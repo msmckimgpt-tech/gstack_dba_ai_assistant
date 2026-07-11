@@ -2484,3 +2484,100 @@ async def admin_metadata_bootstrap_describe(request: Request, account=Depends(ap
         return app._json_error("AI 응답을 해석할 수 없습니다. 다시 시도하세요.", 502)
     results = _metadata_bulk_shape_results(mode, tables, parsed)
     return JSONResponse({"mode": mode, "results": results, "meta": {**(meta or {}), "count": len(results)}})
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
+
+def _glossary_feedback_iso(v):
+    return app._metadata_iso(v)
+
+def _graph_resolve_ds_by_scope(scope_key: str):
+    """scope_key → datasource dict. read(agent_core.set_active_datasource)와 동일 해소:
+    ds.get('scope_key') or ds.get('key') or 라벨. 반환 (ds, None) 또는 (None, reason:str)."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk or sk == "common":
+        return None, "데이터소스 스코프가 아닙니다(common)."
+    from shared import datasources as _dsr
+    mem = None
+    try:
+        mem = app._connect_memory()
+    except Exception:
+        mem = None
+    try:
+        ds_map = _dsr.all_datasources(mem) or {}
+    except Exception:
+        ds_map = {}
+    finally:
+        if mem is not None:
+            try:
+                mem.close()
+            except Exception:
+                pass
+    for label, ds in ds_map.items():
+        cand = str((ds.get("scope_key") or ds.get("key") or label) or "").strip().lower()
+        if cand == sk:
+            return ds, None
+    return None, "해당 스코프의 데이터소스를 찾을 수 없습니다."
+
+def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
+    """MSSQL 골격 — 연결된 database 의 비시스템 SQL 스키마(dbo 등) 테이블을 평탄 수집(metadata-table-desc-fix).
+
+    server > database > schema > table 4계층을 테이블 설명 모델의 (scope_key=datasource, schema_name,
+    table_name) 3-키에 매핑한다 — **저장 schema_name = database(db_name)** (사용자 결정). describe_columns 는
+    실제 SQL 스키마로 introspect 하되 산출 schema_name 은 db_name 으로 통일한다. 동일 table_name 이 복수 SQL
+    스키마에 있으면 최초 1건만 남긴다(DB명 평탄화 한계 — 대부분 dbo 단일). 시스템 SQL 스키마(db_datareader 등
+    고정 역할 + sys/information_schema)는 dialect.system_schemas() 로 제외. cap: 테이블 500 / 컬럼 200.
+    """
+    from modules.tools import _safe_ident as _safe_ident_fn
+    from modules import schema as _schema
+    from shared.config import normalize_db_label as _norm_db_label   # §58: store label lower 계약
+    dialect = _dialects.active()
+    sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
+    real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
+                    if str(s).strip().lower() not in sys_schema]
+    out: list = []
+    seen: set = set()
+    for sql_schema in real_schemas:
+        if len(out) >= app._BOOTSTRAP_MAX_TABLES:
+            break
+        safe_sql_schema = _safe_ident_fn(sql_schema)
+        tnames: list = []
+        cur = conn.cursor()
+        try:
+            cur.execute(dialect.describe_schema_tables(safe_sql_schema))
+            for row in (cur.fetchall() or []):
+                if row and row[0]:
+                    tnames.append(str(row[0]))
+        finally:
+            cur.close()
+        for tname in tnames:
+            if len(out) >= app._BOOTSTRAP_MAX_TABLES:
+                break
+            key = tname.strip().lower()
+            if key in seen:
+                continue  # DB명 평탄화: 동명 테이블(타 SQL 스키마)은 최초 1건만
+            seen.add(key)
+            safe_tname = _safe_ident_fn(tname)
+            cols: list = []
+            ccur = conn.cursor()
+            try:
+                ccur.execute(dialect.describe_columns(safe_sql_schema, safe_tname))
+                for crow in (ccur.fetchall() or []):
+                    if not crow or not crow[0]:
+                        continue
+                    cols.append({"column_name": str(crow[0]),
+                                 "data_type": str(crow[1] or "").lower()})
+                    if len(cols) >= app._BOOTSTRAP_MAX_COLS_PER_TABLE:
+                        break
+            except Exception:
+                cols = []  # 단일 테이블 introspection 실패는 건너뜀(부분 골격 허용)
+            finally:
+                ccur.close()
+            # §58(테이블축 케이스 정합): MSSQL 저장 schema_name(=DB명 라벨)은 set_active_database
+            #   (TASK-0220)·routine backfill(§56 RC5)과 동일한 lower 계약 — sys.databases 원본 케이스를
+            #   무가공 저장하면 cadence(lower) 축과 케이스-변형 이중 적재(라이브 실측 'AccountDB' 33행
+            #   + AGE 중복 스키마 카드)가 생긴다. MSSQL 전용 함수라 MySQL 케이스 보존은 자동 충족.
+            #   (질의 식별자는 sql_schema/tname — db_name 은 연결 바인딩 후 질의에 미사용.)
+            out.append({"schema_name": _norm_db_label(db_name) or db_name,
+                        "table_name": tname, "columns": cols})
+    return out

@@ -2761,3 +2761,304 @@ def _attach_product_conn_status(conn, products: list[dict[str, Any]]) -> None:
                 worst = (r, st["status"])
         # 바인딩 없는 제품(기본 단일 MySQL)은 overall 무첨부 → 프론트가 모드색 유지.
         p["conn_status_overall"] = (worst[1] if worst else None)
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (13종). app 전역은 app.X 동적 참조. ====
+
+def _block_conversations_for_product(
+    product_id: int,
+    reason: str,
+    *,
+    conn=None,
+) -> int:
+    """제품 삭제 시 그 제품을 pinned 한 대화를 일괄 차단한다. Returns 차단된 행 수.
+
+    이미 차단된 대화(blocked_at IS NOT NULL)는 재차단하지 않는다(reason/시각 보존).
+    backend-aware. production(PG) 경로가 정본. 호출자가 차단 실패를 loud 하게 처리할
+    수 있도록 예외는 전파한다(삭제 핸들러가 catch + 경고 로깅).
+    """
+    if not product_id or int(product_id) <= 0:
+        return 0
+    if app.os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "UPDATE agent_runtime.core_conversations "
+                    "SET blocked_at = now(), blocked_reason = %s "
+                    "WHERE product_id = %s AND blocked_at IS NULL",
+                    (reason, int(product_id)),
+                )
+                affected = int(pgcur.rowcount or 0)
+            pg.commit()
+            return affected
+        finally:
+            pg.close()
+    own_conn = conn is None
+    if own_conn:
+        conn = app._connect_memory()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE AgentCoreConversations "
+            "SET blocked_at = NOW(), blocked_reason = %s "
+            "WHERE product_id = %s AND blocked_at IS NULL",
+            (reason, int(product_id)),
+        )
+        affected = int(cur.rowcount or 0)
+        cur.close()
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return affected
+    finally:
+        if own_conn and conn is not None:
+            conn.close()
+
+def _compose_db_insight_text(ent: dict) -> tuple:
+    """by_db 누적 항목(ent) → (한 줄 description, 멀티라인 detail_text[hover title용]).
+
+    description = 도메인 + (schema summary | table 도메인 요약). detail_text = schema 전문 + 테이블별 정제 본문.
+    """
+    domain = ent.get("domain")
+    summary = app._clean_insight_segment(ent.get("schema_text") or "")
+    if not summary and ent.get("tables"):
+        # schema insight 없으면 table 도메인들로 합성.
+        tdoms = []
+        for t in ent["tables"]:
+            d = t.get("domain")
+            if d and d not in tdoms:
+                tdoms.append(d)
+        if tdoms:
+            summary = "주요 테이블 도메인: " + ", ".join(tdoms[:4])
+    parts = []
+    if domain:
+        parts.append(str(domain))
+    if summary:
+        parts.append(summary)
+    description = " — ".join(parts) if parts else None
+
+    lines = []
+    if ent.get("schema_text"):
+        lines.append("· " + str(ent["schema_text"]))
+    for t in ent.get("tables", [])[:12]:
+        tname = t.get("table") or ""
+        tdesc = app._clean_insight_segment(t.get("text") or "") or (t.get("domain") or "")
+        lines.append(f"· {tname}: {tdesc}" if tdesc else f"· {tname}")
+    detail_text = "\n".join(lines) if lines else None
+    return description, detail_text
+
+def _db_catalog_from_object_key(object_key: str, engine: str, object_type: str):
+    """rag_objects.object_key 에서 DB(catalog) 키를 추출 (TASK-0243 — MSSQL 차원 수정).
+
+    object_key = `{ds_prefix}:{path}` (ds_prefix = datasource_key 라벨/해시 — `_ds_valid_key` 가 ':' 를
+    금지하므로 첫 ':' 로 안전 분리, 접두값 자체는 버린다). **MSSQL 은 schema_name 컬럼이 SQL 스키마(dbo)**
+    라 등록 DB(catalog, 예: GameLog_100)와 차원이 달라 schema_name 으로 by_db 를 묶으면 매칭이 빗나가
+    'dbo' 한 바구니로 뭉친다. catalog 는 object_key path 에 인코딩돼 있으므로 거기서 파싱한다.
+      - MySQL(db==schema): path = `{db}`(schema) | `{db}.{table}`(table) → catalog = 첫 segment.
+      - MSSQL: path = `{catalog}.{sqlschema}`(schema, per-DB scan) | `{catalog}.{sqlschema}.{table}`(table)
+        | `{sqlschema}`(bare default_db schema) | `{sqlschema}.{table}`(bare default_db table)
+        → 충분한 segment 면 첫 segment 가 catalog, 부족(=bare default_db)하면 None(등록 catalog 미귀속).
+    반환: catalog(str) 또는 None(귀속 불가 — 호출부에서 MSSQL 은 skip, MySQL 은 schema_name 폴백).
+    """
+    ok = str(object_key or "")
+    path = ok.split(":", 1)[1] if ":" in ok else ok
+    path = path.strip()
+    if not path:
+        return None
+    segs = path.split(".")
+    if str(engine or "").lower() == "mssql":
+        # table = catalog.sqlschema.table(3) / schema = catalog.sqlschema(2). 그 미만이면 bare(catalog 없음).
+        need = 3 if object_type == "table" else 2
+        return segs[0] if len(segs) >= need and segs[0] else None
+    # MySQL: db == catalog == 첫 segment (schema=`db`, table=`db.table`).
+    return segs[0] if segs and segs[0] else None
+
+def _like_escape(value: str) -> str:
+    r"""PG LIKE 패턴의 메타문자(\, %, _)를 ESCAPE '\' 기준으로 이스케이프한다 (인젝션/오매칭 차단)."""
+    s = str(value or "")
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+def _validate_db_rule_pattern(pattern: str) -> "tuple[bool, str]":
+    """B2(강화): 저장 전 정규식 검증 — 길이·compile·backref·그룹수량자·중첩수량자·무한수량자 개수.
+    catastrophic backtracking 의 구조적 벡터(그룹에 붙은 수량자 `)[*+?{]`, alternation+quantifier,
+    counted repetition of groups)를 차단해 백그라운드/요청 스레드 hang(ReDoS)을 막는다. (ok, error)."""
+    p = str(pattern or "").strip()
+    if not p:
+        return (False, "패턴이 비어 있습니다.")
+    if len(p) > app._DB_RULE_PATTERN_MAX:
+        return (False, f"패턴이 너무 깁니다(최대 {app._DB_RULE_PATTERN_MAX}자).")
+    if app._DB_RULE_BACKREF_RE.search(p):
+        return (False, "역참조(backreference)는 허용되지 않습니다.")
+    if app._DB_RULE_NESTED_QUANT_RE.search(p) or app._DB_RULE_GROUP_QUANT_RE.search(p):
+        return (False, "그룹에 붙은 수량자/중첩 수량자는 ReDoS 위험으로 허용되지 않습니다(예: (a|a)*, (.*a){20}).")
+    if len(re.findall(r"[*+]", p)) > app._DB_RULE_MAX_UNBOUNDED_QUANT:
+        return (False, f"무한 수량자(*,+)가 너무 많습니다(최대 {app._DB_RULE_MAX_UNBOUNDED_QUANT}).")
+    try:
+        re.compile(p)
+    except re.error as exc:
+        return (False, f"정규식 오류: {exc}")
+    return (True, "")
+
+def _match_db_rule(user_names: "list[str]", include_pattern: str, exclude_pattern: "str | None",
+                   engine: str, excluded_lower: "set[str]") -> "list[str]":
+    """B5: 엔진별 case-folding(MySQL=IGNORECASE/이름 소문자, MSSQL=대소문자 구분) 으로 일치 DB 반환.
+    Exclude 우선(M1: 모호하면 제외). 잘못된 exclude 는 over-grant 방지 위해 전체 매칭 무효([])."""
+    flags = 0 if str(engine or "").strip().lower() == "mssql" else re.IGNORECASE
+    inc_pat = str(include_pattern or "").strip()
+    if not inc_pat:
+        return []  # 빈 include 는 '전부 일치'가 아니라 '매치 없음'(over-grant 방지, B1).
+    # 방어 심층(B2): 저장 검증을 재적용 — 백그라운드가 저장된 패턴을 돌릴 때도 ReDoS 벡터 차단.
+    if not app._validate_db_rule_pattern(inc_pat)[0]:
+        return []
+    if exclude_pattern and not app._validate_db_rule_pattern(str(exclude_pattern))[0]:
+        return []  # 안전하지 않은 exclude → 전체 무효(over-grant 금지).
+    try:
+        inc = re.compile(inc_pat, flags)
+    except re.error:
+        return []
+    exc = None
+    if exclude_pattern:
+        try:
+            exc = re.compile(str(exclude_pattern), flags)
+        except re.error:
+            return []  # exclude 컴파일 실패 → 안전하게 전체 무효(over-grant 금지).
+    out: list[str] = []
+    for nm in (user_names or [])[:app._DB_RULE_MATCH_BOUND]:
+        name = str(nm or "").strip()
+        if not name:
+            continue
+        low = name.lower()
+        if low in excluded_lower:
+            continue
+        if len(name) > app._DB_RULE_NAME_MAX or app._DB_RULE_NAME_INJECT_RE.search(name):
+            continue
+        if not inc.search(name):
+            continue
+        if exc is not None and exc.search(name):
+            continue  # exclude wins (M1)
+        out.append(name)
+    return out
+
+def _normalize_db_rule_row(row: "dict | None") -> "dict | None":
+    if not row:
+        return None
+    row["is_enabled"] = bool(row.get("is_enabled"))
+    row["cap"] = int(row.get("cap") or 3)
+    return row
+
+def _get_product_db_rules(conn, product_id: int, ds_key: str) -> "list[dict]":
+    """(product, datasource) 의 **모든** 규칙(SortOrder, Id 순). 테이블 미존재 graceful → []."""
+    if product_id <= 0 or not ds_key:
+        return []
+    cur = conn.cursor(dictionary=True)
+    try:
+        try:
+            cur.execute(
+                f"SELECT {app._DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules "
+                "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s ORDER BY SortOrder ASC, Id ASC",
+                (int(product_id), str(ds_key).strip().lower()))
+        except Exception:
+            # SortOrder 컬럼 부재(마이그레이션 전) → Id 순.
+            cur.execute(
+                f"SELECT {app._DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules "
+                "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s ORDER BY Id ASC",
+                (int(product_id), str(ds_key).strip().lower()))
+        rows = cur.fetchall() or []
+    except Exception:
+        return []
+    finally:
+        cur.close()
+    return [app._normalize_db_rule_row(r) for r in rows]
+
+def _get_db_rule_by_id(conn, rule_id: int) -> "dict | None":
+    """규칙 1건 Id 조회(엔드포인트 per-rule 동작용). 테이블 미존재 graceful → None."""
+    if int(rule_id or 0) <= 0:
+        return None
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(f"SELECT {app._DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules WHERE Id=%s LIMIT 1",
+                    (int(rule_id),))
+        row = cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        cur.close()
+    return app._normalize_db_rule_row(row)
+
+def _touch_db_rule_sync(conn, rule_id: int) -> None:
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE WebProductDatasourceDbRules SET LastSyncAt=CURRENT_TIMESTAMP WHERE Id=%s", (int(rule_id),))
+        cur.close()
+    except Exception:
+        pass
+
+def _rule_to_public(rule: dict) -> dict:
+    return {
+        "id": int(rule.get("id") or 0),
+        "include_pattern": str(rule.get("include_pattern") or ""),
+        "exclude_pattern": (str(rule["exclude_pattern"]) if rule.get("exclude_pattern") else ""),
+        "cap": int(rule.get("cap") or 3),
+        "is_enabled": bool(rule.get("is_enabled")),
+        "last_sync_at": str(rule.get("last_sync_at") or ""),
+    }
+
+async def _prompt_generate_json_response(ctx: dict, *, log_label: str, log_ctx: str) -> JSONResponse:
+    """자동작성 비스트리밍 코어 — ctx(create_kwargs 등)로 LLM 1회 호출 후 {prompt, meta} 반환.
+
+    product/role/account 엔드포인트가 공유한다. log_label/log_ctx 는 잘림 경고 로그 식별용
+    (예: log_label='admin_generate_role_prompt_stream', log_ctx='role_id=3').
+    """
+    openai_client = ctx["openai_client"]
+    create_kwargs = ctx["create_kwargs"]
+    _aiops_model = str(ctx.get("llm_model") or "")
+
+    def _aiops_create_and_record():
+        # AI 운영 관제 계측(TASK-AIOPS): create + 회계를 둘 다 executor 스레드에서 실행 →
+        # uvicorn 이벤트 루프에서 동기 PG I/O 금지. 순수 API 왕복 지연만 측정.
+        _t0 = time.perf_counter_ns()
+        r = openai_client.chat.completions.create(**create_kwargs)
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                _aiops_model, "prompt_gen", r, conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _t0) // 1_000_000),
+            )
+        except Exception:
+            pass
+        return r
+
+    try:
+        resp = await asyncio.get_event_loop().run_in_executor(None, _aiops_create_and_record)
+        choice = resp.choices[0]
+        generated = choice.message.content or ""
+        # TASK-0232: max_tokens 도달로 본문이 잘렸는지 명시 검출 — 조용한 잘림 방지.
+        finish_reason = getattr(choice, "finish_reason", None)
+        truncated = finish_reason == "length"
+        if truncated:
+            logging.getLogger(__name__).warning(
+                "%s truncated (finish_reason=length, model=%s, max_tokens=%s, %s)",
+                log_label, ctx["llm_model"], ctx["max_tokens"], log_ctx,
+            )
+    except Exception as llm_exc:
+        return app._json_error(f"LLM 생성 실패: {llm_exc}", 502)
+    return JSONResponse(
+        {"prompt": generated.strip(), "meta": {**ctx["meta_base"], "truncated": truncated}}
+    )
+
+def _clean_insight_segment(text: str) -> str:
+    """insight text_content('schema domain: X / summary / usage / key columns: ...')에서 사람용 본문만 추출.
+    '... domain: ...' 선두 라벨과 'key columns: ...' 꼬리를 떼어 summary/usage 만 ' · ' 로 잇는다."""
+    segs = [s.strip() for s in str(text or "").split(" / ") if s.strip()]
+    body = []
+    for s in segs:
+        low = s.lower()
+        if low.startswith("key columns"):
+            continue
+        if " domain:" in low or low.startswith("domain:"):
+            continue
+        body.append(s)
+    return " · ".join(body)

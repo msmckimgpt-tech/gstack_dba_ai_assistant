@@ -531,3 +531,47 @@ async def admin_datasource_databases(key: str, request: Request, actor=Depends(a
         "conn_status": conn_status,
         "degraded": False,
     })
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
+
+def _ssrf_private_guard_enabled() -> bool:
+    """사설/링크로컬 IP 차단(SSRF 경계)의 활성 여부. 기본 활성(secure-by-default).
+
+    TASK-0228: 사내 환경은 대부분 사설망 IP(예: `10.200.50.80`, RFC1918)로 DB 연결정보를
+    구성·운영한다. 이 경우 datasource 생성·연결테스트가 `_ssrf_check_host` 의 사설망 차단에
+    걸린다(설계상 SSRF 방어). 운영자가 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` 으로 **사설망
+    경계만 의도적으로 비활성화**할 수 있게 한다(`.env.secret` 1줄). 기본값(미설정/그 외 값)은
+    `1`=활성이라 코드 기본 동작은 secure-by-default 로 유지된다 — 즉 "방어 구성은 코드에 보존"
+    하고 운영 설정으로만 끈다(복원 시 env 값을 `1` 로 되돌리면 즉시 재활성).
+
+    **이 토글이 끄는 것은 RFC1918 사설망(`is_private`) 차단뿐**이다 (사용자 승인 범위 = 사내 사설망 DB).
+    다음은 토글과 무관하게 항상 유지된다 (REV-20260611-0228 Finding A/B/C): 클라우드 메타데이터 IP
+    하드차단(169.254.169.254·100.100.100.200, IPv4-mapped IPv6 형 포함), loopback(127.x/::1)·
+    link-local(169.254.x/fe80::)·reserved·multicast 차단, DNS rebinding pin. 끄면 순수 위험만
+    추가되는 경계라 토글 범위에서 제외한다.
+    """
+    import os as _os
+    raw = str(_os.getenv("AGENT_DATASOURCE_SSRF_GUARD_ENABLED", "1")).strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+def _ds_valid_key(key: str) -> "str | None":
+    """datasource 키 정규화·검증. 부적합 시 None. 소문자 영숫자·_·- 만, `ds` 구분자 금지."""
+    import re as _re
+    k = str(key or "").strip().lower()
+    if not k or len(k) > 64:
+        return None
+    if not _re.match(r"^[a-z0-9_-]+$", k):
+        return None
+    if ":" in k or k.startswith("ds"):  # fact-key `:ds:` 구분자 충돌 회피(보수적)
+        return None
+    return k
+
+def _ds_audit_fields(data: dict) -> dict:
+    """B2: audit 화이트리스트 — **password 는 절대 포함 안 함**(평문 ChangeJson 누출 차단)."""
+    out = {}
+    for f in ("key", "engine", "host", "port", "user", "default_db", "is_active"):
+        if f in data:
+            out[f] = data[f]
+    out["password_set"] = bool(data.get("password"))  # 설정 여부만(값 아님)
+    return out

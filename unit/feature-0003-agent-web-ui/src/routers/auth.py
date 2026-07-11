@@ -983,3 +983,22 @@ def _login_reset_lockout(conn, account_id: int) -> None:
         )
     finally:
         cur.close()
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _default_signup_role_id(conn) -> int:
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT Id
+FROM WebRoles
+WHERE IsDefaultSignup = 1
+  AND IsActive = 1
+ORDER BY Id ASC
+LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    cur.close()
+    return int((row or (0,))[0] or 0)

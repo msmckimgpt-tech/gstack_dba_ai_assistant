@@ -216,3 +216,42 @@ def get_api_vault_options() -> JSONResponse:
             "provider": "bedrock-gateway",
         }
     )
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
+
+def _active_stream_count() -> int:
+    with app._ACTIVE_STREAMS_LOCK:
+        return app._ACTIVE_STREAMS
+
+def _is_local_llm_available() -> bool:
+    base_url = str(os.getenv("LOCAL_LLM_API_BASE", "") or "").strip()
+    if not base_url:
+        return False
+    now = app.time.time()
+    if now - float(app._LOCAL_LLM_STATUS.get("checked_at") or 0.0) < 30:
+        return bool(app._LOCAL_LLM_STATUS.get("value"))
+    parsed = app.urlparse(base_url)
+    host = str(parsed.hostname or "").strip()
+    port = int(parsed.port or (443 if parsed.scheme == "https" else 80))
+    available = False
+    if host:
+        try:
+            with app.socket.create_connection((host, port), timeout=1.5):
+                available = True
+        except OSError:
+            available = False
+    app._LOCAL_LLM_STATUS["checked_at"] = now
+    app._LOCAL_LLM_STATUS["value"] = available
+    return available
+
+def _safe_shared_path(path: str) -> app.Path | None:
+    if not path:
+        return None
+    try:
+        resolved = app.Path(path).expanduser().resolve()
+    except Exception:
+        return None
+    if resolved == app.SHARED_ROOT or app.SHARED_ROOT in resolved.parents:
+        return resolved
+    return None

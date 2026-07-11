@@ -192,3 +192,17 @@ def _save_runtime_setting(conn, key: str, value: int, account_id: int | None) ->
             cur.close()
         except Exception:
             pass
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _delete_runtime_setting(conn, key: str) -> None:
+    """override 삭제(기본값으로 초기화)."""
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM WebRuntimeSettings WHERE SettingKey = %s", (str(key),))
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass

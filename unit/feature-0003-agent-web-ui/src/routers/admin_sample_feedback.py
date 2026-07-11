@@ -184,3 +184,23 @@ async def admin_reject_sample_feedback(feedback_id: int, request: Request, accou
         logging.getLogger(__name__).warning("sample.feedback.reject audit 실패 id=%s", feedback_id, exc_info=True)
 
     return JSONResponse({"ok": True, "feedback_id": feedback_id})
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _samples_resolve_account(request: Request):
+    """RBAC(kb.sample.curate) 게이트. (account, None) 또는 (None, JSONResponse[401/403/500]).
+
+    _metadata_resolve_account 와 동형이되 권한 코드만 kb.sample.curate(샘플 큐레이션 권한).
+    """
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return None, app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_permission(request, conn, "kb.sample.curate")
+        if error:
+            return None, error
+        return account, None
+    finally:
+        conn.close()

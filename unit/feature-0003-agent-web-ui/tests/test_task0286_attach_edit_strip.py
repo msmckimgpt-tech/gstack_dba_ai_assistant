@@ -127,6 +127,8 @@ def test_p2_system_prompt_forbids_full_body_keeps_diff():
 # ── A: ask 흐름 호출 ─────────────────────────────────────────────────────────
 def test_a1_ask_invokes_strip_and_content_update():
     import inspect
-    src = inspect.getsource(app)
+    # ITEM-10 p15: strip/update 는 routers/conversations.py 로 이동 — ask 흐름 호출 계약은 위치 무관.
+    import routers.conversations as _rc
+    src = inspect.getsource(app) + inspect.getsource(_rc)
     assert "_strip_attachment_edit_blocks(" in src
     assert "_update_assistant_message_content(" in src
