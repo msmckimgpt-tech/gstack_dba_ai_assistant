@@ -196,33 +196,28 @@ async def admin_create_role(
     return JSONResponse({"ok": True, "role": role})
 
 @router.patch("/api/admin/roles/{role_id}")
-async def admin_update_role(role_id: int, request: Request) -> JSONResponse:
+async def admin_update_role(
+    role_id: int,
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch10: _require_account→account+conn 완전 DI. perm·검증·self-scope·survivor 본문 유지.
+    # get_conn finally:close 가 catalog·UPDATE·_set_role_permissions·audit raise 시 conn leak 해소.
     if role_id <= 0:
         return app._json_error("invalid role_id", 400)
     try:
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(actor, "console.access") or not app._account_has_permission(actor, "console.manage"):
-        conn.close()
         return app._json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     if not app._account_has_permission(actor, "role.update"):
-        conn.close()
         return app._json_error("역할 수정 권한이 필요합니다.", 403)
     current_role = app._load_role_by_id(conn, role_id)
     if not current_role:
-        conn.close()
         return app._json_error("role not found", 404)
     if "role_key" in data and app._sanitize_role_key(data.get("role_key", "")) != current_role.get("key"):
-        conn.close()
         return app._json_error("role_key 는 수정할 수 없습니다.", 400)
     next_name = str(data.get("name", current_role.get("name")) or "").strip()
     next_description = str(data.get("description", current_role.get("description")) or "").strip()
@@ -231,7 +226,6 @@ async def admin_update_role(role_id: int, request: Request) -> JSONResponse:
     next_permission_codes = set(current_role.get("permission_codes") or [])
     if "permission_codes" in data:
         if not app._account_has_permission(actor, "role.permission.manage"):
-            conn.close()
             return app._json_error("역할 권한 배치 권한이 필요합니다.", 403)
         # TASK-0052 Phase 1B: dynamic catalog 기반 검증.
         _catalog_defs_u, catalog_codes_for_role_u, _catalog_map_u = app._resolve_permission_catalog(conn)
@@ -241,7 +235,6 @@ async def admin_update_role(role_id: int, request: Request) -> JSONResponse:
                 catalog_codes=catalog_codes_for_role_u,
             )
         except ValueError as exc:
-            conn.close()
             return app._json_error(str(exc), 400)
         # TASK-0300 (REQ-0287): privilege escalation 방지 — 본인 미보유 권한을 역할에 신규 부여 시
         # 403(역할 경유 우회 차단), 본인 범위 밖 기존 역할 권한은 보존(merge).
@@ -252,21 +245,16 @@ async def admin_update_role(role_id: int, request: Request) -> JSONResponse:
                 current_role.get("permission_codes"),
             )
         except ValueError as exc:
-            conn.close()
             return app._json_error(str(exc), 403)
         try:
             app._ensure_management_survivor_for_role_change(conn, int(role_id), next_permission_codes)
         except ValueError as exc:
-            conn.close()
             return app._json_error(str(exc), 400)
     if current_role.get("is_default_signup") and not next_is_default_signup:
-        conn.close()
         return app._json_error("기본 가입 역할은 다른 역할을 지정하기 전에는 해제할 수 없습니다.", 400)
     if next_is_default_signup and not next_is_active:
-        conn.close()
         return app._json_error("기본 가입 역할은 활성 상태여야 합니다.", 400)
     if current_role.get("is_default_signup") and not next_is_active:
-        conn.close()
         return app._json_error("기본 가입 역할은 비활성화할 수 없습니다.", 400)
     cur = conn.cursor()
     cur.execute(
@@ -310,9 +298,7 @@ WHERE Id = %s
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({"ok": True, "role": role})
 
 @router.delete("/api/admin/roles/{role_id}")

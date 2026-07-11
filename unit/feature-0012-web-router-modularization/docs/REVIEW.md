@@ -220,3 +220,6 @@ source_of_truth: true
 
 ## REV-20260712T045500-item11-batch9 [SKIPPED:panel-precleared] — admin_create_role 완전 DI
 - Related: CHG-20260712T045500-item11-batch9. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _require_account 완전 DI, perm·검증·self-scope 본문 유지. conn.close 스크립트 일괄 제거(AST 함수범위, cur.close 보존 확인). runtime 12종+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T051000-item11-batch10 [SKIPPED:panel-precleared] — admin_update_role 완전 DI
+- Related: CHG-20260712T051000-item11-batch10. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _require_account 완전 DI, perm·self-scope·survivor 본문 유지. conn.close 스크립트 일괄 제거. runtime 11종+leak-fix. 게이트 4종 GREEN.
