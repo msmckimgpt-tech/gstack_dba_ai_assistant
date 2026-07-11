@@ -1246,3 +1246,6 @@ TASK-0015 (plan-review):
 - [x] `.github/workflows/ci.yml` test job "Migration gate" 스텝 추가(`--self-test` + `--heads`, 머지 게이트).
 - [x] `docs/MIGRATIONS.md` 규약 절 추가(3중 장치 + 해소 절차).
 - [x] acceptance (a)(b)(c)(e) 실증 — TEST.md §3 Run 기록 참조. (d) CI 스텝 실행은 본 cycle PR checks 로 확인.
+
+## 20260711T1203-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11 "정책문서 분리/세분화")
+- [x] MODIFY 124→15건(+본 엔트리)·REVIEW 109→15건 이관, 무손실 md5 증명, 상단 링크+REPORT 압축 정보(§5.5). feature-0003 선례(CHG-20260711T115053) 동일 계보.
