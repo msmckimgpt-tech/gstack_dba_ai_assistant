@@ -163,3 +163,7 @@ source_of_truth: true
 ## CHG-20260711T121500-item10-routers-p1 (routers/ 이동 파일럿 — _ds_write_common)
 - Date: 2026-07-11. 판정표 §4("대형 호출자는 web_context 아닌 routers/ — 패치-단일점 자동 보존") 경로의 첫 실적용. 패턴: 이동 함수의 app-전역 참조를 app.X 동적으로 전환 + 도메인 내 호출 로컬화 + 외부(테스트) 참조는 app 꼬리 rebind. app.py 17,724→17,704줄.
 - 검증: 4중 게이트 GREEN — 특히 test_datasource_delete(#S1: app._connect_memory/_require_account 패치 + app._ds_write_common 직접 호출)가 이동 후에도 패치 관통 없이 통과 = 패턴의 핵심 주장 실증.
+
+## CHG-20260711T151943-item10-routers-p2 (_metadata_* 20종 routers 이동)
+- Date: 2026-07-11. 판정표 §4 routers-경로 2차 — 파일럿 패턴 그대로: app.X 동적(패치-단일점)·로컬화·선별 예외(_metadata_llm_complete 는 호출부 app.X 유지)·꼬리 rebind. admin_metadata.py 2,483줄(도메인 소유 정상화). app.py 17,704→17,294.
+- 검증: census(테스트 직접참조 4·setattr 1·routers 소비 단일파일·app 내부 1) 선행 → 4중 게이트.

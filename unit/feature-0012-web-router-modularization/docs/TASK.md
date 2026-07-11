@@ -206,3 +206,9 @@ source_of_truth: true
 
 - [x] `_ds_write_common`(async, 26줄) → routers/admin_datasources.py — app 전역 4종(_require_account·_connect_memory·_account_has_permission·_json_error, 전부 KEEP 목록)은 **app.X 동적 참조**로 전환(패치-단일점 자동 보존) · 도메인 내 호출 3곳 로컬화 · 직접호출 테스트(test_datasource_delete:100)의 `app._ds_write_common` 는 app 꼬리 rebind 로 무변경 보존(register_all 이후 — 순환 안전)
 - [x] 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0 — **routers-이동 패턴 확립**(다음: _collect_*_prompt_context·_metadata_* 대형 클러스터 동일 패턴)
+
+## 20260711T1519-item10-routers-p2 — _metadata_* 20종 → routers/admin_metadata (parallel-work-structure ITEM-10)
+
+- [x] _metadata_* 헬퍼 20종(453줄, L16231-17087 산재) → routers/admin_metadata.py — 파일럿(routers-p1) 패턴: app-전역 13종 app.X 동적 프리픽스 · 도메인 내 소비(23+21+20+16+12…) 로컬화 · **패치되는 _metadata_llm_complete 호출부만 app.X 유지**(setattr 패치 관통 보존) · 테스트 직접참조 4종+app 내부 잔존 호출자(_glossary_feedback_iso)는 꼬리 rebind
+- [x] app.py 17,704 → 17,294줄(누적 19,650→17,294, -2,356)
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest
