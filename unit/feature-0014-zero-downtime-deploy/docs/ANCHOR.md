@@ -41,5 +41,4 @@ TLS preflight·migrate 게이트·post-cutover soak 롤백)에 있다.
 pre-drain 게이트가 그 스트림이 끝날 때까지 해당 replica recreate 를 미룬다.)
 
 ## §4. 외부 검증 로그 (append-only)
-(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. 라이브 롤링 zero-502 부하 + non-root dry-run
-검증은 운영자 수행 후 human 이 append 예정.)
+(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. 라이브 롤링 zero-502 부하 + non-root dry-run 검증은 운영자 수행 후 human 이 append 예정.)

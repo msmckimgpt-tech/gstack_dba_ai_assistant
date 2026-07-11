@@ -60,6 +60,7 @@ LOCK_WAIT_SECONDS="${DEPLOY_WEB_LOCK_WAIT:-600}"
 READY_TIMEOUT="${DEPLOY_WEB_READY_TIMEOUT:-120}"
 PREDRAIN_TIMEOUT="${DEPLOY_WEB_PREDRAIN_TIMEOUT:-90}"
 SOAK_SECONDS="${DEPLOY_WEB_SOAK:-90}"
+EDGE_FLAP_MAX="${DEPLOY_WEB_EDGE_FLAP_MAX:-4}"   # soak 창 내 비연속 edge 실패 누적 임계(하드닝 2026-07-11, 패널 MINOR-1)
 IMAGE_KEEP="${DEPLOY_WEB_IMAGE_KEEP:-3}"
 
 DRY_RUN=0
@@ -121,16 +122,41 @@ normalize_ownership() {
 # ── preflight: 프로덕션 file-set 격리 ──────────────────────────────────────────
 preflight_fileset() {
   step "preflight: 프로덕션 file-set 격리 (-f docker-compose.yml only)"
-  local cfg
-  cfg="$("${DC[@]}" config 2>/dev/null)" || die "docker compose config 실패 (base file-set)."
+  # 하드닝(2026-07-11, feature-0014): `docker compose config` 가 간헐 실패하거나 불완전
+  # 출력을 내는 flake 실측(같은 날 6회 중 3회 — 수동 프로브는 전건 통과, stderr 는
+  # 2>/dev/null 로 유실돼 진단 불가였음. worktree 재현에서 env_file 대상 부재 같은 원인이
+  # stderr 에만 나타남을 확인). ① stderr 포획 ② rc≠0 또는 web-a/b 미검출이면 2s backoff
+  # 최대 3회 재시도 ③ 최종 실패 시 stderr·출력 헤더 덤프. 진짜 실패는 여전히 die.
+  local cfg cfg_err rc attempt
+  cfg_err="$(mktemp)"
+  for attempt in 1 2 3; do
+    cfg="$("${DC[@]}" config 2>"$cfg_err")" && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ] && printf '%s\n' "$cfg" | grep -qE '^  web-a:' \
+       && printf '%s\n' "$cfg" | grep -qE '^  web-b:'; then
+      break
+    fi
+    if [ "$attempt" -lt 3 ]; then
+      warn "compose config 이상(attempt=$attempt rc=$rc bytes=${#cfg}) — 2s 후 재시도. stderr: $(head -c 200 "$cfg_err" | tr '\n' ' ')"
+      sleep 2
+    fi
+  done
+  if [ "$rc" -ne 0 ]; then
+    err "compose config 최종 실패(rc=$rc). stderr: $(head -c 400 "$cfg_err" | tr '\n' ' ')"
+    rm -f "$cfg_err"
+    die "docker compose config 실패 (base file-set)."
+  fi
   # web-a/web-b 섹션에 published 포트가 있으면 --scale/replica 충돌 → 차단.
   local web_block
   web_block="$(printf '%s\n' "$cfg" | awk '/^  web-[ab]:/{f=1} /^  [a-z]/&&!/web-[ab]/{if(f&&!/^  web-[ab]/)f=0} f{print}')"
   if printf '%s\n' "$web_block" | grep -qE 'published:'; then
     die "web-a/web-b 에 호스트 포트(published)가 있습니다. 프로덕션은 Caddy :443 단일 진입이어야 합니다 (dev override 가 머지되었는지 확인). :18080 직접 문은 폐기되었습니다."
   fi
-  printf '%s\n' "$cfg" | grep -qE '^  web-a:' && printf '%s\n' "$cfg" | grep -qE '^  web-b:' \
-    || die "web-a/web-b 서비스가 base compose 에 없습니다 (토폴로지 미적용)."
+  if ! printf '%s\n' "$cfg" | grep -qE '^  web-a:' || ! printf '%s\n' "$cfg" | grep -qE '^  web-b:'; then
+    err "config 출력 진단: bytes=${#cfg} head=[$(printf '%s' "$cfg" | head -3 | tr '\n' '|')] 서비스라인=$(printf '%s\n' "$cfg" | grep -c '^  [a-z][a-z-]*:' || true) stderr(3차)=$(head -c 200 "$cfg_err" | tr '\n' ' ')"
+    rm -f "$cfg_err"
+    die "web-a/web-b 서비스가 base compose 에 없습니다 (토폴로지 미적용 — 3회 재시도 후에도 미검출)."
+  fi
+  rm -f "$cfg_err"
   log "OK — web-a/web-b 호스트포트 없음, 두 replica 정의 확인."
 }
 
@@ -414,11 +440,35 @@ reconcile_caddy() {
 # ── post-cutover soak (부하 노출 후 안정성 + crash-loop 감시 → 자동 롤백) ────────
 soak_or_rollback() {  # $1 = deployed sha
   local sha="$1" deadline=$(( SECONDS + SOAK_SECONDS )) rc_a rc_b base_a base_b
+  local edge_fail_total=0   # 하드닝: flapping(200/503 교대) 이미지는 '연속 3회'를 영원히 못 채움 — 누적 기준 병행
   step "post-cutover soak (${SOAK_SECONDS}s) — edge + RestartCount 감시"
   base_a="$(restart_count web-a)"; base_b="$(restart_count web-b)"
   while [ "$SECONDS" -lt "$deadline" ]; do
     if ! edge_ok; then
-      # edge 503/실패 — 의존성(DB) 문제인지 이미지 문제인지 구분(thrash 방지).
+      # 하드닝(2026-07-11): 단발 edge 실패로 롤백하지 않는다 — 동시 부하/업스트림 헬스체크
+      # 창의 일시 blip 이 정상 이미지를 롤백시킨 false-positive 실측. 2s 간격 연속 3회
+      # 실패일 때만 결함으로 확증한다.
+      local edge_fail=1 probe
+      for probe in 2 3; do
+        sleep 2
+        if edge_ok; then edge_fail=0; break; else edge_fail="$probe"; fi
+      done
+      edge_fail_total=$(( edge_fail_total + 1 ))
+      if [ "$edge_fail" = "0" ] && [ "$edge_fail_total" -lt "$EDGE_FLAP_MAX" ]; then
+        # 회복했어도 blip 원인이 replica 재시작(crash-loop 1회차)일 수 있다 — continue 전에
+        # RestartCount 즉시 재검(패널 적발: deadline 만료와 겹치면 재시작 검사가 영영 스킵).
+        rc_a="$(restart_count web-a)"; rc_b="$(restart_count web-b)"
+        if [ "${rc_a:-0}" -gt "${base_a:-0}" ] || [ "${rc_b:-0}" -gt "${base_b:-0}" ]; then
+          warn "edge blip 회복했으나 RestartCount 증가(web-a:$base_a→$rc_a web-b:$base_b→$rc_b) — crash-loop. 롤백."
+          auto_rollback "$sha"; return 1
+        fi
+        warn "edge 일시 blip(연속 3회 미만 회복, 누적 ${edge_fail_total}) — soak 계속."
+        continue
+      fi
+      if [ "$edge_fail" = "0" ] && [ "$edge_fail_total" -ge "$EDGE_FLAP_MAX" ]; then
+        warn "edge 실패 누적 ${edge_fail_total}회(비연속 flapping) — 결함 이미지 의심. 롤백 판정 진행."
+      fi
+      # edge 연속 3회 실패 — 의존성(DB) 문제인지 이미지 문제인지 구분(thrash 방지).
       if dependency_down; then
         warn "edge 비정상이지만 DB 의존성 down 으로 판단 — 이미지 롤백은 무의미(thrash 금지). 현 상태 유지 + 경보."
         return 0
@@ -453,7 +503,15 @@ auto_rollback() {  # $1 = 실패한 sha
   local svc; for svc in "${REPLICAS[@]}"; do
     recreate_replica "$svc" "$good" || warn "$svc 롤백 recreate 문제 — 계속."
   done
-  edge_ok && log "롤백 후 edge 정상." || err "롤백 후에도 edge 비정상 — 수동 개입 필요."
+  # 하드닝(2026-07-11): 롤백 recreate 직후 단발 프로브는 uvicorn 워밍업/Caddy 업스트림
+  # 헬스체크 창과 겹쳐 false "수동 개입" 판정을 낸다(실측 — 판정 수 초 뒤 정상 회복).
+  # 최대 60s(3s 간격) 회복 대기 후에만 수동 개입을 선언한다.
+  local rb_deadline=$(( SECONDS + 60 )) rb_ok=1
+  while [ "$SECONDS" -lt "$rb_deadline" ]; do
+    if edge_ok; then rb_ok=0; break; fi
+    sleep 3
+  done
+  if [ "$rb_ok" -eq 0 ]; then log "롤백 후 edge 정상."; else err "롤백 후에도 edge 비정상(60s 대기 후) — 수동 개입 필요."; fi
   echo "current=$good" > "$STATE_FILE"
 }
 
@@ -498,7 +556,13 @@ main() {
     write_pin_overlay "$good" "$IMAGE_REPO:last-good"; set_dc_prod
     preflight_fileset; preflight_tls
     local svc; for svc in "${REPLICAS[@]}"; do recreate_replica "$svc" "$good" || die "$svc 롤백 실패."; done
-    edge_ok && log "롤백 완료 + edge 정상 ($good)." || die "롤백했으나 edge 비정상."
+    # 하드닝(2026-07-11): recreate 직후 단발 프로브는 워밍업 창 오판 — auto_rollback 과 동일 60s 회복 대기.
+    local rb_deadline=$(( SECONDS + 60 )) rb_ok=1
+    while [ "$SECONDS" -lt "$rb_deadline" ]; do
+      if edge_ok; then rb_ok=0; break; fi
+      sleep 3
+    done
+    [ "$rb_ok" -eq 0 ] && log "롤백 완료 + edge 정상 ($good)." || die "롤백했으나 edge 비정상(60s 대기 후)."
     echo "current=$good" > "$STATE_FILE"; normalize_ownership; exit 0
   fi
 
