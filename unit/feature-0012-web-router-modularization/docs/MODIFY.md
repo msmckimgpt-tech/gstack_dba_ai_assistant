@@ -254,3 +254,6 @@ source_of_truth: true
 
 ## CHG-20260712T054000-item11-batch12 (admin_put_system_prompt 완전 DI-rework)
 - Date: 2026-07-12. account+conn DI(scope별 403 본문). conn.close×10 스크립트 일괄 제거. runtime snapshot 10종. DEFER 39→38.
+
+## CHG-20260712T055500-item11-batch13 (admin_update_product_databases DI + keep-inline 37 판정)
+- Date: 2026-07-12. 마지막 산재-close leak DI-rework. 잔여 37 keep-inline 정당 판정(style 16+txn 5+특수 16). DI-rework 누적 13, acceptance(e) 달성.

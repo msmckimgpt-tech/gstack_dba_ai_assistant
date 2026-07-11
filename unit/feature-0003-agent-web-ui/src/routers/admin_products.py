@@ -1617,30 +1617,27 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
     })
 
 @router.put("/api/admin/products/{product_id}/databases")
-async def admin_update_product_databases(product_id: int, request: Request) -> JSONResponse:
+async def admin_update_product_databases(
+    product_id: int,
+    request: Request,
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch13: _require_account→account+conn 완전 DI(마지막 산재-close leak 핸들러).
+    # get_conn finally:close 가 datasource 검증·UPDATE raise 시 산재 close 경로의 leak 을 해소.
     if product_id <= 0:
         return app._json_error("invalid product_id", 400)
     try:
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    account, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(account, "product.manage"):
-        conn.close()
         return app._json_error("제품 관리 권한이 필요합니다.", 403)
     cur = conn.cursor()
     cur.execute("SELECT Id, DatasourceKey FROM WebProducts WHERE Id = %s", (int(product_id),))
     _prow = cur.fetchone()
     if not _prow:
         cur.close()
-        conn.close()
         return app._json_error("product not found", 404)
     # TASK-0228 (1:N): body 에 datasource_key 가 있으면 그 datasource 의 접근DB 만 교체(차원 격리).
     # 없으면 레거시 단일 경로 — 제품의 primary datasource 키를 사용(하위호환).
@@ -1663,7 +1660,6 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
             _bound_ok = (_req_dskey == _primary_dskey)  # join 미이전 폴백: primary 와 일치할 때만
         if not _bound_ok:
             cur.close()
-            conn.close()
             return app._json_error(f"datasource '{_req_dskey}' 는 이 제품에 바인딩되지 않았습니다.", 400)
     if _dskey:
         _found = False
@@ -1837,9 +1833,7 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({"ok": True, "databases": cleaned})
 
 @router.get("/api/admin/products/{product_id}/datasources/{key}/db-rules")

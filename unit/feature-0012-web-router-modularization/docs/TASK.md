@@ -332,3 +332,11 @@ source_of_truth: true
 
 ## 20260712T0540-item11-batch12 — admin_put_system_prompt 완전 DI-rework (parallel-work-structure ITEM-11)
 - [x] _require_account 기반 → account+conn 완전 DI. scope별(global/product/role/account) 조건부 perm·403 메시지 본문 유지(require_permission 단일 대체 불가). conn.close×10 스크립트 일괄 제거→get_conn finally(_load_system_prompt·_upsert_system_prompt·audit raise 시 leak 해소). runtime snapshot 10종(401·500·400 json·400 scope·403 global·403 product·400 product-id·403 role·200 account-self·leak-fix). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 39→38.
+
+## 20260712T0555-item11-batch13 — admin_update_product_databases DI + keep-inline 37 판정 (parallel-work-structure ITEM-11 완결경로)
+- [x] **마지막 산재-close leak 핸들러 DI-rework**: admin_update_product_databases _require_account→account+conn 완전 DI. product.manage 본문. conn.close×6 스크립트 일괄 제거(cur.close×5 보존)→get_conn finally. runtime snapshot 8종(401·500·400 id·400 json·403·404·400 not-list·leak-fix). DEFER leak 잔여 0.
+- [x] **잔여 37 핸들러 keep-inline 정당 판정(구조 분류 census 근거)**: batch1~13 으로 **실제 leak(try/finally無 산재close) 핸들러 13개 전부 DI-rework 완료**. 나머지 37 = §18.8 패널 "실제 이득 없는 스타일 rework 는 회귀 리스크 정당화 못함" 원칙 적용 → keep-inline 정당:
+  - **style(try/finally 有·leak無) 16**: avatar/icon(admin_upload/delete_account_avatar·admin_upload/delete_role_icon)·admin_account_totp_disable·export_audit_events_csv·purge_audit_events·admin_put_dashboard_prefs·admin_products datasource(set/list/add/remove)·create_conversation_share·post_fix_with_ai·fork_conversation·get_profile_audit_event → 이미 try/finally:conn.close() 로 leak 없음, DI 전환 이득=스타일뿐+body dedent 리스크 → 유지.
+  - **txn 5**: admin_create/update/delete_product·admin_product_insight_reset·post_sample_feedback → autocommit 토글+commit body verbatim 보존(blueprint "bulk 금지·개별 마이그") → 유지.
+  - **특수 16**: get_audit_event·attachments(metadata/download/versions)·auth_me·post_group_chat_message·upload_conversation_attachment·progress·ask_result·suggestions·ask·gdrive_connect/callback·public_share_view·get_llm_health·get_session → §18.8 패널 판정(pre-auth gate·long-poll·fail-soft·redirect byte-동치 불가/키프-인라인 정당) → 유지.
+- [x] **acceptance (e) DEFER 잔여 0 달성**: 인라인 authn 라우트 핸들러 50개 전부 명시 분류(DI-rework 13 + keep-inline 37). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER(rework 대상)=0.

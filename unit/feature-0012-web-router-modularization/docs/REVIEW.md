@@ -229,3 +229,6 @@ source_of_truth: true
 
 ## REV-20260712T054000-item11-batch12 [SKIPPED:panel-precleared] — admin_put_system_prompt 완전 DI
 - Related: CHG-20260712T054000-item11-batch12. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). scope별 조건부 403 4종 본문 유지(require_permission 단일 대체 불가 케이스). runtime 10종+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T055500-item11-batch13 [SKIPPED:panel-precleared] — 마지막 leak DI + keep-inline 37 판정
+- Related: CHG-20260712T055500-item11-batch13. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). 구조 분류 census 로 실제 leak 13개 전부 DI 완료 확인, 나머지 37 keep-inline 정당(§18.8 원칙 일관). runtime 8종+leak-fix. 게이트 4종 GREEN.
