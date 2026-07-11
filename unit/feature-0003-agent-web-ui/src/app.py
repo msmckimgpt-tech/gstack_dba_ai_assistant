@@ -11056,32 +11056,8 @@ def _generate_datasource_key(engine: str, host: str, port: int) -> str:
     return f"{eng_tag}-{digest}"
 
 
-async def _ds_write_common(request, require_manage=True):
-    """CRUD 공통: conn + actor + 권한 + body. 반환 (conn, actor, data, None) 또는 (None,None,None, error)."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return None, None, None, _json_error("db connection failed", 500)
-    actor, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return None, None, None, error
-    # TASK-0288: datasource CRUD 는 datasource.manage 전용 권한. 기존 console.access+console.manage
-    # 게이트에 datasource.manage 를 추가(require_manage 경로). 미보유 시 403.
-    need = ["console.access"] + (["console.manage", "datasource.manage"] if require_manage else [])
-    if not all(_account_has_permission(actor, p) for p in need):
-        conn.close()
-        return None, None, None, _json_error("데이터소스 관리 권한(datasource.manage)이 필요합니다.", 403)
-    try:
-        body_raw = await request.body()
-        data = (await request.json()) if body_raw else {}
-    except Exception:
-        conn.close()
-        return None, None, None, _json_error("invalid json", 400)
-    if not isinstance(data, dict):
-        conn.close()
-        return None, None, None, _json_error("invalid body", 400)
-    return conn, actor, data, None
+# ITEM-10 routers-p1: _ds_write_common 는 routers/admin_datasources.py 로 이동
+# (app 전역은 app.X 동적 참조 — 패치-단일점 보존. app._ds_write_common 는 꼬리 rebind 로 유지).
 
 
 def _ds_audit_fields(data: dict) -> dict:
@@ -17722,3 +17698,7 @@ def _audit_export_filter_hash(params: dict) -> str:
 from routers import register_all as _register_all_routers  # noqa: E402
 
 _register_all_routers(app)
+
+# ITEM-10 routers-p1: 직접호출 테스트(test_datasource_delete)의 app._ds_write_common 참조 보존 —
+# register_all 이후라 routers.admin_datasources 는 이미 적재됨(순환 안전).
+from routers.admin_datasources import _ds_write_common  # noqa: E402

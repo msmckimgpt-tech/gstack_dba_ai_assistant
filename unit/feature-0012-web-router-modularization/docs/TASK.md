@@ -201,3 +201,8 @@ source_of_truth: true
 
 ## 20260711T1207-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11)
 - [x] MODIFY 45→15건·REVIEW 46→15건 이관, 무손실 md5, 링크+REPORT 압축(§5.5). 선례 3건 동일 계보 — 이로써 §5.5 20건-초과 문서 전량 해소.
+
+## 20260711T1215-item10-routers-p1 — routers/ 이동 파일럿: _ds_write_common (parallel-work-structure ITEM-10, 판정표 §4 경로)
+
+- [x] `_ds_write_common`(async, 26줄) → routers/admin_datasources.py — app 전역 4종(_require_account·_connect_memory·_account_has_permission·_json_error, 전부 KEEP 목록)은 **app.X 동적 참조**로 전환(패치-단일점 자동 보존) · 도메인 내 호출 3곳 로컬화 · 직접호출 테스트(test_datasource_delete:100)의 `app._ds_write_common` 는 app 꼬리 rebind 로 무변경 보존(register_all 이후 — 순환 안전)
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0 — **routers-이동 패턴 확립**(다음: _collect_*_prompt_context·_metadata_* 대형 클러스터 동일 패턴)
