@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import uuid
 from typing import Any
 
 from fastapi import Request
@@ -2345,3 +2346,275 @@ def _fork_conversation_impl(
         },
         None,
     )
+
+
+# ── ITEM-10 p9: 첨부 인제스트·vision 인라인 이미지 (conversations 도메인) ──
+
+def _ingest_attachment_background(
+    *,
+    attachment_id: int,
+    conversation_id: str,
+    object_key: str,
+    kind: str,
+) -> None:
+    """TASK-0107 Phase A.2 — upload endpoint 가 spawn 하는 background ingest.
+
+    sandbox schema 생성 → MinIO 다운로드 → ingest_attachment (csv/xlsx) →
+    MetaJson 에 sandbox_schema_name + sheets 기록 + UploadStatus='ingested'.
+
+    실패는 silent log (UploadStatus='failed' + degraded_reason). caller (upload
+    endpoint) 는 응답 후이므로 background 실패가 사용자 응답을 막지 않는다.
+    """
+    try:
+        from web.modules import storage_minio, sandbox_schema as ss
+        from modules import sandbox_ingest as si  # feature-0002 unified ns
+    except Exception as exc:  # pragma: no cover — import 실패는 fail-loud log
+        try:
+            _conn = app._connect_memory()
+            _cur = _conn.cursor()
+            _cur.execute(
+                "UPDATE WebConversationAttachments SET UploadStatus='failed', "
+                "MetaJson=JSON_OBJECT('degraded_reason', %s) WHERE Id = %s",
+                (f"ingest module import failed: {exc}", attachment_id),
+            )
+            _cur.close()
+            _conn.commit()
+            # TASK-0277: dual-write — import 실패 degraded status 도 PG 로 미러(close 前).
+            try:
+                from web.modules import attachment_pg_mirror as _apm
+                _apm.mirror_attachments(_conn, [attachment_id])
+            except Exception:
+                pass
+            _conn.close()
+        except Exception:
+            pass
+        return
+
+    schema_name = ss.sandbox_schema_name_for(conversation_id)
+
+    # 1) MinIO 에서 bytes 가져오기
+    try:
+        body_bytes = storage_minio.get_object_bytes(object_key)
+    except Exception as exc:
+        app._mark_ingest_failed(attachment_id, f"minio fetch failed: {exc}")
+        return
+
+    # 2) sandbox schema 생성 (idempotent — IF NOT EXISTS).
+    #    단일-user MVP — root user 가 maintainer/writer/cleanup 모두 수행.
+    #    database=None → database=MEMORY_DB 로 열어야 step 4 의 UPDATE 가 같은
+    #    conn 으로 agent_memory.WebConversationAttachments 를 찾을 수 있다.
+    #    CREATE SCHEMA DDL 은 current-database 와 무관하게 동작하므로 문제 없음.
+    try:
+        conn = app._open_memory_connection()
+    except Exception as exc:
+        app._mark_ingest_failed(attachment_id, f"db connect failed: {exc}")
+        return
+
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS `{schema_name}` DEFAULT CHARSET=utf8mb4")
+        finally:
+            cur.close()
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    except Exception as exc:
+        app._mark_ingest_failed(attachment_id, f"schema create failed: {exc}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+
+    # 3) sandbox 안에서 ingest. table_name base = t_<attachment_id>.
+    base_table = f"t_{attachment_id}"
+    try:
+        sandbox_conn = app._open_memory_connection(database=schema_name)
+    except Exception as exc:
+        app._mark_ingest_failed(attachment_id, f"sandbox connect failed: {exc}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+    try:
+        result = si.ingest_attachment(
+            body_bytes,
+            kind=kind,
+            attachment_id=attachment_id,
+            sheet_table_base=base_table,
+            writer_conn=sandbox_conn,
+        )
+    except Exception as exc:
+        app._mark_ingest_failed(attachment_id, f"ingest failed: {exc}")
+        try:
+            sandbox_conn.close()
+            conn.close()
+        except Exception:
+            pass
+        return
+    finally:
+        try:
+            sandbox_conn.close()
+        except Exception:
+            pass
+
+    # 4) MetaJson 갱신 + UploadStatus='ingested'.
+    meta = {"sandbox_schema_name": schema_name}
+    if kind == "csv":
+        meta["sandbox_table_name"] = base_table
+        meta["columns"] = result.get("columns") or []
+        meta["rows_inserted"] = int(result.get("rows_inserted") or 0)
+        if result.get("degraded_reason"):
+            meta["degraded_reason"] = result["degraded_reason"]
+    else:  # xlsx
+        meta["sheets"] = result.get("sheets") or []
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebConversationAttachments SET UploadStatus='ingested', "
+            "MetaJson=%s WHERE Id = %s",
+            (json.dumps(meta, ensure_ascii=False), attachment_id),
+        )
+        cur.close()
+        conn.commit()
+        # TASK-0277: dual-write — ingest 후 status='ingested' + MetaJson 변경을 PG 로 미러.
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            _apm.mirror_attachments(conn, [attachment_id])
+        except Exception:
+            pass
+    except Exception as exc:
+        app._mark_ingest_failed(attachment_id, f"meta update failed: {exc}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _prepare_vision_inline_images(
+    conn,
+    account_id: int,
+    attachment_ids: list[int],
+    *,
+    model: str,
+    conversation_id: str | None,
+) -> tuple[str | None, int, list[dict[str, Any]]]:
+    """vision 첨부 (kind=image) pre-fetch + 임시 file 작성.
+
+    Returns:
+        (temp_file_path, image_count, audit_attachments)
+
+        - vision 미지원 모델 / image kind 0 → (None, 0, []).
+        - 정상 → (path, count, audit_attachments). caller 가 env
+          ATTACHMENT_IMAGE_INLINE_PATH 로 전달, finally 에서 cleanup.
+          audit_attachments 는 S2.5 (attachment.vision.invoke) 의 ChangeJson 용
+          metadata — D12 정합: filename / object_key 미포함, id 와 size_bucket
+          만.
+
+    D13 정합: server-side bytes read + base64 inline. signed URL 외부 송신 0.
+    D12 정합: audit ChangeJson 은 metadata-only (별 caller 책임 — 본 helper 는
+              결과만 제공).
+    """
+    if not attachment_ids or not app.model_supports_vision(model):
+        return (None, 0, [])
+
+    # image kind 첨부 선별 (count cap 적용)
+    # TASK-0277: read cutover — PG 우선(IDOR AccountId 가드 동형), 실패 시 MySQL 폴백.
+    rows = None
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_select_vision_images(conversation_id, int(account_id), attachment_ids, int(app._VISION_IMAGE_COUNT_CAP))
+    except Exception:
+        rows = None
+        logging.getLogger(__name__).warning(
+            "_prepare_vision_inline_images: PG read failed → MySQL fallback", exc_info=True)
+    if rows is None:
+        try:
+            cur = conn.cursor(dictionary=True)
+            try:
+                placeholders = ", ".join(["%s"] * len(attachment_ids))
+                # TASK-0284: ConversationId 스코프(대화 접근권은 ask 핸들러가 게이트), 미전달 시 AccountId 폴백.
+                # 타 대화 첨부 id 주입은 ConversationId 불일치로 차단(IDOR 안전망 유지) — TASK-0132 의
+                # "타 계정 첨부 inject 차단" 의도를 대화 단위로 일반화한다.
+                if conversation_id:
+                    _sc_col, _sc_val = "ConversationId", str(conversation_id)
+                else:
+                    _sc_col, _sc_val = "AccountId", int(account_id)
+                params = tuple(int(i) for i in attachment_ids) + (_sc_val, int(app._VISION_IMAGE_COUNT_CAP))
+                cur.execute(
+                    f"""
+                    SELECT Id, ObjectKey, MimeType, OriginalFilename, SizeBytes, SizeBucket
+                    FROM WebConversationAttachments
+                    WHERE Id IN ({placeholders})
+                      AND {_sc_col} = %s
+                      AND Kind = 'image'
+                      AND DeletedAt IS NULL
+                      AND DeletePending = 0
+                    ORDER BY Id ASC
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = cur.fetchall() or []
+            finally:
+                cur.close()
+        except Exception:
+            return (None, 0, [])
+
+    if not rows:
+        return (None, 0, [])
+
+    # bytes pre-fetch + base64 + size cap
+    from web.modules import storage_minio
+    import base64 as _b64
+
+    inline_entries: list[dict[str, str]] = []
+    audit_attachments: list[dict[str, Any]] = []
+    for row in rows:
+        object_key = str(row.get("ObjectKey") or "").strip()
+        mime_type = str(row.get("MimeType") or "image/png").strip() or "image/png"
+        filename = str(row.get("OriginalFilename") or "").strip()
+        size_bytes = int(row.get("SizeBytes") or 0)
+        size_bucket = str(row.get("SizeBucket") or "").strip()
+        attachment_id = int(row.get("Id") or 0)
+        if not object_key or attachment_id <= 0:
+            continue
+        if size_bytes > app._VISION_IMAGE_SIZE_CAP_BYTES:
+            continue
+        try:
+            data_bytes = storage_minio.get_object_bytes(object_key)
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+            continue
+        if len(data_bytes) > app._VISION_IMAGE_SIZE_CAP_BYTES:
+            continue
+        b64 = _b64.b64encode(data_bytes).decode("ascii")
+        inline_entries.append({
+            "filename": filename,  # caller (agent_core) 가 provider 미송신 — 로그용
+            "mime_type": mime_type,
+            "base64_data": b64,
+        })
+        # S2.5 audit ChangeJson 용 metadata (D12 정합 — filename / object_key 미포함)
+        audit_attachments.append({
+            "attachment_id": attachment_id,
+            "mime_type": mime_type,
+            "size_bucket": size_bucket,
+        })
+
+    if not inline_entries:
+        return (None, 0, [])
+
+    # 임시 file 작성 (caller 가 finally 에서 cleanup)
+    suffix = uuid.uuid4().hex[:12]
+    cid_seg = str(conversation_id or "no-cid")[:24].replace("/", "_")
+    path = f"{app._inline_tmp_dir()}/mysql_ai_inline_{cid_seg}_{suffix}.json"
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(inline_entries, f, ensure_ascii=False)
+    except OSError:
+        return (None, 0, [])
+
+    return (path, len(inline_entries), audit_attachments)

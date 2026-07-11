@@ -155,3 +155,6 @@ source_of_truth: true
 
 ## REV-20260711T195338-item10-routers-p8 [SKIPPED:pattern-transcription] — 부트스트랩 스키마 이동
 - Related Change: CHG-20260711T195338-item10-routers-p8. 승인: ROADMAP §6.1. 패턴 전사 + global-쓰기 등가 변환(ast.Global 스캔으로 기계 검출). F0 접촉 사고는 원복 완료·정직 기록(TASK). 게이트 4종 GREEN.
+
+## REV-20260711T195739-item10-routers-p9 [SKIPPED:pattern-transcription] — 제품 인사이트·첨부 이동
+- Related Change: CHG-20260711T195739-item10-routers-p9. 승인: ROADMAP §6.1. census(패치 1 — 내부 호출 0 확인)+패턴 전사. 게이트 4종 GREEN.

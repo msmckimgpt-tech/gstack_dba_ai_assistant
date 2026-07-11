@@ -185,3 +185,6 @@ source_of_truth: true
 
 ## CHG-20260711T195338-item10-routers-p8 (부트스트랩 스키마 3종 이동 + global-쓰기 등가 변환)
 - Date: 2026-07-11. 확립 패턴 + 신규 처리 1: 이동 함수의 `global X` 모듈-전역 쓰기를 `app.X = ...` 속성 대입으로 변환(등가 — app 잔류 독자가 동일 플래그 관찰). app.py 13,531→12,718.
+
+## CHG-20260711T195739-item10-routers-p9 (제품 인사이트·첨부 백그라운드 4종 이동)
+- Date: 2026-07-11. 확립 패턴 — 도메인별 2-타깃 이동(admin_products/_conv_store). app.py 12,718→12,123.
