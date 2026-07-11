@@ -820,20 +820,6 @@ _WEB_TABLES_READY = False
 # ITEM-10 b5: _prune_orphaned_permission_catalog 는 web_context.py 로 추출(상단 rebind).
 
 
-SEED_ROLE_SYSTEM_PROMPTS = (
-    {
-        "role_key": "sales",
-        "product_id": None,
-        "content": (
-            "당신은 게임 사업팀을 지원하는 DBA 어시스턴트다.\n"
-            "- 질의가 단순 조회 (특정 아이템의 유무, NPC ID, 몬스터 스킬 모듈 등) 이면 문장으로 답하라.\n"
-            "- 질의가 집계/통계 요청이면 결과셋 표로 답하라.\n"
-            "- 심층 ad-hoc 분석, 데이터 의미 해석, 성능 튜닝 요청은 "
-            "\"DBA 팀으로 요청 이관이 필요합니다\" 안내 후 대화 종료.\n"
-            "- DB 쓰기 쿼리 (INSERT/UPDATE/DELETE/DDL) 는 항상 거부."
-        ),
-    },
-)
 
 
 # ITEM-10 routers-p10: _ensure_seed_role_system_prompts 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
@@ -980,23 +966,8 @@ _VALID_PRODUCT_MODES: frozenset[str] = frozenset({"auto", "pinned"})
 # ITEM-10 routers-p10: _ensure_web_audit_chain_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-# TASK-20260619T023922-audit-tamper-evidence (보안 ③): 해시 체인 정규화 + 봉인.
-# 정규화 행 필드는 INSERT 시 불변 컬럼만 — EventHash/PrevHash 자신은 제외(봉인 UPDATE 가
-# 해시를 무효화하지 않도록). OccurredAt 은 ISO 문자열로 안정 직렬화.
-_AUDIT_CHAIN_FIELDS = (
-    "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
-    "SessionId", "ActionCode", "ResourceType", "ResourceId",
-    "ChangeJson", "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
-)
 _AUDIT_SEAL_BATCH = 1000
 _AUDIT_SEAL_LOCK_NAME = "webaudit_seal"
-# JSON 컬럼(ChangeJson/MaskedFields)은 CAST(... AS CHAR) 로 MySQL 정규화 텍스트를 읽어
-# 결정성 확보(seal·verify 가 동일 정규형 사용 → 일관 해시). 별칭은 _AUDIT_CHAIN_FIELDS 정합.
-_AUDIT_CHAIN_SELECT = (
-    "Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId, "
-    "ActionCode, ResourceType, ResourceId, CAST(ChangeJson AS CHAR) AS ChangeJson, "
-    "CAST(MaskedFields AS CHAR) AS MaskedFields, RemoteAddr, UserAgent, RequestId, OccurredAt"
-)
 
 
 
@@ -1296,78 +1267,7 @@ def _account_can_access_conversation(
 # audit 에 절대 노출 안 함. HMAC + size bucket + extension bucket 의 categorical
 # 메타만.
 
-# D7 — 확장자 우선 kind 추론 (클라이언트 MIME 보다 신뢰도 높음).
-# MIME 은 클라이언트가 잘못 보내는 경우가 많으므로 fallback 역할만 한다.
-_EXTENSION_KIND_MAP: dict[str, str] = {
-    "csv": "csv",
-    "xlsx": "xlsx",
-    "xls": "xlsx",
-    "pdf": "pdf",
-    "png": "image",
-    "jpg": "image",
-    "jpeg": "image",
-    "webp": "image",
-    "gif": "image",
-    "bmp": "image",
-    "tiff": "image",
-    "tif": "image",
-    "svg": "image",
-    # 텍스트 계열 — SQL, 소스코드, 설정, 마크업 포함.
-    "txt": "text",
-    "md": "text",
-    "markdown": "text",
-    "sql": "text",
-    "json": "text",
-    "yaml": "text",
-    "yml": "text",
-    "xml": "text",
-    "log": "text",
-    "sh": "text",
-    "bash": "text",
-    "py": "text",
-    "js": "text",
-    "ts": "text",
-    "jsx": "text",
-    "tsx": "text",
-    "html": "text",
-    "htm": "text",
-    "css": "text",
-    "java": "text",
-    "go": "text",
-    "rb": "text",
-    "php": "text",
-    "c": "text",
-    "cpp": "text",
-    "h": "text",
-    "ini": "text",
-    "toml": "text",
-    "conf": "text",
-    "cfg": "text",
-    "env": "text",
-}
 
-# MIME 힌트 테이블 — 확장자 판별 실패 시 fallback.
-_MIME_KIND_HINTS: dict[str, str] = {
-    "text/csv": "csv",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
-    "application/vnd.ms-excel": "xlsx",
-    "application/pdf": "pdf",
-    "image/png": "image",
-    "image/jpeg": "image",
-    "image/webp": "image",
-    "image/gif": "image",
-    "image/bmp": "image",
-    "image/svg+xml": "image",
-    "text/plain": "text",
-    "text/markdown": "text",
-    "text/html": "text",
-    "application/json": "text",
-    "application/xml": "text",
-    "text/xml": "text",
-    "text/x-sql": "text",
-    "application/sql": "text",
-    "text/sql": "text",
-}
 
 # D8 size cap (.env 의 ATTACHMENT_MAX_BYTES_* 로 override 가능).
 _ATTACHMENT_DEFAULT_MAX_BYTES_PER_FILE = 26_214_400  # 25 MB
@@ -2597,11 +2497,6 @@ _DB_RULE_MAX_UNBOUNDED_QUANT = 8                     # `*`/`+` 개수 상한(.*.
 
 
 
-_DB_RULE_SELECT_COLS = (
-    "Id AS id, ProductId AS product_id, LOWER(DatasourceKey) AS datasource_key, "
-    "IncludePattern AS include_pattern, ExcludePattern AS exclude_pattern, Cap AS cap, "
-    "IsEnabled AS is_enabled, CreatedByAccountId AS created_by_account_id, LastSyncAt AS last_sync_at"
-)
 
 
 
@@ -2667,18 +2562,6 @@ _DB_RULE_SELECT_COLS = (
 # ITEM-10 routers-p3: _collect_conversation_signals_pg 는 routers/_prompt_context.py 로 이동(app.X 동적 — 패치-단일점 보존).
 
 
-# 역할 성격 서술용 — 시스템 프롬프트 작성에 유의미한 권한 코드만 사람이 읽는 특성 문장으로
-# 매핑한다(전체 권한 코드 나열 회피). 순서대로 평가해 보유분만 노출.
-_ROLE_CAPABILITY_HINTS: "list[tuple[str, str]]" = [
-    ("conversation.ask", "어시스턴트에게 질의·분석 요청 가능"),
-    ("conversation.create", "새 대화 생성 가능"),
-    ("conversation.read.any", "전체 사용자 대화 열람(관리 범위)"),
-    ("conversation.share.create", "대화 공유 가능"),
-    ("conversation.attachment.upload.own", "파일 첨부 업로드 가능"),
-    ("product.manage", "제품 구성 관리(관리자)"),
-    ("console.access", "관리 콘솔 접근(관리자)"),
-    ("system_prompt.manage.role.any", "역할/시스템 프롬프트 거버넌스(관리자)"),
-]
 
 
 
@@ -2750,18 +2633,6 @@ _ROLE_CAPABILITY_HINTS: "list[tuple[str, str]]" = [
 
 _AUDIT_BUILDER_ACCOUNT_FIELDS = ("role_id", "is_active", "username", "permission_overrides")
 _AUDIT_BUILDER_ROLE_FIELDS = ("name", "description", "is_active", "permission_codes")
-# TASK-0091 (REQ-20260520-0006, Codex outside voice C1+C4): allowlist 정정.
-# - `is_default` + `sort_order` 추가 (Codex C4 — endpoint 가 갱신 가능한데 누락이던 결함).
-# - `system_prompt_summary` 신설 (Codex C1 + SECURITY.md §9.2 — full content 금지,
-#   `{present, content_len, updated_at}` summary 만).
-# - `databases` 제거 (Codex C3 — 별 endpoint `admin.product.databases.update` 의
-#   audit 으로 분리, admin.product.update 의 ChangeJson 에서 noise + state mismatch).
-# - `system_prompt` 제거 (Codex C1 — full content 금지). admin.system_prompt.update
-#   는 별 builder branch (line 8990~) 가 `system_prompt.content_full` masked 처리.
-_AUDIT_BUILDER_PRODUCT_FIELDS = (
-    "product_key", "name", "description", "is_active", "is_default", "sort_order",
-    "default_role_access", "system_prompt_summary",
-)
 _AUDIT_MASKED_FIELDS_PASSWORD = ("password_hash", "temporary_password", "raw_password", "password")  # TASK-0205 B2
 _AUDIT_MASKED_FIELDS_TOKEN = ("session_token_hash", "session_token", "token")
 _AUDIT_MASKED_FIELDS_API_KEY = (
@@ -2833,20 +2704,6 @@ _AUDIT_PURGE_MAX_RUNTIME_SEC = 30
 # ITEM-10 routers-p7: _audit_clamped_limit 는 routers/_audit_infra.py 로 이동(app.X 동적 — record_audit_event 는 app 잔류/패치-단일점).
 
 
-# TASK-0166: LLM 비용 추정 단가 (USD per 1M tokens). 로컬 LLM(edge/core/auto/code)=0.
-# Bedrock claude 공시가 근사 — 정확 단가는 시점/리전별 변동하므로 운영자 참고용 "추정"이다.
-# 별칭(model) 기준 매핑(LiteLLM 이 resolved_model 에도 별칭을 반환하는 경우가 많음).
-_LLM_PRICE_USD_PER_1M = {
-    "claude-haiku-4": {"in": 1.0, "out": 5.0},
-    "claude-sonnet-4": {"in": 3.0, "out": 15.0},
-}
-# date_trunc granularity 화이트리스트 + 표시 포맷 + bucket 개수 상한(차트 막대 과밀 방지).
-_USAGE_GRAN = {
-    "hour":  {"fmt": "YYYY-MM-DD HH24:00", "limit": 168},
-    "day":   {"fmt": "YYYY-MM-DD",          "limit": 90},
-    "week":  {"fmt": "YYYY-MM-DD",          "limit": 53},
-    "month": {"fmt": "YYYY-MM",             "limit": 36},
-}
 
 
 
@@ -2954,16 +2811,6 @@ _SAMPLE_FEEDBACK_LIMIT = 100
 #   admin 은 요청 body/쿼리의 scope_key 를 명시 사용 — CURRENT_FACT_SCOPE_KEY(멀티DS 미갱신, BLOCKER)는 안 씀.
 # ════════════════════════════════════════════════════════════════════════════
 
-_METADATA_FIELD_CAPS = {
-    # 입력 길이 cap — KB 본문 비대화/UI 깨짐/저장소 남용 방어. PG 컬럼은 text 라 DB 강제는 없으니 web 가 cap.
-    "scope_key": 64, "role_key": 64, "term": 200, "definition": 4000,
-    "schema_name": 128, "table_name": 128, "column_name": 128, "code": 256, "label": 1000,
-    # ITEM-11 Phase 2: 테이블/컬럼 설명·샘플 필드 cap. description 은 definition 과 동일(4000).
-    "description": 4000, "nl_question": 2000, "domain": 64,
-    # samples 자동완성 입력 — SQL 본문은 _metadata_suggest_messages 에서 프롬프트에 raw 삽입되므로
-    # 입력 cap 으로 거대 프롬프트/토큰·비용 폭주를 차단(다른 식별 필드와 동일하게 _metadata_str_field 가 강제).
-    "sql": 8000,
-}
 
 # 메타데이터 AI 자동완성(suggest·bootstrap) per-account rate-limit — LLM dispatch 당 비용이 발생하므로
 # fix-with-ai(_FIX_WITH_AI_RATE_PER_MIN)와 동일 패턴으로 비용 DoS 를 차단한다. bootstrap 은 청크 순차
@@ -3149,32 +2996,8 @@ _BOOTSTRAP_MYSQL_SYS_SCHEMAS = frozenset({
 # 저장되지 않으며 기존 CRUD/부트스트랩 저장 경로(명시 권한 편집)로만 영속된다.
 # ════════════════════════════════════════════════════════════════════════════
 
-# 자동완성 대상 필드(서브뷰 → 생성할 설명 필드) — 프론트가 이 키에 결과를 채운다.
-_METADATA_SUGGEST_TARGET = {
-    "glossary": "definition",
-    "enums": "label",
-    "tables": "description",
-    "columns": "description",
-    "samples": "nl_question",
-}
 
-# 자동완성에 필요한 최소 식별 입력(없으면 400) — 빈 식별자로 날조 생성 방지.
-_METADATA_SUGGEST_REQUIRES = {
-    "glossary": ["term"],
-    "enums": ["table_name", "column_name", "code"],
-    "tables": ["table_name"],
-    "columns": ["table_name", "column_name"],
-    "samples": ["sql"],
-}
 
-# 서버측 서브뷰별 RBAC — admin.js _METADATA_SUBTAB_PERM 과 동치. graph-panel-perms(task4): 기능별 세부 권한으로 분리.
-_METADATA_SUBTAB_PERM_SERVER = {
-    "glossary": "metadata.glossary.manage",
-    "enums": "metadata.enum.manage",
-    "tables": "metadata.table.manage",
-    "columns": "metadata.column.manage",
-    "samples": "kb.sample.curate",
-}
 
 # 부트스트랩 일괄 자동완성 — 1 호출당 처리 테이블 상한. 프론트가 청크로 분할 호출해
 # 진행률을 표면화하고 단일 호출 지연·토큰 폭주를 막는다.
@@ -3864,4 +3687,36 @@ from routers.conversations import (  # noqa: E402
 )
 from routers.system import (  # noqa: E402
     _read_llm_provider_status,
+)
+
+# ---- feature-0012 ITEM-10 p17 rebind: 이동 도메인 상수의 app.<name> 보존 ----
+from routers.conversations import (  # noqa: E402
+    _EXTENSION_KIND_MAP,
+    _MIME_KIND_HINTS,
+)
+from routers._bootstrap_schema import (  # noqa: E402
+    SEED_ROLE_SYSTEM_PROMPTS,
+)
+from routers._prompt_context import (  # noqa: E402
+    _ROLE_CAPABILITY_HINTS,
+)
+from routers.admin_metadata import (  # noqa: E402
+    _METADATA_FIELD_CAPS,
+    _METADATA_SUGGEST_TARGET,
+    _METADATA_SUGGEST_REQUIRES,
+    _METADATA_SUBTAB_PERM_SERVER,
+)
+from routers.admin_usage import (  # noqa: E402
+    _USAGE_GRAN,
+    _LLM_PRICE_USD_PER_1M,
+)
+from routers._audit_infra import (  # noqa: E402
+    _AUDIT_CHAIN_FIELDS,
+    _AUDIT_BUILDER_PRODUCT_FIELDS,
+)
+from routers.admin_audits import (  # noqa: E402
+    _AUDIT_CHAIN_SELECT,
+)
+from routers.admin_products import (  # noqa: E402
+    _DB_RULE_SELECT_COLS,
 )

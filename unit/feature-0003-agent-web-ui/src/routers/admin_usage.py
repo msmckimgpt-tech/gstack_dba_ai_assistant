@@ -436,3 +436,22 @@ def _usage_account_ids_for_role(conn, role_key: str) -> "list[int] | None":
         return [int(row[0]) for row in (cur.fetchall() or [])]
     finally:
         cur.close()
+
+
+# ==== feature-0012 ITEM-10 p17 — app.py 에서 이동한 도메인 상수 (2종). ====
+
+# date_trunc granularity 화이트리스트 + 표시 포맷 + bucket 개수 상한(차트 막대 과밀 방지).
+_USAGE_GRAN = {
+    "hour":  {"fmt": "YYYY-MM-DD HH24:00", "limit": 168},
+    "day":   {"fmt": "YYYY-MM-DD",          "limit": 90},
+    "week":  {"fmt": "YYYY-MM-DD",          "limit": 53},
+    "month": {"fmt": "YYYY-MM",             "limit": 36},
+}
+
+# TASK-0166: LLM 비용 추정 단가 (USD per 1M tokens). 로컬 LLM(edge/core/auto/code)=0.
+# Bedrock claude 공시가 근사 — 정확 단가는 시점/리전별 변동하므로 운영자 참고용 "추정"이다.
+# 별칭(model) 기준 매핑(LiteLLM 이 resolved_model 에도 별칭을 반환하는 경우가 많음).
+_LLM_PRICE_USD_PER_1M = {
+    "claude-haiku-4": {"in": 1.0, "out": 5.0},
+    "claude-sonnet-4": {"in": 3.0, "out": 15.0},
+}

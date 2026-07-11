@@ -3322,3 +3322,12 @@ def _read_insight_datasource_health() -> dict:
             except Exception:
                 pass
     return out
+
+
+# ==== feature-0012 ITEM-10 p17 — app.py 에서 이동한 도메인 상수 (1종). ====
+
+_DB_RULE_SELECT_COLS = (
+    "Id AS id, ProductId AS product_id, LOWER(DatasourceKey) AS datasource_key, "
+    "IncludePattern AS include_pattern, ExcludePattern AS exclude_pattern, Cap AS cap, "
+    "IsEnabled AS is_enabled, CreatedByAccountId AS created_by_account_id, LastSyncAt AS last_sync_at"
+)

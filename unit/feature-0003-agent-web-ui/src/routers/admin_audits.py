@@ -751,3 +751,14 @@ def _counted_stream_sync(gen):
     finally:
         with app._ACTIVE_STREAMS_LOCK:
             app._ACTIVE_STREAMS = max(0, app._ACTIVE_STREAMS - 1)
+
+
+# ==== feature-0012 ITEM-10 p17 — app.py 에서 이동한 도메인 상수 (1종). ====
+
+# JSON 컬럼(ChangeJson/MaskedFields)은 CAST(... AS CHAR) 로 MySQL 정규화 텍스트를 읽어
+# 결정성 확보(seal·verify 가 동일 정규형 사용 → 일관 해시). 별칭은 _AUDIT_CHAIN_FIELDS 정합.
+_AUDIT_CHAIN_SELECT = (
+    "Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId, "
+    "ActionCode, ResourceType, ResourceId, CAST(ChangeJson AS CHAR) AS ChangeJson, "
+    "CAST(MaskedFields AS CHAR) AS MaskedFields, RemoteAddr, UserAgent, RequestId, OccurredAt"
+)

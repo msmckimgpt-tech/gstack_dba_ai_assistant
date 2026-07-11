@@ -1299,3 +1299,19 @@ def _is_allowed_api_model(value: str) -> bool:
     if app.is_local_llm_model(value):
         return False
     return app.is_allowed_api_model(value)
+
+
+# ==== feature-0012 ITEM-10 p17 — app.py 에서 이동한 도메인 상수 (1종). ====
+
+# 역할 성격 서술용 — 시스템 프롬프트 작성에 유의미한 권한 코드만 사람이 읽는 특성 문장으로
+# 매핑한다(전체 권한 코드 나열 회피). 순서대로 평가해 보유분만 노출.
+_ROLE_CAPABILITY_HINTS: "list[tuple[str, str]]" = [
+    ("conversation.ask", "어시스턴트에게 질의·분석 요청 가능"),
+    ("conversation.create", "새 대화 생성 가능"),
+    ("conversation.read.any", "전체 사용자 대화 열람(관리 범위)"),
+    ("conversation.share.create", "대화 공유 가능"),
+    ("conversation.attachment.upload.own", "파일 첨부 업로드 가능"),
+    ("product.manage", "제품 구성 관리(관리자)"),
+    ("console.access", "관리 콘솔 접근(관리자)"),
+    ("system_prompt.manage.role.any", "역할/시스템 프롬프트 거버넌스(관리자)"),
+]
