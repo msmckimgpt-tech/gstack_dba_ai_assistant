@@ -212,3 +212,6 @@ source_of_truth: true
 
 ## CHG-20260712T010000-item10-routers-p17 (도메인 상수 14종 이동)
 - Date: 2026-07-12. 상수 전용 mover(self-contained 게이트+직속주석 동반). app.py 3,867→3,722.
+
+## CHG-20260712T013000-item10-완료판정 (ROADMAP §5/note/REPORT 갱신)
+- Date: 2026-07-12. ITEM-10 done 마킹. 코드 변경 없음(정본 갱신 only).

@@ -502,7 +502,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   재측정에 포함.
 
 ### ITEM-10 · web_context 헬퍼 추출 — app.py 완전 thin-app (feature-0012 Final)
-- **status**: in-progress
+- **status**: done   <!-- 2026-07-12 완료: 모듈 분리 실질 완료, thin-app(실질 857줄) 달성. note 완료 판정 참조 -->
+- **status(이전)**: in-progress
 - **note**: 2026-07-11 batch 진행 — batch1: inc3(권한 카탈로그, -562)+inc4(권한빌더 폐포,
   -167) PR #688 머지. batch2: 검증 정규식·인증 파라미터·SEED_ROLE(-77, PR #689). batch3: 세션쿠키·패스워드
   ·TOTP(-285, PR #690 — §18.8 패널 SHIP)+배포 14b7d876·스모크 green. batch4: 세션 경로·출력
@@ -524,9 +525,17 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   → p15: 전수 census 128종(-2,188, 직수입·byte-offset 가드 신설·standalone 검증기 2건 수리·DI-seam KEEP): app.py 4,786(-14,864 누적 / **-76%**)
   → p16: PATCH 32종(-919, setattr=모듈 전역 rebind 판정으로 패치-fn 이동 해금): app.py 3,867(-15,783 누적 / **-80%**). fn sweep 종료 — 잔여 KEEP 12+DEC 10, 다음 p17=상수/모듈-레벨.
   → p17: 대형 self-contained 도메인 상수 14종(-145, census 안전판정: top-level 미참조+RHS self-contained+재할당無+≥4줄; 가변 공유상태·1줄 스칼라·env 설정은 config 계층 유지): app.py 3,722(-15,928 누적 / **-81%**). 상수 전용 mover 신설.
-  배포: batch1~3=14b7d876 라이브 ✓ · batch4~6 배포는 deploy-web preflight flake(간헐)로 보류
-  (이미지 정상 실증·라이브 healthy — 스파인 하드닝은 명세 밖, 사용자 승인 대기). 게이트(배치마다): route snapshot byte-동치·F821·py_compile·전 스위트 pytest.
-  목표 ≤1,000줄까지 배치 계속(다음: 도메인 클러스터 위상순·23-테스트 retarget 영역은 적대검증 후).
+  **완료 판정(2026-07-12, p17 이후)**: app.py 19,650→3,722(-81%). **모듈 분리 실질 완료** —
+  rebind 제외 실질 코드 857줄로 thin-app 목표(≤1,000) 달성. 잔여 top-level fn 22개는 전부
+  아키텍처상 app.py 거주 필수(KEEP 12: DI seam get_conn/require_permission/get_current_account·
+  보안 게이트 _ssrf_check_host/_enforce_audit_prod_gate·감사 record_audit_event·메모리 _connect_memory /
+  DEC 10: lifecycle 훅 _start_*·_reconcile_orphaned_runs_on_startup·_finalize_inflight_runs_on_shutdown).
+  물리 3,722줄 잔여분 = rebind 계약 632(명시 app.X 접근점 — grep/정적분석 F821 보존 위해 유지)
+  + 주석 783 + 공백 1,450 → **모듈화 산물 아닌 형식**. 추가 감소는 rebind 압축(명시성·blame 역행)/
+  공백 청소(SQL heredoc·docstring 문자열 함정)/주석 정리(orphan 판별 리스크)로, 모듈 분리가 아니라
+  코드 청소 영역 → ITEM-10 범위(모듈화) 완결로 판정, 청소는 별건(미채택). 배포 live=a5ac1690 soak 통과.
+  배포 이력: batch1~3=14b7d876 · p12=15541834 · p14=e0302543/3264c275 · p15=e658bca0 · p17=a5ac1690 라이브 ✓.
+  게이트(배치마다 GREEN): route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0.
 - **feature_id**: feature-0012-web-router-modularization
 - **dimension**: structural
 - **risk_grade**: Major
@@ -647,8 +656,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 9 (ITEM-01·02·04·05·08·03·06·07·12) · in-progress 1 (ITEM-10) · pending 1 (ITEM-11) · blocked 1 (ITEM-09)
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → **09=blocked**(그래프 활성 브랜치 — note 참조) → **10=in-progress**(batch) → 11
+- 총 12 항목 · done 10 (ITEM-01·02·04·05·08·03·06·07·12·**10**) · in-progress 1 (ITEM-11) · blocked 1 (ITEM-09)
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → **09=blocked**(그래프 활성 브랜치 — note 참조) → ~~10~~(2026-07-12 완료, p1~p17 -81%·thin-app 실질 857줄) → **11=in-progress**(DEFER 핸들러 DI-rework)
 - ITEM-09 blocked 는 §6.3-3(그래프 구간 활성 브랜치/PR 발견 — edge-opacity 미머지 + simcombo
   미커밋 diff). 해제되면 드레인 재편입.
 - ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —

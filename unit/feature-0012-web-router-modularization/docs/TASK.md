@@ -277,3 +277,7 @@ source_of_truth: true
 ## 20260712T0100-item10-routers-p17 — 대형 self-contained 도메인 상수 14종(145줄) 소비 도메인 이동 (parallel-work-structure ITEM-10)
 - [x] fn sweep 종료 후 상수 계층 진입. census 로 안전 이동 후보 정밀 판정: top-level(rebind 이전) 참조 無 + RHS self-contained(다른 app-global 미참조) + 재할당 없는 pure-literal + ≥4줄만 대상(1줄 스칼라·가변 공유상태 _ACTIVE_REQUESTS/_LOGIN_IP_BUCKETS 류는 rebind 순이득 0 + 재할당 미묘 리스크로 app.py config 계층 유지). _EXTENSION_KIND_MAP 47·_MIME_KIND_HINTS 21→conversations · SEED_ROLE_SYSTEM_PROMPTS 14→_bootstrap_schema · _ROLE_CAPABILITY_HINTS 10→_prompt_context · _METADATA_* 31→admin_metadata · _USAGE_GRAN+_LLM_PRICE 10→admin_usage · _AUDIT_CHAIN/BUILDER 9→_audit_infra · _AUDIT_CHAIN_SELECT 5→admin_audits · _DB_RULE_SELECT_COLS 5→admin_products. app.py 3,867→3,722(-145 / 누적 -81%).
 - [x] 상수 전용 mover 신설: Assign/AnnAssign 노드 + 바로 위 직속 주석(blank 미분리) 동반 이동 · self-contained RHS 재확인 게이트 · span 겹침 assert · top-level load 잔존 검사. 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
+
+## 20260712T0130-item10-완료판정 — 라우터 모듈화 ITEM-10 done (parallel-work-structure §5)
+- [x] ITEM-10 완료 확정: app.py 19,650→3,722(-81%), p1~p17. thin-app 실질 857줄(rebind 제외) — 목표 ≤1,000 정신 달성. 잔여 fn 22 전부 이동금지(KEEP 12 DI seam·보안·감사 / DEC 10 lifecycle). 물리 잔여=rebind 계약 632+주석 783+공백 1,450=형식(모듈화 아님). ROADMAP §5 done 10·ITEM-10 status done·note 완료판정·REPORT §8 기록. 배포 live=a5ac1690.
+- [x] 다음 항목: ITEM-11(DEFER ~46 핸들러 DI-rework, in-progress 전환).
