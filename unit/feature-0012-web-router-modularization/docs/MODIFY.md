@@ -242,3 +242,6 @@ source_of_truth: true
 
 ## CHG-20260712T044500-item11-batch8 (update_conversation_product 완전 DI-rework)
 - Date: 2026-07-12. account+conn DI(perm·pinned 분기 본문). runtime snapshot 11종. DEFER 43→42.
+
+## CHG-20260712T045500-item11-batch9 (admin_create_role 완전 DI-rework)
+- Date: 2026-07-12. account+conn DI(perm·검증 본문). conn.close×12 스크립트 일괄 제거(AST 함수범위). runtime snapshot 12종. DEFER 42→41.

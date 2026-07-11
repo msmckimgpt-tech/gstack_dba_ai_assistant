@@ -320,3 +320,6 @@ source_of_truth: true
 
 ## 20260712T0445-item11-batch8 — update_conversation_product 완전 DI-rework (parallel-work-structure ITEM-11)
 - [x] _require_account 기반 → account+conn 완전 DI(형제 duplicate_conversation 이미 DI). perm(conversation.ask)·소유 게이트·pinned 분기 400/403 본문 유지. conn.close×10 제거→get_conn finally(게이트 헬퍼·UPDATE·pref raise 시 leak 해소). runtime snapshot 11종(401·500·400(json)·403(ask)·404·403(owner)·400(pinned-missing)·400(inactive)·403(product-access)·200·leak-fix). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 43→42.
+
+## 20260712T0455-item11-batch9 — admin_create_role 완전 DI-rework (parallel-work-structure ITEM-11)
+- [x] _require_account 기반 → account+conn 완전 DI. perm(console AND role.create, 조건부 role.permission.manage)·role_key 검증·self-scope 본문 유지. conn.close×12 제거(스크립트 일괄 — AST 함수범위 한정, cur.close×2 보존)→get_conn finally(catalog·_create_role_with_permissions·audit raise 시 leak 해소). runtime snapshot 12종(401·500·400 json·403×3·400 role_key·400 name·400 default-signup·409·200·leak-fix). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 42→41.

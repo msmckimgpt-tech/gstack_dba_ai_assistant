@@ -113,28 +113,23 @@ def admin_roles(request: Request, account=Depends(app.require_permission("consol
     return JSONResponse({"roles": roles})
 
 @router.post("/api/admin/roles")
-async def admin_create_role(request: Request) -> JSONResponse:
+async def admin_create_role(
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch9: _require_account→account+conn 완전 DI. perm·검증은 본문 유지.
+    # get_conn finally:close 가 catalog·_create_role_with_permissions·audit raise 시 conn leak 해소.
     try:
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(actor, "console.access") or not app._account_has_permission(actor, "console.manage"):
-        conn.close()
         return app._json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     if not app._account_has_permission(actor, "role.create"):
-        conn.close()
         return app._json_error("역할 생성 권한이 필요합니다.", 403)
     role_key = app._sanitize_role_key(data.get("role_key", ""))
     if not app._is_valid_role_key(role_key):
-        conn.close()
         return app._json_error("role_key 형식이 올바르지 않습니다.", 400)
     # TASK-0052 Phase 1B: dynamic catalog 기반 검증.
     _catalog_defs, catalog_codes_for_role, _catalog_map = app._resolve_permission_catalog(conn)
@@ -144,33 +139,27 @@ async def admin_create_role(request: Request) -> JSONResponse:
             catalog_codes=catalog_codes_for_role,
         )
     except ValueError as exc:
-        conn.close()
         return app._json_error(str(exc), 400)
     if permission_codes and not app._account_has_permission(actor, "role.permission.manage"):
-        conn.close()
         return app._json_error("역할 권한 배치 권한이 필요합니다.", 403)
     # TASK-0300 (REQ-0287): privilege escalation 방지 — 신규 역할 생성 시에도 본인 미보유 권한은
     # 부여 불가(역할 생성 경유 우회 차단). 신규 역할이라 current=빈 집합 → 부여 권한 전부 self-scope 검사.
     try:
         permission_codes = app._enforce_role_permission_self_scope(actor, permission_codes, set())
     except ValueError as exc:
-        conn.close()
         return app._json_error(str(exc), 403)
     name = str(data.get("name", "") or "").strip()
     if not name:
-        conn.close()
         return app._json_error("role name is required", 400)
     description = str(data.get("description", "") or "").strip()
     is_active = bool(data.get("is_active", True))
     is_default_signup = bool(data.get("is_default_signup", False))
     if is_default_signup and not is_active:
-        conn.close()
         return app._json_error("기본 가입 역할은 활성 상태여야 합니다.", 400)
     cur = conn.cursor()
     cur.execute("SELECT 1 FROM WebRoles WHERE RoleKey = %s LIMIT 1", (role_key,))
     if cur.fetchone():
         cur.close()
-        conn.close()
         return app._json_error("이미 존재하는 role_key 입니다.", 409)
     cur.close()
     role_id = app._create_role_with_permissions(
@@ -203,9 +192,7 @@ async def admin_create_role(request: Request) -> JSONResponse:
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({"ok": True, "role": role})
 
 @router.patch("/api/admin/roles/{role_id}")
