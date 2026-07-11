@@ -179,3 +179,6 @@ source_of_truth: true
 
 ## CHG-20260711T160724-item10-routers-p6 (fork·steps·첨부편집 6종 이동)
 - Date: 2026-07-11. 확립 패턴 — conversations 도메인 write/render 계층 응집. app.py 15,003→14,191.
+
+## CHG-20260711T161858-item10-routers-p7 (감사 인프라 17종 이동 — record_audit_event 는 패치-단일점 잔류)
+- Date: 2026-07-11. 확립 패턴 + KEEP 판단 1(record_audit_event — _connect_memory 계열과 동일 사유). app.py 14,191→13,531.
