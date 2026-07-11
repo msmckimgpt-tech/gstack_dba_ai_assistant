@@ -212,3 +212,8 @@ source_of_truth: true
 - [x] _metadata_* 헬퍼 20종(453줄, L16231-17087 산재) → routers/admin_metadata.py — 파일럿(routers-p1) 패턴: app-전역 13종 app.X 동적 프리픽스 · 도메인 내 소비(23+21+20+16+12…) 로컬화 · **패치되는 _metadata_llm_complete 호출부만 app.X 유지**(setattr 패치 관통 보존) · 테스트 직접참조 4종+app 내부 잔존 호출자(_glossary_feedback_iso)는 꼬리 rebind
 - [x] app.py 17,704 → 17,294줄(누적 19,650→17,294, -2,356)
 - [x] 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest
+
+## 20260711T1523-item10-routers-p3 — 프롬프트 컨텍스트 조립 8종 → routers/_prompt_context (parallel-work-structure ITEM-10)
+- [x] _collect_* 5 + _assemble_* 3 (864줄) → routers/_prompt_context.py — 소비 4개 도메인 분산이라 비-라우트 공용 모듈(`_` 접두 = register_all 자동 제외). app-전역 18종 app.X · **패치 4종(setattr: _assemble_ 3종+_collect_conversation_signals_pg)의 클러스터-내부 호출도 app.X**(관통 보존) · 꼬리 rebind 8종.
+- [x] app.py 17,294 → 16,449줄(누적 19,650→16,449, **-3,201**)
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest

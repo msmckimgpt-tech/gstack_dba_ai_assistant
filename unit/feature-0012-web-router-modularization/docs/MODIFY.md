@@ -167,3 +167,6 @@ source_of_truth: true
 ## CHG-20260711T151943-item10-routers-p2 (_metadata_* 20종 routers 이동)
 - Date: 2026-07-11. 판정표 §4 routers-경로 2차 — 파일럿 패턴 그대로: app.X 동적(패치-단일점)·로컬화·선별 예외(_metadata_llm_complete 는 호출부 app.X 유지)·꼬리 rebind. admin_metadata.py 2,483줄(도메인 소유 정상화). app.py 17,704→17,294.
 - 검증: census(테스트 직접참조 4·setattr 1·routers 소비 단일파일·app 내부 1) 선행 → 4중 게이트.
+
+## CHG-20260711T152337-item10-routers-p3 (프롬프트 컨텍스트 조립 8종 이동)
+- Date: 2026-07-11. p1/p2 패턴 + 신규 판단 1: 소비가 4개 라우터(admin_roles/admin_products/auth/conversations)에 분산된 공용 계층 → 도메인 파일 대신 register_all-제외 공용 모듈 routers/_prompt_context.py 신설(모듈명 `_` 접두 규약 활용). 판정표 실례 #2(_collect_role_prompt_context co-move 파손 시나리오)가 지목한 바로 그 클러스터 — app.X 동적화로 안전 이동. app.py 17,294→16,449.
