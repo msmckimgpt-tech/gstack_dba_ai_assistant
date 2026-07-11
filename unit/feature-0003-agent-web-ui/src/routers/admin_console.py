@@ -690,3 +690,133 @@ def _sanitize_dashboard_prefs(raw: dict) -> dict:
                 order = len(widgets)
             widgets.append({"key": key, "visible": bool(it.get("visible", True)), "order": order})
     return {"version": app._DASHBOARD_PREF_VERSION, "widgets": widgets}
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
+
+def _dash_widget_audits(conn, days: int = 7, *, scope: str = "any", account_id: int | None = None) -> dict:
+    # TASK-0294: scope='own' 이면 본인이 actor 인 이벤트만 집계(ActorAccountId=self) + cross-account
+    # by_actor(타 계정 username 목록)는 제거. scope='any' 는 전체 cross-account(기존). 위젯 가시성은
+    # audit.read.own|any (둘 중 하나), 데이터 출력 경계는 본 scope — _audit_build_self_filter_sql 정합.
+    d = int(days)
+    own = scope == "own"
+    if own and account_id is None:
+        account_id = -1  # fail-closed: scope='own' 인데 account_id 부재 = 매칭 0(cross-account widen 금지).
+    self_and = " AND ActorAccountId = %s" if own else ""
+    self_args = (int(account_id),) if own else ()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY){self_and}",
+            self_args,
+        )
+        cur_total = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            f"SELECT COUNT(*) FROM WebAuditEvents "
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {2 * d} DAY) AND OccurredAt < (NOW() - INTERVAL {d} DAY){self_and}",
+            self_args,
+        )
+        prior_total = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            f"SELECT COUNT(*) FROM WebAuditEvents WHERE OccurredAt >= (NOW() - INTERVAL 1 DAY){self_and}",
+            self_args,
+        )
+        last24 = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            f"SELECT DATE(OccurredAt), COUNT(*) FROM WebAuditEvents "
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY){self_and} GROUP BY DATE(OccurredAt) ORDER BY 1",
+            self_args,
+        )
+        spark = app._dash_fill_daily(cur.fetchall(), d)
+        cur.execute(
+            f"SELECT ActionCode, COUNT(*) FROM WebAuditEvents "
+            f"WHERE OccurredAt >= (NOW() - INTERVAL {d} DAY){self_and} GROUP BY ActionCode ORDER BY 2 DESC LIMIT 8",
+            self_args,
+        )
+        by_action = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+        # by_actor(타 계정 username × 활동량)는 cross-account enumeration — `.any` 전용. `.own` 은 생략.
+        by_actor: list[dict] = []
+        if not own:
+            cur.execute(
+                f"SELECT COALESCE(a.Username, '(익명/시스템)'), COUNT(*) "
+                f"FROM WebAuditEvents ev LEFT JOIN WebAccounts a ON a.Id = ev.ActorAccountId "
+                f"WHERE ev.OccurredAt >= (NOW() - INTERVAL {d} DAY) "
+                f"GROUP BY ev.ActorAccountId, a.Username ORDER BY 2 DESC LIMIT 8"
+            )
+            by_actor = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    title_suffix = "(내 활동)" if own else ""
+    primary = {"label": f"최근 {d}일 이벤트{title_suffix}", "value": cur_total, "primary": True, "spark": spark}
+    dp = app._dash_pct_delta(cur_total, prior_total)
+    if dp is not None:
+        primary["delta_pct"] = dp
+        primary["delta_sentiment"] = "neutral"  # 감사량 증감은 정보성(좋/나쁨 단정 불가)
+    lists = []
+    if by_action:
+        lists.append({"title": f"액션별 ({d}일)", "rows": by_action})
+    if by_actor:
+        lists.append({"title": f"actor별 ({d}일)", "rows": by_actor})
+    return {
+        "tab": "audits",
+        "metrics": [primary, {"label": "최근 24시간", "value": last24}],
+        "lists": lists,
+    }
+
+def _dash_widget_conversations(pg, days: int = 7, *, scope: str = "any", account_id: int | None = None) -> dict:
+    # TASK-0294: scope='own' 이면 본인 소유 대화만 집계(owner_account_id=self) + cross-account
+    # '활성 소유자' metric(타 계정 수) 제거. scope='any' 는 전체(기존). 위젯 가시성은 conversation.list.own|any.
+    d = int(days)
+    cur_win = f"now() - interval '{d} days'"
+    prior_lo = f"now() - interval '{2 * d} days'"
+    prior_hi = cur_win
+    own = scope == "own"
+    if own and account_id is None:
+        account_id = -1  # fail-closed: scope='own' 인데 account_id 부재 = 매칭 0(cross-account widen 금지).
+    args = (int(account_id),) if own else ()
+
+    def _w(extra: str) -> str:
+        parts = [p for p in (extra, "owner_account_id = %s" if own else "") if p]
+        return (" WHERE " + " AND ".join(parts)) if parts else ""
+
+    # WHERE 절을 미리 구성(f-string 안 중첩 따옴표 회피 — Python 3.11 호환).
+    one_day = "created_at >= now() - interval '1 day'"
+    w_total = _w("")
+    w_d1 = _w(one_day)
+    w_cur = _w(f"created_at >= {cur_win}")
+    w_prior = _w(f"created_at >= {prior_lo} AND created_at < {prior_hi}")
+    base = "SELECT COUNT(*) FROM agent_runtime.core_conversations"
+    with pg.cursor() as cur:
+        cur.execute(f"{base}{w_total}", args)
+        total = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(f"{base}{w_d1}", args)
+        d1 = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(f"{base}{w_cur}", args)
+        cur_total = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(f"{base}{w_prior}", args)
+        prior_total = int((cur.fetchone() or (0,))[0] or 0)
+        # '활성 소유자'(distinct owner) 는 cross-account 집계 — `.own` 은 항상 본인 1명이라 생략.
+        owners = None
+        if not own:
+            cur.execute("SELECT COUNT(DISTINCT owner_account_id) FROM agent_runtime.core_conversations WHERE owner_account_id IS NOT NULL")
+            owners = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            f"SELECT date_trunc('day', created_at)::date, count(*) FROM agent_runtime.core_conversations"
+            f"{w_cur} GROUP BY 1 ORDER BY 1",
+            args,
+        )
+        spark = app._dash_fill_daily(cur.fetchall(), d)
+    title_suffix = "(내 대화)" if own else ""
+    primary = {"label": f"최근 {d}일 대화{title_suffix}", "value": cur_total, "primary": True, "spark": spark}
+    dp = app._dash_pct_delta(cur_total, prior_total)
+    if dp is not None:
+        primary["delta_pct"] = dp
+        primary["delta_sentiment"] = "neutral"
+    metrics = [
+        primary,
+        {"label": "최근 24시간", "value": d1, "accent": "ok"},
+        {"label": "내 전체 대화" if own else "전체 대화", "value": total},
+    ]
+    if owners is not None:
+        metrics.append({"label": "활성 소유자", "value": owners})
+    return {"metrics": metrics, "lists": []}

@@ -1223,3 +1223,79 @@ def _describe_role_character(role: "dict[str, Any]") -> str:
 def _sse_pack(event: str, payload: dict) -> str:
     """SSE 프레임 직렬화 — `event: <type>\\ndata: <json>\\n\\n`. 한국어 위해 ensure_ascii=False."""
     return f"event: {event}\ndata: {app.json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
+
+def _upsert_system_prompt(
+    conn,
+    *,
+    scope: str,
+    content: str,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+    updated_by_account_id: int | None = None,
+) -> int:
+    existing = app._load_system_prompt(
+        conn,
+        scope=scope,
+        product_id=product_id,
+        role_id=role_id,
+        account_id=account_id,
+    )
+    cur = conn.cursor()
+    content = (content or "").strip()
+    if existing:
+        if not content:
+            cur.execute("DELETE FROM WebSystemPrompts WHERE Id = %s", (int(existing["id"]),))
+            cur.close()
+            return 0
+        cur.execute(
+            """
+UPDATE WebSystemPrompts
+SET Content = %s, UpdatedByAccountId = %s
+WHERE Id = %s
+            """,
+            (content, updated_by_account_id, int(existing["id"])),
+        )
+        cur.close()
+        return int(existing["id"])
+    if not content:
+        cur.close()
+        return 0
+    cur.execute(
+        """
+INSERT INTO WebSystemPrompts (Scope, ProductId, RoleId, AccountId, Content, UpdatedByAccountId)
+VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (scope, product_id, role_id, account_id, content, updated_by_account_id),
+    )
+    new_id = int(cur.lastrowid or 0)
+    cur.close()
+    return new_id
+
+def _resolve_session_default_model() -> str:
+    """env 의 OPENAI_MODEL 이 catalog 안 alias 일 때만 그 값을 사용. 그 외 (미설정 /
+    invalid / Local LLM gateway 미가용 시의 'auto' / 폐기된 GPT alias) 는 catalog
+    의 API_DEFAULT_MODEL fallback. feature-0007 P1 보강 (CHG-20260522-0002) — 운영
+    .env 잔존 'auto' 또는 legacy GPT 값에서 frontend 가 invalid model 을 /api/ask
+    에 첨부 후 400 차단되던 회귀 차단. Local LLM gateway 가 실제로 가용한 경우
+    (`_is_local_llm_available()` True) 에만 `auto` 가 catalog 에 포함되어 통과 —
+    그 외 시점은 API_DEFAULT_MODEL fallback."""
+    # TASK-0237: 새 이름 LLM_MODEL 우선, 구이름 OPENAI_MODEL fallback(운영 .env 무중단).
+    raw = (app.os.getenv("LLM_MODEL") or app.os.getenv("OPENAI_MODEL") or "").strip()
+    if raw and app.is_allowed_api_model(raw):
+        # 로컬 LLM 모델(auto/edge/core/code)은 웹 UI 기본값으로 노출하지 않음 —
+        # insight-worker 전용. 웹 세션은 항상 Bedrock Claude 계열 기본값 사용.
+        if app.is_local_llm_model(raw):
+            return app.API_DEFAULT_MODEL
+        return raw
+    return app.API_DEFAULT_MODEL
+
+def _is_allowed_api_model(value: str) -> bool:
+    # 웹 UI /api/ask 에서는 로컬 LLM 모델(auto/edge/core/code) 거부 —
+    # insight-worker 전용 모델을 사용자가 직접 지정해 호출하는 경로 차단.
+    if app.is_local_llm_model(value):
+        return False
+    return app.is_allowed_api_model(value)

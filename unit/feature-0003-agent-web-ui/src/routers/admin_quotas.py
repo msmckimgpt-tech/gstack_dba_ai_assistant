@@ -212,3 +212,34 @@ def _account_period_usage_tokens(account_id: int, quota_type: str) -> int:
             pg.close()
         except Exception:
             pass
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
+    """LLM 사용량 한도 사전 게이트. (allowed, error_message). 무제한/미설정/인프라장애=allowed.
+    enforce 킬스위치 OFF 면 무조건 allowed. (보안 ④, fail-open)"""
+    if not app.LLM_QUOTA_ENFORCE or not account:
+        return (True, "")
+    account_id = int(account.get("id") or 0)
+    role_id = int(account.get("role_id") or 0)
+    if account_id <= 0:
+        return (True, "")
+    _label = {"daily": "일일", "monthly": "월간"}
+    for qtype in app._LLM_QUOTA_TYPES:
+        try:
+            limit = app._account_effective_quota(conn, account_id, role_id, qtype)
+        except Exception:
+            limit = None
+        if not limit or int(limit) <= 0:
+            continue  # 무제한/미설정
+        used = app._account_period_usage_tokens(account_id, qtype)
+        if used >= int(limit):
+            # 주체 구분: "계정의 ... 한도" 로 명시 — 서비스 자체 요청량 한도
+            # (llm_provider_health KIND_THROTTLED)와 도달 주체를 구분한다.
+            return (
+                False,
+                f"계정의 {_label.get(qtype, qtype)} LLM 토큰 사용 한도({int(limit):,})를 초과했습니다. "
+                f"현재 사용량 {int(used):,}. 관리자에게 문의하거나 한도 초기화 시점까지 기다려 주세요.",
+            )
+    return (True, "")

@@ -176,3 +176,6 @@ source_of_truth: true
 
 ## REV-20260711T214000-item10-routers-p15 [SKIPPED:pattern-transcription] — 전수 census 최대 sweep
 - Related Change: CHG-20260711T214000-item10-routers-p15. 승인: ROADMAP §6.1. 패턴 전사 + 가드 2종 신설(직수입 충돌·byte-offset)·소급 감사 mismatch 0. DI-seam(require_permission) 은 이동 금지 판정 — ITEM-11 계열로 이연. 게이트 4종 GREEN.
+
+## REV-20260711T220500-item10-routers-p16 [SKIPPED:pattern-transcription] — PATCH 32종 이동
+- Related Change: CHG-20260711T220500-item10-routers-p16. 승인: ROADMAP §6.1. setattr 패치 관통은 전 스위트 pytest(패치 시나리오 포함 1,200+)로 실증. 게이트 4종 GREEN.

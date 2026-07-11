@@ -5364,3 +5364,347 @@ def _coerce_naive_dt(v):
         return v.replace(tzinfo=None)
     except Exception:
         return None
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (11종). app 전역은 app.X 동적 참조. ====
+
+def _load_conversation_product(conn, conversation_id: str) -> dict[str, Any] | None:
+    """대화의 현재 product_id / product_mode / product_key / name 을 통합 반환."""
+    if not conversation_id:
+        return None
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT product_id, product_mode FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                pg_row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return None
+        if not pg_row:
+            return None
+        pid = int(pg_row[0] or 0) or None
+        mode = app._normalize_product_mode(pg_row[1], default="pinned")
+        product_key = product_name = product_is_active = None
+        if pid:
+            try:
+                cur2 = conn.cursor(dictionary=True)
+                cur2.execute("SELECT ProductKey, Name, IsActive FROM WebProducts WHERE Id = %s LIMIT 1", (pid,))
+                wp_row = cur2.fetchone()
+                cur2.close()
+                if wp_row:
+                    product_key = str(wp_row.get("ProductKey") or "") or None
+                    product_name = str(wp_row.get("Name") or "") or None
+                    product_is_active = bool(wp_row.get("IsActive")) if wp_row.get("IsActive") is not None else None
+            except Exception:
+                # best-effort: 제품 메타(이름/활성) enrichment 실패는 pid/mode 반환을 막지 않는다.
+                logging.getLogger(__name__).warning(
+                    "_load_conversation_product: product meta lookup failed (product_id=%s)",
+                    pid, exc_info=True,
+                )
+        return {"product_id": pid, "product_mode": mode, "product_key": product_key,
+                "product_name": product_name, "product_is_active": product_is_active}
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+SELECT c.product_id   AS product_id,
+       c.product_mode AS product_mode,
+       p.ProductKey   AS product_key,
+       p.Name         AS product_name,
+       p.IsActive     AS product_is_active
+FROM AgentCoreConversations c
+LEFT JOIN WebProducts p ON p.Id = c.product_id
+WHERE c.conversation_id = %s
+LIMIT 1
+            """,
+            (conversation_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    pid = int(row.get("product_id") or 0) or None
+    mode = app._normalize_product_mode(row.get("product_mode"), default="pinned")
+    return {
+        "product_id": pid,
+        "product_mode": mode,
+        "product_key": str(row.get("product_key") or "") or None,
+        "product_name": str(row.get("product_name") or "") or None,
+        "product_is_active": bool(row.get("product_is_active")) if row.get("product_is_active") is not None else None,
+    }
+
+def _check_attachment_size_caps(
+    conn,
+    *,
+    account_id: int,
+    conversation_id: str,
+    new_size_bytes: int,
+) -> tuple[bool, str]:
+    """D8 cumulative size cap. per_file / per_conv / per_account 3 측정.
+
+    Returns: (ok, reason). ok=False 면 caller 가 413 응답 + reason 한국어 메시지.
+    """
+    per_file, per_conv, per_account = app._attachment_size_caps()
+    n = int(new_size_bytes or 0)
+    if n <= 0:
+        return False, "첨부 파일이 비어 있습니다."
+    if n > per_file:
+        return False, f"단일 첨부 파일 크기 한도 ({per_file // 1_048_576}MB) 를 초과했습니다."
+
+    # 누적 용량은 MySQL(write-authoritative)에서 항상 계산한다 — quota enforcement 는 정본 기준.
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(SizeBytes), 0)
+            FROM WebConversationAttachments
+            WHERE ConversationId = %s AND DeletedAt IS NULL AND DeletePending = 0
+            """,
+            (conversation_id,),
+        )
+        row = cur.fetchone()
+        conv_used = int((row[0] if row else 0) or 0)
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(SizeBytes), 0)
+            FROM WebConversationAttachments
+            WHERE AccountId = %s AND DeletedAt IS NULL AND DeletePending = 0
+            """,
+            (account_id,),
+        )
+        row = cur.fetchone()
+        account_used = int((row[0] if row else 0) or 0)
+    finally:
+        cur.close()
+
+    # TASK-0277 (REV-20260615-0279 MAJOR-1): read cutover 기간 quota 무결성 — read_pg 면 PG 도 조회해
+    # max() 를 취한다. dual-write fail-soft 로 PG 가 미러를 일시 누락하면 PG 합이 과소계상되어 cap 이
+    # 우회될 수 있으므로, 정본(MySQL)과 PG 중 큰 값으로 보수적으로 enforce 한다(정합 시 동일값). PG read
+    # 실패는 무시(MySQL 값 유지 — quota 는 MySQL 권위라 안전). 후속 decommission 에서 PG-only 전환.
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            conv_used = max(conv_used, int(_apm.pg_sum_size_bytes(conversation_id=conversation_id)))
+            account_used = max(account_used, int(_apm.pg_sum_size_bytes(account_id=account_id)))
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_check_attachment_size_caps: PG cap read failed (MySQL 권위값 유지)", exc_info=True)
+
+    if conv_used + n > per_conv:
+        return False, f"대화당 첨부 총 용량 한도 ({per_conv // 1_048_576}MB) 를 초과했습니다."
+    if account_used + n > per_account:
+        return False, f"계정당 첨부 총 용량 한도 ({per_account // 1_073_741_824}GB) 를 초과했습니다."
+    return True, ""
+
+def _last_step_at_for_run(conn, conversation_id: str, run_id: str) -> app.datetime | None:
+    """주어진 run 의 최근 step CreatedAt 을 datetime 으로 반환. 실패/없음 시 None."""
+    if not conversation_id or not run_id:
+        return None
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT MAX(created_at) FROM agent_runtime.steps"
+                    " WHERE conversation_id = %s AND run_id = %s",
+                    (conversation_id, run_id),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return None
+        if not row or row[0] is None:
+            return None
+        raw = row[0]
+        if isinstance(raw, app.datetime):
+            # CHG-20260527-0001 회귀 수정 (TASK-0159): PG timestamptz 는 세션 타임존
+            # (KST) 으로 aware 하게 반환된다. tzinfo 만 strip 하면 KST wall-clock 이
+            # UTC 로 오인돼, _compute_display_status 의 datetime.utcnow() 비교에서
+            # elapsed 가 음수가 되고 stale 가드(20분)가 영구히 안 터진다 → 고아 run
+            # 무한 폴링. UTC 로 변환 후 naive 화한다 (_parse_kv_timestamp 와 정합).
+            if raw.tzinfo is not None:
+                return raw.astimezone(app.timezone.utc).replace(tzinfo=None)
+            return raw
+        return app._parse_kv_timestamp(str(raw))
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT MAX(CreatedAt) FROM AgentMemorySteps"
+            " WHERE ConversationId = %s AND RunId = %s LIMIT 1",
+            (conversation_id, run_id),
+        )
+        row = cur.fetchone()
+        cur.close()
+    except Exception:
+        return None
+    if not row or row[0] is None:
+        return None
+    raw = row[0]
+    if isinstance(raw, app.datetime):
+        return raw
+    return app._parse_kv_timestamp(str(raw))
+
+def _conversation_exists(
+    conversation_id: str,
+    *,
+    account: dict[str, Any] | None = None,
+    conn=None,
+) -> bool:
+    if not conversation_id:
+        return False
+    own_conn = conn is None
+    if own_conn:
+        try:
+            conn = app._connect_memory()
+        except Exception:
+            return False
+    try:
+        if conversation_id in set(app.list_delete_requested_conversation_ids(conn)):
+            return False
+        # AR-M4-T4: PG read path
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            try:
+                from shared.db import _pg_connect
+                pg = _pg_connect()
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT 1 FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                        (conversation_id,),
+                    )
+                    row = pgcur.fetchone()
+                pg.close()
+                return bool(row)
+            except Exception:
+                pass
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM AgentCoreConversations WHERE conversation_id = %s LIMIT 1", (conversation_id,))
+        row = cur.fetchone()
+        cur.close()
+        return bool(row)
+    finally:
+        if own_conn and conn is not None:
+            conn.close()
+
+def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
+    """attachment 단일 row dict 로 반환. 없으면 None."""
+    if not attachment_id:
+        return None
+    # TASK-0277: read cutover — ATTACHMENTS_READ_BACKEND=postgres 면 PG 에서 읽는다.
+    # PG read 실패(연결 등)는 MySQL 로 폴백(가용성 — dual-write 로 MySQL 도 정본 유지).
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            return _apm.pg_load_attachment_row(int(attachment_id))
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_load_attachment_row: PG read failed → MySQL fallback (id=%s)", attachment_id, exc_info=True)
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                DeletePending, DeleteReason, MetaJson,
+                RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+            FROM WebConversationAttachments
+            WHERE Id = %s
+            LIMIT 1
+            """,
+            (int(attachment_id),),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        cur.close()
+
+def _conversation_scope_key(conn, conversation_id: str) -> str:
+    """대화의 활성 데이터소스 scope_key 를 해석한다 (샘플 피드백 적재용).
+
+    대화 → pinned product → datasource → `_dsr.scope_key`(insight/RAG write 와 동일 식별자)
+    경로로 해석한다. 미고정(auto)/미바인딩/해석 실패 시 'common'(공통 스코프)으로 폴백한다.
+    'common' 은 특정 데이터소스에 묶이지 않은 일반 샘플의 기본 스코프(코어 _normalize_scope_key 와 정합).
+    """
+    try:
+        prod_meta = app._load_conversation_product(conn, conversation_id) if conversation_id else None
+    except Exception:
+        prod_meta = None
+    if not prod_meta or prod_meta.get("product_mode") != "pinned" or not prod_meta.get("product_id"):
+        return "common"
+    try:
+        pid = int(prod_meta["product_id"])
+        product = next((p for p in app._list_products(conn, include_inactive=True) if int(p.get("id") or 0) == pid), None)
+        if not product:
+            return "common"
+        resolved = app._resolve_product_insight_scope(conn, product)
+        scope = resolved.get("scope") if resolved and resolved.get("ok") else None
+        return str(scope).strip() if scope else "common"
+    except Exception:
+        return "common"
+
+def _ask_worker_age_sec(conn) -> float | None:
+    """AI 운영 관제(TASK-AIOPS): ask-worker heartbeat 나이(초). 3-state(정상/저하/중단) 판정용 —
+    _ask_worker_ready 의 bool 만으로는 '저하' 중간대역을 구분할 수 없다. heartbeat 부재/파싱 실패는
+    None(→ 중단). _ask_worker_ready 와 **동일한 naive-UTC 규약**(_parse_kv_timestamp; aware now 와
+    혼용 시 TypeError → 영구 오탐, TASK-0169 함정)."""
+    try:
+        from shared.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
+        raw = app.load_memory_kv(conn, GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY)
+        if not raw:
+            return None
+        parsed = app._parse_kv_timestamp(raw)
+        if parsed is None:
+            return None
+        now_naive = app.datetime.now(app.timezone.utc).replace(tzinfo=None)
+        return max(0.0, (now_naive - parsed).total_seconds())
+    except Exception:
+        return None
+
+def _attachment_size_caps() -> tuple[int, int, int]:
+    """env-driven size cap. (per_file, per_conv, per_account) tuple."""
+    return (
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_FILE") or app._ATTACHMENT_DEFAULT_MAX_BYTES_PER_FILE)),
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_CONV") or app._ATTACHMENT_DEFAULT_MAX_BYTES_PER_CONV)),
+        max(1, int(os.getenv("ATTACHMENT_MAX_BYTES_PER_ACCOUNT") or app._ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT)),
+    )
+
+def _conversation_owned_by_account(conn, conversation_id: str, account_id: int) -> bool:
+    owner_account_id = app._conversation_owner_account_id(conn, conversation_id)
+    return owner_account_id is not None and owner_account_id == int(account_id)
+
+def _is_worker_mode() -> bool:
+    return app._ask_execution_mode() == "worker"
+
+def _open_memory_connection(*, database: str | None = app.MEMORY_DB):
+    params: dict[str, Any] = {
+        "host": app.DB_HOST,
+        "port": app.DB_PORT,
+        "user": app.DB_USER,
+        "password": app.DB_PASSWORD,
+        "autocommit": True,
+        "connection_timeout": 10,
+        "read_timeout": app.WEB_DB_QUERY_TIMEOUT_SEC,
+        "write_timeout": app.WEB_DB_QUERY_TIMEOUT_SEC,
+        "charset": "utf8mb4",
+        "use_unicode": True,
+    }
+    if database:
+        params["database"] = database
+    conn = app.mysql.connector.connect(**params)
+    cur = conn.cursor()
+    try:
+        cur.execute(f"SET SESSION lock_wait_timeout = {int(app.WEB_DB_LOCK_WAIT_TIMEOUT_SEC)}")
+        cur.execute(f"SET SESSION innodb_lock_wait_timeout = {int(app.WEB_DB_LOCK_WAIT_TIMEOUT_SEC)}")
+    finally:
+        cur.close()
+    return conn

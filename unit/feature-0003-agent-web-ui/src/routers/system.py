@@ -13,6 +13,8 @@ from shared.model_catalog import API_DEFAULT_MODEL
 from shared.model_catalog import PUBLIC_API_MODEL_OPTIONS
 import logging
 import os
+from typing import Any
+
 import app
 
 INCLUDE_ORDER = 60  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
@@ -255,3 +257,16 @@ def _safe_shared_path(path: str) -> app.Path | None:
     if resolved == app.SHARED_ROOT or app.SHARED_ROOT in resolved.parents:
         return resolved
     return None
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _read_llm_provider_status() -> "dict[str, Any]":
+    """TASK-20260619T014034: LLM provider 외부요인 제한 상태(PG agent_runtime.llm_provider_health)
+    를 읽어 web 표면(컴포저 배너·상태점·툴팁·실행단계 패널)에 싣는다. probe 없이 cheap PG read 만
+    (probe 는 /api/llm/health 전용). 실패/미가용은 graceful {state:'unknown'}."""
+    try:
+        from modules.llm_provider_health import read_provider_health
+        return read_provider_health()
+    except Exception:
+        return {"state": "unknown"}

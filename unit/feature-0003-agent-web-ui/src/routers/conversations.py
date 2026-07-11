@@ -3588,3 +3588,30 @@ def _archive_conversation(conn, conversation_id: str, account_id: int) -> bool:
         # PG 가 정본이면 MySQL 폴백 실패는 무해(테이블 부재 등).
         pass
     return ok
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
+
+def _search_rate_limit_check(account_id: int, max_per_min: int = 10) -> bool:
+    """REQ-20260518-0010 (TASK-0072): in-process token bucket per account.
+    True if allowed, False if quota exhausted (60s window). Single-process
+    only; multi-worker deployment will allow `max_per_min` per worker."""
+    import time as _time
+    now = _time.time()
+    window_start = now - 60.0
+    with app._RATE_LIMIT_LOCK:
+        bucket = app._RATE_LIMIT_BUCKETS.setdefault(int(account_id), [])
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        if len(bucket) >= max_per_min:
+            return False
+        bucket.append(now)
+        return True
+
+def _clear_accounts_current_conversation(conn, conversation_id: str) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE WebAccounts SET LastConversationId = NULL WHERE LastConversationId = %s",
+        (conversation_id,),
+    )
+    cur.close()

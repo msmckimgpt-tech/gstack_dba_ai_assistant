@@ -2581,3 +2581,88 @@ def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
             out.append({"schema_name": _norm_db_label(db_name) or db_name,
                         "table_name": tname, "columns": cols})
     return out
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
+
+def _bootstrap_collect_skeleton(conn, _dialects, schema_name: str) -> list:
+    """dialect-aware 골격 수집 — {schema_name, table_name, columns:[{column_name, data_type}]}.
+
+    테이블 목록은 dialect.describe_schema_tables(1쿼리), 각 테이블 컬럼은 dialect.describe_columns
+    (row[0]=name, row[1]=type). MySQL/MSSQL 둘 다 동일 인터페이스(dialects.py). 자동 샘플/인덱스
+    조회는 하지 않는다(부하/PII). cap: 테이블 500 / 테이블당 컬럼 200.
+    """
+    from modules.tools import _safe_ident as _safe_ident_fn
+    dialect = _dialects.active()
+    cur = conn.cursor()
+    table_names: list[str] = []
+    try:
+        cur.execute(dialect.describe_schema_tables(schema_name))
+        for row in (cur.fetchall() or []):
+            if row and row[0]:
+                table_names.append(str(row[0]))
+            if len(table_names) >= app._BOOTSTRAP_MAX_TABLES:
+                break
+    finally:
+        cur.close()
+
+    out: list = []
+    for tname in table_names:
+        # REV B1 방어심층: tname 은 introspection 산출(DB 제어)이나 구조화 도구와 동일하게 _safe_ident 통과.
+        safe_tname = _safe_ident_fn(tname)
+        cols: list = []
+        ccur = conn.cursor()
+        try:
+            ccur.execute(dialect.describe_columns(schema_name, safe_tname))
+            for crow in (ccur.fetchall() or []):
+                if not crow or not crow[0]:
+                    continue
+                cols.append({"column_name": str(crow[0]),
+                             "data_type": str(crow[1] or "").lower()})
+                if len(cols) >= app._BOOTSTRAP_MAX_COLS_PER_TABLE:
+                    break
+        except Exception:
+            cols = []  # 단일 테이블 introspection 실패는 건너뜀(부분 골격 허용)
+        finally:
+            ccur.close()
+        out.append({"schema_name": schema_name, "table_name": tname, "columns": cols})
+    return out
+
+def _bootstrap_resolve_datasource(ds_key: str):
+    """datasource key → (ds_dict, scope_key, None) 또는 (None, None, JSONResponse).
+
+    all_datasources(mem) 로 검증(미존재 404). scope_key 화이트리스트도 함께 통과시킨다.
+    """
+    key = str(ds_key or "").strip().lower()
+    if not key:
+        return None, None, app._json_error("datasource 는 필수입니다.", 400)
+    if key == "common":
+        return None, None, app._json_error("'common' 은 introspection 대상이 아닙니다.", 400)
+    from shared import datasources as _dsr
+    mem = None
+    try:
+        mem = app._connect_memory()
+    except Exception:
+        mem = None
+    try:
+        ds_map = _dsr.all_datasources(mem) or {}
+    except Exception:
+        ds_map = {}
+    finally:
+        if mem is not None:
+            try:
+                mem.close()
+            except Exception:
+                pass
+    ds = ds_map.get(key)
+    if not ds:
+        return None, None, app._json_error("해당 datasource 를 찾을 수 없습니다.", 404)
+    return ds, key, None
+
+def _bootstrap_activate_dialect(ds: dict, scope_key: str):
+    """introspection 전에 활성 dialect 를 설정(MSSQL 백틱 폴백 오류 방지). 끝나면 호출측이 리셋."""
+    from shared import config as _cfg
+    engine = str((ds or {}).get("engine") or "mysql").strip().lower()
+    default_db = (ds or {}).get("default_db")
+    _cfg.set_active_datasource(scope_key, engine=engine, default_db=default_db)
+    return engine
