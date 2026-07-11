@@ -194,3 +194,6 @@ source_of_truth: true
 
 ## CHG-20260711T202708-item10-routers-p11 (ask/prompt/usage 5종 이동)
 - Date: 2026-07-11. 4-타깃 분산 이동. 학습: AST 전역 수집기에 AnnAssign 미포함 → 상수 프리픽스 누락(F821 이 적발) — 후속 추출기에 AnnAssign 추가 필요. app.py 10,716→10,132.
+
+## CHG-20260711T203718-item10-routers-p12 (share/gdrive 16종 이동)
+- Date: 2026-07-11. 확립 패턴(AnnAssign 보강판). app.py 10,132→9,824.

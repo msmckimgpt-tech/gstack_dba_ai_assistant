@@ -164,3 +164,6 @@ source_of_truth: true
 
 ## REV-20260711T202708-item10-routers-p11 [SKIPPED:pattern-transcription] — ask/prompt/usage 이동
 - Related Change: CHG-20260711T202708-item10-routers-p11. 승인: ROADMAP §6.1. 패턴 전사(F821 게이트가 AnnAssign 누락 적발 — 게이트 실효 재확인). 게이트 4종 GREEN.
+
+## REV-20260711T203718-item10-routers-p12 [SKIPPED:pattern-transcription] — share/gdrive 이동
+- Related Change: CHG-20260711T203718-item10-routers-p12. 승인: ROADMAP §6.1. 게이트 4종 GREEN.

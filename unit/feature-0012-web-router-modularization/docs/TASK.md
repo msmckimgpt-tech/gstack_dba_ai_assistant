@@ -250,3 +250,7 @@ source_of_truth: true
 ## 20260711T2027-item10-routers-p11 — ask 디스패치·프롬프트 생성·usage 5종(597줄) 도메인 분산 이동 (parallel-work-structure ITEM-10)
 - [x] _dispatch_ask_run_worker·_prepare_text_inline_attachments→_conv_store · _prompt_generate_stream_response→_prompt_context · _autonomous_generate_product_prompt→admin_products · _query_usage_conversations→admin_usage(setattr 1× — 단독 이동·rebind 관통 ✓). AnnAssign 상수 누락 1건(_AUTO_PROMPT_COVERAGE_THRESHOLD) 수기 프리픽스 — 추출기 개선 노트. app.py 10,716→10,132(누적 **-9,518 / -48%**).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821(stdlib 3모듈 보강) · py_compile · 전 스위트 pytest rc=0
+
+## 20260711T2037-item10-routers-p12 — share 8 + gdrive 8(345줄) 도메인 이동 (parallel-work-structure ITEM-10)
+- [x] _share_* → _conv_store(2 라우터 공용) · _gdrive_* → integrations.py(단일 도메인). 패치 0 sweep · 추출기 AnnAssign 수집 보강(p11 학습 반영). **app.py 10,132→9,824 — 1만 줄 돌파**(누적 -9,826 / -50%).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821(json 1건) · py_compile · 전 스위트 pytest rc=0

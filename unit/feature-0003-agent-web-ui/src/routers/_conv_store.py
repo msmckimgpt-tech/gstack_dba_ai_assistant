@@ -2881,3 +2881,197 @@ def _prepare_text_inline_attachments(
     except OSError:
         return None
     return path
+
+
+# ── ITEM-10 p12: 공유(share) 링크/정책 헬퍼 ──
+
+def _share_generate_token() -> str:
+    """256-bit URL-safe token. UNIQUE 충돌 시 호출자가 retry."""
+    return app._share_secrets.token_urlsafe(32)
+
+def _share_load_active(conn, token: str) -> dict[str, Any] | None:
+    """Token 으로 share row 조회 (revoked/expired 도 row 반환 — 호출자가 상태 판정).
+
+    이름은 historical (`active`) 이나 실제로는 token 일치 row 를 그대로 반환한다.
+    RevokedAt / ExpiresAt 판정은 호출자(public view / fork)가 수행한다.
+    """
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId, FloorMessageId,
+       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion, ExpiresAt,
+       Joinable
+FROM WebConversationShares
+WHERE Token = %s
+LIMIT 1
+            """,
+            (token,),
+        )
+        row = cur.fetchone()
+        return row
+    finally:
+        cur.close()
+
+def _share_row_expired(conn, share_id: int) -> bool:
+    """DB 시계 기준 share 만료 여부 (`ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()`).
+
+    만료 판정을 항상 DB NOW() 로 평가해 web 프로세스 ↔ DB 간 clock skew 를 차단한다
+    (생성 시 `DATE_ADD(NOW(), ...)` 와 동일 시계 도메인). 무기한(NULL) share 는 False.
+    """
+    try:
+        sid = int(share_id)
+    except Exception:
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT 1 FROM WebConversationShares "
+            "WHERE Id = %s AND ExpiresAt IS NOT NULL AND ExpiresAt <= NOW() LIMIT 1",
+            (sid,),
+        )
+        return cur.fetchone() is not None
+    finally:
+        cur.close()
+
+def _share_anchor_belongs_to_conversation(conn, conversation_id: str, anchor_message_id: int) -> bool:
+    """AnchorMessageId 가 해당 ConversationId 의 메시지인지 검증 (backend-aware)."""
+    return app._conv_message_exists(conn, conversation_id, int(anchor_message_id))
+
+def _share_sanitize_step(step: Any) -> dict[str, Any]:
+    """단일 step 을 share 익명 노출용 화이트리스트로 재구성.
+
+    - step: {tool, sql, reason, intent, work, result_summary} 만 통과.
+    - result_summary: {preview_table} 만 통과 — csv_paths(서버 경로)·preview(결과 전문)·
+      기타 키 제거. preview_table 자체는 columns/rows/truncated 의 표 데이터로 share.js 가
+      이미 표로 렌더하는 (공유 의도된) 결과 미리보기다.
+    - step 의 args(원본 tool 인자)·error(원본 오류 본문)·csv_paths 등은 통과 목록에 없어 제거.
+    """
+    if not isinstance(step, dict):
+        return {}
+    clean: dict[str, Any] = {k: step[k] for k in app._SHARE_STEP_ALLOWED_KEYS if k in step}
+    rs = clean.get("result_summary")
+    if isinstance(rs, dict):
+        rs_clean = {k: rs[k] for k in app._SHARE_RESULT_SUMMARY_ALLOWED_KEYS if k in rs}
+        if rs_clean:
+            clean["result_summary"] = rs_clean
+        else:
+            clean.pop("result_summary", None)
+    elif "result_summary" in clean:
+        # dict 아닌 result_summary 는 통째 제거 (예측 못한 형태의 raw payload 누출 차단).
+        clean.pop("result_summary", None)
+    return clean
+
+def _share_attach_sanitized_steps(conn, conversation_id: str, created_at, meta_obj: Any) -> Any:
+    """assistant 메시지 meta 에 share 익명 노출용으로 sanitize 한 steps 를 주입 후 meta 반환.
+
+    share API 는 저장 meta_json(보통 {run_id, duration_ms})만 읽어 steps 가 비어 있다.
+    실행 단계(쿼리/결과)는 일반 대화 로드 경로처럼 agent_runtime.steps 에서 동적 조립해야
+    "결과셋에 따라 실행된 쿼리 전환" navigator 가 공유 페이지에서도 동작한다. 단, 익명 노출이므로
+    각 step 을 _share_sanitize_step 으로 화이트리스트 통과시킨다 (csv_paths/preview/args/error 제거).
+
+    meta_obj 가 None 이면 steps 가 실제로 조립될 때만 새 dict 를 만들어 반환(없으면 None 유지).
+    """
+    try:
+        raw_steps = app._load_steps_for_message(conn, conversation_id, created_at, meta_obj if isinstance(meta_obj, dict) else None)
+    except Exception:
+        # steps 조립 실패는 공유 뷰 렌더를 막지 않는다 — 본문/폴백만 표시.
+        logging.getLogger(__name__).warning(
+            "_share_attach_sanitized_steps: steps 조립 실패 (conversation_id=%s)",
+            conversation_id, exc_info=True,
+        )
+        return meta_obj
+    sanitized = [_share_sanitize_step(s) for s in (raw_steps or []) if isinstance(s, dict)]
+    sanitized = [s for s in sanitized if s]
+    if not sanitized:
+        return meta_obj
+    if not isinstance(meta_obj, dict):
+        meta_obj = {}
+    meta_obj["steps"] = sanitized
+    return meta_obj
+
+def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, dict | None]:
+    """attachment_derived 메시지 본문을 redact. 반환: (redacted_content, was_redacted, meta_obj_clean).
+
+    raw attachment payload (CSV sample / vision 분석 결과 / PDF excerpt) 가 share view
+    에 노출되지 않도록 본문을 가림. meta 의 sensitive 필드도 함께 redact (final_sql /
+    result_rows / steps 등은 D12 정합으로 별도 categorical 메타만 유지).
+    """
+    if not app._meta_has_attachment_derived(meta_obj):
+        return content, False, meta_obj
+    meta_clean = None
+    if isinstance(meta_obj, dict):
+        meta_clean = {k: v for k, v in meta_obj.items() if k not in app._SHARE_REDACTED_META_KEYS}
+        meta_clean["attachment_derived"] = True
+        meta_clean["redacted_by_share_policy"] = True
+    return app.SHARE_POLICY_REDACT_TEXT, True, meta_clean
+
+def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, floor_message_id: int | None = None, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
+    """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive, "여기까지 공유").
+
+    share-visibility-window: floor_message_id 가 주어지면 `Id >= floor` (inclusive, "여기부터 공유").
+    익명 공유 스냅샷은 hard window — 라이브 tail 병합 없음(익명 뷰어는 라이브 멤버 아님).
+
+    fork 의 `app._is_internal_message` 와 동일 필터를 적용해 내부/시스템 메시지를 숨긴다.
+
+    TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share_token_policy_version 이 NULL 또는
+    app.SHARE_POLICY_VERSION_CURRENT 보다 작으면 attachment_derived 메시지 본문 자동 redact.
+    기존 token (PolicyVersion=1 또는 NULL) 도 배포 즉시 새 정책 적용.
+    """
+    # cutover 후 메시지는 PG(agent_runtime.messages) 에서 읽는다 (backend-aware helper).
+    # 반환 행은 (id, role, content, created_at, meta_json) tuple. meta_json 은 PG 면 dict.
+    rows = app._conv_load_messages_raw(conn, conversation_id, anchor_message_id, from_id=floor_message_id)
+    visible: list[dict[str, Any]] = []
+    # R-F7: 정책 version 비교 — token 발급 시 version < 현재 면 자동 redact 대상.
+    redact_active = (
+        share_token_policy_version is None
+        or int(share_token_policy_version or 0) < app.SHARE_POLICY_VERSION_CURRENT
+    )
+    for row in rows:
+        msg_id, role_raw, content_raw, created_at, meta_json = row
+        role = str(role_raw or "")
+        content = str(content_raw or "")
+        meta_str = meta_json if isinstance(meta_json, str) else (
+            json.dumps(meta_json) if isinstance(meta_json, dict) else None
+        )
+        if app._is_internal_message(role, content, meta_str):
+            continue
+        # feature-0009 gc-join-notice: 멤버십 이벤트(참여 알림)는 대화 내부 멤버 전용 in-room
+        # 표식이다. anonymous 공유 스냅샷에는 노출하지 않는다(멤버 username 비노출 + share.js
+        # 는 pill 렌더 분기가 없어 정합성도 깨짐). in-room /api/history 경로에서만 pill 로 보인다.
+        _ev_meta = meta_json if isinstance(meta_json, dict) else None
+        if _ev_meta is None and isinstance(meta_json, str) and meta_json:
+            try:
+                _parsed_ev = json.loads(meta_json)
+                _ev_meta = _parsed_ev if isinstance(_parsed_ev, dict) else None
+            except Exception:
+                _ev_meta = None
+        if _ev_meta and _ev_meta.get("event_type"):
+            continue
+        meta_obj: Any = None
+        if isinstance(meta_json, dict):
+            meta_obj = dict(meta_json)
+        elif meta_json:
+            try:
+                meta_obj = json.loads(meta_json)
+            except Exception:
+                meta_obj = None
+        # D9 + R-F7: attachment_derived 메시지 redact (token PolicyVersion 무관, 현 정책 v2 부터 활성).
+        was_redacted = False
+        if redact_active:
+            content, was_redacted, meta_obj = _share_redact_message_content(content, meta_obj)
+        # 실행된 쿼리 전환 navigator 데이터: assistant 메시지에 한해 agent_runtime.steps 에서
+        # sanitize 한 steps 를 동적 조립한다. redact 된 attachment_derived 메시지는 제외(steps 까지
+        # 가려야 하므로 — _share_redact_message_content 가 이미 steps 키를 제거했고 재조립도 안 함).
+        if role == "assistant" and not was_redacted:
+            meta_obj = _share_attach_sanitized_steps(conn, conversation_id, created_at, meta_obj)
+        visible.append(
+            {
+                "id": int(msg_id or 0),
+                "role": role,
+                "content": content,
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
+                "meta": meta_obj,
+            }
+        )
+    return visible
