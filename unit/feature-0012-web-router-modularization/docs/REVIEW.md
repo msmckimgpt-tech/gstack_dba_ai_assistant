@@ -193,3 +193,6 @@ source_of_truth: true
   2. 계약: AST/string 테스트 5종 bypass(Depends 시그니처 추가·status 미검증·app.접두 substring 회피·fail-soft return error·하드코딩 16).
   3. 완전성: 모집단 16 아닌 50(34 누락, 코드베이스 자체 census 수렴), fail-soft 3→6.
 - 처분: 약한 계약 테스트 폐기 · 옵션 C(split) 전환 · 50 핸들러 개별 판정 다-batch(runtime snapshot+동적 완전성). ship-blocking 반영=전건(census 정정·테스트 폐기·방향 전환).
+
+## REV-20260712T024500-item11-batch1 [SKIPPED:panel-precleared] — me_put_system_prompt DI-rework
+- Related: CHG-20260712T024500-item11-batch1. 승인: ROADMAP §6.1 + §6.3(§18.8 패널 REV-20260712T023000 이 batch1 을 BLOCKER 해소 대상으로 사전 판정). runtime byte-동치 7종+leak-fix 회귀가 acceptance (a) 이행. 게이트 4종 GREEN.

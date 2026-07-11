@@ -218,3 +218,6 @@ source_of_truth: true
 
 ## CHG-20260712T023000-item11-census-정정 (DEFER 16→50 교정 + 패널 + 방향 전환)
 - Date: 2026-07-12. 정본 기록(코드 무변경) + 약한 계약 테스트 폐기. ITEM-11 옵션 B→C 전환, census 50 확정.
+
+## CHG-20260712T024500-item11-batch1 (me_put_system_prompt DI-rework conn leak fix)
+- Date: 2026-07-12. 인라인 auth→DI(get_current_account/get_conn), try/finally 부재 leak 해소. runtime snapshot 7종 byte-동치. 잔여 DEFER 50→49.

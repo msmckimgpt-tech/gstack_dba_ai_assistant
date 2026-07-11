@@ -655,19 +655,20 @@ def me_get_system_prompt(request: Request, product_id: int | None = None, accoun
     return JSONResponse({"prompt": row, "product_id": int(product_id) if product_id else None})
 
 @router.put("/api/auth/me/system-prompt")
-async def me_put_system_prompt(request: Request) -> JSONResponse:
+async def me_put_system_prompt(
+    request: Request,
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch1: 인라인 auth → DI(get_current_account/get_conn). get_conn 의 finally:close 가
+    # _upsert_system_prompt raise 시에도 conn 을 닫아 **conn leak(try/finally 부재) 을 해소**(§18.8 패널
+    # BLOCKER). byte-동치: get_conn 흡수(conn None)→get_current_account 가 "db connection failed" 500,
+    # unauth→"로그인이 필요합니다." 401 로 인라인과 동일. 유일 차이=malformed body+unauth 엣지가
+    # 400("invalid json")→401 로 선행(§18.8 설계 렌즈: "strictly safer, benign" — 401/403 자체 불변).
     try:
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    account, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     content = str(data.get("content") or "")
     product_id_raw = data.get("product_id")
     product_id: int | None = None
@@ -675,12 +676,10 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
         try:
             product_id = int(product_id_raw)
         except Exception:
-            conn.close()
             return app._json_error("invalid product_id", 400)
     # TASK-0052 Phase 1C G8: PUT body 의 product_id 가 주어졌으면 접근 권한 검사.
     if product_id is not None and int(product_id) > 0:
         if not app._account_has_product_access(account, int(product_id), conn=conn):
-            conn.close()
             return app._json_error("요청을 수행할 수 없습니다.", 403)
     new_id = app._upsert_system_prompt(
         conn,
@@ -691,7 +690,6 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
         account_id=int(account["id"]),
         updated_by_account_id=int(account["id"]),
     )
-    conn.close()
     return JSONResponse({"ok": True, "id": new_id, "deleted": new_id == 0})
 
 

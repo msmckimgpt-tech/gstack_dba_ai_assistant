@@ -290,3 +290,7 @@ source_of_truth: true
   - **keep-inline 정당(패널 인정)**: ask_result(60s long-poll+per-poll conn) · gdrive_connect/callback(redirect gate) · progress(401 surface+conn absorb) · public_share_view(3 mid-body 결정) · 진짜 pre-auth gate 특수구조 — "defer/router-extraction 레이블"(TASK.md:83 일관), "security regression" 프레이밍 폐기.
   - **테스트**: runtime TestClient snapshot(status+body+`detail` 부재, conftest client/as_account 재사용) + AST 계약(시그니처 Depends 금지·(message,status) 튜플·auth-miss 브랜치 형태) + **동적 스캔 완전성**(50 집합==분류 테이블, 신규 인라인 핸들러 FAIL).
 - [x] acceptance 상태: (a) runtime snapshot 미작성 → 다음 batch · (d) §18.8 패널 완료(NOT-SHIP→재작업 반환) · (e) DEFER 잔여 50(≠0) — 여정 시작. ITEM-11 status=in-progress 유지.
+
+## 20260712T0245-item11-batch1 — me_put_system_prompt DI-rework(conn leak fix) (parallel-work-structure ITEM-11)
+- [x] §18.8 패널 BLOCKER 해소: 인라인 me_put_system_prompt(try/finally 부재)의 `_upsert_system_prompt` raise 시 conn leak → `account=Depends(get_current_account)`+`conn=Depends(get_conn)` DI. get_conn finally:close 가 leak 해소. byte-동치: get_conn 흡수(None)→get_current_account "db connection failed" 500·unauth "로그인이 필요합니다." 401 로 인라인과 동일. 유일 차이=malformed body+unauth 400→401(패널 "strictly safer, benign"; 401/403 자체 불변).
+- [x] runtime TestClient snapshot 7종(conftest client/as_account/as_anonymous+get_conn override): 401·500·400(invalid json)·400(invalid product_id)·403·200 status+body+`detail` 부재 byte-동치 + **leak-fix 회귀**(_upsert raise→get_conn finally conn.close() 호출 관측). 게이트: route snapshot 205 byte-동치·F821 clean·py_compile·전 스위트 pytest rc=0. 잔여 DEFER 50→49.
