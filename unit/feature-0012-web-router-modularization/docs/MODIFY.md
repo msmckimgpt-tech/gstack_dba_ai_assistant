@@ -230,3 +230,6 @@ source_of_truth: true
 
 ## CHG-20260712T034000-item11-batch4 (admin_account_unlock 완전 DI-rework)
 - Date: 2026-07-12. account+conn DI(perm 본문 유지). runtime snapshot 9종. DEFER 47→46.
+
+## CHG-20260712T040000-item11-batch5 (admin_delete_account 완전 DI-rework)
+- Date: 2026-07-12. account+conn DI(perm 본문 유지). runtime snapshot 10종. DEFER 46→45.
