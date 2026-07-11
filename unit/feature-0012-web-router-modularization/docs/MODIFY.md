@@ -239,3 +239,6 @@ source_of_truth: true
 
 ## CHG-20260712T043000-item11-batch7 (admin_delete_role 완전 DI-rework)
 - Date: 2026-07-12. account+conn DI(perm 본문). runtime snapshot 10종. DEFER 44→43.
+
+## CHG-20260712T044500-item11-batch8 (update_conversation_product 완전 DI-rework)
+- Date: 2026-07-12. account+conn DI(perm·pinned 분기 본문). runtime snapshot 11종. DEFER 43→42.
