@@ -215,3 +215,6 @@ source_of_truth: true
 
 ## CHG-20260712T013000-item10-완료판정 (ROADMAP §5/note/REPORT 갱신)
 - Date: 2026-07-12. ITEM-10 done 마킹. 코드 변경 없음(정본 갱신 only).
+
+## CHG-20260712T023000-item11-census-정정 (DEFER 16→50 교정 + 패널 + 방향 전환)
+- Date: 2026-07-12. 정본 기록(코드 무변경) + 약한 계약 테스트 폐기. ITEM-11 옵션 B→C 전환, census 50 확정.
