@@ -638,3 +638,15 @@
 - **검증**: `bash -n` OK. git-backed stub dry-run 전수 PASS — #B2(더 최신 DECOY 존재해도 pin==`--session-id` UUID)·usage-limit(pin 유지 +310m/TTL−1)·context-death(pin 해제)·2단계 백오프(1차 pin 유지·2차 해제)·resume/fresh 모드·pin jsonl 부재→fresh 폴백. newest_session_since 코드참조 0.
 - **인용 무결성 확인**: REV-20260711T150440(본 entry) staged 실재.
 - **Human Approval Needed**: 아니오(착수는 사용자 직접 지시·의도 정정). 비파괴·fail-safe(오탐<미탐, 2단계 백오프로 컨텍스트 보존 우선, TTL·flock·*/5 상한). 배포 무관(호스트 크론). **PR 생성만 confirm 유지**.
+
+## REV-20260711T195353-META-0032-drain-reset-schedule [SUBAGENT:improve-fit-reviewer(§18.8, R7)] — usage-limit 재개를 고정 +5h10m → CLI 실제 리셋 시각 파싱으로 (parallel-work-structure 툴링)
+
+- **cycle**: ai/claude-corp/drain-reset-schedule. **승인 근거: 사용자 명시 지시(2026-07-11)** — "토큰 갱신(19:20) 지났는데 continue fire 미작동, 수정".
+- **라이브 버그(관측)**: 드레인이 15:15~16:25 정상 연속 작동(57d96d41 재개·ITEM-10 PR #702~707 머지) 후 **16:25:04 usage-limit**. mechanism 이 고정 +310m → `next_fire=21:35` 예약. 그러나 CLI 메시지 `resets 7:20pm (Asia/Seoul)` = 실제 리셋 **19:20** → 재개가 **~2h15m 늦음**. 원인: +310m 은 *한도-hit 시각(16:25)* 기준인데 5h 롤링 윈도우 리셋은 *윈도우 시작(~14:20)* 기준. 공유 quota 를 다른 VSCode 세션(당시 5개)이 함께 소비해 한도를 윈도우 초반에 맞으면 오차 큼.
+- **changeset (pure-meta)**: `bin/drain-continue-cron.sh`(`parse_reset_epoch` 헬퍼 + `RESET_BUFFER_SEC` + usage_limit 분기) · `docs/improvements/parallel-work-structure/ROADMAP.md`(§6.4 usage-limit bullet) · 본 entry. §5(워커 소유) 미접촉.
+- **수정**: usage-limit 확정(비-서술 3조건 — 오탐 게이트 불변) 후 CLI 메시지의 `resets <시각>` 파싱(`parse_reset_epoch`: `grep -oiE` + `date -d`, 자정넘김 +86400, `now+6h` 초과=파싱오류 폴백) → `next_fire = 리셋 시각 + RESET_BUFFER_SEC(300s)`. **파싱 실패/이상 시 기존 +310m 폴백**(byte-동치, 회귀 0). pin 유지·TTL−1·NOPROG/STREAK 리셋은 if/else 앞으로 hoist(불변).
+- **linchpin(라이브)**: `date -d` 가 `7:20pm/9:20am/12:05am/12:30am/12:00pm/12:00am` + 대문자/공백 변형 파싱 확인.
+- **§18.8 패널(R7) = SHIP**: 추가 로직 정확·게이트됨·회귀 없음. 엣지 전수 검증 — (a)TZ: host=메시지 TZ(KST) 일치·이상 시 6h 가드→폴백 (b)자정경계 +86400 정상 (c)usage_limit 오탐 결합 표면 없음(스케줄만 변경) (d)버퍼-조기 재-한도는 과거-리셋→6h초과→+310m 폴백으로 자기수렴(스핀 없음) (e)date -d 변형 전부 파싱. 잔여 MINOR 2(24h/hour-only format·TZ 토큰 미파싱)은 **둘 다 안전한 +310m 폴백으로 degrade** — 비차단, 후속 하드닝 옵션.
+- **검증**: `bash -n` OK. dry-run — 미래리셋 "9:19pm"→next=21:24(리셋+300s, +310m 아님)·시각없음→+310m 폴백·과거→다음날→6h초과→폴백. **즉시 remediation**: 19:20 이미 지나 `arm --minutes 0` 재-arm → 19:50 `--resume 57d96d41` 재개 실측(드레인 라이브 복귀).
+- **인용 무결성 확인**: REV-20260711T195353(본 entry) staged 실재.
+- **Human Approval Needed**: 아니오(사용자 지시). 비파괴·fail-safe(파싱 실패 시 기존 +310m 폴백, 6h 가드). 배포 무관(호스트 크론 툴링). **PR 생성만 confirm 유지**.

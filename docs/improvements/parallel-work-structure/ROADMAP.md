@@ -717,7 +717,11 @@ blocked 발생 시: 해당 ITEM 의 status 를 `blocked`+사유로 갱신하고 
      회피.) (`--dangerously-skip-permissions` + `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` + 외곽
      timeout 300m.) ③ **종료사유별 다음 발사**:
        - `usage-limit` — 비-서술 3조건 AND(진전0 ∧ dur<90s ∧ 종단3줄이 “hit your (session|usage)
-         limit”)로만 인정(서술 오탐 차단, §18.8 N3). → **pin 유지** + **`+5h10m` 리셋 대기**(TTL−1).
+         limit”)로만 인정(서술 오탐 차단, §18.8 N3). → **pin 유지** + **CLI 가 알려준 실제 리셋
+         시각 + 버퍼(5분)** 로 재개 예약(TTL−1). 고정 +5h10m 은 한도를 5h 롤링 윈도우 **초반**에
+         맞으면(공유 quota 를 다른 세션들이 함께 소비) 실제 리셋을 크게 지나쳐 재개가 늦었다(관측
+         2026-07-11: 16:25 한도 → +310m=21:35 vs 메시지 “resets 7:20pm”=실제 19:20). 이제 메시지의
+         리셋 시각을 파싱(`parse_reset_epoch`)해 리셋 직후 정확히 재개; **파싱 실패 시 +5h10m 폴백**.
          리셋 후 **같은 세션을 이어서** 재개 = 연속성 핵심.
        - `context 소진` — 같은 3조건에서 종단이 “Prompt is too long”. → **pin 해제** → 다음 fire
          **새 세션** 재앵커(+재-pin). 세션 수명의 자연 종점에서만 갈아탄다(무한 orphan 방지, B3).

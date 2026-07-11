@@ -62,6 +62,7 @@ BURST_TIMEOUT="${DRAIN_BURST_TIMEOUT:-300m}"
 SHORT_MINUTES="${DRAIN_SHORT_MINUTES:-2}"        # 진전/컨텍스트死 종료 시 신속 재발사 간격(다음 */5 틱)
 SHORT_BURST_SEC="${DRAIN_SHORT_BURST_SEC:-90}"   # 이보다 짧은 버스트=무진전/즉시-abort 후보(진전판정 폴백 + limit/death 게이트)
 MAX_NOPROG="${DRAIN_MAX_NOPROG:-6}"              # 무진전 연속 N회 → +310m 백오프(스핀 방지)
+RESET_BUFFER_SEC="${DRAIN_RESET_BUFFER_SEC:-300}" # 리셋 시각 + 버퍼(토큰 반영 여유 5분)
 # 진전(이 버스트의 실작업) 식별용 커밋 메시지 서명 — 이니셔티브 커밋만 계수해 동시 sibling
 # worktree·cron 커밋을 진전으로 오인하지 않는다(패널 N1). 드레인 커밋은 "(parallel-work-structure ITEM-NN…)" 규약.
 DRAIN_PROGRESS_GREP="${DRAIN_PROGRESS_GREP:-parallel-work-structure}"
@@ -111,6 +112,24 @@ commits_since_epoch() {
 # 미리 만들어 `claude --session-id <uuid>` 로 그 id 를 강제하고, 그 값을 그대로 pin 한다.
 new_session_uuid() {
   cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || true
+}
+
+# usage-limit 버스트 로그에서 CLI 가 알려주는 **실제 리셋 시각**("… resets 7:20pm (Asia/Seoul)")을
+# 파싱해 epoch 로 반환(실패 시 빈값). 왜 필요한가: 고정 +310m 은 한도를 5h 롤링 윈도우 **초반**에
+# 맞으면(공유 quota 를 다른 세션들이 함께 소비) 실제 리셋을 크게 지나쳐 재개가 늦다 — 관측(2026-07-11):
+# 16:25 한도 → +310m=21:35 예약 vs 메시지가 알려준 실제 리셋 19:20(=7:20pm). CLI 가 주는 리셋 시각을
+# 쓰면 리셋 직후 정확히 재개. host TZ=메시지 TZ(Asia/Seoul) 전제(date -d 로컬 파싱).
+parse_reset_epoch() {
+  local runlog="$1" t ep nowe
+  t=$(grep -oiE "resets +[0-9]{1,2}:[0-9]{2} *(am|pm)" "$runlog" 2>/dev/null | tail -1 \
+        | grep -oiE "[0-9]{1,2}:[0-9]{2} *(am|pm)" | tr -d ' ')
+  [ -n "$t" ] || return 0
+  ep=$(date -d "$t" +%s 2>/dev/null) || return 0
+  case "$ep" in ''|*[!0-9]*) return 0 ;; esac
+  nowe=$(date +%s)
+  [ "$ep" -le "$nowe" ] && ep=$(( ep + 86400 ))          # 지난 시각(자정 넘김)이면 다음날
+  [ "$ep" -gt $(( nowe + 6*3600 )) ] && return 0         # 6h 초과=파싱 오류로 간주 → 폴백
+  echo "$ep"
 }
 
 cmd="${1:-status}"; shift || true
@@ -230,8 +249,15 @@ case "$cmd" in
     fi
 
     if [ "$usage_limit" = "1" ]; then
-      NEXT_FIRE_EPOCH=$(( now + DEFAULT_MINUTES * 60 )); TTL=$(( TTL - 1 )); NOPROG=0; BACKOFF_STREAK=0
-      log "burst 종료 rc=$rc dur=${dur}s newcommits=$newcommits — usage-limit 감지(pin 유지) → +${DEFAULT_MINUTES}m 리셋 대기 (ttl=$TTL)"
+      TTL=$(( TTL - 1 )); NOPROG=0; BACKOFF_STREAK=0
+      reset_ep=$(parse_reset_epoch "$runlog")
+      if [ -n "$reset_ep" ]; then
+        NEXT_FIRE_EPOCH=$(( reset_ep + RESET_BUFFER_SEC ))   # CLI 가 알려준 실제 리셋 시각 + 버퍼
+        log "burst 종료 rc=$rc dur=${dur}s newcommits=$newcommits — usage-limit 감지(pin 유지) → 실제 리셋 $(date -d "@${reset_ep}" '+%H:%M')+${RESET_BUFFER_SEC}s 재개 (next=$(date -d "@${NEXT_FIRE_EPOCH}" '+%F %T'), ttl=$TTL)"
+      else
+        NEXT_FIRE_EPOCH=$(( now + DEFAULT_MINUTES * 60 ))    # 폴백: 리셋 시각 파싱 실패 → 고정 +310m
+        log "burst 종료 rc=$rc dur=${dur}s newcommits=$newcommits — usage-limit 감지(pin 유지, 리셋시각 파싱 실패) → +${DEFAULT_MINUTES}m 폴백 (ttl=$TTL)"
+      fi
     elif [ "$context_dead" = "1" ]; then
       DRAIN_SESSION_ID=""; NEXT_FIRE_EPOCH=$(( now + SHORT_MINUTES * 60 )); NOPROG=0; BACKOFF_STREAK=0
       log "burst 종료 rc=$rc dur=${dur}s newcommits=$newcommits — context 소진(Prompt too long) → pin 해제, 다음 fire 새 세션 +${SHORT_MINUTES}m"
