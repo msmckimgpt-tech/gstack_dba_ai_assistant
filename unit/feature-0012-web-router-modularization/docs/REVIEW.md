@@ -226,3 +226,6 @@ source_of_truth: true
 
 ## REV-20260712T052500-item11-batch11 [SKIPPED:panel-precleared] — admin_update_account 완전 DI
 - Related: CHG-20260712T052500-item11-batch11. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). 최복잡(15 close, escalation/override). _require_account 완전 DI, escalation·override·survivor 본문 유지. conn.close 스크립트 일괄 제거. runtime 11종 gate 중심+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T054000-item11-batch12 [SKIPPED:panel-precleared] — admin_put_system_prompt 완전 DI
+- Related: CHG-20260712T054000-item11-batch12. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). scope별 조건부 403 4종 본문 유지(require_permission 단일 대체 불가 케이스). runtime 10종+leak-fix. 게이트 4종 GREEN.
