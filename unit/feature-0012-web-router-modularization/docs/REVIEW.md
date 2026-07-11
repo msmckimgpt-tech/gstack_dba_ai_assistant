@@ -414,3 +414,15 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - Related Change: CHG-20260711T103000-item10-webctx-batch2. cycle: ai/claude-corp/feature-0012-item10-webctx-b2. 승인: ROADMAP §6.1.
 - SKIPPED 사유: batch1 과 동일 계보(leaf-first byte-동치 이동 + rebind) — 인증·인가 semantics 무변경(상수·seed 데이터·조회 함수만). 기계 게이트 4종(스냅샷 byte-동치·F821·py_compile·전 스위트 pytest rc=0)이 동치 직접 증명. 이동 전 monkeypatch 소비 grep 0 확인.
 - Human Approval Needed: 아니오 — §6.1.
+
+## REV-20260711T110000-item10-webctx-batch3 [SUBAGENT:improve-fit-reviewer(§18.8 auth dispatch)] — web_context 추출 batch3: 세션쿠키·패스워드·TOTP (parallel-work-structure ITEM-10)
+- Related Change: CHG-20260711T110000-item10-webctx-batch3. cycle: ai/claude-corp/feature-0012-item10-webctx-b3. 승인: ROADMAP §6.1.
+- **§18.8 적대 패널 VERDICT: SHIP** (BLOCKING/MAJOR/MINOR 0 · NIT 1) — 인증 코어 인접(auth dispatch)이라 SKIPPED 아닌 패널 실검증:
+  - byte-동치: 제거 vs 추가 라인 기계 대조 SequenceMatcher ratio 1.0(비공백 270/270), 함수 본문 공백 변형 0, 양 파일 ast.parse 통과.
+  - name-resolution: AST 미해석 이름 0 + **라이브 import 실행** — 30개 심볼 전존, RFC 6238 공식 벡터(T=59→287082)·pbkdf2 왕복·drift ±1 허용/±2 거부 스팟체크 전건 통과.
+  - monkeypatch/테스트 계약: setattr 311건→유니크 65 attr 과 이동 30심볼 교집합 0(내부 의존 위험군 포함), getsource 소비는 함수객체 기준이라 생존, routers app.X 동적참조 rebind 전원 포함·섀도잉 0.
+  - 인증 semantics: TOTP 상수·pbkdf2 포맷·쿠키 httponly/samesite/secure 분기 보존. 함수-지역 절대 import 는 sys.path 전역 해석이라 파일 위치 무관(web.app/bare-app 양 경로 batch1/2 가동 실적으로 기검증).
+  - INVARIANT: `from app import` 0 · 신규 top-level import 는 stdlib 4종(base64/hmac/json/secrets)뿐 — 무순환.
+  - NIT(이동 부산물 stale 자기지시 주석) → 본 커밋에서 정리.
+- 게이트: 스냅샷 byte-동치 · F821 clean(중간 14건 적발 → import 보강+_b64decode 동반 이동 — 게이트 실효 사례) · py_compile · 전 스위트 pytest rc=0.
+- Human Approval Needed: 아니오 — §6.1. behavior-neutral(패널 기계 증명), 배포는 item 완료 시.

@@ -11,9 +11,13 @@ edge 만 유지 → 순환 import 불가). stdlib-only 로 유지한다. app.py 
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import ipaddress
+import json
 import os
+import secrets
 from typing import Any, Iterable
 import re
 import sys
@@ -959,3 +963,331 @@ def _seed_role_codes(role_key: str) -> set[str]:
     if not item:
         return set()
     return set(item["permissions"])
+
+
+# ── ITEM-10 b3: 세션쿠키·패스워드·TOTP 클러스터 ──
+# app.py 에서 byte-동치 이동. top-level 은 여전히 app-free; _totp_dek 계열의
+# `from modules import cred_crypto` / `from shared import datasources` 는 **함수-지역
+# lazy import**(import 시점 무의존·역방향 참조 없음 — INVARIANT 의 무순환 취지 유지).
+
+def _get_session_id(request: Request) -> tuple[str, bool, str]:
+    client_ip = _get_client_ip(request)
+    existing = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
+    if existing:
+        return existing, False, client_ip
+    return secrets.token_hex(32), True, client_ip
+
+
+def _request_is_https(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if forwarded_proto:
+        return forwarded_proto == "https"
+    return str(request.url.scheme or "").lower() == "https"
+
+
+def _set_session_cookie(response: Any, request: Request, session_id: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        session_id,
+        httponly=True,
+        samesite="lax",
+        secure=_request_is_https(request),
+    )
+
+
+def _clear_session_cookie(response: Any, request: Request) -> None:
+    response.delete_cookie(
+        SESSION_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=_request_is_https(request),
+    )
+
+
+# (P5b 이동 당시 app.py 쪽 marker 가 딸려온 잔재 — 본 파일이 정본. ITEM-10 b3 패널 NIT 정리)
+
+
+def _sanitize_username(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "", str(value or "").strip())[:64]
+
+
+def _is_valid_username(value: str) -> bool:
+    return bool(USERNAME_RE.match(str(value or "").strip()))
+
+
+def _is_valid_password(password: str) -> bool:
+    text = str(password or "")
+    if len(text) < 10 or len(text) > 128:
+        return False
+    if CONTROL_RE.search(text):
+        return False
+    return True
+
+
+def _hash_password(password: str, salt: bytes | None = None) -> str:
+    if not _is_valid_password(password):
+        raise ValueError("invalid password")
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        PASSWORD_HASH_ITERATIONS,
+    )
+    return (
+        f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}$"
+        f"{base64.b64encode(salt).decode('ascii')}$"
+        f"{base64.b64encode(digest).decode('ascii')}"
+    )
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_raw, salt_b64, digest_b64 = str(stored_hash or "").split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = max(1, int(iterations_raw))
+        salt = _b64decode(salt_b64)
+        expected = _b64decode(digest_b64)
+        if not salt or not expected:
+            return False
+    except Exception:
+        return False
+    actual = hashlib.pbkdf2_hmac(
+        "sha256",
+        str(password or "").encode("utf-8"),
+        salt,
+        iterations,
+    )
+    return hmac.compare_digest(actual, expected)
+
+
+# =============================================================================
+# TASK-20260619T040000-two-factor-auth (보안 ⑥, Critical §12.3): 2단계 인증 (TOTP, RFC 6238).
+# secret 은 cred_crypto(DEK/KEK, AAD=totp:{account_id})로 암호화 저장. 로그인 pending token 은
+# DEK-HMAC 서명(stateless, 5분 TTL). 백업코드는 sha256 해시(1회용). pyotp 미사용(stdlib).
+# 사용자 opt-in(self-service 켜기/끄기) + 관리자 강제 해제(분실 복구). 기본 미설정=2FA 미사용(무회귀).
+# =============================================================================
+_TOTP_STEP = 30
+_TOTP_DIGITS = 6
+_TOTP_DRIFT_WINDOW = 1            # ±1 step (시계 drift 허용)
+_TOTP_PENDING_TTL = 300          # 로그인 pending token 유효 5분
+_TOTP_BACKUP_CODE_COUNT = 10
+_TOTP_AAD_PREFIX = "totp:"
+
+
+def _totp_generate_secret() -> str:
+    """base32 TOTP secret (160-bit) 생성."""
+    import base64 as _b64
+    return _b64.b32encode(os.urandom(20)).decode("ascii").rstrip("=")
+
+
+def _totp_code_at(secret_b32: str, ts: float) -> str:
+    import base64 as _b64
+    import struct as _st
+    pad = "=" * ((8 - len(secret_b32) % 8) % 8)
+    key = _b64.b32decode(secret_b32.upper() + pad, casefold=True)
+    counter = int(ts // _TOTP_STEP)
+    h = hmac.new(key, _st.pack(">Q", counter), hashlib.sha1).digest()
+    o = h[-1] & 0x0F
+    val = (_st.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % (10 ** _TOTP_DIGITS)
+    return str(val).zfill(_TOTP_DIGITS)
+
+
+def _totp_verify(secret_b32: str, code: str, ts: "float | None" = None) -> bool:
+    import time as _t
+    code = str(code or "").strip().replace(" ", "")
+    if not code.isdigit() or len(code) != _TOTP_DIGITS:
+        return False
+    now = ts if ts is not None else _t.time()
+    for drift in range(-_TOTP_DRIFT_WINDOW, _TOTP_DRIFT_WINDOW + 1):
+        try:
+            if hmac.compare_digest(_totp_code_at(secret_b32, now + drift * _TOTP_STEP), code):
+                return True
+        except Exception:
+            return False
+    return False
+
+
+def _totp_otpauth_uri(secret_b32: str, username: str, issuer: str = "DQA") -> str:
+    from urllib.parse import quote
+    label = quote(f"{issuer}:{username}")
+    return (f"otpauth://totp/{label}?secret={secret_b32}&issuer={quote(issuer)}"
+            f"&digits={_TOTP_DIGITS}&period={_TOTP_STEP}")
+
+
+def _totp_dek(conn):
+    """(_cc, ver, dek) 또는 None. KEK 미설정/DEK 부재 시 None(2FA 불가)."""
+    try:
+        from modules import cred_crypto as _cc
+        from shared import datasources as _dsr
+    except Exception:
+        return None
+    if not _cc.enc_available():
+        return None
+    try:
+        got = _dsr.ensure_dek(conn)
+    except Exception:
+        return None
+    if not got:
+        return None
+    ver, dek = got
+    return (_cc, int(ver), dek)
+
+
+def _totp_encrypt_secret(conn, account_id: int, secret_b32: str) -> "tuple[str, int] | None":
+    d = _totp_dek(conn)
+    if not d:
+        return None
+    _cc, ver, dek = d
+    try:
+        return (_cc.encrypt_password(dek, secret_b32, f"{_TOTP_AAD_PREFIX}{int(account_id)}"), ver)
+    except Exception:
+        return None
+
+
+def _totp_decrypt_secret(conn, account_id: int, enc: str, version: int) -> "str | None":
+    try:
+        from modules import cred_crypto as _cc
+        from shared import datasources as _dsr
+    except Exception:
+        return None
+    try:
+        got = _dsr.get_dek(conn, int(version))
+    except Exception:
+        return None
+    if not got:
+        return None
+    _ver, dek = got
+    try:
+        return _cc.decrypt_password(dek, enc, f"{_TOTP_AAD_PREFIX}{int(account_id)}")
+    except Exception:
+        return None
+
+
+def _totp_load(conn, account_id: int) -> "dict | None":
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT AccountId, SecretEnc, EncryptionVersion, Enabled, BackupCodesJson "
+            "FROM WebAccountTotp WHERE AccountId = %s LIMIT 1",
+            (int(account_id),),
+        )
+        return cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        cur.close()
+
+
+def _totp_is_enabled(conn, account_id: int) -> bool:
+    row = _totp_load(conn, account_id)
+    return bool(row and int(row.get("Enabled") or 0) == 1)
+
+
+def _totp_backup_hash(code: str) -> str:
+    return hashlib.sha256(str(code or "").strip().upper().replace("-", "").encode("utf-8")).hexdigest()
+
+
+def _totp_generate_backup_codes(n: int = _TOTP_BACKUP_CODE_COUNT) -> list[str]:
+    import base64 as _b64
+    return [_b64.b32encode(os.urandom(6)).decode("ascii").rstrip("=")[:10] for _ in range(n)]
+
+
+def _totp_consume_backup_code(conn, account_id: int, code: str) -> bool:
+    """백업 코드 1회용 소비. 일치 시 used 마킹 후 True.
+
+    outside-voice MINOR 흡수: read-modify-write 를 `SELECT ... FOR UPDATE` 명시 tx 로 감싸
+    동시 로그인이 같은 백업코드를 중복 소비하는 race 를 차단(원자적 1회용 보장).
+    """
+    target = _totp_backup_hash(code)
+    started = False
+    try:
+        conn.start_transaction()
+        started = True
+    except Exception:
+        started = False  # 이미 tx 중이면 기존 tx 안에서 FOR UPDATE 로 락.
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT BackupCodesJson FROM WebAccountTotp WHERE AccountId = %s FOR UPDATE",
+            (int(account_id),),
+        )
+        r = cur.fetchone()
+        if not r or not r[0]:
+            if started:
+                conn.commit()
+            return False
+        codes = json.loads(r[0])
+        matched = False
+        for c in codes:
+            if (not c.get("used")) and hmac.compare_digest(str(c.get("hash") or ""), target):
+                c["used"] = True
+                matched = True
+                break
+        if not matched:
+            if started:
+                conn.commit()
+            return False
+        cur.execute(
+            "UPDATE WebAccountTotp SET BackupCodesJson = %s WHERE AccountId = %s",
+            (json.dumps(codes), int(account_id)),
+        )
+        if started:
+            conn.commit()
+        return True
+    except Exception:
+        if started:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        cur.close()
+
+
+def _totp_pending_token(conn, account_id: int) -> "str | None":
+    """로그인 1단계(비밀번호) 통과 후 TOTP 대기용 stateless 서명 토큰(DEK-HMAC, TTL)."""
+    import time as _t
+    import base64 as _b64
+    d = _totp_dek(conn)
+    if not d:
+        return None
+    _cc, _ver, dek = d
+    exp = int(_t.time()) + _TOTP_PENDING_TTL
+    payload = f"{int(account_id)}:{exp}"
+    sig = hmac.new(dek, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return _b64.urlsafe_b64encode(f"{payload}:{sig}".encode("utf-8")).decode("ascii")
+
+
+def _totp_verify_pending_token(conn, token: str) -> "int | None":
+    """pending token 검증 → account_id (만료/위조 시 None)."""
+    import time as _t
+    import base64 as _b64
+    try:
+        raw = _b64.urlsafe_b64decode(str(token or "").encode("ascii")).decode("utf-8")
+        aid_s, exp_s, sig = raw.split(":", 2)
+        aid, exp = int(aid_s), int(exp_s)
+    except Exception:
+        return None
+    if exp < int(_t.time()):
+        return None
+    d = _totp_dek(conn)
+    if not d:
+        return None
+    _cc, _ver, dek = d
+    expect = hmac.new(dek, f"{aid}:{exp}".encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expect, str(sig)):
+        return None
+    return aid
+
+
+def _b64decode(text: str) -> bytes:
+    if not text:
+        return b""
+    try:
+        padding = "=" * (-len(text) % 4)
+        return base64.b64decode(text + padding)
+    except Exception:
+        return b""

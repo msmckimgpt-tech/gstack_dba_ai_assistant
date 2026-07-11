@@ -152,6 +152,15 @@ source_of_truth: true
 - [x] 게이트: 라우트 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
 - [ ] 후속 batch: 도메인 클러스터 위상순 + 23-테스트 retarget 영역(적대검증 후)
 
+## 20260711T1100-item10-webctx-batch3 — web_context 추출 batch3: 세션쿠키·패스워드·TOTP 인증 클러스터 (parallel-work-structure ITEM-10)
+
+- [x] 세션쿠키: _get_session_id·_request_is_https·_set/_clear_session_cookie → web_context.py
+- [x] 패스워드: _sanitize/_is_valid_username·_is_valid_password·_hash/_verify_password·_b64decode → web_context.py
+- [x] TOTP: _TOTP_* 상수 6 + _totp_* 함수 14(2FA 전체 — dek/encrypt/decrypt 의 modules/shared 참조는 함수-지역 lazy import 로 동반 이동, 순환 불가 방향) → web_context.py
+- [x] app.py 18,854 → 18,569줄 (web_context 961→1,293). 상단 import 보강(base64/hmac/json/secrets).
+- [x] 게이트: 스냅샷 byte-동치 · F821 clean(중간 14건 적발→import 보강·_b64decode 동반 이동으로 해소) · py_compile · 전 스위트 pytest rc=0
+- [x] §18.8 패널(auth dispatch — 인증 코어 인접): 아래 REVIEW 참조
+
 ## 8b. (이전) Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
 - [x] 2 핸들러 회수(RP overview + AO insight_coverage) — DI seam byte-동치 가능 핸들러 전부 완료(누적 69)
 - [x] behavior-neutral — make test progress-chars 1238(baseline 동일)·0 fail, route-parity 179 불변, ruff clean, py_compile OK

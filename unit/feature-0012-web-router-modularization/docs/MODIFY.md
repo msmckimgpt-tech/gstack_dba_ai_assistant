@@ -542,3 +542,10 @@ source_of_truth: true
 - Files: src/app.py · src/web_context.py.
 - 검증: 라우트 스냅샷 byte-동치 · ruff F821 clean · py_compile · feature-0003 전 스위트 rc=0(테스트 무변경 — app.SEED_ROLE_DEFINITIONS 등 읽기 소비는 rebind 보존).
 - Rollback: 단일 커밋 revert.
+
+## CHG-20260711T110000-item10-webctx-batch3 (web_context 추출 batch3 — 세션쿠키·패스워드·TOTP, parallel-work-structure ITEM-10)
+- Date: 2026-07-11
+- Summary: 인증 leaf 클러스터를 web_context.py 로 byte-동치 이동 — 세션쿠키 4(_get_session_id/_request_is_https/_set/_clear_session_cookie) · 패스워드 6(_sanitize/_is_valid_username·_is_valid_password·_hash/_verify_password·_b64decode) · TOTP 상수 6+함수 14(_totp_dek 계열의 `modules.cred_crypto`/`shared.datasources` 는 함수-지역 lazy import 동반 이동 — top-level app-free INVARIANT 유지, 역방향 참조 없어 순환 불가). web_context 상단 import 보강(base64/hmac/json/secrets). app.py 18,854→18,569줄(누적 19,650→18,569, -1,081).
+- Files: src/app.py · src/web_context.py.
+- 검증: 스냅샷 byte-동치 · ruff F821 clean(중간 스캔이 14건 적발 → import 보강+_b64decode 동반 이동으로 해소 — F821 게이트가 name-resolution 회귀를 실제 차단한 사례) · py_compile · 전 스위트 pytest rc=0(test_two_factor_auth 포함) · monkeypatch 소비 0(사전 census: 상위는 _connect_memory 68·_require_account 52 등 — 본 batch 비대상).
+- Rollback: 단일 커밋 revert.
