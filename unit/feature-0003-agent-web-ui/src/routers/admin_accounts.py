@@ -124,33 +124,28 @@ def admin_accounts(request: Request, account=Depends(app.require_permission("con
     return JSONResponse({"accounts": accounts, "summary": summary})
 
 @router.patch("/api/admin/accounts/{account_id}")
-async def admin_update_account(account_id: int, request: Request) -> JSONResponse:
+async def admin_update_account(
+    account_id: int,
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch11: _require_account→account+conn 완전 DI. perm·escalation·override·survivor 본문 유지.
+    # get_conn finally:close 가 _load_account_by_id·_role_grant_excess·override·UPDATE·audit raise 시 leak 해소.
     if account_id <= 0:
         return app._json_error("invalid account_id", 400)
     try:
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(actor, "console.access") or not app._account_has_permission(actor, "console.manage"):
-        conn.close()
         return app._json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     if not app._account_has_permission(actor, "account.update"):
-        conn.close()
         return app._json_error("계정 수정 권한이 필요합니다.", 403)
     target = app._load_account_by_id(conn, account_id)
     if not target:
-        conn.close()
         return app._json_error("account not found", 404)
     if target.get("deleted_at"):
-        conn.close()
         return app._json_error("삭제된 계정은 수정할 수 없습니다.", 400)
 
     # TASK-0052 Phase 1C 작업 중 발견된 pre-existing 버그 fix:
@@ -163,11 +158,9 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
 
     if "role_id" in data:
         if not app._account_has_permission(actor, "account.role.assign"):
-            conn.close()
             return app._json_error("역할 부여 권한이 필요합니다.", 403)
         next_role = app._load_role_by_id(conn, next_role_id)
         if not next_role or not next_role.get("is_active"):
-            conn.close()
             return app._json_error("활성 역할만 부여할 수 있습니다.", 400)
         # TASK-0300 (REQ-0287, 사용자 결정 2026-06-17): 역할 *배정* 경유 escalation 차단.
         # 본인 보유 권한 범위를 초과하는 권한을 가진 역할은 배정할 수 없다(역할 편집 우회 차단의
@@ -176,7 +169,6 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
         if int(next_role_id) != int(target.get("role_id") or 0):
             _assign_excess = app._role_grant_excess_for_actor(actor, next_role.get("permission_codes"))
             if _assign_excess:
-                conn.close()
                 return app._json_error(
                     "본인이 보유하지 않은 권한을 가진 역할은 배정할 수 없습니다: "
                     + ", ".join(_assign_excess),
@@ -188,7 +180,6 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
     if "is_active" in data and next_is_active != bool(target.get("is_active")):
         required = "account.activate" if next_is_active else "account.deactivate"
         if not app._account_has_permission(actor, required):
-            conn.close()
             return app._json_error("계정 상태 변경 권한이 필요합니다.", 403)
 
     # TASK-0052 Phase 1B: catalog 를 conn 으로 1 회 조회 후 validation/normalization 모두에 전달.
@@ -196,7 +187,6 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
 
     if "permission_overrides" in data:
         if not app._account_has_permission(actor, "account.permission.override.manage"):
-            conn.close()
             return app._json_error("권한 override 관리 권한이 필요합니다.", 403)
         try:
             override_values = app._normalize_override_payload(
@@ -205,7 +195,6 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
                 catalog_map=catalog_map,
             )
         except ValueError as exc:
-            conn.close()
             return app._json_error(str(exc), 400)
         # TASK-0300 (REQ-0287, 인가 §12.3): privilege escalation 방지 — actor 가 본인 보유 권한
         # 범위 안에서만 override 설정 가능. 미보유 권한 설정 시 403, 범위 밖 기존 override 는 보존(merge).
@@ -216,7 +205,6 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
                 target.get("permission_overrides"),
             )
         except ValueError as exc:
-            conn.close()
             return app._json_error(str(exc), 403)
 
     role_permission_codes = app._load_role_permission_codes(conn, [next_role_id]).get(next_role_id, set())
@@ -233,7 +221,6 @@ async def admin_update_account(account_id: int, request: Request) -> JSONRespons
             next_permissions=next_permissions,
         )
     except ValueError as exc:
-        conn.close()
         return app._json_error(str(exc), 400)
 
     cur = conn.cursor()
@@ -283,9 +270,7 @@ WHERE Id = %s
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     # TASK-0098: admin context — 권한 정보 명시 포함.
     payload = app._serialize_account(updated, include_permissions=True) or {}
     payload["permission_overrides"] = dict((updated or {}).get("permission_overrides") or {})

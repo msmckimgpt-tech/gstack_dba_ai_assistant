@@ -248,3 +248,6 @@ source_of_truth: true
 
 ## CHG-20260712T051000-item11-batch10 (admin_update_role 완전 DI-rework)
 - Date: 2026-07-12. account+conn DI(perm·검증 본문). conn.close×14 스크립트 일괄 제거. admin_roles 그룹 완결. DEFER 41→40.
+
+## CHG-20260712T052500-item11-batch11 (admin_update_account 완전 DI-rework 최복잡)
+- Date: 2026-07-12. account+conn DI(perm·escalation·override·survivor 본문). conn.close×15 스크립트 일괄 제거. runtime snapshot 11종 gate 중심. DEFER 40→39.

@@ -326,3 +326,6 @@ source_of_truth: true
 
 ## 20260712T0510-item11-batch10 — admin_update_role 완전 DI-rework (parallel-work-structure ITEM-11)
 - [x] _require_account 기반 → account+conn 완전 DI. perm(console AND role.update, 조건부 role.permission.manage)·role_key 불변·self-scope·survivor 본문 유지. conn.close×14 스크립트 일괄 제거(cur.close×1 보존)→get_conn finally(catalog·UPDATE·_set_role_permissions·audit raise 시 leak 해소). runtime snapshot 11종(401·500·400 id·400 json·403×2·404·400 role_key·403 perm-manage·200·leak-fix). admin_roles 그룹(delete/create/update) 완결. 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 41→40.
+
+## 20260712T0525-item11-batch11 — admin_update_account 완전 DI-rework (최복잡, parallel-work-structure ITEM-11)
+- [x] _require_account 기반 → account+conn 완전 DI. perm(console AND account.update, 조건부 account.role.assign/activate·deactivate/permission.override.manage)·escalation·override self-scope·survivor 본문 유지. conn.close×15 스크립트 일괄 제거(cur.close×2 보존)→get_conn finally(_load_account_by_id·_role_grant_excess·override·UPDATE·audit raise 시 leak 해소). runtime snapshot 11종 gate 중심(401·500·400 id·400 json·403×2·404·400 deleted·403 role.assign·403 override.manage·leak-fix). happy 200 은 survivor/permissions mock 과다라 생략(route snapshot 205 불변+전 스위트가 커버). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 40→39.
