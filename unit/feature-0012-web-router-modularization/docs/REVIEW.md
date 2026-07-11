@@ -140,3 +140,6 @@ source_of_truth: true
 
 ## REV-20260711T152337-item10-routers-p3 [SKIPPED:pattern-transcription] — 프롬프트 컨텍스트 조립 이동
 - Related Change: CHG-20260711T152337-item10-routers-p3. 승인: ROADMAP §6.1. p1/p2 확립 패턴 + census 선행(패치 4종·직접참조 6종·app 내부 호출자 1) — 판정표가 파손 실례로 경고한 클러스터를 그 판정표의 권장 경로(app.X)로 이동, 해당 패치 테스트(test_auto_role_prompt/auto_account_prompt 등) 통과가 관통 보존 직접 증명. 기계 게이트 4종 GREEN.
+
+## REV-20260711T153043-item10-routers-p4 [SKIPPED:pattern-transcription] — _conv_* 이동
+- Related Change: CHG-20260711T153043-item10-routers-p4. 승인: ROADMAP §6.1. 확립 패턴 전사(패치 0 — 관통 표면 없음). 기계 게이트 4종 GREEN.

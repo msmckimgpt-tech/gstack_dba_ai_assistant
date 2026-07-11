@@ -217,3 +217,7 @@ source_of_truth: true
 - [x] _collect_* 5 + _assemble_* 3 (864줄) → routers/_prompt_context.py — 소비 4개 도메인 분산이라 비-라우트 공용 모듈(`_` 접두 = register_all 자동 제외). app-전역 18종 app.X · **패치 4종(setattr: _assemble_ 3종+_collect_conversation_signals_pg)의 클러스터-내부 호출도 app.X**(관통 보존) · 꼬리 rebind 8종.
 - [x] app.py 17,294 → 16,449줄(누적 19,650→16,449, **-3,201**)
 - [x] 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest
+
+## 20260711T1530-item10-routers-p4 — _conv_* 11종 → routers/_conv_store (parallel-work-structure ITEM-10)
+- [x] 대화 저장소 헬퍼 11종(469줄) → routers/_conv_store.py(share/conversations 공용 — register_all 제외 모듈). 패치 0(census)·app-전역 3종 app.X·꼬리 rebind(직접참조 1·app 내부 호출자 8 보존). app.py 16,449→16,005(누적 **-3,645**).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 · py_compile · 전 스위트 pytest rc=0
