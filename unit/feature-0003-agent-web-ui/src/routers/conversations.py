@@ -575,7 +575,12 @@ def ask_status(request: Request, conversation_id: str = "", account=Depends(app.
 
 
 @router.patch("/api/conversations/{cid}/product")
-async def update_conversation_product(cid: str, request: Request) -> JSONResponse:
+async def update_conversation_product(
+    cid: str,
+    request: Request,
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
     """대화의 product_id / product_mode 를 변경한다 (TASK-0047).
 
     body: { product_id: int|null, mode: 'auto'|'pinned' }
@@ -595,23 +600,14 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
     raw_mode = data.get("mode") if isinstance(data, dict) else None
     raw_pid = data.get("product_id") if isinstance(data, dict) else None
     mode = app._normalize_product_mode(raw_mode, default="pinned")
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    account, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+    # ITEM-11 batch8: _require_account→account+conn 완전 DI. perm/게이트는 본문 유지.
+    # get_conn finally:close 가 게이트 헬퍼·UPDATE·pref raise 시 conn leak 을 해소.
     # 권한: 자기 대화에 ask 가능한 사용자만 변경 허용.
     if not app._account_has_permission(account, "conversation.ask"):
-        conn.close()
         return app._json_error("권한이 없습니다.", 403)
     if not app._conversation_exists(cid, conn=conn):
-        conn.close()
         return app._json_error("conversation not found", 404)
     if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
-        conn.close()
         return app._json_error("타 계정 대화는 변경할 수 없습니다.", 403)
     # REQ-20260626-product-chip-always-enabled (ADR-WEB-0006): 처리 중에도 제품 변경 허용.
     #  과거 turn 단위 immutability 409 가드(TASK-0047)는 제거됐다 — in-flight 답변은 enqueue
@@ -620,12 +616,10 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
     pinned_id: int | None = None
     if mode == "pinned":
         if raw_pid in (None, "", 0):
-            conn.close()
             return app._json_error("pinned 모드에서는 product_id 가 필요합니다.", 400)
         try:
             pinned_id = int(raw_pid)
         except Exception:
-            conn.close()
             return app._json_error("invalid product_id", 400)
         # 활성 + 권한 가능성 검사.
         try:
@@ -639,12 +633,10 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
         except Exception:
             row_v = None
         if not row_v or not int(row_v[0] or 0):
-            conn.close()
             return app._json_error("선택한 제품을 사용할 수 없습니다.", 400)
         # TASK-0052 Phase 1C G1: product 접근 권한 검사 (briefing §3.4).
         # 기존 코드는 IsActive 만 검사 → 모든 logged-in account 가 임의 product 에 pin 가능했음.
         if not app._account_has_product_access(account, pinned_id, conn=conn):
-            conn.close()
             return app._json_error("요청을 수행할 수 없습니다.", 403)
 
     try:
@@ -667,7 +659,6 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
             )
             cur_u.close()
     except Exception:
-        conn.close()
         return app._json_error("대화 제품 정보를 변경하지 못했습니다.", 500)
     # 사용자 직전 선택 보존.
     app._save_account_product_pref(conn, int(account["id"]), mode=mode, pinned_id=pinned_id)
@@ -678,7 +669,6 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
         "product_name": None,
     }
     payload["conversation_id"] = cid
-    conn.close()
     return JSONResponse(payload)
 
 @router.post("/api/conversations/{cid}/duplicate")

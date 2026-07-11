@@ -214,3 +214,6 @@ source_of_truth: true
 
 ## REV-20260712T043000-item11-batch7 [SKIPPED:panel-precleared] — admin_delete_role 완전 DI
 - Related: CHG-20260712T043000-item11-batch7. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _require_account 완전 DI, perm 본문 유지. runtime 10종+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T044500-item11-batch8 [SKIPPED:panel-precleared] — update_conversation_product 완전 DI
+- Related: CHG-20260712T044500-item11-batch8. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _require_account 완전 DI, perm·pinned 분기 본문 유지. runtime 11종+leak-fix. 게이트 4종 GREEN.
