@@ -402,3 +402,7 @@ app.py 조회실패 debug 로그) 반영.
 - **`kb_glossary.py`**: `record_enum_suggestion`(ON CONFLICT WHERE pending, poisoning 방어) · `auto_promote_or_queue_enum`(하이브리드 — conf≥threshold 자동등록 source='auto' + 감사, 미만 pending; rejected/promoted 선검사로 재유입 차단) · `_enum_feedback_status`/`_insert_enum_auto` · `list/count/promote/reject_enum_feedback`(auto_promoted reject=source='auto' 행 회수) · `infer_enum_suggestions`(LLM 위임, table/column/code/label 필수 필터) · enum CRUD `source` 반영.
 - **`llm.py`**: `ENUM_SUGGEST_PROMPT`(코드→라벨 매핑 추출, {"enums":[…]}) + `llm_enum_suggest`(soft-fail []). **`config.py`**: `AGENT_ENUM_AUTOPROPOSE`(기본 1)·`AGENT_ENUM_AUTOPROMOTE_THRESHOLD`(0.9 — 용어 0.85보다 보수적, 구조 추론 오탐 방어)·`AGENT_ENUM_SUGGEST_MODEL/MAX` + `__all__`. **`agent_core.py`**: `_enum_autopropose`(답변 직후 `_glossary_autopropose` 옆, best-effort soft-fail, `AGENT_ENUM_AUTOPROPOSE=0` 비활성).
 - **검증**: `test_kb_enum_feedback.py` 14 PASS(record SQL·자동승급 high/low·poisoning skip·불완전 key skip·되돌리기·promote·infer 필터). 기존 `test_upsert_enum_entry_sql` 은 source 를 컬럼 순서 끝에 append 해 무회귀. 상세·web 경계·UI·배포는 feature-0003 REPORT/TEST(2026-07-07).
+
+## 문서 아카이빙 압축 정보 (§5.5, 20260711T120311)
+- MODIFY.md 총 125건 = 아카이브 109 + 현행 16(최근) · REVIEW.md 총 110건 = 아카이브 94 + 현행 16.
+- verbatim 이관·무손실 md5 검증·timestamp 아카이브명(ADR-20260710T231146).
