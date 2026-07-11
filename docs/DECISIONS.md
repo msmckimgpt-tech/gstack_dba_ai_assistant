@@ -875,3 +875,20 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - Consequences: "최신 base 합산 green 만 main"(W-002) 불변식을 단일 머지 경로에 이식.
   한계: host-local — 원격/CI 발 머지 미보호(문서화). env: MERGE_LOCK_TIMEOUT_SEC·
   MERGE_BEHIND_GATE·MERGE_CLEAN_TIMEOUT_SEC. template base 전파 후보.
+## ADR-20260711T051835-wip-hotspot-policy
+
+- Status: 승인 (2026-07-10 ROADMAP parallel-work-structure §6.1 사전 승인 · ITEM-12 —
+  당초 defer(C-13)였으나 웹 리서치 정량 근거(Uber 16건→40%·DORA 활성 ≤3·커뮤니티 세션
+  상한 2~4, W-006/W-008)로 채택 승격된 항목)
+- Context: 충돌 확률의 근본 변수 = 동시 진행량 × 브랜치 수명. feature-0016 graphux 2~10+
+  병렬은 임계 초과 상태였고, 인프라(mutex·fragment·driver)는 완화책일 뿐.
+- Decision (**§13.2.5-A 신설** + cycle-init soft 게이트 + REGISTRY 부트스트랩):
+  (a) 동일 핫스팟 in-flight ai/* ≤ 2 권고 — cycle-init `--hot-paths` 가 REGISTRY 활성
+  세션과 대조, 겹침 ≥ 2 경고(**차단 아님** — 처리량 보존) (b) REGISTRY(§13.2.8 정본 경로
+  `<project_root>/worktrees/REGISTRY.md`, repo 밖 운영 파일) 활성 entry 에 `hot_paths:`
+  필드 — cycle-init 자동 기록·세션당 자기 블록만 수정 (c) 순차 머지 원칙 — `merge_order:`
+  사전 선언, 1브랜치 머지 → 잔여 rebase (d) 당일(24h) 랜딩 원칙. + §13.2.3-A 에 META-0025
+  구현 존재 표기 편승.
+- Consequences: REGISTRY 부재였던 §13.2.8 알림 경로(session_id)도 부트스트랩됨.
+  cycle-finalize Step 6 의 기존 REGISTRY 이동 로직이 활성화. hard 차단 없음 — 게이트는
+  전부 soft(경고·가시화). template base 전파 후보.

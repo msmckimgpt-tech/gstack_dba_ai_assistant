@@ -578,3 +578,19 @@
 - **acceptance**: (a) 락 홀더 존재 시 두 번째 finalize 대기 후 진행(flock 8s 홀드 재현) (b) **라이브**: probe PR #684(main~25 분기, behind=48)에서 게이트 발동 — 구버전 gh `update-branch` unknown-command **실결함 적발** → gh api PUT 폴백 구현 → probe2 PR #685 로 tip 갱신·behind→0 실증(머지 없이 close·브랜치/worktree 정리) — #684 는 CLEAN 폴링 경유 머지(probe 파일 = 증거 artifact 로 main 잔존) (c) MERGE_LOCK_TIMEOUT_SEC=3 명시 die (d) dry-run 게이트 print 우회 — 기존 흐름 보존.
 - **인용 무결성 확인**: ADR-20260711T053000/053001 · REV-20260711T053001(본 entry) 전부 staged 실재 grep 확인.
 - **Human Approval Needed**: 아니오 — §6.1(명세 내). 머지 안전장치 추가(비파괴·fail-safe 방향). 배포 무관.
+## REV-20260711T051835-META-0029-wip-hotspot-policy [SUBAGENT:improve-fit-reviewer(§18.8)] — 핫스팟 WIP 상한 + 순차 머지 규약 + REGISTRY 부트스트랩 (parallel-work-structure ITEM-12)
+
+- **cycle**: ai/claude-corp/META-0029-wip-hotspot-policy — 드레인 9번째 항목(ITEM-12, Major, AGENTS.md 직렬 체인 01→03→06→07→12 말단). 승인: ROADMAP §6.1 + §0 공통 규약(ADR-20260711T051835 동봉).
+- **changeset (pure-meta)**: `AGENTS.md` §13.2.5-A 신설((a)동일 핫스팟 in-flight ≤2 권고 (b)REGISTRY hot_paths 필드 (c)순차 머지 원칙 — merge_order 사전 선언 (d)당일 랜딩 원칙) + §13.2.3-A 에 META-0025 구현 존재 표기 편승 · `bin/cycle-init.sh`(--hot-paths 인자 + REGISTRY 부트스트랩/entry 자동 기록(자기 블록만)/겹침≥2 soft 경고 — 실패는 경고만·cycle 비차단) · `docs/DECISIONS.md`(ADR) · ROADMAP ITEM-12 done · 본 entry. REGISTRY 자체는 repo 밖 운영 파일(§13.2.8 정본 경로) — 라이브 부트스트랩 완료.
+- **acceptance**: (a) AGENTS.md 조항 diff (b) 겹침 시나리오(활성 sim entry + 겹치는 hot-paths 로 실제 cycle-init 실행) — 경고 발화 + rc=0 정상 진행 + entry 기록, 초판(07-11 05시)과 패널 반영 강화판(07-11 오전, distinct 지표 — "활성 브랜치 2개·나 포함 3개" 경고) 2회 실증, 시뮬 잔재 전부 정리 (c) REGISTRY 신설 + cycle-init 실행으로 hot_paths 포함 entry 기록(본 cycle 자기 entry 가 라이브 증거) (d) §13.2.8 과 모순 없음 — session_id 필드 스키마 additive(fallback `claude-session-<PID>` 로 §13.2.8 standalone 형식 준수).
+- **§18.8 적대 패널 (SUBAGENT: improve-fit-reviewer, 2026-07-11)**: **1차 VERDICT = SHIP-WITH-FIXES**(BLOCKING 0 · MAJOR 4 · MINOR 5 · NIT 4 — sandbox 라이브 재현 포함). **머지 전 전건 반영 + 재검증**:
+  - **MAJOR-1**(`{...} || log_warn` dead code — 실패 시 거짓 성공 로그, 라이브 재현) → `registry_record()` 함수화 + 전 단계 명시 `|| return 1` + rc 캡처 if/else. 재검증: root-소유 lock 으로 실패 유도 → 정직한 WARN + rc=0 + REGISTRY 무손상 + worktree 정상 생성.
+  - **MAJOR-2**(제거→삽입 비원자 — 중간 실패 시 기존 entry 무경고 소실, 라이브 재현) → 제거+삽입 **단일 awk 패스** + 동일 디렉터리 mktemp + 삽입 grep 검증 후에만 mv.
+  - **MAJOR-3**(finalize Step 6 "자동 이동 안 함" + 구스키마 안내 — 닫는 쪽 없는 라이프사이클) → finalize 에 **META-0029 스키마 자동 이동 구현**(Active→Closed + closed_at/PR, 동일 lock·mktemp→검증→mv, 실패 시 경고+수동 안내 폴백; 비-META-0029 형식은 기존 수동 안내 유지). 재검증: sandbox 사본 이동 실증. 본 cycle 의 finalize 실행이 첫 라이브 검증.
+  - **MAJOR-4**(무잠금 RMW + 고정 .tmp — 병렬 lost-update) → `flock -w 10`(REGISTRY.lock, init/finalize 공유) + mktemp 고유명.
+  - **MINOR 5~9 + NIT**: 겹침 지표를 경로쌍→**브랜치 distinct** 로 재설계(정책 준수 오탐 제거) · --help sed 범위 정정 · session_id fallback `claude-session-$PPID` · 자기 블록 제거 Active 한정(Closed 이력 보존) · N-12 .gitignore 조건부 등록 구현(본 배치 wrapper 는 git 밖 — 비적용 확인) · `<미선언>` placeholder 비교 제외.
+  - 패널 적발 실패(통과) 항목: 타 세션 블록 오삭제 · prefix 오탐 · 재실행 중복 · 비차단 보장 · --hot-paths 미지정 회귀.
+  - 잔여(후속, 비차단): 기존 활성 worktree entry backfill 전 게이트 사각(다음 cycle-init 부터 자연 편입) · dry-run 겹침 검사 미실행 · opened_at staleness 표기(finalize 자동 이동이 근본 원인 제거해 우선순위 하락).
+- **guards 준수**: hard 차단 금지(전부 경고·가시화 — 실패 유도 테스트로 비차단 재확인) · REGISTRY entry 세션당 자기 블록만(타 블록 보존 패널 확인) · cycle-init 변경분 §18.8 패널 검증 완료(위).
+- **인용 무결성 확인**: ADR-20260711T051835·REV-20260711T051835 staged 실재 grep(재발 방지 체크 — ITEM-07 M-1 계보).
+- **Human Approval Needed**: 아니오 — §6.1(명세 내). soft 게이트만(비차단)·배포 무관.

@@ -413,11 +413,40 @@ SESSIONS_LOG_PATH="$MAIN_REAL/meta/SESSIONS_LOG.md"
 
 if [ ! -f "$REGISTRY_PATH" ]; then
   log_info "REGISTRY.md 부재 (consumer §13.2.4 미채택) — skip."
+elif grep -qxF '## Active' "$REGISTRY_PATH" && grep -qxF '## Closed' "$REGISTRY_PATH"; then
+  # META-0029 스키마(## Active/## Closed + `### <branch>` 블록) — 자기 entry 자동 이동.
+  # cycle-init 과 동일 lock 공유(병렬 직렬화) · mktemp→검증→mv 원자 rewrite · 실패는 경고만
+  # (§18.8 패널 REV-20260711T051835 MAJOR-3 반영 — 닫는 쪽 없는 라이프사이클/안내문 스키마 불일치 해소).
+  log_info "REGISTRY.md 발견 (META-0029 스키마): $REGISTRY_PATH — entry 자동 이동 (Active → Closed)"
+  REG_TMP=""
+  if exec 8>"$REGISTRY_PATH.lock" && flock -w 10 8 \
+     && REG_TMP="$(mktemp "$REGISTRY_PATH.XXXXXX")" \
+     && awk -v br="### $SELF_BRANCH" \
+            -v closed="- closed_at: $(date +%Y-%m-%dT%H:%M:%S%z) (PR #${PR_NUMBER:-?})" '
+          /^## Active$/ {act=1; print; next}
+          /^## Closed$/ {
+            act=0; print
+            if (n > 0) { print ""; for (i=1;i<=n;i++) print buf[i]; print closed }
+            next
+          }
+          act && $0 == br {cap=1; n=1; buf[1]=$0; next}
+          cap && (/^### / || /^## /) {cap=0}
+          cap {n++; buf[n]=$0; next}
+          {print}
+        ' "$REGISTRY_PATH" >"$REG_TMP" \
+     && ! awk '/^## Active$/{a=1;next} /^## Closed$/{a=0} a' "$REG_TMP" | grep -qxF "### $SELF_BRANCH" \
+     && mv "$REG_TMP" "$REGISTRY_PATH"; then
+    log_info "REGISTRY entry 이동 완료: $SELF_BRANCH → ## Closed"
+  else
+    rm -f "${REG_TMP:-/nonexistent}" 2>/dev/null || true
+    log_warn "REGISTRY entry 자동 이동 실패(또는 entry 부재) — 수동 이동 가능: '## Active' 의 '### $SELF_BRANCH' 블록을 '## Closed' 로"
+  fi
+  exec 8>&- 2>/dev/null || true
 else
-  log_info "REGISTRY.md 발견: $REGISTRY_PATH"
-  log_info "본 script 는 REGISTRY entry 의 자동 이동을 수행하지 않습니다 (각 consumer 의 entry format 차이로 인한 수정 위험)."
+  log_info "REGISTRY.md 발견 (비-META-0029 형식): $REGISTRY_PATH"
+  log_info "본 script 는 이 format 의 자동 이동을 수행하지 않습니다 (consumer entry format 차이로 인한 수정 위험)."
   log_info "다음을 수동으로 진행하세요:"
-  log_info "  1. $REGISTRY_PATH 에서 '## 활성 세션' 의 자기 entry (worktree_path=$SELF_REAL) 를 '## 종료 세션' 으로 이동"
+  log_info "  1. $REGISTRY_PATH 에서 활성 구간의 자기 entry (branch=$SELF_BRANCH, worktree=$SELF_REAL) 를 종료 구간으로 이동"
   if [ -f "$SESSIONS_LOG_PATH" ]; then
     log_info "  2. $SESSIONS_LOG_PATH 에 종료 timestamp + PR #$PR_NUMBER append"
   fi
