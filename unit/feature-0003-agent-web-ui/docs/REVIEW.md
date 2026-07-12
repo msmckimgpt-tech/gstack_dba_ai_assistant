@@ -120,3 +120,6 @@ source_of_truth: true
 
 ## REV-20260712T073000-item09-graph-split [SKIPPED:browser-qa-pending] — admin.js 그래프 분리
 - Related: CHG-20260712T073000-item09-graph-split. 승인: 사용자 명시(blocked 해제). 자동검증 GREEN(module 문법·import/export 정합·undefined 0). 브라우저 QA(acceptance a) 사용자 게이트 대기 — 머지 전 필수.
+
+## REV-20260712T190500-item09-batch23-stamp [SKIPPED:mechanical-move-machine-verified] — 그래프 세분화+스탬프 자동화
+- Related: CHG-20260712T190500-item09-batch23-stamp. 순수 이동은 4중 기계검증(문법·verbatim·미해결참조·byte-eq)으로 대체, 신규 로직(inject_asset_stamp.py·asset_stamp_verify)은 census 실측(vendor 우연매치 12건 제외·pin 보존) 반영 + 멱등성 확인. PB-0008 실 Windows 브라우저 QA 통과(에러 0). 배포 시 asset_stamp_verify 가 주입 누락을 하드 차단.

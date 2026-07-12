@@ -32,6 +32,12 @@ COPY unit/feature-0002-agent-core/alembic.ini /app/alembic.ini
 COPY unit/feature-0002-agent-core/alembic /app/alembic
 COPY unit/feature-0003-agent-web-ui/src /app/web
 
+# ITEM-09 what#3 (AGENTS.md §13.1 v3.35.1 1순위): 정적 자산 ?v= 스탬프 빌드 주입.
+# 소스는 고정 placeholder(?v=dev — hand-edit 커밋 금지·병렬 충돌 표면 제거), 빌드가
+# static 트리 content-hash 를 계산해 HTML/JS 의 전 ?v= 참조를 일괄 치환한다(멱등).
+# deploy-web.sh 가 baked 이미지에 placeholder 잔존 여부를 검증(주입 누락 = 배포 차단).
+RUN python3 /app/scripts/inject_asset_stamp.py --root /app/web/static
+
 # TASK-0126 (#5 split-brain): 배포 provenance. 빌드 시 main HEAD SHA 를 각인하여
 # /healthz 가 노출 → web·insight-worker 가 동일 commit 으로 빌드됐는지 검증 가능.
 # 늦은 위치에 두어 상위 레이어 캐시를 깨지 않음.

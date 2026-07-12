@@ -452,7 +452,7 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **notes**: 배포 무관.
 
 ### ITEM-09 · admin.js 그래프 모듈 분리 (TASK-0012-10 해제)
-- **status**: in-progress   <!-- 2026-07-12: 사용자 승인 blocked 해제. JS 분리 완료·자동검증 GREEN, 브라우저 QA(acceptance a) 사용자 게이트 대기 -->
+- **status**: done   <!-- 2026-07-12 종결: batch1 JS 분리(PR #738 머지+배포) + 브라우저 QA 통과(PB-0008, 에러 0) + batch2 그래프 CSS 분리(graph.css, 실측 8246~8682) + batch3 graph.js 7모듈 세분화(barrel 유지) + what#3 캐시버스터 빌드 주입(inject_asset_stamp.py + deploy-web asset_stamp_verify). 이중 인스턴스화 잠복 버그(HTML ?v=X vs import 무버전)도 해소. 좌표 정본 graph/MAPPING.md v2. core/ctxmenu 내부 추가 세분화는 충돌 실측 시 재검토(C-12 동형 트리거). -->
 - **note(2026-07-12 착수)**: 사용자 명시 승인으로 blocked 해제. §18.8 이해 5-lens workflow(admin.js census·충돌·routers map·웹리서치·정책) → 그래프 블록 admin.js 3618~9024(5,407줄·141함수)를 static/graph/graph.js 로 pure mechanical move. admin.js 17,923→12,520(-5,407, acceptance b ≥3,000 충족). 경계: import surface(adminState/apiFetch/can/showToast/_metaSubmitForm + window.G6 bridge)·export surface(_metaShowGraph/_metaGraphLoadRoots/_metaRoleLegendTips/_metaGraph)·admin.js type=module+mermaid bridge·순환 import(ES live-binding, 런타임 core 사용 안전). 자동검증 GREEN: node --check·정적분석 undefined 0(census 놓친 _metaSubmitForm 포착). window 노출 0+bare 전역 mermaid/G6 bridge 로 type=module 안전. graph/MAPPING.md(외부 브랜치 hunk 재적용, edge-opacity 구체지침). 충돌: edge-opacity·graph-simcombo 는 임의 처분 안 함 — pure-move+MAPPING 재적용. 잔여 후속 batch: (1)브라우저 QA(PB-0008 실 Windows 로드·클릭·우클릭·드래그·줌·검색·패널)=acceptance a/c 완료게이트·사용자환경(Chrome+admin) (2)styles.css 8142~8681 그래프 CSS→graph/graph.css(scope-select 공유 유지) (3)graph.js 8모듈 세분화. 머지게이트: 브라우저 QA 통과 필수.
 - **status(이전)**: blocked
 - **note**: 2026-07-11 착수 윈도우 게이트 FAIL(§6.3-3 — 진짜 이슈): 기계 판정 결과 그래프 구간
@@ -674,11 +674,13 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 11 (ITEM-01·02·04·05·08·03·06·07·12·10·**11**) · blocked 1 (ITEM-09)
-- **ITEM-11 완료(2026-07-12)**: DEFER 핸들러 DI-rework — 실제 leak 13 DI-rework + keep-inline 정당 37(§18.8 원칙). 인라인 authn 50 전부 분류. feature-0012 = ITEM-10(모듈 -81%)+ITEM-11 완결. 잔여=ITEM-09(blocked).
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → **09=blocked**(그래프 활성 브랜치 — note 참조) → ~~10~~(2026-07-12 완료, p1~p17 -81%·thin-app 실질 857줄) → **11=in-progress**(DEFER 핸들러 DI-rework)
-- ITEM-09 blocked 는 §6.3-3(그래프 구간 활성 브랜치/PR 발견 — edge-opacity 미머지 + simcombo
-  미커밋 diff). 해제되면 드레인 재편입.
+- 총 12 항목 · **done 12 — 완주(2026-07-12)** (ITEM-01·02·04·05·08·03·06·07·12·10·11·**09**)
+- **ITEM-11 완료(2026-07-12)**: DEFER 핸들러 DI-rework — 실제 leak 13 DI-rework + keep-inline 정당 37(§18.8 원칙). 인라인 authn 50 전부 분류. feature-0012 = ITEM-10(모듈 -81%)+ITEM-11 완결.
+- **ITEM-09 종결(2026-07-12)**: batch1 JS 분리(PR #738 머지·배포·PB-0008 QA 통과) + batch2 그래프 CSS 분리 + batch3 7모듈 세분화 + what#3 캐시버스터 빌드 주입(§13.1 1순위 구현). per-item status(상단 §4) 참조.
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → ~~10~~(2026-07-12 완료, p1~p17 -81%·thin-app 실질 857줄) → ~~11~~(2026-07-12 완료) → ~~09~~(2026-07-12 완료 — blocked 해제 후 batch1~3+what#3 종결)
+- (해소) ITEM-09 의 §6.3-3 blocked(edge-opacity 미머지 + simcombo 미커밋 diff)는 2026-07-12
+  사용자 승인으로 해제 — 두 흐름은 임의 처분 없이 patch 보존(artifacts/worktree-triage/) +
+  graph/MAPPING.md v2 재적용 경로로 대체(처분은 사용자 판단 대기).
 - ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —
   §6.1 deploy-backed 완료. (첫 deploy-web preflight 1회 일시 실패 후 재시도 성공 — 원인
   미재현 transient, config 재현 검사는 정상.)
