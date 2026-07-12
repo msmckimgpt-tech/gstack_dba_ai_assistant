@@ -6,7 +6,7 @@ edit_policy: rewrite
 source_of_truth: true
 ---
 
-<!-- freshness: feature-0012 web-router-modularization 완결 (PR #736) · HEAD 50a4ccdc · 2026-07-12 -->
+<!-- freshness: feature-0012 완결(PR #736) + ITEM-09 static/graph 편입 · HEAD 41170197 · 2026-07-13 -->
 
 # Codebase Map
 
