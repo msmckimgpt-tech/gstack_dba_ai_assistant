@@ -685,11 +685,20 @@ feature 단위)을 쓰되, 사전 승인이 아니라 **완료 판정 기준(§1
   driver(`.gitattributes` 의 path 한정 `merge=<driver>`)를 둔다. **전체 파일 `merge=union`
   은 금지** — 진짜 충돌(다른 코드 변경)에 양쪽 라인을 모두 남겨 중복을 만든다.
   (timestamp+branch(v3.32.0)·감지-후-재번호(v3.25.0)와 동일 계열의 공유-라인 충돌 회피.)
+  **1순위 구현 완료(2026-07-12, ITEM-09 what#3)**: web 정적 자산의 `?v=` 는 소스에서
+  `?v=dev` placeholder 고정이며 이미지 빌드가 `scripts/inject_asset_stamp.py`(static 트리
+  content-hash, vendor pin 보존)로 주입, `bin/deploy-web.sh` 의 `asset_stamp_verify` 가
+  placeholder 잔존(주입 누락)을 하드 차단한다. **ES module import specifier 도 스탬프
+  대상**(HTML `?v=X` entry 와 무버전 import 가 같은 모듈을 별개 URL 로 이중 인스턴스화하는
+  잠복 버그 방지). 이후 `?v=` 수기 bump 커밋은 금지이자 불필요.
 - **append-only 문서 말미 블록 병합 driver + rerere (2026-07-11 프로젝트 개정,
   ADR-20260711T042631-append-doc-merge-driver — template base 전파 예정)**: path-scoped
   custom merge driver 의 허용 범위를 위 "단일-라인 stamp" 에서 **append-only 문서의 말미
   블록 병합**까지 확대한다 — fragment 전환(근본 해법) 전 과도기 브리지. 조건: ① 대상은
-  append-only 3종(`unit/*/docs/MODIFY.md`·`unit/*/docs/REVIEW.md`·`docs/RELEASE_NOTES.md`)에
+  말미-append 패턴 문서군(`unit/*/docs/MODIFY.md`·`unit/*/docs/REVIEW.md`·`docs/RELEASE_NOTES.md`,
+  2026-07-12 충돌표면 감사 확대분 `unit/*/docs/TASK.md`(rewrite+append 혼합 — 지배 충돌 케이스인
+  사이클 § 말미 append 만 driver 가 흡수, merge-tree 재연 300커밋 실충돌 32건 근거)·
+  `unit/*/docs/DECISIONS.md`·`meta/REVIEW.md`(순수 말미-append 원장인데 기존 패턴 미커버 구멍))에
   `.gitattributes` 로 path-scoped 한정(LEARNINGS.md 는 섹션-내부 삽입 구조라 대상 아님), ② driver
   (`bin/merge-append-doc.sh`)는 **양측이 base 의 끝에 append 만 한 경우**에 한해 `## `
   블록 단위 ours→theirs 연접·dedup 으로 병존시키고, **그 외 전부 `git merge-file` 위임**

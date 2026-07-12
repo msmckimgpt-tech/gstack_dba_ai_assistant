@@ -530,15 +530,18 @@ worker_divergence_warn() {
   return 0
 }
 
-# ── asset 스탬프 WARN (스큐 mitigation 아님 — sticky LB 가 담당) ─────────────────
-asset_stamp_warn() {
+# ── asset 스탬프 검증 (ITEM-09 what#3: 빌드 주입 확인 — §13.1 v3.35.1 1순위) ────
+# 소스는 ?v=dev placeholder 고정(수기 bump 폐지·병렬 충돌 표면 제거), Dockerfile 의
+# inject_asset_stamp.py 가 content-hash 를 주입한다. baked 이미지에 placeholder 가
+# 잔존하면 주입 누락 = 배포 후 캐시 무효화 상실이므로 하드 차단(구 asset_stamp_warn 대체).
+asset_stamp_verify() {  # $1 = sha
   [ "$DRY_RUN" -eq 1 ] && return 0
-  local changed
-  changed="$(git diff --name-only "$BASE_BRANCH"...HEAD -- 'unit/feature-0003-agent-web-ui/src/static/*.js' 'unit/feature-0003-agent-web-ui/src/static/*.css' 2>/dev/null || true)"
-  if [ -n "$changed" ]; then
-    git diff "$BASE_BRANCH"...HEAD -- 'unit/feature-0003-agent-web-ui/src/static/*.html' 2>/dev/null | grep -q '?v=' \
-      || warn "정적 자산이 바뀌었으나 HTML 의 ?v= 스탬프 변경이 안 보임. (스큐 자체는 Caddy sticky cookie LB 가 차단하지만, 캐시 강제무효화에는 스탬프 갱신 권장.)"
+  local leaked
+  leaked="$(docker run --rm --entrypoint grep "$IMAGE_REPO:$1" -rl '?v=dev' /app/web/static 2>/dev/null | head -5 || true)"
+  if [ -n "$leaked" ]; then
+    die "정적 자산 ?v= 스탬프 주입 누락 — baked 이미지에 placeholder(?v=dev) 잔존: $(printf '%s' "$leaked" | tr '\n' ' '). Dockerfile 의 inject_asset_stamp.py RUN 확인. ABORT (스탬프 없이 배포하면 캐시 무효화 상실)."
   fi
+  log "OK — baked 자산 스탬프 주입 확인(?v=dev 잔존 0)."
 }
 
 # ── 메인 흐름 ─────────────────────────────────────────────────────────────────
@@ -584,7 +587,7 @@ main() {
   # (build→migrate→recreate). build 후 migrate 실패 시에도 last-good=이전본 유지(rollback 정합).
   build_image "$TARGET_SHA"
   migrate_phase
-  asset_stamp_warn
+  asset_stamp_verify "$TARGET_SHA"
 
   step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
   # 첫 배포(둘 다 없음)면 둘 다 올림. 아니면 하나씩.

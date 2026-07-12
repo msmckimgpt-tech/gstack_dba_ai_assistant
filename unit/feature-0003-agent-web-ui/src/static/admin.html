@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260710-graph-detail-colsel" />
+  <link rel="stylesheet" href="/static/styles.css?v=dev" />
+  <link rel="stylesheet" href="/static/graph/graph.css?v=dev" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -1038,12 +1039,12 @@
   <!-- feature-0013: mermaid 렌더(window.mermaid, UMD v10.9.3, 오프라인 vendored) + 공용 렌더 헬퍼.
        ux2 #4: 샘플 검수 상세에서 generated_sql 이 다이어그램일 때 sanitized(securityLevel:'strict') 렌더. admin.js 이전 로드. -->
   <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>
-  <script src="/static/mermaid-render.js?v=20260629-mermaid-orphan-fix"></script>
+  <script src="/static/mermaid-render.js?v=dev"></script>
   <!-- 병합: admin.js 는 §57(하이라이트 hl-isolated) + graph-toolbar(툴바 통합·상태 오버레이) 통합본 — cache-buster 는 graph-toolbar 가 최신. -->
-  <script type="module" src="/static/admin.js?v=20260712-item09-graphsplit"></script>
-  <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
+  <script type="module" src="/static/admin.js?v=dev"></script>
+  <script src="/static/textarea-autogrow.js?v=dev"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
-  <script src="/static/release-notes-data.js?v=20260708-rn-0708"></script>
-  <script src="/static/release-notes.js?v=20260618-rn-scope-scroll"></script>
+  <script src="/static/release-notes-data.js?v=dev"></script>
+  <script src="/static/release-notes.js?v=dev"></script>
 </body>
 </html>

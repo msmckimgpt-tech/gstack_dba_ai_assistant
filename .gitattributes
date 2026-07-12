@@ -9,3 +9,10 @@ unit/*/docs/REVIEW.md merge=append-doc
 docs/RELEASE_NOTES.md merge=append-doc
 # docs/LEARNINGS.md 제외(패널 M-3): 고정 Category 4섹션 내부(### LRN-) 삽입 구조라
 # 말미-append 케이스가 성립하지 않음 — driver 혜택 0. default text merge 가 정본 경로.
+# 2026-07-12 확대(충돌표면 감사: merge-tree 재연 300커밋에서 TASK.md 실충돌 32건 — 지배 클래스):
+# TASK.md 는 rewrite+append 혼합이나 driver 는 순수 말미-append 만 자동 병존, 그 외 merge-file
+# 폴백(default 3-way 동일)이라 안전 — 지배 케이스(사이클 § 말미 append)만 흡수.
+# unit DECISIONS.md·meta/REVIEW.md 는 순수 말미-append 원장인데 기존 패턴이 미커버였던 구멍.
+unit/*/docs/TASK.md merge=append-doc
+unit/*/docs/DECISIONS.md merge=append-doc
+meta/REVIEW.md merge=append-doc

@@ -5414,4 +5414,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 
 ## 20260712T0730-item09-graph-split — admin.js 그래프 모듈 분리 (parallel-work-structure ITEM-09)
 - [x] 그래프 블록 admin.js 3618~9024(5,407줄·141함수)를 static/graph/graph.js 로 pure mechanical move. admin.js 17,923→12,520(-5,407, acceptance b ≥3,000 충족). admin.js type=module 전환(window 노출 0+bare 전역 mermaid20/G6 47 bridge 로 안전). import surface(adminState/apiFetch/can/showToast/_metaSubmitForm+window.G6)·export surface(_metaShowGraph/_metaGraphLoadRoots/_metaRoleLegendTips/_metaGraph)·순환 import ES live-binding. 자동검증 GREEN: node --check module 문법·정적분석 undefined 0(census 놓친 _metaSubmitForm 포착). graph/MAPPING.md(외부 브랜치 재적용).
-- [ ] **브라우저 QA(acceptance a/c, PB-0008 실 Windows: 로드·클릭·우클릭·드래그·줌 LOD·검색·패널)** — 사용자 환경(Chrome+admin) 게이트, 머지 전 필수. 잔여 후속: styles.css 그래프 CSS 분리·graph.js 8모듈 세분화.
+- [x] **브라우저 QA(acceptance a/c, PB-0008 실 Windows: 로드·클릭·우클릭·드래그·줌 LOD·검색·패널)** — 2026-07-12 통과(에러 0, test-runs.d/20260712T190500 fragment) → PR #738 머지 + deploy-web 정식 배포(soak 통과). 잔여 후속은 아래 batch23 §.
+
+## 20260712T1905-item09-batch23-stamp — 그래프 CSS/JS 세분화 + 캐시버스터 자동화 (ITEM-09 종결)
+- [x] batch2: styles.css 그래프 밴드 **8246~8682**(census 실측 — 구 계획의 8142 는 비그래프 scope-select 베이스라 정정)→graph/graph.css(437줄, admin.html 전용 link). 공유 예외 2(: .admin-meta-ai-btn 크기 규칙·scope-select 베이스) styles.css 잔류. byte-eq·brace 균형 검증.
+- [x] batch3: graph.js 5,416줄→7 ES 모듈 섹션-연속 분할(state/roleviz/util/rellayout/simgroups/core/ctxmenu)+barrel(공개 4심볼 re-export, admin.js 경로 불변). 의미 클러스터 분할은 27-run 교차 실측으로 기각(순수이동 검증가능성 우선) — core/ctxmenu 내부 세분화는 충돌 실측 시 재검토(C-12 동형). import/export 표면은 census 마스킹 참조 기계 산출(주석-전용 참조 결합 차단), 죽은 _metaSubmitForm import 제거. 검증: node --check 8/8·verbatim 7/7·미해결참조 0.
+- [x] what#3: ?v= 캐시버스터 자동화(§13.1 v3.35.1 1순위) — 소스 ?v=dev placeholder 고정 + scripts/inject_asset_stamp.py(static 트리 content-hash, vendor pin 보존·vendor 내부 우연매치 12건 제외) + Dockerfile RUN + deploy-web asset_stamp_verify 하드게이트. **ES import specifier 도 스탬프** — admin.html(?v=X) vs import(무버전)의 admin.js 이중 인스턴스화 잠복 버그 해소 + 모듈 서브트리 캐시버스터 전파.
+- [x] 브라우저 QA(PB-0008): 렌더 baseline 픽셀 동일·graph.css 적용·스코프/검색/줌/클릭/우클릭 — 콘솔 에러 0 (test-runs.d/20260712T190500-item09-batch23-graph-qa.md).

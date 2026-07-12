@@ -121,3 +121,9 @@ source_of_truth: true
 
 ## CHG-20260712T073000-item09-graph-split (admin.js 그래프 분리)
 - Date: 2026-07-12. admin.js 3618~9024→static/graph/graph.js(pure move, -5,407). type=module+bridge. 자동검증 GREEN. 브라우저 QA 대기.
+
+## CHG-20260712T190500-item09-batch23-stamp (그래프 CSS/JS 세분화 + 캐시버스터 자동화)
+- Date: 2026-07-12. 변경: ① batch2 — styles.css 그래프 밴드(8246~8682, 437줄)→graph/graph.css(공유 2예외 잔류), admin.html link 추가 ② batch3 — graph.js→7모듈+barrel(섹션-연속 pure move, import/export 표면은 census 마스킹 참조로 기계 산출, 죽은 _metaSubmitForm import 제거) ③ what#3 — ?v= 소스 placeholder(?v=dev) 고정 + inject_asset_stamp.py 빌드 주입(content-hash, vendor pin 보존) + deploy-web asset_stamp_verify 하드게이트(구 asset_stamp_warn 대체) + ES import specifier 스탬프(이중 인스턴스화 해소).
+- Files: static/{styles.css,admin.html,index.html,share.html,admin.js}, static/graph/{graph.js,graph-*.js,graph.css,MAPPING.md}, feature-0002 src/{Dockerfile,scripts/inject_asset_stamp.py}, bin/deploy-web.sh, .gitattributes, AGENTS.md §13.1, ROADMAP.
+- Verification: node --check 8/8 · 이동구간 verbatim 7/7 · 미해결참조/ghost-export 0 · CSS byte-eq+brace 0 · inject 멱등(--check=a888c8833eb6) · PB-0008 실브라우저(렌더 픽셀동일·스코프·검색·줌·클릭·우클릭, 콘솔 에러 0).
+- Rollback: 커밋 revert(atomic PR). 배포 실패 시 deploy-web last-good 자동 롤백.

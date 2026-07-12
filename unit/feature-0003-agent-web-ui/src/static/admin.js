@@ -1,5 +1,5 @@
 // feature-0003 ITEM-09 — 그래프 뷰는 graph/graph.js 로 분리(순환 import). type=module 전환.
-import { _metaShowGraph, _metaGraphLoadRoots, _metaRoleLegendTips, _metaGraph } from "./graph/graph.js";
+import { _metaShowGraph, _metaGraphLoadRoots, _metaRoleLegendTips, _metaGraph } from "./graph/graph.js?v=dev";
 const mermaid = window.mermaid;   // UMD 전역 bridge(module scope 의 bare mermaid 참조 보존).
 
 /* =====================================================================
