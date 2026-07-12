@@ -452,7 +452,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **notes**: 배포 무관.
 
 ### ITEM-09 · admin.js 그래프 모듈 분리 (TASK-0012-10 해제)
-- **status**: blocked
+- **status**: in-progress   <!-- 2026-07-12: 사용자 승인 blocked 해제. JS 분리 완료·자동검증 GREEN, 브라우저 QA(acceptance a) 사용자 게이트 대기 -->
+- **note(2026-07-12 착수)**: 사용자 명시 승인으로 blocked 해제. §18.8 이해 5-lens workflow(admin.js census·충돌·routers map·웹리서치·정책) → 그래프 블록 admin.js 3618~9024(5,407줄·141함수)를 static/graph/graph.js 로 pure mechanical move. admin.js 17,923→12,520(-5,407, acceptance b ≥3,000 충족). 경계: import surface(adminState/apiFetch/can/showToast/_metaSubmitForm + window.G6 bridge)·export surface(_metaShowGraph/_metaGraphLoadRoots/_metaRoleLegendTips/_metaGraph)·admin.js type=module+mermaid bridge·순환 import(ES live-binding, 런타임 core 사용 안전). 자동검증 GREEN: node --check·정적분석 undefined 0(census 놓친 _metaSubmitForm 포착). window 노출 0+bare 전역 mermaid/G6 bridge 로 type=module 안전. graph/MAPPING.md(외부 브랜치 hunk 재적용, edge-opacity 구체지침). 충돌: edge-opacity·graph-simcombo 는 임의 처분 안 함 — pure-move+MAPPING 재적용. 잔여 후속 batch: (1)브라우저 QA(PB-0008 실 Windows 로드·클릭·우클릭·드래그·줌·검색·패널)=acceptance a/c 완료게이트·사용자환경(Chrome+admin) (2)styles.css 8142~8681 그래프 CSS→graph/graph.css(scope-select 공유 유지) (3)graph.js 8모듈 세분화. 머지게이트: 브라우저 QA 통과 필수.
+- **status(이전)**: blocked
 - **note**: 2026-07-11 착수 윈도우 게이트 FAIL(§6.3-3 — 진짜 이슈): 기계 판정 결과 그래프 구간
   활성 브랜치 발견 — ① `ai/root/feature-0016-edge-opacity` 미머지·admin.js 그래프 diff(+14),
   마지막 커밋 2026-07-10 15:00(ADR-033 관계선 opacity) ② worktree `feature-0016-graph-simcombo`

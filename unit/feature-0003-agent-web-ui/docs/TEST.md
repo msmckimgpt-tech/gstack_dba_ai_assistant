@@ -2100,3 +2100,4 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 후에만 서빙 자산 실측 가능. win-browser relay 시각검증 가능(PB-0008) → POST-DEPLOY.
 - **POST-DEPLOY win-browser 실 Windows Chrome 검증(T76.3)**: 대형 그래프 줌인 → 노드 선택 → ① 화면 밖 관계 노드로 **관계선 유지**(참조) ② 상세 패널 관계행 클릭 → **화면 밖 대상으로 카메라 팬**(상호작용) ③ 무선택 시 컬링·성능 유지 ④ pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl(`?v=20260710-cullrefkeep` + `_faKeep`/`_clusterHasFocus`) + win-browser 실측 PASS append.
+windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/드래그/줌/검색/패널, 사용자 환경 게이트
