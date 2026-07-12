@@ -344,3 +344,8 @@ source_of_truth: true
 ## 20260712T0610-item11-완료판정 — ITEM-11 done + feature-0012 완결 (parallel-work-structure §5)
 - [x] ITEM-11 완료 확정: DEFER 핸들러 DI-rework — 실제 leak 13개 전부 DI-rework(batch1~13) + keep-inline 정당 37(style 16·txn 5·특수 16, §18.8 원칙). 인라인 authn 50개 전부 명시 분류=acceptance (e). (a)=runtime snapshot·(d)=3렌즈 패널·(b)=ask_result 무변경·(c)=매 batch 게이트 GREEN. ROADMAP §5 done 11·ITEM-11 status done·note·REPORT §9. 라이브 4c203f9c.
 - [x] feature-0012 완결: ITEM-10(모듈 분리 -81%)+ITEM-11(DI-rework). 브라우저 로그인 QA(§7)=자동 검증 다중 GREEN+사용자 환경 게이트(Chrome 기동+admin 자격증명)로 사용자 사인오프 이관. 잔여 initiative=ITEM-09(blocked, 그래프 외부 브랜치).
+
+## 20260712T0700-llm-nav-wiki — LLM 재귀 탐색 위키 + 정책 (parallel-work-structure 후속: AI 작업자 지원)
+- [x] **자동 인덱스**: bin/gen-routemap.py 신설 — routers/*.py AST 스캔으로 docs/ROUTEMAP.md 생성(200 route → router 파일:handler → auth(DI:require_permission/get_current_account/inline-auth/public) → RBAC, INCLUDE_ORDER 순, SSOT=register_all). `--check` = drift 게이트(exit 3). freshness stamp(source_commit).
+- [x] **위키 3종(L0-L3)**: docs/ROUTEMAP.md(L0 INDEX, 자동생성 374줄) · docs/CODE_NAVIGATION.md(L1-L3 재귀 탐색 프로토콜 149줄, matklad codemap+LocAgent hop-budget+aider repo-map 웹 리서치 반영, 실 grep 검증) · docs/CODE_TASKS.md(task→region 카드 7종 318줄, 실앵커 근거). docs/CODEBASE_MAP.md 갱신(stale feature-0011→0012, §4a Web Router Topology 신설).
+- [x] **정책**: AGENTS.md §21.11 Code-Navigation Map 신설(§21.11.1 정본3종 SSOT·.2 4계층 프로토콜·.3 navigation exception(ai_read_priority 상향)·.4 갱신의무 MUST·.5 §13.2 오귀속 정정·.6 router 헤더 docstring 표준). verify-completion check #15(routemap freshness, WARN-only, §21.2 check#12 패턴). 근거: 이해단계 5-lens workflow(admin.js census·충돌분석·routers map·웹 리서치·정책 survey) + 문서생성 4-doc workflow.

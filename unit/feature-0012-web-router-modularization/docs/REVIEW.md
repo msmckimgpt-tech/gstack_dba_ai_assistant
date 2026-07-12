@@ -235,3 +235,6 @@ source_of_truth: true
 
 ## REV-20260712T061000-item11-done-mark [SKIPPED:doc-only] — ITEM-11 done 마킹
 - Related: CHG-20260712T061000-item11-완료판정. 승인: ROADMAP §6.1. acceptance a/d/e 자동 검증 GREEN 근거. 코드 무변경. 브라우저 QA 사용자 게이트 명시.
+
+## REV-20260712T070000-llm-nav-wiki [AGENT-TEAM:SHIP] — LLM 탐색 위키 + 정책
+- Related: CHG-20260712T070000-llm-nav-wiki. 승인: ROADMAP §6.1. 이해 5-lens + 생성 4-doc workflow(agents 9, 0 error). 웹 리서치 근거(matklad·aider·LocAgent·humanlayer 출처). gen-routemap 자동생성 SSOT=INCLUDE_ORDER(drift 차단). agent draft 버그 2건 교정(check#15 gen-routemap 존재판정 역전·router 헤더 §변환). ship-blocking 0.

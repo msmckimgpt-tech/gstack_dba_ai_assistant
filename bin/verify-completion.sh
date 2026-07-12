@@ -1162,6 +1162,36 @@ check_12_wiki_feature_card() {
 # escape: 브리지 setup 불가(공용 CI 등)로 미수행 시 TEST.md 에 'Windows-browser' 맥락으로
 #   사유(미수행/skip/BLOCKED/불가)를 기록하면 통과(카고컬트 방지 — 사유 명시 요구).
 #   긴급 우회: env GSTACK_SKIP_VISUAL_VERIFICATION=1 또는 --skip-visual-verification.
+# Check #15: ROUTEMAP freshness (AGENTS.md §21.11.4, WARN-only) — 구조 리팩터 시 code-map 갱신 의무.
+check_15_routemap_freshness() {
+  local mode="${1:-pre-commit}"
+  git rev-parse --git-dir >/dev/null 2>&1 || { log_check 15 WARN "routemap freshness" "SKIP (not a git work tree)"; return 0; }
+  local repo_root; repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || { log_check 15 WARN "routemap freshness" "SKIP (no repo root)"; return 0; }
+  [ -f "$repo_root/bin/gen-routemap.py" ] || { log_check 15 PASS "routemap freshness" "(gen-routemap.py 미도입 — skip)"; return 0; }
+  local routers_re='unit/feature-0003-agent-web-ui/src/routers/.*\.py$'
+  local src_re='unit/feature-0003-agent-web-ui/src/[^/]+\.py$'
+  local struct new_src touched
+  case "$mode" in
+    pre-commit|shared-pre-commit)
+      struct=$(git diff --cached --diff-filter=ADR --name-only 2>/dev/null | grep -E "$routers_re" || true)
+      new_src=$(git diff --cached --diff-filter=A  --name-only 2>/dev/null | grep -E "$src_re" || true)
+      touched=$(git diff --cached --name-only        2>/dev/null | grep -E "$routers_re" || true) ;;
+    post-commit)
+      struct=$(git diff HEAD~1 HEAD --diff-filter=ADR --name-only 2>/dev/null | grep -E "$routers_re" || true)
+      new_src=$(git diff HEAD~1 HEAD --diff-filter=A  --name-only 2>/dev/null | grep -E "$src_re" || true)
+      touched=$(git diff HEAD~1 HEAD --name-only        2>/dev/null | grep -E "$routers_re" || true) ;;
+    *) log_check 15 WARN "routemap freshness" "SKIP (unknown mode: $mode)"; return 0 ;;
+  esac
+  if [ -z "$struct" ] && [ -z "$new_src" ] && [ -z "$touched" ]; then
+    log_check 15 PASS "routemap freshness" "(no router/src structural change in diff)"; return 0
+  fi
+  if python3 "$repo_root/bin/gen-routemap.py" --check >/dev/null 2>&1; then
+    log_check 15 PASS "routemap freshness" "(ROUTEMAP.md up-to-date)"; return 0
+  fi
+  log_check 15 WARN "routemap freshness" "AGENTS.md §21.11.4: routers/ 또는 src/*.py 구조 변경인데 docs/ROUTEMAP.md 미갱신(gen-routemap --check STALE). 재생성: python3 bin/gen-routemap.py 후 stage. WARN-only(PR block 아님)."
+  return 0
+}
+
 check_13_visual_verification() {
   local mode="${1:-pre-commit}" fdir="${2:-}"
 
@@ -1380,6 +1410,7 @@ main() {
   check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
   # Check #12 (v3.12.0+): wiki feature card companion — WARN-only, failed 영향 X.
   check_12_wiki_feature_card "$effective_mode" || true
+  check_15_routemap_freshness "$effective_mode" || true
 
   if [ "$failed" -eq 0 ]; then
     printf '\nverify-completion: PASS (gate checks + worktree binding + repo immutability + visual-verification #13; #12 wiki WARN-only)\n' >&2

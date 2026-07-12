@@ -2836,6 +2836,89 @@ consumer 가 wiki/ 안의 노트를 자체 작성한 경우 template upgrade 시
 
 ---
 
+### §21.11 Code-Navigation Map (LLM 재귀 탐색 정본, feature-0012 P5b Final)
+
+feature-0012 P5b Final 에서 라이브 웹 진입점 `unit/feature-0003-agent-web-ui/src/app.py` 가 **19,650 → 3,722 줄(-81%)** 로 축소되고, 200 route 의 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 의 **28개 파일**(23 route-module @router + 5 underscore-접두 공유모듈: `_audit_infra`·`_bootstrap_schema`·`_conv_store`·`_prompt_context`·`__init__`)로 추출되었다. 모놀리스 grep 이 통하던 시절과 달리, 이제 "무엇을 어디서 바꾸나" 는 **다파일 재귀 탐색** 문제다. 본 §은 그 탐색의 정본 인덱스 3종과 프로토콜을 정의한다.
+
+본 §은 §21.1 layer 표의 **AI context 행(`repo/docs/*.md` = 정본)** 을 navigation 용도로 확장한다 — wiki layer(mirror, `source_of_truth:false`, 통상 `ai_read_priority` 7~9)와 **다른 계층**이다. Code-Navigation Map 은 mirror 가 아니라 **정본이며 navigation-first(조기 읽기 대상)** 다.
+
+#### §21.11.1 정본 3종 (SSOT 선언)
+
+| 문서 | doc_type | 생성 방식 | 역할 (탐색 계층) | SSOT |
+|---|---|---|---|---|
+| [`docs/ROUTEMAP.md`](docs/ROUTEMAP.md) | ROUTEMAP | **자동 생성** `python3 bin/gen-routemap.py` (수기 편집 금지 — 상단 마커) | **L0 INDEX**: route(method+path) → `routers/파일:handler` → auth(`DI:require_permission`\|`DI:get_current_account`\|`DI:get_optional_account`\|`inline-auth`\|`public/none`) → RBAC 권한. INCLUDE_ORDER 순. | 생성기 SSOT = `routers/__init__.register_all` 의 INCLUDE_ORDER + `@router` 데코레이터 정적 AST 스캔. |
+| [`docs/CODE_NAVIGATION.md`](docs/CODE_NAVIGATION.md) | CODE_NAVIGATION | 사람/AI 유지 (rewrite) | **L1~L3 프로토콜**: 모듈 purpose·endpoints·imports·callees(L1) / handler signature+docstring(L2) / down=callees·up=callers via grep(L3) 의 재귀 탐색 규약. | 이 문서 자체(L0-L3 서사의 정본). |
+| [`docs/CODE_TASKS.md`](docs/CODE_TASKS.md) | CODE_TASKS | 사람/AI 유지 (rewrite) | **작업 카드**: Match keywords / Entry region / Reference regions / Recurse via(리터럴 grep) / Invariants / Verify. | 이 문서 자체(작업 진입 레시피의 정본). |
+
+**규약 인덱스**(코드 자체가 정본 — 문서는 포인터): (1) `app.X` 동적 참조(라우터/공유모듈은 `import app` 후 호출 시점 `app.X` 속성 접근 — `from app import` 금지; monkeypatch·DI override 관통), (2) app.py 꼬리 rebind(L3181~3722, `from routers.X import _foo` = 심볼→소유 라우터 역인덱스), (3) `register_all`+INCLUDE_ORDER(non-underscore·`router` 보유 모듈 자동 발견, `(INCLUDE_ORDER, name)` 순 include; 신규 라우터 = `router` 심볼 파일 추가만), (4) DI seam(app 잔류 정본: `get_conn` fail-soft None yield·`get_current_account` 500/401·`require_permission` 정적 AND-게이트), (5) `web_context` 단방향 추출(leaf helper → `src/web_context.py`), (6) keep-in-app 패치 단일점(`record_audit_event`·`_connect_memory`·`_account_can_access_conversation` 는 app 잔류).
+
+#### §21.11.2 4계층 재귀 탐색 프로토콜
+
+AI 는 라이브 웹 코드를 바꿀 때 grep-first 대신 다음 계층을 순서대로 내려간다(각 계층은 다음 계층의 진입점만 주고 멈춘다 — hop budget 절약):
+
+1. **L0 INDEX** — 바꾸려는 route/기능의 `method+path`(또는 도메인 키워드)를 `docs/ROUTEMAP.md` 에서 찾아 → **`routers/파일:handler`** 로 직행. auth 열이 권한 게이트를 선고지(RBAC 오분류 방지).
+2. **L1 MODULE** — 해당 `routers/<mod>.py` 헤더 docstring(담당 도메인·URL prefix·RBAC 스코프·INCLUDE_ORDER·cross-cut·관련 문서 — CONVENTIONS §13 표준)으로 모듈 범위·의존을 파악.
+3. **L2 SYMBOL** — handler signature + docstring 으로 계약 확인. `app.X` 참조 심볼은 app.py 정본에 있음(DI seam / keep-in-app 헬퍼).
+4. **L3 TRAVERSE** — down(callees): 핸들러가 부르는 `app._foo`/`web_context`/`shared.*` 를 따라감. up(callers): `grep -rn '<symbol>'` 로 역참조(꼬리 rebind 블록이 이동 심볼의 소유 라우터 역인덱스를 제공).
+
+작업 진입 시 `docs/CODE_TASKS.md` 의 카드가 위 L0→L3 를 특정 변경 유형별로 미리 밟아 둔 레시피를 제공한다.
+
+#### §21.11.3 Navigation exception (§21.1 예외 · 조기 읽기)
+
+- **정본 귀속**: 정본 3종은 `repo/docs/` 의 **AI context 정본**(§21.1 layer 표 4행)이다. wiki layer 의 mirror 규칙(복제·priority 7~9·`source_of_truth:false`)이 **적용되지 않는다**. `docs/ROUTEMAP.md` 는 auto-generated(edit_policy: generated)이되 정본이며, `CODE_NAVIGATION.md`·`CODE_TASKS.md` 는 rewrite 정본이다.
+- **조기 읽기**: 라이브 웹(feature-0003) 또는 route/handler/RBAC 를 건드리는 작업은 §10.2 참조 읽기에 3종을 포함하고, `ai_read_priority` 를 상향(제안: ROUTEMAP=4·CODE_NAVIGATION=4·CODE_TASKS=5 — `docs/CODEBASE_MAP.md`·`ARCHITECTURE.md` 계열의 조기 진입 대역)해 DOC_REGISTRY 에 등재한다. grep-first 대신 L0 진입이 기본이다.
+
+#### §21.11.4 갱신 의무 (구조 리팩터 시 MUST)
+
+routers/ 파일을 **추가·분할·이동·삭제** 하거나 `unit/feature-0003-agent-web-ui/src/*.py` 를 신설/이동하는 등 **구조 리팩터**를 한 cycle 은 같은 cycle 안에서:
+
+1. `python3 bin/gen-routemap.py` 재실행 → `docs/ROUTEMAP.md` 재생성·stage (idempotent; freshness stamp = source_commit).
+2. `docs/CODEBASE_MAP.md`(§10.2 파일 탐색 정본) 갱신 — 신규 모듈/디렉토리 반영.
+3. 도메인 경계·L1~L3 서사가 바뀌었으면 `docs/CODE_NAVIGATION.md`·`docs/CODE_TASKS.md` 동반 갱신.
+
+자동 검증: `bin/verify-completion.sh` check #15(routemap freshness, WARN-only — §21.11.4)가 routers/ 파일 수 변경 또는 신규 src/*.py 를 감지했는데 `gen-routemap.py --check` 가 STALE(exit 3)이면 stderr WARN(§21.4 staged rollout 과 동형 — v3.x MUST 격상 후보). 순수 route 본문 편집(파일 수 불변)도 route 데코레이터가 바뀌었으면 재생성 대상이다.
+
+#### §21.11.5 hot_paths(§13.2.5-A)와의 관계 — 오귀속 정정
+
+- Code-Navigation Map(본 §)은 **읽기·구조 탐색**의 정본이고, §13.2.5-A REGISTRY `hot_paths:`/`merge_order:` 는 **쓰기·in-flight 충돌 회피**(휘발성, 세션 활성 동안만 유효)다. 둘은 목적이 다르다: 전자는 "어디를 바꾸나"(안정 인덱스), 후자는 "지금 누가 그 핫스팟을 잡고 있나"(순간 상태). routers/ 대량 분할처럼 핫스팟을 넓게 건드리는 작업은 착수 시 §13.2.5-A hot_paths 로 동시성을 조율하고, 완료 시 본 §21.11.4 로 인덱스를 재생성한다.
+- **오귀속 주의**: Code-Navigation Map·Obsidian Wiki 는 **문서 계층 거버넌스(§21)** 소속이며, `docs/WIKI.md` 가 wiki 운용 정본이다. **§13.2(작업 격리/worktree)** 소속이 아니다 — §13.2 는 병렬 편집 격리·hot_paths·머지 mutex 만 다룬다. 탐색 인덱스의 위치·갱신 의무를 §13.2 에서 찾지 말 것.
+
+#### §21.11.6 Router 모듈 헤더 docstring 표준 (LLM L1 탐색 seam)
+
+`unit/feature-0003-agent-web-ui/src/routers/<domain>.py` 의 각 route-module 은 **모듈 최상단 docstring** 과 **`INCLUDE_ORDER` 상수 주석** 을 아래 고정 순서로 작성한다. 이 헤더는 AGENTS.md §21.11 재귀 탐색의 **L1 MODULE 진입면**이며, `bin/gen-routemap.py` 가 **docstring 첫 줄을 도메인 purpose 로 정적 추출**하므로 형식이 계약이다.
+
+**고정 순서(4 요소)**:
+
+1. **담당 도메인** — docstring **첫 줄**에 `<도메인> 도메인 APIRouter (범위 요약)` 1줄. gen-routemap 이 이 줄만 뽑아 ROUTEMAP 색인·섹션 캡션으로 쓰므로 **첫 줄 단독 완결**(줄바꿈 앞에서 문장 완성, 링크·다중문장 금지).
+2. **URL prefix / RBAC 스코프 / INCLUDE_ORDER 값·근거** — 2번째 문단. 이 라우터가 소유하는 경로 접두(있으면), 지배적 RBAC 권한 스코프(예 `kb.ingest.manual`), 그리고 `INCLUDE_ORDER` 값과 그 순서를 고정한 근거. `INCLUDE_ORDER` 자체는 모듈 상수로 두고 인라인 주석에 "순서 변경 금지" guard 를 남긴다.
+3. **cross-cut feature-id** — 도메인이 여러 feature 에 걸치면(예 group-conversation=feature-0009) 소유 feature-id 를 명시. 추출 규약(‘app.X 동적참조’·‘꼬리 rebind’·‘include_router 맨끝’ 등 비자명 불변식)도 여기 1줄.
+4. **관련 문서 링크** — `docs/ROUTEMAP.md`(해당 섹션)·`docs/CODE_NAVIGATION.md`·필요 시 소유 feature `docs/ANCHOR.md` 포인터.
+
+**규칙**: 첫 줄 = 도메인 요약(MUST, gen-routemap 계약). docstring 은 코드가 정본인 규약을 **재서술하지 말고 포인터**로(SSOT §21.11.1). `INCLUDE_ORDER` 미지정 시 register_all 이 맨 뒤(파일명 순) 배치 — 순서 의존 라우터는 반드시 상수 지정.
+
+**예시 — `routers/admin_metadata.py`**:
+
+```python
+"""admin/metadata 도메인 APIRouter (메타데이터 거버넌스: 용어사전/ENUM/테이블·컬럼 설명/샘플/그래프/부트스트랩/AI 자동완성).
+
+URL: /api/admin/metadata/* (40 route). RBAC 지배 스코프: require_permission
+kb.ingest.manual / kb.glossary.curate / kb.sample.curate (DI 전환 33 핸들러) +
+이연 1(admin_metadata_suggest — 동적 perm + pre-auth 404 gate, inline-auth 유지).
+INCLUDE_ORDER=120 — 2026-07-10 현행 include 순서 스냅샷(ITEM-05, 순서 변경 금지).
+
+소유 feature: feature-0012 P5b Final(라우터 추출). 추출 규약: `import app`+`app.X`
+동적참조(_metadata_* 헬퍼/상수 + DI seam → monkeypatch·override 보존), 순환 안전
+(맨 끝 register_all include), 경로/메서드/응답 byte-동치.
+관련 문서: docs/ROUTEMAP.md#routersadmin_metadatapy · docs/CODE_NAVIGATION.md (L1~L3).
+"""
+from __future__ import annotations
+# ... (handler-사용 stdlib 명시 import) ...
+import app
+
+INCLUDE_ORDER = 120  # 등록 순서 고정 — 현행 include 순서 스냅샷(ITEM-05, 순서 변경 금지)
+router = APIRouter()
+```
+
 ## §22. Claude Code 운영 확장 패턴
 
 ### §22.1 PreCompact Hook — 컨텍스트 압축 정책 제어

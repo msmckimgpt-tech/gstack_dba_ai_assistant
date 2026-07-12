@@ -6,10 +6,21 @@ edit_policy: rewrite
 source_of_truth: true
 ---
 
+<!-- freshness: feature-0012 web-router-modularization 완결 (PR #736) · HEAD 50a4ccdc · 2026-07-12 -->
+
 # Codebase Map
 
 저장소의 파일 구조와 주요 진입점을 AI가 빠르게 참조할 수 있도록 요약한다.
 기능 추가/삭제, 파일 구조 변경 시 갱신한다.
+
+> **Freshness**: feature-0012 (web-router-modularization) 완결 반영 — `app.py` 19,650→3,722줄(-81%),
+> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 28개 파일로 추출됨. (HEAD `50a4ccdc`, 2026-07-12)
+
+> **AI 탐색 진입점 (재귀 4계층)**: 바꾸려는 것이 route/handler 라면 아래 순서로 좁혀 내려간다.
+> **L0 INDEX** → [`docs/ROUTEMAP.md`](ROUTEMAP.md) (method+path → **router 파일:handler** → auth → RBAC 권한; 자동 생성 정본, 200 route). ·
+> **L1~L3 MODULE/SYMBOL/TRAVERSE** → `docs/CODE_NAVIGATION.md` (모듈 purpose·endpoints·imports·callees, handler signature, down=callees/up=callers grep). ·
+> **TASK 카드** → `docs/CODE_TASKS.md` (Match keywords / Entry region / Reference regions / Recurse-via literal grep / Invariants / Verify).
+> 이 CODEBASE_MAP 은 그 위의 L−1 (파일·1줄 책임·링크) 지도다 — route 표는 여기서 복제하지 않고 ROUTEMAP 으로 위임한다.
 
 ## 1. Directory Tree
 
@@ -24,10 +35,13 @@ repo/
 ├── docker-compose.yml      # 서비스 오케스트레이션
 ├── .env / .env.example     # 런타임 환경변수
 ├── .aiignore               # AI 컨텍스트 제외 패턴
+├── bin/                     # 저장소 수준 도구
+│   └── gen-routemap.py     # ROUTEMAP.md 자동 생성기 (register_all INCLUDE_ORDER + @router 정적 스캔; `--check` drift 검사)
 ├── docs/                   # 프로젝트 수준 문서
 │   ├── AGENTS.md(상위)·CONVENTIONS·DECISIONS·PROJECT·SECURITY·STATUS
 │   ├── ARCHITECTURE.md
 │   ├── LEARNINGS.md
+│   ├── ROUTEMAP.md         # route → router:handler → auth 인덱스 (L0, 자동 생성)
 │   └── CODEBASE_MAP.md     # 이 문서
 ├── playbooks/              # PB-0001 ~ PB-0006, PB-0008
 ├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유): __init__·model_catalog·config·db·conn_health·datasources (feature-0011 추출)
@@ -37,6 +51,13 @@ repo/
     ├── feature-0001-platform-runtime/
     ├── feature-0002-agent-core/
     ├── feature-0003-agent-web-ui/
+    │   └── src/
+    │       ├── app.py           # 3,722줄 (feature-0012 후 -81%) — DI seam·인증보조·audit·보안게이트·lifecycle·FastAPI app·config·rebind·register_all 만 잔류
+    │       ├── web_context.py   # leaf helper (app-internal 의존 0인 순수 컨텍스트 조각, 단방향 추출)
+    │       └── routers/         # 도메인 APIRouter 패키지 — 28 파일 (§4a 참조)
+    │           ├── __init__.py            # register_all(app): non-`_`·router 보유 모듈 자동발견 → (INCLUDE_ORDER,name)순 include
+    │           ├── <23 route-module>.py   # 각 파일이 `router = APIRouter()` + `@router` 핸들러 보유 (도메인별)
+    │           └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_conv_store·_prompt_context (register_all 제외)
     ├── feature-0004-browser-automation/
     ├── feature-0005-qa-mcp/
     ├── feature-0006-lan-proxy-access/
@@ -44,7 +65,14 @@ repo/
     ├── feature-0008-windows-browser-testing/
     ├── feature-0009-group-conversation/
     ├── feature-0010-google-drive-integration/
-    └── feature-0011-shared-extraction/
+    ├── feature-0011-shared-extraction/
+    ├── feature-0012-web-router-modularization/   # app.py → routers/ 분할 리팩터 (본 갱신의 출처)
+    ├── feature-0013-relationship-diagrams/
+    ├── feature-0014-zero-downtime-deploy/
+    ├── feature-0015-zd-hygiene-backup/
+    ├── feature-0016-metadata-graph/
+    ├── feature-0016-zd-pg-pause-caddy/
+    └── feature-0017-deploy-build-gate/
 ```
 
 ## 2. Key Entry Points
@@ -58,6 +86,8 @@ repo/
 | `AGENTS.md` | AI 운영 정책 정본 | 섹션 §1~§17 + Part A~G 구조 |
 | `MCP_DESIGN.md` | MCP 서비스 설계 | `feature-0005-qa-mcp`와 연동되는 설계 참고 |
 | `README.md` | 사람용 개요 | 구조와 시작 절차 |
+| `unit/feature-0003-agent-web-ui/src/app.py` | Web API 조립 루트 (FastAPI) | DI seam·인증·audit·lifecycle 만 잔류; route 핸들러는 `routers/` 로 이동 (§4a) |
+| `docs/ROUTEMAP.md` | route 인덱스 (L0) | 어떤 route 가 어느 router 파일:handler 인지 — AI 탐색 첫 관문 |
 
 ## 3. Shared Module Index
 
@@ -76,6 +106,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `shared/datasources.py` | datasource 레지스트리 (DB+`.env` 병합, 자격증명 복호) | feature-0002·0003 (cred_crypto back-dep — 아직 modules/) |
 
 > 아직 추출되지 않은 cross-feature 공통 후보(cred_crypto·memory·llm 등)는 feature-0002 `modules/` 에 잔존(후속 step). 신규 공용 모듈 추가는 PB-0002 참조.
+> **web_context.py 는 shared/ 아님** — feature-0003 web 전용 leaf helper 다 (§4a). 여러 feature 가 아닌 web-ui 내부만 소비한다.
 
 ## 4. Feature File Index
 
@@ -83,18 +114,61 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 |---------|------|-----------|
 | `feature-0001-platform-runtime` | 플랫폼 런타임/공통 자산 | (scaffold — `src/README.md`, `tests/README.md`) |
 | `feature-0002-agent-core` | Agent 핵심 로직 | `src/agent_core.py` (라이브 진입점 = in-process tool-calling 루프), `src/modules/*` (config/llm/knowledge/sql_ops 등), `tests/test_llm_api.py` |
-| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` |
+| `feature-0003-agent-web-ui` | Agent Web UI | `src/app.py` (3,722줄 조립 루트) + `src/routers/*` (28 파일, 도메인별 APIRouter) + `src/web_context.py` (leaf helper). route 인덱스 → [`docs/ROUTEMAP.md`](ROUTEMAP.md). 상세 → §4a |
 | `feature-0004-browser-automation` | 브라우저 자동화 | `src/app.py`, `src/ctl.py` |
 | `feature-0005-qa-mcp` | QA 및 MCP 테스트 | `src/mcp_tests.py` |
 | `feature-0006-lan-proxy-access` | LAN/프록시 접근 | (scaffold — `src/README.md`, `tests/README.md`) |
 | `feature-0007-bedrock-llm-provider` | AWS Bedrock(Seoul `ap-northeast-2`) LLM provider 통합 — 사용자별 API Vault 폐기(ADR-0022) | litellm gateway 구성(`src/config/litellm_config.yaml`), `.env.bedrock` |
 | `feature-0008-windows-browser-testing` | 실제 Windows 브라우저(CDP) 자동 구동 검증 워크플로 + Playwright MCP (PB-0008, 웹/UI 완료 게이트) | `bin/win-browser.py`, `bin/playwright-mcp.sh`, `.mcp.json` |
-| `feature-0009-group-conversation` | 그룹 대화(멤버 roster·보관 이동·나가기·공유 참여 owner 게이트·kick/ban) — **cross-cut** | 코드 거주: feature-0002(`modules/group_members`)·feature-0003(`src/app.py`) |
-| `feature-0010-google-drive-integration` | 계정별 Google Drive 연동 토대(OAuth 토큰 암호화 + MCP seam) — 연동 미수행/비활성 scaffold | `src/gdrive_mcp_seam.py` (feature-0002 `modules/cred_crypto` 의존) |
+| `feature-0009-group-conversation` | 그룹 대화(멤버 roster·보관 이동·나가기·공유 참여 owner 게이트·kick/ban) — **cross-cut** | 코드 거주: feature-0002(`modules/group_members`)·feature-0003(`src/routers/conversations.py`) |
+| `feature-0010-google-drive-integration` | 계정별 Google Drive 연동 토대(OAuth 토큰 암호화 + MCP seam) — 연동 미수행/비활성 scaffold | `src/gdrive_mcp_seam.py` (feature-0002 `modules/cred_crypto` 의존), web 노출 → `src/routers/integrations.py` |
 | `feature-0011-shared-extraction` | 공통 모듈 `shared/` 점진 추출 리팩터(P5a Step 1~5 완료 — model_catalog·config·db·conn_health·datasources, 4 alias shim 제거) | `shared/*` + feature-0002·0003 import 재배선 (§3 참조) |
+| `feature-0012-web-router-modularization` | **web `app.py` 모놀리스 → 도메인 APIRouter 분할** (P5b Final; app.py 19,650→3,722줄 -81%, 핸들러 전량 `routers/` 28 파일로 추출) | `unit/feature-0003-agent-web-ui/src/routers/*` + `web_context.py`, `docs/ROUTEMAP.md`, `bin/gen-routemap.py`. 상세 → §4a |
+| `feature-0013-relationship-diagrams` | 관계 다이어그램 | (feature dir — `docs/`·`src/`) |
+| `feature-0014-zero-downtime-deploy` | 무중단 배포 | (feature dir) |
+| `feature-0015-zd-hygiene-backup` | 무중단 위생/백업 | (feature dir) |
+| `feature-0016-metadata-graph` / `feature-0016-zd-pg-pause-caddy` | 메타데이터 그래프 · PG-pause/Caddy 무중단 | (feature dir 2개) |
+| `feature-0017-deploy-build-gate` | 배포 빌드 게이트 | (feature dir) |
 | `_template` | 신규 feature 템플릿 | `docs/AGENTS.md`, `docs/TASK.md`, `docs/FUNCTION.md`, `docs/REPORT.md`, 등 |
 
 각 feature는 `docs/`(AGENTS, FUNCTION, TASK, TEST, REPORT, MODIFY, REVIEW), `src/`, `tests/` 구조를 따른다.
+
+## 4a. Web Router Topology (feature-0012)
+
+feature-0012 는 `unit/feature-0003-agent-web-ui/src/app.py` 모놀리스(19,650줄)를 도메인 APIRouter 로 분할했다.
+결과 계층은 **app.py (조립 루트) → routers/*.py (도메인) → web_context.py (leaf) → 공유 헬퍼**다.
+route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTEMAP.md`](ROUTEMAP.md) 가 정본**이며 여기서 200행 표를 복제하지 않는다.
+
+### 계층별 책임
+
+| 계층 | 파일 | 책임 (1줄) |
+|------|------|-----------|
+| 조립 루트 | `src/app.py` (3,722줄) | DI seam(`get_conn`/`get_current_account`/`require_permission`)·인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)·audit(`record_audit_event`, setattr 패치-단일점)·보안게이트(`_ssrf_check_host`/`_enforce_audit_prod_gate`)·lifecycle(`@app.on_event` startup/shutdown)·FastAPI app+미들웨어·config 상수·꼬리 rebind 블록·`register_all(app)` |
+| 도메인 router (23) | `src/routers/<domain>.py` | 각 파일이 `router = APIRouter()` + `@router.<method>` 핸들러 보유. 도메인 = static_pages·auth·conversations·share·system·profile·integrations·attachments·media·keywords·ai_ops + admin_*(console·usage·conversations·quotas·sample_feedback·metadata·audits·accounts·roles·datasources·products·settings). 정확한 목록·INCLUDE_ORDER → ROUTEMAP.md |
+| leaf helper | `src/web_context.py` (2,281줄) | app-internal 의존이 전혀 없는 순수 컨텍스트 조립 조각. **단방향 추출**(app→web_context 만, 역참조 없음). routers(auth·share 등)와 app 이 소비 |
+| 공유 헬퍼 (4, `_` 접두) | `src/routers/_audit_infra.py`·`_bootstrap_schema.py`·`_conv_store.py`·`_prompt_context.py` | 라우트 아님 → `register_all` 자동등록 제외(`_` 접두 필터). `_audit_infra`=감사 인프라(단, `record_audit_event` 는 app 잔류)·`_bootstrap_schema`=웹 테이블/시드 부트스트랩·`_conv_store`=대화 저장소(share/conversations 공유)·`_prompt_context`=프롬프트 컨텍스트 조립(admin_roles/admin_products/auth/conversations 4도메인 공유) |
+| 등록기 | `src/routers/__init__.py` | `register_all(app)` — non-`_`·`router` 보유 모듈 자동발견 후 `(INCLUDE_ORDER, name)` 순 include. 신규 라우터 = `router` 심볼 가진 파일 추가만(꼬리 배선 편집 불필요) |
+
+> 파일 수 = 23 route-module + `__init__.py` + 4 `_` 접두 공유헬퍼 = **28 파일** (task 표기 "5 공유모듈" = `__init__` + 4 underscore).
+
+### 배선 규약 (7)
+
+1. **app.X 동적 참조** — 라우터/공유모듈은 `import app` 후 **호출 시점에 `app.X` 속성 접근**한다 (`from app import X` 금지). monkeypatch·DI override 가 관통된다.
+2. **꼬리 rebind** — `app.py` 맨 끝(L3175 `register_all` 호출 직후 ~ L3722)에서 `from routers.X import _foo` 로 **이동된 심볼을 app 네임스페이스에 재부착**한다(67개 import 블록). = 심볼 → 소유 라우터 **역인덱스**로도 읽힌다.
+3. **register_all + INCLUDE_ORDER** — 자동발견·정렬 include (위 등록기 참조).
+4. **DI seam (app 정본 잔류)** — `get_conn`(fail-soft None yield), `get_current_account`(500/401), `require_permission`(정적 AND-게이트) 는 app 에 남는다.
+5. **web_context 단방향 추출** — leaf helper 만 `web_context.py` 로 (§계층별 참조).
+6. **keep-in-app 패치 단일점** — `record_audit_event`(setattr 12×), `_connect_memory`, `_account_can_access_conversation` 는 app 잔류.
+7. **ITEM-11 DI-rework** — 실제 conn leak 핸들러 13개는 account+conn DI 로 전환, 나머지 37개는 keep-inline 정당(style/txn/특수).
+
+### Navigation seams (AI 탐색 진입점)
+
+- **route decorator grep** — `@router.<method>("<literal path>")` 경로 리터럴 grep 으로 handler 직행.
+- **모듈 헤더 docstring** — 각 `routers/<domain>.py` 최상단 docstring 이 도메인+범위 선언.
+- **`routers/__init__.py` INCLUDE_ORDER docstring** — 등록 순서·자동발견 규약.
+- **`app.py` 꼬리 rebind 블록** — 심볼 → 소유 라우터 역인덱스.
+- **문서** — [`docs/ROUTEMAP.md`](ROUTEMAP.md)(L0 route 인덱스), `feature-0003 docs/FUNCTION.md`(함수 카탈로그)·`MODIFY.md`(변경 로그)·`ANCHOR.md`.
+- **골든** — `unit/feature-0003-agent-web-ui/tests/route_snapshot_p5b.json`(205 route parity 스냅샷; 분할 전후 route 표 동치 검증).
 
 ## 5. External Interfaces
 
@@ -110,6 +184,8 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 ## 6. Automation Assets
 
 자동화 워크플로 (`ai-*`, `policy-contract`, `selfhosted-runtime-smoke`, `owner-agent-report`) 와 `automation-contract.json` 은 2026-05-15 폐기되어 더 이상 사용하지 않는다. GitHub 흐름은 일반적인 PR 머지 (`gh pr create` + 사람 리뷰 + `gh pr merge`) 로 일원화한다.
+
+`bin/gen-routemap.py` 는 예외 — `routers/__init__.register_all` INCLUDE_ORDER + `@router` 데코레이터를 정적 스캔해 `docs/ROUTEMAP.md` 를 재생성한다(`--check` 로 drift 검사). route 추가/삭제·이동 후 재실행한다.
 
 ## 7. Known Gaps (미배선 설계 / 의도적 보류)
 
