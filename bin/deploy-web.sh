@@ -537,11 +537,13 @@ worker_divergence_warn() {
 asset_stamp_verify() {  # $1 = sha
   [ "$DRY_RUN" -eq 1 ] && return 0
   local leaked
-  leaked="$(docker run --rm --entrypoint grep "$IMAGE_REPO:$1" -rl '?v=dev' /app/web/static 2>/dev/null | head -5 || true)"
+  # 검증 범위 = 주입 재작성 대상과 동일(*.html/*.js, vendor/ 제외) — 문서(MAPPING.md 등)의
+  # `?v=dev` prose 언급을 잔존으로 오탐하지 않는다(2026-07-12 첫 가동에서 실측된 false-ABORT).
+  leaked="$(docker run --rm --entrypoint grep "$IMAGE_REPO:$1" -rl --include='*.html' --include='*.js' '?v=dev' /app/web/static 2>/dev/null | grep -v '/vendor/' | head -5 || true)"
   if [ -n "$leaked" ]; then
     die "정적 자산 ?v= 스탬프 주입 누락 — baked 이미지에 placeholder(?v=dev) 잔존: $(printf '%s' "$leaked" | tr '\n' ' '). Dockerfile 의 inject_asset_stamp.py RUN 확인. ABORT (스탬프 없이 배포하면 캐시 무효화 상실)."
   fi
-  log "OK — baked 자산 스탬프 주입 확인(?v=dev 잔존 0)."
+  log "OK — baked 자산 스탬프 주입 확인(*.html/*.js 내 ?v=dev 잔존 0)."
 }
 
 # ── 메인 흐름 ─────────────────────────────────────────────────────────────────
