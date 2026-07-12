@@ -260,3 +260,6 @@ source_of_truth: true
 
 ## CHG-20260712T061000-item11-완료판정 (ITEM-11 done + feature-0012 완결)
 - Date: 2026-07-12. 정본 갱신(코드 무변경). ROADMAP §5 done 11·ITEM-11 done·REPORT §9. 브라우저 QA=사용자 사인오프 이관.
+
+## CHG-20260712T070000-llm-nav-wiki (LLM 재귀 탐색 위키 + §21.11 정책)
+- Date: 2026-07-12. bin/gen-routemap.py + docs/{ROUTEMAP,CODE_NAVIGATION,CODE_TASKS}.md + CODEBASE_MAP 갱신 + AGENTS.md §21.11 + verify check #15.
