@@ -114,6 +114,7 @@ feat(feature-0002): agent-core 세션 관리 개선 (#12)
 - 공개 브랜치는 항상 `issue/*`를 사용하고, 내부 `ai/*` 브랜치는 로컬/worktree에서만 사용한다.
 - 이슈에 검증 방법이 없으면 먼저 문서와 로그를 확인해 보완한다.
 - 작업 후 `README.md`, `docs/STATUS.md`, feature 문서가 현실과 어긋나지 않는지 확인한다.
+- **route/handler/RBAC/구조를 바꿨다면** Code-Navigation Map(`docs/ROUTEMAP.md`·`docs/CODE_NAVIGATION.md`·`docs/CODE_TASKS.md`·`docs/CODEBASE_MAP.md`)을 같은 cycle 안에서 재정합한다 — `python3 bin/gen-routemap.py` 재생성 + 참조한 `<file>.py:<sym>` 앵커를 `bin/codenav-lint.sh` 로 resolve 재검증(AGENTS.md §21.11.4·§21.11.7 참조→수정→재정합 순환).
 - `AGENTS.md`의 Git 동기화 절차에 따라 Git 커밋 및 동기화를 수행한다.
   - **항상**: §5 커밋 메시지 규칙에 따라 커밋한다.
   - **공개 동기화 조건 충족 시**: 원격 `issue/*` 브랜치 push 및 PR 생성/갱신까지 수행한다.

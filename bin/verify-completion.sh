@@ -1185,10 +1185,52 @@ check_15_routemap_freshness() {
   if [ -z "$struct" ] && [ -z "$new_src" ] && [ -z "$touched" ]; then
     log_check 15 PASS "routemap freshness" "(no router/src structural change in diff)"; return 0
   fi
+  # companion 게이트(§21.11.4): struct(routers 추가/삭제/rename) 또는 new_src 인데 code-map 3종
+  # (CODEBASE_MAP·CODE_NAVIGATION·CODE_TASKS)이 같은 diff 에 동반 stage 되지 않으면 WARN.
+  # (check #12 feature-card companion 패턴 이식 — 신규 라우터가 ROUTEMAP 만 갱신하고 3문서를
+  #  손대지 않아도 통과하던 gap 을 표면화.)
+  if [ -n "$struct" ] || [ -n "$new_src" ]; then
+    local staged_all companion_missing=""
+    case "$mode" in
+      pre-commit|shared-pre-commit) staged_all=$(git diff --cached --name-only 2>/dev/null) ;;
+      post-commit) staged_all=$(git diff HEAD~1 HEAD --name-only 2>/dev/null) ;;
+    esac
+    local cm
+    for cm in docs/CODEBASE_MAP.md docs/CODE_NAVIGATION.md docs/CODE_TASKS.md; do
+      printf '%s\n' "$staged_all" | grep -qxF "$cm" || companion_missing="$companion_missing $cm"
+    done
+    [ -n "$companion_missing" ] && log_check 15 WARN "routemap companion" "AGENTS.md §21.11.4: routers 구조 변경(struct/new_src)인데 code-map 미동반 stage:$companion_missing — 재정합 후 stage 권장(WARN-only)."
+  fi
   if python3 "$repo_root/bin/gen-routemap.py" --check >/dev/null 2>&1; then
     log_check 15 PASS "routemap freshness" "(ROUTEMAP.md up-to-date)"; return 0
   fi
   log_check 15 WARN "routemap freshness" "AGENTS.md §21.11.4: routers/ 또는 src/*.py 구조 변경인데 docs/ROUTEMAP.md 미갱신(gen-routemap --check STALE). 재생성: python3 bin/gen-routemap.py 후 stage. WARN-only(PR block 아님)."
+  return 0
+}
+
+# Check #16: codenav-lint anchor resolvability (AGENTS.md §21.11.4·§21.11.7, WARN-only)
+# — CODE_NAVIGATION/CODE_TASKS 의 file:symbol·모듈·DI seam 앵커가 소스에서 resolve 되는지.
+#   핸들러 rename/이동처럼 ROUTEMAP 정합을 유지하며 앵커만 무효화하는 변경을 잡는 유일한 자동 수단.
+check_16_codenav_lint() {
+  local mode="${1:-pre-commit}"
+  git rev-parse --git-dir >/dev/null 2>&1 || { log_check 16 WARN "codenav anchors" "SKIP (not a git work tree)"; return 0; }
+  local repo_root; repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || { log_check 16 WARN "codenav anchors" "SKIP (no repo root)"; return 0; }
+  [ -x "$repo_root/bin/codenav-lint.sh" ] || { log_check 16 PASS "codenav anchors" "(codenav-lint.sh 미도입 — skip)"; return 0; }
+  local navdocs_re='docs/CODE_(NAVIGATION|TASKS)\.md$'
+  local code_re='unit/feature-0003-agent-web-ui/src/.*\.py$'
+  local touched
+  case "$mode" in
+    pre-commit|shared-pre-commit) touched=$(git diff --cached --name-only 2>/dev/null) ;;
+    post-commit)                  touched=$(git diff HEAD~1 HEAD --name-only 2>/dev/null) ;;
+    *) log_check 16 WARN "codenav anchors" "SKIP (unknown mode: $mode)"; return 0 ;;
+  esac
+  if ! printf '%s\n' "$touched" | grep -qE "$navdocs_re|$code_re"; then
+    log_check 16 PASS "codenav anchors" "(no code/nav-doc change in diff)"; return 0
+  fi
+  if bash "$repo_root/bin/codenav-lint.sh" >/dev/null 2>&1; then
+    log_check 16 PASS "codenav anchors" "(CODE_NAVIGATION/CODE_TASKS 앵커 resolve)"; return 0
+  fi
+  log_check 16 WARN "codenav anchors" "AGENTS.md §21.11.4: CODE_NAVIGATION/CODE_TASKS 앵커 미해결(codenav-lint STALE). 'bash bin/codenav-lint.sh' 로 목록 확인 후 문서 재정합. WARN-only(PR block 아님)."
   return 0
 }
 
@@ -1411,6 +1453,7 @@ main() {
   # Check #12 (v3.12.0+): wiki feature card companion — WARN-only, failed 영향 X.
   check_12_wiki_feature_card "$effective_mode" || true
   check_15_routemap_freshness "$effective_mode" || true
+  check_16_codenav_lint "$effective_mode" || true
 
   if [ "$failed" -eq 0 ]; then
     printf '\nverify-completion: PASS (gate checks + worktree binding + repo immutability + visual-verification #13; #12 wiki WARN-only)\n' >&2

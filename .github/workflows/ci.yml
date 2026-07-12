@@ -51,6 +51,16 @@ jobs:
           bash bin/migrate-lint.sh --self-test
           bash bin/migrate-lint.sh --heads
 
+      - name: Code-Navigation Map gate — ROUTEMAP drift + 앵커 resolvability (§21.11.7 순환 폐쇄)
+        run: |
+          # AI 작업 후 code-map 재정합의 substrate 게이트. verify-completion 은 비차단 post-commit
+          # hook 이라 merge 를 못 막으므로(AGENTS.md §21.11.4), routers/·src 변경 PR 에서 blocking 실행.
+          # gen-routemap: routers AST 재스캔 결과가 docs/ROUTEMAP.md 와 다르면 STALE(exit 3) → CI fail.
+          # codenav-lint: CODE_NAVIGATION/CODE_TASKS 의 file:symbol·모듈·DI seam 앵커 미해결 시 exit 3.
+          # 둘 다 라이브 DB/컨테이너 불요(순수 정적 스캔).
+          python3 bin/gen-routemap.py --check
+          bash bin/codenav-lint.sh
+
       - name: Unit tests (pytest)
         env:
           # PYTHONPATH 에 repo 루트(.) 포함 — app.py 가 import 하는 최상위 `shared` 패키지 해소.

@@ -1,3 +1,10 @@
+---
+doc_type: CODE_TASKS
+source_of_truth: true
+lifecycle: active
+edit_policy: rewrite
+ai_read_priority: 5
+---
 # CODE_TASKS — TASK 카드 카탈로그 (변경유형 → 코드영역 → 재귀 실행)
 
 <!-- feature-0012 P5b Final 성과 위에 구축한 AI-navigation 카탈로그.

@@ -2683,6 +2683,8 @@ pain 호소는 위 1~3 에서 먼저 처리된 후, 필요 시 persona 호출로
 
 AI 가 본 프로젝트에서 작업할 때 다음을 **권장 (SHOULD)** 으로 따른다. v3.13.0 에서는 self-discipline + opportunistic 동반 + WARN-only enforcement (`check #12` + `bin/wiki-lint.sh` structural) 이며, 후속 cycle 에서 **의무 (MUST)** 로 격상 예정.
 
+> **범위 주의**: 아래 5대 의무는 Obsidian `wiki/`(사람-facing 지식 vault, mirror) **전용**이다. `docs/ROUTEMAP.md`·`CODE_NAVIGATION.md`·`CODE_TASKS.md`·`CODEBASE_MAP.md`(AI-navigation code map, **정본**)의 **참조 → 수정 → 재정합 순환 의무는 [§21.11.7](#§21117-참조--수정--재정합-순환-must--순환-폐쇄)** 이 정본이며 본 §의 대상이 아니다(§21.11.5 오귀속 주의와 동일 취지).
+
 1. **Feature 신규 생성 시 wiki 카드 동반 작성 (SHOULD)**
    - `unit/feature-XXXX-<slug>/` 신규 생성 시 `wiki/Features/feature-XXXX-<slug>.md` 카드 동반.
    - baseline: `repo/wiki/Features/_template-card.md` 또는 `repo/wiki/_templates/feature-card.md` (namu-style).
@@ -2868,15 +2870,27 @@ AI 는 라이브 웹 코드를 바꿀 때 grep-first 대신 다음 계층을 순
 - **정본 귀속**: 정본 3종은 `repo/docs/` 의 **AI context 정본**(§21.1 layer 표 4행)이다. wiki layer 의 mirror 규칙(복제·priority 7~9·`source_of_truth:false`)이 **적용되지 않는다**. `docs/ROUTEMAP.md` 는 auto-generated(edit_policy: generated)이되 정본이며, `CODE_NAVIGATION.md`·`CODE_TASKS.md` 는 rewrite 정본이다.
 - **조기 읽기**: 라이브 웹(feature-0003) 또는 route/handler/RBAC 를 건드리는 작업은 §10.2 참조 읽기에 3종을 포함하고, `ai_read_priority` 를 상향(제안: ROUTEMAP=4·CODE_NAVIGATION=4·CODE_TASKS=5 — `docs/CODEBASE_MAP.md`·`ARCHITECTURE.md` 계열의 조기 진입 대역)해 DOC_REGISTRY 에 등재한다. grep-first 대신 L0 진입이 기본이다.
 
-#### §21.11.4 갱신 의무 (구조 리팩터 시 MUST)
+#### §21.11.4 갱신 의무 (MUST)
 
-routers/ 파일을 **추가·분할·이동·삭제** 하거나 `unit/feature-0003-agent-web-ui/src/*.py` 를 신설/이동하는 등 **구조 리팩터**를 한 cycle 은 같은 cycle 안에서:
+**트리거 (구조 리팩터 한정이 아니다 — 앵커/카운트를 stale 시키는 모든 변경)**: 아래 중 하나라도 해당하면 같은 cycle 안에서 Code-Navigation Map 을 재정합한다.
+
+- **(구조)** routers/ 파일 추가·분할·이동·삭제, `unit/feature-0003-agent-web-ui/src/*.py` 신설/이동.
+- **(앵커)** 핸들러 rename·도메인 내부 이동 — 경로(method+path)가 불변이라 ROUTEMAP 은 정합을 유지해도 `CODE_NAVIGATION`/`CODE_TASKS` 의 `<file>.py:<line> <symbol>` 앵커·grep 레시피가 무효화된다.
+- **(계약)** endpoint 추가·삭제, RBAC/auth 게이트 변경.
+- **(카운트)** 위 변경이 문서의 하드카운트(라우터 파일 수·route 수·app.py 줄수·DI seam 라인)를 어긋나게 함.
+
+**재정합 절차**:
 
 1. `python3 bin/gen-routemap.py` 재실행 → `docs/ROUTEMAP.md` 재생성·stage (idempotent; freshness stamp = source_commit).
-2. `docs/CODEBASE_MAP.md`(§10.2 파일 탐색 정본) 갱신 — 신규 모듈/디렉토리 반영.
-3. 도메인 경계·L1~L3 서사가 바뀌었으면 `docs/CODE_NAVIGATION.md`·`docs/CODE_TASKS.md` 동반 갱신.
+2. `docs/CODEBASE_MAP.md`(§10.2 파일 탐색 정본) 갱신 — 신규/삭제 모듈·디렉토리·하드카운트 반영.
+3. 도메인 경계·L1~L3 서사·`<file>.py:<sym>` 앵커·리터럴 grep 레시피가 바뀌었으면 `docs/CODE_NAVIGATION.md`·`docs/CODE_TASKS.md` 동반 갱신.
+4. **참조-후-재검 (신설, 순환 폐쇄의 핵심)**: 작업 중 §21.11.2 로 참조한 CODE_TASKS 카드·CODE_NAVIGATION 앵커는 완료 전 `grep` 으로 resolve 재검증하고, 참조한 카드/앵커를 `unit/<feature>/docs/REVIEW.md`(또는 MODIFY.md)에 citation 으로 남긴다 — "map 을 참조해 코드를 바꿨으나 그 앵커를 stale 로 방치" 하는 단절을 차단한다.
 
-자동 검증: `bin/verify-completion.sh` check #15(routemap freshness, WARN-only — §21.11.4)가 routers/ 파일 수 변경 또는 신규 src/*.py 를 감지했는데 `gen-routemap.py --check` 가 STALE(exit 3)이면 stderr WARN(§21.4 staged rollout 과 동형 — v3.x MUST 격상 후보). 순수 route 본문 편집(파일 수 불변)도 route 데코레이터가 바뀌었으면 재생성 대상이다.
+**자동 검증** (§21.4 staged rollout 동형 — 선언 MUST · 집행 WARN→BLOCK 단계적):
+
+- `check #15`(routemap freshness) — routers/·src 구조 변경 시 `gen-routemap --check` STALE → WARN. **companion 게이트 병행**: struct(routers 추가/삭제/rename) 또는 new_src 인데 `CODEBASE_MAP`·`CODE_NAVIGATION`·`CODE_TASKS` 3종이 같은 diff 에 동반 stage 되지 않으면 WARN(check #12 feature-card companion 패턴 이식).
+- `check #16`(codenav-lint, `bin/codenav-lint.sh`) — `CODE_NAVIGATION`/`CODE_TASKS` 의 `routers/<mod>.py` 모듈·`<file>.py:<sym>` 앵커·DI seam 심볼(`get_conn`·`get_current_account`·`require_permission`·`register_all`)이 소스에서 실제 resolve 되는지 정적 grep 검증, 미해결 앵커 시 WARN(→ 후속 BLOCK 격상). 이는 (앵커) 트리거 변경을 잡는 **유일한 자동 수단**이다.
+- CI(`.github/workflows/ci.yml`)에서는 `gen-routemap --check`(+ `codenav-lint`)를 **blocking 스텝**으로 병행 실행해, verify-completion 이 CI 게이트가 아니라는 substrate gap(post-commit hook 은 비차단)을 보완한다. 순수 route 본문 편집(파일 수 불변)도 route 데코레이터가 바뀌었으면 재생성 대상이다.
 
 #### §21.11.5 hot_paths(§13.2.5-A)와의 관계 — 오귀속 정정
 
@@ -2918,6 +2932,18 @@ import app
 INCLUDE_ORDER = 120  # 등록 순서 고정 — 현행 include 순서 스냅샷(ITEM-05, 순서 변경 금지)
 router = APIRouter()
 ```
+
+#### §21.11.7 참조 → 수정 → 재정합 순환 (MUST — 순환 폐쇄)
+
+Code-Navigation Map 은 **일방 참조 대상이 아니라 닫힌 순환**이다. AI 가 map 을 읽고 코드를 바꾸면, **바뀐 범위가 다시 map 과 정합**해야 다음 AI 세션의 L0→L3 진입이 유효하다(그렇지 않으면 다음 작업자가 존재하지 않는 `파일:handler`·죽은 grep 레시피로 직행). 순환은 3-step 이며 각 단계에 정본과 enforcement 가 대응된다:
+
+1. **참조 (read)** — 라이브 웹/route/handler/RBAC 작업 착수 시 §21.11.2 프로토콜로 `docs/ROUTEMAP.md`(L0) → `CODE_NAVIGATION.md`/`CODE_TASKS.md`(L1~L3) 를 **조기 읽는다**. read-set 보장은 §21.11.3 + `docs/DOC_REGISTRY.md` 의 `ai_read_priority` 실등재(정본 3종 frontmatter)로 담보된다 — 등재가 없으면 애초에 참조 leg 가 성립하지 않는다.
+2. **수정 (write)** — 코드를 바꾼다.
+3. **재정합 (reconcile)** — §21.11.4 트리거(구조·앵커·계약·카운트)에 걸리면 **같은 cycle 안에서** map 을 재생성/갱신하고 참조 citation 을 REVIEW.md 에 남긴다(§21.11.4 절차 1~4).
+
+**§21.2(wiki 5대 의무)와의 관계**: 본 순환은 §21.2 의 Obsidian `wiki/` 참조·갱신 의무와 **동형 규범이되 별개 계층**이다 — §21.2 는 사람-facing 지식 vault(mirror, `source_of_truth:false`), 본 §은 AI-navigation code map(정본, navigation-first). 대상 문서군이 다르므로 Code-Navigation Map 의 참조·재정합 의무는 **본 §21.11 이 정본**이며 §21.2 에서 찾지 않는다(§21.11.5 오귀속 주의와 동일 취지).
+
+**enforcement**: 순환의 3단계 중 재정합(3) 누락을 §21.11.4 자동 검증(check #15 companion + check #16 codenav-lint, WARN → CI blocking `gen-routemap --check`)이 기계적으로 catch 한다. 선언(MUST)과 집행(staged WARN→BLOCK)의 간극은 §21.4 와 동일한 단계적 격상 정책을 따른다 — "선언만 하고 enforcement 미보강" 의 anti-pattern(§21.4 가 경계한 v3.8.0 drift 누적)을 회피한다.
 
 ## §22. Claude Code 운영 확장 패턴
 

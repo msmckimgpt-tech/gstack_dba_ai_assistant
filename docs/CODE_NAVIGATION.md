@@ -1,3 +1,10 @@
+---
+doc_type: CODE_NAVIGATION
+source_of_truth: true
+lifecycle: active
+edit_policy: rewrite
+ai_read_priority: 4
+---
 # CODE_NAVIGATION — AI worker 재귀 탐색 가이드 (L1~L3)
 
 <!-- L1~L3 companion to docs/ROUTEMAP.md (L0 INDEX). 손유지(hand-maintained). freshness: 2026-07-12 · source_commit: 50a4ccdc -->

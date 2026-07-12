@@ -29,6 +29,7 @@ ai_read_priority: 3
 | 의사결정(ADR) | `docs/DECISIONS.md` | ledger(append-only) | AGENTS.md §18(링크) · wiki/Decisions/*(mirror) | — |
 | 프로젝트 현황 | `unit/<feature>/docs/{TASK,REPORT}` | active(feature) | `docs/STATUS.md`(인덱스 only, P1) · wiki/Features/*(카드 mirror) | — |
 | 아키텍처 | `docs/ARCHITECTURE.md` | active(rewrite) | wiki/Architecture/*(mirror) · ~~wrapper Architecture/~~(삭제 P1) | — |
+| 코드 탐색 지도(AI navigation) | `docs/ROUTEMAP.md`(L0 generated)·`docs/CODE_NAVIGATION.md`(L1~L3 rewrite)·`docs/CODE_TASKS.md`(작업카드 rewrite)·`docs/CODEBASE_MAP.md`(L-1 파일지도 rewrite) — 각기 다른 탐색 계층의 **정본**(mirror 아님, `source_of_truth:true`) | active | AGENTS.md §21.11(참조→재정합 순환 정본 = §21.11.7). `ai_read_priority` 4·4·5·4 (조기 진입 read-set). | — |
 | 보안 정책 | `docs/SECURITY.md` | active(rewrite) | — | — |
 | 코드 규약 | `docs/CONVENTIONS.md` | active(rewrite) | (AGENTS 중복 흡수 P1) | — |
 | 용어(Glossary) | `docs/CONVENTIONS.md §9` | active | wiki/Glossary/*(mirror) | — |
