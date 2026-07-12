@@ -7,7 +7,7 @@ ai_read_priority: 4
 ---
 # CODE_NAVIGATION — AI worker 재귀 탐색 가이드 (L1~L3)
 
-<!-- L1~L3 companion to docs/ROUTEMAP.md (L0 INDEX). 손유지(hand-maintained). freshness: 2026-07-12 · source_commit: 50a4ccdc -->
+<!-- L1~L3 companion to docs/ROUTEMAP.md (L0 INDEX). 손유지(hand-maintained). freshness: 2026-07-13 · source_commit: 41170197 -->
 > **이 문서가 답하는 것**: "바꿀 코드를 어떻게 *찾고*, 지금 보는 게 *뭘 하는지* 어떻게 *알고*, 인접 코드로 어떻게 *건너가나*."
 > **정본 아님(reference)**: 사실의 정본은 코드(`routers/`·`app.py`)와 [ROUTEMAP.md](./ROUTEMAP.md)(L0, 자동 생성). 본 문서는 그 위를 걷는 *지도*다 — 링크가 아니라 **이름과 grep 명령**을 준다(matklad codemap 원칙).
 > **대상 코드**: `unit/feature-0003-agent-web-ui/src/` — app.py(19,650→**3,722줄**, -81%)의 핸들러 전량이 `routers/` 28개 파일로 추출됨(23 route-module `@router` + 4 언더스코어 공유모듈 + `__init__` registrar). leaf helper 는 `src/web_context.py`.
@@ -154,3 +154,32 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 | [../unit/feature-0003-agent-web-ui/docs/FUNCTION.md](../unit/feature-0003-agent-web-ui/docs/FUNCTION.md) | — | 함수 카탈로그(사전) |
 | [../unit/feature-0003-agent-web-ui/docs/MODIFY.md](../unit/feature-0003-agent-web-ui/docs/MODIFY.md) · [ANCHOR.md](../unit/feature-0003-agent-web-ui/docs/ANCHOR.md) | — | 변경 로그 · 위치 앵커 |
 | `../unit/feature-0003-agent-web-ui/tests/route_snapshot_p5b.json` | — | 205 route parity 골든(추출 회귀 gate) |
+
+## 8. 프론트 static 계층 (admin.js · app.js · graph/ — ITEM-09, 2026-07-12)
+
+백엔드(L0=ROUTEMAP)와 달리 프론트는 자동 인덱스가 없다 — 이 § 가 L0/L1 대체 진입면이다.
+코드 루트: `unit/feature-0003-agent-web-ui/src/static/` (이하 grep 도 여기서, 리터럴만).
+
+**Q. "그래프 뷰의 X 를 바꾸려면 어느 모듈?"** — 아래 표에서 직행. 함수 위치는 언제나
+`grep -rn "function _metaXxx" graph/` 가 정본(모듈 헤더에 원 graph.js 라인 구간 명시).
+
+| 모듈 | 역할(변경 유형 매칭) | 주요 심볼 |
+|---|---|---|
+| `graph/graph.js` | **barrel** — 공개 4심볼 re-export. admin.js 는 이 경로만 import. **경로·심볼 변경 금지** | `_metaShowGraph`·`_metaGraphLoadRoots`·`_metaRoleLegendTips`·`_metaGraph` |
+| `graph/graph-state.js` | 그래프 상태·결정론적 배치 상수 | `_metaGraph`(전 모듈이 프로퍼티 변이)·`_MET*` 상수·`_metaNatSort` |
+| `graph/graph-roleviz.js` | 테이블 역할 분류 시각 표식(칩·아이콘·범례) | `_META_ROLE`·`_metaRole*`·`_metaGraphZAssert` |
+| `graph/graph-util.js` | 논블로킹 유틸(rAF 양보) | perf-bg 계열 |
+| `graph/graph-rellayout.js` | 관계 기반 배치 pre-pass(barycenter) | rel-layout 계열 |
+| `graph/graph-simgroups.js` | 유사 속성 그룹(affix family) | `_metaSim*` |
+| `graph/graph-core.js` | init·데이터 로드·G6 build/apply·줌 LOD·anim·검색·미니맵 | `_metaInitGraph`·`_metaG6Build/Apply`·`_metaShowGraph` |
+| `graph/graph-ctxmenu.js` | 우클릭 상호작용·상세/관계 패널 | `_metaCtx`·`_metaGraphCtx*`·`_metaGraphShow*` |
+| `graph/graph.css` | 그래프 전용 CSS(admin.html 만 link) | `.admin-meta-graph-*`·`.amg*` |
+
+**규약(위반 = 런타임 파손)** — 상세·좌표 재적용은 [graph/MAPPING.md](../unit/feature-0003-agent-web-ui/src/static/graph/MAPPING.md) 가 정본:
+1. 모듈 간/admin 순환 import = ES live-binding + 호출시점 사용 전제 — top-level 즉시실행에서 cross-module 심볼 호출 금지.
+2. 상태는 전부 `const` 객체(프로퍼티 변이만) — cross-module 재할당(let) 불가.
+3. `?v=` 는 소스에서 `?v=dev` 고정(HTML + ES import specifier) — 빌드가 content-hash 주입(§13.1). **수기 bump 금지**(이중 인스턴스화 유발).
+4. G6/mermaid 는 UMD 전역 bridge(`const G6 = window.G6;`) — 필요 모듈 상단에 개별 선언.
+
+**admin.js(12,520줄)** — 13 pane 도메인 동거(계정·역할·제품·데이터소스·메타데이터·감사·대시보드·사용량·설정 등). pane 경계 = admin.html `data-admin-pane` 속성이 자연 색인: `grep -n 'data-admin-pane' admin.html`. 공유 코어(`adminState`·`apiFetch`·`can`·`showToast`·pending 스테이징)는 상단 밴드. 전면 분할은 C-12 defer(충돌 실측 트리거).
+**app.js(10,464줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일.
