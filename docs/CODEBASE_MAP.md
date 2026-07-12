@@ -14,7 +14,7 @@ source_of_truth: true
 기능 추가/삭제, 파일 구조 변경 시 갱신한다.
 
 > **Freshness**: feature-0012 (web-router-modularization) 완결 반영 — `app.py` 19,650→3,722줄(-81%),
-> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 28개 파일로 추출됨. (HEAD `50a4ccdc`, 2026-07-12)
+> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 28개 파일로 추출됨. (HEAD `41170197`, 2026-07-13)
 
 > **AI 탐색 진입점 (재귀 4계층)**: 바꾸려는 것이 route/handler 라면 아래 순서로 좁혀 내려간다.
 > **L0 INDEX** → [`docs/ROUTEMAP.md`](ROUTEMAP.md) (method+path → **router 파일:handler** → auth → RBAC 권한; 자동 생성 정본, 200 route). ·
@@ -54,10 +54,20 @@ repo/
     │   └── src/
     │       ├── app.py           # 3,722줄 (feature-0012 후 -81%) — DI seam·인증보조·audit·보안게이트·lifecycle·FastAPI app·config·rebind·register_all 만 잔류
     │       ├── web_context.py   # leaf helper (app-internal 의존 0인 순수 컨텍스트 조각, 단방향 추출)
-    │       └── routers/         # 도메인 APIRouter 패키지 — 28 파일 (§4a 참조)
-    │           ├── __init__.py            # register_all(app): non-`_`·router 보유 모듈 자동발견 → (INCLUDE_ORDER,name)순 include
-    │           ├── <23 route-module>.py   # 각 파일이 `router = APIRouter()` + `@router` 핸들러 보유 (도메인별)
-    │           └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_conv_store·_prompt_context (register_all 제외)
+    │       ├── routers/         # 도메인 APIRouter 패키지 — 28 파일 (§4a 참조)
+    │       │   ├── __init__.py            # register_all(app): non-`_`·router 보유 모듈 자동발견 → (INCLUDE_ORDER,name)순 include
+    │       │   ├── <23 route-module>.py   # 각 파일이 `router = APIRouter()` + `@router` 핸들러 보유 (도메인별)
+    │       │   └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_conv_store·_prompt_context (register_all 제외)
+    │       └── static/          # 프론트 자산 — ?v= 는 전부 `?v=dev` placeholder(빌드가 content-hash 주입, §13.1)
+    │           ├── admin.js     # 관리 콘솔(12,520줄, type=module) — 13 pane 도메인. 그래프는 graph/ 로 분리
+    │           ├── app.js       # 작업 화면(10,464줄) · styles.css(공유 CSS) · share.js/css · index/admin/share.html
+    │           └── graph/       # 그래프 뷰 ES 모듈 (ITEM-09 batch3, 2026-07-12) — CODE_NAVIGATION §8 참조
+    │               ├── graph.js           # barrel — 공개 4심볼 re-export (admin.js 는 이 경로만 import)
+    │               ├── graph-state.js     # `_metaGraph` 상태 + 배치 상수 · graph-roleviz.js(역할 표식)
+    │               ├── graph-core.js      # init·load·G6 build/apply·LOD·anim (2,178줄)
+    │               ├── graph-ctxmenu.js   # 우클릭·상세/관계 패널 (2,237줄) · graph-util/rellayout/simgroups.js
+    │               ├── graph.css          # 그래프 전용 CSS (admin.html 만 link)
+    │               └── MAPPING.md         # 좌표 재적용 체인(구 admin.js/graph.js 라인 → 모듈) + 경계 계약
     ├── feature-0004-browser-automation/
     ├── feature-0005-qa-mcp/
     ├── feature-0006-lan-proxy-access/

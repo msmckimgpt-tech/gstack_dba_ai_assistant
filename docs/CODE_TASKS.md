@@ -9,7 +9,7 @@ ai_read_priority: 5
 
 <!-- feature-0012 P5b Final 성과 위에 구축한 AI-navigation 카탈로그.
      app.py 19,650 → 3,722 줄(-81%). 핸들러 전량이 routers/ 28개 파일로 추출됨.
-     source: routers/*.py + docs/ROUTEMAP.md 실측(2026-07-12). freshness 는 ROUTEMAP source_commit 로 검증. -->
+     source: routers/*.py + docs/ROUTEMAP.md + static/graph/ 실측(2026-07-13). freshness 는 ROUTEMAP source_commit 로 검증. -->
 
 > **이 문서의 용도**: "무엇을 바꾸려는가"(변경유형)를 입력으로, **어느 파일:심볼에서 시작해 →
 > 어떤 순서로 참조하고 → 무슨 grep 으로 호출자/피호출자를 재귀 확장하고 → 무엇을 불변으로 지키고 →
@@ -303,6 +303,31 @@ alembic versions/ 로만 변경 · `_conv_store` 는 share/conversations 공용 
 
 **Verify**: `make test` (스키마 의존 테스트: `test_attachment_pg_cutover`·`test_history_calendar_pg_routing` 등) ·
 PG 마이그는 alembic upgrade(agent-core) 파이프라인.
+
+---
+
+## TASK 8 — 그래프 뷰(UI) 변경 (static/graph 모듈)
+
+**Match keywords**: 그래프·지식그래프·G6·노드/엣지·줌 LOD·우클릭 메뉴·상세/관계 패널·역할 칩·클러스터 배치·미니맵.
+
+**Entry region**: `unit/feature-0003-agent-web-ui/src/static/graph/` — 모듈 선택은
+[CODE_NAVIGATION.md §8](CODE_NAVIGATION.md) 표(변경 유형→모듈). 요약: 상태/상수=`graph-state.js` ·
+역할 표식=`graph-roleviz.js` · 배치=`graph-rellayout.js`/`graph-simgroups.js` ·
+init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js` · CSS=`graph.css`.
+
+**Reference regions (ordered)**:
+1. 함수 위치: `grep -rn "function _metaXxx" unit/feature-0003-agent-web-ui/src/static/graph/` (라인 산술 금지 — 함수명이 durable anchor).
+2. 경계 계약·좌표 재적용: `static/graph/MAPPING.md` (barrel 공개 4심볼·순환 import 규약·구 좌표 체인).
+3. 백엔드 API 를 함께 바꾸면: `docs/ROUTEMAP.md` 에서 `/api/admin/metadata/*`(admin_metadata.py) 좌표 확정 후 TASK 1/3 병행.
+
+**Recurse via (literal grep)**:
+- ↓피호출자(모듈 간): 모듈 상단 `import {...} from "./graph-xxx.js?v=dev"` 가 의존 선언 — `grep -n '^import' graph/<mod>.js`.
+- ↑호출자: `grep -rn '<symbol>' unit/feature-0003-agent-web-ui/src/static/` (admin.js tab-switch 소비는 barrel 경유만).
+- DOM 배선: `grep -n 'metadataGraph\|graphScopeSelect' unit/feature-0003-agent-web-ui/src/static/admin.html`.
+
+**Invariants**: ① barrel(`graph/graph.js`) 경로·공개 4심볼 불변(admin.js 는 barrel 만 import) ② `?v=dev` placeholder 수기 bump 금지(빌드 주입 — §13.1) ③ top-level 즉시실행에서 cross-module 호출 금지(순환 import 는 호출시점 전제) ④ 상태 신규 추가는 const 객체 프로퍼티로(cross-module 재할당 불가) ⑤ G6/mermaid 는 UMD bridge.
+
+**Verify**: `node --check graph/<mod>.js` + PB-0008 실 Windows 브라우저(로드·스코프·검색·줌·클릭·우클릭, 콘솔 에러 0 — `bin/win-browser.py`, 기록은 `docs/test-runs.d/` fragment).
 
 ---
 
