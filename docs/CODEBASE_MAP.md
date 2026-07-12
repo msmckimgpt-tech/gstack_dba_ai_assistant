@@ -6,7 +6,7 @@ edit_policy: rewrite
 source_of_truth: true
 ---
 
-<!-- freshness: feature-0012 완결(PR #736) + ITEM-09 static/graph 편입 · HEAD 41170197 · 2026-07-13 -->
+<!-- freshness: feature-0012 완결(PR #736) + ITEM-09 static/graph 편입 · HEAD f7ad45d7 · 2026-07-13 -->
 
 # Codebase Map
 
@@ -14,7 +14,7 @@ source_of_truth: true
 기능 추가/삭제, 파일 구조 변경 시 갱신한다.
 
 > **Freshness**: feature-0012 (web-router-modularization) 완결 반영 — `app.py` 19,650→3,722줄(-81%),
-> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 28개 파일로 추출됨. (HEAD `41170197`, 2026-07-13)
+> 핸들러 전량이 `unit/feature-0003-agent-web-ui/src/routers/` 28개 파일로 추출됨. (HEAD `f7ad45d7`, 2026-07-13)
 
 > **AI 탐색 진입점 (재귀 4계층)**: 바꾸려는 것이 route/handler 라면 아래 순서로 좁혀 내려간다.
 > **L0 INDEX** → [`docs/ROUTEMAP.md`](ROUTEMAP.md) (method+path → **router 파일:handler** → auth → RBAC 권한; 자동 생성 정본, 200 route). ·
