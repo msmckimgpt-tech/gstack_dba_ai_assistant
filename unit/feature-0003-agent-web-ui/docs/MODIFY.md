@@ -118,3 +118,6 @@ source_of_truth: true
 - Summary: 엔트리 verbatim 이관(원본 순서·내용 무변경) — MODIFY 408건·REVIEW 389건 → `_archive/<DOC>-archive-20260711T115053.md`(timestamp 규약 ADR-20260710T231146 첫 적용). 현행 파일 각 114줄로 경량화. 무손실 재구성 md5 증명.
 - Files: docs/MODIFY.md · docs/REVIEW.md · docs/_archive/ 신설 2파일 · docs/REPORT.md(압축 정보) · docs/TASK.md.
 - Rollback: 아카이브 내용을 링크 지점에 재삽입(verbatim 이라 무손실 복원 가능).
+
+## CHG-20260712T073000-item09-graph-split (admin.js 그래프 분리)
+- Date: 2026-07-12. admin.js 3618~9024→static/graph/graph.js(pure move, -5,407). type=module+bridge. 자동검증 GREEN. 브라우저 QA 대기.

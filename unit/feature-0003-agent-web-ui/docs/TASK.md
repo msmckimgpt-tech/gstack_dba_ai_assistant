@@ -5411,3 +5411,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 무손실 증명: head+archive+kept 재구성 md5 == 원본 md5 (양 문서)
 - [x] 상단 아카이브 참조 링크 + REPORT.md 압축 정보(§5.5) + 아카이브 파일명 timestamp 규약(ITEM-01) 첫 실적용
 - [ ] 후속(별 사이클): feature-0002(124/109건)·feature-0016(117/117건)·feature-0012(46/45건) 동일 아카이빙
+
+## 20260712T0730-item09-graph-split — admin.js 그래프 모듈 분리 (parallel-work-structure ITEM-09)
+- [x] 그래프 블록 admin.js 3618~9024(5,407줄·141함수)를 static/graph/graph.js 로 pure mechanical move. admin.js 17,923→12,520(-5,407, acceptance b ≥3,000 충족). admin.js type=module 전환(window 노출 0+bare 전역 mermaid20/G6 47 bridge 로 안전). import surface(adminState/apiFetch/can/showToast/_metaSubmitForm+window.G6)·export surface(_metaShowGraph/_metaGraphLoadRoots/_metaRoleLegendTips/_metaGraph)·순환 import ES live-binding. 자동검증 GREEN: node --check module 문법·정적분석 undefined 0(census 놓친 _metaSubmitForm 포착). graph/MAPPING.md(외부 브랜치 재적용).
+- [ ] **브라우저 QA(acceptance a/c, PB-0008 실 Windows: 로드·클릭·우클릭·드래그·줌 LOD·검색·패널)** — 사용자 환경(Chrome+admin) 게이트, 머지 전 필수. 잔여 후속: styles.css 그래프 CSS 분리·graph.js 8모듈 세분화.

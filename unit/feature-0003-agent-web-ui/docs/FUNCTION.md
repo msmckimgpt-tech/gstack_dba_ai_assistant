@@ -1551,3 +1551,6 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **모델별 추론 수준 분리**: 추론 강도별 예산이 `reasoning_budget:{model}:{level}` 로 모델마다 독립. 대화 화면의 강도 선택(낮음/일반/높음/매우 높음)은 전역 유지, 예산만 모델별. '일반'은 no-override(모델 기본 thinking 유지, B1).
 - 저장은 즉시 PUT 아님 — 기존 `setRuntimeSettingPending`→commit-bar '모두 적용' 예약 패턴 준수(신규 `agent_max_output:` 키 포함). 총 출력 상향 시 응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'(AGENT_TIMEOUT_SEC)도 함께 상향 필요 — 패널 hint 로 안내(비-streaming 대화 경로).
 - backward-compat: 구 스킴 `reasoning_budget:{level}` override 는 무시(기본 복귀). 정적 자산(admin.js/styles.css) 캐시버스터는 `admin.html` 의 `?v=20260709-reasoning-budget` 로 bump(후속 CHG-20260709T055431 — stale 클라이언트 강제 로드).
+
+## ITEM-09 그래프 모듈 분리 (2026-07-12)
+- 그래프 뷰 141함수(_metaGraph 상태·_META* 상수·_metaG6Build/_metaInitGraph/_metaShowGraph/_metaGraph* 계열)가 admin.js(3618~9024) → static/graph/graph.js 로 이동(pure move). admin.js 는 tab-switch 에서 _metaShowGraph/_metaGraphLoadRoots/_metaRoleLegendTips/_metaGraph 를 import 소비. graph.js 는 adminState/apiFetch/can/showToast/_metaSubmitForm + window.G6 를 import. 함수 카탈로그 상세는 graph.js 자체 참조(단일 파일 응집).

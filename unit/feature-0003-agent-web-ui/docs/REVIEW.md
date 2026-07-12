@@ -117,3 +117,6 @@ source_of_truth: true
 - Related Change: CHG-20260711T115053-docs-archive. cycle: ai/claude-corp/feature-0003-docs-archive. 승인: 사용자 지시(2026-07-11) + §5.5/§5.6 규약 내 작업.
 - SKIPPED 사유: 내용 판단이 없는 기계적 이관 — 검증이 그 자체로 결정적: ① head+archived+kept 재구성 md5 == 원본 md5 (양 문서, 스크립트 assert) ② 이관은 엔트리 경계(^## ) 단위 verbatim ③ 현행 파일 상단 아카이브 링크 + REPORT 압축 정보(§5.5 요건). 런타임 코드 0.
 - Human Approval Needed: 아니오 — 비파괴(무손실·가역), append-only 규약 준수(기존 엔트리 의미 변경 0).
+
+## REV-20260712T073000-item09-graph-split [SKIPPED:browser-qa-pending] — admin.js 그래프 분리
+- Related: CHG-20260712T073000-item09-graph-split. 승인: 사용자 명시(blocked 해제). 자동검증 GREEN(module 문법·import/export 정합·undefined 0). 브라우저 QA(acceptance a) 사용자 게이트 대기 — 머지 전 필수.
