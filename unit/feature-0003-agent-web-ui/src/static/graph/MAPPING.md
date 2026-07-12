@@ -20,8 +20,8 @@ grep -rn "function _metaXxx" unit/feature-0003-agent-web-ui/src/static/graph/
 | 570~630 | `graph-util.js` | graph-perf-bg 논블로킹 유틸 |
 | 631~785 | `graph-rellayout.js` | 관계 기반 배치 pre-pass(barycenter seriation) |
 | 786~1027 | `graph-simgroups.js` | 유사 속성 그룹(affix family) |
-| 1028~3191 | `graph-core.js` | init·load·`_metaG6Build/Apply`·LOD·anim·검색·미니맵 |
-| 3192~5414 | `graph-ctxmenu.js` | 우클릭 상호작용·상세/관계 패널(`_metaCtx`·`_metaGraphCtx*`·`_metaGraphShow*`) |
+| 1028~3191 | `graph-core.js` | init·load·`_metaG6Build/Apply`·LOD·anim·미니맵·검색 input 배선 |
+| 3192~5414 | `graph-ctxmenu.js` | 우클릭 상호작용·상세/관계 패널·검색 엔진(`_metaCtx`·`_metaGraphCtx*`·`_metaGraphShow*`·`_metaGraphSearch`·`_metaRelevance`) |
 | 1~6, 5415~5416 | `graph.js` (barrel) | 헤더·import/export — barrel 이 공개 4심볼 re-export 로 대체 |
 
 모듈 내 오프셋 = (구 graph.js 라인 − 구간시작 + 모듈헤더줄수 + 1). 헤더 줄수가 모듈마다

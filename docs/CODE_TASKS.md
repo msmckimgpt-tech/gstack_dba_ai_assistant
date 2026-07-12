@@ -102,7 +102,7 @@ ai_read_priority: 5
 **Recurse via (literal grep)**:
 - 피호출자(필요 헬퍼 발굴): `grep -n 'app\._' routers/<domain>.py` (그 도메인이 이미 쓰는 app.* 헬퍼 목록) ·
   `grep -rn 'def <helper>' src/web_context.py src/routers/_*.py`.
-- 호출자(프론트 배선): `grep -rn '/api/새/경로' unit/feature-0003-agent-web-ui/static/`.
+- 호출자(프론트 배선): `grep -rn '/api/새/경로' unit/feature-0003-agent-web-ui/src/static/`.
 
 **Invariants**: 규약 §1(app.X dynamic) · §3(app.py 꼬리 편집 **불필요** — register_all 이 기존 router 를 이미
 등록) · RBAC 는 시그니처 `Depends` 에서 선언 · 응답 셰이프 `JSONResponse({"error":msg}, status)` 유지.
@@ -318,7 +318,7 @@ init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js
 **Reference regions (ordered)**:
 1. 함수 위치: `grep -rn "function _metaXxx" unit/feature-0003-agent-web-ui/src/static/graph/` (라인 산술 금지 — 함수명이 durable anchor).
 2. 경계 계약·좌표 재적용: `static/graph/MAPPING.md` (barrel 공개 4심볼·순환 import 규약·구 좌표 체인).
-3. 백엔드 API 를 함께 바꾸면: `docs/ROUTEMAP.md` 에서 `/api/admin/metadata/*`(admin_metadata.py) 좌표 확정 후 TASK 1/3 병행.
+3. 백엔드 API 를 함께 바꾸면: `docs/ROUTEMAP.md` 에서 `/api/admin/metadata/*`(admin_metadata.py) 좌표 확정 후 TASK 1/3 병행. **그래프 데이터의 실체는 cross-feature** — `unit/feature-0002-agent-core/src/modules/metadata_graph.py`(조회 `search_nodes`·`neighborhood`, PG 동기화)가 정본이고 admin_metadata.py 는 `_mg` alias 로 위임한다(`from modules import metadata_graph as _mg`).
 
 **Recurse via (literal grep)**:
 - ↓피호출자(모듈 간): 모듈 상단 `import {...} from "./graph-xxx.js?v=dev"` 가 의존 선언 — `grep -n '^import' graph/<mod>.js`.

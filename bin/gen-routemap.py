@@ -26,13 +26,18 @@ _DI_AUTH = {"get_current_account", "get_optional_account", "require_permission"}
 
 
 def _dep_name(call):
-    """Depends(X) 또는 Depends(X(...)) 의 X 이름."""
+    """Depends(X) 또는 Depends(X(...)) 의 X 이름 + 문자열 인자 전부.
+
+    require_permission("a", "b", ...) 는 정적 AND 게이트 — 첫 인자만 캡처하면 다중-perm 이
+    과소표기된다(2026-07-13 블라인드 내비게이션 시뮬레이션 적발: /api/admin/accounts 의
+    account.read 누락). 문자열 위치 인자를 전부 수집한다(message= 등 kwarg 는 제외).
+    """
     if not (isinstance(call, ast.Call) and _fname(call.func) == "Depends" and call.args):
         return None
     inner = call.args[0]
     if isinstance(inner, ast.Call):
-        return _fname(inner.func), _first_str(inner.args)
-    return _fname(inner), None
+        return _fname(inner.func), _all_strs(inner.args)
+    return _fname(inner), []
 
 
 def _fname(node):
@@ -50,6 +55,10 @@ def _first_str(args):
     return None
 
 
+def _all_strs(args):
+    return [a.value for a in args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+
+
 def _route_decorators(fn):
     """[(method, path), ...] — @router.<method>("path")."""
     out = []
@@ -62,8 +71,8 @@ def _route_decorators(fn):
     return out
 
 
-def _handler_auth(fn, src_seg):
-    """핸들러의 인증/권한 표기 문자열."""
+def _handler_auth(fn, src_seg, delegated=frozenset()):
+    """핸들러의 인증/권한 표기 문자열. delegated = 같은 모듈의 auth-보유 헬퍼 이름 집합."""
     perms = []
     di_kind = None
     for arg in fn.args.args + fn.args.kwonlyargs + fn.args.posonlyargs:
@@ -78,7 +87,7 @@ def _handler_auth(fn, src_seg):
         if fname == "require_permission":
             di_kind = "perm"
             if perm:
-                perms.append(perm)
+                perms.extend(perm)
         elif fname == "get_current_account":
             di_kind = di_kind or "auth"
         elif fname == "get_optional_account":
@@ -87,6 +96,11 @@ def _handler_auth(fn, src_seg):
     import re
     body_perms = re.findall(r'_account_has_permission\([^,]+,\s*"([^"]+)"', src_seg)
     inline_auth = "_require_account(" in src_seg or "_get_authenticated_account(" in src_seg or "_optional_account(" in src_seg
+    # 위임 인증(2026-07-13 시뮬레이션 적발): 핸들러가 같은 모듈의 auth-보유 헬퍼
+    # (예: admin_datasources._ds_write_common)에 인증을 위임하면 public/none 으로 오표기됐다.
+    # scan() 이 모듈별 auth-헬퍼 이름 집합을 넘겨주면 호출 여부로 감지(1-hop — 헬퍼 자신이
+    # 직접 마커를 갖는 경우. 다단 위임은 미추적, 발견 시 확장).
+    delegated_hit = sorted(n for n in delegated if f"{n}(" in src_seg)
     all_perms = sorted(set(perms) | set(body_perms))
     if di_kind == "perm":
         tag = "DI:require_permission"
@@ -96,6 +110,8 @@ def _handler_auth(fn, src_seg):
         tag = "DI:get_optional_account"
     elif inline_auth:
         tag = "inline-auth"
+    elif delegated_hit:
+        tag = f"inline-auth(delegated:{delegated_hit[0]})"
     else:
         tag = "public/none"
     return tag, all_perms
@@ -119,13 +135,22 @@ def scan():
         doc = ast.get_docstring(tree) or ""
         modmeta[f] = {"include_order": include_order if include_order is not None else 10000,
                       "purpose": doc.strip().splitlines()[0].strip() if doc.strip() else ""}
+        # 1-pass: auth 마커를 직접 보유한 비-route 헬퍼(위임 인증 감지용 — _ds_write_common 류)
+        _AUTH_MARKERS = ("_require_account(", "_get_authenticated_account(",
+                         "_account_has_permission(", "require_permission(", "get_current_account")
+        delegated = set()
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not _route_decorators(n):
+                seg = ast.get_source_segment(src, n) or ""
+                if any(m in seg for m in _AUTH_MARKERS):
+                    delegated.add(n.name)
         for n in ast.walk(tree):
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 decs = _route_decorators(n)
                 if not decs:
                     continue
                 seg = ast.get_source_segment(src, n) or ""
-                tag, perms = _handler_auth(n, seg)
+                tag, perms = _handler_auth(n, seg, delegated)
                 for method, rpath in decs:
                     rows.append({"file": f, "handler": n.name, "method": method, "path": rpath,
                                  "auth": tag, "perms": perms, "include_order": modmeta[f]["include_order"]})

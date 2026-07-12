@@ -7,7 +7,7 @@ ai_read_priority: 4
 ---
 # CODE_NAVIGATION — AI worker 재귀 탐색 가이드 (L1~L3)
 
-<!-- L1~L3 companion to docs/ROUTEMAP.md (L0 INDEX). 손유지(hand-maintained). freshness: 2026-07-13 · source_commit: 41170197 -->
+<!-- L1~L3 companion to docs/ROUTEMAP.md (L0 INDEX). 손유지(hand-maintained). freshness: 2026-07-13 · source_commit: f7ad45d7 -->
 > **이 문서가 답하는 것**: "바꿀 코드를 어떻게 *찾고*, 지금 보는 게 *뭘 하는지* 어떻게 *알고*, 인접 코드로 어떻게 *건너가나*."
 > **정본 아님(reference)**: 사실의 정본은 코드(`routers/`·`app.py`)와 [ROUTEMAP.md](./ROUTEMAP.md)(L0, 자동 생성). 본 문서는 그 위를 걷는 *지도*다 — 링크가 아니라 **이름과 grep 명령**을 준다(matklad codemap 원칙).
 > **대상 코드**: `unit/feature-0003-agent-web-ui/src/` — app.py(19,650→**3,722줄**, -81%)의 핸들러 전량이 `routers/` 28개 파일로 추출됨(23 route-module `@router` + 4 언더스코어 공유모듈 + `__init__` registrar). leaf helper 는 `src/web_context.py`.
@@ -171,8 +171,8 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 | `graph/graph-util.js` | 논블로킹 유틸(rAF 양보) | perf-bg 계열 |
 | `graph/graph-rellayout.js` | 관계 기반 배치 pre-pass(barycenter) | rel-layout 계열 |
 | `graph/graph-simgroups.js` | 유사 속성 그룹(affix family) | `_metaSim*` |
-| `graph/graph-core.js` | init·데이터 로드·G6 build/apply·줌 LOD·anim·검색·미니맵 | `_metaInitGraph`·`_metaG6Build/Apply`·`_metaShowGraph` |
-| `graph/graph-ctxmenu.js` | 우클릭 상호작용·상세/관계 패널 | `_metaCtx`·`_metaGraphCtx*`·`_metaGraphShow*` |
+| `graph/graph-core.js` | init·데이터 로드·G6 build/apply·줌 LOD·anim·미니맵·검색 input 배선 | `_metaInitGraph`·`_metaG6Build/Apply`·`_metaShowGraph` |
+| `graph/graph-ctxmenu.js` | 우클릭 상호작용·상세/관계 패널·**검색 엔진**(매칭·정렬·프루닝) | `_metaCtx`·`_metaGraphCtx*`·`_metaGraphShow*`·`_metaGraphSearch`·`_metaRelevance` |
 | `graph/graph.css` | 그래프 전용 CSS(admin.html 만 link) | `.admin-meta-graph-*`·`.amg*` |
 
 **규약(위반 = 런타임 파손)** — 상세·좌표 재적용은 [graph/MAPPING.md](../unit/feature-0003-agent-web-ui/src/static/graph/MAPPING.md) 가 정본:
@@ -181,5 +181,20 @@ grep -n "async def new_conversation" routers/conversations.py   # 시그니처
 3. `?v=` 는 소스에서 `?v=dev` 고정(HTML + ES import specifier) — 빌드가 content-hash 주입(§13.1). **수기 bump 금지**(이중 인스턴스화 유발).
 4. G6/mermaid 는 UMD 전역 bridge(`const G6 = window.G6;`) — 필요 모듈 상단에 개별 선언.
 
-**admin.js(12,520줄)** — 13 pane 도메인 동거(계정·역할·제품·데이터소스·메타데이터·감사·대시보드·사용량·설정 등). pane 경계 = admin.html `data-admin-pane` 속성이 자연 색인: `grep -n 'data-admin-pane' admin.html`. 공유 코어(`adminState`·`apiFetch`·`can`·`showToast`·pending 스테이징)는 상단 밴드. 전면 분할은 C-12 defer(충돌 실측 트리거).
-**app.js(10,464줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일.
+**admin.js(12,520줄)** — 13 pane 도메인 동거. pane 경계 = admin.html `data-admin-pane` 속성이 자연 색인: `grep -n 'data-admin-pane' admin.html`. 공유 코어(`adminState`·`apiFetch`·`can`·`showToast`·pending 스테이징)는 상단 밴드. 전면 분할은 C-12 defer(충돌 실측 트리거). **pane → entry 함수 표**(블라인드 내비게이션 실측 2026-07-13 — "파일:함수" 확정까지 문서로 커버):
+
+| pane (`data-admin-pane`) | entry 함수 (`grep -n "function <이름>" admin.js` 정본) |
+|---|---|
+| dashboard | `renderDashboard` · `loadDashboardOverview` |
+| accounts / roles | `renderAccountList` · `renderRoleList` (로드 공통 `loadAdminData`) |
+| products | `renderProductList` · `loadProductInsightCoverage` |
+| datasources | `renderDatasourcesPane` |
+| audits | `loadAuditList` · `renderAuditList` · `renderAuditDetail` |
+| usage | `loadUsage` |
+| archives | `loadArchivedConversations` · `renderArchiveList` |
+| ai-ops | `loadAiOps` · `renderAiOps` |
+| metadata | `loadMetadata` · `renderMetadataList` · `loadFeedbackQueue` |
+| graph | `_metaShowGraph`(barrel — 위 표) · 스코프 드롭다운은 **admin.js** `_metaPopulateScopeSelect`(graph/ 아님 주의) |
+| settings | `renderRuntimeTimeouts` · `renderModelThinkingBudgets` |
+
+**app.js(10,464줄)** — 작업 화면(채팅·composer·첨부·공유·프로필). C-12 defer 동일. fetch 라인에서 엔클로징 함수 역산: `awk 'NR<=<라인>' app.js | grep -n "^function\|^async function" | tail -1`.
