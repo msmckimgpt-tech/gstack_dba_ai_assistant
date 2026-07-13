@@ -9,6 +9,14 @@ import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./grap
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
 import { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCombo, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols } from "./graph-ctxmenu.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
+// feature-0016 §78: PixiJS v8 렌더러 어댑터(SceneAdapter, G6.Graph 인터페이스 호환). 배선 seam.
+import { PixiGraphAdapter } from "./graph-renderer-pixi.js?v=dev";
+// 렌더러 선택: 'pixi'(기본, window.PIXI 존재 시) | 'g6'(폴백). window.__META_RENDERER 로 강제 override 가능(회귀 시 즉시 롤백).
+function _metaRendererKind() {
+  const forced = (typeof window !== "undefined" && window.__META_RENDERER) || null;
+  if (forced === "g6" || forced === "pixi") return forced;
+  return (typeof window !== "undefined" && window.PIXI && typeof PixiGraphAdapter === "function") ? "pixi" : "g6";
+}
 
 // ── graph-layoutmemo(§73): 순수 배치-정렬 함수 메모이즈용 위상 서명 ──
 //   실측(win-browser, PB-0008): _metaG6Build 의 ~99% 는 _metaRelOrderAll(barycenter 4-sweep)+
@@ -211,7 +219,12 @@ function _metaG6Build() {
   // viewport-cull(§65): 화면(+마진) 밖 판정용 model-space 가시 rect 를 1회 산정. 집계 중이 아니고 대형 모델일 때만.
   //   getCanvasByViewport(screen→model) 로 좌상/우하 model 좌표를 얻어 마진 확장. API 부재/개요면 비활성.
   let _cullActive = false, _vx0 = 0, _vy0 = 0, _vx1 = 0, _vy1 = 0;
-  if (!aggActive && _metaGraph.nodes.size > _META_CULL_MIN) {
+  // feature-0016 §78: pixi 렌더러는 GPU 상주라 §65/§67 뷰포트 컬링(Canvas per-frame CPU-raster 완화 목적)이
+  //   불필요하다. pixi 에서 컬링을 켜면 (a) _built 가 부분집합이 되어 미니맵이 뷰포트만 표시(적대리뷰 M3),
+  //   (b) 팬 aftertransform 이 rebuild 를 rAF 마다 걸어 GC churn(M4) — 둘 다 컬링 비활성으로 근본 해소.
+  //   전량 방출해도 GPU 팬은 vsync-perfect(882 등가 실측). 컬럼-LOD(§61)/집계(§63)는 방출 수 자체를 줄이므로 유지.
+  const _pixiMode = _metaRendererKind() === "pixi";
+  if (!aggActive && !_pixiMode && _metaGraph.nodes.size > _META_CULL_MIN) {
     try {
       const _gg = _metaGraph.graph;
       if (_gg && typeof _gg.getCanvasByViewport === "function" && typeof _gg.getSize === "function") {
@@ -1826,8 +1839,13 @@ function _metaClusterDragCommit() {
 function _metaInitGraph() {
   const container = document.getElementById("metadataGraphCanvas");
   if (!container) return;
-  if (!window.G6 || typeof window.G6.Graph !== "function") {
+  const _rk = _metaRendererKind();   // feature-0016 §78: 'pixi' | 'g6'
+  if (_rk === "g6" && (!window.G6 || typeof window.G6.Graph !== "function")) {
     _metaGraphStatus("그래프 라이브러리(G6)를 불러오지 못했습니다.");
+    return;
+  }
+  if (_rk === "pixi" && !window.PIXI) {
+    _metaGraphStatus("그래프 라이브러리(PixiJS)를 불러오지 못했습니다.");
     return;
   }
   if (_metaGraph.graph) { try { _metaGraph.graph.resize(); } catch (_) {} return; }
@@ -1880,13 +1898,23 @@ function _metaInitGraph() {
   // graph-initview(E1): 미니맵 — 초기 화면이 "부분"이 될 수 있으므로 전체 지도+뷰포트 표시로 보완.
   // 플러그인 미지원 번들이면 그래프 자체는 살린다(minimap 없이 재생성 — 번들 교체 시 POC 재검증 전제).
   let graph = null;
-  try {
-    graph = new window.G6.Graph(Object.assign({}, baseCfg, { plugins: [{ type: "minimap", key: "minimap", size: [168, 112], position: "right-bottom" }] }));   // graph-minimap-reuse: 명시 key → getPluginInstance("minimap") 직접 히트(by-type 폴백 경고 회피)
-  } catch (_) { graph = null; }
-  if (!graph) {
-    try { graph = new window.G6.Graph(baseCfg); } catch (_) { graph = null; }
+  if (_rk === "pixi") {
+    // feature-0016 §78: PixiGraphAdapter — baseCfg(container/autoResize/zoomRange/node.state) 소비.
+    //   behaviors/edge.style/plugins(minimap) 는 어댑터가 자체 처리(중버튼 팬·좌클릭 노드드래그·자체 미니맵).
+    // §78 적대리뷰 M2: 어댑터는 G6 behaviors 를 소비 안 하므로 drag-enable predicate 를 명시 주입 —
+    //   GX:/CATX: 접기 컨트롤·접힌 카테고리 밴드가 pixi 에서 드래그돼 clusterOffset 을 오염시키는 것을 차단.
+    try { graph = new PixiGraphAdapter(Object.assign({}, baseCfg, { minimap: true, minimapSize: [168, 112], renderer: "webgl",
+      elementDragEnable: _metaElementDragEnable, canvasDragEnable: _metaCanvasDragEnable })); } catch (_) { graph = null; }
+    if (!graph) { _metaGraphStatus("그래프 초기화 실패(PixiJS)."); return; }
+  } else {
+    try {
+      graph = new window.G6.Graph(Object.assign({}, baseCfg, { plugins: [{ type: "minimap", key: "minimap", size: [168, 112], position: "right-bottom" }] }));   // graph-minimap-reuse: 명시 key → getPluginInstance("minimap") 직접 히트(by-type 폴백 경고 회피)
+    } catch (_) { graph = null; }
+    if (!graph) {
+      try { graph = new window.G6.Graph(baseCfg); } catch (_) { graph = null; }
+    }
+    if (!graph) { _metaGraphStatus("그래프 초기화 실패(G6)."); return; }
   }
-  if (!graph) { _metaGraphStatus("그래프 초기화 실패(G6)."); return; }
   _metaGraph.graph = graph;
   // graph-minimap-reuse: 미니맵 재사용 패치는 여기(init)서 걸지 않는다 — G6 v5 는 context.plugin 을 첫 draw 의
   //   initRuntime() 에서 lazy 생성하므로 이 시점 getPluginInstance("minimap") 는 실패한다. _metaG6ApplyOnce 의

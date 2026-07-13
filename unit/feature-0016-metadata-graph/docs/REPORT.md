@@ -1690,3 +1690,59 @@ win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검�
   위험)이며 옛 self-complaint 아님. 사용자 원 리포트("대부분 노드 주의가 불명확") 해소.
 - **미결(범위 밖)**: cc_data_main 원천 큐레이션 공백(column/table_descriptions 0행)은 상류 이슈로 별도 후속 —
   프롬프트가 불평을 멈출 뿐 실질 풍부화는 큐레이션/인트로스펙션 보강 필요(ADR-034 한계 절 기재).
+
+## 2026-07-13 · §78 렌더 엔진 PixiJS v8 교체 — 타당성 검토 + 계획 수립 (plan-review)
+사용자 리포트(다수): 노드 다수 상태 카메라 이동(팬) 버벅임 잔존 → 외부 엔진(게임/시뮬레이터) 전환 타당성 검토 요청 → 검토 결과 수용 + "G6 과거 디자인 실패 이력, **디자인 무붕괴 + 성능 확보로 PixiJS v8 계획 수립**" 지시.
+
+### 타당성 검토 결론 (read-only, 2026-07-13 세션)
+- **잔존 병목**: rebuild 축(§73 메모이즈)·방출 수 축(§61/§65/§67)은 해소 — 남은 것은 G6 Canvas immediate-mode 의 **매 프레임 화면 안 전 도형 CPU 재래스터**(~1ms/노드, ADR-030) + §76 팬 중 rAF 재-emit. 화면 안 500+ 요소 팬은 앱 측 최적화로 60fps 불가(구조적).
+- **게임/시뮬레이터 엔진(Unity/Unreal/Godot/Bevy) 기각**: 성능 이득 원천은 "GPU 상주 씬"이라는 WebGL/WebGPU 일반 속성 — 웹 스택으로 동일 획득 가능. 게임엔진 고유 부담(수십 MB WASM·C#/Rust 툴체인·DOM(상세 패널 2,237줄)↔엔진 브리지·한글 IME/접근성·PB-0008 파이프라인 부정합)만 남음.
+- **결합도 실측**(서브에이전트 인벤토리): 그래프 JS ≈5,491줄 중 G6 직접 결합 ~700–900줄(15–20%). 레이아웃·메모이즈·LOD 판정·모델·DOM 패널 전부 엔진-중립 → 패리티 이식 국소적.
+- G6 WebGL 재번들 스파이크는 사용자 결정으로 기각(과거 디자인 실패 이력 — ADR-004 배경 ③⑤).
+
+### 계획 정착
+- `pixi-migration/BLUEPRINT.md` 신설 — 디자인 보존 계약 D1~D6(hard gate: 벡터 테셀레이션·점선 3종 등가·오버레이 hack 무재도입·한글 라벨 전략 POC 확정·상태 bake 철학 유지·커스텀 미니맵) + Phase A(POC, exit gate)/B(SceneAdapter 통합)/C(PB-0008+배포) + 리스크 R1~R7.
+- TASK.md §78 Implementation Plan(§7.1) — **plan-review 상태, Major(§12.3), 사람 승인 대기(§12.1)**.
+- 순서 게이트(R6): Phase B 는 `feature-0016-minimap-fullview`(graph-core.js 미커밋 수정 중)·`content-cluster` cycle 착지 후. §번호 머지 시 scoped-renumber 허용(§13.1).
+
+### Git 동기화 결과
+- 커밋: (본 커밋) `ai/root/feature-0016-graph-pixi` — docs-only(BLUEPRINT/TASK/REPORT/MODIFY/REVIEW).
+- Push: **보류** (사유: §16.3 Step 4 — Major plan-review 승인 대기. 승인 후 Phase A cycle 에서 동기화 재개.)
+
+## 2026-07-13 · §78 Phase A POC 완료 — 디자인·성능 exit gate PASS
+PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수행.
+- **산출물**: `pixi-migration/poc/pixi-poc.html`(정본 스타일 수치 1:1 이식 씬 + 팬/줌 프레임타임 하네스 + `window.poc` 구동 API), `shoot_pixi.py`(Playwright headless 드라이버), `pixi.min.js` 8.19.0 vendored(797KB — g6.min.js 1.38MB 대비 순감).
+- **디자인(D1~D5)**: 노드 6종(테이블 역할색 칩·컬럼 dot·루틴 보라칩·SC 카드·combo 점선 카드·ctl)·엣지 6종(trusted/candidate/crossds/routine read/SCHEMA_REF+count)·dim 0.38 bake·한글 라벨 — headless 줌 배율별 + **실 Windows Chrome(PB-0008 relay)** 스크린샷 검수 전항 등가. 과거 WebGL 실패 모드(텍스처 왜곡·점선 소실) 재현 없음(벡터 테셀레이션 + Text resolution 4).
+- **성능(실 Windows Chrome)**: idle vsync 18.0/18.1ms(~55Hz) 기준선 대비 — **882노드 등가 씬 팬/줌 p50=p95=18.0/18.1ms = vsync-perfect**(현행 G6 Canvas 는 동급 규모에서 사용자 체감 버벅임이 리포트되던 규모). 11k 스트레스는 무최적화 POC floor 22~31fps(p95 69ms) — GraphicsContext 공유·BitmapText·컬링 도입 전 수치.
+- **판정**: BLUEPRINT §4 Exit A 충족(디자인 전항 + 성능 게이트). 다음 = 사용자 육안 확인(win-browser 로 사용자 Chrome 에 디자인 씬 표시함) → Phase B 어댑터 통합. **Phase B 는 R6 순서 게이트**(minimap-fullview·content-cluster cycle 착지) 충족 후 착수.
+
+### Git 동기화 결과 (Phase A)
+- 커밋: (본 커밋) `ai/root/feature-0016-graph-pixi` — POC 3파일 + TASK/REPORT/MODIFY 기록.
+- Push: 진행 (PLAN-APPROVED Major 진행 중 — BLOCKED 없음, §16.3 Step 4 자동 동기화).
+
+## 2026-07-13 · §78 R6 순서게이트 자연 해소 + 착지분 흡수·테스트 정합
+- **R6 해소**: 세션 진행 중 content-cluster(PR #746)·§77 minimap-fullview(PR #747, 배포 c264e3f1 PB-0008 PASS) 가 origin/main 착지 → Phase B blocker 소멸(사용자가 계획한 "나머지 worktree 병합"을 각 소유 세션이 finalize).
+- **흡수**: pixi 브랜치 rebase onto origin/main(9커밋). merge-append-doc 드라이버가 TASK/MODIFY/REPORT/REVIEW append 문서를 union 자동병합 — §77/§78 공존·§번호 중복 0. `graph/` 7모듈 origin/main byte-동일 = 착지분 완전 흡수(graph-core.js `nodePosAll`·미니맵 전역개요 실재).
+- **테스트 정합**: 그래프 headless 11 스위트 **279 PASS / 0 FAIL**(graph-split 번들 레시피 재현) — 흡수 후 회귀 0.
+- **병렬 전략 결론**: SceneAdapter(graph-renderer-pixi.js) 는 신규 파일이라 타 세션과 파일 충돌 0 → Phase B-early(어댑터 신설·scene-spec·adapter 테스트)는 언제든 병렬 가능. graph-core.js **배선**(B-late)만 rebase 재확인 게이트 대상(신규 세션이 그 파일 변경 시). 다른 세션 소유 worktree 병합은 그 세션이 finalize(§13.2 F2 단일 mutator) — 내가 대신 병합하지 않음.
+
+### Git 동기화 결과
+- rebase onto origin/main(behind 0) + force-push(내 브랜치·PR 미개설이라 안전). 커밋 3개 유지(해시 재작성).
+
+## 2026-07-13 · §78 Phase B-early — SceneAdapter(PixiJS v8) 신설·실증 완료
+사용자 지시(병렬 착수) 수용 — R6 자연해소 후 Phase B 착수. B-early(충돌-독립 신규 파일)부터.
+- **산출물**(신규 파일, 타 세션 graph-core.js 변경과 충돌 0): `graph/graph-renderer-pixi.js`(PixiGraphAdapter — G6.Graph 인터페이스 호환, PixiAdapterPure 순수로직 분리) · `graph/SCENE_SPEC.md`(scene-spec 계약) · `tests/headless/test_pixi_adapter.js`(28 PASS) · `pixi-migration/poc/adapter-poc.html`(setScene 실증 하네스).
+- **설계 핵심**: scene-spec = `_metaG6Build()` 출력형태(G6 data-shape) 그대로 → B-late 배선이 `setData(built)`→`setScene(built)` 치환만으로 완료(graph-core emission 무변경 목표). combo 는 자식 union bbox 로 auto-fit → G6 auto-fit 제약(ADR-029/030 combo-safe 컬링 제한) 어댑터에서 소멸.
+- **검증**: 어댑터 순수 28 PASS(카메라 수학·대시·bbox·hit-grid·diff — 결함 1 적발수정 fitCamera pad:0) + 그래프 회귀 279 PASS 무회귀. 실 Windows Chrome(PB-0008): 디자인 D1~D5 보존(상태 오버레이·한글 라벨·점선 6종·combo)·845 등가 팬/줌 **60fps vsync-perfect(p95 16.8ms)**·이벤트 합성(spatial hit-grid picking) 정확. 이벤트 결함 2 적발수정(좌클릭 팬 클릭소실·dblclick 노드무관).
+- **다음**: B-late(graph-core.js 렌더러 seam 배선 + setScene 치환 + admin.html vendor) — 착수 직전 fetch/rebase 로 그래프 변경 재확인(R6 원칙). 이후 미니맵·드래그배치·오브젝트풀·BitmapText 후속 §.
+
+### Git 동기화 결과
+- 커밋: `ai/root/feature-0016-graph-pixi` — 어댑터·계약·테스트·POC·docs. Push: 진행(PLAN-APPROVED Major·BLOCKED 없음).
+
+## 2026-07-13 · §78 Phase B-late — graph-core seam 배선 + UI 버튼 정합 (그래프 렌더러 PixiJS 전환)
+사용자 지시: "실제 배선까지 진행 + cycle-finalize + 그래프 뷰 내 모든 UI 버튼 작동 정합."
+- **배선**: `graph-core.js _metaInitGraph` 에 렌더러 seam(`_metaRendererKind` 'pixi'/'g6' 분기) — pixi 기본, `window.__META_RENDERER='g6'` 폴백. admin.html pixi.min.js vendor. 착수 전 fetch/rebase(behind 0, 새 그래프 변경 없음 재확인).
+- **UI 버튼 정합(gap 인벤토리 17종)**: 적대 서브에이전트가 graph-core 가 부르는 G6 API·이벤트·버튼 경로를 전수 인벤토리 → 어댑터 gap 을 전부 배선. CRITICAL 3(getElementRenderBounds min/max superset·좌표 API 방향 스왑 getCanvasByViewport=screen→model·setElementZIndex map 인자)이 카메라 이동 버튼 전량을 좌우 — 수정 완료. 추가: getElementZIndex/getEdgeData(z-order)·translateElementTo+드래그 이벤트 합성(자유배치)·combo/edge hit-test(스키마 배경·관계선 우클릭)·client payload(팬-가드)·busy 상태·autoResize·afterdraw payload·resize 무인자. 모든 버튼(툴바 줌/fit/100%/스키마점프·검색·kind 필터·상세 패널 카메라·이력·컬럼 선택·우클릭 메뉴·드래그·AI 마커·미니맵)이 어댑터 위에서 동작(graph-core 로직 무변경).
+- **render-on-demand 전환**: ticker autoStart:false + 변경 지점마다 명시 _render(). 근본원인 디버그 — WebGL preserveDrawingBuffer:false + rAF-throttle 로 headless/CDP 스크린샷이 검게 캡처되던 것(수동 render 는 컬러 실증)을 on-demand 렌더 + preserveDrawingBuffer:true 로 해소. 정적 viz 라 idle GPU 0 부수이득.
+- **검증**: 어댑터 순수 33 PASS + 그래프 회귀 279 PASS 무회귀 + 통합 하네스(실 그래프 마크업 + Pixi UMD + graph 번들 + mock apiFetch) headless+실 Windows Chrome: seam→PixiGraphAdapter 구성·6 스키마 카드 렌더·툴바 버튼·팬 60fps vsync-perfect·pageerror 0. 심화 상호작용(expand/상세/컨텍스트/드래그)은 동일 graph-core 로직이라 실데이터 PB-0008 이 정본 게이트(다음).
+- **다음**: 배포(deploy_scope included) + 라이브 admin 그래프 뷰 PB-0008(실데이터 전 버튼·상호작용·팬 성능) → cycle-finalize.

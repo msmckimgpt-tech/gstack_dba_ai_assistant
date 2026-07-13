@@ -162,7 +162,22 @@ source_of_truth: true
   - **테스트 flake**: 타이머 350ms vs 대기 450/500ms(마진 100~150ms), node 단일스레드 타이머 — 낮음. 65 PASS 재현 3회.
 - 검증: headless 11 스위트 **279 PASS / 0 FAIL**(라이브 적발 3건 각각 F8/F9/F1~7 로 재현·잠금) + **라이브 e2e PASS**(시딩 수렴 fullSigCurrent=true → 줌 2.0 컬링 rebuild 방출 1,573→153 에 미니맵 해시 완전 불변 → 팬 불변 → 스코프 전환 재렌더 → pageerror 0). 상세 test-runs.d/20260713T105224-minimap-fullview.md.
 - 판정: **PASS — 랜딩 차단 없음.** 1차 리뷰의 M1(staleness 표식)은 시딩 도입으로 실질 해소(stale 창이 무기한→~0.5s), M2(과도기 창)·N1(선-마킹)은 수용 유지.
-
 ## REV-20260713T143000-ai-claude-feature-0016-content-cluster-h1 [SKIPPED:single-line-hotfix] — 루틴 fetch scope 비대칭 1줄 수정
 - Related Change: CHG-20260713T143000-content-cluster-h1. WHERE 절 1건(스코프 필터 제거) + 테스트 assert — 본 cycle REV-20260713T120500 패널이 검증한 코드면의 국소 후속(같은 n4 비대칭 클래스, 라이브 실증으로 적발·확인). 인가·경계·마이그 0.
 - Panel skip 사유(§18.8): diff 가 단일 WHERE 절 축소(필터 제거 — 반환 집합이 ds 파티션으로 유계)이고, 원 패널이 동일 클래스(n4)를 이미 적대 검증. 회귀는 테스트 assert 로 잠금. 라이브 재가동 실증이 완료 게이트.
+## REV-20260713T023517-ai-root-feature-0016-graph-pixi [SKIPPED:docs-only-plan]
+- §78 PixiJS v8 렌더러 교체 **계획 수립**(BLUEPRINT + TASK §78 plan-review) — 코드 diff 0, docs-only. §18.8 패널은 코드 산출물 부재로 SKIPPED. 계획 자체의 검증 게이트는 §7.1 human plan-review(PLAN-APPROVED 마커) + Phase A POC exit gate(디자인 D1~D6·성능 p95)로 이원화되어 있음. 구현 cycle(Phase A~C)에서 §18.8 적대 패널 정상 적용 예정.
+
+## REV-20260713T042924-ai-root-feature-0016-graph-pixi-poc [SKIPPED:poc-only]
+- §78 Phase A PixiJS POC — poc/ 격리 폴더(pixi-poc.html·shoot_pixi.py·vendored pixi.min.js) + docs 기록. **제품 코드/자산(graph/*·admin.js·admin.html) 변경 0**. verify-completion check#4 는 poc 의 .html/.js 를 코드로 감지하나 제품 표면 무변경이라 §18.8 적대 패널 SKIPPED. 실제 검증 게이트는 BLUEPRINT §4 Exit A(디자인 D1~D5 + 성능 p95) 로 실 Windows Chrome(PB-0008 relay) 실측 PASS. 제품 코드 통합(Phase B)에서 §18.8 정규 적용.
+
+## REV-20260713T051139-ai-root-feature-0016-graph-pixi-adapter [SKIPPED:unwired-new-file]
+- §78 Phase B-early SceneAdapter(graph-renderer-pixi.js) 신설 — **미배선 신규 파일**(admin.html·graph-core.js 무변경, 실 제품 렌더 경로에 아직 미연결). 어댑터 자체 검증은 순수테스트 28 PASS + 실 Windows Chrome PB-0008(디자인·성능·이벤트) 로 수행. §18.8 적대 패널은 B-late(graph-core 렌더러 seam 배선 = 실 사용자 표면 변경) 시 정규 적용. 신규 파일·미배선이라 현 커밋 SKIPPED.
+
+## REV-20260713T060954-ai-root-feature-0016-graph-pixi-wire [SUBAGENT:graph-adversarial] — PASS-WITH-FIXES
+§78 B-late graph-core seam 배선(G6→PixiJS) diff 적대 리뷰(Explore/opus, 실 코드 대조·추측 배제).
+- **BLOCKING 1 수정**: B1 드래그/translateElementTo 후 hit-grid 미갱신 → 이동 요소 클릭 불가(dragend rebuild 없는 평범 노드/SC 카드). 수정: _moveElement·translateElementTo 종료 시 buildHitGrid 재구성(실증: 카드 200,150 이동 후 새 위치 _pick hit·옛 위치 miss).
+- **MAJOR 4 수정**: M1 combo 드래그 시 배경 카드 미추종 → _moveElement combo 분기가 카드 객체도 동반 이동. M2 click-only 컨트롤(GX:/CATX:/접힌 CAT:·CATH:)이 pixi 에서 드래그돼 clusterOffset 오염 → graph-core 가 _metaElementDragEnable predicate 를 어댑터 cfg 로 주입, 드래그 진입 게이트. M3 미니맵 부분집합 표시 + M4 팬 GC churn → **pixi 모드 뷰포트 컬링 비활성**(GPU 상주라 §65/§67 CPU-raster 완화 불필요) 근본 해소 — _built 전량 방출로 미니맵 전역 + 팬 rebuild 소거.
+- **MINOR 수정**: m1 destroy 시 window 리스너·ResizeObserver 정리. m2 노드 lineDash(그룹 배경 GB 점선) 소비. m4 드래그 중 미니맵 뷰포트 사각형만 갱신(콘텐츠 재그림 dragend 지연).
+- **통과 확인(적대 검증)**: 좌표 API 방향(getCanvasByViewport=screen→model)은 이 diff 가 오히려 **수정**(graph-core 소비부 정합)·getElementRenderBounds min/max superset 정합·PIXI 전역 노출(UMD var)·미배선/reject 폴백(try/catch·null guard)·미니맵 재사용 패치 __reusePatched 조기 return — 전부 결함 아님 확인.
+- 회귀: 어댑터 순수 33 PASS + 그래프 headless 279 PASS 무회귀. 남은 m3(seed/anchor 헛도는 무해 noise)는 정확성 무관 — POST-DEPLOY 후속.

@@ -1,0 +1,181 @@
+<!doctype html>
+<!-- feature-0016 §78 Phase B — SceneAdapter 실증 POC.
+     graph-renderer-pixi.js 의 PixiGraphAdapter 를 실제 import 해, scene-spec(=_metaG6Build 출력 형태,
+     G6 data-shape)을 setScene 으로 렌더한다. 디자인 보존(D1~D5)·팬/줌 성능·이벤트 합성을 실증.
+     window.poc.* 로 win-browser/headless 가 구동. -->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>adapter-poc §78 Phase B</title>
+<style>
+  html,body{margin:0;height:100%;background:#f6f8fb;font-family:system-ui,sans-serif}
+  #stage{position:absolute;inset:0}
+  #hud{position:absolute;left:8px;top:8px;z-index:10;background:rgba(255,255,255,.92);border:1px solid #d5dbe5;
+       border-radius:8px;padding:6px 10px;font-size:12px;color:#334;white-space:pre;max-width:560px}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hud">loading…</div>
+<script src="/feature-0016-metadata-graph/pixi-migration/poc/pixi.min.js"></script>
+<script type="module">
+"use strict";
+window.__err = [];
+window.addEventListener("error", e => window.__err.push(String(e.message)));
+window.addEventListener("unhandledrejection", e => window.__err.push(String(e.reason)));
+
+import { PixiGraphAdapter, PixiAdapterPure } from "/feature-0003-agent-web-ui/src/static/graph/graph-renderer-pixi.js";
+
+// ── 정본 스타일 상수 (graph-roleviz/state 이식 — scene-spec 생산용) ──
+const COLOR = { Table:"#0f7d8c", Column:"#5c6773", GlossaryTerm:"#9c6515", Schema:"#3f4b8c", Routine:"#7b5cd6" };
+const ROLE = { master:{c:"#0072B2",d:false}, account:{c:"#56B4E9",d:true}, transaction:{c:"#009E73",d:true},
+               log:{c:"#E69F00",d:true}, mapping:{c:"#CC79A7",d:true}, config:{c:"#D55E00",d:false},
+               stats:{c:"#F0E442",d:true}, etc:{c:"#6e7681",d:false} };
+const LAY = { TW:150, TROW:34, CROW:21, CIND:26, PADT:34, PADX:16, TGAP:12, CARDW:210, CARDH:44 };
+const Z = { COMBO:0, EDGE:2, COLUMN:3, NODE:4, CTL:6 };
+
+const hud = document.getElementById("hud"), stageEl = document.getElementById("stage");
+function log(s){ hud.textContent = s; }
+
+// scene-spec 생산기 — _metaG6Build 출력 형태(G6 data-shape) 그대로
+function tableNode(id, x, y, name, role, combo, states){
+  const rd = role ? ROLE[role] : null;
+  return { id, type:"rect", combo, states:states||[], data:{kind:"table",role},
+    style:{ x, y, size:[LAY.TW,24], radius:6, fill: rd?rd.c:COLOR.Table, stroke:"#ffffff", lineWidth:1, zIndex:Z.NODE,
+      labelText:name, labelPlacement:"center", labelFill: rd&&rd.d?"#161b22":"#ffffff", labelFontSize:12, labelFontWeight:700, labelMaxWidth:LAY.TW-10 } };
+}
+function colNode(id, x, y, name, combo){
+  return { id, type:"circle", combo, data:{kind:"column"},
+    style:{ x, y, size:11, fill:COLOR.Column, stroke:"#ffffff", lineWidth:1, zIndex:Z.COLUMN,
+      labelText:name, labelPlacement:"right", labelFill:"#161b22", labelFontSize:10, labelOffsetX:5, labelMaxWidth:168 } };
+}
+function routineNode(id, x, y, name, combo){
+  return { id, type:"rect", combo, data:{kind:"routine"},
+    style:{ x, y, size:[LAY.TW,24], radius:12, fill:COLOR.Routine, stroke:"#ffffff", lineWidth:1, zIndex:Z.NODE,
+      labelText:name, labelPlacement:"center", labelFill:"#ffffff", labelFontSize:11, labelFontWeight:700, labelMaxWidth:176 } };
+}
+function termNode(id, x, y, name, combo){
+  return { id, type:"rect", combo, data:{kind:"term"},
+    style:{ x, y, size:[130,22], radius:11, fill:COLOR.GlossaryTerm, stroke:"#ffffff", lineWidth:1, zIndex:Z.NODE,
+      labelText:name, labelPlacement:"center", labelFill:"#ffffff", labelFontSize:11, labelFontWeight:700, labelMaxWidth:118 } };
+}
+function schemaCardNode(id, x, y, name){
+  return { id:"SC:"+id, type:"rect", data:{kind:"schema-card"},
+    style:{ x, y, size:[LAY.CARDW,LAY.CARDH], radius:10, fill:"#eef0f8", stroke:COLOR.Schema, lineWidth:1.5, zIndex:Z.NODE,
+      labelText:name, labelPlacement:"center", labelFill:"#2a3567", labelFontSize:12, labelFontWeight:700, labelMaxWidth:LAY.CARDW-16 } };
+}
+function schemaCombo(id, name){
+  return { id, type:"rect", data:{label:name,kind:"schema"},
+    style:{ labelText:name, radius:12, padding:[30,16,14,16], labelPlacement:"top",
+      fill:COLOR.Schema, fillOpacity:0.045, stroke:"#aab3c5", lineWidth:1, lineDash:[6,4], zIndex:Z.COMBO } };
+}
+function edgeSpec(id, s, t, kind, extra){
+  const base = { id, source:s, target:t, data:{type:kind}, style:{ zIndex:Z.EDGE } };
+  const st = base.style;
+  if (kind==="trusted"){ st.stroke="#6b4410"; st.lineWidth=3; st.endArrow=true; }
+  else if (kind==="candidate"){ st.stroke="#c9a24a"; st.lineWidth=1.8; st.lineDash=[6,4]; st.endArrow=true; }
+  else if (kind==="inferred"){ st.stroke="#cbd2db"; st.lineWidth=1.4; st.endArrow=true; }
+  else if (kind==="crossds"){ st.stroke="#a855c7"; st.lineWidth=1.8; st.lineDash=[2,4]; st.endArrow=true; }
+  else if (kind==="routine"){ st.stroke=COLOR.Routine; st.lineWidth=1.5; st.lineDash=[2,3]; st.startArrow=true; }
+  else if (kind==="schema_ref"){ const n=(extra&&extra.count)||1; st.stroke="#8fa3bf"; st.lineWidth=1+Math.min(2.4,Math.log2(n+1)*0.55); st.strokeOpacity=0.75; if(n>1){st.labelText=String(n); st.labelFontSize=9; st.labelFill="#64748b"; st.labelBackground=true; st.labelBackgroundFill="#f6f8fb";} }
+  return base;
+}
+
+// 대표 디자인 씬 (D1~D5 side-by-side) — pixi-poc.html 과 동일 구도, 이번엔 어댑터 setScene 경로
+function buildDesignScene(){
+  const nodes=[], edges=[], combos=[schemaCombo("dk_data_release","dk_data_release")];
+  let ty = LAY.PADT+12;
+  const cols=["PaymentId","UserNo","Amount","CreatedAt","ProductCode"];
+  ["Payment","PaymentLog","Refund","Coupon"].forEach((nm,i)=>{
+    nodes.push(tableNode("T:"+nm, LAY.PADX+LAY.TW/2, ty, nm, ["master","transaction","log","account"][i], "dk_data_release", nm==="Payment"?["selected"]:[]));
+    if(i===0){ let cy=ty+LAY.TROW-6; cols.forEach((cn,j)=>{ nodes.push(colNode("C:"+j, LAY.PADX+LAY.CIND, cy, cn+" · int", "dk_data_release")); cy+=LAY.CROW; }); ty=cy+LAY.TGAP; }
+    else ty+=LAY.TROW;
+  });
+  nodes.push(routineNode("R:fn", LAY.PADX+LAY.TW+60+LAY.TW/2, LAY.PADT+12, "ƒ fn_CalcReward", "dk_data_release"));
+  nodes.push(tableNode("T:UserAccount", LAY.PADX+LAY.TW+60+LAY.TW/2, LAY.PADT+12+LAY.TROW, "UserAccount", "account", "dk_data_release", ["analyzed"]));
+  nodes.push(tableNode("T:Dimmed", LAY.PADX+LAY.TW+60+LAY.TW/2, LAY.PADT+12+2*LAY.TROW, "DimmedTable", "log", "dk_data_release"));
+  nodes[nodes.length-1].style.opacity = PixiAdapterPure ? 0.38 : 0.38;   // dim bake
+  nodes.push(termNode("G:1", LAY.PADX+65, 300, "확률형 아이템 지급", "dk_data_release"));
+  nodes.push(colNode("C:ko", LAY.PADX+LAY.CIND, 335, "지급 로그 · 결제 연결 컬럼", "dk_data_release"));
+  nodes.push(schemaCardNode("dk_game_release_1", 760, 30, "dk_game_release_1"));
+  nodes.push(schemaCardNode("cc_data_main", 760, 170, "cc_data_main"));
+  edges.push(edgeSpec("e1","T:Payment","SC:dk_game_release_1","trusted"));
+  edges.push(edgeSpec("e2","T:PaymentLog","SC:cc_data_main","candidate"));
+  edges.push(edgeSpec("e3","R:fn","SC:dk_game_release_1","crossds"));
+  edges.push(edgeSpec("e4","T:UserAccount","T:Payment","routine"));
+  edges.push(edgeSpec("e5","SC:dk_game_release_1","SC:cc_data_main","schema_ref",{count:27}));
+  return { nodes, edges, combos };
+}
+
+// 성능 씬 (882 등가 / 스트레스) — scene-spec 대량 생산
+function buildPerfScene(S, T, C){
+  const nodes=[], edges=[], combos=[];
+  const roles=Object.keys(ROLE);
+  const perRow=Math.ceil(Math.sqrt(S)), innerCols=Math.max(1,Math.min(6,Math.round(Math.sqrt(T/2))));
+  const tBlock=LAY.TROW+C*LAY.CROW+LAY.TGAP, rows=Math.ceil(T/innerCols);
+  const w=innerCols*(LAY.TW+74)+2*LAY.PADX, h=LAY.PADT+rows*tBlock+20;
+  const chips=[];
+  for(let s=0;s<S;s++){
+    const sx=(s%perRow)*(w+48), sy=Math.floor(s/perRow)*(h+52);
+    combos.push(schemaCombo("s"+s,"schema_"+s));
+    // combo 자식은 절대좌표 노드 (POC 는 좌표 직접 생산 — graph-core masonry 대체)
+    for(let t=0;t<T;t++){
+      const cx=sx+LAY.PADX+(t%innerCols)*(LAY.TW+74)+LAY.TW/2, cy=sy+LAY.PADT+Math.floor(t/innerCols)*tBlock+12;
+      nodes.push(tableNode("t"+s+"_"+t, cx, cy, "table_"+s+"_"+t, roles[(s+t)%roles.length], "s"+s, []));
+      chips.push("t"+s+"_"+t);
+      for(let c=0;c<C;c++) nodes.push(colNode("c"+s+"_"+t+"_"+c, cx-LAY.TW/2+LAY.CIND, cy+LAY.TROW-6+c*LAY.CROW, "col_"+c+" · varchar", "s"+s));
+    }
+  }
+  for(let e=0;e<Math.min(chips.length,300);e++){
+    edges.push(edgeSpec("pe"+e, chips[(e*7)%chips.length], chips[(e*13+5)%chips.length], ["trusted","candidate","crossds"][e%3]));
+  }
+  return { nodes, edges, combos, _count: S*T*(1+C)+S };
+}
+
+// ── 부팅 + 어댑터 ──
+let adapter=null, lastPerf="";
+async function boot(){
+  adapter = new PixiGraphAdapter({ container: stageEl, zoomRange:[0.05,4], background:"#f6f8fb", panButton:"any",
+    node:{ state:{ selected:{stroke:"#111827",lineWidth:2.5}, match:{stroke:"#f59e0b",lineWidth:2.5}, analyzed:{fill:"#7b5cd6"}, running:{fill:"#f59e0b"} } } });
+  // 이벤트 합성 실증 — 콘솔로 마지막 히트 노출
+  adapter.on("node:click", p => { window.__lastEvt = "node:click "+(p.id||""); });
+  adapter.on("node:dblclick", p => { window.__lastEvt = "node:dblclick "+(p.id||""); });
+  adapter.on("canvas:click", () => { window.__lastEvt = "canvas:click"; });
+  adapter.on("node:contextmenu", p => { window.__lastEvt = "node:contextmenu "+(p.id||""); });
+  await adapter.setScene(buildDesignScene());
+  adapter.fitView({ padding: 80 });
+  log(`PixiJS ${PIXI.VERSION} · renderer=${adapter.app.renderer.name} · dpr=${window.devicePixelRatio}\nadapter ready (setScene 경로)`);
+  window.__adapter = adapter;   // 디버그: 실 브라우저 좌표 계산용(정확한 hit-test 실증)
+  window.poc = {
+    screenOf: (id) => { const p = adapter.getElementPosition(id); if(!p) return null; const s = adapter.getCanvasByViewport(p); const r = adapter.app.canvas.getBoundingClientRect(); return { x: r.left + s[0], y: r.top + s[1] }; },
+    design: async () => { await adapter.setScene(buildDesignScene()); adapter.fitView({padding:80}); return "design"; },
+    perf: async (S,T,C) => { const b=buildPerfScene(S,T,C); await adapter.setScene(b); adapter.fitView({padding:40}); return b._count; },
+    zoomTo: z => adapter.zoomTo(z),
+    fit: () => adapter.fitView({padding:60}),
+    panTest: (sec,ax,ay) => runFrameTest("pan", sec, ax||400, ay||200),
+    zoomTest: sec => runFrameTest("zoom", sec),
+    clickAt: (sx,sy) => { const r=adapter.app.canvas.getBoundingClientRect(); adapter.app.canvas.dispatchEvent(new PointerEvent("pointerdown",{clientX:r.left+sx,clientY:r.top+sy,button:0})); window.dispatchEvent(new PointerEvent("pointerup",{clientX:r.left+sx,clientY:r.top+sy,button:0})); return window.__lastEvt; },
+    stats: () => ({ children: adapter.world.children.length, zoom:+adapter.getZoom().toFixed(3), renderer:adapter.app.renderer.name, ver:PIXI.VERSION, lastEvt:window.__lastEvt||null }),
+  };
+}
+function runFrameTest(kind, seconds, ampX, ampY){
+  return new Promise(res=>{
+    const t0=performance.now(), frames=[]; let last=t0;
+    const baseX=adapter.world.x, baseY=adapter.world.y, z0=adapter.getZoom();
+    function tick(now){
+      frames.push(now-last); last=now; const el=(now-t0)/1000;
+      if(kind==="pan") adapter.world.position.set(baseX+Math.sin(el*Math.PI)*ampX, baseY+Math.cos(el*Math.PI*0.7)*ampY);
+      else adapter.zoomTo(z0*(0.35+0.65*(0.5+0.5*Math.sin(el*2.5))));
+      if(now-t0<seconds*1000) requestAnimationFrame(tick);
+      else { if(kind==="pan") adapter.world.position.set(baseX,baseY); else adapter.zoomTo(z0);
+        frames.shift(); frames.sort((a,b)=>a-b);
+        const q=p=>frames[Math.min(frames.length-1,Math.floor(frames.length*p))]||0;
+        res({ frames:frames.length, fps:Math.round(1000/(frames.reduce((a,b)=>a+b,0)/frames.length)), p50:+q(0.5).toFixed(2), p95:+q(0.95).toFixed(2), max:+Math.max(...frames).toFixed(2) }); }
+    }
+    requestAnimationFrame(tick);
+  });
+}
+boot();
+</script>
+</body>
+</html>

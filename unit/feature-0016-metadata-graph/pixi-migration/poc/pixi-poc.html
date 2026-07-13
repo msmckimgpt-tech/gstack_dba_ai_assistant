@@ -1,0 +1,299 @@
+<!doctype html>
+<!-- feature-0016 §78 Phase A POC — PixiJS v8 디자인 보존(D1~D3,D5) + 팬/줌 성능 게이트.
+     스타일 수치는 graph-roleviz.js / graph-state.js / graph-core.js 의 정본을 그대로 이식(재해석 금지).
+     window.poc.* 로 shoot_pixi.py 가 구동한다. -->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>pixi-poc §78</title>
+<style>
+  html,body{margin:0;height:100%;background:#f6f8fb;font-family:system-ui,sans-serif}
+  #stage{position:absolute;inset:0}
+  #hud{position:absolute;left:8px;top:8px;z-index:10;background:rgba(255,255,255,.9);border:1px solid #d5dbe5;
+       border-radius:8px;padding:6px 10px;font-size:12px;color:#334;white-space:pre;max-width:520px}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hud">loading…</div>
+<script src="./pixi.min.js"></script>
+<script>
+"use strict";
+window.__err = [];
+window.addEventListener("error", e => window.__err.push(String(e.message)));
+window.addEventListener("unhandledrejection", e => window.__err.push(String(e.reason)));
+
+// ── 정본 상수 (graph-state.js / graph-core.js / graph-roleviz.js 이식 — 수치 무변경) ──
+const COLOR = { Table:"#0f7d8c", Column:"#5c6773", GlossaryTerm:"#9c6515", Schema:"#3f4b8c",
+                Datasource:"#2e7d52", Product:"#2e7d52", Routine:"#7b5cd6" };
+const ROLE = { master:{color:"#0072B2",dark:false}, account:{color:"#56B4E9",dark:true},
+               transaction:{color:"#009E73",dark:true}, log:{color:"#E69F00",dark:true},
+               mapping:{color:"#CC79A7",dark:true}, config:{color:"#D55E00",dark:false},
+               stats:{color:"#F0E442",dark:true}, etc:{color:"#6e7681",dark:false} };
+const LAY = { SW:300, GAPX:48, GAPY:52, PADT:34, PADX:16, TROW:34, CROW:21, CIND:26, TGAP:12,
+              TW:150, CARDW:210, CARDH:44 };
+const Z = { CAT_BG:-1, COMBO:0, GROUP_BG:1, EDGE:2, COLUMN:3, NODE:4, GROUP_HD:5, CTL:6 };
+const ZOOM_RANGE = [0.05, 4];
+const DIM = 0.38;
+
+// ── Pixi 초기화 (D1: 벡터 테셀레이션 + DPR 해상도, 스프라이트 스케일링 미사용) ──
+const app = new PIXI.Application();
+const world = new PIXI.Container();      // 카메라 = world transform (팬/줌 = 행렬 갱신 1회)
+world.sortableChildren = true;
+let labelRes = Math.min((window.devicePixelRatio || 1) * 2, 4);   // D4 1차 전략: Text 캐시 + 고해상 래스터
+
+const hud = document.getElementById("hud");
+function log(s){ hud.textContent = s; }
+
+// ── 도형 헬퍼 (정본 스타일 → Pixi Graphics) ──
+function hexA(c){ return c; }
+function dashedPoly(g, x1, y1, x2, y2, dash, width, color, alpha){
+  // D2: 대시 세그먼트 자작 — G6 lineDash 등가([on,off] 반복)
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  let t = 0, on = true, i = 0;
+  while (t < len) {
+    const seg = Math.min(dash[i % dash.length], len - t);
+    if (on) { g.moveTo(x1 + ux * t, y1 + uy * t); g.lineTo(x1 + ux * (t + seg), y1 + uy * (t + seg)); }
+    t += seg; on = !on; i++;
+  }
+  g.stroke({ color, width, alpha: alpha == null ? 1 : alpha, cap: "butt" });
+}
+function arrowHead(g, x, y, angle, size, color, alpha){
+  const a1 = angle + Math.PI - 0.42, a2 = angle + Math.PI + 0.42;
+  g.moveTo(x, y).lineTo(x + Math.cos(a1) * size, y + Math.sin(a1) * size)
+   .lineTo(x + Math.cos(a2) * size, y + Math.sin(a2) * size).closePath().fill({ color, alpha: alpha == null ? 1 : alpha });
+}
+function label(text, {size=12, fill="#ffffff", weight="700", maxW=0, anchor=[0.5,0.5]}={}){
+  const t = new PIXI.Text({ text, style: { fontFamily: "system-ui, 'Segoe UI', sans-serif",
+    fontSize: size, fill, fontWeight: weight }, resolution: labelRes });
+  if (maxW > 0 && t.width > maxW) {   // labelMaxWidth 등가: 말줄임
+    const s = String(text); let lo = 1, hi = s.length;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; t.text = s.slice(0, mid) + "…"; (t.width <= maxW) ? lo = mid : hi = mid - 1; }
+    t.text = s.slice(0, lo) + "…";
+  }
+  t.anchor.set(anchor[0], anchor[1]);
+  return t;
+}
+
+// 노드 팩토리 — 정본 스타일 생성기 1:1 (좌표는 좌상단 기준으로 통일해 배치 코드 단순화)
+function tableChip(x, y, name, role, dim){
+  const c = new PIXI.Container(); c.zIndex = Z.NODE; c.position.set(x, y);
+  const rd = role ? ROLE[role] : null;
+  const g = new PIXI.Graphics();
+  g.roundRect(-LAY.TW/2, -12, LAY.TW, 24, 6).fill(rd ? rd.color : COLOR.Table).stroke({ color: "#ffffff", width: 1 });
+  const t = label(name, { size: 12, fill: rd && rd.dark ? "#161b22" : "#ffffff", maxW: LAY.TW - 10 });
+  c.addChild(g, t); if (dim) c.alpha = DIM;   // D5: dim 은 base bake(컨테이너 alpha 확정) — 상태 revert 의존 없음
+  return c;
+}
+function columnDot(x, y, name, dim){
+  const c = new PIXI.Container(); c.zIndex = Z.COLUMN; c.position.set(x, y);
+  const g = new PIXI.Graphics();
+  g.circle(0, 0, 5.5).fill(COLOR.Column).stroke({ color: "#ffffff", width: 1 });
+  const t = label(name, { size: 10, fill: "#161b22", weight: "400", maxW: 168, anchor: [0, 0.5] });
+  t.position.set(5.5 + 5, 0);
+  c.addChild(g, t); if (dim) c.alpha = DIM;
+  return c;
+}
+function routineChip(x, y, name){
+  const c = new PIXI.Container(); c.zIndex = Z.NODE; c.position.set(x, y);
+  const g = new PIXI.Graphics();
+  g.roundRect(-LAY.TW/2, -12, LAY.TW, 24, 12).fill(COLOR.Routine).stroke({ color: "#ffffff", width: 1 });
+  c.addChild(g, label(name, { size: 11, maxW: 176 }));
+  return c;
+}
+function ctlBox(x, y, strokeColor){
+  const c = new PIXI.Container(); c.zIndex = Z.CTL; c.position.set(x, y);
+  const g = new PIXI.Graphics();
+  g.roundRect(-9, -9, 18, 18, 4).fill("#ffffff").stroke({ color: strokeColor, width: 1.5 });
+  c.addChild(g, label("−", { size: 15, fill: strokeColor }));
+  return c;
+}
+function schemaCard(x, y, name){
+  const c = new PIXI.Container(); c.zIndex = Z.NODE; c.position.set(x, y);
+  const g = new PIXI.Graphics();
+  g.roundRect(0, 0, LAY.CARDW, LAY.CARDH, 10).fill("#eef0f8").stroke({ color: COLOR.Schema, width: 1.5 });
+  const t = label(name, { size: 12, fill: "#2a3567", maxW: LAY.CARDW - 16 }); t.position.set(LAY.CARDW/2, LAY.CARDH/2);
+  c.addChild(g, t);
+  return c;
+}
+function schemaCombo(x, y, w, h, name){
+  // combo 카드: 점선 남색 라운드 + fillOpacity .045 + 상단 라벨 (D2/D3: 점선·라벨 전부 씬 내 벡터)
+  const c = new PIXI.Container(); c.zIndex = Z.COMBO; c.position.set(x, y);
+  const g = new PIXI.Graphics();
+  g.roundRect(0, 0, w, h, 12).fill({ color: COLOR.Schema, alpha: 0.045 });
+  const per = [[0,0,w,0],[w,0,w,h],[w,h,0,h],[0,h,0,0]];   // 라운드 근사 없이 4변 점선(시각 등가 확인용)
+  for (const [a,b,cx2,cy2] of per) dashedPoly(g, a, b, cx2, cy2, [6,4], 1, "#aab3c5");
+  const t = label(name, { size: 13, fill: COLOR.Schema }); t.anchor.set(0, 1); t.position.set(4, -4);
+  c.addChild(g, t);
+  return c;
+}
+function edge(x1, y1, x2, y2, kind, opt){
+  // 정본 _metaEdgeStyleFor/_metaRoutineEdgeStyle/_metaSchemaRefEdgeStyle 1:1
+  const g = new PIXI.Graphics(); g.zIndex = Z.EDGE;
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  if (kind === "trusted") { g.moveTo(x1,y1).lineTo(x2,y2).stroke({ color:"#6b4410", width:3 }); arrowHead(g,x2,y2,ang,9,"#6b4410"); }
+  else if (kind === "candidate") { dashedPoly(g,x1,y1,x2,y2,[6,4],1.8,"#c9a24a"); arrowHead(g,x2,y2,ang,8,"#c9a24a"); }
+  else if (kind === "crossds") { dashedPoly(g,x1,y1,x2,y2,[2,4],1.8,"#a855c7"); arrowHead(g,x2,y2,ang,8,"#a855c7"); }
+  else if (kind === "routine_read") { dashedPoly(g,x1,y1,x2,y2,[2,3],1.5,COLOR.Routine); arrowHead(g,x1,y1,ang+Math.PI,8,COLOR.Routine); }
+  else if (kind === "routine_write_crossds") { dashedPoly(g,x1,y1,x2,y2,[2,3],1.8,"#a855c7"); arrowHead(g,x2,y2,ang,8,"#a855c7"); }
+  else if (kind === "schema_ref") {
+    const n = (opt && opt.count) || 1;
+    g.moveTo(x1,y1).lineTo(x2,y2).stroke({ color:"#8fa3bf", width: 1 + Math.min(2.4, Math.log2(n+1)*0.55), alpha:0.75 });
+    if (n > 1) { const lb = label(String(n), { size:9, fill:"#64748b", weight:"400" });
+      const bg = new PIXI.Graphics(); bg.zIndex = Z.EDGE;
+      const mx=(x1+x2)/2, my=(y1+y2)/2; lb.position.set(mx,my);
+      bg.roundRect(mx-lb.width/2-3, my-7, lb.width+6, 14, 3).fill({ color:"#f6f8fb", alpha:0.85 });
+      const wrap = new PIXI.Container(); wrap.zIndex = Z.EDGE; wrap.addChild(g, bg, lb); return wrap; }
+  }
+  return g;
+}
+
+// ── 씬 빌더 ──
+let nodeCount = 0, labelCount = 0;
+function clearWorld(){ world.removeChildren().forEach(c => c.destroy({ children: true })); nodeCount = 0; labelCount = 0; }
+
+// 대표 디자인 씬 (D1~D3, D5 side-by-side 용 — g6-poc-validated.html 과 같은 구도)
+function buildDesignScene(){
+  clearWorld();
+  const roles = [null, "master", "transaction", "log", "account", "config", "stats", "mapping", "etc"];
+  // 펼친 스키마 1 (테이블 4 + 컬럼)
+  const combo = schemaCombo(0, 0, 2*LAY.TW + 3*LAY.PADX + LAY.CIND + 168, 360, "dk_data_release");
+  world.addChild(combo);
+  world.addChild(ctlBox(2*LAY.TW + 3*LAY.PADX + LAY.CIND + 168 - 14, 14, COLOR.Schema));
+  const cols = ["PaymentId", "UserNo", "Amount", "CreatedAt", "ProductCode"];
+  let ty = LAY.PADT + 12;
+  ["Payment", "PaymentLog", "Refund", "Coupon"].forEach((nm, i) => {
+    world.addChild(tableChip(LAY.PADX + LAY.TW/2, ty, nm, roles[i], false));
+    if (i === 0) { world.addChild(ctlBox(LAY.PADX + LAY.TW + 12, ty, "#0a5b66"));
+      let cy = ty + LAY.TROW - 6;
+      cols.forEach(cn => { world.addChild(columnDot(LAY.PADX + LAY.CIND, cy, cn + " · int", false)); cy += LAY.CROW; });
+      ty = cy + LAY.TGAP; } else ty += LAY.TROW;
+  });
+  // 루틴 칩 + 두 번째 열
+  world.addChild(routineChip(LAY.PADX + LAY.TW + 60 + LAY.TW/2, LAY.PADT + 12, "ƒ fn_CalcReward"));
+  world.addChild(tableChip(LAY.PADX + LAY.TW + 60 + LAY.TW/2, LAY.PADT + 12 + LAY.TROW, "UserAccount", "account", false));
+  world.addChild(tableChip(LAY.PADX + LAY.TW + 60 + LAY.TW/2, LAY.PADT + 12 + 2*LAY.TROW, "DimmedTable", "log", true));  // D5 dim bake
+  // D4: 한글 라벨 검증 — 용어 칩(GlossaryTerm 앰버) + 한글 컬럼 설명
+  const term = new PIXI.Container(); term.zIndex = Z.NODE; term.position.set(LAY.PADX + 65, 300);
+  const tg = new PIXI.Graphics();
+  tg.roundRect(-65, -11, 130, 22, 11).fill(COLOR.GlossaryTerm).stroke({ color: "#ffffff", width: 1 });
+  term.addChild(tg, label("확률형 아이템 지급", { size: 11, maxW: 118 }));
+  world.addChild(term);
+  world.addChild(columnDot(LAY.PADX + LAY.CIND, 335, "지급 로그 · 결제 연결 컬럼", false));
+  // 접힌 스키마 카드 2 + 집계선
+  const cardA = schemaCard(760, 30, "dk_game_release_1"); world.addChild(cardA);
+  const cardB = schemaCard(760, 170, "cc_data_main"); world.addChild(cardB);
+  // 엣지 6종
+  world.addChild(edge(LAY.PADX + LAY.TW, LAY.PADT + 12, 760, 30 + 22, "trusted"));
+  world.addChild(edge(LAY.PADX + LAY.TW, LAY.PADT + 12 + LAY.TROW, 760, 170 + 22, "candidate"));
+  world.addChild(edge(LAY.PADX + LAY.TW + 60 + LAY.TW, LAY.PADT + 12 + LAY.TROW, 760, 30 + 40, "crossds"));
+  world.addChild(edge(LAY.PADX + LAY.TW + 60 + LAY.TW/2, LAY.PADT + 24, LAY.PADX + LAY.TW/2, LAY.PADT + 12, "routine_read"));
+  world.addChild(edge(760 + LAY.CARDW/2, 30 + LAY.CARDH, 760 + LAY.CARDW/2, 170, "schema_ref", { count: 27 }));
+  log("design scene ready");
+}
+
+// 성능 씬 — 실측 등가(882노드/5스키마 펼침) 또는 스트레스(10k+)
+function buildPerfScene(S, T, C){
+  clearWorld();
+  const roles = Object.keys(ROLE);
+  const perRow = Math.ceil(Math.sqrt(S));
+  const colH = C * LAY.CROW, tBlock = LAY.TROW + colH + LAY.TGAP;
+  const innerCols = Math.max(1, Math.min(6, Math.round(Math.sqrt(T * tBlock / 100 / 2))));
+  const rows = Math.ceil(T / innerCols);
+  const w = innerCols * (LAY.TW + 74) + 2*LAY.PADX, h = LAY.PADT + rows * tBlock + 20;
+  const chips = [];
+  for (let s = 0; s < S; s++) {
+    const sx = (s % perRow) * (w + LAY.GAPX), sy = Math.floor(s / perRow) * (h + LAY.GAPY);
+    world.addChild(schemaCombo(sx, sy, w, h, "schema_" + s));
+    for (let t = 0; t < T; t++) {
+      const cx = sx + LAY.PADX + (t % innerCols) * (LAY.TW + 74) + LAY.TW/2;
+      const cy = sy + LAY.PADT + Math.floor(t / innerCols) * tBlock + 12;
+      world.addChild(tableChip(cx, cy, "table_" + s + "_" + t, roles[(s + t) % roles.length], false));
+      chips.push([cx, cy]);
+      for (let c = 0; c < C; c++)
+        world.addChild(columnDot(cx - LAY.TW/2 + LAY.CIND, cy + LAY.TROW - 6 + c * LAY.CROW, "col_" + c + " · varchar", false));
+    }
+  }
+  for (let e = 0; e < Math.min(chips.length, 300); e++) {
+    const a = chips[(e * 7) % chips.length], b = chips[(e * 13 + 5) % chips.length];
+    world.addChild(edge(a[0], a[1], b[0], b[1], e % 3 === 0 ? "trusted" : (e % 3 === 1 ? "candidate" : "crossds")));
+  }
+  nodeCount = S * T * (1 + C) + S;
+  log(`perf scene: S=${S} T=${T} C=${C} → elements≈${nodeCount}, children=${world.children.length}`);
+}
+
+// ── 카메라 (팬/줌 = world transform — 재래스터/재빌드 없음) ──
+let zoom = 1;
+function applyCam(){ world.scale.set(zoom); }
+function fit(){
+  const b = world.getLocalBounds();
+  const vw = app.renderer.width / app.renderer.resolution, vh = app.renderer.height / app.renderer.resolution;
+  zoom = Math.max(ZOOM_RANGE[0], Math.min(ZOOM_RANGE[1], Math.min(vw / (b.width + 80), vh / (b.height + 80))));
+  world.scale.set(zoom);
+  world.position.set((vw - b.width * zoom) / 2 - b.x * zoom, (vh - b.height * zoom) / 2 - b.y * zoom);
+}
+function zoomTo(z){ zoom = Math.max(ZOOM_RANGE[0], Math.min(ZOOM_RANGE[1], z)); applyCam(); }
+
+// 휠 줌 + 드래그 팬 (POC 는 좌클릭 팬 허용)
+const stageEl = document.getElementById("stage");
+stageEl.addEventListener("wheel", e => { e.preventDefault();
+  zoomTo(zoom * (e.deltaY < 0 ? 1.12 : 0.9)); }, { passive: false });
+let drag = null;
+stageEl.addEventListener("pointerdown", e => { drag = [e.clientX - world.x, e.clientY - world.y]; });
+window.addEventListener("pointermove", e => { if (drag) world.position.set(e.clientX - drag[0], e.clientY - drag[1]); });
+window.addEventListener("pointerup", () => { drag = null; });
+
+// ── 성능 하네스: 스크립트 팬/줌 프레임타임 ──
+function panTest(seconds, ampX, ampY){
+  return new Promise(resolve => {
+    const t0 = performance.now(), frames = [];
+    let last = t0, phase = 0;
+    const baseX = world.x, baseY = world.y;
+    function tick(now){
+      frames.push(now - last); last = now;
+      phase = (now - t0) / 1000 * Math.PI;   // 좌우+상하 오실레이션(사용자 드래그 팬 등가)
+      world.position.set(baseX + Math.sin(phase) * (ampX || 400), baseY + Math.cos(phase * 0.7) * (ampY || 200));
+      if (now - t0 < seconds * 1000) requestAnimationFrame(tick);
+      else { world.position.set(baseX, baseY);
+        frames.shift(); frames.sort((a, b) => a - b);
+        const q = p => frames[Math.min(frames.length - 1, Math.floor(frames.length * p))] || 0;
+        resolve({ frames: frames.length, fps: Math.round(1000 / (frames.reduce((a, b) => a + b, 0) / frames.length)),
+          p50: +q(0.5).toFixed(2), p95: +q(0.95).toFixed(2), max: +Math.max(...frames).toFixed(2) }); }
+    }
+    requestAnimationFrame(tick);
+  });
+}
+function zoomTest(seconds){
+  return new Promise(resolve => {
+    const t0 = performance.now(), frames = []; let last = t0;
+    const z0 = zoom;
+    function tick(now){
+      frames.push(now - last); last = now;
+      zoomTo(z0 * (0.35 + 0.65 * (0.5 + 0.5 * Math.sin((now - t0) / 400))));
+      if (now - t0 < seconds * 1000) requestAnimationFrame(tick);
+      else { zoomTo(z0); frames.shift(); frames.sort((a, b) => a - b);
+        const q = p => frames[Math.min(frames.length - 1, Math.floor(frames.length * p))] || 0;
+        resolve({ frames: frames.length, fps: Math.round(1000 / (frames.reduce((a, b) => a + b, 0) / frames.length)),
+          p50: +q(0.5).toFixed(2), p95: +q(0.95).toFixed(2), max: +Math.max(...frames).toFixed(2) }); }
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
+// ── 부팅 ──
+(async () => {
+  await app.init({ background: "#f6f8fb", antialias: true,
+    resolution: window.devicePixelRatio || 1, autoDensity: true, preference: "webgl" });
+  stageEl.appendChild(app.canvas);
+  app.renderer.resize(stageEl.clientWidth, stageEl.clientHeight);
+  app.stage.addChild(world);
+  buildDesignScene(); fit();
+  const info = `PixiJS ${PIXI.VERSION} · renderer=${app.renderer.name} · dpr=${window.devicePixelRatio}`;
+  log(info + "\nready");
+  window.poc = { buildDesignScene, buildPerfScene, fit, zoomTo, panTest, zoomTest,
+    stats: () => ({ children: world.children.length, zoom, renderer: app.renderer.name, ver: PIXI.VERSION }) };
+})();
+</script>
+</body>
+</html>

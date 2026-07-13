@@ -1036,6 +1036,9 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
+  <!-- feature-0016 §78: 그래프 뷰 렌더러 PixiJS v8(WebGL/WebGPU) — G6(Canvas) per-frame CPU 재래스터
+       팬 병목 해소. window.PIXI(UMD) 를 graph-renderer-pixi.js(SceneAdapter)가 소비. G6 는 폴백으로 유지. -->
+  <script src="/static/vendor/pixi.min.js?v=8.19.0"></script>
   <!-- feature-0013: mermaid 렌더(window.mermaid, UMD v10.9.3, 오프라인 vendored) + 공용 렌더 헬퍼.
        ux2 #4: 샘플 검수 상세에서 generated_sql 이 다이어그램일 때 sanitized(securityLevel:'strict') 렌더. admin.js 이전 로드. -->
   <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>

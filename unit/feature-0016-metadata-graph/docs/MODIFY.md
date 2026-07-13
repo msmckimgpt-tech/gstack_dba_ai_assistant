@@ -130,8 +130,26 @@ source_of_truth: true
 - 변경: 줌 인 뷰포트 컬링(§65/§67)이 미니맵(전역 개요)까지 컬링된 구성으로 바꾸던 결함 수정. ① `_metaGraph._cullPartial`(build 가 뷰포트 사유로 방출을 실제 누락했는지) 신설 — build 서두 초기화 + 4 컬 지점(클러스터·루틴·루틴 파라미터 `_rtOff`·테이블) 마킹 + products/스코프 전환 stale 소거 2곳. ② **전체-기하 서명** `_miniFullSig`(§76 nodePosAll — 컬링 무관 전 노드 — + edges.size FNV, build 마다 산정) 신설 — 미니맵 보유 이미지(`mm.__fullImageSig`)의 '현재성' 판정 기준. ③ `_metaPatchMinimapReuse` 확장: 부분방출 + 전체 이미지 보유 시 `renderMinimap` 재복제 skip(stale 여도 부분 재복제 금지 — 컬링 구성 노출 차단, `__lastGeomSig` 는 전체-build 서명 보존으로 줌아웃 복귀 시 재사용). 무컬링 렌더에서만 서명 마킹, 미보유 시 원본 폴백(빈 미니맵·동결 방지). ④ 같은 게이트로 plugin `setCamera` 래핑 — AFTER_TRANSFORM 재적합이 컬링 중 부분 bounds 로 미니맵 카메라를 줌인시키는 두 번째 기전 차단(`updateMask` 는 요소 bounds 비의존이라 마스크 정위치 유지). ⑤ **컬링-유예 시딩 build**(`_metaMinimapSeedKick` 350ms 지연·`_cullSuspendOnce` 1회 소비·`_miniSeedTimer` 중복 방지): fit 이 판독 하한으로 클램프되는 대형 모델은 무컬링 build 가 자연 미발생(라이브 실측 1,249 노드 fit 방출 153) → 전체 이미지를 1회 전량-방출 build 로 시딩, stale(줌인 중 펼침/필터) 시 재시딩. 시딩-마킹 debounce(128ms) 경합으로 마킹 무산 시 래퍼 stale-skip 분기가 force 재-kick(latch 관통) — 상호작용 소강 시점 수렴 보장.
 - 근거: 사용자 리포트("전역적으로 보여야 할 미니맵 내 노드들의 출력 구성이 변경… 컬링된 그래프 뷰 이미지가 사용") — §74(전체-이미지 재사용, ADR-036)의 의미론을 컬링(§65/§67/§76) 이후에도 보존. §74 상태-only skip 무회귀(방출 서명 게이트 유지 + 컬링 차원 직교 게이트). 설계 3요소(②⑤ + force 재-kick)는 PRE-LANDING 라이브 검증이 적발한 결함 3건(fit-클램프 무컬링 미발생·카드 시점 이미지 오인·경합 latch 고착)의 대응.
 - 검증: minimap_reuse **65 PASS**(Section E 서명 의미론 + F1~F9 시딩/stale 재시딩/경합 수렴 — 라이브 적발 3건 전부 headless 재현·잠금) + 그래프 headless 11 스위트 **279 PASS / 0 FAIL** + `node --check --input-type=module` PASS. graph-split 후 headless 번들 레시피 확립(7 모듈 sed 연결 + admin.js 심볼 stub). **PRE-LANDING PB-0008 win-browser 라이브 PASS**(qa-idc 1,249 노드: 시딩 수렴 → 줌 2.0 컬링 rebuild 방출 1,573→153 에 미니맵 toDataURL 해시 완전 불변 → 팬 불변 → 스코프 전환 재렌더 → pageerror 0, test-runs.d/20260713T105224). 적대 리뷰 2 라운드 → REVIEW.md(REV-20260713). POST-DEPLOY 재확인은 T77.5.
-
 ## CHG-20260713T143000-ai-claude-feature-0016-content-cluster-h1 — 클러스터 pass 루틴 fetch scope 비대칭 hotfix (2026-07-13)
 - 대상: `semantic_cluster.py` 루틴 fetch WHERE 1건 + 회귀 테스트 잠금. POST-DEPLOY 라이브 실증에서 적발 — pass 리포트 objects=7055(테이블만)로 루틴 전량 미합류.
 - 원인: `routine_objects.scope_key` 는 **datasource_key**(라이브 실측 — node_analysis_jobs 와 동일 비대칭 클래스, 패널 n4 계보). 'common' 스코프 필터가 0-match. datasource_key 등가가 실질 파티션이므로 scope 필터 제거(백필 쿼리와 동형 — 백필은 원래 무필터라 정상 동작했음).
 - 검증: test_semantic_cluster_content.py 회귀 잠금(+scope 필터 부재 assert) 포함 전 파일 PASS. POST-DEPLOY 재가동으로 루틴 합류 실증(REPORT).
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-plan — §78 PixiJS v8 렌더러 교체 계획 수립 (docs-only, 코드 0)
+- 대상: `unit/feature-0016-metadata-graph/pixi-migration/BLUEPRINT.md`(신설), `docs/{TASK.md(§78 신설),REPORT.md(2026-07-13 절),REVIEW.md([SKIPPED] entry)}`. **코드/자산 변경 0**.
+- 변경: 팬 성능 잔존 병목(Canvas per-frame CPU 재래스터) 타당성 검토 결론 + PixiJS v8 이관 계획(디자인 보존 계약 D1~D6·Phase A/B/C·AC·리스크 R1~R7)을 plan-review 상태로 정착. 실행은 PLAN-APPROVED 후(§7.1 Major).
+- 근거: 사용자 지시(2026-07-13) — 게임엔진 기각 검토 수용, G6 유지 경로 기각(과거 디자인 실패 이력), PixiJS v8 로 디자인 무붕괴+성능 확보 계획 요청. 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-poc — §78 Phase A POC (poc-only, 제품 코드 0)
+- 대상: `unit/feature-0016-metadata-graph/pixi-migration/poc/{pixi-poc.html,shoot_pixi.py,pixi.min.js}`(신설), `docs/{TASK.md(T78.2),REPORT.md,MODIFY.md}`. **제품 코드/자산 변경 0** (poc 격리 폴더).
+- 변경: PixiJS 8.19.0 POC — 디자인 보존 계약 D1~D5 검증 씬 + 성능 하네스. 실 Windows Chrome 실측 exit gate PASS(882 등가 vsync-perfect).
+- 근거: TASK §78 T78.2 / BLUEPRINT §4 Phase A. 제품 diff 부재 — §18.8 패널은 Phase B 코드 통합 시 적용.
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-adapter — §78 Phase B-early SceneAdapter 신설 (신규 파일, graph-core 무변경)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/graph/{graph-renderer-pixi.js,SCENE_SPEC.md}`(신설) · `tests/headless/test_pixi_adapter.js`(신설) · `pixi-migration/poc/adapter-poc.html`(신설) · docs(TASK T78.3·REPORT·test-runs.d). **기존 graph/ 7모듈·admin.js·admin.html 무변경**(배선은 B-late).
+- 변경: PixiJS v8 SceneAdapter(G6.Graph 호환 + 순수로직 분리) — scene-spec(=_metaG6Build 출력형태) setScene 렌더. 순수 28 PASS·그래프 회귀 279 무회귀·실 Chrome 60fps vsync + 디자인 D1~D5 보존.
+- 근거: TASK §78 T78.3a / BLUEPRINT §4 Phase B. 신규 파일이라 §18.8 적대 패널은 B-late(graph-core 배선=실 제품 표면 변경) 시 정규 적용 — 본 커밋은 미배선 어댑터라 SKIPPED.
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-wire — §78 B-late seam 배선 + 적대리뷰 수정 (제품 코드 변경)
+- 대상: `graph/graph-renderer-pixi.js`(gap 배선 + 적대리뷰 B1/M1/M2/m1/m2/m4)·`graph/graph-core.js`(seam _metaRendererKind·_metaInitGraph 분기 + pixi 컬링 비활성 M3/M4 + drag-enable predicate 주입)·`graph/SCENE_SPEC.md`(신규)·`admin.html`(pixi.min.js vendor)·`vendor/pixi.min.js`(신규)·`tests/headless/test_pixi_adapter.js`.
+- 변경: 그래프 렌더러 G6→PixiJS 전환 배선. 어댑터가 G6.Graph 인터페이스 미러(모든 UI 버튼·상호작용 무변경 동작). render-on-demand. 적대 §18.8 BLOCKING1+MAJOR4+MINOR3 수정. 회귀 0(순수 33 + 그래프 279).
+- 근거: 사용자 지시(실 배선 + 모든 UI 버튼 정합). REV-…-graph-pixi-wire [SUBAGENT:PASS-WITH-FIXES].
