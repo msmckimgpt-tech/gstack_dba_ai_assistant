@@ -211,3 +211,20 @@ source_of_truth: true
 
 ## REV-20260713T081919-ai-root-feature-0016-graph-pixi-bitmaptext-pd [SKIPPED:docs-only-postdeploy]
 - §80 POST-DEPLOY 라이브 기록 — docs-only. 배선 코드는 선행 REV-...-bitmaptext [SUBAGENT:PASS-WITH-FIXES] 완료. SKIPPED.
+
+## REV-20260713T181300-detail-hover-fx — §81 상세 패널 hover 시각 효과
+- 설계 선택: hover 효과를 **비커밋**(커밋 선택 bake·전체 rebuild 미접촉)으로 구현. 하이라이트는 PixiJS 어댑터의 world-space 전용 오버레이 레이어(`_hoverLayer`)에 위임 — `this.world` 자식이라 팬/줌 자동 정합, `setElementState`(노드-only, 커밋 상태)·엣지 상태 부재 문제를 우회하고 커밋 선택과 시각 충돌 없음. 카메라 이동은 기존 `_metaGraphAnimateFocus`(적응형 부드러운 팬) 재사용.
+- 렌더러 무관: G6 폴백 seam(`window.__META_RENDERER`) 대비 하이라이트 메서드를 feature-detect(`typeof g.setHoverHighlight==="function"`)로 호출 — 폴백에선 graceful no-op, 카메라(focusElement)는 양쪽 동작. PixiJS 가 de-facto 렌더러라 실사용 경로 정상.
+- 카메라 요동 방지: hover-intent 200ms 지연 + leave 취소(스윕 통과 무시). 클릭 팬(`_metaGraphPanToRelation`)과 동일하게 `_opSeq` 미bump — 진행 중 fetch/expand 를 폐기하지 않음(트레이드오프: 드문 동시 hover 팬 겹침 가능하나 intent 지연이 실질 완화).
+- 미렌더 대상: 접힌 스키마/뷰포트 컬링으로 대상이 미렌더면 `_metaRenderedAncestorFor`(소속 테이블/카드)로 승격, 조상도 미렌더면 graceful skip(요동/오류 없음). 컬럼 단위 FK 연결선 정확도를 위해 참조/관계 행에 `data-edge-self`(방향별 self 끝점) 부여.
+- a11y: mouseenter/leave 에 더해 focus/blur 도 동일 처리(키보드 탐색 파리티, 기존 `:focus-visible` CSS 관례 정합).
+- XSS: 신규 `data-edge-self` 속성값 전부 기존 `esc()` 경유. 신규 파일 0·공개 barrel 표면 무변경.
+- 검증: 정적(node --check 3모듈 PASS·export/import 정합·어댑터 메서드 존재·diff 4파일 스코프). PB-0008 라이브(visual_verification_scope=always 하드 게이트)는 배포 후 T81.6 — 미수행 상태로 완료 주장 안 함.
+
+## REV-20260713T181300-detail-hover-fx-panel [SUBAGENT:PASS-WITH-FIXES]
+§18.8 적대 검증 패널(general-purpose subagent, 정적 추론 — 라이브 브라우저 미가용). 판정 **PASS-WITH-FIXES**. 발견·조치:
+- **MAJOR (수정됨)** 연속 hover-pan 루프 충돌: `_opSeq` 미bump(클릭 팬과 동일)이라 두 hover-pan `_metaGraphAnimateFocus` 루프가 서로 다른 앵커로 매 프레임 translateBy → ~1.2s 창에서 카메라 요동. **조치**: hover-pan 세대 토큰 `_metaHoverPanGen`(Cancel/새 Pan 이 bump) + `_metaGraphAnimateFocus(…, {abort})` 선점 종료 훅 추가 — 새 hover/leave 가 진행 중 루프를 즉시 abort(fetch `_opSeq` 는 미폐기 유지). NIT#5(leave 가 시작된 팬 못 멈춤)도 동일 수정으로 해소.
+- **MINOR (수정됨)** mouseleave 미발화 재렌더(히스토리 back/forward·펼치기 버튼·폴 재렌더) 시 예약 팬 타이머가 사라진 대상으로 발화 / stale 강조 잔존: **조치**: 4개 상세 렌더 함수(RenderDetail·RenderRelations·ShowCategoryDetail·RenderClusterDetail) 진입부에 `_metaGraphHoverPanCancel()+_metaGraphClearHoverHighlight()` 추가.
+- **MINOR (수정됨)** `_metaGraphSetHoverHighlight` 의 `!a && b`(self 미렌더·상대 렌더) 케이스 강조 누락: **조치**: `else if (b) addNode(b)` 추가.
+- **반증(결함 아님 확인)**: XSS(`data-edge-self` 전부 `esc()` — &<>" 이스케이프) · G6 폴백 안전(feature-detect no-op, throw 경로 없음) · draw() 스래싱 없음(hover 는 `_hoverLayer`+`_render()` 만, `setData`/`draw` 무접촉) · 리스너 누수 없음(매 렌더 `el.innerHTML` 교체로 GC) · hit-test 간섭 없음(오버레이 eventMode none·자체 hit-grid) · 클릭/더블/캐럿 라우팅 무회귀(hover 는 mouseenter/leave/focus/blur 만, stopPropagation 없음).
+- 재검증: 3개 모듈 `node --check` PASS(수정 후). 회귀: 그래프 헤드리스 하네스는 배포 파이프라인에서 실행(별도) — 본 변경은 additive·비커밋이라 기존 배치·선택 경로 무접촉.

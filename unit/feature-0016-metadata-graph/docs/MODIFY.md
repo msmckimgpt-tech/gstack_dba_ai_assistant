@@ -174,3 +174,8 @@ source_of_truth: true
 
 ## CHG-20260713T081919-postdeploy — §80 POST-DEPLOY 기록 (docs-only)
 - docs(TASK T80.3·REPORT)+test-runs.d. 코드 0. PR #759 배포(b69e4111)+라이브 BitmapText 렌더·팬 60fps·pageerror 0. §18.8 SKIPPED.
+
+## CHG-20260713T181300-detail-hover-fx — §81 상세 패널 hover 시각 효과
+- 대상(cross-cut feature-0003 static/graph): `graph-renderer-pixi.js`(world-space `_hoverLayer`+`setHoverHighlight`/`clearHoverHighlight`, draw() stale clear)·`graph-core.js`(`_metaGraphHoverPan`/`HoverPanCancel`/`SetHoverHighlight`/`ClearHoverHighlight` 래퍼+export)·`graph-ctxmenu.js`(hover 바인더 `_metaBindHoverPan`/`_metaBindHoverHighlight`/`_metaGraphBindDetailHover`+5뷰 배선+`data-edge-self`)·`graph.css`(`[data-cid]` 커서/hover).
+- 변경: 상세 패널 하위 항목 hover 시 비커밋 피드백 — 카테고리/클러스터 행=부드러운 카메라 팬(intent 200ms), 컬럼=노드 강조 링, 참조·ROUTINE_USES·관계 행=연결선(엣지)+양끝 노드 강조. 커밋 선택/rebuild 미접촉. 렌더러 무관(G6 폴백=하이라이트 no-op·카메라 동작).
+- 근거: 사용자 요청(entry persona dispatch). 등급 Minor(additive UI). 정적 검증 PASS(node --check 3모듈·심볼 정합). PB-0008 라이브 검증(visual=always)은 배포 후 T81.6.

@@ -286,9 +286,12 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 /* graph-ctxmenu: 관계 상세 패널 — 방향별 관계 행(클릭=상대 노드 이동) */
 .admin-meta-graph-sec ul.amgr-list { list-style: none; margin: 0; padding: 0; }
 .amgr-row { padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 8px; margin: 4px 0; }
-.amgr-row[data-key], .amgr-row.amgr-trace[data-trace] { cursor: pointer; }
+/* detail-hover-fx: 카테고리 상세의 스키마 클러스터 행(data-cid)도 다른 클릭 행과 동일한 커서/hover 어포던스 —
+   hover 시 캔버스 카메라가 해당 클러스터로 이동하므로 행 자체도 상호작용 대상임을 시각적으로 알린다. */
+.amgr-row[data-key], .amgr-row.amgr-trace[data-trace], .amgr-row[data-cid] { cursor: pointer; }
 .amgr-row[data-key]:hover, .amgr-row[data-key]:focus-visible,
-.amgr-row.amgr-trace[data-trace]:hover, .amgr-row.amgr-trace[data-trace]:focus-visible {
+.amgr-row.amgr-trace[data-trace]:hover, .amgr-row.amgr-trace[data-trace]:focus-visible,
+.amgr-row[data-cid]:hover, .amgr-row[data-cid]:focus-visible {
   border-color: var(--primary); background: var(--primary-soft); outline: none;
 }
 .amgr-row.amgr-plain { border-style: dashed; }

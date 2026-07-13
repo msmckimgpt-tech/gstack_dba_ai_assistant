@@ -7,7 +7,7 @@ import { _META_ROLE, _metaFocusAdjacency, _metaFocusKeyFor, _metaRoleChipHTML, _
 import { _metaApplyState, _metaCacheSig, _metaSetBusy, _metaSigRole, _metaStateSig, _metaYieldPaint } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency } from "./graph-rellayout.js?v=dev";
 import { _metaSimGroups } from "./graph-simgroups.js?v=dev";
-import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphFitClamped, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
+import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 
 // ── graph-ctxmenu: 노드 우클릭 상세 상호작용 (REQ-20260702T113000) ──────────────────
@@ -720,6 +720,44 @@ function _metaGraphBindTraceRows(el) {
   });
 }
 
+// ── detail-hover-fx: 상세 패널 하위 항목 hover 시각 효과 바인딩(비커밋 — 클릭 라우팅과 독립·병존) ──
+//   사용자 요청: 하위 항목 hover 시 시각적 명확성 부여. mouseenter/leave + focus/blur(키보드 파리티).
+//   pan=카메라 이동(intent 지연·leave 취소), highlight=캔버스 오버레이 강조(leave 시 해제). 렌더러 미지원
+//   (G6 폴백)이면 하이라이트는 no-op, 카메라는 동작. 클릭/더블클릭(선택·추적)은 기존 바인딩이 그대로 담당.
+function _metaBindHoverPan(row, key) {
+  if (!row || !key) return;
+  const on = () => _metaGraphHoverPan(key);
+  const off = () => _metaGraphHoverPanCancel();
+  row.addEventListener("mouseenter", on);
+  row.addEventListener("mouseleave", off);
+  row.addEventListener("focus", on);
+  row.addEventListener("blur", off);
+}
+function _metaBindHoverHighlight(row, spec) {
+  if (!row || !spec) return;
+  const on = () => _metaGraphSetHoverHighlight(spec);
+  const off = () => _metaGraphClearHoverHighlight();
+  row.addEventListener("mouseenter", on);
+  row.addEventListener("mouseleave", off);
+  row.addEventListener("focus", on);
+  row.addEventListener("blur", off);
+}
+// 상세 패널 컨테이너 전체에 hover 강조 바인딩(공용): 컬럼 선택=노드 강조, 참조/사용 행=연결선 강조.
+//   selfKey 는 ROUTINE_USES(data-rtuse) 의 self 끝점 폴백. 참조 행(.amgr-trace)·관계 행(.amgr-row[data-key])은
+//   data-edge-self 를 self 끝점으로(없으면 selfKey) 사용 — 컬럼 단위 FK 도 정확한 연결선을 강조한다.
+function _metaGraphBindDetailHover(el, selfKey) {
+  if (!el) return;
+  el.querySelectorAll(".amgr-col-select[data-col]").forEach((b) => {
+    _metaBindHoverHighlight(b, { nodeKeys: [b.getAttribute("data-col")] });
+  });
+  el.querySelectorAll(".amgr-trace[data-trace]").forEach((r) => {
+    _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || selfKey, r.getAttribute("data-trace")]] });
+  });
+  el.querySelectorAll("[data-rtuse]").forEach((b) => {
+    _metaBindHoverHighlight(b, { edgeKeyPairs: [[b.getAttribute("data-edge-self") || selfKey, b.getAttribute("data-rtuse")]] });
+  });
+}
+
 // reldedup(graph-detail): _metaGraphRelTraceRowsHTML 제거 — 유일 소비처였던 AI 박스 '연결 관계 추적'
 //   flat 목록이 상단 컬럼 섹션과 중복이라 삭제되면서 이 헬퍼도 orphan 이 됐다. 컬럼별·방향별 추적 행은
 //   _metaGraphRenderDetail 의 relRow/dirGroup 이 담당한다(더 풍부: 방향 그룹·의미 툴팁).
@@ -1205,6 +1243,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
+  _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여(예약 팬·강조) 정리(mouseleave 미발화 경로 대비).
   // 항목1: 이 노드가 검색 결과라 그래프에 rel(유사도)이 실려 있으면 상세 헤더에 % 명시.
   const selfScopeKey = (self.key && self.key.indexOf(":") >= 0)
     ? self.key.slice(0, self.key.indexOf(":")) : (adminState.metadata.scopeKey || "common");
@@ -1302,7 +1341,9 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     const selfEndFqn = dir === "out" ? nm(e.source) : nm(e.target);
     const otherFqn = nm(other);
     const tip = _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn);
-    return `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
+    // detail-hover-fx: self 끝점 키(방향별 e.source/e.target) — hover 연결선 강조가 정확한 컬럼↔상대 엣지를 그린다.
+    const selfEndKey = dir === "out" ? e.source : e.target;
+    return `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" data-edge-self="${esc(selfEndKey)}" role="button" tabindex="0" ` +
       `title="${esc(tip)}">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(otherFqn)}</code>` +
       `${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}` +
@@ -1466,6 +1507,8 @@ function _metaGraphRenderDetail(self, nodes, edges) {
       if (body) body.hidden = open;
     });
   });
+  // detail-hover-fx: 하위 항목 hover 강조 — 컬럼=노드 링, 참조·사용 행=연결선(엣지). 클릭/토글 바인딩과 병존.
+  _metaGraphBindDetailHover(el, self.key);
   _metaGraphLoadNodeAnalysis(self.key);
 }
 
@@ -1526,6 +1569,7 @@ async function _metaGraphShowRelations(key) {
 function _metaGraphRenderRelations(key, nodes, edges) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
+  _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const byKey = {};
   (nodes || []).forEach((n) => { if (n && n.key) byKey[n.key] = n; });
@@ -1577,7 +1621,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
     const main = arrow === "→"
       ? `${localName ? `<code>${esc(localName)}</code> <span class="amgr-arrow">→</span> ` : ""}${counter}`
       : `${counter}${localName ? ` <span class="amgr-arrow">→</span> <code>${esc(localName)}</code>` : ""}`;
-    return `<li class="amgr-row" data-key="${esc(otherKey)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
+    return `<li class="amgr-row" data-key="${esc(otherKey)}" data-edge-self="${esc(selfEndKey || key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span>${main}` +
       `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}${curateBtns(e)}</div>` +
       `<div class="amgr-sub admin-meta-graph-muted">${esc(typeKo)}${srcKo ? " · 근거: " + esc(srcKo) : ""}${on.description ? " — " + esc(on.description) : ""}</div></li>`;
@@ -1606,7 +1650,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   if (terms.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul class="amgr-list">`);
     terms.slice(0, 30).forEach(({ e, node }) => {
-      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
+      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" data-edge-self="${esc(key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
         `<div class="amgr-main"><span class="amgr-arrow">◈</span><strong>${esc(node.name || node.key)}</strong></div>` +
         `<div class="amgr-sub admin-meta-graph-muted">${esc(_META_EDGE_TYPE_KO[e.type] || e.type)}${node.description ? " — " + esc(node.description) : ""}</div></li>`);
     });
@@ -1629,6 +1673,8 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   el.querySelectorAll(".amgr-row[data-key]").forEach((r) => {
     // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
     _metaGraphBindRelRow(r, r.getAttribute("data-key"));
+    // detail-hover-fx: hover 시 연결선(엣지) 강조 — self 끝점(data-edge-self)↔상대(data-key).
+    _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || key, r.getAttribute("data-key")]] });
   });
   // graph-category(§55 B): 큐레이션 버튼 — 행 클릭(카메라 이동)과 분리(stopPropagation).
   el.querySelectorAll("button.amgr-cur").forEach((b) => {
@@ -1649,6 +1695,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
 function _metaGraphShowCategoryDetail(catKey) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el || !catKey) return;
+  _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const label = _metaGraph.catLabelOf.get(catKey) || (catKey === "PC:__none__" ? "미분류" : catKey);
   const members = _metaGraph.catMembers.get(catKey) || [];
@@ -1670,7 +1717,9 @@ function _metaGraphShowCategoryDetail(catKey) {
   parts.push(`</ul></div></div>`);
   el.innerHTML = parts.join("");
   el.querySelectorAll(".amgr-row[data-cid]").forEach((r) => {
-    r.addEventListener("click", () => _metaGraphShowClusterDetailById(r.getAttribute("data-cid")));
+    const cid = r.getAttribute("data-cid");
+    r.addEventListener("click", () => _metaGraphShowClusterDetailById(cid));
+    _metaBindHoverPan(r, cid);   // detail-hover-fx: hover 시 해당 스키마 클러스터로 부드러운 카메라 이동
   });
   _metaGraphStatus(`카테고리: ${label} — 스키마 ${members.length}개`);
 }
@@ -2124,6 +2173,7 @@ async function _metaGraphShowClusterDetailById(comboId) {
 function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
+  _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   // graph-initview(V-G): cap 절단 시 실 총계(table_count) 우선 — 카드 배지와 패널 수치 모순 방지.
   const nTables = (totalOverride != null) ? totalOverride : ((tables && tables.length) || childTables || 0);
@@ -2178,6 +2228,7 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   if (_schemaAiBtn && comboId) _schemaAiBtn.addEventListener("click", () => _metaGraphAnalyzeSchema(comboId));
   // role-cluster-prefix: 테이블 행 클릭 → 해당 노드 선택(_metaGraphShowDetail = 하이라이트 setSelected + 상세 렌더) + 렌더돼 있으면 카메라 focus.
   el.querySelectorAll(".amgr-ct-row[data-node-key]").forEach((btn) => {
+    _metaBindHoverPan(btn, btn.getAttribute("data-node-key"));   // detail-hover-fx: hover 시 해당 테이블로 부드러운 카메라 이동
     btn.addEventListener("click", () => {
       const k = btn.getAttribute("data-node-key");
       if (!k) return;

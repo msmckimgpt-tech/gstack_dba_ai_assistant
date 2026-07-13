@@ -1262,19 +1262,22 @@ async function _metaGraphFitClamped(focusFirst) {
 //   반응 텀이 사라지고, (b) 재빌드로 앵커가 이동/재생성돼도 최종 위치로 매끄럽게 수렴한다. seq 로 후속 op 시 폐기,
 //   재빌드 중 element 일시 미해소는 해당 프레임만 skip(프레임카운트 조기포기 없음 — 저사양 rAF 탈동조 대비). 종료는 수렴/seq/MAXMS.
 //   카메라 transform 만(노드 재렌더 없음)이라 프리즈 무관. API 부재 번들은 focusElement 즉시 폴백.
-async function _metaGraphAnimateFocus(key, seq) {
+// opts.abort(선택): true 반환 시 팬 루프를 즉시 종료(detail-hover-fx — hover-pan 세대 토큰으로 이전 팬을
+//   선점 종료. _opSeq 를 bump 하지 않아 진행 중 fetch 를 폐기하지 않으면서도 연속 hover 팬끼리 충돌하지 않게 함).
+async function _metaGraphAnimateFocus(key, seq, opts) {
   const g = _metaGraph.graph;
   if (!g || !key) return;
   // graph-rel-layout(§18.8 패널 MINOR): tween 생존 마커 — expand 가 rebuild 후 "tween 이 이미 죽었는지"를
   //   판정해 시야 보정 폴백을 결정한다(관계 재배치로 앵커가 원거리 이동 가능해져 필요해짐). seq 소유 기준.
   _metaGraph._focusLive = seq == null ? -1 : seq;
   try {
-    await _metaGraphAnimateFocusRun(g, key, seq);
+    await _metaGraphAnimateFocusRun(g, key, seq, opts);
   } finally {
     if (_metaGraph._focusLive === (seq == null ? -1 : seq)) _metaGraph._focusLive = null;
   }
 }
-async function _metaGraphAnimateFocusRun(g, key, seq) {
+async function _metaGraphAnimateFocusRun(g, key, seq, opts) {
+  const abort = (opts && typeof opts.abort === "function") ? opts.abort : null;
   // API 부재 번들 폴백(getElementRenderBounds/getViewportByCanvas/translateBy 없으면 즉시 focus — 구 동작 보존).
   if (typeof g.getElementRenderBounds !== "function" || typeof g.getViewportByCanvas !== "function" || typeof g.translateBy !== "function") {
     try { const fel = _metaRenderedIdFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}
@@ -1289,6 +1292,7 @@ async function _metaGraphAnimateFocusRun(g, key, seq) {
   const t0 = now(), MAXMS = 1200;   // **유일** 시간 상한 — av 미해소(재빌드 프리즈로 rAF 탈동조)여도 여기서 확정 종료.
   const K = 0.24;                    // 프레임당 잔여 delta 비율(ease-out follow — 빠른 시작·부드러운 안착)
   while (true) {
+    if (abort && abort()) return;                            // detail-hover-fx: 새 hover-pan/leave 로 선점 종료(세대 토큰)
     if (seq != null && seq !== _metaGraph._opSeq) return;   // 후속 op 로 폐기
     if (now() - t0 > MAXMS) return;                          // 시간 상한(유일 안전망 — 프레임 카운트 기반 조기 포기 없음)
     let W, H;   // 매 프레임 재조회 — 팬 중 컨테이너/창 리사이즈 대응(중앙 목표 스테일 방지).
@@ -1309,6 +1313,58 @@ async function _metaGraphAnimateFocusRun(g, key, seq) {
     // av 미해소(재빌드 중 일시)면 이 프레임 skip — MAXMS 까지 재시도(조기 포기 없음 → 저사양 프레임드롭에도 팬 미실패).
     await raf();
   }
+}
+
+// ── detail-hover-fx: 우측 상세 패널 하위 항목 hover 시각 효과(비커밋 — 커밋 선택/전체 rebuild 미접촉) ──
+//   요청(REQ): 상세 패널의 "관련된 객체 및 연결" 하위 항목에 마우스를 올리면 시각적 명확성을 준다.
+//     · 카테고리/스키마 클러스터 행 → 해당 객체로 부드러운 카메라 이동
+//     · 컬럼 행 → 컬럼 노드 하이라이트 / 참조·함수프로시저 행 → 연결선(엣지) 하이라이트
+//   카메라 이동은 hover-intent 지연(스윕 중 요동 방지) + leave 시 취소. 클릭 팬(_metaGraphPanToRelation)과
+//   동일하게 _opSeq 를 bump 하지 않는다(진행 중 fetch 를 폐기하지 않음). 하이라이트는 렌더러 오버레이
+//   (setHoverHighlight)에 위임 — G6 폴백 어댑터엔 부재라 feature-detect 로 graceful no-op(카메라는 양쪽 동작).
+let _metaHoverPanTimer = null;
+let _metaHoverPanGen = 0;   // hover-pan 세대 — Cancel/새 Pan 이 bump → 진행 중 팬 루프를 선점 종료(연속 hover 충돌 방지, 적대리뷰 MAJOR).
+function _metaGraphHoverPan(key, delay) {
+  _metaGraphHoverPanCancel();   // 세대 bump(진행 중 팬 abort) + 대기 타이머 제거
+  if (!key) return;
+  const d = (delay == null) ? 200 : delay;   // hover-intent: 잠깐 머무를 때만 카메라 이동(행 위 빠른 통과는 무시)
+  const gen = _metaHoverPanGen;   // 이 예약의 세대(취소 후 현재값 캡처)
+  _metaHoverPanTimer = (typeof window !== "undefined" ? window.setTimeout : setTimeout)(() => {
+    _metaHoverPanTimer = null;
+    if (gen !== _metaHoverPanGen) return;   // 지연 중 새 hover/leave 로 대체됨 — 폐기
+    const g = _metaGraph.graph; if (!g) return;
+    const fel = _metaRenderedIdFor(key) || _metaRenderedAncestorFor(key);
+    if (!fel) return;   // 화면 밖(미렌더 — 접힌 스키마/컬링) → graceful(클릭으로 펼침 유도, 카메라 요동 없음)
+    // 기존 부드러운 적응형 팬 재사용(줌 유지, 팬만) + 세대 abort(이후 hover/leave 가 이 루프를 즉시 종료).
+    _metaGraphAnimateFocus(fel, _metaGraph._opSeq, { abort: () => gen !== _metaHoverPanGen });
+  }, d);
+}
+function _metaGraphHoverPanCancel() {
+  _metaHoverPanGen++;   // 진행 중 hover-pan 루프(abort 체크) + 대기 타이머를 무효화
+  if (_metaHoverPanTimer) { (typeof window !== "undefined" ? window.clearTimeout : clearTimeout)(_metaHoverPanTimer); _metaHoverPanTimer = null; }
+}
+// spec: { nodeKeys?: [key], edgeKeyPairs?: [[keyA,keyB]] }. key→렌더 요소 id 해소(미렌더면 조상=소속 테이블/카드로 승격).
+//   엣지는 양끝 렌더 요소 사이 연결선으로 강조하고 양끝 노드도 함께 링 강조(연결이 명확히 보이게).
+function _metaGraphSetHoverHighlight(spec) {
+  const g = _metaGraph.graph;
+  if (!g || typeof g.setHoverHighlight !== "function") return;   // G6 폴백 등 미지원 렌더러 → no-op
+  const resolve = (k) => (k ? (_metaRenderedIdFor(k) || _metaRenderedAncestorFor(k)) : null);
+  const nodeIds = [];
+  const addNode = (id) => { if (id && nodeIds.indexOf(id) < 0) nodeIds.push(id); };
+  ((spec && spec.nodeKeys) || []).forEach((k) => addNode(resolve(k)));
+  const edges = [];
+  ((spec && spec.edgeKeyPairs) || []).forEach((pair) => {
+    const a = resolve(pair && pair[0]), b = resolve(pair && pair[1]);
+    if (a && b && a !== b) { edges.push([a, b]); addNode(a); addNode(b); }
+    else if (a) { addNode(a); }   // 상대 미렌더 — self 끝점만이라도 강조(연결선은 생략)
+    else if (b) { addNode(b); }   // self 미렌더(컬링)·상대 렌더 — 상대 끝점만이라도 강조(적대리뷰 MINOR#4)
+  });
+  if (!nodeIds.length && !edges.length) { if (typeof g.clearHoverHighlight === "function") { try { g.clearHoverHighlight(); } catch (_) {} } return; }
+  try { g.setHoverHighlight({ nodes: nodeIds, edges }); } catch (_) {}
+}
+function _metaGraphClearHoverHighlight() {
+  const g = _metaGraph.graph;
+  if (g && typeof g.clearHoverHighlight === "function") { try { g.clearHoverHighlight(); } catch (_) {} }
 }
 
 // 라벨별 색 — RFC 팔레트(Table=teal, Column=slate, GlossaryTerm=amber, Schema=indigo, DS/Product=green).
@@ -2283,4 +2339,4 @@ function _metaGraphOnNodeClick(e) {
 }
 
 
-export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphFitClamped, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
+export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
