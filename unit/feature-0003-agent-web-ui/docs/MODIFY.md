@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260713T101500-ds-conn-test-postverify (TASK-20260713T094624-ds-conn-test POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-13. 코드/자산 무변경 — test-runs.d/20260713T094624-ds-conn-test.md 에 POST-DEPLOY 라이브 PASS append + TASK.md 체크리스트 완료 + REVIEW postverify 엔트리. 배포 PR #767→main 02a1e585, `make deploy-web` 무중단 롤링(soak PASS).
+- 라이브 실측 요지(https://localhost/ bootstrap_admin, win-browser relay Chrome): AC-1 15 DS 배지 전부 `<button.product-dropup-item-ds--test>`·AC-2 클릭→"✓ 연결 성공(11.8ms)" 상단 토스트(top 66px·입력창 비가림)·AC-4 제품 미전환·AC-5 프론트 쿨다운 발화·AC-6 admin 토스트 하단 불변·AC-7 pageerror 0.
+- Cross-ref: CHG-20260713T094624-ds-conn-test(기능) · REV-20260713T101500-ds-conn-test-postverify · test-runs.d fragment.
+
 ## CHG-20260713T094624-ds-conn-test (TASK-20260713T094624-ds-conn-test — 작업화면 제품 드롭업 데이터소스 '연결 테스트' 버튼 + 상단 단발성 토스트, Major §12.3)
 - Date: 2026-07-13. `/_template:entry` arg-given. 스키마/마이그/신규 RBAC/신규 엔드포인트 0.
 - 변경:

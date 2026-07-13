@@ -5493,4 +5493,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 테스트: `verify_profile_icon_consistency.mjs` 하네스 `canOpenAdminConsole` 스텁 + `test_datasource_test_nonblocking.py` autouse 리셋 fixture + throttle 계약 2건(반복→429·404 무-throttle). 타깃 6/6.
 - [x] §18.8 적대 패널 3렌즈(backend+security·frontend+QA·UX+a11y) → SHIP-WITH-FIXES: FE HIGH(하네스)·MED-HIGH(pointer-events 더블클릭)·MED(쿨다운 sentinel)·UX MAJOR(중첩 인터랙티브·어포던스·aria-label)·Backend NIT 4+MINOR 1 **전건 반영 후 재검**(REV-20260713T094624-ds-conn-test).
 - [x] 검증: `node --check`(app.js·admin.js module)·`py_compile`·CSS 균형·**전체 pytest 1902 passed / 2 skipped / 0 failed(회귀 0)**.
-- [ ] verify-completion → 머지·push → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 실 Windows 브라우저(데이터소스 버튼·상단 토스트·입력창 비가림·429 쿨다운·admin 회귀 0). win-browser relay 172.26.144.1:9223 열림.
+- [x] verify-completion PASS → 머지(PR #767, main 02a1e585, rebase 로 병렬 graph-perm-split 충돌 해소) → web 재배포(deploy_scope: included, `make deploy-web` 무중단 soak PASS) → **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 PASS**(AC-1~7 전항목: 15 DS 버튼·상단 토스트 top=66px 입력창 비가림·제품 미전환·프론트 쿨다운·admin 회귀 0·pageerror 0). 상세 test-runs.d/20260713T094624-ds-conn-test.md POST-DEPLOY 갱신.

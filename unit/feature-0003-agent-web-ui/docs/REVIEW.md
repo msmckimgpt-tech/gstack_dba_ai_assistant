@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260713T101500-ds-conn-test-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260713T094624-ds-conn-test, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 test-runs.d fragment POST-DEPLOY append + TASK.md 체크리스트 완료뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260713T094624-ds-conn-test(AGENT-TEAM 3렌즈 SHIP)가 정본. 본 엔트리는 배포 후 라이브 실측 결과 기록만.
+- 라이브 실측 요지(배포 02a1e585, https://localhost/ bootstrap_admin console_access, win-browser Chrome relay): AC-1 15 DS 배지 전부 `<button.product-dropup-item-ds--test>`(aria-label·min 24px·테두리)·AC-2 클릭→실 probe "✓ 연결 성공(11.8ms)" 토스트 top=66px(composer 769px 위, 입력창 비가림)·단발성 자동숨김·AC-4 제품 미전환(stopPropagation)·AC-5 프론트 쿨다운 "4초 후 다시" 발화·AC-6 admin `#adminToast` 하단 불변·AC-7 pageerror 0. Evidence scratchpad/ds-conn-test-postdeploy.png.
+
 ## REV-20260713T094624-ds-conn-test [AGENT-TEAM:backend+frontend+ux 3lens] — 작업화면 제품 드롭업 데이터소스 '연결 테스트' 버튼 + 상단 단발성 토스트 (TASK-20260713T094624-ds-conn-test, Major §12.3)
 - §18.8 dispatch(UI/button/toast → ux·design / API·endpoint·throttle → backend·security / frontend correctness → qa) 3-렌즈 적대 패널. **적발 결함 전건 반영 후 SHIP**.
 - **설계 결정(AskUserQuestion 2026-07-13)**: ① 연결 테스트 = **A2**(관리자 엔드포인트 `POST /api/admin/datasources/{key}/test` 재사용 — 별도 RBAC 추가 없음) + 남용 방지 프론트/백 재시도 텀. ② 상단 토스트 = **C2**(작업화면 전체 `#toast` 상단 앵커, admin `#adminToast` 하단 불변).
