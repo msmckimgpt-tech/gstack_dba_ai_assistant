@@ -123,3 +123,11 @@ source_of_truth: true
 
 ## REV-20260712T190500-item09-batch23-stamp [SKIPPED:mechanical-move-machine-verified] — 그래프 세분화+스탬프 자동화
 - Related: CHG-20260712T190500-item09-batch23-stamp. 순수 이동은 4중 기계검증(문법·verbatim·미해결참조·byte-eq)으로 대체, 신규 로직(inject_asset_stamp.py·asset_stamp_verify)은 census 실측(vendor 우연매치 12건 제외·pin 보존) 반영 + 멱등성 확인. PB-0008 실 Windows 브라우저 QA 통과(에러 0). 배포 시 asset_stamp_verify 가 주입 누락을 하드 차단.
+
+
+## REV-20260713T102249-doc-sync-rn-0713 [SKIPPED:non-policy-doc] — 릴리즈노트 07-10 블록 7항목 prepend(관계도 성능·정리·상세 이동·강조 안정화·상단 툴바 / 타임아웃 모달 제거 / AI 능동 분석 '주의' 실질화 §69 / AI 분석 접속거부 조기 skip) (TASK-20260713T102249-doc-sync-rn-0713, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`)뿐 — 비-정책 doc-only. 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC·엔드포인트·cache-buster(빌드 자동주입) 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현·중복회피·operational gate 는 doc_sync 가 정본(feature-0016 REPORT/DECISIONS §57.4~76 + feature-0003 REPORT ask-timeout + feature-0002 REPORT mssql-auth-cooldown + feature-0016 §69 T69.5 POST-DEPLOY REPORT + git log) 대비 직접 검증.
+- **07-10 run 대비 차이**: (a) §69 AI caveats 편입 — 07-10 run 이 T69.5 미완(라이브 미관측)으로 REJECT 했으나 07-13 PR #744 T69.5 완수(cc_data_main 재생성 715/715·0 failed·옛 자기-불평 사실상 0·사용자 원 리포트 해소)로 라이브 관측 가능 → 7번째 항목으로 편입. (b) cache-buster 수기 bump 제거 — 07-10 run 의 html `?v=` 수기 bump 은 ITEM-09 what#3(inject_asset_stamp.py content-hash 빌드주입) 도입 이전이라 재현 안 함(소스 `?v=dev` 고정). (c) landing/배포 소유=본 attended run(07-10 run 은 cron wrapper 위임).
+- 적대 대조(정본): 07-09~10 사용자 화면 신규 = 그래프 §57.4~76(성능·정리·상세 내비·강조 안정화·툴바)·타임아웃 모달 제거·§69 caveats·MSSQL 접속거부 skip. 07-11~13 은 behavior-neutral(feature-0012 완결·ITEM-09 CSS/JS·META)라 사용자향 0. feature-id/§/테이블/함수/ADR/오류코드 누출 0, 07-08/07-09 블록 대비 중복 0.
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check release-notes-data.js` PASS · vm 파서 구조검증(블록 순서 07-10>07-09>…·항목 스키마·누출 스캔 0).
+- Cross-ref: CHG/TASK/FUNCTION/TEST-20260713T102249-doc-sync-rn-0713 / 원천 머지 d87d582e(타임아웃 모달)·§60~76 그래프·10da986e(MSSQL cooldown)·PR #664/#744(§69 T69.5). META(STATUS·wiki·RELEASE_NOTES·meta/REVIEW)는 별도 commit/META mode(REV-20260713T102249-META-doc-sync-0713).

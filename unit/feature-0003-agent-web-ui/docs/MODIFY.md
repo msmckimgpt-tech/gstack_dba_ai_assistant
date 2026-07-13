@@ -127,3 +127,14 @@ source_of_truth: true
 - Files: static/{styles.css,admin.html,index.html,share.html,admin.js}, static/graph/{graph.js,graph-*.js,graph.css,MAPPING.md}, feature-0002 src/{Dockerfile,scripts/inject_asset_stamp.py}, bin/deploy-web.sh, .gitattributes, AGENTS.md §13.1, ROADMAP.
 - Verification: node --check 8/8 · 이동구간 verbatim 7/7 · 미해결참조/ghost-export 0 · CSS byte-eq+brace 0 · inject 멱등(--check=a888c8833eb6) · PB-0008 실브라우저(렌더 픽셀동일·스코프·검색·줌·클릭·우클릭, 콘솔 에러 0).
 - Rollback: 커밋 revert(atomic PR). 배포 실패 시 deploy-web last-good 자동 롤백.
+
+
+## CHG-20260713T102249-doc-sync-rn-0713 (TASK-20260713T102249-doc-sync-rn-0713 — 07-09~10 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases[0] 에 `date:"2026-07-10"` 새 블록 prepend(`generated` 2026-07-10) — 7항목(fixed/work 1·improved admin 5·improved/common 1). 07-09 이하 블록 보존.
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(ITEM-09 what#3 이후 수기 bump 폐지) — Dockerfile `inject_asset_stamp.py` 가 배포 시 content-hash 주입, deploy-web `asset_stamp_verify` 가 baked placeholder 잔존 하드 차단. index/admin.html 편집 0.
+- 제외: POST-DEPLOY/docs-only 커밋·추론예산(07-09 기출시·docs/RELEASE_NOTES 미러에만 추가)·07-11~13 behavior-neutral(feature-0012 라우터 모듈화 완결·ITEM-09 그래프 CSS/JS·META 툴링). 07-08/07-09 블록과 중복 0.
+- **§69 편입**: 07-10 run REJECT(T69.5 미완) → 07-13 PR #744 T69.5 완수(cc_data_main 715/715)로 라이브 관측 가능 → 편입.
+- Verification: `node --check release-notes-data.js` PASS · vm 구조검증(블록순서·스키마·누출0). 사용자향 평이화(내부용어 누출 0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포는 본 attended run 소유(PR→merge→make deploy-web). META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260713T102249-META-doc-sync-0713).

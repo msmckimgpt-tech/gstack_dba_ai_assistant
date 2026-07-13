@@ -1555,3 +1555,9 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 ## ITEM-09 그래프 모듈 분리 (2026-07-12)
 - 그래프 뷰 141함수(_metaGraph 상태·_META* 상수·_metaG6Build/_metaInitGraph/_metaShowGraph/_metaGraph* 계열)가 admin.js(3618~9024) → static/graph/graph.js 로 이동(pure move). admin.js 는 tab-switch 에서 _metaShowGraph/_metaGraphLoadRoots/_metaRoleLegendTips/_metaGraph 를 import 소비. graph.js 는 adminState/apiFetch/can/showToast/_metaSubmitForm + window.G6 를 import. 함수 카탈로그 상세는 graph.js 자체 참조(단일 파일 응집).
 - (batch2·3 + what#3, 2026-07-12) 그래프 CSS 를 styles.css 8246~8682 → static/graph/graph.css 로 분리(admin.html 전용 link, .admin-meta-ai-btn 크기 규칙·scope-select 베이스는 공유 잔류). graph.js 5,416줄을 7 ES 모듈로 섹션-연속 분할(graph-state/roleviz/util/rellayout/simgroups/core/ctxmenu) — graph.js 는 공개 4심볼 barrel 로 축소(admin.js import 경로 불변). ?v= 캐시버스터는 소스 ?v=dev placeholder 고정 + 빌드 주입(scripts/inject_asset_stamp.py, Dockerfile RUN, deploy-web asset_stamp_verify 하드게이트) — ES import specifier 까지 스탬프해 admin.js 이중 인스턴스화(HTML ?v=X vs import 무버전) 잠복 버그도 해소. 좌표 재적용 정본 = graph/MAPPING.md v2.
+
+
+## (doc-sync-rn-0713, 2026-07-13) 릴리즈노트 콘텐츠 — 07-10 블록 7항목(관계도 성능·정리·상세 이동·강조 안정화·상단 툴바 / 타임아웃 모달 제거 / AI 능동 분석 '주의' 실질화 §69 / AI 분석 접속거부 조기 skip)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 `date:"2026-07-10"` 블록 prepend(7항목·`generated` 2026-07-10). 직전 블록(07-09 모델별 추론 예산) 이후 07-09~10 머지 델타 중 사용자 화면 신규분만 반영(그래프 §57.4~76·타임아웃 모달 제거·§69 caveats 실질화·MSSQL 접속거부 조기 skip).
+- 평이화/비노출: feature-id·§번호·ADR·테이블/함수명·오류코드 등 내부표현 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입) — 수기 bump 없음. CHG/REV-20260713T102249-doc-sync-rn-0713. landing/배포는 본 attended run 소유.

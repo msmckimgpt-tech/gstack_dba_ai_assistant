@@ -237,3 +237,31 @@ edit_policy: append-only
 
 ### 정본
 - `unit/feature-0016-metadata-graph/docs/*`(§57~59, feature-local ADR-024~025) · `unit/feature-0003-agent-web-ui/docs/*`(metadata-console-ux2/-polish·product-classify-suggest UI) · `unit/feature-0002-agent-core/docs/*`(§59 분류 엔진 코드 거주 product_classify/llm/insight).
+
+## 2026-07-09 — feature-0018 / feature-0003: 모델별 추론 예산 상한 확대 + 추론↔본문 비율 배분
+
+### 변경 (관리자 영향 — 런타임 설정)
+- **‘모델별 추론 예산’ 재구성 + 상한 native 확대 (feature-0018, 코드 거주 feature-0003/0002)** — 관리 콘솔 시스템 > 설정의 ‘모델별 추론 예산’을 모델별 카드(접기/펼치기)로 재구성하고, 총 출력 한도(`max_tokens`)를 모델 실성능(Sonnet 128,000 · Haiku 64,000 토큰)까지 상향 허용(이전 ‘매우 높음’ 최대값=기본값이라 위로 조정 불가하던 제약 해소). 추론 강도(낮음·높음·매우 높음)별 예산을 모델마다 분리하고, 추론↔본문 출력 비율 슬라이더로 배분(남는 본문 여유 표시·총 출력을 크게 잡으면 실행 제한 시간도 함께 올려야 할 수 있다는 안내).
+
+### 정본
+- `unit/feature-0003-agent-web-ui/docs/*`(WebRuntimeSettings·admin_settings) · `unit/feature-0002-agent-core/docs/*`(`reasoning_budget`·`shared/runtime_settings`).
+
+## 2026-07-10 — feature-0016 / feature-0003 / feature-0002: 관계도 대규모 성능·정리 + 상세 내비·강조 안정화 · 응답 지연 타임아웃 모달 제거 · AI 능동 분석 ‘주의’ 실질화 · 인증실패 회복력 (07-09~10 머지분)
+
+### 변경 (관리자 영향 — 관계도 뷰, §60~76)
+- **대규모 관계도 성능·정리 (§60~67·§73~76, feature-local ADR-028~033/035~037, 마이그 0)** — 스키마 펼침 시 세로 폭주 해소(적응형 폭 + 실높이 열 balance, ADR-028)·노드-레벨 컬럼 LOD(ADR-029)·뷰포트 컬링(화면 밖 미그리기, ADR-032) + 컬링 노드의 참조/상호작용 보존(ADR-037)·배치정렬 위상서명 메모이즈(줌인 근본해소, POST-DEPLOY 882노드 7.4×, ADR-035)·미니맵 전체이미지 재사용(ADR-036). 극단 줌아웃 클러스터 집계 카드(ADR-030/031)는 규모·구조 파악 저해로 §67 폐기(ADR-033 — 뷰포트 컬링 + 컬럼 LOD 만 잔존). 사용자 체감: 수백 테이블·수천 항목 규모에서 확대·축소·이동이 매끄럽고 화면 밖 요소 자동 생략(연결선·상세 이동은 보존).
+- **상세 패널 내비·사용 관계 read/write 분리 (§68~72·§75)** — 상세 패널의 사용(참조) 관계를 읽기/쓰기 그룹으로 분리(§68), 선택 노드/관계행/미렌더 컬럼으로 카메라 이동(§70~72), 상세 컬럼 목록에서 직접 컬럼 선택(§75), 중복 관계행 병합(§69).
+- **관계 강조·엣지 팬 안정화 (§57.4~9·§62·§64·§66, feature-local ADR-026~028/031)** — 선택 노드 상대 하이라이트 즉시·정확 점등(빌드시점 인접 재산출·직렬화 bake 단일 진실)·선택 노드 오-침강 및 dim 영구고착 해소·유령 관계선 잔상 제거(§66)·줌아웃 하이라이트 LOD 정규화(§64)·관계선(엣지) 위 중간(휠)버튼 카메라 팬(§62, 엣지 자체는 비이동 보존).
+- **상단 툴바 통합 (graph-toolbar)** — 흩어진 13 컨트롤을 3존(검색·보기 옵션 팝오버·초기화·상세)으로 압축, 줌·상태는 캔버스 플로팅 오버레이로 이동(상태 텍스트 reflow 제거).
+
+### 변경 (작업 화면)
+- **응답 지연 타임아웃 복구 모달 제거 (feature-0003, ask-timeout-nonblocking)** — 답변 생성이 오래 걸릴 때 화면 전체를 덮으며 선택을 요구하던 복구 모달(z-9999) 제거 → 모달·토스트 없는 조용한 자동 재연결. 취소/즉시답변은 컴포저 인라인 버튼 상시. 배포 4b6919ec·POST-DEPLOY PB-0008 라이브 PASS.
+
+### 변경 (관리자 영향 — AI 능동 분석 품질, §69)
+- **능동 노드분석 caveats 계약 재설계 (§69, feature-local ADR-034)** — AI 노드 능동 분석의 ‘주의’ 항목이 ‘불완전 메타/직접 확인 필요’ 형식적 자기-불평 대신 실질 운영·보안 포인트(비가역 삭제·cascade, 민감·현금성 데이터, 대량데이터 성능/잠금, 미검증 FK 데이터품질)만 짚도록 프롬프트 재설계 + Routine(함수/프로시저) touches 읽기/쓰기 구분·returns payload 투영·시드 커버리지 확대. **T69.5 POST-DEPLOY 완수(07-10 배포 a24415a5 + `cc_data_main` 재생성 run 7c75ddcb: 715/715 done·0 failed, PR #744)** — 표본 재확인 시 옛 자기-불평 사실상 0(사용자 원 리포트 ‘대부분 노드 주의가 불명확’ 해소) → 사용자 릴리즈노트 편입.
+
+### 변경 (내부 — 화면 변화 없음)
+- **MSSQL 인증 실패 순회 조기 skip + datasource cooldown (feature-0002, §12.3, 마이그 0)** — insight-worker 순회에서 MSSQL 로그인 실패(18456)를 감지하면 같은 datasource 의 나머지 등록 DB 를 cycle 내 조기 skip + datasource label 키 cooldown(기본 600s, `AGENT_INSIGHT_AUTH_COOLDOWN_SEC`)으로 운영자 GRANT 복구 전 반복 재연결·로그·I/O 억제(복구권위 = TTL 만료). DB/객체별 권한거부(916/229/297)는 로그인 성공 상태라 해당 DB 만 실패·순회 계속(로그인 실패 전용).
+
+### 정본
+- `unit/feature-0016-metadata-graph/docs/*`(§57.4~9·§60~76, feature-local ADR-026~037) · `unit/feature-0003-agent-web-ui/docs/*`(ask-timeout-nonblocking·graph-toolbar) · `unit/feature-0002-agent-core/docs/*`(mssql-auth-cooldown §12.3·§69 node-analysis 코드 거주).
