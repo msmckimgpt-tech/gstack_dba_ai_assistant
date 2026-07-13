@@ -220,6 +220,10 @@ def test_pass_per_schema_split_joint_ids(monkeypatch):
     cur = _pass_env(monkeypatch, rag, routines)
     rep = sc.run_semantic_cluster_pass("common", "ds1")
     assert rep["error"] is None
+    # h1 회귀 잠금: routine fetch 는 scope 필터 없이 ds 만 — routine_objects.scope_key 는
+    # datasource_key(라이브 실측)라 'common' 필터는 루틴 전량 미합류를 만든다.
+    rq = [q for (q, p) in cur.executed if "FROM routine_objects r JOIN texts" in q][0]
+    assert "r.scope_key" not in rq and "r.datasource_key = %s" in rq
     assert rep["schemas"] == 2 and rep["clusters"] == 2 and rep["skipped_schemas"] == 0
     ups_t = {p[2]: (p[0], p[1]) for (q, p) in _updates(cur, "rag_objects")}
     ups_r = {p[2]: (p[0], p[1]) for (q, p) in _updates(cur, "routine_objects")}

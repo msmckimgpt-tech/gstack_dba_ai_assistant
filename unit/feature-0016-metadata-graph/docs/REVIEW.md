@@ -162,3 +162,7 @@ source_of_truth: true
   - **테스트 flake**: 타이머 350ms vs 대기 450/500ms(마진 100~150ms), node 단일스레드 타이머 — 낮음. 65 PASS 재현 3회.
 - 검증: headless 11 스위트 **279 PASS / 0 FAIL**(라이브 적발 3건 각각 F8/F9/F1~7 로 재현·잠금) + **라이브 e2e PASS**(시딩 수렴 fullSigCurrent=true → 줌 2.0 컬링 rebuild 방출 1,573→153 에 미니맵 해시 완전 불변 → 팬 불변 → 스코프 전환 재렌더 → pageerror 0). 상세 test-runs.d/20260713T105224-minimap-fullview.md.
 - 판정: **PASS — 랜딩 차단 없음.** 1차 리뷰의 M1(staleness 표식)은 시딩 도입으로 실질 해소(stale 창이 무기한→~0.5s), M2(과도기 창)·N1(선-마킹)은 수용 유지.
+
+## REV-20260713T143000-ai-claude-feature-0016-content-cluster-h1 [SKIPPED:single-line-hotfix] — 루틴 fetch scope 비대칭 1줄 수정
+- Related Change: CHG-20260713T143000-content-cluster-h1. WHERE 절 1건(스코프 필터 제거) + 테스트 assert — 본 cycle REV-20260713T120500 패널이 검증한 코드면의 국소 후속(같은 n4 비대칭 클래스, 라이브 실증으로 적발·확인). 인가·경계·마이그 0.
+- Panel skip 사유(§18.8): diff 가 단일 WHERE 절 축소(필터 제거 — 반환 집합이 ds 파티션으로 유계)이고, 원 패널이 동일 클래스(n4)를 이미 적대 검증. 회귀는 테스트 assert 로 잠금. 라이브 재가동 실증이 완료 게이트.
