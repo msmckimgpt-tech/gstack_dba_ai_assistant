@@ -73,7 +73,9 @@ def test_dialect_hint_mysql_corrects_tsql():
     )
     assert "MySQL" in h
     assert "TOP" in h and "LIMIT" in h
-    assert "UNION" in h
+    # FR-readonly-query-shapes-overblock: 최상위 UNION/UNION ALL 은 이제 read-only 로 허용된다 →
+    # dialect 교정 힌트의 "UNION 불가" tip 은 제거됐다(오정보 방지). UNION 은 더 이상 교정 대상 아님.
+    assert "UNION" not in h
     assert "IFNULL" in h or "COALESCE" in h
     assert "백틱" in h  # [bracket] → backtick 교정
 

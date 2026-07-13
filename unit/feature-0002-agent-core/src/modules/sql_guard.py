@@ -393,6 +393,13 @@ def collect_schema_refs(
                 schemas.add(fschema)
             if fcatalog:
                 catalogs.add(fcatalog)
+        # FR-readonly-query-shapes-overblock: read-only SHOW(SHOW CREATE TABLE/COLUMNS/INDEX/TABLE STATUS)
+        # 의 대상 스키마(.db)도 제품 allowlist 대조 대상에 포함(caller _freeform_sql_access_error 가 강제).
+        # SHOW VARIABLES/STATUS 등 .db 없는 서버-전역 introspection 은 스키마 참조 0 → allowlist 무영향.
+        if isinstance(stmt, _exp.Show):
+            _sdb = _show_target_db(stmt)
+            if _sdb:
+                schemas.add(_sdb)
     return (schemas, has_unqualified, catalogs)
 
 
@@ -436,6 +443,101 @@ def _has_forbidden_special_node(node) -> str | None:
         if isinstance(ident, _exp.Identifier) and not getattr(ident, "quoted", False):
             if (ident.name or "").lower() in _NILADIC_IDENTITY_FUNCS:
                 return f"niladic system function: {ident.name}"
+    return None
+
+
+# FR-readonly-query-shapes-overblock (§18.8 승인 Critical): sql_guard 의 SELECT/CTE-only shape 게이트가
+# LLM 이 리뷰·introspection 에 자연스럽게 쓰는 **read-only** 패턴을 과차단하던 것을 좁게 보정한다.
+# 허용 대상은 (1) 최상위 set-op(UNION/INTERSECT/EXCEPT of SELECTs) (2) 아래 read-only SHOW 화이트리스트뿐.
+# GRANTS/PRIVILEGES/PROCESSLIST/DATABASES/ENGINE/PLUGINS/BINLOG/MASTER·SLAVE·REPLICA STATUS 등 enumeration·
+# 복제내부·권한열람 SHOW 는 **계속 차단**(정보노출/보안). SHOW 대상 스키마(.db)는 forbidden(내부DB) 차단 +
+# 제품 allowlist(collect_schema_refs→_freeform_sql_access_error) 강제. 쓰기·부수효과 SHOW 는 애초에 없음.
+_READONLY_SHOW_KINDS: frozenset = frozenset({
+    # 테이블/뷰 구조·DDL 리뷰(이 마찰의 "테이블 변경사항" 필요) + 서버 config/status.
+    # 루틴(PROCEDURE/FUNCTION) 정의는 전용 도구 describe_routine 이 담당하므로 SHOW CREATE PROCEDURE/
+    # FUNCTION 은 여기 넣지 않는다(guard 는 계속 거부→describe_routine 유도, 중복 경로 방지).
+    "CREATE TABLE", "CREATE VIEW",
+    "COLUMNS", "FULL COLUMNS",
+    "INDEX", "INDEXES", "KEYS",
+    "TABLE STATUS",
+    "VARIABLES", "SESSION VARIABLES", "GLOBAL VARIABLES",
+    "STATUS", "SESSION STATUS", "GLOBAL STATUS",
+})
+
+
+def _show_kind(show) -> str:
+    """exp.Show 의 종류(`.this`)를 대문자·단일공백 정규화."""
+    return re.sub(r"\s+", " ", str(getattr(show, "this", "") or "").strip()).upper()
+
+
+def _show_target_db(show) -> str:
+    """exp.Show 의 대상 스키마(.db) 를 인용 제거 lowercase 로. 없으면 ''."""
+    if _exp is None:
+        return ""
+    db = show.args.get("db")
+    if isinstance(db, _exp.Identifier):
+        return (db.name or "").strip().lower()
+    if db is None:
+        return ""
+    return str(db).strip().strip("`\"[]").lower()
+
+
+def _validate_readonly_show(show, forbid: "set[str] | frozenset[str]", dialect: str) -> SqlGuardResult:
+    """read-only SHOW introspection 검증 — 화이트리스트 종류 + 대상 스키마 forbidden 차단.
+
+    허용 종류(SHOW CREATE TABLE/VIEW·COLUMNS·INDEX·TABLE STATUS·VARIABLES/STATUS 등)만 통과하고,
+    나머지 SHOW(GRANTS/DATABASES/PROCESSLIST 등)는 기존과 동일하게 거부한다. 제품 allowlist 는
+    collect_schema_refs(SHOW .db 수집)→tools._freeform_sql_access_error 가 별도로 강제한다.
+    """
+    kind = _show_kind(show)
+    if kind not in _READONLY_SHOW_KINDS:
+        # 비-read-only SHOW — shape 거부(기존 메시지 유지: 구조 탐색은 전용 도구/허용 SHOW 로 유도).
+        return SqlGuardResult(
+            False,
+            error_reason=f"only SELECT/CTE allowed, got Show ({kind or 'SHOW'})",
+            denied_patterns=[f"show:{kind or 'SHOW'}"],
+        )
+    dbname = _show_target_db(show)
+    if dbname and dbname in forbid:
+        return SqlGuardResult(
+            False,
+            error_reason=f"forbidden schema: {dbname}",
+            denied_patterns=[f"schema:{dbname}"],
+        )
+    return SqlGuardResult(
+        True,
+        ast_summary={
+            "statement_type": "SHOW",
+            "dialect": dialect,
+            "show_kind": kind,
+            "show_db": dbname,
+        },
+    )
+
+
+# REV-20260713T171821 §18.8 security 패널(적대검증): shape 게이트가 root 타입만 보므로, **데이터 수정 CTE**
+# (`WITH c AS (DELETE/INSERT/UPDATE … RETURNING) SELECT … c`)나 서브쿼리·union 분기에 숨은 write/DDL 노드가
+# accepted shape(Select/With/SetOp) 안에 실려 통과할 수 있었다(pre-existing 잠복 — MySQL/MSSQL 은 DML-in-CTE
+# 미지원·RO GRANT 가 backstop 이나 guard 는 authoritative 여야 함). 트리 전체에서 write/DDL/command 노드를
+# 스캔해 거부(defense-in-depth). SELECT/SHOW/UNION read-only 트리는 이 노드들을 포함하지 않는다(false-positive 0 실측).
+_WRITE_NODE_TYPES: tuple = tuple(
+    c for c in (
+        getattr(_exp, _n, None) for _n in (
+            "Insert", "Update", "Delete", "Merge",
+            "Create", "Drop", "Alter", "TruncateTable",
+            "Command", "Copy", "LoadData",
+        )
+    ) if c is not None
+) if _exp is not None else ()
+
+
+def _find_write_node(root) -> str | None:
+    """accepted shape 트리(CTE 본체·서브쿼리·union 분기 포함) 안 write/DDL/command 노드명. 없으면 None."""
+    if _exp is None:
+        return None
+    for cls in _WRITE_NODE_TYPES:
+        for _ in root.find_all(cls):
+            return cls.__name__
     return None
 
 
@@ -492,23 +594,45 @@ def validate_sql_for_sandbox(
         return SqlGuardResult(False, error_reason=f"expected 1 statement, got {len(parsed)}")
 
     root = parsed[0]
-    # AST shape allowlist: root 는 SELECT 또는 WITH (CTE) 이어야 함.
+    # FR-readonly-query-shapes-overblock: read-only SHOW introspection(SHOW CREATE TABLE/VIEW·COLUMNS·
+    # INDEX·TABLE STATUS·VARIABLES/STATUS 등)은 화이트리스트로 통과, 나머지 SHOW 는 거부.
+    if isinstance(root, _exp.Show):
+        return _validate_readonly_show(root, forbid, dialect)
+
+    # AST shape allowlist: root 는 SELECT · WITH(CTE) · 최상위 set-op(UNION/INTERSECT/EXCEPT of SELECTs).
+    # set-op 는 read-only 결합이며, 구성 SELECT·모든 하위노드가 아래 금지-스키마/함수/lock/into 검사를
+    # find_all 로 **전수** 통과해야 한다(분기별 격리 — 예: `SELECT … UNION SELECT … FROM agent_memory.x`
+    # 는 forbidden schema 로 차단됨).
     select_root = root
     if isinstance(root, _exp.With):
-        # CTE root — 본체 select 부분 추출.
+        # CTE root — 본체 select/set-op 부분 추출.
         select_root = root.this
-    if not isinstance(select_root, _exp.Select):
-        return SqlGuardResult(False, error_reason=f"only SELECT/CTE allowed, got {root.__class__.__name__}")
+    _SETOP = getattr(_exp, "SetOperation", None)
+    _is_setop = _SETOP is not None and isinstance(select_root, _SETOP)
+    if not (isinstance(select_root, _exp.Select) or _is_setop):
+        return SqlGuardResult(False, error_reason=f"only SELECT/CTE/UNION allowed, got {root.__class__.__name__}")
+    # set-op 이 실제 SELECT 로만 구성됐는지(비어있지 않은지) 방어.
+    if _is_setop and not list(select_root.find_all(_exp.Select)):
+        return SqlGuardResult(False, error_reason="set operation without SELECT branches", denied_patterns=["setop-empty"])
 
-    # lock clause 검사 (FOR UPDATE / LOCK IN SHARE MODE 등 sqlglot 가 SELECT.args["locks"] 로 expose).
-    locks = select_root.args.get("locks") or []
-    if locks:
-        return SqlGuardResult(False, error_reason=f"lock clause not allowed: {locks}", denied_patterns=["FOR UPDATE/LOCK"])
+    # lock / into 검사 — **모든 SELECT 분기**(union 구성·CTE·서브쿼리 포함)에 적용.
+    # (FOR UPDATE / LOCK IN SHARE MODE 는 select.args["locks"], MySQL `INTO @var/OUTFILE`·T-SQL
+    #  `SELECT … INTO newtbl` 부수효과는 select.args["into"] 로 노출.) 단일 SELECT 도 자기 자신 1개.
+    for _sel in root.find_all(_exp.Select):
+        if _sel.args.get("locks"):
+            return SqlGuardResult(False, error_reason=f"lock clause not allowed: {_sel.args.get('locks')}", denied_patterns=["FOR UPDATE/LOCK"])
+        if _sel.args.get("into"):
+            return SqlGuardResult(False, error_reason="INTO clause not allowed", denied_patterns=["INTO"])
 
-    # into 검사 (dialect 무관: MySQL `INTO @var/OUTFILE`, T-SQL `SELECT ... INTO newtbl` 둘 다
-    # sqlglot 이 select.args["into"] 로 노출 → 부수효과 SELECT 를 shape 단계에서 차단).
-    if select_root.args.get("into"):
-        return SqlGuardResult(False, error_reason="INTO clause not allowed", denied_patterns=["INTO"])
+    # write/DDL 노드 스캔(defense-in-depth) — accepted shape 안에 숨은 데이터 수정 CTE·서브쿼리 write 거부.
+    # (root-level DML 은 위 shape 게이트가 이미 거부; 여기선 CTE 본체·서브쿼리·union 분기의 중첩 write 를 잡는다.)
+    _wnode = _find_write_node(root)
+    if _wnode:
+        return SqlGuardResult(
+            False,
+            error_reason=f"write/DDL statement not allowed: {_wnode}",
+            denied_patterns=[f"write:{_wnode}"],
+        )
 
     # re-gate BLOCKER2(2차): 4-part 참조(`server.database.schema.object`) 차단. sqlglot 은 4-part 를
     # catalog/db/name 3슬롯으로 collapse 하며 실제 schema 를 잃어, 첫 토큰(linked-server 이름)이 catalog 로
@@ -565,7 +689,11 @@ def validate_sql_for_sandbox(
 
     # ast_summary — audit 의 normalized form.
     summary = {
-        "statement_type": "SELECT_CTE" if isinstance(root, _exp.With) else "SELECT",
+        "statement_type": (
+            "SELECT_CTE" if isinstance(root, _exp.With)
+            else "SET_OP" if _is_setop
+            else "SELECT"
+        ),
         "dialect": dialect,
         "table_refs": [
             f"{catalog + '.' if catalog else ''}{db + '.' if db else ''}{name}"

@@ -1040,8 +1040,9 @@ def _dialect_correction_hint(sql: str) -> str:
             tips.append("식별자는 `[브래킷]` 이 아니라 백틱 `` `db`.`table` `` 또는 평문 db.table 을 쓰세요")
         if " TOP " in (" " + su + " ") or su.startswith("SELECT TOP"):
             tips.append("`SELECT TOP n` 대신 `... LIMIT n` 을 쓰세요")
-        if "UNION" in su:
-            tips.append("최상위 `UNION`/`UNION ALL` 은 허용되지 않습니다 — 쿼리를 나누거나 `SUM(CASE WHEN …)` 조건집계로 합치세요")
+        # FR-readonly-query-shapes-overblock: 최상위 UNION/UNION ALL of SELECT 는 이제 허용된다
+        # (read-only 결합) — 종전의 "UNION 불가" 힌트는 제거(오정보 방지). 분기가 거부되면 그 사유
+        # (금지 스키마/함수·lock 등)가 error_reason 에 그대로 나온다.
         if "CONVERT(" in su or "DATEADD" in su or "GETDATE(" in su:
             tips.append("날짜/형변환은 T-SQL `CONVERT/DATEADD/GETDATE` 가 아니라 MySQL `DATE_FORMAT/DATE_ADD/CAST(x AS DATE)/NOW()` 를 쓰세요")
         if "ISNULL(" in su:
