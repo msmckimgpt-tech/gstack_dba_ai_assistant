@@ -170,3 +170,13 @@ source_of_truth: true
 - Verification: 권한 단위테스트(perm-split/dependency-map/glossary-enum) + feature-0003 전체 스위트 PASS(회귀 0) · §18.8 보안 렌즈 적대 리뷰(권한상승·접근상실·멱등·enforcement·SQL, 라이브 MySQL 8.0.46 실증) — 3 findings(A MEDIUM 권한상승·B LOW 멱등·C NIT docstring) 적발·수정 후 VERDICT PASS.
 - Rollback: 커밋 revert. backfill 은 grant 추가만(파괴 없음) — revert 후에도 부여된 graph.read 는 잔존(관리 콘솔에서 명시 회수 가능). `WebSchemaMigrations` 마커 row 는 잔존(무해).
 - 잔여: verify-completion → commit(사용자 confirm) → 머지·push → web 재배포 → 배포 후 DB 마커·라이브 권한 그리드 + PB-0008 실렌더.
+
+## CHG-20260713T185846-attach-filename-consistency (첨부 새 버전 파일명 코드-권위 정합, secondary cross-ref, conversation_audit FR-attachment-update-pasted-not-versioned)
+- Date: 2026-07-13. `/_dqa:conversation_audit "첨부파일 갱신"` 의 **secondary(cross-ref)** — primary=feature-0002 프롬프트(CHG-20260713T185846-attach-update-versioned). 사용자 요구 2항: "갱신된 파일의 명칭도 기존과 정합(버전 접미)".
+- Reason(RC): 명명 정합이 코드로 보장되지 않음 — `_next_version_filename` 은 LLM 이 filename 을 **생략할 때만** 적용됐고, 프롬프트는 오히려 LLM 에게 `report_v2.csv` 수동 지정을 유도 → 버전 불일치·재편집 이중접미(`report_v2.csv`→`report_v2_v3.csv`) 가능.
+- Changes (`src/routers/_conv_store.py`):
+  - `_next_version_filename` idempotent 강화: stem 의 기존 `_v<n>$` 접미를 `app.re.sub` 로 제거 후 재부여 → 재편집 이중접미 방지(`report_v2.csv`+v3→`report_v3.csv`). 확장자 없는 이름도 처리.
+  - `_materialize_assistant_attachment_edits` 명명 블록을 **코드-권위**로 교체: LLM `filename` 유무와 무관하게 항상 `<stem>_v<next_version>.<src_ext>` 생성. LLM 이 이름을 줘도 stem 만 취하고 버전 접미를 강제, 확장자는 source 를 강제 보존(보안리뷰 V3 `.exe` 차단 불변).
+- Recurrence sealing: LLM-dependent 명명 → 코드 권위 명명(AUTH-1a). materialize 가드(conv/account scope·size cap·text-only·MinIO 원자성·UNIQUE version race) 전부 불변. **보안 회귀 0**.
+- 검증: `tests/test_attachment_versioning.py` 명명 정합 케이스(idempotent·이중접미 방지·확장자 강제) + feature-0003 회귀. §18.8 패널 REV-20260713T185846.
+- Cross-ref(정본): feature-0002 CHG-20260713T185846-attach-update-versioned · FRICTION_LEDGER FR-attachment-update-pasted-not-versioned · ANCHOR 0003 무충돌.

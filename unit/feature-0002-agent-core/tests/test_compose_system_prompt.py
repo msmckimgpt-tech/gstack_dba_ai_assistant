@@ -115,6 +115,58 @@ class ComposeSystemPromptTest(unittest.TestCase):
         self.assertIn("## OUTPUT", prompt)
         self.assertLess(prompt.index("## OUTPUT"), prompt.index("```diff"))
 
+    def test_system_prompt_prefers_attachment_edit_on_update_request(self):
+        # FR-attachment-update-pasted-not-versioned (A1): 코드 상수 SYSTEM_PROMPT 가 명시적
+        # 갱신요청 시 attachment-edit 새 버전 전달을 지시하고, filename 은 생략(시스템 자동 버전명명)
+        # 하도록 유도해야 한다 (라이브 global row 의 seed/fallback).
+        prompt = agent_core.SYSTEM_PROMPT
+        self.assertIn("attachment-edit", prompt)
+        # "brand-new SQL" 예외가 편집을 삼키지 않음을 명시.
+        self.assertRegex(prompt, r"(?i)EDIT of that file|never .*brand-new SQL")
+        # filename 생략 유도 (수동 report_v2.csv 지정 유도 제거).
+        self.assertRegex(prompt, r"(?i)do NOT set `?filename`?|OMIT")
+
+    def test_attachment_delivery_directive_always_injected(self):
+        # A2: compose 결과에 코드-권위 첨부 전달 지시가 항상 포함(global row 무관).
+        prompt = agent_core.compose_system_prompt(
+            FakeConnection(),
+            product_id=1,
+            role_id=16,
+            account_id=7,
+            product_mode="pinned",
+        )
+        self.assertIn("FILE UPDATE REQUESTS", prompt)
+        self.assertIn("source_attachment_id", prompt)
+        # injection guard 처럼 base 뒤 상위에 위치(제품/역할/계정 커스터마이즈보다 앞).
+        self.assertLess(prompt.index("FILE UPDATE REQUESTS"), prompt.index("## PRODUCT CONTEXT"))
+
+    def test_attachment_directive_survives_operator_global_override(self):
+        # A2 drift 봉인 핵심: 운영자 WebSystemPrompts global row 가 코드 상수 base 를 통째
+        # 대체해도(첨부 지침이 빠진 커스텀 프롬프트라도) 코드-권위 지시는 여전히 주입된다.
+        class FakeCursorGlobalOverride(FakeCursor):
+            def execute(self, sql, params=None):
+                if "Scope='global'" in sql:
+                    self._row = ("운영자 커스텀 BASE — 첨부 관련 지침 전혀 없음",)
+                    return
+                super().execute(sql, params)
+
+        class FakeConnectionGlobalOverride:
+            def cursor(self):
+                return FakeCursorGlobalOverride()
+
+        prompt = agent_core.compose_system_prompt(
+            FakeConnectionGlobalOverride(),
+            product_id=1,
+            role_id=16,
+            account_id=None,
+            product_mode="pinned",
+        )
+        # global override 내용이 base 로 쓰였는지 확인.
+        self.assertIn("운영자 커스텀 BASE", prompt)
+        # 그럼에도 코드-권위 첨부 전달 지시는 존속(프로덕션 도달).
+        self.assertIn("FILE UPDATE REQUESTS", prompt)
+        self.assertIn("attachment-edit", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

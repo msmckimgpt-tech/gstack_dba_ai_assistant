@@ -407,6 +407,9 @@ app.py 조회실패 debug 로그) 반영.
 - **`llm.py`**: `ENUM_SUGGEST_PROMPT`(코드→라벨 매핑 추출, {"enums":[…]}) + `llm_enum_suggest`(soft-fail []). **`config.py`**: `AGENT_ENUM_AUTOPROPOSE`(기본 1)·`AGENT_ENUM_AUTOPROMOTE_THRESHOLD`(0.9 — 용어 0.85보다 보수적, 구조 추론 오탐 방어)·`AGENT_ENUM_SUGGEST_MODEL/MAX` + `__all__`. **`agent_core.py`**: `_enum_autopropose`(답변 직후 `_glossary_autopropose` 옆, best-effort soft-fail, `AGENT_ENUM_AUTOPROPOSE=0` 비활성).
 - **검증**: `test_kb_enum_feedback.py` 14 PASS(record SQL·자동승급 high/low·poisoning skip·불완전 key skip·되돌리기·promote·infer 필터). 기존 `test_upsert_enum_entry_sql` 은 source 를 컬럼 순서 끝에 append 해 무회귀. 상세·web 경계·UI·배포는 feature-0003 REPORT/TEST(2026-07-07).
 
+## 첨부 파일 갱신 — 명시적 갱신요청 시 새 첨부 버전 전달 (conversation_audit, 2026-07-13)
+- FR-attachment-update-pasted-not-versioned(structural: 갱신요청 34대화 중 붙여넣기 실패 27) 봉인 — SYSTEM_PROMPT 첨부 전달 지침 강화 + `_ATTACHMENT_DELIVERY_DIRECTIVE` 코드-권위 주입(compose_system_prompt, global row drift 봉인). 정본 기록=FRICTION_LEDGER FR-attachment-update-pasted-not-versioned · CHG-20260713T185846-attach-update-versioned · REV-20260713T185846. 파일명 정합은 feature-0003 `_conv_store.py` 코드-권위 정규화(cross-ref).
+
 ## 문서 아카이빙 압축 정보 (§5.5, 20260711T120311)
 - MODIFY.md 총 125건 = 아카이브 109 + 현행 16(최근) · REVIEW.md 총 110건 = 아카이브 94 + 현행 16.
 - verbatim 이관·무손실 md5 검증·timestamp 아카이브명(ADR-20260710T231146).
