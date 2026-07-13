@@ -1,14 +1,16 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-07-13
+last_updated: 2026-07-14
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-07-13
+2026-07-14
 
 ## Key Recent Facts
+- feature-0016 graph-pixi(07-13, §78~81 · MAJOR): 그래프 렌더 엔진 **AntV G6 v5(Canvas)→PixiJS v8(WebGL) 전면 교체**(엔진-중립 SceneAdapter seam·GPU 상주 씬·G6 폴백 토글) — 노드 다수 팬 버벅임 근본 해소(대형 409 객체 팬 60fps vsync 라이브 PASS)+미니맵 클램프/드래그·scene diff 풀(§79)·라벨 BitmapText(§80·렌더 157ms→0.03ms)·상세 hover 시각 효과(§81). 카테고리 밴드 **콘텐츠 단위 그룹핑 실동작화**(mig 0040·LLM 라벨·mutual-kNN)+p2(가짜 밴드 소멸·연관 밴드 인접). 코드 거주 0003(graph-core/renderer-pixi)·0002.
+- 07-13 오후 기타: feature-0003 첨부 **사용자 재업로드 버전 관리**(해시 체인·assistant diff 인지)·작업화면 데이터소스 **연결 테스트 버튼**(ds-conn-test)·**그래프 뷰 권한 분리**(`metadata.graph.read` 를 kb.ingest.manual 묶음에서 독립, Critical) · feature-0002 **describe_routine 도구**+**sql_guard read-only shape 과차단 보정**(최상위 UNION·읽기전용 SHOW) · **feature-0019 메시지 편집 신규**(Phase 1 대화 내부 브랜치 트리 백엔드·마이그 0041, 엔드포인트/프론트 대기).
 - feature-0016 graph-perf-uxpolish(07-09~10, §57.4~76, feature-local ADR-026~037): 그래프 뷰 **대규모 성능·정리 + 상세 내비·강조 안정화** — 스키마 펼침 세로폭주 해소(ADR-028)·컬럼/뷰포트 컬링+컬링 노드 참조/상호작용 보존(ADR-029/032/037)·배치정렬 위상서명 메모이즈(줌인 근본해소 882노드 7.4×, ADR-035)·미니맵 전체이미지 재사용(ADR-036); 극단 줌아웃 집계 카드는 §67 폐기(ADR-033) · 상세 패널 사용관계 read/write 분리·선택노드/관계행/미렌더 컬럼 카메라 이동·컬럼 선택(§68~72/§75)·중복 관계 병합(§69) · 상단 툴바 3존 통합+줌/상태 플로팅 오버레이 · 상대 하이라이트 즉시·정확 점등·유령 관계선 잔상 제거(§57.4~9·§64·§66)·엣지 중간버튼 팬(§62) · **AI 능동 분석 caveats 계약 재설계(§69/ADR-034)** — 형식적 자기-불평 제거·실위험만 짚기, **T69.5 완수(07-13 PR #744, cc_data_main 재생성 715/715·옛 자기-불평 사실상 0, 사용자 원 리포트 해소)**. 코드 거주 0003(admin.js)·0002(node_analysis/llm). PB-0008 라이브 육안 다수 잔여.
 - feature-0003 ask-timeout-nonblocking(07-09): 작업 화면 응답 지연 시 **화면 전체 덮던 타임아웃 복구 모달(z-9999) 제거 → 모달·토스트 없는 조용한 자동 재연결**. 취소/즉시답변 컴포저 인라인 버튼 상시(TASK-0157/0158). §18.8 R1 MAJOR(H1 신규대화 early-cid in-flight 키 이관) 동반수정. 배포 4b6919ec·POST-DEPLOY PB-0008 win-browser PASS.
 - feature-0003/0018 reasoning-budget-per-model(07-09): 관리 콘솔 **모델별 추론 예산 상한 native 확대**(Sonnet 128K·Haiku 64K max_tokens)+추론 강도별 예산 모델별 분리+추론↔본문 비율 슬라이더(feature-0018 코드 거주 0003, `WebRuntimeSettings`).
@@ -50,6 +52,7 @@ last_updated: 2026-07-13
 - assistant 요청 2번 중복 처리 차단(feature-0003/0002, 06-26): 워커모드 `/api/ask` long-poll 끊김 후 재전송 시 ask_job 2개 → 2회 처리되던 결함을 enqueue 멱등화(dedup NOT EXISTS + 기존 run attach)로 차단. 후속 PG AmbiguousParameter 회귀는 dedup 전용 파라미터+alias 격리로 해소.
 
 ## Recent Changes
+- doc_sync 07-14(스케줄, ULTRACODE·landing/배포 소유=wrapper 위임): 07-13 10:30 sync(bafad813) 이후 07-13 오후 델타(#746~#770) 정합 — feature-0016 그래프 렌더러 PixiJS v8 전면 교체(§78~81)+콘텐츠 밴드(mig 0040)·p2·feature-0003 첨부 버전 관리·ds-conn-test·graph-perm-split(Critical)·feature-0002 describe_routine·sql_guard read-only 보정·feature-0019 메시지 편집 신규(Phase 1). STATUS 인덱스(0002/0003/0016 행 07-13+요지·feature-0019 신규 행·sources·gen-status --check PASS)·ARCHITECTURE feature-0016 렌더러 PixiJS+§78~81 마커·SECURITY §19 graph.read 함의 정정(우산=편집 4키만)·wiki(_Index 카운트 17→18+feature-0019 행·feature-0016 렌더러·overview 카운트+㊿+§2.1 행·hot·Log·카드 0016/0003/0002). 동반 operational(feature-0003 별도 commit): 릴리즈노트 data.js 07-13 블록 +7항목(generated 07-13) — cache-buster `?v=dev` 고정(빌드 inject_asset_stamp.py content-hash 자동주입, 수기 bump 불요). content-cluster·§77 은 착지 브랜치가 이미 Log 기록·feature-0019 카드 기존재. 무변경 정직: DECISIONS noChange(§78 등 feature-local ADR·graph-perm-split B안 승인). **landing/배포 소유=wrapper 위임 → 로컬 commit 만·push/merge/deploy 는 wrapper**. (doc-sync-20260714-020501)
 - doc_sync 07-13(수동, attended): 직전 07-10 스케줄 doc_sync 미landed(wrapper landing 실패·133 커밋 stale)를 **콘텐츠 harvest 후 supersede** — origin/main(c02d81e0) 기준 fresh 재구성으로 07-09~13 창 정합. 사용자향은 07-09~10 국한(07-11~13 은 feature-0012 라우터 모듈화 완결·ITEM-09 그래프 CSS/JS·META 툴링 등 전부 behavior-neutral). ① feature-0016 그래프 §57.4~76 대규모 성능/UX(뷰포트 컬링·세로폭주·미니맵·상세 read/write·카메라 이동·툴바 3존·하이라이트 안정화, ADR-026~037) ② feature-0003 응답 지연 타임아웃 모달 제거+(07-09) 추론 예산 상한 확대 ③ feature-0002 MSSQL 로그인실패 조기 skip+cooldown ④ **§69 AI caveats — 07-10 run 이 유보(T69.5 미완)했으나 07-13 PR #744 T69.5 완수(cc_data_main 715/715)로 사용자 릴리즈노트 편입** ⑤ (색인) feature-0012 완결(07-12). STATUS 인덱스 0002/0003/0016 행 07-10·0012 review/07-12(rollup 0·passthrough·gen-status --check PASS)·ARCHITECTURE feature-0012 완결·`docs/RELEASE_NOTES` 07-09/07-10 블록·wiki(카드 0016/0012·overview ㊻~㊾·hot·Log). 동반 operational(feature-0003 별도 commit): 릴리즈노트 data.js 07-10 블록 7항목(§69 포함, generated 07-10) — cache-buster `?v=dev` 는 빌드 `inject_asset_stamp.py` content-hash 자동주입이라 수기 bump 불요. 무변경 정직: SECURITY/DECISIONS noChange(경계 0·ADR feature-local)·카운트 noChange(카드 18=unit 18). landing/배포 소유=스킬 → PR→merge→deploy-web. (doc-sync-20260713)
 - doc_sync 07-08(스케줄, ULTRACODE): 07-07 23:52 직전 sync 이후 07-08 머지 델타 정합 — ① feature-0016 §57 graph-edge-visibility(ADR-024 — 접힘 카드 연결선·상대 하이라이트·크로스 마젠타·중간 줌 LOD) ② §58 tableaxis-case(MSSQL 라벨 정합+AccountDB rekey·gateway mem 2g) ③ §59 product-classify-suggest(ADR-025 — 제품 분류 AI 제안→승인) ④ feature-0003 메타데이터 콘솔 UX 4건+폴리시 5건+제품 분류 승인 UI. STATUS 인덱스 0002/0003/0016 행·RELEASE_NOTES 07-08 블록·wiki(hot·카드 0016/0003·overview ㊹㊺·Log). 동반 operational(feature-0003 별도 commit): 릴리즈노트 data.js 07-08 블록 + cache-buster. 무변경 정직 보고: _Index/Index/feature 카운트 noChange(신규 feature 0 — 17 active/카드 18)·concepts noChange(§59=기존 metadata 도메인 내부)·DECISIONS noChange(ADR-024~025 feature-local). (doc-sync-20260708-230501)
 - doc_sync 07-07 2차(스케줄, ULTRACODE): 같은 날 11:34 sync(04bf4a87/dfc64728) 이후 11:37~19:33 머지 델타 정합 — ① KB 채택 인박스+ENUM 자율수집(`kb.enum.curate`·alembic 0039) ② 콘솔 IA 통합+5서브뷰 폴리시 ③ 추론 강도별 예산 ④ §56 그래프 sync 견고화(ADR-022~023) ⑤ feature-0007 OAuth cron 정적화. STATUS 인덱스 0002/0003/0007/0016 행·RELEASE_NOTES 07-07 tail 블록·wiki(hot·카드 0003/0016·overview ㊸)·meta/REVIEW. 동반 operational(feature-0003 별도 commit): 릴리즈노트 data.js 07-07 +2항목(코드값 채택·추론 강도별 예산)+cache-buster `20260707b-rn-0707`. SECURITY noChange(kb.enum.curate 대칭 확장·경계 0, feature cycle 승격 권고)·DECISIONS/ARCHITECTURE noChange·카드 18 안정. 8-agent adversarial-verify wf_731a14ae(2 catch 교정: 용어 릴리즈노트 중복·§56 ADR split). (doc-sync-20260707-230501)
@@ -68,7 +71,8 @@ last_updated: 2026-07-13
 
 ## Active Threads
 - feature-0011 P5a 잔여: Step6(feature 단위 Dockerfile 분리, Critical — Windows 브라우저 완료 게이트). app.py router 분할은 P5b 별도(07-01 전체추출 완료).
-- feature-0012 P5b 잔여: web_context 헬퍼 전체 추출(별도 workstream)·프론트(admin.js/app.js/styles.css) 분할·Final 로그인 QA·batch4(잔여 16 route) 프로덕션 재배포 검증.
+- feature-0012 완결(07-12 라이브 4c203f9c — 148 route 전량 byte-동치 추출+ITEM-10/11): 잔여 initiative ITEM-09(그래프 CSS/JS 세분화·외부 브랜치 blocked)만.
+- feature-0019 메시지 편집 Phase 1: 백엔드 기반(대화 내부 브랜치 트리·마이그 0041·recall 로더·쓰기 체이닝) 완료 · **엔드포인트(edit/branch-switch/history)·프론트·통합테스트·PB-0008 대기**(dormant). Phase 2(그룹 단순수정·@assistant 잠금) 후속.
 - feature-0010 활성화 cycle 이월: 라이브 토큰교환·refresh 회전·Google revoke·설정 UI·mcp_client seam 배선.
 - insight-worker(TASK-0305) GRANT 적용 · NL2SQL few-shot A/B.
 - baseline 추적: `test_product_delete_block_conv.py` 2건 clean main 에서도 실패(admin_delete_product 404) — feature-0003 소관.

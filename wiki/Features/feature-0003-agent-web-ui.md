@@ -43,6 +43,8 @@ sources:
 
 > **2026-07-08 확장 (§2.8)**: **메타데이터 콘솔 UX·폴리시** — 검토/검수 큐 행 클릭→우측 read-only 상세 패널(선택 불가 해소)·ENUM 그룹 "+코드 추가" pre-fill·샘플 검수 큐 mermaid 렌더·좌측 목록 가독성 + 디자인 폴리시 5건(필 위계·nesting·배지 accent). **제품 분류 AI 제안 승인 UI**(제품 관리 "✨ AI 분류 제안" 블록·승인/거부, 정본 feature-0016 §59).
 
+> **2026-07-13 확장 (§2.9)**: **첨부 사용자 재업로드 버전 관리**(해시 대조→버전 체인 편입·assistant v1→v2 diff 인지·UI v2 배지+diff 색, Major, cross-cut feature-0002) · 작업화면 제품 드롭업 데이터소스 **'연결 테스트' 버튼**+상단 단발성 토스트(ds-conn-test, Major) · **그래프 뷰 권한 분리**(`metadata.graph.read` 를 '메타데이터 관리'(`kb.ingest.manual`) 묶음에서 독립, Critical §12.3·1회 backfill 로 기존 접근 보존, 정본 SECURITY §19) · **그래프 뷰 렌더러 PixiJS v8 전면 교체**(관리콘솔 그래프뷰 UI 가 본 feature static 에 거주 — AntV G6 v5→PixiJS 팬 60fps·미니맵/BitmapText/hover fx, 정본 feature-0016 §78~81).
+
 ## 2. 상세
 
 ### 2.1 책임 경계

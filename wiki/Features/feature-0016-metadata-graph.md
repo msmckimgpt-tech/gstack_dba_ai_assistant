@@ -42,13 +42,14 @@ sources:
   - **(2026-07-08 §57, ADR-024, 마이그 0)** **접힘 카드 연결선·상대 하이라이트·크로스 시각 구분·중간 줌 LOD** — 스키마 카드 접힘 상태 연결 구조 가시화(SCHEMA_REF 질의시점 1-hop 스키마-쌍 무향 집계·cap 400·렌더 3단 승격 컬럼→테이블→SC 카드, 양쪽 접힘일 때만)·선택 노드 1-hop 상대 하이라이트(비인접 dim, rebuild-bake §33 정합)·크로스-DB ROUTINE_USES 마젠타 색 구분(REFERENCES cross 어휘 공유·직교 인코딩)·중간 줌 LOD(줌<0.35 ∧ 모델 엣지>120 무상태 FK·비크로스 단건 축약·의미 신호 보존·밴드 전이 디바운스). POST-DEPLOY PB-0008 라이브 PASS(SCHEMA_REF count 라벨·상대 dim 358/361·마젠타 51·LOD dropped 520).
   - **(2026-07-08 §58)** 스키마 골격 가져오기 MSSQL 라벨 케이스 정합(`normalize_db_label` — §56 RC5 계약의 테이블 축 확장)+AccountDB 33행 rekey(accountdb·AGE 34정점 회수) · bedrock-gateway mem_limit 2g 영속화(OOM 재시작 루프 복구, infra·릴리즈노트 대상 아님).
   - **(2026-07-08 §59, ADR-025, 마이그 0)** **분석 기반 제품 분류 'AI 제안→사람 승인' 파이프라인** — 카테고리 밴드의 스키마→제품 매핑을 이름 규칙에서 분석 신호(테이블 구성·node_analysis 요약)로 개선. 매핑 테이블(WebProductDatabases)이 에이전트 접근 allowlist 겸용이라 LLM 산출은 **Pending(RuleId NULL·Reason 'ai_suggest:<conf>') 적재까지만**·사람이 제품 관리에서 승인(Source='ai')/거부. 환각 차단 3중 게이트(스키마 실재·datasource 연결 제품 화이트리스트·MIN_CONF 0.6)·데몬 기본 OFF(AGENT_PRODUCT_CLASSIFY_AUTO). POST-DEPLOY 라이브 실증(dry-run 11→10건 Pending 적재·근거 문자열 동봉). 코드 거주 feature-0002(product_classify/llm/insight)·0003(admin_products/admin UI).
-- **마지막 갱신**: 2026-07-10
+  - **(2026-07-13 §78~81 · 콘텐츠 밴드)** 그래프 **렌더 엔진 AntV G6 v5(Canvas)→PixiJS v8(WebGL) 전면 교체**(MAJOR·PLAN-APPROVED — 엔진-중립 SceneAdapter seam·GPU 상주 씬·G6 폴백 토글, 노드 다수 팬 버벅임 근본 해소·§78) · 미니맵 클램프/드래그·scene diff 오브젝트 풀(§79) · 라벨 Text→BitmapText(dynamic font+tint·렌더 157ms→0.03ms, §80) · 상세 패널 하위 항목 hover 비커밋 시각 효과(§81) · 카테고리 밴드 **'컨텐츠 단위' 그룹핑 실동작화**(mig 0040 — DB단위 클러스터·함수/프로시저 합동·능동 분석문 시그니처·LLM 컨텐츠 라벨·mutual-kNN)+p2(가짜 affix 밴드 소멸·연관 밴드 centroid seriation 인접). POST-DEPLOY PB-0008 라이브 PASS(409 객체 팬 60fps vsync·미니맵 불변·밴드 정합). 코드 거주 feature-0003(graph-core/renderer-pixi)·0002.
+- **마지막 갱신**: 2026-07-13
 - **AI 작업자**: claude / Human (REQ-20260630-metadata-graph, 사용자 결정 A3 — AGE 즉시 도입·한 묶음·신규 feature-0016, 2026-06-30)
 
 ## 3. 책임 경계
 
 - **입력**: 관계형 SSOT(`table_descriptions`·`column_descriptions`·`table_relationships`·`kb_glossary`·`glossary_relations`·`enum_dictionary`·`rag_objects`·`routine_objects`) · 데이터소스 FK 메타(information_schema/sys.foreign_keys) + 함수·프로시저 시그니처(INFORMATION_SCHEMA.ROUTINES/PARAMETERS) · 대화 JOIN SQL(엣지 학습) · 스키마 명명 규칙·실데이터 겹침 프로브(암묵 관계 추론·검증) · 시그니처 임베딩(의미 클러스터·크로스-ds 후보).
-- **출력**: AGE `metadata_kb` 그래프(관계형 투영) · 그래프 투영 API `{nodes[],edges[]}`(scope·검색·k-hop·kind 필터, cap 강제) · 관리콘솔 그래프 뷰(AntV G6 Canvas) + 통합 엔티티 카드(설명+컬럼+관계+용어+루틴) · 제품 카테고리 개요 · AI knowledge context 엔티티 묶음 + `graph_navigate` 네비게이션.
+- **출력**: AGE `metadata_kb` 그래프(관계형 투영) · 그래프 투영 API `{nodes[],edges[]}`(scope·검색·k-hop·kind 필터, cap 강제) · 관리콘솔 그래프 뷰(PixiJS v8 WebGL) + 통합 엔티티 카드(설명+컬럼+관계+용어+루틴) · 제품 카테고리 개요 · AI knowledge context 엔티티 묶음 + `graph_navigate` 네비게이션.
 - **side-effect**: 비파괴 추가만 — AGE 확장·`metadata_kb` 그래프 생성·신규 인덱스·alembic 0025~0037 비파괴 스키마. 관계형 SSOT 무변경. 커스텀 PG16 이미지 cutover(운영 DB 교체)는 별도 게이트·롤백 경로(이미지 revert + drop_graph) 하에 진행됨. 모든 신규 경로 flag-gated + graceful(AGE 부재 시 no-op). AI 능동 분석은 비용 가드(only_missing·cap·confirm) 강제.
 
 ## 4. 관련 정본
@@ -63,7 +64,7 @@ sources:
 ## 5. 관련 노트
 
 - [[feature-0002-agent-core]] — 동기화·투영 모듈(`metadata_graph`)·`graph_navigate` tool·insight FK introspection·암묵 관계 추론/프로브·routine introspect·의미 임베딩 클러스터링·대화 학습이 거주
-- [[feature-0003-agent-web-ui]] — 관리콘솔 그래프 뷰(AntV G6 Canvas) UI·상세/필터/검색·능동 분석 UI 가 거주
+- [[feature-0003-agent-web-ui]] — 관리콘솔 그래프 뷰(PixiJS v8 WebGL) UI·상세/필터/검색·능동 분석 UI 가 거주
 - [[feature-0013-relationship-diagrams]] — `table_relationships` 관계 저장소·FK introspection·대화 JOIN 학습 재사용(엣지 투영 입력)
 - [[feature-0014-zero-downtime-deploy]] — 커스텀 AGE PG 이미지 cutover 가 무중단 배포 파이프라인과 정합
 - [[../concepts/nl2sql-flywheel]] — 그래프 네비게이션으로 8K 테이블 컨텍스트 초과 해소·NL→SQL join 정확도 보강
@@ -86,3 +87,4 @@ sources:
 - 2026-07-07 (doc_sync 2차): §56 그래프 sync 견고화(ADR-022~023, 마이그 0) — SAVEPOINT 행 격리·워터마크 전진 게이트·크로스-DB ROUTINE_USES 참조 채택·thin '연결 정보 없음' 동치·backfill/MSSQL store label 정규화+케이스변형 멱등 회수(RC1~5) + §55 화살표 데이터흐름/능동분석 지침 툴팁 정합. POST-DEPLOY e2e(크로스 ROUTINE_USES 1,041·case_purged 6,320·워터마크 전진). 요지+정본 포인터만 — 재서술 금지(SSOT). 정본 DECISIONS ADR-022~023 / REPORT 07-07 / 머지 fe05d6f8·94e2e411·b0d9deb6·POST-DEPLOY 4647fc71.
 - 2026-07-08 (doc_sync): 07-08 델타 반영 — §57 graph-edge-visibility(ADR-024, 마이그 0): 접힘 카드 SCHEMA_REF 집계 연결선·상대 하이라이트·크로스 ROUTINE_USES 마젠타·중간 줌 LOD, POST-DEPLOY PB-0008 라이브 PASS(PR #623·deploy c1d7cac8); §58 tableaxis-case(Minor): 스키마 골격 MSSQL 라벨 `normalize_db_label` 정합(§56 RC5 테이블 축)+AccountDB rekey·gateway mem 2g 영속화(#625→#627 compose 중복 키 정정); §59 product-classify-suggest(ADR-025, 마이그 0): 분석 기반 제품 분류 'AI 제안→사람 승인' 파이프라인(Pending-only 스테이징·환각 3중 게이트·데몬 기본 OFF), POST-DEPLOY 라이브 실증(11→10건 적재, PR #626·deploy c2d5796d). 요지+정본 포인터만 — 재서술 금지(SSOT). 정본 TASK §57~59 / DECISIONS ADR-024~025 / REPORT 07-01~07-06(§55~59 는 TASK/DECISIONS 정본). 코드 거주 feature-0002·0003.
 - 2026-07-13 (doc_sync): 07-09~10 델타 반영(직전 07-10 스케줄 doc_sync 미landed → fresh 재구성 supersede) — §57.4~9 상대 하이라이트 신뢰성 완결(빌드시점 인접 재산출·직렬화 bake 단일 진실·고립 노드 미발동·재선택 opacity base bake, ADR-026~028)·§60~76 대규모 성능/UX(스키마 펼침 세로폭주 해소 ADR-028·컬럼/뷰포트 컬링 ADR-029/032+컬링 노드 참조/상호작용 보존 ADR-037·배치정렬 위상서명 메모이즈 ADR-035·미니맵 전체이미지 재사용 ADR-036·극단 줌아웃 집계카드 §67 폐기 ADR-033·상세 패널 사용관계 read/write 분리+관계행/미렌더 컬럼 카메라 이동+컬럼 선택 §68~72/§75·중복 관계 병합 §69·상단 툴바 3존 통합+줌/상태 플로팅 오버레이·엣지 중간버튼 팬 §62·AI 능동 분석 caveats 계약 재설계 ADR-034). **§69 AI caveats 는 T69.5 POST-DEPLOY 완수(07-13 PR #744 — cc_data_main 재생성 715/715·0 failed, 옛 자기-불평 사실상 0)로 이제 라이브 관측 가능 → 07-10 run 이 유보했던 것을 사용자 릴리즈노트에 편입.** 요지+정본 포인터만 — 재서술 금지(SSOT). 정본 TASK/REPORT §60~76 / DECISIONS ADR-026~037 / 코드 거주 feature-0003(admin.js)·0002(node_analysis/llm).
+- 2026-07-14 (doc_sync): 07-13 오후 델타(#746~#770) 반영 — §78 렌더 엔진 PixiJS v8 전면 교체(G6 v5→PixiJS·SceneAdapter seam·팬 60fps 라이브 PASS)·§79 pixi-polish(미니맵 클램프/드래그·scene diff 풀)·§80 BitmapText 라벨·§81 상세 hover 시각 효과·카테고리 밴드 콘텐츠 단위 그룹핑(mig 0040)+p2(가짜 밴드 소멸·연관 밴드 인접). §3 출력·§5 관련노트 렌더러 현재상태 AntV G6 Canvas→PixiJS v8 WebGL 정정. 요지+정본 포인터만 — 재서술 금지(SSOT). 정본 TASK §77~81+content-cluster(-p2) / 코드 거주 feature-0003(graph-core/renderer-pixi)·0002. content-cluster·§77 minimap-fullview 는 착지 브랜치가 이미 Log 기록. landing/배포 소유=wrapper 위임(로컬 commit 만).
