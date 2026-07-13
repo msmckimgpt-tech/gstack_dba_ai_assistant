@@ -122,3 +122,20 @@ source_of_truth: true
 - Related Change: CHG-20260710T170000-nodeanalysis-postdeploy. 코드/자산 변경 0 — TASK(T69.5 [x])·REPORT(POST-DEPLOY 절)·MODIFY(CHG) doc-status 갱신뿐.
 - Panel skip 사유(§18.8 — doc-only, 런타임 코드면 0): §69 코드 결함면은 원 cycle REV-20260710T165030 [SUBAGENT: PASS-WITH-FIXES] 에서 적대 패널 완료. 본 changeset 은 배포·재생성 실측 결과 기록. 배포 정합은 라이브 실증(config 값·프롬프트 계약·healthz·run 7c75ddcb 715 done/0 failed·caveats 자기-불평 사실상 0)으로 대체.
 - Human Approval: deploy_scope: included(전역) + 사용자 "전부 진행" 승인 — §69 재개 cycle 의 완수 tail.
+
+## REV-20260713T120500-ai-claude-feature-0016-content-cluster [SUBAGENT: PASS-WITH-FIXES] — 카테고리 밴드 컨텐츠 단위 그룹핑(semantic cluster 재작업) diff 적대 리뷰
+- 대상: 커밋 4878fe20+a762abe5(+미커밋 문서) — `semantic_cluster.py` 재작업·`metadata_graph.py` Routine 투영·`llm.py` cluster_label·`shared/config.py`·requirements(numpy)·alembic 0040·신규 테스트. backend-only(프론트 0). §18.8 general-purpose 적대 리뷰어 8축(결정론/트랜잭션/키정합/AGE/LLM/성능/회귀/마이그레이션) + 라이브 프로브(트랜잭션 롤백) 교차.
+- 패널 판정: **PASS-WITH-FIXES — BLOCKING 0 · MAJOR 1 · MINOR 5 · NIT 5.** 통과 축: legacy 시그니처 byte-동일성(테스트 잠금)·`_run_step` force-커밋으로 owned 폴백 rollback 안전·키 정합(`_effective_schema`≡`_rag_effective`, 루틴 store label lower 계약)·AGE 8컬럼/agtype null 안전(Table 동형)·`llm_cluster_label`=product_classify verbatim 동형·0040 expand-safe(migrate-lint 실측 PASS)·프론트 무변경 전제 성립(simgroups be:/ingest generic/Routine∈g.tables 코드 확증). pre-existing FAIL 1건(`test_sync_graph_rollback_on_error_restores_autocommit`)은 기준 커밋(37d45aea)에서도 동일 FAIL 실증 — 본 diff 무관.
+- 결함 원장 및 처리 (전건 같은 cycle 반영, 커밋 3차):
+  - **M1 [MAJOR/도달성] — 수정**: 분석 완료가 rag/routine 행 updated_at 을 전진시키지 않아, 백로그 0 정상 상태에서 top-500 창 밖의 분석-보유 행이 영구히 구 시그니처 유지(RC4 인과 실패, silent). → 백필에 **분석-신선 표적 선별**(EXISTS: 최신 done j.updated_at > 행.updated_at, 테이블·루틴 각각, cap=batch) 합류 + 처리 시 updated_at 명시 touch(시그니처 불변이어도 touch → 조건 해소·재선별 차단, 멱등). 회귀 테스트 추가.
+  - **n4 [NIT→실결함 승격/키정합] — 수정 (라이브 확증)**: `_fetch_analysis_text` 가 rag scope('common')로 필터하나 node_analysis_jobs.scope_key 는 **datasource_key**(라이브 GROUP BY 실측 — scoped 매칭 0/255 vs unscoped 255/255) → RC4 분석문 주입이 전면 무효였음. → scope ANY(rag-scope, datasource) 2-probe 로 수정 + 테스트가 ANY 쿼리 형태 잠금. **리뷰 패널이 아니었으면 배포 후에도 조용히 죽어 있었을 결함.**
+  - **m1 [MINOR/tx] — 수정**: `_step_routines` 폴백의 무조건 `c.rollback()` → `if owned:` 가드 + `_pending[0]=0`(_step_relationships 선례 정합 — 외부 주입 conn 미커밋 작업 보호).
+  - **m2 [MINOR/성능] — 수정**: 게이트 OFF/전량 캐시 적중에도 라벨용 분석문 N+1 점조회 실행 → 캐시-미스 클러스터 한정 lazy 콜백(fetch_summaries)으로 이동.
+  - **m3 [MINOR/캐시] — 수정**: kv 라벨 key `label:{ds}:{schema}:{h16}` 가 varchar(128) 초과 가능(초과 시 silent 캐시 부전 → 매 pass LLM 재호출 누수) → 네임스페이스 sha256[:12] 고정폭화(`label:{ns12}:{h16}`≈35자). 구 해시 행 잔존(TTL 없음)은 수용 — 규모 유계(클러스터 수), 청소는 후속.
+  - **m4 [MINOR/메모리] — 수정**: 대형 ds fetch 의 Python float 리스트 ~230MB transient(1g cgroup headroom) → `_parse_embedding` 이 float32 ndarray 즉시 변환(~29MB) + 호출부 `is None` 판정(ndarray truthiness).
+  - **m5 [MINOR/churn] — 수정**: pass-전역 순번 id 는 앞 스키마 증감이 뒤 전체 id 를 shift(대량 UPDATE·재투영·프론트 접힘상태 무효화) → **스키마-로컬 순번**(패널이 프론트 nsKey 스키마 네임스페이스로 전역 유일성 불필요 확증). 테스트 계약 갱신.
+  - **n1·n2·n3 [NIT] — 수정**: natural-sort 표기→사전순 정정 / `_fetch_analysis_text` tie-break id DESC / SAVEPOINT 실패 경로 ROLLBACK TO 후 RELEASE(서브tx 잔존 방지).
+  - **n5 [NIT] — 수용**: 커밋 메시지 테스트 카운트 오기(불변 이력 — 문서 카운트는 정정).
+- 라이브 프로브(본 세션, 롤백·무변경) 추가 적발·수정 2건(리뷰와 독립): SAVEPOINT 미격리 연쇄 실패 / base-τ 단일연결 blob(254/255) → mutual-kNN+τ-상승 재분할(MODIFY CHG-20260713T113500). 반영 후 재프로브: cc_data_main **37 클러스터/199 편입** 유지·error 0.
+- 반영 후 재검증: 신규 테스트 파일 **24 PASS** + 연관(category refine·routine crossdb) 스위트 PASS + 전체 스위트 컨테이너 pytest(재실행) + py_compile·migrate-lint PASS.
+- **deploy_scope: included 근거 기록(§12.2/§16.3)**: FIRST_REQUEST.md 전역 `deploy_scope: included` — cycle 종료 시 confirm 없이 배포 진행(첫 배포 직전 1줄 표면화). numpy 실효는 insight-worker/ask-worker/agent 이미지 재빌드 필수(make up 은 worker 미재빌드 — 배포 노트).

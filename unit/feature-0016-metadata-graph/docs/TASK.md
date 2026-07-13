@@ -2252,3 +2252,42 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ## 20260711T1205-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11)
 - [x] MODIFY 117→15건·REVIEW 117→15건 이관, 무손실 md5, 링크+REPORT 압축(§5.5). 선례 CHG-20260711T115053/T120311 동일 계보.
+
+## 20260713T1059-content-cluster — 카테고리 밴드 '컨텐츠 단위' 그룹핑 실동작화 (2026-07-13, 사용자 요청 · entry persona dispatch)
+사용자: "`그래프 뷰`에서 'AI 능동 분석' 후(`mssql-qa-idc.cc_data_main`) '제품 카테고리 밴드'가 일부만 컨텐츠 단위로 묶이고 대부분(특히 함수·프로시저)은 단순 명칭으로 구분 → 분석 현황·문제 파악 + 컨텐츠 단위로 묶이도록 개선."
+
+### 진단 (2026-07-13 라이브 실측, mssql-06656002eda6=mssql-qa-idc / cc_data_main)
+- **RC1 [BLOCKING] numpy 부재**: insight-worker 이미지에 numpy 미설치 → `semantic_cluster._cluster_edges` 가 ImportError 를 조용히 삼키고 `[]` 반환 → union-find 전부 싱글턴 → **전 시스템 semantic_cluster 0건** (cadence 는 정상 순회 — kv `cluster_at:*` 20 scope 마크, error=None). 시그니처·임베딩은 16k+ 전량 완료 상태(정본 rag_objects 7,055/7,055 임베딩). requirements.txt 에 numpy 자체가 없음(모듈 docstring 의 "pgvector 하드 dep" 가정 오류).
+- **RC2 datasource-전역 N 가드**: `run_semantic_cluster_pass` 가 (scope, datasource) 전역 단위 → 본 ds 는 N=7,055 > FULLMATRIX_MAX_N(2,000) 로 numpy 복구 후에도 통째 skip. 표시 단위(스키마=DB 클러스터 내부 sim-group)와 계산 단위 불일치.
+- **RC3 루틴 미편입**: cc_data_main 루틴 300(프로시저 293·함수 7) > 테이블 255 인데 routine_objects 에 시그니처/클러스터 컬럼이 없어 클러스터링 대상 밖 + role 분류도 Table 전용 → 함수·프로시저는 `nm:` 이름 affix(sp_/up_ 접두) 그룹만.
+- **RC4 분석문 미활용**: 'AI 능동 분석' 완료분(cc_data_main Table done 466·Routine done 477, 내용 풍부)이 그룹핑 신호에 미연결. 테이블 시그니처는 이름+컬럼+role/domain 만(table_descriptions 0/255) → 분석을 돌려도 밴드 불변(사용자 기대 인과 부재).
+- **RC5 라벨**: `_label_cluster`(서버)·`labelOf`(프론트) 모두 이름 접두/접미 스템 → 묶여도 "컨텐츠 단위"로 읽히지 않음.
+- 조인 키 실측: 그래프 node_key = `<ds>:<eff_schema>.<name>`(Table 2-seg) / `<ds>:<eff_schema>.<name>()`(Routine) — cc_data_main 테이블 255/255·루틴 300/300 매칭 100%.
+
+### 계획 (§7.1 — Major: 다파일 + additive 마이그 + 유계 LLM 비용 / worktree ai/claude/feature-0016-content-cluster)
+1. **alembic 0040_routine_objects_semantic_cluster**: routine_objects ADD `signature_text_hash char(64)`·`semantic_cluster_id int`·`semantic_cluster_label varchar(128)`(전부 nullable — 카탈로그 전용) + 인덱스 2(0035 동형). expand-safe.
+2. **requirements.txt**: `numpy>=1.26` 추가(RC1). `_cluster_edges` numpy 부재 시 1회 WARNING(fail-loud 관측성).
+3. **semantic_cluster.py 재작업**(RC2·RC3·RC4):
+   - `build_routine_signature_text(eff_schema,name,rtype,params,returns,touches,analysis)` 신설, `build_table_signature_text(...,analysis="")` 확장 — **analysis 줄은 비어있지 않을 때만 append**(미분석 객체 해시 불변 → 재임베딩 blast-radius 를 분석 보유분으로 한정, §12.3 2차-효과).
+   - 분석문 소스: `node_analysis_jobs`(status=done, ix_node_analysis_jobs_node_lookup) 최신 1건의 summary(+usage) — 분석 갱신 → 해시 변경 → 재임베딩 → 재클러스터 인과 성립.
+   - `run_signature_backfill_pass`: 루틴 패스 추가(routine_objects 미처리-우선, §55 D 동형·배치 상한 공유).
+   - `run_semantic_cluster_pass`: (scope, ds) fetch 후 **effective schema(DB) 단위로 분할 클러스터링**(테이블+루틴 합동, cluster_id 는 pass-전역 순번으로 유일) — DB별 N 이 가드 이하로 떨어져 대형 ds 도 실동작, 표시 단위와 정합. 역기록은 rag_objects/routine_objects 각각.
+4. **LLM 컨텐츠 라벨**(RC5): `llm.py` 에 `CLUSTER_LABEL_PROMPT`+`llm_cluster_label(payload)`(llm_product_classify 동형 — JSON-only·untrusted-data·NODE_ANALYSIS_MODEL 라우팅). 멤버 이름+분석 요약(≤5멤버×160자)으로 클러스터당 ≤24자 한국어 라벨. kv 캐시 `label:<ds>:<db>:<memberset-hash>`(멤버 불변 시 재호출 0). 실패/비활성(`AGENT_METADATA_CLUSTER_LABEL_LLM=0`) 시 affix 폴백(fail-soft). 비용 유계: DB당 1 call(클러스터 배치)·변경분만.
+5. **metadata_graph.py**: `sync_routine(...,cluster_id/cluster_label=_UNSET)` 투영(_INT/_NULLABLE_PROP_KEYS 기존 포함) + sync `_step_routines` SELECT 확장(컬럼 부재 구DB fallback) + `schema_tables` Routine RETURN 에 `r.semantic_cluster_id/label` → 노드 payload `cluster_id/cluster_label`.
+6. **프론트 무변경**: ingest(graph-ctxmenu.js L1113)가 노드-라벨 무관 generic 이고 `_metaSimGroups` 의 be: 판정도 g.tables(루틴 포함) 전체를 보므로 백엔드 신호만으로 루틴 be: 그룹 성립. cache-buster 불요.
+7. **검증**: 신규 `test_semantic_cluster_content.py`(시그니처 결정론/analysis-멱등, DB분할·N가드 per-DB, 합동 id 공간, LLM 라벨 fail-soft/캐시, 루틴 백필) + 기존 스위트 컨테이너 pytest. verify-completion → PR → merge → 배포(마이그 0040 + web 롤링 + insight/ask-worker 재빌드) → **POST-DEPLOY**: cc_data_main 표적 백필+클러스터 pass 수동 가동 → rag/routine cluster 카운트 실증 → PB-0008 실 Windows 그래프 뷰 육안(§ 카테고리 그룹 밴드가 컨텐츠 단위 라벨로 재편 + ƒ/⚙ 동참).
+- AC-20260713T1059-content-cluster-1: cc_data_main 클러스터 펼침 시 sim-group 밴드에 be: 클러스터(테이블+루틴 혼성) ≥ 5 형성, 라벨이 이름 스템이 아닌 한국어 컨텐츠 명(예: "몬스터 스폰", "아이템 효과").
+- AC-…-2: 함수·프로시저가 자기가 만지는 테이블과 같은 밴드에 배치(예: sp_GetMonsterSpawn ↔ dt_MonsterSpawn).
+- AC-…-3: 미분석·미임베딩 객체 해시/동작 불변(무회귀 — 기존 nm:/role:/misc 폴백 그대로), 마이그 미적용 창 fail-soft.
+- AC-…-4: numpy 부재 시 silent 무산 대신 WARNING 1회.
+
+### Tasks
+- [x] TC.1 alembic `0040_routine_objects_semantic_cluster`(additive 3컬럼+인덱스 2, 0035 동형) + MAX_MIGRATION 0040.
+- [x] TC.2 requirements numpy + `_cluster_edges` fail-loud WARNING 1회.
+- [x] TC.3 semantic_cluster.py 재작업 — DB(effective schema) 단위 분할(N 가드 국소화·pass-전역 결정 id)·루틴 합동 편입(시그니처 빌더+백필 패스+0040 미적용 soft-skip)·분석문 시그니처 주입(`_fetch_analysis_text`, 조건부 append).
+- [x] TC.4 LLM 컨텐츠 라벨 — llm.py `CLUSTER_LABEL_PROMPT`+`llm_cluster_label`(product_classify 동형) + `_llm_content_labels`(kv 멤버셋-해시 캐시·배치 40·fail-soft) + config `AGENT_METADATA_CLUSTER_LABEL_LLM`.
+- [x] TC.5 metadata_graph.py — `sync_routine` cluster 투영(_UNSET 보존) + `_step_routines` 확장 SELECT(구DB 폴백) + `schema_tables` Routine RETURN 8컬럼(cluster_id/label). 프론트 변경 0(ingest generic).
+- [x] TC.6a (라이브 프로브 적발·수정) chaining 방어 — mutual-kNN + `_adaptive_components`(cap 40·τ-상승 divisive) + SAVEPOINT 격리(non-autocommit conn) + migrate-lint .py 필터. 재프로브: cc_data_main 37 클러스터(blob 해소).
+- [x] TC.6 검증 — 신규 test_semantic_cluster_content.py 19 + 연관 스위트 + 전체 스위트 컨테이너 pytest EXIT=0. §18.8 적대 패널(REVIEW.md REV entry).
+- [ ] TC.7 verify-completion → PR → merge → 배포(마이그 0040 + web 롤링 + insight/ask-worker 재빌드).
+- [ ] TC.8 POST-DEPLOY — cc_data_main 표적 백필+클러스터 pass 가동 → rag/routine cluster DB 카운트 실증(AC-1·2) → PB-0008 실 Windows 육안 + TEST fragment(Environment: Windows-browser).

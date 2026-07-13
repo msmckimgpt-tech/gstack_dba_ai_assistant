@@ -30,3 +30,7 @@ sqlglot>=23.0.0,<28.0.0
 # (ODBC/apt 불필요 — pyodbc 대비 빌드 단순). engine='mssql' datasource 분석 전용.
 # 한계(문서화): DATETIMEOFFSET/AAD 인증 제약 — Stage 2 범위 내 수용.
 pymssql>=2.2.0
+# feature-0016 content-cluster (TASK 20260713T1059, RC1): 의미 클러스터링(semantic_cluster.py)의
+# kNN 코사인 행렬 계산. 종전 requirements 에 없어 _cluster_edges 가 ImportError 를 삼키고 빈 엣지를
+# 반환 → 전 시스템 semantic_cluster 0건으로 조용히 무산됐다(라이브 실측 2026-07-13). 하드 dep.
+numpy>=1.26.0

@@ -1,5 +1,30 @@
 # Report
 
+## 2026-07-13 · 카테고리 밴드 '컨텐츠 단위' 그룹핑 실동작화 (content-cluster, TASK 20260713T1059 / ADR-20260713T105932)
+
+### 요청 (사용자)
+`그래프 뷰`에서 'AI 능동 분석' 후(`mssql-qa-idc.cc_data_main`) '제품 카테고리 밴드'가 일부만 컨텐츠 단위로 묶이고
+대부분(특히 함수·프로시저)은 단순 명칭 구분 — 분석 현황·문제 파악 + 컨텐츠 단위로 묶이도록 개선.
+
+### 진단 (라이브 실측 2026-07-13, mssql-06656002eda6/cc_data_main)
+- **RC1 numpy 부재(BLOCKING)**: insight-worker 이미지에 numpy 미설치 → `_cluster_edges` 가 ImportError 를 삼키고 빈 엣지 반환 → **전 시스템 semantic_cluster 0건**(cadence kv 마크 20 scope 정상·error=None — 조용한 무산). 시그니처·임베딩은 16k+ 전량 완료 상태였음.
+- **RC2 ds-전역 N 가드**: 클러스터 단위가 (scope,ds) 전역이라 본 ds(N=7,055) > FULLMATRIX_MAX_N(2,000) 통째 skip — 표시 단위(스키마=DB 클러스터 내부 sim-group)와 계산 단위 불일치.
+- **RC3 루틴 미편입**: cc_data_main 루틴 300 > 테이블 255 인데 routine_objects 에 시그니처/클러스터 컬럼 자체가 없고 role 분류도 Table 전용 → 함수·프로시저는 `nm:` 이름 affix 그룹만.
+- **RC4 분석문 미연결**: 능동 분석 done(Table 466·Routine 477, 내용 풍부)이 그룹핑 신호에 미사용 — 테이블 설명 0/255 라 시그니처가 이름+컬럼뿐, 분석을 돌려도 밴드 불변.
+- **RC5 라벨**: 서버/프론트 라벨 모두 이름 접두/접미 스템 — 묶여도 컨텐츠로 안 읽힘.
+
+### 처리 결과 (backend-only — 프론트 변경 0)
+- numpy requirements 추가 + `_cluster_edges` 부재 시 1회 WARNING(fail-loud).
+- `run_semantic_cluster_pass` → **DB(effective schema) 단위 분할**(N 가드 국소화·pass-전역 결정 id) + **루틴 합동 클러스터**(alembic 0040 additive: signature_text_hash/semantic_cluster_id/label + 인덱스 2) — 루틴 시그니처 = 이름+type+params+returns+**touches(참조 테이블 read/write)**+분석문.
+- **분석문 시그니처 주입**: node_analysis 최신 done 의 summary+usage(≤400자) — 'AI 능동 분석 → 재임베딩 → 재클러스터' 인과 성립. analysis 줄은 비어있지 않을 때만 append(미분석 해시 byte-불변 → 재임베딩 blast-radius 를 분석 보유분으로 한정).
+- **LLM 컨텐츠 라벨**: `llm_cluster_label`(product_classify 동형·JSON-only·untrusted-data 가드) — 멤버 이름+분석 요약로 클러스터당 한국어 명(≤32자), kv 멤버셋-해시 캐시(불변 시 재호출 0)·fail-soft affix 폴백·`AGENT_METADATA_CLUSTER_LABEL_LLM` 게이트(기본 ON).
+- 그래프 투영: `sync_routine` cluster props(_UNSET 보존) + `_step_routines` 확장 SELECT(0040 미적용 창 폴백) + `schema_tables` Routine RETURN 에 cluster 필드 — 프론트 ingest(generic)·`_metaSimGroups`(be: 판정이 g.tables=테이블+루틴 전체) 가 무변경으로 소비.
+- **chaining 방어(라이브 프로브 적발·수정)**: base τ 단일연결이 DB 전체를 단일 blob(254/255)으로 만들던 것을 mutual-kNN + cap(40) 초과 τ-상승 재분할로 해소 — 재프로브(롤백) cc_data_main **37 클러스터**('buff' 24·'monsterclass' 11·'monsterspawnpoint' 7 등 컨텐츠 응집·총 199/255), ds 전체 1,016 클러스터/74 스키마/skip 0. + non-autocommit conn SAVEPOINT 격리, migrate-lint MAX_MIGRATION.txt 오탐 수정.
+
+### 검증
+- 신규 `test_semantic_cluster_content.py` 16 PASS + 전체 스위트 컨테이너 pytest **EXIT=0**(전건 PASS). 상세: `test-runs.d/TASK-20260713T105932-content-cluster.md`.
+- §18.8 적대 패널 → REVIEW.md REV entry. POST-DEPLOY: 마이그 0040 → worker/web 재빌드 → cc_data_main 표적 백필+클러스터 pass → DB 카운트 실증 → PB-0008 실 Windows 육안(AC-1 be: 밴드 ≥5·컨텐츠 라벨 / AC-2 루틴↔테이블 동반 배치).
+
 ## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §74/ADR-036, 머지 재번호 §70→§73→§74·ADR-034→ADR-036 §13.1)
 
 ### 요청 (사용자)
