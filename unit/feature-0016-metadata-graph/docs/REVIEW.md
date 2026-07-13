@@ -117,3 +117,8 @@ source_of_truth: true
 
 ## REV-20260711T120531-docs-archive [SKIPPED:mechanical-archiving] — §5.5 아카이빙
 - Related Change: CHG-20260711T120531-docs-archive. 재구성 md5==원본(assert)·verbatim·런타임 코드 0. 승인: 사용자 지시+§5.5.
+
+## REV-20260710T170000-ai-claude-feature-0016-nodeanalysis-postdeploy [SKIPPED:doc-only-postdeploy] — §69 T69.5 POST-DEPLOY 완수 기록 (코드 무변경)
+- Related Change: CHG-20260710T170000-nodeanalysis-postdeploy. 코드/자산 변경 0 — TASK(T69.5 [x])·REPORT(POST-DEPLOY 절)·MODIFY(CHG) doc-status 갱신뿐.
+- Panel skip 사유(§18.8 — doc-only, 런타임 코드면 0): §69 코드 결함면은 원 cycle REV-20260710T165030 [SUBAGENT: PASS-WITH-FIXES] 에서 적대 패널 완료. 본 changeset 은 배포·재생성 실측 결과 기록. 배포 정합은 라이브 실증(config 값·프롬프트 계약·healthz·run 7c75ddcb 715 done/0 failed·caveats 자기-불평 사실상 0)으로 대체.
+- Human Approval: deploy_scope: included(전역) + 사용자 "전부 진행" 승인 — §69 재개 cycle 의 완수 tail.

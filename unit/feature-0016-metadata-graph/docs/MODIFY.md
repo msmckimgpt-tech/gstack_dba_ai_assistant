@@ -104,3 +104,8 @@ source_of_truth: true
 
 ## CHG-20260711T120531-docs-archive (MODIFY/REVIEW §5.5 아카이빙)
 - Date: 2026-07-11. MODIFY 117건(102 이관)·REVIEW 117건(102 이관) — verbatim·무손실 md5·가역. 선례 동일 스크립트.
+
+## CHG-20260710T170000-ai-claude-feature-0016-nodeanalysis-postdeploy — §69 T69.5 POST-DEPLOY 완수 기록 (docs-only, 코드 0)
+- 대상: `unit/feature-0016-metadata-graph/docs/{TASK.md(T69.5 [ ]→[x]),REPORT.md(POST-DEPLOY 절),REVIEW.md([SKIPPED] entry)}`. **코드/자산 변경 0**.
+- 변경: §69(ADR-034, PR #664 a24415a5) 배포 + cc_data_main 재생성(run 7c75ddcb, only_missing=false) 완수 결과를 정본에 기록 — planned 555·capped=false(P3 실증), 715 잡 전량 done·0 failed, caveats 빈값 400/715·자기-불평 사실상 0.
+- 근거: 원 cycle 이 T69.5 를 POST-DEPLOY 항목으로 남긴 것을 배포·재생성 실측으로 마감. 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).
