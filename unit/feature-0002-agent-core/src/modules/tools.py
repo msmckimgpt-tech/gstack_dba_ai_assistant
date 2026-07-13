@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import re
 import time
 from typing import Any
 
@@ -456,6 +457,25 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "describe_routine",
+            "description": (
+                "저장 프로시저·함수(routine)의 정의 본문(SQL)과 파라미터를 조회한다. "
+                "`SHOW CREATE PROCEDURE`/`SHOW CREATE FUNCTION` 은 지원되지 않으므로, "
+                "프로시저·함수의 내부 로직(예: PK 처리·재사용 쿼리)을 확인해야 할 때 이 도구를 사용한다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "schema_name": {"type": "string", "description": "스키마(데이터베이스) 이름"},
+                    "routine_name": {"type": "string", "description": "프로시저/함수 이름"},
+                },
+                "required": ["schema_name", "routine_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_tables",
             "description": (
                 "키워드로 테이블을 검색한다 (최후 수단). "
@@ -501,8 +521,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 # 전체 도구 정의 (list_schemas, describe_schema, explain_query 등 추가 도구 포함)
-# 작은 모델에서는 TOOL_DEFINITIONS (핵심 4개)만 사용하고,
-# 큰 모델에서는 TOOL_DEFINITIONS_FULL을 사용할 수 있다.
+# 작은 모델에서는 TOOL_DEFINITIONS (핵심 5개: execute_sql/describe_table/describe_routine/
+# search_tables/get_sample_rows)만 사용하고, 큰 모델에서는 TOOL_DEFINITIONS_FULL을 사용할 수 있다.
 TOOL_DEFINITIONS_FULL: list[dict[str, Any]] = TOOL_DEFINITIONS + [
     {
         "type": "function",
@@ -714,7 +734,7 @@ def _format_result_sets(result_sets: list, max_rows: int | None = None) -> str:
 
 
 def _safe_ident(name: str) -> str:
-    """SQL 식별자에서 위험 문자 제거 (구조화 도구의 식별자 인용 신뢰경계).
+    r"""SQL 식별자에서 위험 문자 제거 (구조화 도구의 식별자 인용 신뢰경계).
 
     구조화 도구(describe_*/sample/indexes/foreign_keys/search)는 schema/table 인자를 AST 게이트가
     아닌 본 함수로만 정제한 뒤 dialect SQL 에 f-string 삽입한다. 따라서 **모든 dialect 의 인용 구분자**
@@ -723,9 +743,14 @@ def _safe_ident(name: str) -> str:
       - **MSSQL 대괄호 `[` `]`** (REV-0201 B1): MSSQL dialect 는 `[{schema}].[{table}]` 로 인용하는데
         `]` 를 안 지우면 `tbl] UNION SELECT ... --` 로 인용을 닫고 2차 SQLi 가 가능했다(라이브 실증).
         `]` 제거로 주입 토큰이 단일 식별자 안에 갇혀 무력화된다(존재하지 않는 객체명 → 에러).
+      - **역슬래시 `\`** (REV-20260713T140405 §18.8 security 패널): MySQL 은 백슬래시 이스케이프가
+        기본 ON 이라, `'{schema}'` 리터럴에 삽입된 값이 `x\` 로 끝나면 종료 따옴표를 이스케이프해
+        인접 `'{name}'` 필드가 raw SQL 로 탈출한다(`… '{schema}' AND … = '{name}'` → 첫 리터럴이
+        `'x\' AND … = '` 로 병합되고 name 이 코드가 됨 — UNION 인젝션). `\` 제거로 이 breakout 을 닫는다.
+        (구조화 도구 전반 공유 사인의 근본 강화 — describe_routine 뿐 아니라 describe_*/search/indexes/fk 도 소급 방어.)
     """
     return (
-        name.replace("`", "").replace(";", "")
+        name.replace("\\", "").replace("`", "").replace(";", "")
         .replace("'", "").replace('"', "")
         .replace("[", "").replace("]", "")
         .strip()
@@ -1037,6 +1062,26 @@ def _dialect_correction_hint(sql: str) -> str:
     return head
 
 
+# FR-show-create-routine-blocked (L2 교정 힌트): `SHOW CREATE PROCEDURE/FUNCTION`·`SHOW PROCEDURE/
+# FUNCTION STATUS` 는 SELECT/CTE-only 가드에 (의도대로) 막힌다 — 거부만 돌려주면 LLM 이 같은 구문을
+# 재시도하며 thrashing 한다. 거부 메시지에 전용 도구(describe_routine)를 짚어 self-correct 를 유도한다.
+_ROUTINE_INTROSPECT_RE = re.compile(
+    r"\bSHOW\s+CREATE\s+(?:PROCEDURE|FUNCTION)\b"
+    r"|\bSHOW\s+(?:PROCEDURE|FUNCTION)\s+STATUS\b",
+    re.IGNORECASE,
+)
+
+
+def _routine_introspection_redirect(sql: str) -> str:
+    """거부된 SQL 이 저장 루틴 introspection 시도면 전용 도구로 유도(L2 교정 힌트)."""
+    if _ROUTINE_INTROSPECT_RE.search(sql or ""):
+        return (
+            " 저장 프로시저·함수의 정의는 SHOW CREATE 가 아니라 "
+            "`describe_routine`(schema_name, routine_name) 도구로 조회하세요."
+        )
+    return ""
+
+
 def _tool_execute_sql(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
@@ -1062,6 +1107,7 @@ def _tool_execute_sql(conn, args: dict) -> str:
             f"execute_sql 은 단일 SELECT/CTE 분석 쿼리만 허용됩니다 "
             f"(스키마 구조 탐색은 list_schemas/describe_table 등 전용 도구 사용). "
             f"{_dialect_correction_hint(sql)}"
+            f"{_routine_introspection_redirect(sql)}"
         )
     # Product 단위 스키마 allowlist (교차 product 격리) — P6: AST 추출 + 무자격/cross-DB 정책.
     err = _freeform_sql_access_error(sql)
@@ -1297,6 +1343,87 @@ def _tool_get_foreign_keys(conn, args: dict) -> str:
     return "\n".join(parts)
 
 
+def _tool_describe_routine(conn, args: dict) -> str:
+    """저장 프로시저/함수(routine)의 정의 본문·파라미터를 조회한다 (read-only 카탈로그).
+
+    FR-show-create-routine-blocked: LLM 이 자연스럽게 쓰는 `SHOW CREATE PROCEDURE` 는 sql_guard 의
+    SELECT/CTE-only 불변식에 (의도대로) 막힌다. 정의 열람은 이미 항상-허용인 카탈로그
+    (information_schema/sys)에서 **읽기 전용**으로 얻으므로, 신뢰경계 확장 없이 전용 구조화 도구로
+    노출한다. 스키마 접근은 다른 구조화 도구와 동일하게 `_struct_schema_access_error`(allowlist +
+    내부 스키마 영구차단)로 격리하고, 실제 정의 열람 권한은 datasource RO 계정 GRANT 가 backstop이다.
+    """
+    schema = _safe_ident(args.get("schema_name", ""))
+    name = _safe_ident(args.get("routine_name", ""))
+    if not schema or not name:
+        return "오류: schema_name과 routine_name은 필수입니다."
+    err = _struct_schema_access_error(schema)
+    if err:
+        return err
+
+    # 정의 조회 (컬럼 계약: ROUTINE_NAME, ROUTINE_TYPE, DATA_TYPE, ROUTINE_COMMENT, ROUTINE_DEFINITION)
+    def_sql = _dialects.active().routine_definition(schema, name)
+    try:
+        def_results, _ = _raw_execute_sql(conn, def_sql)
+    except Exception as e:
+        return f"루틴 정의 조회 오류: {e}"
+    def_rows: list = []
+    for kind, _cols, rows in def_results:
+        if kind == "rows" and isinstance(rows, list):
+            def_rows.extend(rows)
+    if not def_rows:
+        return (
+            f"`{schema}` 스키마에 `{name}` 저장 루틴(프로시저/함수)이 없습니다. "
+            f"이름을 확인하거나 search_tables 로 스키마를 탐색하세요."
+        )
+
+    # 파라미터 조회 (1회 — 동일 스키마·이름). 실패는 graceful(정의만 표시).
+    prows: list = []
+    try:
+        param_sql = _dialects.active().routine_parameters(schema, name)
+        param_results, _ = _raw_execute_sql(conn, param_sql)
+        for kind, _cols, rows in param_results:
+            if kind == "rows" and isinstance(rows, list):
+                prows.extend(rows)
+    except Exception:
+        prows = []
+
+    parts: list[str] = []
+    multi = len(def_rows) > 1  # 드묾: MySQL 은 같은 스키마에 동명 PROCEDURE + FUNCTION 공존 가능(각각 표시).
+    for row in def_rows:
+        rtype = str(row[1] or "").strip() or "ROUTINE"
+        dtype = str(row[2] or "").strip()
+        comment = str(row[3] or "").strip()
+        definition = str(row[4] or "").strip()
+        header = f"## `{schema}`.`{name}` ({rtype}"
+        if dtype:
+            header += f" → {dtype}"
+        header += ")"
+        parts.append(header)
+        if comment:
+            parts.append(f"> {comment}")
+        # 동명 proc+func 공존 시 파라미터 교차오염 방지 — pr[4]=ROUTINE_TYPE 로 이 루틴 것만 표시.
+        # 단일 루틴(대다수)·MSSQL(ROUTINE_TYPE NULL)은 필터 없이 전체 사용.
+        routine_prows = (
+            [pr for pr in prows if str(pr[4] or "").strip().upper() == rtype.upper()]
+            if multi else prows
+        )
+        if routine_prows:
+            parts.append("\n### 파라미터")
+            parts.append("| # | name | mode | type |")
+            parts.append("|---|---|---|---|")
+            for pr in routine_prows:
+                parts.append(f"| {pr[0]} | {pr[1]} | {pr[2]} | {pr[3]} |")
+        parts.append("\n### 정의")
+        if definition:
+            parts.append(f"```sql\n{definition}\n```")
+        else:
+            parts.append(
+                "(정의 본문을 표시할 수 없습니다 — 이 데이터소스 계정에 루틴 정의 열람 권한이 "
+                "없을 수 있습니다. DB 관리자에게 정의 조회 권한을 확인하세요.)"
+            )
+    return "\n".join(parts)
+
+
 def _tool_graph_navigate(conn, args: dict) -> str:
     """feature-0016: 메타데이터 지식그래프(AGE metadata_kb) 읽기 전용 탐색.
 
@@ -1392,6 +1519,7 @@ _TOOL_HANDLERS = {
     "list_schemas": _tool_list_schemas,
     "describe_schema": _tool_describe_schema,
     "describe_table": _tool_describe_table,
+    "describe_routine": _tool_describe_routine,
     "search_tables": _tool_search_tables,
     "get_sample_rows": _tool_get_sample_rows,
     "execute_sql": _tool_execute_sql,

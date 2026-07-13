@@ -4854,6 +4854,14 @@ def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: s
         if table:
             return f"`{table}` 테이블 구조를 확인한다"
         return "테이블 구조를 확인한다"
+    if tool_name == "describe_routine":
+        schema = str(payload.get("schema_name") or "").strip()
+        routine = str(payload.get("routine_name") or "").strip()
+        if schema and routine:
+            return f"`{schema}`.`{routine}` 프로시저/함수 정의를 확인한다"
+        if routine:
+            return f"`{routine}` 프로시저/함수 정의를 확인한다"
+        return "저장 프로시저/함수 정의를 확인한다"
     if tool_name == "search_tables":
         keyword = str(payload.get("keyword") or "").strip()
         schema = str(payload.get("schema_name") or "").strip()

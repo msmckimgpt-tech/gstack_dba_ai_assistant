@@ -17,6 +17,7 @@ source_of_truth: true
 - no-op cycle 이 더 이상 요약/타이밍 로그를 누적하지 않는지 확인
 
 ## 2. Test Cases
+- TEST-20260713-describe-routine: `pytest unit/feature-0002-agent-core/tests/test_describe_routine_tool.py` (20건) — describe_routine 도구 + SHOW CREATE 유도(FR-show-create-routine-blocked). (a) **보안 불변식 보존**: `sql_guard.validate_sql_for_sandbox` 가 여전히 `SHOW CREATE PROCEDURE/FUNCTION` 거부(SELECT/CTE-only 미변경) 2건. (b) L2 유도 힌트: SHOW CREATE PROCEDURE/FUNCTION·SHOW (PROCEDURE|FUNCTION) STATUS → describe_routine 안내, SELECT·SHOW CREATE TABLE 은 미유도 4건. (c) execute_sql 거부 메시지에 유도 포함 1건. (d) 도구 등록: `_TOOL_HANDLERS` + **핵심 `TOOL_DEFINITIONS`(LLM 실노출)** 2건. (e) dialect SQL(MySQL ROUTINES/PARAMETERS·MSSQL OBJECT_DEFINITION) 3건. (f) `_tool_describe_routine` 동작: happy(정의 본문+파라미터)·not-found·무권한(정의 NULL→권한 안내)·필수인자·`agent_memory` 내부스키마 차단 5건. 회귀 게이트: `test_query_guard`/`test_sql_trust_boundary`/`test_mssql_security_boundary` 재통과(보안 회귀 0).
 - TEST-0009: `python3 -m py_compile unit/feature-0002-agent-core/src/agent_core.py unit/feature-0003-agent-web-ui/src/app.py`
 - TEST-0010: `python3 -m unittest unit/feature-0002-agent-core/tests/test_compose_system_prompt.py`
 - TEST-0011: web 컨테이너 내부에서 `compose_system_prompt(product_id=1, role_id=16, product_mode="pinned")`를 호출해 Role 공통 지침이 누적되는지 확인
@@ -32,6 +33,11 @@ source_of_truth: true
 - TEST-20260710-auth-cooldown: `pytest tests/test_mssql_auth_cooldown.py` — MSSQL insight 순회 **로그인실패**(18456) 조기 skip + **datasource label 키** cooldown 검증(REV-20260710 흡수). (a) cooldown 헬퍼/prune 6건(set/active·만료 자동정리·clear·ttl=0 비활성·None key·`_prune_auth_cooldown` 삭제/rename 누수 차단), (b) `run_insight_cycle` 순회 통합 5건: 같은 datasource 10 DB 중 첫 18456 시 실제 connect 1회만(AC1), cooldown 중 다음 cycle connect 0회(AC2), `AGENT_INSIGHT_AUTH_COOLDOWN_SEC=0` 시 cycle 내 skip 유지·cycle 간 재시도(AC4), **HIGH-1 같은 host:port 다른 login 은 연쇄차단 안 됨**(`test_different_login_same_endpoint_not_chained`), **HIGH-2 916("Cannot open database")은 다른 DB 순회 계속**(`test_per_db_916_does_not_skip_other_dbs`).
 
 ## 3. Test Run History
+- 2026-07-13 (TASK-20260713T140405-describe-routine-tool — conversation_audit FR-show-create-routine-blocked):
+  - `python3 -m py_compile src/modules/dialects.py src/modules/tools.py` → 통과.
+  - 재사용 `repo-ask-worker:latest` 이미지 + worktree `/work` 마운트 + PYTHONPATH(pip install pytest) 로 `pytest unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests` **전체 스위트 → RC=0**(실패/에러 0, skip 2). `.env` 없는 worktree 라 `make test`(compose 변수 미해석 "invalid proto") 대신 이미지 직접 재사용 경로 사용(project-pytest-worktree-pycache-gotcha).
+  - 타깃 재확인: `test_describe_routine_tool.py`(신규 20) + `test_query_guard.py`+`test_sql_trust_boundary.py`+`test_mssql_security_boundary.py` → **123 PASS, RC=0**. 보안 가드 3파일 재통과 = sql_guard SELECT/CTE-only 불변식·allowlist 회귀 0.
+  - 백엔드(도구/dialect) + 도구 정의 변경 — 웹 surface 는 narration 라벨(feature-0003 companion, graceful fallback)만이라 PB-0008 Windows-browser 는 배포 후 라이브 대화 실측분(Phase 11b, REPORT/LEDGER 참조).
 - 2026-07-10 (TASK-20260710-mssql-auth-cooldown — codex 디스크 I/O 장애조사 트랙 B):
   - `python3 -m py_compile shared/config.py unit/feature-0002-agent-core/src/modules/insight.py` → 통과 (TEST-0001 계열).
   - 신규 `tests/test_mssql_auth_cooldown.py` (DB 없이 monkeypatch, connect 호출 카운트) → **11 passed**: cooldown 헬퍼/prune 6 + 순회 통합 5(AC1 connect 1회 / AC2 cooldown skip 0회 / AC4 ttl=0 재시도 / HIGH-1 다른 login 독립 / HIGH-2 916 다른 DB 계속). §18.8 적대 리뷰 REV-20260710T191159-mssql-auth-cooldown(HIGH2+MED2+LOW2 실증 전건 흡수)로 8→11 확장(HIGH-1 datasource-label 키·HIGH-2 `_is_login_failure` 18456 우선·LOW-5 prune 회귀 고정).

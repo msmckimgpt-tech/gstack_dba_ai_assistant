@@ -8,7 +8,34 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260710-mssql-auth-cooldown (current cycle) — MSSQL insight 순회 인증실패 조기 skip + cooldown (Minor §12.3, feature-0002 주관, codex 디스크 I/O 장애조사 트랙 B)
+## TASK-20260713T140405-describe-routine-tool (current cycle) — 저장 프로시저/함수 정의 조회 도구 신설 (Major §12.3, conversation_audit FR-show-create-routine-blocked)
+- 출처: `/_dqa:conversation_audit` (2026-07-13, 사용자 명시 호출). 대화 "재사용 쿼리의 PK 관리 문제 추가 리뷰" 에서 assistant 가 저장 프로시저 로직을 검토하려 `SHOW CREATE PROCEDURE gunzgame.Game_AccountAttendence` 를 `execute_sql` 로 실행했으나 보안 가드에 차단됨(사용자 보고). 사용자 승인 방식=**Option 1**(전용 도구 + 유도, AskUserQuestion 2026-07-13).
+- **근본원인(삼각측량, rootcause_confidence high)**:
+  - L5(가드): `sql_guard.validate_sql_for_sandbox` 가 `execute_sql` 을 단일 SELECT/CTE 로만 허용(`sql_guard.py:~500` `only SELECT/CTE allowed`) → `SHOW CREATE PROCEDURE`(sqlglot `exp.Show`)는 거부. **이 SELECT-only 불변식은 의도된 핵심 보안 기능(F4) — 유지**.
+  - L2(진짜 결함): 거부 메시지가 `list_schemas/describe_table` 만 안내하고 **프로시저/함수 정의를 볼 경로를 전혀 알려주지 않음**(tools.py 거부 hint). LLM 노출 도구는 핵심 4개(execute_sql/describe_table/search_tables/get_sample_rows, `agent_core.py:3634 _run_tool_defs=TOOL_DEFINITIONS`)뿐이라 루틴 본문 조회 수단 부재.
+  - 접근 권한 자체는 이미 열림: `information_schema` 는 항상-허용(`_whitelist_violation`)이라 `SELECT … FROM information_schema.ROUTINES` 는 지금도 통과. 막힌 것은 **구문 형태(SHOW CREATE)** 뿐. 실제 정의 열람 가부는 datasource RO 계정 GRANT 가 최종 backstop(권한 없으면 NULL — 정보 누출 아님).
+- **재발경로/봉인**: `model limit`(거부 피드백에 교정 힌트 부재, L2) + capability gap → **전용 구조화 도구로 봉인**. sql_guard SELECT/CTE-only 불변식 미변경(보안 회귀 0).
+
+### §2.1 Implementation Plan
+- **파일 경로 + symbol:**
+  - `unit/feature-0002-agent-core/src/modules/dialects.py`: `Dialect.routine_definition/routine_parameters`(base NotImplementedError) + MySQLDialect/MSSQLDialect 구현. 컬럼 계약(엔진 무관): 정의=ROUTINE_NAME/ROUTINE_TYPE/DATA_TYPE/ROUTINE_COMMENT/ROUTINE_DEFINITION, 파라미터=ORDINAL_POSITION/PARAMETER_NAME/PARAMETER_MODE/DATA_TYPE. MySQL=information_schema.ROUTINES/PARAMETERS, MSSQL=INFORMATION_SCHEMA.ROUTINES + OBJECT_DEFINITION(4000자 절단 회피).
+  - `unit/feature-0002-agent-core/src/modules/tools.py`: `_tool_describe_routine`(structured 도구 패턴 — `_safe_ident` 정제 + `_struct_schema_access_error` allowlist 게이트 + `_raw_execute_sql`) · `_TOOL_HANDLERS["describe_routine"]` · **핵심 `TOOL_DEFINITIONS`(LLM 실노출)** 에 도구 정의 추가(4→5) · `_routine_introspection_redirect` L2 힌트 + `_tool_execute_sql` 거부 메시지 말미 append · `import re`.
+  - `unit/feature-0002-agent-core/src/agent_core.py`(§18.8 qa 패널 반영): `_derive_step_work`/`_derive_step_reason` describe_routine 케이스(런타임 narration fallback 일관성).
+  - `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py`(companion, cross-ref only): `_derive_step_work` 에 describe_routine narration 라벨(graceful fallback 존재).
+- **§18.8 적대 패널(security+backend+qa)**: MAJOR 1(`_safe_ident` 역슬래시 미제거 → MySQL 리터럴 breakout, pre-existing 공유 사인 → `\` strip 근본 봉인)·MINOR 2(동명 proc+func 파라미터 교차오염 → ROUTINE_TYPE 필터 / narration fallback → agent_core 케이스) 전건 수정. 나머지 REFUTED(safe/correct). 상세 REV-20260713T140405.
+- **검증**: `tests/test_describe_routine_tool.py`(신규) — 보안 불변식 보존(sql_guard 여전히 SHOW CREATE 거부) + L2 힌트 + 도구 등록(핵심 세트) + dialect SQL + 도구 동작(happy/not-found/무권한/필수인자/내부스키마 차단) + 백슬래시 strip + 동명 proc+func 파라미터 격리. 전체 회귀 pytest RC=0.
+
+### §2.2 Completion Checklist
+- [x] dialects.py routine_definition/routine_parameters (MySQL+MSSQL, ROUTINE_TYPE 파라미터 격리 컬럼)
+- [x] tools.py `_tool_describe_routine` + `_TOOL_HANDLERS` + 핵심 `TOOL_DEFINITIONS`(4→5) + L2 유도 힌트 + `_safe_ident` 역슬래시 strip
+- [x] agent_core.py narration fallback(_derive_step_work/_derive_step_reason) + feature-0003 narration 라벨(companion)
+- [x] tests/test_describe_routine_tool.py 신규 + 전체 회귀 pytest RC=0(1868 PASS) + 보안 가드 3파일 재통과
+- [x] §18.8 적대 패널(security+backend+qa) — MAJOR1·MINOR2 수정, REV-20260713T140405
+- [ ] cycle-finalize(PR merge, 외부영향 confirm) + 영향 서비스 재빌드 배포(ask-worker/insight-worker/web, confirm) + 라이브 실측
+- [ ] FRICTION_LEDGER FR-show-create-routine-blocked 갱신(fixed:deployed:unverified-live)
+- **위험등급 Major**: 신규 LLM 노출 도구가 루틴 정의(로직)를 표면화 — DB GRANT 가 최종 인가 경계. sql_guard·allowlist·RBAC 불변. ANCHOR §1~§3(core/web-ui 분리·모듈 배치) 무충돌.
+
+## TASK-20260710-mssql-auth-cooldown — MSSQL insight 순회 인증실패 조기 skip + cooldown (Minor §12.3, feature-0002 주관, codex 디스크 I/O 장애조사 트랙 B)
 - 출처: `/_template:entry`(2026-07-10). codex 가 감지한 WSL 디스크 I/O 장애(F: VHDX 쓰기 18~37MB/s 지속, insight-worker 중단 시 0.13~0.38MB/s 로 정상화) 조사. **근본 원인**: MSSQL datasource `mssql-qa-idc`(scope=`mssql-06656002eda6` = engine+host+port 해시, DB별 아님)의 로그인 `mckim` 인증/권한 실패(MSSQL 18456 "Login failed")가 `WebProductDatabases` 등록 DB(cc_test_20260625, dk_game_release_235~242_20260625, dk_game_release_luanna_20260625) 수만큼 반복 재연결·로그·후속 I/O 유발. conn_health network circuit-breaker 는 auth 를 **의도적으로 제외**(shared/db.py `_is_connect_breaker_failure` — 한 계정 자격오류가 datasource 를 unstable 로 오판하지 않게)해, 첫 DB 18456 뒤에도 나머지 DB 를 계속 시도한다.
 - **운영 조치 분리(저장소 세션 범위 밖, 검토항목)**: WebDatasources `mssql-qa-idc` InsightEnabled=0, SQL Server login `mckim` 존재/잠금/기본DB 확인, 대상 DB 별 `mckim` USER+db_datareader GRANT(bin/datasource-mssql-ro-bootstrap-multidb.sql), registry 연결정보 UI/API 갱신 — 프로덕션 DB·암호화 registry 접근 필요라 운영자 수행. 본 cycle 은 코드 개선(재시도 억제)만 담당.
 
