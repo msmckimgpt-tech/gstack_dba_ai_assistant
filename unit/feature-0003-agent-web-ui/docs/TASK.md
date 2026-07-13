@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260713T053423-attach-user-version — 사용자 재업로드 첨부 버전 관리(해시 대조 → 버전 체인 편입) (Major §12.3 — feature-0003 업로드 경로 + cross-cut feature-0002 LLM 컨텍스트. /_template:entry arg-given dispatch)
+
+<!-- PLAN-APPROVED by mckim on 2026-07-13 (AskUserQuestion: "승인 — 계획대로 진행"; 설계 결정 3건: 파일명 자동감지 / 버전표식+diff 주입 / 체인 정합+assistant 비교) -->
+
+- 트리거(사용자): "서비스 내 assistant와 대화 중, 이미 첨부한 파일이 있을 경우에 같은 파일을 첨부했을 때 완전히 같은 파일이 아니라면(해시값 대조) 버전을 올린 파일로 다시 첨부하여 전달… 이러한 첨부된 파일 갱신을 assistant가 인지… 과거 버전의 첨부파일 비교 또한 정합."
+- 현황(핵심): 버전 인프라 완비 — `core_attachments`/`WebConversationAttachments` 의 `Sha256`·`RootAttachmentId`·`VersionNumber`·`CreatedByRole`·`SupersededAt` + `UNIQUE(root,version)`, `GET /api/attachments/{id}/versions`, `v{n}` 배지(TASK-0274/0285). 그러나 **버전 체인은 assistant 파일 수정(materialize, `_conv_store._materialize_assistant_attachment_edits`)에서만 채워지고**, 사용자 재업로드는 매번 별개 첨부(root=NULL, v1)를 생성. sha256 은 저장되나 dedup/버전 판정 미사용.
+- 설계(3 결정 = 사용자 승인): ① 재업로드 인식 = **파일명 자동감지**(대화 내 동일 파일명·동일 account 의 최신 head 와 sha256 대조) ② assistant 인지 = **버전 표식 + 변경점 diff 자동 주입** ③ 과거 버전 비교 = **체인 정합 + assistant 비교**(신규 UI 최소, 기존 버전 목록·다운로드 유지). 동일 해시 = 기존 재사용(멱등).
+- 구현: (1) `_conv_store.py` 신규 `_find_latest_same_name_attachment`(체인 head 조회, MySQL write-consistent)·`_compute_version_diff`(unified diff, size-cap) + `app.py` p15 rebind 등록. (2) `conversations.py upload_conversation_attachment` — sha256 후 prior 조회 → 동일=재사용 반환·상이=버전 INSERT(root/version/`'user'`/MetaJson.version_diff) + supersede + 체인 dual-write. (3) `agent_core.py _build_attachment_context_section` — SELECT 버전 컬럼 append·🔄v{n} 표식·`## FILE UPDATES` datamark diff 주입. (4) `static/app.js` — 버전 toast·`sha256`/`version_number` pill 필드·클라이언트 dedup 해시 대조 정밀화. (5) tests·docs.
+- Risk: **Major** — 보안 민감 업로드 경로 + LLM 컨텍스트, cross-feature(0003·0002). 단 **스키마 변경 없음**(모든 컬럼 기존재)·파괴적 마이그 없음·되돌리기 용이(비파괴 additive). §18.8 보안 렌즈(IDOR·체인 무결성·injection) + verify-completion + PB-0008 게이트. deploy_scope: included.
+- Completion Checklist:
+  - [x] `_conv_store._find_latest_same_name_attachment`·`_compute_version_diff` 신규 + app.py p15 rebind. py_compile PASS.
+  - [x] `conversations.upload_conversation_attachment` 버전 감지·재사용(멱등)·새 버전 INSERT(`'user'`)·supersede·체인 dual-write. 표준 업로드(prior 없음)는 기존 default 와 byte-동치.
+  - [x] `agent_core._build_attachment_context_section` SELECT 버전 컬럼 append(index 보존)·🔄v{n} 표식·`## FILE UPDATES` datamark diff 주입.
+  - [x] `static/app.js` 버전 toast(`_attachUploadDoneMessage`)·pill `sha256`/`version_number`·클라이언트 dedup 해시 대조(`_sha256HexOfFile`). node --check PASS.
+  - [x] 테스트: `test_attachment_versioning.py` +6(U1~U5·diff/find/upload) · 신규 `test_attachment_user_version_context.py` +5(표식·FILE UPDATES·datamark·truncate·v1 무회귀). 첨부 관련 31 PASS · **전체 스위트 EXIT=0**(회귀 0, 기존 9-tuple 컨텍스트 테스트는 `len(row)>10` 가드로 보호).
+  - [ ] §18.8 적대 보안 렌즈 리뷰(IDOR·체인·injection) → REV-20260713T053423-attach-user-version.
+  - [ ] verify-completion --pre-commit PASS → commit → PR → merge → web 재배포(deploy_scope: included).
+  - [ ] **PB-0008 실 Windows 브라우저**: 재업로드 → "새 버전 v2" toast·버전 배지·(대화)assistant 변경점 인지 시각검증.
+
 ## TASK-20260709-ask-timeout-nonblocking — 응답 지연 시 화면 전체를 덮던 타임아웃 복구 모달 제거(조용한 자동 재연결로 대체) (Minor §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
 - 트리거(사용자): "작업 화면에서 서비스 assistant 에 요청 후 상대적으로 오래 걸리면 화면 전체를 가리는 답변-지연 경고창이 떠 불편 — 해당 화면을 삭제하거나 기존 작업을 방해하지 않는 UI로 구성." 후속 지시: "자동 재연결은 필수 동작이며 사용자는 그 작동을 알 필요 없음."
 - 진단: `static/app.js sendPrompt()` 의 `/api/ask` 실패 + `/api/ask_status` `is_processing=true` 경로가 `showTimeoutRecoveryDialog`(fixed inset0·z-index 9999 backdrop + 3버튼 모달)를 `await` 로 띄워 화면 전체를 가리고 진행 강제 중단(TASK-0041 도입). 3액션(취소/즉시답변/계속대기)은 이미 컴포저 인라인 어포던스(전송→"중단" TASK-0157 / "즉시 답변" TASK-0158 / attach 기본동작)로 상시 존재 → 모달 중복. 재연결만 필수.

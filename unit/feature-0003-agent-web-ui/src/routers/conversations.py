@@ -1579,38 +1579,134 @@ async def upload_conversation_attachment(
         size_bucket = app._size_bucket(len(body_bytes))
         sha256_hex = hashlib.sha256(body_bytes).hexdigest()
 
+        # REQ-20260713-attach-user-version: 같은 파일명 재업로드 → 버전 체인 편입.
+        # 대화 내 동일 파일명·동일 account 의 최신 버전(head)을 찾아 sha256 대조:
+        #   - 내용 동일(해시 일치) → 새 row/MinIO 미생성, 기존 최신 버전 재사용(멱등).
+        #     "완전히 같은 파일이 아니라면 버전을 올린다"(사용자 요청) — 동일하면 버전 불변.
+        #   - 내용 다름 → 같은 root 체인의 새 버전(CreatedByRole='user')으로 INSERT + 직전 supersede.
+        # 체인 스코프 = (conversation_id, account_id, filename) — cross-account/conv 혼입 차단(IDOR).
+        prior_att = app._find_latest_same_name_attachment(conn, cid, int(account["id"]), filename)
+        version_root_id: int | None = None
+        version_number = 1
+        version_meta: dict | None = None
+        if prior_att:
+            if str(prior_att.get("Sha256") or "") == sha256_hex:
+                # 내용 동일(멱등) — 기존 최신 버전 재사용. 새 객체/row 미생성.
+                _reuse_signed: str | None = None
+                if not app._account_is_pending(account):
+                    try:
+                        _reuse_signed = storage_minio.generate_presigned_get(
+                            str(prior_att.get("ObjectKey") or ""),
+                            response_filename=filename,
+                        )
+                    except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                        _reuse_signed = None
+                _reuse_payload = app._serialize_attachment_for_api(
+                    prior_att, include_signed_url=bool(_reuse_signed), signed_url=_reuse_signed)
+                _reuse_payload["reused_existing_version"] = True
+                return JSONResponse(_reuse_payload)
+            # 내용 다름 — 새 버전. root = prior 의 root(없으면 prior 자신). 체인 MAX(VersionNumber)+1.
+            version_root_id = int(prior_att.get("RootAttachmentId") or 0) or int(prior_att.get("Id") or 0)
+            _vcur = conn.cursor()
+            try:
+                _vcur.execute(
+                    """
+                    SELECT COALESCE(MAX(VersionNumber), 1)
+                    FROM WebConversationAttachments
+                    WHERE RootAttachmentId = %s OR Id = %s
+                    """,
+                    (version_root_id, version_root_id),
+                )
+                _vrow = _vcur.fetchone()
+                version_number = int((_vrow[0] if _vrow else 1) or 1) + 1
+            finally:
+                _vcur.close()
+            version_meta = {
+                "version_of": int(prior_att.get("Id") or 0),
+                "from_version": int(prior_att.get("VersionNumber") or 1),
+                "to_version": version_number,
+            }
+            # 변경점 diff(텍스트 계열만) — 이전 버전 MinIO 본문 대비. fail-soft(diff 실패해도 버전은 생성).
+            _prev_kind = str(prior_att.get("Kind") or "")
+            if kind in ("text", "csv") and _prev_kind in ("text", "csv"):
+                try:
+                    _prev_bytes = storage_minio.get_object_bytes(str(prior_att.get("ObjectKey") or ""))
+                    version_meta["version_diff"] = app._compute_version_diff(
+                        _prev_bytes.decode("utf-8", "replace"),
+                        body_bytes.decode("utf-8", "replace"),
+                        prev_version=int(prior_att.get("VersionNumber") or 1),
+                        new_version=version_number,
+                        filename=filename,
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "upload_conversation_attachment: version diff compute failed (prior=%s) — version without diff",
+                        prior_att.get("Id"), exc_info=True)
+
         # ObjectKey: <cid>/<attachment_uuid>/<safe_filename>.
         import uuid as _uuid
         attachment_uuid = str(_uuid.uuid4())
         object_key = storage_minio.make_object_key(cid, attachment_uuid, filename)
 
         # INSERT row first (uploaded 상태) — MinIO put 실패 시 rollback.
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
+        # REQ-20260713: 버전 컬럼을 명시 INSERT. prior 없음 → RootAttachmentId=NULL,
+        # VersionNumber=1, MetaJson=NULL, CreatedByRole='user' — 기존 스키마 default 와 byte-동치.
+        # prior 있고 내용 다름 → root/version/version_meta 반영(사용자 버전).
+        _ATTACH_INSERT_SQL = """
                 INSERT INTO WebConversationAttachments (
                     ConversationId, AccountId, ObjectKey, OriginalFilename,
                     FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
-                    UploadStatus, MetaJson
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', NULL)
-                """,
-                (
-                    cid,
-                    int(account["id"]),
-                    object_key,
-                    filename,
-                    filename_hmac,
-                    mime_type,
-                    len(body_bytes),
-                    size_bucket,
-                    sha256_hex,
-                    kind,
-                ),
-            )
-            attachment_id = int(cur.lastrowid or 0)
-        finally:
-            cur.close()
+                    UploadStatus, MetaJson, RootAttachmentId, VersionNumber, CreatedByRole
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, 'user')
+                """
+
+        def _insert_attachment_row(_ver: int) -> int:
+            _meta = None
+            if version_meta is not None:
+                version_meta["to_version"] = int(_ver)
+                if isinstance(version_meta.get("version_diff"), dict):
+                    version_meta["version_diff"]["to_version"] = int(_ver)
+                _meta = json.dumps(version_meta)
+            _c = conn.cursor()
+            try:
+                _c.execute(_ATTACH_INSERT_SQL, (
+                    cid, int(account["id"]), object_key, filename, filename_hmac,
+                    mime_type, len(body_bytes), size_bucket, sha256_hex, kind,
+                    _meta, version_root_id, int(_ver),
+                ))
+                return int(_c.lastrowid or 0)
+            finally:
+                _c.close()
+
+        try:
+            attachment_id = _insert_attachment_row(version_number)
+        except Exception:
+            # REQ-20260713: 동시 재업로드가 같은 (root, version) 을 선점하면 UNIQUE(UQ_WCA_VersionChain)
+            # 위반 → 버전 케이스만 체인 MAX+1 재계산 후 1회 재시도(assistant materialize 경로와 대칭, raw 500 회피).
+            # 표준 업로드(version_root_id 없음)의 실패는 그대로 아래 rollback+500 으로 처리.
+            attachment_id = 0
+            if version_root_id:
+                logging.getLogger(__name__).warning(
+                    "upload_conversation_attachment: version INSERT race (root=%s, v=%s) — recompute+retry",
+                    version_root_id, version_number, exc_info=True)
+                try:
+                    _rc = conn.cursor()
+                    try:
+                        _rc.execute(
+                            "SELECT COALESCE(MAX(VersionNumber), 1) FROM WebConversationAttachments "
+                            "WHERE RootAttachmentId = %s OR Id = %s",
+                            (version_root_id, version_root_id),
+                        )
+                        _rr = _rc.fetchone()
+                        version_number = int((_rr[0] if _rr else 1) or 1) + 1
+                    finally:
+                        _rc.close()
+                    attachment_id = _insert_attachment_row(version_number)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "upload_conversation_attachment: version INSERT retry failed (root=%s) — abort",
+                        version_root_id, exc_info=True)
+                    attachment_id = 0
         if not attachment_id:
             try:
                 conn.rollback()
@@ -1650,10 +1746,45 @@ async def upload_conversation_attachment(
         except Exception:
             pass
 
+        # REQ-20260713: 새 버전이면 직전 버전들을 superseded 마킹 — 목록엔 최신만 노출.
+        # WHERE VersionNumber < new 로 둬, 직전 supersede 가 일부 실패해 비-superseded 구버전이
+        # 남아도 다음 업로드가 자가 정정(더 옛 버전 전부 끔) — 어시스턴트 materialize 경로와 동형.
+        if version_root_id:
+            _scur = conn.cursor()
+            try:
+                _scur.execute(
+                    """
+                    UPDATE WebConversationAttachments
+                    SET SupersededAt = UTC_TIMESTAMP(6)
+                    WHERE (RootAttachmentId = %s OR Id = %s)
+                      AND VersionNumber < %s AND SupersededAt IS NULL AND DeletedAt IS NULL
+                    """,
+                    (version_root_id, version_root_id, version_number),
+                )
+                conn.commit()
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "upload_conversation_attachment: supersede prior versions failed (root=%s, v=%s)",
+                    version_root_id, version_number, exc_info=True)
+            finally:
+                _scur.close()
+
         # TASK-0277: dual-write — 업로드 직후 MySQL 상태를 PG core_attachments 로 미러(flag-gated, fail-soft).
+        # REQ-20260713: 새 버전이면 supersede 된 이전 버전(체인 전체)도 함께 미러 — PG 목록/버전 정합.
         try:
             from web.modules import attachment_pg_mirror as _apm
-            _apm.mirror_attachments(conn, [attachment_id])
+            _mirror_ids = [attachment_id]
+            if version_root_id:
+                _ccur = conn.cursor()
+                try:
+                    _ccur.execute(
+                        "SELECT Id FROM WebConversationAttachments WHERE RootAttachmentId = %s OR Id = %s",
+                        (version_root_id, version_root_id),
+                    )
+                    _mirror_ids = sorted({attachment_id} | {int(r[0]) for r in (_ccur.fetchall() or [])})
+                finally:
+                    _ccur.close()
+            _apm.mirror_attachments(conn, _mirror_ids)
         except Exception:
             pass
 

@@ -5636,6 +5636,88 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
     finally:
         cur.close()
 
+def _find_latest_same_name_attachment(
+    conn, conversation_id: str, account_id: int, filename: str
+) -> dict[str, Any] | None:
+    """REQ-20260713-attach-user-version: 사용자 재업로드 버전 체인 편입 판정용.
+
+    대화 내 **같은 파일명·같은 account** 의 최신(비-superseded·비-deleted·비-pending)
+    첨부 1건을 반환한다(없으면 None). 반환 dict 는 `_load_attachment_row` 와 동형 컬럼셋.
+
+    버전 체인은 `(conversation_id, account_id, OriginalFilename)` 로 스코프한다:
+      - 다른 멤버가 올린 동명 파일(그룹 대화)이나 다른 대화의 첨부와 체인이 섞이지 않게 —
+        cross-account/cross-conversation 체인 하이재킹(IDOR) 방어.
+      - `SupersededAt IS NULL` 로 체인의 현재 head 만 매칭한다(구버전에는 붙지 않음).
+    업로드 경로(MySQL INSERT 직후)에서 호출되므로 write-consistent 한 MySQL(conn)에서
+    직접 읽는다(PG 미러 지연 회피).
+    """
+    if not (conversation_id and account_id and filename):
+        return None
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                DeletePending, DeleteReason, MetaJson,
+                RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+            FROM WebConversationAttachments
+            WHERE ConversationId = %s AND AccountId = %s AND OriginalFilename = %s
+              AND DeletedAt IS NULL AND DeletePending = 0 AND SupersededAt IS NULL
+            ORDER BY VersionNumber DESC, Id DESC
+            LIMIT 1
+            """,
+            (str(conversation_id), int(account_id), str(filename)),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        cur.close()
+
+def _compute_version_diff(
+    prev_text: str,
+    new_text: str,
+    *,
+    prev_version: int,
+    new_version: int,
+    filename: str,
+    cap_bytes: int | None = None,
+) -> dict[str, Any]:
+    """REQ-20260713-attach-user-version: 이전↔신규 버전 unified diff (텍스트 계열 전용).
+
+    LLM 컨텍스트 주입용 변경점 요약. `MetaJson.version_diff` 로 새 버전 row 에 저장된다.
+    cap_bytes(기본 `_ASSISTANT_EDIT_SIZE_CAP_BYTES`) 초과 시 절단(`truncated=True`).
+    바이너리(xlsx/pdf/image) 재업로드는 caller 가 호출하지 않는다(diff 무의미).
+    """
+    import difflib
+    if cap_bytes is None:
+        cap_bytes = app._ASSISTANT_EDIT_SIZE_CAP_BYTES
+    prev_lines = (prev_text or "").splitlines()
+    new_lines = (new_text or "").splitlines()
+    diff_lines = list(
+        difflib.unified_diff(
+            prev_lines,
+            new_lines,
+            fromfile=f"{filename} (v{prev_version})",
+            tofile=f"{filename} (v{new_version})",
+            lineterm="",
+        )
+    )
+    unified = "\n".join(diff_lines)
+    truncated = False
+    encoded = unified.encode("utf-8")
+    if len(encoded) > int(cap_bytes):
+        unified = encoded[: int(cap_bytes)].decode("utf-8", "ignore")
+        truncated = True
+    return {
+        "from_version": int(prev_version),
+        "to_version": int(new_version),
+        "unified_diff": unified,
+        "truncated": truncated,
+    }
+
 def _conversation_scope_key(conn, conversation_id: str) -> str:
     """대화의 활성 데이터소스 scope_key 를 해석한다 (샘플 피드백 적재용).
 

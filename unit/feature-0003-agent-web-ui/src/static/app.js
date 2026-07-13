@@ -7492,6 +7492,8 @@ async function _syncConversationAttachmentsToBucket(convId) {
           version_number: Number(a.version_number || 1),
           is_assistant_generated: !!a.is_assistant_generated,
           root_attachment_id: Number(a.root_attachment_id || aid),
+          // REQ-20260713: 클라이언트 해시 대조 dedup 용(히스토리 로드 후 재추가 정밀 판정).
+          sha256: a.sha256 || null,
         });
         existingIds.add(aid);
       }
@@ -7606,16 +7608,25 @@ function _removeAttachmentPill(attachmentId) {
 }
 
 async function _uploadComposerAttachment(file) {
-  // TASK-0124 de-duplication: 같은 이름+크기 파일이 이미 bucket 에 존재하면 재업로드 차단.
+  // TASK-0124 de-duplication → REQ-20260713-attach-user-version: 이름+크기 차단을 **해시 대조**로
+  // 정밀화한다. 같은 이름의 파일이라도 내용이 다르면(sha256 불일치) 통과시켜 백엔드가 새 버전으로
+  // 편입하게 하고, 내용이 완전히 동일할 때만 중복 차단한다(기존 안티-중복 의도 보존). 새 파일 해시는
+  // 백엔드 저장값(bucket item.sha256, 업로드 응답에서 적재)과만 비교 — sha256 미상이면 통과(백엔드 권위).
   const _deupKey = _composerAttachmentKey(state.activeConversationId);
   const _dedupBucket = state.composerAttachments.byConv[_deupKey];
   if (_dedupBucket && file) {
-    const _dupExists = _dedupBucket.items.some(
+    const _sameNameSize = _dedupBucket.items.filter(
       (it) => it.name === (file.name || "unnamed") && it.size === (Number(file.size) || 0) && it.status !== "failed"
     );
-    if (_dupExists) {
-      showToast(`이미 첨부된 파일입니다: ${file.name || "unnamed"}`, true);
-      return;
+    if (_sameNameSize.length) {
+      let _newHash = null;
+      try { _newHash = await _sha256HexOfFile(file); } catch (_e) { _newHash = null; }
+      const _identical = Boolean(_newHash) && _sameNameSize.some((it) => it.sha256 && it.sha256 === _newHash);
+      if (_identical) {
+        showToast(`이미 첨부된 파일입니다(내용 동일): ${file.name || "unnamed"}`, true);
+        return;
+      }
+      // 이름·크기는 같으나 내용이 다르거나(해시 불일치)·해시 미상 → 통과(백엔드가 버전 판정).
     }
   }
   // TASK-0107 (이슈 #2): 새 대화 진입 전 (activeConversationId 부재 + pendingSentinel 도 없음)
@@ -7701,8 +7712,8 @@ async function _uploadComposerAttachment(file) {
       const resp = await apiFetch(`/api/conversations/${encodeURIComponent(earlyCid)}/attachments`, { method: "POST", body: formData, headers: {} });
       if (resp && Number(resp.id) > 0) {
         const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
-        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null, source: "new" };
-        showToast(`첨부 업로드 완료: ${file.name || "unnamed"}`);
+        if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null, source: "new", sha256: resp.sha256 || null, version_number: Number(resp.version_number || 1) };
+        showToast(_attachUploadDoneMessage(resp, file.name || "unnamed"));
       } else {
         const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
         if (idx2 >= 0) uploadBucket.items[idx2] = { ...uploadBucket.items[idx2], status: "failed", error: resp?.error || "업로드 실패" };
@@ -7762,9 +7773,11 @@ async function _uploadComposerAttachment(file) {
           selected: true,
           signed_url: resp.signed_url || null,
           source: "new",
+          sha256: resp.sha256 || null,
+          version_number: Number(resp.version_number || 1),
         };
       }
-      showToast(`첨부 업로드 완료: ${optimistic.name}`);
+      showToast(_attachUploadDoneMessage(resp, optimistic.name));
     } else if (resp && resp.error) {
       const idx = bucket.items.findIndex((it) => it.id === localId);
       if (idx >= 0) {
@@ -7782,6 +7795,27 @@ async function _uploadComposerAttachment(file) {
     state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
     _renderAttachmentPills();
   }
+}
+
+// REQ-20260713-attach-user-version: 파일 내용의 SHA-256 hex(클라이언트 해시 대조용).
+// crypto.subtle 은 secure context(HTTPS/localhost)에서만 동작 — 실패 시 caller 가 null 처리(통과).
+async function _sha256HexOfFile(file) {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// REQ-20260713-attach-user-version: 업로드 응답의 버전 상태에 따른 완료 toast 메시지.
+// reused_existing_version=true → 동일 파일(기존 버전 재사용), version_number>1 → 새 버전, 그 외 → 신규 업로드.
+function _attachUploadDoneMessage(resp, name) {
+  const ver = Number((resp && resp.version_number) || 1);
+  if (resp && resp.reused_existing_version) {
+    return `동일 파일입니다 — 기존 버전(v${ver})을 사용합니다: ${name}`;
+  }
+  if (ver > 1) {
+    return `새 버전(v${ver})으로 첨부했습니다: ${name}`;
+  }
+  return `첨부 업로드 완료: ${name}`;
 }
 
 function _guessKindFromFile(file) {
@@ -7843,6 +7877,8 @@ async function _flushStagedAttachmentsToCid(targetCid, sourceKey) {
           selected: true,
           signed_url: resp.signed_url || null,
           source: "new",
+          sha256: resp.sha256 || null,
+          version_number: Number(resp.version_number || 1),
         });
         uploadedIds.push(Number(resp.id));
       } else {

@@ -3476,6 +3476,8 @@ from routers._conv_store import (  # noqa: E402
     _size_bucket,
     _attachment_edit_block_spans,
     _next_version_filename,
+    _find_latest_same_name_attachment,
+    _compute_version_diff,
     _extract_intent_from_content,
     _normalize_topic,
     _normalize_step_text,
