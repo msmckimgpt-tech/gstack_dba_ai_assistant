@@ -320,3 +320,44 @@ def test_sync_routine_cluster_projection(monkeypatch):
     mg.sync_routine(None, "ds1", "aaa", "sp_r1")   # _UNSET → 속성 미전달(보존)
     rp = [p for (l, k, p) in merged if l == "Routine"][0]
     assert "semantic_cluster_id" not in rp and "semantic_cluster_label" not in rp
+
+
+def test_pass_giant_blob_adaptive_split(monkeypatch):
+    """라이브 프로브 적발 회귀 잠금: base τ 에서 스키마 전체가 한 blob 이면 τ-상승 재분할로 쪼갠다."""
+    pytest.importorskip("numpy")
+    import math
+    def v(deg):
+        return [math.cos(math.radians(deg)), math.sin(math.radians(deg))]
+    # 그룹 A(0°±1°) 와 그룹 B(32°±1°): 교차 코사인 ~0.84~0.86 ≥ base τ(0.82) → base 에서 단일 blob,
+    # τ 상승(0.86+)에서 교차 엣지 소멸 → 3+3 분리. 그룹 내부 ~0.9999 는 ceiling 까지 유지.
+    rag = [
+        (1, "ds1:aaa.dbo.t1", "t1", v(0.0), None, None, "dbo"),
+        (2, "ds1:aaa.dbo.t2", "t2", v(0.5), None, None, "dbo"),
+        (3, "ds1:aaa.dbo.t3", "t3", v(1.0), None, None, "dbo"),
+        (4, "ds1:aaa.dbo.t4", "t4", v(32.0), None, None, "dbo"),
+        (5, "ds1:aaa.dbo.t5", "t5", v(32.5), None, None, "dbo"),
+        (6, "ds1:aaa.dbo.t6", "t6", v(33.0), None, None, "dbo"),
+    ]
+    cur = _pass_env(monkeypatch, rag, [])
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_MAX_SIZE", 3, raising=False)
+    rep = sc.run_semantic_cluster_pass("common", "ds1")
+    assert rep["error"] is None and rep["clusters"] == 2
+    ups = {p[2]: p[0] for (q, p) in _updates(cur, "rag_objects")}
+    assert ups[1] == ups[2] == ups[3] and ups[4] == ups[5] == ups[6] and ups[1] != ups[4]
+
+
+def test_cluster_edges_mutual_knn_blocks_hub_chain():
+    """mutual-kNN: 허브 j 가 i 를 top-k 에 안 담으면 i→j 단방향은 엣지가 아니다(연쇄 차단)."""
+    pytest.importorskip("numpy")
+    import math
+    # 허브 h(0°) 주변에 8개 근접(±2°) + 원거리 x(35°): x 의 top-k 엔 h 가 있지만
+    # h 의 top-k(max_deg=2 로 축소)는 근접 이웃만 — x-h 엣지 없음.
+    embs = [[math.cos(math.radians(d)), math.sin(math.radians(d))] for d in (0, 1, -1, 35)]
+    old = _cfgattr().AGENT_METADATA_CLUSTER_MAX_DEGREE
+    try:
+        _cfgattr().AGENT_METADATA_CLUSTER_MAX_DEGREE = 2
+        edges = set(sc._cluster_edges(embs, tau=0.80))
+    finally:
+        _cfgattr().AGENT_METADATA_CLUSTER_MAX_DEGREE = old
+    assert (0, 3) not in edges and (3, 0) not in edges   # 단방향(비상호) 차단
+    assert (0, 1) in edges and (0, 2) in edges           # 상호 근접은 유지

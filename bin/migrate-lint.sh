@@ -270,7 +270,9 @@ collect_targets() {
           git diff --name-only --diff-filter=AM HEAD -- "$VERSIONS_DIR" 2>/dev/null
           git ls-files --others --exclude-standard -- "$VERSIONS_DIR" 2>/dev/null
         fi
-      ) | sort -u
+      # content-cluster(2026-07-13): revision(*.py)만 — MAX_MIGRATION.txt(ITEM-02 의도적 충돌 파일)가
+      # 마이그레이션과 함께 diff 에 잡히면 AST 파싱 실패로 오탐 FAIL 하던 lint 버그 수정.
+      ) | grep -E '\.py$' | sort -u
       ;;
   esac
 }

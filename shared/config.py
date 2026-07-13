@@ -690,6 +690,10 @@ AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N = int(os.getenv("AGENT_METADATA_CLUSTER_
 # content-cluster RC5 (TASK 20260713T1059): 클러스터 라벨을 LLM 한국어 컨텐츠 명으로(멤버셋-해시 kv 캐시,
 #   fail-soft affix 폴백). 0 이면 affix 라벨만 — membership(cluster id)은 게이트와 무관하게 동작.
 AGENT_METADATA_CLUSTER_LABEL_LLM = os.getenv("AGENT_METADATA_CLUSTER_LABEL_LLM", "1").strip().lower() in ("1", "true", "yes")
+# content-cluster: 클러스터 멤버 상한 — 초과 컴포넌트는 τ 를 올려 재분할(divisive, _adaptive_components).
+#   라이브 프로브에서 base τ 단일연결이 DB 전체를 한 blob(254멤버)으로 만들던 chaining 방어. ceiling 에서도
+#   안 쪼개지면 진성 동질로 수용(하드 컷 아님 — 밴드 유용성 가이드).
+AGENT_METADATA_CLUSTER_MAX_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MAX_SIZE", "40") or "40")
 # feature-0016 Phase B (ADR-019, crossds-rel): 크로스-데이터소스 관계 추론(Phase C 시그니처 임베딩 구동).
 #   AUTO=0(기본 OFF) → 스키마·UI·scope 완화만 배포되고 추론 inert. Phase C 임베딩 populate 후 1 로 flip.
 #   MIN_SIM 높게(0.90) — 프로브 검증 불가라 보수적. 프로브 skip·manual/대화JOIN 승격은 relationships.py.

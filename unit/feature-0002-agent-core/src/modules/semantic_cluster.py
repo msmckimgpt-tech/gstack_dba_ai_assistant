@@ -270,8 +270,13 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
 def _routine_signature_backfill(cur, rep, max_rows) -> None:
     """routine_objects 시그니처 백필(테이블 패스와 동형 — 미처리 우선·변경감지·멱등, RC3).
 
-    컬럼 부재(alembic 0040 미적용 창)는 전체 backfill 을 죽이지 않고 1회 WARNING 후 skip —
-    autocommit 연결이라 별도 rollback 불요. fail-soft."""
+    컬럼 부재(alembic 0040 미적용 창)는 전체 backfill 을 죽이지 않고 1회 WARNING 후 skip.
+    SAVEPOINT 격리 — caller 가 non-autocommit conn 을 주입해도 실패 SELECT 가 tx 를 aborted 로
+    남기지 않게(클러스터 pass 의 routine fetch 와 동형·라이브 프로브 적발). fail-soft."""
+    try:
+        cur.execute("SAVEPOINT sc_routine_backfill")
+    except Exception:
+        pass
     try:
         limit = ""
         args = []
@@ -286,7 +291,15 @@ def _routine_signature_backfill(cur, rep, max_rows) -> None:
             tuple(args),
         )
         rows = cur.fetchall()
+        try:
+            cur.execute("RELEASE SAVEPOINT sc_routine_backfill")
+        except Exception:
+            pass
     except Exception as exc:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sc_routine_backfill")
+        except Exception:
+            pass
         if not _ROUTINE_COLS_WARNED["done"]:
             _ROUTINE_COLS_WARNED["done"] = True
             _log.warning("routine 시그니처 백필 skip(0040 미적용 창?): %r", exc)
@@ -320,15 +333,19 @@ def _routine_signature_backfill(cur, rep, max_rows) -> None:
 
 
 # ── (2) 클러스터링 ─────────────────────────────────────────────────────────
-def _cluster_edges(embeddings) -> list:
-    """임베딩 리스트 → 무향 kNN 엣지 [(i,j)]. numpy N×N 코사인(대형 스키마는 caller 가 N 가드 분기).
+def _cluster_edges(embeddings, tau=None) -> list:
+    """임베딩 리스트 → 무향 **mutual-kNN** 엣지 [(i,j)]. numpy N×N 코사인(대형 스키마는 caller 가 N 가드 분기).
 
-    단일연결 chaining 억제: 노드당 상위 MAX_DEGREE 이웃만(코사인 τ 이상). L2 정규화 후 내적 = 코사인.
+    단일연결 chaining 억제 2중: ① 노드당 상위 MAX_DEGREE 이웃 중 τ 이상 ② **상호(mutual) top-k 만
+    엣지 채택** — 라이브 프로브(2026-07-13)에서 단방향 kNN + union-find 가 cc_data_main 255 테이블을
+    단일 254-멤버 blob 으로 연쇄 병합(시그니처 boilerplate 공유로 baseline 유사도가 높음)한 것의 1차
+    방어. 잔여 거대 컴포넌트는 _adaptive_components 의 τ-상승 재분할이 2차 방어. L2 정규화 후 내적 = 코사인.
     """
     n = len(embeddings)
     if n < 2:
         return []
-    tau = float(_cfg.AGENT_METADATA_CLUSTER_SIM_THRESHOLD)
+    if tau is None:
+        tau = float(_cfg.AGENT_METADATA_CLUSTER_SIM_THRESHOLD)
     max_deg = max(1, int(_cfg.AGENT_METADATA_CLUSTER_MAX_DEGREE))
     try:
         import numpy as np
@@ -346,22 +363,44 @@ def _cluster_edges(embeddings) -> list:
     X = X / norms
     S = X @ X.T                      # 코사인 유사도 행렬 (N×N)
     np.fill_diagonal(S, -1.0)        # 자기 자신 제외
-    edges = set()
+    k = min(max_deg, n - 1)
+    if k <= 0:
+        return []
+    topk = []                        # 노드별 top-k 이웃 집합(τ 이상만)
     for i in range(n):
         row = S[i]
-        # 노드 i 의 상위 max_deg 이웃 중 τ 이상만(chaining 억제 + O(N) per-row).
-        k = min(max_deg, n - 1)
-        if k <= 0:
-            continue
         idx = np.argpartition(row, -k)[-k:]
-        for j in idx:
-            j = int(j)
-            if j == i:
-                continue
-            if float(row[j]) >= tau:
-                a, b = (i, j) if i < j else (j, i)
-                edges.add((a, b))
-    return list(edges)
+        topk.append({int(j) for j in idx if int(j) != i and float(row[int(j)]) >= tau})
+    edges = []
+    for i in range(n):
+        for j in topk[i]:
+            if j > i and i in topk[j]:   # mutual — 양방향 top-k 일 때만(비대칭 허브 연쇄 차단)
+                edges.append((i, j))
+    return edges
+
+
+def _adaptive_components(embs, member_idx, tau, cap, *, step=0.02, ceiling=0.98) -> list:
+    """거대 컴포넌트 적응 재분할(divisive) — 컴포넌트가 cap 초과면 τ 를 올려 그 멤버들만 재클러스터.
+
+    라이브 프로브 적발: 같은 DB 테이블은 시그니처 구조 공유로 baseline 코사인이 높아 base τ 에서
+    스키마 전체가 한 blob 이 된다(cc_data_main 254/255 — 밴드로 무용). τ 를 step 씩 올리며 재귀
+    분할하고, ceiling 에서도 안 쪼개지는 컴포넌트는 진성 동질(샤드 등)로 보고 수용. 결정론(입력
+    순서·τ 시퀀스 고정). 반환: member_idx(원본 인덱스) 의 부분집합 리스트."""
+    if len(member_idx) < 2:
+        return [list(member_idx)]
+    sub = [embs[i] for i in member_idx]
+    roots = _union_find(len(sub), _cluster_edges(sub, tau=tau))
+    comp = {}
+    for local_i, r in enumerate(roots):
+        comp.setdefault(r, []).append(member_idx[local_i])
+    out = []
+    for members in comp.values():
+        if len(members) > cap and tau + step <= ceiling:
+            out.extend(_adaptive_components(embs, members, round(tau + step, 4), cap,
+                                            step=step, ceiling=ceiling))
+        else:
+            out.append(members)
+    return out
 
 
 def _union_find(n, edges) -> list:
@@ -561,6 +600,13 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             items.append({"kind": "table", "id": rid, "key": okey or "", "name": tbl or "",
                           "emb": vec, "cur_cid": ccid, "cur_lab": clab, "schema": eff})
         # 루틴 합동 편입(RC3) — 0040 미적용 창/컬럼 부재는 1회 경고 후 테이블만 클러스터.
+        # SAVEPOINT 격리(라이브 프로브 적발): caller 가 non-autocommit conn 을 주입하면 실패 SELECT 가
+        # 트랜잭션을 aborted 로 남겨 이후 UPDATE 전부 InFailedSqlTransaction 으로 연쇄 실패한다.
+        # autocommit(기본 경로)에서는 SAVEPOINT 자체가 실패하지만 무해(try 로 삼킴 — 동작 종전과 동일).
+        try:
+            cur.execute("SAVEPOINT sc_routine_fetch")
+        except Exception:
+            pass
         try:
             cur.execute(
                 "SELECT r.id, r.schema_name, r.routine_name, t.embedding, r.semantic_cluster_id, "
@@ -577,7 +623,15 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                 items.append({"kind": "routine", "id": rid,
                               "key": f"{datasource_key}:{sch}.{name}()", "name": f"{name}()",
                               "emb": vec, "cur_cid": ccid, "cur_lab": clab, "schema": sch or ""})
+            try:
+                cur.execute("RELEASE SAVEPOINT sc_routine_fetch")
+            except Exception:
+                pass
         except Exception as exc:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sc_routine_fetch")
+            except Exception:
+                pass
             if not _ROUTINE_COLS_WARNED["done"]:
                 _ROUTINE_COLS_WARNED["done"] = True
                 _log.warning("routine 클러스터 fetch skip(0040 미적용 창?): %r", exc)
@@ -607,13 +661,14 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                 rep["skipped_schemas"] += 1
                 skipped_idx.update(idxs)
                 continue
-            edges = _cluster_edges([items[i]["emb"] for i in idxs])
-            roots = _union_find(len(idxs), edges)
-            comp = {}
-            for local_i, r in enumerate(roots):
-                comp.setdefault(r, []).append(idxs[local_i])
+            # mutual-kNN + 거대 컴포넌트 적응 재분할(τ 상승) — 라이브 프로브에서 base τ 단일연결이
+            # 스키마 전체(254/255)를 한 blob 으로 만들던 chaining 의 방어(상세 _adaptive_components).
+            cap = max(min_size, int(getattr(_cfg, "AGENT_METADATA_CLUSTER_MAX_SIZE", 40)))
+            base_tau = float(_cfg.AGENT_METADATA_CLUSTER_SIM_THRESHOLD)
+            embs_all = [it["emb"] for it in items]
+            comps = _adaptive_components(embs_all, idxs, base_tau, cap)
             valid = [(min(items[i]["key"] for i in members), members)
-                     for members in comp.values() if len(members) >= min_size]
+                     for members in comps if len(members) >= min_size]
             valid.sort(key=lambda x: x[0])
             # 라벨: affix 기본 + LLM 컨텐츠 라벨(캐시·fail-soft) override — 분석 요약을 입력으로.
             label_inputs = []
