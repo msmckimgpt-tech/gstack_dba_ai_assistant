@@ -48,3 +48,10 @@ verdict: PASS
 - 부기: 라이브 검증이 결함 3건(fit-클램프 무컬링 미발생·카드 시점 이미지 오인·시딩-마킹 debounce
   경합 latch 고착)을 적발 → 코드 재설계(T77.6~8) 후 본 Run 으로 재검증 완료. 컨테이너 주입분은
   배포 시 이미지 재빌드로 소거(정본은 repo). POST-DEPLOY 재확인은 T77.5.
+
+### Run (2026-07-13) — §77 POST-DEPLOY 배포빌드 재확인(T77.5) — Environment: Windows-browser
+
+- 배포: PR #747 머지(main c264e3f1) + `make deploy-web`(무중단 롤링 web-a/b recreate·Caddyfile 무변경·post-cutover soak 90s PASS). 서빙 자산 스탬프 `?v=5f6d70568188`, 배포 빌드에 `_miniFullSig`·`_metaMinimapSeedKick`·`_cullPartial` 서빙 확인(curl/fetch).
+- 방법: PB-0008 — bin/win-browser.py 실 Windows Chrome 150. 배포 빌드에 QA 전용 디버그 핸들만 임시 append(검증 후 제거, repo·이미지 미포함).
+- 결과 **PASS**: qa-idc 1,249 노드(cc_tortusa/cc_test_pikeman 펼침) — ① 시딩 수렴(fullSigCurrent=true, 방출 1,573) ② **극단 줌인 2.0 컬링 rebuild(방출 1,573→153, _cullPartial=true)에 미니맵 toDataURL 해시 완전 불변(1889907447 — PRE-LANDING 과 동일 결정값)** ③ 팬 후 불변 ④ 스코프 전환(gz-dev) 재렌더(동결 없음) ⑤ pageerror 0. 스크린샷 shot_20260713_133004(줌 2.0 — 메인 캔버스 컬링·미니맵 전역 개요 유지 육안 대조).
+- 마감: QA 디버그 핸들 컨테이너에서 제거 → 서빙 자산 배포 이미지 정합(`__mg` 부재·§77 배선 유지 재확인). visual_verification_scope=always 완료 게이트 충족.
