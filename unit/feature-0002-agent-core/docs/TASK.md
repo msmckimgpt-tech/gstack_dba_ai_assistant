@@ -31,8 +31,9 @@ source_of_truth: true
 - [x] agent_core.py narration fallback(_derive_step_work/_derive_step_reason) + feature-0003 narration 라벨(companion)
 - [x] tests/test_describe_routine_tool.py 신규 + 전체 회귀 pytest RC=0(1868 PASS) + 보안 가드 3파일 재통과
 - [x] §18.8 적대 패널(security+backend+qa) — MAJOR1·MINOR2 수정, REV-20260713T140405
-- [ ] cycle-finalize(PR merge, 외부영향 confirm) + 영향 서비스 재빌드 배포(ask-worker/insight-worker/web, confirm) + 라이브 실측
-- [ ] FRICTION_LEDGER FR-show-create-routine-blocked 갱신(fixed:deployed:unverified-live)
+- [x] cycle-finalize(PR #749 merge main 6841eba2) + 영향 서비스 재빌드 배포(ask-worker/insight-worker/web-a/web-b, 4서비스 GIT_COMMIT=6841eba2, 런타임 실증 PASS)
+- [x] FRICTION_LEDGER FR-show-create-routine-blocked → fixed:deployed:unverified-live
+- [ ] 라이브 대화 실측(프로시저 정의 요청 재현) — 다음 audit 에서 corroboration 재측정 시 verified
 - **위험등급 Major**: 신규 LLM 노출 도구가 루틴 정의(로직)를 표면화 — DB GRANT 가 최종 인가 경계. sql_guard·allowlist·RBAC 불변. ANCHOR §1~§3(core/web-ui 분리·모듈 배치) 무충돌.
 
 ## TASK-20260710-mssql-auth-cooldown — MSSQL insight 순회 인증실패 조기 skip + cooldown (Minor §12.3, feature-0002 주관, codex 디스크 I/O 장애조사 트랙 B)
