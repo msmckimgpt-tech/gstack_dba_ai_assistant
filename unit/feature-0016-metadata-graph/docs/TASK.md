@@ -2252,7 +2252,6 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ## 20260711T1205-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11)
 - [x] MODIFY 117→15건·REVIEW 117→15건 이관, 무손실 md5, 링크+REPORT 압축(§5.5). 선례 CHG-20260711T115053/T120311 동일 계보.
-
 ## 20260713T1059-content-cluster — 카테고리 밴드 '컨텐츠 단위' 그룹핑 실동작화 (2026-07-13, 사용자 요청 · entry persona dispatch)
 사용자: "`그래프 뷰`에서 'AI 능동 분석' 후(`mssql-qa-idc.cc_data_main`) '제품 카테고리 밴드'가 일부만 컨텐츠 단위로 묶이고 대부분(특히 함수·프로시저)은 단순 명칭으로 구분 → 분석 현황·문제 파악 + 컨텐츠 단위로 묶이도록 개선."
 
@@ -2291,3 +2290,16 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] TC.6 검증 — 신규 test_semantic_cluster_content.py 19 + 연관 스위트 + 전체 스위트 컨테이너 pytest EXIT=0. §18.8 적대 패널(REVIEW.md REV entry).
 - [ ] TC.7 verify-completion → PR → merge → 배포(마이그 0040 + web 롤링 + insight/ask-worker 재빌드).
 - [ ] TC.8 POST-DEPLOY — cc_data_main 표적 백필+클러스터 pass 가동 → rag/routine cluster DB 카운트 실증(AC-1·2) → PB-0008 실 Windows 육안 + TEST fragment(Environment: Windows-browser).
+## 20260713T1052-graph-minimap-fullview — §77 미니맵 전역 개요 유지(컬링 부분방출 build 의 재복제·카메라 재적합 금지) (2026-07-13, 사용자 리포트 · entry persona dispatch)
+사용자: 줌 인 시 그래프 뷰 내부는 뷰포트 컬링으로 방출 제한(의도)인데, **미니맵에도 컬링이 적용돼 전역 구성이 바뀐다** — §74 에서 "전체 이미지 캐싱·재사용"을 요청했지만 현재는 컬링된 그래프의 이미지가 사용됨.
+- [x] T77.0 진단 — 기전 2개: ① `_miniGeomSig` 가 **컬링된 방출 데이터(_built)** 기준이라 줌인 rebuild 마다 서명 변화 → §74 재사용 게이트가 열려 plugin `renderMinimap()` 이 컬링된 부분집합을 cloneNode 재복제. ② plugin `onTransform`(AFTER_TRANSFORM 32ms 스로틀)의 `setCamera()` 가 미니맵 카메라를 **메인 캔버스 `getBounds("elements")`**(컬링 중 = 부분집합 bounds)에 재적합 → 이미지를 지켜도 카메라가 부분 영역으로 줌인(vendor 번들 역공학 실측).
+- [x] T77.1 build 부분방출 추적(graph-core.js): `_metaGraph._cullPartial` — build 서두 false 초기화, 뷰포트 사유 방출 누락 4 지점(클러스터 통째 §67·루틴 칩 §67·루틴 파라미터 `_rtOff` §65·테이블 칩 §67)에서 true 마킹. products 뷰·스코프/뷰 전환 리셋 2곳에 stale 소거 동반. `_cullActive`(판정 활성)와 구분 — 개요 fit 은 컬링 활성이어도 방출 완전집합(false).
+- [x] T77.2 renderMinimap 게이트 확장(`_metaPatchMinimapReuse`): "부분방출(_cullPartial) + 전체 이미지 보유(`__hasFullImage`) + canvas 존재" 면 재복제 skip — `__lastGeomSig` 도 전체-build 서명 보존(줌아웃 복귀 시 기하 불변이면 서명 일치로 그대로 재사용). 전체 이미지는 **무컬링 build 렌더에서만** 마킹. 미보유(초기부터 컬링 — 드묾) 시 원본 렌더 폴백(빈 미니맵 방지, full 마킹 안 함 — 이후도 계속 갱신해 동결 방지).
+- [x] T77.3 setCamera 게이트(기전 ②): 같은 조건이면 재적합 skip — 마지막 무컬링(전체 bounds) 카메라 유지. `updateMask` 는 이 카메라 매핑으로 현재 뷰포트를 사상하므로 마스크는 전체 이미지 위 올바른 위치 유지(maskBBox getter 는 요소 bounds 비의존 — 실측). 무컬링/미보유 시 원본 동작(소형 그래프 회귀 0).
+- [x] T77.4 검증(1차): `test_g6build_minimap_reuse.js` Section E 신규(실 build `_cullPartial` 산정·게이트 시나리오·setCamera skip/재개/폴백) + 그래프 headless 11 스위트 무회귀. `node --check --input-type=module` PASS. graph-split(ITEM-09) 후 headless 실행 레시피 신규 확립: 7 모듈 sed 연결 번들(import/export 제거 + admin.js 4 심볼 stub + `var G6` 중복 해소) — test-runs.d fragment 에 기록.
+- [x] T77.6 **라이브 적발 ① — fit-클램프 대형 모델은 무컬링 build 자연 미발생** (win-browser 실측: qa-idc 1,249 노드 fit=zoom 0.55 에서 방출 153·_cullPartial=true): 전체 이미지가 영영 미시딩 → **컬링-유예 시딩 build** 도입(`_metaMinimapSeedKick` 350ms 지연 예약·`_cullSuspendOnce` 1회 소비·전량 방출 비용 = pre-§65 빌드 1프레임).
+- [x] T77.7 **라이브 적발 ② — boolean full-마킹의 '카드 시점 이미지 오인'** (접힘 카드 단계(소형·무컬링)에서 마킹된 이미지를 펼침 후에도 현재로 오인·시딩 억제): **전체-기하 서명** `_miniFullSig`(§76 nodePosAll — 컬링 무관 전 노드 — + edges.size FNV 해시, build 마다 산정) 대비 `mm.__fullImageSig` 로 현재성 판정. stale 이면 부분 재복제 대신 재시딩으로 교체.
+- [x] T77.8 **라이브 적발 ③ — 시딩-마킹 경합**: 시딩 build 직후 다른 컬링 build 가 minimap onRender debounce(128ms) 창에 끼면 clone 이 부분 상태를 봐 마킹 무산 + `_miniSeedRun` latch 고착 → 래퍼 stale-skip 분기(debounce 발화=상호작용 소강 신호)가 **force 재-kick**(latch 관통), `_miniSeedTimer` 로 중복 예약 방지 — 소강 시점 수렴 보장.
+- [x] T77.9 검증(최종): minimap_reuse **65 PASS**(Section E 서명 의미론 + F1~F9: 유예 build 전량방출·applyOnce 예약 경로·stale 재시딩(F8=적발② 재현)·경합 수렴(F9=적발③ 재현)) + 그래프 headless 11 스위트 **279 PASS / 0 FAIL**.
+- [x] T77.10 **PRE-LANDING win-browser 실 Windows Chrome 라이브(PB-0008)**: 변경 static 을 web-a/b 에 docker cp(스탬프 정합 치환) + 디버그 핸들(주입 사본 한정) — qa-idc 1,249 노드(스키마 2개 펼침) 시딩 수렴(fullSigCurrent=true) → **극단 줌인 2.0(컬링 rebuild 방출 1,573→153)에 미니맵 toDataURL 해시 완전 불변** → 팬+rebuild 불변 → 스코프 전환(gz-dev) 재렌더(동결 없음) → 전 과정 pageerror 0. 스크린샷 2매(baseline/zoomed) 육안 — 미니맵 전역 구성 동일. test-runs.d fragment.
+- [ ] T77.5 POST-DEPLOY win-browser 실 Windows Chrome 육안(PB-0008, 배포 빌드 재확인): 대형 scope 로드 → 극단 줌인(컬링 발동) → ① 미니맵 **전역 구성 유지** ② 마스크 정위치·팬/줌 추종 ③ 줌아웃 복귀 정상 ④ 스코프 전환 재렌더(동결 없음) ⑤ pageerror 0. TEST fragment append.

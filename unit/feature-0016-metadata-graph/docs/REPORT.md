@@ -1,5 +1,24 @@
 # Report
 
+## 2026-07-13 · 그래프 뷰 미니맵 — 줌인 컬링이 전역 개요를 바꾸던 결함 수정 (graph-minimap-fullview, §77)
+
+### 요청 (사용자)
+줌 인 시 그래프 뷰 내부의 뷰포트 컬링(방출 제한)은 확인되나, **미니맵에도 그 컬링이 적용돼 전역적으로 보여야 할 미니맵 구성이 바뀐다** — §74 에서 "전체 이미지 캐싱·재사용"을 요청했지만 현재는 컬링된 그래프 이미지가 사용됨.
+
+### 진단 (기전 2개)
+- ① §74 재사용 게이트의 기하 서명(`_miniGeomSig`)이 **컬링된 방출 데이터(_built)** 기준 — 줌인 rebuild 마다 컬링 구성이 달라져 서명이 변하고, 게이트가 열려 G6 v5 minimap 이 **컬링된 부분집합을 재복제**.
+- ② plugin `onTransform`(AFTER_TRANSFORM 32ms)의 `setCamera()` 가 미니맵 카메라를 메인 캔버스 `getBounds("elements")` — 컬링 중엔 부분집합 bounds — 에 재적합. 이미지를 지켜도 **카메라가 부분 영역으로 줌인**(vendor 역공학 실측).
+
+### 처리 결과 (frontend-only, graph-core.js)
+- build 가 뷰포트 사유로 방출을 실제 누락했는지 추적하는 `_metaGraph._cullPartial` 신설(4 컬 지점 마킹 + 리셋 2곳). `_cullActive`(판정 활성)와 직교.
+- **전체-기하 서명** `_miniFullSig`(§76 nodePosAll — 컬링 무관 전 노드 — 기반, build 마다 산정)로 미니맵 보유 이미지의 '현재성' 판정 — boolean 마킹은 접힘 카드 시점 이미지를 펼침 후에도 현재로 오인(라이브 적발 ②).
+- `renderMinimap` 게이트: 부분방출 + 전체 이미지 보유 시 재복제 skip(stale 여도 부분 재복제 금지 — 교체는 시딩이 담당). 무컬링 렌더에서만 서명 마킹. 미보유 시 원본 폴백(빈 미니맵·동결 방지).
+- `setCamera` 동일 게이트 래핑: 컬링 중 부분 bounds 재적합 차단(두 번째 기전) — 전체 bounds 카메라 유지, 마스크는 요소 bounds 비의존이라 전체 이미지 위 현 뷰포트 위치를 계속 정확 표시.
+- **컬링-유예 시딩 build**(`_metaMinimapSeedKick`): fit 이 판독 하한(0.55)으로 클램프되는 대형 모델은 무컬링 build 가 자연 미발생(라이브 적발 ① — 1,249 노드 fit 방출 153)이라 전체 이미지를 1회 전량-방출 build 로 시딩(비용 = pre-§65 빌드 1프레임)·stale 시 재시딩. 시딩-마킹 debounce 경합(라이브 적발 ③ — latch 고착)은 래퍼 stale-skip 분기의 force 재-kick 으로 상호작용 소강 시점 수렴.
+- 트레이드오프: 줌인(컬링) 중의 구조 변경은 미니맵에 즉시가 아니라 **~0.5s 내 시딩 build** 로 반영(전량 방출 1프레임 비용) — 전역 개요 정합(사용자 요구) 우선.
+
+### 검증
+`test_g6build_minimap_reuse.js` **65 PASS**(Section E 서명 의미론 + F1~F9 시딩·stale 재시딩·경합 수렴 — 라이브 적발 3건 headless 재현·잠금) + 그래프 headless 11 스위트 **279 PASS / 0 FAIL** + `node --check` PASS. graph-split(ITEM-09) 후 headless 번들 실행 레시피 확립. **PRE-LANDING PB-0008 win-browser 라이브 PASS**: qa-idc 1,249 노드 시딩 수렴 → **줌 2.0 컬링 rebuild(방출 1,573→153)에 미니맵 toDataURL 해시 완전 불변** → 팬 불변 → 스코프 전환 재렌더(동결 없음) → pageerror 0 (test-runs.d fragment·스크린샷 2매). POST-DEPLOY 재확인 T77.5 잔여.
 ## 2026-07-13 · 카테고리 밴드 '컨텐츠 단위' 그룹핑 실동작화 (content-cluster, TASK 20260713T1059 / ADR-20260713T105932)
 
 ### 요청 (사용자)
