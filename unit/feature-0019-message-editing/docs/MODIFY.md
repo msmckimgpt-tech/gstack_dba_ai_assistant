@@ -41,3 +41,9 @@ source_of_truth: true
 - **DEC-3 (형제 버전 그룹핑 = 공유 parent_message_id)**: 편집된 user 메시지들은 같은 parent 를
   공유하므로 별도 edit_root 태깅 없이도 페이징 그룹 식별 가능. edit_root/edit_version 은
   정렬·명시 표식용(첨부 house-pattern 대칭).
+
+## CHG-20260713-0001 (Phase 1 checkpoint 1 — 백엔드 기반)
+- 변경: 위 feature-0002 목록(마이그 0041·schema.sql·runtime_backend·agent_core·test_message_branching).
+- 성격: additive·dormant scaffold(has_branches DEFAULT false → 신규 경로 비활성, 라이브 무영향).
+- 검증: 단위 11 PASS + 기존 runtime/dual-write/convo-search 회귀 0(54 PASS). 상세 TEST.md Run 2026-07-13.
+- 결정: DEC-1(PG-first)·DEC-2(브랜치=대화 내부 트리, fork 아님)·DEC-3(형제=공유 parent).
