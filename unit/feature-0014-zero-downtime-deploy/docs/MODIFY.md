@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260713T073141-deploy-verify-checklist
+- Date: 2026-07-13
+- Related Requirement: REQ-20260713T073141-deploy-verify-checklist (AC-DVC-1~3)
+- 변경:
+  - `bin/deploy-web.sh`: `post_deploy_checklist()` 신규(output-only, dry-run skip) + "배포 완료" step 직후 호출. 5항목(배포완료·워커 재빌드·캐시 무효화·실 사용자 표면 검증·완료 보고 시점)을 stderr 로 요약 출력. **배포 판정/제어 흐름 무변경**(`bash -n` PASS).
+  - `unit/feature-0014-zero-downtime-deploy/docs/RUNBOOK.md`: §10 배포 검증 체크리스트(판정 기준 표 + 워커 코드 판정 가이드) 추가. §9(worker divergence)와 연동.
+  - `docs/LEARNINGS.md`: LRN-20260713-0001 회고(merge≠배포완료·워커 미반영·백엔드만 검증 3중 마찰) 추가.
+  - feature-0014 FUNCTION(REQ/AC)·TASK(체크박스)·REPORT·REVIEW 갱신.
+- 근거: 2026-07-13 feature-0003 attach-user-version 사용자 테스트가 배포 ~1시간 전(구코드)에 수행돼 실패로 관측됨. 추가로 그 기능의 assistant 인지 로직은 ask-worker 거주라 web 배포만으론 미반영(별도 재빌드 필요), 완료 검증(PB-0008)이 백엔드 fetch 만 타 client-only 경로를 놓침. 세 마찰을 배포 프로세스 체크리스트로 상시화.
+- Minor §12.3 (문서 + output-only 스크립트). 스키마/RBAC/배포 로직 무변경. REV-20260713T073141-deploy-verify-checklist.
+
 ## CHG-20260630T120000-zero-downtime-deploy
 - Date: 2026-06-30
 - Related Requirement: REQ-20260630T120000-zero-downtime-web, REQ-...120001-safe-unattended-deploy,

@@ -43,6 +43,7 @@ source_of_truth: true
 - [ ] TASK-20260630T120104-two-replica: web→web-a/web-b + Caddy LB (P1)
 - [ ] TASK-20260630T120105-sse-asset: SSE pre-drain + 자산 content-hash (P2)
 - [ ] TASK-20260630T120106-wire-tests-docs: cycle-finalize wire + 수용 테스트 + 정적 검증 + 문서 (P3)
+- [x] TASK-20260713T073141-deploy-verify-checklist: 배포 후 사용자 인수 전 검증 체크리스트 상시화 (RUNBOOK §10 + deploy-web.sh `post_deploy_checklist` output-only + LEARNINGS). Minor §12.3, `bash -n` PASS. feature-0003 attach-user-version 회고 반영.
 
 ## 4. In Progress
 - P0a~P3 순차 구현 중.

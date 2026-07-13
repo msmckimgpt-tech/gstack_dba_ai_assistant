@@ -21,6 +21,12 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: mistake
 
+### LRN-20260713-0001 — 웹/UI 기능 완료 보고가 "코드 병합"·"백엔드 통과"에 머물면, 배포 전 사용자 테스트·워커 미반영·client-only 결함을 놓친다
+- Source: feature-0003 attach-user-version (사용자 재업로드 첨부 버전 관리) 배포 후 사용자 버그 리포트 조사 (2026-07-13)
+- Mistake: 세 겹의 마찰이 겹쳤다. (1) **merge ≠ 배포 완료** — 사용자가 기능을 테스트했으나 그 시각(13:52 KST)이 배포(~15:00 KST)보다 ~1시간 앞서 구코드가 서빙 중이었다(DB CreatedAt 타임스탬프로 확정). (2) **워커 미반영** — 그 기능의 "assistant 변경점 인지" 로직은 `agent_core._build_attachment_context_section`(ask-worker 거주)인데, `deploy-web.sh` 는 web(web-a/web-b)만 재배포하므로 web 배포만으론 반영되지 않는다(deploy-web 의 `worker GIT_COMMIT != web` WARN 을 보고서야 ask-worker 를 별도 재빌드). (3) **백엔드만 검증** — 완료 검증(PB-0008)을 `fetch(FormData)` 백엔드 직접 호출로만 수행해, 사용자가 실제 쓰는 `_uploadComposerAttachment`(ES-module scope, 클라이언트 해시 dedup) 경로를 타지 않아 client-only 결함을 놓칠 뻔했다.
+- Correct approach: 배포 검증 체크리스트를 프로세스로 상시화 — ① 배포 완료(양 replica 대상 SHA + soak) 전에는 "사용자 테스트 가능"으로 알리지 않는다 ② 변경이 워커 코드(`agent_core`·워커가 쓰는 `modules`/`shared`)에 닿으면 그 배포에서 워커를 즉시 재빌드(`build <worker> && up -d --no-deps <worker>`) ③ 정적 자산 `?v=` 스탬프 변경 확인 + 사용자 하드 리프레시 안내 ④ 백엔드 API 뿐 아니라 실 사용자 경로(UI)를 라이브 배포본에서 PB-0008 검증 ⑤ 위 통과 후에만 완료 보고. 정본 = feature-0014 RUNBOOK.md §10, `deploy-web.sh post_deploy_checklist` 가 매 배포 자동 출력.
+- Verified: true (근본원인 DB 타임스탬프 확정 + 배포 후 라이브 재검증 490→491 체인·finder 정상; 체크리스트 상시화 구현).
+
 ### LRN-20260703-0001 — metric 이 기록되는 코드 경로를 "중앙 helper 가 있는 모듈"에서만 grep 하면 실제 라이브 경로를 놓친다
 - Source: TASK-20260703-aiops-ttft-latency (AI 운영 현황 지연 p95 재정의)
 - Mistake: "어느 경로가 `latency_ms` 를 기록하나" 를 `llm.py` 안에서만 grep 해 `_openai_chat_completion_with_deadline` 를 유일 계측점으로 단정했다. 그러나 이 중앙 래퍼의 유일 호출자 `llm_plan` 은 **호출자가 0인 죽은 코드**였고, 실제 메인 에이전트 추론(`task='agent'`)은 `agent_core._call_llm` 이 래퍼를 우회해 직접 기록한다(TASK-0163 RC1 이 이미 문서화). 잘못된 함수(죽은 코드)를 계측·스트리밍 전환하고 KPI 를 그 컬럼으로 돌려, 배포됐다면 패널이 영구 공백 + 작동하던 지표 폐기(순 회귀)될 뻔했다. 적대 리뷰 패널(2렌즈 독립)이 커밋 전 BLOCKING 으로 적발.

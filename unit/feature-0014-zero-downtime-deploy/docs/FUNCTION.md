@@ -25,6 +25,17 @@ web 서비스를 **무중단(zero-downtime)** 으로 재배포하는 구조를 �
   고병렬(동시 머지) 상황에도 안전하게(직렬화·롤백·검증) 무인 배포가 가능하다.
 - REQ-20260630T120002-migration-safety: 두 web 버전이 공유 DB 에 잠시 공존하는 롤아웃
   창에서 스키마 비호환(expand/contract 위반)을 게이트로 차단한다.
+- REQ-20260713T073141-deploy-verify-checklist (**Minor §12.3** — 문서 + output-only 스크립트,
+  배포 로직 무변경): 배포 후 사용자 인수 전 검증을 5항목 체크리스트로 상시화한다 —
+  ① 배포 완료(merge≠배포완료) ② 워커 재빌드 판정(deploy-web 은 web 만 재배포) ③ 정적 자산
+  캐시 무효화(하드 리프레시) ④ 실 사용자 표면(UI 경로) PB-0008 검증 ⑤ 통과 후에만 완료 보고.
+  `bin/deploy-web.sh` 가 "배포 완료" 직후 `post_deploy_checklist` 로 요약 출력하고(output-only),
+  정본은 RUNBOOK.md §10. 근거: 2026-07-13 feature-0003 attach-user-version 회고(배포 전 테스트·
+  워커 미반영·백엔드만 검증 3중 마찰). AC-DVC-1 ~ AC-DVC-3.
+  - AC-DVC-1: `bin/deploy-web.sh` 에 `post_deploy_checklist()` 가 존재하고 성공 배포 완료 직후
+    호출된다(dry-run 은 skip). 5항목을 stderr 로 출력하며 **배포 판정/제어 흐름에 영향 없다**(output-only, `bash -n` PASS).
+  - AC-DVC-2: RUNBOOK.md §10 에 5항목 체크리스트(판정 기준 표) + 워커 코드 판정 가이드(#2 보조)가 문서화된다.
+  - AC-DVC-3: LEARNINGS.md 에 회고(LRN)가 기록되어 후속 세션이 동일 마찰을 반복하지 않는다.
 
 ## 3. In Scope
 - Caddy 2-upstream 로드밸런싱 + active health + dial-retry 토폴로지 (Caddyfile).
