@@ -176,6 +176,15 @@ export const PixiAdapterPure = {
   comboSig(c, bb) { return "C|" + JSON.stringify(c.style || {}) + "|" + bb.x.toFixed(1) + "," + bb.y.toFixed(1) + "," + bb.w.toFixed(1) + "," + bb.h.toFixed(1); },
   edgeId(e) { return e.id != null ? e.id : ("__e:" + e.source + ">" + e.target); },
 
+  // §80 BitmapText tint: "#rgb"/"#rrggbb"/number → {tint, valid}. 비-hex(rgb()/named)면 valid=false(Text 폴백 유도).
+  hexToTint(hex) {
+    if (typeof hex === "number") return { tint: hex, valid: true };
+    const s = String(hex).trim();
+    if (!/^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(s)) return { tint: 0xffffff, valid: false };
+    const h = s.replace("#", ""); const full = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+    return { tint: parseInt(full, 16), valid: true };
+  },
+
   // 두 built scene diff (오브젝트 풀 재사용 판정). id 기준 add/remove/keep.
   diffScene(prevIds, built) {
     const next = new Set(), add = [], keep = [];
@@ -552,10 +561,29 @@ export class PixiGraphAdapter {
     return c;
   }
 
+  // 라벨 팩토리(§80): BitmapText(dynamic font, white-base + tint 로 glyph atlas 색-무관 공유 → 렌더 draw call 17×↓,
+  //   render-on-demand 팬 매 프레임 재렌더에 직결) 기본, 실패/미지원 시 PIXI.Text 폴백(품질 동일). fill 은 tint(hex→number).
+  _makeText(text, o) {
+    const P = this.P, size = o.size || 12, fill = o.fill || "#ffffff", weight = String(o.weight || 400);
+    const engine = this.cfg.labelEngine || "bitmap";
+    const col = PixiAdapterPure.hexToTint(fill);
+    // bitmap 은 white-base glyph + tint 로 색을 낸다 → tint 로 표현 불가한 색(비-hex rgb()/named)은 Text 로 강등(m1).
+    if (engine === "bitmap" && P.BitmapText && col.valid) {
+      try {
+        const b = new P.BitmapText({ text: String(text), style: { fontFamily: "system-ui, 'Segoe UI', sans-serif", fontSize: size, fill: "#ffffff", fontWeight: weight } });
+        b.tint = col.tint;
+        // M2: dynamic-font glyph 래스터화는 지연(첫 width/render)이라 생성 try 밖에서 throw 시 폴백 무력 →
+        //   여기서 강제 measure 로 실패를 생성 시점으로 당긴다(성공하면 이후 경로 안전, 실패면 catch→Text).
+        void b.width;
+        return b;
+      } catch (_) { /* dynamic font 래스터화 실패 → Text 폴백(아래) */ }
+    }
+    return new P.Text({ text: String(text), style: { fontFamily: "system-ui, 'Segoe UI', sans-serif", fontSize: size, fill: fill, fontWeight: weight }, resolution: this._labelRes });
+  }
+
   _label(text, s) {
-    const P = this.P, place = s.labelPlacement || "center";
-    const t = new P.Text({ text: String(text), style: { fontFamily: "system-ui, 'Segoe UI', sans-serif",
-      fontSize: s.labelFontSize || 12, fill: s.labelFill || "#ffffff", fontWeight: String(s.labelFontWeight || 400) }, resolution: this._labelRes });
+    const place = s.labelPlacement || "center";
+    const t = this._makeText(text, { size: s.labelFontSize || 12, fill: s.labelFill || "#ffffff", weight: s.labelFontWeight || 400 });
     if (s.labelMaxWidth && t.width > s.labelMaxWidth) this._ellipsize(t, s.labelMaxWidth);
     if (place === "right") { t.anchor.set(0, 0.5); t.position.set((typeof s.size === "number" ? s.size / 2 : 6) + (s.labelOffsetX || 4), 0); }
     else if (place === "top") { t.anchor.set(0, 1); t.position.set((Array.isArray(s.size) ? -s.size[0] / 2 : 0) + 4, (Array.isArray(s.size) ? -s.size[1] / 2 : 0) - 4); }
@@ -608,7 +636,7 @@ export class PixiGraphAdapter {
       g.stroke({ color: s.stroke || "#aab3c5", width: s.lineWidth || 1 }); }
     else g.roundRect(0, 0, bb.w, bb.h, s.radius || 12).stroke({ color: s.stroke || "#aab3c5", width: s.lineWidth || 1 });
     cont.addChild(g);
-    if (s.labelText) { const t = new P.Text({ text: String(s.labelText), style: { fontFamily: "system-ui, sans-serif", fontSize: s.labelFontSize || 13, fill: s.labelFill || "#3f4b8c", fontWeight: "700" }, resolution: this._labelRes }); t.anchor.set(0, 1); t.position.set(4, -4); cont.addChild(t); }
+    if (s.labelText) { const t = this._makeText(s.labelText, { size: s.labelFontSize || 13, fill: s.labelFill || "#3f4b8c", weight: 700 }); t.anchor.set(0, 1); t.position.set(4, -4); cont.addChild(t); }
     this._objs.set(c.id, cont);
     return cont;
   }
@@ -626,7 +654,7 @@ export class PixiGraphAdapter {
     if (s.labelText) { const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
       if (s.labelBackground) { const bg = new P.Graphics(); const tw = String(s.labelText).length * (s.labelFontSize || 9) * 0.6;
         bg.roundRect(mx - tw / 2 - 3, my - 7, tw + 6, 14, 3).fill({ color: s.labelBackgroundFill || "#f6f8fb", alpha: 0.85 }); g.addChild(bg); }
-      const t = new P.Text({ text: String(s.labelText), style: { fontSize: s.labelFontSize || 9, fill: s.labelFill || "#64748b" }, resolution: this._labelRes }); t.anchor.set(0.5, 0.5); t.position.set(mx, my); g.addChild(t); }
+      const t = this._makeText(s.labelText, { size: s.labelFontSize || 9, fill: s.labelFill || "#64748b", weight: 400 }); t.anchor.set(0.5, 0.5); t.position.set(mx, my); g.addChild(t); }
     return g;
   }
   _arrow(g, x, y, ang, color, alpha) {

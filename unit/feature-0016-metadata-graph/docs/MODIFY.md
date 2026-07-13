@@ -166,3 +166,8 @@ source_of_truth: true
 
 ## CHG-20260713T070819-postdeploy — §79 POST-DEPLOY 라이브 검증 기록 (docs-only)
 - 대상: docs(TASK T79.6·REPORT)+test-runs.d. 코드 0. PR #755 배포(8edfa3a8) + 라이브 미니맵 클램프/드래그·409 렌더·pageerror 0. §18.8 SKIPPED.
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-bitmaptext — §80 라벨 Text→BitmapText 렌더 최적화 + 적대리뷰 수정
+- 대상: `graph/graph-renderer-pixi.js`(_makeText 라벨 팩토리·hexToTint·M2 폴백·노드/combo/edge 라벨 통일)·`tests/headless/test_pixi_adapter.js`(T20 hexToTint).
+- 변경: 라벨 BitmapText(dynamic font white-base+tint) 기본/Text 폴백. 실 그래프 씬 렌더 Text 157ms→BitmapText 0.03ms(draw call 공유 atlas). §18.8 MAJOR2(폴백 무력·CJK atlas)+MINOR3 수정. 회귀 0(순수 56+그래프 279).
+- 근거: 사용자 요청(§79 DEFER 항목 진행). POC 측정 후 채택. REV-…-bitmaptext [SUBAGENT:PASS-WITH-FIXES]. M1 atlas 는 bounded 트레이드오프(실데이터 영문 위주)+labelEngine seam.
