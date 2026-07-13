@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260713T061500-attach-user-version-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260713T053423-attach-user-version, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 TEST.md §4(Windows-browser Run: 배포 후 잔여 → POST-DEPLOY 라이브 PASS)·TASK.md 체크리스트 완료·MODIFY.md postverify CHG 뿐 — 코드/자산/스키마/RBAC 0. 기능 코드 적대 검증은 직전 REV-20260713T053423-attach-user-version(SUBAGENT:security SHIP)이 정본. 본 엔트리는 배포 후 라이브 실측 결과 기록만.
+- 라이브 실측 요지(배포 7f1ed748, https://localhost/ bootstrap_admin, win-browser Chrome/150): AC-AUV-1 v2 체인 편입(root 490)·AC-AUV-2 동일 멱등(491 reused)·AC-AUV-3/5 체인 정합(v1 superseded/v2 최신·목록 최신만)·**AC-AUV-4 assistant 가 v1→v2 diff 정확 인지**(SELECT 1→2·주석 추가; new_attachment_ids 미포함 턴엔 정직 "비교 불가"·환각 0)·AC-AUV-6 UI v2 배지+diff 색상 렌더. Evidence artifacts/shared/win-browser-shots-attach-user-version/01_version_badge_and_assistant_diff.png.
+
 ## REV-20260713T053423-attach-user-version [SUBAGENT:security 1lens] — 사용자 재업로드 첨부 버전 관리 (TASK-20260713T053423-attach-user-version, Major §12.3, cross-cut feature-0002)
 - §18.8 dispatch(첨부 업로드 경로 + LLM 컨텍스트 + IDOR/인젝션 → security 렌즈) 적대적 리뷰 **VERDICT: SHIP (blocking/major 0)**. 7 렌즈(IDOR·체인무결성·인젝션·dedup누출·SELECT index·byte-동치·fail-soft) 전수 SAFE 판정 + MINOR 2 + NIT 1 → **전건 반영 후 재검 PASS**.
 - **설계 결정(사용자 승인 3건, AskUserQuestion 2026-07-13)**: ① 재업로드 인식 = 파일명 자동감지(대화 내 동일 파일명·동일 account 최신 head 와 sha256 대조) ② assistant 인지 = 버전 표식 + 변경점 diff 자동 주입 ③ 과거 버전 비교 = 체인 정합 + assistant 비교(신규 UI 최소). 동일 해시 = 기존 재사용(멱등, "완전히 같은 파일이 아니라면 버전업" 요청 정합).

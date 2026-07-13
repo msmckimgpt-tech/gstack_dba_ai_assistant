@@ -23,9 +23,9 @@ source_of_truth: true
   - [x] `agent_core._build_attachment_context_section` SELECT 버전 컬럼 append(index 보존)·🔄v{n} 표식·`## FILE UPDATES` datamark diff 주입.
   - [x] `static/app.js` 버전 toast(`_attachUploadDoneMessage`)·pill `sha256`/`version_number`·클라이언트 dedup 해시 대조(`_sha256HexOfFile`). node --check PASS.
   - [x] 테스트: `test_attachment_versioning.py` +6(U1~U5·diff/find/upload) · 신규 `test_attachment_user_version_context.py` +5(표식·FILE UPDATES·datamark·truncate·v1 무회귀). 첨부 관련 31 PASS · **전체 스위트 EXIT=0**(회귀 0, 기존 9-tuple 컨텍스트 테스트는 `len(row)>10` 가드로 보호).
-  - [ ] §18.8 적대 보안 렌즈 리뷰(IDOR·체인·injection) → REV-20260713T053423-attach-user-version.
-  - [ ] verify-completion --pre-commit PASS → commit → PR → merge → web 재배포(deploy_scope: included).
-  - [ ] **PB-0008 실 Windows 브라우저**: 재업로드 → "새 버전 v2" toast·버전 배지·(대화)assistant 변경점 인지 시각검증.
+  - [x] §18.8 적대 보안 렌즈 리뷰(IDOR·체인·injection) → **SHIP**(blocking/major 0, MINOR 2+NIT 1 전건 반영) REV-20260713T053423-attach-user-version.
+  - [x] verify-completion --pre-commit **PASS** → commit b5c1dcab → PR #751 merge(main 7f1ed748) → web 무중단 재배포(deploy-web, web-a/b + ask-worker 재빌드, 코드 baked 확인).
+  - [x] **PB-0008 실 Windows 브라우저 POST-DEPLOY 라이브 PASS**: 라이브 e2e(AC-AUV-1 재업로드 v2 편입·AC-AUV-2 동일 멱등 reused·AC-AUV-3/5 체인 정합·**AC-AUV-4 assistant 가 v1→v2 diff 정확 인지·AC-AUV-6 UI v2 배지+diff 색상 렌더**). Evidence artifacts/shared/win-browser-shots-attach-user-version/01_version_badge_and_assistant_diff.png. (TEST.md §4 2026-07-13 Run 참조.)
 
 ## TASK-20260709-ask-timeout-nonblocking — 응답 지연 시 화면 전체를 덮던 타임아웃 복구 모달 제거(조용한 자동 재연결로 대체) (Minor §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
 - 트리거(사용자): "작업 화면에서 서비스 assistant 에 요청 후 상대적으로 오래 걸리면 화면 전체를 가리는 답변-지연 경고창이 떠 불편 — 해당 화면을 삭제하거나 기존 작업을 방해하지 않는 UI로 구성." 후속 지시: "자동 재연결은 필수 동작이며 사용자는 그 작동을 알 필요 없음."
