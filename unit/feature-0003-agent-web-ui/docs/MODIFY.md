@@ -155,3 +155,18 @@ source_of_truth: true
 - Verification: `node --check release-notes-data.js` PASS · vm 구조검증(블록순서·스키마·누출0). 사용자향 평이화(내부용어 누출 0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포는 본 attended run 소유(PR→merge→make deploy-web). META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260713T102249-META-doc-sync-0713).
+
+
+## CHG-20260713T181800-graph-perm-split (그래프 뷰 권한을 '메타데이터 관리' 묶음에서 분리 — Critical §12.3 인증/인가, 사용자 승인 B안)
+- Date: 2026-07-13. 요청(/_template:entry): "그래프 뷰가 별도의 탭으로 분리됨에 따라, 권한 또한 '메타데이터 관리'로부터 별도로 분리." 결정: **B안(분리 + 기존 접근 보존, 비파괴)**.
+- 변경(behavior — RBAC):
+  - `src/web_context.py`: `_METADATA_MANUAL_IMPLIES` 에서 `metadata.graph.read` 제거(편집 4종만 함의) · 묶음 `kb.ingest.manual` 설명·`metadata.graph.read` 라벨("그래프 뷰 조회")/설명 갱신 · 신규 `_backfill_graph_perm_split_v1(conn)`(1회 접근보존 backfill, `_ensure_seed_roles` 말미 호출) + `_GRAPH_PERM_SPLIT_MIGRATION_KEY` 상수.
+  - `src/routers/_bootstrap_schema.py`: `WebSchemaMigrations(MigrationKey PK, AppliedAt)` DDL — 1회 웹 DB 마이그레이션 guard 저장소.
+  - `src/static/admin.js`: `ADMIN_TAB_PERMISSIONS.graph` = `["metadata.graph.read"]`(묶음 인정 제거) · `PERMISSION_DEPENDENCIES["metadata.graph.read"]` = `"console.access"`(묶음 하위→직속 승격).
+  - `src/static/admin.html`: 그래프 탭 게이트 주석 갱신.
+  - `tests/test_metadata_perm_split.py`, `tests/test_permission_dependency_map.py`: 분리 계약 반영(R3 편집4종·R3c 묶음 graph 미함의·R3d 독립부여·t5 graph.read=console.access·m3 포함).
+- 하위호환(비파괴·가역): backfill 이 분리 전환 1회에 (a) 묶음 보유 role→graph.read role권한, (b) 묶음 ALLOW override 계정→graph.read ALLOW override(graph.read DENY 는 존중). `WebSchemaMigrations` 마커로 재실행 차단. admin 은 기존 explicit catchup 으로 graph.read 유지.
+- Files: `src/web_context.py`, `src/routers/_bootstrap_schema.py`, `src/routers/admin_metadata.py`(docstring), `src/static/admin.js`, `src/static/admin.html`, `tests/test_metadata_perm_split.py`, `tests/test_permission_dependency_map.py`, `docs/{TASK,MODIFY,REPORT,REVIEW,TEST}.md`, `static/release-notes-data.js`.
+- Verification: 권한 단위테스트(perm-split/dependency-map/glossary-enum) + feature-0003 전체 스위트 PASS(회귀 0) · §18.8 보안 렌즈 적대 리뷰(권한상승·접근상실·멱등·enforcement·SQL, 라이브 MySQL 8.0.46 실증) — 3 findings(A MEDIUM 권한상승·B LOW 멱등·C NIT docstring) 적발·수정 후 VERDICT PASS.
+- Rollback: 커밋 revert. backfill 은 grant 추가만(파괴 없음) — revert 후에도 부여된 graph.read 는 잔존(관리 콘솔에서 명시 회수 가능). `WebSchemaMigrations` 마커 row 는 잔존(무해).
+- 잔여: verify-completion → commit(사용자 confirm) → 머지·push → web 재배포 → 배포 후 DB 마커·라이브 권한 그리드 + PB-0008 실렌더.

@@ -247,7 +247,10 @@ const PERMISSION_DEPENDENCIES = {
   "metadata.enum.manage": "kb.ingest.manual",
   "metadata.table.manage": "kb.ingest.manual",
   "metadata.column.manage": "kb.ingest.manual",
-  "metadata.graph.read": "kb.ingest.manual",
+  // graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰가 별도 최상위 탭으로 분리됨에 따라 그래프 뷰 조회
+  //   권한을 '메타데이터 관리' 묶음 하위에서 떼어내 console.access 직속(묶음과 형제)으로 승격한다. 역할 권한
+  //   편집 UI 에서 묶음에 종속 표시되지 않고 독립 항목으로 노출된다(표시 계층 — authz enforcement 는 백엔드).
+  "metadata.graph.read": "console.access",
   // TASK-0288: 제품 관리 — product.read 가 그룹 게이트(console.access 하위), manage/프롬프트는 read 선행.
   "product.read": "console.access",
   "product.manage": "product.read",
@@ -2031,9 +2034,12 @@ const ADMIN_TAB_PERMISSIONS = {
              // kb.enum.curate: ENUM 검토 큐(2차보기) 진입 — kb.glossary.curate/kb.sample.curate 와 동형으로,
              //   curate-only 사용자도 메타데이터 탭 → ENUM 검토 큐에 도달하도록 OR-array 에 포함.
              "kb.sample.curate", "kb.glossary.curate", "kb.enum.curate"],
-  // feature-0016 §45: 그래프 뷰 최상위 탭 — metadata.graph.read 게이트(kb.ingest.manual 묶음이 함의).
+  // feature-0016 §45: 그래프 뷰 최상위 탭 — metadata.graph.read 단독 게이트.
+  //   graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰 권한을 '메타데이터 관리' 묶음에서 분리함에 따라
+  //   kb.ingest.manual(묶음)은 더 이상 그래프 탭을 노출하지 않는다(백엔드 _METADATA_MANUAL_IMPLIES 에서도 제거).
+  //   기존 묶음 보유자는 _backfill_graph_perm_split_v1 1회 backfill 로 metadata.graph.read 를 명시 보유해 그대로 노출.
   //   **필수(fail-open 방지)** — canSeeTab() 은 매핑 없는 탭을 fail-open 하므로 누락 = 권한 없는 사용자에게 탭 노출.
-  graph: ["metadata.graph.read", "kb.ingest.manual"],
+  graph: ["metadata.graph.read"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 

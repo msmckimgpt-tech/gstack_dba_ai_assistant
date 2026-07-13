@@ -257,15 +257,21 @@ PERMISSION_DEFINITIONS = (
         # operator/sales/pending 미부여(least-privilege).
         "code": "kb.ingest.manual",
         "label": "메타데이터 관리 (전체 묶음)",
-        "description": "메타데이터 탭의 모든 세부 기능(용어사전·ENUM·테이블 설명·컬럼 설명 관리 + 그래프 뷰 조회)을 한 번에 부여하는 묶음 권한이다. 세부 기능만 선택적으로 부여하려면 아래 개별 metadata.* 권한을 사용한다(이 묶음을 보유하면 개별 권한을 모두 보유한 것과 동일하게 동작한다).",
+        "description": "메타데이터 탭의 모든 편집 기능(용어사전·ENUM·테이블 설명·컬럼 설명 관리)을 한 번에 부여하는 묶음 권한이다. 세부 기능만 선택적으로 부여하려면 아래 개별 metadata.*.manage 권한을 사용한다(이 묶음을 보유하면 4종 편집 권한을 모두 보유한 것과 동일하게 동작한다). 그래프 뷰 조회(metadata.graph.read)는 별도 최상위 탭으로 분리되어 이 묶음에 포함되지 않는다 — 그래프 뷰 접근은 metadata.graph.read 로 개별 부여한다(graph-perm-split, 사용자 결정 2026-07-13).",
         "group": "kb",
     },
     # graph-panel-perms(task4, Critical §12.3): 메타데이터 탭 세부 권한 — 기존 단일 `kb.ingest.manual`
     # 묶음을 기능별로 분리(B안, 사용자 결정 2026-07-01)해 용어사전/ENUM/테이블/컬럼 관리와 그래프 뷰 조회를
     # 개별 위임 가능하게 한다. 하위호환: `kb.ingest.manual` 보유자는 _apply_permission_overrides 의
-    # 함의(_METADATA_MANUAL_IMPLIES)로 아래 5개를 effective 로 자동 보유 → 기존 배포 무손실(비파괴·가역).
+    # 함의(_METADATA_MANUAL_IMPLIES)로 편집 4종을 effective 로 자동 보유 → 기존 배포 무손실(비파괴·가역).
     # 모두 console.access 하위(관리 콘솔 진입 필요). admin seed(=set(PERMISSION_CODES)) 자동 보유 + 기존
     # admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여. operator/sales/pending 미부여(least-privilege).
+    #
+    # graph-perm-split(Critical §12.3, 사용자 결정 2026-07-13): 그래프 뷰가 별도 최상위 탭(feature-0016 §45)으로
+    #   분리됨에 따라 metadata.graph.read 를 위 함의(_METADATA_MANUAL_IMPLIES)에서 제거해 "메타데이터 관리"
+    #   묶음과 권한도 분리한다. 편집 4종(glossary/enum/table/column)만 묶음이 함의하고, 그래프 뷰 조회는
+    #   독립 권한이 된다. 기존 배포에서 묶음 보유로 그래프에 접근하던 principal 은 _backfill_graph_perm_split_v1
+    #   1회 backfill(멱등 guard)로 metadata.graph.read 를 명시 부여받아 접근을 잃지 않는다(B안 = 접근 보존).
     {
         "code": "metadata.glossary.manage",
         "label": "용어사전 관리",
@@ -292,8 +298,8 @@ PERMISSION_DEFINITIONS = (
     },
     {
         "code": "metadata.graph.read",
-        "label": "메타데이터 그래프 뷰 조회",
-        "description": "메타데이터 지식그래프 뷰(테이블/컬럼/관계/용어 탐색·검색)를 조회하고, 그래프 뷰의 내장 AI 능동 분석을 실행할 수 있다. 읽기 중심 탐색 권한으로, 개별 메타데이터 항목 편집 권한과 분리된다.",
+        "label": "그래프 뷰 조회",
+        "description": "지식베이스 그래프 뷰 탭(테이블/컬럼/관계/용어 탐색·검색)을 조회하고, 그래프 뷰의 내장 AI 능동 분석을 실행할 수 있다. 그래프 뷰는 별도 최상위 탭으로, 이 권한은 '메타데이터 관리' 묶음(kb.ingest.manual) 및 개별 편집 권한과 독립적으로 부여된다(graph-perm-split 2026-07-13). 읽기 중심 탐색 권한.",
         "group": "kb",
     },
     {
@@ -600,15 +606,23 @@ PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
 PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
 
 # graph-panel-perms(task4): 레거시 묶음 권한 `kb.ingest.manual` 이 함의하는 세부 권한 집합.
-#   _apply_permission_overrides 가 effective map 에서 묶음 보유자에게 아래 5개를 자동 부여(개별 DENY 오버라이드는 존중).
+#   _apply_permission_overrides 가 effective map 에서 묶음 보유자에게 아래 편집 4종을 자동 부여(개별 DENY 오버라이드는 존중).
 #   기존 배포 무손실(비파괴·가역) — DB 마이그레이션 없이 하위호환. 묶음 보유 principal(역할/계정 오버라이드) 전부 커버.
+# graph-perm-split(Critical §12.3, 2026-07-13): metadata.graph.read 를 본 함의에서 제거 — 그래프 뷰가
+#   별도 최상위 탭으로 분리됨에 따라 "메타데이터 관리" 묶음이 더 이상 그래프 뷰 접근을 자동 함의하지 않는다.
+#   분리 시점의 기존 묶음 보유 principal 의 그래프 접근은 _backfill_graph_perm_split_v1(1회 멱등 backfill)로 보존.
 _METADATA_MANUAL_IMPLIES = (
     "metadata.glossary.manage",
     "metadata.enum.manage",
     "metadata.table.manage",
     "metadata.column.manage",
-    "metadata.graph.read",
 )
+
+# graph-perm-split(Critical §12.3, 사용자 결정 2026-07-13): 그래프 뷰 권한을 메타데이터 관리 묶음 함의에서
+#   분리하면서, **분리 시점의 기존 묶음 보유 principal 의 그래프 접근을 1회 backfill 로 보존**하기 위한 마커 키.
+#   WebSchemaMigrations 에 이 키가 있으면 backfill 완료 → 재실행 안 함(멱등 guard). 매 startup 무조건 재실행 시
+#   분리 이후 새로 묶음을 받은 역할까지 graph.read 를 자동 획득해 분리가 무력화되므로 반드시 1회만 수행한다.
+_GRAPH_PERM_SPLIT_MIGRATION_KEY = "graph-perm-split-v1"
 
 
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
@@ -1801,6 +1815,123 @@ VALUES (%s, %s)
     _cleanup_deprecated_role_permissions(conn)
     # TASK-0164: 위에서 링크가 제거된 완전-폐기 권한의 고아 WebPermissions catalog 행도 정리.
     _prune_orphaned_permission_catalog(conn)
+    # graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰 권한을 메타데이터 관리 묶음에서 분리하며,
+    #   분리 시점의 기존 묶음 보유 principal 의 그래프 접근을 1회 backfill 로 보존(B안 = 접근 보존, 비파괴).
+    _backfill_graph_perm_split_v1(conn)
+
+
+def _backfill_graph_perm_split_v1(conn) -> None:
+    """graph-perm-split(Critical §12.3, 사용자 결정 2026-07-13) — 1회성 접근 보존 backfill.
+
+    그래프 뷰 권한 `metadata.graph.read` 를 "메타데이터 관리" 묶음(`kb.ingest.manual`)의 함의
+    (`_METADATA_MANUAL_IMPLIES`)에서 제거하면, 그동안 묶음 보유만으로 그래프에 접근하던 기존 배포의
+    principal(역할/계정 오버라이드)이 접근을 잃는다. 이를 막기 위해 **분리 전환 시점에 한 번만** 다음을
+    수행해 그때의 effective 접근을 명시 grant 로 고정한다(B안 = 접근 보존).
+
+    - 대상 1 (역할): `kb.ingest.manual` 을 명시 보유한 role 에 `metadata.graph.read` role 권한 부여.
+    - 대상 2 (계정 오버라이드): `kb.ingest.manual` 에 ALLOW 오버라이드를 가졌고 `metadata.graph.read` 에는
+      아직 오버라이드가 없는 account 에 `metadata.graph.read` ALLOW 오버라이드 부여. (graph.read 에 명시
+      DENY 를 이미 둔 account 는 대상 아님 — least-privilege 존중, 기존 함의도 DENY 를 존중했음.)
+
+    **멱등 1회 guard**: WebSchemaMigrations 에 `_GRAPH_PERM_SPLIT_MIGRATION_KEY` 마커가 있으면 skip.
+    매 startup 무조건 실행하면 분리 이후 새로 묶음을 받은 역할까지 graph.read 를 자동 획득해 분리가
+    무력화되므로, 정확히 1회만 수행하고 마커를 남긴다. 전 과정은 best-effort — 마커 테이블 부재 등으로
+    실패하면(예: 일부 테스트 컨텍스트) 조용히 skip 하고, 마커 미기록 시 다음 startup 에 재시도한다
+    (INSERT IGNORE 라 재시도 무해).
+    """
+    try:
+        cur = conn.cursor()
+        # 마커 테이블 자족 보장 — 운영 재기동은 slow path(_ensure_web_tables)를 안 타고 fast path
+        # (_ensure_seed_catchup)만 타는데, WebSchemaMigrations DDL 은 slow path 에만 있다. 본 함수가
+        # _ensure_seed_roles 를 통해 fast/slow 양 경로에서 호출되므로, 마커 테이블을 직접 IF NOT EXISTS
+        # 로 보장해 경로 독립적으로 동작시킨다(미보장 시 fast path 에서 SELECT 예외→backfill 영구 skip→
+        # 기존 묶음 보유자 그래프 접근 상실이라는 접근보존 위반이 운영 배포에서 조용히 발생).
+        cur.execute(
+            """
+CREATE TABLE IF NOT EXISTS WebSchemaMigrations (
+    MigrationKey VARCHAR(191) NOT NULL PRIMARY KEY,
+    AppliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cur.execute(
+            "SELECT 1 FROM WebSchemaMigrations WHERE MigrationKey = %s LIMIT 1",
+            (_GRAPH_PERM_SPLIT_MIGRATION_KEY,),
+        )
+        already = cur.fetchone()
+        cur.close()
+    except Exception:
+        # 마커 테이블 생성/조회 실패(DB error 등) — 이번 startup 에서는 안전하게 skip (다음 startup 재시도).
+        return
+    if already:
+        return
+    permission_map = _permission_id_map(conn)
+    bundle_pid = int(permission_map.get("kb.ingest.manual") or 0)
+    graph_pid = int(permission_map.get("metadata.graph.read") or 0)
+    if bundle_pid > 0 and graph_pid > 0:
+        cur = conn.cursor()
+        # 대상 1 — 역할 backfill: 묶음 보유 role 에 graph.read 명시 부여.
+        cur.execute(
+            """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT rp.RoleId, %s
+FROM WebRolePermissions rp
+WHERE rp.PermissionId = %s
+            """,
+            (graph_pid, bundle_pid),
+        )
+        # 대상 2 — 계정 오버라이드 backfill: 묶음 ALLOW override 보유 + graph.read override 부재 account.
+        cur.execute(
+            """
+INSERT IGNORE INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+SELECT ao.AccountId, %s, 'allow'
+FROM WebAccountPermissionOverrides ao
+WHERE ao.PermissionId = %s
+  AND LOWER(ao.OverrideValue) = 'allow'
+  AND NOT EXISTS (
+    SELECT 1 FROM WebAccountPermissionOverrides ao2
+    WHERE ao2.AccountId = ao.AccountId AND ao2.PermissionId = %s
+  )
+            """,
+            (graph_pid, bundle_pid, graph_pid),
+        )
+        # 대상 3 — 과잉부여 방지(접근 상태 고정): role 이 묶음을 보유(→위 대상1 로 graph.read 명시 부여됨)하지만
+        #   계정이 묶음을 DENY override 로 끈 account 는, 분리 전에는 묶음이 꺼져 graph 도 함의되지 않아 접근이 없었다.
+        #   대상1 이 role 에 graph.read 를 준 뒤로는 이 account 가 graph.read override 없이 접근을 새로 얻게 되므로,
+        #   graph.read override 부재 시 graph.read DENY override 를 부여해 분리 전 effective(=그래프 없음)를 고정한다.
+        #   (기존 함의도 묶음 DENY 를 존중해 graph 를 안 줬음 — 동치 보존. graph.read override 가 이미 있으면 존중.)
+        cur.execute(
+            """
+INSERT IGNORE INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+SELECT ao.AccountId, %s, 'deny'
+FROM WebAccountPermissionOverrides ao
+JOIN WebAccounts acc ON acc.Id = ao.AccountId
+JOIN WebRolePermissions rp ON rp.RoleId = acc.RoleId AND rp.PermissionId = %s
+WHERE ao.PermissionId = %s
+  AND LOWER(ao.OverrideValue) = 'deny'
+  AND NOT EXISTS (
+    SELECT 1 FROM WebAccountPermissionOverrides ao2
+    WHERE ao2.AccountId = ao.AccountId AND ao2.PermissionId = %s
+  )
+            """,
+            (graph_pid, bundle_pid, bundle_pid, graph_pid),
+        )
+        cur.close()
+        # 마커 기록 — **backfill 본문이 실제 실행된 경우에만** 1회 완료 표시(재실행 방지). FINDING-B(보안리뷰):
+        #   bundle_pid/graph_pid 부재로 위 본문을 건너뛴 상태에서 마커를 남기면, 마커만 "done" 인 채 backfill 은
+        #   영구 미실행 → 전원 접근 상실 오기록이 된다. catalog hydrate 가 _ensure_seed_roles 앞이라 정상경로에선
+        #   pid 가 항상 존재하나, 방어적으로 마커 기록을 body 실행(if 블록)에 결합해 다음 startup 재시도를 보장한다.
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT IGNORE INTO WebSchemaMigrations (MigrationKey) VALUES (%s)",
+                (_GRAPH_PERM_SPLIT_MIGRATION_KEY,),
+            )
+            cur.close()
+        except Exception:
+            # 마커 기록 실패 — 다음 startup 재시도(INSERT IGNORE 라 backfill 재적용 무해).
+            pass
+
 
 def _cleanup_deprecated_role_permissions(conn) -> None:
     """폐기/정리된 권한을 기존 WebRolePermissions 에서 제거한다 (idempotent)."""
