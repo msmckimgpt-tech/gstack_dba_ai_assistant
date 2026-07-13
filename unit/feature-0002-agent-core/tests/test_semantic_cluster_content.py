@@ -105,10 +105,14 @@ def test_routine_signature_shape_and_analysis():
 def test_fetch_analysis_text_parses_str_and_dict():
     js = '{"summary": "요약.", "usage": "활용.", "caveats": ""}'
     cur = FakeCursor(rows={"FROM node_analysis_jobs": [(js,)]})
-    assert sc._fetch_analysis_text(cur, "common", "ds:a.t") == "요약. 활용."
+    assert sc._fetch_analysis_text(cur, "common", "ds", "ds:a.t") == "요약. 활용."
+    # §18.8 패널 n4(라이브 확증): jobs.scope_key 는 datasource — 양쪽 scope 를 ANY 로 조회해야 한다.
+    q, params = cur.executed[-1]
+    assert "scope_key = ANY(" in q and sorted(params[0]) == ["common", "ds"]
     cur2 = FakeCursor(rows={"FROM node_analysis_jobs": [({"summary": "S"},)]})
-    assert sc._fetch_analysis_text(cur2, "common", "ds:a.t") == "S"
-    assert sc._fetch_analysis_text(FakeCursor(), "common", "ds:a.t") == ""
+    assert sc._fetch_analysis_text(cur2, "common", "ds", "ds:a.t") == "S"
+    assert sc._fetch_analysis_text(FakeCursor(), "common", "ds", "ds:a.t") == ""
+    assert sc._fetch_analysis_text(FakeCursor(), "", "", "ds:a.t") == ""
 
 
 # ── RC5: 라벨 위생·캐시·fail-soft ────────────────────────────────────────────
@@ -219,10 +223,10 @@ def test_pass_per_schema_split_joint_ids(monkeypatch):
     assert rep["schemas"] == 2 and rep["clusters"] == 2 and rep["skipped_schemas"] == 0
     ups_t = {p[2]: (p[0], p[1]) for (q, p) in _updates(cur, "rag_objects")}
     ups_r = {p[2]: (p[0], p[1]) for (q, p) in _updates(cur, "routine_objects")}
-    # aaa: 테이블 t1·t2 + 루틴 sp_r1 이 **같은 cid**(합동 id 공간), bbb 는 다른 cid — pass-전역 유일.
-    assert ups_t[1][0] == ups_t[2][0] == ups_r[11][0]
-    assert ups_t[3][0] == ups_t[4][0] != ups_t[1][0]
-    assert {ups_t[1][0], ups_t[3][0]} == {0, 1}
+    # aaa: 테이블 t1·t2 + 루틴 sp_r1 이 **같은 cid**(합동 id 공간). id 는 스키마-로컬 순번(m5) —
+    # 프론트 그룹 키가 스키마 네임스페이스라 스키마 간 동일 값(0)이어도 무해.
+    assert ups_t[1][0] == ups_t[2][0] == ups_r[11][0] == 0
+    assert ups_t[3][0] == ups_t[4][0] == 0
 
 
 def test_pass_schema_n_guard_localized(monkeypatch):
@@ -361,3 +365,32 @@ def test_cluster_edges_mutual_knn_blocks_hub_chain():
         _cfgattr().AGENT_METADATA_CLUSTER_MAX_DEGREE = old
     assert (0, 3) not in edges and (3, 0) not in edges   # 단방향(비상호) 차단
     assert (0, 1) in edges and (0, 2) in edges           # 상호 근접은 유지
+
+
+# ── §18.8 패널 M1: 분석-신선 표적 백필(도달성) ────────────────────────────────
+def test_backfill_analysis_fresh_targeted_pick_and_touch(monkeypatch):
+    """백로그 0 이어도 최신 done 분석이 행보다 새 행은 표적 합류하고, 시그니처 불변이면 touch 로
+    조건을 해소한다(top-N 창 밖 영구 미갱신 — 패널 M1 회귀 잠금)."""
+    from modules.utils import _text_hash
+    # 시그니처 불변 케이스: 현재 해시가 (분석 "" 기준) 계산 해시와 동일하도록 구성.
+    sig_same = sc.build_table_signature_text("aaa", "t1", "", [], "", "", analysis="")
+    row_same = (21, "common", "ds1", "dbo", "t1", "ds1:aaa.dbo.t1", _text_hash(sig_same.strip()), "", "")
+    row_stale = (22, "common", "ds1", "dbo", "t2", "ds1:aaa.dbo.t2", "OLDHASH", "", "")
+    cur = FakeCursor(rows={
+        "FROM rag_objects WHERE object_type": [],                       # 주 백로그 0
+        "split_part(replace(o.object_key": [row_same, row_stale],      # M1 표적 선별
+        "COUNT(*) FROM rag_objects": (0,),
+        "FROM routine_objects WHERE routine_name <> '' ORDER BY": [],
+        "COUNT(*) FROM routine_objects": (0,),
+    })
+    monkeypatch.setattr(sc, "_rw_conn", lambda conn: (FakeConn(cur), False))
+    stored = []
+    monkeypatch.setattr(sc, "_text_store_insert", lambda _cur, text: stored.append(text) or "h")
+    rep = sc.run_signature_backfill_pass(max_rows=10)
+    assert rep["analysis_fresh"] == 2 and rep["processed"] == 2 and rep["changed"] == 1
+    touches = [(q, p) for (q, p) in cur.executed
+               if q.startswith("UPDATE rag_objects SET updated_at = now()")]
+    assert len(touches) == 1 and touches[0][1] == (21,)   # 불변 행은 touch 만(재선별 차단)
+    hash_ups = [(q, p) for (q, p) in cur.executed
+                if q.startswith("UPDATE rag_objects SET signature_text_hash")]
+    assert len(hash_ups) == 1 and "updated_at = now()" in hash_ups[0][0] and hash_ups[0][1][1] == 22

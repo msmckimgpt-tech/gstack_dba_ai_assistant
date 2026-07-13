@@ -9,8 +9,9 @@ ADR-013 의 프론트 affix 휴리스틱을 대체·보강하는 **서버측 의
 content-cluster 재작업(RC1~RC5 진단, unit TASK 20260713T1059):
   - **DB(effective schema) 단위 분할 클러스터링**: 종전 (scope, datasource) 전역 단위는 표시 단위
     (그래프 스키마 클러스터 내부 sim-group)와 불일치 + 대형 ds(7,055 테이블)가 FULLMATRIX_MAX_N 에
-    걸려 통째 skip 됐다(RC2). DB 별로 나누면 N 이 수백 수준이라 실동작하고 cluster id 는 pass-전역
-    순번으로 유일성을 유지한다.
+    걸려 통째 skip 됐다(RC2). DB 별로 나누면 N 이 수백 수준이라 실동작한다. cluster id 는
+    스키마-로컬 순번(§18.8 패널 m5 — 프론트 그룹 키가 스키마 네임스페이스라 전역 유일성 불필요,
+    전역 순번은 스키마 간 id-shift churn 유발).
   - **루틴(함수·프로시저) 합동 편입**(RC3): routine_objects 도 시그니처(이름+파라미터+반환형+참조
     테이블+능동 분석문) 임베딩 → 같은 DB 의 테이블과 **하나의 id 공간**에서 합동 클러스터링 —
     루틴이 자기가 만지는 테이블과 같은 컨텐츠 그룹으로 묶인다(alembic 0040).
@@ -30,8 +31,8 @@ content-cluster 재작업(RC1~RC5 진단, unit TASK 20260713T1059):
     테이블(dbo.T)의 시그니처·해시가 DB별로 구분(verify MAJOR — 다중 DB 오염 차단).
   - chaining 억제: 노드당 kNN 이웃 상한(MAX_DEGREE)로 단일연결 폭주 방지(verify MAJOR).
   - 멱등·결정론: signature_text_hash 는 시그니처의 sha256(변경 없으면 no-op). cluster_id 는 스키마
-    natural-sort → 멤버 min(key) 순 결정 배정. 재실행 시 임베딩 불변이면 동일 결과(LLM 라벨은 표시
-    전용 + 멤버셋-해시 kv 캐시라 멤버 불변이면 재호출 없이 동일).
+    사전순 → 멤버 min(key) 순 스키마-로컬 결정 배정. 재실행 시 임베딩 불변이면 동일 결과(LLM 라벨은
+    표시 전용 + 멤버셋-해시 kv 캐시라 멤버 불변이면 재호출 없이 동일).
 """
 from __future__ import annotations
 
@@ -161,18 +162,24 @@ def _fetch_table_desc(cur, scope_key, schema_name, table_name) -> str:
         return ""
 
 
-def _fetch_analysis_text(cur, scope_key, node_key) -> str:
+def _fetch_analysis_text(cur, scope_key, datasource_key, node_key) -> str:
     """node_analysis_jobs 최신 done 분석의 summary+usage — 시그니처의 컨텐츠 신호(RC4).
 
     node_key = 그래프 노드 키(`<ds>:<eff_schema>.<name>` / Routine 은 `...()`) —
     cc_data_main 실측 테이블 255/255·루틴 300/300 매칭(ix_node_analysis_jobs_node_lookup).
-    분석 부재/파싱 실패 → ""(시그니처 불변). fail-soft."""
+    **scope 차원(§18.8 패널 n4 — 라이브 확증)**: node_analysis_jobs.scope_key 는 웹 트리거가
+    datasource_key 를 넣는다(라이브 실측 — rag 의 'common' 과 다름; 'common' 필터는 매칭 0).
+    양쪽 값 모두 인정(ANY) — 인덱스 (scope_key,node_key,status) 2-probe. 동률 tie-break 는
+    id DESC(패널 n2 — updated_at 동률 시 비결정 픽 방지). 분석 부재/파싱 실패 → ""(시그니처 불변). fail-soft."""
+    scopes = sorted({s for s in (str(scope_key or ""), str(datasource_key or "")) if s})
+    if not scopes:
+        return ""
     try:
         cur.execute(
             "SELECT analysis FROM node_analysis_jobs "
-            "WHERE scope_key = %s AND node_key = %s AND status = 'done' AND analysis IS NOT NULL "
-            "ORDER BY updated_at DESC LIMIT 1",
-            (scope_key, node_key),
+            "WHERE scope_key = ANY(%s) AND node_key = %s AND status = 'done' AND analysis IS NOT NULL "
+            "ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (scopes, node_key),
         )
         r = cur.fetchone()
         if not r or not r[0]:
@@ -196,7 +203,9 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
     texts 적재분은 기존 embedding 데몬이 임베딩(신규 embedding 호출 없음). fail-soft, 부분 카운트 반환.
     max_rows 는 kind 별(테이블/루틴) 각각 적용 — 기존 배치 상한 의미 보존."""
     rep = {"processed": 0, "changed": 0, "failed": 0, "error": None, "remaining": 0,
-           "routine_processed": 0, "routine_changed": 0, "routine_failed": 0, "routine_remaining": 0}
+           "analysis_fresh": 0,
+           "routine_processed": 0, "routine_changed": 0, "routine_failed": 0, "routine_remaining": 0,
+           "routine_analysis_fresh": 0}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -219,6 +228,43 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
             tuple(args),
         )
         rows = cur.fetchall()
+        # §18.8 패널 M1(RC4 도달성): 분석이 새로 완료돼도 rag 행 updated_at 은 전진하지 않아,
+        # 백로그 0 정상 상태에서 top-N 창 밖의 분석-보유 행이 영구히 구 시그니처로 남는다.
+        # 최신 done 분석(j.updated_at)이 행(o.updated_at)보다 새 행을 표적 선별해 합류시키고,
+        # 처리 시 updated_at 을 명시 touch 해 조건을 해소한다(멱등 — 다음 pass 재선별 없음).
+        fresh_ids = set()
+        try:
+            cur.execute("SAVEPOINT sc_fresh_tbl")
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "SELECT id, scope_key, datasource_key, schema_name, table_name, object_key, "
+                "signature_text_hash, category_entity_type, category_domain "
+                "FROM rag_objects o WHERE o.object_type = 'table' AND o.table_name <> '' "
+                "AND o.datasource_key <> '' AND EXISTS (SELECT 1 FROM node_analysis_jobs j "
+                "WHERE j.scope_key = ANY(ARRAY[o.scope_key, o.datasource_key]) AND j.status = 'done' "
+                "AND j.node_key = o.datasource_key || ':' || "
+                "split_part(replace(o.object_key, o.datasource_key || ':', ''), '.', 1) "
+                "|| '.' || o.table_name AND j.updated_at > o.updated_at) LIMIT %s",
+                (int(max_rows) if (max_rows and int(max_rows) > 0) else 500,),
+            )
+            seen = {r[0] for r in rows}
+            fresh_rows = [r for r in cur.fetchall() if r[0] not in seen]
+            fresh_ids = {r[0] for r in fresh_rows}
+            rep["analysis_fresh"] = len(fresh_ids)
+            rows = list(rows) + fresh_rows
+            try:
+                cur.execute("RELEASE SAVEPOINT sc_fresh_tbl")
+            except Exception:
+                pass
+        except Exception:
+            # node_analysis 미구성 환경 — 표적 선별만 생략(주 백필 불변). SAVEPOINT 로 tx 오염 차단.
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sc_fresh_tbl")
+                cur.execute("RELEASE SAVEPOINT sc_fresh_tbl")
+            except Exception:
+                pass
         for (rid, scope, dsk, sch, tbl, okey, cur_hash, etype, domain) in rows:
             rep["processed"] += 1
             try:
@@ -226,15 +272,19 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
                 cols = _fetch_columns(cur, scope, sch, tbl)
                 desc = _fetch_table_desc(cur, scope, sch, tbl)
                 # content-cluster RC4: 그래프 노드 키(`<ds>:<eff>.<table>`)로 최신 done 분석문 소싱.
-                ana = _fetch_analysis_text(cur, scope, f"{dsk}:{eff}.{tbl}") if dsk else ""
+                ana = _fetch_analysis_text(cur, scope, dsk, f"{dsk}:{eff}.{tbl}") if dsk else ""
                 sig = build_table_signature_text(eff, tbl, desc, cols, etype, domain, analysis=ana)
                 # 리뷰 MAJOR-1: _text_store_insert 가 내부에서 sig.strip() 후 해시하므로 write-key 도 반드시
                 #   strip 후 해시해야 texts join-key 와 일치한다(컬럼 없는 테이블의 trailing space 로 divergence → 영구 미클러스터 방지).
                 h = _text_hash(sig.strip())
                 if h == (cur_hash or "").strip():
+                    if rid in fresh_ids:
+                        # M1: 분석은 새로우나 시그니처 불변(요약 동일) — touch 로 표적 조건 해소(재선별 차단).
+                        cur.execute("UPDATE rag_objects SET updated_at = now() WHERE id = %s", (rid,))
                     continue   # 변경 없음 — no-op
                 _text_store_insert(None, sig)   # texts upsert(dedup, 내부 strip → _text_hash(sig.strip())==h) → embedding 데몬이 임베딩
-                cur.execute("UPDATE rag_objects SET signature_text_hash = %s WHERE id = %s", (h, rid))
+                cur.execute("UPDATE rag_objects SET signature_text_hash = %s, updated_at = now() "
+                            "WHERE id = %s", (h, rid))
                 rep["changed"] += 1
             except Exception as exc:
                 rep["failed"] += 1
@@ -291,6 +341,24 @@ def _routine_signature_backfill(cur, rep, max_rows) -> None:
             tuple(args),
         )
         rows = cur.fetchall()
+        # §18.8 패널 M1(RC4 도달성) — 테이블 패스 동형: 최신 done 분석이 행보다 새 루틴을 표적 합류.
+        #   (외곽 sc_routine_backfill SAVEPOINT 가 아직 열려 있어 실패 시 아래 except 로 합류·격리.)
+        fresh_ids = set()
+        cur.execute(
+            "SELECT id, scope_key, datasource_key, schema_name, routine_name, routine_type, "
+            "params, returns, referenced_tables, signature_text_hash "
+            "FROM routine_objects r WHERE r.routine_name <> '' AND r.datasource_key <> '' "
+            "AND EXISTS (SELECT 1 FROM node_analysis_jobs j "
+            "WHERE j.scope_key = ANY(ARRAY[r.scope_key, r.datasource_key]) AND j.status = 'done' "
+            "AND j.node_key = r.datasource_key || ':' || r.schema_name || '.' || r.routine_name || '()' "
+            "AND j.updated_at > r.updated_at) LIMIT %s",
+            (int(max_rows) if (max_rows and int(max_rows) > 0) else 500,),
+        )
+        seen = {r[0] for r in rows}
+        fresh_rows = [r for r in cur.fetchall() if r[0] not in seen]
+        fresh_ids = {r[0] for r in fresh_rows}
+        rep["routine_analysis_fresh"] = len(fresh_ids)
+        rows = list(rows) + fresh_rows
         try:
             cur.execute("RELEASE SAVEPOINT sc_routine_backfill")
         except Exception:
@@ -298,6 +366,7 @@ def _routine_signature_backfill(cur, rep, max_rows) -> None:
     except Exception as exc:
         try:
             cur.execute("ROLLBACK TO SAVEPOINT sc_routine_backfill")
+            cur.execute("RELEASE SAVEPOINT sc_routine_backfill")   # 패널 n3: 실패 서브tx 잔존 방지
         except Exception:
             pass
         if not _ROUTINE_COLS_WARNED["done"]:
@@ -312,14 +381,17 @@ def _routine_signature_backfill(cur, rep, max_rows) -> None:
             touches = refs if isinstance(refs, list) else []
             # routine_objects.schema_name 은 그래프 스키마 라벨(MSSQL=DB명 lower, §56·§58)과 동일 —
             # effective schema 재유도 불요, node_key 도 같은 라벨로 조립.
-            ana = _fetch_analysis_text(cur, scope, f"{dsk}:{sch}.{name}()") if dsk else ""
+            ana = _fetch_analysis_text(cur, scope, dsk, f"{dsk}:{sch}.{name}()") if dsk else ""
             sig = build_routine_signature_text(sch or "", name, rtype, params, returns, touches,
                                                analysis=ana)
             h = _text_hash(sig.strip())
             if h == (cur_hash or "").strip():
+                if rid in fresh_ids:
+                    cur.execute("UPDATE routine_objects SET updated_at = now() WHERE id = %s", (rid,))
                 continue
             _text_store_insert(None, sig)
-            cur.execute("UPDATE routine_objects SET signature_text_hash = %s WHERE id = %s", (h, rid))
+            cur.execute("UPDATE routine_objects SET signature_text_hash = %s, updated_at = now() "
+                        "WHERE id = %s", (h, rid))
             rep["routine_changed"] += 1
         except Exception as exc:
             rep["routine_failed"] += 1
@@ -492,18 +564,26 @@ def _valid_label(lab) -> str:
     return s[:_LABEL_MAX_CHARS]
 
 
-def _llm_content_labels(cur, datasource_key, eff_schema, clusters) -> dict:
+def _label_ns_hash(datasource_key, eff_schema) -> str:
+    """kv 캐시 key 네임스페이스 고정폭 해시(패널 m3) — ds(≤64)+schema(≤256) 원문 조합은 kv.key
+    varchar(128)을 초과해 INSERT silent-fail → 캐시 부전 → 매 pass LLM 재호출 누수가 가능했다."""
+    return hashlib.sha256(f"{datasource_key}\x1f{eff_schema}".encode("utf-8")).hexdigest()[:12]
+
+
+def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summaries=None) -> dict:
     """클러스터별 한국어 컨텐츠 라벨 — kv 캐시(멤버셋 해시) 우선, 미스만 llm.llm_cluster_label 배치 호출.
 
-    clusters: [{"idx": <로컬 idx>, "keys": [...], "names": [...], "summaries": [...]}]
-    반환 {idx: label}. 게이트 OFF/LLM 실패/부적합 라벨 → 해당 idx 미포함(caller 가 affix 폴백).
-    비용 유계: DB 당 캐시-미스 클러스터만, 호출당 40 클러스터 배치. fail-soft."""
+    clusters: [{"idx": <로컬 idx>, "keys": [...], "names": [...]}] — 분석 요약은 **캐시-미스
+    클러스터에 한해** fetch_summaries(cl) 콜백으로 lazy 수집(패널 m2 — 게이트 OFF/전량 캐시 적중 시
+    per-member 점조회 0). 반환 {idx: label}. 게이트 OFF/LLM 실패/부적합 라벨 → 해당 idx 미포함
+    (caller 가 affix 폴백). 비용 유계: DB 당 캐시-미스 클러스터만, 호출당 40 클러스터 배치. fail-soft."""
     out = {}
     if not getattr(_cfg, "AGENT_METADATA_CLUSTER_LABEL_LLM", True):
         return out
+    ns = _label_ns_hash(datasource_key, eff_schema)
     misses = []
     for cl in clusters:
-        kv_key = f"label:{datasource_key}:{eff_schema}:{_member_set_hash(cl['keys'])}"
+        kv_key = f"label:{ns}:{_member_set_hash(cl['keys'])}"
         cached = _valid_label(_kv_get(cur, kv_key))
         if cached:
             out[cl["idx"]] = cached
@@ -517,6 +597,12 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters) -> dict:
         return out
     for start in range(0, len(misses), _LABEL_CLUSTERS_PER_CALL):
         batch = misses[start:start + _LABEL_CLUSTERS_PER_CALL]
+        for (cl, _k) in batch:
+            if "summaries" not in cl:
+                try:
+                    cl["summaries"] = list(fetch_summaries(cl)) if fetch_summaries else []
+                except Exception:
+                    cl["summaries"] = []
         payload = {
             "task": "cluster_label",
             "datasource": datasource_key,
@@ -524,7 +610,7 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters) -> dict:
             "clusters": [
                 {"idx": cl["idx"],
                  "members": [str(n)[:80] for n in cl["names"][:_LABEL_MEMBERS_CAP]],
-                 "analyses": [str(s)[:160] for s in cl["summaries"][:_LABEL_ANALYSES_CAP]]}
+                 "analyses": [str(s)[:160] for s in (cl.get("summaries") or [])[:_LABEL_ANALYSES_CAP]]}
                 for (cl, _k) in batch
             ],
         }
@@ -556,14 +642,25 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters) -> dict:
 
 
 def _parse_embedding(emb):
-    """pgvector embedding — str '[...]' 또는 list. 파싱 실패/빈 값 → None(해당 행 제외)."""
+    """pgvector embedding — str '[...]' 또는 list. 파싱 실패/빈 값 → None(해당 행 제외).
+
+    패널 m4(메모리): 가능하면 float32 ndarray 로 즉시 변환 — 대형 ds(7k×1024d)에서 Python float
+    리스트(~230MB transient)를 ~29MB 로 줄인다(insight-worker mem_limit 1g headroom). numpy 부재
+    시 리스트 유지(클러스터링은 어차피 _cluster_edges 에서 무산·경고)."""
     if isinstance(emb, str):
         try:
             vec = [float(x) for x in emb.strip("[]").split(",") if x.strip()]
         except Exception:
             return None
-        return vec or None
-    return emb or None
+    else:
+        vec = emb
+    if vec is None or len(vec) == 0:
+        return None
+    try:
+        import numpy as np
+        return np.asarray(vec, dtype=np.float32)
+    except Exception:
+        return vec
 
 
 def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
@@ -573,7 +670,7 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
     (1) 시그니처 임베딩 보유 객체 fetch(테이블 + 루틴 합동, RC3). (2) effective schema 별 그룹 →
     그룹별 kNN + union-find — N > FULLMATRIX_MAX_N 인 **스키마만** skip(종전 ds-전역 skip 의 RC2 를
     국소화: 표시 단위인 스키마 클러스터와 계산 단위 정합). (3) size ≥ MIN_SIZE component →
-    cluster_id(pass-전역 순번 — 스키마 natural-sort → 멤버 min(key) 순 결정 배정) + 라벨(LLM 컨텐츠
+    cluster_id(스키마-로컬 순번 — 사전순 스키마 → 멤버 min(key) 순 결정 배정; 프론트 그룹 키가 스키마 네임스페이스라 전역 유일성 불필요) + 라벨(LLM 컨텐츠
     라벨 → affix 폴백, RC5). 싱글턴/미충족 → NULL. (4) 변경분만 UPDATE(멱등). skip 스키마의 기존
     배정은 보존. fail-soft."""
     rep = {"scope": scope_key, "objects": 0, "clusters": 0, "updated": 0,
@@ -594,7 +691,7 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
         )
         for (rid, okey, tbl, emb, ccid, clab, sch) in cur.fetchall():
             vec = _parse_embedding(emb)
-            if not vec:
+            if vec is None:
                 continue
             eff = _effective_schema(datasource_key, okey, sch)
             items.append({"kind": "table", "id": rid, "key": okey or "", "name": tbl or "",
@@ -618,7 +715,7 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             )
             for (rid, sch, name, emb, ccid, clab) in cur.fetchall():
                 vec = _parse_embedding(emb)
-                if not vec:
+                if vec is None:
                     continue
                 items.append({"kind": "routine", "id": rid,
                               "key": f"{datasource_key}:{sch}.{name}()", "name": f"{name}()",
@@ -630,6 +727,7 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
         except Exception as exc:
             try:
                 cur.execute("ROLLBACK TO SAVEPOINT sc_routine_fetch")
+                cur.execute("RELEASE SAVEPOINT sc_routine_fetch")   # 패널 n3: 실패 서브tx 잔존 방지
             except Exception:
                 pass
             if not _ROUTINE_COLS_WARNED["done"]:
@@ -646,8 +744,11 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             by_schema.setdefault(it["schema"], []).append(i)
         maxn = int(_cfg.AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N)
         assign = {}          # 전역 item index → (cid, label)
-        next_cid = 0
+        total_clusters = 0
         skipped_idx = set()  # skip 스키마 멤버(기존 배정 보존)
+        # 스키마 순회는 사전순(lexicographic — 패널 n1 표기 정정) 결정론. cluster id 는 **스키마-로컬
+        # 순번**(패널 m5): 프론트 그룹 키가 스키마 네임스페이스(nsKey)라 전역 유일성이 불필요하고,
+        # 전역 순번은 앞 스키마의 증감이 뒤 전체 id 를 shift 시켜 대량 UPDATE·재투영 churn 을 만든다.
         for eff in sorted(by_schema.keys()):
             idxs = by_schema[eff]
             rep["schemas"] += 1
@@ -670,29 +771,33 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             valid = [(min(items[i]["key"] for i in members), members)
                      for members in comps if len(members) >= min_size]
             valid.sort(key=lambda x: x[0])
-            # 라벨: affix 기본 + LLM 컨텐츠 라벨(캐시·fail-soft) override — 분석 요약을 입력으로.
+            # 라벨: affix 기본 + LLM 컨텐츠 라벨(캐시·fail-soft) override — 분석 요약은 캐시-미스
+            # 클러스터에 한해 lazy 수집(패널 m2: 게이트 OFF/전량 적중 시 per-member 점조회 0).
             label_inputs = []
             for local_idx, (_key, members) in enumerate(valid):
+                label_inputs.append({"idx": local_idx, "_members": members, "_eff": eff,
+                                     "keys": [items[i]["key"] for i in members],
+                                     "names": [items[i]["name"] for i in members]})
+
+            def _summaries_for(cl):
                 summaries = []
-                for i in members:
+                for i in cl.get("_members") or []:
                     if len(summaries) >= _LABEL_ANALYSES_CAP:
                         break
                     nk = (items[i]["key"] if items[i]["kind"] == "routine"
-                          else f"{datasource_key}:{eff}.{items[i]['name']}")
-                    s = _fetch_analysis_text(cur, scope_key, nk)
+                          else f"{datasource_key}:{cl.get('_eff')}.{items[i]['name']}")
+                    s = _fetch_analysis_text(cur, scope_key, datasource_key, nk)
                     if s:
                         summaries.append(s)
-                label_inputs.append({"idx": local_idx,
-                                     "keys": [items[i]["key"] for i in members],
-                                     "names": [items[i]["name"] for i in members],
-                                     "summaries": summaries})
-            llm_labels = _llm_content_labels(cur, datasource_key, eff, label_inputs)
+                return summaries
+            llm_labels = _llm_content_labels(cur, datasource_key, eff, label_inputs,
+                                             fetch_summaries=_summaries_for)
             for local_idx, (_key, members) in enumerate(valid):
                 label = llm_labels.get(local_idx) or _label_cluster([items[i]["name"] for i in members])
                 for i in members:
-                    assign[i] = (next_cid, label)
-                next_cid += 1
-        rep["clusters"] = next_cid
+                    assign[i] = (local_idx, label)   # 스키마-로컬 id(m5)
+            total_clusters += len(valid)
+        rep["clusters"] = total_clusters
         # 역기록: 변경분만 UPDATE (싱글턴/미클러스터 → NULL 회수, skip 스키마는 보존).
         for i, it in enumerate(items):
             if i in skipped_idx:

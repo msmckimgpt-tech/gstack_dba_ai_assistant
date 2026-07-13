@@ -121,3 +121,8 @@ source_of_truth: true
 - 변경: **라이브 프로브(트랜잭션 롤백·무변경)가 적발한 결함 2건 수정** — ① non-autocommit conn 주입 시 0040-미적용 routine fetch 실패가 tx 를 aborted 로 남겨 pass 전체 InFailedSqlTransaction 연쇄(→ SAVEPOINT 격리, 백필 동형) ② base τ(0.82) 단일연결 union-find 가 같은 DB 테이블(시그니처 boilerplate 공유로 baseline 유사도 높음)을 **단일 254-멤버 blob** 으로 병합해 밴드로 무용(→ mutual-kNN 엣지 + cap 초과 컴포넌트 τ-상승(step 0.02, ceiling 0.98) divisive 재분할). ③ migrate-lint diff 모드가 MAX_MIGRATION.txt(비-py)를 AST 파싱해 오탐 FAIL 하던 lint 버그(.py 필터 — 마이그와 MAX_MIGRATION 동시 변경 cycle 의 첫 발현).
 - 근거·실증: 수정 후 재프로브(롤백) — cc_data_main **37 클러스터**(sizes 39·24·13·11… 총 199/255, 'buff'·'monsterclass'·'monsterspawnpoint'·'achieve' 등 컨텐츠 응집), ds 전체 1,016 클러스터/74 스키마/skip 0. 수정 전엔 74 스키마가 각각 거대 blob(총 75 클러스터).
 - 검증: test_semantic_cluster_content.py 16→**19**(adaptive split·mutual-kNN 허브차단·기존 유지) + migrate-lint 전체 PASS(+self-test PASS).
+
+## CHG-20260713T121500-ai-claude-feature-0016-content-cluster-panel — §18.8 패널(PASS-WITH-FIXES) 반영 (2026-07-13, 같은 cycle 3차)
+- 대상: `semantic_cluster.py`(M1 분석-신선 표적 백필+touch·n4 scope ANY·m2 lazy summaries·m3 kv key 고정폭·m4 float32 ndarray·m5 스키마-로컬 id·n1/n2/n3) + `metadata_graph.py`(m1 `_step_routines` 폴백 `if owned:` 가드+_pending 리셋) + 테스트 계약 갱신(+M1·scope-ANY 회귀 잠금, 파일 24 tests).
+- 핵심: **n4 는 라이브 확증 결과 실결함** — node_analysis_jobs.scope_key 가 datasource_key 라 'common' 필터는 매칭 0(분석문 주입 전면 무효였음) → ANY(rag-scope, ds) 로 수정. **M1** — 분석 완료가 행 updated_at 을 안 올려 top-N 창 밖 분석-보유 행이 영구 미갱신 → EXISTS 표적 선별+명시 touch(멱등). 상세 원장: REVIEW.md REV-20260713T120500.
+- 검증: 신규 파일 24 + 연관 스위트 PASS, 전체 스위트 컨테이너 pytest EXIT=0, 라이브 재프로브(롤백) cc_data_main 37 클러스터 유지·error 0.

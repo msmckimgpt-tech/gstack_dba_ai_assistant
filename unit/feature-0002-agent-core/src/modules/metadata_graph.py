@@ -664,10 +664,15 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                             "FROM routine_objects" + _w, _a)
                 rows = cur.fetchall()
             except Exception:
-                try:
-                    c.rollback()   # owned(batched tx) 의 aborted tx 회수 후 구 스키마 재시도
-                except Exception:
-                    pass
+                # §18.8 패널 m1: rollback 은 owned(자체 batched tx)일 때만 — 외부 주입 conn 의
+                # 미커밋 작업을 무단 파괴하지 않는다(_step_relationships 의 `if owned:` 선례 정합).
+                # owned 에서는 _run_step 진입 시 force-커밋이 선행돼 버려지는 것은 aborted 빈 tx 뿐.
+                if owned:
+                    try:
+                        c.rollback()
+                    except Exception:
+                        pass
+                    _pending[0] = 0   # rollback 으로 버려진 미커밋 카운터 정합
                 _has_cluster_cols = False
                 cur.execute("SELECT scope_key, schema_name, routine_name, routine_type, params, "
                             "referenced_tables FROM routine_objects" + _w, _a)
