@@ -8,7 +8,30 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260713T140405-describe-routine-tool (current cycle) — 저장 프로시저/함수 정의 조회 도구 신설 (Major §12.3, conversation_audit FR-show-create-routine-blocked)
+## TASK-20260713T171821-readonly-query-shapes (current cycle) — read-only 쿼리 shape 과차단 보정: 최상위 UNION + 읽기전용 SHOW (Critical §12.3, conversation_audit FR-readonly-query-shapes-overblock)
+- 출처: `/_dqa:conversation_audit "동적 쿼리 및 테이블 변경사항 추가 리뷰"` (2026-07-13, 사용자 명시 — "여전히 유사한 이슈… '보안 정책상 차단된 SQL' 이 발생하지 않고 정상 조회"). 사용자 승인 방식=**UNION + 읽기전용 SHOW**(AskUserQuestion 2026-07-13).
+- **근본원인(삼각측량 high, 코드+DB(PG agent_runtime)+전사)**: **L5 — sql_guard `validate_sql_for_sandbox` 의 SELECT/CTE-only shape 게이트가 read-only 패턴을 과차단**. 대상 대화(`20260713074503-5cef7aa2`) 차단 2건 = `SHOW CREATE TABLE gunzgame.attendence`("CharacterID 추가 여부"=테이블 변경 리뷰) + `SHOW VARIABLES LIKE 'lower_case_table_names'`(config). **corroboration structural**: 최근 30일 "보안 정책상 차단된 SQL" = 9 distinct conv·14건 — `UNION`(8, 최대)·`Show`(5)·parse-fail(12)·multi-statement(4)·MSSQL db_id/db_name(3).
+- **재발경로/봉인**: read-only shape 과차단(guard 가정 오류) → **shape allowlist 를 read-only 패턴으로 정확히 확장**(쓰기·allowlist·금지함수·multi-statement 불변). 이전 describe_routine 은 프로시저 subset만 봉인 → 이번은 UNION + 테이블/뷰/config SHOW 로 확장.
+
+### §2.1 Implementation Plan
+- `unit/feature-0002-agent-core/src/modules/sql_guard.py`:
+  - `_READONLY_SHOW_KINDS`(화이트리스트: CREATE TABLE/VIEW·COLUMNS·INDEX·TABLE STATUS·VARIABLES/STATUS — **PROCEDURE/FUNCTION 제외**=describe_routine 담당) + `_show_kind`/`_show_target_db`/`_validate_readonly_show` 헬퍼.
+  - `validate_sql_for_sandbox` shape 게이트: (a) `exp.Show`→`_validate_readonly_show`(종류 화이트리스트 + 대상 `.db` forbidden 차단) (b) `exp.SetOperation`(UNION/INTERSECT/EXCEPT) 허용 (c) lock/into 검사를 **모든 SELECT 분기**(`root.find_all(Select)`)에 적용. 기존 4-part/forbidden-schema/forbidden-function 검사는 이미 find_all 로 union 분기 전수 순회(불변).
+  - `collect_schema_refs`: SHOW `.db` 를 schemas 에 수집 → tools `_freeform_sql_access_error` 가 SHOW 대상에도 제품 allowlist 강제.
+- `unit/feature-0002-agent-core/src/modules/tools.py`: `_dialect_correction_hint` 의 stale "최상위 UNION 불가" 힌트 제거(UNION 이제 허용 — 오정보 방지).
+- **검증**: `tests/test_readonly_query_shapes.py`(신규) — UNION 허용·분기별 보안 불변식·read-only SHOW 허용·forbidden/비-readonly SHOW 차단·collect_schema_refs SHOW .db·데이터수정CTE 거부·기존 불변식 회귀. 전체 회귀 pytest.
+- **위험등급 Critical**(sql_guard 허용범위). ANCHOR §1~§3(core/web-ui 분리·모듈 배치) 무충돌.
+
+### §2.2 Completion Checklist
+- [x] sql_guard: set-op(UNION/INTERSECT/EXCEPT) shape 허용 + read-only SHOW 화이트리스트 + `_validate_readonly_show`/`_show_kind`/`_show_target_db` + collect_schema_refs SHOW `.db`
+- [x] sql_guard: lock/into 를 모든 SELECT 분기에 적용 + **write-node defense-in-depth**(`_find_write_node` — 데이터수정CTE/중첩 write 거부, §18.8 security 패널 MAJOR 흡수)
+- [x] tools.py: stale "최상위 UNION 불가" 힌트 제거
+- [x] tests/test_readonly_query_shapes.py 신규 + test_gc_dialect_context UNION 단언 갱신 + 전체 회귀 pytest **1899 PASS(RC=0)**
+- [x] §18.8 적대 패널(security+backend+qa; 세션한도 조기종료→인라인 자기검증) — MAJOR1(데이터수정CTE) 수정, 나머지 REFUTED. REV-20260713T171821
+- [ ] cycle-finalize(PR merge, 외부영향 confirm) + 영향 서비스 재빌드 배포(ask-worker/insight-worker/web, confirm) + 라이브 실측
+- [ ] FRICTION_LEDGER FR-readonly-query-shapes-overblock 갱신(fixed:deployed:unverified-live)
+
+## TASK-20260713T140405-describe-routine-tool — 저장 프로시저/함수 정의 조회 도구 신설 (Major §12.3, conversation_audit FR-show-create-routine-blocked)
 - 출처: `/_dqa:conversation_audit` (2026-07-13, 사용자 명시 호출). 대화 "재사용 쿼리의 PK 관리 문제 추가 리뷰" 에서 assistant 가 저장 프로시저 로직을 검토하려 `SHOW CREATE PROCEDURE gunzgame.Game_AccountAttendence` 를 `execute_sql` 로 실행했으나 보안 가드에 차단됨(사용자 보고). 사용자 승인 방식=**Option 1**(전용 도구 + 유도, AskUserQuestion 2026-07-13).
 - **근본원인(삼각측량, rootcause_confidence high)**:
   - L5(가드): `sql_guard.validate_sql_for_sandbox` 가 `execute_sql` 을 단일 SELECT/CTE 로만 허용(`sql_guard.py:~500` `only SELECT/CTE allowed`) → `SHOW CREATE PROCEDURE`(sqlglot `exp.Show`)는 거부. **이 SELECT-only 불변식은 의도된 핵심 보안 기능(F4) — 유지**.
