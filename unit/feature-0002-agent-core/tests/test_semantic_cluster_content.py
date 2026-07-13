@@ -398,3 +398,57 @@ def test_backfill_analysis_fresh_targeted_pick_and_touch(monkeypatch):
     hash_ups = [(q, p) for (q, p) in cur.executed
                 if q.startswith("UPDATE rag_objects SET signature_text_hash")]
     assert len(hash_ups) == 1 and "updated_at = now()" in hash_ups[0][0] and hash_ups[0][1][1] == 22
+
+
+# ── p2: centroid seriation + soft-attach ─────────────────────────────────────
+def test_seriate_by_centroid_neighbor_chain():
+    pytest.importorskip("numpy")
+    # A=[1,0], B=[0.95,0.31](A와 근접), C=[0,1](원거리). 크기 최대 C 시작 → 최근접 B? cos(C,B)=0.31 > cos(C,A)=0 → C,B,A.
+    cents = sc._cluster_centroids([[1.0, 0.0], [0.95, 0.31], [0.0, 1.0]], [[0], [1], [2]])
+    order = sc._seriate_by_centroid(cents, [2, 2, 3], ["a", "b", "c"])
+    assert order == [2, 1, 0]
+    # 2개 이하 → 항등
+    assert sc._seriate_by_centroid(cents[:2], [1, 1], ["a", "b"]) == [0, 1]
+
+
+def test_pass_soft_attach_leftovers(monkeypatch):
+    """p2 RC-A: 코어 미배정 잔여가 centroid 코사인 ≥ ATTACH_SIM 이면 최근접 클러스터에 편입(라벨 상속),
+    미달은 NULL — 'dt_c' 류 가짜 affix 가족으로 흐르던 잔여를 컨텐츠 기반으로 흡수."""
+    pytest.importorskip("numpy")
+    rag = [
+        (1, "ds1:aaa.dbo.t1", "t1", [1.0, 0.0], None, None, "dbo"),
+        (2, "ds1:aaa.dbo.t2", "t2", [0.999, 0.01], None, None, "dbo"),
+        # near: cos 0.80 — base τ(0.82) 미만이라 코어 비편입(mutual-kNN 엣지 없음), attach(0.78) 이상 → 편입.
+        (3, "ds1:aaa.dbo.near", "near", [0.8, 0.6], None, None, "dbo"),
+        (4, "ds1:aaa.dbo.far", "far", [0.0, 1.0], None, None, "dbo"),       # cos 0 → NULL 유지
+    ]
+    cur = _pass_env(monkeypatch, rag, [])
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_ATTACH_SIM", 0.78, raising=False)
+    rep = sc.run_semantic_cluster_pass("common", "ds1")
+    assert rep["error"] is None and rep["clusters"] == 1 and rep["attached"] == 1
+    ups = {p[2]: (p[0], p[1]) for (q, p) in _updates(cur, "rag_objects")}
+    assert ups[3][0] == ups[1][0] and ups[3][1] == ups[1][1]   # 편입 + 라벨 상속
+    assert 4 not in ups   # far 는 NULL 유지(신규 배정 없음 → UPDATE 없음)
+
+
+def test_pass_attach_cap_guard(monkeypatch):
+    """§18.8 p2 패널 MAJOR-1 회귀 잠금: attach 는 클러스터별 코어+attached < cap 동안만 —
+    유사도 내림차순 배정, cap 도달 후보는 NULL 유지(거대 밴드 재생성 차단)."""
+    pytest.importorskip("numpy")
+    # 4D: 코어 [1,0,0,0]×2. 잔여 3개는 코어와 cos 0.81/0.80/0.79(τ 0.82 미만·attach 0.78 이상),
+    # 서로는 cos≈0.63(상호 코어 미형성 — 2D 로는 불가능한 구성이라 4D 사용).
+    rag = [
+        (1, "ds1:aaa.dbo.t1", "t1", [1.0, 0.0, 0.0, 0.0], None, None, "dbo"),
+        (2, "ds1:aaa.dbo.t2", "t2", [0.999, 0.01, 0.0, 0.0], None, None, "dbo"),
+        (3, "ds1:aaa.dbo.l1", "l1", [0.81, 0.5864, 0.0, 0.0], None, None, "dbo"),
+        (4, "ds1:aaa.dbo.l2", "l2", [0.80, 0.0, 0.6, 0.0], None, None, "dbo"),
+        (5, "ds1:aaa.dbo.l3", "l3", [0.79, 0.0, 0.0, 0.6131], None, None, "dbo"),
+    ]
+    cur = _pass_env(monkeypatch, rag, [])
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_ATTACH_SIM", 0.78, raising=False)
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_MAX_SIZE", 3, raising=False)
+    rep = sc.run_semantic_cluster_pass("common", "ds1")
+    assert rep["error"] is None and rep["clusters"] == 1
+    assert rep["attached"] == 1, "room=cap(3)-core(2)=1 — 최고 유사도 l1 만 편입"
+    ups = {p[2] for (q, p) in _updates(cur, "rag_objects")}
+    assert 3 in ups and 4 not in ups and 5 not in ups

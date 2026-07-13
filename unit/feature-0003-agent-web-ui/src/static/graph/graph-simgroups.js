@@ -22,8 +22,32 @@ function _metaViewNorm(t) {
   const s = String((t && (t.name || t.key)) || "").toLowerCase();
   return s.startsWith("view_") ? s.slice(5) : s;
 }
-function _metaSimFamilies(tables) {
-  const norm = _metaViewNorm;
+// content-cluster p2 RC-A(사용자 리포트: "dt_c" 밴드에 DT_CashPoint·DT_Castle·dt_CombineMaterial 동거):
+//   스키마 테이블 다수가 공유하는 **일반 접두**(dt_/ct_/sp_ 류 타입 마커, 영문 2~4자+'_')를 데이터
+//   기반으로 검출한다. 이런 접두는 컨텐츠 신호가 아니라 명명 규약이라, affix 후보에 남으면
+//   "접두+1자" 가짜 가족(무관 테이블 동거)을 만든다. 임계: max(4, 15%) — 소형 스키마 오검출 방지.
+//   §18.8 p2 패널 MAJOR-2: 접두 폭은 2~3자 한정 — 4자는 user_/item_/mail_/cash_ 류 **의미 접두**
+//   (컨텐츠 신호)와 겹쳐 실스템 가족을 파괴한다(리뷰어 실험: user_ 25% 오검출 → user 가족 해체).
+//   dt_/ct_/sp_/usp_/tbl_ 류 타입 마커는 전부 2~3자라 커버 유지.
+function _metaGenericPrefixes(names) {
+  const cnt = new Map();
+  names.forEach((nm) => {
+    const m = /^([a-z]{2,3}_)/.exec(nm);
+    if (m) cnt.set(m[1], (cnt.get(m[1]) || 0) + 1);
+  });
+  const th = Math.max(4, Math.ceil(names.length * 0.15));
+  return new Set([...cnt.entries()].filter(([, c]) => c >= th).map(([p]) => p));
+}
+// 일반 접두 strip(잔여 이름이 3자 이상 남을 때만 — 과절단 방지). 긴 접두 우선.
+function _metaStripGeneric(nm, gp) {
+  if (!gp || !gp.size) return nm;
+  for (const p of [...gp].sort((a, b) => b.length - a.length)) {
+    if (nm.startsWith(p) && nm.length - p.length >= 3) return nm.slice(p.length);
+  }
+  return nm;
+}
+function _metaSimFamilies(tables, gp) {
+  const norm = (t) => _metaStripGeneric(_metaViewNorm(t), gp);
   const support = new Map();   // token -> Set(tableKey)
   const bump = (tok, k) => { let s = support.get(tok); if (!s) { s = new Set(); support.set(tok, s); } s.add(k); };
   tables.forEach((t) => {
@@ -53,7 +77,8 @@ function _metaSimFamilies(tables) {
 //   크기 desc·라벨 natural), 그룹 내 테이블 순서 = _metaRelOrderAll 재사용(컴포넌트 군집 + barycenter —
 //   "그룹"을 컨테이너로 취급). 반환: { list: [{key,label,n,tables[]}], orderIds: [...] } (결정론).
 function _metaSimGroups(schemaId, tables, adj) {
-  const fam = _metaSimFamilies(tables);
+  const gp = _metaGenericPrefixes(tables.map(_metaViewNorm));   // p2: 스키마-공통 일반 접두(affix 품질)
+  const fam = _metaSimFamilies(tables, gp);
   const roleFam = (t) => { const r = _metaRoleOf(t.key); return r ? "role:" + r : null; };
   // Phase C(ADR-013 후속, semantic-embed): 백엔드 의미 클러스터(be:) 우선. namespace 는 정확히 1회('be:'+id)
   //   부여 — 하류 nm: 재접두 대상에서 제외(verify MAJOR: 이중 namespace 방지). 이 스키마 내 be: 멤버 ≥2 일
@@ -98,7 +123,7 @@ function _metaSimGroups(schemaId, tables, adj) {
   // 그룹 리스트 + 라벨
   const groupsBy = new Map();
   tables.forEach((t) => { const f = famOf.get(t.key); if (!groupsBy.has(f)) groupsBy.set(f, []); groupsBy.get(f).push(t); });
-  const normNm = _metaViewNorm;   // §18.8 MINOR: view_ 만 제거(viewer 등 실명 보존) — _metaSimFamilies 와 동일 규칙
+  const normNm = (t) => _metaStripGeneric(_metaViewNorm(t), gp);   // §18.8 MINOR + p2: _metaSimFamilies 와 동일 정규화(일반 접두 strip 포함)
   const commonAffix = (arr) => {   // 멤버 정규화 이름의 최장 공통 접두/접미 중 긴 쪽(≥4) — 자연 스템 라벨
     if (!arr.length) return null;
     const ns = arr.map(normNm);
@@ -133,7 +158,14 @@ function _metaSimGroups(schemaId, tables, adj) {
     return tok;
   };
   const nsKey = (f) => schemaId + "\u0001" + f;   // 그룹 키 네임스페이스(스키마별 유일, 제어문자 구분자)
-  const baseOrder = [...groupsBy.keys()].sort((a, b) => (groupsBy.get(b).length - groupsBy.get(a).length) || _metaNatSort(labelOf(a, groupsBy.get(a)), labelOf(b, groupsBy.get(b))));
+  // p2 RC-B(연관 밴드 인접): be: 밴드는 **cluster id 오름차순 선두 배치** — 백엔드가 id 를 centroid
+  //   최근접-이웃 체인(semantic seriation) 순서로 배정하므로 id 순 = 의미 연관 밴드 인접. FK 희소
+  //   게임 DB 에선 관계 seriation 이 무신호라 임베딩 순서가 유일한 연관성 데이터 소스다.
+  //   nm:/role:/misc 는 기존 크기 desc·관계 seriation·misc 후미 유지.
+  const beOrder = [...groupsBy.keys()].filter((f) => f.startsWith("be:"))
+    .sort((a, b) => (parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10)) || _metaNatSort(a, b));
+  const baseOrder = [...groupsBy.keys()].filter((f) => !f.startsWith("be:"))
+    .sort((a, b) => (groupsBy.get(b).length - groupsBy.get(a).length) || _metaNatSort(labelOf(a, groupsBy.get(a)), labelOf(b, groupsBy.get(b))));
   // misc 는 항상 마지막(잡동사니가 seriation 으로 가운데 끼는 것 방지)
   const miscIdx = baseOrder.indexOf("misc");
   if (miscIdx >= 0) { baseOrder.splice(miscIdx, 1); baseOrder.push("misc"); }
@@ -141,8 +173,9 @@ function _metaSimGroups(schemaId, tables, adj) {
   const groupOfT = new Map();
   groupsBy.forEach((arr, f) => arr.forEach((t) => groupOfT.set(t.key, nsKey(f))));
   const groupOf = (tk) => groupOfT.get(tk) || null;
-  // 그룹 seriation(관계 많은 그룹끼리 인접) — misc 제외 후 재부착(항상 마지막 유지)
+  // 비-be 그룹만 관계 seriation — be: 는 id 순 고정 선두, misc 재부착(항상 마지막 유지)
   let serIds = _metaRelSchemaOrder(nsIds.filter((k) => k !== nsKey("misc")), adj, groupOf);
+  serIds = [...beOrder.map(nsKey), ...serIds];
   if (groupsBy.has("misc")) serIds.push(nsKey("misc"));
   // feature-0016 §49(요구②, 적대리뷰 R1): 그룹 순서 안정화 — 이웃확장 rebuild 시 그룹이 재-seriate 되어 형제가 점프하지
   //   않도록 직전 순서(groupOrder[schemaId])를 보존하고 신규 그룹만 append. (misc 는 위에서 이미 마지막.)

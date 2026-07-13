@@ -2349,3 +2349,26 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T80.1 **라벨 팩토리 `_makeText`**: `cfg.labelEngine`('bitmap' 기본/'text' 폴백). bitmap=`PIXI.BitmapText`(white base #ffffff dynamic font + `tint`=`_hexNum(fill)` — glyph atlas 색-무관 공유). BitmapText 미지원/throw 시 `PIXI.Text` 폴백. `_hexNum` hex→tint number. 노드/combo/edge 라벨 3곳 전부 경유.
 - [x] T80.2 검증: 어댑터 순수 **54 PASS**(T20 hex 파싱) + 그래프 회귀 **279 무회귀** + 통합 하네스(라벨 BitmapText 렌더·tint 색상 정확·품질·pageerror 0). 실 그래프 씬 렌더 Text 157ms→BitmapText 0.03ms 실측.
 - [x] T80.3 **§18.8 반영 + POST-DEPLOY 완료 (2026-07-13)**: 적대 리뷰 MAJOR2(폴백·CJK atlas)+MINOR3 수정. PR #759 → main b69e4111 무중단 배포(soak PASS). 서빙 BitmapText 배선 확인(_makeText/hexToTint/BitmapText 10 심볼·cache-buster ffaeb2b71103). 라이브 admin(건즈 gunzgame 409 객체): 라벨 BitmapText 렌더·확대 시 선명·색상 정확·**팬 60fps vsync-perfect(p95 16.8ms)**·pageerror 0. **§80 완결.**
+
+## 20260713T1620-content-cluster-p2 — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 (2026-07-13, 사용자 후속 리포트)
+사용자: "여전히 클러스터링 부실 — 'dt_c...' 밴드에 무관한 테이블 동거(`DT_CashPoint`,`DT_Castle`,`dt_CombineMaterial`) + 각 밴드끼리 연관 깊은 항목별로 가까이 배치 필요."
+
+### 진단 (라이브 실측)
+- **RC-A**: 세 테이블 모두 `semantic_cluster_id NULL` — cc_data_main 미클러스터 잔여 114/255 가 **프론트 nm: affix 폴백**으로 흘렀고, `_metaSimFamilies` 가 일반 접두+1자("dt_c", 지지도 3)도 가족으로 채택해 무관 테이블이 동거. (의미 클러스터 결함이 아니라 폴백 품질 문제 — mutual-kNN τ=0.82 에서 의미 이웃 없는 싱글턴들.)
+- **RC-B**: 밴드 순서 = `_metaRelSchemaOrder`(FK 관계 seriation)뿐 — FK 미선언 게임 DB 에선 무관계 → 크기 desc·자연순 폴백이라 의미 연관 밴드가 흩어짐. 임베딩(연관성의 데이터 소스)이 순서에 미사용.
+
+### 계획 (Major — backend+frontend, worktree ai/claude/feature-0016-content-cluster-p2)
+1. **[BE] soft-attach 2차 패스**(semantic_cluster.run_semantic_cluster_pass): 코어 클러스터 확정 후, 미배정 객체를 클러스터 **centroid 코사인 ≥ `AGENT_METADATA_CLUSTER_ATTACH_SIM`(신규 config, 기본 0.78)** 이면 최근접 클러스터에 편입(라벨 상속) — 잔여를 컨텐츠 기반으로 흡수. 미달은 NULL 유지(무리한 편입 금지).
+2. **[BE] 클러스터 id = centroid 최근접-이웃 체인 seriation 순서**(스키마-로컬): 시작=최대 크기(동률 min-key), greedy 로 가장 유사한 미방문 centroid 를 다음 id 로 — 연관 클러스터가 인접 id. 결정론(동률 min-key).
+3. **[FE] affix 일반 접두 strip**(graph-simgroups `_metaSimFamilies`/`commonAffix`): 스키마-공통 선행 접두를 데이터 기반 검출해 정규화에서 제거 — "dt_c" 류 가짜 가족 소멸, "monster…" 류 실스템 보존. **최종 구현값(§18.8 패널 MAJOR-2 정합)**: 접두 폭 영문 **2~3자+'_' 필수**(4자는 user_/item_ 류 의미 접두 보호), 임계 **max(4, 15%)**(계획 초안의 ≥35% 는 dt_ 실점유율 미달 위험으로 완화 — 폭 축소가 오검출 대역을 봉쇄).
+4. **[FE] be: 밴드 순서 = cluster id 오름차순 우선**: id 가 BE seriation 을 담으므로 be: 밴드 인접 배치. nm:/role:/misc 는 기존 관계 seriation + 후미 유지. §49 순서 안정화(_metaStableSeq)·접힘 지속 보존.
+5. 검증: BE 테스트(attach 편입/미달 NULL·seriation id 순서 결정론) + FE 헤드리스(접두 strip 로 dt_c 가족 소멸·be: id 순 배치) + 전체 스위트. §18.8 패널 → verify → PR → merge → 배포(web+worker) → 클러스터 pass 재가동 → **PB-0008**(프론트 변경 — visual always): dt_c 밴드 소멸 + 연관 밴드 인접 육안.
+- AC-p2-1: cc_data_main 에서 `DT_CashPoint`·`DT_Castle`·`dt_CombineMaterial` 이 한 밴드에 동거하지 않음(각자 의미 클러스터 편입 또는 role:/기타).
+- AC-p2-2: be: 밴드가 id 순 인접 배치(예: 몬스터 계열 밴드들이 서로 이웃).
+- AC-p2-3: 기존 be: 밴드 membership·라벨 무회귀, 접두 strip 이 실스템 가족을 파괴하지 않음.
+
+### Tasks
+- [x] TP.1 BE soft-attach(cap 가드·유사도 내림차순 결정 배정) + centroid seriation id + `AGENT_METADATA_CLUSTER_ATTACH_SIM`(0.78).
+- [x] TP.2 FE `_metaGenericPrefixes`(2~3자·max(4,15%))·`_metaStripGeneric`(잔여 ≥3자) + be: 밴드 id 순 선두 배치(비-be 관계 seriation·misc 후미·§49 안정화 보존 — 세션 중 신규 밴드는 후미, fresh load 시 정상).
+- [x] TP.3 검증 — BE 23(attach cap 가드 포함)+FE 헤드리스 16(user_ 4자 의미 접두 보호 포함)+그래프 전 스위트 무회귀+전체 pytest EXIT=0+라이브 프로브(attached 5,249·잔여 114→26·리포트 3종 분리). §18.8 패널 PASS-WITH-FIXES 전건 반영(REV-20260713T170500).
+- [ ] TP.4 verify → PR → merge → 배포(web+worker) → 클러스터 pass 재가동 → **PB-0008**(dt_c 가짜 밴드 소멸 + 연관 밴드 인접 육안) + test-runs fragment.

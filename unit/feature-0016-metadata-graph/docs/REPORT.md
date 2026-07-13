@@ -1,5 +1,22 @@
 # Report
 
+## 2026-07-13 · 카테고리 밴드 p2 — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 (content-cluster-p2, TASK 20260713T1620 / ADR-20260713T163000)
+
+### 요청 (사용자 후속)
+"여전히 클러스터링 부실 — 'dt_c...' 밴드에 무관한 테이블 동거(DT_CashPoint·DT_Castle·dt_CombineMaterial) + 각 밴드끼리 연관 깊은 항목별로 가까이 배치."
+
+### 진단
+- **RC-A**: 세 테이블 모두 semantic_cluster_id NULL — 미클러스터 잔여 114/255 가 FE nm: affix 폴백으로 흘렀고, affix 마이너가 일반 접두+1자("dt_c") 가족도 채택해 무관 테이블 동거. (의미 클러스터 결함이 아니라 폴백 품질.)
+- **RC-B**: 밴드 순서 = FK 관계 seriation 뿐 — FK 미선언 게임 DB 에선 무신호 → 의미 연관 밴드 산재.
+
+### 처리 결과
+- **BE soft-attach 2차 패스**: 코어 미배정 잔여를 centroid 코사인 ≥ ATTACH_SIM(0.78) 최근접 클러스터에 편입(라벨 상속·코어 라벨/캐시 비오염). 프로브: attached **5,249**, cc_data_main 잔여 **114→26**, 리포트 3종 각기 다른 컨텐츠 클러스터로 분리.
+- **BE cluster id = centroid 최근접-이웃 체인 seriation**(스키마-로컬) + **FE be: 밴드 id 오름차순 선두 배치** — 의미 연관 밴드 인접(FK 무신호 DB 의 유일한 연관성 데이터 소스=임베딩).
+- **FE affix 일반 접두 strip**: 스키마 15%·≥4 공유 선행 접두(dt_/ct_ 류) 데이터 기반 검출·제거 — "dt_c" 가짜 가족 소멸, "monster…" 실스템 보존(과절단 방지 잔여 ≥3자).
+
+### 검증
+- BE 24 + FE 헤드리스 13(신규 test_g6build_simgroups_p2.js) + 그래프 헤드리스 전 스위트 무회귀 + 전체 pytest EXIT=0 + 라이브 프로브(롤백). §18.8 패널 → REVIEW.md. POST-DEPLOY: 배포→클러스터 pass 재가동→PB-0008(dt_c 소멸·인접 배치 육안).
+
 ## 2026-07-13 · 그래프 뷰 미니맵 — 줌인 컬링이 전역 개요를 바꾸던 결함 수정 (graph-minimap-fullview, §77)
 
 ### 요청 (사용자)

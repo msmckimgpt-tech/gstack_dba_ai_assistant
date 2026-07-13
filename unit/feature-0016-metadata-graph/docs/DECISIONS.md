@@ -925,3 +925,12 @@ source_of_truth: true
 - **결정 보강(라이브 프로브 적발, 같은 cycle)**: base τ(0.82) 단일연결 union-find 는 같은 DB 시그니처의 boilerplate 공유(baseline 코사인 상승) 때문에 스키마 전체를 한 blob 으로 병합했다(cc_data_main 254/255 — 밴드 무용). ⑤ **mutual-kNN**(양방향 top-k 만 엣지 — 비대칭 허브 연쇄 차단) + ⑥ **cap 초과 컴포넌트 τ-상승 divisive 재분할**(`AGENT_METADATA_CLUSTER_MAX_SIZE`=40, step 0.02, ceiling 0.98 — ceiling 에서도 안 쪼개지면 진성 동질로 수용)을 채택. 재프로브 실증: cc_data_main 37 클러스터(최대 39, 'buff' 24·'monsterclass' 11 등 컨텐츠 응집). 또한 caller-owned non-autocommit conn 에서 0040-미적용 routine fetch 실패가 tx 를 aborted 로 남기던 것을 SAVEPOINT 로 격리(백필 동형).
 - 검증: 단위 16 + 전체 스위트 EXIT=0 · §18.8 적대 패널(REVIEW.md) · POST-DEPLOY cc_data_main 실증(DB 카운트)·PB-0008 육안.
 - Supersedes: 0035 설계의 "scope=(scope,ds) 전역 클러스터" 단위 정의 / Superseded By: —
+
+## ADR-20260713T163000-content-cluster-p2 — 잔여 흡수(soft-attach)·의미 seriation·affix 접두 위생 (사용자 후속 리포트)
+- 상태: 채택 (2026-07-13)
+- 맥락: content-cluster(ADR-20260713T105932) 출하 후 사용자 후속 — "dt_c" 밴드에 무관 테이블 동거(미클러스터 잔여 114/255 의 affix 폴백 품질 문제) + 연관 밴드 인접 배치 요구(FK 희소 DB 에서 관계 seriation 무신호).
+- 결정: ① **soft-attach 2차 패스** — 코어(mutual-kNN τ=0.82) 미배정 잔여를 클러스터 centroid 코사인 ≥ `ATTACH_SIM`(0.78)이면 최근접 편입. 라벨·kv 캐시 키는 코어 멤버만으로 산정(attach 가 라벨 오염·캐시 흔들림 없음). 미달은 NULL(무리한 편입 금지). ② **cluster id = centroid 최근접-이웃 greedy 체인 순서**(스키마-로컬, 시작=최대크기·동률 min-key) — id 가 의미 인접성을 담는 부호가 되어 ③ FE 가 be: 밴드를 id 오름차순 선두 배치(비-be 는 기존 관계 seriation·misc 후미). ④ FE affix 마이닝에 **스키마-공통 일반 접두 strip**(영문 2~4자+'_', max(4,15%) 데이터 기반 — dt_/ct_ 류 명명 규약은 컨텐츠 신호가 아님) — 잔여 ≥3자 조건으로 과절단 방지.
+- 대안 기각: (a) base τ 인하로 코어 확장 — chaining 재유발 위험(직전 blob 사고), attach 는 코어 품질 보존. (b) 별도 order 컬럼/API — id 재활용이 스키마·API 무변경(비파괴). (c) 접두 고정 스톱리스트(dt_,ct_…) — 게임별 명명 상이, 데이터 기반이 일반화.
+- 트레이드오프: id 재-seriation 으로 1회성 대량 UPDATE·재투영 churn(멱등 수렴, 프로브 23,324). attach 는 cap(40) 미적용 — 코어가 cap 이하로 유지되고 attach 는 잔여 유계라 거대 blob 재생성 없음. 접두 strip 으로 dt_x/ct_x 가 같은 스템 가족에 합쳐질 수 있음 — 동일 컨텐츠의 타입 변형이라 수용.
+- 검증: BE 24 + FE 13 + 헤드리스 전 스위트 + 전체 pytest EXIT=0 + 라이브 프로브(attached 5,249·cc_data_main 잔여 114→26·리포트 3종 분리). §18.8 패널(REVIEW.md). POST-DEPLOY PB-0008.
+- Supersedes: — / Superseded By: —
