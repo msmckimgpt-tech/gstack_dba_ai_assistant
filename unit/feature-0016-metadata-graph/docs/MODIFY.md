@@ -163,3 +163,6 @@ source_of_truth: true
 - 대상: `graph/graph-renderer-pixi.js`(analyzed 테두리 복원·미니맵 클램프/드래그·오브젝트 풀·B1/M1/M2/m1/m4/NIT 수정)·`tests/headless/test_pixi_adapter.js`(T14~19).
 - 변경: PixiJS 렌더러 후속 — analyzed/running 상태 dot→테두리(concentric halo, selected 미가림), running fill desaturate, 미니맵 뷰포트 클램프·드래그 상호작용, scene diff 오브젝트 풀(선택 리빌드 6배). §18.8 BLOCKING1+MAJOR2+MINOR 수정. 회귀 0(순수 49+그래프 279).
 - 근거: 사용자 리포트 3건 + 후속 최적화. REV-…-graph-pixi-polish [SUBAGENT:PASS-WITH-FIXES]. BitmapText DEFER(측정 근거).
+
+## CHG-20260713T070819-postdeploy — §79 POST-DEPLOY 라이브 검증 기록 (docs-only)
+- 대상: docs(TASK T79.6·REPORT)+test-runs.d. 코드 0. PR #755 배포(8edfa3a8) + 라이브 미니맵 클램프/드래그·409 렌더·pageerror 0. §18.8 SKIPPED.

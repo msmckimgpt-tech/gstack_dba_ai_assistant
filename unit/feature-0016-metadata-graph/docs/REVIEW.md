@@ -193,3 +193,6 @@ source_of_truth: true
 - **수용(수정 불요)**: m3 풀 키 kind-네임스페이스(combo/node id 실무 분리 — 접두 SC:/GB:/fqn vs bare schema, 충돌 확률 낮음·pre-existing, 전 _objs 접근 재작성 과함). m2 node 서명 정밀도(재생성=안전, 재사용률 미세 손실). m5 cull-on JSON.stringify(pixi 모드 컬링 비활성이라 미실행 경로).
 - 통과 확인(적대): 미니맵 좌표계 일치·edge/combo 재생성 정합·제거/재생성 루프 누수 0·순수함수 수학 정확 — 결함 아님 명시.
 - 회귀: 어댑터 순수 **49 PASS**(T14~19 추가) + 그래프 headless **279 PASS 무회귀**. B1/M1 시각 실증·pageerror 0.
+
+## REV-20260713T070819-ai-root-feature-0016-graph-pixi-polish-pd [SKIPPED:docs-only-postdeploy]
+- §79 POST-DEPLOY 라이브 기록 — docs-only. 배선 코드는 선행 REV-...-graph-pixi-polish [SUBAGENT:PASS-WITH-FIXES] 적대 리뷰 완료. SKIPPED.

@@ -1766,3 +1766,9 @@ PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수
 
 ### Git 동기화 결과
 - 커밋: `ai/root/feature-0016-graph-pixi-polish`. 배포·라이브 PB-0008 후속.
+
+## 2026-07-13 · §79 POST-DEPLOY 완료
+PR #755 → main 8edfa3a8 무중단 배포. 라이브 admin(건즈 gunzgame 409 객체): 미니맵 클램프(극단 줌아웃 박스 내)·미니맵 드래그(클릭→카메라 이동)·409 객체 렌더 정합·pageerror 0. analyzed 테두리·running desaturate·풀 6배는 통합 하네스 시각 실증. **§79 완결.**
+
+### Git 동기화 결과
+- 병합: PR #755 → main 8edfa3a8. 배포: deploy-web.sh(무중단). POST-DEPLOY docs(본 커밋).
