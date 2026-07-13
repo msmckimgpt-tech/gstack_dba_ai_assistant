@@ -1746,3 +1746,11 @@ PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수
 - **render-on-demand 전환**: ticker autoStart:false + 변경 지점마다 명시 _render(). 근본원인 디버그 — WebGL preserveDrawingBuffer:false + rAF-throttle 로 headless/CDP 스크린샷이 검게 캡처되던 것(수동 render 는 컬러 실증)을 on-demand 렌더 + preserveDrawingBuffer:true 로 해소. 정적 viz 라 idle GPU 0 부수이득.
 - **검증**: 어댑터 순수 33 PASS + 그래프 회귀 279 PASS 무회귀 + 통합 하네스(실 그래프 마크업 + Pixi UMD + graph 번들 + mock apiFetch) headless+실 Windows Chrome: seam→PixiGraphAdapter 구성·6 스키마 카드 렌더·툴바 버튼·팬 60fps vsync-perfect·pageerror 0. 심화 상호작용(expand/상세/컨텍스트/드래그)은 동일 graph-core 로직이라 실데이터 PB-0008 이 정본 게이트(다음).
 - **다음**: 배포(deploy_scope included) + 라이브 admin 그래프 뷰 PB-0008(실데이터 전 버튼·상호작용·팬 성능) → cycle-finalize.
+
+## 2026-07-13 · §78 Phase C 완결 — 배포 + 라이브 PB-0008 (그래프 렌더러 PixiJS 전환 완료)
+- **배포**: PR #752 → main d776f57b, `deploy-web.sh` 무중단 롤링(web-a/web-b·soak 90s PASS). deploy_scope:included 활성 근거 하 자동 배포(1줄 표면화 완료).
+- **라이브 PB-0008(실 Windows Chrome, mysql-gz-dev 건즈 실데이터)**: seam=PixiGraphAdapter(webgl/8.19.0)·roots(3 스키마+밴드+관계+미니맵)·스키마 펼침(409 객체 정상 렌더·미니맵 전역=M3 실증)·combo 상세·툴바(줌/fit/검색/초기화)·**대형 스키마 팬 60fps vsync-perfect(p95 16.8ms)**·pageerror 0. 사용자 팬 버벅임 근본 해소 라이브 확인. 상세 = test-runs.d/20260713T061958-pixi-live-postdeploy.md.
+- **결과**: feature-0016 §78(그래프 렌더러 G6→PixiJS v8) 계획 수립→POC→흡수→어댑터 신설→seam 배선→적대리뷰→배포→라이브검증 완결. 모든 UI 버튼·상호작용 정합 + 핵심 성능 목표 달성.
+
+### Git 동기화 결과 (Phase C)
+- 병합: PR #752 → main d776f57b. 배포: deploy-web.sh(무중단). POST-DEPLOY docs 커밋(본 커밋) → 자동 동기화.

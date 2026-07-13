@@ -153,3 +153,8 @@ source_of_truth: true
 - 대상: `graph/graph-renderer-pixi.js`(gap 배선 + 적대리뷰 B1/M1/M2/m1/m2/m4)·`graph/graph-core.js`(seam _metaRendererKind·_metaInitGraph 분기 + pixi 컬링 비활성 M3/M4 + drag-enable predicate 주입)·`graph/SCENE_SPEC.md`(신규)·`admin.html`(pixi.min.js vendor)·`vendor/pixi.min.js`(신규)·`tests/headless/test_pixi_adapter.js`.
 - 변경: 그래프 렌더러 G6→PixiJS 전환 배선. 어댑터가 G6.Graph 인터페이스 미러(모든 UI 버튼·상호작용 무변경 동작). render-on-demand. 적대 §18.8 BLOCKING1+MAJOR4+MINOR3 수정. 회귀 0(순수 33 + 그래프 279).
 - 근거: 사용자 지시(실 배선 + 모든 UI 버튼 정합). REV-…-graph-pixi-wire [SUBAGENT:PASS-WITH-FIXES].
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-postdeploy — §78 Phase C POST-DEPLOY 라이브 검증 기록 (docs-only, 코드 0)
+- 대상: `docs/{TASK.md(T78.3c/T78.4 완료),REPORT.md(Phase C 완결)}` + `unit/feature-0003-agent-web-ui/docs/test-runs.d/*-pixi-live-postdeploy.md`. **코드/자산 변경 0**.
+- 변경: PR #752 배포(main d776f57b) + 라이브 admin 그래프 뷰 PixiJS 실데이터 PB-0008 결과 기록 — 409 객체 렌더·전 UI 버튼·팬 60fps vsync-perfect·pageerror 0. feature-0016 §78 완결.
+- 근거: 배포·라이브 검증 완수. 코드 diff 부재 → §18.8 SKIPPED.
