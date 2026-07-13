@@ -475,6 +475,72 @@ def _adaptive_components(embs, member_idx, tau, cap, *, step=0.02, ceiling=0.98)
     return out
 
 
+def _cluster_centroids(embs, member_lists) -> list:
+    """클러스터별 L2-정규화 centroid (p2 seriation·soft-attach 공용). numpy 부재 → [](no-op)."""
+    try:
+        import numpy as np
+    except Exception:
+        return []
+    out = []
+    for members in member_lists:
+        X = np.asarray([embs[i] for i in members], dtype=np.float32)
+        c = X.mean(axis=0)
+        n = float(np.linalg.norm(c))
+        out.append(c / n if n > 0 else c)
+    return out
+
+
+def _seriate_by_centroid(centroids, sizes, keys) -> list:
+    """centroid 최근접-이웃 greedy 체인 → 클러스터 순서(로컬 인덱스 permutation), p2 RC-B.
+
+    시작 = 최대 크기(동률 min-key). 다음 = 현재 클러스터 centroid 와 최대 코사인(동률 min-key)의
+    미방문 클러스터. 의미 연관 클러스터가 인접 id 를 받아 프론트 밴드 배치가 내용순이 된다.
+    결정론. centroid 미가용(numpy 부재)·클러스터 ≤2 → 항등 순서."""
+    n = len(sizes)
+    if n <= 2 or not centroids or len(centroids) != n:
+        return list(range(n))
+    try:
+        import numpy as np
+    except Exception:
+        return list(range(n))
+    C = np.asarray(centroids, dtype=np.float32)
+    start = min(range(n), key=lambda j: (-sizes[j], keys[j]))
+    order, visited = [start], {start}
+    while len(order) < n:
+        cur = order[-1]
+        sims = C @ C[cur]
+        best = None
+        for j in range(n):
+            if j in visited:
+                continue
+            if best is None or float(sims[j]) > float(sims[best]) or (
+                    float(sims[j]) == float(sims[best]) and keys[j] < keys[best]):
+                best = j
+        order.append(best)
+        visited.add(best)
+    return order
+
+
+def _nearest_centroid(emb, centroids):
+    """emb 와 최대 코사인 centroid 의 (인덱스, 코사인) — 동률은 낮은 idx(strict >). 실패 → (None, -1.0).
+    임계 판정은 caller 소관(§18.8 p2 패널 MAJOR-1 cap 가드가 유사도 내림차순 배정에 sim 을 소비)."""
+    try:
+        import numpy as np
+    except Exception:
+        return None, -1.0
+    v = np.asarray(emb, dtype=np.float32)
+    n = float(np.linalg.norm(v))
+    if n <= 0:
+        return None, -1.0
+    v = v / n
+    best, best_sim = None, -1.0
+    for j, c in enumerate(centroids):
+        s = float(np.dot(v, c))
+        if s > best_sim:
+            best, best_sim = j, s
+    return best, best_sim
+
+
 def _union_find(n, edges) -> list:
     """union-find → 각 노드의 component 대표(root) 리스트."""
     parent = list(range(n))
@@ -674,7 +740,7 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
     라벨 → affix 폴백, RC5). 싱글턴/미충족 → NULL. (4) 변경분만 UPDATE(멱등). skip 스키마의 기존
     배정은 보존. fail-soft."""
     rep = {"scope": scope_key, "objects": 0, "clusters": 0, "updated": 0,
-           "schemas": 0, "skipped_schemas": 0, "error": None}
+           "schemas": 0, "skipped_schemas": 0, "attached": 0, "error": None}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -774,6 +840,14 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             valid = [(min(items[i]["key"] for i in members), members)
                      for members in comps if len(members) >= min_size]
             valid.sort(key=lambda x: x[0])
+            # p2 RC-B(연관 밴드 인접 배치): 클러스터 id 를 **centroid 최근접-이웃 체인 seriation 순서**로
+            # 배정 — 프론트가 be: 밴드를 id 순으로 배치하면 의미 연관 밴드가 물리적으로 이웃한다.
+            # 결정론: 시작=최대 크기(동률 min-key), greedy 다음=현재 centroid 와 최대 코사인(동률 min-key).
+            centroids = _cluster_centroids(embs_all, [m for (_k, m) in valid])
+            order = _seriate_by_centroid(centroids, [len(m) for (_k, m) in valid],
+                                         [k for (k, _m) in valid])
+            valid = [valid[j] for j in order]
+            centroids = [centroids[j] for j in order]
             # 라벨: affix 기본 + LLM 컨텐츠 라벨(캐시·fail-soft) override — 분석 요약은 캐시-미스
             # 클러스터에 한해 lazy 수집(패널 m2: 게이트 OFF/전량 적중 시 per-member 점조회 0).
             label_inputs = []
@@ -795,10 +869,41 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                 return summaries
             llm_labels = _llm_content_labels(cur, datasource_key, eff, label_inputs,
                                              fetch_summaries=_summaries_for)
+            labels_by_cid = {}
+            in_core = set()
             for local_idx, (_key, members) in enumerate(valid):
                 label = llm_labels.get(local_idx) or _label_cluster([items[i]["name"] for i in members])
+                labels_by_cid[local_idx] = label
                 for i in members:
-                    assign[i] = (local_idx, label)   # 스키마-로컬 id(m5)
+                    assign[i] = (local_idx, label)   # 스키마-로컬 id(m5) — seriation 순
+                    in_core.add(i)
+            # p2 RC-A(soft-attach 2차 패스): 코어 미배정 잔여를 centroid 코사인 ≥ ATTACH_SIM 이면 최근접
+            # 클러스터에 편입(라벨 상속) — 잔여가 프론트 affix 폴백("dt_c" 류 가짜 가족)으로 흐르는 것을
+            # 컨텐츠 기반으로 흡수. 미달은 NULL 유지(무리한 편입 금지). 라벨·캐시 키는 코어 멤버만으로
+            # 산정(attach 가 라벨을 오염시키지 않음). fail-soft(numpy 부재 시 no-op).
+            if centroids:
+                attach_tau = float(getattr(_cfg, "AGENT_METADATA_CLUSTER_ATTACH_SIM", 0.78))
+                # §18.8 p2 패널 MAJOR-1: cap 가드 — attach 가 MAX_SIZE 를 우회해 거대 밴드를 재생성하지
+                # 않도록(직전 cycle 이 해소한 blob 의 재발 경로 — 리뷰어 실험 실증 65>40), 후보를 유사도
+                # 내림차순(동률 min-key)으로 정렬해 클러스터별 코어+attached < cap 동안만 배정한다.
+                # cap 도달 클러스터의 잔여 후보는 차선 centroid 재평가 없이 NULL 유지(결정·단순).
+                room = {cid: max(0, cap - len(members)) for cid, (_k, members) in enumerate(valid)}
+                cands = []
+                for i in idxs:
+                    if i in in_core:
+                        continue
+                    cid, sim = _nearest_centroid(embs_all[i], centroids)
+                    if cid is not None and sim >= attach_tau:
+                        cands.append((-sim, items[i]["key"], i, cid))
+                cands.sort()
+                for _negsim, _key, i, cid in cands:
+                    if room.get(cid, 0) <= 0:
+                        continue
+                    room[cid] -= 1
+                    assign[i] = (cid, labels_by_cid.get(cid))
+                    # NIT-1: attached = 이번 pass 에서 attach 로 배정된 총수(신규+유지 재배정 포함 —
+                    # 멱등 재실행에서도 상태 총수로 유지. 변경분은 updated 가 관측).
+                    rep["attached"] += 1
             total_clusters += len(valid)
         rep["clusters"] = total_clusters
         # 역기록: 변경분만 UPDATE (싱글턴/미클러스터 → NULL 회수, skip 스키마는 보존).

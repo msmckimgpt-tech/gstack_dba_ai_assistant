@@ -211,7 +211,6 @@ source_of_truth: true
 
 ## REV-20260713T081919-ai-root-feature-0016-graph-pixi-bitmaptext-pd [SKIPPED:docs-only-postdeploy]
 - §80 POST-DEPLOY 라이브 기록 — docs-only. 배선 코드는 선행 REV-...-bitmaptext [SUBAGENT:PASS-WITH-FIXES] 완료. SKIPPED.
-
 ## REV-20260713T181300-detail-hover-fx — §81 상세 패널 hover 시각 효과
 - 설계 선택: hover 효과를 **비커밋**(커밋 선택 bake·전체 rebuild 미접촉)으로 구현. 하이라이트는 PixiJS 어댑터의 world-space 전용 오버레이 레이어(`_hoverLayer`)에 위임 — `this.world` 자식이라 팬/줌 자동 정합, `setElementState`(노드-only, 커밋 상태)·엣지 상태 부재 문제를 우회하고 커밋 선택과 시각 충돌 없음. 카메라 이동은 기존 `_metaGraphAnimateFocus`(적응형 부드러운 팬) 재사용.
 - 렌더러 무관: G6 폴백 seam(`window.__META_RENDERER`) 대비 하이라이트 메서드를 feature-detect(`typeof g.setHoverHighlight==="function"`)로 호출 — 폴백에선 graceful no-op, 카메라(focusElement)는 양쪽 동작. PixiJS 가 de-facto 렌더러라 실사용 경로 정상.
@@ -228,3 +227,16 @@ source_of_truth: true
 - **MINOR (수정됨)** `_metaGraphSetHoverHighlight` 의 `!a && b`(self 미렌더·상대 렌더) 케이스 강조 누락: **조치**: `else if (b) addNode(b)` 추가.
 - **반증(결함 아님 확인)**: XSS(`data-edge-self` 전부 `esc()` — &<>" 이스케이프) · G6 폴백 안전(feature-detect no-op, throw 경로 없음) · draw() 스래싱 없음(hover 는 `_hoverLayer`+`_render()` 만, `setData`/`draw` 무접촉) · 리스너 누수 없음(매 렌더 `el.innerHTML` 교체로 GC) · hit-test 간섭 없음(오버레이 eventMode none·자체 hit-grid) · 클릭/더블/캐럿 라우팅 무회귀(hover 는 mouseenter/leave/focus/blur 만, stopPropagation 없음).
 - 재검증: 3개 모듈 `node --check` PASS(수정 후). 회귀: 그래프 헤드리스 하네스는 배포 파이프라인에서 실행(별도) — 본 변경은 additive·비커밋이라 기존 배치·선택 경로 무접촉.
+## REV-20260713T170500-ai-claude-feature-0016-content-cluster-p2 [SUBAGENT: PASS-WITH-FIXES] — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 diff 적대 리뷰
+- 대상: worktree p2 diff — `semantic_cluster.py`(soft-attach·centroid seriation)·`shared/config.py`(ATTACH_SIM)·`graph-simgroups.js`(일반 접두 strip·be: id 순 선두 배치)·신규 테스트(BE 2+1수정·FE 헤드리스 13→16). §18.8 general-purpose 적대 리뷰어 — **리뷰어 독립 재현**(BE 22·FE 13·헤드리스 12 스위트 전 PASS + 멱등 재실행 UPDATE 0 실증) + **적대 실험 2건으로 결함 재현**.
+- 패널 판정: **PASS-WITH-FIXES — BLOCKING 0 · MAJOR 2 · MINOR 4 · NIT 2.** 통과 축: seriation·attach 결정론(tie-break 전거 확증)·멱등(재실행 UPDATE 0)·라벨 kv 캐시 코어-멤버 한정(attach 불간섭)·skip/미달 스키마와 attach 상호작용 안전·be: 이중 포함 없음·groupCollapsed/검색 강제펼침 보존·O(n²) 규모 무해.
+- 결함 원장 및 처리:
+  - **MAJOR-1 [BE/cap 우회] — 수정**: attach 에 클러스터별 수용량 가드 부재 — 리뷰어 실험에서 잔여 60 전원이 한 centroid 로 attach 되어 밴드 65 > cap 40(직전 cycle 이 해소한 거대 밴드의 재발 경로). → 후보 (‑sim, key) 정렬 후 **코어+attached < cap 동안만 배정**(도달 시 차선 재평가 없이 NULL — 결정·단순). 회귀 테스트 test_pass_attach_cap_guard(4D 구성) 추가.
+  - **MAJOR-2 [FE/의미 접두 오검출] — 수정**: 접두 regex 2~4자+15% 임계가 user_/item_ 류 **4자 의미 접두**를 generic 판정(리뷰어 실험: user_ 25% → user 가족 해체 — AC-p2-3 자기위반) + TASK 계획(≥35%·2~4자)과 코드 drift. → regex **2~3자** 축소(dt_/ct_/sp_/usp_/tbl_ 커버 유지·4자 의미 접두 보호) + TASK.md 최종 구현값 정합 + FE 테스트 D1~D3(user_ 보존) 추가.
+  - **MINOR-1 [FE] 수용**: gp 가 로드-상태 의존(이웃확장 시 nm: 그룹 키 변동 가능) — 기존 affix 지지도의 동류 리스크 확장, §49 안정화가 점프 억제. 관찰만.
+  - **MINOR-2 [FE] 수용**: 세션 중 신규 be: 밴드는 §49 우선으로 후미 append(fresh load 시 정상 복귀) — 검증 절에 명시.
+  - **MINOR-3 [BE] 이연**: `_label_cluster` affix 폴백의 generic strip 미적용(FE/BE 라벨 비대칭 — LLM 라벨 경로에선 무발현, 표시 품질만). 후속.
+  - **MINOR-4 [BE] 수용**: ATTACH_SIM 이 τ 와 독립 상수 — config 주석에 관계 서술 존재, τ-파생 기본값은 후속 검토.
+  - **NIT-1 — 수정(주석)**: rep["attached"] 의미를 "이번 pass attach 배정 총수(신규+유지)"로 명확화. **NIT-2 — 수용**: 방향 말줄임 라벨이 strip 정규화 기준(view_ strip 이래 기존 semantics 연장).
+- 반영 후 재검증: FE simgroups_p2 **16/16** + category 26·vpack 19 무회귀, BE 파일 23 PASS, **전체 pytest EXIT=0/FAILED 0**. 라이브 프로브(롤백): attached 5,249·cc_data_main 잔여 114→26·리포트 3종(DT_CashPoint/DT_Castle/dt_CombineMaterial) 각기 다른 클러스터로 분리.
+- **deploy_scope: included 근거 기록(§12.2/§16.3)**: FIRST_REQUEST.md 전역 선언 — cycle 종료 시 배포(web 롤링+worker 재빌드) 자동 진행, 프론트 변경이라 `visual_verification_scope: always` 에 따라 POST-DEPLOY PB-0008 이 완료 게이트.
