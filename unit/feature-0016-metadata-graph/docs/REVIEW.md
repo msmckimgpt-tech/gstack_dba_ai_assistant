@@ -167,3 +167,6 @@ source_of_truth: true
 - Panel skip 사유(§18.8): diff 가 단일 WHERE 절 축소(필터 제거 — 반환 집합이 ds 파티션으로 유계)이고, 원 패널이 동일 클래스(n4)를 이미 적대 검증. 회귀는 테스트 assert 로 잠금. 라이브 재가동 실증이 완료 게이트.
 ## REV-20260713T023517-ai-root-feature-0016-graph-pixi [SKIPPED:docs-only-plan]
 - §78 PixiJS v8 렌더러 교체 **계획 수립**(BLUEPRINT + TASK §78 plan-review) — 코드 diff 0, docs-only. §18.8 패널은 코드 산출물 부재로 SKIPPED. 계획 자체의 검증 게이트는 §7.1 human plan-review(PLAN-APPROVED 마커) + Phase A POC exit gate(디자인 D1~D6·성능 p95)로 이원화되어 있음. 구현 cycle(Phase A~C)에서 §18.8 적대 패널 정상 적용 예정.
+
+## REV-20260713T042924-ai-root-feature-0016-graph-pixi-poc [SKIPPED:poc-only]
+- §78 Phase A PixiJS POC — poc/ 격리 폴더(pixi-poc.html·shoot_pixi.py·vendored pixi.min.js) + docs 기록. **제품 코드/자산(graph/*·admin.js·admin.html) 변경 0**. verify-completion check#4 는 poc 의 .html/.js 를 코드로 감지하나 제품 표면 무변경이라 §18.8 적대 패널 SKIPPED. 실제 검증 게이트는 BLUEPRINT §4 Exit A(디자인 D1~D5 + 성능 p95) 로 실 Windows Chrome(PB-0008 relay) 실측 PASS. 제품 코드 통합(Phase B)에서 §18.8 정규 적용.

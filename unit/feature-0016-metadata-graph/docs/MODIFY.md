@@ -138,3 +138,8 @@ source_of_truth: true
 - 대상: `unit/feature-0016-metadata-graph/pixi-migration/BLUEPRINT.md`(신설), `docs/{TASK.md(§78 신설),REPORT.md(2026-07-13 절),REVIEW.md([SKIPPED] entry)}`. **코드/자산 변경 0**.
 - 변경: 팬 성능 잔존 병목(Canvas per-frame CPU 재래스터) 타당성 검토 결론 + PixiJS v8 이관 계획(디자인 보존 계약 D1~D6·Phase A/B/C·AC·리스크 R1~R7)을 plan-review 상태로 정착. 실행은 PLAN-APPROVED 후(§7.1 Major).
 - 근거: 사용자 지시(2026-07-13) — 게임엔진 기각 검토 수용, G6 유지 경로 기각(과거 디자인 실패 이력), PixiJS v8 로 디자인 무붕괴+성능 확보 계획 요청. 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-poc — §78 Phase A POC (poc-only, 제품 코드 0)
+- 대상: `unit/feature-0016-metadata-graph/pixi-migration/poc/{pixi-poc.html,shoot_pixi.py,pixi.min.js}`(신설), `docs/{TASK.md(T78.2),REPORT.md,MODIFY.md}`. **제품 코드/자산 변경 0** (poc 격리 폴더).
+- 변경: PixiJS 8.19.0 POC — 디자인 보존 계약 D1~D5 검증 씬 + 성능 하네스. 실 Windows Chrome 실측 exit gate PASS(882 등가 vsync-perfect).
+- 근거: TASK §78 T78.2 / BLUEPRINT §4 Phase A. 제품 diff 부재 — §18.8 패널은 Phase B 코드 통합 시 적용.

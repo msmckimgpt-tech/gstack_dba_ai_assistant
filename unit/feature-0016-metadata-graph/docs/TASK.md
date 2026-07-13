@@ -2322,6 +2322,9 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 ### Tasks
 - [x] T78.0 타당성 검토(read-only): 게임/시뮬레이터 엔진 기각·웹 GPU 렌더러 권고·결합도 실측(G6 결합 ~700–900줄/5,491줄) — 2026-07-13 세션 보고.
 - [x] T78.1 계획 수립: BLUEPRINT.md + 본 §78(plan-review) 정착.
-- [ ] T78.2 (승인 게이트) PLAN-APPROVED 마커 → Phase A POC 착수 (BLUEPRINT §4 Phase A, exit gate: 디자인 D1~D6 + 성능 p95).
+- [x] T78.2 Phase A POC **완료 — exit gate PASS** (2026-07-13): `pixi-migration/poc/{pixi-poc.html,shoot_pixi.py,pixi.min.js(8.19.0 vendored)}`.
+  - **디자인 게이트(D1~D5)**: 정본 스타일 수치(graph-roleviz/state) 1:1 이식 씬 — 노드 6종·엣지 6종·dim bake·한글 라벨("확률형 아이템 지급") 을 headless(줌 0.35~2.5×DPR2) + **실 Windows Chrome(PB-0008 relay)** 양쪽 스크린샷 검수: 벡터 선명·점선 3종 패턴 등가·텍스처 왜곡 없음·tofu 없음. D6(미니맵)은 Phase B 구현 항목.
+  - **성능 게이트**: 실 Windows Chrome 실측 — idle vsync 기준선 p50/p95 = 18.0/18.1ms(~55Hz 디스플레이). **882노드 등가 씬(5스키마×24T×6C) 팬/줌 p50=p95=18.0/18.1ms = vsync-perfect(추가 지연 0, jank 0)** → 게이트 "p95<16.6ms@60Hz" 의 취지(p95≤vsync 간격) 충족. 11k 스트레스(20×50×10, 실전 극단의 ~2배)는 무최적화 POC 로 p50 36/p95 69ms(22~31fps) — GraphicsContext 공유·BitmapText·컬링 미적용 상태의 floor 로 headroom 명확.
+  - headless SwiftShader 수치는 소프트웨어 GL 이라 참고 배제(POC 주석 명기). pageerror 0.
 - [ ] T78.3 Phase B 어댑터 통합 (순서 게이트 R6 충족 후).
 - [ ] T78.4 Phase C PB-0008 시각검증 + 배포 + ADR 신설(ADR-004 supersede) + 문서 정합.

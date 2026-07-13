@@ -1708,3 +1708,14 @@ win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검�
 ### Git 동기화 결과
 - 커밋: (본 커밋) `ai/root/feature-0016-graph-pixi` — docs-only(BLUEPRINT/TASK/REPORT/MODIFY/REVIEW).
 - Push: **보류** (사유: §16.3 Step 4 — Major plan-review 승인 대기. 승인 후 Phase A cycle 에서 동기화 재개.)
+
+## 2026-07-13 · §78 Phase A POC 완료 — 디자인·성능 exit gate PASS
+PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수행.
+- **산출물**: `pixi-migration/poc/pixi-poc.html`(정본 스타일 수치 1:1 이식 씬 + 팬/줌 프레임타임 하네스 + `window.poc` 구동 API), `shoot_pixi.py`(Playwright headless 드라이버), `pixi.min.js` 8.19.0 vendored(797KB — g6.min.js 1.38MB 대비 순감).
+- **디자인(D1~D5)**: 노드 6종(테이블 역할색 칩·컬럼 dot·루틴 보라칩·SC 카드·combo 점선 카드·ctl)·엣지 6종(trusted/candidate/crossds/routine read/SCHEMA_REF+count)·dim 0.38 bake·한글 라벨 — headless 줌 배율별 + **실 Windows Chrome(PB-0008 relay)** 스크린샷 검수 전항 등가. 과거 WebGL 실패 모드(텍스처 왜곡·점선 소실) 재현 없음(벡터 테셀레이션 + Text resolution 4).
+- **성능(실 Windows Chrome)**: idle vsync 18.0/18.1ms(~55Hz) 기준선 대비 — **882노드 등가 씬 팬/줌 p50=p95=18.0/18.1ms = vsync-perfect**(현행 G6 Canvas 는 동급 규모에서 사용자 체감 버벅임이 리포트되던 규모). 11k 스트레스는 무최적화 POC floor 22~31fps(p95 69ms) — GraphicsContext 공유·BitmapText·컬링 도입 전 수치.
+- **판정**: BLUEPRINT §4 Exit A 충족(디자인 전항 + 성능 게이트). 다음 = 사용자 육안 확인(win-browser 로 사용자 Chrome 에 디자인 씬 표시함) → Phase B 어댑터 통합. **Phase B 는 R6 순서 게이트**(minimap-fullview·content-cluster cycle 착지) 충족 후 착수.
+
+### Git 동기화 결과 (Phase A)
+- 커밋: (본 커밋) `ai/root/feature-0016-graph-pixi` — POC 3파일 + TASK/REPORT/MODIFY 기록.
+- Push: 진행 (PLAN-APPROVED Major 진행 중 — BLOCKED 없음, §16.3 Step 4 자동 동기화).
