@@ -5451,8 +5451,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(블록순서 07-10>07-09>… 정합·항목 스키마 type/area/title/detail·누출 스캔 0).
 - [x] 배포: verify-completion(operational, feature-0003) → 로컬 commit(META STATUS·wiki·RELEASE_NOTES·meta/REVIEW 는 별도 commit). **landing(push/PR/merge)·배포(make deploy-web 무중단)는 본 attended run 소유** → PR→merge→deploy-web→end-state 검증(라이브 `?v=` 해시 갱신·generated 07-10 서빙 확인).
 - [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(그래프 §60~76·타임아웃 모달·§69 caveats)는 각 원천 cycle POST-DEPLOY PB-0008 이 검증(다수 PASS). 사유 TEST.md §CHECK#13.
-
-
 ## 20260713T1818-graph-perm-split — 그래프 뷰 권한을 '메타데이터 관리' 묶음에서 분리 (Critical §12.3 인증/인가, /_template:entry arg-given, 사용자 승인 B안, 2026-07-13)
 
 - **요청**(/_template:entry): "그래프 뷰가 별도의 탭으로 분리됨에 따라, 권한 또한 '메타데이터 관리'로부터 별도로 분리해주세요."
@@ -5483,3 +5481,16 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
   - `kb.ingest.manual` 설명 301→205자 단축(클립 없이 온전 저장). 전 권한 description ≤255·label ≤128 전수 확인(잘림 0).
 - [x] py_compile OK · feature-0003 전체 스위트 PASS(회귀 0).
 - [ ] verify-completion → commit → PR → 머지 → web 재배포 → **재실증**: web 로그 `seed catchup skipped` 소멸 + `WebSchemaMigrations` 에 `graph-perm-split-v1` row 생성.
+
+
+## TASK-20260713T094624-ds-conn-test — 작업화면 제품 드롭업 데이터소스 라벨 '연결 테스트' 버튼 + 상단 단발성 토스트 (Major §12.3 — feature-0003 web/UI + 백엔드 throttle, 2026-07-13)
+- 트리거: `/_template:entry` arg-given. REQ: 채팅 작업화면 제품 목록 데이터소스 라벨 클릭 → 연결 테스트 + 관리 콘솔식 단발성 Toast, 단 작업화면 토스트는 입력창 비가림 상단 표시.
+- [x] 설계 결정(AskUserQuestion): ① A2(관리자 엔드포인트 `POST /api/admin/datasources/{key}/test` 재사용·별도 RBAC 무 + 프론트/백 재시도 텀) ② C2(작업화면 전체 토스트 상단화).
+- [x] 프론트 `static/app.js`: `buildProductDropupItem` 데이터소스 배지 → `canOpenAdminConsole()` 게이트 실제 `<button>`('연결 테스트'), 단일=그 DS/멀티="N개 데이터소스"→전체 순차+요약 토스트, 행 요소 `<button>`→`<div role=menuitem tabindex>`(click+keydown 선택 복원·중첩 button 회피), `runDatasourceConnTest`(프론트 쿨다운 4s `.has()` sentinel·진행 중 disabled·403 apiFetch 위임/429 중립/실패 에러 토스트).
+- [x] 상단 토스트 `static/styles.css`: `#toast` 상단 앵커(`top: calc(--topbar-h+14px)`·`bottom:auto`·`max-width: min(460px, 100vw-32px)`·bg transition), `button.product-dropup-item-ds--test`(at-rest 테두리·min 24px·hover 틴트·:disabled). admin `#adminToast` 하단 불변.
+- [x] 백엔드 `routers/admin_datasources.py`: `admin_test_datasource` per-(account,key) 쿨다운(env `AGENT_DS_TEST_COOLDOWN_SEC`=3s, resolve/SSRF 이후·probe 직전, 미경과 429 throttled — probe 미실행). in-process·per-replica coarse throttle(프론트 disable 이 1차).
+- [x] `static/admin.js`: 공유 엔드포인트 429 graceful — 배지 lazy probe 직전 상태 유지(‘down’ 오분류 방지)·상세/제품바인딩 '연결 테스트' 버튼 중립 토스트.
+- [x] 테스트: `verify_profile_icon_consistency.mjs` 하네스 `canOpenAdminConsole` 스텁 + `test_datasource_test_nonblocking.py` autouse 리셋 fixture + throttle 계약 2건(반복→429·404 무-throttle). 타깃 6/6.
+- [x] §18.8 적대 패널 3렌즈(backend+security·frontend+QA·UX+a11y) → SHIP-WITH-FIXES: FE HIGH(하네스)·MED-HIGH(pointer-events 더블클릭)·MED(쿨다운 sentinel)·UX MAJOR(중첩 인터랙티브·어포던스·aria-label)·Backend NIT 4+MINOR 1 **전건 반영 후 재검**(REV-20260713T094624-ds-conn-test).
+- [x] 검증: `node --check`(app.js·admin.js module)·`py_compile`·CSS 균형·**전체 pytest 1902 passed / 2 skipped / 0 failed(회귀 0)**.
+- [ ] verify-completion → 머지·push → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 실 Windows 브라우저(데이터소스 버튼·상단 토스트·입력창 비가림·429 쿨다운·admin 회귀 0). win-browser relay 172.26.144.1:9223 열림.

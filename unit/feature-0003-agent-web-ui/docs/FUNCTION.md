@@ -1574,3 +1574,10 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 `date:"2026-07-10"` 블록 prepend(7항목·`generated` 2026-07-10). 직전 블록(07-09 모델별 추론 예산) 이후 07-09~10 머지 델타 중 사용자 화면 신규분만 반영(그래프 §57.4~76·타임아웃 모달 제거·§69 caveats 실질화·MSSQL 접속거부 조기 skip).
 - 평이화/비노출: feature-id·§번호·ADR·테이블/함수명·오류코드 등 내부표현 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입) — 수기 bump 없음. CHG/REV-20260713T102249-doc-sync-rn-0713. landing/배포는 본 attended run 소유.
+
+### (TASK-20260713T094624-ds-conn-test) 작업 화면 제품 드롭업 데이터소스 라벨 = '연결 테스트' 버튼 + 상단 단발성 토스트
+- 작업 화면 composer '+' 제품 드롭업(`buildProductDropupItem`)의 각 제품 행 데이터소스 배지를, 관리 콘솔 접근 권한(`canOpenAdminConsole()`) 계정에 한해 실제 `<button>`('연결 테스트')로 렌더한다. 클릭 시 관리 콘솔과 동일한 `POST /api/admin/datasources/{key}/test`(A2, 별도 RBAC 추가 없음)를 호출하고 결과를 단발성 토스트로 표시. 단일 DS=그 DS 테스트, 다중 DS="N개 데이터소스" 버튼=전체 순차 테스트+요약 토스트 1개. 무권한/열람 전용 제품은 기존 display-only 배지 유지(회귀 0).
+- 작업 화면 토스트(`#toast`)는 **화면 상단**(topbar 아래) 앵커로 이동 — 하단 입력창(composer)과 위로 열리는 제품 드롭업을 가리지 않는다(C2, 작업 화면 전 토스트 적용). 관리 콘솔 토스트(`#adminToast`)는 하단 유지(id 스코프 오버라이드).
+- 남용 방지: 프론트 per-key/조합키 쿨다운(버튼 disable, 기본 4s) + 백엔드 per-(account,key) 쿨다운(`AGENT_DS_TEST_COOLDOWN_SEC` 기본 3s, 미경과 시 probe 없이 429 throttled). 관리 콘솔 기존 호출부(배지 lazy probe·상세/제품바인딩 '연결 테스트')도 429 graceful(배지 직전 상태 유지·버튼 중립 토스트).
+- 접근성: DS 테스트 버튼은 실제 `<button>`(중첩 `<button>` 회피 위해 행 요소를 `<div role=menuitem tabindex>`로 전환·click+keydown 선택 복원)·`aria-label="<key> 연결 테스트"`·min 24px 터치 타깃·at-rest 테두리 어포던스.
+- 코드 거주: `static/app.js`·`static/styles.css`·`static/admin.js`·`routers/admin_datasources.py`. CHG/REV-20260713T094624-ds-conn-test.
