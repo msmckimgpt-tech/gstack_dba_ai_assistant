@@ -181,3 +181,6 @@ source_of_truth: true
 - **MINOR 수정**: m1 destroy 시 window 리스너·ResizeObserver 정리. m2 노드 lineDash(그룹 배경 GB 점선) 소비. m4 드래그 중 미니맵 뷰포트 사각형만 갱신(콘텐츠 재그림 dragend 지연).
 - **통과 확인(적대 검증)**: 좌표 API 방향(getCanvasByViewport=screen→model)은 이 diff 가 오히려 **수정**(graph-core 소비부 정합)·getElementRenderBounds min/max superset 정합·PIXI 전역 노출(UMD var)·미배선/reject 폴백(try/catch·null guard)·미니맵 재사용 패치 __reusePatched 조기 return — 전부 결함 아님 확인.
 - 회귀: 어댑터 순수 33 PASS + 그래프 headless 279 PASS 무회귀. 남은 m3(seed/anchor 헛도는 무해 noise)는 정확성 무관 — POST-DEPLOY 후속.
+
+## REV-20260713T062037-ai-root-feature-0016-graph-pixi-postdeploy [SKIPPED:docs-only-postdeploy]
+- §78 Phase C POST-DEPLOY 라이브 PB-0008 결과 기록 — docs-only(코드/자산 0). 배선 코드 diff 는 선행 REV-…-graph-pixi-wire [SUBAGENT:PASS-WITH-FIXES] 에서 §18.8 적대 리뷰 완료. 본 커밋은 라이브 검증 기록이라 SKIPPED.
