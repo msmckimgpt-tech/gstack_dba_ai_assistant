@@ -170,3 +170,6 @@ source_of_truth: true
 
 ## REV-20260713T042924-ai-root-feature-0016-graph-pixi-poc [SKIPPED:poc-only]
 - §78 Phase A PixiJS POC — poc/ 격리 폴더(pixi-poc.html·shoot_pixi.py·vendored pixi.min.js) + docs 기록. **제품 코드/자산(graph/*·admin.js·admin.html) 변경 0**. verify-completion check#4 는 poc 의 .html/.js 를 코드로 감지하나 제품 표면 무변경이라 §18.8 적대 패널 SKIPPED. 실제 검증 게이트는 BLUEPRINT §4 Exit A(디자인 D1~D5 + 성능 p95) 로 실 Windows Chrome(PB-0008 relay) 실측 PASS. 제품 코드 통합(Phase B)에서 §18.8 정규 적용.
+
+## REV-20260713T051139-ai-root-feature-0016-graph-pixi-adapter [SKIPPED:unwired-new-file]
+- §78 Phase B-early SceneAdapter(graph-renderer-pixi.js) 신설 — **미배선 신규 파일**(admin.html·graph-core.js 무변경, 실 제품 렌더 경로에 아직 미연결). 어댑터 자체 검증은 순수테스트 28 PASS + 실 Windows Chrome PB-0008(디자인·성능·이벤트) 로 수행. §18.8 적대 패널은 B-late(graph-core 렌더러 seam 배선 = 실 사용자 표면 변경) 시 정규 적용. 신규 파일·미배선이라 현 커밋 SKIPPED.

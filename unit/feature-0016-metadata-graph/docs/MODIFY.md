@@ -143,3 +143,8 @@ source_of_truth: true
 - 대상: `unit/feature-0016-metadata-graph/pixi-migration/poc/{pixi-poc.html,shoot_pixi.py,pixi.min.js}`(신설), `docs/{TASK.md(T78.2),REPORT.md,MODIFY.md}`. **제품 코드/자산 변경 0** (poc 격리 폴더).
 - 변경: PixiJS 8.19.0 POC — 디자인 보존 계약 D1~D5 검증 씬 + 성능 하네스. 실 Windows Chrome 실측 exit gate PASS(882 등가 vsync-perfect).
 - 근거: TASK §78 T78.2 / BLUEPRINT §4 Phase A. 제품 diff 부재 — §18.8 패널은 Phase B 코드 통합 시 적용.
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-adapter — §78 Phase B-early SceneAdapter 신설 (신규 파일, graph-core 무변경)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/graph/{graph-renderer-pixi.js,SCENE_SPEC.md}`(신설) · `tests/headless/test_pixi_adapter.js`(신설) · `pixi-migration/poc/adapter-poc.html`(신설) · docs(TASK T78.3·REPORT·test-runs.d). **기존 graph/ 7모듈·admin.js·admin.html 무변경**(배선은 B-late).
+- 변경: PixiJS v8 SceneAdapter(G6.Graph 호환 + 순수로직 분리) — scene-spec(=_metaG6Build 출력형태) setScene 렌더. 순수 28 PASS·그래프 회귀 279 무회귀·실 Chrome 60fps vsync + 디자인 D1~D5 보존.
+- 근거: TASK §78 T78.3a / BLUEPRINT §4 Phase B. 신규 파일이라 §18.8 적대 패널은 B-late(graph-core 배선=실 제품 표면 변경) 시 정규 적용 — 본 커밋은 미배선 어댑터라 SKIPPED.

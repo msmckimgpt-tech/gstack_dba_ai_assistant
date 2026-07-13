@@ -1728,3 +1728,13 @@ PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수
 
 ### Git 동기화 결과
 - rebase onto origin/main(behind 0) + force-push(내 브랜치·PR 미개설이라 안전). 커밋 3개 유지(해시 재작성).
+
+## 2026-07-13 · §78 Phase B-early — SceneAdapter(PixiJS v8) 신설·실증 완료
+사용자 지시(병렬 착수) 수용 — R6 자연해소 후 Phase B 착수. B-early(충돌-독립 신규 파일)부터.
+- **산출물**(신규 파일, 타 세션 graph-core.js 변경과 충돌 0): `graph/graph-renderer-pixi.js`(PixiGraphAdapter — G6.Graph 인터페이스 호환, PixiAdapterPure 순수로직 분리) · `graph/SCENE_SPEC.md`(scene-spec 계약) · `tests/headless/test_pixi_adapter.js`(28 PASS) · `pixi-migration/poc/adapter-poc.html`(setScene 실증 하네스).
+- **설계 핵심**: scene-spec = `_metaG6Build()` 출력형태(G6 data-shape) 그대로 → B-late 배선이 `setData(built)`→`setScene(built)` 치환만으로 완료(graph-core emission 무변경 목표). combo 는 자식 union bbox 로 auto-fit → G6 auto-fit 제약(ADR-029/030 combo-safe 컬링 제한) 어댑터에서 소멸.
+- **검증**: 어댑터 순수 28 PASS(카메라 수학·대시·bbox·hit-grid·diff — 결함 1 적발수정 fitCamera pad:0) + 그래프 회귀 279 PASS 무회귀. 실 Windows Chrome(PB-0008): 디자인 D1~D5 보존(상태 오버레이·한글 라벨·점선 6종·combo)·845 등가 팬/줌 **60fps vsync-perfect(p95 16.8ms)**·이벤트 합성(spatial hit-grid picking) 정확. 이벤트 결함 2 적발수정(좌클릭 팬 클릭소실·dblclick 노드무관).
+- **다음**: B-late(graph-core.js 렌더러 seam 배선 + setScene 치환 + admin.html vendor) — 착수 직전 fetch/rebase 로 그래프 변경 재확인(R6 원칙). 이후 미니맵·드래그배치·오브젝트풀·BitmapText 후속 §.
+
+### Git 동기화 결과
+- 커밋: `ai/root/feature-0016-graph-pixi` — 어댑터·계약·테스트·POC·docs. Push: 진행(PLAN-APPROVED Major·BLOCKED 없음).
