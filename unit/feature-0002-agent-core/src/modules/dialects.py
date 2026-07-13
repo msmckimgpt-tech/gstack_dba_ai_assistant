@@ -198,6 +198,25 @@ class Dialect:
     def foreign_keys_incoming(self, schema: str, table: str) -> str:
         raise NotImplementedError
 
+    # ── describe_routine 전용 SQL (저장 프로시저/함수 정의·파라미터 introspection) ──
+    # FR-show-create-routine-blocked: LLM 이 자연스럽게 쓰는 `SHOW CREATE PROCEDURE` 는 sql_guard 의
+    # SELECT/CTE-only 불변식에 (의도대로) 막힌다. 정의 조회는 이미 항상-허용인 카탈로그(information_schema/
+    # sys)에서 **읽기 전용**으로 얻으므로, 신뢰경계 확장 없이 전용 구조화 도구로 노출한다(RO GRANT 가 backstop).
+    def routine_definition(self, schema: str, name: str) -> str:
+        """저장 루틴(PROCEDURE/FUNCTION) 정의 조회 SQL.
+
+        컬럼 계약(엔진 무관, 위치 파싱 호환): ROUTINE_NAME, ROUTINE_TYPE, DATA_TYPE(함수 반환타입/'')，
+        ROUTINE_COMMENT, ROUTINE_DEFINITION(본문). read-only 카탈로그 조회.
+        """
+        raise NotImplementedError
+
+    def routine_parameters(self, schema: str, name: str) -> str:
+        """저장 루틴 파라미터 조회 SQL.
+
+        컬럼 계약: ORDINAL_POSITION, PARAMETER_NAME, PARAMETER_MODE, DATA_TYPE. (position 0 = 함수 반환)
+        """
+        raise NotImplementedError
+
 
 class MySQLDialect(Dialect):
     name = "mysql"
@@ -335,6 +354,37 @@ class MySQLDialect(Dialect):
         WHERE REFERENCED_TABLE_SCHEMA = '{schema}'
             AND REFERENCED_TABLE_NAME = '{table}'
         ORDER BY TABLE_SCHEMA, TABLE_NAME
+    """
+
+    def routine_definition(self, schema: str, name: str) -> str:
+        # information_schema.ROUTINES — ROUTINE_DEFINITION 은 본문(BEGIN…END). DTD_IDENTIFIER 는 함수
+        # 반환 타입 전체 선언(프로시저는 NULL→''). 정의 열람 권한 없으면 ROUTINE_DEFINITION NULL(도구가 안내).
+        return f"""
+        SELECT
+            ROUTINE_NAME,
+            ROUTINE_TYPE,
+            COALESCE(DTD_IDENTIFIER, '') AS DATA_TYPE,
+            COALESCE(ROUTINE_COMMENT, '') AS ROUTINE_COMMENT,
+            COALESCE(ROUTINE_DEFINITION, '') AS ROUTINE_DEFINITION
+        FROM information_schema.ROUTINES
+        WHERE ROUTINE_SCHEMA = '{schema}' AND ROUTINE_NAME = '{name}'
+        ORDER BY ROUTINE_TYPE
+    """
+
+    def routine_parameters(self, schema: str, name: str) -> str:
+        # ORDINAL_POSITION=0 = 함수 반환값(PARAMETER_NAME NULL). DTD_IDENTIFIER 로 전체 타입 선언.
+        # ROUTINE_TYPE(pr[4]) 은 MySQL 동명 PROCEDURE+FUNCTION 공존 시 caller 가 타입별로 파라미터를
+        # 분리하기 위한 판별 컬럼(교차오염 방지). information_schema.PARAMETERS 가 제공.
+        return f"""
+        SELECT
+            ORDINAL_POSITION,
+            COALESCE(PARAMETER_NAME, '(RETURN)') AS PARAMETER_NAME,
+            COALESCE(PARAMETER_MODE, '') AS PARAMETER_MODE,
+            COALESCE(DTD_IDENTIFIER, '') AS DATA_TYPE,
+            ROUTINE_TYPE
+        FROM information_schema.PARAMETERS
+        WHERE SPECIFIC_SCHEMA = '{schema}' AND SPECIFIC_NAME = '{name}'
+        ORDER BY ROUTINE_TYPE, ORDINAL_POSITION
     """
 
     def probe_relationship_overlap(self, src_schema, src_table, src_col,
@@ -621,6 +671,42 @@ class MSSQLDialect(Dialect):
         JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
         WHERE rs.name = '{schema}' AND rt.name = '{table}'
         ORDER BY ps.name, pt.name
+    """
+
+    def routine_definition(self, schema: str, name: str) -> str:
+        # 컬럼 순서를 MySQL 산출과 동일하게(ROUTINE_NAME, ROUTINE_TYPE, DATA_TYPE, ROUTINE_COMMENT,
+        # ROUTINE_DEFINITION). MSSQL INFORMATION_SCHEMA.ROUTINES.ROUTINE_DEFINITION 은 4000자 절단이라
+        # OBJECT_DEFINITION(전체 nvarchar(max))을 우선 사용, 폴백으로 ROUTINE_DEFINITION. COMMENT 동치 없음→''.
+        return f"""
+        SELECT
+            r.ROUTINE_NAME,
+            r.ROUTINE_TYPE,
+            COALESCE(r.DATA_TYPE, '') AS DATA_TYPE,
+            '' AS ROUTINE_COMMENT,
+            COALESCE(
+                OBJECT_DEFINITION(OBJECT_ID(QUOTENAME(r.ROUTINE_SCHEMA) + '.' + QUOTENAME(r.ROUTINE_NAME))),
+                CAST(r.ROUTINE_DEFINITION AS NVARCHAR(MAX)),
+                ''
+            ) AS ROUTINE_DEFINITION
+        FROM INFORMATION_SCHEMA.ROUTINES r
+        WHERE r.ROUTINE_SCHEMA = '{schema}' AND r.ROUTINE_NAME = '{name}'
+        ORDER BY r.ROUTINE_TYPE
+    """
+
+    def routine_parameters(self, schema: str, name: str) -> str:
+        # 컬럼: ORDINAL_POSITION, PARAMETER_NAME, PARAMETER_MODE, DATA_TYPE, ROUTINE_TYPE (MySQL 순서).
+        # MSSQL 은 스키마 내 객체명이 유일해 동명 proc+func 공존이 없다(교차오염 무관) → ROUTINE_TYPE(pr[4])
+        # 슬롯은 컬럼 계약 대칭을 위해 NULL 상수로 채운다(caller 는 def_rows 다중일 때만 이 컬럼으로 필터).
+        return f"""
+        SELECT
+            ORDINAL_POSITION,
+            COALESCE(PARAMETER_NAME, '(RETURN)') AS PARAMETER_NAME,
+            COALESCE(PARAMETER_MODE, '') AS PARAMETER_MODE,
+            COALESCE(DATA_TYPE, '') AS DATA_TYPE,
+            CAST(NULL AS NVARCHAR(20)) AS ROUTINE_TYPE
+        FROM INFORMATION_SCHEMA.PARAMETERS
+        WHERE SPECIFIC_SCHEMA = '{schema}' AND SPECIFIC_NAME = '{name}'
+        ORDER BY ORDINAL_POSITION
     """
 
     def probe_relationship_overlap(self, src_schema, src_table, src_col,

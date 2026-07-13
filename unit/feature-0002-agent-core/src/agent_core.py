@@ -2465,6 +2465,14 @@ def _derive_step_work(tool_name: str, args: dict[str, Any] | None = None, tool_r
         if table:
             return f"`{table}` 테이블 구조를 확인한다"
         return "테이블 구조를 확인한다"
+    if tool == "describe_routine":
+        schema = str(payload.get("schema_name") or "").strip()
+        routine = str(payload.get("routine_name") or "").strip()
+        if schema and routine:
+            return f"`{schema}`.`{routine}` 프로시저/함수 정의를 확인한다"
+        if routine:
+            return f"`{routine}` 프로시저/함수 정의를 확인한다"
+        return "저장 프로시저/함수 정의를 확인한다"
     if tool == "search_tables":
         keyword = str(payload.get("keyword") or "").strip()
         schema = str(payload.get("schema_name") or "").strip()
@@ -2527,6 +2535,8 @@ def _derive_step_reason(tool_name: str, args: dict[str, Any] | None = None) -> s
         return "해당 스키마에 어떤 테이블이 있는지 파악하기 위해"
     if tool == "describe_table":
         return "쿼리에 사용할 컬럼과 자료형을 정확히 확인하기 위해"
+    if tool == "describe_routine":
+        return "저장 프로시저/함수의 내부 로직을 확인하기 위해"
     if tool == "search_tables":
         return "질문에 필요한 테이블을 찾기 위해"
     if tool == "get_sample_rows":
