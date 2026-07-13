@@ -42,7 +42,12 @@
 
 ### 검증
 - 신규 `test_semantic_cluster_content.py` 16 PASS + 전체 스위트 컨테이너 pytest **EXIT=0**(전건 PASS). 상세: `test-runs.d/TASK-20260713T105932-content-cluster.md`.
-- §18.8 적대 패널 → REVIEW.md REV entry. POST-DEPLOY: 마이그 0040 → worker/web 재빌드 → cc_data_main 표적 백필+클러스터 pass → DB 카운트 실증 → PB-0008 실 Windows 육안(AC-1 be: 밴드 ≥5·컨텐츠 라벨 / AC-2 루틴↔테이블 동반 배치).
+- §18.8 적대 패널 [SUBAGENT: PASS-WITH-FIXES] 전건 반영(REV-20260713T120500) + h1 hotfix(PR #748 — 루틴 fetch scope 비대칭).
+
+### POST-DEPLOY 완수 (2026-07-13, PR #746+#748 / 87767ebe)
+- 파이프라인: 백필 full(cc_data_main 분석문 주입 255/255+300/300·루틴 21,541 시그니처) → 임베딩 드레인(19,770→0) → 클러스터 pass **objects 23,465·clusters 3,652·error 0** → AGE 수렴 cc_data_main **Table 141/141·Routine 217/217** → API cluster 필드 반환 확인.
+- cc_data_main 실증: "아이템 합성 강화"(t5+r14)·"물물교환 거래"(t5+r12)·"퀘스트 데이터 관리"(r10)·"업적 시스템"(t8)·"길드 용병 관리"(t3+r3)·"메일 시스템"(r6) 등 **한국어 컨텐츠 라벨 + 테이블·루틴 혼성 클러스터**.
+- **PB-0008 실 Windows PASS**: cc_data_main 펼침 시 그룹 138 중 **be: 컨텐츠 밴드 95** 렌더("퀘스트 데이터 관리 · 10"·"이상 상태 관리 · 9"·"메일 시스템 · 6"·"몬스터 도감 관리 · 6"…), 루틴이 sp_ 접두 나열 대신 컨텐츠 단위 배치, window error 0. AC-1·2·3 전부 충족 — **사용자 원 리포트("함수·프로시저가 단순 명칭 구분") 해소**. 상세 test-runs.d/TASK-20260713T105932-content-cluster-postdeploy.md.
 
 ## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §74/ADR-036, 머지 재번호 §70→§73→§74·ADR-034→ADR-036 §13.1)
 

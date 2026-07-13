@@ -2288,8 +2288,8 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] TC.5 metadata_graph.py — `sync_routine` cluster 투영(_UNSET 보존) + `_step_routines` 확장 SELECT(구DB 폴백) + `schema_tables` Routine RETURN 8컬럼(cluster_id/label). 프론트 변경 0(ingest generic).
 - [x] TC.6a (라이브 프로브 적발·수정) chaining 방어 — mutual-kNN + `_adaptive_components`(cap 40·τ-상승 divisive) + SAVEPOINT 격리(non-autocommit conn) + migrate-lint .py 필터. 재프로브: cc_data_main 37 클러스터(blob 해소).
 - [x] TC.6 검증 — 신규 test_semantic_cluster_content.py 19 + 연관 스위트 + 전체 스위트 컨테이너 pytest EXIT=0. §18.8 적대 패널(REVIEW.md REV entry).
-- [ ] TC.7 verify-completion → PR → merge → 배포(마이그 0040 + web 롤링 + insight/ask-worker 재빌드).
-- [ ] TC.8 POST-DEPLOY — cc_data_main 표적 백필+클러스터 pass 가동 → rag/routine cluster DB 카운트 실증(AC-1·2) → PB-0008 실 Windows 육안 + TEST fragment(Environment: Windows-browser).
+- [x] TC.7 verify-completion PASS → PR #746 머지(8eceefe2) → 배포(마이그 0040 라이브 head + web 롤링 soak PASS + insight/ask-worker 재빌드 numpy 2.4.6). + h1 hotfix PR #748(87767ebe — 루틴 fetch scope 비대칭, CHG-20260713T143000).
+- [x] TC.8 POST-DEPLOY 완수 — 백필 full(루틴 21,541·cc_data_main 분석문 주입 255/255+300/300)→임베딩 드레인(19,770→0)→클러스터 pass(objects 23,465·clusters 3,652·error 0)→AGE 수렴(cc_data_main T141/141·R217/217)→PB-0008 실 Windows PASS(be: 밴드 95·한국어 라벨·혼성 밴드·오류 0 — 상세 test-runs.d/TASK-20260713T105932-content-cluster-postdeploy.md). AC-1·AC-2·AC-3 전부 충족.
 ## 20260713T1052-graph-minimap-fullview — §77 미니맵 전역 개요 유지(컬링 부분방출 build 의 재복제·카메라 재적합 금지) (2026-07-13, 사용자 리포트 · entry persona dispatch)
 사용자: 줌 인 시 그래프 뷰 내부는 뷰포트 컬링으로 방출 제한(의도)인데, **미니맵에도 컬링이 적용돼 전역 구성이 바뀐다** — §74 에서 "전체 이미지 캐싱·재사용"을 요청했지만 현재는 컬링된 그래프의 이미지가 사용됨.
 - [x] T77.0 진단 — 기전 2개: ① `_miniGeomSig` 가 **컬링된 방출 데이터(_built)** 기준이라 줌인 rebuild 마다 서명 변화 → §74 재사용 게이트가 열려 plugin `renderMinimap()` 이 컬링된 부분집합을 cloneNode 재복제. ② plugin `onTransform`(AFTER_TRANSFORM 32ms 스로틀)의 `setCamera()` 가 미니맵 카메라를 **메인 캔버스 `getBounds("elements")`**(컬링 중 = 부분집합 bounds)에 재적합 → 이미지를 지켜도 카메라가 부분 영역으로 줌인(vendor 번들 역공학 실측).
