@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260713T061500-attach-user-version-postverify (TASK-20260713T053423-attach-user-version POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-13. 코드/자산 무변경 — TEST.md §4 Windows-browser Run 을 "배포 후 잔여" → **POST-DEPLOY 라이브 PASS** 로 갱신 + TASK.md 체크리스트 완료. 배포: PR #751→main 7f1ed748, web-a/web-b 무중단 롤링 + ask-worker 재빌드(agent_core 변경 baked).
+- 검증 요지(https://localhost/, bootstrap_admin, win-browser relay Chrome/150): 라이브 e2e — v1(490)→v2(491, root=490 편입)→동일 재업로드(491 reused)→버전 체인 2개(v1 superseded/v2 최신)→목록 최신만(version_count=2); **assistant 가 v1→v2 diff(SELECT 1→2·-- changed 추가) 정확 인지**(new_attachment_ids 포함 시), 미포함 턴엔 정직 "비교 불가"(환각 0). Evidence artifacts/shared/win-browser-shots-attach-user-version/01_version_badge_and_assistant_diff.png.
+- Cross-ref: CHG-20260713T053423-attach-user-version(기능) · TEST.md §4 2026-07-13 Run · REV-20260713T053423-attach-user-version.
+
 ## CHG-20260713T053423-attach-user-version (TASK-20260713T053423-attach-user-version — 사용자 재업로드 첨부 버전 관리, Major §12.3, cross-cut feature-0002)
 - 변경:
   - `routers/_conv_store.py`: 신규 `_find_latest_same_name_attachment(conn, conversation_id, account_id, filename)`(대화 내 `(ConversationId,AccountId,OriginalFilename)` 최신 비-superseded·비-deleted head 1건 — 버전 체인 편입 판정, MySQL write-consistent)·`_compute_version_diff(prev, new, *, prev_version, new_version, filename, cap_bytes)`(difflib unified diff, size-cap `_ASSISTANT_EDIT_SIZE_CAP_BYTES`, truncated 플래그).
