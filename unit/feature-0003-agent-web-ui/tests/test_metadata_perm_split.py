@@ -7,10 +7,16 @@
 하위호환은 **비파괴·가역** 함의로 보장한다 — DB 마이그레이션 없이, effective permission map
 빌더(_apply_permission_overrides)에서 묶음 보유자에게 세부 권한을 자동 부여(개별 DENY 존중).
 
+graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰가 별도 최상위 탭으로 분리됨에 따라
+metadata.graph.read 를 묶음 함의(_METADATA_MANUAL_IMPLIES)에서 제거 — 묶음이 함의하는 것은 편집 4종뿐.
+기존 묶음 보유자의 그래프 접근은 _backfill_graph_perm_split_v1(1회 멱등 backfill)로 보존(B안).
+
 검증:
-  R1  5개 세부 권한이 PERMISSION_DEFINITIONS(group=kb) + PERMISSION_CODES 에 존재.
+  R1  5개 세부 권한이 PERMISSION_DEFINITIONS(group=kb) + PERMISSION_CODES 에 존재(graph.read 포함).
   R2  admin seed(=set(PERMISSION_CODES)) 포함 / operator·sales·pending 미포함(least-privilege).
-  R3  하위호환 함의 — kb.ingest.manual(effective) → 5개 세부 권한 True (비파괴 마이그).
+  R3  하위호환 함의 — kb.ingest.manual(effective) → 편집 4종 True (비파괴 마이그).
+  R3c graph-perm-split — 묶음은 metadata.graph.read 를 함의하지 않는다(권한 분리).
+  R3d graph.read 단독 부여는 독립(묶음/편집 권한 미부여).
   R4  개별 DENY 오버라이드가 함의보다 우선(least-privilege 존중).
   R5  세부 권한 단독 부여 시 다른 세부 권한/묶음은 미부여(granular 격리).
   R6  레거시 묶음 kb.ingest.manual 은 catalog 에 유지(기존 grant 하위호환).
@@ -26,13 +32,18 @@ from pathlib import Path
 
 import app
 
-NEW_PERMS = [
+# graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰가 별도 최상위 탭으로 분리됨에 따라
+#   metadata.graph.read 를 묶음 함의(_METADATA_MANUAL_IMPLIES)에서 제거. 묶음이 함의하는 것은 편집 4종뿐이다.
+#   graph.read 는 여전히 카탈로그(group=kb)·admin seed 에 존재하나, 묶음과 독립적으로 부여된다.
+EDIT_PERMS = [
     "metadata.glossary.manage",
     "metadata.enum.manage",
     "metadata.table.manage",
     "metadata.column.manage",
-    "metadata.graph.read",
 ]
+GRAPH_PERM = "metadata.graph.read"
+# R1/R2 는 5종 전체(카탈로그 존재·admin seed) 를 커버 — graph.read 는 분리 후에도 catalog/admin seed 에 유지.
+NEW_PERMS = EDIT_PERMS + [GRAPH_PERM]
 
 ADMIN_JS = Path(__file__).resolve().parents[1] / "src" / "static" / "admin.js"
 
@@ -56,30 +67,54 @@ def test_r2_admin_seed_not_stock_roles():
                 assert code not in set(role["permissions"]), f"{key} 는 {code} 미보유(least-privilege)"
 
 
-# ── R3: 하위호환 함의 (kb.ingest.manual → 세부 권한 전체) ─────────────────────────────
-def test_r3_manual_umbrella_implies_all_detail_perms():
+# ── R3: 하위호환 함의 (kb.ingest.manual → 편집 4종) ─────────────────────────────────
+def test_r3_manual_umbrella_implies_edit_perms():
     perms = app._apply_permission_overrides({"kb.ingest.manual"})
     assert perms.get("kb.ingest.manual") is True
-    for code in NEW_PERMS:
+    for code in EDIT_PERMS:
         assert perms.get(code) is True, f"묶음 보유인데 {code} 함의 안 됨(하위호환 깨짐)"
 
 
 def test_r3b_manual_umbrella_via_account_override_allow():
-    # 계정 ALLOW 오버라이드로 묶음을 얻은 경우에도 세부 권한이 함의돼야 한다(effective map 기준).
+    # 계정 ALLOW 오버라이드로 묶음을 얻은 경우에도 편집 4종이 함의돼야 한다(effective map 기준).
     perms = app._apply_permission_overrides(set(), {"kb.ingest.manual": app.OVERRIDE_ALLOW})
-    for code in NEW_PERMS:
+    for code in EDIT_PERMS:
         assert perms.get(code) is True, f"override-allow 묶음인데 {code} 함의 안 됨"
 
 
-# ── R4: 개별 DENY 오버라이드가 함의보다 우선 ─────────────────────────────────────────
+# ── R3c: graph-perm-split — 묶음은 그래프 뷰 조회를 함의하지 않는다(권한 분리) ──────────────
+def test_r3c_manual_umbrella_does_not_imply_graph():
+    """graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰가 별도 최상위 탭으로 분리됨에 따라
+    '메타데이터 관리' 묶음(kb.ingest.manual)은 더 이상 그래프 뷰 조회(metadata.graph.read)를 함의하지 않는다.
+    묶음만 보유한 principal 은 그래프 뷰 접근을 갖지 않는다(명시 부여 필요)."""
+    perms = app._apply_permission_overrides({"kb.ingest.manual"})
+    assert perms.get("metadata.graph.read") is False, \
+        "묶음이 그래프 뷰를 함의하면 분리 실패(권한이 메타데이터 관리에서 안 떨어짐)"
+    # 계정 ALLOW 오버라이드로 묶음을 얻어도 함의 안 됨.
+    perms_ovr = app._apply_permission_overrides(set(), {"kb.ingest.manual": app.OVERRIDE_ALLOW})
+    assert perms_ovr.get("metadata.graph.read") is False, "override-allow 묶음도 그래프 함의 안 함"
+    assert GRAPH_PERM not in app._METADATA_MANUAL_IMPLIES, \
+        "metadata.graph.read 가 _METADATA_MANUAL_IMPLIES 에 남아 있음(분리 회귀)"
+
+
+def test_r3d_graph_grant_is_independent():
+    """graph.read 를 명시 부여하면 그래프만 켜지고 묶음/편집 권한은 미부여(독립 권한)."""
+    perms = app._apply_permission_overrides({"metadata.graph.read"})
+    assert perms.get("metadata.graph.read") is True
+    assert perms.get("kb.ingest.manual") is False, "그래프 권한이 묶음을 역으로 켜면 안 됨"
+    for code in EDIT_PERMS:
+        assert perms.get(code) is False, f"그래프 권한 단독인데 {code} 부여됨(격리 위반)"
+
+
+# ── R4: 개별 DENY 오버라이드가 함의보다 우선 (편집 권한 기준) ─────────────────────────────
 def test_r4_detail_deny_override_beats_implication():
     perms = app._apply_permission_overrides(
-        {"kb.ingest.manual"}, {"metadata.graph.read": app.OVERRIDE_DENY}
+        {"kb.ingest.manual"}, {"metadata.column.manage": app.OVERRIDE_DENY}
     )
-    assert perms.get("metadata.graph.read") is False, "명시 DENY 가 함의보다 우선해야 함"
-    # 나머지 세부 권한은 여전히 함의 True.
-    for code in NEW_PERMS:
-        if code == "metadata.graph.read":
+    assert perms.get("metadata.column.manage") is False, "명시 DENY 가 함의보다 우선해야 함"
+    # 나머지 편집 권한은 여전히 함의 True.
+    for code in EDIT_PERMS:
+        if code == "metadata.column.manage":
             continue
         assert perms.get(code) is True, f"{code} 는 DENY 안 됐으므로 여전히 함의 True"
 

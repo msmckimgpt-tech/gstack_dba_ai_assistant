@@ -5451,3 +5451,24 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(블록순서 07-10>07-09>… 정합·항목 스키마 type/area/title/detail·누출 스캔 0).
 - [x] 배포: verify-completion(operational, feature-0003) → 로컬 commit(META STATUS·wiki·RELEASE_NOTES·meta/REVIEW 는 별도 commit). **landing(push/PR/merge)·배포(make deploy-web 무중단)는 본 attended run 소유** → PR→merge→deploy-web→end-state 검증(라이브 `?v=` 해시 갱신·generated 07-10 서빙 확인).
 - [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(그래프 §60~76·타임아웃 모달·§69 caveats)는 각 원천 cycle POST-DEPLOY PB-0008 이 검증(다수 PASS). 사유 TEST.md §CHECK#13.
+
+
+## 20260713T1818-graph-perm-split — 그래프 뷰 권한을 '메타데이터 관리' 묶음에서 분리 (Critical §12.3 인증/인가, /_template:entry arg-given, 사용자 승인 B안, 2026-07-13)
+
+- **요청**(/_template:entry): "그래프 뷰가 별도의 탭으로 분리됨에 따라, 권한 또한 '메타데이터 관리'로부터 별도로 분리해주세요."
+- **배경**: 그래프 뷰는 이미 별도 최상위 탭(feature-0016 §45, PR #738 병합)이나, 권한 `metadata.graph.read` 는 여전히 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 `_METADATA_MANUAL_IMPLIES` 로 자동 함의 → UI 는 분리·권한은 미분리.
+- **위험등급**: Critical(§12.3 인증/인가 구조 변경) — 사람 승인 필수. **AskUserQuestion 결정: B안(분리 + 기존 접근 보존, 비파괴)**.
+- **§2.1 Implementation Plan (승인됨)**:
+  - backend `web_context.py`: `_METADATA_MANUAL_IMPLIES` 에서 `metadata.graph.read` 제거(편집 4종만 함의) · 묶음 설명(L260)·graph 권한 라벨/설명 갱신 · `_backfill_graph_perm_split_v1(conn)` 1회 backfill 추가(`_ensure_seed_roles` 말미 호출).
+  - backend `_bootstrap_schema.py`: `WebSchemaMigrations` 마커 테이블 DDL(1회 마이그레이션 guard).
+  - frontend `admin.js`: 탭 게이트 `graph` 에서 `kb.ingest.manual` 제거(`["metadata.graph.read"]`) · 종속맵 `metadata.graph.read` 부모 `kb.ingest.manual`→`console.access`.
+  - `admin.html`: 그래프 탭 게이트 주석 갱신.
+  - tests: `test_metadata_perm_split.py`(R3 편집4종 함의·R3c 묶음이 graph 미함의·R3d 독립부여) · `test_permission_dependency_map.py`(t5 graph.read=console.access 직속·m3 포함).
+- **하위호환(B안 — 접근 보존)**: `_backfill_graph_perm_split_v1` 이 분리 전환 시점에 1회만 (a) `kb.ingest.manual` 보유 role 에 `metadata.graph.read` role 권한, (b) `kb.ingest.manual` ALLOW override 보유 + graph.read override 부재 account 에 graph.read ALLOW override 를 부여. graph.read 명시 DENY 는 존중(미부여). `WebSchemaMigrations` 마커로 재실행 차단(매 startup 재실행 시 분리 이후 신규 묶음까지 graph 획득 → 분리 무력화 방지). admin 은 `_ensure_seed_roles` explicit catchup 으로 이미 graph.read 보유(무영향).
+- [x] backend/frontend/html/tests 구현.
+- [x] 검증: `test_metadata_perm_split.py`+`test_permission_dependency_map.py`+`test_metadata_glossary_enum.py` PASS · **feature-0003 전체 스위트 PASS(회귀 0)**. (초기 2 실패 = 복사한 `.env` 의 `AGENT_RUNTIME_READ_BACKEND=postgres`·`AGENT_TIMEOUT_SEC=300` 이 `--no-deps` DB-less 에서 유발한 환경 기인 — base main 동일 재현·env 중립화 시 소멸, 본 변경 무관 확인.)
+- [x] §18.8 보안 렌즈 적대 리뷰(권한상승·접근상실·멱등·enforcement·SQL 5축, 라이브 MySQL 8.0.46 실증) → **3 findings 적발·수정**: A(MEDIUM 권한상승 — 묶음-DENY 계정 과잉획득 → 대상3 graph-DENY override 고정), B(LOW 멱등 — 마커를 backfill 본문 안으로 이동), C(NIT — admin_metadata.py docstring 2곳). 2-path 회귀(fast path backfill skip)는 backfill 자체 `CREATE TABLE IF NOT EXISTS` 로 경로 독립화. **VERDICT PASS/SHIP** (REV-20260713T181800-graph-perm-split).
+- [x] findings 수정 후 재검증: feature-0003 전체 스위트 GREEN · py_compile 3파일 OK.
+- [ ] **후속(비-차단)**: backfill SQL(대상1/2/3) MySQL 통합테스트 추가 — 현재 표준 스위트는 `--no-deps` 라 보안 리뷰 라이브 실증 + `_apply_permission_overrides` 단위테스트로 커버(TEST.md 기록).
+- [ ] verify-completion --pre-commit → commit(사용자 confirm) → 머지·push → web 재배포(정적 baked + 마이그 startup) → 배포 후 DB 마커(`WebSchemaMigrations`)·라이브 권한 그리드 실측.
+- [ ] PB-0008 Windows-browser: 그래프 탭 권한 게이팅 실렌더(묶음-only 계정 미노출·graph.read 계정 노출).

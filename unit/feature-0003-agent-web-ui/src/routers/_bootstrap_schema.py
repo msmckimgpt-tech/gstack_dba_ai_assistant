@@ -804,6 +804,18 @@ def _ensure_web_tables():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
+        # graph-perm-split(Critical §12.3, 2026-07-13): 웹 권한 DB 의 1회성 데이터 마이그레이션/backfill
+        # 적용 여부 마커. 웹 권한 스키마는 alembic 없이 부트스트랩 `_ensure_*` 로 관리되므로, "정확히 1회만"
+        # 실행해야 하는 backfill(예: _backfill_graph_perm_split_v1)의 재실행 방지 guard 저장소로 사용한다.
+        # (WebRuntimeSettings 는 런타임 설정 KV 이자 snapshot 대상이라 마이그레이션 마커와 용도를 분리.)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebSchemaMigrations (
+                MigrationKey VARCHAR(191) NOT NULL PRIMARY KEY,
+                AppliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
         cur.close()
         app._ensure_permission_catalog(conn)
         app._ensure_seed_roles(conn)

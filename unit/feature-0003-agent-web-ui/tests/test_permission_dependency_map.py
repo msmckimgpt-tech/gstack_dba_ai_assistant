@@ -128,7 +128,9 @@ def test_m2_acyclic_terminates_at_root():
 
 
 def test_m3_master_gate_console_access():
-    for base in ("account.read", "role.read", "audit.read.own", "system_prompt.global.read"):
+    # graph-perm-split(2026-07-13): metadata.graph.read 도 console.access 직속(그래프 뷰 별도 탭 분리).
+    for base in ("account.read", "role.read", "audit.read.own", "system_prompt.global.read",
+                 "metadata.graph.read"):
         assert DEPS.get(base) == "console.access", f"{base} 의 부모가 console.access 아님"
     assert "console.access" not in DEPS, "console.access 는 루트여야 함(키가 되면 안 됨)"
 
@@ -400,22 +402,29 @@ def test_t4_grid_list_is_single_column_not_grid():
 
 
 def test_t5_metadata_group_gate_hierarchy():
-    """metadata-perm-hier: 메타데이터(kb 그룹) 종속 정합화 pin. 다른 관리 그룹(account.read→account.*,
-    quota.read→quota.manage)처럼 "그룹 게이트 → 세부" 2단 계층이어야 한다. 묶음 `kb.ingest.manual` 이
-    게이트(→console.access), 세부 5개 metadata.* 는 묶음 아래(→kb.ingest.manual). flat 회귀 방지."""
-    _META5 = (
+    """metadata-perm-hier + graph-perm-split: 메타데이터(kb 그룹) 종속 정합화 pin. 다른 관리 그룹
+    (account.read→account.*, quota.read→quota.manage)처럼 "그룹 게이트 → 세부" 2단 계층이어야 한다. 묶음
+    `kb.ingest.manual` 이 게이트(→console.access), 편집 4종 metadata.*.manage 는 묶음 아래(→kb.ingest.manual).
+
+    graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰가 별도 최상위 탭으로 분리됨에 따라
+    metadata.graph.read 는 묶음 하위가 아니라 console.access 직속(묶음과 형제, 그룹 루트)이다."""
+    _META_EDIT4 = (
         "metadata.glossary.manage", "metadata.enum.manage", "metadata.table.manage",
-        "metadata.column.manage", "metadata.graph.read",
+        "metadata.column.manage",
     )
     assert DEPS.get("kb.ingest.manual") == "console.access", "묶음 kb.ingest.manual 게이트가 console.access 아님"
-    for m in _META5:
+    for m in _META_EDIT4:
         assert DEPS.get(m) == "kb.ingest.manual", f"{m} 부모가 kb.ingest.manual 아님(평면 회귀)"
-    # kb 그룹 트리 depth: 묶음=0(그룹 루트), 세부 metadata.*=1(묶음 자식)
+    # graph-perm-split: 그래프 뷰 조회는 묶음에서 분리 — console.access 직속(형제).
+    assert DEPS.get("metadata.graph.read") == "console.access", \
+        "metadata.graph.read 는 graph-perm-split 후 console.access 직속이어야 함(묶음 종속 아님)"
+    # kb 그룹 트리 depth: 묶음=0(그룹 루트), 편집 4종=1(묶음 자식), graph.read=0(console.access 직속 = 그룹 루트)
     kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
     tree = dict(_order_items_as_tree(kb_codes))
     assert tree.get("kb.ingest.manual") == 0, "kb.ingest.manual 이 그룹 루트(depth 0) 아님"
-    for m in _META5:
+    for m in _META_EDIT4:
         assert tree.get(m) == 1, f"{m} 이 묶음 아래(depth 1) 아님 — 계층 회귀"
+    assert tree.get("metadata.graph.read") == 0, "metadata.graph.read 가 그룹 루트(depth 0) 아님 — 분리 회귀"
 
 
 def test_t6_metadata_reachable_when_gate_off():

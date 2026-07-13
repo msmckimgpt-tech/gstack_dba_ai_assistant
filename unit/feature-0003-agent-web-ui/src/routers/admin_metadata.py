@@ -1799,7 +1799,7 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
 
 @router.post("/api/admin/metadata/graph/analyze")
 async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 metadata.graph.read(우산 kb.ingest.manual 함의).
+    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 metadata.graph.read(graph-perm-split 2026-07-13 후 독립 권한 — kb.ingest.manual 묶음이 더 이상 함의하지 않음).
 
     body: {node_key, scope_key?, depth?, node_budget?, prompt?}. run 을 만들고 즉시 202 반환 — 실제
     분석은 insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
@@ -1837,7 +1837,7 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
 
 @router.post("/api/admin/metadata/graph/analyze-schema")
 async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """DB(스키마) 단위 AI 능동 분석(§53·§55). 권한 metadata.graph.read(노드 분석과 동일 우산).
+    """DB(스키마) 단위 AI 능동 분석(§53·§55). 권한 metadata.graph.read(노드 분석과 동일 권한 — graph-perm-split 2026-07-13 후 kb.ingest.manual 묶음과 독립).
 
     body: {schema_key, scope_key?, prompt?, only_missing?=true, dry_run?}. 스키마 소속 Table·Routine 을
     depth=0 시드로 일괄 enqueue — §55(REQ-20260706 ③): 시드별 직계 컬럼 + per-seed 앵커 게이팅 재귀
