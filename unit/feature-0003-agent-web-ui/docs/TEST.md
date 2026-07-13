@@ -2115,3 +2115,5 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 
 
 - **CHECK#13 · Environment: Windows-browser — 미수행 사유 (doc-sync-rn-0713, 2026-07-13) 릴리즈노트 콘텐츠·PB-0008 신규 렌더 델타 없음**: 변경은 `release-notes-data.js` 콘텐츠 데이터뿐(렌더 로직 `release-notes.js` 불변·cache-buster 빌드 자동주입) → 새로 Windows-browser 로 시각검증할 UI 렌더 델타 없음(브리지 불가 아님 — 검증 대상 자체가 콘텐츠 데이터라 부적용). 검증: `node --check` PASS + vm 구조검증(블록순서·스키마·누출0). 원천 UI(그래프 §57.4~76·타임아웃 모달 제거·§69 caveats)는 각 원천 cycle POST-DEPLOY PB-0008 이 검증(다수 PASS). 릴리즈노트 실서빙은 본 run 의 make deploy-web(web 재빌드) 후 end-state 검증(라이브 `?v=` 해시 갱신·generated 07-10)으로 확인.
+
+- **CHECK#13 · Environment: Windows-browser — 미수행 사유 (doc-sync-rn-0714, 2026-07-14) 릴리즈노트 콘텐츠·PB-0008 신규 렌더 델타 없음**: 변경은 `release-notes-data.js` 콘텐츠 데이터뿐(렌더 로직 `release-notes.js` 불변·cache-buster 빌드 자동주입) → 새로 Windows-browser 로 시각검증할 UI 렌더 델타 없음(브리지 불가 아님 — 검증 대상 자체가 콘텐츠 데이터라 부적용). 검증: `node --check` PASS + vm 구조검증(28 releases·07-13 블록 8항목·스키마·누출0). 원천 UI(그래프 §77~81·첨부 버전·ds-conn-test)는 각 원천 cycle POST-DEPLOY PB-0008 이 검증(PASS). 릴리즈노트 실서빙은 **cron wrapper 의 web 재빌드**(inject_asset_stamp content-hash 주입) 후 서빙 확인(스킬은 로컬 commit 만 — end-state 검증은 배포 소유자 몫).

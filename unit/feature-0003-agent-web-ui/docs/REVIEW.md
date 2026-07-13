@@ -177,3 +177,11 @@ source_of_truth: true
 - **자기 검증**: 전 권한 description ≤255·label ≤128 AST 전수 확인(잘림 0) · py_compile OK · feature-0003 전체 스위트 PASS(회귀 0). 근본 fix 실증은 배포 후(catchup 로그 소멸 + WebSchemaMigrations 마커).
 - **교훈**: 권한 정의 description/label 은 컬럼 길이 제약이 있고, 초과 시 단일 row 가 전 seed catchup 을 차단한다. CI(`--no-deps`)가 이 DB 제약을 미검출 → 방어적 클립 + (후속) 부트스트랩 통합테스트 필요. graph-perm-split 보안 리뷰가 지적한 "backfill/부트스트랩 DB 통합테스트 부재" 갭이 실제 사고로 실현됨.
 - Cross-ref: CHG/TASK-20260713T185600-graph-perm-descfix.
+
+
+## REV-20260714T024534-doc-sync-rn-0714 [SKIPPED:non-policy-doc] — 릴리즈노트 07-13 블록 +7항목 append(관계도 콘텐츠 밴드 그룹핑·큰 관계도 이동 부드러움·미니맵/상세 hover·첨부 재업로드 버전·데이터소스 연결 테스트·정상 조회 과차단 수정) (TASK-20260714T024534-doc-sync-rn-0714, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`)뿐 — 비-정책 doc-only. 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC·엔드포인트·cache-buster(빌드 자동주입) 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현·중복회피·operational gate 는 doc_sync 가 정본(feature-0016 TASK §77~81·content-cluster REPORT + feature-0003 TASK attach-user-version/ds-conn-test + feature-0002 TASK readonly-query-shapes + git log #746~#770) 대비 직접 검증.
+- 적대 대조(정본): 07-13 오후 사용자 화면 신규 = 콘텐츠 밴드 그룹핑(content-cluster+p2)·렌더러 교체 체감 부드러움(§78)·미니맵(§77/§79)·상세 hover(§81)·첨부 재업로드 버전(attach-user-version)·ds '연결 테스트'(ds-conn-test)·읽기전용 조회 과차단 수정(readonly-query-shapes). 제외=메시지 편집(backend-only)·describe_routine(LLM 내부 도구·사용자 화면 비노출·체감 간접 — item#7 readonly-query-shapes 는 사용자 조회가 직접 안 막히게 되는 화면 체감이라 포함, 구분 기준=사용자 화면 직접 변화 유무)·내부 최적화(§79 pool/§80 BitmapText). feature-id/§/테이블/함수/ADR/라이브러리명 누출 0(vm leak 스캔), 07-10 블록 대비 중복 회피(부드러움 항목은 컬링→렌더러 근본개선 차원 명시).
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check release-notes-data.js` PASS · vm 파서 구조검증(28 releases·블록 07-13 head·항목 스키마·07-13 8항목·누출 스캔 0).
+- **cache-buster**: 소스 `?v=dev` 고정 — 07-12 ITEM-09 what#3(`inject_asset_stamp.py` content-hash 빌드주입·deploy-web `asset_stamp_verify` 하드게이트) 이후 수기 bump 폐지. system-prompt 의 '수동 bump' 지시는 그 정책 이전 모델 기준이라 부적용(수동 변경 시 게이트 무력화·해시 불변). 직전 doc-sync(REV-20260713T102249-doc-sync-rn-0713)도 동일 판단.
+- Cross-ref: CHG/TASK/FUNCTION/TEST-20260714T024534-doc-sync-rn-0714 / META REV-20260714T024534-META-0035-doc-sync-0714(별도 commit) / 원천 PR #746~#770. **landing/배포 소유=cron wrapper 위임(로컬 commit 만).**

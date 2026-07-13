@@ -1581,3 +1581,9 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 남용 방지: 프론트 per-key/조합키 쿨다운(버튼 disable, 기본 4s) + 백엔드 per-(account,key) 쿨다운(`AGENT_DS_TEST_COOLDOWN_SEC` 기본 3s, 미경과 시 probe 없이 429 throttled). 관리 콘솔 기존 호출부(배지 lazy probe·상세/제품바인딩 '연결 테스트')도 429 graceful(배지 직전 상태 유지·버튼 중립 토스트).
 - 접근성: DS 테스트 버튼은 실제 `<button>`(중첩 `<button>` 회피 위해 행 요소를 `<div role=menuitem tabindex>`로 전환·click+keydown 선택 복원)·`aria-label="<key> 연결 테스트"`·min 24px 터치 타깃·at-rest 테두리 어포던스.
 - 코드 거주: `static/app.js`·`static/styles.css`·`static/admin.js`·`routers/admin_datasources.py`. CHG/REV-20260713T094624-ds-conn-test.
+
+
+## (doc-sync-rn-0714, 2026-07-14) 릴리즈노트 콘텐츠 — 07-13 오후 블록 +7항목(관계도 콘텐츠 밴드·이동 부드러움·미니맵/상세 hover·첨부 재업로드 버전·데이터소스 연결 테스트·정상 조회 과차단 수정)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases[0](2026-07-13) items 에 07-13 오후 머지 델타 중 사용자 화면 신규분 7항목 append. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 평이화/비노출: feature-id·§번호·ADR·라이브러리명(PixiJS 등)·테이블/함수명·마이그·내부 표현 비노출(사용자 언어).
+- 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260714T024534-doc-sync-rn-0714. **landing/배포는 cron wrapper 소유(로컬 commit 만).**

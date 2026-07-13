@@ -198,3 +198,13 @@ source_of_truth: true
 - Verification: py_compile OK · feature-0003 전체 스위트 PASS(회귀 0) · 전 권한 desc≤255·label≤128 전수 확인.
 - Rollback: 커밋 revert(설명 길이만 원복 시 1406 재발하므로 truncation 클립은 유지 권장).
 - 잔여: 배포 후 web 로그 `seed catchup skipped` 소멸 + `WebSchemaMigrations` graph-perm-split-v1 row 실증.
+
+
+## CHG-20260714T024534-doc-sync-rn-0714 (TASK-20260714T024534-doc-sync-rn-0714 — 07-13 오후 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases[0](date "2026-07-13") items 에 **+7항목** append(improved/admin 4·new/work 2·fixed/work 1)·summary 재작성. generated 2026-07-13 유지(새 date 블록 생성 안 함). 07-10 이하 블록 보존.
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입·deploy-web `asset_stamp_verify` 하드게이트). index/admin.html 편집 0. release-notes-data.js 내용 변경만으로 전역 content-hash 변화 → wrapper 재빌드 시 서빙 토큰 자동 갱신(수동 bump 부적용·해시 불변).
+- 제외: feature-0019 메시지 편집(backend-only)·describe_routine(unverified-live)·내부 렌더 최적화(§79/§80)·deploy checklist.
+- Verification: `node --check` PASS · vm 구조검증(블록순서·스키마·07-13 8항목·누출0). 사용자향 평이화(내부용어 누출 0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- **landing/배포 소유=cron wrapper 위임**(로컬 commit 만·push/merge/deploy 미수행). META(STATUS·wiki·ARCHITECTURE·SECURITY·meta/REVIEW)는 별도 commit(REV-20260714T024534-META-0035-doc-sync-0714).
