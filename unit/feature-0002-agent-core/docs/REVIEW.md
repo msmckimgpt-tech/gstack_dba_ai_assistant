@@ -169,3 +169,8 @@ source_of_truth: true
 - 라이브 실측 필요분(Phase 11b): 코드/테스트는 "도구가 정의를 반환·SHOW CREATE 유도·sql_guard 불변" 증명. "실제 대화에서 프로시저 검토 마찰 소멸" 은 배포 후 라이브 대화 실측분(미수행) → FRICTION_LEDGER `fixed:deployed:unverified-live`.
 - Human Approval: 수정 방식(Option 1 전용 도구+유도)은 AskUserQuestion(2026-07-13) 사용자 승인. Major(신규 LLM 노출 도구·정의 표면화) → PR/deploy 는 외부영향 confirm 유지.
 - Cross-ref: CHG-20260713T140405-describe-routine-tool(MODIFY) · FUNCTION REQ-20260713-describe-routine · TEST-20260713-describe-routine · FRICTION_LEDGER FR-show-create-routine-blocked · feature-0003 `_conv_store.py` narration(companion) · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260713T151500-describe-routine-deploy [SKIPPED:post-deploy-doc-reconciliation] — 배포 완료 기록 + 원장 상태 정합
+- Date: 2026-07-13. Related Change: CHG-20260713T151500-describe-routine-deploy. 코드 변경 0(docs-only).
+- SKIPPED 사유: 런타임 코드 무변경 — PR #749(REV-20260713T140405 검증 완료) 배포 후 상태 정합(FRICTION_LEDGER fixed:undeployed→fixed:deployed:unverified-live + TASK 체크박스). 배포 검증은 결정적: 4서비스 GIT_COMMIT=6841eba2 + ask-worker 런타임 import 실증(describe_routine/handler/_safe_ident 백슬래시) + web /healthz. §18.8 dispatch 비해당(배포 기록).
+- Human Approval: 배포는 사용자 confirm(AskUserQuestion 2026-07-13 "PR 머지 + 배포"). 본 follow-up 은 그 배포의 정직-상태 기록(docs-only).
