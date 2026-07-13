@@ -2287,6 +2287,7 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] TC.3 semantic_cluster.py 재작업 — DB(effective schema) 단위 분할(N 가드 국소화·pass-전역 결정 id)·루틴 합동 편입(시그니처 빌더+백필 패스+0040 미적용 soft-skip)·분석문 시그니처 주입(`_fetch_analysis_text`, 조건부 append).
 - [x] TC.4 LLM 컨텐츠 라벨 — llm.py `CLUSTER_LABEL_PROMPT`+`llm_cluster_label`(product_classify 동형) + `_llm_content_labels`(kv 멤버셋-해시 캐시·배치 40·fail-soft) + config `AGENT_METADATA_CLUSTER_LABEL_LLM`.
 - [x] TC.5 metadata_graph.py — `sync_routine` cluster 투영(_UNSET 보존) + `_step_routines` 확장 SELECT(구DB 폴백) + `schema_tables` Routine RETURN 8컬럼(cluster_id/label). 프론트 변경 0(ingest generic).
-- [x] TC.6 검증 — 신규 test_semantic_cluster_content.py 16 + 연관 70 + 전체 스위트 컨테이너 pytest EXIT=0. §18.8 적대 패널(REVIEW.md REV entry).
+- [x] TC.6a (라이브 프로브 적발·수정) chaining 방어 — mutual-kNN + `_adaptive_components`(cap 40·τ-상승 divisive) + SAVEPOINT 격리(non-autocommit conn) + migrate-lint .py 필터. 재프로브: cc_data_main 37 클러스터(blob 해소).
+- [x] TC.6 검증 — 신규 test_semantic_cluster_content.py 19 + 연관 스위트 + 전체 스위트 컨테이너 pytest EXIT=0. §18.8 적대 패널(REVIEW.md REV entry).
 - [ ] TC.7 verify-completion → PR → merge → 배포(마이그 0040 + web 롤링 + insight/ask-worker 재빌드).
 - [ ] TC.8 POST-DEPLOY — cc_data_main 표적 백필+클러스터 pass 가동 → rag/routine cluster DB 카운트 실증(AC-1·2) → PB-0008 실 Windows 육안 + TEST fragment(Environment: Windows-browser).

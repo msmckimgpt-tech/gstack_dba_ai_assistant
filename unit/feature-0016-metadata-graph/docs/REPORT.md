@@ -19,6 +19,7 @@
 - **분석문 시그니처 주입**: node_analysis 최신 done 의 summary+usage(≤400자) — 'AI 능동 분석 → 재임베딩 → 재클러스터' 인과 성립. analysis 줄은 비어있지 않을 때만 append(미분석 해시 byte-불변 → 재임베딩 blast-radius 를 분석 보유분으로 한정).
 - **LLM 컨텐츠 라벨**: `llm_cluster_label`(product_classify 동형·JSON-only·untrusted-data 가드) — 멤버 이름+분석 요약로 클러스터당 한국어 명(≤32자), kv 멤버셋-해시 캐시(불변 시 재호출 0)·fail-soft affix 폴백·`AGENT_METADATA_CLUSTER_LABEL_LLM` 게이트(기본 ON).
 - 그래프 투영: `sync_routine` cluster props(_UNSET 보존) + `_step_routines` 확장 SELECT(0040 미적용 창 폴백) + `schema_tables` Routine RETURN 에 cluster 필드 — 프론트 ingest(generic)·`_metaSimGroups`(be: 판정이 g.tables=테이블+루틴 전체) 가 무변경으로 소비.
+- **chaining 방어(라이브 프로브 적발·수정)**: base τ 단일연결이 DB 전체를 단일 blob(254/255)으로 만들던 것을 mutual-kNN + cap(40) 초과 τ-상승 재분할로 해소 — 재프로브(롤백) cc_data_main **37 클러스터**('buff' 24·'monsterclass' 11·'monsterspawnpoint' 7 등 컨텐츠 응집·총 199/255), ds 전체 1,016 클러스터/74 스키마/skip 0. + non-autocommit conn SAVEPOINT 격리, migrate-lint MAX_MIGRATION.txt 오탐 수정.
 
 ### 검증
 - 신규 `test_semantic_cluster_content.py` 16 PASS + 전체 스위트 컨테이너 pytest **EXIT=0**(전건 PASS). 상세: `test-runs.d/TASK-20260713T105932-content-cluster.md`.
