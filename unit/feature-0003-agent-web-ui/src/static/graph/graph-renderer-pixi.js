@@ -124,6 +124,33 @@ export const PixiAdapterPure = {
     return best;
   },
 
+  // combo 히트: 노드가 없을 때 폴백(스키마 배경 클릭/우클릭). 자식 union bbox 안이면 그 combo.
+  hitTestCombo(mx, my, combos, nodes) {
+    let best = null, bestArea = Infinity;   // 여러 combo 겹치면 가장 작은(구체) 것
+    for (const c of combos) {
+      const b = this.comboBBox(c.id, nodes, (c.style || {}).padding); if (!b) continue;
+      if (mx < b.x || mx > b.x + b.w || my < b.y || my > b.y + b.h) continue;
+      const area = b.w * b.h; if (area < bestArea) { bestArea = area; best = c; }
+    }
+    return best;
+  },
+
+  // edge 히트: 점-선분 거리 ≤ tol(model px)인 최근접 엣지(우클릭 컨텍스트 메뉴용, gap #12).
+  hitTestEdge(mx, my, edges, posOf, tol) {
+    const t = tol || 6; let best = null, bestD = t;
+    for (const e of edges) {
+      const a = posOf(e.source), b = posOf(e.target); if (!a || !b) continue;
+      const d = this._segDist(mx, my, a[0], a[1], b[0], b[1]);
+      if (d <= bestD) { bestD = d; best = e; }
+    }
+    return best;
+  },
+  _segDist(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1, L2 = dx * dx + dy * dy;
+    let t = L2 ? ((px - x1) * dx + (py - y1) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  },
+
   // 두 built scene diff (오브젝트 풀 재사용 판정). id 기준 add/remove/keep.
   diffScene(prevIds, built) {
     const next = new Set(), add = [], keep = [];
@@ -164,39 +191,116 @@ export class PixiGraphAdapter {
     this.app = new this.P.Application();
     await this.app.init({ background: this.cfg.background || "#f6f8fb", antialias: true,
       resolution: (window.devicePixelRatio || 1), autoDensity: true,
-      preference: this.cfg.renderer === "webgpu" ? "webgpu" : "webgl" });
+      preference: this.cfg.renderer === "webgpu" ? "webgpu" : "webgl",
+      // render-on-demand: 정적 그래프는 idle 시 GPU 를 돌릴 필요가 없다(게임 아님). autoStart:false 로 ticker
+      //   자동 렌더를 끄고, 변경(draw/카메라/상태/드래그) 시에만 명시 _render() 한다 — idle GPU 0 + rAF-throttle
+      //   무관한 즉시 페인트(headless/CDP 스크린샷도 안정). preserveDrawingBuffer: present 후 버퍼 클리어로 인한
+      //   스크린샷/미니맵 RenderTexture 검은 캡처 방지.
+      autoStart: false, sharedTicker: false, preserveDrawingBuffer: true });
+    try { this.app.ticker.stop(); } catch (_) {}
     if (this.container) { this.container.appendChild(this.app.canvas); this._resizeToContainer(); }
     this.world = new this.P.Container(); this.world.sortableChildren = true;
     this.app.stage.addChild(this.world);
+    this._initMinimap();
     this._bindPointer();
+    // autoResize(gap #15): 컨테이너/창 리사이즈 자동 추종.
+    if (this.cfg.autoResize !== false && typeof ResizeObserver !== "undefined" && this.container) {
+      this._ro = new ResizeObserver(() => this._resizeToContainer()); this._ro.observe(this.container);
+    }
+  }
+
+  // 미니맵: app.stage 오버레이(팬/줌 무관, 우하단). 전체 노드를 축소 렌더 + 뷰포트 사각형.
+  //   G6 minimap 플러그인 대체 — getPluginInstance("minimap") 호환 스텁 노출(graph-core 재사용 최적화는
+  //   pixi 분기에서 no-op). 어댑터가 자체 관리하므로 §74/§77 재복제 게이트 불필요.
+  _initMinimap() {
+    if (!this.P || this.cfg.minimap === false) { this._minimap = null; return; }
+    const P = this.P, sz = this.cfg.minimapSize || [168, 112];
+    const c = new P.Container(); c.zIndex = 10000;
+    const bg = new P.Graphics(); bg.roundRect(0, 0, sz[0], sz[1], 6).fill({ color: "#ffffff", alpha: 0.92 }).stroke({ color: "#d5dbe5", width: 1 });
+    const content = new P.Graphics(), mask = new P.Graphics();
+    mask.rect(0, 0, sz[0], sz[1]).fill(0xffffff); content.mask = mask;
+    const vp = new P.Graphics();
+    c.addChild(bg, content, mask, vp);
+    this.app.stage.addChild(c);
+    this._minimap = { c, content, vp, mask, size: sz, __reusePatched: true, __fullImageSig: null, _geomSig: null,
+      renderMinimap: () => this._renderMinimap(), setShapes: () => {} };
+    this._positionMinimap();
+  }
+  _positionMinimap() {
+    if (!this._minimap || !this.app) return;
+    const [vw, vh] = this.getSize();
+    this._minimap.c.position.set(vw - this._minimap.size[0] - 10, vh - this._minimap.size[1] - 10);
+  }
+  _renderMinimap() {
+    if (!this._minimap || !this.world) return;
+    const mm = this._minimap, [mw, mh] = mm.size;
+    const b = PixiAdapterPure.contentBounds(this._built);
+    if (b.w <= 0 || b.h <= 0) { mm.content.clear(); return; }
+    const pad = 6, s = Math.min((mw - 2 * pad) / b.w, (mh - 2 * pad) / b.h);
+    const ox = pad + (mw - 2 * pad - b.w * s) / 2, oy = pad + (mh - 2 * pad - b.h * s) / 2;
+    mm._proj = { s, ox, oy, bx: b.x, by: b.y };
+    const g = mm.content; g.clear();
+    // 노드를 미니맵 스케일 점/사각형으로 (combo 배경은 옅게)
+    for (const cb of (this._built.combos || [])) { const bb = PixiAdapterPure.comboBBox(cb.id, this._built.nodes, (cb.style || {}).padding); if (!bb) continue;
+      g.rect(ox + (bb.x - b.x) * s, oy + (bb.y - b.y) * s, bb.w * s, bb.h * s).fill({ color: "#3f4b8c", alpha: 0.06 }); }
+    for (const n of (this._built.nodes || [])) { const bb = PixiAdapterPure.nodeBBox(n);
+      g.rect(ox + (bb.x - b.x) * s, oy + (bb.y - b.y) * s, Math.max(1, bb.w * s), Math.max(1, bb.h * s)).fill({ color: (n.style && n.style.fill) || "#0f7d8c", alpha: 0.85 }); }
+    this._renderMinimapViewport();
+  }
+  _renderMinimapViewport() {
+    if (!this._minimap || !this._minimap._proj || !this.app) return;
+    const mm = this._minimap, pr = mm._proj, cam = this._cam, [vw, vh] = this.getSize();
+    // 화면 뷰포트의 model 사각형 → 미니맵 좌표
+    const m0 = PixiAdapterPure.screenToModel(0, 0, cam), m1 = PixiAdapterPure.screenToModel(vw, vh, cam);
+    mm.vp.clear();
+    mm.vp.rect(pr.ox + (m0[0] - pr.bx) * pr.s, pr.oy + (m0[1] - pr.by) * pr.s, (m1[0] - m0[0]) * pr.s, (m1[1] - m0[1]) * pr.s)
+      .stroke({ color: "#2563eb", width: 1.5, alpha: 0.9 });
   }
 
   _resizeToContainer() {
     if (!this.container || !this.app) return;
     const w = this.container.clientWidth || 800, h = this.container.clientHeight || 600;
+    // 크기 무변화 시 skip — ResizeObserver 루프(resize→layout→observe) 경고 방지.
+    if (this._lastW === w && this._lastH === h) return;
+    this._lastW = w; this._lastH = h;
     this.app.renderer.resize(w, h);
+    this._positionMinimap();
+    this._render();
   }
 
+  // render-on-demand: 변경 지점마다 명시 렌더(ticker autoStart:false). rAF-throttle 무관 즉시 페인트.
+  _render() { if (this.app && this.app.renderer && this.world) { try { this.app.renderer.render(this.app.stage); } catch (_) {} } }
   // ── 카메라 상태 헬퍼 ──
   get _cam() { return this.world ? { zoom: this.world.scale.x, x: this.world.position.x, y: this.world.position.y } : { zoom: 1, x: 0, y: 0 }; }
-  _applyCam(c) { if (!this.world) return; this.world.scale.set(c.zoom); this.world.position.set(c.x, c.y); this._emitTransform(); }
+  _applyCam(c) { if (!this.world) return; this.world.scale.set(c.zoom); this.world.position.set(c.x, c.y); this._renderMinimapViewport(); this._render(); this._emitTransform(); }
   getSize() { return this.app ? [this.app.renderer.width / this.app.renderer.resolution, this.app.renderer.height / this.app.renderer.resolution] : [0, 0]; }
-  resize(w, h) { if (this.app) this.app.renderer.resize(w, h); }
   getZoom() { return this._cam.zoom; }
   zoomTo(z, opts) { const c = this._cam; c.zoom = PixiAdapterPure.clampZoom(z, this.zoomRange); this._applyCam(c); }
   zoomBy(f) { const c = this._cam; c.zoom = PixiAdapterPure.clampZoom(c.zoom * f, this.zoomRange); this._applyCam(c); }
   translateBy(d) { const c = this._cam; c.x += d[0]; c.y += d[1]; this._applyCam(c); }
-  // model→screen / screen→model (G6 의미 유지)
-  getCanvasByViewport(m) { return PixiAdapterPure.modelToScreen(m[0], m[1], this._cam); }
-  getViewportByCanvas(s) { return PixiAdapterPure.screenToModel(s[0], s[1], this._cam); }
+  // ⚠ G6 명명(gap #2): getCanvasByViewport(screen)→model, getViewportByCanvas(model)→screen. graph-core 용법과 일치.
+  getCanvasByViewport(s) { return PixiAdapterPure.screenToModel(s[0], s[1], this._cam); }
+  getViewportByCanvas(m) { return PixiAdapterPure.modelToScreen(m[0], m[1], this._cam); }
 
-  getElementPosition(id) { const n = this._built.nodes.find(x => x.id === id); return n ? [n.style.x, n.style.y] : null; }
-  getElementRenderBounds(id) {
+  // 위치: 노드 우선, combo/SC:/GB:/GH:/CAT: 등 장식은 bbox 중심(gap #9).
+  getElementPosition(id) {
+    const n = this._built.nodes.find(x => x.id === id);
+    if (n) return [n.style.x, n.style.y];
+    const b = this._boundsOf(id);
+    return b ? [b.x + b.width / 2, b.y + b.height / 2] : null;
+  }
+  _boundsOf(id) {
     const n = this._built.nodes.find(x => x.id === id);
     if (n) { const b = PixiAdapterPure.nodeBBox(n); return { x: b.x, y: b.y, width: b.w, height: b.h }; }
     const c = this._built.combos.find(x => x.id === id);
     if (c) { const b = PixiAdapterPure.comboBBox(c.id, this._built.nodes, (c.style || {}).padding); if (b) return { x: b.x, y: b.y, width: b.w, height: b.h }; }
     return null;
+  }
+  // G6 반환형 superset: graph-core(_metaGraphAnimateFocus)는 b.min[0..1]/b.max[0..1] 을 읽는다(gap #1).
+  getElementRenderBounds(id) {
+    const b = this._boundsOf(id);
+    if (!b) return null;
+    return { x: b.x, y: b.y, width: b.width, height: b.height, min: [b.x, b.y], max: [b.x + b.width, b.y + b.height], center: [b.x + b.width / 2, b.y + b.height / 2] };
   }
 
   fitView(opts) {
@@ -237,41 +341,101 @@ export class PixiGraphAdapter {
   _bindPointer() {
     if (!this.app) return;
     const el = this.app.canvas; el.style.touchAction = "none";
-    const MOVE_THRESH = 4;   // px — 이 이하 이동은 '정지=클릭', 초과는 '드래그=팬'
-    let down = null, dragging = false;
+    const MOVE_THRESH = 4;   // px — 이 이하 이동은 '정지=클릭', 초과는 드래그(팬 or 노드이동)
+    let down = null, mode = null;   // mode: null|"pan"|"nodedrag"
     const scr = (e) => { const r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-    // 어느 버튼이 캔버스 팬인지: 기본=중간버튼(1)만(graph-core _metaCanvasDragEnable 등가). panButton:"any"=좌클릭 드래그도 팬.
-    const panAllowed = (btn) => btn === 1 || this.cfg.panButton === "any";
+    const rawClient = (e) => ({ x: e.clientX, y: e.clientY });
+    const midBtn = (btn) => btn === 1;
+    // 노드 이동 대상인가(gap #7, _metaElementDragEnable 등가): 좌클릭 + 노드/장식(SC:/GB:/GH:/CAT:/CATH: 등)이되
+    //   접기 컨트롤(GX:/CATX:)·접힌 카테고리 밴드는 클릭 전용 → graph-core 핸들러가 최종 판정(어댑터는 dragstart 만 발화).
     el.addEventListener("wheel", (e) => { e.preventDefault();
       const s = scr(e); this._applyCam(PixiAdapterPure.zoomAroundCursor(this._cam, e.deltaY < 0 ? 1.12 : 0.9, s, this.zoomRange)); }, { passive: false });
-    el.addEventListener("pointerdown", (e) => {
-      const s = scr(e); down = { sx: s.x, sy: s.y, button: e.button, ox: this._cam.x, oy: this._cam.y }; dragging = false;
-    });
-    window.addEventListener("pointermove", (e) => {
+    const onDown = (e) => {
+      const s = scr(e), [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
+      const hit = this._pick(mx, my);
+      down = { sx: s.x, sy: s.y, button: e.button, ox: this._cam.x, oy: this._cam.y, hit, client: rawClient(e), mx, my, lmx: mx, lmy: my }; mode = null;
+    };
+    el.addEventListener("pointerdown", onDown);
+    const onMove = (e) => {
       if (!down) return;
       const s = scr(e), dx = s.x - down.sx, dy = s.y - down.sy;
-      if (!dragging && Math.hypot(dx, dy) > MOVE_THRESH) dragging = true;
-      if (dragging && panAllowed(down.button)) this._applyCam({ zoom: this._cam.zoom, x: down.ox + dx, y: down.oy + dy });
-    });
+      const [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
+      if (!mode && Math.hypot(dx, dy) > MOVE_THRESH) {
+        // 중간버튼=팬. 좌클릭+노드/장식=노드드래그(단 elementDragEnable predicate 통과 시 — M2: GX:/CATX:/접힌 밴드는 click 전용). 그 외=팬.
+        const dragOk = down.hit && this._elementDragEnable(down.hit, e);
+        if (midBtn(down.button) || !dragOk) mode = "pan";
+        else { mode = "nodedrag"; this._emitDrag("dragstart", down.hit, e, s, mx, my); }
+      }
+      if (mode === "pan") this._applyCam({ zoom: this._cam.zoom, x: down.ox + dx, y: down.oy + dy });
+      else if (mode === "nodedrag") {
+        // grabbed 요소를 델타만큼 이동(모델 좌표) — graph-core 핸들러가 종속을 translateElementTo 로 따라 옮긴다.
+        const ddx = mx - down.lmx, ddy = my - down.lmy; down.lmx = mx; down.lmy = my;
+        this._moveElement(down.hit.id, ddx, ddy);
+        this._emitDrag("drag", down.hit, e, s, mx, my);
+      }
+    };
+    window.addEventListener("pointermove", onMove);
     const up = (e) => {
       if (!down) return;
-      const wasDragging = dragging, btn = down.button, s = scr(e); down = null; dragging = false;
-      if (wasDragging && panAllowed(btn)) return;   // 드래그 팬이었음 → 클릭 억제
-      const c = this._cam, [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, c);
-      const hit = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes) : null;
-      const kindEvt = hit ? (this._isCombo(hit.id) ? "combo" : "node") : "canvas";
-      if (btn === 2) { this._emit(kindEvt + ":contextmenu", this._payload(hit, s, mx, my)); return; }
+      const finished = mode, d = down, s = scr(e); down = null; mode = null;
+      const [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
+      if (finished === "pan") return;                       // 팬 → 클릭 억제
+      if (finished === "nodedrag") { this._emitDrag("dragend", d.hit, e, s, mx, my); return; }
+      // 정지 클릭/우클릭
+      const hit = d.hit, kindEvt = hit ? (hit.__combo ? "combo" : "node") : "canvas";
+      if (d.button === 2) {   // 우클릭: 노드>combo>edge>canvas
+        if (hit) { this._emit(kindEvt + ":contextmenu", this._payload(hit, s, mx, my, e)); return; }
+        const eh = this._pickEdge(mx, my);
+        if (eh) { this._emit("edge:contextmenu", this._payload(eh, s, mx, my, e)); return; }
+        this._emit("canvas:contextmenu", this._payload(null, s, mx, my, e)); return;
+      }
       const now = (typeof performance !== "undefined" ? performance.now() : 0);
-      // 더블클릭 = 같은 노드를 DBLCLICK_MS 내 재클릭(graph-core 이웃확장 semantics). 다른 노드/빈 공간은 초기화.
-      if (hit && this._lastTapId === hit.id && (now - this._lastTap) < DBLCLICK_MS) { this._lastTap = 0; this._lastTapId = null; this._emit("node:dblclick", this._payload(hit, s, mx, my)); return; }
+      if (hit && this._lastTapId === hit.id && (now - this._lastTap) < DBLCLICK_MS) { this._lastTap = 0; this._lastTapId = null; this._emit((hit.__combo ? "combo" : "node") + ":dblclick", this._payload(hit, s, mx, my, e)); return; }
       this._lastTap = hit ? now : 0; this._lastTapId = hit ? hit.id : null;
-      this._emit(kindEvt + ":click", this._payload(hit, s, mx, my));
+      this._emit(kindEvt + ":click", this._payload(hit, s, mx, my, e));
     };
     window.addEventListener("pointerup", up);
     el.addEventListener("contextmenu", (e) => e.preventDefault());
+    this._winListeners = [["pointermove", onMove], ["pointerup", up]];   // m1: destroy 시 정리
   }
+  // 노드 우선, 없으면 combo(스키마 배경) — 반환에 __combo 표시. hit.data/id 는 G6 e.target 호환.
+  _pick(mx, my) {
+    const n = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes) : null;
+    if (n) return n;
+    const c = PixiAdapterPure.hitTestCombo(mx, my, this._built.combos || [], this._built.nodes || []);
+    return c ? Object.assign({ __combo: true }, c) : null;
+  }
+  _pickEdge(mx, my) { const posOf = (id) => { const p = this.getElementPosition(id); return p; }; return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom)); }
   _isCombo(id) { return this._built.combos.some(c => c.id === id); }
-  _payload(hit, s, mx, my) { return { target: hit ? { id: hit.id, data: hit.data } : null, id: hit ? hit.id : null, canvas: s, model: { x: mx, y: my } }; }
+  // M2: graph-core 의 _metaElementDragEnable 을 G6-shape 이벤트로 호출(주입 시). 미주입이면 항상 허용.
+  _elementDragEnable(hit, e) {
+    const fn = this.cfg.elementDragEnable; if (typeof fn !== "function") return true;
+    try { return fn({ target: { id: hit.id }, targetType: hit.__combo ? "combo" : "node", buttons: (e && e.buttons) || 1, button: (e && typeof e.button === "number") ? e.button : 0 }); } catch (_) { return true; }
+  }
+  _moveElement(id, ddx, ddy) {
+    const n = this._built.nodes.find(x => x.id === id);
+    if (n) { n.style.x += ddx; n.style.y += ddy; const o = this._objs.get(id); if (o) o.position.set(n.style.x, n.style.y); this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128); this._render(); return; }   // B1: hit-grid 재구성(이동 후 클릭 유지)
+    // combo(스키마 배경) 드래그: 자식 노드 전체 + combo 카드 배경(자식 파생 bbox 이므로 같은 델타)을 함께 이동(M1)
+    for (const cn of (this._built.nodes || [])) { if (cn.combo === id) { cn.style.x += ddx; cn.style.y += ddy; const o = this._objs.get(cn.id); if (o) o.position.set(cn.style.x, cn.style.y); } }
+    const card = this._objs.get(id); if (card) { card.position.set(card.position.x + ddx, card.position.y + ddy); }   // M1: combo 배경 카드 추종
+    this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);   // B1
+    this._render();
+  }
+  // 드래그 이벤트 합성 — payload 에 target.id + buttons/button/targetType(_metaEventButtons·enable predicate 용).
+  _emitDrag(phase, hit, e, s, mx, my) {
+    const kind = hit.__combo ? "combo" : "node";
+    const pl = this._payload(hit, s, mx, my, e);
+    pl.targetType = hit.__combo ? "combo" : "node";
+    pl.buttons = 1; pl.button = 0;
+    this._emit(kind + ":" + phase, pl);
+    // m4: 드래그 중엔 미니맵 뷰포트 사각형만 갱신(O(1)) — 콘텐츠 전량 재그림(O(N))은 dragend 로 지연.
+    if (phase === "dragend") this._renderMinimap(); else if (phase === "drag") this._renderMinimapViewport();
+  }
+  _payload(hit, s, mx, my, e) {
+    return { target: hit ? { id: hit.id, data: hit.data } : null, id: hit ? hit.id : null,
+      canvas: s, client: (e ? { x: e.clientX, y: e.clientY } : s), model: { x: mx, y: my },
+      buttons: (e && e.buttons) || 0, button: (e && typeof e.button === "number") ? e.button : 0 };
+  }
 
   // ── 데이터/렌더 ──
   setData(built) { this._built = built || { nodes: [], edges: [], combos: [] }; }
@@ -299,7 +463,10 @@ export class PixiGraphAdapter {
     for (const n of (this._built.nodes || [])) this.world.addChild(this._drawNode(n));
     // 4) hit-grid 재구성
     this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);
-    this._emit("afterdraw", { stage: "data" });
+    // 5) 미니맵 재렌더 (구성 변경 반영)
+    this._renderMinimap();
+    this._render();
+    this._emit("afterdraw", { data: { stage: "data" } });   // graph-core 는 e.data.stage 를 읽는다(gap #16)
   }
 
   _drawNode(n) {
@@ -309,7 +476,14 @@ export class PixiGraphAdapter {
     const st = { color: s.stroke || "#ffffff", width: s.lineWidth || 1 };
     if (n.type === "circle") { const r = (typeof s.size === "number" ? s.size : 11) / 2; g.circle(0, 0, r).fill(s.fill || "#5c6773"); if (s.lineWidth) g.stroke(st); }
     else { const w = Array.isArray(s.size) ? s.size[0] : (s.size || 100), h = Array.isArray(s.size) ? s.size[1] : 24;
-      g.roundRect(-w / 2, -h / 2, w, h, s.radius || 0).fill({ color: s.fill || "#0f7d8c", alpha: s.fillOpacity == null ? 1 : s.fillOpacity }); if (s.lineWidth) g.stroke(st); }
+      g.roundRect(-w / 2, -h / 2, w, h, s.radius || 0).fill({ color: s.fill || "#0f7d8c", alpha: s.fillOpacity == null ? 1 : s.fillOpacity });
+      if (s.lineWidth) {
+        if (Array.isArray(s.lineDash)) {   // m2: 노드 lineDash(그룹 배경 GB 점선) 소비 — rect 4변 대시
+          const D = PixiAdapterPure.dashSegments, dd = s.lineDash;
+          for (const seg of [].concat(D(-w/2,-h/2,w/2,-h/2,dd), D(w/2,-h/2,w/2,h/2,dd), D(w/2,h/2,-w/2,h/2,dd), D(-w/2,h/2,-w/2,-h/2,dd))) g.moveTo(seg[0], seg[1]).lineTo(seg[2], seg[3]);
+          g.stroke(st);
+        } else g.stroke(st);
+      } }
     c.addChild(g);
     if (s.labelText) c.addChild(this._label(s.labelText, s));
     // 상태 오버레이 (selected 테두리·match glow·analyzed/running 마커) — base 는 이미 style 에 bake(dim=opacity)
@@ -338,10 +512,12 @@ export class PixiGraphAdapter {
     const conf = this._nodeState;
     for (const st of states) {
       const sc = conf[st] || {};
-      if (st === "selected" || st === "match") {
+      if (st === "selected" || st === "match" || st === "busy") {
+        // selected=진회색 halo, match=앰버 glow, busy=청색 처리중 테두리(gap #14)
+        const col = sc.stroke || (st === "selected" ? "#111827" : st === "busy" ? "#2563eb" : "#f59e0b");
         const halo = new P.Graphics();
         halo.roundRect(-w / 2 - 3, -h / 2 - 3, w + 6, h + 6, (s.radius || 4) + 2)
-          .stroke({ color: sc.stroke || (st === "selected" ? "#111827" : "#f59e0b"), width: sc.lineWidth || 2.5, alpha: 0.9 });
+          .stroke({ color: col, width: sc.lineWidth || 2.5, alpha: st === "match" ? 0.8 : 0.9 });
         halo.zIndex = -1; c.addChildAt(halo, 0);
       } else if (st === "analyzed" || st === "running") {
         const dot = new P.Graphics();
@@ -387,11 +563,42 @@ export class PixiGraphAdapter {
     g.moveTo(x, y).lineTo(x + Math.cos(a1) * size, y + Math.sin(a1) * size).lineTo(x + Math.cos(a2) * size, y + Math.sin(a2) * size).closePath().fill({ color: color || "#cbd2db", alpha: alpha == null ? 1 : alpha });
   }
 
-  // 상태 갱신 (G6 호환) — v1 은 full rebuild 에 states 반영, per-element 는 재-draw 유도
-  setElementState(id, states) { const n = this._built.nodes.find(x => x.id === id); if (n) { n.states = Array.isArray(states) ? states : [states]; } }
-  setElementZIndex(id, z) { const o = this._objs.get(id); if (o) o.zIndex = z; }
-  getPluginInstance(key) { return key === "minimap" ? (this._minimap || null) : null; }   // 미니맵 후속 §
-  destroy() { try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); if (this.app) this.app.destroy(true, { children: true }); } catch (_) {} this._objs.clear(); this._handlers.clear(); }
+  // 상태 갱신 (G6 호환) — 상태 배열 변이 + 해당 노드 오브젝트만 즉시 재렌더(gap #13, 증분 경로 ctxmenu:2011).
+  setElementState(id, states) {
+    const n = this._built.nodes.find(x => x.id === id); if (!n) return;
+    n.states = Array.isArray(states) ? states : [states];
+    const old = this._objs.get(id);
+    if (old && this.world) { const idx = this.world.getChildIndex(old); const fresh = this._drawNode(n); try { old.destroy({ children: true }); } catch (_) {} this.world.removeChild(old); this.world.addChildAt(fresh, Math.max(0, Math.min(idx, this.world.children.length))); this._render(); }
+  }
+  // z-index: graph-core(roleviz)는 **단일 map 인자** {id:z} 로 부른다(gap #3). (id,z) 2인자도 겸용.
+  setElementZIndex(a, b) {
+    if (a && typeof a === "object") { for (const id in a) { const o = this._objs.get(id); if (o) o.zIndex = a[id]; } this._render(); return; }
+    const o = this._objs.get(a); if (o) { o.zIndex = b; this._render(); }
+  }
+  getElementZIndex(id) { const o = this._objs.get(id); return o ? (o.zIndex || 0) : 0; }   // gap #4
+  getEdgeData() { return this._built.edges || []; }   // gap #5
+  // 요소 절대이동 (드래그 종속 동반이동, gap #6). map {id:[x,y]} — 모델 좌표.
+  translateElementTo(map, anim) {
+    if (!map || typeof map !== "object") return;
+    for (const id in map) {
+      const p = map[id]; if (!Array.isArray(p)) continue;
+      const n = this._built.nodes.find(x => x.id === id);
+      if (n) { n.style.x = p[0]; n.style.y = p[1]; }
+      const o = this._objs.get(id); if (o) o.position.set(p[0], p[1]);
+    }
+    this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);   // B1: 종속 이동 후 hit-grid 갱신
+    this._render();
+  }
+  getPluginInstance(key) { return key === "minimap" ? (this._minimap || null) : null; }   // G6 minimap 플러그인 호환(자체 렌더)
+  // 무인자(gap #10)=컨테이너 추종, (w,h)=명시. graph-core 는 무인자로 부른다(core:1833,2090).
+  resize(w, h) { if (!this.app) return; if (w == null) this._resizeToContainer(); else { this.app.renderer.resize(w, h); this._positionMinimap(); this._renderMinimapViewport(); } this._render(); }
+  destroy() {
+    try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); } catch (_) {}
+    try { if (this._ro) this._ro.disconnect(); } catch (_) {}   // m1: ResizeObserver 정리
+    try { if (this._winListeners) for (const [ev, fn] of this._winListeners) window.removeEventListener(ev, fn); } catch (_) {}   // m1: window 리스너 정리
+    try { if (this.app) this.app.destroy(true, { children: true }); } catch (_) {}
+    this._objs.clear(); this._handlers.clear();
+  }
 }
 
 // 렌더러 팩토리 — B-late seam(_META_RENDERER)에서 G6.Graph 대신 이걸 선택.

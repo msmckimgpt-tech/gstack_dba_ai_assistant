@@ -186,10 +186,19 @@ COLUMN(3) < NODE(칩·카드 4) < GROUP_HD(그룹 헤더 5) < CTL(컨트롤 6)`.
 `canonical+1000` 으로 결정론 부스트하고 dragend 에 canonical 복원 — G6 내장 drag-element 의
 `frontElement` 영구 승격(드래그 이력이 z-order 로 굳는 원인)을 상쇄한다.
 
-**렌더러 교체 계획 (2026-07-13, TASK §78 — plan-review)**: 노드 다수 팬 버벅임의 잔존 병목이 Canvas
-immediate-mode 의 매 프레임 CPU 재래스터(~1ms/노드, ADR-030)로 확정되어, 렌더 계층을 **PixiJS v8
-(WebGL/WebGPU)** SceneAdapter 로 교체하는 계획이 수립됨(`../pixi-migration/BLUEPRINT.md` — 디자인 보존
-계약 D1~D6 hard gate). **승인(PLAN-APPROVED)·이관 완료 전까지 현행 G6 v5 Canvas 가 정본이며 본 절 기술은 불변.**
+**렌더러 교체 PixiJS v8 (2026-07-13, TASK §78, PLAN-APPROVED)**: 노드 다수 팬 버벅임의 잔존 병목이 G6 Canvas
+immediate-mode 의 매 프레임 CPU 재래스터(~1ms/노드, ADR-030)로 확정 → 렌더 계층을 **PixiJS v8(WebGL/WebGPU,
+MIT, vendored `vendor/pixi.min.js`)** `PixiGraphAdapter`(SceneAdapter, `graph/graph-renderer-pixi.js`)로 교체.
+GPU 상주 씬 + 카메라=world Container transform 1회 갱신으로 팬 프레임당 CPU 재래스터 제거(실측 882 등가 팬/줌
+60fps vsync-perfect). **배선 방식**: `graph-core.js _metaInitGraph` 가 `_metaRendererKind()`('pixi' 기본 —
+window.PIXI 존재 시 / 'g6' 폴백)로 분기해 `new PixiGraphAdapter(cfg)` 생성. 어댑터가 G6.Graph 인터페이스를
+미러(setData/draw→setScene·카메라 API·이벤트 on·setElementState/ZIndex·getPluginInstance)해 graph-core 의
+모든 UI 버튼·상호작용 경로(툴바 줌·스키마 점프·검색·kind 필터·상세 패널 카메라·우클릭 컨텍스트 메뉴·드래그
+자유배치·AI 분석 마커·미니맵)가 **무변경으로 어댑터 위에서 동작**. scene-spec = `_metaG6Build()` 출력형태
+(G6 data-shape) 그대로라 emission 로직 불변. render-on-demand(ticker autoStart:false — 정적 viz idle GPU 0).
+combo 는 자식 union bbox 로 auto-fit(G6 auto-fit 제약 소멸). **폴백**: `window.__META_RENDERER='g6'` + 재로드로
+G6 즉시 복귀(회귀 대비). G6 vendored 유지. ADR-004(G6 채택) supersede. 상세: `../pixi-migration/BLUEPRINT.md`
++ `graph/SCENE_SPEC.md`.
 Phase A POC(2026-07-13, `pixi-migration/poc/`)로 디자인 보존(D1~D5)·성능(882 등가 vsync-perfect) exit gate 를 실 Windows Chrome 실측 PASS — 제품 코드 미변경(POC 격리).
 Phase B-early(2026-07-13): `graph/graph-renderer-pixi.js` SceneAdapter(G6.Graph 호환) 신설 — scene-spec(=_metaG6Build 출력형태) setScene 렌더, 순수 28 PASS·실 Chrome 60fps·D1~D5 보존. **미배선 신규 파일**(graph-core.js 배선은 B-late).
 

@@ -131,6 +131,24 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(cbb && cbb.w > 0 && cbb.h > 0, "T11 combo 자식 auto-fit");
 }
 
+// ── gap 수정 계약 (배선 정합) ──
+// T12 combo hitTest: 노드 없는 combo 영역 → 그 combo
+{
+  const nodes = [{ id: "a", type: "rect", combo: "S1", style: { x: 100, y: 100, size: [150, 24] } }];
+  const combos = [{ id: "S1", style: { padding: [30, 16, 14, 16] } }];
+  ok(Pure.hitTestCombo(200, 130, combos, nodes) === null, "T12 combo bbox 밖=null");
+  const h = Pure.hitTestCombo(100, 60, combos, nodes);   // 노드 위(88~112) 아닌 padding 영역
+  ok(h && h.id === "S1", "T12 combo padding 영역 hit");
+}
+// T13 edge hitTest: 선분 근처 → 그 엣지
+{
+  const edges = [{ id: "e1", source: "a", target: "b" }];
+  const pos = (id) => id === "a" ? [0, 0] : [100, 0];
+  ok(Pure.hitTestEdge(50, 2, edges, pos, 6).id === "e1", "T13 선분 근처 hit");
+  ok(Pure.hitTestEdge(50, 40, edges, pos, 6) === null, "T13 선분 밖=null");
+  ok(Pure._segDist(50, 3, 0, 0, 100, 0) === 3, "T13 점-선분 거리");
+}
+
 console.log("──────");
 console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
 process.exit(fail === 0 ? 0 : 1);

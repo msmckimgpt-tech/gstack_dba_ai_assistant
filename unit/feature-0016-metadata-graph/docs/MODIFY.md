@@ -148,3 +148,8 @@ source_of_truth: true
 - 대상: `unit/feature-0003-agent-web-ui/src/static/graph/{graph-renderer-pixi.js,SCENE_SPEC.md}`(신설) · `tests/headless/test_pixi_adapter.js`(신설) · `pixi-migration/poc/adapter-poc.html`(신설) · docs(TASK T78.3·REPORT·test-runs.d). **기존 graph/ 7모듈·admin.js·admin.html 무변경**(배선은 B-late).
 - 변경: PixiJS v8 SceneAdapter(G6.Graph 호환 + 순수로직 분리) — scene-spec(=_metaG6Build 출력형태) setScene 렌더. 순수 28 PASS·그래프 회귀 279 무회귀·실 Chrome 60fps vsync + 디자인 D1~D5 보존.
 - 근거: TASK §78 T78.3a / BLUEPRINT §4 Phase B. 신규 파일이라 §18.8 적대 패널은 B-late(graph-core 배선=실 제품 표면 변경) 시 정규 적용 — 본 커밋은 미배선 어댑터라 SKIPPED.
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-wire — §78 B-late seam 배선 + 적대리뷰 수정 (제품 코드 변경)
+- 대상: `graph/graph-renderer-pixi.js`(gap 배선 + 적대리뷰 B1/M1/M2/m1/m2/m4)·`graph/graph-core.js`(seam _metaRendererKind·_metaInitGraph 분기 + pixi 컬링 비활성 M3/M4 + drag-enable predicate 주입)·`graph/SCENE_SPEC.md`(신규)·`admin.html`(pixi.min.js vendor)·`vendor/pixi.min.js`(신규)·`tests/headless/test_pixi_adapter.js`.
+- 변경: 그래프 렌더러 G6→PixiJS 전환 배선. 어댑터가 G6.Graph 인터페이스 미러(모든 UI 버튼·상호작용 무변경 동작). render-on-demand. 적대 §18.8 BLOCKING1+MAJOR4+MINOR3 수정. 회귀 0(순수 33 + 그래프 279).
+- 근거: 사용자 지시(실 배선 + 모든 UI 버튼 정합). REV-…-graph-pixi-wire [SUBAGENT:PASS-WITH-FIXES].

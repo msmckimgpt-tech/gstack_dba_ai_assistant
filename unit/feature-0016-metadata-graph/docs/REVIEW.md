@@ -173,3 +173,11 @@ source_of_truth: true
 
 ## REV-20260713T051139-ai-root-feature-0016-graph-pixi-adapter [SKIPPED:unwired-new-file]
 - §78 Phase B-early SceneAdapter(graph-renderer-pixi.js) 신설 — **미배선 신규 파일**(admin.html·graph-core.js 무변경, 실 제품 렌더 경로에 아직 미연결). 어댑터 자체 검증은 순수테스트 28 PASS + 실 Windows Chrome PB-0008(디자인·성능·이벤트) 로 수행. §18.8 적대 패널은 B-late(graph-core 렌더러 seam 배선 = 실 사용자 표면 변경) 시 정규 적용. 신규 파일·미배선이라 현 커밋 SKIPPED.
+
+## REV-20260713T060954-ai-root-feature-0016-graph-pixi-wire [SUBAGENT:graph-adversarial] — PASS-WITH-FIXES
+§78 B-late graph-core seam 배선(G6→PixiJS) diff 적대 리뷰(Explore/opus, 실 코드 대조·추측 배제).
+- **BLOCKING 1 수정**: B1 드래그/translateElementTo 후 hit-grid 미갱신 → 이동 요소 클릭 불가(dragend rebuild 없는 평범 노드/SC 카드). 수정: _moveElement·translateElementTo 종료 시 buildHitGrid 재구성(실증: 카드 200,150 이동 후 새 위치 _pick hit·옛 위치 miss).
+- **MAJOR 4 수정**: M1 combo 드래그 시 배경 카드 미추종 → _moveElement combo 분기가 카드 객체도 동반 이동. M2 click-only 컨트롤(GX:/CATX:/접힌 CAT:·CATH:)이 pixi 에서 드래그돼 clusterOffset 오염 → graph-core 가 _metaElementDragEnable predicate 를 어댑터 cfg 로 주입, 드래그 진입 게이트. M3 미니맵 부분집합 표시 + M4 팬 GC churn → **pixi 모드 뷰포트 컬링 비활성**(GPU 상주라 §65/§67 CPU-raster 완화 불필요) 근본 해소 — _built 전량 방출로 미니맵 전역 + 팬 rebuild 소거.
+- **MINOR 수정**: m1 destroy 시 window 리스너·ResizeObserver 정리. m2 노드 lineDash(그룹 배경 GB 점선) 소비. m4 드래그 중 미니맵 뷰포트 사각형만 갱신(콘텐츠 재그림 dragend 지연).
+- **통과 확인(적대 검증)**: 좌표 API 방향(getCanvasByViewport=screen→model)은 이 diff 가 오히려 **수정**(graph-core 소비부 정합)·getElementRenderBounds min/max superset 정합·PIXI 전역 노출(UMD var)·미배선/reject 폴백(try/catch·null guard)·미니맵 재사용 패치 __reusePatched 조기 return — 전부 결함 아님 확인.
+- 회귀: 어댑터 순수 33 PASS + 그래프 headless 279 PASS 무회귀. 남은 m3(seed/anchor 헛도는 무해 noise)는 정확성 무관 — POST-DEPLOY 후속.

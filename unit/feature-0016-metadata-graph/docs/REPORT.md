@@ -1738,3 +1738,11 @@ PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수
 
 ### Git 동기화 결과
 - 커밋: `ai/root/feature-0016-graph-pixi` — 어댑터·계약·테스트·POC·docs. Push: 진행(PLAN-APPROVED Major·BLOCKED 없음).
+
+## 2026-07-13 · §78 Phase B-late — graph-core seam 배선 + UI 버튼 정합 (그래프 렌더러 PixiJS 전환)
+사용자 지시: "실제 배선까지 진행 + cycle-finalize + 그래프 뷰 내 모든 UI 버튼 작동 정합."
+- **배선**: `graph-core.js _metaInitGraph` 에 렌더러 seam(`_metaRendererKind` 'pixi'/'g6' 분기) — pixi 기본, `window.__META_RENDERER='g6'` 폴백. admin.html pixi.min.js vendor. 착수 전 fetch/rebase(behind 0, 새 그래프 변경 없음 재확인).
+- **UI 버튼 정합(gap 인벤토리 17종)**: 적대 서브에이전트가 graph-core 가 부르는 G6 API·이벤트·버튼 경로를 전수 인벤토리 → 어댑터 gap 을 전부 배선. CRITICAL 3(getElementRenderBounds min/max superset·좌표 API 방향 스왑 getCanvasByViewport=screen→model·setElementZIndex map 인자)이 카메라 이동 버튼 전량을 좌우 — 수정 완료. 추가: getElementZIndex/getEdgeData(z-order)·translateElementTo+드래그 이벤트 합성(자유배치)·combo/edge hit-test(스키마 배경·관계선 우클릭)·client payload(팬-가드)·busy 상태·autoResize·afterdraw payload·resize 무인자. 모든 버튼(툴바 줌/fit/100%/스키마점프·검색·kind 필터·상세 패널 카메라·이력·컬럼 선택·우클릭 메뉴·드래그·AI 마커·미니맵)이 어댑터 위에서 동작(graph-core 로직 무변경).
+- **render-on-demand 전환**: ticker autoStart:false + 변경 지점마다 명시 _render(). 근본원인 디버그 — WebGL preserveDrawingBuffer:false + rAF-throttle 로 headless/CDP 스크린샷이 검게 캡처되던 것(수동 render 는 컬러 실증)을 on-demand 렌더 + preserveDrawingBuffer:true 로 해소. 정적 viz 라 idle GPU 0 부수이득.
+- **검증**: 어댑터 순수 33 PASS + 그래프 회귀 279 PASS 무회귀 + 통합 하네스(실 그래프 마크업 + Pixi UMD + graph 번들 + mock apiFetch) headless+실 Windows Chrome: seam→PixiGraphAdapter 구성·6 스키마 카드 렌더·툴바 버튼·팬 60fps vsync-perfect·pageerror 0. 심화 상호작용(expand/상세/컨텍스트/드래그)은 동일 graph-core 로직이라 실데이터 PB-0008 이 정본 게이트(다음).
+- **다음**: 배포(deploy_scope included) + 라이브 admin 그래프 뷰 PB-0008(실데이터 전 버튼·상호작용·팬 성능) → cycle-finalize.
