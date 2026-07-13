@@ -2306,7 +2306,7 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 ## §78 graph-pixi-renderer — 렌더 엔진 G6 v5(Canvas) → PixiJS v8(WebGL/WebGPU) 교체 (2026-07-13, 사용자 요청 · entry persona dispatch) [§번호는 머지 시 scoped-renumber 가능, §13.1]
 사용자 요청: 노드 다수 상태의 카메라 이동(팬) 버벅임 잔존 — 외부 고성능 엔진 검토 결과(2026-07-13 read-only 검토: 게임엔진 기각·웹 GPU 렌더러 권고) 수용, "G6 는 과거 디자인 실패 이력 — **기존 디자인이 무너지지 않는 형태로 정합 + 성능 확보, PixiJS v8 로 계획 수립**".
 
-<!-- PLAN-REVIEW: §7.1 Major — 사람 승인 대기. 승인 시 아래에 PLAN-APPROVED 마커 기입 후 Phase A 착수. -->
+<!-- PLAN-APPROVED by ms.mckim on 2026-07-13 (AskUserQuestion: "승인 — Phase A 착수") -->
 
 ### §2.1 Implementation Plan (§7.1)
 - **정본 상세 계획**: `../pixi-migration/BLUEPRINT.md` (디자인 보존 계약 D1~D6 hard gate + Phase A POC / B 어댑터 통합 / C 검증·배포 + 리스크 R1~R7).
