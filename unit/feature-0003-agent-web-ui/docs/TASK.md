@@ -5470,6 +5470,19 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] **후속(비-차단)**: backfill SQL(대상1/2/3) MySQL 통합테스트 추가 — 현재 표준 스위트는 `--no-deps` 라 보안 리뷰 라이브 실증 + `_apply_permission_overrides` 단위테스트로 커버(TEST.md 기록).
 - [ ] verify-completion --pre-commit → commit(사용자 confirm) → 머지·push → web 재배포(정적 baked + 마이그 startup) → 배포 후 DB 마커(`WebSchemaMigrations`)·라이브 권한 그리드 실측.
 - [ ] PB-0008 Windows-browser: 그래프 탭 권한 게이팅 실렌더(묶음-only 계정 미노출·graph.read 계정 노출).
+
+
+## 20260713T1856-graph-perm-descfix — graph-perm-split 배포 후 seed catchup 1406 hotfix (권한 설명 255자 초과 → 부트스트랩 차단, 2026-07-13)
+
+- **적발(배포 후 실증)**: graph-perm-split(PR #765) 배포 후 `WebSchemaMigrations` 미생성 → backfill 미실행 확인. web-a 로그: `seed catchup skipped: 1406 (22001): Data too long for column 'Description'`. **근본원인**: `kb.ingest.manual` 설명을 301자로 늘렸는데 `WebPermissions.Description` = VARCHAR(255) → `_ensure_permission_catalog` INSERT 가 1406 으로 던지고, 이를 감싸는 `_ensure_seed_catchup`(운영 재기동 fast path) 전체가 skip → `_ensure_seed_roles`·graph-perm backfill·기타 catchup 통째 미실행. **CI(`--no-deps`)는 이 컬럼 제약 미노출**(보안 리뷰가 경고한 커버리지 갭 실현).
+- **영향 실측**: 그래프 접근을 잃은 사용자 **0명** — 유일한 묶음 보유 role=`admin`(이미 explicit graph.read 보유), 비-admin 묶음 보유 role/계정 override 부재. 단 seed catchup 전체가 매 startup 차단되는 부트스트랩 fragility 는 즉시 수정 대상.
+- **수정(2건)**:
+  - `_ensure_permission_catalog`: Label/Description 을 컬럼 길이(128/255)로 **방어적 클립** — 단일 긴 문자열이 전 부트스트랩 catchup 을 차단하던 fragility 제거(재발 방지).
+  - `kb.ingest.manual` 설명 301→205자 단축(클립 없이 온전 저장). 전 권한 description ≤255·label ≤128 전수 확인(잘림 0).
+- [x] py_compile OK · feature-0003 전체 스위트 PASS(회귀 0).
+- [ ] verify-completion → commit → PR → 머지 → web 재배포 → **재실증**: web 로그 `seed catchup skipped` 소멸 + `WebSchemaMigrations` 에 `graph-perm-split-v1` row 생성.
+
+
 ## TASK-20260713T094624-ds-conn-test — 작업화면 제품 드롭업 데이터소스 라벨 '연결 테스트' 버튼 + 상단 단발성 토스트 (Major §12.3 — feature-0003 web/UI + 백엔드 throttle, 2026-07-13)
 - 트리거: `/_template:entry` arg-given. REQ: 채팅 작업화면 제품 목록 데이터소스 라벨 클릭 → 연결 테스트 + 관리 콘솔식 단발성 Toast, 단 작업화면 토스트는 입력창 비가림 상단 표시.
 - [x] 설계 결정(AskUserQuestion): ① A2(관리자 엔드포인트 `POST /api/admin/datasources/{key}/test` 재사용·별도 RBAC 무 + 프론트/백 재시도 텀) ② C2(작업화면 전체 토스트 상단화).
