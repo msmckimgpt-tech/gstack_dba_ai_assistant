@@ -28,8 +28,9 @@ source_of_truth: true
 - [x] tools.py: stale "최상위 UNION 불가" 힌트 제거
 - [x] tests/test_readonly_query_shapes.py 신규 + test_gc_dialect_context UNION 단언 갱신 + 전체 회귀 pytest **1899 PASS(RC=0)**
 - [x] §18.8 적대 패널(security+backend+qa; 세션한도 조기종료→인라인 자기검증) — MAJOR1(데이터수정CTE) 수정, 나머지 REFUTED. REV-20260713T171821
-- [ ] cycle-finalize(PR merge, 외부영향 confirm) + 영향 서비스 재빌드 배포(ask-worker/insight-worker/web, confirm) + 라이브 실측
-- [ ] FRICTION_LEDGER FR-readonly-query-shapes-overblock 갱신(fixed:deployed:unverified-live)
+- [x] cycle-finalize(PR #761 merge main 9892fc3b) + 배포(ask-worker/insight-worker 재빌드·재생성 + web-a/b deploy-web, 4서비스 GIT_COMMIT=9892fc3b, 런타임 가드 동작 실증 PASS)
+- [x] FRICTION_LEDGER FR-readonly-query-shapes-overblock 생성(fixed:deployed:unverified-live)
+- [ ] 라이브 대화 실측(동적쿼리·테이블변경 리뷰 정상 조회) — 다음 audit corroboration 재측정 시 verified
 
 ## TASK-20260713T140405-describe-routine-tool — 저장 프로시저/함수 정의 조회 도구 신설 (Major §12.3, conversation_audit FR-show-create-routine-blocked)
 - 출처: `/_dqa:conversation_audit` (2026-07-13, 사용자 명시 호출). 대화 "재사용 쿼리의 PK 관리 문제 추가 리뷰" 에서 assistant 가 저장 프로시저 로직을 검토하려 `SHOW CREATE PROCEDURE gunzgame.Game_AccountAttendence` 를 `execute_sql` 로 실행했으나 보안 가드에 차단됨(사용자 보고). 사용자 승인 방식=**Option 1**(전용 도구 + 유도, AskUserQuestion 2026-07-13).
