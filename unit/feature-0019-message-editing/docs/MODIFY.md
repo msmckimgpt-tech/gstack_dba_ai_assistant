@@ -56,3 +56,10 @@ source_of_truth: true
 - 검증: 누계 15 PASS, 회귀 0(55 PASS).
 - 결정: DEC-4(두 store dual active_leaf + core_message_id 링크 좌표, DESIGN §2.3)·DEC-5(display→core
   매핑은 user 메시지 created_at 1:1 매칭 — 정상 append 무-스레딩).
+
+## CHG-20260713-0003 (마이그레이션 게이트 fix — MAX_MIGRATION 마커 갱신)
+- 변경: `alembic/versions/MAX_MIGRATION.txt` 0040 → 0041_message_branching.
+- 사유: CI Migration gate(`bin/migrate-lint.sh --heads`, parallel-work ITEM-02)가 head(0041)와
+  MAX_MIGRATION 마커(0040) 불일치를 적발 → PR #766 CI red. 신규 마이그레이션 추가 시 이 마커도
+  함께 갱신해야 함(verify-completion·make test 는 검사 안 하는 CI 전용 게이트). 코드/스키마 무변경.
+- 검증: migrate-lint --self-test PASS + --heads PASS(head 0041 단일·번호중복 0·MAX_MIGRATION 일치).
