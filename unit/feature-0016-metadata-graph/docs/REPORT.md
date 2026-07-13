@@ -1719,3 +1719,12 @@ PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수
 ### Git 동기화 결과 (Phase A)
 - 커밋: (본 커밋) `ai/root/feature-0016-graph-pixi` — POC 3파일 + TASK/REPORT/MODIFY 기록.
 - Push: 진행 (PLAN-APPROVED Major 진행 중 — BLOCKED 없음, §16.3 Step 4 자동 동기화).
+
+## 2026-07-13 · §78 R6 순서게이트 자연 해소 + 착지분 흡수·테스트 정합
+- **R6 해소**: 세션 진행 중 content-cluster(PR #746)·§77 minimap-fullview(PR #747, 배포 c264e3f1 PB-0008 PASS) 가 origin/main 착지 → Phase B blocker 소멸(사용자가 계획한 "나머지 worktree 병합"을 각 소유 세션이 finalize).
+- **흡수**: pixi 브랜치 rebase onto origin/main(9커밋). merge-append-doc 드라이버가 TASK/MODIFY/REPORT/REVIEW append 문서를 union 자동병합 — §77/§78 공존·§번호 중복 0. `graph/` 7모듈 origin/main byte-동일 = 착지분 완전 흡수(graph-core.js `nodePosAll`·미니맵 전역개요 실재).
+- **테스트 정합**: 그래프 headless 11 스위트 **279 PASS / 0 FAIL**(graph-split 번들 레시피 재현) — 흡수 후 회귀 0.
+- **병렬 전략 결론**: SceneAdapter(graph-renderer-pixi.js) 는 신규 파일이라 타 세션과 파일 충돌 0 → Phase B-early(어댑터 신설·scene-spec·adapter 테스트)는 언제든 병렬 가능. graph-core.js **배선**(B-late)만 rebase 재확인 게이트 대상(신규 세션이 그 파일 변경 시). 다른 세션 소유 worktree 병합은 그 세션이 finalize(§13.2 F2 단일 mutator) — 내가 대신 병합하지 않음.
+
+### Git 동기화 결과
+- rebase onto origin/main(behind 0) + force-push(내 브랜치·PR 미개설이라 안전). 커밋 3개 유지(해시 재작성).

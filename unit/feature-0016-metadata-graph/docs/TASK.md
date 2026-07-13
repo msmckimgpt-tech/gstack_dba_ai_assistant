@@ -2326,5 +2326,6 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   - **디자인 게이트(D1~D5)**: 정본 스타일 수치(graph-roleviz/state) 1:1 이식 씬 — 노드 6종·엣지 6종·dim bake·한글 라벨("확률형 아이템 지급") 을 headless(줌 0.35~2.5×DPR2) + **실 Windows Chrome(PB-0008 relay)** 양쪽 스크린샷 검수: 벡터 선명·점선 3종 패턴 등가·텍스처 왜곡 없음·tofu 없음. D6(미니맵)은 Phase B 구현 항목.
   - **성능 게이트**: 실 Windows Chrome 실측 — idle vsync 기준선 p50/p95 = 18.0/18.1ms(~55Hz 디스플레이). **882노드 등가 씬(5스키마×24T×6C) 팬/줌 p50=p95=18.0/18.1ms = vsync-perfect(추가 지연 0, jank 0)** → 게이트 "p95<16.6ms@60Hz" 의 취지(p95≤vsync 간격) 충족. 11k 스트레스(20×50×10, 실전 극단의 ~2배)는 무최적화 POC 로 p50 36/p95 69ms(22~31fps) — GraphicsContext 공유·BitmapText·컬링 미적용 상태의 floor 로 headroom 명확.
   - headless SwiftShader 수치는 소프트웨어 GL 이라 참고 배제(POC 주석 명기). pageerror 0.
-- [ ] T78.3 Phase B 어댑터 통합 (순서 게이트 R6 충족 후).
+- [x] T78.2b (R6 자연 해소 + 흡수·테스트 정합) 착지분 rebase 흡수 (2026-07-13): 세션 중 `content-cluster`(PR #746)·`§77 minimap-fullview`(PR #747, 배포 c264e3f1) 가 origin/main 착지 → R6 순서 게이트 **자연 해소**. pixi 브랜치를 origin/main 에 rebase(9커밋 흡수, merge-append-doc 드라이버로 TASK/MODIFY/REPORT/REVIEW union 자동병합·§번호 충돌 0). `graph/` 폴더 origin/main **byte-동일**(착지분 완전 흡수) 확인. **그래프 headless 11 스위트 279 PASS / 0 FAIL**(graph-split ITEM-09 번들 레시피 재현 — agglod 8·category 26·collod 20·cullrefkeep 15·edge_visibility 71·layoutmemo 19·minimap_reuse 65·viewportcull 6·vpack 19·detail_colsel 8·colnav 22). 흡수된 §77 미니맵 전역개요·content-cluster 카테고리 그룹핑은 Phase B scene-spec 흡수 대상 목록에 편입.
+- [ ] T78.3 Phase B 어댑터 통합 (R6 해소 — 착수 가능; graph-core.js 배선은 신규 세션 그래프 변경 유무 rebase 재확인 후).
 - [ ] T78.4 Phase C PB-0008 시각검증 + 배포 + ADR 신설(ADR-004 supersede) + 문서 정합.
