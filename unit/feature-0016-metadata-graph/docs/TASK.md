@@ -2190,8 +2190,14 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   (이전 "정의서 확인 필수"), sp_GetCashPoint(Get) → "민감 결제·통화 데이터 권한제어·감사로깅"(이전 "확인 불가"),
   sp_DeleteItemAttributeResist(Delete) → "비가역 DELETE 데이터 손실"(양질 유지). **라이브 payload**: touches
   read/write 정확 구분(DELETE→write·Get→read) + returns 투영 확인.
-- [ ] T69.5 배포 + 재생성: insight-worker+web 이미지 재빌드 배포 후 cc_data_main `only_missing=false` 재분석
-  (555 전량 시드 → 전 노드 커버 + 새 계약 caveats 로 교체). 진행 폴링으로 done/failed 추적 + 표본 caveats 재확인.
+- [x] T69.5 배포 + 재생성(2026-07-10 배포 a24415a5, PR #664): insight-worker 재빌드·재기동(라이브 config
+  CAP 1000·MAX 2000·BUDGET 4000·BATCH 10 + 새 프롬프트 계약 확인) + deploy-web 무중단 롤링(web-a/b, soak 통과)
+  + healthz OK. cc_data_main `only_missing=false` 재분석 run `7c75ddcb`: dry_run **planned 555·capped=false**
+  (이전 CAP 200 이면 200 잘림 — P3 커버리지 수정 실증) → 재귀 확장 포함 **715 잡 전량 done·0 failed**
+  (초기 급속 드레인 시 haiku 빈응답 transient 330 → 실패분 pending 리셋 + 완만 페이스 재처리로 전량 회복).
+  표본 재확인: 빈 caveats 400/715(평범 노드 정답), 비어있지않음 315 전부 실위험(sp_Delete* 비가역·cascade,
+  민감·현금성, 대량데이터 성능, candidate FK 데이터품질). **옛 자기-불평("메타데이터 불완전·직접 확인 필요·불명확")
+  사실상 0**(전수 스캔 매칭 12건은 전부 candidate/미검증 FK 데이터품질 caveats=새 계약이 허용하는 가시적 위험).
 ## §73 graph-layoutmemo — 배치-정렬 함수 위상-서명 메모이즈 (근본원인: 줌인해도 느림) (2026-07-10, 사용자 요청)
 사용자 요청(누적): "극단적인 줌 인 상태에서도 성능이 저하됩니다(밀집 아닌데도). 근본적인 원인을 탐색 후 해소." §67(뷰포트 컬링)은
 화면 **밖** 요소만 줄여, 화면 안 요소가 많거나 극단 줌인(소수 가시)에서도 rebuild 마다 도는 **전체 모델 대상 배치 계산**을 못 줄였다.

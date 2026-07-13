@@ -1628,3 +1628,21 @@ win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검�
 
 ## 문서 아카이빙 압축 정보 (§5.5, 20260711T120531)
 - MODIFY 총 118건=아카이브 102+현행 16 · REVIEW 총 118건=아카이브 102+현행 16. verbatim·무손실 md5·timestamp 아카이브명.
+
+
+## 2026-07-10 POST-DEPLOY · §69 AI 능동 분석 "주의" 개선 배포 + cc_data_main 재생성 완수 (T69.5)
+§69(ADR-034) 코드 변경이 PR #664 로 main 병합(a24415a5) 후 라이브 배포·재생성까지 완수됨.
+- **배포**: insight-worker 재빌드·재기동(라이브 검증 config CAP 1000·MAX 2000·RUN_BUDGET 4000·BATCH 10 +
+  NODE_ANALYSIS_PROMPT 새 계약 5요소 — Caveats rule·Analyze-from-what-is-visible·returns/touches Input·
+  untrusted 열거·빈값 선호) + `make deploy-web` 무중단 롤링(web-a/b, soak 90s 통과) + healthz OK. 신규 마이그 0.
+- **재생성 run `7c75ddcb`**(cc_data_main, `only_missing=false`): dry_run **planned 555 · capped=false** —
+  이전 `SCHEMA_CAP=200` 이면 200 에서 잘려 355 미커버였을 것(P3 커버리지 수정의 라이브 실증). 재귀 확장 포함
+  **715 잡 전량 done · 0 failed**. (초기 급속 드레인 시 haiku 빈응답 transient 330건 발생 → 실패분을 pending
+  리셋 + 완만 페이스 재처리로 전량 회복. 급속 연속 호출이 원인, 로직 결함 아님.)
+- **caveats 품질 재확인**(715 전수): 빈 caveats **400/715**(평범한 노드는 빈 값이 정답 — 계약 의도대로),
+  비어있지않음 315 는 전부 실제·가시적 위험(sp_Delete* 비가역·cascade, 민감·현금성 재화, 대량데이터 성능/피크타임
+  잠금, candidate/미검증 FK 데이터품질). **옛 자기-불평("메타데이터 불완전·직접 확인 필요·불명확·판단 불가")
+  사실상 0** — 전수 스캔 매칭 12건은 전부 candidate FK 관계 데이터품질 caveats(새 계약이 명시 허용하는 가시적
+  위험)이며 옛 self-complaint 아님. 사용자 원 리포트("대부분 노드 주의가 불명확") 해소.
+- **미결(범위 밖)**: cc_data_main 원천 큐레이션 공백(column/table_descriptions 0행)은 상류 이슈로 별도 후속 —
+  프롬프트가 불평을 멈출 뿐 실질 풍부화는 큐레이션/인트로스펙션 보강 필요(ADR-034 한계 절 기재).
