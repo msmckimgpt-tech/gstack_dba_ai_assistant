@@ -21,8 +21,19 @@ import asyncio
 import json
 import time
 
+import pytest
+
 import app
 from routers import admin_datasources  # feature-0012 P5b
+
+
+@pytest.fixture(autouse=True)
+def _reset_ds_test_throttle():
+    """ds-conn-test: /test 쿨다운은 모듈 전역 상태(_ds_test_last_at) — 여러 테스트가 같은 key+actor 를
+    재사용하므로 테스트 간 리셋해 쿨다운 누수(2번째 호출부터 429)를 막는다."""
+    admin_datasources._ds_test_last_at.clear()
+    yield
+    admin_datasources._ds_test_last_at.clear()
 
 
 class _FakeRequest:
@@ -140,3 +151,35 @@ def test_concurrent_probes_do_not_block_event_loop(monkeypatch):
     assert all(_body(r)["ok"] for r in results)
     # 직렬이면 N*SLEEP=1.5s. to_thread 병렬이면 ~SLEEP. 넉넉히 절반(0.75s) 미만이면 비블로킹 입증.
     assert elapsed < (SLEEP * N) * 0.5, f"동시 probe 가 직렬화됨(elapsed={elapsed:.2f}s) — 이벤트 루프 블로킹 의심"
+
+
+# ── T4: ds-conn-test 쿨다운(429) — per-(account,key) 반복 테스트 부하 방지 ──────────────
+def test_conn_test_cooldown_throttles_repeat(monkeypatch):
+    """같은 (account,key) 재테스트가 쿨다운 내면 probe 없이 429(throttled). 다른 account/key 는 독립."""
+    _install(monkeypatch, probe=lambda ds, *, timeout=None: (True, 5.0, ""))
+    r1 = asyncio.run(admin_datasources.admin_test_datasource("mysql-cd", _FakeRequest(), actor={"id": 7}, conn=_BenignConn()))
+    assert r1.status_code == 200 and _body(r1)["ok"] is True
+    # 즉시 재호출 — 쿨다운(기본 3s) 내 → 429.
+    r2 = asyncio.run(admin_datasources.admin_test_datasource("mysql-cd", _FakeRequest(), actor={"id": 7}, conn=_BenignConn()))
+    assert r2.status_code == 429
+    b = _body(r2)
+    assert b["throttled"] is True and b["ok"] is False and b["status"] == "unknown"
+    assert isinstance(b["retry_after_ms"], int) and b["retry_after_ms"] >= 1
+    assert "password" not in b and "host" not in b  # 자격증명 비유출 계약 유지
+    # 다른 account(8) 는 독립 — 쿨다운 무관하게 통과.
+    r3 = asyncio.run(admin_datasources.admin_test_datasource("mysql-cd", _FakeRequest(), actor={"id": 8}, conn=_BenignConn()))
+    assert r3.status_code == 200
+    # 다른 key 도 독립.
+    r4 = asyncio.run(admin_datasources.admin_test_datasource("mysql-cd2", _FakeRequest(), actor={"id": 7}, conn=_BenignConn()))
+    assert r4.status_code == 200
+
+
+# ── T5: 미등록 key(404)·SSRF 차단은 throttle 대상 아님(무-probe 경로, NIT-3) ──────────────
+def test_conn_test_404_not_throttled(monkeypatch):
+    """resolve 실패(404) 는 probe 를 돌리지 않으므로 쿨다운을 소진하지 않는다 — 반복해도 404(429 아님)."""
+    _install(monkeypatch, probe=lambda ds, *, timeout=None: (True, 5.0, ""))
+    monkeypatch.setattr("shared.datasources.resolve", lambda conn, key: None)
+    r1 = asyncio.run(admin_datasources.admin_test_datasource("nope", _FakeRequest(), actor={"id": 9}, conn=_BenignConn()))
+    assert r1.status_code == 404
+    r2 = asyncio.run(admin_datasources.admin_test_datasource("nope", _FakeRequest(), actor={"id": 9}, conn=_BenignConn()))
+    assert r2.status_code == 404   # 여전히 404 — throttle 이 resolve 이후라 404 를 마스킹하지 않음

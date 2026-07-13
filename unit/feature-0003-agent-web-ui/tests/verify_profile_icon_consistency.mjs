@@ -81,12 +81,16 @@ console.log("\n[2/3] 드롭업 항목 레이아웃 순서 + Identicon 폴백");
 const connMeta = extractFn(appSrc, "connStatusMeta");
 const buildItem = extractFn(appSrc, "buildProductDropupItem");
 // click 핸들러가 closeProductDropup/setActiveProduct 를 참조하므로 스텁 주입.
+// ds-conn-test: buildProductDropupItem 이 데이터소스 배지 렌더 시 canOpenAdminConsole() 로 '연결 테스트'
+//  버튼 노출 여부를 게이트한다. 본 하네스는 프로필 아이콘/레이아웃 순서(display-only 배지)를 검증하므로
+//  false 스텁 → 기존 span 배지 경로(회귀 0)를 그대로 평가한다.
 const harness = `
 ${appHash}
 ${appSvg}
 ${connMeta}
 function closeProductDropup(){}
 function setActiveProduct(){}
+function canOpenAdminConsole(){ return false; }
 ${buildItem}
 return buildProductDropupItem;
 `;
