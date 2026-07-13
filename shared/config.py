@@ -290,6 +290,8 @@ __all__ = [
     "AGENT_METADATA_CLUSTER_MAX_DEGREE",
     "AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N",
     "AGENT_METADATA_CLUSTER_LABEL_LLM",
+    "AGENT_METADATA_CLUSTER_MAX_SIZE",
+    "AGENT_METADATA_CLUSTER_ATTACH_SIM",
     "AGENT_XDS_RELATIONSHIP_INFER_AUTO",
     "AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC",
     "AGENT_XDS_RELATIONSHIP_MIN_SIM",
@@ -694,6 +696,10 @@ AGENT_METADATA_CLUSTER_LABEL_LLM = os.getenv("AGENT_METADATA_CLUSTER_LABEL_LLM",
 #   라이브 프로브에서 base τ 단일연결이 DB 전체를 한 blob(254멤버)으로 만들던 chaining 방어. ceiling 에서도
 #   안 쪼개지면 진성 동질로 수용(하드 컷 아님 — 밴드 유용성 가이드).
 AGENT_METADATA_CLUSTER_MAX_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MAX_SIZE", "40") or "40")
+# content-cluster p2 RC-A: soft-attach 임계 — 코어 클러스터 미배정 잔여를 centroid 코사인 ≥ 이 값이면
+#   최근접 클러스터에 편입(라벨 상속). base τ(0.82)보다 완화하되 무리한 편입은 금지. 0 이면 사실상 전부 편입,
+#   1 이면 비활성에 수렴.
+AGENT_METADATA_CLUSTER_ATTACH_SIM = float(os.getenv("AGENT_METADATA_CLUSTER_ATTACH_SIM", "0.78") or "0.78")
 # feature-0016 Phase B (ADR-019, crossds-rel): 크로스-데이터소스 관계 추론(Phase C 시그니처 임베딩 구동).
 #   AUTO=0(기본 OFF) → 스키마·UI·scope 완화만 배포되고 추론 inert. Phase C 임베딩 populate 후 1 로 flip.
 #   MIN_SIM 높게(0.90) — 프로브 검증 불가라 보수적. 프로브 skip·manual/대화JOIN 승격은 relationships.py.

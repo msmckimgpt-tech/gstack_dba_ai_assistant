@@ -174,3 +174,9 @@ source_of_truth: true
 
 ## CHG-20260713T081919-postdeploy — §80 POST-DEPLOY 기록 (docs-only)
 - docs(TASK T80.3·REPORT)+test-runs.d. 코드 0. PR #759 배포(b69e4111)+라이브 BitmapText 렌더·팬 60fps·pageerror 0. §18.8 SKIPPED.
+
+## CHG-20260713T163000-ai-claude-feature-0016-content-cluster-p2 — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 (2026-07-13)
+- 대상: `semantic_cluster.py`(`_cluster_centroids`·`_seriate_by_centroid`·`_nearest_centroid` + pass 에 soft-attach·id seriation) + `shared/config.py`(`AGENT_METADATA_CLUSTER_ATTACH_SIM`=0.78) + `graph-simgroups.js`(`_metaGenericPrefixes`·`_metaStripGeneric` affix 정규화 + be: 밴드 id 순 선두 배치) + 신규 테스트(BE 2·FE 헤드리스 13).
+- 변경(사용자 후속 리포트 — TASK 20260713T1620): **RC-A** 미클러스터 잔여가 "dt_c" 가짜 affix 가족(무관 테이블 동거: DT_CashPoint·DT_Castle·dt_CombineMaterial)으로 흐르던 것을 ①BE soft-attach(centroid 코사인 ≥0.78 최근접 편입·라벨 상속·코어 라벨/캐시 비오염) ②FE 스키마-공통 일반 접두(dt_/ct_ 류, max(4,15%) 임계) strip 으로 이중 해소. **RC-B** 밴드 순서가 FK seriation 뿐이던 것을 BE 가 cluster id 를 centroid 최근접-이웃 체인 순서로 배정 + FE 가 be: 밴드를 id 오름차순 선두 배치 — 의미 연관 밴드 인접.
+- 근거·실증(라이브 프로브·롤백): attached **5,249**, cc_data_main 미클러스터 테이블 **114→26**, 리포트 3종이 각기 다른 컨텐츠 클러스터로 분리(cid 20/13/0 — 동거 해소). updated 23,324 는 id 재-seriation 1회성 churn(멱등 — 재실행 시 0).
+- 검증: BE test_semantic_cluster_content.py 24(seriation 체인·attach 편입/미달 NULL) + FE test_g6build_simgroups_p2.js 13(접두 검출/strip/과절단 방지·dt_c 가족 소멸·실스템 보존·be: id 순 선두·결정론) + 그래프 헤드리스 전 스위트 무회귀(category 26·vpack 19 외) + 전체 pytest EXIT=0. §18.8 패널 → REVIEW.md.
