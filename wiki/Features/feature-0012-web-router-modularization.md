@@ -29,8 +29,8 @@ feature-0003 `app.py`(단일 FastAPI app, 최대 29.5K줄/178 route)를 도메�
 
 ## 2. 상태
 
-- **단계**: in-progress — route-parity 안전망 + 의존성 audit(PR#456) 이후 **P5b 전체추출 완료**(2026-07-01): app.py 모놀리스의 148 route 핸들러 전량을 21개 도메인 `APIRouter` 로 byte-동치 추출(app.py ~29K→18,917줄, 잔여 `@app` 라우트 0). batch1-3 라이브 배포·검증 완료(main c031b5d — 추출 라우트 프로덕션 응답 byte-동치). 잔여: `web_context` 헬퍼 추출·프론트(admin.js/app.js/styles.css) 분할·Final 로그인 QA·batch4(잔여 16 route) 재배포 검증.
-- **마지막 갱신**: 2026-07-01
+- **단계**: review(완결) — route-parity 안전망 + 의존성 audit(PR#456) 이후 **P5b 전체추출 완료**(2026-07-01): app.py 모놀리스의 148 route 핸들러 전량을 21개 도메인 `APIRouter` 로 byte-동치 추출(app.py ~29K→18,917줄, 잔여 `@app` 라우트 0). **2026-07-12 feature-0012 완결**(라이브 4c203f9c) — ITEM-10(라우터 추출 + `web_context` 헬퍼 추출, 모듈 분리 -81%) + ITEM-11(잔여 인라인 authn DEFER 핸들러 실leak 13건 DI-rework·keep-inline 정당 37 명시분류) 완료. 브라우저 로그인 QA = 자동 검증 다중 GREEN + 사용자 환경 게이트로 사용자 사인오프 이관. 잔여 initiative ITEM-09(그래프 CSS/JS 세분화·외부 브랜치, blocked).
+- **마지막 갱신**: 2026-07-12
 - **AI 작업자**: claude / Human (§12 승인 2026-06-25)
 
 ## 3. 책임 경계
@@ -53,6 +53,6 @@ feature-0003 `app.py`(단일 FastAPI app, 최대 29.5K줄/178 route)를 도메�
 
 ## 6. Open questions / 미해결
 
-- web_context 헬퍼 전체 추출 — 별도 workstream(원래 블로커), 후속.
-- 프론트(admin.js/app.js/styles.css) 분할 — 별건/후속(TASK-0012-10).
-- Final 로그인 QA + batch4(잔여 16 route) 프로덕션 재배포 검증 — 후속.
+- ~~web_context 헬퍼 전체 추출~~ — **완료**(ITEM-10, 2026-07-12).
+- ~~Final 로그인 QA + batch4(잔여 16 route) 프로덕션 재배포 검증~~ — **완료**(ITEM-10/11 완결, 라이브 4c203f9c; 브라우저 로그인 QA 사용자 사인오프 이관).
+- 프론트(admin.js/app.js/styles.css) 분할 — 별건/후속(ITEM-09 그래프 CSS/JS 세분화는 외부 브랜치 blocked, 나머지 분할 후속).
