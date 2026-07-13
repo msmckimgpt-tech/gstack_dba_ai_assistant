@@ -46,9 +46,17 @@ related: FUNCTION.md, feature-0003 DESIGN-fork-reference.md, SECURITY.md §21
 | `active_leaf_message_id` | bigint NULL | 현재 활성 브랜치의 leaf core_messages.id. NULL=linear tail(=MAX(id)). 활성 경로 = leaf→root parent 역추적. |
 
 ### 2.3 표시 store `agent_runtime.messages`
-동일 3 컬럼(`parent_message_id`/`edit_root_message_id`/`edit_version`) 미러. 표시 로더가
+동일 3 컬럼(`parent_message_id`/`edit_root_message_id`/`edit_version`) 미러 + `core_message_id
+bigint`(브랜치-헤드 sibling 이 자기 core 짝을 가리키는 링크 — 브랜치 전환 좌표). 표시 로더가
 활성 경로를 그리고 페이징 메타를 노출. core 와 messages 는 각자 id-space 라 브랜치 포인터도
 각 store 내부 id 로 저장(bridge 는 created_at 유지).
+
+**두 store 정합 (dual active_leaf)**: core 와 display 는 각자 self-contained 브랜치 구조(각 store
+parent 체인 + 전용 active_leaf)를 갖는다. `core_conversations.active_leaf_message_id`(core) +
+`active_display_leaf_message_id`(display). 쓰기 choke-point 가 대칭 유지 — core=`_save_message`,
+display=`_mirror_message` 가 각자 자기 store 의 active_leaf 로 체인·전진. **브랜치 전환 좌표**는
+편집된 user 메시지 sibling 에 저장된 `messages.core_message_id`(엔드포인트가 양 store sibling 을
+동시에 만들며 링크) 로 exact 매핑(fuzzy created_at 브리지 회피).
 
 ### 2.4 MySQL parity
 `_bootstrap_schema.py` 의 `AgentCoreMessages`/`AgentCoreConversations` 에 동일 컬럼 idempotent

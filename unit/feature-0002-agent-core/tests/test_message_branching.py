@@ -162,3 +162,46 @@ def test_save_core_message_with_edit_version_uses_branch_insert():
     )
     assert cur.executed == [rb._PG_INSERT_CORE_MESSAGE_BRANCH]
     assert cur.params[0]["edit_root_message_id"] == 5 and cur.params[0]["edit_version"] == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 표시 store(messages) 쓰기 라우팅 (INV-1 항등성 + 브랜치)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_save_memory_message_nonbranch_uses_existing_insert():
+    cur = _FakeCursor(fetchone=(11,))
+    new_id = _backend().save_memory_message(
+        _FakeConn(cur), conversation_id="c1", role="user", content="hi"
+    )
+    assert new_id == 11
+    assert cur.executed == [rb._PG_INSERT_MEMORY_MESSAGE]  # byte-identical 경로 + RETURNING id
+
+
+def test_save_memory_message_with_parent_uses_branch_insert():
+    cur = _FakeCursor(fetchone=(12,))
+    _backend().save_memory_message(
+        _FakeConn(cur), conversation_id="c1", role="assistant", content="a", parent_message_id=7
+    )
+    assert cur.executed == [rb._PG_INSERT_MEMORY_MESSAGE_BRANCH]
+    assert cur.params[0]["parent_message_id"] == 7
+
+
+def test_save_memory_message_with_core_link_uses_branch_insert():
+    cur = _FakeCursor(fetchone=(13,))
+    _backend().save_memory_message(
+        _FakeConn(cur), conversation_id="c1", role="user", content="edited",
+        edit_root_message_id=3, edit_version=2, core_message_id=99,
+    )
+    assert cur.executed == [rb._PG_INSERT_MEMORY_MESSAGE_BRANCH]
+    assert cur.params[0]["core_message_id"] == 99 and cur.params[0]["edit_version"] == 2
+
+
+def test_load_display_branch_state_parses_and_defaults():
+    cur = _FakeCursor(fetchone=(True, 88))
+    assert _backend().load_display_branch_state(_FakeConn(cur), conversation_id="c1") == {
+        "has_branches": True, "active_leaf_id": 88
+    }
+    cur2 = _FakeCursor(fetchone=None)
+    assert _backend().load_display_branch_state(_FakeConn(cur2), conversation_id="c1") == {
+        "has_branches": False, "active_leaf_id": None
+    }

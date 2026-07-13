@@ -114,6 +114,9 @@ ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS has_branches boolean NOT NULL DEFAULT false;
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS active_leaf_message_id bigint;
+-- display store 전용 활성 브랜치 leaf (core 와 대칭 — /api/history 표시 경로).
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS active_display_leaf_message_id bigint;
 
 CREATE INDEX IF NOT EXISTS ix_core_conv_owner
     ON agent_runtime.core_conversations (owner_account_id);
@@ -297,6 +300,9 @@ ALTER TABLE agent_runtime.messages
     ADD COLUMN IF NOT EXISTS edit_root_message_id bigint;
 ALTER TABLE agent_runtime.messages
     ADD COLUMN IF NOT EXISTS edit_version integer NOT NULL DEFAULT 1;
+-- 브랜치-헤드 sibling → core 짝 링크(브랜치 전환 좌표).
+ALTER TABLE agent_runtime.messages
+    ADD COLUMN IF NOT EXISTS core_message_id bigint;
 
 CREATE INDEX IF NOT EXISTS ix_messages_parent
     ON agent_runtime.messages (conversation_id, parent_message_id);

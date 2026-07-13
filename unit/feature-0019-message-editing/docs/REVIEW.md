@@ -22,3 +22,11 @@ source_of_truth: true
   fast-path + 단위 회귀 테스트로 가드(비분기 항등성 단언). 잔여 위험 낮음(dormant).
 - Human Approval: 설계·착수 승인 완료(2026-07-13, /_template:entry PLAN-APPROVED). 배포는 Phase 1
   완료·PB-0008 이후 별도.
+
+## REV-20260713-0002 [SKIPPED: 표시 store 쓰기 정합 — dormant scaffold, 정상 append byte-identical]
+- Related Change: CHG-20260713-0002 (display 브랜치 쓰기 대칭·core_message_id 링크·display 헬퍼).
+- Reason: checkpoint 1 과 동일 — dormant(has_branches DEFAULT false). 정상 append 는 core_message_id
+  미스레딩으로 byte-identical(hot-path call-site 무변경). 단위 15 PASS + 회귀 0(55). 활성 보안 표면은
+  엔드포인트 라이브(Phase 1 완료) 시점에 발생 → §18.8 적대 패널 그때 수행(REV-0001 과 통합).
+- Risks: display 쓰기 choke-point(memory.save_memory_message) 변경 → 미분기 항등 단위테스트로 가드.
+- Human Approval: PLAN-APPROVED 유효(2026-07-13). 배포 별도.

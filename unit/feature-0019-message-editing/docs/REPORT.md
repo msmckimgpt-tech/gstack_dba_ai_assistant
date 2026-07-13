@@ -41,3 +41,19 @@ sibling(같은 parent)으로 체인 + 재답변. 형제 버전 그룹핑 = 공�
 
 **위험/무회귀 근거**: 본 checkpoint 는 has_branches=false 기본 → 모든 신규 경로 dormant
 (엔드포인트 부재로 has_branches 를 true 로 만드는 경로 없음). 라이브 무영향(순수 additive scaffold).
+
+## 2026-07-13 — Phase 1 백엔드 기반 (checkpoint 2: 표시 store 쓰기 정합)
+
+**완료 (검증됨):** 두 store(core/display) 브랜치 쓰기 대칭 완성.
+- 마이그 0041 확장: `messages.core_message_id`(브랜치-헤드→core 링크, 브랜치 전환 좌표) +
+  `core_conversations.active_display_leaf_message_id`(display 전용 활성 leaf). additive.
+- 표시 store 쓰기(`memory.save_memory_message` + PG backend): 브랜치 대화면 `active_display_leaf`
+  체이닝·전진, 미분기는 기존 INSERT(+RETURNING id) 그대로. `_PG_INSERT_MEMORY_MESSAGE_BRANCH`·
+  헬퍼(`load_display_branch_state`/`set_active_display_leaf`) + `enable_branches` 가 display leaf 도 확정.
+- **hot-path 무-스레딩 설계**: 정상 append 는 core_message_id 미스레딩(byte-identical) — 편집된
+  원본 M 의 display→core 매핑은 user 메시지 created_at 매칭(1:1 신뢰), 브랜치-헤드 sibling 만
+  엔드포인트가 exact 링크 저장. → `_mirror_message`·5 call-site 무변경(회귀 표면 최소).
+- 단위테스트 +4 (표시 store 쓰기 라우팅·core 링크·display 상태) — 누계 15 PASS, 회귀 0(55 PASS).
+
+**남은 Phase 1**: 엔드포인트(edit/branch-switch/history active-path)·프론트·통합·PB-0008.
+여전히 dormant(has_branches 활성 경로 없음) — 라이브 무영향.

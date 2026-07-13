@@ -136,6 +136,19 @@ INSERT INTO agent_runtime.messages
     (conversation_id, role, content, meta_json)
 VALUES
     (%(conversation_id)s, %(role)s, %(content)s, %(meta_json)s::jsonb)
+RETURNING id
+"""
+
+# feature-0019 message-editing: 표시 store 브랜치 포인터 + core 짝 링크를 함께 기록하는 INSERT.
+#   branch 인자 지정 시만 사용 — 미분기 정상 append 는 위 _PG_INSERT_MEMORY_MESSAGE 그대로.
+_PG_INSERT_MEMORY_MESSAGE_BRANCH = """
+INSERT INTO agent_runtime.messages
+    (conversation_id, role, content, meta_json,
+     parent_message_id, edit_root_message_id, edit_version, core_message_id)
+VALUES
+    (%(conversation_id)s, %(role)s, %(content)s, %(meta_json)s::jsonb,
+     %(parent_message_id)s, %(edit_root_message_id)s, %(edit_version)s, %(core_message_id)s)
+RETURNING id
 """
 
 _PG_INSERT_STEP = """
@@ -257,10 +270,30 @@ SET active_leaf_message_id = %(leaf_id)s
 WHERE conversation_id = %(conversation_id)s
 """
 
-# feature-0019 message-editing: 첫 편집에서 브랜치 게이트 활성 + 활성 leaf 확정(원자).
+# feature-0019 message-editing: 표시 store 전용 활성 leaf 전진(정상 append) — has_branches 대화만.
+_PG_SET_ACTIVE_DISPLAY_LEAF = """
+UPDATE agent_runtime.core_conversations
+SET active_display_leaf_message_id = %(leaf_id)s
+WHERE conversation_id = %(conversation_id)s
+"""
+
+# feature-0019 message-editing: 표시 store 브랜치 게이트 상태(active_display_leaf).
+_PG_LOAD_DISPLAY_BRANCH_STATE = """
+SELECT has_branches, active_display_leaf_message_id
+FROM agent_runtime.core_conversations
+WHERE conversation_id = %(conversation_id)s
+LIMIT 1
+"""
+
+# feature-0019 message-editing: 첫 편집에서 브랜치 게이트 활성 + core/display 활성 leaf 확정(원자).
+#   core leaf = 전달값(호출자가 max_core_message_id 로 산출), display leaf = 표시 store tail.
 _PG_ENABLE_BRANCHES = """
 UPDATE agent_runtime.core_conversations
-SET has_branches = true, active_leaf_message_id = %(leaf_id)s
+SET has_branches = true,
+    active_leaf_message_id = %(leaf_id)s,
+    active_display_leaf_message_id = (
+        SELECT MAX(id) FROM agent_runtime.messages WHERE conversation_id = %(conversation_id)s
+    )
 WHERE conversation_id = %(conversation_id)s
 """
 
@@ -568,14 +601,61 @@ class PgRuntimeBackend:
         role: str,
         content: str,
         meta_json: Optional[str] = None,
-    ) -> None:
+        parent_message_id: Optional[int] = None,
+        edit_root_message_id: Optional[int] = None,
+        edit_version: int = 1,
+        core_message_id: Optional[int] = None,
+    ) -> int:
+        # feature-0019 message-editing: 브랜치 인자 지정 시 표시 store 브랜치 포인터 + core 링크를
+        #   함께 기록하고 신규 id 반환. 미분기 정상 append 는 기존 INSERT 그대로(회귀 0). 반환 id 는
+        #   display active_leaf 전진·core 링크에 사용(기존 caller 는 반환값 무시 → 무영향).
+        _branch_write = (
+            parent_message_id is not None
+            or edit_root_message_id is not None
+            or edit_version != 1
+            or core_message_id is not None
+        )
         with conn.cursor() as cur:
-            cur.execute(_PG_INSERT_MEMORY_MESSAGE, {
-                "conversation_id": conversation_id,
-                "role": role,
-                "content": content,
-                "meta_json": meta_json,
-            })
+            if _branch_write:
+                cur.execute(_PG_INSERT_MEMORY_MESSAGE_BRANCH, {
+                    "conversation_id": conversation_id, "role": role, "content": content,
+                    "meta_json": meta_json,
+                    "parent_message_id": int(parent_message_id) if parent_message_id is not None else None,
+                    "edit_root_message_id": int(edit_root_message_id) if edit_root_message_id is not None else None,
+                    "edit_version": int(edit_version),
+                    "core_message_id": int(core_message_id) if core_message_id is not None else None,
+                })
+            else:
+                cur.execute(_PG_INSERT_MEMORY_MESSAGE, {
+                    "conversation_id": conversation_id,
+                    "role": role,
+                    "content": content,
+                    "meta_json": meta_json,
+                })
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+    def set_active_display_leaf(self, conn: Any, *, conversation_id: str, leaf_id: int) -> None:
+        """feature-0019: 표시 store 정상 append 후 display 활성 leaf 전진(has_branches 대화만)."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_SET_ACTIVE_DISPLAY_LEAF, {"conversation_id": conversation_id, "leaf_id": int(leaf_id)})
+
+    def load_display_branch_state(self, conn: Any, *, conversation_id: str) -> dict:
+        """feature-0019: 표시 store 브랜치 게이트 상태. 반환 {"has_branches", "active_leaf_id"}(display id).
+
+        컬럼 부재(pre-migration 42703) → has_branches=False(무회귀 기본).
+        """
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_PG_LOAD_DISPLAY_BRANCH_STATE, {"conversation_id": conversation_id})
+                row = cur.fetchone()
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "sqlstate", None) == "42703":
+                return {"has_branches": False, "active_leaf_id": None}
+            raise
+        if row is None:
+            return {"has_branches": False, "active_leaf_id": None}
+        return {"has_branches": bool(row[0]), "active_leaf_id": row[1]}
 
     def save_memory_step(
         self,

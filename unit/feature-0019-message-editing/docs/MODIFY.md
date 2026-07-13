@@ -47,3 +47,12 @@ source_of_truth: true
 - 성격: additive·dormant scaffold(has_branches DEFAULT false → 신규 경로 비활성, 라이브 무영향).
 - 검증: 단위 11 PASS + 기존 runtime/dual-write/convo-search 회귀 0(54 PASS). 상세 TEST.md Run 2026-07-13.
 - 결정: DEC-1(PG-first)·DEC-2(브랜치=대화 내부 트리, fork 아님)·DEC-3(형제=공유 parent).
+
+## CHG-20260713-0002 (Phase 1 checkpoint 2 — 표시 store 쓰기 정합)
+- 변경: 마이그 0041 확장(messages.core_message_id·core_conversations.active_display_leaf_message_id) +
+  memory.save_memory_message/PG backend 브랜치 체이닝 + display 헬퍼(load_display_branch_state·
+  set_active_display_leaf) + enable_branches display leaf 확정 + 단위테스트 +4.
+- 성격: additive·dormant. 정상 append byte-identical(core_message_id 미스레딩), hot-path call-site 무변경.
+- 검증: 누계 15 PASS, 회귀 0(55 PASS).
+- 결정: DEC-4(두 store dual active_leaf + core_message_id 링크 좌표, DESIGN §2.3)·DEC-5(display→core
+  매핑은 user 메시지 created_at 1:1 매칭 — 정상 append 무-스레딩).

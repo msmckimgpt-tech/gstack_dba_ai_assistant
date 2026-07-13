@@ -43,16 +43,19 @@ ALTER TABLE agent_runtime.core_messages
     ADD COLUMN IF NOT EXISTS edit_root_message_id bigint,
     ADD COLUMN IF NOT EXISTS edit_version         integer NOT NULL DEFAULT 1;
 
--- 2) messages (표시 store) 동일 미러
+-- 2) messages (표시 store) 동일 미러 + core_message_id(브랜치-헤드 sibling → core 짝 링크,
+--    브랜치 전환 좌표 — fuzzy created_at 브리지 회피).
 ALTER TABLE agent_runtime.messages
     ADD COLUMN IF NOT EXISTS parent_message_id    bigint,
     ADD COLUMN IF NOT EXISTS edit_root_message_id bigint,
-    ADD COLUMN IF NOT EXISTS edit_version         integer NOT NULL DEFAULT 1;
+    ADD COLUMN IF NOT EXISTS edit_version         integer NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS core_message_id      bigint;
 
--- 3) core_conversations 게이트 플래그 + 활성 브랜치 leaf (0037 has_restricted_members 패턴)
+-- 3) core_conversations 게이트 플래그 + 활성 브랜치 leaf(core+display dual, 0037 패턴)
 ALTER TABLE agent_runtime.core_conversations
-    ADD COLUMN IF NOT EXISTS has_branches           boolean NOT NULL DEFAULT false,
-    ADD COLUMN IF NOT EXISTS active_leaf_message_id bigint;
+    ADD COLUMN IF NOT EXISTS has_branches                   boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS active_leaf_message_id         bigint,
+    ADD COLUMN IF NOT EXISTS active_display_leaf_message_id bigint;
 
 -- 4) active-path recursive CTE(m.id = path.parent_message_id) 조인용 인덱스
 CREATE INDEX IF NOT EXISTS ix_core_messages_parent
@@ -76,10 +79,12 @@ DROP INDEX IF EXISTS agent_runtime.ix_messages_parent;
 DROP INDEX IF EXISTS agent_runtime.ix_core_messages_parent;
 
 ALTER TABLE agent_runtime.core_conversations
+    DROP COLUMN IF EXISTS active_display_leaf_message_id,
     DROP COLUMN IF EXISTS active_leaf_message_id,
     DROP COLUMN IF EXISTS has_branches;
 
 ALTER TABLE agent_runtime.messages
+    DROP COLUMN IF EXISTS core_message_id,
     DROP COLUMN IF EXISTS edit_version,
     DROP COLUMN IF EXISTS edit_root_message_id,
     DROP COLUMN IF EXISTS parent_message_id;
