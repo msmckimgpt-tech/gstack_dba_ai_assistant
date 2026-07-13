@@ -196,3 +196,8 @@ source_of_truth: true
 
 ## REV-20260713T070819-ai-root-feature-0016-graph-pixi-polish-pd [SKIPPED:docs-only-postdeploy]
 - §79 POST-DEPLOY 라이브 기록 — docs-only. 배선 코드는 선행 REV-...-graph-pixi-polish [SUBAGENT:PASS-WITH-FIXES] 적대 리뷰 완료. SKIPPED.
+
+## REV-20260713T154500-ai-claude-feature-0016-content-cluster-postdeploy [SKIPPED:doc-only-postdeploy] — content-cluster TC.7/TC.8 POST-DEPLOY 완수 기록 (코드 무변경)
+- Related Change: TASK TC.7/TC.8 [x] + REPORT POST-DEPLOY 절 + test-runs.d fragment. 코드/자산 변경 0 — 배포·라이브 실증(백필→임베딩→클러스터→AGE 수렴→PB-0008 PASS) 결과 기록.
+- Panel skip 사유(§18.8): 코드면은 본 cycle REV-20260713T120500 [SUBAGENT: PASS-WITH-FIXES] + h1 REV-20260713T143000 에서 완료. 본 changeset 은 실측 기록. 검증용 QA 핸들은 서빙 사본 한정·원복 완료(repo·이미지 미포함).
+- Human Approval: deploy_scope: included(전역, FIRST_REQUEST.md) — 사용자 원 요청("컨텐츠 단위로 묶이도록 개선")의 완수 tail.
