@@ -2349,7 +2349,15 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T80.1 **라벨 팩토리 `_makeText`**: `cfg.labelEngine`('bitmap' 기본/'text' 폴백). bitmap=`PIXI.BitmapText`(white base #ffffff dynamic font + `tint`=`_hexNum(fill)` — glyph atlas 색-무관 공유). BitmapText 미지원/throw 시 `PIXI.Text` 폴백. `_hexNum` hex→tint number. 노드/combo/edge 라벨 3곳 전부 경유.
 - [x] T80.2 검증: 어댑터 순수 **54 PASS**(T20 hex 파싱) + 그래프 회귀 **279 무회귀** + 통합 하네스(라벨 BitmapText 렌더·tint 색상 정확·품질·pageerror 0). 실 그래프 씬 렌더 Text 157ms→BitmapText 0.03ms 실측.
 - [x] T80.3 **§18.8 반영 + POST-DEPLOY 완료 (2026-07-13)**: 적대 리뷰 MAJOR2(폴백·CJK atlas)+MINOR3 수정. PR #759 → main b69e4111 무중단 배포(soak PASS). 서빙 BitmapText 배선 확인(_makeText/hexToTint/BitmapText 10 심볼·cache-buster ffaeb2b71103). 라이브 admin(건즈 gunzgame 409 객체): 라벨 BitmapText 렌더·확대 시 선명·색상 정확·**팬 60fps vsync-perfect(p95 16.8ms)**·pageerror 0. **§80 완결.**
-
+## §81 graph-detail-hover-fx — 우측 상세 패널 하위 항목 hover 시각 효과 (2026-07-13, 사용자 요청 · entry persona dispatch) [§번호는 머지 시 scoped-renumber 가능, §13.1]
+요구(REQ): 그래프 뷰 우측 상세 패널의 "선택할 수 있는 하위 항목(관련된 객체 및 연결)"에 마우스를 hover 하면 시각적 명확성을 제공한다. 클릭 전 **비커밋** 피드백 — 카테고리/스키마 클러스터 행=해당 객체로 부드러운 카메라 이동, 컬럼 행=컬럼 노드 하이라이트, 참조·함수/프로시저 참조 행=연결선(엣지) 하이라이트. 코드 거주: cross-cut feature-0003(static/graph). 등급 **Minor**(비파괴 additive UI — 인증/데이터/외부비용 무관). 커밋 선택(`_metaGraphSetSelected`)·전체 rebuild 상태는 미접촉(hover 는 독립 오버레이/디바운스 팬).
+- [x] T81.0 **현 구조 파악**: 렌더러=PixiJS(§78, G6 폴백 seam), 상세 패널=`graph-ctxmenu.js`. 5개 상세 뷰(노드/관계 상세/클러스터/카테고리)와 하위 항목 DOM·기존 클릭 라우팅(카메라 팬 `_metaGraphAnimateFocus`, 선택 bake)·렌더러 상태 API 매핑.
+- [x] T81.1 **렌더러 오버레이(`graph-renderer-pixi.js`)**: `this.world` 에 world-space `_hoverLayer`(zIndex 최상단·eventMode none) 추가. `setHoverHighlight({nodes,edges,color?})`=노드 bbox 강조 링 + 엣지 끝점 연결선(방향 화살촉) / `clearHoverHighlight()`. `draw()` 시작에 stale 강조 제거(rebuild 좌표 이동 대비). 팬/줌은 world 자식이라 자동 정합.
+- [x] T81.2 **렌더러-무관 래퍼(`graph-core.js`)**: `_metaGraphHoverPan`(hover-intent 200ms 지연·leave 취소·`_metaRenderedIdFor||_metaRenderedAncestorFor` 승격·기존 부드러운 팬 재사용, `_opSeq` 미bump=fetch 미폐기) / `_metaGraphSetHoverHighlight`(key→렌더 id 해소·미렌더는 조상 승격·양끝 노드+연결선) / `_metaGraphClearHoverHighlight`. 미지원 렌더러(G6 폴백)는 feature-detect no-op(카메라는 양쪽 동작).
+- [x] T81.3 **상세 패널 배선(`graph-ctxmenu.js`)**: `_metaBindHoverPan`/`_metaBindHoverHighlight`(mouseenter/leave+focus/blur=키보드 파리티). 카테고리 상세 `.amgr-row[data-cid]`→클러스터 팬 · 클러스터 상세 `.amgr-ct-row[data-node-key]`→테이블 팬 · 노드 상세 `.amgr-col-select[data-col]`→컬럼 노드 강조 · `.amgr-trace[data-trace]`(+`data-edge-self`)·`[data-rtuse]`→연결선 강조 · 관계 상세 `.amgr-row[data-key]`(+`data-edge-self`)→연결선 강조. 기존 클릭/더블/토글 바인딩과 병존.
+- [x] T81.4 **CSS(`graph.css`)**: 카테고리 행(`[data-cid]`)에 다른 클릭 행과 동일한 커서/hover 어포던스 추가.
+- [x] T81.5 **정적 검증**: 3개 모듈 `node --check` PASS · 신규 심볼 export/import 정합 · 어댑터 메서드 존재 · staged diff 4파일 스코프 정합.
+- [ ] T81.6 **PB-0008 라이브 Windows-browser 검증**(visual_verification_scope=always 하드 게이트): 배포(deploy_scope=included 사전승인) 후 `bin/win-browser.py` 로 5개 상세 뷰 hover 효과 실측(카메라 이동 부드러움·노드/연결선 강조 정합·pageerror 0). `docs/test-runs.d/` fragment 에 Run 기록.
 ## 20260713T1620-content-cluster-p2 — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 (2026-07-13, 사용자 후속 리포트)
 사용자: "여전히 클러스터링 부실 — 'dt_c...' 밴드에 무관한 테이블 동거(`DT_CashPoint`,`DT_Castle`,`dt_CombineMaterial`) + 각 밴드끼리 연관 깊은 항목별로 가까이 배치 필요."
 

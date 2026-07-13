@@ -174,7 +174,10 @@ source_of_truth: true
 
 ## CHG-20260713T081919-postdeploy — §80 POST-DEPLOY 기록 (docs-only)
 - docs(TASK T80.3·REPORT)+test-runs.d. 코드 0. PR #759 배포(b69e4111)+라이브 BitmapText 렌더·팬 60fps·pageerror 0. §18.8 SKIPPED.
-
+## CHG-20260713T181300-detail-hover-fx — §81 상세 패널 hover 시각 효과
+- 대상(cross-cut feature-0003 static/graph): `graph-renderer-pixi.js`(world-space `_hoverLayer`+`setHoverHighlight`/`clearHoverHighlight`, draw() stale clear)·`graph-core.js`(`_metaGraphHoverPan`/`HoverPanCancel`/`SetHoverHighlight`/`ClearHoverHighlight` 래퍼+export)·`graph-ctxmenu.js`(hover 바인더 `_metaBindHoverPan`/`_metaBindHoverHighlight`/`_metaGraphBindDetailHover`+5뷰 배선+`data-edge-self`)·`graph.css`(`[data-cid]` 커서/hover).
+- 변경: 상세 패널 하위 항목 hover 시 비커밋 피드백 — 카테고리/클러스터 행=부드러운 카메라 팬(intent 200ms), 컬럼=노드 강조 링, 참조·ROUTINE_USES·관계 행=연결선(엣지)+양끝 노드 강조. 커밋 선택/rebuild 미접촉. 렌더러 무관(G6 폴백=하이라이트 no-op·카메라 동작).
+- 근거: 사용자 요청(entry persona dispatch). 등급 Minor(additive UI). 정적 검증 PASS(node --check 3모듈·심볼 정합). PB-0008 라이브 검증(visual=always)은 배포 후 T81.6.
 ## CHG-20260713T163000-ai-claude-feature-0016-content-cluster-p2 — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 (2026-07-13)
 - 대상: `semantic_cluster.py`(`_cluster_centroids`·`_seriate_by_centroid`·`_nearest_centroid` + pass 에 soft-attach·id seriation) + `shared/config.py`(`AGENT_METADATA_CLUSTER_ATTACH_SIM`=0.78) + `graph-simgroups.js`(`_metaGenericPrefixes`·`_metaStripGeneric` affix 정규화 + be: 밴드 id 순 선두 배치) + 신규 테스트(BE 2·FE 헤드리스 13).
 - 변경(사용자 후속 리포트 — TASK 20260713T1620): **RC-A** 미클러스터 잔여가 "dt_c" 가짜 affix 가족(무관 테이블 동거: DT_CashPoint·DT_Castle·dt_CombineMaterial)으로 흐르던 것을 ①BE soft-attach(centroid 코사인 ≥0.78 최근접 편입·라벨 상속·코어 라벨/캐시 비오염) ②FE 스키마-공통 일반 접두(dt_/ct_ 류, max(4,15%) 임계) strip 으로 이중 해소. **RC-B** 밴드 순서가 FK seriation 뿐이던 것을 BE 가 cluster id 를 centroid 최근접-이웃 체인 순서로 배정 + FE 가 be: 밴드를 id 오름차순 선두 배치 — 의미 연관 밴드 인접.

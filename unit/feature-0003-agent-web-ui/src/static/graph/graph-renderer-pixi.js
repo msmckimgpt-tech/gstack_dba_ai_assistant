@@ -235,6 +235,11 @@ export class PixiGraphAdapter {
     if (this.container) { this.container.appendChild(this.app.canvas); this._resizeToContainer(); }
     this.world = new this.P.Container(); this.world.sortableChildren = true;
     this.app.stage.addChild(this.world);
+    // detail-hover-fx: 상세 패널 하위 항목 hover 강조용 world-space 오버레이(팬/줌 자동 추종). 비커밋 —
+    //   커밋 선택(setElementState)·전체 rebuild(setScene/draw) 상태와 독립. zIndex 최상단·이벤트 비참여
+    //   (어댑터는 raw canvas pointer 로 hit-test 하므로 hit 방해 0). draw() 는 _objs 만 정리하고 이 레이어는 보존.
+    this._hoverLayer = new this.P.Container(); this._hoverLayer.zIndex = 99999; this._hoverLayer.eventMode = "none";
+    this.world.addChild(this._hoverLayer);
     this._initMinimap();
     this._bindPointer();
     // autoResize(gap #15): 컨테이너/창 리사이즈 자동 추종.
@@ -503,6 +508,7 @@ export class PixiGraphAdapter {
   async draw() {
     await this._ready;
     if (!this.world) return;   // 비브라우저/미배선 — no-op
+    if (this._hoverLayer) this._hoverLayer.removeChildren();   // detail-hover-fx: rebuild 로 노드 좌표가 바뀌면 stale 강조 제거(hover 는 transient — 재hover 시 재도출).
     const built = this._built;
     // 끝점 위치 O(1) 조회 맵(구 O(N·E) find 제거)
     const npos = new Map();
@@ -691,6 +697,36 @@ export class PixiGraphAdapter {
     this._render();
   }
   getPluginInstance(key) { return key === "minimap" ? (this._minimap || null) : null; }   // G6 minimap 플러그인 호환(자체 렌더)
+  // detail-hover-fx: 상세 패널 하위 항목 hover 시 비커밋 강조. spec={nodes:[id],edges:[[idA,idB]],color?}.
+  //   노드=bbox 강조 링, 엣지=끝점 사이 굵은 강조선(+양끝 노드 링). world-space 라 팬/줌 자동 정합.
+  //   G6 폴백 어댑터엔 본 메서드가 부재 → graph-core 가 feature-detect 로 no-op(카메라 이동은 양쪽 동작).
+  setHoverHighlight(spec) {
+    if (!this.world || !this._hoverLayer || !this.P) return;
+    const P = this.P, layer = this._hoverLayer, color = (spec && spec.color) || 0x2563eb;
+    layer.removeChildren();
+    for (const pair of ((spec && spec.edges) || [])) {
+      const a = this.getElementPosition(pair[0]), b = this.getElementPosition(pair[1]);
+      if (!a || !b) continue;
+      const g = new P.Graphics();
+      g.moveTo(a[0], a[1]).lineTo(b[0], b[1]).stroke({ color, width: 3.5, alpha: 0.95 });
+      // 방향 화살촉(끝점 b) — 어느 쪽으로 이어지는 연결인지 명확화.
+      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      this._arrow(g, b[0], b[1], ang, color, 0.95);
+      layer.addChild(g);
+    }
+    for (const id of ((spec && spec.nodes) || [])) {
+      const bb = this._boundsOf(id); if (!bb) continue;
+      const g = new P.Graphics(), pad = 4;
+      g.roundRect(bb.x - pad, bb.y - pad, bb.width + 2 * pad, bb.height + 2 * pad, 8).stroke({ color, width: 3, alpha: 0.95 });
+      layer.addChild(g);
+    }
+    this._render();
+  }
+  clearHoverHighlight() {
+    if (!this._hoverLayer) return;
+    this._hoverLayer.removeChildren();
+    this._render();
+  }
   // 무인자(gap #10)=컨테이너 추종, (w,h)=명시. graph-core 는 무인자로 부른다(core:1833,2090).
   resize(w, h) { if (!this.app) return; if (w == null) this._resizeToContainer(); else { this.app.renderer.resize(w, h); this._positionMinimap(); this._renderMinimapViewport(); } this._render(); }
   destroy() {
