@@ -186,6 +186,11 @@ COLUMN(3) < NODE(칩·카드 4) < GROUP_HD(그룹 헤더 5) < CTL(컨트롤 6)`.
 `canonical+1000` 으로 결정론 부스트하고 dragend 에 canonical 복원 — G6 내장 drag-element 의
 `frontElement` 영구 승격(드래그 이력이 z-order 로 굳는 원인)을 상쇄한다.
 
+**렌더러 교체 계획 (2026-07-13, TASK §78 — plan-review)**: 노드 다수 팬 버벅임의 잔존 병목이 Canvas
+immediate-mode 의 매 프레임 CPU 재래스터(~1ms/노드, ADR-030)로 확정되어, 렌더 계층을 **PixiJS v8
+(WebGL/WebGPU)** SceneAdapter 로 교체하는 계획이 수립됨(`../pixi-migration/BLUEPRINT.md` — 디자인 보존
+계약 D1~D6 hard gate). **승인(PLAN-APPROVED)·이관 완료 전까지 현행 G6 v5 Canvas 가 정본이며 본 절 기술은 불변.**
+
 ## 14. AI 능동 분석 테이블 역할 시각 표식 (2026-07-02, node-role-viz, ADR-010)
 AI 능동 분석(node_analysis)이 완료된 **Table** 노드는 역할 8종(NODE_ROLES: master 기준·정의 / account
 계정·유저 / transaction 거래·행위 / log 로그·이력 / mapping 매핑·연결 / config 설정 / stats 집계·통계 /

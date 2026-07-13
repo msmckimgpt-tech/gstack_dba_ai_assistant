@@ -1690,3 +1690,21 @@ win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검�
   위험)이며 옛 self-complaint 아님. 사용자 원 리포트("대부분 노드 주의가 불명확") 해소.
 - **미결(범위 밖)**: cc_data_main 원천 큐레이션 공백(column/table_descriptions 0행)은 상류 이슈로 별도 후속 —
   프롬프트가 불평을 멈출 뿐 실질 풍부화는 큐레이션/인트로스펙션 보강 필요(ADR-034 한계 절 기재).
+
+## 2026-07-13 · §78 렌더 엔진 PixiJS v8 교체 — 타당성 검토 + 계획 수립 (plan-review)
+사용자 리포트(다수): 노드 다수 상태 카메라 이동(팬) 버벅임 잔존 → 외부 엔진(게임/시뮬레이터) 전환 타당성 검토 요청 → 검토 결과 수용 + "G6 과거 디자인 실패 이력, **디자인 무붕괴 + 성능 확보로 PixiJS v8 계획 수립**" 지시.
+
+### 타당성 검토 결론 (read-only, 2026-07-13 세션)
+- **잔존 병목**: rebuild 축(§73 메모이즈)·방출 수 축(§61/§65/§67)은 해소 — 남은 것은 G6 Canvas immediate-mode 의 **매 프레임 화면 안 전 도형 CPU 재래스터**(~1ms/노드, ADR-030) + §76 팬 중 rAF 재-emit. 화면 안 500+ 요소 팬은 앱 측 최적화로 60fps 불가(구조적).
+- **게임/시뮬레이터 엔진(Unity/Unreal/Godot/Bevy) 기각**: 성능 이득 원천은 "GPU 상주 씬"이라는 WebGL/WebGPU 일반 속성 — 웹 스택으로 동일 획득 가능. 게임엔진 고유 부담(수십 MB WASM·C#/Rust 툴체인·DOM(상세 패널 2,237줄)↔엔진 브리지·한글 IME/접근성·PB-0008 파이프라인 부정합)만 남음.
+- **결합도 실측**(서브에이전트 인벤토리): 그래프 JS ≈5,491줄 중 G6 직접 결합 ~700–900줄(15–20%). 레이아웃·메모이즈·LOD 판정·모델·DOM 패널 전부 엔진-중립 → 패리티 이식 국소적.
+- G6 WebGL 재번들 스파이크는 사용자 결정으로 기각(과거 디자인 실패 이력 — ADR-004 배경 ③⑤).
+
+### 계획 정착
+- `pixi-migration/BLUEPRINT.md` 신설 — 디자인 보존 계약 D1~D6(hard gate: 벡터 테셀레이션·점선 3종 등가·오버레이 hack 무재도입·한글 라벨 전략 POC 확정·상태 bake 철학 유지·커스텀 미니맵) + Phase A(POC, exit gate)/B(SceneAdapter 통합)/C(PB-0008+배포) + 리스크 R1~R7.
+- TASK.md §78 Implementation Plan(§7.1) — **plan-review 상태, Major(§12.3), 사람 승인 대기(§12.1)**.
+- 순서 게이트(R6): Phase B 는 `feature-0016-minimap-fullview`(graph-core.js 미커밋 수정 중)·`content-cluster` cycle 착지 후. §번호 머지 시 scoped-renumber 허용(§13.1).
+
+### Git 동기화 결과
+- 커밋: (본 커밋) `ai/root/feature-0016-graph-pixi` — docs-only(BLUEPRINT/TASK/REPORT/MODIFY/REVIEW).
+- Push: **보류** (사유: §16.3 Step 4 — Major plan-review 승인 대기. 승인 후 Phase A cycle 에서 동기화 재개.)

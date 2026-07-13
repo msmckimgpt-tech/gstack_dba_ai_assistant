@@ -2303,3 +2303,25 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T77.9 검증(최종): minimap_reuse **65 PASS**(Section E 서명 의미론 + F1~F9: 유예 build 전량방출·applyOnce 예약 경로·stale 재시딩(F8=적발② 재현)·경합 수렴(F9=적발③ 재현)) + 그래프 headless 11 스위트 **279 PASS / 0 FAIL**.
 - [x] T77.10 **PRE-LANDING win-browser 실 Windows Chrome 라이브(PB-0008)**: 변경 static 을 web-a/b 에 docker cp(스탬프 정합 치환) + 디버그 핸들(주입 사본 한정) — qa-idc 1,249 노드(스키마 2개 펼침) 시딩 수렴(fullSigCurrent=true) → **극단 줌인 2.0(컬링 rebuild 방출 1,573→153)에 미니맵 toDataURL 해시 완전 불변** → 팬+rebuild 불변 → 스코프 전환(gz-dev) 재렌더(동결 없음) → 전 과정 pageerror 0. 스크린샷 2매(baseline/zoomed) 육안 — 미니맵 전역 구성 동일. test-runs.d fragment.
 - [x] T77.5 POST-DEPLOY win-browser 실 Windows Chrome 육안(PB-0008, 배포 빌드 c264e3f1 재확인) **PASS**: PR #747 머지(c264e3f1) + `make deploy-web`(무중단 롤링 web-a/b·soak PASS) 후 배포 빌드(자산 스탬프 `?v=5f6d70568188`, `_miniFullSig`·`_metaMinimapSeedKick` 서빙 확인) 실측 — qa-idc 1,249 노드(스키마 2개 펼침) 시딩 수렴(fullSigCurrent=true·방출 1,573 전량) → **극단 줌인 2.0(컬링 rebuild 방출 1,573→153, _cullPartial=true)에 미니맵 toDataURL 해시 완전 불변**(1889907447, PRE-LANDING 과 동일 결정값) → 팬(translateBy [-700,-350]) 후 불변 → 스코프 전환(mysql-gz-dev) 재렌더(동결 없음) → 전 과정 pageerror 0. 스크린샷 shot_20260713_133004(줌 2.0 — 메인 캔버스 컬링·미니맵 전역 개요 유지 육안 대조). QA 디버그 핸들은 검증 후 컨테이너에서 제거(배포 이미지 정합). test-runs.d fragment 갱신.
+## §78 graph-pixi-renderer — 렌더 엔진 G6 v5(Canvas) → PixiJS v8(WebGL/WebGPU) 교체 (2026-07-13, 사용자 요청 · entry persona dispatch) [§번호는 머지 시 scoped-renumber 가능, §13.1]
+사용자 요청: 노드 다수 상태의 카메라 이동(팬) 버벅임 잔존 — 외부 고성능 엔진 검토 결과(2026-07-13 read-only 검토: 게임엔진 기각·웹 GPU 렌더러 권고) 수용, "G6 는 과거 디자인 실패 이력 — **기존 디자인이 무너지지 않는 형태로 정합 + 성능 확보, PixiJS v8 로 계획 수립**".
+
+<!-- PLAN-REVIEW: §7.1 Major — 사람 승인 대기. 승인 시 아래에 PLAN-APPROVED 마커 기입 후 Phase A 착수. -->
+
+### §2.1 Implementation Plan (§7.1)
+- **정본 상세 계획**: `../pixi-migration/BLUEPRINT.md` (디자인 보존 계약 D1~D6 hard gate + Phase A POC / B 어댑터 통합 / C 검증·배포 + 리스크 R1~R7).
+- **영향 파일**:
+  - 신설: `unit/feature-0003-agent-web-ui/src/static/graph/graph-renderer-pixi.js`(SceneAdapter), `src/static/vendor/pixi.min.js`(v8 vendored), `unit/feature-0016-metadata-graph/pixi-migration/{BLUEPRINT.md,poc/}`, `unit/feature-0003-agent-web-ui/tests/headless/test_pixi_adapter_*.js`
+  - 수정: `graph/graph-core.js`(G6 접점 ~700줄 — `_metaInitGraph`·`_metaG6Apply/ApplyOnce`·`_metaGraphAnimateFocusRun`·드래그 핸들러·`aftertransform` 핸들러 → adapter 치환), `graph/graph-roleviz.js`(스타일 생성기 scene-spec 중립화 — 수치 무변경), `admin.html`(vendor 교체+cache-buster)
+  - 불변: `graph-state.js`(모델·`_META_*` 상수)·`graph-rellayout.js`·`graph-simgroups.js`·`graph-ctxmenu.js`(DOM 패널)·`_metaG6Build` 좌표 계산부·`_metaTopoSig` 메모이즈
+- **접근 요약**: 엔진-중립 scene-spec 경계(SceneAdapter)를 세워 G6 결합층(~700–900줄)만 PixiJS 로 치환. GPU 상주 씬 + 카메라=행렬 갱신으로 팬 프레임당 CPU 재래스터(~1ms/노드, ADR-030) 제거. LOD/컬링 장치는 이관 단계 behavior-neutral 보존(제거·단순화는 라이브 실측 후 별도 §). 렌더러 토글 seam 으로 즉시 폴백 가능.
+- **완료 판정(AC)**: ① 디자인 체크리스트 D1~D6 전항 PASS(PB-0008 실 Windows·스크린샷 증적) ② 팬/줌 p95 < 16.6ms @882노드 등가 씬(win-browser 실측·before/after) ③ 상호작용 전 플로우 동작 동등·pageerror 0 ④ 기존 headless build 스위트 회귀 0 + adapter 신설 스위트 PASS ⑤ 폴백 토글 실증 후 soak 통과 시 g6.min.js 제거.
+- **위험도**: **Major**(§12.3 — 다중 파일·사용자-대면 대형 UI·배포. frontend-only·마이그 0). 승인 전 실행 금지(§12.1).
+- **순서 게이트(R6)**: Phase B 착수는 `feature-0016-minimap-fullview`(graph-core.js 미커밋 수정 중)·`feature-0016-content-cluster` cycle 착지 후(F2 단일 mutator). 미니맵 fullview 산출물은 B5 에서 Pixi 미니맵으로 재이식.
+
+### Tasks
+- [x] T78.0 타당성 검토(read-only): 게임/시뮬레이터 엔진 기각·웹 GPU 렌더러 권고·결합도 실측(G6 결합 ~700–900줄/5,491줄) — 2026-07-13 세션 보고.
+- [x] T78.1 계획 수립: BLUEPRINT.md + 본 §78(plan-review) 정착.
+- [ ] T78.2 (승인 게이트) PLAN-APPROVED 마커 → Phase A POC 착수 (BLUEPRINT §4 Phase A, exit gate: 디자인 D1~D6 + 성능 p95).
+- [ ] T78.3 Phase B 어댑터 통합 (순서 게이트 R6 충족 후).
+- [ ] T78.4 Phase C PB-0008 시각검증 + 배포 + ADR 신설(ADR-004 supersede) + 문서 정합.
