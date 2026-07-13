@@ -2379,4 +2379,4 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] TP.1 BE soft-attach(cap 가드·유사도 내림차순 결정 배정) + centroid seriation id + `AGENT_METADATA_CLUSTER_ATTACH_SIM`(0.78).
 - [x] TP.2 FE `_metaGenericPrefixes`(2~3자·max(4,15%))·`_metaStripGeneric`(잔여 ≥3자) + be: 밴드 id 순 선두 배치(비-be 관계 seriation·misc 후미·§49 안정화 보존 — 세션 중 신규 밴드는 후미, fresh load 시 정상).
 - [x] TP.3 검증 — BE 23(attach cap 가드 포함)+FE 헤드리스 16(user_ 4자 의미 접두 보호 포함)+그래프 전 스위트 무회귀+전체 pytest EXIT=0+라이브 프로브(attached 5,249·잔여 114→26·리포트 3종 분리). §18.8 패널 PASS-WITH-FIXES 전건 반영(REV-20260713T170500).
-- [ ] TP.4 verify → PR → merge → 배포(web+worker) → 클러스터 pass 재가동 → **PB-0008**(dt_c 가짜 밴드 소멸 + 연관 밴드 인접 육안) + test-runs fragment.
+- [x] TP.4 완수 — PR #763 머지(469fa20d)·배포·클러스터 pass 재가동(attached 4,843·cap 가드 실동작)·AGE 수렴(T225/R298)·**PB-0008 PASS**(nm:dt_* 가짜 가족 0·be: 95 id순 선두·길드4/퀘스트3/몬스터6+ 연속 인접·기능 오류 0). 리포트 3종 분리(게임 콘텐츠 마스터/캐시포인트 관리/아이템 합성 강화). 상세 test-runs.d/TASK-20260713T1620-content-cluster-p2-postdeploy.md.
