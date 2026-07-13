@@ -170,3 +170,15 @@ source_of_truth: true
 - Verification: 권한 단위테스트(perm-split/dependency-map/glossary-enum) + feature-0003 전체 스위트 PASS(회귀 0) · §18.8 보안 렌즈 적대 리뷰(권한상승·접근상실·멱등·enforcement·SQL, 라이브 MySQL 8.0.46 실증) — 3 findings(A MEDIUM 권한상승·B LOW 멱등·C NIT docstring) 적발·수정 후 VERDICT PASS.
 - Rollback: 커밋 revert. backfill 은 grant 추가만(파괴 없음) — revert 후에도 부여된 graph.read 는 잔존(관리 콘솔에서 명시 회수 가능). `WebSchemaMigrations` 마커 row 는 잔존(무해).
 - 잔여: verify-completion → commit(사용자 confirm) → 머지·push → web 재배포 → 배포 후 DB 마커·라이브 권한 그리드 + PB-0008 실렌더.
+
+
+## CHG-20260713T185600-graph-perm-descfix (graph-perm-split 배포 후 seed catchup 1406 hotfix — 권한 설명 255자 초과)
+- Date: 2026-07-13. 배포 후 실증에서 `WebSchemaMigrations` 미생성·backfill 미실행 적발. web 로그 `seed catchup skipped: 1406 Data too long for column 'Description'`. 근본원인: `kb.ingest.manual` 설명 301자 > `WebPermissions.Description` VARCHAR(255) → `_ensure_permission_catalog` 1406 → `_ensure_seed_catchup`(fast path) 전체 skip → seed_roles/backfill 미실행. CI(`--no-deps`)가 컬럼 제약 미검출.
+- 변경(behavior — 부트스트랩 robustness):
+  - `src/web_context.py` `_ensure_permission_catalog`: `label[:128]`·`description[:255]` 방어적 클립(단일 긴 문자열이 전 catchup 을 차단하던 fragility 제거).
+  - `src/web_context.py` `kb.ingest.manual` description 301→205자 단축(온전 저장, 잘림 0).
+- 영향: 그래프 접근 상실 사용자 0명(유일 묶음 보유=admin, 이미 graph.read 보유). 부트스트랩 catchup 재개가 핵심.
+- Files: `src/web_context.py`, `docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md`, `docs/test-runs.d/*`.
+- Verification: py_compile OK · feature-0003 전체 스위트 PASS(회귀 0) · 전 권한 desc≤255·label≤128 전수 확인.
+- Rollback: 커밋 revert(설명 길이만 원복 시 1406 재발하므로 truncation 클립은 유지 권장).
+- 잔여: 배포 후 web 로그 `seed catchup skipped` 소멸 + `WebSchemaMigrations` graph-perm-split-v1 row 실증.

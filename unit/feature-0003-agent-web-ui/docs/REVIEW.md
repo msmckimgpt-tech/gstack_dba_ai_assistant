@@ -157,3 +157,10 @@ source_of_truth: true
 - **검증**: 권한 단위테스트(perm-split R3/R3c/R3d·dependency-map t5/m3) + feature-0003 전체 스위트 PASS(회귀 0, env 중립화). 3 findings 수정 후 재실행 GREEN. `py_compile` 3파일 OK.
 - **잔여 커버리지 갭(비-차단, 후속 권장)**: backfill SQL(대상1/2/3·마커 guard)은 `--no-deps` 표준 스위트에 자동 통합테스트 부재 — 본 cycle 은 보안 리뷰의 라이브 MySQL 실증 + `_apply_permission_overrides` 단위테스트로 커버. Critical authz 마이그레이션이므로 MySQL 통합테스트(대상3 과잉부여·graph-DENY skip) 후속 추가 권장(TEST.md 기록).
 - Cross-ref: CHG/TASK-20260713T181800-graph-perm-split · REPORT §1. Files: `src/web_context.py`, `src/routers/{_bootstrap_schema,admin_metadata}.py`, `src/static/{admin.js,admin.html,release-notes-data.js}`, `tests/{test_metadata_perm_split,test_permission_dependency_map}.py`.
+
+## REV-20260713T185600-graph-perm-descfix [SKIPPED:bootstrap-robustness-no-authz-surface] — seed catchup 1406 hotfix (권한 설명 255자 초과)
+- **적발 경로**: graph-perm-split 배포 후 실증(§16.3 완료 게이트가 아니라 배포 후 검증)이 `WebSchemaMigrations` 미생성·backfill 미실행을 잡아냄 → web 로그 `seed catchup skipped: 1406 Data too long`. 근본원인=내가 `kb.ingest.manual` 설명을 301자로 늘린 것이 `WebPermissions.Description` VARCHAR(255) 초과 → `_ensure_permission_catalog` 던짐 → `_ensure_seed_catchup` 전체 skip.
+- **Panel skip 사유(§18.8)**: 본 hotfix 는 신규 authz 로직·enforcement·엔드포인트·스키마 형태 변경 0 — (1) description 문자열 단축(표시 텍스트), (2) `_ensure_permission_catalog` 의 방어적 문자열 클립(부트스트랩 robustness)뿐. 권한 판정(`_apply_permission_overrides`)·게이트·backfill SQL 무변경. 적대 보안 렌즈 대상 아님(표시/부트스트랩 방어). graph-perm-split 본체의 §18.8 PASS(REV-20260713T181800)가 authz 커버리지 정본.
+- **자기 검증**: 전 권한 description ≤255·label ≤128 AST 전수 확인(잘림 0) · py_compile OK · feature-0003 전체 스위트 PASS(회귀 0). 근본 fix 실증은 배포 후(catchup 로그 소멸 + WebSchemaMigrations 마커).
+- **교훈**: 권한 정의 description/label 은 컬럼 길이 제약이 있고, 초과 시 단일 row 가 전 seed catchup 을 차단한다. CI(`--no-deps`)가 이 DB 제약을 미검출 → 방어적 클립 + (후속) 부트스트랩 통합테스트 필요. graph-perm-split 보안 리뷰가 지적한 "backfill/부트스트랩 DB 통합테스트 부재" 갭이 실제 사고로 실현됨.
+- Cross-ref: CHG/TASK-20260713T185600-graph-perm-descfix.
