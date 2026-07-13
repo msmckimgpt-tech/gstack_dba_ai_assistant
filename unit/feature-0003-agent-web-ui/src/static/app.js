@@ -1329,9 +1329,77 @@ function connStatusMeta(status) {
   }
 }
 
+// ds-conn-test (feature-0003-ds-conn-test): 작업화면 제품 드롭업의 데이터소스 라벨 클릭 → 연결 테스트.
+//   관리 콘솔 데이터소스 '연결 테스트'와 동일하게 POST /api/admin/datasources/{key}/test 재사용(A2).
+//   결과는 단발성 토스트(showToast — #toast 는 작업화면 상단 앵커라 입력창/드롭업 비가림, C2).
+//   반복 클릭 부하 방지: 프론트 쿨다운(버튼 disable, 단일=key/멀티=조합키) + 백엔드 429(2차 방어선).
+//   무권한(datasource.manage 없음)은 apiFetch 공통 403 catch 가 권한 토스트 표시(중복 처리 안 함).
+const PRODUCT_DS_TEST_COOLDOWN_MS = 4000;
+const _dsTestLastAt = new Map();   // cooldownKey -> 시각(performance.now)
+
+async function runDatasourceConnTest(keys, badgeEl) {
+  const list = (Array.isArray(keys) ? keys : [keys])
+    .map((k) => String(k || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (!list.length) return;
+  const cdKey = list.join(",");
+  const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  // sentinel 은 `.has()` — `|| 0` 은 performance.now()(0 기준)에서 페이지 로드 4초 내 첫 클릭을 오차단.
+  const last = _dsTestLastAt.get(cdKey);
+  if (last !== undefined) {
+    const remain = PRODUCT_DS_TEST_COOLDOWN_MS - (now - last);
+    if (remain > 0) {
+      showToast(`연결 테스트는 ${Math.ceil(remain / 1000)}초 후 다시 시도해 주세요.`, false);
+      return;
+    }
+  }
+  _dsTestLastAt.set(cdKey, now);
+  // 진행 중 disabled — 버튼은 disabled 시 클릭이 부모(제품 선택)로 새지 않는다(pointer-events:none 회피).
+  if (badgeEl) { badgeEl.disabled = true; badgeEl.setAttribute("aria-busy", "true"); }
+  const _test = (k) => apiFetch(`/api/admin/datasources/${encodeURIComponent(k)}/test`, { method: "POST" });
+  try {
+    if (list.length === 1) {
+      const k = list[0];
+      showToast(`'${k}' 연결 테스트 중…`, false);
+      const r = await _test(k);
+      showToast(
+        r && r.ok ? `✓ '${k}' 연결 성공 (${r.elapsed_ms}ms)` : `✗ '${k}' 연결 실패: ${(r && r.error) || "확인 불가"}`,
+        !(r && r.ok),
+      );
+    } else {
+      // 멀티 datasource: 각 바인딩을 순차 테스트(부하 완충)하고 요약 토스트 1개로 단발성 표시.
+      showToast(`데이터소스 ${list.length}개 연결 테스트 중…`, false);
+      const results = [];
+      for (const k of list) {
+        const r = await _test(k);
+        results.push({ k, ok: !!(r && r.ok) });
+      }
+      const okN = results.filter((r) => r.ok).length;
+      const failKeys = results.filter((r) => !r.ok).map((r) => r.k);
+      showToast(
+        okN === list.length
+          ? `✓ 데이터소스 ${okN}개 모두 연결 성공`
+          : `데이터소스 ${list.length}개 중 ${okN}개 연결 성공 · 실패: ${failKeys.join(", ")}`,
+        okN !== list.length,
+      );
+    }
+  } catch (e) {
+    if (e && e.status === 403) {
+      /* apiFetch 공통 catch 가 권한 토스트를 이미 표시 — 중복 방지 위해 무처리. */
+    } else if (e && e.status === 429) {
+      showToast((e && e.message) || "연결 테스트가 너무 잦습니다. 잠시 후 다시 시도해 주세요.", false);
+    } else {
+      showToast((e && e.message) || "연결 테스트 실패", true);
+    }
+  } finally {
+    if (badgeEl) { badgeEl.disabled = false; badgeEl.removeAttribute("aria-busy"); }
+  }
+}
+
 function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources, connStatusOverall, iconUrl, productKey, viewOnly, viewOnlyReason }) {
-  const item = document.createElement("button");
-  item.type = "button";
+  // ds-conn-test: 행을 <div role=menuitem> 로(과거 <button>) — 내부에 실제 '연결 테스트' <button> 을
+  //  두려면 button-in-button(비적합 HTML)을 피해야 한다. 선택 동작은 click + keydown(Enter/Space)로 복원.
+  const item = document.createElement("div");
   item.className = "product-dropup-item";
   item.setAttribute("role", "menuitem");
   item.dataset.mode = mode;
@@ -1343,8 +1411,7 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   // 열람 전용 — 회색·비활성·선택 불가(ANCHOR §1: 본인 권한 밖 제품으로는 발화하지 못함).
   if (viewOnly) {
     item.classList.add("is-view-only");
-    item.disabled = true;
-    item.setAttribute("aria-disabled", "true");
+    item.setAttribute("aria-disabled", "true");   // div: tabindex 미부여로 포커스 불가 + 핸들러 미부착.
     if (viewOnlyReason) item.title = viewOnlyReason;
   }
 
@@ -1397,23 +1464,43 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   // ④ 데이터소스 — 멀티 datasource (P2/TASK-0228 1:N): 바인딩된 datasource 를 배지로 표시.
   //  - 1개: 라벨 그대로. 2개 이상: "N개 데이터소스" + 전체 목록 tooltip.
   //  TASK-0261: tooltip 에 각 datasource 의 연결 상태도 함께 표기.
+  //  ds-conn-test: canOpenAdminConsole() 이면 배지를 '연결 테스트' 버튼으로 만든다(라벨 클릭 → 테스트,
+  //   결과 상단 토스트). 무권한/열람전용은 기존 display-only span 유지(회귀 0). 제품 선택(item 클릭)과
+  //   분리 위해 stopPropagation — 중첩 <button> 회피로 span[role=button] 사용(단일=그 DS, 멀티=전체).
   const _dsBinds = Array.isArray(datasources) ? datasources : (datasourceKey ? [{ datasource_key: datasourceKey }] : []);
   const _dsTip = (b) => {
     const s = b && b.conn_status && b.conn_status.status;
     return s ? `${b.datasource_key} (${connStatusMeta(s).label})` : (b ? b.datasource_key : "");
   };
+  const _dsTestable = !viewOnly && canOpenAdminConsole();
+  const _makeDsBadge = (text, tip, testKeys, ariaLabel) => {
+    if (_dsTestable && Array.isArray(testKeys) && testKeys.length) {
+      // 실제 <button> — 네이티브 키보드 활성화(Enter/Space) + at-rest 테두리 어포던스 + 접근가능한 이름.
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "product-dropup-item-ds product-dropup-item-ds--test";
+      btn.textContent = text;
+      btn.title = `${tip} — 클릭하여 연결 테스트`;
+      btn.setAttribute("aria-label", ariaLabel);   // 이름=DS키가 아니라 '연결 테스트' 의도 노출(MAJOR-3).
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();   // 제품 선택(행 click)으로 전파 차단.
+        runDatasourceConnTest(testKeys, btn);
+      });
+      return btn;
+    }
+    // 무권한/열람 전용: 기존 display-only span 유지(role/tabindex/listener 없음 — 회귀 0).
+    const dsBadge = document.createElement("span");
+    dsBadge.className = "product-dropup-item-ds";
+    dsBadge.textContent = text;
+    dsBadge.title = tip;
+    return dsBadge;
+  };
   if (_dsBinds.length >= 2) {
-    const dsBadge = document.createElement("span");
-    dsBadge.className = "product-dropup-item-ds";
-    dsBadge.textContent = `${_dsBinds.length}개 데이터소스`;
-    dsBadge.title = "데이터 소스: " + _dsBinds.map(_dsTip).join(", ");
-    item.appendChild(dsBadge);
+    const _keys = _dsBinds.map((b) => b && b.datasource_key).filter(Boolean);
+    item.appendChild(_makeDsBadge(`${_dsBinds.length}개 데이터소스`, "데이터 소스: " + _dsBinds.map(_dsTip).join(", "), _keys, `데이터소스 ${_dsBinds.length}개 연결 테스트`));
   } else if (datasourceKey) {
-    const dsBadge = document.createElement("span");
-    dsBadge.className = "product-dropup-item-ds";
-    dsBadge.textContent = datasourceKey;
-    dsBadge.title = `데이터 소스: ${_dsTip(_dsBinds[0]) || datasourceKey}`;
-    item.appendChild(dsBadge);
+    item.appendChild(_makeDsBadge(datasourceKey, `데이터 소스: ${_dsTip(_dsBinds[0]) || datasourceKey}`, [datasourceKey], `${datasourceKey} 연결 테스트`));
   }
 
   const check = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -1429,9 +1516,11 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   check.appendChild(path);
   item.appendChild(check);
 
-  // 열람 전용 항목은 disabled 라 클릭 이벤트가 발화하지 않는다(선택 경로 자체를 막음).
+  // 열람 전용 항목은 선택 경로 자체를 막는다(tabindex 미부여 + 핸들러 미부착). 그 외는 div[role=menuitem]
+  //  이므로 button 네이티브 활성화를 tabindex(Tab 포커스) + keydown(Enter/Space)로 대체한다.
   if (!viewOnly) {
-    item.addEventListener("click", (ev) => {
+    item.tabIndex = 0;
+    const _select = (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       closeProductDropup();
@@ -1439,6 +1528,12 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
         mode,
         pinnedId: pid,
       }).catch((error) => showToast(error.message || "제품 변경 실패", true));
+    };
+    item.addEventListener("click", _select);
+    item.addEventListener("keydown", (ev) => {
+      // 자식 컨트롤('연결 테스트' 버튼)에서 버블된 키 이벤트는 무시 — 행 자신이 포커스일 때만 선택.
+      if (ev.target !== item) return;
+      if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") _select(ev);
     });
   }
   return item;

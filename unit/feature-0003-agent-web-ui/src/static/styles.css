@@ -3363,6 +3363,49 @@ a { color: inherit; }
   transform: translateX(-50%) translateY(0);
 }
 
+/* ds-conn-test (feature-0003, C2): 작업화면 토스트(#toast)는 상단 앵커 — 하단 입력창(composer)과
+   위로 열리는 제품 드롭업을 가리지 않도록 topbar 아래에서 내려온다. 관리 콘솔 토스트(#adminToast)는
+   공유 .toast 규칙(하단) 그대로 유지 — id 스코프로만 오버라이드(specificity #toast 0,1,0,0 > .toast). */
+#toast {
+  top: calc(var(--topbar-h, 52px) + 14px);
+  bottom: auto;
+  max-width: min(460px, calc(100vw - 32px));   /* 좁은 뷰포트 좌우 overflow 방지 */
+  transform: translateX(-50%) translateY(-10px);
+  transition: opacity .17s, transform .17s, background .17s;   /* 진행→에러 배경색 전환도 애니메이션 */
+}
+#toast.is-visible {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ds-conn-test: '연결 테스트' 버튼(작업화면 제품 드롭업의 데이터소스 라벨). 실제 <button> — at-rest
+   테두리로 클릭 가능함을 표시(display-only 배지와 구분), 24px 이상 터치 타깃(WCAG 2.5.8), 진행 중 disabled. */
+button.product-dropup-item-ds--test {
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  min-height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+  border: 1px solid var(--border, #d7dae0);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: var(--text-2, #6b7280);
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+button.product-dropup-item-ds--test:hover {
+  background: var(--primary-soft, #eff6ff);
+  color: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+}
+button.product-dropup-item-ds--test:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 1px;
+}
+button.product-dropup-item-ds--test:disabled {
+  opacity: .6;
+  cursor: progress;
+}
+
 /* =====================================================================
    ADMIN PAGE  (separate route /admin — same stylesheet)
    REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 — sidebar 전체 height +

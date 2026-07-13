@@ -11,6 +11,17 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260713T094624-ds-conn-test (TASK-20260713T094624-ds-conn-test — 작업화면 제품 드롭업 데이터소스 '연결 테스트' 버튼 + 상단 단발성 토스트, Major §12.3)
+- Date: 2026-07-13. `/_template:entry` arg-given. 스키마/마이그/신규 RBAC/신규 엔드포인트 0.
+- 변경:
+  - `static/app.js`: `buildProductDropupItem` — 데이터소스 배지를 `_dsTestable = !viewOnly && canOpenAdminConsole()` 게이트로 실제 `<button>`('연결 테스트') 렌더(`_makeDsBadge`, 무권한/열람전용은 기존 display-only span). **행 요소 `<button>`→`<div role=menuitem>` + `tabIndex=0` + click/keydown(Enter/Space) 선택 복원**(중첩 `<button>` 회피). 신규 `runDatasourceConnTest(keys, badgeEl)` — 프론트 쿨다운(`PRODUCT_DS_TEST_COOLDOWN_MS=4000`·`_dsTestLastAt` `.has()` sentinel)·진행 중 `disabled`·단일/멀티(순차+요약)·403(apiFetch 위임)/429(중립)/실패(에러) 상단 토스트.
+  - `static/styles.css`: `#toast` 상단 앵커(`top: calc(var(--topbar-h,52px)+14px)`·`bottom:auto`·`max-width: min(460px, calc(100vw-32px))`·`transition` 에 background 추가·`#toast.is-visible`) — 작업화면 전 토스트 상단화(admin `#adminToast` 하단 불변, id 스코프). `button.product-dropup-item-ds--test`(font reset·min-height 24px·at-rest 테두리·hover 틴트·:focus-visible·:disabled).
+  - `routers/admin_datasources.py`: import `os`/`time`. 모듈 상태 `_DS_TEST_COOLDOWN_SEC`(env `AGENT_DS_TEST_COOLDOWN_SEC` 기본 3, try/except 폴백)·`_ds_test_last_at`·`_DS_TEST_LRU_CAP=4096`. 신규 `_ds_test_throttle_check(account_id, key)`(per-(account,key) 쿨다운·LRU prune·throttled 반환 `max(1.0, round(ms))`). `admin_test_datasource`: resolve/SSRF 이후·probe 직전에 throttle 게이트 — 미경과 시 probe 없이 **429**(body: key/ok/elapsed_ms/error/status/throttled/retry_after_ms(int)).
+  - `static/admin.js`: `_probeDatasourceConn` — `const _prev` 함수 스코프 캡처 + 429 catch 시 'down' 대신 직전 확정 상태 유지. 상세 `_dsRenderDetail` '연결 테스트' + 제품바인딩 ⋯ '연결 테스트' catch 에 429=중립 토스트 분기.
+  - `tests/verify_profile_icon_consistency.mjs`: 하네스에 `canOpenAdminConsole(){return false;}` 스텁(display-only 경로 유지). `tests/test_datasource_test_nonblocking.py`: autouse `_reset_ds_test_throttle` fixture + throttle 계약 테스트 2건(T4 반복→429·독립 account/key, T5 404 무-throttle).
+- 검증: `node --check`(app.js·admin.js module)·`py_compile`·CSS 1780/1780·타깃 6/6·**전체 pytest 1902 passed / 2 skipped / 0 failed**. §18.8 3렌즈 패널 SHIP-WITH-FIXES→반영 후 SHIP.
+- Cross-ref: REV-20260713T094624-ds-conn-test · REPORT §1 · TASK-20260713T094624-ds-conn-test · TEST test-runs.d/20260713T094624-ds-conn-test.md · FUNCTION §13.
+
 ## CHG-20260713T061500-attach-user-version-postverify (TASK-20260713T053423-attach-user-version POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-13. 코드/자산 무변경 — TEST.md §4 Windows-browser Run 을 "배포 후 잔여" → **POST-DEPLOY 라이브 PASS** 로 갱신 + TASK.md 체크리스트 완료. 배포: PR #751→main 7f1ed748, web-a/web-b 무중단 롤링 + ask-worker 재빌드(agent_core 변경 baked).
 - 검증 요지(https://localhost/, bootstrap_admin, win-browser relay Chrome/150): 라이브 e2e — v1(490)→v2(491, root=490 편입)→동일 재업로드(491 reused)→버전 체인 2개(v1 superseded/v2 최신)→목록 최신만(version_count=2); **assistant 가 v1→v2 diff(SELECT 1→2·-- changed 추가) 정확 인지**(new_attachment_ids 포함 시), 미포함 턴엔 정직 "비교 불가"(환각 0). Evidence artifacts/shared/win-browser-shots-attach-user-version/01_version_badge_and_assistant_diff.png.
