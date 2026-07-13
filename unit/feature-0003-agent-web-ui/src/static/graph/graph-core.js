@@ -227,10 +227,23 @@ function _metaG6Build() {
     } catch (_) { _cullActive = false; }
   }
   _metaGraph._cullActive = _cullActive;   // 상태(디버그/후속). 테이블 bbox 가 가시 rect 와 안 겹치면 off-view.
+  // graph-minimap-fullview(§77, 사용자 리포트): 이 build 가 뷰포트 컬링으로 방출을 실제 누락했는지 추적.
+  //   _cullActive(컬링 판정 활성)와 별개 — 개요 fit 처럼 전부 가시면 컬링 활성이어도 방출은 완전집합(false).
+  //   미니맵 재사용 게이트(_metaPatchMinimapReuse)가 이 플래그로 "부분방출 build 재복제 금지"를 판정한다.
+  _metaGraph._cullPartial = false;
   // viewport-cull(§65): 이 build 가 커버한 뷰포트 중심·반경(마진 제외 실 뷰포트) — 팬 후 재-emit 판정용(aftertransform).
   _metaGraph._cullVp = _cullActive
     ? { cx: (_vx0 + _vx1) / 2, cy: (_vy0 + _vy1) / 2, hw: (_vx1 - _vx0) / 2, hh: (_vy1 - _vy0) / 2 }
     : null;
+  // graph-minimap-fullview(§77 — 시딩 build): fit 이 판독 하한(_META_MIN_READ_ZOOM)으로 클램프되는 대형
+  //   모델은 "전체"에서도 콘텐츠가 화면 밖에 남아 **무컬링 build 가 자연 발생하지 않는다**(라이브 실측:
+  //   1,249 노드 fit 에서 방출 153·_cullPartial=true). 이러면 미니맵 전체 이미지가 영영 시딩 안 돼 폴백
+  //   (부분 재복제)이 지속 — _metaG6ApplyOnce 가 스코프당 1회 예약하는 컬링-유예 build 로 전체 이미지를
+  //   시딩한다. 이 build 는 전량 방출(비용 = pre-§65 빌드 1프레임, 1회 한정) → 미니맵이 전체를 복제·마킹.
+  if (_metaGraph._cullSuspendOnce) {
+    _metaGraph._cullSuspendOnce = false;   // 1회 소비 — _miniSeedRun 해제는 미니맵 전체 렌더 마킹 시(래퍼)
+    if (_cullActive) { _cullActive = false; _metaGraph._cullActive = false; _metaGraph._cullVp = null; }
+  }
   const _offView = (x0, y0, x1, y1) => _cullActive && (x1 < _vx0 || x0 > _vx1 || y1 < _vy0 || y0 > _vy1);
   // graph-cull-refkeep(§76, 사용자 피드백): 컬링은 draw(방출)만 줄여야 하고 **참조(엣지)·상호작용(상세 네비)** 은
   //   보존해야 한다. 선택 노드의 관계 상대(focusAdj = 상세 패널이 보여주는 관계)는 화면 밖이어도 방출 예외 —
@@ -424,6 +437,16 @@ function _metaG6Build() {
     });
   }
   _metaGraph._edgeExempt = _edgeExempt;   // (디버그/테스트 노출)
+  // graph-minimap-fullview(§77): **전체-기하 서명**(컬링 무관) — nodePosAll(컬링돼도 전 노드 포함, §76)로
+  //   산정. 미니맵이 보유한 전체 이미지가 '현재 전체 기하' 와 일치하는지 판정하는 기준 — 접힘 카드 단계의
+  //   full 이미지를 펼침 후에도 현재로 오인해 시딩까지 억제하던 결함(라이브 실측)의 근본 해소.
+  //   0.25px 양자화·FNV-1a(§74 동형). 엣지 수 포함(관계 큐레이션류 엣지-only 변경 감지 보조).
+  {
+    let fh = 0x811c9dc5 >>> 0;
+    const fmix = (s) => { s = String(s); for (let i = 0; i < s.length; i++) { fh ^= s.charCodeAt(i); fh = Math.imul(fh, 0x01000193) >>> 0; } fh ^= 0x2c; fh = Math.imul(fh, 0x01000193) >>> 0; };
+    _metaGraph.nodePosAll.forEach((p, k) => { fmix(k); fmix(Math.round(p.x * 4)); fmix(Math.round(p.y * 4)); fmix(Math.round((p.h || 0) * 4)); });
+    _metaGraph._miniFullSig = _metaGraph.nodePosAll.size + ":" + _metaGraph.edges.size + ":" + (fh >>> 0);
+  }
   // §76: 컬 예외 통합 판정 — focus(선택 노드 관계) OR edge(뷰포트 내 노드 연결 상대). 테이블·클러스터 컬 지점 공용.
   const _keepFromCull = (k) => _faKeep(k) || _edgeExempt.has(k);
   const _clusterKeep = (g) => _clusterHasFocus(g) || !!(g && !g.isTerms && g.tables && g.tables.some((t) => _edgeExempt.has(t.key)));
@@ -533,7 +556,7 @@ function _metaG6Build() {
     const _freePlaced = _metaGraph.nodePos.size > 0 || _metaGraph.groupOffset.size > 0;
     // §76: 클러스터가 선택 노드의 관계 상대를 하나라도 품으면 통째 컬링 금지 → combo + 그 관계 테이블이 방출돼
     //   관계선·상호작용이 보존된다(per-table 컬링이 나머지 화면 밖 테이블은 계속 억제).
-    if (_cullActive && !g.isTerms && !_freePlaced && !_clusterKeep(g) && _offView(L.x0, L.y0, L.x0 + L.w, L.y0 + L.h)) return;
+    if (_cullActive && !g.isTerms && !_freePlaced && !_clusterKeep(g) && _offView(L.x0, L.y0, L.x0 + L.w, L.y0 + L.h)) { _metaGraph._cullPartial = true; return; }   // graph-minimap-fullview(§77): 부분방출 표시
     combos.push({ id, type: _METtype, data: { label: _metaComboName(id), kind: "schema" }, style: Object.assign({ labelText: _metaComboName(id) }, _metaComboStyleFor(g.isTerms)) });
     if (!g.isTerms && _metaGraph.schemaExpanded.has(id)) {
       // graph-initview: "−" 접기 컨트롤(combo 우상단) — 카드로 복귀.
@@ -607,7 +630,7 @@ function _metaG6Build() {
       }
       if (it.label === "Routine") {
         // viewport-cull(§67): 화면 밖 루틴 칩도 미방출(테이블과 동형). §76: 단 선택 노드의 관계 상대는 예외(엣지·상호작용 보존).
-        if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;
+        if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) { _metaGraph._cullPartial = true; return; }   // graph-minimap-fullview(§77): 부분방출 표시
         // graph-funcproc(ADR-016): 함수(ƒ)/프로시저(⚙) 칩 — 검색 매칭 강조는 테이블과 동일 룰.
         //   §18.8 패널(NIT): isTerms 분기보다 먼저 — 스키마 세그먼트 없는 flat-scope Routine 이
         //   terms 클러스터로 강등돼도 용어 칩이 아닌 ƒ/⚙ 보라 칩으로 렌더된다.
@@ -625,6 +648,7 @@ function _metaG6Build() {
         //   방출 시 아래 항목과 겹침 — terms 에서는 펼침 미지원(상세 패널 세로 목록으로 열람).
         const plist = (!g.isTerms && _metaGraph.routineExpanded.has(it.key)) ? _metaRoutineParamList(it) : [];
         const _rtOff = plist.length ? _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it)) : false;   // viewport-cull(§65)
+        if (_rtOff) _metaGraph._cullPartial = true;   // graph-minimap-fullview(§77): 뷰포트 사유 파라미터 억제도 부분방출
         if (plist.length && !colLodActive && !_rtOff) {   // col-lod(개요) 또는 viewport-cull(줌인 화면 밖) 시 파라미터 억제(realH 로 높이는 예약됨)
           // routine 칩 폭은 rel-가변(_metaRoutineStyle 과 동일식) — ctl 을 TW/2 고정으로 두면 넓은 칩과 겹침.
           const rw = Math.min(190, _METLAY.TW + (typeof rrel === "number" ? Math.round(rrel * 40) : 0));
@@ -654,7 +678,7 @@ function _metaG6Build() {
       // viewport-cull(§67): 화면(+마진) 밖 테이블은 **테이블 칩 자체를 미방출**(줌인 대형모델 draw 급감 — 병목
       //   =setData/draw 방출 요소 수). 화면 밖이라 시각 손실 0. 엣지 끝점은 renderEndpoint 가 승격/드롭. combo 는
       //   가시 테이블에 auto-fit. 전체가 화면 밖인 클러스터는 상위에서 통째 컬링(combo 포함). §65 컬럼→테이블 확장.
-      if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;   // 화면 밖 테이블 컬링(§76: 선택 관계 상대는 예외 — 엣지·상호작용 보존)
+      if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) { _metaGraph._cullPartial = true; return; }   // 화면 밖 테이블 컬링(§76: 선택 관계 상대는 예외 — 엣지·상호작용 보존) + §77 부분방출 표시
       const _colSuppressed = colLodActive && cols && cols.length;   // (in-view 테이블) 개요 col-lod 컬럼 억제만
       // col-lod: 억제 시 '▤N' 컬럼수 배지를 라벨 **앞**에 둔다 — _metaTableStyle labelMaxWidth(140) 후미
       //   ellipsis 로 긴 테이블명(예: cc_user_subscription)이 잘려도 배지가 살아남아 '컬럼 억제됨'
@@ -911,7 +935,7 @@ function _metaG6BuildProducts() {
   _metaGraph.firstElementId = null;
   _metaGraph._colLodActive = false;   // col-lod(§61): products 뷰는 컬럼/LOD 없음 — 스키마 빌드가 남긴 stale 플래그 소거(상태줄 거짓 마커 방지). _metaG6Build 는 products 모드에서 여기로 조기 return 하므로 스키마 빌드의 산정을 못 거친다.
   _metaGraph._aggActive = false;      // agg-lod(§63): products 뷰는 집계 없음 — stale 플래그 소거.
-  _metaGraph._cullActive = false; _metaGraph._cullVp = null;   // viewport-cull(§65): products 뷰 stale 소거.
+  _metaGraph._cullActive = false; _metaGraph._cullVp = null; _metaGraph._cullPartial = false; _metaGraph._miniSeedRun = false; _metaGraph._cullSuspendOnce = false; _metaGraph._miniFullSig = null; if (_metaGraph._miniSeedTimer) { try { clearTimeout(_metaGraph._miniSeedTimer); } catch (_) {} _metaGraph._miniSeedTimer = null; }   // viewport-cull(§65)+§77: products 뷰 stale 소거(시딩 가드·전체서명·타이머 포함).
   const prods = [], dss = [];
   _metaGraph.nodes.forEach((n) => {
     if (n.label === "Product") prods.push(n);
@@ -1002,6 +1026,8 @@ function _metaRenderedAncestorFor(key) {
 //   를 재사용한다. 기하가 바뀌는 경로(펼침/접기/드래그/LOD 밴드/스코프 재적재/검색 prune)는 서명이 바뀌어 정상 재복제.
 //   위치는 0.25px 로 양자화(미소 부동소수 흔들림 무시). combo 위치는 자식 auto-fit(getContentBBox)이라 자식 노드
 //   위치가 서명에 있으면 암묵 포함 — combo 는 id 존재만 해시(추가/삭제 감지). built 미정의 시 null → 항상 재복제(안전).
+//   §77(graph-minimap-fullview): 서명은 방출된 _built 기준이라 뷰포트 컬링 build 에선 부분집합 서명이 된다 —
+//   재복제 허용 여부는 _cullPartial(부분방출 플래그)로 별도 게이트(부분방출 build 는 전체 이미지 유지, 래퍼 참조).
 function _metaMinimapGeomSig(built) {
   if (!built) return null;
   let h = 0x811c9dc5 >>> 0;   // FNV-1a 32bit offset basis
@@ -1078,6 +1104,18 @@ async function _metaG6ApplyOnce(fit) {
     //   는 context.plugin 부재로 실패(→ 패치 no-op, 최적화 사멸). draw 완료 후엔 plugin 인스턴스가 존재하므로 여기서 건다.
     //   멱등(__reusePatched)이라 매 apply 호출돼도 첫 성공 래핑 1회만 유효(이후 즉시 return).
     _metaPatchMinimapReuse(g);
+    // graph-minimap-fullview(§77 — 시딩 예약): 컬링 부분방출인데 미니맵 전체 이미지가 없거나(대형 모델
+    //   fit-클램프로 무컬링 build 가 자연 발생 안 하는 케이스) **현재 전체 기하와 불일치**(줌인 중 펼침/필터
+    //   등 구조 변경 — 접힘 카드 시점 이미지 오인 방지)면 컬링-유예 build 를 300ms idle 로 예약. 그 build 는
+    //   전량 방출(비용 = pre-§65 빌드 1프레임)로 미니맵이 전체를 재복제·서명 갱신. _metaG6Apply 직렬화가
+    //   진행 중 apply 와의 경합을 흡수하고, _miniSeedRun 가드(전체 렌더 마킹 시 해제)가 중복 예약을 차단한다.
+    try {
+      const _mm = g.getPluginInstance && g.getPluginInstance("minimap");
+      if (_mm && _mm.__reusePatched && _metaGraph._cullPartial
+          && (_mm.__fullImageSig == null || _mm.__fullImageSig !== _metaGraph._miniFullSig)) {
+        _metaMinimapSeedKick();
+      }
+    } catch (_) { /* 시딩은 최적화 — 실패해도 정확성 무관(폴백 유지) */ }
     _metaGraphZAssert();   // graph-zorder h2: setData update 의 combo-hierarchy z 평탄화(comboZ+1) 를 canonical 로 재-assert
     _metaGraphMinimapAnchor();   // graph-minimap-fix: 플러그인 컨테이너 inline left/top → CSS 앵커 정규화(멱등)
     if (fit) { await _metaGraphFitClamped(true); }
@@ -1112,6 +1150,21 @@ function _metaGraphMinimapAnchor(retries) {
 //   호출 시점: **첫 draw 이후**(G6 v5 는 context.plugin 을 첫 draw 의 initRuntime() 에서 lazy 생성 — init 시점 호출은
 //   getPluginInstance 실패로 no-op). _metaG6ApplyOnce 의 `await g.draw()` 직후 매 apply 호출되나 멱등(__reusePatched)이라
 //   첫 성공 래핑 1회만 유효(이후 즉시 return).
+// graph-minimap-fullview(§77 — 시딩 kick 공용 헬퍼): 컬링-유예 build 1회를 350ms 지연 예약.
+//   가드 2중: _miniSeedTimer(타이머 진행 중 중복 예약 방지)와 _miniSeedRun(이전 시도의 마킹 대기 — 해제는
+//   래퍼의 전체 렌더 마킹 성공 시). 시딩 build 직후 다른 컬링 build 가 debounce 창에 끼어 마킹이 무산되면
+//   _miniSeedRun 이 latch 로 남으므로, stale-skip 재-kick(force=true)만 latch 를 뚫고 재예약한다.
+function _metaMinimapSeedKick(force) {
+  if (_metaGraph._miniSeedTimer) return;
+  if (_metaGraph._miniSeedRun && !force) return;
+  _metaGraph._miniSeedRun = true;
+  _metaGraph._miniSeedTimer = setTimeout(() => {
+    _metaGraph._miniSeedTimer = null;
+    try { _metaGraph._cullSuspendOnce = true; _metaG6Apply(false); }
+    catch (_) { _metaGraph._miniSeedRun = false; _metaGraph._cullSuspendOnce = false; }
+  }, 350);
+}
+
 function _metaPatchMinimapReuse(graph) {
   let mm = null;
   try { mm = graph.getPluginInstance && graph.getPluginInstance("minimap"); } catch (_) { mm = null; }
@@ -1122,10 +1175,37 @@ function _metaPatchMinimapReuse(graph) {
       const sig = _metaGraph._miniGeomSig;
       // 캔버스가 이미 생성돼 있고(첫 렌더 완료) 기하 서명이 직전 렌더와 동일하면 '한 번 draw 한 전체 이미지' 재사용.
       if (sig != null && sig === mm.__lastGeomSig && mm.canvas) return;
+      // graph-minimap-fullview(§77, 사용자 리포트 "줌인 컬링이 미니맵 구성까지 바꾼다"): 뷰포트 컬링으로 방출이
+      //   부분집합인 build(_cullPartial)에서 재복제하면 미니맵(전역 개요)이 컬링된 구성으로 바뀐다 — 전체 이미지를
+      //   보유 중이면 재복제 skip(마지막 무컬링 이미지 유지, __lastGeomSig 도 그 전체-build 서명으로 보존).
+      //   보유 이미지의 '현재성' 은 __fullImageSig(그 이미지를 복제한 build 의 전체-기하 서명 _miniFullSig)로
+      //   판정 — stale(줌인 중 펼침/필터 등 구조 변경)이어도 부분 재복제는 안 한다(컬링 구성 노출 금지).
+      //   교체는 컬링-유예 시딩 build(_metaMinimapSeedKick)가 수행 — 시딩 직후 다른 컬링 build 가 debounce
+      //   창(128ms)에 끼면 clone 이 부분 상태를 보게 돼 마킹이 무산될 수 있으므로, 본 stale-skip 분기(디바운스
+      //   발화 = 상호작용 소강 신호)가 재-kick 해 소강 시점에 수렴시킨다. 전체 이미지가 아예 없으면
+      //   (초기 draw 부터 컬링 — 드묾) 부분이라도 원본 렌더 폴백(빈 미니맵 방지, full 마킹 안 함).
+      if (_metaGraph._cullPartial && mm.__fullImageSig != null && mm.canvas) {
+        if (mm.__fullImageSig !== _metaGraph._miniFullSig) _metaMinimapSeedKick(true);   // latch 관통 재-kick
+        return;
+      }
       mm.__lastGeomSig = sig;
+      if (!_metaGraph._cullPartial) { mm.__fullImageSig = _metaGraph._miniFullSig; _metaGraph._miniSeedRun = false; }
     } catch (_) { /* 서명 비교 실패 → 아래 원본 렌더로 안전 폴백 */ }
     return orig();
   };
+  // graph-minimap-fullview(§77 — 카메라 유지): 미니맵 플러그인은 AFTER_TRANSFORM(팬/줌, 32ms 스로틀)마다
+  //   setCamera() 로 미니맵 카메라를 **메인 캔버스의 현재 요소 bounds**(getBounds("elements"))에 재적합한다.
+  //   뷰포트 컬링 중엔 이 bounds 가 방출 부분집합(≈뷰포트+마진)이라, 재복제를 skip 해 전체 이미지를 지켜도
+  //   카메라가 그 부분 영역으로 줌인돼 전역 개요가 깨진다(두 번째 기전). 부분방출 상태 + 전체 이미지 보유면
+  //   setCamera 재적합을 skip — 마지막 무컬링(전체 bounds) 카메라를 유지한다. updateMask 는 이 카메라 매핑으로
+  //   현재 뷰포트를 사상하므로 마스크는 전체 이미지 위 올바른 위치에 계속 표시된다. 무컬링/이미지 미보유면 원본 동작.
+  if (typeof mm.setCamera === "function") {
+    const origCam = mm.setCamera.bind(mm);
+    mm.setCamera = function () {
+      try { if (_metaGraph._cullPartial && mm.__fullImageSig != null) return; } catch (_) { /* 안전 폴백 → 원본 */ }
+      return origCam();
+    };
+  }
   // graph-minimap-reuse(적대 리뷰 H2 수정 — 네이티브 드래그 stale): 노드/콤보 드래그는 _metaG6Apply(setData+draw)를
   //   거치지 않고 G6 가 요소를 직접 이동(`translateElementTo`→`element.draw({stage:"translate"})`, 콤보는 native
   //   drag-element)한다. 이 draw 도 AFTER_DRAW 를 발생(payload `stage:"translate"`)시켜 minimap onRender→renderMinimap 을
@@ -1292,7 +1372,7 @@ function _metaGraphResetModel() {
   _metaGraph._lodBand = null;   // §57 패널 NIT: LOD 밴드 기준선도 초기화(스코프 전환 스퓨리어스 rebuild 방지).
   _metaGraph._colLodActive = false;   // col-lod(§61): 스코프/뷰 전환 시 억제 플래그 초기화(상태줄 stale 마커 방지).
   _metaGraph._aggActive = false;      // agg-lod(§63): 스코프/뷰 전환 시 집계 플래그 초기화.
-  _metaGraph._cullActive = false; _metaGraph._cullVp = null;   // viewport-cull(§65): 스코프/뷰 전환 시 초기화.
+  _metaGraph._cullActive = false; _metaGraph._cullVp = null; _metaGraph._cullPartial = false; _metaGraph._miniSeedRun = false; _metaGraph._cullSuspendOnce = false; _metaGraph._miniFullSig = null; if (_metaGraph._miniSeedTimer) { try { clearTimeout(_metaGraph._miniSeedTimer); } catch (_) {} _metaGraph._miniSeedTimer = null; }   // viewport-cull(§65)+§77: 스코프/뷰 전환 시 초기화(시딩 가드·전체서명·타이머 포함).
   if (_metaGraph._cullRaf) { try { (typeof window !== "undefined" && window.cancelAnimationFrame ? window.cancelAnimationFrame : clearTimeout)(_metaGraph._cullRaf); } catch (_) {} _metaGraph._cullRaf = null; }   // §76 실시간 컬링 rAF 정리(스코프 전환 stale 방지)
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).

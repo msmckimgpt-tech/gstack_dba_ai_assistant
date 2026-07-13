@@ -122,7 +122,6 @@ source_of_truth: true
 - Related Change: CHG-20260710T170000-nodeanalysis-postdeploy. 코드/자산 변경 0 — TASK(T69.5 [x])·REPORT(POST-DEPLOY 절)·MODIFY(CHG) doc-status 갱신뿐.
 - Panel skip 사유(§18.8 — doc-only, 런타임 코드면 0): §69 코드 결함면은 원 cycle REV-20260710T165030 [SUBAGENT: PASS-WITH-FIXES] 에서 적대 패널 완료. 본 changeset 은 배포·재생성 실측 결과 기록. 배포 정합은 라이브 실증(config 값·프롬프트 계약·healthz·run 7c75ddcb 715 done/0 failed·caveats 자기-불평 사실상 0)으로 대체.
 - Human Approval: deploy_scope: included(전역) + 사용자 "전부 진행" 승인 — §69 재개 cycle 의 완수 tail.
-
 ## REV-20260713T120500-ai-claude-feature-0016-content-cluster [SUBAGENT: PASS-WITH-FIXES] — 카테고리 밴드 컨텐츠 단위 그룹핑(semantic cluster 재작업) diff 적대 리뷰
 - 대상: 커밋 4878fe20+a762abe5(+미커밋 문서) — `semantic_cluster.py` 재작업·`metadata_graph.py` Routine 투영·`llm.py` cluster_label·`shared/config.py`·requirements(numpy)·alembic 0040·신규 테스트. backend-only(프론트 0). §18.8 general-purpose 적대 리뷰어 8축(결정론/트랜잭션/키정합/AGE/LLM/성능/회귀/마이그레이션) + 라이브 프로브(트랜잭션 롤백) 교차.
 - 패널 판정: **PASS-WITH-FIXES — BLOCKING 0 · MAJOR 1 · MINOR 5 · NIT 5.** 통과 축: legacy 시그니처 byte-동일성(테스트 잠금)·`_run_step` force-커밋으로 owned 폴백 rollback 안전·키 정합(`_effective_schema`≡`_rag_effective`, 루틴 store label lower 계약)·AGE 8컬럼/agtype null 안전(Table 동형)·`llm_cluster_label`=product_classify verbatim 동형·0040 expand-safe(migrate-lint 실측 PASS)·프론트 무변경 전제 성립(simgroups be:/ingest generic/Routine∈g.tables 코드 확증). pre-existing FAIL 1건(`test_sync_graph_rollback_on_error_restores_autocommit`)은 기준 커밋(37d45aea)에서도 동일 FAIL 실증 — 본 diff 무관.
@@ -139,3 +138,27 @@ source_of_truth: true
 - 라이브 프로브(본 세션, 롤백·무변경) 추가 적발·수정 2건(리뷰와 독립): SAVEPOINT 미격리 연쇄 실패 / base-τ 단일연결 blob(254/255) → mutual-kNN+τ-상승 재분할(MODIFY CHG-20260713T113500). 반영 후 재프로브: cc_data_main **37 클러스터/199 편입** 유지·error 0.
 - 반영 후 재검증: 신규 테스트 파일 **24 PASS** + 연관(category refine·routine crossdb) 스위트 PASS + 전체 스위트 컨테이너 pytest(재실행) + py_compile·migrate-lint PASS.
 - **deploy_scope: included 근거 기록(§12.2/§16.3)**: FIRST_REQUEST.md 전역 `deploy_scope: included` — cycle 종료 시 confirm 없이 배포 진행(첫 배포 직전 1줄 표면화). numpy 실효는 insight-worker/ask-worker/agent 이미지 재빌드 필수(make up 은 worker 미재빌드 — 배포 노트).
+## REV-20260713T105224-ai-root-feature-0016-minimap-fullview [SUBAGENT: SHIP] — §77 미니맵 전역 개요 유지(컬링 부분방출 재복제·카메라 재적합 금지) diff 적대 리뷰
+- 대상: `unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js`(_cullPartial 추적 4지점+리셋 2곳 + renderMinimap/setCamera 게이트) + `tests/headless/test_g6build_minimap_reuse.js`(Section E 16 신규). frontend-only·마이그 0·Minor(§12.3).
+- 패널: general-purpose 적대 리뷰어 — diff 전문 + graph-core.js 전체 컨텍스트(컬링 지점·리셋·aftertransform·검색/스코프 전환 경로) + G6 vendor minimap 클래스 역어셈블 + 번들 레시피 재현으로 headless 51 PASS 독립 재실행. **판정 SHIP — BLOCKING/MAJOR 0, MINOR 2 + NIT 1(전부 미수정 수용).**
+- 실증된 PASS 축: ①상태 타이밍 — `_cullPartial` 은 build 동기 세팅·onRender 는 trailing debounce(128ms)라 발화 시점 플래그·서명·캔버스가 항상 최종 build 로 coalesce(극단 왕복 포함), translate 끼어듦은 gate2 흡수. ②불변식 "hasFullImage ⇒ 캔버스=마지막 무컬링 렌더" — 덮어쓰기 경로 전수에서 위반 도달 불가(plugin canvas 1회 생성 유지 실측). ③스코프/검색 전환 stale 이미지 — 전 경로가 `_metaGraphResetModel`(partial=false) 경유 + 첫 build 가 카드/소형(<400) 또는 카드 게이팅으로 무컬링 → 서명 불일치 재복제로 즉시 교체. ④G6 내부 정합 — this. 동적 디스패치로 래퍼 확실 가로챔·createLandmark key-cache 무오염·onMaskDrag 팬 비율은 동결 카메라와 이미지 축척 일치·maskBBox 요소 bounds 비의존·마스크 드래그 중 plugin 자체 setCamera 억제. ⑤컬링 지점 전수 — `_offView` 방출 감소 4곳 전부 마킹, catHidden/hiddenKinds/col-lod/edge-lod 는 사용자·줌-LOD 사유라 미마킹이 올바름, 엣지 드롭은 노드 컬의 하류(플래그 선행 보장). ⑥테스트 정합 — E 16 단언 전부 래퍼 의미와 일치·51 PASS 독립 재현.
+- 결함 원장 및 처리:
+  - **M1 [MINOR/UX] — 수용(후속 후보)**: 컬링 지속 중 전체 이미지의 staleness 표식 부재 — 줌인 중 kind 필터/펼침 등 구조 조작 시 미니맵이 과거 개요를 무기한 표시할 수 있음(특히 "full 밴드 내 줌아웃 + 중심 불이동" 은 uncull rebuild 자체가 없는 기존 §65 gap). 코드 주석에 트레이드오프 명시·어떤 무컬링 build 로도 자가치유·pre-§77(부분집합 재복제)보다 엄격히 덜 틀림 → 미수정. 후속: skip 상태 시 미니맵 "개요 고정" 배지 1개.
+  - **M2 [MINOR/과도기] — 수용**: 플래그 전환 창(스코프 전환 fetch 대기·draw in-flight)의 setCamera 통과가 과도기 bounds 재적합 가능 — 새 스코프 첫 렌더/다음 transform·renderMinimap 이 즉시 교정(자가치유), 관측 창 극소 → 미수정.
+  - **N1 [NIT] — 수용**: `__hasFullImage` 마킹이 orig() 성공 전 선-대입 — §74 `__lastGeomSig` 와 동일한 기존 패턴·가정적 경로 → §74 정리 시 함께 성공-후 마킹으로.
+- 검증: minimap_reuse **51 PASS** + 그래프 headless 11 스위트 **265 PASS / 0 FAIL** + `node --check --input-type=module` PASS(test-runs.d/20260713T105224-minimap-fullview.md).
+- **deploy_scope: included 근거 기록(§12.2/§16.3)**: FIRST_REQUEST.md 전역 `deploy_scope: included` → cycle 종료 시 자동 배포(첫 배포 직전 1줄 표면화). frontend 자산 baked — 배포 후 실 Windows 육안(PB-0008, T77.5)이 완료 게이트.
+- 근거: 코드 diff 존재(핵심 미니맵·컬링 경로) → §18.8 적대 패널 수행. BLOCKING/MAJOR 0 → 랜딩 차단 없음.
+
+## REV-20260713T115500-ai-root-feature-0016-minimap-fullview-r2 [SELF: PASS] — §77 2차 델타(전체-기하 서명·시딩·경합 수렴) 적대 검토
+- 배경: 1차 [SUBAGENT: SHIP](REV-20260713T105224) 이후 **PRE-LANDING 라이브 검증(PB-0008)이 결함 3건을 연쇄 적발**해 설계가 확장됨 — (적발①) fit-클램프 대형 모델은 무컬링 build 자연 미발생(1,249 노드 fit 방출 153)이라 전체 이미지 영영 미시딩 → 컬링-유예 시딩 build(`_metaMinimapSeedKick`) (적발②) boolean full-마킹이 접힘 카드 시점 이미지를 펼침 후 현재로 오인·시딩 억제 → 전체-기하 서명 `_miniFullSig`(nodePosAll+edges.size) 현재성 판정 (적발③) 시딩-마킹 debounce(128ms) 경합으로 마킹 무산 + seedRun latch 고착 → stale-skip 분기 force 재-kick + `_miniSeedTimer` 중복 방지.
+- 패널 형태: 2차 델타 서브에이전트 리뷰가 **사용량 한도(session limit, 12:30 리셋)로 중단** → 인라인 셀프 적대 검토로 대체 수행(§18.8 패널 자체는 1차에서 수행 완료·본 델타는 headless 재현 + 라이브 e2e 이중 잠금). 후속 패널 재검이 필요하면 머지 후 diff 재리뷰 가능.
+- 셀프 검토 원장(공격 지점별):
+  - **시딩 진동(seed→cull→seed 교대)**: 시딩 후 `_miniFullSig` 는 컬링·뷰포트와 무관(F2 가 culled/seeded build 동일 서명 단언) → 기하 불변이면 stale 조건이 닫혀 재-kick 불가(F7 실증). 진동 없음 판정.
+  - **force 재-kick 폭주**: 재-kick 은 debounce 발화(=128ms 상호작용 소강) 시에만 + 타이머 가드 → 연속 팬/줌 중 kick 0, 소강당 최대 1회(구조 변경당 시딩 1프레임 ≈ pre-§65 빌드 1회 비용). 유계 판정.
+  - **시딩 build 부작용**: `_metaG6Apply(false)` — fit 미호출(카메라 불변)·상태는 model bake(선택/드래그 보존)·직후 대형 draw 잔존은 다음 상호작용 rebuild 가 재컬링(과도 상태). 무해 판정.
+  - **서명 커버리지**: 컬럼 펼침=`h`(realH) 포착·카테고리 접힘=catHidden 제외 포착·kind 필터/그룹 접힘=place 변화 포착·엣지=count 만(타입-flip 미포착 — 168×112px 스케일 시각 무의미, 수용). 산정 비용 O(N) sub-ms(1.3k 엔트리).
+  - **타이머 수명**: 리셋 2곳(clearTimeout+null)·발화 시 suspend 1회 소비 후 무해한 전량 build·그래프 재생성 시에도 안전(현재 graph 에 apply). leak 없음 판정.
+  - **테스트 flake**: 타이머 350ms vs 대기 450/500ms(마진 100~150ms), node 단일스레드 타이머 — 낮음. 65 PASS 재현 3회.
+- 검증: headless 11 스위트 **279 PASS / 0 FAIL**(라이브 적발 3건 각각 F8/F9/F1~7 로 재현·잠금) + **라이브 e2e PASS**(시딩 수렴 fullSigCurrent=true → 줌 2.0 컬링 rebuild 방출 1,573→153 에 미니맵 해시 완전 불변 → 팬 불변 → 스코프 전환 재렌더 → pageerror 0). 상세 test-runs.d/20260713T105224-minimap-fullview.md.
+- 판정: **PASS — 랜딩 차단 없음.** 1차 리뷰의 M1(staleness 표식)은 시딩 도입으로 실질 해소(stale 창이 무기한→~0.5s), M2(과도기 창)·N1(선-마킹)은 수용 유지.
