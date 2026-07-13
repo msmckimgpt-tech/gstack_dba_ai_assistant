@@ -158,3 +158,8 @@ source_of_truth: true
 - 대상: `docs/{TASK.md(T78.3c/T78.4 완료),REPORT.md(Phase C 완결)}` + `unit/feature-0003-agent-web-ui/docs/test-runs.d/*-pixi-live-postdeploy.md`. **코드/자산 변경 0**.
 - 변경: PR #752 배포(main d776f57b) + 라이브 admin 그래프 뷰 PixiJS 실데이터 PB-0008 결과 기록 — 409 객체 렌더·전 UI 버튼·팬 60fps vsync-perfect·pageerror 0. feature-0016 §78 완결.
 - 근거: 배포·라이브 검증 완수. 코드 diff 부재 → §18.8 SKIPPED.
+
+## CHG-20260713T-ai-root-feature-0016-graph-pixi-polish — §79 후속 이슈 3건 + 오브젝트 풀 + 적대리뷰 수정
+- 대상: `graph/graph-renderer-pixi.js`(analyzed 테두리 복원·미니맵 클램프/드래그·오브젝트 풀·B1/M1/M2/m1/m4/NIT 수정)·`tests/headless/test_pixi_adapter.js`(T14~19).
+- 변경: PixiJS 렌더러 후속 — analyzed/running 상태 dot→테두리(concentric halo, selected 미가림), running fill desaturate, 미니맵 뷰포트 클램프·드래그 상호작용, scene diff 오브젝트 풀(선택 리빌드 6배). §18.8 BLOCKING1+MAJOR2+MINOR 수정. 회귀 0(순수 49+그래프 279).
+- 근거: 사용자 리포트 3건 + 후속 최적화. REV-…-graph-pixi-polish [SUBAGENT:PASS-WITH-FIXES]. BitmapText DEFER(측정 근거).

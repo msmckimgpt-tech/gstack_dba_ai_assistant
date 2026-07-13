@@ -184,3 +184,12 @@ source_of_truth: true
 
 ## REV-20260713T062037-ai-root-feature-0016-graph-pixi-postdeploy [SKIPPED:docs-only-postdeploy]
 - §78 Phase C POST-DEPLOY 라이브 PB-0008 결과 기록 — docs-only(코드/자산 0). 배선 코드 diff 는 선행 REV-…-graph-pixi-wire [SUBAGENT:PASS-WITH-FIXES] 에서 §18.8 적대 리뷰 완료. 본 커밋은 라이브 검증 기록이라 SKIPPED.
+
+## REV-20260713T070223-ai-root-feature-0016-graph-pixi-polish [SUBAGENT:graph-adversarial] — PASS-WITH-FIXES
+§79 PixiJS 후속(이슈 3건+오브젝트 풀) diff 적대 리뷰(Explore/opus, 실 코드 대조).
+- **BLOCKING 1 수정**: B1 상태 halo 페인트 순서가 G6 역전(addChildAt(_,0))으로 analyzed/running halo 가 selected 테두리를 **완전히 가림**(분석된 노드 클릭 시 선택 피드백 소실 — 흔한 케이스). 수정: halo 를 states 순서대로 body 아래 **증가 인덱스** 삽입 + 상태별 2px 인셋(concentric 링) → selected(마지막) 최상위·다중 상태 동시 표기. 시각 실증: sel+analyzed 노드 보라(안)+진회색(밖) 링 동시 가시.
+- **MAJOR 2 수정**: M1 running fill desaturate(G6 fillOpacity 0.45 — 앰버 역할색 위 주황 점선 위장 방지)가 어댑터에서 드롭 → _drawNode 가 running 상태 시 body fill alpha 0.45 적용(시각 실증: amber 노드 fill 흐려짐·주황 점선 선명). M2 오브젝트 풀·halo 무테스트 → 서명 로직을 PixiAdapterPure.nodeSig/edgeSig/comboSig/edgeId 순수함수로 추출·draw() 소비·**T17~19 테스트 10건 추가**(재사용/재생성 정합·type 변화·끝점 이동·bbox 변화).
+- **MINOR 수정**: m1 node 서명에 n.type 추가(circle/rect 기하 방어). m4  빈 콘텐츠 시 (stale proj 엉뚱한 팬 방지). NIT 미니맵 드래그 로컬좌표 박스 클램프(박스 밖 극단 팬 방지).
+- **수용(수정 불요)**: m3 풀 키 kind-네임스페이스(combo/node id 실무 분리 — 접두 SC:/GB:/fqn vs bare schema, 충돌 확률 낮음·pre-existing, 전 _objs 접근 재작성 과함). m2 node 서명 정밀도(재생성=안전, 재사용률 미세 손실). m5 cull-on JSON.stringify(pixi 모드 컬링 비활성이라 미실행 경로).
+- 통과 확인(적대): 미니맵 좌표계 일치·edge/combo 재생성 정합·제거/재생성 루프 누수 0·순수함수 수학 정확 — 결함 아님 명시.
+- 회귀: 어댑터 순수 **49 PASS**(T14~19 추가) + 그래프 headless **279 PASS 무회귀**. B1/M1 시각 실증·pageerror 0.

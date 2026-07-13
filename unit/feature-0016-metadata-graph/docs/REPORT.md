@@ -1754,3 +1754,15 @@ PLAN-APPROVED(사용자, AskUserQuestion) 직후 같은 세션에서 Phase A 수
 
 ### Git 동기화 결과 (Phase C)
 - 병합: PR #752 → main d776f57b. 배포: deploy-web.sh(무중단). POST-DEPLOY docs 커밋(본 커밋) → 자동 동기화.
+
+## 2026-07-13 · §79 graph-pixi-polish — 후속 이슈 3건 + 오브젝트 풀
+사용자 리포트(§78 완결 후) 수정 + 후속 최적화.
+- **이슈①**: analyzed/running 상태를 dot(뱃지)에서 **테두리(halo)**로 복원 — G6 원본 node.state 계약(analyzed=보라 stroke·running=주황 점선) 회귀 수정. 상태 전부 halo 통일, sc의 stroke/lineWidth/lineDash 소비.
+- **이슈②**: 미니맵 뷰포트 사각형 경계 클램프(`minimapViewportRect`) — 극단 줌아웃 시 미니맵 박스 이탈 해소.
+- **이슈③**: 미니맵 드래그 상호작용(`_inMinimap`+`minimapToModel`+`_minimapPanTo`) — 미니맵 클릭/드래그로 카메라 이동.
+- **오브젝트 풀**: `draw()` id+서명 기반 재사용 — 선택/상태변경 리빌드 183ms→30ms(6배). 끝점 O(1) 맵.
+- **BitmapText DEFER**: 라벨 80% 이나 풀로 full-build 희귀화 + 한글 atlas 리스크 불균형 → Text 캐시 유지(측정 근거 기록, 재검토 조건 명시).
+- 검증: 어댑터 순수 39 PASS(미니맵 클램프/역투영 T14~16 추가) + 그래프 회귀 279 PASS 무회귀 + 통합 하네스 eval(3 이슈·풀 6배·렌더 정합) + pageerror 0.
+
+### Git 동기화 결과
+- 커밋: `ai/root/feature-0016-graph-pixi-polish`. 배포·라이브 PB-0008 후속.
