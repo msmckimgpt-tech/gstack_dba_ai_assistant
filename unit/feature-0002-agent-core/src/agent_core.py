@@ -492,10 +492,15 @@ _INJECTION_GUARD_NOTICE = (
 
 
 def _datamark_untrusted(content: str, label: str = "데이터") -> str:
-    """비신뢰 텍스트를 sentinel 마커로 구획(spotlighting). 콘텐츠 내 sentinel 은 제거해
-    닫는 마커 위조(인젝션 breakout)를 차단한다. (보안 ⑤)"""
+    """비신뢰 텍스트를 sentinel 마커로 구획(spotlighting). 콘텐츠·label 내 sentinel 은 제거해
+    닫는 마커 위조(인젝션 breakout)를 차단한다. (보안 ⑤)
+
+    REQ-20260713(보안리뷰 MINOR-2): label 도 비신뢰 값(파일명 등)이 들어올 수 있으므로 동일하게
+    sentinel 을 strip 한다 — label 에 위조 close 마커를 심어 구획을 깨는 벡터를 전 caller 에서 차단.
+    """
     safe = str(content or "").replace(_INJ_OPEN, "").replace(_INJ_CLOSE, "")
-    return f"{_INJ_OPEN} ({label})\n{safe}\n{_INJ_CLOSE}"
+    safe_label = str(label or "데이터").replace(_INJ_OPEN, "").replace(_INJ_CLOSE, "")
+    return f"{_INJ_OPEN} ({safe_label})\n{safe}\n{_INJ_CLOSE}"
 
 
 def _number_file_lines(content: str) -> str:
@@ -643,8 +648,10 @@ def _build_attachment_context_section(
                     _scope_sql, _scope_val = "account_id = %s", int(account_id or 0)
                 with _pg.cursor() as _pc:
                     _pc.execute(
+                        # REQ-20260713: 버전 컬럼 3개 append(row[9..11]) — 기존 positional index(0..8) 보존.
                         f"SELECT id, conversation_id, original_filename, kind, mime_type, "
-                        f"size_bytes, size_bucket, upload_status, meta_json::text "
+                        f"size_bytes, size_bucket, upload_status, meta_json::text, "
+                        f"root_attachment_id, version_number, created_by_role "
                         f"FROM agent_runtime.core_attachments "
                         f"WHERE id IN ({_ph}) AND {_scope_sql} "
                         f"AND deleted_at IS NULL AND delete_pending = 0 ORDER BY id ASC",
@@ -668,9 +675,11 @@ def _build_attachment_context_section(
             else:
                 _scope_sql, _scope_val = "AccountId = %s", int(account_id or 0)
             cur.execute(
+                # REQ-20260713: 버전 컬럼 3개 append(row[9..11]) — 기존 positional index(0..8) 보존.
                 f"""
                 SELECT Id, ConversationId, OriginalFilename, Kind, MimeType,
-                       SizeBytes, SizeBucket, UploadStatus, MetaJson
+                       SizeBytes, SizeBucket, UploadStatus, MetaJson,
+                       RootAttachmentId, VersionNumber, CreatedByRole
                 FROM WebConversationAttachments
                 WHERE Id IN ({placeholders}) AND {_scope_sql} AND DeletedAt IS NULL AND DeletePending = 0
                 ORDER BY Id ASC
@@ -708,12 +717,16 @@ def _build_attachment_context_section(
     )
     sandbox_table_specs: list[tuple[str, str, str]] = []  # (schema, table, source_label)
     text_content_entries: list[tuple[int, str, str, bool]] = []  # (attachment_id, filename, content, is_new)
+    version_diff_entries: list[tuple[str, dict]] = []  # REQ-20260713: (filename, version_diff dict)
     for row in rows:
         attachment_id = int(row[0] or 0)
         kind = str(row[3] or "")
         filename = str(row[2] or "")
         size_bucket = str(row[6] or "")
         upload_status = str(row[7] or "")
+        # REQ-20260713-attach-user-version: 버전 정보(row[9..11] — SELECT append 순서).
+        version_number = int(row[10] or 1) if len(row) > 10 and row[10] is not None else 1
+        created_by_role = str(row[11] or "user") if len(row) > 11 and row[11] is not None else "user"
         meta_obj: dict = {}
         try:
             meta_raw = row[8]
@@ -770,10 +783,24 @@ def _build_attachment_context_section(
 
         # 신규 vs 세션 라벨 (NEW_ATTACHMENT_IDS 기반).
         source_label = " ★신규" if attachment_id in new_ids_set else " ◆세션"
+        # REQ-20260713-attach-user-version: 버전>1 이면 갱신 표식 — assistant 가 "이 파일이
+        # 이전 버전에서 갱신되었음"을 인지하게 한다. 사용자 재업로드(user)/AI 수정(assistant) 구분.
+        version_label = ""
+        if version_number and version_number > 1:
+            _by = "AI 수정본" if created_by_role == "assistant" else "사용자가 재업로드해 갱신"
+            version_label = f" 🔄v{version_number}(이전 v{version_number - 1} 대비 갱신 — {_by})"
+        # 변경점 diff 수집 — 사용자 재업로드 시 MetaJson.version_diff 에 저장됨. **이번 요청 신규
+        # 첨부(★, new_ids_set)에 한정** — 재업로드가 일어난 그 턴에만 "무엇이 바뀌었는지" diff 를
+        # 주입한다(보안리뷰 NIT: 이전 턴 버전의 diff 를 매 턴 재주입하면 "방금 변경" 문구가 stale·
+        # 토큰 낭비). 🔄v{n} 버전 표식은 위 file 목록 라인에서 매 턴 유지되므로 assistant 는 이후
+        # 턴에도 버전>1 임을 계속 인지하고, 명시 비교 요청 시 버전 조회 API 로 대조 가능.
+        _vdiff = meta_obj.get("version_diff") if isinstance(meta_obj, dict) else None
+        if attachment_id in new_ids_set and isinstance(_vdiff, dict) and str(_vdiff.get("unified_diff") or "").strip():
+            version_diff_entries.append((filename, _vdiff))
         # TASK-0284: 파일명을 맨 앞에 따옴표로 노출 — LLM 이 첨부를 attachment_id(일련번호)가 아닌
         # 파일명으로 지칭하게 한다(사용자 혼란 방지). attachment_id 는 보조 참조로 괄호 안에 둔다.
         lines.append(
-            f'- file "{filename}" (attachment_id={attachment_id}) kind={kind} size={size_bucket} status={upload_status}{source_label}{meta_text}'
+            f'- file "{filename}" (attachment_id={attachment_id}) kind={kind} size={size_bucket} status={upload_status}{source_label}{version_label}{meta_text}'
         )
 
     # text kind 파일 내용 주입 (TASK-0124).
@@ -817,6 +844,34 @@ def _build_attachment_context_section(
             "— and include 1–2 unchanged context lines around the change so the numbers anchor to the source. "
             "NEVER include the `<N>→` prefix inside the diff; the +, -, and context lines must contain only the "
             "real code."
+        )
+
+    # REQ-20260713-attach-user-version: 사용자가 같은 파일을 새 내용으로 재업로드해 버전이 오른 경우,
+    # 이전 버전 대비 변경점(unified diff)을 주입해 assistant 가 "무엇이 바뀌었는지" 인지하게 한다.
+    # diff 본문은 비신뢰(사용자 콘텐츠 파생) → datamark sentinel 로 구획(인젝션 방어).
+    if version_diff_entries:
+        lines.append("")
+        lines.append("## FILE UPDATES — 이전 버전 대비 변경점 (user re-upload)")
+        lines.append(
+            "<!-- 사용자가 이미 첨부했던 파일을 새 내용으로 다시 첨부했습니다. 아래는 직전 버전 대비 "
+            "unified diff 입니다. -->"
+        )
+        for _fname, _vd in version_diff_entries:
+            _fv = _vd.get("from_version")
+            _tv = _vd.get("to_version")
+            _trunc = " [truncated]" if _vd.get("truncated") else ""
+            lines.append("")
+            lines.append(f"### {_fname}: v{_fv} → v{_tv}{_trunc}")
+            lines.append("```diff")
+            lines.append(_datamark_untrusted(str(_vd.get("unified_diff") or ""), f"첨부 파일 {_fname} 버전 diff"))
+            lines.append("```")
+        lines.append("")
+        lines.append(
+            "**INSTRUCTION (FILE UPDATES)**: The unified diff(s) above show what changed between the previous "
+            "version and the current (re-attached) version of a file. The CURRENT full content is the version "
+            "shown in ATTACHED FILE CONTENTS above; the diff explains what the user just changed. When the user "
+            "asks what changed, asks you to review the update, or asks you to compare versions, use this diff. "
+            "`+` lines were added in the new version, `-` lines were removed."
         )
 
     # 각 sandbox table 의 column schema + head 5 sample rows.

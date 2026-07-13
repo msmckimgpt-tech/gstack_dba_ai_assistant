@@ -361,3 +361,97 @@ def test_r1_list_filters_superseded():
     src = inspect.getsource(conversations.list_conversation_attachments)
     norm = " ".join(src.split()).lower()
     assert "supersededat is null" in norm, "목록은 최신 버전만 노출(SupersededAt IS NULL) 해야 함"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# REQ-20260713-attach-user-version: 사용자 재업로드 → 버전 체인 편입 (해시 대조)
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── find 헬퍼 전용 fake conn (dict-cursor fetchone) ──────────────────────────
+class _FindCur:
+    def __init__(self, row, captured):
+        self._row = row
+        self._captured = captured
+
+    def execute(self, sql, params=None):
+        self._captured["sql"] = sql
+        self._captured["params"] = params
+
+    def fetchone(self):
+        return self._row
+
+    def close(self):
+        pass
+
+
+class _FindConn:
+    def __init__(self, row, captured):
+        self._row = row
+        self._captured = captured
+
+    def cursor(self, *a, **k):
+        return _FindCur(self._row, self._captured)
+
+
+# ── U1: diff 계산 (pure) ─────────────────────────────────────────────────────
+def test_u1_compute_version_diff_basic():
+    vd = app._compute_version_diff("a\nb\nc", "a\nB\nc", prev_version=1, new_version=2, filename="q.sql")
+    assert vd["from_version"] == 1 and vd["to_version"] == 2
+    assert vd["truncated"] is False
+    assert "-b" in vd["unified_diff"] and "+B" in vd["unified_diff"]
+    # 파일명·버전 헤더가 diff 에 포함(fromfile/tofile).
+    assert "q.sql (v1)" in vd["unified_diff"] and "q.sql (v2)" in vd["unified_diff"]
+
+
+def test_u2_compute_version_diff_truncation():
+    big_prev = "x\n" * 5000
+    big_new = "y\n" * 5000
+    vd = app._compute_version_diff(
+        big_prev, big_new, prev_version=1, new_version=2, filename="big.txt", cap_bytes=100)
+    assert vd["truncated"] is True
+    assert len(vd["unified_diff"].encode("utf-8")) <= 100
+
+
+# ── U3/U4: 동명파일 최신버전 조회 (체인 편입 판정) ────────────────────────────
+def test_u3_find_latest_same_name_match():
+    row = {
+        "Id": 100, "Sha256": "abc", "OriginalFilename": "report.sql",
+        "RootAttachmentId": None, "VersionNumber": 1, "Kind": "text",
+        "ObjectKey": "conv-1/uuid/report.sql", "ConversationId": "conv-1", "AccountId": 7,
+    }
+    cap: dict = {}
+    out = app._find_latest_same_name_attachment(_FindConn(row, cap), "conv-1", 7, "report.sql")
+    assert out and out["Id"] == 100 and out["Sha256"] == "abc"
+    s = " ".join(str(cap["sql"]).split()).lower()
+    # 체인 스코프: conversation + account + filename + 최신(head) 만.
+    assert "conversationid = %s" in s and "accountid = %s" in s and "originalfilename = %s" in s
+    assert "supersededat is null" in s, "체인 head(비-superseded)만 매칭해야 함"
+    assert "deletedat is null" in s and "deletepending = 0" in s
+    assert tuple(cap["params"]) == ("conv-1", 7, "report.sql")
+
+
+def test_u4_find_latest_same_name_none_and_guards():
+    # 매칭 없음 → None
+    assert app._find_latest_same_name_attachment(_FindConn(None, {}), "conv-1", 7, "x.sql") is None
+    # 인자 결손(빈 conv / account 0 / 빈 filename) → None (쿼리 미실행 — fail-safe)
+    assert app._find_latest_same_name_attachment(_FindConn({"Id": 1}, {}), "", 7, "x") is None
+    assert app._find_latest_same_name_attachment(_FindConn({"Id": 1}, {}), "c", 0, "x") is None
+    assert app._find_latest_same_name_attachment(_FindConn({"Id": 1}, {}), "c", 7, "") is None
+
+
+# ── U5: 업로드 핸들러 버전 로직 (정적 소스 검사) ──────────────────────────────
+def test_u5_upload_handler_user_version_logic():
+    import inspect
+
+    src = inspect.getsource(conversations.upload_conversation_attachment)
+    norm = " ".join(src.split())
+    # 재업로드 감지: 동명파일 최신버전 조회.
+    assert "_find_latest_same_name_attachment" in norm, "재업로드 감지 헬퍼 호출 누락"
+    # 해시 일치 → 기존 재사용(멱등) 플래그.
+    assert "reused_existing_version" in norm, "동일 해시 재사용 플래그 누락"
+    # 새 버전은 사용자 생성.
+    assert "'user'" in norm, "새 버전 CreatedByRole='user' 누락"
+    # 직전 버전 supersede.
+    assert "SET SupersededAt" in norm, "직전 버전 supersede UPDATE 누락"
+    # 해시 대조로 버전업 판정(요청: 완전히 같은 파일이 아니라면 버전업).
+    assert "sha256_hex" in norm and "Sha256" in norm, "sha256 대조 누락"

@@ -11,6 +11,18 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260713T053423-attach-user-version (TASK-20260713T053423-attach-user-version — 사용자 재업로드 첨부 버전 관리, Major §12.3, cross-cut feature-0002)
+- 변경:
+  - `routers/_conv_store.py`: 신규 `_find_latest_same_name_attachment(conn, conversation_id, account_id, filename)`(대화 내 `(ConversationId,AccountId,OriginalFilename)` 최신 비-superseded·비-deleted head 1건 — 버전 체인 편입 판정, MySQL write-consistent)·`_compute_version_diff(prev, new, *, prev_version, new_version, filename, cap_bytes)`(difflib unified diff, size-cap `_ASSISTANT_EDIT_SIZE_CAP_BYTES`, truncated 플래그).
+  - `app.py`: p15 rebind 블록에 `_find_latest_same_name_attachment`·`_compute_version_diff` import 추가(app.X 노출).
+  - `routers/conversations.py` `upload_conversation_attachment`: sha256 계산 직후 prior head 조회 → **해시 일치=기존 최신 버전 재사용**(INSERT/MinIO put skip, 기존 payload + `reused_existing_version:true` 반환) / **불일치=새 버전**(root=prior.root||prior.Id·`VersionNumber=MAX+1`·텍스트계열 diff 를 `MetaJson.version_diff` 저장). INSERT 를 버전 컬럼(`MetaJson,RootAttachmentId,VersionNumber,CreatedByRole='user'`) 명시로 확장(prior 없음 시 NULL/1/NULL='user' → 기존 default byte-동치). commit 후 직전 버전 `SET SupersededAt=UTC_TIMESTAMP(6) WHERE VersionNumber<new` + PG dual-write 를 체인 전체 id 로 확장.
+  - `unit/feature-0002-agent-core/src/agent_core.py` `_build_attachment_context_section`: PG/MySQL SELECT 에 `root_attachment_id/version_number/created_by_role`(row[9..11]) append(기존 index 0~8 보존)·`version_number>1` 파일 라인에 🔄v{n} 표식(사용자/AI 구분)·`MetaJson.version_diff` 수집 → `## FILE UPDATES` 섹션에 `_datamark_untrusted` 후 ```diff``` 주입 + 지침.
+  - `static/app.js`: 신규 `_sha256HexOfFile`(crypto.subtle)·`_attachUploadDoneMessage`(버전 상태별 toast). `_uploadComposerAttachment` 클라이언트 dedup 을 이름+크기 → **해시 대조**로 정밀화(동일 내용만 차단). 업로드 성공 3지점(earlyCid·activeConv·staged flush) pill 에 `sha256`/`version_number` 적재 + 버전 인지 toast. 목록 로더 pill 에 `sha256` 적재.
+  - tests: `unit/feature-0003-agent-web-ui/tests/test_attachment_versioning.py` +6(U1 diff·U2 truncate·U3/U4 find·U5 upload 정적)·신규 `unit/feature-0002-agent-core/tests/test_attachment_user_version_context.py` +5(표식·FILE UPDATES·datamark·truncate·v1 무회귀).
+  - docs: FUNCTION.md REQ-20260713-attach-user-version(AC-AUV-1~6)·TASK.md(PLAN-APPROVED)·REPORT.md·TEST.md §4·REVIEW.md.
+- 스키마/마이그레이션/RBAC/엔드포인트 shape: **무변경**(버전 컬럼 전부 기존재 — TASK-0274/0008). 응답 필드 additive(`reused_existing_version`)·MetaJson additive(`version_diff`).
+- 검증: py_compile 4 + node --check PASS · 첨부 버전 31 PASS · 전체 스위트 EXIT=0(회귀 0). §18.8 REV-20260713T053423-attach-user-version. Cross-ref: TASK/FUNCTION-20260713T053423-attach-user-version · 기반 TASK-0274/0275/0285/0286(버전 인프라)·0008 core_attachments 스키마.
+
 ## CHG-20260707T111500-runtime-settings-postverify (feature-0018 + audit hotfix POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 에 POST-DEPLOY PB-0008 PASS Run append + TASK 완료 체크. 배포: PR #602→a7dcc436(feature) + PR #604→8d0a4723(audit hotfix), web 무중단 롤링 ×2.
 - 검증 요지: 설정 pane 3항목 렌더, 실행 타임아웃 22입력/6카테고리/즉시·재배포 배지, **env-fallback 실증**(300/600/180=.env 값), 모델 예산 2행 no-override input 비움, write-path e2e(저장→DB override→audit→초기화→DB 정리), pageerror 0. 증적 artifacts/feature-0018-runtime-settings/pb0008-runtime-settings-timeouts.png.
