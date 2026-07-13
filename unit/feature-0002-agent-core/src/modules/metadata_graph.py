@@ -346,22 +346,30 @@ def delete_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col, tgt_scop
     _cypher(cur, q, 1)
 
 
-def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", refs=None) -> None:
+def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", refs=None,
+                 cluster_id=_UNSET, cluster_label=_UNSET) -> None:
     """Routine 노드 + HAS_ROUTINE(Schema→Routine) + ROUTINE_USES(Routine→Table) MERGE (ADR-016).
 
     key/fqn 은 `schema.name()` — 뒤의 `()` 가 동명 테이블 키(`schema.name`)와의 전역 key 충돌을
     막는 네임스페이스이자 사람이 읽는 함수 표기다. refs = [{fqn:'schema.table', kind:'read|write'}]
     (routine_objects.referenced_tables). 참조 Table 은 최소 MERGE(설명 미설정 — 큐레이션 비파괴)로
-    앵커링해 고아 엣지를 막는다(_anchor_relationship_column 동형)."""
+    앵커링해 고아 엣지를 막는다(_anchor_relationship_column 동형).
+    cluster_id/cluster_label(content-cluster RC3): sync_table 동형 — 기본 _UNSET=미전달(보존),
+    routine_objects 투영은 항상 현재값(None 포함)을 전달해 이탈 시 `= null` clear(stale phantom 방지).
+    schema_tables 가 RETURN → 프론트 sim-group 이 루틴도 be: 그룹으로 소비."""
     fqn = f"{schema}.{name}()" if schema else f"{name}()"
     skey = _vkey(scope, schema or "(default)")
     rkey = _vkey(scope, fqn)
     _merge_vertex(cur, "Schema", skey,
                   {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope})
-    _merge_vertex(cur, "Routine", rkey,
-                  {"name": name, "fqn": fqn, "scope_key": scope, "schema_name": schema or "",
-                   "routine_type": routine_type or "procedure", "params": (params or "")[:500],
-                   "source": "routine_introspect"})
+    rprops = {"name": name, "fqn": fqn, "scope_key": scope, "schema_name": schema or "",
+              "routine_type": routine_type or "procedure", "params": (params or "")[:500],
+              "source": "routine_introspect"}
+    if cluster_id is not _UNSET:
+        rprops["semantic_cluster_id"] = cluster_id      # None → _props_set 이 = null 로 clear
+    if cluster_label is not _UNSET:
+        rprops["semantic_cluster_label"] = cluster_label
+    _merge_vertex(cur, "Routine", rkey, rprops)
     _merge_edge(cur, "Schema", skey, "HAS_ROUTINE", "Routine", rkey)
     # §18.8 패널(MAJOR): 가산적 MERGE 만으로는 정의 변경으로 사라진 참조가 그래프에 영구 잔존
     # (REFERENCES 의 broken stale-edge 클래스 재도입). refs 가 이 routine 의 **전량**이므로
@@ -645,16 +653,36 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
         _run_step("table_relationships", _step_relationships)
         # 3b) routine_objects (함수·프로시저, graph-funcproc ADR-016) — Routine 노드 +
         #     HAS_ROUTINE + 참조 테이블 ROUTINE_USES. 테이블 부재(구 DB·0034 미적용)는 _run_step 이 격리.
+        #     content-cluster RC3: 의미 클러스터(semantic_cluster_id/label)도 Routine 정점에 투영 —
+        #     컬럼 부재(0040 미적용 창)는 구 SELECT 로 폴백(클러스터만 미투영, step 은 계속).
         def _step_routines():
             _w, _a = _scope_since_where()
-            cur.execute("SELECT scope_key, schema_name, routine_name, routine_type, params, "
-                        "referenced_tables FROM routine_objects" + _w, _a)
-            for sc, sch, name, rtype, params, refs in cur.fetchall():
-                def _row(sc=sc, sch=sch, name=name, rtype=rtype, params=params, refs=refs):
+            _has_cluster_cols = True
+            try:
+                cur.execute("SELECT scope_key, schema_name, routine_name, routine_type, params, "
+                            "referenced_tables, semantic_cluster_id, semantic_cluster_label "
+                            "FROM routine_objects" + _w, _a)
+                rows = cur.fetchall()
+            except Exception:
+                try:
+                    c.rollback()   # owned(batched tx) 의 aborted tx 회수 후 구 스키마 재시도
+                except Exception:
+                    pass
+                _has_cluster_cols = False
+                cur.execute("SELECT scope_key, schema_name, routine_name, routine_type, params, "
+                            "referenced_tables FROM routine_objects" + _w, _a)
+                rows = [tuple(r) + (None, None) for r in cur.fetchall()]
+            for sc, sch, name, rtype, params, refs, ccid, clab in rows:
+                def _row(sc=sc, sch=sch, name=name, rtype=rtype, params=params, refs=refs,
+                         ccid=ccid, clab=clab):
                     if isinstance(refs, str):
                         refs = json.loads(refs or "[]")
+                    kw = {}
+                    if _has_cluster_cols:
+                        kw = {"cluster_id": (int(ccid) if ccid is not None else None),
+                              "cluster_label": (clab if clab else None)}
                     sync_routine(cur, sc, sch or "", name, rtype or "procedure",
-                                 params or "", refs if isinstance(refs, list) else [])
+                                 params or "", refs if isinstance(refs, list) else [], **kw)
                 if _sync_row_guard(cur, owned, _err_samples, "routine", _row, rep):
                     rep["routines"] += 1; _pending[0] += 1; _tick()
                 else:
@@ -1106,11 +1134,14 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
         # graph-funcproc(ADR-016): 스키마의 함수·프로시저(Routine) 노드 + 참조 테이블 엣지도 함께 반환 —
         #   클러스터 펼침 시 테이블과 나란히 ƒ/⚙ 칩으로 렌더된다. 라벨 부재(0034 미적용)는 비차단.
         try:
+            # content-cluster RC3: 의미 클러스터도 RETURN — Table(scope_roots/schema_tables) 동형.
+            #   0040 미투영 정점은 속성 부재 → agtype null → cluster_id=None(프론트 affix 폴백, 비차단).
             rrows = _cypher(cur,
                 f"MATCH (s:Schema)-[:HAS_ROUTINE]->(r:Routine) "
                 f"WHERE s.scope_key = {sc} AND s.key = {sk} "
-                f"RETURN r.key, r.name, r.fqn, r.description, r.routine_type, r.params "
-                f"LIMIT {limit}", 6)
+                f"RETURN r.key, r.name, r.fqn, r.description, r.routine_type, r.params, "
+                f"r.semantic_cluster_id, r.semantic_cluster_label "
+                f"LIMIT {limit}", 8)
             skey0 = None
             for r in rrows:
                 rkey = _unwrap(r[0])
@@ -1120,7 +1151,8 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
                     nodes[rkey] = {"label": "Routine", "key": rkey, "name": _unwrap(r[1]),
                                    "fqn": _unwrap(r[2]), "description": _unwrap(r[3]),
                                    "source": "routine_introspect",
-                                   "routine_type": _unwrap(r[4]), "params": _unwrap(r[5])}
+                                   "routine_type": _unwrap(r[4]), "params": _unwrap(r[5]),
+                                   "cluster_id": _unwrap(r[6]), "cluster_label": _unwrap(r[7])}
                 if skey0 is None:
                     skey0 = schema_key
                 result["edges"].append({"source": skey0, "target": rkey, "type": "HAS_ROUTINE",
