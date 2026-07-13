@@ -108,6 +108,20 @@ VALUES
 RETURNING id
 """
 
+# feature-0019 message-editing (alembic 0041): 브랜치 포인터를 함께 기록하는 INSERT.
+#   branch 인자(parent_message_id/edit_root/edit_version) 가 지정될 때만 사용 — 미분기 정상 append
+#   는 위 _PG_INSERT_CORE_MESSAGE 그대로(회귀 0). 컬럼 부재(pre-0041) 시 caller 가 42703 처리.
+_PG_INSERT_CORE_MESSAGE_BRANCH = """
+INSERT INTO agent_runtime.core_messages
+    (conversation_id, role, content, tool_calls, tool_call_id, name, sender_account_id,
+     recall_floor_created_at, parent_message_id, edit_root_message_id, edit_version)
+VALUES
+    (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s,
+     %(sender_account_id)s, %(recall_floor_created_at)s, %(parent_message_id)s,
+     %(edit_root_message_id)s, %(edit_version)s)
+RETURNING id
+"""
+
 _PG_UPSERT_KV = """
 INSERT INTO agent_runtime.kv (conversation_id, key, value)
 VALUES (%(conversation_id)s, %(key)s, %(value)s)
@@ -218,6 +232,91 @@ SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
 FROM agent_runtime.core_messages
 WHERE conversation_id = %(conversation_id)s
   AND (%(floor_ca)s IS NULL OR created_at >= %(floor_ca)s)
+  AND (%(ceil_ca)s IS NULL OR created_at <= %(ceil_ca)s
+       OR (%(joined_ca)s IS NOT NULL AND created_at >= %(joined_ca)s))
+  AND NOT (recall_floor_created_at IS NOT NULL
+           AND %(floor_ca)s IS NOT NULL
+           AND recall_floor_created_at < %(floor_ca)s)
+ORDER BY id ASC
+LIMIT %(limit)s
+"""
+
+# feature-0019 message-editing: 대화의 브랜치 게이트 상태(첫 편집에서만 has_branches=true).
+#   has_branches=false(거의 모든 대화) → 로더가 기존 linear 경로 그대로(회귀 0, AC-ME-2).
+_PG_LOAD_BRANCH_STATE = """
+SELECT has_branches, active_leaf_message_id
+FROM agent_runtime.core_conversations
+WHERE conversation_id = %(conversation_id)s
+LIMIT 1
+"""
+
+# feature-0019 message-editing: 활성 브랜치 leaf 전진(정상 append) — has_branches 대화만 호출.
+_PG_SET_ACTIVE_LEAF = """
+UPDATE agent_runtime.core_conversations
+SET active_leaf_message_id = %(leaf_id)s
+WHERE conversation_id = %(conversation_id)s
+"""
+
+# feature-0019 message-editing: 첫 편집에서 브랜치 게이트 활성 + 활성 leaf 확정(원자).
+_PG_ENABLE_BRANCHES = """
+UPDATE agent_runtime.core_conversations
+SET has_branches = true, active_leaf_message_id = %(leaf_id)s
+WHERE conversation_id = %(conversation_id)s
+"""
+
+# feature-0019 message-editing: 첫 편집 시 기존 linear 메시지의 parent 체인 backfill(각 메시지의
+#   parent = 직전 메시지 by id). 이후 active-path CTE 가 성립한다. 이미 parent 있는 행은 보존.
+#   (core_messages 와 messages 각각 자기 id-space 로 backfill — ANCHOR INV-5.)
+_PG_BACKFILL_CORE_PARENTS = """
+WITH ord AS (
+    SELECT id, LAG(id) OVER (ORDER BY id) AS prev_id
+    FROM agent_runtime.core_messages
+    WHERE conversation_id = %(conversation_id)s
+)
+UPDATE agent_runtime.core_messages c
+SET parent_message_id = ord.prev_id
+FROM ord
+WHERE c.id = ord.id AND ord.prev_id IS NOT NULL AND c.parent_message_id IS NULL
+"""
+
+_PG_BACKFILL_MSG_PARENTS = """
+WITH ord AS (
+    SELECT id, LAG(id) OVER (ORDER BY id) AS prev_id
+    FROM agent_runtime.messages
+    WHERE conversation_id = %(conversation_id)s
+)
+UPDATE agent_runtime.messages c
+SET parent_message_id = ord.prev_id
+FROM ord
+WHERE c.id = ord.id AND ord.prev_id IS NOT NULL AND c.parent_message_id IS NULL
+"""
+
+# feature-0019 message-editing: 대화 tail(현재 활성 leaf 초기값) = MAX(core_messages.id).
+_PG_MAX_CORE_MESSAGE_ID = """
+SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conversation_id)s
+"""
+
+# feature-0019 message-editing: 활성 브랜치 경로만 로드하는 active-path recursive CTE.
+#   active_leaf 에서 parent_message_id 를 root 까지 역추적 → 활성 가지만(옛 브랜치 배제).
+#   window 술어(floor/ceil/joined + recall_floor)는 _PG_LOAD_CORE_MESSAGES_WINDOWED 와 동일하게
+#   최종 SELECT 에 합성(가려진 구간 물리 배제 유지, SECURITY §21). floor/ceil/joined 가 전부 NULL
+#   이면 술어가 항상 TRUE → 비-windowed 와 동치. ORDER BY id ASC LIMIT = 기존 로더 tail 의미 유지.
+_PG_LOAD_CORE_MESSAGES_BRANCH = """
+WITH RECURSIVE path AS (
+    SELECT id, role, content, tool_calls, tool_call_id, name, sender_account_id,
+           parent_message_id, created_at, recall_floor_created_at
+    FROM agent_runtime.core_messages
+    WHERE conversation_id = %(conversation_id)s AND id = %(active_leaf_id)s
+    UNION ALL
+    SELECT m.id, m.role, m.content, m.tool_calls, m.tool_call_id, m.name, m.sender_account_id,
+           m.parent_message_id, m.created_at, m.recall_floor_created_at
+    FROM agent_runtime.core_messages m
+    JOIN path p ON m.id = p.parent_message_id
+    WHERE m.conversation_id = %(conversation_id)s
+)
+SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
+FROM path
+WHERE (%(floor_ca)s IS NULL OR created_at >= %(floor_ca)s)
   AND (%(ceil_ca)s IS NULL OR created_at <= %(ceil_ca)s
        OR (%(joined_ca)s IS NOT NULL AND created_at >= %(joined_ca)s))
   AND NOT (recall_floor_created_at IS NOT NULL
@@ -399,6 +498,9 @@ class PgRuntimeBackend:
         name: Optional[str] = None,
         sender_account_id: Optional[int] = None,
         recall_floor_created_at=None,
+        parent_message_id: Optional[int] = None,
+        edit_root_message_id: Optional[int] = None,
+        edit_version: int = 1,
     ) -> int:
         import json as _json
         tc_json = _json.dumps(tool_calls, ensure_ascii=False) if tool_calls is not None else None
@@ -412,7 +514,23 @@ class PgRuntimeBackend:
             "sender_account_id": int(sender_account_id) if sender_account_id is not None else None,
             "recall_floor_created_at": recall_floor_created_at,
         }
+        # feature-0019 message-editing: 브랜치 인자가 지정되면 브랜치 포인터를 함께 기록.
+        #   미분기 정상 append(parent=None·edit_root=None·edit_version=1)는 기존 경로 그대로(회귀 0).
+        _branch_write = (
+            parent_message_id is not None
+            or edit_root_message_id is not None
+            or edit_version != 1
+        )
         with conn.cursor() as cur:
+            if _branch_write:
+                cur.execute(_PG_INSERT_CORE_MESSAGE_BRANCH, {
+                    **params,
+                    "parent_message_id": int(parent_message_id) if parent_message_id is not None else None,
+                    "edit_root_message_id": int(edit_root_message_id) if edit_root_message_id is not None else None,
+                    "edit_version": int(edit_version),
+                })
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
             try:
                 cur.execute(_PG_INSERT_CORE_MESSAGE, params)
             except Exception as exc:  # noqa: BLE001
@@ -551,14 +669,69 @@ class PgRuntimeBackend:
             cur.execute(_PG_LOAD_STEPS, {"conversation_id": conversation_id, "limit": limit})
             return cur.fetchall() or []
 
+    def load_branch_state(self, conn: Any, *, conversation_id: str) -> dict:
+        """feature-0019 message-editing: 대화의 브랜치 게이트 상태.
+
+        반환: {"has_branches": bool, "active_leaf_id": int|None}.
+        컬럼 부재(pre-migration, UndefinedColumn 42703) → has_branches=False(무회귀 기본).
+        그 외 예외는 상위(_read_runtime_pg)로 전파 → None → 로더가 기존 linear 경로.
+        """
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_PG_LOAD_BRANCH_STATE, {"conversation_id": conversation_id})
+                row = cur.fetchone()
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "sqlstate", None) == "42703":  # UndefinedColumn (pre-migration)
+                return {"has_branches": False, "active_leaf_id": None}
+            raise
+        if row is None:
+            return {"has_branches": False, "active_leaf_id": None}
+        return {"has_branches": bool(row[0]), "active_leaf_id": row[1]}
+
+    def set_active_leaf(self, conn: Any, *, conversation_id: str, leaf_id: int) -> None:
+        """feature-0019: 정상 append 후 활성 브랜치 leaf 를 전진(has_branches 대화만 호출)."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_SET_ACTIVE_LEAF, {"conversation_id": conversation_id, "leaf_id": int(leaf_id)})
+
+    def enable_branches(self, conn: Any, *, conversation_id: str, leaf_id: int) -> None:
+        """feature-0019: 첫 편집 — parent 체인 backfill(core+display) + 게이트 활성 + 활성 leaf 확정.
+
+        idempotent: 이미 parent 있는 행은 보존, 이미 has_branches 여도 leaf 재확정만.
+        """
+        with conn.cursor() as cur:
+            cur.execute(_PG_BACKFILL_CORE_PARENTS, {"conversation_id": conversation_id})
+            cur.execute(_PG_BACKFILL_MSG_PARENTS, {"conversation_id": conversation_id})
+            cur.execute(_PG_ENABLE_BRANCHES, {"conversation_id": conversation_id, "leaf_id": int(leaf_id)})
+
+    def max_core_message_id(self, conn: Any, *, conversation_id: str):
+        """feature-0019: 대화의 현재 tail(활성 leaf 초기값). 없으면 None."""
+        with conn.cursor() as cur:
+            cur.execute(_PG_MAX_CORE_MESSAGE_ID, {"conversation_id": conversation_id})
+            row = cur.fetchone()
+            return row[0] if row and row[0] is not None else None
+
     def load_core_messages(
         self, conn: Any, *, conversation_id: str, limit: int = 200,
-        floor_ca=None, ceil_ca=None, joined_ca=None,
+        floor_ca=None, ceil_ca=None, joined_ca=None, use_branch: bool = False, active_leaf_id=None,
     ) -> list:
+        # feature-0019 message-editing: use_branch=True(has_branches 대화)면 active_leaf 에서 시작하는
+        #   active-path CTE 로 활성 브랜치 경로만 로드(옛 브랜치 배제). window 술어는 CTE 최종 SELECT
+        #   에 그대로 합성. active_leaf_id=None(첫 메시지 편집 브랜치 전이 window)이면 CTE anchor 가
+        #   없어 empty(정확: 새 첫 메시지 이전엔 문맥 없음). use_branch=False(거의 모든 대화) →
+        #   아래 기존 linear 경로 그대로(회귀 0, AC-ME-2).
         # share-visibility-window: floor/ceiling 이 하나라도 있으면 windowed 쿼리로 가려진 구간 배제.
         windowed = floor_ca is not None or ceil_ca is not None
         with conn.cursor() as cur:
-            if windowed:
+            if use_branch:
+                cur.execute(
+                    _PG_LOAD_CORE_MESSAGES_BRANCH,
+                    {
+                        "conversation_id": conversation_id, "limit": limit,
+                        "active_leaf_id": active_leaf_id,
+                        "floor_ca": floor_ca, "ceil_ca": ceil_ca, "joined_ca": joined_ca,
+                    },
+                )
+            elif windowed:
                 cur.execute(
                     _PG_LOAD_CORE_MESSAGES_WINDOWED,
                     {
