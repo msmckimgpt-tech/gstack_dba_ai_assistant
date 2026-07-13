@@ -208,3 +208,6 @@ source_of_truth: true
 - **MINOR 수정**: m1 _hexNum→PixiAdapterPure.hexToTint(valid 플래그) — 비-hex(rgb()/named) fill 은 tint 표현 불가라 흰색화(비가시) 대신 **Text 엔진으로 강등**(실 fill 전량 hex 라 라이브 무트리거·잠재 방어). m2 T20 tautology → 순수 hexToTint 실경로 T20 7건(hex/3자리/number/rgb/named). m3 edge/combo 라벨 fontFamily 를 노드와 동일 system-ui 로 정규화(edge 는 기존 Pixi 기본 Arial → 일관성 개선, 문서화).
 - **반증(적대 검증 결과 결함 아님)**: blur 우려 기각(dynamic font baseRenderedFontSize=100 texel/em > 구 Text 24~48 = 오히려 더 조밀·최대줌+dpr2 도 1:1 이상)·tint 색 정확(white base 곱셈)·풀 재사용 정합(nodeSig 에 labelText/Fill/Size 포함). anchor 수직 정렬 win-browser 육안 정합 확인(카드 중앙).
 - 회귀: 어댑터 순수 **56 PASS**(hexToTint T20) + 그래프 **279 무회귀** + 통합(BitmapText 렌더·tint·anchor·pageerror 0).
+
+## REV-20260713T081919-ai-root-feature-0016-graph-pixi-bitmaptext-pd [SKIPPED:docs-only-postdeploy]
+- §80 POST-DEPLOY 라이브 기록 — docs-only. 배선 코드는 선행 REV-...-bitmaptext [SUBAGENT:PASS-WITH-FIXES] 완료. SKIPPED.
