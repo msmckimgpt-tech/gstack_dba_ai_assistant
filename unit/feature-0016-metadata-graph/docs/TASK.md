@@ -2357,7 +2357,7 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T81.3 **상세 패널 배선(`graph-ctxmenu.js`)**: `_metaBindHoverPan`/`_metaBindHoverHighlight`(mouseenter/leave+focus/blur=키보드 파리티). 카테고리 상세 `.amgr-row[data-cid]`→클러스터 팬 · 클러스터 상세 `.amgr-ct-row[data-node-key]`→테이블 팬 · 노드 상세 `.amgr-col-select[data-col]`→컬럼 노드 강조 · `.amgr-trace[data-trace]`(+`data-edge-self`)·`[data-rtuse]`→연결선 강조 · 관계 상세 `.amgr-row[data-key]`(+`data-edge-self`)→연결선 강조. 기존 클릭/더블/토글 바인딩과 병존.
 - [x] T81.4 **CSS(`graph.css`)**: 카테고리 행(`[data-cid]`)에 다른 클릭 행과 동일한 커서/hover 어포던스 추가.
 - [x] T81.5 **정적 검증**: 3개 모듈 `node --check` PASS · 신규 심볼 export/import 정합 · 어댑터 메서드 존재 · staged diff 4파일 스코프 정합.
-- [ ] T81.6 **PB-0008 라이브 Windows-browser 검증**(visual_verification_scope=always 하드 게이트): 배포(deploy_scope=included 사전승인) 후 `bin/win-browser.py` 로 5개 상세 뷰 hover 효과 실측(카메라 이동 부드러움·노드/연결선 강조 정합·pageerror 0). `docs/test-runs.d/` fragment 에 Run 기록.
+- [x] T81.6 **PB-0008 라이브 Windows-browser 검증 완료 (2026-07-13)**: PR #764 → main 84f66608 무중단 배포(soak PASS, web-a/web-b, cache-buster ?v=04a485d52d0a). 라이브 admin(mysql-gz-dev/gunzgame 409 객체) `bin/win-browser.py` 실측 — ① 클러스터 상세 테이블 행(mailreserve) hover→카메라가 '출석 관리' 영역에서 mailreserve 로 부드럽게 팬(pan-01→02) ② 함수·프로시저 행(Game_BuyCashItem_Steam) hover→연결선(굵은 파란 선)+양끝 노드 강조 링(hl-03) ③ mouseleave→강조 즉시 해제(hl-04) ④ 그래프 뷰 pageerror 0(benign ResizeObserver warning 만). 신규 ES 모듈 라이브 로드·실행 정상. **§81 완결.**
 ## 20260713T1620-content-cluster-p2 — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 (2026-07-13, 사용자 후속 리포트)
 사용자: "여전히 클러스터링 부실 — 'dt_c...' 밴드에 무관한 테이블 동거(`DT_CashPoint`,`DT_Castle`,`dt_CombineMaterial`) + 각 밴드끼리 연관 깊은 항목별로 가까이 배치 필요."
 

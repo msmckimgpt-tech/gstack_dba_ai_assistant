@@ -1,5 +1,19 @@
 # Report
 
+## 2026-07-13 · 그래프 상세 패널 하위 항목 hover 시각 효과 (§81 graph-detail-hover-fx, PR #764)
+
+### 요청 (사용자)
+그래프 뷰 우측 상세 패널의 "선택할 수 있는 하위 항목(관련된 객체 및 연결)" hover 시 시각적 명확성 제공 — 카테고리/스키마 클러스터=해당 객체로 부드러운 카메라 이동, Table/Column/함수·프로시저=컬럼(하이라이트)·컬럼 내 참조(연결선 하이라이트)·함수/프로시저 참조(연결선 하이라이트).
+
+### 처리 결과 (cross-cut 코드 거주 feature-0003 static/graph, 비커밋·additive)
+- **PixiJS 어댑터**: world-space `_hoverLayer` 오버레이(팬/줌 자동 정합) + `setHoverHighlight`(노드 강조 링·엣지 연결선+방향 화살촉)/`clearHoverHighlight`. 커밋 선택·전체 rebuild 상태 무접촉.
+- **graph-core 래퍼**: `_metaGraphHoverPan`(hover-intent 200ms + 세대토큰 선점 종료 + leave 취소, 기존 부드러운 팬 재사용) · `_metaGraphSetHoverHighlight`(key→렌더 id 해소·미렌더는 조상 승격). G6 폴백은 feature-detect no-op(카메라는 양쪽 동작).
+- **상세 패널**: 5개 뷰(노드/관계/카테고리/클러스터 상세)에 mouseenter/leave + focus/blur(키보드 파리티) 바인딩. 참조/관계 행에 `data-edge-self` 로 정확한 컬럼↔상대 연결선 강조.
+
+### 검증
+- 정적 `node --check` 3모듈 PASS · §18.8 적대 검증 PASS-WITH-FIXES(MAJOR 연속 팬 충돌=세대토큰 수정, MINOR 3건 수정) · verify-completion 16/16 PASS.
+- **PB-0008 라이브 완료**(mysql-gz-dev/gunzgame 409 객체): 클러스터 테이블 행 hover→카메라 부드러운 팬 · 함수·프로시저 행 hover→연결선+노드 링 · mouseleave→즉시 해제 · pageerror 0. PR #764 → main 84f66608 무중단 배포.
+
 ## 2026-07-13 · 카테고리 밴드 p2 — 잔여 affix 가짜 밴드 해소 + 연관 밴드 인접 배치 (content-cluster-p2, TASK 20260713T1620 / ADR-20260713T163000)
 
 ### 요청 (사용자 후속)
