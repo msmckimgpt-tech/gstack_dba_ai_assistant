@@ -201,3 +201,10 @@ source_of_truth: true
 - Related Change: TASK TC.7/TC.8 [x] + REPORT POST-DEPLOY 절 + test-runs.d fragment. 코드/자산 변경 0 — 배포·라이브 실증(백필→임베딩→클러스터→AGE 수렴→PB-0008 PASS) 결과 기록.
 - Panel skip 사유(§18.8): 코드면은 본 cycle REV-20260713T120500 [SUBAGENT: PASS-WITH-FIXES] + h1 REV-20260713T143000 에서 완료. 본 changeset 은 실측 기록. 검증용 QA 핸들은 서빙 사본 한정·원복 완료(repo·이미지 미포함).
 - Human Approval: deploy_scope: included(전역, FIRST_REQUEST.md) — 사용자 원 요청("컨텐츠 단위로 묶이도록 개선")의 완수 tail.
+
+## REV-20260713T081302-ai-root-feature-0016-graph-pixi-bitmaptext [SUBAGENT:graph-adversarial] — PASS-WITH-FIXES
+§80 라벨 Text→BitmapText diff 적대 리뷰(Explore/opus, pixi.min.js BitmapFontManager/DynamicBitmapFont 내부까지 대조). BLOCKING 0.
+- **MAJOR 2 수정**: M2 try/catch 폴백 무력 — dynamic-font glyph 래스터화는 지연(첫 width/render)이라 생성 try 밖 throw 시 폴백 안 되고 라벨 소실 → _makeText 에서 void b.width 강제 measure 로 실패를 생성 시점으로 당겨 catch→Text 폴백 실동작화. M1 CJK atlas 미회수(세션 전역 누적) — 실데이터는 대부분 **영문 테이블/컬럼명**(bounded ASCII glyph·고재사용)이고 한글은 UI chrome/용어 한정이라 실무 영향 제한적. bounded 트레이드오프로 문서화 + seam(labelEngine:'text') 탈출구 유지(내부 BitmapFontManager clear 는 미공개 API 라 미호출).
+- **MINOR 수정**: m1 _hexNum→PixiAdapterPure.hexToTint(valid 플래그) — 비-hex(rgb()/named) fill 은 tint 표현 불가라 흰색화(비가시) 대신 **Text 엔진으로 강등**(실 fill 전량 hex 라 라이브 무트리거·잠재 방어). m2 T20 tautology → 순수 hexToTint 실경로 T20 7건(hex/3자리/number/rgb/named). m3 edge/combo 라벨 fontFamily 를 노드와 동일 system-ui 로 정규화(edge 는 기존 Pixi 기본 Arial → 일관성 개선, 문서화).
+- **반증(적대 검증 결과 결함 아님)**: blur 우려 기각(dynamic font baseRenderedFontSize=100 texel/em > 구 Text 24~48 = 오히려 더 조밀·최대줌+dpr2 도 1:1 이상)·tint 색 정확(white base 곱셈)·풀 재사용 정합(nodeSig 에 labelText/Fill/Size 포함). anchor 수직 정렬 win-browser 육안 정합 확인(카드 중앙).
+- 회귀: 어댑터 순수 **56 PASS**(hexToTint T20) + 그래프 **279 무회귀** + 통합(BitmapText 렌더·tint·anchor·pageerror 0).

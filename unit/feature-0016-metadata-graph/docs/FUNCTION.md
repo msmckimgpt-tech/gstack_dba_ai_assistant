@@ -202,6 +202,8 @@ G6 즉시 복귀(회귀 대비). G6 vendored 유지. ADR-004(G6 채택) supersed
 Phase A POC(2026-07-13, `pixi-migration/poc/`)로 디자인 보존(D1~D5)·성능(882 등가 vsync-perfect) exit gate 를 실 Windows Chrome 실측 PASS — 제품 코드 미변경(POC 격리).
 Phase B-early(2026-07-13): `graph/graph-renderer-pixi.js` SceneAdapter(G6.Graph 호환) 신설 — scene-spec(=_metaG6Build 출력형태) setScene 렌더, 순수 28 PASS·실 Chrome 60fps·D1~D5 보존. **미배선 신규 파일**(graph-core.js 배선은 B-late).
 
+**라벨 렌더 BitmapText (2026-07-13, §80)**: 그래프 라벨을 PIXI.Text→BitmapText(dynamic font white-base + tint)로 전환 — 공유 glyph atlas 로 렌더 draw call 대폭 감소(실 씬 2505 노드 렌더 Text 157ms→BitmapText 0.03ms). render-on-demand 팬 매 프레임 재렌더에 직결(대형 스코프 팬 부드러움). `cfg.labelEngine:'text'` 폴백 seam. atlas 는 세션 전역 누적(실데이터 영문 위주라 bounded).
+
 ## 14. AI 능동 분석 테이블 역할 시각 표식 (2026-07-02, node-role-viz, ADR-010)
 AI 능동 분석(node_analysis)이 완료된 **Table** 노드는 역할 8종(NODE_ROLES: master 기준·정의 / account
 계정·유저 / transaction 거래·행위 / log 로그·이력 / mapping 매핑·연결 / config 설정 / stats 집계·통계 /

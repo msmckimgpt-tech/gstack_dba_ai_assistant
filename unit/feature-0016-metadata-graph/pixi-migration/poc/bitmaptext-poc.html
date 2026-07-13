@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- feature-0016 §80 BitmapText 한글 atlas POC — Text vs Bitmap(dynamic font + tint) 성능·품질 실측. -->
+<html lang="ko"><head><meta charset="utf-8"><title>bitmaptext-poc</title>
+<style>html,body{margin:0;height:100%;background:#f6f8fb;font-family:system-ui}#hud{position:absolute;left:8px;top:8px;z-index:9;background:#fff;border:1px solid #ccc;border-radius:6px;padding:6px 10px;font:12px system-ui;white-space:pre}#stage{position:absolute;inset:0}</style>
+</head><body>
+<div id="hud">loading…</div><div id="stage"></div>
+<script src="./pixi.min.js"></script>
+<script>
+"use strict";
+window.__err=[]; addEventListener("error",e=>__err.push(String(e.message))); addEventListener("unhandledrejection",e=>__err.push(String(e.reason)));
+const hud=document.getElementById("hud");
+(async()=>{
+  const app=new PIXI.Application();
+  await app.init({background:"#f6f8fb",antialias:true,resolution:window.devicePixelRatio||1,autoDensity:true,preference:"webgl",preserveDrawingBuffer:true,autoStart:false});
+  document.getElementById("stage").appendChild(app.canvas);
+  const world=new PIXI.Container(); app.stage.addChild(world);
+  const RES=Math.min((window.devicePixelRatio||1)*2,4);
+  // 한글 라벨 샘플 (실 스키마 테이블명 유사)
+  const KO=["캐릭터정보","아이템지급로그","결제내역","확률형아이템","길드멤버십","랭킹스냅샷","쿠폰발급이력","우편함","친구목록","퀘스트진행","상점구매","환불처리","계정보안","접속로그","게임머니","경험치테이블","스킬트리","인벤토리슬롯","거래소등록","보상수령"];
+  const labels=[]; for(let i=0;i<600;i++) labels.push(KO[i%KO.length]+"_"+i);
+
+  // ── Text 방식 ──
+  function makeText(txt,size,fillHex){ return new PIXI.Text({text:txt,style:{fontFamily:"system-ui, 'Segoe UI', sans-serif",fontSize:size,fill:fillHex,fontWeight:"700"},resolution:RES}); }
+  // ── BitmapText 방식 (white base + tint, dynamic font) ──
+  function makeBitmap(txt,size,fillHex){ const b=new PIXI.BitmapText({text:txt,style:{fontFamily:"system-ui, 'Segoe UI', sans-serif",fontSize:size,fill:"#ffffff",fontWeight:"700"}}); b.tint=fillHex; return b; }
+
+  function bench(maker){ const objs=[]; const t0=performance.now();
+    for(let i=0;i<labels.length;i++){ const o=maker(labels[i], [10,11,12,13][i%4], [0xffffff,0x161b22,0x2a3567,0x64748b][i%4]); objs.push(o); }
+    const el=performance.now()-t0; return {ms:+el.toFixed(1),objs}; }
+
+  // 워밍업(폰트 atlas 생성 1회)
+  makeBitmap("워밍업",12,0xffffff); makeText("워밍업",12,0xffffff);
+  const bmp=bench(makeBitmap); const txt=bench(makeText);
+
+  // 시각 비교: 좌 Text, 우 BitmapText (상단 24개씩 배치)
+  world.removeChildren();
+  for(let i=0;i<24;i++){ const t=makeText(labels[i],12,0x161b22); t.position.set(20,20+i*26); world.addChild(t);
+    const b=makeBitmap(labels[i],12,0x161b22); b.position.set(360,20+i*26); world.addChild(b); }
+  // 라벨 헤더
+  const h1=makeText("Text",14,0x000000);h1.position.set(20,0);world.addChild(h1);
+  const h2=makeText("BitmapText(dynamic+tint)",14,0x000000);h2.position.set(360,0);world.addChild(h2);
+  app.renderer.render(app.stage);
+
+  hud.textContent=`PixiJS ${PIXI.VERSION} · dpr=${window.devicePixelRatio}\nText 600개: ${txt.ms}ms\nBitmapText 600개: ${bmp.ms}ms\nspeedup: ${(txt.ms/bmp.ms).toFixed(1)}x\nerr: ${__err.length}`;
+  // 렌더 벤치: 2000 라벨을 world 에 넣고 render 반복 시간 + draw call
+  function renderBench(maker){ const w2=new PIXI.Container(); app.stage.addChild(w2);
+    for(let i=0;i<2000;i++){ const o=maker(labels[i%labels.length], [10,11,12,13][i%4], [0xffffff,0x161b22,0x2a3567,0x64748b][i%4]); o.position.set((i%40)*22, Math.floor(i/40)*16); w2.addChild(o); }
+    app.renderer.render(app.stage); // 워밍업
+    const t0=performance.now(); for(let k=0;k<20;k++) app.renderer.render(app.stage); const el=(performance.now()-t0)/20;
+    app.stage.removeChild(w2); w2.destroy({children:true}); return +el.toFixed(2); }
+  window.__poc={ textMs:txt.ms, bmpMs:bmp.ms, ver:PIXI.VERSION, err:__err,
+    renderBench:()=>({textRenderMs:renderBench(makeText), bmpRenderMs:renderBench(makeBitmap)}),
+    // 재생성 비용(atlas 준비 후 2회차)
+    rerun:()=>{ const b2=bench(makeBitmap), t2=bench(makeText); return {textMs:t2.ms,bmpMs:b2.ms,speedup:+(t2.ms/b2.ms).toFixed(1)}; },
+    widthCheck:()=>{ const b=makeBitmap("확률형아이템지급로그",12,0xffffff); return {bmpWidth:+b.width.toFixed(1)}; } };
+})();
+</script></body></html>

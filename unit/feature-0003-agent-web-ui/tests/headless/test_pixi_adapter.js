@@ -203,6 +203,17 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(Pure.comboSig(c, { x: 0, y: 0, w: 250, h: 100 }) !== s0, "T19 bbox 변화(자식 이동) → 서명 differ");
 }
 
+// T20 hexToTint (BitmapText tint 파싱, §80 — 실 PixiAdapterPure.hexToTint 경로 검증. 비-hex=valid:false→Text 폴백)
+{
+  ok(Pure.hexToTint("#ffffff").tint === 0xffffff && Pure.hexToTint("#ffffff").valid, "T20 흰색 파싱");
+  ok(Pure.hexToTint("#161b22").tint === 0x161b22, "T20 어두운색 파싱");
+  ok(Pure.hexToTint("#fff").tint === 0xffffff && Pure.hexToTint("#fff").valid, "T20 3자리 확장");
+  ok(Pure.hexToTint(0x7b2fbe).tint === 0x7b2fbe, "T20 number 통과");
+  ok(Pure.hexToTint("zzz").valid === false, "T20 비-hex → valid:false(Text 폴백)");
+  ok(Pure.hexToTint("rgb(1,2,3)").valid === false, "T20 rgb() → valid:false");
+  ok(Pure.hexToTint("white").valid === false, "T20 named → valid:false");
+}
+
 console.log("──────");
 console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
 process.exit(fail === 0 ? 0 : 1);

@@ -1777,3 +1777,17 @@ PR #755 → main 8edfa3a8 무중단 배포. 라이브 admin(건즈 gunzgame 409 
 
 ### Git 동기화 결과
 - 병합: PR #755 → main 8edfa3a8. 배포: deploy-web.sh(무중단). POST-DEPLOY docs(본 커밋).
+
+## 2026-07-13 · §80 graph-pixi-bitmaptext — 라벨 Text→BitmapText 렌더 최적화
+§79 DEFER 항목을 POC 실측 후 채택.
+- **측정**: 실 그래프 씬 2505 노드 렌더 Text 157ms(라벨마다 텍스처 ~2000 draw call) vs BitmapText 0.03ms(공유 atlas ~1 draw call) = 수천 배. 생성은 BitmapText 2배 느리나(한글 glyph 방대) 오브젝트 풀로 신규 노드에만. 품질 동일.
+- **판단 근거**: render-on-demand 로 팬 매 프레임 재렌더 → 대형 씬(8K 테이블·다수 펼침)에서 Text 렌더 draw call 이 팬 병목(157ms/frame=~6fps). BitmapText 로 팬 부드러움 확보. §79 의 "라이브 409객체 60fps"는 라벨 ~200개라 Text 도 충분했으나, 사용자 실 규모(다수 펼침)에서 Text 는 팬 붕괴.
+- **구현**: `_makeText` 라벨 팩토리(labelEngine seam, BitmapText white-base+tint / Text 폴백). 노드·combo·edge 라벨 통일.
+- 검증: 순수 54 PASS + 그래프 279 무회귀 + 통합(tint 색상·품질·pageerror 0).
+
+### Git 동기화 결과
+- 커밋: `ai/root/feature-0016-graph-pixi-bitmaptext`. 배포·라이브 PB-0008 후속.
+
+### §80 적대리뷰 반영 + M1 atlas 트레이드오프 (문서화)
+- M2(폴백 무력): `void b.width` 강제 measure 로 dynamic-font 지연 래스터화 실패를 생성 시점으로 당겨 Text 폴백 실동작. m1(비-hex fill): hexToTint valid 플래그로 rgb()/named 는 Text 강등. m2: hexToTint 순수함수 추출·T20 실경로 테스트. m3: 라벨 fontFamily system-ui 정규화.
+- **M1 트레이드오프(수용·문서화)**: BitmapText dynamic-font atlas 는 등장한 고유 glyph 를 **세션 전역 누적**하고 스코프 전환/노드 destroy 에서 회수되지 않는다(구 Text 는 라벨별 텍스처라 노드와 함께 해제). 다만 ① 실 데이터 테이블/컬럼명은 대부분 **영문**(bounded ASCII·고재사용) ② 한글은 UI chrome/용어 한정 ③ atlas 는 언어 syllable 집합으로 상한(무한 아님)이라 실무 메모리 영향 제한적. 고-카디널리티 CJK 스코프에서 문제 시 `window.__META_RENDERER` 무관 라벨 seam(어댑터 cfg `labelEngine:'text'`)으로 강등 가능(내부 BitmapFontManager clear API 미공개라 자동 회수는 미구현). 
