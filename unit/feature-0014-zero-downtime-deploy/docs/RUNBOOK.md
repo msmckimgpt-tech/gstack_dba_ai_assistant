@@ -85,6 +85,30 @@ docker compose -f docker-compose.yml build insight-worker ask-worker
 docker compose -f docker-compose.yml up -d --no-deps insight-worker ask-worker
 ```
 
+## 10. 배포 검증 체크리스트 (사용자 인수 전 필수)
+
+`bin/deploy-web.sh` 는 "배포 완료" 직후 이 체크리스트를 요약 출력한다(`post_deploy_checklist`,
+output-only). 아래는 그 정본이며, AI·운영자는 **사용자에게 "배포·검증 완료"를 보고하기 전**
+5개 항목을 모두 통과시킨다.
+
+> **회고 근거 (2026-07-13, feature-0003 attach-user-version)**: 사용자가 재업로드 버전 관리를
+> 테스트했으나 실패 보고. 조사 결과 **테스트가 배포 ~1시간 전(구코드)에 수행**됐고(merge≠배포완료),
+> 또한 그 기능의 assistant 인지 로직은 **ask-worker 에 거주**하는데 web 배포만으론 반영되지 않으며
+> (worker 재빌드 필요), 완료 검증(PB-0008)이 **백엔드 fetch 경로만 타 client-only 경로를 놓쳤다**.
+> 세 마찰을 다음 체크리스트로 상시화한다.
+
+| # | 항목 | 판정 |
+|---|------|------|
+| 1 | **배포 완료 확인** | web-a·web-b 가 대상 SHA(origin/main HEAD) + soak 통과. **merge ≠ 배포 완료** — 병합~배포완료 사이 창은 구코드가 서빙되므로, 이 시점 전에는 기능을 "사용자 테스트 가능"으로 알리지 않는다. |
+| 2 | **워커 재빌드 판정** | 변경이 `ask-worker`/`insight-worker` 코드(`agent_core.py`·워커가 쓰는 `modules`·`shared`)에 닿으면, deploy-web 의 `worker GIT_COMMIT != web` WARN 을 확인하고 **그 배포에서 즉시** 재빌드한다(web 배포만으로는 워커 코드 미반영). §9 참조. |
+| 3 | **정적 자산 캐시 무효화** | 서빙 HTML 의 `?v=` 스탬프가 변경됐는가(빌드 `inject_asset_stamp.py` content-hash 자동 주입 — deploy-web 의 `asset_stamp_verify` 가 placeholder 잔존을 하드 차단). 사용자에게 **하드 리프레시(Ctrl+F5)** 안내 — stale JS 로 구 동작 관측 방지. |
+| 4 | **실 사용자 표면 검증** | 백엔드 API 뿐 아니라 **사용자가 실제로 쓰는 경로**(UI 업로드/클릭 등)를 라이브 배포본에서 PB-0008 로 검증. 백엔드 `fetch`/API 직접 호출만으로는 client-only 결함(프론트 dedup·ES-module 경로 등)을 놓친다. |
+| 5 | **완료 보고 시점** | 위 1~4 통과 후에만 "배포·검증 완료"를 사용자에게 보고. 그 전에는 "미배포/검증 중"으로 명시한다. |
+
+### 워커 코드 판정 가이드 (#2 보조)
+- **web 만 재배포로 충분**: `unit/feature-0003-agent-web-ui/src`(app.py·routers·static) 등 web 프로세스 전용 변경.
+- **워커도 재빌드 필요**: `unit/feature-0002-agent-core/src/agent_core.py`(프롬프트·컨텍스트 주입·LLM 호출)·`modules/insight.py`·워커가 import 하는 `shared/*`·에이전트 루프 로직. 재업로드 버전 관리의 "assistant 변경점 인지"(agent_core `_build_attachment_context_section`)가 대표 사례.
+
 ## 롤백(설계 자체 되돌리기)
 컷오버를 되돌리려면 PR revert 후 `docker compose up -d --no-deps web` 로 단일 web 복귀
 (단 base 에 `web` 서비스가 다시 있어야 함). 권장하지 않음 — 무중단 이득 상실.

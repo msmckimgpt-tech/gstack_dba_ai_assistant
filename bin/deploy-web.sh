@@ -546,6 +546,32 @@ asset_stamp_verify() {  # $1 = sha
   log "OK — baked 자산 스탬프 주입 확인(*.html/*.js 내 ?v=dev 잔존 0)."
 }
 
+# ── 배포 검증 체크리스트 (사용자 인수 전 — RUNBOOK §10) ──────────────────────
+# deploy-web 는 web(web-a/web-b)만 재배포한다. 워커 코드·정적 자산 캐시·실 사용자
+# 경로 검증은 별도 책임이라, "merge ≠ 배포 완료 / 백엔드 통과 ≠ 사용자 경로 통과 /
+# 워커 코드 미반영" 마찰(2026-07-13 attach-user-version 회고)을 매 배포마다 상시
+# 표면화한다. output-only — 배포 로직·판정에 영향 없음.
+post_deploy_checklist() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  cat >&2 <<'CKL'
+
+=== 배포 검증 체크리스트 (사용자 인수 전 필수 — 상세: feature-0014 RUNBOOK §10) ===
+ [1] 배포 완료: web-a·web-b 가 대상 SHA + soak 통과(위 로그). 이 시점 전에는 기능을
+     "사용자 테스트 가능"으로 알리지 않는다 (merge ≠ 배포 완료 — 그 사이 창은 구코드).
+ [2] 워커 재빌드 판정: 변경이 ask-worker/insight-worker 코드(agent_core·workers 가 쓰는
+     modules·shared)에 닿으면, 위 'worker GIT_COMMIT != web' WARN 확인 후 그 배포에서 즉시
+     재빌드한다(web 배포만으로는 워커 코드 미반영):
+       docker compose -f docker-compose.yml build <worker>
+       docker compose -f docker-compose.yml up -d --no-deps <worker>   # <worker>=ask-worker|insight-worker
+ [3] 캐시 무효화: 서빙 HTML 의 ?v= 스탬프가 바뀌었는가(위 asset 스탬프 OK). 사용자에게
+     하드 리프레시(Ctrl+F5) 안내 — stale JS 로 구 동작이 관측되는 것을 방지.
+ [4] 실 사용자 표면 검증: 백엔드 API 뿐 아니라 사용자가 실제 쓰는 경로(UI 업로드/클릭 등)를
+     라이브 배포본에서 PB-0008 로 검증한다 (백엔드 fetch 만 타면 client-only 결함을 놓친다).
+ [5] 완료 보고: [1]~[4] 통과 후에만 "배포·검증 완료"를 사용자에게 보고한다.
+================================================================================
+CKL
+}
+
 # ── 메인 흐름 ─────────────────────────────────────────────────────────────────
 main() {
   preflight_privilege
@@ -611,6 +637,7 @@ main() {
   worker_divergence_warn
   normalize_ownership
   step "배포 완료: $TARGET_SHA (무중단 롤링 + soak 통과)"
+  post_deploy_checklist
 }
 
 main "$@"

@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260713T073141-deploy-verify-checklist [SKIPPED:output-only-script+doc]
+- Related Change: CHG-20260713T073141-deploy-verify-checklist (배포 검증 체크리스트 상시화)
+- Panel skip 사유(§18.8): 변경은 ① `bin/deploy-web.sh` 의 **output-only** 함수(`post_deploy_checklist`, stderr echo — 배포 판정/제어 흐름·exit code·마이그/롤백/soak 로직 일절 무변경) ② RUNBOOK.md §10 문서 ③ LEARNINGS/FUNCTION/TASK/MODIFY 문서. 실행 로직·스키마·RBAC·엔드포인트 0 → 적대적 코드 검증 실익 낮음.
+- 대신 실질 검증: `bash -n bin/deploy-web.sh` PASS(구문) · `post_deploy_checklist` 는 `[ "$DRY_RUN" -eq 1 ] && return 0` 로 dry-run 무출력 · 호출 지점은 성공 배포 종단(`step "배포 완료"` 직후)뿐 · heredoc(`<<'CKL'`)은 변수 확장 없어 injection 표면 없음.
+- 근거·회고: feature-0003 attach-user-version 배포 후 사용자 테스트 실패 조사 → 배포 전 테스트(merge≠배포완료)·ask-worker 미반영·백엔드만 검증 3중 마찰. Cross-ref: FUNCTION/TASK/MODIFY-20260713T073141 · docs/LEARNINGS LRN-20260713-0001 · RUNBOOK §10.
+
 ## REV-20260630T120000-zero-downtime-deploy
 - Related Change: CHG-20260630T120000 (feature-0014 무중단 배포 구조 + deploy-web.sh)
 - Reason: `deploy_scope: included` 로 머지마다 web 단일 컨테이너 recreate → Caddy 502 blip 빈발.

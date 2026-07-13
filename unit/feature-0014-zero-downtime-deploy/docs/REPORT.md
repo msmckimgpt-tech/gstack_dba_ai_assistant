@@ -9,6 +9,12 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
+
+**2026-07-13 TASK-20260713T073141-deploy-verify-checklist — 배포 검증 체크리스트 상시화** (Minor §12.3, 문서 + output-only 스크립트). feature-0003 attach-user-version 배포 후 사용자 버그 리포트 조사에서 3중 마찰(① 사용자 테스트가 배포 ~1h 전 구코드에 수행 — merge≠배포완료 ② assistant 인지 로직이 ask-worker 거주라 web 배포만으론 미반영 ③ 완료 검증이 백엔드 fetch 만 타 client-only 경로 누락)을 확인, 배포 프로세스 체크리스트로 상시화했다. `bin/deploy-web.sh` 에 `post_deploy_checklist()`(output-only, dry-run skip)를 추가해 "배포 완료" 직후 5항목(배포완료·워커 재빌드 판정·캐시 무효화·실 사용자 표면 PB-0008·완료 보고 시점)을 stderr 로 요약 출력하고, 정본을 RUNBOOK.md §10(판정 기준 표 + 워커 코드 판정 가이드)에 문서화, LEARNINGS LRN-20260713-0001 회고를 남겼다. **배포 판정/제어 흐름 무변경**(`bash -n` PASS). §18.8 [SKIPPED:output-only-script+doc] REV-20260713T073141. worktree `ai/claude/feature-0014-deploy-verify-checklist`(base main).
+
+---
+
+## 1. Summary
 web 서비스를 Caddy LB 뒤 **2-replica(web-a/web-b) 무중단 롤링** 으로 전환하는 구조와 그
 롤아웃을 안전하게 수행하는 배포 스파인(`bin/deploy-web.sh`)을 구현했다. 설계는 독립 아키텍트
 패널 → 심사 → 합성 → 9개 적대적 검증 워크플로(wf_f176026a)로 도출했고, 검증이 적발한 8개 gap
