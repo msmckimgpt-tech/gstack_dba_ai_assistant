@@ -149,6 +149,60 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(Pure._segDist(50, 3, 0, 0, 100, 0) === 3, "T13 점-선분 거리");
 }
 
+// ── 미니맵 순수 로직 (이슈#2 클램프 · 이슈#3 역투영) ──
+// T14 projection: 콘텐츠를 미니맵 박스에 letterbox
+{
+  const pr = Pure.minimapProjection({ x: 0, y: 0, w: 1000, h: 500 }, [168, 112], 6);
+  ok(pr !== null, "T14 projection 존재");
+  ok(approx(pr.s, (168 - 12) / 1000), "T14 letterbox scale = min((mw-2p)/w,(mh-2p)/h)");
+  ok(Pure.minimapProjection({ x: 0, y: 0, w: 0, h: 0 }, [168, 112]) === null, "T14 빈 bounds=null");
+}
+// T15 역투영 왕복: 미니맵 로컬 → model
+{
+  const pr = Pure.minimapProjection({ x: 100, y: 50, w: 800, h: 400 }, [168, 112], 6);
+  // model 중심(500,250)이 미니맵 로컬 어디에? ox+(500-100)*s, oy+(250-50)*s
+  const lx = pr.ox + (500 - 100) * pr.s, ly = pr.oy + (250 - 50) * pr.s;
+  const [mx, my] = Pure.minimapToModel(lx, ly, pr);
+  ok(approx(mx, 500) && approx(my, 250), "T15 미니맵 로컬→model 역투영 왕복");
+}
+// T16 뷰포트 사각형 클램프: 뷰포트가 콘텐츠보다 크면 미니맵 박스로 클램프(벗어남 0)
+{
+  const pr = Pure.minimapProjection({ x: 0, y: 0, w: 1000, h: 500 }, [168, 112], 6);
+  // 극단 줌아웃: 뷰포트 model 이 콘텐츠를 크게 초과 (-5000..6000)
+  const r = Pure.minimapViewportRect([-5000, -5000], [6000, 6000], pr, [168, 112]);
+  ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= 168 && r.y + r.h <= 112, "T16 사각형 미니맵 박스 내 클램프(벗어남 0)");
+  // 정상 뷰포트(콘텐츠 일부): 사각형이 박스 안 부분영역
+  const r2 = Pure.minimapViewportRect([200, 100], [600, 300], pr, [168, 112]);
+  ok(r2.w > 0 && r2.h > 0 && r2.x + r2.w <= 168, "T16 정상 뷰포트 부분사각형");
+}
+
+// ── 오브젝트 풀 서명 (§18.8 M2: 재사용/재생성 정합) ──
+// T17 nodeSig: type/combo/style/states 변화 시 서명 differ, 동일 시 same
+{
+  const n = { id: "a", type: "rect", combo: "S", states: [], style: { x: 1, y: 2, size: [150, 24], fill: "#0072B2" } };
+  const s0 = Pure.nodeSig(n);
+  ok(Pure.nodeSig({ ...n }) === s0, "T17 동일 노드 서명 동일(재사용)");
+  ok(Pure.nodeSig({ ...n, states: ["selected"] }) !== s0, "T17 states 변화 → 서명 differ(recreate)");
+  ok(Pure.nodeSig({ ...n, style: { ...n.style, x: 999 } }) !== s0, "T17 위치 변화 → 서명 differ");
+  ok(Pure.nodeSig({ ...n, type: "circle" }) !== s0, "T17 type 변화 → 서명 differ(m1 — circle/rect 기하)");
+  ok(Pure.nodeSig({ ...n, fill: "x" }) === s0, "T17 비-style 필드 무관(fill 은 style 안)");
+}
+// T18 edgeSig: 끝점 이동 시 differ (노드 이동 → 엣지 재생성)
+{
+  const e = { id: "e1", source: "a", target: "b", style: { stroke: "#000" } };
+  const s0 = Pure.edgeSig(e, [0, 0], [100, 0]);
+  ok(Pure.edgeSig(e, [0, 0], [100, 0]) === s0, "T18 끝점 동일 → 서명 동일");
+  ok(Pure.edgeSig(e, [0, 0], [100, 50]) !== s0, "T18 끝점 이동 → 서명 differ(재생성)");
+  ok(Pure.edgeId({ source: "a", target: "b" }).startsWith("__e:"), "T18 id 없는 엣지 폴백 키");
+}
+// T19 comboSig: bbox(자식 파생) 변화 시 differ
+{
+  const c = { id: "S", style: { fill: "#3f4b8c", lineDash: [6, 4] } };
+  const s0 = Pure.comboSig(c, { x: 0, y: 0, w: 200, h: 100 });
+  ok(Pure.comboSig(c, { x: 0, y: 0, w: 200, h: 100 }) === s0, "T19 bbox 동일 → 서명 동일");
+  ok(Pure.comboSig(c, { x: 0, y: 0, w: 250, h: 100 }) !== s0, "T19 bbox 변화(자식 이동) → 서명 differ");
+}
+
 console.log("──────");
 console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
 process.exit(fail === 0 ? 0 : 1);

@@ -151,6 +151,31 @@ export const PixiAdapterPure = {
     return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
   },
 
+  // 미니맵 projection: contentBounds+size → {s,ox,oy,bx,by} (콘텐츠를 미니맵 박스에 letterbox). 이슈#2/#3 공용.
+  minimapProjection(bounds, size, pad) {
+    const [mw, mh] = size, p = pad == null ? 6 : pad;
+    if (!bounds || bounds.w <= 0 || bounds.h <= 0) return null;
+    const s = Math.min((mw - 2 * p) / bounds.w, (mh - 2 * p) / bounds.h);
+    return { s, ox: p + (mw - 2 * p - bounds.w * s) / 2, oy: p + (mh - 2 * p - bounds.h * s) / 2, bx: bounds.x, by: bounds.y };
+  },
+  // 미니맵 로컬 점 → model (이슈#3 드래그 역투영).
+  minimapToModel(lx, ly, pr) { return [pr.bx + (lx - pr.ox) / pr.s, pr.by + (ly - pr.oy) / pr.s]; },
+  // 뷰포트 model 사각형 → 미니맵 좌표(경계 클램프, 이슈#2).
+  minimapViewportRect(m0, m1, pr, size) {
+    const [mw, mh] = size, cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const x0 = cl(pr.ox + (m0[0] - pr.bx) * pr.s, 0, mw), y0 = cl(pr.oy + (m0[1] - pr.by) * pr.s, 0, mh);
+    const x1 = cl(pr.ox + (m1[0] - pr.bx) * pr.s, 0, mw), y1 = cl(pr.oy + (m1[1] - pr.by) * pr.s, 0, mh);
+    return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+  },
+
+  // 오브젝트 풀 요소 서명(재사용 판정 — 렌더 기하 영향 전량 포착). draw() 와 테스트가 공유.
+  //   node: type+combo+style+states (§18.8 m1: type 포함 — circle/rect 기하 갈림). edge: 끝점+style.
+  //   combo: style+bbox(자식 파생). 좌표는 0.1px 양자화(FP 노이즈 무불필요 recreate 방지, m2 일관).
+  nodeSig(n) { return "N|" + (n.type || "") + "|" + (n.combo || "") + "|" + JSON.stringify(n.style || {}) + "|" + ((n.states || []).join(",")); },
+  edgeSig(e, a, b) { return "E|" + e.source + "|" + e.target + "|" + JSON.stringify(e.style || {}) + "|" + a[0].toFixed(1) + "," + a[1].toFixed(1) + "," + b[0].toFixed(1) + "," + b[1].toFixed(1); },
+  comboSig(c, bb) { return "C|" + JSON.stringify(c.style || {}) + "|" + bb.x.toFixed(1) + "," + bb.y.toFixed(1) + "," + bb.w.toFixed(1) + "," + bb.h.toFixed(1); },
+  edgeId(e) { return e.id != null ? e.id : ("__e:" + e.source + ">" + e.target); },
+
   // 두 built scene diff (오브젝트 풀 재사용 판정). id 기준 add/remove/keep.
   diffScene(prevIds, built) {
     const next = new Set(), add = [], keep = [];
@@ -233,12 +258,11 @@ export class PixiGraphAdapter {
   }
   _renderMinimap() {
     if (!this._minimap || !this.world) return;
-    const mm = this._minimap, [mw, mh] = mm.size;
+    const mm = this._minimap;
     const b = PixiAdapterPure.contentBounds(this._built);
-    if (b.w <= 0 || b.h <= 0) { mm.content.clear(); return; }
-    const pad = 6, s = Math.min((mw - 2 * pad) / b.w, (mh - 2 * pad) / b.h);
-    const ox = pad + (mw - 2 * pad - b.w * s) / 2, oy = pad + (mh - 2 * pad - b.h * s) / 2;
-    mm._proj = { s, ox, oy, bx: b.x, by: b.y };
+    const pr = PixiAdapterPure.minimapProjection(b, mm.size, 6);
+    if (!pr) { mm.content.clear(); mm._proj = null; return; }   // m4: 빈 콘텐츠 시 stale proj 제거(엉뚱한 팬 방지)
+    mm._proj = pr; const s = pr.s, ox = pr.ox, oy = pr.oy;
     const g = mm.content; g.clear();
     // 노드를 미니맵 스케일 점/사각형으로 (combo 배경은 옅게)
     for (const cb of (this._built.combos || [])) { const bb = PixiAdapterPure.comboBBox(cb.id, this._built.nodes, (cb.style || {}).padding); if (!bb) continue;
@@ -249,12 +273,13 @@ export class PixiGraphAdapter {
   }
   _renderMinimapViewport() {
     if (!this._minimap || !this._minimap._proj || !this.app) return;
-    const mm = this._minimap, pr = mm._proj, cam = this._cam, [vw, vh] = this.getSize();
+    const mm = this._minimap, pr = mm._proj, cam = this._cam, [vw, vh] = this.getSize(), [mw, mh] = mm.size;
     // 화면 뷰포트의 model 사각형 → 미니맵 좌표
     const m0 = PixiAdapterPure.screenToModel(0, 0, cam), m1 = PixiAdapterPure.screenToModel(vw, vh, cam);
+    // 이슈#2: 극단 줌아웃 시 뷰포트가 콘텐츠보다 커 사각형이 미니맵 박스를 벗어난다 → 경계 클램프(순수 함수).
+    const r = PixiAdapterPure.minimapViewportRect(m0, m1, pr, mm.size);
     mm.vp.clear();
-    mm.vp.rect(pr.ox + (m0[0] - pr.bx) * pr.s, pr.oy + (m0[1] - pr.by) * pr.s, (m1[0] - m0[0]) * pr.s, (m1[1] - m0[1]) * pr.s)
-      .stroke({ color: "#2563eb", width: 1.5, alpha: 0.9 });
+    mm.vp.rect(r.x, r.y, r.w, r.h).stroke({ color: "#2563eb", width: 1.5, alpha: 0.9 });
   }
 
   _resizeToContainer() {
@@ -351,13 +376,17 @@ export class PixiGraphAdapter {
     el.addEventListener("wheel", (e) => { e.preventDefault();
       const s = scr(e); this._applyCam(PixiAdapterPure.zoomAroundCursor(this._cam, e.deltaY < 0 ? 1.12 : 0.9, s, this.zoomRange)); }, { passive: false });
     const onDown = (e) => {
-      const s = scr(e), [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
+      const s = scr(e);
+      // 이슈#3: 미니맵 영역 클릭/드래그 = 카메라 이동(그래프 드래그·선택보다 우선).
+      if (this._inMinimap(s.x, s.y)) { down = { minimap: true }; mode = "minimap"; this._minimapPanTo(s.x, s.y); return; }
+      const [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
       const hit = this._pick(mx, my);
       down = { sx: s.x, sy: s.y, button: e.button, ox: this._cam.x, oy: this._cam.y, hit, client: rawClient(e), mx, my, lmx: mx, lmy: my }; mode = null;
     };
     el.addEventListener("pointerdown", onDown);
     const onMove = (e) => {
       if (!down) return;
+      if (down.minimap) { const s2 = scr(e); this._minimapPanTo(s2.x, s2.y); return; }   // 이슈#3: 미니맵 드래그 추종
       const s = scr(e), dx = s.x - down.sx, dy = s.y - down.sy;
       const [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
       if (!mode && Math.hypot(dx, dy) > MOVE_THRESH) {
@@ -377,6 +406,7 @@ export class PixiGraphAdapter {
     window.addEventListener("pointermove", onMove);
     const up = (e) => {
       if (!down) return;
+      if (down.minimap) { down = null; mode = null; return; }   // 이슈#3: 미니맵 드래그 종료(클릭 억제)
       const finished = mode, d = down, s = scr(e); down = null; mode = null;
       const [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
       if (finished === "pan") return;                       // 팬 → 클릭 억제
@@ -407,6 +437,22 @@ export class PixiGraphAdapter {
   }
   _pickEdge(mx, my) { const posOf = (id) => { const p = this.getElementPosition(id); return p; }; return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom)); }
   _isCombo(id) { return this._built.combos.some(c => c.id === id); }
+  // 이슈#3: 미니맵 상호작용 — 스크린(canvas-relative) 점이 미니맵 박스 안인가.
+  _inMinimap(sx, sy) {
+    const mm = this._minimap; if (!mm || !mm.c) return false;
+    const px = mm.c.position.x, py = mm.c.position.y, [mw, mh] = mm.size;
+    return sx >= px && sx <= px + mw && sy >= py && sy <= py + mh;
+  }
+  // 이슈#3: 미니맵 위 점 → model 좌표 역투영 → 그 model 점을 화면 중앙에 오도록 카메라 이동.
+  _minimapPanTo(sx, sy) {
+    const mm = this._minimap; if (!mm || !mm._proj) return;
+    const pr = mm._proj, [mw, mh] = mm.size;
+    // NIT: 드래그가 미니맵 박스를 벗어나면 콘텐츠 밖으로 역투영돼 카메라가 극단으로 날아감 → 로컬 좌표를 박스로 클램프.
+    const lx = Math.max(0, Math.min(mw, sx - mm.c.position.x)), ly = Math.max(0, Math.min(mh, sy - mm.c.position.y));
+    const [mx, my] = PixiAdapterPure.minimapToModel(lx, ly, pr);
+    const [vw, vh] = this.getSize(), cam = this._cam;
+    this._applyCam({ zoom: cam.zoom, x: vw / 2 - mx * cam.zoom, y: vh / 2 - my * cam.zoom });
+  }
   // M2: graph-core 의 _metaElementDragEnable 을 G6-shape 이벤트로 호출(주입 시). 미주입이면 항상 허용.
   _elementDragEnable(hit, e) {
     const fn = this.cfg.elementDragEnable; if (typeof fn !== "function") return true;
@@ -441,29 +487,38 @@ export class PixiGraphAdapter {
   setData(built) { this._built = built || { nodes: [], edges: [], combos: [] }; }
   async setScene(built) { this.setData(built); await this.draw(); return this; }
 
+  // scene diff 오브젝트 풀(후속 최적화): 매 draw 전량 destroy/recreate 대신 id+서명 기반 재사용.
+  //   서명 = 렌더 기하에 영향 주는 전량(node=combo+style+states, edge=끝점+style, combo=style+bbox).
+  //   서명 동일 → 재사용(skip make), 변경 → 해당 1개만 recreate, 신규 → add, 소멸 → remove. world.sortableChildren=true
+  //   라 zIndex 페인트 정렬은 자동(자식 순서 무관). 선택/상태변경(기하 동일) 리빌드에서 대다수 노드 재사용 = GC↓·draw↓.
   async draw() {
     await this._ready;
     if (!this.world) return;   // 비브라우저/미배선 — no-op
-    const P = this.P;
-    // v1: full rebuild (오브젝트 풀 diff 는 후속 §). 기존 자식 제거·재구성.
-    this.world.removeChildren().forEach(c => { try { c.destroy({ children: true }); } catch (_) {} });
-    this._objs.clear();
-    // 1) combos (배경 카드) — 자식 bbox 로 auto-fit
-    for (const c of (this._built.combos || [])) {
-      const bb = PixiAdapterPure.comboBBox(c.id, this._built.nodes, (c.style || {}).padding); if (!bb) continue;
-      this.world.addChild(this._drawCombo(c, bb));
+    const built = this._built;
+    // 끝점 위치 O(1) 조회 맵(구 O(N·E) find 제거)
+    const npos = new Map();
+    for (const n of (built.nodes || [])) npos.set(n.id, [n.style.x, n.style.y]);
+    const pos = (id) => { if (npos.has(id)) return npos.get(id); const bb = this.getElementRenderBounds(id); return bb ? [bb.x + bb.width / 2, bb.y + bb.height / 2] : null; };
+    // spec 목록 + 서명
+    const specs = [];
+    for (const c of (built.combos || [])) { const bb = PixiAdapterPure.comboBBox(c.id, built.nodes, (c.style || {}).padding); if (!bb) continue;
+      specs.push({ id: c.id, sig: PixiAdapterPure.comboSig(c, bb), make: () => this._drawCombo(c, bb) }); }
+    for (const e of (built.edges || [])) { const a = pos(e.source), b = pos(e.target); if (!a || !b) continue;
+      const eid = PixiAdapterPure.edgeId(e);
+      specs.push({ id: eid, sig: PixiAdapterPure.edgeSig(e, a, b), make: () => { const g = this._drawEdge(e, a, b); this._objs.set(eid, g); return g; } }); }
+    for (const n of (built.nodes || [])) specs.push({ id: n.id, sig: PixiAdapterPure.nodeSig(n), make: () => this._drawNode(n) });
+    // diff
+    if (!this._objSig) this._objSig = new Map();
+    const nextIds = new Set(); for (const sp of specs) nextIds.add(sp.id);
+    for (const [id, obj] of Array.from(this._objs)) { if (!nextIds.has(id)) { try { obj.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(obj); } catch (_) {} this._objs.delete(id); this._objSig.delete(id); } }
+    let reused = 0, made = 0;
+    for (const sp of specs) {
+      if (this._objSig.get(sp.id) === sp.sig && this._objs.has(sp.id)) { reused++; continue; }   // 서명 동일 → 재사용
+      const old = this._objs.get(sp.id); if (old) { try { old.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(old); } catch (_) {} }
+      const obj = sp.make(); this.world.addChild(obj); this._objSig.set(sp.id, sp.sig); made++;
     }
-    // 2) edges (노드 아래·위 z 는 zIndex 로 정렬)
-    const pos = (id) => { const n = this._built.nodes.find(x => x.id === id); if (n) return [n.style.x, n.style.y]; const bb = this.getElementRenderBounds(id); return bb ? [bb.x + bb.width / 2, bb.y + bb.height / 2] : null; };
-    for (const e of (this._built.edges || [])) {
-      const a = pos(e.source), b = pos(e.target); if (!a || !b) continue;
-      this.world.addChild(this._drawEdge(e, a, b));
-    }
-    // 3) nodes
-    for (const n of (this._built.nodes || [])) this.world.addChild(this._drawNode(n));
-    // 4) hit-grid 재구성
-    this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);
-    // 5) 미니맵 재렌더 (구성 변경 반영)
+    this._lastDrawStats = { reused, made, total: specs.length };
+    this._hitGrid = PixiAdapterPure.buildHitGrid(built.nodes, 128);
     this._renderMinimap();
     this._render();
     this._emit("afterdraw", { data: { stage: "data" } });   // graph-core 는 e.data.stage 를 읽는다(gap #16)
@@ -474,9 +529,13 @@ export class PixiGraphAdapter {
     c.zIndex = s.zIndex || 4; c.position.set(s.x, s.y);
     const g = new P.Graphics();
     const st = { color: s.stroke || "#ffffff", width: s.lineWidth || 1 };
-    if (n.type === "circle") { const r = (typeof s.size === "number" ? s.size : 11) / 2; g.circle(0, 0, r).fill(s.fill || "#5c6773"); if (s.lineWidth) g.stroke(st); }
+    // §18.8 M1: running 상태의 fill desaturate(G6 running.fillOpacity 0.45 — 앰버/주황 역할색 위에서 주황 점선 테두리
+    //   위장 방지)를 어댑터에 복원. state config 의 fillOpacity 는 node.style 에 bake 안 되므로 states 로 판정해 fill alpha 적용.
+    const runSc = ((n.states || []).indexOf("running") >= 0) ? (this._nodeState.running || { fillOpacity: 0.45 }) : null;
+    const fillAlpha = runSc ? (runSc.fillOpacity != null ? runSc.fillOpacity : 0.45) : (s.fillOpacity == null ? 1 : s.fillOpacity);
+    if (n.type === "circle") { const r = (typeof s.size === "number" ? s.size : 11) / 2; g.circle(0, 0, r).fill({ color: s.fill || "#5c6773", alpha: fillAlpha }); if (s.lineWidth) g.stroke(st); }
     else { const w = Array.isArray(s.size) ? s.size[0] : (s.size || 100), h = Array.isArray(s.size) ? s.size[1] : 24;
-      g.roundRect(-w / 2, -h / 2, w, h, s.radius || 0).fill({ color: s.fill || "#0f7d8c", alpha: s.fillOpacity == null ? 1 : s.fillOpacity });
+      g.roundRect(-w / 2, -h / 2, w, h, s.radius || 0).fill({ color: s.fill || "#0f7d8c", alpha: fillAlpha });
       if (s.lineWidth) {
         if (Array.isArray(s.lineDash)) {   // m2: 노드 lineDash(그룹 배경 GB 점선) 소비 — rect 4변 대시
           const D = PixiAdapterPure.dashSegments, dd = s.lineDash;
@@ -510,19 +569,31 @@ export class PixiGraphAdapter {
     const P = this.P, s = n.style || {};
     const w = Array.isArray(s.size) ? s.size[0] : (s.size || 24), h = Array.isArray(s.size) ? s.size[1] : 24;
     const conf = this._nodeState;
+    // 상태 = **테두리(halo)** — G6 원본 node.state 계약과 동일(analyzed/running 을 뱃지 dot 으로 렌더하던 회귀 수정, 사용자 리포트 2026-07-13).
+    //   §18.8 B1 수정: `_metaNodeStates` 는 [match, analyzed, running, selected, dimmed] 순으로 상태를 만들고, G6 는
+    //   **나중에 적용된 상태(=selected)의 stroke 가 이긴다**. 겹치는 동일-rect halo 는 나중에 페인트된(=자식 배열
+    //   더 뒤) 것이 위에 보이므로, halo 를 states 순서대로 body 아래에 **증가 인덱스**로 삽입한다 → selected(마지막)가
+    //   halo 중 최상위(body 직전)로 페인트되어 analyzed/running 위에서 보인다. (앞서 addChildAt(_,0) 은 순서를 뒤집어
+    //   analyzed 가 selected 를 가렸음.) rect 인셋을 상태별로 2px 씩 벌려 동시 표기(concentric)도 가능케 한다.
+    let hi = 0, seen = 0;   // hi=halo 삽입 인덱스(body 아래), seen=인셋 단계
     for (const st of states) {
       const sc = conf[st] || {};
-      if (st === "selected" || st === "match" || st === "busy") {
-        // selected=진회색 halo, match=앰버 glow, busy=청색 처리중 테두리(gap #14)
-        const col = sc.stroke || (st === "selected" ? "#111827" : st === "busy" ? "#2563eb" : "#f59e0b");
+      if (st === "selected" || st === "match" || st === "busy" || st === "analyzed" || st === "running") {
+        const DEF = { selected: { stroke: "#161b22", lineWidth: 3 }, match: { stroke: "#e8a400", lineWidth: 2 },
+          busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] }, analyzed: { stroke: "#7b2fbe", lineWidth: 3 },
+          running: { stroke: "#e08a1e", lineWidth: 2, lineDash: [4, 3] } };
+        const d = DEF[st], col = sc.stroke || d.stroke, lw = sc.lineWidth || d.lineWidth, dash = sc.lineDash || d.lineDash;
         const halo = new P.Graphics();
-        halo.roundRect(-w / 2 - 3, -h / 2 - 3, w + 6, h + 6, (s.radius || 4) + 2)
-          .stroke({ color: col, width: sc.lineWidth || 2.5, alpha: st === "match" ? 0.8 : 0.9 });
-        halo.zIndex = -1; c.addChildAt(halo, 0);
-      } else if (st === "analyzed" || st === "running") {
-        const dot = new P.Graphics();
-        dot.circle(w / 2 - 2, -h / 2 + 2, 4).fill(sc.fill || (st === "running" ? "#f59e0b" : "#7b5cd6"));
-        c.addChild(dot);
+        const inset = seen * 2;   // 다중 상태 동시 표기: 바깥으로 2px 씩 확장(concentric 링, 서로 안 가림)
+        const rx = -w / 2 - 3 - inset, ry = -h / 2 - 3 - inset, rw = w + 6 + 2 * inset, rh = h + 6 + 2 * inset, rr = (s.radius || 4) + 2 + inset;
+        if (Array.isArray(dash)) {   // 점선 테두리(busy/running) — rect 4변 대시
+          const D = PixiAdapterPure.dashSegments;
+          for (const seg of [].concat(D(rx, ry, rx + rw, ry, dash), D(rx + rw, ry, rx + rw, ry + rh, dash), D(rx + rw, ry + rh, rx, ry + rh, dash), D(rx, ry + rh, rx, ry, dash))) halo.moveTo(seg[0], seg[1]).lineTo(seg[2], seg[3]);
+          halo.stroke({ color: col, width: lw, alpha: 0.9 });
+        } else {
+          halo.roundRect(rx, ry, rw, rh, rr).stroke({ color: col, width: lw, alpha: st === "match" ? 0.8 : 0.9 });
+        }
+        c.addChildAt(halo, hi++); seen++;   // body 아래·states 순서 → selected(마지막) 최상위 halo
       }
     }
   }
@@ -568,7 +639,9 @@ export class PixiGraphAdapter {
     const n = this._built.nodes.find(x => x.id === id); if (!n) return;
     n.states = Array.isArray(states) ? states : [states];
     const old = this._objs.get(id);
-    if (old && this.world) { const idx = this.world.getChildIndex(old); const fresh = this._drawNode(n); try { old.destroy({ children: true }); } catch (_) {} this.world.removeChild(old); this.world.addChildAt(fresh, Math.max(0, Math.min(idx, this.world.children.length))); this._render(); }
+    if (old && this.world) { const idx = this.world.getChildIndex(old); const fresh = this._drawNode(n); try { old.destroy({ children: true }); } catch (_) {} this.world.removeChild(old); this.world.addChildAt(fresh, Math.max(0, Math.min(idx, this.world.children.length)));
+      if (this._objSig) this._objSig.delete(id);   // 풀 서명 무효화(증분 갱신 — 다음 full draw 가 재계산)
+      this._render(); }
   }
   // z-index: graph-core(roleviz)는 **단일 map 인자** {id:z} 로 부른다(gap #3). (id,z) 2인자도 겸용.
   setElementZIndex(a, b) {
