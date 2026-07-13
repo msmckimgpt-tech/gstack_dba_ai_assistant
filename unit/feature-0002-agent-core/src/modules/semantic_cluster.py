@@ -705,13 +705,16 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
         except Exception:
             pass
         try:
+            # h1(라이브 실증 적발): routine_objects.scope_key 는 datasource_key(node_analysis_jobs
+            # 와 동일 비대칭 — n4 클래스)라 'common' 스코프 필터는 0-match(루틴 전량 미합류).
+            # datasource_key 등가가 실질 파티션이므로 scope 필터를 제거한다(백필 쿼리와 동형).
             cur.execute(
                 "SELECT r.id, r.schema_name, r.routine_name, t.embedding, r.semantic_cluster_id, "
                 "r.semantic_cluster_label "
                 "FROM routine_objects r JOIN texts t ON r.signature_text_hash = t.text_hash "
-                "WHERE r.scope_key = %s AND r.datasource_key = %s "
+                "WHERE r.datasource_key = %s "
                 "AND r.signature_text_hash IS NOT NULL AND t.embedding IS NOT NULL",
-                (scope_key, datasource_key),
+                (datasource_key,),
             )
             for (rid, sch, name, emb, ccid, clab) in cur.fetchall():
                 vec = _parse_embedding(emb)
