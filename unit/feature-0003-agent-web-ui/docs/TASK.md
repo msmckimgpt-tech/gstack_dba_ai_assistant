@@ -21,9 +21,9 @@ source_of_truth: true
   - [x] index.html 계정 pane 4 하위탭 재구성(섹션 7→4그룹 이동·id 전부 보존·div 균형 32/32).
   - [x] app.js switchAccountSubtab + switchProfileTab 디스패치 변경 + 버튼 리스너 배선. node --check PASS.
   - [x] styles.css `.profile-subtabs`/`.profile-subtab`/`.profile-subpane`.
-  - [ ] §18.8 적대 서브에이전트 리뷰(섹션 배치 무손실·lazy 렌더·기본 하위탭) → 반영.
-  - [ ] verify-completion --pre-commit → commit → PR → 머지 → web 무중단 재배포.
-  - [ ] **POST-DEPLOY PB-0008 실 Windows 브라우저 검증**: 계정 탭 진입 시 4 하위 탭 노출·기본 '계정' 활성 / 각 탭 클릭 시 해당 섹션만 표시(알림·화면효과·사용량 차트·비번/2FA/로그아웃) / 사용량 탭 진입 시 차트 로드 / pageerror 0.
+  - [x] §18.8 적대 서브에이전트 리뷰 → **SHIP**(결함 0, deferred a11y NIT 1). REV-20260714T074417-account-subtabs [SUBAGENT].
+  - [x] verify-completion --pre-commit **PASS** → commit → PR #788(CI test PASS 51s·CLEAN) merge(main 53e55bfe) → `deploy-web --web-only` 무중단 롤링. **1차 배포 soak false-positive 롤백**(edge /healthz 순간 비정상+mysql/pg 정상 — cold-start+insight-worker 동시부하 transient, 정적자산 변경이라 /healthz 영향 불가) → **재배포 soak PASS**(web-a/web-b 53e55bfe). LRN-20260630(deploy-web-healthz-concurrent-resync) 패턴 일치.
+  - [x] **POST-DEPLOY PB-0008 실 Windows 브라우저 검증 PASS** (AI 직접 — 실 Windows Chrome via bin/win-browser.py, https://localhost/ bootstrap_admin, 라이브 53e55bfe): 런타임 assertion — 하위탭 4개[account,notifications,ui,usage]·기본 'account' 활성·account subpane만 노출 / '알림'→notifications subpane만(체크박스 존재) / 'UI'→ui subpane만(motionEffectSelect 존재) / '사용 내역'→usage subpane만(차트 존재) / '계정'→account subpane만(2FA·로그아웃 존재). 각 전환 시 정확히 1개 subpane visible. 스크린샷 scratchpad/subtabs-account.png·subtabs-ui.png(세그먼트 하위탭 바 정합 렌더·UI 탭에 애니메이션 설정 격리). pageerror 0. (TEST §Run 2026-07-14 account-subtabs POST-DEPLOY 참조.)
 
 ## TASK-20260714T065503-anim-effect-pref — 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정 신설 (Major §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
 

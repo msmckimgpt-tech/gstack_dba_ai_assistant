@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260714T080000-account-subtabs-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260714T074417-account-subtabs, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 TASK 체크리스트 완료 + TEST POST-DEPLOY append + MODIFY -postverify CHG뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260714T074417-account-subtabs [SUBAGENT] (SHIP)가 정본.
+- 라이브 실측 요지: win-browser 실 Windows Chrome, 라이브 53e55bfe. 하위탭 4개·기본 account·각 전환 시 정확히 1 subpane 노출 assertion 전항목 PASS·서빙 심볼 확인·세그먼트 하위탭 바 시각 렌더(스크린샷). 1차 배포 soak false-positive 롤백→재배포 PASS(정적자산 /healthz 무관·동시부하 transient).
+- Cross-ref: REV-20260714T074417-account-subtabs(기능 정본) · CHG-20260714T080000-account-subtabs-postverify · TEST Run POST-DEPLOY.
+
 ## REV-20260714T074417-account-subtabs [SUBAGENT:adversarial-diff-review] — 프로필 '계정' 탭 하위 세분화(계정/알림/UI/사용 내역) (TASK-20260714T074417-account-subtabs, Minor §12.3, frontend-only) — SHIP
 - 렌즈: 적대 코드리뷰 서브에이전트(general-purpose) — diff 한정, 5축(섹션 배치 무손실/id 보존·lazy 렌더 정합·first-open 기본 하위탭·이벤트 배선·DOM/CSS 균형).
 - **건전 확인(결함 0):** ① 7섹션이 4 subpane 에 정확히 1회씩 배치·손실/중복 0·필수 element id 20종 전부 정확히 1회(grep 확증). ② lazy 렌더 정합 — 활동 dl 은 openProfile→renderProfile 이 계속 채움(기본 노출 account subpane), 모든 change 핸들러는 initialize() 에서 getElementById/querySelectorAll 로 바인딩(=`.hidden` 무관 유효), renderNotifyPrefs/renderMotionPref/loadProfileUsage 는 display-only(SoT=localStorage/API)라 하위탭 활성 시 렌더 지연이 stale 유발 안 함, `dChk.disabled` interlock 은 change 핸들러+subpane open 에서 재적용, renderProfileTotp 는 innerHTML clear-후-rebind 라 반복 토글 리스너 누수 없음, 기존 테스트가 구 평면 구조 참조 0. ③ first-open — `state.accountSubtab` undefined→'account', 정적 HTML 기본값(account is-active/others hidden)이 switchAccountSubtab('account') 결과와 정확히 일치(오패널 flash 없음). ④ 이벤트 배선 — 하위탭 버튼 initialize() 1회 바인딩(중복 없음), openProfile 기본 prompt 탭+state.accountSubtab 세션 유지로 계정 재진입 시 마지막 하위탭 복원(의도 일치). ⑤ 구조 — pane div 균형 32/32, 전역 button reset 로 `.profile-subtab` UA chrome 없음, `state` 모듈 const.
