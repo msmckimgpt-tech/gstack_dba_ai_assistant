@@ -354,6 +354,74 @@ def test_n1_next_version_filename():
     assert app._next_version_filename("", 2) == "edited_v2.txt"
 
 
+# ── N2: 버전 파일명 idempotent (FR-attachment-update — 이중접미 방지) ──────────
+def test_n2_next_version_filename_idempotent():
+    # 이미 _v<n> 접미가 있는 이름을 재편집해도 이중접미가 생기지 않는다(원본과 정합).
+    assert app._next_version_filename("report_v2.csv", 3) == "report_v3.csv"
+    assert app._next_version_filename("data_v10.txt", 11) == "data_v11.txt"
+    assert app._next_version_filename("q_v5", 6) == "q_v6"
+    # 내부의 _v 는 접미가 아니면 보존(끝의 _v<digits> 만 제거).
+    assert app._next_version_filename("v2_report.csv", 2) == "v2_report_v2.csv"
+
+
+# ── N3: materialize 가 LLM filename 을 코드-권위로 정규화 (버전 접미 + source 확장자 강제) ──
+def test_n3_materialize_normalizes_llm_filename(monkeypatch):
+    storage = _install_fake_storage(monkeypatch)
+    store = {"max_version": 1, "new_id": 9010}
+    conn = _Conn(store)
+    # source = orig.txt (kind text, v1). LLM 이 위험/불일치 이름을 줘도 stem 만 취하고
+    # 버전 접미(_v2)와 source 확장자(txt)를 코드가 강제해야 한다.
+    monkeypatch.setattr(app, "_load_attachment_row", lambda c, i: _src_row())
+    monkeypatch.setattr(app, "_check_attachment_size_caps", lambda *a, **k: (True, ""))
+
+    answer = (
+        "```attachment-edit\n"
+        '{"source_attachment_id": 100, "filename": "hacked.exe"}\n'
+        "수정된 내용\n"
+        "```"
+    )
+    created = app._materialize_assistant_attachment_edits(
+        conn, account=_account(), conversation_id="conv-1", answer=answer, message_id=5,
+    )
+    assert len(created) == 1
+    ins = store.get("insert_params")
+    assert ins is not None
+    # INSERT params[3] = OriginalFilename(코드가 실제 저장하는 값). LLM 의 .exe 는 버려지고
+    # source 확장자 txt + 버전 접미 _v2 가 강제된다. (created[0] 직렬화는 monkeypatch 된
+    # _load_attachment_row 재조회 결과라 harness 아티팩트 — INSERT param 이 authoritative.)
+    assert ins[3] == "hacked_v2.txt", f"명명 정규화 실패: {ins[3]!r}"
+
+
+# ── N4: 확장자 없는 source + LLM 이중확장자 → 유효 확장자 안전 강제 (§18.8 SEC-1) ──
+def test_n4_extensionless_source_forces_safe_ext(monkeypatch):
+    _install_fake_storage(monkeypatch)
+    store = {"max_version": 1, "new_id": 9011}
+    conn = _Conn(store)
+    # source 는 확장자 없는 text 첨부(예: 'statement'). LLM 이 x.exe.txt 류 이중확장자를 줘도
+    # 유효(trailing) 확장자는 kind 기반 안전값(txt)이어야 하고 .exe 가 유효 확장자로 승격되면 안 된다.
+    def _noext_src(c, i):
+        r = _src_row()
+        r["OriginalFilename"] = "statement"  # 확장자 없음
+        r["ObjectKey"] = "conv-1/uuid/statement"
+        return r
+    monkeypatch.setattr(app, "_load_attachment_row", _noext_src)
+    monkeypatch.setattr(app, "_check_attachment_size_caps", lambda *a, **k: (True, ""))
+
+    answer = (
+        "```attachment-edit\n"
+        '{"source_attachment_id": 100, "filename": "statement.exe.txt"}\n'
+        "x\n```"
+    )
+    created = app._materialize_assistant_attachment_edits(
+        conn, account=_account(), conversation_id="conv-1", answer=answer, message_id=5,
+    )
+    assert len(created) == 1
+    saved = store["insert_params"][3]
+    # 유효(마지막) 확장자는 반드시 안전값 txt (실행파일류 확장자 승격 차단).
+    assert saved.rsplit(".", 1)[-1] == "txt", f"유효 확장자가 안전하지 않음: {saved!r}"
+    assert saved.endswith("_v2.txt"), f"버전 접미/확장자 강제 실패: {saved!r}"
+
+
 # ── R1: 목록 SQL 최신버전 필터 (정적 소스 검사) ──────────────────────────────
 def test_r1_list_filters_superseded():
     import inspect

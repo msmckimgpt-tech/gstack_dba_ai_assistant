@@ -1301,3 +1301,15 @@ TASK-0015 (plan-review):
 
 ## 20260711T1203-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11 "정책문서 분리/세분화")
 - [x] MODIFY 124→15건(+본 엔트리)·REVIEW 109→15건 이관, 무손실 md5 증명, 상단 링크+REPORT 압축 정보(§5.5). feature-0003 선례(CHG-20260711T115053) 동일 계보.
+
+## 20260713T1858-attach-update-versioned — 첨부 파일 갱신: 명시적 갱신요청 → 새 첨부 버전 전달 (conversation_audit FR-attachment-update-pasted-not-versioned, Major)
+> `/_dqa:conversation_audit "첨부파일 갱신"`. friction-id=FR-attachment-update-pasted-not-versioned. 진단 대화(마스킹): 갱신요청 34대화 중 성공 3·붙여넣기 실패 27(structural). 코드 거주 primary=feature-0002(프롬프트), secondary cross-ref=feature-0003(파일명 정규화).
+- [x] A1 — SYSTEM_PROMPT "DELIVERING THE EDITED FILE" 섹션 강화(명시적 갱신요청→attachment-edit 필수·brand-new SQL 예외 배제·filename 생략 유도·미첨부 시 재첨부 요청).
+- [x] A2 — `_ATTACHMENT_DELIVERY_DIRECTIVE` 코드-권위 주입(compose_system_prompt parts, global row 무관 항상 effective, AUTH-1a drift 봉인).
+- [x] A3(cross-ref feature-0003) — `_next_version_filename` idempotent(_v<n> 이중접미 방지) + materialize 명명 코드-권위(`<stem>_v<n>.<src-ext>`, LLM 명명 무관·확장자 강제). 명칭 정합 코드 보장.
+- [x] unit docs: MODIFY(CHG-20260713T185846-attach-update-versioned) + 본 TASK + REPORT cross-ref. feature-0003 MODIFY 동반.
+- [x] 검증: 단위테스트 신규 6종(directive 항상 주입·global override 존속·명명 idempotent·LLM명명 정규화·SEC-1 안전확장자) 타깃 36 PASS(내 diff 신규 실패 0; 전체 스위트 pre-existing 11 실패=b2e86880 baseline test debt, 첨부·내 diff 무관).
+- [x] §18.8 적대 패널(full panel default — 프롬프트 code change·표 키워드 미매칭): security+backend+qa 3렌즈. SEC-1(MINOR 확장자승격 회귀) 봉인, 나머지 REFUTED → REVIEW REV-20260713T185846.
+- [ ] verify-completion(feature-0002) PASS → commit/push.
+- [ ] commit/push(auto-sync) → PR·머지·배포(Major=confirm) → 배포검증(worker+web 재빌드) → 원장 갱신.
+- [ ] 라이브 실측(배포 후 corroboration 재측정: 갱신요청 대화의 assistant 버전 생성 비율 상승·```sql 붙여넣기 감소)는 다음 audit 분리분(코드/테스트만으로 마찰 소멸 단정 금지).

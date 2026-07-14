@@ -1641,18 +1641,24 @@ def _materialize_assistant_attachment_edits(
         finally:
             cur.close()
 
-        # MINOR(보안리뷰 V3): 새 파일명은 source 확장자를 강제 보존 — LLM 이 filename 에
-        # `.exe` 등을 줘도 다운로드 Content-Disposition 에 실행파일류 확장자가 실리지 않게.
+        # 명칭 정합(FR-attachment-update-pasted-not-versioned, 사용자 요구): 새 버전 파일명은
+        # 항상 원본과 정합하는 `<stem>_v<n>.<ext>` 형태로 **코드가 권위적으로** 결정한다. LLM 이
+        # filename 을 주더라도(프롬프트는 생략 유도) stem 만 취해 버전 접미(_v<n>)를 강제하고,
+        # 확장자는 source 를 강제 보존한다(보안리뷰 V3: `.exe` 등 실행파일류 확장자 차단). 이렇게
+        # LLM 명명·재편집 이중접미와 무관하게 명칭 정합이 코드로 보장된다.
         src_filename = str(src.get("OriginalFilename") or "")
         src_ext = src_filename.rsplit(".", 1)[1].lower() if "." in src_filename else ""
-        raw_filename = block.get("filename") or app._next_version_filename(src_filename, next_version)
-        # base name 만 취하고(디렉토리 구분자 제거) source 확장자로 정규화.
-        base_name = str(raw_filename).replace("/", "_").replace("\\", "_").strip()
-        if src_ext:
-            stem = base_name.rsplit(".", 1)[0] if "." in base_name else base_name
-            filename = f"{stem}.{src_ext}"
+        # 확장자는 source 를 강제 보존한다. source 에 확장자가 없더라도 kind 기반 안전 확장자
+        # (txt/csv)를 부여해, LLM 이 준 이름의 내부 dot(예: `x.exe.txt`)이 유효 확장자로 승격되는
+        # 것을 차단한다(§18.8 security 패널 SEC-1 — 보안리뷰 V3 실행파일류 확장자 차단 불변).
+        safe_ext = src_ext or ("csv" if src_kind == "csv" else "txt")
+        llm_filename = str(block.get("filename") or "").replace("/", "_").replace("\\", "_").strip()
+        if llm_filename:
+            llm_stem = llm_filename.rsplit(".", 1)[0] if "." in llm_filename else llm_filename
+            base_for_naming = f"{llm_stem}.{safe_ext}"
         else:
-            filename = base_name or app._next_version_filename(src_filename, next_version)
+            base_for_naming = src_filename if src_ext else f"{src_filename or 'edited'}.{safe_ext}"
+        filename = app._next_version_filename(base_for_naming, next_version)
         # kind 는 source kind 를 그대로 따른다(텍스트 계열만 여기 도달 — 가드 1).
         new_kind = src_kind
         mime_type = "text/csv" if new_kind == "csv" else "text/plain; charset=utf-8"
@@ -4843,13 +4849,17 @@ def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]
     return spans
 
 def _next_version_filename(original: str, version_number: int) -> str:
-    """원본 파일명에서 버전 접미사를 붙인 기본 파일명 생성(LLM 이 filename 미지정 시).
-    `report.csv` + v2 → `report_v2.csv`."""
+    """원본 파일명에서 버전 접미사를 붙인 기본 파일명 생성(버전 체인과 정합).
+    `report.csv` + v2 → `report_v2.csv`. 이미 `_v<n>` 접미가 있으면 제거 후 재부여해
+    재편집 시 이중접미를 방지한다(`report_v2.csv` + v3 → `report_v3.csv`).
+    FR-attachment-update-pasted-not-versioned: 갱신 파일명을 원본과 정합하게 코드가 권위 결정."""
     name = (original or "edited.txt").strip() or "edited.txt"
     if "." in name:
         stem, ext = name.rsplit(".", 1)
-        return f"{stem}_v{version_number}.{ext}"
-    return f"{name}_v{version_number}"
+    else:
+        stem, ext = name, ""
+    stem = app.re.sub(r"_v\d+$", "", stem) or stem  # 기존 버전 접미 제거(idempotent)
+    return f"{stem}_v{version_number}.{ext}" if ext else f"{stem}_v{version_number}"
 
 def _extract_intent_from_content(content: str) -> str:
     text = (content or "").strip()

@@ -70,8 +70,11 @@ def test_b2_guard_notice_content():
 def test_b3_compose_injects_guard():
     src = inspect.getsource(ac.compose_system_prompt)
     assert "_INJECTION_GUARD_NOTICE" in src
-    # base 직후 parts 에 포함.
-    assert "[base_prompt, _INJECTION_GUARD_NOTICE]" in src
+    # base 직후 parts 에 포함(FR-attachment-update: 뒤에 _ATTACHMENT_DELIVERY_DIRECTIVE 가
+    # 추가돼 리스트가 3요소가 됐으나, guard 가 base 바로 다음이라는 불변식은 유지).
+    assert "[base_prompt, _INJECTION_GUARD_NOTICE" in src
+    # 첨부 갱신 지시도 base 뒤 코드-권위로 항상 주입(global row 무관 drift 봉인).
+    assert "_ATTACHMENT_DELIVERY_DIRECTIVE" in src
 
 
 def test_b4_attachment_content_datamarked():
