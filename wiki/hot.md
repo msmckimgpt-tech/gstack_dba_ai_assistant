@@ -1,14 +1,16 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-07-14
+last_updated: 2026-07-15
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-07-14
+2026-07-15
 
 ## Key Recent Facts
+- feature-0019 메시지 편집(07-14, Major 완성·라이브): **사용자가 보낸 메시지 수정** — 1:1=단순 수정 / 요청사항 수정 시 브랜치 재답변(`< n/m >` 페이징), 공유(그룹)=단순 수정만(@assistant 호출 메시지 잠금·본인 발신 IDOR 게이트). Phase 1(엔드포인트+프론트+보안)+Phase 2(그룹/공유+@assistant 잠금) 머지·마이그 0041 적용·브랜치 recall 로더 hotfix·**PB-0008 라이브 PASS**. append-only 대화 위 대화-내부 브랜치 트리(has_branches 게이트·비분기 byte-identical·단위 11 PASS). 코드 거주 0002(브랜치 트리·recall)·0003(엔드포인트·프론트). [bee8a96d Phase1·1cf7784b Phase2·08443ae1 hotfix·3f9c55ba PB-0008] (정본 REPORT prose 는 checkpoint 3 까지라 Phase 2 라이브 lag — git+PB-0008 이 진실)
+- 07-14 그래프·작업화면 UX + 답변 정확도(feature-0003·0002): feature-0003 — 그래프 뷰 **첫 입장 조작 도움말 팝업**(중간버튼 커서 표식·mis-position CSS 주석 `*/` hazard 근본수정)·**제품 카테고리 밴드 우클릭 전용 메뉴**·작업 화면 **애니메이션 효과 설정**(복원+인앱 on/off)·프로필 **'계정' 탭 세분화**(계정/알림/UI/사용 내역)·펼친 **'결과 보기' 스크롤 보존**(세로/가로)·**그래프 'AI 능동 분석 실행' 권한 분리**(신규 하위 권한 `metadata.graph.analyze` 를 조회 `metadata.graph.read` 에서 독립·LLM 호출/KB 갱신 특권 별도 통제·무권한 시 버튼 미표시, Critical §12.3·A안 최소권한 backfill 없음). feature-0002 — MySQL **시스템 변수(@@) 읽기 과차단 해소**·**첨부↔실DB grounding 모순·식별자 대소문자 false-missing 봉인**(+부분 미리보기 전수 단정 방지·LLM 요청-레벨 오류 분류)·**MSSQL cross-DB 메타데이터 발견**(검색·describe, admin)·**첨부 갱신 새 버전 전달**. 전건 POST-DEPLOY PB-0008/라이브. 코드 거주 0003·0002.
 - feature-0020-zd-deploy-all(07-14, Major 신규): **무중단 배포 커버리지 완성** — deploy 스파인(bin/deploy-web.sh) 확장: 워커(insight/ask) 자동 롤아웃(`mysql-ai-agent:<sha>` build-once 핀·healthy+GIT_COMMIT 게이트·agent last-good 롤백 — 구 WARN-only divergence 대체)+bedrock-gateway 드리프트 시 **surge replica** 무중단 교체(profile deploy-surge·DNS alias·steady-state 비용 0)+caddy 이미지 드리프트 reconcile+alembic 직접호출 stale-image 가드(선행 재빌드)+워커 healthcheck timeout 30s(16h unhealthy 오탐 해소)+라이브 적용 미커밋 compose 튜닝 정식 커밋(live-truth). `make deploy-all`/`deploy-workers`/`ask-worker-*`·make up ask-worker 기동 공백 수정. 동반: feature-0014 TLS preflight cold-host 무메시지 사망·STATE dry-run 실기록·롤백 후 :current 태그 오염(M-2) 수정, RUNBOOK §9 stale 정정. §18.8 패널 MAJOR5/MINOR7 전건 반영. 코드 거주 0014(스파인)·0002(이미지)·0007(gateway).
 - feature-0016 graph-pixi(07-13, §78~81 · MAJOR): 그래프 렌더 엔진 **AntV G6 v5(Canvas)→PixiJS v8(WebGL) 전면 교체**(엔진-중립 SceneAdapter seam·GPU 상주 씬·G6 폴백 토글) — 노드 다수 팬 버벅임 근본 해소(대형 409 객체 팬 60fps vsync 라이브 PASS)+미니맵 클램프/드래그·scene diff 풀(§79)·라벨 BitmapText(§80·렌더 157ms→0.03ms)·상세 hover 시각 효과(§81). 카테고리 밴드 **콘텐츠 단위 그룹핑 실동작화**(mig 0040·LLM 라벨·mutual-kNN)+p2(가짜 밴드 소멸·연관 밴드 인접). 코드 거주 0003(graph-core/renderer-pixi)·0002.
 - 07-13 오후 기타: feature-0003 첨부 **사용자 재업로드 버전 관리**(해시 체인·assistant diff 인지)·작업화면 데이터소스 **연결 테스트 버튼**(ds-conn-test)·**그래프 뷰 권한 분리**(`metadata.graph.read` 를 kb.ingest.manual 묶음에서 독립, Critical) · feature-0002 **describe_routine 도구**+**sql_guard read-only shape 과차단 보정**(최상위 UNION·읽기전용 SHOW) · **feature-0019 메시지 편집 신규**(Phase 1 대화 내부 브랜치 트리 백엔드·마이그 0041, 엔드포인트/프론트 대기).
@@ -49,8 +51,6 @@ last_updated: 2026-07-14
 - 답변 피드백 답변당 고유화(feature-0003/0002, 06-29): 답변당 사용자별 고유 👍/👎 1개 강제(마이그 0021/0022 + 고유성 키 id_space 보강) — 새로고침·대화 전환 후 중복 부여 차단.
 - 첨부 wrong-bubble 엣지 하드닝(feature-0003, 06-29): 첨부 영속 레이어 매칭 키에 `message_id_space` 추가(ec39a60). 정상 display 경로 동작 동일 — fork/마이그 cross-space 엣지 하드닝.
 - feature-0012 web-router-modularization 토대(06-29, PR#456): feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할 토대 — route-parity 안전망 + 의존성 audit(P5b, behavior-neutral).
-- 제품 선택 chip 처리 중 항상 활성화(feature-0003, 06-26): 답변 생성 중에도 composer 제품 선택 chip 변경 가능 — turn-immutability 3계층 가드 완화. 제품은 enqueue 시 캡처 → in-flight 답변 비오염, 변경은 다음 요청부터. RBAC/스키마 무변경. ADR-WEB-0006.
-- assistant 요청 2번 중복 처리 차단(feature-0003/0002, 06-26): 워커모드 `/api/ask` long-poll 끊김 후 재전송 시 ask_job 2개 → 2회 처리되던 결함을 enqueue 멱등화(dedup NOT EXISTS + 기존 run attach)로 차단. 후속 PG AmbiguousParameter 회귀는 dedup 전용 파라미터+alias 격리로 해소.
 
 ## Recent Changes
 - feature-0020 cycle(07-14): docker-compose(워커 hc timeout 30s·gateway stop_grace 120s·bedrock-gateway-surge profile 서비스·live-truth 튜닝 커밋)·deploy-web.sh(워커/gateway phase·scope 플래그·state key=value)·alembic-migrate.sh(upgrade/stamp 선행 재빌드 가드)·Makefile(deploy-all/deploy-workers/ask-worker-*·up 기동)·RUNBOOK §9 개정·STATUS/ARCHITECTURE/wiki 카드+_Index 19 active.
@@ -75,7 +75,6 @@ last_updated: 2026-07-14
 - feature-0020: cycle-finalize 후 라이브 실배포(POST-DEPLOY §16.3 deploy-backed) — 첫 워커 핀 배포는 agent last-good 부재라 attended. gateway 상시 2-replica 는 메모리 예산 사람 결정 보류.
 - feature-0011 P5a 잔여: Step6(feature 단위 Dockerfile 분리, Critical — Windows 브라우저 완료 게이트). app.py router 분할은 P5b 별도(07-01 전체추출 완료).
 - feature-0012 완결(07-12 라이브 4c203f9c — 148 route 전량 byte-동치 추출+ITEM-10/11): 잔여 initiative ITEM-09(그래프 CSS/JS 세분화·외부 브랜치 blocked)만.
-- feature-0019 메시지 편집 Phase 1: 백엔드 기반(대화 내부 브랜치 트리·마이그 0041·recall 로더·쓰기 체이닝) 완료 · **엔드포인트(edit/branch-switch/history)·프론트·통합테스트·PB-0008 대기**(dormant). Phase 2(그룹 단순수정·@assistant 잠금) 후속.
 - feature-0010 활성화 cycle 이월: 라이브 토큰교환·refresh 회전·Google revoke·설정 UI·mcp_client seam 배선.
 - insight-worker(TASK-0305) GRANT 적용 · NL2SQL few-shot A/B.
 - baseline 추적: `test_product_delete_block_conv.py` 2건 clean main 에서도 실패(admin_delete_product 404) — feature-0003 소관.

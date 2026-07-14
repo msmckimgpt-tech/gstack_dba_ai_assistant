@@ -692,3 +692,12 @@
 - **[SKIPPED] 사유**: 색인/미러/사용자향 표면 additive 정합(정책 의미·구조 결정 변경 0) — codex 패널 불요, doc_sync 가 정본(feature TASK/REPORT·git log·PR #746~#770) 대비 직접 대조 검증(선례 META-0022·0034 계열). ULTRACODE 4-도메인 병렬 분석 + 적대 재검증 후 반영.
 - **인용 무결성 확인**: REV-20260714T024534-META-0035-doc-sync-0714(본 entry) staged 실재. 동반 operational REV-20260714T024534-doc-sync-rn-0714(feature-0003 REVIEW.md) 작성 — 별도 operational commit 으로 stage.
 - **Human Approval Needed**: 아니오 (색인/미러 additive·제품 런타임 동작 0·pure-meta). landing/배포 소유=wrapper 위임 → 스킬 로컬 commit 만·push/merge/deploy 는 wrapper.
+
+## REV-20260715T025509-META-0036-doc-sync-0715 [SKIPPED:doc-sync-index-mirror-additive] — 07-14 머지 델타 인덱스/미러/사용자향 표면 정합 (메시지 편집 Phase 1+2 완성·무중단 배포 커버리지·그래프 UX·애니메이션/계정탭·sysvar 과차단·grounding 봉인·graph-analyze-perm)
+- **범위**: docs/STATUS.md(인덱스 4행 0002/0003/0016/0019 date 07-14+요지, rollup 0·passthrough·gen-status --check PASS)·docs/ARCHITECTURE.md(feature-0019 기능맵+의존맵 신규, DESIGN-fork-reference §7 참조 정합)·docs/SECURITY.md(07-14 graph-analyze-perm addendum — metadata.graph.analyze 실행 권한 분리)·wiki(hot Key Facts·Log append·카드 0019/0003/0002·overview 2026-07-14 서사+카운트 20·Index/_Index/Architecture Overview/Module-Map feature 카운트 20 정합).
+- **[SKIPPED] 사유**: 색인/미러/사용자향 표면 additive 정합(정책 의미·구조 결정 변경 0) — codex 패널 불요, doc_sync 가 정본(feature TASK/REPORT/FUNCTION·git log 07-14·PR #766~#800) 대비 직접 대조 검증(선례 META-0034·0035 계열). ULTRACODE 4-도메인 병렬 draft→적대 재검증(wf_ebf9d553) + defect 3건 교정(ARCHITECTURE §참조 mis-resolve→DESIGN-fork-reference·wiki 현재상태 카운트 셀 4곳 stale→20) 후 반영.
+- **DECISIONS noChange**: 07-14 feature ADR 은 feature-local(unit docs)·신규 repo-level ADR 0 → DECISIONS.md 미편집(색인 대상 없음). 신규 ADR 본문 미작성(보수 기본값).
+- **정본 lag(보고)**: feature-0019 REPORT/TASK prose 가 git 현실(Phase 1+2 라이브)보다 뒤처짐 — mirror(STATUS/wiki)는 git+FUNCTION 스펙+PB-0008 실측을 진실로 반영, 정본 prose 갱신은 feature-0019 후속 cycle 권고(doc_sync 정본 미편집).
+- **인용 무결성 확인**: 본 entry(META-0036) staged 실재. 동반 operational REV-20260715T025509-doc-sync-rn-0715(feature-0003 REVIEW.md) 작성 — 별도 operational commit 으로 stage.
+- **feature-count**: ground-truth `ls -d unit/feature-*`=20·wiki 카드 20 — Index/_Index/overview/Architecture Overview/Module-Map 전 현재상태 카운트 20 정합(sweep clean).
+- **Human Approval Needed**: 아니오 (색인/미러 additive·제품 런타임 동작 0·pure-meta). landing/배포 소유=wrapper 위임 → 스킬 로컬 commit 만·push/merge/deploy 는 wrapper.

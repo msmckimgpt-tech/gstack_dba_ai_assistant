@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 19 active |
+| Feature 수 | 20 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-18 개 feature(카드 19 — feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, 번호 충돌·사람 결정 보류)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+20 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -63,7 +63,7 @@ sources:
 | feature-0016-metadata-graph | in-progress | AGE 메타데이터 지식그래프(관계형 SSOT→`metadata_kb` 투영) + 관리콘솔 그래프 뷰(PixiJS v8 WebGL) + `graph_navigate` AI 도구 — cutover 라이브 완료 + (07-01) WebGL 렌더러·암묵(FK 미선언) 관계 추론·AI 능동 분석·메타데이터 탭 권한 5분할 + (07-13) 렌더러 PixiJS v8 전면 교체·콘텐츠 밴드 그룹핑 | [[feature-0016-metadata-graph]] | `unit/feature-0016-metadata-graph/docs/FUNCTION.md` |
 | feature-0016-zd-pg-pause-caddy | review | PG pgbouncer PAUSE 래퍼(`pg-restart.sh`, near-zero PG 재시작) + deploy-web.sh Caddyfile reconcile(변경 시 caddy recreate) | [[feature-0016-zd-pg-pause-caddy]] | `unit/feature-0016-zd-pg-pause-caddy/docs/FUNCTION.md` |
 | feature-0017-deploy-build-gate | review | deploy-web.sh 빌드 게이트 snap-docker metadata-file race false-failure 수정(이미지 정합 검증) | [[feature-0017-deploy-build-gate]] | `unit/feature-0017-deploy-build-gate/docs/FUNCTION.md` |
-| feature-0019-message-editing | in-progress | 메시지 편집 — 1:1 대화 내부 브랜치 트리(단순 수정 / 요청 수정=분기 재답변 `< n/m >` 페이징)·공유(그룹)=단순 수정만 · Phase 1 백엔드 기반(마이그 0041) | [[feature-0019-message-editing]] | `unit/feature-0019-message-editing/docs/FUNCTION.md` |
+| feature-0019-message-editing | in-progress | 메시지 편집 — 1:1 대화 내부 브랜치 트리(단순 수정 / 요청 수정=분기 재답변 `< n/m >` 페이징)·공유(그룹)=단순 수정만 · Phase 1+2 라이브(마이그 0041·PB-0008) | [[feature-0019-message-editing]] | `unit/feature-0019-message-editing/docs/FUNCTION.md` |
 | feature-0020-zd-deploy-all | in-progress | 무중단 배포 커버리지 완성 — 워커(insight/ask) 자동 롤아웃·bedrock-gateway surge 무중단 교체·caddy 이미지 드리프트·alembic stale-image 가드 (deploy 스파인 확장) | [[feature-0020-zd-deploy-all]] | `unit/feature-0020-zd-deploy-all/docs/FUNCTION.md` |
 
 ## 3. Archived / completed

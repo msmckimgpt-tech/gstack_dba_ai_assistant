@@ -10,7 +10,7 @@ ai_read_priority: 7
 wiki_role: feature_card
 wiki_name: project
 confidence: high
-maturity: in-progress
+maturity: substantial
 ai_generated: true
 feature_id: feature-0019-message-editing
 linked_unit: unit/feature-0019-message-editing
@@ -29,9 +29,13 @@ sources:
 분기 재답변·`< n/m >` 페이징)], 공유(그룹) 대화는 단순 수정만(@assistant 호출 메시지 잠금).
 
 ## 2. 상태
-- Phase 1(1:1) 백엔드 기반 완료(마이그 0041·active-path recall 로더·쓰기 체이닝, 단위 11 PASS).
-- 남은 Phase 1: 엔드포인트(edit/branch-switch/history)·프론트·통합테스트·PB-0008.
-- Phase 2(그룹 단순수정·@assistant 잠금): 후속.
+- **Phase 1+2 완성·라이브** — 1:1 대화 편집(단순 수정 / 요청사항 수정 시 브랜치 재답변·`< n/m >` 버전 페이징)
+  + 공유(그룹) 단순 수정(@assistant 호출 메시지 잠금·본인 발신 IDOR 게이트). 엔드포인트(edit/branch-switch/
+  history)·프론트 UI·마이그 0041 적용·브랜치 recall 로더 hotfix·PB-0008 라이브 검증 완료.
+- 코어 브랜치 트리(parent_message_id + active_leaf + has_branches 게이트)는 additive — 비분기 대화는
+  byte-identical(무회귀), 단위 11 PASS.
+- 라이브 상태 근거 = git 머지 4건(bee8a96d Phase1·1cf7784b Phase2·08443ae1 hotfix·3f9c55ba PB-0008); 정본
+  REPORT prose 는 Phase 1 checkpoint 3 시점이라 Phase 2 라이브가 아직 미반영(lag) — 본 카드는 git+PB-0008 진실 반영.
 
 ## 3. 책임 경계
 - 코드 거주: feature-0002(core_messages 브랜치 트리·recall 로더·쓰기), feature-0003(엔드포인트·프론트).
@@ -51,4 +55,7 @@ sources:
 - 그룹 window + 브랜치 동시 상호작용(Phase 2, 현재 그룹은 브랜치 없음이라 무관).
 
 ## 7. 변경 이력 (이 카드)
+- 2026-07-14: Phase 1+2 완성·라이브 반영 — 1:1 편집(단순/분기재답변) + 그룹/공유 단순 수정(@assistant 잠금)·
+  마이그 0041 적용·PB-0008 라이브 PASS. maturity in-progress→substantial. (git bee8a96d/1cf7784b/08443ae1/3f9c55ba
+  실측 — 정본 REPORT prose lag.)
 - 2026-07-13: 신규(Phase 1 checkpoint 1 동반).

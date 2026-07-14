@@ -45,6 +45,8 @@ sources:
 
 > **2026-07-13 확장 (§2.9)**: **첨부 사용자 재업로드 버전 관리**(해시 대조→버전 체인 편입·assistant v1→v2 diff 인지·UI v2 배지+diff 색, Major, cross-cut feature-0002) · 작업화면 제품 드롭업 데이터소스 **'연결 테스트' 버튼**+상단 단발성 토스트(ds-conn-test, Major) · **그래프 뷰 권한 분리**(`metadata.graph.read` 를 '메타데이터 관리'(`kb.ingest.manual`) 묶음에서 독립, Critical §12.3·1회 backfill 로 기존 접근 보존, 정본 SECURITY §19) · **그래프 뷰 렌더러 PixiJS v8 전면 교체**(관리콘솔 그래프뷰 UI 가 본 feature static 에 거주 — AntV G6 v5→PixiJS 팬 60fps·미니맵/BitmapText/hover fx, 정본 feature-0016 §78~81).
 
+> **2026-07-14 확장 (§2.10)**: 작업 화면 **애니메이션 효과 복원 + 인앱 on/off 설정**(anim-effect-pref) · 프로필 **'계정' 탭 세분화**(계정/알림/UI/사용 내역 하위 탭, account-subtabs) · 그래프 뷰 **첫 입장 조작 도움말 팝업**(중간버튼 커서 표식 + mis-position CSS 주석 `*/` hazard 근본수정, graph-entry-help) · 그래프 **제품 카테고리 밴드 우클릭 전용 메뉴**(graph-ctxmenu-category) · 실행 단계 폴링 갱신 시 펼친 **'결과 보기' 스크롤 보존**(세로/가로 layout-timing 0-clamp, step-scroll-preserve) · **그래프 뷰 'AI 능동 분석 실행' 권한 분리**(신규 하위 권한 `metadata.graph.analyze` — 실행=LLM 호출/KB 갱신/비용 유발 특권이라 조회 `metadata.graph.read` 에서 분리·무권한 시 실행 트리거 UI 5곳 미표시·결과 열람은 graph.read 유지, Critical §12.3·A안 최소권한 backfill 없음, 정본 SECURITY §19). 전건 POST-DEPLOY PB-0008 라이브 PASS.
+
 ## 2. 상세
 
 ### 2.1 책임 경계
