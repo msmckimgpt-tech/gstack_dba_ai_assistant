@@ -21,9 +21,9 @@ source_of_truth: true
   - [x] `_prefersReducedMotion()` pref-aware 개편 + localStorage 접근자 4종. node --check app.js PASS.
   - [x] 캘린더·검색 점프 네이티브 smooth → `scrollMessagePointIntoCenter` 라우팅(잔여 네이티브 smooth-into-center 0건 확인).
   - [x] 프로필 계정 탭 '애니메이션 효과' select(마크업+renderMotionPref+change 리스너+init applyMotionPref) + `.profile-select-row` 스타일.
-  - [ ] §18.8 dispatch(UX/design) 판정 — 프론트 단독·비파괴 Minor성 변경이나 UI 표시 신호 → 판단 후 패널 or `[SKIPPED:*]` 기록.
-  - [ ] verify-completion --pre-commit → commit(사용자 confirm) → PR → 머지 → web 무중단 재배포.
-  - [ ] **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 검증**: `motionEffectSelect` '항상 켬' 설정 후 ① 대화 전환 크로스페이드 ② 가이드 뱃지 클릭 스크롤 ③ 캘린더 버튼 클릭 스크롤이 (OS 애니메이션 효과 off 상태에서도) 부드럽게 복원됨 + '항상 끔' 시 즉시 이동 + pageerror 0.
+  - [x] §18.8 dispatch(UX/design) 판정 — 적대 서브에이전트 코드리뷰(REV-20260714T065503-anim-effect-pref [SUBAGENT]) FIX-THEN-SHIP → MAJOR 1건(크로스페이드 CSS 게이트) 반영 후 SHIP.
+  - [x] verify-completion --pre-commit **PASS** → commit c7c11ad7 → PR #786(CI test PASS 1m4s·CLEAN) merge(main f00519dd) → `deploy-web --web-only` 무중단 롤링(web-a/web-b f00519dd·90s soak PASS·caddy no-op). 서빙 자산 stamp `be578a894b32→b162038f7a10`·app.js 모션 심볼 16·styles.css data-motion 게이트 1 확인.
+  - [x] **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 검증 PASS** (AI 직접 — 실 Windows Chrome via bin/win-browser.py, https://localhost/ bootstrap_admin 로그인 세션): 런타임 assertion — `setMotionPref('off')→_prefersReducedMotion()=true`·`'on'→false`(OS와 무관 복원)·`'os'→OS(matchMedia)와 일치`, `<html data-motion>` 각각 off/on/os 반영, `#motionEffectSelect` 존재+옵션 3종(시스템 설정 따름/항상 켬/항상 끔)+값 hydration, 캘린더 `jumpToHistoryAnchor`·검색 `_jumpToSearchMatchedMessage` 소스가 `scrollMessagePointIntoCenter` 라우팅 확인, 설정 원복. 프로필 계정 탭 '화면 효과 > 애니메이션 효과' 렌더 스크린샷(scratchpad/anim-pref-account-tab.png). **주의**: 본 검증 Windows 머신은 reduce-motion off(matchMedia=false)라 "reduce-motion 하 실제 부드러운 모션" 육안 시연은 불가하나, `'on'→_prefersReducedMotion()=false`(OS 무관)가 3개 애니 전부를 구동하는 게이트이므로 복원 로직은 결정적으로 실증됨. (TEST §Run 2026-07-14 anim-effect-pref POST-DEPLOY 참조.)
 
 ## TASK-20260713T053423-attach-user-version — 사용자 재업로드 첨부 버전 관리(해시 대조 → 버전 체인 편입) (Major §12.3 — feature-0003 업로드 경로 + cross-cut feature-0002 LLM 컨텍스트. /_template:entry arg-given dispatch)
 

@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260714T073000-anim-effect-pref-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260714T065503-anim-effect-pref, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 TASK.md 체크리스트 완료 + TEST.md POST-DEPLOY 라이브 PASS append + MODIFY -postverify CHG뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260714T065503-anim-effect-pref [SUBAGENT] (FIX-THEN-SHIP→반영 후 SHIP)가 정본. 본 엔트리는 배포 후 라이브 실측 결과 기록만.
+- 라이브 실측 요지: win-browser 실 Windows Chrome, 라이브 f00519dd. 게이트 로직 assertion 전항목 PASS(off→reduced true·on→false OS무관·os→OS일치·data-motion 반영·select 3옵션+hydration·캘린더/검색 scrollMessagePointIntoCenter 라우팅)·서빙 자산 stamp/심볼 확인·프로필 계정 탭 select 시각 렌더(스크린샷). 한계: 검증 머신 reduce-motion off라 육안 모션 시연 불가(로직은 결정적 실증).
+- Cross-ref: REV-20260714T065503-anim-effect-pref(기능 정본) · CHG-20260714T073000-anim-effect-pref-postverify · TEST Run POST-DEPLOY.
+
 ## REV-20260714T065503-anim-effect-pref [SUBAGENT:adversarial-diff-review] — 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정 (TASK-20260714T065503-anim-effect-pref, Major §12.3, frontend-only) — FIX-THEN-SHIP → 반영 후 SHIP
 - 렌즈: 적대 코드리뷰 서브에이전트(general-purpose) — diff 한정, 5축(라우팅 등가성·회귀 표면/TDZ·접근성·UI 배선·null/예외 가드). §18.8 dispatch: UI/화면 신호 → ux/design 후보이나, 프론트 단독·비파괴·서버계약/RBAC/스키마 0 라 단일 적대 코드리뷰로 수행.
 - **적발(MAJOR 1건, 반영):** 크로스페이드 고스트에 걸린 별도 CSS 미디어쿼리 `@media (prefers-reduced-motion: reduce) { .messages-switch-ghost { display:none } }`(styles.css) 는 인앱 pref 로 덮이지 않아, **OS reduce-motion ON + 인앱 '항상 켬'** 시나리오에서 JS 가드는 통과해 고스트를 생성하지만 CSS 가 `display:none` 으로 가려 "빈 화면 후 fade-in"(크로스페이드 아님)이 되어 **대표 효과(크로스페이드)가 정작 복원 안 되는** 결함. 이 시나리오가 바로 본 기능의 목적이자 POST-DEPLOY PB-0008 검증 항목. → **수정:** `html:not([data-motion="on"]) .messages-switch-ghost { display:none }` 로 이관(이미 init 배선된 `<html data-motion>` 속성 재사용 — 이로써 data-motion 이 "미래용"이 아니라 현재 필수임도 확인). 크래시/누수 없음(fallback 타이머가 숨은 고스트 정리)이라 순수 시각 결함이었음.

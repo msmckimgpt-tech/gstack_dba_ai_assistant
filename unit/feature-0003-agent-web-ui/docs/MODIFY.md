@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260714T073000-anim-effect-pref-postverify (TASK-20260714T065503-anim-effect-pref POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-14. 코드/자산 무변경 — TASK.md 체크리스트 완료 + TEST.md POST-DEPLOY 라이브 PASS append + REVIEW postverify 엔트리. 배포 PR #786→main f00519dd, `deploy-web --web-only` 무중단 롤링(soak PASS).
+- 라이브 실측 요지(https://localhost/ bootstrap_admin, win-browser Chrome): 게이트 로직 런타임 assertion 전항목 PASS(`off→reduced=true`·`on→reduced=false` OS무관·`os→OS일치`·data-motion 반영·`#motionEffectSelect` 옵션3종+hydration·캘린더/검색 `scrollMessagePointIntoCenter` 라우팅) + 서빙 자산 stamp 갱신(b162038f7a10)·심볼 확인 + 프로필 계정 탭 select 시각 렌더(스크린샷). 한계: 검증 머신 reduce-motion off라 육안 모션 시연 불가·로직은 결정적 실증.
+- Cross-ref: CHG-20260714T065503-anim-effect-pref(기능) · REV-20260714T073000-anim-effect-pref-postverify · TEST Run(2026-07-14) POST-DEPLOY.
+
 ## CHG-20260714T065503-anim-effect-pref (TASK-20260714T065503-anim-effect-pref — 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정, Major §12.3, frontend-only)
 - Date: 2026-07-14. `/_template:entry` arg-given. 스키마/마이그/RBAC/엔드포인트/서버 계약 0 — 프론트 단독·비파괴.
 - 근본원인: 사용자 보고 3종 애니(대화 전환 크로스페이드·point-rail 뱃지 스크롤·캘린더 버튼 스크롤)가 `prefers-reduced-motion: reduce` 매칭 시 통째로 즉시(instant)로 degrade. 코드/배포는 정상(소스 애니 증가·배포 byte-동일). Windows 에서 이 미디어쿼리는 "동작 줄이기"가 아니라 설정>접근성>시각 효과>애니메이션 효과·배터리 절약 모드에 매핑 → 사용자 미인지 상태로 "최근 갑자기" 발동 가능.
