@@ -29,8 +29,9 @@ source_of_truth: true
 - [x] `_metaGraphCtxForCategory` 신설 + graph-core dispatch 라우팅 + import/export 배선
 - [x] `node --check`(module) 양 파일 PASS + dispatch/의존심볼 grep 정합
 - [x] feature 문서(FUNCTION/TASK/MODIFY/REVIEW/REPORT) + test-runs.d fragment
-- [ ] verify-completion PASS → commit → PR·머지
-- [ ] web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 시각검증
+- [x] verify-completion PASS → commit → PR #794 머지(main 154fb916)
+- [x] web 재배포(deploy_scope: included, web-a/b 154fb916 soak PASS) → POST-DEPLOY 라이브 검증: **배포 전달 + 라이브 도달성 + 수정 핸들러 우클릭 dispatch 파이프라인 실증 PASS**(win-browser relay, Chrome 150). 리터럴 CAT 밴드 위 '카테고리' 메뉴 육안 = **DEFERRED**(도달 가능 scope 가 전부 미분류→밴드 미방출, 제품-매핑 scope 필요) — 코드-로직 airtight + 파이프라인 실증으로 고신뢰, 사용자 1-probe 권장. test-runs.d fragment POST-DEPLOY Run 참조.
+  - 라이브 서빙 재확인(postverify, main 1f705a9e): web-a·web-b `GIT_COMMIT=1f705a9e`(154fb916 포함) + baked 자산에 `_metaGraphCtxForCategory` 반영. 수정 정상 서빙 중.
 
 ## TASK-20260714T074417-account-subtabs — 프로필 '계정' 탭 하위 세분화(계정/알림/UI/사용 내역) (Minor §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
 
