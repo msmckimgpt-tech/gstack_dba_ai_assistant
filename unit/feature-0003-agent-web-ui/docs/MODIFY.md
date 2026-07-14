@@ -241,3 +241,10 @@ source_of_truth: true
 - 검증: `node --check app.js` PASS · 신규 `tests/verify_step_result_scroll_preserve.mjs`(jsdom, 소스추출 격리) **23/23 PASS**. 정적 자산 baked → 시각 최종확인 PB-0008 배포 후 잔여(§CHECK#13, visual_verification_scope: always).
 - Files: `src/static/app.js`, `tests/verify_step_result_scroll_preserve.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST,REPORT}.md`, `docs/test-runs.d/20260714T015432-step-scroll-preserve.md`.
 - Cross-ref: REV-20260714T015432-step-scroll-preserve · REQ/AC-SSP-1~3.
+
+## CHG-20260714T133700-routemap-refresh (graph-analyze-perm 후속 — docs/ROUTEMAP.md 재생성, 자동생성 artifact)
+- Date: 2026-07-14. graph-analyze-perm(PR #783, e7c31e3e) 이 analyze POST 2개의 `require_permission` 를 graph.read→graph.analyze 로 바꿨는데 `docs/ROUTEMAP.md`(route→permission 자동 맵) 재생성을 누락 → main CI "Code-Navigation Map gate"(`gen-routemap.py --check` exit 3, ROUTEMAP STALE) 적색. **원인**: verify-completion CHECK#15 는 diff 에 구조적 route 추가/삭제가 있을 때만 gen-routemap --check 를 돌려 permission-only drift 를 로컬 미검출(CI 는 무조건 검사).
+- 변경: `python3 bin/gen-routemap.py` 재실행 → `docs/ROUTEMAP.md` 의 `/graph/analyze`·`/graph/analyze-schema` 두 POST 행 permission 을 `metadata.graph.analyze` 로 갱신(2행, 202 routes 중). **코드/런타임 무변경**(auto-generated 내비 doc only).
+- Files: `docs/ROUTEMAP.md`, `docs/{TASK,MODIFY,REVIEW}.md`.
+- Verification: `gen-routemap.py --check` exit 0(up-to-date) · `codenav-lint.sh` OK.
+- Cross-ref: CHG-20260714T105200-graph-analyze-perm(원천) · REV-20260714T133700-routemap-refresh.

@@ -5525,3 +5525,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check app.js` PASS · jsdom 소스추출 격리 테스트 신규 `tests/verify_step_result_scroll_preserve.mjs` **23/23 PASS**(정적 배선 양경로·capture/restore 계약·펼침만 캡처·접힘 skip·새 단계 무영향·null/빈맵 방어). feature-0003 회귀 스위트는 verify-completion 게이트로 확인(AC-SSP-3).
 - [x] §18.8 dispatch: UI/화면 신호 → ux/design 후보이나 **단일 파일·비파괴·백엔드 무변경 Minor** 라 패널 skip(REVIEW `[SKIPPED:*]` 기록). 결과 표/미리보기 스크롤 semantics 는 표준 DOM(회귀 표면 없음).
 - [ ] verify-completion → commit(사용자 confirm) → PR → 머지 → web 재배포 → **POST-DEPLOY PB-0008**: 실 Windows 브라우저에서 다단계 실행(결과 스크롤 발생) 중 새 단계 도착 시 펼친 결과/외부 목록 스크롤 유지 시각검증(visual_verification_scope: always — 라이브 LLM 다단계 run 의 폴링 타이밍 재현이 비결정적이라 배포 후 잔여).
+
+
+## 20260714T1337-routemap-refresh — graph-analyze-perm 후속 docs/ROUTEMAP.md 재생성 (CI Code-Navigation gate 적색 해소, 2026-07-14)
+
+- **트리거**: graph-analyze-perm(PR #783) 병합 후 main CI "test" 적색 — `gen-routemap.py --check` exit 3(ROUTEMAP STALE). analyze POST 2개 require_permission 변경(graph.read→graph.analyze) 후 ROUTEMAP 재생성 누락. verify-completion CHECK#15 는 구조적 route 변경 시에만 검사해 로컬 미검출(권한 데코레이터 변경 = permission-only drift).
+- [x] `python3 bin/gen-routemap.py` 재생성 — ROUTEMAP.md 2행(analyze POST permission) 갱신. gen-routemap --check exit 0 · codenav-lint OK. 코드/런타임 무변경(auto-generated doc).
+- [ ] verify-completion → commit → PR → 머지 → main CI green 확인 → (graph-analyze-perm 본체) web 재배포·배포 후 실증.
