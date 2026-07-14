@@ -262,3 +262,6 @@ source_of_truth: true
 - Related Change: CHG-20260714T090500. 단일 파일 표시-정확성 수정(마이그 0·인가 경계 0·LLM 계약 무변 — payload.datasource 는 프롬프트 문맥 필드).
 - Panel skip 사유(§18.8 Minor+1파일): 위험면 = ①캐시 무효화(→ ns 해시 유지로 차단, 테스트 잠금) ②tx 오염(→ SAVEPOINT 격리, 기존 패턴 동형) ③폴백(스냅샷 부재 → key 그대로, 테스트 잠금). 데이터 정정 UPDATE 는 datasource_health join 멱등.
 - Human Approval: deploy_scope: included(전역) — 사용자 리포트 직접 수정.
+
+## REV-20260714T104500-ai-claude-feature-0016-cluster-label-target-close [SKIPPED:doc-only-postdeploy] — TL.3 완수 기록
+- Related Change: CHG-20260714T104500. 코드 0 — 배포·데이터 정정·라이브 확증 기록. 코드면은 REV-20260714T090500 에서 처리.

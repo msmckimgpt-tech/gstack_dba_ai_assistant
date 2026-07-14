@@ -195,3 +195,6 @@ source_of_truth: true
 - 대상: `bin/metadata-graph-sync.sh`(flock -n 가드 + symlink 검사 신설)·`bin/routine-backfill.sh`(동일 lock 파일 공유 가드 + symlink 검사 신설, §18.8 리뷰 지적 반영).
 - 변경(사용자 장애 리포트 — "로그인 후 빈 화면, 작업 콘솔 미작동"): root crontab(30분 주기) 로 호출되는 `metadata-graph-sync.sh` 에 동시성 가드가 없어, 이전 실행이 AGE 그래프(`metadata_kb`) lock 경합으로 멈추면 새 cron 이 계속 겹쳐 쌓이던 것을 `flock -n`(non-blocking) 으로 원천 차단. `sync_graph()` 의 또 다른 호출자 `routine-backfill.sh` 도 동일 lock 을 공유하도록 확장(리뷰 MAJOR-1). lock 파일을 world-writable `/tmp` 대신 root 전용 `/root/.locks/mysql-ai-delegated-dev/`(0700, 자기-provision)로 이동 + 심볼릭 링크 대상이면 fail-loud 거부(리뷰 MAJOR-2, TOCTOU 방지).
 - 근거·실증: 라이브 인시던트(stray 프로세스 20개, 1h19m lock-wait 체인, pgbouncer 풀 30→14 커넥션 회복) → 즉시 복구(코드 변경 전 운영 조치) → 재발 방지 코드 수정 → §18.8 general-purpose 적대 리뷰 PASS-WITH-FIXES(MAJOR 2건 수정) → cross-script 상호배제 + symlink 가드 라이브 재현 검증. 상세는 TASK.md §82, REVIEW.md REV-20260714T120000-graphsync-flock-guard.
+
+## CHG-20260714T104500-ai-claude-feature-0016-cluster-label-target-close — TL.3 완수 기록 (2026-07-14, doc-only)
+- 대상: TASK.md(TL.3 [x]). 코드 0. PR #775 배포(b747c29a) 후 실측: 기존 527건 정정(UPDATE, 잔여 19건=미등록 legacy scope 라벨 부재)·신규 활동 target=사용자 식별자 기록 확인(/api/admin/ai-ops).
