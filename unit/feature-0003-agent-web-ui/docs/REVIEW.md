@@ -202,3 +202,9 @@ source_of_truth: true
 - 검증: `node --check app.js` PASS · `tests/verify_step_result_scroll_preserve.mjs`(jsdom@22, app.js 에서 헬퍼 소스 슬라이스 후 eval) **23/23 PASS** — 정적 배선(양 경로 snapshot 선행·restore 후행·data-step-result-key), 기능(펼친 2개만 캡처·top/left·접힘 제외·240/88 복원·새 단계 D 무영향·null/빈맵 예외 없음). feature-0003 회귀는 verify-completion 게이트.
 - 잔여(비-차단): jsdom 은 layout 무계산이라 **외부 목록 스크롤**(scrollHeight 의존)의 픽셀 거동은 미검증 — 내부 결과 스크롤(scrollTop verbatim 저장) 계약만 격리 실증. 외부 목록 + 실제 다단계 폴링 타이밍의 시각 최종확인은 POST-DEPLOY PB-0008(라이브 LLM run 필요·비결정적, visual_verification_scope: always).
 - Cross-ref: CHG/TASK/FUNCTION-20260714T015432-step-scroll-preserve · TEST §CHECK#13(2026-07-14) · test-runs.d/20260714T015432-step-scroll-preserve.md · ANCHOR 0003 무충돌.
+
+## REV-20260714T133700-routemap-refresh [SKIPPED:auto-generated-artifact-no-code] — docs/ROUTEMAP.md 재생성(graph-analyze-perm 후속)
+- Panel skip 사유(§18.8): 변경은 `bin/gen-routemap.py` 가 라우터 AST 로 자동 생성하는 `docs/ROUTEMAP.md` 2행(analyze POST permission graph.read→graph.analyze 반영)뿐 — 코드·런타임·RBAC enforcement·엔드포인트 shape 무변경. 권한 분리 자체의 authz 검증은 원천 REV-20260714T105200-graph-analyze-perm(§18.8 PASS)가 정본.
+- 자기 검증: `gen-routemap.py --check` exit 0 · `codenav-lint.sh` OK · 재생성 diff 가 원천 변경(2 POST 권한)과 정확히 일치.
+- 교훈: require_permission 값 변경은 ROUTEMAP drift 이나 verify-completion CHECK#15 는 구조적 route 변경 시에만 gen-routemap --check 를 돌려 로컬 미검출 → CI 에서만 적발. 권한 데코레이터 변경 cycle 은 `gen-routemap.py` 재실행을 명시 수행할 것.
+- Cross-ref: CHG-20260714T133700-routemap-refresh · 원천 CHG-20260714T105200-graph-analyze-perm.
