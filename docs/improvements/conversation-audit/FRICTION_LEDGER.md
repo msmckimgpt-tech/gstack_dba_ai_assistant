@@ -145,6 +145,22 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **배포 note(§정직)**: `deploy-web` soak 가 첫 2회 edge /healthz 단발 프로브 window(web-a/web-b 동시 recreate 후 Caddy 재해석 + cutover blip)에서 롤백 판정 → 3회차 배포 시 실시간 edge 프로브로 9dce3caa 가 soak 내내 200(mysql/pg true) 유지 실증 후 성공(transient 확증, 코드 결함 아님 — 런타임 diff 는 sql_guard 7줄뿐이며 /healthz 는 mysql+pg ping 만 검사, sql_guard 미경유).
 - **라이브 실측 필요분(§정직)**: 코드/테스트/런타임 가드 실증은 "`SELECT @@x` 허용 + write/tsql 차단 유지" 증명. "실제 대화에서 환경옵션 확인 마찰 소멸" 은 배포 후 라이브 실측분(미수행) → 다음 audit corroboration(`denylist match: @@` distinct_conv) 재측정 → 0 유지 시 `verified`, 재증가 시 `regressed`.
 
+## FR-partial-evidence-false-verification — fixed:deployed:unverified-live (L2/L1 부분 증거 전수 단정 환각; 절단 미리보기 epistemics + byte-bounded 확장 + grounding 계약)
+
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 `test_partial_evidence_grounding.py` 10 PASS + 전체 회귀 feature-0002+0003 EXIT=0·§18.8 3렌즈 패널[API 세션한도→인라인 자기검증] BLOCKING/MAJOR 0) + **배포 완료**(2026-07-14, PR #793 merge main `244e6bec` → `deploy-web` 무중단 web-a/web-b + ask-worker/insight-worker 재빌드·gateway reconcile, soak 통과; **4서비스 GIT_COMMIT=244e6bec healthy**; ask-worker 런타임 실증 — `expand_char_budget`/`_TOOL_PREVIEW_ROWS_MAX` 7건 로드·`_server_variable_redirect` 0건(Lever D 철회 반영)·SYSTEM_PROMPT `PREVIEW-TRUNCATED`/`SERVER OPTIONS` 2건; web /healthz=244e6bec·mysql_ok·pg_ok). **라이브 대화 실측 미수행** → `unverified-live`. 배포 시점 baseline: 30일 절단 노출 8/49 대화·'환각' 명시 2건(90일). 다음 audit corroboration 재측정 감소 시 `verified`.
+- **fix(요지)**: CHG-20260714T063200-partial-evidence-grounding / **코드 거주 `feature-0002-agent-core`** / REV-20260714T063200-partial-evidence-grounding. 출하 lever = A(절단 epistemics)+B(byte-bounded 확장)+C(grounding 계약). PLAN-APPROVED A+B+C+D + PR/배포 인가(AskUserQuestion 2026-07-14). Major(코어 LLM 경로).
+- **last_seen**: 2026-07-14 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **modality**: 1:1 동기 · **product_id(마스킹)**: P-119 · **conv(마스킹)**: `20260714050748-e6add7f1`(topic "첨부파일과 실제 DB 비교 검증")
+- **symptom_confidence**: high (사용자 명시 불만 "답변 내 환각이 극심합니다" `E-USR` + ground truth 첨부 sha256 대조 재현) · **rootcause_confidence**: high (코드+DB(PG core_messages)+전사+첨부 원본 삼각측량, file:line 확정)
+- **suspected_layers**: **L2**(도구 피드백 — 절단 미리보기가 자기교정 정보 미동봉, `_format_result_sets`/execute_sql 안내문) + **L1**(프롬프트 — 부재/전수 단정에 근거 계약 부재) + render 표시 캡 구조
+- **증상(signal)**: `E-USR` 명시 불만 + `E-AST` 환각(ground-truth 대조) + `I-FALSE` 거짓 성공 — ① `execute_sql` 183행 결과가 50행 미리보기 절단(gunzlog 전량 미열람)됐는데 "전수 검증"처럼 서술 + 첨부에 **실재하는** `TRUNCATE charactermakinglog`(첨부 141행)를 "누락"으로 오진 ② 정정 턴(사용자 "실제 첨부파일을 확인하며 비교")도 61행/50행 절단으로 동일 반복 ③ `@@lower_case_table_names` 거부 후 문서 기본값(0) 추측 → 실측(1) 반대 결론.
+- **confirmed_root_cause**: 재발경로 = `model limit`(비결정 LLM 이 절단·차단이라는 부분 증거를 전수로 오단정). 봉인은 (A) 도구 피드백 정형화 — 절단 안내문에 "미열람 행 단정 금지·재조회 유도·CSV 비가독" epistemic 동봉 (B) 표시 캡 구조 보정 — 소형 결과는 char-budget(12,000자)·행 상한(500) 내 전량 표시해 목록 대조가 미리보기 내 종결(광폭/대형은 기존 캡; 웹 UI step 은 CSV 우선 50행 경로라 무영향) (C) 프롬프트 grounding 계약 — SYSTEM_PROMPT 4규칙(절단 epistemics·부재/전수 근거 계약·첨부↔DB 양측 조회·옵션 실측). ③번 @@ 근본은 병렬 세션 CHG-20260714T153113(FR-sysvar-select-denylist-overblock)이 가드-허용으로 처리 → 애초 계획 Lever D(@@ 거부 힌트)는 dead 경로가 되어 **출하 철회**(정직 — dead code 미출하).
+- **corroboration**: 30일 절단 노출(`행 중 50행만 표시`) **8/49 대화(~17%)** structural surface; '환각' 명시 불만은 90일 이 대화가 최초(now 2). 절단 자체는 흔하나(structural) "전수 단정 환각"으로 귀결되는 빈도는 저-흔적(명시 불만 희소) — **근본이 코드 file:line confirmed(high) + 재발경로 확실(대형 목록↔첨부 대조는 쿼리 리뷰 상시 단계) + 저위험 봉인(표시 계약·가드 불변)** → 명백한 구조결함 fix-now.
+- **disposition 근거**: Major(코어 LLM 프롬프트·도구 피드백; sql_guard 허용범위·RBAC·PII 불변 → Critical 아님) → attended PLAN-APPROVED. 코드 confirmed + 저위험 봉인 → fix-now.
+- **rc_ids**: RC-1(이 audit) · **batch-id**: B-20260714T063200-partial-evidence-grounding
+- **동시수정 note(§13.1)**: 본 cycle 중 feature-0002 표준 worktree 를 병렬 세션 2건이 순차 머지(MSSQL cross-DB PR #790/#791, sysvar-guard PR #792) → rebase 2회. sysvar-guard 가 같은 대화 …e6add7f1 의 ③번 @@ 근본을 가드-허용으로 처리해 본 Lever D 를 철회(중복 회피·정직). base-drift 는 union merge + Lever D 재평가로 해소, 상호 회귀 0(내 테스트 + MSSQL 테스트 동시 PASS 실측).
+- **라이브 실측 필요분(§정직)**: 코드/테스트/런타임 실증은 "절단 시 자기교정 안내·소형 결과 전량 노출·부재/전수 근거 계약·옵션 실측 유도" 증명. "실제 대화에서 부분증거 전수 단정 환각 소멸" 은 배포 후 라이브 실측분(미수행) → 다음 audit corroboration(절단 노출 대화의 후속 '환각'/'다시 확인' 명시 불만 재발) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+
 ---
 
 ### 메타 (이 원장의 첫 기록)
