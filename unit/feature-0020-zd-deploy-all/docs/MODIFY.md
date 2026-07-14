@@ -41,3 +41,14 @@ source_of_truth: true
 - Rollback Notes: PR revert 후 기존 수동 절차로 복귀 가능. 워커 컨테이너는 revert 후 첫
   `docker compose up` 에서 `repo-*` 이미지로 자연 복귀. surge 서비스는 profile 뒤라 revert 전
   실행 중이면 `docker compose --profile deploy-surge rm -sf bedrock-gateway-surge` 로 정리.
+
+## CHG-20260714T130500-ai-claude-feature-0020-zd-deploy-all
+- Date: 2026-07-14
+- Related Requirement: REQ-20260714T101500-zd-deploy-all (POST-DEPLOY 기록)
+- Summary: 라이브 배포 검증 기록(docs-only) — test-runs.d fragment(TEST-…-5 PASS)·REPORT §2/§7
+  동기화 결과·TASK 체크리스트 완결. 직전 docs 커밋(e4a02ec7)이 TASK 체크박스/MODIFY entry 누락
+  상태로 파이프 exit-code 가림 탓에 verify FAIL 을 지나쳐 커밋된 것을 본 커밋이 정합(§16.3
+  Step 3 — amend 금지, 새 commit 으로 수정).
+- Files: unit/feature-0020-zd-deploy-all/docs/{TASK,MODIFY,REPORT,REVIEW}.md, docs/test-runs.d/
+- Impact: 문서만 — 런타임 0.
+- Rollback Notes: 해당 없음(기록).

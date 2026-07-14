@@ -78,3 +78,15 @@ source_of_truth: true
 - 재검증: bash -n 2종 PASS + dry-run 4 scope 재실행 전건 exit 0 (workers-only 경로에 migrate
   게이트 발화 확인).
 - 인용 무결성: 본 entry 와 반영 diff 는 같은 changeset 에 staged.
+
+## REV-20260714T125800-ai-claude-feature-0020-zd-deploy-all [SKIPPED:post-deploy-docs-only] — 라이브 배포 결과 기록
+- Date: 2026-07-14
+- Scope: docs-only — POST-DEPLOY 라이브 검증 Run fragment(test-runs.d) + REPORT §2/§7 동기화 결과 기입. 코드 변경 0.
+- [SKIPPED] 사유: 산출물이 검증 기록 자체(라이브 배포 exit 0·워커 healthy·edge 200 — 로그/inspect 실측 전사)라 패널 불요. 선례 POST-DEPLOY 기록 커밋 계열(#773 등).
+
+## REV-20260714T130500-ai-claude-feature-0020-zd-deploy-all [SKIPPED:docs-checklist-reconcile] — 직전 docs 커밋 게이트 누락 정합
+- Date: 2026-07-14
+- Scope: docs-only — TASK 체크박스 완결 + MODIFY CHG entry 보강. 직전 e4a02ec7 커밋 시
+  `verify | tail` 파이프가 FAIL exit 을 가려(체인 미중단) check #2/#3 미충족 상태로 커밋된
+  것을 새 commit 으로 정합(--amend 금지 준수).
+- [SKIPPED] 사유: 체크리스트/기록 정합 자체 — 패널 대상 아님.
