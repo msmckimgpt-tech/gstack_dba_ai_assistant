@@ -1332,7 +1332,6 @@ TASK-0015 (plan-review):
 - [x] verify-completion(feature-0002) PASS → commit(f5e4b69b)/push → PR #771 merge(main ee4f8de6) → 배포(4서비스 ee4f8de6·런타임 실증·/healthz) → 원장 fixed:deployed:unverified-live(CHG-20260714T031500-attach-update-deploy).
 - [ ] commit/push(auto-sync) → PR·머지·배포(Major=confirm) → 배포검증(worker+web 재빌드) → 원장 갱신.
 - [ ] 라이브 실측(배포 후 corroboration 재측정: 갱신요청 대화의 assistant 버전 생성 비율 상승·```sql 붙여넣기 감소)는 다음 audit 분리분(코드/테스트만으로 마찰 소멸 단정 금지).
-
 ## 20260714T1531-sysvar-select-guard — MySQL 시스템 변수 읽기(@@) denylist 과차단 해소 (conversation_audit FR-sysvar-select-denylist-overblock, Critical)
 > `/_dqa:conversation_audit "초기화 쿼리 환경 옵션 검토"`. friction-id=FR-sysvar-select-denylist-overblock. 진단 대화(마스킹): …e6add7f1 — 사용자가 "환경 옵션 직접 확인 후 판단" 명시 지시 → `SELECT @@lower_case_table_names, @@version`(단일 read-only SELECT)이 `denylist match: @@` 로 차단 → assistant 가 OS 기본값 추정으로 대체("MySQL 설정 확인 불가" 명시). 어제 출하한 read-only SHOW VARIABLES/STATUS 화이트리스트(FR-readonly-query-shapes)와 동일 정보 클래스라 태세 불일치.
 - [x] `src/modules/sql_guard.py` — `_DENYLIST_PATTERNS`(MySQL)에서 `@@` 패턴 제거(사유 주석 부착). T-SQL denylist 의 `@@` 는 유지(MSSQL 메타 열거 차단 태세 불변). 쓰기 경로(`SET @@`/`SET @`/`:=`)는 기존 denylist+shape 게이트가 계속 차단.
@@ -1341,3 +1340,13 @@ TASK-0015 (plan-review):
 - [x] §13.1 동시수정 기록: `.worktrees/feature-0002-agent-core`(branch ai/claude/feature-0002-agent-core)를 병렬 세션(FR-partial-evidence-false-verification 작업, tools.py/agent_core.py)이 점유 중이라 본 작업은 별도 worktree `feature-0002-sysvar-guard`(branch ai/claude/feature-0002-sysvar-guard)로 격리. 파일 교집합 0(sql_guard.py/test_readonly_query_shapes.py vs tools.py/agent_core.py).
 - [ ] 검증: 타깃 가드 테스트 4파일 PASS(사전 실행) + 전체 회귀 + §18.8 적대 패널(security+backend+qa) + verify-completion.
 - [ ] commit/push(auto-sync) → PR·머지·배포(Critical=confirm) → 배포검증 → 원장 갱신(docs-only 후속).
+## 20260714T0632-partial-evidence-grounding — 부분 증거(절단 미리보기·차단 옵션조회) 전수 단정 환각 봉인 (conversation_audit FR-partial-evidence-false-verification, Major)
+> `/_dqa:conversation_audit "첨부파일과 실제 DB 비교 검증"`. friction-id=FR-partial-evidence-false-verification. 진단 대화(마스킹) …e6add7f1: 사용자 명시 불만 "답변 내 환각이 극심합니다"(90일 내 최초 '환각' 명시). ground truth(첨부 sha256 대조)로 3중 환각 확증 — ① 183행 중 50행 절단 미리보기(gunzlog 전량 미열람)를 전수 검증처럼 서술 + 첨부 141행에 실재하는 TRUNCATE 를 "누락" 오진 ② 정정 답변도 61행 중 50행으로 동일 반복 ③ `SELECT @@lower_case_table_names` 거부 후 기본값 추측 → 대소문자 반대 결론(실측 1). corroboration: 30d 절단 노출 8/46 대화(17%, structural surface). 코드 거주=feature-0002.
+- [x] A(L2) — `tools.py` execute_sql 절단 안내문에 epistemic 자기교정 지침(미열람 행 존재/부재/개수/완전성 단정 금지·좁혀 재조회 유도·CSV 는 모델 비가독 명시). `_format_result_sets` 절단 마커에도 "미열람·단정 금지" 부기.
+- [x] B(구조) — `_format_result_sets` char-budget 확장(expand_rows=500·expand_char_budget=12,000): 소형 결과는 캡 너머 전부 표시(183행 목록 대조가 미리보기 안에서 종결), 광폭/대형 결과는 기존 50행 캡 유지(컨텍스트 보호 불변). stats out-param 으로 정직한 표시 행수 안내.
+- [x] C(L1) — SYSTEM_PROMPT "HANDLING RESULTS — NEVER FABRICATE" 확장 4규칙: PREVIEW-TRUNCATED epistemics · ABSENCE/COMPLETENESS 완전 근거 계약(불가 시 "미확인" 명시) · 첨부↔DB 비교는 양측 조회 선행(describe_table/describe_routine) · SERVER OPTIONS 기본값 추측 금지(실제 값 조회 — `@@var`/SHOW VARIABLES).
+- [~] ~~D(L2) — @@ denylist 거부 SHOW VARIABLES 힌트~~ **제거(rebase 재평가)**: 애초 진단의 ③번(@@lower_case_table_names 거부)을 **병렬 세션 CHG-20260714T153113-sysvar-select-guard(FR-sysvar-select-denylist-overblock)가 MySQL `@@` denylist 를 아예 제거**해 `SELECT @@var` 가 통과하게 되면서 "거부 시 힌트"는 dead 경로가 됨 → `_server_variable_redirect` 삭제. ③번은 그 가드 허용 + 본 C(L1) "실제 값 조회" 계약으로 커버(정직 — dead code 미출하). 회귀 가드 `test_server_variable_redirect_removed`.
+- [x] 검증: `tests/test_partial_evidence_grounding.py` 신규 11 PASS(확장/캡 유지/500 상한/legacy 캡/절단 안내/@@ 힌트·MSSQL 제외·프롬프트 계약) + 전체 회귀 pytest EXIT=0(feature-0002+0003).
+- [ ] §18.8 적대 패널(full panel default — 프롬프트·도구 피드백 code change) → REVIEW entry.
+- [ ] verify-completion(feature-0002) → commit/push(auto-sync) → PR·머지·배포(Major=confirm 완료: PLAN-APPROVED A+B+C+D + PR/배포 인가, AskUserQuestion 2026-07-14) → 배포검증(4서비스) → 원장 갱신.
+- [ ] 라이브 실측(배포 후 corroboration 재측정: 절단 노출 대화의 환각/정정요구 재발 0 확인)은 다음 audit 분리분(코드/테스트만으로 마찰 소멸 단정 금지).
