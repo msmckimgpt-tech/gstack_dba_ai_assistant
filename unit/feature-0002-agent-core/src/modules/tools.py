@@ -894,12 +894,28 @@ def build_tool_definitions_for_datasources(base_defs: list[dict[str, Any]], labe
 #  도구 실행 함수
 # ══════════════════════════════════════════════════════════════════
 
-def _format_result_sets(result_sets: list, max_rows: int | None = None) -> str:
-    """execute_sql 결과를 텍스트로 변환."""
+def _format_result_sets(
+    result_sets: list,
+    max_rows: int | None = None,
+    expand_rows: int | None = None,
+    expand_char_budget: int | None = None,
+    stats: dict | None = None,
+) -> str:
+    """execute_sql 결과를 텍스트로 변환.
+
+    conv-audit FR-partial-evidence-false-verification: 절단된 미리보기가 "전수 검증 완료"
+    환각의 입력이 되는 것을 막는 두 장치 —
+    - expand_rows/expand_char_budget: 총량이 작은 결과는 캡(max_rows)을 넘어 전부 표시해
+      목록 대조·누락 검증이 미리보기 안에서 끝나게 한다. 대형 결과는 기존 캡 유지(컨텍스트 보호).
+    - stats out-param(total_rows/shown_rows/truncated): caller 가 실제 표시 행수를 알아
+      정직한 절단 안내문을 덧붙일 수 있게 한다.
+    """
     if max_rows is None:
         max_rows = AGENT_TOP_N
     parts: list[str] = []
     total_rows = 0
+    shown_total = 0
+    truncated_any = False
     for kind, col_or_count, rows in result_sets:
         if kind == "rows" and isinstance(rows, list):
             columns = col_or_count if isinstance(col_or_count, list) else []
@@ -907,21 +923,41 @@ def _format_result_sets(result_sets: list, max_rows: int | None = None) -> str:
             if columns:
                 parts.append("| " + " | ".join(str(c) for c in columns) + " |")
                 parts.append("|" + "|".join("---" for _ in columns) + "|")
-            displayed = rows[:max_rows]
-            for row in displayed:
+            shown = 0
+            used_chars = 0
+            for row in rows:
+                if shown >= max_rows and not (
+                    expand_rows
+                    and expand_char_budget
+                    and shown < expand_rows
+                    and used_chars < expand_char_budget
+                ):
+                    break
                 cells = []
                 for v in row:
                     s = str(v) if v is not None else "NULL"
                     if len(s) > 100:
                         s = s[:100] + "..."
                     cells.append(s)
-                parts.append("| " + " | ".join(cells) + " |")
-            if len(rows) > max_rows:
-                parts.append(f"\n... ({len(rows)} 행 중 {max_rows}행만 표시)")
+                line = "| " + " | ".join(cells) + " |"
+                parts.append(line)
+                used_chars += len(line) + 1
+                shown += 1
+            shown_total += shown
+            if len(rows) > shown:
+                truncated_any = True
+                parts.append(
+                    f"\n... ({len(rows)} 행 중 {shown}행만 표시 — 나머지 {len(rows) - shown}행은 "
+                    f"미열람이므로 그 행들의 존재/부재/개수를 단정하지 말 것)"
+                )
             else:
                 parts.append(f"\n({len(rows)} 행)")
         elif kind == "rowcount":
             parts.append(f"영향받은 행: {col_or_count}")
+    if stats is not None:
+        stats["total_rows"] = total_rows
+        stats["shown_rows"] = shown_total
+        stats["truncated"] = truncated_any
     return "\n".join(parts)
 
 
@@ -1271,6 +1307,12 @@ def _tool_get_sample_rows(conn, args: dict) -> str:
 
 
 _TOOL_PREVIEW_ROWS = 50
+# conv-audit FR-partial-evidence-false-verification: 소형 결과 char-budget 내 전체 표시 —
+# 절단 미리보기가 "전수 검증 완료" 환각의 입력이 되는 것을 구조적으로 차단(예: 183행 테이블
+# 목록 대조가 50행에서 끊겨 gunzlog 전체가 미열람인데 전수 비교로 서술). 캡의 의도(컨텍스트
+# 보호)는 char-budget + 행수 상한이 그대로 유지한다.
+_TOOL_PREVIEW_ROWS_MAX = 500
+_TOOL_PREVIEW_CHAR_BUDGET = 12_000
 
 
 def _estimate_explain_rows(conn, sql: str) -> int | None:
@@ -1491,15 +1533,29 @@ def _tool_execute_sql(conn, args: dict) -> str:
                     else:
                         csv_rows.append([row])
             csv_paths.append(save_csv(f"resultset{idx}", [str(col) for col in columns], csv_rows))
-        # LLM에게 미리보기(최대 5행)만 전달, 전체 결과는 CSV 참조
-        preview = _format_result_sets(result_sets, max_rows=_TOOL_PREVIEW_ROWS)
+        # LLM에게 미리보기만 전달(기본 50행; 소형 결과는 char-budget 내 전부), 전체 결과는 CSV 참조.
+        # conv-audit FR-partial-evidence-false-verification: 절단 시 epistemic 안내(미열람 행 단정
+        # 금지 + 좁혀 재조회 유도 + CSV 는 모델이 읽을 수 없음)를 함께 돌려 자기교정을 유도한다.
+        _pv_stats: dict = {}
+        preview = _format_result_sets(
+            result_sets,
+            max_rows=_TOOL_PREVIEW_ROWS,
+            expand_rows=_TOOL_PREVIEW_ROWS_MAX,
+            expand_char_budget=_TOOL_PREVIEW_CHAR_BUDGET,
+            stats=_pv_stats,
+        )
         parts: list[str] = [preview] if preview else []
         if csv_paths:
             for path in csv_paths:
                 parts.append(f"CSV 저장: {path}")
-            if total_row_count > _TOOL_PREVIEW_ROWS:
+            if _pv_stats.get("truncated"):
+                _shown = int(_pv_stats.get("shown_rows") or 0)
                 parts.append(
-                    f"(전체 {total_row_count}행 — 위 표는 미리보기 {_TOOL_PREVIEW_ROWS}행입니다. "
+                    f"(전체 {total_row_count}행 — 위 표는 미리보기 {_shown}행입니다. "
+                    f"나머지 {max(total_row_count - _shown, 0)}행을 당신은 보지 못했습니다: 보지 못한 행에 "
+                    f"대한 존재/부재/개수/완전성 단정은 금지입니다. 전수 확인·누락 검증·목록 비교가 "
+                    f"필요하면 WHERE 필터·집계(COUNT/GROUP BY)·NOT IN 교차조회 등으로 좁혀 재조회하세요. "
+                    f"CSV 는 사용자 다운로드 전용이라 당신은 읽을 수 없습니다. "
                     f"답변에 전체 표를 삽입하지 말고, CSV 다운로드 링크를 제공하세요.)"
                 )
         parts.append(f"(실행 시간: {elapsed:.2f}초)")

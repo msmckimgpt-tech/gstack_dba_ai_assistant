@@ -233,3 +233,31 @@ source_of_truth: true
 - Date: 2026-07-14. Related Change: CHG-20260714T171000-mssql-crossdb-deploy. 코드 변경 0(docs-only).
 - SKIPPED 사유: 런타임 코드 무변경 — PR #790(REV-20260714T161500 검증 완료) 배포 후 상태 정합(FRICTION_LEDGER fixed:undeployed→fixed:deployed:unverified-live + TASK 체크박스). 배포 검증 결정적: 4서비스 GIT_COMMIT=b364e964 healthy + deploy-web soak 통과 + 배포 이미지 baked end-state 실증(mssql-web-qa cross-DB describe 15컬럼·routine 1345자).
 - Human Approval: 배포 사용자 confirm(AskUserQuestion 2026-07-14 "병합+배포"). 본 follow-up 은 그 배포의 정직-상태 기록(docs-only).
+## REV-20260714T063200-partial-evidence-grounding [SUBAGENT:partial-evidence-adversarial-security+backend+qa → API 세션한도 조기종료 → 인라인 자기검증 완료] — 부분 증거 전수 단정 환각 봉인 (conversation_audit FR-partial-evidence-false-verification)
+> **rebase 재평가(정직)**: 애초 계획 Lever D(@@ 거부 SHOW VARIABLES 힌트)는 병렬 세션 CHG-20260714T153113-sysvar-select-guard 가 MySQL `@@` denylist 를 제거해 dead 경로가 되어 **출하 철회**(코드·테스트 삭제, 회귀가드 추가). 아래 S-2/B-4 는 N/A 로 격하. 출하 lever = A(절단 epistemics)+B(byte-bounded 확장)+C(grounding 계약).
+- Date: 2026-07-14. Related Change: CHG-20260714T063200-partial-evidence-grounding. cycle: ai/claude/feature-0002-agent-core.
+- Trigger (§18.8 dispatch): SYSTEM_PROMPT(L1) + execute_sql 도구 피드백/미리보기(L2/render) code change — §18.8 표 키워드 0건 매칭 → **full panel default = security + backend/correctness + qa/regression** 3렌즈. L6(모델·디코딩) 미변경이나 비결정 LLM 행동(프롬프트·도구 피드백) 변경이라 **+회귀 렌즈** 포함. 3 subagent(general-purpose outside voice) dispatch 했으나 **API 세션한도(5:30pm KST reset)로 3건 전부 조기종료** → FR-readonly-query-shapes 선례대로 **인라인 자기검증**으로 대체 완료(메인 루프 Opus 4.8, 코드 확인 근거 첨부).
+- **패널 결과: BLOCKING/MAJOR 0**. 전 항목 REFUTED(코드 확인). 실질 조치 0.
+- **security — 전부 REFUTED**:
+  - [S-1] Lever B 데이터 노출 확대(50→≤500행): 신 경계 침범 아님 — LLM 은 동일 데이터를 sql_guard 통과 SELECT 페이지네이션으로 이미 조회 가능하고 CSV 는 어차피 사용자에 전량 전달(`tools.py:1199` save_csv). forbidden schema(agent_memory) 는 `_INTERNAL_SCHEMAS` 가드가 result 이전 차단이라 이 경로로 누출 불가(변경 없음). char-budget(12,000)·행 상한(500)이 무제한 노출 방지.
+  - [S-2] ~~Lever D 힌트 인젝션~~ **N/A — Lever D 출하 철회**(병렬 세션 CHG-20260714T153113 가 MySQL `@@` denylist 제거 → 거부-시-힌트 dead 경로 → `_server_variable_redirect` 삭제). 잔여 diff 에 @@ 관련 코드 없음.
+  - [S-3] 프롬프트 상충: Lever C SERVER OPTIONS 규칙은 "never reason from documented defaults — read the actual value first(`@@var`/SHOW VARIABLES)" 로 sysvar-guard 가 @@ 를 허용한 태세와 **정합**(우회 유도 문구 없음). _INJECTION_GUARD_NOTICE(parts index 1) 미훼손.
+  - [S-4] stats out-param: `total_rows/shown_rows/truncated` 3정수만 담김(값·PII 없음), caller 는 절단 안내 분기에만 사용(사용자 표면 미노출). REFUTED.
+  - [S-5] 웹 렌더 상호작용: 웹 UI step preview_table 은 **CSV 우선 경로**(`render.py:206-219 read_csv_preview max_rows=50`)라 500행으로 안 늘어남(50행 유지) — Lever B 는 LLM 텍스트 content 만 확장. 대량 렌더 무발생.
+- **backend/correctness — 전부 REFUTED**:
+  - [B-1] 호출처 회귀: `_format_result_sets` 호출처 6곳(tools.py 924/1002/1269/1341/1376/1390/1412/1419) 전부 expand 미전달=종전 동작(legacy 캡). 하류 파서 `render.py:187 parse_result_preview_table` 정규식 `\.\.\.\s*\(\d+\s*행 중` 은 신 문구 `... (N 행 중 M행만 표시 — …`도 **매칭 유지**(실측 MATCH), 소형 전량표시 시 `(N 행)`→truncated=False(정확). feature-0003 절단문구 파서 부재(grep 0).
+  - [B-2] 경계값: `shown>=max_rows and not(expand_rows and expand_char_budget and shown<expand_rows and used_chars<expand_char_budget)` — expand=None→break(legacy), shown=500→`500<500`=False→break(hard cap), 예산 소진→break. per-result-set shown/used_chars 리셋 + shown_total 합산 정확. execute_sql 은 단일 SELECT/CTE(multi-statement 차단)라 실질 set 1개.
+  - [B-3] 절단 안내 정합: rows kind 결과는 항상 save_csv(`tools.py:1199`)→csv_paths 비지 않음→`truncated`시 안내 항상 붙음(누락 없음). total_row_count·stats.total_rows 모두 rows kind 만 합산=일치.
+  - [B-4] ~~@@ 힌트~~ **N/A — Lever D 철회**(위 S-2). SERVER OPTIONS 실측은 Lever C 프롬프트 계약이 담당.
+  - [B-5] 프롬프트 충돌: "COMPARING an attachment against the live DB … fetch BOTH sides" 는 **비교를 사용자가 요청한 경우** 조건부 → 기존 ATTACHED FILES 예외("unless the user explicitly asks you to run or validate", `agent_core.py:114,856`)와 정합(리뷰-only 과업 오도 없음). 이 대화가 정확히 그 예외 케이스.
+  - [B-6] 테스트 품질: `test_partial_evidence_grounding.py` 는 실 결함 포착형(확장 vs 캡 유지 대비·500 상한·legacy 캡·절단 안내 문구·프롬프트 계약·Lever D 재도입 회귀가드). monkeypatch 경로(`T._raw_execute_sql`/`save_csv`/`_apply_query_cap`/`_freeform_sql_access_error`)가 실 코드 경로 일치.
+- **qa/regression — 전부 REFUTED**:
+  - [Q-1] 원 마찰 봉인: 183행(2컬럼 협폭 ≈ 30자/행 × 183 ≈ 5.5K자)·61행 목록 모두 12,000자 예산 내 전량 표시(단위테스트 `test_medium_result_expands_fully` 183행 마지막행 확증). 300행+ 대형 목록은 예산 초과 시 절단 안내 정확 유지.
+  - [Q-2] 토큰: 최악 per-set 12,000자 ≈ 3–4K 토큰(단일 set 정상). 증가분은 소형 협폭 목록(≈5.5K자)에 국한, 광폭/대형은 기존 캡. 컨텍스트 임계 무위협.
+  - [Q-3] 웹 UX: step preview_table CSV 50행 유지(S-5 참조) — 500행 렌더 성능 무영향.
+  - [Q-4] 미확인 남발: "미확인" 은 "could not verify" 조건부(전수 확인된 단순 질답 미발동). Discovery budget(효율적 발견)과 상보(발견 실패 시 정직 표기) — 충돌 아님.
+  - [Q-5] 커버리지 갭: 하류 절단문구 파서(render.py) 정규식 회귀 없음 실측(B-1). multi-set stats·csv 없는 절단(rowcount)·경계는 코드상 무결(B-2/B-3).
+- OVERALL: BLOCKING 0 / MAJOR 0 / MINOR 0 / NIT 1(C-5 문구가 기존 예외와 이미 정합 — 현 문구로 충분, 별도 조치 불요).
+- **라이브 실측 필요분(Phase 11b)**: 코드/테스트는 "절단 시 자기교정 안내·소형 결과 전량 노출·부재/전수 단정 근거 계약·@@ 실측 유도" 증명. "실제 대화에서 부분증거 전수 단정 환각 소멸" 은 배포 후 corroboration 재측정분(미수행) → FRICTION_LEDGER `fixed:deployed:unverified-live`.
+- Human Approval: PLAN-APPROVED A+B+C+D 전부 + PR/배포 인가(AskUserQuestion 2026-07-14). Major(코어 LLM 경로) → PR/deploy 외부영향 confirm 완료.
+- Cross-ref: CHG-20260714T063200-partial-evidence-grounding(MODIFY) · FRICTION_LEDGER FR-partial-evidence-false-verification · ANCHOR 0002 §1~§3 무충돌.
