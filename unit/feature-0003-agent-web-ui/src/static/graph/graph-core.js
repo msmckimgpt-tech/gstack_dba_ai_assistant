@@ -7,7 +7,7 @@ import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds,
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
-import { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCombo, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols } from "./graph-ctxmenu.js?v=dev";
+import { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols } from "./graph-ctxmenu.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 // feature-0016 §78: PixiJS v8 렌더러 어댑터(SceneAdapter, G6.Graph 인터페이스 호환). 배선 seam.
 import { PixiGraphAdapter } from "./graph-renderer-pixi.js?v=dev";
@@ -2081,8 +2081,9 @@ function _metaInitGraph() {
     const p = _metaCtxPoint(e);
     // graph-initview: 스키마 카드("SC:")·펼친 스키마 접기 ctl("XS:") 우클릭 → 스키마 전용 메뉴로 귀속.
     //   이 prefix 를 안 벗기면 _metaGraphCtxForNode 가 모델(SC: 없는 순수 key)에서 노드를 못 찾아 무반응.
-    // graph-category(§55 A): 카테고리 밴드 요소 우클릭 — 노드 메뉴 부적합(합성 밴드) → 메뉴 숨김(무반응 방지 후속 여지).
-    if (/^CAT(H|X)?:/.test(String(id))) { _metaGraphCtxHide(); return; }
+    // graph-category(§55 A): 카테고리 밴드(CAT:/CATH:/CATX:) 우클릭 — 합성 밴드라 노드/클러스터(combo) 메뉴 부적합.
+    //   전용 카테고리 메뉴(상세·접기/펼치기·복사)로 라우팅(이전 hide stopgap 대체 + combo fall-through "클러스터 메뉴" 오노출 회귀 차단).
+    if (/^CAT(H|X)?:/.test(String(id))) { _metaGraphCtxForCategory(String(id).replace(/^CAT(H|X)?:/, ""), p.x, p.y); return; }
     if (String(id).startsWith("GB:") || String(id).startsWith("GH:") || String(id).startsWith("GX:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스/헤더/컨트롤(GX 포함, group-interact §50 REV) 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
       const gk = String(id).slice(3), sep = gk.indexOf("\u0001");
       if (sep >= 0) _metaGraphCtxForSchema(gk.slice(0, sep), p.x, p.y); else _metaGraphCtxHide();

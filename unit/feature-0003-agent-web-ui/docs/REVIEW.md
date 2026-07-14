@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260714T180125-graph-ctxmenu-category [SKIPPED:frontend-ui-minor-additive-no-backend-no-rbac] — 그래프 카테고리 밴드 우클릭 전용 메뉴 (TASK-20260714T180125-graph-ctxmenu-category)
+- Panel skip 사유(§18.8): 프론트 그래프 JS 2파일·additive(신규 메뉴 함수 1 + dispatch 1줄 라우팅 교체)·백엔드/RBAC/스키마/엔드포인트 0·비파괴. 위험 표면 = 우클릭 메뉴 dispatch 한정.
+- 적대적 자가검토(4가설 refute): ① "CAT 밴드가 여전히 combo 로 fall-through" → **refute**: Pixi `_pick`(graph-renderer-pixi.js L446-451)은 node hit 을 combo 보다 우선(L448 `if(n) return n`), CAT 배경 노드는 밴드 전체 bbox(size:[bw,bh])이고 hit-grid 는 built.nodes 무필터 포함이라 밴드 영역 우클릭은 반드시 `node:contextmenu`(kindEvt=node) 도달 → L2086 전용 라우팅. combo fall-through 불가. ② "catKey 추출 오류" → **refute**: `id.replace(/^CAT(H|X)?:/, "")` 가 CAT:/CATH:/CATX: 3종 모두 cat.key 로 정규화(좌클릭 핸들러 slice(4/5)와 동치). ③ "의존 심볼 미정의" → **refute**: `_metaGraph.catLabelOf/catCollapsed/catMembers`(graph-state)·`_metaGraphShowCategoryDetail`(동일 파일)·`_metaG6Apply`/`_metaGraphCopyText`(import·기존 combo 메뉴에서 사용) 전부 존재 확인. ④ "접기 토글이 좌클릭 CATX 와 이중 발화" → **refute**: 우클릭 메뉴 onClick 은 catCollapsed 토글+`_metaG6Apply(false)` 1회, 좌클릭 CATX 경로와 독립(동시 발화 없음).
+- 근거/대안: 대안A(L2085 hide 유지)=사용자 "밴드 우클릭 무반응/클러스터 오노출" 미해소로 기각. 대안B(combo 핸들러에서 CAT 분기)=hit-test 상 CAT 는 node 이벤트라 부적합. 채택=node 핸들러 전용 라우팅 + 전용 메뉴(combo 메뉴 구조 파리티: 상세·접기/펼치기·복사).
+- deploy_scope: included(FIRST_REQUEST) 근거로 cycle-final 후 web 재배포 사전 승인. POST-DEPLOY PB-0008 라이브 잔여.
+- Cross-ref: CHG-20260714T180125-graph-ctxmenu-category · test-runs.d/20260714T180125-graph-ctxmenu-category.md.
+
 ## REV-20260714T080000-account-subtabs-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260714T074417-account-subtabs, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 TASK 체크리스트 완료 + TEST POST-DEPLOY append + MODIFY -postverify CHG뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260714T074417-account-subtabs [SUBAGENT] (SHIP)가 정본.
 - 라이브 실측 요지: win-browser 실 Windows Chrome, 라이브 53e55bfe. 하위탭 4개·기본 account·각 전환 시 정확히 1 subpane 노출 assertion 전항목 PASS·서빙 심볼 확인·세그먼트 하위탭 바 시각 렌더(스크린샷). 1차 배포 soak false-positive 롤백→재배포 PASS(정적자산 /healthz 무관·동시부하 transient).

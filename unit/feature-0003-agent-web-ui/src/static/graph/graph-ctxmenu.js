@@ -272,6 +272,27 @@ function _metaGraphCtxForCombo(comboId, x, y) {
   ], x, y);
 }
 
+// graph-category(§55 A): 제품 카테고리 밴드(CAT:/CATH:/CATX:) 우클릭 메뉴 — 밴드는 합성 요소(모델 노드 아님)라
+//   노드/클러스터(combo) 메뉴가 부적합하다. 이전 node:contextmenu 는 _metaGraphCtxHide() stopgap 으로 숨겼고
+//   (그 이전 배포본은 hit-test 가 combo 로 fall-through 해 "스키마 클러스터" 메뉴가 오노출됐다), 이제 카테고리
+//   전용 액션(상세·접기/펼치기·복사)만 노출한다. catKey = cat.key(예: "PC:<id>" / "PC:__none__").
+function _metaGraphCtxForCategory(catKey, x, y) {
+  if (!catKey) { _metaGraphCtxHide(); return; }
+  const label = _metaGraph.catLabelOf.get(catKey) || (catKey === "PC:__none__" ? "미분류" : catKey);
+  const collapsed = _metaGraph.catCollapsed.has(catKey);
+  const members = _metaGraph.catMembers.get(catKey) || [];
+  _metaGraphCtxShow([
+    { head: true, badge: "카테고리", badgeColor: "#8a5a1f", label: label },
+    { icon: "🗂", label: "카테고리 상세", hint: `제품 정보 · 멤버 DB ${members.length}개`, onClick: () => _metaGraphShowCategoryDetail(catKey) },
+    { icon: collapsed ? "▸" : "▾", label: collapsed ? "펼치기 (밴드)" : "접기 (밴드)", hint: "멤버 스키마 클러스터 표시/숨김", onClick: () => {
+      if (_metaGraph.catCollapsed.has(catKey)) _metaGraph.catCollapsed.delete(catKey);
+      else _metaGraph.catCollapsed.add(catKey);
+      _metaG6Apply(false);
+    } },
+    { icon: "📑", label: "카테고리명 복사", onClick: () => _metaGraphCopyText(label) },
+  ], x, y);
+}
+
 // 엣지(관계선) 우클릭 메뉴 (review MAJOR-2) — 관계 자체의 신뢰도·근거·cardinality + 양끝 노드 이동.
 function _metaGraphCtxForEdge(edgeId, x, y) {
   const e = _metaGraph.edges.get(edgeId);
@@ -2305,4 +2326,4 @@ async function _metaGraphLoadNodeAnalysis(key) {
 // 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)
 
 
-export { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCombo, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols };
+export { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols };
