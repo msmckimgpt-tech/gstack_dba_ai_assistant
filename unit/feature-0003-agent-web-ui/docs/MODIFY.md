@@ -217,7 +217,19 @@ source_of_truth: true
 - Recurrence sealing: LLM-dependent 명명 → 코드 권위 명명(AUTH-1a). materialize 가드(conv/account scope·size cap·text-only·MinIO 원자성·UNIQUE version race) 전부 불변. **보안 회귀 0**.
 - 검증: `tests/test_attachment_versioning.py` 명명 정합 케이스(idempotent·이중접미 방지·확장자 강제·SEC-1) + feature-0003 회귀. §18.8 패널 REV-20260713T185846.
 - Cross-ref(정본): feature-0002 CHG-20260713T185846-attach-update-versioned · FRICTION_LEDGER FR-attachment-update-pasted-not-versioned · ANCHOR 0003 무충돌.
-
+## CHG-20260714T105200-graph-analyze-perm (그래프 AI 능동 분석 실행 권한을 하위 권한으로 분리 — Critical §12.3 인증/인가)
+- Date: 2026-07-14. 요청: AI 능동 분석 '실행' 권한을 조회(metadata.graph.read)에서 하위 권한으로 구분 + 무권한 시 버튼 UI 미표시. 하위호환=A안(최소권한, backfill 없음).
+- 변경(behavior — RBAC):
+  - `src/web_context.py`: 신규 `metadata.graph.analyze`("그래프 AI 능동 분석 실행", group=kb) + `metadata.graph.read` 설명 갱신(조회+결과열람 / 실행은 하위 권한으로 분리) + `_ensure_seed_roles` admin catchup 에 `metadata.graph.analyze` 추가(기존 admin 락아웃 방지).
+  - `src/routers/admin_metadata.py`: 실행 POST 2개 `require_permission` `metadata.graph.read`→`metadata.graph.analyze` (`/graph/analyze` 노드, `/graph/analyze-schema` 스키마) + docstring 갱신. GET status/node/columns 는 graph.read 유지(읽기).
+  - `src/static/admin.js`: `PERMISSION_DEPENDENCIES` 에 `metadata.graph.analyze → metadata.graph.read`(하위, progressive disclosure).
+  - `src/static/graph/graph-ctxmenu.js`: 능동 분석 트리거 UI 5곳 `can("metadata.graph.analyze")` 게이팅 — 노드 상세 AI 섹션(#metaGraphAiSec, 미렌더+바인딩 skip)·노드 우클릭·스키마 우클릭·combo 우클릭·클러스터 카드 버튼.
+  - tests: `test_metadata_perm_split.py`(graph.read 만으론 analyze 미부여·독립부여·admin catchup·catalog/seed) + `test_permission_dependency_map.py`(t5 graph.analyze→graph.read 종속·depth).
+- 하위호환: A안 — graph.read 보유자에게 analyze backfill 없음(명시 부여). admin 은 catchup 으로 획득. 현재 graph.read 보유자 admin 뿐 → 실질 영향 0. 데이터 마이그레이션 없음(WebSchemaMigrations 마커 불요).
+- Files: `src/web_context.py`, `src/routers/admin_metadata.py`, `src/static/admin.js`, `src/static/graph/graph-ctxmenu.js`, `tests/{test_metadata_perm_split,test_permission_dependency_map}.py`, `docs/{FUNCTION,TASK,MODIFY,REPORT,REVIEW}.md`, `docs/test-runs.d/*`.
+- Verification: py_compile + node --check(module) OK · 권한 타깃 + feature-0003 전체 스위트 PASS(회귀 0) · §18.8 보안 렌즈 적대 리뷰.
+- Rollback: 커밋 revert. grant 추가만(파괴 없음) — revert 후 admin 의 graph.analyze row 는 잔존(관리 콘솔 회수 가능).
+- 잔여: 배포 후 graph.read-only 계정 버튼 미노출·POST 403 / graph.analyze 계정 버튼·실행 정상 실증.
 ## CHG-20260714T015432-step-scroll-preserve (TASK-20260714T015432-step-scroll-preserve — 실행 단계 폴링 갱신 시 펼친 "결과 보기" 스크롤 보존, Minor §12.3 frontend-only)
 - Date: 2026-07-14. 사용자 보고: 내부 실행 단계 갱신 때마다 펼쳐 둔 "결과 보기" 스크롤이 초기값으로 리셋. RC: 두 라이브 폴링 재렌더 경로가 컨테이너를 `innerHTML=""` 로 통째 재작성 → 결과 표/미리보기·외부 목록 스크롤 0 초기화(펼침 상태는 `state.stepResultExpanded`+`_stepResultKey` 로 이미 복원되나 스크롤은 미복원).
 - Changes (`src/static/app.js`):

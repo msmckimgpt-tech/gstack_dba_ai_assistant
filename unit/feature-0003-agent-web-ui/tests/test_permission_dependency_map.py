@@ -418,13 +418,18 @@ def test_t5_metadata_group_gate_hierarchy():
     # graph-perm-split: 그래프 뷰 조회는 묶음에서 분리 — console.access 직속(형제).
     assert DEPS.get("metadata.graph.read") == "console.access", \
         "metadata.graph.read 는 graph-perm-split 후 console.access 직속이어야 함(묶음 종속 아님)"
-    # kb 그룹 트리 depth: 묶음=0(그룹 루트), 편집 4종=1(묶음 자식), graph.read=0(console.access 직속 = 그룹 루트)
+    # graph-analyze-perm(2026-07-14): AI 능동 분석 실행은 조회(graph.read)의 하위 권한 — 종속 부모=graph.read.
+    assert DEPS.get("metadata.graph.analyze") == "metadata.graph.read", \
+        "metadata.graph.analyze 는 graph-analyze-perm 후 metadata.graph.read 하위여야 함(실행=조회의 하위)"
+    # kb 그룹 트리 depth: 묶음=0(그룹 루트), 편집 4종=1(묶음 자식), graph.read=0(console.access 직속 = 그룹 루트),
+    #   graph.analyze=1(graph.read 자식 — 조회의 하위 실행 권한).
     kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
     tree = dict(_order_items_as_tree(kb_codes))
     assert tree.get("kb.ingest.manual") == 0, "kb.ingest.manual 이 그룹 루트(depth 0) 아님"
     for m in _META_EDIT4:
         assert tree.get(m) == 1, f"{m} 이 묶음 아래(depth 1) 아님 — 계층 회귀"
     assert tree.get("metadata.graph.read") == 0, "metadata.graph.read 가 그룹 루트(depth 0) 아님 — 분리 회귀"
+    assert tree.get("metadata.graph.analyze") == 1, "metadata.graph.analyze 가 graph.read 아래(depth 1) 아님 — 하위 권한 회귀"
 
 
 def test_t6_metadata_reachable_when_gate_off():

@@ -207,14 +207,18 @@ function _metaGraphCtxForNode(key, x, y) {
     if (pk) items.push({ icon: "📄", label: "소속 테이블 상세", onClick: () => _metaGraphShowDetail(pk) });
   }
   items.push({ sep: true });
-  items.push({
-    // graph-funcproc(REQ ④): '재분석' 라벨 제거 — 능동 분석 재실행이 곧 재분석(UX 중복 정리).
-    icon: "✨", label: "AI 능동 분석", hint: "관련 노드 자동 분석 · 상세 패널 버튼 hover 로 지침 입력",
-    // 상세 카드를 먼저 열어 AI box 에 진행이 보이게 한 뒤 트리거(ShowDetail 은 내부 catch 라 항상 resolve).
-    // §18.8 패널(MINOR): ctxmenu 경로는 지침 미전송 — 이전 노드의 stale 지침이 화면 표시 없이 암묵
-    // 적용되는 것을 차단. 지침은 popover(입력이 눈에 보이는 경로)로만 전송한다.
-    onClick: () => { _metaGraphShowDetail(key).then(() => _metaGraphAnalyze(key, scope)); },
-  });
+  // graph-analyze-perm(Critical §12.3, 2026-07-14): AI 능동 분석 실행은 metadata.graph.analyze 게이트 —
+  //   미보유 시 메뉴 항목 미노출(요청: 권한 없으면 버튼 UI 미표시). 실 거부는 백엔드 403 이 최종 경계.
+  if ((typeof can === "function") && can("metadata.graph.analyze")) {
+    items.push({
+      // graph-funcproc(REQ ④): '재분석' 라벨 제거 — 능동 분석 재실행이 곧 재분석(UX 중복 정리).
+      icon: "✨", label: "AI 능동 분석", hint: "관련 노드 자동 분석 · 상세 패널 버튼 hover 로 지침 입력",
+      // 상세 카드를 먼저 열어 AI box 에 진행이 보이게 한 뒤 트리거(ShowDetail 은 내부 catch 라 항상 resolve).
+      // §18.8 패널(MINOR): ctxmenu 경로는 지침 미전송 — 이전 노드의 stale 지침이 화면 표시 없이 암묵
+      // 적용되는 것을 차단. 지침은 popover(입력이 눈에 보이는 경로)로만 전송한다.
+      onClick: () => { _metaGraphShowDetail(key).then(() => _metaGraphAnalyze(key, scope)); },
+    });
+  }
   items.push({
     icon: "📑", label: n.label === "GlossaryTerm" ? "이름 복사" : "FQN 복사",
     onClick: () => _metaGraphCopyText(n.fqn || n.name || key),
@@ -243,7 +247,10 @@ function _metaGraphCtxForSchema(schemaKey, x, y) {
   // 클러스터 상세는 그래프를 펼치지 않고 API 로 테이블 목록을 조회(접힌 카드에서 "펼치지 않고 훑어보기").
   items.push({ icon: "📋", label: "클러스터 상세", hint: "테이블 목록(펼치지 않음)", onClick: () => _metaGraphShowClusterDetailById(schemaKey) });
   // routine-dbanalysis(§53): DB(스키마) 단위 AI 능동 분석 — 미분석 테이블 일괄 시드(confirm 에 대상 수 표시).
-  items.push({ icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블·함수·프로시저", onClick: () => _metaGraphAnalyzeSchema(schemaKey) });
+  // graph-analyze-perm(Critical §12.3, 2026-07-14): metadata.graph.analyze 게이트 — 미보유 시 미노출.
+  if ((typeof can === "function") && can("metadata.graph.analyze")) {
+    items.push({ icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블·함수·프로시저", onClick: () => _metaGraphAnalyzeSchema(schemaKey) });
+  }
   items.push({ icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) });
   _metaGraphCtxShow(items, x, y);
 }
@@ -259,7 +266,8 @@ function _metaGraphCtxForCombo(comboId, x, y) {
     (isTerms || !_metaGraph.schemaExpanded.has(comboId)) ? null
       : { icon: "▦", label: "접기 (카드로)", onClick: () => _metaGraphCollapseSchema(comboId) },
     // routine-dbanalysis(§53): DB 단위 능동 분석 — 용어 묶음(합성)은 제외.
-    isTerms ? null : { icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블·함수·프로시저", onClick: () => _metaGraphAnalyzeSchema(comboId) },
+    // graph-analyze-perm(Critical §12.3, 2026-07-14): metadata.graph.analyze 게이트 — 미보유 시 미노출.
+    (isTerms || !((typeof can === "function") && can("metadata.graph.analyze"))) ? null : { icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블·함수·프로시저", onClick: () => _metaGraphAnalyzeSchema(comboId) },
     isTerms ? null : { icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) },
   ], x, y);
 }
@@ -1441,19 +1449,27 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   // 항목2: AI 능동 분석 섹션 — 버튼으로 트리거(백그라운드 재귀), box 에 진행/결과 렌더.
   //   graph-funcproc(ADR-017, REQ ⑤): 버튼 hover 시 지침 입력 popover(툴팁형) — 입력하면 LLM 이
   //   자율 판단해 분석에 반영. 입력 없이 클릭하면 기존과 동일(지침 없는 분석).
+  //   graph-analyze-perm(Critical §12.3, 2026-07-14): **게이트 분리** — 결과 조회는 metadata.graph.read,
+  //   실행(버튼·지침 popover)은 하위 권한 metadata.graph.analyze. 섹션 컨테이너·결과 box(metaGraphAiBox)는
+  //   항상 렌더해 조회 권한자가 기존 AI 분석 결과·진행 상태를 열람하고(백엔드 GET /graph/analyze/node 도
+  //   graph.read 게이트, graph.read 설명의 "결과·진행 상태 열람" 계약과 정합), '능동 분석'/'분석 시작' 실행
+  //   컨트롤만 _canAnalyze 로 게이트한다(요청: 권한 없으면 버튼 UI 미표시). 실 거부는 백엔드 403 이 최종 경계.
+  const _canAnalyze = (typeof can === "function") && can("metadata.graph.analyze");
   parts.push(`<div class="admin-meta-graph-sec admin-meta-graph-ai" id="metaGraphAiSec">`);
-  parts.push(`<div class="admin-meta-graph-ai-head"><h4>AI 능동 분석</h4><button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn" title="hover: 분석 지침 입력">✨ 능동 분석</button></div>`);
-  parts.push(`<div class="admin-meta-ai-pop" id="metaGraphAiPop" hidden>` +
-    `<label for="metaGraphAiPrompt">분석 지침 (선택, ≤400자)</label>` +
-    `<textarea id="metaGraphAiPrompt" rows="2" maxlength="400" placeholder="예: 결제 흐름 관점에서 연관 테이블 위주로 분석"></textarea>` +
-    `<div class="admin-meta-ai-pop-foot"><span class="admin-meta-graph-muted">지침은 AI가 자율 판단해 분석 내용·탐색 방향에 반영합니다.</span>` +
-    `<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiPopGo">✨ 분석 시작</button></div></div>`);
-  parts.push(`<div class="admin-meta-graph-ai-box" id="metaGraphAiBox"><span class="admin-meta-graph-muted">이 노드에서 시작해 관련 노드를 AI가 재귀적으로 분석합니다(백그라운드).</span></div>`);
+  parts.push(`<div class="admin-meta-graph-ai-head"><h4>AI 능동 분석</h4>${_canAnalyze ? `<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn" title="hover: 분석 지침 입력">✨ 능동 분석</button>` : ``}</div>`);
+  if (_canAnalyze) {
+    parts.push(`<div class="admin-meta-ai-pop" id="metaGraphAiPop" hidden>` +
+      `<label for="metaGraphAiPrompt">분석 지침 (선택, ≤400자)</label>` +
+      `<textarea id="metaGraphAiPrompt" rows="2" maxlength="400" placeholder="예: 결제 흐름 관점에서 연관 테이블 위주로 분석"></textarea>` +
+      `<div class="admin-meta-ai-pop-foot"><span class="admin-meta-graph-muted">지침은 AI가 자율 판단해 분석 내용·탐색 방향에 반영합니다.</span>` +
+      `<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiPopGo">✨ 분석 시작</button></div></div>`);
+  }
+  parts.push(`<div class="admin-meta-graph-ai-box" id="metaGraphAiBox"><span class="admin-meta-graph-muted">${_canAnalyze ? "이 노드에서 시작해 관련 노드를 AI가 재귀적으로 분석합니다(백그라운드)." : "AI 능동 분석 결과가 아직 없습니다. (실행 권한이 있으면 여기서 능동 분석을 시작할 수 있습니다.)"}</span></div>`);
   parts.push(`</div>`);
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
-  // 버튼 바인딩(+hover 지침 popover) + 기존 분석 결과가 있으면 즉시 로드.
-  _metaGraphBindAiPopover(self.key, selfScopeKey);
+  // 실행 컨트롤 바인딩(+hover 지침 popover) — _canAnalyze 일 때만(버튼·popover 미렌더 시 skip). 결과 로드는 아래 무조건.
+  if (_canAnalyze) _metaGraphBindAiPopover(self.key, selfScopeKey);
   // graph-focus-selected: 상세 패널의 선택 노드로 카메라만 팬한다(그래프 구조·선택 상태 불변 —
   //   _metaGraphPanToRelation 패턴 재사용). 렌더 안 된 노드(접힌 스키마 등)면 안내만 하고 팬 skip.
   const focusSelBtn = document.getElementById("metaGraphFocusSelBtn");
@@ -2185,7 +2201,11 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   //   "−" 컨트롤은 큰 스키마에서 뷰포트 밖으로 벗어나 접근 불가하던 문제 해소. 패널 body 클릭으로 접히지 않게
   //   접기는 이 버튼(및 기존 "−"/우클릭 메뉴)로만 트리거.
   const _canCollapse = comboId && _metaGraph.schemaExpanded && _metaGraph.schemaExpanded.has(comboId);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}${comboId && comboId !== _META_TERMS_COMBO ? ` <button type="button" class="amgr-link" id="metaGraphClusterAnalyzeBtn" title="이 DB(스키마)의 미분석 항목(테이블·함수·프로시저) 전체를 AI 능동 분석합니다 — 실행 전 대상 수를 확인합니다">✨ DB 전체 AI 능동 분석</button>` : ""}</div>`);
+  // graph-analyze-perm(Critical §12.3, 2026-07-14): 클러스터 상세 카드의 'DB 전체 AI 능동 분석' 버튼도
+  //   metadata.graph.analyze 게이트 — 미보유 시 미렌더(요청: 권한 없으면 버튼 UI 미표시). 바인딩(하단
+  //   getElementById)은 null-safe 라 렌더 조건만 가드하면 충분. 실 거부는 백엔드 403 이 최종 경계.
+  const _canAnalyzeCluster = (typeof can === "function") && can("metadata.graph.analyze");
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}${(comboId && comboId !== _META_TERMS_COMBO && _canAnalyzeCluster) ? ` <button type="button" class="amgr-link" id="metaGraphClusterAnalyzeBtn" title="이 DB(스키마)의 미분석 항목(테이블·함수·프로시저) 전체를 AI 능동 분석합니다 — 실행 전 대상 수를 확인합니다">✨ DB 전체 AI 능동 분석</button>` : ""}</div>`);
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {

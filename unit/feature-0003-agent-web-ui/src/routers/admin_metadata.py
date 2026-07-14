@@ -1798,8 +1798,8 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
     })
 
 @router.post("/api/admin/metadata/graph/analyze")
-async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 metadata.graph.read(graph-perm-split 2026-07-13 후 독립 권한 — kb.ingest.manual 묶음이 더 이상 함의하지 않음).
+async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('metadata.graph.analyze'))) -> JSONResponse:
+    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 metadata.graph.analyze(graph-analyze-perm 2026-07-14 후 조회 metadata.graph.read 에서 분리된 실행 전용 하위 권한 — LLM 호출·KB 갱신·비용 유발 특권 동작).
 
     body: {node_key, scope_key?, depth?, node_budget?, prompt?}. run 을 만들고 즉시 202 반환 — 실제
     분석은 insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
@@ -1836,8 +1836,8 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
                         status_code=202)
 
 @router.post("/api/admin/metadata/graph/analyze-schema")
-async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """DB(스키마) 단위 AI 능동 분석(§53·§55). 권한 metadata.graph.read(노드 분석과 동일 권한 — graph-perm-split 2026-07-13 후 kb.ingest.manual 묶음과 독립).
+async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(app.require_permission('metadata.graph.analyze'))) -> JSONResponse:
+    """DB(스키마) 단위 AI 능동 분석(§53·§55). 권한 metadata.graph.analyze(노드 분석과 동일 실행 권한 — graph-analyze-perm 2026-07-14 후 조회 metadata.graph.read 에서 분리).
 
     body: {schema_key, scope_key?, prompt?, only_missing?=true, dry_run?}. 스키마 소속 Table·Routine 을
     depth=0 시드로 일괄 enqueue — §55(REQ-20260706 ③): 시드별 직계 컬럼 + per-seed 앵커 게이팅 재귀
@@ -1999,7 +1999,7 @@ async def admin_metadata_graph_relationship_curate(request: Request,
 
 @router.get("/api/admin/metadata/graph/analyze")
 def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """분석 run 진행률 폴링(항목2). 권한 kb.ingest.manual. ?run_id=<hex>.
+    """분석 run 진행률 폴링(항목2). 권한 metadata.graph.read(결과·진행 상태 조회 — 실행은 graph.analyze). ?run_id=<hex>.
     반환 {status, enqueued, done, failed, done_keys[...]} — 프론트가 done_keys 로 분석 마커 표시."""
     run_id = (request.query_params.get("run_id") or "").strip()
     if not run_id:
@@ -2012,7 +2012,7 @@ def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.re
 
 @router.get("/api/admin/metadata/graph/analyze/node")
 def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """노드의 최신 분석 상태/결과(상세 패널, 항목2). 권한 kb.ingest.manual. ?node=<key>[&scope=<ds>].
+    """노드의 최신 분석 상태/결과(상세 패널, 항목2). 권한 metadata.graph.read(결과 조회 — 실행은 graph.analyze). ?node=<key>[&scope=<ds>].
     반환 {status:'none'|'pending'|'running'|'done'|'failed', analysis:{summary,relationships,usage,caveats}}."""
     node = (request.query_params.get("node") or "").strip()
     if not node:
@@ -2027,7 +2027,7 @@ def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.requ
 
 @router.get("/api/admin/metadata/graph/analyze/status")
 def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """스코프 내 노드들의 분석 상태 **일괄** 집계(그래프 초기 렌더 마커용, 항목1). 권한 kb.ingest.manual.
+    """스코프 내 노드들의 분석 상태 **일괄** 집계(그래프 초기 렌더 마커용, 항목1). 권한 metadata.graph.read(상태 조회 — 실행은 graph.analyze).
     ?scope=<ds> — 그 datasource 스코프의 완료/진행중 node_key 집합을 반환한다. 프론트는 그래프 로드/검색/확장
     직후 이 결과로 마커(보라 '분석됨'·주황 '분석중')와 역할 표식(node-role-viz)을 **노드 클릭 없이** 즉시 적용한다.
     반환 {done_keys:[...], running_keys:[...], roles:{node_key:role}}. PG 미가용 시 빈 집합(마커 없음 — 그래프는 정상)."""
@@ -2042,7 +2042,7 @@ def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(a
 
 @router.get("/api/admin/metadata/graph/columns")
 def admin_metadata_graph_columns(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """더블클릭 컬럼 즉석 introspection(항목3). 권한 kb.ingest.manual. ?node=<table key `scope:schema.table`>.
+    """더블클릭 컬럼 즉석 introspection(항목3). 권한 metadata.graph.read(그래프 조회 — 실행은 graph.analyze). ?node=<table key `scope:schema.table`>.
 
     그래프 투영(SSOT=column_descriptions)에 Column 노드가 없어(큐레이션/분석 미진행) 더블클릭해도
     컬럼이 안 펼쳐지던 문제를 해소한다. 그래프에 컬럼이 없으면 **데이터소스 information_schema 를 즉석
