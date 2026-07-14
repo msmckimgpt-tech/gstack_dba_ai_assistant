@@ -630,6 +630,39 @@ def _valid_label(lab) -> str:
     return s[:_LABEL_MAX_CHARS]
 
 
+def _ds_display_label(cur, datasource_key) -> str:
+    """scope_key(해시) → 사용자 지정 datasource 식별자 (agent_runtime.datasource_health 스냅샷, TASK-0255 R2).
+
+    사용자 리포트(2026-07-14): 'AI 운영 현황' 의 cluster_label 활동 target 이 해시 원본
+    (mssql-06656002eda6)으로 노출 → 사용자 식별자(mssql-qa-idc)로 기록한다. kv 라벨 캐시
+    네임스페이스는 여전히 datasource_key(해시) — 표시만 바꾸고 캐시 무효화는 일으키지 않는다.
+    부재/실패 → key 그대로(fail-soft). SAVEPOINT 격리 — 주입 non-autocommit conn 에서 실패가
+    tx 를 오염시키지 않게(routine fetch 동형)."""
+    try:
+        cur.execute("SAVEPOINT sc_ds_label")
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            "SELECT datasource_label FROM agent_runtime.datasource_health WHERE scope_key = %s",
+            (datasource_key,),
+        )
+        r = cur.fetchone()
+        try:
+            cur.execute("RELEASE SAVEPOINT sc_ds_label")
+        except Exception:
+            pass
+        lab = str(r[0]).strip() if r and r[0] else ""
+        return lab or str(datasource_key)
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sc_ds_label")
+            cur.execute("RELEASE SAVEPOINT sc_ds_label")
+        except Exception:
+            pass
+        return str(datasource_key)
+
+
 def _label_ns_hash(datasource_key, eff_schema) -> str:
     """kv 캐시 key 네임스페이스 고정폭 해시(패널 m3) — ds(≤64)+schema(≤256) 원문 조합은 kv.key
     varchar(128)을 초과해 INSERT silent-fail → 캐시 부전 → 매 pass LLM 재호출 누수가 가능했다."""
@@ -661,6 +694,9 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
         from . import llm as _llm
     except Exception:
         return out
+    # 표시용 datasource 식별자(해시 → 사용자 지정 라벨) — LLM 프롬프트 문맥 + llm_usage.target 기록.
+    # 미스가 있을 때만 1회 조회(전량 캐시 적중 시 추가 쿼리 0 — 패널 m2 정신과 정합).
+    ds_label = _ds_display_label(cur, datasource_key)
     for start in range(0, len(misses), _LABEL_CLUSTERS_PER_CALL):
         batch = misses[start:start + _LABEL_CLUSTERS_PER_CALL]
         for (cl, _k) in batch:
@@ -671,7 +707,7 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
                     cl["summaries"] = []
         payload = {
             "task": "cluster_label",
-            "datasource": datasource_key,
+            "datasource": ds_label,
             "schema": eff_schema,
             "clusters": [
                 {"idx": cl["idx"],
