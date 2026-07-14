@@ -25,7 +25,7 @@ source_of_truth: true
 - [x] agent_core.py: `_MSSQL_DIALECT_GUIDANCE` 다중 DB 발견 지침
 - [x] tests/test_mssql_crossdb_discovery.py(33) + 전체 회귀 **1967 passed/2 skipped/0 failed(RC=0)**
 - [x] 라이브 QA(mssql-web-qa) 수정 검증: describe_columns([Shop],T_ItemInfo)=15컬럼·search_tables('Buy',Shop)=L_Item_Buy_Log 발견
-- [ ] §18.8 적대 패널(security+backend+qa) — REV-20260714T161500. 배포(ask-worker+web 재빌드) 후 라이브 대화 corroboration 재측정 → FRICTION_LEDGER `verified`
+- [x] §18.8 적대 패널(security+backend+qa) — REV-20260714T161500(MAJOR3 전건 수정·재검증). **배포 완료**(PR #790 merge b364e964 → deploy-web 4서비스 재빌드·soak 통과·baked end-state 실증, CHG-20260714T171000-mssql-crossdb-deploy). 라이브 대화 corroboration 재측정 → FRICTION_LEDGER `verified`(다음 audit)
 
 ## TASK-20260713T171821-readonly-query-shapes (current cycle) — read-only 쿼리 shape 과차단 보정: 최상위 UNION + 읽기전용 SHOW (Critical §12.3, conversation_audit FR-readonly-query-shapes-overblock)
 - 출처: `/_dqa:conversation_audit "동적 쿼리 및 테이블 변경사항 추가 리뷰"` (2026-07-13, 사용자 명시 — "여전히 유사한 이슈… '보안 정책상 차단된 SQL' 이 발생하지 않고 정상 조회"). 사용자 승인 방식=**UNION + 읽기전용 SHOW**(AskUserQuestion 2026-07-13).

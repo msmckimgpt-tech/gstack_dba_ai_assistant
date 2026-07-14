@@ -218,3 +218,9 @@ source_of_truth: true
 - **검증**: 신규 `tests/test_mssql_crossdb_discovery.py`(33 test — dialect 3-part 생성·MySQL 골든 db-무시·resolver 재해석/거부·cross-DB 검색·교정힌트·describe_table 3-part) + 전체 회귀 **1967 passed/2 skipped/0 failed**. 라이브 QA(mssql-web-qa): `describe_columns([Shop],T_ItemInfo)`=15컬럼·`search_tables('Buy',Shop)`=`L_Item_Buy_Log`(사용자 작업 참조 테이블) 발견. **라이브 대화 실측**(실제 리뷰 대화에서 발견 성공)은 배포 후 다음 audit corroboration(MSSQL describe_table 빈-헤더율 감소) 재측정 시 `verified`.
 - 위험등급 **Critical**(§12.3 데이터소스 접근 모델) — 사용자 AskUserQuestion 승인(2026-07-14, "완전 DB인지"). §18.8 적대 패널(security+backend+qa) 결과 REVIEW.md 기록.
 - Cross-ref: FRICTION_LEDGER `FR-mssql-crossdb-structured-discovery` · REVIEW REV-20260714T161500-mssql-crossdb-discovery · ANCHOR 0002 §1~§3(core LLM tool 경로·모듈 배치) 무충돌.
+
+## CHG-20260714T171000-mssql-crossdb-deploy (배포 완료 기록 + 원장 상태 정합, docs-only)
+- Date: 2026-07-14. CHG-20260714T161500-mssql-crossdb-structured-discovery 후속 — PR #790 merge(main `b364e964`) 후 배포 완료.
+- 배포: `sudo -E bin/deploy-web.sh`(=deploy-all) 무중단 롤아웃 — web-a/web-b 롤링(git_commit=b364e964, soak 90s 통과·롤백 0) + insight-worker/ask-worker 재빌드(mysql-ai-agent:b364e964) + gateway reconcile(드리프트 0). **4서비스 GIT_COMMIT=b364e964 healthy**. **배포 이미지 baked end-state 실증**(deployed `/app/modules/dialects.py` 직접 로드, mssql-web-qa): `describe_columns([Shop],T_ItemInfo)`=15컬럼 · `routine_definition(schema='',db='Shop')`=1345자(`[Shop].sys.sql_modules` cross-DB) · sys.sql_modules 사용 True.
+- 코드 변경 0(docs-only) — FRICTION_LEDGER `fixed:undeployed`→`fixed:deployed:unverified-live` + TASK 체크박스 정합. 라이브 대화 실측(MSSQL 발견 빈결과율 감소)은 다음 audit corroboration 재측정 시 `verified`.
+- Cross-ref: FRICTION_LEDGER FR-mssql-crossdb-structured-discovery · REV-20260714T171000-mssql-crossdb-deploy.
