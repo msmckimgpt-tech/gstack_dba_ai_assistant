@@ -296,3 +296,14 @@ source_of_truth: true
 - 검증: `node --check` PASS · `tests/verify_step_result_scroll_preserve.mjs` **29/29 PASS**(+5: [3b] rAF 배선·[7] 동기+rAF 이중 복원·0-clamp 복구·큐 소진). 로컬 chromium 다운로드 차단으로 real-browser clamp 는 미재현 — 배포 후 사용자/PB-0008 확인.
 - Files: `src/static/app.js`, `tests/verify_step_result_scroll_preserve.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST,REPORT}.md`, `docs/test-runs.d/20260714T053522-step-scroll-raf.md`.
 - Cross-ref: REV/TASK/AC-SSP-4-20260714T053522 · 원천 REQ-20260714T015432-step-scroll-preserve.
+
+## CHG-20260714T180314-graph-entry-help (TASK-20260714T1803-graph-entry-help — 그래프 뷰 첫 입장 도움말 팝업 + 중간버튼 커서, Minor §12.3 frontend-only additive)
+- Date: 2026-07-14. 사용자 요청: 그래프 뷰 첫 입장 조작 도움말 팝업(닫기·재확인 가능) + 마우스 중간 버튼 클릭 시 커서 적절 변경. `/_template:entry` arg-given. 그래프 도메인 정본 feature-0016.
+- Changes:
+  - `src/static/admin.html`: 툴바 `❓ 도움말` 버튼(`#metadataGraphHelpBtn`, 초기화·상세 옆) + 캔버스 wrap(role=img 밖 형제 — 접근성) 내 `#metadataGraphHelp` 오버레이(role=dialog·aria-modal, 8개 조작 항목·읽기전용 고지·✕/알겠습니다).
+  - `src/static/graph/graph.css`: `.amg-help-*` 스타일 — `.admin-meta-graph-canvas-wrap`(position:relative) 기준 절대배치 inset:0·z-index 40(줌6/상태6/미니맵5/보기옵션30 위)·중앙 카드+반투명 backdrop·amgHelpIn 애니·좁은 폭 라벨 세로 스택. 토큰(--surface/--border/--text*/--primary)만 써 라이트/다크 자동.
+  - `src/static/graph/graph-core.js`: `_metaGraphShowHelp`/`_metaGraphHideHelp`/`_metaGraphMaybeAutoHelp`/`_metaGraphBindHelp` 신설(+`_META_HELP_SEEN_KEY`/`_metaHelpKeydown`). `_metaShowGraph` 에 `_metaGraphBindHelp()`(멱등 `_helpBound`) + 검색 포커스 뒤 `_metaGraphMaybeAutoHelp()` 훅. 첫 진입 1회 자동노출=`localStorage("metaGraphHelpSeen")` 미확인 시만, 닫으면 seen set. 닫기 4경로(✕·알겠습니다·배경 target 판정·Esc capture)·a11y 포커스 이동/복귀·localStorage try/catch 안전 강등. 중간버튼: 기존 container `mousedown` button===1 핸들러에 `cursor="grabbing"` + mouseup(buttons&4 유지 가드)·blur 복원.
+- 무회귀: 순수 additive. 백엔드/엔드포인트/RBAC/스키마 0 · 기존 그래프 상호작용(팬·노드드래그·우클릭·줌·미니맵)·이벤트 바인딩 0 · cache-buster `?v=dev` placeholder(빌드 content-hash 자동주입) 수기편집 없음.
+- 검증: `node --check --input-type=module`(graph-core.js) PASS · admin.html 도움말 블록 태그 균형 · graph.css 중괄호 215/215 · 심볼 전수 존재. PB-0008 라이브=POST-DEPLOY 이연(정적 baked).
+- Files: `src/static/admin.html`, `src/static/graph/graph.css`, `src/static/graph/graph-core.js`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260714T180314-graph-entry-help.md`.
+- Cross-ref: REV/TASK-20260714T1803-graph-entry-help · TEST test-runs.d/20260714T180314-graph-entry-help.md · ANCHOR 0003 무충돌.

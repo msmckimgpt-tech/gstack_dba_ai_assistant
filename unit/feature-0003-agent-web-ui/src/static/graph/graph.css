@@ -441,3 +441,53 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
   .admin-meta-graph-canvas { height: clamp(320px, 60dvh, 640px); }
   .admin-meta-graph-detail { height: auto; max-height: 380px; }
 }
+
+/* ── graph-entry-help: 첫 입장 조작 안내 팝업 ────────────────────────────────────
+   .admin-meta-graph-canvas-wrap(position:relative) 기준 절대배치라 캔버스 영역만 덮는다(상세 패널 제외).
+   z-index 40 = 캔버스 오버레이(줌 6·상태 6·미니맵 5·보기옵션 30) 위. 토큰(--surface/--border/--text*/--primary)만
+   써서 라이트·다크 테마 자동 대응. 표시 토글은 [hidden] 속성(graph-core.js _metaGraphBindHelp 가 조작). */
+.amg-help-overlay {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.amg-help-overlay[hidden] { display: none; }
+.amg-help-backdrop { position: absolute; inset: 0; background: rgba(15, 23, 42, .34); backdrop-filter: blur(1.5px); }
+.amg-help-card {
+  position: relative; z-index: 1;
+  width: min(460px, 100%); max-height: 100%; overflow-y: auto;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface, #fff); box-shadow: 0 10px 40px rgba(15, 23, 42, .28);
+  animation: amgHelpIn .16s ease-out;
+}
+@keyframes amgHelpIn { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+.amg-help-head { display: flex; align-items: flex-start; gap: 10px; }
+.amg-help-title { margin: 0; font-size: 15px; font-weight: 700; color: var(--text); flex: 1 1 auto; }
+.amg-help-x {
+  flex: none; border: 0; background: none; cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 6px; color: var(--text-muted);
+}
+.amg-help-x:hover { color: var(--text); background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
+.amg-help-x:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.amg-help-sub { margin: 8px 0 12px; font-size: 12px; line-height: 1.5; color: var(--text-2, var(--text)); }
+.amg-help-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.amg-help-list li { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; line-height: 1.45; }
+.amg-help-k { flex: none; width: 118px; font-weight: 700; color: var(--primary, #2563eb); }
+.amg-help-d { flex: 1 1 auto; min-width: 0; color: var(--text-2, var(--text)); }
+.amg-help-foot {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--border);
+}
+.amg-help-ok {
+  flex: none; appearance: none; cursor: pointer;
+  padding: 7px 16px; border: 0; border-radius: 8px; font-size: 12.5px; font-weight: 700;
+  background: var(--primary, #2563eb); color: #fff;
+}
+.amg-help-ok:hover { background: var(--primary-dark, #1d4ed8); }
+.amg-help-ok:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.amg-help-reopen { flex: 1 1 auto; font-size: 11px; color: var(--text-muted); }
+/* 좁은 폭(상세 패널 펼침·모바일)에서 조작 라벨을 위로 쌓아 설명이 눌리지 않게 한다. */
+@media (max-width: 520px) {
+  .amg-help-list li { flex-direction: column; gap: 1px; }
+  .amg-help-k { width: auto; }
+}
