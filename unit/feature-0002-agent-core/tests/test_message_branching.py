@@ -205,3 +205,16 @@ def test_load_display_branch_state_parses_and_defaults():
     assert _backend().load_display_branch_state(_FakeConn(cur2), conversation_id="c1") == {
         "has_branches": False, "active_leaf_id": None
     }
+
+
+def test_branch_query_casts_nullable_params_for_pg_type_inference():
+    """POST-DEPLOY hotfix 회귀 가드: 비-windowed 브랜치 대화는 floor/ceil/joined=None →
+    psycopg 가 untyped NULL 전송 → `$n IS NULL` 에서 PG "could not determine data type of
+    parameter" 로 로더 전체 실패(PB-0008 라이브 reanswer 에서 적발). 각 nullable 파라미터에
+    명시 캐스팅(::bigint/::timestamptz)이 있어야 한다. (mock cursor 는 SQL 실행 안 하므로 이
+    문자열 단언으로 회귀 가드 — 실검증은 PB-0008.)"""
+    q = rb._PG_LOAD_CORE_MESSAGES_BRANCH
+    assert "%(active_leaf_id)s::bigint" in q, "active_leaf_id 캐스팅 누락(첫 메시지 편집 None)"
+    assert "%(floor_ca)s::timestamptz" in q, "floor_ca 캐스팅 누락(비-windowed None)"
+    assert "%(ceil_ca)s::timestamptz" in q, "ceil_ca 캐스팅 누락"
+    assert "%(joined_ca)s::timestamptz" in q, "joined_ca 캐스팅 누락"

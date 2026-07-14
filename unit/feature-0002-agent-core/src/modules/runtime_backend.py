@@ -334,12 +334,16 @@ SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conver
 #   window 술어(floor/ceil/joined + recall_floor)는 _PG_LOAD_CORE_MESSAGES_WINDOWED 와 동일하게
 #   최종 SELECT 에 합성(가려진 구간 물리 배제 유지, SECURITY §21). floor/ceil/joined 가 전부 NULL
 #   이면 술어가 항상 TRUE → 비-windowed 와 동치. ORDER BY id ASC LIMIT = 기존 로더 tail 의미 유지.
+#   **명시 캐스팅 필수(POST-DEPLOY hotfix)**: 비-windowed 브랜치 대화는 floor/ceil/joined 가 전부
+#   None → psycopg 가 untyped NULL 로 전송 → `$n IS NULL` 에서 PG "could not determine data type of
+#   parameter" 로 로더 전체 실패(WINDOWED 쿼리는 windowed 시에만 호출돼 항상 non-None 이라 무사).
+#   active_leaf_id 도 첫 메시지 편집 시 None 가능 → 동일. 각 파라미터에 ::bigint/::timestamptz 캐스팅.
 _PG_LOAD_CORE_MESSAGES_BRANCH = """
 WITH RECURSIVE path AS (
     SELECT id, role, content, tool_calls, tool_call_id, name, sender_account_id,
            parent_message_id, created_at, recall_floor_created_at
     FROM agent_runtime.core_messages
-    WHERE conversation_id = %(conversation_id)s AND id = %(active_leaf_id)s
+    WHERE conversation_id = %(conversation_id)s AND id = %(active_leaf_id)s::bigint
     UNION ALL
     SELECT m.id, m.role, m.content, m.tool_calls, m.tool_call_id, m.name, m.sender_account_id,
            m.parent_message_id, m.created_at, m.recall_floor_created_at
@@ -349,12 +353,12 @@ WITH RECURSIVE path AS (
 )
 SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
 FROM path
-WHERE (%(floor_ca)s IS NULL OR created_at >= %(floor_ca)s)
-  AND (%(ceil_ca)s IS NULL OR created_at <= %(ceil_ca)s
-       OR (%(joined_ca)s IS NOT NULL AND created_at >= %(joined_ca)s))
+WHERE (%(floor_ca)s::timestamptz IS NULL OR created_at >= %(floor_ca)s::timestamptz)
+  AND (%(ceil_ca)s::timestamptz IS NULL OR created_at <= %(ceil_ca)s::timestamptz
+       OR (%(joined_ca)s::timestamptz IS NOT NULL AND created_at >= %(joined_ca)s::timestamptz))
   AND NOT (recall_floor_created_at IS NOT NULL
-           AND %(floor_ca)s IS NOT NULL
-           AND recall_floor_created_at < %(floor_ca)s)
+           AND %(floor_ca)s::timestamptz IS NOT NULL
+           AND recall_floor_created_at < %(floor_ca)s::timestamptz)
 ORDER BY id ASC
 LIMIT %(limit)s
 """

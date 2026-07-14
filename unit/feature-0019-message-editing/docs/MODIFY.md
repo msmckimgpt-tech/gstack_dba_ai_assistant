@@ -78,3 +78,14 @@ source_of_truth: true
 - 성격: 편집 기능을 실제 활성화(has_branches true 경로 생성). 비분기 대화는 여전히 기존 경로(무회귀).
 - 검증: ROUTEMAP·codenav 게이트 PASS + make test import OK(브랜치 15 + route-parity PASS) + §18.8 보안 리뷰.
 - 결정: DEC-6(edit 재사용 = fix-with-ai 재dispatch 패턴)·DEC-7(Phase 1 그룹 편집 차단, 서버 authz + UI 게이트).
+
+## CHG-20260714-0005 (POST-DEPLOY hotfix — 브랜치 로더 파라미터 타입추론)
+- 변경: `runtime_backend._PG_LOAD_CORE_MESSAGES_BRANCH` 의 nullable 파라미터에 명시 캐스팅
+  (`active_leaf_id::bigint`, `floor_ca/ceil_ca/joined_ca::timestamptz`) + 회귀 가드 테스트.
+- 사유: 비-windowed 브랜치 대화(1:1 편집)는 floor/ceil/joined 가 전부 None → psycopg 가 untyped
+  NULL 전송 → `$n IS NULL` 에서 PG "could not determine data type of parameter $3" → CORE recall
+  로더 전체 실패(MySQL fallback 도 실패). WINDOWED 쿼리는 windowed 시에만 호출돼 항상 non-None 이라
+  무사했으나, 브랜치 쿼리는 비-windowed 에서도 호출돼 노출됨.
+- 적발: **PB-0008 라이브 reanswer** (ask-worker 로그 진단). 단위테스트는 mock cursor 라 SQL 유효성
+  미검증(gap) → visual_verification_scope: always 정책의 가치 실증.
+- 검증: psql PREPARE 로 캐스팅이 untyped NULL 해소 확인 + 회귀 가드 단언 16 PASS. PB-0008 재검증 예정.
