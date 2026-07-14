@@ -5613,4 +5613,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 비변경: 백엔드/엔드포인트/RBAC/스키마 0 · 기존 그래프 상호작용(팬·노드드래그·우클릭·줌·미니맵)·이벤트 바인딩 0 · cache-buster 는 `?v=dev` placeholder(빌드 inject_asset_stamp content-hash 자동주입, §13.1) 수기 편집 없음.
 - 검증: `node --check --input-type=module`(graph-core.js) PASS · admin.html 도움말 블록 태그 균형 · graph.css 중괄호 215/215 균형. **PB-0008 라이브는 정적 자산 web 이미지 baked → POST-DEPLOY 이연**(feature-0003 web/UI 확립 패턴, visual_verification_scope: always — test-runs.d fragment 기록).
 - §18.8: 3파일·비파괴·additive·백엔드/RBAC 무변경 Minor → 패널 skip(REVIEW `[SKIPPED:frontend-ui-minor-additive-no-backend-no-rbac]`).
-- [ ] verify-completion(pre-commit) → commit(사용자 confirm) → PR → 머지 → web 재배포(deploy_scope: included) → **POST-DEPLOY PB-0008 라이브**: (a) 시크릿/신규 브라우저 첫 그래프 진입 시 팝업 자동 1회 노출 (b) ✕·알겠습니다·배경·Esc 닫기 + localStorage seen (c) 재진입 시 자동노출 안 함·❓ 버튼으로 재호출 (d) 중간버튼 드래그 중 커서 grabbing·뗌 복원 (e) pageerror 0. worktree `ai/claude/feature-0003-graph-entry-help`(base main f44623f3).
+- [x] verify-completion(pre-commit) → commit → PR #795 → 머지(main 1f705a9e) → web 재배포(deploy_scope: included, deploy-web --web-only soak PASS) → **POST-DEPLOY PB-0008 라이브**: (a) 자동 1회 노출 ✓ (b) 닫기 4경로 + seen ✓ (c) 재진입 무자동노출·❓ 재호출 ✓ (d) 중간버튼 커서 grabbing·복원 ✓ (e) pageerror 0 ✓. worktree `ai/claude/feature-0003-graph-entry-help`(base main f44623f3). **단 팝업 위치 결함 발견**(중앙 미정렬·줌 컨트롤 겹침) → 후속 20260714T184717-graph-help-overlay-fix 에서 근본원인(CSS 주석 `*/` hazard) 수정.
+
+## 20260714T184717-graph-help-overlay-fix — 그래프 도움말 팝업 mis-position 근본원인 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독, CSS 주석 텍스트 국한. /_template:resume 재개. 그래프 도메인 정본 feature-0016)
+- 트리거(사용자, graph-entry-help 배포 직후): "도움말 팝업을 그래프 뷰 중앙에 위치시키고, 좌측 하단 UI(줌 컨트롤)와 겹치는 문제를 해결." (원본 세션 세션한도 도달로 진단 중 중단 → resume 재개.)
+- 배경: graph-entry-help(CHG-20260714T180314) 배포본에서 `#metadataGraphHelp` 오버레이가 중앙 모달이 아니라 캔버스 아래로 밀려 좌하단 줌 컨트롤과 겹침. 초기 fragment 는 "짧은 뷰포트 minor UX" 로 오진.
+- 근본원인(라이브 CDP 확정): `.amg-help-overlay` 스타일 주석의 토큰 목록 `--surface/--border/--text*/--primary` 에서 `--text*` 뒤 `/` 와 결합해 `*/` 서브스트링 형성 → CSS 주석 조기 종료 → 이후 텍스트가 깨진 CSS 로 유입 → 바로 아래 `.amg-help-overlay { position:absolute … }` 규칙 통째 드롭 → position `static` 폴백 → flex column 흐름상 캔버스 아래 렌더·줌 겹침. (`getComputedStyle` 전 속성 기본값 + `cssRules` 에 bare 규칙 부재 + 격리 파싱 정상 → 직전 주석 문맥 문제로 특정. `/*`:`*/` 61:62→61:61.)
+- 구현:
+  - [x] `graph/graph.css`: 주석 토큰 구분자 `/` → `·`(`--surface·--border·--text*·--primary`)로 `*/` 제거 + 재발 방지 NOTE 삽입. CSS 선언/선택자/미디어쿼리 무변경(주석 텍스트 국한).
+- 비변경: 백엔드/엔드포인트/RBAC/스키마/JS/HTML 0. cache-buster `?v=dev` placeholder(빌드 content-hash 자동주입) 수기편집 없음.
+- 검증: (a) 수정본 파싱 시 `.amg-help-overlay` 규칙 복구·`position:absolute`(rule 204→205). (b) 라이브 규칙 주입 geometry: 카드 canvas-wrap 정중앙(dx:0 dy:0)·줌 컨트롤 미겹침(card_overlaps_zoom:false). (c) §18.8 SUBAGENT 적대검증 PASS(주석 델리미터 61/61·잔여 hazard 없음·diff 주석 국한).
+- [x] §18.8 적대적 SUBAGENT 검증 PASS(REVIEW `[SUBAGENT:css-comment-hazard-adversarial-PASS]`).
+- [ ] verify-completion(pre-commit) → commit → PR → 머지 → web 재배포(deploy_scope: included) → **POST-DEPLOY PB-0008 라이브 재검증**: 재배포된 graph.css 에서 `.amg-help-overlay` position=absolute·팝업 카드 중앙정렬·줌 컨트롤 미겹침·pageerror 0. worktree `ai/claude/feature-0003-graph-entry-help-postdeploy`(base main 1f705a9e).
