@@ -5532,3 +5532,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - **트리거**: graph-analyze-perm(PR #783) 병합 후 main CI "test" 적색 — `gen-routemap.py --check` exit 3(ROUTEMAP STALE). analyze POST 2개 require_permission 변경(graph.read→graph.analyze) 후 ROUTEMAP 재생성 누락. verify-completion CHECK#15 는 구조적 route 변경 시에만 검사해 로컬 미검출(권한 데코레이터 변경 = permission-only drift).
 - [x] `python3 bin/gen-routemap.py` 재생성 — ROUTEMAP.md 2행(analyze POST permission) 갱신. gen-routemap --check exit 0 · codenav-lint OK. 코드/런타임 무변경(auto-generated doc).
 - [ ] verify-completion → commit → PR → 머지 → main CI green 확인 → (graph-analyze-perm 본체) web 재배포·배포 후 실증.
+
+## TASK-20260714T053522-step-scroll-raf — 펼친 "결과 보기" 가로 스크롤 layout-timing 0-clamp 후속 수정 (Minor §12.3 — feature-0003 프론트 단독. step-scroll-preserve 배포-후 사용자 재보고)
+- 트리거(사용자): step-scroll-preserve(REQ-...T015432) 배포 후 "가로 스크롤이 지속적으로 초기화되는 이슈가 여전히 남아있는것으로 확인" (스크린샷: character 테이블 구조 결과, 가로 스크롤바 리셋). /_template:entry 후속.
+- [x] 근본원인: 라운드1 의 동기 복원이 재렌더 직후 결과 표 layout 확정 전에 `scrollLeft` 를 써서 브라우저가 `scrollWidth`(overflow 없음)로 **0-clamp**. 세로는 이 결과에 overflow 없어 미관측(동일 취약). 라운드1 jsdom 테스트는 scrollLeft 를 clamp 없이 저장해 놓침.
+- [x] 검증경로 조사: 스크린샷 UI(번호+툴배지+근거+결과 표 토글)=`_renderStepSidePanelBody`(사이드 패널) 구조. 배포 자산 서빙 심볼 13회 확인(수정은 반영됨) → 경로 문제 아님 → 실브라우저 scrollLeft clamp/layout 타이밍으로 좁힘. 로컬 chromium 다운로드 차단으로 real-browser repro 불가 → 표준 해법(rAF) + additive 로 진행.
+- [x] 수정 `static/app.js`: 공용 `_applyStepPanelScroll`(내부 결과+외부 목록 복원) 신설 + `_scheduleStepPanelScroll`(동기 1회 + `requestAnimationFrame` 1회). 두 렌더 경로(`_renderStepSidePanelBody`·`renderProgress`)의 인라인 복원 블록을 이 스케줄러 호출로 대체. 순수 additive(동기 유지 + rAF 추가)라 회귀 표면 없음.
+- [x] 검증: `node --check` PASS · `verify_step_result_scroll_preserve.mjs` **29/29 PASS**(신규 [3b] rAF 배선·[7] 동기+rAF 이중 복원·0-clamp 복구 경로·rAF 큐 소진 +5). feature-0003 회귀는 verify-completion 게이트.
+- [x] §18.8: 단일 파일·비파괴·additive Minor → 패널 skip(REVIEW `[SKIPPED:*]`).
+- [ ] verify-completion → commit(사용자 confirm) → PR → 머지 → web 재배포 → **사용자/PB-0008 실측 확인**(가로 스크롤 유지). real-browser 로컬 미검증분은 배포 후 사용자 확인으로 닫음.

@@ -4947,6 +4947,28 @@ function _restoreStepResultScroll(body, map) {
   });
 }
 
+// 폴링 재렌더 후 스크롤을 되돌린다 — 컨테이너(외부 목록)와 펼쳐 둔 각 결과셋(내부)을 함께.
+// 재렌더 직후 동기적으로 scrollLeft/Top 을 쓰면, 새로 삽입된 서브트리의 layout 이 아직
+// 확정되지 않아 브라우저가 overflow(scrollWidth/scrollHeight)를 모른 채 0 으로 clamp 한다
+// (특히 가로 스크롤에서 관측 — 세로는 결과가 짧으면 overflow 자체가 없어 티가 안 났을 뿐 동일).
+// 따라서 동기 1회(이미 layout 이 확정된 경우의 1프레임 깜빡임 방지) + requestAnimationFrame 1회
+// (layout 확정 후 확실한 복원)로 두 번 적용한다. rAF 는 다음 폴링(수 초 간격)보다 훨씬 앞서
+// (≈16ms) 실행되므로 재진입 경합 없음.
+function _applyStepPanelScroll(container, resultScroll, atBottom, prevTop) {
+  if (!container) return;
+  _restoreStepResultScroll(container, resultScroll);
+  // 외부 목록 스크롤: 하단 추종 중이었으면 최하단, 아니면 이전 위치 유지(미추종 0 리셋 방지).
+  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+  container.scrollTop = atBottom ? container.scrollHeight : Math.min(prevTop, maxTop);
+}
+
+function _scheduleStepPanelScroll(container, resultScroll, atBottom, prevTop) {
+  _applyStepPanelScroll(container, resultScroll, atBottom, prevTop);
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => _applyStepPanelScroll(container, resultScroll, atBottom, prevTop));
+  }
+}
+
 function _renderStepSidePanelBody(pending) {
   const body = document.getElementById("stepSidePanelBody");
   const badge = document.getElementById("stepSidePanelBadge");
@@ -4988,15 +5010,9 @@ function _renderStepSidePanelBody(pending) {
     item.appendChild(buildStepDetailEl(step, idx, { compact: false }));
     body.appendChild(item);
   });
-  // 펼쳐 둔 결과셋의 내부 스크롤 복원 — 새 단계가 추가돼도 기존 항목에서 보던 위치를 유지.
-  _restoreStepResultScroll(body, resultScroll);
-  // 외부 패널 스크롤: 하단 추종 중이었으면 최하단으로, 아니면 이전 위치를 유지한다
-  // (기존에는 미추종 시 스크롤이 0 으로 리셋됐다 — 위 단계를 읽던 사용자 위치 보존).
-  if (wasAtBottom) {
-    body.scrollTop = body.scrollHeight;
-  } else {
-    body.scrollTop = Math.min(prevScrollTop, Math.max(0, body.scrollHeight - body.clientHeight));
-  }
+  // 내부 결과셋 + 외부 패널 스크롤 복원(동기 + rAF). rAF 로 layout 확정 후 재적용해
+  // 가로 스크롤이 layout 미확정 시점의 0-clamp 로 초기화되는 것을 막는다.
+  _scheduleStepPanelScroll(body, resultScroll, wasAtBottom, prevScrollTop);
 }
 
 function formatElapsed(ms) {
@@ -5659,16 +5675,8 @@ function renderProgress(statusPayload = null) {
     item.appendChild(buildStepDetailEl(step, idx));
     progressStepsEl.appendChild(item);
   });
-  // 펼쳐 둔 결과셋 내부 스크롤 복원 + 외부 목록 위치 유지(하단 추종 중이었으면 최하단).
-  _restoreStepResultScroll(progressStepsEl, progResultScroll);
-  if (progAtBottom) {
-    progressStepsEl.scrollTop = progressStepsEl.scrollHeight;
-  } else {
-    progressStepsEl.scrollTop = Math.min(
-      progPrevTop,
-      Math.max(0, progressStepsEl.scrollHeight - progressStepsEl.clientHeight),
-    );
-  }
+  // 내부 결과셋 + 외부 목록 스크롤 복원(동기 + rAF) — 사이드 패널과 동일 규약.
+  _scheduleStepPanelScroll(progressStepsEl, progResultScroll, progAtBottom, progPrevTop);
 }
 
 function clearProgressPollTimer() {

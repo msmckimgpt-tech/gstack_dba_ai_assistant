@@ -208,3 +208,10 @@ source_of_truth: true
 - 자기 검증: `gen-routemap.py --check` exit 0 · `codenav-lint.sh` OK · 재생성 diff 가 원천 변경(2 POST 권한)과 정확히 일치.
 - 교훈: require_permission 값 변경은 ROUTEMAP drift 이나 verify-completion CHECK#15 는 구조적 route 변경 시에만 gen-routemap --check 를 돌려 로컬 미검출 → CI 에서만 적발. 권한 데코레이터 변경 cycle 은 `gen-routemap.py` 재실행을 명시 수행할 것.
 - Cross-ref: CHG-20260714T133700-routemap-refresh · 원천 CHG-20260714T105200-graph-analyze-perm.
+
+## REV-20260714T053522-step-scroll-raf [SKIPPED:frontend-ui-minor-single-file-additive-no-backend] — 펼친 "결과 보기" 가로 스크롤 layout-timing 0-clamp 후속 (TASK-20260714T053522-step-scroll-raf)
+- Panel skip 사유(§18.8): 프론트 단일 파일(`static/app.js`), 순수 additive(동기 복원 유지 + rAF 재적용 추가), 백엔드/RBAC/스키마/엔드포인트 0. 표준 DOM scroll 타이밍 처리 → 적대 코드리뷰 한계 이득 낮음.
+- **라운드1 실패 정직 기록**: step-scroll-preserve(REV-...T015432) 는 jsdom 23/23 PASS + 배포 자산 서빙 심볼 확인까지 통과했으나 **실브라우저 가로 스크롤은 여전히 초기화**됐다(사용자 재보고). 원인=jsdom 이 `scrollLeft` 를 clamp 없이 verbatim 저장 → 동기 복원의 layout-미확정 0-clamp 결함을 격리 테스트가 놓침. 교훈: scroll 오프셋의 실제 clamp 거동은 jsdom 으로 검증 불가 — layout 의존 동작은 real-browser 또는 배포-후 실측이 정본.
+- 적대 자가검토(refute 시도): ① "동기 복원도 남겨두면 0-clamp 값이 최종?" → rAF 콜백이 그 뒤(layout 확정 후) 동일 캡처값을 재적용하므로 최종은 올바른 값(테스트 [7] flush 로 0→88 복구 실증). ② "rAF 가 다음 폴링 재렌더 뒤에 늦게 실행돼 stale DOM 복원?" → rAF≈16ms ≪ 폴링 간격(수 초), 항상 다음 렌더 전 소진(테스트 [7] 큐 소진 확인); 설령 늦어도 캡처값은 콘텐츠 안정 시 동일이라 무해. ③ "additive 가 세로 스크롤/하단추종 회귀?" → `_applyStepPanelScroll` 이 기존 if/else 외부 스크롤 로직을 그대로 이관(atBottom→scrollHeight / else→min(prevTop,maxTop)), 동기 경로 동작 불변. ④ "rAF 미지원 환경?" → `typeof requestAnimationFrame === "function"` 가드, 미지원 시 동기 복원만(라운드1 동작).
+- 검증: `node --check app.js` PASS · `verify_step_result_scroll_preserve.mjs` 29/29 PASS. **로컬 real-browser clamp 미재현**(chromium 다운로드 환경 차단) — 근본원인은 well-known layout-timing 클래스이고 수정이 additive(회귀 표면 없음)라 배포 진행, 최종 확인은 사용자/PB-0008 실측(가로 스크롤 유지).
+- Cross-ref: CHG/TASK/FUNCTION AC-SSP-4-20260714T053522 · 원천 REQ-20260714T015432 · TEST §CHECK#13(2026-07-14) · test-runs.d/20260714T053522-step-scroll-raf.md · ANCHOR 0003 무충돌.
