@@ -2385,7 +2385,7 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - 진단: `llm_cluster_label` 이 `_record_llm_usage(target=payload.datasource)` 에 **scope_key 해시**(mssql-06656002eda6)를 기록(546건 실측 — 해시 target 은 cluster_label 유일; product_classify 는 이미 사용자 식별자). 사용자 식별자 매핑은 PG `agent_runtime.datasource_health`(scope_key→datasource_label, TASK-0255 R2 스냅샷·18건)에 존재.
 - [x] TL.1 `semantic_cluster._ds_display_label`(datasource_health 조회·fail-soft key 폴백·SAVEPOINT 격리) + `_llm_content_labels` 가 미스 존재 시 1회 해석해 payload.datasource(→ llm_usage.target·LLM 프롬프트 문맥)에 사용. **kv 캐시 ns 는 해시 불변**(캐시 무효화 0).
 - [x] TL.2 테스트 2(해석/폴백·payload 라벨+캐시 ns 불변) — 파일 25 PASS.
-- [ ] TL.3 PR→merge→worker 재빌드(+web 패리티 롤링)→기존 546건 데이터 정정(UPDATE llm_usage target 해시→라벨, 멱등)→패널 표시 확인.
+- [x] TL.3 완수 — PR #775 머지(b747c29a)·web 롤링+worker 재빌드·기존 **527건** UPDATE 정정(잔여 19건=datasource_health 미등록 legacy scope 2종 — 라벨 부재라 해시 유지가 정직, 등록 시 자동 라벨화)·라이브 확증(배포 직후 신규 활동 target=mssql-qa-idc 기록, /api/admin/ai-ops 실측).
 ## §82 metadata-graph-sync-flock — cron 겹침 실행 무가드로 인한 서비스 전역 장애 긴급 수정 (2026-07-14, 사용자 장애 리포트)
 사용자: "로그인 후 빈 화면, 작업 콘솔도 제대로 작동하지 않음." 등급 **Major**(운영 인시던트 긴급대응 — 비파괴 스크립트 가드 추가, 인증/스키마/데이터 무변경).
 
