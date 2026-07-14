@@ -1072,6 +1072,7 @@ function switchProfileTab(tab) {
     renderProfileTotp(); // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 상태 렌더.
     loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역(계정 탭으로 병합) lazy 로드.
     renderNotifyPrefs(); // gc-settings-notif: 알림 환경설정(멘션/데스크톱) 상태·권한 렌더.
+    renderMotionPref(); // anim-pref: 화면 애니메이션 효과 select 상태 렌더.
   } else if (tab === "release-notes") {
     // 릴리즈 노트 — 정적 콘텐츠라 매 진입 렌더(가벼움). 렌더러는 release-notes.js.
     // 작업 화면은 '관리 콘솔' 영역 노트를 숨긴다(work/common 만 노출).
@@ -2473,6 +2474,12 @@ function renderNotifyPrefs() {
     });
     permEl.appendChild(btn);
   }
+}
+
+// anim-pref: 프로필 드로어의 '애니메이션 효과' select 를 저장된 값으로 hydration.
+function renderMotionPref() {
+  const sel = document.getElementById("motionEffectSelect");
+  if (sel) sel.value = getMotionPref();
 }
 
 function openProfile(tab = "prompt") {
@@ -5410,7 +5417,9 @@ async function jumpToHistoryAnchor(atString) {
     }
     const target = document.getElementById(`message-${mid}`);
     if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      // anim-pref: 네이티브 smooth 대신 pref-aware EaseOutExpo(point-rail 과 동일 경로).
+      // 브라우저가 reduce-motion 을 보고해도 인앱 '항상 켬' 이면 부드럽게 이동한다.
+      scrollMessagePointIntoCenter(target);
       target.classList.add("is-anchor-highlight");
       window.setTimeout(() => target.classList.remove("is-anchor-highlight"), 1500);
     } else {
@@ -6106,9 +6115,39 @@ const MSG_FADE_IN_MS = 200;
 const MSG_FADE_ACCEL_MS = 90; // 목표가 먼저 준비됐을 때 남은 fade-out 을 압축할 상한
 let _msgSwitchGhost = null;
 
-function _prefersReducedMotion() {
+// feature-0003 anim-pref: 인앱 '애니메이션 효과' 설정.
+// 기본값은 OS 접근성 신호(prefers-reduced-motion)를 존중('os')하되, 사용자가 명시적으로
+// '항상 켬(on)/항상 끔(off)' 을 고르면 그 뜻이 우선한다. Windows 의 "애니메이션 효과"
+// 토글·배터리 절약 모드가 꺼지면 Chrome 이 prefers-reduced-motion:reduce 를 보고해
+// 대화 전환 크로스페이드·가이드 뱃지/캘린더 스크롤이 통째로 즉시(instant)로 degrade 되는데,
+// 내부 도구 사용자가 OS 설정과 무관하게 이 효과를 되살릴 수 있게 한다(접근성 기본값은 보존).
+const MOTION_PREF_KEY = "mad.motionEffect.v1"; // localStorage: 'os' | 'on' | 'off'
+function getMotionPref() {
+  try {
+    const v = window.localStorage.getItem(MOTION_PREF_KEY);
+    return (v === "on" || v === "off") ? v : "os";
+  } catch (_) { return "os"; }
+}
+function setMotionPref(v) {
+  const val = (v === "on" || v === "off") ? v : "os";
+  try { window.localStorage.setItem(MOTION_PREF_KEY, val); } catch (_) {}
+  applyMotionPref();
+  return val;
+}
+// <html data-motion="os|on|off"> 반영 — CSS 가 참조할 수 있게(현재 3개 타깃 효과는 JS 게이트).
+function applyMotionPref() {
+  try { document.documentElement.setAttribute("data-motion", getMotionPref()); } catch (_) {}
+}
+function _osPrefersReducedMotion() {
   try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
   catch (_) { return false; }
+}
+// 애니메이션을 '줄여야' 하는가? 'on'=항상 애니(줄임 안 함) / 'off'=항상 줄임 / 'os'=OS 신호.
+function _prefersReducedMotion() {
+  const pref = getMotionPref();
+  if (pref === "on") return false;
+  if (pref === "off") return true;
+  return _osPrefersReducedMotion();
 }
 
 // 클릭 즉시 호출 — 직전 화면 스냅샷 fade-out 시작 + 실제 로그 투명화.
@@ -9801,6 +9840,7 @@ async function initializeWorkspace() {
 }
 
 async function initialize() {
+  applyMotionPref(); // anim-pref: 저장된 애니메이션 효과 설정을 <html data-motion> 에 반영(페이지 1회).
   document.querySelectorAll("[data-auth-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       toggleAuthPane(button.dataset.authTab);
@@ -9886,6 +9926,16 @@ async function initialize() {
       setNotifyPrefs({ desktop: notifyDesktopChk.checked });
       if (notifyDesktopChk.checked) _maybeRequestNotifyPermission();
       renderNotifyPrefs();
+    });
+  }
+
+  // anim-pref: 화면 애니메이션 효과 select. 즉시 저장 + <html data-motion> 반영(applyMotionPref).
+  const motionEffectSelect = document.getElementById("motionEffectSelect");
+  if (motionEffectSelect) {
+    motionEffectSelect.addEventListener("change", () => {
+      const val = setMotionPref(motionEffectSelect.value);
+      const label = val === "on" ? "항상 켬" : val === "off" ? "항상 끔" : "시스템 설정 따름";
+      showToast(`애니메이션 효과: ${label}`);
     });
   }
 
@@ -10259,7 +10309,8 @@ function _jumpToSearchMatchedMessage() {
   sm.pendingJumpConvId = "";
   if (!matched) return;
   try {
-    matched.scrollIntoView({ behavior: "smooth", block: "center" });
+    // anim-pref: 네이티브 smooth 대신 pref-aware EaseOutExpo(point-rail·캘린더와 동일 경로).
+    scrollMessagePointIntoCenter(matched);
     matched.classList.add("is-search-matched");
     setTimeout(() => matched.classList.remove("is-search-matched"), 1800);
   } catch (_) {}

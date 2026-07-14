@@ -435,6 +435,21 @@
         <div class="profile-notify-perm helper-text" id="profileNotifyPerm" aria-live="polite"></div>
       </div>
 
+      <!-- anim-pref: 화면 애니메이션 효과 — 대화 전환 크로스페이드·가이드 뱃지/캘린더 스크롤 이동 등.
+           기본값은 OS 접근성 설정(prefers-reduced-motion)을 따르되, '항상 켬/끔' 으로 재정의 가능.
+           상태 렌더는 renderMotionPref(), 저장은 localStorage(getMotionPref/setMotionPref). -->
+      <div class="profile-section" id="profileMotionSection">
+        <div class="profile-section-title">화면 효과</div>
+        <div class="profile-select-row">
+          <label class="profile-toggle-text" for="motionEffectSelect">애니메이션 효과<span class="helper-text">대화 전환 크로스페이드, 우측 가이드 뱃지·캘린더 클릭 시 부드러운 스크롤 이동 등의 효과입니다. 기본값은 시스템 설정을 따르며, 시스템에서 애니메이션이 꺼져 있어도 여기서 '항상 켬' 으로 되살릴 수 있습니다.</span></label>
+          <select id="motionEffectSelect" class="btn-secondary profile-motion-select" aria-label="애니메이션 효과">
+            <option value="os">시스템 설정 따름</option>
+            <option value="on">항상 켬</option>
+            <option value="off">항상 끔</option>
+          </select>
+        </div>
+      </div>
+
       <!-- TASK-0184: 내 사용 내역 — 본인 LLM 토큰/모델/요청 (GET /api/profile/usage). 간소판(추정 비용 비노출).
            gc-settings-notif: 별도 '사용 내역' 탭에서 '계정' 탭으로 병합(차트/컨트롤 id 동일 — loadProfileUsage 무변경). -->
       <div class="profile-section">

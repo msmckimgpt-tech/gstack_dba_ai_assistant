@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260714T065503-anim-effect-pref — 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정 신설 (Major §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
+
+<!-- APPROACH-APPROVED by mckim on 2026-07-14 (AskUserQuestion: "인앱 애니메이션 토글 신설 (권장)") -->
+
+- 트리거(사용자): "서비스 내 assistant 와 대화하는 `작업 화면` 내 애니메이션이 대부분 누락되어 사라진 것으로 확인. 상세하게 원인을 파악한 후 기존의 애니메이션 효과를 복원." 후속 문답으로 대상 3종 확정 — ① 대화 전환 크로스페이드 ② 우측 가이드 뱃지(point rail) 클릭 스크롤 이동 ③ 캘린더 버튼 클릭 스크롤 이동. reduce-motion 은 사용자 확인상 꺼짐. "최근 갑자기" 사라짐.
+- 진단(상세): 코드/배포는 정상 — 소스 애니메이션 최근 20커밋 내 증가(transition 77→84), 배포 컨테이너(web-a/b) 자산이 소스와 byte-동일(sha256 일치), HTTP 서빙·cache-buster 정상. 세 함수(`_beginConversationCrossfade`·`scrollMessagePointIntoCenter`/`_animatePointScroll`·`jumpToHistoryAnchor`)는 최근 미변경. **공통 근본원인: 세 효과 모두 `prefers-reduced-motion: reduce` 매칭 시 통째로 즉시(instant)로 degrade** — 크로스페이드·point-rail 은 JS `_prefersReducedMotion()` 가드, 캘린더·검색점프는 네이티브 `scrollIntoView({behavior:"smooth"})`(브라우저가 reduce-motion 시 무시). 이 게이트가 켜지면 이 셋만 죽고 순수 CSS 애니(page-fade·pending 스피너)는 유지 → "대부분 사라졌지만 화면은 정상" 관측과 정확히 일치. Windows 에서 Chrome 의 이 미디어쿼리는 "동작 줄이기" 가 아니라 **설정>접근성>시각 효과>애니메이션 효과** 토글·**배터리 절약 모드**에 매핑되어, 사용자가 인지 못한 채 "최근 갑자기" 발동 가능.
+- 설계(사용자 승인 = 인앱 토글): 접근성 기본값(OS 존중)은 보존하되, 내부 도구 사용자가 OS 설정과 무관하게 효과를 되살릴 수 있는 인앱 **"애니메이션 효과"** 설정(`os`/`on`/`off`, 기본 `os`) 신설. `on`=OS reduce-motion 이어도 애니 복원 / `off`=항상 최소화 / `os`=기존 동작(하위호환). 저장=localStorage(서버·마이그 불필요, 프론트 단독).
+- 구현(frontend-only): (1) `static/app.js` — `_prefersReducedMotion()` 을 pref-aware 로 개편(`getMotionPref`/`setMotionPref`/`applyMotionPref`/`_osPrefersReducedMotion`, `MOTION_PREF_KEY="mad.motionEffect.v1"`). (2) 캘린더 `jumpToHistoryAnchor`·검색 `_jumpToSearchMatchedMessage` 의 네이티브 smooth `scrollIntoView` 를 pref-aware `scrollMessagePointIntoCenter`(point-rail 과 동일 EaseOutExpo 경로)로 라우팅 → `on` 이면 OS reduce-motion 에서도 부드럽게 이동. (3) 프로필 드로어 '계정' 탭에 '화면 효과 > 애니메이션 효과' select UI(`index.html` `#motionEffectSelect` + `renderMotionPref()` + change 리스너 + `applyMotionPref()` init 배선). (4) `<html data-motion>` 반영(향후 CSS 참조용). (5) `styles.css` `.profile-select-row`/`.profile-motion-select` 정합 스타일.
+- Risk: **Major** — 그러나 프론트 단독·비파괴·서버 계약/RBAC/스키마/마이그 무변경·되돌리기 용이. `os` 기본값이라 미설정 사용자는 기존과 완전 동일(회귀 표면 0). visual_verification_scope: always → PB-0008 게이트. deploy_scope: included.
+- Completion Checklist:
+  - [x] `_prefersReducedMotion()` pref-aware 개편 + localStorage 접근자 4종. node --check app.js PASS.
+  - [x] 캘린더·검색 점프 네이티브 smooth → `scrollMessagePointIntoCenter` 라우팅(잔여 네이티브 smooth-into-center 0건 확인).
+  - [x] 프로필 계정 탭 '애니메이션 효과' select(마크업+renderMotionPref+change 리스너+init applyMotionPref) + `.profile-select-row` 스타일.
+  - [ ] §18.8 dispatch(UX/design) 판정 — 프론트 단독·비파괴 Minor성 변경이나 UI 표시 신호 → 판단 후 패널 or `[SKIPPED:*]` 기록.
+  - [ ] verify-completion --pre-commit → commit(사용자 confirm) → PR → 머지 → web 무중단 재배포.
+  - [ ] **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 검증**: `motionEffectSelect` '항상 켬' 설정 후 ① 대화 전환 크로스페이드 ② 가이드 뱃지 클릭 스크롤 ③ 캘린더 버튼 클릭 스크롤이 (OS 애니메이션 효과 off 상태에서도) 부드럽게 복원됨 + '항상 끔' 시 즉시 이동 + pageerror 0.
+
 ## TASK-20260713T053423-attach-user-version — 사용자 재업로드 첨부 버전 관리(해시 대조 → 버전 체인 편입) (Major §12.3 — feature-0003 업로드 경로 + cross-cut feature-0002 LLM 컨텍스트. /_template:entry arg-given dispatch)
 
 <!-- PLAN-APPROVED by mckim on 2026-07-13 (AskUserQuestion: "승인 — 계획대로 진행"; 설계 결정 3건: 파일명 자동감지 / 버전표식+diff 주입 / 체인 정합+assistant 비교) -->
