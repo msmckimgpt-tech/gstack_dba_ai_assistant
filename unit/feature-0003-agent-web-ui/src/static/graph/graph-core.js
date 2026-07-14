@@ -1422,10 +1422,65 @@ function _metaShowGraph() {
   _metaInitGraph();
   _metaRoleLegendTips();   // role-cluster-prefix: 역할 범례 hover 툴팁(desc) 주입(정적 <li data-role> → _META_ROLE 단일 소스).
   _metaGraphBindLegendTabs();   // graphux7(#3): 범례 3-탭 전환 바인딩(멱등).
+  _metaGraphBindHelp();    // graph-entry-help: ❓ 도움말 버튼·팝업 닫기 컨트롤 바인딩(멱등).
   // feature-0016: 그래프 뷰 진입 시 현재 선택 datasource 의 그래프(roots)를 즉시 로드 — 각 데이터소스별 그래프 출현.
   _metaGraphLoadRoots();
   const s = document.getElementById("metadataGraphSearch");
   if (s && s.focus) try { s.focus(); } catch (_) {}
+  _metaGraphMaybeAutoHelp();   // graph-entry-help: 최초 진입 시 1회 자동 노출(localStorage 미확인 시). 검색 포커스 뒤 호출해 포커스를 팝업이 가져간다.
+}
+
+// ── graph-entry-help: 첫 입장 조작 안내 팝업 ──────────────────────────────────────
+//   최초 진입 시 1회 자동 노출(localStorage metaGraphHelpSeen). 이후엔 상단 ❓ 도움말 버튼으로 재호출.
+//   닫기: ✕ · "알겠습니다" · 배경(backdrop) 클릭 · Esc. 닫는 순간 seen 플래그를 세워 다음 세션부터 자동 노출 안 함.
+//   markup 은 admin.html #metadataGraphHelp(캔버스 role=img 밖 형제 — 접근성), 스타일은 graph/graph.css(.amg-help-*).
+const _META_HELP_SEEN_KEY = "metaGraphHelpSeen";
+let _metaHelpKeydown = null;   // Esc 리스너 핸들(표시 중에만 등록/해제)
+
+function _metaGraphShowHelp() {
+  const ov = document.getElementById("metadataGraphHelp");
+  if (!ov) return;
+  ov.hidden = false;
+  // Esc 로 닫기 — 표시 중에만 등록. 중복 방지 위해 기존 핸들 제거 후 재등록(capture: 그래프 키 핸들러보다 먼저).
+  if (_metaHelpKeydown) document.removeEventListener("keydown", _metaHelpKeydown, true);
+  _metaHelpKeydown = (ev) => { if (ev.key === "Escape") { ev.stopPropagation(); _metaGraphHideHelp(); } };
+  document.addEventListener("keydown", _metaHelpKeydown, true);
+  const close = document.getElementById("metadataGraphHelpClose");   // a11y: 모달 진입 시 닫기 버튼으로 포커스.
+  if (close && close.focus) try { close.focus(); } catch (_) {}
+}
+
+function _metaGraphHideHelp() {
+  const ov = document.getElementById("metadataGraphHelp");
+  if (ov) ov.hidden = true;
+  if (_metaHelpKeydown) { document.removeEventListener("keydown", _metaHelpKeydown, true); _metaHelpKeydown = null; }
+  try { localStorage.setItem(_META_HELP_SEEN_KEY, "1"); } catch (_) {}   // 닫으면 '봤음' — 다음 세션부터 자동 노출 안 함(재확인은 ❓ 버튼).
+  const btn = document.getElementById("metadataGraphHelpBtn");   // a11y: 재호출 버튼으로 포커스 복귀.
+  if (btn && btn.focus) try { btn.focus(); } catch (_) {}
+}
+
+// 최초 진입 자동 노출 — seen 플래그가 없을 때만. localStorage 접근 실패(사생활 모드 등)는 '미확인=노출'로 안전 강등.
+function _metaGraphMaybeAutoHelp() {
+  let seen = false;
+  try { seen = localStorage.getItem(_META_HELP_SEEN_KEY) === "1"; } catch (_) {}
+  if (!seen) _metaGraphShowHelp();
+}
+
+// 컨트롤 바인딩(멱등) — ❓ 버튼·✕·"알겠습니다"·배경 클릭. _metaShowGraph 에서 1회 호출.
+function _metaGraphBindHelp() {
+  if (_metaGraph._helpBound) return;
+  _metaGraph._helpBound = true;
+  const btn = document.getElementById("metadataGraphHelpBtn");
+  if (btn) btn.addEventListener("click", () => _metaGraphShowHelp());
+  const ov = document.getElementById("metadataGraphHelp");
+  if (ov) ov.addEventListener("click", (ev) => {
+    // 배경(data-amg-help-close) 또는 오버레이 여백 클릭 시 닫기 — 카드 내부 클릭은 무시(버블 target 판정).
+    const t = ev.target;
+    if (t && (t.hasAttribute("data-amg-help-close") || t.classList.contains("amg-help-overlay"))) _metaGraphHideHelp();
+  });
+  const close = document.getElementById("metadataGraphHelpClose");
+  if (close) close.addEventListener("click", () => _metaGraphHideHelp());
+  const ok = document.getElementById("metadataGraphHelpOk");
+  if (ok) ok.addEventListener("click", () => _metaGraphHideHelp());
 }
 
 // 모델 초기화(그래프 교체/리셋/scope 전환 시). 노드·엣지·펼침·마커 clear.
@@ -2120,8 +2175,23 @@ function _metaInitGraph() {
   }, true);
   // graph-drag(REQ ①): 중간(휠) 버튼 mousedown 의 브라우저 기본 동작(자동 스크롤 = 팬 커서)을
   //   억제해 G6 카메라 팬만 남긴다. pointer 이벤트 흐름은 유지되므로 drag-canvas 는 정상 작동.
+  // graph-entry-help: 중간 버튼을 누르는 동안 커서를 grabbing(쥔 손)으로 바꿔 '화면 이동(팬) 중'을 시각적으로
+  //   알린다. 브라우저 기본 autoscroll 커서(all-scroll)를 preventDefault 로 없앤 자리를 대신한다. 캔버스
+  //   (#metadataGraphCanvas)는 명시 cursor 가 없어 자식 <canvas> 가 이 값을 상속하므로 렌더러(PixiJS/G6) 무관.
   container.addEventListener("mousedown", (ev) => {
-    if (ev.button === 1) ev.preventDefault();
+    if (ev.button !== 1) return;
+    ev.preventDefault();
+    container.style.cursor = "grabbing";
+    // 중간 버튼을 떼거나(mouseup) 창 포커스를 잃으면(blur — 뗌 이벤트 유실 대비) 커서 복원. 다른 버튼만 뗀
+    //   경우(중간 버튼 여전히 눌림, buttons & 4)는 유지해 팬 도중 커서가 깜빡이지 않게 한다.
+    const clearCur = (e) => {
+      if (e && e.type === "mouseup" && typeof e.buttons === "number" && (e.buttons & 4) === 4) return;
+      container.style.cursor = "";
+      window.removeEventListener("mouseup", clearCur, true);
+      window.removeEventListener("blur", clearCur, true);
+    };
+    window.addEventListener("mouseup", clearCur, true);
+    window.addEventListener("blur", clearCur, true);
   }, true);
   // graph-drag(REQ ②): 테이블 노드를 드래그하면 그 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도
   //   함께 이동한다. dragstart 에서 각 종속의 테이블 대비 월드 오프셋을 고정 기록하고, node:drag/

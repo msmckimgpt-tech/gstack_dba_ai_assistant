@@ -786,6 +786,9 @@
 
             <button type="button" class="btn-secondary" id="metadataGraphResetBtn">초기화</button>
             <button type="button" class="btn-secondary" id="metadataGraphDetailToggle" aria-label="상세 패널 접기/펼치기" title="상세 패널 접기/펼치기">상세 ⇆</button>
+            <!-- graph-entry-help: 그래프 조작 안내 팝업 재호출 버튼. 첫 진입 시 팝업이 자동 1회 노출되고(localStorage
+                 metaGraphHelpSeen), 이후에는 이 버튼으로 언제든 다시 연다. 로직·바인딩은 graph-core.js _metaGraphBindHelp. -->
+            <button type="button" class="btn-secondary amg-help-btn" id="metadataGraphHelpBtn" aria-label="그래프 조작 도움말" title="그래프 조작 도움말 — 클릭·드래그·줌·미니맵 안내를 다시 봅니다">❓ 도움말</button>
           </div>
           <!-- graphux7(#3): 범례는 상단 flat 바를 제거하고 상세 패널 하단 탭(#metadataGraphLegendTabs)으로 이관 —
                탭① 노드 종류 · 탭② 관계·AI 상태 · 탭③ 테이블 역할. flat 바 제거로 캔버스 세로 공간 확보.
@@ -810,6 +813,33 @@
                    캔버스 밖으로 넘치지 않는다. id/aria-live 보존(admin.js LOD 마커 직접 조작 호환). pointer-events:none 로
                    그래프 상호작용을 가리지 않음. -->
               <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
+              <!-- graph-entry-help: 첫 입장 조작 안내 팝업. 캔버스(role=img) 밖 형제로 두어 접근성 보존(img 하위 인터랙티브 금지).
+                   기본 hidden — 첫 진입 시 graph-core.js 가 표시(localStorage metaGraphHelpSeen 로 최초 1회만 자동), ❓ 도움말
+                   버튼으로 재호출. 닫기: ✕·배경 클릭·Esc·"알겠습니다". -->
+              <div class="amg-help-overlay" id="metadataGraphHelp" hidden role="dialog" aria-modal="true" aria-labelledby="amgHelpTitle">
+                <div class="amg-help-backdrop" data-amg-help-close></div>
+                <div class="amg-help-card" role="document">
+                  <div class="amg-help-head">
+                    <h3 class="amg-help-title" id="amgHelpTitle">그래프 뷰 조작 안내</h3>
+                    <button type="button" class="amg-help-x" id="metadataGraphHelpClose" aria-label="도움말 닫기" title="닫기">✕</button>
+                  </div>
+                  <p class="amg-help-sub">관계형 메타데이터를 그래프로 투영한 <b>읽기 전용</b> 뷰입니다. 아래 조작으로 탐색하세요.</p>
+                  <ul class="amg-help-list">
+                    <li><span class="amg-help-k">단일 클릭</span><span class="amg-help-d">노드의 설명·컬럼·관계·연관 용어를 오른쪽 상세 패널에서 봅니다.</span></li>
+                    <li><span class="amg-help-k">더블클릭</span><span class="amg-help-d">그 노드를 중심으로 이웃 그래프를 펼칩니다.</span></li>
+                    <li><span class="amg-help-k">우클릭</span><span class="amg-help-d">상세·관계 상세(방향·신뢰도·근거)·관계 확장·중심 보기 등 상호작용 메뉴를 엽니다.</span></li>
+                    <li><span class="amg-help-k">드래그</span><span class="amg-help-d">빈 공간은 화면 이동(팬), 노드·카드는 자유 배치로 옮깁니다.</span></li>
+                    <li><span class="amg-help-k">가운데 버튼 드래그</span><span class="amg-help-d">노드 위에서도 어디서나 화면을 이동(팬)합니다.</span></li>
+                    <li><span class="amg-help-k">휠 스크롤</span><span class="amg-help-d">커서 위치를 기준으로 확대·축소합니다.</span></li>
+                    <li><span class="amg-help-k">미니맵(우하단)</span><span class="amg-help-d">클릭·드래그로 원하는 위치로 빠르게 이동합니다.</span></li>
+                    <li><span class="amg-help-k">검색·보기 옵션</span><span class="amg-help-d">상단 바에서 노드를 검색하고 이웃 깊이·표시 종류를 조절합니다.</span></li>
+                  </ul>
+                  <div class="amg-help-foot">
+                    <button type="button" class="amg-help-ok" id="metadataGraphHelpOk">알겠습니다</button>
+                    <span class="amg-help-reopen">상단 <b>❓ 도움말</b> 버튼으로 언제든 다시 볼 수 있습니다.</span>
+                  </div>
+                </div>
+              </div>
             </div>
             <!-- graph-panel-resize: 캔버스↔상세 패널 사이 드래그 분리 바. --meta-graph-detail-w 를 갱신해 패널 폭 조절(←/→ 키보드 접근). -->
             <div class="admin-meta-graph-resizer" id="metadataGraphResizer" role="separator"

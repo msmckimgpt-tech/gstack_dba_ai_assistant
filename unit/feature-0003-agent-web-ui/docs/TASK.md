@@ -5599,3 +5599,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check` PASS · `verify_step_result_scroll_preserve.mjs` **29/29 PASS**(신규 [3b] rAF 배선·[7] 동기+rAF 이중 복원·0-clamp 복구 경로·rAF 큐 소진 +5). feature-0003 회귀는 verify-completion 게이트.
 - [x] §18.8: 단일 파일·비파괴·additive Minor → 패널 skip(REVIEW `[SKIPPED:*]`).
 - [ ] verify-completion → commit(사용자 confirm) → PR → 머지 → web 재배포 → **사용자/PB-0008 실측 확인**(가로 스크롤 유지). real-browser 로컬 미검증분은 배포 후 사용자 확인으로 닫음.
+
+## 20260714T1803-graph-entry-help — 그래프 뷰 첫 입장 조작 도움말 팝업 + 중간버튼 커서 표식 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 비파괴 additive. /_template:entry arg-given dispatch. 그래프 도메인 정본 feature-0016)
+- 트리거(사용자): "서비스 내 `그래프 뷰` 에서, 첫 입장 시 조작과 관련된 (닫을 수 있고, 이후 다시 확인할 수 있는) 도움말 팝업을 띄워주세요. 또한 마우스 중간 버튼 클릭을 진행했을 때, 마우스 커서가 적절하게 바뀔 수 있도록 구성해주세요."
+- 배경: 그래프 뷰(지식베이스 > 그래프 뷰 pane)는 단일클릭=상세·더블클릭=이웃펼침·우클릭=메뉴·드래그=팬/노드이동·중간버튼=팬·휠=줌·미니맵 등 조작이 다양하나 진입 시 안내가 없어 학습곡선이 있었다. 중간버튼 팬은 브라우저 기본 autoscroll 커서를 preventDefault 로 없앤 뒤(graph-core.js §REQ①) 커서 표식이 비어 있었다.
+- 구현 ①(도움말 팝업):
+  - [x] `admin.html`: 툴바에 `#metadataGraphHelpBtn`(❓ 도움말) 추가(초기화·상세 옆) + 캔버스 wrap(`role=img` 밖 형제 — 접근성) 안에 `#metadataGraphHelp` 오버레이(role=dialog, aria-modal) 마크업 — 8개 조작 항목·읽기전용 안내·닫기(✕/알겠습니다).
+  - [x] `graph/graph.css`: `.amg-help-*` 오버레이 스타일(캔버스 wrap position:relative 기준 절대배치 inset:0·z-index 40[줌6/상태6/미니맵5/보기옵션30 위]·중앙 카드+반투명 backdrop·amgHelpIn 애니). 토큰(--surface/--border/--text*/--primary)만 써 라이트·다크 자동 대응. 좁은 폭 라벨 세로 스택 미디어쿼리.
+  - [x] `graph/graph-core.js`: `_metaGraphShowHelp`/`_metaGraphHideHelp`/`_metaGraphMaybeAutoHelp`/`_metaGraphBindHelp` 신설. `_metaShowGraph` 에서 바인딩(멱등 `_helpBound`) + 검색 포커스 뒤 자동노출 호출. **첫 진입 1회 자동노출**은 `localStorage("metaGraphHelpSeen")` 미확인 시만(기존 metaGraphHiddenKinds/metaGraphDetailW 관례), 닫는 순간 seen 플래그 set → 다음 세션부터 자동노출 안 함. 재확인은 ❓ 버튼. 닫기 4경로(✕·알겠습니다·배경클릭·Esc[capture])·a11y 포커스 이동/복귀·localStorage 실패 시 '미확인=노출' 안전 강등.
+- 구현 ②(중간버튼 커서):
+  - [x] `graph/graph-core.js`: 기존 container(`#metadataGraphCanvas`) 중간버튼 `mousedown` 핸들러(§REQ①)에 `container.style.cursor="grabbing"` 표식 추가 — 캔버스는 명시 cursor 없어 자식 `<canvas>` 가 상속(렌더러 PixiJS/G6 무관). 복원: mouseup(단 buttons&4 여전 눌림이면 유지→깜빡임 방지)·window blur(뗌 이벤트 유실 대비) 시 커서 리셋 + 리스너 자체 정리.
+- 비변경: 백엔드/엔드포인트/RBAC/스키마 0 · 기존 그래프 상호작용(팬·노드드래그·우클릭·줌·미니맵)·이벤트 바인딩 0 · cache-buster 는 `?v=dev` placeholder(빌드 inject_asset_stamp content-hash 자동주입, §13.1) 수기 편집 없음.
+- 검증: `node --check --input-type=module`(graph-core.js) PASS · admin.html 도움말 블록 태그 균형 · graph.css 중괄호 215/215 균형. **PB-0008 라이브는 정적 자산 web 이미지 baked → POST-DEPLOY 이연**(feature-0003 web/UI 확립 패턴, visual_verification_scope: always — test-runs.d fragment 기록).
+- §18.8: 3파일·비파괴·additive·백엔드/RBAC 무변경 Minor → 패널 skip(REVIEW `[SKIPPED:frontend-ui-minor-additive-no-backend-no-rbac]`).
+- [ ] verify-completion(pre-commit) → commit(사용자 confirm) → PR → 머지 → web 재배포(deploy_scope: included) → **POST-DEPLOY PB-0008 라이브**: (a) 시크릿/신규 브라우저 첫 그래프 진입 시 팝업 자동 1회 노출 (b) ✕·알겠습니다·배경·Esc 닫기 + localStorage seen (c) 재진입 시 자동노출 안 함·❓ 버튼으로 재호출 (d) 중간버튼 드래그 중 커서 grabbing·뗌 복원 (e) pageerror 0. worktree `ai/claude/feature-0003-graph-entry-help`(base main f44623f3).

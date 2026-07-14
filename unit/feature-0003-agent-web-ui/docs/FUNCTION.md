@@ -1616,3 +1616,10 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 계약: 밴드 우클릭 → `node:contextmenu`(CAT 배경 노드는 밴드 전체 bbox·hit-grid 우선이라 combo 보다 먼저 히트) → `_metaGraphCtxForCategory(id.replace(/^CAT(H|X)?:/, ""), x, y)`. 메뉴 구성(combo 메뉴 파리티): 헤더 배지 '카테고리' + **📋 카테고리 상세**(제품 정보·멤버 DB 목록 = 좌클릭 상세와 동일 `_metaGraphShowCategoryDetail`) + **접기/펼치기 (밴드)**(멤버 클러스터 표시/숨김 = `catCollapsed` 토글 + `_metaG6Apply`, CATX 컨트롤과 동일 효과) + **카테고리명 복사**.
 - 좌클릭 경로(CAT/CATH=상세, CATX=접기 토글)·밴드 드래그·스키마 클러스터(combo) 우클릭 메뉴는 무변경(회귀 0). RBAC/백엔드/스키마/엔드포인트 0.
 - 코드 거주: `static/graph/graph-ctxmenu.js`(+`_metaGraphCtxForCategory` + export)·`static/graph/graph-core.js`(`node:contextmenu` CAT 분기 라우팅 + import). CHG/REV-20260714T180125-graph-ctxmenu-category.
+
+## (TASK-20260714T1803-graph-entry-help, 2026-07-14) 그래프 뷰 첫 입장 조작 도움말 팝업 + 중간버튼 커서 표식 (web/UI, Minor §12.3, frontend-only — 그래프 도메인 정본 feature-0016)
+- REQ-20260714T1803-graph-entry-help: 그래프 뷰(지식베이스 > 그래프 뷰) 첫 입장 시 조작 안내 도움말 팝업을 띄운다 — **닫을 수 있고 이후 다시 확인할 수 있어야** 한다. 또한 마우스 **중간(휠) 버튼**으로 조작(팬)할 때 커서가 적절하게 바뀌어야 한다.
+- AC-20260714T1803-graph-entry-help-1(도움말 팝업): 그래프 뷰 **최초 진입 시 1회 자동 노출**(`localStorage("metaGraphHelpSeen")` 미확인 시). 팝업은 단일클릭·더블클릭·우클릭·드래그·가운데 버튼·휠·미니맵·검색/보기옵션 8개 조작을 안내하고 읽기전용 뷰임을 고지한다. **닫기 4경로**(✕·"알겠습니다"·배경 클릭·Esc) 중 하나로 닫으면 seen 플래그 set → 다음 세션부터 자동 노출 안 함. **재확인**: 상단 툴바 `❓ 도움말` 버튼(`#metadataGraphHelpBtn`)으로 언제든 재노출. a11y: role=dialog·aria-modal, 진입 시 닫기 버튼 포커스·닫을 때 ❓ 버튼 복귀. localStorage 접근 실패(사생활 모드)는 '미확인=노출'로 안전 강등.
+- AC-20260714T1803-graph-entry-help-2(중간버튼 커서): 캔버스(`#metadataGraphCanvas`)에서 **가운데 버튼을 누르는 동안 커서 = `grabbing`**(쥔 손 — '화면 이동 중' 표식), 버튼을 떼거나(다른 버튼만 뗀 경우 `buttons & 4` 여전 눌림이면 유지) 창 포커스를 잃으면 복원. 브라우저 기본 autoscroll 커서(all-scroll)를 `preventDefault` 로 없앤 자리를 대신한다. 캔버스는 명시 cursor 부재라 자식 `<canvas>` 가 상속(렌더러 PixiJS/G6 무관).
+- 비변경: 백엔드/엔드포인트/RBAC/스키마 0 · 기존 그래프 상호작용(팬·노드드래그·우클릭·줌·미니맵)·이벤트 바인딩 0. 순수 additive.
+- 코드 거주: `static/admin.html`(❓ 버튼 + `#metadataGraphHelp` 오버레이)·`static/graph/graph.css`(`.amg-help-*`)·`static/graph/graph-core.js`(`_metaGraphShowHelp/Hide/MaybeAutoHelp/BindHelp` + `_metaShowGraph` 훅 + 중간버튼 `mousedown` 커서). CHG/REV-20260714T1803-graph-entry-help.
