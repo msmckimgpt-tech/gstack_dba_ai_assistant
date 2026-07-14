@@ -323,3 +323,10 @@ source_of_truth: true
 - 검증: (a) 수정본 파싱 시 `.amg-help-overlay` 규칙 복구·`position:absolute`(rule 204→205). (b) 라이브 규칙 주입 후 geometry: 카드 canvas-wrap 정중앙(dx:0 dy:0)·줌 컨트롤 미겹침(card_overlaps_zoom:false). (c) §18.8 SUBAGENT 적대검증 PASS(주석 델리미터 61/61·잔여 `*/` hazard 없음·diff 주석 국한). POST-DEPLOY 재배포 자산 최종 확인=deploy-web 직후.
 - Files: `src/static/graph/graph.css`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260714T180314-graph-entry-help.md`.
 - Cross-ref: REV/TASK-20260714T184717-graph-help-overlay-fix · 원천 CHG-20260714T180314-graph-entry-help · TEST test-runs.d/20260714T180314-graph-entry-help.md(POST-DEPLOY FIX 섹션) · ANCHOR 0003 무충돌.
+
+## CHG-20260714T190916-graph-help-overlay-postverify (그래프 도움말 팝업 mis-position 수정 POST-DEPLOY 재배포 자산 실증 기록, doc-only)
+- Date: 2026-07-14. CHG-20260714T184717-graph-help-overlay-fix(PR #798, main 8d1285d0) 배포 후 **재배포된 자산** 상 최종 확인. 코드 변경 0(문서 전용).
+- Changes: `docs/test-runs.d/20260714T180314-graph-entry-help.md` POST-DEPLOY FIX 섹션에 "재배포 자산 최종 확인" append + `docs/TASK.md` fix post-deploy 박스 close.
+- 실증: `/healthz` git_commit=8d1285d0. 서빙 graph.css 스탬프 `4335ea1dac52`→`d5f26a416089`(content-hash 갱신)·소스 byte-identical·주석 델리미터 61:61. 배포본 런타임(win-browser eval, 주입 없이): `.amg-help-overlay` cssRules 파싱 복구·`position:absolute`·`display:flex`·`align-items:center`·`z-index:40` · 카드 canvas-wrap 수평 정중앙(dx:0)·줌 컨트롤 미겹침(card_overlaps_zoom:false) · ❓ 버튼 팝업 스크린샷 육안(중앙 모달) · pageerror 0. → 배포본 실증 PASS.
+- Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/test-runs.d/20260714T180314-graph-entry-help.md`.
+- Cross-ref: REV-20260714T190916-graph-help-overlay-postverify · 원천 CHG/REV-20260714T184717-graph-help-overlay-fix · ANCHOR 0003 무충돌.
