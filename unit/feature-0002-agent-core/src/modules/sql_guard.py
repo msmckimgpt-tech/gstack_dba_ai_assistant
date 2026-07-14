@@ -106,7 +106,7 @@ _FORBIDDEN_FUNCTIONS_TSQL = {
 # 무인용 식별자만 차단해 실제 컬럼(`[user]`/`t.user`)은 허용한다.
 _NILADIC_IDENTITY_FUNCS = frozenset({"user", "session_user", "system_user", "current_user"})
 
-# 보조 denylist regex (allowlist 가 못 잡는 edge — backup defense). MySQL 어휘 (골든: 무변경).
+# 보조 denylist regex (allowlist 가 못 잡는 edge — backup defense). MySQL 어휘.
 _DENYLIST_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bINTO\s+OUTFILE\b", re.IGNORECASE),
     re.compile(r"\bINTO\s+DUMPFILE\b", re.IGNORECASE),
@@ -120,7 +120,10 @@ _DENYLIST_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bLOAD_FILE\s*\(", re.IGNORECASE),
     re.compile(r"\bGET_LOCK\s*\(", re.IGNORECASE),
     re.compile(r"/\*\+\s*[^*]*\*/"),  # optimizer hints
-    re.compile(r"@@", re.IGNORECASE),  # system variables
+    # `@@`(시스템 변수 읽기)는 MySQL 에서 차단하지 않는다 (FR-sysvar-select-denylist-overblock):
+    # read-only SHOW VARIABLES/STATUS 화이트리스트와 동일 정보 클래스라 SELECT @@x 만 막으면
+    # 태세 불일치. 쓰기는 아래 SET @/:= denylist 와 shape 게이트(SET 은 SELECT/CTE 아님)가 차단.
+    # T-SQL denylist 의 @@ 는 유지(MSSQL 메타 열거 차단 태세 불변).
     re.compile(r"\bSET\s+@", re.IGNORECASE),  # user variable write
     re.compile(r":=\s*"),  # user variable assignment
     re.compile(r"--[ \t]*[^\n]*", re.MULTILINE),  # line comment (audit only — not block by default)
