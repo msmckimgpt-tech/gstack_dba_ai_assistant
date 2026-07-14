@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260714T074417-account-subtabs — 프로필 '계정' 탭 하위 세분화(계정/알림/UI/사용 내역) (Minor §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
+
+<!-- APPROACH-APPROVED by mckim on 2026-07-14 (AskUserQuestion: "4탭 (권장) — 계정/알림/UI/사용 내역") -->
+
+- 트리거(사용자): "프로필에 (애니메이션) 조정값이 추가되며 구성이 난잡해졌다. `계정` 탭을 세분화해달라 — 알림, UI." (anim-effect-pref 후속.)
+- 진단: `계정` 탭(`data-profile-pane="security-and-account"`)에 7개 섹션(활동·알림·화면 효과·사용 내역·비밀번호 변경·2FA·로그아웃)이 한 화면에 세로로 누적 → 길고 난잡. anim-effect-pref 의 '화면 효과' 추가로 가중.
+- 설계(사용자 승인 = 4 하위 탭): 계정 탭 내부에 secondary nav(하위 탭) 도입 — **계정**(활동+비밀번호+2FA+로그아웃) / **알림** / **UI**(화면 효과) / **사용 내역**(차트). 각 하위 탭 콘텐츠는 활성화 시점 lazy 렌더(사용량은 API라 해당 탭 진입 시에만 로드 — 기존엔 계정 탭 진입 시 4개 일괄 렌더). 기본 하위 탭 = 계정, 세션 내 마지막 선택 복원(state.accountSubtab).
+- 구현(frontend-only, 비파괴·behavior-preserving): (1) `index.html` — 계정 pane 을 `.profile-subtabs`(4 버튼) + 4× `.profile-subpane` 으로 재구성, 7 섹션을 4 그룹으로 이동(모든 element id 보존). (2) `app.js` — 신규 `switchAccountSubtab(sub)`(is-active/hidden 토글 + 하위 탭별 lazy 렌더), `switchProfileTab('security-and-account')` 를 `switchAccountSubtab(state.accountSubtab||'account')` 로 변경, `initialize()` 에 하위 탭 버튼 리스너 배선. (3) `styles.css` — `.profile-subtabs`/`.profile-subtab`/`.profile-subpane`(세그먼트 pill 스타일, 상단 drawer-tab 언더라인과 구분).
+- Risk: **Minor** — frontend 단독·비파괴·서버 계약/RBAC/스키마/마이그 무변경. DOM 재배치 + 순수 표현계층 sub-nav. 되돌리기 용이. visual_verification_scope: always → PB-0008. deploy_scope: included.
+- Completion Checklist:
+  - [x] index.html 계정 pane 4 하위탭 재구성(섹션 7→4그룹 이동·id 전부 보존·div 균형 32/32).
+  - [x] app.js switchAccountSubtab + switchProfileTab 디스패치 변경 + 버튼 리스너 배선. node --check PASS.
+  - [x] styles.css `.profile-subtabs`/`.profile-subtab`/`.profile-subpane`.
+  - [ ] §18.8 적대 서브에이전트 리뷰(섹션 배치 무손실·lazy 렌더·기본 하위탭) → 반영.
+  - [ ] verify-completion --pre-commit → commit → PR → 머지 → web 무중단 재배포.
+  - [ ] **POST-DEPLOY PB-0008 실 Windows 브라우저 검증**: 계정 탭 진입 시 4 하위 탭 노출·기본 '계정' 활성 / 각 탭 클릭 시 해당 섹션만 표시(알림·화면효과·사용량 차트·비번/2FA/로그아웃) / 사용량 탭 진입 시 차트 로드 / pageerror 0.
+
 ## TASK-20260714T065503-anim-effect-pref — 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정 신설 (Major §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
 
 <!-- APPROACH-APPROVED by mckim on 2026-07-14 (AskUserQuestion: "인앱 애니메이션 토글 신설 (권장)") -->
