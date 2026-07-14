@@ -57,3 +57,29 @@ sibling(같은 parent)으로 체인 + 재답변. 형제 버전 그룹핑 = 공�
 
 **남은 Phase 1**: 엔드포인트(edit/branch-switch/history active-path)·프론트·통합·PB-0008.
 여전히 dormant(has_branches 활성 경로 없음) — 라이브 무영향.
+
+## 2026-07-14 — Phase 1 오케스트레이션·UI (checkpoint 3: 엔드포인트 + 프론트)
+
+백엔드 기반(PR #766 merged) 위에 **편집 기능을 활성화**하는 HTTP 엔드포인트 + 프론트 UI 완성.
+본 슬라이스로 has_branches 가 실제로 true 가 되는 경로가 생김(더 이상 dormant 아님).
+
+**완료:**
+- **엔드포인트**(feature-0003 `conversations.py`):
+  - `POST /api/conversations/{cid}/messages/{mid}/edit` {mode, new_content} — simple(제자리 갱신+
+    '편집됨') / reanswer(브랜치 setup → `/api/ask` 재dispatch, fix-with-ai 패턴). authz = 대화접근 +
+    ask 권한 + 본인 소유(IDOR) + user 메시지 + 그룹 차단(Phase 2) + rate-limit + audit.
+  - `POST /api/conversations/{cid}/branch/switch` {message_id} — 버전 페이징(양 store active_leaf 이동).
+  - `GET /api/history` 확장 — has_branches 게이트로 활성 경로만 필터 + 버전 메타(version_number/
+    version_count/sibling_ids) 부착. 비분기는 기존 경로(무회귀). 브랜치 대화 core fallback 차단(누출 방지).
+- **브랜치 오케스트레이션 헬퍼**(`_conv_store.py`): `_branch_get_display_message`·`_branch_map_display_
+  user_to_core`(링크 or created_at 매칭)·`_branch_reanswer_setup`(enable+active_leaf=M.parent)·
+  `_branch_simple_edit`·`_branch_switch`(하향 CTE leaf)·`_branch_active_display_ids`·`_branch_version_groups`.
+- **프론트**(`app.js`/`styles.css`): user 말풍선 '수정' 버튼(hover) → 인라인 편집 UI([단순 수정 /
+  요청사항 수정 / 취소]) · `< n / m >` 버전 페이저(상시, prev/next → branch/switch) · '(편집됨)' 배지.
+  `_canEditMessage` 게이트(1:1 본인 대화) — 그룹 미노출.
+- **검증**: 신규 2 route ROUTEMAP·codenav 게이트 PASS + route-parity golden 갱신(207 routes) +
+  make test 컨테이너 import OK(브랜치 15 + route-parity PASS). 잔여 4 실패는 pre-existing local-env
+  (routine_dbanalysis·runtime_settings×2·item11_batch8 — backend-only cycle 에서도 실패, CI 통과 실증).
+- §18.8 적대적 보안 리뷰(security subagent) — 결과는 REVIEW.md.
+
+**남은 Phase 1**: 배포(마이그 0041 적용 + agent/insight-worker/web 재빌드) + PB-0008 라이브 시각검증.

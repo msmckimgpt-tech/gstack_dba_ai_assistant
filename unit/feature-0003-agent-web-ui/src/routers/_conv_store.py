@@ -1396,10 +1396,42 @@ def _get_history(
                 "created_at": str(created_at),
                 "meta": meta,
             })
+        # feature-0019 message-editing: 편집으로 브랜치가 생긴 대화(has_branches)면 활성 경로만
+        #   노출하고 버전 페이징 메타(version_number/version_count/sibling_ids)를 부착한다. 게이트
+        #   fast-path — has_branches=false(거의 모든 대화)면 이 블록 전체 skip(무회귀).
+        _has_branches, _active_disp_leaf = _branch_display_state(conversation_id)
+        # SEC MINOR-B: 브랜치 활성경로 필터/버전 메타는 1:1 소유 대화(편집 대상)에만. 브랜치된 1:1 이
+        #   share/join 으로 그룹 승격된 경우엔 비활성 버전 id 노출·타 멤버 메시지 은닉을 피하려 skip(전체 노출).
+        if _has_branches and not _conversation_is_group(conversation_id):
+            try:
+                from shared.db import _pg_connect as _pgc
+                _bpg = _pgc()
+                try:
+                    _active_ids = _branch_active_display_ids(_bpg, conversation_id, _active_disp_leaf)
+                    _vgroups = _branch_version_groups(_bpg, conversation_id)
+                finally:
+                    _bpg.close()
+                messages_pg = [m for m in messages_pg if int(m["id"]) in _active_ids]
+                _id_to_sibs: dict[int, list] = {}
+                for _sibs in _vgroups.values():
+                    for _sid in _sibs:
+                        _id_to_sibs[_sid] = _sibs
+                for m in messages_pg:
+                    if str(m.get("role") or "").lower() == "user":
+                        _sibs = _id_to_sibs.get(int(m["id"]))
+                        if _sibs and len(_sibs) > 1:
+                            m["version_number"] = _sibs.index(int(m["id"])) + 1
+                            m["version_count"] = len(_sibs)
+                            m["sibling_ids"] = _sibs
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "branch history enrich failed (cid=%s)", conversation_id, exc_info=True
+                )
         needs_core_pg = not messages_pg or not any(str(i.get("role", "")).lower() == "assistant" for i in messages_pg)
         # share-visibility-window: bounded 멤버(window 지정)는 core fallback(core_messages 직접
         # 읽기 — window 미적용)을 건너뛴다. 표시 store 만으로 window 정합 응답을 준다(유출 방지).
-        if needs_core_pg and window is None:
+        # feature-0019: 브랜치 대화도 core fallback 금지 — 무필터 core 읽기가 옛 브랜치를 노출하므로.
+        if needs_core_pg and window is None and not _has_branches:
             core_msgs, core_hm, core_oid, core_tc, core_uc = _get_agent_core_history(
                 conn, conversation_id, limit=limit, before_id=before_id
             )
@@ -5798,3 +5830,345 @@ def _open_memory_connection(*, database: str | None = app.MEMORY_DB):
     finally:
         cur.close()
     return conn
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# feature-0019 message-editing — 브랜치 오케스트레이션 (엔드포인트 전용, PG 직접)
+#   백엔드 write 기반(마이그 0041 + core/display 브랜치 체이닝)은 feature-0002 에 있고,
+#   본 블록은 편집/브랜치전환 HTTP 핸들러가 호출하는 오케스트레이션이다. PG 전용
+#   (agent_runtime.*). has_branches 게이트로 비분기 대화는 절대 진입하지 않는다(무회귀).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_BRANCH_EDIT_CONTENT_CAP = 100_000  # 편집 본문 상한(과대 입력 조기 차단)
+
+
+def _branch_get_display_message(pg, conversation_id: str, message_id: int):
+    """표시 store 메시지 1행(브랜치 컬럼 포함). 없으면 None."""
+    with pg.cursor() as cur:
+        cur.execute(
+            "SELECT id, role, content, created_at, meta_json, parent_message_id, "
+            "edit_root_message_id, edit_version, core_message_id "
+            "FROM agent_runtime.messages WHERE conversation_id = %s AND id = %s LIMIT 1",
+            (conversation_id, int(message_id)),
+        )
+        r = cur.fetchone()
+    if not r:
+        return None
+    return {
+        "id": int(r[0]), "role": r[1], "content": r[2], "created_at": r[3], "meta_json": r[4],
+        "parent_message_id": r[5], "edit_root_message_id": r[6],
+        "edit_version": r[7], "core_message_id": r[8],
+    }
+
+
+def _branch_map_display_user_to_core(pg, conversation_id: str, disp: dict):
+    """편집 대상 user 표시메시지 → core 짝 id. 링크(core_message_id) 있으면 exact.
+
+    링크 부재 시 **결정적 서수(ordinal) 매핑**: display user 메시지 중 M 의 순번(id ASC) =
+    core user 메시지의 같은 순번. 1:1 대화(Phase 1 편집 대상)는 user 메시지가 두 store 간 strict
+    1:1(이벤트/시스템 user 메시지 없음 — 그룹 join 알림은 그룹 전용이고 편집은 그룹 차단)이라
+    exact·tie-safe. created_at 근접매칭(동일 초 tie 시 무관 메시지 오선택)의 무결성 결함 대체
+    (REV-20260714 SEC MAJOR #1). None 가능(미발견).
+    """
+    if disp.get("core_message_id"):
+        return int(disp["core_message_id"])
+    with pg.cursor() as cur:
+        cur.execute(
+            "WITH ranked AS (SELECT id, row_number() OVER (ORDER BY id) AS rn "
+            "FROM agent_runtime.messages WHERE conversation_id = %s AND role = 'user') "
+            "SELECT rn FROM ranked WHERE id = %s",
+            (conversation_id, int(disp["id"])),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        rank = int(row[0])
+        cur.execute(
+            "WITH ranked AS (SELECT id, row_number() OVER (ORDER BY id) AS rn "
+            "FROM agent_runtime.core_messages WHERE conversation_id = %s AND role = 'user') "
+            "SELECT id FROM ranked WHERE rn = %s",
+            (conversation_id, rank),
+        )
+        r2 = cur.fetchone()
+    return int(r2[0]) if r2 else None
+
+
+def _branch_backfill_and_parents(pg, conversation_id: str, m_core_id, m_display_id: int):
+    """첫 편집: core+display linear parent 체인 backfill(멱등) 후, 편집 대상 M 의 parent(브랜치
+    분기점)를 두 store 각각에서 재조회해 반환. (m_core_parent, m_display_parent) — NULL 가능(첫 메시지).
+    """
+    with pg.cursor() as cur:
+        cur.execute(
+            "WITH ord AS (SELECT id, LAG(id) OVER (ORDER BY id) AS prev FROM agent_runtime.core_messages "
+            "WHERE conversation_id = %s) "
+            "UPDATE agent_runtime.core_messages c SET parent_message_id = ord.prev FROM ord "
+            "WHERE c.id = ord.id AND ord.prev IS NOT NULL AND c.parent_message_id IS NULL",
+            (conversation_id,),
+        )
+        cur.execute(
+            "WITH ord AS (SELECT id, LAG(id) OVER (ORDER BY id) AS prev FROM agent_runtime.messages "
+            "WHERE conversation_id = %s) "
+            "UPDATE agent_runtime.messages c SET parent_message_id = ord.prev FROM ord "
+            "WHERE c.id = ord.id AND ord.prev IS NOT NULL AND c.parent_message_id IS NULL",
+            (conversation_id,),
+        )
+        m_core_parent = None
+        if m_core_id is not None:
+            cur.execute("SELECT parent_message_id FROM agent_runtime.core_messages WHERE id = %s", (int(m_core_id),))
+            row = cur.fetchone()
+            m_core_parent = row[0] if row else None
+        cur.execute("SELECT parent_message_id FROM agent_runtime.messages WHERE id = %s", (int(m_display_id),))
+        row = cur.fetchone()
+        m_display_parent = row[0] if row else None
+    return m_core_parent, m_display_parent
+
+
+def _branch_reanswer_setup(conversation_id: str, disp: dict):
+    """요청사항 수정(reanswer) 준비: 브랜치 게이트 활성 + 편집 대상 M 의 parent 를 두 store 의
+    active_leaf 로 세팅(그 지점부터 새 브랜치 분기) + M 표시행에 core 링크 저장. 이후 호출자가
+    동일 conversation_id 로 /api/ask 재dispatch → 워커가 새 user 메시지(M 형제)+답변을 활성
+    브랜치에 체인한다(feature-0002 검증된 write 경로 재사용).
+
+    **반환**: 편집 직전 상태 스냅샷 dict {has_branches, active_leaf, active_display_leaf}. 호출자는
+    /api/ask 재dispatch 실패 시 `_branch_restore_state` 로 이 값을 복원해, active_leaf 가 M.parent 에
+    고착돼 대화 tail 이 화면에서 사라지는 것을 막는다(REV-20260714 SEC MAJOR #2 보상 복원).
+    예외는 상위로 전파(호출자가 500).
+    """
+    from shared.db import _pg_connect
+    pg = _pg_connect(autocommit=False)
+    try:
+        # 보상 복원용 사전 상태 스냅샷.
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT has_branches, active_leaf_message_id, active_display_leaf_message_id "
+                "FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                (conversation_id,),
+            )
+            _pr = cur.fetchone()
+        prior = {
+            "has_branches": bool(_pr[0]) if _pr else False,
+            "active_leaf": (_pr[1] if _pr else None),
+            "active_display_leaf": (_pr[2] if _pr else None),
+        }
+        m_core_id = _branch_map_display_user_to_core(pg, conversation_id, disp)
+        m_core_parent, m_display_parent = _branch_backfill_and_parents(
+            pg, conversation_id, m_core_id, disp["id"]
+        )
+        with pg.cursor() as cur:
+            cur.execute(
+                "UPDATE agent_runtime.core_conversations "
+                "SET has_branches = true, active_leaf_message_id = %s, active_display_leaf_message_id = %s "
+                "WHERE conversation_id = %s",
+                (m_core_parent, m_display_parent, conversation_id),
+            )
+            if m_core_id is not None:
+                cur.execute(
+                    "UPDATE agent_runtime.messages SET core_message_id = %s "
+                    "WHERE id = %s AND core_message_id IS NULL",
+                    (int(m_core_id), disp["id"]),
+                )
+        pg.commit()
+        return prior
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        pg.close()
+
+
+def _branch_restore_state(conversation_id: str, prior: dict):
+    """reanswer 재dispatch 실패 시 편집 직전 브랜치 상태(has_branches/active_leaf/active_display_leaf)
+    복원 — active_leaf 가 M.parent 에 고착돼 tail 이 사라지는 것 방지(REV-20260714 SEC MAJOR #2).
+    best-effort(복원 실패해도 원 예외 흐름 유지)."""
+    if not isinstance(prior, dict):
+        return
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "UPDATE agent_runtime.core_conversations "
+                "SET has_branches = %s, active_leaf_message_id = %s, active_display_leaf_message_id = %s "
+                "WHERE conversation_id = %s",
+                (bool(prior.get("has_branches")), prior.get("active_leaf"),
+                 prior.get("active_display_leaf"), conversation_id),
+            )
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+
+def _branch_simple_edit(conversation_id: str, disp: dict, new_content: str):
+    """단순 수정: 편집 대상 user 메시지 내용을 두 store 제자리 갱신 + '편집됨' 표식(meta.edited).
+    재답변 없음, 하위 메시지·브랜치 불변. 브랜치 대화가 아니어도 동작(has_branches 무변경).
+    """
+    import json as _json
+    from shared.db import _pg_connect
+    pg = _pg_connect(autocommit=False)
+    try:
+        m_core_id = _branch_map_display_user_to_core(pg, conversation_id, disp)
+        # 표시 store meta 에 edited 표식 병합.
+        meta = {}
+        mj = disp.get("meta_json")
+        if mj:
+            try:
+                meta = _json.loads(mj) if isinstance(mj, str) else (mj or {})
+            except Exception:
+                meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["edited"] = True
+        with pg.cursor() as cur:
+            cur.execute(
+                "UPDATE agent_runtime.messages SET content = %s, meta_json = %s::jsonb "
+                "WHERE conversation_id = %s AND id = %s",
+                (new_content, _json.dumps(meta, ensure_ascii=False), conversation_id, disp["id"]),
+            )
+            if m_core_id is not None:
+                cur.execute(
+                    "UPDATE agent_runtime.core_messages SET content = %s WHERE id = %s",
+                    (new_content, int(m_core_id)),
+                )
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        pg.close()
+
+
+def _branch_leaf_of(pg, table: str, conversation_id: str, start_id: int):
+    """start_id 노드에서 자식(parent_message_id=현재)을 따라 내려간 브랜치 leaf(최심 후손) id.
+    분기가 여러 갈래면 가장 최근(최대 id) 자식을 따른다(활성 tail 규약)."""
+    # SEC 관찰: table 은 f-string 삽입이므로 allowlist 로 고정(외부 입력 유입 방어).
+    if table not in ("messages", "core_messages"):
+        raise ValueError(f"invalid branch table: {table!r}")
+    with pg.cursor() as cur:
+        cur.execute(
+            f"WITH RECURSIVE down AS ("
+            f"  SELECT id FROM agent_runtime.{table} WHERE id = %s AND conversation_id = %s "
+            f"  UNION ALL "
+            f"  SELECT m.id FROM agent_runtime.{table} m JOIN down d ON m.parent_message_id = d.id "
+            f"  WHERE m.conversation_id = %s AND m.id = ("
+            f"    SELECT max(c.id) FROM agent_runtime.{table} c WHERE c.parent_message_id = d.id"
+            f"  )"
+            f") SELECT max(id) FROM down",
+            (int(start_id), conversation_id, conversation_id),
+        )
+        r = cur.fetchone()
+    return int(r[0]) if r and r[0] is not None else int(start_id)
+
+
+def _branch_switch(conversation_id: str, target_display_id: int):
+    """브랜치 전환(페이징): 선택한 버전(target 표시 user 메시지)의 브랜치를 활성으로. 두 store 의
+    active_leaf 를 각 브랜치 leaf 로 이동. target 은 반드시 이 대화의 user 메시지여야 한다(호출자 검증).
+    반환: True(성공)/False(대상 부적합). 예외는 상위 전파.
+    """
+    from shared.db import _pg_connect
+    pg = _pg_connect(autocommit=False)
+    try:
+        disp = _branch_get_display_message(pg, conversation_id, target_display_id)
+        if not disp or str(disp.get("role") or "").lower() != "user":
+            return False
+        disp_leaf = _branch_leaf_of(pg, "messages", conversation_id, disp["id"])
+        m_core_id = _branch_map_display_user_to_core(pg, conversation_id, disp)
+        core_leaf = _branch_leaf_of(pg, "core_messages", conversation_id, m_core_id) if m_core_id else None
+        with pg.cursor() as cur:
+            cur.execute(
+                "UPDATE agent_runtime.core_conversations "
+                "SET active_leaf_message_id = %s, active_display_leaf_message_id = %s "
+                "WHERE conversation_id = %s AND has_branches = true",
+                (core_leaf, disp_leaf, conversation_id),
+            )
+            ok = cur.rowcount > 0
+        pg.commit()
+        return ok
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        pg.close()
+
+
+def _branch_display_state(conversation_id: str):
+    """/api/history 용: (has_branches, active_display_leaf_message_id). 컬럼부재/오류 → (False, None)."""
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect()
+    except Exception:
+        return (False, None)
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT has_branches, active_display_leaf_message_id "
+                "FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                (conversation_id,),
+            )
+            r = cur.fetchone()
+        if not r:
+            return (False, None)
+        return (bool(r[0]), r[1])
+    except Exception:
+        return (False, None)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+
+def _branch_active_display_ids(pg, conversation_id: str, active_leaf):
+    """활성 브랜치 경로의 display 메시지 id 집합(leaf→root parent 역추적). active_leaf=None → 빈 집합."""
+    if active_leaf is None:
+        return set()
+    with pg.cursor() as cur:
+        cur.execute(
+            "WITH RECURSIVE up AS ("
+            "  SELECT id, parent_message_id FROM agent_runtime.messages "
+            "  WHERE conversation_id = %s AND id = %s "
+            "  UNION ALL "
+            "  SELECT m.id, m.parent_message_id FROM agent_runtime.messages m "
+            "  JOIN up u ON m.id = u.parent_message_id WHERE m.conversation_id = %s"
+            ") SELECT id FROM up",
+            (conversation_id, int(active_leaf), conversation_id),
+        )
+        return {int(r[0]) for r in (cur.fetchall() or [])}
+
+
+def _branch_version_groups(pg, conversation_id: str):
+    """편집된 user 메시지의 형제 버전 그룹. 반환 {parent_key: [display_id...(id ASC)]}.
+    형제 = 같은 parent_message_id 를 공유하는 user 메시지(DEC-3). parent NULL 은 '__root__' 키.
+    version_count>1 인 그룹만 반환(페이징 표식 대상)."""
+    with pg.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(parent_message_id::text, '__root__') AS pk, id "
+            "FROM agent_runtime.messages "
+            "WHERE conversation_id = %s AND role = 'user' "
+            "ORDER BY pk, id ASC",
+            (conversation_id,),
+        )
+        rows = cur.fetchall() or []
+    groups: dict[str, list] = {}
+    for pk, mid in rows:
+        groups.setdefault(str(pk), []).append(int(mid))
+    return {k: v for k, v in groups.items() if len(v) > 1}
