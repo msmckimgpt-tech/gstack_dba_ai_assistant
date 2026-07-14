@@ -219,3 +219,8 @@ source_of_truth: true
 - **재검증**: 전체 회귀 **1980 passed / 2 skipped / 0 failed**(신규 `test_mssql_crossdb_discovery.py` 46). 라이브 QA(mssql-web-qa) 수정 실증: describe_columns([Shop],T_ItemInfo)=15컬럼 · search_tables('Buy',Shop)=L_Item_Buy_Log · routine cross-DB 1345자.
 - 근본성 교차(R3/R4): 보안 렌즈 — cross-DB 는 유효 허용 DB(freeform 이 이미 도달)만·시스템 DB/스키마·agent_memory·`_safe_ident`+allowlist 이중 방어 유지(경계 확장 0, sys backstop 복원). 회귀 렌즈 — MySQL 골든 db-무시 11 메서드 + 비활성 경로 불변.
 - Human Approval: **AskUserQuestion 2026-07-14 "완전 DB인지"**(Critical 접근 모델 사람 승인). PR/deploy 는 외부영향 confirm 별도.
+
+## REV-20260714T171000-mssql-crossdb-deploy [SKIPPED:post-deploy-doc-reconciliation] — 배포 완료 기록 + 원장 상태 정합
+- Date: 2026-07-14. Related Change: CHG-20260714T171000-mssql-crossdb-deploy. 코드 변경 0(docs-only).
+- SKIPPED 사유: 런타임 코드 무변경 — PR #790(REV-20260714T161500 검증 완료) 배포 후 상태 정합(FRICTION_LEDGER fixed:undeployed→fixed:deployed:unverified-live + TASK 체크박스). 배포 검증 결정적: 4서비스 GIT_COMMIT=b364e964 healthy + deploy-web soak 통과 + 배포 이미지 baked end-state 실증(mssql-web-qa cross-DB describe 15컬럼·routine 1345자).
+- Human Approval: 배포 사용자 confirm(AskUserQuestion 2026-07-14 "병합+배포"). 본 follow-up 은 그 배포의 정직-상태 기록(docs-only).
