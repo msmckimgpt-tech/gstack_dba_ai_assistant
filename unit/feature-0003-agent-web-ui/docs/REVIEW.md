@@ -10,6 +10,30 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260714T080000-account-subtabs-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260714T074417-account-subtabs, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 TASK 체크리스트 완료 + TEST POST-DEPLOY append + MODIFY -postverify CHG뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260714T074417-account-subtabs [SUBAGENT] (SHIP)가 정본.
+- 라이브 실측 요지: win-browser 실 Windows Chrome, 라이브 53e55bfe. 하위탭 4개·기본 account·각 전환 시 정확히 1 subpane 노출 assertion 전항목 PASS·서빙 심볼 확인·세그먼트 하위탭 바 시각 렌더(스크린샷). 1차 배포 soak false-positive 롤백→재배포 PASS(정적자산 /healthz 무관·동시부하 transient).
+- Cross-ref: REV-20260714T074417-account-subtabs(기능 정본) · CHG-20260714T080000-account-subtabs-postverify · TEST Run POST-DEPLOY.
+
+## REV-20260714T074417-account-subtabs [SUBAGENT:adversarial-diff-review] — 프로필 '계정' 탭 하위 세분화(계정/알림/UI/사용 내역) (TASK-20260714T074417-account-subtabs, Minor §12.3, frontend-only) — SHIP
+- 렌즈: 적대 코드리뷰 서브에이전트(general-purpose) — diff 한정, 5축(섹션 배치 무손실/id 보존·lazy 렌더 정합·first-open 기본 하위탭·이벤트 배선·DOM/CSS 균형).
+- **건전 확인(결함 0):** ① 7섹션이 4 subpane 에 정확히 1회씩 배치·손실/중복 0·필수 element id 20종 전부 정확히 1회(grep 확증). ② lazy 렌더 정합 — 활동 dl 은 openProfile→renderProfile 이 계속 채움(기본 노출 account subpane), 모든 change 핸들러는 initialize() 에서 getElementById/querySelectorAll 로 바인딩(=`.hidden` 무관 유효), renderNotifyPrefs/renderMotionPref/loadProfileUsage 는 display-only(SoT=localStorage/API)라 하위탭 활성 시 렌더 지연이 stale 유발 안 함, `dChk.disabled` interlock 은 change 핸들러+subpane open 에서 재적용, renderProfileTotp 는 innerHTML clear-후-rebind 라 반복 토글 리스너 누수 없음, 기존 테스트가 구 평면 구조 참조 0. ③ first-open — `state.accountSubtab` undefined→'account', 정적 HTML 기본값(account is-active/others hidden)이 switchAccountSubtab('account') 결과와 정확히 일치(오패널 flash 없음). ④ 이벤트 배선 — 하위탭 버튼 initialize() 1회 바인딩(중복 없음), openProfile 기본 prompt 탭+state.accountSubtab 세션 유지로 계정 재진입 시 마지막 하위탭 복원(의도 일치). ⑤ 구조 — pane div 균형 32/32, 전역 button reset 로 `.profile-subtab` UA chrome 없음, `state` 모듈 const.
+- **Deferred NIT(비차단, 회귀 아님):** 하위탭 버튼에 role="tab"/aria-selected 는 있으나 subpane 에 role="tabpanel"·aria-controls/labelledby·화살표 roving 미비 — 단 부모 drawer-tab 은 role 자체가 없어 본 변경은 additive(퇴행 아님). 부모 탭 ARIA 정비와 함께 추후 일괄 개선 권장.
+- **Verdict: SHIP** (blocking/major/minor 0, deferred a11y NIT 1).
+- Cross-ref: TASK/CHG/FUNCTION-20260714T074417-account-subtabs · TEST Run(2026-07-14) account-subtabs · 선행 anim-effect-pref · ANCHOR 0003 무충돌.
+
+## REV-20260714T073000-anim-effect-pref-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260714T065503-anim-effect-pref, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 TASK.md 체크리스트 완료 + TEST.md POST-DEPLOY 라이브 PASS append + MODIFY -postverify CHG뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260714T065503-anim-effect-pref [SUBAGENT] (FIX-THEN-SHIP→반영 후 SHIP)가 정본. 본 엔트리는 배포 후 라이브 실측 결과 기록만.
+- 라이브 실측 요지: win-browser 실 Windows Chrome, 라이브 f00519dd. 게이트 로직 assertion 전항목 PASS(off→reduced true·on→false OS무관·os→OS일치·data-motion 반영·select 3옵션+hydration·캘린더/검색 scrollMessagePointIntoCenter 라우팅)·서빙 자산 stamp/심볼 확인·프로필 계정 탭 select 시각 렌더(스크린샷). 한계: 검증 머신 reduce-motion off라 육안 모션 시연 불가(로직은 결정적 실증).
+- Cross-ref: REV-20260714T065503-anim-effect-pref(기능 정본) · CHG-20260714T073000-anim-effect-pref-postverify · TEST Run POST-DEPLOY.
+
+## REV-20260714T065503-anim-effect-pref [SUBAGENT:adversarial-diff-review] — 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정 (TASK-20260714T065503-anim-effect-pref, Major §12.3, frontend-only) — FIX-THEN-SHIP → 반영 후 SHIP
+- 렌즈: 적대 코드리뷰 서브에이전트(general-purpose) — diff 한정, 5축(라우팅 등가성·회귀 표면/TDZ·접근성·UI 배선·null/예외 가드). §18.8 dispatch: UI/화면 신호 → ux/design 후보이나, 프론트 단독·비파괴·서버계약/RBAC/스키마 0 라 단일 적대 코드리뷰로 수행.
+- **적발(MAJOR 1건, 반영):** 크로스페이드 고스트에 걸린 별도 CSS 미디어쿼리 `@media (prefers-reduced-motion: reduce) { .messages-switch-ghost { display:none } }`(styles.css) 는 인앱 pref 로 덮이지 않아, **OS reduce-motion ON + 인앱 '항상 켬'** 시나리오에서 JS 가드는 통과해 고스트를 생성하지만 CSS 가 `display:none` 으로 가려 "빈 화면 후 fade-in"(크로스페이드 아님)이 되어 **대표 효과(크로스페이드)가 정작 복원 안 되는** 결함. 이 시나리오가 바로 본 기능의 목적이자 POST-DEPLOY PB-0008 검증 항목. → **수정:** `html:not([data-motion="on"]) .messages-switch-ghost { display:none }` 로 이관(이미 init 배선된 `<html data-motion>` 속성 재사용 — 이로써 data-motion 이 "미래용"이 아니라 현재 필수임도 확인). 크래시/누수 없음(fallback 타이머가 숨은 고스트 정리)이라 순수 시각 결함이었음.
+- **건전 확인(결함 없음):** ① 캘린더/검색 점프 라우팅(`scrollMessagePointIntoCenter`)은 기존 native `scrollIntoView({behavior:"smooth",block:"center"})`와 실무상 동형 — 타깃은 항상 `messageLogEl` 내부(point-rail dot 클릭과 동일 패턴)·`off`/reduce 시 `setter(to)` 즉시이동(no-op 아님)·`!messageLogEl` no-op 은 `#messageLog` 안정 요소라 불가. ② TDZ 없음 — `MOTION_PREF_KEY` const 접근자 전부 hoisted 함수 선언·런타임 호출(6124 이전 top-level 호출 경로 없음, `initialize()`는 그 뒤 실행). ③ 기본 `os`=기존 로직 byte-동치(회귀 표면 0). ④ localStorage read/write/setAttribute 전부 try/catch. ⑤ null 가드 존재(renderMotionPref·change 리스너·scrollMessagePointIntoCenter). ⑥ UI 배선 정확(`#motionEffectSelect` ∈ `data-profile-pane="security-and-account"`·renderMotionPref 동일 탭 dispatch). ⑦ 접근성 — 기본 `os`가 OS 신호 보존, 인앱 override 는 내부도구 정당 opt-in. `node --check app.js` PASS·잔여 native smooth-into-center 0(10503/10514 는 `block:"nearest"` 의도적 즉시).
+- **Verdict: FIX-THEN-SHIP → MAJOR 반영 완료(styles.css data-motion 가드) → SHIP.**
+- Cross-ref: TASK/CHG/FUNCTION-20260714T065503-anim-effect-pref · TEST Run(2026-07-14) anim-effect-pref · ANCHOR 0003 무충돌.
+
 ## REV-20260713T101500-ds-conn-test-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260713T094624-ds-conn-test, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 test-runs.d fragment POST-DEPLOY append + TASK.md 체크리스트 완료뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260713T094624-ds-conn-test(AGENT-TEAM 3렌즈 SHIP)가 정본. 본 엔트리는 배포 후 라이브 실측 결과 기록만.
 - 라이브 실측 요지(배포 02a1e585, https://localhost/ bootstrap_admin console_access, win-browser Chrome relay): AC-1 15 DS 배지 전부 `<button.product-dropup-item-ds--test>`(aria-label·min 24px·테두리)·AC-2 클릭→실 probe "✓ 연결 성공(11.8ms)" 토스트 top=66px(composer 769px 위, 입력창 비가림)·단발성 자동숨김·AC-4 제품 미전환(stopPropagation)·AC-5 프론트 쿨다운 "4초 후 다시" 발화·AC-6 admin `#adminToast` 하단 불변·AC-7 pageerror 0. Evidence scratchpad/ds-conn-test-postdeploy.png.

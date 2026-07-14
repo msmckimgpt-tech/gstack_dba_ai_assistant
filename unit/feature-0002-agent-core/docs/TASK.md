@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260714T161500-mssql-crossdb-discovery (current cycle) — MSSQL 구조화 발견 도구 DB(catalog) 인지: cross-DB 검색·describe (Critical §12.3, conversation_audit FR-mssql-crossdb-structured-discovery)
+- 출처: `/_dqa:conversation_audit "코드 재검토 요청 — assistant 가 SQL Server 내부 관련 객체를 못 찾음(실제로는 있는데도)"` (2026-07-14, 사용자 명시). 승인=**완전 DB인지**(AskUserQuestion 2026-07-14).
+- **근본원인(삼각측량 high — 코드+PG 대화집계+라이브 QA 서버+전사)**: SQL Server `INFORMATION_SCHEMA`/`sys` 는 **DB(catalog)별**(MySQL 인스턴스-전역 information_schema 와 비대칭)인데, 구조화 발견 도구가 pin 된 primary DB(`allow_dbs[0]`) 하나만 조회 → 제품 데이터가 분산된 다른 허용 DB(product 117 `Shop`·`CASHITEMDB` 등 30여 개)의 객체를 "없음"으로 오판·give-up. `schema_name` 이 DB 를 스키마로 오인(관측: describe_table 빈-헤더 schema 인자 대부분 DB명). **corroboration structural**: MSSQL 29대화 중 11(~38%) describe_table 빈-헤더·9 search_tables 빈결과, 오늘까지. 대상 대화 `20260714065456-d705e0c7`(product 117, `Shop.dbo.T_ItemInfo`/`L_Item_Buy_Log` 미발견→포기→"다시, 제대로 검토해주세요"). 라이브 재현/수정검증(mssql-web-qa): primary `_INDY_STATISTIC` 에서 미발견 → `[Shop].INFORMATION_SCHEMA` 3-part 로 15컬럼·`L_Item_Buy_Log` 발견.
+- **재발경로/봉인**: capability gap(도구가 freeform 이 이미 도달하는 허용 DB 에 못 닿음) → 구조화 발견 도구를 **DB(catalog) 인지**로. `[db].` 3-part 카탈로그 조회 + `search_tables` 대상 DB 미지정 시 허용 DB 전체 검색(DB-qualified) + 빈결과 L2 교정 힌트. 보안 경계 불변(유효 허용 DB만·시스템/내부 DB·시스템 스키마 차단·`_safe_ident`+allowlist 이중).
+
+### §1.1 Implementation Plan
+- `src/modules/dialects.py`: MSSQLDialect 전 발견 메서드에 `db` 파라미터 + `_cat(db)` 3-part 접두(sys/INFORMATION_SCHEMA); describe_columns 스키마 필터 조건부; routine OBJECT_ID 3-part. base/MySQL 은 `db=""` 무시(골든 회귀 0).
+- `src/modules/tools.py`: `_mssql_active`/`_mssql_effective_allow_dbs`/`_mssql_resolve_catalog`/`_mssql_resolve_table_schema`/`_mssql_struct_target`/`_mssql_crossdb_hint` + 8개 구조화 핸들러 catalog-aware + `search_tables` cross-DB(per-DB graceful·CAP 40) + TOOL_DEFINITIONS `database` 파라미터.
+- `src/agent_core.py`: `_MSSQL_DIALECT_GUIDANCE` 다중 DB 발견 지침(L1 정합).
+- `tests/test_mssql_crossdb_discovery.py`(신규).
+
+### §1.2 Completion Checklist
+- [x] dialects.py: MSSQLDialect `db` catalog 접두(11 메서드) + describe_columns 조건부 스키마 필터 + base/MySQL `db=""` 무시(골든)
+- [x] tools.py: catalog resolver/헬퍼 5종 + 8 핸들러 catalog-aware + search_tables cross-DB + `database` 툴 파라미터 + L2 교정 힌트
+- [x] agent_core.py: `_MSSQL_DIALECT_GUIDANCE` 다중 DB 발견 지침
+- [x] tests/test_mssql_crossdb_discovery.py(33) + 전체 회귀 **1967 passed/2 skipped/0 failed(RC=0)**
+- [x] 라이브 QA(mssql-web-qa) 수정 검증: describe_columns([Shop],T_ItemInfo)=15컬럼·search_tables('Buy',Shop)=L_Item_Buy_Log 발견
+- [x] §18.8 적대 패널(security+backend+qa) — REV-20260714T161500(MAJOR3 전건 수정·재검증). **배포 완료**(PR #790 merge b364e964 → deploy-web 4서비스 재빌드·soak 통과·baked end-state 실증, CHG-20260714T171000-mssql-crossdb-deploy). 라이브 대화 corroboration 재측정 → FRICTION_LEDGER `verified`(다음 audit)
+
 ## TASK-20260713T171821-readonly-query-shapes (current cycle) — read-only 쿼리 shape 과차단 보정: 최상위 UNION + 읽기전용 SHOW (Critical §12.3, conversation_audit FR-readonly-query-shapes-overblock)
 - 출처: `/_dqa:conversation_audit "동적 쿼리 및 테이블 변경사항 추가 리뷰"` (2026-07-13, 사용자 명시 — "여전히 유사한 이슈… '보안 정책상 차단된 SQL' 이 발생하지 않고 정상 조회"). 사용자 승인 방식=**UNION + 읽기전용 SHOW**(AskUserQuestion 2026-07-13).
 - **근본원인(삼각측량 high, 코드+DB(PG agent_runtime)+전사)**: **L5 — sql_guard `validate_sql_for_sandbox` 의 SELECT/CTE-only shape 게이트가 read-only 패턴을 과차단**. 대상 대화(`20260713074503-5cef7aa2`) 차단 2건 = `SHOW CREATE TABLE gunzgame.attendence`("CharacterID 추가 여부"=테이블 변경 리뷰) + `SHOW VARIABLES LIKE 'lower_case_table_names'`(config). **corroboration structural**: 최근 30일 "보안 정책상 차단된 SQL" = 9 distinct conv·14건 — `UNION`(8, 최대)·`Show`(5)·parse-fail(12)·multi-statement(4)·MSSQL db_id/db_name(3).

@@ -2577,6 +2577,13 @@ a { color: inherit; }
 .profile-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
 .profile-toggle-text .helper-text { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
 .profile-notify-perm { margin-top: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+/* anim-pref: 선택형 설정 행(라벨 + select). toggle-row 와 시각 정합. */
+.profile-select-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 8px 0;
+}
+.profile-select-row .profile-toggle-text { flex: 1; min-width: 0; cursor: default; }
+.profile-motion-select { flex-shrink: 0; align-self: center; min-width: 128px; }
 .profile-notify-perm .btn-secondary { font-size: 12px; padding: 5px 10px; }
 
 /* TASK-0158: 첨부 scopeAll 토글 (attach 사이드패널) */
@@ -3291,6 +3298,41 @@ a { color: inherit; }
   flex-direction: column;
   gap: 16px;
   flex: 1;
+}
+
+/* account-subtabs (feature-0003-account-subtabs): '계정' 탭 하위 세분화 secondary nav.
+   상단 drawer-tab(언더라인)과 시각적으로 구분되는 세그먼트/pill 스타일. */
+.profile-subtabs {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 3px;
+  margin-bottom: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.profile-subtab {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+  transition: color .14s, background .14s, box-shadow .14s;
+}
+.profile-subtab:hover { color: var(--text-2); }
+.profile-subtab.is-active {
+  color: var(--primary);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+/* 하위 패널: drawer-pane 과 동일한 세로 스택. */
+.profile-subpane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 /* 프로필 드로어 헤더: 아바타 + 이름 인라인 */
@@ -6479,8 +6521,12 @@ button.product-dropup-item-ds--test:disabled {
   will-change: opacity;
 }
 @media (prefers-reduced-motion: reduce) {
-  /* 모션 최소화: app.js 가 고스트를 생성하지 않지만(가드) 방어적으로 숨김. */
-  .messages-switch-ghost { display: none; }
+  /* 모션 최소화: app.js 가 고스트를 생성하지 않지만(가드) 방어적으로 숨김.
+     anim-pref: 단, 인앱 '애니메이션 효과 = 항상 켬'(<html data-motion="on">)이면 OS reduce-motion
+     이어도 크로스페이드를 복원해야 하므로 숨기지 않는다. app.js _prefersReducedMotion() 의
+     'on' 분기가 고스트를 생성하는데, 이 CSS 가 그대로면 display:none 으로 가려 '빈 화면 후
+     fade-in'(크로스페이드 아님)이 되던 결함 수정(REV-...anim-effect-pref). */
+  html:not([data-motion="on"]) .messages-switch-ghost { display: none; }
 }
 /* TASK-0062: rail dot 위치를 scrollHeight 비례 (top: %) 로 배치 — relative + absolute */
 .message-point-rail {

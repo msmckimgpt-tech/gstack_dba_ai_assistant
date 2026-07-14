@@ -153,25 +153,27 @@ class Dialect:
         raise NotImplementedError
 
     # ── introspection / sampling SQL ──
-    def list_schemas_with_counts(self) -> str:
+    # `db`(catalog) 파라미터는 MSSQL cross-DB 발견 전용 — MySQL 은 information_schema 가 인스턴스-전역이라
+    # 무시(schema 인자가 곧 DB). 호출부가 dialect 무관하게 db= 를 넘길 수 있도록 시그니처만 공유한다.
+    def list_schemas_with_counts(self, db: str = "") -> str:
         raise NotImplementedError
 
-    def list_schema_names(self) -> str:
+    def list_schema_names(self, db: str = "") -> str:
         raise NotImplementedError
 
-    def describe_schema_tables(self, schema: str) -> str:
+    def describe_schema_tables(self, schema: str, db: str = "") -> str:
         raise NotImplementedError
 
-    def describe_columns(self, schema: str, table: str) -> str:
+    def describe_columns(self, schema: str, table: str, db: str = "") -> str:
         raise NotImplementedError
 
-    def list_indexes(self, schema: str, table: str) -> str:
+    def list_indexes(self, schema: str, table: str, db: str = "") -> str:
         raise NotImplementedError
 
-    def sample(self, schema: str, table: str, limit: int) -> str:
+    def sample(self, schema: str, table: str, limit: int, db: str = "") -> str:
         raise NotImplementedError
 
-    def search_tables(self, keyword: str, sys_exclude: str, where_schema: str) -> str:
+    def search_tables(self, keyword: str, sys_exclude: str, where_schema: str, db: str = "") -> str:
         raise NotImplementedError
 
     # ── 사전 부하추정 / 실행계획 (P6 부하게이트 — dialect 별 처리) ──
@@ -189,20 +191,20 @@ class Dialect:
         raise NotImplementedError
 
     # ── get_table_indexes / get_foreign_keys 전용 SQL (P6: 두 도구 dialect 화) ──
-    def table_indexes(self, schema: str, table: str) -> str:
+    def table_indexes(self, schema: str, table: str, db: str = "") -> str:
         raise NotImplementedError
 
-    def foreign_keys_outgoing(self, schema: str, table: str) -> str:
+    def foreign_keys_outgoing(self, schema: str, table: str, db: str = "") -> str:
         raise NotImplementedError
 
-    def foreign_keys_incoming(self, schema: str, table: str) -> str:
+    def foreign_keys_incoming(self, schema: str, table: str, db: str = "") -> str:
         raise NotImplementedError
 
     # ── describe_routine 전용 SQL (저장 프로시저/함수 정의·파라미터 introspection) ──
     # FR-show-create-routine-blocked: LLM 이 자연스럽게 쓰는 `SHOW CREATE PROCEDURE` 는 sql_guard 의
     # SELECT/CTE-only 불변식에 (의도대로) 막힌다. 정의 조회는 이미 항상-허용인 카탈로그(information_schema/
     # sys)에서 **읽기 전용**으로 얻으므로, 신뢰경계 확장 없이 전용 구조화 도구로 노출한다(RO GRANT 가 backstop).
-    def routine_definition(self, schema: str, name: str) -> str:
+    def routine_definition(self, schema: str, name: str, db: str = "") -> str:
         """저장 루틴(PROCEDURE/FUNCTION) 정의 조회 SQL.
 
         컬럼 계약(엔진 무관, 위치 파싱 호환): ROUTINE_NAME, ROUTINE_TYPE, DATA_TYPE(함수 반환타입/'')，
@@ -210,7 +212,7 @@ class Dialect:
         """
         raise NotImplementedError
 
-    def routine_parameters(self, schema: str, name: str) -> str:
+    def routine_parameters(self, schema: str, name: str, db: str = "") -> str:
         """저장 루틴 파라미터 조회 SQL.
 
         컬럼 계약: ORDINAL_POSITION, PARAMETER_NAME, PARAMETER_MODE, DATA_TYPE. (position 0 = 함수 반환)
@@ -242,7 +244,7 @@ class MySQLDialect(Dialect):
     def quote_qualified(self, schema: str, table: str) -> str:
         return f"`{schema}`.`{table}`"
 
-    def list_schemas_with_counts(self) -> str:
+    def list_schemas_with_counts(self, db: str = "") -> str:
         return """
         SELECT
             s.SCHEMA_NAME,
@@ -255,10 +257,10 @@ class MySQLDialect(Dialect):
         ORDER BY s.SCHEMA_NAME
     """
 
-    def list_schema_names(self) -> str:
+    def list_schema_names(self, db: str = "") -> str:
         return "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME"
 
-    def describe_schema_tables(self, schema: str) -> str:
+    def describe_schema_tables(self, schema: str, db: str = "") -> str:
         return f"""
         SELECT
             TABLE_NAME,
@@ -271,7 +273,7 @@ class MySQLDialect(Dialect):
         ORDER BY TABLE_NAME
     """
 
-    def describe_columns(self, schema: str, table: str) -> str:
+    def describe_columns(self, schema: str, table: str, db: str = "") -> str:
         return f"""
         SELECT
             COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY,
@@ -281,13 +283,13 @@ class MySQLDialect(Dialect):
         ORDER BY ORDINAL_POSITION
     """
 
-    def list_indexes(self, schema: str, table: str) -> str:
+    def list_indexes(self, schema: str, table: str, db: str = "") -> str:
         return f"SHOW INDEX FROM `{schema}`.`{table}`"
 
-    def sample(self, schema: str, table: str, limit: int) -> str:
+    def sample(self, schema: str, table: str, limit: int, db: str = "") -> str:
         return f"SELECT * FROM `{schema}`.`{table}` LIMIT {limit}"
 
-    def search_tables(self, keyword: str, sys_exclude: str, where_schema: str) -> str:
+    def search_tables(self, keyword: str, sys_exclude: str, where_schema: str, db: str = "") -> str:
         return f"""
         SELECT DISTINCT
             t.TABLE_SCHEMA,
@@ -322,7 +324,7 @@ class MySQLDialect(Dialect):
         except Exception:
             return None
 
-    def table_indexes(self, schema: str, table: str) -> str:
+    def table_indexes(self, schema: str, table: str, db: str = "") -> str:
         # 골든: _tool_get_table_indexes 의 기존 SQL 그대로.
         return f"""
         SELECT
@@ -333,7 +335,7 @@ class MySQLDialect(Dialect):
         ORDER BY INDEX_NAME, SEQ_IN_INDEX
     """
 
-    def foreign_keys_outgoing(self, schema: str, table: str) -> str:
+    def foreign_keys_outgoing(self, schema: str, table: str, db: str = "") -> str:
         return f"""
         SELECT
             CONSTRAINT_NAME, COLUMN_NAME,
@@ -345,7 +347,7 @@ class MySQLDialect(Dialect):
         ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
     """
 
-    def foreign_keys_incoming(self, schema: str, table: str) -> str:
+    def foreign_keys_incoming(self, schema: str, table: str, db: str = "") -> str:
         return f"""
         SELECT
             CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME,
@@ -356,7 +358,7 @@ class MySQLDialect(Dialect):
         ORDER BY TABLE_SCHEMA, TABLE_NAME
     """
 
-    def routine_definition(self, schema: str, name: str) -> str:
+    def routine_definition(self, schema: str, name: str, db: str = "") -> str:
         # information_schema.ROUTINES — ROUTINE_DEFINITION 은 본문(BEGIN…END). DTD_IDENTIFIER 는 함수
         # 반환 타입 전체 선언(프로시저는 NULL→''). 정의 열람 권한 없으면 ROUTINE_DEFINITION NULL(도구가 안내).
         return f"""
@@ -371,7 +373,7 @@ class MySQLDialect(Dialect):
         ORDER BY ROUTINE_TYPE
     """
 
-    def routine_parameters(self, schema: str, name: str) -> str:
+    def routine_parameters(self, schema: str, name: str, db: str = "") -> str:
         # ORDINAL_POSITION=0 = 함수 반환값(PARAMETER_NAME NULL). DTD_IDENTIFIER 로 전체 타입 선언.
         # ROUTINE_TYPE(pr[4]) 은 MySQL 동명 PROCEDURE+FUNCTION 공존 시 caller 가 타입별로 파라미터를
         # 분리하기 위한 판별 컬럼(교차오염 방지). information_schema.PARAMETERS 가 제공.
@@ -472,26 +474,49 @@ class MSSQLDialect(Dialect):
     def quote_qualified(self, schema: str, table: str) -> str:
         return f"[{schema}].[{table}]"
 
-    def list_schemas_with_counts(self) -> str:
+    @staticmethod
+    def _cat(db: str) -> str:
+        """catalog(DB) 3-part 접두 `[db].` — 빈값이면 현재 연결(pin) DB(접두 없음).
+
+        **cross-DB 발견(FR-mssql-crossdb-structured-discovery)**: SQL Server 의 INFORMATION_SCHEMA/
+        sys 카탈로그 뷰는 **DB(catalog)별**이라(MySQL 의 인스턴스-전역 information_schema 와 비대칭),
+        구조화 발견 도구가 pin 된 primary DB 하나만 봤다 → 다른 허용 DB 의 객체를 "없음"으로 오판.
+        `[db].` 접두로 같은 연결에서 다른 허용 DB 의 카탈로그를 읽는다(freeform 3-part 가 이미 도달하는
+        범위와 동일 — 보안 경계 불변, RO GRANT 가 backstop). ADR/probe_relationship_overlap 의
+        `[db].[dbo].[table]` cross-DB 규약과 정합. `db` 는 **caller 가 _safe_ident + allowlist 검증한 값만**
+        전달(SQLi/무단 catalog 차단 — `[{db}]` 삽입 전 신뢰경계 필수)."""
+        d = str(db or "").strip()
+        return f"[{d}]." if d else ""
+
+    def list_schemas_with_counts(self, db: str = "") -> str:
         # 컬럼 순서: schema_name, table_count, approx_total_rows (MySQL 과 동일)
-        return """
+        c = self._cat(db)
+        return f"""
         SELECT
             s.name AS SCHEMA_NAME,
             COUNT(t.object_id) AS table_count,
             COALESCE(SUM(CAST(p.rows AS BIGINT)), 0) AS approx_total_rows
-        FROM sys.schemas s
-        LEFT JOIN sys.tables t ON t.schema_id = s.schema_id
-        LEFT JOIN sys.partitions p
+        FROM {c}sys.schemas s
+        LEFT JOIN {c}sys.tables t ON t.schema_id = s.schema_id
+        LEFT JOIN {c}sys.partitions p
             ON p.object_id = t.object_id AND p.index_id IN (0, 1)
         GROUP BY s.name
         ORDER BY s.name
     """
 
-    def list_schema_names(self) -> str:
-        return "SELECT name AS SCHEMA_NAME FROM sys.schemas ORDER BY name"
+    def list_schema_names(self, db: str = "") -> str:
+        return f"SELECT name AS SCHEMA_NAME FROM {self._cat(db)}sys.schemas ORDER BY name"
 
-    def describe_schema_tables(self, schema: str) -> str:
+    def describe_schema_tables(self, schema: str, db: str = "") -> str:
         # 컬럼: table_name, approx_rows, engine, comment, create_time (MySQL 순서)
+        # schema 가 비면(catalog 전체 나열 — cross-DB DB 단위 describe) 시스템 스키마만 제외하고 전체 사용자
+        # 테이블을 반환한다. schema 지정 시 그 스키마로 한정(기존 동작).
+        c = self._cat(db)
+        if str(schema or "").strip():
+            _where = f"s.name = '{schema}'"
+        else:
+            _sys = ", ".join(f"'{s}'" for s in sorted(self._SYS))
+            _where = f"s.name NOT IN ({_sys})"
         return f"""
         SELECT
             t.name AS TABLE_NAME,
@@ -499,20 +524,23 @@ class MSSQLDialect(Dialect):
             'mssql' AS ENGINE,
             CAST(ep.value AS NVARCHAR(200)) AS TABLE_COMMENT,
             t.create_date AS CREATE_TIME
-        FROM sys.tables t
-        JOIN sys.schemas s ON s.schema_id = t.schema_id
-        LEFT JOIN sys.partitions p
+        FROM {c}sys.tables t
+        JOIN {c}sys.schemas s ON s.schema_id = t.schema_id
+        LEFT JOIN {c}sys.partitions p
             ON p.object_id = t.object_id AND p.index_id IN (0, 1)
-        LEFT JOIN sys.extended_properties ep
+        LEFT JOIN {c}sys.extended_properties ep
             ON ep.major_id = t.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
-        WHERE s.name = '{schema}'
+        WHERE {_where}
         GROUP BY t.name, t.create_date, CAST(ep.value AS NVARCHAR(200))
         ORDER BY t.name
     """
 
-    def describe_columns(self, schema: str, table: str) -> str:
+    def describe_columns(self, schema: str, table: str, db: str = "") -> str:
         # 컬럼: COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT
         # MSSQL 에 COLUMN_KEY/EXTRA/COMMENT 직접 동치 없음 → 가용 정보만, 나머지 빈 문자열(순서 유지).
+        # schema 가 비면(catalog 타깃·실 스키마 미상) 테이블명만으로 조회(DB 내 어느 사용자 스키마든 매칭).
+        c = self._cat(db)
+        _schema_clause = f"c.TABLE_SCHEMA = '{schema}' AND " if str(schema or "").strip() else ""
         return f"""
         SELECT
             c.COLUMN_NAME,
@@ -522,14 +550,15 @@ class MSSQLDialect(Dialect):
             CAST(c.COLUMN_DEFAULT AS NVARCHAR(200)) AS COLUMN_DEFAULT,
             '' AS EXTRA,
             '' AS COLUMN_COMMENT
-        FROM INFORMATION_SCHEMA.COLUMNS c
-        WHERE c.TABLE_SCHEMA = '{schema}' AND c.TABLE_NAME = '{table}'
+        FROM {c}INFORMATION_SCHEMA.COLUMNS c
+        WHERE {_schema_clause}c.TABLE_NAME = '{table}'
         ORDER BY c.ORDINAL_POSITION
     """
 
-    def list_indexes(self, schema: str, table: str) -> str:
+    def list_indexes(self, schema: str, table: str, db: str = "") -> str:
         # SHOW INDEX 가 소비하는 위치(row[1]=non_unique, [2]=key_name, [3]=seq, [4]=column, [6]=cardinality)
         # 에 맞춰 7 컬럼을 정렬: (NULL, non_unique, index_name, seq, column, NULL, NULL).
+        c = self._cat(db)
         return f"""
         SELECT
             NULL AS Table_,
@@ -539,29 +568,35 @@ class MSSQLDialect(Dialect):
             col.name AS Column_name,
             NULL AS Collation,
             NULL AS Cardinality
-        FROM sys.indexes i
-        JOIN sys.tables t ON t.object_id = i.object_id
-        JOIN sys.schemas s ON s.schema_id = t.schema_id
-        JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-        JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id
+        FROM {c}sys.indexes i
+        JOIN {c}sys.tables t ON t.object_id = i.object_id
+        JOIN {c}sys.schemas s ON s.schema_id = t.schema_id
+        JOIN {c}sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN {c}sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id
         WHERE s.name = '{schema}' AND t.name = '{table}' AND i.type > 0
         ORDER BY i.name, ic.key_ordinal
     """
 
-    def sample(self, schema: str, table: str, limit: int) -> str:
-        return f"SELECT TOP {int(limit)} * FROM [{schema}].[{table}]"
+    def sample(self, schema: str, table: str, limit: int, db: str = "") -> str:
+        # catalog(db) 지정 시 3-part `[db].[schema].[table]`(cross-DB 표본). db 미지정=현재 연결 DB.
+        d = str(db or "").strip()
+        qual = f"[{d}].[{schema}].[{table}]" if d else f"[{schema}].[{table}]"
+        return f"SELECT TOP {int(limit)} * FROM {qual}"
 
-    def search_tables(self, keyword: str, sys_exclude: str, where_schema: str) -> str:
+    def search_tables(self, keyword: str, sys_exclude: str, where_schema: str, db: str = "") -> str:
         # sys_exclude/where_schema 는 MySQL 의 `t.TABLE_SCHEMA` 별칭 기준 문자열이라 그대로 호환
         # (INFORMATION_SCHEMA.TABLES 의 TABLE_SCHEMA 컬럼 동일). TOP 50 으로 LIMIT 대체.
+        # db 지정 시 그 catalog(DB)의 INFORMATION_SCHEMA 를 3-part 로 조회(cross-DB 발견). tools.py 가
+        # catalog 별로 호출해 결과를 병합(DB-qualified). db 미지정=현재 연결 DB(기존 동작).
+        c = self._cat(db)
         return f"""
         SELECT DISTINCT TOP 50
             t.TABLE_SCHEMA,
             t.TABLE_NAME,
             CAST(NULL AS BIGINT) AS approx_rows,
             CAST('' AS NVARCHAR(200)) AS TABLE_COMMENT
-        FROM INFORMATION_SCHEMA.TABLES t
-        LEFT JOIN INFORMATION_SCHEMA.COLUMNS c
+        FROM {c}INFORMATION_SCHEMA.TABLES t
+        LEFT JOIN {c}INFORMATION_SCHEMA.COLUMNS c
             ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
         WHERE ({sys_exclude})
             {where_schema}
@@ -610,9 +645,10 @@ class MSSQLDialect(Dialect):
     def explain_plan(self, run, sql: str):
         return self._showplan(run, sql)
 
-    def table_indexes(self, schema: str, table: str) -> str:
+    def table_indexes(self, schema: str, table: str, db: str = "") -> str:
         # 컬럼 순서/이름을 MySQL 산출과 동일하게(INDEX_NAME, NON_UNIQUE, COLUMN_NAME, SEQ_IN_INDEX,
         # CARDINALITY, INDEX_TYPE, NULLABLE). CARDINALITY 직접 동치 없음 → NULL.
+        c = self._cat(db)
         return f"""
         SELECT
             i.name AS INDEX_NAME,
@@ -622,17 +658,18 @@ class MSSQLDialect(Dialect):
             CAST(NULL AS BIGINT) AS CARDINALITY,
             i.type_desc AS INDEX_TYPE,
             CASE WHEN col.is_nullable = 1 THEN 'YES' ELSE 'NO' END AS NULLABLE
-        FROM sys.indexes i
-        JOIN sys.tables t ON t.object_id = i.object_id
-        JOIN sys.schemas s ON s.schema_id = t.schema_id
-        JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-        JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id
+        FROM {c}sys.indexes i
+        JOIN {c}sys.tables t ON t.object_id = i.object_id
+        JOIN {c}sys.schemas s ON s.schema_id = t.schema_id
+        JOIN {c}sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+        JOIN {c}sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id
         WHERE s.name = '{schema}' AND t.name = '{table}' AND i.type > 0
         ORDER BY i.name, ic.key_ordinal
     """
 
-    def foreign_keys_outgoing(self, schema: str, table: str) -> str:
+    def foreign_keys_outgoing(self, schema: str, table: str, db: str = "") -> str:
         # 컬럼: CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+        c = self._cat(db)
         return f"""
         SELECT
             fk.name AS CONSTRAINT_NAME,
@@ -640,20 +677,21 @@ class MSSQLDialect(Dialect):
             rs.name AS REFERENCED_TABLE_SCHEMA,
             rt.name AS REFERENCED_TABLE_NAME,
             rc.name AS REFERENCED_COLUMN_NAME
-        FROM sys.foreign_keys fk
-        JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
-        JOIN sys.tables pt ON pt.object_id = fk.parent_object_id
-        JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
-        JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
-        JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
-        JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
-        JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+        FROM {c}sys.foreign_keys fk
+        JOIN {c}sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+        JOIN {c}sys.tables pt ON pt.object_id = fk.parent_object_id
+        JOIN {c}sys.schemas ps ON ps.schema_id = pt.schema_id
+        JOIN {c}sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+        JOIN {c}sys.tables rt ON rt.object_id = fk.referenced_object_id
+        JOIN {c}sys.schemas rs ON rs.schema_id = rt.schema_id
+        JOIN {c}sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
         WHERE ps.name = '{schema}' AND pt.name = '{table}'
         ORDER BY fk.name, fkc.constraint_column_id
     """
 
-    def foreign_keys_incoming(self, schema: str, table: str) -> str:
+    def foreign_keys_incoming(self, schema: str, table: str, db: str = "") -> str:
         # 컬럼: CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, REFERENCED_COLUMN_NAME
+        c = self._cat(db)
         return f"""
         SELECT
             fk.name AS CONSTRAINT_NAME,
@@ -661,22 +699,39 @@ class MSSQLDialect(Dialect):
             pt.name AS TABLE_NAME,
             pc.name AS COLUMN_NAME,
             rc.name AS REFERENCED_COLUMN_NAME
-        FROM sys.foreign_keys fk
-        JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
-        JOIN sys.tables pt ON pt.object_id = fk.parent_object_id
-        JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
-        JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
-        JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
-        JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
-        JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+        FROM {c}sys.foreign_keys fk
+        JOIN {c}sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+        JOIN {c}sys.tables pt ON pt.object_id = fk.parent_object_id
+        JOIN {c}sys.schemas ps ON ps.schema_id = pt.schema_id
+        JOIN {c}sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+        JOIN {c}sys.tables rt ON rt.object_id = fk.referenced_object_id
+        JOIN {c}sys.schemas rs ON rs.schema_id = rt.schema_id
+        JOIN {c}sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
         WHERE rs.name = '{schema}' AND rt.name = '{table}'
         ORDER BY ps.name, pt.name
     """
 
-    def routine_definition(self, schema: str, name: str) -> str:
+    def routine_definition(self, schema: str, name: str, db: str = "") -> str:
         # 컬럼 순서를 MySQL 산출과 동일하게(ROUTINE_NAME, ROUTINE_TYPE, DATA_TYPE, ROUTINE_COMMENT,
         # ROUTINE_DEFINITION). MSSQL INFORMATION_SCHEMA.ROUTINES.ROUTINE_DEFINITION 은 4000자 절단이라
-        # OBJECT_DEFINITION(전체 nvarchar(max))을 우선 사용, 폴백으로 ROUTINE_DEFINITION. COMMENT 동치 없음→''.
+        # 전체 정의(nvarchar(max))를 우선 사용, 폴백으로 ROUTINE_DEFINITION. COMMENT 동치 없음→''.
+        # 정의 소스(REV 패널 backend MAJOR): `OBJECT_DEFINITION(id)` 은 db_id 인자가 없어 **current(pin) DB
+        # 컨텍스트**에서 평가된다 → cross-DB 에서 3-part OBJECT_ID 가 대상 DB 의 object_id 를 줘도 정의는
+        # pin DB 에서 해소돼 NULL(→ 4000자 절단 폴백) 또는 오답이 된다. 따라서 **`[db].sys.sql_modules`**
+        # (object_id 도 같은 [db] 공간에서 해소)에서 definition 을 읽어 cross-DB 정확성을 확보한다.
+        # schema 가 비면(catalog 타깃·실스키마 미상) ROUTINE_SCHEMA 필터를 생략(이름으로 매칭).
+        c = self._cat(db)
+        d = str(db or "").strip()
+        if d:
+            # cross-DB: 대상 DB 의 sys.sql_modules(object_id 도 [db] 공간) 로 전체 정의 조회.
+            _def_expr = (
+                f"(SELECT sm.definition FROM {c}sys.sql_modules sm "
+                f"WHERE sm.object_id = OBJECT_ID('[{d}].' + QUOTENAME(r.ROUTINE_SCHEMA) + '.' + QUOTENAME(r.ROUTINE_NAME)))"
+            )
+        else:
+            # primary(현재 DB): 기존 골든 — OBJECT_DEFINITION(전체 nvarchar(max)).
+            _def_expr = "OBJECT_DEFINITION(OBJECT_ID(QUOTENAME(r.ROUTINE_SCHEMA) + '.' + QUOTENAME(r.ROUTINE_NAME)))"
+        _schema_clause = f"r.ROUTINE_SCHEMA = '{schema}' AND " if str(schema or "").strip() else ""
         return f"""
         SELECT
             r.ROUTINE_NAME,
@@ -684,19 +739,21 @@ class MSSQLDialect(Dialect):
             COALESCE(r.DATA_TYPE, '') AS DATA_TYPE,
             '' AS ROUTINE_COMMENT,
             COALESCE(
-                OBJECT_DEFINITION(OBJECT_ID(QUOTENAME(r.ROUTINE_SCHEMA) + '.' + QUOTENAME(r.ROUTINE_NAME))),
+                {_def_expr},
                 CAST(r.ROUTINE_DEFINITION AS NVARCHAR(MAX)),
                 ''
             ) AS ROUTINE_DEFINITION
-        FROM INFORMATION_SCHEMA.ROUTINES r
-        WHERE r.ROUTINE_SCHEMA = '{schema}' AND r.ROUTINE_NAME = '{name}'
+        FROM {c}INFORMATION_SCHEMA.ROUTINES r
+        WHERE {_schema_clause}r.ROUTINE_NAME = '{name}'
         ORDER BY r.ROUTINE_TYPE
     """
 
-    def routine_parameters(self, schema: str, name: str) -> str:
+    def routine_parameters(self, schema: str, name: str, db: str = "") -> str:
         # 컬럼: ORDINAL_POSITION, PARAMETER_NAME, PARAMETER_MODE, DATA_TYPE, ROUTINE_TYPE (MySQL 순서).
         # MSSQL 은 스키마 내 객체명이 유일해 동명 proc+func 공존이 없다(교차오염 무관) → ROUTINE_TYPE(pr[4])
         # 슬롯은 컬럼 계약 대칭을 위해 NULL 상수로 채운다(caller 는 def_rows 다중일 때만 이 컬럼으로 필터).
+        c = self._cat(db)
+        _schema_clause = f"SPECIFIC_SCHEMA = '{schema}' AND " if str(schema or "").strip() else ""
         return f"""
         SELECT
             ORDINAL_POSITION,
@@ -704,8 +761,8 @@ class MSSQLDialect(Dialect):
             COALESCE(PARAMETER_MODE, '') AS PARAMETER_MODE,
             COALESCE(DATA_TYPE, '') AS DATA_TYPE,
             CAST(NULL AS NVARCHAR(20)) AS ROUTINE_TYPE
-        FROM INFORMATION_SCHEMA.PARAMETERS
-        WHERE SPECIFIC_SCHEMA = '{schema}' AND SPECIFIC_NAME = '{name}'
+        FROM {c}INFORMATION_SCHEMA.PARAMETERS
+        WHERE {_schema_clause}SPECIFIC_NAME = '{name}'
         ORDER BY ORDINAL_POSITION
     """
 

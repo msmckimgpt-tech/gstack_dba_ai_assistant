@@ -208,7 +208,6 @@ source_of_truth: true
 - Date: 2026-07-14. Related Change: CHG-20260714T031500-attach-update-deploy. 코드 변경 0(docs-only).
 - SKIPPED 사유: 런타임 코드 무변경 — PR #771(REV-20260713T185846 검증 완료) 배포 후 상태 정합(FRICTION_LEDGER fixed:undeployed→fixed:deployed:unverified-live + TASK 체크박스). 배포 검증 결정적: 4서비스 GIT_COMMIT=ee4f8de6 running/healthy + ask-worker 런타임 실증(A1 attachment-edit 강화·A2 directive) + web-a 런타임 실증(A3 이중접미 방지·safe_ext) + web /healthz=ee4f8de6.
 - Human Approval: 배포 사용자 confirm(AskUserQuestion 2026-07-13 "PR·머지·배포 전체"). 본 follow-up 은 그 배포의 정직-상태 기록(docs-only).
-
 ## REV-20260714T153113-sysvar-select-guard [AGENT-TEAM:security+backend+qa-adversarial] — MySQL 시스템 변수 읽기(@@) denylist 과차단 해소 (conversation_audit FR-sysvar-select-denylist-overblock)
 - Date: 2026-07-14. Related Change: CHG-20260714T153113-sysvar-select-guard. cycle: ai/claude/feature-0002-sysvar-guard.
 - Trigger (§18.8 dispatch): sql_guard 허용범위 code change(`query`/`schema` 키워드 매칭) → **security + backend + qa** 3렌즈 적대 패널. (backend+qa 서브에이전트가 세션 한도로 조기 종료 → 인라인 자기검증으로 완료 — 결정적 실증 확보.)
@@ -219,3 +218,18 @@ source_of_truth: true
 - **수용된 잔여(설계상 의도)**: `SET GLOBAL x`(무-@@)·`SELECT @@x/**/y`(무해 sysvar read) 는 shape 게이트/AST 계층이 각각 정확 처리 — pre-existing, 본 diff 무영향.
 - Human Approval: AskUserQuestion 2026-07-14 "제거 진행". Critical §12.3(sql_guard 허용범위) → PR/deploy 는 외부영향 confirm(override 불가).
 - Cross-ref: CHG-20260714T153113-sysvar-select-guard(MODIFY) · 선행 REV-20260713T171821-readonly-query-shapes · FRICTION_LEDGER FR-sysvar-select-denylist-overblock(머지·배포 후 docs-only 후속 생성) · ANCHOR 0002 §1~§3 무충돌.
+## REV-20260714T161500-mssql-crossdb-discovery [AGENT-TEAM:security+backend+qa-adversarial] — MSSQL 구조화 발견 도구 DB(catalog) 인지 (conversation_audit FR-mssql-crossdb-structured-discovery)
+- Date: 2026-07-14. Related Change: CHG-20260714T161500-mssql-crossdb-structured-discovery. **위험등급 Critical §12.3**(데이터소스 접근 모델). Trigger(§18.8): `schema/query/마이그레이션`(backend+qa) + `데이터소스 바인딩·접근경계`(security) → full 3렌즈 적대 패널.
+- 방식: 3 병렬 적대 서브에이전트(security / backend·correctness / qa·regression), 각 "결함 적발" 입장으로 diff+보안게이트+기존테스트 정독. **판정 종합**: BLOCKER 0, MAJOR 3(+ BLOCKER-인접 1), MINOR/LOW 다수. **모든 MAJOR 본 cycle 내 수정 후 재검증**.
+- **[security MAJOR → FIXED]** cross-DB 구조화 경로(`_mssql_struct_target` target_db 분기)가 `_struct_schema_access_error` 의 시스템 스키마(sys/guest/db_*) 차단을 우회 → `get_sample_rows(database='Shop', schema_name='sys', table_name='database_principals')` 로 `[Shop].[sys].*`(DB principals/permissions/sql_modules) 표본 유출 가능(M1 의도 경계 재개방). **봉인**: `_mssql_resolve_catalog` 에 명시 시스템 스키마 거부(`database`+sys / `db.schema`+sys) + `_mssql_resolve_table_schema` 시스템 스키마 후보 제외·폴백 dbo + `_mssql_struct_target` 최종 eff backstop. 회귀 테스트 3(`get_sample_rows_crossdb_system_schema_blocked` = 쿼리 실행 0 확인 등).
+- **[backend MAJOR/BLOCKER-인접 → FIXED]** `routine_definition` cross-DB 의 `OBJECT_DEFINITION(OBJECT_ID(3-part))` — `OBJECT_DEFINITION(id)` 은 db_id 인자가 없어 **current(pin) DB 컨텍스트**로 평가 → 대상 DB object_id 를 pin DB 에서 해소해 NULL(→4000자 절단 폴백) 또는 오답. **봉인**: cross-DB 는 `[db].sys.sql_modules`(object_id 도 [db] 공간 해소)로 정의 조회, no-db(primary)는 OBJECT_DEFINITION 유지(골든). **라이브 QA 실증**: `routine_definition('dbo','P_CharacterMoveSnapShot_ReadAll_BackOffice',db='Shop')` → 1345자 전체 정의(NULL/절단 아님). 기존 테스트가 문자열만 봐 버그 통과 → 실동작 테스트로 교체.
+- **[qa MAJOR M1 → FIXED]** `describe_table` catalog 경로가 describe_columns 에 빈 schema 전달 → 동명-다스키마 컬럼 혼입+헤더/인덱스 축 불일치(하필 관측 마찰 경로). **봉인**: 해석된 `eff_schema`(구체)로 컬럼 조회(헤더/인덱스/샘플 동일 축). **[qa MAJOR M2 → FIXED]** sample/indexes/fk/routine 의 cross-DB 핸들러 경로 미검증 → 통합 테스트 6 추가.
+- **[LOW m4 → FIXED]** describe_routine 실스키마 미상 시 dbo 고정 → 비-dbo 루틴 미발견 + "search_tables 로 스키마 탐색"(루틴 미검색) 오도 안내 + 헤더 DB 미표기. **봉인**: `default_schema=''`(스키마 필터 생략·이름 매칭) + DB-qualified 헤더 + 힌트 정정. **[MINOR → 인지]** allowlist display 값이 `_safe_ident` 미적용(악성 admin config 한정 — allowlist 는 이미 검증된 DB명, 방어심화 후속 이월).
+- **재검증**: 전체 회귀 **1980 passed / 2 skipped / 0 failed**(신규 `test_mssql_crossdb_discovery.py` 46). 라이브 QA(mssql-web-qa) 수정 실증: describe_columns([Shop],T_ItemInfo)=15컬럼 · search_tables('Buy',Shop)=L_Item_Buy_Log · routine cross-DB 1345자.
+- 근본성 교차(R3/R4): 보안 렌즈 — cross-DB 는 유효 허용 DB(freeform 이 이미 도달)만·시스템 DB/스키마·agent_memory·`_safe_ident`+allowlist 이중 방어 유지(경계 확장 0, sys backstop 복원). 회귀 렌즈 — MySQL 골든 db-무시 11 메서드 + 비활성 경로 불변.
+- Human Approval: **AskUserQuestion 2026-07-14 "완전 DB인지"**(Critical 접근 모델 사람 승인). PR/deploy 는 외부영향 confirm 별도.
+
+## REV-20260714T171000-mssql-crossdb-deploy [SKIPPED:post-deploy-doc-reconciliation] — 배포 완료 기록 + 원장 상태 정합
+- Date: 2026-07-14. Related Change: CHG-20260714T171000-mssql-crossdb-deploy. 코드 변경 0(docs-only).
+- SKIPPED 사유: 런타임 코드 무변경 — PR #790(REV-20260714T161500 검증 완료) 배포 후 상태 정합(FRICTION_LEDGER fixed:undeployed→fixed:deployed:unverified-live + TASK 체크박스). 배포 검증 결정적: 4서비스 GIT_COMMIT=b364e964 healthy + deploy-web soak 통과 + 배포 이미지 baked end-state 실증(mssql-web-qa cross-DB describe 15컬럼·routine 1345자).
+- Human Approval: 배포 사용자 confirm(AskUserQuestion 2026-07-14 "병합+배포"). 본 follow-up 은 그 배포의 정직-상태 기록(docs-only).
