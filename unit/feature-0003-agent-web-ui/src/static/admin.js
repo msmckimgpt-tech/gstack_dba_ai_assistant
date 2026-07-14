@@ -251,6 +251,9 @@ const PERMISSION_DEPENDENCIES = {
   //   권한을 '메타데이터 관리' 묶음 하위에서 떼어내 console.access 직속(묶음과 형제)으로 승격한다. 역할 권한
   //   편집 UI 에서 묶음에 종속 표시되지 않고 독립 항목으로 노출된다(표시 계층 — authz enforcement 는 백엔드).
   "metadata.graph.read": "console.access",
+  // graph-analyze-perm(Critical §12.3, 2026-07-14): AI 능동 분석 실행은 조회(graph.read)의 하위 권한 —
+  //   역할 편집 UI 에서 graph.read 아래 nest. 조회 없이 실행 무의미(progressive disclosure). authz 는 백엔드.
+  "metadata.graph.analyze": "metadata.graph.read",
   // TASK-0288: 제품 관리 — product.read 가 그룹 게이트(console.access 하위), manage/프롬프트는 read 선행.
   "product.read": "console.access",
   "product.manage": "product.read",

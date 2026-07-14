@@ -5504,3 +5504,18 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(28 releases·블록 07-13 head·항목 스키마 type/area/title·07-13 블록 8항목·누출 스캔 0).
 - [x] landing/배포: verify-completion(operational, feature-0003) → **로컬 commit 까지만**. **push/merge-to-main/deploy(make deploy-web 무중단)는 cron wrapper 소유**(system-prompt v3 위임 — 스킬 미수행). META(STATUS·wiki·ARCHITECTURE·SECURITY·meta/REVIEW)는 별도 commit(REV-20260714T024534-META-0035-doc-sync-0714).
 - [ ] PB-0008 Windows-browser: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(그래프 §77~81·첨부 버전·ds-conn-test)는 각 원천 cycle POST-DEPLOY PB-0008 이 이미 검증(PASS). 사유 TEST.md §CHECK#13(2026-07-14).
+
+
+## 20260714T1052-graph-analyze-perm — 그래프 AI 능동 분석 실행 권한을 하위 권한으로 분리 (Critical §12.3 인증/인가, 2026-07-14)
+
+- **요청**: "그래프 뷰의 `AI 능동 분석` 실행 권한은 하위 권한으로 구분… 권한이 없을 경우 관련된 버튼 UI가 나타나지 않도록." (graph-perm-split 후속)
+- **위험등급**: Critical(인증/인가 구조 변경 — 신규 권한). **하위호환 = A안(최소권한, backfill 없음)** — 근거: 요청 취지가 "실행 권한 분리 + 무권한 시 버튼 숨김"이라 graph.read 만으로 analyze 딸려오면 안 됨; analyze 는 LLM·KB·비용 특권 동작; 현재 graph.read 보유자는 admin 뿐(seed catchup 으로 획득) → 실질 영향 0.
+- **§2.1 Plan**:
+  - backend `web_context.py`: 신규 `metadata.graph.analyze`(group=kb) + graph.read 설명 갱신(조회+결과열람 / 실행 분리) + admin catchup 추가(락아웃 방지).
+  - backend `admin_metadata.py`: 실행 POST 2개(`/graph/analyze` 노드·`/graph/analyze-schema` 스키마) → `require_permission('metadata.graph.analyze')`. GET status/columns 는 graph.read 유지.
+  - frontend `admin.js`: 종속맵 `metadata.graph.analyze → metadata.graph.read`. `graph-ctxmenu.js`: 능동 분석 트리거 UI 5곳 `can("metadata.graph.analyze")` 게이팅(미렌더 + 바인딩 skip).
+  - tests: graph.read 만으론 analyze 미부여·독립 부여·admin catchup·종속맵 pin.
+- [x] backend/frontend/tests 구현 · py_compile + node --check OK.
+- [x] 검증: 권한 타깃(perm-split + dependency-map, graph.analyze 신규 4테스트) + feature-0003 전체 스위트 PASS(회귀 0, env 중립화).
+- [x] §18.8 보안 렌즈 적대 리뷰(backend 게이트 완결성·frontend 버튼 완결성·FE/BE parity·락아웃·null-safety).
+- [ ] verify-completion → commit → PR → 머지 → web 재배포 → **배포 후 실증**: graph.read-only 계정은 능동 분석 버튼 미노출·POST analyze 403 / graph.analyze 보유 계정은 버튼 노출·실행 정상. admin catchup 으로 `WebRolePermissions` 에 admin+graph.analyze row 확인.

@@ -299,7 +299,22 @@ PERMISSION_DEFINITIONS = (
     {
         "code": "metadata.graph.read",
         "label": "그래프 뷰 조회",
-        "description": "지식베이스 그래프 뷰 탭(테이블/컬럼/관계/용어 탐색·검색)을 조회하고, 그래프 뷰의 내장 AI 능동 분석을 실행할 수 있다. 그래프 뷰는 별도 최상위 탭으로, 이 권한은 '메타데이터 관리' 묶음(kb.ingest.manual) 및 개별 편집 권한과 독립적으로 부여된다(graph-perm-split 2026-07-13). 읽기 중심 탐색 권한.",
+        "description": "지식베이스 그래프 뷰 탭(테이블/컬럼/관계/용어 탐색·검색)을 조회하고 AI 능동 분석 결과·진행 상태를 열람할 수 있다. 별도 최상위 탭으로 '메타데이터 관리' 묶음과 독립 부여된다(graph-perm-split 2026-07-13). 읽기 중심 탐색 권한 — AI 능동 분석 '실행'은 하위 권한 metadata.graph.analyze 로 분리된다(graph-analyze-perm 2026-07-14).",
+        "group": "kb",
+    },
+    {
+        # graph-analyze-perm(Critical §12.3, 사용자 결정 2026-07-14): 그래프 뷰의 AI 능동 분석 '실행'을
+        #   조회(metadata.graph.read)에서 분리한 하위 권한. 노드 단위(POST /graph/analyze)·DB(스키마) 단위
+        #   (POST /graph/analyze-schema) 능동 분석 트리거를 게이트한다. 분석은 LLM 을 호출하고 KB(노드 분석
+        #   결과·역할 분류)를 갱신하며 비용을 유발하는 특권 동작이라 조회와 분리(least-privilege). 조회 상태·결과
+        #   열람은 graph.read 유지. UI 종속(admin.js PERMISSION_DEPENDENCIES)은 graph.read 를 부모로 둔다
+        #   (조회 없이 실행 무의미 — progressive disclosure). admin seed(=set(PERMISSION_CODES)) 자동 보유 +
+        #   기존 admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여(필수 — 미보정 시 기존 admin 이
+        #   능동 분석 버튼을 잃는다). operator/sales/pending 미부여. graph.read 보유자에게 일괄 backfill 하지
+        #   않는다(A안 = 최소권한, 명시 부여 — 요청 취지 "실행 권한 분리 + 무권한 시 버튼 미표시").
+        "code": "metadata.graph.analyze",
+        "label": "그래프 AI 능동 분석 실행",
+        "description": "그래프 뷰에서 AI 능동 분석(노드 단위·DB 스키마 단위)을 실행할 수 있다. 실행은 LLM 을 호출해 테이블/컬럼/관계를 자동 분석하고 지식베이스를 갱신하며 비용을 유발하므로, 그래프 뷰 조회(metadata.graph.read)와 분리된 실행 전용 권한이다. 이 권한이 없으면 능동 분석 버튼·메뉴가 표시되지 않는다.",
         "group": "kb",
     },
     {
@@ -1696,6 +1711,11 @@ def _ensure_seed_roles(conn) -> None:
             "metadata.table.manage",
             "metadata.column.manage",
             "metadata.graph.read",
+            # graph-analyze-perm(Critical §12.3, 2026-07-14): admin 의 그래프 AI 능동 분석 실행 권한 catchup.
+            # **필수** — 신규 권한은 role 생성 시 seed 로만 부여되어 기존 배포 admin row 에는 미적용. 미보정 시
+            # 기존 admin 이 그래프 뷰의 '능동 분석' 버튼·메뉴를 잃는다(lockout — graph.read 가 더 이상 실행을
+            # 함의하지 않으므로). operator/sales/pending 미부여(least-privilege).
+            "metadata.graph.analyze",
             # TASK-AIOPS: admin 의 AI 운영 현황 조회 권한 catchup. **필수** — 신규 권한은 role 생성 시
             # seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row 에는 retroactive 미적용.
             # 미보정 시 기존 admin 이 AI 운영 현황 탭을 못 본다(lockout, PB-0008 적발). operator/sales/dba 미부여.
