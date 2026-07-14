@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260714T183808-graph-ctxmenu-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 검증 기록 (TASK-20260714T180125-graph-ctxmenu-category, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 TASK 체크리스트 완료 + test-runs.d fragment POST-DEPLOY Run append 뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260714T180125-graph-ctxmenu-category [SKIPPED:frontend-ui-minor-additive-no-backend-no-rbac] 가 정본.
+- 라이브 실측 요지(win-browser 실 Windows Chrome/150, 배포 154fb916): 배포 전달 + 라이브 도달성 + **수정 핸들러 우클릭 dispatch 파이프라인 실증** PASS. 리터럴 CAT 밴드 위 '카테고리' 메뉴 육안 = DEFERRED(제품-매핑 scope 필요 — 도달 가능 scope 가 전부 미분류라 밴드 미방출; 코드-로직 airtight + 파이프라인 실증으로 고신뢰, 사용자 1-probe 권장).
+- Cross-ref: REV-20260714T180125-graph-ctxmenu-category(기능 정본) · CHG-20260714T183808-graph-ctxmenu-postverify · test-runs.d/20260714T180125-graph-ctxmenu-category.md POST-DEPLOY Run.
+
 ## REV-20260714T180125-graph-ctxmenu-category [SKIPPED:frontend-ui-minor-additive-no-backend-no-rbac] — 그래프 카테고리 밴드 우클릭 전용 메뉴 (TASK-20260714T180125-graph-ctxmenu-category)
 - Panel skip 사유(§18.8): 프론트 그래프 JS 2파일·additive(신규 메뉴 함수 1 + dispatch 1줄 라우팅 교체)·백엔드/RBAC/스키마/엔드포인트 0·비파괴. 위험 표면 = 우클릭 메뉴 dispatch 한정.
 - 적대적 자가검토(4가설 refute): ① "CAT 밴드가 여전히 combo 로 fall-through" → **refute**: Pixi `_pick`(graph-renderer-pixi.js L446-451)은 node hit 을 combo 보다 우선(L448 `if(n) return n`), CAT 배경 노드는 밴드 전체 bbox(size:[bw,bh])이고 hit-grid 는 built.nodes 무필터 포함이라 밴드 영역 우클릭은 반드시 `node:contextmenu`(kindEvt=node) 도달 → L2086 전용 라우팅. combo fall-through 불가. ② "catKey 추출 오류" → **refute**: `id.replace(/^CAT(H|X)?:/, "")` 가 CAT:/CATH:/CATX: 3종 모두 cat.key 로 정규화(좌클릭 핸들러 slice(4/5)와 동치). ③ "의존 심볼 미정의" → **refute**: `_metaGraph.catLabelOf/catCollapsed/catMembers`(graph-state)·`_metaGraphShowCategoryDetail`(동일 파일)·`_metaG6Apply`/`_metaGraphCopyText`(import·기존 combo 메뉴에서 사용) 전부 존재 확인. ④ "접기 토글이 좌클릭 CATX 와 이중 발화" → **refute**: 우클릭 메뉴 onClick 은 catCollapsed 토글+`_metaG6Apply(false)` 1회, 좌클릭 CATX 경로와 독립(동시 발화 없음).

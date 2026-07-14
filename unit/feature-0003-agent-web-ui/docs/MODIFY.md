@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260714T183808-graph-ctxmenu-postverify (TASK-20260714T180125-graph-ctxmenu-category POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-14. 코드/자산 무변경 — TASK.md 체크리스트 완료(verify/PR#794/POST-DEPLOY) + test-runs.d fragment 에 POST-DEPLOY 라이브 검증 Run append. 기능 배포는 PR #794→main 154fb916, `deploy-web`(deploy_scope: included, web-a/b soak PASS) 로 선행 완료(본 커밋은 그 사후 기록).
+- 라이브 실측 요지(win-browser 실 Windows Chrome/150, https://localhost/admin): 배포 전달(서빙 baked 자산에 `_metaGraphCtxForCategory` 반영)·라이브 도달성(그래프 렌더·범례 '제품 카테고리 밴드')·**수정 핸들러(node:contextmenu CAT 분기 graph-core L2086) 우클릭 dispatch 파이프라인 라이브 실증** PASS. 리터럴 CAT 밴드 위 '카테고리' 메뉴 육안 = DEFERRED(도달 scope 전부 미분류→밴드 미방출, 제품-매핑 scope 필요) — 사용자 1-probe 권장.
+- postverify 재확인(main 1f705a9e): web-a·web-b `GIT_COMMIT=1f705a9e`(154fb916 포함) + baked `_metaGraphCtxForCategory` 반영 실측 — 수정 정상 서빙 중.
+- Cross-ref: CHG-20260714T180125-graph-ctxmenu-category(기능) · REV-20260714T183808-graph-ctxmenu-postverify · test-runs.d/20260714T180125-graph-ctxmenu-category.md POST-DEPLOY Run.
+
 ## CHG-20260714T180125-graph-ctxmenu-category (TASK-20260714T180125-graph-ctxmenu-category — 그래프 카테고리 밴드 우클릭 전용 메뉴, Minor §12.3 frontend-only additive)
 - Date: 2026-07-14. 그래프 뷰 '제품 카테고리 밴드'(CAT:/CATH:/CATX:) 우클릭을 전용 카테고리 메뉴로 라우팅 — 이전 `_metaGraphCtxHide()` stopgap(및 그 이전 배포본의 combo fall-through "스키마 클러스터 메뉴" 오노출) 대체.
 - `static/graph/graph-ctxmenu.js`: +`_metaGraphCtxForCategory(catKey, x, y)`(헤더 배지 + 카테고리 상세 + 밴드 접기/펼치기 + 카테고리명 복사) + export.
