@@ -4,7 +4,8 @@ sql_guard 의 SELECT/CTE-only shape 게이트가 LLM 의 자연스러운 read-on
 좁게 보정: (1) 최상위 set-op(UNION/INTERSECT/EXCEPT of SELECTs) (2) read-only SHOW 화이트리스트.
 
 핵심 검증:
-- 허용: UNION/UNION ALL of SELECTs · read-only SHOW(CREATE TABLE/VIEW·COLUMNS·INDEX·TABLE STATUS·VARIABLES/STATUS).
+- 허용: UNION/UNION ALL of SELECTs · read-only SHOW(CREATE TABLE/VIEW·COLUMNS·INDEX·TABLE STATUS·VARIABLES/STATUS)
+  · 시스템 변수 읽기 SELECT @@x/@@GLOBAL.x (FR-sysvar-select-denylist-overblock — MySQL denylist `@@` 제거).
 - **보안 불변식 유지(회귀 0)**: UNION 분기의 forbidden-schema/lock/into/금지함수는 여전히 차단 ·
   비-read-only SHOW(GRANTS/DATABASES/PROCESSLIST) 차단 · SHOW 대상 forbidden schema 차단 ·
   DELETE/DDL/multi-statement/INTO 차단 · SHOW .db 가 collect_schema_refs 로 제품 allowlist 대조에 합류.
@@ -127,6 +128,29 @@ def test_write_and_multistatement_still_blocked():
     assert _ok("UPDATE db.t SET x=1").ok is False
     assert _ok("SELECT 1; SELECT 2").ok is False
     assert _ok("SELECT a INTO OUTFILE '/tmp/x' FROM db.t").ok is False
+
+
+# ── 5b. 시스템 변수 읽기 허용 (FR-sysvar-select-denylist-overblock) ────────
+def test_sysvar_select_allowed():
+    # SELECT @@x 는 read-only SHOW VARIABLES 와 동일 정보 클래스 — denylist `@@` 제거 후 허용.
+    r = _ok("SELECT @@lower_case_table_names AS l, @@version AS v")
+    assert r.ok is True, r.error_reason
+    assert _ok("SELECT @@GLOBAL.lower_case_table_names").ok is True
+    assert _ok("SELECT @@sql_mode").ok is True
+
+
+def test_sysvar_write_paths_still_blocked():
+    # 쓰기/할당 경로 불변: SET 은 shape 게이트 + `SET @` denylist, := 는 denylist 가 차단.
+    assert _ok("SET @@sql_mode = ''").ok is False
+    assert _ok("SET @a = 1").ok is False
+    assert _ok("SELECT @a := 1").ok is False
+
+
+def test_sysvar_tsql_still_blocked():
+    # MSSQL 메타 열거 차단 태세 불변 — T-SQL denylist 의 @@ 유지.
+    r = _ok("SELECT @@VERSION", dialect="tsql")
+    assert r.ok is False
+    assert "@@" in r.error_reason
 
 
 # ── 6. collect_schema_refs 가 SHOW .db 를 수집(제품 allowlist 강제 경로) ──

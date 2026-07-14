@@ -1332,3 +1332,12 @@ TASK-0015 (plan-review):
 - [x] verify-completion(feature-0002) PASS → commit(f5e4b69b)/push → PR #771 merge(main ee4f8de6) → 배포(4서비스 ee4f8de6·런타임 실증·/healthz) → 원장 fixed:deployed:unverified-live(CHG-20260714T031500-attach-update-deploy).
 - [ ] commit/push(auto-sync) → PR·머지·배포(Major=confirm) → 배포검증(worker+web 재빌드) → 원장 갱신.
 - [ ] 라이브 실측(배포 후 corroboration 재측정: 갱신요청 대화의 assistant 버전 생성 비율 상승·```sql 붙여넣기 감소)는 다음 audit 분리분(코드/테스트만으로 마찰 소멸 단정 금지).
+
+## 20260714T1531-sysvar-select-guard — MySQL 시스템 변수 읽기(@@) denylist 과차단 해소 (conversation_audit FR-sysvar-select-denylist-overblock, Critical)
+> `/_dqa:conversation_audit "초기화 쿼리 환경 옵션 검토"`. friction-id=FR-sysvar-select-denylist-overblock. 진단 대화(마스킹): …e6add7f1 — 사용자가 "환경 옵션 직접 확인 후 판단" 명시 지시 → `SELECT @@lower_case_table_names, @@version`(단일 read-only SELECT)이 `denylist match: @@` 로 차단 → assistant 가 OS 기본값 추정으로 대체("MySQL 설정 확인 불가" 명시). 어제 출하한 read-only SHOW VARIABLES/STATUS 화이트리스트(FR-readonly-query-shapes)와 동일 정보 클래스라 태세 불일치.
+- [x] `src/modules/sql_guard.py` — `_DENYLIST_PATTERNS`(MySQL)에서 `@@` 패턴 제거(사유 주석 부착). T-SQL denylist 의 `@@` 는 유지(MSSQL 메타 열거 차단 태세 불변). 쓰기 경로(`SET @@`/`SET @`/`:=`)는 기존 denylist+shape 게이트가 계속 차단.
+- [x] `tests/test_readonly_query_shapes.py` §5b — sysvar SELECT 허용 3케이스(session/GLOBAL/sql_mode) + 쓰기 경로 차단 3케이스 + tsql `@@` 차단 유지 1케이스.
+- [x] 사용자 승인: AskUserQuestion 2026-07-14 "제거 진행"(Critical §12.3 — sql_guard 허용범위).
+- [x] §13.1 동시수정 기록: `.worktrees/feature-0002-agent-core`(branch ai/claude/feature-0002-agent-core)를 병렬 세션(FR-partial-evidence-false-verification 작업, tools.py/agent_core.py)이 점유 중이라 본 작업은 별도 worktree `feature-0002-sysvar-guard`(branch ai/claude/feature-0002-sysvar-guard)로 격리. 파일 교집합 0(sql_guard.py/test_readonly_query_shapes.py vs tools.py/agent_core.py).
+- [ ] 검증: 타깃 가드 테스트 4파일 PASS(사전 실행) + 전체 회귀 + §18.8 적대 패널(security+backend+qa) + verify-completion.
+- [ ] commit/push(auto-sync) → PR·머지·배포(Critical=confirm) → 배포검증 → 원장 갱신(docs-only 후속).
