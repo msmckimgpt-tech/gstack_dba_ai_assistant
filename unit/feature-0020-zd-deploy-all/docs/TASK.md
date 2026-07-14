@@ -57,22 +57,22 @@ source_of_truth: true
 - [x] T4 alembic-migrate.sh 폴백 가드
 - [x] T5 Makefile (deploy-all·ask-worker 타깃·up 빌드 목록)
 - [x] T6 검증(bash -n·dry-run 4 scope·compose config ±profile·pin overlay 병합) + 문서(RUNBOOK §9 정정·unit docs·STATUS·ARCHITECTURE·wiki 카드/_Index/Log/hot)
-- [ ] T7 verify-completion → commit → PR → cycle-finalize
-- [ ] T8 라이브 배포(deploy_scope: included) + POST-DEPLOY 검증(§16.3 deploy-backed)
+- [x] T7 verify-completion → commit → PR #780 → cycle-finalize(머지 eaba795a)
+- [x] T8 라이브 배포(deploy_scope: included) + POST-DEPLOY 검증(§16.3 deploy-backed) — exit 0·워커 healthy·edge 200 (test-runs.d fragment)
 
 ## 4. In Progress
-- T7 동기화.
+- 없음 (cycle 완료).
 
 ## 5. Blocked
 - 없음.
 
 ## 7. Completion Checklist
-- [ ] 모든 REQ 의 AC 가 구현되었다
-- [ ] 자동 테스트가 통과한다 (bash -n / dry-run / compose config; make test 회귀 무관 영역)
-- [ ] 웹/UI 변경 없음 — Windows-browser 검증 N/A (UI 표면 없음, 사유 TEST.md 명시)
-- [ ] FUNCTION.md 가 현재 동작과 일치한다
-- [ ] MODIFY.md / REVIEW.md / REPORT.md / TEST.md 기록
-- [ ] STATUS.md / ARCHITECTURE.md 반영
-- [ ] verify-completion --pre-commit PASS
-- [ ] Git 커밋 + 원격 동기화
-- [ ] (deploy-backed) 라이브 재배포 검증 — cycle-finalize 후 실배포 + healthz PASS
+- [x] 모든 REQ 의 AC 가 구현되었다 (AC-1~5)
+- [x] 자동 테스트가 통과한다 (bash -n / dry-run 4 scope / compose config ±profile)
+- [x] 웹/UI 변경 없음 — Windows-browser 검증 N/A (UI 표면 없음, 사유 TEST.md 명시)
+- [x] FUNCTION.md 가 현재 동작과 일치한다
+- [x] MODIFY.md / REVIEW.md / REPORT.md / TEST.md 기록
+- [x] STATUS.md / ARCHITECTURE.md 반영
+- [x] verify-completion --pre-commit PASS (본 cycle 1차 commit)
+- [x] Git 커밋 + 원격 동기화 (PR #780 머지 eaba795a)
+- [x] (deploy-backed) 라이브 재배포 검증 — 실배포 exit 0 + edge /healthz 200 + 워커 healthy
