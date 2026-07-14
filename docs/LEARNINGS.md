@@ -319,6 +319,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Meta (process): 이 두 결함(그리고 별개의 "unknown audit action" write-path 버그)은 **단위 테스트·API 테스트·§18.8 3-렌즈 적대 코드리뷰가 모두 통과시킨 뒤 PB-0008 실 Windows 브라우저 검증에서야** 드러났다 — (1) audit action 미등록은 라이브 저장 시에만, (2) 시각 완성도는 코드로 판정 불가. **UI 는 "코드리뷰+단위테스트 통과" 로 완료 선언하지 않는다.** 렌더 결과·정렬·상호작용 e2e(편집→pending→적용→DB roundtrip) 는 §15.4.1 PB-0008 이 유일한 완료 게이트. 재설계 자체도 적대 디자인/UX 렌즈가 배포 전 2 MAJOR(반응형 붕괴·no-override 재-핀 트랩)를 잡았다.
 - Applies to: 관리 콘솔의 모든 설정/목록 pane 신규·개편. 디자인 착수 전 기존 디자인 토큰/정돈된 패턴을 매핑(subagent)하고, 완료 전 PB-0008 before/after + 상호작용 e2e 로 검증한다.
 
+### LRN-20260714-0001 — 엔진별 카탈로그 스코프 비대칭: MySQL information_schema 는 인스턴스-전역, SQL Server INFORMATION_SCHEMA/sys 는 DB별
+- Source: CHG-20260714T161500-mssql-crossdb-structured-discovery (feature-0002-agent-core), conversation_audit FR-mssql-crossdb-structured-discovery
+- Pattern: 스키마 탐색·발견 도구를 dialect-agnostic 하게 짤 때, **MySQL 은 `information_schema` 가 인스턴스 전역이라 한 연결에서 모든 DB(스키마)의 객체가 보이지만, SQL Server 는 `INFORMATION_SCHEMA`/`sys` 카탈로그 뷰가 연결된 DB(catalog) 하나만 노출**한다. MySQL 에서 잘 돌던 "연결 기본 DB 에서 카탈로그 조회" 코드를 MSSQL 에 그대로 쓰면, 제품이 여러 DB 를 allowlist 로 가질 때 primary 밖 객체를 **실존하는데도 "없음"으로 반환**해 assistant 가 give-up 한다(라이브 관측: MSSQL 대화 ~38% 가 describe_table 빈-헤더). 봉인은 발견 도구를 **catalog 인지**로 — 다른 허용 DB 를 `[db].sys.*`/`[db].INFORMATION_SCHEMA.*` 3-part 로 조회하고, 키워드 검색은 허용 DB 전체를 훑어 DB-qualified 위치를 반환한다(freeform 3-part 가 이미 도달하는 범위와 동일 — 보안 경계 확장 0).
+- Signal 함의(다음 audit 반영): **MSSQL 대화의 `search_tables`/`describe_table` 빈결과는 "객체 없음" 신호가 아니다** — 다른 catalog 미탐색일 수 있다. conversation_audit 의 search_empty/describe-empty corroboration 은 엔진(MSSQL)·다중 DB 여부로 분해해 해석한다.
+- 주의(cross-DB 함수 스코프 함정): `OBJECT_DEFINITION(id)` 은 db_id 인자가 없어 **current(pin) DB 컨텍스트**로 평가된다 — 3-part `OBJECT_ID('[db].[s].[n]')` 로 id 를 얻어도 정의는 pin DB 에서 해소돼 NULL/오답. cross-DB 루틴 정의는 `[db].sys.sql_modules WHERE object_id = OBJECT_ID('[db].[s].[n]')`(양쪽 다 [db] id 공간)로 조회한다. 시스템 스키마(sys/guest/db_*) 차단은 cross-DB 경로에서도 명시 재적용해야 한다(primary 경로 게이트를 우회하지 않게).
+- Applies to: 멀티-DB datasource 를 지원하는 모든 dialect-aware 스키마 탐색/발견/insight 코드. 신규 엔진 추가 시 "카탈로그 뷰가 인스턴스-전역인가 DB별인가" 를 먼저 확인.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
