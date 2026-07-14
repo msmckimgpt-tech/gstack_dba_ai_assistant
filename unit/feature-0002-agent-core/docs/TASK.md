@@ -1350,3 +1350,20 @@ TASK-0015 (plan-review):
 - [ ] §18.8 적대 패널(full panel default — 프롬프트·도구 피드백 code change) → REVIEW entry.
 - [ ] verify-completion(feature-0002) → commit/push(auto-sync) → PR·머지·배포(Major=confirm 완료: PLAN-APPROVED A+B+C+D + PR/배포 인가, AskUserQuestion 2026-07-14) → 배포검증(4서비스) → 원장 갱신.
 - [ ] 라이브 실측(배포 후 corroboration 재측정: 절단 노출 대화의 환각/정정요구 재발 0 확인)은 다음 audit 분리분(코드/테스트만으로 마찰 소멸 단정 금지).
+## 20260714T-attach-review-grounding — 첨부-답변 정합성 실데이터 감사 후속: 첨부섹션 grounding 모순 제거 + LLM 오류 분류 확장 (Major)
+> 계기: 실런타임 데이터 감사(PG agent_runtime.core_attachments 411첨부/81대화 + MinIO 대조). 결론 — 토큰-초과 에러 0건(전 첨부 소형, text 최대 12.7KB)이라 "토큰-초과 대응"은 현 마찰 미해소. 실제 정합성 실패의 진짜 축은 ① ingest/kind 라우팅(대체로 해소) ② 접근·세션창(보안 민감·deferred) ③ 환각(grounding) ④ 모델 alias/오류 표면화. 본 cycle 은 ③(모순 제거 부분)·④ 착수.
+- [x] ③ grounding(모순 제거·최소): `agent_core.py` `_build_attachment_context_section` 첨부 INSTRUCTION 에서 전역 규칙과 모순되던 "do NOT run execute_sql ... unless the user explicitly asks" 억제 문구 제거 → 순수 코드리뷰는 DB 불필요 유지, 실 DB 상태 주장은 전역 규칙("COMPARING an attachment against the live DB", 병합 PR #793 FR-partial-evidence)에 위임. **중복 아님**: 전역 grounding 은 이미 있으나 첨부 섹션이 이를 무력화하던 latent 모순을 봉인.
+- [x] ④ LLM 오류 분류 확장: `llm_provider_health.py` `classify_llm_provider_error` 에 `bad_model`(litellm "Invalid model name passed in model=auto/core/edge"·OpenAI model_not_found)·`context_length`(Anthropic/Bedrock/OpenAI 컨텍스트 초과 표현 통합) 버킷 추가 → raw 400 덤프 대신 친절 한국어 메시지. 요청-레벨 오류라 글로벌 provider health 미오염(`persist_health=False` + 기존 confirmed=False skip 이중 안전망). `agent_core.py` 호출부에 persist_health 게이트.
+- [x] 검증: 신규 테스트 `test_attach_grounding.py`(5) + `test_llm_provider_health.py` 확장(8: bad_model/context_length/persist_health/순서/회귀) 로컬 PASS. feature-0002 전체 회귀 로컬 EXIT=0(신규 실패 0).
+- [x] §13.1 동시수정 기록: REGISTRY 활성 `ai/claude/feature-0002-agent-core`(worktree feature-0002-agent-core)가 agent_core.py 를 점유 이력(FR-partial-evidence, 현재는 병합됨 PR #793). 본 변경은 그 병합분 위(base 57f21121)에서 **상보적**(전역 규칙 위임)이며 편집 라인(첨부 섹션 ~L854 / 오류분류 caller ~L3956)은 전역 규칙(L103)과 비겹침. 머지 시 재확인.
+- [x] §18.8 적대 패널(프롬프트·오류경로 code change) → REV-20260714T210000 (fresh 2렌즈 SUBAGENT: MAJOR1[정적 억제 잔존]·MINOR2 전건 수정).
+- [ ] verify-completion(feature-0002) → commit/push(auto-sync) → PR·머지·배포(deploy_scope: included) → 배포검증.
+- [ ] deferred(별도 cycle 문서화): ④ 근본(`model=auto/core/edge` alias 누출 추적) · ① text-inline 회귀테스트 · ② 접근·세션창(share-window 보안 민감).
+## 20260714T221500-attach-case-insensitive-grounding — 라이브 실측 잔존 false-missing 봉인 (Major, CHG-20260714T210000 과 함께 배포)
+> 계기: FR-partial-evidence 라이브 실측(배포본 244e6bec 직접 재현). 원 증상(charactermakinglog 오진) 소멸 확인했으나 잔존 false-missing 1건 발견 — `gunzlog.LoginEventLog`(첨부 162행 활성 TRUNCATE 실재·활성 131개 중 유일 CamelCase)를 "쿼리에 없는 누락"으로 오판. 근본 = 실 DB(lower_case_table_names=1) 소문자명 vs 첨부 CamelCase 를 모델이 대소문자 구분 비교. 사용자 "잔존 먼저 조사·수정 후 함께 배포" 선택(AskUserQuestion 2026-07-14).
+- [x] 근본원인 규명: LoginEventLog=유일 CamelCase=유일 false-missing 상관 + SYSTEM_PROMPT 에 식별자 case-fold 비교 지침 부재 확인(L102~104 · L250-251 은 표기보존=쿼리작성용).
+- [x] 수정: `agent_core.py` SYSTEM_PROMPT grounding 계약에 "IDENTIFIER CASE" 규칙 추가(case-insensitive 매칭·case-only≠absence·absence 단정 전 case-folded 검색/probe). 프롬프트 레버(모델 추론 대조라 코드 lever 부재).
+- [x] 테스트: `test_attach_grounding.py` +3(규칙 존재·근본 명시·case-fold 검색 요구) = 파일 8 PASS. 로컬 36 PASS.
+- [x] §18.8 적대 패널(프롬프트 grounding code change) → REVIEW REV-20260714T221500 (+ Cycle B REV-20260714T210000 동반 기록).
+- [x] `make test` 전체 회귀: cycle 자체 테스트 전부 PASS(로컬 41)·무관 4건 pre-existing/환경(신규 회귀 0, 연역+경험 확정).
+- [ ] verify-completion(feature-0002) → commit/push → PR → merge → 배포(deploy_scope: included, Cycle B ③④ + 본 case-fix 함께) → 배포검증(4서비스 GIT_COMMIT) → 라이브 재-재현 LoginEventLog 오판 소멸 확인 → 원장 반영.

@@ -30,7 +30,16 @@ KIND_AUTH_INVALID = "auth_invalid"
 KIND_THROTTLED = "throttled"
 KIND_UNAVAILABLE = "unavailable"
 KIND_NOT_CONFIGURED = "not_configured"
+# TASK-20260714-attach-grounding: 요청-레벨 400 오류(provider 장애 아님).
+#   bad_model    — 라우팅/설정으로 잘못된 모델명이 API 로 전달(예: model=auto/core/edge 미해소).
+#   context_length — 프롬프트(첨부+히스토리)가 모델 컨텍스트 초과. raw 덤프 대신 친절 메시지 +
+#   글로벌 provider health 미오염(persist_health=False).
+KIND_BAD_MODEL = "bad_model"
+KIND_CONTEXT_LENGTH = "context_length"
 KIND_UNKNOWN = "unknown"
+
+# 요청-레벨 오류 kind — provider 장애가 아니므로 글로벌 health 상태에 영속하지 않는다.
+_REQUEST_LEVEL_KINDS = frozenset({KIND_BAD_MODEL, KIND_CONTEXT_LENGTH})
 
 _PROVIDER_LABEL = {"bedrock": "AWS Bedrock", "local": "로컬 LLM", "openai": "LLM 제공자"}
 
@@ -104,6 +113,22 @@ _UNAVAIL_PAT = re.compile(
     r"|temporarily unavailable",
     re.I,
 )
+# TASK-20260714-attach-grounding: 요청-레벨 400 패턴.
+#   bad_model — litellm "Invalid model name passed in model=..." / OpenAI "model_not_found" 등.
+_BAD_MODEL_PAT = re.compile(
+    r"invalid model name|model_not_found|the model .* does not exist"
+    r"|unknown model|model=\w+\.?\s*call `?/v1/models`?|no such model"
+    r"|invalid.*model.*passed",
+    re.I,
+)
+#   context_length — 프롬프트가 컨텍스트 초과(Anthropic/Bedrock/OpenAI 표현 통합).
+_CONTEXT_LEN_PAT = re.compile(
+    r"context length|context window|maximum context|context_length_exceeded"
+    r"|input is too long|input length and max_tokens|too many (?:input )?tokens"
+    r"|prompt is too long|reduce the length of the messages"
+    r"|exceeds?.*(?:context|token limit)|max_tokens.*exceed.*context",
+    re.I,
+)
 _TAG_PAT = re.compile(
     r"(ExpiredToken(?:Exception)?|UnrecognizedClientException|InvalidSignatureException"
     r"|AccessDenied(?:Exception)?|ThrottlingException|ServiceUnavailable(?:Exception)?"
@@ -147,6 +172,14 @@ def _build_restriction(
     elif kind == KIND_NOT_CONFIGURED:
         msg = "AI 제공자 자격증명이 설정되지 않아 응답을 생성할 수 없습니다. 관리자에게 문의하세요."
         retryable = False
+    elif kind == KIND_BAD_MODEL:
+        # 요청-레벨: 라우팅/설정 오류로 잘못된 모델명이 전달됨. 사용자가 재시도해도 무의미 → 관리자 안내.
+        msg = "요청한 AI 모델을 현재 사용할 수 없습니다(모델 설정 오류). 관리자에게 모델 라우팅 설정 확인을 요청해 주세요."
+        retryable = False
+    elif kind == KIND_CONTEXT_LENGTH:
+        # 요청-레벨: 첨부/대화가 컨텍스트 초과. 분량을 줄이면 사용자 스스로 복구 가능 → 행동 가능한 안내.
+        msg = "첨부 파일과 대화 내용이 한 번에 처리할 수 있는 분량을 초과했습니다. 첨부 파일을 나눠서 올리거나 일부만 남기고 다시 시도해 주세요."
+        retryable = False
     else:
         msg = f"{plabel} 사용에 외부 요인으로 인한 제한이 발생했습니다. 잠시 후 다시 시도해 주세요."
         retryable = True
@@ -157,6 +190,8 @@ def _build_restriction(
         "retryable": retryable,
         "error_tag": _short_tag(kind, status, text),
         "confirmed": bool(confirmed),
+        # 요청-레벨 오류(bad_model/context_length)는 provider 장애가 아님 → 글로벌 health 미영속.
+        "persist_health": kind not in _REQUEST_LEVEL_KINDS,
     }
 
 
@@ -172,8 +207,26 @@ def classify_llm_provider_error(exc: "Exception | None", provider: "str | None" 
     provider = provider or current_provider()
     status, text = _extract_status_and_text(exc)
     low = text.lower()
+    # 자격증명 만료가 가장 구체적 → 최우선. 이어서 요청-레벨(bad_model/context_length)을 auth/throttle/
+    # unavail 앞에서 판정하되, **request-level status(400/404/413)일 때만** 매칭한다.
+    # REV-20260714T210000(security Concern 3): text-only 매칭이 status 를 무시하면, 실제 429 throttle
+    # ("Too many tokens submitted, slow down") 이나 403 auth("unknown model tier") 가 context_length/
+    # bad_model 로 오분류돼 persist_health=False 로 **실제 provider health 배너를 억제**한다. status 로
+    # 확정 outage/auth/throttle 를 요청-레벨 버킷이 훔치지 못하게 게이트한다.
+    # 400/413=요청 형식/크기 오류, 404=모델 미존재(OpenAI model_not_found) — 모두 요청-레벨(client)이고
+    # 위험한 401/403/429/5xx 와 겹치지 않는다.
+    # REV-20260714T221500(적대 패널 MINOR-1): status 미상(None) fallback 도 제거한다 — 래핑/네트워크
+    # 예외로 status 를 잃은 throttle/auth 가 토큰/모델 어휘("too many tokens"/"unknown model")를 담으면
+    # 요청-레벨로 훔쳐가 배너를 억제할 수 있었다. 실 SDK 오류는 status_code 를 항상 실어(429/401/403)
+    # 게이트가 정확하므로, status 없는 요청-레벨 매칭을 포기하는 편(→ 보수적으로 auth/throttle/generic 폴백)이
+    # provider-health 신호 억제 위험보다 안전. context_length/bad_model 은 status 확정(400/404/413) 시에만.
+    _req_ok = status in (400, 404, 413)
     if _CRED_EXPIRED_PAT.search(low):
         kind = KIND_CREDENTIAL_EXPIRED
+    elif _req_ok and _BAD_MODEL_PAT.search(low):
+        kind = KIND_BAD_MODEL
+    elif _req_ok and _CONTEXT_LEN_PAT.search(low):
+        kind = KIND_CONTEXT_LENGTH
     elif _AUTH_INVALID_PAT.search(low) or status in (401, 403):
         kind = KIND_AUTH_INVALID
     elif _THROTTLE_PAT.search(low) or status == 429:
