@@ -1310,6 +1310,6 @@ TASK-0015 (plan-review):
 - [x] unit docs: MODIFY(CHG-20260713T185846-attach-update-versioned) + 본 TASK + REPORT cross-ref. feature-0003 MODIFY 동반.
 - [x] 검증: 단위테스트 신규 6종(directive 항상 주입·global override 존속·명명 idempotent·LLM명명 정규화·SEC-1 안전확장자) 타깃 36 PASS(내 diff 신규 실패 0; 전체 스위트 pre-existing 11 실패=b2e86880 baseline test debt, 첨부·내 diff 무관).
 - [x] §18.8 적대 패널(full panel default — 프롬프트 code change·표 키워드 미매칭): security+backend+qa 3렌즈. SEC-1(MINOR 확장자승격 회귀) 봉인, 나머지 REFUTED → REVIEW REV-20260713T185846.
-- [ ] verify-completion(feature-0002) PASS → commit/push.
+- [x] verify-completion(feature-0002) PASS → commit(f5e4b69b)/push → PR #771 merge(main ee4f8de6) → 배포(4서비스 ee4f8de6·런타임 실증·/healthz) → 원장 fixed:deployed:unverified-live(CHG-20260714T031500-attach-update-deploy).
 - [ ] commit/push(auto-sync) → PR·머지·배포(Major=confirm) → 배포검증(worker+web 재빌드) → 원장 갱신.
 - [ ] 라이브 실측(배포 후 corroboration 재측정: 갱신요청 대화의 assistant 버전 생성 비율 상승·```sql 붙여넣기 감소)는 다음 audit 분리분(코드/테스트만으로 마찰 소멸 단정 금지).

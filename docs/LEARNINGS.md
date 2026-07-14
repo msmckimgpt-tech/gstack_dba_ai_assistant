@@ -62,6 +62,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Applies to: 다중 provider/모델 폴백을 가진 모든 LLM 라우팅. "availability vs quality" 폴백 결정 시 폴백 모델의 컨텍스트/능력이 정본과 등가인지 먼저 확인하고, 아니면 깨끗한 실패 또는 명시 표면화를 기본값으로 한다.
 - Verified: true (적대 2렌즈 패널 CONFIRMED + 배포 후 live probe: claude-haiku-4-chat→claude 라우팅 확인, gemma 도달 불가).
 
+### LRN-20260714-0001 — 코드 상수 프롬프트의 "행동 계약"은 운영자 DB 프롬프트(global row)가 통째 대체하면 조용히 사라진다 — injection-guard 처럼 compose 시 코드-권위 주입해야 프로덕션에 도달한다
+- Source: conversation_audit FR-attachment-update-pasted-not-versioned (2026-07-14, structural 27/34)
+- Pattern: 어떤 행동 계약(예: "명시적 갱신요청 → 쿼리 붙여넣기 말고 첨부 새 버전으로 전달")을 **코드 상수 `SYSTEM_PROMPT` 안에만** 넣으면, `compose_system_prompt` 가 운영자의 `websystemprompts` global-scope row 를 **base 로 통째 대체**하는 구조에서 그 지침이 프로덕션 프롬프트에서 약해지거나 사라진다(data/config drift). 실측: attachment-edit 전달 메커니즘·프롬프트 지침이 2026-06-15/16 출하됐는데도 90일간 갱신요청 34대화 중 27(~79%)이 여전히 붙여넣기 — 메커니즘은 있는데 프롬프트가 그 경로로 안 태웠고, 지침이 코드 상수 안이라 운영자 프롬프트 커스터마이즈에 취약했다.
+- 교훈: (1) **드리프트되면 안 되는 행동 계약은 base prompt(운영자 대체 가능)에 의존하지 말고, `_INJECTION_GUARD_NOTICE` 처럼 compose 단계에서 base 뒤에 코드가 항상 append** 한다(AUTH-1a 코드 권위선). 이러면 운영자 global row 내용과 무관하게 계약이 effective. (2) 메커니즘 존재 ≠ 사용됨 — 기능을 출하했는데 채택률이 낮으면 "프롬프트가 그 경로로 태우는가"를 **정본 store 집계로 측정**(성공/실패 퍼널)하라. 코드만 보면 "있으니 됐다"고 오판한다. (3) LLM-의존 산출물(파일명 등)의 정합은 프롬프트 지시가 아니라 **코드가 권위적으로 강제**(예: 명명 정규화)해야 drift-proof.
+- 봉인 방식: (A2) 강화 지침을 `_ATTACHMENT_DELIVERY_DIRECTIVE` 로 compose parts 에 코드-주입(global row 무관 도달) + (A1) 코드 상수 base 지침도 동반 강화(no-global-row 환경·seed) + (A3) 파일명은 `_next_version_filename` 이 `<stem>_v<n>.<src_ext>` 로 코드-권위 결정(LLM 명명 무관). 검증: 코드/테스트로 "지침 도달·명명 정합" 증명 vs 배포 후 corroboration 재측정으로 "실제 붙여넣기 감소" 는 분리(코드만으로 마찰 소멸 단정 금지).
+- Applies to: 프롬프트·가드·라우팅 등 "코드 상수 vs DB 저장 설정" 이 공존하는 모든 경로. 행동 계약을 어디에 두는가(대체 가능 base vs 코드 권위 주입)를 drift 내성 기준으로 결정하라. + conversation_audit 류 채택률 진단은 정본 store 집계 퍼널로.
+- Verified: true (적대 3렌즈 패널 — SEC-1 MINOR 봉인·나머지 REFUTED; 배포 후 4서비스 ee4f8de6 런타임 실증. 라이브 대화 붙여넣기 감소는 다음 audit corroboration 재측정 대기 = unverified-live).
+
 ### LRN-20260605-0001 — DB cutover 의 read-back 누락은 워커뿐 아니라 "사용자 대면 grounding 경로"까지 조용히 무력화한다
 - Source: feature-0002 DB 조회 UX 개선 (TASK-0151, 2026-06-05)
 - Pattern: 05-27 MySQL→PG cutover 가 쓰기는 PG 로 옮기고 DROP 까지 했지만, **여러 read 경로가 DROP 된 MySQL 테이블을 `try/except: pass` 로 조회**해 빈 결과를 반환하고 있었다. TASK-0145 는 insight worker 면(livelock)을 고쳤고, TASK-0151 은 **사용자 질의의 스키마 grounding(`_load_schema_list`/`_load_relevant_table_insights` → "KNOWN SCHEMAS" 주입)** 면을 고쳤다. 둘 다 같은 원인의 다른 얼굴이다.
