@@ -49,6 +49,34 @@ _alembic_sh() {  # $1 = 컨테이너 안에서 실행할 alembic 명령 (예: "a
   fi
 }
 
+# feature-0020 (AC-3): MIGRATE_ALEMBIC_IMAGE 미설정 직접 호출 stale-image 가드.
+# `compose run agent` 는 마지막으로 빌드된 repo-agent 이미지를 쓴다 — working tree 에 신규
+# 마이그레이션 파일이 있어도 stale 이미지엔 없어 upgrade 가 "current==head, 적용 없음" 으로
+# 조용히 놓치고(2026-07-02 마이그 0030 실측 회귀와 동일 클래스 — deploy-web 경로는 fresh 이미지
+# 주입으로 기수정), stamp 는 잘못된 head 로 기록한다. 변이 액션(upgrade|stamp)에 한해 선행
+# 재빌드로 이미지를 working tree 와 정합시킨다. 생략은 MIGRATE_SKIP_REBUILD=1 명시로만.
+# (top-level 1회 — _alembic_sh 는 $() 서브셸에서 호출되어 함수 내 once-플래그가 유지되지 않음.)
+if [ -z "${MIGRATE_ALEMBIC_IMAGE:-}" ] && [ "${MIGRATE_SKIP_REBUILD:-0}" != "1" ] \
+   && { [ "$ACTION" = "upgrade" ] || [ "$ACTION" = "stamp" ]; }; then
+  echo "[alembic-migrate] MIGRATE_ALEMBIC_IMAGE 미설정 + ACTION=$ACTION — stale 이미지 방지 위해 agent 이미지 선행 재빌드(생략: MIGRATE_SKIP_REBUILD=1)." >&2
+  # 리뷰 M-3: 빌드 실패를 WARN-continue 하면 stale 이미지가 그대로 남아 upgrade 는 stale head
+  # 기준 "pending 없음"(exit 0)·stamp 는 옛 head 기록 — 본 가드가 봉인하려던 silent-miss 재현.
+  # deploy-web build 게이트와 동형: exit≠0 은 snap-docker metadata-race 마커가 있을 때만 관용,
+  # 아니면 하드 중단. GIT_COMMIT 도 주입해 이미지 각인(TASK-0126)을 보존한다.
+  _bl="$(mktemp)"
+  _gc="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  if ! GIT_COMMIT="$_gc" COMPOSE_BAKE=false docker compose build agent >"$_bl" 2>&1; then
+    if grep -qiE 'compose-build-metadataFile|metadataFile.*no such file|metadata file.*no such file' "$_bl"; then
+      echo "[alembic-migrate] WARN: compose build agent exit≠0 이나 metadata-race 마커 검출 — 이미지 정상 산출로 판단, 계속." >&2
+    else
+      tail -15 "$_bl" >&2; rm -f "$_bl"
+      echo "[alembic-migrate] ERROR: agent 이미지 재빌드 실패(race 마커 없음) — stale 이미지로 $ACTION 을 진행하면 head 오판(silent-miss) 위험. 중단." >&2
+      exit 1
+    fi
+  fi
+  rm -f "$_bl"
+fi
+
 # alembic offline --sql 생성(DB 무연결). 성공 시 stdout=순수 SQL, 실패 시 non-zero rc 전파.
 # (기존 `2>/dev/null` 만으로는 docker/pip/alembic 실패가 빈 SQL 로 삼켜져 upgrade 가 "pending 없음"
 #  으로 false-green → swap 진행하던 silent-miss 클래스가 남았다. 이제 rc 를 살려 호출부가 die 한다.)

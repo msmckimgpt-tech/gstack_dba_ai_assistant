@@ -76,14 +76,25 @@ last-good 으로 자동 롤백하는지 확인. 수동 롤백: `make web-rollbac
 컷오버 검증 후, cycle-finalize/머지 후 자동 배포 단계가 `sudo -E bin/deploy-web.sh` 를
 호출하도록 운영 절차(FIRST_REQUEST.md 의 배포 명령)를 갱신한다. 그 전까지는 수동 호출.
 
-## 9. worker 빌드 (divergence 발생 시, quiet-time)
-web 배포는 worker(insight/ask)를 건드리지 않는다. `deploy-web.sh` 가 worker GIT_COMMIT
-divergence 를 WARN 하면, 한가한 시간에:
-```
-docker compose -f docker-compose.yml build insight-worker ask-worker
-# insight-worker 는 SIGTERM 핸들러가 없으니 healthcheck heartbeat 가 idle(사이클 사이)일 때 recreate
-docker compose -f docker-compose.yml up -d --no-deps insight-worker ask-worker
-```
+## 9. worker 롤아웃 (feature-0020 — 스파인 자동화로 대체)
+> **개정 (2026-07-14, feature-0020-zd-deploy-all)**: 본 절의 구 절차("web 배포는 worker 를
+> 건드리지 않는다 → divergence WARN 시 수동 재빌드")는 폐기됐다. `bin/deploy-web.sh` 가
+> web soak 통과 후 **워커를 자동 롤아웃**한다: `mysql-ai-agent:<sha>` build-once 핀 →
+> insight-worker → ask-worker 순차 recreate → healthy 게이트(+GIT_COMMIT 검증) → 실패 시
+> agent last-good 자동 롤백. 워커만 다시 돌리려면 `make deploy-workers`
+> (`bin/deploy-web.sh --workers-only`). gateway(litellm)는 드리프트 시에만 surge replica
+> 로 무중단 교체(`--force-gateway` 로 강제).
+>
+> 구 서술의 "insight-worker 는 SIGTERM 핸들러가 없다"는 feature-0015 이후 stale —
+> insight-worker 는 `_INSIGHT_SHUTDOWN` graceful(루프 경계 종료, stop_grace 30s),
+> ask-worker 는 `_SHUTDOWN` + lease requeue(stop_grace 70s)로 임의 시점 recreate 가 안전하다.
+>
+> **운영 주의 — insight-worker `restart: on-failure:3`** (live-truth 채택분, 2026-07-14):
+> 크래시 3회 연속이면 자동재시작이 멈추고, 데몬/호스트 재시작 후에도 자동 복귀하지 않는다
+> (unless-stopped 와 다름 — 폭주 억제 의도). 정지 확인·수동 재기동:
+> `docker compose -f docker-compose.yml ps insight-worker` →
+> `docker compose -f docker-compose.yml up -d --no-deps insight-worker`
+> (또는 `make insight-up`).
 
 ## 10. 배포 검증 체크리스트 (사용자 인수 전 필수)
 
@@ -100,12 +111,12 @@ output-only). 아래는 그 정본이며, AI·운영자는 **사용자에게 "�
 | # | 항목 | 판정 |
 |---|------|------|
 | 1 | **배포 완료 확인** | web-a·web-b 가 대상 SHA(origin/main HEAD) + soak 통과. **merge ≠ 배포 완료** — 병합~배포완료 사이 창은 구코드가 서빙되므로, 이 시점 전에는 기능을 "사용자 테스트 가능"으로 알리지 않는다. |
-| 2 | **워커 재빌드 판정** | 변경이 `ask-worker`/`insight-worker` 코드(`agent_core.py`·워커가 쓰는 `modules`·`shared`)에 닿으면, deploy-web 의 `worker GIT_COMMIT != web` WARN 을 확인하고 **그 배포에서 즉시** 재빌드한다(web 배포만으로는 워커 코드 미반영). §9 참조. |
+| 2 | **워커 롤아웃 확인** | deploy-web 로그의 `워커 롤아웃 완료` 확인(feature-0020 부터 스파인이 자동 수행 — §9). `--web-only` 로 돌렸다면 워커 코드 변경 여부를 판단해 전체 scope 재실행(`make deploy-all`). |
 | 3 | **정적 자산 캐시 무효화** | 서빙 HTML 의 `?v=` 스탬프가 변경됐는가(빌드 `inject_asset_stamp.py` content-hash 자동 주입 — deploy-web 의 `asset_stamp_verify` 가 placeholder 잔존을 하드 차단). 사용자에게 **하드 리프레시(Ctrl+F5)** 안내 — stale JS 로 구 동작 관측 방지. |
 | 4 | **실 사용자 표면 검증** | 백엔드 API 뿐 아니라 **사용자가 실제로 쓰는 경로**(UI 업로드/클릭 등)를 라이브 배포본에서 PB-0008 로 검증. 백엔드 `fetch`/API 직접 호출만으로는 client-only 결함(프론트 dedup·ES-module 경로 등)을 놓친다. |
 | 5 | **완료 보고 시점** | 위 1~4 통과 후에만 "배포·검증 완료"를 사용자에게 보고. 그 전에는 "미배포/검증 중"으로 명시한다. |
 
-### 워커 코드 판정 가이드 (#2 보조)
+### 워커 코드 판정 가이드 (#2 보조 — `--web-only` 사용 판단용)
 - **web 만 재배포로 충분**: `unit/feature-0003-agent-web-ui/src`(app.py·routers·static) 등 web 프로세스 전용 변경.
 - **워커도 재빌드 필요**: `unit/feature-0002-agent-core/src/agent_core.py`(프롬프트·컨텍스트 주입·LLM 호출)·`modules/insight.py`·워커가 import 하는 `shared/*`·에이전트 루프 로직. 재업로드 버전 관리의 "assistant 변경점 인지"(agent_core `_build_attachment_context_section`)가 대표 사례.
 

@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
 # deploy-web.sh — feature-0014: web 무중단(zero-downtime) 롤링 배포 스파인.
+#                 feature-0020: 워커(insight/ask)·bedrock-gateway·caddy 이미지까지
+#                 같은 스파인에서 무중단 롤아웃(전 배포 대상 커버리지 완성).
 #
 # Caddy LB(web-a:8000 web-b:8000) 뒤에서 web replica 를 한 번에 하나씩 재시작해
 # 항상 ≥1 healthy upstream 을 유지한다. 고병렬 자동배포(deploy_scope: included)에서
-# 무인 실행되도록 직렬화·검증·자동 롤백을 모두 포함한다.
+# 무인 실행되도록 직렬화·검증·자동 롤백을 모두 포함한다. web swap + soak 통과 후
+# 워커를 build-once 핀 이미지로 순차 recreate(graceful SIGTERM + healthy 게이트 +
+# last-good 롤백)하고, bedrock-gateway 는 드리프트 시에만 surge replica 로 무중단
+# 교체한다(상세: unit/feature-0020-zd-deploy-all/docs/FUNCTION.md).
 #
 # === 실행 모델 (중요) ============================================================
 # 본 호스트는 docker 그룹 미소속이라 docker 에 sudo 가 필요하다. AGENTS.md §22.12 §1
@@ -25,11 +30,15 @@
 #  - build-once(image pin by SHA) + last-good 유지 → 빠른 롤백(재빌드 없음)
 #  - one-at-a-time + pre-drain(상대 ready 확인 + 대상 active_streams==0 대기) + /readyz 게이트
 #  - post-cutover soak(RestartCount/edge 감시) + 자동 롤백; bad-image vs dependency-down 구분
-#  - worker(insight/ask) 미접촉 단언(--no-deps, web-a/web-b 만 지정)
+#  - web 롤링 자체는 web-a/web-b 만 지정(--no-deps). 워커 롤아웃은 soak 통과 후
+#    별도 phase 에서 수행(feature-0020 — 구 "worker 미접촉 + WARN-only" 를 대체)
 #
 # Usage:
-#   sudo -E bin/deploy-web.sh                 # origin/main HEAD 로 롤링 배포
-#   sudo -E bin/deploy-web.sh --rollback      # last-good 이미지로 롤백
+#   sudo -E bin/deploy-web.sh                 # origin/main HEAD 로 전체 롤아웃(web+워커+gateway)
+#   sudo -E bin/deploy-web.sh --web-only      # web(+caddy reconcile)만 — 기존 feature-0014 범위
+#   sudo -E bin/deploy-web.sh --workers-only  # 워커+gateway 만 (마이그 없는 워커 코드/설정 변경 전용)
+#   sudo -E bin/deploy-web.sh --force-gateway # gateway 드리프트 무관 surge 교체 강제
+#   sudo -E bin/deploy-web.sh --rollback      # last-good 이미지로 롤백(web + 워커)
 #   sudo -E bin/deploy-web.sh --dry-run       # 명령만 출력(상태 변경 없음)
 #   sudo -E bin/deploy-web.sh --help
 #
@@ -63,8 +72,20 @@ SOAK_SECONDS="${DEPLOY_WEB_SOAK:-90}"
 EDGE_FLAP_MAX="${DEPLOY_WEB_EDGE_FLAP_MAX:-4}"   # soak 창 내 비연속 edge 실패 누적 임계(하드닝 2026-07-11, 패널 MINOR-1)
 IMAGE_KEEP="${DEPLOY_WEB_IMAGE_KEEP:-3}"
 
+# feature-0020: 워커·gateway 롤아웃 상수
+AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask 워커 공용 이미지(동일 Dockerfile build-once)
+WORKERS=(insight-worker ask-worker)
+AGENT_LASTGOOD_FILE="$STATE_DIR/deploy-agent.last-good"
+WORKER_READY_TIMEOUT="${DEPLOY_WORKER_READY_TIMEOUT:-300}"    # insight 최악 unhealthy 확정(start 60s+60s×3=240s)보다 여유(리뷰 m-3 — 경계 동률 false-fail 방지)
+GATEWAY_READY_TIMEOUT="${DEPLOY_GATEWAY_READY_TIMEOUT:-180}"
+GATEWAY_SERVICE="bedrock-gateway"
+GATEWAY_SURGE="bedrock-gateway-surge"
+GATEWAY_CONFIG_FILE="unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml"
+
 DRY_RUN=0
 MODE="deploy"   # deploy | rollback
+SCOPE="all"     # all | web | workers (feature-0020)
+FORCE_GATEWAY=0
 
 # base file-set ONLY — dev override(override.yml)/self-TLS/호스트포트를 머지하지 않는다.
 DC=(docker compose -f docker-compose.yml)
@@ -82,16 +103,23 @@ run() {  # dry-run 인지 명령 실행 래퍼
   "$@"
 }
 
-usage() { sed -n '2,55p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --rollback) MODE="rollback"; shift ;;
-    --dry-run)  DRY_RUN=1; shift ;;
-    --help|-h)  usage 0 ;;
+    --rollback)      MODE="rollback"; shift ;;
+    --dry-run)       DRY_RUN=1; shift ;;
+    --web-only)      SCOPE="web"; shift ;;
+    --workers-only)  SCOPE="workers"; shift ;;
+    --force-gateway) FORCE_GATEWAY=1; shift ;;
+    --help|-h)       usage 0 ;;
     *) die2 "알 수 없는 인자: $1" ;;
   esac
 done
+[ "$SCOPE" = "workers" ] && [ "$MODE" = "rollback" ] && die2 "--workers-only 와 --rollback 병용 불가 (롤백은 web+워커 일괄)."
+
+# base file-set + surge profile (gateway surge 서비스 조작 전용 — 다른 서비스에 영향 없음)
+DC_SURGE=(docker compose -f docker-compose.yml --profile deploy-surge)
 
 # ── WEB_PUBLIC_HOST 로드 (.env, sudo -E 로 env 전달되면 그쪽 우선) ──────────────
 WEB_PUBLIC_HOST="${WEB_PUBLIC_HOST:-$(sed -n 's/^WEB_PUBLIC_HOST=//p' .env 2>/dev/null | tail -1)}"
@@ -181,10 +209,13 @@ preflight_tls() {
     warn "leaf cert 가 14일 내 만료. 곧 두 replica 동시 만료 위험 — 갱신 권장. (배포는 계속)"
   fi
   # (4) Caddy 컨테이너가 보는 rootCA 가 호스트와 동일한가 (회전 후 reload 누락 감지) — best-effort
-  if "${DC[@]}" ps caddy >/dev/null 2>&1; then
+  # feature-0020 수정: 구 가드 `ps caddy`(컨테이너 0개여도 exit 0)는 caddy 미기동 호스트에서
+  # 블록에 진입시키고, 부재 컨테이너 exec 파이프라인이 pipefail+set-e 로 **무메시지 exit 1**
+  # 을 냈다(잠복 — cold host/worktree dry-run 실측). ps -q 비어있음으로 실존 확인.
+  if [ -n "$("${DC[@]}" ps -q caddy 2>/dev/null)" ]; then
     local host_ca caddy_ca
     host_ca="$(sha256sum "$ROOT_CA" 2>/dev/null | awk '{print $1}')"
-    caddy_ca="$("${DC[@]}" exec -T caddy cat /certs/rootCA.pem 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
+    caddy_ca="$("${DC[@]}" exec -T caddy cat /certs/rootCA.pem 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}' || true)"
     if [ -n "$caddy_ca" ] && [ "$host_ca" != "$caddy_ca" ]; then
       die "Caddy 컨테이너의 rootCA 가 호스트와 불일치(회전 후 reload 누락). 'docker compose exec caddy ... reload' 또는 caddy 재시작 필요. ABORT."
     fi
@@ -216,10 +247,23 @@ resolve_target_sha() {
 
 current_deployed_sha() { [ -f "$STATE_FILE" ] && sed -n 's/^current=//p' "$STATE_FILE" | tail -1 || true; }
 lastgood_sha()         { [ -f "$LASTGOOD_FILE" ] && cat "$LASTGOOD_FILE" 2>/dev/null | tr -d '[:space:]' || true; }
+agent_lastgood_sha()   { [ -f "$AGENT_LASTGOOD_FILE" ] && cat "$AGENT_LASTGOOD_FILE" 2>/dev/null | tr -d '[:space:]' || true; }
+
+# feature-0020: STATE_FILE 을 key=value 다중 라인으로 확장(current= / agent_current= /
+# gateway_config_sha=). 기존 단일-라인 overwrite(echo > file)는 다른 키를 파괴하고,
+# dry-run 에서도 실기록되는 결함이 있어 state_set 으로 일원화(dry-run 무기록).
+state_get() { [ -f "$STATE_FILE" ] && sed -n "s/^$1=//p" "$STATE_FILE" | tail -1 || true; }
+state_set() {  # $1=key $2=value — 다른 키 보존 rewrite
+  if [ "$DRY_RUN" -eq 1 ]; then log "[dry-run] state $1=$2"; return 0; fi
+  local tmp; tmp="$(mktemp)"
+  { [ -f "$STATE_FILE" ] && grep -v "^$1=" "$STATE_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } > "$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
 
 # ── migrate 게이트 + 적용 (expand 먼저, swap 전) ───────────────────────────────
-migrate_phase() {
-  step "마이그레이션: expand/contract 게이트 + 적용 (swap 전)"
+migrate_phase() {  # $1 = alembic 실행 이미지 (기본 web 이미지; workers-only 는 agent 이미지 — 리뷰 M-5)
+  local mig_img="${1:-$IMAGE_REPO:$TARGET_SHA}"
+  step "마이그레이션: expand/contract 게이트 + 적용 (swap 전, image=$mig_img)"
   if [ -x bin/migrate-lint.sh ]; then
     if ! run bash bin/migrate-lint.sh --base "$BASE_BRANCH"; then
       die "migrate-lint 차단: 비가산(contract) 마이그레이션. expand/contract 2-phase 또는 서명 annotation 필요 (CONVENTIONS §12). ABORT (스키마/컨테이너 무변경)."
@@ -241,7 +285,7 @@ migrate_phase() {
     #     확인, apply 는 ON_ERROR_STOP=1 psql 성공 후 fall-through). fresh 이미지(1)로 head 감지가 정확해져
     #     이 head-anchored 안전 논리가 성립한다. 1차 exit≠0 이면 backoff 후 1회 멱등 재시도 — 재시도 exit 0
     #     = head 도달로 판정(race/transient 무관 swap 안전). 재시도도 실패 = 진짜 실패 → ABORT(미적용 미배포).
-    _mig_env=(env "MIGRATE_ALEMBIC_IMAGE=$IMAGE_REPO:$TARGET_SHA")
+    _mig_env=(env "MIGRATE_ALEMBIC_IMAGE=$mig_img")
     if ! run "${_mig_env[@]}" bash bin/alembic-migrate.sh upgrade; then
       warn "alembic-migrate 1차 exit≠0 — snap-docker docker-run race/일시 blip 가능성. ${MIGRATE_RETRY_BACKOFF:-5}s backoff 후 멱등 재시도로 head 도달 판정."
       [ "$DRY_RUN" -eq 1 ] || sleep "${MIGRATE_RETRY_BACKOFF:-5}"   # 같은 race window 재적중 완화(dry-run 은 skip)
@@ -255,73 +299,90 @@ migrate_phase() {
 }
 
 # ── 이미지 빌드 (build-once, SHA 핀, last-good 회전) ────────────────────────────
-write_pin_overlay() {  # $1 = sha, $2 = image ref (default $IMAGE_REPO:$sha; rollback 은 :last-good 태그)
-  local sha="$1" img="${2:-$IMAGE_REPO:$sha}"
-  if [ "$DRY_RUN" -eq 1 ]; then log "[dry-run] write pin overlay → $img"; return 0; fi
-  cat > "$PIN_FILE" <<YAML
-# feature-0014 deploy-web.sh 자동 생성 — web-a/web-b 를 빌드 결과 이미지에 핀(롤백 즉시성).
-services:
-  web-a:
-    image: ${img}
-  web-b:
-    image: ${img}
-YAML
+write_pin_overlay() {  # $1 = web image ref, $2 = agent image ref ("" 또는 생략 → 워커 핀 생략)
+  local web_img="$1" agent_img="${2:-}"
+  if [ "$DRY_RUN" -eq 1 ]; then log "[dry-run] write pin overlay → web=$web_img agent=${agent_img:-<none>}"; return 0; fi
+  {
+    echo "# feature-0014/0020 deploy-web.sh 자동 생성 — 빌드 결과 이미지 핀(롤백 즉시성)."
+    echo "services:"
+    printf '  web-a:\n    image: %s\n  web-b:\n    image: %s\n' "$web_img" "$web_img"
+    if [ -n "$agent_img" ]; then
+      local w; for w in "${WORKERS[@]}"; do printf '  %s:\n    image: %s\n' "$w" "$agent_img"; done
+    fi
+  } > "$PIN_FILE"
 }
 
 DC_PROD=()  # base + pin overlay
 set_dc_prod() { DC_PROD=(docker compose -f docker-compose.yml -f "$PIN_FILE"); }
 
-build_image() {  # $1 = sha
-  local sha="$1"
-  step "이미지 빌드 (build-once, GIT_COMMIT=$sha → $IMAGE_REPO:$sha)"
-  write_pin_overlay "$sha"
-  set_dc_prod
-  # last-good 회전: 현재 :current 를 last-good 로 보존(빌드/스왑 성공 전에).
-  local cur; cur="$(current_deployed_sha)"
-  if [ -n "$cur" ]; then
-    run bash -c "echo '$cur' > '$LASTGOOD_FILE'"; log "last-good = $cur"
-    # :current → :last-good 태그 회전. sha 태그가 keep-N prune 으로 지워져도 last-good 이미지는
-    # 이 안정 태그로 보존되어 롤백이 항상 가능(백엔드 리뷰 note).
-    if [ "$DRY_RUN" -ne 1 ] && docker image inspect "$IMAGE_REPO:current" >/dev/null 2>&1; then
-      docker tag "$IMAGE_REPO:current" "$IMAGE_REPO:last-good" || true
-    fi
+rotate_lastgood() {  # $1=image repo, $2=직전 배포 sha(빈 값 허용 — 첫 배포), $3=last-good 기록 파일
+  local repo="$1" prev="$2" f="$3"
+  [ -n "$prev" ] || return 0
+  run bash -c "echo '$prev' > '$f'"; log "last-good($repo) = $prev"
+  # :current → :last-good 태그 회전. sha 태그가 keep-N prune 으로 지워져도 last-good 이미지는
+  # 이 안정 태그로 보존되어 롤백이 항상 가능(백엔드 리뷰 note).
+  if [ "$DRY_RUN" -ne 1 ] && docker image inspect "$repo:current" >/dev/null 2>&1; then
+    docker tag "$repo:current" "$repo:last-good" || true
   fi
-  # web-a 만 빌드하면 image:$sha 로 태깅됨 → web-b 가 동일 이미지 재사용(build-once).
+}
+
+build_service_image() {  # $1 = sha, $2 = image repo, $3 = compose build 서비스 (build-once 대표)
+  local sha="$1" repo="$2" bsvc="$3"
+  # $bsvc 하나만 빌드하면 pin overlay 의 image:$repo:$sha 로 태깅됨 → 동일 이미지 서비스가 재사용(build-once).
   # feature-0017: build 게이트는 exit code 만 신뢰하지 않는다(snap-docker 의 metadata-file race —
   # docker 29.3.1/compose v5.1.1/buildx v0.31.1 가 `naming...done` 후 /tmp metadata 파일을 confinement
   # 다른 mount ns 에서 못 찾아 EXIT 1 을 반환하나 이미지는 정상 산출·태깅됨, dc-build 동일 우회).
   # 판정: 이미지 존재 + GIT_COMMIT 라벨==sha 로 정합 확인. EXIT≠0 은 **로그에 metadata-file race 마커가
   # 있을 때만** 양성 무시 — 진짜 빌드 실패(컴파일 에러 등, 마커 없음/이미지 부재)는 여전히 ABORT.
   if [ "$DRY_RUN" -eq 1 ]; then
-    log "[dry-run] build web-a (GIT_COMMIT=$sha)"
+    log "[dry-run] build $bsvc (GIT_COMMIT=$sha → $repo:$sha)"
   else
     local _blog _brc
     _blog="$(mktemp)"
     set +e +o pipefail
-    GIT_COMMIT="$sha" "${DC_PROD[@]}" build web-a 2>&1 | tee "$_blog"
+    GIT_COMMIT="$sha" "${DC_PROD[@]}" build "$bsvc" 2>&1 | tee "$_blog"
     _brc=${PIPESTATUS[0]}
     set -e -o pipefail
     local _img_commit
-    _img_commit="$(docker image inspect "$IMAGE_REPO:$sha" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^GIT_COMMIT=//p' | head -1)"
+    _img_commit="$(docker image inspect "$repo:$sha" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^GIT_COMMIT=//p' | head -1)"
     if [ "$_brc" -eq 0 ] && [ "$_img_commit" = "$sha" ]; then
       :  # 정상 빌드
     elif [ "$_brc" -ne 0 ] && [ "$_img_commit" = "$sha" ] && \
          grep -qiE 'compose-build-metadataFile|metadataFile.*no such file|metadata file.*no such file' "$_blog"; then
-      warn "compose build EXIT=$_brc 이나 이미지($IMAGE_REPO:$sha, GIT_COMMIT 일치) 정상 산출 — snap-docker metadata-file race 양성 무시(dc-build 동일 우회)."
+      warn "compose build EXIT=$_brc 이나 이미지($repo:$sha, GIT_COMMIT 일치) 정상 산출 — snap-docker metadata-file race 양성 무시(dc-build 동일 우회)."
     else
       log "--- build log tail ---"; tail -15 "$_blog" >&2; rm -f "$_blog"
-      die "이미지 빌드 실패 — $IMAGE_REPO:$sha 부재 또는 GIT_COMMIT('$_img_commit')≠$sha (EXIT=$_brc, metadata-race 마커 없음). 진짜 빌드 실패 — ABORT."
+      die "이미지 빌드 실패 — $repo:$sha 부재 또는 GIT_COMMIT('$_img_commit')≠$sha (EXIT=$_brc, metadata-race 마커 없음). 진짜 빌드 실패 — ABORT."
     fi
     rm -f "$_blog"
   fi
   # 새 이미지를 안정 태그 :current 로 (다음 배포가 :last-good 로 회전).
-  if [ "$DRY_RUN" -ne 1 ]; then docker tag "$IMAGE_REPO:$sha" "$IMAGE_REPO:current" || true; fi
+  if [ "$DRY_RUN" -ne 1 ]; then docker tag "$repo:$sha" "$repo:current" || true; fi
   # keep-N prune (오래된 SHA 태그 정리)
   if [ "$DRY_RUN" -ne 1 ]; then
-    docker images "$IMAGE_REPO" --format '{{.Tag}} {{.ID}}' 2>/dev/null \
+    docker images "$repo" --format '{{.Tag}} {{.ID}}' 2>/dev/null \
       | grep -vE '^(current|last-good) ' | awk '{print $1}' | tail -n +"$((IMAGE_KEEP+1))" \
-      | while read -r t; do [ -n "$t" ] && docker rmi "$IMAGE_REPO:$t" 2>/dev/null || true; done
+      | while read -r t; do [ -n "$t" ] && docker rmi "$repo:$t" 2>/dev/null || true; done
   fi
+}
+
+build_image() {  # $1 = sha — web 이미지 build-once (pin overlay 는 main 이 선기록)
+  local sha="$1"
+  step "web 이미지 빌드 (build-once, GIT_COMMIT=$sha → $IMAGE_REPO:$sha)"
+  rotate_lastgood "$IMAGE_REPO" "$(current_deployed_sha)" "$LASTGOOD_FILE"
+  build_service_image "$sha" "$IMAGE_REPO" web-a
+}
+
+build_agent_image() {  # $1 = sha — 워커 공용 agent 이미지 build-once (feature-0020)
+  local sha="$1"
+  step "agent(워커) 이미지 빌드 (build-once, GIT_COMMIT=$sha → $AGENT_IMAGE_REPO:$sha)"
+  if [ "$(state_get agent_current)" = "$sha" ] && [ "$DRY_RUN" -ne 1 ] \
+     && docker image inspect "$AGENT_IMAGE_REPO:$sha" >/dev/null 2>&1; then
+    log "agent 이미지 이미 $sha — 빌드/last-good 회전 skip(멱등)."
+    return 0
+  fi
+  rotate_lastgood "$AGENT_IMAGE_REPO" "$(state_get agent_current)" "$AGENT_LASTGOOD_FILE"
+  build_service_image "$sha" "$AGENT_IMAGE_REPO" insight-worker
 }
 
 # ── replica 헬퍼 ──────────────────────────────────────────────────────────────
@@ -359,6 +420,7 @@ print(0); sys.exit(0)
 }
 
 wait_ready() {  # $1 = svc, $2 = expected sha → 0 성공
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] wait_ready $1 (기대 $2) skip"; return 0; }
   local svc="$1" want="$2" deadline=$(( SECONDS + READY_TIMEOUT )) out got
   while [ "$SECONDS" -lt "$deadline" ]; do
     out="$(replica_readyz "$svc" || true)"
@@ -375,6 +437,7 @@ wait_ready() {  # $1 = svc, $2 = expected sha → 0 성공
 predrain() {  # $1 = recreate 대상 svc, $2 = 상대(살아있어야 함) svc
   local target="$1" other="$2" deadline=$(( SECONDS + PREDRAIN_TIMEOUT )) n
   step "pre-drain: $other 건강 확인 + $target 진행 스트림 종료 대기"
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] pre-drain skip"; return 0; }
   # 상대 replica 가 살아있어야 무중단. (초기 배포로 상대가 아직 없으면 skip.)
   if replica_cid "$other" >/dev/null 2>&1 && [ -n "$(replica_cid "$other")" ]; then
     replica_readyz "$other" >/dev/null 2>&1 || warn "$other 가 ready 아님 — $target recreate 시 순간 단일 upstream 위험."
@@ -423,7 +486,21 @@ reconcile_caddy() {
   host_sha="$(sha256sum "$CADDYFILE" 2>/dev/null | awk '{print $1}')"
   cont_sha="$("${DC[@]}" exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
   if [ -n "$cont_sha" ] && [ "$host_sha" = "$cont_sha" ]; then
-    log "Caddyfile 무변경(sha 일치) — caddy 유지(blip 0)"; return 0
+    # feature-0020: config 무변경이어도 caddy 이미지 태그 갱신(caddy:2 re-pull)은 recreate 필요.
+    # 단일 edge 라 recreate 는 수초 blip — 이미지 업그레이드 시에만 발생(평시 blip 0 유지).
+    local ccid cimg_run cimg_local
+    ccid="$("${DC[@]}" ps -q caddy 2>/dev/null | head -1)"
+    cimg_run="$(docker inspect -f '{{.Image}}' "$ccid" 2>/dev/null || true)"
+    cimg_local="$(docker image inspect "$(docker inspect -f '{{.Config.Image}}' "$ccid" 2>/dev/null)" -f '{{.Id}}' 2>/dev/null || true)"
+    if [ -n "$cimg_run" ] && [ -n "$cimg_local" ] && [ "$cimg_run" != "$cimg_local" ]; then
+      warn "Caddyfile 무변경이나 caddy 이미지 태그 갱신 감지 — recreate(수초 edge blip, 업그레이드 시에만)."
+      run "${DC[@]}" up -d --no-deps --force-recreate caddy || die "caddy recreate 실패."
+      local img_deadline=$(( SECONDS + 20 ))
+      while [ "$SECONDS" -lt "$img_deadline" ]; do edge_ok && { log "caddy 이미지 갱신 recreate 후 edge 정상"; return 0; }; sleep 2; done
+      warn "caddy recreate 후 edge 가 20s 내 200 아님 — soak 단계가 추가 감시."
+      return 0
+    fi
+    log "Caddyfile 무변경(sha 일치) + 이미지 일치 — caddy 유지(blip 0)"; return 0
   fi
   log "Caddyfile 변경 감지(host=$(printf '%.12s' "$host_sha") != caddy=$(printf '%.12s' "$cont_sha")) — 검증 후 recreate"
   # recreate 전 adapt 검증(깨진 config 로 caddy 를 죽이지 않도록). throwaway 컨테이너에서 검증.
@@ -445,6 +522,7 @@ soak_or_rollback() {  # $1 = deployed sha
   local sha="$1" deadline=$(( SECONDS + SOAK_SECONDS )) rc_a rc_b base_a base_b
   local edge_fail_total=0   # 하드닝: flapping(200/503 교대) 이미지는 '연속 3회'를 영원히 못 채움 — 누적 기준 병행
   step "post-cutover soak (${SOAK_SECONDS}s) — edge + RestartCount 감시"
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] soak skip"; return 0; }
   base_a="$(restart_count web-a)"; base_b="$(restart_count web-b)"
   while [ "$SECONDS" -lt "$deadline" ]; do
     if ! edge_ok; then
@@ -502,7 +580,10 @@ auto_rollback() {  # $1 = 실패한 sha
   if ! docker image inspect "$IMAGE_REPO:last-good" >/dev/null 2>&1; then
     err "last-good 이미지($IMAGE_REPO:last-good) 가 로컬에 없음 — 빠른 롤백 불가. 수동 개입 필요."; return 1
   fi
-  write_pin_overlay "$good" "$IMAGE_REPO:last-good"; set_dc_prod
+  # 워커 핀은 현행 유지(auto_rollback 은 web 결함 대응 — 워커는 이 시점 미접촉).
+  local agent_pin=""
+  docker image inspect "$AGENT_IMAGE_REPO:current" >/dev/null 2>&1 && agent_pin="$AGENT_IMAGE_REPO:current"
+  write_pin_overlay "$IMAGE_REPO:last-good" "$agent_pin"; set_dc_prod
   local svc; for svc in "${REPLICAS[@]}"; do
     recreate_replica "$svc" "$good" || warn "$svc 롤백 recreate 문제 — 계속."
   done
@@ -515,19 +596,192 @@ auto_rollback() {  # $1 = 실패한 sha
     sleep 3
   done
   if [ "$rb_ok" -eq 0 ]; then log "롤백 후 edge 정상."; else err "롤백 후에도 edge 비정상(60s 대기 후) — 수동 개입 필요."; fi
-  echo "current=$good" > "$STATE_FILE"
+  state_set current "$good"
+  # 리뷰 M-2: ":current 태그 = 현재 배포본" 불변식 복원 — 미복원 시 다음 배포의 last-good
+  # 회전이 실패 이미지를 last-good 으로 오염시켜 2연속 실패에서 롤백 불능이 된다.
+  if [ "$DRY_RUN" -ne 1 ]; then docker tag "$IMAGE_REPO:last-good" "$IMAGE_REPO:current" 2>/dev/null || true; fi
 }
 
-# ── worker GIT_COMMIT divergence (web vs insight/ask) WARN — 자동수정 안 함 ──────
-worker_divergence_warn() {
+# ── 워커(insight/ask) 롤아웃 (feature-0020) ─────────────────────────────────────
+# 워커는 큐 기반 + graceful SIGTERM(insight `_INSIGHT_SHUTDOWN` 루프경계 종료 — feature-0015
+# 구현·stop_grace 30s / ask `_SHUTDOWN` + lease requeue·stop_grace 70s) + 멱등 쓰기라 단일
+# 인스턴스 순차 recreate 로도 사용자 체감 무중단이다. 구 worker_divergence_warn(WARN-only,
+# 수동 재빌드 안내 — "insight SIGTERM 핸들러 없음" 서술은 feature-0015 이후 stale)을 스파인
+# 자동 롤아웃으로 대체한다(2026-07-13 attach-user-version 회고의 '워커 코드 미반영' 마찰 해소).
+container_health() {  # $1=svc → healthy|starting|unhealthy|running|restarting|exited|none
+  local cid; cid="$(replica_cid "$1")"
+  [ -n "$cid" ] || { echo none; return 0; }
+  docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || echo none
+}
+
+worker_commit() {  # $1=svc → 컨테이너의 GIT_COMMIT (실패 시 빈 값)
+  "${DC_PROD[@]}" exec -T "$1" printenv GIT_COMMIT 2>/dev/null | tr -d '[:space:]' || true
+}
+
+wait_worker_healthy() {  # $1=svc $2=timeout_s $3=기대 sha("" = commit 검증 생략) → 0 성공
+  local svc="$1" want="${3:-}" deadline=$(( SECONDS + $2 )) st got rc
   [ "$DRY_RUN" -eq 1 ] && return 0
-  local wsha isha asha
-  wsha="$(replica_readyz web-a 2>/dev/null | awk '{print $2}' || true)"
-  isha="$("${DC_PROD[@]}" exec -T insight-worker printenv GIT_COMMIT 2>/dev/null | tr -d '[:space:]' || true)"
-  asha="$("${DC_PROD[@]}" exec -T ask-worker printenv GIT_COMMIT 2>/dev/null | tr -d '[:space:]' || true)"
-  [ -n "$isha" ] && [ "$isha" != "$wsha" ] && warn "insight-worker GIT_COMMIT($isha) != web($wsha) — quiet-time 에 worker 재빌드 권장(insight-worker 는 SIGTERM 핸들러 없음 → idle 시 recreate)."
-  [ -n "$asha" ] && [ "$asha" != "$wsha" ] && warn "ask-worker GIT_COMMIT($asha) != web($wsha) — quiet-time 재빌드 권장(ask-worker grace 70s, 안전)."
-  return 0
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    st="$(container_health "$svc")"
+    rc="$(restart_count "$svc")"
+    if [ "${rc:-0}" -gt 0 ]; then
+      err "$svc RestartCount=$rc — 신규 컨테이너 crash-loop(restart 정책이 은폐 가능). 결함 판정."
+      return 1
+    fi
+    case "$st" in
+      healthy)
+        got="$(worker_commit "$svc")"
+        if [ -z "$want" ] || [ "$got" = "$want" ]; then log "  $svc healthy (GIT_COMMIT=${got:-?})"; return 0; fi
+        err "$svc healthy 이지만 GIT_COMMIT=$got (기대=$want) — 핀/빌드 불일치."; return 1 ;;
+      exited|dead|none)
+        err "$svc 상태=$st — 기동 실패."; return 1 ;;
+    esac
+    sleep 5
+  done
+  err "$svc 가 ${2}s 내 healthy 도달 실패(최종 상태=$(container_health "$svc"))."
+  return 1
+}
+
+deploy_workers() {  # $1 = 대상 sha, $2 = pin overlay 의 web image ref(롤백 시 유지) → 0 성공.
+  local sha="$1" web_img="$2" svc st got
+  step "워커 롤아웃 (${WORKERS[*]} — one-at-a-time, graceful stop_grace 존중)"
+  for svc in "${WORKERS[@]}"; do
+    # 멱등 skip: 이미 대상 sha + healthy 면 무접촉(인터럽트된 배포 재개 지원).
+    if [ "$DRY_RUN" -ne 1 ]; then
+      st="$(container_health "$svc")"; got="$(worker_commit "$svc")"
+      if [ "$st" = "healthy" ] && [ "$got" = "$sha" ]; then
+        log "$svc 이미 $sha + healthy — skip(멱등)."; continue
+      fi
+    fi
+    log "recreate $svc → $AGENT_IMAGE_REPO:$sha"
+    if ! run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$svc" \
+       || ! wait_worker_healthy "$svc" "$WORKER_READY_TIMEOUT" "$sha"; then
+      err "$svc 롤아웃 실패 — 워커군 last-good 롤백 시도. (web 은 기존 서빙 유지 — expand/contract 게이트가 혼합 버전 안전을 보장. CONVENTIONS §12)"
+      rollback_workers "$web_img"
+      return 1
+    fi
+  done
+  state_set agent_current "$sha"
+  log "워커 롤아웃 완료 — ${WORKERS[*]} = $AGENT_IMAGE_REPO:$sha"
+}
+
+rollback_workers() {  # $1 = pin overlay 에 유지할 web image ref
+  local web_img="$1" good svc
+  good="$(agent_lastgood_sha)"
+  step "워커 롤백 → agent last-good=${good:-<none>}"
+  if [ -z "$good" ] || ! docker image inspect "$AGENT_IMAGE_REPO:last-good" >/dev/null 2>&1; then
+    err "agent last-good 이미지 없음 — 워커 자동 롤백 불가(수동 개입 필요). 첫 스파인 워커 배포 실패라면 구 repo-* 이미지는 로컬에 남아 있다 — 복구: docker compose -f docker-compose.yml up -d --no-deps <svc> (base file-set = repo-* 이미지 복귀)."
+    return 1
+  fi
+  write_pin_overlay "$web_img" "$AGENT_IMAGE_REPO:last-good"; set_dc_prod
+  for svc in "${WORKERS[@]}"; do
+    run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$svc" || warn "$svc 롤백 recreate 문제 — 계속."
+    wait_worker_healthy "$svc" "$WORKER_READY_TIMEOUT" "$good" || warn "$svc 롤백 후에도 비정상 — 수동 확인 필요."
+  done
+  state_set agent_current "$good"
+  # 리뷰 M-2: current 태그 불변식 복원 (auto_rollback 과 동일 근거 — 오염 방지).
+  if [ "$DRY_RUN" -ne 1 ]; then docker tag "$AGENT_IMAGE_REPO:last-good" "$AGENT_IMAGE_REPO:current" 2>/dev/null || true; fi
+}
+
+# ── bedrock-gateway 무중단 reconcile (feature-0020) — 드리프트 시에만 surge 교체 ──
+# 단일 gateway(LLM 관문) 재배포 창의 요청 실패(SPOF)를 없앤다: 드리프트 감지 시에만
+#   surge replica(profile deploy-surge, DNS alias `bedrock-gateway`) 기동 → healthy →
+#   본체 recreate(신규 요청은 alias 로 surge 가 흡수, in-flight 는 stop_grace 120s drain)
+#   → 본체 healthy → surge graceful 종료.
+# steady-state 리소스 증가 0(평시 surge 미기동). 상시 2-replica HA 는 범위 밖(unit ANCHOR §2).
+gateway_health() {  # $1=svc
+  local cid; cid="$("${DC_SURGE[@]}" ps -q "$1" 2>/dev/null | head -1)"
+  [ -n "$cid" ] || { echo none; return 0; }
+  docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || echo none
+}
+
+wait_gateway_healthy() {  # $1=svc $2=timeout_s
+  local svc="$1" deadline=$(( SECONDS + $2 )) st none_streak=0
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    st="$(gateway_health "$svc")"
+    [ "$st" = "healthy" ] && return 0
+    case "$st" in
+      exited|dead) err "$svc 상태=$st"; return 1 ;;
+      none)
+        # 리뷰 m-2: 즉사(exited→ps 미표시)면 none 이 지속 — 타임아웃까지 태우지 않고 조기 실패.
+        none_streak=$(( none_streak + 1 ))
+        [ "$none_streak" -ge 5 ] && { err "$svc 컨테이너 미검출 연속 ${none_streak}회 — 기동 즉사 판정."; return 1; } ;;
+      *) none_streak=0 ;;
+    esac
+    sleep 3
+  done
+  err "$svc 가 ${2}s 내 healthy 도달 실패(최종=$(gateway_health "$svc"))."
+  return 1
+}
+
+# 리뷰 M-1: 직전 배포가 surge 정리 전에 죽었으면(비정상 종료·수동 복구 누락) leaked surge 가
+# DNS alias 로 stale config/이미지 트래픽을 계속 서빙한다(restart:no — 재부팅까지 잔존).
+# 본체 healthy 일 때만 정리(본체 비정상이면 surge 가 유일 서빙 — 유지 + 경고).
+sweep_leaked_surge() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  local leaked; leaked="$("${DC_SURGE[@]}" ps -q "$GATEWAY_SURGE" 2>/dev/null | head -1)"
+  [ -n "$leaked" ] || return 0
+  warn "leaked surge replica 감지(직전 배포 잔존) — 본체 healthy 확인 후 정리."
+  if wait_gateway_healthy "$GATEWAY_SERVICE" 30; then
+    run "${DC_SURGE[@]}" stop "$GATEWAY_SURGE" || true
+    run "${DC_SURGE[@]}" rm -f "$GATEWAY_SURGE" || true
+    log "leaked surge 정리 완료."
+  else
+    warn "본체 비정상 — leaked surge 유지(유일 서빙 가능성). 수동 개입 필요."
+  fi
+}
+
+deploy_gateway_reconcile() {
+  step "bedrock-gateway reconcile (드리프트 시에만 surge 무중단 교체)"
+  [ -f "$GATEWAY_CONFIG_FILE" ] || { warn "gateway config 없음($GATEWAY_CONFIG_FILE) — reconcile skip."; return 0; }
+  local cid cfg_now cfg_rec cfg_run img_run img_local drift=""
+  cid="$("${DC[@]}" ps -q "$GATEWAY_SERVICE" 2>/dev/null | head -1)"
+  cfg_now="$(sha256sum "$GATEWAY_CONFIG_FILE" 2>/dev/null | awk '{print $1}')"
+  if [ -z "$cid" ]; then
+    log "gateway 미기동 — up -d $GATEWAY_SERVICE"
+    run "${DC[@]}" up -d --no-deps "$GATEWAY_SERVICE" || { err "gateway 기동 실패."; return 1; }
+    wait_gateway_healthy "$GATEWAY_SERVICE" "$GATEWAY_READY_TIMEOUT" || return 1
+    state_set gateway_config_sha "$cfg_now"
+    sweep_leaked_surge   # 리뷰 M-1
+    return 0
+  fi
+  cfg_rec="$(state_get gateway_config_sha)"
+  # 실행 중 프로세스가 로드했던 config 는 기록(state) 기준으로, bind inode-stale 은 컨테이너 내부
+  # 파일 대조로 각각 판정한다(Caddyfile reconcile 과 동형 — merge 가 inode 를 갈아끼우는 함정).
+  cfg_run="$(docker exec "$cid" cat /app/config.yaml 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
+  img_run="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
+  img_local="$(docker image inspect "$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)" -f '{{.Id}}' 2>/dev/null || true)"
+  if   [ "$FORCE_GATEWAY" -eq 1 ]; then drift="--force-gateway 지정"
+  elif [ -n "$cfg_rec" ] && [ "$cfg_rec" != "$cfg_now" ]; then drift="litellm config 변경(기록 ${cfg_rec:0:12}≠현행 ${cfg_now:0:12})"
+  elif [ -n "$cfg_run" ] && [ "$cfg_run" != "$cfg_now" ]; then drift="config bind inode-stale(컨테이너≠호스트)"
+  elif [ -n "$img_run" ] && [ -n "$img_local" ] && [ "$img_run" != "$img_local" ]; then drift="이미지 태그 갱신(running≠local)"
+  fi
+  if [ -z "$drift" ]; then
+    [ -z "$cfg_rec" ] && state_set gateway_config_sha "$cfg_now"
+    sweep_leaked_surge   # 리뷰 M-1: 무드리프트 경로에서도 고아 surge 정리
+    log "gateway 드리프트 없음 — 무접촉(blip 0)."
+    return 0
+  fi
+  log "gateway 드리프트 감지: $drift → surge 무중단 교체 시작"
+  # 1) surge 기동 + healthy 게이트. 실패 시 본체 무접촉(무중단 보존) — 새 이미지/설정 결함 의심.
+  if ! run "${DC_SURGE[@]}" up -d --no-deps "$GATEWAY_SURGE" \
+     || ! wait_gateway_healthy "$GATEWAY_SURGE" "$GATEWAY_READY_TIMEOUT"; then
+    run "${DC_SURGE[@]}" rm -sf "$GATEWAY_SURGE" || true
+    err "surge replica healthy 실패 — 본체 무접촉 유지(기존 gateway 가 계속 서빙). 새 이미지/설정 점검."
+    return 1
+  fi
+  # 2) 본체 recreate — 신규 요청은 DNS alias 로 surge 가 흡수, in-flight 는 stop_grace drain.
+  if ! run "${DC[@]}" up -d --no-deps --force-recreate "$GATEWAY_SERVICE" \
+     || ! wait_gateway_healthy "$GATEWAY_SERVICE" "$GATEWAY_READY_TIMEOUT"; then
+    err "gateway 본체 recreate 후 비정상 — surge 가 임시 서빙 중(의도적으로 유지). 수동 개입 필요. 주의: surge 는 restart:no 라 호스트 재부팅 시 소멸 — 방치 금지."
+    return 1
+  fi
+  # 3) surge graceful 종료(진행 요청 drain 후 정리).
+  run "${DC_SURGE[@]}" stop "$GATEWAY_SURGE" || warn "surge stop 문제 — rm 계속."
+  run "${DC_SURGE[@]}" rm -f "$GATEWAY_SURGE" || true
+  state_set gateway_config_sha "$cfg_now"
+  log "gateway 무중단 교체 완료."
 }
 
 # ── asset 스탬프 검증 (ITEM-09 what#3: 빌드 주입 확인 — §13.1 v3.35.1 1순위) ────
@@ -547,10 +801,9 @@ asset_stamp_verify() {  # $1 = sha
 }
 
 # ── 배포 검증 체크리스트 (사용자 인수 전 — RUNBOOK §10) ──────────────────────
-# deploy-web 는 web(web-a/web-b)만 재배포한다. 워커 코드·정적 자산 캐시·실 사용자
-# 경로 검증은 별도 책임이라, "merge ≠ 배포 완료 / 백엔드 통과 ≠ 사용자 경로 통과 /
-# 워커 코드 미반영" 마찰(2026-07-13 attach-user-version 회고)을 매 배포마다 상시
-# 표면화한다. output-only — 배포 로직·판정에 영향 없음.
+# "merge ≠ 배포 완료 / 백엔드 통과 ≠ 사용자 경로 통과" 마찰(2026-07-13
+# attach-user-version 회고)을 매 배포마다 상시 표면화한다. output-only —
+# 배포 로직·판정에 영향 없음. (워커 재빌드는 feature-0020 부터 스파인이 자동 수행.)
 post_deploy_checklist() {
   [ "$DRY_RUN" -eq 1 ] && return 0
   cat >&2 <<'CKL'
@@ -558,11 +811,8 @@ post_deploy_checklist() {
 === 배포 검증 체크리스트 (사용자 인수 전 필수 — 상세: feature-0014 RUNBOOK §10) ===
  [1] 배포 완료: web-a·web-b 가 대상 SHA + soak 통과(위 로그). 이 시점 전에는 기능을
      "사용자 테스트 가능"으로 알리지 않는다 (merge ≠ 배포 완료 — 그 사이 창은 구코드).
- [2] 워커 재빌드 판정: 변경이 ask-worker/insight-worker 코드(agent_core·workers 가 쓰는
-     modules·shared)에 닿으면, 위 'worker GIT_COMMIT != web' WARN 확인 후 그 배포에서 즉시
-     재빌드한다(web 배포만으로는 워커 코드 미반영):
-       docker compose -f docker-compose.yml build <worker>
-       docker compose -f docker-compose.yml up -d --no-deps <worker>   # <worker>=ask-worker|insight-worker
+ [2] 워커 롤아웃: 위 '워커 롤아웃 완료' 로그 확인(스파인이 자동 수행 — feature-0020).
+     '--web-only' 로 돌렸다면 워커 코드 변경 여부를 판단해 전체 스코프로 재실행한다.
  [3] 캐시 무효화: 서빙 HTML 의 ?v= 스탬프가 바뀌었는가(위 asset 스탬프 OK). 사용자에게
      하드 리프레시(Ctrl+F5) 안내 — stale JS 로 구 동작이 관측되는 것을 방지.
  [4] 실 사용자 표면 검증: 백엔드 API 뿐 아니라 사용자가 실제 쓰는 경로(UI 업로드/클릭 등)를
@@ -587,7 +837,7 @@ main() {
     local good; good="$(lastgood_sha)"
     [ -n "$good" ] || die "last-good 없음 — 롤백 대상 불명."
     docker image inspect "$IMAGE_REPO:last-good" >/dev/null 2>&1 || die "last-good 이미지($IMAGE_REPO:last-good) 없음."
-    write_pin_overlay "$good" "$IMAGE_REPO:last-good"; set_dc_prod
+    write_pin_overlay "$IMAGE_REPO:last-good" ""; set_dc_prod
     preflight_fileset; preflight_tls
     local svc; for svc in "${REPLICAS[@]}"; do recreate_replica "$svc" "$good" || die "$svc 롤백 실패."; done
     # 하드닝(2026-07-11): recreate 직후 단발 프로브는 워밍업 창 오판 — auto_rollback 과 동일 60s 회복 대기.
@@ -597,46 +847,103 @@ main() {
       sleep 3
     done
     [ "$rb_ok" -eq 0 ] && log "롤백 완료 + edge 정상 ($good)." || die "롤백했으나 edge 비정상(60s 대기 후)."
-    echo "current=$good" > "$STATE_FILE"; normalize_ownership; exit 0
+    state_set current "$good"
+    # feature-0020: 워커도 last-good 이 있으면 함께 롤백(web/워커 버전 정합).
+    if [ "$SCOPE" != "web" ] && [ -n "$(agent_lastgood_sha)" ]; then
+      rollback_workers "$IMAGE_REPO:last-good" || warn "워커 롤백 부분 실패 — 수동 확인."
+    fi
+    normalize_ownership; exit 0
   fi
 
   resolve_target_sha
   # coalesce no-op: 이미 배포된 것이 origin/main HEAD 면 재배포 불필요(멱등).
-  if [ "$(current_deployed_sha)" = "$TARGET_SHA" ] && edge_ok; then
-    log "이미 $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등)."; normalize_ownership; exit 0
+  local web_current agent_current
+  web_current="$(current_deployed_sha)"; agent_current="$(state_get agent_current)"
+  if [ "$FORCE_GATEWAY" -eq 0 ] && edge_ok; then
+    case "$SCOPE" in
+      all)     if [ "$web_current" = "$TARGET_SHA" ] && [ "$agent_current" = "$TARGET_SHA" ]; then
+                 log "이미 web+워커 $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등). (gateway/caddy 의 이미지-only 드리프트(re-pull)는 no-op 에서 미검사 — 필요 시 --force-gateway 또는 커밋 동반 배포.)"; normalize_ownership; exit 0; fi ;;
+      web)     if [ "$web_current" = "$TARGET_SHA" ]; then
+                 log "이미 web $TARGET_SHA 배포됨 + edge 정상 → no-op (멱등)."; normalize_ownership; exit 0; fi ;;
+      workers) if [ "$agent_current" = "$TARGET_SHA" ]; then
+                 log "이미 워커 $TARGET_SHA 배포됨 → no-op (멱등)."; normalize_ownership; exit 0; fi ;;
+    esac
   fi
 
   preflight_fileset
   preflight_tls
-  # feature-0014-migrate-fresh-image: build 를 migrate 앞으로. migrate_phase 가 방금 빌드한
-  # mysql-ai-web:<sha>(신규 마이그레이션 파일 포함)로 alembic 을 돌리게 한다. 과거엔 migrate 가
-  # build 전에 실행돼 `docker compose run agent`(stale 이미지)로 head 를 오판, 신규 마이그를
-  # 조용히 놓쳤다. build 는 swap(recreate) 전 단계라 이 순서에서도 expand-before-swap 불변 유지
-  # (build→migrate→recreate). build 후 migrate 실패 시에도 last-good=이전본 유지(rollback 정합).
-  build_image "$TARGET_SHA"
-  migrate_phase
-  asset_stamp_verify "$TARGET_SHA"
 
-  step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
-  # 첫 배포(둘 다 없음)면 둘 다 올림. 아니면 하나씩.
-  if [ -z "$(replica_cid web-a)" ] && [ -z "$(replica_cid web-b)" ]; then
-    log "초기 배포 — web-a, web-b 동시 기동."
-    run "${DC_PROD[@]}" up -d --no-deps --no-build web-a web-b || die "초기 web 기동 실패."
-    wait_ready web-a "$TARGET_SHA" || die "web-a 초기 ready 실패."
-    wait_ready web-b "$TARGET_SHA" || die "web-b 초기 ready 실패."
-  else
-    predrain web-a web-b
-    recreate_replica web-a "$TARGET_SHA" || die "web-a 배포 실패 — web-b(OLD) 가 계속 서빙 중. 수동 확인."
-    predrain web-b web-a
-    recreate_replica web-b "$TARGET_SHA" || { err "web-b 배포 실패 — web-a(NEW) 가 서빙 중. web-b 만 롤백/재시도 권장."; auto_rollback "$TARGET_SHA"; exit 1; }
+  # pin overlay 는 모든 DC_PROD 사용의 전제 — 먼저 기록. (--workers-only 는 web 을 현행
+  # 안정 태그로 핀: web 은 미접촉이라 inert, overlay 정합만 유지.)
+  local web_img="$IMAGE_REPO:$TARGET_SHA"
+  if [ "$SCOPE" = "workers" ] && docker image inspect "$IMAGE_REPO:current" >/dev/null 2>&1; then
+    web_img="$IMAGE_REPO:current"
+  fi
+  write_pin_overlay "$web_img" "$AGENT_IMAGE_REPO:$TARGET_SHA"
+  set_dc_prod
+
+  # web 이 이미 대상 SHA + 양 replica ready 면 web 단계 skip(인터럽트된 배포 재개 멱등성).
+  local web_skip=0
+  if [ "$SCOPE" = "workers" ]; then
+    web_skip=1
+  elif [ "$web_current" = "$TARGET_SHA" ] && [ "$DRY_RUN" -ne 1 ]; then
+    local _ra _rb
+    _ra="$(replica_readyz web-a 2>/dev/null | awk '{print $2}' || true)"
+    _rb="$(replica_readyz web-b 2>/dev/null | awk '{print $2}' || true)"
+    if [ "$_ra" = "$TARGET_SHA" ] && [ "$_rb" = "$TARGET_SHA" ]; then
+      web_skip=1; log "web 이미 $TARGET_SHA + 양 replica ready — web 단계(빌드/마이그/롤링/soak) skip."
+    fi
   fi
 
-  echo "current=$TARGET_SHA" > "$STATE_FILE"
-  reconcile_caddy   # feature-0016: Caddyfile 변경 시에만 caddy recreate(inode-stale 대응)
-  soak_or_rollback "$TARGET_SHA" || exit 1
-  worker_divergence_warn
+  if [ "$web_skip" -eq 0 ]; then
+    # feature-0014-migrate-fresh-image: build 를 migrate 앞으로. migrate_phase 가 방금 빌드한
+    # mysql-ai-web:<sha>(신규 마이그레이션 파일 포함)로 alembic 을 돌리게 한다. 과거엔 migrate 가
+    # build 전에 실행돼 `docker compose run agent`(stale 이미지)로 head 를 오판, 신규 마이그를
+    # 조용히 놓쳤다. build 는 swap(recreate) 전 단계라 이 순서에서도 expand-before-swap 불변 유지
+    # (build→migrate→recreate). build 후 migrate 실패 시에도 last-good=이전본 유지(rollback 정합).
+    build_image "$TARGET_SHA"
+    # 워커 이미지도 swap 전 선빌드(fail-fast — agent 빌드 실패 시 어떤 컨테이너도 무접촉).
+    [ "$SCOPE" = "web" ] || build_agent_image "$TARGET_SHA"
+    migrate_phase
+    asset_stamp_verify "$TARGET_SHA"
+
+    step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
+    # 첫 배포(둘 다 없음)면 둘 다 올림. 아니면 하나씩.
+    if [ -z "$(replica_cid web-a)" ] && [ -z "$(replica_cid web-b)" ]; then
+      log "초기 배포 — web-a, web-b 동시 기동."
+      run "${DC_PROD[@]}" up -d --no-deps --no-build web-a web-b || die "초기 web 기동 실패."
+      wait_ready web-a "$TARGET_SHA" || die "web-a 초기 ready 실패."
+      wait_ready web-b "$TARGET_SHA" || die "web-b 초기 ready 실패."
+    else
+      predrain web-a web-b
+      recreate_replica web-a "$TARGET_SHA" || die "web-a 배포 실패 — web-b(OLD) 가 계속 서빙 중. 수동 확인."
+      predrain web-b web-a
+      recreate_replica web-b "$TARGET_SHA" || { err "web-b 배포 실패 — web-a(NEW) 가 서빙 중. web-b 만 롤백/재시도 권장."; auto_rollback "$TARGET_SHA"; exit 1; }
+    fi
+
+    state_set current "$TARGET_SHA"
+    reconcile_caddy   # feature-0016: Caddyfile 변경 시에만 caddy recreate(inode-stale 대응) + 0020: 이미지 드리프트
+    soak_or_rollback "$TARGET_SHA" || exit 1
+  else
+    if [ "$SCOPE" != "web" ]; then
+      build_agent_image "$TARGET_SHA"
+      # 리뷰 M-5: workers-only/재개 경로도 pending 마이그레이션을 놓치지 않도록 agent 이미지로
+      # migrate 게이트+적용. expand 는 구 web 코드에도 안전(CONVENTIONS §12 전제)이라 적용이 옳다.
+      migrate_phase "$AGENT_IMAGE_REPO:$TARGET_SHA"
+    fi
+    reconcile_caddy
+  fi
+
+  # feature-0020: 워커 + gateway 롤아웃 (web soak 통과 후 — 사용자 대면 경로 안정 확인 뒤 백그라운드 층).
+  if [ "$SCOPE" != "web" ]; then
+    deploy_workers "$TARGET_SHA" "$web_img" \
+      || { err "워커 롤아웃 실패 — web 은 $TARGET_SHA 서빙 중(부분 완료, 혼합 버전은 expand/contract 로 안전). 원인 해결 후 재실행(멱등)."; exit 1; }
+    deploy_gateway_reconcile \
+      || { err "gateway reconcile 실패 — web/워커는 $TARGET_SHA 서빙 중(부분 완료). 위 로그로 수동 확인."; exit 1; }
+  fi
+
   normalize_ownership
-  step "배포 완료: $TARGET_SHA (무중단 롤링 + soak 통과)"
+  step "배포 완료: $TARGET_SHA (scope=$SCOPE — web 롤링·워커·gateway reconcile + soak 통과)"
   post_deploy_checklist
 }
 
