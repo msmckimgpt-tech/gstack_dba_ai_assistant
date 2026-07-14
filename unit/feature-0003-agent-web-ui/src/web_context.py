@@ -257,7 +257,7 @@ PERMISSION_DEFINITIONS = (
         # operator/sales/pending 미부여(least-privilege).
         "code": "kb.ingest.manual",
         "label": "메타데이터 관리 (전체 묶음)",
-        "description": "메타데이터 탭의 모든 편집 기능(용어사전·ENUM·테이블 설명·컬럼 설명 관리)을 한 번에 부여하는 묶음 권한이다. 세부 기능만 선택적으로 부여하려면 아래 개별 metadata.*.manage 권한을 사용한다(이 묶음을 보유하면 4종 편집 권한을 모두 보유한 것과 동일하게 동작한다). 그래프 뷰 조회(metadata.graph.read)는 별도 최상위 탭으로 분리되어 이 묶음에 포함되지 않는다 — 그래프 뷰 접근은 metadata.graph.read 로 개별 부여한다(graph-perm-split, 사용자 결정 2026-07-13).",
+        "description": "메타데이터 탭의 편집 기능(용어사전·ENUM·테이블 설명·컬럼 설명 관리)을 한 번에 부여하는 묶음 권한이다(개별 metadata.*.manage 로 세분 부여 가능). 그래프 뷰 조회(metadata.graph.read)는 별도 최상위 탭으로 분리되어 이 묶음에 포함되지 않으며, 그래프 뷰 접근은 개별 부여한다(graph-perm-split 2026-07-13).",
         "group": "kb",
     },
     # graph-panel-perms(task4, Critical §12.3): 메타데이터 탭 세부 권한 — 기존 단일 `kb.ingest.manual`
@@ -1573,6 +1573,13 @@ VALUES (%s, %s)
 def _ensure_permission_catalog(conn) -> None:
     cur = conn.cursor()
     for item in PERMISSION_DEFINITIONS:
+        # graph-perm-descfix(2026-07-13): Label/Description 를 컬럼 길이(VARCHAR(128)/VARCHAR(255))로
+        #   방어적 클립한다. 미클립 시 정의의 description 이 255 자를 초과하면 이 INSERT 가 1406(Data too
+        #   long)으로 던지고, 본 함수를 감싸는 _ensure_seed_catchup(fast path)이 통째로 skip 되어
+        #   _ensure_seed_roles·permission backfill·기타 부트스트랩 catchup 이 전부 미실행된다(단일 긴 문자열이
+        #   전 부트스트랩을 차단하는 fragility — graph-perm-split 배포에서 kb.ingest.manual 설명 301 자로 실측).
+        label = str(item["label"])[:128]
+        description = str(item["description"])[:255]
         cur.execute(
             """
 INSERT INTO WebPermissions (Code, Label, Description, GroupName)
@@ -1584,8 +1591,8 @@ ON DUPLICATE KEY UPDATE
             """,
             (
                 item["code"],
-                item["label"],
-                item["description"],
+                label,
+                description,
                 item["group"],
             ),
         )

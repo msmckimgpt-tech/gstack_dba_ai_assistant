@@ -129,7 +129,18 @@ def save_memory_message(
     role: str,
     content: str,
     meta: dict[str, Any] | None = None,
-) -> None:
+    core_message_id: int | None = None,
+    parent_message_id: int | None = None,
+    edit_root_message_id: int | None = None,
+    edit_version: int = 1,
+) -> int:
+    """표시 store(messages) 쓰기 choke-point.
+
+    feature-0019 message-editing: 편집으로 브랜치가 생긴 대화(has_branches=true)면 이 append 를
+    display 활성 leaf(active_display_leaf)에 체인하고 leaf 를 전진시킨다 — 정상 대화는 조회 후
+    즉시 기존 INSERT 경로(회귀 0). parent/edit/core_message_id 명시(엔드포인트 sibling 생성) 시
+    그 값으로 브랜치 포인터·링크를 기록. 반환 = 신규 display 메시지 id(internal-skip 시 0).
+    """
     meta_json = None
     auto_meta = dict(meta) if isinstance(meta, dict) else {}
     is_internal = False
@@ -142,7 +153,7 @@ def save_memory_message(
             is_internal = True
             auto_meta["internal"] = True
     if is_internal and not AGENT_STORE_INTERNAL_MESSAGES:
-        return
+        return 0
     if cfg.CURRENT_RUN_ID and "run_id" not in auto_meta:
         auto_meta["run_id"] = cfg.CURRENT_RUN_ID
     if auto_meta:
@@ -152,16 +163,38 @@ def save_memory_message(
             meta_json = json.dumps({"value": str(auto_meta)}, ensure_ascii=False)
     from .runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
     pg_conn = _get_pg_runtime_conn()
+    new_id = 0
     if pg_conn:
         try:
-            _get_pg_runtime_backend().save_memory_message(pg_conn,
+            backend = _get_pg_runtime_backend()
+            _chain_parent = parent_message_id
+            _advance_leaf = False
+            # 명시 브랜치 인자(엔드포인트 sibling 생성)가 없으면 정상 append — 브랜치 대화면 체이닝.
+            if _chain_parent is None and edit_version == 1 and edit_root_message_id is None:
+                try:
+                    _bs = backend.load_display_branch_state(pg_conn, conversation_id=conversation_id)
+                    if isinstance(_bs, dict) and _bs.get("has_branches"):
+                        _chain_parent = _bs.get("active_leaf_id")
+                        _advance_leaf = True
+                except Exception:
+                    _chain_parent = None  # fail-soft → 기존 linear append
+            new_id = backend.save_memory_message(pg_conn,
                 conversation_id=conversation_id, role=role,
-                content=content, meta_json=meta_json)
+                content=content, meta_json=meta_json,
+                parent_message_id=_chain_parent, edit_root_message_id=edit_root_message_id,
+                edit_version=edit_version, core_message_id=core_message_id)
+            if _advance_leaf and new_id:
+                try:
+                    backend.set_active_display_leaf(pg_conn, conversation_id=conversation_id, leaf_id=new_id)
+                except Exception as _exc2:
+                    import logging as _log
+                    _log.getLogger("agent_core.memory").warning("display active_leaf advance failed: %s", _exc2)
         except Exception as _exc:
             import logging as _log
             _log.getLogger("agent_core.memory").warning("save_memory_message PG write failed: %s", _exc)
         finally:
             pg_conn.close()
+    return new_id
 
 
 def save_memory_kv(conn, conversation_id: str, key: str, value: str) -> None:

@@ -6,6 +6,8 @@ uniform `import app`+`app.X` 동적참조(app 헬퍼/상수 + DI seam) → monke
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 
 from fastapi import APIRouter
 from fastapi import Depends
@@ -16,6 +18,53 @@ import app
 
 INCLUDE_ORDER = 190  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
+
+
+# ── ds-conn-test (feature-0003-ds-conn-test): 연결 테스트 per-(account,key) 쿨다운 ──────
+# 채팅 작업화면 제품 드롭업의 데이터소스 라벨을 "연결 테스트" 버튼으로 노출하면서(A2 — 관리자
+# 엔드포인트 재사용), 짧은 시간 내 반복 클릭으로 인한 실 DB probe(SELECT 1) 부하 급증을 백엔드에서도
+# 차단한다(프론트 버튼 disable 이 1차, 본 쿨다운이 2차 방어선 — 사용자 요청 "프론트/백 단위 재시도 텀").
+#   - 지표 = (account_id, datasource_key) 별 마지막 테스트 이후 경과 시간. 쿨다운 미경과면 429(비파괴 —
+#     probe 미실행). 429 body 는 정상 응답과 동형(key/ok/elapsed_ms/error/status) + throttled/retry_after_ms.
+#   - in-process 맵이라 web replica 별 독립(coarse throttle — 정밀 rate-limit 아님, 부하 완충 목적).
+#     Caddy LB(web-a/web-b) 하에서 사용자가 replica 를 번갈아도 최소 절반으로 억제되며, 정밀 억제는
+#     프론트 버튼 disable 이 담당. 필요 시 공유 store 기반 강화는 후속(REPORT 기록).
+#   - 관리 콘솔의 기존 호출부(배지 lazy probe·상세 '연결 테스트'·제품 바인딩 ⋯ 테스트)도 같은 엔드포인트라
+#     429 를 graceful 처리하도록 admin.js 를 함께 갱신(배지는 직전 상태 유지, 버튼은 중립 토스트).
+try:
+    _DS_TEST_COOLDOWN_SEC = float(os.environ.get("AGENT_DS_TEST_COOLDOWN_SEC", "3") or 0)
+except (TypeError, ValueError):
+    # 오타(예: "3s") 로 웹 모듈 import 전체가 죽는 것 방지 — 부하 튜닝 노브가 기동을 막지 않도록 폴백.
+    _DS_TEST_COOLDOWN_SEC = 3.0
+_DS_TEST_LRU_CAP = 4096
+_ds_test_last_at: dict[tuple[int, str], float] = {}
+
+
+def _ds_test_throttle_check(account_id, key) -> float:
+    """per-(account,key) 쿨다운. 반환: retry_after_ms(>=1)=미경과(429) / 0.0=통과(타임스탬프 갱신).
+
+    쿨다운 0 이하(disable)면 항상 통과. 맵이 LRU_CAP 초과 시 만료분 정리(무한 성장 방지).
+    """
+    if _DS_TEST_COOLDOWN_SEC <= 0:
+        return 0.0
+    now = time.monotonic()
+    ident = (int(account_id or 0), str(key or "").strip().lower())
+    last = _ds_test_last_at.get(ident)
+    if last is not None:
+        remain = _DS_TEST_COOLDOWN_SEC - (now - last)
+        if remain > 0:
+            # remain>0 이면 항상 >=1ms 반환 — pass sentinel(0.0)과 절대 충돌 안 하도록 하한.
+            return max(1.0, round(remain * 1000.0))
+    # 통과 — 타임스탬프 갱신 + 단순 상한(만료 우선 제거, 그래도 초과면 오래된 것부터 정리).
+    if len(_ds_test_last_at) >= _DS_TEST_LRU_CAP:
+        cutoff = now - _DS_TEST_COOLDOWN_SEC
+        for _k in [k for k, v in _ds_test_last_at.items() if v < cutoff]:
+            _ds_test_last_at.pop(_k, None)
+        if len(_ds_test_last_at) >= _DS_TEST_LRU_CAP:
+            for _k in sorted(_ds_test_last_at, key=_ds_test_last_at.get)[: _DS_TEST_LRU_CAP // 4]:
+                _ds_test_last_at.pop(_k, None)
+    _ds_test_last_at[ident] = now
+    return 0.0
 
 
 # ITEM-10 routers-p1: app.py 에서 이동(도메인 소유 정상화 — 판정표 §4 routers 경로).
@@ -160,6 +209,18 @@ async def admin_test_datasource(key: str, request: Request, actor=Depends(app.ge
     if not okssrf:
         return JSONResponse({"key": str(key).strip().lower(), "ok": False, "elapsed_ms": 0.0,
                              "error": f"ssrf_blocked: {ssrf_reason}"})
+    # ds-conn-test: 실제 probe(부하 유발) 직전에만 per-(account,key) 쿨다운을 건다. 404/SSRF(무-probe)
+    #   경로는 이 지점에 도달하기 전 반환되므로 throttle 대상이 아니다(부하 없음·404 마스킹 방지, NIT-3).
+    #   authz(403) 이후라 무권한자에게 429 로 존재를 노출하지 않는다. body 는 정상 응답과 동형 유지.
+    _retry_ms = _ds_test_throttle_check(actor.get("id") if isinstance(actor, dict) else None, key)
+    if _retry_ms > 0:
+        _sec = max(1, int((_retry_ms + 999) // 1000))
+        return JSONResponse(
+            {"key": str(key).strip().lower(), "ok": False, "elapsed_ms": 0.0,
+             "error": f"연결 테스트가 너무 잦습니다. {_sec}초 후 다시 시도해 주세요.",
+             "status": "unknown", "throttled": True, "retry_after_ms": int(_retry_ms)},
+            status_code=429,
+        )
     # MAJOR-2: 검증된 IP 로 고정 연결(DNS rebinding 차단 — host 재해석 금지).
     # TASK-0253: probe_datasource 는 도달 불가 datasource 에서 connection_timeout(기본 8s)까지
     #  동기 점유한다. async 핸들러 안에서 직접 호출하면 그동안 **이벤트 루프 전체가 블로킹**되어

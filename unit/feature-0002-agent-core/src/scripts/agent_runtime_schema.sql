@@ -107,6 +107,16 @@ ALTER TABLE agent_runtime.core_conversations
 --   false(기본) → 가시성 필터 완전 우회(무회귀). true → loader 가 actor window 해석 + fail-closed.
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS has_restricted_members boolean NOT NULL DEFAULT false;
+-- feature-0019 message-editing (alembic 0041): 브랜치(메시지 편집) 게이트 플래그 + 활성 leaf.
+--   has_branches=false(기본) → recall/history 가 기존 linear 경로 그대로(회귀 0). 첫 편집에서 set.
+--   active_leaf_message_id → 활성 브랜치 leaf(core_messages.id). NULL=linear tail(=MAX(id)).
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS has_branches boolean NOT NULL DEFAULT false;
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS active_leaf_message_id bigint;
+-- display store 전용 활성 브랜치 leaf (core 와 대칭 — /api/history 표시 경로).
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS active_display_leaf_message_id bigint;
 
 CREATE INDEX IF NOT EXISTS ix_core_conv_owner
     ON agent_runtime.core_conversations (owner_account_id);
@@ -169,6 +179,23 @@ ALTER TABLE agent_runtime.core_messages
 --   windowed 멤버의 가시 경계(floor/ceiling)는 core_messages 를 created_at 으로 필터한다.
 CREATE INDEX IF NOT EXISTS ix_core_messages_conv_created
     ON agent_runtime.core_messages (conversation_id, created_at);
+
+-- feature-0019 message-editing (alembic 0041): 대화 내부 브랜치 트리(메시지 편집·재답변).
+--   parent_message_id    — 브랜치 predecessor(같은 store id). NULL=대화 첫 메시지/비분기.
+--   edit_root_message_id — 편집된 user 메시지 버전 체인 root(첫 버전 id). 형제 버전 그룹핑/정렬.
+--   edit_version         — 버전 순번(1=원본).
+ALTER TABLE agent_runtime.core_messages
+    ADD COLUMN IF NOT EXISTS parent_message_id bigint;
+ALTER TABLE agent_runtime.core_messages
+    ADD COLUMN IF NOT EXISTS edit_root_message_id bigint;
+ALTER TABLE agent_runtime.core_messages
+    ADD COLUMN IF NOT EXISTS edit_version integer NOT NULL DEFAULT 1;
+
+CREATE INDEX IF NOT EXISTS ix_core_messages_parent
+    ON agent_runtime.core_messages (conversation_id, parent_message_id);
+CREATE INDEX IF NOT EXISTS ix_core_messages_edit_root
+    ON agent_runtime.core_messages (edit_root_message_id)
+    WHERE edit_root_message_id IS NOT NULL;
 
 -- ============================================================================
 -- 2b. conversation_members — feature-0009-group-conversation (그룹 대화 멤버십)
@@ -264,6 +291,24 @@ CREATE TABLE IF NOT EXISTS agent_runtime.messages (
 
 CREATE INDEX IF NOT EXISTS ix_messages_conv_created
     ON agent_runtime.messages (conversation_id, created_at DESC);
+
+-- feature-0019 message-editing (alembic 0041): 표시 store 브랜치 미러(core_messages 와 동형,
+--   각 store 내부 id-space 로 저장 — cross-store 시각 cut 불필요, ANCHOR INV-5).
+ALTER TABLE agent_runtime.messages
+    ADD COLUMN IF NOT EXISTS parent_message_id bigint;
+ALTER TABLE agent_runtime.messages
+    ADD COLUMN IF NOT EXISTS edit_root_message_id bigint;
+ALTER TABLE agent_runtime.messages
+    ADD COLUMN IF NOT EXISTS edit_version integer NOT NULL DEFAULT 1;
+-- 브랜치-헤드 sibling → core 짝 링크(브랜치 전환 좌표).
+ALTER TABLE agent_runtime.messages
+    ADD COLUMN IF NOT EXISTS core_message_id bigint;
+
+CREATE INDEX IF NOT EXISTS ix_messages_parent
+    ON agent_runtime.messages (conversation_id, parent_message_id);
+CREATE INDEX IF NOT EXISTS ix_messages_edit_root
+    ON agent_runtime.messages (edit_root_message_id)
+    WHERE edit_root_message_id IS NOT NULL;
 
 -- ============================================================================
 -- 5. steps — MySQL AgentMemorySteps 등가

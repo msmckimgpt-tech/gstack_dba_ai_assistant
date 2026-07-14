@@ -11,6 +11,22 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260713T101500-ds-conn-test-postverify (TASK-20260713T094624-ds-conn-test POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-13. 코드/자산 무변경 — test-runs.d/20260713T094624-ds-conn-test.md 에 POST-DEPLOY 라이브 PASS append + TASK.md 체크리스트 완료 + REVIEW postverify 엔트리. 배포 PR #767→main 02a1e585, `make deploy-web` 무중단 롤링(soak PASS).
+- 라이브 실측 요지(https://localhost/ bootstrap_admin, win-browser relay Chrome): AC-1 15 DS 배지 전부 `<button.product-dropup-item-ds--test>`·AC-2 클릭→"✓ 연결 성공(11.8ms)" 상단 토스트(top 66px·입력창 비가림)·AC-4 제품 미전환·AC-5 프론트 쿨다운 발화·AC-6 admin 토스트 하단 불변·AC-7 pageerror 0.
+- Cross-ref: CHG-20260713T094624-ds-conn-test(기능) · REV-20260713T101500-ds-conn-test-postverify · test-runs.d fragment.
+
+## CHG-20260713T094624-ds-conn-test (TASK-20260713T094624-ds-conn-test — 작업화면 제품 드롭업 데이터소스 '연결 테스트' 버튼 + 상단 단발성 토스트, Major §12.3)
+- Date: 2026-07-13. `/_template:entry` arg-given. 스키마/마이그/신규 RBAC/신규 엔드포인트 0.
+- 변경:
+  - `static/app.js`: `buildProductDropupItem` — 데이터소스 배지를 `_dsTestable = !viewOnly && canOpenAdminConsole()` 게이트로 실제 `<button>`('연결 테스트') 렌더(`_makeDsBadge`, 무권한/열람전용은 기존 display-only span). **행 요소 `<button>`→`<div role=menuitem>` + `tabIndex=0` + click/keydown(Enter/Space) 선택 복원**(중첩 `<button>` 회피). 신규 `runDatasourceConnTest(keys, badgeEl)` — 프론트 쿨다운(`PRODUCT_DS_TEST_COOLDOWN_MS=4000`·`_dsTestLastAt` `.has()` sentinel)·진행 중 `disabled`·단일/멀티(순차+요약)·403(apiFetch 위임)/429(중립)/실패(에러) 상단 토스트.
+  - `static/styles.css`: `#toast` 상단 앵커(`top: calc(var(--topbar-h,52px)+14px)`·`bottom:auto`·`max-width: min(460px, calc(100vw-32px))`·`transition` 에 background 추가·`#toast.is-visible`) — 작업화면 전 토스트 상단화(admin `#adminToast` 하단 불변, id 스코프). `button.product-dropup-item-ds--test`(font reset·min-height 24px·at-rest 테두리·hover 틴트·:focus-visible·:disabled).
+  - `routers/admin_datasources.py`: import `os`/`time`. 모듈 상태 `_DS_TEST_COOLDOWN_SEC`(env `AGENT_DS_TEST_COOLDOWN_SEC` 기본 3, try/except 폴백)·`_ds_test_last_at`·`_DS_TEST_LRU_CAP=4096`. 신규 `_ds_test_throttle_check(account_id, key)`(per-(account,key) 쿨다운·LRU prune·throttled 반환 `max(1.0, round(ms))`). `admin_test_datasource`: resolve/SSRF 이후·probe 직전에 throttle 게이트 — 미경과 시 probe 없이 **429**(body: key/ok/elapsed_ms/error/status/throttled/retry_after_ms(int)).
+  - `static/admin.js`: `_probeDatasourceConn` — `const _prev` 함수 스코프 캡처 + 429 catch 시 'down' 대신 직전 확정 상태 유지. 상세 `_dsRenderDetail` '연결 테스트' + 제품바인딩 ⋯ '연결 테스트' catch 에 429=중립 토스트 분기.
+  - `tests/verify_profile_icon_consistency.mjs`: 하네스에 `canOpenAdminConsole(){return false;}` 스텁(display-only 경로 유지). `tests/test_datasource_test_nonblocking.py`: autouse `_reset_ds_test_throttle` fixture + throttle 계약 테스트 2건(T4 반복→429·독립 account/key, T5 404 무-throttle).
+- 검증: `node --check`(app.js·admin.js module)·`py_compile`·CSS 1780/1780·타깃 6/6·**전체 pytest 1902 passed / 2 skipped / 0 failed**. §18.8 3렌즈 패널 SHIP-WITH-FIXES→반영 후 SHIP.
+- Cross-ref: REV-20260713T094624-ds-conn-test · REPORT §1 · TASK-20260713T094624-ds-conn-test · TEST test-runs.d/20260713T094624-ds-conn-test.md · FUNCTION §13.
+
 ## CHG-20260713T061500-attach-user-version-postverify (TASK-20260713T053423-attach-user-version POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-13. 코드/자산 무변경 — TEST.md §4 Windows-browser Run 을 "배포 후 잔여" → **POST-DEPLOY 라이브 PASS** 로 갱신 + TASK.md 체크리스트 완료. 배포: PR #751→main 7f1ed748, web-a/web-b 무중단 롤링 + ask-worker 재빌드(agent_core 변경 baked).
 - 검증 요지(https://localhost/, bootstrap_admin, win-browser relay Chrome/150): 라이브 e2e — v1(490)→v2(491, root=490 편입)→동일 재업로드(491 reused)→버전 체인 2개(v1 superseded/v2 최신)→목록 최신만(version_count=2); **assistant 가 v1→v2 diff(SELECT 1→2·-- changed 추가) 정확 인지**(new_attachment_ids 포함 시), 미포함 턴엔 정직 "비교 불가"(환각 0). Evidence artifacts/shared/win-browser-shots-attach-user-version/01_version_badge_and_assistant_diff.png.
@@ -171,12 +187,33 @@ source_of_truth: true
 - Rollback: 커밋 revert. backfill 은 grant 추가만(파괴 없음) — revert 후에도 부여된 graph.read 는 잔존(관리 콘솔에서 명시 회수 가능). `WebSchemaMigrations` 마커 row 는 잔존(무해).
 - 잔여: verify-completion → commit(사용자 confirm) → 머지·push → web 재배포 → 배포 후 DB 마커·라이브 권한 그리드 + PB-0008 실렌더.
 
+## CHG-20260713T185600-graph-perm-descfix (graph-perm-split 배포 후 seed catchup 1406 hotfix — 권한 설명 255자 초과)
+- Date: 2026-07-13. 배포 후 실증에서 `WebSchemaMigrations` 미생성·backfill 미실행 적발. web 로그 `seed catchup skipped: 1406 Data too long for column 'Description'`. 근본원인: `kb.ingest.manual` 설명 301자 > `WebPermissions.Description` VARCHAR(255) → `_ensure_permission_catalog` 1406 → `_ensure_seed_catchup`(fast path) 전체 skip → seed_roles/backfill 미실행. CI(`--no-deps`)가 컬럼 제약 미검출.
+- 변경(behavior — 부트스트랩 robustness):
+  - `src/web_context.py` `_ensure_permission_catalog`: `label[:128]`·`description[:255]` 방어적 클립(단일 긴 문자열이 전 catchup 을 차단하던 fragility 제거).
+  - `src/web_context.py` `kb.ingest.manual` description 301→205자 단축(온전 저장, 잘림 0).
+- 영향: 그래프 접근 상실 사용자 0명(유일 묶음 보유=admin, 이미 graph.read 보유). 부트스트랩 catchup 재개가 핵심.
+- Files: `src/web_context.py`, `docs/{TASK,MODIFY,REPORT,REVIEW,FUNCTION}.md`, `docs/test-runs.d/*`.
+- Verification: py_compile OK · feature-0003 전체 스위트 PASS(회귀 0) · 전 권한 desc≤255·label≤128 전수 확인.
+- Rollback: 커밋 revert(설명 길이만 원복 시 1406 재발하므로 truncation 클립은 유지 권장).
+- 잔여: 배포 후 web 로그 `seed catchup skipped` 소멸 + `WebSchemaMigrations` graph-perm-split-v1 row 실증.
+
+
+## CHG-20260714T024534-doc-sync-rn-0714 (TASK-20260714T024534-doc-sync-rn-0714 — 07-13 오후 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases[0](date "2026-07-13") items 에 **+7항목** append(improved/admin 4·new/work 2·fixed/work 1)·summary 재작성. generated 2026-07-13 유지(새 date 블록 생성 안 함). 07-10 이하 블록 보존.
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입·deploy-web `asset_stamp_verify` 하드게이트). index/admin.html 편집 0. release-notes-data.js 내용 변경만으로 전역 content-hash 변화 → wrapper 재빌드 시 서빙 토큰 자동 갱신(수동 bump 부적용·해시 불변).
+- 제외: feature-0019 메시지 편집(backend-only)·describe_routine(unverified-live)·내부 렌더 최적화(§79/§80)·deploy checklist.
+- Verification: `node --check` PASS · vm 구조검증(블록순서·스키마·07-13 8항목·누출0). 사용자향 평이화(내부용어 누출 0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- **landing/배포 소유=cron wrapper 위임**(로컬 commit 만·push/merge/deploy 미수행). META(STATUS·wiki·ARCHITECTURE·SECURITY·meta/REVIEW)는 별도 commit(REV-20260714T024534-META-0035-doc-sync-0714).
+
 ## CHG-20260713T185846-attach-filename-consistency (첨부 새 버전 파일명 코드-권위 정합, secondary cross-ref, conversation_audit FR-attachment-update-pasted-not-versioned)
 - Date: 2026-07-13. `/_dqa:conversation_audit "첨부파일 갱신"` 의 **secondary(cross-ref)** — primary=feature-0002 프롬프트(CHG-20260713T185846-attach-update-versioned). 사용자 요구 2항: "갱신된 파일의 명칭도 기존과 정합(버전 접미)".
 - Reason(RC): 명명 정합이 코드로 보장되지 않음 — `_next_version_filename` 은 LLM 이 filename 을 **생략할 때만** 적용됐고, 프롬프트는 오히려 LLM 에게 `report_v2.csv` 수동 지정을 유도 → 버전 불일치·재편집 이중접미(`report_v2.csv`→`report_v2_v3.csv`) 가능.
 - Changes (`src/routers/_conv_store.py`):
   - `_next_version_filename` idempotent 강화: stem 의 기존 `_v<n>$` 접미를 `app.re.sub` 로 제거 후 재부여 → 재편집 이중접미 방지(`report_v2.csv`+v3→`report_v3.csv`). 확장자 없는 이름도 처리.
-  - `_materialize_assistant_attachment_edits` 명명 블록을 **코드-권위**로 교체: LLM `filename` 유무와 무관하게 항상 `<stem>_v<next_version>.<src_ext>` 생성. LLM 이 이름을 줘도 stem 만 취하고 버전 접미를 강제, 확장자는 source 를 강제 보존(보안리뷰 V3 `.exe` 차단 불변).
+  - `_materialize_assistant_attachment_edits` 명명 블록을 **코드-권위**로 교체: LLM `filename` 유무와 무관하게 항상 `<stem>_v<next_version>.<src_ext>` 생성. LLM 이 이름을 줘도 stem 만 취하고 버전 접미를 강제, 확장자는 source 를 강제 보존(보안리뷰 V3 `.exe` 차단 불변; 확장자 부재 source 는 kind 기반 안전값 §18.8 SEC-1).
 - Recurrence sealing: LLM-dependent 명명 → 코드 권위 명명(AUTH-1a). materialize 가드(conv/account scope·size cap·text-only·MinIO 원자성·UNIQUE version race) 전부 불변. **보안 회귀 0**.
-- 검증: `tests/test_attachment_versioning.py` 명명 정합 케이스(idempotent·이중접미 방지·확장자 강제) + feature-0003 회귀. §18.8 패널 REV-20260713T185846.
+- 검증: `tests/test_attachment_versioning.py` 명명 정합 케이스(idempotent·이중접미 방지·확장자 강제·SEC-1) + feature-0003 회귀. §18.8 패널 REV-20260713T185846.
 - Cross-ref(정본): feature-0002 CHG-20260713T185846-attach-update-versioned · FRICTION_LEDGER FR-attachment-update-pasted-not-versioned · ANCHOR 0003 무충돌.

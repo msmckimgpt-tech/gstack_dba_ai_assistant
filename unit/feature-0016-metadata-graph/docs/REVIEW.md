@@ -240,3 +240,7 @@ source_of_truth: true
   - **NIT-1 — 수정(주석)**: rep["attached"] 의미를 "이번 pass attach 배정 총수(신규+유지)"로 명확화. **NIT-2 — 수용**: 방향 말줄임 라벨이 strip 정규화 기준(view_ strip 이래 기존 semantics 연장).
 - 반영 후 재검증: FE simgroups_p2 **16/16** + category 26·vpack 19 무회귀, BE 파일 23 PASS, **전체 pytest EXIT=0/FAILED 0**. 라이브 프로브(롤백): attached 5,249·cc_data_main 잔여 114→26·리포트 3종(DT_CashPoint/DT_Castle/dt_CombineMaterial) 각기 다른 클러스터로 분리.
 - **deploy_scope: included 근거 기록(§12.2/§16.3)**: FIRST_REQUEST.md 전역 선언 — cycle 종료 시 배포(web 롤링+worker 재빌드) 자동 진행, 프론트 변경이라 `visual_verification_scope: always` 에 따라 POST-DEPLOY PB-0008 이 완료 게이트.
+
+## REV-20260713T175500-ai-claude-feature-0016-content-cluster-p2-postdeploy [SKIPPED:doc-only-postdeploy] — p2 TP.4 POST-DEPLOY 완수 기록 (코드 무변경)
+- Related Change: TASK TP.4 [x] + test-runs.d fragment. 코드/자산 변경 0 — 배포(469fa20d)·클러스터 재가동(attached 4,843·cap 가드 실동작)·AGE 수렴·PB-0008 PASS(가짜 밴드 소멸·인접 배치·리포트 3종 분리) 실측 기록.
+- Panel skip 사유(§18.8): 코드면은 REV-20260713T170500 [SUBAGENT: PASS-WITH-FIXES] 에서 완료. QA 핸들은 서빙 사본 한정·원복 완료.

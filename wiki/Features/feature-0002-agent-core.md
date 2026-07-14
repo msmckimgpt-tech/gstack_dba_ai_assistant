@@ -50,7 +50,7 @@ sources:
 1. `agent_core.run_agent()` 진입 → OpenAI SDK client 준비 (Bedrock gateway 경유)
 2. `agent_memory` 대화/메시지/KV 보장 + `origin_request` / `thread_goal` 3-state 판정
 3. `_build_knowledge_context()` 로 SCHEMAS / RELEVANT TABLES 블록 주입
-4. **Step Loop**: `tool_calls` 최대 3 개씩 실행 (`execute_sql` / `describe_table` / `search_tables` / `get_sample_rows`), 결과 메모리 기록. tool_calls 없으면 최종 답변.
+4. **Step Loop**: `tool_calls` 최대 3 개씩 실행 (`execute_sql` / `describe_table` / `describe_routine` / `search_tables` / `get_sample_rows`), 결과 메모리 기록. tool_calls 없으면 최종 답변.
 5. 루프 상한 = `AGENT_MAX_STEPS` + `AGENT_TIMEOUT_SEC * 3`, Web UI "중단" / "즉시 답변" 감지.
 
 ### 2.3 KB 마이그레이션 (TASK-0015 M0~M5)
@@ -95,6 +95,7 @@ sources:
 - **`pg_branch` tag**: `RETURNING id, (xmax = 0)` 패턴으로 INSERT vs UPDATE 구분 — `_pg_op_local` threadlocal capture.
 - **insight worker fail-safe**: heartbeat stale 시 `_should_run_inline_insight_scan()` 가 인라인 scan 트리거.
 - **insight 효율·안정성 (2026-07-03, 정본 REPORT — 비사용자향)**: ① 동일구조 테이블 그룹화(insight-table-grouping) — 날짜/번호 suffix 만 다른 샤드를 (base_stem, fingerprint)로 묶어 **대표 1회 LLM 분석 + 형제 LLM-free fan-out**(신규 일자 샤드는 KV 상속으로 LLM 0), per-table `table_insight` fact 유지로 NL→SQL 무회귀. ② 부하 분산(insight-load-spread, cross-feature 0016) — 실패 대상 격리·재시도 backoff + graph sync batched commit/incremental(57,000+ 요소 개별 MERGE WAL fsync ~5.7만 → ~114). ③ healthcheck false-negative 해소(insight-heartbeat-liveness) — 긴 cycle 중 진행-중 heartbeat throttle 갱신. ④ 요청레벨 LLM fallback(claude-corp→root→edge gemma, 정본 feature-0007).
+- **read-only 도구·가드 확장 (2026-07-13, conversation_audit 발)**: 저장 프로시저/함수 정의 조회 전용 도구 **`describe_routine`** 신설(`SHOW CREATE PROCEDURE` 를 execute_sql 로 실행하다 보안 가드에 차단되던 마찰 해소·사용자 승인 Option 1) + **sql_guard read-only shape 과차단 보정**(최상위 UNION·읽기전용 SHOW(테이블/뷰/config) 허용 — 쓰기·allowlist·금지함수·multi-statement 불변·tools.py stale 'UNION 불가' 힌트 제거). 코드 거주 0002(tools/sql_guard). 정본 TASK `20260713T140405`·`20260713T171821`.
 
 ## 4. 사용법
 

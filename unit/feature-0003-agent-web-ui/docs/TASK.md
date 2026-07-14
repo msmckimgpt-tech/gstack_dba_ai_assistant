@@ -5451,8 +5451,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(블록순서 07-10>07-09>… 정합·항목 스키마 type/area/title/detail·누출 스캔 0).
 - [x] 배포: verify-completion(operational, feature-0003) → 로컬 commit(META STATUS·wiki·RELEASE_NOTES·meta/REVIEW 는 별도 commit). **landing(push/PR/merge)·배포(make deploy-web 무중단)는 본 attended run 소유** → PR→merge→deploy-web→end-state 검증(라이브 `?v=` 해시 갱신·generated 07-10 서빙 확인).
 - [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(그래프 §60~76·타임아웃 모달·§69 caveats)는 각 원천 cycle POST-DEPLOY PB-0008 이 검증(다수 PASS). 사유 TEST.md §CHECK#13.
-
-
 ## 20260713T1818-graph-perm-split — 그래프 뷰 권한을 '메타데이터 관리' 묶음에서 분리 (Critical §12.3 인증/인가, /_template:entry arg-given, 사용자 승인 B안, 2026-07-13)
 
 - **요청**(/_template:entry): "그래프 뷰가 별도의 탭으로 분리됨에 따라, 권한 또한 '메타데이터 관리'로부터 별도로 분리해주세요."
@@ -5472,3 +5470,37 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] **후속(비-차단)**: backfill SQL(대상1/2/3) MySQL 통합테스트 추가 — 현재 표준 스위트는 `--no-deps` 라 보안 리뷰 라이브 실증 + `_apply_permission_overrides` 단위테스트로 커버(TEST.md 기록).
 - [ ] verify-completion --pre-commit → commit(사용자 confirm) → 머지·push → web 재배포(정적 baked + 마이그 startup) → 배포 후 DB 마커(`WebSchemaMigrations`)·라이브 권한 그리드 실측.
 - [ ] PB-0008 Windows-browser: 그래프 탭 권한 게이팅 실렌더(묶음-only 계정 미노출·graph.read 계정 노출).
+
+
+## 20260713T1856-graph-perm-descfix — graph-perm-split 배포 후 seed catchup 1406 hotfix (권한 설명 255자 초과 → 부트스트랩 차단, 2026-07-13)
+
+- **적발(배포 후 실증)**: graph-perm-split(PR #765) 배포 후 `WebSchemaMigrations` 미생성 → backfill 미실행 확인. web-a 로그: `seed catchup skipped: 1406 (22001): Data too long for column 'Description'`. **근본원인**: `kb.ingest.manual` 설명을 301자로 늘렸는데 `WebPermissions.Description` = VARCHAR(255) → `_ensure_permission_catalog` INSERT 가 1406 으로 던지고, 이를 감싸는 `_ensure_seed_catchup`(운영 재기동 fast path) 전체가 skip → `_ensure_seed_roles`·graph-perm backfill·기타 catchup 통째 미실행. **CI(`--no-deps`)는 이 컬럼 제약 미노출**(보안 리뷰가 경고한 커버리지 갭 실현).
+- **영향 실측**: 그래프 접근을 잃은 사용자 **0명** — 유일한 묶음 보유 role=`admin`(이미 explicit graph.read 보유), 비-admin 묶음 보유 role/계정 override 부재. 단 seed catchup 전체가 매 startup 차단되는 부트스트랩 fragility 는 즉시 수정 대상.
+- **수정(2건)**:
+  - `_ensure_permission_catalog`: Label/Description 을 컬럼 길이(128/255)로 **방어적 클립** — 단일 긴 문자열이 전 부트스트랩 catchup 을 차단하던 fragility 제거(재발 방지).
+  - `kb.ingest.manual` 설명 301→205자 단축(클립 없이 온전 저장). 전 권한 description ≤255·label ≤128 전수 확인(잘림 0).
+- [x] py_compile OK · feature-0003 전체 스위트 PASS(회귀 0).
+- [ ] verify-completion → commit → PR → 머지 → web 재배포 → **재실증**: web 로그 `seed catchup skipped` 소멸 + `WebSchemaMigrations` 에 `graph-perm-split-v1` row 생성.
+
+
+## TASK-20260713T094624-ds-conn-test — 작업화면 제품 드롭업 데이터소스 라벨 '연결 테스트' 버튼 + 상단 단발성 토스트 (Major §12.3 — feature-0003 web/UI + 백엔드 throttle, 2026-07-13)
+- 트리거: `/_template:entry` arg-given. REQ: 채팅 작업화면 제품 목록 데이터소스 라벨 클릭 → 연결 테스트 + 관리 콘솔식 단발성 Toast, 단 작업화면 토스트는 입력창 비가림 상단 표시.
+- [x] 설계 결정(AskUserQuestion): ① A2(관리자 엔드포인트 `POST /api/admin/datasources/{key}/test` 재사용·별도 RBAC 무 + 프론트/백 재시도 텀) ② C2(작업화면 전체 토스트 상단화).
+- [x] 프론트 `static/app.js`: `buildProductDropupItem` 데이터소스 배지 → `canOpenAdminConsole()` 게이트 실제 `<button>`('연결 테스트'), 단일=그 DS/멀티="N개 데이터소스"→전체 순차+요약 토스트, 행 요소 `<button>`→`<div role=menuitem tabindex>`(click+keydown 선택 복원·중첩 button 회피), `runDatasourceConnTest`(프론트 쿨다운 4s `.has()` sentinel·진행 중 disabled·403 apiFetch 위임/429 중립/실패 에러 토스트).
+- [x] 상단 토스트 `static/styles.css`: `#toast` 상단 앵커(`top: calc(--topbar-h+14px)`·`bottom:auto`·`max-width: min(460px, 100vw-32px)`·bg transition), `button.product-dropup-item-ds--test`(at-rest 테두리·min 24px·hover 틴트·:disabled). admin `#adminToast` 하단 불변.
+- [x] 백엔드 `routers/admin_datasources.py`: `admin_test_datasource` per-(account,key) 쿨다운(env `AGENT_DS_TEST_COOLDOWN_SEC`=3s, resolve/SSRF 이후·probe 직전, 미경과 429 throttled — probe 미실행). in-process·per-replica coarse throttle(프론트 disable 이 1차).
+- [x] `static/admin.js`: 공유 엔드포인트 429 graceful — 배지 lazy probe 직전 상태 유지(‘down’ 오분류 방지)·상세/제품바인딩 '연결 테스트' 버튼 중립 토스트.
+- [x] 테스트: `verify_profile_icon_consistency.mjs` 하네스 `canOpenAdminConsole` 스텁 + `test_datasource_test_nonblocking.py` autouse 리셋 fixture + throttle 계약 2건(반복→429·404 무-throttle). 타깃 6/6.
+- [x] §18.8 적대 패널 3렌즈(backend+security·frontend+QA·UX+a11y) → SHIP-WITH-FIXES: FE HIGH(하네스)·MED-HIGH(pointer-events 더블클릭)·MED(쿨다운 sentinel)·UX MAJOR(중첩 인터랙티브·어포던스·aria-label)·Backend NIT 4+MINOR 1 **전건 반영 후 재검**(REV-20260713T094624-ds-conn-test).
+- [x] 검증: `node --check`(app.js·admin.js module)·`py_compile`·CSS 균형·**전체 pytest 1902 passed / 2 skipped / 0 failed(회귀 0)**.
+- [x] verify-completion PASS → 머지(PR #767, main 02a1e585, rebase 로 병렬 graph-perm-split 충돌 해소) → web 재배포(deploy_scope: included, `make deploy-web` 무중단 soak PASS) → **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 PASS**(AC-1~7 전항목: 15 DS 버튼·상단 토스트 top=66px 입력창 비가림·제품 미전환·프론트 쿨다운·admin 회귀 0·pageerror 0). 상세 test-runs.d/20260713T094624-ds-conn-test.md POST-DEPLOY 갱신.
+
+### TASK-20260714T024534-doc-sync-rn-0714 — 07-13 오후 머지분 릴리즈노트 정합(관계도 콘텐츠 밴드 그룹핑·큰 관계도 이동 부드러움·미니맵/상세 hover·첨부 재업로드 버전 관리·데이터소스 연결 테스트·정상 조회 과차단 수정) (doc_sync, 비-정책 콘텐츠 doc, 2026-07-14)
+- 트리거: `/_dqa:doc_sync ultracode`(스케줄·무인, cron wrapper). 직전 릴리즈노트 블록(2eb802be @ 07-13 — graph-perm-split 1항목) 이후 07-13 오후~저녁(#746~#770) main 병합 user-facing 델타 정합. 기존 07-13 블록(releases[0])에 items **+7항목** append(generated 2026-07-13 유지·새 date 블록 생성 안 함).
+- [x] append 7항목: ① improved/admin 관계도 카테고리 밴드 콘텐츠 단위 그룹핑(feature-0016 content-cluster+p2) ② improved/admin 큰 관계도 화면 이동·확대 부드러움(feature-0016 §78 렌더러 교체) ③ improved/admin 미니맵 전체 구성 유지+클릭/드래그 이동(§77/§79) ④ improved/admin 상세 패널 hover 미리 강조(§81) ⑤ new/work 같은 파일 재첨부 버전 관리(attach-user-version) ⑥ new/work 작업화면 데이터소스 '연결 테스트' 버튼(ds-conn-test) ⑦ fixed/work 정상 조회 보안정책 과차단 수정(feature-0002 readonly-query-shapes).
+- [x] **사용자향 평이화**: PixiJS·§번호·feature-id·SceneAdapter·BitmapText·mutual-kNN·centroid·sql_guard·UNION/SHOW·mig·ADR 등 내부표현 누출 0(vm 구조검증 leak 스캔 0). 화면 체감 변화만 사용자 언어로.
+- [x] **제외(비-노출)**: 메시지 편집 Phase 1(feature-0019 backend-only·UI 없음)·describe_routine(LLM 내부 도구·사용자 화면 비노출 — 사용자 체감은 AI 답변 매개 간접이라 제외; readonly-query-shapes 와 달리 사용자 화면 직접 변화 없음)·§79 scene-pool/§80 BitmapText 내부 최적화(항목 ②에 체감 흡수)·§79 '분석됨' 테두리 복원(같은날 회귀 되돌림·순변화 0)·deploy verify checklist(내부 운영).
+- [x] **cache-buster**: 소스 `?v=dev` 고정 placeholder 유지 — index/admin.html 수기 bump **안 함**(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` 가 배포 시 static 트리 content-hash 주입, deploy-web `asset_stamp_verify` 가 baked `?v=dev` 잔존 하드 차단). release-notes-data.js 내용 변경만으로 전역 content-hash 변화 → wrapper 재빌드 시 서빙 토큰 자동 갱신. **system-prompt 의 '수동 bump' 지시는 07-12 ITEM-09 이전 모델 기준이라 부적용**(수동 변경 시 asset_stamp_verify 게이트 무력화 위험·content-hash 불변). 직전 doc-sync-rn-0713 도 동일 판단.
+- [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(28 releases·블록 07-13 head·항목 스키마 type/area/title·07-13 블록 8항목·누출 스캔 0).
+- [x] landing/배포: verify-completion(operational, feature-0003) → **로컬 commit 까지만**. **push/merge-to-main/deploy(make deploy-web 무중단)는 cron wrapper 소유**(system-prompt v3 위임 — 스킬 미수행). META(STATUS·wiki·ARCHITECTURE·SECURITY·meta/REVIEW)는 별도 commit(REV-20260714T024534-META-0035-doc-sync-0714).
+- [ ] PB-0008 Windows-browser: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(그래프 §77~81·첨부 버전·ds-conn-test)는 각 원천 cycle POST-DEPLOY PB-0008 이 이미 검증(PASS). 사유 TEST.md §CHECK#13(2026-07-14).

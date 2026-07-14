@@ -1948,6 +1948,15 @@ def _load_conversation_messages(
             _pg_kwargs["floor_ca"] = win.get("floor_ca")
             _pg_kwargs["ceil_ca"] = win.get("ceil_ca")
             _pg_kwargs["joined_ca"] = win.get("joined_ca")
+        # feature-0019 message-editing: 편집으로 브랜치가 생긴 대화(has_branches=true)면 활성
+        #   브랜치 경로만 로드한다. 게이트 fast-path — 거의 모든 대화는 has_branches=false 라
+        #   use_branch 미전달 → 로더가 기존 linear 경로(회귀 0, AC-ME-2). fail-soft: 브랜치 상태
+        #   조회 실패(None)면 미분기로 간주(기존 경로). active_leaf_id=None(첫 메시지 편집 전이
+        #   window)이어도 has_branches=true 면 CTE 로 라우팅(anchor 없어 empty prior history — 정확).
+        _branch = _read_runtime_pg("load_branch_state", conversation_id=conversation_id)
+        if isinstance(_branch, dict) and _branch.get("has_branches"):
+            _pg_kwargs["use_branch"] = True
+            _pg_kwargs["active_leaf_id"] = _branch.get("active_leaf_id")
         pg_rows = _read_runtime_pg("load_core_messages", **_pg_kwargs)
         if pg_rows is not None:
             # PG: (role, content, tool_calls, tool_call_id, name, sender_account_id) — tool_calls is
@@ -1990,24 +1999,45 @@ def _save_message(conn, conversation_id: str, role: str,
                   tool_call_id: str | None = None,
                   name: str | None = None,
                   sender_account_id: int | None = None,
-                  recall_floor_created_at=None):
+                  recall_floor_created_at=None,
+                  parent_message_id: int | None = None):
     """메시지를 DB에 저장.
 
     feature-0009: sender_account_id 는 user 메시지의 발신 멤버(그룹 대화 발신자 귀속).
     assistant/tool 메시지는 None(AI/시스템). nullable 이라 기존 호출 무회귀.
     share-visibility-window(REVIEW M1): recall_floor_created_at = 이 assistant 답변이 그린 recall
     하한(owner-answer recall-측 봉인). None=미태깅.
+    feature-0019 message-editing: 편집으로 브랜치가 생긴 대화(has_branches=true)면 이 append 를
+    현재 active_leaf 에 체인하고 leaf 를 전진시킨다 — 정상 대화(has_branches=false)는 branch 조회
+    후 즉시 기존 INSERT 경로(parent=None) 그대로(회귀 0). parent_message_id 명시 시 그 값 우선.
     """
     from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
     pg_conn = _get_pg_runtime_conn()
     if pg_conn:
         try:
-            _get_pg_runtime_backend().save_core_message(pg_conn,
+            backend = _get_pg_runtime_backend()
+            _chain_parent = parent_message_id
+            _advance_leaf = False
+            if _chain_parent is None:
+                try:
+                    _bs = backend.load_branch_state(pg_conn, conversation_id=conversation_id)
+                    if isinstance(_bs, dict) and _bs.get("has_branches"):
+                        _chain_parent = _bs.get("active_leaf_id")
+                        _advance_leaf = True
+                except Exception:
+                    _chain_parent = None  # fail-soft → 기존 linear append
+            new_id = backend.save_core_message(pg_conn,
                 conversation_id=conversation_id, role=role,
                 content=content, tool_calls=tool_calls,
                 tool_call_id=tool_call_id, name=name,
                 sender_account_id=sender_account_id,
-                recall_floor_created_at=recall_floor_created_at)
+                recall_floor_created_at=recall_floor_created_at,
+                parent_message_id=_chain_parent)
+            if _advance_leaf and new_id:
+                try:
+                    backend.set_active_leaf(pg_conn, conversation_id=conversation_id, leaf_id=new_id)
+                except Exception as _exc2:
+                    logger.warning("_save_message active_leaf advance failed: %s", _exc2)
         except Exception as _exc:
             logger.warning("_save_message PG write failed: %s", _exc)
         finally:

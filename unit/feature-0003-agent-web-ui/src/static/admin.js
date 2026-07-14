@@ -1344,10 +1344,10 @@ function _probeDatasourceConn(key, { force = false } = {}) {
   const k = String(key || "").trim().toLowerCase();
   if (!k) return Promise.resolve({ state: "fail", error: "키 없음" });
   const cache = adminState.datasourceConnStatus;
+  const _prev = cache.get(k);   // ds-conn-test: 429(쿨다운) 시 복원할 직전 상태 캡처(checking 덮어쓰기 전).
   if (!force) {
-    const prev = cache.get(k);
     // 확정된 상태(ok/unstable/down — checking 아닌 것)면 재사용.
-    if (prev && prev.state && prev.state !== "checking") return Promise.resolve(prev);
+    if (_prev && _prev.state && _prev.state !== "checking") return Promise.resolve(_prev);
   }
   // TASK-0253 (REV MINOR-2): in-flight dedup 은 force 와 무관하게 적용한다. force 는 "캐시 무시
   //  재probe" 의미이지 "이미 도는 probe 를 무시하고 또 띄워라"가 아니다. 이전엔 force 경로가 이
@@ -1371,6 +1371,13 @@ function _probeDatasourceConn(key, { force = false } = {}) {
       cache.set(k, res);
       return res;
     } catch (e) {
+      // ds-conn-test 쿨다운(429): 배지를 'down' 으로 떨어뜨리지 않고 직전 확정 상태 유지(없으면 확인 중).
+      //  429 는 연결 실패가 아니라 재테스트 간격 제한이므로 상태 오분류를 막는다.
+      if (e && e.status === 429) {
+        const keep = (_prev && _prev.state && _prev.state !== "checking") ? _prev : { state: "checking" };
+        cache.set(k, keep);
+        return keep;
+      }
       const res = { state: "down", error: (e && e.message) || "테스트 실패" };
       cache.set(k, res);
       return res;
@@ -5708,7 +5715,11 @@ function _dsRenderDetail(ds) {
     try {
       const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(ds.key)}/test`, { method: "POST" });
       showToast(r && r.ok ? `✓ 연결 성공 (${r.elapsed_ms}ms)` : `✗ 실패 (${(r && r.error) || "?"})`, !(r && r.ok));
-    } catch (e) { showToast(e.message || "테스트 실패", true); }
+    } catch (e) {
+      // ds-conn-test: 429(쿨다운)는 실패가 아니라 재테스트 간격 제한 — 중립 토스트.
+      if (e && e.status === 429) showToast(e.message || "잠시 후 다시 시도해 주세요.", false);
+      else showToast(e.message || "테스트 실패", true);
+    }
     finally { testBtn.disabled = false; testBtn.textContent = prev; }
   });
   actions.appendChild(testBtn);
@@ -11410,7 +11421,11 @@ function renderProductDetail() {
           const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(b.datasource_key)}/test`, { method: "POST" });
           if (r && r.ok) showToast(`'${b.datasource_key}' 연결 성공 (${r.elapsed_ms}ms)`);
           else showToast(`'${b.datasource_key}' 연결 실패: ${(r && r.error) || "unknown"}`, true);
-        } catch (e) { showToast(`'${b.datasource_key}' 연결 테스트 오류: ${e.message || "실패"}`, true); }
+        } catch (e) {
+          // ds-conn-test: 429(쿨다운)는 실패가 아니라 재테스트 간격 제한 — 중립 토스트.
+          if (e && e.status === 429) showToast(e.message || "잠시 후 다시 시도해 주세요.", false);
+          else showToast(`'${b.datasource_key}' 연결 테스트 오류: ${e.message || "실패"}`, true);
+        }
       });
       // 기본 지정(primary 아닐 때만) — 즉시 API 대신 desired 스테이징(일괄 적용).
       if (!b.is_primary) {

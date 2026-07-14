@@ -50,7 +50,7 @@ sources:
 
 ## 1. 개요
 
-본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → **N 개 데이터소스 (MySQL·MSSQL)** 에 대한 read-only DBA 작업 자동화를 17 개 feature unit(디렉토리 18 — feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스) + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.
+본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → **N 개 데이터소스 (MySQL·MSSQL)** 에 대한 read-only DBA 작업 자동화를 18 개 feature unit(디렉토리 19 — feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스) + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.
 
 > **2026-06 현재**: 초기 단일 MySQL replica → **멀티 데이터소스** (dialect 추상화 + envelope 암호화 registry + DB-단위 접근) 로 일반화. agent runtime + KB 는 Postgres 단독 정본 (2026-05-27 이관 완료). agent 실행은 ask-worker out-of-process 큐로 cutover.
 > **2026-06-19~23**: ① **사용자 보안 보강 6종** (공유 링크 만료·로그인 시도 제한·감사 변조방지·LLM 사용량 한도·프롬프트 인젝션 방지·2단계 인증) 전체 완료 — [[../docs/SECURITY|SECURITY.md]] §7.2·§12~§15. ② **그룹 대화** (feature-0009) — 멤버십·`@assistant` 멘션·열람≠발화 분리·라이브 UX. ③ **NL→SQL 정확도 flywheel** (eval harness·샘플쿼리 few-shot·self-reflection·용어/ENUM 사전) — `docs/improvements/dba-ai-nl2sql/ROADMAP.md`.
@@ -68,6 +68,7 @@ sources:
 > **2026-07-08**: ㊹ **그래프 뷰 접힘 카드 연결선·상대 하이라이트·크로스 구분·LOD + 분석 기반 제품 분류 제안** (feature-0016 §57~59) — 관계도 스키마 카드 접힘 상태에서도 **연결선**(SCHEMA_REF 질의시점 1-hop 집계·렌더 3단 승격 컬럼→테이블→카드)·선택 노드 **상대 하이라이트**(1-hop 선명·나머지 dim)·크로스-DB ROUTINE_USES **마젠타** 색 구분·**중간 줌 LOD**(엣지 스파게티 축약, ADR-024)·스키마 골격 가져오기 MSSQL 라벨 케이스 정합(§58)·**분석 기반 제품 분류 'AI 제안→사람 승인'**(카테고리 밴드 매핑을 이름 규칙→분석 신호로 개선하되 접근 allowlist 자동기록 금지 위해 Pending-only 스테이징·환각 3중 게이트·데몬 기본 OFF, ADR-025 §59). 전건 POST-DEPLOY 라이브 실증. ㊺ **메타데이터 콘솔 UX·폴리시 + 제품 분류 승인 UI** (feature-0003) — 검토/검수 큐 행 클릭→우측 read-only 상세(선택 불가 해소)·ENUM "+코드 추가" pre-fill·샘플 검수 큐 mermaid 렌더·목록 가독성 + 디자인 폴리시 5건(필 위계·nesting·배지 accent) + 제품 관리 "✨ AI 분류 제안" 승인/거부 UI. [[Features/feature-0016-metadata-graph]] · [[Features/feature-0003-agent-web-ui]] · [[Features/feature-0002-agent-core]].
 > **2026-07-09~10**: ㊻ **그래프 뷰 대규모 성능·UX 진화 (§57.4~76)** (feature-0016) — 상대 하이라이트 신뢰성 완결(즉시·정확 점등·오-침강/dim 고착·유령 관계선 잔상 해소, §57.4~9·§64·§66, ADR-026~028)·대규모 성능·정리(스키마 펼침 세로폭주 해소 ADR-028·컬럼/뷰포트 컬링 ADR-029/032+컬링 노드 참조/상호작용 보존 ADR-037·배치정렬 위상서명 메모이즈 ADR-035·미니맵 전체이미지 재사용 ADR-036·극단 줌아웃 집계 카드는 §67 폐기 ADR-033)·상세 패널 사용관계 read/write 분리+관계행/미렌더 컬럼 카메라 이동+컬럼 선택(§68~72/§75)·상단 툴바 3존 통합+줌/상태 플로팅 오버레이·엣지 중간(휠)버튼 팬(§62)·AI 능동 분석 caveats 계약 재설계(§69/ADR-034 — 형식적 자기-불평 제거·실위험만; **T69.5 완수 07-13 PR #744·cc_data_main 715/715**). ㊼ **응답 지연 타임아웃 복구 모달 제거 + 추론 예산 상한 확대** (feature-0003/0018) — 작업 화면에서 화면 전체를 덮던 타임아웃 복구 모달 제거·모달/토스트 없는 조용한 자동 재연결(배포 4b6919ec·PB-0008 PASS) + (07-09) 관리 콘솔 모델별 추론 예산 상한 native 확대(Sonnet 128K·Haiku 64K)+추론↔본문 비율 슬라이더(feature-0018 코드 거주). ㊽ **MSSQL 인증 실패 순회 조기 skip + datasource cooldown** (feature-0002 §12.3) — insight 순회에서 MSSQL 로그인 실패(18456)를 조기 skip + datasource cooldown(기본 600s)으로 실패 로그인 반복·로그·I/O 억제(회복력; DB/객체별 권한거부는 로그인 성공이라 순회 계속, 마이그·경계 0). [[Features/feature-0016-metadata-graph]] · [[Features/feature-0003-agent-web-ui]] · [[Features/feature-0002-agent-core]].
 > **2026-07-12**: ㊾ **web 라우터 모듈화 완결** (feature-0012, behavior-neutral 내부 리팩터) — feature-0003 `app.py` 모놀리스(~29K/148 route)를 **21개 도메인 `APIRouter` 로 byte-동치 전량 추출**(app.py→18,917줄, 잔여 `@app` 0) + ITEM-10(`web_context` 헬퍼 추출·모듈분리 -81%) + ITEM-11(잔여 인라인 authn DEFER 핸들러 실leak 13 DI-rework·keep-inline 정당 37 명시분류) 완료(라이브 4c203f9c, route-parity 골든 불변·프로덕션 응답 실측 동일). 브라우저 로그인 QA 사용자 사인오프 이관. 잔여 initiative ITEM-09(그래프 CSS/JS 세분화·외부 브랜치 blocked). [[Features/feature-0012-web-router-modularization]] · [[Features/feature-0003-agent-web-ui]].
+> **2026-07-13**: ㊿ **그래프 렌더러 PixiJS v8 전면 교체 + 콘텐츠 밴드 + 메시지 편집 신규** — feature-0016 그래프 렌더 엔진을 노드 다수 팬(카메라 이동) 버벅임 근본 해소를 위해 **AntV G6 v5(Canvas)→PixiJS v8(WebGL) 전면 교체**(엔진-중립 SceneAdapter seam·GPU 상주 씬·G6 폴백 토글, §78)+미니맵 클램프/드래그·scene diff 오브젝트 풀(§79)·라벨 Text→BitmapText(§80·렌더 157ms→0.03ms)·상세 패널 하위 항목 hover 시각 효과(§81) — 대형 스키마(409 객체) 팬 60fps vsync 라이브 PB-0008 PASS. 카테고리 밴드 **'컨텐츠 단위' 그룹핑 실동작화**(mig 0040·DB단위 클러스터·함수/프로시저 합동·LLM 라벨·mutual-kNN)+p2(가짜 밴드 소멸·연관 밴드 인접). feature-0003 — 첨부 **사용자 재업로드 버전 관리**(해시 대조 체인·assistant diff 인지)·작업화면 데이터소스 **'연결 테스트' 버튼**·**그래프 뷰 권한 분리**(`metadata.graph.read` 를 '메타데이터 관리' 묶음에서 독립, Critical). feature-0002 — **describe_routine 도구**(저장 프로시저/함수 정의 조회)·**sql_guard read-only shape 과차단 보정**(최상위 UNION·읽기전용 SHOW 허용). **feature-0019 메시지 편집 (신규)** — 사용자가 보낸 메시지 수정(1:1=단순/요청 분기 재답변 `< n/m >`·공유=단순만), Phase 1 대화 내부 브랜치 트리 백엔드 기반(마이그 0041). [[Features/feature-0016-metadata-graph]] · [[Features/feature-0003-agent-web-ui]] · [[Features/feature-0002-agent-core]] · [[Features/feature-0019-message-editing]].
 
 ## 2. 상세
 
@@ -93,10 +94,11 @@ sources:
 | feature-0016-metadata-graph | 메타데이터 지식그래프 — 관계형 SSOT→AGE `metadata_kb` 투영 + 관리콘솔 그래프 뷰(검색·이웃) + `graph_navigate` AI 도구 | [[Features/feature-0016-metadata-graph\|카드]] |
 | feature-0016-zd-pg-pause-caddy | PG 재시작 무중단화 — pgbouncer PAUSE 래퍼(`pg-restart.sh`) + deploy-web.sh Caddyfile reconcile | [[Features/feature-0016-zd-pg-pause-caddy\|카드]] |
 | feature-0017-deploy-build-gate | 배포 스파인 빌드 게이트 false-failure 수정 — 이미지 정합 검증(snap-docker metadata-race) | [[Features/feature-0017-deploy-build-gate\|카드]] |
+| feature-0019-message-editing | 메시지 편집 — 1:1 대화 내부 브랜치 트리(단순 수정 / 요청 수정 분기 재답변) + 공유(그룹) 단순 수정 (Phase 1 백엔드 기반) | [[Features/feature-0019-message-editing\|카드]] |
 
 ### 2.2 핵심 결정 (ADR)
 
-17-feature 위에 다음 결정이 누적되어 현재 시스템을 형성한다:
+18-feature 위에 다음 결정이 누적되어 현재 시스템을 형성한다:
 
 - **ADR-0019** ([[Decisions/ADR-0019-web-audit-events|mirror]]) — `WebAuditEvents` 단일 테이블 + `record_audit_event` dispatcher + 16 endpoint hook + 4 RBAC 권한
 - **ADR-0021** ([[Decisions/ADR-0021-kb-postgres-rbac|mirror]]) — KB Postgres 분리 + `agent_kb_rw` / `agent_kb_ro` 2-layer RBAC
