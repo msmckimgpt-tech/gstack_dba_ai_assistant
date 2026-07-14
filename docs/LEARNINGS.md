@@ -69,6 +69,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Applies to: 다중 provider/모델 폴백을 가진 모든 LLM 라우팅. "availability vs quality" 폴백 결정 시 폴백 모델의 컨텍스트/능력이 정본과 등가인지 먼저 확인하고, 아니면 깨끗한 실패 또는 명시 표면화를 기본값으로 한다.
 - Verified: true (적대 2렌즈 패널 CONFIRMED + 배포 후 live probe: claude-haiku-4-chat→claude 라우팅 확인, gemma 도달 불가).
 
+### LRN-20260714-0003 — 보안 가드의 read-only allowlist 를 넓힐 때는 "같은 정보 클래스의 형제 표현"을 함께 감사하라 — 한 표현만 풀면 태세 불일치가 같은 마찰로 하루 만에 재발한다
+- Source: conversation_audit FR-sysvar-select-denylist-overblock (2026-07-14) — 선행 FR-readonly-query-shapes-overblock(2026-07-13)의 형제-표현 잔재
+- Pattern: sql_guard 처럼 "read-only 만 허용" 가드에서 어떤 read-only 표현(예: `SHOW (GLOBAL) VARIABLES/STATUS`)을 사용자 승인하에 allowlist 에 넣으면, **같은 정보를 노출하는 다른 문법 표현**(예: `SELECT @@lower_case_table_names`)이 별도 규칙(여기선 보조 denylist 의 `@@`)으로 여전히 차단된 채 남기 쉽다. 그 결과 `SHOW VARIABLES` 는 되는데 `SELECT @@x` 는 "보안 정책상 차단"되는 **태세 불일치**가 생기고, LLM 이 자연스럽게 고르는 표현이 후자면 어제 고친 것과 **똑같은 마찰**이 하루 만에 재발한다(실측: readonly-shapes 배포 다음날 `denylist match: @@` 차단 1건). 정보노출 관점에선 `SHOW GLOBAL VARIABLES` 가 이미 전체 시스템변수를 덤프하므로 `SELECT @@x`(부분집합)를 막는 건 보안 이득 0·마찰만 유발.
+- 교훈: (1) 가드 allowlist 를 넓히는 변경을 할 때, "이 정보/동작을 얻는 **다른 문법 경로**가 무엇이고 그것들도 같은 태세인가"를 한 번에 감사하라 — 한 표현만 풀면 형제 표현이 posture-drift 로 남는다. (2) allowlist 확장의 보안 판단 기준은 "이 표현이 위험한가"가 아니라 **"이미 허용된 표현 대비 노출/동작 델타가 있는가"** — 델타 0 이면 막는 것은 순수 마찰. (3) read-only 정보 노출과 **쓰기/부수효과**는 분리해서 봉인 — `@@` 읽기는 풀되 `SET @@`(쓰기)·`:=`(할당)·shape 게이트(`exp.Set` 거부)는 유지, dialect 별로도 분리(T-SQL `@@` 는 메타 열거 차단 태세라 유지).
+- 봉인 방식: MySQL 보조 denylist 에서 `@@` 만 제거(형제 표현 태세 정합) + 쓰기/할당/shape/tsql 불변 회귀 테스트로 고정. 검증: security 적대 서브에이전트 5축(write·노출델타·UNION분기·tsql·난독화) REFUTED + 런타임 가드 실증(`SELECT @@x`=ALLOW·`SET @@`=DENY·tsql `@@`=DENY).
+- Applies to: sql_guard·RBAC·allowlist 등 "허용 목록을 승인받아 넓히는" 모든 보안 가드 변경. 한 케이스를 풀면 **같은 능력의 형제 표현/경로**를 동일 커밋에서 감사해 posture-drift 잔재를 남기지 말 것. 신호 검출 측: `denylist match: @@`·`got Union`·`got Show` 처럼 시그니처가 표현별로 갈리면 corroboration 을 표현별 버킷으로 집계해야 형제 잔재를 조기 포착한다.
+- Verified: true (코드/테스트/런타임 가드 실증 CONFIRMED; 배포 후 라이브 corroboration `denylist match: @@` distinct_conv 재측정은 다음 audit — 0 유지 시 마찰 소멸 확정).
+
 ### LRN-20260714-0001 — 코드 상수 프롬프트의 "행동 계약"은 운영자 DB 프롬프트(global row)가 통째 대체하면 조용히 사라진다 — injection-guard 처럼 compose 시 코드-권위 주입해야 프로덕션에 도달한다
 - Source: conversation_audit FR-attachment-update-pasted-not-versioned (2026-07-14, structural 27/34)
 - Pattern: 어떤 행동 계약(예: "명시적 갱신요청 → 쿼리 붙여넣기 말고 첨부 새 버전으로 전달")을 **코드 상수 `SYSTEM_PROMPT` 안에만** 넣으면, `compose_system_prompt` 가 운영자의 `websystemprompts` global-scope row 를 **base 로 통째 대체**하는 구조에서 그 지침이 프로덕션 프롬프트에서 약해지거나 사라진다(data/config drift). 실측: attachment-edit 전달 메커니즘·프롬프트 지침이 2026-06-15/16 출하됐는데도 90일간 갱신요청 34대화 중 27(~79%)이 여전히 붙여넣기 — 메커니즘은 있는데 프롬프트가 그 경로로 안 태웠고, 지침이 코드 상수 안이라 운영자 프롬프트 커스터마이즈에 취약했다.

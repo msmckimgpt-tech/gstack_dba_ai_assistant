@@ -128,6 +128,23 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **범위 밖(deferred)**: allowlist display 값 `_safe_ident` 미적용(악성 admin config 한정 방어심화, MINOR) · cross-DB 검색 CAP 40 초과 DB(명시 안내·`database` 지정 유도) · describe_columns 스키마 미상 시 동명-다스키마는 이제 eff_schema 해석으로 단일화(dbo 우선).
 - **라이브 실측 필요분(§정직)**: 코드/테스트/라이브 QA 는 "cross-DB describe/search/routine 이 다른 허용 DB 객체를 도달"·"시스템 스키마 차단 유지" 증명. "실제 리뷰 대화에서 발견 성공·give-up 소멸" 은 배포 후 실측분 → 다음 audit corroboration(MSSQL describe_table 빈-헤더율·search_tables 빈결과율 감소) 재측정 → 개선 시 `verified`.
 
+## FR-sysvar-select-denylist-overblock — fixed:deployed:unverified-live (L5 sql_guard @@ denylist 과차단; read-only 시스템변수 SELECT 허용)
+
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트(가드+cross-db 175 타깃 PASS·전체 회귀 신규 실패 0[4 실패=baseline test debt, stash 대조 실증]·§18.8 3렌즈 패널 전건 REFUTED) + **배포 완료**(2026-07-14, PR #792 merge main `9dce3caa` → `deploy-web` 무중단 롤아웃 web-a/web-b + ask-worker/insight-worker 재빌드·gateway reconcile, soak 통과; **4서비스 GIT_COMMIT=9dce3caa healthy**; 배포본 ask-worker 런타임 가드 실증 — `SELECT @@lower_case_table_names, @@version`=ALLOW / `SET @@GLOBAL.sql_mode`=DENY / tsql `SELECT @@VERSION`=DENY; web /healthz=9dce3caa·mysql_ok·pg_ok). **라이브 대화 실측 미수행** → `unverified-live`. 다음 audit corroboration(`denylist match: @@` distinct_conv) 재측정 0 유지 시 `verified`.
+- **fix(요지)**: CHG-20260714T153113-sysvar-select-guard / **코드 거주 `feature-0002-agent-core`** / REV-20260714T153113-sysvar-select-guard (§18.8 security 적대 서브에이전트 5축 REFUTED + backend/qa 인라인 실증 REFUTED). 사용자 승인=**denylist @@ 제거**(AskUserQuestion 2026-07-14). 선행 CHG-20260713T171821-readonly-query-shapes 의 태세 정합 후속.
+- **last_seen**: 2026-07-14 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **modality**: 1:1 동기 · **product_id(마스킹)**: P-119 · **conv(마스킹)**: `20260714050748-e6add7f1`(topic "초기화 쿼리 환경 옵션 검토")
+- **symptom_confidence**: high (사용자 명시 지시 "환경 옵션 직접 확인 후 판단" + DB 재현) · **rootcause_confidence**: high (코드 file:line + PG core_messages 차단 로그 + 전사 삼각측량)
+- **suspected_layers**: **L5**(sql_guard 보조 denylist `@@` 가 read-only 시스템변수 SELECT 를 과차단 — 실질 write/쓰기 보안과 무관한 정보-클래스 태세 불일치)
+- **증상(signal)**: `E-SYS`/`E-USR` — assistant 가 `SELECT @@lower_case_table_names, @@version`(단일 read-only SELECT)로 대소문자 옵션을 직접 확인하려다 `denylist match: @@` 차단 → 재시도(SHOW VARIABLES) 없이 "MySQL 설정 확인 불가"로 OS 기본값 추정 대체 → 사용자의 "환경 옵션 직접 확인" 명시 요구 좌절. 거부 힌트도 "단일 SELECT/CTE 만 허용"이라 오도(해당 쿼리는 단일 SELECT).
+- **confirmed_root_cause**: `sql_guard.py:123` MySQL `_DENYLIST_PATTERNS` 의 `re.compile(r"@@")` 가 시스템 변수 읽기 SELECT 를 차단. CHG-20260713T171821 로 read-only `SHOW (GLOBAL) VARIABLES/STATUS`(전체 시스템변수 노출)가 사용자 승인하에 허용된 뒤라 그 **부분집합**인 `SELECT @@x` 만 막는 태세 불일치 잔재. 재발경로 = **guard 가정 오류**(read-only 정보-클래스를 unsafe 로 오분류; FR-readonly-query-shapes-overblock 와 동류 L5).
+- **봉인**: MySQL denylist 에서 `@@` 제거. **보안 회귀 0**: (1) 정보노출 델타 0(`SHOW GLOBAL VARIABLES` 가 이미 전량 노출) (2) write 경로 0(`SET @@`·`SET @`=`\bSET\s+@` denylist, `SET GLOBAL x`(무-@@)=shape 게이트 `exp.Set` 거부, `:=`=denylist) (3) forbidden-schema/lock/into/write-node/금지함수는 `find_all` 전수 순회로 `@@` 와 독립(UNION/CTE 분기 무영향) (4) **T-SQL denylist `@@` 유지**(MSSQL 메타 열거 차단 태세 불변).
+- **corroboration**: 30일 `denylist match: @@` = **distinct_conv 1**(2026-07-14, 어제 readonly-shapes 배포 후 유일 차단) → **idiosyncratic**(빈도 임계 미달). 단 **근본이 코드 file:line confirmed(high) + 명백한 태세 불일치 + 재발경로 확실**(환경옵션 확인은 초기화/DDL 쿼리 리뷰 상시 단계) → 명백한 구조결함 fix-now. 선행 FR-readonly-query-shapes(structural, 9 conv)의 직접 태세 후속.
+- **disposition 근거**: Critical(§12.3 sql_guard 허용범위) → attended 사람 승인(AskUserQuestion). 코드 confirmed + read-only 안전성(정보노출 델타 0·write 경로 0) → fix-now.
+- **rc_ids**: RC-1(이 audit) · **batch-id**: B-20260714T153113-sysvar-select-guard
+- **배포 note(§정직)**: `deploy-web` soak 가 첫 2회 edge /healthz 단발 프로브 window(web-a/web-b 동시 recreate 후 Caddy 재해석 + cutover blip)에서 롤백 판정 → 3회차 배포 시 실시간 edge 프로브로 9dce3caa 가 soak 내내 200(mysql/pg true) 유지 실증 후 성공(transient 확증, 코드 결함 아님 — 런타임 diff 는 sql_guard 7줄뿐이며 /healthz 는 mysql+pg ping 만 검사, sql_guard 미경유).
+- **라이브 실측 필요분(§정직)**: 코드/테스트/런타임 가드 실증은 "`SELECT @@x` 허용 + write/tsql 차단 유지" 증명. "실제 대화에서 환경옵션 확인 마찰 소멸" 은 배포 후 라이브 실측분(미수행) → 다음 audit corroboration(`denylist match: @@` distinct_conv) 재측정 → 0 유지 시 `verified`, 재증가 시 `regressed`.
+
 ---
 
 ### 메타 (이 원장의 첫 기록)

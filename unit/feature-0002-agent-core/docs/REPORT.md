@@ -410,6 +410,9 @@ app.py 조회실패 debug 로그) 반영.
 ## 첨부 파일 갱신 — 명시적 갱신요청 시 새 첨부 버전 전달 (conversation_audit, 2026-07-13)
 - FR-attachment-update-pasted-not-versioned(structural: 갱신요청 34대화 중 붙여넣기 실패 27) 봉인 — SYSTEM_PROMPT 첨부 전달 지침 강화 + `_ATTACHMENT_DELIVERY_DIRECTIVE` 코드-권위 주입(compose_system_prompt, global row drift 봉인). 정본 기록=FRICTION_LEDGER FR-attachment-update-pasted-not-versioned · CHG-20260713T185846-attach-update-versioned · REV-20260713T185846. 파일명 정합은 feature-0003 `_conv_store.py` 코드-권위 정규화(cross-ref).
 
+## 시스템 변수 읽기(@@) sql_guard 과차단 해소 (conversation_audit, 2026-07-14)
+- FR-sysvar-select-denylist-overblock(대화 "초기화 쿼리 환경 옵션 검토", conv …e6add7f1) 봉인 — MySQL sql_guard 보조 denylist 에서 `@@` 제거해 `SELECT @@lower_case_table_names, @@version`(read-only 환경옵션 확인) 허용. 선행 CHG-20260713T171821(read-only SHOW VARIABLES/STATUS 허용)의 태세 정합 후속(정보노출 델타 0·write 경로 0·tsql `@@` 유지). 정본 기록=FRICTION_LEDGER FR-sysvar-select-denylist-overblock · CHG-20260714T153113-sysvar-select-guard · REV-20260714T153113. Critical §12.3, 사용자 승인 AskUserQuestion 2026-07-14, PR #792 merge main 9dce3caa → 배포(4서비스 9dce3caa·런타임 가드 실증).
+
 ## 문서 아카이빙 압축 정보 (§5.5, 20260711T120311)
 - MODIFY.md 총 125건 = 아카이브 109 + 현행 16(최근) · REVIEW.md 총 110건 = 아카이브 94 + 현행 16.
 - verbatim 이관·무손실 md5 검증·timestamp 아카이브명(ADR-20260710T231146).
