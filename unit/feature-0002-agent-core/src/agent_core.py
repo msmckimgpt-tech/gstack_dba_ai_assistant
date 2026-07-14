@@ -100,6 +100,7 @@ Never present a table name, column name, or number you have not verified against
 - If execute_sql errors (unknown column/table), read the error and fix it via describe_table/search_tables — do not retry the same guessed name repeatedly.
 - PREVIEW-TRUNCATED results: when a tool result says only the first N rows are shown ("... 행 중 N행만 표시" / "미리보기"), you have NOT seen the remaining rows. NEVER claim something is absent/missing, give counts, or say "전부 확인했다" based on a truncated list. Narrow the query (WHERE filter, COUNT/GROUP BY aggregation, NOT IN cross-check, pagination) until the evidence you cite fits inside what you actually saw. The saved CSV is a download link for the USER — you cannot read it back.
 - ABSENCE / COMPLETENESS claims ("X가 없다/누락됐다", "모두 검증했다") require complete evidence: a non-truncated result, a targeted probe (e.g. `WHERE name = 'X'` → 0 rows), or an exact quoted line from the attachment. If you could not verify something, write 미확인 explicitly — never fill the gap with a guess.
+- IDENTIFIER CASE when matching names across sides (식별자 대소문자): SQL identifiers are often case-folded by the server — MySQL under `lower_case_table_names=1` returns table names lowercased — so the SAME object can appear as `LoginEventLog` in an attachment yet `logineventlog` from a tool. A name that differs ONLY in case is NOT by itself evidence of absence. Before you claim a table/column is "누락/missing" or "not in the file/query", search the attachment case-insensitively (case-fold) or run a targeted probe — never conclude absence from an exact-case scan. When the server case-folds identifiers (`lower_case_table_names=1`, read the actual value per the SERVER OPTIONS rule) names differing only in case ARE the same object; on a case-sensitive server, confirm before equating. Applies especially to "이 테이블은 초기화 쿼리에 없다" claims when comparing an attachment against the live DB.
 - COMPARING an attachment against the live DB (변경 전/후, 첨부 vs 실제 DB): fetch BOTH sides before comparing — the attachment content is provided inline; the CURRENT DB side must come from tools (describe_table / describe_routine / a targeted SELECT). Never narrate the current-DB side from assumption or memory.
 - SERVER OPTIONS / environment values (e.g. lower_case_table_names): never reason from documented defaults — read the actual value first (MySQL: `SELECT @@var` or `SHOW VARIABLES LIKE '...'`; SQL Server: `SELECT SERVERPROPERTY('...')` / `@@VERSION` is blocked, use `SHOW`-equivalent catalog views). If it cannot be read, say so and qualify the dependent conclusion as 미확인.
 
@@ -111,8 +112,8 @@ Never present a table name, column name, or number you have not verified against
 ## ATTACHED FILES — REVIEW THEM AS THE SUBJECT
 If an "ATTACHED FILE CONTENTS" or "ATTACHED FILES" section is present and the user asks you to review / explain / fix / compare / optimize the attached SQL, code, or data:
 - Treat the attached content as the PRIMARY subject of your answer.
-- Do NOT run execute_sql against your own database unless the user explicitly asks you to run or validate the query there. KNOWN SCHEMAS are background, not the answer source for a review task.
-- These attachment instructions take precedence over the general "query the database" guidance whenever the user's request is about the attached files.
+- Reviewing the file's INTERNAL quality (logic, syntax, style, bugs of the code as written) does not by itself require execute_sql — reason from the attached content. KNOWN SCHEMAS are background, not the answer source for a pure review task.
+- But do NOT assert how the file relates to the ACTUAL / live database (whether a table or procedure exists, matches, or differs) from memory: any such claim MUST be verified against the live DB first, following the "COMPARING an attachment against the live DB" rule above. Focusing on the attached files does NOT override that grounding rule.
 
 ## SQL CONVENTIONS
 - Always use `schema`.`table` format. This assistant has read-only access — SELECT statements only.
@@ -851,13 +852,23 @@ def _build_attachment_context_section(
             lines.append(_datamark_untrusted(_number_file_lines(content), f"첨부 파일 {fname}"))
             lines.append("```")
         lines.append("")
+        # TASK-20260714-attach-grounding: 기존 지시("do NOT run execute_sql ... unless the user explicitly
+        # asks")는 전역 SYSTEM_PROMPT 의 grounding 규칙("COMPARING an attachment against the live DB: fetch
+        # BOTH sides ... Never narrate the current-DB side from assumption or memory", FR-partial-evidence,
+        # 병합 PR #793)과 **직접 모순**된다 — 첨부 섹션이 실 DB 조회를 억제해 "이 프로시저는 실 DB 와 다르다"
+        # 류 미검증 단언(환각)을 유발했다(관측: 대화 20260714 자기정정). 여기서는 그 모순을 제거하고 전역
+        # 규칙에 위임한다: 순수 코드 리뷰는 DB 불필요를 유지하되, 실 DB 상태에 대한 주장은 전역 규칙을 따른다.
         lines.append(
             "**INSTRUCTION**: The file contents above are the actual raw content of the attached files. "
             "Read them directly to answer the user's question. "
             "If the user asks to review / explain / fix / compare / optimize these files (e.g. 쿼리 리뷰, "
-            "코드 검토), the attached content is the PRIMARY subject — answer about it directly and do NOT "
-            "run execute_sql against your own database unless the user explicitly asks you to run or validate "
-            "the query there. This takes precedence over the general 'query the database' guidance. "
+            "코드 검토), the attached content is the PRIMARY subject — answer about it directly. "
+            "Reviewing the file's INTERNAL quality (logic, syntax, style, bugs of the code as written) does "
+            "not by itself require execute_sql — reason from the content above. But do NOT infer or assert "
+            "how the file relates to the ACTUAL / deployed database (whether a table or procedure exists, "
+            "matches, or differs) from memory: when your answer makes such a claim you MUST verify it "
+            "against the live DB first, following the 'COMPARING an attachment against the live DB' rule "
+            "stated earlier in this system prompt. "
             "Files marked '★ 이번 요청 신규 첨부' were just attached in this message. "
             "Files marked '◆ 이전 세션 첨부' are from earlier in this conversation and remain available. "
             "Do NOT ask the user to paste the file contents — they are already provided above."
@@ -3957,7 +3968,11 @@ def _run_agent_core(
                 if _restr is not None:
                     error_msg = _restr["message"]
                     result["llm_restriction"] = _restr
-                    record_provider_restricted(_restr, source="ask")
+                    # TASK-20260714-attach-grounding: bad_model/context_length 는 요청-레벨 오류이지
+                    # provider 장애가 아니다 → 글로벌 provider health 를 restricted 로 오염시키지 않는다
+                    # (persist_health=False). 오탐 글로벌 배너 방지.
+                    if _restr.get("persist_health", True):
+                        record_provider_restricted(_restr, source="ask")
             except Exception:
                 pass
             result["error"] = error_msg
