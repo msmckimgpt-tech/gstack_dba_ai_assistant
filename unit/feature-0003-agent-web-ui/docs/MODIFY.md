@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260714T080000-account-subtabs-postverify (TASK-20260714T074417-account-subtabs POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-14. 코드/자산 무변경 — TASK.md 체크리스트 완료 + TEST.md POST-DEPLOY 라이브 PASS append + REVIEW postverify. 배포 PR #788→main 53e55bfe, `deploy-web --web-only`(1차 soak false-positive 롤백→재배포 PASS).
+- 라이브 실측 요지(win-browser 실 Windows Chrome, 라이브 53e55bfe): 하위탭 4개·기본 account·각 클릭 시 정확히 1 subpane(알림 체크박스/UI select/사용량 차트/2FA·로그아웃) 노출 assertion 전항목 PASS + 서빙 자산 심볼 확인 + 세그먼트 하위탭 바 시각 렌더(스크린샷).
+- 운영 노트: 1차 배포가 post-cutover soak 에서 edge /healthz 순간 비정상(mysql/pg 정상)으로 last-good 자동 롤백 — 정적 자산 변경이라 /healthz 무관, cold-start+insight-worker 동시부하 transient(LRN deploy-web-healthz-concurrent-resync 패턴). 동일 이미지 재배포 시 soak PASS 로 false-positive 확증.
+- Cross-ref: CHG-20260714T074417-account-subtabs(기능) · REV-20260714T080000-account-subtabs-postverify · TEST Run POST-DEPLOY.
+
 ## CHG-20260714T074417-account-subtabs (TASK-20260714T074417-account-subtabs — 프로필 '계정' 탭 하위 세분화, Minor §12.3, frontend-only)
 - Date: 2026-07-14. `/_template:entry` arg-given. 스키마/마이그/RBAC/엔드포인트/서버 계약 0 — DOM 재배치 + 표현계층 sub-nav.
 - 배경: anim-effect-pref 로 '화면 효과'가 추가되며 '계정' 탭 7섹션(활동·알림·화면효과·사용내역·비번·2FA·로그아웃)이 한 화면에 누적 → 난잡. 사용자 요청으로 하위 탭 세분화(알림·UI 독립 확정 → 4탭 승인).
