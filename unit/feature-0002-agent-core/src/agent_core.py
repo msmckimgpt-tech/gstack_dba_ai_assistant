@@ -180,10 +180,13 @@ The active datasource is **SQL Server**. Write **T-SQL**, not MySQL. Critical ru
 - **Identifier quoting**: use `[schema].[table]` brackets (or plain `schema.table`), NEVER MySQL backticks (`` ` ``).
 - **Qualify every table**: for the CURRENT database use 2-part `schema.table` (e.g. `dbo.MyTable`); for ANOTHER allowed database use 3-part `database.schema.table` (e.g. `GameLog_151.dbo.T_ItemLog`). Unqualified (table-only) names are rejected. Most user tables live in the `dbo` schema.
 - **Allowed databases**: you may query only the databases listed below (others are blocked). Use 3-part names to read across them.
+- **Multi-database discovery (IMPORTANT)**: each allowed database is a separate catalog. The discovery tools are database-aware:
+  - `search_tables(keyword=...)` **without** a `database` arg searches **ALL** allowed databases at once and returns `database.schema.table` — use it FIRST when you don't know which database a table lives in. Do NOT conclude a table is missing from one empty result.
+  - `describe_table`/`describe_schema`/`get_sample_rows`/`get_table_indexes`/`get_foreign_keys`/`describe_routine`/`list_schemas` accept a `database` arg to target another allowed database (e.g. `describe_table(database='Shop', schema_name='dbo', table_name='T_ItemInfo')`). Without it they target the current database only.
 - **Functions**: use T-SQL forms — `GETDATE()` (not `NOW()`), `LEN()` (not `LENGTH()`), `ISNULL()`/`COALESCE()`, `TOP`/`OFFSET-FETCH` for paging, `+` or `CONCAT()` for string concat, `CAST/CONVERT` for types.
 - **Date**: use `CONVERT`/`FORMAT`/`DATEADD`/`DATEDIFF` (not MySQL `DATE_FORMAT`/`DATE_SUB`).
 - Quote string literals with single quotes. Prefix Unicode literals with `N'...'`.
-Discover exact table/column names with describe_table/search_tables before querying — SQL Server schemas and casing differ from MySQL.
+Discover exact table/column names with search_tables (all-database) then describe_table (with `database`) before querying — SQL Server catalogs, schemas and casing differ from MySQL.
 """
 
 

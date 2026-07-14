@@ -397,6 +397,170 @@ def _cfg_get_active_datasource():
     return _cfg.get_active_datasource()
 
 
+def _mssql_active() -> bool:
+    """현재 활성 dialect 가 MSSQL + datasource 활성(멀티 DB 모델) 인지."""
+    return str(_dialects.active().name).lower() == "mssql" and bool(_cfg_get_active_datasource())
+
+
+def _mssql_effective_allow_dbs() -> "tuple[list[str], dict[str, str]]":
+    """(display-case DB 목록, {lower→display}) — 유효 허용 DB(시스템/내부 DB 제거).
+
+    grounding 표시용 원본 케이스 allowlist(`_ACTIVE_SCHEMA_ALLOWLIST_DISPLAY`)에서 시스템 DB
+    (master/model/msdb/tempdb)·내부 DB(agent_memory)를 뺀 것. cross-DB 발견의 대상 DB 집합이자
+    유효 접근 경계(freeform 3-part 가 이미 도달하는 범위와 동일)."""
+    disp = _ACTIVE_SCHEMA_ALLOWLIST_DISPLAY.get() or []
+    hard = _INTERNAL_SCHEMAS | _dialects.active().system_databases()
+    out: list[str] = []
+    m: dict[str, str] = {}
+    for d in disp:
+        t = str(d).strip()
+        tl = t.lower()
+        if t and tl not in hard and tl not in m:
+            m[tl] = t
+            out.append(t)
+    return out, m
+
+
+def _mssql_resolve_catalog(args: dict) -> "tuple[str, str, str | None]":
+    """MSSQL 구조화 발견 도구의 catalog(DB)/schema 해석 (cross-DB 발견 봉인 —
+    FR-mssql-crossdb-structured-discovery).
+
+    반환 `(target_db, sql_schema, err)`:
+      - `target_db=''` → 현재 연결(pin) primary DB (기존 동작). `sql_schema`=원 schema_name.
+      - `target_db!=''` → 지정 허용 DB(display-case). 3-part `[db].` 로 조회. `sql_schema`=실 SQL 스키마
+        (미상이면 '' → describe/columns 는 테이블명으로 매칭).
+      - `err!=None` → 접근 거부(허용 목록 밖 / 시스템·내부 DB).
+
+    해석 규칙(관측 LLM 행동 + ADR "MSSQL schema-slot=DB명, 실스키마 dbo" 규약 정합):
+      1. 명시 `database` 인자 → 그 DB(검증). schema_name 은 실 SQL 스키마.
+      2. schema_name 이 `db.schema` 꼴이고 db-part 가 허용 DB → 분해.
+      3. schema_name 이 허용 DB 명과 일치 → schema_name 을 DB(catalog)로 재해석(실스키마 미상='').
+      4. 그 외 → primary(현재 연결) + schema_name=실 스키마 (기존 동작).
+
+    보안: 반환되는 target_db 는 **항상 유효 허용 DB** 이거나 ''(primary). 허용 밖/시스템/내부 DB 는
+    err 로 fail-closed. 값은 caller 가 _safe_ident 로 정제한 뒤 전달됨(SQLi 경계)."""
+    schema_in = _safe_ident(args.get("schema_name", ""))
+    if not _mssql_active():
+        return "", schema_in, None
+    dbs_disp, dbs_map = _mssql_effective_allow_dbs()
+    hard = _INTERNAL_SCHEMAS | _dialects.active().system_databases()
+
+    def _validate(dbl: str) -> "str | None":
+        if dbl in hard:
+            return f"오류: 시스템/내부 데이터베이스는 조회할 수 없습니다: {dbl}."
+        if dbl not in dbs_map:
+            allowed = ", ".join(sorted(dbs_disp)) or "(없음)"
+            return f"오류: 접근이 허용되지 않은 데이터베이스: '{dbl}'. 이 제품에 허용된 DB: {allowed}."
+        return None
+
+    def _sys_schema_err(sch: str) -> "str | None":
+        # M1 보존: cross-DB catalog 경로에서도 시스템 스키마(sys/guest/db_*) 직접 지정 차단
+        # (primary 경로 _struct_schema_access_error 와 대칭 — sys 카탈로그는 GRANT 로 안 막혀 명시 차단 필수).
+        if sch and sch.strip().lower() in _dialects.active().system_schemas():
+            return (f"오류: 시스템 스키마는 직접 접근할 수 없습니다: {sch} "
+                    f"(구조 탐색은 list_schemas/describe_table 사용).")
+        return None
+
+    database = _safe_ident(args.get("database", ""))
+    if database:
+        dbl = database.strip().lower()
+        err = _validate(dbl) or _sys_schema_err(schema_in)
+        return ("", "", err) if err else (dbs_map[dbl], schema_in, None)
+
+    if schema_in and "." in schema_in:
+        head, _dot, tail = schema_in.partition(".")
+        hl = head.strip().lower()
+        if hl in dbs_map:
+            err = _sys_schema_err(tail.strip())
+            return ("", "", err) if err else (dbs_map[hl], tail.strip(), None)
+
+    sl = schema_in.strip().lower()
+    if sl and sl in dbs_map:
+        return dbs_map[sl], "", None
+
+    return "", schema_in, None
+
+
+def _mssql_crossdb_hint(exclude_db: str = "") -> str:
+    """MSSQL 다중 DB 에서 구조화 도구가 빈결과일 때 다른 허용 DB 탐색 안내(L2 교정 힌트).
+
+    빈 검색 결과를 "객체 없음" 으로 오판하고 give-up 하던 재발 경로를 봉인 — 객체가 다른 catalog 에
+    있을 수 있음을 명시하고 대상 지정/전체검색 방법을 안내한다."""
+    if not _mssql_active():
+        return ""
+    dbs_disp, _ = _mssql_effective_allow_dbs()
+    others = [d for d in dbs_disp if d.strip().lower() != str(exclude_db or "").strip().lower()]
+    if not others:
+        return ""
+    shown = ", ".join(f"`{d}`" for d in others[:30])
+    more = f" 외 {len(others) - 30}개" if len(others) > 30 else ""
+    return (
+        "\n\n(참고: SQL Server 는 DB(catalog)별로 객체가 분리됩니다 — 찾는 객체가 다른 DB 에 있을 수 있습니다. "
+        f"허용 DB: {shown}{more}. `database` 인자로 대상 DB 를 지정하거나, keyword 만으로 `search_tables` 를 "
+        "호출하면 허용된 모든 DB 를 한 번에 검색합니다.)"
+    )
+
+
+def _mssql_resolve_table_schema(conn, db: str, table: str, prefer: str = "") -> str:
+    """catalog(db) 안에서 table 의 실제 SQL 스키마 해석(indexes/sample/fk 의 3-part 조립용).
+
+    prefer(명시 스키마) 우선 → dbo → 첫 사용자 스키마 → 폴백 'dbo'. cross-DB describe 시 실스키마
+    미상(schema-slot=DB명)일 때 인덱스/표본/FK 가 정확한 스키마를 쓰도록 1회 조회(cheap·read-only)."""
+    p = str(prefer or "").strip()
+    d = str(db or "").strip()
+    if not d:
+        return p or "dbo"
+    try:
+        rs, _ = _raw_execute_sql(
+            conn,
+            f"SELECT TABLE_SCHEMA FROM [{d}].INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{table}'",
+        )
+        found = [str(r[0]) for kind, _c, rows in rs if kind == "rows" and rows for r in rows]
+    except Exception:
+        found = []
+    # 시스템 스키마(sys/guest/db_*)는 후보에서 제외(M1 — 시스템 카탈로그 데이터 표본 유출 방지).
+    _sys = _dialects.active().system_schemas()
+    found = [f for f in found if f.lower() not in _sys]
+    if p and p.lower() not in _sys and any(f.lower() == p.lower() for f in found):
+        return p
+    for f in found:
+        if f.lower() == "dbo":
+            return f
+    if found:
+        return found[0]
+    return "dbo" if (not p or p.lower() in _sys) else p
+
+
+def _mssql_struct_target(conn, args: dict, table_for_schema: str = "",
+                         default_schema: str = "dbo") -> "tuple[str, str, str | None]":
+    """단일-객체 구조화 도구(sample/indexes/fk/routine) 공통 catalog/schema 해석.
+
+    반환 `(target_db, eff_schema, err)`:
+      - MySQL/비활성/MSSQL-primary → target_db='' + eff_schema=원 schema_name(기존 접근 게이트 적용).
+      - MSSQL catalog(DB 지정) → target_db=허용 DB + eff_schema(실스키마; table_for_schema 지정 시 조회로
+        해석, 미상이면 default_schema). resolve 가 허용 DB·시스템 스키마를 이미 검증했으므로 3-part 안전.
+        default_schema='' 이면 실스키마 미상 시 빈값 반환 → dialect 가 스키마 필터 생략(이름으로 매칭 —
+        루틴처럼 스키마-조회 대칭이 없는 객체용).
+    """
+    target_db, sql_schema, err = _mssql_resolve_catalog(args)
+    if err:
+        return "", "", err
+    if target_db:
+        if table_for_schema:
+            eff = _mssql_resolve_table_schema(conn, target_db, table_for_schema, prefer=sql_schema)
+        else:
+            eff = sql_schema or default_schema
+        # 최종 backstop(M1): 해석된 eff 가 시스템 스키마면 거부(시스템 카탈로그 표본/정의 유출 차단).
+        if eff and eff.strip().lower() in _dialects.active().system_schemas():
+            return "", "", (f"오류: 시스템 스키마는 직접 접근할 수 없습니다: {eff} "
+                            f"(구조 탐색은 list_schemas/describe_table 사용).")
+        return target_db, eff, None
+    e = _struct_schema_access_error(sql_schema)
+    if e:
+        return "", "", e
+    return "", sql_schema, None
+
+
 # ══════════════════════════════════════════════════════════════════
 #  OpenAI function calling 도구 스키마
 # ══════════════════════════════════════════════════════════════════
@@ -442,12 +606,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": (
                 "테이블의 컬럼명, 타입, 키, 인덱스를 반환한다. "
                 "execute_sql이 컬럼 오류로 실패했을 때만 사용한다. "
-                "동일 테이블에 대해 1회만 호출한다."
+                "동일 테이블에 대해 1회만 호출한다. "
+                "SQL Server: 대상 테이블이 다른 데이터베이스(catalog)에 있으면 `database` 인자로 그 DB 를 "
+                "지정한다(예: database='Shop', table_name='T_ItemInfo'). 어느 DB 인지 모르면 먼저 "
+                "search_tables 로 위치를 찾는다."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "schema_name": {"type": "string", "description": "스키마 이름"},
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름 — 현재 DB 가 아닌 다른 허용 DB 조회용"},
+                    "schema_name": {"type": "string", "description": "스키마 이름 (MySQL=데이터베이스, SQL Server=SQL 스키마 예 dbo)"},
                     "table_name": {"type": "string", "description": "테이블 이름"},
                 },
                 "required": ["schema_name", "table_name"],
@@ -466,6 +634,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름 — 다른 허용 DB 의 루틴 조회용"},
                     "schema_name": {"type": "string", "description": "스키마(데이터베이스) 이름"},
                     "routine_name": {"type": "string", "description": "프로시저/함수 이름"},
                 },
@@ -480,7 +649,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": (
                 "키워드로 테이블을 검색한다 (최후 수단). "
                 "시스템 프롬프트의 KNOWN SCHEMAS에 관련 테이블이 이미 있으면 이 도구를 사용하지 않는다. "
-                "같은 키워드로 2회 이상 호출하지 않는다."
+                "같은 키워드로 2회 이상 호출하지 않는다. "
+                "SQL Server: `database` 를 지정하지 않으면 이 제품의 **허용된 모든 데이터베이스(catalog)를 "
+                "한 번에** 검색하고 `database.schema.table` 로 위치를 반환한다 — 테이블이 어느 DB 에 있는지 "
+                "모를 때 이 도구를 먼저 쓴다. 특정 DB 만 검색하려면 `database` 를 지정한다."
             ),
             "parameters": {
                 "type": "object",
@@ -489,9 +661,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "검색 키워드",
                     },
+                    "database": {
+                        "type": "string",
+                        "description": "(SQL Server, 선택) 이 데이터베이스(catalog)만 검색. 미지정 시 허용된 모든 DB 검색.",
+                    },
                     "schema_name": {
                         "type": "string",
-                        "description": "스키마 이름 (선택)",
+                        "description": "스키마 이름 (선택). SQL Server 에서 값이 허용 DB 명이면 그 DB 로 해석.",
                     },
                 },
                 "required": ["keyword"],
@@ -510,6 +686,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름"},
                     "schema_name": {"type": "string", "description": "스키마 이름"},
                     "table_name": {"type": "string", "description": "테이블 이름"},
                     "limit": {"type": "integer", "description": "행 수 (기본 5)"},
@@ -528,19 +705,32 @@ TOOL_DEFINITIONS_FULL: list[dict[str, Any]] = TOOL_DEFINITIONS + [
         "type": "function",
         "function": {
             "name": "list_schemas",
-            "description": "MySQL 사용자 스키마 목록을 반환한다.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "description": (
+                "사용자 스키마 목록을 반환한다. SQL Server: 기본은 현재 DB 의 스키마 — 다른 허용 DB 의 "
+                "스키마를 보려면 `database` 를 지정한다(허용 DB 목록은 시스템 프롬프트 참조)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름"},
+                },
+                "required": [],
+            },
         },
     },
     {
         "type": "function",
         "function": {
             "name": "describe_schema",
-            "description": "스키마의 모든 테이블 목록과 행 수를 반환한다.",
+            "description": (
+                "스키마의 모든 테이블 목록과 행 수를 반환한다. SQL Server: `schema_name`(또는 `database`)에 "
+                "데이터베이스(catalog) 이름을 주면 그 DB 의 전체 테이블을 나열한다."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "schema_name": {"type": "string", "description": "스키마 이름"},
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름"},
+                    "schema_name": {"type": "string", "description": "스키마 이름(SQL Server 에서는 DB명도 허용)"},
                 },
                 "required": ["schema_name"],
             },
@@ -564,10 +754,11 @@ TOOL_DEFINITIONS_FULL: list[dict[str, Any]] = TOOL_DEFINITIONS + [
         "type": "function",
         "function": {
             "name": "get_table_indexes",
-            "description": "테이블 인덱스 정보를 반환한다.",
+            "description": "테이블 인덱스 정보를 반환한다. SQL Server: 다른 DB 는 `database` 로 지정.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름"},
                     "schema_name": {"type": "string", "description": "스키마 이름"},
                     "table_name": {"type": "string", "description": "테이블 이름"},
                 },
@@ -579,10 +770,11 @@ TOOL_DEFINITIONS_FULL: list[dict[str, Any]] = TOOL_DEFINITIONS + [
         "type": "function",
         "function": {
             "name": "get_foreign_keys",
-            "description": "테이블 외래키 관계를 반환한다.",
+            "description": "테이블 외래키 관계를 반환한다. SQL Server: 다른 DB 는 `database` 로 지정.",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름"},
                     "schema_name": {"type": "string", "description": "스키마 이름"},
                     "table_name": {"type": "string", "description": "테이블 이름"},
                 },
@@ -758,12 +950,19 @@ def _safe_ident(name: str) -> str:
 
 
 def _tool_list_schemas(conn, _args: dict) -> str:
-    # re-gate(3차) BLOCKER3: schema 인자 없는 구조화 도구도 pin 검증 — pin 무효 시 로그인 기본 DB 의
-    # 스키마명을 열거하므로 fail-closed.
-    pin_err = _mssql_pin_gate()
-    if pin_err:
-        return pin_err
-    sql = _dialects.active().list_schemas_with_counts()
+    # MSSQL: `database` 인자로 특정 허용 DB 의 스키마를 나열 가능(cross-DB). 미지정=현재 연결 DB.
+    target_db = ""
+    if _mssql_active() and isinstance(_args, dict) and _safe_ident(_args.get("database", "")):
+        target_db, _sc, cat_err = _mssql_resolve_catalog(_args)
+        if cat_err:
+            return cat_err
+    if not target_db:
+        # re-gate(3차) BLOCKER3: schema 인자 없는 구조화 도구도 pin 검증 — pin 무효 시 로그인 기본 DB 의
+        # 스키마명을 열거하므로 fail-closed.
+        pin_err = _mssql_pin_gate()
+        if pin_err:
+            return pin_err
+    sql = _dialects.active().list_schemas_with_counts(db=target_db)
     result_sets, _ = _raw_execute_sql(conn, sql)
     # 시스템 스키마 필터링
     filtered: list[str] = []
@@ -781,14 +980,24 @@ def _tool_list_schemas(conn, _args: dict) -> str:
 
 def _tool_describe_schema(conn, args: dict) -> str:
     schema = _safe_ident(args.get("schema_name", ""))
-    if not schema:
+    if not schema and not (_mssql_active() and _safe_ident(args.get("database", ""))):
         return "오류: schema_name은 필수입니다."
-    err = _struct_schema_access_error(schema)
-    if err:
-        return err
-    sql = _dialects.active().describe_schema_tables(schema)
+    # MSSQL: schema_name 이 허용 DB 명이거나 database 인자면 그 DB 의 테이블 전체를 나열(cross-DB).
+    target_db, sql_schema, cat_err = _mssql_resolve_catalog(args)
+    if cat_err:
+        return cat_err
+    if target_db:
+        # catalog(DB) 단위: sql_schema 지정 시 그 스키마, 미지정 시 DB 전체 사용자 테이블.
+        sql = _dialects.active().describe_schema_tables(sql_schema, db=target_db)
+        _label = f"{target_db}" + (f".{sql_schema}" if sql_schema else " (전체 스키마)")
+    else:
+        err = _struct_schema_access_error(schema)
+        if err:
+            return err
+        sql = _dialects.active().describe_schema_tables(schema)
+        _label = schema
     result_sets, _ = _raw_execute_sql(conn, sql)
-    parts = [f"## 스키마: {schema}\n"]
+    parts = [f"## 스키마: {_label}\n"]
     for kind, cols, rows in result_sets:
         if kind == "rows" and rows:
             parts.append("| table | approx_rows | engine | comment |")
@@ -798,25 +1007,40 @@ def _tool_describe_schema(conn, args: dict) -> str:
                 parts.append(f"| {row[0]} | {row[1]} | {row[2]} | {comment} |")
             parts.append(f"\n총 {len(rows)} 테이블")
         elif kind == "rows":
-            parts.append(f"스키마 '{schema}'에 테이블이 없거나 스키마가 존재하지 않습니다.")
+            parts.append(f"'{_label}'에 테이블이 없거나 스키마/DB 가 존재하지 않습니다.")
+            if _mssql_active():
+                parts.append(_mssql_crossdb_hint(exclude_db=target_db))
     return "\n".join(parts)
 
 
 def _tool_describe_table(conn, args: dict) -> str:
-    schema = _safe_ident(args.get("schema_name", ""))
     table = _safe_ident(args.get("table_name", ""))
-    if not schema or not table:
-        return "오류: schema_name과 table_name은 필수입니다."
-    err = _struct_schema_access_error(schema)
-    if err:
-        return err
+    # MSSQL: catalog(DB)/schema 해석 (cross-DB 발견). MySQL/비활성: target_db='' + schema=원본.
+    target_db, sql_schema, cat_err = _mssql_resolve_catalog(args)
+    if cat_err:
+        return cat_err
+    schema = sql_schema  # primary/MySQL 경로에선 원 schema_name, catalog 경로에선 실 SQL 스키마('' 가능)
+    if not table or not (schema or target_db):
+        return "오류: schema_name(또는 database)과 table_name은 필수입니다."
+    if target_db:
+        # cross-DB catalog 경로: resolve 가 이미 허용 DB 검증. 실스키마 미상이면 실제 스키마 해석.
+        eff_schema = _mssql_resolve_table_schema(conn, target_db, table, prefer=schema)
+        disp_schema, disp_db = eff_schema, target_db
+    else:
+        # 기존 경로: primary(MSSQL) / MySQL — 스키마 접근 게이트 유지.
+        err = _struct_schema_access_error(schema)
+        if err:
+            return err
+        eff_schema = schema
+        disp_schema, disp_db = schema, ""
 
-    # 컬럼 정보
-    col_sql = _dialects.active().describe_columns(schema, table)
+    # 컬럼 정보: catalog 경로는 해석된 eff_schema(구체 스키마)로 한정 — 동명-다스키마 컬럼 혼입 방지
+    # (헤더/인덱스/샘플과 동일 축). eff_schema 해석 실패 폴백은 'dbo'. primary/MySQL 은 기존 schema.
+    col_sql = _dialects.active().describe_columns(eff_schema, table, db=target_db)
     col_results, _ = _raw_execute_sql(conn, col_sql)
 
-    # 인덱스 정보
-    idx_sql = _dialects.active().list_indexes(schema, table)
+    # 인덱스 정보 (인덱스 SQL 은 구체 스키마 필요 → eff_schema)
+    idx_sql = _dialects.active().list_indexes(eff_schema, table, db=target_db)
     try:
         idx_results, _ = _raw_execute_sql(conn, idx_sql)
     except Exception:
@@ -836,14 +1060,17 @@ def _tool_describe_table(conn, args: dict) -> str:
         #     적중한다(이전엔 'dbo' vs 'GunzGame' 축 불일치로 부트스트랩 컬럼 설명이 영영 미주입).
         overlay_schema = schema
         if str(_dialects.active().name).lower() == "mssql":
-            overlay_schema = (_cfg.get_active_default_db() or schema)
+            # 부트스트랩은 schema_name=database(DB명)로 저장 → cross-DB catalog 경로는 target_db,
+            # primary 경로는 연결 default_db 로 조회(축 정합).
+            overlay_schema = (target_db or _cfg.get_active_default_db() or schema)
         kb_col_desc = load_column_descriptions_for_table(
             overlay_schema, table, scope_key=_cfg.get_active_datasource()
         )
     except Exception:
         kb_col_desc = {}
 
-    parts = [f"## `{schema}`.`{table}` 구조\n"]
+    _hdr = f"`{disp_db}`.`{disp_schema}`.`{table}`" if disp_db else f"`{disp_schema}`.`{table}`"
+    parts = [f"## {_hdr} 구조\n"]
     parts.append("### 컬럼")
     parts.append("| column | type | nullable | key | default | extra | comment |")
     parts.append("|---|---|---|---|---|---|---|")
@@ -883,7 +1110,7 @@ def _tool_describe_table(conn, args: dict) -> str:
                     break
     if has_complex:
         try:
-            sample_sql = _dialects.active().sample(schema, table, 1)
+            sample_sql = _dialects.active().sample(eff_schema, table, 1, db=target_db)
             sample_results, _ = _raw_execute_sql(conn, sample_sql)
             sample_text = _format_result_sets(sample_results, max_rows=1)
             if sample_text:
@@ -892,14 +1119,81 @@ def _tool_describe_table(conn, args: dict) -> str:
         except Exception:
             pass
 
+    # 컬럼 0행 = 객체 미발견. MSSQL 다중 DB 면 다른 catalog 안내(빈 헤더를 "없음"으로 오판·give-up 봉인).
+    _found_cols = any(kind == "rows" and rows for kind, _c, rows in col_results)
+    if not _found_cols and _mssql_active():
+        parts.append(_mssql_crossdb_hint(exclude_db=target_db))
+
+    return "\n".join(parts)
+
+
+_SEARCH_TABLES_DB_CAP = 40  # cross-DB 검색 시 훑는 최대 catalog 수(비용 상한 — 초과분은 명시 안내).
+
+
+def _search_tables_mssql(conn, args: dict, keyword: str) -> str:
+    """MSSQL cross-DB 테이블 검색 (FR-mssql-crossdb-structured-discovery 봉인).
+
+    SQL Server 는 INFORMATION_SCHEMA 가 DB(catalog)별이라, pin 된 primary DB 하나만 훑으면 다른 허용
+    DB 의 객체를 못 찾는다(실존하는데 "검색 결과 없음"→give-up). 대상 DB 미지정 시 **허용된 모든 DB**
+    (freeform 3-part 가 이미 도달하는 범위)를 훑어 DB-qualified 결과를 반환한다. 특정 DB 는 `database`
+    인자로 한정. 보안 경계 불변(유효 허용 DB 만·시스템/내부 DB 제외·per-DB graceful skip)."""
+    target_db, sql_schema, err = _mssql_resolve_catalog(args)
+    if err:
+        return err
+    sys_exclude = " AND ".join(f"t.TABLE_SCHEMA != '{s}'" for s in sorted(_excluded_schemas()))
+    where_schema = f"AND t.TABLE_SCHEMA = '{sql_schema}'" if sql_schema else ""
+    dbs_disp, _dbs_map = _mssql_effective_allow_dbs()
+    if target_db:
+        targets = [target_db]
+    else:
+        # pin 검증 대신 전체 허용 DB 검색. allowlist 비면(접근 0) pin_gate 로 fail-closed.
+        if not dbs_disp:
+            return _mssql_pin_gate() or "검색 가능한 데이터베이스가 없습니다(빈 접근목록)."
+        targets = dbs_disp
+    capped = targets[:_SEARCH_TABLES_DB_CAP]
+    rows_out: list[tuple[str, str, str]] = []
+    for dbi in capped:
+        try:
+            sql = _dialects.active().search_tables(keyword, sys_exclude, where_schema, db=dbi)
+            rs, _ = _raw_execute_sql(conn, sql)
+        except Exception:
+            continue  # per-DB graceful — 접속불가/권한없는 DB 는 건너뛰고 나머지 검색 지속.
+        for kind, _cols, rows in rs:
+            if kind == "rows" and rows:
+                for row in rows:
+                    rows_out.append((dbi, str(row[0]), str(row[1])))
+    parts = [f"## '{keyword}' 검색 결과\n"]
+    if rows_out:
+        parts.append("| database | schema | table |")
+        parts.append("|---|---|---|")
+        for dbi, sch, tbl in rows_out:
+            parts.append(f"| {dbi} | {sch} | {tbl} |")
+        scope = f"'{target_db}' DB" if target_db else f"허용 DB {len(capped)}개"
+        parts.append(f"\n{len(rows_out)} 테이블 검색됨 ({scope}).")
+        parts.append(
+            "\n(조회는 3-part `database.schema.table`(execute_sql) 또는 `database` 인자"
+            "(describe_table 등)로 대상 DB 를 지정하세요. 대부분 사용자 테이블 스키마는 `dbo`.)"
+        )
+    else:
+        parts.append("검색 결과가 없습니다.")
+        parts.append(_mssql_crossdb_hint(exclude_db=target_db))
+    if not target_db and len(targets) > _SEARCH_TABLES_DB_CAP:
+        parts.append(
+            f"\n(참고: 허용 DB {len(targets)}개 중 상위 {_SEARCH_TABLES_DB_CAP}개만 검색했습니다 — "
+            f"나머지는 `database` 인자로 지정해 검색하세요.)"
+        )
     return "\n".join(parts)
 
 
 def _tool_search_tables(conn, args: dict) -> str:
     keyword = _safe_ident(args.get("keyword", ""))
-    schema_filter = _safe_ident(args.get("schema_name", ""))
     if not keyword:
         return "오류: keyword는 필수입니다."
+    # MSSQL: DB(catalog)별 카탈로그라 cross-DB 검색 경로로 분기(다중 DB 발견 봉인).
+    if _mssql_active():
+        return _search_tables_mssql(conn, args, keyword)
+    # ── MySQL / 비활성: information_schema 인스턴스-전역 → 기존 단일-쿼리 경로(동작 0 변경) ──
+    schema_filter = _safe_ident(args.get("schema_name", ""))
     # re-gate(3차) BLOCKER3: schema_filter 없이도 pin 된 DB 전체 테이블명을 열거하므로 pin 검증(무조건).
     pin_err = _mssql_pin_gate()
     if pin_err:
@@ -955,12 +1249,12 @@ def _tool_get_sample_rows(conn, args: dict) -> str:
     schema = _safe_ident(args.get("schema_name", ""))
     table = _safe_ident(args.get("table_name", ""))
     limit = min(max(1, int(args.get("limit", 5))), 20)
-    if not schema or not table:
+    if not table or not (schema or (_mssql_active() and _safe_ident(args.get("database", "")))):
         return "오류: schema_name과 table_name은 필수입니다."
-    err = _struct_schema_access_error(schema)
+    target_db, eff_schema, err = _mssql_struct_target(conn, args, table_for_schema=table)
     if err:
         return err
-    sql = _dialects.active().sample(schema, table, limit)
+    sql = _dialects.active().sample(eff_schema, table, limit, db=target_db)
     try:
         result_sets, elapsed = _raw_execute_sql(conn, sql)
         formatted = _format_result_sets(result_sets, max_rows=limit)
@@ -1300,12 +1594,12 @@ def _tool_explain_query(conn, args: dict) -> str:
 def _tool_get_table_indexes(conn, args: dict) -> str:
     schema = _safe_ident(args.get("schema_name", ""))
     table = _safe_ident(args.get("table_name", ""))
-    if not schema or not table:
+    if not table or not (schema or (_mssql_active() and _safe_ident(args.get("database", "")))):
         return "오류: schema_name과 table_name은 필수입니다."
-    err = _struct_schema_access_error(schema)
+    target_db, eff_schema, err = _mssql_struct_target(conn, args, table_for_schema=table)
     if err:
         return err
-    sql = _dialects.active().table_indexes(schema, table)  # P6: dialect 별 인덱스 조회
+    sql = _dialects.active().table_indexes(eff_schema, table, db=target_db)  # P6: dialect 별 인덱스 조회
     try:
         result_sets, _ = _raw_execute_sql(conn, sql)
         return _format_result_sets(result_sets)
@@ -1316,16 +1610,17 @@ def _tool_get_table_indexes(conn, args: dict) -> str:
 def _tool_get_foreign_keys(conn, args: dict) -> str:
     schema = _safe_ident(args.get("schema_name", ""))
     table = _safe_ident(args.get("table_name", ""))
-    if not schema or not table:
+    if not table or not (schema or (_mssql_active() and _safe_ident(args.get("database", "")))):
         return "오류: schema_name과 table_name은 필수입니다."
-    err = _struct_schema_access_error(schema)
+    target_db, eff_schema, err = _mssql_struct_target(conn, args, table_for_schema=table)
     if err:
         return err
 
     # P6: dialect 별 외래키 조회 (MySQL=information_schema, MSSQL=sys.foreign_keys)
-    outgoing_sql = _dialects.active().foreign_keys_outgoing(schema, table)  # 이 테이블이 참조하는 FK
-    incoming_sql = _dialects.active().foreign_keys_incoming(schema, table)  # 이 테이블을 참조하는 FK
-    parts = [f"## `{schema}`.`{table}` 외래키\n"]
+    outgoing_sql = _dialects.active().foreign_keys_outgoing(eff_schema, table, db=target_db)  # 참조하는 FK
+    incoming_sql = _dialects.active().foreign_keys_incoming(eff_schema, table, db=target_db)  # 참조되는 FK
+    _fk_hdr = f"`{target_db}`.`{eff_schema}`.`{table}`" if target_db else f"`{eff_schema}`.`{table}`"
+    parts = [f"## {_fk_hdr} 외래키\n"]
 
     try:
         out_results, _ = _raw_execute_sql(conn, outgoing_sql)
@@ -1355,14 +1650,17 @@ def _tool_describe_routine(conn, args: dict) -> str:
     """
     schema = _safe_ident(args.get("schema_name", ""))
     name = _safe_ident(args.get("routine_name", ""))
-    if not schema or not name:
+    if not name or not (schema or (_mssql_active() and _safe_ident(args.get("database", "")))):
         return "오류: schema_name과 routine_name은 필수입니다."
-    err = _struct_schema_access_error(schema)
+    # MSSQL: catalog(DB) 지정 시 3-part 로 다른 허용 DB 의 루틴도 조회. 루틴은 스키마-조회 대칭이 없어
+    # default_schema='' → 실스키마 미상이면 dialect 가 ROUTINE_SCHEMA 필터를 생략(이름으로 매칭, 비-dbo 포함).
+    target_db, eff_schema, err = _mssql_struct_target(conn, args, table_for_schema="", default_schema="")
     if err:
         return err
+    schema = eff_schema
 
     # 정의 조회 (컬럼 계약: ROUTINE_NAME, ROUTINE_TYPE, DATA_TYPE, ROUTINE_COMMENT, ROUTINE_DEFINITION)
-    def_sql = _dialects.active().routine_definition(schema, name)
+    def_sql = _dialects.active().routine_definition(schema, name, db=target_db)
     try:
         def_results, _ = _raw_execute_sql(conn, def_sql)
     except Exception as e:
@@ -1372,15 +1670,16 @@ def _tool_describe_routine(conn, args: dict) -> str:
         if kind == "rows" and isinstance(rows, list):
             def_rows.extend(rows)
     if not def_rows:
-        return (
-            f"`{schema}` 스키마에 `{name}` 저장 루틴(프로시저/함수)이 없습니다. "
-            f"이름을 확인하거나 search_tables 로 스키마를 탐색하세요."
-        )
+        _loc = (f"`{target_db}` DB" if target_db else "") + (f" `{schema}` 스키마" if schema else "")
+        msg = f"{_loc or '현재 DB'}에 `{name}` 저장 루틴(프로시저/함수)이 없습니다. 이름을 확인하세요."
+        if _mssql_active():
+            msg += _mssql_crossdb_hint(exclude_db=target_db)
+        return msg
 
     # 파라미터 조회 (1회 — 동일 스키마·이름). 실패는 graceful(정의만 표시).
     prows: list = []
     try:
-        param_sql = _dialects.active().routine_parameters(schema, name)
+        param_sql = _dialects.active().routine_parameters(schema, name, db=target_db)
         param_results, _ = _raw_execute_sql(conn, param_sql)
         for kind, _cols, rows in param_results:
             if kind == "rows" and isinstance(rows, list):
@@ -1395,7 +1694,8 @@ def _tool_describe_routine(conn, args: dict) -> str:
         dtype = str(row[2] or "").strip()
         comment = str(row[3] or "").strip()
         definition = str(row[4] or "").strip()
-        header = f"## `{schema}`.`{name}` ({rtype}"
+        _qual = ".".join(f"`{p}`" for p in (target_db, schema, name) if p)
+        header = f"## {_qual} ({rtype}"
         if dtype:
             header += f" → {dtype}"
         header += ")"
