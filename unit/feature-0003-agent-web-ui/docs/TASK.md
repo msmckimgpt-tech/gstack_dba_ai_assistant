@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260714T180125-graph-ctxmenu-category — 그래프 뷰 '제품 카테고리 밴드' 우클릭을 전용 메뉴로 정합 (Minor §12.3 — feature-0003 프론트 단독, additive. /_template:entry arg-given dispatch)
+
+**사용자 요청**: 그래프 뷰 우클릭 정합 — ① '제품 카테고리 밴드' 우클릭에서 '스키마 클러스터' 우클릭 동작이 나타나는 문제 수정, ② 밴드 우클릭 동작 구성.
+
+**진단**: 카테고리 밴드(CAT:/CATH:/CATX: 합성 노드, graph-category §55 A)의 우클릭은 `node:contextmenu` 로 도달하나, 현행 main 은 `graph-core.js` L2085 에서 `_metaGraphCtxHide()` **stopgap** 으로 메뉴만 숨겼다(주석 "무반응 방지 후속 여지" = 전용 메뉴 미구성). 사용자가 본 "클러스터 메뉴 노출"은 그 stopgap 도입(커밋 2e168614, 그래프 JS 분리) **이전 배포본**의 잔존 동작 — 당시 CAT 특례가 없어 Pixi hit-test 가 밑에 깔린 combo 로 fall-through(`combo:contextmenu` → `_metaGraphCtxForCombo` = 스키마 클러스터 메뉴). 두 증상(클러스터 오노출 · 밴드 전용 메뉴 부재)은 동일 수정으로 해소.
+
+**수정(2 파일, additive)**:
+- `static/graph/graph-ctxmenu.js`: 신규 `_metaGraphCtxForCategory(catKey, x, y)` — 카테고리 전용 메뉴(헤더 배지 '카테고리' + 📋 카테고리 상세 + 접기/펼치기(밴드 `catCollapsed` 토글 + `_metaG6Apply`) + 카테고리명 복사). export 배선.
+- `static/graph/graph-core.js`: L2085 `node:contextmenu` 핸들러의 CAT 분기를 `_metaGraphCtxHide()` → `_metaGraphCtxForCategory(id.replace(/^CAT(H|X)?:/, ""), p.x, p.y)` 라우팅으로 교체. import 배선.
+
+**비변경**: 좌클릭 경로(CATX 토글·CAT/CATH 상세)·밴드 드래그·combo/node/edge/canvas 메뉴·백엔드/RBAC/스키마/엔드포인트 0.
+
+**검증**: `node --check`(ES module) 양 파일 PASS · dispatch/의존심볼 정합 grep 확인.
+
+**잔여**: verify-completion → commit → PR·머지 → web 재배포(deploy_scope: included) → 배포 후 PB-0008 실 Windows 브라우저 라이브 시각검증(밴드 우클릭=카테고리 메뉴 / 클러스터 메뉴 미노출, visual_verification_scope: always). worktree `ai/claude/feature-0003-graph-ctxmenu-category`(base main f44623f3). REV-20260714T180125-graph-ctxmenu-category.
+
+**완료 체크리스트**:
+- [x] 진단 — 카테고리 밴드 우클릭 dispatch 경로 규명(node:contextmenu → hide stopgap / 이전 배포본 combo fall-through)
+- [x] `_metaGraphCtxForCategory` 신설 + graph-core dispatch 라우팅 + import/export 배선
+- [x] `node --check`(module) 양 파일 PASS + dispatch/의존심볼 grep 정합
+- [x] feature 문서(FUNCTION/TASK/MODIFY/REVIEW/REPORT) + test-runs.d fragment
+- [ ] verify-completion PASS → commit → PR·머지
+- [ ] web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 시각검증
+
 ## TASK-20260714T074417-account-subtabs — 프로필 '계정' 탭 하위 세분화(계정/알림/UI/사용 내역) (Minor §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
 
 <!-- APPROACH-APPROVED by mckim on 2026-07-14 (AskUserQuestion: "4탭 (권장) — 계정/알림/UI/사용 내역") -->

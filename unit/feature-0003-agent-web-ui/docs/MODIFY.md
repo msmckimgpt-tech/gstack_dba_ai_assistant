@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260714T180125-graph-ctxmenu-category (TASK-20260714T180125-graph-ctxmenu-category — 그래프 카테고리 밴드 우클릭 전용 메뉴, Minor §12.3 frontend-only additive)
+- Date: 2026-07-14. 그래프 뷰 '제품 카테고리 밴드'(CAT:/CATH:/CATX:) 우클릭을 전용 카테고리 메뉴로 라우팅 — 이전 `_metaGraphCtxHide()` stopgap(및 그 이전 배포본의 combo fall-through "스키마 클러스터 메뉴" 오노출) 대체.
+- `static/graph/graph-ctxmenu.js`: +`_metaGraphCtxForCategory(catKey, x, y)`(헤더 배지 + 카테고리 상세 + 밴드 접기/펼치기 + 카테고리명 복사) + export.
+- `static/graph/graph-core.js`: `node:contextmenu` CAT 분기 `_metaGraphCtxHide()` → `_metaGraphCtxForCategory(String(id).replace(/^CAT(H|X)?:/, ""), p.x, p.y)` + import.
+- 검증: `node --check`(module) 양 파일 PASS · dispatch/의존심볼 grep 정합. POST-DEPLOY PB-0008 라이브 잔여(visual_verification_scope: always).
+
 ## CHG-20260714T080000-account-subtabs-postverify (TASK-20260714T074417-account-subtabs POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-14. 코드/자산 무변경 — TASK.md 체크리스트 완료 + TEST.md POST-DEPLOY 라이브 PASS append + REVIEW postverify. 배포 PR #788→main 53e55bfe, `deploy-web --web-only`(1차 soak false-positive 롤백→재배포 PASS).
 - 라이브 실측 요지(win-browser 실 Windows Chrome, 라이브 53e55bfe): 하위탭 4개·기본 account·각 클릭 시 정확히 1 subpane(알림 체크박스/UI select/사용량 차트/2FA·로그아웃) 노출 assertion 전항목 PASS + 서빙 자산 심볼 확인 + 세그먼트 하위탭 바 시각 렌더(스크린샷).
