@@ -2380,3 +2380,10 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] TP.2 FE `_metaGenericPrefixes`(2~3자·max(4,15%))·`_metaStripGeneric`(잔여 ≥3자) + be: 밴드 id 순 선두 배치(비-be 관계 seriation·misc 후미·§49 안정화 보존 — 세션 중 신규 밴드는 후미, fresh load 시 정상).
 - [x] TP.3 검증 — BE 23(attach cap 가드 포함)+FE 헤드리스 16(user_ 4자 의미 접두 보호 포함)+그래프 전 스위트 무회귀+전체 pytest EXIT=0+라이브 프로브(attached 5,249·잔여 114→26·리포트 3종 분리). §18.8 패널 PASS-WITH-FIXES 전건 반영(REV-20260713T170500).
 - [x] TP.4 완수 — PR #763 머지(469fa20d)·배포·클러스터 pass 재가동(attached 4,843·cap 가드 실동작)·AGE 수렴(T225/R298)·**PB-0008 PASS**(nm:dt_* 가짜 가족 0·be: 95 id순 선두·길드4/퀘스트3/몬스터6+ 연속 인접·기능 오류 0). 리포트 3종 분리(게임 콘텐츠 마스터/캐시포인트 관리/아이템 합성 강화). 상세 test-runs.d/TASK-20260713T1620-content-cluster-p2-postdeploy.md.
+
+## 20260714T0900-cluster-label-target — AI 운영 현황 cluster_label 활동의 datasource 해시 노출 수정 (2026-07-14, 사용자 리포트)
+사용자: "`관리 콘솔 > AI 운영 현황` 내 'cluster_label' 활동에선 각 데이터 소스가 해시 원본값으로 나타남 — 임의 지정 식별자로 나타나게."
+- 진단: `llm_cluster_label` 이 `_record_llm_usage(target=payload.datasource)` 에 **scope_key 해시**(mssql-06656002eda6)를 기록(546건 실측 — 해시 target 은 cluster_label 유일; product_classify 는 이미 사용자 식별자). 사용자 식별자 매핑은 PG `agent_runtime.datasource_health`(scope_key→datasource_label, TASK-0255 R2 스냅샷·18건)에 존재.
+- [x] TL.1 `semantic_cluster._ds_display_label`(datasource_health 조회·fail-soft key 폴백·SAVEPOINT 격리) + `_llm_content_labels` 가 미스 존재 시 1회 해석해 payload.datasource(→ llm_usage.target·LLM 프롬프트 문맥)에 사용. **kv 캐시 ns 는 해시 불변**(캐시 무효화 0).
+- [x] TL.2 테스트 2(해석/폴백·payload 라벨+캐시 ns 불변) — 파일 25 PASS.
+- [ ] TL.3 PR→merge→worker 재빌드(+web 패리티 롤링)→기존 546건 데이터 정정(UPDATE llm_usage target 해시→라벨, 멱등)→패널 표시 확인.

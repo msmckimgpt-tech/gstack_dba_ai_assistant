@@ -244,3 +244,8 @@ source_of_truth: true
 ## REV-20260713T175500-ai-claude-feature-0016-content-cluster-p2-postdeploy [SKIPPED:doc-only-postdeploy] — p2 TP.4 POST-DEPLOY 완수 기록 (코드 무변경)
 - Related Change: TASK TP.4 [x] + test-runs.d fragment. 코드/자산 변경 0 — 배포(469fa20d)·클러스터 재가동(attached 4,843·cap 가드 실동작)·AGE 수렴·PB-0008 PASS(가짜 밴드 소멸·인접 배치·리포트 3종 분리) 실측 기록.
 - Panel skip 사유(§18.8): 코드면은 REV-20260713T170500 [SUBAGENT: PASS-WITH-FIXES] 에서 완료. QA 핸들은 서빙 사본 한정·원복 완료.
+
+## REV-20260714T090500-ai-claude-feature-0016-cluster-label-target [SKIPPED:minor-single-file] — cluster_label target 사용자 식별자화
+- Related Change: CHG-20260714T090500. 단일 파일 표시-정확성 수정(마이그 0·인가 경계 0·LLM 계약 무변 — payload.datasource 는 프롬프트 문맥 필드).
+- Panel skip 사유(§18.8 Minor+1파일): 위험면 = ①캐시 무효화(→ ns 해시 유지로 차단, 테스트 잠금) ②tx 오염(→ SAVEPOINT 격리, 기존 패턴 동형) ③폴백(스냅샷 부재 → key 그대로, 테스트 잠금). 데이터 정정 UPDATE 는 datasource_health join 멱등.
+- Human Approval: deploy_scope: included(전역) — 사용자 리포트 직접 수정.
