@@ -1597,3 +1597,10 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases[0](2026-07-13) items 에 07-13 오후 머지 델타 중 사용자 화면 신규분 7항목 append. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 평이화/비노출: feature-id·§번호·ADR·라이브러리명(PixiJS 등)·테이블/함수명·마이그·내부 표현 비노출(사용자 언어).
 - 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260714T024534-doc-sync-rn-0714. **landing/배포는 cron wrapper 소유(로컬 commit 만).**
+
+## (TASK-20260714T065503-anim-effect-pref, 2026-07-14) 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정 (web/UI, Major §12.3, frontend-only)
+- 프로필 드로어 '계정' 탭에 '화면 효과 > 애니메이션 효과' 설정(`#motionEffectSelect`)을 추가한다. 값 3종: **시스템 설정 따름**(`os`, 기본) / **항상 켬**(`on`) / **항상 끔**(`off`). 저장은 브라우저 localStorage(`mad.motionEffect.v1`) — 서버·마이그·계정 데이터 무관(브라우저별 표시 설정).
+- 계약: 대화 화면의 모션 게이트 `_prefersReducedMotion()`는 이 설정을 우선 반영한다 — `on`=항상 애니메이션(줄이지 않음, OS `prefers-reduced-motion:reduce` 여도 복원)·`off`=항상 최소화·`os`=OS 신호 존중(기존 동작, 미설정 사용자 완전 하위호환). 접근성 기본값(OS 존중)은 보존하되 내부 도구 사용자가 명시적으로 복원할 수 있게 하는 opt-in.
+- 적용 범위(사용자 보고 3종 복원): ① 좌측 대화 전환 크로스페이드(`_beginConversationCrossfade`/`_commitConversationCrossfade`) ② 우측 가이드 뱃지(point rail) 클릭 스크롤(`scrollMessagePointIntoCenter`→`_animatePointScroll`) ③ 날짜 분기선>캘린더 시각 버튼 클릭 스크롤(`jumpToHistoryAnchor`) + 검색 결과 점프(`_jumpToSearchMatchedMessage`). 캘린더·검색 점프는 네이티브 `scrollIntoView({behavior:"smooth"})`(브라우저가 reduce-motion 시 무시)에서 pref-aware `scrollMessagePointIntoCenter`(point-rail 과 동일 EaseOutExpo 경로)로 이관해 `on` 시 OS 설정과 무관하게 부드럽게 동작한다.
+- 배경: 세 애니가 `prefers-reduced-motion: reduce` 매칭 시 통째로 즉시(instant)로 degrade. Windows 에서 이 미디어쿼리는 "동작 줄이기"가 아니라 설정>접근성>시각 효과>애니메이션 효과·배터리 절약 모드에 매핑 → 사용자 미인지 상태로 "갑자기" 발동 가능(코드/배포는 정상).
+- `<html data-motion="os|on|off">` 속성을 init 및 변경 시 반영(향후 순수 CSS 애니메이션의 pref 참조 확장 지점). 코드 거주: `static/app.js`·`static/index.html`·`static/styles.css`. CHG/REV-20260714T065503-anim-effect-pref.

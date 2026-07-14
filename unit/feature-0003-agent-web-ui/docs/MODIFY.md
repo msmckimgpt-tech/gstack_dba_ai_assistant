@@ -11,6 +11,16 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260714T065503-anim-effect-pref (TASK-20260714T065503-anim-effect-pref — 작업 화면 애니메이션 복원 + 인앱 "애니메이션 효과" 설정, Major §12.3, frontend-only)
+- Date: 2026-07-14. `/_template:entry` arg-given. 스키마/마이그/RBAC/엔드포인트/서버 계약 0 — 프론트 단독·비파괴.
+- 근본원인: 사용자 보고 3종 애니(대화 전환 크로스페이드·point-rail 뱃지 스크롤·캘린더 버튼 스크롤)가 `prefers-reduced-motion: reduce` 매칭 시 통째로 즉시(instant)로 degrade. 코드/배포는 정상(소스 애니 증가·배포 byte-동일). Windows 에서 이 미디어쿼리는 "동작 줄이기"가 아니라 설정>접근성>시각 효과>애니메이션 효과·배터리 절약 모드에 매핑 → 사용자 미인지 상태로 "최근 갑자기" 발동 가능.
+- 변경:
+  - `static/app.js`: `_prefersReducedMotion()` 을 pref-aware 로 개편 — 신규 `MOTION_PREF_KEY="mad.motionEffect.v1"`(localStorage `os`/`on`/`off`)·`getMotionPref`/`setMotionPref`/`applyMotionPref`(`<html data-motion>` 반영)/`_osPrefersReducedMotion`. `on`=항상 애니(줄임 안 함)·`off`=항상 줄임·`os`=OS 신호(기본, 하위호환). 캘린더 `jumpToHistoryAnchor`·검색 `_jumpToSearchMatchedMessage` 의 네이티브 `scrollIntoView({behavior:"smooth",block:"center"})` → pref-aware `scrollMessagePointIntoCenter`(point-rail 과 동일 EaseOutExpo 경로)로 라우팅 → `on` 이면 OS reduce-motion 에서도 부드럽게 이동. `renderMotionPref()` 신규 + 계정 탭 렌더/change 리스너/`initialize()` 의 `applyMotionPref()` 배선.
+  - `static/index.html`: 프로필 드로어 '계정' 탭에 '화면 효과 > 애니메이션 효과' select(`#motionEffectSelect`, 시스템 설정 따름/항상 켬/항상 끔) `profile-section#profileMotionSection` 추가.
+  - `static/styles.css`: `.profile-select-row`/`.profile-motion-select` 정합 스타일(toggle-row 시각 정합).
+- 검증: `node --check app.js` PASS · 심볼/배선 확인 · 잔여 네이티브 smooth-into-center `scrollIntoView({behavior:"smooth"})` 0건 · `os` 기본값 하위호환(회귀 표면 0). §18.8 적대 서브에이전트 리뷰(REVIEW). POST-DEPLOY PB-0008 라이브 시각검증(TEST §Run 2026-07-14 anim-effect-pref).
+- Cross-ref: TASK-20260714T065503-anim-effect-pref · REV-20260714T065503-anim-effect-pref · TEST Run(2026-07-14) anim-effect-pref · ANCHOR 0003 무충돌.
+
 ## CHG-20260713T101500-ds-conn-test-postverify (TASK-20260713T094624-ds-conn-test POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-13. 코드/자산 무변경 — test-runs.d/20260713T094624-ds-conn-test.md 에 POST-DEPLOY 라이브 PASS append + TASK.md 체크리스트 완료 + REVIEW postverify 엔트리. 배포 PR #767→main 02a1e585, `make deploy-web` 무중단 롤링(soak PASS).
 - 라이브 실측 요지(https://localhost/ bootstrap_admin, win-browser relay Chrome): AC-1 15 DS 배지 전부 `<button.product-dropup-item-ds--test>`·AC-2 클릭→"✓ 연결 성공(11.8ms)" 상단 토스트(top 66px·입력창 비가림)·AC-4 제품 미전환·AC-5 프론트 쿨다운 발화·AC-6 admin 토스트 하단 불변·AC-7 pageerror 0.
