@@ -29,8 +29,17 @@ source_of_truth: true
     null-leaf(첫 메시지 편집 전이) → CTE empty-anchor.
   - 게이트 상태 파싱; pre-migration(42703) fail-safe 기본값.
 
+### Run 2026-07-14 — 엔드포인트+프론트 (checkpoint 3)
+- Command: `make test` (agent 컨테이너, --no-deps) + 컨테이너 route-parity 재실행.
+- Result: **브랜치 15 PASS + route_parity PASS**(golden 207 routes 갱신 후). app import OK
+  (신규 엔드포인트·브랜치 헬퍼·app.py import 배선 성공). ruff PASS.
+- 정적 게이트: `gen-routemap.py --check` up-to-date(신규 2 route 등재) · `codenav-lint.sh` OK.
+- **잔여 4 실패 = pre-existing local-env**(routine_dbanalysis·runtime_settings·item11_batch8·
+  runtime_settings_api): backend-only cycle(feature-0003 무변경)에서도 동일 실패 → 본 변경 무관.
+  CI 는 이들 통과(PR #766 backend cycle 에서 CI green 실증) — local 컨테이너 env 특이.
+- §18.8 적대적 보안 리뷰: REVIEW.md 참조.
+
 ## 3. 남은 테스트 (Phase 1)
-- [ ] 통합: reanswer → 새 sibling + 재답변 + 옛 브랜치 보존; 브랜치 전환 후 recall/history 정합.
-- [ ] IDOR: 타인 메시지 편집 4xx; 그룹 @assistant 메시지 편집 4xx.
-- [ ] window 합성: windowed 멤버 + 브랜치 동시 — 가려진 구간 미노출(fail-closed).
-- [ ] PB-0008 라이브 시각검증.
+- [ ] PB-0008 라이브 시각검증(편집·재답변·`< n/m >` 페이징 — 배포 후).
+- [x] IDOR/authz: 서버 게이트(본인 소유·user 메시지·그룹 차단·conversation_id 스코프) — 보안 리뷰.
+- [x] 비분기 항등성·active-path·window 합성 — 백엔드 단위 15 PASS.

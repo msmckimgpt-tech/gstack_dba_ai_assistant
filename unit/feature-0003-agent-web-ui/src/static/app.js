@@ -3886,6 +3886,133 @@ async function _submitFixWithAi(message) {
     showToast((error && error.message) || "수정 요청에 실패했습니다.", true);
   }
 }
+
+// ── feature-0019 message-editing: 자신이 보낸 메시지 수정 + ChatGPT식 버전 페이징 ──────
+// Phase 1 = 1:1 본인 대화 전용(그룹은 Phase 2). 서버 authz(본인 소유·user 메시지)와 동일 게이트.
+function _canEditMessage(message, role) {
+  const conv = currentConversation();
+  return role === "user"
+    && Boolean(message) && message.id != null
+    && !isGroupConversation(conv)     // Phase 1 = 1:1 (그룹 편집은 Phase 2)
+    && isOwnConversation(conv)        // 본인 대화
+    && can("conversation.ask");
+}
+
+async function _submitMessageEdit(cid, mid, mode, newContent) {
+  return apiFetch(
+    `/api/conversations/${encodeURIComponent(cid)}/messages/${encodeURIComponent(mid)}/edit`,
+    { method: "POST", body: JSON.stringify({ mode, new_content: newContent }) },
+  );
+}
+
+async function _switchBranch(cid, targetId) {
+  return apiFetch(
+    `/api/conversations/${encodeURIComponent(cid)}/branch/switch`,
+    { method: "POST", body: JSON.stringify({ message_id: targetId }) },
+  );
+}
+
+// 말풍선 내용을 인라인 편집 UI 로 교체 — textarea + [단순 수정 / 요청사항 수정 / 취소].
+function _startInlineEdit(message, bubbleEl) {
+  const cid = state.activeConversationId;
+  if (!cid || message.id == null) return;
+  const editor = document.createElement("div");
+  editor.className = "message-edit-box";
+  const ta = document.createElement("textarea");
+  ta.className = "message-edit-textarea";
+  ta.value = String(message.content || "");
+  ta.rows = Math.min(12, Math.max(2, String(message.content || "").split("\n").length + 1));
+  editor.appendChild(ta);
+  const btnRow = document.createElement("div");
+  btnRow.className = "message-edit-actions";
+  const reBtn = document.createElement("button");
+  reBtn.type = "button";
+  reBtn.className = "message-edit-btn message-edit-reanswer";
+  reBtn.textContent = "요청사항 수정 (재답변)";
+  reBtn.title = "수정한 내용으로 새 답변을 생성합니다. 이전 답변은 < n/m > 페이징으로 조회할 수 있습니다.";
+  const simpleBtn = document.createElement("button");
+  simpleBtn.type = "button";
+  simpleBtn.className = "message-edit-btn message-edit-simple";
+  simpleBtn.textContent = "단순 수정";
+  simpleBtn.title = "재답변 없이 이 메시지 내용만 수정합니다.";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "message-edit-btn message-edit-cancel";
+  cancelBtn.textContent = "취소";
+  cancelBtn.addEventListener("click", () => renderMessages());
+  async function _doEdit(mode) {
+    const nc = ta.value.trim();
+    if (!nc) { showToast("수정할 내용을 입력하세요.", true); return; }
+    reBtn.disabled = simpleBtn.disabled = cancelBtn.disabled = true;
+    showToast(mode === "reanswer" ? "재답변 중…" : "메시지 수정 중…");
+    try {
+      const payload = await _submitMessageEdit(cid, message.id, mode, nc);
+      if (mode === "reanswer" && payload && String(payload.error || "").trim()) {
+        showToast(`재답변 실패: ${payload.error}`, true);
+      } else {
+        showToast(mode === "reanswer" ? "재답변을 추가했습니다." : "메시지를 수정했습니다.");
+      }
+      await refreshWorkspace(String((payload && payload.conversation_id) || cid));
+    } catch (e) {
+      showToast((e && e.message) || "수정에 실패했습니다.", true);
+      reBtn.disabled = simpleBtn.disabled = cancelBtn.disabled = false;
+    }
+  }
+  reBtn.addEventListener("click", () => _doEdit("reanswer"));
+  simpleBtn.addEventListener("click", () => _doEdit("simple"));
+  btnRow.appendChild(reBtn);
+  btnRow.appendChild(simpleBtn);
+  btnRow.appendChild(cancelBtn);
+  editor.appendChild(btnRow);
+  bubbleEl.innerHTML = "";
+  bubbleEl.appendChild(editor);
+  try { ta.focus(); } catch (_e) {}
+}
+
+// ChatGPT식 버전 페이징 — 편집된 메시지의 다른 버전(형제 브랜치)으로 전환.
+async function _pageBranch(message, direction) {
+  const cid = state.activeConversationId;
+  const sibs = Array.isArray(message.sibling_ids) ? message.sibling_ids : [];
+  const cur = Number(message.version_number || 1);
+  const nextIdx = (cur - 1) + direction;
+  if (!cid || nextIdx < 0 || nextIdx >= sibs.length) return;
+  showToast("버전 전환 중…");
+  try {
+    await _switchBranch(cid, sibs[nextIdx]);
+    await refreshWorkspace(cid);
+  } catch (e) {
+    showToast((e && e.message) || "버전 전환에 실패했습니다.", true);
+  }
+}
+
+function _buildBranchPager(message) {
+  const pager = document.createElement("div");
+  pager.className = "message-branch-pager";
+  const cur = Number(message.version_number || 1);
+  const total = Number(message.version_count || 1);
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "branch-pager-btn branch-pager-prev";
+  prev.textContent = "‹";
+  prev.disabled = cur <= 1;
+  prev.title = "이전 버전";
+  prev.addEventListener("click", (ev) => { ev.stopPropagation(); _pageBranch(message, -1); });
+  const label = document.createElement("span");
+  label.className = "branch-pager-label";
+  label.textContent = `${cur} / ${total}`;
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "branch-pager-btn branch-pager-next";
+  next.textContent = "›";
+  next.disabled = cur >= total;
+  next.title = "다음 버전";
+  next.addEventListener("click", (ev) => { ev.stopPropagation(); _pageBranch(message, 1); });
+  pager.appendChild(prev);
+  pager.appendChild(label);
+  pager.appendChild(next);
+  return pager;
+}
+
 // ITEM-03 / share-visibility-window: sample-feedback POST 를 모듈 레벨로 추출해 재사용.
 // 투표(👍/👎) 경로와 ☰ 메뉴 '샘플 등록'(suggested=true) 이 동일 endpoint/바디로 호출한다.
 // 요청 바디는 기존 send() 인라인 호출과 byte-for-byte 동일(중복 부여 방지 uniqueness key 포함).
@@ -4194,6 +4321,41 @@ function renderMessages() {
         actions.appendChild(menuTrigger);
       }
       bubble.appendChild(actions);
+    }
+
+    // feature-0019 message-editing: user 메시지 편집 어포던스 + ChatGPT식 버전 페이징.
+    //   - 편집됨 배지: meta.edited (단순 수정 결과).
+    //   - 버전 페이저 < n / m >: version_count>1 (서버 /api/history 가 부착).
+    //   - 수정 버튼: 1:1 본인 대화 + user 메시지(_canEditMessage). 그룹은 Phase 2.
+    if (role === "user") {
+      if (message.meta && message.meta.edited) {
+        const editedBadge = document.createElement("span");
+        editedBadge.className = "message-edited-badge";
+        editedBadge.textContent = "(편집됨)";
+        editedBadge.title = "이 메시지는 수정되었습니다.";
+        meta.appendChild(editedBadge);
+      }
+      // 버전 페이저 < n / m > 는 항상 노출(ChatGPT식 상시 네비게이션).
+      if (Number(message.version_count || 0) > 1) {
+        bubble.appendChild(_buildBranchPager(message));
+      }
+      // 수정 버튼은 hover 액션(다른 말풍선 액션과 동형).
+      if (_canEditMessage(message, role)) {
+        const uActions = document.createElement("div");
+        uActions.className = "message-actions message-user-actions";
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "message-action-btn message-edit-trigger";
+        editBtn.textContent = "수정";
+        editBtn.title = "이 메시지를 수정합니다 (단순 수정 / 요청사항 수정)";
+        editBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          _startInlineEdit(message, bubble);
+        });
+        uActions.appendChild(editBtn);
+        bubble.appendChild(uActions);
+      }
     }
 
     // TASK-0061 Phase 4 (REQ-20260515-0006 / AC-0084): stable anchor id 부여 (rail / calendar 점프용).

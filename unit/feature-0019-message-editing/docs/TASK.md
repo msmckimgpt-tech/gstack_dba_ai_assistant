@@ -38,14 +38,14 @@ source_of_truth: true
 
 ## 3. Task Queue (Phase 1 — 1:1)
 - [x] TASK-P1-0 요구·설계 정립(FUNCTION·DESIGN·ANCHOR, PLAN-APPROVED)
-- [ ] TASK-P1-1 마이그레이션: core_messages/core_conversations 브랜치 컬럼 + schema.sql + MySQL parity
-- [ ] TASK-P1-2 코어 recall 로더 active-path CTE(has_branches 게이트 + window 합성)
-- [ ] TASK-P1-3 쓰기 경로(save_core_message/messages writer parent·branch 인자 + active_leaf 전진)
-- [ ] TASK-P1-4 엔드포인트 edit(simple/reanswer) + branch/switch + /api/history 확장
-- [ ] TASK-P1-5 프론트 편집 UI + `< n/m >` 페이징 + renderMessages 브랜치 렌더
-- [ ] TASK-P1-6 단위테스트(비분기 항등성·브랜치 전환·edit authz·window 합성)
+- [x] TASK-P1-1 마이그레이션 0041(core/display 브랜치 컬럼 + schema.sql) — **merged PR #766**
+- [x] TASK-P1-2 코어 recall 로더 active-path CTE(has_branches 게이트 + window 합성) — merged
+- [x] TASK-P1-3 쓰기 경로(core save_core_message/_save_message + display save_memory_message 체이닝) — merged
+- [x] TASK-P1-4 엔드포인트 edit(simple/reanswer) + branch/switch + /api/history active-path+버전 메타
+- [x] TASK-P1-5 프론트 편집 UI(수정 버튼·인라인 모드 선택) + `< n/m >` 페이징 + renderMessages 브랜치 렌더
+- [x] TASK-P1-6 단위테스트(비분기 항등성·active-path·window 합성 — 백엔드 15 PASS) + ROUTEMAP/codenav 게이트
 - [ ] TASK-P1-7 verify-completion + 적대적 보안 리뷰(§18.8) + PB-0008 시각검증
-- [ ] TASK-P1-8 배포(deploy_scope: included) + POST-DEPLOY PB-0008
+- [ ] TASK-P1-8 배포(deploy_scope: included, 마이그 0041 적용) + POST-DEPLOY PB-0008
 
 ## 4. In Progress
 - TASK-P1-1 마이그레이션

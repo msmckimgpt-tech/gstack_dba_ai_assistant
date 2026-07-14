@@ -63,3 +63,18 @@ source_of_truth: true
   MAX_MIGRATION 마커(0040) 불일치를 적발 → PR #766 CI red. 신규 마이그레이션 추가 시 이 마커도
   함께 갱신해야 함(verify-completion·make test 는 검사 안 하는 CI 전용 게이트). 코드/스키마 무변경.
 - 검증: migrate-lint --self-test PASS + --heads PASS(head 0041 단일·번호중복 0·MAX_MIGRATION 일치).
+
+## CHG-20260714-0004 (Phase 1 checkpoint 3 — 엔드포인트 + 프론트, 편집 기능 활성화)
+- feature-0003-agent-web-ui:
+  - `routers/conversations.py`: `post_edit_message`(POST …/messages/{mid}/edit, simple/reanswer)·
+    `post_branch_switch`(POST …/branch/switch) 신규.
+  - `routers/_conv_store.py`: 브랜치 오케스트레이션 블록(9 함수) + `_get_history` 브랜치 필터/버전 메타.
+  - `app.py`: 브랜치 헬퍼 7종 import(app.* 노출).
+  - `static/app.js`: 편집/페이징 로직(`_canEditMessage`·`_startInlineEdit`·`_pageBranch`·
+    `_buildBranchPager`·`_submitMessageEdit`·`_switchBranch`) + renderMessages user 컨트롤.
+  - `static/styles.css`: 편집 박스·버전 페이저·편집됨 배지 스타일.
+  - `tests/route_snapshot_p5b.json`: route-parity golden 갱신(신규 2 route, 205→207).
+  - `docs/ROUTEMAP.md`: 재생성(202 routes, 신규 2 등재).
+- 성격: 편집 기능을 실제 활성화(has_branches true 경로 생성). 비분기 대화는 여전히 기존 경로(무회귀).
+- 검증: ROUTEMAP·codenav 게이트 PASS + make test import OK(브랜치 15 + route-parity PASS) + §18.8 보안 리뷰.
+- 결정: DEC-6(edit 재사용 = fix-with-ai 재dispatch 패턴)·DEC-7(Phase 1 그룹 편집 차단, 서버 authz + UI 게이트).

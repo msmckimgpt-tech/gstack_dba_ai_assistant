@@ -1450,6 +1450,159 @@ async def post_fix_with_ai(cid: str, request: Request) -> JSONResponse:
     internal_req = app._make_internal_ask_request(request, ask_body)
     return await ask(internal_req)  # feature-0012 P5b: 동일 모듈 내 ask (cross-call)
 
+
+@router.post("/api/conversations/{cid}/messages/{mid}/edit")
+async def post_edit_message(cid: str, mid: int, request: Request) -> JSONResponse:
+    """feature-0019 메시지 편집 — 자신이 보낸 user 메시지를 수정.
+
+    body: {mode: 'simple'|'reanswer', new_content: str}.
+      - simple   : 제자리 내용 갱신('편집됨' 표식), 재답변 없음, 하위 불변.
+      - reanswer : 편집 지점에서 새 브랜치 + /api/ask 재dispatch(형제 버전, ChatGPT식 분기).
+    Phase 1 = 1:1 전용(그룹 편집은 Phase 2). authz = 대화 접근 + ask 권한 + 본인 소유(IDOR) + user 메시지.
+    가드 순서 = fix-with-ai 동형.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        return app._json_error("invalid body", 400)
+    mode = str(data.get("mode") or "").strip()
+    new_content = str(data.get("new_content") or "")
+    if mode not in ("simple", "reanswer"):
+        return app._json_error("mode 는 simple 또는 reanswer 여야 합니다.", 400)
+    if not new_content.strip():
+        return app._json_error("수정할 내용이 비어 있습니다.", 400)
+    if len(new_content) > 100_000:
+        return app._json_error("입력이 너무 깁니다.", 400)
+
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        if not app._account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        if not app._account_has_permission(account, "conversation.ask"):
+            return app._json_error("이 대화에 발화(질의) 권한이 없습니다.", 403)
+        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._FIX_WITH_AI_RATE_PER_MIN):
+            return app._json_error("요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        # Phase 1 = 1:1 전용. 그룹 대화 편집(단순 수정 + @assistant 잠금)은 Phase 2.
+        if app._conversation_is_group(cid):
+            return app._json_error("그룹 대화 메시지 편집은 준비 중입니다.", 400)
+        # IDOR: 본인 소유 대화만(1:1 은 owner = 발신자).
+        if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
+            return app._json_error("본인이 보낸 메시지만 수정할 수 있습니다.", 403)
+        # 편집 대상 로드 + user 메시지 검증.
+        from shared.db import _pg_connect
+        _pg = _pg_connect()
+        try:
+            disp = app._branch_get_display_message(_pg, cid, mid)
+        finally:
+            _pg.close()
+        if not disp:
+            return app._json_error("메시지를 찾을 수 없습니다.", 404)
+        if str(disp.get("role") or "").lower() != "user":
+            return app._json_error("assistant 메시지는 수정할 수 없습니다.", 400)
+        # best-effort audit (편집 트리거 기록).
+        try:
+            app.record_audit_event(
+                conn, actor=app._build_actor_from_request(request, account, actor_type="account"),
+                action="conversation.message_edit", resource_type="conversation", resource_id=str(cid),
+                change_json={"conversation_id": cid, "message_id": int(mid), "mode": mode},
+            )
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        conn.close()
+
+    if mode == "simple":
+        try:
+            app._branch_simple_edit(cid, disp, new_content)
+        except Exception:
+            logging.getLogger(__name__).warning("branch simple edit failed (cid=%s mid=%s)", cid, mid, exc_info=True)
+            return app._json_error("수정 처리 중 오류가 발생했습니다.", 500)
+        return JSONResponse({"ok": True, "mode": "simple", "message_id": int(mid)})
+
+    # reanswer: 브랜치 준비(active_leaf = M.parent) 후 동일 conversation_id 로 /api/ask 재dispatch.
+    #   워커가 새 user 메시지(M 형제)+답변을 활성 브랜치에 체인(feature-0002 검증된 write 경로).
+    try:
+        _prior = app._branch_reanswer_setup(cid, disp)
+    except Exception:
+        logging.getLogger(__name__).warning("branch reanswer setup failed (cid=%s mid=%s)", cid, mid, exc_info=True)
+        return app._json_error("재답변 준비 중 오류가 발생했습니다.", 500)
+    ask_body = {"message": new_content, "conversation_id": cid}
+    internal_req = app._make_internal_ask_request(request, ask_body)
+    try:
+        return await ask(internal_req)
+    except Exception:
+        # /api/ask 재dispatch 가 raise(워커 오류·disconnect 등) → active_leaf 가 M.parent 에 고착돼
+        # 대화 tail 이 사라지므로 편집 직전 상태로 보상 복원(SEC MAJOR #2). error 결과(예외 아님)는
+        # 새 user 메시지가 저장돼 active_leaf 전진 → tail 소실 없음(복원 불요).
+        app._branch_restore_state(cid, _prior)
+        logging.getLogger(__name__).warning("reanswer ask dispatch raised (cid=%s mid=%s)", cid, mid, exc_info=True)
+        return app._json_error("재답변 생성에 실패했습니다. 잠시 후 다시 시도하세요.", 500)
+
+
+@router.post("/api/conversations/{cid}/branch/switch")
+async def post_branch_switch(cid: str, request: Request) -> JSONResponse:
+    """feature-0019 브랜치 전환(페이징) — 편집된 메시지의 다른 버전으로 활성 브랜치 이동.
+
+    body: {message_id: int} — 전환할 버전(표시 user 메시지 id). 두 store 의 active_leaf 를 그
+    브랜치 leaf 로 이동한다(화면·LLM recall 정합). Phase 1 = 1:1 전용, 본인 소유.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        return app._json_error("invalid body", 400)
+    try:
+        target_id = int(data.get("message_id"))
+    except Exception:
+        return app._json_error("message_id(정수)가 필요합니다.", 400)
+
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        if not app._account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        if app._conversation_is_group(cid):
+            return app._json_error("그룹 대화는 브랜치 전환을 지원하지 않습니다.", 400)
+        if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
+            return app._json_error("본인 대화만 전환할 수 있습니다.", 403)
+        # SEC MINOR-C: 재귀 CTE(_branch_leaf_of/_branch_active_display_ids) 무제한 유발 방지(edit 과 동일 버킷).
+        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._FIX_WITH_AI_RATE_PER_MIN):
+            return app._json_error("요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+    finally:
+        conn.close()
+
+    try:
+        ok = app._branch_switch(cid, target_id)
+    except Exception:
+        logging.getLogger(__name__).warning("branch switch failed (cid=%s mid=%s)", cid, target_id, exc_info=True)
+        return app._json_error("브랜치 전환 중 오류가 발생했습니다.", 500)
+    if not ok:
+        return app._json_error("전환할 버전을 찾을 수 없습니다.", 404)
+    return JSONResponse({"ok": True, "active_version_id": int(target_id)})
+
+
 @router.get("/api/conversations/{cid}/shares")
 def list_conversation_shares(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
     """해당 대화의 share 목록 (활성 + revoked 모두). 조회 권한: read.own/any."""

@@ -30,3 +30,25 @@ source_of_truth: true
   엔드포인트 라이브(Phase 1 완료) 시점에 발생 → §18.8 적대 패널 그때 수행(REV-0001 과 통합).
 - Risks: display 쓰기 choke-point(memory.save_memory_message) 변경 → 미분기 항등 단위테스트로 가드.
 - Human Approval: PLAN-APPROVED 유효(2026-07-13). 배포 별도.
+
+## REV-20260714-0003 [SUBAGENT:message-edit-security] SHIP-WITH-FIXES
+- Related Change: CHG-20260714-0004 (편집/브랜치 HTTP 엔드포인트 + 오케스트레이션, Phase 1 활성화).
+- Scope: `post_edit_message`·`post_branch_switch`·`_branch_*` 헬퍼 10종·`_get_history` 브랜치 필터.
+- 적대적 보안 리뷰(security subagent) — IDOR/authz/SQL 인젝션/데이터 누출/원자성 항목별 판정.
+- **결함 없음 확인**: IDOR(cross-conversation mid/target 주입 — `_branch_get_display_message` 가
+  `WHERE conversation_id AND id` 로 스코프, owner 게이트) · branch/switch authz · SQL 인젝션(전 값
+  파라미터화, `_branch_leaf_of` table 하드코딩) · `_get_history` 콘텐츠 누출(window ∧ active-branch
+  합성, 브랜치 대화 core fallback 차단).
+- **MAJOR #1 [FIXED]** display→core 매핑: created_at 근접매칭이 동일-초 tie 시 무관 core 메시지를
+  덮어써 display/core 발산 → **결정적 서수(ordinal) 매핑**으로 교체(`_branch_map_display_user_to_core`,
+  1:1 user 메시지 strict 1:1 → exact). commit 51c79f→본 cycle.
+- **MAJOR #2 [FIXED]** reanswer 2단계 비원자성: `/api/ask` 재dispatch raise 시 active_leaf 가 M.parent
+  고착 → 대화 tail 소실 → **편집 직전 상태 캡처(`_branch_reanswer_setup` 반환) + 실패 시 보상 복원
+  (`_branch_restore_state`)**. 엔드포인트 try/except 배선.
+- **MINOR [FIXED]**: (B) 브랜치 필터/버전 메타를 `not _conversation_is_group` 로 게이트(그룹 승격 시
+  비활성 버전 id 노출·타 멤버 은닉 방지) · (C) branch/switch rate-limit 추가 · (관찰) `_branch_leaf_of`
+  table allowlist assert.
+- **MINOR-A [수용]**: authorship 미검증은 `is_group` 영구 플래그(join 시 set·해제 불가) + 편집 PG-write
+  가 PG-down 시 함께 실패 → 실전 악용 창 없음. 정본 = 소유 게이트.
+- 재검증: AST OK · app import OK · route-parity(207) + 브랜치 15 = 16 PASS.
+- Human Approval: PLAN-APPROVED(2026-07-13). 배포는 마이그 0041 적용 + PB-0008 후.

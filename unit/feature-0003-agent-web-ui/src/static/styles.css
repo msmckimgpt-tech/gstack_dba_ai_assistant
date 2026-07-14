@@ -8628,3 +8628,37 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: color-mix(in srgb, var(--primary) 8%, transparent);
 }
 .admin-meta-ai-btn:disabled { opacity: .6; cursor: progress; }
+
+/* ═══ feature-0019 message-editing: 메시지 편집 UI + ChatGPT식 버전 페이징 ═══════ */
+.message-edit-box { display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
+.message-edit-textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px;
+  padding: 8px 10px; border: 1px solid var(--primary); border-radius: 10px;
+  font: inherit; font-size: 14px; line-height: 1.5; background: var(--surface); color: inherit;
+}
+.message-edit-textarea:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; }
+.message-edit-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.message-edit-btn {
+  font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2, #555);
+  cursor: pointer; transition: background .12s, color .12s, border-color .12s, opacity .12s;
+}
+.message-edit-btn:disabled { opacity: .55; cursor: default; }
+.message-edit-btn.message-edit-reanswer { background: var(--primary); border-color: var(--primary); color: #fff; }
+.message-edit-btn.message-edit-reanswer:hover:not(:disabled) { background: var(--primary-dark); }
+.message-edit-btn.message-edit-simple:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.message-edit-btn.message-edit-cancel { color: var(--text-muted); }
+
+.message-edited-badge { margin-left: 6px; font-size: 11px; color: var(--text-muted); font-style: italic; }
+
+.message-branch-pager { display: inline-flex; align-items: center; gap: 2px; margin-top: 6px; user-select: none; }
+.message.is-user .message-branch-pager { align-self: flex-end; }
+.branch-pager-btn {
+  font-size: 13px; line-height: 1; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2, #555);
+  cursor: pointer; transition: background .12s, color .12s, border-color .12s, opacity .12s;
+}
+.branch-pager-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.branch-pager-btn:disabled { opacity: .4; cursor: default; }
+.branch-pager-label { font-size: 11px; color: var(--text-muted); padding: 0 4px; font-variant-numeric: tabular-nums; }

@@ -3236,6 +3236,15 @@ from routers._conv_store import (  # noqa: E402
     _copy_conversation_attachments,
     _fork_conversation_impl,
     _materialize_assistant_attachment_edits,
+    # feature-0019 message-editing — 브랜치 오케스트레이션
+    _branch_get_display_message,
+    _branch_reanswer_setup,
+    _branch_restore_state,
+    _branch_simple_edit,
+    _branch_switch,
+    _branch_display_state,
+    _branch_active_display_ids,
+    _branch_version_groups,
 )
 # ITEM-10 routers-p7: 라우터·테스트 참조 보존 (record_audit_event 는 app 정의 유지 — setattr 12× 패치-단일점).
 from routers._audit_infra import (  # noqa: E402

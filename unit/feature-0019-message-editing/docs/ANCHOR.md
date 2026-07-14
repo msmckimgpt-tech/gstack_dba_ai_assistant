@@ -36,5 +36,4 @@ LLM 문맥 recall 이 대화 전체를 native 메시지로 주입하고(§14 dat
   (cross-store 시각 cut 불필요 — fork F1 회피). bridge 는 created_at 유지.
 
 ## §4. 외부 검증 로그 (append-only)
-- (대기) §18.8 적대적 보안 리뷰(security) — edit IDOR / window 합성 / @assistant 잠금.
-- (대기) PB-0008 실 Windows 브라우저 시각검증.
+(엔트리 없음 — §18.8 적대적 보안 리뷰(REV-20260714-0003 [SUBAGENT] SHIP-WITH-FIXES)·PB-0008 시각검증 기록은 REVIEW.md/TEST.md. 본 §4 는 major 외부 검증 챌린지 전용, feature-0009 §4 규약 답습.)
