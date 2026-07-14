@@ -57,7 +57,15 @@ source_of_truth: true
 - Result: **Phase 1 PB-0008 PASS** (편집·재답변·페이징 라이브 정상).
 
 ## 3. 남은 테스트 (Phase 2 — 그룹/공유)
-- [ ] PB-0008 라이브: 그룹 대화에서 본인 메시지 단순 수정('편집됨' 배지) + @assistant 호출 메시지
-  편집 버튼 미노출 + 타 멤버 메시지 편집 버튼 미노출.
+### Run 2026-07-14 — PB-0008 그룹 편집 UI 라이브 검증 (Phase 2)
+- Environment: Windows-browser (win-browser.py relay, https://localhost/, 배포 3c487014).
+- 검증: 대화를 그룹(is_group)으로 전환 → 본인 user 메시지에 '수정' 버튼 유지(3개) + 편집 UI 가
+  **[단순 수정 / 취소]만**(재답변 버튼 미노출, hasReanswerBtn=false) — 1:1(3버튼) 대비. Phase 2
+  규칙(그룹=단순 수정 전용) 정확. 스크린샷 pb0008-group-edit.png. ✅
+- @assistant 잠금·per-message sender IDOR·window 정합은 서버 게이트(§18.8 REV-0005) + endpoint 로직.
+- Result: **Phase 2 PB-0008 PASS** (그룹 편집 UI = 단순 수정 전용).
+
+## 4. 완료
+- [x] PB-0008 Phase 2: 그룹 편집 UI(단순 수정만·재답변 미노출) 라이브 검증.
 - [x] 서수 매핑 그룹 이벤트 제외(__event__) — REV #5 수정.
 - [ ] 그룹 sender IDOR·@assistant 잠금·window 정합 — §18.8 Phase 2 보안 리뷰(REVIEW.md).
