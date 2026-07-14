@@ -53,14 +53,12 @@ const sideBlk = appJs.slice(
 );
 ok("[2] 사이드 패널: 재렌더 전 _snapshotStepResultScroll 호출",
    /const\s+\w+\s*=\s*_snapshotStepResultScroll\(body\)/.test(sideBlk));
-ok("[2] 사이드 패널: 재렌더 후 _restoreStepResultScroll 호출",
-   /_restoreStepResultScroll\(body,\s*\w+\)/.test(sideBlk));
+ok("[2] 사이드 패널: 재렌더 후 _scheduleStepPanelScroll(body, …) 호출(동기+rAF)",
+   /_scheduleStepPanelScroll\(body,\s*\w+/.test(sideBlk));
 ok("[2] 사이드 패널: snapshot 이 innerHTML 재작성보다 앞",
    sideBlk.indexOf("_snapshotStepResultScroll(body)") < sideBlk.indexOf('body.innerHTML = ""'));
-ok("[2] 사이드 패널: restore 가 innerHTML 재작성보다 뒤",
-   sideBlk.lastIndexOf("_restoreStepResultScroll(body") > sideBlk.indexOf('body.innerHTML = ""'));
-ok("[2] 사이드 패널: 미추종 시 외부 스크롤 이전 위치 유지(prevScrollTop)",
-   /Math\.min\(prevScrollTop/.test(sideBlk));
+ok("[2] 사이드 패널: restore 스케줄이 innerHTML 재작성보다 뒤",
+   sideBlk.lastIndexOf("_scheduleStepPanelScroll(body") > sideBlk.indexOf('body.innerHTML = ""'));
 
 // renderProgress(인라인 progress 카드) 배선
 const progBlk = appJs.slice(
@@ -69,13 +67,25 @@ const progBlk = appJs.slice(
 );
 ok("[3] progress 카드: 재렌더 전 _snapshotStepResultScroll(progressStepsEl) 호출",
    /_snapshotStepResultScroll\(progressStepsEl\)/.test(progBlk));
-ok("[3] progress 카드: 재렌더 후 _restoreStepResultScroll(progressStepsEl, …) 호출",
-   /_restoreStepResultScroll\(progressStepsEl,\s*\w+\)/.test(progBlk));
+ok("[3] progress 카드: 재렌더 후 _scheduleStepPanelScroll(progressStepsEl, …) 호출(동기+rAF)",
+   /_scheduleStepPanelScroll\(progressStepsEl,\s*\w+/.test(progBlk));
 // renderProgress 최상단 early-return 분기에도 innerHTML="" 가 있으므로, 재렌더용은 마지막 occurrence.
 ok("[3] progress 카드: snapshot 이 재렌더 innerHTML 재작성보다 앞",
    progBlk.indexOf("_snapshotStepResultScroll(progressStepsEl)") < progBlk.lastIndexOf('progressStepsEl.innerHTML = ""'));
-ok("[3] progress 카드: restore 가 재렌더 innerHTML 재작성보다 뒤",
-   progBlk.lastIndexOf("_restoreStepResultScroll(progressStepsEl") > progBlk.lastIndexOf('progressStepsEl.innerHTML = ""'));
+ok("[3] progress 카드: restore 스케줄이 재렌더 innerHTML 재작성보다 뒤",
+   progBlk.lastIndexOf("_scheduleStepPanelScroll(progressStepsEl") > progBlk.lastIndexOf('progressStepsEl.innerHTML = ""'));
+
+// ── 3b. 정적: _scheduleStepPanelScroll 이 동기 + requestAnimationFrame 두 번 복원 ──
+const schedBlk = appJs.slice(
+  appJs.indexOf("function _scheduleStepPanelScroll("),
+  appJs.indexOf("function _renderStepSidePanelBody("),
+);
+ok("[3b] _scheduleStepPanelScroll: 동기 _applyStepPanelScroll 호출",
+   /_applyStepPanelScroll\(container, resultScroll, atBottom, prevTop\)/.test(schedBlk));
+ok("[3b] _scheduleStepPanelScroll: requestAnimationFrame 로 재적용(layout 확정 후 0-clamp 방지)",
+   /requestAnimationFrame\(\(\)\s*=>\s*_applyStepPanelScroll\(/.test(schedBlk));
+ok("[3b] _applyStepPanelScroll: 외부 스크롤 미추종 시 이전 위치 유지(prevTop clamp)",
+   /Math\.min\(prevTop,\s*maxTop\)/.test(appJs));
 
 // ── 4. 기능: 소스에서 헬퍼 2개를 추출해 jsdom 에서 실제 실행 ────────────────
 const helpersStart = appJs.indexOf("function _snapshotStepResultScroll(body) {");
@@ -85,12 +95,17 @@ const helpersSrc = appJs.slice(helpersStart, helpersEnd);
 
 const dom = new JSDOM("<!DOCTYPE html><body><div id='panel'></div></body>");
 const { document } = dom.window;
+// requestAnimationFrame 스텁 — 예약된 콜백을 수집해 수동 flush 로 rAF 경로를 검증.
+const rafCbs = [];
+const requestAnimationFrame = (cb) => { rafCbs.push(cb); return rafCbs.length; };
+const flushRaf = () => { const cbs = rafCbs.splice(0); cbs.forEach((cb) => cb()); };
 // 전역으로 노출된 Map/querySelector 등은 window 컨텍스트에서 동작. 헬퍼를 eval 로 주입.
 const factory = new dom.window.Function(
-  "document", "Map",
-  helpersSrc + "\nreturn { _snapshotStepResultScroll, _restoreStepResultScroll };",
+  "document", "Map", "requestAnimationFrame",
+  helpersSrc + "\nreturn { _snapshotStepResultScroll, _restoreStepResultScroll, _applyStepPanelScroll, _scheduleStepPanelScroll };",
 );
-const { _snapshotStepResultScroll, _restoreStepResultScroll } = factory(document, dom.window.Map);
+const { _snapshotStepResultScroll, _restoreStepResultScroll, _applyStepPanelScroll, _scheduleStepPanelScroll } =
+  factory(document, dom.window.Map, requestAnimationFrame);
 
 // 한 step 결과셋 DOM(사이드 패널 buildStepDetailEl 구조 모사)을 만든다.
 function makeStep(panel, key, { expanded, scrollTop = 0, scrollLeft = 0, kind = "table" }) {
@@ -140,6 +155,23 @@ let threw = false;
 try { _restoreStepResultScroll(panel, new dom.window.Map()); _restoreStepResultScroll(null, snap); }
 catch (_) { threw = true; }
 ok("[6] 방어: 빈 맵/null 컨테이너에서 예외 없음", !threw);
+
+// ── 7. 기능: _scheduleStepPanelScroll 이 동기 + rAF 두 번 복원 ──────────────
+// 실브라우저에서 재렌더 직후 동기 scrollLeft 쓰기는 layout 미확정으로 0-clamp 될 수 있어,
+// rAF(layout 확정 후) 재적용이 실제 수정 지점이다. jsdom 은 clamp 안 하므로 동기도 값이
+// 남지만, "동기 1회 + rAF 1회" 두 번 적용되는 배선 자체를 flush 로 검증한다.
+panel.innerHTML = "";
+const g = makeStep(panel, "1:t2", { expanded: true, scrollLeft: 0, kind: "preview" });
+const snap7 = new dom.window.Map([["1:t2", { top: 0, left: 88 }]]);
+rafCbs.length = 0;
+_scheduleStepPanelScroll(panel, snap7, false, 0);
+ok("[7] 동기 복원 즉시 반영(가로 88)", g.scroller.scrollLeft === 88);
+ok("[7] rAF 콜백 1건 예약됨(layout 확정 후 재적용)", rafCbs.length === 1);
+// 실브라우저 0-clamp 재현: rAF 실행 전 누군가 scroll 을 0 으로 되돌려도 rAF 가 재복원.
+g.scroller.scrollLeft = 0;
+flushRaf();
+ok("[7] rAF flush 후 가로 88 재복원(0-clamp 복구 경로)", g.scroller.scrollLeft === 88);
+ok("[7] rAF 큐 소진(재진입 경합 없음)", rafCbs.length === 0);
 
 console.log(`\n${failed === 0 ? "OK" : "FAIL"} — passed=${passed} failed=${failed}`);
 process.exit(failed === 0 ? 0 : 1);

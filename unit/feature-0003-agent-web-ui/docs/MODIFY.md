@@ -248,3 +248,14 @@ source_of_truth: true
 - Files: `docs/ROUTEMAP.md`, `docs/{TASK,MODIFY,REVIEW}.md`.
 - Verification: `gen-routemap.py --check` exit 0(up-to-date) · `codenav-lint.sh` OK.
 - Cross-ref: CHG-20260714T105200-graph-analyze-perm(원천) · REV-20260714T133700-routemap-refresh.
+
+## CHG-20260714T053522-step-scroll-raf (TASK-20260714T053522-step-scroll-raf — 펼친 "결과 보기" 가로 스크롤 layout-timing 0-clamp 후속, Minor §12.3 frontend-only)
+- Date: 2026-07-14. step-scroll-preserve(CHG-...T015432) 배포 후 사용자 재보고("가로 스크롤이 지속적으로 초기화 여전히 남아있음"). RC: 동기 `_restoreStepResultScroll` 이 재렌더 직후 결과 표 layout 확정 전에 `scrollLeft` 를 써서 브라우저가 `scrollWidth`(overflow 미확정)로 0-clamp. 라운드1 jsdom 테스트는 scrollLeft verbatim 저장이라 미검출.
+- Changes (`src/static/app.js`):
+  - 신규 `_applyStepPanelScroll(container, resultScroll, atBottom, prevTop)`: 내부 결과셋(`_restoreStepResultScroll`) + 외부 목록 스크롤(하단추종=최하단 / 미추종=`Math.min(prevTop, maxTop)`)을 함께 복원.
+  - 신규 `_scheduleStepPanelScroll(...)`: `_applyStepPanelScroll` 을 **동기 1회 + `requestAnimationFrame` 1회** 적용(rAF 로 layout 확정 후 재적용 → 0-clamp 복구). rAF 는 다음 폴링보다 훨씬 앞서(≈16ms) 실행 → 재진입 경합 없음.
+  - `_renderStepSidePanelBody`·`renderProgress` 의 인라인 복원 블록(동기 restore + if/else 외부 스크롤)을 `_scheduleStepPanelScroll(...)` 호출로 대체.
+- 무회귀: 순수 additive(동기 복원 유지 + rAF 추가, 동일 캡처값 재적용). 펼침/토글·하단추종·dedup 키·백엔드/RBAC/스키마 0.
+- 검증: `node --check` PASS · `tests/verify_step_result_scroll_preserve.mjs` **29/29 PASS**(+5: [3b] rAF 배선·[7] 동기+rAF 이중 복원·0-clamp 복구·큐 소진). 로컬 chromium 다운로드 차단으로 real-browser clamp 는 미재현 — 배포 후 사용자/PB-0008 확인.
+- Files: `src/static/app.js`, `tests/verify_step_result_scroll_preserve.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST,REPORT}.md`, `docs/test-runs.d/20260714T053522-step-scroll-raf.md`.
+- Cross-ref: REV/TASK/AC-SSP-4-20260714T053522 · 원천 REQ-20260714T015432-step-scroll-preserve.
