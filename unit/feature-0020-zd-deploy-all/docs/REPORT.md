@@ -17,8 +17,8 @@ web·워커·gateway·caddy 전부가 무중단/near-zero 롤아웃되도록 완
 
 ## 2. Progress
 - Planned: —
-- In Progress: T8 라이브 배포 + POST-DEPLOY 검증 (cycle-finalize 후)
-- Done: T1~T6 (gap 분석·compose·스파인 확장·alembic 가드·Makefile·검증·문서)
+- In Progress: —
+- Done: T1~T8 전체 (gap 분석·구현·적대 패널 반영·PR #780 머지·라이브 배포·POST-DEPLOY 검증 PASS)
 
 ## 3. Recent Changes
 - CHG-20260714T104500 참조 (MODIFY.md) — deploy-web.sh 워커/gateway phase, compose surge·
@@ -47,6 +47,8 @@ web·워커·gateway·caddy 전부가 무중단/near-zero 롤아웃되도록 완
   WIKI_CARD.md 는 본 cycle 이 작성.
 
 ## 7. Git 동기화 결과
-- 커밋: (cycle-final 시 기록)
-- verify-completion: (pre-commit 시 기록)
-- Push / main 병합: (cycle-finalize 시 기록)
+- 커밋: 6d7a44d4(rebase 후) → PR #780 → main eaba795a 머지 (2026-07-14)
+- verify-completion: PASS (pre-commit, check #9 는 §18.8 패널 entry 로 충족)
+- Push / main 병합: 완료 (cycle-finalize --pr 780, merge mutex 경유)
+- 충돌 해결: 없음 (origin/main 19커밋 전진분 rebase 무충돌; wiki/hot.md 는 additive 재구성)
+- 라이브 배포: `sudo -E bin/deploy-web.sh` exit 0 — web/워커 eaba795a healthy·edge 200·gateway 무접촉 (POST-DEPLOY 상세: docs/test-runs.d/TEST-20260714T104500-zd-deploy-all-5.md)
