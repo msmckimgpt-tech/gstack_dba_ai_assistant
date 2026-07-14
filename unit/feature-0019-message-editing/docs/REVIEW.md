@@ -52,3 +52,10 @@ source_of_truth: true
   가 PG-down 시 함께 실패 → 실전 악용 창 없음. 정본 = 소유 게이트.
 - 재검증: AST OK · app import OK · route-parity(207) + 브랜치 15 = 16 PASS.
 - Human Approval: PLAN-APPROVED(2026-07-13). 배포는 마이그 0041 적용 + PB-0008 후.
+
+## REV-20260714-0004 [SKIPPED: SQL 캐스팅 hotfix — 보안 표면 무변경, PB-0008 실검증]
+- Related Change: CHG-20260714-0005 (브랜치 로더 파라미터 명시 캐스팅).
+- Reason: 순수 SQL 파라미터 타입 캐스팅(로직·authz·데이터 흐름·쿼리 결과 집합 무변경 — 캐스팅은
+  동일 값의 타입만 명시). 신규 보안 표면 없음. §18.8 편집 보안 패널(REV-0003)의 범위 무영향.
+  실검증은 PB-0008 라이브 reanswer(적발 경로와 동일).
+- Human Approval: PLAN-APPROVED(2026-07-13) 유효. deploy_scope: included.
