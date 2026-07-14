@@ -313,3 +313,13 @@ source_of_truth: true
 - 검증: `node --check --input-type=module`(graph-core.js) PASS · admin.html 도움말 블록 태그 균형 · graph.css 중괄호 215/215 · 심볼 전수 존재. PB-0008 라이브=POST-DEPLOY 이연(정적 baked).
 - Files: `src/static/admin.html`, `src/static/graph/graph.css`, `src/static/graph/graph-core.js`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260714T180314-graph-entry-help.md`.
 - Cross-ref: REV/TASK-20260714T1803-graph-entry-help · TEST test-runs.d/20260714T180314-graph-entry-help.md · ANCHOR 0003 무충돌.
+
+## CHG-20260714T184717-graph-help-overlay-fix (TASK-20260714T184717-graph-help-overlay-fix — 그래프 도움말 팝업 mis-position 근본원인 수정, Minor §12.3 frontend-only)
+- Date: 2026-07-14. POST-DEPLOY 후속(graph-entry-help 배포 1f705a9e 직후 사용자 지적: "도움말 팝업을 그래프 뷰 중앙에 위치·좌하단 줌 컨트롤 겹침 해결"). `/_template:resume` 재개.
+- 근본원인: `graph.css` 도움말 스타일 주석(CHG-20260714T180314-graph-entry-help 에서 작성)의 토큰 목록 `토큰(--surface/--border/--text*/--primary)만` 에서 `--text*` 뒤 `/` 와 결합해 **`*/` 서브스트링**이 생겨 CSS 주석이 조기 종료 → 이후 텍스트가 깨진 CSS 로 유입 → 바로 아래 `.amg-help-overlay { position:absolute … }` 규칙이 파서에서 통째 드롭 → position `static` 폴백 → flex column 흐름상 캔버스 아래 렌더 → 팝업이 줌 컨트롤과 겹침. (라이브 CDP: `getComputedStyle` 전 속성 기본값 + `sheet.cssRules` 에 bare `.amg-help-overlay` 부재 + 격리 파싱은 정상 → 직전 주석 문맥 문제로 특정. `/*`:`*/` 개수 61:62 → 61:61.)
+- Changes:
+  - `src/static/graph/graph.css`: 주석 line ~447 토큰 구분자 `/` → `·`(`--surface·--border·--text*·--primary`)로 `*/` 서브스트링 제거 + 재발 방지 NOTE 2줄 삽입. **CSS 선언·선택자·미디어쿼리 무변경**(주석 텍스트 국한).
+- 무회귀: CSS 규칙/선택자/미디어쿼리 0 변경(git diff +4/-2, 주석만). 백엔드/RBAC/스키마/JS/HTML 0. cache-buster `?v=dev` placeholder(빌드 content-hash 자동주입) 수기편집 없음.
+- 검증: (a) 수정본 파싱 시 `.amg-help-overlay` 규칙 복구·`position:absolute`(rule 204→205). (b) 라이브 규칙 주입 후 geometry: 카드 canvas-wrap 정중앙(dx:0 dy:0)·줌 컨트롤 미겹침(card_overlaps_zoom:false). (c) §18.8 SUBAGENT 적대검증 PASS(주석 델리미터 61/61·잔여 `*/` hazard 없음·diff 주석 국한). POST-DEPLOY 재배포 자산 최종 확인=deploy-web 직후.
+- Files: `src/static/graph/graph.css`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260714T180314-graph-entry-help.md`.
+- Cross-ref: REV/TASK-20260714T184717-graph-help-overlay-fix · 원천 CHG-20260714T180314-graph-entry-help · TEST test-runs.d/20260714T180314-graph-entry-help.md(POST-DEPLOY FIX 섹션) · ANCHOR 0003 무충돌.
