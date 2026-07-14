@@ -243,6 +243,19 @@ source_of_truth: true
 
 ## REV-20260713T175500-ai-claude-feature-0016-content-cluster-p2-postdeploy [SKIPPED:doc-only-postdeploy] — p2 TP.4 POST-DEPLOY 완수 기록 (코드 무변경)
 - Related Change: TASK TP.4 [x] + test-runs.d fragment. 코드/자산 변경 0 — 배포(469fa20d)·클러스터 재가동(attached 4,843·cap 가드 실동작)·AGE 수렴·PB-0008 PASS(가짜 밴드 소멸·인접 배치·리포트 3종 분리) 실측 기록.
+
+## REV-20260714T120000-graphsync-flock-guard [SUBAGENT: PASS-WITH-FIXES] — §82 metadata-graph-sync cron 겹침 실행 flock 가드 (서비스 장애 긴급 대응)
+- 대상: `bin/metadata-graph-sync.sh`(flock -n 가드 신설)·`bin/routine-backfill.sh`(동일 lock 공유 가드 신설). §18.8 general-purpose 서브에이전트 — 정적 코드 리뷰(라이브 브라우저/컨테이너 미가용, 스크립트 자체 + repo 전역 `sync_graph()` 호출자 grep 기반 독립 조사).
+- 배경: 사용자 장애 리포트("로그인 후 빈 화면, 작업 콘솔 미작동") 근본원인 = `metadata-graph-sync.sh` cron(30분 주기)이 동시성 가드 없이 겹쳐 쌓여 AGE 그래프 lock 경합 → pgbouncer 풀 고갈 → ask-worker/insight-worker 전역 장애. 최초 수정(flock 단일 스크립트 가드)에 대해 적대 리뷰 실시.
+- 패널 판정: **PASS-WITH-FIXES — BLOCKING 0 · MAJOR 2 · MINOR 1 · NIT 1.**
+- 결함 원장 및 처리:
+  - **MAJOR-1 [동시성 범위 불충분] — 수정**: 리뷰어가 repo 전역 `grep -rn "sync_graph("` 로 `modules/routine_backfill.py:202`(경유 `bin/routine-backfill.sh`, 사용자가 직접 실행하는 정상 운영 명령)가 같은 AGE 그래프에 대해 동일 함수를 호출함을 발견 — 최초 수정은 cron 자기-겹침만 막을 뿐, cron 과 수동 backfill 의 동시 실행 시 **동일 장애 클래스가 다른 조합으로 재발**할 수 있었다. → `routine-backfill.sh` 에도 `metadata-graph-sync.sh` 와 **동일 lock 파일**을 사용하는 flock 가드를 추가해 자원(AGE 그래프) 단위로 직렬화. 라이브 재현으로 상호배제 확인(REPORT.md 검증 절).
+  - **MAJOR-2 [lock 파일 TOCTOU] — 수정**: lock 경로가 world-writable `/tmp` 의 고정 파일명이라, 최초 생성 시점에 공격자가 심볼릭 링크를 먼저 심으면 root(cron) 프로세스가 그 대상(예: `/etc/passwd`)을 열어쓸 위험(symlink pre-plant TOCTOU) — 지적. → lock 을 root 전용 디렉터리 `/root/.locks/mysql-ai-delegated-dev/`(스크립트가 매 실행 `mkdir -p -m 700` 로 자기-provision)로 이동 + 대상이 심볼릭 링크면 fail-loud 로 즉시 거부하는 명시 검사를 두 스크립트에 동일 추가. 라이브 재현(`/etc/passwd` 심볼릭 링크 사전배치 → `exit 1` 즉시 거부, 대상 미접촉)으로 확인.
+  - **MINOR (수용, 낮은 우선순위)**: lock 경로가 `COMPOSE_PROJECT_NAME` 로 스코프되지 않아 이론상 동일 호스트에 다른 compose 프로젝트가 있으면 오탐 가능 — 이 호스트는 단일 `repo` 프로젝트 고정 관행(기존 `kb-pg-healthcheck.sh` 주석과 동일 가정)이라 실 위험 낮음. 후속 검토 항목으로만 기록(TASK §82 T82.3 인접).
+  - **NIT (정보 기록, 조치 불요)**: 기존 `exec docker exec ...` → `docker exec ...; exit $?` 변경으로 wrapper shell 프로세스가 별도 PID 로 생존 — `docker top <container>` 기반 기존 "잔존 프로세스 kill" quirk 절차는 컨테이너 **내부** 프로세스만 다루므로 영향 없음(host 측 수동 kill 시에만 참고).
+  - **반증(결함 아님 확인)**: flock 해제는 exit 0/1/2/3 전 경로에서 정상(각 `exit` 문 도달 시 fd 9 close, `set -euo pipefail` 과 상충 없음) · lock-then-exec 사이 TOCTOU 없음(`flock -n` 원자적, `docker exec` 전체 구간 보유) · skip 이벤트는 고유 stderr 메시지로 cron.log 에서 실패와 구분 가능.
+  - 미해결 관찰(비차단, 후속 이월): 스크립트 자체 timeout·연속-skip 알림 부재 — TASK §82 T82.3 (본 cycle 범위 밖, 후속 initiative)으로 이미 반영.
+- 재검증: 두 스크립트 `bash -n` PASS + cross-script 상호배제 라이브 재현(1st 진행 중 2nd 즉시 exit 3) + symlink 가드 라이브 재현(exit 1, 대상 미접촉) + lock dir 권한(700 root:root, non-root 접근 거부) 실증. 상세는 TASK.md §82 T82.4/T82.5, REPORT.md 검증 절.
 - Panel skip 사유(§18.8): 코드면은 REV-20260713T170500 [SUBAGENT: PASS-WITH-FIXES] 에서 완료. QA 핸들은 서빙 사본 한정·원복 완료.
 
 ## REV-20260714T090500-ai-claude-feature-0016-cluster-label-target [SKIPPED:minor-single-file] — cluster_label target 사용자 식별자화

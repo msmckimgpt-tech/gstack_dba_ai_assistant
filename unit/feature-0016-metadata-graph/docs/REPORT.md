@@ -1,5 +1,31 @@
 # Report
 
+## 2026-07-14 · 서비스 전역 장애 긴급 대응 — metadata-graph-sync cron 겹침 실행 flock 가드 (§82 metadata-graph-sync-flock)
+
+### 요청 (사용자, 장애 리포트)
+"현재 서비스가 제대로 작동하지 않는것으로 확인됩니다. 로그인을 진행 후 빈 화면이 나오고, 작업 콘솔 또한 제대로 작동하지 않습니다."
+
+### 근본 원인
+`bin/metadata-graph-sync.sh` 가 root crontab(`*/30 * * * *`)으로 호출되는데 동시성 가드가 없어, 최소 2026-07-13 18:00 KST 이후 **~20시간 동안 `metadata_graph_sync.py` 인스턴스가 30분마다 계속 겹쳐 쌓였다**(확인 시점 20개 프로세스 동시 생존). 전부 동일 AGE 그래프(`metadata_kb`)의 `MERGE (n:Schema ...)` 노드에 대해 서로 잠금 대기(순환 체인, 최대 1h19m)를 형성해 pgbouncer 커넥션 풀(`default_pool_size=20`)이 전량 lock-wait 로 소진 — ask-worker/insight-worker 의 모든 PG 접근이 `query_wait_timeout`으로 연쇄 실패했다(로그인 후 빈 화면·작업 콘솔 미작동의 직접 원인). 상세 진단·복구 절차는 `unit/feature-0016-metadata-graph/docs/TASK.md` §82 참조.
+
+### 처리 결과
+- **긴급 복구(코드 변경 없음, 운영 조치)**: stray 프로세스 20개 kill → PG 잠금 자연 해소(활성 커넥션 30→14) → ask-worker/insight-worker 자동 `healthy` 회복 → `/healthz`·`/`·`/api/session` 200 확인.
+- **재발 방지(본 cycle)**: `bin/metadata-graph-sync.sh` 에 `flock -n` 논블로킹 가드 추가 — 겹침 실행 자체를 차단(이전 실행 생존 시 새 cron 은 즉시 skip, exit 3).
+- **§18.8 적대 리뷰 반영(PASS-WITH-FIXES → 수정 완료)**: 리뷰어가 실제 grep 으로 `sync_graph()` 의 또 다른 호출자 `bin/routine-backfill.sh`(사용자 수동 실행)를 찾아내 "cron 자기-겹침만 막으면 수동 backfill 과의 동시 실행으로 동일 lock 경합이 재발한다"(MAJOR-1)를 지적 — `routine-backfill.sh` 에도 **같은 lock 파일을 공유**하는 가드를 추가해 두 진입점을 자원(AGE 그래프) 단위로 직렬화했다. 또한 lock 파일이 world-writable `/tmp` 고정 경로라 symlink 사전배치 TOCTOU 위험(MAJOR-2)을 지적받아, root 전용 `/root/.locks/mysql-ai-delegated-dev/`(자기-provision `mkdir -p -m 700`)로 이동 + 대상이 심볼릭 링크면 fail-loud 거부하는 검사를 추가했다. 최종 diff: 2개 파일(`bin/metadata-graph-sync.sh`·`bin/routine-backfill.sh`), 인증/스키마/데이터 무변경.
+- **정책 준수 메모**: 최초 조치 중 main worktree(`repo/`)에서 직접 스크립트를 수정했으나(§13.2 위반), 사용자 정정을 받아 즉시 되돌리고 `bin/cycle-init.sh` 로 전용 worktree(`ai/claude-corp/graphsync-flock-guard`)를 생성해 그 안에서 재작업했다.
+
+### 검증
+- 두 스크립트 `bash -n` 문법 PASS.
+- flock 동시성 단위 검증(합성) — 동일 lock file 대상 두 인스턴스 동시 기동 시 1st 는 lock 보유·2nd 는 즉시 "correctly skipped" 종료.
+- **cross-script 상호배제 라이브 재현**: `metadata-graph-sync.sh` 가 lock 보유 중(sudo, 워커 컨테이너 대상 실제 sync 진행) `routine-backfill.sh --dry-run` 을 0.4s 뒤 기동 → 즉시 `exit 3`("metadata-graph-sync.sh(또는 이전 실행)이 아직 진행 중") 확인, 1st 는 정상 `docker exec` 진행(`exec →` 로그 확인).
+- **symlink 가드 라이브 재현**: lock 경로에 `/etc/passwd` 심볼릭 링크를 사전 배치한 뒤 스크립트 기동 → `exit 1` + "심볼릭 링크입니다 — 변조 의심, 중단" 즉시 거부(대상 파일 미접촉).
+- lock 디렉터리 권한 확인: `700 root:root` — non-root(`claude-corp`) 사용자로 해당 디렉터리 내 파일 조작 시도 시 `Permission denied` 실증.
+- 상세는 TASK.md §82 T82.2/T82.4/T82.5.
+
+### Git 동기화 결과
+- Task-Cycle: graphsync-flock-guard.
+- (verify-completion 실행 후 아래 갱신)
+
 ## 2026-07-13 · 그래프 상세 패널 하위 항목 hover 시각 효과 (§81 graph-detail-hover-fx, PR #764)
 
 ### 요청 (사용자)

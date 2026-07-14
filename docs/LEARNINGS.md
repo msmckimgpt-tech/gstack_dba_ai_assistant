@@ -21,6 +21,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: mistake
 
+### LRN-20260714-0001 — 반복 실행 스크립트(cron)는 "이전 실행이 끝나지 않았을 가능성"을 기본 가정하고 동시성 가드를 갖춰야 한다 — 없으면 실패 누적이 자원 고갈로 전이되어 무관한 서비스까지 무너뜨린다
+- Source: 사용자 장애 리포트("로그인 후 빈 화면, 작업 콘솔 미작동") 근본원인 조사 (2026-07-14, feature-0016 §82)
+- Mistake: `bin/metadata-graph-sync.sh`(AGE 그래프 동기화)가 root crontab `*/30 * * * *` 로 호출되는데 **동시성 가드(flock 등)가 전혀 없었다**. 이전 실행이 AGE 그래프 노드 lock 경합으로 멈추면(이미 `docs/LEARNINGS.md` 에 "graph-sync 병렬 deadlock" quirk 로 기록돼 있던 클래스), cron 은 그 사실을 모른 채 30분마다 새 실행을 계속 겹쳐 쌓았다. 결과: 최소 ~20시간 동안 `metadata_graph_sync.py` 20개가 동시에 같은 그래프 노드에 대해 서로 잠금 대기(순환 체인, 최대 1h19m)를 형성 → pgbouncer 커넥션 풀(`default_pool_size=20`)이 전량 lock-wait 로 소진 → **그래프 동기화와 무관한** ask-worker(사용자 대화 처리)·insight-worker 전체가 `query_wait_timeout` 으로 연쇄 실패 → 로그인 후 빈 화면·작업 콘솔 미작동(전 사용자 영향). 이미 문서화된 quirk(수동 kill 대응)가 있었음에도 **재발 방지(가드)는 별도 후속으로 남겨진 채 방치**돼 동일 원인이 훨씬 큰 규모로 재발했다.
+- Correct approach: (1) **cron/timer 로 호출되는 모든 스크립트는 기본값으로 `flock -n`(또는 동등한 non-blocking lock) 가드를 갖춘다** — "이전 실행이 아직 살아있을 수 있다"를 예외가 아니라 기본 가정으로 둔다. (2) 그 자원(여기서는 AGE 그래프 lock)이 다른 무관한 서비스와 **커넥션 풀을 공유**한다면, 한 반복 작업의 정체가 풀 전체를 고갈시켜 무관한 기능까지 넘어뜨릴 수 있음을 설계 시점에 고려한다 — 실패 격리(pool 분리, 타임아웃 하한)가 없으면 "부수적 배치 작업"이 "핵심 서비스 전역 장애"로 전이된다. (3) 과거에 한 번 발생한 lock-경합 quirk 를 문서화하면서 "재발 방지(가드)"를 즉시 구현하지 않고 후속 과제로 미룬 경우, 그 gap 은 리스트에만 남고 실제로 재발할 때까지 잊혀지기 쉽다 — quirk 기록에 "임시 수동 대응"만 있고 "구조적 방지"가 없으면 그 자체가 미완료 상태임을 명시(예: TODO 항목화)해야 한다.
+- Applies to: 모든 cron/timer 기반 반복 스크립트(`crontab -l`/`sudo crontab -l` 로 열거되는 전체), 특히 공유 커넥션 풀(pgbouncer 등)에 접근하는 백그라운드 배치 작업.
+- Verified: true (근본원인 라이브 lock-wait 체인 확인 + stray 프로세스 kill 로 즉시 해소 확인 + flock 가드 추가 후 이중 기동 재현 테스트로 재발 차단 확인).
+
 ### LRN-20260713-0001 — 웹/UI 기능 완료 보고가 "코드 병합"·"백엔드 통과"에 머물면, 배포 전 사용자 테스트·워커 미반영·client-only 결함을 놓친다
 - Source: feature-0003 attach-user-version (사용자 재업로드 첨부 버전 관리) 배포 후 사용자 버그 리포트 조사 (2026-07-13)
 - Mistake: 세 겹의 마찰이 겹쳤다. (1) **merge ≠ 배포 완료** — 사용자가 기능을 테스트했으나 그 시각(13:52 KST)이 배포(~15:00 KST)보다 ~1시간 앞서 구코드가 서빙 중이었다(DB CreatedAt 타임스탬프로 확정). (2) **워커 미반영** — 그 기능의 "assistant 변경점 인지" 로직은 `agent_core._build_attachment_context_section`(ask-worker 거주)인데, `deploy-web.sh` 는 web(web-a/web-b)만 재배포하므로 web 배포만으론 반영되지 않는다(deploy-web 의 `worker GIT_COMMIT != web` WARN 을 보고서야 ask-worker 를 별도 재빌드). (3) **백엔드만 검증** — 완료 검증(PB-0008)을 `fetch(FormData)` 백엔드 직접 호출로만 수행해, 사용자가 실제 쓰는 `_uploadComposerAttachment`(ES-module scope, 클라이언트 해시 dedup) 경로를 타지 않아 client-only 결함을 놓칠 뻔했다.
