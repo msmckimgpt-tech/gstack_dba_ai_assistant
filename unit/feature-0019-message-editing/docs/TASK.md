@@ -44,14 +44,19 @@ source_of_truth: true
 - [x] TASK-P1-4 엔드포인트 edit(simple/reanswer) + branch/switch + /api/history active-path+버전 메타
 - [x] TASK-P1-5 프론트 편집 UI(수정 버튼·인라인 모드 선택) + `< n/m >` 페이징 + renderMessages 브랜치 렌더
 - [x] TASK-P1-6 단위테스트(비분기 항등성·active-path·window 합성 — 백엔드 15 PASS) + ROUTEMAP/codenav 게이트
-- [ ] TASK-P1-7 verify-completion + 적대적 보안 리뷰(§18.8) + PB-0008 시각검증
-- [ ] TASK-P1-8 배포(deploy_scope: included, 마이그 0041 적용) + POST-DEPLOY PB-0008
+- [x] TASK-P1-7 verify-completion + 적대적 보안 리뷰(§18.8 SHIP-WITH-FIXES, 2 MAJOR 수정) + **PB-0008 라이브 PASS**
+- [x] TASK-P1-8 배포(web+워커 e5f18b61, 마이그 0041 적용) + POST-DEPLOY hotfix(파라미터 캐스팅 PR #774) + 재검증 PASS
+
+**→ Phase 1 (1:1 편집) 완결** (PR #766+#772+#774 merged·라이브 배포·PB-0008 통과).
 
 ## 4. In Progress
-- TASK-P1-1 마이그레이션
+- Phase 2 그룹/공유 단순편집.
 
 ## 5. Blocked
 - 없음
 
-## 6. Phase 2 (그룹/공유 — 후속)
-- 그룹 단순수정 + @assistant 잠금 + window 정합 + 감사(AC-ME-6,8) + PB-0008.
+## 6. Phase 2 (그룹/공유) Task Queue
+- [x] TASK-P2-1 엔드포인트 그룹 편집 허용(simple만) + @assistant 잠금 + per-message sender IDOR
+- [x] TASK-P2-2 프론트 _canEditMessage 그룹 지원(본인 발신·비-@assistant) + 인라인 재답변 버튼 그룹 미노출
+- [x] TASK-P2-3 서수 매핑 그룹 이벤트(__event__) 제외 — SEC #5
+- [ ] TASK-P2-4 §18.8 그룹 편집 보안 리뷰 + verify + 배포 + PB-0008(그룹 대화 단순수정·잠금·미노출)

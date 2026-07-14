@@ -89,3 +89,14 @@ source_of_truth: true
 - 적발: **PB-0008 라이브 reanswer** (ask-worker 로그 진단). 단위테스트는 mock cursor 라 SQL 유효성
   미검증(gap) → visual_verification_scope: always 정책의 가치 실증.
 - 검증: psql PREPARE 로 캐스팅이 untyped NULL 해소 확인 + 회귀 가드 단언 16 PASS. PB-0008 재검증 예정.
+
+## CHG-20260714-0006 (Phase 2 — 그룹/공유 단순편집)
+- feature-0003 conversations.py: post_edit_message 그룹 편집 허용 — 그룹은 simple 강제 +
+  @assistant 호출 메시지 잠금(mentions.message_invokes_assistant) + per-message sender IDOR
+  (meta_json.sender_account_id == actor, 미상 시 owner fail-closed). 1:1 은 기존 owner 검사.
+- feature-0003 static/app.js: _canEditMessage 그룹 지원(본인 발신 msgIsOwn + @assistant 미호출) +
+  _startInlineEdit 재답변 버튼 그룹 미노출(단순 수정 전용).
+- feature-0003 _conv_store.py: _branch_map_display_user_to_core core count 에서 __event__(그룹 join
+  알림, core role='user' / display role='system' 비대칭) 제외 — 서수 매핑 오손상 방지(SEC #5).
+- 성격: 그룹 단순편집 활성화(AC-ME-6). route 무변경(로직만). 1:1 무회귀.
+- 검증: make test 회귀 0(4 pre-existing local-env) + AST OK. §18.8 보안 = REV-0005.

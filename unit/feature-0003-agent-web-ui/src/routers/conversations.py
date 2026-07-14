@@ -1492,13 +1492,7 @@ async def post_edit_message(cid: str, mid: int, request: Request) -> JSONRespons
             return app._json_error("이 대화에 발화(질의) 권한이 없습니다.", 403)
         if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._FIX_WITH_AI_RATE_PER_MIN):
             return app._json_error("요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
-        # Phase 1 = 1:1 전용. 그룹 대화 편집(단순 수정 + @assistant 잠금)은 Phase 2.
-        if app._conversation_is_group(cid):
-            return app._json_error("그룹 대화 메시지 편집은 준비 중입니다.", 400)
-        # IDOR: 본인 소유 대화만(1:1 은 owner = 발신자).
-        if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
-            return app._json_error("본인이 보낸 메시지만 수정할 수 있습니다.", 403)
-        # 편집 대상 로드 + user 메시지 검증.
+        # 편집 대상 로드(그룹/1:1 공통) — sender·내용 검증에 선행 필요.
         from shared.db import _pg_connect
         _pg = _pg_connect()
         try:
@@ -1509,6 +1503,36 @@ async def post_edit_message(cid: str, mid: int, request: Request) -> JSONRespons
             return app._json_error("메시지를 찾을 수 없습니다.", 404)
         if str(disp.get("role") or "").lower() != "user":
             return app._json_error("assistant 메시지는 수정할 수 없습니다.", 400)
+        # feature-0019 Phase 2: 대화 유형별 편집 규칙.
+        if app._conversation_is_group(cid):
+            # 그룹/공유 대화: 단순 수정만(브랜치/재답변은 1:1 전용 — 공유 답변 무결성).
+            if mode != "simple":
+                return app._json_error("그룹 대화는 단순 수정만 가능합니다.", 400)
+            # @assistant 를 호출한(유발한) 메시지는 편집 잠금 — 공유 답변의 전제 변조 차단(REQ-ME-R3).
+            try:
+                from modules.mentions import message_invokes_assistant as _invokes
+                if _invokes(str(disp.get("content") or "")):
+                    return app._json_error("@assistant 를 호출한 메시지는 수정할 수 없습니다.", 400)
+            except Exception:
+                pass
+            # IDOR(그룹): 본인이 발신한 메시지만(per-message sender). meta_json.sender_account_id 비교.
+            _sender = None
+            try:
+                _mj = disp.get("meta_json")
+                _meta = json.loads(_mj) if isinstance(_mj, str) else (_mj or {})
+                _sender = (_meta or {}).get("sender_account_id") if isinstance(_meta, dict) else None
+            except Exception:
+                _sender = None
+            if _sender is None:
+                # 발신자 미상(레거시/시스템) → owner 만 허용(보수적 fail-closed).
+                if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
+                    return app._json_error("본인이 보낸 메시지만 수정할 수 있습니다.", 403)
+            elif int(_sender) != int(account["id"]):
+                return app._json_error("본인이 보낸 메시지만 수정할 수 있습니다.", 403)
+        else:
+            # 1:1 대화: owner = 발신자(IDOR). simple/reanswer 모두 허용.
+            if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
+                return app._json_error("본인이 보낸 메시지만 수정할 수 있습니다.", 403)
         # best-effort audit (편집 트리거 기록).
         try:
             app.record_audit_event(
