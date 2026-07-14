@@ -59,3 +59,19 @@ source_of_truth: true
   동일 값의 타입만 명시). 신규 보안 표면 없음. §18.8 편집 보안 패널(REV-0003)의 범위 무영향.
   실검증은 PB-0008 라이브 reanswer(적발 경로와 동일).
 - Human Approval: PLAN-APPROVED(2026-07-13) 유효. deploy_scope: included.
+
+## REV-20260714-0005 [SUBAGENT:message-edit-p2-group-security] SHIP-WITH-FIXES
+- Related Change: CHG-20260714-0006 (그룹/공유 단순편집).
+- 적대적 보안 리뷰(security subagent — 사용량 한도로 조기 종료, 핵심 결함 지목 후 메인이 완결).
+- **MAJOR [FIXED] 서수 매핑 그룹 비대칭(SEC #5)**: 그룹 join 알림이 core_messages 엔 role='user'+
+  name='__event__', display 엔 role='system' 으로 저장 → role='user' 집합 불일치 → display→core
+  서수 매핑이 무관 메시지 오선택·손상. 전수 조사로 __event__ 가 유일 비대칭임 확인 → core count
+  에서 __event__ 제외(수정). (subagent 가 "다른 이벤트 타입 확인" 리드 제공 → 메인이 전수 검증.)
+- **결함 없음 확인(메인 완결)**:
+  - sender IDOR: 그룹은 meta_json.sender_account_id == actor 검증, sender 미상 시 owner fail-closed.
+  - @assistant 잠금: 원본 content 로 message_invokes_assistant 판정 → 공유 답변 유발 메시지 편집 차단.
+    simple 편집은 재답변 없음이라 편집으로 assistant 재호출·답변 변조 불가.
+  - window 정합: sender 검증이 "본인 발신"만 허용 → 편집 대상은 항상 편집자 window 내(본인이 보낸
+    메시지) → 가려진 구간 편집 불가. 콘텐츠 누출·window 우회 없음.
+  - mode 강제: 그룹에서 reanswer/branch 차단(mode!='simple' → 400), 그룹 판정·disp 로드 후 순서 정합.
+- Human Approval: PLAN-APPROVED(2026-07-13). deploy_scope: included.

@@ -3889,13 +3889,16 @@ async function _submitFixWithAi(message) {
 
 // ── feature-0019 message-editing: 자신이 보낸 메시지 수정 + ChatGPT식 버전 페이징 ──────
 // Phase 1 = 1:1 본인 대화 전용(그룹은 Phase 2). 서버 authz(본인 소유·user 메시지)와 동일 게이트.
-function _canEditMessage(message, role) {
+function _canEditMessage(message, role, msgIsOwn) {
   const conv = currentConversation();
-  return role === "user"
-    && Boolean(message) && message.id != null
-    && !isGroupConversation(conv)     // Phase 1 = 1:1 (그룹 편집은 Phase 2)
-    && isOwnConversation(conv)        // 본인 대화
-    && can("conversation.ask");
+  if (role !== "user" || !message || message.id == null || !can("conversation.ask")) return false;
+  if (isGroupConversation(conv)) {
+    // Phase 2: 그룹/공유 대화 — 본인 발신 + @assistant 미호출 메시지만(단순 수정 전용).
+    const invokesAssistant = !!(window.Mentions && window.Mentions.messageInvokesAssistant(String(message.content || "")));
+    return Boolean(msgIsOwn) && !invokesAssistant;
+  }
+  // 1:1 대화: owner = 발신자.
+  return isOwnConversation(conv);
 }
 
 async function _submitMessageEdit(cid, mid, mode, newContent) {
@@ -3960,7 +3963,10 @@ function _startInlineEdit(message, bubbleEl) {
   }
   reBtn.addEventListener("click", () => _doEdit("reanswer"));
   simpleBtn.addEventListener("click", () => _doEdit("simple"));
-  btnRow.appendChild(reBtn);
+  // Phase 2: 그룹/공유 대화는 단순 수정만(재답변/브랜치 없음) — 재답변 버튼 미노출.
+  if (!isGroupConversation(currentConversation())) {
+    btnRow.appendChild(reBtn);
+  }
   btnRow.appendChild(simpleBtn);
   btnRow.appendChild(cancelBtn);
   editor.appendChild(btnRow);
@@ -4340,7 +4346,7 @@ function renderMessages() {
         bubble.appendChild(_buildBranchPager(message));
       }
       // 수정 버튼은 hover 액션(다른 말풍선 액션과 동형).
-      if (_canEditMessage(message, role)) {
+      if (_canEditMessage(message, role, msgIsOwn)) {
         const uActions = document.createElement("div");
         uActions.className = "message-actions message-user-actions";
         const editBtn = document.createElement("button");

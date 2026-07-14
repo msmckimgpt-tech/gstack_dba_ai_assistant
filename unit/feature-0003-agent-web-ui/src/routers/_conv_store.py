@@ -5875,10 +5875,14 @@ def _branch_map_display_user_to_core(pg, conversation_id: str, disp: dict):
     """편집 대상 user 표시메시지 → core 짝 id. 링크(core_message_id) 있으면 exact.
 
     링크 부재 시 **결정적 서수(ordinal) 매핑**: display user 메시지 중 M 의 순번(id ASC) =
-    core user 메시지의 같은 순번. 1:1 대화(Phase 1 편집 대상)는 user 메시지가 두 store 간 strict
-    1:1(이벤트/시스템 user 메시지 없음 — 그룹 join 알림은 그룹 전용이고 편집은 그룹 차단)이라
-    exact·tie-safe. created_at 근접매칭(동일 초 tie 시 무관 메시지 오선택)의 무결성 결함 대체
-    (REV-20260714 SEC MAJOR #1). None 가능(미발견).
+    core user 메시지의 같은 순번. user 메시지는 두 store 에 dual-write 되어 순번이 일치한다.
+    created_at 근접매칭(동일 초 tie 시 무관 메시지 오선택)의 무결성 결함 대체(REV-20260714 SEC
+    MAJOR #1). None 가능(미발견).
+
+    **그룹 이벤트 제외(Phase 2, REV-20260714 SEC #5)**: 그룹 join 알림은 core_messages 에
+    role='user'+name=EVENT_MESSAGE_NAME('__event__') 로, display 에는 role='system' 으로 저장돼
+    두 store 의 role='user' 집합이 어긋난다. core 쪽 count 에서 __event__ 를 제외해야 순번이
+    display(이벤트가 role='system' 이라 이미 제외)와 일치한다 — 미제외 시 무관 메시지 오매핑·손상.
     """
     if disp.get("core_message_id"):
         return int(disp["core_message_id"])
@@ -5895,7 +5899,8 @@ def _branch_map_display_user_to_core(pg, conversation_id: str, disp: dict):
         rank = int(row[0])
         cur.execute(
             "WITH ranked AS (SELECT id, row_number() OVER (ORDER BY id) AS rn "
-            "FROM agent_runtime.core_messages WHERE conversation_id = %s AND role = 'user') "
+            "FROM agent_runtime.core_messages WHERE conversation_id = %s AND role = 'user' "
+            "  AND (name IS NULL OR name <> '__event__')) "
             "SELECT id FROM ranked WHERE rn = %s",
             (conversation_id, rank),
         )
