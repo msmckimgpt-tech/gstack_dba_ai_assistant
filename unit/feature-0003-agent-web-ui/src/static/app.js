@@ -1068,17 +1068,43 @@ function switchProfileTab(tab) {
   if (tab === "prompt") {
     initAccountPromptEditor().catch(() => {});
   } else if (tab === "security-and-account") {
-    // gc-settings-notif: '계정' 탭으로 통합 — 2FA + 사용 내역(병합) + 알림 환경설정을 한 번에 렌더.
-    renderProfileTotp(); // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 상태 렌더.
-    loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역(계정 탭으로 병합) lazy 로드.
-    renderNotifyPrefs(); // gc-settings-notif: 알림 환경설정(멘션/데스크톱) 상태·권한 렌더.
-    renderMotionPref(); // anim-pref: 화면 애니메이션 효과 select 상태 렌더.
+    // account-subtabs: '계정' 탭을 하위 탭(계정/알림/UI/사용 내역)으로 세분화. 각 하위 탭의
+    // 콘텐츠(2FA·알림·화면 효과·사용량)는 그 하위 탭 활성화 시점에 lazy 렌더(switchAccountSubtab).
+    // 마지막 선택 하위 탭을 복원(기본 'account'). 과거엔 4개 콘텐츠를 이 탭 진입 시 한 번에 렌더.
+    switchAccountSubtab(state.accountSubtab || "account");
   } else if (tab === "release-notes") {
     // 릴리즈 노트 — 정적 콘텐츠라 매 진입 렌더(가벼움). 렌더러는 release-notes.js.
     // 작업 화면은 '관리 콘솔' 영역 노트를 숨긴다(work/common 만 노출).
     if (window.ReleaseNotes) {
       window.ReleaseNotes.render(document.getElementById("releaseNotesBody"), { areas: ["work", "common"] });
     }
+  }
+}
+
+// account-subtabs (feature-0003-account-subtabs): '계정' 탭 하위 세분화 전환.
+// 하위 탭: account(활동·비번·2FA·로그아웃) / notifications(알림) / ui(화면 효과) / usage(사용 내역).
+// 콘텐츠는 해당 하위 탭 활성화 시점에 lazy 렌더 — 사용량(usage)은 API 호출이라 해당 탭 진입 시에만 로드.
+function switchAccountSubtab(sub) {
+  const valid = ["account", "notifications", "ui", "usage"];
+  if (!valid.includes(sub)) sub = "account";
+  state.accountSubtab = sub;
+  document.querySelectorAll("[data-account-subtab]").forEach((btn) => {
+    const on = btn.dataset.accountSubtab === sub;
+    btn.classList.toggle("is-active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  document.querySelectorAll("[data-account-subpane]").forEach((pane) => {
+    pane.classList.toggle("hidden", pane.dataset.accountSubpane !== sub);
+  });
+  // 하위 탭별 lazy 콘텐츠 렌더(활동 정보는 openProfile 의 renderProfile 이 이미 채움).
+  if (sub === "account") {
+    renderProfileTotp(); // 2FA 상태.
+  } else if (sub === "notifications") {
+    renderNotifyPrefs(); // 알림 상태·권한.
+  } else if (sub === "ui") {
+    renderMotionPref(); // 화면 애니메이션 효과 select.
+  } else if (sub === "usage") {
+    loadProfileUsage().catch(() => {}); // 사용량 차트(API).
   }
 }
 
@@ -9900,6 +9926,10 @@ async function initialize() {
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
     // lazy 콘텐츠 적재는 switchProfileTab() 내부에서 단일 디스패치 (prompt / security-and-account[2FA·사용내역·알림] / release-notes).
     btn.addEventListener("click", () => switchProfileTab(btn.dataset.profileTab));
+  });
+  // account-subtabs: '계정' 탭 하위 탭(계정/알림/UI/사용 내역) 전환. 콘텐츠 lazy 렌더는 switchAccountSubtab() 내부.
+  document.querySelectorAll("[data-account-subtab]").forEach((btn) => {
+    btn.addEventListener("click", () => switchAccountSubtab(btn.dataset.accountSubtab));
   });
   const profileUsageDaysSel = document.getElementById("profileUsageDays");
   if (profileUsageDaysSel) {

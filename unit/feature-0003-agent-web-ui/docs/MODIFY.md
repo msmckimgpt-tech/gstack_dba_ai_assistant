@@ -11,6 +11,16 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260714T074417-account-subtabs (TASK-20260714T074417-account-subtabs — 프로필 '계정' 탭 하위 세분화, Minor §12.3, frontend-only)
+- Date: 2026-07-14. `/_template:entry` arg-given. 스키마/마이그/RBAC/엔드포인트/서버 계약 0 — DOM 재배치 + 표현계층 sub-nav.
+- 배경: anim-effect-pref 로 '화면 효과'가 추가되며 '계정' 탭 7섹션(활동·알림·화면효과·사용내역·비번·2FA·로그아웃)이 한 화면에 누적 → 난잡. 사용자 요청으로 하위 탭 세분화(알림·UI 독립 확정 → 4탭 승인).
+- 변경:
+  - `static/index.html`: `data-profile-pane="security-and-account"` 를 `.profile-subtabs`(계정/알림/UI/사용 내역 4버튼) + 4× `.profile-subpane`(data-account-subpane) 으로 재구성. 7섹션을 account(활동+비번+2FA+로그아웃)/notifications(알림)/ui(화면효과)/usage(사용내역) 로 이동 — 모든 element id 보존(회귀 0).
+  - `static/app.js`: 신규 `switchAccountSubtab(sub)` — `[data-account-subtab]` is-active·aria-selected + `[data-account-subpane]` hidden 토글 + 하위 탭별 lazy 렌더(account→renderProfileTotp / notifications→renderNotifyPrefs / ui→renderMotionPref / usage→loadProfileUsage). `switchProfileTab('security-and-account')` 를 4콘텐츠 일괄 렌더에서 `switchAccountSubtab(state.accountSubtab||'account')` 로 변경(사용량 API 는 usage 탭 진입 시에만 호출 — 효율 개선). `initialize()` 에 `[data-account-subtab]` 클릭 리스너 배선.
+  - `static/styles.css`: `.profile-subtabs`(세그먼트 컨테이너)·`.profile-subtab`(pill, is-active 강조)·`.profile-subpane`(세로 스택) — 상단 drawer-tab 언더라인과 시각 구분.
+- 검증: `node --check app.js` PASS · 하위탭/subpane 각 4·섹션 id 전부 보존·pane div 균형 32/32. §18.8 적대 서브에이전트 리뷰(REVIEW). POST-DEPLOY PB-0008 라이브 시각검증(TEST §Run 2026-07-14 account-subtabs).
+- Cross-ref: TASK-20260714T074417-account-subtabs · REV-20260714T074417-account-subtabs · 선행 anim-effect-pref(CHG-20260714T065503) · ANCHOR 0003 무충돌.
+
 ## CHG-20260714T073000-anim-effect-pref-postverify (TASK-20260714T065503-anim-effect-pref POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-14. 코드/자산 무변경 — TASK.md 체크리스트 완료 + TEST.md POST-DEPLOY 라이브 PASS append + REVIEW postverify 엔트리. 배포 PR #786→main f00519dd, `deploy-web --web-only` 무중단 롤링(soak PASS).
 - 라이브 실측 요지(https://localhost/ bootstrap_admin, win-browser Chrome): 게이트 로직 런타임 assertion 전항목 PASS(`off→reduced=true`·`on→reduced=false` OS무관·`os→OS일치`·data-motion 반영·`#motionEffectSelect` 옵션3종+hydration·캘린더/검색 `scrollMessagePointIntoCenter` 라우팅) + 서빙 자산 stamp 갱신(b162038f7a10)·심볼 확인 + 프로필 계정 탭 select 시각 렌더(스크린샷). 한계: 검증 머신 reduce-motion off라 육안 모션 시연 불가·로직은 결정적 실증.

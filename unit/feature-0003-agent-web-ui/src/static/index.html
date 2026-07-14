@@ -411,104 +411,123 @@
          기존 별도 '사용 내역'(usage) 탭/패널을 이 탭으로 병합(차트 id 동일, loadProfileUsage 무변경). -->
     <div class="drawer-pane hidden" data-profile-pane="security-and-account">
 
-      <div class="profile-section">
-        <div class="profile-section-title">활동</div>
-        <dl class="profile-dl">
-          <dt>가입</dt><dd id="profileCreatedAt">—</dd>
-          <dt>최근 로그인</dt><dd id="profileLastLogin">—</dd>
-          <dt>권한 부여</dt><dd id="profileApprovedAt">—</dd>
-        </dl>
+      <!-- account-subtabs (feature-0003-account-subtabs): '계정' 탭 하위 세분화 —
+           계정 / 알림 / UI / 사용 내역. 전환은 switchAccountSubtab() (app.js). 콘텐츠
+           lazy 렌더(2FA/알림/화면효과/사용량)는 각 하위 탭 활성화 시점에 디스패치. -->
+      <div class="profile-subtabs" role="tablist" aria-label="계정 하위 설정">
+        <button type="button" class="profile-subtab is-active" data-account-subtab="account" role="tab" aria-selected="true">계정</button>
+        <button type="button" class="profile-subtab" data-account-subtab="notifications" role="tab" aria-selected="false">알림</button>
+        <button type="button" class="profile-subtab" data-account-subtab="ui" role="tab" aria-selected="false">UI</button>
+        <button type="button" class="profile-subtab" data-account-subtab="usage" role="tab" aria-selected="false">사용 내역</button>
       </div>
 
-      <!-- gc-settings-notif: 알림 환경설정 — 멘션 알림 마스터 + 데스크톱(OS) 알림 + 권한 상태/요청.
+      <!-- [계정] 활동 + 비밀번호 변경 + 2단계 인증 + 로그아웃 -->
+      <div class="profile-subpane" data-account-subpane="account">
+        <div class="profile-section">
+          <div class="profile-section-title">활동</div>
+          <dl class="profile-dl">
+            <dt>가입</dt><dd id="profileCreatedAt">—</dd>
+            <dt>최근 로그인</dt><dd id="profileLastLogin">—</dd>
+            <dt>권한 부여</dt><dd id="profileApprovedAt">—</dd>
+          </dl>
+        </div>
+
+        <div class="profile-section">
+          <div class="profile-section-title">비밀번호 변경</div>
+          <form id="passwordChangeForm" class="profile-form">
+            <label class="field">
+              <span>현재</span>
+              <input id="currentPassword" type="password" autocomplete="current-password" />
+            </label>
+            <label class="field">
+              <span>새 비밀번호</span>
+              <input id="newPassword" type="password" autocomplete="new-password" />
+            </label>
+            <label class="field">
+              <span>확인</span>
+              <input id="confirmPassword" type="password" autocomplete="new-password" />
+            </label>
+            <div class="form-error" id="passwordError"></div>
+            <button type="submit" class="btn-primary">변경</button>
+          </form>
+        </div>
+
+        <!-- TASK-20260619T040000-two-factor-auth (보안 ⑥): 2단계 인증(TOTP) self-service. -->
+        <div class="profile-section" id="profileTotpSection">
+          <div class="profile-section-title">2단계 인증 (2FA)</div>
+          <div id="profileTotpBody" aria-live="polite">로딩 중…</div>
+        </div>
+
+        <div class="profile-section profile-danger-zone">
+          <button type="button" class="btn-secondary" id="logoutBtn">로그아웃</button>
+        </div>
+      </div><!-- /account subpane -->
+
+      <!-- [알림] gc-settings-notif: 멘션 알림 마스터 + 데스크톱(OS) 알림 + 권한 상태/요청.
            상태·권한 렌더는 renderNotifyPrefs(), 저장은 localStorage(getNotifyPrefs/setNotifyPrefs). -->
-      <div class="profile-section" id="profileNotifySection">
-        <div class="profile-section-title">알림</div>
-        <label class="profile-toggle-row">
-          <input type="checkbox" id="notifyMentionsChk" />
-          <span class="profile-toggle-text">멘션 알림 받기<span class="helper-text">대화에서 나를 멘션하면 알림(토스트·데스크톱)을 표시합니다.</span></span>
-        </label>
-        <label class="profile-toggle-row">
-          <input type="checkbox" id="notifyDesktopChk" />
-          <span class="profile-toggle-text">데스크톱 알림<span class="helper-text">브라우저 OS 알림으로도 표시합니다(브라우저 권한 필요).</span></span>
-        </label>
-        <div class="profile-notify-perm helper-text" id="profileNotifyPerm" aria-live="polite"></div>
-      </div>
+      <div class="profile-subpane hidden" data-account-subpane="notifications">
+        <div class="profile-section" id="profileNotifySection">
+          <div class="profile-section-title">알림</div>
+          <label class="profile-toggle-row">
+            <input type="checkbox" id="notifyMentionsChk" />
+            <span class="profile-toggle-text">멘션 알림 받기<span class="helper-text">대화에서 나를 멘션하면 알림(토스트·데스크톱)을 표시합니다.</span></span>
+          </label>
+          <label class="profile-toggle-row">
+            <input type="checkbox" id="notifyDesktopChk" />
+            <span class="profile-toggle-text">데스크톱 알림<span class="helper-text">브라우저 OS 알림으로도 표시합니다(브라우저 권한 필요).</span></span>
+          </label>
+          <div class="profile-notify-perm helper-text" id="profileNotifyPerm" aria-live="polite"></div>
+        </div>
+      </div><!-- /notifications subpane -->
 
-      <!-- anim-pref: 화면 애니메이션 효과 — 대화 전환 크로스페이드·가이드 뱃지/캘린더 스크롤 이동 등.
+      <!-- [UI] anim-pref: 화면 애니메이션 효과 — 대화 전환 크로스페이드·가이드 뱃지/캘린더 스크롤 이동 등.
            기본값은 OS 접근성 설정(prefers-reduced-motion)을 따르되, '항상 켬/끔' 으로 재정의 가능.
            상태 렌더는 renderMotionPref(), 저장은 localStorage(getMotionPref/setMotionPref). -->
-      <div class="profile-section" id="profileMotionSection">
-        <div class="profile-section-title">화면 효과</div>
-        <div class="profile-select-row">
-          <label class="profile-toggle-text" for="motionEffectSelect">애니메이션 효과<span class="helper-text">대화 전환 크로스페이드, 우측 가이드 뱃지·캘린더 클릭 시 부드러운 스크롤 이동 등의 효과입니다. 기본값은 시스템 설정을 따르며, 시스템에서 애니메이션이 꺼져 있어도 여기서 '항상 켬' 으로 되살릴 수 있습니다.</span></label>
-          <select id="motionEffectSelect" class="btn-secondary profile-motion-select" aria-label="애니메이션 효과">
-            <option value="os">시스템 설정 따름</option>
-            <option value="on">항상 켬</option>
-            <option value="off">항상 끔</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- TASK-0184: 내 사용 내역 — 본인 LLM 토큰/모델/요청 (GET /api/profile/usage). 간소판(추정 비용 비노출).
-           gc-settings-notif: 별도 '사용 내역' 탭에서 '계정' 탭으로 병합(차트/컨트롤 id 동일 — loadProfileUsage 무변경). -->
-      <div class="profile-section">
-        <div class="profile-usage-head">
-          <div class="profile-section-title">사용 내역</div>
-          <div class="profile-usage-controls">
-            <!-- 집계 단위 (시간별/일별/월별) — 백엔드 /api/profile/usage 의 gran 파라미터(hour/day/month) -->
-            <select id="profileUsageGran" class="btn-secondary profile-usage-days" aria-label="집계 단위">
-              <option value="hour">시간별</option>
-              <option value="day" selected>일별</option>
-              <option value="month">월별</option>
-            </select>
-            <select id="profileUsageDays" class="btn-secondary profile-usage-days" aria-label="기간">
-              <option value="7">최근 7일</option>
-              <option value="30" selected>최근 30일</option>
-              <option value="90">최근 90일</option>
+      <div class="profile-subpane hidden" data-account-subpane="ui">
+        <div class="profile-section" id="profileMotionSection">
+          <div class="profile-section-title">화면 효과</div>
+          <div class="profile-select-row">
+            <label class="profile-toggle-text" for="motionEffectSelect">애니메이션 효과<span class="helper-text">대화 전환 크로스페이드, 우측 가이드 뱃지·캘린더 클릭 시 부드러운 스크롤 이동 등의 효과입니다. 기본값은 시스템 설정을 따르며, 시스템에서 애니메이션이 꺼져 있어도 여기서 '항상 켬' 으로 되살릴 수 있습니다.</span></label>
+            <select id="motionEffectSelect" class="btn-secondary profile-motion-select" aria-label="애니메이션 효과">
+              <option value="os">시스템 설정 따름</option>
+              <option value="on">항상 켬</option>
+              <option value="off">항상 끔</option>
             </select>
           </div>
         </div>
-        <div id="profileUsageSummary" class="profile-usage-summary"></div>
-        <div class="profile-usage-card">
-          <div class="profile-usage-h"><span id="profileUsageTrendTitle">일별</span> 토큰 사용량 <span class="profile-usage-caption">· 모델별 누적</span></div>
-          <div id="profileUsageDayChart" class="profile-usage-chart"></div>
+      </div><!-- /ui subpane -->
+
+      <!-- [사용 내역] TASK-0184: 내 사용 내역 — 본인 LLM 토큰/모델/요청 (GET /api/profile/usage). 간소판(추정 비용 비노출).
+           차트/컨트롤 id 동일 — loadProfileUsage 무변경. -->
+      <div class="profile-subpane hidden" data-account-subpane="usage">
+        <div class="profile-section">
+          <div class="profile-usage-head">
+            <div class="profile-section-title">사용 내역</div>
+            <div class="profile-usage-controls">
+              <!-- 집계 단위 (시간별/일별/월별) — 백엔드 /api/profile/usage 의 gran 파라미터(hour/day/month) -->
+              <select id="profileUsageGran" class="btn-secondary profile-usage-days" aria-label="집계 단위">
+                <option value="hour">시간별</option>
+                <option value="day" selected>일별</option>
+                <option value="month">월별</option>
+              </select>
+              <select id="profileUsageDays" class="btn-secondary profile-usage-days" aria-label="기간">
+                <option value="7">최근 7일</option>
+                <option value="30" selected>최근 30일</option>
+                <option value="90">최근 90일</option>
+              </select>
+            </div>
+          </div>
+          <div id="profileUsageSummary" class="profile-usage-summary"></div>
+          <div class="profile-usage-card">
+            <div class="profile-usage-h"><span id="profileUsageTrendTitle">일별</span> 토큰 사용량 <span class="profile-usage-caption">· 모델별 누적</span></div>
+            <div id="profileUsageDayChart" class="profile-usage-chart"></div>
+          </div>
+          <div class="profile-usage-card">
+            <div class="profile-usage-h">모델별 비중</div>
+            <div id="profileUsageModelChart" class="profile-usage-chart"></div>
+          </div>
         </div>
-        <div class="profile-usage-card">
-          <div class="profile-usage-h">모델별 비중</div>
-          <div id="profileUsageModelChart" class="profile-usage-chart"></div>
-        </div>
-      </div>
-
-      <div class="profile-section">
-        <div class="profile-section-title">비밀번호 변경</div>
-        <form id="passwordChangeForm" class="profile-form">
-          <label class="field">
-            <span>현재</span>
-            <input id="currentPassword" type="password" autocomplete="current-password" />
-          </label>
-          <label class="field">
-            <span>새 비밀번호</span>
-            <input id="newPassword" type="password" autocomplete="new-password" />
-          </label>
-          <label class="field">
-            <span>확인</span>
-            <input id="confirmPassword" type="password" autocomplete="new-password" />
-          </label>
-          <div class="form-error" id="passwordError"></div>
-          <button type="submit" class="btn-primary">변경</button>
-        </form>
-      </div>
-
-      <!-- TASK-20260619T040000-two-factor-auth (보안 ⑥): 2단계 인증(TOTP) self-service. -->
-      <div class="profile-section" id="profileTotpSection">
-        <div class="profile-section-title">2단계 인증 (2FA)</div>
-        <div id="profileTotpBody" aria-live="polite">로딩 중…</div>
-      </div>
-
-      <div class="profile-section profile-danger-zone">
-        <button type="button" class="btn-secondary" id="logoutBtn">로그아웃</button>
-      </div>
+      </div><!-- /usage subpane -->
 
     </div><!-- /security-and-account -->
 
