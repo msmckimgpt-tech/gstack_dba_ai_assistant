@@ -1010,3 +1010,15 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 
 ### Run (예정) — POST-DEPLOY win-browser 실 Windows Chrome (Environment: Windows-browser, PB-0008) — T76.3
 - 배포 후 대형 그래프 줌인 → 노드 선택 → ① 화면 밖 관계 노드로 관계선 유지 ② 상세 패널 관계행 클릭 → 화면 밖 대상 카메라 팬 ③ 무선택 컬링·성능 유지 ④ pageerror 0. 헤드리스는 실 화면 미대체 — 육안 배포 후.
+
+## §82 metadata-graph-sync-flock — cron 겹침 실행 무가드 서비스 장애 긴급 수정 (2026-07-14)
+불변식: ① 동일 lock file 대상 두 인스턴스 동시 기동 시 1개만 실제 작업(docker exec) 진행, 나머지는 즉시 skip(exit 3) ② 워커 컨테이너 부재 시 기존 exit 2 동작 무변경 ③ 정상 단독 실행(겹침 없음) 시 기존과 동일하게 성공(exit 0/1) — flock 도입으로 인한 회귀 없음.
+
+### Run — 문법 + flock 동시성 (Environment: unit/node, 실제로는 bash) — T82.2
+- `bash -n bin/metadata-graph-sync.sh` → **PASS**(문법 오류 없음).
+- flock 합성 단위 테스트(동일 `/tmp/flocktest.lock` 대상 두 서브셸 동시 기동, 1st 는 3s 점유): 1st `acquired lock` → 2nd 즉시 `correctly skipped (lock held)` → 1st 만료 후 `done`. **PASS**(불변식 ① 확인).
+- 실 스크립트 라이브 재현(sudo, `repo-insight-worker-1` 대상, `--incremental` 인자로 2 인스턴스 0.4s 간격 기동): 1st(`timeout 3`)= `exit 124`(정상 진행 중 timeout, docker exec 로 넘어간 것 확인 — 로그 `[metadata-graph-sync] exec → repo-insight-worker-1`) / 2nd = `exit 3` + 로그 `이전 실행이 아직 진행 중 — skip`. **PASS**(불변식 ① 실경로 확인, 회귀 없음).
+- 라이브 인시던트 복구 확인(장애 재현 전 실제 관측): stray 프로세스 kill 후 `docker compose ps` ask-worker/insight-worker `unhealthy`→`healthy`(15s 내), `--since 30s` 로그에 신규 `query_wait_timeout` 없음, `curl -sk https://localhost/healthz`→200·`/`→200·`/api/session`→200. 근본원인(겹침 cron)이 flock 가드로 재발 차단됨을 별도로 확인.
+
+### Run (예정) — 실 cron 배포 후 관찰 (Environment: prod-cron)
+- 배포 후 첫 30분 cron 사이클에서 `artifacts/metadata-graph/cron.log` 에 정상 skip/진행 로그가 기대대로 나타나는지 육안 확인(1회성, 비차단).

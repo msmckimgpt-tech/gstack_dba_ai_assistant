@@ -188,7 +188,10 @@ source_of_truth: true
 - 대상: TASK.md(TP.4 [x])·REVIEW.md([SKIPPED] entry)·test-runs.d fragment. **코드/자산 변경 0**.
 - 변경: PR #763 배포(469fa20d) 후 실측 기록 — 클러스터 재가동(attached 4,843·cap 가드 실동작)·AGE 수렴(cc_data_main T225/R298)·PB-0008 PASS(nm:dt_* 가짜 가족 0·be: 95 id순 선두·길드4/퀘스트3/몬스터6+ 연속 인접·리포트 3종 각기 다른 컨텐츠 클러스터 분리·기능 오류 0).
 - 근거: TP.4 완수 게이트(visual_verification_scope: always) 마감. 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).
-
 ## CHG-20260714T090500-ai-claude-feature-0016-cluster-label-target — cluster_label 활동 target 사용자 식별자화 (2026-07-14)
 - 대상: `semantic_cluster.py`(`_ds_display_label` 신설 + `_llm_content_labels` payload.datasource=사용자 식별자) + 테스트 2. 마이그 0·Minor(§12.3 — 단일 파일·표시 정확성).
 - 변경: 'AI 운영 현황' cluster_label 활동의 target 이 scope_key 해시로 노출되던 것을 `agent_runtime.datasource_health` 스냅샷(scope_key→datasource_label)으로 해석해 기록. 미스 존재 시에만 1회 조회(전량 캐시 적중 시 추가 쿼리 0). kv 라벨 캐시 ns 는 해시 유지 — 캐시 무효화·재호출 없음. 랜딩 후 기존 546건 UPDATE 데이터 정정(멱등) 동반.
+## CHG-20260714T-graphsync-flock-guard — §82 metadata-graph-sync cron 겹침 실행 flock 가드 (서비스 전역 장애 긴급 대응, 2026-07-14)
+- 대상: `bin/metadata-graph-sync.sh`(flock -n 가드 + symlink 검사 신설)·`bin/routine-backfill.sh`(동일 lock 파일 공유 가드 + symlink 검사 신설, §18.8 리뷰 지적 반영).
+- 변경(사용자 장애 리포트 — "로그인 후 빈 화면, 작업 콘솔 미작동"): root crontab(30분 주기) 로 호출되는 `metadata-graph-sync.sh` 에 동시성 가드가 없어, 이전 실행이 AGE 그래프(`metadata_kb`) lock 경합으로 멈추면 새 cron 이 계속 겹쳐 쌓이던 것을 `flock -n`(non-blocking) 으로 원천 차단. `sync_graph()` 의 또 다른 호출자 `routine-backfill.sh` 도 동일 lock 을 공유하도록 확장(리뷰 MAJOR-1). lock 파일을 world-writable `/tmp` 대신 root 전용 `/root/.locks/mysql-ai-delegated-dev/`(0700, 자기-provision)로 이동 + 심볼릭 링크 대상이면 fail-loud 거부(리뷰 MAJOR-2, TOCTOU 방지).
+- 근거·실증: 라이브 인시던트(stray 프로세스 20개, 1h19m lock-wait 체인, pgbouncer 풀 30→14 커넥션 회복) → 즉시 복구(코드 변경 전 운영 조치) → 재발 방지 코드 수정 → §18.8 general-purpose 적대 리뷰 PASS-WITH-FIXES(MAJOR 2건 수정) → cross-script 상호배제 + symlink 가드 라이브 재현 검증. 상세는 TASK.md §82, REVIEW.md REV-20260714T120000-graphsync-flock-guard.

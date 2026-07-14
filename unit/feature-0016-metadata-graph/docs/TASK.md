@@ -2380,10 +2380,39 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] TP.2 FE `_metaGenericPrefixes`(2~3자·max(4,15%))·`_metaStripGeneric`(잔여 ≥3자) + be: 밴드 id 순 선두 배치(비-be 관계 seriation·misc 후미·§49 안정화 보존 — 세션 중 신규 밴드는 후미, fresh load 시 정상).
 - [x] TP.3 검증 — BE 23(attach cap 가드 포함)+FE 헤드리스 16(user_ 4자 의미 접두 보호 포함)+그래프 전 스위트 무회귀+전체 pytest EXIT=0+라이브 프로브(attached 5,249·잔여 114→26·리포트 3종 분리). §18.8 패널 PASS-WITH-FIXES 전건 반영(REV-20260713T170500).
 - [x] TP.4 완수 — PR #763 머지(469fa20d)·배포·클러스터 pass 재가동(attached 4,843·cap 가드 실동작)·AGE 수렴(T225/R298)·**PB-0008 PASS**(nm:dt_* 가짜 가족 0·be: 95 id순 선두·길드4/퀘스트3/몬스터6+ 연속 인접·기능 오류 0). 리포트 3종 분리(게임 콘텐츠 마스터/캐시포인트 관리/아이템 합성 강화). 상세 test-runs.d/TASK-20260713T1620-content-cluster-p2-postdeploy.md.
-
 ## 20260714T0900-cluster-label-target — AI 운영 현황 cluster_label 활동의 datasource 해시 노출 수정 (2026-07-14, 사용자 리포트)
 사용자: "`관리 콘솔 > AI 운영 현황` 내 'cluster_label' 활동에선 각 데이터 소스가 해시 원본값으로 나타남 — 임의 지정 식별자로 나타나게."
 - 진단: `llm_cluster_label` 이 `_record_llm_usage(target=payload.datasource)` 에 **scope_key 해시**(mssql-06656002eda6)를 기록(546건 실측 — 해시 target 은 cluster_label 유일; product_classify 는 이미 사용자 식별자). 사용자 식별자 매핑은 PG `agent_runtime.datasource_health`(scope_key→datasource_label, TASK-0255 R2 스냅샷·18건)에 존재.
 - [x] TL.1 `semantic_cluster._ds_display_label`(datasource_health 조회·fail-soft key 폴백·SAVEPOINT 격리) + `_llm_content_labels` 가 미스 존재 시 1회 해석해 payload.datasource(→ llm_usage.target·LLM 프롬프트 문맥)에 사용. **kv 캐시 ns 는 해시 불변**(캐시 무효화 0).
 - [x] TL.2 테스트 2(해석/폴백·payload 라벨+캐시 ns 불변) — 파일 25 PASS.
 - [ ] TL.3 PR→merge→worker 재빌드(+web 패리티 롤링)→기존 546건 데이터 정정(UPDATE llm_usage target 해시→라벨, 멱등)→패널 표시 확인.
+## §82 metadata-graph-sync-flock — cron 겹침 실행 무가드로 인한 서비스 전역 장애 긴급 수정 (2026-07-14, 사용자 장애 리포트)
+사용자: "로그인 후 빈 화면, 작업 콘솔도 제대로 작동하지 않음." 등급 **Major**(운영 인시던트 긴급대응 — 비파괴 스크립트 가드 추가, 인증/스키마/데이터 무변경).
+
+### 진단 (라이브 실측)
+- **증상**: `ask-worker`/`insight-worker` 컨테이너 16시간째 `unhealthy`. 로그 전량 `query_wait_timeout` / `the connection is closed`(save_memory_kv·claim·sweep·embedding_backfill 등 전 PG 경로 실패).
+- **RC**: `bin/metadata-graph-sync.sh` 가 root crontab `*/30 * * * *` 로 동시성 가드(flock 등) 없이 호출됨. `docker top repo-insight-worker-1` 확인 결과 **`metadata_graph_sync.py` 프로세스 20개가 Jul13 00:00 부터 30분 간격으로 전부 살아남아 누적**(cron.log 의 `since` 워터마크가 `2026-07-13 18:00:02 KST` 에 고정된 채 매 회 `query_wait_timeout`/`connection is lost` 로 실패 반복 — 최소 ~20시간 지속). `pg_stat_activity` 잠금 그래프 조회 결과 전부 `agent_core_kb` 애플리케이션이 동일 AGE 그래프 `metadata_kb` 의 `MERGE (n:Schema ...)` 노드에 대해 **순환 대기 체인**(최대 1시간19분 lock-wait) 을 형성 — pgbouncer 커넥션 풀(`default_pool_size=20`)이 전량 이 lock-wait 커넥션으로 소진되어, 실제 사용자 요청을 처리해야 할 ask-worker/insight-worker 의 모든 PG 접근이 `query_wait_timeout` 으로 연쇄 실패(로그인 후 빈 화면·작업 콘솔 미작동의 직접 원인).
+- **참고**: 동일 클래스 quirk 가 이미 `docs/LEARNINGS.md`(graph-sync 병렬 deadlock) 에 기록돼 있었으나, 그 대응(수동 kill)만 있고 **재발 방지(flock)는 미구현** 상태였다 — 이번은 그 결여로 재발한 것.
+- 별개로 main worktree 에 미커밋 `docker-compose.yml` 변경(다른 세션, `AGENT_DISABLE_AUTO_RETRY` 등 datasource 재시도 폭주 방지 튜닝)이 있었으나 **본 인시던트의 원인이 아님**(대상 서비스·매커니즘 상이 — datasource 프로브 재시도 vs AGE 그래프 sync 겹침) — 손대지 않고 그대로 보존(foreign-change, meta/FOREIGN_CHANGE_ALERT.md 기 기록).
+
+### 즉시 복구 (2026-07-14, 코드 변경 전 실시 — 운영 조치, 사용자 확인 후 진행)
+1. `docker top repo-insight-worker-1` 로 stray `metadata_graph_sync.py` PID 20개 식별 → host 측 `kill -TERM` 전량 종료(MERGE 는 멱등이라 데이터 손실 없음).
+2. `pg_stat_activity` 재확인 — 잠금 대기 커넥션 자연 해소(활성 커넥션 30→14, lock-wait MERGE 쿼리 0).
+3. ask-worker/insight-worker 헬스체크 `unhealthy`→`healthy` 자동 회복 확인(15초 내), 신규 `query_wait_timeout` 로그 없음(30초 관측 무재발).
+4. `/healthz`(200)·`/`(200)·`/api/session`(200) curl 직접 확인 — 서비스 응답 정상화.
+
+### 재발 방지 (본 cycle 코드 변경)
+- [x] T82.1 `bin/metadata-graph-sync.sh` 에 `flock -n`(non-blocking) 가드 추가 — 이전 실행이 살아있으면 새 cron 호출은 **즉시 skip(exit 3)**, 무한 대기·겹침 실행 자체를 원천 차단. 기존 `exec docker exec ...` 는 `docker exec ...; exit $?` 로 변경(flock fd 보유 상태에서 실제 종료까지 wrapper 프로세스가 생존해야 하므로).
+- [x] T82.2 검증(unit/node 격리, Environment: unit/node) — `bash -n` 문법 확인 PASS + flock 동시성 단위 테스트(동일 lock file 대상 두 인스턴스 동시 기동 → 1st 는 lock 보유·2nd 는 즉시 "correctly skipped" 종료) 라이브 재현 PASS(sudo 경로로 실제 스크립트 대상 이중 기동 → 2nd 즉시 exit 3, 1st 는 정상 진행).
+- [x] T82.4 **§18.8 적대 리뷰(general-purpose subagent) 반영 — PASS-WITH-FIXES → 수정 완료**:
+  - **MAJOR-1(수정)**: 리뷰어가 grep 으로 `sync_graph()` 의 또 다른 직접 호출자 `modules/routine_backfill.py:202`(경유 `bin/routine-backfill.sh`, 사용자 수동 실행)를 지적 — cron 자기-겹침만 막으면 **cron 과 수동 backfill 의 동시 실행**으로 동일 lock 경합(장애 원인 클래스)이 재발할 수 있었다. → `bin/routine-backfill.sh` 에도 **동일 lock 파일을 공유**하는 flock 가드 추가(자원=AGE 그래프 단위 직렬화). 라이브 재현으로 상호 배제 확인(아래 검증).
+  - **MAJOR-2(수정)**: lock 파일이 world-writable `/tmp` 의 고정 경로라 symlink pre-plant TOCTOU 위험(첫 생성 시점에 공격자가 심볼릭 링크를 먼저 심으면 root 스크립트가 그 대상을 열어씀) — 지적. → lock 을 root 전용 디렉터리(`/root/.locks/mysql-ai-delegated-dev/`, `mkdir -p -m 700` 로 매 실행 자기-provision)로 이동 + **대상이 심볼릭 링크면 fail-loud 로 거부**하는 명시 검사 추가(두 스크립트 동일).
+  - MINOR(수용, 낮은 우선순위): lock 경로가 `COMPOSE_PROJECT_NAME` 로 스코프되지 않음 — 이 호스트는 단일 `repo` 프로젝트 고정 관행(`kb-pg-healthcheck.sh` 주석 확인)이라 실 위험 낮음, 후속 검토.
+  - NIT(정보 기록): `exec` 제거로 wrapper 프로세스가 docker-exec 자식과 별도 PID 로 생존 — 기존 "docker top | grep 로 잔존 프로세스 kill" quirk 대응 시 wrapper 가 아닌 실제 python 자식 PID 를 대상해야 함(기존 절차와 동일 — `docker top <container>` 는 컨테이너 내부 프로세스만 보여주므로 영향 없음, host 측 수동 kill 절차에서만 유의).
+  - PASS 확인: flock 해제는 exit 0/1/2/3 전 경로에서 정상(각 `exit` 문에서 fd 9 close), lock-then-exec 사이 TOCTOU 없음(`flock -n` 이 원자적이며 `docker exec` 전체 구간 동안 보유).
+  - 미해결 관찰(비차단, T82.3 으로 이월): 스크립트 자체 timeout/연속-skip 알림 부재 — 이미 T82.3 에 반영.
+- [ ] T82.3 (권장, 본 cycle 범위 밖) cron 자체에 loop 안전장치(예: 연속 skip N회 시 알림) 및 `metadata_graph_sync.py`/`routine_backfill.py` 내부 자체 타임아웃(현재는 무한 lock-wait 가능) 검토 — 후속 initiative.
+- [x] T82.5 확장 검증 — 두 스크립트 `bash -n` PASS + **cross-script 상호배제 라이브 재현**(`metadata-graph-sync.sh` 가 lock 보유 중 `routine-backfill.sh --dry-run` 기동 → 즉시 `exit 3` + 로그 확인, 1st 는 정상 진행) + **symlink 가드 라이브 재현**(lock 경로에 `/etc/passwd` 심볼릭 링크 사전 배치 후 스크립트 기동 → `exit 1` + "심볼릭 링크입니다 — 변조 의심" 즉시 거부, 대상 파일 미접촉 확인) + lock 디렉터리 권한 확인(`700 root:root`, non-root 사용자 접근 거부 실증).
+
+### Git 동기화 결과
+- Task-Cycle: graphsync-flock-guard (ai/claude-corp/graphsync-flock-guard, worktree, AGENTS.md §13.2 정합 — main 직접수정 금지 사용자 정정 반영).
