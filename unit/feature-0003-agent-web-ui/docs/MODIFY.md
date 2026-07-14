@@ -330,3 +330,13 @@ source_of_truth: true
 - 실증: `/healthz` git_commit=8d1285d0. 서빙 graph.css 스탬프 `4335ea1dac52`→`d5f26a416089`(content-hash 갱신)·소스 byte-identical·주석 델리미터 61:61. 배포본 런타임(win-browser eval, 주입 없이): `.amg-help-overlay` cssRules 파싱 복구·`position:absolute`·`display:flex`·`align-items:center`·`z-index:40` · 카드 canvas-wrap 수평 정중앙(dx:0)·줌 컨트롤 미겹침(card_overlaps_zoom:false) · ❓ 버튼 팝업 스크린샷 육안(중앙 모달) · pageerror 0. → 배포본 실증 PASS.
 - Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/test-runs.d/20260714T180314-graph-entry-help.md`.
 - Cross-ref: REV-20260714T190916-graph-help-overlay-postverify · 원천 CHG/REV-20260714T184717-graph-help-overlay-fix · ANCHOR 0003 무충돌.
+
+
+## CHG-20260715T025509-doc-sync-rn-0715 (TASK-20260715T025509-doc-sync-rn-0715 — 07-14 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases 배열 head 에 **date "2026-07-14" 새 블록 prepend**(10항목: work 6·admin 3·common 1)·summary 작성. generated 07-13→07-14. 기존 28 블록 보존(총 29).
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입·deploy-web `asset_stamp_verify` 하드게이트). index/admin.html 편집 0. release-notes-data.js 내용 변경만으로 전역 content-hash 변화 → wrapper 재빌드 시 서빙 토큰 자동 갱신(수동 bump 부적용·해시 불변).
+- 제외: feature-0020 무중단 배포(내부)·feature-0016 flock/cluster-label(내부 운영)·@@ 시스템변수 과차단(07-13 블록 detail 포괄·중복 회피)·POST-DEPLOY/ROUTEMAP/ANCHOR 기록.
+- Verification: `node --check` PASS · vm 구조검증(29 releases·07-14 head 10항목·07-13 보존·스키마·누출0). 사용자향 평이화(내부용어 누출 0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- **landing/배포 소유=cron wrapper 위임**(로컬 commit 만·push/merge/deploy 미수행). META(STATUS·wiki·ARCHITECTURE·SECURITY·meta/REVIEW)는 별도 commit(REV-20260715T025509-META-0036-doc-sync-0715).
