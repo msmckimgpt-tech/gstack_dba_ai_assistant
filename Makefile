@@ -147,8 +147,9 @@ up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-w
 	@# 종료코드는 흡수하고, 직후 이미지 존재 여부로 실제 빌드 성공을 검증한다.
 	@# feature-0014: web 은 web-a/web-b 두 replica(무중단 롤링). 동일 Dockerfile 이라 빌드
 	@# 캐시로 사실상 build-once. (라이브 무중단 재배포는 'make deploy-web' = bin/deploy-web.sh.)
-	@$(DC_QUIET) build agent memory-init insight-worker web-a web-b browser || true
-	@for img in repo-agent repo-memory-init repo-insight-worker repo-web-a repo-web-b repo-browser; do \
+	@# feature-0020: ask-worker 를 빌드 목록에 추가(cold up 시 이미지 미빌드로 기동 불가하던 공백).
+	@$(DC_QUIET) build agent memory-init insight-worker ask-worker web-a web-b browser || true
+	@for img in repo-agent repo-memory-init repo-insight-worker repo-ask-worker repo-web-a repo-web-b repo-browser; do \
 		docker image inspect $$img >/dev/null 2>&1 \
 			|| { echo "[make up] 빌드된 이미지 누락: $$img" >&2; exit 1; }; \
 	done
@@ -167,6 +168,14 @@ up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-w
 		$(DC_QUIET) up -d insight-worker; \
 	else \
 		$(DC_QUIET) stop insight-worker >/dev/null 2>&1 || true; \
+	fi
+	@# feature-0020 (리뷰 M-4): ask-worker 기동 — web 이 AGENT_ASK_EXECUTION_MODE=worker 로
+	@# 운영 중이라(라이브 실측) cold up 에서 워커 부재 시 사용자 질문이 enqueue 만 되고 hang.
+	@# inprocess 모드에서는 shadow-safe(떠 있어도 동작 무변경)라 무조건 기동이 안전 기본값.
+	@if [[ "$(ENABLE_ASK_WORKER)" != "0" ]]; then \
+		$(DC_QUIET) up -d ask-worker; \
+	else \
+		$(DC_QUIET) stop ask-worker >/dev/null 2>&1 || true; \
 	fi
 	@if [[ "$(ENABLE_MCP)" == "1" ]]; then \
 		$(DC_QUIET) --profile mcp up -d mcp; \
@@ -420,10 +429,18 @@ web: init  ## web: Web UI 기동 (web-a/web-b 2-replica + Caddy :443 단일 진�
 	@echo "Web UI: https://$(WEB_PUBLIC_HOST)  (Caddy :443 단일 진입 — :18080 web 직접 문은 feature-0014 에서 폐기)"
 	@if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_PUBLIC_HOST) (LAN IP $(WEB_LAN_IP) → DNS/hosts 매핑)"; fi
 
-deploy-web:  ## web: 라이브 무중단(zero-downtime) 롤링 재배포 (origin/main HEAD). 헤더의 scoped sudo 필요.
+deploy-web:  ## web: 라이브 무중단(zero-downtime) 전체 롤아웃 — web 롤링 + 워커 + gateway reconcile (origin/main HEAD). 헤더의 scoped sudo 필요.
 	@sudo -E bin/deploy-web.sh
 
-web-rollback:  ## web: 직전 정상 이미지(last-good)로 무중단 롤백
+deploy-all: deploy-web  ## web: deploy-web 의 명시적 alias (feature-0020 — 스파인이 전 배포 대상을 커버)
+
+deploy-web-only:  ## web: web(+caddy reconcile)만 롤링 재배포 (구 feature-0014 범위)
+	@sudo -E bin/deploy-web.sh --web-only
+
+deploy-workers:  ## web: 워커(insight/ask)+gateway 만 롤아웃 (마이그 없는 워커 코드/설정 변경 전용)
+	@sudo -E bin/deploy-web.sh --workers-only
+
+web-rollback:  ## web: 직전 정상 이미지(last-good)로 무중단 롤백 (web + 워커)
 	@sudo -E bin/deploy-web.sh --rollback
 
 web-down:  ## web: Web UI + caddy 정지
@@ -480,6 +497,24 @@ insight-status:  ## insight: insight-worker 컨테이너 상태 표시
 
 insight-logs:  ## insight: insight-worker 로그 follow
 	@$(DC_QUIET) logs -f --tail=200 insight-worker
+
+# =============================================================================
+# Ask worker (feature-0020 — insight 와 대칭 운영 타깃)
+# =============================================================================
+
+ask-worker-up:  ## ask-worker: ask-worker 기동
+	@$(MAKE) check-llm-network
+	@$(MAKE) -s dc-build SERVICE=ask-worker
+	@$(DC_QUIET) up -d --no-build ask-worker
+
+ask-worker-down:  ## ask-worker: ask-worker 정지 (graceful — stop_grace 70s, in-flight run 은 lease requeue)
+	@$(DC_QUIET) stop ask-worker || true
+
+ask-worker-status:  ## ask-worker: ask-worker 컨테이너 상태 표시
+	@$(DC_QUIET) ps ask-worker
+
+ask-worker-logs:  ## ask-worker: ask-worker 로그 follow
+	@$(DC_QUIET) logs -f --tail=200 ask-worker
 
 # =============================================================================
 # MCP — Model Context Protocol 서버 (선택)

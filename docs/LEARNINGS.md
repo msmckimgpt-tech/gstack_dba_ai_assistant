@@ -21,6 +21,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: mistake
 
+### LRN-20260714-0001 — 반복 실행 스크립트(cron)는 "이전 실행이 끝나지 않았을 가능성"을 기본 가정하고 동시성 가드를 갖춰야 한다 — 없으면 실패 누적이 자원 고갈로 전이되어 무관한 서비스까지 무너뜨린다
+- Source: 사용자 장애 리포트("로그인 후 빈 화면, 작업 콘솔 미작동") 근본원인 조사 (2026-07-14, feature-0016 §82)
+- Mistake: `bin/metadata-graph-sync.sh`(AGE 그래프 동기화)가 root crontab `*/30 * * * *` 로 호출되는데 **동시성 가드(flock 등)가 전혀 없었다**. 이전 실행이 AGE 그래프 노드 lock 경합으로 멈추면(이미 `docs/LEARNINGS.md` 에 "graph-sync 병렬 deadlock" quirk 로 기록돼 있던 클래스), cron 은 그 사실을 모른 채 30분마다 새 실행을 계속 겹쳐 쌓았다. 결과: 최소 ~20시간 동안 `metadata_graph_sync.py` 20개가 동시에 같은 그래프 노드에 대해 서로 잠금 대기(순환 체인, 최대 1h19m)를 형성 → pgbouncer 커넥션 풀(`default_pool_size=20`)이 전량 lock-wait 로 소진 → **그래프 동기화와 무관한** ask-worker(사용자 대화 처리)·insight-worker 전체가 `query_wait_timeout` 으로 연쇄 실패 → 로그인 후 빈 화면·작업 콘솔 미작동(전 사용자 영향). 이미 문서화된 quirk(수동 kill 대응)가 있었음에도 **재발 방지(가드)는 별도 후속으로 남겨진 채 방치**돼 동일 원인이 훨씬 큰 규모로 재발했다.
+- Correct approach: (1) **cron/timer 로 호출되는 모든 스크립트는 기본값으로 `flock -n`(또는 동등한 non-blocking lock) 가드를 갖춘다** — "이전 실행이 아직 살아있을 수 있다"를 예외가 아니라 기본 가정으로 둔다. (2) 그 자원(여기서는 AGE 그래프 lock)이 다른 무관한 서비스와 **커넥션 풀을 공유**한다면, 한 반복 작업의 정체가 풀 전체를 고갈시켜 무관한 기능까지 넘어뜨릴 수 있음을 설계 시점에 고려한다 — 실패 격리(pool 분리, 타임아웃 하한)가 없으면 "부수적 배치 작업"이 "핵심 서비스 전역 장애"로 전이된다. (3) 과거에 한 번 발생한 lock-경합 quirk 를 문서화하면서 "재발 방지(가드)"를 즉시 구현하지 않고 후속 과제로 미룬 경우, 그 gap 은 리스트에만 남고 실제로 재발할 때까지 잊혀지기 쉽다 — quirk 기록에 "임시 수동 대응"만 있고 "구조적 방지"가 없으면 그 자체가 미완료 상태임을 명시(예: TODO 항목화)해야 한다.
+- Applies to: 모든 cron/timer 기반 반복 스크립트(`crontab -l`/`sudo crontab -l` 로 열거되는 전체), 특히 공유 커넥션 풀(pgbouncer 등)에 접근하는 백그라운드 배치 작업.
+- Verified: true (근본원인 라이브 lock-wait 체인 확인 + stray 프로세스 kill 로 즉시 해소 확인 + flock 가드 추가 후 이중 기동 재현 테스트로 재발 차단 확인).
+
 ### LRN-20260713-0001 — 웹/UI 기능 완료 보고가 "코드 병합"·"백엔드 통과"에 머물면, 배포 전 사용자 테스트·워커 미반영·client-only 결함을 놓친다
 - Source: feature-0003 attach-user-version (사용자 재업로드 첨부 버전 관리) 배포 후 사용자 버그 리포트 조사 (2026-07-13)
 - Mistake: 세 겹의 마찰이 겹쳤다. (1) **merge ≠ 배포 완료** — 사용자가 기능을 테스트했으나 그 시각(13:52 KST)이 배포(~15:00 KST)보다 ~1시간 앞서 구코드가 서빙 중이었다(DB CreatedAt 타임스탬프로 확정). (2) **워커 미반영** — 그 기능의 "assistant 변경점 인지" 로직은 `agent_core._build_attachment_context_section`(ask-worker 거주)인데, `deploy-web.sh` 는 web(web-a/web-b)만 재배포하므로 web 배포만으론 반영되지 않는다(deploy-web 의 `worker GIT_COMMIT != web` WARN 을 보고서야 ask-worker 를 별도 재빌드). (3) **백엔드만 검증** — 완료 검증(PB-0008)을 `fetch(FormData)` 백엔드 직접 호출로만 수행해, 사용자가 실제 쓰는 `_uploadComposerAttachment`(ES-module scope, 클라이언트 해시 dedup) 경로를 타지 않아 client-only 결함을 놓칠 뻔했다.
@@ -61,6 +68,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - 봉인 방식: 사용자 대면 대화 답변(task='agent') 전용 edge-free alias 로 라우팅(litellm 체인에서 로컬 모델 도달 불가) + 회귀 가드 테스트로 "대화 기본 모델의 폴백 체인이 anthropic-only" 를 고정(기본 모델·체인 변경 시 자동 적발). 배치/분석 등 비-대화 경로의 gemma 강등은 무영향(alias 분리).
 - Applies to: 다중 provider/모델 폴백을 가진 모든 LLM 라우팅. "availability vs quality" 폴백 결정 시 폴백 모델의 컨텍스트/능력이 정본과 등가인지 먼저 확인하고, 아니면 깨끗한 실패 또는 명시 표면화를 기본값으로 한다.
 - Verified: true (적대 2렌즈 패널 CONFIRMED + 배포 후 live probe: claude-haiku-4-chat→claude 라우팅 확인, gemma 도달 불가).
+
+### LRN-20260714-0001 — 코드 상수 프롬프트의 "행동 계약"은 운영자 DB 프롬프트(global row)가 통째 대체하면 조용히 사라진다 — injection-guard 처럼 compose 시 코드-권위 주입해야 프로덕션에 도달한다
+- Source: conversation_audit FR-attachment-update-pasted-not-versioned (2026-07-14, structural 27/34)
+- Pattern: 어떤 행동 계약(예: "명시적 갱신요청 → 쿼리 붙여넣기 말고 첨부 새 버전으로 전달")을 **코드 상수 `SYSTEM_PROMPT` 안에만** 넣으면, `compose_system_prompt` 가 운영자의 `websystemprompts` global-scope row 를 **base 로 통째 대체**하는 구조에서 그 지침이 프로덕션 프롬프트에서 약해지거나 사라진다(data/config drift). 실측: attachment-edit 전달 메커니즘·프롬프트 지침이 2026-06-15/16 출하됐는데도 90일간 갱신요청 34대화 중 27(~79%)이 여전히 붙여넣기 — 메커니즘은 있는데 프롬프트가 그 경로로 안 태웠고, 지침이 코드 상수 안이라 운영자 프롬프트 커스터마이즈에 취약했다.
+- 교훈: (1) **드리프트되면 안 되는 행동 계약은 base prompt(운영자 대체 가능)에 의존하지 말고, `_INJECTION_GUARD_NOTICE` 처럼 compose 단계에서 base 뒤에 코드가 항상 append** 한다(AUTH-1a 코드 권위선). 이러면 운영자 global row 내용과 무관하게 계약이 effective. (2) 메커니즘 존재 ≠ 사용됨 — 기능을 출하했는데 채택률이 낮으면 "프롬프트가 그 경로로 태우는가"를 **정본 store 집계로 측정**(성공/실패 퍼널)하라. 코드만 보면 "있으니 됐다"고 오판한다. (3) LLM-의존 산출물(파일명 등)의 정합은 프롬프트 지시가 아니라 **코드가 권위적으로 강제**(예: 명명 정규화)해야 drift-proof.
+- 봉인 방식: (A2) 강화 지침을 `_ATTACHMENT_DELIVERY_DIRECTIVE` 로 compose parts 에 코드-주입(global row 무관 도달) + (A1) 코드 상수 base 지침도 동반 강화(no-global-row 환경·seed) + (A3) 파일명은 `_next_version_filename` 이 `<stem>_v<n>.<src_ext>` 로 코드-권위 결정(LLM 명명 무관). 검증: 코드/테스트로 "지침 도달·명명 정합" 증명 vs 배포 후 corroboration 재측정으로 "실제 붙여넣기 감소" 는 분리(코드만으로 마찰 소멸 단정 금지).
+- Applies to: 프롬프트·가드·라우팅 등 "코드 상수 vs DB 저장 설정" 이 공존하는 모든 경로. 행동 계약을 어디에 두는가(대체 가능 base vs 코드 권위 주입)를 drift 내성 기준으로 결정하라. + conversation_audit 류 채택률 진단은 정본 store 집계 퍼널로.
+- Verified: true (적대 3렌즈 패널 — SEC-1 MINOR 봉인·나머지 REFUTED; 배포 후 4서비스 ee4f8de6 런타임 실증. 라이브 대화 붙여넣기 감소는 다음 audit corroboration 재측정 대기 = unverified-live).
 
 ### LRN-20260605-0001 — DB cutover 의 read-back 누락은 워커뿐 아니라 "사용자 대면 grounding 경로"까지 조용히 무력화한다
 - Source: feature-0002 DB 조회 UX 개선 (TASK-0151, 2026-06-05)

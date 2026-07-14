@@ -203,3 +203,8 @@ source_of_truth: true
 - **라이브 실측 필요분(Phase 11b)**: 코드/테스트는 "명시적 갱신요청 → attachment-edit 유도·명명 정합·확장자 안전" 증명. "실제 대화에서 붙여넣기 감소·버전 생성 비율 상승" 은 배포 후 corroboration 재측정분(미수행) → FRICTION_LEDGER `fixed:deployed:unverified-live`. **QA-2 MINOR watch**(text-inline count cap 초과 대화에서 메타엔 뜨나 content 미주입 시 "MUST" 가 fabrication 유도 가능)는 라이브-eval 관찰 항목으로 이월.
 - Human Approval: Scope A(AskUserQuestion 2026-07-13) PLAN-APPROVED. Major(코어 LLM 경로) → PR/deploy 는 외부영향 confirm(override 불가).
 - Cross-ref: CHG-20260713T185846-attach-update-versioned(MODIFY) · feature-0003 CHG-20260713T185846-attach-filename-consistency · FRICTION_LEDGER FR-attachment-update-pasted-not-versioned · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260714T031500-attach-update-deploy [SKIPPED:post-deploy-doc-reconciliation] — 배포 완료 기록 + 원장 상태 정합
+- Date: 2026-07-14. Related Change: CHG-20260714T031500-attach-update-deploy. 코드 변경 0(docs-only).
+- SKIPPED 사유: 런타임 코드 무변경 — PR #771(REV-20260713T185846 검증 완료) 배포 후 상태 정합(FRICTION_LEDGER fixed:undeployed→fixed:deployed:unverified-live + TASK 체크박스). 배포 검증 결정적: 4서비스 GIT_COMMIT=ee4f8de6 running/healthy + ask-worker 런타임 실증(A1 attachment-edit 강화·A2 directive) + web-a 런타임 실증(A3 이중접미 방지·safe_ext) + web /healthz=ee4f8de6.
+- Human Approval: 배포 사용자 confirm(AskUserQuestion 2026-07-13 "PR·머지·배포 전체"). 본 follow-up 은 그 배포의 정직-상태 기록(docs-only).

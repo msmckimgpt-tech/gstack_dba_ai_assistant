@@ -217,8 +217,6 @@ source_of_truth: true
 - Recurrence sealing: LLM-dependent 명명 → 코드 권위 명명(AUTH-1a). materialize 가드(conv/account scope·size cap·text-only·MinIO 원자성·UNIQUE version race) 전부 불변. **보안 회귀 0**.
 - 검증: `tests/test_attachment_versioning.py` 명명 정합 케이스(idempotent·이중접미 방지·확장자 강제·SEC-1) + feature-0003 회귀. §18.8 패널 REV-20260713T185846.
 - Cross-ref(정본): feature-0002 CHG-20260713T185846-attach-update-versioned · FRICTION_LEDGER FR-attachment-update-pasted-not-versioned · ANCHOR 0003 무충돌.
-
-
 ## CHG-20260714T105200-graph-analyze-perm (그래프 AI 능동 분석 실행 권한을 하위 권한으로 분리 — Critical §12.3 인증/인가)
 - Date: 2026-07-14. 요청: AI 능동 분석 '실행' 권한을 조회(metadata.graph.read)에서 하위 권한으로 구분 + 무권한 시 버튼 UI 미표시. 하위호환=A안(최소권한, backfill 없음).
 - 변경(behavior — RBAC):
@@ -232,3 +230,14 @@ source_of_truth: true
 - Verification: py_compile + node --check(module) OK · 권한 타깃 + feature-0003 전체 스위트 PASS(회귀 0) · §18.8 보안 렌즈 적대 리뷰.
 - Rollback: 커밋 revert. grant 추가만(파괴 없음) — revert 후 admin 의 graph.analyze row 는 잔존(관리 콘솔 회수 가능).
 - 잔여: 배포 후 graph.read-only 계정 버튼 미노출·POST 403 / graph.analyze 계정 버튼·실행 정상 실증.
+## CHG-20260714T015432-step-scroll-preserve (TASK-20260714T015432-step-scroll-preserve — 실행 단계 폴링 갱신 시 펼친 "결과 보기" 스크롤 보존, Minor §12.3 frontend-only)
+- Date: 2026-07-14. 사용자 보고: 내부 실행 단계 갱신 때마다 펼쳐 둔 "결과 보기" 스크롤이 초기값으로 리셋. RC: 두 라이브 폴링 재렌더 경로가 컨테이너를 `innerHTML=""` 로 통째 재작성 → 결과 표/미리보기·외부 목록 스크롤 0 초기화(펼침 상태는 `state.stepResultExpanded`+`_stepResultKey` 로 이미 복원되나 스크롤은 미복원).
+- Changes (`src/static/app.js`):
+  - `buildStepDetailEl`: 결과 wrap(`.step-result-wrap`)에 `dataset.stepResultKey = stepKey`(`_stepResultKey`=step_index+created_at) 부여 — 재렌더 간 스크롤 매칭 안정 키(펼침 영속화와 동일 키 재사용).
+  - 신규 제네릭 헬퍼 `_snapshotStepResultScroll(body)` / `_restoreStepResultScroll(body, map)`: 컨테이너 내 펼쳐진(`[data-step-result-key]` 비-hidden) 결과의 `.result-table-wrap`/`.step-result-preview` 스크롤(top/left)을 stepKey 로 Map 캡처·복원. 접힘·미매칭·null/빈맵 방어.
+  - `_renderStepSidePanelBody`(사이드 패널): 재렌더 전 `prevScrollTop`+`_snapshotStepResultScroll(body)` → `body.innerHTML=""` 재작성 → `_restoreStepResultScroll` + 외부 스크롤(하단추종=최하단 / 미추종=`Math.min(prevScrollTop, maxTop)` 유지, 기존 미추종 0 리셋 제거).
+  - `renderProgress`(인라인 progress 카드): 동일 규약을 `progressStepsEl` 에 적용(progAtBottom/progPrevTop + snapshot/restore).
+- 무회귀: 펼침/토글 동작·하단추종 자동스크롤·step dedup 키 불변. 백엔드/엔드포인트/RBAC/스키마 0. 표준 DOM scroll semantics.
+- 검증: `node --check app.js` PASS · 신규 `tests/verify_step_result_scroll_preserve.mjs`(jsdom, 소스추출 격리) **23/23 PASS**. 정적 자산 baked → 시각 최종확인 PB-0008 배포 후 잔여(§CHECK#13, visual_verification_scope: always).
+- Files: `src/static/app.js`, `tests/verify_step_result_scroll_preserve.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST,REPORT}.md`, `docs/test-runs.d/20260714T015432-step-scroll-preserve.md`.
+- Cross-ref: REV-20260714T015432-step-scroll-preserve · REQ/AC-SSP-1~3.

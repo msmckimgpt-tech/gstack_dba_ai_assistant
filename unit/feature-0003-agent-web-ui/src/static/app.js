@@ -3889,13 +3889,16 @@ async function _submitFixWithAi(message) {
 
 // ── feature-0019 message-editing: 자신이 보낸 메시지 수정 + ChatGPT식 버전 페이징 ──────
 // Phase 1 = 1:1 본인 대화 전용(그룹은 Phase 2). 서버 authz(본인 소유·user 메시지)와 동일 게이트.
-function _canEditMessage(message, role) {
+function _canEditMessage(message, role, msgIsOwn) {
   const conv = currentConversation();
-  return role === "user"
-    && Boolean(message) && message.id != null
-    && !isGroupConversation(conv)     // Phase 1 = 1:1 (그룹 편집은 Phase 2)
-    && isOwnConversation(conv)        // 본인 대화
-    && can("conversation.ask");
+  if (role !== "user" || !message || message.id == null || !can("conversation.ask")) return false;
+  if (isGroupConversation(conv)) {
+    // Phase 2: 그룹/공유 대화 — 본인 발신 + @assistant 미호출 메시지만(단순 수정 전용).
+    const invokesAssistant = !!(window.Mentions && window.Mentions.messageInvokesAssistant(String(message.content || "")));
+    return Boolean(msgIsOwn) && !invokesAssistant;
+  }
+  // 1:1 대화: owner = 발신자.
+  return isOwnConversation(conv);
 }
 
 async function _submitMessageEdit(cid, mid, mode, newContent) {
@@ -3960,7 +3963,10 @@ function _startInlineEdit(message, bubbleEl) {
   }
   reBtn.addEventListener("click", () => _doEdit("reanswer"));
   simpleBtn.addEventListener("click", () => _doEdit("simple"));
-  btnRow.appendChild(reBtn);
+  // Phase 2: 그룹/공유 대화는 단순 수정만(재답변/브랜치 없음) — 재답변 버튼 미노출.
+  if (!isGroupConversation(currentConversation())) {
+    btnRow.appendChild(reBtn);
+  }
   btnRow.appendChild(simpleBtn);
   btnRow.appendChild(cancelBtn);
   editor.appendChild(btnRow);
@@ -4340,7 +4346,7 @@ function renderMessages() {
         bubble.appendChild(_buildBranchPager(message));
       }
       // 수정 버튼은 hover 액션(다른 말풍선 액션과 동형).
-      if (_canEditMessage(message, role)) {
+      if (_canEditMessage(message, role, msgIsOwn)) {
         const uActions = document.createElement("div");
         uActions.className = "message-actions message-user-actions";
         const editBtn = document.createElement("button");
@@ -4621,6 +4627,9 @@ function buildStepDetailEl(step, idx, { compact = false } = {}) {
       const resultBody = document.createElement("div");
       resultBody.className = "step-result-wrap";
       resultBody.hidden = !startExpanded;
+      // 폴링 재렌더(body.innerHTML 재작성) 사이에 결과셋 내부 스크롤을 복원하기 위한
+      // 안정 키. _renderStepSidePanelBody 의 스냅샷/복원이 이 값으로 같은 step 을 매칭한다.
+      resultBody.dataset.stepResultKey = stepKey;
 
       if (tableEl) {
         resultBody.appendChild(tableEl);
@@ -4905,13 +4914,49 @@ function refreshStepSidePanel(pending) {
   _renderStepSidePanelBody(pending);
 }
 
+// 펼쳐 둔 각 step 결과셋의 내부 스크롤 오프셋을 stepKey 기준으로 스냅샷한다.
+// 사이드 패널은 폴링으로 새 단계가 추가될 때마다 body.innerHTML 을 통째로 재작성하는데,
+// 그때 펼쳐 둔 결과 표(.result-table-wrap)/미리보기(.step-result-preview)의 스크롤이
+// 0(초기값)으로 되돌아간다. 재렌더 직전에 위치를 기억했다가 재렌더 후 복원한다.
+function _snapshotStepResultScroll(body) {
+  const map = new Map();
+  if (!body) return map;
+  body.querySelectorAll("[data-step-result-key]").forEach((wrap) => {
+    if (wrap.hidden) return; // 접혀 있으면 보존할 스크롤 없음
+    const key = wrap.dataset.stepResultKey;
+    if (!key) return;
+    const scroller = wrap.querySelector(".result-table-wrap, .step-result-preview");
+    if (scroller && (scroller.scrollTop || scroller.scrollLeft)) {
+      map.set(key, { top: scroller.scrollTop, left: scroller.scrollLeft });
+    }
+  });
+  return map;
+}
+
+// _snapshotStepResultScroll 로 기억한 위치를 재렌더된 같은 step 결과셋에 되돌린다.
+function _restoreStepResultScroll(body, map) {
+  if (!body || !map || !map.size) return;
+  body.querySelectorAll("[data-step-result-key]").forEach((wrap) => {
+    const key = wrap.dataset.stepResultKey;
+    if (!key || !map.has(key)) return;
+    const scroller = wrap.querySelector(".result-table-wrap, .step-result-preview");
+    if (!scroller) return;
+    const pos = map.get(key);
+    if (pos.top) scroller.scrollTop = pos.top;
+    if (pos.left) scroller.scrollLeft = pos.left;
+  });
+}
+
 function _renderStepSidePanelBody(pending) {
   const body = document.getElementById("stepSidePanelBody");
   const badge = document.getElementById("stepSidePanelBadge");
   if (!body) return;
-  // 재렌더 전 스크롤 위치 스냅샷 — 사용자가 위로 스크롤했으면 자동 이동 안 함
+  // 재렌더 전 스크롤 위치 스냅샷 — (1) 외부 패널 위치, (2) 펼쳐 둔 각 결과셋 내부 스크롤.
+  // 하단 추종 중이면 자동으로 최하단으로 이동하고, 아니면 기존 위치를 그대로 유지한다.
   const scrollBottom = body.scrollHeight - body.scrollTop - body.clientHeight;
   const wasAtBottom = scrollBottom < 80;
+  const prevScrollTop = body.scrollTop;
+  const resultScroll = _snapshotStepResultScroll(body);
   body.innerHTML = "";
   const steps = Array.isArray(pending && pending.steps) ? pending.steps : [];
   if (badge) badge.textContent = steps.length ? `${steps.length}단계` : "";
@@ -4943,8 +4988,15 @@ function _renderStepSidePanelBody(pending) {
     item.appendChild(buildStepDetailEl(step, idx, { compact: false }));
     body.appendChild(item);
   });
-  // 사용자가 아래쪽에 있을 때만 최하단으로 스크롤
-  if (wasAtBottom) body.scrollTop = body.scrollHeight;
+  // 펼쳐 둔 결과셋의 내부 스크롤 복원 — 새 단계가 추가돼도 기존 항목에서 보던 위치를 유지.
+  _restoreStepResultScroll(body, resultScroll);
+  // 외부 패널 스크롤: 하단 추종 중이었으면 최하단으로, 아니면 이전 위치를 유지한다
+  // (기존에는 미추종 시 스크롤이 0 으로 리셋됐다 — 위 단계를 읽던 사용자 위치 보존).
+  if (wasAtBottom) {
+    body.scrollTop = body.scrollHeight;
+  } else {
+    body.scrollTop = Math.min(prevScrollTop, Math.max(0, body.scrollHeight - body.clientHeight));
+  }
 }
 
 function formatElapsed(ms) {
@@ -5589,6 +5641,13 @@ function renderProgress(statusPayload = null) {
     }
   }
 
+  // 재렌더 전 스크롤 스냅샷 — 외부 목록 위치 + 펼쳐 둔 각 결과셋 내부 스크롤
+  // (사이드 패널 _renderStepSidePanelBody 와 동일 규약: 폴링 재렌더로 스크롤이 0 으로
+  //  되돌아가는 것을 막는다). 헬퍼는 컨테이너 무관하게 [data-step-result-key] 로 매칭.
+  const progAtBottom =
+    progressStepsEl.scrollHeight - progressStepsEl.scrollTop - progressStepsEl.clientHeight < 80;
+  const progPrevTop = progressStepsEl.scrollTop;
+  const progResultScroll = _snapshotStepResultScroll(progressStepsEl);
   progressStepsEl.innerHTML = "";
   steps.forEach((step, idx) => {
     const item = document.createElement("div");
@@ -5600,6 +5659,16 @@ function renderProgress(statusPayload = null) {
     item.appendChild(buildStepDetailEl(step, idx));
     progressStepsEl.appendChild(item);
   });
+  // 펼쳐 둔 결과셋 내부 스크롤 복원 + 외부 목록 위치 유지(하단 추종 중이었으면 최하단).
+  _restoreStepResultScroll(progressStepsEl, progResultScroll);
+  if (progAtBottom) {
+    progressStepsEl.scrollTop = progressStepsEl.scrollHeight;
+  } else {
+    progressStepsEl.scrollTop = Math.min(
+      progPrevTop,
+      Math.max(0, progressStepsEl.scrollHeight - progressStepsEl.clientHeight),
+    );
+  }
 }
 
 function clearProgressPollTimer() {

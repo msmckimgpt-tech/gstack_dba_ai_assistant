@@ -452,3 +452,26 @@ def test_pass_attach_cap_guard(monkeypatch):
     assert rep["attached"] == 1, "room=cap(3)-core(2)=1 — 최고 유사도 l1 만 편입"
     ups = {p[2] for (q, p) in _updates(cur, "rag_objects")}
     assert 3 in ups and 4 not in ups and 5 not in ups
+
+
+# ── cluster-label-target(2026-07-14): llm_usage.target 사용자 식별자 기록 ─────
+def test_ds_display_label_resolves_and_falls_back():
+    cur = FakeCursor(rows={"FROM agent_runtime.datasource_health": ("mssql-qa-idc",)})
+    assert sc._ds_display_label(cur, "mssql-06656002eda6") == "mssql-qa-idc"
+    assert sc._ds_display_label(FakeCursor(), "mssql-06656002eda6") == "mssql-06656002eda6"   # 스냅샷 부재 → key
+
+
+def test_llm_labels_payload_uses_display_label(monkeypatch):
+    """'AI 운영 현황' target 해시 노출(사용자 리포트) 회귀 잠금 — payload.datasource = 사용자 식별자,
+    kv 캐시 키는 여전히 해시 ns(캐시 무효화 없음)."""
+    from modules import llm as llm_mod
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
+    calls = []
+    monkeypatch.setattr(llm_mod, "llm_cluster_label",
+                        lambda payload: calls.append(payload) or {"labels": [{"idx": 0, "label": "몬스터 스폰"}]})
+    cur = FakeCursor(rows={"FROM agent_runtime.datasource_health": ("mssql-qa-idc",)})
+    out = sc._llm_content_labels(cur, "mssql-06656002eda6", "cc_data_main", _label_clusters())
+    assert out == {0: "몬스터 스폰"} and calls[0]["datasource"] == "mssql-qa-idc"
+    ns = sc._label_ns_hash("mssql-06656002eda6", "cc_data_main")
+    inserts = [p for (q, p) in cur.executed if "INSERT INTO agent_runtime.kv" in q]
+    assert inserts and inserts[0][1].startswith(f"label:{ns}:")   # 캐시 키는 해시 ns 불변

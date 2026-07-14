@@ -100,7 +100,7 @@ services:
     image: mysql:${MYSQL_IMAGE_TAG}
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 4g
+    mem_limit: 3g
     pids_limit: 512
     # CHG-20260522-0005: .env.mysql 별 파일 (MYSQL_ROOT_PASSWORD / DB_PASSWORD).
     env_file:
@@ -354,6 +354,15 @@ services:
       AGENT_CONVERSATION_ID: __insight_worker__
       # TASK-0130: environment override 시 anchor 의 PG_REQUIRED 가 상속 안 되므로 명시.
       AGENT_RUNTIME_PG_REQUIRED: "1"
+      # 장애 datasource가 있을 때 짧은 tick과 자동 재시도가 연결 폭주로
+      # 번지지 않도록 worker와 health probe의 재시도 예산을 분리한다.
+      AGENT_DISABLE_AUTO_RETRY: "1"
+      AGENT_INSIGHT_WORKER_TICK_SEC: "60"
+      AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC: "900"
+      AGENT_CONN_HEALTHY_RECHECK_SEC: "120"
+      AGENT_CONN_UNSTABLE_RECHECK_SEC: "60"
+      AGENT_CONN_UNSTABLE_RECHECK_MAX_SEC: "900"
+      AGENT_CONN_PROBE_WORKERS: "1"
       # feature-0016 §55 (REQ-20260706 ②·④): Phase B 크로스-데이터소스 추론 flip — ADR-019 의
       # "임베딩 populate 후 flip" 이행. §55 D(시그니처 백필 미처리-우선 fix)가 populate 를 가동하므로
       # 데몬을 켠다(임베딩 없는 동안은 후보 0 = 자연 no-op, cadence 6h). intra-DS 크로스 스키마
@@ -361,7 +370,7 @@ services:
       AGENT_XDS_RELATIONSHIP_INFER_AUTO: "1"
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
     networks: [dbnet, llm-shared, replica-net]
-    restart: unless-stopped
+    restart: on-failure:3
     # feature-0015: SIGTERM graceful(_INSIGHT_SHUTDOWN) — 진행 cycle 을 루프 경계에서 마치고 종료.
     # cycle 이 LLM 호출로 길 수 있어 기본 10s 보다 여유. 초과 시 SIGKILL 이나 쓰기 멱등이라 무손상.
     stop_grace_period: 30s
@@ -370,7 +379,10 @@ services:
     healthcheck:
       test: ["CMD", "python", "/app/scripts/healthcheck_insight_worker.py"]
       interval: 60s
-      timeout: 10s
+      # feature-0020: 10s → 30s. probe 가 DB 연결을 여는 스크립트라 호스트 부하 시 10s 를
+      # 초과해 timeout 오탐(라이브 16h unhealthy 실측, 2026-07-14). 배포 스파인의 워커
+      # healthy 게이트가 이 상태를 신뢰하므로 오탐이 곧 배포 false-fail — 여유 상향.
+      timeout: 30s
       retries: 3
       start_period: 60s
 
@@ -400,7 +412,8 @@ services:
     healthcheck:
       test: ["CMD", "python", "/app/scripts/healthcheck_ask_worker.py"]
       interval: 30s
-      timeout: 10s
+      # feature-0020: 10s → 30s (insight-worker 와 동일 근거 — 부하 시 timeout 오탐 억제).
+      timeout: 30s
       retries: 3
       start_period: 40s
 
@@ -514,7 +527,7 @@ services:
     restart: unless-stopped
     # Chromium/Playwright 은 장기 세션에서 메모리 누수가 흔하다 — 넉넉히 캡.
     logging: *default-logging
-    mem_limit: 3g
+    mem_limit: 2g
     pids_limit: 1024
     env_file:
       - .env
@@ -564,6 +577,51 @@ services:
     # dbnet(앱·DB)은 master_key 인증 트래픽(앱→gateway)용으로 유지. Bedrock 자격
     # 복구 시 llm-shared 는 그대로 둬도 무해(Bedrock 라우팅은 외부 AWS endpoint).
     networks: [dbnet, llm-shared]
+    # feature-0020: 재배포 시 in-flight LLM 호출 drain 여유(litellm=uvicorn 이 SIGTERM 에
+    # graceful — 신규 수락 중단 + 진행 요청 완료). 기본 10s 면 장시간 LLM 호출이 SIGKILL.
+    stop_grace_period: 120s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health/liveliness',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ── bedrock-gateway 배포 surge replica (feature-0020) ─────────────────────────
+  # 목적: 단일 gateway 재배포(이미지/설정 변경) 창의 LLM 요청 실패(SPOF)를 없앤다.
+  # 평시엔 기동하지 않는다(profile deploy-surge — steady-state 메모리 비용 0). 배포
+  # 스파인(deploy-web.sh deploy_gateway_reconcile)이 드리프트 감지 시에만:
+  #   surge up → healthy → 본체 recreate → healthy → surge graceful stop·rm.
+  # network alias 로 DNS 이름 `bedrock-gateway` 에 합류하므로(양 네트워크), 본체가
+  # 재시작되는 동안 앱(BEDROCK_GATEWAY_URL=http://bedrock-gateway:8080)의 신규 요청은
+  # surge 로 해석되고, 끊긴 연결은 OpenAI SDK 기본 connect-retry 가 흡수한다.
+  # 상시 2-replica(HA)는 범위 밖 — 메모리 예산 결정 필요(unit ANCHOR §2 Alt-B).
+  bedrock-gateway-surge:
+    profiles: ["deploy-surge"]
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: "no"
+    logging: *default-logging
+    mem_limit: 2g
+    pids_limit: 256
+    env_file:
+      - .env
+      - .env.bedrock
+      - .env.llm
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml:/app/config.yaml:ro
+    command:
+      - "--config"
+      - "/app/config.yaml"
+      - "--port"
+      - "8080"
+    stop_grace_period: 120s
+    networks:
+      dbnet:
+        aliases: [bedrock-gateway]
+      llm-shared:
+        aliases: [bedrock-gateway]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health/liveliness',timeout=2).status==200 else 1)"]
       interval: 10s
@@ -585,7 +643,7 @@ services:
     image: ollama/ollama:latest
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 4g
+    mem_limit: 2g
     pids_limit: 256
     env_file:
       - .env
@@ -599,7 +657,7 @@ services:
       OLLAMA_MAX_LOADED_MODELS: 1
       OLLAMA_KEEP_ALIVE: "-1"
       OLLAMA_FLASH_ATTENTION: 1
-      OLLAMA_NUM_PARALLEL: 2
+      OLLAMA_NUM_PARALLEL: 1
     volumes:
       - embed_ollama_models:/root/.ollama
       - /root/wsl-gpu/lib:/usr/lib/wsl/lib:ro
