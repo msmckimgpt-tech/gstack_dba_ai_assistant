@@ -8,7 +8,20 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260714T161500-mssql-crossdb-discovery (current cycle) — MSSQL 구조화 발견 도구 DB(catalog) 인지: cross-DB 검색·describe (Critical §12.3, conversation_audit FR-mssql-crossdb-structured-discovery)
+## TASK-20260715-llm-probe-thinking-budget (current cycle) — LLM 헬스 probe 오탐: stale "요청량 한도/사용량 소진" 배너 고착 해소 (Major §12.3 — LLM 라우팅·외부 비용)
+- 출처: `/_template:entry "assistant 내부 인사이트·답변 시 claude-corp 계정 사용량 소진 메시지 — 실제 허용량 남아있음, 원인 파악·수정"` (2026-07-15, 사용자 명시). 수정방식 승인 = **유효 probe(Option A)** (AskUserQuestion 2026-07-15).
+- **근본원인(재현 확정)**: active health probe `probe_provider`(web `/api/llm/health` 60s 폴링)가 `OPENAI_MODEL`(=`claude-haiku-4-interactive`)로 `max_tokens=1` ping → 이 alias 는 litellm config `thinking.budget_tokens:5000` 강제 → Anthropic `max_tokens>budget_tokens` 위반 → 항상 400 → `classify_llm_provider_error`=None → probe 가 OK/restricted 어느 것도 기록 못 함. 배너 clear 자동경로(probe) 무력화 → 순간 429 로 찍힌 sticky `restricted` 가 계정 회복 후에도 성공 답변 전까지 stale 고착.
+- **봉인**: probe 를 valid ping 으로 — thinking 강제 alias(claude-*)면 최소 budget(1024) override + max_tokens>budget → 성공 시 `record_provider_ok` 가 배너 정상 해소. 비-thinking(로컬 gemma)은 max_tokens=1 유지.
+
+### §1.2 Completion Checklist
+- [x] `src/modules/llm_provider_health.py`: `_PROBE_THINKING_BUDGET`=1024 상수 + `probe_provider` valid-ping 분기(thinking override+max_tokens>budget / 비-thinking max_tokens=1)
+- [x] `probe_provider` recovery-only gate: 비-force 는 restricted 일 때만 실제 ping, ok/unknown cached 반환(5h 윈도우 재고정 방지 — 적대 리뷰 CONCERN 흡수)
+- [x] `tests/test_llm_provider_health.py`: valid-ping 2건 + recovery-only gate 4건 — 파일 **37 passed**(RC=0)
+- [x] classify 실제 실행으로 400→None 재현 + `_call_llm` thinking override 메커니즘(test_reasoning_effort) 정합 확인
+- [x] `docs/FUNCTION.md` probe 서술 갱신 · `docs/MODIFY.md` CHG-20260715-llm-probe-thinking-budget
+- [x] §18.8 적대 리뷰(backend) SHIP-WITH-FIXES→CONCERN 흡수 — REV-20260715T120000-llm-probe-thinking-budget
+- [ ] 배포(web 재빌드) 후 라이브 `/api/llm/health` probe 성공(OK 기록) + stale 배너 해소 실증
+ — MSSQL 구조화 발견 도구 DB(catalog) 인지: cross-DB 검색·describe (Critical §12.3, conversation_audit FR-mssql-crossdb-structured-discovery)
 - 출처: `/_dqa:conversation_audit "코드 재검토 요청 — assistant 가 SQL Server 내부 관련 객체를 못 찾음(실제로는 있는데도)"` (2026-07-14, 사용자 명시). 승인=**완전 DB인지**(AskUserQuestion 2026-07-14).
 - **근본원인(삼각측량 high — 코드+PG 대화집계+라이브 QA 서버+전사)**: SQL Server `INFORMATION_SCHEMA`/`sys` 는 **DB(catalog)별**(MySQL 인스턴스-전역 information_schema 와 비대칭)인데, 구조화 발견 도구가 pin 된 primary DB(`allow_dbs[0]`) 하나만 조회 → 제품 데이터가 분산된 다른 허용 DB(product 117 `Shop`·`CASHITEMDB` 등 30여 개)의 객체를 "없음"으로 오판·give-up. `schema_name` 이 DB 를 스키마로 오인(관측: describe_table 빈-헤더 schema 인자 대부분 DB명). **corroboration structural**: MSSQL 29대화 중 11(~38%) describe_table 빈-헤더·9 search_tables 빈결과, 오늘까지. 대상 대화 `20260714065456-d705e0c7`(product 117, `Shop.dbo.T_ItemInfo`/`L_Item_Buy_Log` 미발견→포기→"다시, 제대로 검토해주세요"). 라이브 재현/수정검증(mssql-web-qa): primary `_INDY_STATISTIC` 에서 미발견 → `[Shop].INFORMATION_SCHEMA` 3-part 로 15컬럼·`L_Item_Buy_Log` 발견.
 - **재발경로/봉인**: capability gap(도구가 freeform 이 이미 도달하는 허용 DB 에 못 닿음) → 구조화 발견 도구를 **DB(catalog) 인지**로. `[db].` 3-part 카탈로그 조회 + `search_tables` 대상 DB 미지정 시 허용 DB 전체 검색(DB-qualified) + 빈결과 L2 교정 힌트. 보안 경계 불변(유효 허용 DB만·시스템/내부 DB·시스템 스키마 차단·`_safe_ident`+allowlist 이중).

@@ -258,3 +258,93 @@ def test_statusless_token_text_not_request_level():
         if r is not None:
             assert r["kind"] not in (lph.KIND_BAD_MODEL, lph.KIND_CONTEXT_LENGTH)
             assert r["persist_health"] is True
+
+
+# ── active probe 요청 구성 (thinking budget 오진 회귀 방지) ─────────────────
+# 배경: probe 가 max_tokens=1 고정으로 thinking 강제 alias(claude-*, litellm config budget_tokens=5000)에
+# 보내면 Anthropic 제약(max_tokens > thinking.budget_tokens) 위반 → 항상 400 → classify None →
+# record_provider_ok/restricted 어느 것도 못 남겨 stale restricted 배너를 영영 해소 못 했다.
+# (llm-routing-interactive-split "thinking budget > max_tokens 오진"). probe 는 valid ping 이어야 한다.
+
+class _CapturingClient:
+    def __init__(self, sink):
+        self._sink = sink
+        self.chat = self  # client.chat.completions.create 체인 모사
+        self.completions = self
+
+    def create(self, **kwargs):
+        self._sink.append(kwargs)
+        return object()  # 성공 응답(내용 무관 — probe 는 예외 유무만 본다)
+
+
+def _run_probe(monkeypatch, model, supports_thinking, *, force=True, state="ok"):
+    captured: list = []
+    ok_calls: list = []
+    monkeypatch.setattr("shared.config.OPENAI_MODEL", model, raising=False)
+    monkeypatch.setattr("shared.model_catalog.model_supports_thinking",
+                        lambda m: supports_thinking, raising=False)
+    monkeypatch.setattr("modules.llm._get_llm_client",
+                        lambda **kw: _CapturingClient(captured), raising=False)
+    # PG 격리 — 상태 기록/조회를 no-op/고정으로. source="ask" 로 두어 M2 probe-throttle 우회.
+    monkeypatch.setattr(lph, "record_provider_ok", lambda **kw: ok_calls.append(kw))
+    monkeypatch.setattr(lph, "record_provider_restricted", lambda *a, **kw: None)
+    monkeypatch.setattr(lph, "read_provider_health",
+                        lambda *a, **kw: {"state": state, "source": "ask"})
+    lph._PROBE_STATE["ts"] = 0.0
+    lph._PROBE_STATE["running"] = False
+    lph.probe_provider(force=force)
+    return captured, ok_calls
+
+
+def test_probe_thinking_model_sends_valid_max_tokens_over_budget(monkeypatch):
+    captured, ok_calls = _run_probe(monkeypatch, "claude-haiku-4-interactive", True)
+    assert len(captured) == 1, "probe 가 LLM 호출을 정확히 1회 해야 한다"
+    kw = captured[0]
+    budget = kw["extra_body"]["thinking"]["budget_tokens"]
+    assert budget == lph._PROBE_THINKING_BUDGET
+    # 핵심 불변식: max_tokens > thinking.budget_tokens (Anthropic 제약, 400 회귀 방지)
+    assert kw["max_tokens"] > budget
+    # valid ping 성공 → OK 기록되어 stale 배너 해소 가능
+    assert len(ok_calls) == 1
+
+
+def test_probe_non_thinking_model_uses_minimal_max_tokens(monkeypatch):
+    captured, ok_calls = _run_probe(monkeypatch, "edge", False)
+    assert len(captured) == 1
+    kw = captured[0]
+    assert kw["max_tokens"] == 1          # 비-thinking(로컬 gemma 등)은 최저 비용 유지
+    assert "extra_body" not in kw          # thinking override 주입 안 함
+    assert len(ok_calls) == 1
+
+
+# ── recovery-only gate: ok/unknown 은 실제 호출 없이 cached 반환(5h 윈도우 재고정 방지) ──
+
+def test_probe_skips_real_call_when_state_ok(monkeypatch):
+    # 비-force + state=ok → 실제 claude ping 을 하지 않는다(재고정·비용 회피).
+    captured, ok_calls = _run_probe(monkeypatch, "claude-haiku-4-interactive", True,
+                                    force=False, state="ok")
+    assert captured == [], "ok 상태의 idle 폴링은 실제 claude 호출을 유발하면 안 된다"
+    assert ok_calls == []
+
+
+def test_probe_skips_real_call_when_state_unknown(monkeypatch):
+    captured, _ = _run_probe(monkeypatch, "claude-haiku-4-interactive", True,
+                             force=False, state="unknown")
+    assert captured == [], "unknown 상태도 실제 호출 없이 cached 반환"
+
+
+def test_probe_pings_when_restricted_for_recovery(monkeypatch):
+    # 비-force + state=restricted → 복구 감지 위해 valid ping 발생(max_tokens>budget).
+    captured, ok_calls = _run_probe(monkeypatch, "claude-haiku-4-interactive", True,
+                                    force=False, state="restricted")
+    assert len(captured) == 1, "restricted 상태는 복구 감지를 위해 능동 ping 해야 한다"
+    assert captured[0]["max_tokens"] > captured[0]["extra_body"]["thinking"]["budget_tokens"]
+    assert len(ok_calls) == 1
+
+
+def test_probe_force_pings_regardless_of_ok_state(monkeypatch):
+    # force(사용자 명시 재시도)는 ok 여도 gate 우회하고 즉시 실제 ping.
+    captured, ok_calls = _run_probe(monkeypatch, "claude-haiku-4-interactive", True,
+                                    force=True, state="ok")
+    assert len(captured) == 1
+    assert len(ok_calls) == 1
