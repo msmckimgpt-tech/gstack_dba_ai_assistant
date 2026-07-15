@@ -545,3 +545,16 @@ TASK-0299 의 SHOWPLAN/EXPLAIN 사전 부하추정을 활용해, 무거운 쿼�
 ## text 첨부 인라인 경로 + cap-note 정직화 (2026-07-15, TASK-20260715T060000-attach-inline-honesty)
 - `_build_attachment_context_section`(agent_core.py): `kind="text"` 첨부는 sandbox ingest 대상이 아니라 `_load_attachment_inline_texts()`(map, `_prepare_text_inline_attachments` 산물)에서 raw content 를 `## ATTACHED FILE CONTENTS` 로 **직접 인라인**한다. csv/xlsx 만 sandbox 스키마+샘플 경로. (회귀 가드: `test_attach_inline_honesty.py`.)
 - 인라인 개수/크기 상한(`_TEXT_INLINE_COUNT_CAP=20` + 64KB/file)을 넘겨 map 에 없는 text 파일에는 정직 노트를 붙인다 — 기존 `(content unavailable — check MinIO connectivity)`(MinIO 오귀속→fabrication)를 제거하고, 원인 미단정 + 회복경로(재첨부 — 파일명 지정 우선순위는 존재하지 않아 거짓약속이었음, 패널 정정) + `len(text_inline_map)>0`(cap 원인·인라인 수 보고)/`==0`(판독실패 가능·cap 귀속 안 함) 분기 안내로 교체.
+
+## 스키마명 서버-실제-case 해소 (2026-07-15, TASK-20260715T082345-schema-name-case-drift)
+- `src/modules/tools.py`:
+  - `_mysql_schema_case_map(conn) -> dict[str,str]`: MySQL conn 에서 `SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA` 로 `{소문자 스키마명 → 서버 실제 case}` 맵. conn 속성(`_agent_mysql_schema_case_map`)에 캐시(런당 datasource 별 1회). **캐시는 dict 인 값만 신뢰**(MagicMock/래퍼 속성 auto-vivify 오판 방지). 대소문자만 다른 동명 스키마가 둘 이상이면(모호) 그 키 제외(fail-safe). 조회 실패=빈 맵.
+  - `_canonical_schema_name(conn, name) -> str`: 유일 case-insensitive 매칭일 때만 서버 실제 case 로 치환, 미발견/모호/빈값은 원본.
+  - `_canonicalize_schema_args_mysql(conn, arguments)`: 구조화 도구 인자 `schema_name` 을 in-place 정규화(table_name 등은 불변).
+  - `_DatasourceRouter.refresh_case(label, conn)`: 그 datasource(MySQL)의 `_allow_schemas`(grounding·`describe()`·DISPLAY allowlist 소스)를 서버 실제 case 로 정규화. `_allow_schemas_case_fixed` 로 idempotent. MSSQL/조회실패 no-op.
+  - `execute_tool`: 라우터 경로는 `conn_for → refresh_case → activate` 후, dispatch **직전** `_canonicalize_schema_args_mysql`(활성 engine 이 MySQL 일 때). 비라우터(단일 레거시) 경로도 활성 dialect 가 MSSQL 이 아니면 동일 정규화. **allowlist 게이트(`_ACTIVE_SCHEMA_ALLOWLIST` 소문자 비교)는 canonicalize 전후 판정 불변** → 접근 경계 무변경(canonicalize 는 authorize 된 스키마의 표기만 서버 실제값으로 교정).
+- `src/agent_core.py`:
+  - 멀티-ds 실행 진입에서 primary 연결 직후 `_ds_router.refresh_case(resolve_label(None), db_conn)`(라이브 authoritative) → primary grounding 실제 case.
+  - `_correct_allow_schemas_case_via_graph(ds_dicts)` — run-start(라우터 등록 직후·grounding 조립 前)에 **모든 바인딩 datasource**(비-primary 포함)의 `_allow_schemas` 를 `metadata_kb` 그래프(scope_key)의 서버 실제 case 로 in-place 교정. **connection-free**(KB PG 스냅샷·per-datasource 재연결 없음·lazy 보존)·**degrade-safe**(graph 미가용/miss/모호 → 저장 case 유지)·MySQL only·**라이브 refresh_case 로 이미 교정된 ds(`_allow_schemas_case_fixed`)는 skip**(라이브 authoritative — REV 재검증 authority-inversion 방지). 비-primary freeform execute_sql 이 grounding 소문자를 복사해 0행 되는 것을 봉인. 구조화 도구는 execute_tool 라이브 arg-canonicalize 가 authoritative(graph stale 여도 회귀 0).
+  - 단일-ds MySQL 은 스키마 리스트 grounding 미주입(static `_MYSQL_DIALECT_GUIDANCE`만) + 구조화 arg-canonicalize 봉인 → grounding 교정 deferred(활성 drift 제품 없음).
+- **robustness(REV backend MAJOR)**: `_mysql_schema_case_map` 조회 실패는 캐시/latch 안 함(재시도 유지)+경고 로그; `refresh_case` latch 는 성공(non-empty map)일 때만. `_canonical_schema_name` 은 인용(`` ` ``·`"`·`[]`) 제거 후 조회.

@@ -307,3 +307,21 @@ source_of_truth: true
 - Recurrence sealing: ① 인라인 경로 회귀 봉인(text→sandbox 오라우팅 재발 시 테스트 적색). ② cap-omit 노트의 MinIO 오귀속 제거로 모델의 인프라-장애 fabrication 차단. **보안 회귀 0**: 노트는 code-authored 안내(datamark 밖·주입면 무변경), 접근/스코프 불변.
 - 검증: 신규 4 PASS. 다른 테스트 옛 노트 참조 0(grep, CHECK#3 무회귀). feature-0002 전체 회귀 신규 실패 0. §18.8 적대 패널 → REV-20260715T060000-attach-inline-honesty.
 - Cross-ref: ② 서브에이전트 진단(share-window 비관여) · Cycle C(②-frontend app.js 라벨 대칭, 후속) · FRICTION_LEDGER text-inline count cap · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260715T082345-schema-name-case-drift (스키마명 서버-실제-case 해소 — A 런타임 canonicalize + grounding, Critical §12.3 데이터소스 바인딩)
+- Date: 2026-07-15. 계기: `/_dqa:conversation_audit` "테이블 구조 정합성 검토"(product 97 대화 20260715070720-c202bcf8) — assistant 가 데이터소스 참조 불가·유효 테이블 조회 0행 → 요청 수행 불가.
+- Reason(RC, 3-source 삼각측량 high): allowlist `WebProductDatabases.SchemaName` 이 서버 실제 대소문자와 다르게 소문자 저장(서버 `DEV_1_1_1_20`, 63테이블 ↔ 저장 `dev_1_1_1_20`). case-sensitive MySQL(`lower_case_table_names=0`, Linux)에서 구조화 도구가 저장 case 를 literal 로 써 전부 0행/빈결과 → '테이블 없음' 오판·give-up. `_datasource_allow_schemas`(agent_core.py:3153)는 저장 case 를 **의도적 보존**(case-sensitive 대응)이라 코드는 옳으나 저장 데이터가 소문자 → grounding·쿼리 모두 잘못된 case. 이전 casing 프롬프트 lever(모델 소문자화 금지)로는 미해결(데이터 자체가 소문자). 재발경로 = **data/config drift**(allowlist casing ≠ 서버 casing) → 코드 권위선 봉인.
+- corroboration: **structural** — allowlist 205 중 85 case mismatch; MySQL 실패확정 클래스(소문자 stored → 서버 대/혼합) ~18행·4 product(94/97/110/121)·다수 MySQL datasource. (MSSQL 67 은 case-insensitive → 무해 거짓양성 기각.)
+- 사용자 승인: **Critical → attended AskUserQuestion(2026-07-15) = "A + B(ingestion)"**. A(런타임 resolution seal)+B(web-UI write 정규화).
+- Changes(feature-0002 primary):
+  - `src/modules/tools.py`:
+    - `_mysql_schema_case_map(conn)` — 라이브 `SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA` 로 {소문자→서버실제case} 맵. conn 속성 캐시(dict 만 신뢰 — MagicMock/래퍼 auto-vivify 방어). 대소문자만 다른 동명 복수는 **모호→제외**(fail-safe). 조회 실패=빈 맵(no-op).
+    - `_canonical_schema_name` / `_canonicalize_schema_args_mysql` — schema_name 을 서버 실제 case 로(유일 매칭 시만).
+    - `execute_tool` — 라우터·비라우터 양 경로에서 handler dispatch **직전** schema_name 정규화(MySQL 한정, MSSQL/비-MySQL no-op). 라우터 경로는 `conn_for → refresh_case → activate` 순.
+    - `_DatasourceRouter.refresh_case(label, conn)` — 그 datasource(MySQL) `_allow_schemas`(grounding·DISPLAY allowlist)를 서버 실제 case 로 정규화. idempotent(`_allow_schemas_case_fixed`). MSSQL no-op.
+  - `src/agent_core.py` — 멀티-ds primary 연결 직후 `refresh_case(resolve_label(None), db_conn)` → run-start grounding 이 실제 case 노출.
+- **보안 불변식(회귀 0)**: 접근 게이트 `_ACTIVE_SCHEMA_ALLOWLIST`(소문자 set)는 canonicalize 전후 판정 동일(`'DEV_1_1_1_20'.lower()=='dev_1_1_1_20'`) — 미허용 스키마 접근 확장 0, 내부(agent_memory)/시스템 스키마 차단 불변. canonicalize 는 이미 authorize 된 스키마의 *표기*만 서버 실제값으로 교정.
+- 검증: 신규 `tests/test_schema_name_case_drift.py` 15 PASS(case-map·canonicalize·refresh_case·execute_tool choke·보안불변·MSSQL no-op). feature-0002+0003 전체 **2107 passed, 2 skipped**. §18.8 적대 패널 → REV-20260715T082345-schema-name-case-drift.
+- 라이브 실측 필요분(§정직): 코드/유닛은 "정규화 로직 정확·게이트 불변" 증명. "실제 대화 마찰 소멸(describe/search 가 DEV_1_1_1_20 63테이블 반환·give-up 소멸)" 은 배포 후 원 입력 재현분(미수행) → 배포 후 `unverified-live`, 다음 audit corroboration 재측정.
+- 적대 패널 후속(REV-20260715T082345): 초기 grounding(primary-only)·poison-cache·Part B(picker) 결함을 §18.8 3렌즈가 적발 → grounding graph 교정(전 datasource·live-fixed skip)·프로브 실패 재시도·**B write-path 정규화 재설계**로 봉인, 재검증 READY-TO-SHIP. 상세 REVIEW.md.
+- Cross-ref: **B = feature-0003 admin_products.py write-path 서버-실제-case 정규화**(CHG-20260715T082345-picker-case-preserve, admin.js/수기 입력 무관 chokepoint) · FRICTION_LEDGER FR-schema-name-case-drift · 이전 FR-nl2sql casing 프롬프트 lever(모델 소문자화 금지 — 별개 축) · ANCHOR 0002 §1~§3 무충돌(allowlist 격리 불변식 유지).

@@ -333,3 +333,19 @@ source_of_truth: true
 - 검증: `test_attach_inline_honesty.py` 4 PASS(정정 반영) · feature-0002 전체 신규 실패 0. `make test` 컨테이너는 verify-completion 단계 실행.
 - Human Approval: PLAN-APPROVED(사용자 "남은 deferred 축 완수까지 진행", 2026-07-15). Minor(프롬프트 note + 회귀 테스트) → PR/deploy(deploy_scope: included).
 - Cross-ref: CHG-20260715T060000-attach-inline-honesty(MODIFY) · Cycle C(②-frontend app.js 라벨 대칭, 후속) · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260715T082345-schema-name-case-drift [SUBAGENT:adversarial-security+backend+qa] READY-TO-SHIP (§18.8 적대 패널 — datasource 스키마 접근/query → security+backend+qa 3렌즈)
+- Trigger: 변경 키워드 `datasource`·`schema`·`query`(스키마 접근 경계) → **security + backend + qa** 3렌즈(Critical §12.3 데이터소스 바인딩). `[SUBAGENT:adversarial-{security,backend,qa}]` + 재검증 `[SUBAGENT:adversarial-reverify]`.
+- 대상: CHG-20260715T082345-schema-name-case-drift(A: tools.py canonicalize+refresh_case, agent_core.py grounding) + CHG-20260715T082345-picker-case-preserve→**write-path 정규화로 재설계**(feature-0003 admin_products.py).
+- **security 렌즈 = REFUTED(치명결함 0)**: 6개 반증 벡터(allowlist 경계 우회·내부/시스템 스키마 노출·SCHEMATA 인젝션·모호·캐시오염·MSSQL) 전부 깨기 실패. 핵심 3주장(소문자-게이트 불변·유일매칭만 교정·내부/시스템 차단 불변) 유지. MINOR 2(SCHEMATA 프로브 breaker 미경유·picker/runtime 모호처리 비대칭)·NIT 2 — 비-보안경계.
+- **backend/qa 렌즈 = 결함있음(BLOCKING 0)**: 보안 경계·MSSQL no-op·교차런 오염 반증됨(REFUTED). 적발 confirmed 결함:
+  - [MAJOR] 멀티-ds **비-primary**·단일-ds freeform execute_sql grounding 이 저장 소문자로 남음(구조화 도구는 arg-canonicalize 봉인).
+  - [MAJOR] `_mysql_schema_case_map` 프로브 일시 실패가 빈맵 캐시 + `_allow_schemas_case_fixed` latch → 런 canonicalize poison.
+  - [MAJOR] Part B(admin_console picker) 실효 없음 — admin.js 가 MySQL 스키마명 `.toLowerCase()` 저장, wrong-endpoint.
+  - [MINOR] 인용 schema_name canonicalize miss.
+- **수정(전건 봉인)**: (1) grounding → `_correct_allow_schemas_case_via_graph`(run-start·모든 바인딩 datasource·metadata_kb graph·connection-free·degrade-safe·MySQL only·모호 제외·live-fixed ds skip[authority]). 단일-ds 는 스키마 리스트 grounding 미주입 + arg-canonicalize 봉인 → deferred(문서화). (2) 프로브 실패=캐시/latch 안 함+경고 로그(재시도 유지), latch=성공(non-empty)만. (3) Part B 재설계 = write-path 정규화(`list_server_databases` 서버 실제 case·SSRF 선행·degrade-safe·모호 제외 — admin.js/수기 입력 무관 chokepoint 봉인); admin_console picker 변경 원복. (4) 인용(`\`\"[]`) 제거 후 조회.
+- **재검증 = READY-TO-SHIP**: 결함 1~4 전부 `SEALED`(호출순서·참조정합·재시도·게이트 불변 코드확인). 신규 BLOCKING/MAJOR 0. 잔여 MINOR 3(authority-inversion→**수정반영**·agtype SQL 실AGE 미테스트[런타임 라이브 프로브로 실증됨]·seq-scan 경미[Schema 334행])·NIT 2(admin 저장 지연·write-path 실AGE 테스트 공백) — 전부 non-blocking.
+- 검증: `test_schema_name_case_drift.py` 24 + `test_product_databases_case_normalize.py` 2 PASS. 전체 회귀 feature-0002+0003 **2113 passed, 2 skipped**. 보안·멀티ds 회귀(sql_trust_boundary·mssql_security_boundary·multi_datasource·product_multi_datasource·mssql_crossdb·datasource_registry) 무회귀.
+- 라이브 실측(§정직): 실 mysql-mv-qa-game(10.103.204.59) 앱 복호 경로 프로브로 **datasource-레벨 라이브 확증** — `dev_1_1_1_20`(소문자)=0테이블 / `DEV_1_1_1_20`(canonical)=63테이블(fix 가 0→63 뒤집음 실증). end-to-end(배포된 agent 가 실 대화에서 canonicalize 호출)는 배포 후 원 입력 재현분(unverified-live).
+- Human Approval: **Critical(§12.3 데이터소스 바인딩) → attended AskUserQuestion(2026-07-15) = "A + B(ingestion)"**. PR/deploy = confirm(override 불가).
+- Cross-ref: CHG-20260715T082345-schema-name-case-drift(MODIFY) · feature-0003 CHG-20260715T082345-picker-case-preserve(write-path 재설계) · FRICTION_LEDGER FR-schema-name-case-drift · ANCHOR 0002 §1~§3 무충돌.
