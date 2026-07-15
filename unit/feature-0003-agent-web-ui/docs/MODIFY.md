@@ -11,6 +11,16 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260715T114608-graph-ctxmenu-band-priority (TASK-20260715T114608-graph-ctxmenu-band-priority — 제품 카테고리 밴드 우클릭 band-wins, Major §12.3 frontend-only)
+- Date: 2026-07-15. 제품 카테고리 밴드 안의 스키마 클러스터 박스가 밴드를 시각적으로 채워, 밴드 우클릭이 스키마 메뉴로 새는 UX 겹침 → 사용자 결정 "밴드 우선"으로 우클릭 시 밴드 귀속.
+- `static/graph/graph-renderer-pixi.js`:
+  - 신규 `PixiGraphAdapter._pickContext(mx,my)` — `_pick()` 이 combo 또는 schema-card 를 반환하고 그 지점을 덮는 cat-bg 가 있으면 cat-bg(카테고리 밴드)로 승격; 아니면 `_pick()` 그대로.
+  - `up()` 우클릭(button===2) 경로만 `_pickContext` 사용(kind=chit.__combo?combo:node 로 emit). 좌클릭/더블클릭/드래그는 `_pick` 불변.
+- band-wins 범위: 밴드 멤버 클러스터(combo/schema-card)만 승격. 테이블·컬럼 노드·CATH/CATX/GX/GH/GB·밴드 밖 standalone 클러스터는 불변.
+- 비변경: 좌클릭(펼치기/상세)·드래그(노드/combo/밴드헤더)·dispatch·메뉴 함수·시각 z·백엔드/RBAC/스키마 0.
+- 검증: `node --check` PASS · `tests/headless/test_pixi_adapter.js` T22 회귀 6종(ALL PASS 68/0) · §18.8 적대 패널. POST-DEPLOY PB-0008 라이브 잔여(visual_verification_scope: always).
+- Cross-ref: TASK/REVIEW-20260715T114608-graph-ctxmenu-band-priority · test-runs.d/20260715T114608-graph-ctxmenu-band-priority.md · 선행 CHG-20260715T102901-graph-ctxmenu-hittest(WYSIWYG hit-test 층서).
+
 ## CHG-20260715T110000-graph-ctxmenu-hittest-postverify (TASK-20260715T102901-graph-ctxmenu-hittest POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-15. 코드/자산 무변경 — test-runs.d fragment 의 POST-DEPLOY 섹션을 '이연' 계획→실측 PASS 로 갱신 + TASK 체크리스트 완료. 기능 배포는 PR #808→main 6ec5da4b(이후 병렬 8098aee1 재배포, fix 포함)로 선행 완료.
 - 라이브 실측 요지(win-browser 실 Windows Chrome/150, https://localhost/admin): 제품-매핑 데이터소스(mysql-kr-an2-auth, "킹스레이드 - 국내 QA") 스키마그래프에 CAT 밴드 2개 렌더 → **스키마 클러스터(dbAuth·dbTest) 우클릭 = "스키마" 메뉴**(이전 결함 해소) · **밴드 헤더·tint 여백 우클릭 = "카테고리" 메뉴** · 세 증상 전부 해소(WYSIWYG). 증거 scratchpad/evidence-cluster-schema-menu.png.
