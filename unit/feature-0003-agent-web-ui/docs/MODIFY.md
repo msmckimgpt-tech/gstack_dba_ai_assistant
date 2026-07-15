@@ -359,3 +359,10 @@ source_of_truth: true
 - 검증: 라이브 win-browser eval — keep-all 어절 줄바꿈(스크린샷) · 반응형 다중 폭 실측(300→268·360→320·617→520·1100→520, 오버플로 0). POST-DEPLOY 재배포 자산 확인=deploy-web 직후.
 - Files: `src/static/graph/graph.css`, `docs/{TASK,MODIFY,REVIEW,FUNCTION,REPORT}.md`, `docs/test-runs.d/20260715T102912-graph-help-text-responsive.md`.
 - Cross-ref: REV/TASK-20260715T102912-graph-help-text-responsive · 원천 CHG-20260714T180314-graph-entry-help(팝업 신설)·CHG-20260714T184717-graph-help-overlay-fix(위치 수정) · ANCHOR 0003 무충돌.
+
+## CHG-20260715T103948-graph-help-responsive-postverify (도움말 팝업 줄바꿈+반응형 POST-DEPLOY 재배포 자산 실증 기록, doc-only)
+- Date: 2026-07-15. CHG-20260715T102912-graph-help-text-responsive(PR #804, main 6af16762) 배포 후 재배포 자산 상 최종 확인. 코드 변경 0(문서 전용).
+- Changes: `docs/test-runs.d/20260715T102912-graph-help-text-responsive.md` 재배포 자산 확인 append + `docs/TASK.md` post-deploy 박스 close.
+- 실증: `/healthz` git_commit=6af16762. 서빙 graph.css 스탬프 `d5f26a416089`→`92be1efb1249`(갱신)·`word-break: keep-all`+`clamp(320px, 90%, 520px)` 반영·주석 63:63. 배포본 런타임(win-browser eval, 주입 없이): `.amg-help-card` word-break=keep-all(설명 상속)·overflow-wrap=anywhere · 반응형 다중 폭 300→268·360→320·617→520·1100→520(오버플로 0) · 스크린샷 육안 · pageerror 0. → PASS.
+- Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/test-runs.d/20260715T102912-graph-help-text-responsive.md`.
+- Cross-ref: REV-20260715T103948-graph-help-responsive-postverify · 원천 CHG/REV-20260715T102912-graph-help-text-responsive · ANCHOR 0003 무충돌.
