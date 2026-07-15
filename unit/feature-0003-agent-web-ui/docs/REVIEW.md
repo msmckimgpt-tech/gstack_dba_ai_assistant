@@ -342,7 +342,18 @@ source_of_truth: true
   - **연결 테스트 게이트**: 기존 '버튼 무게이트+서버 manage 403' 괴리 → datasource.test 로 FE/BE 정합(개선).
 - **검증**: 785/0(호스트) · jsdom 47/0 · R9(transitive·DENY 우선)/R10(legacy 3자 parity) 신설 · ROUTEMAP 재생성 --check 0. 컨테이너 make test·배포 후 실증은 TASK 잔여.
 - **Human Approval**: 예 — cycle 시작 AskUserQuestion 2건 승인(Critical §12.3 충족).
-
 ## REV-20260715T113000-perm-atomic-postverify [SKIPPED:doc-only-postdeploy-verification-record] — perm-atomic-split 배포 후 실증 기록 (PR #810 · 8098aee1)
 - 코드 변경 0(문서 전용). 실증: seed catchup 정상 · `atomic-perm-split-v1` 마커 · admin 원자 23종 · 묶음 보유 role=admin 뿐(usermanager 비대상 정상·접근 상실 0) · PB-0008 라이브(레거시 묶음 grid 0건·원자 트리 d1/d2·검수=원본 read 하위·토글 접힘/펼침·상태 무오염). 상세 = test-runs.d/20260715T103406-perm-atomic-split.md POST-DEPLOY Run.
 - [SKIPPED] 사유: 배포 후 실증 문서화만 — 신규 코드/경계 0(선례 REV-20260714T203000-perm-category-hier-postverify).
+## REV-20260715T110000-attach-new-label-symmetry [SUBAGENT:adversarial-scope/IDOR/correctness] — staged-flush 첨부 new_attachment_ids 라벨 대칭
+- 대상: `app.js` lazy-create staged-flush 의 `new_attachment_ids` union(±3줄) + 서버측 소비(agent_core `_build_attachment_context_section`). 적대 서브에이전트 1렌즈(scope/IDOR/correctness, 5축), 양 dispatch 경로(in-process router + ask-worker) 추적.
+- **CONFIRMED-DEFECT 0 / 5축 전건 REFUTED**:
+  - **① Scope/IDOR — REFUTED**: `new_attachment_ids`(→`_NEW_ATTACHMENT_IDS_CTX`→`_load_new_attachment_ids`→`new_ids_set`)는 **라벨(★/◆)+version-diff 게이트 전용**. 주입 대상 선택 SQL 은 `attachment_ids`(`Id IN (...)`)+ConversationId(IDOR 안전망)만 필터 — new_ids_set 은 이미 fetch 된 행을 라벨만 함. attachment_ids 에 없는 id 는 rows 부재 → 라벨 미방출. 접근 확장 불가.
+  - **② uploadedIds 신뢰 — REFUTED**: `_flushStagedAttachmentsToCid` 가 성공 업로드 응답 `Number(resp.id)>0` 만 push. resp 는 `POST /api/conversations/{earlyCid}/attachments`(방금 이 계정용 발급된 earlyCid) 결과 → 이-대화·이-계정 서버-확인 id. stale/foreign 누출 불가.
+  - **③ version-diff 오트리거 — REFUTED**: `## FILE UPDATES` 게이트는 `new_ids_set 포함 AND MetaJson.version_diff(unified_diff 비어있지 않음)` 동시 요구. 신규 earlyCid 는 동명 prior 부재 → v1/root=NULL, version_diff 부재 → 라벨이 ★신규여도 게이트 닫힘.
+  - **④ dedup/type/ordering — REFUTED**: `new Set([...prev,...uploadedIds].map(Number).filter(n>0))` — 빈-버그케이스=deduped uploadedIds(정확), 기존값 있으면 union. NaN/음수 배제, Set dedup, 삽입순 보존. 인접 attachment_ids union 과 정확 대칭.
+  - **⑤ 비-lazy 경로 무영향 — REFUTED**: 추가 블록은 `if(isLazyCreate)`+`if(earlyCid)`+`if(stagedCount>0)` 내부만 — 기존 대화·무-staged send 무변경.
+- OVERALL: BLOCKING 0 / MAJOR 0 / MINOR 0. No fix required.
+- 검증: `node --check` PASS. 라이브 PB-0008(신규 대화 staged 첨부 ★신규 인지)은 정적자산 baked → 배포 후 실측(TEST.md §3 DEFERRED).
+- Human Approval: PLAN-APPROVED(사용자 "남은 deferred 축 완수까지 진행", 2026-07-15). Minor(라벨-only) → PR/deploy(deploy_scope: included).
+- Cross-ref: CHG-20260715T110000-attach-new-label-symmetry(MODIFY) · CHG-20260715T060000-attach-inline-honesty(②-backend, feature-0002) · ANCHOR §1~§3 무충돌.
