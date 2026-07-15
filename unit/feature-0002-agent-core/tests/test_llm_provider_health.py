@@ -5,6 +5,8 @@ PG 없이 순수 분류 로직만 검증(자격증명 만료/인증실패/쓰로
 """
 from __future__ import annotations
 
+import time
+
 import modules.llm_provider_health as lph
 
 
@@ -277,7 +279,7 @@ class _CapturingClient:
         return object()  # 성공 응답(내용 무관 — probe 는 예외 유무만 본다)
 
 
-def _run_probe(monkeypatch, model, supports_thinking, *, force=True, state="ok"):
+def _run_probe(monkeypatch, model, supports_thinking, *, force=True, state="ok", ts=0.0):
     captured: list = []
     ok_calls: list = []
     monkeypatch.setattr("shared.config.OPENAI_MODEL", model, raising=False)
@@ -290,7 +292,9 @@ def _run_probe(monkeypatch, model, supports_thinking, *, force=True, state="ok")
     monkeypatch.setattr(lph, "record_provider_restricted", lambda *a, **kw: None)
     monkeypatch.setattr(lph, "read_provider_health",
                         lambda *a, **kw: {"state": state, "source": "ask"})
-    lph._PROBE_STATE["ts"] = 0.0
+    # ts=0.0(기본) = 미-probe 센티넬 → throttle 되지 않음(probe-throttle-monotonic-flake: time.monotonic()
+    #   절대값 무관하게 결정적). ts>0(최근 스탬프) 을 주면 TTL 내 throttle 을 검증할 수 있다.
+    lph._PROBE_STATE["ts"] = ts
     lph._PROBE_STATE["running"] = False
     lph.probe_provider(force=force)
     return captured, ok_calls
@@ -348,3 +352,23 @@ def test_probe_force_pings_regardless_of_ok_state(monkeypatch):
                                     force=True, state="ok")
     assert len(captured) == 1
     assert len(ok_calls) == 1
+
+
+# ── probe-throttle-monotonic-flake: ts=0.0(미-probe 센티넬) throttle 회귀 잠금 ──
+# 배경: throttle 이 `now - ts < min_gap`(now=time.monotonic()=부팅 이후 절대초)만 봤을 때, 초기 ts=0.0 이면
+# monotonic()<min_gap 인 갓-부팅 워커/CI 러너에서 첫 probe 가 spurious throttle 됐다(restricted 복구 ping
+# 누락 + 러너 uptime 에 따라 restricted 테스트가 flaky). 수정: last_ts>0 일 때만 throttle.
+
+def test_probe_sentinel_ts_zero_not_throttled_regardless_of_monotonic(monkeypatch):
+    # ts=0.0(미-probe 센티넬) → time.monotonic() 절대값과 무관하게 throttle 안 됨(결정적 ping).
+    captured, ok_calls = _run_probe(monkeypatch, "claude-haiku-4-interactive", True,
+                                    force=False, state="restricted", ts=0.0)
+    assert len(captured) == 1, "ts=0.0 센티넬은 monotonic 절대값과 무관하게 throttle 되면 안 된다(flake 회귀)"
+    assert len(ok_calls) == 1
+
+
+def test_probe_recent_ts_within_ttl_throttles(monkeypatch):
+    # 최근 실제 스탬프(ts>0, TTL 내) → skip(throttle 유지) — 센티넬 수정이 정상 throttle 을 깨지 않음.
+    captured, _ = _run_probe(monkeypatch, "claude-haiku-4-interactive", True,
+                             force=False, state="restricted", ts=time.monotonic())
+    assert captured == [], "TTL 내 최근 probe(ts>0)는 skip(throttle)해야 한다"

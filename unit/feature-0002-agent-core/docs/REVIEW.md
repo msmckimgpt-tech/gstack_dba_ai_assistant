@@ -361,3 +361,14 @@ source_of_truth: true
 - 라이브 실측(§정직): 실 mysql-mv-qa-game(10.103.204.59) 앱 복호 경로 프로브로 **datasource-레벨 라이브 확증** — `dev_1_1_1_20`(소문자)=0테이블 / `DEV_1_1_1_20`(canonical)=63테이블(fix 가 0→63 뒤집음 실증). end-to-end(배포된 agent 가 실 대화에서 canonicalize 호출)는 배포 후 원 입력 재현분(unverified-live).
 - Human Approval: **Critical(§12.3 데이터소스 바인딩) → attended AskUserQuestion(2026-07-15) = "A + B(ingestion)"**. PR/deploy = confirm(override 불가).
 - Cross-ref: CHG-20260715T082345-schema-name-case-drift(MODIFY) · feature-0003 CHG-20260715T082345-picker-case-preserve(write-path 재설계) · FRICTION_LEDGER FR-schema-name-case-drift · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260715T234757-probe-throttle-monotonic-flake [SKIPPED:backend-throttle-sentinel-single-condition-no-rbac-no-data-no-security] — LLM 헬스 probe throttle 센티넬 수정 (20260715T2347-probe-throttle-monotonic-flake, Minor §12.3)
+- Panel skip 사유(§18.8): 단건 조건 가드(`last_ts > 0.0 and`) + 테스트. RBAC/데이터/스키마/보안경계/분류로직 무변경. 적대 코드리뷰(권한·주입·enforcement) 이득 없음.
+- 근본원인: throttle 이 `now(=monotonic, 부팅 이후 절대초) - ts < min_gap` 만 봐서 초기 ts=0.0 + monotonic<min_gap(갓-부팅)에 첫 probe spurious throttle. 러너 uptime 의존 flake + 첫 복구 probe 누락 잠복 버그.
+- 적대 자가검토(refute):
+  ① "센티넬 가드가 정상 throttle 을 깨나?" → 실 probe 는 `_PROBE_STATE["ts"] = now`(monotonic>0)로 스탬프(line 441) → 이후 `last_ts>0` 항상 참 → TTL/5s throttle 정상. ts=0.0 은 오직 미-probe 초기값(monotonic 이 정확히 0.0 을 반환하는 일 없음). `test_probe_recent_ts_within_ttl_throttles` 로 잠금.
+  ② "과도 probe(비용) 유발?" → 첫 1회만 센티넬로 허용, 그 뒤 스탬프되어 throttle 복원. running 가드·M2 PG throttle 별도 유지 → stampede 방지 불변.
+  ③ "recovery-only gate 우회?" → gate(restricted/force 만 실호출)는 throttle 이후 단계(line 425~439)로 무접촉. ok/unknown skip 로직 불변.
+  ④ "flake 실증?" → monotonic=10<60·ts=0.0·restricted 재현 시 수정본 1 ping(구 0). 결정적.
+- 검증: `test_llm_provider_health.py` 39 PASS(회귀 잠금 2 신규) · flake 조건 재현 확증.
+- Cross-ref: CHG/TASK/TEST-20260715T234757-probe-throttle-monotonic-flake · 선행 1c1889e4(recovery-only gate) · ANCHOR 0002 §1~§3 무충돌.

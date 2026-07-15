@@ -339,3 +339,13 @@ source_of_truth: true
 - 라이브 실측 필요분(§정직): 코드/유닛은 "정규화 로직 정확·게이트 불변" 증명. "실제 대화 마찰 소멸(describe/search 가 DEV_1_1_1_20 63테이블 반환·give-up 소멸)" 은 배포 후 원 입력 재현분(미수행) → 배포 후 `unverified-live`, 다음 audit corroboration 재측정.
 - 적대 패널 후속(REV-20260715T082345): 초기 grounding(primary-only)·poison-cache·Part B(picker) 결함을 §18.8 3렌즈가 적발 → grounding graph 교정(전 datasource·live-fixed skip)·프로브 실패 재시도·**B write-path 정규화 재설계**로 봉인, 재검증 READY-TO-SHIP. 상세 REVIEW.md.
 - Cross-ref: **B = feature-0003 admin_products.py write-path 서버-실제-case 정규화**(CHG-20260715T082345-picker-case-preserve, admin.js/수기 입력 무관 chokepoint) · FRICTION_LEDGER FR-schema-name-case-drift · 이전 FR-nl2sql casing 프롬프트 lever(모델 소문자화 금지 — 별개 축) · ANCHOR 0002 §1~§3 무충돌(allowlist 격리 불변식 유지).
+
+## CHG-20260715T234757-probe-throttle-monotonic-flake (LLM 헬스 probe throttle 센티넬 — 갓-부팅 spurious throttle(CI flake + 잠복 버그) 해소)
+- Date: 2026-07-15. 계기: 무관 PR #832(프론트 graph)의 CI 를 `test_probe_pings_when_restricted_for_recovery` 가 flaky 하게 red 화. 같은 base #831 green → flaky 확증.
+- 근본원인: `probe_provider` throttle `now - _PROBE_STATE["ts"] < min_gap`(now=`time.monotonic()`, min_gap=5|TTL60). 미-probe 센티넬 `ts=0.0` + monotonic()<min_gap(갓-부팅 러너/워커) → `now - 0 < min_gap` → 첫 probe spurious throttle. 러너 uptime 의존 flake + 잠복 프로덕션 버그(첫 restricted-복구 probe 누락).
+- Changes(feature-0002):
+  - `src/modules/llm_provider_health.py` `probe_provider`: throttle 판정을 `last_ts = float(_PROBE_STATE["ts"]); if last_ts > 0.0 and now - last_ts < min_gap:` 로 — ts=0.0(미-probe)은 monotonic 무관 non-throttle(첫 probe 항상 허용), 실 스탬프 후에만 throttle. 정상 TTL/5s throttle·running 가드·M2 PG throttle·recovery gate 불변.
+  - `tests/test_llm_provider_health.py`: `_run_probe` 에 `ts` 파라미터(기본 0.0) 추가 + `import time`; 회귀 잠금 2종(`test_probe_sentinel_ts_zero_not_throttled_regardless_of_monotonic`·`test_probe_recent_ts_within_ttl_throttles`).
+- 비변경: 분류기·record/read health·recovery-only gate·thinking budget·RBAC/스키마/마이그레이션 0.
+- 검증: `test_llm_provider_health.py` 39 PASS · flake 조건 재현(monotonic=10<60·ts=0.0·restricted → 수정 1 ping, 구 0) · §18.8 [SKIPPED] 적대 자가검토.
+- Cross-ref: 원천 flake=무관 PR #832 CI · 선행 CHG(1c1889e4, TASK-20260715-llm-probe-thinking-budget, recovery-only gate 도입) · REV/TEST-20260715T234757-probe-throttle-monotonic-flake · ANCHOR 0002 §1~§3 무충돌.
