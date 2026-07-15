@@ -293,6 +293,35 @@ function _metaGraphCtxForCategory(catKey, x, y) {
   ], x, y);
 }
 
+// graph-content-category(band-wins 철회 2026-07-15): 컨텐츠 카테고리 = 스키마 클러스터 **내부** sim-group
+//   (유사 테이블 그룹 — 이름 affix 가족 = "컨텐츠 신호"로 내부 노드를 묶은 클러스터, graph-simgroups). GB/GH/GX 우클릭 전용.
+//   그래프 3층 우클릭 대상 중 세 번째: ①제품 카테고리 밴드(cat-bg, 제품 단위)=카테고리 메뉴 · ②스키마 클러스터(combo, DB 단위)=스키마 메뉴
+//   · ③컨텐츠 카테고리(sim-group)=이 메뉴. 사용자 정정("제품 카테고리 밴드↔컨텐츠 카테고리 착각") 반영 — 각 대상이 자기 메뉴로 정합.
+//   gk = groupKey(형식 "<schemaKey>\u0001<token>"). 그룹 label/멤버수는 build 시 _metaGraph.groupInfo 에 적재(카테고리의 catLabelOf 동형).
+function _metaGraphCtxForContentCategory(gk, x, y) {
+  if (!gk) { _metaGraphCtxHide(); return; }
+  const key = String(gk);
+  const sep = key.indexOf("\u0001");
+  const schemaKey = sep >= 0 ? key.slice(0, sep) : null;
+  const info = _metaGraph.groupInfo && _metaGraph.groupInfo.get(key);
+  const label = (info && info.label) || (sep >= 0 ? key.slice(sep + 1) : key);   // groupInfo miss 시 token 폴백
+  const cnt = (info && typeof info.n === "number") ? info.n : ((_metaGraph.groupMembers.get(key) || []).length || null);
+  const collapsed = _metaGraph.groupCollapsed.has(key);
+  const items = [
+    { head: true, badge: "컨텐츠 카테고리", badgeColor: "#8a3f7a", label: cnt != null ? `${label} · 테이블 ${cnt}` : label },
+  ];
+  // 소속 스키마 상세(멤버 테이블 목록) — GB/GH 좌클릭 파리티(_metaGraphShowClusterDetailById). sim-group 은 스키마의 부분집합이라 소속 스키마로 앵커.
+  if (schemaKey) items.push({ icon: "📋", label: "소속 스키마 상세", hint: "테이블 목록", onClick: () => _metaGraphShowClusterDetailById(schemaKey) });
+  // 컨텐츠 묶음 접기/펼치기 — GX 컨트롤 좌클릭과 동일 경로(groupCollapsed 토글 + _metaG6Apply). 지속 의도라 검색 시만 build 가 강제 펼침.
+  items.push({ icon: collapsed ? "▸" : "▾", label: collapsed ? "펼치기 (묶음)" : "접기 (묶음)", hint: "컨텐츠 묶음 멤버 표시/숨김", onClick: () => {
+    if (_metaGraph.groupCollapsed.has(key)) _metaGraph.groupCollapsed.delete(key);
+    else _metaGraph.groupCollapsed.add(key);
+    _metaG6Apply(false);
+  } });
+  items.push({ icon: "📑", label: "묶음명 복사", onClick: () => _metaGraphCopyText(label) });
+  _metaGraphCtxShow(items, x, y);
+}
+
 // 엣지(관계선) 우클릭 메뉴 (review MAJOR-2) — 관계 자체의 신뢰도·근거·cardinality + 양끝 노드 이동.
 function _metaGraphCtxForEdge(edgeId, x, y) {
   const e = _metaGraph.edges.get(edgeId);
@@ -2326,4 +2355,4 @@ async function _metaGraphLoadNodeAnalysis(key) {
 // 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)
 
 
-export { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols };
+export { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForContentCategory, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols };

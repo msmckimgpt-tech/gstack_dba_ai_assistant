@@ -62,6 +62,7 @@ const _metaGraph = {
   groupCollapsed: new Set(),  // 접힌 sim-group key(멤버 미방출·헤더만)
   groupMembers: new Map(),    // groupKey -> [멤버 테이블 id] (드래그 시 묶음 이동 — 매 build 재구성, 펼친 그룹만)
   groupOf: new Map(),         // 테이블 id -> groupKey (멤버 이동 시 GB 박스 반응형 rebuild 판정 — 매 build 재구성)
+  groupInfo: new Map(),       // graph-content-category: groupKey -> {label, n, schema} (우클릭 컨텐츠 카테고리 메뉴 헤더용 — 매 build 재구성)
   // feature-0016 §49(요구②): 배치 순서 안정화 — 이웃확장/펼침 rebuild 시 re-seriation 으로 노드가 그리드를 점프하지
   //   않도록 직전 클러스터·테이블 순서를 보존하고 신규만 seriated 순서로 append. 드래그(nodePos/clusterOffset)와 직교.
   //   resetModel(스코프 전환·초기화)에서 clear → fresh load 는 순수 seriation.

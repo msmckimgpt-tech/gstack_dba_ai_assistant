@@ -444,3 +444,18 @@ source_of_truth: true
 - 실증(win-browser eval, bootstrap_admin, 주입 없이): (bundle) `/admin` ENUM 검토 큐 12후보 → 8묶음 그룹핑·전체 승인 마스터·일부 해제 indeterminate/힌트·등록 count/disabled 로직 PASS. (flex-fix) 재배포 자산(a3c69103·styles.css 62c4b695387d) 카드 높이 [166…298] 자연 높이·flex-shrink=0·목록 스크롤·sliver 해소·pageError 0.
 - Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/test-runs.d/{20260715T105337-enum-review-bundle,20260715T113208-enum-bundle-flex-fix}.md`.
 - Cross-ref: 원천 CHG-20260715T105337-enum-review-bundle · CHG-20260715T113208-enum-bundle-flex-fix · ANCHOR 0003 무충돌.
+
+## CHG-20260715T135725-graph-ctxmenu-content-category (TASK-20260715T135725-graph-ctxmenu-content-category — 그래프 우클릭 3대상 정합: 컨텐츠 카테고리 전용 메뉴 신설 + band-wins 철회, Major §12.3 frontend-only)
+- Date: 2026-07-15. 사용자 정정("'제품 카테고리 밴드'를 '내부 노드를 컨텐츠 단위로 묶은 클러스터=컨텐츠 카테고리'로 착각") → band-priority(CHG-20260715T114608) 전제 무효. 그래프 우클릭 3층 정합: 제품 카테고리 밴드=카테고리 / 스키마 클러스터=스키마 / 컨텐츠 카테고리(sim-group)=신설 전용 메뉴.
+- `static/graph/graph-renderer-pixi.js` (band-wins 철회):
+  - `PixiGraphAdapter._pickContext(mx,my)` 제거. `up()` 우클릭(button===2)은 다시 `d.hit`(=`_pick`, WYSIWYG)로 emit — 좌클릭·드래그와 동일 hit. 밴드 위 스키마 클러스터 우클릭 → 스키마 메뉴(카테고리 승격 제거).
+- `static/graph/graph-ctxmenu.js`:
+  - 신규 `_metaGraphCtxForContentCategory(gk,x,y)` + export. gk 형식 "<schemaKey>\u0001<token>". 헤더 배지 '컨텐츠 카테고리'(#8a3f7a)+label·테이블수 / 📋 소속 스키마 상세(`_metaGraphShowClusterDetailById`) / 접기·펼치기 (묶음)(`groupCollapsed` 토글+`_metaG6Apply(false)`) / 묶음명 복사. groupInfo miss 시 token 폴백(안전).
+- `static/graph/graph-core.js`:
+  - `node:contextmenu` GB/GH/GX 분기: `_metaGraphCtxForSchema(gk.slice(0,sep))` → `_metaGraphCtxForContentCategory(gk)`. import 추가.
+  - `_metaGraph.groupInfo` 신설 · `_metaG6Build` reset + sim-group emission 전량 적재({label,n,schema}, 접힘/펼침 무관).
+- `static/graph/graph-state.js`: `groupInfo: new Map()` 초기화(groupMembers 패턴 정합).
+- `tests/headless/test_pixi_adapter.js`: T22 를 band-wins → 컨텐츠 카테고리 회귀로 교체(GB/GH 자기노드·밴드 흡수 안 함 · 밴드 위 스키마카드→SC · `_pickContext` undefined). ALL PASS 66/0.
+- 비변경: 좌클릭(GB/GH 상세, GX 접기)·드래그(sim-group 리지드 이동)·제품 카테고리 밴드/스키마 클러스터 메뉴·dispatch 타 분기·시각 z·백엔드/RBAC/스키마 0.
+- 검증: `node --check`(4 파일) PASS · 헤드리스 66/0 · §18.8 적대 패널. POST-DEPLOY PB-0008 라이브 잔여(visual_verification_scope: always).
+- Cross-ref: TASK/REVIEW-20260715T135725-graph-ctxmenu-content-category · test-runs.d/20260715T135725-graph-ctxmenu-content-category.md · **철회 대상 CHG-20260715T114608-graph-ctxmenu-band-priority** · 유지 선행 CHG-20260715T102901-graph-ctxmenu-hittest(WYSIWYG _pick 3-tier) · ANCHOR 0003 무충돌.

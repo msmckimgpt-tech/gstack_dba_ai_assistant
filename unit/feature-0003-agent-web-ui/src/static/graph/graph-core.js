@@ -7,7 +7,7 @@ import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds,
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
-import { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols } from "./graph-ctxmenu.js?v=dev";
+import { _metaColParent, _metaCtx, _metaCtxPoint, _metaGraphColCmp, _metaGraphCollapse, _metaGraphCollapseSchema, _metaGraphCtxForCanvas, _metaGraphCtxForCategory, _metaGraphCtxForCombo, _metaGraphCtxForContentCategory, _metaGraphCtxForEdge, _metaGraphCtxForNode, _metaGraphCtxForSchema, _metaGraphCtxHide, _metaGraphExpand, _metaGraphExpandSchema, _metaGraphFocusChip, _metaGraphHistoryGo, _metaGraphHistoryReset, _metaGraphIngest, _metaGraphInitResizer, _metaGraphRenderDetailEmpty, _metaGraphSearch, _metaGraphSetSelected, _metaGraphShowCategoryDetail, _metaGraphShowClusterDetailById, _metaGraphShowClusterDetailLocal, _metaGraphShowDetail, _metaGraphSyncAnalysisMarkers, _metaGraphToggleColumns, _metaTableHasCols } from "./graph-ctxmenu.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 // feature-0016 §78: PixiJS v8 렌더러 어댑터(SceneAdapter, G6.Graph 인터페이스 호환). 배선 seam.
 import { PixiGraphAdapter } from "./graph-renderer-pixi.js?v=dev";
@@ -60,6 +60,7 @@ function _metaG6Build() {
   _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
   _metaGraph.groupMembers = new Map();   // group-interact(§50): 매 build 그룹→멤버 인덱스 재구성(펼친 그룹만 emission 에서 채움).
   _metaGraph.groupOf = new Map();        // group-interact(§50): 매 build 테이블→groupKey 역인덱스 재구성.
+  _metaGraph.groupInfo = new Map();      // graph-content-category: 매 build 그룹→{label,n,schema} 재구성(우클릭 컨텐츠 카테고리 메뉴 헤더용 — catLabelOf 동형).
   const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
   const ensureG = (id) => { if (!groups.has(id)) groups.set(id, { isTerms: id === _META_TERMS_COMBO, tables: [], terms: [], colsByTable: new Map() }); return groups.get(id); };
   const tableByKey = new Map();
@@ -596,6 +597,7 @@ function _metaG6Build() {
         bx.minT = Math.min(bx.minT, topAbs);   bx.maxB = Math.max(bx.maxB, memBottom);
       });
       L.groupsMeta.forEach((gm) => {
+        _metaGraph.groupInfo.set(gm.key, { label: gm.label, n: gm.n, schema: id });   // graph-content-category: 우클릭 컨텐츠 카테고리 메뉴 헤더용 그룹 메타(접힘/펼침 무관 전량 적재).
         // 펼침: 멤버 bbox 파생(무멤버 방어 시 패킹 폴백) · 접힘: 패킹 헤더 기하.
         const bx = (!gm.collapsed) ? grpBox.get(gm.key) : null;
         let left, top, right, bottom;
@@ -2139,9 +2141,9 @@ function _metaInitGraph() {
     // graph-category(§55 A): 카테고리 밴드(CAT:/CATH:/CATX:) 우클릭 — 합성 밴드라 노드/클러스터(combo) 메뉴 부적합.
     //   전용 카테고리 메뉴(상세·접기/펼치기·복사)로 라우팅(이전 hide stopgap 대체 + combo fall-through "클러스터 메뉴" 오노출 회귀 차단).
     if (/^CAT(H|X)?:/.test(String(id))) { _metaGraphCtxForCategory(String(id).replace(/^CAT(H|X)?:/, ""), p.x, p.y); return; }
-    if (String(id).startsWith("GB:") || String(id).startsWith("GH:") || String(id).startsWith("GX:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스/헤더/컨트롤(GX 포함, group-interact §50 REV) 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
+    if (String(id).startsWith("GB:") || String(id).startsWith("GH:") || String(id).startsWith("GX:")) {   // graph-content-category(band-wins 철회 2026-07-15): 그룹 박스/헤더/컨트롤(GX 포함) 우클릭 = **컨텐츠 카테고리**(sim-group) 전용 메뉴. 이전엔 소속 스키마 메뉴였으나, 사용자 정정으로 제품 카테고리 밴드/스키마 클러스터/컨텐츠 카테고리 3대상을 각자 메뉴로 분리.
       const gk = String(id).slice(3), sep = gk.indexOf("\u0001");
-      if (sep >= 0) _metaGraphCtxForSchema(gk.slice(0, sep), p.x, p.y); else _metaGraphCtxHide();
+      if (sep >= 0) _metaGraphCtxForContentCategory(gk, p.x, p.y); else _metaGraphCtxHide();
       return;
     }
     if (String(id).startsWith("SC:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }

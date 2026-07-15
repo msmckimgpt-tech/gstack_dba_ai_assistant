@@ -428,9 +428,11 @@ export class PixiGraphAdapter {
       if (finished === "nodedrag") { this._emitDrag("dragend", d.hit, e, s, mx, my); return; }
       // 정지 클릭/우클릭
       const hit = d.hit, kindEvt = hit ? (hit.__combo ? "combo" : "node") : "canvas";
-      if (d.button === 2) {   // 우클릭: band-wins(_pickContext) — 밴드 위 클러스터도 카테고리. 노드>combo>edge>canvas
-        const chit = this._pickContext(mx, my);
-        if (chit) { this._emit((chit.__combo ? "combo" : "node") + ":contextmenu", this._payload(chit, s, mx, my, e)); return; }
+      if (d.button === 2) {   // 우클릭: WYSIWYG _pick(=d.hit) — 보이는 대로. 노드(GB/GH/GX 컨텐츠 카테고리·CAT* 카테고리 포함)>combo(스키마)>cat-bg(카테고리)>edge>canvas
+        // graph-ctxmenu(band-wins 철회 2026-07-15): 이전 _pickContext 는 밴드 위 스키마 클러스터를 카테고리 밴드로 승격했으나,
+        //   사용자 정정("제품 카테고리 밴드↔컨텐츠 카테고리 착각") — 세 대상(제품 카테고리 밴드/스키마 클러스터/컨텐츠 카테고리=sim-group)은
+        //   각자 자기 메뉴를 가져야 정합. 우클릭도 좌클릭·드래그와 동일한 _pick 결과(d.hit)를 쓴다 → 스키마 클러스터는 어디서나 스키마 메뉴.
+        if (hit) { this._emit(kindEvt + ":contextmenu", this._payload(hit, s, mx, my, e)); return; }
         const eh = this._pickEdge(mx, my);
         if (eh) { this._emit("edge:contextmenu", this._payload(eh, s, mx, my, e)); return; }
         this._emit("canvas:contextmenu", this._payload(null, s, mx, my, e)); return;
@@ -464,20 +466,6 @@ export class PixiGraphAdapter {
     // tier3: 카테고리 밴드 배경(cat-bg) — 밴드 고유 여백/헤더밖 영역 우클릭·드래그만 카테고리로
     const cb = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => this._isCatBg(nd)) : null;
     return cb || null;
-  }
-  // graph-ctxmenu(band-wins, 우클릭 전용): 제품 카테고리 밴드 위에 얹힌 스키마 클러스터(카드/combo)를 우클릭하면
-  //   그 클러스터가 아니라 **소속 카테고리 밴드** 메뉴를 낸다(사용자 결정 2026-07-15: 밴드가 그 안의 클러스터 박스를
-  //   시각적으로 거의 채워 "밴드 우클릭"이 곧 "박스 우클릭"이 되므로, 우클릭은 밴드로 귀속). 개별 테이블/컬럼·헤더(CATH)
-  //   ·컨트롤(CATX/GX)·sim-group(GB/GH) 노드는 그대로 자기 메뉴(밴드로 흡수하지 않음). 밴드 밖 standalone 클러스터도 불변.
-  //   **좌클릭/드래그는 _pick(클러스터 우선) 유지** — 클러스터 펼치기·상세·이동은 좌클릭 경로로 접근(어포던스 보존).
-  _pickContext(mx, my) {
-    const hit = this._pick(mx, my);
-    // 밴드 멤버 클러스터(combo 또는 schema-card)를 우클릭한 경우에만 소속 cat-bg 로 승격
-    if (hit && (hit.__combo || (hit.data && hit.data.kind === "schema-card"))) {
-      const cb = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => this._isCatBg(nd)) : null;
-      if (cb) return cb;   // 밴드 위 → 카테고리 밴드 메뉴. 밴드 밖(cb=null) → 클러스터 그대로.
-    }
-    return hit;
   }
   _pickEdge(mx, my) { const posOf = (id) => { const p = this.getElementPosition(id); return p; }; return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom)); }
   _isCombo(id) { return this._built.combos.some(c => c.id === id); }
