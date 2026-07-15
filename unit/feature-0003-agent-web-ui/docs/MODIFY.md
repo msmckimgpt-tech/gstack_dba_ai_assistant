@@ -522,3 +522,15 @@ source_of_truth: true
 - 실증(win-browser 실 Windows Chrome 150 relay, 배포 cdee785e, 로그인 세션): 그래프 뷰 > mysql-gz-dev > gunzgame 스키마 카드 클릭 → 상세 패널에서 (1) 컨텐츠 카테고리 그룹 **72개** 렌더(cap 수정 전 10개), 함수·프로시저-only 그룹 **51개**(수정 전 0개 — "계정 조회" 24 routine·"캐릭터 인벤토리" 25·"아이템 구매" 15·"아이템 정보" 13·"재화 변환" 5·"스팀 캐시 관리" 3·"로그인 보상" 2 등), (2) `⚙ Game_AllItemGet`(gunzgame.Game_AllItemGet()) 클릭 → "ROUTINE / ⚙ 프로시저 / 이웃 2개" 노드 상세 조회, (3) 섹션 "테이블·함수·프로시저 (409)"·설명 "테이블 115개 · 함수·프로시저 294개", (4) 캔버스 sim-group 과 패널 컨텐츠 카테고리 일치, (5) pageerror 0. 서빙 자산 baked(`ROW_CAP = 500` grep=1 web-a/web-b). evidence: gz_routine_groups.png.
 - Changes: `docs/test-runs.d/20260715T2119-graph-cluster-detail-routines.md` Run 3 DEFERRED→PASS(집계) · `docs/test-runs.d/20260715T2152-graph-cluster-detail-cap.md` Run 4 DEFERRED→PASS(라이브) · `docs/TASK.md` 두 cycle POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
 - Cross-ref: 원천 CHG-20260715T211911-graph-cluster-detail-routines · CHG-20260715T215241-graph-cluster-detail-cap · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
+
+## CHG-20260715T223744-graph-cluster-detail-fulllist (스키마 클러스터 상세: 컨텐츠 카테고리 목록 전체 출력 + 행 상호작용 이벤트 위임, Minor §12.3)
+- Date: 2026-07-15. feature-0003 web/UI 프론트 단독(1파일). cluster-detail-cap(CHG-20260715T215241) 후속. 그래프 도메인 정본 feature-0016.
+- 사용자 보고: 컨텐츠 카테고리 일부만 집계 — `(3/5)`·`(0/N)`. 원인·전체 출력 가능 여부 문의.
+- 근본원인: 직전 cluster-detail-cap 의 전역 상한 ROW_CAP=500 + 그룹당 25. 멤버 총합 500 초과 스키마에서 500행 소진 후 그룹 헤딩+0행/경계 그룹 부분 표시.
+- Changes:
+  - `src/static/graph/graph-ctxmenu.js` `_metaGraphRenderClusterDetail`:
+    - 캡 사실상 해제: 그룹당 캡 제거, 전역 안전가드 ROW_CAP 500→5000. `shown = min(sg.tables.length, max(0, 5000-emitted))` → 전체 멤버 렌더. flat 폴백 500→5000. 헤딩 항상 방출·`(shown/n)` 유지.
+    - 행 클릭/hover 바인딩을 per-row(`_metaBindHoverPan` 4리스너 + 클릭 1) → 컨테이너 `ul.amgr-cluster-tables` 이벤트 위임(리스너 O(1)). ul 매 렌더 재생성이라 누적 없음. mouseover/out·focusin/out(버블)+`_hoverKey`+`relatedTarget` 검사로 원본 hover 의미 보존. 클릭 `closest(".amgr-ct-row[data-node-key]")`.
+- 비변경: 집계/membership/hiddenKinds/sim-group/헤딩/XSS·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: `node --check` PASS · §18.8 적대 리뷰(위임 누적·hover 의미·클릭 동등성) · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
+- Cross-ref: TASK 20260715T2237 · REV/TEST-20260715T223744-graph-cluster-detail-fulllist · test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md · 선행 CHG-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.

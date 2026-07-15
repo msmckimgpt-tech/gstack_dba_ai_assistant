@@ -5838,3 +5838,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 비변경: cluster-detail-routines 의 집계/membership/hiddenKinds/렌더 분기·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: [x] `node --check`(module) PASS · [x] §18.8 [SKIPPED] 적대 자가검토(display-cap 상수·헤딩 방출 로직, 경계·주입·RBAC 무관) · [x] verify-completion PASS → PR #828 머지(main cdee785e) → web 재배포(deploy_scope: included, soak PASS) → [x] **POST-DEPLOY PB-0008 라이브 PASS**(gunzgame 상세: 컨텐츠 카테고리 그룹 72개·함수·프로시저-only 그룹 **51개** 노출[수정 전 0]·⚙ Game_AllItemGet 클릭→routine 노드 상세 조회·캔버스 sim-group 정합·pageerror 0).
 - worktree `ai/claude/feature-0003-graph-cluster-detail-cap`(base main 1b370dfd). REV/CHG/TEST-20260715T215241-graph-cluster-detail-cap. POST-DEPLOY: CHG-20260715T220941-graph-cluster-detail-postverify.
+
+
+## 20260715T2237-graph-cluster-detail-fulllist — 스키마 클러스터 상세: 컨텐츠 카테고리 목록 전체 출력(캡 사실상 해제 + 행 상호작용 이벤트 위임) (Minor §12.3 — feature-0003 web/UI 프론트 단독, cluster-detail-cap 후속. 그래프 도메인 정본 feature-0016)
+
+- 사용자 보고(스크린샷): 컨텐츠 카테고리 일부만 상세 패널에 집계 — 한 그룹은 `(3/5)`(5중 3), 다수 그룹은 `(0/N)`(헤딩만). "나타나지 않는 이유? 전체를 출력하도록 구성 가능?"
+- 진단: 직전 cluster-detail-cap(20260715T2152)이 도입한 **전역 상한 ROW_CAP=500 + 그룹당 PER_GROUP=25**. 이 스키마는 컨텐츠 카테고리 멤버 총합이 500 초과 → 500행 소진 후 그룹은 헤딩+0행(`(0/N)`), 경계 그룹만 부분(`(3/5)`). 즉 500 캡이 원인(직전 cycle 이 대형 스키마 대비 도입한 바운드가 이 스키마엔 과소).
+- 수정(frontend-only 1파일 `src/static/graph/graph-ctxmenu.js`):
+  - [x] **캡 사실상 해제** — 그룹당 캡(PER_GROUP) 제거, 전역 상한을 안전가드 `ROW_CAP=5000`(비현실 극단 스키마 브라우저 행 방지)만 유지. `shown = min(sg.tables.length, max(0, 5000-emitted))` → 5000 미만 스키마는 **모든 컨텐츠 카테고리의 전체 멤버** 렌더. 헤딩 항상 방출·`(shown/n)` 표식 유지.
+  - [x] **행 상호작용 이벤트 위임** — 전체 출력으로 행이 수천 개가 될 수 있어, 클릭/hover 를 행마다(`_metaBindHoverPan` 4리스너 + 클릭 1) 붙이던 것을 컨테이너 `ul.amgr-cluster-tables` 위임(리스너 O(1))으로 전환. ul 은 매 렌더 innerHTML 재생성이라 위임 리스너 누적 없음(직전 ul GC). mouseover/mouseout·focusin/focusout(버블)로 hover-pan, `_hoverKey`로 같은 행 재-pan/과잉취소 방지, `relatedTarget` 검사로 행 내부 자식 이동 시 취소 억제. 클릭은 `closest(".amgr-ct-row[data-node-key]")`.
+  - flat 폴백(sgs<2)도 `slice(0,500)`→`slice(0,5000)`.
+- 비변경: 집계/membership/hiddenKinds/sim-group 계산·헤딩·XSS(esc)·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: [x] `node --check`(module) PASS · [x] §18.8 적대 리뷰([SUBAGENT] 6축 결함 0 — 리스너 누적/hover 의미/클릭 동등성/전체출력/회귀/성능 전부 PASS; NIT 반영: ROW_CAP 공통 상수 hoist, REV-20260715T223744) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008(500+ 항목 스키마에서 전 컨텐츠 카테고리 전체 멤버 렌더·(0/N) 소거·hover pan·행 클릭 조회, visual_verification_scope: always).
+- 후속 옵션(정직): 매우 큰 스키마의 긴 평면 목록 UX 개선은 컨텐츠 카테고리 접기/펼치기(collapsible group)로 별도 개선 가능 — 본 cycle 은 사용자 요청 "전체 출력" 직답.
+- worktree `ai/claude/feature-0003-graph-cluster-detail-fulllist`(base main fb6410b4). REV/CHG/TEST-20260715T223744-graph-cluster-detail-fulllist.

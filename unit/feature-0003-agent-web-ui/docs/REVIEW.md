@@ -460,3 +460,17 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T211911(routine 집계, [SUBAGENT] hiddenKinds parity MAJOR 수정) + CHG-20260715T215241(cap 개정, [SKIPPED] display-cap 적대 자가검토)은 각 REV 로 검증됨. 본 cycle 은 배포 결과를 원장에 기록만.
 - 배포본 실증(win-browser eval, 로그인 세션, 배포 cdee785e, 주입 없이): gunzgame 클러스터 상세에서 함수·프로시저-only 컨텐츠 카테고리 51개 노출(수정 전 0)·⚙/ƒ 칩 멤버 행·⚙ Game_AllItemGet 클릭→routine 노드 상세·캔버스 sim-group 정합·pageerror 0. 스크린샷 육안 정상(gz_routine_groups.png: "계정 조회" 그룹 ⚙ Game_Account*·ƒ Func_IsAccountBoundCustomizeItem 멤버).
 - Cross-ref: CHG-20260715T220941-graph-cluster-detail-postverify · 원천 REV-20260715T211911-graph-cluster-detail-routines · REV-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.
+
+## REV-20260715T223744-graph-cluster-detail-fulllist [SUBAGENT:cluster-detail-event-delegation-adversarial + 적대 자가검토] — 스키마 클러스터 상세 컨텐츠 카테고리 목록 전체 출력 + 행 상호작용 이벤트 위임 (20260715T2237-graph-cluster-detail-fulllist, Minor §12.3)
+- 근본원인: 직전 cluster-detail-cap 의 전역 상한 500 + 그룹당 25 가 멤버 총합 500 초과 스키마에서 뒤쪽 컨텐츠 카테고리를 `(0/n)`·경계 `(3/5)`로 절단(사용자 스크린샷). 수정: 그룹당 캡 제거 + 전역 상한 500→5000(안전가드)로 전체 멤버 렌더, 행 클릭/hover 를 per-row → 컨테이너 `ul` 이벤트 위임 전환.
+- **[SUBAGENT] VERDICT — correctness/회귀 결함 없음(6축 PASS)**:
+  - ① 리스너 누적 없음 — 위임을 영속 `el`(#metadataGraphDetailBody) 아닌 **매 렌더 innerHTML 재생성되는 `ul.amgr-cluster-tables`** 에 부착. 직전 ul↔리스너는 외부 참조 없는 자기완결 사이클(블록-local `const _ctUl`)이라 mark-sweep GC 수거. collapse/analyze 버튼은 card head 의 형제(ul 밖)라 위임과 미교차.
+  - ② hover 의미 동등 — mouseout `!b.contains(relatedTarget)`(칩↔code 자식 이동 취소 억제, relatedTarget 은 항상 element), 인접행 이동 mouseout(A)→cancel + mouseover(B)→pan 이 원본 mouseleave→enter 순서와 동등(`_metaGraphHoverPan` 이 내부에서 Cancel 선행 — idempotent), `_hoverKey` 로 같은 행 재-pan 억제, window 이탈 relatedTarget=null→cancel. focusout 은 button 만 focusable 이라 안전.
+  - ③ 클릭 동등 — `closest(".amgr-ct-row[data-node-key]")` 가 칩/code/desc 클릭 행 승격, 그룹 헤딩(키 없음)→null→no-op. `_metaGraphShowDetail` 은 async(apiFetch await 후 innerHTML 교체)라 클릭 전파 완료 후 ul 교체 — use-after-detach 없음.
+  - ④ 전체 출력 — `_metaSimGroups` 반환 `n===tables.length`(동일 배열)라 <5000 스키마는 `shown=len` 전량·trunc 빈값; >5000 은 헤딩 무조건 방출(slice 전) + `(shown/n)` 정직. flat 폴백 `slice(0,ROW_CAP)`.
+  - ⑤ 회귀 — 소형 스키마 그룹핑/개수/헤딩 무변경(캡 산술만 변경), `rowHTML`·`esc` byte-동일(XSS·data-node-key round-trip 불변).
+  - ⑥ 성능 — 위임 리스너 O(1)(총 5 addEventListener). `_metaSimGroups`/`_metaRelOrderAll` 은 기존에도 전체 멤버 처리(캡은 render-slice 에만 적용)라 신규 알고리즘 비용 0. caveat(결함 아님): ROW_CAP 근처 ~5000 li/button(~20-25k DOM) 1회 innerHTML 동기 렌더는 수백 ms 가능 — "전체 출력" 요청의 수용 트레이드오프, ROW_CAP=5000 가드.
+- **NIT 반영**: ROW_CAP 상수를 구획/평면 폴백 공통 스코프로 hoist(리뷰 NIT — 폴백 `5000` 리터럴 하드코딩 drift 위험 제거, 이제 `slice(0, ROW_CAP)`). 잔여 NIT(`_ctUl.contains(b)` 방어적 중복)은 무해로 유지.
+- 적대 자가검토: "위임 click 이 재렌더 후에도 stale 참조?" → 클릭은 구 ul 에서 발화·처리 완료 후 재렌더, 신 ul 은 새 위임 획득 — 무해. "5000 초과 실스키마?" → 단일 스키마 테이블+루틴 5000 초과는 비현실(gunzgame 409); 초과 시 헤딩 항상 방출로 discoverability 유지.
+- 검증: `node --check`(module) PASS · [SUBAGENT] 적대 리뷰 결함 0 · POST-DEPLOY PB-0008 라이브(500+ 항목 스키마 전 컨텐츠 카테고리 전체 렌더·hover/클릭, 잔여).
+- Cross-ref: TASK 20260715T2237 · CHG/TEST-20260715T223744-graph-cluster-detail-fulllist · test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md · 선행 REV-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.
