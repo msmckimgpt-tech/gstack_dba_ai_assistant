@@ -1393,3 +1393,15 @@ TASK-0015 (plan-review):
 - [x] §18.8 적대 패널(프롬프트 note code change) → **CONFIRMED-DEFECT ×3 수정**(거짓 회복경로 파일명→재첨부·"size cap" 오기 삭제·len==0 진단역전 교정) + 3축 REFUTED. → REV-20260715T060000-attach-inline-honesty.
 - [ ] verify-completion → commit/push(auto-sync) → PR·머지·배포(deploy_scope: included) → 배포검증.
 - [ ] ②-frontend(app.js staged-flush 라벨 대칭)은 Cycle C 로 분리(웹 자산 변경 → visual verification 필요).
+
+## 20260715T082345-schema-name-case-drift — 스키마명 서버-실제-case 해소 (A 런타임 canonicalize+grounding, Critical)
+> 계기: `/_dqa:conversation_audit` "테이블 구조 정합성 검토"(product 97 대화 20260715070720-c202bcf8). allowlist(WebProductDatabases.SchemaName)가 서버 실제 case 와 다르게 소문자 저장(서버 `DEV_1_1_1_20` ↔ 저장 `dev_1_1_1_20`) → case-sensitive MySQL(lctn=0)에서 describe_table/search_tables/INFORMATION_SCHEMA 전부 0행 → assistant '테이블 없음' 오판·give-up. structural: 205 allowlist 중 85 case mismatch(MySQL 실패클래스 ~18, product 94/97/110/121). graph(동기 snapshot) ground truth = DEV_1_1_1_20 63테이블.
+- [x] A tools.py: `_mysql_schema_case_map`(라이브 INFORMATION_SCHEMA.SCHEMATA·conn 캐시·모호 제외) + `_canonical_schema_name` + `_canonicalize_schema_args_mysql`. `execute_tool` 단일 choke 에서 schema_name 정규화(라우터·비라우터, MySQL 한정·MSSQL no-op). `_DatasourceRouter.refresh_case` 로 `_allow_schemas`(grounding/DISPLAY) 실제 case refresh.
+- [x] A agent_core.py: 멀티-ds primary 연결 직후 refresh_case → run-start grounding 실제 case.
+- [x] B(cross-ref feature-0003) admin_products.py `admin_update_product_databases` write-path 서버-실제-case 정규화(`list_server_databases`·SSRF 선행·degrade-safe·MySQL only·모호 제외). admin.js `.toLowerCase()`/수기 입력 무관 backend chokepoint. (초기 admin_console picker 후보는 패널 재진단으로 wrong-endpoint·admin.js 무효화 확인 → 원복.)
+- [x] 단위테스트: `tests/test_schema_name_case_drift.py`(15) + feature-0003 `tests/test_available_databases_case.py`(2). 보안 불변식(canonicalize 가 allowlist 게이트 판정 무변·미허용 스키마 확장 0) 포함.
+- [x] 전체 회귀: feature-0002+0003 **2107 passed, 2 skipped**(EXIT=0). 보안·멀티ds 회귀(sql_trust_boundary·mssql_security_boundary·multi_datasource·product_multi_datasource·mssql_crossdb·datasource_registry) 무회귀.
+- [x] §18.8 적대 패널(security+backend+qa — datasource 접근 경계) → REV-20260715T082345-schema-name-case-drift.
+- [ ] verify-completion → commit/push(auto-sync) → PR·머지(Critical=confirm)·배포(4서비스, Critical=confirm)·배포검증.
+- [ ] 라이브 재현(Phase 11b): 배포 후 원 마찰(P97 대화) 재현 — describe_table/search_tables 가 DEV_1_1_1_20 63테이블 반환·give-up 소멸 실측(unverified-live).
+- [ ] deferred(§정직·백필=admin): 기존 18 MySQL drift 행 백필(A 런타임이 seal 이므로 hygiene) · 외부-datasource picker 는 control-plane conn 조회 한계(datasource-scoped picker 후속).

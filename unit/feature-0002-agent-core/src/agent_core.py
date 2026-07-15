@@ -3202,6 +3202,73 @@ def _resolve_product_datasources(mem_conn, product_id) -> "list[dict]":
     return out if len(out) >= 2 else []
 
 
+def _correct_allow_schemas_case_via_graph(ds_dicts: "list[dict]") -> None:
+    """FR-schema-name-case-drift (grounding): 각 datasource(MySQL)의 `_allow_schemas` 를 metadata_kb
+    그래프의 **서버 실제 case** 로 in-place 정규화한다. run-start grounding(system prompt)이 저장된 소문자
+    (예: `dev_1_1_1_20`)가 아니라 서버 실제 case(`DEV_1_1_1_20`)를 노출하게 해, **비-primary datasource
+    freeform execute_sql** 이 case-sensitive MySQL 에서 0행 되는 것을 예방한다(REV backend/qa MAJOR).
+
+    **connection-free**(KB PG graph snapshot 읽기 — 각 datasource 재연결 불필요, lazy 계약 보존)·
+    **degrade-safe**(graph 미가용/miss/모호 → 저장 case 유지). 구조화 도구(describe/search)는 별도로
+    execute_tool 의 라이브 arg-canonicalize 가 authoritative 로 봉인하므로, graph 가 stale 여도 회귀 없음.
+    보안 무변: `_allow_schemas` 는 grounding 표시 소스일 뿐 접근 게이트(소문자 set)는 불변."""
+    try:
+        from shared.db import _pg_available, _pg_connect
+        from shared import datasources as _dsmod
+        if not _pg_available() or not ds_dicts:
+            return
+    except Exception:
+        return
+    pg = None
+    try:
+        pg = _pg_connect(autocommit=True)
+        cur = pg.cursor()
+        try:
+            for ds in ds_dicts:
+                try:
+                    if str(ds.get("engine") or "mysql").strip().lower() != "mysql":
+                        continue
+                    # 이미 라이브 refresh_case 로 교정된 datasource(primary)는 graph(스냅샷)로 덮어쓰지
+                    # 않는다 — 라이브가 authoritative(REV 재검증 MINOR: authority inversion 방지).
+                    if ds.get("_allow_schemas_case_fixed"):
+                        continue
+                    allow = ds.get("_allow_schemas") or []
+                    sk = _dsmod.scope_key(ds)
+                    if not allow or not sk:
+                        continue
+                    cur.execute(
+                        'SELECT (properties::text)::jsonb->>\'name\' FROM metadata_kb."Schema" '
+                        'WHERE (properties::text)::jsonb->>\'scope_key\' = %s',
+                        (sk,),
+                    )
+                    low2real: dict[str, str] = {}
+                    ambig: set[str] = set()
+                    for r in (cur.fetchall() or []):
+                        if not r or not r[0]:
+                            continue
+                        real = str(r[0]); low = real.lower()
+                        if low in low2real and low2real[low] != real:
+                            ambig.add(low)  # 대소문자만 다른 동명 복수 → 모호(교정 안 함)
+                        else:
+                            low2real[low] = real
+                    for low in ambig:
+                        low2real.pop(low, None)
+                    if low2real:
+                        ds["_allow_schemas"] = [low2real.get(str(s).strip().lower(), s) for s in allow]
+                except Exception:
+                    continue
+        finally:
+            cur.close()
+    except Exception as exc:
+        logging.getLogger("agent_core").debug("allow_schemas_case_graph_skip err=%r", exc)
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+
 # ── ITEM-07: Self-Reflection 자가수정 루프 헬퍼 ──────────────────────────────
 # 보안 가드 차단(의도적)은 자가수정 대상이 아니다 — 우회 유도 금지.
 # 보안 가드 차단(의도적)은 자가수정 대상이 아니다 — 우회 유도 금지. 메시지 wording drift 에
@@ -3644,6 +3711,13 @@ def _run_agent_core(
             return result
         # primary datasource 를 run-wide 기본 컨텍스트로(grounding·첫 tool 기본값).
         _ds = _multi_ds_list[0]
+        # FR-schema-name-case-drift: primary(MySQL)의 allowlist display 를 서버 실제 case 로 정규화해
+        # run-start grounding 이 저장 case(예: 'dev_1_1_1_20')가 아닌 서버 실제 case('DEV_1_1_1_20')를
+        # 보여주게 한다. 비-primary 는 그 datasource 첫 사용 시 execute_tool 이 refresh(+인자 canonicalize).
+        try:
+            _ds_router.refresh_case(_ds_router.resolve_label(None), db_conn)
+        except Exception:
+            pass
     else:
         # 단일 datasource (또는 미바인딩/flag OFF): 기존 경로 — 동작 0 변경.
         try:
@@ -3815,6 +3889,13 @@ def _run_agent_core(
         import modules.tools as _tools_reg
         _ds_router_token = _tools_reg.set_active_ds_router(_ds_router)
         _ds_router.activate(_ds_router.resolve_label(None))  # primary allowlist/engine 활성
+        # FR-schema-name-case-drift(grounding): 모든 바인딩 datasource 의 _allow_schemas 를 graph 실제
+        # case 로 교정(비-primary 포함) → run-start grounding 이 실제 case 노출(비-primary freeform 봉인).
+        # connection-free·degrade-safe. 구조화 도구는 execute_tool 라이브 arg-canonicalize 가 authoritative.
+        try:
+            _correct_allow_schemas_case_via_graph(_multi_ds_list)
+        except Exception:
+            pass
         # 각 도구에 datasource 선택 인자(enum=바인딩 라벨) 주입한 정의 사용.
         try:
             _run_tool_defs = _tools_reg.build_tool_definitions_for_datasources(

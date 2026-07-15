@@ -1721,6 +1721,39 @@ async def admin_update_product_databases(
             "description": str(item.get("description") or "").strip(),
             "sort_order": int(item.get("sort_order") or (i + 1) * 10),
         })
+    # ── FR-schema-name-case-drift (B, ingestion 정규화) ──────────────────────────
+    # 저장 직전 각 스키마명을 datasource 서버의 **실제 case** 로 정규화한다. 프론트 picker(admin.js 가
+    # MySQL 스키마명을 `.toLowerCase()` 로 저장)·수기 입력이 소문자로 보내도, case-sensitive MySQL
+    # (lower_case_table_names=0)에서 그 스키마 조회가 0행이 되는 drift 를 **write 시점에** 봉인한다
+    # (예: 서버 `DEV_1_1_1_20` ↔ 입력 `dev_1_1_1_20`). 런타임 A(agent_core canonicalize)와 짝을 이뤄
+    # 신규 저장 case 를 서버 실제값으로 고정. **degrade-safe**: datasource 미해소·SSRF 차단·연결 실패·
+    # 모호(대소문자만 다른 동명 복수) → 입력 case 유지(저장 차단 안 함, 기존 동작). MySQL 대상만
+    # (MSSQL 은 catalog case-insensitive — 정규화 불필요).
+    if cleaned and _ds_engine == "mysql" and _dskey:
+        try:
+            from shared import datasources as _dsr
+            from shared import db as _db
+            _norm_ds = _dsr.resolve(conn, _dskey)
+            if _norm_ds:
+                _okssrf, _rsn, _pin = app._ssrf_check_host(_norm_ds.get("host"))
+                if _okssrf:
+                    _low2real: dict[str, str] = {}
+                    _ambig: set[str] = set()
+                    for _n in (_db.list_server_databases({**_norm_ds, "host": _pin}) or []):
+                        _r = str(_n); _l = _r.strip().lower()
+                        if _l in _low2real and _low2real[_l] != _r:
+                            _ambig.add(_l)  # 대소문자만 다른 동명 복수 → 모호(정규화 안 함)
+                        else:
+                            _low2real[_l] = _r
+                    for _l in _ambig:
+                        _low2real.pop(_l, None)
+                    for _it in cleaned:
+                        _rc = _low2real.get(str(_it["schema_name"]).strip().lower())
+                        if _rc:
+                            _it["schema_name"] = _rc  # 서버 실제 case 로 고정
+        except Exception:
+            logging.getLogger(__name__).debug("schema_case_normalize_skip ds=%s", _dskey)
+
     # before-state 캡처 — 현재 schemas list.
     # TASK-0228 (1:N): datasource_key 차원이 있으면 그 datasource 의 행만 교체(다른 datasource 의
     # 접근DB 는 보존 — 차원 격리). 없으면 레거시 단일 경로(_dskey = primary).

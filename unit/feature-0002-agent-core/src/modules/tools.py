@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import contextvars
 import json
+import logging
 import re
 import time
 from typing import Any
+
+_log = logging.getLogger("agent_core.tools")
 
 from shared.config import AGENT_TOP_N, AGENT_MAX_SHOW
 from shared.db import execute_sql as _raw_execute_sql, DatasourceCircuitOpen
@@ -73,6 +76,88 @@ def set_active_schema_allowlist(schemas: list[str] | set[str] | None) -> None:
 
 def clear_active_schema_allowlist() -> None:
     set_active_schema_allowlist(None)
+
+
+# ── 스키마명 서버-실제-case 해소 (FR-schema-name-case-drift) ──────────────────────
+# allowlist(WebProductDatabases.SchemaName)가 서버 실제 대소문자와 다르게 저장되면(예: admin 이
+# 'dev_1_1_1_20' 로 등록했으나 서버는 'DEV_1_1_1_20'), case-sensitive MySQL
+# (lower_case_table_names=0, Linux)에서 구조화 도구의 schema-scoped 쿼리(describe_table·
+# search_tables·INFORMATION_SCHEMA 필터 등)가 전부 0행/빈결과가 된다(assistant 가 '테이블 없음'
+# 오판·give-up). 라이브 INFORMATION_SCHEMA.SCHEMATA 로 서버 실제 case 를 조회해 schema_name 인자를
+# 정규화한다.
+#
+# **보안 불변식**: allowlist 게이트(`_ACTIVE_SCHEMA_ALLOWLIST` 소문자 set 비교)는 canonicalize 전후
+# 판정이 **동일**하다(`'DEV_1_1_1_20'.lower() == 'dev_1_1_1_20'`) — 접근 경계 무변경, 보안 회귀 0.
+# canonicalize 는 이미 authorize 된 스키마의 *표기*만 서버 실제값으로 교정할 뿐, 다른 스키마로
+# 확장하지 않는다. 유일 case-insensitive 매칭일 때만 치환하고, 서버에 대소문자만 다른 동명 스키마가
+# 둘 이상이면(모호) 원본을 유지한다(fail-safe = 기존 동작).
+_MYSQL_SCHEMA_CASE_MAP_ATTR = "_agent_mysql_schema_case_map"
+
+
+def _mysql_schema_case_map(conn) -> "dict[str, str]":
+    """MySQL conn 의 {소문자 스키마명 → 서버 실제 case} 맵. 모호(대소문자만 다른 동명 복수)는 제외.
+
+    conn 객체에 캐시(런당 datasource 별 1회 조회). 조회 실패 시 빈 맵(canonicalize no-op = 기존 동작).
+    """
+    cached = getattr(conn, _MYSQL_SCHEMA_CASE_MAP_ATTR, None)
+    if isinstance(cached, dict):  # dict 인 캐시만 신뢰 — MagicMock/래퍼의 속성 auto-vivify 오판 방지.
+        return cached
+    m: "dict[str, str]" = {}
+    ambiguous: "set[str]" = set()
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA")
+            for row in (cur.fetchall() or []):
+                if not row or not row[0]:
+                    continue
+                real = str(row[0])
+                low = real.lower()
+                if low in m and m[low] != real:
+                    ambiguous.add(low)  # 같은 소문자에 복수 실제-case 존재 → 모호(정규화 안 함)
+                else:
+                    m[low] = real
+        finally:
+            cur.close()
+    except Exception as exc:
+        # 조회 **실패**(연결 hiccup 등)는 캐시/latch 하지 않는다 — 빈 맵을 캐시하면 그 런 전체
+        # canonicalize 가 영구 no-op 로 poison 된다(REV backend MAJOR). 다음 호출에서 재시도되도록
+        # uncached 빈 맵 반환 + 관측성 로그.
+        _log.warning("schema_case_map: INFORMATION_SCHEMA.SCHEMATA 조회 실패 — 이번 호출 canonicalize skip(재시도 유지): %r", exc)
+        return {}
+    for low in ambiguous:
+        m.pop(low, None)
+    try:
+        setattr(conn, _MYSQL_SCHEMA_CASE_MAP_ATTR, m)  # **성공 시에만** 캐시(실패는 위에서 조기 반환).
+    except Exception:
+        pass  # C 확장 conn 등 속성 설정 불가 시 캐시 없이 매번 조회(정상 동작).
+    return m
+
+
+def _canonical_schema_name(conn, name: str) -> str:
+    """schema_name 을 서버 실제 case 로 정규화. 유일 case-insensitive 매칭일 때만 치환(모호/미발견=원본).
+
+    LLM 이 식별자를 인용(`` `x` ``/`"x"`/`[x]`)해 넘겨도 매칭되도록 조회 키는 인용 제거 후 소문자화한다
+    (반환은 서버 실제 case — 후속 핸들러의 `_safe_ident` 가 인용/정제 담당)."""
+    if not name or not str(name).strip():
+        return name
+    key = str(name).strip().strip('`"[]').strip().lower()
+    if not key:
+        return name
+    real = _mysql_schema_case_map(conn).get(key)
+    return real if real else name
+
+
+def _canonicalize_schema_args_mysql(conn, arguments: "dict[str, Any]") -> None:
+    """MySQL 구조화 도구 인자의 schema_name 을 서버 실제 case 로 in-place 정규화(FR-schema-name-case-drift).
+
+    freeform execute_sql 은 schema 를 raw SQL 리터럴로 담아 이 경로를 타지 않는다(grounding 이 실제
+    case 를 보여주는 것으로 대응 — 아래 라우터 display refresh)."""
+    if not isinstance(arguments, dict):
+        return
+    v = arguments.get("schema_name")
+    if isinstance(v, str) and v.strip():
+        arguments["schema_name"] = _canonical_schema_name(conn, v)
 
 
 # ── 멀티 datasource (1:N) 런타임 라우터 (TASK-0228) ──────────────────────────────
@@ -153,6 +238,32 @@ class _DatasourceRouter:
             engine=ds.get("engine"),
             default_db=ds.get("default_db"),
         )
+
+    def refresh_case(self, label: str, conn) -> None:
+        """FR-schema-name-case-drift: 이 datasource(MySQL)의 `_allow_schemas` 를 서버 실제 case 로
+        정규화(grounding·DISPLAY allowlist 가 저장 case 편차 없이 실제 case 를 보여주도록). 런당 1회.
+
+        보안 무변: 소문자 비교 set 은 canonicalize 후에도 동일 소문자라 접근 경계 불변. MSSQL/조회실패는
+        no-op(기존 동작). idempotent."""
+        ds = self._by_label.get(label)
+        if ds is None:
+            return
+        if (str(ds.get("engine") or "mysql").strip().lower() != "mysql"):
+            return
+        if ds.get("_allow_schemas_case_fixed"):
+            return
+        try:
+            cmap = _mysql_schema_case_map(conn)
+            if not cmap:
+                # 맵 비어있음(조회 실패 or 스키마 0) → **latch 하지 않는다**. 조회 실패면 다음 tool 호출에서
+                # 재시도되도록(poison-latch 방지, REV backend MAJOR).
+                return
+            allow = ds.get("_allow_schemas") or []
+            if allow:
+                ds["_allow_schemas"] = [_canonical_schema_name(conn, s) for s in allow]
+            ds["_allow_schemas_case_fixed"] = True  # 성공(non-empty map) 시에만 latch.
+        except Exception:
+            pass  # 실패 시 저장 case 유지(기존 동작) — canonicalize 는 별도로 인자 레벨에서도 방어.
 
     def close_all(self) -> None:
         for c in self._conns.values():
@@ -2092,7 +2203,16 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
             return f"데이터소스 '{label}' 연결 실패: {e}"
         if ds_conn is None:
             return f"데이터소스 '{label}' 를 사용할 수 없습니다."
+        # FR-schema-name-case-drift: 활성화 전에 이 datasource 의 allowlist display 를 서버 실제 case 로
+        # 정규화(grounding·DISPLAY 가 저장 case 편차 없이 실제 case 노출). refresh 후 activate 가 전파.
+        router.refresh_case(label, ds_conn)
         router.activate(label)
+        # 이 datasource(MySQL)에서 schema_name 인자를 서버 실제 case 로 정규화(case-sensitive 서버 0행 방지).
+        try:
+            if str((_cfg.get_active_datasource_engine() or "mysql")).lower() != "mssql":
+                _canonicalize_schema_args_mysql(ds_conn, arguments)
+        except Exception:
+            pass
         if tool_name == "execute_sql":
             _snapshot_sql_exec_ctx()  # R-2: primary 복원 전 실행 컨텍스트 캡처
         try:
@@ -2102,6 +2222,13 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
         finally:
             # 다음 tool 호출의 기본값이 흔들리지 않도록 primary 컨텍스트로 복원.
             router.activate(router.resolve_label(None))
+    # 단일(레거시) datasource 경로 — MySQL 기본. schema_name 서버 실제 case 정규화(라우터 경로와 동형,
+    # FR-schema-name-case-drift). 활성 dialect 가 MSSQL(비-MySQL)이면 no-op.
+    try:
+        if str(_dialects.active().name).lower() != "mssql":
+            _canonicalize_schema_args_mysql(conn, arguments)
+    except Exception:
+        pass
     if tool_name == "execute_sql":
         _snapshot_sql_exec_ctx()  # R-2: 비라우팅 경로도 동일 캡처(학습이 단일 소스만 읽게)
     try:

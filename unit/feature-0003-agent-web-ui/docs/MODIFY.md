@@ -465,3 +465,11 @@ source_of_truth: true
 - 실증(win-browser Chrome 150, 배포 66722981): ① sim-group "방송 계정·3"(mysql-kr-an2-player dbGame) 우클릭 → **컨텐츠 카테고리** 메뉴 / ② 밴드 위 스키마 클러스터(dbAuth) → **스키마**(band-wins 철회 복원) / ③ 제품 카테고리 밴드 → **카테고리** / 개별 테이블 → **테이블**(흡수 안 됨). 서빙 자산 baked(`_pickContext` 메서드 0·우클릭=`_pick`·ContentCategory 라우팅·groupInfo)+브라우저 in-page fetch(stale 아님) 확인.
 - Changes: `docs/test-runs.d/20260715T135725-graph-ctxmenu-content-category.md` POST-DEPLOY 섹션 DEFERRED→PASS · `docs/TASK.md` 체크리스트 close · `docs/REVIEW.md` postverify REV.
 - Cross-ref: 원천 CHG-20260715T135725-graph-ctxmenu-content-category · ANCHOR 0003 무충돌.
+
+## CHG-20260715T082345-picker-case-preserve (제품 접근DB write-path 서버-실제-case 정규화 — B ingestion, cross-ref feature-0002 FR-schema-name-case-drift)
+- Date: 2026-07-15. 계기: `/_dqa:conversation_audit` "테이블 구조 정합성 검토" 마찰의 ingestion 근본 — 스키마 whitelist 가 소문자로 저장돼 case-sensitive MySQL 에서 assistant 조회 0행(정본 근본·봉인 = feature-0002 CHG-20260715T082345-schema-name-case-drift).
+- Reason(RC, §18.8 적대 패널 재진단): 초기 후보(admin_console picker `.lower()` 제거)는 **실효 없음**으로 기각 — (a) 그 picker(`/api/admin/databases/available`)는 미바인딩 default 폴백 전용이고 실 바인딩 picker 는 `list_server_databases_classified`(이미 실제 case), (b) **admin.js(11277/11366)가 MySQL 스키마명을 저장 직전 `.toLowerCase()`** 해 서버-측 picker case 보존을 무효화. 실 소문자화는 프론트 + write path 무정규화의 합작.
+- Changes(feature-0003): `src/routers/admin_products.py` `admin_update_product_databases` — 저장 직전 `cleaned` 스키마명을 datasource 서버 **실제 case**(`shared.db.list_server_databases`, SSRF-pin 선행)로 정규화. **엔드포인트/프론트 case 무관 backend chokepoint** — admin.js 소문자화·수기 소문자 입력 모두 write 시점에 서버 실제값으로 고정. degrade-safe(datasource 미해소·SSRF 차단·연결 실패·모호[대소문자만 다른 동명 복수] → 입력 case 유지·저장 차단 안 함). MySQL only(MSSQL catalog case-insensitive). admin_console picker 변경은 **원복**(wrong-endpoint·무효).
+- 검증: 신규 `tests/test_product_databases_case_normalize.py` 2 PASS(소문자 입력→서버 실제 case 저장·degrade-safe). feature-0003 전체 회귀 무영향(2113 passed 통합).
+- 한계(§정직, deferred): admin.js 소문자화 자체는 미수정(프론트·visual verification 필요·write-path 정규화가 상쇄) · datasource-scoped picker 실제 case 표시(후속) · 기존 저장 소문자 행 백필은 admin 별도(A 런타임 canonicalize + 재저장 시 write-path 정규화가 점진 seal).
+- Cross-ref: **primary = feature-0002 CHG-20260715T082345-schema-name-case-drift**(런타임 resolution seal·verify 정본) · REV-20260715T082345-schema-name-case-drift(패널) · FRICTION_LEDGER FR-schema-name-case-drift.
