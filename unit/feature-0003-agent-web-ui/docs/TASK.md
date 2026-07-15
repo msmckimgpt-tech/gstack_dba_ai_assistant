@@ -5650,5 +5650,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] backend/frontend/tests 구현 · ast/py_compile + node --check(ESM) OK.
 - [x] 검증(로컬): 권한 타깃 50 PASS + feature-0003 스위트 **785 passed/0 failed**(test_share_redaction_invariant 는 main baseline 도 동일 실패하는 호스트 환경 요인이라 제외 — 컨테이너 make test 에서 재확인) + jsdom 탭 게이팅 **47/0 PASS**.
 - [ ] §18.8 보안 렌즈 적대 리뷰(권한상승·접근상실·backfill 멱등·FE/BE parity·lockout).
-- [ ] 컨테이너 make test → verify-completion → commit → PR → 머지 → web 재배포(deploy_scope: included).
-- [ ] **배포 후 실증**: web 로그 seed catchup 정상 + `WebSchemaMigrations` `console-category-access-v1` row + 역할별 유효권한 무손실(탭 노출 동일) + PB-0008 실브라우저(역할 편집 grid 카테고리 계층·접근 체크 시 하위 펼침·제한 역할 탭 가시성).
+- [x] 컨테이너 make test(잔여 4실패 = 환경 기인 확정, fragment) → verify-completion PASS → commit → PR #801 → 머지(7e375ebc) → web 재배포(deploy-web.sh scope=all, soak 통과).
+- [x] **배포 후 실증 완료(2026-07-14)**: web 로그 seed catchup 정상(1406 없음) + `console-category-access-v1` 마커 + 접근 5종 admin/usermanager(backfill 구제 실증)/dba(audit) 부여 + override target2 1건 + PB-0008 라이브(usermanager grid 접근 5종 depth0·감사 4탭 조회 depth1 통합·상위 토글→하위 7종 접힘/펼침·admin 13탭·상태 오염 0). fragment POST-DEPLOY Run 참조.
