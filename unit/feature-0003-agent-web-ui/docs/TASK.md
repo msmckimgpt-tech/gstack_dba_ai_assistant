@@ -5759,3 +5759,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 비변경: 개별 promote/reject 엔드포인트·glossary/sample 큐·RBAC 정의·스키마/마이그레이션·인증 0. cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: `node --check`(module) admin.js PASS · agent 컨테이너 targeted pytest 28/0 · `gen-routemap --check` up-to-date. **미선택(해제)은 pending 유지 = 비파괴**(거부 아님).
 - [ ] verify-completion(pre-commit) → commit → PR·머지 → web 재배포(deploy_scope: included) → **POST-DEPLOY PB-0008 라이브 시각검증**(묶음 카드 렌더·전체 승인/일부 해제 토글·등록 후 코드사전 반영, visual_verification_scope: always). worktree `ai/claude/feature-0003-enum-review-bundle`(base main 7f169007). REV/CHG-20260715T105337-enum-review-bundle.
+
+
+## 20260715T1132-enum-bundle-flex-fix — ENUM 검토 큐 묶음 카드 flex 압축 붕괴 수정 (Minor §12.3 — feature-0003 web/UI CSS 전용. enum-review-bundle POST-DEPLOY PB-0008 적발 후속)
+
+- 트리거: enum-review-bundle(20260715T1053) 배포 후 PB-0008 라이브 시각검증에서 묶음 카드가 12px sliver 로 붕괴(내용이 회색 바로만 보임) 적발.
+- 진단(라이브 확정): `#metadataList` 는 `overflow-y:auto`+`flex-direction:column`(height 373px, 높이 제약) 스크롤 컨테이너. `.admin-meta-bundle` 이 기본 `flex-shrink:1` 이라 8개 묶음 카드가 flex 압축되고, 카드의 `overflow:hidden` 이 넘친 내용(head 65 + list 38 + foot 61 = 164px)을 클리핑 → 12px sliver. flat-list `.admin-meta-row`(overflow visible)는 미발현이던 잠복 결함이 신규 카드(overflow:hidden)에서 발현.
+- 수정: [x] `styles.css` `.admin-meta-bundle` 에 `flex-shrink: 0` — 카드 자연 높이 유지, 목록은 컨테이너가 스크롤. 라이브 주입 검증(카드 12px→166px 복원).
+- 비변경: JS/HTML/백엔드/RBAC/엔드포인트/스키마 0. 다른 CSS 규칙 무변경. cache-buster `?v=dev` placeholder 수기편집 없음.
+- [ ] verify-completion → commit → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 재검증(재배포 자산 카드 정상 높이·묶음 8개·전체 승인/일부 해제·등록·pageerror 0). worktree `ai/claude/feature-0003-enum-bundle-flex-fix`(base main f6cb0b14). REV/CHG-20260715T113208-enum-bundle-flex-fix.

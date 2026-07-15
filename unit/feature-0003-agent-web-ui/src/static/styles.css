@@ -8410,6 +8410,9 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: var(--surface);
   margin-bottom: 12px;
   overflow: hidden;
+  /* #metadataList 는 overflow-y:auto flex-column(높이 제약) — 기본 flex-shrink:1 이면 다건 묶음이
+     압축되고 위 overflow:hidden 이 내용을 잘라 카드가 sliver 로 붕괴한다. 자연 높이 유지 + 목록 스크롤. */
+  flex-shrink: 0;
 }
 .admin-meta-bundle-head {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
