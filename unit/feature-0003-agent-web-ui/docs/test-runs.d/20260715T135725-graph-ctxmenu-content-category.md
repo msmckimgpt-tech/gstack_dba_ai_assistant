@@ -26,6 +26,13 @@ verdict: PASS (코드/문법/단위 회귀) · POST-DEPLOY PB-0008 라이브 잔
 - 회귀 표면: 제품 카테고리 밴드·스키마 클러스터 메뉴·dispatch 타 분기·시각 z·백엔드/RBAC/스키마 0.
 - 결과: 코드/문법/단위 회귀 PASS.
 
-### Run (2026-07-15) — POST-DEPLOY 라이브 검증 — **Environment: Windows-browser (win-browser.py relay)** — DEFERRED (배포 후 실측 교체)
+### Run (2026-07-15) — POST-DEPLOY 라이브 검증 — **Environment: Windows-browser (win-browser.py relay, Chrome 150, 배포 66722981)** — PASS
 
-- 예정 실증: (배포 전달) 서빙 web-a/b `GIT_COMMIT` + baked `graph-renderer-pixi.js` 에 `_pickContext` **부재** 확인. (라이브) 제품-매핑 데이터소스(예: mysql-kr-an2-auth) 스키마그래프 펼친 스키마 내 sim-group 박스/헤더 우클릭 → **"컨텐츠 카테고리" 메뉴** · 밴드 위 스키마 클러스터 박스 우클릭 → **"스키마" 메뉴**(band-wins 복원) · 제품 카테고리 밴드 여백 → **"카테고리" 메뉴** · 좌클릭 어포던스(클러스터 펼치기·그룹 접기) 보존.
+- **배포 전달 확인 (PASS)**: 서빙 web-a·web-b 모두 `GIT_COMMIT=66722981`. baked `static/graph/` 정적 자산: `graph-renderer-pixi.js` 에 `_pickContext` 메서드/호출 **0**(주석만) + 우클릭 `kindEvt + ":contextmenu"`(=`d.hit`=`_pick`) **1** / `graph-ctxmenu.js` `_metaGraphCtxForContentCategory` **2**(정의+export)+badge `"컨텐츠 카테고리"` / `graph-core.js` `_metaGraphCtxForContentCategory` **2**(import+호출)+`groupInfo` **2**. 브라우저 in-page `fetch(?v=dev, no-store)` 재확인 동일(stale 캐시 아님, 라이브 도달).
+- **라이브 우클릭 배지 실증 (PASS)** — win-browser 합성 우클릭(`contextmenu`+`pointerdown/up` button=2, 실 canvas 좌표) 후 `.admin-meta-graph-ctxmenu` 배지 판독:
+  - **① 컨텐츠 카테고리 (sim-group)** — mysql-kr-an2-player dbGame(99 테이블) 펼침, sim-group "방송 계정 · 3"(BanBroadcastAccount·FavoriteBroadcastAccount 등) 박스/헤더 3지점(470,668)(500,700)(440,695) 우클릭 → **배지 "컨텐츠 카테고리" · 헤더 "방송 계정 · 테이블 3" · 📋 소속 스키마 상세 · ▾ 접기 (묶음) · 📑 묶음명 복사**. 구현과 정확히 일치. ✅ (이전엔 스키마 메뉴로 라우팅되던 대상)
+  - **② 스키마 클러스터 → 스키마 (band-wins 철회 복원)** — mysql-kr-an2-auth dbAuth 카드(밴드 위, 430,252) 우클릭 → **배지 "스키마"**(dbAuth · 테이블 10). 펼친 dbAuth combo 내부 배경 4지점 → 전부 **"스키마"**. band-wins 승격 제거 확인. ✅
+  - **③ 제품 카테고리 밴드 → 카테고리** — "미분류" 밴드 헤더(410,364)·밴드 여백(430,438)·킹스레이드 밴드 헤더(430,340) → 전부 **배지 "카테고리"**. ✅
+  - **개별 테이블 노드 불변** — BanBroadcastAccount(485,680)·PlayerMisc(290,680) 우클릭 → **배지 "테이블"**(sim-group 에 흡수 안 됨). ✅
+- **좌클릭 어포던스 보존**: dbAuth·dbGame 카드 좌클릭 → 클러스터 펼침(테이블 로딩→렌더) 정상.
+- **판정: PASS** — 3대상 우클릭 정합(밴드=카테고리 / 스키마 클러스터=스키마 / 컨텐츠 카테고리=컨텐츠 카테고리) 라이브 충족, band-wins 철회 확인, 개별 테이블 흡수 0. 증거 스크린샷 `scratchpad/evidence-content-category-menu.png`(방송 계정 sim-group 우클릭 → "컨텐츠 카테고리" 메뉴, plum #8a3f7a 배지). healthz/soak 통과.
