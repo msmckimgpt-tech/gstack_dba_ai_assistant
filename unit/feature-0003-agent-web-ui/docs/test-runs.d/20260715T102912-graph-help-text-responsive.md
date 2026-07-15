@@ -16,4 +16,5 @@ verdict: PASS (코드/정적 + 라이브 win-browser eval 다중 크기 실증)
   - **줄바꿈**: keep-all 적용 후 설명이 어절 경계로만 줄바꿈 — "…아래 조작으로"/"탐색하세요.", "…자유 배치로 옮깁니다."(넓어진 카드에선 1줄), "…상호작용"/"메뉴를 엽니다." 등 orphan 음절 소거(스크린샷 육안).
   - **반응형(컨테이너 폭 시뮬레이션)**: canvas-wrap 폭 override 측정 — 300px→카드 268(100% 바운드, 오버플로 0) · 360→320 · 617(자연)→520 · 700→520 · 1100→520(가독 상한). 브라우저 크기에 따라 320~520px 유동, 어떤 폭에서도 컨테이너 미초과.
 - **§18.8**: 프론트 1파일 CSS 텍스트-레이아웃 전용(word-break/width), 백엔드/RBAC/스키마/JS/HTML 0 → 패널 skip(REVIEW `[SKIPPED:...]`, 적대 자가검토 refute).
-- 결과: **PASS** — 줄바꿈 자연화 + 반응형 크기 라이브 실증. POST-DEPLOY 재배포 자산 최종 확인=deploy-web 직후.
+- 결과: **PASS** — 줄바꿈 자연화 + 반응형 크기 라이브 실증.
+- **재배포 자산 최종 확인(2026-07-15, PR #804 머지 → main 6af16762 → deploy-web --web-only soak PASS)**: `/healthz` git_commit=**6af16762**·mysql_ok·pg_ok. 서빙 `graph.css` 스탬프 `d5f26a416089`→**`92be1efb1249`**(content-hash 갱신)·`word-break: keep-all`+`clamp(320px, 90%, 520px)` 반영·`/*`:`*/` 63:63. **주입 없이** 배포본 런타임(win-browser eval, 그래프 뷰 pane): `.amg-help-card` computed `word-break: keep-all`·`overflow-wrap: anywhere`, 설명(`.amg-help-d`)에 **상속 확인**(word-break=keep-all). 반응형 다중 폭 실측(canvas-wrap override): 300→268·360→320·617→520·1100→520(오버플로 0). 스크린샷 육안(설명 어절 줄바꿈·넓어진 카드·중앙 모달·줌 미겹침). pageerror 0. → **배포본 실증 PASS**.
