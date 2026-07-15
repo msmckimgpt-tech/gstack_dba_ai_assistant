@@ -5880,3 +5880,16 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 비변경: 전체 출력(캡)·집계/membership/hiddenKinds·행 클릭 조회·hover pan·백엔드/RBAC/스키마 0. 순수 additive UI. cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: [x] `node --check`(module, graph-ctxmenu.js·graph-state.js) PASS · [x] CSS 균형(brace 221:221·comment 66:66, `*/` hazard 없음) · [x] §18.8 적대 리뷰([SUBAGENT] 7축 BLOCK/MAJOR 0; MINOR 2 수정 반영[모두 접기 라벨 재동기화 `_syncCollapseAllLabel`·esc `"` 이스케이프], NIT 1 선재, REV-20260716T003901) · [x] verify-completion PASS → PR #835 머지(main 00454608) → web 재배포(deploy_scope: included, soak PASS) → [x] **POST-DEPLOY PB-0008 라이브 PASS**(DK dk_data_release_main 66그룹 상세: 헤딩 클릭 접기/펼치기[41행 표시↔숨김·캐럿 ▾↔▸]·모두 접기/펼치기 66그룹[라벨 정합]·재렌더 접힘 유지[행 클릭→뒤로→여전 접힘]·키보드 Enter/Space·행 클릭 조회 불변·pageerror 0). POST-DEPLOY CHG-20260716T005817-graph-cluster-detail-collapse-postverify.
 - worktree `ai/claude/feature-0003-graph-cluster-detail-collapse`(base main e2cc1c80). REV/CHG/TEST-20260716T003901-graph-cluster-detail-collapse.
+
+
+## 20260716T0128-graph-cluster-detail-group-hoverpan — 스키마 클러스터 상세: 컨텐츠 카테고리 헤딩 hover 시 카메라 팬(다른 객체와 동일) (Minor §12.3 — feature-0003 web/UI 프론트 단독. collapse 후속. 그래프 도메인 정본 feature-0016)
+
+- 사용자 요청: 상세 패널의 다른 객체(테이블/함수 행)처럼, 컨텐츠 카테고리 그룹 헤딩에 mouse hover 시 해당 위치로 카메라가 부드럽게 이동하도록 구성.
+- 진단: 행(`.amgr-ct-row[data-node-key]`)은 이미 hover-pan(`_metaGraphHoverPan(nodeKey)`, 200ms intent → `_metaRenderedIdFor` → `_metaGraphAnimateFocus`)이 걸려 있으나 그룹 헤딩(`.amgr-ct-group`)은 hover-pan 대상 아님.
+- 구현(frontend-only 1파일 `src/static/graph/graph-ctxmenu.js`):
+  - [x] 헤딩에 `data-pan-key = sg.tables[0].key`(그룹 **첫 멤버 노드 key**) — 행 hover-pan 과 동일하게 노드로 팬("다른 객체와 동일하게"). 첫 멤버는 항상 실 노드라 진입경로(카드클릭 Local·콤보/히스토리 ById-API)·fam 정합에 무관하게 견고하고, sim-group 이 캔버스에서 조밀 박스로 팩되므로 그 카테고리 영역이 화면에 들어온다.
+  - [x] 기존 `ul` hover 위임(`_hoverOn`)을 `_panTargetOf`(행 data-node-key **또는** 헤딩 data-pan-key)로 확장. mouseout/focusout 선택자에 `.amgr-ct-group[data-pan-key]` 추가(헤딩 내부 이동 취소 억제 포함). `_metaGraphHoverPan` 이 미렌더(접힘 스키마/컬링) 시 graceful no-op — 행과 동일.
+  - [x] (초판은 캔버스 그룹 박스 `GB:` 타깃이었으나 §18.8 적대 리뷰의 콤보경로 fam-divergence caveat 근본 제거 위해 첫 멤버 노드로 전환 — 제어문자·fam-매핑 불필요, 소스 리터럴 0x01 부재.)
+- 비변경: 헤딩 클릭(접기/펼치기 토글)·행 클릭 조회·행 hover-pan·collapse/전체출력·백엔드/RBAC/스키마 0. 순수 additive. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: [x] `node --check`(module) PASS · [x] §18.8 적대 리뷰([SUBAGENT] 6축 diff 도입 결함 0; #1 GB-키 fam-divergence caveat → 타깃을 첫 멤버 노드로 전환해 근본 제거, REV-20260716T012805) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008(헤딩 hover 시 해당 컨텐츠 카테고리로 카메라 팬·행 hover 불변·접힘 헤딩도 팬·pageerror 0, visual_verification_scope: always).
+- worktree `ai/claude/feature-0003-graph-cluster-detail-group-hoverpan`(base main 0433efbb). REV/CHG/TEST-20260716T012805-graph-cluster-detail-group-hoverpan.

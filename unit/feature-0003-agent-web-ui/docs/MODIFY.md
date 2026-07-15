@@ -576,3 +576,15 @@ source_of_truth: true
 - 실증(실 Windows Chrome relay, 배포 00454608, 로그인 세션): 그래프 뷰 > mssql-dk-dev > dk_data_release_main(423항목·66 컨텐츠 카테고리) 상세에서 (1) 헤딩 클릭 접기/펼치기(NPC 콘텐츠 41행 표시↔display:none·캐럿 ▾↔▸·aria-expanded), (2) 모두 접기/펼치기 66그룹(라벨 "▾ 모두 접기"↔"▸ 모두 펼치기" 정합 — MINOR #1 수정 실증), (3) 재렌더 접힘 유지(접기→행 클릭 노드조회→뒤로→여전 접힘, panelGroupCollapsed sg.key 제어문자 포함 매칭), (4) 키보드 Enter/Space 토글, (5) 행 클릭 조회 불변·pageerror 0. 서빙 자산 baked(grep=10). evidence: collapse_evidence.png(▸ NPC 콘텐츠·▾ 퀘스트 시스템·▸ 성 시스템 공존 + 모두 접기 버튼).
 - Changes: `docs/test-runs.d/20260716T0039-graph-cluster-detail-collapse.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
 - Cross-ref: 원천 CHG-20260716T003901-graph-cluster-detail-collapse · ANCHOR 0003 무충돌.
+
+## CHG-20260716T012805-graph-cluster-detail-group-hoverpan (스키마 클러스터 상세: 컨텐츠 카테고리 헤딩 hover 시 카메라 팬, Minor §12.3)
+- Date: 2026-07-16. feature-0003 web/UI 프론트 단독(1파일). cluster-detail-collapse 후속. 그래프 도메인 정본 feature-0016.
+- 사용자 요청: 상세 패널 다른 객체(행)처럼 컨텐츠 카테고리 헤딩 hover 시 해당 위치로 카메라 부드럽게 이동.
+- Changes:
+  - `src/static/graph/graph-ctxmenu.js` `_metaGraphRenderClusterDetail`:
+    - 그룹 헤딩에 `data-pan-key = sg.tables[0].key`(그룹 **첫 멤버 노드 key**) — 행 hover-pan 과 동일하게 노드로 팬. 첫 멤버는 항상 실 노드라 진입경로(카드클릭 Local·콤보/히스토리 ById-API)·fam 정합에 무관하게 견고.
+    - hover 이벤트 위임 확장: `_panTargetOf`(행 `data-node-key` **또는** 헤딩 `data-pan-key`) → `_metaGraphHoverPan`. mouseout/focusout 선택자에 `.amgr-ct-group[data-pan-key]` 추가.
+- 설계 전환: 초판 타깃 = 캔버스 그룹 박스 `GB:comboId+SEP+fam`(fam 정합 확증). 단 §18.8 적대 리뷰가 콤보/히스토리-뒤로 경로(`ById`, API depth=1)의 API↔모델 집합 divergence 시 fam-불일치 caveat(graceful no-op) 지적 → **첫 멤버 노드 key 로 전환**해 근본 제거(노드 key 는 fam·경로 무관, 제어문자·String.fromCharCode 불필요).
+- 비변경: 헤딩 클릭(접기/펼치기)·행 클릭 조회·행 hover-pan·collapse/전체출력·백엔드/RBAC/스키마 0. 순수 additive. cache-buster placeholder 수기편집 없음. 소스 리터럴 0x01 부재.
+- 검증: `node --check` PASS · §18.8 적대 리뷰 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
+- Cross-ref: TASK 20260716T0128 · REV/TEST-20260716T012805-graph-cluster-detail-group-hoverpan · test-runs.d/20260716T0128-graph-cluster-detail-group-hoverpan.md · 선행 CHG-20260716T003901-graph-cluster-detail-collapse · ANCHOR 0003 무충돌.

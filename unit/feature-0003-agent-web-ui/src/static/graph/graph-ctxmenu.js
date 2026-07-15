@@ -2334,7 +2334,13 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
         const collapsed = _metaGraph.panelGroupCollapsed.has(sg.key);
         const shown = Math.min(sg.tables.length, Math.max(0, ROW_CAP - emitted));
         const trunc = shown < sg.tables.length ? ` <span class="amgr-ct-group-trunc">(${shown}/${sg.n})</span>` : "";
-        parts.push(`<li class="amgr-ct-group${collapsed ? " is-collapsed" : ""}" role="button" tabindex="0" aria-expanded="${!collapsed}" data-group-key="${esc(sg.key)}" title="클릭하면 이 컨텐츠 카테고리를 접거나 펼칩니다" aria-label="${esc(sg.label)} 컨텐츠 카테고리 · 항목 ${sg.n}개"><span class="amgr-ct-group-caret" aria-hidden="true">${collapsed ? "▸" : "▾"}</span><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
+        // graph-funcproc(cluster-detail-group-hoverpan): 헤딩 hover → 해당 컨텐츠 카테고리 위치로 카메라 부드럽게 팬.
+        //   타깃 = 그룹의 **첫 멤버 노드 key**(행 hover-pan 과 동일하게 노드로 팬 — 사용자 "다른 객체와 동일하게"). 첫 멤버는
+        //   항상 실 노드라 진입경로(카드클릭 Local / 콤보·히스토리 ById-API)·fam 정합에 무관하게 견고하고, sim-group 은 캔버스에서
+        //   조밀 박스로 팩되므로 첫 멤버로 팬하면 그 카테고리 영역이 화면에 들어온다. `_metaGraphHoverPan` 이 200ms intent 후
+        //   `_metaRenderedIdFor` 로 해석 → 미렌더(접힘 스키마/컬링) 시 graceful no-op(행 동형).
+        const _panKey = sg.tables[0] ? sg.tables[0].key : "";
+        parts.push(`<li class="amgr-ct-group${collapsed ? " is-collapsed" : ""}" role="button" tabindex="0" aria-expanded="${!collapsed}" data-group-key="${esc(sg.key)}"${_panKey ? ` data-pan-key="${esc(_panKey)}"` : ""} title="클릭하면 이 컨텐츠 카테고리를 접거나 펼칩니다" aria-label="${esc(sg.label)} 컨텐츠 카테고리 · 항목 ${sg.n}개"><span class="amgr-ct-group-caret" aria-hidden="true">${collapsed ? "▸" : "▾"}</span><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
         sg.tables.slice(0, shown).forEach((t) => { parts.push(rowHTML(t, collapsed)); emitted++; });
       });
     } else {
@@ -2398,15 +2404,24 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
       const grp = e.target.closest(".amgr-ct-group[data-group-key]");
       if (grp && _ctUl.contains(grp)) { e.preventDefault(); _toggleCtGroup(grp); }
     });
-    const _hoverOn = (e) => { const k = _rowKeyOf(e); if (k && k !== _hoverKey) { _hoverKey = k; _metaGraphHoverPan(k); } };
+    // graph-funcproc(cluster-detail-group-hoverpan): hover-pan 대상 = 행(data-node-key, 노드) **또는** 그룹 헤딩(data-pan-key,
+    //   컨텐츠 카테고리 GB 박스). 둘 다 _metaGraphHoverPan 으로 동일하게 처리(200ms intent·미렌더 graceful no-op).
+    const _panTargetOf = (e) => {
+      const row = e.target.closest(".amgr-ct-row[data-node-key]");
+      if (row && _ctUl.contains(row)) return row.getAttribute("data-node-key");
+      const grp = e.target.closest(".amgr-ct-group[data-pan-key]");
+      if (grp && _ctUl.contains(grp)) return grp.getAttribute("data-pan-key");
+      return null;
+    };
+    const _hoverOn = (e) => { const k = _panTargetOf(e); if (k && k !== _hoverKey) { _hoverKey = k; _metaGraphHoverPan(k); } };
     _ctUl.addEventListener("mouseover", _hoverOn);
     _ctUl.addEventListener("focusin", _hoverOn);
     _ctUl.addEventListener("mouseout", (e) => {
-      const b = e.target.closest(".amgr-ct-row[data-node-key]");
-      // 같은 행 내부(칩↔코드 등) 이동은 취소하지 않음 — relatedTarget 이 같은 행 밖으로 나갈 때만.
+      const b = e.target.closest(".amgr-ct-row[data-node-key], .amgr-ct-group[data-pan-key]");
+      // 같은 행/헤딩 내부(칩↔코드·캐럿↔라벨 등) 이동은 취소하지 않음 — relatedTarget 이 그 밖으로 나갈 때만.
       if (b && (!e.relatedTarget || !b.contains(e.relatedTarget))) { _hoverKey = null; _metaGraphHoverPanCancel(); }
     });
-    _ctUl.addEventListener("focusout", (e) => { if (e.target.closest(".amgr-ct-row[data-node-key]")) { _hoverKey = null; _metaGraphHoverPanCancel(); } });
+    _ctUl.addEventListener("focusout", (e) => { if (e.target.closest(".amgr-ct-row[data-node-key], .amgr-ct-group[data-pan-key]")) { _hoverKey = null; _metaGraphHoverPanCancel(); } });
   }
   // graph-funcproc(cluster-detail-collapse): '모두 접기/펼치기' — 하나라도 펼쳐져 있으면 전부 접고, 전부 접혀 있으면 전부 펼친다.
   const _collapseAllBtnEl = document.getElementById("metaGraphCtCollapseAll");
