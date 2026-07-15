@@ -5707,3 +5707,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `python3 bin/gen-routemap.py` 재생성(+--check 0) — 권한 데코레이터 변경 cycle 필수(CI Code-Navigation gate).
 - [x] 컨테이너 make test(신규 회귀 0) → verify-completion PASS(커밋 전 15체크) → PR #810 → 머지(8098aee1) → web 재배포(soak 통과).
 - [x] **배포 후 실증 완료(2026-07-15)**: `atomic-perm-split-v1` 마커 + admin 원자 23종(catchup) + 묶음 보유 role=admin 뿐 확인(usermanager 는 묶음 미보유 — 전개 비대상 정상) + PB-0008 라이브(레거시 묶음 렌더 0건·용어사전 read→원자4종/검수 트리·read 토글 접힘/펼침·0건 pending). fragment POST-DEPLOY Run 참조.
+
+## 20260715T110000-attach-new-label-symmetry — staged-flush 첨부 new_attachment_ids 라벨 대칭 (deferred ②-frontend, Minor §12.3)
+> 계기: 첨부-답정합 실데이터 감사 deferred ②-frontend. ② 서브에이전트 진단: 신규 대화에서 staged 첨부가 flush-업로드된 뒤 `attachment_ids` 에만 union 되고 `new_attachment_ids` 엔 누락(스냅샷 시점 status="staged"≠"ready") → 프롬프트에서 ★신규 대신 ◆세션 오라벨 → assistant "새 파일 반영 안 됨" 오판(관측 대화 20260615061233).
+- [x] `src/static/app.js` — lazy-create send 경로에서 `_flushStagedAttachmentsToCid` 직후 `uploadedIds` 를 `askBody.new_attachment_ids` 에도 union(기존 `attachment_ids` union 과 대칭). `if(isLazyCreate)`+`if(stagedCount>0)` 블록 내부 한정 → 기존 대화·무-staged send 무영향.
+- [x] de-risk: `node --check` PASS. new_attachment_ids 는 서버(agent_core `_build_attachment_context_section`)에서 **★/◆ 라벨 + version-diff 게이트 전용**(접근 스코프는 attachment_ids 가 담당) — 라벨-only 변경이라 IDOR/스코프 무영향. uploadedIds 는 방금 earlyCid 에 업로드된 서버-확인 id. staged 신규는 v1/root=NULL 이라 version-diff 미트리거.
+- [x] §18.8 적대 패널(scope/IDOR/correctness 5축) → CONFIRMED-DEFECT 0·전건 REFUTED(라벨-only, 서버 SQL 은 attachment_ids 스코프). → REV-20260715T110000.
+- [x] TEST.md §3 Environment: Windows-browser 기록(de-risk + 배포 후 PB-0008 DEFERRED).
+- [ ] verify-completion(feature-0003, check #13 visual) → commit/push(auto-sync) → PR·머지·배포(deploy_scope: included) → 배포 후 PB-0008 실측(신규 대화 staged 첨부 → assistant 가 ★신규로 인지·"반영 안 됨" 미발생).

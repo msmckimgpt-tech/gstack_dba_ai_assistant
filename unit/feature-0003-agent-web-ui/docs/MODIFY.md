@@ -386,3 +386,13 @@ source_of_truth: true
 - 비변경: 권한 code 삭제 0(묶음은 숨김만·함의 유지) · 스키마/마이그 0 · route 경로/메서드 0 · `_METADATA_MANUAL_IMPLIES` 상수 보존.
 - Verification: 785/0(호스트) · jsdom 47/0 · 컨테이너 make test·배포 후 실증은 TASK 잔여.
 - Cross-ref: REV-20260715T103406-perm-atomic-split · ADR-20260715T103406-perm-atomic-split · SECURITY §22.4 · 원천 CHG-20260714T181936.
+
+## CHG-20260715T110000-attach-new-label-symmetry (staged-flush 첨부 new_attachment_ids 라벨 대칭 — deferred ②-frontend, Minor §12.3)
+- Date: 2026-07-15. 계기: 첨부-답정합 실데이터 감사 deferred ②-frontend(②-backend=CHG-20260715T060000 별도 완료). ② 서브에이전트가 share-window 는 라이브-ask 첨부 경로 밖(비보안)임을 확인 — friction(1) stale-window 의 프론트 축.
+- Reason(RC): 신규 대화 send 시 staged 첨부(status="staged")를 `_flushStagedAttachmentsToCid` 가 업로드해 `uploadedIds` 반환 → `attachment_ids` 에만 union(app.js:9307), `new_attachment_ids`(9264 스냅샷은 flush 전이라 `status==="ready"` 필터로 staged 제외)엔 누락. 비대칭 → 방금 올린 파일이 프롬프트에서 ◆세션(이전 세션)으로 오라벨 → assistant 가 "새 파일이 업로드되지 않았거나 반영 안 됨"이라 오판(관측 대화 20260615061233).
+- 사용자 승인: **PLAN-APPROVED**(사용자 "남은 deferred 축 완수까지 진행", 2026-07-15). Minor(라벨-only 프론트 union; 접근/인가 불변 → Critical 아님).
+- Changes(feature-0003):
+  - `src/static/app.js` — lazy-create + staged 블록에서 `uploadedIds` 를 `askBody.new_attachment_ids` 에도 union(`new Set(...).filter(n>0)`, attachment_ids union 대칭). 블록 밖(기존 대화·무-staged)은 무영향.
+- Recurrence sealing: attachment_ids/new_attachment_ids union 대칭으로 staged-flush 신규 첨부의 ★신규 라벨 보장 → "새 파일 반영 안 됨" 오판 경로 봉인. **보안 회귀 0**: new_attachment_ids 는 서버측 라벨+version-diff 게이트 전용(접근 스코프 아님), uploadedIds 는 서버-확인 id, v1 staged 라 version-diff 미트리거.
+- 검증: `node --check` PASS. de-risk(로직 대칭 분석 + 적대 패널 + 서버측 new_attachment_ids 소비 추적). 라이브 PB-0008(신규 대화 staged 첨부 ★신규 인지)은 정적자산 baked → 배포 후 실측(TEST.md §3 DEFERRED). §18.8 → REV-20260715T110000-attach-new-label-symmetry.
+- Cross-ref: CHG-20260715T060000-attach-inline-honesty(②-backend, feature-0002) · ② 서브에이전트 진단(share-window 비관여) · ANCHOR §1~§3 무충돌.

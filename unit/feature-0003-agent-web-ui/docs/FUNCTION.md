@@ -1647,3 +1647,6 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-14" 블록 신규(10항목) prepend·generated 07-14. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 평이화/비노출: feature-id·§번호·PR#·마이그·권한키(metadata.graph.analyze 등)·테이블/함수명·라이브러리명 비노출(사용자 언어).
 - 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260715T025509-doc-sync-rn-0715. **landing/배포는 cron wrapper 소유(로컬 commit 만).**
+
+## staged 첨부 flush 시 new_attachment_ids 라벨 대칭 (2026-07-15, TASK-20260715T110000-attach-new-label-symmetry)
+- `sendPrompt`(app.js) lazy-create 경로: 신규 대화에서 staged 첨부를 `_flushStagedAttachmentsToCid` 로 업로드한 뒤, 반환 `uploadedIds` 를 `askBody.attachment_ids` **와** `askBody.new_attachment_ids` **양쪽에** union 한다. new_attachment_ids 스냅샷(flush 전)은 `status==="ready"` 필터로 staged 를 제외하므로, 이 대칭 union 이 없으면 방금 올린 파일이 프롬프트에서 ★신규 대신 ◆세션 으로 오라벨된다(assistant "새 파일 반영 안 됨" 오판). new_attachment_ids 는 서버측 ★/◆ 라벨 + version-diff 게이트 전용(접근 스코프는 attachment_ids).

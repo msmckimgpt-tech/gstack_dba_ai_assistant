@@ -9305,6 +9305,15 @@ async function sendPrompt() {
             [...(askBody.attachment_ids || []), ...uploadedIds].map(Number).filter((n) => n > 0),
           );
           askBody.attachment_ids = Array.from(union);
+          // TASK-attach-new-label-symmetry (②-frontend): 방금 flush-업로드된 staged 첨부는 이번 턴 신규다.
+          // new_attachment_ids 스냅샷(위 9264)은 flush 전이라 status="staged"(≠"ready")로 이들을 제외했다 —
+          // attachment_ids union 과 비대칭이라 신규-대화 staged 첨부가 프롬프트에서 ★신규 대신 ◆세션 으로
+          // 오라벨돼 assistant 가 "새 파일이 반영되지 않음"이라 오판했다(관측 대화 20260615061233). new
+          // _attachment_ids 에도 uploadedIds 를 union 해 라벨 대칭을 봉인.
+          const newUnion = new Set(
+            [...(askBody.new_attachment_ids || []), ...uploadedIds].map(Number).filter((n) => n > 0),
+          );
+          askBody.new_attachment_ids = Array.from(newUnion);
         }
         // askBody 를 즉시-cid 모드로 전환 (lazy_create hint 제거 — 서버가 이 cid 를 그대로 사용).
         askBody.conversation_id = earlyCid;

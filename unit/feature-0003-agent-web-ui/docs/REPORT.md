@@ -1578,3 +1578,10 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - MODIFY.md 총 변경 424건 = 아카이브 408(`_archive/MODIFY-archive-20260711T115053.md`) + 현행 16(최근).
 - REVIEW.md 총 리뷰 405건 = 아카이브 389(`_archive/REVIEW-archive-20260711T115053.md`) + 현행 16(최근).
 - 이관은 verbatim(무손실 재구성 md5 검증) · 아카이브 파일명은 timestamp 규약(ADR-20260710T231146) 첫 적용.
+
+## staged-flush 첨부 new_attachment_ids 라벨 대칭 — deferred ②-frontend (2026-07-15)
+- **계기**: 첨부-답정합 실데이터 감사 deferred ②-frontend. ② 서브에이전트가 share-window `[from,to]` 는 라이브-ask 첨부 경로에 없음(비보안)을 확인 — friction(1) "이전 세션 파일만" 은 프론트 라벨 비대칭 + backend cap-note(②-backend CHG-20260715T060000 별도)였다.
+- **RC**: 신규 대화 staged 첨부가 flush-업로드 후 `attachment_ids` 에만 union 되고 `new_attachment_ids` 엔 누락(스냅샷 시점 status="staged"≠"ready") → 프롬프트 ★/◆ 라벨(agent_core `_build_attachment_context_section`)이 ◆세션 으로 오라벨 → assistant "새 파일 반영 안 됨" 오판.
+- **수정(CHG-20260715T110000)**: app.js lazy-create+staged 블록에서 `uploadedIds` 를 `new_attachment_ids` 에도 union(attachment_ids 대칭). 라벨-only(접근 스코프는 attachment_ids) → IDOR/인가 무영향.
+- **검증**: `node --check` PASS + de-risk(대칭 로직 분석·적대 패널·서버측 소비 추적). 라이브 PB-0008(신규 대화 staged 첨부 ★신규 인지·"반영 안 됨" 미발생)은 정적자산 web 이미지 baked → 배포 후 실측(TEST.md §3).
+- **②-frontend 로 axis ② 마감**: friction(2) xlsx 접근은 이미 수정됨(491310e5+958df646). friction(1) 은 ②-backend(cap-note 정직화)+②-frontend(라벨 대칭) 양면 봉인.

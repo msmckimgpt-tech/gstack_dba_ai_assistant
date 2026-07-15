@@ -116,6 +116,12 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260715T110000-attach-new-label-symmetry staged-flush 첨부 new_attachment_ids 라벨 대칭 (Minor §12.3, 2026-07-15, deferred ②-frontend) — **Environment: Windows-browser (신규 대화 staged 첨부 업로드→전송→assistant 가 ★신규로 인지하는 전 과정은 실 브라우저 파일선택+업로드+ask 왕복이 필요해 headless 대체 불가 — de-risk=`node --check` PASS + 로직 대칭 분석(attachment_ids/new_attachment_ids union 대칭) + §18.8 적대 패널(스코프/IDOR REFUTED, 라벨-only) + 서버측 new_attachment_ids 소비 추적(★/◆ 라벨+version-diff 게이트 전용), 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
+- 증상(실데이터 감사, 대화 20260615061233-140adf6f): 신규 대화에서 파일을 첨부(staged)하고 전송하면, assistant 가 "현재 첨부된 파일 목록에는 여전히 모두 이전 세션 파일(◆세션)만 있습니다 / 새 파일이 반영 안 됨"이라 오판. 근본: staged→flush 업로드된 id 가 `attachment_ids` 에만 union 되고 `new_attachment_ids` 엔 누락(스냅샷 시점 status="staged"≠"ready") → 프롬프트에서 ◆세션 오라벨.
+- 수정: `app.js` lazy-create+staged 블록에서 `uploadedIds` 를 `new_attachment_ids` 에도 union(attachment_ids 대칭).
+- 기대: 신규 대화에서 파일 첨부→전송 시 assistant 가 그 파일을 **이번 턴 신규(★신규)**로 인지하고 정상 리뷰(“이전 세션 파일만/반영 안 됨” 미발생).
+- **PB-0008 Windows-browser 라이브 실측 — DEFERRED(배포 후)**: 정적 자산(app.js)이 web 이미지에 baked 되므로 배포 후 실 Windows Chrome via `bin/win-browser.py` relay + 로그인 세션에서 [신규 대화 → 파일 첨부 → "이 파일 리뷰" 전송 → assistant 응답이 파일을 신규로 취급] 를 실측하고 본 케이스에 Run 기록 append. de-risk(node --check + 로직 대칭 + 적대 패널 + 서버 소비 추적)로 코드 정합은 확증.
+
 ### TASK-20260710-graph-edge-midpan 그래프 뷰 관계선(엣지) 위 중간버튼 드래그 카메라 팬 무반응 수정 (Minor §12.3, 2026-07-10, feature-0016 cross-cut) — **Environment: Windows-browser (실 중간버튼 드래그는 real-mouse 입력 + 인증 게이트 그래프 뷰 렌더가 필요해 headless 대체 불가 — de-risk=근본원인 번들 실증(스타일 병합순서·drag-element enableElements) + node --check + headless g6build 125건 회귀 0, 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
 - 증상(사용자 리포트): 그래프 뷰에서 마우스 **중간버튼 드래그로 카메라 이동** 시, 드래그를 **관계선(엣지) 위**에서 시작하면 팬이 작동하지 않음. 빈 캔버스·노드 위 시작은 정상.
 - 근본원인(vendor `g6.min.js` 실증): 카메라 팬은 `drag-canvas` behavior 가 담당하고, 이 behavior 는 `@antv/g-plugin-dragndrop` 이 합성하는 global `dragstart` 에서 발동한다. dragndrop 은 pointerdown 대상의 `closest("[draggable=true]")` 를 드래그 소스로 삼는데, **노드/콤보는 `draggable` 기본값 true 이지만 엣지 기본 스타일에는 `draggable` 이 없다**(bundle `Nw`/`Wb` defaultStyleProps=draggable:!0, 엣지 base 는 부재). 따라서 관계선 위 pointerdown 은 소스 해소가 null → `dragstart` 미합성 → drag-canvas 미발동.
