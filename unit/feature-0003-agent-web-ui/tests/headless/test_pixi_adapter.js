@@ -307,6 +307,8 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
     world, _built: { nodes, edges, combos: [] }, _objs: objs, _objSig: new Map(),
     getElementPosition: Adapter.prototype.getElementPosition,
     _boundsOf: Adapter.prototype._boundsOf,
+    _incidentEdges: Adapter.prototype._incidentEdges,   // graph-edge-drag-perf: 인덱스 부재 → O(E) filter 폴백
+    _resolvePos: Adapter.prototype._resolvePos,   // _nodeById 부재 → getElementPosition 폴백
     _drawEdge(e, a, b) { const g = { __edge: e.id, a, b, destroy() {} }; drawn.push(g); return g; },
   };
   // 드래그: cat1(A,B) 이동 — translateElementTo 가 style 을 먼저 갱신하는 실제 순서를 모사(B 만 새 위치).
@@ -327,6 +329,138 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   Adapter.prototype._refreshIncidentEdges.call(ctx, []);
   Adapter.prototype._refreshIncidentEdges.call(ctx, null);
   ok(drawn.length === before, "T23 빈/null 이동집합 no-op");
+}
+
+// ── T24 graph-edge-drag-perf: 드래그 재그림 3 lever(in-place 재사용·인접 인덱스·rAF 코얼레싱) ──
+//   ① 기존 엣지 Graphics 재사용(_paintEdge, destroy/recreate·GC 회피) ② _edgeIndex 로 O(incident) ③ _scheduleEdgeRefresh rAF 병합.
+{
+  // ① in-place 재사용: 기존 엣지 오브젝트(clear 보유·parent===world)는 _paintEdge 로 재사용, _drawEdge/destroy 안 함
+  const nodes = [
+    { id: "A", type: "rect", style: { x: 0, y: 0, size: [10, 10] } },
+    { id: "B", type: "rect", style: { x: 100, y: 0, size: [10, 10] } },
+  ];
+  const edges = [{ id: "e1", source: "A", target: "B", style: {} }];
+  const world = { children: [], addChild(o) { this.children.push(o); }, removeChild(o) { const i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); } };
+  const existing = { __edge: "e1", clear() { this.cleared = (this.cleared || 0) + 1; }, parent: world, destroy() { this.destroyed = true; } };
+  world.children.push(existing);
+  let paintCalls = 0, drawCalls = 0;
+  const ctx = {
+    world, _built: { nodes, edges, combos: [] }, _objs: new Map([["e1", existing]]), _objSig: new Map(),
+    getElementPosition: Adapter.prototype.getElementPosition, _boundsOf: Adapter.prototype._boundsOf,
+    _incidentEdges: Adapter.prototype._incidentEdges,
+    _resolvePos: Adapter.prototype._resolvePos,
+    _paintEdge(g, a2, aa, bb) { paintCalls++; g.__painted = [aa, bb]; return g; },
+    _drawEdge(e, aa, bb) { drawCalls++; return { __edge: e.id, aa, bb, destroy() {} }; },
+  };
+  nodes[1].style.x = 500;   // B 이동
+  Adapter.prototype._refreshIncidentEdges.call(ctx, ["B"]);
+  ok(paintCalls === 1 && drawCalls === 0, "T24 in-place 재사용(_paintEdge 1·_drawEdge 0)");
+  ok(ctx._objs.get("e1") === existing && !existing.destroyed, "T24 재사용 시 동일 Graphics 유지·destroy 안 함");
+  ok(existing.__painted && existing.__painted[0][0] === 0 && existing.__painted[1][0] === 500, "T24 재사용 엣지 새 끝점 좌표로 re-path(A[0]·B[500])");
+  ok(world.children.length === 1, "T24 재사용은 world 자식 add/remove 없음");
+}
+{
+  // ② 인접 인덱스 incident dedup + 폴백 동치
+  const eAB = { id: "eAB", source: "A", target: "B" }, eBC = { id: "eBC", source: "B", target: "C" }, eCD = { id: "eCD", source: "C", target: "D" };
+  const edges = [eAB, eBC, eCD];
+  const edgeIndex = new Map([["A", [eAB]], ["B", [eAB, eBC]], ["C", [eBC, eCD]], ["D", [eCD]]]);
+  const inc = Adapter.prototype._incidentEdges.call({ _built: { edges }, _edgeIndex: edgeIndex }, new Set(["A", "B"])).map(e => e.id).sort();
+  ok(inc.length === 2 && inc[0] === "eAB" && inc[1] === "eBC", "T24 인접 인덱스 incident dedup(eAB 1회·eBC, eCD 제외)");
+  const inc2 = Adapter.prototype._incidentEdges.call({ _built: { edges }, _edgeIndex: null }, new Set(["A", "B"])).map(e => e.id).sort();
+  ok(inc2.length === 2 && inc2[0] === "eAB" && inc2[1] === "eBC", "T24 인덱스 부재 O(E) 폴백 동치");
+}
+{
+  // ③ scheduler: 비-rAF 즉시 동기 폴백(sandbox 에 requestAnimationFrame 없음 = 기본)
+  const calls = [];
+  const ctxSync = { _refreshIncidentEdges(ids) { calls.push(["refresh", [...ids].sort().join(",")]); }, _render() { calls.push(["render"]); } };
+  Adapter.prototype._scheduleEdgeRefresh.call(ctxSync, ["A", "B"]);
+  ok(calls.length === 2 && calls[0][0] === "refresh" && calls[0][1] === "A,B" && calls[1][0] === "render", "T24 scheduler 비-rAF 즉시 동기 폴백");
+  // rAF 주입(sandbox 컨텍스트에 노출) → 코얼레싱 검증
+  const flushFns = [];
+  sandbox.requestAnimationFrame = (fn) => { flushFns.push(fn); return flushFns.length; };
+  sandbox.cancelAnimationFrame = () => {};
+  const c2 = [];
+  const ctxRaf = { _refreshIncidentEdges(ids) { c2.push([...ids].sort().join(",")); }, _render() { c2.push("render"); } };
+  Adapter.prototype._scheduleEdgeRefresh.call(ctxRaf, ["A"]);
+  Adapter.prototype._scheduleEdgeRefresh.call(ctxRaf, ["B", "C"]);   // 같은 프레임 누적
+  ok(flushFns.length === 1 && c2.length === 0, "T24 scheduler rAF 코얼레싱(2 호출→rAF 1개·미실행)");
+  flushFns[0]();   // 프레임 발화
+  ok(c2.length === 2 && c2[0] === "A,B,C" && c2[1] === "render", "T24 flush 시 누적 id(A,B,C) 1회 재그림+렌더");
+  // _flushEdgeRefresh 즉시 반영(pending 있을 때)
+  const c3 = [];
+  const ctxFlush = { _pendingMoved: new Set(["X", "Y"]), _pendingRaf: 7, _refreshIncidentEdges(ids) { c3.push([...ids].sort().join(",")); }, _render() { c3.push("render"); } };
+  Adapter.prototype._flushEdgeRefresh.call(ctxFlush);
+  ok(c3.length === 2 && c3[0] === "X,Y" && c3[1] === "render" && ctxFlush._pendingRaf === 0 && ctxFlush._pendingMoved === null, "T24 _flushEdgeRefresh 즉시 반영+pending 클리어");
+  delete sandbox.requestAnimationFrame; delete sandbox.cancelAnimationFrame;   // 복원(다른 테스트 격리)
+}
+
+// ── T25 graph-edge-drag-perf 실-경로 하드닝(적대 리뷰 C1~C4·P3) ──
+{
+  // C1: 실 _paintEdge 재사용 — stale 라벨 자식 제거 + geometry 재-path(라벨 있는 엣지)
+  const staleLabel = { __stale: true, destroy() { this.destroyed = true; } };
+  const g = {
+    children: [staleLabel], _ops: [], zIndex: 0,
+    clear() { this._ops.push("clear"); return this; },
+    moveTo() { this._ops.push("moveTo"); return this; },
+    lineTo() { this._ops.push("lineTo"); return this; },
+    stroke() { this._ops.push("stroke"); return this; },
+    removeChildren() { const c = this.children; this.children = []; this._ops.push("removeChildren"); return c; },
+    addChild(o) { this.children.push(o); this._ops.push("addChild"); return o; },
+  };
+  let addedText = null;
+  const ctx = { P: null, _arrow() {}, _makeText(t) { addedText = { __text: t, anchor: { set() {} }, position: { set() {} }, width: 10 }; return addedText; } };
+  const edge = { source: "A", target: "B", style: { labelText: "REL", stroke: "#000", lineWidth: 2 } };
+  Adapter.prototype._paintEdge.call(ctx, g, edge, [0, 0], [100, 0]);
+  ok(g._ops[0] === "clear", "T25 실 _paintEdge 첫 동작 clear()");
+  ok(staleLabel.destroyed === true, "T25 재사용 시 stale 라벨 자식 destroy");
+  ok(g._ops.includes("moveTo") && g._ops.includes("lineTo") && g._ops.includes("stroke"), "T25 새 geometry 재-path");
+  ok(g.children.length === 1 && g.children[0] === addedText, "T25 stale 제거 후 새 라벨 자식 1개(이중 렌더 아님)");
+  ok(g.zIndex === 2, "T25 엣지 zIndex 2 유지");
+}
+{
+  // C2: 순수 buildEdgeIndex — 자기루프 1회·null/빈 안전·incident dedup 계약
+  const eAB = { source: "A", target: "B" }, eBC = { source: "B", target: "C" }, eSelf = { source: "X", target: "X" };
+  const idx = Pure.buildEdgeIndex([eAB, eBC, eSelf]);
+  ok(idx.get("A").length === 1 && idx.get("A")[0] === eAB, "T25 buildEdgeIndex A→[eAB]");
+  ok(idx.get("B").length === 2, "T25 buildEdgeIndex B→[eAB,eBC]");
+  ok(idx.get("X").length === 1, "T25 buildEdgeIndex 자기루프(source===target) 1회만 등재");
+  ok(Pure.buildEdgeIndex(null).size === 0 && Pure.buildEdgeIndex([]).size === 0, "T25 buildEdgeIndex null/빈 안전");
+}
+{
+  // C3: 재사용 불가(old 에 clear 없음 = node/combo Container) → 재생성(destroy+_drawEdge)
+  const nodes = [{ id: "A", type: "rect", style: { x: 0, y: 0, size: [10, 10] } }, { id: "B", type: "rect", style: { x: 50, y: 0, size: [10, 10] } }];
+  const edges = [{ id: "e1", source: "A", target: "B", style: {} }];
+  const world = { children: [], addChild(o) { this.children.push(o); }, removeChild(o) { const i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); } };
+  const nonReusable = { __container: true, parent: world, destroy() { this.destroyed = true; } };   // clear 없음
+  world.children.push(nonReusable);
+  let paintCalls = 0, drawCalls = 0;
+  const ctx = { world, _built: { nodes, edges, combos: [] }, _objs: new Map([["e1", nonReusable]]), _objSig: new Map(),
+    _incidentEdges: Adapter.prototype._incidentEdges, _resolvePos: Adapter.prototype._resolvePos, getElementPosition: Adapter.prototype.getElementPosition, _boundsOf: Adapter.prototype._boundsOf,
+    _paintEdge() { paintCalls++; }, _drawEdge(e) { drawCalls++; return { __edge: e.id, destroy() {} }; } };
+  Adapter.prototype._refreshIncidentEdges.call(ctx, ["A"]);
+  ok(paintCalls === 0 && drawCalls === 1 && nonReusable.destroyed === true, "T25 재사용 불가(clear 없는 Container) → destroy+_drawEdge(else 분기)");
+}
+{
+  // C4: incident 이나 끝점 미해소(pos null) → skip(재그림 안 함)
+  const nodes = [{ id: "A", type: "rect", style: { x: 0, y: 0, size: [10, 10] } }];   // B 없음
+  const edges = [{ id: "e1", source: "A", target: "B", style: {} }];
+  const world = { children: [], addChild(o) { this.children.push(o); }, removeChild() {} };
+  let drawCalls = 0;
+  const ctx = { world, _built: { nodes, edges, combos: [] }, _objs: new Map(), _objSig: new Map(),
+    _incidentEdges: Adapter.prototype._incidentEdges, _resolvePos: Adapter.prototype._resolvePos, getElementPosition: Adapter.prototype.getElementPosition, _boundsOf: Adapter.prototype._boundsOf,
+    _drawEdge(e) { drawCalls++; return { __edge: e.id }; } };
+  Adapter.prototype._refreshIncidentEdges.call(ctx, ["A"]);
+  ok(drawCalls === 0 && world.children.length === 0, "T25 미해소 끝점 incident 엣지 skip(재그림 안 함)");
+}
+{
+  // P3: _resolvePos 는 _nodeById 있으면 live node.style O(1) 조회(getElementPosition 미호출), 비-node 폴백
+  const nodeA = { id: "A", style: { x: 7, y: 9 } };
+  let gept = 0;
+  const ctx = { _nodeById: new Map([["A", nodeA]]), getElementPosition() { gept++; return [0, 0]; } };
+  const p = Adapter.prototype._resolvePos.call(ctx, "A");
+  ok(p[0] === 7 && p[1] === 9 && gept === 0, "T25 _resolvePos _nodeById O(1)(getElementPosition 미호출)");
+  Adapter.prototype._resolvePos.call(ctx, "SC:x");
+  ok(gept === 1, "T25 _resolvePos 비-node(_nodeById miss) → getElementPosition 폴백");
 }
 
 console.log("──────");

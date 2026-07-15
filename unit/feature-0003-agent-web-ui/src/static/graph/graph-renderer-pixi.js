@@ -174,6 +174,16 @@ export const PixiAdapterPure = {
   //   combo: style+bbox(자식 파생). 좌표는 0.1px 양자화(FP 노이즈 무불필요 recreate 방지, m2 일관).
   nodeSig(n) { return "N|" + (n.type || "") + "|" + (n.combo || "") + "|" + JSON.stringify(n.style || {}) + "|" + ((n.states || []).join(",")); },
   edgeSig(e, a, b) { return "E|" + e.source + "|" + e.target + "|" + JSON.stringify(e.style || {}) + "|" + a[0].toFixed(1) + "," + a[1].toFixed(1) + "," + b[0].toFixed(1) + "," + b[1].toFixed(1); },
+
+  // graph-edge-drag-perf: 인접 인덱스(node id → incident edge[]). 드래그 재그림이 이동 노드의 인접 엣지만
+  //   O(incident) 로 조회(전량 O(E) 스캔 제거). 토폴로지(source/target)만 의존. 자기루프(source===target)는
+  //   1회만 등재. **미해소 끝점 엣지도 포함**(완전) — 소비측(_refreshIncidentEdges)이 pos null 이면 skip.
+  buildEdgeIndex(edges) {
+    const idx = new Map();
+    const add = (k, e) => { let arr = idx.get(k); if (!arr) { arr = []; idx.set(k, arr); } arr.push(e); };
+    for (const e of (edges || [])) { add(e.source, e); if (e.target !== e.source) add(e.target, e); }
+    return idx;
+  },
   comboSig(c, bb) { return "C|" + JSON.stringify(c.style || {}) + "|" + bb.x.toFixed(1) + "," + bb.y.toFixed(1) + "," + bb.w.toFixed(1) + "," + bb.h.toFixed(1); },
   edgeId(e) { return e.id != null ? e.id : ("__e:" + e.source + ">" + e.target); },
 
@@ -492,14 +502,13 @@ export class PixiGraphAdapter {
   }
   _moveElement(id, ddx, ddy) {
     const n = this._built.nodes.find(x => x.id === id);
-    if (n) { n.style.x += ddx; n.style.y += ddy; const o = this._objs.get(id); if (o) o.position.set(n.style.x, n.style.y); this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128); this._refreshIncidentEdges([id]); this._render(); return; }   // B1: hit-grid 재구성(이동 후 클릭 유지). graph-edge-follow-drag: 이동 노드의 관계선 즉시 추종
+    if (n) { n.style.x += ddx; n.style.y += ddy; const o = this._objs.get(id); if (o) o.position.set(n.style.x, n.style.y); this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128); this._scheduleEdgeRefresh([id]); return; }   // B1: hit-grid 재구성(이동 후 클릭 유지). graph-edge-follow-drag: 이동 노드의 관계선 추종(perf: rAF 코얼레싱)
     // combo(스키마 배경) 드래그: 자식 노드 전체 + combo 카드 배경(자식 파생 bbox 이므로 같은 델타)을 함께 이동(M1)
     const moved = [];
     for (const cn of (this._built.nodes || [])) { if (cn.combo === id) { cn.style.x += ddx; cn.style.y += ddy; const o = this._objs.get(cn.id); if (o) o.position.set(cn.style.x, cn.style.y); moved.push(cn.id); } }
     const card = this._objs.get(id); if (card) { card.position.set(card.position.x + ddx, card.position.y + ddy); }   // M1: combo 배경 카드 추종
     this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);   // B1
-    this._refreshIncidentEdges(moved);   // graph-edge-follow-drag: 이동한 자식 노드들의 관계선 즉시 추종
-    this._render();
+    this._scheduleEdgeRefresh(moved);   // graph-edge-follow-drag: 이동한 자식 노드들의 관계선 추종(perf: rAF 코얼레싱)
   }
   // graph-edge-follow-drag: 노드 드래그로 위치가 바뀐 노드에 연결된 관계선(엣지)만 증분 재그림.
   //   엣지는 절대 model 좌표(a,b)를 Graphics path 에 bake 한 독립 오브젝트라(_drawEdge) 노드 Container 이동으로
@@ -513,21 +522,69 @@ export class PixiGraphAdapter {
   //     · cross-category 엣지(한끝만 이동 — 다른 제품 카테고리로 가는 연결선): 이동 끝점은 새 좌표,
   //       미이동 끝점은 현재 좌표로 재그려 연결선 구조가 갱신된다(제품 카테고리를 옮겨도 타 카테고리
   //       연결선이 옛 위치에 남지 않게 — 사용자 정정 케이스).
+  //   graph-edge-drag-perf(3 lever): ① 인접 인덱스(_edgeIndex, node→incident edges)로 O(E) 전량 스캔 →
+  //   O(incident) ② 기존 엣지 Graphics **in-place 재사용**(_paintEdge: clear+재-path) — destroy/new Graphics
+  //   재생성(GPU 지오메트리 재할당+GC churn) 회피 ③ 호출은 _scheduleEdgeRefresh 로 rAF 코얼레싱(프레임당 1회).
   _refreshIncidentEdges(movedIds) {
     if (!this.world) return;
     const moved = (movedIds instanceof Set) ? movedIds : new Set(movedIds || []);
     if (!moved.size) return;
-    for (const e of (this._built.edges || [])) {
-      if (!moved.has(e.source) && !moved.has(e.target)) continue;
-      const a = this.getElementPosition(e.source), b = this.getElementPosition(e.target);
+    for (const e of this._incidentEdges(moved)) {
+      const a = this._resolvePos(e.source), b = this._resolvePos(e.target);
       if (!a || !b) continue;
       const eid = PixiAdapterPure.edgeId(e);
       const old = this._objs.get(eid);
-      if (old) { try { old.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(old); } catch (_) {} }
-      const g = this._drawEdge(e, a, b);
-      this.world.addChild(g); this._objs.set(eid, g);
+      if (old && old.parent === this.world && typeof old.clear === "function") {
+        this._paintEdge(old, e, a, b);   // in-place 재사용: clear+재-path(destroy/recreate·GC 회피)
+      } else {
+        if (old) { try { old.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(old); } catch (_) {} }
+        const g = this._drawEdge(e, a, b);
+        this.world.addChild(g); this._objs.set(eid, g);
+      }
       if (this._objSig) this._objSig.set(eid, PixiAdapterPure.edgeSig(e, a, b));
     }
+  }
+  // incident 엣지 후보: _edgeIndex 있으면 이동 노드의 인접 엣지만(dedup) 반환 = O(incident). 없으면 O(E) 폴백.
+  _incidentEdges(moved) {
+    const idx = this._edgeIndex;
+    if (!idx) return (this._built.edges || []).filter(e => moved.has(e.source) || moved.has(e.target));
+    const out = [], seen = new Set();
+    for (const id of moved) {
+      const arr = idx.get(id); if (!arr) continue;
+      for (const e of arr) { const eid = PixiAdapterPure.edgeId(e); if (seen.has(eid)) continue; seen.add(eid); out.push(e); }
+    }
+    return out;
+  }
+  // graph-edge-drag-perf(P3): 끝점(node id) live 좌표 O(1) 해소. _nodeById 있으면 node.style 직접(드래그로 갱신된
+  //   현재 좌표), 비-node(combo/장식) 또는 인덱스 부재는 getElementPosition(bbox 중심) 폴백. getElementPosition 의
+  //   O(N) nodes.find 를 incident 엣지마다 2회 돌던 비용(O(incident×N)) 제거.
+  _resolvePos(id) {
+    const nb = this._nodeById;
+    if (nb) { const n = nb.get(id); if (n) return [n.style.x, n.style.y]; }
+    return this.getElementPosition(id);
+  }
+  // 드래그 중 엣지 재그림 rAF 코얼레싱: pointermove 가 프레임보다 자주 발화하거나 한 프레임에 _moveElement +
+  //   (graph-core 종속이동)translateElementTo 가 겹쳐 호출돼도 이동 id 를 누적해 **프레임당 1회** 재그림+렌더.
+  //   노드 좌표/hit-grid 는 호출부에서 동기 갱신(getElementPosition·클릭 정확도 보존) — 비싼 엣지 재그림만 지연.
+  //   비-rAF 환경(node vm 테스트 등)은 즉시 동기 폴백. dragend/destroy 는 _flushEdgeRefresh 로 즉시 반영.
+  _scheduleEdgeRefresh(movedIds) {
+    const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+    const m = (movedIds instanceof Set) ? movedIds : (movedIds || []);
+    if (!raf) { this._refreshIncidentEdges(m instanceof Set ? m : new Set(m)); this._render(); return; }
+    if (!this._pendingMoved) this._pendingMoved = new Set();
+    for (const id of m) this._pendingMoved.add(id);
+    if (this._pendingRaf) return;
+    this._pendingRaf = raf(() => {
+      this._pendingRaf = 0;
+      const ids = this._pendingMoved; this._pendingMoved = null;
+      if (ids && ids.size) this._refreshIncidentEdges(ids);
+      this._render();
+    });
+  }
+  _flushEdgeRefresh() {
+    if (this._pendingRaf) { try { cancelAnimationFrame(this._pendingRaf); } catch (_) {} this._pendingRaf = 0; }
+    const ids = this._pendingMoved; this._pendingMoved = null;
+    if (ids && ids.size) { this._refreshIncidentEdges(ids); this._render(); }
   }
   // 드래그 이벤트 합성 — payload 에 target.id + buttons/button/targetType(_metaEventButtons·enable predicate 용).
   _emitDrag(phase, hit, e, s, mx, my) {
@@ -537,7 +594,8 @@ export class PixiGraphAdapter {
     pl.buttons = 1; pl.button = 0;
     this._emit(kind + ":" + phase, pl);
     // m4: 드래그 중엔 미니맵 뷰포트 사각형만 갱신(O(1)) — 콘텐츠 전량 재그림(O(N))은 dragend 로 지연.
-    if (phase === "dragend") this._renderMinimap(); else if (phase === "drag") this._renderMinimapViewport();
+    //   graph-edge-drag-perf: dragend 는 rAF 코얼레싱 중이던 엣지 재그림을 즉시 flush(최종 위치 동기 반영).
+    if (phase === "dragend") { this._flushEdgeRefresh(); this._renderMinimap(); } else if (phase === "drag") this._renderMinimapViewport();
   }
   _payload(hit, s, mx, my, e) {
     return { target: hit ? { id: hit.id, data: hit.data } : null, id: hit ? hit.id : null,
@@ -546,7 +604,7 @@ export class PixiGraphAdapter {
   }
 
   // ── 데이터/렌더 ──
-  setData(built) { this._built = built || { nodes: [], edges: [], combos: [] }; }
+  setData(built) { this._built = built || { nodes: [], edges: [], combos: [] }; this._edgeIndex = null; this._nodeById = null; }   // graph-edge-drag-perf: 인접/노드 인덱스 무효화(draw 가 재구성)
   async setScene(built) { this.setData(built); await this.draw(); return this; }
 
   // scene diff 오브젝트 풀(후속 최적화): 매 draw 전량 destroy/recreate 대신 id+서명 기반 재사용.
@@ -560,13 +618,20 @@ export class PixiGraphAdapter {
     const built = this._built;
     // 끝점 위치 O(1) 조회 맵(구 O(N·E) find 제거)
     const npos = new Map();
-    for (const n of (built.nodes || [])) npos.set(n.id, [n.style.x, n.style.y]);
+    // graph-edge-drag-perf(P3): node id → node 맵도 유지 → 드래그 중 _resolvePos 가 live 좌표를 O(1) 조회
+    //   (getElementPosition 의 O(N) nodes.find 제거 — 허브 드래그 O(incident×N)→O(N+incident)). setData 무효화.
+    this._nodeById = new Map();
+    for (const n of (built.nodes || [])) { npos.set(n.id, [n.style.x, n.style.y]); this._nodeById.set(n.id, n); }
     const pos = (id) => { if (npos.has(id)) return npos.get(id); const bb = this.getElementRenderBounds(id); return bb ? [bb.x + bb.width / 2, bb.y + bb.height / 2] : null; };
     // spec 목록 + 서명
     const specs = [];
     for (const c of (built.combos || [])) { const bb = PixiAdapterPure.comboBBox(c.id, built.nodes, (c.style || {}).padding); if (!bb) continue;
       specs.push({ id: c.id, sig: PixiAdapterPure.comboSig(c, bb), make: () => this._drawCombo(c, bb) }); }
-    for (const e of (built.edges || [])) { const a = pos(e.source), b = pos(e.target); if (!a || !b) continue;
+    // graph-edge-drag-perf: 인접 인덱스(node id → incident edge[]) — 드래그 재그림이 O(E) 전량 스캔 대신 O(incident).
+    //   토폴로지(source/target)만 의존 → 드래그(좌표만 변화) 동안 유효, setData 에서 무효화. 미해소 끝점 엣지도 포함(완전).
+    this._edgeIndex = PixiAdapterPure.buildEdgeIndex(built.edges);
+    for (const e of (built.edges || [])) {
+      const a = pos(e.source), b = pos(e.target); if (!a || !b) continue;
       const eid = PixiAdapterPure.edgeId(e);
       specs.push({ id: eid, sig: PixiAdapterPure.edgeSig(e, a, b), make: () => { const g = this._drawEdge(e, a, b); this._objs.set(eid, g); return g; } }); }
     for (const n of (built.nodes || [])) specs.push({ id: n.id, sig: PixiAdapterPure.nodeSig(n), make: () => this._drawNode(n) });
@@ -695,8 +760,14 @@ export class PixiGraphAdapter {
     return cont;
   }
 
-  _drawEdge(e, a, b) {
-    const P = this.P, s = e.style || {}, g = new P.Graphics();
+  _drawEdge(e, a, b) { return this._paintEdge(new this.P.Graphics(), e, a, b); }
+  // graph-edge-drag-perf: 주어진 Graphics 에 엣지 기하(선/대시/화살표/라벨)를 in-place 페인트. 신규(_drawEdge)와
+  //   드래그 재사용(_refreshIncidentEdges) 공용. 재사용 시 g.clear()+라벨 자식 destroy 로 이전 상태를 지운다
+  //   (라벨 없는 대다수 엣지는 children 비어 오버헤드 0). 신규 Graphics 는 clear/자식정리가 no-op → 종전 동작 동일.
+  _paintEdge(g, e, a, b) {
+    const P = this.P, s = e.style || {};
+    g.clear();
+    if (g.children && g.children.length) { for (const ch of g.removeChildren()) { try { ch.destroy(); } catch (_) {} } }
     g.zIndex = (s.zIndex != null ? s.zIndex : 2);
     const alpha = s.strokeOpacity == null ? 1 : s.strokeOpacity;
     if (s.lineDash) { for (const seg of PixiAdapterPure.dashSegments(a[0], a[1], b[0], b[1], s.lineDash)) g.moveTo(seg[0], seg[1]).lineTo(seg[2], seg[3]);
@@ -743,8 +814,7 @@ export class PixiGraphAdapter {
       const o = this._objs.get(id); if (o) o.position.set(p[0], p[1]);
     }
     this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);   // B1: 종속 이동 후 hit-grid 갱신
-    this._refreshIncidentEdges(moved);   // graph-edge-follow-drag: 종속 노드(컬럼·장식) 이동 시 관계선 추종
-    this._render();
+    this._scheduleEdgeRefresh(moved);   // graph-edge-follow-drag: 종속 노드(컬럼·장식) 이동 시 관계선 추종(perf: rAF 코얼레싱)
   }
   getPluginInstance(key) { return key === "minimap" ? (this._minimap || null) : null; }   // G6 minimap 플러그인 호환(자체 렌더)
   // detail-hover-fx: 상세 패널 하위 항목 hover 시 비커밋 강조. spec={nodes:[id],edges:[[idA,idB]],color?}.
@@ -781,6 +851,7 @@ export class PixiGraphAdapter {
   resize(w, h) { if (!this.app) return; if (w == null) this._resizeToContainer(); else { this.app.renderer.resize(w, h); this._positionMinimap(); this._renderMinimapViewport(); } this._render(); }
   destroy() {
     try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); } catch (_) {}
+    try { if (this._pendingRaf) cancelAnimationFrame(this._pendingRaf); } catch (_) {}   // graph-edge-drag-perf: 코얼레싱 rAF 정리
     try { if (this._ro) this._ro.disconnect(); } catch (_) {}   // m1: ResizeObserver 정리
     try { if (this._winListeners) for (const [ev, fn] of this._winListeners) window.removeEventListener(ev, fn); } catch (_) {}   // m1: window 리스너 정리
     try { if (this.app) this.app.destroy(true, { children: true }); } catch (_) {}
