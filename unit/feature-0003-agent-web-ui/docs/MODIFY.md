@@ -553,3 +553,9 @@ source_of_truth: true
 - 비변경: 팬/줌·상태·미니맵·hover·우클릭·클릭·백엔드/RBAC/스키마 0.
 - 검증: `node --check`(ESM) PASS · 헤드리스 96/0 · §18.8 적대 리뷰(결함 없음+지적 4건 반영) · POST-DEPLOY PB-0008 라이브(대형 스키마 드래그 프레임률·추종 정확성, 잔여).
 - Cross-ref: TASK 20260715T2316 · REV/TEST-20260715T231656-graph-edge-drag-perf · test-runs.d/20260715T2316-graph-edge-drag-perf.md · 선행 CHG-20260715T181939-graph-edge-follow-drag · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
+
+## CHG-20260716T000000-graph-edge-drag-perf-postverify (그래프 드래그 관계선 재그림 최적화 POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-07-16. CHG-20260715T231656-graph-edge-drag-perf(PR #832, main bfb1aa98) 배포 후 라이브 실증. 코드 변경 0(문서 전용).
+- 실증(win-browser 실 Windows Chrome, 배포 bfb1aa98, PixiJS): P1(적대 리뷰) 반영해 pointerup 후 캡처. ① 추종 정확성 유지 — root 제품 카테고리 "건즈-개발·1" + gunzgame 409객체 dense-edge 테이블 드래그 모두 새 위치 관계선 추종·옛 위치 orphan 0. ② 부하 개선(정량) — gunzgame 40 pointermove 동기=30.4ms(0.76ms/move)·동기 burst 중 rAF 프레임 0(40 move 엣지 재그림이 단일 rAF 코얼레싱, 재사용-repaint). ③ dragend `_flushEdgeRefresh` 동기 반영·stale 0. ④ pageerror 0. 서빙 자산 baked(perf 함수 grep=11).
+- Changes: `docs/test-runs.d/20260715T2316-graph-edge-drag-perf.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
+- Cross-ref: 원천 CHG-20260715T231656-graph-edge-drag-perf · flake 선행수정 feature-0002 CHG-20260715T234757-probe-throttle-monotonic-flake(무관 CI red 해소) · ANCHOR 0003 무충돌.
