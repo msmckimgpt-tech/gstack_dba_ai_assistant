@@ -17,6 +17,12 @@ verdict: 정적 PASS · POST-DEPLOY PB-0008 라이브 DEFERRED
 - 개정 후 `shown = Math.min(sg.tables.length, PER_GROUP=25, Math.max(0, ROW_CAP=500 - emitted))`. 헤딩은 조기 return 없이 **항상 방출** → 모든 컨텐츠 카테고리 가시. 캡 도달(emitted≥500) 시 shown=0 → 헤딩+0행+`(0/n)`. 그룹 멤버 ≤25·예산 충분 시 전량. gunzgame(409<500): 그룹 멤버 >25 인 그룹(32)만 25 표시, 나머지 전량 → **함수·프로시저 컨텐츠 카테고리 전부 헤딩+멤버 노출**. 개수 정합: 헤딩 `sg.n` 불변 + `(shown/n)` 표식.
 - 결과 **PASS(정적)**.
 
-### Run 4 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **DEFERRED(배포 후 수행)**
-- 대상: 재배포 후 gunzgame 클러스터 상세 재진입 → (1) 함수·프로시저 컨텐츠 카테고리(예 "상점 아이템 명칭" 류 routine 그룹)가 헤딩 + ƒ/⚙ 보라 칩 멤버 행으로 실제 렌더, (2) routine 행 클릭 → 노드 상세(파라미터) 조회, (3) 테이블 그룹은 25 초과 시 `(25/n)` 표식·나머지 정상, (4) pageerror 0.
-- visual_verification_scope: always — 배포 후 충족 예정. 미수행 사유: 정적 자산 baked 라 web 재배포 후에만 서빙 반영.
+### Run 4 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **PASS**
+- 배포: PR #828 → main cdee785e + `sudo -E bin/deploy-web.sh` 무중단 롤링(web-a/web-b·워커 recreate·soak 통과). 서빙 자산 `/app/web/static/graph/graph-ctxmenu.js` `ROW_CAP = 500` grep=1(web-a/web-b baked).
+- 방법: win-browser.py 실 Windows Chrome 150 relay, https://localhost/admin(로그인 세션) 하드 리프레시 → 그래프 뷰 > 데이터소스 mysql-gz-dev 진입(합성 좌클릭) > gunzgame 스키마 카드 클릭 → 상세 패널.
+- 결과 **PASS**:
+  1. **함수·프로시저 컨텐츠 카테고리 노출**: 렌더된 컨텐츠 카테고리 그룹 = **72개**(cap 수정 전 10개), 그중 **함수·프로시저-only 그룹 51개**(수정 전 0개). 실측 예: "계정 조회"(24 routine)·"캐릭터 인벤토리"(25)·"아이템 구매"(15)·"아이템 정보"(13)·"재화 변환"(5)·"스팀 캐시 관리"(3)·"로그인 보상"(2) 등. 총 렌더 행 400(ROW_CAP=500 내), mixed 그룹 0.
+  2. **routine 행 ƒ/⚙ 칩 + 클릭 조회**: "계정 조회" 그룹의 `⚙ Game_AllItemGet`(key `mysql-6e07e3baa968:gunzgame.Game_AllItemGet()`) 클릭 → 상세 패널 "ROUTINE / Game_AllItemGet / ⚙ 프로시저 · 이웃 2개" 정상 조회. 스크린샷 육안: "계정 조회 24" 헤딩 아래 `⚙ Game_AccountItemBringBack`·`ƒ Func_IsAccountBoundCustomizeItem`·`⚙ Game_AccountGet` 등 ƒ/⚙ 보라 칩 멤버, 그 위 `⚙ Game_CashSetItem`·`⚙ Game_MedalItemList` 등. 캔버스 sim-group("아이템 구매 기록·7"·"퀘스트 플레이 기록·5")과 일치.
+  3. **섹션 제목/개수 정합**: "테이블·함수·프로시저 (409)", 설명 "테이블 115개 · 함수·프로시저 294개".
+  4. **pageerror 0**: window 에러 배열 빈값·docReady complete.
+- visual_verification_scope: always (§10.5 web/UI 완료 게이트) — 충족. evidence: gz_routine_groups.png(계정 조회 그룹 ⚙/ƒ 멤버).
