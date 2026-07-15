@@ -2,7 +2,7 @@
 run_at: 2026-07-15T23:16:00+09:00
 session: ai/claude/feature-0003-graph-edge-drag-perf
 scope: 그래프 드래그 관계선 재그림 per-frame 부하 최적화 — 인접 인덱스 + in-place Graphics 재사용 + rAF 코얼레싱 (20260715T2316-graph-edge-drag-perf)
-verdict: PASS (headless) / DEFERRED (POST-DEPLOY PB-0008 라이브)
+verdict: PASS (headless + POST-DEPLOY PB-0008 라이브)
 ---
 
 ### Run 1 — 헤드리스 순수/증분 로직 (Environment: node vm, PixiAdapterPure + prototype-stub)
@@ -18,11 +18,11 @@ verdict: PASS (headless) / DEFERRED (POST-DEPLOY PB-0008 라이브)
 ### Run 2 — 문법 검증 (Environment: node --check, ESM)
 - `graph-renderer-pixi.js` `node --check` PASS.
 
-### Run 3 — POST-DEPLOY 라이브 실증 (Environment: Windows-browser, PB-0008 relay) — DEFERRED
-- 대상: web 재배포(deploy_scope: included) 후 실 Windows Chrome https://localhost/admin → 지식베이스 > 그래프 뷰.
-- 검증 시나리오(예정):
-  1. **추종 정확성 유지(회귀 방지)**: 제품 카테고리/스키마 클러스터/테이블 드래그 → cross-category 관계선이 줌 없이 새 위치 실시간 추종(graph-edge-follow-drag 실증 재확인, 옛 위치 잔상 0).
-  2. **프레임률 개선**: 대형 스키마(수백 객체·다수 관계선, 예 gunzgame 409) 펼친 상태에서 허브 노드/클러스터 드래그 → 드래그 프레임률 관찰(최적화 전 대비 체감 개선·jank 감소).
-  3. **dragend 정합**: pointerup 후 최종 위치에 관계선 정확 반영(rAF 잔여로 인한 stale 없음).
-  4. pageerror 0.
-- visual_verification_scope: always (§10.5 web/UI 완료 게이트 — headless 는 렌더/프레임률 미검증).
+### Run 3 — POST-DEPLOY 라이브 실증 (Environment: Windows-browser, PB-0008 relay) — **PASS**
+- 배포: PR #832 → main bfb1aa98 + `sudo -E bin/deploy-web.sh` 무중단 롤링(soak 통과). 서빙 자산 `_scheduleEdgeRefresh`/`_paintEdge`/`buildEdgeIndex` grep=11(baked). win-browser 실 Windows Chrome, PixiJS(default=pixi). **P1(적대 리뷰) 반영: rAF 코얼레싱으로 mid-drag(pointerup 전) 는 stale → pointerup 후 캡처.**
+- 결과 **PASS**:
+  1. **추종 정확성 유지(회귀 방지)**: (root 뷰) 제품 카테고리 "건즈-개발·1" 드래그+pointerup → cross-category 관계선 새 위치 정확 추종·옛 위치 잔상 0. (gunzgame 409객체 dense-edge) 테이블 노드 드래그+pointerup → 조밀 incident 메시가 새 위치 추종·orphan 엣지 0. 리팩터(재사용+코얼레싱+인덱스)가 추종 정확성 불변 실증.
+  2. **프레임률/부하 개선(정량)**: gunzgame(409객체·다수 관계선) 드래그에서 **40 pointermove 동기 처리 = 30.4ms(0.76ms/move)**, **동기 burst 동안 rAF 프레임 0** → 40개 move 의 엣지 재그림이 단일 rAF 로 코얼레싱(40× destroy/recreate → 1× reuse-repaint). 0.76ms/move 는 노드 이동+hitgrid 동기 비용뿐. root 뷰 30 move = 6.3ms. 수정 전 per-move 전체-엣지 destroy/recreate 대비 부하 대폭 감소.
+  3. **dragend 정합**: pointerup(=`_flushEdgeRefresh` 동기 flush) 후 최종 위치에 관계선 정확 반영·rAF 잔여 stale 0.
+  4. **pageerror 0** 전 과정.
+- visual_verification_scope: always (§10.5) — 충족.

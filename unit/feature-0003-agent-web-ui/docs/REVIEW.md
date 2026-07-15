@@ -494,3 +494,8 @@ source_of_truth: true
   - **P1(검증 계약, 조치)**: rAF 지연으로 mid-drag(pointerup 전) 스냅샷이 stale → PB-0008 은 **pointerup 후**(dragend 동기 flush) 또는 프레임 대기 후 캡처. P2(destroy this.world 미null, 도달불가 defense-gap)·N1(edge-id↔node-id 충돌, 기존 동작·본 변경 미도입)은 non-blocking 기록.
 - 검증: `node --check`(ESM) PASS · 헤드리스 T24 10종 + T25 13종 + T23 회귀 ALL PASS **96/0** · [SUBAGENT] 적대 리뷰 결함 없음 + 지적 4건 반영 · POST-DEPLOY PB-0008 라이브(대형 스키마 드래그 프레임률·cross-category 추종 정확성 유지, 잔여).
 - Cross-ref: TASK 20260715T2316 · CHG/TEST-20260715T231656-graph-edge-drag-perf · 선행 REV-20260715T181939-graph-edge-follow-drag(추종 정확성 정본) · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
+
+## REV-20260716T000000-graph-edge-drag-perf-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 그래프 드래그 관계선 재그림 최적화 POST-DEPLOY 라이브 실증 기록 (CHG-20260716T000000-graph-edge-drag-perf-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T231656 은 REV-20260715T231656([SUBAGENT] 적대 리뷰 결함 없음 + 지적 4건 반영)로 검증됨. 본 cycle 은 배포 결과 원장 기록만.
+- 배포본 실증(win-browser eval, pointerup 후 캡처): 추종 정확성 유지(root 카테고리 + gunzgame 409 dense-edge)·정량 부하개선(40move=30.4ms·burst 중 rAF 0=코얼레싱)·dragend 정합·pageerror 0. 서빙 baked.
+- Cross-ref: CHG-20260716T000000-graph-edge-drag-perf-postverify · 원천 REV-20260715T231656-graph-edge-drag-perf · ANCHOR 0003 무충돌.
