@@ -20,6 +20,10 @@ import app
 INCLUDE_ORDER = 120  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
 
+# 구조 묶음 단위 ENUM 검토 큐 '전체 승인/일부 해제 후 등록'(bulk-promote) 1회 상한. 한 컬럼 묶음의
+# 코드 수는 통상 수십 이하지만, 다중 묶음 동시 등록/오용 방어로 요청당 건수를 cap 한다.
+_ENUM_BULK_PROMOTE_MAX = 200
+
 
 # ITEM-10 routers-p2: _metadata_* 헬퍼 20종 app.py 에서 이동(도메인 소유 정상화 — 판정표 §4).
 # app 전역은 app.X 동적 참조(패치-단일점). _metadata_llm_complete 호출부는 app.X 유지(테스트 setattr 패치 관통).
@@ -1187,6 +1191,91 @@ def admin_reject_enum_feedback(feedback_id: int, request: Request, account=Depen
         _metadata_audit(request, account, action="enum.feedback.reject",
                         resource_id=int(feedback_id), change_json={"feedback_id": int(feedback_id)})
     return JSONResponse({"ok": True, "id": int(feedback_id), "rejected": int(affected)})
+
+@router.post("/api/admin/metadata/enum-feedback/bulk-promote")
+async def admin_bulk_promote_enum_feedback(request: Request, account=Depends(app.require_permission('kb.enum.curate'))) -> JSONResponse:
+    """검토 큐(pending) 다건 → ENUM 코드사전 일괄 승급(구조 묶음 단위 '등록'). 권한 kb.enum.curate.
+
+    body: {"feedback_ids": [int, ...]}. 관리자가 묶음 체크리스트에서 '전체 승인' 또는 '일부 해제'
+    후 선택한 후보만 승급한다. 미선택(해제)분은 pending 유지(거부 아님 — 비파괴). 단일 트랜잭션:
+    하나라도 예외면 전체 롤백. 이미 처리된/없는 id 는 skip(skipped_ids)로 표시(부분 skip 은 정상).
+
+    동시성: id 를 정렬해 결정적 lock 순서로 FOR UPDATE 를 획득한다(동시 bulk-promote 간 deadlock
+    회피). 블로킹 DB 배치(최대 _ENUM_BULK_PROMOTE_MAX × 3 쿼리 + FOR UPDATE)는 run_in_executor 로
+    이벤트 루프 밖(threadpool)에서 실행한다 — lock 대기가 워커 전체를 멈추지 않도록(단건 def 핸들러가
+    threadpool 로 dispatch 되는 것과 동형; 본 핸들러는 body await 때문에 async 필수).
+    """
+    data = await _metadata_read_json(request)
+    raw_ids = (data or {}).get("feedback_ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return app._json_error("feedback_ids 는 비어있지 않은 배열이어야 합니다.", 400)
+    # 파싱/DB 이전에 원본 길이부터 cap — 초대형 배열의 full-parse + O(n) 루프 선-DoS 차단.
+    # (dedup 후 개수는 raw 길이 이하이므로 이 검사로 승급 대상 수도 자동 상한.)
+    if len(raw_ids) > _ENUM_BULK_PROMOTE_MAX:
+        return app._json_error(f"한 번에 최대 {_ENUM_BULK_PROMOTE_MAX}건까지 등록할 수 있습니다.", 400)
+    seen = set()
+    ids = []
+    for v in raw_ids:
+        # bool(JSON true/false) · 비정수 float(1.9) 은 명시 거부(int() 무언 강등/절단 차단).
+        if isinstance(v, bool) or (isinstance(v, float) and not v.is_integer()):
+            return app._json_error("feedback_ids 에 정수가 아닌 값이 있습니다.", 400)
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return app._json_error("feedback_ids 에 정수가 아닌 값이 있습니다.", 400)
+        if n <= 0:
+            return app._json_error("feedback_ids 는 양의 정수여야 합니다.", 400)
+        if n in seen:
+            continue
+        seen.add(n)
+        ids.append(n)
+    ids.sort()   # 결정적 lock 순서(deadlock 회피).
+    approved_by = str((account or {}).get("username") or "") or None
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)   # connect 는 connect_timeout 로 bounded(루프 blocking 무한 아님).
+    except Exception:
+        return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+
+    def _run_bulk(conn):
+        # 블로킹 배치 — threadpool 에서 실행. conn 은 이 스레드에서만 순차 사용(동시 접근 없음).
+        from modules import kb_glossary as _kg
+        try:
+            # FOR UPDATE 무한 대기 방어(_pg_connect 는 lock/statement timeout 미설정) —
+            # 경합 lock 은 5s 후 실패→롤백→500(재시도 가능)로 fail-fast. 트랜잭션 로컬.
+            _lc = conn.cursor()
+            try:
+                _lc.execute("SET LOCAL lock_timeout = '5s'")
+            finally:
+                _lc.close()
+            out = _kg.bulk_promote_enum_feedback(conn, ids, approved_by=approved_by)
+            conn.commit()
+            return out
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    try:
+        results = await asyncio.get_running_loop().run_in_executor(None, _run_bulk, pg)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_bulk_promote_enum_feedback 실패 ids=%s", ids, exc_info=True)
+        return app._json_error("ENUM 일괄 승급 실패", 500)
+    promoted = [r for r in results if r.get("enum_id") is not None]
+    skipped_ids = [r["feedback_id"] for r in results if r.get("enum_id") is None]
+    _metadata_audit(request, account, action="enum.feedback.bulk_promote",
+                    resource_id=None,
+                    change_json={"requested": ids, "promoted_count": len(promoted),
+                                 "skipped_ids": skipped_ids})
+    return JSONResponse({"ok": True, "promoted_count": len(promoted),
+                         "skipped_ids": skipped_ids, "results": results})
 
 @router.get("/api/admin/metadata/tables")
 def admin_list_table_desc(request: Request, account=Depends(app.require_permission('metadata.table.read'))) -> JSONResponse:

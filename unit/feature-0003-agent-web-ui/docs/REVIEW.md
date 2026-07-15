@@ -357,3 +357,14 @@ source_of_truth: true
 - 검증: `node --check` PASS. 라이브 PB-0008(신규 대화 staged 첨부 ★신규 인지)은 정적자산 baked → 배포 후 실측(TEST.md §3 DEFERRED).
 - Human Approval: PLAN-APPROVED(사용자 "남은 deferred 축 완수까지 진행", 2026-07-15). Minor(라벨-only) → PR/deploy(deploy_scope: included).
 - Cross-ref: CHG-20260715T110000-attach-new-label-symmetry(MODIFY) · CHG-20260715T060000-attach-inline-honesty(②-backend, feature-0002) · ANCHOR §1~§3 무충돌.
+
+## REV-20260715T105337-enum-review-bundle [SUBAGENT:backend-security-adversarial — VERDICT SHIP after fixes (1 MAJOR + 2 MINOR 전건 수정)] — ENUM 코드사전 검토 큐 구조 묶음 승인 체크리스트 + 일괄 등록 (20260715T1053-enum-review-bundle, Major §12.3)
+- 대상: 신규 `POST /api/admin/metadata/enum-feedback/bulk-promote`(admin_metadata.py) + `bulk_promote_enum_feedback`(kb_glossary.py). 프론트(admin.js 묶음 렌더 + CSS)는 로직·경계 무변경(RBAC/스키마/엔드포인트 shape 0) → 백엔드/보안 축만 적대 패널(§18.8 "API/endpoint → backend, security, qa").
+- **적대 패널(general-purpose subagent, 결함 적발 목적)** 결과: BLOCKERS 0, MAJOR 1, MINOR 2. **전건 수정 후 SHIP.**
+  - **[MAJOR — 수정됨] 이벤트 루프 블로킹**: 핸들러가 `async def`(body await 필수)인데 최대 200×3 블로킹 psycopg 쿼리(+`FOR UPDATE`, `_pg_connect` 는 lock/statement timeout 미설정)를 이벤트 루프에서 직접 실행 → 경합 lock 시 워커 전체 정지(단건 형제는 `def` 라 threadpool 격리). **수정**: 블로킹 배치를 `run_in_executor(None, _run_bulk, pg)` 로 threadpool 오프로드(connect 는 connect_timeout 로 bounded, 루프에 유지해 503 parity) + 배치 트랜잭션에 `SET LOCAL lock_timeout='5s'`(무한 FOR UPDATE 대기 fail-fast → 롤백 → 재시도 가능 500).
+  - **[MINOR — 수정됨] deadlock**: `FOR UPDATE` 를 클라이언트 순서로 획득 → 겹치는 id 를 역순으로 동시 bulk-promote 시 deadlock → 500. **수정**: `ids.sort()` 로 결정적 lock 순서(테스트 `test_enum_feedback_bulk_promote_sorts_ids`).
+  - **[MINOR — 수정됨] 선-DoS**: cap 을 dedup 후 개수에 적용 → 초대형 배열 full-parse + O(n) 루프가 400 전에 실행. **수정**: 원본 배열 길이(`len(raw_ids)`)부터 cap(테스트 `_cap_400`) + bool/비정수 float 명시 거부.
+- **PASS(결함 없음, 패널 확인)**: 트랜잭션 원자성(단일 commit, 예외 시 rollback+close, 부분 실패 전건 롤백)·연결 수명·RBAC(`kb.enum.curate` 단건과 byte-identical, 우회 없음)·SQL injection(파라미터화 재사용, 신규 interpolation 0)·입력검증(missing/non-dict/non-list/non-int/≤0/dedup)·audit(`_metadata_audit` resource_id=None 허용·change_json 직렬화)·부분 skip 시맨틱(없음/이미처리 → enum_id=None skip, 예외 아님).
+- 비파괴 재확인: 미선택(해제) 후보는 pending 유지(거부 아님). 개별 promote/reject·glossary/sample 큐·엔드포인트 shape 불변.
+- 검증: agent 컨테이너 pytest — core `test_kb_enum_feedback`(bulk_multi·skips_missing) + web `test_metadata_enum_feedback`(bulk_promote·reports_skips·empty_400·bad_type_400·cap_400·sorts_ids·requires_curate) + route_parity(golden 재생성) **31 passed** · `py_compile` OK · `node --check` admin.js PASS · `gen-routemap --check` up-to-date. **라이브 시각검증 = POST-DEPLOY PB-0008**(정적 baked, visual_verification_scope: always).
+- Cross-ref: CHG/TASK/REQ-20260715T105337-enum-review-bundle · FUNCTION AC-ERB-1~3 · 원천 enum_feedback(alembic 0039)·admin_metadata enum-feedback 큐 · TEST test-runs.d/20260715T105337-enum-review-bundle.md · ANCHOR 0003 무충돌.

@@ -15,6 +15,7 @@ audit, 직렬화, source 노출)만 본다. test_metadata_glossary_autoreg.py �
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 
@@ -193,6 +194,88 @@ def test_enum_feedback_reject(monkeypatch):
     resp = admin_metadata.admin_reject_enum_feedback(5, _FakeRequest(), account=acct)
     assert resp.status_code == 200
     assert any(e.get("action") == "enum.feedback.reject" for e in events)
+
+
+# ── FB: bulk-promote (구조 묶음 단위 '전체 승인/일부 해제 후 등록') ────────────
+def test_enum_feedback_bulk_promote(monkeypatch):
+    acct = _env(monkeypatch, perms={"kb.enum.curate": True})
+    pg = _PgConn()
+    monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
+    monkeypatch.setattr(_kg, "bulk_promote_enum_feedback",
+                        lambda conn, ids, **k: [{"feedback_id": i, "enum_id": 100 + i} for i in ids])
+    events = _audit_capture(monkeypatch)
+    # 중복 4 는 정규화(dedup)되어 requested=[3,4].
+    resp = asyncio.run(admin_metadata.admin_bulk_promote_enum_feedback(
+        _FakeRequest(payload={"feedback_ids": [3, 4, 4]}), account=acct))
+    assert resp.status_code == 200
+    body = _body(resp)
+    assert body["promoted_count"] == 2 and body["skipped_ids"] == []
+    assert pg.committed is True
+    ev = next((e for e in events if e.get("action") == "enum.feedback.bulk_promote"), None)
+    assert ev is not None and ev["change_json"]["requested"] == [3, 4]
+
+
+def test_enum_feedback_bulk_promote_reports_skips(monkeypatch):
+    acct = _env(monkeypatch, perms={"kb.enum.curate": True})
+    pg = _PgConn()
+    monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
+    monkeypatch.setattr(_kg, "bulk_promote_enum_feedback",
+                        lambda conn, ids, **k: [{"feedback_id": 3, "enum_id": 103},
+                                                {"feedback_id": 4, "enum_id": None}])
+    _audit_capture(monkeypatch)
+    resp = asyncio.run(admin_metadata.admin_bulk_promote_enum_feedback(
+        _FakeRequest(payload={"feedback_ids": [3, 4]}), account=acct))
+    assert resp.status_code == 200
+    body = _body(resp)
+    assert body["promoted_count"] == 1 and body["skipped_ids"] == [4]
+
+
+def test_enum_feedback_bulk_promote_empty_400(monkeypatch):
+    acct = _env(monkeypatch, perms={"kb.enum.curate": True})
+    resp = asyncio.run(admin_metadata.admin_bulk_promote_enum_feedback(
+        _FakeRequest(payload={"feedback_ids": []}), account=acct))
+    assert resp.status_code == 400
+
+
+def test_enum_feedback_bulk_promote_bad_type_400(monkeypatch):
+    acct = _env(monkeypatch, perms={"kb.enum.curate": True})
+    resp = asyncio.run(admin_metadata.admin_bulk_promote_enum_feedback(
+        _FakeRequest(payload={"feedback_ids": ["x"]}), account=acct))
+    assert resp.status_code == 400
+
+
+def test_enum_feedback_bulk_promote_cap_400(monkeypatch):
+    # 원본 배열 길이(dedup 전)부터 cap — 초대형 배열 선-DoS 차단(파싱/DB 이전 400).
+    acct = _env(monkeypatch, perms={"kb.enum.curate": True})
+    resp = asyncio.run(admin_metadata.admin_bulk_promote_enum_feedback(
+        _FakeRequest(payload={"feedback_ids": list(range(1, 202))}), account=acct))  # 201 > 200
+    assert resp.status_code == 400
+
+
+def test_enum_feedback_bulk_promote_sorts_ids(monkeypatch):
+    # deadlock 회피 — 요청이 뒤섞여도 dedup 후 정렬된 결정적 lock 순서로 승급.
+    acct = _env(monkeypatch, perms={"kb.enum.curate": True})
+    pg = _PgConn()
+    monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
+    captured = {}
+
+    def _fake_bulk(conn, ids, **k):
+        captured["ids"] = list(ids)
+        return [{"feedback_id": i, "enum_id": 100 + i} for i in ids]
+
+    monkeypatch.setattr(_kg, "bulk_promote_enum_feedback", _fake_bulk)
+    _audit_capture(monkeypatch)
+    resp = asyncio.run(admin_metadata.admin_bulk_promote_enum_feedback(
+        _FakeRequest(payload={"feedback_ids": [9, 3, 7, 3]}), account=acct))
+    assert resp.status_code == 200
+    assert captured["ids"] == [3, 7, 9]   # dedup + 정렬
+    assert pg.committed is True
+
+
+def test_enum_feedback_bulk_promote_requires_curate(client, as_account):
+    as_account(perms={"console.access": True})   # kb.enum.curate 없음 → 403
+    resp = client.post("/api/admin/metadata/enum-feedback/bulk-promote", json={"feedback_ids": [1]})
+    assert resp.status_code == 403
 
 
 # ── SRC: ENUM 목록 source 직렬화(자동등록 배지) ───────────────────────────────
