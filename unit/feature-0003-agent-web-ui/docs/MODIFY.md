@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260715T120000-graph-ctxmenu-band-priority-postverify (TASK-20260715T114608-graph-ctxmenu-band-priority POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-15. 코드/자산 무변경 — test-runs.d fragment POST-DEPLOY 섹션 '이연'→실측 PASS + TASK 체크리스트 완료. 기능 배포 PR #815→main 6a950a20 선행 완료.
+- 라이브 실측(win-browser Chrome 150, 6a950a20): 킹스레이드·미분류 CAT 밴드에서 클러스터 박스(dbAuth·dbTest) 우클릭 → **카테고리 메뉴**(band-wins) / 펼친 테이블 노드 → **그 테이블 메뉴**(흡수 안 함) / 좌클릭 → **클러스터 펼치기 정상**. 사용자 결정("밴드 우선") 충족. 증거 scratchpad/evidence-bandwins-box-category.png.
+- Cross-ref: CHG-20260715T114608-graph-ctxmenu-band-priority(기능) · REV-20260715T120000-graph-ctxmenu-band-priority-postverify · test-runs.d/20260715T114608-graph-ctxmenu-band-priority.md POST-DEPLOY Run.
+
 ## CHG-20260715T114608-graph-ctxmenu-band-priority (TASK-20260715T114608-graph-ctxmenu-band-priority — 제품 카테고리 밴드 우클릭 band-wins, Major §12.3 frontend-only)
 - Date: 2026-07-15. 제품 카테고리 밴드 안의 스키마 클러스터 박스가 밴드를 시각적으로 채워, 밴드 우클릭이 스키마 메뉴로 새는 UX 겹침 → 사용자 결정 "밴드 우선"으로 우클릭 시 밴드 귀속.
 - `static/graph/graph-renderer-pixi.js`:
