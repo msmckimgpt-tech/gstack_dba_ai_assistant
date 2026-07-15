@@ -278,3 +278,18 @@ source_of_truth: true
 - **cache-buster**: 소스 `?v=dev` 고정 — 07-12 ITEM-09 what#3(`inject_asset_stamp.py` content-hash 빌드주입·deploy-web `asset_stamp_verify` 하드게이트) 이후 수기 bump 폐지. system-prompt 의 '수동 bump' 지시는 그 정책 이전 모델 기준이라 부적용(수동 변경 시 게이트 무력화·해시 불변). 직전 doc-sync(REV-20260714T024534-doc-sync-rn-0714)도 동일 판단.
 - **정본 lag(보고)**: feature-0019 REPORT.md prose 는 07-14 Phase 1 checkpoint 3 에서 멈춰 Phase 2(1cf7784b) 라이브 미반영 — 릴리즈노트/STATUS/wiki mirror 는 FUNCTION 스펙(REQ-ME-R3/AC-ME-6)+git+PB-0008 실측 기준으로 정확 작성. 정본 REPORT Phase 2 completion 섹션 추가는 feature-0019 후속 cycle 권고(doc_sync 정본 미편집).
 - Cross-ref: CHG/TASK/FUNCTION/TEST-20260715T025509-doc-sync-rn-0715 / META REV-20260715T025509-META-0036-doc-sync-0715(별도 commit) / 원천 PR 07-14. **landing/배포 소유=cron wrapper 위임(로컬 commit 만).**
+## REV-20260714T181936-perm-category-hier [SKIPPED:panel-usage-limit—inline-adversarial-selfreview+live-mysql-dryrun] — 관리 콘솔 권한 체계 카테고리 '접근' 계층 재구성 (20260714T1819-perm-category-hier, Critical §12.3)
+
+- **대상**: 신규 카테고리 접근 권한 5종(`console.{account,product,audit,kb,system}.access`) + GroupName 재배치 + `_backfill_console_category_access_v1`(1회 멱등) + admin.js 종속 트리/탭 카테고리 AND 게이트. 사용자 승인 A안(B안=표시만 은 "카테고리 최상위 접근 권한" 요건 미충족 기각). 병렬 겹침(ITEM-09 admin.js hot_paths)도 사용자 결정 "그대로 진행".
+- **§18.8 수행 형태 정직 보고**: 보안 렌즈 subagent 패널이 세션 한도(usage limit)로 조기 종료 → **inline 적대 자가검토 + 라이브 MySQL dry-run 실증으로 대체 수행** (graph-perm-split 의 라이브 실증 선례 답습). 패널 재실행이 필요하면 후속 cycle 에서 가능.
+- **적대 가설 → 판정**:
+  - 권한상승(역함의): REFUTE — 함의 로직은 `_apply_permission_overrides` 의 `_METADATA_MANUAL_IMPLIES` 뿐(전수 확인), 접근 권한이 세부 권한을 함의하는 경로 0. 접근 권한 단독이 여는 데이터 표면 0(엔드포인트 require_permission 무변경).
+  - 동적 `product.access.<key>` prefix 충돌: REFUTE — 동적 판별은 `IsDynamic` 컬럼 기반(`_resolve_permission_catalog`), `product.access.` prefix 문자열 필터 코드 0건(전수 grep). `console.product.access` 는 정적 카탈로그 별개 code.
+  - seed catchup 255자 트랩: REFUTE — 전수 72건 label≤128·desc≤255 실측(신규 5종 desc 89~112자). 방어 클립(graph-perm-descfix)도 유지.
+  - 부트스트랩 순서: REFUTE — fast(`_ensure_seed_catchup` L2250)·slow(L820) 양 경로 모두 catalog→seed_roles(말미 backfill) 순서 보장, backfill 시점에 접근 pid 존재.
+  - GroupName 이동 회귀: REFUTE — 백엔드에 GroupName 문자열 분기 0건(전수 grep), `_prune_orphaned_permission_catalog` 는 명시 폐기 목록만(신규 무관), admin grid 는 백엔드 group 사용·app.js 는 `PERMISSION_GROUP_OVERRIDES` 명시 매핑 추가.
+  - 접근 상실(락아웃) 조합 매트릭스: (role console.access × role 세부 × 계정 override allow/deny/부재) 전 조합 사고실험 — backfill 대상 3종이 오늘 탭이 보이던 모든 조합을 커버(동치 보존), 오늘 안 보이던 조합은 그대로(과잉부여 없음: console.access 없는 operator/sales/pending 의 audit.read.own 은 부여 제외 — least-privilege).
+  - grid 저장 계약: REFUTE — disclosure 는 collapse only(저장 경로 hidden row 유지, TASK-0264 계약 미변경 코드).
+- **라이브 MySQL 8 dry-run 실증(read-only, `repo-mysql-1`/agent_memory, 감사 카테고리 대표)**: backfill 3종 SELECT 문법·의미 정상(1093 없음). **target1 적중 = admin + 커스텀 role `usermanager`** — usermanager 는 seed catchup 목록에 없는 커스텀 role 이라 catchup 만으론 감사 카테고리 탭을 잃었을 대상 → backfill 이 정확히 구제(설계 필요성 실증). target2 = 계정 1건(leaf ALLOW override) · target3 = 0행. 라이브 role 8종 중 console.access 미보유 role(dev_server/dos_web 등)은 오늘도 콘솔 미진입 → 동치 보존.
+- **테스트**: 권한 타깃 50 PASS(M5 backfill 맵↔FE 종속 동치 신설) · feature-0003 785/0 · jsdom 탭 게이팅 47/0 · 컨테이너 make test 4 실패 전건 **환경 기인 확정**(3건=복사 .env `AGENT_RUNTIME_READ_BACKEND=postgres`·`AGENT_TIMEOUT_SEC=300` — env 중립화로 소멸·선례 동일 / 1건=`postgres-replica` DNS — main 코드+격리 네트워크 동일 재현, 격리 프로젝트 네트워크에 replica 부재 기인).
+- **Human Approval**: 예 — 본 cycle 시작 시 AskUserQuestion 으로 A안 승인 완료(Critical §12.3 사람 승인 충족).

@@ -70,9 +70,12 @@ function extractFn(src, name) {
 }
 
 const tabPermsSrc = extractConstObject(adminJs, "ADMIN_TAB_PERMISSIONS");
+// perm-category-hier(2026-07-14): canSeeTab = 카테고리 접근(AND) && 탭 권한(OR) — 카테고리 매핑도 주입.
+const tabCategorySrc = extractConstObject(adminJs, "ADMIN_TAB_CATEGORY_ACCESS");
 const canSeeTabSrc = extractFn(adminJs, "canSeeTab");
 const applyVisSrc = extractFn(adminJs, "applyAdminTabVisibility");
 ok("ADMIN_TAB_PERMISSIONS 추출", Boolean(tabPermsSrc));
+ok("ADMIN_TAB_CATEGORY_ACCESS 추출", Boolean(tabCategorySrc));
 ok("canSeeTab 추출", Boolean(canSeeTabSrc));
 ok("applyAdminTabVisibility 추출", Boolean(applyVisSrc));
 
@@ -101,7 +104,7 @@ function run(permissionList, activeTab = "dashboard") {
   // 추출 코드 평가 (scope: document/$/can/switchTab)
   const factory = new Function(
     "document", "$", "can", "switchTab",
-    `${tabPermsSrc}\n${canSeeTabSrc}\n${applyVisSrc}\n applyAdminTabVisibility(); return { adminState_tab: arguments };`
+    `${tabPermsSrc}\n${tabCategorySrc}\n${canSeeTabSrc}\n${applyVisSrc}\n applyAdminTabVisibility(); return { adminState_tab: arguments };`
   );
   factory(document, $, can, switchTab);
   // 가시성 측정 헬퍼
@@ -121,10 +124,13 @@ function run(permissionList, activeTab = "dashboard") {
   return { tabVisible, groupLabelVisible, activeKey };
 }
 
-// ── 케이스 1: 전체 admin 권한 → 모든 탭 표시 ───────────────────────────────────
+// ── 케이스 1: 전체 admin 권한 → 모든 탭 표시 (perm-category-hier: 카테고리 접근 5종 포함) ──
 {
   const r = run([
-    "console.access", "account.read", "role.read", "product.read", "product.manage",
+    "console.access",
+    "console.account.access", "console.product.access", "console.audit.access",
+    "console.kb.access", "console.system.access",
+    "account.read", "role.read", "product.read", "product.manage",
     "datasource.read", "datasource.manage", "audit.read.own", "audit.read.any",
     "console.usage.read", "console.aiops.read", "conversation.archive.read.any",
     "system_prompt.global.read", "system_prompt.global.write",
@@ -140,9 +146,9 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[admin] 제품 그룹라벨 표시", r.groupLabelVisible("제품"));
 }
 
-// ── 케이스 2: mckim 시나리오 (console.access + audit.read.own 만) ──────────────
+// ── 케이스 2: mckim 시나리오 (감사 카테고리 접근 + audit.read.own — backfill 후 상태) ──
 {
-  const r = run(["console.access", "audit.read.own"]);
+  const r = run(["console.access", "console.audit.access", "audit.read.own"]);
   ok("[제한] 대시보드 표시", r.tabVisible("dashboard"));
   ok("[제한] 감사로그 표시", r.tabVisible("audits"));
   ok("[제한] 계정 숨김", !r.tabVisible("accounts"));
@@ -152,24 +158,51 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[제한] 설정 숨김", !r.tabVisible("settings"));
   ok("[제한] 계정 그룹라벨 숨김", !r.groupLabelVisible("계정"));
   ok("[제한] 제품 그룹라벨 숨김", !r.groupLabelVisible("제품"));
-  ok("[제한] 시스템 그룹라벨 숨김", !r.groupLabelVisible("시스템"));
+  // 릴리즈 노트 탭은 비민감이라 콘솔 진입자 전원 노출(권한 매핑 없음, admin.html 주석) →
+  // 시스템 그룹라벨은 항상 표시된다(기존 "숨김" 기대는 release-notes 도입 이전의 stale 기대값).
+  ok("[제한] 시스템 그룹라벨 표시(릴리즈 노트 상시 노출)", r.groupLabelVisible("시스템"));
   ok("[제한] 감사 그룹라벨 표시", r.groupLabelVisible("감사"));
 }
 
-// ── 케이스 3: product.read 만 → 제품 표시(read|manage), 데이터소스 숨김 ──────────
+// ── 케이스 2b: perm-category-hier — 카테고리 접근 게이트 (AND) 검증 ──────────────
 {
-  const r = run(["console.access", "product.read"]);
+  // 세부 권한만 있고 카테고리 접근이 없으면 탭 숨김(카테고리 최상위 조회 게이트).
+  const r = run(["console.access", "audit.read.own", "console.usage.read"]);
+  ok("[카테고리게이트] 접근 없이 감사로그 숨김", !r.tabVisible("audits"));
+  ok("[카테고리게이트] 접근 없이 LLM 사용량 숨김", !r.tabVisible("usage"));
+  ok("[카테고리게이트] 감사 그룹라벨 숨김", !r.groupLabelVisible("감사"));
+  // 카테고리 접근만 있고 세부 권한이 없으면 역시 숨김(빈 카테고리 미노출).
+  const r2 = run(["console.access", "console.audit.access"]);
+  ok("[카테고리게이트] 접근만으론 감사로그 숨김", !r2.tabVisible("audits"));
+  ok("[카테고리게이트] 접근만으론 보관대화 숨김", !r2.tabVisible("archives"));
+  // 접근 + 탭별 조회 권한 → 해당 탭만 노출(감사 4탭 개별 게이트).
+  const r3 = run(["console.access", "console.audit.access", "console.usage.read"]);
+  ok("[카테고리게이트] 접근+usage.read → LLM 사용량 표시", r3.tabVisible("usage"));
+  ok("[카테고리게이트] 접근+usage.read → 감사로그 숨김", !r3.tabVisible("audits"));
+}
+
+// ── 케이스 3: product 카테고리 접근 + product.read → 제품 표시, 데이터소스 숨김 ──────
+{
+  const r = run(["console.access", "console.product.access", "product.read"]);
   ok("[product.read] 제품 표시 (read 로도 노출)", r.tabVisible("products"));
   ok("[product.read] 데이터소스 숨김", !r.tabVisible("datasources"));
   ok("[product.read] 제품 그룹라벨 표시", r.groupLabelVisible("제품"));
 }
 
-// ── 케이스 4: datasource.read 만 → 데이터소스 표시, 제품 숨김 ──────────────────
+// ── 케이스 4: product 카테고리 접근 + datasource.read → 데이터소스 표시, 제품 숨김 ────
 {
-  const r = run(["console.access", "datasource.read"]);
+  const r = run(["console.access", "console.product.access", "datasource.read"]);
   ok("[datasource.read] 데이터소스 표시", r.tabVisible("datasources"));
   ok("[datasource.read] 제품 숨김", !r.tabVisible("products"));
   ok("[datasource.read] 제품 그룹라벨 표시(데이터소스 동일 그룹)", r.groupLabelVisible("제품"));
+}
+
+// ── 케이스 4b: perm-category-hier — 설정 탭 게이트에 system.runtime.* 보강 검증 ──────
+{
+  const r = run(["console.access", "console.system.access", "system.runtime.read"]);
+  ok("[runtime.read] 설정 표시 (runtime 단독 보유 도달 보강)", r.tabVisible("settings"));
+  const r2 = run(["console.access", "system.runtime.read"]);
+  ok("[runtime.read] 카테고리 접근 없으면 설정 숨김", !r2.tabVisible("settings"));
 }
 
 // ── 케이스 5: 권한 없음(console.access 만) → 대시보드만 ─────────────────────────
@@ -179,9 +212,10 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[빈권한] 계정 숨김", !r.tabVisible("accounts"));
   ok("[빈권한] 감사로그 숨김", !r.tabVisible("audits"));
   ok("[빈권한] AI 운영 현황 숨김 (fail-open 방지)", !r.tabVisible("ai-ops"));
-  ok("[빈권한] 계정/제품/감사/시스템 라벨 전부 숨김",
-    !r.groupLabelVisible("계정") && !r.groupLabelVisible("제품")
-    && !r.groupLabelVisible("감사") && !r.groupLabelVisible("시스템"));
+  // 시스템 라벨은 릴리즈 노트 탭(비민감, 전원 노출)로 항상 표시 — 계정/제품/감사만 숨김 기대.
+  ok("[빈권한] 계정/제품/감사 라벨 숨김",
+    !r.groupLabelVisible("계정") && !r.groupLabelVisible("제품") && !r.groupLabelVisible("감사"));
+  ok("[빈권한] 시스템 라벨 표시(릴리즈 노트 상시 노출)", r.groupLabelVisible("시스템"));
 }
 
 // ── 케이스 6: 활성 탭이 숨겨지면 첫 표시 탭으로 전환 ───────────────────────────

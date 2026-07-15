@@ -371,14 +371,19 @@ state.sendMode = localStorage.getItem(SEND_MODE_LS_KEY) === "enter" ? "enter" : 
 // TASK-0073 Phase C: audit group 추가 — backend PERMISSION_DEFINITIONS 의 group="audit" 정합.
 // TASK-0095: settings group 추가 — 전역 시스템 프롬프트 권한 그룹.
 // TASK-0269: 대화 그룹을 own/any 로 분리 — conversation → conversation_own(내 대화 권한) + conversation_any(전체 대화 권한).
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "conversation_own", "conversation_any", "product", "attachment", "audit", "settings", "misc"];
+// perm-category-hier(2026-07-14): quota/datasource/kb 그룹 라벨 추가 — 백엔드 group 키가 라벨 맵에
+//   없으면 "기타"로 떨어지던 것을 정합(admin.js PERMISSION_GROUP_LABELS 와 동일 유지, CONVENTIONS §10.6).
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings", "conversation_own", "conversation_any", "attachment", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
+  quota: "LLM 사용 한도",
   conversation_own: "내 대화 권한",
   conversation_any: "전체 대화 권한",
   product: "제품",
+  datasource: "데이터소스",
+  kb: "지식베이스",
   attachment: "첨부",
   audit: "감사",
   settings: "시스템 설정",
@@ -393,17 +398,38 @@ const WORK_SCREEN_PERMISSION_SECTIONS = [
   // TASK-0094 Sprint 1 Phase 12: attachment group 추가 — 첨부 sandbox SQL 권한이 운영 권한 묶음에 표시.
   { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 접근 · 첨부", groups: ["conversation_own", "conversation_any", "product", "attachment"] },
   // TASK-0095: settings 그룹은 작업 화면의 관리 권한 section 에 placeholder.
-  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / 감사 / 시스템 설정", groups: ["console", "account", "role", "audit", "settings"] },
+  // perm-category-hier(2026-07-14): quota/datasource/kb 그룹을 관리 권한 section 에 합류(라벨 맵 부재로
+  //   "기타" fallback 되던 것을 정합) — 그룹 순서는 admin 콘솔 nav 카테고리 순서와 동일.
+  { id: "manage", title: "관리 권한", description: "관리 콘솔 / 계정 / 역할 / LLM 사용 한도 / 데이터소스 / 감사 / 지식베이스 / 시스템 설정", groups: ["console", "account", "role", "quota", "datasource", "audit", "kb", "settings"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
+// perm-category-hier(2026-07-14): 백엔드 GroupName 재배치와 정합하는 code별 명시 매핑 —
+//   prefix 추론이 재배치를 따라가지 못하는 코드들(감사 카테고리 탭 권한·insight.reset·카테고리 접근 5종).
+const PERMISSION_GROUP_OVERRIDES = {
+  "console.usage.read": "audit",
+  "console.aiops.read": "audit",
+  "conversation.archive.read.any": "audit",
+  "insight.reset": "product",
+  "console.account.access": "account",
+  "console.product.access": "product",
+  "console.audit.access": "audit",
+  "console.kb.access": "kb",
+  "console.system.access": "settings",
+  "system.runtime.read": "settings",
+  "system.runtime.write": "settings",
+};
+
 function permissionGroupOf(code = "") {
-  // app.py PERMISSION_DEFINITIONS 와 정합:
+  // web_context.py PERMISSION_DEFINITIONS 와 정합:
+  //  - perm-category-hier 재배치 코드 → PERMISSION_GROUP_OVERRIDES 명시 매핑.
   //  - `system_prompt.global.*` (TASK-0095) → settings 그룹.
   //  - 다른 system_prompt.* (manage.role.any 등) → product 그룹 유지 (기존 호환).
   const codeStr = String(code || "");
+  if (PERMISSION_GROUP_OVERRIDES[codeStr]) return PERMISSION_GROUP_OVERRIDES[codeStr];
   if (codeStr.startsWith("system_prompt.global.")) return "settings";
   if (codeStr.startsWith("system_prompt.")) return "product";
+  if (codeStr.startsWith("metadata.") || codeStr.startsWith("kb.")) return "kb";
   // TASK-0269: 대화 권한은 own/any 로 분리 — `.any` 는 전체 대화 권한, 나머지(create/ask/list.own/...own/share)는 내 대화 권한.
   if (codeStr.startsWith("conversation.")) return codeStr.endsWith(".any") ? "conversation_any" : "conversation_own";
   const head = codeStr.split(".", 1)[0] || "misc";
@@ -413,6 +439,12 @@ function permissionGroupOf(code = "") {
 const PERMISSION_LABELS = {
   "console.access": "관리 콘솔 접근",
   "console.manage": "관리 콘솔 수정",
+  // perm-category-hier(2026-07-14): 관리 콘솔 nav 카테고리별 최상위 '접근'(조회 게이트) 5종.
+  "console.account.access": "계정 접근",
+  "console.product.access": "제품 접근",
+  "console.audit.access": "감사 접근",
+  "console.kb.access": "지식베이스 접근",
+  "console.system.access": "시스템 접근",
   "account.read": "계정 조회",
   "account.update": "계정 수정",
   "account.delete": "계정 삭제",

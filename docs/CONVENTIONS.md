@@ -276,29 +276,31 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 ### 10.6 화면별 권한 섹션·정렬 정책 (REQ-20260512-0002)
 
-권한 (Permission) 리스트는 백엔드 단일 `PERMISSION_DEFINITIONS[*].group` (`console` / `account` / `role` / `conversation_own` / `conversation_any` / `product` / `attachment` / `audit` / `settings` / `misc`) 으로 분류되지만, **사용자가 보는 정렬·섹션 구조는 화면 맥락에 따라 다르게 적용한다.** 같은 정렬을 두 화면에 공유하면 한쪽은 항상 핵심 권한이 묻힌다.
+권한 (Permission) 리스트는 백엔드 단일 `PERMISSION_DEFINITIONS[*].group` (`console` / `account` / `role` / `quota` / `product` / `datasource` / `kb` / `conversation_own` / `conversation_any` / `attachment` / `audit` / `settings` / `misc`) 으로 분류되지만, **사용자가 보는 정렬·섹션 구조는 화면 맥락에 따라 다르게 적용한다.** 같은 정렬을 두 화면에 공유하면 한쪽은 항상 핵심 권한이 묻힌다.
 
 #### 화면별 2단 section
 
 | 화면 | 시각 | 섹션 순서 (상→하) |
 |---|---|---|
-| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation_own`, `conversation_any`, `product`, `attachment`) → **관리 권한** (`console`, `account`, `role`, `audit`, `settings`) → **기타** (`misc`) |
-| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`, `audit`, `settings`) → **운영 권한** (`conversation_own`, `conversation_any`, `product`, `attachment`) → **기타** (`misc`) |
+| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation_own`, `conversation_any`, `product`, `attachment`) → **관리 권한** (`console`, `account`, `role`, `quota`, `datasource`, `audit`, `kb`, `settings`) → **기타** (`misc`) |
+| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`, `quota`, `product`, `datasource`, `audit`, `kb`, `settings`) → **운영 권한** (`conversation_own`, `conversation_any`, `product_access`, `attachment`) → **기타** (`misc`) |
 
 > TASK-0073: `audit` group 은 두 화면 모두 "관리 권한" 묶음에 합류한다. 작업 화면은 본인 `audit.read.own` 보유 여부에 따라 placeholder 만 (실 entry point 는 admin 콘솔). 관리 콘솔은 audit.read.own / .any / .export / .purge 4 권한이 모두 grid 에 노출된다.
 >
 > TASK-0094 Sprint 1 Phase 12: `attachment` group 신설 (8 group → 9 group). 첨부 sandbox SQL 실행 권한 (`attachment.execute_sql_on.{own,any}`) 이 본 group 에 등재. `conversation.attachment.*` 4 권한은 group="conversation" 유지 (대화 흐름의 일부). 작업 화면 + 관리 콘솔 모두 운영 권한 묶음에 합류.
 > TASK-0095: `settings` group 신설 — 전역 시스템 프롬프트 (`system_prompt.global.*`). 작업 화면/관리 콘솔 모두 관리 권한 묶음에 합류 (운영자 한정).
-> TASK-0269: 구 `conversation` group 을 **`conversation_own`(내 대화 권한) / `conversation_any`(전체 대화 권한)** 2 group 으로 분리. `conversation.*` 권한 중 `.any` 접미는 `conversation_any`, 그 외(create/ask/list.own/`*.own`/share.create + `conversation.attachment.*.own`)는 `conversation_own`. 권한 code·enforce 불변(group=UI 분류 메타). 각 group 내 종속은 "목록 조회"(`list.own`/`list.any`) 게이트 카테고리 — create/list.own/list.any 루트, 동작 권한은 해당 group 의 list 를 부모로(`.any→.own` 1:1 종속 폐기).
+> TASK-0269: 구 `conversation` group 을 **`conversation_own`(내 대화 권한) / `conversation_any`(전체 대화 권한)** 2 group 으로 분리. `conversation.*` 권한 중 `.any` 접미는 `conversation_any`, 그 외(create/ask/list.own/`*.own`/share.create + `conversation.attachment.*.own`)는 `conversation_own`. 권한 code·enforce 불변(group=UI 분류 메타). 각 group 내 종속은 "목록 조회"(`list.own`/`list.any`) 게이트 카테고리 — list.own/list.any 루트, 동작 권한(create 포함, perm-category-hier 2026-07-14)은 해당 group 의 list 를 부모로(`.any→.own` 1:1 종속 폐기).
+> **perm-category-hier (Critical §12.3, 사용자 승인 A안 2026-07-14, SECURITY.md §22)**: 관리 권한 section 을 관리 콘솔 좌측 nav 카테고리와 정합하는 **카테고리 '접근' 계층**으로 재구성. 신규 카테고리 접근 5종 `console.{account,product,audit,kb,system}.access`(= 각 카테고리 최상위 조회 게이트, `console.access` 하위)가 도입되고, 같은 카테고리의 모든 권한(탭 조회 → 추가/수정/삭제 → 승인/작동)은 그 접근 권한 하위로 재귀 종속된다. GroupName 재배치(code·enforce 불변): `console.usage.read`·`console.aiops.read`·`conversation.archive.read.any` → `audit`(감사 카테고리 4개 탭 조회 권한 통합), `insight.reset` → `product`(실행 표면=제품 상세). group 라벨 `kb`="지식베이스"(구 "지식베이스(KB) 검수"). 탭 노출은 `canSeeTab = 카테고리 접근(AND) && 탭 권한(OR)`(`admin.js` `ADMIN_TAB_CATEGORY_ACCESS`). 기존 배포는 `_backfill_console_category_access_v1` 1회 backfill 로 접근 무손실.
 
 #### 정합 규칙
 
-- 백엔드 group 키 (`console` / `account` / `role` / `conversation_own` / `conversation_any` / `product` / `attachment` / `audit` / `settings` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
+- 백엔드 group 키 (`console` / `account` / `role` / `quota` / `product` / `datasource` / `kb` / `conversation_own` / `conversation_any` / `attachment` / `audit` / `settings` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
+- **관리 권한 section 의 group 순서는 관리 콘솔 좌측 nav 카테고리 순서와 정합한다** (perm-category-hier): `console` → 계정 카테고리(`account`·`role`·`quota`) → 제품 카테고리(`product`·`datasource`) → `audit`(감사) → `kb`(지식베이스) → `settings`(시스템).
 - 작업 화면은 사용자가 그 section 안의 어느 group 권한도 보유하지 않으면 **section 자체를 미렌더**한다. 특히 일반 사용자의 "관리 권한" section 은 자동 hide.
 - 관리 콘솔은 사용자(관리자) 가 보유한 권한과 무관하게 **모든 section 을 항상 표시**한다. 관리자가 배치 가능한 권한 전체를 보여주는 grid 이기 때문이다.
 - 두 화면의 section 정의는 코드 상수 1 곳에서 한다: 작업 화면 = `app.js` 의 `WORK_SCREEN_PERMISSION_SECTIONS`, 관리 콘솔 = `admin.js` 의 `ADMIN_PERMISSION_SECTIONS`.
 - 새 group 키가 백엔드에 추가되면 위 두 상수에 명시적으로 매핑한다. 매핑이 빠지면 "기타" section 으로 fallback 한다 (자동, but 권장 아님).
-- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `conversation_own`="내 대화 권한", `conversation_any`="전체 대화 권한", `product`="제품", `attachment`="첨부", `audit`="감사", `settings`="시스템 설정", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
+- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `quota`="LLM 사용 한도", `datasource`="데이터소스", `kb`="지식베이스", `conversation_own`="내 대화 권한", `conversation_any`="전체 대화 권한", `product`="제품"(관리 콘솔은 "제품 관리"), `attachment`="첨부", `audit`="감사", `settings`="시스템 설정", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
 
 #### 동적 권한 (`product.access.<key>`, `system_prompt.*`)
 
@@ -312,12 +314,17 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 `PERMISSION_DEPENDENCIES` (child → 선행 parent) 에 따라 선행 권한이 충족돼야
 (역할 체크박스 = 체크 / 계정 override = "허용" 또는 "상속(허용)") 해당 종속 권한 row 를 노출한다. 규칙:
 
-- **마스터 게이트**: `console.access` (관리 콘솔 접근) 가 관리 권한 section 의 마스터
-  게이트. `account.read` / `role.read` / `audit.read.own` / `system_prompt.global.read`
-  의 부모 = `console.access` → 미체크 시 계정·역할·감사·시스템설정 그룹이 접힌다.
-- **운영 권한 (TASK-0269)**: 대화는 `conversation_own`(내 대화 권한) / `conversation_any`
-  (전체 대화 권한) 2 그룹으로 분리. 각 그룹의 "목록 조회"(`list.own`/`list.any`)가 게이트 —
-  create/list.own/list.any 루트, 동작 권한은 같은 그룹의 list 를 선행으로 둔다.
+- **마스터 게이트 → 카테고리 접근 (perm-category-hier, 2026-07-14)**: `console.access`
+  (관리 콘솔 접근) 가 관리 권한 section 의 마스터 게이트이고, 그 하위에 **카테고리 접근 5종**
+  (`console.{account,product,audit,kb,system}.access`) 이 온다. 각 카테고리의 탭 조회 base
+  (`account.read`/`role.read`/`quota.read`/`product.read`/`datasource.read`/`audit.read.own`/
+  `conversation.archive.read.any`/`console.usage.read`/`console.aiops.read`/`kb.ingest.manual`/
+  `metadata.graph.read`/`kb.*.curate`/`system_prompt.global.read`/`system.runtime.read`) 의 부모 =
+  소속 카테고리 접근 → 미체크 시 해당 카테고리 그룹이 접힌다(마스터 게이트 미체크 시 전체 접힘).
+- **운영 권한 (TASK-0269 + perm-category-hier)**: 대화는 `conversation_own`(내 대화 권한) /
+  `conversation_any`(전체 대화 권한) 2 그룹으로 분리. 각 그룹의 "목록 조회"(`list.own`/`list.any`)가
+  카테고리 접근(=조회) 게이트 — list.own/list.any 루트, 동작 권한(create 포함)은 같은 그룹의
+  list 를 선행으로 둔다.
 - **계정 override 게이트 = 허용/상속(허용) (TASK-0270)**: override 모드 게이트는 값이
   "허용"이거나 "상속"이면서 계정 역할이 그 권한을 부여(상속(허용))할 때 충족된다. "거부"는
   역할 부여와 무관하게 게이트 OFF(거부 우선). 상속(허용) 판정 baseline = 역할 `permission_codes`.

@@ -688,3 +688,40 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
    멤버 대화목록의 topic(익명 뷰는 §21.2 에서 genericize, 로그인 멤버 목록은 잔여). 전부 존재 여부만·콘텐츠 0.
 4. **PG 전용**: windowing 은 PG 런타임에서만 유효(MySQL-only 배포는 익명 뷰 snapshot 만).
 5. **외부 배포**: §7.2 IP allowlist / token 비밀번호가 windowed 공유에도 동일 적용(외부 노출 시).
+
+## 22. 관리 콘솔 권한 카테고리 계층 — 카테고리 '접근' 게이트 (perm-category-hier, TASK-20260714T181936-perm-category-hier)
+
+관리 콘솔 `계정 및 역할` 의 권한 체계를 좌측 nav 카테고리(계정/제품/감사/지식베이스/시스템) 정합
+계층으로 재구성 (Critical §12.3, 사용자 승인 A안 2026-07-14).
+
+### 22.1 권한 모델
+
+- **신규 카테고리 접근 권한 5종**: `console.account.access` / `console.product.access` /
+  `console.audit.access` / `console.kb.access` / `console.system.access` — 각 nav 카테고리의
+  **최상위 '접근'(=카테고리 조회 게이트)**. `console.access`(콘솔 마스터 게이트) 하위.
+- **계층 규약**: 같은 카테고리의 모든 권한은 그 카테고리의 접근 권한 하위로 종속 — 탭 조회
+  (예: 감사 → 감사 로그/보관 대화/LLM 사용량/AI 운영 현황 조회) → 추가/수정/삭제 →
+  승인(curate)/작동(insight.reset·audit.export/purge·graph.analyze) 순으로 탭 내부 구조를 따라
+  재귀 구성. UI 는 상위 권한 활성화 시 하위가 펼쳐진다(progressive disclosure, CONVENTIONS §10.6).
+- **표시 그룹(GroupName) 재배치 (code·enforcement 불변)**: `console.usage.read`·`console.aiops.read`
+  (console→audit), `conversation.archive.read.any`(conversation_any→audit — 유일 표면이 감사>보관
+  대화 탭), `insight.reset`(console→product — 실행 표면이 제품 상세).
+- **탭 노출 게이트**: `canSeeTab = 카테고리 접근(AND) && 탭 권한(OR)` (`admin.js`
+  `ADMIN_TAB_CATEGORY_ACCESS`). 설정 탭 게이트에 `system.runtime.read/write` 누락 보강.
+
+### 22.2 Enforcement 경계 (변경 없음 / 신규)
+
+- **백엔드 엔드포인트 enforcement 는 불변** — 기존 `console.access` + 세부 권한(require_permission)
+  게이트 유지. 카테고리 접근 권한은 (1) nav/탭 노출 게이트(프론트), (2) 권한 부여 계층 규율
+  (UI 종속·grant shape) 이다. 세부 권한 없이 접근 권한만으로 얻는 데이터 표면 = 0 (역함의 없음).
+- 신규 엔드포인트·익명 표면·데이터 노출 증가 0. DENY override 우선·잠금 회귀 방지 보존.
+
+### 22.3 접근 무손실 backfill (1회, 멱등)
+
+- `_backfill_console_category_access_v1`(web_context.py, `WebSchemaMigrations` 마커
+  `console-category-access-v1`) — 도입 시점 1회: ① `console.access`+카테고리 세부 권한 보유 role 에
+  접근 권한 부여 ② 세부 권한 ALLOW override 계정에 접근 ALLOW override ③ console.access ALLOW
+  override + 역할 세부 권한 조합 보존. graph-perm-split-v1 과 동일 규약(마커는 본문 실행 시에만 기록,
+  매 startup 재실행 금지 — 계층 게이트 무력화 방지).
+- seed: admin(=set(PERMISSION_CODES)) 자동 + 기존 admin row catchup 5종(lockout 방지), dba 는
+  `console.audit.access` 동반. operator/sales/pending 미부여(콘솔 진입권 자체가 없음 — least-privilege).

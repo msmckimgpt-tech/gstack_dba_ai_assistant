@@ -49,3 +49,12 @@ source_of_truth: true
 - Date: 2026-03-26
 - Decision: Web UI는 코드 소유권만 분리하고 런타임 이미지는 core feature에서 조립한다
 - Consequence: 기동 구조는 단순하지만 build coupling이 남는다
+
+## ADR-20260714T181936-perm-category-hier — 관리 콘솔 권한을 nav 카테고리 '접근' 게이트 계층으로 재구성 (A안)
+
+- **Status**: accepted (사용자 승인 2026-07-14, Critical §12.3)
+- **Context**: 권한 grid 가 console.access 단일 마스터 아래 그룹 base 평면 나열이었고, 감사 카테고리 4개 탭(감사 로그·보관 대화·LLM 사용량·AI 운영 현황)의 조회 권한이 3개 그룹(audit/conversation_any/console)에 산재. system.runtime.* 종속 미선언, insight.reset 그룹 오배치, 카테고리 단위 접근 게이트 부재.
+- **Decision**: ① 카테고리 최상위 '접근'(=조회 게이트) 권한 5종 신설 `console.{account,product,audit,kb,system}.access` — console.access 하위, 같은 카테고리의 모든 권한(탭 조회→추가/수정/삭제→승인/작동)이 그 하위로 탭 구조 따라 재귀 종속. ② 탭 노출 = 카테고리 접근(AND) && 탭 권한(OR). ③ 백엔드 엔드포인트 enforcement 는 불변(접근 권한=nav 노출+부여 계층 규율, 역함의 없음). ④ 기존 배포는 1회 멱등 backfill(`console-category-access-v1`)로 접근 무손실. ⑤ GroupName 재배치로 표시 그룹을 카테고리와 정합(코드 불변).
+- **Alternatives**: B안(신규 권한 없이 표시 계층만 재구성) — 위험 최소지만 "권한 단위의 카테고리 최상위 접근" 요건 미충족으로 기각. 엔드포인트에 카테고리 접근 AND enforcement 추가 — 수십 핸들러 변경·락아웃 리스크 대비 이득 없음(기존 console.access+세부 게이트 유지)으로 보류.
+- **Consequences**: 역할 편집 grid 가 nav 카테고리와 1:1 정합(상위 체크 시 하위 펼침). 신규 역할 구성 시 카테고리 접근을 먼저 부여해야 탭이 노출된다(의도된 계층 규율). backfill 이후 새로 세부 권한만 부여된 role 은 접근 권한을 명시 부여해야 한다(자동 함의 없음).
+- **Cross-ref**: SECURITY.md §22 · CONVENTIONS.md §10.6 · CHG-20260714T181936 · 선례 graph-perm-split(ADR 없음, TASK 20260713T1818)·metadata-perm-hier.
