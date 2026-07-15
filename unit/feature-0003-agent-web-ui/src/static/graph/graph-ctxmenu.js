@@ -459,6 +459,9 @@ async function _metaGraphSearch(q) {
   if (!_metaGraph.graph) return;
   _metaGraph.lastQuery = q;
   if (!q) {
+    // graph-search-detail: 검색어가 비면 상세 패널의 검색결과 뷰만 해제(사용자가 결과를 클릭해 노드
+    //   상세로 들어간 경우는 마커 부재라 보존). 노드 상세/클러스터 상세 렌더는 마커를 만들지 않는다.
+    if (document.getElementById("metaGraphSearchResults")) _metaGraphRenderDetailEmpty();
     // graph-navfilter(§54③): 검색어 클리어는 그래프 구성(펼침·배치·확장)을 보존한다 — 검색 잔재
     //   (pristine 카드·glow)만 걷어내고 제자리 rebuild. 초기 화면 복귀는 '그래프 초기화' 버튼 전용.
     //   §54③ 패널 MAJOR: 검색이 products 개요를 리셋하고 들어온 경우(base.mode=products)는 보존할
@@ -572,6 +575,8 @@ async function _metaGraphSearch(q) {
   if (seq !== _metaGraph._opSeq) return;   // await 사이 scope/roots 전환 — 이 검색의 tail(status) 폐기
   if (q !== _metaGraph.lastQuery) return;  // §54③ 패널 MINOR: 클리어는 _opSeq 무-bump — stale 검색 tail 은 lastQuery 로 폐기
   _metaGraphSyncAnalysisMarkers(scope);
+  // graph-search-detail: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성(매칭 근거·유사도 배지, 클릭 → 상세).
+  _metaGraphRenderSearchResults(data.nodes, q);
   // §54③: preserve 시 첫 매칭 렌더 노드로 부드러운 팬(fit 없이) — 하이라이트 가시화.
   if (preserve && matchNodes.size) {
     const first = Array.from(matchNodes).find((k) => _metaRenderedIdFor(k));
@@ -1258,6 +1263,48 @@ function _metaGraphRenderDetailEmpty() {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p><p class="admin-meta-detail-note">노드를 <strong>우클릭</strong>하면 상세 보기·관계 상세·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다.</p></div>';
+}
+
+// graph-search-detail: 검색어 갱신 시 상세 패널에 **검색 결과 리스트**를 구성한다(트리거 = _metaGraphSearch).
+//   백엔드 search_nodes 가 반환한 노드(이름/FQN + 컨텐츠 카테고리 + AI 능동 분석 매칭, score 내림차순)를
+//   매칭 근거 배지(match_via: 이름/카테고리/AI분석)·유사도와 함께 나열한다. 행 클릭 시 그 노드 상세로 이동.
+//   컨테이너 id=metaGraphSearchResults 는 검색 해제 시 "검색결과 뷰인지" 판별 마커(노드 상세는 보존).
+function _metaGraphRenderSearchResults(nodes, q) {
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
+  if (!el) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const list = (nodes || []).filter((n) => n && n.key);
+  if (!list.length) {
+    el.innerHTML = `<div id="metaGraphSearchResults" class="admin-detail-empty admin-meta-graph-searchres">`
+      + `<p><strong>'${esc(q)}'</strong> — 검색 결과가 없습니다.</p>`
+      + `<p class="admin-meta-detail-note">이름·FQN·컨텐츠 카테고리·AI 능동 분석 내용 어디에서도 찾지 못했습니다. 검색어를 바꿔보세요.</p></div>`;
+    return;
+  }
+  // match_via(백엔드 부여) → 사람이 읽는 근거 배지. 다중 매칭이면 배지 여럿.
+  const VIA = { name: ["이름", "amgr-via-name"], category: ["카테고리", "amgr-via-category"], analysis: ["AI 분석", "amgr-via-analysis"] };
+  const rows = list.map((n) => {
+    const via = Array.isArray(n.match_via) ? n.match_via : [];
+    const badges = via.map((v) => VIA[v] ? `<span class="amgr-via ${VIA[v][1]}">${VIA[v][0]}</span>` : "").join("");
+    const scorePct = (typeof n.score === "number" && n.score > 0)
+      ? ` <span class="admin-meta-graph-muted amgr-searchscore" title="검색어 유사도(pg_trgm)">유사도 ${Math.round(n.score * 100)}%</span>` : "";
+    const cluster = (via.indexOf("category") >= 0 && n.cluster_label)
+      ? `<span class="amgr-searchmeta">카테고리: ${esc(n.cluster_label)}</span>` : "";
+    const color = _META_GRAPH_COLOR[n.label] || "#5c6773";
+    const labelKo = _META_LABEL_KO[n.label] || n.label || "";
+    return `<li class="amgr-row amgr-searchres" data-goto="${esc(n.key)}" role="button" tabindex="0" title="${esc(n.fqn || n.name || n.key)} — 클릭하면 이 노드 상세를 봅니다">`
+      + `<div class="amgr-main"><span class="admin-meta-graph-badge" style="background:${color}">${esc(labelKo)}</span> <code>${esc(n.name || n.fqn || n.key)}</code>${scorePct}</div>`
+      + ((badges || cluster) ? `<div class="amgr-searchsub">${badges}${cluster}</div>` : "")
+      + `</li>`;
+  }).join("");
+  el.innerHTML = `<div id="metaGraphSearchResults" class="admin-meta-graph-card admin-meta-graph-searchres">`
+    + `<div class="admin-meta-graph-card-head"><strong>🔎 검색 결과</strong> <span class="admin-meta-graph-relbadge" title="매칭된 노드 수(유사도 내림차순)">${list.length}건</span></div>`
+    + `<p class="admin-meta-detail-note">'${esc(q)}' — 이름·FQN·<strong>컨텐츠 카테고리</strong>·<strong>AI 능동 분석</strong> 매칭. 행을 클릭하면 해당 노드 상세로 이동합니다.</p>`
+    + `<ul class="amgr-list amgr-searchlist">${rows}</ul></div>`;
+  el.querySelectorAll(".amgr-searchres[data-goto]").forEach((r) => {
+    const go = () => { const k = r.getAttribute("data-goto"); if (k) _metaGraphShowDetail(k); };
+    r.addEventListener("click", go);
+    r.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } });
+  });
 }
 
 // feature-0016: 관계 엣지의 신뢰 상태 배지 — FK 는 무표시, 추정(candidate)/신뢰(trusted) 구분.

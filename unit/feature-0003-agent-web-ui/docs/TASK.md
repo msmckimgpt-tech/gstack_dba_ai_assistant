@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260716T013714-graph-search-detail-panel — 그래프 뷰: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성 (Minor §12.3 — feature-0003 프론트 단독, additive·비파괴; 그래프 도메인 정본 feature-0016)
+- 출처: `/_template:entry` 후속 turn — "글로우가 나타나는 것을 확인했습니다. 추가로, 검색어가 입력되었을 경우엔 상세 패널 내 검색 결과를 구성하도록 동작시켜주세요. 트리거는 '검색어 갱신 시' 입니다." (2026-07-16, 사용자 명시). 직전 cycle(feature-0002 graph-search-content) 로 검색이 컨텐츠 카테고리·AI 능동 분석까지 매칭하게 된 것의 프론트 후속.
+- **배경**: 그래프 검색은 캔버스에 앰버 글로우 + 스키마 카드 badge 로만 결과를 표기했다. 사용자는 검색 시 상세 패널에서 매칭 노드 목록을 바로 훑고 싶어 한다. 백엔드 `search_nodes` 가 이미 노드별 `match_via`(name/category/analysis)·`cluster_label`·`score`(유사도 내림차순)를 반환하므로 프론트 렌더만 추가하면 된다.
+- **동작**: `_metaGraphSearch(q)` 가 검색어 갱신(300ms 디바운스)마다 백엔드 응답 노드를 상세 패널(`#metadataGraphDetailBody`)에 **검색 결과 리스트**로 렌더한다. 각 행 = label 배지 + 이름 + 유사도% + **매칭 근거 배지**(이름/카테고리/AI 분석) + 카테고리 라벨. 행 클릭 = `_metaGraphShowDetail(key)` 로 그 노드 상세 이동. 검색어 클리어 시 검색결과 뷰(마커 `#metaGraphSearchResults`)만 해제(사용자가 결과 클릭해 노드 상세로 들어간 경우는 보존).
+- **병렬 세션**: `feature-0016-graph-detail-scroll` 이 같은 `graph-ctxmenu.js` 의 상세 패널 스크롤/history 함수를 편집 중 — 본 변경은 `_metaGraphSearch`·신규 `_metaGraphRenderSearchResults`·`_metaGraphRenderDetailEmpty` 뒤 삽입으로 함수 영역 직교(merge 시 rebase, 프로젝트 병렬 그래프 통상 패턴).
+
+### §1.1 Implementation Plan
+- `src/static/graph/graph-ctxmenu.js`: 신규 `_metaGraphRenderSearchResults(nodes, q)`(esc·match_via 배지·score·cluster_label·클릭→showDetail·키보드 접근) + `_metaGraphSearch` 2훅(비어있지 않은 q → 렌더 / 클리어 시 마커 있으면 `_metaGraphRenderDetailEmpty`). 렌더는 `if (q !== _metaGraph.lastQuery) return` stale 가드 뒤.
+- `src/static/graph/graph.css`: `.amgr-searchres`/`.amgr-via-{name,category,analysis}`/`.amgr-searchlist` 등(카테고리 배지=검색 글로우와 동일 앰버 계열). `.amgr-row[data-goto]` cursor/hover.
+- 캐시버스터: `?v=dev` 는 빌드(inject_asset_stamp.py)가 content-hash 주입 — 내용 변경만으로 자동 무효화(수동 bump 불요).
+
+### §1.2 Completion Checklist
+- [x] `_metaGraphRenderSearchResults` 신설(match_via 배지·유사도·cluster_label·클릭→상세·role/tabindex/Enter·Space)
+- [x] `_metaGraphSearch` 훅: 검색어 갱신 시 렌더(stale 가드 뒤) + 클리어 시 마커 기반 검색결과 뷰 해제(노드 상세 보존)
+- [x] graph.css 검색결과 스타일(기존 amgr-*/card 토큰 재사용, 배지 색 일관) + node --check 모듈 구문 통과 + CSS 중괄호 밸런스
+- [x] §18.8 적대 리뷰(frontend correctness+UX — XSS/esc·리스너 누수·stale·클리어 복원·병렬 hunk·접근성)
+- [ ] 배포 후 PB-0008 실 Windows 브라우저 시각검증(검색어 입력→상세 패널 결과 리스트·배지·클릭 이동, visual_verification_scope: always)
+
 ## TASK-20260715T135725-graph-ctxmenu-content-category — 그래프 우클릭 3대상 정합: 컨텐츠 카테고리(sim-group) 전용 메뉴 신설 + band-wins 철회 (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. graph-ctxmenu-band-priority 정정)
 
 **사용자 정정 (band-wins 배포 후)**: "제가 '제품 카테고리 밴드'를 '각 내부 노드를 컨텐츠 단위로 묶은 클러스터(이하 컨텐츠 카테고리)'로 착각하여 잘못 요청했습니다. 기존 우클릭 대상의 구조와 작동이 정합하게 구성해주세요 — 제품 카테고리 밴드:카테고리 / 스키마 클러스터:스키마 / (추가) 컨텐츠 카테고리:컨텐츠 카테고리."
