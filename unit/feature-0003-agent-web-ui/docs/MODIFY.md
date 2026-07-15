@@ -505,3 +505,14 @@ source_of_truth: true
 - 비변경: 제품 카테고리 패널(스키마 목록)·캔버스 build·우클릭 메뉴·드래그·상태·백엔드/RBAC/스키마/엔드포인트 0. Table-only 스키마 회귀 0(문구만 확장). cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: `node --check`(module) PASS · §18.8 적대 리뷰 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260715T2119 · REV/TEST-20260715T211911-graph-cluster-detail-routines · test-runs.d/20260715T2119-graph-cluster-detail-routines.md · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
+
+## CHG-20260715T215241-graph-cluster-detail-cap (스키마 클러스터 상세: 목록 행 캡이 함수·프로시저 컨텐츠 카테고리를 통째 숨기던 문제 수정, Minor §12.3)
+- Date: 2026-07-15. feature-0003 web/UI 프론트 단독(1파일). cluster-detail-routines(CHG-20260715T211911) POST-DEPLOY PB-0008 후속. 그래프 도메인 정본 feature-0016.
+- 트리거: cluster-detail-routines 배포 후 라이브 검증에서, gunzgame 클러스터 상세(409항목=테이블 115+함수·프로시저 294)의 집계·개수는 정확하나 목록에 렌더된 컨텐츠 카테고리가 앞쪽 테이블 be: 클러스터 10개(80행)뿐 — 함수·프로시저 컨텐츠 카테고리가 한 개도 안 보임을 적발.
+- 근본원인: `_metaGraphRenderClusterDetail` sim-group 렌더가 전역 80행 캡 도달 시 이후 그룹 통째 skip(`if (emitted >= 80) return`). sim-group 순서가 be: 의미 클러스터(테이블) 우선이라 대형 스키마에서 앞쪽 테이블 그룹이 80행 소진 → 뒤쪽 routine 컨텐츠 카테고리(헤딩 포함) 전체 렌더 누락. 집계 포함(cluster-detail-routines)만으로는 시각적 조회 불가.
+- Changes:
+  - `src/static/graph/graph-ctxmenu.js` `_metaGraphRenderClusterDetail` 캡 규약 개정: (1) `if (emitted >= 80) return` 제거 → **모든 컨텐츠 카테고리 헤딩 항상 방출**(카테고리 가시·조회 가능). (2) 멤버 행 캡을 그룹당 PER_GROUP=25 + 전역 ROW_CAP=500 로 재구성(`shown = min(sg.n, 25, max(0, 500-emitted))`) — 한 그룹 예산 독식 방지 + 패널 길이 바운드(aside overflow-y:auto). 절단은 그룹별 `(shown/n)`. (3) flat 폴백 `slice(0,80)`→`slice(0,500)`.
+- 회귀: 소형 스키마(≤80·그룹 ≤25) 동일. 그룹 멤버 >25 인 그룹만 25 표시 + `(25/n)`(예 gunzgame "캐릭터 정보 및 랭킹" 32→25) — routine 카테고리 전면 가시화 위한 수용 트레이드오프.
+- 비변경: cluster-detail-routines 집계/membership/hiddenKinds/렌더 분기·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: `node --check` PASS · §18.8 [SKIPPED] 적대 자가검토(display-cap 상수·헤딩 방출, 경계·주입·RBAC 무관) · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
+- Cross-ref: TASK 20260715T2152 · REV/TEST-20260715T215241-graph-cluster-detail-cap · test-runs.d/20260715T2152-graph-cluster-detail-cap.md · 선행 CHG-20260715T211911-graph-cluster-detail-routines · ANCHOR 0003 무충돌.
