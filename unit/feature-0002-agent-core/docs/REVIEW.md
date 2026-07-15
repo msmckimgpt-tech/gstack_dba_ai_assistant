@@ -320,3 +320,16 @@ source_of_truth: true
 - 검증: `test_conversation_answer_no_edge_alias.py` 15 PASS(옛계약 갱신 + G2b/G6/G7/G8) · `test_reasoning_effort.py` 재통과 · feature-0002 전체 신규 실패 0. `make test`(agent 컨테이너)는 verify-completion 단계에서 정본 실행.
 - Human Approval: PLAN-APPROVED(사용자 "남은 deferred 축 완수까지 진행", 2026-07-15). Major(대화 outbound 라우팅) → PR/deploy confirm(deploy_scope: included).
 - Cross-ref: CHG-20260715T050000-conv-alias-leak-guard(MODIFY) · CHG-20260714T210000(같은 축 ④ friendly-message 표면 계층) · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260715T060000-attach-inline-honesty [SUBAGENT:adversarial-backend/correctness/prompt] — text-inline 회귀테스트 + 첨부 cap-note 정직화
+- 대상: `agent_core.py _build_attachment_context_section` cap-omit 노트 + `test_attach_inline_honesty.py`. 적대 서브에이전트 1렌즈(backend/correctness/prompt, 5축).
+- **CONFIRMED-DEFECT ×3 (전건 수정)**: 초안 정직-노트가 새로운 부정확을 도입 —
+  - **(1) 거짓 회복 경로**: "ask about it by file name so it is prioritized for inlining" — 파일명 우선순위 메커니즘 **부재**(선택은 `_prepare_text_inline_attachments` 의 `ORDER BY Id DESC LIMIT 20`, 전달 `attachment_ids` 순서는 `WHERE IN` 뿐이라 SQL ORDER BY 가 덮음). → 모델이 파일명 지정 재요청해도 같은 top-20 재선택=broken loop. **수정**: 진짜 회복 = **재첨부**(높은 Id → 최신 → 인라인).
+  - **(2) "size cap" 오기**: 크기 상한(64KB) 초과 파일은 `_conv_store.py` 에서 **truncate 되어 여전히 인라인**(`cap_note/truncated`)됨 → 부재 원인이 될 수 없음. 부재는 **count cap 초과 또는 판독실패**만. **수정**: "size cap" 삭제.
+  - **(3) len==0 진단 역전**: 0개 인라인은 인프라/판독 실패 가능성 最高인데 초안이 "NOT necessarily a system or MinIO error" + cap 귀속으로 **올바른 진단에서 멀어지게** 함. **수정**: len==0 분기에서 cap 귀속·downplay 제거("the cause is not confirmed", "Do NOT assert a specific cause", 재첨부/재시도).
+  - **정정 반영**: `len(map)`을 cap·"N most recent" 로 단정하지 않음("only the most recent … (currently N loaded)"). 회귀 테스트도 갱신(재첨부·no size-cap·no MinIO 단정).
+- **REFUTED (패널)**: ②주입안전(노트는 code-authored 상수·int 만 보간, 파일 body 는 여전히 datamark 별도 구획, 신규 sentinel-bypass 면 0) ③기존 테스트 회귀 없음(옛 노트 문자열 참조는 본 신규 파일만, version/injection/idor 테스트는 무관 필드 assert) ④신규 테스트 비-tautological(MinIO 노트 제거는 옛 코드에서 fail).
+- OVERALL: BLOCKING 0 / MAJOR 0 / CONFIRMED-DEFECT 3(전건 수정) / MINOR 0.
+- 검증: `test_attach_inline_honesty.py` 4 PASS(정정 반영) · feature-0002 전체 신규 실패 0. `make test` 컨테이너는 verify-completion 단계 실행.
+- Human Approval: PLAN-APPROVED(사용자 "남은 deferred 축 완수까지 진행", 2026-07-15). Minor(프롬프트 note + 회귀 테스트) → PR/deploy(deploy_scope: included).
+- Cross-ref: CHG-20260715T060000-attach-inline-honesty(MODIFY) · Cycle C(②-frontend app.js 라벨 대칭, 후속) · ANCHOR 0002 §1~§3 무충돌.
