@@ -456,7 +456,14 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .amg-help-backdrop { position: absolute; inset: 0; background: rgba(15, 23, 42, .34); backdrop-filter: blur(1.5px); }
 .amg-help-card {
   position: relative; z-index: 1;
-  width: min(460px, 100%); max-height: 100%; overflow-y: auto;
+  /* 반응형 크기: 고정 폭이 아니라 캔버스(=브라우저) 크기에 유동한다. clamp 로 320~520px 사이에서
+     컨테이너 폭의 90% 를 따라가고, min(...,100%) 로 좁은 화면에선 컨테이너를 넘지 않는다.
+     세로는 max-height:100%(캔버스 높이) + overflow-y:auto 로 짧은 뷰포트에서도 잘리지 않고 내부 스크롤. */
+  width: min(clamp(320px, 90%, 520px), 100%); max-height: 100%; overflow-y: auto;
+  /* 한국어 줄바꿈: word-break 상속으로 카드 내 모든 안내 텍스트에 적용. CJK 는 기본(word-break:normal)이
+     글자 사이 아무 데서나 끊겨 "…탐색하세"/"요." 처럼 음절이 다음 줄로 떨어진다. keep-all 로 어절(공백)
+     단위로만 끊고, overflow-wrap:anywhere 로 폭 초과 토큰(긴 URL 등 예외)만 강제 분할한다. */
+  word-break: keep-all; overflow-wrap: anywhere;
   padding: 18px 20px 16px;
   border: 1px solid var(--border); border-radius: 12px;
   background: var(--surface, #fff); box-shadow: 0 10px 40px rgba(15, 23, 42, .28);
