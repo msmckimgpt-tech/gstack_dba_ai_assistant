@@ -806,7 +806,32 @@ def _build_attachment_context_section(
                 is_new = attachment_id in new_ids_set
                 text_content_entries.append((attachment_id, filename, content, is_new))
             else:
-                meta_text += " (content unavailable — check MinIO connectivity)"
+                # TASK-attach-inline-honesty (②): text content 는 최근 N개(개수 상한)+파일당 크기 상한만
+                # 인라인된다(_prepare_text_inline_attachments, _TEXT_INLINE_COUNT_CAP=20). 상한 초과·일시
+                # 판독불가로 map 에 없을 때 기존 문구 "check MinIO connectivity" 는 원인을 **오귀속**해 모델이
+                # 인프라(MinIO) 장애를 fabrication 하게 했다(관측 대화 20260615061233·FRICTION_LEDGER
+                # text-inline count cap). 원인을 단정하지 않고 정직하게 안내하며, 실행 가능한 회복 경로를 제시.
+                # 적대 패널(REV-20260715T060000) 3정정: (a) 크기 상한 파일은 truncate 되어 여전히 인라인
+                # 되므로 부재 원인이 아님(count cap 또는 판독실패만) → "size cap" 삭제. (b) len(map)은 cap 도
+                # "N most recent" 도 아님(판독실패로 top-20 에 구멍) → 사실 단정 회피. (c) 회복은 "파일명 지정"
+                # 이 아니라 **재첨부**(높은 Id → 최신 → 인라인) — 선택은 ORDER BY Id DESC LIMIT 이라 파일명
+                # 우선순위 메커니즘 부재. (d) len==0 은 인프라 실패 가능성 最高 → cap 귀속·downplay 금지.
+                _inlined_n = len(text_inline_map)
+                if _inlined_n == 0:
+                    meta_text += (
+                        " (content not inlined this turn — no text file content was loaded. This may be a "
+                        "transient read issue, or the file may be empty; the cause is not confirmed. Do NOT "
+                        "assert a specific cause. If you need this file's content, ask the user to re-attach "
+                        "it or try again.)"
+                    )
+                else:
+                    meta_text += (
+                        f" (content not inlined — only the most recent text files are inlined per turn "
+                        f"(currently {_inlined_n} loaded); this file may be beyond that recent set, or a "
+                        "transient read issue. Do NOT claim a specific MinIO/system failure. If you need "
+                        "this file's content, ask the user to re-attach it so it becomes the most recent "
+                        "and is inlined.)"
+                    )
 
         if meta_obj.get("degraded_reason"):
             meta_text += f" [DEGRADED: {meta_obj['degraded_reason']}]"

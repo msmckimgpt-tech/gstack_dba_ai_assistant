@@ -1384,4 +1384,12 @@ TASK-0015 (plan-review):
 - [x] 검증: `tests/test_conversation_answer_no_edge_alias.py` 확장 — 기존 `edge→edge` identity 기대(옛 버그 인코딩)를 새 계약으로 갱신 + G2b(누출 alias→chat 파라메트릭)·G6(해소 대상 litellm 등록명 invariant)·G7(`_call_llm` 아웃바운드 chat)·G8(패널 회귀: 예산 outbound 기준·max_tokens>5000). 파일 15 PASS. feature-0002+0003 회귀: 신규 실패 0(test_share_redaction_invariant 7건은 base main 에서도 동일 실패=pre-existing, 내 diff 미참조).
 - [x] §13.2.2 F2: shared/ 단일-mutator = 본 cycle(ai/claude/conv-alias-leak-guard). 편집 `shared/model_catalog.py`(1함수)+`src/agent_core.py`(_call_llm budget 산정), 병렬 shared mutator 없음(REGISTRY 확인).
 - [x] §18.8 적대 패널(security+backend/routing 통합 6축) → **CONFIRMED-DEFECT#1**(초기 fix 가 outbound 만 해소하고 max_tokens 를 원본 기준 산정→ -chat 고정 thinking budget 5000 대비 2048<5000 2차 400) **수정 완료**(`_call_llm` budget_model 도입 + G8 회귀) + 5축 REFUTED + 2 PLAUSIBLE-RISK 수용. → REV-20260715T050000-conv-alias-leak-guard.
-- [ ] verify-completion(feature-0002) → commit/push(auto-sync) → PR·머지·배포(deploy_scope: included) → 배포검증.
+- [x] verify-completion(feature-0002) PASS → PR #807 병합(main 91280bb2) → 배포(4서비스 91280bb2·soak 통과) → 배포본 grep 실증. **Cycle A 완료.**
+## 20260715T060000-attach-inline-honesty — text-inline 회귀테스트 + 첨부 cap-note 정직화 (deferred ①+②-backend, Minor)
+> 계기: 첨부-답변 정합성 실데이터 감사의 deferred 축 ①(text-inline 회귀테스트 부재)+②-backend(cap 초과 text 파일 노트가 MinIO 장애로 오귀속). ② 서브에이전트 진단: share-window 는 라이브-ask 첨부 경로에 없음(비보안) → 마찰은 프론트 라벨 비대칭(Cycle C)+backend cap-note. 본 cycle 은 ① + ②-backend.
+- [x] ① text-inline 회귀테스트 신설: `tests/test_attach_inline_honesty.py` — text kind 첨부 content 가 sandbox 아닌 **인라인**으로 주입됨을 `_build_attachment_context_section` 출력으로 검증(과거 2026-05 다수 대화의 "sandbox ingest 대기" 오라우팅 회귀 방지). `_load_attachment_inline_texts` monkeypatch.
+- [x] ②-backend cap-note 정직화: `src/agent_core.py` `_build_attachment_context_section` — 인라인 map 에 없는 text 파일 노트 `(content unavailable — check MinIO connectivity)` → 정직 노트. **원인 미단정**(cap 초과 or 일시 판독불가) + 회복경로(재첨부) + `len>0`(cap 귀속) vs `len==0`(판독실패 가능·cap 귀속 안 함) 분기. 기존 문구가 모델의 MinIO 장애 fabrication 유발(관측 대화 20260615061233·FRICTION_LEDGER text-inline count cap).
+- [x] 검증: 신규 4 PASS(text 인라인·content_len·len==0 note·len>0 count). 다른 테스트의 옛 노트 문자열 참조 0(grep). feature-0002 전체 회귀 신규 실패 0.
+- [x] §18.8 적대 패널(프롬프트 note code change) → **CONFIRMED-DEFECT ×3 수정**(거짓 회복경로 파일명→재첨부·"size cap" 오기 삭제·len==0 진단역전 교정) + 3축 REFUTED. → REV-20260715T060000-attach-inline-honesty.
+- [ ] verify-completion → commit/push(auto-sync) → PR·머지·배포(deploy_scope: included) → 배포검증.
+- [ ] ②-frontend(app.js staged-flush 라벨 대칭)은 Cycle C 로 분리(웹 자산 변경 → visual verification 필요).
