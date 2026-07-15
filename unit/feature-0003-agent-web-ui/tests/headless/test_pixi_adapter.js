@@ -252,39 +252,33 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(pick(2000, 2000) === null, "T21 밴드 밖 빈 공간 → null(canvas)");
 }
 
-// ── T22 _pickContext band-wins (우클릭 전용): 밴드 위 클러스터 우클릭 → 카테고리 밴드 / 테이블·헤더는 자기 / 밴드 밖 클러스터는 스키마 ──
-//   사용자 결정(2026-07-15): 밴드가 멤버 클러스터 박스를 시각적으로 채우므로 우클릭은 밴드로 귀속. 좌클릭/드래그(_pick)는 불변.
+// ── T22 컨텐츠 카테고리(sim-group) 우클릭 = 자기 노드 + band-wins 철회 회귀 ──
+//   band-wins 철회(2026-07-15, 사용자 정정 "제품 카테고리 밴드↔컨텐츠 카테고리 착각"): 우클릭은 이제 _pick(=좌클릭·드래그와 동일 hit).
+//   ①sim-group 박스/헤더(GB/GH)는 tier1 실요소라 밴드로 흡수되지 않고 자기 노드로 반환 → graph-core 가 **컨텐츠 카테고리 메뉴**로 라우팅.
+//   ②밴드 위 스키마 클러스터는 더 이상 카테고리로 승격되지 않는다(스키마 메뉴 복원). ③_pickContext 는 제거됨.
 {
   const nodes = [
-    { id: "CAT:prod", type: "rect", data: { kind: "cat-bg", cat: "prod" }, style: { x: 300, y: 300, size: [600, 400], zIndex: -1 } },  // 밴드 x0..600 y100..500
-    { id: "SC:s1", type: "rect", combo: "s1", data: { kind: "schema-card" }, style: { x: 200, y: 200, size: [150, 60], zIndex: 4 } },   // 밴드 내 카드 x125..275 y170..230
-    { id: "t1", type: "rect", combo: "s2", data: { kind: "table" }, style: { x: 450, y: 250, size: [150, 24], zIndex: 4 } },            // 밴드 내 테이블 x375..525 y238..262
-    { id: "CATH:prod", type: "rect", data: { kind: "cat-hd", cat: "prod" }, style: { x: 100, y: 120, size: [180, 22], zIndex: 5 } },     // 밴드 헤더칩 x10..190 y109..131
-    { id: "SC:s9", type: "rect", combo: "s9", data: { kind: "schema-card" }, style: { x: 900, y: 300, size: [150, 60], zIndex: 4 } },   // 밴드 밖 standalone 카드 x825..975 y270..330
+    { id: "CAT:prod", type: "rect", data: { kind: "cat-bg", cat: "prod" }, style: { x: 300, y: 300, size: [600, 400], zIndex: -1 } },   // 밴드 x0..600 y100..500
+    { id: "SC:s1", type: "rect", combo: "s1", data: { kind: "schema-card" }, style: { x: 200, y: 200, size: [150, 60], zIndex: 4 } },    // 밴드 내 스키마 카드 x125..275 y170..230
+    { id: "GB:grp1", type: "rect", combo: "s2", data: { kind: "group-bg", group: "grp1", schema: "s2" }, style: { x: 450, y: 400, size: [160, 80], zIndex: 1 } },   // 밴드 내 sim-group 박스 x370..530 y360..440
+    { id: "GH:grp1", type: "rect", combo: "s2", data: { kind: "group-hd", group: "grp1", schema: "s2" }, style: { x: 400, y: 370, size: [80, 18], zIndex: 5 } },     // sim-group 헤더 x360..440 y361..379
   ];
-  const combos = [{ id: "s2", style: { padding: [30, 16, 14, 16] } }];   // s2 bbox ≈ x359..541 y208..276 (밴드 내)
+  const combos = [{ id: "s2", style: { padding: [30, 16, 14, 16] } }];
   const hg = Pure.buildHitGrid(nodes, 128);
-  const ctx = { _hitGrid: hg, _built: { nodes, combos }, _isCatBg: Adapter.prototype._isCatBg, _pick: Adapter.prototype._pick };
-  const pc = (x, y) => Adapter.prototype._pickContext.call(ctx, x, y);
+  const ctx = { _hitGrid: hg, _built: { nodes, combos }, _isCatBg: Adapter.prototype._isCatBg };
+  const pick = (x, y) => Adapter.prototype._pick.call(ctx, x, y);
 
-  // 밴드 내 스키마 카드 우클릭 → 카테고리 밴드로 승격
-  const rCard = pc(200, 200);
-  ok(rCard && rCard.id === "CAT:prod" && !rCard.__combo, "T22 밴드 내 스키마 카드 우클릭 → 카테고리 밴드");
-  // 밴드 내 스키마 클러스터 빈배경(combo) 우클릭 → 카테고리 밴드로 승격
-  const rCombo = pc(365, 270);
-  ok(rCombo && rCombo.id === "CAT:prod" && !rCombo.__combo, "T22 밴드 내 combo 빈배경 우클릭 → 카테고리 밴드");
-  // 밴드 내 개별 테이블 노드 우클릭 → 그 테이블(밴드로 흡수 안 함)
-  const rTbl = pc(450, 250);
-  ok(rTbl && rTbl.id === "t1", "T22 밴드 내 테이블 노드 → 그 노드(밴드 흡수 안 함)");
-  // 밴드 헤더칩 우클릭 → 카테고리(그대로)
-  const rHd = pc(100, 120);
-  ok(rHd && rHd.id === "CATH:prod", "T22 밴드 헤더칩 → 카테고리 헤더(그대로)");
-  // 밴드 고유 여백 우클릭 → 카테고리
-  const rTint = pc(50, 450);
-  ok(rTint && rTint.id === "CAT:prod", "T22 밴드 고유 여백 → 카테고리");
-  // 밴드 밖 standalone 스키마 카드 우클릭 → 스키마(승격 안 함)
-  const rStand = pc(900, 300);
-  ok(rStand && rStand.id === "SC:s9", "T22 밴드 밖 standalone 카드 → 스키마(승격 안 함)");
+  // ① 밴드 위 sim-group 박스(GB) 우클릭 → 그 GB 노드(밴드로 흡수 안 됨) → 컨텐츠 카테고리 메뉴
+  const pGB = pick(450, 400);
+  ok(pGB && pGB.id === "GB:grp1" && !pGB.__combo, "T22 밴드 위 sim-group 박스 우클릭 → GB 노드(컨텐츠 카테고리), 밴드 흡수 안 함");
+  // ① sim-group 헤더(GH, z=5) 우클릭 → GH 노드
+  const pGH = pick(400, 370);
+  ok(pGH && pGH.id === "GH:grp1", "T22 sim-group 헤더 우클릭 → GH 노드(컨텐츠 카테고리)");
+  // ② band-wins 철회: 밴드 위 스키마 카드 우클릭 → SC(스키마 메뉴), 카테고리로 승격 안 됨
+  const pSC = pick(200, 200);
+  ok(pSC && pSC.id === "SC:s1" && !pSC.__combo, "T22 밴드 위 스키마 카드 우클릭 → SC(스키마 메뉴), band-wins 승격 제거");
+  // ③ _pickContext 제거됨(회귀 방지)
+  ok(typeof Adapter.prototype._pickContext === "undefined", "T22 _pickContext 제거됨(band-wins 철회)");
 }
 
 console.log("──────");

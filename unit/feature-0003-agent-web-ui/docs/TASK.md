@@ -8,7 +8,33 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260715T114608-graph-ctxmenu-band-priority — 제품 카테고리 밴드 우클릭이 그 안 스키마 클러스터로 새는 문제: 우클릭 band-wins (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. graph-ctxmenu-hittest 후속)
+## TASK-20260715T135725-graph-ctxmenu-content-category — 그래프 우클릭 3대상 정합: 컨텐츠 카테고리(sim-group) 전용 메뉴 신설 + band-wins 철회 (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. graph-ctxmenu-band-priority 정정)
+
+**사용자 정정 (band-wins 배포 후)**: "제가 '제품 카테고리 밴드'를 '각 내부 노드를 컨텐츠 단위로 묶은 클러스터(이하 컨텐츠 카테고리)'로 착각하여 잘못 요청했습니다. 기존 우클릭 대상의 구조와 작동이 정합하게 구성해주세요 — 제품 카테고리 밴드:카테고리 / 스키마 클러스터:스키마 / (추가) 컨텐츠 카테고리:컨텐츠 카테고리."
+
+**진단**: band-priority(TASK-20260715T114608)의 전제("밴드 위 클러스터=밴드 귀속")가 사용자 착각에서 나온 것. 그래프에는 3층 클러스터 구조가 있음 — ①제품 카테고리 밴드(cat-bg, 제품 단위, graph-category §55) ②스키마 클러스터(combo, DB 단위) ③컨텐츠 카테고리(sim-group GB/GH/GX, 스키마 내부 유사 테이블 그룹, graph-simgroups 가 내부적으로 "content-cluster"·"컨텐츠 신호"로 명명). 사용자가 ①과 ③을 혼동. 정합 해법: 세 대상이 각자 자기 메뉴.
+
+**사용자 결정 (AskUserQuestion, 2026-07-15)**: (1) 컨텐츠 카테고리 = sim-group(GB/GH/GX) **확인**. (2) band-wins **철회** — 스키마 클러스터는 어디서나 스키마 메뉴로 복원.
+
+**수정 (5 파일, frontend-only)**:
+- `graph-renderer-pixi.js` — band-wins 철회: `_pickContext()` 제거, `up()` button===2 는 `d.hit`(=`_pick` WYSIWYG) 사용. `_pick` 3-tier(hittest fix)는 불변.
+- `graph-ctxmenu.js` — 신규 `_metaGraphCtxForContentCategory(gk,x,y)` + export: 배지 '컨텐츠 카테고리'(#8a3f7a)+label·테이블수 / 📋 소속 스키마 상세 / 접기·펼치기 (묶음) / 묶음명 복사.
+- `graph-core.js` — GB/GH/GX dispatch → `_metaGraphCtxForContentCategory(gk)`; `_metaGraph.groupInfo`(groupKey→{label,n,schema}) 신설·emission 전량 적재; import.
+- `graph-state.js` — `groupInfo: new Map()` 초기화.
+- `tests/headless/test_pixi_adapter.js` — T22 를 컨텐츠 카테고리 회귀로 교체.
+
+**비변경/보존**: 좌클릭(GB/GH=클러스터 상세, GX=접기 토글)·드래그(sim-group 리지드 이동 group-interact §50)·제품 카테고리 밴드/스키마 클러스터 메뉴·개별 테이블·컬럼 노드·dispatch 타 분기·백엔드/RBAC/스키마/엔드포인트 0.
+
+**완료 체크리스트**:
+- [x] 진단 — 3층 클러스터(밴드/스키마/컨텐츠) 식별, 사용자 ①↔③ 혼동 확인, AskUserQuestion 2문항 확정(sim-group 확인 + band-wins 철회)
+- [x] band-wins 철회(`_pickContext` 제거, 우클릭=`_pick`) + `_metaGraphCtxForContentCategory` 신설 + GB/GH/GX 재라우팅 + groupInfo 적재
+- [x] `node --check`(4 파일) PASS + T22 교체(컨텐츠 카테고리 라우팅·band-wins 철회·`_pickContext` 부재) ALL PASS 66/0
+- [ ] §18.8 적대 패널 → REV-20260715T135725-graph-ctxmenu-content-category [SUBAGENT]
+- [ ] feature 문서(TASK/MODIFY/REVIEW/REPORT/FUNCTION) + test-runs.d fragment
+- [ ] verify-completion PASS → commit → PR → 머지
+- [ ] web 재배포(deploy_scope: included) → **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브**: sim-group 우클릭→컨텐츠 카테고리 / 스키마 클러스터 우클릭→스키마(band-wins 복원) / 밴드 여백→카테고리
+
+## TASK-20260715T114608-graph-ctxmenu-band-priority — 제품 카테고리 밴드 우클릭이 그 안 스키마 클러스터로 새는 문제: 우클릭 band-wins (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. graph-ctxmenu-hittest 후속) **[철회됨 → TASK-20260715T135725-graph-ctxmenu-content-category: 사용자가 밴드↔컨텐츠 카테고리 착각을 정정]**
 
 **사용자 보고 (hittest fix 배포 후)**: "제품 카테고리 밴드에 대한 우클릭이, 여전히 스키마 클러스터에 대한 우클릭으로 작동한다."
 

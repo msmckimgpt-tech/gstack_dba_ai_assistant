@@ -10,6 +10,12 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260715T135725-graph-ctxmenu-content-category [SUBAGENT:adversarial-content-category-review] — 그래프 우클릭 3대상 정합: 컨텐츠 카테고리(sim-group) 메뉴 신설 + band-wins 철회 (TASK-20260715T135725-graph-ctxmenu-content-category, Major §12.3 frontend-only) — SHIP
+- Panel(§18.8): general-purpose 서브에이전트 적대 리뷰 — 8가설 전수 공격(band-wins 철회 dead-ref · GX 라우팅 · groupInfo miss · separator · 접기 토글 · 소속 스키마 앵커 · badge 계약 · 테스트 자명통과) + 66/66 헤드리스 + ESM 문법 + 원본 계약 교차검증. **BLOCKING 0, 8가설 전수 REJECTED → SHIP**.
+- 가설별(전부 REJECTED): H1 band-wins 철회 무결(pointerdown `down.hit=_pick`, button===2 가 `hit` emit + `_pickEdge`/canvas 폴백 보존, `_pickContext` 런타임 참조 0) · H2 GX 라우팅=사용자 명시 의도("GB/GH/GX 전용") · H3 `groupInfo.set(gm.key)` 와 GB/GH/GX push 가 **동일 forEach** → 우클릭 가능 그룹은 groupInfo 에 반드시 존재(label 빈문자 불가) · H4 separator `\u0001` 이스케이프·리터럴 0x01 0 · H5 접기 토글=GX 좌클릭 정본과 동일(full-key `groupCollapsed` 토글+`_metaG6Apply(false)`) · H6 소속 스키마 앵커=GB/GH 좌클릭(core:2345)과 **동일 추출** → `_metaGraphShowClusterDetailById` 계약 파리티 · H7 badge 필드 형태 카테고리/스키마 메뉴와 일치 · H8 T22 가 tier 로직 실행(GH z5>GB z1)+band-wins witness(pSC→SC:s1·`_pickContext` undefined), 자명통과 아님.
+- NIT 처리(4건): ① [pixi:431] button===2 주석 GX 누락 → **수정**(주석에 GB/GH/GX 명시). ② [test:263-281] T22 가 `up()` dispatch 분기를 직접 미구동 + `_pickContext` 이름 결합(다른 이름 승격 재도입 미포착) → **수용**(우클릭이 이제 `_pick` 이라 T21/T22 의 `_pick` 계약이 곧 우클릭 계약; 이벤트 시뮬레이션은 헤드리스 범위 밖 · POST-DEPLOY PB-0008 라이브가 실 dispatch 커버). ③ [ctxmenu:307] groupInfo miss 폴백 label=원시 fam id → **수용**(H3 근거로 miss 도달 불가, 순수 방어·미관). ④ [core:2144] GX 우클릭이 접기 항목 포함 content-category 메뉴 = GX 기능 중복 → **수용**(사용자 명시 "GB/GH/GX 전용", 3요소 일관성 향상, 무해).
+- Cross-ref: TASK/CHG-20260715T135725-graph-ctxmenu-content-category · **철회 대상 REV-20260715T114608-graph-ctxmenu-band-priority** · 유지 선행 REV-20260715T102901-graph-ctxmenu-hittest(WYSIWYG `_pick` 3-tier).
+
 ## REV-20260715T120000-graph-ctxmenu-band-priority-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 검증 기록 (TASK-20260715T114608-graph-ctxmenu-band-priority, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 test-runs.d fragment POST-DEPLOY 섹션(이연→실측 PASS)+TASK 체크리스트뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260715T114608-graph-ctxmenu-band-priority [SUBAGENT] (SHIP)가 정본.
 - 라이브 실측(win-browser Chrome 150, 6a950a20): 밴드 위 클러스터 박스 우클릭→카테고리 메뉴 / 펼친 테이블 노드→그 테이블 / 좌클릭→클러스터 펼치기 정상. 사용자 결정 "밴드 우선" 라이브 충족. 증거 스크린샷 확보.
