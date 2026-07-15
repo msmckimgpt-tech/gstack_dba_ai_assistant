@@ -534,10 +534,22 @@ source_of_truth: true
 - 비변경: 집계/membership/hiddenKinds/sim-group/헤딩/XSS·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: `node --check` PASS · §18.8 적대 리뷰(위임 누적·hover 의미·클릭 동등성) · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260715T2237 · REV/TEST-20260715T223744-graph-cluster-detail-fulllist · test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md · 선행 CHG-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.
-
 ## CHG-20260715T231304-graph-cluster-detail-fulllist-postverify (컨텐츠 카테고리 전체 출력 + 이벤트 위임 POST-DEPLOY 라이브 실증 기록, doc-only)
 - Date: 2026-07-15. cluster-detail-fulllist(CHG-20260715T223744, PR #830 main 41cf76c5) 배포 후 win-browser PB-0008 라이브 실증. 코드 변경 0(문서 전용).
 - 실증(실 Windows Chrome 150 relay, 배포 41cf76c5, 로그인 세션): 그래프 뷰 > mssql-dk-dev(DK온라인) > `dk_data_release_main`(123 테이블 + 300 함수·프로시저 = 423항목) 상세 → (1) 컨텐츠 카테고리 그룹 **66개 전량 렌더 · 423행 · (0/N) 0 · 절단 0 · routine-only 43그룹**("NPC 콘텐츠 41" 등), aside scrollH 12423, (2) 행 자식(`<code>`) 합성 click → 이벤트 위임 승격 → `singleinfo` 노드 상세 조회, (3) pageerror 0. 서빙 자산 baked(`ROW_CAP = 5000`·`_ctUl` grep=9). evidence: relmain_full.png.
 - 주(정직): 사용자 스크린샷의 정확한 >500 스키마(gemstone/binto32/merchant — DK QA/production 추정)는 좌표 특정 못 함. 단 검증한 423/66그룹 스키마 전량 렌더 + ROW_CAP=5000 결정론(적대 리뷰 확인)으로 해당 >500 스키마도 (0/N) 없이 전체 표시됨.
 - Changes: `docs/test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
 - Cross-ref: 원천 CHG-20260715T223744-graph-cluster-detail-fulllist · ANCHOR 0003 무충돌.
+## CHG-20260715T231656-graph-edge-drag-perf (그래프 드래그 관계선 재그림 per-frame 부하 최적화 — 인접 인덱스 + in-place Graphics 재사용 + rAF 코얼레싱)
+- Date: 2026-07-15. 계기: graph-edge-follow-drag(CHG-20260715T181939) 배포 후 사용자 실측 "관계선 추종은 정상이나 드래그 프레임당 재그림 부하 심함" → 후속 최적화.
+- 병목(적대 리뷰 F1 확증): `_refreshIncidentEdges` 프레임마다 (a) `_built.edges` 전량 O(E) 스캔 (b) incident 엣지 `destroy({children})`+`new Graphics()` 재생성(GPU 지오메트리 재할당+GC). 허브/대형 스키마 드래그 시 프레임당 수백~수천 Graphics 폐기·재생성 + `_moveElement`↔`translateElementTo` 이중 호출.
+- Changes(feature-0003, frontend-only 1파일 + 테스트):
+  - `src/static/graph/graph-renderer-pixi.js`:
+    - ① `_edgeIndex`(node→incident edge[]) `draw()` 구성(순수 `PixiAdapterPure.buildEdgeIndex` 추출)·`setData` 무효화 + `_incidentEdges(moved)` dedup 반환(O(incident), 폴백 O(E) filter). + **P3(적대 리뷰)**: 끝점 해소를 `_nodeById`(draw 구성·setData 무효화) 기반 `_resolvePos` O(1) 로 — `getElementPosition` O(N) `nodes.find` 제거(O(incident×N)→O(N+incident)).
+    - ② `_paintEdge(g,e,a,b)`(clear+라벨자식 destroy 후 재-path) 신설, `_drawEdge`=`_paintEdge(new Graphics())` 위임(신규·full draw byte-동일). `_refreshIncidentEdges` 는 기존 엣지(`old.parent===world && typeof old.clear==='function'`) in-place 재사용, 신규만 `_drawEdge`+addChild.
+    - ③ `_scheduleEdgeRefresh(movedIds)`(rAF 이동 id 누적→프레임당 1회 refresh+render, 비-rAF 동기 폴백) + `_flushEdgeRefresh`(dragend 즉시). `_moveElement`(양분기)·`translateElementTo` 가 `_refreshIncidentEdges`+`_render` 직접호출 대신 `_scheduleEdgeRefresh`. `_emitDrag` dragend flush, `destroy` rAF cancel. 노드 좌표·hit-grid 는 동기 유지.
+  - `tests/headless/test_pixi_adapter.js`: T24 10종 + **T25 13종(적대 리뷰 C1~C4 실-경로 하드닝: 실 `_paintEdge` clear+stale라벨 destroy+재-path·순수 `buildEdgeIndex` 자기루프/null·재사용불가 else 분기·미해소 skip·`_resolvePos` O(1)/폴백)** + T23 회귀. ALL PASS 96/0.
+- 정확성 불변: cross-category 추종(graph-edge-follow-drag OR 판정)·full draw() diff·_objSig 재사용 계약·zIndex 페인트 순서 유지. 라벨 엣지도 재사용 시 자식 destroy 후 재구성(stale 무).
+- 비변경: 팬/줌·상태·미니맵·hover·우클릭·클릭·백엔드/RBAC/스키마 0.
+- 검증: `node --check`(ESM) PASS · 헤드리스 96/0 · §18.8 적대 리뷰(결함 없음+지적 4건 반영) · POST-DEPLOY PB-0008 라이브(대형 스키마 드래그 프레임률·추종 정확성, 잔여).
+- Cross-ref: TASK 20260715T2316 · REV/TEST-20260715T231656-graph-edge-drag-perf · test-runs.d/20260715T2316-graph-edge-drag-perf.md · 선행 CHG-20260715T181939-graph-edge-follow-drag · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.

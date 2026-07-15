@@ -5852,3 +5852,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 검증: [x] `node --check`(module) PASS · [x] §18.8 적대 리뷰([SUBAGENT] 6축 결함 0 — 리스너 누적/hover 의미/클릭 동등성/전체출력/회귀/성능 전부 PASS; NIT 반영: ROW_CAP 공통 상수 hoist, REV-20260715T223744) · [x] verify-completion PASS → PR #830 머지(main 41cf76c5) → web 재배포(deploy_scope: included, soak PASS) → [x] **POST-DEPLOY PB-0008 라이브 PASS**(DK온라인 dk_data_release_main 123테이블+300함수·프로시저=423항목 상세: 컨텐츠 카테고리 66그룹 전량·423행·(0/N) 0·routine-only 43그룹·스크롤 12423px; 이벤트 위임 클릭 자식→행 승격 조회; pageerror 0. ROW_CAP=5000 결정론적 전체 렌더 — 사용자의 >500 스키마도 동일 커버).
 - 후속 옵션(정직): 매우 큰 스키마의 긴 평면 목록 UX 개선은 컨텐츠 카테고리 접기/펼치기(collapsible group)로 별도 개선 가능 — 본 cycle 은 사용자 요청 "전체 출력" 직답.
 - worktree `ai/claude/feature-0003-graph-cluster-detail-fulllist`(base main fb6410b4). REV/CHG/TEST-20260715T223744-graph-cluster-detail-fulllist.
+
+## 20260715T2316-graph-edge-drag-perf — 그래프 드래그 관계선 재그림 per-frame 부하 최적화 (Minor §12.3 — feature-0003 web/UI 프론트 단독, PixiJS 렌더러 hot-path. graph-edge-follow-drag 후속. 그래프 도메인 정본 feature-0016. /_template:entry arg-given dispatch)
+
+- 사용자 보고: graph-edge-follow-drag 로 관계선 추종은 정상 확인. 다만 예고한 대로 **드래그 프레임당 재그림 부하가 심함**을 실측 확인 → 후속 최적화 요청.
+- 병목(적대 리뷰 F1 확증): `_refreshIncidentEdges` 가 프레임마다 (a) `this._built.edges` 전량 O(E) 스캔, (b) incident 엣지를 `old.destroy({children})` 후 `new Graphics()` 재생성(GPU 지오메트리 재할당 + GC churn). 허브/대형 스키마 드래그 시 프레임당 수백~수천 Graphics 폐기·재생성. 추가로 `_moveElement` + graph-core 종속이동 `translateElementTo` 가 한 프레임에 이중 호출(각 O(E) 스캔·재그림).
+- 수정(3 lever, frontend-only 1파일 + 테스트):
+  - [x] **① 인접 인덱스** `_edgeIndex`(node id→incident edge[]) — `draw()` 에서 토폴로지 기반 구성, `setData` 무효화. `_incidentEdges(moved)` 가 이동 노드의 인접 엣지만 dedup 반환 = O(incident)(인덱스 부재 시 O(E) filter 폴백).
+  - [x] **② in-place Graphics 재사용** `_paintEdge(g,e,a,b)` — 기존 엣지 Graphics 를 `clear()`+라벨자식 destroy 후 재-path(destroy/new Graphics·GC 회피). `_drawEdge`=`_paintEdge(new Graphics())` 위임(신규·full draw 종전 동작 byte-동일). 재사용 가드 = `old.parent===world && typeof old.clear==='function'`(node/combo Container 오재사용 방지).
+  - [x] **③ rAF 코얼레싱** `_scheduleEdgeRefresh(movedIds)` — 이동 id 누적 후 프레임당 1회 `_refreshIncidentEdges`+`_render`. `_moveElement`/`translateElementTo` 이중 호출 자연 병합. 노드 좌표·hit-grid 는 동기 갱신(getElementPosition·클릭 정확도 보존). 비-rAF(node/CDP) 즉시 동기 폴백. dragend `_flushEdgeRefresh` 즉시 반영, destroy rAF cancel.
+- 비변경: cross-category 추종 정확성(graph-edge-follow-drag)·full draw() diff·팬/줌·상태·미니맵·hover·우클릭·백엔드/RBAC/스키마 0.
+- 검증: [x] `node --check`(ESM) PASS · [x] 헤드리스 T24 10종 + T25 13종(적대 리뷰 C1~C4 실-경로 + P3) + T23 회귀 ALL PASS 96/0 · [x] §18.8 적대 리뷰(결함 없음, 지적 P3/C2/C1/C3/C4 반영) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008(대형 스키마 드래그 프레임률·추종 정확성 유지).
+- worktree `ai/claude/feature-0003-graph-edge-drag-perf`(base main 41cf76c5). REV/CHG/TEST-20260715T231656-graph-edge-drag-perf.

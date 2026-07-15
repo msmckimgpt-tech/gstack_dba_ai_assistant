@@ -474,8 +474,23 @@ source_of_truth: true
 - 적대 자가검토: "위임 click 이 재렌더 후에도 stale 참조?" → 클릭은 구 ul 에서 발화·처리 완료 후 재렌더, 신 ul 은 새 위임 획득 — 무해. "5000 초과 실스키마?" → 단일 스키마 테이블+루틴 5000 초과는 비현실(gunzgame 409); 초과 시 헤딩 항상 방출로 discoverability 유지.
 - 검증: `node --check`(module) PASS · [SUBAGENT] 적대 리뷰 결함 0 · POST-DEPLOY PB-0008 라이브(500+ 항목 스키마 전 컨텐츠 카테고리 전체 렌더·hover/클릭, 잔여).
 - Cross-ref: TASK 20260715T2237 · CHG/TEST-20260715T223744-graph-cluster-detail-fulllist · test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md · 선행 REV-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.
-
 ## REV-20260715T231304-graph-cluster-detail-fulllist-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 컨텐츠 카테고리 전체 출력 + 이벤트 위임 POST-DEPLOY 실증 기록 (CHG-20260715T231304-graph-cluster-detail-fulllist-postverify)
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T223744 은 REV-20260715T223744([SUBAGENT] 6축 결함 0)로 검증됨. 본 cycle 은 배포 결과 기록만.
 - 배포본 실증(win-browser, 배포 41cf76c5): DK온라인 dk_data_release_main(423항목=123테이블+300함수·프로시저) 상세에서 컨텐츠 카테고리 66그룹 전량·423행·(0/N) 0·routine-only 43그룹·스크롤 12423px; 행 자식 click 위임 승격 조회; pageerror 0. ROW_CAP=5000 결정론적 전체 렌더로 사용자 >500 스키마도 동일 커버.
 - Cross-ref: CHG-20260715T231304-graph-cluster-detail-fulllist-postverify · 원천 REV-20260715T223744-graph-cluster-detail-fulllist · ANCHOR 0003 무충돌.
+## REV-20260715T231656-graph-edge-drag-perf [SUBAGENT:pixi-drag-perf-adversarial + 적대 자가검토] — 그래프 드래그 관계선 재그림 per-frame 부하 최적화 (20260715T2316-graph-edge-drag-perf, Minor §12.3)
+- 병목: `_refreshIncidentEdges` 프레임당 O(E) 스캔 + incident 엣지 destroy/new Graphics 재생성(GPU 재할당·GC) + 이중 호출. 3 lever(인접 인덱스·in-place 재사용·rAF 코얼레싱)로 공략.
+- 적대 자가검토(refute):
+  ① "in-place 재사용이 라벨 stale 남기나?" → `_paintEdge` 가 `g.clear()`(geometry) + `g.children.length` 있으면 `removeChildren()`+각 `destroy()`(라벨/bg) 후 재구성. 라벨 없는 대다수 엣지는 children 0 → 오버헤드 0. stale 무.
+  ② "재사용 가드가 node/combo 를 오재사용?" → `typeof old.clear==='function'` — Graphics 만 clear 보유(Container 노드/combo 는 없음) + `old.parent===this.world`. edge id↔node id 충돌 시에도 clear 유무로 분기(안전 폴백=destroy+draw). T24 실증.
+  ③ "rAF 지연으로 최종 위치 stale?" → dragend `_emitDrag` 가 `_flushEdgeRefresh`(cancel rAF + 즉시 refresh+render)로 최종 위치 동기 반영. destroy 는 `_pendingRaf` cancel. pointerup 후 잔여 rAF 없음.
+  ④ "노드 동기·엣지 rAF = 1프레임 괴리?" → 드래그 중 ≤16ms 엣지 지연은 비가시(minimap 뷰포트는 동기). 정확성 무영향. translateElementTo 는 graph-core `_metaNodeDrag`(1849) 단일 호출(드래그 전용)이라 async 안전.
+  ⑤ "_edgeIndex stale?" → 토폴로지(source/target) 의존 → 드래그(좌표만 변화) 동안 유효. setData 가 null 무효화 → 다음 draw 재구성. 부재 시 O(E) 폴백(정확성 유지·성능만 degrade). 미해소 끝점 엣지도 인덱스 포함하되 `_refreshIncidentEdges` 의 `if(!a||!b)continue` 가 skip.
+  ⑥ "full draw() 회귀?" → `_drawEdge`=`_paintEdge(new Graphics())` — clear/자식정리 no-op(신규) → 종전 byte-동일. draw diff·_objSig·zIndex·sortableChildren 페인트 순서 불변.
+- [SUBAGENT:pixi-drag-perf-adversarial] VERDICT — **레버 3종 CONFIRMED correctness 회귀 없음**(8축 refute: node/edge 1프레임 desync·dragend 최종위치·잔여 rAF·_pendingMoved 오염·_edgeIndex stale·guard 오재사용·byte-동일 draw·비-rAF 폴백 전부 clear). `_built.edges` in-place 변이 없음(grep 확증)·setData→draw 항상 후속(graph-core:1108→1116)·translateElementTo 드래그 단일 호출 확인. **반영한 후속 개선(적대 리뷰 지적)**:
+  - **P3(perf 실질, 반영)**: `_refreshIncidentEdges` 가 `getElementPosition`(O(N) `nodes.find`)으로 끝점 해소해 실제 O(incident×N)이던 것 → `_nodeById`(draw 구성·setData 무효화) 기반 `_resolvePos` O(1) 로 교체 = O(N+incident). 허브 드래그 이득 실화.
+  - **C2(테스트 가능, 반영)**: `draw()` 인라인 인덱스 구성을 순수 `PixiAdapterPure.buildEdgeIndex(edges)` 로 추출 → 자기루프 1회·null/빈·미해소 끝점 포함 계약을 T25 로 잠금.
+  - **C1/C3/C4(실-경로 테스트, 반영)**: T24 가 `_paintEdge`/인덱스를 stub 했던 공백을 T25 로 보강 — 실 `_paintEdge`(clear+stale 라벨자식 destroy+재-path·이중렌더 아님)·재사용불가 else 분기(clear 없는 Container→destroy+_drawEdge)·미해소 끝점 skip 실검증.
+  - **P1(검증 계약, 조치)**: rAF 지연으로 mid-drag(pointerup 전) 스냅샷이 stale → PB-0008 은 **pointerup 후**(dragend 동기 flush) 또는 프레임 대기 후 캡처. P2(destroy this.world 미null, 도달불가 defense-gap)·N1(edge-id↔node-id 충돌, 기존 동작·본 변경 미도입)은 non-blocking 기록.
+- 검증: `node --check`(ESM) PASS · 헤드리스 T24 10종 + T25 13종 + T23 회귀 ALL PASS **96/0** · [SUBAGENT] 적대 리뷰 결함 없음 + 지적 4건 반영 · POST-DEPLOY PB-0008 라이브(대형 스키마 드래그 프레임률·cross-category 추종 정확성 유지, 잔여).
+- Cross-ref: TASK 20260715T2316 · CHG/TEST-20260715T231656-graph-edge-drag-perf · 선행 REV-20260715T181939-graph-edge-follow-drag(추종 정확성 정본) · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
