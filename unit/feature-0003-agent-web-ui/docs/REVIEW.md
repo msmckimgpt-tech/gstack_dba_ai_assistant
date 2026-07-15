@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260715T110000-graph-ctxmenu-hittest-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 검증 기록 (TASK-20260715T102901-graph-ctxmenu-hittest, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 test-runs.d fragment POST-DEPLOY 섹션(이연→실측 PASS)+TASK 체크리스트뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260715T102901-graph-ctxmenu-hittest [SUBAGENT] (SHIP)가 정본.
+- 라이브 실측 요지(win-browser Chrome 150, 배포 6ec5da4b→8098aee1): 제품-매핑 데이터소스 스키마그래프 CAT 밴드 2개에서 스키마 클러스터→"스키마" 메뉴 / 밴드 헤더·tint 여백→"카테고리" 메뉴 실증 — 세 사용자 증상(스키마↔카테고리 뒤바뀜) 전부 해소. WYSIWYG. 증거 스크린샷 확보.
+- Cross-ref: REV-20260715T102901-graph-ctxmenu-hittest(기능 정본) · CHG-20260715T110000-graph-ctxmenu-hittest-postverify · test-runs.d POST-DEPLOY Run.
+
 ## REV-20260715T102901-graph-ctxmenu-hittest [SUBAGENT:adversarial-hittest-review] — 그래프 우클릭 메뉴 오라우팅 hit-test 층서 수정 (TASK-20260715T102901-graph-ctxmenu-hittest, Major §12.3 frontend-only) — SHIP
 - Panel(§18.8): general-purpose 서브에이전트 적대 리뷰(코드 교차검증 + 라이브 테스트 62/62). 7가설 전수 판정.
 - **핵심 소견**: 이 수정의 본질 = **hit-test 우선순위를 시각 z-페인트 순서와 정확히 정합**(WYSIWYG). `_METZ`(CAT_BG:-1 < COMBO:0 < GROUP_BG:1)에서 combo 는 cat-bg 와 group-bg 사이 유일 요소 → 3-tier(실노드 > combo > cat-bg)가 순수 z-order 를 정확 재현. 수정 전 node-first 는 비-node 인 combo 를 무시해 정합이 깨져 있었음.

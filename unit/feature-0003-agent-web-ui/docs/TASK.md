@@ -36,8 +36,8 @@ source_of_truth: true
 - [x] `node --check` PASS + T21 회귀 6종 추가 (ALL PASS 62/0)
 - [x] §18.8 적대 패널 → **SHIP**(BLOCKING 0, 7가설 전수 REJECTED; NIT=주석 over-claim 정정 완료) REV-20260715T102901-graph-ctxmenu-hittest [SUBAGENT]
 - [x] feature 문서(TASK/MODIFY/REVIEW/REPORT) + test-runs.d fragment
-- [ ] verify-completion PASS → commit → PR·머지
-- [ ] web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 실 Windows 브라우저 라이브: 3종 클릭(스키마 클러스터→클러스터 메뉴 / 카테고리 밴드 여백·헤더→카테고리 메뉴 / 카드·테이블→해당 요소) 실증
+- [x] verify-completion PASS → commit c1a64398 → PR #808 머지(main 6ec5da4b; docs 충돌 병렬 사이클과 병합 해소)
+- [x] web 재배포(deploy_scope: included, web-a/b 6ec5da4b→8098aee1 soak PASS) → **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 PASS**(win-browser Chrome 150, 제품-매핑 데이터소스 mysql-kr-an2-auth 스키마그래프의 CAT 밴드 2개): 스키마 클러스터(dbAuth·dbTest) 우클릭→**스키마 메뉴** / 카테고리 밴드 헤더(킹스레이드·미분류)→**카테고리 메뉴** / 밴드 tint 여백 3지점→**카테고리 메뉴** — 세 증상 전부 해소, WYSIWYG. 증거 scratchpad/evidence-cluster-schema-menu.png. (postverify: CHG/REV-20260715T110000-graph-ctxmenu-hittest-postverify)
 
 ## TASK-20260714T180125-graph-ctxmenu-category — 그래프 뷰 '제품 카테고리 밴드' 우클릭을 전용 메뉴로 정합 (Minor §12.3 — feature-0003 프론트 단독, additive. /_template:entry arg-given dispatch)
 

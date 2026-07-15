@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260715T110000-graph-ctxmenu-hittest-postverify (TASK-20260715T102901-graph-ctxmenu-hittest POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-15. 코드/자산 무변경 — test-runs.d fragment 의 POST-DEPLOY 섹션을 '이연' 계획→실측 PASS 로 갱신 + TASK 체크리스트 완료. 기능 배포는 PR #808→main 6ec5da4b(이후 병렬 8098aee1 재배포, fix 포함)로 선행 완료.
+- 라이브 실측 요지(win-browser 실 Windows Chrome/150, https://localhost/admin): 제품-매핑 데이터소스(mysql-kr-an2-auth, "킹스레이드 - 국내 QA") 스키마그래프에 CAT 밴드 2개 렌더 → **스키마 클러스터(dbAuth·dbTest) 우클릭 = "스키마" 메뉴**(이전 결함 해소) · **밴드 헤더·tint 여백 우클릭 = "카테고리" 메뉴** · 세 증상 전부 해소(WYSIWYG). 증거 scratchpad/evidence-cluster-schema-menu.png.
+- Cross-ref: CHG-20260715T102901-graph-ctxmenu-hittest(기능) · REV-20260715T110000-graph-ctxmenu-hittest-postverify · test-runs.d/20260715T102901-graph-ctxmenu-hittest.md POST-DEPLOY Run.
+
 ## CHG-20260715T102901-graph-ctxmenu-hittest (TASK-20260715T102901-graph-ctxmenu-hittest — 그래프 우클릭 메뉴 오라우팅 hit-test 층서 수정, Major §12.3 frontend-only)
 - Date: 2026-07-15. 그래프 뷰 우클릭 메뉴가 대상과 뒤바뀌는 결함(스키마 클러스터→카테고리 메뉴 / 제품 카테고리 밴드→스키마 메뉴) 수정. 근본: `_pick` 이 node 우선 반환→CAT 밴드 배경(node, `data.kind:"cat-bg"`, z=-1, 멤버 클러스터 전체 덮음)이 스키마 클러스터 빈배경(combo, 폴백 대상) 우클릭을 가로챔.
 - `static/graph/graph-renderer-pixi.js`:
