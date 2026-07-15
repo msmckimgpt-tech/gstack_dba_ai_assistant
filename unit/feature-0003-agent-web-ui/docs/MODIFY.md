@@ -437,3 +437,10 @@ source_of_truth: true
 - 검증: 라이브 win-browser 주입 검증(카드 12px→166px). POST-DEPLOY PB-0008 재검증 예정.
 - Files: `unit/feature-0003-agent-web-ui/src/static/styles.css`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260715T113208-enum-bundle-flex-fix.md`.
 - Cross-ref: 원천 CHG-20260715T105337-enum-review-bundle · ANCHOR 0003 무충돌.
+
+## CHG-20260715T120000-enum-review-bundle-postverify (ENUM 검토 큐 묶음 승인 체크리스트 + flex-fix POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-07-15. CHG-20260715T105337-enum-review-bundle(PR #811, f6cb0b14) + CHG-20260715T113208-enum-bundle-flex-fix(PR #817, a3c69103) 배포 후 라이브 실증. 코드 변경 0(문서 전용).
+- Changes: `docs/test-runs.d/20260715T105337-enum-review-bundle.md` + `docs/test-runs.d/20260715T113208-enum-bundle-flex-fix.md` POST-DEPLOY append + `docs/TASK.md` 두 cycle post-deploy 박스 close.
+- 실증(win-browser eval, bootstrap_admin, 주입 없이): (bundle) `/admin` ENUM 검토 큐 12후보 → 8묶음 그룹핑·전체 승인 마스터·일부 해제 indeterminate/힌트·등록 count/disabled 로직 PASS. (flex-fix) 재배포 자산(a3c69103·styles.css 62c4b695387d) 카드 높이 [166…298] 자연 높이·flex-shrink=0·목록 스크롤·sliver 해소·pageError 0.
+- Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/test-runs.d/{20260715T105337-enum-review-bundle,20260715T113208-enum-bundle-flex-fix}.md`.
+- Cross-ref: 원천 CHG-20260715T105337-enum-review-bundle · CHG-20260715T113208-enum-bundle-flex-fix · ANCHOR 0003 무충돌.

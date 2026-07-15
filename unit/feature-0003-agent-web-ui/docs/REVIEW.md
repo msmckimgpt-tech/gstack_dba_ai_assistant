@@ -397,3 +397,8 @@ source_of_truth: true
 - 적대 자가검토(refute): ① "flex-shrink:0 이 목록 스크롤을 깨나?" → `#metadataList overflow-y:auto` 가 컨테이너 스크롤 제공, 카드는 자연 높이(표준 패턴). ② "다건일 때 넘침?" → 컨테이너 스크롤이 흡수(카드 압축 대신). ③ "다른 flex 자식 회귀?" → `.admin-meta-bundle` 한정 선택자, 타 규칙 무변경.
 - 검증: POST-DEPLOY PB-0008 라이브(재배포 자산 카드 정상 높이·묶음·체크리스트·등록·pageerror 0).
 - Cross-ref: CHG/TASK-20260715T113208-enum-bundle-flex-fix · 원천 REV-20260715T105337-enum-review-bundle · ANCHOR 0003 무충돌.
+
+## REV-20260715T120000-enum-review-bundle-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — ENUM 검토 큐 묶음 승인 체크리스트 + flex-fix POST-DEPLOY 실증 기록 (CHG-20260715T120000-enum-review-bundle-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T105337(백엔드/보안 [SUBAGENT] 적대 패널 완료) + CHG-20260715T113208(CSS [SKIPPED] 적대 자가검토 완료)은 각 REV 로 검증됨. 본 cycle 은 배포 결과를 원장에 기록만.
+- 배포본 실증(win-browser eval, bootstrap_admin /api/auth/login 200, 주입 없이): (묶음/체크리스트) 12후보→8묶음·전체 승인 마스터·일부 해제 indeterminate/힌트·등록 count/disabled 라이브 PASS. (flex-fix 재배포 a3c69103) 카드 높이 [166,166,166,205,166,166,298,166]·flex-shrink=0·목록 스크롤(scrollH 1770>clientH 373)·sliver 해소·pageError 0. 스크린샷 육안 정상.
+- Cross-ref: CHG-20260715T120000-enum-review-bundle-postverify · 원천 REV-20260715T105337-enum-review-bundle · REV-20260715T113208-enum-bundle-flex-fix · ANCHOR 0003 무충돌.
