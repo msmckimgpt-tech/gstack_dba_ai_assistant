@@ -695,6 +695,29 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_table_coverage",
+            "description": (
+                "첨부된 SQL 스크립트(초기화/정리/마이그레이션 등)가 실제 DB 스키마의 어떤 테이블을 "
+                "참조/미참조하는지 **대소문자를 무시하고 결정론적으로(코드로)** 대조한다. "
+                "'이 초기화 쿼리가 모든 테이블을 다루나', '누락된 테이블이 있나' 처럼 첨부 스크립트의 "
+                "테이블 커버리지를 실 DB 와 비교할 때 목록을 눈으로 비교하지 말고 이 도구를 사용한다. "
+                "특히 식별자 대소문자가 다를 때(예: 첨부 `LoginEventLog` ↔ DB `logineventlog`, "
+                "lower_case_table_names=1) 발생하는 '누락' 오판을 방지한다. "
+                "반환된 '미참조' 목록이 곧 스크립트가 다루지 않는 테이블이다 — 그 결과를 다시 눈으로 뒤집지 말 것."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "schema_name": {"type": "string", "description": "커버리지를 확인할 스키마(데이터베이스) 이름"},
+                    "attachment_id": {"type": "integer", "description": "(선택) 특정 첨부만 대조. 미지정 시 첨부된 모든 텍스트/SQL 파일 대상."},
+                },
+                "required": ["schema_name"],
+            },
+        },
+    },
 ]
 
 # 전체 도구 정의 (list_schemas, describe_schema, explain_query 등 추가 도구 포함)
@@ -1046,6 +1069,153 @@ def _tool_describe_schema(conn, args: dict) -> str:
             parts.append(f"'{_label}'에 테이블이 없거나 스키마/DB 가 존재하지 않습니다.")
             if _mssql_active():
                 parts.append(_mssql_crossdb_hint(exclude_db=target_db))
+    return "\n".join(parts)
+
+
+# '조작(operate-on)' 동사 뒤의 (선택적 schema.)table 식별자 추출용. REV-20260714T233000 적대패널 M1:
+# '참조'를 "이름이 아무데나 등장"으로 잡으면 컬럼·함수·키워드 동명(status/log/user 등)을 오집계해
+# 실제 누락을 은폐한다 → 스크립트가 그 테이블을 **실제 조작**(TRUNCATE/DELETE/DROP/INSERT/UPDATE/
+# ALTER/RENAME)하는 대상만 '조작'으로 집계.
+_TABLE_OP_RE = re.compile(
+    r"\b(?:TRUNCATE\s+TABLE|TRUNCATE|DELETE\s+FROM|DROP\s+TABLE|INSERT\s+INTO|"
+    r"REPLACE\s+INTO|UPDATE|ALTER\s+TABLE|RENAME\s+TABLE)\s+"
+    r"(?:IF\s+(?:NOT\s+)?EXISTS\s+)?"
+    r"(?:`?(?P<schema>[A-Za-z_]\w*)`?\s*\.\s*)?`?(?P<table>[A-Za-z_]\w*)`?",
+    re.IGNORECASE,
+)
+_USE_RE = re.compile(r"\bUSE\s+`?(?P<schema>[A-Za-z_]\w*)`?", re.IGNORECASE)
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _split_sql_active_comment(text: str) -> "tuple[str, str]":
+    """SQL 텍스트를 (활성 코드, 주석 텍스트)로 분리 — 블록 /* */ · 라인/인라인 -- 및 # 를 모두
+    주석으로 분류(REV-20260714T233000 적대패널 B2: 주석 처리된 TRUNCATE 가 '활성 조작'으로 새면
+    의도적 보존 테이블을 '완전 커버'로 오단정). 문자열/백틱 내부의 --/# 는 초기화 DDL 에서 드물어
+    휴리스틱으로 처리(한계는 REVIEW 기록)."""
+    comments: list[str] = []
+    body = _BLOCK_COMMENT_RE.sub(lambda m: (comments.append(m.group(0)) or " "), text)
+    active_lines: list[str] = []
+    for ln in body.splitlines():
+        cut = len(ln)
+        for marker in ("--", "#"):
+            idx = ln.find(marker)
+            if idx != -1 and idx < cut:
+                cut = idx
+        active_lines.append(ln[:cut])
+        if cut < len(ln):
+            comments.append(ln[cut:])
+    return "\n".join(active_lines), "\n".join(comments)
+
+
+def _operated_tables(code: str, requested_schema: str) -> "set[str]":
+    """`code`(활성/주석 텍스트) 안에서 조작 대상이 된 테이블명(소문자 set)을 requested_schema 범위로
+    추출한다. USE 로 현재 스키마 추적, schema-qualified 조작은 그 스키마로 귀속(적대패널 m1 cross-schema).
+    스키마 미상(USE·qualifier 모두 없음)은 단일-스키마 스크립트로 보고 관대 포함."""
+    req = requested_schema.lower()
+    cur = ""
+    hits: set[str] = set()
+    for ln in code.splitlines():
+        um = _USE_RE.search(ln)
+        if um:
+            cur = um.group("schema").lower()
+        for m in _TABLE_OP_RE.finditer(ln):
+            eff = (m.group("schema") or "").lower() or cur
+            if eff == req or eff == "":
+                hits.add(m.group("table").lower())
+    return hits
+
+
+def _tool_check_table_coverage(conn, args: dict) -> str:
+    """TASK-20260714T233000-attach-table-coverage: 첨부 SQL 스크립트가 실 DB 스키마의 어떤 테이블을
+    **조작(TRUNCATE/DELETE/DROP/INSERT/UPDATE/ALTER/RENAME)** 하는지 대소문자 무시로 **결정론적**(코드)
+    대조한다. 모델이 목록을 눈으로 비교하다 대소문자 불일치(첨부 `LoginEventLog` ↔ DB `logineventlog`,
+    lower_case_table_names=1)로 '누락'을 오판하던 경로(FR-partial-evidence 잔존)를 봉인."""
+    schema = _safe_ident(args.get("schema_name", ""))
+    if not schema:
+        return "오류: schema_name 은 필수입니다."
+    err = _struct_schema_access_error(schema)
+    if err:
+        return err
+    # 1) 실 DB 테이블 목록(정본) — describe_schema_tables 재사용(sql_guard-safe, 이름만).
+    try:
+        sql = _dialects.active().describe_schema_tables(schema)
+        result_sets, _ = _raw_execute_sql(conn, sql)
+    except Exception as e:
+        return f"오류: 스키마 '{schema}' 테이블 목록 조회 실패: {e}"
+    db_tables: list[str] = []
+    for kind, _cols, rows in result_sets:
+        if kind == "rows" and rows:
+            for row in rows:
+                nm = str(row[0] or "").strip()
+                if nm:
+                    db_tables.append(nm)
+    if not db_tables:
+        return f"스키마 '{schema}' 에 테이블이 없거나 조회할 수 없습니다."
+    # 2) 첨부 콘텐츠 로드 — deferred import(순환 회피), ContextVar-aware run-scope 로더 재사용.
+    try:
+        import agent_core as _ac  # noqa: PLC0415 (deferred: agent_core ↔ tools 순환 회피)
+        att_map = _ac._load_attachment_inline_texts()
+    except Exception:
+        att_map = {}
+    if not att_map:
+        return ("오류: 대조할 첨부 파일 내용을 찾을 수 없습니다. 이 도구는 사용자가 첨부한 "
+                "SQL 스크립트를 실 DB 와 대조할 때만 사용하세요.")
+    want = args.get("attachment_id")
+    try:
+        want = int(want) if want not in (None, "") else None
+    except (TypeError, ValueError):
+        want = None
+    contents: list[str] = []
+    any_truncated = False
+    for aid, meta in att_map.items():
+        if want is not None and int(aid) != want:
+            continue
+        contents.append(str(meta.get("content") or ""))
+        if meta.get("truncated"):
+            any_truncated = True
+    text = "\n".join(contents)
+    if not text.strip():
+        return "오류: 대상 첨부 내용이 비어 있습니다(attachment_id 확인)."
+    # 3) 주석 분리(블록/라인/인라인) 후 '조작 대상' 테이블만 추출(단순 이름 등장 아님).
+    active_code, comment_text = _split_sql_active_comment(text)
+    active_ops = _operated_tables(active_code, schema)
+    commented_ops = _operated_tables(comment_text, schema)
+
+    referenced, commented_only, not_referenced = [], [], []
+    for t in db_tables:
+        tl = t.lower()
+        if tl in active_ops:
+            referenced.append(t)
+        elif tl in commented_ops:
+            commented_only.append(t)
+        else:
+            not_referenced.append(t)
+
+    head = "대소문자 무시·코드 결정론" + ("" if not any_truncated else " · ⚠️ 첨부 절단됨")
+    parts = [f"## 첨부 ↔ 실 DB 테이블 커버리지 — 스키마 `{schema}` ({head})"]
+    parts.append(
+        f"- 실 DB 테이블 **{len(db_tables)}** · 스크립트가 조작 **{len(referenced)}** · "
+        f"주석에서만 조작 **{len(commented_only)}** · 미조작 **{len(not_referenced)}**"
+    )
+    if any_truncated:
+        parts.append(
+            "\n> ⚠️ **첨부가 절단(truncated)됨** — 스크립트 뒷부분을 못 봤을 수 있어 아래 '미조작'은 "
+            "**확정(authoritative) 아님**. 절단 없는 원본을 다시 첨부받고, '미조작'을 '누락'으로 단정하지 말 것."
+        )
+    if not_referenced:
+        parts.append(f"\n### 스크립트가 조작(TRUNCATE/DELETE/DROP 등)하지 않는 DB 테이블 ({len(not_referenced)})")
+        parts.append(", ".join(f"`{t}`" for t in sorted(not_referenced)))
+    else:
+        parts.append("\n### 미조작 테이블 없음 — 스크립트가 이 스키마의 모든 실 DB 테이블을 조작함.")
+    if commented_only:
+        parts.append(f"\n### 주석 처리된 조작만 있음(비활성 — 의도적 보존 가능) ({len(commented_only)})")
+        parts.append(", ".join(f"`{t}`" for t in sorted(commented_only)))
+    parts.append(
+        "\n> '조작' = 스크립트가 그 테이블을 TRUNCATE/DELETE/DROP/INSERT/UPDATE/ALTER 대상으로 삼음"
+        "(이름이 컬럼·함수로만 등장한 것은 제외). 대소문자만 다른 대상(첨부 `LoginEventLog` ↔ DB "
+        "`logineventlog`)은 이미 '조작'으로 집계됨"
+        + ("." if not any_truncated else " — 단 절단 시 '미조작'은 미확정.")
+    )
     return "\n".join(parts)
 
 
@@ -1875,6 +2045,7 @@ def get_last_execute_sql_context():
 _TOOL_HANDLERS = {
     "list_schemas": _tool_list_schemas,
     "describe_schema": _tool_describe_schema,
+    "check_table_coverage": _tool_check_table_coverage,
     "describe_table": _tool_describe_table,
     "describe_routine": _tool_describe_routine,
     "search_tables": _tool_search_tables,
