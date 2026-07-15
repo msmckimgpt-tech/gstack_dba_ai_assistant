@@ -13,3 +13,5 @@ verdict: PASS (라이브 근본원인 확정 + 수정 라이브 주입 검증; �
 - **라이브 주입 검증(win-browser eval)**: `.admin-meta-bundle{flex-shrink:0}` 주입 전 카드 rect **12px** → 주입 후 **166px**(내용 전체 노출). 다른 규칙·JS·DOM 무변경.
 - **§18.8**: CSS 1선언 레이아웃 전용 → 패널 skip(REVIEW `[SKIPPED:...]`, 적대 자가검토 refute).
 - 결과: **PASS**(근본원인 라이브 확정 + 수정 효과 라이브 실증). **재배포 자산 최종 검증은 본 fix 배포 후 append**(카드 정상 높이·묶음 8개·전체 승인/일부 해제 토글·등록·pageerror 0).
+
+- **[POST-DEPLOY 갱신 2026-07-15] 재배포 자산 라이브 PASS (Environment: Windows-browser, AI 직접 — 실 Windows Chrome via bin/win-browser.py relay, bootstrap_admin)**: PR #817 머지(a3c69103) → deploy-web --web-only soak PASS. `/healthz` git_commit=**a3c69103**·mysql_ok·pg_ok. 서빙 `styles.css` 스탬프 갱신(**62c4b695387d**) + 규칙 정규식 추출로 `.admin-meta-bundle { … flex-shrink: 0 }` 배포 확증. **배포본 런타임(win-browser eval, 주입 없이)**: ENUM 검토 큐 묶음 8개 카드 높이 **[166,166,166,205,166,166,298,166]**(전부 자연 높이·최소 166px — 12px sliver 완전 해소)·`.admin-meta-bundle` computed `flex-shrink=0`·목록 컨테이너 스크롤(scrollHeight 1770 > clientHeight 373)·내용/등록/마스터 정상·pageError 0. 스크린샷 육안(묶음 카드 정상 렌더: 전체 승인 마스터·`0→성공`·`등록 (1)`, scratchpad/enum-review-bundle-fixed.png). → **재배포 자산 실증 PASS**.
