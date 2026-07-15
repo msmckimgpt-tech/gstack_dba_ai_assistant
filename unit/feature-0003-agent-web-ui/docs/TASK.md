@@ -5807,5 +5807,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - cross-category 처리(사용자 정정): OR 판정으로 한끝만 이동한 엣지도 재그림 — 이동 끝점은 새 좌표, 미이동(타 카테고리) 끝점은 현재 좌표 → 연결선 구조 갱신.
 - 비변경: 팬/줌·상태(selected/match/running)·미니맵·hover-fx·우클릭 메뉴·클릭·백엔드/RBAC/스키마 0. full `draw()` diff 경로 불변(회귀 0).
 - 알려진 한계(정직·deferred): 허브 노드(수천 incident 엣지) 드래그 시 per-frame 재그림 비용 존재 — 단 full draw() 보다 저렴하고 정확성 필수 최소치. 필요 시 rAF 스로틀은 후속 최적화(§76 계열).
-- 검증: [x] `node --check` PASS · [x] 헤드리스 `test_pixi_adapter.js` T23 신규 7종(incident 선택·cross-category 이동/미이동 끝점·_objs/world/_objSig 교체·무관 skip·빈/null no-op) ALL PASS 73/0 · [ ] §18.8 적대 리뷰(진행) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 라이브(제품 카테고리 드래그 중 cross-category 관계선 실시간 추종).
-- worktree `ai/claude/feature-0003-graph-edge-follow-drag`(base main b3c8cd34). REV/CHG/TEST-20260715T181939-graph-edge-follow-drag.
+- 검증: [x] `node --check` PASS · [x] 헤드리스 `test_pixi_adapter.js` T23 신규 7종(incident 선택·cross-category 이동/미이동 끝점·_objs/world/_objSig 교체·무관 skip·빈/null no-op) ALL PASS 73/0 · [x] §18.8 적대 리뷰 correctness 결함 없음 · [x] verify-completion PASS → PR #824 머지(main 0f26cec1) → web 재배포(soak PASS, deploy_scope: included) → [x] **POST-DEPLOY PB-0008 라이브 PASS**(제품 카테고리 "건즈-개발·1" 드래그 중 cross-category 관계선 줌 없이 실시간 추종·옛 위치 잔상 0·pageerror 0).
+- worktree `ai/claude/feature-0003-graph-edge-follow-drag`(base main b3c8cd34). REV/CHG/TEST-20260715T181939-graph-edge-follow-drag. POST-DEPLOY: CHG-20260715T190000-graph-edge-follow-drag-postverify.

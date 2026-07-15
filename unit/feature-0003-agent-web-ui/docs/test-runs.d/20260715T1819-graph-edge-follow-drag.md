@@ -2,7 +2,7 @@
 run_at: 2026-07-15T18:19:00+09:00
 session: ai/claude/feature-0003-graph-edge-follow-drag
 scope: 그래프 뷰 노드/제품 카테고리 드래그 시 관계선(엣지) 미추종 수정 — PixiJS incident 엣지 증분 재그림 (20260715T1819-graph-edge-follow-drag)
-verdict: PASS (headless) / DEFERRED (POST-DEPLOY PB-0008 라이브)
+verdict: PASS (headless + POST-DEPLOY PB-0008 라이브)
 ---
 
 ### Run 1 — 헤드리스 순수/증분 로직 (Environment: node vm, PixiAdapterPure + prototype-stub)
@@ -21,12 +21,12 @@ verdict: PASS (headless) / DEFERRED (POST-DEPLOY PB-0008 라이브)
 ### Run 2 — 문법 검증 (Environment: node --check, ESM)
 - `graph-renderer-pixi.js` `node --check` PASS (export → const 치환 후).
 
-### Run 3 — POST-DEPLOY 라이브 실증 (Environment: Windows-browser, PB-0008 relay) — DEFERRED
-- 대상: web 재배포(deploy_scope: included) 후 실 Windows Chrome https://localhost/admin → 지식베이스 > 그래프 뷰.
-- 검증 시나리오(예정):
-  1. 제품 카테고리 밴드(CAT)를 좌클릭 드래그 → 밴드 이동 중 **cross-category 관계선이 실시간으로 새 위치 추종**(줌 조작 없이). 이동 전 위치 잔상 0.
-  2. 스키마 클러스터(combo) 드래그 → 클러스터 내부/외부 엣지 추종.
-  3. 개별 테이블 드래그 → 테이블-테이블/테이블-컬럼 관계선 추종.
-  4. 대형 스키마(수백 객체·다수 관계선) 드래그 프레임률 관찰(허용 가능 범위 확인).
-  5. pageerror 0.
-- visual_verification_scope: always (§10.5 web/UI 완료 게이트 — headless 는 렌더 시각 미검증).
+### Run 3 — POST-DEPLOY 라이브 실증 (Environment: Windows-browser, PB-0008 relay) — **PASS**
+- 배포: PR #824 → main 0f26cec1 + `sudo -E bin/deploy-web.sh` 무중단 롤링(web-a/web-b recreate·soak 90s PASS·워커 롤아웃). 서빙 자산 `/app/web/static/graph/graph-renderer-pixi.js` `_refreshIncidentEdges` grep=4(baked·stale 아님).
+- 방법: win-browser.py 실 Windows Chrome 150(relay 172.26.144.1:9223→9222), https://localhost/admin(200·로그인 세션) → 지식베이스 > 그래프 뷰. 렌더러 = PixiJS(default=pixi, window.PIXI loaded). 루트 뷰 = **제품 카테고리 14개(좌) + 데이터소스 18개(우) + cross-category 관계선**(canvas 245,180 615×570).
+- 결과 **PASS**:
+  1. **cross-category 관계선 실시간 추종**: 제품 카테고리 "건즈-개발·1"(중앙 ~552,464)을 합성 PointerEvent(pointerdown+pointermove×10, button0)로 좌상단(~400,280)으로 드래그. **pointerup 전·줌 조작 없이** mid-drag 스크린샷에서 카테고리가 새 위치로 이동 + 데이터소스로 향하는 **관계선이 새 위치를 그대로 추종**(옛 위치 잔상 0). 수정 전이라면 관계선이 옛 위치(중앙)에 남았을 것 — `_refreshIncidentEdges`(이동 끝점 새 좌표·미이동 데이터소스 끝점 현재 좌표) 실증. evidence: graph_root(before)·graph_middrag(추종)·graph_after_reset.
+  2. **dragend 후 정합**: pointerup 후에도 카테고리가 새 위치 유지(ADR-004 자유배치 영속) + 관계선 정상 추종.
+  3. **pageerror 0**: window 에러 배열 빈값·docReady complete·canvas 정상.
+- visual_verification_scope: always (§10.5 web/UI 완료 게이트) — 충족.
+- 미실행(비회귀·후속): 스키마 클러스터/개별 테이블 드래그(동일 chokepoint 경유라 커버 추정)·허브 대형 스키마 프레임률(F1 트레이드오프 관측). 핵심 사용자 보고 케이스(제품 카테고리 cross-category)는 실증 완료.

@@ -427,3 +427,8 @@ source_of_truth: true
 - [SUBAGENT] 잔여 non-blocking: **F1(CONFIRMED, 성능 트레이드오프)** 허브/대형 스키마 드래그 시 프레임당 O(E)×2 스캔 + incident 엣지 destroy/recreate(graph-core `_metaNodeDrag` 종속이동과 이중 호출 — 단 서로 다른 엣지집합). 사용자 드래그로 bound·정확성 무영향 → 수용, deferred 최적화 = 엣지 Graphics 재사용(`.clear()`+재-path, destroy/recreate 회피) 또는 rAF 스로틀. F2(null 끝점 stale, 드래그 중 노드 소멸 거의 도달불가·benign)·F3(비-배열 문자열 movedIds 문자분해, 현 호출자 전부 배열/Set·미도달)·F4(_drawEdge throw 시 다음 draw self-heal, draw() make 경로와 동일 리스크) — 전부 도달난이도 높음/benign, 수정 불요.
 - 검증: `node --check` PASS · 헤드리스 T23 7종 ALL PASS 73/0 · [SUBAGENT] 적대 리뷰 결함 없음 · POST-DEPLOY PB-0008 라이브(제품 카테고리 드래그 중 cross-category 관계선 실시간 추종, 잔여).
 - Cross-ref: TASK 20260715T1819 · CHG/TEST-20260715T181939-graph-edge-follow-drag · 그래프 도메인 정본 feature-0016 · 선행 graph 렌더러 seam §78(PixiJS) · ANCHOR 0003 무충돌.
+
+## REV-20260715T190000-graph-edge-follow-drag-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 그래프 관계선 추종 수정 POST-DEPLOY 라이브 실증 기록 (CHG-20260715T190000-graph-edge-follow-drag-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T181939 은 REV-20260715T181939([SUBAGENT] 적대 리뷰 correctness 결함 없음)로 검증됨. 본 cycle 은 배포 결과를 원장에 기록만.
+- 배포본 실증(win-browser eval, 로그인 세션, 주입 없이): PixiJS 루트 뷰에서 제품 카테고리 드래그 → cross-category 관계선이 pointerup 전·줌 없이 새 위치 실시간 추종(옛 위치 잔상 0)·dragend 정합·pageerror 0. 서빙 자산 baked(`_refreshIncidentEdges` grep=4). 스크린샷 육안 정상(graph_middrag 에서 이동 카테고리→데이터소스 관계선이 새 좌표에서 발원).
+- Cross-ref: CHG-20260715T190000-graph-edge-follow-drag-postverify · 원천 REV-20260715T181939-graph-edge-follow-drag · ANCHOR 0003 무충돌.

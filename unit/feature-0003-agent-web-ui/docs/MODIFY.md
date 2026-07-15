@@ -485,3 +485,9 @@ source_of_truth: true
 - 한계(정직, deferred): 허브 노드(수천 incident 엣지) per-frame 재그림 비용 — full draw() 보다 저렴하고 정확성 필수 최소치, rAF 스로틀은 후속(§76 계열).
 - 검증: `node --check` PASS · 헤드리스 73/0 · §18.8 적대 리뷰 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260715T1819 · REV/TEST-20260715T181939-graph-edge-follow-drag · test-runs.d/20260715T1819-graph-edge-follow-drag.md · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
+
+## CHG-20260715T190000-graph-edge-follow-drag-postverify (그래프 관계선 추종 수정 POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-07-15. CHG-20260715T181939-graph-edge-follow-drag(PR #824, main 0f26cec1) 배포 후 라이브 실증. 코드 변경 0(문서 전용).
+- 실증(win-browser 실 Windows Chrome 150, relay, 배포 0f26cec1): PixiJS 그래프 루트 뷰(제품 카테고리 14 + 데이터소스 18 + cross-category 관계선)에서 제품 카테고리 "건즈-개발·1"을 합성 PointerEvent(button0)로 드래그 → **pointerup 전·줌 없이** mid-drag 스크린샷에서 관계선이 이동한 새 위치를 그대로 추종(옛 위치 잔상 0). dragend 후에도 정합(ADR-004 자유배치 영속). pageerror 0. 서빙 자산 `_refreshIncidentEdges` grep=4(baked). evidence: graph_root·graph_middrag·graph_after_reset.
+- Changes: `docs/test-runs.d/20260715T1819-graph-edge-follow-drag.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
+- Cross-ref: 원천 CHG-20260715T181939-graph-edge-follow-drag · ANCHOR 0003 무충돌.
