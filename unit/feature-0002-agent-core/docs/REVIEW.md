@@ -10,6 +10,18 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260715T120000-llm-probe-thinking-budget [SUBAGENT:llm-probe-adversarial-backend]
+- Date: 2026-07-15
+- Cycle: TASK-20260715-llm-probe-thinking-budget (LLM 헬스 probe 오탐 — stale "요청량 한도/사용량 소진" 배너 고착 해소), **Major §12.3** — LLM 라우팅·외부 비용.
+- Trigger: §18.8 — LLM 라우팅/외부요인 분류(backend) + 외부 비용(claude-corp 토큰·5h 윈도우). 적대 코드리뷰(general-purpose outside voice, REFUTE: 불변식/override 실효/게이트/가드/비용 재고정/파이썬 정합).
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0) → CONCERN 흡수 후 SHIP.
+- **CONFIRMED-SAFE (리뷰어 실측 인용)**: ①불변식 max_tokens(1088)>budget(1024) 성립, 1024=Anthropic 하한(model_catalog.py:299) · ②요청단위 thinking override 가 litellm config 고정 budget(5000)을 대체 — probe 의 extra_body shape 가 `_call_llm`(agent_core.py:2930) 프로덕션 경로와 byte-identical, reasoning-effort selector 가 동일 메커니즘 프로덕션 의존 · ③게이트 `model_supports_thinking("claude-haiku-4-interactive")`=True / "edge"=False · ④TTL·running·M2 stampede 가드 + classify→None(false restricted 없음) 무변경 · ⑥`create_kwargs: "dict[str,Any]"` 로컬 annotation 미평가·`Any` import 됨, off-by-one 없음.
+- **흡수한 CONCERN (item 5 — 비용/5h 윈도우 재고정)**: 리뷰어 지적 — valid-ping 수정이 idle 탭 probe 를 "400 거부(0토큰)"에서 "성공 생성(≤1024토큰)"으로 바꿔, claude-corp 5시간 rolling 윈도우를 60s 마다 재고정(refresh-claude-oauth-token.sh 가 cron probe 를 제거한 바로 그 부작용). 특히 밤새 열어둔 idle 탭이 유일 트래픽이 되는 경우. **수정(백엔드 단독)**: `probe_provider` 에 recovery-only gate 추가 — 비-force probe 는 **state=restricted(복구 감지 필요)일 때만** 실제 valid-ping, ok/unknown 은 실제 호출 없이 cached 반환. 정상 상태 새 제한은 reactive(agent_core record_provider_restricted)가 잡고, force(사용자 재시도)는 gate 우회. → idle 정상 운영 중 claude 실호출 0(재고정 원천 차단), 능동 ping 은 outage 창(rare)에만. 프론트 변경 불요(cross-feature 회피).
+- **수용(범위 밖·inherent)**: probe alias `claude-haiku-4-interactive` 의 litellm fallback 에 edge(gemma) 포함 → 두 claude 계정 완전 장애 시 probe 가 gemma 로 성공해 ok 기록 가능. 실제 대화도 동일 alias 로 동일 fallback → service-availability semantics 상 일관, max_tokens/thinking 변경이 도입한 것 아님(별도 follow-up 여지).
+- **미계측 주의**: probe 토큰 소비는 llm_usage 미기록(model_catalog.py:361, SDK usage 필드 부재) — 비용 대시보드 비가시. recovery-only gate 로 실호출 자체가 outage 창 한정이라 실질 영향 미미.
+- Verification: test_llm_provider_health.py **37 passed**(probe valid-ping 2 + recovery-only gate 4 신규 포함, RC=0) + py_compile. **라이브 실증(배포 후 `/api/llm/health` probe 성공·stale 배너 해소)은 보류** — 배포 게이트.
+- Cross-ref: CHG-20260715-llm-probe-thinking-budget / TASK-20260715-llm-probe-thinking-budget / feature-0007 litellm_config.yaml(thinking budget) / bin/refresh-claude-oauth-token.sh(윈도우 재고정 원칙).
+
 ## REV-20260623T145444-sample-flywheel-core [SUBAGENT:sample-flywheel-adversarial-backend-security]
 - Date: 2026-06-23
 - Cycle: TASK-20260623T145444-sample-flywheel-core (ROADMAP ITEM-02+03 샘플쿼리 flywheel PR-A 코어), **Major §12.3** + 보안 표면(PII·injection-only).

@@ -10,6 +10,20 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260715-llm-probe-thinking-budget (LLM provider 헬스 probe 오탐 — stale "요청량 한도/사용량 소진" 배너 고착 해소, Major §12.3 — LLM 라우팅·외부 비용)
+- Date: 2026-07-15. 별도 worktree `ai/claude/feature-0002-llm-health-probe`(base main). 사용자 요청(/_template:entry): "assistant 가 내부 인사이트·답변 시 claude-corp 계정 사용량 소진 메시지가 뜨는데 실제로는 허용량이 남아있다 — 원인 파악·수정".
+- **근본원인(재현 확정)**: `probe_provider`(active health probe, web `/api/llm/health` 60s 폴링)가 `OPENAI_MODEL`(운영값 `claude-haiku-4-interactive`)로 `max_tokens=1` ping 을 보낸다. 그러나 이 alias 는 litellm config(`feature-0007 litellm_config.yaml`)에서 `thinking.budget_tokens: 5000` 을 강제 → Anthropic 제약(`max_tokens > thinking.budget_tokens`) 위반 → **항상 400**. `classify_llm_provider_error` 는 이 400 을 **None** 으로 반환(실제 실행 검증: 대표 400 3종 모두 None) → probe 가 `record_provider_ok` 도 `record_provider_restricted` 도 못 남긴다. 결과: 배너를 끄는(clear) 유일한 자동 경로(probe)가 무력 → claude-corp 이 순간 429(burst)로 sticky `restricted` 를 한번 기록하면(정상), 계정 회복 후에도 성공 답변이 발생하기 전까지 **배너가 영영 stale 로 고착**. (auto-memory `llm-routing-interactive-split` "thinking budget > max_tokens 오진" 함정과 일치.)
+- **변경**: `src/modules/llm_provider_health.py`
+  - 모듈 상수 `_PROBE_THINKING_BUDGET = 1024`(Anthropic budget 하한) 추가.
+  - `probe_provider`: `create` 인자를 `create_kwargs` 로 조립. `model_supports_thinking(model)`(claude-*)이면 `extra_body={"thinking":{"type":"enabled","budget_tokens":1024}}` + `max_tokens=1088`(>budget, 400 회귀 방지)로 **valid ping** → 성공 시 `record_provider_ok` 가 stale 배너를 실제 해소. 비-thinking 모델(로컬 gemma/edge)은 `max_tokens=1` 유지(최저 비용). thinking override 는 `_call_llm` 이 이미 쓰는 검증된 메커니즘(test_reasoning_effort) 재사용.
+  - `probe_provider` **recovery-only gate**(적대 리뷰 CONCERN 흡수 REV-20260715): 비-force probe 는 `state=restricted`(복구 감지 필요)일 때만 실제 valid-ping; `ok/unknown` 은 실제 호출 없이 cached 반환. → idle 정상 폴링이 claude-corp 5h rolling 윈도우를 재고정하지 않게(refresh-claude-oauth-token.sh cron-probe 제거 원칙 정합). 정상 상태 새 제한은 reactive(agent_core) 가 잡고, force(사용자 재시도)는 gate 우회.
+  - `tests/test_llm_provider_health.py`: `test_probe_thinking_model_sends_valid_max_tokens_over_budget`·`test_probe_non_thinking_model_uses_minimal_max_tokens` + recovery-only gate 4건(ok/unknown skip·restricted ping·force bypass). 파일 **37 passed**.
+- Why: probe 는 배너 자동 복구 메커니즘인데 thinking-강제 alias 도입(interactive-split 2026-07-04) 이후 max_tokens=1 이 구조적으로 항상 400 이 되어 그 역할을 못 했다. 유효 요청으로 바꿔 자동 해소 복원 + recovery-only gate 로 정상 시 실호출 억제.
+- Impact: classify/영속 스키마/HTTP/TTL·stampede 가드 무변경. probe 실제 claude 호출은 **restricted(outage) 창 또는 force 일 때만**(≤~1088 output) — 정상 idle 폴링은 실호출 0(윈도우 재고정 없음). 비-thinking·정상 경로 무회귀.
+- Rollback: probe 의 create_kwargs 분기 revert(→ max_tokens=1) + 상수/테스트 제거. 다른 경로 영향 0.
+- Deploy: web 재빌드(agent_core 모듈은 web import). alembic/스키마 변경 없음.
+- Cross-ref: REV-20260715T120000-llm-probe-thinking-budget / feature-0007 litellm_config.yaml(thinking budget) / CHG-20260625T045450-limit-subject-msg(동일 배너 메시지 계보).
+
 ## CHG-20260625T012217-kb-pg-superuser-host (deploy infra fix, Minor §12.3)
 - Date: 2026-06-25. **deploy/infra** — 코드·런타임 동작 무변경. 별도 worktree `ai/claude/kb-pg-superuser-host-fix`.
 - Reason: `make up`(배포) 의 memory-init 단계가 `KB Postgres schema 적용 실패: FATAL: bouncer config error` 로 exit 1. 근본 원인 — `_ensure_pg_schema`(memory.py:854) 의 superuser DDL 연결이 `AGENT_KB_PG_SUPERUSER_HOST` 미설정 시 `AGENT_KB_PG_HOST(=pgbouncer)` 를 상속하는데, pgbouncer userlist 엔 DML role `agent_kb_rw` 만 등록(auth_query 없음)되어 superuser `postgres` 인증 불가.

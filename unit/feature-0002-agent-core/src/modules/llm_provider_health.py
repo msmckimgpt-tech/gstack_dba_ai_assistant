@@ -375,6 +375,14 @@ def read_provider_health(provider: "str | None" = None) -> "dict[str, Any]":
 # ── active probe(hybrid) ──────────────────────────────────────────────
 _PROBE_STATE: "dict[str, Any]" = {"ts": 0.0, "running": False}
 
+# 요청 단위 probe thinking budget(Anthropic 하한 1024). thinking 을 강제하는 alias
+# (litellm config 가 budget_tokens 고정)에 max_tokens=1 을 보내면 Anthropic 제약
+# (max_tokens > thinking.budget_tokens)을 위반해 항상 400 → classify None → OK/restricted
+# 어느 것도 기록 못 해 stale restricted 배너를 영영 해소 못 한다(자동 복구 무력화 —
+# llm-routing-interactive-split "thinking budget > max_tokens 오진" 함정). probe 는 요청
+# 단위 override 로 최소 budget 을 넣고 max_tokens 를 그 위로 잡아 valid·저비용 ping 을 만든다.
+_PROBE_THINKING_BUDGET = 1024
+
 
 def _probe_enabled() -> bool:
     return os.getenv("LLM_HEALTH_PROBE_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no")
@@ -388,10 +396,18 @@ def _probe_ttl() -> int:
 
 
 def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, Any]":
-    """active probe — 최소 LLM 호출(max_tokens=1)로 provider 자격증명 상태를 선제 확인 + 기록.
+    """active probe — 최소 LLM 호출로 provider 자격증명 상태를 선제 확인 + 기록.
 
     TTL(LLM_HEALTH_PROBE_TTL_SEC, 기본 60s) 내 재호출은 skip(throttle) — 비용 최소화.
     분류 불가 예외는 health 를 바꾸지 않는다(일시 네트워크 등 오탐 방지). web 에서만 호출.
+
+    실제 claude 호출(valid-ping)은 **restricted 상태(복구 감지 필요) 또는 force 일 때만** 발생한다 —
+    ok/unknown 이면 cached 상태만 반환해 idle 폴링이 5h rolling 윈도우를 재고정하지 않는다.
+
+    thinking 을 강제하는 alias(claude-*)면 요청 단위 thinking override(최소 budget) + max_tokens>
+    budget 로 valid ping 을 만든다 — 그래야 성공 시 record_provider_ok 가 stale restricted 배너를
+    실제로 해소한다(max_tokens=1 고정은 Anthropic 400 → 어느 상태도 기록 못 함). 비-thinking 모델
+    (로컬 gemma 등)은 max_tokens=1(최저 비용) 유지.
     """
     provider = current_provider()
     if not _probe_enabled():
@@ -414,23 +430,40 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
                 return existing
         except Exception:
             pass
+        # 능동 valid-ping(실제 claude 호출)은 **복구 감지가 필요한 restricted 상태일 때만** 한다.
+        # ok/unknown 이면 실제 호출 없이 cached 상태만 반환 — idle 폴링이 claude-corp 5h rolling
+        # 윈도우를 재고정하지 않게(refresh-claude-oauth-token.sh 가 cron probe 를 없앤 것과 동일 원칙).
+        # 정상 상태에서 새로 발생하는 제한은 실제 답변 실패 경로(agent_core record_provider_restricted,
+        # reactive)가 권위적으로 잡는다. force(사용자 명시 재시도)는 이 gate 를 우회해 즉시 실제 ping.
+        if str(existing.get("state") or "") != STATE_RESTRICTED:
+            return existing
     _PROBE_STATE["running"] = True
     _PROBE_STATE["ts"] = now
     try:
         from shared import config as cfg
+        from shared.model_catalog import model_supports_thinking
         from .llm import _get_llm_client
         model = getattr(cfg, "OPENAI_MODEL", None) or "claude-sonnet-4"
         client = _get_llm_client(timeout_sec=timeout_sec, model=model)
         if client is None:
             record_provider_restricted(not_configured_restriction(provider), source="probe")
             return read_provider_health(provider)
+        create_kwargs: "dict[str, Any]" = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "timeout": timeout_sec,
+        }
+        if model_supports_thinking(model):
+            # thinking 강제 alias — Anthropic 제약(max_tokens > budget_tokens) 충족하도록
+            # 최소 budget override + max_tokens 를 그 위로. valid 성공 → OK 기록 → 배너 자동 해소.
+            create_kwargs["max_tokens"] = _PROBE_THINKING_BUDGET + 64
+            create_kwargs["extra_body"] = {
+                "thinking": {"type": "enabled", "budget_tokens": _PROBE_THINKING_BUDGET}
+            }
+        else:
+            create_kwargs["max_tokens"] = 1
         try:
-            client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=1,
-                timeout=timeout_sec,
-            )
+            client.chat.completions.create(**create_kwargs)
             record_provider_ok(provider=provider, source="probe")
         except Exception as exc:
             restriction = classify_llm_provider_error(exc, provider)
