@@ -510,3 +510,8 @@ source_of_truth: true
 - 적대 자가검토: "esc 강화가 텍스트(`<code>`,`<strong>`) 렌더 회귀?" → `"`→`&quot;` 는 텍스트 노드에서 `"` 로 렌더(시각 동일)·속성값에서만 실효. "sync 라벨이 flat 폴백(버튼 부재)서 throw?" → getElementById null-guard + groups.length 가드.
 - 검증: `node --check`(module) PASS · [SUBAGENT] 6/6→7/7축 PASS·MINOR 2 수정·NIT 1 선재 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260716T0039 · CHG/TEST-20260716T003901-graph-cluster-detail-collapse · test-runs.d/20260716T0039-graph-cluster-detail-collapse.md · 선행 REV-20260715T223744-graph-cluster-detail-fulllist · ANCHOR 0003 무충돌.
+
+## REV-20260716T005817-graph-cluster-detail-collapse-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 컨텐츠 카테고리 접기/펼치기 POST-DEPLOY 실증 기록 (CHG-20260716T005817-graph-cluster-detail-collapse-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260716T003901 은 REV-20260716T003901([SUBAGENT] 7축 BLOCK/MAJOR 0·MINOR 2 수정)로 검증됨. 본 cycle 은 배포 결과 기록만.
+- 배포본 실증(win-browser, 배포 00454608): DK dk_data_release_main(66 컨텐츠 카테고리) 상세에서 헤딩 클릭 접기/펼치기·모두 접기/펼치기(라벨 정합)·재렌더 접힘 유지·키보드 토글·행 클릭 조회 불변·pageerror 0. 스크린샷 육안 정상(접힘 ▸/펼침 ▾ 캐럿 공존).
+- Cross-ref: CHG-20260716T005817-graph-cluster-detail-collapse-postverify · 원천 REV-20260716T003901-graph-cluster-detail-collapse · ANCHOR 0003 무충돌.

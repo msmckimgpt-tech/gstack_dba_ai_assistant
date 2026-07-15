@@ -20,6 +20,15 @@ verdict: 정적 PASS · POST-DEPLOY PB-0008 라이브 DEFERRED
 - **§18.8 적대 리뷰 MINOR 2 수정 반영**: (#1) '모두 접기/펼치기' 라벨 stale → `_syncCollapseAllLabel()`(전 그룹 상태 재계산)을 `_toggleCtGroup` 말미 호출; (#2) 로컬 `esc`(2262)에 `.replace(/"/g,"&quot;")` 추가(`data-group-key` 등 속성 breakout 방지, 파일 내 강한 esc 와 정합). 재검증 `node --check` PASS.
 - 결과 **PASS(정적)** — §18.8 적대 리뷰 상세는 REVIEW.md(REV-20260716T003901) 참조.
 
-### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **DEFERRED(배포 후 수행)**
-- 대상: 재배포 후 컨텐츠 카테고리 다수 스키마(예 DK dk_data_release_main 66그룹) 클러스터 상세 → (1) 그룹 헤딩 클릭 시 멤버 행 접힘/펼침·캐럿 ▾↔▸, (2) '모두 접기/펼치기' 동작, (3) 개별 접은 뒤 행 클릭(노드 조회)→뒤로 재렌더 시 접힘 유지, (4) 키보드 Enter/Space 토글, (5) 행 클릭/hover pan 불변, (6) pageerror 0.
-- visual_verification_scope: always — 배포 후 충족 예정. 미수행 사유: 정적 자산 baked 라 web 재배포 후에만 서빙 반영.
+### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **PASS**
+- 배포: PR #835 → main 00454608 + `sudo -E bin/deploy-web.sh` 무중단 롤링(web-a/web-b·워커 recreate·soak 통과). 서빙 자산 `panelGroupCollapsed`·`_toggleCtGroup` grep=10(web-a).
+- 방법: win-browser.py 실 Windows Chrome relay, https://localhost/admin(로그인 세션) → 그래프 뷰 > mssql-dk-dev(DK온라인) > dk_data_release_main(423항목·66 컨텐츠 카테고리) 상세.
+- 결과 **PASS**:
+  1. **collapse UI 노출**: 섹션 헤더 "테이블·함수·프로시저 (423) ▾ 모두 접기"(collapse-all 버튼), 66 그룹 헤딩(data-group-key) + 66 캐럿.
+  2. **그룹 헤딩 토글**: "NPC 콘텐츠"(41 멤버) 라벨 자식 click → 이벤트 위임 승격 → 접힘(멤버 41행 표시→41행 display:none, 캐럿 ▾→▸, aria-expanded=false); 재click → 펼침(41행 복원·▾).
+  3. **모두 접기/펼치기**: 버튼 click → 66/66 그룹 접힘·전 행 숨김·라벨 "▾ 모두 접기"→"▸ 모두 펼치기"; 재click → 66 펼침·라벨 복원. (라벨-동작 정합 = MINOR #1 수정 실증.)
+  4. **재렌더 접힘 유지(핵심)**: "NPC 콘텐츠" 접기 → 다른 그룹 행(UnderageGamePlayLimit) click 로 노드 상세 이동 → "← 뒤로" 클러스터 상세 재렌더 → **"NPC 콘텐츠" 여전히 접힘**(caret ▸·41행 숨김). `panelGroupCollapsed`(sg.key="panel:dk_data_release_mainbe:0", 제어문자 포함) 매칭 정상.
+  5. **키보드 토글**: "퀘스트 시스템" 헤딩 포커스 → Enter 접힘 / Space 펼침(Space 스크롤 없음).
+  6. **행 클릭 조회 불변**: 행 code 자식 click → 노드 상세(TABLE UnderageGamePlayLimit) 정상. **pageerror 0**·docReady complete.
+  7. 스크린샷 육안: `▸ NPC 콘텐츠 41`(접힘·행 없음)·`▾ 퀘스트 시스템 10`(펼침·10행·포커스)·`▸ 성 시스템 3`(접힘) 공존 + 헤더 "▾ 모두 접기" 버튼.
+- visual_verification_scope: always — 충족. evidence: collapse_evidence.png.

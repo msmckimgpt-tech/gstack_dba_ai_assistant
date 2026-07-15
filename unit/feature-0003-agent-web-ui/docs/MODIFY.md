@@ -570,3 +570,9 @@ source_of_truth: true
 - 비변경: 전체 출력(캡)·집계/membership/hiddenKinds·행 클릭·hover·백엔드/RBAC/스키마 0. 순수 additive UI. cache-buster placeholder 수기편집 없음.
 - 검증: `node --check`(2파일) PASS · CSS 균형(221:221·66:66) · §18.8 적대 리뷰 · POST-DEPLOY PB-0008(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260716T0039 · REV/TEST-20260716T003901-graph-cluster-detail-collapse · test-runs.d/20260716T0039-graph-cluster-detail-collapse.md · 선행 CHG-20260715T223744-graph-cluster-detail-fulllist · ANCHOR 0003 무충돌.
+
+## CHG-20260716T005817-graph-cluster-detail-collapse-postverify (컨텐츠 카테고리 접기/펼치기 POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-07-16. cluster-detail-collapse(CHG-20260716T003901, PR #835 main 00454608) 배포 후 win-browser PB-0008 라이브 실증. 코드 변경 0(문서 전용).
+- 실증(실 Windows Chrome relay, 배포 00454608, 로그인 세션): 그래프 뷰 > mssql-dk-dev > dk_data_release_main(423항목·66 컨텐츠 카테고리) 상세에서 (1) 헤딩 클릭 접기/펼치기(NPC 콘텐츠 41행 표시↔display:none·캐럿 ▾↔▸·aria-expanded), (2) 모두 접기/펼치기 66그룹(라벨 "▾ 모두 접기"↔"▸ 모두 펼치기" 정합 — MINOR #1 수정 실증), (3) 재렌더 접힘 유지(접기→행 클릭 노드조회→뒤로→여전 접힘, panelGroupCollapsed sg.key 제어문자 포함 매칭), (4) 키보드 Enter/Space 토글, (5) 행 클릭 조회 불변·pageerror 0. 서빙 자산 baked(grep=10). evidence: collapse_evidence.png(▸ NPC 콘텐츠·▾ 퀘스트 시스템·▸ 성 시스템 공존 + 모두 접기 버튼).
+- Changes: `docs/test-runs.d/20260716T0039-graph-cluster-detail-collapse.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
+- Cross-ref: 원천 CHG-20260716T003901-graph-cluster-detail-collapse · ANCHOR 0003 무충돌.
