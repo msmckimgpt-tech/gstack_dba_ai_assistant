@@ -1418,3 +1418,11 @@ TASK-0015 (plan-review):
 - [ ] verify-completion → commit/push(auto-sync) → PR·머지(Critical=confirm)·배포(4서비스, Critical=confirm)·배포검증.
 - [ ] 라이브 재현(Phase 11b): 배포 후 원 마찰(P97 대화) 재현 — describe_table/search_tables 가 DEV_1_1_1_20 63테이블 반환·give-up 소멸 실측(unverified-live).
 - [ ] deferred(§정직·백필=admin): 기존 18 MySQL drift 행 백필(A 런타임이 seal 이므로 hygiene) · 외부-datasource picker 는 control-plane conn 조회 한계(datasource-scoped picker 후속).
+
+## 20260715T2347-probe-throttle-monotonic-flake — LLM 헬스 probe throttle 이 갓-부팅 워커/러너에서 첫 probe 를 spurious throttle (CI flake + 잠복 프로덕션 버그) (Minor §12.3 — feature-0002 agent-core, 백엔드 단건조건. /_template:entry arg-given dispatch)
+
+- 계기: 별개 PR(#832 graph-edge-drag-perf, 프론트 전용)의 CI 가 무관한 `test_probe_pings_when_restricted_for_recovery` 로 red. 같은 base #831 은 green → flaky. 사용자 결정: flake 먼저 수정.
+- 근본원인: `probe_provider` throttle 게이트 `if now - float(_PROBE_STATE["ts"]) < min_gap`(now=`time.monotonic()`=부팅 이후 절대초, min_gap=force면 5·아니면 TTL 60). 초기/미-probe `ts=0.0` 이면 `now - 0 = now`. **갓-부팅 러너/워커에서 `monotonic() < min_gap`** 이면 `now < 60` → 첫 probe 가 spurious throttle. force=False+restricted 테스트만 실패(0 ping, 기대 1); 러너 uptime 이 60 을 넘었는지에 따라 통과/실패가 갈리는 flake. **잠복 프로덕션 버그**: 갓-부팅 web 워커의 첫 restricted-복구 probe 가 누락될 수 있음(자동복구 지연).
+- 수정: [x] `llm_provider_health.py` throttle 판정에 `last_ts > 0.0 and` 가드 추가 — `ts=0.0`(미-probe 센티넬)은 monotonic 절대값 무관하게 throttle 되지 않음(첫 probe 항상 허용). 실제 스탬프(ts>0) 이후에만 TTL/5s throttle 적용(정상 동작 불변). 테스트 무의존 수정(테스트가 ts 를 리셋하지 않아도 결정적).
+- 검증: [x] `test_llm_provider_health.py` 39 PASS(신규 회귀 잠금 2: ts=0.0 센티넬 non-throttle·최근 ts throttle 유지) · [x] **flake 조건 재현**(monotonic=10<60·ts=0.0·restricted → 수정본 복구 ping 1회, 구코드는 0) · [ ] verify-completion → PR·머지(→ #832 CI green 재개).
+- worktree `ai/claude/feature-0002-probe-throttle-monotonic-flake`(base main 2188fb34). REV/CHG/TEST-20260715T234757-probe-throttle-monotonic-flake.

@@ -418,7 +418,12 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
     if _PROBE_STATE["running"]:
         return read_provider_health(provider)
     min_gap = 5.0 if force else float(_probe_ttl())
-    if now - float(_PROBE_STATE["ts"]) < min_gap:
+    # probe-throttle-monotonic-flake: ts 는 time.monotonic()(부팅 이후 절대초)로만 스탬프되고 초기값은
+    #   0.0(미-probe 센티넬)이다. `now - ts < min_gap` 만으로 판정하면, monotonic() 이 아직 min_gap 미만인
+    #   갓-부팅 워커/러너에서 **첫 probe 가 spurious throttle** 된다(= restricted 복구 ping 누락 + 러너
+    #   uptime 에 따라 갈리는 테스트 flake). last_ts>0 일 때만(=실제로 1회 이상 스탬프된 뒤에만) throttle.
+    last_ts = float(_PROBE_STATE["ts"])
+    if last_ts > 0.0 and now - last_ts < min_gap:
         return read_provider_health(provider)
     # M2(리뷰): 클러스터 전역 throttle — 다른 web 워커의 최근 probe(updated_at)가 TTL 내면 skip.
     # per-process _PROBE_STATE 만으로는 N 워커 stampede 방지 불가 → PG updated_at 비교로 보강.
