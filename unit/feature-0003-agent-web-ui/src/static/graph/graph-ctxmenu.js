@@ -2257,7 +2257,9 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
-  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // graph-funcproc(cluster-detail-collapse): `"` 도 이스케이프(파일 내 강한 esc 와 정합) — data-group-key/aria-label/title 등
+  //   속성값이 상태-키 라운드트립까지 실어 나르므로 속성 breakout 방지(§18.8 적대 리뷰 MINOR #2 반영). 텍스트 노드엔 무해.
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   // graph-funcproc(cluster-detail-routines): 목록 집계 대상 = 테이블 + 함수·프로시저(Routine). build 가
   //   Table+Routine 을 함께 sim-group 화하므로 패널도 병합집합으로 구획해야 캔버스와 컨텐츠 카테고리가 일치하고,
   //   함수·프로시저만 있는 컨텐츠 카테고리도 목록에 나타난다. 테이블 개수/절단 표기는 기존대로 테이블 기준 유지.
@@ -2287,10 +2289,10 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   if (members.length) {
     // graph-funcproc(cluster-detail-routines): 섹션 제목은 함수·프로시저가 있으면 병합집합을 반영.
     const secTitle = nRoutines ? `테이블·함수·프로시저 (${members.length})` : `테이블 (${tblList.length})`;
-    parts.push(`<div class="admin-meta-graph-sec"><h4>${secTitle}</h4><ul class="amgr-cluster-tables">`);
     // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
     //   graph-funcproc: Routine 행은 역할 칩 대신 ƒ/⚙ 보라 칩(캔버스 칩 색과 동일)을 접두사로 — 테이블/루틴을 시각 구분.
-    const rowHTML = (t) => {
+    //   graph-funcproc(cluster-detail-collapse): 행 <li> 에 amgr-ct-row-li 클래스 부여(그룹 접힘 시 amgr-ct-collapsed 로 display:none 토글 대상).
+    const rowHTML = (t, collapsed) => {
       let prefix, title;
       if (t.label === "Routine") {
         prefix = `<span class="amgr-role-chip amgr-role-chip-sm" style="background:${_META_GRAPH_COLOR.Routine};color:#fff" title="${esc(_metaRoutineKo(t.routine_type))}">${_metaRoutineIcon(t.routine_type)}</span>`;
@@ -2300,32 +2302,43 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
         prefix = role ? _metaRoleChipHTML(role, esc, true) : `<span class="amgr-role-chip amgr-role-chip-sm amgr-role-none" aria-hidden="true"></span>`;
         title = "클릭하면 이 테이블 노드를 선택합니다";
       }
-      return `<li><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="${title}">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`;
+      return `<li class="amgr-ct-row-li${collapsed ? " amgr-ct-collapsed" : ""}"><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="${title}">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`;
     };
     // graph-simgroups: 캔버스와 동일한 유사 속성 그룹으로 목록도 구획(헤딩 행) — 2그룹 이상일 때만. 실패 시 평면 폴백.
     //   graph-funcproc: 구획 입력을 members(테이블+루틴)로 확장 — Routine-only 컨텐츠 카테고리도 그룹 헤딩으로 나타난다.
+    //   (collapse 컨트롤 조건 판정을 위해 h4 방출 전에 계산.)
     let sgs = null;
     try {
       const tbk = new Map(members.map((t) => [t.key, t]));
       sgs = _metaSimGroups("panel:" + String(name), members, _metaRelAdjacency(tbk));
     } catch (_) { sgs = null; }
+    const _grouped = !!(sgs && sgs.length >= 2);
+    // graph-funcproc(cluster-detail-collapse): 컨텐츠 카테고리별 접기/펼치기(사용자 요청). 그룹 헤딩을 클릭/키보드 토글(캐럿 ▾/▸)로
+    //   멤버 행을 display 토글하고, 접힘 상태는 _metaGraph.panelGroupCollapsed(sg.key)에 유지(같은 클러스터 재렌더 간). 섹션 헤더엔
+    //   '모두 접기/펼치기' 편의 컨트롤(긴 목록 탐색용). 그룹이 있을 때(_grouped)만 노출.
+    const _allCollapsed = _grouped && sgs.every((sg) => _metaGraph.panelGroupCollapsed.has(sg.key));
+    const _collapseAllBtn = _grouped
+      ? ` <button type="button" class="amgr-link amgr-ct-collapse-all" id="metaGraphCtCollapseAll" title="모든 컨텐츠 카테고리 접기/펼치기">${_allCollapsed ? "▸ 모두 펼치기" : "▾ 모두 접기"}</button>`
+      : "";
+    parts.push(`<div class="admin-meta-graph-sec"><h4>${secTitle}${_collapseAllBtn}</h4><ul class="amgr-cluster-tables">`);
     // graph-funcproc(cluster-detail-fulllist): 캡 규약 재개정(사용자 요청 "전체 출력") — 직전 전역 500행 + 그룹당 25
     //   캡은 컨텐츠 카테고리 멤버 총합이 500 초과인 스키마에서 뒤쪽 그룹을 (0/n)·경계 그룹을 (3/5)로 잘랐다.
     //   이제 **모든 컨텐츠 카테고리의 전체 멤버를 렌더**한다(그룹당 캡 제거, 전역 상한은 비현실 극단 스키마의
     //   브라우저 행 방지용 안전 가드 ROW_CAP 만 유지 — 구획/평면 폴백 공통 상수). 수천 행 렌더에도 행 상호작용은
     //   아래 컨테이너(ul) 이벤트 위임으로 처리해 리스너가 O(1)(누적/바인딩 비용 안전). 헤딩 항상 방출·절단표식은 가드 경계에서만.
     const ROW_CAP = 5000;
-    if (sgs && sgs.length >= 2) {
-      // §18.8 패널: 그룹 헤딩은 목록의 실제 구획 의미(장식 아님) → aria-hidden 금지. role="group"+aria-label 로 노출.
+    if (_grouped) {
+      // §18.8 패널: 그룹 헤딩은 목록의 실제 구획 의미(장식 아님) → 접기/펼치기 disclosure(role="button"+aria-expanded).
       let emitted = 0;
       sgs.forEach((sg) => {
+        const collapsed = _metaGraph.panelGroupCollapsed.has(sg.key);
         const shown = Math.min(sg.tables.length, Math.max(0, ROW_CAP - emitted));
         const trunc = shown < sg.tables.length ? ` <span class="amgr-ct-group-trunc">(${shown}/${sg.n})</span>` : "";
-        parts.push(`<li class="amgr-ct-group" role="group" aria-label="${esc(sg.label)} 그룹 · 항목 ${sg.n}개"><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
-        sg.tables.slice(0, shown).forEach((t) => { parts.push(rowHTML(t)); emitted++; });
+        parts.push(`<li class="amgr-ct-group${collapsed ? " is-collapsed" : ""}" role="button" tabindex="0" aria-expanded="${!collapsed}" data-group-key="${esc(sg.key)}" title="클릭하면 이 컨텐츠 카테고리를 접거나 펼칩니다" aria-label="${esc(sg.label)} 컨텐츠 카테고리 · 항목 ${sg.n}개"><span class="amgr-ct-group-caret" aria-hidden="true">${collapsed ? "▸" : "▾"}</span><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
+        sg.tables.slice(0, shown).forEach((t) => { parts.push(rowHTML(t, collapsed)); emitted++; });
       });
     } else {
-      members.slice(0, ROW_CAP).forEach((t) => parts.push(rowHTML(t)));
+      members.slice(0, ROW_CAP).forEach((t) => parts.push(rowHTML(t, false)));
     }
     parts.push(`</ul></div>`);
   }
@@ -2342,15 +2355,48 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   //   ul 은 매 렌더 innerHTML 로 재생성되므로 위임 리스너가 누적되지 않는다(직전 ul 은 리스너와 함께 GC). mouseover/out·
   //   focusin/out 은 버블링되므로 위임 가능(mouseenter/leave·focus/blur 는 버블 안 됨). _hoverKey 로 같은 행 재-pan/중복 취소 방지.
   const _ctUl = el.querySelector("ul.amgr-cluster-tables");
+  // graph-funcproc(cluster-detail-collapse): '모두 접기/펼치기' 라벨을 현재 그룹 상태로 재동기화(§18.8 적대 리뷰 MINOR #1 —
+  //   개별 토글 후 라벨-동작 불일치 방지). 전부 접힘이면 '펼치기', 아니면 '접기'.
+  const _syncCollapseAllLabel = () => {
+    const btn = document.getElementById("metaGraphCtCollapseAll");
+    if (!btn || !_ctUl) return;
+    const groups = _ctUl.querySelectorAll(".amgr-ct-group[data-group-key]");
+    if (!groups.length) return;
+    const allCol = [...groups].every((g) => g.classList.contains("is-collapsed"));
+    btn.textContent = allCol ? "▸ 모두 펼치기" : "▾ 모두 접기";
+  };
+  // graph-funcproc(cluster-detail-collapse): 컨텐츠 카테고리 그룹 접기/펼치기 — 헤딩 다음부터 다음 그룹 헤딩 전까지의
+  //   멤버 행(amgr-ct-row-li)에 amgr-ct-collapsed(display:none) 를 토글. 접힘 상태는 _metaGraph.panelGroupCollapsed 에 유지.
+  const _toggleCtGroup = (grp) => {
+    if (!grp) return;
+    const gk = grp.getAttribute("data-group-key");
+    const collapse = !grp.classList.contains("is-collapsed");
+    grp.classList.toggle("is-collapsed", collapse);
+    grp.setAttribute("aria-expanded", String(!collapse));
+    const caret = grp.querySelector(".amgr-ct-group-caret"); if (caret) caret.textContent = collapse ? "▸" : "▾";
+    let n = grp.nextElementSibling;
+    while (n && !n.classList.contains("amgr-ct-group")) { n.classList.toggle("amgr-ct-collapsed", collapse); n = n.nextElementSibling; }
+    if (gk) { if (collapse) _metaGraph.panelGroupCollapsed.add(gk); else _metaGraph.panelGroupCollapsed.delete(gk); }
+    _syncCollapseAllLabel();
+  };
   if (_ctUl) {
     const _rowKeyOf = (e) => { const b = e.target.closest(".amgr-ct-row[data-node-key]"); return (b && _ctUl.contains(b)) ? b.getAttribute("data-node-key") : null; };
     let _hoverKey = null;
     _ctUl.addEventListener("click", (e) => {
+      // 그룹 헤딩 클릭 = 접기/펼치기 토글(행 클릭보다 먼저 판정).
+      const grp = e.target.closest(".amgr-ct-group[data-group-key]");
+      if (grp && _ctUl.contains(grp)) { _toggleCtGroup(grp); return; }
       const k = _rowKeyOf(e);
       if (!k) return;
       _metaGraphShowDetail(k);
       const g = _metaGraph.graph, rel = _metaRenderedIdFor(k);
       if (g && rel && typeof g.focusElement === "function") { try { Promise.resolve(g.focusElement(rel, false)).catch(() => {}); } catch (_) {} }
+    });
+    // 키보드 접근성: 포커스된 그룹 헤딩에서 Enter/Space = 토글(Space 는 페이지 스크롤 방지).
+    _ctUl.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+      const grp = e.target.closest(".amgr-ct-group[data-group-key]");
+      if (grp && _ctUl.contains(grp)) { e.preventDefault(); _toggleCtGroup(grp); }
     });
     const _hoverOn = (e) => { const k = _rowKeyOf(e); if (k && k !== _hoverKey) { _hoverKey = k; _metaGraphHoverPan(k); } };
     _ctUl.addEventListener("mouseover", _hoverOn);
@@ -2361,6 +2407,17 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
       if (b && (!e.relatedTarget || !b.contains(e.relatedTarget))) { _hoverKey = null; _metaGraphHoverPanCancel(); }
     });
     _ctUl.addEventListener("focusout", (e) => { if (e.target.closest(".amgr-ct-row[data-node-key]")) { _hoverKey = null; _metaGraphHoverPanCancel(); } });
+  }
+  // graph-funcproc(cluster-detail-collapse): '모두 접기/펼치기' — 하나라도 펼쳐져 있으면 전부 접고, 전부 접혀 있으면 전부 펼친다.
+  const _collapseAllBtnEl = document.getElementById("metaGraphCtCollapseAll");
+  if (_collapseAllBtnEl && _ctUl) {
+    _collapseAllBtnEl.addEventListener("click", () => {
+      const groups = [..._ctUl.querySelectorAll(".amgr-ct-group[data-group-key]")];
+      if (!groups.length) return;
+      const anyExpanded = groups.some((g) => !g.classList.contains("is-collapsed"));
+      // 하나라도 펼침 → 전부 접기, 전부 접힘 → 전부 펼치기. 라벨은 _toggleCtGroup 이 _syncCollapseAllLabel 로 갱신.
+      groups.forEach((g) => { const isCol = g.classList.contains("is-collapsed"); if (anyExpanded ? !isCol : isCol) _toggleCtGroup(g); });
+    });
   }
 }
 
