@@ -2851,8 +2851,17 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # 429/401 을 raise → 아래 caller(_run_agent_core)의 LLM-error 핸들러가 "명백한 실패처리"로 안내한다.
     # 표시/저장/usage 기록·max_tokens·thinking·vision 판정은 모두 원본 `model`(claude-haiku-4)을 유지하고,
     # 실제 서빙 모델은 resolved_model(resp.model)로 추적한다. 매핑 없는 model(claude-sonnet-4 등)은 identity.
+    # TASK-conv-alias-leak-guard (패널 CONFIRMED-DEFECT#1): **max_tokens 산정**은 실제 서빙되는 outbound
+    # alias 기준으로 한다(thinking 주입 게이트는 아래에서 원본 model 유지 — 무회귀). 원본이 thinking-capable
+    # claude-* 면 budget_model=원본(agent_max_output override 키·cap 무회귀). 원본이 로컬/'claude' 등 비-thinking
+    # 누출 alias(auto/edge/core/code/claude)면 conversation_answer_model 이 outbound 를 claude-haiku-4-chat 로
+    # 해소하는데, 이 -chat 는 litellm config 에 고정 thinking budget(5000)을 갖는다 — 원본(local cap 2048 / None)
+    # 으로 max_tokens 를 잡으면 Anthropic max_tokens>budget_tokens 제약을 깨 2차 400. budget_model 로 outbound 를
+    # 쓰면 agent_max_output(claude-haiku-4-chat)=20000>5000 안전(정상 claude-haiku-4 경로 budget_model=원본=24000 무회귀).
+    outbound_model = conversation_answer_model(model)
+    budget_model = model if model_supports_thinking(model) else outbound_model
     kwargs: dict[str, Any] = {
-        "model": conversation_answer_model(model),
+        "model": outbound_model,
         "messages": effective_messages,
     }
     if temperature is not None:
@@ -2861,7 +2870,7 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         kwargs["tools"] = tools
     # 대화(agent) 총 출력 상한 — reasoning-budget-per-model: thinking 모델은 모델별 값(관리 콘솔
     # override 반영), 그 외(로컬 LLM 등)는 기존 task cap. token_limit 이 thinking+content 총량 규정.
-    token_limit = _rts.agent_max_output(model) if model_supports_thinking(model) else max_tokens_for_model(model, "agent")
+    token_limit = _rts.agent_max_output(budget_model) if model_supports_thinking(budget_model) else max_tokens_for_model(budget_model, "agent")
     if token_limit is not None:
         kwargs["max_tokens"] = token_limit
     # feature-0003 reasoning-effort-selector: 사용자 지정 추론 강도를 요청 단위 thinking
@@ -2882,6 +2891,9 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         # thinking budget override 를 적용한다. override 미설정이면 None → 아래 조건 미충족 →
         # 미주입 → 모델 config 기본 thinking 유지(B1 무회귀).
         _think_budget = _rts.model_thinking_budget_override(model)
+    # client thinking 주입 게이트는 **원본 model** 기준(무회귀). 비-thinking 원본(로컬 alias 등)은
+    # client thinking 을 넣지 않고 outbound(-chat) config 의 고정 thinking(5000)에 맡긴다 — 위에서 max_tokens 를
+    # budget_model(outbound) 로 20000 잡았으므로 max_tokens(20000)>config budget(5000) 안전(2차 400 없음).
     if _think_budget is not None and model_supports_thinking(model):
         # Anthropic 제약(budget_tokens < max_tokens) 안전 보장 — 주입 budget 을 이 요청의
         # max_tokens 미만으로 clamp(content 최소 1024 확보). reasoning-budget-per-model 이후
