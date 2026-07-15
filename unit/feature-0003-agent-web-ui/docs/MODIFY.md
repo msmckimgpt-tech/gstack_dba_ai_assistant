@@ -516,3 +516,9 @@ source_of_truth: true
 - 비변경: cluster-detail-routines 집계/membership/hiddenKinds/렌더 분기·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: `node --check` PASS · §18.8 [SKIPPED] 적대 자가검토(display-cap 상수·헤딩 방출, 경계·주입·RBAC 무관) · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260715T2152 · REV/TEST-20260715T215241-graph-cluster-detail-cap · test-runs.d/20260715T2152-graph-cluster-detail-cap.md · 선행 CHG-20260715T211911-graph-cluster-detail-routines · ANCHOR 0003 무충돌.
+
+## CHG-20260715T220941-graph-cluster-detail-postverify (그래프 클러스터 상세 함수·프로시저 컨텐츠 카테고리 수정 POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-07-15. cluster-detail-routines(CHG-20260715T211911, PR #827 main 1b370dfd) + cluster-detail-cap(CHG-20260715T215241, PR #828 main cdee785e) 배포 후 라이브 실증. 코드 변경 0(문서 전용).
+- 실증(win-browser 실 Windows Chrome 150 relay, 배포 cdee785e, 로그인 세션): 그래프 뷰 > mysql-gz-dev > gunzgame 스키마 카드 클릭 → 상세 패널에서 (1) 컨텐츠 카테고리 그룹 **72개** 렌더(cap 수정 전 10개), 함수·프로시저-only 그룹 **51개**(수정 전 0개 — "계정 조회" 24 routine·"캐릭터 인벤토리" 25·"아이템 구매" 15·"아이템 정보" 13·"재화 변환" 5·"스팀 캐시 관리" 3·"로그인 보상" 2 등), (2) `⚙ Game_AllItemGet`(gunzgame.Game_AllItemGet()) 클릭 → "ROUTINE / ⚙ 프로시저 / 이웃 2개" 노드 상세 조회, (3) 섹션 "테이블·함수·프로시저 (409)"·설명 "테이블 115개 · 함수·프로시저 294개", (4) 캔버스 sim-group 과 패널 컨텐츠 카테고리 일치, (5) pageerror 0. 서빙 자산 baked(`ROW_CAP = 500` grep=1 web-a/web-b). evidence: gz_routine_groups.png.
+- Changes: `docs/test-runs.d/20260715T2119-graph-cluster-detail-routines.md` Run 3 DEFERRED→PASS(집계) · `docs/test-runs.d/20260715T2152-graph-cluster-detail-cap.md` Run 4 DEFERRED→PASS(라이브) · `docs/TASK.md` 두 cycle POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
+- Cross-ref: 원천 CHG-20260715T211911-graph-cluster-detail-routines · CHG-20260715T215241-graph-cluster-detail-cap · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.

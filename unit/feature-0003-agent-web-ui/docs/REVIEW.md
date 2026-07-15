@@ -455,3 +455,8 @@ source_of_truth: true
 - [SKIPPED] VERDICT — display-cap 규약 개정, correctness/경계 결함 없음. 캡 도달 후에도 **모든 컨텐츠 카테고리가 헤딩으로 반드시 나타나** 사용자 목표(routine 컨텐츠 카테고리 조회 가능) 달성.
 - 검증: `node --check`(module) PASS · POST-DEPLOY PB-0008 라이브(gunzgame 상세에서 함수·프로시저 컨텐츠 카테고리 헤딩+ƒ/⚙ 멤버 행 실렌더·클릭 조회 확인, 잔여).
 - Cross-ref: TASK 20260715T2152 · CHG/TEST-20260715T215241-graph-cluster-detail-cap · test-runs.d/20260715T2152-graph-cluster-detail-cap.md · 선행 REV-20260715T211911-graph-cluster-detail-routines · ANCHOR 0003 무충돌.
+
+## REV-20260715T220941-graph-cluster-detail-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 그래프 클러스터 상세 함수·프로시저 컨텐츠 카테고리 수정 POST-DEPLOY 실증 기록 (CHG-20260715T220941-graph-cluster-detail-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T211911(routine 집계, [SUBAGENT] hiddenKinds parity MAJOR 수정) + CHG-20260715T215241(cap 개정, [SKIPPED] display-cap 적대 자가검토)은 각 REV 로 검증됨. 본 cycle 은 배포 결과를 원장에 기록만.
+- 배포본 실증(win-browser eval, 로그인 세션, 배포 cdee785e, 주입 없이): gunzgame 클러스터 상세에서 함수·프로시저-only 컨텐츠 카테고리 51개 노출(수정 전 0)·⚙/ƒ 칩 멤버 행·⚙ Game_AllItemGet 클릭→routine 노드 상세·캔버스 sim-group 정합·pageerror 0. 스크린샷 육안 정상(gz_routine_groups.png: "계정 조회" 그룹 ⚙ Game_Account*·ƒ Func_IsAccountBoundCustomizeItem 멤버).
+- Cross-ref: CHG-20260715T220941-graph-cluster-detail-postverify · 원천 REV-20260715T211911-graph-cluster-detail-routines · REV-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.

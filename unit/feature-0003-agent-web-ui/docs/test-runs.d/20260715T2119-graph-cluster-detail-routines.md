@@ -18,8 +18,9 @@ verdict: 정적 PASS · POST-DEPLOY PB-0008 라이브 DEFERRED
 - **escape**: routine name·description·routine_type 전부 `esc()` 경유(rowHTML). Routine 아이콘/라벨은 `_metaRoutineIcon`/`_metaRoutineKo`(미상 routine_type → ⚙/프로시저 기본).
 - 결과 **PASS(정적)** — correctness/회귀 결함 미발견. §18.8 적대 리뷰 결과는 REVIEW.md 참조.
 
-### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **DEFERRED(배포 후 수행)**
-- 대상: 정적 자산 baked 이미지(web-a/web-b) 재배포 후 서빙 자산 반영 확인 → win-browser.py 실 Windows Chrome relay 로 `https://localhost/admin` > 지식베이스 > 그래프 뷰.
+### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **PASS(집계)**
+- 배포 main 1b370dfd(PR #827) 후 win-browser.py 실 Windows Chrome relay, gunzgame 클러스터 상세 진입: 섹션 "테이블·함수·프로시저 (409)"·설명 "테이블 115개 · 함수·프로시저 294개" 실측 — **routine 이 집계에 포함됨을 입증**(수정 전이라면 "테이블 (115)"). 단 이 배포본에선 80행 전역 캡 때문에 routine 컨텐츠 카테고리 **행**은 미노출(앞쪽 테이블 be: 클러스터 10개가 80행 소진) — 이 시각 누락은 후속 cluster-detail-cap(20260715T2152, main cdee785e)에서 헤딩 항상 방출 + 캡 개정으로 해소(그 cycle 의 Run 4 POST-DEPLOY PASS: routine-only 컨텐츠 카테고리 51개 노출·⚙ Game_AllItemGet 클릭 조회). 즉 **집계 정합은 본 cycle, 시각 조회는 후속 cap cycle 에서 완결**.
+- (원 계획 대상: 정적 자산 baked 이미지 재배포 후 서빙 자산 반영 확인 → win-browser.py 실 Windows Chrome relay 로 `https://localhost/admin` > 지식베이스 > 그래프 뷰.)
 - 확인 항목(예정):
   1. 함수·프로시저가 다수인 스키마 클러스터(예: gunzgame)를 상세 패널로 진입(combo 클릭 또는 카드) → 설명에 "함수·프로시저 M개" 노출, 섹션 제목 "테이블·함수·프로시저 (N)".
   2. **캔버스에는 보이나 기존 패널엔 없던 함수·프로시저-only 컨텐츠 카테고리**(예: "상점 아이템 명칭")가 상세 패널 목록에 그룹 헤딩 + 멤버(ƒ/⚙ 칩)로 표시.
