@@ -337,3 +337,7 @@ source_of_truth: true
   - **연결 테스트 게이트**: 기존 '버튼 무게이트+서버 manage 403' 괴리 → datasource.test 로 FE/BE 정합(개선).
 - **검증**: 785/0(호스트) · jsdom 47/0 · R9(transitive·DENY 우선)/R10(legacy 3자 parity) 신설 · ROUTEMAP 재생성 --check 0. 컨테이너 make test·배포 후 실증은 TASK 잔여.
 - **Human Approval**: 예 — cycle 시작 AskUserQuestion 2건 승인(Critical §12.3 충족).
+
+## REV-20260715T113000-perm-atomic-postverify [SKIPPED:doc-only-postdeploy-verification-record] — perm-atomic-split 배포 후 실증 기록 (PR #810 · 8098aee1)
+- 코드 변경 0(문서 전용). 실증: seed catchup 정상 · `atomic-perm-split-v1` 마커 · admin 원자 23종 · 묶음 보유 role=admin 뿐(usermanager 비대상 정상·접근 상실 0) · PB-0008 라이브(레거시 묶음 grid 0건·원자 트리 d1/d2·검수=원본 read 하위·토글 접힘/펼침·상태 무오염). 상세 = test-runs.d/20260715T103406-perm-atomic-split.md POST-DEPLOY Run.
+- [SKIPPED] 사유: 배포 후 실증 문서화만 — 신규 코드/경계 0(선례 REV-20260714T203000-perm-category-hier-postverify).
