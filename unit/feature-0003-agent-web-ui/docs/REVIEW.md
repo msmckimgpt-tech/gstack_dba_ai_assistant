@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260716T015800-graph-search-detail-postverify [SKIPPED:post-deploy-visual-verification-reconciliation] — PB-0008 라이브 PASS 원장 정합 (docs-only, 코드 변경 0)
+- Date: 2026-07-16
+- Cycle: CHG-20260716T015800-graph-search-detail-postverify (test-runs.d Run 3 DEFERRED→PASS + TASK 체크박스), **Minor §12.3**.
+- SKIPPED 사유: 순수 검증 원장 정합 — 런타임 코드·CSS·백엔드 변경 0(§18.4 META docs-only). 기능 코드 자체의 적대검증은 REV-20260716T013714-graph-search-detail-panel(frontend correctness+ux 7축, SHIP)에서 완료. 본 cycle 은 그 SHIP 후 배포·PB-0008 라이브 시각검증(main 03e8d1b0) 결과를 test-runs fragment 에 기록한 것.
+- 검증 결정적(라이브 실측): 검색어 갱신→상세 패널 결과 리스트(코스튬 7건/플루토스 28건), match_via 배지(AI 분석/카테고리)+cluster_label+유사도, 행 클릭→노드 상세, 클리어→뷰 해제, pageerror 0. 상세는 test-runs.d/20260716T0137 Run 3.
+- Cross-ref: REV-20260716T013714-graph-search-detail-panel / CHG-20260716T015800-graph-search-detail-postverify.
+
 ## REV-20260716T013714-graph-search-detail-panel [SUBAGENT:adversarial-frontend-correctness+ux] — 검색어 갱신 시 상세 패널에 검색 결과 구성 SHIP
 - Date: 2026-07-16
 - Cycle: TASK-20260716T013714-graph-search-detail-panel (그래프 뷰: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성), **Minor §12.3** — feature-0003 프론트 단독·additive.

@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260716T015800-graph-search-detail-postverify (POST-DEPLOY 시각검증 정합 — docs-only, 코드 변경 0)
+- Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-detail-postverify`(base main 03e8d1b0). CHG-20260716T013714-graph-search-detail-panel(PR #839 배포 완료) 의 POST-DEPLOY PB-0008 라이브 시각검증 결과를 원장에 정합.
+- 변경: `docs/test-runs.d/20260716T0137-graph-search-detail-panel.md` Run 3 DEFERRED→**PASS**(win-browser.py 실 Windows Chrome 라이브 실측 — 코스튬 7건 AI 분석 배지·플루토스 28건 카테고리 배지+cluster_label+유사도 63%·행 클릭→노드 상세·클리어→뷰 해제·pageerror 0) + verdict 갱신 + `docs/TASK.md` PB-0008 체크박스 [x]. **런타임 코드·CSS·백엔드 무변경**(순수 검증 원장 정합).
+- Rollback: 문서 revert. Deploy: 없음(docs-only). Cross-ref: CHG-20260716T013714-graph-search-detail-panel / REV-20260716T015800-graph-search-detail-postverify.
+
 ## CHG-20260716T013714-graph-search-detail-panel (그래프 뷰: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성, Minor §12.3 — 프론트 단독·additive; 그래프 정본 feature-0016)
 - Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-detail-panel`(base main 0433efbb). 사용자 요청(/_template:entry 후속 turn): "검색어가 입력되었을 경우엔 상세 패널 내 검색 결과를 구성하도록 동작시켜주세요. 트리거는 '검색어 갱신 시'."
 - **컨텍스트**: 직전 cycle(feature-0002 CHG-20260716-graph-search-content-match)로 `search_nodes` 가 이름/FQN 외 컨텐츠 카테고리(`semantic_cluster_label`)·AI 능동 분석(`node_analysis_jobs.analysis`)까지 매칭하고 노드에 `match_via`·`cluster_label`·`score` 를 실어 반환한다. 그래프 검색은 캔버스 앰버 글로우 + 스키마 카드 badge 로만 결과를 표기했는데, 검색 시 상세 패널에서 매칭 노드 목록을 바로 훑도록 결과 리스트를 상세 패널에 구성한다(프론트 렌더만 추가 — 백엔드 payload 이미 충분).
