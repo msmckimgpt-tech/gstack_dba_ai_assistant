@@ -1,6 +1,6 @@
 {
-  "total_routes": 207,
-  "api_routes": 206,
+  "total_routes": 208,
+  "api_routes": 207,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -667,6 +667,13 @@
     },
     {
       "path": "/api/admin/metadata/enum-feedback/{feedback_id}/reject",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/metadata/enum-feedback/bulk-promote",
       "methods": [
         "POST"
       ],

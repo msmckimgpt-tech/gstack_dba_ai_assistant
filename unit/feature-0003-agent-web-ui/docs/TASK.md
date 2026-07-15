@@ -5715,3 +5715,20 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] §18.8 적대 패널(scope/IDOR/correctness 5축) → CONFIRMED-DEFECT 0·전건 REFUTED(라벨-only, 서버 SQL 은 attachment_ids 스코프). → REV-20260715T110000.
 - [x] TEST.md §3 Environment: Windows-browser 기록(de-risk + 배포 후 PB-0008 DEFERRED).
 - [ ] verify-completion(feature-0003, check #13 visual) → commit/push(auto-sync) → PR·머지·배포(deploy_scope: included) → 배포 후 PB-0008 실측(신규 대화 staged 첨부 → assistant 가 ★신규로 인지·"반영 안 됨" 미발생).
+- [ ] 컨테이너 make test → verify-completion → commit → PR → 머지 → web 재배포.
+- [ ] **배포 후 실증**: `atomic-perm-split-v1` 마커 + 묶음 보유 role(usermanager 등) 원자 explicit 전개 + PB-0008(grid 에 묶음 미표시·원자 단위 [조회→추가/수정/삭제/검수] 트리·버튼 게이팅).
+
+## 20260715T1053-enum-review-bundle — ENUM 코드사전 검토 큐: 구조 묶음 단위 승인 체크리스트 + 일괄 등록 (Major §12.3 — feature-0003 web/UI 프론트 + admin_metadata/kb_glossary 백엔드, additive·비파괴. /_template:entry arg-given dispatch. REQ-20260715T105337-enum-review-bundle)
+
+- 트리거(사용자 요청): `관리 콘솔 > 지식베이스 > 메타데이터 > ENUM 코드사전` 검토 큐에서 ENUM값을 **구조 묶음 단위**로 구성하고, 각 검토에서 **승인 여부를 체크리스트**로 만들어 **전체 승인 / 일부만 승인 해제** 후 **등록**할 수 있게.
+- 진단: 현행 ENUM 검토 큐(`renderFeedbackQueue` kind=enum)는 개별 `table.column · code` 후보를 1건씩 승급/거부하는 flat list — 묶음/일괄/체크리스트 없음. `enum_feedback` UNIQUE 키 `(scope,schema,table,column,code)` → **한 컬럼 = 한 구조 묶음**(코드↔라벨 후보 집합)이 자연 그룹.
+- 구현:
+  - [x] (백엔드 core) `kb_glossary.py` `bulk_promote_enum_feedback(conn, feedback_ids, *, approved_by=None)` — 기존 `promote_enum_feedback` 를 단일 트랜잭션 loop, `[{"feedback_id","enum_id"}]` 반환(없음/이미 처리 → enum_id=None skip, 예외 아님).
+  - [x] (백엔드 web) `admin_metadata.py` `POST /api/admin/metadata/enum-feedback/bulk-promote`(RBAC `kb.enum.curate` 재사용) — body `{"feedback_ids":[int,...]}` 정규화(int·양수·dedup·≤`_ENUM_BULK_PROMOTE_MAX`=200) → bulk 승급 → commit/rollback + audit `enum.feedback.bulk_promote`(requested/promoted_count/skipped_ids).
+  - [x] (프론트) `admin.js` `renderFeedbackQueue` enum 경로 → `_metaRenderEnumBundles`(묶음 그룹핑, Map 삽입순 보존) + `_metaBuildEnumBundle`(헤더 '전체 승인' 마스터 체크박스[indeterminate 연동] + 코드행 개별 체크박스 + 힌트[전체 승인/일부 해제 N개 제외/선택 없음] + '등록(N)' 버튼) + `_enumBundleRegister`(확인→bulk-promote→토스트→큐 리로드). glossary/sample 경로·개별 액션 불변.
+  - [x] (CSS) `styles.css` `.admin-meta-bundle*` 카드(헤더/체크리스트/푸터) — 기존 admin-meta 토큰 재사용.
+  - [x] 테스트: (core) `test_bulk_promote_enum_feedback_multi`·`_skips_missing`; (web) `test_enum_feedback_bulk_promote`·`_reports_skips`·`_empty_400`·`_bad_type_400`·`_requires_curate`(403).
+  - [x] `docs/ROUTEMAP.md` 재생성(203 routes, 신규 route 반영 — Code-Navigation gate).
+- 비변경: 개별 promote/reject 엔드포인트·glossary/sample 큐·RBAC 정의·스키마/마이그레이션·인증 0. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: `node --check`(module) admin.js PASS · agent 컨테이너 targeted pytest 28/0 · `gen-routemap --check` up-to-date. **미선택(해제)은 pending 유지 = 비파괴**(거부 아님).
+- [ ] verify-completion(pre-commit) → commit → PR·머지 → web 재배포(deploy_scope: included) → **POST-DEPLOY PB-0008 라이브 시각검증**(묶음 카드 렌더·전체 승인/일부 해제 토글·등록 후 코드사전 반영, visual_verification_scope: always). worktree `ai/claude/feature-0003-enum-review-bundle`(base main 7f169007). REV/CHG-20260715T105337-enum-review-bundle.

@@ -401,3 +401,15 @@ source_of_truth: true
 - Recurrence sealing: attachment_ids/new_attachment_ids union 대칭으로 staged-flush 신규 첨부의 ★신규 라벨 보장 → "새 파일 반영 안 됨" 오판 경로 봉인. **보안 회귀 0**: new_attachment_ids 는 서버측 라벨+version-diff 게이트 전용(접근 스코프 아님), uploadedIds 는 서버-확인 id, v1 staged 라 version-diff 미트리거.
 - 검증: `node --check` PASS. de-risk(로직 대칭 분석 + 적대 패널 + 서버측 new_attachment_ids 소비 추적). 라이브 PB-0008(신규 대화 staged 첨부 ★신규 인지)은 정적자산 baked → 배포 후 실측(TEST.md §3 DEFERRED). §18.8 → REV-20260715T110000-attach-new-label-symmetry.
 - Cross-ref: CHG-20260715T060000-attach-inline-honesty(②-backend, feature-0002) · ② 서브에이전트 진단(share-window 비관여) · ANCHOR §1~§3 무충돌.
+## CHG-20260715T105337-enum-review-bundle (ENUM 코드사전 검토 큐: 구조 묶음 단위 승인 체크리스트 + 일괄 등록, Major §12.3 additive·비파괴)
+- Date: 2026-07-15. 사용자 요청: `관리 콘솔 > 지식베이스 > 메타데이터 > ENUM 코드사전` 검토 큐에서 ENUM값을 구조 묶음 단위로 구성 + 승인 체크리스트(전체 승인/일부 해제) 후 등록. `/_template:entry` arg-given dispatch. 설계 근거: `enum_feedback` UNIQUE `(scope,schema,table,column,code)` → 한 컬럼 = 한 구조 묶음.
+- Changes:
+  - `unit/feature-0002-agent-core/src/modules/kb_glossary.py`: 신규 `bulk_promote_enum_feedback(conn, feedback_ids, *, approved_by=None)` — 기존 `promote_enum_feedback` 를 단일 트랜잭션 loop, `[{"feedback_id","enum_id"}]` 반환(없음/이미 처리 → enum_id=None skip).
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`: 신규 `POST /api/admin/metadata/enum-feedback/bulk-promote`(RBAC `kb.enum.curate`) — body `{"feedback_ids":[int,...]}` 정규화(int·양수·dedup·≤`_ENUM_BULK_PROMOTE_MAX`=200) → `bulk_promote_enum_feedback` → commit/rollback + audit `enum.feedback.bulk_promote`(requested/promoted_count/skipped_ids). 모듈 상수 `_ENUM_BULK_PROMOTE_MAX` 추가.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `renderFeedbackQueue` enum 경로 → `_metaRenderEnumBundles`(묶음 그룹핑) + `_metaBuildEnumBundle`(전체 승인 마스터+개별 체크박스+힌트+등록 버튼) + `_enumBundleKey`/`_enumBundleRegister`(bulk-promote). enum note 텍스트 갱신. glossary/sample 경로 불변.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.admin-meta-bundle*` 카드 스타일(헤더/체크리스트/푸터).
+  - `docs/ROUTEMAP.md`: 재생성(203 routes, 신규 route 반영).
+- 무회귀: 개별 promote/reject·glossary/sample 큐·RBAC 정의·스키마/마이그레이션·인증 0. 미선택(해제)은 pending 유지(비파괴 — 거부 아님). cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: `node --check`(module) admin.js PASS · agent 컨테이너 targeted pytest 28/0(core 2 + web 6 신규 포함) · `gen-routemap --check` up-to-date. POST-DEPLOY PB-0008 라이브(묶음 카드·토글·등록) 예정.
+- Files: `unit/feature-0002-agent-core/src/modules/kb_glossary.py`, `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`, `unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css}`, `unit/feature-0002-agent-core/tests/test_kb_enum_feedback.py`, `unit/feature-0003-agent-web-ui/tests/test_metadata_enum_feedback.py`, `docs/ROUTEMAP.md`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260715T105337-enum-review-bundle.md`.
+- Cross-ref: REV/TASK-20260715T105337-enum-review-bundle · REQ-20260715T105337-enum-review-bundle · 원천 enum_feedback(alembic 0039)·admin_metadata enum-feedback 큐 · ANCHOR 0003 무충돌.

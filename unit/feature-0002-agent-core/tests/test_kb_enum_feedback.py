@@ -149,6 +149,27 @@ def test_promote_enum_feedback_inserts_and_marks():
     assert "status='promoted'" in joined
 
 
+# ── bulk_promote_enum_feedback (구조 묶음 단위 '등록') ──────────────────────────
+def test_bulk_promote_enum_feedback_multi():
+    # 다건 연속 승급 — 각 건마다 SELECT(row) + INSERT RETURNING(eid) 시퀀스. 요청 순서 보존.
+    conn = _ScriptedConn(fetchone_queue=[
+        ("common", "", "orders", "status", "P", "결제대기"), (101,),
+        ("common", "", "orders", "status", "S", "배송중"), (102,),
+    ], rowcount=1)
+    results = G.bulk_promote_enum_feedback(conn, [3, 4], approved_by="curator")
+    assert results == [{"feedback_id": 3, "enum_id": 101}, {"feedback_id": 4, "enum_id": 102}]
+
+
+def test_bulk_promote_enum_feedback_skips_missing():
+    # pending 아님/없음(SELECT fetchone=None) → enum_id=None skip(예외 아님, 부분 skip 정상).
+    conn = _ScriptedConn(fetchone_queue=[
+        None,                                                       # id 5: 대상 아님 → None
+        ("common", "", "orders", "status", "P", "결제대기"), (201,),   # id 6: 정상 승급
+    ], rowcount=1)
+    results = G.bulk_promote_enum_feedback(conn, [5, 6])
+    assert results == [{"feedback_id": 5, "enum_id": None}, {"feedback_id": 6, "enum_id": 201}]
+
+
 # ── infer_enum_suggestions — LLM 위임 + 필터링(fake 모듈 주입) ──────────────────
 def test_infer_enum_suggestions_filters(monkeypatch):
     fake = types.ModuleType("modules.llm")

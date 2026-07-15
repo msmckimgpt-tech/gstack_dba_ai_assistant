@@ -848,6 +848,20 @@ def promote_enum_feedback(conn, feedback_id, *, approved_by=None):
         cur.close()
 
 
+def bulk_promote_enum_feedback(conn, feedback_ids, *, approved_by=None) -> list:
+    """검토 큐(pending) 다건 → ENUM 코드사전 일괄 승급(구조 묶음 단위 '등록').
+
+    각 id 를 promote_enum_feedback 로 처리하고 결과를 모은다. 단일 트랜잭션(커밋은 호출자):
+    하나라도 예외면 호출자가 전체 롤백. 이미 처리됐거나 없는 id 는 enum_id=None 으로 skip 표시
+    (예외 아님 — 부분 skip 은 정상). 반환: [{"feedback_id": int, "enum_id": int|None}] (요청 순서).
+    """
+    results = []
+    for fid in feedback_ids:
+        eid = promote_enum_feedback(conn, int(fid), approved_by=approved_by)
+        results.append({"feedback_id": int(fid), "enum_id": (int(eid) if eid is not None else None)})
+    return results
+
+
 def reject_enum_feedback(conn, feedback_id) -> int:
     """검토 큐 거부(by id). pending 거부 + auto_promoted 되돌리기(자동추가 source='auto' 행 제거).
 

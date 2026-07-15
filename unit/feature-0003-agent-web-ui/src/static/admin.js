@@ -4393,10 +4393,16 @@ function renderFeedbackQueue(kind) {
   const note = document.createElement("span");
   note.className = "admin-archive-detail-note";
   note.textContent = kind === "enum"
-    ? "대화에서 자동 수집된 ENUM 코드↔라벨 후보입니다. 승급하면 코드사전에 반영되고, 거부하면 제외(자동 등록분은 회수)됩니다."
+    ? "대화에서 자동 수집된 ENUM 코드↔라벨 후보입니다. 컬럼(구조 묶음)별로 묶어 표시합니다. 묶음 안에서 전체 승인 또는 일부 해제 후 '등록'하면 선택한 코드만 코드사전에 반영되고, 해제한 코드는 검토 큐에 그대로 남습니다."
     : "대화에서 자동 제안된 용어 후보입니다. 승급하면 용어사전에 반영되고, 거부하면 제외(자동 등록분은 회수)됩니다.";
   bar.appendChild(note);
   listEl.appendChild(bar);
+
+  // ENUM 검토 큐는 구조 묶음(scope · schema.table.column) 단위 승인 체크리스트 + 일괄 등록으로 렌더.
+  if (kind === "enum") {
+    _metaRenderEnumBundles(listEl, items, canCurate);
+    return;
+  }
 
   if (!items.length) {
     const empty = document.createElement("div");
@@ -4485,6 +4491,205 @@ function renderFeedbackQueue(kind) {
       if (actions.childNodes.length) row.appendChild(actions);
     }
     listEl.appendChild(row);
+  }
+}
+
+// ── ENUM 검토 큐 — 구조 묶음(scope · schema.table.column) 단위 승인 체크리스트 + 일괄 등록 ──────
+// enum_feedback UNIQUE 키 = (scope,schema,table,column,code) → 한 컬럼 = 한 '구조 묶음'. 묶음별로
+// pending 후보를 체크리스트로 묶어 '전체 승인' 마스터 체크 + 개별 해제('일부만 승인 해제') 후 '등록'
+// (bulk-promote) 한다. 미선택(해제)은 pending 유지(비파괴). promoted/rejected/auto 행은 읽기전용 표시.
+function _enumBundleKey(it) {
+  return [it.scope_key || "", it.schema_name || "", it.table_name || "", it.column_name || ""].join("");
+}
+
+function _metaRenderEnumBundles(listEl, items, canCurate) {
+  const countEl = document.getElementById("metadataCount");
+  // 묶음 그룹핑 — 입력 순서 보존(백엔드가 status/created_at DESC 정렬). Map 은 삽입 순서 유지.
+  const bundles = new Map();
+  for (const it of (items || [])) {
+    const key = _enumBundleKey(it);
+    let b = bundles.get(key);
+    if (!b) {
+      b = { scope_key: it.scope_key || "", schema_name: it.schema_name || "",
+            table_name: it.table_name || "", column_name: it.column_name || "", items: [] };
+      bundles.set(key, b);
+    }
+    b.items.push(it);
+  }
+  if (countEl) countEl.textContent = bundles.size ? `${(items || []).length}건 · ${bundles.size}개 묶음` : "0건";
+  if (!bundles.size) {
+    const empty = document.createElement("div");
+    empty.className = "admin-list-empty";
+    empty.textContent = "검토할 ENUM 후보가 없습니다.";
+    listEl.appendChild(empty);
+    return;
+  }
+  for (const b of bundles.values()) {
+    listEl.appendChild(_metaBuildEnumBundle(b, canCurate));
+  }
+}
+
+function _metaBuildEnumBundle(b, canCurate) {
+  const card = document.createElement("div");
+  card.className = "admin-meta-bundle";
+
+  const pendingItems = b.items.filter((it) => String(it.status || "") === "pending");
+  const hasPending = pendingItems.length > 0;
+  const showChecklist = canCurate && hasPending;   // 체크리스트/등록은 pending 후보가 있고 큐레이트 권한일 때만.
+
+  // ── 헤더: [전체 승인 마스터]  scope · schema.table.column  [코드 N개 · 대기 M]
+  const head = document.createElement("div");
+  head.className = "admin-meta-bundle-head";
+  let master = null;
+  if (showChecklist) {
+    const ml = document.createElement("label");
+    ml.className = "admin-meta-bundle-master";
+    master = document.createElement("input");
+    master.type = "checkbox";
+    master.checked = true;
+    ml.appendChild(master);
+    const mt = document.createElement("span");
+    mt.textContent = "전체 승인";
+    ml.appendChild(mt);
+    head.appendChild(ml);
+  }
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "admin-meta-bundle-title";
+  const scopeTag = document.createElement("span");
+  scopeTag.className = "admin-meta-tag admin-meta-tag-neutral";
+  scopeTag.textContent = `scope: ${_metaDatasourceLabelOf(b.scope_key)}`;
+  titleWrap.appendChild(scopeTag);
+  const loc = [b.schema_name, b.table_name, b.column_name].filter(Boolean).join(".");
+  const locEl = document.createElement("span");
+  locEl.className = "admin-meta-bundle-loc";
+  locEl.textContent = loc;
+  titleWrap.appendChild(locEl);
+  head.appendChild(titleWrap);
+  const cnt = document.createElement("span");
+  cnt.className = "admin-meta-bundle-count";
+  cnt.textContent = hasPending ? `코드 ${b.items.length}개 · 대기 ${pendingItems.length}` : `코드 ${b.items.length}개`;
+  head.appendChild(cnt);
+  card.appendChild(head);
+
+  // ── 코드 체크리스트
+  const list = document.createElement("div");
+  list.className = "admin-meta-bundle-list";
+  const checkboxes = [];
+  for (const it of b.items) {
+    const isPending = String(it.status || "") === "pending";
+    const row = document.createElement("div");
+    row.className = "admin-meta-bundle-row";
+    if (showChecklist && isPending) {
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = true;
+      cb.className = "admin-meta-bundle-check";
+      cb.dataset.fid = String(it.id);
+      cb.setAttribute("aria-label", `${it.code} 승인`);
+      checkboxes.push(cb);
+      row.appendChild(cb);
+    } else {
+      const sp = document.createElement("span");
+      sp.className = "admin-meta-bundle-check-sp";
+      sp.setAttribute("aria-hidden", "true");
+      row.appendChild(sp);
+    }
+    const codeWrap = document.createElement("div");
+    codeWrap.className = "admin-meta-bundle-codewrap";
+    const codeEl = document.createElement("span");
+    codeEl.className = "admin-meta-code";
+    codeEl.textContent = String(it.code || "");
+    codeWrap.appendChild(codeEl);
+    const arrow = document.createElement("span");
+    arrow.className = "admin-meta-bundle-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = "→";
+    codeWrap.appendChild(arrow);
+    const labelEl = document.createElement("span");
+    labelEl.className = "admin-meta-bundle-label";
+    labelEl.textContent = it.suggested_label || "";
+    codeWrap.appendChild(labelEl);
+    row.appendChild(codeWrap);
+    const tags = document.createElement("div");
+    tags.className = "admin-meta-bundle-tags";
+    if (it.confidence != null) {
+      const t = document.createElement("span");
+      t.className = "admin-meta-tag admin-meta-tag-conf";
+      t.textContent = `신뢰도 ${Number(it.confidence).toFixed(2)}`;
+      tags.appendChild(t);
+    }
+    const st = String(it.status || "");
+    if (st !== "pending") {
+      const stLabel = { auto_promoted: "자동 등록됨", promoted: "승급됨", rejected: "거부됨" }[st] || st;
+      const stCls = st === "promoted" ? "admin-meta-tag-ok" : st === "rejected" ? "admin-meta-tag-danger" : "admin-meta-tag-neutral";
+      const t = document.createElement("span");
+      t.className = "admin-meta-tag " + stCls;
+      t.textContent = stLabel;
+      tags.appendChild(t);
+    }
+    row.appendChild(tags);
+    list.appendChild(row);
+  }
+  card.appendChild(list);
+
+  // ── 푸터: 등록 버튼 + 선택 상태 힌트(전체 승인 / 일부 해제) — 마스터·개별 체크박스와 연동.
+  if (showChecklist) {
+    const foot = document.createElement("div");
+    foot.className = "admin-meta-bundle-foot";
+    const hint = document.createElement("span");
+    hint.className = "admin-meta-bundle-hint";
+    foot.appendChild(hint);
+    const reg = document.createElement("button");
+    reg.type = "button";
+    reg.className = "btn-primary admin-meta-bundle-register";
+    foot.appendChild(reg);
+    const syncState = () => {
+      const checkedN = checkboxes.filter((c) => c.checked).length;
+      reg.textContent = `등록 (${checkedN})`;
+      reg.disabled = checkedN === 0;
+      hint.textContent = checkedN === checkboxes.length ? "전체 승인"
+        : checkedN === 0 ? "선택된 코드 없음"
+        : `일부 해제 (${checkboxes.length - checkedN}개 제외)`;
+      if (master) {
+        master.checked = checkedN === checkboxes.length;
+        master.indeterminate = checkedN > 0 && checkedN < checkboxes.length;
+      }
+    };
+    for (const c of checkboxes) c.addEventListener("change", syncState);
+    if (master) {
+      master.addEventListener("change", () => {
+        for (const c of checkboxes) c.checked = master.checked;
+        syncState();
+      });
+    }
+    reg.addEventListener("click", () => {
+      const ids = checkboxes.filter((c) => c.checked).map((c) => Number(c.dataset.fid));
+      _enumBundleRegister(ids, reg);
+    });
+    syncState();
+    card.appendChild(foot);
+  }
+  return card;
+}
+
+async function _enumBundleRegister(feedbackIds, btn) {
+  if (!feedbackIds || !feedbackIds.length) return;
+  if (!window.confirm(`선택한 ${feedbackIds.length}개 코드를 ENUM 코드사전에 등록(승급)합니다.\n해제한 코드는 검토 큐에 그대로 남습니다.`)) return;
+  if (btn) btn.disabled = true;
+  try {
+    const data = await apiFetch("/api/admin/metadata/enum-feedback/bulk-promote", {
+      method: "POST",
+      body: JSON.stringify({ feedback_ids: feedbackIds }),
+    });
+    const n = (data && data.promoted_count) || 0;
+    const skipped = (data && data.skipped_ids && data.skipped_ids.length) || 0;
+    if (typeof showToast === "function") {
+      showToast(skipped ? `${n}개 코드를 등록했습니다. (${skipped}개는 이미 처리됨)` : `${n}개 코드를 코드사전에 등록했습니다.`);
+    }
+    await loadFeedbackQueue("enum");
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "등록 실패", true);
+    if (btn) btn.disabled = false;
   }
 }
 
