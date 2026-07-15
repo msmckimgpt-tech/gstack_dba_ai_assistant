@@ -1374,4 +1374,6 @@ TASK-0015 (plan-review):
 - [x] agent_core: SYSTEM_PROMPT 라우팅(커버리지 비교→도구, truncated 면 미확인) + reason/work narration.
 - [x] §18.8 적대 2렌즈 패널(REV-20260714T233000): BLOCKING2(B1 절단·B2 주석)·MAJOR1(M1 이름 등장 오집계)·MINOR2 적발 → 조작-동사 추출+주석분리+절단캐비엇+USE귀속 전면 재설계 봉인. 보안 5벡터 REFUTED.
 - [x] 테스트 `test_check_table_coverage.py` 12 PASS(seal + B1/B2/M1/m1 회귀 + 헬퍼). `make test` 신규 회귀 0(pre-existing 4건 무관·flaky 1건 재실행시 소멸).
-- [ ] verify-completion → commit/push → PR → merge → 배포(deploy_scope: included) → 배포검증 + 라이브 재-재현으로 결정론 봉인 실증(LoginEventLog 미조작 오판 소멸) → FRICTION_LEDGER 종합 정합.
+- [x] verify-completion → commit/push → PR #803 merge(main 3c8e78df) → 배포(4서비스 3c8e78df·tool live) → 라이브 재-재현은 외부 gunzgame DB unreachable(err 2003)로 미완(외부 인프라).
+## 20260715T104500-friction-ledger-reconcile — FR-partial-evidence 원장 arc 정합 (docs-only, 코드 0)
+- [x] FRICTION_LEDGER FR-partial-evidence 엔트리에 후속 봉인 arc(case 레버 부분작동→결정론 도구 배포 3c8e78df) + status `unverified-live` 유지 근거 반영. CHG-20260715T104500 · REV-20260715T104500 [SKIPPED].

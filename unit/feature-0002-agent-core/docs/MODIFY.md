@@ -280,3 +280,9 @@ source_of_truth: true
 - §18.8 적대 2렌즈 패널이 v1 순진설계 적발(REV-20260714T233000): **B1**(절단 미인지→false-missing authoritative 재도입)·**B2**(블록/인라인/# 주석 누출→false-coverage)·**M1**(이름 아무데나 등장→컬럼/함수 동명 오집계·실누락 은폐) BLOCKING/MAJOR → **조작-동사 추출 + 주석 분리 + 절단 캐비엇 + USE 스키마 귀속**으로 전면 재설계 봉인. 보안 5벡터 REFUTED.
 - 검증: `tests/test_check_table_coverage.py` **12 PASS**(seal `LoginEventLog`↔`logineventlog`=조작 집계·미조작 아님 + B1 절단격하·B2 주석분리·M1 컬럼오탐방지·m1 cross-schema 회귀 + 헬퍼). feature-0002 전체 `make test` 신규 회귀 0. §18.8 적대 2렌즈 패널 → REV-20260714T233000-attach-table-coverage(BLOCKING2·MAJOR1·MINOR2 전건 수정).
 - Cross-ref: **CHG-20260714T221500**(case 프롬프트 레버 — 본 도구가 그 잔존을 코드로 마감·상보) · **FR-partial-evidence-false-verification**(원장) · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260715T104500-friction-ledger-reconcile (docs-only: FR-partial-evidence 원장 상태 arc 정합, 코드 변경 0)
+- Date: 2026-07-15. 런타임 코드·테스트 무변경. `docs/improvements/conversation-audit/FRICTION_LEDGER.md` FR-partial-evidence-false-verification 엔트리의 잔존-결함 문구가 "별도 triage 대상"(PR #800 시점)에 머물러, 완료된 후속 봉인 arc(case 프롬프트 레버 CHG-20260714T221500 부분작동 → 결정론 도구 CHG-20260714T233000 배포 `3c8e78df`)를 반영하도록 정합 + status enum(`fixed:deployed:unverified-live`) 불변 명시.
+- Recurrence sealing: N/A(문서 정합). 코드 봉인은 CHG-20260714T221500·CHG-20260714T233000, 적대검증은 REV-20260714T221500·REV-20260714T233000.
+- 검증: docs-only(§18.4 META 인접) — verify-completion #9 = REV-20260715T104500 [SKIPPED:post-deploy-ledger-reconciliation].
+- Cross-ref: FRICTION_LEDGER FR-partial-evidence-false-verification · CHG-20260714T233000 · REV-20260715T104500.
