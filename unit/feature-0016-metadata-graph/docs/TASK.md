@@ -12,6 +12,7 @@ source_of_truth: true
 - REQ-20260630-metadata-graph (FUNCTION.md §2). 사용자 결정 A3(AGE 즉시 도입)·한 묶음·신규 feature-0016.
 - 등급: **Critical** (운영 PostgreSQL 커스텀 이미지 + 그래프 마이그레이션 + 무중단 배포 영향).
 - RFC: 세션 아티팩트 "메타데이터 지식그래프 아키텍처" (v2-data-grounded).
+- **Cross-ref (2026-07-16, 코드 거주 feature-0002)**: 그래프 뷰 검색(`search_nodes`)이 이름/FQN 외 **컨텐츠 카테고리**(`semantic_cluster_label`, §78~81 컨텐츠 단위 그룹)·**AI 능동 분석 본문**(`node_analysis_jobs.analysis`, §69/ADR-034)까지 매칭하도록 확장. 정본 기록 = feature-0002 TASK-20260716-graph-search-content-match / MODIFY CHG-20260716-graph-search-content-match / REV-20260716T010620-graph-search-content-match. 프론트(`graph-ctxmenu.js`) 무수정(백엔드 단독).
 
 ## 1. Phase 0 — AGE 인프라 토대 (de-risk, worktree-local 비파괴) ✅ PASS (2026-06-30)
 - [x] T0.1 `docker/Dockerfile.pg-age` — base `pgvector/pgvector:pg16` 위에 Apache AGE
