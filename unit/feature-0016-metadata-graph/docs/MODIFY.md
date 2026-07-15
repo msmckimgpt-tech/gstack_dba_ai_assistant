@@ -199,6 +199,11 @@ source_of_truth: true
 ## CHG-20260714T104500-ai-claude-feature-0016-cluster-label-target-close — TL.3 완수 기록 (2026-07-14, doc-only)
 - 대상: TASK.md(TL.3 [x]). 코드 0. PR #775 배포(b747c29a) 후 실측: 기존 527건 정정(UPDATE, 잔여 19건=미등록 legacy scope 라벨 부재)·신규 활동 target=사용자 식별자 기록 확인(/api/admin/ai-ops).
 
+## CHG-20260716T021733-ai-claude-feature-0016-graph-detail-nav-sticky — 상세 패널 [뒤로/앞으로] 바 상단 고정(sticky) (2026-07-16)
+- 대상(cross-cut 코드 거주 feature-0003 static/graph): `graph.css` 1파일(+16/-2) — `.admin-meta-graph-detailnav`(sticky top:0·z-index:5·불투명 배경·하단 border·좌우 bleed)·`.admin-meta-graph-detail`(aside 상단 padding 제거 `14px`→`0 14px 14px`)·신규 규칙 `.admin-meta-graph-detailnav[hidden] + [id=metadataGraphDetailBody]`(바 숨을 때 body 상단 여백 보전).
+- 변경(사용자 요청 — entry persona dispatch): 상세 패널 방문 이력 바를 스크롤 위치와 무관하게 상단 고정해 [뒤로/앞으로] 버튼을 언제든 사용 가능. aside 상단 padding 을 0 으로 두어 스크롤포트 최상단=바 위치가 되게 함으로써 바 위로 콘텐츠가 비치는 틈을 제거. 인증/데이터/JS 무변경(순수 CSS 레이아웃).
+- 근거: 등급 Minor(CSS-only, additive). 라이브 검증(서빙 사본, 실 Windows 브라우저) PASS — navTop 180px 고정·`contentAboveBar:[]`·좁은 폭(420/300/220) 가로 오버플로 0. §18.8 CSS 엣지케이스 적대 리뷰 **PASS(BLOCK/MAJOR 0, NIT 3 전부 의도/라이브 확인)**. 상세는 TASK.md `## 20260716T0217-graph-detail-nav-sticky`, REVIEW.md REV-20260716T021733-graph-detail-nav-sticky.
+
 ## CHG-20260715T161958-ai-claude-feature-0016-graph-detail-scroll — 상세 패널 [뒤로/앞으로] 스크롤 위치 보존 (2026-07-15)
 - 대상(cross-cut 코드 거주 feature-0003 static/graph): `graph-ctxmenu.js` 1파일 — 신규 헬퍼 `_metaGraphDetailScrollEl`/`_metaGraphHistoryCaptureScroll`/`_metaGraphHistoryRestoreScroll` + `_metaGraphHistoryRecord`(새 방문 push 전 스냅샷)·`_metaGraphHistoryGo`(sync→async, idx 변경 전 스냅샷 + 렌더 await 후 대상 scrollTop 복원) 배선.
 - 변경(사용자 요청 — entry persona dispatch): 상세 패널 방문 이력의 [뒤로/앞으로] 이동 시, 스크롤 컨테이너(`<aside id="metadataGraphDetail">`, overflow-y:auto)의 세로 스크롤 위치를 이력 항목별(`detailHist[i].scroll`)로 스냅샷·복원. 화면을 떠날 때(새 방문 record 또는 뒤로/앞으로 이동) 현 scrollTop 을 항목에 저장하고, 대상 화면 렌더 완료(await) 후 `requestAnimationFrame` 으로 복원(콘텐츠 높이 확정 후 적용 → clamp 회피). 미저장 항목은 0(맨 위). 이력 항목 shape 는 `{v,k}`→`{v,k,scroll?}` additive.

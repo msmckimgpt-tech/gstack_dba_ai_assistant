@@ -266,6 +266,21 @@ source_of_truth: true
 ## REV-20260714T104500-ai-claude-feature-0016-cluster-label-target-close [SKIPPED:doc-only-postdeploy] — TL.3 완수 기록
 - Related Change: CHG-20260714T104500. 코드 0 — 배포·데이터 정정·라이브 확증 기록. 코드면은 REV-20260714T090500 에서 처리.
 
+## REV-20260716T021733-ai-claude-feature-0016-graph-detail-nav-sticky [SUBAGENT: PASS] — 상세 패널 [뒤로/앞으로] 바 상단 고정(sticky) CSS 적대 리뷰
+- 대상: `graph.css`(`.admin-meta-graph-detailnav` sticky + `.admin-meta-graph-detail` aside 상단 padding 제거 + `[hidden] + body` 보전). §18.8 general-purpose 서브에이전트 — 정적 CSS/DOM 분석(라이브 미가정, graph.css diff + admin.html DOM + nav.hidden 토글 JS + body-only innerHTML 불변식 교차 검증).
+- Related Change: CHG-20260716T021733. 위험면 = 레이아웃 회귀(상단 여백 등가·스태킹·반응형·가로 오버플로). JS/데이터/인증 무변경.
+- 패널 판정: **PASS — BLOCK/MAJOR 0 · NIT 3(전부 의도된 것 또는 라이브 확인 완료).** 코드 수정 불필요.
+- 적대 6축 검증(전부 통과, 근거 요약):
+  - **① aside 상단 padding 제거 부작용 없음**: 상단 여백이 세 상태 모두 14px 등가 — nav 표시(aside0+nav pad14)·nav 숨김/빈 상태(aside0+body pad14, `[hidden]+body` 규칙). load-bearing 불변식 3개 확인: nav 가시성=`nav.hidden` 토글만·body innerHTML만 교체(파괴 안 함)·**aside innerHTML 통째 교체 코드 0건**(nav 가 항상 body 직전 형제로 생존). margin-collapse 등가.
+  - **② 인접 형제 `[hidden] + [id=…]` 정상**: display:none 은 DOM 위치 유지라 `+` 매칭 성립. nav↔body 사이 요소 없음. body padding 규칙 유일(충돌 0).
+  - **③ z-index:5 스태킹 정상**: aside 내 positioned 요소는 신규 sticky nav 뿐(형제 전부 static) → 불투명 nav 가 항상 콘텐츠 위. 외부 UI(ctxmenu fixed z10000·ai-pop z60·help z40·focus-chip 캔버스기준)는 전부 별도 컨텍스트, 무충돌.
+  - **④ 반응형 정상**: `@media(max-width:900px)` 는 max-height:380px 만 주고 base overflow-y:auto 유지 → sticky 성립. nav ~47px(=380 의 12%).
+  - **⑤ 좌우 bleed 가로 스크롤바 없음**: nav 는 flex stretch 자식이라 border-box 폭 = 스크롤포트 폭에 flush. **라이브 확인(추가 검증): 패널 폭 420/300/220px 모두 `scrollW==clientW`(hOverflow=false)**.
+  - **⑥ 기타 정상**: sticky+flex-shrink:0 공존·border-radius 상단 모서리 overflow 클리핑(poke-out 없음)·범례 margin-top:auto 바닥 고정 세로총량 불변·nav 배경=aside 와 동일 불투명 `var(--surface,#fff)`(반투명 color-mix 아님) 콘텐츠 완전 은폐.
+  - **NIT(비차단, 의도/확인)**: NIT-1(버튼 2px 근접, "일관 14px" 의도)·NIT-2(nav↔body 하단 간격 8→~17px, sticky 분리 의도)·NIT-3(좁은 패널 가로 스크롤바·스크롤 중 누출 라이브 확인 권장 → **본 세션 라이브로 hOverflow=false·contentAboveBar=[] 확인 완료**).
+- 재검증: 라이브(서빙 사본, 실 Windows 브라우저) navTop 180px 고정·불투명·바 위 콘텐츠 0·좁은 폭 가로 오버플로 0. test-run fragment `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260716T021733-graph-detail-nav-sticky.md`.
+- Human Approval: deploy_scope: included(FIRST_REQUEST.md 전역). visual_verification_scope: always → 본 cycle 라이브 검증으로 충족.
+
 ## REV-20260715T161958-ai-claude-feature-0016-graph-detail-scroll [SUBAGENT: PASS-WITH-FIXES] — 상세 패널 [뒤로/앞으로] 스크롤 위치 보존 diff 적대 리뷰
 - 대상: `graph-ctxmenu.js`(이력 스크롤 캡처/복원 + `_metaGraphHistoryGo` sync→async)·`graph-state.js`(`_histNavBusy`/`_pendingDetailScroll` 상태). §18.8 general-purpose 서브에이전트 — 정적 코드 리뷰(라이브 브라우저 미가용, diff + DOM(`admin.html`) + CSS(`graph.css:197` overflow 소유) + show 함수 3종·`_metaGraphOnNodeClick`·`_metaGraphLoadNodeAnalysis`·`_opSeq` 세대 가드 교차 검증).
 - Related Change: CHG-20260715T161958. 위험면 = 표시 정확성(스크롤 좌표) + 이력 상태 정합. 인증/스키마/데이터/API 무변경.

@@ -2436,3 +2436,22 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### Git 동기화 결과
 - Task-Cycle: graph-detail-scroll (ai/claude/feature-0016-graph-detail-scroll, worktree).
+
+## 20260716T0217-graph-detail-nav-sticky — 상세 패널 [뒤로/앞으로] 바 상단 고정(sticky) (2026-07-16, 사용자 요청 · entry persona dispatch)
+
+### 요청 (사용자)
+"이어서, 해당 버튼을 유효하게 사용할 수 있도록 '상세 패널' 의 상단 고정된 위치에(스크롤 위치 관계 없이) 구성해주세요."
+
+### 배경
+직전 cycle(graph-detail-scroll)에서 뒤로/앞으로 스크롤 보존을 구현했으나, 방문 이력 바(`.admin-meta-graph-detailnav`)가 스크롤 컨테이너(`<aside id=metadataGraphDetail>`, overflow-y:auto)의 일반 흐름 첫 자식이라 아래로 스크롤하면 버튼이 화면 밖으로 사라져 다시 위로 올려야 눌 수 있었다. 스크롤 위치와 무관하게 버튼을 항상 쓸 수 있도록 바를 상단 고정.
+
+### 처리 (본 cycle, CSS-only — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] TN.1 `graph.css`: `.admin-meta-graph-detailnav` 를 `position:sticky; top:0; z-index:5` 로 상단 고정 + 불투명 배경(`var(--surface)`) + 하단 구분선(`border-bottom`) + 좌우 음수마진 bleed(`margin:0 -14px`)로 배경/구분선 full-width + 동일 padding 복원.
+- [x] TN.2 `.admin-meta-graph-detail`(aside) 상단 padding 제거(`14px`→`0 14px 14px`) — 스크롤포트 최상단 = 바 위치가 되게 해 **바 위로 콘텐츠가 비치는 틈을 제거**(초기 음수마진-only 시도의 잔여 결함). 상단 여백은 바(표시 시)가 자체 padding 으로 제공.
+- [x] TN.3 `.admin-meta-graph-detailnav[hidden] + [id="metadataGraphDetailBody"] { padding-top:14px }` — 이력 ≤1 로 바가 숨을 때 body 최상단 여백 보전(진입/빈 상태 여백 유지).
+- [x] TN.4 라이브 검증(서빙 사본, 실 Windows 브라우저) **PASS** — nav 강제 표시 + 40줄 더미 콘텐츠 주입 + scrollTop 500 상태에서 측정: `position:sticky`·navTop **180px 불변**(스크롤 전/후)·불투명 배경·**`contentAboveBar:[]`(바 위 노출 콘텐츠 0)**. 스크린샷 2매(sticky-scrolled 결함확인→sticky-precise 수정확인).
+- [x] TN.5 §18.8 적대 리뷰(general-purpose subagent, CSS 엣지케이스) 반영 — **PASS(BLOCK/MAJOR 0, NIT 3 전부 의도/확인)**. 6축(상단여백 등가·인접형제·z-index·반응형·가로 bleed·기타) 전부 통과, 코드 수정 불필요. NIT-3(좁은 패널 가로 스크롤바·스크롤 중 누출)은 본 세션 라이브로 hOverflow=false(폭 420/300/220)·contentAboveBar=[] 확인 완료. 상세=REVIEW.md REV-20260716T021733-graph-detail-nav-sticky.
+- [x] TN.6 라이브 시각 검증 충족(visual_verification_scope=always) — 서빙 사본 실 브라우저에서 sticky 동작 직접 측정·확증(navTop 180px 고정·바 위 콘텐츠 0). 실 이력 in-situ 확인은 그래프 데이터 확보 시 후속(선택).
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-nav-sticky (ai/claude/feature-0016-graph-detail-nav-sticky, worktree).
