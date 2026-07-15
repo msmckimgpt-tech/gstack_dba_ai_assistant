@@ -15,8 +15,9 @@ src = src.replace(/^export const /m, "const ")
          .replace(/^export \{[^}]*\};?/gm, "");
 const sandbox = { window: undefined, performance: { now: () => 0 }, module: {}, console };
 vm.createContext(sandbox);
-vm.runInContext(src + "\nthis.__Pure = PixiAdapterPure;", sandbox, { filename: "adapter.js" });
+vm.runInContext(src + "\nthis.__Pure = PixiAdapterPure;\nthis.__Adapter = PixiGraphAdapter;", sandbox, { filename: "adapter.js" });
 const Pure = sandbox.__Pure;
+const Adapter = sandbox.__Adapter;
 
 let pass = 0, fail = 0;
 const approx = (a, b, e) => Math.abs(a - b) <= (e || 1e-6);
@@ -212,6 +213,43 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(Pure.hexToTint("zzz").valid === false, "T20 비-hex → valid:false(Text 폴백)");
   ok(Pure.hexToTint("rgb(1,2,3)").valid === false, "T20 rgb() → valid:false");
   ok(Pure.hexToTint("white").valid === false, "T20 named → valid:false");
+}
+
+// ── T21 _pick 3-tier 층서 (graph-ctxmenu hit-test 회귀): 구체요소 > 스키마 combo > cat-bg ──
+//   결함(수정 전): CAT 밴드 배경이 node(z=-1)로 built.nodes 에 있어 _pick 의 node-우선 반환이
+//   스키마 클러스터 빈 배경(combo 폴백 대상) 우클릭을 CAT node 로 가로채 '카테고리 메뉴' 오라우팅했고,
+//   반대로 밴드 위 카드/클러스터(z=4)가 CAT 를 눌러 밴드 우클릭이 '스키마 메뉴'로 샜다.
+{
+  const nodes = [
+    // 제품 카테고리 밴드 배경 — 멤버 클러스터 전체를 덮음(center 300,300 → x 0..600, y 100..500), z=-1
+    { id: "CAT:prod", type: "rect", data: { kind: "cat-bg", cat: "prod" }, style: { x: 300, y: 300, size: [600, 400], zIndex: -1 } },
+    // 접힌 스키마 카드 SC — CAT 밴드 내부, z=4 (x 125..275, y 170..230)
+    { id: "SC:s1", type: "rect", combo: "s1", data: { kind: "schema-card" }, style: { x: 200, y: 200, size: [150, 60], zIndex: 4 } },
+    // 펼친 스키마 클러스터 s2 의 자식 테이블 — combo bbox 파생용, z=4 (x 375..525, y 238..262)
+    { id: "t1", type: "rect", combo: "s2", data: { kind: "table" }, style: { x: 450, y: 250, size: [150, 24], zIndex: 4 } },
+  ];
+  const combos = [{ id: "s2", style: { padding: [30, 16, 14, 16] } }];   // s2 bbox ≈ x 359..541, y 208..276
+  const hg = Pure.buildHitGrid(nodes, 128);
+  const ctx = { _hitGrid: hg, _built: { nodes, combos }, _isCatBg: Adapter.prototype._isCatBg };
+  const pick = (x, y) => Adapter.prototype._pick.call(ctx, x, y);
+
+  // 수정 전 결함 witness: 필터 없는 raw hitTest 는 스키마 combo 영역(365,270)에서 CAT node 를 반환(오라우팅 근원)
+  ok(Pure.hitTest(365, 270, hg, nodes) && Pure.hitTest(365, 270, hg, nodes).id === "CAT:prod", "T21 (witness) 수정 전엔 combo 영역이 CAT node 로 가로채짐");
+
+  // tier1: 구체 요소 — 스키마 카드 위 → SC (카테고리 밴드 무관)
+  const pCard = pick(200, 200);
+  ok(pCard && pCard.id === "SC:s1" && !pCard.__combo, "T21 스키마 카드 우클릭 → SC 노드(카테고리 아님)");
+  // tier1: 테이블 노드 위 → t1
+  const pTbl = pick(450, 250);
+  ok(pTbl && pTbl.id === "t1" && !pTbl.__combo, "T21 클러스터 멤버 테이블 → 그 노드");
+  // tier2: 스키마 클러스터 빈 배경(combo, cat 밴드와 겹침) → combo s2 ('스키마 메뉴') — 핵심 fix
+  const pCombo = pick(365, 270);
+  ok(pCombo && pCombo.__combo && pCombo.id === "s2", "T21 스키마 클러스터 빈배경 → combo(스키마 메뉴), CAT 가로채기 제거");
+  // tier3: 카테고리 밴드 고유 여백(카드·combo 없음) → CAT ('카테고리 메뉴')
+  const pCat = pick(50, 130);
+  ok(pCat && pCat.id === "CAT:prod" && !pCat.__combo, "T21 카테고리 밴드 고유 여백 → CAT(카테고리 메뉴)");
+  // 빈 공간(밴드 밖) → null
+  ok(pick(2000, 2000) === null, "T21 밴드 밖 빈 공간 → null(canvas)");
 }
 
 console.log("──────");

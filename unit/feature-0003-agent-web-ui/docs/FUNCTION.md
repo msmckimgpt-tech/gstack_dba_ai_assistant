@@ -1622,6 +1622,13 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 좌클릭 경로(CAT/CATH=상세, CATX=접기 토글)·밴드 드래그·스키마 클러스터(combo) 우클릭 메뉴는 무변경(회귀 0). RBAC/백엔드/스키마/엔드포인트 0.
 - 코드 거주: `static/graph/graph-ctxmenu.js`(+`_metaGraphCtxForCategory` + export)·`static/graph/graph-core.js`(`node:contextmenu` CAT 분기 라우팅 + import). CHG/REV-20260714T180125-graph-ctxmenu-category.
 
+## (TASK-20260715T102901-graph-ctxmenu-hittest, 2026-07-15) 그래프 뷰 우클릭 메뉴 오라우팅(스키마↔제품카테고리 뒤바뀜) hit-test 층서 수정 (web/UI, Major §12.3 — 정본 feature-0016 그래프, frontend-only, 핵심 상호작용 경로)
+- graph-ctxmenu-category(dispatch 라우팅) 배포 후 사용자 잔존 보고: **스키마 클러스터 우클릭 → 카테고리 메뉴 / 제품 카테고리 밴드 우클릭 → 스키마 메뉴**(뒤바뀜), 카테고리 헤더는 정상. dispatch(graph-core `node:contextmenu`)는 정확하나 `e.target.id` 를 정하는 hit-test 가 오targeting.
+- 계약: `PixiGraphAdapter._pick()`(`graph-renderer-pixi.js`) 이 이제 **시각 z-페인트 순서와 정합하는 3-tier** 로 hit 을 결정 — ① 실 요소(cat-bg 제외: 카드·테이블·GB/GH/GX·CATH/CATX) → ② 스키마 클러스터 배경(combo, z=`_METZ.COMBO`=0) → ③ 카테고리 밴드 배경(cat-bg, z=`_METZ.CAT_BG`=-1). `PixiAdapterPure.hitTest(mx,my,hg,nodes,filter)` optional 필터 인자 + `_isCatBg(n)=(data.kind==="cat-bg")` 헬퍼. 결과 "보이는 대로 클릭"(WYSIWYG): 밴드 위에 클러스터/카드가 보이면 그 요소 메뉴, 밴드 tint 고유 여백만 보이면 카테고리 메뉴, 헤더(CATH)/컨트롤(CATX)은 tier1 최우선(카테고리 메뉴).
+- 이전 결함: `_pick` 이 node 를 combo 보다 **무조건 먼저** 반환 → CAT 밴드 배경(멤버 클러스터 전체를 덮는 node, z=-1)이 스키마 클러스터 빈 배경(combo, 밴드보다 위에 페인팅되나 폴백 tier) 우클릭을 가로챔 → hit-test 가 페인트 순서 위반. 과거 GROUP_BG `-2→1`(combo 위) 승격과 동일 부류의 미수정 잔재.
+- 비변경: dispatch·메뉴 함수·CAT/GB 노드 방출·시각 z·좌클릭·드래그 경로(헤더 리지드 이동 보존, 밴드 내부 클러스터 단독 드래그 복원)·엣지/canvas 메뉴·백엔드/RBAC/스키마 0.
+- 검증: `node --check` PASS · `tests/headless/test_pixi_adapter.js` **T21 회귀 6종**(witness+3tier, ALL PASS 62/0) · §18.8 적대 패널 **SHIP**(BLOCKING 0). 코드 거주: `static/graph/graph-renderer-pixi.js`. POST-DEPLOY PB-0008 라이브 잔여(visual_verification_scope: always). CHG/REV-20260715T102901-graph-ctxmenu-hittest.
+
 ## (TASK-20260714T1803-graph-entry-help, 2026-07-14) 그래프 뷰 첫 입장 조작 도움말 팝업 + 중간버튼 커서 표식 (web/UI, Minor §12.3, frontend-only — 그래프 도메인 정본 feature-0016)
 - REQ-20260714T1803-graph-entry-help: 그래프 뷰(지식베이스 > 그래프 뷰) 첫 입장 시 조작 안내 도움말 팝업을 띄운다 — **닫을 수 있고 이후 다시 확인할 수 있어야** 한다. 또한 마우스 **중간(휠) 버튼**으로 조작(팬)할 때 커서가 적절하게 바뀌어야 한다.
 - AC-20260714T1803-graph-entry-help-1(도움말 팝업): 그래프 뷰 **최초 진입 시 1회 자동 노출**(`localStorage("metaGraphHelpSeen")` 미확인 시). 팝업은 단일클릭·더블클릭·우클릭·드래그·가운데 버튼·휠·미니맵·검색/보기옵션 8개 조작을 안내하고 읽기전용 뷰임을 고지한다. **닫기 4경로**(✕·"알겠습니다"·배경 클릭·Esc) 중 하나로 닫으면 seen 플래그 set → 다음 세션부터 자동 노출 안 함. **재확인**: 상단 툴바 `❓ 도움말` 버튼(`#metadataGraphHelpBtn`)으로 언제든 재노출. a11y: role=dialog·aria-modal, 진입 시 닫기 버튼 포커스·닫을 때 ❓ 버튼 복귀. localStorage 접근 실패(사생활 모드)는 '미확인=노출'로 안전 강등.

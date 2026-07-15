@@ -10,6 +10,22 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260715T102901-graph-ctxmenu-hittest [SUBAGENT:adversarial-hittest-review] — 그래프 우클릭 메뉴 오라우팅 hit-test 층서 수정 (TASK-20260715T102901-graph-ctxmenu-hittest, Major §12.3 frontend-only) — SHIP
+- Panel(§18.8): general-purpose 서브에이전트 적대 리뷰(코드 교차검증 + 라이브 테스트 62/62). 7가설 전수 판정.
+- **핵심 소견**: 이 수정의 본질 = **hit-test 우선순위를 시각 z-페인트 순서와 정확히 정합**(WYSIWYG). `_METZ`(CAT_BG:-1 < COMBO:0 < GROUP_BG:1)에서 combo 는 cat-bg 와 group-bg 사이 유일 요소 → 3-tier(실노드 > combo > cat-bg)가 순수 z-order 를 정확 재현. 수정 전 node-first 는 비-node 인 combo 를 무시해 정합이 깨져 있었음.
+- 가설별(전부 REJECTED=문제없음):
+  - H1 드래그 회귀: CATH 헤더 리지드 이동·밴드 여백 드래그 tier1/tier3 로 **보존**; 밴드 내부 클러스터 빈배경 드래그는 수정 전 cat-bg 가 가로채 카테고리 통째 이동하던 것을 combo→클러스터 단독 이동으로 **복원**(graph-core L613 설계 주석 정합). 회귀 아님.
+  - H2 GB/CAT 공존: GB(group-bg, z=1)는 tier1 유지 — cat-bg 만 tier3. 기존 동작 불변.
+  - H3 엣지케이스: 접힌 카테고리(combo 부재→tier3 cat-bg)·terms combo·agg-lod 카드·카드/펼침 모드 전부 정상.
+  - H4 `_isCatBg`: `data.kind==="cat-bg"` 방출은 graph-core L490 CAT: 배경 단일 지점; CATH(cat-hd)/CATX(cat-ctl)는 미매칭→tier1 유지(헤더 카테고리 메뉴 보존).
+  - H5 성능: pointerdown 만 호출, tier3 단일 bucket 순회 — 무시 가능.
+  - H6 증상 해소: "스키마 클러스터 빈배경→카테고리" 확정 해소, "밴드→스키마" 재발 불가(밴드 tint 여백은 tier3 카테고리, 클러스터 페인팅 영역은 tier2 스키마 = WYSIWYG), 헤더→카테고리 보존.
+  - H7 테스트: T21 은 실효 가드(witness+실 `_pick` 호출; old 로 되돌리면 "빈배경→combo" FAIL). NIT: 합성 씬 하드코딩이라 data.kind 리네임/z-order drift 는 미포착(단일 방출 지점이라 위험 낮음).
+- **판정: SHIP · BLOCKING 0**.
+- NIT 처리: (1) diff 주석의 결함 (b)("카드/GB 가 밴드 위 우클릭을 스키마로 샜다→해소") over-claim 지적 → **수정 완료**(주석을 실 기전=combo 가로채기 + WYSIWYG 로 정정, 카드/클러스터가 밴드 위에 보이면 그 요소 메뉴가 정상임을 명시). (2) T21 합성 씬 미-import = accept(단일 방출 지점).
+- 권고(비차단): POST-DEPLOY PB-0008 real-mouse 로 3대상(펼친 클러스터 빈배경/밴드 tint/헤더) 우클릭 + 밴드 내부 클러스터 단독 드래그 라이브 실측 → 본 cycle POST-DEPLOY 계획에 반영.
+- Cross-ref: CHG/TASK-20260715T102901-graph-ctxmenu-hittest · test-runs.d/20260715T102901-graph-ctxmenu-hittest.md.
+
 ## REV-20260714T183808-graph-ctxmenu-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 검증 기록 (TASK-20260714T180125-graph-ctxmenu-category, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 TASK 체크리스트 완료 + test-runs.d fragment POST-DEPLOY Run append 뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260714T180125-graph-ctxmenu-category [SKIPPED:frontend-ui-minor-additive-no-backend-no-rbac] 가 정본.
 - 라이브 실측 요지(win-browser 실 Windows Chrome/150, 배포 154fb916): 배포 전달 + 라이브 도달성 + **수정 핸들러 우클릭 dispatch 파이프라인 실증** PASS. 리터럴 CAT 밴드 위 '카테고리' 메뉴 육안 = DEFERRED(제품-매핑 scope 필요 — 도달 가능 scope 가 전부 미분류라 밴드 미방출; 코드-로직 airtight + 파이프라인 실증으로 고신뢰, 사용자 1-probe 권장).

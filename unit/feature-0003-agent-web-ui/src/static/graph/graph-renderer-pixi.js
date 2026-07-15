@@ -110,12 +110,13 @@ export const PixiAdapterPure = {
     return { grid, cell: c };
   },
 
-  // model 점 위 최상위(z 큰) 노드. hit-grid 사용.
-  hitTest(mx, my, hg, nodes) {
+  // model 점 위 최상위(z 큰) 노드. hit-grid 사용. filter(n)→false 인 노드는 제외(층서 tier 분리용).
+  hitTest(mx, my, hg, nodes, filter) {
     const cx = Math.floor(mx / hg.cell), cy = Math.floor(my / hg.cell);
     const bucket = hg.grid.get(cx + "," + cy) || [];
     let best = null, bestZ = -Infinity;
     for (const n of bucket) {
+      if (filter && !filter(n)) continue;
       const b = this.nodeBBox(n);
       if (mx < b.x || mx > b.x + b.w || my < b.y || my > b.y + b.h) continue;
       const z = (n.style && n.style.zIndex) || 0;
@@ -442,12 +443,26 @@ export class PixiGraphAdapter {
     el.addEventListener("contextmenu", (e) => e.preventDefault());
     this._winListeners = [["pointermove", onMove], ["pointerup", up]];   // m1: destroy 시 정리
   }
-  // 노드 우선, 없으면 combo(스키마 배경) — 반환에 __combo 표시. hit.data/id 는 G6 e.target 호환.
+  // graph-ctxmenu(hit-test 층서 = 시각 z-페인트 순서 정합, WYSIWYG): 구체 요소 > 스키마 클러스터 배경(combo) > 카테고리 밴드 배경(cat-bg).
+  //   근본 결함: CAT 밴드 배경은 멤버 클러스터 전체를 덮는 node(z=_METZ.CAT_BG=-1)인데, 예전 _pick 은
+  //   node 를 combo 보다 **무조건 먼저** 반환했다. 그래서 스키마 클러스터 빈 배경(combo, z=0 — 밴드보다
+  //   위에 페인팅됨) 우클릭이 combo 폴백에 닿기 전에 밑에 깔린 CAT node(z=-1)에 가로채여 '카테고리 메뉴'로
+  //   오라우팅됐다(사용자 보고 "스키마 클러스터 우클릭 → 카테고리 메뉴"). 즉 hit-test 가 페인트 순서를
+  //   위반했다. → cat-bg 를 최하위 tier 로 내려 "combo(z0)가 cat-bg(z-1) 위"라는 페인트 순서를 hit 에도 재현.
+  //   시각 페인팅 z 불변 — hit-test 우선순위만 교정. 결과는 "보이는 대로 클릭": 카드·클러스터가 밴드 위에
+  //   보이면 그 요소 메뉴(tier1/2), 밴드 tint 고유 여백만 보이면 카테고리 메뉴(tier3). 헤더 CATH/컨트롤 CATX
+  //   는 cat-bg 아님 → tier1 최우선(카테고리 메뉴).
+  _isCatBg(n) { return !!(n && n.data && n.data.kind === "cat-bg"); }
   _pick(mx, my) {
-    const n = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes) : null;
+    // tier1: 실 요소(카드·테이블·GB/GH/GX·CATH/CATX 등, cat-bg 제외) — z 최상위
+    const n = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => !this._isCatBg(nd)) : null;
     if (n) return n;
+    // tier2: 스키마 클러스터 배경(combo) — 카테고리 밴드보다 우선
     const c = PixiAdapterPure.hitTestCombo(mx, my, this._built.combos || [], this._built.nodes || []);
-    return c ? Object.assign({ __combo: true }, c) : null;
+    if (c) return Object.assign({ __combo: true }, c);
+    // tier3: 카테고리 밴드 배경(cat-bg) — 밴드 고유 여백/헤더밖 영역 우클릭·드래그만 카테고리로
+    const cb = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => this._isCatBg(nd)) : null;
+    return cb || null;
   }
   _pickEdge(mx, my) { const posOf = (id) => { const p = this.getElementPosition(id); return p; }; return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom)); }
   _isCombo(id) { return this._built.combos.some(c => c.id === id); }
