@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260715T102901-graph-ctxmenu-hittest — 그래프 뷰 우클릭 메뉴 오라우팅(스키마↔제품카테고리 뒤바뀜) hit-test 층서 수정 (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. /_template:resume 후속)
+
+**사용자 보고 (graph-ctxmenu-category 배포 후 잔존)**: 그래프 뷰 우클릭 메뉴가 대상과 뒤바뀜 —
+- 카테고리(헤더) 우클릭 → 이상없음
+- **스키마(클러스터) 우클릭 → 카테고리 메뉴** (틀림)
+- **제품 카테고리(밴드) 우클릭 → 스키마 메뉴** (틀림)
+
+**진단**: dispatch 라우팅(graph-core `node:contextmenu` L2141 CAT 분기 등)은 정확하나 **`e.target.id` 를 정하는 hit-test 가 엉뚱한 배경 노드를 집음**. 근본: `PixiGraphAdapter._pick()`(graph-renderer-pixi.js)이 `hitTest(built.nodes)` 로 **어떤 node 든 잡히면 즉시 반환**하고 그때만 `hitTestCombo`(스키마 클러스터 배경) 로 폴백. 그런데 CAT 밴드 배경이 **node**(`id:"CAT:"`, `data.kind:"cat-bg"`, z=`_METZ.CAT_BG`=-1, size=멤버 클러스터 전체 bbox+패딩)로 built.nodes 에 들어가 멤버 클러스터를 전부 덮음 →
+- 스키마 클러스터 빈 배경(combo, z=0, 폴백 대상) 우클릭 = node-우선이라 CAT node(z=-1)가 먼저 잡혀 **카테고리 메뉴**로 감(combo 폴백 미도달).
+- CAT 밴드가 멤버 카드/클러스터(z=4)와 겹친 곳 우클릭 = 상위 z 카드가 이겨 **스키마 메뉴**로 샘.
+- CATH 헤더 칩(z=`GROUP_HD`=5)은 항상 이겨 카테고리 메뉴 ✓ ("카테고리 이상없음").
+과거 GROUP_BG 를 `-2→1`(combo 위)로 올려 그룹 상호작용 dead 를 고친 것과 **동일 부류의 미수정 잔재**(graph-core L608 주석).
+
+**수정(1 파일, hit-test 층서만)**: `graph-renderer-pixi.js`
+- `PixiAdapterPure.hitTest(mx,my,hg,nodes,filter)` — optional `filter(n)` 인자 추가(tier 분리용).
+- `PixiGraphAdapter._pick()` 을 **3-tier** 로: ① 실 요소(cat-bg 제외 — 카드·테이블·GB/GH/GX·CATH/CATX) → ② 스키마 클러스터 배경(combo) → ③ CAT 밴드 배경(cat-bg). `_isCatBg(n)` 헬퍼(`data.kind==="cat-bg"`).
+- 결과 층서 = **"구체 요소 > 스키마 클러스터 배경 > 카테고리 밴드 배경"**. 시각 페인팅 z(-1)는 불변, hit-test 우선순위만 교정.
+
+**비변경**: dispatch 라우팅·메뉴 함수·CAT/GB 노드 방출·시각 렌더(z)·좌클릭·엣지/canvas 메뉴·백엔드/RBAC/스키마 0. `_pick` 은 click/dragstart/contextmenu 공용이나 헤더(CATH z=5)·combo·카드가 각자 tier1/tier2 로 정상 귀속되어 드래그 회귀 없음(밴드 리지드 드래그는 헤더/고유여백 경로 유지).
+
+**검증**: `node --check`(ES module) PASS · `tests/headless/test_pixi_adapter.js` **T21 신규 회귀 6종**(witness: 수정 전 combo 영역이 CAT node 로 가로채짐 / 카드→SC / 테이블→노드 / **클러스터 빈배경→combo(스키마)** / 밴드 여백→CAT(카테고리) / 밖→null) — ALL PASS 62/0 · §18.8 적대 패널.
+
+**완료 체크리스트**:
+- [x] 근본원인 진단 — `_pick` node-우선 반환이 cat-bg(node)로 combo 폴백을 가로챔 (hit-test 층서 결함)
+- [x] `_pick` 3-tier(실요소>combo>cat-bg) + `hitTest` filter 인자 + `_isCatBg`
+- [x] `node --check` PASS + T21 회귀 6종 추가 (ALL PASS 62/0)
+- [x] §18.8 적대 패널 → **SHIP**(BLOCKING 0, 7가설 전수 REJECTED; NIT=주석 over-claim 정정 완료) REV-20260715T102901-graph-ctxmenu-hittest [SUBAGENT]
+- [x] feature 문서(TASK/MODIFY/REVIEW/REPORT) + test-runs.d fragment
+- [ ] verify-completion PASS → commit → PR·머지
+- [ ] web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 실 Windows 브라우저 라이브: 3종 클릭(스키마 클러스터→클러스터 메뉴 / 카테고리 밴드 여백·헤더→카테고리 메뉴 / 카드·테이블→해당 요소) 실증
+
 ## TASK-20260714T180125-graph-ctxmenu-category — 그래프 뷰 '제품 카테고리 밴드' 우클릭을 전용 메뉴로 정합 (Minor §12.3 — feature-0003 프론트 단독, additive. /_template:entry arg-given dispatch)
 
 **사용자 요청**: 그래프 뷰 우클릭 정합 — ① '제품 카테고리 밴드' 우클릭에서 '스키마 클러스터' 우클릭 동작이 나타나는 문제 수정, ② 밴드 우클릭 동작 구성.

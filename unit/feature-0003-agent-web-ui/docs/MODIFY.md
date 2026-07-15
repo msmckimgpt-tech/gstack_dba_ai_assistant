@@ -11,6 +11,16 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260715T102901-graph-ctxmenu-hittest (TASK-20260715T102901-graph-ctxmenu-hittest — 그래프 우클릭 메뉴 오라우팅 hit-test 층서 수정, Major §12.3 frontend-only)
+- Date: 2026-07-15. 그래프 뷰 우클릭 메뉴가 대상과 뒤바뀌는 결함(스키마 클러스터→카테고리 메뉴 / 제품 카테고리 밴드→스키마 메뉴) 수정. 근본: `_pick` 이 node 우선 반환→CAT 밴드 배경(node, `data.kind:"cat-bg"`, z=-1, 멤버 클러스터 전체 덮음)이 스키마 클러스터 빈배경(combo, 폴백 대상) 우클릭을 가로챔.
+- `static/graph/graph-renderer-pixi.js`:
+  - `PixiAdapterPure.hitTest(mx,my,hg,nodes,filter)` — optional `filter(n)` 인자 추가(tier 분리, `filter(n)→false` 노드 skip).
+  - `PixiGraphAdapter._pick()` 3-tier 재작성: ① `hitTest`(cat-bg 제외) → ② `hitTestCombo`(스키마 클러스터) → ③ `hitTest`(cat-bg 만). `_isCatBg(n)` 헬퍼 신설.
+- 층서 결과: 구체 요소 > 스키마 클러스터 배경 > 카테고리 밴드 배경. 시각 z(-1) 불변 — hit-test 우선순위만 교정.
+- 비변경: dispatch(graph-core node:contextmenu)·메뉴 함수·노드 방출·좌클릭·드래그 경로·백엔드/RBAC/스키마 0.
+- 검증: `node --check` PASS · `tests/headless/test_pixi_adapter.js` T21 회귀 6종 추가(ALL PASS 62/0) · §18.8 적대 패널. POST-DEPLOY PB-0008 라이브 잔여(visual_verification_scope: always).
+- Cross-ref: TASK/REVIEW-20260715T102901-graph-ctxmenu-hittest · test-runs.d/20260715T102901-graph-ctxmenu-hittest.md · 선행 CHG-20260714T180125-graph-ctxmenu-category(dispatch 라우팅).
+
 ## CHG-20260714T183808-graph-ctxmenu-postverify (TASK-20260714T180125-graph-ctxmenu-category POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-14. 코드/자산 무변경 — TASK.md 체크리스트 완료(verify/PR#794/POST-DEPLOY) + test-runs.d fragment 에 POST-DEPLOY 라이브 검증 Run append. 기능 배포는 PR #794→main 154fb916, `deploy-web`(deploy_scope: included, web-a/b soak PASS) 로 선행 완료(본 커밋은 그 사후 기록).
 - 라이브 실측 요지(win-browser 실 Windows Chrome/150, https://localhost/admin): 배포 전달(서빙 baked 자산에 `_metaGraphCtxForCategory` 반영)·라이브 도달성(그래프 렌더·범례 '제품 카테고리 밴드')·**수정 핸들러(node:contextmenu CAT 분기 graph-core L2086) 우클릭 dispatch 파이프라인 라이브 실증** PASS. 리터럴 CAT 밴드 위 '카테고리' 메뉴 육안 = DEFERRED(도달 scope 전부 미분류→밴드 미방출, 제품-매핑 scope 필요) — 사용자 1-probe 권장.
