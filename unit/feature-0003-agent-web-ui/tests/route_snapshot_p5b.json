@@ -1,6 +1,6 @@
 {
-  "total_routes": 208,
-  "api_routes": 207,
+  "total_routes": 211,
+  "api_routes": 210,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -1453,6 +1453,27 @@
       "path": "/api/admin/settings/runtime",
       "methods": [
         "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/reasoning/guidance",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/reasoning/redteam",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/reasoning/notes",
+      "methods": [
+        "GET"
       ],
       "type": "APIRoute"
     }

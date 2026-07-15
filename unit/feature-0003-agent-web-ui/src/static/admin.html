@@ -100,6 +100,11 @@
         <button type="button" class="admin-tab" data-admin-tab="settings" id="adminTabSettings">
           <span class="admin-tab-label">설정</span>
         </button>
+        <!-- feature-0021: AI 추론 구조 조회 (console.reasoning.read 없으면 숨김) — 지침/스킬 레지스트리 ·
+             자가 적대(red-team) 리뷰 활동 · 세션/제품 메모리 노트 현황 (read-only). -->
+        <button type="button" class="admin-tab" data-admin-tab="reasoning" id="adminTabReasoning" style="display:none">
+          <span class="admin-tab-label">AI 추론</span>
+        </button>
         <!-- 릴리즈 노트: 비민감 정보 → 콘솔 진입자 모두에게 노출(권한 매핑 없음). 콘텐츠는 release-notes-data.js. -->
         <button type="button" class="admin-tab" data-admin-tab="release-notes" id="adminTabReleaseNotes">
           <span class="admin-tab-label">릴리즈 노트</span>
@@ -997,6 +1002,24 @@
                   <span class="admin-list-row-meta">LLM 모델별 thinking budget</span>
                 </span>
               </button>
+              <!-- feature-0021: 자가 적대(red-team) 리뷰 · 메모리 노트 운영 값 -->
+              <button
+                type="button"
+                class="admin-list-row admin-list-row--nav"
+                role="option"
+                aria-selected="false"
+                data-settings-tab="redteam-review"
+                data-settings-group="운영 값"
+                data-settings-keywords="자가 리뷰 red-team redteam 적대 검증 메모리 노트 세션 제품 TTL"
+              >
+                <span class="admin-list-row-cb" aria-hidden="true"></span>
+                <span class="admin-list-row-main">
+                  <span class="admin-list-row-title">
+                    <span class="admin-list-row-name">AI 자가 리뷰</span>
+                  </span>
+                  <span class="admin-list-row-meta">답변 red-team 검증·메모리 노트</span>
+                </span>
+              </button>
             </div>
           </div>
           <div class="admin-detail-col" id="settingsDetail">
@@ -1029,7 +1052,33 @@
                 <!-- mountModelThinkingBudgetsPanel() 가 마운트 -->
               </div>
             </article>
+            <!-- feature-0021: 자가 적대(red-team) 리뷰 운영 값 패널 -->
+            <article class="admin-settings-panel" data-settings-panel="redteam-review">
+              <header class="admin-settings-panel-head">
+                <h3>AI 자가 리뷰</h3>
+                <p class="admin-settings-panel-hint">답변 전달 전 별도 저비용 모델이 grounding·SQL·권한·완전성·정직성 5축으로 적대 검증(red-team)하고, 검증 결과·핵심 사실을 세션/제품 메모리 노트로 축적합니다. 낮음 추론 강도는 기본 건너뜀, 검증 실패는 답변을 막지 않습니다(fail-open). 전 항목 저장 즉시 반영됩니다.</p>
+              </header>
+              <div class="admin-settings-panel-body" id="redteamReviewMount">
+                <!-- mountRedteamReviewPanel() 가 마운트 -->
+              </div>
+            </article>
           </div>
+        </div>
+      </section>
+
+      <!-- feature-0021: AI 추론 pane — 지침/스킬 레지스트리(progressive disclosure) + red-team 리뷰 활동 + 메모리 노트 현황 -->
+      <section class="admin-pane" data-admin-pane="reasoning">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">AI Reasoning</div>
+            <h2>AI 추론</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="reasoningRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="reasoningBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
         </div>
       </section>
 

@@ -65,6 +65,7 @@ sources:
 | feature-0017-deploy-build-gate | review | deploy-web.sh 빌드 게이트 snap-docker metadata-file race false-failure 수정(이미지 정합 검증) | [[feature-0017-deploy-build-gate]] | `unit/feature-0017-deploy-build-gate/docs/FUNCTION.md` |
 | feature-0019-message-editing | in-progress | 메시지 편집 — 1:1 대화 내부 브랜치 트리(단순 수정 / 요청 수정=분기 재답변 `< n/m >` 페이징)·공유(그룹)=단순 수정만 · Phase 1+2 라이브(마이그 0041·PB-0008) | [[feature-0019-message-editing]] | `unit/feature-0019-message-editing/docs/FUNCTION.md` |
 | feature-0020-zd-deploy-all | in-progress | 무중단 배포 커버리지 완성 — 워커(insight/ask) 자동 롤아웃·bedrock-gateway surge 무중단 교체·caddy 이미지 드리프트·alembic stale-image 가드 (deploy 스파인 확장) | [[feature-0020-zd-deploy-all]] | `unit/feature-0020-zd-deploy-all/docs/FUNCTION.md` |
+| feature-0021-redteam-review | in-progress | assistant 답변 자가 적대(red-team) 리뷰 — fresh-context 5축 검증(find→revise→verify·강도 게이팅·fail-open)+[세션,제품] 메모리 노트(TTL)+콘솔 'AI 추론' 탭 (Claude Code 패턴 이식, 코드 거주 0002/0003/shared) | [[feature-0021-redteam-review]] | `unit/feature-0021-redteam-review/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

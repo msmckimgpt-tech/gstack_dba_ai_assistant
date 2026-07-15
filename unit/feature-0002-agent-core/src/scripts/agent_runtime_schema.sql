@@ -534,6 +534,25 @@ CREATE INDEX IF NOT EXISTS ix_core_att_provider_pf
 CREATE INDEX IF NOT EXISTS ix_core_att_provider_pending
     ON agent_runtime.core_attachment_provider_files (deleted_at, last_delete_attempt_at);
 
+CREATE TABLE IF NOT EXISTS agent_runtime.redteam_reviews (
+    id                BIGSERIAL PRIMARY KEY,
+    conversation_id   TEXT,
+    run_id            TEXT,
+    verdict           VARCHAR(16) NOT NULL,
+    findings          JSONB,
+    block_count       INTEGER NOT NULL DEFAULT 0,
+    warn_count        INTEGER NOT NULL DEFAULT 0,
+    verify_verdict    VARCHAR(16),
+    revision_applied  BOOLEAN NOT NULL DEFAULT FALSE,
+    model             VARCHAR(128),
+    latency_ms        INTEGER,
+    reasoning_level   VARCHAR(16),
+    is_group          BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_redteam_reviews_conversation
+    ON agent_runtime.redteam_reviews (conversation_id, id DESC);
+
 -- ============================================================================
 -- 7. Role grants (post-table creation)
 --    DEFAULT PRIVILEGES 가 이미 설정됐으므로 bootstrapped role 에는 자동 적용됨.

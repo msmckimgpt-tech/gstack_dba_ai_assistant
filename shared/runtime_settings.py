@@ -69,6 +69,7 @@ __all__ = [
     "GROUP_MODEL_BUDGET",
     "GROUP_REASONING_BUDGET",
     "GROUP_AGENT_MAX_OUTPUT",
+    "GROUP_REDTEAM",
 ]
 
 GROUP_TIMEOUT = "timeout"
@@ -514,6 +515,107 @@ def _timeout_specs() -> tuple[dict[str, Any], ...]:
     return tuple(dict(spec, group=GROUP_TIMEOUT) for spec in _TIMEOUT_SPECS)
 
 
+# ── 자가 적대 리뷰(red-team) 레지스트리 (feature-0021) ─────────────────────
+# assistant 답변 전달 전 fresh-context 적대 리뷰 오케스트레이션의 게이트/예산.
+# 전부 live — 답변 단위로 읽으므로 재시작 없이 즉시 반영. 0/1 스위치도 int 스펙으로 표현.
+GROUP_REDTEAM = "redteam"
+
+_REDTEAM_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "key": "REDTEAM_ENABLED",
+        "category": "자가 리뷰",
+        "label": "답변 자가 적대 리뷰 사용",
+        "description": "답변 전달 전 별도 저비용 LLM 이 grounding·SQL·권한·완전성·정직성 5축으로 적대 리뷰를 수행합니다 (1=사용, 0=중지). 리뷰 실패는 답변을 막지 않습니다(fail-open).",
+        "unit": "0/1",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_MIN_LEVEL",
+        "category": "자가 리뷰",
+        "label": "리뷰 최소 추론 강도",
+        "description": "이 강도 이상 대화에서만 리뷰 수행 (0=낮음, 1=일반, 2=높음, 3=매우높음). 기본 1 — 낮음 강도는 비용 절약을 위해 건너뜁니다.",
+        "unit": "level",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 3,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_MAX_REVISIONS",
+        "category": "자가 리뷰",
+        "label": "BLOCK 결함 수정 상한",
+        "description": "리뷰가 BLOCK 결함을 찾았을 때 답변을 수정하는 최대 횟수. 0 이면 기록만 하고 수정하지 않습니다.",
+        "unit": "회",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 2,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_TIMEOUT_SEC",
+        "category": "자가 리뷰",
+        "label": "리뷰어 호출 타임아웃",
+        "description": "리뷰어 LLM 1회 호출 상한. 초과 시 원 답변을 그대로 전달합니다(fail-open).",
+        "unit": "초",
+        "default": 25,
+        "minimum": 5,
+        "maximum": 300,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_NOTES_ENABLED",
+        "category": "자가 리뷰 메모리",
+        "label": "세션/제품 메모리 노트 사용",
+        "description": "답변 후 자가 리뷰 결과·핵심 사실을 세션(대화)/제품 노트 파일로 축적하고 다음 답변 프롬프트에 참조합니다 (1=사용, 0=중지).",
+        "unit": "0/1",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_NOTES_SESSION_TTL_DAYS",
+        "category": "자가 리뷰 메모리",
+        "label": "세션 노트 보존 기간",
+        "description": "세션(대화) 노트 임시 파일의 TTL. 마지막 갱신 후 이 기간이 지나면 주기 정리에서 삭제됩니다.",
+        "unit": "일",
+        "default": 7,
+        "minimum": 1,
+        "maximum": 90,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_NOTES_PRODUCT_TTL_DAYS",
+        "category": "자가 리뷰 메모리",
+        "label": "제품 노트 보존 기간",
+        "description": "제품 노트 임시 파일의 TTL. 마지막 갱신 후 이 기간이 지나면 주기 정리에서 삭제됩니다.",
+        "unit": "일",
+        "default": 30,
+        "minimum": 1,
+        "maximum": 365,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_NOTES_INJECT_MAX_CHARS",
+        "category": "자가 리뷰 메모리",
+        "label": "노트 프롬프트 주입 상한",
+        "description": "세션+제품 노트를 답변 프롬프트에 주입할 때의 합산 문자 상한 (토큰 절약 캡). 0 이면 주입하지 않습니다.",
+        "unit": "자",
+        "default": 4000,
+        "minimum": 0,
+        "maximum": 20000,
+        "apply_mode": "live",
+    },
+)
+
+
+def _redteam_specs() -> tuple[dict[str, Any], ...]:
+    return tuple(dict(spec, group=GROUP_REDTEAM) for spec in _REDTEAM_SPECS)
+
+
 # 스펙은 프로세스 수명 내 정적이다(타임아웃=리터럴, 모델 예산=import-time 고정 카탈로그 순회).
 # get_int·model_thinking_budget_override 가 매 MCP 요청·매 timeout 해석마다 spec_for 를 호출하므로
 # 전체 스펙/인덱스를 1회 계산 후 메모이즈한다(적대 backend MINOR — hot-path 재빌드 제거).
@@ -530,6 +632,7 @@ def list_specs() -> tuple[dict[str, Any], ...]:
             + _agent_max_output_specs()
             + _model_budget_specs()
             + _reasoning_budget_specs()
+            + _redteam_specs()
         )
     return _SPECS_CACHE
 
@@ -829,6 +932,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
     agent_outputs: list[dict[str, Any]] = []
     models: list[dict[str, Any]] = []
     reasoning: list[dict[str, Any]] = []
+    redteam: list[dict[str, Any]] = []
     for spec in list_specs():
         key = str(spec["key"])
         has_override = key in ov
@@ -864,6 +968,8 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
             row["level"] = spec.get("level")
             row["default_known"] = bool(spec.get("default_known"))
             reasoning.append(row)
+        elif spec.get("group") == GROUP_REDTEAM:
+            redteam.append(row)
         else:
             timeouts.append(row)
     return {
@@ -871,6 +977,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
         "agent_max_outputs": agent_outputs,
         "model_thinking_budgets": models,
         "reasoning_budgets": reasoning,
+        "redteam": redteam,
         "meta": {
             "snapshot_path": snapshot_path(),
             "disabled": _disabled(),
