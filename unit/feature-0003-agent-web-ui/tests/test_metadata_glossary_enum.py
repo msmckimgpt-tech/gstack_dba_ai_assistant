@@ -133,7 +133,7 @@ def _allow_scopes(monkeypatch, scopes=("common", "default")):
 
 
 def _admin(monkeypatch):
-    acct = {"id": 1, "username": "admin", "permissions": {"kb.ingest.manual": True}}
+    acct = {"id": 1, "username": "admin", "permissions": {"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True}}
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     return acct
 

@@ -80,7 +80,7 @@ def test_conn_fail_500(client, monkeypatch):
 
 
 def test_invalid_product_id_400(client, as_account, override_conn):
-    as_account(perms={"product.manage": True})
+    as_account(perms={"product.manage": True, "product.create": True, "product.update": True, "product.delete": True})
     override_conn()
     r = client.put("/api/admin/products/0/databases", json={})
     assert r.status_code == 400
@@ -88,7 +88,7 @@ def test_invalid_product_id_400(client, as_account, override_conn):
 
 
 def test_invalid_json_400(client, as_account, override_conn):
-    as_account(perms={"product.manage": True})
+    as_account(perms={"product.manage": True, "product.create": True, "product.update": True, "product.delete": True})
     override_conn()
     r = client.put(_URL, content=b"{bad", headers={"content-type": "application/json"})
     assert r.status_code == 400
@@ -104,7 +104,7 @@ def test_no_product_manage_perm_403(client, as_account, override_conn):
 
 
 def test_product_not_found_404(client, as_account, override_conn):
-    as_account(perms={"product.manage": True})
+    as_account(perms={"product.manage": True, "product.create": True, "product.update": True, "product.delete": True})
     override_conn(product_row=None)  # SELECT Id,DatasourceKey → None
     r = client.put(_URL, json={})
     assert r.status_code == 404
@@ -112,7 +112,7 @@ def test_product_not_found_404(client, as_account, override_conn):
 
 
 def test_databases_not_list_400(client, as_account, override_conn):
-    as_account(perms={"product.manage": True})
+    as_account(perms={"product.manage": True, "product.create": True, "product.update": True, "product.delete": True})
     override_conn(product_row=(3, ""))  # product 존재, primary datasource 없음
     r = client.put(_URL, json={"databases": "notalist"})
     assert r.status_code == 400
@@ -122,7 +122,7 @@ def test_databases_not_list_400(client, as_account, override_conn):
 def test_leak_fix_conn_closed_on_query_raise(client, as_account, override_conn):
     """**leak-fix 회귀**: SELECT product raise 시에도 get_conn finally 가 conn.close()."""
     store = override_conn(execute_raises=True)
-    as_account(perms={"product.manage": True})
+    as_account(perms={"product.manage": True, "product.create": True, "product.update": True, "product.delete": True})
 
     from fastapi.testclient import TestClient
     cap = TestClient(appmod.app, base_url="http://localhost", raise_server_exceptions=False)

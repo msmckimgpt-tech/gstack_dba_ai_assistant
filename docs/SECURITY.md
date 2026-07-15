@@ -725,3 +725,28 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
   매 startup 재실행 금지 — 계층 게이트 무력화 방지).
 - seed: admin(=set(PERMISSION_CODES)) 자동 + 기존 admin row catchup 5종(lockout 방지), dba 는
   `console.audit.access` 동반. operator/sales/pending 미부여(콘솔 진입권 자체가 없음 — least-privilege).
+
+### 22.4 원자 단위 분리 (perm-atomic-split, TASK 20260715T1034-perm-atomic-split, 2026-07-15)
+
+§22 계층 재구성 후에도 잎(leaf)이 묶음이던 지점 — [등록/수정/삭제] 단일 권한, 검수 큐 [승급/거부]
+단일 권한 — 을 원자 단위로 분리 (Critical §12.3, 사용자 승인: 전체 분리 + 묶음 숨김).
+
+- **신규 원자 권한 23종**: 사전 4종(용어/ENUM/테이블/컬럼) × `{read,create,update,delete}` 16종 +
+  `product.{create,update,delete}` + `datasource.{create,update,delete,test}`. 엔드포인트
+  enforcement 를 액션별 원자 단위로 전환(사전 CRUD 22 핸들러 + 제품 12 + 데이터소스 4;
+  부트스트랩=create∧update AND, AI 자동완성(suggest)=update 게이트 — 조회만으론 LLM 비용 유발 불가).
+- **검수(승급·거부)는 단일 '검수' 단위 유지**(반쪽 검수자 모호성 회피) + **원본 사전의 조회(read)
+  하위로 종속**(사용자 지시): `kb.glossary.curate`→`metadata.glossary.read`,
+  `kb.enum.curate`→`metadata.enum.read`, `kb.sample.curate`=카테고리 직속(원본 조회 단위 없음).
+- **레거시 묶음 7종 숨김**: `kb.ingest.manual`·`metadata.*.manage` 4종·`product.manage`·
+  `datasource.manage` 은 코드·기존 grant·transitive 함의(`_PERMISSION_BUNDLE_IMPLIES` —
+  묶음→원자, 개별 DENY 우선)를 안전망으로 유지하되 권한 grid 에서 제거(`LEGACY_BUNDLE_PERMISSIONS`,
+  BE/FE 3자 parity 테스트). 역할 저장 경로는 TASK-0300 preservedHidden 이 미렌더 grant 를
+  보존하므로 묶음 grant 가 저장으로 소실되지 않는다.
+- **접근 무손실 backfill(1회, `atomic-perm-split-v1`)**: 묶음 보유 role/ALLOW override 에 원자
+  단위 explicit 전개(+묶음 DENY×역할 보유 조합은 원자 DENY 로 구 effective 고정).
+  `console-category-access-v1` **보다 먼저** 실행(fresh install 에서 카테고리 접근 backfill 의
+  원자 leaves 판정 선행 조건). admin catchup 23종 동반(lockout 방지).
+- **서브탭 진입 게이트 = 조회(read)**: `_METADATA_SUBTAB_PERM(_SERVER)` manage→read 전환.
+  데이터소스 연결 테스트는 `datasource.test` 작동 단위로 분리(작업 화면 ds-conn-test 버튼 동일
+  게이트 — 기존 '버튼 노출but 403' 괴리 해소).

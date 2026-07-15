@@ -68,8 +68,11 @@ def _ds_test_throttle_check(account_id, key) -> float:
 
 
 # ITEM-10 routers-p1: app.py 에서 이동(도메인 소유 정상화 — 판정표 §4 routers 경로).
-async def _ds_write_common(request, require_manage=True):
-    """CRUD 공통: conn + actor + 권한 + body. 반환 (conn, actor, data, None) 또는 (None,None,None, error)."""
+async def _ds_write_common(request, require_manage=True, action_perm="datasource.update"):
+    """CRUD 공통: conn + actor + 권한 + body. 반환 (conn, actor, data, None) 또는 (None,None,None, error).
+
+    perm-atomic-split(2026-07-15): 묶음 datasource.manage 대신 액션별 원자 권한(action_perm —
+    create/update/delete)을 게이트한다. console.access+console.manage 선행은 기존 유지."""
     try:
         conn = app._connect_memory()
     except Exception:
@@ -78,12 +81,12 @@ async def _ds_write_common(request, require_manage=True):
     if error:
         conn.close()
         return None, None, None, error
-    # TASK-0288: datasource CRUD 는 datasource.manage 전용 권한. 기존 console.access+console.manage
-    # 게이트에 datasource.manage 를 추가(require_manage 경로). 미보유 시 403.
-    need = ["console.access"] + (["console.manage", "datasource.manage"] if require_manage else [])
+    # TASK-0288 → perm-atomic-split: datasource CRUD 는 액션별 원자 권한(action_perm). 기존
+    # console.access+console.manage 선행 게이트는 유지. 미보유 시 403.
+    need = ["console.access"] + (["console.manage", action_perm] if require_manage else [])
     if not all(app._account_has_permission(actor, p) for p in need):
         conn.close()
-        return None, None, None, app._json_error("데이터소스 관리 권한(datasource.manage)이 필요합니다.", 403)
+        return None, None, None, app._json_error(f"데이터소스 권한({action_perm})이 필요합니다.", 403)
     try:
         body_raw = await request.body()
         data = (await request.json()) if body_raw else {}
@@ -200,8 +203,9 @@ async def admin_test_datasource(key: str, request: Request, actor=Depends(app.ge
     if not app._account_has_permission(actor, "console.access"):
         return app._json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     # TASK-0288: 연결 테스트는 datasource 관리 동작(자격증명 검증·서버 probe) — manage 권한.
-    if not app._account_has_permission(actor, "datasource.manage"):
-        return app._json_error("데이터소스 관리 권한이 필요합니다.", 403)
+    # perm-atomic-split(2026-07-15): 연결 테스트는 작동 단위 datasource.test 로 분리(구 datasource.manage).
+    if not app._account_has_permission(actor, "datasource.test"):
+        return app._json_error("데이터소스 연결 테스트 권한(datasource.test)이 필요합니다.", 403)
     ds = _dsr.resolve(conn, str(key).strip().lower())
     if not ds:
         return app._json_error(f"미등록(또는 복호 불가) datasource 라벨: {key}", 404)
@@ -248,7 +252,7 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
     """datasource 생성 (자격증명 DB 암호화 저장, TASK-0205). console.manage. password 는 응답 비노출."""
     from modules import cred_crypto as _cc
     from shared import datasources as _dsr
-    conn, actor, data, error = await _ds_write_common(request)
+    conn, actor, data, error = await _ds_write_common(request, action_perm="datasource.create")
     if error:
         return error
     try:
@@ -306,7 +310,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
     """datasource 수정 (TASK-0205). password 미입력 시 미변경. console.manage. 응답 password 비노출."""
     from modules import cred_crypto as _cc
     from shared import datasources as _dsr
-    conn, actor, data, error = await _ds_write_common(request)
+    conn, actor, data, error = await _ds_write_common(request, action_perm="datasource.update")
     if error:
         return error
     # TASK-0277 (REV BLOCKER2): _connect_memory 는 autocommit=True 라 다단계 rename+cascade 가 비원자적이었다.
@@ -464,7 +468,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
 @router.delete("/api/admin/datasources/{key}")
 async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
     """datasource 삭제 (TASK-0205). 바인딩된 product 있으면 거부(?force=1 로 강제). console.manage."""
-    conn, actor, _data, error = await _ds_write_common(request)
+    conn, actor, _data, error = await _ds_write_common(request, action_perm="datasource.delete")
     if error:
         return error
     try:

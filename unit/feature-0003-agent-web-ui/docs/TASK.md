@@ -5693,3 +5693,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 검증: graph.css `/*`:`*/` 63:63·중괄호 215:215 균형(주석 hazard 없음, 20260714T184717-fix 불변식 준수) · 라이브 win-browser eval — keep-all 어절 줄바꿈 스크린샷 + 반응형 다중 폭 실측(300→268·360→320·617→520·1100→520, 오버플로 0).
 - [x] §18.8 패널 skip(REVIEW `[SKIPPED:frontend-ui-minor-css-text-layout-no-logic-no-rbac]`, 적대 자가검토 6가설 refute).
 - [x] verify-completion(pre-commit) → commit → PR #804 → 머지(main 6af16762) → web 재배포(deploy_scope: included, deploy-web --web-only soak PASS) → **POST-DEPLOY PB-0008 라이브 재검증**: 재배포된 graph.css(스탬프 92be1efb1249)에서 `.amg-help-card` computed word-break=keep-all(설명 상속)·overflow-wrap=anywhere·반응형 폭 다중 크기(300→268·360→320·617→520·1100→520, 오버플로 0)·스크린샷 육안·중앙정렬·pageerror 0 ✓. worktree `ai/claude/feature-0003-graph-help-wordbreak`(base main 14f54e64). 재배포 자산 최종 확인=postverify(ai/claude/feature-0003-graph-help-responsive-postverify).
+## 20260715T1034-perm-atomic-split — 권한 최소 단위 원자화(추가/수정/삭제 분리) + 레거시 묶음 숨김 (Critical §12.3 인증/인가, 2026-07-15)
+
+- **요청**: "여전히 권한이 [등록/수정/삭제] 혹은 [등록/거부/(삭제 권한이 없음)] 형태로 통합된 상태" — perm-category-hier(20260714T1819) 후속: 트리는 정합됐으나 잎이 묶음이던 지점의 원자 분리. **사용자 결정**: ① 전체 분리 + 묶음 grid 숨김 ② 검수(승급·거부)는 단일 유지하되 원본 사전('관리' 계열) 하위 종속.
+- **위험등급**: Critical(인가 — 신규 23종 + 엔드포인트 enforcement 전환 ~38 핸들러).
+- **§2.1 Plan/구현**:
+  - backend `web_context.py`: 원자 23종(사전 4×4 + product 3 + datasource 4) + `_PERMISSION_BUNDLE_IMPLIES` transitive 함의(DENY 우선, fixpoint) + `LEGACY_BUNDLE_PERMISSIONS` 7종 + admin catchup 23종 + `_backfill_atomic_perm_split_v1`(마커 `atomic-perm-split-v1`, 대상3종, category-access-v1 **선행** 호출 — fresh install 순서 계약) + `_CONSOLE_CATEGORY_ACCESS_LEAVES` 원자화(묶음 제거).
+  - backend 엔드포인트: `admin_metadata.py` 22 핸들러(list=read/POST=create/PUT=update/DELETE=delete, 유사어=update, bootstrap=create∧update, describe·관계 큐레이션·suggest=update — suggest 는 가시성 맵과 분리한 `_METADATA_SUGGEST_PERM`), `admin_products.py`(create/update/delete + icon·databases·db-rules·AI제안·프롬프트=update, M3 creator 판정=update), `admin_datasources.py`(`_ds_write_common(action_perm=…)` + test=`datasource.test`), `_prompt_context.py`(제품 프롬프트 생성=update). `_METADATA_SUBTAB_PERM_SERVER`=read.
+  - frontend `admin.js`: DEPS 원자 트리(read→create/update/delete, 검수→원본 read 하위) + 레거시 7종 grid 필터 + 서브탭 CREATE/UPDATE/DELETE 맵 신설·버튼 게이팅(새 항목=create·행 편집=update·삭제=delete·폼 저장=액션별·bootstrap=create∧update) + ds/제품 bulk·상세 액션별 분리(연결 테스트=test 게이트 신설 — 기존 무게이트 403 괴리 해소) + metadata 탭 게이트 read+curate. `app.js`: 자기 권한 목록 legacy 숨김 + ds-conn-test 버튼 `datasource.test` 게이트 + 라벨 23종.
+  - 저장 안전: 역할 저장 경로 TASK-0300 preservedHidden 이 grid 미렌더(숨긴 묶음) grant 보존 — wipe 없음(코드 확인).
+- [x] 구현 · ast/node --check 전부 OK.
+- [x] tests: perm dict 원자 보강 10파일 + dependency-map(M3 원자·legacy 트리 제외·V2·t5/t6 재작성) + perm_split(R7/R8=read, R9 transitive 함의·DENY 우선, R10 legacy 3자 parity) — **785 passed/0** + jsdom 47/0.
+- [x] `python3 bin/gen-routemap.py` 재생성(+--check 0) — 권한 데코레이터 변경 cycle 필수(CI Code-Navigation gate).
+- [ ] 컨테이너 make test → verify-completion → commit → PR → 머지 → web 재배포.
+- [ ] **배포 후 실증**: `atomic-perm-split-v1` 마커 + 묶음 보유 role(usermanager 등) 원자 explicit 전개 + PB-0008(grid 에 묶음 미표시·원자 단위 [조회→추가/수정/삭제/검수] 트리·버튼 게이팅).

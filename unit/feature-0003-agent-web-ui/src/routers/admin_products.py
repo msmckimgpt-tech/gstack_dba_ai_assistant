@@ -824,7 +824,7 @@ async def admin_remove_product_datasource(product_id: int, key: str, request: Re
         conn.close()
 
 @router.put("/api/admin/products/{product_id}/icon")
-async def upload_product_icon(product_id: int, request: Request, file: UploadFile = File(...), account=Depends(app.require_permission("product.manage", message="제품 관리 권한이 필요합니다 (product.manage).")), conn=Depends(app.get_conn)) -> JSONResponse:
+async def upload_product_icon(product_id: int, request: Request, file: UploadFile = File(...), account=Depends(app.require_permission("product.update", message="제품 수정 권한이 필요합니다 (product.update).")), conn=Depends(app.get_conn)) -> JSONResponse:
     """제품 아이콘 업로드(product.manage). 이전 아이콘 교체."""
     cur = conn.cursor()
     try:
@@ -857,7 +857,7 @@ async def upload_product_icon(product_id: int, request: Request, file: UploadFil
     return JSONResponse({"ok": True, "icon_url": app._product_icon_url_for(int(product_id), object_key)})
 
 @router.delete("/api/admin/products/{product_id}/icon")
-def delete_product_icon(product_id: int, request: Request, account=Depends(app.require_permission("product.manage", message="제품 관리 권한이 필요합니다 (product.manage).")), conn=Depends(app.get_conn)) -> JSONResponse:
+def delete_product_icon(product_id: int, request: Request, account=Depends(app.require_permission("product.update", message="제품 수정 권한이 필요합니다 (product.update).")), conn=Depends(app.get_conn)) -> JSONResponse:
     """제품 아이콘 제거(product.manage) → 기본/Identicon 폴백."""
     cur = conn.cursor()
     try:
@@ -1227,7 +1227,7 @@ async def admin_create_product(request: Request) -> JSONResponse:
     if error:
         conn.close()
         return error
-    if not app._account_has_permission(account, "product.manage"):
+    if not app._account_has_permission(account, "product.create"):
         conn.close()
         return app._json_error("제품 관리 권한이 필요합니다.", 403)
     product_key = str(data.get("product_key") or "").strip().upper()
@@ -1367,7 +1367,7 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
     if error:
         conn.close()
         return error
-    if not app._account_has_permission(account, "product.manage"):
+    if not app._account_has_permission(account, "product.update"):
         conn.close()
         return app._json_error("제품 관리 권한이 필요합니다.", 403)
     # TASK-0091 (REQ-20260520-0006, Codex outside voice C2): 명시 transaction —
@@ -1488,7 +1488,7 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
     if error:
         conn.close()
         return error
-    if not app._account_has_permission(account, "product.manage"):
+    if not app._account_has_permission(account, "product.delete"):
         conn.close()
         return app._json_error("제품 관리 권한이 필요합니다.", 403)
     # TASK-0302 (외부리뷰 MAJOR — defense-in-depth): 기본 제품(IsDefault) 삭제는 백엔드에서도 차단한다.
@@ -1631,7 +1631,7 @@ async def admin_update_product_databases(
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    if not app._account_has_permission(account, "product.manage"):
+    if not app._account_has_permission(account, "product.update"):
         return app._json_error("제품 관리 권한이 필요합니다.", 403)
     cur = conn.cursor()
     cur.execute("SELECT Id, DatasourceKey FROM WebProducts WHERE Id = %s", (int(product_id),))
@@ -2475,7 +2475,7 @@ def _reconcile_all_db_rules_once() -> None:
                 creator = app._load_account_by_id(conn, creator_id) if creator_id > 0 else None
                 # M3: creator 가 현재도 **활성·비삭제 + product.manage** 일 때만 자동 GRANT — 아니면 pending.
                 creator_ok = bool(creator and creator.get("is_active") and not creator.get("deleted_at"))
-                can_manage = bool(creator_ok and app._account_has_permission(creator, "product.manage"))
+                can_manage = bool(creator_ok and app._account_has_permission(creator, "product.update"))
                 app._reconcile_one_db_rule(conn, rule, actor_account=creator, can_manage=can_manage, trigger="background")
             except Exception:
                 try:
@@ -2504,7 +2504,7 @@ def _db_rule_gate(request: Request, product_id: int, key: str):
     if error:
         conn.close()
         return (None, None, None, error)
-    if not app._account_has_permission(account, "product.manage"):
+    if not app._account_has_permission(account, "product.update"):
         conn.close()
         return (None, None, None, app._json_error("제품 관리 권한이 필요합니다.", 403))
     cur = conn.cursor()

@@ -58,3 +58,12 @@ source_of_truth: true
 - **Alternatives**: B안(신규 권한 없이 표시 계층만 재구성) — 위험 최소지만 "권한 단위의 카테고리 최상위 접근" 요건 미충족으로 기각. 엔드포인트에 카테고리 접근 AND enforcement 추가 — 수십 핸들러 변경·락아웃 리스크 대비 이득 없음(기존 console.access+세부 게이트 유지)으로 보류.
 - **Consequences**: 역할 편집 grid 가 nav 카테고리와 1:1 정합(상위 체크 시 하위 펼침). 신규 역할 구성 시 카테고리 접근을 먼저 부여해야 탭이 노출된다(의도된 계층 규율). backfill 이후 새로 세부 권한만 부여된 role 은 접근 권한을 명시 부여해야 한다(자동 함의 없음).
 - **Cross-ref**: SECURITY.md §22 · CONVENTIONS.md §10.6 · CHG-20260714T181936 · 선례 graph-perm-split(ADR 없음, TASK 20260713T1818)·metadata-perm-hier.
+
+## ADR-20260715T103406-perm-atomic-split — 권한 최소 단위 원자화(레거시 묶음 숨김 + transitive 함의)
+
+- **Status**: accepted (사용자 승인 2026-07-15, Critical §12.3 — perm-category-hier ADR-20260714T181936 후속)
+- **Context**: 카테고리 계층 재구성 후에도 권한의 잎이 묶음([등록/수정/삭제] 단일 manage, 검수 [승급/거부] 단일 curate)이라 원칙 ②(수정 가능 항목=추가·수정·삭제 단위)가 미충족.
+- **Decision**: ① 원자 23종 신설 + 엔드포인트 enforcement 액션별 전환. ② 레거시 묶음 7종은 코드·기존 grant·transitive 함의(DENY 우선)를 안전망으로 유지하되 **권한 grid 에서 숨김**(신규 부여는 원자만). ③ 검수는 단일 '검수' 단위 유지 + **원본 사전 read 하위 종속**(사용자 지시 — 반쪽 검수자·큐 항목 편집 귀속 모호성 회피). ④ 1회 backfill(`atomic-perm-split-v1`)로 묶음 보유 principal 에 원자 explicit 전개(+DENY 조합 고정), category-access-v1 선행. ⑤ 부트스트랩=create∧update AND, AI 자동완성=update(조회만으론 LLM 비용 유발 불가), 연결 테스트=`datasource.test` 작동 단위.
+- **Alternatives**: 묶음 grid 표시 유지(통합 항목 잔존이라 기각 — 사용자 결정), 검수 승급/거부 분리(반쪽 검수자 모호성 — 기각), choke-point(_account_has_permission) 묶음 fallback(원자 DENY 무력화 — 기각).
+- **Consequences**: grid 에는 원자 단위만 보인다(조회→추가/수정/삭제/검수 트리). 역할 저장은 preservedHidden(TASK-0300)이 숨긴 묶음 grant 를 보존. 신규 역할은 원자 단위로만 구성.
+- **Cross-ref**: SECURITY §22.4 · CONVENTIONS §10.6 · CHG-20260715T103406.

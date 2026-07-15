@@ -133,7 +133,7 @@ def _allow_scopes(monkeypatch, scopes=("common", "default")):
 def _admin(monkeypatch):
     """kb.ingest.manual + kb.sample.curate 둘 다 보유(Phase 2 happy path)."""
     acct = {"id": 1, "username": "admin",
-            "permissions": {"kb.ingest.manual": True, "kb.sample.curate": True}}
+            "permissions": {"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True, "kb.sample.curate": True}}
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     return acct
 
@@ -195,7 +195,7 @@ def test_samples_endpoints_require_curate(monkeypatch, client, as_account):
 
 def test_samples_curate_only_not_ingest(client, as_account):
     """kb.ingest.manual 만 있고 kb.sample.curate 없으면 샘플 엔드포인트 403 (권한 분리 확인)."""
-    as_account(perms={"kb.ingest.manual": True})  # curate 없음 → require_permission("kb.sample.curate") 403
+    as_account(perms={"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True})  # curate 없음 → require_permission("kb.sample.curate") 403
     assert client.get("/api/admin/metadata/samples?scope_key=common").status_code == 403
 
 

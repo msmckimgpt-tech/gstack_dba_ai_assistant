@@ -299,28 +299,128 @@ PERMISSION_DEFINITIONS = (
     #   묶음과 권한도 분리한다. 편집 4종(glossary/enum/table/column)만 묶음이 함의하고, 그래프 뷰 조회는
     #   독립 권한이 된다. 기존 배포에서 묶음 보유로 그래프에 접근하던 principal 은 _backfill_graph_perm_split_v1
     #   1회 backfill(멱등 guard)로 metadata.graph.read 를 명시 부여받아 접근을 잃지 않는다(B안 = 접근 보존).
+    # perm-atomic-split(Critical §12.3, 사용자 승인 2026-07-15): 사전 4종의 묶음 `.manage` 를
+    #   원자 단위 {read(조회)/create(추가)/update(수정)/delete(삭제)} 로 분리. `.manage` 는 레거시
+    #   묶음으로 코드·함의(_PERMISSION_BUNDLE_IMPLIES)만 유지하고 권한 grid 에서는 숨긴다
+    #   (LEGACY_BUNDLE_PERMISSIONS — 기존 grant 하위호환·신규 부여는 원자 단위만).
     {
         "code": "metadata.glossary.manage",
         "label": "용어사전 관리",
-        "description": "용어사전(도메인 용어↔정의) 항목과 유사어 참조를 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다(도메인 전문가/큐레이터 전용).",
+        "description": "[레거시 묶음] 용어사전 조회/추가/수정/삭제를 한 번에 부여한다. 신규 부여는 원자 단위(metadata.glossary.read/create/update/delete)를 사용한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.glossary.read",
+        "label": "용어사전 조회",
+        "description": "용어사전(도메인 용어↔정의) 항목과 유사어 참조를 조회할 수 있다. 용어사전 서브탭 진입 게이트.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.glossary.create",
+        "label": "용어사전 추가",
+        "description": "용어사전 항목을 신규 등록할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.glossary.update",
+        "label": "용어사전 수정",
+        "description": "용어사전 항목과 유사어 참조를 수정할 수 있다(AI 자동완성 제안 포함). 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.glossary.delete",
+        "label": "용어사전 삭제",
+        "description": "용어사전 항목을 삭제할 수 있다.",
         "group": "kb",
     },
     {
         "code": "metadata.enum.manage",
         "label": "ENUM 코드사전 관리",
-        "description": "ENUM 코드사전(컬럼 코드↔라벨) 항목을 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "description": "[레거시 묶음] ENUM 코드사전 조회/추가/수정/삭제를 한 번에 부여한다. 신규 부여는 원자 단위(metadata.enum.read/create/update/delete)를 사용한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.enum.read",
+        "label": "ENUM 코드사전 조회",
+        "description": "ENUM 코드사전(컬럼 코드↔라벨) 항목을 조회할 수 있다. ENUM 서브탭 진입 게이트.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.enum.create",
+        "label": "ENUM 코드사전 추가",
+        "description": "ENUM 코드사전 항목을 신규 등록할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.enum.update",
+        "label": "ENUM 코드사전 수정",
+        "description": "ENUM 코드사전 항목을 수정할 수 있다(AI 자동완성 제안 포함).",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.enum.delete",
+        "label": "ENUM 코드사전 삭제",
+        "description": "ENUM 코드사전 항목을 삭제할 수 있다.",
         "group": "kb",
     },
     {
         "code": "metadata.table.manage",
         "label": "테이블 설명 관리",
-        "description": "테이블 설명을 등록/수정/삭제하고 스키마 골격 가져오기(부트스트랩)를 사용할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "description": "[레거시 묶음] 테이블 설명 조회/추가/수정/삭제·스키마 골격 가져오기를 한 번에 부여한다. 신규 부여는 원자 단위(metadata.table.read/create/update/delete)를 사용한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.table.read",
+        "label": "테이블 설명 조회",
+        "description": "테이블 설명 항목을 조회할 수 있다. 테이블 설명 서브탭 진입 게이트.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.table.create",
+        "label": "테이블 설명 추가",
+        "description": "테이블 설명을 신규 등록할 수 있다. 스키마 골격 가져오기(부트스트랩)는 추가+수정 권한을 함께 요구한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.table.update",
+        "label": "테이블 설명 수정",
+        "description": "테이블 설명을 수정할 수 있다(AI 자동완성·부트스트랩 설명 생성·그래프 관계 큐레이션 포함).",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.table.delete",
+        "label": "테이블 설명 삭제",
+        "description": "테이블 설명 항목을 삭제할 수 있다.",
         "group": "kb",
     },
     {
         "code": "metadata.column.manage",
         "label": "컬럼 설명 관리",
-        "description": "컬럼 설명을 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "description": "[레거시 묶음] 컬럼 설명 조회/추가/수정/삭제를 한 번에 부여한다. 신규 부여는 원자 단위(metadata.column.read/create/update/delete)를 사용한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.column.read",
+        "label": "컬럼 설명 조회",
+        "description": "컬럼 설명 항목을 조회할 수 있다. 컬럼 설명 서브탭 진입 게이트.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.column.create",
+        "label": "컬럼 설명 추가",
+        "description": "컬럼 설명을 신규 등록할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.column.update",
+        "label": "컬럼 설명 수정",
+        "description": "컬럼 설명을 수정할 수 있다(AI 자동완성 제안 포함).",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.column.delete",
+        "label": "컬럼 설명 삭제",
+        "description": "컬럼 설명 항목을 삭제할 수 있다.",
         "group": "kb",
     },
     {
@@ -565,9 +665,28 @@ PERMISSION_DEFINITIONS = (
         "group": "product",
     },
     {
+        # perm-atomic-split(2026-07-15): 레거시 묶음 — 코드·함의 유지, grid 숨김. 신규 부여는 원자 단위.
         "code": "product.manage",
         "label": "제품 관리",
-        "description": "제품(Product) 생성/수정/삭제 및 접근 DB 스키마, 제품 시스템 프롬프트를 관리할 수 있다.",
+        "description": "[레거시 묶음] 제품 조회/생성/수정/삭제를 한 번에 부여한다. 신규 부여는 원자 단위(product.read/create/update/delete)를 사용한다.",
+        "group": "product",
+    },
+    {
+        "code": "product.create",
+        "label": "제품 생성",
+        "description": "제품(Product)을 신규 생성할 수 있다.",
+        "group": "product",
+    },
+    {
+        "code": "product.update",
+        "label": "제품 수정",
+        "description": "제품 구성(기본 정보·아이콘·접근 DB 스키마·데이터소스 바인딩·DB 규칙·AI 분류 제안 반영·제품 프롬프트 생성)을 수정할 수 있다.",
+        "group": "product",
+    },
+    {
+        "code": "product.delete",
+        "label": "제품 삭제",
+        "description": "제품을 삭제할 수 있다.",
         "group": "product",
     },
     {
@@ -589,9 +708,36 @@ PERMISSION_DEFINITIONS = (
         "group": "datasource",
     },
     {
+        # perm-atomic-split(2026-07-15): 레거시 묶음 — 코드·함의 유지, grid 숨김. 신규 부여는 원자 단위.
         "code": "datasource.manage",
         "label": "데이터소스 관리",
-        "description": "데이터소스를 생성/수정/삭제하고 연결 테스트를 수행할 수 있다(자격증명 암호화 저장).",
+        "description": "[레거시 묶음] 데이터소스 조회/생성/수정/삭제/연결 테스트를 한 번에 부여한다. 신규 부여는 원자 단위(datasource.read/create/update/delete/test)를 사용한다.",
+        "group": "datasource",
+    },
+    {
+        "code": "datasource.create",
+        "label": "데이터소스 생성",
+        "description": "데이터소스를 신규 등록할 수 있다(자격증명 암호화 저장).",
+        "group": "datasource",
+    },
+    {
+        "code": "datasource.update",
+        "label": "데이터소스 수정",
+        "description": "데이터소스 구성(좌표·라벨·자격증명)을 수정할 수 있다.",
+        "group": "datasource",
+    },
+    {
+        "code": "datasource.delete",
+        "label": "데이터소스 삭제",
+        "description": "데이터소스를 삭제할 수 있다.",
+        "group": "datasource",
+    },
+    {
+        # 연결 테스트 = 작동 권한(좌표/자격증명 검증 프로브 — 상태 변경 없음). 작업 화면
+        # 데이터소스 '연결 테스트' 버튼(ds-conn-test)도 본 권한을 사용한다.
+        "code": "datasource.test",
+        "label": "데이터소스 연결 테스트",
+        "description": "등록된 데이터소스에 연결 테스트(프로브)를 실행할 수 있다. 구성 변경 없이 연결성만 검증한다.",
         "group": "datasource",
     },
     # TASK-0073 Phase A3 (REQ-20260519-0001, Critical §12.3): audit 권한 4건.
@@ -686,6 +832,50 @@ _METADATA_MANUAL_IMPLIES = (
     "metadata.column.manage",
 )
 
+# perm-atomic-split(Critical §12.3, 사용자 승인 2026-07-15): 묶음(레거시) → 원자 단위 함의 맵.
+#   _apply_permission_overrides 가 effective map 에서 묶음 보유자에게 원자 단위를 transitive 로
+#   자동 부여한다(kb.ingest.manual → 4 manage → 각 read/create/update/delete). 개별 DENY 오버라이드
+#   존중(least-privilege). manage 는 read 도 함의(기존 read/manage superset 의미론 정합 — TASK-0288).
+_PERMISSION_BUNDLE_IMPLIES = {
+    "kb.ingest.manual": _METADATA_MANUAL_IMPLIES,
+    "metadata.glossary.manage": (
+        "metadata.glossary.read", "metadata.glossary.create",
+        "metadata.glossary.update", "metadata.glossary.delete",
+    ),
+    "metadata.enum.manage": (
+        "metadata.enum.read", "metadata.enum.create",
+        "metadata.enum.update", "metadata.enum.delete",
+    ),
+    "metadata.table.manage": (
+        "metadata.table.read", "metadata.table.create",
+        "metadata.table.update", "metadata.table.delete",
+    ),
+    "metadata.column.manage": (
+        "metadata.column.read", "metadata.column.create",
+        "metadata.column.update", "metadata.column.delete",
+    ),
+    "product.manage": (
+        "product.read", "product.create", "product.update", "product.delete",
+    ),
+    "datasource.manage": (
+        "datasource.read", "datasource.create", "datasource.update",
+        "datasource.delete", "datasource.test",
+    ),
+}
+
+# perm-atomic-split: 권한 grid(관리 콘솔 역할/override 편집기 + 작업 화면 자기 조회)에서 숨기는
+#   레거시 묶음 코드. 코드·enforcement 함의·기존 grant 는 유지(하위호환 안전망)하되 화면에는
+#   원자 단위만 노출한다 — admin.js/app.js 의 동명 상수와 정합(test 가 parity 검증).
+LEGACY_BUNDLE_PERMISSIONS = (
+    "kb.ingest.manual",
+    "metadata.glossary.manage",
+    "metadata.enum.manage",
+    "metadata.table.manage",
+    "metadata.column.manage",
+    "product.manage",
+    "datasource.manage",
+)
+
 # graph-perm-split(Critical §12.3, 사용자 결정 2026-07-13): 그래프 뷰 권한을 메타데이터 관리 묶음 함의에서
 #   분리하면서, **분리 시점의 기존 묶음 보유 principal 의 그래프 접근을 1회 backfill 로 보존**하기 위한 마커 키.
 #   WebSchemaMigrations 에 이 키가 있으면 backfill 완료 → 재실행 안 함(멱등 guard). 매 startup 무조건 재실행 시
@@ -705,16 +895,22 @@ _CONSOLE_CATEGORY_ACCESS_LEAVES = {
         "quota.read", "quota.manage",
     ),
     "console.product.access": (
-        "product.read", "product.manage", "system_prompt.manage.role.any", "insight.reset",
-        "datasource.read", "datasource.manage",
+        "product.read", "product.create", "product.update", "product.delete",
+        "system_prompt.manage.role.any", "insight.reset",
+        "datasource.read", "datasource.create", "datasource.update", "datasource.delete",
+        "datasource.test",
     ),
     "console.audit.access": (
         "audit.read.own", "audit.read.any", "audit.export", "audit.purge",
         "conversation.archive.read.any", "console.usage.read", "console.aiops.read",
     ),
     "console.kb.access": (
-        "kb.ingest.manual", "metadata.glossary.manage", "metadata.enum.manage",
-        "metadata.table.manage", "metadata.column.manage",
+        # perm-atomic-split(2026-07-15): 레거시 묶음(kb.ingest.manual·metadata.*.manage)은 grid 숨김·
+        # FE 종속 트리 제외라 본 맵에서도 제외 — 원자 단위가 카테고리 leaves(M5 계약).
+        "metadata.glossary.read", "metadata.glossary.create", "metadata.glossary.update", "metadata.glossary.delete",
+        "metadata.enum.read", "metadata.enum.create", "metadata.enum.update", "metadata.enum.delete",
+        "metadata.table.read", "metadata.table.create", "metadata.table.update", "metadata.table.delete",
+        "metadata.column.read", "metadata.column.create", "metadata.column.update", "metadata.column.delete",
         "metadata.graph.read", "metadata.graph.analyze",
         "kb.sample.curate", "kb.glossary.curate", "kb.enum.curate",
     ),
@@ -728,6 +924,12 @@ _CONSOLE_CATEGORY_ACCESS_LEAVES = {
 #   매 startup 재실행 시 backfill 이후 새로 세부 권한만 받은 역할까지 접근 권한을 자동 획득해
 #   계층 게이트가 무력화되므로 정확히 1회만 수행한다.
 _CONSOLE_CATEGORY_ACCESS_MIGRATION_KEY = "console-category-access-v1"
+
+# perm-atomic-split: 묶음→원자 단위 explicit 전개 1회 backfill 마커. 묶음 보유 principal 이
+#   권한 grid 에서 원자 단위 체크 상태로 보이도록 explicit grant 로 고정한다(런타임 함의는 안전망).
+#   1회 규약 근거는 위와 동일 — 단, 묶음은 grid 숨김이라 분리 이후 신규 묶음 부여 경로가 없어
+#   재실행 위험 자체가 작다(방어적 1회 유지).
+_ATOMIC_PERM_SPLIT_MIGRATION_KEY = "atomic-perm-split-v1"
 
 
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
@@ -830,15 +1032,23 @@ def _apply_permission_overrides(
             permissions[code] = True
         elif normalized == OVERRIDE_DENY:
             permissions[code] = False
-    # graph-panel-perms(task4): 레거시 묶음 `kb.ingest.manual` 함의 — effective 로 묶음 보유 시 세부 metadata.*
-    #   권한을 자동 부여한다(비파괴 하위호환). 단 해당 세부 권한이 명시 DENY 오버라이드된 경우는 존중(least-privilege).
-    if permissions.get("kb.ingest.manual"):
-        for code in _METADATA_MANUAL_IMPLIES:
-            if code not in permissions:
+    # graph-panel-perms(task4) → perm-atomic-split(2026-07-15) 일반화: 레거시 묶음 함의 —
+    #   effective 로 묶음 보유 시 원자 단위를 transitive 로 자동 부여(kb.ingest.manual → 4 manage →
+    #   각 read/create/update/delete). 개별 DENY 오버라이드는 존중(least-privilege). fixpoint 루프는
+    #   묶음 체인 깊이(2)만큼만 실제 반복되고 변화 없으면 즉시 종료한다.
+    changed = True
+    while changed:
+        changed = False
+        for bundle, implied in _PERMISSION_BUNDLE_IMPLIES.items():
+            if not permissions.get(bundle):
                 continue
-            if _normalize_override_value((overrides or {}).get(code)) == OVERRIDE_DENY:
-                continue
-            permissions[code] = True
+            for code in implied:
+                if code not in permissions or permissions[code]:
+                    continue
+                if _normalize_override_value((overrides or {}).get(code)) == OVERRIDE_DENY:
+                    continue
+                permissions[code] = True
+                changed = True
     return permissions
 
 
@@ -1835,6 +2045,16 @@ def _ensure_seed_roles(conn) -> None:
             "console.audit.access",
             "console.kb.access",
             "console.system.access",
+            # perm-atomic-split(Critical §12.3, 2026-07-15): admin 의 원자 단위 23종 catchup.
+            # **필수** — 신규 권한은 role 생성 시 seed 로만 부여되어 기존 배포 admin row 미적용.
+            # 엔드포인트 enforcement 가 원자 단위로 전환되므로 미보정 시 admin lockout(런타임
+            # 함의가 안전망이나 explicit 부여로 grid 표시·저장 정합 확보).
+            "metadata.glossary.read", "metadata.glossary.create", "metadata.glossary.update", "metadata.glossary.delete",
+            "metadata.enum.read", "metadata.enum.create", "metadata.enum.update", "metadata.enum.delete",
+            "metadata.table.read", "metadata.table.create", "metadata.table.update", "metadata.table.delete",
+            "metadata.column.read", "metadata.column.create", "metadata.column.update", "metadata.column.delete",
+            "product.create", "product.update", "product.delete",
+            "datasource.create", "datasource.update", "datasource.delete", "datasource.test",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -1948,6 +2168,11 @@ VALUES (%s, %s)
     # graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰 권한을 메타데이터 관리 묶음에서 분리하며,
     #   분리 시점의 기존 묶음 보유 principal 의 그래프 접근을 1회 backfill 로 보존(B안 = 접근 보존, 비파괴).
     _backfill_graph_perm_split_v1(conn)
+    # perm-atomic-split(Critical §12.3, 2026-07-15): 묶음(manage·kb.ingest.manual) 보유 principal 에
+    #   원자 단위(read/create/update/delete 등)를 explicit 전개 — grid 표시 정합 + 접근 무손실.
+    #   **console-category-access-v1 보다 먼저** 실행해 fresh install 에서 묶음-only role 도 원자
+    #   단위를 얻은 뒤 카테고리 접근 backfill 의 leaves 판정(원자 기준)에 걸리게 한다(순서 계약).
+    _backfill_atomic_perm_split_v1(conn)
     # perm-category-hier(Critical §12.3, 2026-07-14): 카테고리 접근 권한 5종 도입 시점의 기존 principal
     #   접근을 1회 backfill 로 보존(console.access + 카테고리 세부 권한 보유자에 접근 권한 자동 부여).
     _backfill_console_category_access_v1(conn)
@@ -2064,6 +2289,118 @@ WHERE ao.PermissionId = %s
         except Exception:
             # 마커 기록 실패 — 다음 startup 재시도(INSERT IGNORE 라 backfill 재적용 무해).
             pass
+
+
+def _backfill_atomic_perm_split_v1(conn) -> None:
+    """perm-atomic-split(Critical §12.3, 사용자 승인 2026-07-15) — 묶음→원자 단위 1회 explicit 전개.
+
+    묶음 권한(metadata.*.manage·kb.ingest.manual·product.manage·datasource.manage)을 grid 에서
+    숨기고 원자 단위(read/create/update/delete/test)로 분리함에 따라, 기존 묶음 보유 principal 의
+    부여 상태를 원자 단위 explicit grant 로 고정한다. 런타임 함의(_PERMISSION_BUNDLE_IMPLIES)가
+    effective 접근을 이미 보존하지만, grid 는 explicit grant 기준 표시라 backfill 없이는 묶음
+    보유 role 의 원자 체크박스가 비어 보인다(관리자 혼란 + 저장 시 소실 위험).
+
+    - 대상 1 (역할): 묶음 명시 보유 role 에 그 묶음의 transitive 원자 집합 부여.
+    - 대상 2 (계정 오버라이드): 묶음 ALLOW override 계정에 원자 ALLOW override(부재 시).
+    - 대상 3 (계정 오버라이드×역할): 묶음 DENY override + 역할이 묶음 보유 → 원자 DENY override
+      (부재 시) — 분리 전 effective(묶음 꺼짐=원자 없음)를 고정(graph-perm-split 대상3 동형).
+
+    멱등 1회 guard: WebSchemaMigrations `_ATOMIC_PERM_SPLIT_MIGRATION_KEY`. best-effort —
+    실패 시 조용히 skip, 마커 미기록이면 다음 startup 재시도(INSERT IGNORE 무해).
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+CREATE TABLE IF NOT EXISTS WebSchemaMigrations (
+    MigrationKey VARCHAR(191) NOT NULL PRIMARY KEY,
+    AppliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cur.execute(
+            "SELECT 1 FROM WebSchemaMigrations WHERE MigrationKey = %s LIMIT 1",
+            (_ATOMIC_PERM_SPLIT_MIGRATION_KEY,),
+        )
+        already = cur.fetchone()
+        cur.close()
+    except Exception:
+        return
+    if already:
+        return
+    # transitive 전개(kb.ingest.manual → manage 4종 → 각 원자) — 묶음별 최종 원자 집합으로 평탄화.
+    def _expand(bundle: str) -> set[str]:
+        out: set[str] = set()
+        stack = list(_PERMISSION_BUNDLE_IMPLIES.get(bundle, ()))
+        while stack:
+            code = stack.pop()
+            if code in out:
+                continue
+            out.add(code)
+            stack.extend(_PERMISSION_BUNDLE_IMPLIES.get(code, ()))
+        return out
+
+    permission_map = _permission_id_map(conn)
+    plan: list[tuple[int, list[int]]] = []  # (bundle_pid, atomic_pids)
+    for bundle in _PERMISSION_BUNDLE_IMPLIES:
+        bundle_pid = int(permission_map.get(bundle) or 0)
+        atomic_pids = [int(permission_map.get(c) or 0) for c in sorted(_expand(bundle))]
+        atomic_pids = [pid for pid in atomic_pids if pid > 0]
+        if bundle_pid <= 0 or not atomic_pids:
+            # 원자 카탈로그 미hydrate — 마커 없이 반환(다음 startup 재시도, FINDING-B 규약).
+            return
+        plan.append((bundle_pid, atomic_pids))
+    cur = conn.cursor()
+    for bundle_pid, atomic_pids in plan:
+        for atomic_pid in atomic_pids:
+            # 대상 1 — 역할: 묶음 보유 role 에 원자 부여.
+            cur.execute(
+                """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT rp.RoleId, %s FROM WebRolePermissions rp WHERE rp.PermissionId = %s
+                """,
+                (atomic_pid, bundle_pid),
+            )
+            # 대상 2 — 계정 오버라이드: 묶음 ALLOW → 원자 ALLOW(부재 시).
+            cur.execute(
+                """
+INSERT IGNORE INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+SELECT ao.AccountId, %s, 'allow'
+FROM WebAccountPermissionOverrides ao
+WHERE ao.PermissionId = %s AND LOWER(ao.OverrideValue) = 'allow'
+  AND NOT EXISTS (
+    SELECT 1 FROM WebAccountPermissionOverrides ao2
+    WHERE ao2.AccountId = ao.AccountId AND ao2.PermissionId = %s
+  )
+                """,
+                (atomic_pid, bundle_pid, atomic_pid),
+            )
+            # 대상 3 — 묶음 DENY override + 역할 묶음 보유 → 원자 DENY(부재 시): 분리 전 effective 고정.
+            cur.execute(
+                """
+INSERT IGNORE INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+SELECT ao.AccountId, %s, 'deny'
+FROM WebAccountPermissionOverrides ao
+JOIN WebAccounts acc ON acc.Id = ao.AccountId
+JOIN WebRolePermissions rp ON rp.RoleId = acc.RoleId AND rp.PermissionId = %s
+WHERE ao.PermissionId = %s AND LOWER(ao.OverrideValue) = 'deny'
+  AND NOT EXISTS (
+    SELECT 1 FROM WebAccountPermissionOverrides ao2
+    WHERE ao2.AccountId = ao.AccountId AND ao2.PermissionId = %s
+  )
+                """,
+                (atomic_pid, bundle_pid, bundle_pid, atomic_pid),
+            )
+    cur.close()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT IGNORE INTO WebSchemaMigrations (MigrationKey) VALUES (%s)",
+            (_ATOMIC_PERM_SPLIT_MIGRATION_KEY,),
+        )
+        cur.close()
+    except Exception:
+        pass
 
 
 def _backfill_console_category_access_v1(conn) -> None:

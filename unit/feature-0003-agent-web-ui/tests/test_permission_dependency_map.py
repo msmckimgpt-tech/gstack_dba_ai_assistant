@@ -135,6 +135,14 @@ _CATEGORY_ACCESS = (
     "console.kb.access", "console.system.access",
 )
 
+# perm-atomic-split(2026-07-15): 레거시 묶음 — 실 grid 는 LEGACY_BUNDLE_PERMISSIONS 로 렌더 전
+# 제거하므로 가시성/트리 검증에서도 제외한다(admin.js·web_context.LEGACY_BUNDLE_PERMISSIONS parity).
+_LEGACY_BUNDLES = {
+    "kb.ingest.manual",
+    "metadata.glossary.manage", "metadata.enum.manage", "metadata.table.manage", "metadata.column.manage",
+    "product.manage", "datasource.manage",
+}
+
 
 def test_m3_master_gate_and_category_access():
     # perm-category-hier(Critical §12.3, 2026-07-14): console.access 하위에 카테고리 접근 5종,
@@ -151,15 +159,34 @@ def test_m3_master_gate_and_category_access():
         ("conversation.archive.read.any", "console.audit.access"),
         ("console.usage.read", "console.audit.access"),
         ("console.aiops.read", "console.audit.access"),
-        ("kb.ingest.manual", "console.kb.access"),
+        # perm-atomic-split: 사전 4종 조회(read)가 서브탭 게이트 — 카테고리 접근 하위.
+        ("metadata.glossary.read", "console.kb.access"),
+        ("metadata.enum.read", "console.kb.access"),
+        ("metadata.table.read", "console.kb.access"),
+        ("metadata.column.read", "console.kb.access"),
         ("metadata.graph.read", "console.kb.access"),
         ("kb.sample.curate", "console.kb.access"),
-        ("kb.glossary.curate", "console.kb.access"),
-        ("kb.enum.curate", "console.kb.access"),
+        # 검수(승급·거부 단일)는 원본 사전 조회 하위(사용자 지시 2026-07-15).
+        ("kb.glossary.curate", "metadata.glossary.read"),
+        ("kb.enum.curate", "metadata.enum.read"),
         ("system_prompt.global.read", "console.system.access"),
         ("system.runtime.read", "console.system.access"),
     ):
         assert DEPS.get(base) == access, f"{base} 의 부모가 {access} 아님 (실제 {DEPS.get(base)})"
+    # perm-atomic-split: 원자 CRUD — 각 사전/엔티티의 추가·수정·삭제(·테스트)는 조회(read) 하위.
+    for ent, acts in (
+        ("metadata.glossary", ("create", "update", "delete")),
+        ("metadata.enum", ("create", "update", "delete")),
+        ("metadata.table", ("create", "update", "delete")),
+        ("metadata.column", ("create", "update", "delete")),
+        ("product", ("create", "update", "delete")),
+        ("datasource", ("create", "update", "delete", "test")),
+    ):
+        for act in acts:
+            assert DEPS.get(f"{ent}.{act}") == f"{ent}.read", f"{ent}.{act} 부모가 {ent}.read 아님"
+    # 레거시 묶음은 grid 미표시 — 종속 트리에서 제외(키로 존재하면 안 됨).
+    for legacy in _LEGACY_BUNDLES:
+        assert legacy not in DEPS, f"레거시 묶음 {legacy} 가 종속 트리에 잔존"
     # 작동 권한 오배치 정정: insight.reset 은 제품 카테고리의 작동 권한(product.read 하위).
     assert DEPS.get("insight.reset") == "product.read", "insight.reset 부모가 product.read 아님"
     # 시스템 카테고리: runtime write 는 read 선행(기존 미선언 루트였던 것을 정합).
@@ -242,12 +269,14 @@ def test_v2_master_gate_off_collapses_manage_section():
         "console.manage", "console.usage.read", "console.aiops.read", "insight.reset",
         "account.read", "account.update", "account.delete",
         "role.read", "role.create", "role.permission.manage",
-        "datasource.read", "datasource.manage",
-        "product.read", "product.manage", "system_prompt.manage.role.any",
+        "datasource.read", "datasource.create", "datasource.update", "datasource.delete", "datasource.test",
+        "product.read", "product.create", "product.update", "product.delete", "system_prompt.manage.role.any",
+        "metadata.glossary.read", "metadata.glossary.create", "kb.glossary.curate",
         "audit.read.own", "audit.read.any", "audit.purge",
         "system_prompt.global.read", "system_prompt.global.write",
     ):
         assert not vis[code], f"게이트 OFF 인데 {code} 가 보임"
+    # 레거시 묶음은 실 grid 에서 렌더 자체가 제외 — 가시성 검증 대상 아님(_LEGACY_BUNDLES).
     # 운영 권한 루트(TASK-0269 + perm-category-hier: list.own / list.any)는 게이트 없이 visible.
     # create 는 perm-category-hier 에서 list.own 하위 동작 권한으로 정합 — 루트 아님.
     for code in ("conversation.list.own", "conversation.list.any"):
@@ -484,48 +513,45 @@ def test_t4_grid_list_is_single_column_not_grid():
 
 
 def test_t5_metadata_group_gate_hierarchy():
-    """metadata-perm-hier + graph-perm-split + perm-category-hier: 지식베이스(kb 그룹) 종속 계층 pin.
-    카테고리 접근 console.kb.access 가 그룹 루트(→console.access), 그 아래 묶음 kb.ingest.manual
-    (편집 4종의 게이트)·검수 3종·그래프 뷰 조회(metadata.graph.read)가 형제로 오고, 편집 4종은 묶음
-    아래(depth 2), 능동 분석 실행(graph.analyze)은 graph.read 아래(depth 2)다."""
-    _META_EDIT4 = (
-        "metadata.glossary.manage", "metadata.enum.manage", "metadata.table.manage",
-        "metadata.column.manage",
-    )
+    """perm-atomic-split(2026-07-15): 지식베이스(kb 그룹) 원자 트리 pin.
+    console.kb.access(그룹 루트) → 사전 4종 조회(read, depth1) → 각 추가/수정/삭제(depth2) +
+    검수(승급·거부 단일, glossary/enum 은 원본 사전 read 하위 depth2 — 사용자 지시) +
+    그래프 조회(depth1) → 능동 분석 실행(depth2). 레거시 묶음은 grid 미표시(트리 제외)."""
     assert DEPS.get("console.kb.access") == "console.access", "console.kb.access 부모가 console.access 아님"
-    assert DEPS.get("kb.ingest.manual") == "console.kb.access", "묶음 kb.ingest.manual 게이트가 console.kb.access 아님"
-    for m in _META_EDIT4:
-        assert DEPS.get(m) == "kb.ingest.manual", f"{m} 부모가 kb.ingest.manual 아님(평면 회귀)"
-    # graph-perm-split: 그래프 뷰 조회는 묶음에서 분리 — 카테고리 접근 하위(묶음과 형제).
-    assert DEPS.get("metadata.graph.read") == "console.kb.access", \
-        "metadata.graph.read 는 카테고리 접근(console.kb.access) 하위여야 함(묶음 종속 아님)"
-    # graph-analyze-perm(2026-07-14): AI 능동 분석 실행은 조회(graph.read)의 하위 권한 — 종속 부모=graph.read.
-    assert DEPS.get("metadata.graph.analyze") == "metadata.graph.read", \
-        "metadata.graph.analyze 는 graph-analyze-perm 후 metadata.graph.read 하위여야 함(실행=조회의 하위)"
-    # 검수/승급(승인) 3종은 카테고리 접근 하위 독립 항목(묶음과 형제 — curate-only 부여 패턴 보존).
-    for c in ("kb.sample.curate", "kb.glossary.curate", "kb.enum.curate"):
-        assert DEPS.get(c) == "console.kb.access", f"{c} 부모가 console.kb.access 아님"
-    # kb 그룹 트리 depth: 카테고리 접근=0(그룹 루트), 묶음/검수/graph.read=1, 편집 4종/graph.analyze=2.
-    kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
+    for ent in ("glossary", "enum", "table", "column"):
+        assert DEPS.get(f"metadata.{ent}.read") == "console.kb.access", f"{ent}.read 부모가 카테고리 접근 아님"
+        for act in ("create", "update", "delete"):
+            assert DEPS.get(f"metadata.{ent}.{act}") == f"metadata.{ent}.read", f"{ent}.{act} 부모가 read 아님"
+    assert DEPS.get("kb.glossary.curate") == "metadata.glossary.read", "용어 검수가 원본 사전 read 하위 아님"
+    assert DEPS.get("kb.enum.curate") == "metadata.enum.read", "ENUM 검수가 원본 사전 read 하위 아님"
+    assert DEPS.get("kb.sample.curate") == "console.kb.access", "샘플 검수(원본 조회 단위 없음)가 카테고리 직속 아님"
+    assert DEPS.get("metadata.graph.read") == "console.kb.access"
+    assert DEPS.get("metadata.graph.analyze") == "metadata.graph.read"
+    # kb 그룹 트리 depth(레거시 묶음 필터 후): 카테고리 접근=0, read/graph.read/sample.curate=1, 원자·검수·analyze=2.
+    kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb" and c not in _LEGACY_BUNDLES]
     tree = dict(_order_items_as_tree(kb_codes))
-    assert tree.get("console.kb.access") == 0, "console.kb.access 가 그룹 루트(depth 0) 아님"
-    assert tree.get("kb.ingest.manual") == 1, "kb.ingest.manual 이 카테고리 접근 아래(depth 1) 아님"
-    for m in _META_EDIT4:
-        assert tree.get(m) == 2, f"{m} 이 묶음 아래(depth 2) 아님 — 계층 회귀"
-    assert tree.get("metadata.graph.read") == 1, "metadata.graph.read 가 depth 1 아님 — 분리 회귀"
-    assert tree.get("metadata.graph.analyze") == 2, "metadata.graph.analyze 가 graph.read 아래(depth 2) 아님 — 하위 권한 회귀"
+    assert tree.get("console.kb.access") == 0
+    for ent in ("glossary", "enum", "table", "column"):
+        assert tree.get(f"metadata.{ent}.read") == 1, f"{ent}.read depth1 아님"
+        for act in ("create", "update", "delete"):
+            assert tree.get(f"metadata.{ent}.{act}") == 2, f"{ent}.{act} depth2 아님"
+    assert tree.get("kb.glossary.curate") == 2 and tree.get("kb.enum.curate") == 2
+    assert tree.get("kb.sample.curate") == 1
+    assert tree.get("metadata.graph.read") == 1 and tree.get("metadata.graph.analyze") == 2
 
 
 def test_t6_metadata_reachable_when_gate_off():
-    """B안 개별 부여 보존: 게이트(kb.ingest.manual) OFF 여도 개별 metadata.* 는 도달 가능해야 한다.
-    console.access·console.kb.access ON·kb.ingest.manual OFF → metadata.* 는 hidden(progressive
-    disclosure 정상)이지만, kb 그룹은 루트(카테고리 접근)가 항상 보여 '더 보기' 탈출구가 보장
-    → 통째 숨지 않는다(unreachable 아님)."""
+    """원자 분리 후 도달성: 카테고리 접근 ON·사전 read OFF → 원자(추가/수정/삭제)·검수는 hidden
+    (progressive disclosure)이지만, read 게이트 자체(그룹 depth1 루트들)는 노출돼 '더 보기' 복원
+    레버가 보장된다. read ON 이면 원자 노출."""
     all_codes = set(app.PERMISSION_CODES)
-    vis = compute_visibility({"console.access", "console.kb.access"}, all_codes)  # 묶음 미체크
-    assert vis["metadata.glossary.manage"] is False, "게이트 OFF 인데 metadata 노출됨(계층 미작동)"
-    assert vis["kb.ingest.manual"] is True, "그룹 게이트(묶음)가 카테고리 접근 아래인데 hidden — 도달 레버 소실"
-    kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
+    vis = compute_visibility({"console.access", "console.kb.access"}, all_codes)  # read 미체크
+    assert vis["metadata.glossary.read"] is True, "read 게이트가 hidden — 복원 레버 소실"
+    assert vis["metadata.glossary.create"] is False, "read OFF 인데 create 노출(계층 미작동)"
+    assert vis["kb.glossary.curate"] is False, "read OFF 인데 검수 노출(원본 종속 미작동)"
+    vis2 = compute_visibility({"console.access", "console.kb.access", "metadata.glossary.read"}, all_codes)
+    assert vis2["metadata.glossary.create"] and vis2["metadata.glossary.update"] and vis2["metadata.glossary.delete"]
+    assert vis2["kb.glossary.curate"], "read ON 인데 검수 hidden"
+    kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb" and c not in _LEGACY_BUNDLES]
     kb_roots = [c for c in kb_codes if DEPS.get(c) not in set(kb_codes)]
-    assert kb_roots, "kb 그룹에 루트 권한 없음 — '더 보기' 탈출구 부재 위험"
     assert "console.kb.access" in kb_roots, "카테고리 접근이 kb 그룹 루트가 아님"

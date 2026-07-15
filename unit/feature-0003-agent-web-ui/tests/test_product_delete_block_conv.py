@@ -101,7 +101,7 @@ class _Req:
 
 
 def _actor():
-    return {"id": 1, "permissions": {"product.manage": True}}
+    return {"id": 1, "permissions": {"product.manage": True, "product.create": True, "product.update": True, "product.delete": True}}
 
 
 def _patch_delete(monkeypatch, conn, *, has_perm=True):
