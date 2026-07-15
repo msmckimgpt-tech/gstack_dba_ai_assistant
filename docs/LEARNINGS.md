@@ -402,3 +402,9 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 ### LRN-20260326-0001 — `AGENTS.md`가 정책 정본, `CLAUDE.md`는 참조 shim
 - Source: ADR-0002
 - Preference: 저장소 수준 AI 정책은 `AGENTS.md` 하나로만 관리한다. `CLAUDE.md`는 호환성을 위해 유지하되 정책 내용을 중복 서술하지 않는다.
+
+### LRN-20260715-0001 — 데이터소스 스키마명은 서버 실제 case 가 정본 — allowlist/프롬프트 소문자 저장이 case-sensitive 백엔드에서 조회를 조용히 0행으로 만든다
+- Source: conversation_audit FR-schema-name-case-drift (product 97 "테이블 구조 정합성 검토")
+- Category: pattern
+- Frame: 스키마/DB/테이블 **식별자 case 는 데이터·설정 계층에서 임의로 정규화(소문자화)하면 안 된다**. case-sensitive 백엔드(MySQL `lower_case_table_names=0`·case-sensitive collation)에서는 저장된 case 가 서버와 1글자라도 다르면 조회가 **에러 아닌 0행**으로 실패해, LLM 이 "대상 없음"으로 오판·give-up 한다(에러가 아니라 조용한 빈결과라 자기교정도 안 됨). (1) 신호 검출: "유효 테이블 조회도 결과셋 empty" + describe/search 빈결과 반복 + INFORMATION_SCHEMA 전체 나열조차 0행 → **연결은 살아있으나(빠른 실행) 스키마명 case/존재 문제**를 의심(연결 끊김·권한과 구분). (2) 이전 casing 대책이 "모델의 소문자화 금지" 프롬프트 lever 였다면, **데이터(allowlist)·UI(picker `.lower()`)가 소문자를 주입하는 별도 축**을 반드시 확인 — 프롬프트 lever 로는 데이터-drift 를 못 잡는다. (3) 봉인은 **코드 권위선**: 런타임에 서버 실제 case 로 canonicalize(라이브 SCHEMATA, case-insensitive 유일매칭·모호 제외) + write-path 정규화. **보안 게이트는 소문자 비교로 유지**하면 canonicalize 가 접근 경계를 바꾸지 않는다(표기만 교정). (4) 거짓양성 주의: MSSQL/case-insensitive collation 백엔드의 case mismatch 는 무해 — 실패 클래스는 case-sensitive 백엔드만.
+- How to apply: 스키마/DB 목록을 소비·저장하는 모든 경로(allowlist resolution·UI picker·auto-classify·grounding)에서 소문자화(`.lower()`)를 **비교용에만** 쓰고 저장/표시/쿼리값은 서버 실제 case 를 보존. 신규 case 이슈 진단 시 metadata graph(동기 snapshot)로 서버 실제 case 를 ground-truth 로 대조.
