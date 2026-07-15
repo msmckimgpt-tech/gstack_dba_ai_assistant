@@ -5705,5 +5705,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 구현 · ast/node --check 전부 OK.
 - [x] tests: perm dict 원자 보강 10파일 + dependency-map(M3 원자·legacy 트리 제외·V2·t5/t6 재작성) + perm_split(R7/R8=read, R9 transitive 함의·DENY 우선, R10 legacy 3자 parity) — **785 passed/0** + jsdom 47/0.
 - [x] `python3 bin/gen-routemap.py` 재생성(+--check 0) — 권한 데코레이터 변경 cycle 필수(CI Code-Navigation gate).
-- [ ] 컨테이너 make test → verify-completion → commit → PR → 머지 → web 재배포.
-- [ ] **배포 후 실증**: `atomic-perm-split-v1` 마커 + 묶음 보유 role(usermanager 등) 원자 explicit 전개 + PB-0008(grid 에 묶음 미표시·원자 단위 [조회→추가/수정/삭제/검수] 트리·버튼 게이팅).
+- [x] 컨테이너 make test(신규 회귀 0) → verify-completion PASS(커밋 전 15체크) → PR #810 → 머지(8098aee1) → web 재배포(soak 통과).
+- [x] **배포 후 실증 완료(2026-07-15)**: `atomic-perm-split-v1` 마커 + admin 원자 23종(catchup) + 묶음 보유 role=admin 뿐 확인(usermanager 는 묶음 미보유 — 전개 비대상 정상) + PB-0008 라이브(레거시 묶음 렌더 0건·용어사전 read→원자4종/검수 트리·read 토글 접힘/펼침·0건 pending). fragment POST-DEPLOY Run 참조.
