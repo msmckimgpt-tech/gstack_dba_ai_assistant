@@ -197,7 +197,7 @@ def test_enum_feedback_reject(monkeypatch):
 
 # ── SRC: ENUM 목록 source 직렬화(자동등록 배지) ───────────────────────────────
 def test_enum_list_includes_source(monkeypatch):
-    acct = _env(monkeypatch, perms={"metadata.enum.manage": True})
+    acct = _env(monkeypatch, perms={"metadata.enum.manage": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True})
     monkeypatch.setattr(_dbmod, "_pg_connect_ro", lambda: _PgConn())
     ts = datetime.datetime(2026, 7, 7, 10, 0, 0)
     # row: (id, scope_key, schema_name, table_name, column_name, code, label, source, created_at, updated_at)

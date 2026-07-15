@@ -835,7 +835,7 @@ def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_
 async def _collect_product_prompt_context(product_id: int, request: Request):
     """TASK-0237: 제품 프롬프트 자동작성 수집·조립의 **인증 게이트** 래퍼.
 
-    인증/`product.manage` 권한을 확인한 뒤 request-less 코어
+    인증/`product.update` 권한을 확인한 뒤 request-less 코어(perm-atomic-split 2026-07-15)
     (`_assemble_product_prompt_llm_request`) 에 위임한다. 비스트리밍
     (POST /prompt/generate)·스트리밍(GET /prompt/generate/stream) 엔드포인트가
     본 함수를 await 한다(시그니처·반환계약 불변).
@@ -848,7 +848,7 @@ async def _collect_product_prompt_context(product_id: int, request: Request):
         account, error = app._require_account(request, conn)
         if error:
             return error, None
-        if not app._account_has_permission(account, "product.manage"):
+        if not app._account_has_permission(account, "product.update"):
             return app._json_error("제품 관리 권한이 필요합니다.", 403), None
     finally:
         conn.close()

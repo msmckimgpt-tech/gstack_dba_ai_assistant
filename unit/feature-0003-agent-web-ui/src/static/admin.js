@@ -247,11 +247,18 @@ const PERMISSION_DEPENDENCIES = {
   //   insight.reset 은 제품 상세의 파괴적 '작동' 권한 — 제품 조회 하위(perm-category-hier 에서
   //   console 직속에서 이동, 실행 표면 = routers/admin_products.py insight-reset).
   "product.read": "console.product.access",
-  "product.manage": "product.read",
+  // perm-atomic-split(2026-07-15): 묶음 product.manage/datasource.manage 는 grid 숨김(LEGACY) —
+  //   종속 트리는 원자 단위(생성/수정/삭제/테스트)가 조회(read) 하위로 구성된다.
+  "product.create": "product.read",
+  "product.update": "product.read",
+  "product.delete": "product.read",
   "system_prompt.manage.role.any": "product.read",
   "insight.reset": "product.read",
   "datasource.read": "console.product.access",
-  "datasource.manage": "datasource.read",
+  "datasource.create": "datasource.read",
+  "datasource.update": "datasource.read",
+  "datasource.delete": "datasource.read",
+  "datasource.test": "datasource.read",
   // 감사 카테고리(감사 로그·보관 대화·LLM 사용량·AI 운영 현황 4개 탭): 각 탭의 조회 권한이
   //   감사 접근 하위로 종속(perm-category-hier — usage/aiops 는 console 직속에서, 보관 대화는
   //   conversation.list.any 하위에서 이동). 내보내기/삭제는 감사 로그 조회의 하위 작동 권한.
@@ -266,16 +273,29 @@ const PERMISSION_DEPENDENCIES = {
   //   유지하되 그룹 게이트를 console.access 직속에서 카테고리 접근(console.kb.access) 하위로 이동.
   //   백엔드는 묶음이 편집 4종을 함의(_METADATA_MANUAL_IMPLIES)하므로 의미 정합. 종속 맵은 UI 표시 계층
   //   (progressive disclosure)일 뿐 authz enforcement 아님 — 개별 부여는 "세부 권한 더 보기"로 여전히 가능.
-  "kb.ingest.manual": "console.kb.access",
-  "metadata.glossary.manage": "kb.ingest.manual",
-  "metadata.enum.manage": "kb.ingest.manual",
-  "metadata.table.manage": "kb.ingest.manual",
-  "metadata.column.manage": "kb.ingest.manual",
-  //   검수/승급(승인 권한 3종)은 메타데이터 탭의 2차 보기(검토·검수 큐) — 카테고리 접근 하위 독립 항목
-  //   (묶음과 형제 — curate-only 큐레이터가 묶음 없이 부여받는 실사용 패턴 보존).
+  // perm-atomic-split(2026-07-15, 사용자 승인): 사전 4종 = 조회(read)가 서브탭 게이트, 그 하위에
+  //   추가/수정/삭제 원자 단위 + 검수(승급·거부 단일 단위 — 사용자 지시로 원본 사전 항목 하위 종속).
+  //   레거시 묶음(kb.ingest.manual·metadata.*.manage)은 grid 숨김(LEGACY_BUNDLE_PERMISSIONS) — 트리 제외.
+  "metadata.glossary.read": "console.kb.access",
+  "metadata.glossary.create": "metadata.glossary.read",
+  "metadata.glossary.update": "metadata.glossary.read",
+  "metadata.glossary.delete": "metadata.glossary.read",
+  "kb.glossary.curate": "metadata.glossary.read",
+  "metadata.enum.read": "console.kb.access",
+  "metadata.enum.create": "metadata.enum.read",
+  "metadata.enum.update": "metadata.enum.read",
+  "metadata.enum.delete": "metadata.enum.read",
+  "kb.enum.curate": "metadata.enum.read",
+  "metadata.table.read": "console.kb.access",
+  "metadata.table.create": "metadata.table.read",
+  "metadata.table.update": "metadata.table.read",
+  "metadata.table.delete": "metadata.table.read",
+  "metadata.column.read": "console.kb.access",
+  "metadata.column.create": "metadata.column.read",
+  "metadata.column.update": "metadata.column.read",
+  "metadata.column.delete": "metadata.column.read",
+  //   샘플 검수는 원본 사전(샘플쿼리)의 조회 단위가 없어(서브탭 자체가 검수 도메인) 카테고리 접근 직속.
   "kb.sample.curate": "console.kb.access",
-  "kb.glossary.curate": "console.kb.access",
-  "kb.enum.curate": "console.kb.access",
   // graph-perm-split(Critical §12.3, 2026-07-13) + perm-category-hier: 그래프 뷰 조회는 '메타데이터 관리'
   //   묶음과 형제인 독립 탭 게이트 — 카테고리 접근(console.kb.access) 하위.
   "metadata.graph.read": "console.kb.access",
@@ -538,6 +558,15 @@ export function can(permission) {
   return Boolean(adminState.me?.permissions?.[permission]);
 }
 
+// perm-atomic-split(2026-07-15): 레거시 묶음 — 코드·enforcement 함의·기존 grant 는 유지하되
+// 권한 grid(역할/override 편집기)에서는 숨긴다. 신규 부여는 원자 단위만. web_context.py
+// LEGACY_BUNDLE_PERMISSIONS 와 정합(test_permission_dependency_map 이 parity 검증).
+const LEGACY_BUNDLE_PERMISSIONS = new Set([
+  "kb.ingest.manual",
+  "metadata.glossary.manage", "metadata.enum.manage", "metadata.table.manage", "metadata.column.manage",
+  "product.manage", "datasource.manage",
+]);
+
 function groupedPermissions(opts = {}) {
   // TASK-0053 Phase B: dynamic 권한 (`product.access.<key>`) 은 별도 product subcatalog UI 가
   // 처리하므로 일반 권한 grid 에서는 excludeDynamic=true 로 필터링한다. 정적 권한
@@ -546,6 +575,7 @@ function groupedPermissions(opts = {}) {
   const groups = new Map();
   adminState.permissions.forEach((permission) => {
     if (excludeDynamic && permission.is_dynamic) return;
+    if (LEGACY_BUNDLE_PERMISSIONS.has(permission.code)) return;  // perm-atomic-split: 묶음 숨김.
     const group = permission.group || "misc";
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(permission);
@@ -2066,10 +2096,9 @@ const ADMIN_TAB_PERMISSIONS = {
   //   kb.ingest.manual(묶음)은 함의로 아래 관리 권한을 effective 보유하므로 명시성 위해 유지.
   //   feature-0016 §45: graph.read 는 여기서 제거 — 그래프 뷰가 별도 최상위 탭(ADMIN_TAB_PERMISSIONS.graph)이 되어
   //   메타데이터 서브탭에서 빠졌으므로, graph.read 만 가진 역할이 서브탭 없는 빈 메타데이터 탭을 보지 않게 한다.
-  metadata: ["kb.ingest.manual", "metadata.glossary.manage", "metadata.enum.manage",
-             "metadata.table.manage", "metadata.column.manage",
-             // kb.enum.curate: ENUM 검토 큐(2차보기) 진입 — kb.glossary.curate/kb.sample.curate 와 동형으로,
-             //   curate-only 사용자도 메타데이터 탭 → ENUM 검토 큐에 도달하도록 OR-array 에 포함.
+  metadata: ["metadata.glossary.read", "metadata.enum.read",
+             "metadata.table.read", "metadata.column.read",
+             // 검수(승급·거부) 단독 보유 큐레이터도 메타데이터 탭 → 해당 검토·검수 큐에 도달.
              "kb.sample.curate", "kb.glossary.curate", "kb.enum.curate"],
   // feature-0016 §45: 그래프 뷰 최상위 탭 — metadata.graph.read 단독 게이트.
   //   graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰 권한을 '메타데이터 관리' 묶음에서 분리함에 따라
@@ -2785,12 +2814,36 @@ adminState.metadata = {
 
 // 서브뷰별 권한 — 서브탭/버튼 표시 게이트(실제 거부는 서버 403). graph-panel-perms(task4): 기능별 세부 권한으로 분리.
 const _METADATA_SUBTAB_PERM = {
-  glossary: "metadata.glossary.manage",   // 단, 용어사전 서브탭은 OR(kb.glossary.curate) — _metaSubtabVisible 참조.
-  enums: "metadata.enum.manage",
-  tables: "metadata.table.manage",
-  columns: "metadata.column.manage",
+  // perm-atomic-split(2026-07-15): 서브탭 진입(가시성) 게이트 = 조회(read) 원자 단위 —
+  //   레거시 묶음(manage)은 함의+backfill 로 read 를 보유하므로 무손실. samples 는 검수 단일 단위.
+  glossary: "metadata.glossary.read",
+  enums: "metadata.enum.read",
+  tables: "metadata.table.read",
+  columns: "metadata.column.read",
   samples: "kb.sample.curate",
-  // feature-0016 §45: graph 서브탭 제거 — 그래프 뷰는 지식베이스 최상위 탭(ADMIN_TAB_PERMISSIONS.graph)으로 이관.
+};
+
+// perm-atomic-split: 서브탭별 추가/수정/삭제 원자 게이트 — 백엔드 엔드포인트 enforcement 와 1:1.
+const _METADATA_SUBTAB_CREATE_PERM = {
+  glossary: "metadata.glossary.create",
+  enums: "metadata.enum.create",
+  tables: "metadata.table.create",
+  columns: "metadata.column.create",
+  samples: "kb.sample.curate",
+};
+const _METADATA_SUBTAB_UPDATE_PERM = {
+  glossary: "metadata.glossary.update",
+  enums: "metadata.enum.update",
+  tables: "metadata.table.update",
+  columns: "metadata.column.update",
+  samples: "kb.sample.curate",
+};
+const _METADATA_SUBTAB_DELETE_PERM = {
+  glossary: "metadata.glossary.delete",
+  enums: "metadata.enum.delete",
+  tables: "metadata.table.delete",
+  columns: "metadata.column.delete",
+  samples: "kb.sample.curate",
 };
 
 // 2차 보기(목록 | 검토·검수 큐)를 갖는 서브탭 설정 — 서브탭 파라미터화(용어사전에 하드코딩됐던 것을 일반화).
@@ -3607,7 +3660,14 @@ function _metaRenderForm() {
     field.appendChild(input);
     wrap.appendChild(field);
   }
-  if (submitBtn) submitBtn.textContent = editing ? "수정 저장" : "등록";
+  if (submitBtn) {
+    submitBtn.textContent = editing ? "수정 저장" : "등록";
+    // perm-atomic-split: 저장 버튼은 액션별 원자 권한 보유 시에만 노출(서버 enforcement 와 정합).
+    const _saveSub = adminState.metadata.subTab;
+    const _savePerm = editing ? (_METADATA_SUBTAB_UPDATE_PERM[_saveSub] || "metadata.table.update")
+                              : (_METADATA_SUBTAB_CREATE_PERM[_saveSub] || "metadata.table.create");
+    submitBtn.style.display = can(_savePerm) ? "" : "none";
+  }
   if (cancelBtn) cancelBtn.style.display = editing ? "" : "none";
 }
 
@@ -3633,7 +3693,7 @@ function _metaRenderDetail() {
     else if (_METADATA_NO_CREATE[md.subTab] && !(md.editing && md.editing.id != null)) mode = "empty";  // samples 생성 비활성.
   }
   // graph-panel-perms(task4): 스키마 골격 부트스트랩은 테이블 골격 도구 → metadata.table.manage 게이트(백엔드 동치).
-  if (mode === "bootstrap" && !((md.subTab === "tables" || md.subTab === "columns") && can("metadata.table.manage"))) mode = "empty";
+  if (mode === "bootstrap" && !((md.subTab === "tables" || md.subTab === "columns") && can("metadata.table.create") && can("metadata.table.update"))) mode = "empty";
   md.detailMode = mode;
   const empty = document.getElementById("metadataDetailEmpty");
   const form = document.getElementById("metadataForm");
@@ -3676,13 +3736,13 @@ function _metaSyncListToolbar() {
   if (searchEl) searchEl.style.display = review ? "none" : "";
   const bsBtn = document.getElementById("metadataBootstrapOpenBtn");
   if (bsBtn) {
-    const showBs = (md.subTab === "tables" || md.subTab === "columns") && can("metadata.table.manage") && !review;
+    const showBs = (md.subTab === "tables" || md.subTab === "columns") && can("metadata.table.create") && can("metadata.table.update") && !review;
     bsBtn.style.display = showBs ? "" : "none";
     bsBtn.classList.toggle("is-active", md.detailMode === "bootstrap");   // 진입 상태 시각 표시(토글).
   }
   const newBtn = document.getElementById("metadataNewBtn");
   if (newBtn) {
-    const canCreate = !_METADATA_NO_CREATE[md.subTab] && !review && can(_METADATA_SUBTAB_PERM[md.subTab] || "kb.ingest.manual");
+    const canCreate = !_METADATA_NO_CREATE[md.subTab] && !review && can(_METADATA_SUBTAB_CREATE_PERM[md.subTab] || "metadata.table.create");
     newBtn.style.display = canCreate ? "" : "none";
   }
 }
@@ -3881,12 +3941,14 @@ function _metaListRow(it, sub, canEdit, grouped) {
       relBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaToggleRelations(it); });
       actions.appendChild(relBtn);
     }
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn-secondary admin-meta-del";
-    delBtn.textContent = "삭제";
-    delBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaDelete(it); });
-    actions.appendChild(delBtn);
+    if (can(_METADATA_SUBTAB_DELETE_PERM[sub] || "metadata.table.delete")) {
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn-secondary admin-meta-del";
+      delBtn.textContent = "삭제";
+      delBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaDelete(it); });
+      actions.appendChild(delBtn);
+    }
     row.appendChild(actions);
   }
   return row;
@@ -3968,8 +4030,8 @@ function renderMetadataList() {
   // metadata-list-detail: 좌측 목록 검색(title/body 부분일치). 카운트는 검색 시 필터/전체 표기.
   const q = (adminState.metadata.search || "").trim().toLowerCase();
   const items = q ? allItems.filter((it) => _metaItemMatchesSearch(it, sub, q)) : allItems;
-  // 서브뷰별 편집 권한 — samples 는 kb.sample.curate, 나머지는 kb.ingest.manual.
-  const canEdit = can(_METADATA_SUBTAB_PERM[sub] || "kb.ingest.manual");
+  // perm-atomic-split: 행 편집 affordance = 수정(update) 원자 게이트(samples=검수 단일).
+  const canEdit = can(_METADATA_SUBTAB_UPDATE_PERM[sub] || "metadata.table.update");
   if (countEl) countEl.textContent = q ? `${items.length}/${allItems.length}건` : `${items.length}건`;
   _metaUpdateKpi(allItems, sub);   // B10: KPI 는 전체 로드분 기준.
   listEl.replaceChildren();
@@ -3977,7 +4039,7 @@ function renderMetadataList() {
     if (q) {
       listEl.appendChild(_metaEmptyState("검색 결과가 없습니다.", "다른 검색어를 시도하세요."));
     } else {
-      const creatable = !_METADATA_NO_CREATE[sub] && can(_METADATA_SUBTAB_PERM[sub] || "kb.ingest.manual");
+      const creatable = !_METADATA_NO_CREATE[sub] && can(_METADATA_SUBTAB_CREATE_PERM[sub] || "metadata.table.create");
       listEl.appendChild(_metaEmptyState(_METADATA_EMPTY_MSG[sub] || "등록된 항목이 없습니다.",
         creatable ? "＋ 새 항목으로 시작하세요." : ""));
     }
@@ -4602,7 +4664,7 @@ function _metaSyncBootstrapVisibility() {
   const panel = document.getElementById("metadataBootstrap");
   if (!panel) return;
   const sub = adminState.metadata.subTab;
-  const applicable = (sub === "tables" || sub === "columns") && can("metadata.table.manage");
+  const applicable = (sub === "tables" || sub === "columns") && can("metadata.table.create") && can("metadata.table.update");
   panel.style.display = applicable ? "" : "none";
   if (!applicable) return;
   const scopeDs = _metaScopeDatasourceKey();  // 공용/미매칭이면 빈 문자열.
@@ -5342,7 +5404,8 @@ function renderDatasourcesPane() {
   if (!listEl || !detailEl) return;
   // TASK-0288: datasource mutation UI 는 datasource.manage 게이트(백엔드 _ds_write_common 정합).
   // datasource.read 만 보유한 뷰어는 목록은 보되 생성/수정/삭제 버튼은 숨겨진다.
-  const canManage = can("datasource.manage");
+  // perm-atomic-split: '+ 새 데이터소스' 노출 = 생성(create) 원자 게이트.
+  const canManage = can("datasource.create");
   const encReady = Boolean(adminState.datasourcesEncryptionReady);
   const dsList = adminState.datasources || [];
 
@@ -5553,10 +5616,12 @@ function renderDatasourceBulkBar() {
     return btn;
   };
 
-  // TASK-0288: datasource.manage 로 모든 datasource bulk mutation 을 통제(상세 패널 액션과 동일 게이트).
-  if (can("datasource.manage")) {
+  // perm-atomic-split: bulk 액션별 원자 게이트 — 인사이트 토글=수정(update), 삭제=삭제(delete).
+  if (can("datasource.update")) {
     bar.appendChild(makeBtn("인사이트 탐색 켜기", () => bulkDatasourceSetInsight(true)));
     bar.appendChild(makeBtn("인사이트 탐색 끄기", () => bulkDatasourceSetInsight(false)));
+  }
+  if (can("datasource.delete")) {
     bar.appendChild(makeBtn("삭제", () => bulkDatasourceDelete(), true));
   }
   bar.appendChild(makeBtn("선택 해제", () => {
@@ -5676,8 +5741,10 @@ function _dsConnStatusLabel(status) {
 function _dsRenderDetail(ds) {
   const detailEl = $("datasourceDetail");
   if (!detailEl || !ds) return;
-  // TASK-0288: 상세 패널의 수정/삭제 액션도 datasource.manage 게이트.
-  const canManage = can("datasource.manage");
+  // perm-atomic-split: 상세 패널 액션별 원자 게이트 — 수정/인사이트 토글=update, 삭제=delete, 연결 테스트=test.
+  const canManage = can("datasource.update");
+  const canDsDelete = can("datasource.delete");
+  const canDsTest = can("datasource.test");
   const editable = Boolean(ds.editable) && canManage;
   detailEl.innerHTML = "";
 
@@ -5777,7 +5844,7 @@ function _dsRenderDetail(ds) {
     }
     finally { testBtn.disabled = false; testBtn.textContent = prev; }
   });
-  actions.appendChild(testBtn);
+  if (canDsTest) actions.appendChild(testBtn);
 
   if (editable) {
     // TASK-0215: insight-worker 탐색 on/off 토글(즉시 PATCH).
@@ -5804,10 +5871,13 @@ function _dsRenderDetail(ds) {
     const editBtn = document.createElement("button");
     editBtn.className = "btn-secondary"; editBtn.textContent = "수정";
     editBtn.addEventListener("click", () => _dsRenderForm(ds));
-    const delBtn = document.createElement("button");
-    delBtn.className = "btn-danger"; delBtn.textContent = "삭제";
-    delBtn.addEventListener("click", () => _dsDelete(ds.key));
-    actions.append(editBtn, delBtn);
+    actions.append(editBtn);
+    if (canDsDelete) {
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn-danger"; delBtn.textContent = "삭제";
+      delBtn.addEventListener("click", () => _dsDelete(ds.key));
+      actions.append(delBtn);
+    }
   } else {
     // 읽기전용 사유 안내 — sticky 액션바 위(앞)에 배치(액션바는 항상 패널 최하단 고정).
     const ro = document.createElement("div");
@@ -10354,10 +10424,12 @@ function renderProductBulkBar() {
     return btn;
   };
 
-  // product.manage 권한 1 개로 모든 product mutation 을 통제 (현재 RBAC catalog 기준)
-  if (can("product.manage")) {
+  // perm-atomic-split: bulk 액션별 원자 게이트 — 활성/비활성=수정(update), 삭제=삭제(delete).
+  if (can("product.update")) {
     bar.appendChild(makeBtn("활성화 pending", () => bulkProductSetActive(true)));
     bar.appendChild(makeBtn("비활성화 pending", () => bulkProductSetActive(false)));
+  }
+  if (can("product.delete")) {
     bar.appendChild(makeBtn("삭제 pending", () => bulkProductDelete(), true));
   }
   bar.appendChild(makeBtn("선택 해제", () => {
@@ -10440,7 +10512,8 @@ function renderProductDetail() {
     paneEl.textContent = "제품 없음";
     return;
   }
-  const canManage = can("product.manage");
+  // perm-atomic-split: 상세 편집 affordance = 수정(update) 원자 게이트(입력 disable·구성 액션).
+  const canManage = can("product.update");
   const canReset = can("insight.reset");  // TASK-0230: insight 초기화 권한(admin 한정)
 
   // Header
@@ -12491,8 +12564,8 @@ async function initialize() {
   const newProductBtn = $("newProductBtn");
   if (newProductBtn) {
     newProductBtn.addEventListener("click", () => {
-      if (!can("product.manage")) {
-        showToast("권한 없음", true);
+      if (!can("product.create")) {
+        showToast("권한 없음(product.create)", true);
         return;
       }
       startNewProduct();

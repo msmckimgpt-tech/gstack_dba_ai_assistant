@@ -132,7 +132,7 @@ def test_glossary_curate_in_admin_seed():
 
 # ── RV: role_key 검증 ─────────────────────────────────────────────────────────
 def test_create_glossary_with_role(monkeypatch):
-    acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
+    acct = _env(monkeypatch, perms={"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True})
     pg = _PgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     captured = {}
@@ -147,7 +147,7 @@ def test_create_glossary_with_role(monkeypatch):
 
 
 def test_create_glossary_invalid_role_400(monkeypatch):
-    acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
+    acct = _env(monkeypatch, perms={"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True})
     called = {"n": 0}
     monkeypatch.setattr(_kg, "upsert_glossary_term", lambda *a, **k: called.update(n=called["n"] + 1))
     resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest(
@@ -220,7 +220,7 @@ def test_feedback_reject(monkeypatch):
 
 # ── REL: 유사어 관계 ─────────────────────────────────────────────────────────
 def test_relation_add(monkeypatch):
-    acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
+    acct = _env(monkeypatch, perms={"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True})
     pg = _PgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     monkeypatch.setattr(_kg, "get_glossary_term", lambda conn, tid, **k: (tid, "common", "*", "t", "d", "manual"))
@@ -235,19 +235,19 @@ def test_relation_add(monkeypatch):
 
 
 def test_relation_self_reference_400(monkeypatch):
-    acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
+    acct = _env(monkeypatch, perms={"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True})
     resp = asyncio.run(admin_metadata.admin_add_glossary_relation(1, _FakeRequest({"to_id": 1}), account=acct))
     assert resp.status_code == 400
 
 
 def test_relation_bad_type_400(monkeypatch):
-    acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
+    acct = _env(monkeypatch, perms={"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True})
     resp = asyncio.run(admin_metadata.admin_add_glossary_relation(1, _FakeRequest({"to_id": 2, "relation_type": "bogus"}), account=acct))
     assert resp.status_code == 400
 
 
 def test_relation_delete(monkeypatch):
-    acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
+    acct = _env(monkeypatch, perms={"kb.ingest.manual": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True})
     pg = _PgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     monkeypatch.setattr(_kg, "delete_glossary_relation", lambda conn, rid: 1)

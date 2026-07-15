@@ -79,7 +79,7 @@ class _TrackingConn:
 
 def _build_actor():
     # TASK-0288: datasource CRUD 는 datasource.manage 전용 권한 필요(_ds_write_common).
-    return {"id": 1, "permissions": {"console.access": True, "console.manage": True, "datasource.manage": True}}
+    return {"id": 1, "permissions": {"console.access": True, "console.manage": True, "datasource.manage": True, "datasource.create": True, "datasource.update": True, "datasource.delete": True, "datasource.test": True}}
 
 
 def _patch_common(monkeypatch, conn):

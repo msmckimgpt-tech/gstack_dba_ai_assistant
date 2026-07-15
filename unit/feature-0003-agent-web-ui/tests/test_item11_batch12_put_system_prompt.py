@@ -97,7 +97,7 @@ def test_product_no_perm_403(client, as_account, override_conn):
 
 
 def test_product_missing_id_400(client, as_account, override_conn):
-    as_account(perms={"product.manage": True})
+    as_account(perms={"product.manage": True, "product.create": True, "product.update": True, "product.delete": True})
     override_conn()
     r = client.put(_URL, json={"scope": "product"})
     assert r.status_code == 400

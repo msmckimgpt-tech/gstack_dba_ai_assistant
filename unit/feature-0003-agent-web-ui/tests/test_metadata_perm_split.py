@@ -138,15 +138,15 @@ def test_r6_legacy_umbrella_retained_in_catalog():
 
 # ── R7: 서버 서브탭 RBAC 맵 갱신 ────────────────────────────────────────────────────
 def test_r7_server_subtab_perm_map_split():
+    # perm-atomic-split(2026-07-15): 서브탭 진입(가시성) 게이트 = 조회(read) 원자 단위.
     m = app._METADATA_SUBTAB_PERM_SERVER
-    assert m["glossary"] == "metadata.glossary.manage"
-    assert m["enums"] == "metadata.enum.manage"
-    assert m["tables"] == "metadata.table.manage"
-    assert m["columns"] == "metadata.column.manage"
-    assert m["samples"] == "kb.sample.curate"  # 불변
+    assert m["glossary"] == "metadata.glossary.read"
+    assert m["enums"] == "metadata.enum.read"
+    assert m["tables"] == "metadata.table.read"
+    assert m["columns"] == "metadata.column.read"
+    assert m["samples"] == "kb.sample.curate"
 
 
-# ── R8: 프론트 서브탭 권한 맵도 세부 권한(FE/BE 동치) ────────────────────────────────
 def test_r8_frontend_subtab_perm_map_split():
     text = ADMIN_JS.read_text(encoding="utf-8")
     m = re.search(r"const _METADATA_SUBTAB_PERM\s*=\s*\{(.*?)\};", text, re.DOTALL)
@@ -155,8 +155,8 @@ def test_r8_frontend_subtab_perm_map_split():
     # feature-0016 §45: graph 서브탭은 admin.js 에서 제거됨(그래프 뷰=지식베이스 최상위 탭 ADMIN_TAB_PERMISSIONS.graph
     # 으로 이관). _METADATA_SUBTAB_PERM 에서 graph 키가 사라진 것과 정합하도록 기대에서 제외(stale 테스트 정정,
     # share-visibility-window 머지 위생).
-    for sub, perm in (("glossary", "metadata.glossary.manage"), ("enums", "metadata.enum.manage"),
-                      ("tables", "metadata.table.manage"), ("columns", "metadata.column.manage")):
+    for sub, perm in (("glossary", "metadata.glossary.read"), ("enums", "metadata.enum.read"),
+                      ("tables", "metadata.table.read"), ("columns", "metadata.column.read")):
         assert re.search(rf'{sub}:\s*"{re.escape(perm)}"', body), f"admin.js 서브탭 {sub} → {perm} 미갱신"
 
 
@@ -220,3 +220,45 @@ def test_graph_analyze_fe_gate_split():
     assert "_metaGraphLoadNodeAnalysis(self.key)" in text, "노드 분석 결과 로드 호출 부재"
     assert "if (_canAnalyze) _metaGraphLoadNodeAnalysis" not in text, \
         "결과 로드가 실행 권한(_canAnalyze) 게이트에 갇힘 — graph.read-only 뷰어가 결과를 못 봄(계약 위반)"
+
+
+# ── R9/R10: perm-atomic-split(2026-07-15) — transitive 묶음 함의 + 레거시 숨김 parity ──
+def test_r9_bundle_implies_atomic_transitive():
+    """묶음 보유 → 원자 단위 transitive 함의: kb.ingest.manual → manage 4종 → 각 read/create/update/delete.
+    개별 DENY 오버라이드는 함의보다 우선(least-privilege)."""
+    perms = app._apply_permission_overrides({"kb.ingest.manual"})
+    for ent in ("glossary", "enum", "table", "column"):
+        assert perms.get(f"metadata.{ent}.manage") is True
+        for act in ("read", "create", "update", "delete"):
+            assert perms.get(f"metadata.{ent}.{act}") is True, f"{ent}.{act} transitive 함의 실패"
+    # manage 단독 → 그 사전의 원자만(격리)
+    perms2 = app._apply_permission_overrides({"metadata.glossary.manage"})
+    for act in ("read", "create", "update", "delete"):
+        assert perms2.get(f"metadata.glossary.{act}") is True
+    assert perms2.get("metadata.enum.read") is False, "타 사전으로 함의 누출"
+    # product/datasource 묶음 → 원자(+read/test 포함)
+    perms3 = app._apply_permission_overrides({"product.manage", "datasource.manage"})
+    for c in ("product.read", "product.create", "product.update", "product.delete",
+              "datasource.read", "datasource.create", "datasource.update", "datasource.delete", "datasource.test"):
+        assert perms3.get(c) is True, f"{c} 묶음 함의 실패"
+    # DENY 우선: 묶음 보유 + 원자 DENY → 그 원자만 False (transitive 경유에도 존중)
+    perms4 = app._apply_permission_overrides({"kb.ingest.manual"}, {"metadata.glossary.delete": "deny"})
+    assert perms4.get("metadata.glossary.delete") is False, "DENY 가 transitive 함의에 밀림"
+    assert perms4.get("metadata.glossary.update") is True
+
+
+def test_r10_legacy_bundle_hidden_parity():
+    """레거시 묶음 숨김 목록이 backend(web_context.LEGACY_BUNDLE_PERMISSIONS)·admin.js·app.js 3자 동치."""
+    import web_context
+    backend = set(web_context.LEGACY_BUNDLE_PERMISSIONS)
+    # 함의 맵의 모든 묶음 키 = 숨김 목록 (숨기지 않은 묶음이 남으면 '통합 항목 잔존')
+    assert backend == set(web_context._PERMISSION_BUNDLE_IMPLIES.keys())
+    for fname in ("admin.js", "app.js"):
+        text = (ADMIN_JS.parent / fname).read_text(encoding="utf-8")
+        m = re.search(r"LEGACY_BUNDLE_PERMISSIONS = new Set\(\[(.*?)\]\)", text, re.DOTALL)
+        assert m, f"{fname} 에 LEGACY_BUNDLE_PERMISSIONS 부재"
+        fe = set(re.findall(r'"([^"]+)"', m.group(1)))
+        assert fe == backend, f"{fname} 숨김 목록 불일치: {fe ^ backend}"
+    # 모든 묶음 코드는 catalog 에 유효(기존 grant 하위호환) + FE 종속 트리에는 부재
+    for code in backend:
+        assert code in app.PERMISSION_CODES, f"{code} catalog 이탈"

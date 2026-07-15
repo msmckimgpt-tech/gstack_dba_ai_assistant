@@ -445,6 +445,30 @@ const PERMISSION_LABELS = {
   "console.audit.access": "감사 접근",
   "console.kb.access": "지식베이스 접근",
   "console.system.access": "시스템 접근",
+  // perm-atomic-split(2026-07-15): 원자 단위 권한 라벨.
+  "metadata.glossary.read": "용어사전 조회",
+  "metadata.glossary.create": "용어사전 추가",
+  "metadata.glossary.update": "용어사전 수정",
+  "metadata.glossary.delete": "용어사전 삭제",
+  "metadata.enum.read": "ENUM 코드사전 조회",
+  "metadata.enum.create": "ENUM 코드사전 추가",
+  "metadata.enum.update": "ENUM 코드사전 수정",
+  "metadata.enum.delete": "ENUM 코드사전 삭제",
+  "metadata.table.read": "테이블 설명 조회",
+  "metadata.table.create": "테이블 설명 추가",
+  "metadata.table.update": "테이블 설명 수정",
+  "metadata.table.delete": "테이블 설명 삭제",
+  "metadata.column.read": "컬럼 설명 조회",
+  "metadata.column.create": "컬럼 설명 추가",
+  "metadata.column.update": "컬럼 설명 수정",
+  "metadata.column.delete": "컬럼 설명 삭제",
+  "product.create": "제품 생성",
+  "product.update": "제품 수정",
+  "product.delete": "제품 삭제",
+  "datasource.create": "데이터소스 생성",
+  "datasource.update": "데이터소스 수정",
+  "datasource.delete": "데이터소스 삭제",
+  "datasource.test": "데이터소스 연결 테스트",
   "account.read": "계정 조회",
   "account.update": "계정 수정",
   "account.delete": "계정 삭제",
@@ -1531,7 +1555,8 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
     const s = b && b.conn_status && b.conn_status.status;
     return s ? `${b.datasource_key} (${connStatusMeta(s).label})` : (b ? b.datasource_key : "");
   };
-  const _dsTestable = !viewOnly && canOpenAdminConsole();
+  // perm-atomic-split: 서버가 datasource.test 원자 권한을 게이트하므로 버튼도 동일 게이트(403 괴리 차단).
+  const _dsTestable = !viewOnly && canOpenAdminConsole() && Boolean(state.user?.permissions?.["datasource.test"]);
   const _makeDsBadge = (text, tip, testKeys, ariaLabel) => {
     if (_dsTestable && Array.isArray(testKeys) && testKeys.length) {
       // 실제 <button> — 네이티브 키보드 활성화(Enter/Space) + at-rest 테두리 어포던스 + 접근가능한 이름.
@@ -1972,9 +1997,16 @@ async function generateAccountPrompt(btn) {
 function buildPermissionPills(containerEl) {
   if (!containerEl) return;
   containerEl.innerHTML = "";
+  // perm-atomic-split(2026-07-15): 레거시 묶음(manage·kb.ingest.manual)은 표시 숨김 — 원자 단위만.
+  const LEGACY_BUNDLE_PERMISSIONS = new Set([
+    "kb.ingest.manual",
+    "metadata.glossary.manage", "metadata.enum.manage", "metadata.table.manage", "metadata.column.manage",
+    "product.manage", "datasource.manage",
+  ]);
   const enabled = Object.entries(state.user?.permissions || {})
     .filter(([, value]) => Boolean(value))
-    .map(([code]) => code);
+    .map(([code]) => code)
+    .filter((code) => !LEGACY_BUNDLE_PERMISSIONS.has(code));
 
   if (!enabled.length) {
     const badge = document.createElement("span");

@@ -105,7 +105,7 @@ def test_overview_resource_widgets_gated_by_resource_permission(monkeypatch):
     """TASK-0293: account.read 보유자는 accounts 위젯만, 미보유 리소스 위젯은 부재.
     product.manage(read 없이)도 products 위젯 노출 — superset(manage⊇read)."""
     actor = {"id": 7, "permissions": {
-        "console.access": True, "account.read": True, "product.manage": True}}
+        "console.access": True, "account.read": True, "product.manage": True, "product.create": True, "product.update": True, "product.delete": True}}
     _patch_common(monkeypatch, actor)
 
     body = _body(admin_console.admin_overview(_FakeRequest(), actor=actor, conn=_BenignConn()))

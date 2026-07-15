@@ -324,3 +324,16 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 CSS 수정 CHG-20260715T102912 은 이미 REV-20260715T102912 [SKIPPED:...] 로 적대 자가검토 완료. 본 cycle 은 배포 결과를 fragment/TASK 에 기록만.
 - 배포본 실증(win-browser eval, 주입 없이): `/healthz` git_commit=6af16762 · 서빙 graph.css 스탬프 92be1efb1249(갱신) · `.amg-help-card` word-break=keep-all(설명 상속)·overflow-wrap=anywhere · 반응형 폭 300→268·360→320·617→520·1100→520(오버플로 0) · 스크린샷 육안(어절 줄바꿈·넓어진 카드·중앙 모달) · pageerror 0. → PASS.
 - Cross-ref: CHG-20260715T103948-graph-help-responsive-postverify · 원천 CHG/REV-20260715T102912-graph-help-text-responsive · ANCHOR 0003 무충돌.
+## REV-20260715T103406-perm-atomic-split [SKIPPED:panel-usage-limit—inline-adversarial-selfreview] — 권한 최소 단위 원자화 + 레거시 묶음 숨김 (20260715T1034, Critical §12.3)
+
+- **대상**: 원자 23종 + 엔드포인트 enforcement 전환(~38 핸들러) + transitive 함의 + backfill v2 + grid 묶음 숨김. 사용자 결정 2건(전체 분리+숨김 / 검수 단일·원본 read 하위) AskUserQuestion 승인.
+- **§18.8 수행 형태**: 직전 cycle 과 동일 사유(패널 subagent 세션 한도)로 inline 적대 자가검토. 적대 가설 → 판정:
+  - **원자 DENY 무력화(choke-point fallback)**: 설계 단계에서 기각 — `_account_has_permission` 에 묶음 fallback 을 두면 effective map 의 원자 DENY 를 우회(권한상승). 대신 effective map 함의만 사용(DENY 우선, 테스트 R9 pin).
+  - **역할 저장 wipe(숨긴 묶음 grant 소실)**: REFUTE — 역할 저장 경로 preservedHidden(TASK-0300)이 grid 미렌더 코드를 union 보존(admin.js 실코드 확인). override 편집기는 row 단위 upsert 라 무관.
+  - **suggest(LLM 비용)가 read 로 격하**: 설계에서 차단 — 가시성 맵(read)과 분리된 `_METADATA_SUGGEST_PERM`(update) 신설.
+  - **fresh install 순서 결함**: backfill v2 를 category-access-v1 **선행** 호출로 해결(묶음-only role 이 원자 전개 후 카테고리 접근 leaves 판정에 걸림 — 코드 주석 계약).
+  - **테스트 fake 계정 우회로 인한 위장 통과**: 원자 키를 perm dict 에 명시 보강(10파일) — enforcement 는 plain lookup 유지.
+  - **잔여 묶음 enforcement**: 전수 grep 0(미사용 legacy 헬퍼 `_metadata_resolve_account` 만 잔존 — 호출처 0 확인).
+  - **연결 테스트 게이트**: 기존 '버튼 무게이트+서버 manage 403' 괴리 → datasource.test 로 FE/BE 정합(개선).
+- **검증**: 785/0(호스트) · jsdom 47/0 · R9(transitive·DENY 우선)/R10(legacy 3자 parity) 신설 · ROUTEMAP 재생성 --check 0. 컨테이너 make test·배포 후 실증은 TASK 잔여.
+- **Human Approval**: 예 — cycle 시작 AskUserQuestion 2건 승인(Critical §12.3 충족).

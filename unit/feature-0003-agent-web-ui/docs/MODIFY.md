@@ -376,3 +376,13 @@ source_of_truth: true
 - 실증: `/healthz` git_commit=6af16762. 서빙 graph.css 스탬프 `d5f26a416089`→`92be1efb1249`(갱신)·`word-break: keep-all`+`clamp(320px, 90%, 520px)` 반영·주석 63:63. 배포본 런타임(win-browser eval, 주입 없이): `.amg-help-card` word-break=keep-all(설명 상속)·overflow-wrap=anywhere · 반응형 다중 폭 300→268·360→320·617→520·1100→520(오버플로 0) · 스크린샷 육안 · pageerror 0. → PASS.
 - Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/test-runs.d/20260715T102912-graph-help-text-responsive.md`.
 - Cross-ref: REV-20260715T103948-graph-help-responsive-postverify · 원천 CHG/REV-20260715T102912-graph-help-text-responsive · ANCHOR 0003 무충돌.
+## CHG-20260715T103406-perm-atomic-split (TASK 20260715T1034-perm-atomic-split — 권한 최소 단위 원자화 + 레거시 묶음 숨김, Critical §12.3 인증/인가)
+- Date: 2026-07-15. perm-category-hier 후속(사용자: "[등록/수정/삭제]·[등록/거부] 통합 잔존") — 사용자 결정: 전체 분리+묶음 숨김 / 검수 단일 유지·원본 사전 하위 종속.
+- backend `src/web_context.py`: 원자 23종 신설(사전 4종×read/create/update/delete + product.{create,update,delete} + datasource.{create,update,delete,test}) · `_PERMISSION_BUNDLE_IMPLIES` transitive 함의(개별 DENY 우선) · `LEGACY_BUNDLE_PERMISSIONS` 7종 · admin catchup 23종 · `_backfill_atomic_perm_split_v1`(1회 멱등 `atomic-perm-split-v1`, category-access-v1 선행 호출) · leaves 맵 원자화.
+- backend 라우터: `admin_metadata.py` 22 핸들러 액션별 전환+`_METADATA_SUBTAB_PERM_SERVER`=read+`_METADATA_SUGGEST_PERM`(update) 분리 · `admin_products.py` create/update/delete(+구성/규칙/AI제안/프롬프트=update) · `admin_datasources.py` `_ds_write_common(action_perm)`+test=`datasource.test` · `_prompt_context.py` update.
+- frontend `admin.js`: DEPS 원자 트리(검수→원본 read 하위)·legacy grid 필터·서브탭 C/U/D 맵+버튼 게이팅·ds/제품 bulk·상세 액션 분리·metadata 탭 게이트 read+curate. `app.js`: legacy 숨김·ds-conn-test `datasource.test` 게이트·라벨 23종.
+- tests: perm dict 원자 보강 10파일 · dependency-map 재계약(M3/V2/t5/t6·legacy 제외) · perm_split R7/R8=read + R9(transitive·DENY)·R10(3자 parity) 신설.
+- docs: SECURITY §22.4 · CONVENTIONS §10.6 · ROUTEMAP 재생성(202 routes, 권한 열 30행 갱신, --check 0).
+- 비변경: 권한 code 삭제 0(묶음은 숨김만·함의 유지) · 스키마/마이그 0 · route 경로/메서드 0 · `_METADATA_MANUAL_IMPLIES` 상수 보존.
+- Verification: 785/0(호스트) · jsdom 47/0 · 컨테이너 make test·배포 후 실증은 TASK 잔여.
+- Cross-ref: REV-20260715T103406-perm-atomic-split · ADR-20260715T103406-perm-atomic-split · SECURITY §22.4 · 원천 CHG-20260714T181936.

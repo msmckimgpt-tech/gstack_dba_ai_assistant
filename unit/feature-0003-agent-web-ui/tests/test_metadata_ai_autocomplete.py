@@ -91,8 +91,8 @@ def _admin(monkeypatch):
     """메타데이터 세부 권한(graph-panel-perms task4 B안 분리) + kb.sample.curate 모두 보유(happy path).
     as_account/직접 dict 는 _apply_permission_overrides 함의를 안 타므로, 세부 권한을 명시 부여한다."""
     acct = {"id": 1, "username": "admin",
-            "permissions": {"metadata.glossary.manage": True, "metadata.enum.manage": True,
-                            "metadata.table.manage": True, "metadata.column.manage": True,
+            "permissions": {"metadata.glossary.manage": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.manage": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True,
+                            "metadata.table.manage": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.manage": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True,
                             "metadata.graph.read": True, "kb.sample.curate": True}}
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     return acct
@@ -101,8 +101,8 @@ def _admin(monkeypatch):
 def _ingest_only(monkeypatch):
     """메타데이터 세부 편집 권한만 — samples(kb.sample.curate)에는 부족."""
     acct = {"id": 5, "username": "kb",
-            "permissions": {"metadata.glossary.manage": True, "metadata.enum.manage": True,
-                            "metadata.table.manage": True, "metadata.column.manage": True}}
+            "permissions": {"metadata.glossary.manage": True, "metadata.glossary.read": True, "metadata.glossary.create": True, "metadata.glossary.update": True, "metadata.glossary.delete": True, "metadata.enum.manage": True, "metadata.enum.read": True, "metadata.enum.create": True, "metadata.enum.update": True, "metadata.enum.delete": True,
+                            "metadata.table.manage": True, "metadata.table.read": True, "metadata.table.create": True, "metadata.table.update": True, "metadata.table.delete": True, "metadata.column.manage": True, "metadata.column.read": True, "metadata.column.create": True, "metadata.column.update": True, "metadata.column.delete": True}}
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     return acct
 
