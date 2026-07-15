@@ -97,6 +97,7 @@ const _metaGraph = {
   catCollapsed: new Set(),    // 접힌 카테고리 catKey(멤버 클러스터 미방출·헤더 밴드만)
   catMembers: new Map(),      // catKey -> [멤버 클러스터(comboId)] — 매 build 재구성(카테고리 드래그 소비)
   catLabelOf: new Map(),      // catKey -> 표시 라벨 — 매 build 재구성(상세·헤더)
+  panelGroupCollapsed: new Set(),  // graph-funcproc(cluster-detail-collapse): 클러스터 상세 패널에서 접힌 컨텐츠 카테고리 그룹 key(sg.key="panel:"+name+""+fam). 같은 클러스터 재렌더 간 접힘 유지(세션 한정, 리로드 초기화).
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──

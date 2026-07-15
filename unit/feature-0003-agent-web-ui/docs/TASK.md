@@ -5864,3 +5864,19 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 비변경: cross-category 추종 정확성(graph-edge-follow-drag)·full draw() diff·팬/줌·상태·미니맵·hover·우클릭·백엔드/RBAC/스키마 0.
 - 검증: [x] `node --check`(ESM) PASS · [x] 헤드리스 T24 10종 + T25 13종(적대 리뷰 C1~C4 실-경로 + P3) + T23 회귀 ALL PASS 96/0 · [x] §18.8 적대 리뷰(결함 없음, 지적 P3/C2/C1/C3/C4 반영) · [x] verify-completion PASS → PR #832 머지(main bfb1aa98) → web 재배포(soak PASS) → **POST-DEPLOY PB-0008 라이브 PASS**(gunzgame 409객체 드래그 40move=30.4ms·burst 중 rAF 0=코얼레싱·추종 정확·pageerror 0). POST-DEPLOY: CHG-20260716T000000-graph-edge-drag-perf-postverify.
 - worktree `ai/claude/feature-0003-graph-edge-drag-perf`(base main 41cf76c5). REV/CHG/TEST-20260715T231656-graph-edge-drag-perf.
+
+
+## 20260716T0039-graph-cluster-detail-collapse — 스키마 클러스터 상세: 컨텐츠 카테고리별 접기/펼치기(collapsible) (Minor §12.3 — feature-0003 web/UI 프론트 단독. cluster-detail-fulllist 후속. 그래프 도메인 정본 feature-0016)
+
+- 사용자 요청: 전체 출력(fulllist) 후속으로, 상세 패널에서 **컨텐츠 카테고리별 접기/펼치기** 기능 구성(대형 스키마의 긴 평면 목록 탐색성 개선).
+- 구현(frontend-only 3파일):
+  - [x] `graph-state.js` `_metaGraph.panelGroupCollapsed`(Set<sg.key>) 신설 — 접힌 컨텐츠 카테고리 그룹 유지(같은 클러스터 재렌더 간, 세션 한정·리로드 초기화).
+  - [x] `graph-ctxmenu.js` `_metaGraphRenderClusterDetail`:
+    - 그룹 헤딩을 접기/펼치기 disclosure 로 — `role="button" tabindex="0" aria-expanded data-group-key` + 캐럿 `▾`(펼침)/`▸`(접힘). 초기 렌더는 `panelGroupCollapsed.has(sg.key)` 반영(헤딩 `is-collapsed` + 멤버 행 `amgr-ct-collapsed`).
+    - `rowHTML(t, collapsed)` — 행 `<li>` 에 `amgr-ct-row-li`(+접힘 시 `amgr-ct-collapsed`) 부여(토글 대상).
+    - 섹션 헤더에 '모두 접기/펼치기' 컨트롤(`#metaGraphCtCollapseAll`) — 그룹 있을 때만 노출. sgs 계산을 h4 방출 전으로 이동.
+  - [x] 상호작용(기존 `ul` 이벤트 위임 확장): `_toggleCtGroup`(헤딩 다음~다음 그룹 헤딩 전까지 멤버 행 `amgr-ct-collapsed` 토글 + 캐럿·aria·panelGroupCollapsed 갱신). click 위임에 헤딩 분기(행 클릭보다 먼저), keydown Enter/Space 토글(Space 스크롤 방지), 모두 접기/펼치기(하나라도 펼침→전부 접기·전부 접힘→전부 펼치기).
+  - [x] `graph.css` 헤딩 `cursor:pointer`+hover/focus 어포던스·캐럿·`.amgr-ct-collapsed{display:none}`·`.amgr-ct-collapse-all`.
+- 비변경: 전체 출력(캡)·집계/membership/hiddenKinds·행 클릭 조회·hover pan·백엔드/RBAC/스키마 0. 순수 additive UI. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: [x] `node --check`(module, graph-ctxmenu.js·graph-state.js) PASS · [x] CSS 균형(brace 221:221·comment 66:66, `*/` hazard 없음) · [x] §18.8 적대 리뷰([SUBAGENT] 7축 BLOCK/MAJOR 0; MINOR 2 수정 반영[모두 접기 라벨 재동기화 `_syncCollapseAllLabel`·esc `"` 이스케이프], NIT 1 선재, REV-20260716T003901) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008(그룹 헤딩 클릭 접기/펼치기·캐럿·모두 접기/펼치기·재렌더 접힘 유지·행 클릭 조회 불변, visual_verification_scope: always).
+- worktree `ai/claude/feature-0003-graph-cluster-detail-collapse`(base main e2cc1c80). REV/CHG/TEST-20260716T003901-graph-cluster-detail-collapse.

@@ -227,11 +227,20 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 }
 .amgr-ct-row:hover, .amgr-ct-row:focus-visible { background: var(--primary-soft, #eff6ff); outline: none; }
 /* graph-simgroups: 클러스터 상세 목록의 유사 속성 그룹 헤딩 행(캔버스 그룹 박스와 동일 구획) */
-.amgr-ct-group { display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; padding: 2px 4px; list-style: none; border-bottom: 1px solid var(--border, #e2e8f0); }
+/* graph-funcproc(cluster-detail-collapse): 헤딩 = 컨텐츠 카테고리 접기/펼치기 토글(클릭·키보드). 캐럿 ▾/▸ + hover/focus 어포던스. */
+.amgr-ct-group { display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; padding: 2px 4px; list-style: none; border-bottom: 1px solid var(--border, #e2e8f0); cursor: pointer; user-select: none; border-radius: 4px; }
 .amgr-ct-group:first-child { margin-top: 0; }
+.amgr-ct-group:hover { background: var(--primary-soft, #eff6ff); }
+.amgr-ct-group:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 1px; }
+.amgr-ct-group-caret { flex: none; width: 10px; font-size: 9px; color: #7c8aa5; text-align: center; transition: color .12s; }
+.amgr-ct-group:hover .amgr-ct-group-caret { color: var(--primary, #2563eb); }
 .amgr-ct-group-label { font-size: 11px; font-weight: 700; color: #33415c; }
 .amgr-ct-group-n { font-size: 10px; color: #7c8aa5; background: #eef2f8; border-radius: 8px; padding: 0 6px; }
 .amgr-ct-group-trunc { font-size: 10px; color: #9aa4b5; }
+/* 접힌 그룹의 멤버 행 숨김 */
+.admin-meta-graph-sec ul.amgr-cluster-tables li.amgr-ct-row-li.amgr-ct-collapsed { display: none; }
+/* 섹션 헤더의 '모두 접기/펼치기' 컨트롤 */
+.amgr-ct-collapse-all { font-size: 10.5px; font-weight: 600; margin-left: 8px; }
 .amgr-ct-row code { flex: none; }
 .amgr-ct-desc { color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* 역할 칩 — 그래프 노드 칩·상세 배지와 동일 색/아이콘. -sm(고정 18px)은 목록 접두사 정렬 슬롯. */

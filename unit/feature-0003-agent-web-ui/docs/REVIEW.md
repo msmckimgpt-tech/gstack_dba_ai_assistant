@@ -499,3 +499,14 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T231656 은 REV-20260715T231656([SUBAGENT] 적대 리뷰 결함 없음 + 지적 4건 반영)로 검증됨. 본 cycle 은 배포 결과 원장 기록만.
 - 배포본 실증(win-browser eval, pointerup 후 캡처): 추종 정확성 유지(root 카테고리 + gunzgame 409 dense-edge)·정량 부하개선(40move=30.4ms·burst 중 rAF 0=코얼레싱)·dragend 정합·pageerror 0. 서빙 baked.
 - Cross-ref: CHG-20260716T000000-graph-edge-drag-perf-postverify · 원천 REV-20260715T231656-graph-edge-drag-perf · ANCHOR 0003 무충돌.
+
+## REV-20260716T003901-graph-cluster-detail-collapse [SUBAGENT:cluster-detail-collapse-disclosure-adversarial + 적대 자가검토] — 스키마 클러스터 상세: 컨텐츠 카테고리별 접기/펼치기 (20260716T0039-graph-cluster-detail-collapse, Minor §12.3)
+- 변경: 컨텐츠 카테고리(sim-group) 헤딩을 접기/펼치기 disclosure(role=button·aria-expanded·캐럿)로, 토글 시 헤딩~다음 헤딩 전 멤버 행 display 토글, 접힘 상태 `_metaGraph.panelGroupCollapsed` 유지, 섹션 헤더 '모두 접기/펼치기'. 기존 `ul` 이벤트 위임 확장.
+- **[SUBAGENT] VERDICT — BLOCK/MAJOR 결함 0**. 7축(헤딩vs행 분기·토글 순회·초기 접힘 정합·모두 접기/펼치기·리스너 누적·키보드/포커스·회귀/XSS/CSS) 전부 PASS. MINOR 2 + NIT 1 적발:
+  - **MINOR #1 (수정 반영)**: '모두 접기/펼치기' 라벨이 개별 토글 후 stale(동작은 self-consistent·데이터손상 없음, 표시만 오해소지). → `_syncCollapseAllLabel()`(전 그룹 상태로 라벨 재계산)을 `_toggleCtGroup` 말미에서 호출; collapse-all 핸들러의 수동 라벨 설정 제거(중복). 개별·일괄 토글 모두 라벨-동작 정합.
+  - **MINOR #2 (수정 반영)**: 함수-지역 `esc`(2262)가 `"` 미이스케이프(파일 내 1358/1648/1774 esc 는 이스케이프). `data-group-key`/`aria-label`/`title` 속성이 상태-키 라운드트립을 실어 나르므로 `"` 포함 식별자 시 속성 breakout 가능(선재 패턴이나 data-group-key 는 새 sink). → esc 에 `.replace(/"/g,"&quot;")` 추가(파일 내 강한 esc 와 정합). 텍스트 노드엔 무해.
+  - **NIT #3 (선재·미수정)**: 패널 sim-group/접힘 keyspace 가 comboId 아닌 표시명(`"panel:"+_metaComboName`) 기반 → 동명 스키마 동시 표시 시 충돌 가능. 단 기존 `groupOrder`/`groupTableOrder`(graph-simgroups)가 이미 동일 keyspace 공유 — 본 기능이 상속했을 뿐 새로 유발 안 함(표시명 데이터소스 내 유일 시 무해). 별도 개선 대상.
+- **[SUBAGENT] 7축 판정**: ① 헤딩(`.amgr-ct-group`)·행(`.amgr-ct-row-li`) ul 형제·무중첩, 자식 클릭 `closest` 귀속, 헤딩 먼저 판정+return → 오분류 0. ② `nextElementSibling` while 이 다음 `.amgr-ct-group` 에서 정확히 멈춤·마지막 그룹 끝까지·헤딩 사이 이물 노드 없음. ③ `collapsed`(panelGroupCollapsed.has)가 is-collapsed/caret/aria-expanded/행 amgr-ct-collapsed 일관, sg.key 동일 클러스터 결정론 안정. ④ `anyExpanded ? !isCol : isCol` 혼합상태 정확·재렌더 리스너 누적 0. ⑤ _toggleCtGroup 렌더별 새 클로저·위임 `ul` 재생성·collapse-all 새 버튼 재바인딩. ⑥ Enter/Space 헤딩 토글·Space preventDefault·행 button 네이티브 클릭 보존(role=button li 미합성). ⑦ 행 클릭/hover/전체출력/개수 불변·`[data-group-key]` presence 선택자만·CSS `*/` hazard 없음.
+- 적대 자가검토: "esc 강화가 텍스트(`<code>`,`<strong>`) 렌더 회귀?" → `"`→`&quot;` 는 텍스트 노드에서 `"` 로 렌더(시각 동일)·속성값에서만 실효. "sync 라벨이 flat 폴백(버튼 부재)서 throw?" → getElementById null-guard + groups.length 가드.
+- 검증: `node --check`(module) PASS · [SUBAGENT] 6/6→7/7축 PASS·MINOR 2 수정·NIT 1 선재 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
+- Cross-ref: TASK 20260716T0039 · CHG/TEST-20260716T003901-graph-cluster-detail-collapse · test-runs.d/20260716T0039-graph-cluster-detail-collapse.md · 선행 REV-20260715T223744-graph-cluster-detail-fulllist · ANCHOR 0003 무충돌.
