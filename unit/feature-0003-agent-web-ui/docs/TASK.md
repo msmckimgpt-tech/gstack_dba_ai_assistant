@@ -5683,3 +5683,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] §18.8 보안 렌즈 적대 리뷰(권한상승·접근상실·backfill 멱등·FE/BE parity·lockout).
 - [x] 컨테이너 make test(잔여 4실패 = 환경 기인 확정, fragment) → verify-completion PASS → commit → PR #801 → 머지(7e375ebc) → web 재배포(deploy-web.sh scope=all, soak 통과).
 - [x] **배포 후 실증 완료(2026-07-14)**: web 로그 seed catchup 정상(1406 없음) + `console-category-access-v1` 마커 + 접근 5종 admin/usermanager(backfill 구제 실증)/dba(audit) 부여 + override target2 1건 + PB-0008 라이브(usermanager grid 접근 5종 depth0·감사 4탭 조회 depth1 통합·상위 토글→하위 7종 접힘/펼침·admin 13탭·상태 오염 0). fragment POST-DEPLOY Run 참조.
+
+## 20260715T102912-graph-help-text-responsive — 그래프 도움말 팝업 텍스트 줄바꿈 + 반응형 크기 (Minor §12.3 — feature-0003 web/UI 프론트 단독, CSS 전용. 그래프 도메인 정본 feature-0016)
+- 트리거(사용자 피드백 2건, graph-entry-help 배포본): ① "설명 텍스트 문단이 중간에 잘린 상태로 줄바꿈되는 디자인적 불편" ② "팝업이 고정 크기가 아닌, 브라우저 자체 크기에 반응하여 변형될 수 있도록".
+- 진단: `.amg-help-card` 가 (텍스트) `word-break: normal` — CJK 기본은 글자 사이 아무 데서나 끊겨 "…탐색하세"/"요.", "옮깁니"/"다." 음절 orphan. (크기) `width: min(460px, 100%)` — 460px 고정 상한이라 큰 화면에서 고정감·반응 없음.
+- 구현:
+  - [x] `graph/graph.css` `.amg-help-card`: (텍스트) `word-break: keep-all; overflow-wrap: anywhere;` — 어절(공백) 단위 줄바꿈, word-break 상속으로 카드 내 전체 안내 텍스트 적용, 폭 초과 토큰만 강제 분할. (반응형) `width: min(460px, 100%)` → `min(clamp(320px, 90%, 520px), 100%)` — 캔버스(=브라우저) 폭에 320~520px 유동, 좁은 화면 100% 바운드. 세로 max-height:100%+overflow-y:auto 유지.
+- 비변경: CSS 선택자/미디어쿼리/다른 규칙 0. 백엔드/RBAC/스키마/JS/HTML 0. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: graph.css `/*`:`*/` 63:63·중괄호 215:215 균형(주석 hazard 없음, 20260714T184717-fix 불변식 준수) · 라이브 win-browser eval — keep-all 어절 줄바꿈 스크린샷 + 반응형 다중 폭 실측(300→268·360→320·617→520·1100→520, 오버플로 0).
+- [x] §18.8 패널 skip(REVIEW `[SKIPPED:frontend-ui-minor-css-text-layout-no-logic-no-rbac]`, 적대 자가검토 6가설 refute).
+- [x] verify-completion(pre-commit) → commit → PR #804 → 머지(main 6af16762) → web 재배포(deploy_scope: included, deploy-web --web-only soak PASS) → **POST-DEPLOY PB-0008 라이브 재검증**: 재배포된 graph.css(스탬프 92be1efb1249)에서 `.amg-help-card` computed word-break=keep-all(설명 상속)·overflow-wrap=anywhere·반응형 폭 다중 크기(300→268·360→320·617→520·1100→520, 오버플로 0)·스크린샷 육안·중앙정렬·pageerror 0 ✓. worktree `ai/claude/feature-0003-graph-help-wordbreak`(base main 14f54e64). 재배포 자산 최종 확인=postverify(ai/claude/feature-0003-graph-help-responsive-postverify).

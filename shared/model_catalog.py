@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
+
+_log = logging.getLogger("model_catalog")
 
 __all__ = [
     "API_DEFAULT_MODEL",
@@ -148,17 +151,40 @@ def is_local_llm_model(value: str | None) -> bool:
 _CONVERSATION_ANSWER_ALIAS: dict[str, str] = {
     "claude-haiku-4": "claude-haiku-4-chat",
 }
+# 대화 답변 경로가 Bedrock 프록시로 보낼 때 쓸 기본 chat 모델(edge-free, litellm 등록 model_name).
+# haiku 는 API_MODEL_OPTIONS 상 "기본값" 이며 claude-haiku-4-chat 가 그 edge-free chat alias 다.
+_CONVERSATION_ANSWER_DEFAULT_CHAT = "claude-haiku-4-chat"
 
 
 def conversation_answer_model(value: str | None) -> str:
     """사용자 대면 assistant 답변(task='agent')을 litellm 에 보낼 때 쓸 edge-free alias 를 반환한다.
 
     edge(gemma) 폴백이 걸린 대화 모델(claude-haiku-4)은 대화 전용 edge-free alias
-    (claude-haiku-4-chat)로 치환한다. 매핑에 없는 model 은 그대로 반환(identity).
-    반환값은 litellm 호출 kwarg('model')로만 쓰고, 표시/저장/usage 기록에는 원본
-    문자열을 유지한다(호출측 책임).
+    (claude-haiku-4-chat)로 치환한다. 반환값은 litellm 호출 kwarg('model')로만 쓰고,
+    표시/저장/usage 기록에는 원본 문자열을 유지한다(호출측 책임).
+
+    TASK-alias-leak-guard: 대화 답변 경로는 고정 Bedrock 클라이언트로 나간다(`_call_llm` 은
+    tier-resolve 하지 않음 — FR-edge-fallback 정합상 gemma 강등 금지). 따라서 로컬 게이트웨이
+    alias(auto/edge/core/code)나 미등록 bare family alias('claude')가 **identity 로 통과하면
+    Bedrock 프록시가 "Invalid model name passed in model=..." 400** 을 반환한다(실측: 다수 대화의
+    `LLM 호출 오류` + `__ask_worker__`). 운영 `.env` 의 `OPENAI_MODEL=auto` 가 대표 트리거.
+    이들을 대화 기본 chat 모델(claude-haiku-4-chat)로 fail-loud 해소해 raw alias 가 Bedrock 으로
+    새지 않게 한다(대화는 Claude 유지 — gemma 로 강등하지 않음). 등록된 Claude 모델
+    (claude-sonnet-4 등)과 이미 해소된 chat alias 는 identity(무회귀).
     """
-    return _CONVERSATION_ANSWER_ALIAS.get(str(value or "").strip(), str(value or "").strip())
+    name = str(value or "").strip()
+    mapped = _CONVERSATION_ANSWER_ALIAS.get(name)
+    if mapped is not None:
+        return mapped
+    # 로컬 게이트웨이 alias 또는 미등록 bare family alias 'claude' → Bedrock 400 유발. 기본 chat 로 해소.
+    if is_local_llm_model(name) or name.lower() == "claude":
+        _log.warning(
+            "conversation_answer_model: 비대화 alias %r 를 Bedrock 대화 경로로 보낼 수 없어 "
+            "%s 로 해소(Bedrock 'Invalid model name' 400 방지).",
+            name, _CONVERSATION_ANSWER_DEFAULT_CHAT,
+        )
+        return _CONVERSATION_ANSWER_DEFAULT_CHAT
+    return name
 
 
 def model_supports_temperature(value: str | None) -> bool:

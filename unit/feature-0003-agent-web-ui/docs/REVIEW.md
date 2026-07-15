@@ -313,3 +313,14 @@ source_of_truth: true
 ## REV-20260714T203000-perm-category-hier-postverify [SKIPPED:doc-only-postdeploy-verification-record] — perm-category-hier 배포 후 실증 기록 (PR #801 · 7e375ebc)
 - 코드 변경 0(문서 전용). 실증 내용: seed catchup 정상 · `console-category-access-v1` 마커 · 접근 5종 부여(admin catchup / **usermanager = backfill 구제 실증** / dba audit) · override target2 1건 · PB-0008 라이브(grid 계층 depth·상위 토글 → 하위 접힘/펼침·admin 13탭·"변경 없음" 상태 무오염). 상세 = test-runs.d/20260714T181936-perm-category-hier.md POST-DEPLOY Run · TASK 20260714T1819 잔여 박스 close.
 - [SKIPPED] 사유: 배포 후 실증의 문서화만 — 신규 코드/경계 0, 패널 불요(선례 REV-20260714T190916-graph-help-overlay-postverify).
+
+## REV-20260715T102912-graph-help-text-responsive [SKIPPED:frontend-ui-minor-css-text-layout-no-logic-no-rbac] — 그래프 도움말 팝업 텍스트 줄바꿈 + 반응형 크기 (TASK-20260715T102912-graph-help-text-responsive)
+- Panel skip 사유(§18.8): 프론트 1파일 CSS 텍스트-레이아웃 전용(`.amg-help-card` 의 word-break/overflow-wrap/width). 백엔드/RBAC/스키마/엔드포인트/JS/HTML 0. 로직·경계 무변경 → 적대 코드리뷰(권한·주입·enforcement) 이득 없음.
+- 적대 자가검토(refute 시도): ① "keep-all 이 긴 무공백 토큰(URL 등)에서 오버플로?" → `overflow-wrap: anywhere` 동반으로 폭 초과 시 강제 분할, 안내 텍스트엔 그런 토큰 없음(어절마다 공백). ② "clamp width 가 좁은 화면에서 컨테이너 넘침?" → 바깥 `min(..., 100%)` 로 항상 컨테이너 바운드(실측 300px→268·오버플로 0). ③ "카드가 너무 커져 모달감 상실?" → 상한 520px(가독 상한), 1100px 캔버스에서도 520 유지. ④ "keep-all 이 중점(·) 목록('설명·컬럼') 을 한 덩어리로 묶어 넘침?" → 285px 설명폭 대비 짧아 무해, 초과 시 overflow-wrap fallback. ⑤ "다른 규칙/미디어쿼리 회귀?" → diff 는 `.amg-help-card` 선언 2 + 주석 국한, `@media(max-width:520px)` 라벨 스택 등 기존 규칙 무변경. ⑥ "주석 hazard 재발?" → 신규 주석 `/*`:`*/` 63:63 균형·`*` 뒤 `/` 없음(20260714T184717-fix 불변식 준수).
+- 검증: graph.css `/*`:`*/` 63:63·중괄호 215:215 균형 · 라이브 win-browser eval(keep-all 어절 줄바꿈 스크린샷 + 반응형 다중 폭 실측 300~1100px, 오버플로 0). **라이브 시각검증 = POST-DEPLOY PB-0008**(정적 baked, visual_verification_scope: always).
+- Cross-ref: CHG/TASK-20260715T102912-graph-help-text-responsive · 원천 CHG-20260714T180314-graph-entry-help·CHG-20260714T184717-graph-help-overlay-fix · TEST test-runs.d/20260715T102912-graph-help-text-responsive.md · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
+
+## REV-20260715T103948-graph-help-responsive-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 도움말 팝업 줄바꿈+반응형 재배포 자산 실증 기록 (CHG-20260715T103948-graph-help-responsive-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 CSS 수정 CHG-20260715T102912 은 이미 REV-20260715T102912 [SKIPPED:...] 로 적대 자가검토 완료. 본 cycle 은 배포 결과를 fragment/TASK 에 기록만.
+- 배포본 실증(win-browser eval, 주입 없이): `/healthz` git_commit=6af16762 · 서빙 graph.css 스탬프 92be1efb1249(갱신) · `.amg-help-card` word-break=keep-all(설명 상속)·overflow-wrap=anywhere · 반응형 폭 300→268·360→320·617→520·1100→520(오버플로 0) · 스크린샷 육안(어절 줄바꿈·넓어진 카드·중앙 모달) · pageerror 0. → PASS.
+- Cross-ref: CHG-20260715T103948-graph-help-responsive-postverify · 원천 CHG/REV-20260715T102912-graph-help-text-responsive · ANCHOR 0003 무충돌.

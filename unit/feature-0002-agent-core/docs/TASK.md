@@ -1367,3 +1367,21 @@ TASK-0015 (plan-review):
 - [x] §18.8 적대 패널(프롬프트 grounding code change) → REVIEW REV-20260714T221500 (+ Cycle B REV-20260714T210000 동반 기록).
 - [x] `make test` 전체 회귀: cycle 자체 테스트 전부 PASS(로컬 41)·무관 4건 pre-existing/환경(신규 회귀 0, 연역+경험 확정).
 - [ ] verify-completion(feature-0002) → commit/push → PR → merge → 배포(deploy_scope: included, Cycle B ③④ + 본 case-fix 함께) → 배포검증(4서비스 GIT_COMMIT) → 라이브 재-재현 LoginEventLog 오판 소멸 확인 → 원장 반영.
+## 20260714T233000-attach-table-coverage — 라이브 실측 잔존 결정론적 코드 봉인 (Major, 사용자=Option C "코드로 결정론적 봉인")
+> 계기: CHG-20260714T221500(case 프롬프트 레버) 배포(ee3424c3) 후 라이브 재-재현에서 잔존 확인 — 모델이 case 인지는 하나 여전히 LoginEventLog '누락' 오기재 + lcase 미실측 정규화 제안(프롬프트 레버=확률적 완화 한계). 사용자 "코드로 결정론적 봉인" 선택(AskUserQuestion 2026-07-14).
+- [x] 근본: 첨부↔DB 테이블 대조가 모델 추론이라 대소문자 비결정 → 코드로 이관.
+- [x] 신규 tool `check_table_coverage`(tools.py): DB 테이블명 정본 기준으로 첨부가 그 테이블을 **조작(TRUNCATE/DELETE/DROP/…)** 하는지 대소문자 무시 판정(`_operated_tables`). 주석 분리(`_split_sql_active_comment`), truncated 캐비엇, USE 스키마 귀속. deferred import 첨부 로더, `_struct_schema_access_error` 게이트, TOOL_DEFINITIONS+_TOOL_HANDLERS 등록.
+- [x] agent_core: SYSTEM_PROMPT 라우팅(커버리지 비교→도구, truncated 면 미확인) + reason/work narration.
+- [x] §18.8 적대 2렌즈 패널(REV-20260714T233000): BLOCKING2(B1 절단·B2 주석)·MAJOR1(M1 이름 등장 오집계)·MINOR2 적발 → 조작-동사 추출+주석분리+절단캐비엇+USE귀속 전면 재설계 봉인. 보안 5벡터 REFUTED.
+- [x] 테스트 `test_check_table_coverage.py` 12 PASS(seal + B1/B2/M1/m1 회귀 + 헬퍼). `make test` 신규 회귀 0(pre-existing 4건 무관·flaky 1건 재실행시 소멸).
+- [x] verify-completion → commit/push → PR #803 merge(main 3c8e78df) → 배포(4서비스 3c8e78df·tool live) → 라이브 재-재현은 외부 gunzgame DB unreachable(err 2003)로 미완(외부 인프라).
+## 20260715T104500-friction-ledger-reconcile — FR-partial-evidence 원장 arc 정합 (docs-only, 코드 0)
+- [x] FRICTION_LEDGER FR-partial-evidence 엔트리에 후속 봉인 arc(case 레버 부분작동→결정론 도구 배포 3c8e78df) + status `unverified-live` 유지 근거 반영. CHG-20260715T104500 · REV-20260715T104500 [SKIPPED].
+## 20260715T050000-conv-alias-leak-guard — 대화 답변 model alias 누출(Bedrock 400) 봉인 (deferred ④, Major)
+> 계기: 첨부-답변 정합성 실데이터 감사(deferred 축 ④). 실관측 — 다수 대화·`__ask_worker__` 에 `LLM 호출 오류: Error code: 400 ... Invalid model name passed in model=auto/core/edge/claude`. 선행(CHG-20260714T210000)의 friendly-message(bad_model) 계층은 표면만 완화, 근본(내부 alias 가 Bedrock 프록시로 raw 전달)은 미해소. 서브에이전트 근본 추적으로 누출 경로·choke-point 확정.
+- [x] RC 확정: 대화 답변 경로(`_call_llm`)는 고정 Bedrock 클라이언트로 나가고 tier-resolve 안 함(FR-edge-fallback: 대화는 gemma 강등 금지). `conversation_answer_model()`이 미매핑 alias 를 identity 통과 → 로컬 게이트웨이 alias(auto/edge/core/code)·bare 'claude' 가 Bedrock 프록시로 새어 400. 운영 `.env` `OPENAI_MODEL=auto` 가 대표 트리거.
+- [x] fix(choke-point): `shared/model_catalog.py` `conversation_answer_model()` — 로컬 alias(`is_local_llm_model`)·bare 'claude' 를 대화 기본 chat(`claude-haiku-4-chat`)로 fail-loud(warn log) 해소. 등록 Claude(claude-sonnet-4)·이미 해소된 chat alias 는 identity(무회귀). **`_call_llm` tier-resolve 미러링은 명시적 거부**(대화를 gemma 로 강등 — FR-edge-fallback 위반).
+- [x] 검증: `tests/test_conversation_answer_no_edge_alias.py` 확장 — 기존 `edge→edge` identity 기대(옛 버그 인코딩)를 새 계약으로 갱신 + G2b(누출 alias→chat 파라메트릭)·G6(해소 대상 litellm 등록명 invariant)·G7(`_call_llm` 아웃바운드 chat)·G8(패널 회귀: 예산 outbound 기준·max_tokens>5000). 파일 15 PASS. feature-0002+0003 회귀: 신규 실패 0(test_share_redaction_invariant 7건은 base main 에서도 동일 실패=pre-existing, 내 diff 미참조).
+- [x] §13.2.2 F2: shared/ 단일-mutator = 본 cycle(ai/claude/conv-alias-leak-guard). 편집 `shared/model_catalog.py`(1함수)+`src/agent_core.py`(_call_llm budget 산정), 병렬 shared mutator 없음(REGISTRY 확인).
+- [x] §18.8 적대 패널(security+backend/routing 통합 6축) → **CONFIRMED-DEFECT#1**(초기 fix 가 outbound 만 해소하고 max_tokens 를 원본 기준 산정→ -chat 고정 thinking budget 5000 대비 2048<5000 2차 400) **수정 완료**(`_call_llm` budget_model 도입 + G8 회귀) + 5축 REFUTED + 2 PLAUSIBLE-RISK 수용. → REV-20260715T050000-conv-alias-leak-guard.
+- [ ] verify-completion(feature-0002) → commit/push(auto-sync) → PR·머지·배포(deploy_scope: included) → 배포검증.
