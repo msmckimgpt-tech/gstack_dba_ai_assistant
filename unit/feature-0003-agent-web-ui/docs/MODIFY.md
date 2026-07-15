@@ -601,3 +601,9 @@ source_of_truth: true
 - 비변경: 헤딩 클릭(접기/펼치기)·행 클릭 조회·행 hover-pan·collapse/전체출력·백엔드/RBAC/스키마 0. 순수 additive. cache-buster placeholder 수기편집 없음. 소스 리터럴 0x01 부재.
 - 검증: `node --check` PASS · §18.8 적대 리뷰 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260716T0128 · REV/TEST-20260716T012805-graph-cluster-detail-group-hoverpan · test-runs.d/20260716T0128-graph-cluster-detail-group-hoverpan.md · 선행 CHG-20260716T003901-graph-cluster-detail-collapse · ANCHOR 0003 무충돌.
+
+## CHG-20260716T015146-graph-cluster-detail-group-hoverpan-postverify (컨텐츠 카테고리 헤딩 hover-pan POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-07-16. cluster-detail-group-hoverpan(CHG-20260716T012805, PR #838 main d2c72fdc) 배포 후 win-browser PB-0008 라이브 실증. 코드 변경 0(문서 전용).
+- 실증(실 Windows Chrome relay, 배포 d2c72fdc, 로그인 세션): DK dk_data_release_main(66 컨텐츠 카테고리) 상세에서 (1) 66 그룹 전부 `data-pan-key`=첫 멤버 노드 key("NPC 콘텐츠"→Combine 테이블·"게임 콘텐츠 조회"→P_CashItem_ReadBy_BackOffice 프로시저), (2) 헤딩 hover(200ms intent) → 카메라 부드럽게 팬: "NPC 콘텐츠"(TitleInfo·MerchantName 영역)↔"게임 콘텐츠 조회"(SetItem·spDeleteCollection 영역) 서로 다른 위치로 이동·미니맵 뷰포트 박스 이동, (3) 행 hover-pan·클릭 조회 불변·pageerror 0. 서빙 자산 baked(grep=8). evidence: hover_g0.png·hover_g45.png.
+- Changes: `docs/test-runs.d/20260716T0128-graph-cluster-detail-group-hoverpan.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
+- Cross-ref: 원천 CHG-20260716T012805-graph-cluster-detail-group-hoverpan · ANCHOR 0003 무충돌.

@@ -17,6 +17,11 @@ verdict: 정적 PASS · POST-DEPLOY PB-0008 라이브 DEFERRED
 - **collapse 상호작용**: 헤딩 click=접기토글(data-group-key)·hover=팬(data-pan-key) 이벤트/속성 분리. data-pan-key 는 collapsed 무관 항상 방출 → 접힌 헤딩·모두 접기 후에도 팬.
 - 결과 **PASS(정적)** — §18.8 적대 리뷰 상세는 REVIEW.md(REV-20260716T012805) 참조.
 
-### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **DEFERRED(배포 후 수행)**
-- 대상: 재배포 후 컨텐츠 카테고리 다수 스키마(예 DK dk_data_release_main 66그룹) 클러스터 상세 → (1) 그룹 헤딩에 mouseover(200ms 유지) → 카메라가 해당 컨텐츠 카테고리(첫 멤버 노드) 위치로 부드럽게 팬(팬 전/후 스크린샷 뷰 이동 확인), (2) 다른 헤딩으로 이동 시 그 그룹으로 재팬, (3) 행 hover-pan·행 클릭 조회 불변, (4) 접힌 헤딩 hover 도 팬, (5) pageerror 0.
-- visual_verification_scope: always — 배포 후 충족 예정. 미수행 사유: 정적 자산 baked 라 web 재배포 후에만 서빙 반영.
+### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **PASS**
+- 배포: PR #838 → main d2c72fdc + `sudo -E bin/deploy-web.sh` 무중단 롤링(web-a/web-b·워커 recreate·soak 통과). 서빙 자산 `_panTargetOf`·`data-pan-key` grep=8(web-a).
+- 방법: win-browser.py 실 Windows Chrome relay, https://localhost/admin(로그인 세션) → 그래프 뷰 > mssql-dk-dev(DK온라인) > dk_data_release_main(423항목·66 컨텐츠 카테고리) 상세, 줌인 2회(팬 가시성).
+- 결과 **PASS**:
+  1. **data-pan-key 부여**: 66 그룹 전부 `data-pan-key` = 첫 멤버 노드 key(예 "NPC 콘텐츠" → `…dk_data_release_main.Combine` 테이블, "게임 콘텐츠 조회" → `P_CashItem_ReadBy_BackOffice()` 프로시저).
+  2. **헤딩 hover → 카메라 팬**: 헤딩 라벨에 mouseover(200ms intent) → 카메라 부드럽게 이동. "NPC 콘텐츠" hover 시 뷰 = TitleInfo·MerchantName·"상점 시스템"·"게임 기본 데이터" 영역; "게임 콘텐츠 조회" hover 시 뷰 = SetItem·SocialAction·spDeleteCollection 등 **다른 영역**으로 팬(미니맵 뷰포트 박스 위치도 이동). 서로 다른 컨텐츠 카테고리 → 서로 다른 위치로 팬 실증(행 hover-pan 과 동일 메커니즘).
+  3. **회귀**: 행 hover-pan·행 클릭 조회·collapse 토글 불변. **pageerror 0**·docReady complete.
+- visual_verification_scope: always — 충족. evidence: hover_g0.png(NPC 콘텐츠 영역)·hover_g45.png(게임 콘텐츠 조회 영역, 뷰 이동).

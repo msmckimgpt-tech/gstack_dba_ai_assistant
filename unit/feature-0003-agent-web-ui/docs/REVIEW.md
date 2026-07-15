@@ -535,3 +535,8 @@ source_of_truth: true
 - 적대 자가검토: "첫 멤버가 API 경로서 미렌더면?" → 펼친 스키마는 모델에 전 테이블 로드·API depth=1 = 동일 테이블이라 렌더됨; 드문 divergence 도 no-op(무해). "헤딩 hover 가 행 hover 와 대상 중복?" → 첫 멤버 노드 = 헤딩 아래 첫 행과 동일 노드라 hover 위치만 다르고 팬 대상 일관(혼란 없음).
 - 검증: `node --check`(module) PASS · [SUBAGENT] 6축 결함 0 + caveat 설계변경으로 소거 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260716T0128 · CHG/TEST-20260716T012805-graph-cluster-detail-group-hoverpan · test-runs.d/20260716T0128-graph-cluster-detail-group-hoverpan.md · 선행 REV-20260716T003901-graph-cluster-detail-collapse · ANCHOR 0003 무충돌.
+
+## REV-20260716T015146-graph-cluster-detail-group-hoverpan-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 컨텐츠 카테고리 헤딩 hover-pan POST-DEPLOY 실증 기록 (CHG-20260716T015146-graph-cluster-detail-group-hoverpan-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260716T012805 은 REV-20260716T012805([SUBAGENT] 6축 결함 0·GB→첫멤버 전환)로 검증됨. 본 cycle 은 배포 결과 기록만.
+- 배포본 실증(win-browser, 배포 d2c72fdc): DK dk_data_release_main 상세에서 66 그룹 전부 data-pan-key=첫 멤버 노드; 헤딩 hover → 카메라 팬("NPC 콘텐츠"↔"게임 콘텐츠 조회" 서로 다른 영역·미니맵 이동); 행 hover/클릭 불변; pageerror 0. 스크린샷 육안 정상(뷰 이동 확인).
+- Cross-ref: CHG-20260716T015146-graph-cluster-detail-group-hoverpan-postverify · 원천 REV-20260716T012805-graph-cluster-detail-group-hoverpan · ANCHOR 0003 무충돌.
