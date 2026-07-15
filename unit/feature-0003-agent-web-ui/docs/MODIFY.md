@@ -340,3 +340,13 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(29 releases·07-14 head 10항목·07-13 보존·스키마·누출0). 사용자향 평이화(내부용어 누출 0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - **landing/배포 소유=cron wrapper 위임**(로컬 commit 만·push/merge/deploy 미수행). META(STATUS·wiki·ARCHITECTURE·SECURITY·meta/REVIEW)는 별도 commit(REV-20260715T025509-META-0036-doc-sync-0715).
+## CHG-20260714T181936-perm-category-hier (TASK 20260714T1819-perm-category-hier — 관리 콘솔 권한 체계 카테고리 '접근' 계층 재구성, Critical §12.3 인증/인가)
+- Date: 2026-07-14. 사용자 요청("권한 체계 구조적 난잡 — 카테고리별 '접근'(=조회) 최상위 + 하위 종속 + 상위 활성화 시 UI 펼침") — 사용자 승인 A안.
+- backend `src/web_context.py`: 신규 카테고리 접근 권한 5종 `console.{account,product,audit,kb,system}.access`(각 카테고리 그룹 배치, desc≤255) · GroupName 재배치(`console.usage.read`/`console.aiops.read`/`conversation.archive.read.any`→audit, `insight.reset`→product — code·enforcement 불변) · admin catchup 5종 + dba `console.audit.access` · `_CONSOLE_CATEGORY_ACCESS_LEAVES` 카테고리→하위 맵 · `_backfill_console_category_access_v1`(1회 멱등, `WebSchemaMigrations` `console-category-access-v1`, 대상 3종 — 접근 무손실) `_ensure_seed_roles` 말미 배선.
+- frontend `src/static/admin.js`: `PERMISSION_DEPENDENCIES` 카테고리 계층 전면 재구성(+`system.runtime.*` 종속 신설, `conversation.create`→list.own, `insight.reset`→product.read, 감사 4탭 조회→`console.audit.access`) · `ADMIN_TAB_CATEGORY_ACCESS` 신설 + `canSeeTab`=카테고리 접근(AND)&&탭 권한(OR) · settings 탭 게이트 `system.runtime.read/write` 보강 · 그룹 순서 nav 정합 + kb 라벨 "지식베이스".
+- frontend `src/static/app.js`: 그룹 라벨(quota/datasource/kb)·순서 + `PERMISSION_GROUP_OVERRIDES`(재배치 코드 명시 매핑) + 접근 5종 라벨 + manage section groups 정합.
+- tests: `test_permission_dependency_map.py`(M3/M4 갱신·M5 신설·V2/V3/V4·v6/v7·t3/t5/t6) · `test_llm_usage_quota.py` f2 · `test_insight_reset.py` group · `verify_admin_tab_gating.mjs`(카테고리 AND 케이스 2b/4b 신설 + release-notes 상시 노출로 stale 하던 시스템 라벨 기대 2건 정정 — main baseline 부터 FAIL 이던 건).
+- docs: `docs/SECURITY.md` §22 신설 · `docs/CONVENTIONS.md` §10.6 정합 · unit TASK/REPORT/REVIEW/DECISIONS.
+- 비변경: 엔드포인트 `require_permission` 0건(ROUTEMAP 무영향) · 권한 code/스키마/마이그 0 · `_METADATA_MANUAL_IMPLIES` 불변 · 작업 화면 동작.
+- Verification: 권한 타깃 50 PASS · feature-0003 스위트 785/0(호스트, baseline 제외) · jsdom 탭 게이팅 47/0 · 컨테이너 make test + 배포 후 backfill 마커·무손실 실증은 TASK 잔여 항목.
+- Cross-ref: REV-20260714T181936-perm-category-hier · ADR-20260714T181936-perm-category-hier · SECURITY §22.

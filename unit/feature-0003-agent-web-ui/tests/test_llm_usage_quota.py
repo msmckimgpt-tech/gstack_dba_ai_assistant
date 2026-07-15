@@ -230,8 +230,9 @@ def test_f2_quota_permission_ui_gating():
     # buildQuotaEditor 가 readOnly 분기(입력 disable + 저장 버튼 미렌더) 지원.
     assert "const readOnly = Boolean(opts.readOnly)" in js
     assert "dailyInput.disabled = true" in js
-    # 종속성 맵: quota.read→console.access, quota.manage→quota.read.
-    assert '"quota.read": "console.access"' in js
+    # 종속성 맵: quota.read→console.account.access(계정 카테고리 접근 — 한도 UI 는 계정·역할 탭 내부
+    # 섹션, perm-category-hier 2026-07-14), quota.manage→quota.read.
+    assert '"quota.read": "console.account.access"' in js
     assert '"quota.manage": "quota.read"' in js
     # 그룹 메타 등재.
     assert 'quota: "LLM 사용 한도"' in js

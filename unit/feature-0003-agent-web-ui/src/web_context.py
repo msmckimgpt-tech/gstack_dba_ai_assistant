@@ -120,30 +120,50 @@ PERMISSION_DEFINITIONS = (
     {
         # TASK-0136 (#11): LLM 토큰/비용 사용량 조회. 운영·비용 민감 정보 → admin 한정
         # (admin seed = set(PERMISSION_CODES) 로 자동 부여, operator/sales/pending 미부여).
+        # perm-category-hier(Critical §12.3, 2026-07-14): 관리 콘솔 '감사' 카테고리의 'LLM 사용량' 탭
+        # 조회 권한이므로 group 을 console→audit 로 재배치(표시 분류만 — code·enforcement 불변).
         "code": "console.usage.read",
         "label": "LLM 사용량 조회",
         "description": "LLM 토큰 사용량/비용 집계를 조회할 수 있다 (운영자 전용).",
-        "group": "console",
+        "group": "audit",
     },
     {
         # TASK-AIOPS: AI 운영 관제 패널(관리 콘솔 > 감사 > AI 운영 현황) 조회 권한. 운영 민감
         # 정보(워커 상태·provider 헬스·AI 활동 계측)라 admin 한정 — admin seed(=set(PERMISSION_CODES))
         # 자동 부여 + 아래 _ensure_seed_roles catchup 으로 기존 admin row backfill.
         # operator/sales/dba/pending 미부여 (least-privilege).
+        # perm-category-hier(2026-07-14): '감사' 카테고리의 'AI 운영 현황' 탭 조회 권한이므로
+        # group 을 console→audit 로 재배치(표시 분류만 — code·enforcement 불변).
         "code": "console.aiops.read",
         "label": "AI 운영 현황 조회",
         "description": "AI 운영 관제 패널(워커 상태·provider 헬스·AI 활동 계측)을 조회할 수 있다 (운영자 전용).",
-        "group": "console",
+        "group": "audit",
     },
     {
         # TASK-0228: insight-worker 가 생성한 schema/table 분석(fact/rag/fingerprint)을
         # 접근 가능 데이터베이스(DB) 단위로 초기화(삭제)한다. 잘못 분석된 내용을 되돌릴 수단.
         # **파괴적** — audit.purge 와 동급으로 admin 한정 (admin seed = set(PERMISSION_CODES)
         # 자동 부여, operator/sales/pending 미부여). dry-run 미리보기 + typed-confirm + self-audit.
+        # perm-category-hier(2026-07-14): 실행 표면이 제품 상세(insight-reset 버튼,
+        # routers/admin_products.py)이므로 group 을 console→product 로 재배치 — '제품' 카테고리의
+        # 작동 권한(표시 분류만, code·enforcement 불변).
         "code": "insight.reset",
         "label": "insight 분석 초기화",
         "description": "접근 가능 데이터베이스 단위로 insight 분석 결과(fact/rag/fingerprint)를 삭제할 수 있다. 다음 worker cycle 에 자동 재분석된다. 시작/완료는 self-audit 으로 기록된다 (운영자 전용).",
-        "group": "console",
+        "group": "product",
+    },
+    # perm-category-hier(Critical §12.3, 사용자 승인 A안 2026-07-14): 관리 콘솔 좌측 nav 카테고리
+    # (계정/제품/감사/지식베이스/시스템) 단위의 최상위 '접근'(=카테고리 조회 게이트) 권한 5종.
+    # 카테고리 내 모든 권한(탭 조회·추가/수정/삭제·승인/작동)은 이 접근 권한 하위로 종속된다
+    # (UI 계층 admin.js PERMISSION_DEPENDENCIES + 탭 노출 ADMIN_TAB_CATEGORY_ACCESS AND 게이트).
+    # 백엔드 엔드포인트 enforcement 는 기존(console.access + 세부 권한) 유지 — 접근 권한은 nav
+    # 노출·부여 계층 규율이다. 기존 배포는 _backfill_console_category_access_v1 1회 backfill 로
+    # 접근 무손실(console.access + 카테고리 내 세부 권한 보유 principal 에 자동 부여).
+    {
+        "code": "console.account.access",
+        "label": "계정 접근",
+        "description": "관리 콘솔의 '계정' 카테고리(계정·역할 탭)에 접근할 수 있다. 카테고리 최상위 조회 게이트 — 계정/역할/LLM 사용 한도의 세부 권한은 이 권한 하위로 종속된다.",
+        "group": "account",
     },
     {
         "code": "account.read",
@@ -234,6 +254,13 @@ PERMISSION_DEFINITIONS = (
         "label": "LLM 사용 한도 조절",
         "description": "역할별 기본 / 계정별 특수 LLM 토큰 사용 한도를 설정하거나 해제할 수 있다. 조회 권한이 선행되어야 한다.",
         "group": "quota",
+    },
+    {
+        # perm-category-hier(2026-07-14): '지식베이스' 카테고리(메타데이터·그래프 뷰 탭) 최상위 접근 게이트.
+        "code": "console.kb.access",
+        "label": "지식베이스 접근",
+        "description": "관리 콘솔의 '지식베이스' 카테고리(메타데이터·그래프 뷰 탭)에 접근할 수 있다. 카테고리 최상위 조회 게이트 — 메타데이터 관리/검수·그래프 뷰의 세부 권한은 이 권한 하위로 종속된다.",
+        "group": "kb",
     },
     {
         # TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03, AC-0612):
@@ -418,10 +445,13 @@ PERMISSION_DEFINITIONS = (
     {
         # TASK-0273: "삭제" 가 soft-archive(보관)로 전환됨에 따라, 보관된 대화를 오용 방지
         # 목적으로 조회하는 전용 권한(감사). 일반 대화 읽기(conversation.read.any)와 분리.
+        # perm-category-hier(2026-07-14): 유일한 표면이 관리 콘솔 '감사 > 보관 대화' 탭이므로
+        # group 을 conversation_any→audit 로 재배치 — '감사' 카테고리의 탭 조회 권한
+        # (표시 분류만, code·enforcement 불변).
         "code": "conversation.archive.read.any",
         "label": "보관 대화 조회",
         "description": "모든 계정의 보관된(삭제 처리된) 대화를 오용 방지 목적으로 조회할 수 있다.",
-        "group": "conversation_any",
+        "group": "audit",
     },
     {
         "code": "conversation.cancel.own",
@@ -522,6 +552,13 @@ PERMISSION_DEFINITIONS = (
     # 작업 화면에서 제품으로 요청을 보내는 권한은 별개 축 — 동적 `product.access.<key>`
     # (group='product_access'). 두 축은 enforcement·권한 편집기 그룹 모두 분리한다.
     {
+        # perm-category-hier(2026-07-14): '제품' 카테고리(제품·데이터소스 탭) 최상위 접근 게이트.
+        "code": "console.product.access",
+        "label": "제품 접근",
+        "description": "관리 콘솔의 '제품' 카테고리(제품·데이터소스 탭)에 접근할 수 있다. 카테고리 최상위 조회 게이트 — 제품/데이터소스의 세부 권한은 이 권한 하위로 종속된다.",
+        "group": "product",
+    },
+    {
         "code": "product.read",
         "label": "제품 조회",
         "description": "관리 콘솔에서 제품(Product) 구성(목록·접근 DB·데이터소스 바인딩 현황)을 조회할 수 있다.",
@@ -563,6 +600,15 @@ PERMISSION_DEFINITIONS = (
     # `.export` 는 admin/dba — CSV / JSON dump 가능 (PII bulk export).
     # `.purge` 는 admin only — retention 초과 chunked PK 삭제 (자가 audit 동반).
     {
+        # perm-category-hier(2026-07-14): '감사' 카테고리(감사 로그·보관 대화·LLM 사용량·AI 운영 현황
+        # 4개 탭) 최상위 접근 게이트. 4개 탭의 조회 권한(audit.read.own/any·conversation.archive.read.any·
+        # console.usage.read·console.aiops.read)이 전부 이 권한 하위로 종속된다.
+        "code": "console.audit.access",
+        "label": "감사 접근",
+        "description": "관리 콘솔의 '감사' 카테고리(감사 로그·보관 대화·LLM 사용량·AI 운영 현황 탭)에 접근할 수 있다. 카테고리 최상위 조회 게이트 — 각 탭의 조회/내보내기/삭제 권한은 이 권한 하위로 종속된다.",
+        "group": "audit",
+    },
+    {
         "code": "audit.read.own",
         "label": "내 감사 로그 조회",
         "description": "자신이 actor 인 audit 이벤트 또는 자신을 target 으로 한 admin 이벤트를 조회할 수 있다.",
@@ -589,6 +635,13 @@ PERMISSION_DEFINITIONS = (
     # TASK-0095 (REQ-20260521-0002, Major §12.3): GLOBAL system prompt layer.
     # `settings` 그룹은 신규 `설정` 탭 (확장성 — 차후 기타 운영 항목 추가 대비) 의 권한 묶음.
     # admin only auto-grant. 다른 role 은 admin 콘솔에서 explicit override.
+    {
+        # perm-category-hier(2026-07-14): '시스템' 카테고리(설정 탭) 최상위 접근 게이트.
+        "code": "console.system.access",
+        "label": "시스템 접근",
+        "description": "관리 콘솔의 '시스템' 카테고리(설정 탭)에 접근할 수 있다. 카테고리 최상위 조회 게이트 — 전역 시스템 프롬프트/런타임 설정의 조회·수정 권한은 이 권한 하위로 종속된다.",
+        "group": "settings",
+    },
     {
         "code": "system_prompt.global.read",
         "label": "전역 시스템 프롬프트 조회",
@@ -638,6 +691,43 @@ _METADATA_MANUAL_IMPLIES = (
 #   WebSchemaMigrations 에 이 키가 있으면 backfill 완료 → 재실행 안 함(멱등 guard). 매 startup 무조건 재실행 시
 #   분리 이후 새로 묶음을 받은 역할까지 graph.read 를 자동 획득해 분리가 무력화되므로 반드시 1회만 수행한다.
 _GRAPH_PERM_SPLIT_MIGRATION_KEY = "graph-perm-split-v1"
+
+# perm-category-hier(Critical §12.3, 사용자 승인 A안 2026-07-14): 관리 콘솔 nav 카테고리별 최상위
+#   '접근'(조회 게이트) 권한 → 그 카테고리에 속한 세부 권한(탭 조회·추가/수정/삭제·승인/작동) 목록.
+#   용도: (1) _backfill_console_category_access_v1 — 기존 배포에서 console.access + 세부 권한 보유
+#   principal 에 접근 권한을 1회 자동 부여(접근 무손실), (2) 테스트의 카탈로그 정합 검증.
+#   admin.js 의 PERMISSION_DEPENDENCIES(UI 계층)·ADMIN_TAB_CATEGORY_ACCESS(탭 게이트)와 정합 유지.
+_CONSOLE_CATEGORY_ACCESS_LEAVES = {
+    "console.account.access": (
+        "account.read", "account.update", "account.delete", "account.activate",
+        "account.deactivate", "account.role.assign", "account.permission.override.manage",
+        "role.read", "role.create", "role.update", "role.delete", "role.permission.manage",
+        "quota.read", "quota.manage",
+    ),
+    "console.product.access": (
+        "product.read", "product.manage", "system_prompt.manage.role.any", "insight.reset",
+        "datasource.read", "datasource.manage",
+    ),
+    "console.audit.access": (
+        "audit.read.own", "audit.read.any", "audit.export", "audit.purge",
+        "conversation.archive.read.any", "console.usage.read", "console.aiops.read",
+    ),
+    "console.kb.access": (
+        "kb.ingest.manual", "metadata.glossary.manage", "metadata.enum.manage",
+        "metadata.table.manage", "metadata.column.manage",
+        "metadata.graph.read", "metadata.graph.analyze",
+        "kb.sample.curate", "kb.glossary.curate", "kb.enum.curate",
+    ),
+    "console.system.access": (
+        "system_prompt.global.read", "system_prompt.global.write",
+        "system.runtime.read", "system.runtime.write",
+    ),
+}
+
+# perm-category-hier: 1회 backfill 멱등 마커 키(WebSchemaMigrations). graph-perm-split 과 동일 규약 —
+#   매 startup 재실행 시 backfill 이후 새로 세부 권한만 받은 역할까지 접근 권한을 자동 획득해
+#   계층 게이트가 무력화되므로 정확히 1회만 수행한다.
+_CONSOLE_CATEGORY_ACCESS_MIGRATION_KEY = "console-category-access-v1"
 
 
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
@@ -1735,6 +1825,16 @@ def _ensure_seed_roles(conn) -> None:
             # 의 신규 항목을 못 본다(lockout). operator/sales/dba 미부여(least-privilege).
             "system.runtime.read",
             "system.runtime.write",
+            # perm-category-hier(Critical §12.3, 2026-07-14): admin 의 카테고리 접근 권한 5종 catchup.
+            # **필수** — 신규 권한은 role 생성 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 배포
+            # admin row 에는 retroactive 미적용. 미보정 시 탭 게이트(ADMIN_TAB_CATEGORY_ACCESS AND)
+            # 적용 후 기존 admin 이 콘솔 전 카테고리를 잃는다(lockout). 커스텀 역할은
+            # _backfill_console_category_access_v1 이 1회 보정(접근 무손실).
+            "console.account.access",
+            "console.product.access",
+            "console.audit.access",
+            "console.kb.access",
+            "console.system.access",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -1803,6 +1903,9 @@ VALUES (%s, %s)
                 "audit.export",
                 # TASK-0094 Sprint 1 Phase 3: dba 도 첨부 read.own catchup (운영 모니터링 자격).
                 "conversation.attachment.read.own",
+                # perm-category-hier(2026-07-14): dba 는 감사 모니터링 role — 감사 카테고리 접근 게이트
+                # 동반 부여(콘솔 진입권 console.access 이 없으면 inert, 있으면 감사 탭 노출 보존).
+                "console.audit.access",
             ):
                 pid = int(permission_map.get(code) or 0)
                 if pid <= 0:
@@ -1845,6 +1948,9 @@ VALUES (%s, %s)
     # graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰 권한을 메타데이터 관리 묶음에서 분리하며,
     #   분리 시점의 기존 묶음 보유 principal 의 그래프 접근을 1회 backfill 로 보존(B안 = 접근 보존, 비파괴).
     _backfill_graph_perm_split_v1(conn)
+    # perm-category-hier(Critical §12.3, 2026-07-14): 카테고리 접근 권한 5종 도입 시점의 기존 principal
+    #   접근을 1회 backfill 로 보존(console.access + 카테고리 세부 권한 보유자에 접근 권한 자동 부여).
+    _backfill_console_category_access_v1(conn)
 
 
 def _backfill_graph_perm_split_v1(conn) -> None:
@@ -1958,6 +2064,129 @@ WHERE ao.PermissionId = %s
         except Exception:
             # 마커 기록 실패 — 다음 startup 재시도(INSERT IGNORE 라 backfill 재적용 무해).
             pass
+
+
+def _backfill_console_category_access_v1(conn) -> None:
+    """perm-category-hier(Critical §12.3, 사용자 승인 A안 2026-07-14) — 1회성 접근 보존 backfill.
+
+    관리 콘솔 nav 카테고리별 최상위 '접근' 권한 5종(_CONSOLE_CATEGORY_ACCESS_LEAVES 키)을 도입하고
+    프론트 탭 노출을 "카테고리 접근 AND 탭 권한"(ADMIN_TAB_CATEGORY_ACCESS)으로 전환하면, 그동안
+    console.access + 세부 권한만으로 탭을 보던 기존 배포 principal 이 nav 노출을 잃는다. 이를 막기
+    위해 **도입 시점에 한 번만** 그때의 effective 노출을 명시 grant 로 고정한다(접근 무손실).
+
+    - 대상 1 (역할): console.access 와 카테고리 세부 권한을 모두 명시 보유한 role 에 그 카테고리의
+      접근 권한을 부여. (console.access 없는 role — operator/sales/pending 의 audit.read.own 등 —
+      은 오늘도 콘솔 진입 불가이므로 부여하지 않는다: least-privilege 보존.)
+    - 대상 2 (계정 오버라이드): 카테고리 세부 권한에 ALLOW 오버라이드를 가졌고 접근 권한에는 아직
+      오버라이드가 없는 account 에 접근 권한 ALLOW 오버라이드 부여.
+    - 대상 3 (계정 오버라이드×역할): console.access 를 ALLOW 오버라이드로 얻고 세부 권한은 역할에서
+      받는 account — role 이 console.access 미보유라 대상 1 에서 빠지는 조합 — 에 접근 권한 ALLOW
+      오버라이드 부여(오늘 탭이 보이던 상태 보존).
+
+    분리 전 카테고리 접근이 없던 principal(콘솔 진입 불가·세부 권한 전무)은 부여 대상이 아니다.
+    **멱등 1회 guard**: WebSchemaMigrations 의 _CONSOLE_CATEGORY_ACCESS_MIGRATION_KEY 마커. 매 startup
+    재실행 시 backfill 이후 새로 세부 권한만 받은 역할까지 접근 권한을 자동 획득해 계층 게이트가
+    무력화되므로 정확히 1회만 수행한다(graph-perm-split-v1 과 동일 규약). best-effort — 실패 시 조용히
+    skip 하고 마커 미기록이면 다음 startup 재시도(INSERT IGNORE 라 재시도 무해).
+    """
+    try:
+        cur = conn.cursor()
+        # 마커 테이블 자족 보장 — fast path(_ensure_seed_catchup)는 slow path 의 DDL 을 안 타므로
+        # 직접 IF NOT EXISTS 로 보장(graph-perm-split-v1 과 동일 — 미보장 시 backfill 영구 skip 위험).
+        cur.execute(
+            """
+CREATE TABLE IF NOT EXISTS WebSchemaMigrations (
+    MigrationKey VARCHAR(191) NOT NULL PRIMARY KEY,
+    AppliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cur.execute(
+            "SELECT 1 FROM WebSchemaMigrations WHERE MigrationKey = %s LIMIT 1",
+            (_CONSOLE_CATEGORY_ACCESS_MIGRATION_KEY,),
+        )
+        already = cur.fetchone()
+        cur.close()
+    except Exception:
+        # 마커 테이블 생성/조회 실패(DB error 등) — 이번 startup 은 안전하게 skip(다음 startup 재시도).
+        return
+    if already:
+        return
+    permission_map = _permission_id_map(conn)
+    console_pid = int(permission_map.get("console.access") or 0)
+    # 접근 권한 5종 pid 가 전부 hydrate 되어 있어야 본문 실행 — 부분 실행 후 마커를 남기면 남은
+    # 카테고리는 영구 미보정이 된다(FINDING-B 규약: 마커는 본문이 전부 실행된 경우에만 기록).
+    access_pids = {
+        code: int(permission_map.get(code) or 0)
+        for code in _CONSOLE_CATEGORY_ACCESS_LEAVES
+    }
+    if console_pid <= 0 or any(pid <= 0 for pid in access_pids.values()):
+        return
+    cur = conn.cursor()
+    for access_code, leaf_codes in _CONSOLE_CATEGORY_ACCESS_LEAVES.items():
+        access_pid = access_pids[access_code]
+        leaf_pids = [int(permission_map.get(code) or 0) for code in leaf_codes]
+        leaf_pids = [pid for pid in leaf_pids if pid > 0]
+        if not leaf_pids:
+            continue
+        leaf_ph = ", ".join(["%s"] * len(leaf_pids))
+        # 대상 1 — 역할: console.access + 카테고리 세부 권한 보유 role 에 접근 권한 부여.
+        cur.execute(
+            f"""
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT DISTINCT rp.RoleId, %s
+FROM WebRolePermissions rp
+JOIN WebRolePermissions rc ON rc.RoleId = rp.RoleId AND rc.PermissionId = %s
+WHERE rp.PermissionId IN ({leaf_ph})
+            """,
+            (access_pid, console_pid, *leaf_pids),
+        )
+        # 대상 2 — 계정 오버라이드: 세부 권한 ALLOW override 보유 + 접근 권한 override 부재.
+        cur.execute(
+            f"""
+INSERT IGNORE INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+SELECT DISTINCT ao.AccountId, %s, 'allow'
+FROM WebAccountPermissionOverrides ao
+WHERE ao.PermissionId IN ({leaf_ph})
+  AND LOWER(ao.OverrideValue) = 'allow'
+  AND NOT EXISTS (
+    SELECT 1 FROM WebAccountPermissionOverrides ao2
+    WHERE ao2.AccountId = ao.AccountId AND ao2.PermissionId = %s
+  )
+            """,
+            (access_pid, *leaf_pids, access_pid),
+        )
+        # 대상 3 — console.access ALLOW override + 역할이 세부 권한 보유(role 은 console.access 미보유
+        #   가능) + 접근 권한 override 부재. 오늘 "override 진입 + 역할 세부 권한" 으로 탭이 보이던
+        #   조합의 노출 보존.
+        cur.execute(
+            f"""
+INSERT IGNORE INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+SELECT DISTINCT ao.AccountId, %s, 'allow'
+FROM WebAccountPermissionOverrides ao
+JOIN WebAccounts acc ON acc.Id = ao.AccountId
+JOIN WebRolePermissions rp ON rp.RoleId = acc.RoleId AND rp.PermissionId IN ({leaf_ph})
+WHERE ao.PermissionId = %s
+  AND LOWER(ao.OverrideValue) = 'allow'
+  AND NOT EXISTS (
+    SELECT 1 FROM WebAccountPermissionOverrides ao2
+    WHERE ao2.AccountId = ao.AccountId AND ao2.PermissionId = %s
+  )
+            """,
+            (access_pid, *leaf_pids, console_pid, access_pid),
+        )
+    cur.close()
+    # 마커 기록 — 본문(5 카테고리 전부)이 실행된 경우에만 1회 완료 표시(graph-perm-split FINDING-B 규약).
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT IGNORE INTO WebSchemaMigrations (MigrationKey) VALUES (%s)",
+            (_CONSOLE_CATEGORY_ACCESS_MIGRATION_KEY,),
+        )
+        cur.close()
+    except Exception:
+        # 마커 기록 실패 — 다음 startup 재시도(INSERT IGNORE 라 backfill 재적용 무해).
+        pass
 
 
 def _cleanup_deprecated_role_permissions(conn) -> None:

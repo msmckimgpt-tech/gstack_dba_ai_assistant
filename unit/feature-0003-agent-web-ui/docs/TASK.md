@@ -5635,3 +5635,20 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(29 releases·releases[0].date=2026-07-14/items=10·releases[1].date=2026-07-13 보존·스키마 type/area/title·누출 스캔 0).
 - [x] landing/배포: verify-completion(operational, feature-0003) → **로컬 commit 까지만**. **push/merge-to-main/deploy(wrapper fetch→rebase→ff-push→web 재빌드+헬스)는 cron wrapper 소유**(system-prompt v3 위임 — 스킬 미수행). META(STATUS·wiki·ARCHITECTURE·SECURITY·meta/REVIEW)는 별도 commit(REV-20260715T025509-META-0036-doc-sync-0715).
 - [ ] PB-0008 Windows-browser: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(메시지 편집·그래프 도움말/카테고리밴드·애니메이션/계정탭)는 각 원천 cycle POST-DEPLOY PB-0008 이 이미 검증(PASS). 사유 TEST.md §CHECK#13(2026-07-15).
+## 20260714T1819-perm-category-hier — 관리 콘솔 권한 체계를 카테고리 '접근' 계층으로 재구성 (Critical §12.3 인증/인가, 2026-07-14)
+
+- **요청**: "관리 콘솔 > 계정 및 역할의 권한 체계가 구조적으로 난잡 — ① 최상위=카테고리별 '접근'(=조회) ② 같은 카테고리 권한은 접근 하위 종속(추가/수정/삭제·탭 조회 재귀·승인/작동) ③ 상위 활성화 시 하위 UI 펼침." (`/_template:entry` arg-given dispatch)
+- **위험등급**: Critical(인증/인가 구조 — 신규 권한 5종 + 탭 게이트 전환). **사용자 승인 = A안**(카테고리 접근 신설 + 무손실 backfill; B안=표시만 은 "최상위 접근 권한" 요건 미충족으로 기각). 병렬 세션 겹침(ITEM-09 admin.js)도 사용자 결정 "그대로 진행"(수정 영역 상이 — 권한 상수 vs 그래프 모듈).
+- **현황 진단(난잡의 실체)**: ① 카테고리 접근 권한 부재(console.access 아래 그룹 base 평면) ② 감사 4탭 조회 권한이 3개 그룹 산재(audit / conversation_any(보관) / console(usage·aiops)) ③ system.runtime.* 종속 미선언 루트 + settings 탭 게이트 누락 ④ insight.reset 이 console 그룹(실표면=제품 상세) ⑤ conversation.create 가 목록조회 게이트 밖 루트.
+- **§2.1 Plan**:
+  - backend `web_context.py`: 신규 접근 5종 `console.{account,product,audit,kb,system}.access`(각 카테고리 그룹, desc≤255) + GroupName 재배치(usage/aiops/archive→audit, insight.reset→product) + admin catchup 5종·dba `console.audit.access` + `_CONSOLE_CATEGORY_ACCESS_LEAVES` 맵 + `_backfill_console_category_access_v1`(1회 멱등, `WebSchemaMigrations` `console-category-access-v1`, 대상: ①console.access+세부 보유 role ②세부 ALLOW override 계정 ③console.access override×역할 세부 조합).
+  - frontend `admin.js`: `PERMISSION_DEPENDENCIES` 전면 재구성(카테고리 접근 계층 + system.runtime.*·create 종속 추가) + `ADMIN_TAB_CATEGORY_ACCESS`(canSeeTab = 카테고리 AND && 탭 OR) + settings 탭 게이트 system.runtime.* 보강 + 그룹 순서/라벨(kb="지식베이스") 정합. `app.js`: 그룹 라벨(quota/datasource/kb)·`PERMISSION_GROUP_OVERRIDES`·접근 5종 라벨.
+  - **enforcement 불변**: 엔드포인트 require_permission 무변경(접근 권한=nav 노출 게이트+부여 계층, 역함의 없음 — SECURITY §22).
+  - tests: dependency-map 계약 갱신(M3/M4/M5 신설·V2/V3/V4·t3/t5/t6) + quota f2 + insight_reset group + verify_admin_tab_gating.mjs(카테고리 AND 케이스 + release-notes stale 기대 2건 정정).
+  - docs: SECURITY.md §22 신설 · CONVENTIONS §10.6 정합 · 본 unit TASK/REPORT/MODIFY/REVIEW/DECISIONS.
+  - **acceptance**: 카테고리 접근 미보유 시 해당 카테고리 탭/그룹 미노출·세부 권한 UI 접힘 / 접근+탭권한 보유 시 기존과 동일 노출 / 기존 배포 principal 접근 상실 0(backfill) / admin lockout 0(catchup).
+- [x] backend/frontend/tests 구현 · ast/py_compile + node --check(ESM) OK.
+- [x] 검증(로컬): 권한 타깃 50 PASS + feature-0003 스위트 **785 passed/0 failed**(test_share_redaction_invariant 는 main baseline 도 동일 실패하는 호스트 환경 요인이라 제외 — 컨테이너 make test 에서 재확인) + jsdom 탭 게이팅 **47/0 PASS**.
+- [ ] §18.8 보안 렌즈 적대 리뷰(권한상승·접근상실·backfill 멱등·FE/BE parity·lockout).
+- [ ] 컨테이너 make test → verify-completion → commit → PR → 머지 → web 재배포(deploy_scope: included).
+- [ ] **배포 후 실증**: web 로그 seed catchup 정상 + `WebSchemaMigrations` `console-category-access-v1` row + 역할별 유효권한 무손실(탭 노출 동일) + PB-0008 실브라우저(역할 편집 grid 카테고리 계층·접근 체크 시 하위 펼침·제한 역할 탭 가시성).

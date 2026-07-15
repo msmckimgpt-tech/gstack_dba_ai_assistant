@@ -192,7 +192,8 @@ def test_like_escape_metachars():
 def test_insight_reset_permission_in_catalog():
     assert "insight.reset" in app.PERMISSION_CODES
     defn = app.PERMISSION_DEFINITION_MAP["insight.reset"]
-    assert defn["group"] == "console"
+    # perm-category-hier(2026-07-14): 실행 표면이 제품 상세(insight-reset 버튼)라 group console→product 재배치.
+    assert defn["group"] == "product"
 
 
 def test_insight_reset_in_admin_seed():

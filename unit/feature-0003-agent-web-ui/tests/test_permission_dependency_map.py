@@ -8,17 +8,20 @@ admin.js 의 `PERMISSION_DEPENDENCIES`(child -> 선행 parent) 맵을 파싱해
 검증 대상:
   M1  맵 파싱 — 25개 이상 엔트리, child/parent 모두 실제 권한 code.
   M2  비순환 — 모든 체인이 루트로 종료(self-loop / cycle 없음).
-  M3  마스터 게이트 — account.read / role.read / audit.read.own /
-        system_prompt.global.read 의 부모 = console.access. console.access 는
-        키가 아님(루트).
+  M3  마스터 게이트 + 카테고리 접근(perm-category-hier, Critical §12.3, 사용자 승인 A안 2026-07-14) —
+        console.access 하위에 카테고리 접근 5종(console.{account,product,audit,kb,system}.access),
+        각 카테고리의 탭 조회 base(account.read/role.read/audit.read.own/...)는 소속 카테고리
+        접근을 부모로 둔다. console.access 는 키가 아님(루트).
   M4  own→any — `.any`(전체) 대화 권한은 대응 `.own`(내) 권한을 부모로 둔다.
+        (예외: conversation.archive.read.any 는 감사 카테고리 탭 권한 — console.audit.access 하위.)
+  M5  카테고리-하위 정합 — web_context._CONSOLE_CATEGORY_ACCESS_LEAVES 의 모든 세부 권한의
+        조상 체인이 그 카테고리의 접근 권한을 경유한다(백엔드 backfill 맵 ↔ FE 종속 맵 동치).
   V1  비파괴 — 임의 checked 집합에서 checked 권한은 항상 visible(부여된 권한 미숨김).
   V2  마스터 게이트 OFF — checked=∅ 이면 관리 권한 section 의 비루트 권한 전부 hidden,
         console.access 만 visible(계정·역할 등 그룹이 통째 접힘).
-  V3  중간 게이트 — console.access ON·account.read OFF → account.read visible,
-        account.update hidden.
-  V4  orphan 체인 — account.delete 만 checked → account.delete·account.read·
-        console.access 전부 visible(조상 강제 노출), account.update hidden.
+  V3  중간 게이트 — console.access·console.account.access ON·account.read OFF →
+        account.read visible, account.update hidden.
+  V4  orphan 체인 — account.delete 만 checked → 게이트 미충족이라 hidden(단순화 계약).
 
 `make test`(agent 이미지, --no-deps)에서 DB 없이 정적 파싱으로 실행된다.
 """
@@ -127,27 +130,83 @@ def test_m2_acyclic_terminates_at_root():
         # 루트(DEPS 에 없는 code)로 종료됨
 
 
-def test_m3_master_gate_console_access():
-    # graph-perm-split(2026-07-13): metadata.graph.read 도 console.access 직속(그래프 뷰 별도 탭 분리).
-    for base in ("account.read", "role.read", "audit.read.own", "system_prompt.global.read",
-                 "metadata.graph.read"):
-        assert DEPS.get(base) == "console.access", f"{base} 의 부모가 console.access 아님"
+_CATEGORY_ACCESS = (
+    "console.account.access", "console.product.access", "console.audit.access",
+    "console.kb.access", "console.system.access",
+)
+
+
+def test_m3_master_gate_and_category_access():
+    # perm-category-hier(Critical §12.3, 2026-07-14): console.access 하위에 카테고리 접근 5종,
+    #   각 카테고리의 탭 조회 base 는 소속 카테고리 접근을 부모로 둔다.
+    for access in _CATEGORY_ACCESS:
+        assert DEPS.get(access) == "console.access", f"{access} 의 부모가 console.access 아님"
+    for base, access in (
+        ("account.read", "console.account.access"),
+        ("role.read", "console.account.access"),
+        ("quota.read", "console.account.access"),
+        ("product.read", "console.product.access"),
+        ("datasource.read", "console.product.access"),
+        ("audit.read.own", "console.audit.access"),
+        ("conversation.archive.read.any", "console.audit.access"),
+        ("console.usage.read", "console.audit.access"),
+        ("console.aiops.read", "console.audit.access"),
+        ("kb.ingest.manual", "console.kb.access"),
+        ("metadata.graph.read", "console.kb.access"),
+        ("kb.sample.curate", "console.kb.access"),
+        ("kb.glossary.curate", "console.kb.access"),
+        ("kb.enum.curate", "console.kb.access"),
+        ("system_prompt.global.read", "console.system.access"),
+        ("system.runtime.read", "console.system.access"),
+    ):
+        assert DEPS.get(base) == access, f"{base} 의 부모가 {access} 아님 (실제 {DEPS.get(base)})"
+    # 작동 권한 오배치 정정: insight.reset 은 제품 카테고리의 작동 권한(product.read 하위).
+    assert DEPS.get("insight.reset") == "product.read", "insight.reset 부모가 product.read 아님"
+    # 시스템 카테고리: runtime write 는 read 선행(기존 미선언 루트였던 것을 정합).
+    assert DEPS.get("system.runtime.write") == "system.runtime.read", "system.runtime.write 종속 누락"
     assert "console.access" not in DEPS, "console.access 는 루트여야 함(키가 되면 안 됨)"
 
 
 def test_m4_conversation_list_gate():
-    # TASK-0269: 대화 own/any 그룹 분리 + "목록 조회" 게이트.
+    # TASK-0269 + perm-category-hier: 대화 own/any 그룹 분리 + "목록 조회"(카테고리 접근=조회) 게이트.
     #   전체 대화(.any) 동작 권한은 conversation.list.any 를, 내 대화 동작 권한은 conversation.list.own 을 부모로 둔다.
-    #   create / list.own / list.any 는 루트(부모 없음).
-    for root in ("conversation.create", "conversation.list.own", "conversation.list.any"):
+    #   list.own / list.any 는 루트(부모 없음). create 는 동작 권한 — list.own 하위(perm-category-hier 정합).
+    for root in ("conversation.list.own", "conversation.list.any"):
         assert DEPS.get(root) is None, f"{root} 는 루트(부모 없음)여야 함 (실제 {DEPS.get(root)})"
+    assert DEPS.get("conversation.create") == "conversation.list.own", \
+        "conversation.create 는 내 대화 목록 조회(접근 게이트) 하위여야 함"
     for code in VALID_CODES:
         if not code.startswith("conversation."):
             continue
         if code in ("conversation.create", "conversation.list.own", "conversation.list.any"):
             continue
+        if code == "conversation.archive.read.any":
+            # perm-category-hier: 보관 대화 조회는 감사 카테고리 탭 권한(console.audit.access 하위).
+            continue
         gate = "conversation.list.any" if code.endswith(".any") else "conversation.list.own"
         assert DEPS.get(code) == gate, f"{code} 의 게이트가 {gate} 아님 (실제 {DEPS.get(code)})"
+
+
+def test_m5_backend_category_leaves_map_coherent():
+    # perm-category-hier: 백엔드 backfill 맵(_CONSOLE_CATEGORY_ACCESS_LEAVES)과 FE 종속 맵 동치 —
+    #   각 카테고리의 모든 세부 권한의 조상 체인이 그 카테고리의 접근 권한을 경유해야 한다.
+    import web_context
+
+    leaves_map = web_context._CONSOLE_CATEGORY_ACCESS_LEAVES
+    assert set(leaves_map.keys()) == set(_CATEGORY_ACCESS), "카테고리 접근 5종 키 불일치"
+    for access, leaves in leaves_map.items():
+        assert access in VALID_CODES, f"{access} 가 카탈로그에 없음"
+        for leaf in leaves:
+            assert leaf in VALID_CODES, f"{leaf} 가 카탈로그에 없음"
+            chain = []
+            cur = DEPS.get(leaf)
+            while cur is not None:
+                chain.append(cur)
+                cur = DEPS.get(cur)
+            assert access in chain, f"{leaf} 의 조상 체인에 {access} 부재 (체인={chain})"
+    # 관리 콘솔 마스터 게이트 경유: 접근 5종의 조상 = console.access.
+    for access in _CATEGORY_ACCESS:
+        assert DEPS.get(access) == "console.access"
 
 
 # ── V: 가시성 불변식 (TASK-0264 — 게이트 체인 충족 시에만 노출, 부여 무관) ──────────
@@ -189,21 +248,30 @@ def test_v2_master_gate_off_collapses_manage_section():
         "system_prompt.global.read", "system_prompt.global.write",
     ):
         assert not vis[code], f"게이트 OFF 인데 {code} 가 보임"
-    # 운영 권한 루트(TASK-0269: create / list.own / list.any)는 게이트 없이 visible.
-    # TASK-0288: product.manage 는 운영 루트가 아님 — 제품 관리(product.read 게이트, console.access 하위)로 이동.
-    for code in ("conversation.create", "conversation.list.own", "conversation.list.any"):
+    # 운영 권한 루트(TASK-0269 + perm-category-hier: list.own / list.any)는 게이트 없이 visible.
+    # create 는 perm-category-hier 에서 list.own 하위 동작 권한으로 정합 — 루트 아님.
+    for code in ("conversation.list.own", "conversation.list.any"):
         assert vis[code], f"운영 루트 {code} 가 숨겨짐"
+    assert not vis["conversation.create"], "list.own OFF 인데 create 가 보임(접근 게이트 미작동)"
     # 동작 권한은 "목록 조회" 게이트 OFF 라 hidden (read.own→list.own, read.any→list.any)
     assert not vis["conversation.read.own"], "list.own OFF 인데 read.own 가 보임"
     assert not vis["conversation.read.any"], "list.any OFF 인데 read.any 가 보임"
+    # perm-category-hier: 카테고리 접근 5종도 비루트(console.access 하위)라 hidden.
+    for code in _CATEGORY_ACCESS:
+        assert not vis[code], f"마스터 게이트 OFF 인데 {code} 가 보임"
 
 
 def test_v3_intermediate_gate_account_read():
     all_codes = set(VALID_CODES)
-    vis = compute_visibility({"console.access"}, all_codes)
-    assert vis["account.read"], "console.access ON 이면 account.read(그룹 base) 노출"
+    # perm-category-hier: 카테고리 접근이 중간 게이트 — console.access 만 켜면 카테고리 접근만 노출.
+    vis0 = compute_visibility({"console.access"}, all_codes)
+    assert vis0["console.account.access"], "console.access ON 이면 계정 카테고리 접근 노출"
+    assert not vis0["account.read"], "console.account.access OFF 인데 account.read 가 보임"
+    vis = compute_visibility({"console.access", "console.account.access"}, all_codes)
+    assert vis["account.read"], "카테고리 접근 ON 이면 account.read(탭 base) 노출"
     assert not vis["account.update"], "account.read OFF 인데 account.update 가 보임"
-    assert vis["role.read"], "console.access ON 이면 role.read 노출"
+    assert vis["role.read"], "카테고리 접근 ON 이면 role.read 노출"
+    assert vis["quota.read"], "카테고리 접근 ON 이면 quota.read 노출"
 
 
 def test_v4_granted_detail_collapsed_when_gate_off():
@@ -214,10 +282,13 @@ def test_v4_granted_detail_collapsed_when_gate_off():
     assert not vis["account.read"], "게이트(console.access) OFF 라 account.read 도 숨김"
     assert vis["console.access"], "console.access(루트)는 항상 노출"
     assert not vis["account.update"], "형제 account.update 도 게이트 OFF 라 숨김"
-    # 게이트 체인을 충족하면 도달(노출).
-    vis2 = compute_visibility({"console.access", "account.read", "account.delete"}, all_codes)
+    # 게이트 체인을 충족하면 도달(노출) — perm-category-hier: 체인에 카테고리 접근 포함.
+    vis2 = compute_visibility(
+        {"console.access", "console.account.access", "account.read", "account.delete"}, all_codes
+    )
     assert vis2["account.delete"], "게이트 체인 충족 시 account.delete 노출"
     assert vis2["account.read"] and vis2["console.access"], "충족된 게이트들도 노출"
+    assert vis2["console.account.access"], "충족된 카테고리 접근도 노출"
 
 
 # ── V(override): 계정 override 모드 가시성 불변식 (TASK-0264) ──────────────────────
@@ -241,33 +312,42 @@ def test_v6_override_gate_allow_reveals_children():
     assert not vis["account.delete"], "게이트 미충족(inherit)인데 deny account.delete 노출됨"
     assert not vis["account.read"], "게이트(console.access) 미허용이라 account.read 도 접힘"
     assert vis["console.access"], "console.access(루트)는 노출"
-    # 게이트 허용 체인 → 자식 노출. console.access·account.read 허용 → account.update 노출.
-    vis2 = compute_visibility_override({"console.access": "allow", "account.read": "allow"}, all_codes)
-    assert vis2["account.read"], "console.access 허용 시 account.read 노출"
+    # 게이트 허용 체인 → 자식 노출. console.access·카테고리 접근·account.read 허용 → account.update 노출.
+    vis2 = compute_visibility_override(
+        {"console.access": "allow", "console.account.access": "allow", "account.read": "allow"}, all_codes
+    )
+    assert vis2["account.read"], "카테고리 접근 허용 시 account.read 노출"
     assert vis2["account.update"], "account.read 허용 시 account.update 노출"
     # 게이트 거부는 자식을 열지 않음(허용만).
-    vis3 = compute_visibility_override({"console.access": "allow", "account.read": "deny"}, all_codes)
+    vis3 = compute_visibility_override(
+        {"console.access": "allow", "console.account.access": "allow", "account.read": "deny"}, all_codes
+    )
     assert not vis3["account.update"], "account.read=거부 면 account.update 안 열림"
 
 
 def test_v7_override_inherit_allow_gate_reveals_children():
     # TASK-0270: 계정 override 게이트는 "허용" 뿐 아니라 "상속(허용)"(상속 + 역할이 부여)에도 펼친다.
     all_codes = set(VALID_CODES)
-    # console.access·account.read 가 override "상속"이고 역할이 둘 다 부여(inherited) → account.update 노출.
-    inherited = {"console.access", "account.read"}
+    # console.access·카테고리 접근·account.read 가 override "상속"이고 역할이 셋 다 부여(inherited)
+    # → account.update 노출.
+    inherited = {"console.access", "console.account.access", "account.read"}
     vis = compute_visibility_override({}, all_codes, inherited)  # 모든 값 기본 "상속"
-    assert vis["account.read"], "console.access 상속(허용) 시 account.read 노출"
+    assert vis["account.read"], "카테고리 접근 상속(허용) 시 account.read 노출"
     assert vis["account.update"], "account.read 상속(허용) 시 account.update 노출"
     # 역할이 부여 안 함(inherited 비어있음) → 상속(거부) → 안 펼침.
     vis_none = compute_visibility_override({}, all_codes, set())
     assert not vis_none["account.read"], "역할 미부여 상속(거부)면 account.read 안 노출"
     assert not vis_none["account.update"], "역할 미부여면 account.update 안 노출"
     # 명시 "거부"는 역할이 부여(inherited)해도 게이트 OFF — 거부가 상속을 이긴다.
-    vis_deny = compute_visibility_override({"account.read": "deny"}, all_codes, {"console.access", "account.read"})
+    vis_deny = compute_visibility_override(
+        {"account.read": "deny"}, all_codes,
+        {"console.access", "console.account.access", "account.read"},
+    )
     assert not vis_deny["account.update"], "account.read=거부면 역할이 부여해도 account.update 안 열림"
     # "허용"은 inherited 무관하게 펼침.
     vis_allow = compute_visibility_override(
-        {"console.access": "allow", "account.read": "allow"}, all_codes, set()
+        {"console.access": "allow", "console.account.access": "allow", "account.read": "allow"},
+        all_codes, set(),
     )
     assert vis_allow["account.update"], "허용 게이트는 inherited 무관 펼침"
 
@@ -380,12 +460,14 @@ def test_t2_conversation_groups_split_and_list_gate_nesting():
                 assert pos[gate] < pos[code], f"게이트 {gate} 가 {code} 뒤"
 
 
-def test_t3_account_read_is_group_root_depth0():
-    # account.read 는 부모(console.access)가 다른 그룹(console)이라 account 그룹 내 루트(depth 0).
+def test_t3_account_category_access_is_group_root_depth0():
+    # perm-category-hier: account 그룹 내 루트는 카테고리 접근(console.account.access, 부모=다른 그룹
+    # console 의 console.access). account.read 는 그 자식(depth 1), 세부 권한은 depth 2.
     acct = [c for c in app.PERMISSION_CODES if _group_of(c) == "account"]
     depth = {c: d for c, d in _order_items_as_tree(acct)}
-    assert depth["account.read"] == 0, "account.read 는 그룹 내 루트(depth 0)여야 함"
-    assert depth["account.update"] == 1, "account.update 는 account.read 의 자식(depth 1)"
+    assert depth["console.account.access"] == 0, "console.account.access 가 그룹 내 루트(depth 0)여야 함"
+    assert depth["account.read"] == 1, "account.read 는 카테고리 접근의 자식(depth 1)"
+    assert depth["account.update"] == 2, "account.update 는 account.read 의 자식(depth 2)"
 
 
 def test_t4_grid_list_is_single_column_not_grid():
@@ -402,45 +484,48 @@ def test_t4_grid_list_is_single_column_not_grid():
 
 
 def test_t5_metadata_group_gate_hierarchy():
-    """metadata-perm-hier + graph-perm-split: 메타데이터(kb 그룹) 종속 정합화 pin. 다른 관리 그룹
-    (account.read→account.*, quota.read→quota.manage)처럼 "그룹 게이트 → 세부" 2단 계층이어야 한다. 묶음
-    `kb.ingest.manual` 이 게이트(→console.access), 편집 4종 metadata.*.manage 는 묶음 아래(→kb.ingest.manual).
-
-    graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰가 별도 최상위 탭으로 분리됨에 따라
-    metadata.graph.read 는 묶음 하위가 아니라 console.access 직속(묶음과 형제, 그룹 루트)이다."""
+    """metadata-perm-hier + graph-perm-split + perm-category-hier: 지식베이스(kb 그룹) 종속 계층 pin.
+    카테고리 접근 console.kb.access 가 그룹 루트(→console.access), 그 아래 묶음 kb.ingest.manual
+    (편집 4종의 게이트)·검수 3종·그래프 뷰 조회(metadata.graph.read)가 형제로 오고, 편집 4종은 묶음
+    아래(depth 2), 능동 분석 실행(graph.analyze)은 graph.read 아래(depth 2)다."""
     _META_EDIT4 = (
         "metadata.glossary.manage", "metadata.enum.manage", "metadata.table.manage",
         "metadata.column.manage",
     )
-    assert DEPS.get("kb.ingest.manual") == "console.access", "묶음 kb.ingest.manual 게이트가 console.access 아님"
+    assert DEPS.get("console.kb.access") == "console.access", "console.kb.access 부모가 console.access 아님"
+    assert DEPS.get("kb.ingest.manual") == "console.kb.access", "묶음 kb.ingest.manual 게이트가 console.kb.access 아님"
     for m in _META_EDIT4:
         assert DEPS.get(m) == "kb.ingest.manual", f"{m} 부모가 kb.ingest.manual 아님(평면 회귀)"
-    # graph-perm-split: 그래프 뷰 조회는 묶음에서 분리 — console.access 직속(형제).
-    assert DEPS.get("metadata.graph.read") == "console.access", \
-        "metadata.graph.read 는 graph-perm-split 후 console.access 직속이어야 함(묶음 종속 아님)"
+    # graph-perm-split: 그래프 뷰 조회는 묶음에서 분리 — 카테고리 접근 하위(묶음과 형제).
+    assert DEPS.get("metadata.graph.read") == "console.kb.access", \
+        "metadata.graph.read 는 카테고리 접근(console.kb.access) 하위여야 함(묶음 종속 아님)"
     # graph-analyze-perm(2026-07-14): AI 능동 분석 실행은 조회(graph.read)의 하위 권한 — 종속 부모=graph.read.
     assert DEPS.get("metadata.graph.analyze") == "metadata.graph.read", \
         "metadata.graph.analyze 는 graph-analyze-perm 후 metadata.graph.read 하위여야 함(실행=조회의 하위)"
-    # kb 그룹 트리 depth: 묶음=0(그룹 루트), 편집 4종=1(묶음 자식), graph.read=0(console.access 직속 = 그룹 루트),
-    #   graph.analyze=1(graph.read 자식 — 조회의 하위 실행 권한).
+    # 검수/승급(승인) 3종은 카테고리 접근 하위 독립 항목(묶음과 형제 — curate-only 부여 패턴 보존).
+    for c in ("kb.sample.curate", "kb.glossary.curate", "kb.enum.curate"):
+        assert DEPS.get(c) == "console.kb.access", f"{c} 부모가 console.kb.access 아님"
+    # kb 그룹 트리 depth: 카테고리 접근=0(그룹 루트), 묶음/검수/graph.read=1, 편집 4종/graph.analyze=2.
     kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
     tree = dict(_order_items_as_tree(kb_codes))
-    assert tree.get("kb.ingest.manual") == 0, "kb.ingest.manual 이 그룹 루트(depth 0) 아님"
+    assert tree.get("console.kb.access") == 0, "console.kb.access 가 그룹 루트(depth 0) 아님"
+    assert tree.get("kb.ingest.manual") == 1, "kb.ingest.manual 이 카테고리 접근 아래(depth 1) 아님"
     for m in _META_EDIT4:
-        assert tree.get(m) == 1, f"{m} 이 묶음 아래(depth 1) 아님 — 계층 회귀"
-    assert tree.get("metadata.graph.read") == 0, "metadata.graph.read 가 그룹 루트(depth 0) 아님 — 분리 회귀"
-    assert tree.get("metadata.graph.analyze") == 1, "metadata.graph.analyze 가 graph.read 아래(depth 1) 아님 — 하위 권한 회귀"
+        assert tree.get(m) == 2, f"{m} 이 묶음 아래(depth 2) 아님 — 계층 회귀"
+    assert tree.get("metadata.graph.read") == 1, "metadata.graph.read 가 depth 1 아님 — 분리 회귀"
+    assert tree.get("metadata.graph.analyze") == 2, "metadata.graph.analyze 가 graph.read 아래(depth 2) 아님 — 하위 권한 회귀"
 
 
 def test_t6_metadata_reachable_when_gate_off():
     """B안 개별 부여 보존: 게이트(kb.ingest.manual) OFF 여도 개별 metadata.* 는 도달 가능해야 한다.
-    console.access ON·kb.ingest.manual OFF → metadata.* 는 hidden(progressive disclosure 정상)이지만,
-    kb 그룹은 루트 권한(kb.ingest.manual 게이트 자체 + kb.sample.curate 등)이 항상 보여 '더 보기' 탈출구가
-    보장 → 통째 숨지 않는다(unreachable 아님)."""
+    console.access·console.kb.access ON·kb.ingest.manual OFF → metadata.* 는 hidden(progressive
+    disclosure 정상)이지만, kb 그룹은 루트(카테고리 접근)가 항상 보여 '더 보기' 탈출구가 보장
+    → 통째 숨지 않는다(unreachable 아님)."""
     all_codes = set(app.PERMISSION_CODES)
-    vis = compute_visibility({"console.access"}, all_codes)  # 묶음 미체크
+    vis = compute_visibility({"console.access", "console.kb.access"}, all_codes)  # 묶음 미체크
     assert vis["metadata.glossary.manage"] is False, "게이트 OFF 인데 metadata 노출됨(계층 미작동)"
-    assert vis["kb.ingest.manual"] is True, "그룹 게이트(묶음)가 루트인데 hidden — 도달 레버 소실"
+    assert vis["kb.ingest.manual"] is True, "그룹 게이트(묶음)가 카테고리 접근 아래인데 hidden — 도달 레버 소실"
     kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
     kb_roots = [c for c in kb_codes if DEPS.get(c) not in set(kb_codes)]
     assert kb_roots, "kb 그룹에 루트 권한 없음 — '더 보기' 탈출구 부재 위험"
+    assert "console.kb.access" in kb_roots, "카테고리 접근이 kb 그룹 루트가 아님"

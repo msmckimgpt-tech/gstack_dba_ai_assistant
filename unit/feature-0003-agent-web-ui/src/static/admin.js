@@ -160,7 +160,10 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // TASK-0288: datasource 그룹 신설(관리 콘솔 데이터소스 권한) + 제품 권한 2축 분리 —
 //   product(제품 관리, 관리 콘솔 구성: product.read/manage) ↔ product_access(제품 사용,
 //   작업 화면에서 요청 전송: 동적 product.access.<key>). 사용자 결정 2026-06-16.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "datasource", "kb", "audit", "settings", "product", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
+// perm-category-hier(Critical §12.3, 사용자 승인 A안 2026-07-14): 그룹 순서를 관리 콘솔 좌측 nav
+//   카테고리 순서(계정[account·role·quota] → 제품[product·datasource] → 감사 → 지식베이스 → 시스템)와
+//   정합. 각 카테고리 최상위엔 '접근'(console.<cat>.access) 조회 게이트가 오고 세부 권한이 하위 종속.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
@@ -168,8 +171,9 @@ const PERMISSION_GROUP_LABELS = {
   // TASK-20260623T030418-quota-rbac-permission: LLM 토큰 사용 한도(역할 기본·계정 특수)의 조회/조절 권한 그룹.
   quota: "LLM 사용 한도",
   datasource: "데이터소스",
-  // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수.
-  kb: "지식베이스(KB) 검수",
+  // perm-category-hier: 메타데이터 관리·검수·그래프 뷰를 포괄하므로 "지식베이스(KB) 검수"→"지식베이스"
+  //   (검수 전용이라는 오해 해소 — app.js PERMISSION_GROUP_LABELS 와 동일 유지, CONVENTIONS §10.6).
+  kb: "지식베이스",
   conversation_own: "내 대화 권한",
   conversation_any: "전체 대화 권한",
   product: "제품 관리",
@@ -188,7 +192,8 @@ const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
   // TASK-0288: datasource(데이터소스 관리) + product(제품 관리, 관리 콘솔 구성)는 관리 권한 section.
   // TASK-20260623T030418-quota-rbac-permission: LLM 사용 한도(quota) 그룹도 관리 권한 section.
-  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · LLM 사용 한도 · 데이터소스 · KB 검수 · 제품 관리 · 감사 · 시스템 설정", groups: ["console", "account", "role", "quota", "datasource", "kb", "audit", "settings", "product"] },
+  // perm-category-hier: 그룹 순서를 nav 카테고리 순서와 정합(계정 → 제품 → 감사 → 지식베이스 → 시스템).
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · LLM 사용 한도 · 제품 관리 · 데이터소스 · 감사 · 지식베이스 · 시스템 설정", groups: ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings"] },
   // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
   // TASK-0288: 작업 화면 제품 사용(product_access)은 운영 권한 section — 관리 콘솔 제품 관리(product)와 분리.
   { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 사용 · 첨부", groups: ["conversation_own", "conversation_any", "product_access", "attachment"] },
@@ -201,72 +206,93 @@ const ADMIN_PERMISSION_SECTIONS = [
 //   부여된 권한이 조용히 숨겨지지 않는다. 각 그룹의 숨은 row 는 "세부 권한 N개 더 보기" 로 강제 노출 가능.
 //
 // 구조 (CONVENTIONS.md §10.6 의 group/section 정렬은 그대로 — 본 맵은 group 내부의 표시 단계만 정의):
-//  · 관리 권한 section: `console.access`(관리 콘솔 접근) 가 마스터 게이트.
-//      account.read / role.read / audit.read.own / system_prompt.global.read 의 부모 = console.access →
-//      console.access 가 꺼지면 계정·역할·감사·시스템설정 그룹 전체가 접혀 "관리 콘솔" 그룹만 남는다.
-//      각 그룹 base 권한(account.read 등) 이 다시 그 그룹의 세부 권한을 연다.
-//  · 운영 권한 section: 마스터 게이트 없음. `.any`(전체) 권한은 대응 `.own`(내) 권한을 선행으로 둔다
-//      (any ⊇ own 의 참 종속). 제품·첨부는 평면.
-// 백엔드 PERMISSION_DEFINITIONS(app.py) 의 code 와 1:1 정합 필수 — 회귀 테스트
+//  · 관리 권한 section (perm-category-hier, Critical §12.3, 사용자 승인 A안 2026-07-14):
+//      `console.access`(관리 콘솔 접근) 가 마스터 게이트 → 그 하위에 nav 카테고리별 최상위
+//      '접근'(=카테고리 조회 게이트) 5종: console.account.access(계정) / console.product.access(제품) /
+//      console.audit.access(감사) / console.kb.access(지식베이스) / console.system.access(시스템).
+//      같은 카테고리의 모든 권한(탭 조회 → 추가/수정/삭제 → 승인/작동)은 그 카테고리의 접근 권한
+//      하위로 탭 내부 구조를 따라 재귀 종속된다 — 예: 감사 접근 → [감사 로그 조회(own→any→내보내기/삭제),
+//      보관 대화 조회, LLM 사용량 조회, AI 운영 현황 조회]. 상위 체크 시 하위가 UI 로 펼쳐진다.
+//  · 운영 권한 section: 마스터 게이트 없음. 각 그룹의 "목록 조회"(list.own/list.any)가 카테고리
+//      접근(=조회) 게이트 — 동작 권한(생성·요청·삭제 등)은 그 하위로 종속된다.
+// 백엔드 PERMISSION_DEFINITIONS(web_context.py) 의 code 와 1:1 정합 필수 — 회귀 테스트
 //   test_permission_dependency_map.py 가 모든 key/value 가 실제 권한 code 인지 검증한다.
+// 탭 노출 게이트는 ADMIN_TAB_CATEGORY_ACCESS(카테고리 접근 AND 탭 권한) — 본 맵과 정합 유지.
 const PERMISSION_DEPENDENCIES = {
-  // ── 관리 권한 (마스터 게이트 = console.access) ──
+  // ── 관리 권한 (마스터 게이트 = console.access → 카테고리 접근 5종) ──
   "console.manage": "console.access",
-  "console.usage.read": "console.access",
-  "console.aiops.read": "console.access",
-  "insight.reset": "console.access",
-  "account.read": "console.access",
+  "console.account.access": "console.access",
+  "console.product.access": "console.access",
+  "console.audit.access": "console.access",
+  "console.kb.access": "console.access",
+  "console.system.access": "console.access",
+  // 계정 카테고리(계정·역할 탭 + 한도 섹션): account.read/role.read/quota.read 가 탭(섹션) 조회 게이트.
+  "account.read": "console.account.access",
   "account.update": "account.read",
   "account.delete": "account.read",
   "account.activate": "account.read",
   "account.deactivate": "account.read",
   "account.role.assign": "account.read",
   "account.permission.override.manage": "account.read",
-  "role.read": "console.access",
+  "role.read": "console.account.access",
   "role.create": "role.read",
   "role.update": "role.read",
   "role.delete": "role.read",
   "role.permission.manage": "role.read",
-  // TASK-20260623T030418-quota-rbac-permission: LLM 사용 한도 — quota.read 가 그룹 게이트(console.access
-  //   하위), quota.manage(조절) 는 quota.read(조회) 선행. 조회 없이는 조절 불가.
-  "quota.read": "console.access",
+  // TASK-20260623T030418-quota-rbac-permission: LLM 사용 한도 — 한도 UI 는 계정·역할 탭 내부 섹션이므로
+  //   계정 카테고리 접근 하위. quota.manage(조절) 는 quota.read(조회) 선행. 조회 없이는 조절 불가.
+  "quota.read": "console.account.access",
   "quota.manage": "quota.read",
-  // TASK-0288: 데이터소스 — datasource.read 가 그룹 게이트(console.access 하위), manage 는 read 선행.
-  "datasource.read": "console.access",
+  // 제품 카테고리(제품·데이터소스 탭): product.read/datasource.read 가 탭 조회 게이트.
+  //   insight.reset 은 제품 상세의 파괴적 '작동' 권한 — 제품 조회 하위(perm-category-hier 에서
+  //   console 직속에서 이동, 실행 표면 = routers/admin_products.py insight-reset).
+  "product.read": "console.product.access",
+  "product.manage": "product.read",
+  "system_prompt.manage.role.any": "product.read",
+  "insight.reset": "product.read",
+  "datasource.read": "console.product.access",
   "datasource.manage": "datasource.read",
-  // TASK-20260623T090440-sample-feedback-curation: KB 샘플 검수/승급 — console.access 하위(콘솔 진입 필요).
-  "kb.sample.curate": "console.access",
-  // metadata-perm-hier: 메타데이터 그룹 종속 정합화 — 다른 관리 그룹(account.read→account.*,
-  //   quota.read→quota.manage 등)이 "그룹 게이트(read) → 세부 권한" 2단 계층인데 메타데이터만 평면이었다.
-  //   묶음 권한 `kb.ingest.manual`("메타데이터 관리 (전체 묶음)")을 그룹 게이트로 삼아 정합화한다:
-  //   `kb.ingest.manual`→console.access(콘솔 게이트 하위, 타 그룹 base 와 동형), 세부 5개→`kb.ingest.manual`.
-  //   백엔드는 이미 묶음이 5개를 함의(_METADATA_MANUAL_IMPLIES)하므로 의미 정합. 종속 맵은 UI 표시 계층
+  // 감사 카테고리(감사 로그·보관 대화·LLM 사용량·AI 운영 현황 4개 탭): 각 탭의 조회 권한이
+  //   감사 접근 하위로 종속(perm-category-hier — usage/aiops 는 console 직속에서, 보관 대화는
+  //   conversation.list.any 하위에서 이동). 내보내기/삭제는 감사 로그 조회의 하위 작동 권한.
+  "audit.read.own": "console.audit.access",
+  "audit.read.any": "audit.read.own",
+  "audit.export": "audit.read.own",
+  "audit.purge": "audit.read.own",
+  "conversation.archive.read.any": "console.audit.access",
+  "console.usage.read": "console.audit.access",
+  "console.aiops.read": "console.audit.access",
+  // 지식베이스 카테고리(메타데이터·그래프 뷰 탭) — metadata-perm-hier 의 "묶음 게이트 → 세부" 계층을
+  //   유지하되 그룹 게이트를 console.access 직속에서 카테고리 접근(console.kb.access) 하위로 이동.
+  //   백엔드는 묶음이 편집 4종을 함의(_METADATA_MANUAL_IMPLIES)하므로 의미 정합. 종속 맵은 UI 표시 계층
   //   (progressive disclosure)일 뿐 authz enforcement 아님 — 개별 부여는 "세부 권한 더 보기"로 여전히 가능.
-  "kb.ingest.manual": "console.access",
+  "kb.ingest.manual": "console.kb.access",
   "metadata.glossary.manage": "kb.ingest.manual",
   "metadata.enum.manage": "kb.ingest.manual",
   "metadata.table.manage": "kb.ingest.manual",
   "metadata.column.manage": "kb.ingest.manual",
-  // graph-perm-split(Critical §12.3, 2026-07-13): 그래프 뷰가 별도 최상위 탭으로 분리됨에 따라 그래프 뷰 조회
-  //   권한을 '메타데이터 관리' 묶음 하위에서 떼어내 console.access 직속(묶음과 형제)으로 승격한다. 역할 권한
-  //   편집 UI 에서 묶음에 종속 표시되지 않고 독립 항목으로 노출된다(표시 계층 — authz enforcement 는 백엔드).
-  "metadata.graph.read": "console.access",
+  //   검수/승급(승인 권한 3종)은 메타데이터 탭의 2차 보기(검토·검수 큐) — 카테고리 접근 하위 독립 항목
+  //   (묶음과 형제 — curate-only 큐레이터가 묶음 없이 부여받는 실사용 패턴 보존).
+  "kb.sample.curate": "console.kb.access",
+  "kb.glossary.curate": "console.kb.access",
+  "kb.enum.curate": "console.kb.access",
+  // graph-perm-split(Critical §12.3, 2026-07-13) + perm-category-hier: 그래프 뷰 조회는 '메타데이터 관리'
+  //   묶음과 형제인 독립 탭 게이트 — 카테고리 접근(console.kb.access) 하위.
+  "metadata.graph.read": "console.kb.access",
   // graph-analyze-perm(Critical §12.3, 2026-07-14): AI 능동 분석 실행은 조회(graph.read)의 하위 권한 —
   //   역할 편집 UI 에서 graph.read 아래 nest. 조회 없이 실행 무의미(progressive disclosure). authz 는 백엔드.
   "metadata.graph.analyze": "metadata.graph.read",
-  // TASK-0288: 제품 관리 — product.read 가 그룹 게이트(console.access 하위), manage/프롬프트는 read 선행.
-  "product.read": "console.access",
-  "product.manage": "product.read",
-  "system_prompt.manage.role.any": "product.read",
-  "audit.read.own": "console.access",
-  "audit.read.any": "audit.read.own",
-  "audit.export": "audit.read.own",
-  "audit.purge": "audit.read.own",
-  "system_prompt.global.read": "console.access",
+  // 시스템 카테고리(설정 탭): 전역 프롬프트/런타임 설정의 read 가 조회 게이트, write 는 read 선행.
+  //   (system.runtime.* 는 기존에 종속 미선언 루트였던 것을 perm-category-hier 에서 정합.)
+  "system_prompt.global.read": "console.system.access",
   "system_prompt.global.write": "system_prompt.global.read",
+  "system.runtime.read": "console.system.access",
+  "system.runtime.write": "system.runtime.read",
   // ── 운영 권한 (TASK-0269 — own/any 그룹 분리 + "목록 조회" 게이트) ──
-  //   내 대화 권한(conversation_own): "내 대화 목록 조회"(list.own) 가 게이트 → 동작 권한 노출.
-  //     "대화 생성"(create)·"내 대화 목록 조회"(list.own) 는 루트(기반, 항상 표시).
+  //   내 대화 권한(conversation_own): "내 대화 목록 조회"(list.own) 가 카테고리 접근(조회) 게이트 —
+  //     루트(항상 표시). perm-category-hier: "대화 생성"(create)도 동작 권한이므로 게이트 하위로 정합
+  //     (기존 루트 → list.own 종속).
+  "conversation.create": "conversation.list.own",
   "conversation.read.own": "conversation.list.own",
   "conversation.ask": "conversation.list.own",
   "conversation.file.read.own": "conversation.list.own",
@@ -284,7 +310,8 @@ const PERMISSION_DEPENDENCIES = {
   "conversation.file.read.any": "conversation.list.any",
   "conversation.rename.any": "conversation.list.any",
   "conversation.delete.any": "conversation.list.any",
-  "conversation.archive.read.any": "conversation.list.any",
+  // perm-category-hier: conversation.archive.read.any(보관 대화 조회)는 감사 카테고리 탭 권한으로 이동
+  //   (위 감사 블록 — console.audit.access 하위). 여기(전체 대화)에는 더 이상 두지 않는다.
   "conversation.cancel.any": "conversation.list.any",
   "conversation.finalize.any": "conversation.list.any",
   "conversation.duplicate.any": "conversation.list.any",
@@ -2050,10 +2077,35 @@ const ADMIN_TAB_PERMISSIONS = {
   //   기존 묶음 보유자는 _backfill_graph_perm_split_v1 1회 backfill 로 metadata.graph.read 를 명시 보유해 그대로 노출.
   //   **필수(fail-open 방지)** — canSeeTab() 은 매핑 없는 탭을 fail-open 하므로 누락 = 권한 없는 사용자에게 탭 노출.
   graph: ["metadata.graph.read"],
-  settings: ["system_prompt.global.read", "system_prompt.global.write"],
+  // perm-category-hier: 런타임 설정 pane(system.runtime.*)이 설정 탭 내부인데 탭 게이트에 누락돼
+  //   있던 것을 보강 — runtime read/write 단독 보유자도 설정 탭에 도달 가능(백엔드 엔드포인트 권한과 정합).
+  settings: ["system_prompt.global.read", "system_prompt.global.write",
+             "system.runtime.read", "system.runtime.write"],
+};
+
+// perm-category-hier(Critical §12.3, 2026-07-14): 탭 → 소속 nav 카테고리의 최상위 '접근' 권한 매핑.
+// canSeeTab = 카테고리 접근(AND) && 탭 권한(OR) — 카테고리 접근이 없으면 그 카테고리의 탭은 세부
+// 권한을 보유해도 노출하지 않는다(카테고리 최상위 조회 게이트). 기존 배포 principal 은
+// _backfill_console_category_access_v1(web_context.py) 1회 backfill 로 접근 권한을 자동 부여받아
+// 노출 무손실. 매핑 없는 탭(dashboard/release-notes)은 카테고리 게이트 없음.
+const ADMIN_TAB_CATEGORY_ACCESS = {
+  accounts: "console.account.access",
+  roles: "console.account.access",
+  products: "console.product.access",
+  datasources: "console.product.access",
+  audits: "console.audit.access",
+  archives: "console.audit.access",
+  usage: "console.audit.access",
+  "ai-ops": "console.audit.access",
+  metadata: "console.kb.access",
+  graph: "console.kb.access",
+  settings: "console.system.access",
 };
 
 function canSeeTab(tabKey) {
+  // perm-category-hier: 카테고리 접근 게이트 선행(AND) — 없으면 탭 권한과 무관하게 미노출.
+  const catPerm = ADMIN_TAB_CATEGORY_ACCESS[tabKey];
+  if (catPerm && !can(catPerm)) return false;
   const perms = ADMIN_TAB_PERMISSIONS[tabKey];
   if (!perms || !perms.length) return true; // 매핑 없음(dashboard) = 항상 표시.
   return perms.some((p) => can(p));
