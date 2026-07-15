@@ -1,5 +1,25 @@
 # Report
 
+## 2026-07-16 · 그래프 상세 패널 [뒤로/앞으로] 바 상단 고정 (20260716T0217-graph-detail-nav-sticky)
+
+### 요청 (사용자, entry persona dispatch)
+"이어서, 해당 버튼을 유효하게 사용할 수 있도록 '상세 패널' 의 상단 고정된 위치에(스크롤 위치 관계 없이) 구성해주세요."
+
+### 배경
+직전 스크롤 보존 cycle 후속. 방문 이력 바(`.admin-meta-graph-detailnav`)가 스크롤 컨테이너의 일반 흐름 첫 자식이라 아래로 스크롤하면 버튼이 사라졌다. 스크롤과 무관하게 항상 사용 가능하도록 상단 고정.
+
+### 처리 결과 (Minor, CSS-only, cross-cut 코드 거주 feature-0003 static/graph)
+- `graph.css` 1파일(+16/-2): ① `.admin-meta-graph-detailnav` → `position:sticky; top:0; z-index:5` + 불투명 배경 + 하단 구분선 + 좌우 음수마진 bleed(배경/구분선 full-width) + 자체 padding(상단 여백 제공). ② `.admin-meta-graph-detail`(aside) 상단 padding 제거(`14px`→`0 14px 14px`) — 스크롤포트 최상단=바 위치가 되게 해 바 위로 콘텐츠가 비치는 틈 제거. ③ `.admin-meta-graph-detailnav[hidden] + [id=metadataGraphDetailBody]{padding-top:14px}` — 바 숨을 때(이력 ≤1) body 상단 여백 보전.
+- JS/데이터/인증 무변경(순수 CSS 레이아웃).
+
+### 검증
+- 라이브(서빙 사본, 실 Windows 브라우저) **PASS**: nav 강제 표시 + 40줄 더미 주입 + scrollTop 500 상태에서 `position:sticky`·navTop **180px 불변**·불투명 배경·**바 위 노출 콘텐츠 0**(`contentAboveBar:[]`) 측정 + 스크린샷 육안(바 상단 고정, 콘텐츠 그 아래로 스크롤). 초기 음수마진-only 버전은 바 위 14px 콘텐츠 누출이 관측돼 aside 상단 padding 제거로 수정.
+- §18.8 CSS 엣지케이스 적대 리뷰: **PASS(BLOCK/MAJOR 0, NIT 3 전부 의도/라이브 확인)** — 6축(상단여백 등가·인접형제 셀렉터·z-index 스태킹·반응형·가로 bleed·기타) 전부 통과, 코드 수정 불필요. NIT-3(좁은 패널 가로 스크롤바)은 라이브로 hOverflow=false(폭 420/300/220px) 확인. (REVIEW.md REV-20260716T021733-graph-detail-nav-sticky).
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-nav-sticky (ai/claude/feature-0016-graph-detail-nav-sticky, worktree).
+- (verify-completion 실행 후 아래 갱신)
+
 ## 2026-07-15 · 그래프 상세 패널 [뒤로/앞으로] 스크롤 위치 보존 (20260715T1619-graph-detail-scroll)
 
 ### 요청 (사용자, entry persona dispatch)

@@ -72,7 +72,19 @@
    기본 flex-shrink:1 이면 노드 상세(detailBody)가 눌려 내용이 잘리는 뒤틀림 발생. */
 .admin-meta-graph-detail > * { flex-shrink: 0; }
 /* graphux7(#1): 상세 패널 방문 이력 뒤로/앞으로 바 — detail body 위, aside 상단. 이력 ≤1 이면 hidden. */
-.admin-meta-graph-detailnav { display: flex; align-items: center; gap: 6px; padding: 2px 2px 8px; }
+/* graph-detail-nav-sticky: 스크롤 위치와 무관하게 바를 상세 패널 상단에 고정 — 뒤로/앞으로 버튼을 언제든 사용 가능.
+   스크롤 컨테이너 = 상위 aside(.admin-meta-graph-detail, overflow-y:auto). aside 의 상단 padding 을 0 으로 두어
+   스크롤포트 최상단 = 바 위치가 되게 하고(바 위로 콘텐츠가 비칠 틈 자체를 제거), 바가 상단 14px 여백을 자체 padding
+   으로 제공한다. 좌우는 음수 마진으로 컨테이너 가장자리까지 확장(배경·구분선 full-width) + 동일 padding 복원으로
+   버튼 위치 유지. 불투명 배경 + 하단 구분선으로 아래로 흐르는 콘텐츠와 시각 분리. */
+.admin-meta-graph-detailnav {
+  display: flex; align-items: center; gap: 6px;
+  position: sticky; top: 0; z-index: 5;
+  margin: 0 -14px 8px; padding: 14px 14px 8px;
+  background: var(--surface, #fff); border-bottom: 1px solid var(--border);
+}
+/* 이력 ≤1 로 바가 숨으면 body 가 최상단 → 제거한 aside 상단 padding 을 body 로 보전(진입 시 여백 유지). */
+.admin-meta-graph-detailnav[hidden] + [id="metadataGraphDetailBody"] { padding-top: 14px; }
 /* author display:flex 는 UA [hidden]{display:none} 를 덮으므로 명시 [hidden] 규칙 필요(권한 grid [hidden] 트랩 동형). */
 .admin-meta-graph-detailnav[hidden] { display: none; }
 .amg-detailnav-btn {
@@ -193,7 +205,9 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 .admin-meta-graph-detail {
   /* graphux6-responsive: 고정 height 제거 → 그리드 행이 채운다. 내부 콘텐츠(노드 상세 + 하단 진행
      패널)는 overflow-y:auto 로 상세 패널 안에서 스크롤한다(pane 를 밀거나 잘리지 않음). */
-  border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0;
+  /* graph-detail-nav-sticky: 상단 padding 0 — sticky nav(.admin-meta-graph-detailnav)가 스크롤포트 최상단에
+     붙어 그 위로 콘텐츠가 비치지 않게. 상단 여백은 nav(표시 시) 또는 body(nav 숨을 때) 가 자체 제공. */
+  border: 1px solid var(--border); border-radius: 8px; padding: 0 14px 14px; min-width: 0;
   background: var(--surface, #fff); overflow-y: auto; min-height: 0; font-size: 13px;
   /* role-legend-bottom(#565): flex 컬럼 — 역할 범례 카드(margin-top:auto)를 패널 바닥에 고정. 나머지 자식은 자연 흐름.
      graphux6-responsive: 고정 height 대신 min-height:0 + 그리드 행이 detail 높이를 채우고, 내부는 이 flex 컬럼으로
