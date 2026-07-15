@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260716-graph-search-content-match (current cycle) — 그래프 뷰 검색 매칭 확장: 컨텐츠 카테고리 + AI 능동 분석 본문 (Minor §12.3 — 비파괴·읽기전용 검색 쿼리 확장·내부 API)
+- 출처: `/_template:entry "그래프 뷰 내부에서 검색을 진행할 때, '테이블, 컬럼, 용어' 뿐만 아니라, 컨텐츠 카테고리 및 AI 능동 분석을 통해 얻은 내용 또한 매칭될 수 있도록 구성해주세요."` (2026-07-16, 사용자 명시).
+- **교차 feature**: 그래프 뷰 기능 정본 = feature-0016-metadata-graph. 코드 거주 = feature-0002-agent-core `modules/metadata_graph.py`(검색은 서버사이드 `search_nodes` 가 정본, 프론트 `_metaGraphSearch` 는 반환 노드 렌더·글로우만 담당). 본 cycle 은 코드 거주 feature(0002)에 기록, 추적은 feature-0016 TASK/REPORT 에 cross-ref.
+- **배경**: 관리 콘솔 그래프 뷰 검색은 `/api/admin/metadata/graph?q=` → `search_nodes()` Cypher `MATCH (n) WHERE toLower(n.name) CONTAINS q OR toLower(n.fqn) CONTAINS q` 로 **이름/FQN 만** 매칭(테이블·컬럼·용어·스키마·함수/프로시저 이름이 잡히던 이유 = 모든 label 의 name/fqn CONTAINS). 컨텐츠 카테고리(§78~81 컨텐츠 단위 그룹 = `semantic_cluster_label`)·AI 능동 분석 본문(`node_analysis_jobs.analysis`)은 매칭 대상이 아니었다.
+- **프론트 무수정 근거**: 프론트는 백엔드 반환 노드를 label 별로 분류·카드 badge·앰버 글로우만 얹는다(임의 매칭 노드 처리 가능). 활성 병렬 세션(`feature-0003-graph-cluster-detail-collapse`)이 `graph-ctxmenu.js` 편집 중이라 백엔드 단독 변경으로 스코프 충돌 회피.
+
+### §1.1 Implementation Plan
+- `src/modules/metadata_graph.py`:
+  - `search_nodes` Cypher WHERE 에 `toLower(n.semantic_cluster_label) CONTAINS {ql}` 추가(컨텐츠 카테고리, AGE 노드 프로퍼티 — `toLower(null)`=null 은 OR 무시로 비클러스터 노드 안전). RETURN 9컬럼(+`semantic_cluster_label`), `_node_dict` row[8]→`cluster_label`(존재 시).
+  - 신규 `_analysis_match_keys(cur, query, scope, limit)`: 같은 agent_kb 커넥션으로 `node_analysis_jobs`(AGE 정점 아닌 관계형 테이블) `status='done' AND position(%s in lower(analysis::text))>0` 부분일치 → 매칭 `node_key` 집합. bind param(injection-safe)·scope 조건부·1자 질의 스킵·권한/부재/실패 graceful []. 결과를 Cypher `n.key IN [...]`(`_cq` 인용) 로 합류.
+  - 각 노드 `match_via`(name|category|analysis 다중) 부여(프론트 무해·관측/검증용). pg_trgm score 계산에 `similarity(cluster_label,q)` 추가(카테고리 매칭 랭킹 보정).
+- `tests/test_graph_search_content.py`(신규): SQL/Cypher 합성·match_via·scope 격리·graceful·회귀 7건.
+
+### §1.2 Completion Checklist
+- [x] `search_nodes` Cypher WHERE: `semantic_cluster_label` CONTAINS 추가 + 분석 key `n.key IN [...]` 합류 + RETURN 9컬럼
+- [x] `_analysis_match_keys` 헬퍼: node_analysis_jobs status='done' position() 부분일치·scope 조건부·bind param·1자 스킵·graceful
+- [x] `_node_dict` row[8]=cluster_label + `match_via` 근거 + score 에 cluster_label similarity 반영
+- [x] `tests/test_graph_search_content.py` 7 PASS + 기존 metadata_graph/semantic_cluster/funcproc/routine 테스트 회귀 0(로컬 PYTHONPATH)
+- [x] §18.8 적대 리뷰(backend+security — query/schema 키워드, 인젝션·NULL 3치·scope 격리·RO 권한 렌즈)
+- [ ] 배포(web 재빌드) 후 라이브 `/api/admin/metadata/graph?q=<카테고리/분석어>` 매칭 실증 + feature-0016 cross-ref 기록
+
 ## TASK-20260715-llm-probe-thinking-budget (current cycle) — LLM 헬스 probe 오탐: stale "요청량 한도/사용량 소진" 배너 고착 해소 (Major §12.3 — LLM 라우팅·외부 비용)
 - 출처: `/_template:entry "assistant 내부 인사이트·답변 시 claude-corp 계정 사용량 소진 메시지 — 실제 허용량 남아있음, 원인 파악·수정"` (2026-07-15, 사용자 명시). 수정방식 승인 = **유효 probe(Option A)** (AskUserQuestion 2026-07-15).
 - **근본원인(재현 확정)**: active health probe `probe_provider`(web `/api/llm/health` 60s 폴링)가 `OPENAI_MODEL`(=`claude-haiku-4-interactive`)로 `max_tokens=1` ping → 이 alias 는 litellm config `thinking.budget_tokens:5000` 강제 → Anthropic `max_tokens>budget_tokens` 위반 → 항상 400 → `classify_llm_provider_error`=None → probe 가 OK/restricted 어느 것도 기록 못 함. 배너 clear 자동경로(probe) 무력화 → 순간 429 로 찍힌 sticky `restricted` 가 계정 회복 후에도 성공 답변 전까지 stale 고착.

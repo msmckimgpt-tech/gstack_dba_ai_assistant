@@ -52,7 +52,11 @@ _NULLABLE_PROP_KEYS = {"semantic_cluster_id", "semantic_cluster_label"}
 _UNSET = object()   # sync_table cluster 인자 "미전달" 센티넬(≠ 명시 None=clear)
 
 _NEIGHBOR_NODE_CAP = 300   # 투영 1회 최대 노드 수 (8K 규모 보호)
-_SEARCH_CAP = 80           # 검색 결과 최대 노드 수
+_SEARCH_CAP = 80           # 검색 결과 반환 최대 노드 수
+# graph-search-content(P2 봉인): Cypher `LIMIT` 절단이 trigram 점수 정렬 **이전**에 일어나므로, 넓힌
+# WHERE(이름/FQN/컨텐츠 카테고리/AI 분석)에서 이름-정확 매칭이 스캔 순서상 뒤로 밀리면 반환 cap 에 탈락한다.
+# 후보 풀을 반환 limit 보다 넓게(≤ ceiling) 떠서 점수 정렬 후 limit 로 재절단 → 고점수(이름-정확) 매칭 보존.
+_SEARCH_FETCH_CEIL = 240   # 내부 후보 풀 상한(반환 개수 계약은 limit 로 불변)
 _SYNC_BATCH_LOG = 500      # 동기화 진행 로그 간격
 # insight-load-spread: sync_graph 의 batched commit 크기. 이 개수의 MERGE 마다 1회 커밋으로 묶어
 # 개별-커밋(autocommit) 시 8K 규모 5.7만 WAL fsync 폭주(30분 cron 스파이크)를 ~100 회로 줄인다.
@@ -833,15 +837,81 @@ def _node_dict(row):
          "ordinal": _as_int(_unwrap(row[6]))}
     if len(row) > 7:   # graph-funcproc: 함수·프로시저 구분(FE ƒ/⚙ 표기)
         d["routine_type"] = _unwrap(row[7])
+    if len(row) > 8:   # graph-search-content: 컨텐츠 카테고리(의미 클러스터) 라벨 — 검색 매칭·랭킹 노출
+        cl = _unwrap(row[8])
+        if cl:
+            d["cluster_label"] = cl
     return d
 
 
+def _analysis_match_keys(cur, query: str, scope: str | None, limit: int, autocommit: bool = True) -> list:
+    """AI 능동 분석 본문(node_analysis_jobs.analysis) 부분일치 → 매칭 node_key 목록.
+
+    analysis 텍스트는 AGE 그래프 정점 속성이 아니라 **같은 agent_kb DB 의 관계형 테이블**에 산다
+    (feature-0016 §69/ADR-034 — node_analysis_runs/jobs). 검색 커넥션(_ro_conn)이 그 DB 를 가리키므로
+    동일 커서로 조회한다. status='done' 만(진행/실패 잡 제외). scope 지정 시 그 datasource 로 한정.
+    전부 bind param(injection-safe). position()=LIKE 와일드카드/ESCAPE 없는 대소문자 무관 부분일치.
+    analysis 가 text/json/jsonb 어느 저장형이든 ::text 정규화.
+
+    **graceful-degrade 불변(P4 봉인)**: 권한 부재·컬럼 부재·배포 skew(테이블 미존재) 등으로 실패해도
+    호출측 검색 본류(같은 커서의 후속 Cypher)를 죽이지 않고 []를 반환한다. autocommit 커넥션이면 실패 문이
+    다음 문을 오염시키지 않아 자연 graceful; **non-autocommit** 커넥션이면 실패가 트랜잭션을 abort 시켜
+    후속 Cypher 가 InFailedSqlTransaction 으로 죽으므로, SAVEPOINT 로 감싸 실패 시 ROLLBACK TO SAVEPOINT
+    로 트랜잭션을 복원한다(본 모듈 `_ro_conn` 및 현행 두 호출처는 autocommit=True 라 SAVEPOINT 미사용)."""
+    keys = []
+    if not query or len(query) < 2:   # 1자 질의는 분석 본문 전면 매칭(노이즈·풀스캔) — 스킵.
+        return keys
+    sp = False
+    if not autocommit:
+        try:
+            cur.execute("SAVEPOINT _amk_sp")
+            sp = True
+        except Exception:
+            sp = False
+    try:
+        params = [query.lower()]
+        scope_sql = ""
+        if scope:
+            scope_sql = " AND scope_key = %s"
+            params.append(scope)
+        params.append(int(limit))
+        cur.execute(
+            "SELECT DISTINCT node_key FROM node_analysis_jobs "
+            "WHERE status = 'done' AND analysis IS NOT NULL "
+            "AND position(%s in lower(analysis::text)) > 0" + scope_sql + " "
+            "LIMIT %s", tuple(params))
+        keys = [r[0] for r in cur.fetchall() if r and r[0]]
+        if sp:
+            try:
+                cur.execute("RELEASE SAVEPOINT _amk_sp")
+            except Exception:
+                pass
+    except Exception as exc:
+        if sp:   # non-autocommit: 실패 문이 abort 시킨 트랜잭션을 savepoint 로 복원(후속 Cypher 생존).
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT _amk_sp")
+            except Exception:
+                pass
+        _log.debug("analysis_match_keys_failed err=%r", exc)
+    return keys
+
+
 def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=None) -> list:
-    """이름/FQN 부분일치 노드 검색(대소문자 무관). scope 지정 시 해당 datasource 노드만. 8K 규모 보호 cap."""
+    """노드 부분일치 검색(대소문자 무관). scope 지정 시 해당 datasource 노드만. 8K 규모 보호 cap.
+
+    매칭 대상(graph-search-content, 사용자 요청 — 기존 이름·FQN 에 컨텐츠 카테고리·AI 분석 추가):
+      1. n.name / n.fqn              — 테이블·컬럼·용어·스키마·함수/프로시저 이름(기존)
+      2. n.semantic_cluster_label    — 컨텐츠 카테고리(§78~81 컨텐츠 단위 그룹 / sim-group LLM 라벨)
+      3. node_analysis_jobs.analysis — AI 능동 분석을 통해 얻은 내용(별도 관계형 테이블, key 합류)
+    각 노드에 match_via(name|category|analysis, 다중 가능)를 실어 매칭 근거를 노출(프론트 무해·검증용).
+    """
     out = []
     if not query:
         return out
     limit = min(int(limit or 50), _SEARCH_CAP)
+    # P2 봉인: 후보 풀은 반환 limit 보다 넓게 뜬다(점수 정렬 후 limit 로 재절단 — 아래). 절단이 정렬 이전인
+    #   Cypher LIMIT 의 한계(스캔순서 상위 N 만 남김)를 상쇄해 이름-정확 매칭이 category/analysis 에 밀려 탈락 방지.
+    fetch_n = max(limit, min(_SEARCH_FETCH_CEIL, limit * 4))
     c, owned = _ro_conn(conn)
     if c is None:
         return out
@@ -850,32 +920,59 @@ def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=Non
         _set_age_path(cur)
         ql = _cq(query.lower())
         scope_clause = f" AND n.scope_key = {_cq(scope)}" if scope else ""
+        # (3) AI 능동 분석 본문 매칭 → node_key 집합(동일 커넥션·별도 테이블). 아래 Cypher 에 key IN 으로 합류.
+        analysis_keys = _analysis_match_keys(cur, query, scope, limit,
+                                             autocommit=getattr(c, "autocommit", True))
+        analysis_set = set(analysis_keys)
+        key_clause = ""
+        if analysis_keys:
+            lits = ", ".join(_cq(k) for k in analysis_keys)
+            key_clause = f" OR n.key IN [{lits}]"
+        # (1)+(2) 이름/FQN/컨텐츠 카테고리 라벨 CONTAINS. toLower(null)=null 은 OR 에서 무시(비클러스터 노드 안전).
         rows = _cypher(cur,
-            f"MATCH (n) WHERE (toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql}){scope_clause} "
+            f"MATCH (n) WHERE ((toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql} "
+            f"OR toLower(n.semantic_cluster_label) CONTAINS {ql}){key_clause}){scope_clause} "
             f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source, n.ordinal, "
-            f"n.routine_type LIMIT {limit}", 8)
+            f"n.routine_type, n.semantic_cluster_label LIMIT {fetch_n}", 9)
         out = [_node_dict(r) for r in rows]
+        # 매칭 근거(match_via) — 이름/카테고리는 반환값에서 재확인, 분석은 key 집합으로 판정.
+        qn = query.lower()
+        for nd in out:
+            via = []
+            if qn in (nd.get("name") or "").lower() or qn in (nd.get("fqn") or "").lower():
+                via.append("name")
+            if qn in (nd.get("cluster_label") or "").lower():
+                via.append("category")
+            if nd.get("key") in analysis_set:
+                via.append("analysis")
+            if via:
+                nd["match_via"] = via
         # feature-0016 graphux5: pg_trgm 실측 유사도 점수(검색어 대비) 부여 + 내림차순 정렬.
-        #   Cypher CONTAINS 로 얻은 후보의 name/fqn 에 pg_trgm similarity() 를 1왕복으로 계산해 score(0~1)
-        #   를 각 노드에 실어 UI 가 "검색어와 얼마나 유사한지"를 명시 표시하게 한다(요청 항목1). 값은 전부
-        #   파라미터 바인딩(injection-safe). pg_trgm 부재/실패 시 score 없이 원순서 반환(graceful).
+        #   name/fqn/컨텐츠 카테고리 라벨의 최대 유사도를 score(0~1)로 실어 UI 가 "검색어와 얼마나 유사한지"를
+        #   표시(요청 항목1). analysis-only 매칭은 짧은 유사도 대상이 없어 score≈0 이나 여전히 결과에 포함·글로우.
+        #   값은 전부 파라미터 바인딩(injection-safe). pg_trgm 부재/실패 시 score 없이 원순서 반환(graceful).
         if out:
             try:
                 rows_sql, vparams = [], []
                 for i, nd in enumerate(out):
-                    rows_sql.append("(%s::int, %s, %s)")
-                    vparams.extend([i, nd.get("name") or "", nd.get("fqn") or ""])
+                    rows_sql.append("(%s::int, %s, %s, %s)")
+                    vparams.extend([i, nd.get("name") or "", nd.get("fqn") or "", nd.get("cluster_label") or ""])
                 cur.execute(
                     "SELECT x.i, GREATEST(similarity(lower(x.nm), lower(%s)), "
-                    "                     similarity(lower(x.fq), lower(%s))) AS score "
-                    "FROM (VALUES " + ",".join(rows_sql) + ") AS x(i, nm, fq)",
-                    tuple([query, query] + vparams))
+                    "                     similarity(lower(x.fq), lower(%s)), "
+                    "                     similarity(lower(x.cl), lower(%s))) AS score "
+                    "FROM (VALUES " + ",".join(rows_sql) + ") AS x(i, nm, fq, cl)",
+                    tuple([query, query, query] + vparams))
                 smap = {int(r[0]): float(r[1]) for r in cur.fetchall()}
                 for i, nd in enumerate(out):
                     nd["score"] = round(smap.get(i, 0.0), 4)
                 out.sort(key=lambda n: (n.get("score") or 0.0), reverse=True)
             except Exception as exc:
                 _log.debug("search_nodes_score_failed err=%r", exc)
+        # P2 봉인: 넓게 뜬 후보 풀을 (점수 정렬 후) 반환 limit 로 재절단 — 반환 개수 계약 불변, 고점수 매칭 보존.
+        #   score 실패로 정렬 못 했어도 limit 로 절단(기존 동작과 동치 degradation).
+        if len(out) > limit:
+            out = out[:limit]
         cur.close()
     except Exception as exc:
         _log.debug("search_nodes_failed err=%r", exc)
