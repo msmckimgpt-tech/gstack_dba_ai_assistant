@@ -50,7 +50,10 @@ class _CaptureCompletions:
         self._sink = sink
 
     def create(self, **kwargs):
+        # 전체 kwargs 캡처(model + max_tokens + extra_body) — 기존 소비자는 sink["model"]만 읽어 무회귀.
         self._sink["model"] = kwargs.get("model")
+        self._sink["max_tokens"] = kwargs.get("max_tokens")
+        self._sink["extra_body"] = kwargs.get("extra_body")
         return _Resp()
 
 
@@ -64,13 +67,27 @@ def test_conversation_answer_model_maps_haiku_to_chat():
     assert conversation_answer_model("claude-haiku-4") == "claude-haiku-4-chat"
 
 
-def test_conversation_answer_model_identity_for_unmapped():
-    # sonnet 은 litellm fallbacks 목록에 없어 edge 강등이 없다 → 치환 불필요.
+def test_conversation_answer_model_identity_for_registered_claude():
+    # 등록된 Claude 모델은 identity(무회귀). sonnet 은 litellm fallbacks 목록에 없어 edge 강등 없음.
     assert conversation_answer_model("claude-sonnet-4") == "claude-sonnet-4"
-    # 로컬/기타 모델·공백도 identity(무회귀).
-    assert conversation_answer_model("edge") == "edge"
+    # 이미 해소된 chat alias 는 멱등.
+    assert conversation_answer_model("claude-haiku-4-chat") == "claude-haiku-4-chat"
+    # 공백/None 은 identity(호출측이 상위에서 기본 모델로 해소; 여기서 변형하지 않음).
     assert conversation_answer_model("") == ""
     assert conversation_answer_model(None) == ""
+
+
+# ── G2b: alias 누출 가드 (TASK-alias-leak-guard) ───────────────────────────────
+# 대화 답변 경로는 고정 Bedrock 클라이언트로 나가므로(FR-edge-fallback: gemma tier-resolve 금지),
+# 로컬 게이트웨이 alias(auto/edge/core/code)·미등록 bare 'claude' 가 identity 로 통과하면 Bedrock
+# 프록시가 "Invalid model name passed in model=..." 400 을 낸다(실측 다수 대화). 이들을 대화 기본
+# chat(claude-haiku-4-chat)로 해소해 raw alias 가 Bedrock 으로 새지 않게 봉인.
+@pytest.mark.parametrize("alias", ["auto", "edge", "core", "code", "claude", "CLAUDE", " Edge "])
+def test_conversation_answer_model_resolves_leaking_aliases(alias):
+    out = conversation_answer_model(alias)
+    assert out == "claude-haiku-4-chat", f"{alias!r} 는 Bedrock 400 유발 alias — 기본 chat 로 해소돼야 함"
+    # 원본 raw alias 가 그대로 반환되면 안 된다(누출 방지 핵심).
+    assert out.strip().lower() not in {"auto", "edge", "core", "code", "claude"}
 
 
 def _patch_side_effects(monkeypatch, recorded):
@@ -179,3 +196,77 @@ def test_default_conversation_model_chain_is_edge_free():
     )
     # 명시적으로 gemma/edge alias 자체가 도달 불가임을 재확인.
     assert "edge-fallback" not in reachable
+
+
+# ── G6: 누출 alias 해소 대상이 litellm 에 실제 등록된 model_name 인지 (config invariant) ──
+# resolver 를 프록시 실 레지스트리에 고정 — 미래에 기본 chat alias 를 바꿔 미등록 이름으로
+# 해소하면(다시 400) 이 테스트가 잡는다.
+def test_leaking_aliases_resolve_to_registered_proxy_name():
+    yaml = pytest.importorskip("yaml")
+    with open(_LITELLM_CFG, encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    registered = {m["model_name"] for m in cfg["model_list"]}
+    for alias in ("auto", "edge", "core", "code", "claude"):
+        out = conversation_answer_model(alias)
+        assert out in registered, (
+            f"'{alias}' 해소 결과 '{out}' 가 litellm model_list 에 없음 — Bedrock 400 재발 위험. "
+            f"등록된 이름: {sorted(registered)}"
+        )
+
+
+# ── G7: _call_llm 배선 — model='auto' 가 litellm 에 raw 로 새지 않는다 (누출 회귀 방지) ──
+def test_call_llm_resolves_leaking_alias_before_create(monkeypatch):
+    sink: dict = {}
+    recorded: list = []
+    _patch_side_effects(monkeypatch, recorded)
+
+    agent_core._call_llm(
+        _CaptureClient(sink), [{"role": "user", "content": "hi"}], "auto",
+        conversation_id="conv-A", run_id="run-A",
+    )
+
+    # litellm create 에는 해소된 chat alias 가 나가야 한다(raw 'auto' → Bedrock 400 방지).
+    assert sink["model"] == "claude-haiku-4-chat"
+    assert sink["model"] != "auto"
+    # 기록/표시 model 은 원본('auto') 유지 — 표시/집계 정합(호출측 책임 불변).
+    assert recorded == [("auto", "agent")]
+
+
+# ── G8: 누출 alias 의 max_tokens/thinking 는 아웃바운드(-chat) 기준으로 산정 (패널 CONFIRMED-DEFECT#1) ──
+# outbound(claude-haiku-4-chat)는 litellm config 에 고정 thinking budget(5000)을 갖는다. 누출 alias(auto)의
+# max_tokens 를 원본 기준(local cap 2048)으로 잡으면 max_tokens<budget → Anthropic 2차 400. budget 은 실제
+# 서빙 outbound 기준(agent_max_output(claude-haiku-4-chat)=20000>5000)으로 산정돼야 한다. G7 이 stub 로
+# 놓친 예산 경로를 실제로 태워 봉인(단, agent_max_output 은 스파이로 DB 비의존·결정론).
+def test_call_llm_sizes_budget_from_outbound_for_leaking_alias(monkeypatch):
+    sink: dict = {}
+    recorded: list = []
+    budget_calls: list = []
+    # 예산 경로를 실제로 태운다 — model_supports_thinking / max_tokens_for_model 미stub(진짜 분기).
+    monkeypatch.setattr(
+        agent_core, "_record_llm_usage",
+        lambda model, task, resp, conversation_id=None, run_id=None, latency_ms=None,
+        target=None, step_gap_ms=None: recorded.append((model, task)),
+    )
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_images", lambda: None)
+    monkeypatch.setattr(agent_core, "messages_for_provider", lambda messages, **kw: messages)
+    monkeypatch.setattr(agent_core, "model_supports_vision", lambda m: False)
+    monkeypatch.setattr(agent_core, "thinking_budget_for_level", lambda level: None)
+    monkeypatch.setattr(agent_core._rts, "reasoning_budget_override", lambda m, lvl: None)
+    monkeypatch.setattr(agent_core._rts, "model_thinking_budget_override", lambda m: None)
+    # agent_max_output 는 스파이(호출 model 기록 + 고정 20000) — DB 비의존·결정론. 원본 'auto' 가 새면 잡힘.
+    monkeypatch.setattr(agent_core._rts, "agent_max_output", lambda m: budget_calls.append(m) or 20000)
+
+    agent_core._call_llm(
+        _CaptureClient(sink), [{"role": "user", "content": "hi"}], "auto",
+        conversation_id="conv-B", run_id="run-B",
+    )
+
+    assert sink["model"] == "claude-haiku-4-chat"           # 아웃바운드
+    # 핵심: 예산 산정도 아웃바운드(-chat) 기준 — 원본 'auto'(local cap 2048)로 새지 않는다.
+    assert budget_calls == ["claude-haiku-4-chat"]
+    assert isinstance(sink["max_tokens"], int) and sink["max_tokens"] > 5000, (
+        f"outbound max_tokens={sink.get('max_tokens')} 가 -chat 고정 thinking budget 5000 이하 "
+        f"→ Anthropic max_tokens>budget_tokens 위반(2차 400)."
+    )
+    # 기록/표시는 원본('auto') 유지.
+    assert recorded == [("auto", "agent")]

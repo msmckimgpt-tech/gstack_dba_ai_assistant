@@ -287,7 +287,6 @@ source_of_truth: true
 - **라이브 실측 필요분(§정직)**: 프롬프트 레버(모델 추론 대조라 결정론 코드 lever 부재)는 확률적 완화. 배포 후 동일 입력 재-재현으로 LoginEventLog 오판 소멸 확인이 최종 증거 → 배포검증 단계에서 실측.
 - Human Approval: 라이브 실측 결과 표면화 후 사용자 "잔존 먼저 조사·수정 후 함께 배포" 명시 선택(AskUserQuestion 2026-07-14). Major → PR/deploy confirm(deploy_scope: included).
 - Cross-ref: FRICTION_LEDGER FR-partial-evidence-false-verification(라이브 실측 결과) · CHG-20260714T221500(MODIFY) · REV-20260714T210000(동반 Cycle B) · ANCHOR 0002 §1~§3 무충돌.
-
 ## REV-20260714T233000-attach-table-coverage [SUBAGENT:adversarial-security+backend/correctness] — 첨부↔실DB 테이블 커버리지 결정론 코드 봉인(신규 tool)
 - Date: 2026-07-15. Related Change: CHG-20260714T233000-attach-table-coverage. cycle: ai/claude/attach-table-coverage(feature-0002-agent-core).
 - Trigger (§18.8): 신규 tool `check_table_coverage`(DB 접근 + 첨부 파싱 + SQL 식별자 추출) code change → full panel(security/injection + backend/correctness). 2 subagent(general-purpose outside voice) **완주**. 계기: case 프롬프트 레버(REV-20260714T221500) 배포(ee3424c3) 후 라이브 재-재현 부분작동 → 사용자 "코드로 결정론적 봉인"(Option C).
@@ -310,3 +309,14 @@ source_of_truth: true
 - SKIPPED 사유: 순수 docs(원장) 정합 — 런타임 코드·테스트 변경 0(§18.4 META). 봉인 코드 자체의 적대검증은 REV-20260714T221500(case 레버)·REV-20260714T233000(결정론 도구, BLOCKING2·MAJOR1 수정)에서 완료.
 - Human Approval: 사용자 결정 arc(라이브 실측 표면화→"잔존 먼저 수정"→"코드로 결정론 봉인" Option C) 반영의 정직-상태 기록.
 - Cross-ref: FRICTION_LEDGER FR-partial-evidence-false-verification · CHG-20260714T221500 · CHG-20260714T233000 · REV-20260714T233000.
+## REV-20260715T050000-conv-alias-leak-guard [SUBAGENT:adversarial-security+backend/routing/correctness] — 대화 답변 model alias 누출(Bedrock 400) 봉인
+- 대상: `shared/model_catalog.py conversation_answer_model` + `agent_core.py _call_llm` budget 산정. 적대 서브에이전트 1렌즈(security+backend+routing 통합, 6축).
+- **CONFIRMED-DEFECT#1 (수정 완료)**: 초기 fix 는 outbound `model` 만 `claude-haiku-4-chat` 로 해소하고 `max_tokens`/thinking 은 원본(auto) 기준 산정 → `max_tokens_for_model("auto")=2048`(local cap), 그런데 outbound `-chat` 은 litellm config 에 고정 `thinking.budget_tokens=5000` → **`2048<5000` Anthropic 제약 위반 = 2차 400**(정확히 프로덕션 트리거 `OPENAI_MODEL=auto` 에서 400→400). bare `claude` 는 `max_tokens_for_model`=None → max_tokens 미설정 → 동일 실패.
+  - **Fix**: `_call_llm` 에 `budget_model = model if model_supports_thinking(model) else outbound_model` 도입 → **max_tokens 산정만** outbound 기준(agent_max_output(claude-haiku-4-chat)=20000>5000). **thinking 주입 게이트는 원본 model 유지**(비-thinking 누출 alias 는 client thinking 미주입 → outbound config 고정 5000 적용, `20000>5000` 안전). 정상 claude-haiku-4 경로 budget_model=원본=24000 무회귀. `model_supports_vision`·`_record_llm_usage` 는 원본 유지.
+  - **회귀 봉인**: G7(model-name 해소, stub 로 예산 경로 미검증)에 더해 **G8 신설** — `max_tokens_for_model`/`model_supports_thinking` 미stub, `agent_max_output` 스파이로 budget 산정 모델을 검증(누출 alias 예산이 outbound=chat 기준·`max_tokens>5000`·기록은 원본). 회귀 `test_reasoning_level_ignored_for_non_thinking_model`(edge→thinking 미주입) 재통과 확인.
+- **REFUTED (패널)**: ①해소 대상 claude-haiku-4-chat 타당(등록·edge-free·기본값, sonnet 무강등) ②over-capture 없음(litellm 등록 model_name 전수 대조: edge-fallback≠edge·bare claude만·registered claude-* 무포획) ③insight/routine collateral 없음(`conversation_answer_model` 단일 caller `_call_llm`, insight/aux 는 별도 create 경로) ⑤옛 `edge→edge` 계약은 버그 인코딩이었고 신규 계약 정확(G2b/G6 비-tautological) ⑥FR-edge-fallback 불변식 보존(해소 대상 체인 edge 미도달, G5 config 파싱 검증).
+- **PLAUSIBLE-RISK (저위험·수용, 문서화)**: (a) map lookup 은 strip-only(비-lowercase), leak-guard 는 case-insensitive → `"Claude-Haiku-4"` 혼합대소문자는 map miss 후 identity — **비현실적**(모델 문자열은 catalog canonical lowercase). (b) guard 는 known-bad allowlist 라 `claude-haiku-4-interactive`(체인이 edge 도달) 같은 alias 는 identity 통과 가능 — **대화-답변 모델 아님**(OPENAI_MODEL/API_MODEL_OPTIONS 미포함, 대화 경로 미발생). 둘 다 현 입력 도메인 밖 → 미수정, 재검토 트리거만 기록.
+- OVERALL: BLOCKING 0 / MAJOR 1(수정 완료) / MINOR 0 / PLAUSIBLE-RISK 2(수용·문서화).
+- 검증: `test_conversation_answer_no_edge_alias.py` 15 PASS(옛계약 갱신 + G2b/G6/G7/G8) · `test_reasoning_effort.py` 재통과 · feature-0002 전체 신규 실패 0. `make test`(agent 컨테이너)는 verify-completion 단계에서 정본 실행.
+- Human Approval: PLAN-APPROVED(사용자 "남은 deferred 축 완수까지 진행", 2026-07-15). Major(대화 outbound 라우팅) → PR/deploy confirm(deploy_scope: included).
+- Cross-ref: CHG-20260715T050000-conv-alias-leak-guard(MODIFY) · CHG-20260714T210000(같은 축 ④ friendly-message 표면 계층) · ANCHOR 0002 §1~§3 무충돌.
