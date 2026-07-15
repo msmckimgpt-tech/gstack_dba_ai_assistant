@@ -1,5 +1,26 @@
 # Report
 
+## 2026-07-15 · 그래프 상세 패널 [뒤로/앞으로] 스크롤 위치 보존 (20260715T1619-graph-detail-scroll)
+
+### 요청 (사용자, entry persona dispatch)
+"`그래프 뷰` 에서, '상세 패널' 내 [뒤로/앞으로] 버튼을 통해 상호작용 할 때 스크롤 위치 현황 또한 보존될 수 있도록 구성해주세요."
+
+### 배경·근본
+상세 패널 방문 이력(`_metaGraph.detailHist`, 항목 `{v,k}`)의 [뒤로/앞으로](`_metaGraphHistoryGo`)는 노드/클러스터/관계 상세를 되짚지만, 스크롤 컨테이너(`<aside id="metadataGraphDetail">`, overflow-y:auto — 렌더 함수는 자식 `#metadataGraphDetailBody` 의 innerHTML 만 교체)의 scrollTop 을 이력 항목별로 관리하지 않았다. 따라서 되짚은 화면은 직전 화면에서 남은(짧은 콘텐츠면 0 으로 clamp 된) 스크롤 위치로 보였고, "떠날 때 보던 위치"가 유실됐다.
+
+### 처리 결과 (Minor, additive UI, cross-cut 코드 거주 feature-0003 static/graph)
+- `graph-ctxmenu.js`·`graph-state.js` 2파일: ① 헬퍼 신설 — `_metaGraphDetailScrollEl`(스크롤 aside), `_metaGraphHistoryCaptureScroll`(현 이력 항목에 scrollTop 스냅샷), `_metaGraphHistoryRestoreScroll`(대상 항목 scrollTop 을 `requestAnimationFrame` 으로 복원, 미저장=0), `_metaGraphReapplyPendingScroll`(노드 상세 AI 박스 async 로드 후 1회 재적용). ② leave-point 배선 — `_metaGraphHistoryRecord`(새 방문 push 직전 현 화면 스냅샷)·`_metaGraphHistoryGo`(idx 변경 직전 떠나는 화면 스냅샷). ③ `_metaGraphHistoryGo` sync→async — async show 함수를 await 해 렌더 완료 후 대상 scrollTop 복원.
+- 이력 항목 shape `{v,k}` → `{v,k,scroll?}`(하위호환). 상태 필드 `_histNavBusy`(캡처 게이트)·`_pendingDetailScroll`(재적용 목표) 추가. 인증/스키마/데이터/API 무변경. cache-buster 무편집(소스 `?v=dev` placeholder — 빌드 주입, §13.1).
+
+### 검증
+- 정적: `graph-ctxmenu.js`·`graph-state.js` `node --check`(ES module) PASS.
+- §18.8 general-purpose 적대 리뷰: **PASS-WITH-FIXES** — MAJOR 1(M1 `_histNav` 억제창을 show 동기 접두부로 한정: 네비 fetch 중 사용자 클릭이 이력에서 누락되던 회귀 제거)·MINOR 3(m2 렌더 예외 시 tail 보장 + 주석 정정 / m3 AI박스 async 성장 후 하단 스크롤 1회 재적용 / m4 캡처 전용 `_histNavBusy` 게이트로 연타 오정합 방지) 전부 수정. 상세=REVIEW.md REV-20260715T161958-graph-detail-scroll.
+- PB-0008 라이브 브라우저(웹/UI 완료 게이트, visual): 배포 후 TS.6 — 뒤로/앞으로 왕복 시 각 화면 세로 스크롤 위치 복원 육안 확인.
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-scroll (ai/claude/feature-0016-graph-detail-scroll, worktree).
+- (verify-completion 실행 후 아래 갱신)
+
 ## 2026-07-14 · 서비스 전역 장애 긴급 대응 — metadata-graph-sync cron 겹침 실행 flock 가드 (§82 metadata-graph-sync-flock)
 
 ### 요청 (사용자, 장애 리포트)

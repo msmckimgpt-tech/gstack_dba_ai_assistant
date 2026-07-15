@@ -265,3 +265,17 @@ source_of_truth: true
 
 ## REV-20260714T104500-ai-claude-feature-0016-cluster-label-target-close [SKIPPED:doc-only-postdeploy] — TL.3 완수 기록
 - Related Change: CHG-20260714T104500. 코드 0 — 배포·데이터 정정·라이브 확증 기록. 코드면은 REV-20260714T090500 에서 처리.
+
+## REV-20260715T161958-ai-claude-feature-0016-graph-detail-scroll [SUBAGENT: PASS-WITH-FIXES] — 상세 패널 [뒤로/앞으로] 스크롤 위치 보존 diff 적대 리뷰
+- 대상: `graph-ctxmenu.js`(이력 스크롤 캡처/복원 + `_metaGraphHistoryGo` sync→async)·`graph-state.js`(`_histNavBusy`/`_pendingDetailScroll` 상태). §18.8 general-purpose 서브에이전트 — 정적 코드 리뷰(라이브 브라우저 미가용, diff + DOM(`admin.html`) + CSS(`graph.css:197` overflow 소유) + show 함수 3종·`_metaGraphOnNodeClick`·`_metaGraphLoadNodeAnalysis`·`_opSeq` 세대 가드 교차 검증).
+- Related Change: CHG-20260715T161958. 위험면 = 표시 정확성(스크롤 좌표) + 이력 상태 정합. 인증/스키마/데이터/API 무변경.
+- 패널 판정: **PASS-WITH-FIXES — BLOCKING 0 · MAJOR 1 · MINOR 3 · PASS 2.** 전 항목 반영(수정) 완료.
+- 결함 원장 및 처리:
+  - **MAJOR M1 [`_histNav` 억제창 확장 회귀] — 수정**: 리뷰어가 sync→async 전환으로 `_histNav`(재기록 억제) 유지 구간이 "show 동기 접두부"→"전체 fetch+render(await)"로 확장됨을 지적 — 네비 렌더 fetch 도중 사용자가 **다른 노드를 클릭**하면 그 클릭의 `_metaGraphHistoryRecord` 가 억제돼 **이력에서 누락**(패널 콘텐츠 vs `detailHistIdx` desync). → show 함수를 kick 해 promise 를 받은 **직후 `_histNav=false`** 로 되돌려 억제창을 동기 접두부로 한정(Record 는 3함수 모두 첫 await 이전 동기 구간 725/1651/2266 에서 호출·억제됨을 코드로 확증). `await` 는 유지(스크롤 복원 타이밍). 세대 가드 `seq` 도 await 이전 캡처로 복원(리뷰 M1-NIT).
+  - **MINOR m2 [reject 시 tail 스킵 + 주석 부정확] — 수정**: 리뷰어가 show 함수의 try/catch 가 `apiFetch` 만 감싸고 이후 DOM 조립(`_metaGraphRenderDetail` 등)은 무방비라, 렌더 throw 시 await 가 reject → try/finally 밖 restore·focus·UpdateUI 가 스킵되고 클릭 핸들러에서 unhandled rejection 을 지적. → `await p` 를 `try/catch(_)` 로 감싸 tail(스크롤/카메라/UI)을 항상 실행 + 주석을 "fetch 만 흡수, 렌더 예외는 삼켜 tail 보장"으로 정정.
+  - **MINOR m3 [AI 박스 async 성장으로 하단 복원 무력화] — 수정**: 노드 상세는 `_metaGraphRenderDetail` 이 `_metaGraphLoadNodeAnalysis`(fire-and-forget)를 킥해 AI 박스(`#metaGraphAiBox`)를 **복원(rAF) 이후** 채워 높이를 키우므로, 하단으로 스크롤해 저장한 값이 복원 시점(짧은 콘텐츠)에 clamp 되고 재적용되지 않음을 지적. → 복원 목표를 `_pendingDetailScroll{key,top}` 로 남기고 `_metaGraphLoadNodeAnalysis` 말미에 **key 일치 시 1회 재적용**(`_metaGraphReapplyPendingScroll`)하는 훅 추가(관계/클러스터 상세는 async 성장 없어 무영향).
+  - **MINOR m4 [연타 캡처 오정합] — 수정**: 빠른 뒤로 연타 시 선행 네비 렌더가 미완인 동안 후행 `Go` 의 leave-capture 가 **현 항목(N-1)에 이전 화면(N)의 scrollTop** 을 기록하는 오염을 지적. → `_histNav` 과 분리된 캡처 전용 게이트 `_histNavBusy`(네비 렌더 in-flight True) 도입 — `_metaGraphHistoryCaptureScroll` 이 busy 면 스킵(억제=Record 는 그대로, 스크롤 캡처만 게이팅해 M1 회귀와 직교).
+  - **PASS P1 (스크롤 대상 요소 정합)**: `graph.css:197` 이 `overflow-y:auto` 를 `<aside id="metadataGraphDetail">` 에 부여하고 `#metadataGraphDetailBody` 는 overflow 없는 flex 자식(`admin.html:861`) — 렌더가 body innerHTML 만 교체해도 스크롤 프레임은 aside 이므로 `_metaGraphDetailScrollEl()` 이 aside 를 캡처/복원하는 것이 정합(body 였으면 오답). 결함 없음 확인.
+  - **PASS P2 (주경로 leave-capture 배치 정합)**: `_metaGraphHistoryRecord` 의 캡처가 두 early-return(억제·중복) 뒤·push 앞이라 실제 새 항목 기록 시에만 실행, Record 는 렌더 전 호출이라 캡처 시 aside 는 이전 콘텐츠(올바른 값). 결함 없음 확인.
+- 재검증: `graph-ctxmenu.js`·`graph-state.js` `node --check`(ES module) PASS + 신규 심볼(`_histNavBusy`/`_pendingDetailScroll`/`_metaGraphReapplyPendingScroll`) 참조 정합 + 3함수 Record-before-await 순서 코드 확증. 최종 diff 2파일(graph-ctxmenu.js·graph-state.js).
+- Human Approval: deploy_scope: included(FIRST_REQUEST.md 전역). visual_verification_scope: always → PB-0008 라이브(TS.6)가 배포 후 완료 게이트.

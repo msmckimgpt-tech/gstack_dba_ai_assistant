@@ -2417,3 +2417,22 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### Git 동기화 결과
 - Task-Cycle: graphsync-flock-guard (ai/claude-corp/graphsync-flock-guard, worktree, AGENTS.md §13.2 정합 — main 직접수정 금지 사용자 정정 반영).
+
+## 20260715T1619-graph-detail-scroll — 상세 패널 [뒤로/앞으로] 스크롤 위치 보존 (2026-07-15, 사용자 요청 · entry persona dispatch)
+
+### 요청 (사용자)
+"`그래프 뷰` 에서, '상세 패널' 내 [뒤로/앞으로] 버튼을 통해 상호작용 할 때 스크롤 위치 현황 또한 보존될 수 있도록 구성해주세요."
+
+### 배경
+상세 패널 방문 이력(`_metaGraph.detailHist`)의 [뒤로/앞으로](`_metaGraphHistoryGo`)는 이전에 본 화면(노드/클러스터/관계 상세)을 되짚지만, 스크롤 컨테이너(`<aside id="metadataGraphDetail">`, overflow-y:auto — 자식 `#metadataGraphDetailBody` 의 innerHTML 만 교체)의 scrollTop 을 이력 항목별로 관리하지 않았다. 그 결과 되짚은 화면이 맨 위 또는 직전 화면의 잔여(clamp)된 위치로 표시돼, "떠날 때 보던 세로 스크롤 위치"가 유실됐다.
+
+### 처리 (본 cycle, 코드 변경 — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] TS.1 스크롤 스냅샷/복원 헬퍼 신설 — `graph-ctxmenu.js`: `_metaGraphDetailScrollEl`(스크롤 aside 해석)·`_metaGraphHistoryCaptureScroll`(현 이력 항목에 `.scroll` 스냅샷)·`_metaGraphHistoryRestoreScroll`(대상 항목 scrollTop 을 `requestAnimationFrame` 으로 복원 — 교체 콘텐츠 높이 확정 후 적용해 clamp 회피, 미저장=0).
+- [x] TS.2 leave-point 배선 — `_metaGraphHistoryRecord`(새 방문 push 전 현 화면 스냅샷)·`_metaGraphHistoryGo`(idx 변경 전 떠나는 화면 스냅샷). 이력 항목 shape `{v,k}` → `{v,k,scroll?}`(하위호환 additive).
+- [x] TS.3 `_metaGraphHistoryGo` sync→async 전환 — show 함수(3종 `_metaGraphShowDetail`/`ShowRelations`/`ShowClusterDetailById`, 모두 async·body innerHTML 동기 교체)를 `await` 해 렌더 완료 후 대상 scrollTop 복원. `_histNav` 는 finally 까지 유지(전체 렌더 동안 재기록 억제 — 기존 대비 강화, 회귀 없음: record 는 각 show 함수의 첫 await 이전 동기 구간에서만 발생). 카메라 focus 도 렌더 완료 후 실행(개선).
+- [x] TS.4 정적 검증 — `node --check`(ES module) PASS. cache-buster 무편집(소스 `?v=dev` placeholder, 빌드 주입 — §13.1).
+- [x] TS.5 §18.8 적대 리뷰(general-purpose subagent) 반영 — **PASS-WITH-FIXES(MAJOR 1 + MINOR 3 전부 수정)**. M1(`_histNav` 억제창을 show 동기 접두부로 한정 — 네비 중 클릭 이력 누락 회귀 제거)·m2(`await` try/catch 로 렌더 예외 시 tail 보장 + 주석 정정)·m3(노드 상세 AI 박스 async 성장 후 `_pendingDetailScroll` 로 1회 재적용 — 하단부 복원)·m4(캡처 전용 `_histNavBusy` 게이트로 연타 오정합 방지). 상세=REVIEW.md REV-20260715T161958-graph-detail-scroll. 반영 후 최종 diff 2파일(graph-ctxmenu.js·graph-state.js), `node --check` 재PASS.
+- [ ] TS.6 PB-0008 라이브 브라우저 검증(웹/UI 완료 게이트, Environment: Windows-browser) — 배포 후 수행(뒤로/앞으로 왕복 시 각 화면 세로 스크롤 위치 복원 육안 확인).
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-scroll (ai/claude/feature-0016-graph-detail-scroll, worktree).

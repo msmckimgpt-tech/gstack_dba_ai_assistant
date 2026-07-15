@@ -630,35 +630,78 @@ function _metaTableHasCols(key) {
 // graphux7(#1) + graph-navfilter(§54①): 상세 패널 방문 이력(뒤로/앞으로) — view-typed 엔트리
 //   {v:"node"|"cluster"|"rel", k:key} 로 노드 상세뿐 아니라 클러스터 상세·관계 상세도 되짚는다.
 const _META_HIST_CAP = 50;
+// graph-detail-scroll: 상세 패널 스크롤 컨테이너 = aside.admin-meta-graph-detail(overflow-y:auto).
+//   렌더 함수는 자식 #metadataGraphDetailBody 의 innerHTML 만 교체하므로 aside 의 scrollTop 은
+//   프레임 자체엔 살아있지만, 화면(이력 항목)마다 콘텐츠 높이가 달라 이전 위치가 clamp/유실된다.
+//   → 이력 항목별로 scrollTop 을 스냅샷·복원해 뒤로/앞으로 시 보던 위치를 되살린다.
+function _metaGraphDetailScrollEl() {
+  return document.getElementById("metadataGraphDetail");   // #metadataGraphDetailBody(내용)이 아닌 스크롤 aside
+}
+// 현재 이력 항목에 스크롤 위치를 스냅샷(현 화면을 떠나기 직전 — 새 방문 push 또는 뒤로/앞으로 이동 전).
+//   _histNavBusy(네비 렌더 in-flight)면 스킵 — 패널 콘텐츠가 아직 이전 화면이라 현 항목에 남의 scrollTop 을
+//   기록하는 오정합(연타)을 방지한다.
+function _metaGraphHistoryCaptureScroll() {
+  if (_metaGraph._histNavBusy) return;
+  const cur = _metaGraph.detailHist[_metaGraph.detailHistIdx];
+  if (!cur) return;                                        // 비어 있음(-1) — 스냅샷 대상 없음
+  const el = _metaGraphDetailScrollEl();
+  if (el) cur.scroll = el.scrollTop;
+}
+// 대상 이력 항목의 스크롤 위치를 복원(대상 화면 렌더 완료 후). 미저장이면 0(맨 위).
+//   rAF 로 다음 프레임에 적용 — 교체된 (동기) 콘텐츠 높이가 레이아웃에 반영된 뒤 설정해 clamp 회피.
+//   노드 상세는 AI 박스(_metaGraphLoadNodeAnalysis)가 async 로 나중에 높이를 키우므로, 목표를
+//   _pendingDetailScroll{key,top} 로 남겨 그 박스가 로드된 뒤 1회 재적용(하단부 복원)한다.
+function _metaGraphHistoryRestoreScroll(ent) {
+  const el = _metaGraphDetailScrollEl();
+  if (!el) return;
+  const top = (ent && typeof ent.scroll === "number") ? ent.scroll : 0;
+  _metaGraph._pendingDetailScroll = (ent && ent.v === "node") ? { key: ent.k, top } : null;
+  requestAnimationFrame(() => { try { el.scrollTop = top; } catch (_) {} });
+}
+// graph-detail-scroll(m3): 노드 상세 AI 박스가 async 로 로드돼 패널이 커진 직후, 진행 중인 복원 목표를
+//   1회 재적용한다(첫 rAF 복원이 짧은 콘텐츠로 clamp 됐던 하단부를 되살림). key 일치 시에만 — 다른 화면
+//   렌더의 AI 로드가 남의 스크롤을 건드리지 않게. 재적용 후 소진(1회성).
+function _metaGraphReapplyPendingScroll(key) {
+  const p = _metaGraph._pendingDetailScroll;
+  if (!p || p.key !== key) return;
+  _metaGraph._pendingDetailScroll = null;
+  const el = _metaGraphDetailScrollEl();
+  if (el) requestAnimationFrame(() => { try { el.scrollTop = p.top; } catch (_) {} });
+}
 function _metaGraphHistoryRecord(key, view) {
   if (!key || _metaGraph._histNav) return;              // 뒤로/앞으로 네비 중 재기록 금지
   const v = view || "node";
   const h = _metaGraph.detailHist;
   const cur = h[_metaGraph.detailHistIdx];
   if (cur && cur.k === key && cur.v === v) return;      // 같은 화면 연속 재선택 — 중복 억제
+  _metaGraphHistoryCaptureScroll();                     // graph-detail-scroll: 현 화면 스크롤 스냅샷(새 방문으로 떠나기 전)
   h.splice(_metaGraph.detailHistIdx + 1);               // 앞으로 분기 절단(새 방문이 forward 이력을 덮음)
   h.push({ v, k: key });
   if (h.length > _META_HIST_CAP) h.shift();             // 상한 초과 시 오래된 앞부분 제거
   _metaGraph.detailHistIdx = h.length - 1;
   _metaGraphHistoryUpdateUI();
 }
-function _metaGraphHistoryGo(dir) {
+async function _metaGraphHistoryGo(dir) {
   const ni = _metaGraph.detailHistIdx + dir;
   if (ni < 0 || ni >= _metaGraph.detailHist.length) return;
+  _metaGraphHistoryCaptureScroll();                     // graph-detail-scroll: 떠나는 화면 스크롤 스냅샷(idx 변경·busy 세팅 전)
+  _metaGraph._histNavBusy = true;                       // 이후 캡처 스킵(연타 시 in-flight 화면에 오정합 방지, m4)
   _metaGraph.detailHistIdx = ni;
   const ent = _metaGraph.detailHist[ni];
-  _metaGraph._histNav = true;                           // 각 진입 함수의 Record(첫 await 이전 동기 구간)가 재기록하지 않게
-  try {
-    // 클러스터 복원은 반드시 ById — Local 은 모델-로컬이라 중심보기(resetModel) 후 빈 목록을 렌더.
-    if (ent.v === "cluster") _metaGraphShowClusterDetailById(ent.k);
-    else if (ent.v === "rel") _metaGraphShowRelations(ent.k);
-    else _metaGraphShowDetail(ent.k);
-  } finally { _metaGraph._histNav = false; }
+  // 클러스터 복원은 반드시 ById — Local 은 모델-로컬이라 중심보기(resetModel) 후 빈 목록을 렌더.
+  _metaGraph._histNav = true;                           // 각 show 함수의 Record(첫 await 이전 동기 구간)가 재기록하지 않게
+  const p = (ent.v === "cluster") ? _metaGraphShowClusterDetailById(ent.k)
+    : (ent.v === "rel") ? _metaGraphShowRelations(ent.k)
+      : _metaGraphShowDetail(ent.k);
+  _metaGraph._histNav = false;                          // M1: 억제창을 show 동기 접두부로 한정(Record 는 위 호출에서 이미 실행·억제).
+                                                        //   전체 await 동안 유지하면 네비 중 사용자 클릭이 이력에서 누락되는 회귀.
+  const seq = _metaGraph._opSeq;                        // await 이전 캡처(세대 가드 보존)
+  try { await p; }                                      // 렌더 완료 대기(스크롤 복원 타이밍)
+  catch (_) { /* m2: 렌더 예외(fetch 흡수 외 DOM 조립 throw)를 삼켜 아래 tail 을 항상 실행 */ }
+  _metaGraph._histNavBusy = false;
+  _metaGraphHistoryRestoreScroll(ent);                  // graph-detail-scroll: 대상 화면 스크롤 복원(렌더 완료 후)
   // 카메라 재현(fire-and-forget) — 미렌더(접힘/모델 제거)면 skip, 패널은 API 재조회로 복원됨.
-  if (_metaRenderedIdFor(ent.k)) {
-    const seq = _metaGraph._opSeq;
-    _metaGraphAnimateFocus(ent.k, seq);
-  }
+  if (_metaRenderedIdFor(ent.k)) _metaGraphAnimateFocus(ent.k, seq);
   _metaGraphHistoryUpdateUI();
 }
 function _metaGraphHistoryReset() {
@@ -2524,6 +2567,9 @@ async function _metaGraphLoadNodeAnalysis(key) {
     box.innerHTML = '<span class="admin-meta-graph-muted">이 노드 분석 실패. 재시도하려면 능동 분석을 다시 눌러 주세요.</span>';
   }
   // status === 'none' → 기본 안내 유지(버튼으로 시작).
+  // graph-detail-scroll(m3): AI 박스가 로드돼 패널 높이가 바뀐 직후, 뒤로/앞으로 복원 목표를 1회 재적용
+  //   (첫 rAF 복원이 짧은 콘텐츠로 clamp 됐던 하단부 스크롤을 되살림). key 불일치·미보류 시 no-op.
+  _metaGraphReapplyPendingScroll(key);
 }
 
 // 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)

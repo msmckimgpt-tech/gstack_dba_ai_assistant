@@ -198,3 +198,8 @@ source_of_truth: true
 
 ## CHG-20260714T104500-ai-claude-feature-0016-cluster-label-target-close — TL.3 완수 기록 (2026-07-14, doc-only)
 - 대상: TASK.md(TL.3 [x]). 코드 0. PR #775 배포(b747c29a) 후 실측: 기존 527건 정정(UPDATE, 잔여 19건=미등록 legacy scope 라벨 부재)·신규 활동 target=사용자 식별자 기록 확인(/api/admin/ai-ops).
+
+## CHG-20260715T161958-ai-claude-feature-0016-graph-detail-scroll — 상세 패널 [뒤로/앞으로] 스크롤 위치 보존 (2026-07-15)
+- 대상(cross-cut 코드 거주 feature-0003 static/graph): `graph-ctxmenu.js` 1파일 — 신규 헬퍼 `_metaGraphDetailScrollEl`/`_metaGraphHistoryCaptureScroll`/`_metaGraphHistoryRestoreScroll` + `_metaGraphHistoryRecord`(새 방문 push 전 스냅샷)·`_metaGraphHistoryGo`(sync→async, idx 변경 전 스냅샷 + 렌더 await 후 대상 scrollTop 복원) 배선.
+- 변경(사용자 요청 — entry persona dispatch): 상세 패널 방문 이력의 [뒤로/앞으로] 이동 시, 스크롤 컨테이너(`<aside id="metadataGraphDetail">`, overflow-y:auto)의 세로 스크롤 위치를 이력 항목별(`detailHist[i].scroll`)로 스냅샷·복원. 화면을 떠날 때(새 방문 record 또는 뒤로/앞으로 이동) 현 scrollTop 을 항목에 저장하고, 대상 화면 렌더 완료(await) 후 `requestAnimationFrame` 으로 복원(콘텐츠 높이 확정 후 적용 → clamp 회피). 미저장 항목은 0(맨 위). 이력 항목 shape 는 `{v,k}`→`{v,k,scroll?}` additive.
+- 근거: 등급 Minor(additive UI, 인증/데이터/스키마 무변경). 정적 검증 `node --check`(ES module) PASS. §18.8 general-purpose 적대 리뷰 **PASS-WITH-FIXES** — MAJOR 1(M1 `_histNav` 억제창 확장 회귀)+MINOR 3(m2 reject tail / m3 AI박스 async 성장 하단복원 / m4 연타 캡처 오정합) 전부 수정 반영, 이 과정에서 `graph-state.js`(`_histNavBusy`/`_pendingDetailScroll`) 추가돼 최종 diff 2파일. PB-0008 라이브 검증(visual)은 배포 후 TS.6. 상세는 TASK.md `## 20260715T1619-graph-detail-scroll`, REVIEW.md REV-20260715T161958-graph-detail-scroll.

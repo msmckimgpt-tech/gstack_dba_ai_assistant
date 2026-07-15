@@ -73,9 +73,15 @@ const _metaGraph = {
   _comboDragStart: null,      // combo:dragstart 시 {id, x, y}(중심) — dragend 델타 산출용
   // graphux7(#1) + graph-navfilter(§54①): 상세 패널 방문 이력(뒤로/앞으로). datasource 컨텍스트
   //   전환(loadRoots/Products) 시 _metaGraphHistoryReset 로 초기화. _histNav=네비 중(중복 push 억제).
-  detailHist: [],             // 방문 스택 — {v:"node"|"cluster"|"rel", k:key} (오래된 앞 → 최근 뒤)
+  detailHist: [],             // 방문 스택 — {v:"node"|"cluster"|"rel", k:key, scroll?:number} (오래된 앞 → 최근 뒤)
   detailHistIdx: -1,          // 현재 위치 인덱스(-1=비어 있음)
-  _histNav: false,            // 뒤로/앞으로 네비게이션 진행 중 플래그
+  _histNav: false,            // 뒤로/앞으로 네비게이션 진행 중 플래그(Record 억제 — show 동기 접두부 한정)
+  // graph-detail-scroll: 상세 패널 스크롤 위치 보존(뒤로/앞으로). detailHist[i].scroll 에 이력 항목별 scrollTop
+  //   스냅샷을 저장·복원. _histNavBusy=네비 렌더 in-flight(캡처 스킵으로 연타 시 오정합 방지 — _histNav 와
+  //   분리: _histNav 는 Record 억제만, 이 플래그는 스크롤 캡처만 게이팅). _pendingDetailScroll=복원 목표
+  //   {key,top} — 노드 상세 AI 박스(_metaGraphLoadNodeAnalysis)가 async 로 높이를 키운 뒤 1회 재적용용.
+  _histNavBusy: false,
+  _pendingDetailScroll: null,
   // graph-navfilter(§54②): 노드 종류 표시 필터 — "edges"|"function"|"procedure" 를 빌드 입력에서
   //   제외(스타일 숨김 아님 — masonry/simgroups/shelf-pack 이 자동 재배치). 테이블·컬럼은 항상 표시.
   //   scope-독립 preference 라 resetModel 에서 clear 하지 않는다(localStorage 영속).
