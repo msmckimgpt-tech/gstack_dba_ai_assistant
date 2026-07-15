@@ -473,3 +473,15 @@ source_of_truth: true
 - 검증: 신규 `tests/test_product_databases_case_normalize.py` 2 PASS(소문자 입력→서버 실제 case 저장·degrade-safe). feature-0003 전체 회귀 무영향(2113 passed 통합).
 - 한계(§정직, deferred): admin.js 소문자화 자체는 미수정(프론트·visual verification 필요·write-path 정규화가 상쇄) · datasource-scoped picker 실제 case 표시(후속) · 기존 저장 소문자 행 백필은 admin 별도(A 런타임 canonicalize + 재저장 시 write-path 정규화가 점진 seal).
 - Cross-ref: **primary = feature-0002 CHG-20260715T082345-schema-name-case-drift**(런타임 resolution seal·verify 정본) · REV-20260715T082345-schema-name-case-drift(패널) · FRICTION_LEDGER FR-schema-name-case-drift.
+
+## CHG-20260715T181939-graph-edge-follow-drag (그래프 뷰 노드/제품 카테고리 드래그 시 관계선 미추종 수정 — PixiJS incident 엣지 증분 재그림)
+- Date: 2026-07-15. 계기: 사용자 보고 "그래프 뷰에서 좌클릭 드래그로 제품 카테고리를 옮길 때 관계선이 옮기기 전 위치에 그대로 출력(줌 아웃으로만 갱신)". 작업 중 사용자 정정: "cross-category 엣지(다른 제품 카테고리로 가는 연결선)의 구조 갱신이 핵심".
+- 근본원인: PixiJS 렌더러에서 엣지는 절대 model 좌표(a,b)를 Graphics path 에 bake 한 **world 직속 독립 오브젝트**(`_drawEdge`)라 노드 Container 이동으로 따라오지 않는다. 드래그 경로 `_moveElement`/`translateElementTo` 는 노드 style/position 만 갱신 + `_render()`(단순 repaint)만 호출 → incident 엣지 옛 좌표 유지. full `draw()`(줌 밴드 LOD rebuild)만 `edgeSig(e,a,b)` 끝점 변경을 감지해 recreate → "줌 아웃해야 갱신".
+- Changes(feature-0003, frontend-only 1 파일 + 테스트):
+  - `src/static/graph/graph-renderer-pixi.js`: 신규 `_refreshIncidentEdges(movedIds)` — `this._built.edges` 중 `source||target ∈ movedIds` 인 엣지만 old destroy→removeChild→`_drawEdge(e,a,b)`→addChild→`_objs.set`, `_objSig.set(eid, edgeSig(e,a,b))`(다음 full draw 재사용). 좌표는 `getElementPosition`(draw() 의 pos 계산과 동형). `_moveElement` 노드분기(`[id]`)·combo분기(이동 자식 id 수집)·`translateElementTo`(이동 노드 id 수집) 에서 `_render()` 직전 호출.
+  - `tests/headless/test_pixi_adapter.js`: T23 신규 7종(prototype call + stub world/_drawEdge — incident 선택 e1(내부)·e2(cross-category) 재그림·e3 skip / cross-category 이동끝점 새좌표·미이동끝점 옛좌표 / _objs·world 교체 / _objSig 갱신 / 빈·null no-op). ALL PASS 73/0.
+- cross-category 보장: OR 판정 — 한끝(이동 카테고리 구성원)만 movedIds 에 있어도 재그림, 이동 끝점 새 좌표 + 미이동 끝점 현재 좌표로 연결선 구조 갱신(사용자 정정 케이스). 카테고리 드래그는 `graph-core._metaNodeDrag` 가 전 구성원을 `translateElementTo` 로 이동시키므로 본 chokepoint 가 커버.
+- 비변경: 팬/줌·상태·미니맵·hover-fx·우클릭 메뉴·클릭·백엔드/RBAC/스키마/마이그레이션 0. full `draw()` diff 경로 불변.
+- 한계(정직, deferred): 허브 노드(수천 incident 엣지) per-frame 재그림 비용 — full draw() 보다 저렴하고 정확성 필수 최소치, rAF 스로틀은 후속(§76 계열).
+- 검증: `node --check` PASS · 헤드리스 73/0 · §18.8 적대 리뷰 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
+- Cross-ref: TASK 20260715T1819 · REV/TEST-20260715T181939-graph-edge-follow-drag · test-runs.d/20260715T1819-graph-edge-follow-drag.md · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.

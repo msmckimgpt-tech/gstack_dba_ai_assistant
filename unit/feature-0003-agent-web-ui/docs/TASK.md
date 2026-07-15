@@ -5794,3 +5794,18 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 수정: [x] `styles.css` `.admin-meta-bundle` 에 `flex-shrink: 0` — 카드 자연 높이 유지, 목록은 컨테이너가 스크롤. 라이브 주입 검증(카드 12px→166px 복원).
 - 비변경: JS/HTML/백엔드/RBAC/엔드포인트/스키마 0. 다른 CSS 규칙 무변경. cache-buster `?v=dev` placeholder 수기편집 없음.
 - [x] verify-completion → commit → PR #817 머지(a3c69103) → web 재배포(soak PASS) → **POST-DEPLOY PB-0008 재검증 PASS**: 재배포 자산 카드 높이 [166…298](자연 높이·sliver 해소)·flex-shrink=0·목록 스크롤·pageError 0. worktree `ai/claude/feature-0003-enum-bundle-flex-fix`(base main f6cb0b14). REV/CHG-20260715T113208-enum-bundle-flex-fix.
+
+## 20260715T1819-graph-edge-follow-drag — 그래프 뷰 노드/제품 카테고리 드래그 시 관계선 미추종 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독, PixiJS 렌더러. 그래프 도메인 정본 feature-0016. /_template:entry arg-given dispatch)
+
+- 사용자 보고: "그래프 뷰에서 좌클릭 드래그로 제품 카테고리를 옮길 때 관계선이 옮기기 전 위치에 그대로 출력됨(줌 아웃으로만 갱신)."
+- 사용자 정정(작업 중): "내부 엣지(양끝이 같은 제품 카테고리 구성원)는 상대위치가 정합해 무해하나, **다른 제품 카테고리로 가는 cross-category 엣지**는 연결선 구조 갱신이 필요하다."
+- 진단: PixiJS 렌더러(`graph-renderer-pixi.js`)에서 엣지는 절대 model 좌표(a,b)를 Graphics path 에 bake 한 **world 직속 독립 오브젝트**(`_drawEdge` 668 — 노드 Container 의 자식 아님). 드래그 시 `_moveElement`(493)/`translateElementTo`(706)는 노드 style/position 만 옮기고 `_render()`(312, 단순 repaint)만 호출 → incident 엣지는 옛 좌표 유지. 오직 full `draw()`(526, 줌 밴드 LOD rebuild 등)만 `edgeSig(e,a,b)`(끝점 포함, 176)의 서명 변경을 감지해 엣지 recreate → "줌 아웃해야 관계선 갱신" 회귀.
+- 카테고리 드래그 경로 확인: CAT/CATH 밴드 드래그(`graph-core._metaNodeDragStart` 1768) → dragstart 가 `_metaComboMemberIds` 로 전 구성원 노드 id 를 `offs` 에 적재 → drag 중 `_metaNodeDrag`(1848) 가 `translateElementTo(to)` 로 전량 절대이동. 즉 구성원 이동이 renderer `translateElementTo` 를 경유 → 여기서 incident 엣지 refresh 하면 cross-category 커버.
+- 수정:
+  - [x] `graph-renderer-pixi.js` 신규 `_refreshIncidentEdges(movedIds)` — source **또는** target 이 이동집합에 포함된 엣지만 증분 재그림(O(E) 스캔 + incident 엣지만 destroy→_drawEdge→addChild, `_objs`·`_objSig` 갱신). 전체 `draw()`(콤보/전노드/미니맵 재구성)보다 저렴.
+  - [x] `_moveElement` 노드분기(movedIds=[id])·combo분기(movedIds=이동 자식노드)·`translateElementTo`(movedIds=이동 노드) 에서 `_render()` 직전 호출.
+- cross-category 처리(사용자 정정): OR 판정으로 한끝만 이동한 엣지도 재그림 — 이동 끝점은 새 좌표, 미이동(타 카테고리) 끝점은 현재 좌표 → 연결선 구조 갱신.
+- 비변경: 팬/줌·상태(selected/match/running)·미니맵·hover-fx·우클릭 메뉴·클릭·백엔드/RBAC/스키마 0. full `draw()` diff 경로 불변(회귀 0).
+- 알려진 한계(정직·deferred): 허브 노드(수천 incident 엣지) 드래그 시 per-frame 재그림 비용 존재 — 단 full draw() 보다 저렴하고 정확성 필수 최소치. 필요 시 rAF 스로틀은 후속 최적화(§76 계열).
+- 검증: [x] `node --check` PASS · [x] 헤드리스 `test_pixi_adapter.js` T23 신규 7종(incident 선택·cross-category 이동/미이동 끝점·_objs/world/_objSig 교체·무관 skip·빈/null no-op) ALL PASS 73/0 · [ ] §18.8 적대 리뷰(진행) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 라이브(제품 카테고리 드래그 중 cross-category 관계선 실시간 추종).
+- worktree `ai/claude/feature-0003-graph-edge-follow-drag`(base main b3c8cd34). REV/CHG/TEST-20260715T181939-graph-edge-follow-drag.
