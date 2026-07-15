@@ -491,3 +491,17 @@ source_of_truth: true
 - 실증(win-browser 실 Windows Chrome 150, relay, 배포 0f26cec1): PixiJS 그래프 루트 뷰(제품 카테고리 14 + 데이터소스 18 + cross-category 관계선)에서 제품 카테고리 "건즈-개발·1"을 합성 PointerEvent(button0)로 드래그 → **pointerup 전·줌 없이** mid-drag 스크린샷에서 관계선이 이동한 새 위치를 그대로 추종(옛 위치 잔상 0). dragend 후에도 정합(ADR-004 자유배치 영속). pageerror 0. 서빙 자산 `_refreshIncidentEdges` grep=4(baked). evidence: graph_root·graph_middrag·graph_after_reset.
 - Changes: `docs/test-runs.d/20260715T1819-graph-edge-follow-drag.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
 - Cross-ref: 원천 CHG-20260715T181939-graph-edge-follow-drag · ANCHOR 0003 무충돌.
+
+## CHG-20260715T211911-graph-cluster-detail-routines (스키마 클러스터 상세 패널: 함수·프로시저만 있는 컨텐츠 카테고리 누락 수정, Minor §12.3)
+- Date: 2026-07-15. feature-0003 web/UI 프론트 단독(1파일). 그래프 도메인 정본 feature-0016. `/_template:entry` arg-given dispatch.
+- 사용자 보고: 상세 패널의 컨텐츠 카테고리가 테이블만 집계 → 함수·프로시저만 있는 컨텐츠 카테고리(예: "상점 아이템 명칭")가 목록 누락. 해당 항목도 조회되게 구성.
+- 근본원인: 캔버스 build(`graph-core.js` L64~L78)는 Table+Routine 을 모두 `g.tables` 에 넣어 `_metaSimGroups` 로 함께 sim-group(컨텐츠 카테고리)화하나, 스키마 클러스터 상세 패널 진입점(`_metaGraphShowClusterDetailById`·`_metaGraphShowClusterDetailLocal`)과 렌더(`_metaGraphRenderClusterDetail`)는 `label === "Table"` 만 집계 → Routine-only 컨텐츠 카테고리 누락 + 캔버스와 불일치.
+- Changes:
+  - `src/static/graph/graph-ctxmenu.js`:
+    - `_metaGraphShowClusterDetailLocal`: `label === "Routine" && _metaCatParent(n.key,n.fqn)===comboId` 수집·정렬 → `routines` 인자로 렌더 전달.
+    - `_metaGraphShowClusterDetailById`: 모델에서 routines 수집(API 응답 형태 무관 — 패널은 화면 내 스키마라 모델 보장) → 렌더 전달 + status 라인 함수·프로시저 개수 노출.
+    - `_metaGraphRenderClusterDetail(name,fqn,tables,childTables,childCols,totalOverride,truncated,comboId,routines)`: `members=tables.concat(routines)` 로 `_metaSimGroups`/렌더. Routine 행 = ƒ/⚙ 보라 칩(`_META_GRAPH_COLOR.Routine`) 접두사, 클릭 → `_metaGraphShowDetail`(API 조회, routine 키 동작). 설명/섹션 제목/그룹 aria-label 병합집합 반영. 테이블 개수·cap 절단(nTables/truncNote)은 테이블 기준 유지.
+- 정합성: 패널 sim-group 입력을 캔버스와 동일 Table+Routine 병합집합으로 맞춤 → 상세 패널 컨텐츠 카테고리가 캔버스와 일치. `_metaSchemaComboOf(Routine)`==`_metaCatParent(...)` 동일 predicate 로 membership 정합.
+- 비변경: 제품 카테고리 패널(스키마 목록)·캔버스 build·우클릭 메뉴·드래그·상태·백엔드/RBAC/스키마/엔드포인트 0. Table-only 스키마 회귀 0(문구만 확장). cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: `node --check`(module) PASS · §18.8 적대 리뷰 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
+- Cross-ref: TASK 20260715T2119 · REV/TEST-20260715T211911-graph-cluster-detail-routines · test-runs.d/20260715T2119-graph-cluster-detail-routines.md · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
