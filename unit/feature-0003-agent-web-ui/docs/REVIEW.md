@@ -474,3 +474,8 @@ source_of_truth: true
 - 적대 자가검토: "위임 click 이 재렌더 후에도 stale 참조?" → 클릭은 구 ul 에서 발화·처리 완료 후 재렌더, 신 ul 은 새 위임 획득 — 무해. "5000 초과 실스키마?" → 단일 스키마 테이블+루틴 5000 초과는 비현실(gunzgame 409); 초과 시 헤딩 항상 방출로 discoverability 유지.
 - 검증: `node --check`(module) PASS · [SUBAGENT] 적대 리뷰 결함 0 · POST-DEPLOY PB-0008 라이브(500+ 항목 스키마 전 컨텐츠 카테고리 전체 렌더·hover/클릭, 잔여).
 - Cross-ref: TASK 20260715T2237 · CHG/TEST-20260715T223744-graph-cluster-detail-fulllist · test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md · 선행 REV-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.
+
+## REV-20260715T231304-graph-cluster-detail-fulllist-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 컨텐츠 카테고리 전체 출력 + 이벤트 위임 POST-DEPLOY 실증 기록 (CHG-20260715T231304-graph-cluster-detail-fulllist-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 postdeploy 실증 기록). 실 구현 CHG-20260715T223744 은 REV-20260715T223744([SUBAGENT] 6축 결함 0)로 검증됨. 본 cycle 은 배포 결과 기록만.
+- 배포본 실증(win-browser, 배포 41cf76c5): DK온라인 dk_data_release_main(423항목=123테이블+300함수·프로시저) 상세에서 컨텐츠 카테고리 66그룹 전량·423행·(0/N) 0·routine-only 43그룹·스크롤 12423px; 행 자식 click 위임 승격 조회; pageerror 0. ROW_CAP=5000 결정론적 전체 렌더로 사용자 >500 스키마도 동일 커버.
+- Cross-ref: CHG-20260715T231304-graph-cluster-detail-fulllist-postverify · 원천 REV-20260715T223744-graph-cluster-detail-fulllist · ANCHOR 0003 무충돌.
