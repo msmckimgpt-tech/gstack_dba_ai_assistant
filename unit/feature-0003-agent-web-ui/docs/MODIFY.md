@@ -428,3 +428,12 @@ source_of_truth: true
 - 검증: `node --check`(module) admin.js PASS · agent 컨테이너 targeted pytest 28/0(core 2 + web 6 신규 포함) · `gen-routemap --check` up-to-date. POST-DEPLOY PB-0008 라이브(묶음 카드·토글·등록) 예정.
 - Files: `unit/feature-0002-agent-core/src/modules/kb_glossary.py`, `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`, `unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css}`, `unit/feature-0002-agent-core/tests/test_kb_enum_feedback.py`, `unit/feature-0003-agent-web-ui/tests/test_metadata_enum_feedback.py`, `docs/ROUTEMAP.md`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260715T105337-enum-review-bundle.md`.
 - Cross-ref: REV/TASK-20260715T105337-enum-review-bundle · REQ-20260715T105337-enum-review-bundle · 원천 enum_feedback(alembic 0039)·admin_metadata enum-feedback 큐 · ANCHOR 0003 무충돌.
+
+
+## CHG-20260715T113208-enum-bundle-flex-fix (ENUM 검토 큐 묶음 카드 flex 압축 붕괴 수정, Minor §12.3 CSS 전용)
+- Date: 2026-07-15. enum-review-bundle 배포 후 PB-0008 적발 — 묶음 카드 12px sliver 로 붕괴.
+- Changes: `unit/feature-0003-agent-web-ui/src/static/styles.css` `.admin-meta-bundle` 에 `flex-shrink: 0` 추가. `#metadataList`(overflow-y:auto flex-column, 높이 제약)에서 카드가 flex 압축 + card `overflow:hidden` 클리핑되던 것을 자연 높이 유지로 해소.
+- 무회귀: JS/HTML/백엔드/RBAC/엔드포인트/스키마 0. CSS 선언 1 + 주석. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: 라이브 win-browser 주입 검증(카드 12px→166px). POST-DEPLOY PB-0008 재검증 예정.
+- Files: `unit/feature-0003-agent-web-ui/src/static/styles.css`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260715T113208-enum-bundle-flex-fix.md`.
+- Cross-ref: 원천 CHG-20260715T105337-enum-review-bundle · ANCHOR 0003 무충돌.

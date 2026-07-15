@@ -389,3 +389,11 @@ source_of_truth: true
 - 비파괴 재확인: 미선택(해제) 후보는 pending 유지(거부 아님). 개별 promote/reject·glossary/sample 큐·엔드포인트 shape 불변.
 - 검증: agent 컨테이너 pytest — core `test_kb_enum_feedback`(bulk_multi·skips_missing) + web `test_metadata_enum_feedback`(bulk_promote·reports_skips·empty_400·bad_type_400·cap_400·sorts_ids·requires_curate) + route_parity(golden 재생성) **31 passed** · `py_compile` OK · `node --check` admin.js PASS · `gen-routemap --check` up-to-date. **라이브 시각검증 = POST-DEPLOY PB-0008**(정적 baked, visual_verification_scope: always).
 - Cross-ref: CHG/TASK/REQ-20260715T105337-enum-review-bundle · FUNCTION AC-ERB-1~3 · 원천 enum_feedback(alembic 0039)·admin_metadata enum-feedback 큐 · TEST test-runs.d/20260715T105337-enum-review-bundle.md · ANCHOR 0003 무충돌.
+
+
+## REV-20260715T113208-enum-bundle-flex-fix [SKIPPED:frontend-css-layout-single-declaration-no-logic-no-rbac] — ENUM 검토 큐 묶음 카드 flex 압축 붕괴 수정 (20260715T1132-enum-bundle-flex-fix, Minor §12.3)
+- Panel skip 사유(§18.8): CSS 1선언(`flex-shrink:0`) + 주석. JS/HTML/백엔드/RBAC/엔드포인트 0. 로직·경계 무변경 → 적대 코드리뷰(권한·주입·enforcement) 이득 없음.
+- 근본원인 라이브 확정: `#metadataList`(overflow-y:auto·flex-column·height 373px)에서 `.admin-meta-bundle` 기본 flex-shrink:1 → 8카드 압축 + card overflow:hidden 이 내용(164px) 클리핑 → 12px sliver. flex-shrink:0 주입 시 166px 복원(라이브 실측). flat-list `.admin-meta-row`(overflow visible)는 미발현이던 잠복.
+- 적대 자가검토(refute): ① "flex-shrink:0 이 목록 스크롤을 깨나?" → `#metadataList overflow-y:auto` 가 컨테이너 스크롤 제공, 카드는 자연 높이(표준 패턴). ② "다건일 때 넘침?" → 컨테이너 스크롤이 흡수(카드 압축 대신). ③ "다른 flex 자식 회귀?" → `.admin-meta-bundle` 한정 선택자, 타 규칙 무변경.
+- 검증: POST-DEPLOY PB-0008 라이브(재배포 자산 카드 정상 높이·묶음·체크리스트·등록·pageerror 0).
+- Cross-ref: CHG/TASK-20260715T113208-enum-bundle-flex-fix · 원천 REV-20260715T105337-enum-review-bundle · ANCHOR 0003 무충돌.
