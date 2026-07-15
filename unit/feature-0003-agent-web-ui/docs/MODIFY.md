@@ -534,3 +534,10 @@ source_of_truth: true
 - 비변경: 집계/membership/hiddenKinds/sim-group/헤딩/XSS·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: `node --check` PASS · §18.8 적대 리뷰(위임 누적·hover 의미·클릭 동등성) · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260715T2237 · REV/TEST-20260715T223744-graph-cluster-detail-fulllist · test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md · 선행 CHG-20260715T215241-graph-cluster-detail-cap · ANCHOR 0003 무충돌.
+
+## CHG-20260715T231304-graph-cluster-detail-fulllist-postverify (컨텐츠 카테고리 전체 출력 + 이벤트 위임 POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-07-15. cluster-detail-fulllist(CHG-20260715T223744, PR #830 main 41cf76c5) 배포 후 win-browser PB-0008 라이브 실증. 코드 변경 0(문서 전용).
+- 실증(실 Windows Chrome 150 relay, 배포 41cf76c5, 로그인 세션): 그래프 뷰 > mssql-dk-dev(DK온라인) > `dk_data_release_main`(123 테이블 + 300 함수·프로시저 = 423항목) 상세 → (1) 컨텐츠 카테고리 그룹 **66개 전량 렌더 · 423행 · (0/N) 0 · 절단 0 · routine-only 43그룹**("NPC 콘텐츠 41" 등), aside scrollH 12423, (2) 행 자식(`<code>`) 합성 click → 이벤트 위임 승격 → `singleinfo` 노드 상세 조회, (3) pageerror 0. 서빙 자산 baked(`ROW_CAP = 5000`·`_ctUl` grep=9). evidence: relmain_full.png.
+- 주(정직): 사용자 스크린샷의 정확한 >500 스키마(gemstone/binto32/merchant — DK QA/production 추정)는 좌표 특정 못 함. 단 검증한 423/66그룹 스키마 전량 렌더 + ROW_CAP=5000 결정론(적대 리뷰 확인)으로 해당 >500 스키마도 (0/N) 없이 전체 표시됨.
+- Changes: `docs/test-runs.d/20260715T2237-graph-cluster-detail-fulllist.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
+- Cross-ref: 원천 CHG-20260715T223744-graph-cluster-detail-fulllist · ANCHOR 0003 무충돌.

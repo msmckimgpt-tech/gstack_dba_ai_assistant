@@ -16,6 +16,12 @@ verdict: 정적 PASS · POST-DEPLOY PB-0008 라이브 DEFERRED
 - **회귀**: 소형 스키마는 캡 미도달 → 전체 표시(기존과 동일, 단 직전 cap cycle 의 그룹당 25 절단이 사라져 25 초과 그룹도 전량). XSS: rowHTML `esc()` 무변경.
 - 결과 **PASS(정적)** — §18.8 적대 리뷰 결과는 REVIEW.md 참조.
 
-### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **DEFERRED(배포 후 수행)**
-- 대상: 재배포 후 컨텐츠 카테고리 멤버 총합 500 초과 스키마(사용자 스크린샷의 gemstone/battlefield/transform-job DB) 클러스터 상세 재진입 → (1) 모든 컨텐츠 카테고리가 전체 멤버 렌더(`(0/N)`·`(3/5)` 소거), (2) hover 시 카메라 pan 정상, (3) 행 클릭 → 노드 상세 조회, (4) pageerror 0, (5) 다수 행 렌더 시 체감 지연 없음.
-- visual_verification_scope: always — 배포 후 충족 예정. 미수행 사유: 정적 자산 baked 라 web 재배포 후에만 서빙 반영.
+### Run 3 — POST-DEPLOY 라이브 시각검증 (Environment: Windows-browser, PB-0008 relay) — **PASS**
+- 배포: PR #830 → main 41cf76c5 + `sudo -E bin/deploy-web.sh` 무중단 롤링(web-a/web-b·워커 recreate·soak 통과). 서빙 자산 `ROW_CAP = 5000`·`_ctUl` grep=9(web-a/web-b baked).
+- 방법: win-browser.py 실 Windows Chrome 150 relay, https://localhost/admin(로그인 세션) → 그래프 뷰 > mssql-dk-dev(DK온라인) > 스키마 카드 클릭 → 상세 패널.
+- 결과 **PASS**:
+  1. **전체 출력(대형 스키마)**: `dk_data_release_main`(123 테이블 + 300 함수·프로시저 = 423항목) 상세에서 **컨텐츠 카테고리 그룹 66개 전부 렌더 · 423행 전량 · `(0/N)` 0개 · 절단 0**, 그중 **함수·프로시저-only 그룹 43개**("NPC 콘텐츠 41"=Combine/NPCDrop/Collection… 41 routine 등). 패널 aside scrollH 12423(overflow-y:auto 스크롤). 직전 cluster-detail-cap(500 캡) 대비 캡 해제로 대형·고프로시저 스키마의 모든 컨텐츠 카테고리·전체 멤버가 표시됨을 실증. (`dk_game_integrate` 70항목도 7그룹 전량 렌더 교차확인.)
+  2. **행 상호작용 이벤트 위임**: 행 자식(`<code>`)에 합성 click → `closest(".amgr-ct-row")` 위임 승격 → `_metaGraphShowDetail("…singleinfo")` → "TABLE / singleinfo / 이웃 2개" 노드 상세 조회(위임 클릭 정상). mouseover 위임도 발화.
+  3. **pageerror 0**: window 에러 배열 빈값·docReady complete.
+- visual_verification_scope: always — 충족. evidence: relmain_full.png("NPC 콘텐츠 41" 그룹 + 캔버스 66 컨텐츠 카테고리 boxes).
+- 주(정직): 사용자 스크린샷의 정확한 스키마(멤버 총합 500 초과, gemstone/binto32/merchant 콘텐츠 — DK QA/production 계열 추정)는 본 검증에서 좌표로 특정하지 못했으나, (a) 검증한 423항목/66그룹 스키마가 전량 렌더되고 (b) ROW_CAP=5000 라 5000 미만 스키마는 결정론적으로 전체 렌더(적대 리뷰 확인)되므로 해당 >500 스키마도 동일하게 `(0/N)` 없이 전체 표시된다.
