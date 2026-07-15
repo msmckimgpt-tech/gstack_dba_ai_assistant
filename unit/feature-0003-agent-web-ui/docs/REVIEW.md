@@ -10,6 +10,22 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260715T114608-graph-ctxmenu-band-priority [SUBAGENT:adversarial-band-wins-review] — 제품 카테고리 밴드 우클릭 band-wins (TASK-20260715T114608-graph-ctxmenu-band-priority, Major §12.3 frontend-only) — SHIP
+- Panel(§18.8): general-purpose 서브에이전트 적대 리뷰 — up()→_pickContext→emit→graph-core dispatch 전 경로 추적 + 68/68 테스트 + 좌표 기하 전수 재계산. 8가설 전수 REJECTED(무결).
+- 가설별:
+  - H1 좌클릭/드래그 보존: `_pickContext` 는 `d.button===2` 분기에서만 호출; onMove(pan/nodedrag)·좌클릭·더블클릭은 `d.hit`(=`_pick`) 사용 → **우클릭 전용 확정**. T21 이 `_pick` 계약 유지 잠금. (NIT: up 버튼 게이팅 자체는 코드리딩+T21 담보, pure 유닛 아님.)
+  - H2 콘텐츠 노드 비흡수: 승격 조건 `__combo||kind==="schema-card"` — table/column/term/routine/ctl 전부 제외. T22 rTbl 가드.
+  - H3 헤더/컨트롤: CATH(cat-hd)/CATX(cat-ctl)/GB/GH/GX 승격 대상 아님 → 자기 라우팅 그대로. T22 rHd 가드.
+  - H4 밴드 밖 standalone: cat-bg=null→승격 skip. T22 rStand(schema-card) 가드. (NIT: standalone combo 미커버지만 로직상 `__combo` 유지→스키마, 회귀 없음.)
+  - H5 미분류 밴드: `CAT:미분류` cat-bg 라 균일 적용 → 미분류 클러스터 우클릭=미분류 카테고리 메뉴. 결함 아님, 사용자 결정과 정합(관찰).
+  - H6 _payload/kind 정합(핵심): 승격 시 raw cat-bg 노드(`__combo` 미부여) 반환 → `node:contextmenu`, id`"CAT:key"` → graph-core L2141 `/^CAT/`→`_metaGraphCtxForCategory`. combo→cat-bg 승격이 정확히 카테고리로 라우팅. 미승격 combo/SC 는 각자 경로.
+  - H7 재-pick 좌표: button===2 는 finished=null(≤MOVE_THRESH 4px)일 때만 도달 → up 좌표 재-pick 이 down 과 동일. payload model 좌표도 up 이라 정합.
+  - H8 T22 신뢰성: 좌표 기하(CAT 0..600×100..500·SC 125..275×170..230·combo 359..541×208..276·standalone 825..975×270..330) 코멘트 일치, 6 assertion 실효 가드. 68 PASS/0 FAIL.
+- **판정: SHIP · BLOCKING 0**.
+- NIT 처리: (1) up 버튼 게이팅 회귀 방지 = PB-0008 POST-DEPLOY 시나리오에 좌/우 분기 명문화(fragment (d) 좌클릭 펼치기 항목) — 수용. (2) T22 커버리지 갭(standalone combo·column·GB·미분류) = accept(로직상 회귀 없음). (3) 문서 = 본 cycle 에서 TASK/MODIFY/REPORT/FUNCTION/fragment 갱신 완료.
+- 트레이드오프(사용자 수용): 밴드 내 클러스터 우클릭 스키마 메뉴는 좌클릭 드릴로 대체. 후속 '통합 메뉴' 여지(§8.1).
+- Cross-ref: CHG/TASK-20260715T114608-graph-ctxmenu-band-priority · test-runs.d/20260715T114608-graph-ctxmenu-band-priority.md · 선행 REV-20260715T102901-graph-ctxmenu-hittest.
+
 ## REV-20260715T110000-graph-ctxmenu-hittest-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 검증 기록 (TASK-20260715T102901-graph-ctxmenu-hittest, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 test-runs.d fragment POST-DEPLOY 섹션(이연→실측 PASS)+TASK 체크리스트뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260715T102901-graph-ctxmenu-hittest [SUBAGENT] (SHIP)가 정본.
 - 라이브 실측 요지(win-browser Chrome 150, 배포 6ec5da4b→8098aee1): 제품-매핑 데이터소스 스키마그래프 CAT 밴드 2개에서 스키마 클러스터→"스키마" 메뉴 / 밴드 헤더·tint 여백→"카테고리" 메뉴 실증 — 세 사용자 증상(스키마↔카테고리 뒤바뀜) 전부 해소. WYSIWYG. 증거 스크린샷 확보.

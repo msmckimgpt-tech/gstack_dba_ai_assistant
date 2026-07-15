@@ -1628,6 +1628,13 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 좌클릭 경로(CAT/CATH=상세, CATX=접기 토글)·밴드 드래그·스키마 클러스터(combo) 우클릭 메뉴는 무변경(회귀 0). RBAC/백엔드/스키마/엔드포인트 0.
 - 코드 거주: `static/graph/graph-ctxmenu.js`(+`_metaGraphCtxForCategory` + export)·`static/graph/graph-core.js`(`node:contextmenu` CAT 분기 라우팅 + import). CHG/REV-20260714T180125-graph-ctxmenu-category.
 
+## (TASK-20260715T114608-graph-ctxmenu-band-priority, 2026-07-15) 제품 카테고리 밴드 우클릭 band-wins — 밴드 위 클러스터 박스 우클릭도 카테고리 메뉴 (web/UI, Major §12.3 — 정본 feature-0016 그래프, frontend-only)
+- graph-ctxmenu-hittest 배포 후 사용자 보고: "제품 카테고리 밴드 우클릭이 여전히 스키마 클러스터로 작동". 진단(라이브 정밀 측정): hit-test 는 정확(경계=가시 박스 일치)하나, 밴드 안 스키마 클러스터 박스가 밴드를 시각적으로 거의 채워 "밴드 우클릭"=박스 우클릭→스키마. 겹침 우선순위 설계 결정 → 사용자 선택 "밴드 우선".
+- 계약: 그래프 우클릭(contextmenu)은 이제 `PixiGraphAdapter._pickContext()` 로 결정 — 밴드 멤버 스키마 클러스터(combo/schema-card)를 우클릭하면 소속 **카테고리 밴드(cat-bg) 메뉴**를 낸다. 개별 테이블·컬럼 노드, 밴드 헤더(CATH)·컨트롤(CATX/GX), sim-group(GB/GH), 밴드 밖 standalone 클러스터는 각자 메뉴 그대로. **좌클릭/더블클릭/드래그는 `_pick`(클러스터 우선) 불변** — 클러스터 펼치기·상세·이동은 좌클릭 경로 유지.
+- 구현: `_pickContext(mx,my)` = `_pick()` 결과가 combo/schema-card 이고 그 지점 cat-bg 피복 시 cat-bg 승격, else `_pick()`. `up()` button===2 만 사용.
+- 트레이드오프(사용자 수용): 밴드 내 클러스터의 우클릭 스키마 메뉴(펼치기·클러스터 상세·DB 전체 AI 능동 분석·스키마명 복사)는 좌클릭 드릴로 대체 접근. 후속 '통합 메뉴' 검토 여지(§8.1).
+- 검증: `node --check` PASS · `tests/headless/test_pixi_adapter.js` T22 회귀 6종(ALL PASS 68/0) · §18.8 적대 패널. 코드 거주: `static/graph/graph-renderer-pixi.js`. POST-DEPLOY PB-0008 잔여. CHG/REV-20260715T114608-graph-ctxmenu-band-priority.
+
 ## (TASK-20260715T102901-graph-ctxmenu-hittest, 2026-07-15) 그래프 뷰 우클릭 메뉴 오라우팅(스키마↔제품카테고리 뒤바뀜) hit-test 층서 수정 (web/UI, Major §12.3 — 정본 feature-0016 그래프, frontend-only, 핵심 상호작용 경로)
 - graph-ctxmenu-category(dispatch 라우팅) 배포 후 사용자 잔존 보고: **스키마 클러스터 우클릭 → 카테고리 메뉴 / 제품 카테고리 밴드 우클릭 → 스키마 메뉴**(뒤바뀜), 카테고리 헤더는 정상. dispatch(graph-core `node:contextmenu`)는 정확하나 `e.target.id` 를 정하는 hit-test 가 오targeting.
 - 계약: `PixiGraphAdapter._pick()`(`graph-renderer-pixi.js`) 이 이제 **시각 z-페인트 순서와 정합하는 3-tier** 로 hit 을 결정 — ① 실 요소(cat-bg 제외: 카드·테이블·GB/GH/GX·CATH/CATX) → ② 스키마 클러스터 배경(combo, z=`_METZ.COMBO`=0) → ③ 카테고리 밴드 배경(cat-bg, z=`_METZ.CAT_BG`=-1). `PixiAdapterPure.hitTest(mx,my,hg,nodes,filter)` optional 필터 인자 + `_isCatBg(n)=(data.kind==="cat-bg")` 헬퍼. 결과 "보이는 대로 클릭"(WYSIWYG): 밴드 위에 클러스터/카드가 보이면 그 요소 메뉴, 밴드 tint 고유 여백만 보이면 카테고리 메뉴, 헤더(CATH)/컨트롤(CATX)은 tier1 최우선(카테고리 메뉴).

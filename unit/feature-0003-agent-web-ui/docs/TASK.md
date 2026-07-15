@@ -8,6 +8,33 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260715T114608-graph-ctxmenu-band-priority — 제품 카테고리 밴드 우클릭이 그 안 스키마 클러스터로 새는 문제: 우클릭 band-wins (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. graph-ctxmenu-hittest 후속)
+
+**사용자 보고 (hittest fix 배포 후)**: "제품 카테고리 밴드에 대한 우클릭이, 여전히 스키마 클러스터에 대한 우클릭으로 작동한다."
+
+**진단 (라이브 PB-0008 정밀 측정)**: hittest fix 는 정확히 작동(박스→스키마, 밴드 tint 여백/헤더→카테고리; hit 경계=가시 박스 경계와 일치, y=320 라인 x283-323 카테고리/x333-765 박스 스키마/x785 카테고리). **근본 = UX 겹침**: 카테고리 밴드 안의 스키마 클러스터 박스(SC 카드/combo)가 밴드 내부를 시각적으로 거의 꽉 채워, 사용자가 "밴드"로 인식하고 우클릭하는 지점이 곧 클러스터 박스라 스키마 메뉴가 나옴. hit-test 결함 아님 — **겹침 우선순위 설계 결정**.
+
+**사용자 결정 (AskUserQuestion, 2026-07-15)**: "밴드 우선 — 박스 위도 카테고리". 밴드 영역(멤버 클러스터 박스 포함) 우클릭 → 카테고리 메뉴. 스키마 클러스터는 좌클릭 드릴 등 다른 경로로 접근.
+
+**수정 (1 파일, 우클릭 경로 한정)**: `graph-renderer-pixi.js`
+- 신규 `PixiGraphAdapter._pickContext(mx,my)`: `_pick()` 결과가 **combo 또는 schema-card** 이고 그 지점을 덮는 cat-bg 가 있으면 **cat-bg(카테고리 밴드)로 승격**. 아니면 `_pick()` 그대로.
+- `up()` 의 **우클릭(button===2)만** `_pickContext` 사용. 좌클릭·더블클릭·드래그(팬/노드/combo/밴드헤더)는 `_pick`(클러스터 우선) **불변** → 클러스터 펼치기·이동 어포던스 보존.
+
+**비변경/보존**: 밴드 내 개별 **테이블·컬럼 노드** 우클릭 = 그 노드 메뉴(밴드 흡수 안 함, combo/schema-card 만 승격). 밴드 **헤더 CATH·컨트롤 CATX/GX·sim-group GB/GH** 우클릭 = 그대로. **밴드 밖 standalone 클러스터** 우클릭 = 스키마 메뉴(cat-bg 미피복→승격 안 함). 좌클릭/드래그·백엔드/RBAC/스키마 0.
+
+**트레이드오프 (사용자 수용)**: 밴드 내 클러스터의 우클릭 스키마 메뉴(펼치기·클러스터 상세·DB 전체 AI 능동 분석·스키마명 복사)는 좌클릭 드릴(펼치기·상세 패널)로 대체 접근. 필요 시 후속으로 '통합 메뉴'(카테고리+클러스터) 검토 가능(§8.1 기록).
+
+**검증**: `node --check` PASS · `tests/headless/test_pixi_adapter.js` **T22 신규 6종**(밴드 내 카드/combo→카테고리 · 테이블→자기 · 헤더→카테고리 · 밴드여백→카테고리 · 밴드밖 카드→스키마) ALL PASS 68/0 · §18.8 적대 패널.
+
+**완료 체크리스트**:
+- [x] 근본 진단 — hit-test 정확(경계=가시박스 일치), 클러스터 박스가 밴드를 시각적으로 채우는 겹침 UX → 사용자 결정 band-wins
+- [x] `_pickContext`(combo/schema-card→소속 cat-bg 승격) + `up` 우클릭만 적용 + 좌클릭/드래그 불변
+- [x] `node --check` PASS + T22 회귀 6종 (ALL PASS 68/0)
+- [x] §18.8 적대 패널 → **SHIP**(BLOCKING 0, 8가설 전수 REJECTED; NIT=up 버튼게이팅 PB-0008 명문화·T22 갭 accept) REV-20260715T114608-graph-ctxmenu-band-priority [SUBAGENT]
+- [x] feature 문서(TASK/MODIFY/REVIEW/REPORT/FUNCTION) + test-runs.d fragment
+- [ ] verify-completion PASS → commit → PR·머지
+- [ ] web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 라이브: 밴드 내 클러스터 박스 우클릭 → 카테고리 메뉴 / 테이블 노드 → 그 노드 / 밴드 밖 클러스터 → 스키마 / 좌클릭 펼치기 정상
+
 ## TASK-20260715T102901-graph-ctxmenu-hittest — 그래프 뷰 우클릭 메뉴 오라우팅(스키마↔제품카테고리 뒤바뀜) hit-test 층서 수정 (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. /_template:resume 후속)
 
 **사용자 보고 (graph-ctxmenu-category 배포 후 잔존)**: 그래프 뷰 우클릭 메뉴가 대상과 뒤바뀜 —
