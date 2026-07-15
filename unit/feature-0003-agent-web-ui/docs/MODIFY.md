@@ -11,6 +11,19 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260716T013714-graph-search-detail-panel (그래프 뷰: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성, Minor §12.3 — 프론트 단독·additive; 그래프 정본 feature-0016)
+- Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-detail-panel`(base main 0433efbb). 사용자 요청(/_template:entry 후속 turn): "검색어가 입력되었을 경우엔 상세 패널 내 검색 결과를 구성하도록 동작시켜주세요. 트리거는 '검색어 갱신 시'."
+- **컨텍스트**: 직전 cycle(feature-0002 CHG-20260716-graph-search-content-match)로 `search_nodes` 가 이름/FQN 외 컨텐츠 카테고리(`semantic_cluster_label`)·AI 능동 분석(`node_analysis_jobs.analysis`)까지 매칭하고 노드에 `match_via`·`cluster_label`·`score` 를 실어 반환한다. 그래프 검색은 캔버스 앰버 글로우 + 스키마 카드 badge 로만 결과를 표기했는데, 검색 시 상세 패널에서 매칭 노드 목록을 바로 훑도록 결과 리스트를 상세 패널에 구성한다(프론트 렌더만 추가 — 백엔드 payload 이미 충분).
+- **변경**: `src/static/graph/graph-ctxmenu.js`
+  - 신규 `_metaGraphRenderSearchResults(nodes, q)`: `#metadataGraphDetailBody` 에 검색 결과 리스트 렌더. 행 = label 배지(`_META_GRAPH_COLOR`/`_META_LABEL_KO`) + 이름 + 유사도%(score>0) + **매칭 근거 배지**(match_via: 이름/카테고리/AI 분석) + 카테고리 라벨(category 매칭 시 cluster_label). 전 사용자/DB 유래 문자열 `esc()` HTML 이스케이프. 결과 0건 시 안내 메시지. 컨테이너 id `metaGraphSearchResults`(검색결과 뷰 판별 마커). 행 클릭/Enter/Space → `_metaGraphShowDetail(key)`(그 노드 상세 이동). role=button·tabindex 접근성.
+  - `_metaGraphSearch` 2훅: (a) 비어있지 않은 q 는 `if (q !== _metaGraph.lastQuery) return` stale 가드 뒤에서 `_metaGraphRenderSearchResults(data.nodes, q)` 호출(검색어 갱신 트리거). (b) 클리어(빈 q) 시 상세 body 에 마커가 있으면(=검색결과 뷰) `_metaGraphRenderDetailEmpty()` 로 해제 — 사용자가 결과를 클릭해 노드 상세로 들어간 경우는 마커 부재라 보존.
+  - `src/static/graph/graph.css`: `.amgr-searchlist`/`.amgr-searchres`/`.amgr-via`+`.amgr-via-{name,category,analysis}`/`.amgr-searchsub`/`.amgr-searchmeta` + `.amgr-row[data-goto]` cursor·hover. 카테고리 배지는 검색 글로우(#e8a400)와 동일 앰버 계열, 분석=블루, 이름=회색. 기존 `admin-meta-graph-card`/`amgr-row`/badge 토큰 재사용.
+- Why: 검색 결과를 캔버스에서만 보던 것을 상세 패널에서 목록으로 훑고(매칭 근거·유사도 가시), 클릭으로 바로 상세 이동 — 검색→탐색 흐름 단축. 직전 백엔드 매칭 확장(카테고리·AI 분석)의 근거를 배지로 표면화해 "왜 매칭됐는지"도 노출.
+- Impact: 검색 경로에만 상세 패널 렌더 1개 추가. 노드 상세/클러스터 상세/우클릭 메뉴·기존 글로우·카드 badge 무변경. 백엔드·API·스키마 무변경. 캐시버스터는 빌드 content-hash 자동 주입.
+- Rollback: `_metaGraphRenderSearchResults` + 2훅 + graph.css 블록 revert. 다른 경로 영향 0.
+- Deploy: web 재빌드(정적 자산 hash 재주입). alembic/백엔드 변경 없음.
+- Cross-ref: feature-0002 CHG-20260716-graph-search-content-match(match_via/cluster_label/score 원천) · feature-0016-metadata-graph(그래프 뷰 정본) · REV-20260716T013714-graph-search-detail-panel · 병렬 세션 feature-0016-graph-detail-scroll(상세 패널 스크롤/history, 함수 영역 직교).
+
 ## CHG-20260715T120000-graph-ctxmenu-band-priority-postverify (TASK-20260715T114608-graph-ctxmenu-band-priority POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-15. 코드/자산 무변경 — test-runs.d fragment POST-DEPLOY 섹션 '이연'→실측 PASS + TASK 체크리스트 완료. 기능 배포 PR #815→main 6a950a20 선행 완료.
 - 라이브 실측(win-browser Chrome 150, 6a950a20): 킹스레이드·미분류 CAT 밴드에서 클러스터 박스(dbAuth·dbTest) 우클릭 → **카테고리 메뉴**(band-wins) / 펼친 테이블 노드 → **그 테이블 메뉴**(흡수 안 함) / 좌클릭 → **클러스터 펼치기 정상**. 사용자 결정("밴드 우선") 충족. 증거 scratchpad/evidence-bandwins-box-category.png.

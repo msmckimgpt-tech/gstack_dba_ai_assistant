@@ -307,6 +307,25 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 /* graph-reltrace ②③: 추적 행의 "🔎 추적" 힌트 — hover 시에만 또렷하게(비침습). */
 .amgr-tracehint { flex: none; margin-left: auto; font-size: 10px; color: var(--text-3, var(--text-2)); opacity: .55; white-space: nowrap; }
 .amgr-row.amgr-trace:hover .amgr-tracehint, .amgr-row.amgr-trace:focus-visible .amgr-tracehint { opacity: 1; color: var(--primary); }
+/* graph-search-detail: 검색어 갱신 시 상세 패널에 구성되는 검색 결과 리스트. 행 클릭 = 그 노드 상세 이동.
+   매칭 근거 배지(match_via): 이름=중립 회색 / 카테고리=앰버(검색 글로우와 동일 계열) / AI 분석=블루. */
+ul.amgr-searchlist { list-style: none; margin: 6px 0 0; padding: 0; }
+.amgr-row[data-goto] { cursor: pointer; }
+.amgr-row[data-goto]:hover, .amgr-row[data-goto]:focus-visible {
+  border-color: var(--primary); background: var(--primary-soft); outline: none;
+}
+.amgr-searchres .amgr-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.amgr-searchres .amgr-main code { font-size: 11.5px; word-break: break-all; }
+.amgr-searchscore { flex: none; margin-left: auto; }
+.amgr-searchsub { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+.amgr-via {
+  font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.amgr-via-name { color: #4a5568; background: rgba(90, 103, 120, .12); border-color: rgba(90, 103, 120, .3); }
+.amgr-via-category { color: #7a4b12; background: rgba(232, 164, 0, .14); border-color: rgba(232, 164, 0, .42); }
+.amgr-via-analysis { color: #2b5a9e; background: rgba(43, 90, 158, .12); border-color: rgba(43, 90, 158, .35); }
+.amgr-searchmeta { font-size: 10.5px; color: var(--text-muted, var(--text-2)); }
 /* reldedup(graph-detail): .admin-meta-graph-ai-rels 규칙 제거 — AI 박스 '연결 관계 추적' 목록이
    상단 컬럼 섹션과 중복이라 삭제되며 이 클래스의 유일 producer 가 사라졌다. */
 /* reldetail-colexpand ①②③: 컬럼 아코디언 + 방향 그룹 + 개수 배지 */
