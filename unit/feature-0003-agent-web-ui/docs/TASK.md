@@ -29,10 +29,10 @@ source_of_truth: true
 - [x] 진단 — 3층 클러스터(밴드/스키마/컨텐츠) 식별, 사용자 ①↔③ 혼동 확인, AskUserQuestion 2문항 확정(sim-group 확인 + band-wins 철회)
 - [x] band-wins 철회(`_pickContext` 제거, 우클릭=`_pick`) + `_metaGraphCtxForContentCategory` 신설 + GB/GH/GX 재라우팅 + groupInfo 적재
 - [x] `node --check`(4 파일) PASS + T22 교체(컨텐츠 카테고리 라우팅·band-wins 철회·`_pickContext` 부재) ALL PASS 66/0
-- [ ] §18.8 적대 패널 → REV-20260715T135725-graph-ctxmenu-content-category [SUBAGENT]
-- [ ] feature 문서(TASK/MODIFY/REVIEW/REPORT/FUNCTION) + test-runs.d fragment
-- [ ] verify-completion PASS → commit → PR → 머지
-- [ ] web 재배포(deploy_scope: included) → **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브**: sim-group 우클릭→컨텐츠 카테고리 / 스키마 클러스터 우클릭→스키마(band-wins 복원) / 밴드 여백→카테고리
+- [x] §18.8 적대 패널 → **SHIP**(BLOCKING 0, 8가설 전수 REJECTED; NIT 4건 중 주석 1건 수정·3건 수용) REV-20260715T135725-graph-ctxmenu-content-category [SUBAGENT]
+- [x] feature 문서(TASK/MODIFY/REVIEW/REPORT/FUNCTION) + test-runs.d fragment
+- [x] verify-completion PASS → commit a8739db6 → PR #820 → CI SUCCESS → 머지(main 66722981) → cycle-finalize
+- [x] web 재배포(deploy_scope: included, web-a/b 66722981 soak 통과) → **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 PASS**(win-browser Chrome 150): ① sim-group "방송 계정·3"(mysql-kr-an2-player dbGame) 우클릭 → **컨텐츠 카테고리 메뉴**(헤더 "방송 계정·테이블 3"·소속 스키마 상세·접기(묶음)·묶음명 복사) / ② 밴드 위 스키마 클러스터(dbAuth) 우클릭 → **스키마 메뉴**(band-wins 철회 복원) / ③ 제품 카테고리 밴드(미분류·킹스레이드) → **카테고리 메뉴** / 개별 테이블(BanBroadcastAccount) → **테이블 메뉴**(흡수 안 됨). 서빙 자산 baked(`_pickContext` 0·ContentCategory 라우팅)+브라우저 fetch(stale 아님) 확인. 증거 scratchpad/evidence-content-category-menu.png. (postverify: CHG/REV-20260715T140000-graph-ctxmenu-content-category-postverify)
 
 ## TASK-20260715T114608-graph-ctxmenu-band-priority — 제품 카테고리 밴드 우클릭이 그 안 스키마 클러스터로 새는 문제: 우클릭 band-wins (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. graph-ctxmenu-hittest 후속) **[철회됨 → TASK-20260715T135725-graph-ctxmenu-content-category: 사용자가 밴드↔컨텐츠 카테고리 착각을 정정]**
 
