@@ -442,3 +442,16 @@ source_of_truth: true
 - 적대 자가검토(refute): "guard 추가가 status 라인 개수(ById)와 목록 개수를 어긋나게 하나?" → status 의 `routines.length` 도 guard 후 배열 기준이라 목록·설명·status 3자 동일 집합. "hiddenKinds 미초기화 환경?" → `_metaGraph.hiddenKinds` 는 graph-state 초기화 Set(빈 Set 이면 `.has` 항상 false=전량 표시, 캔버스와 동일).
 - 검증: `node --check`(module) PASS · [SUBAGENT] 적대 리뷰 MAJOR 1 수정·잔여 correctness 결함 없음 · POST-DEPLOY PB-0008 라이브(잔여, visual_verification_scope: always).
 - Cross-ref: TASK 20260715T2119 · CHG/TEST-20260715T211911-graph-cluster-detail-routines · test-runs.d/20260715T2119-graph-cluster-detail-routines.md · 그래프 도메인 정본 feature-0016 · ANCHOR 0003 무충돌.
+
+## REV-20260715T215241-graph-cluster-detail-cap [SKIPPED:frontend-display-cap-constants-and-heading-emission-no-logic-no-boundary-no-rbac] — 스키마 클러스터 상세: 목록 행 캡이 함수·프로시저 컨텐츠 카테고리를 통째 숨기던 문제 수정 (20260715T2152-graph-cluster-detail-cap, Minor §12.3)
+- Panel skip 사유(§18.8): 렌더 캡 상수(80→PER_GROUP 25 + ROW_CAP 500) + "그룹 헤딩 항상 방출" 표시 로직 변경. 데이터/집계/membership/권한/엔드포인트/주입 경계 무변경 → 적대 코드리뷰(권한·주입·enforcement) 이득 없음. 대신 적대 자가검토로 대체.
+- 근본원인(라이브 확정): `_metaGraphRenderClusterDetail` sim-group 렌더가 `if (emitted >= 80) return` 로 캡 도달 후 그룹 통째 skip. sim-group 순서 be:(테이블) 우선 → gunzgame(409) 앞쪽 테이블 be: 클러스터 10개가 80행 소진 → 함수·프로시저 컨텐츠 카테고리 전체(헤딩 포함) 렌더 누락(POST-DEPLOY PB-0008 라이브 실측: 렌더 그룹 10개 전부 tbl, rtn=0; aside scrollH 2620·마지막 "전체 순위 (2/3)" 절단).
+- 적대 자가검토(refute):
+  ① "전역 캡 500 도달 후 그룹은?" → `shown = min(sg.n, 25, max(0, 500-emitted))` = 0 → 헤딩은 방출(카테고리 가시), 멤버 0행 + `(0/n)` 표식. 데이터 손실 아님(개수 정직).
+  ② "PER_GROUP=25 가 기존 표시를 줄이나?" → 그룹 멤버 >25 인 그룹만(예 gunzgame 32→25) `(25/32)` 표식으로 정직 절단. ≤25 그룹은 전부 표시(대다수 routine 그룹 = affix family 소형이라 전량 노출). 소형 스키마 회귀 0.
+  ③ "개수 모순?" → 헤딩 `sg.n`(전체 개수) 불변, 표식 `(shown/n)` 이 표시분 명시 → 섹션 제목(members.length)·설명(함수·프로시저 N개)·헤딩 개수 3자 정합 유지.
+  ④ "패널 폭주(수천 행)?" → ROW_CAP=500 전역 상한 + PER_GROUP=25 이중 바운드. 패널 aside=overflow-y:auto 스크롤(라이브 확인). 500 행 DOM/리스너는 현대 브라우저 수용 범위(기존 80 대비 증가하나 gunzgame 409 실렌더 기준 안전).
+  ⑤ "flat 폴백(sgs<2) 정합?" → `slice(0,80)`→`slice(0,500)` 동일 상향, 소형은 무영향.
+- [SKIPPED] VERDICT — display-cap 규약 개정, correctness/경계 결함 없음. 캡 도달 후에도 **모든 컨텐츠 카테고리가 헤딩으로 반드시 나타나** 사용자 목표(routine 컨텐츠 카테고리 조회 가능) 달성.
+- 검증: `node --check`(module) PASS · POST-DEPLOY PB-0008 라이브(gunzgame 상세에서 함수·프로시저 컨텐츠 카테고리 헤딩+ƒ/⚙ 멤버 행 실렌더·클릭 조회 확인, 잔여).
+- Cross-ref: TASK 20260715T2152 · CHG/TEST-20260715T215241-graph-cluster-detail-cap · test-runs.d/20260715T2152-graph-cluster-detail-cap.md · 선행 REV-20260715T211911-graph-cluster-detail-routines · ANCHOR 0003 무충돌.

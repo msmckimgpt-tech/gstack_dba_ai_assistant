@@ -5824,3 +5824,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 비변경: 제품 카테고리 패널(`_metaGraphShowCategoryDetail`=스키마 목록, 무관)·캔버스 build·우클릭 메뉴·드래그·상태·백엔드/RBAC/스키마/엔드포인트 0. cache-buster `?v=dev` placeholder 수기편집 없음.
 - 검증: [x] `node --check`(module) PASS · [x] §18.8 적대 리뷰([SUBAGENT] MAJOR 1건 hiddenKinds parity → 수정 반영 + NIT 문구 수정, 6축 회귀·정합·중복·null·cap·XSS 판정, REV-20260715T211911) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008(gunzgame 클러스터 상세에서 "상점 아이템 명칭" 등 함수·프로시저-only 컨텐츠 카테고리 목록 표시·routine 행 클릭 조회, visual_verification_scope: always).
 - worktree `ai/claude/feature-0003-graph-cluster-detail-routines`(base main 114e4214). REV/CHG/TEST-20260715T211911-graph-cluster-detail-routines.
+
+
+## 20260715T2152-graph-cluster-detail-cap — 스키마 클러스터 상세: 목록 행 캡이 함수·프로시저 컨텐츠 카테고리를 통째 숨기던 문제 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독, cluster-detail-routines POST-DEPLOY PB-0008 후속. 그래프 도메인 정본 feature-0016)
+
+- 트리거: cluster-detail-routines(20260715T2119) 배포 후 POST-DEPLOY PB-0008 라이브 검증에서, gunzgame 클러스터 상세(테이블 115 + 함수·프로시저 294 = 409항목)의 **집계·개수는 정확**(섹션 "테이블·함수·프로시저 (409)", 설명 "함수·프로시저 294개")하나, **목록에 실제로 렌더된 컨텐츠 카테고리는 앞쪽 테이블 be: 클러스터 10개(80행)뿐**이고 함수·프로시저 컨텐츠 카테고리는 한 개도 안 보임을 적발.
+- 근본원인: `_metaGraphRenderClusterDetail` 의 sim-group 렌더 루프가 **전역 80행 캡 도달 시 이후 그룹을 통째 skip**(`if (emitted >= 80) return`). sim-group 순서는 be: 의미 클러스터(테이블) 우선 → 대형 스키마에서 앞쪽 테이블 그룹이 80행을 소진하면 뒤쪽 routine 컨텐츠 카테고리(그룹 헤딩 포함) 전체가 렌더 자체에서 누락. cluster-detail-routines 로 routine 을 집계에 넣었어도 이 캡이 시각적으로 다시 숨김(사용자 목표 "routine 컨텐츠 카테고리 조회" 미달).
+- 수정(frontend-only 1파일 `src/static/graph/graph-ctxmenu.js`, 캡 규약 개정):
+  - [x] **모든 컨텐츠 카테고리 헤딩 항상 방출** — `if (emitted >= 80) return` 제거. 그룹(=컨텐츠 카테고리) 존재 자체가 정보라 늘 가시·조회 가능.
+  - [x] 멤버 행 캡을 **그룹당 상한 PER_GROUP=25 + 전역 상한 ROW_CAP=500** 로 재구성(`shown = min(sg.n, 25, max(0, 500-emitted))`). 한 그룹이 예산 독식 방지 + 패널 길이 바운드(패널 aside = overflow-y:auto 스크롤). 절단은 그룹별 `(shown/n)` 표식(개수 모순 방지).
+  - [x] flat 폴백(sgs<2)도 `slice(0,80)` → `slice(0,500)`.
+- 회귀: 소형 스키마(≤80항목·그룹 멤버 ≤25)는 기존과 동일 표시. 그룹 멤버 >25 인 그룹만 25 표시 + `(25/n)` 표식(예 gunzgame "캐릭터 정보 및 랭킹" 32→25) — routine 카테고리 전면 가시화를 위한 수용 가능한 트레이드오프.
+- 비변경: cluster-detail-routines 의 집계/membership/hiddenKinds/렌더 분기·백엔드/RBAC/스키마 0. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: [x] `node --check`(module) PASS · [x] §18.8 [SKIPPED] 적대 자가검토(display-cap 상수·헤딩 방출 로직, 경계·주입·RBAC 무관) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008(gunzgame 상세에서 함수·프로시저 컨텐츠 카테고리 헤딩+ƒ/⚙ 멤버 행 실제 렌더·클릭 조회 확인, visual_verification_scope: always).
+- worktree `ai/claude/feature-0003-graph-cluster-detail-cap`(base main 1b370dfd). REV/CHG/TEST-20260715T215241-graph-cluster-detail-cap.

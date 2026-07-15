@@ -2311,17 +2311,23 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
     } catch (_) { sgs = null; }
     if (sgs && sgs.length >= 2) {
       // §18.8 패널: 그룹 헤딩은 목록의 실제 구획 의미(장식 아님) → aria-hidden 금지. role="group"+aria-label
-      //   로 보조기기에 "그룹명·개수"를 노출. 80행 캡은 그룹 경계에서만 끊고 절단 표식을 남긴다(개수 모순 방지).
+      //   로 보조기기에 "그룹명·개수"를 노출.
+      // graph-funcproc(cluster-detail-cap): 캡 규약 개정 — 이전 전역 80행 캡은 그룹 경계에서 끊되 **캡 도달 후 그룹을
+      //   통째 skip** 해, 대형 스키마(예 gunzgame 409항목)에서 앞쪽 테이블 be: 클러스터가 80행을 소진하면 뒤쪽
+      //   함수·프로시저 컨텐츠 카테고리 전체가 목록에서 사라졌다(사용자 보고의 핵심 — routine-only 카테고리 조회 불가).
+      //   개정: (1) **모든 컨텐츠 카테고리 헤딩을 항상 방출**해 카테고리 자체는 늘 가시·조회 가능, (2) 멤버 행은
+      //   그룹당 상한(PER_GROUP) + 전역 상한(ROW_CAP)으로 캡해 한 그룹이 예산을 독식하지 않게 하고 패널 길이를 바운드
+      //   (패널 aside=overflow-y:auto 스크롤). 절단은 그룹별 "(shown/n)" 표식으로 개수 모순 방지.
+      const ROW_CAP = 500, PER_GROUP = 25;
       let emitted = 0;
       sgs.forEach((sg) => {
-        if (emitted >= 80) return;
-        const shown = Math.min(sg.tables.length, 80 - emitted);
+        const shown = Math.min(sg.tables.length, PER_GROUP, Math.max(0, ROW_CAP - emitted));
         const trunc = shown < sg.tables.length ? ` <span class="amgr-ct-group-trunc">(${shown}/${sg.n})</span>` : "";
         parts.push(`<li class="amgr-ct-group" role="group" aria-label="${esc(sg.label)} 그룹 · 항목 ${sg.n}개"><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
         sg.tables.slice(0, shown).forEach((t) => { parts.push(rowHTML(t)); emitted++; });
       });
     } else {
-      members.slice(0, 80).forEach((t) => parts.push(rowHTML(t)));
+      members.slice(0, 500).forEach((t) => parts.push(rowHTML(t)));
     }
     parts.push(`</ul></div>`);
   }
