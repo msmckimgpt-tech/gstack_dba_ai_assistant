@@ -293,3 +293,7 @@ source_of_truth: true
 - **라이브 MySQL 8 dry-run 실증(read-only, `repo-mysql-1`/agent_memory, 감사 카테고리 대표)**: backfill 3종 SELECT 문법·의미 정상(1093 없음). **target1 적중 = admin + 커스텀 role `usermanager`** — usermanager 는 seed catchup 목록에 없는 커스텀 role 이라 catchup 만으론 감사 카테고리 탭을 잃었을 대상 → backfill 이 정확히 구제(설계 필요성 실증). target2 = 계정 1건(leaf ALLOW override) · target3 = 0행. 라이브 role 8종 중 console.access 미보유 role(dev_server/dos_web 등)은 오늘도 콘솔 미진입 → 동치 보존.
 - **테스트**: 권한 타깃 50 PASS(M5 backfill 맵↔FE 종속 동치 신설) · feature-0003 785/0 · jsdom 탭 게이팅 47/0 · 컨테이너 make test 4 실패 전건 **환경 기인 확정**(3건=복사 .env `AGENT_RUNTIME_READ_BACKEND=postgres`·`AGENT_TIMEOUT_SEC=300` — env 중립화로 소멸·선례 동일 / 1건=`postgres-replica` DNS — main 코드+격리 네트워크 동일 재현, 격리 프로젝트 네트워크에 replica 부재 기인).
 - **Human Approval**: 예 — 본 cycle 시작 시 AskUserQuestion 으로 A안 승인 완료(Critical §12.3 사람 승인 충족).
+
+## REV-20260714T203000-perm-category-hier-postverify [SKIPPED:doc-only-postdeploy-verification-record] — perm-category-hier 배포 후 실증 기록 (PR #801 · 7e375ebc)
+- 코드 변경 0(문서 전용). 실증 내용: seed catchup 정상 · `console-category-access-v1` 마커 · 접근 5종 부여(admin catchup / **usermanager = backfill 구제 실증** / dba audit) · override target2 1건 · PB-0008 라이브(grid 계층 depth·상위 토글 → 하위 접힘/펼침·admin 13탭·"변경 없음" 상태 무오염). 상세 = test-runs.d/20260714T181936-perm-category-hier.md POST-DEPLOY Run · TASK 20260714T1819 잔여 박스 close.
+- [SKIPPED] 사유: 배포 후 실증의 문서화만 — 신규 코드/경계 0, 패널 불요(선례 REV-20260714T190916-graph-help-overlay-postverify).

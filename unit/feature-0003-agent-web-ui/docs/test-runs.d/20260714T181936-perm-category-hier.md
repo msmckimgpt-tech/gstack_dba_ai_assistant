@@ -23,3 +23,18 @@ verdict: PASS
 - **미수행 사유(§15.4.1 baked 자산 + authz 게이팅)**: 정적 자산은 web 이미지에 baked 되어 배포 후에만 라이브 반영(cache-buster content-hash 빌드 주입). 검증 자체가 **배포 후 startup backfill**(`console-category-access-v1`)과 역할별 부여 상태에 의존 — (a) admin 역할 grid 에서 카테고리 접근 5종이 각 그룹 최상위(depth 0)로 표시·체크 시 하위 펼침, (b) 감사 그룹에 4탭 조회 권한(보관 대화·LLM 사용량·AI 운영 현황 포함) 통합 표시, (c) 제한 역할(예: usermanager)의 탭 가시성 무손실 — 은 배포 환경 데이터가 필요해 배포 전 headless 로 대체 불가(jsdom 게이팅 47/0 로 로직층은 검증 완료).
 - **배포 후 라이브 검증 계획(PB-0008)**: web 재배포 후 win-browser.py relay 로 https://localhost/admin — ① 역할 편집 grid: 카테고리 접근 체크/해제 시 하위 그룹 펼침/접힘(감사 접근 OFF → 감사 그룹 접힘), ② 좌측 nav: usermanager 류 제한 역할 탭 노출 동일(backfill 무손실), ③ `WebSchemaMigrations` `console-category-access-v1` row + usermanager 에 `console.audit.access` 부여 실증, ④ web 로그 seed catchup 정상(1406 없음).
 - 결과: 정적·로직 검증 PASS · 라이브 시각검증 DEFERRED(배포 후, 위 계획).
+
+### Run (2026-07-14, POST-DEPLOY) — perm-category-hier 라이브 실증 — **Environment: Windows-browser (win-browser.py relay, 실 Windows Chrome 150)**
+
+- 배포: PR #801 머지(7e375ebc) → `bin/deploy-web.sh`(scope=all — web 롤링·워커 핀·gateway reconcile·soak) exit 0.
+- **DB/부트스트랩 실증**:
+  - web 로그 seed catchup 이상 없음(`1406`/`Data too long`/`seed catchup skipped` 미출현).
+  - `WebSchemaMigrations` 에 `console-category-access-v1` 마커 기록(2026-07-15 10:07:41 컨테이너 시각).
+  - 접근 5종 부여: admin(5종, catchup)·**usermanager(5종 — backfill 이 dry-run 예측대로 커스텀 role 구제, catchup-only 였다면 lockout 이던 대상)**·dba(console.audit.access). GroupName 재배치 반영(usage/aiops/archive=audit, insight.reset=product).
+  - account override backfill(target2): AccountId 4 에 `console.audit.access=allow`(감사 leaf ALLOW override 보유자) — 예측 일치. target3 = 0행(예측 일치).
+- **라이브 브라우저 실증**(bootstrap_admin, https://localhost/admin):
+  - admin 13 탭 전부 노출(catchup 정상 — lockout 0).
+  - 역할 편집 grid(usermanager): 접근 5종 = **depth 0 그룹 루트·전부 체크**, 감사 4탭 조회(audit.read.own·conversation.archive.read.any·console.usage.read·console.aiops.read) = **depth 1 로 감사 접근 하위 통합**, system.runtime.read/write = depth 1/2(종속 신설 반영). 관리 권한 섹션 그룹 순서 = nav 카테고리 정합(콘솔·계정·역할·한도·제품·데이터소스·감사·지식베이스·시스템).
+  - **상위 활성화 → 하위 펼침(요건 ③)**: `console.audit.access` 체크 해제 시 하위 7종(read.own/any·export·purge·archive·usage·aiops) 전부 접힘(그룹은 잔존 — 접근 체크박스가 복원 레버, §10.6 계약) → 재체크 시 전부 재펼침. 토글 원복 후 "변경 없음·0건 pending"(상태 오염 0).
+  - 스크린샷 육안 확인(usermanager 편집 화면·관리 권한 섹션·좌측 nav 카테고리). eval 전 호출 ok(스크립트 오류 0).
+- 결과: **PASS** (배포 후 실증 완료 — 접근 상실 0·계층 UI 동작·backfill/catchup 정합).
