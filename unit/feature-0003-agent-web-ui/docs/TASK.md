@@ -24,7 +24,7 @@ source_of_truth: true
 - [x] `_metaGraphSearch` 훅: 검색어 갱신 시 렌더(stale 가드 뒤) + 클리어 시 마커 기반 검색결과 뷰 해제(노드 상세 보존)
 - [x] graph.css 검색결과 스타일(기존 amgr-*/card 토큰 재사용, 배지 색 일관) + node --check 모듈 구문 통과 + CSS 중괄호 밸런스
 - [x] §18.8 적대 리뷰(frontend correctness+UX — XSS/esc·리스너 누수·stale·클리어 복원·병렬 hunk·접근성)
-- [ ] 배포 후 PB-0008 실 Windows 브라우저 시각검증(검색어 입력→상세 패널 결과 리스트·배지·클릭 이동, visual_verification_scope: always)
+- [x] 배포(PR #839 → main 03e8d1b0, deploy-web soak 통과) 후 PB-0008 실 Windows 브라우저 시각검증 PASS — 코스튬 7건(AI 분석 배지)·플루토스 28건(카테고리 배지+cluster_label+유사도 63%)·행 클릭→노드 상세·클리어→뷰 해제·pageerror 0 (test-runs.d/20260716T0137 Run 3)
 
 ## TASK-20260715T135725-graph-ctxmenu-content-category — 그래프 우클릭 3대상 정합: 컨텐츠 카테고리(sim-group) 전용 메뉴 신설 + band-wins 철회 (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. graph-ctxmenu-band-priority 정정)
 
