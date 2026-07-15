@@ -304,3 +304,9 @@ source_of_truth: true
 - **라이브 실측 필요분**: 도구 로직은 결정론(코드). "모델이 도구를 호출하고 결과를 뒤집지 않는가"는 배포 후 라이브 재-재현으로 실측(SYSTEM_PROMPT 라우팅=확률적, 대조=결정론).
 - Human Approval: 사용자 Option C "코드로 결정론적 봉인" 명시 선택(AskUserQuestion 2026-07-14). Major → PR/deploy confirm(deploy_scope: included).
 - Cross-ref: CHG-20260714T233000(MODIFY) · REQ-20260714-attach-table-coverage(FUNCTION) · CHG-20260714T221500(case 프롬프트 레버 — 상보) · FRICTION_LEDGER FR-partial-evidence-false-verification · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260715T104500-friction-ledger-reconcile [SKIPPED:post-deploy-ledger-reconciliation] — FR-partial-evidence 원장 상태 arc 정합 (docs-only, 코드 변경 0)
+- Date: 2026-07-15. 런타임 코드 무변경. FRICTION_LEDGER FR-partial-evidence-false-verification 엔트리의 잔존-결함 문구가 "별도 triage 대상"(PR #800 작성 시점)에 머물러, 실제로 완료된 후속 봉인 arc(case 프롬프트 레버 CHG-20260714T221500 부분작동 → 결정론 도구 CHG-20260714T233000 배포 `3c8e78df`)를 반영하도록 정합. status enum 은 `fixed:deployed:unverified-live` 불변(도구 결정론은 코드+유닛 증명, `verified` 는 원장 정의상 다음 audit corroboration 으로 닫힘; end-to-end 라이브 재-재현은 외부 gunzgame DB unreachable 로 미완).
+- SKIPPED 사유: 순수 docs(원장) 정합 — 런타임 코드·테스트 변경 0(§18.4 META). 봉인 코드 자체의 적대검증은 REV-20260714T221500(case 레버)·REV-20260714T233000(결정론 도구, BLOCKING2·MAJOR1 수정)에서 완료.
+- Human Approval: 사용자 결정 arc(라이브 실측 표면화→"잔존 먼저 수정"→"코드로 결정론 봉인" Option C) 반영의 정직-상태 기록.
+- Cross-ref: FRICTION_LEDGER FR-partial-evidence-false-verification · CHG-20260714T221500 · CHG-20260714T233000 · REV-20260714T233000.
