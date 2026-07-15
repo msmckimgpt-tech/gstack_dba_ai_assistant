@@ -281,6 +281,54 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(typeof Adapter.prototype._pickContext === "undefined", "T22 _pickContext 제거됨(band-wins 철회)");
 }
 
+// ── T23 graph-edge-follow-drag: 노드 드래그 시 incident 엣지 증분 재그림(특히 cross-category) ──
+//   회귀: 엣지는 절대좌표를 Graphics 에 bake 한 독립 오브젝트라(_drawEdge) 노드 Container 이동으로 안 따라온다
+//   → 예전엔 full draw()(줌 밴드 rebuild 등)만 edgeSig(끝점 포함) 변경을 감지해 재생성 → "줌 아웃해야 관계선 갱신".
+//   _refreshIncidentEdges 는 "source 또는 target 이 이동집합에 포함"된 엣지만 재그린다:
+//     ① 내부 엣지(양끝 이동) ② cross-category 엣지(한끝만 이동 — 사용자 정정: 다른 제품 카테고리로 가는 연결선
+//        구조 갱신) ③ 무관 엣지(양끝 미이동, skip).
+{
+  const nodes = [
+    { id: "A", type: "rect", style: { x: 10, y: 10, size: [20, 10] } },    // cat1 member
+    { id: "B", type: "rect", style: { x: 50, y: 10, size: [20, 10] } },    // cat1 member (드래그로 이동)
+    { id: "C", type: "rect", style: { x: 200, y: 200, size: [20, 10] } },  // cat2 member (미이동)
+    { id: "D", type: "rect", style: { x: 300, y: 300, size: [20, 10] } },  // 무관(미이동)
+  ];
+  const edges = [
+    { id: "e1", source: "A", target: "B", style: {} },   // 내부(cat1↔cat1)
+    { id: "e2", source: "B", target: "C", style: {} },   // cross-category(cat1↔cat2) — 핵심 케이스
+    { id: "e3", source: "C", target: "D", style: {} },   // 무관(둘 다 미이동)
+  ];
+  const drawn = [];   // _drawEdge 호출 기록
+  const world = { children: [], addChild(o) { this.children.push(o); }, removeChild(o) { const i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); } };
+  const objs = new Map();
+  for (const e of edges) objs.set(e.id, { __stale: e.id, destroy() {} });   // 기존(옛 위치) 엣지 오브젝트
+  const ctx = {
+    world, _built: { nodes, edges, combos: [] }, _objs: objs, _objSig: new Map(),
+    getElementPosition: Adapter.prototype.getElementPosition,
+    _boundsOf: Adapter.prototype._boundsOf,
+    _drawEdge(e, a, b) { const g = { __edge: e.id, a, b, destroy() {} }; drawn.push(g); return g; },
+  };
+  // 드래그: cat1(A,B) 이동 — translateElementTo 가 style 을 먼저 갱신하는 실제 순서를 모사(B 만 새 위치).
+  nodes[1].style.x = 500; nodes[1].style.y = 400;
+  Adapter.prototype._refreshIncidentEdges.call(ctx, ["A", "B"]);
+
+  const ids = drawn.map((g) => g.__edge).sort();
+  ok(ids.length === 2 && ids[0] === "e1" && ids[1] === "e2", "T23 incident 엣지만 재그림(e1 내부·e2 cross), 무관 e3 skip");
+  // cross-category e2: B(이동) 끝점은 새 좌표, C(미이동) 끝점은 옛 좌표 → 연결선 구조가 새 위치로 갱신
+  const g2 = drawn.find((g) => g.__edge === "e2");
+  ok(g2 && g2.a[0] === 500 && g2.a[1] === 400, "T23 cross-category 엣지의 이동 끝점(B) 새 좌표 갱신");
+  ok(g2 && g2.b[0] === 200 && g2.b[1] === 200, "T23 cross-category 엣지의 미이동 끝점(C) 옛 좌표 유지");
+  ok(ctx._objs.get("e2") === g2 && world.children.indexOf(g2) >= 0, "T23 _objs·world 새 엣지로 교체");
+  ok(ctx._objSig.get("e2") === Pure.edgeSig(edges[1], [500, 400], [200, 200]), "T23 _objSig 갱신(다음 full draw 재사용)");
+  ok(ctx._objs.get("e3").__stale === "e3", "T23 무관 엣지 e3 오브젝트 불변");
+  // 빈 이동집합·null 은 no-op(방어)
+  const before = drawn.length;
+  Adapter.prototype._refreshIncidentEdges.call(ctx, []);
+  Adapter.prototype._refreshIncidentEdges.call(ctx, null);
+  ok(drawn.length === before, "T23 빈/null 이동집합 no-op");
+}
+
 console.log("──────");
 console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
 process.exit(fail === 0 ? 0 : 1);

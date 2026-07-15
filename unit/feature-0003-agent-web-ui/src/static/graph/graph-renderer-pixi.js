@@ -492,12 +492,42 @@ export class PixiGraphAdapter {
   }
   _moveElement(id, ddx, ddy) {
     const n = this._built.nodes.find(x => x.id === id);
-    if (n) { n.style.x += ddx; n.style.y += ddy; const o = this._objs.get(id); if (o) o.position.set(n.style.x, n.style.y); this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128); this._render(); return; }   // B1: hit-grid 재구성(이동 후 클릭 유지)
+    if (n) { n.style.x += ddx; n.style.y += ddy; const o = this._objs.get(id); if (o) o.position.set(n.style.x, n.style.y); this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128); this._refreshIncidentEdges([id]); this._render(); return; }   // B1: hit-grid 재구성(이동 후 클릭 유지). graph-edge-follow-drag: 이동 노드의 관계선 즉시 추종
     // combo(스키마 배경) 드래그: 자식 노드 전체 + combo 카드 배경(자식 파생 bbox 이므로 같은 델타)을 함께 이동(M1)
-    for (const cn of (this._built.nodes || [])) { if (cn.combo === id) { cn.style.x += ddx; cn.style.y += ddy; const o = this._objs.get(cn.id); if (o) o.position.set(cn.style.x, cn.style.y); } }
+    const moved = [];
+    for (const cn of (this._built.nodes || [])) { if (cn.combo === id) { cn.style.x += ddx; cn.style.y += ddy; const o = this._objs.get(cn.id); if (o) o.position.set(cn.style.x, cn.style.y); moved.push(cn.id); } }
     const card = this._objs.get(id); if (card) { card.position.set(card.position.x + ddx, card.position.y + ddy); }   // M1: combo 배경 카드 추종
     this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);   // B1
+    this._refreshIncidentEdges(moved);   // graph-edge-follow-drag: 이동한 자식 노드들의 관계선 즉시 추종
     this._render();
+  }
+  // graph-edge-follow-drag: 노드 드래그로 위치가 바뀐 노드에 연결된 관계선(엣지)만 증분 재그림.
+  //   엣지는 절대 model 좌표(a,b)를 Graphics path 에 bake 한 독립 오브젝트라(_drawEdge) 노드 Container 이동으로
+  //   따라오지 않는다 — 예전엔 오직 full draw()(줌 밴드 전이 rebuild 등)만 edgeSig(끝점 포함) 변경을 감지해
+  //   재생성했다. 그래서 드래그 중에는 관계선이 옛 위치에 남고 "줌 아웃해야 갱신"되는 회귀가 있었다.
+  //   여기서 이동 노드의 incident 엣지만 골라 재그려 드래그 중 실시간 추종시킨다(전체 draw() 보다 저렴 —
+  //   콤보/전 노드/미니맵 재구성 없이 O(E) 스캔 + incident 엣지만 recreate). _objSig 도 갱신해 다음 full
+  //   draw() 가 동일 서명을 재사용(중복 recreate 방지)하게 한다.
+  //   판정 = source **또는** target 이 이동집합에 포함(OR). 이로써 두 케이스를 함께 처리한다:
+  //     · 내부 엣지(양끝이 같은 제품 카테고리 구성원 — 둘 다 이동): 양끝 새 좌표로 재그림.
+  //     · cross-category 엣지(한끝만 이동 — 다른 제품 카테고리로 가는 연결선): 이동 끝점은 새 좌표,
+  //       미이동 끝점은 현재 좌표로 재그려 연결선 구조가 갱신된다(제품 카테고리를 옮겨도 타 카테고리
+  //       연결선이 옛 위치에 남지 않게 — 사용자 정정 케이스).
+  _refreshIncidentEdges(movedIds) {
+    if (!this.world) return;
+    const moved = (movedIds instanceof Set) ? movedIds : new Set(movedIds || []);
+    if (!moved.size) return;
+    for (const e of (this._built.edges || [])) {
+      if (!moved.has(e.source) && !moved.has(e.target)) continue;
+      const a = this.getElementPosition(e.source), b = this.getElementPosition(e.target);
+      if (!a || !b) continue;
+      const eid = PixiAdapterPure.edgeId(e);
+      const old = this._objs.get(eid);
+      if (old) { try { old.destroy({ children: true }); } catch (_) {} try { this.world.removeChild(old); } catch (_) {} }
+      const g = this._drawEdge(e, a, b);
+      this.world.addChild(g); this._objs.set(eid, g);
+      if (this._objSig) this._objSig.set(eid, PixiAdapterPure.edgeSig(e, a, b));
+    }
   }
   // 드래그 이벤트 합성 — payload 에 target.id + buttons/button/targetType(_metaEventButtons·enable predicate 용).
   _emitDrag(phase, hit, e, s, mx, my) {
@@ -705,13 +735,15 @@ export class PixiGraphAdapter {
   // 요소 절대이동 (드래그 종속 동반이동, gap #6). map {id:[x,y]} — 모델 좌표.
   translateElementTo(map, anim) {
     if (!map || typeof map !== "object") return;
+    const moved = [];
     for (const id in map) {
       const p = map[id]; if (!Array.isArray(p)) continue;
       const n = this._built.nodes.find(x => x.id === id);
-      if (n) { n.style.x = p[0]; n.style.y = p[1]; }
+      if (n) { n.style.x = p[0]; n.style.y = p[1]; moved.push(id); }
       const o = this._objs.get(id); if (o) o.position.set(p[0], p[1]);
     }
     this._hitGrid = PixiAdapterPure.buildHitGrid(this._built.nodes, 128);   // B1: 종속 이동 후 hit-grid 갱신
+    this._refreshIncidentEdges(moved);   // graph-edge-follow-drag: 종속 노드(컬럼·장식) 이동 시 관계선 추종
     this._render();
   }
   getPluginInstance(key) { return key === "minimap" ? (this._minimap || null) : null; }   // G6 minimap 플러그인 호환(자체 렌더)
