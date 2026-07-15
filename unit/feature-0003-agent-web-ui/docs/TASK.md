@@ -32,8 +32,8 @@ source_of_truth: true
 - [x] `node --check` PASS + T22 회귀 6종 (ALL PASS 68/0)
 - [x] §18.8 적대 패널 → **SHIP**(BLOCKING 0, 8가설 전수 REJECTED; NIT=up 버튼게이팅 PB-0008 명문화·T22 갭 accept) REV-20260715T114608-graph-ctxmenu-band-priority [SUBAGENT]
 - [x] feature 문서(TASK/MODIFY/REVIEW/REPORT/FUNCTION) + test-runs.d fragment
-- [ ] verify-completion PASS → commit → PR·머지
-- [ ] web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 라이브: 밴드 내 클러스터 박스 우클릭 → 카테고리 메뉴 / 테이블 노드 → 그 노드 / 밴드 밖 클러스터 → 스키마 / 좌클릭 펼치기 정상
+- [x] verify-completion PASS → commit 79d5353b → PR #815 머지(main 6a950a20)
+- [x] web 재배포(deploy_scope: included, web-a/b 6a950a20 soak PASS) → **POST-DEPLOY PB-0008 실 Windows 브라우저 라이브 PASS**(win-browser Chrome 150, 킹스레이드·미분류 CAT 밴드): 밴드 위 클러스터 박스(dbAuth·dbTest) 우클릭 → **카테고리 메뉴** / 펼친 테이블 노드(DeviceId 등) → **그 테이블 메뉴**(흡수 안 함) / 좌클릭 → **클러스터 펼치기 정상**. 사용자 결정 충족. 증거 scratchpad/evidence-bandwins-box-category.png. (postverify: CHG/REV-20260715T120000-graph-ctxmenu-band-priority-postverify)
 
 ## TASK-20260715T102901-graph-ctxmenu-hittest — 그래프 뷰 우클릭 메뉴 오라우팅(스키마↔제품카테고리 뒤바뀜) hit-test 층서 수정 (Major §12.3 — feature-0003 프론트 단독, 핵심 상호작용 경로. /_template:resume 후속)
 

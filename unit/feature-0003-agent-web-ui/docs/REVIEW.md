@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260715T120000-graph-ctxmenu-band-priority-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 검증 기록 (TASK-20260715T114608-graph-ctxmenu-band-priority, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 test-runs.d fragment POST-DEPLOY 섹션(이연→실측 PASS)+TASK 체크리스트뿐 — 코드/자산/스키마/RBAC 0. 기능 적대 검증은 REV-20260715T114608-graph-ctxmenu-band-priority [SUBAGENT] (SHIP)가 정본.
+- 라이브 실측(win-browser Chrome 150, 6a950a20): 밴드 위 클러스터 박스 우클릭→카테고리 메뉴 / 펼친 테이블 노드→그 테이블 / 좌클릭→클러스터 펼치기 정상. 사용자 결정 "밴드 우선" 라이브 충족. 증거 스크린샷 확보.
+- Cross-ref: REV-20260715T114608-graph-ctxmenu-band-priority(기능 정본) · CHG-20260715T120000-graph-ctxmenu-band-priority-postverify · test-runs.d POST-DEPLOY Run.
+
 ## REV-20260715T114608-graph-ctxmenu-band-priority [SUBAGENT:adversarial-band-wins-review] — 제품 카테고리 밴드 우클릭 band-wins (TASK-20260715T114608-graph-ctxmenu-band-priority, Major §12.3 frontend-only) — SHIP
 - Panel(§18.8): general-purpose 서브에이전트 적대 리뷰 — up()→_pickContext→emit→graph-core dispatch 전 경로 추적 + 68/68 테스트 + 좌표 기하 전수 재계산. 8가설 전수 REJECTED(무결).
 - 가설별:
