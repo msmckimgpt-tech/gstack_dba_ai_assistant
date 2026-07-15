@@ -5809,3 +5809,18 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - 알려진 한계(정직·deferred): 허브 노드(수천 incident 엣지) 드래그 시 per-frame 재그림 비용 존재 — 단 full draw() 보다 저렴하고 정확성 필수 최소치. 필요 시 rAF 스로틀은 후속 최적화(§76 계열).
 - 검증: [x] `node --check` PASS · [x] 헤드리스 `test_pixi_adapter.js` T23 신규 7종(incident 선택·cross-category 이동/미이동 끝점·_objs/world/_objSig 교체·무관 skip·빈/null no-op) ALL PASS 73/0 · [x] §18.8 적대 리뷰 correctness 결함 없음 · [x] verify-completion PASS → PR #824 머지(main 0f26cec1) → web 재배포(soak PASS, deploy_scope: included) → [x] **POST-DEPLOY PB-0008 라이브 PASS**(제품 카테고리 "건즈-개발·1" 드래그 중 cross-category 관계선 줌 없이 실시간 추종·옛 위치 잔상 0·pageerror 0).
 - worktree `ai/claude/feature-0003-graph-edge-follow-drag`(base main b3c8cd34). REV/CHG/TEST-20260715T181939-graph-edge-follow-drag. POST-DEPLOY: CHG-20260715T190000-graph-edge-follow-drag-postverify.
+
+
+## 20260715T2119-graph-cluster-detail-routines — 스키마 클러스터 상세 패널: 함수·프로시저만 있는 컨텐츠 카테고리 누락 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독. 그래프 도메인 정본 feature-0016. `/_template:entry` arg-given dispatch)
+
+- 사용자 보고: "상세 패널의 컨텐츠 카테고리가 **테이블만 대상**으로 집계돼, 목록에 나타나지 않는 컨텐츠 카테고리가 있다. **함수·프로시저만 포함된 대상**에서 이슈 — 해당 항목도 상세 패널에서 조회되게 구성."
+- 진단: 캔버스 build(`graph-core.js` L64~L78)는 Table 과 Routine(함수·프로시저)을 **모두 `g.tables`** 에 넣어 `_metaSimGroups` 로 함께 sim-group(컨텐츠 카테고리)화한다. 그러나 스키마 클러스터 상세 패널의 두 진입점은 `label === "Table"` 만 수집 — `_metaGraphShowClusterDetailById`(combo:click, API+모델 폴백) · `_metaGraphShowClusterDetailLocal`(모델 전용). 렌더 `_metaGraphRenderClusterDetail` 이 tables-only 로 sim-group 계산 → Routine-only 컨텐츠 카테고리(예: "상점 아이템 명칭")가 캔버스엔 보여도 목록에서 누락. membership 판정 `_metaSchemaComboOf(Routine)`==`_metaCatParent(n.key,n.fqn)` 는 Table 과 동일 predicate라 정합 확장 가능.
+- 수정(frontend-only 1파일 `src/static/graph/graph-ctxmenu.js`):
+  - [x] `_metaGraphShowClusterDetailLocal`: `label === "Routine" && _metaCatParent(...)===comboId` 도 수집·정렬 → 렌더에 `routines` 전달.
+  - [x] `_metaGraphShowClusterDetailById`: routines 는 API 응답 형태 무관하게 **모델에서** 수집(패널=화면 내 스키마라 모델 보장) → 렌더에 전달 + status 라인에 함수·프로시저 개수.
+  - [x] `_metaGraphRenderClusterDetail(...,routines)`: `members = tables.concat(routines)` 로 sim-group 계산·렌더. Routine 행은 ƒ/⚙ 보라 칩(`_META_GRAPH_COLOR.Routine`) 접두사·클릭 시 `_metaGraphShowDetail`(API 조회, routine 키 동작). 설명/섹션 제목/그룹 aria-label 을 병합집합 반영("테이블 N개 · 함수·프로시저 M개", "테이블·함수·프로시저 (N)"). 테이블 개수·cap 절단(nTables/truncNote)은 **기존대로 테이블 기준 유지**.
+  - [x] **kind 필터(hiddenKinds) 정합(§18.8 적대 리뷰 MAJOR 반영)**: 두 수집 루프에 build(graph-core L74-75)와 동형 guard `!_metaGraph.hiddenKinds.has((routine_type==="function")?"function":"procedure")` — 사용자가 툴바 'ƒ 함수'/'⚙ 프로시저'를 숨기면 캔버스처럼 패널에서도 제외해 목록·sim-group 이 계속 일치.
+- 캔버스 정합: 패널 sim-group 입력을 캔버스와 동일한 Table+Routine 병합집합(hiddenKinds 필터 포함)으로 맞춤 → 상세 패널 컨텐츠 카테고리 목록이 캔버스와 일치. **Table-only 스키마는 회귀 0**(설명 문구 routine 조건부 확장, 섹션 제목·그룹핑·개수 불변).
+- 비변경: 제품 카테고리 패널(`_metaGraphShowCategoryDetail`=스키마 목록, 무관)·캔버스 build·우클릭 메뉴·드래그·상태·백엔드/RBAC/스키마/엔드포인트 0. cache-buster `?v=dev` placeholder 수기편집 없음.
+- 검증: [x] `node --check`(module) PASS · [x] §18.8 적대 리뷰([SUBAGENT] MAJOR 1건 hiddenKinds parity → 수정 반영 + NIT 문구 수정, 6축 회귀·정합·중복·null·cap·XSS 판정, REV-20260715T211911) · [ ] verify-completion → PR·머지 → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008(gunzgame 클러스터 상세에서 "상점 아이템 명칭" 등 함수·프로시저-only 컨텐츠 카테고리 목록 표시·routine 행 클릭 조회, visual_verification_scope: always).
+- worktree `ai/claude/feature-0003-graph-cluster-detail-routines`(base main 114e4214). REV/CHG/TEST-20260715T211911-graph-cluster-detail-routines.
