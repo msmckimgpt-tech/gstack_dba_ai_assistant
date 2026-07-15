@@ -1367,3 +1367,11 @@ TASK-0015 (plan-review):
 - [x] §18.8 적대 패널(프롬프트 grounding code change) → REVIEW REV-20260714T221500 (+ Cycle B REV-20260714T210000 동반 기록).
 - [x] `make test` 전체 회귀: cycle 자체 테스트 전부 PASS(로컬 41)·무관 4건 pre-existing/환경(신규 회귀 0, 연역+경험 확정).
 - [ ] verify-completion(feature-0002) → commit/push → PR → merge → 배포(deploy_scope: included, Cycle B ③④ + 본 case-fix 함께) → 배포검증(4서비스 GIT_COMMIT) → 라이브 재-재현 LoginEventLog 오판 소멸 확인 → 원장 반영.
+## 20260714T233000-attach-table-coverage — 라이브 실측 잔존 결정론적 코드 봉인 (Major, 사용자=Option C "코드로 결정론적 봉인")
+> 계기: CHG-20260714T221500(case 프롬프트 레버) 배포(ee3424c3) 후 라이브 재-재현에서 잔존 확인 — 모델이 case 인지는 하나 여전히 LoginEventLog '누락' 오기재 + lcase 미실측 정규화 제안(프롬프트 레버=확률적 완화 한계). 사용자 "코드로 결정론적 봉인" 선택(AskUserQuestion 2026-07-14).
+- [x] 근본: 첨부↔DB 테이블 대조가 모델 추론이라 대소문자 비결정 → 코드로 이관.
+- [x] 신규 tool `check_table_coverage`(tools.py): DB 테이블명 정본 기준으로 첨부가 그 테이블을 **조작(TRUNCATE/DELETE/DROP/…)** 하는지 대소문자 무시 판정(`_operated_tables`). 주석 분리(`_split_sql_active_comment`), truncated 캐비엇, USE 스키마 귀속. deferred import 첨부 로더, `_struct_schema_access_error` 게이트, TOOL_DEFINITIONS+_TOOL_HANDLERS 등록.
+- [x] agent_core: SYSTEM_PROMPT 라우팅(커버리지 비교→도구, truncated 면 미확인) + reason/work narration.
+- [x] §18.8 적대 2렌즈 패널(REV-20260714T233000): BLOCKING2(B1 절단·B2 주석)·MAJOR1(M1 이름 등장 오집계)·MINOR2 적발 → 조작-동사 추출+주석분리+절단캐비엇+USE귀속 전면 재설계 봉인. 보안 5벡터 REFUTED.
+- [x] 테스트 `test_check_table_coverage.py` 12 PASS(seal + B1/B2/M1/m1 회귀 + 헬퍼). `make test` 신규 회귀 0(pre-existing 4건 무관·flaky 1건 재실행시 소멸).
+- [ ] verify-completion → commit/push → PR → merge → 배포(deploy_scope: included) → 배포검증 + 라이브 재-재현으로 결정론 봉인 실증(LoginEventLog 미조작 오판 소멸) → FRICTION_LEDGER 종합 정합.

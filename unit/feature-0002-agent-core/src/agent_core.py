@@ -102,6 +102,7 @@ Never present a table name, column name, or number you have not verified against
 - ABSENCE / COMPLETENESS claims ("X가 없다/누락됐다", "모두 검증했다") require complete evidence: a non-truncated result, a targeted probe (e.g. `WHERE name = 'X'` → 0 rows), or an exact quoted line from the attachment. If you could not verify something, write 미확인 explicitly — never fill the gap with a guess.
 - IDENTIFIER CASE when matching names across sides (식별자 대소문자): SQL identifiers are often case-folded by the server — MySQL under `lower_case_table_names=1` returns table names lowercased — so the SAME object can appear as `LoginEventLog` in an attachment yet `logineventlog` from a tool. A name that differs ONLY in case is NOT by itself evidence of absence. Before you claim a table/column is "누락/missing" or "not in the file/query", search the attachment case-insensitively (case-fold) or run a targeted probe — never conclude absence from an exact-case scan. When the server case-folds identifiers (`lower_case_table_names=1`, read the actual value per the SERVER OPTIONS rule) names differing only in case ARE the same object; on a case-sensitive server, confirm before equating. Applies especially to "이 테이블은 초기화 쿼리에 없다" claims when comparing an attachment against the live DB.
 - COMPARING an attachment against the live DB (변경 전/후, 첨부 vs 실제 DB): fetch BOTH sides before comparing — the attachment content is provided inline; the CURRENT DB side must come from tools (describe_table / describe_routine / a targeted SELECT). Never narrate the current-DB side from assumption or memory.
+- TABLE COVERAGE of an attached script vs the live DB ("이 초기화/정리 쿼리가 모든 테이블을 다루나", "누락된 테이블", which DB tables the script does/doesn't TRUNCATE/DELETE/DROP): do NOT eyeball the two lists — call `check_table_coverage(schema_name=...)`. It deterministically (in code, case-insensitively) reports which DB tables the script OPERATES ON (TRUNCATE/DELETE/DROP/INSERT/UPDATE/ALTER — not mere name mentions) vs its 미조작(not-operated) set, and separates commented-out operations. Rely on its 미조작 set instead of re-eyeballing — a case-only difference (`LoginEventLog`↔`logineventlog`) is already reconciled there. EXCEPTION: if its output warns the attachment was **truncated**, the 미조작 set is NOT authoritative (the script's tail was cut) — say 미확인 and ask for the untruncated file rather than declaring those tables missing.
 - SERVER OPTIONS / environment values (e.g. lower_case_table_names): never reason from documented defaults — read the actual value first (MySQL: `SELECT @@var` or `SHOW VARIABLES LIKE '...'`; SQL Server: `SELECT SERVERPROPERTY('...')` / `@@VERSION` is blocked, use `SHOW`-equivalent catalog views). If it cannot be read, say so and qualify the dependent conclusion as 미확인.
 
 ## UNDERSTAND INTENT — THINK, DON'T JUST OBEY LITERALLY
@@ -2597,6 +2598,11 @@ def _derive_step_work(tool_name: str, args: dict[str, Any] | None = None, tool_r
         if routine:
             return f"`{routine}` 프로시저/함수 정의를 확인한다"
         return "저장 프로시저/함수 정의를 확인한다"
+    if tool == "check_table_coverage":
+        schema = str(payload.get("schema_name") or "").strip()
+        if schema:
+            return f"첨부 스크립트가 `{schema}` 의 어떤 테이블을 다루는지 실 DB 와 대조한다"
+        return "첨부 스크립트의 테이블 커버리지를 실 DB 와 대조한다"
     if tool == "search_tables":
         keyword = str(payload.get("keyword") or "").strip()
         schema = str(payload.get("schema_name") or "").strip()
@@ -2661,6 +2667,8 @@ def _derive_step_reason(tool_name: str, args: dict[str, Any] | None = None) -> s
         return "쿼리에 사용할 컬럼과 자료형을 정확히 확인하기 위해"
     if tool == "describe_routine":
         return "저장 프로시저/함수의 내부 로직을 확인하기 위해"
+    if tool == "check_table_coverage":
+        return "첨부 스크립트가 실 DB 의 모든 테이블을 다루는지 대소문자 무시로 정확히 대조하기 위해"
     if tool == "search_tables":
         return "질문에 필요한 테이블을 찾기 위해"
     if tool == "get_sample_rows":
