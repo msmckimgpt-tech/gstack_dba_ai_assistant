@@ -2309,25 +2309,23 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
       const tbk = new Map(members.map((t) => [t.key, t]));
       sgs = _metaSimGroups("panel:" + String(name), members, _metaRelAdjacency(tbk));
     } catch (_) { sgs = null; }
+    // graph-funcproc(cluster-detail-fulllist): 캡 규약 재개정(사용자 요청 "전체 출력") — 직전 전역 500행 + 그룹당 25
+    //   캡은 컨텐츠 카테고리 멤버 총합이 500 초과인 스키마에서 뒤쪽 그룹을 (0/n)·경계 그룹을 (3/5)로 잘랐다.
+    //   이제 **모든 컨텐츠 카테고리의 전체 멤버를 렌더**한다(그룹당 캡 제거, 전역 상한은 비현실 극단 스키마의
+    //   브라우저 행 방지용 안전 가드 ROW_CAP 만 유지 — 구획/평면 폴백 공통 상수). 수천 행 렌더에도 행 상호작용은
+    //   아래 컨테이너(ul) 이벤트 위임으로 처리해 리스너가 O(1)(누적/바인딩 비용 안전). 헤딩 항상 방출·절단표식은 가드 경계에서만.
+    const ROW_CAP = 5000;
     if (sgs && sgs.length >= 2) {
-      // §18.8 패널: 그룹 헤딩은 목록의 실제 구획 의미(장식 아님) → aria-hidden 금지. role="group"+aria-label
-      //   로 보조기기에 "그룹명·개수"를 노출.
-      // graph-funcproc(cluster-detail-cap): 캡 규약 개정 — 이전 전역 80행 캡은 그룹 경계에서 끊되 **캡 도달 후 그룹을
-      //   통째 skip** 해, 대형 스키마(예 gunzgame 409항목)에서 앞쪽 테이블 be: 클러스터가 80행을 소진하면 뒤쪽
-      //   함수·프로시저 컨텐츠 카테고리 전체가 목록에서 사라졌다(사용자 보고의 핵심 — routine-only 카테고리 조회 불가).
-      //   개정: (1) **모든 컨텐츠 카테고리 헤딩을 항상 방출**해 카테고리 자체는 늘 가시·조회 가능, (2) 멤버 행은
-      //   그룹당 상한(PER_GROUP) + 전역 상한(ROW_CAP)으로 캡해 한 그룹이 예산을 독식하지 않게 하고 패널 길이를 바운드
-      //   (패널 aside=overflow-y:auto 스크롤). 절단은 그룹별 "(shown/n)" 표식으로 개수 모순 방지.
-      const ROW_CAP = 500, PER_GROUP = 25;
+      // §18.8 패널: 그룹 헤딩은 목록의 실제 구획 의미(장식 아님) → aria-hidden 금지. role="group"+aria-label 로 노출.
       let emitted = 0;
       sgs.forEach((sg) => {
-        const shown = Math.min(sg.tables.length, PER_GROUP, Math.max(0, ROW_CAP - emitted));
+        const shown = Math.min(sg.tables.length, Math.max(0, ROW_CAP - emitted));
         const trunc = shown < sg.tables.length ? ` <span class="amgr-ct-group-trunc">(${shown}/${sg.n})</span>` : "";
         parts.push(`<li class="amgr-ct-group" role="group" aria-label="${esc(sg.label)} 그룹 · 항목 ${sg.n}개"><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
         sg.tables.slice(0, shown).forEach((t) => { parts.push(rowHTML(t)); emitted++; });
       });
     } else {
-      members.slice(0, 500).forEach((t) => parts.push(rowHTML(t)));
+      members.slice(0, ROW_CAP).forEach((t) => parts.push(rowHTML(t)));
     }
     parts.push(`</ul></div>`);
   }
@@ -2339,17 +2337,31 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   // routine-dbanalysis(§53): DB 단위 능동 분석 버튼 — 컨텍스트 메뉴와 동일 핸들러(확인창에 대상 수 표시).
   const _schemaAiBtn = document.getElementById("metaGraphClusterAnalyzeBtn");
   if (_schemaAiBtn && comboId) _schemaAiBtn.addEventListener("click", () => _metaGraphAnalyzeSchema(comboId));
-  // role-cluster-prefix: 테이블 행 클릭 → 해당 노드 선택(_metaGraphShowDetail = 하이라이트 setSelected + 상세 렌더) + 렌더돼 있으면 카메라 focus.
-  el.querySelectorAll(".amgr-ct-row[data-node-key]").forEach((btn) => {
-    _metaBindHoverPan(btn, btn.getAttribute("data-node-key"));   // detail-hover-fx: hover 시 해당 테이블로 부드러운 카메라 이동
-    btn.addEventListener("click", () => {
-      const k = btn.getAttribute("data-node-key");
+  // role-cluster-prefix + cluster-detail-fulllist: 행 클릭 → 노드 선택(_metaGraphShowDetail) + focus; hover → 카메라 pan.
+  //   전체 출력(캡 해제)로 행이 수천 개가 될 수 있어 **행마다 바인딩하지 않고 컨테이너(ul)에 이벤트 위임**한다.
+  //   ul 은 매 렌더 innerHTML 로 재생성되므로 위임 리스너가 누적되지 않는다(직전 ul 은 리스너와 함께 GC). mouseover/out·
+  //   focusin/out 은 버블링되므로 위임 가능(mouseenter/leave·focus/blur 는 버블 안 됨). _hoverKey 로 같은 행 재-pan/중복 취소 방지.
+  const _ctUl = el.querySelector("ul.amgr-cluster-tables");
+  if (_ctUl) {
+    const _rowKeyOf = (e) => { const b = e.target.closest(".amgr-ct-row[data-node-key]"); return (b && _ctUl.contains(b)) ? b.getAttribute("data-node-key") : null; };
+    let _hoverKey = null;
+    _ctUl.addEventListener("click", (e) => {
+      const k = _rowKeyOf(e);
       if (!k) return;
       _metaGraphShowDetail(k);
       const g = _metaGraph.graph, rel = _metaRenderedIdFor(k);
       if (g && rel && typeof g.focusElement === "function") { try { Promise.resolve(g.focusElement(rel, false)).catch(() => {}); } catch (_) {} }
     });
-  });
+    const _hoverOn = (e) => { const k = _rowKeyOf(e); if (k && k !== _hoverKey) { _hoverKey = k; _metaGraphHoverPan(k); } };
+    _ctUl.addEventListener("mouseover", _hoverOn);
+    _ctUl.addEventListener("focusin", _hoverOn);
+    _ctUl.addEventListener("mouseout", (e) => {
+      const b = e.target.closest(".amgr-ct-row[data-node-key]");
+      // 같은 행 내부(칩↔코드 등) 이동은 취소하지 않음 — relatedTarget 이 같은 행 밖으로 나갈 때만.
+      if (b && (!e.relatedTarget || !b.contains(e.relatedTarget))) { _hoverKey = null; _metaGraphHoverPanCancel(); }
+    });
+    _ctUl.addEventListener("focusout", (e) => { if (e.target.closest(".amgr-ct-row[data-node-key]")) { _hoverKey = null; _metaGraphHoverPanCancel(); } });
+  }
 }
 
 // 노드의 최신 분석 상태/결과를 조회해 AI box 에 렌더(상세 패널 진입 시 + 폴링 완료 시).
