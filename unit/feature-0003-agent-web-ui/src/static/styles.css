@@ -4382,6 +4382,7 @@ button.product-dropup-item-ds--test:disabled {
 .admin-pane[data-admin-pane="dashboard"].is-active,
 .admin-pane[data-admin-pane="usage"].is-active,
 .admin-pane[data-admin-pane="ai-ops"].is-active,
+.admin-pane[data-admin-pane="reasoning"].is-active,
 .admin-pane[data-admin-pane="release-notes"].is-active {
   /* aiops-scroll: AI 운영 현황 pane 은 배너/축/KPI/Attention/카테고리표/활동feed/커버리지의
      단순 세로 흐름(list-detail 아님)이라 dashboard/usage 와 동일하게 pane 자체 세로 스크롤 부여.
@@ -8758,3 +8759,39 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .branch-pager-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
 .branch-pager-btn:disabled { opacity: .4; cursor: default; }
 .branch-pager-label { font-size: 11px; color: var(--text-muted); padding: 0 4px; font-variant-numeric: tabular-nums; }
+
+/* ── feature-0021: AI 추론 탭 (지침/스킬 레지스트리 · red-team 리뷰 · 메모리 노트) ── */
+.reasoning-section { margin-bottom: 28px; }
+.reasoning-section-title { margin: 0 0 4px; font-size: 15px; }
+.reasoning-section-hint { margin: 0 0 12px; font-size: 12px; color: var(--text-muted); }
+.reasoning-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.reasoning-stat { min-width: 96px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.reasoning-stat-num { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.reasoning-stat-label { font-size: 11px; color: var(--text-muted); }
+.reasoning-review-list { display: flex; flex-direction: column; gap: 8px; }
+.reasoning-review-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.reasoning-review-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.reasoning-review-meta { font-size: 11px; color: var(--text-muted); }
+.reasoning-verdict { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
+.reasoning-verdict--ok { color: #2e7d32; border-color: rgba(46,125,50,.4); background: rgba(46,125,50,.08); }
+.reasoning-verdict--warn { color: #b26a00; border-color: rgba(178,106,0,.4); background: rgba(178,106,0,.08); }
+.reasoning-verdict--err { color: #c62828; border-color: rgba(198,40,40,.4); background: rgba(198,40,40,.08); }
+.reasoning-finding { font-size: 12px; margin-top: 2px; word-break: break-word; }
+.reasoning-finding--none { color: var(--text-muted); }
+.reasoning-finding-fix { color: var(--text-muted); }
+.reasoning-more { margin-top: 10px; }
+.reasoning-guidance-list { display: flex; flex-direction: column; gap: 6px; }
+.reasoning-guidance-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer;
+  transition: border-color .12s, background .12s; }
+.reasoning-guidance-row:hover { border-color: var(--primary); }
+.reasoning-guidance-name { font-weight: 600; font-size: 13px; }
+.reasoning-guidance-desc { font-size: 12px; color: var(--text-muted); word-break: break-word; }
+.reasoning-guidance-meta { font-size: 11px; color: var(--text-muted); opacity: .8; }
+.reasoning-guidance-detail { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.reasoning-guidance-detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+.reasoning-guidance-pre { margin: 0; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font-size: 12px; line-height: 1.5; }
+.reasoning-notes-table { width: 100%; }
+.reasoning-notes-table td, .reasoning-notes-table th { font-size: 12px; }
+.reasoning-note-ident { font-family: var(--mono, monospace); font-size: 11px; word-break: break-all; }

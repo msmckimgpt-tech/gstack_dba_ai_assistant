@@ -3917,6 +3917,17 @@ def _run_agent_core(
         system_content += "Use the thread_goal as the authoritative reference for what the user is trying to achieve when context is ambiguous.\n"
     if knowledge_ctx:
         system_content += knowledge_ctx
+    # feature-0021: 세션/제품 자가리뷰 노트 주입 (캡 이내, best-effort). bounded 발신자에게는
+    # origin/thread_goal 과 동일 사유로 억제 — 세션 노트는 대화 전 구간에서 축적된 자유 텍스트라
+    # visibility window 로 자를 수 없다 (share-visibility-window B1 정합).
+    if not _suppress_conversation_context:
+        try:
+            from modules.agent_notes import load_notes_context as _load_notes_ctx
+            _notes_ctx = _load_notes_ctx(cid, product_id)
+            if _notes_ctx:
+                system_content += "\n\n" + _notes_ctx
+        except Exception:
+            pass
     # feature-0013: flow/관계/구조 질문에 mermaid 다이어그램 발화 유도 (knowledge context 뒤 = 마지막 강조)
     system_content += _MERMAID_DIAGRAM_GUIDANCE
     messages: list[dict[str, Any]] = [
@@ -4069,6 +4080,56 @@ def _run_agent_core(
             all_csv = _step_csv_paths(steps)
             answer = _collapse_large_tables(raw_answer, all_csv) if all_csv else raw_answer
             result["answer"] = answer
+
+            # feature-0021: 자가 적대 red-team 리뷰 — 전달 전 fresh-context 검증 (fail-open).
+            # 초안 생성 컨텍스트와 분리된 저비용 리뷰어가 grounding/SQL/권한/완전성/정직성
+            # 5축으로 반박 시도, BLOCK 결함이면 초안 컨텍스트에서 제한 횟수 내 수정
+            # (게이팅·깊이는 modules/redteam.review_plan 의 결정론 파이프라인). 어떤 실패도
+            # 답변 전달을 막지 않는다. 노트 축적(agent_notes)은 리뷰 여부와 무관 best-effort.
+            _rt_meta: dict[str, Any] | None = None
+            try:
+                from modules import agent_notes as _agent_notes
+                from modules import redteam as _redteam
+
+                if _redteam.review_plan(reasoning_level) is not None:
+                    _emit_activity("답변을 자가 검증하는 중 (red-team 리뷰)")
+
+                    def _rt_revise(instruction: str) -> str | None:
+                        _rev_messages = messages + [
+                            {"role": "assistant", "content": answer},
+                            {"role": "system", "content": instruction},
+                        ]
+                        _rev = _call_llm(client, _rev_messages, model,
+                                         temperature=temperature,
+                                         conversation_id=cid, run_id=run_id,
+                                         reasoning_level=reasoning_level)
+                        _txt = _strip_leaked_tool_notes(getattr(_rev, "content", "") or "")
+                        _txt = _txt.strip()
+                        if not _txt:
+                            return None
+                        # 수정 모델이 raw 도구 결과를 보고 대형 인라인 표를 재방출할 수 있으므로
+                        # 초안과 동일하게 CSV 링크로 접는다(초안의 _collapse_large_tables 대칭 — 회귀 방지).
+                        return _collapse_large_tables(_txt, all_csv) if all_csv else _txt
+
+                    _rt_answer, _rt_meta = _redteam.orchestrate_review(
+                        question=user_message,
+                        draft_answer=answer,
+                        steps=steps,
+                        executed_sql=last_sql,
+                        conversation_id=cid,
+                        run_id=run_id,
+                        reasoning_level=reasoning_level,
+                        is_group=bool(_group_sender_labels),
+                        revise_fn=_rt_revise,
+                    )
+                    if _rt_answer and _rt_answer.strip():
+                        answer = _rt_answer
+                        result["answer"] = answer
+                _agent_notes.update_notes_after_answer(
+                    conversation_id=cid, product_id=product_id,
+                    steps=steps, review_meta=_rt_meta)
+            except Exception:
+                pass
 
             # 메시지 저장 (duration_ms 포함)
             # TASK-0289: 표시 수행시간을 LLM 루프만(run_start 기준) → 진짜 end-to-end(total:

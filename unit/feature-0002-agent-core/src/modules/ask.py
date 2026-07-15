@@ -402,6 +402,13 @@ def run_ask_worker_loop() -> None:
             last_sweep = now
         if now - last_reap >= max(sweep_every, 300):
             _reap_orphan_inline_files(conn)
+            # feature-0021: 세션/제품 자가리뷰 노트 TTL 정리 (/shared/agent-notes,
+            # mtime 기준 — runtime settings 로 TTL 조정). 실패해도 워커 루프 무영향.
+            try:
+                from modules.agent_notes import sweep_expired_notes
+                sweep_expired_notes()
+            except Exception as exc:
+                log.warning("ask-worker: agent-notes sweep 실패(무시): %s", exc)
             last_reap = now
 
         try:

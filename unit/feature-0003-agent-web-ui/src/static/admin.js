@@ -308,6 +308,8 @@ const PERMISSION_DEPENDENCIES = {
   "system_prompt.global.write": "system_prompt.global.read",
   "system.runtime.read": "console.system.access",
   "system.runtime.write": "system.runtime.read",
+  // feature-0021(redteam-review): AI 추론 구조 조회(read-only) — 시스템 카테고리 하위.
+  "console.reasoning.read": "console.system.access",
   // ── 운영 권한 (TASK-0269 — own/any 그룹 분리 + "목록 조회" 게이트) ──
   //   내 대화 권한(conversation_own): "내 대화 목록 조회"(list.own) 가 카테고리 접근(조회) 게이트 —
   //     루트(항상 표시). perm-category-hier: "대화 생성"(create)도 동작 권한이므로 게이트 하위로 정합
@@ -2110,6 +2112,9 @@ const ADMIN_TAB_PERMISSIONS = {
   //   있던 것을 보강 — runtime read/write 단독 보유자도 설정 탭에 도달 가능(백엔드 엔드포인트 권한과 정합).
   settings: ["system_prompt.global.read", "system_prompt.global.write",
              "system.runtime.read", "system.runtime.write"],
+  // feature-0021: AI 추론 탭 — console.reasoning.read 게이트. **필수(fail-open 방지)** —
+  //   canSeeTab() 은 매핑 없는 탭을 fail-open(전원 노출)하므로 누락 = 권한 없는 사용자에게 탭 노출.
+  reasoning: ["console.reasoning.read"],
 };
 
 // perm-category-hier(Critical §12.3, 2026-07-14): 탭 → 소속 nav 카테고리의 최상위 '접근' 권한 매핑.
@@ -2129,6 +2134,7 @@ const ADMIN_TAB_CATEGORY_ACCESS = {
   metadata: "console.kb.access",
   graph: "console.kb.access",
   settings: "console.system.access",
+  reasoning: "console.system.access",
 };
 
 function canSeeTab(tabKey) {
@@ -2395,6 +2401,188 @@ function renderAiOps(data) {
   if (_actList) bindAiOpsActivityToggle(_actList);
 }
 
+/* ── feature-0021: AI 추론 탭 (지침/스킬 레지스트리 · red-team 리뷰 활동 · 메모리 노트) ──
+ * read-only 조회 — 데이터 소스: /api/admin/reasoning/{guidance,redteam,notes}.
+ * 지침 목록은 progressive disclosure(메타만) — 항목 클릭 시 ?key= 단건 본문 로드. */
+async function loadReasoning() {
+  const body = $("reasoningBody");
+  if (body) body.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
+  try {
+    const [guidance, redteam, notes] = await Promise.all([
+      apiFetch("/api/admin/reasoning/guidance"),
+      apiFetch("/api/admin/reasoning/redteam"),
+      apiFetch("/api/admin/reasoning/notes"),
+    ]);
+    if (!adminState.reasoning) adminState.reasoning = { initialized: true, redteamCursor: null };
+    adminState.reasoning.redteamCursor = redteam.next_cursor || null;
+    renderReasoning(guidance, redteam, notes);
+  } catch (e) {
+    const msg = String((e && e.message) || e).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    if (body) body.innerHTML = '<div class="admin-detail-empty">AI 추론 정보를 불러오지 못했습니다: ' + msg + "</div>";
+  }
+}
+
+function _reasoningVerdictBadge(esc, verdict) {
+  const map = { pass: ["정상 통과", "ok"], revise: ["결함 수정", "warn"], error: ["리뷰 실패", "err"] };
+  const [label, cls] = map[verdict] || [verdict || "?", ""];
+  return `<span class="reasoning-verdict reasoning-verdict--${cls}">${esc(label)}</span>`;
+}
+
+function _reasoningReviewRowHtml(esc, it) {
+  const findings = Array.isArray(it.findings) ? it.findings : [];
+  const findingHtml = findings.map((f) =>
+    `<div class="reasoning-finding"><strong>[${esc(f.severity)}/${esc(f.axis)}]</strong> ${esc(f.claim)}` +
+    (f.fix_hint ? ` <span class="reasoning-finding-fix">→ ${esc(f.fix_hint)}</span>` : "") + `</div>`
+  ).join("");
+  const metaBits = [
+    it.created_at ? esc(String(it.created_at).replace("T", " ").slice(0, 19)) : "",
+    esc(it.reasoning_level || ""),
+    it.is_group ? "그룹" : "1:1",
+    it.latency_ms != null ? `${esc(it.latency_ms)}ms` : "",
+    it.revision_applied ? "수정 적용됨" : "",
+    it.verify_verdict ? `재검증=${esc(it.verify_verdict)}` : "",
+  ].filter(Boolean).join(" · ");
+  return `<div class="reasoning-review-row">
+    <div class="reasoning-review-head">${_reasoningVerdictBadge(esc, it.verdict)}
+      <span class="reasoning-review-meta">${metaBits}</span></div>
+    ${findingHtml || '<div class="reasoning-finding reasoning-finding--none">지적 없음</div>'}
+  </div>`;
+}
+
+function renderReasoning(guidance, redteam, notes) {
+  const body = $("reasoningBody");
+  if (!body) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // ── 1. red-team 리뷰 활동 ──
+  const st = (redteam && redteam.stats) || {};
+  const statHtml = `
+    <div class="reasoning-stats">
+      <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.reviews_24h ?? "–")}</div><div class="reasoning-stat-label">리뷰 (24h)</div></div>
+      <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.reviews_7d ?? "–")}</div><div class="reasoning-stat-label">리뷰 (7d)</div></div>
+      <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.revise_7d ?? "–")}</div><div class="reasoning-stat-label">결함 검출 (7d)</div></div>
+      <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.revisions_applied_7d ?? "–")}</div><div class="reasoning-stat-label">수정 적용 (7d)</div></div>
+      <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.errors_7d ?? "–")}</div><div class="reasoning-stat-label">리뷰 실패 (7d)</div></div>
+      <div class="reasoning-stat"><div class="reasoning-stat-num">${st.avg_latency_ms_7d != null ? esc(st.avg_latency_ms_7d) + "ms" : "–"}</div><div class="reasoning-stat-label">평균 지연 (7d)</div></div>
+    </div>`;
+  const reviews = Array.isArray(redteam && redteam.items) ? redteam.items : [];
+  const _reviewEmptyMsg = (redteam && redteam.pg_available === false)
+    ? "저장소(PG)에 연결할 수 없습니다."
+    : (redteam && redteam.table_available === false)
+      ? "자가 리뷰 저장소가 아직 준비되지 않았습니다 (마이그레이션/배포 대기)."
+      : "기록된 리뷰가 없습니다.";
+  const reviewListHtml = reviews.length
+    ? reviews.map((it) => _reasoningReviewRowHtml(esc, it)).join("")
+    : '<div class="admin-detail-empty">' + _reviewEmptyMsg + "</div>";
+  const moreBtnHtml = adminState.reasoning && adminState.reasoning.redteamCursor
+    ? '<button type="button" class="btn-secondary" id="reasoningMoreBtn">더 보기</button>' : "";
+
+  // ── 2. 지침/스킬 레지스트리 (progressive disclosure — 클릭 시 본문 로드) ──
+  const gItems = Array.isArray(guidance && guidance.items) ? guidance.items : [];
+  const gRows = (kind) => gItems.filter((g) => g.kind === kind).map((g) =>
+    `<button type="button" class="reasoning-guidance-row" data-guidance-key="${esc(g.key)}">
+      <span class="reasoning-guidance-name">${esc(g.name)}</span>
+      <span class="reasoning-guidance-desc">${esc(g.description)}</span>
+      <span class="reasoning-guidance-meta">${esc(g.injection || "")}${g.chars != null ? " · " + esc(g.chars) + "자" : ""}</span>
+    </button>`
+  ).join("");
+
+  // ── 3. 메모리 노트 현황 ──
+  const nItems = Array.isArray(notes && notes.items) ? notes.items : [];
+  const noteRows = nItems.map((n) => {
+    const days = Math.floor((n.expires_in_sec || 0) / 86400);
+    const hours = Math.floor(((n.expires_in_sec || 0) % 86400) / 3600);
+    return `<tr><td>${esc(n.scope === "session" ? "세션" : "제품")}</td><td class="reasoning-note-ident">${esc(n.ident)}</td>
+      <td>${esc(Math.round((n.size_bytes || 0) / 102.4) / 10)}KB</td><td>${esc(n.updated_at || "")}</td>
+      <td>${days}일 ${hours}시간 후 만료</td></tr>`;
+  }).join("");
+  const notesHtml = nItems.length
+    ? `<table class="admin-table reasoning-notes-table"><thead><tr><th>구분</th><th>식별자</th><th>크기</th><th>갱신</th><th>TTL</th></tr></thead><tbody>${noteRows}</tbody></table>`
+    : '<div class="admin-detail-empty">축적된 노트가 없습니다.</div>';
+
+  body.innerHTML = `
+    <div class="reasoning-section">
+      <h3 class="reasoning-section-title">자가 적대 리뷰 활동</h3>
+      <p class="reasoning-section-hint">답변 전달 전 별도 모델이 수행한 red-team 검증 판정입니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong> 에서 조정합니다.</p>
+      ${statHtml}
+      <div class="reasoning-review-list" id="reasoningReviewList">${reviewListHtml}</div>
+      <div class="reasoning-more">${moreBtnHtml}</div>
+    </div>
+    <div class="reasoning-section">
+      <h3 class="reasoning-section-title">작동 지침</h3>
+      <p class="reasoning-section-hint">assistant 프롬프트에 주입되는 지침 레지스트리입니다. 항목을 클릭하면 전체 본문을 확인할 수 있습니다. (기본 시스템 프롬프트의 운영 정본 편집은 설정 &gt; 전역 시스템 프롬프트)</p>
+      <div class="reasoning-guidance-list">${gRows("guidance") || '<div class="admin-detail-empty">레지스트리를 불러올 수 없습니다.</div>'}</div>
+      <div class="reasoning-guidance-detail" id="reasoningGuidanceDetail" hidden></div>
+    </div>
+    <div class="reasoning-section">
+      <h3 class="reasoning-section-title">스킬 (도구)</h3>
+      <p class="reasoning-section-hint">assistant 가 답변 중 자율 호출할 수 있는 함수 도구입니다. 클릭 시 전체 스키마(JSON)를 표시합니다.</p>
+      <div class="reasoning-guidance-list">${gRows("skill") || '<div class="admin-detail-empty">레지스트리를 불러올 수 없습니다.</div>'}</div>
+    </div>
+    <div class="reasoning-section">
+      <h3 class="reasoning-section-title">메모리 노트 (임시 파일)</h3>
+      <p class="reasoning-section-hint">세션(대화)/제품별 자가리뷰·메모리 노트 현황입니다. TTL 만료 시 주기 정리로 자동 삭제됩니다 (경로: ${esc((notes && notes.root) || "/shared/agent-notes")}).</p>
+      ${notesHtml}
+    </div>`;
+
+  const moreBtn = $("reasoningMoreBtn");
+  if (moreBtn) moreBtn.addEventListener("click", loadReasoningMoreReviews);
+  body.querySelectorAll("[data-guidance-key]").forEach((btn) => {
+    btn.addEventListener("click", () => showGuidanceDetail(btn.getAttribute("data-guidance-key")));
+  });
+}
+
+async function loadReasoningMoreReviews() {
+  const cursor = adminState.reasoning && adminState.reasoning.redteamCursor;
+  if (!cursor) return;
+  const listEl = $("reasoningReviewList");
+  const moreBtn = $("reasoningMoreBtn");
+  if (moreBtn) moreBtn.disabled = true;
+  try {
+    const data = await apiFetch(`/api/admin/reasoning/redteam?cursor=${encodeURIComponent(cursor)}`);
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    (data.items || []).forEach((it) => {
+      if (listEl) listEl.insertAdjacentHTML("beforeend", _reasoningReviewRowHtml(esc, it));
+    });
+    adminState.reasoning.redteamCursor = data.next_cursor || null;
+    if (!data.next_cursor && moreBtn) moreBtn.remove();
+  } catch (e) {
+    console.error("[reasoning] more reviews failed:", e);
+  } finally {
+    if (moreBtn) moreBtn.disabled = false;
+  }
+}
+
+async function showGuidanceDetail(key) {
+  const detail = $("reasoningGuidanceDetail");
+  if (!detail || !key) return;
+  detail.hidden = false;
+  detail.textContent = "불러오는 중…";
+  try {
+    const data = await apiFetch(`/api/admin/reasoning/guidance?key=${encodeURIComponent(key)}`);
+    const item = data && data.item;
+    if (!item) { detail.textContent = "본문을 불러올 수 없습니다."; return; }
+    detail.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "reasoning-guidance-detail-head";
+    const title = document.createElement("strong");
+    title.textContent = item.name || item.key;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "btn-secondary";
+    closeBtn.textContent = "닫기";
+    closeBtn.addEventListener("click", () => { detail.hidden = true; });
+    head.append(title, closeBtn);
+    const pre = document.createElement("pre");
+    pre.className = "reasoning-guidance-pre";
+    pre.textContent = item.text || "(비어 있음)";
+    detail.append(head, pre);
+    detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (e) {
+    detail.textContent = `본문 조회 실패: ${(e && e.message) || e}`;
+  }
+}
+
 function switchTab(tabName) {
   adminState.tab = tabName;
   document.querySelectorAll(".admin-tab").forEach((btn) => {
@@ -2419,6 +2607,11 @@ function switchTab(tabName) {
   if (tabName === "ai-ops" && !adminState.aiOps.initialized) {
     adminState.aiOps.initialized = true;
     loadAiOps();
+  }
+  // feature-0021: AI 추론 tab 첫 진입 시 로드.
+  if (tabName === "reasoning" && !(adminState.reasoning && adminState.reasoning.initialized)) {
+    adminState.reasoning = { initialized: true, redteamCursor: null };
+    loadReasoning();
   }
   // TASK-0095: 설정 tab 첫 진입 시 sub-section 마운트.
   if (tabName === "settings" && !adminState.settings.initialized) {
@@ -6395,6 +6588,8 @@ const SETTINGS_PANEL_MOUNTERS = {
   // feature-0018: 실행 타임아웃 / 모델별 추론 예산 — 각자 전용 UI, 레거시 admin-settings-panel 정합.
   "runtime-timeouts": mountRuntimeTimeoutsPanel,
   "model-thinking-budgets": mountModelThinkingBudgetsPanel,
+  // feature-0021: 자가 적대(red-team) 리뷰 · 메모리 노트 운영 값 (runtime_settings redteam 그룹).
+  "redteam-review": mountRedteamReviewPanel,
 };
 
 function mountSettingsSections() {
@@ -6564,6 +6759,8 @@ function rerenderRuntimeSettingsPanels() {
   if (t && adminState.settings.mountedPanels.has("runtime-timeouts")) renderRuntimeTimeouts(t);
   const m = $("modelThinkingBudgetsMount");
   if (m && adminState.settings.mountedPanels.has("model-thinking-budgets")) renderModelThinkingBudgets(m);
+  const r = $("redteamReviewMount");
+  if (r && adminState.settings.mountedPanels.has("redteam-review")) renderRedteamReviewSettings(r);
 }
 
 // 정렬 grid 행(라벨+배지 / 설명 / 입력+단위 / 상태·기본값). timeouts·models 공용.
@@ -6924,6 +7121,62 @@ function buildBudgetSliderRow(item, canWrite, getTotal) {
   // 총 출력이 바뀌면 슬라이더 상한/본문 파생을 다시 그린다(카드가 호출).
   row._rsRecompute = refresh;
   return row;
+}
+
+/* ── feature-0021: 자가 적대(red-team) 리뷰 · 메모리 노트 운영 값 패널 ─────────
+ * runtime_settings 의 redteam 그룹(REDTEAM_*)을 실행 타임아웃 패널과 동일한 정렬 grid
+ * 행으로 렌더 — 편집은 pending 예약, 적용은 하단 공용 commit-bar (기존 배선 재사용). */
+async function mountRedteamReviewPanel() {
+  const mount = $("redteamReviewMount");
+  if (!mount) return;
+  if (!can("system.runtime.read")) {
+    rsErrorPlaceholder(mount, "런타임 설정 조회 권한이 없습니다.");
+    return;
+  }
+  await renderRedteamReviewSettings(mount);
+}
+
+async function renderRedteamReviewSettings(mount) {
+  rsErrorPlaceholder(mount, "불러오는 중…");
+  let data;
+  try {
+    data = await apiFetch(RUNTIME_SETTINGS_ENDPOINT);
+  } catch (err) {
+    rsErrorPlaceholder(mount, `조회 실패: ${err.message || err}`);
+    return;
+  }
+  const canWrite = can("system.runtime.write");
+  const items = Array.isArray(data.redteam) ? data.redteam : [];
+  if (!items.length) { rsErrorPlaceholder(mount, "등록된 자가 리뷰 항목이 없습니다."); return; }
+  mount.innerHTML = "";
+  const panel = document.createElement("div");
+  panel.className = "rs-panel";
+  const order = [];
+  const byCat = new Map();
+  for (const it of items) {
+    const cat = it.category || "기타";
+    if (!byCat.has(cat)) { byCat.set(cat, []); order.push(cat); }
+    byCat.get(cat).push(it);
+  }
+  for (const cat of order) {
+    const group = document.createElement("div");
+    group.className = "rs-group";
+    const gtitle = document.createElement("div");
+    gtitle.className = "rs-group-title";
+    gtitle.textContent = cat;
+    const list = document.createElement("div");
+    list.className = "rs-list";
+    for (const it of byCat.get(cat)) list.appendChild(buildRuntimeSettingRow(it, canWrite));
+    group.append(gtitle, list);
+    panel.appendChild(group);
+  }
+  if (!canWrite) {
+    const note = document.createElement("div");
+    note.className = "rs-readonly-note";
+    note.textContent = "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
+    panel.appendChild(note);
+  }
+  mount.appendChild(panel);
 }
 
 async function mountModelThinkingBudgetsPanel() {
@@ -12604,6 +12857,12 @@ async function initialize() {
   if (aiOpsRefreshBtn && !aiOpsRefreshBtn.dataset.bound) {
     aiOpsRefreshBtn.dataset.bound = "1";
     aiOpsRefreshBtn.addEventListener("click", () => loadAiOps());
+  }
+  // feature-0021: AI 추론 새로고침
+  const reasoningRefreshBtn = $("reasoningRefreshBtn");
+  if (reasoningRefreshBtn && !reasoningRefreshBtn.dataset.bound) {
+    reasoningRefreshBtn.dataset.bound = "1";
+    reasoningRefreshBtn.addEventListener("click", () => loadReasoning());
   }
   // 샘플 검수는 메타데이터 > 샘플쿼리 > 샘플 검수 큐 2차 보기로 통합됨(독립 탭·새로고침 버튼 제거).
   const archiveSearch = $("archiveSearch");

@@ -1,0 +1,50 @@
+---
+doc_type: REPORT
+feature_id: feature-0021-redteam-review
+status: active
+edit_policy: rewrite
+source_of_truth: false
+---
+
+# Current Report
+
+## 1. Summary
+assistant 답변 전달 전 자가 적대(red-team) 리뷰 — Claude Code 추론 패턴 (fresh-context
+find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완료. 코어 오케스트레이션
+(agent_core choke-point) + [세션, 제품] 메모리 노트 (TTL) + 런타임 설정 + 관리 콘솔 "AI 추론"
+탭까지 구현. cross-cut 코드 거주: feature-0002/0003/shared.
+
+## 2. Progress
+- Planned: PB-0008 콘솔 시각검증 (배포 후), 라이브 리뷰 판정 1건 실증
+- In Progress: cycle-final (verify-completion → PR → 배포)
+- Done: 리서치(공식문서+실동작), 코어 3모듈(redteam/agent_notes/guidance_registry),
+  choke-point 훅, alembic 0042, REDTEAM_* 런타임 설정, 권한+admin_reasoning 라우터,
+  콘솔 탭/설정 패널, 단위 테스트 34건, ROUTEMAP 재생성, route-parity golden 갱신
+
+## 3. Recent Changes
+- CHG-20260715-0001 — 최초 구현 (상세 MODIFY.md)
+- 총 변경 횟수: 1
+
+## 4. Open Issues
+- make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):
+  runtime_settings 2건은 `.env` 의 AGENT_TIMEOUT_SEC=300 이 기본값 60 단정과 충돌 (main 동일
+  실패), routine_dbanalysis·item11_batch8 2건은 main 컨테이너가 라이브 PG 네트워크에 붙어
+  통과하던 것이 격리 worktree 네트워크에서 정직하게 실패 (PG 부재). 후속 개선 후보: §8.
+
+## 5. Test Status
+- 자동 테스트: 신규 34건 PASS (redteam 18 · agent_notes 8 · admin_reasoning 8) + 기존 스위트
+  회귀 0 (환경 의존 4건 제외 — 상세 TEST.md §3). 적대 패널(REV-0002) BLOCK2+MAJOR1+MINOR3 반영·재검증 완료.
+- 수동 테스트: 배포 후 PB-0008 Windows-browser 콘솔 검증 + 라이브 리뷰 실증 예정
+- 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰)
+
+## 6. Blocked Items
+- 없음
+
+## 7. Human Attention Needed
+- 없음 (deploy_scope: included — cycle-final 후 자동 배포 진행)
+
+## 8. Suggested Improvements
+- make test 의 컨테이너가 라이브 compose 네트워크에 합류해 "DB 필요 테스트가 우연히 통과"
+  하는 문제 — `--network none` 격리 또는 env 고정(.env.test)으로 결정론화 후보.
+- runtime_settings 기본값 단정 테스트 2건의 env 내성화 (monkeypatch.delenv).
+- 리뷰 판정 rubric 의 LLM-as-judge 정확도 평가 (golden 셋) — feature-0002 eval harness 연계.

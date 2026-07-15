@@ -783,6 +783,8 @@ def _openai_chat_completion_with_deadline(
     messages: list[dict[str, Any]],
     timeout_sec: int | None = None,
     task: str = "agent",
+    conversation_id: str | None = None,
+    run_id: str | None = None,
 ):
     # TASK-0129 (#3): model 의 tier 에 맞는 client 로 재해석. caller 가 default client 를
     # 넘겨도 'edge'/'core' 는 local gateway, 'claude-*' 는 Bedrock 으로 보장 (라우팅 회귀 차단).
@@ -808,7 +810,11 @@ def _openai_chat_completion_with_deadline(
     try:
         resp = future.result(timeout=wall_sec)
         _lat_ms = (time.perf_counter_ns() - _lat_t0) // 1_000_000
-        _record_llm_usage(model, task, resp, latency_ms=int(_lat_ms))  # TASK-0136 (#11): best-effort 토큰+지연 회계
+        # TASK-0136 (#11): best-effort 토큰+지연 회계. feature-0021: caller 가 정확한
+        # conversation/run 을 알면 명시 전달(in-process 동시 ask 의 cfg 전역 race 회피 —
+        # _record_llm_usage docstring TASK-0163). 미전달 기존 호출은 종전대로 cfg fallback.
+        _record_llm_usage(model, task, resp, latency_ms=int(_lat_ms),
+                          conversation_id=conversation_id, run_id=run_id)
         return resp
     except concurrent.futures.TimeoutError:
         _log_llm_warn("_openai_chat_completion_with_deadline", "timeout", f"model={model} wall_sec={wall_sec}")
