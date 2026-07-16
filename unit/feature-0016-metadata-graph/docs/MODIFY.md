@@ -199,6 +199,11 @@ source_of_truth: true
 ## CHG-20260714T104500-ai-claude-feature-0016-cluster-label-target-close — TL.3 완수 기록 (2026-07-14, doc-only)
 - 대상: TASK.md(TL.3 [x]). 코드 0. PR #775 배포(b747c29a) 후 실측: 기존 527건 정정(UPDATE, 잔여 19건=미등록 legacy scope 라벨 부재)·신규 활동 target=사용자 식별자 기록 확인(/api/admin/ai-ops).
 
+## CHG-20260716T010349-ai-claude-feature-0016-graph-detail-nav-hover-fade — 상세 패널 [뒤로/앞으로] 바 hover 아닐 때 부드럽게 반투명 (2026-07-16)
+- 대상(cross-cut 코드 거주 feature-0003 static/graph): `graph.css` 1파일(+9/-1) — `.admin-meta-graph-detailnav` 에 `opacity:.3` + `transition:opacity .18s ease` 추가 + 신규 규칙 `:hover, :focus-within { opacity:1 }` + `@media(prefers-reduced-motion:reduce){transition:none}`.
+- 변경(사용자 요청 — entry persona dispatch): sticky 이력 바를 hover(또는 키보드 포커스)가 아닐 때 부드럽게 반투명(0.3)으로 흐리게 해 콘텐츠를 덜 가리는 비간섭 컨트롤로. hover/focus 시 완전 불투명 복원. 레이아웃/포인터 타겟 불변(흐린 상태에서도 상단 hover 로 즉시 복원). 순수 CSS.
+- 근거: 등급 Minor(CSS-only, additive, 레이아웃 무변경). 라이브 검증 PASS(기본 opacity 0.3·transition 0.18s / hover·focus-within opacity 1 / 스크린샷 대비). §18.8 `[SKIPPED:minor-single-file]`(sticky 기반은 선행 REV-20260716T021733 검증, 본 변경 self-review). 상세는 TASK.md `## 20260716T0103-graph-detail-nav-hover-fade`, REVIEW.md REV-20260716T010349-graph-detail-nav-hover-fade.
+
 ## CHG-20260716T021733-ai-claude-feature-0016-graph-detail-nav-sticky — 상세 패널 [뒤로/앞으로] 바 상단 고정(sticky) (2026-07-16)
 - 대상(cross-cut 코드 거주 feature-0003 static/graph): `graph.css` 1파일(+16/-2) — `.admin-meta-graph-detailnav`(sticky top:0·z-index:5·불투명 배경·하단 border·좌우 bleed)·`.admin-meta-graph-detail`(aside 상단 padding 제거 `14px`→`0 14px 14px`)·신규 규칙 `.admin-meta-graph-detailnav[hidden] + [id=metadataGraphDetailBody]`(바 숨을 때 body 상단 여백 보전).
 - 변경(사용자 요청 — entry persona dispatch): 상세 패널 방문 이력 바를 스크롤 위치와 무관하게 상단 고정해 [뒤로/앞으로] 버튼을 언제든 사용 가능. aside 상단 padding 을 0 으로 두어 스크롤포트 최상단=바 위치가 되게 함으로써 바 위로 콘텐츠가 비치는 틈을 제거. 인증/데이터/JS 무변경(순수 CSS 레이아웃).

@@ -82,7 +82,15 @@
   position: sticky; top: 0; z-index: 5;
   margin: 0 -14px 8px; padding: 14px 14px 8px;
   background: var(--surface, #fff); border-bottom: 1px solid var(--border);
+  /* graph-detail-nav-hover-fade: 마우스 hover(또는 키보드 포커스)가 아닐 땐 바를 부드럽게 흐리게(반투명) —
+     비간섭 컨트롤로 콘텐츠를 덜 가림. hover/focus 시 완전 불투명 복원. 바는 레이아웃/포인터 타겟을 그대로
+     유지하므로 흐린 상태에서도 상단 영역에 커서를 올리면 즉시 되살아난다. */
+  opacity: .3; transition: opacity .18s ease;
 }
+.admin-meta-graph-detailnav:hover,
+.admin-meta-graph-detailnav:focus-within { opacity: 1; }
+/* 접근성: 모션 최소화 선호 시 페이드 전환 제거(즉시 전환). */
+@media (prefers-reduced-motion: reduce) { .admin-meta-graph-detailnav { transition: none; } }
 /* 이력 ≤1 로 바가 숨으면 body 가 최상단 → 제거한 aside 상단 padding 을 body 로 보전(진입 시 여백 유지). */
 .admin-meta-graph-detailnav[hidden] + [id="metadataGraphDetailBody"] { padding-top: 14px; }
 /* author display:flex 는 UA [hidden]{display:none} 를 덮으므로 명시 [hidden] 규칙 필요(권한 grid [hidden] 트랩 동형). */

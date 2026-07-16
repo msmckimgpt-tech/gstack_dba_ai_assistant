@@ -1,5 +1,21 @@
 # Report
 
+## 2026-07-16 · 그래프 상세 패널 [뒤로/앞으로] 바 hover 페이드 (20260716T0103-graph-detail-nav-hover-fade)
+
+### 요청 (사용자, entry persona dispatch)
+"mouse hover 가 아닐 땐, 부드럽게 투명해지도록 구성해주세요."
+
+### 처리 결과 (Minor, CSS-only, cross-cut 코드 거주 feature-0003 static/graph)
+- `graph.css` 1파일(+9/-1): sticky 이력 바(`.admin-meta-graph-detailnav`)에 기본 `opacity:.3` + `transition:opacity .18s ease` 추가 → hover 가 아닐 땐 부드럽게 반투명. `:hover, :focus-within { opacity:1 }` 로 마우스 hover·키보드 포커스 시 불투명 복원. `@media(prefers-reduced-motion:reduce){transition:none}` 접근성 가드. 레이아웃/포인터 타겟 불변(흐린 상태에서도 상단 hover 로 즉시 복원).
+
+### 검증
+- 라이브(서빙 사본, 실 Windows 브라우저) **PASS**: 기본(비-hover) `opacity 0.3`·`transition opacity 0.18s`; 포인터를 바에 올림 → `opacity 1`(`:hover` 매칭); 키보드 포커스 → `opacity 1`(`:focus-within`, 포인터 멀어도). 스크린샷 대비(fade-idle 흐림 ↔ fade-hover 실선)로 육안 확인.
+- §18.8 `[SKIPPED:minor-single-file]` — 적대적 self-review(발견성·비침·포인터이벤트·접근성·스태킹·성능) + 라이브 3상태 실측. sticky 기반은 선행 REV-20260716T021733 [SUBAGENT:PASS] 검증. (REVIEW.md REV-20260716T010349-graph-detail-nav-hover-fade).
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-nav-hover-fade (ai/claude/feature-0016-graph-detail-nav-hover-fade, worktree).
+- (verify-completion 실행 후 아래 갱신)
+
 ## 2026-07-16 · 그래프 상세 패널 [뒤로/앞으로] 바 상단 고정 (20260716T0217-graph-detail-nav-sticky)
 
 ### 요청 (사용자, entry persona dispatch)
