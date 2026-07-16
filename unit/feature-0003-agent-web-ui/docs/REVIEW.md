@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260716T051931-ds-test-gate-fix [SKIPPED:trivial-regression-fix-display-only] — 작업화면 데이터소스 '연결 테스트' 버튼 렌더 회귀 수정 (TASK-20260716T051931-ds-test-gate-fix, Minor §12.3)
+- Panel skip 사유(§18.8): app.js **1줄** 변경(프론트 표시 게이트) — 백엔드 enforcement·스키마·RBAC·엔드포인트 shape 0. 보안 posture 불변(서버 `admin_test_datasource` 는 console.access+datasource.test 계속 요구). 07-13 출하·PB-0008 PASS 동작의 복구라 신규 설계 표면 없음. 라이브 실증은 POST-DEPLOY PB-0008.
+- **회귀 진단**: perm-atomic-split(`8e01cc24`, 07-15 Critical)이 DS 테스트 버튼 프론트 게이트를 `Boolean(state.user?.permissions?.["datasource.test"])` 로 작성. `state.user.permissions` 는 이 코드베이스의 `/api/session` 에 부재(TASK-0098 "표시 허용 + backend 403" 컨벤션·`can()` 이 permissions 맵 미사용) → undefined→false → 버튼 전부 미렌더. 라이브 b8658bee 세션 실측 `user.permissions` 부재 확인.
+- **수정**: `Boolean(state.user?.permissions?.["datasource.test"])` → `can("datasource.test")`(display-permissive, 컨벤션 정합). 순 게이트 = `!viewOnly && canOpenAdminConsole()`(07-13 동작 복구). datasource.test 미보유자는 백엔드 403 → apiFetch 공통 토스트.
+- **관련 flag(별도 feature 소유)**: 동일 커밋 app.js ≈L2006 권한 표시 UI 도 `state.user?.permissions` 를 읽어 동일 부재 — 본 cycle scope 밖(그 기능 소유자에게 위임).
+- **VERDICT: SHIP (회귀 복구·display-only·보안 무영향).**
+
 ## REV-20260716T120000-graph-search-groups-postverify [SKIPPED:post-deploy-visual-verification-reconciliation] — PB-0008 라이브 PASS 원장 정합 (docs-only, 코드 변경 0)
 - Date: 2026-07-16
 - Cycle: CHG-20260716T120000-graph-search-groups-postverify (test-runs.d Run 3 DEFERRED→PASS + TASK 체크박스), **Minor §12.3**.

@@ -1610,6 +1610,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 남용 방지: 프론트 per-key/조합키 쿨다운(버튼 disable, 기본 4s) + 백엔드 per-(account,key) 쿨다운(`AGENT_DS_TEST_COOLDOWN_SEC` 기본 3s, 미경과 시 probe 없이 429 throttled). 관리 콘솔 기존 호출부(배지 lazy probe·상세/제품바인딩 '연결 테스트')도 429 graceful(배지 직전 상태 유지·버튼 중립 토스트).
 - 접근성: DS 테스트 버튼은 실제 `<button>`(중첩 `<button>` 회피 위해 행 요소를 `<div role=menuitem tabindex>`로 전환·click+keydown 선택 복원)·`aria-label="<key> 연결 테스트"`·min 24px 터치 타깃·at-rest 테두리 어포던스.
 - 코드 거주: `static/app.js`·`static/styles.css`·`static/admin.js`·`routers/admin_datasources.py`. CHG/REV-20260713T094624-ds-conn-test.
+- **게이트 권한(perm-atomic-split 이후)**: 백엔드 `admin_test_datasource` 는 `console.access`+`datasource.test`(07-15 `8e01cc24` 로 구 `datasource.manage` 에서 분리) 요구. 프론트 표시 게이트 = `!viewOnly && canOpenAdminConsole() && can("datasource.test")` — `can()` 은 TASK-0098 컨벤션(display-permissive, `state.user.permissions` 미사용)이라 로그인 사용자에게 노출하고 실제 거부는 백엔드 403 처리. **주의**: `state.user?.permissions?.[...]` 로 게이트하면 `/api/session` 이 permissions 를 직렬화하지 않아 항상 미렌더(회귀) — `can()` 만 사용할 것. CHG/REV-20260716T051931-ds-test-gate-fix.
 
 
 ## (doc-sync-rn-0714, 2026-07-14) 릴리즈노트 콘텐츠 — 07-13 오후 블록 +7항목(관계도 콘텐츠 밴드·이동 부드러움·미니맵/상세 hover·첨부 재업로드 버전·데이터소스 연결 테스트·정상 조회 과차단 수정)

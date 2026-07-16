@@ -1555,8 +1555,12 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
     const s = b && b.conn_status && b.conn_status.status;
     return s ? `${b.datasource_key} (${connStatusMeta(s).label})` : (b ? b.datasource_key : "");
   };
-  // perm-atomic-split: 서버가 datasource.test 원자 권한을 게이트하므로 버튼도 동일 게이트(403 괴리 차단).
-  const _dsTestable = !viewOnly && canOpenAdminConsole() && Boolean(state.user?.permissions?.["datasource.test"]);
+  // perm-atomic-split: 서버가 datasource.test 원자 권한을 게이트한다. 프론트 게이트는 코드베이스
+  //  컨벤션(TASK-0098 "표시 허용 + backend 403 fallback")대로 `can()` 사용 — `state.user.permissions`
+  //  는 /api/session 에 직렬화되지 않아(세션 user 에 permissions 필드 없음) 그 맵을 읽으면 항상
+  //  undefined→false 라 버튼이 사라진다(회귀). can("datasource.test") 는 로그인 사용자에게 true 를
+  //  반환하고, datasource.test 미보유자는 백엔드 403 → apiFetch 공통 토스트가 처리한다.
+  const _dsTestable = !viewOnly && canOpenAdminConsole() && can("datasource.test");
   const _makeDsBadge = (text, tip, testKeys, ariaLabel) => {
     if (_dsTestable && Array.isArray(testKeys) && testKeys.length) {
       // 실제 <button> — 네이티브 키보드 활성화(Enter/Space) + at-rest 테두리 어포던스 + 접근가능한 이름.

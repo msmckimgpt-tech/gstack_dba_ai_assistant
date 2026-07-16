@@ -5950,3 +5950,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **pre-existing 무관 실패 정직 보고**: `verify_release_notes.mjs` 34중 33 PASS·1 FAIL([스크롤] admin release-notes pane overflow-y:auto 정규식) — 이 assertion 은 `styles.css`(본 cycle 미변경)를 읽고, 규칙(line 4386 `overflow-y:auto`)은 실재하나 선택자~속성 사이 설명 주석(~200자)이 테스트의 160자 정규식 창을 초과해 매칭 실패하는 **feature-0003 테스트 정규식 brittleness(false-negative)** — pristine HEAD(내 data 편집 stash)에서도 동일 FAIL 재현으로 내 변경과 무관 확인. styles.css/feature 테스트는 feature-0003 cycle 소관(doc_sync 미편집).
 - [x] landing/배포: verify-completion(operational, feature-0003) → **로컬 commit 까지만**. **push/merge-to-main/deploy(wrapper fetch→rebase→ff-push→web 재빌드+헬스)는 cron wrapper 소유**(system-prompt v3 위임 — 스킬 미수행). META(wiki·SECURITY §23·meta/REVIEW)는 별도 commit(0cc64c2b, REV-20260716T010501-META-0037-doc-sync-0716).
 - [ ] PB-0008 Windows-browser: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(관계도 우클릭/상세/드래그·ENUM 큐·권한·'AI 추론' 콘솔)는 각 원천 cycle POST-DEPLOY PB-0008 이 이미 검증(PASS). 사유 TEST.md CHECK#13(2026-07-16).
+
+## TASK-20260716T051931-ds-test-gate-fix — 작업화면 데이터소스 '연결 테스트' 버튼 렌더 회귀 수정 (Minor §12.3 — app.js 1줄, 2026-07-16)
+- 트리거: 사용자 회귀 신고(`/_template:entry`). 07-13 출하·PB-0008 PASS 한 DS 테스트 버튼이 다른 세션 작업 후 미표시.
+- [x] 진단: perm-atomic-split `8e01cc24`(07-15)가 프론트 게이트를 `Boolean(state.user?.permissions?.["datasource.test"])` 로 변경 → 이 코드베이스는 `state.user.permissions` 미직렬화(TASK-0098 컨벤션)라 항상 false → 버튼 미렌더. 라이브 b8658bee 세션 실측 `hasPermissions:false` 확인.
+- [x] 수정(app.js `_dsTestable` 1줄): `Boolean(state.user?.permissions?.["datasource.test"])` → `can("datasource.test")`. 순 게이트 = `!viewOnly && canOpenAdminConsole()`(07-13 동작 복구). 보안 무영향(백엔드 admin_test_datasource console.access+datasource.test 요구 불변).
+- [x] 검증: `node --check` PASS · `can()` global · 회귀 하네스 short-circuit 무영향. §18.8 full 패널 skip(1줄 display-only 회귀 복구·보안 posture 불변, REVIEW 근거).
+- [ ] verify-completion → 머지·push → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 라이브 복구 확인(admin 계정 DS 버튼 재렌더·클릭 성공 토스트·pageerror 0).
+- 관련 flag: 동일 커밋 app.js ≈L2006 권한 표시 UI 도 부재 `state.user.permissions` 의존 — 별도 feature 소유(본 scope 밖).
