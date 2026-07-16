@@ -2455,3 +2455,21 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### Git 동기화 결과
 - Task-Cycle: graph-detail-nav-sticky (ai/claude/feature-0016-graph-detail-nav-sticky, worktree).
+
+## 20260716T0103-graph-detail-nav-hover-fade — 상세 패널 [뒤로/앞으로] 바 hover 아닐 때 부드럽게 반투명 (2026-07-16, 사용자 요청 · entry persona dispatch)
+
+### 요청 (사용자)
+"mouse hover 가 아닐 땐, 부드럽게 투명해지도록 구성해주세요."
+
+### 배경
+직전 cycle 에서 이력 바를 상단 sticky 고정(불투명). 사용자가 후속으로, 바가 콘텐츠를 상시 가리지 않도록 hover 가 아닐 땐 부드럽게 흐려지고(반투명) hover 시 되살아나는 비간섭 컨트롤을 요청.
+
+### 처리 (본 cycle, CSS-only — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] TF.1 `graph.css` `.admin-meta-graph-detailnav`: 기본 `opacity:.3` + `transition:opacity .18s ease`(부드러운 페이드).
+- [x] TF.2 `.admin-meta-graph-detailnav:hover, :focus-within { opacity:1 }` — 마우스 hover 또는 키보드 포커스(접근성) 시 완전 불투명 복원. 바는 레이아웃/포인터 타겟을 유지하므로 흐린 상태에서도 상단에 커서를 올리면 즉시 되살아남.
+- [x] TF.3 접근성 가드 `@media (prefers-reduced-motion: reduce) { transition:none }` — 모션 최소화 선호 시 즉시 전환.
+- [x] TF.4 라이브 검증(서빙 사본, 실 Windows 브라우저) **PASS** — 기본(비-hover) `opacity 0.3`·`transition opacity 0.18s`; 포인터를 바에 올리면 `opacity 1`(`matches(:hover)=true`); 키보드 포커스 시 `opacity 1`(`:focus-within`, 포인터 멀어도) — 지연 후 측정으로 페이드 완료 확인. 스크린샷 2매(fade-idle 흐림 / fade-hover 실선 대비).
+- [x] TF.5 §18.8 리뷰 — `[SKIPPED:minor-single-file]`(REVIEW.md REV-20260716T010349-graph-detail-nav-hover-fade): CSS 4줄 opacity/transition 추가(레이아웃 무변경), sticky 기반은 선행 REV-20260716T021733 [SUBAGENT:PASS] 에서 검증. 위험면 self-review 기록(하단).
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-nav-hover-fade (ai/claude/feature-0016-graph-detail-nav-hover-fade, worktree).

@@ -266,6 +266,19 @@ source_of_truth: true
 ## REV-20260714T104500-ai-claude-feature-0016-cluster-label-target-close [SKIPPED:doc-only-postdeploy] — TL.3 완수 기록
 - Related Change: CHG-20260714T104500. 코드 0 — 배포·데이터 정정·라이브 확증 기록. 코드면은 REV-20260714T090500 에서 처리.
 
+## REV-20260716T010349-ai-claude-feature-0016-graph-detail-nav-hover-fade [SKIPPED:minor-single-file] — 상세 패널 [뒤로/앞으로] 바 hover 페이드
+- Related Change: CHG-20260716T010349. `graph.css` 4줄 추가(opacity:.3 + transition + `:hover,:focus-within{opacity:1}` + reduced-motion). 레이아웃 무변경(opacity/transition만) — sticky 구조는 선행 REV-20260716T021733 [SUBAGENT: PASS] 에서 6축 검증 완료.
+- Panel skip 사유(§18.8 Minor + 1파일 + 레이아웃 무변경): 적대적 self-review 로 위험면 소진 + 라이브 3상태 실측.
+- 위험면 self-review(적대적):
+  - **발견성(discoverability)** — 흐린 바를 못 찾을 위험: `opacity:0` 이 아닌 **0.3**(ghosted, 여전히 가시)로 완화 + 바가 레이아웃/포인터 타겟을 유지해 상단 영역 hover 시 즉시 복원. `:focus-within` 으로 키보드 탐색에도 복원. 라이브 스크린샷(fade-idle)에서 바 판독 가능 확인.
+  - **콘텐츠 비침(흐릴 때 sticky no-peek 무력화)**: 흐린 상태에서 아래 콘텐츠가 바를 통해 비침 — **사용자 요청의 명시적 의도**(hover 아닐 때 투명). hover/focus 시 불투명(0.3→1)이라 사용 시점엔 은폐 복원.
+  - **포인터 이벤트**: `opacity<1` 은 `pointer-events` 를 끄지 않으므로 흐린 바도 hover/클릭 타겟 유지 → 복원·조작 정상(라이브 `matches(:hover)=true` 확인).
+  - **접근성**: `:focus-within`(키보드 포커스 복원, 라이브 opacity 1 확인) + `@media(prefers-reduced-motion:reduce)` 로 전환 제거(전정기관 자극 완화).
+  - **스태킹**: `opacity<1` 이 스태킹 컨텍스트를 만들지만 z-index:5 는 그대로라 형제(static) 위 유지 — 선행 리뷰 z축 결론 불변.
+  - **성능**: opacity 전환은 컴포지터 처리(리플로우/리페인트 없음) — 저비용.
+- 재검증: 라이브(서빙 사본, 실 Windows 브라우저) — 기본 opacity 0.3·transition 0.18s / hover opacity 1(`:hover` 매칭) / 키보드 focus-within opacity 1(포인터 멀어도) / 스크린샷 대비(흐림↔실선). test-run fragment `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260716T010349-graph-detail-nav-hover-fade.md`.
+- Human Approval: deploy_scope: included(FIRST_REQUEST.md 전역). visual_verification_scope: always → 본 cycle 라이브 검증 충족.
+
 ## REV-20260716T021733-ai-claude-feature-0016-graph-detail-nav-sticky [SUBAGENT: PASS] — 상세 패널 [뒤로/앞으로] 바 상단 고정(sticky) CSS 적대 리뷰
 - 대상: `graph.css`(`.admin-meta-graph-detailnav` sticky + `.admin-meta-graph-detail` aside 상단 padding 제거 + `[hidden] + body` 보전). §18.8 general-purpose 서브에이전트 — 정적 CSS/DOM 분석(라이브 미가정, graph.css diff + admin.html DOM + nav.hidden 토글 JS + body-only innerHTML 불변식 교차 검증).
 - Related Change: CHG-20260716T021733. 위험면 = 레이아웃 회귀(상단 여백 등가·스태킹·반응형·가로 오버플로). JS/데이터/인증 무변경.
