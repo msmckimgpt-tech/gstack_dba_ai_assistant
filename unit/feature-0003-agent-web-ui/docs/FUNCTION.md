@@ -1697,3 +1697,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-16" 블록 신규(4항목: admin 4) prepend·generated 07-16. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 평이화/비노출: feature-id·§번호·PR#·권한키·함수명·내부표현 비노출(사용자 언어).
 - 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260716T140735-doc-sync-rn-0716b. **attended run — landing/배포 스킬 소유(분리 commit→PR→merge→deploy-web→서빙 검증).**
+
+## (doc-sync-rn-0717, 2026-07-17) 릴리즈노트 콘텐츠 — 07-16 블록에 ‘연결 테스트’ 버튼 회귀 복구 fixed 항목 추가
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 기존 07-16 블록 items 에 fixed/work 1항목 추가(작업 화면 데이터소스 ‘연결 테스트’ 버튼 미표시 회귀 복구) + summary 1문장. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. generated 07-16 유지·releases 31 불변.
+- 평이화/비노출: feature-id·§번호·PR#·권한키·함수명·내부표현 비노출(사용자 언어).
+- 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260717T010501-doc-sync-rn-0717. **무인 스케줄 run — landing/배포는 cron wrapper 소유(로컬 commit 만).**

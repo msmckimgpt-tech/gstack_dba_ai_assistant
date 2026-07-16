@@ -11,6 +11,15 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260717T010501-doc-sync-rn-0717 (TASK-20260717T010501-doc-sync-rn-0717 — 07-16 후속 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 기존 releases[0] "2026-07-16" 블록 items 에 **fixed/work 항목 1개 추가**(작업 화면 데이터소스 ‘연결 테스트’ 버튼 미표시 회귀 복구) + summary 1문장 append. generated 07-16 유지·신규 dated 블록 미생성·releases 31 불변.
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입·deploy-web `asset_stamp_verify` 하드게이트). index/admin.html 편집 0.
+- 제외: redteam-rederive(PR #857, 내부·미배포)·ds-test-gate-fix POST-DEPLOY 기록(원천 cycle 소관).
+- Verification: `node --check` PASS · vm 구조검증(31 releases·07-16 head 5항목[admin 4·work 1]·07-15 보존 7·스키마·누출0) · verify_release_notes.mjs 33/34(1 FAIL=styles.css pre-existing).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- **무인 스케줄 run — landing/배포는 cron wrapper v3 소유(스킬 로컬 commit 만)**. META(SECURITY §22.4·wiki Log·meta/REVIEW)는 별도 commit.
+
 ## CHG-20260716T052500-ds-test-gate-fix-postverify (TASK-20260716T051931-ds-test-gate-fix POST-DEPLOY 회귀 복구 라이브 기록, 비-정책 doc-only)
 - Date: 2026-07-16. 코드/자산 무변경 — test-runs.d POST-DEPLOY append + TASK 체크박스 완료. 배포 PR #855→main e6ca5e4b, `make deploy-web` 무중단(soak PASS).
 - 라이브 실측(win-browser relay, bootstrap_admin): DS 테스트 버튼 14개 재렌더(수정 전 0)·클릭→"✓ 연결 성공 (13.6ms)" 상단 토스트·pageerror 0 → 사용자 신고 회귀 해소. Cross-ref: REV-20260716T052500-ds-test-gate-fix-postverify · CHG-20260716T051931-ds-test-gate-fix.

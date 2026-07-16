@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260717T010501-doc-sync-rn-0717 [SKIPPED:non-policy-doc] — 릴리즈노트 07-16 블록 ‘연결 테스트’ 버튼 회귀 복구 fixed 항목 추가 (TASK-20260717T010501-doc-sync-rn-0717, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`)뿐 — 비-정책 doc-only. 렌더 로직·백엔드·스키마·RBAC·엔드포인트·cache-buster(빌드 자동주입) 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·비중복은 doc_sync 가 정본(feature-0003 REPORT/TASK ds-test-gate-fix + 07-13 블록 소개 대조) 대비 직접 검증.
+- 적대 대조(정본): ds-test-gate-fix(REPORT 2026-07-16) = 07-13 출하·PB-0008 PASS 한 ‘연결 테스트’ 버튼이 perm-atomic-split(8e01cc24) 부작용으로 미직렬화 state.user.permissions 의존→항상 false→미렌더 회귀(라이브 b8658bee hasPermissions:false 실측), can() display-permissive 로 07-13 동작 복구·백엔드 enforcement 불변·POST-DEPLOY PB-0008 라이브 복구(87cbe5d8). 07-13 블록이 버튼을 type:new/work 로 소개 → 재소개 아닌 ‘보이지 않던 문제 수정’ fixed 프레이밍(중복 아님). feature-id/§/PR#/구현 누출 0.
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check` PASS · vm 구조검증(31 releases·07-16 head 5항목[admin 4·work 1]·07-15 보존 7·스키마·누출0) · verify_release_notes.mjs 33/34 PASS·1 FAIL(styles.css 스크롤 정규식 pre-existing false-negative, 본 cycle 미변경·feature-0003 소관).
+- **cache-buster**: 소스 `?v=dev` 고정 — ITEM-09 what#3(`inject_asset_stamp.py` content-hash 빌드주입·deploy-web `asset_stamp_verify` 하드게이트) 이후 수기 bump 폐지. index/admin.html 편집 0.
+- Cross-ref: CHG/TASK/FUNCTION/TEST-20260717T010501-doc-sync-rn-0717 / META REV-20260717T010501-META-0039-doc-sync-0717(별도 commit) / 원천 PR #855/#856. **무인 스케줄 run — landing/배포는 cron wrapper v3 소유(스킬 로컬 commit 만).**
+
 ## REV-20260716T052500-ds-test-gate-fix-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 회귀 복구 라이브 기록 (TASK-20260716T051931-ds-test-gate-fix, 비-정책 doc-only)
 - Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260716T051931-ds-test-gate-fix.
 - 라이브 실측(배포 e6ca5e4b, https://localhost/ bootstrap_admin console_access, win-browser Chrome relay): DS 테스트 버튼 **14개 재렌더**(수정 전 0 — 회귀 복구)·클릭→"✓ 'mssql-dk-dev' 연결 성공 (13.6ms)" 상단 토스트·pageerror 0. 서빙 app.js `can("datasource.test")` 반영 확인.

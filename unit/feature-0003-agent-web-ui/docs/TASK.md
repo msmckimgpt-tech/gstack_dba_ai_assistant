@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260717T010501-doc-sync-rn-0717 — 07-16 후속 머지분 릴리즈노트 정합(작업 화면 데이터소스 ‘연결 테스트’ 버튼 렌더 회귀 복구) (doc_sync, 비-정책 콘텐츠 doc, 2026-07-17)
+- 트리거: `/_dqa:doc_sync ultracode`(무인 스케줄, cron wrapper v3). 직전 doc-sync(b8658bee, 07-16) 이후 머지 델타 중 user-facing = ds-test-gate-fix(PR #855/#856) 1건. 기존 07-16 블록에 fixed/work 항목 1개 추가 + summary 1문장(신규 dated 블록 미생성·generated 07-16 유지·releases 31 불변).
+- [x] 07-16 블록 fixed/work 1항목: 작업 화면 데이터소스 ‘연결 테스트’ 버튼이 일부 사용자에게 미표시되던 회귀를 07-13 출하 동작으로 복구. 07-13 블록이 이 버튼을 type:new/work 로 소개했으므로 재소개가 아닌 ‘보이지 않던 문제 수정’ 프레이밍.
+- [x] **사용자향 평이화**: feature-id·perm-atomic-split·state.user.permissions·app.js·can()·게이트·권한키 누출 0. ‘일부 사용자에게 보이지 않던 → 다시 정상 표시’ 화면 체감만.
+- [x] **제외(비-노출)**: redteam-rederive(PR #857) — 자가검증 BLOCK 축 재도출은 내부 로직(사용자 ‘BLOCK 축’ 비노출)·라이브 실증 배포 게이트 대기(미배포) → 릴리즈노트 제외(배포 후 ‘AI 답변 정확도/안정성’ 톤 편입 검토 여지).
+- [x] **cache-buster**: 소스 `?v=dev` 고정 placeholder 유지 — index/admin.html 수기 bump 안 함(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` 배포 시 content-hash 주입·deploy-web `asset_stamp_verify` 하드게이트). 직전 doc-sync-rn-0713~0716b 동일 판단.
+- [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(31 releases·releases[0].date=2026-07-16/items=5[admin 4·work 1]·releases[1].date=2026-07-15 보존[7]·스키마·누출0) · verify_release_notes.mjs 33/34(1 FAIL=styles.css 스크롤 정규식 pre-existing, 본 cycle 무관·feature-0003 소관).
+- [x] landing/배포: verify-completion(operational, feature-0003) → **무인 스케줄 run 이라 스킬은 로컬 commit 까지만** — push/merge/`make deploy-web`/end-state 서빙 검증은 cron wrapper v3 소유(스킬 미수행). META(SECURITY §22.4 정정·wiki Log·meta/REVIEW)는 별도 commit.
+- [ ] PB-0008 Windows-browser: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(‘연결 테스트’ 버튼)는 원천 cycle POST-DEPLOY PB-0008 이 이미 검증(PASS, 87cbe5d8). 사유 TEST.md CHECK#13(doc-sync-rn-0717).
+
 ## TASK-20260716T140735-doc-sync-rn-0716b — 07-16 낮 머지분 릴리즈노트 정합(관계도 검색 확대/결과 목록·상세 [뒤로/앞으로] 탐색 UX·카테고리 헤딩 hover 이동·콘솔 유사 화면 서브탭 통합) (doc_sync, 비-정책 콘텐츠 doc, 2026-07-16)
 - 트리거: `/_dqa:doc_sync`(attended, 사용자 명시 호출). 직전 스케줄 run(01:05, cron wrapper v3 landing 위임)의 미landed 잔재 2 commit(META 0cc64c2b·operational eeabda19 — 07-15 블록 7항목)을 rebase harvest 한 뒤, 그 이후 07-16 낮 머지 델타(PR #837~#853, 34 commit)의 user-facing 분을 **date "2026-07-16" 새 블록 prepend**(4항목: admin 4) + generated 07-15→07-16. 기존 블록(07-15 이하 30개) 무삭제·무변형(총 31 블록).
 - [x] 신규 07-16 블록 4항목(admin 4): ① improved/admin 관계도 검색 콘텐츠 묶음·AI 분석 매칭 확대+상세 패널 검색 결과 목록+2단 접기·검색 이력·설명 간결화(graph-search content-match/detail-panel/panel-groups) ② improved/admin 상세 목록 [뒤로/앞으로] 스크롤 보존·바 상단 고정·비사용 시 반투명(+클릭 후 페이드 fix)(graph-detail-nav scroll/sticky/hover-fade/focus-fade-fix) ③ improved/admin 콘텐츠 묶음 제목 hover 시 화면 이동(graph-cluster-detail-group-hoverpan) ④ improved/admin 콘솔 유사 화면 하위 탭 통합('AI 운영 현황'·'프롬프트' 서브탭+sticky)(feature-0021 console-ia/subtabs/subtab-sticky).
