@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260716T052500-ds-test-gate-fix-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 회귀 복구 라이브 기록 (TASK-20260716T051931-ds-test-gate-fix, 비-정책 doc-only)
+- Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260716T051931-ds-test-gate-fix.
+- 라이브 실측(배포 e6ca5e4b, https://localhost/ bootstrap_admin console_access, win-browser Chrome relay): DS 테스트 버튼 **14개 재렌더**(수정 전 0 — 회귀 복구)·클릭→"✓ 'mssql-dk-dev' 연결 성공 (13.6ms)" 상단 토스트·pageerror 0. 서빙 app.js `can("datasource.test")` 반영 확인.
+
 ## REV-20260716T051931-ds-test-gate-fix [SKIPPED:trivial-regression-fix-display-only] — 작업화면 데이터소스 '연결 테스트' 버튼 렌더 회귀 수정 (TASK-20260716T051931-ds-test-gate-fix, Minor §12.3)
 - Panel skip 사유(§18.8): app.js **1줄** 변경(프론트 표시 게이트) — 백엔드 enforcement·스키마·RBAC·엔드포인트 shape 0. 보안 posture 불변(서버 `admin_test_datasource` 는 console.access+datasource.test 계속 요구). 07-13 출하·PB-0008 PASS 동작의 복구라 신규 설계 표면 없음. 라이브 실증은 POST-DEPLOY PB-0008.
 - **회귀 진단**: perm-atomic-split(`8e01cc24`, 07-15 Critical)이 DS 테스트 버튼 프론트 게이트를 `Boolean(state.user?.permissions?.["datasource.test"])` 로 작성. `state.user.permissions` 는 이 코드베이스의 `/api/session` 에 부재(TASK-0098 "표시 허용 + backend 403" 컨벤션·`can()` 이 permissions 맵 미사용) → undefined→false → 버튼 전부 미렌더. 라이브 b8658bee 세션 실측 `user.permissions` 부재 확인.
