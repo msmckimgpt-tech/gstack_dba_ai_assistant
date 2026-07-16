@@ -266,6 +266,18 @@ source_of_truth: true
 ## REV-20260714T104500-ai-claude-feature-0016-cluster-label-target-close [SKIPPED:doc-only-postdeploy] — TL.3 완수 기록
 - Related Change: CHG-20260714T104500. 코드 0 — 배포·데이터 정정·라이브 확증 기록. 코드면은 REV-20260714T090500 에서 처리.
 
+## REV-20260716T024014-ai-claude-feature-0016-graph-detail-nav-focus-fade-fix [SKIPPED:minor-single-file] — [뒤로/앞으로] 클릭 후 바 페이드 미적용 버그 수정
+- Related Change: CHG-20260716T024014. `graph.css` 복원 규칙 `:focus-within` → `:hover` 분리 + `:has(:focus-visible)`. hover-fade 구조는 선행 REV-20260716T021733 [SUBAGENT:PASS](sticky) + REV-20260716T010349(fade)에서 검증.
+- Panel skip 사유(§18.8 Minor + 1파일 + 1줄 selector 교정 + before/after 라이브 확증): 근본 원인 재현 + 수정 직접 검증으로 소진.
+- 위험면 self-review(적대적):
+  - **:focus-visible 모달리티 정확성** — 마우스 클릭이 focus-visible 로 오판되면 수정 무의미: 라이브에서 실 마우스 클릭 → `back:focus-visible=false`(수정 규칙 미매칭) 확인. 키보드 modality → `back:focus-visible=true`(매칭) 확인. Chrome 150 표준 동작 정합.
+  - **:has 브라우저 지원** — Chrome 105+(타깃 150 지원). 미지원 브라우저 대비 `:hover` 를 별도 규칙으로 분리 → `:has(...)` 규칙만 무시되고 hover 복원은 보존(단일 selector-list 였다면 invalid selector 로 전체 규칙 드롭 위험을 회피). 최악의 경우 손실은 "키보드 포커스 시 불투명 유지"뿐(코어 hover 페이드 무영향).
+  - **키보드 접근성 회귀** — 수정으로 키보드 사용자가 바를 못 보게 되는가: `:has(:focus-visible)` 로 Tab 포커스 시 opacity 1 유지 확인(라이브). 회귀 없음.
+  - **기존 정상 동작 보존** — 마우스 hover 시 불투명(:hover 규칙 유지), 비-hover 반투명(opacity:.3 유지), 전환(0.18s) 유지. 스크린샷/측정 정합.
+  - **성능/스태킹** — selector 교정만, opacity/transition/z-index 무변경 → 선행 리뷰 결론 불변.
+- 재검증: 라이브(실 Windows Chrome 150) before/after — 재현(마우스 클릭 후 focus-within=true, opacity 1 고착) → 수정(포인터 밖+버튼포커스 opacity 0.3 / 키보드포커스 opacity 1). CSS brace balance OK·`:focus-within` 잔존 0. test-run fragment `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260716T024014-graph-detail-nav-focus-fade-fix.md`.
+- Human Approval: deploy_scope: included(FIRST_REQUEST.md 전역). visual_verification_scope: always → 본 cycle 라이브 검증 충족.
+
 ## REV-20260716T010349-ai-claude-feature-0016-graph-detail-nav-hover-fade [SKIPPED:minor-single-file] — 상세 패널 [뒤로/앞으로] 바 hover 페이드
 - Related Change: CHG-20260716T010349. `graph.css` 4줄 추가(opacity:.3 + transition + `:hover,:focus-within{opacity:1}` + reduced-motion). 레이아웃 무변경(opacity/transition만) — sticky 구조는 선행 REV-20260716T021733 [SUBAGENT: PASS] 에서 6축 검증 완료.
 - Panel skip 사유(§18.8 Minor + 1파일 + 레이아웃 무변경): 적대적 self-review 로 위험면 소진 + 라이브 3상태 실측.

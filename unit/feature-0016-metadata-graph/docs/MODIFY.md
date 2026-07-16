@@ -199,6 +199,11 @@ source_of_truth: true
 ## CHG-20260714T104500-ai-claude-feature-0016-cluster-label-target-close — TL.3 완수 기록 (2026-07-14, doc-only)
 - 대상: TASK.md(TL.3 [x]). 코드 0. PR #775 배포(b747c29a) 후 실측: 기존 527건 정정(UPDATE, 잔여 19건=미등록 legacy scope 라벨 부재)·신규 활동 target=사용자 식별자 기록 확인(/api/admin/ai-ops).
 
+## CHG-20260716T024014-ai-claude-feature-0016-graph-detail-nav-focus-fade-fix — [뒤로/앞으로] 클릭 후 바 페이드 미적용 버그 수정 (:focus-within→:has(:focus-visible)) (2026-07-16)
+- 대상(cross-cut 코드 거주 feature-0003 static/graph): `graph.css` 1파일(+8/-4) — hover-fade 복원 규칙 `.admin-meta-graph-detailnav:hover, :focus-within { opacity:1 }` 를 `:hover { opacity:1 }` + `:has(:focus-visible) { opacity:1 }` 로 분리.
+- 변경(사용자 버그 리포트): `:focus-within` 이 마우스 클릭 포커스도 매칭해, [뒤로/앞으로] 클릭 후 버튼이 포커스를 유지하면 포인터가 떠나도 바가 opacity 1 로 고착(투명 미적용)되던 버그. `:focus-visible`(키보드 포커스만)로 교정 → 마우스 클릭은 포인터가 떠나면 정상 페이드, 키보드 포커스는 불투명 유지(접근성). 스키마 클러스터 도착 시 카메라 focusElement 포커스 이탈이 없어 특히 발현. 순수 CSS.
+- 근거: 등급 Minor(CSS-only, 버그 수정). 라이브(실 Windows Chrome 150) before/after 직접 확증(재현: 마우스 클릭 후 focus-within=true → 수정: 포인터 밖+버튼포커스 opacity 0.3 / 키보드포커스 opacity 1). `:has` 미지원 브라우저는 hover 규칙 분리로 graceful degradation. §18.8 `[SKIPPED:minor-single-file]`. 상세는 TASK.md `## 20260716T0240-graph-detail-nav-focus-fade-fix`, REVIEW.md REV-20260716T024014-graph-detail-nav-focus-fade-fix.
+
 ## CHG-20260716T010349-ai-claude-feature-0016-graph-detail-nav-hover-fade — 상세 패널 [뒤로/앞으로] 바 hover 아닐 때 부드럽게 반투명 (2026-07-16)
 - 대상(cross-cut 코드 거주 feature-0003 static/graph): `graph.css` 1파일(+9/-1) — `.admin-meta-graph-detailnav` 에 `opacity:.3` + `transition:opacity .18s ease` 추가 + 신규 규칙 `:hover, :focus-within { opacity:1 }` + `@media(prefers-reduced-motion:reduce){transition:none}`.
 - 변경(사용자 요청 — entry persona dispatch): sticky 이력 바를 hover(또는 키보드 포커스)가 아닐 때 부드럽게 반투명(0.3)으로 흐리게 해 콘텐츠를 덜 가리는 비간섭 컨트롤로. hover/focus 시 완전 불투명 복원. 레이아웃/포인터 타겟 불변(흐린 상태에서도 상단 hover 로 즉시 복원). 순수 CSS.

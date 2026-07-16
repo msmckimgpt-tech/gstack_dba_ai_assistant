@@ -1,5 +1,24 @@
 # Report
 
+## 2026-07-16 · [뒤로/앞으로] 클릭 후 바 페이드 미적용 버그 수정 (20260716T0240-graph-detail-nav-focus-fade-fix)
+
+### 요청 (사용자, 버그 리포트)
+"간헐적으로 [뒤로/앞으로] 버튼을 클릭했을 때 투명도 기능이 적용되지 않는 이슈. (좌클릭 시 정상적으로 투명해짐) 주로 도착 지점이 '스키마 클러스터' 페이지일 경우 나타남."
+
+### 근본 원인
+직전 hover-fade cycle 의 복원 규칙 `:hover, :focus-within { opacity:1 }` 에서 `:focus-within` 이 **마우스 클릭 포커스도 매칭**. [뒤로/앞으로] 클릭 → 버튼 포커스 유지 → 포인터가 바를 벗어나도 opacity 1 고착(투명 미적용). 다른 곳 클릭 시 버튼 blur → 정상 페이드("좌클릭 시 정상 투명"의 기전). 스키마 클러스터 도착은 노드 도착과 달리 카메라 focusElement 포커스 이탈이 없어 버튼 포커스가 남아 특히 발현.
+
+### 처리 결과 (Minor, CSS-only, cross-cut 코드 거주 feature-0003 static/graph)
+- `graph.css` 1파일(+8/-4): `:hover, :focus-within { opacity:1 }` → `:hover { opacity:1 }` + `:has(:focus-visible) { opacity:1 }` 분리. `:focus-visible` 은 키보드 포커스에만 매칭 → 마우스 클릭 후 포인터가 떠나면 정상 페이드, 키보드 포커스는 불투명 유지(접근성). `:has` 미지원 브라우저는 hover 규칙 분리로 graceful degradation.
+
+### 검증
+- 라이브(실 Windows Chrome 150) **before/after 직접 확증**: 재현(실 마우스 [뒤로] 클릭 → `nav:focus-within=true`, opacity 1 고착) → 수정(포인터 바 밖 + 버튼 포커스 유지 상태 `opacity=0.3` 페이드 / 키보드 포커스 `opacity=1` 유지). `nav:has(:focus-visible)` = 마우스 false·키보드 true 로 모달리티 정확. CSS brace balance OK·`:focus-within` 잔존 0.
+- §18.8 `[SKIPPED:minor-single-file]` — 근본 원인 재현 + 수정 직접 검증 + 적대 self-review(:focus-visible 모달리티·:has 지원·키보드 회귀·기존 동작 보존). (REVIEW.md REV-20260716T024014-graph-detail-nav-focus-fade-fix).
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-nav-focus-fade-fix (ai/claude/feature-0016-graph-detail-nav-focus-fade-fix, worktree).
+- (verify-completion 실행 후 아래 갱신)
+
 ## 2026-07-16 · 그래프 상세 패널 [뒤로/앞으로] 바 hover 페이드 (20260716T0103-graph-detail-nav-hover-fade)
 
 ### 요청 (사용자, entry persona dispatch)

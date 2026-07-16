@@ -2473,3 +2473,23 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### Git 동기화 결과
 - Task-Cycle: graph-detail-nav-hover-fade (ai/claude/feature-0016-graph-detail-nav-hover-fade, worktree).
+
+## 20260716T0240-graph-detail-nav-focus-fade-fix — [뒤로/앞으로] 클릭 후 바가 안 흐려지는 버그 수정(:focus-within→:has(:focus-visible)) (2026-07-16, 사용자 버그 리포트 · entry persona dispatch)
+
+### 요청 (사용자, 버그 리포트)
+"간헐적으로 [뒤로/앞으로] 버튼을 클릭했을 때 투명도 기능이 적용되지 않는 이슈. (좌클릭 시 정상적으로 투명해짐) 주로, 버튼을 클릭했을 때 도착 지점이 '스키마 클러스터' 페이지일 경우 나타남."
+
+### 근본 원인
+직전 hover-fade cycle 의 복원 규칙이 `:hover, :focus-within { opacity:1 }` 이었다. `:focus-within` 은 **마우스 클릭 포커스도 매칭**하므로, [뒤로/앞으로] 버튼을 클릭하면 버튼이 포커스를 유지 → 포인터가 바를 벗어나도 `:focus-within` 이 계속 매칭해 `opacity:1` 로 고착(=투명 미적용). 다른 곳을 클릭하면 버튼이 blur 되어 정상 페이드("좌클릭 시 정상 투명"의 기전). **스키마 클러스터 도착 시 주 발현**: 노드 도착은 `_metaGraphHistoryGo` 가 `_metaGraphAnimateFocus`(카메라 `focusElement`) 등으로 포커스 이탈/버튼 disabled 를 유발해 focus-within 이 풀리지만, 클러스터 도착은 그 이탈이 없어 버튼 포커스가 그대로 남는다.
+
+### 처리 (본 cycle, CSS-only — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] TX.1 `graph.css`: `:hover, :focus-within { opacity:1 }` → **`:hover { opacity:1 }` 와 `:has(:focus-visible) { opacity:1 }` 로 분리**. `:focus-visible` 은 키보드 포커스에만 매칭(마우스 클릭 포커스는 제외)하므로, 마우스로 버튼을 눌러도 포인터가 떠나면 정상 페이드. 키보드 접근성(Tab 포커스)은 `:has(:focus-visible)` 로 불투명 유지.
+- [x] TX.2 `:has` 미지원 브라우저 graceful degradation — `:hover` 를 별도 규칙으로 분리해, `:has(...)` 규칙만 무시돼도 hover 복원은 보존(단일 selector-list 였다면 전체 규칙이 드롭될 위험).
+- [x] TX.3 라이브 검증(서빙 사본, 실 Windows 브라우저 Chrome 150) **before/after 직접 확증**:
+  - **재현(수정 전)**: 실 마우스로 [뒤로] 클릭 → `activeEl=metaGraphDetailBack`·`nav:focus-within=true`·`nav:has(:focus-visible)=false`·`back:focus-visible=false` → focus-within 이 opacity 1 고착(버그).
+  - **수정 후(핵심)**: 포인터를 바 밖(검색창)으로 + [뒤로] 버튼 포커스 유지 상태에서 `opacity=0.3`(페이드) — 기존이면 1.0 고착이던 시나리오 해소. `nav:has(:focus-visible)=false`.
+  - **키보드 접근성 유지**: 키보드 modality 에서 버튼 포커스 → `back:focus-visible=true`·`nav:has(:focus-visible)=true` → `opacity=1`(transition 0.3→1 관측 후 1.0 확정).
+- [x] TX.4 §18.8 리뷰 — `[SKIPPED:minor-single-file]`(REVIEW.md REV-20260716T024014-graph-detail-nav-focus-fade-fix): 1줄 selector 교정 + before/after 라이브 확증. 적대 self-review(하단).
+
+### Git 동기화 결과
+- Task-Cycle: graph-detail-nav-focus-fade-fix (ai/claude/feature-0016-graph-detail-nav-focus-fade-fix, worktree).
