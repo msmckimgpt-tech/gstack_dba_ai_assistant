@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260716T120000-graph-search-groups-postverify [SKIPPED:post-deploy-visual-verification-reconciliation] — PB-0008 라이브 PASS 원장 정합 (docs-only, 코드 변경 0)
+- Date: 2026-07-16
+- Cycle: CHG-20260716T120000-graph-search-groups-postverify (test-runs.d Run 3 DEFERRED→PASS + TASK 체크박스), **Minor §12.3**.
+- SKIPPED 사유: 순수 검증 원장 정합 — 런타임 코드 변경 0(§18.4 META docs-only). 기능 코드 적대검증은 REV-20260716T114705-graph-search-panel-groups(SHIP-WITH-FIXES, C1/C2/P1/P2 봉인)에서 완료. 본 cycle 은 배포·PB-0008 라이브(main 89c1e7b0) 결과 기록.
+- 검증 결정적(라이브 실측): 8 스키마→카테고리 2단 접기·모두 접기/펼치기(C2 라벨 정합)·검색 이력 뒤로(입력값·28건 복원)/앞으로·verbose 부제 부재·pageerror 0. 상세 test-runs.d/20260716T1147 Run 3.
+- Cross-ref: REV-20260716T114705-graph-search-panel-groups / CHG-20260716T120000-graph-search-groups-postverify.
+
 ## REV-20260716T114705-graph-search-panel-groups [SUBAGENT:adversarial-frontend-correctness+ux] — 검색 결과 패널 3개선(2단 접기·검색 이력·간결화) SHIP-WITH-FIXES
 - Date: 2026-07-16
 - Cycle: TASK-20260716T114705-graph-search-panel-groups (검색 결과 2단 접기·검색 이력·설명문 간결화), **Minor §12.3** — 프론트 단독·additive.
