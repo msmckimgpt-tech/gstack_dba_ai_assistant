@@ -30,13 +30,10 @@ def _guidance_entries() -> list[dict[str, Any]]:
             "text_fn": text_fn,
         }
 
+    # console-ia(2026-07-16): 기본 시스템 프롬프트(SYSTEM_PROMPT)는 전역 시스템 프롬프트
+    # (WebSystemPrompts scope=global)의 코드 fallback 이라 편집 정본이 관리 콘솔 '설정 > 프롬프트
+    # > 전역 시스템 프롬프트'다. 작동 지침 목록에서 제외해 편집 경로를 단일화한다(중복 제거).
     return [
-        entry(
-            "system-prompt-base", "기본 시스템 프롬프트 (부트스트랩 fallback)",
-            "assistant 의 기본 역할·안전 규칙. 운영 정본은 WebSystemPrompts(scope=global) DB 행이며 관리 콘솔 '시스템 프롬프트'에서 편집한다. 이 항목은 코드에 내장된 부트스트랩 fallback 본문.",
-            "always (DB 행 부재 시 fallback)",
-            lambda: str(getattr(_agent_core(), "SYSTEM_PROMPT", "")),
-        ),
         entry(
             "dialect-mysql", "MySQL 방언 지침",
             "활성 datasource 가 MySQL 일 때 T-SQL 패턴 대신 MySQL 문법을 강제하는 지침.",

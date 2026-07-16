@@ -53,3 +53,36 @@ source_of_truth: true
 - 후속(cycle-final): ANCHOR §4 주석-예시 grace-만료 오판 해소 (CHG-0002 — cp 복제 시 git --follow
   가 canonical_at 을 템플릿 최초 커밋으로 끌어당기는 함정). 코드 무관 거버넌스 정합.
 - Human Approval Needed: 없음.
+
+## REV-20260716-0003
+- Related Change: CHG-20260716-0003 (관리 콘솔 IA 재구성)
+- Reason: 사용자 요청 — 단일 'AI 추론' 탭을 관측(감사)/설정(프롬프트) 성격별로 분리 +
+  전역 시스템 프롬프트와 비교·검토. IA 정합성 개선.
+- Alternatives Considered: 지침/스킬 조회 권한 — (a) system_prompt.global.read 재사용[채택,
+  프롬프트 조회 성격 일치·신규 권한 최소], (b) console.reasoning.read 공유(카테고리 교차로 게이트
+  꼬임 — 기각), (c) 신규 권한(과세분화 — 기각). fallback 중복 — (a) 작동 지침서 제외[채택,
+  편집 정본 단일화], (b) 유지+편집 링크(중복 잔존 — 기각). 둘 다 사용자 확정.
+- Risks: ① 권한 카테고리 재배치(console.reasoning.read: system→audit)로 기존 admin 접근 변동 →
+  권한 자체는 동일해 admin catchup·backfill 불요(카테고리 매핑만 변경), FE↔카탈로그 정합은
+  test_permission_dependency_map 이 검증. ② 지침/스킬 조회를 system_prompt.global.read 로 게이트 →
+  전역 프롬프트 조회권 보유자가 지침/스킬도 조회(합리적 — 같은 프롬프트 구성 조회). ③ guidance
+  엔드포인트 권한 변경 → ROUTEMAP 재생성(CI gate).
+- Open Questions: 없음.
+- Human Approval Needed: 없음 (read-only 권한 재배치, 비파괴. deploy_scope: included).
+
+## REV-20260716-0004 [SUBAGENT:general-purpose] — APPROVE-WITH-FIXES (반영 완료)
+- Related Change: CHG-20260716-0003 (콘솔 IA 재구성)
+- Reason: §18.8 dispatch — 권한 카테고리 재배치(인가 표면)·엔드포인트 권한 변경·FE 정합 렌즈.
+  적대 지시 "권한 정합(M5)·접근 회귀·엔드포인트 auth·FE 배선 REFUTE".
+- 판정: 전 기능 영역(권한맵 M1~M5·접근 회귀·엔드포인트 auth·FE 배선·ROUTEMAP) **CLEAN**,
+  BLOCK/MAJOR 0. MINOR 4건(문서/주석 drift)만 — 전건 반영:
+  - #1 admin_reasoning.py 모듈 docstring(구 "시스템>AI추론"·"console.reasoning.read") → 감사/설정
+    분리·권한 분리로 갱신(ROUTEMAP L0 모듈 설명 정합).
+  - #2 admin.html·admin.js 주석의 mountGuidancePanel/mountSkillsPanel → mountGuidanceRegistryPanel.
+  - #3 web_context 2072 catchup 주석 "시스템>AI추론" → "감사>AI추론".
+  - #4 admin.js 311 주석 "시스템 카테고리 하위" → "감사 카테고리 하위".
+- 검증됨(CLEAN): console.reasoning.read DEPS=[console.audit.access, console.access] ↔ web_context
+  audit leaves 일치(M5), system 참조 잔재 0; admin 은 audit access+reasoning.read catchup 둘 다 보유
+  →탭 노출 무회귀; guidance FE 게이트(system_prompt.global.read)↔백엔드 일치; renderReasoning/
+  showGuidanceDetail 시그니처 caller 정합; 설정 프롬프트 3항목(row/article/mounter) 키 일치; ROUTEMAP 재생성.
+- Human Approval Needed: 없음.

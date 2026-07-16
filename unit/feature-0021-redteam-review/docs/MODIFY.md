@@ -62,3 +62,28 @@ source_of_truth: true
 - Files: `unit/feature-0021-redteam-review/docs/ANCHOR.md`
 - Impact: 문서 전용 (거버넌스 게이트 통과). 코드/동작 무변경.
 - Rollback Notes: 불요 (문서).
+
+## CHG-20260716-0003
+- Date: 2026-07-16
+- Related Requirement: REQ-20260716-console-ia (사용자 요청 — 관리 콘솔 IA 재구성)
+- Summary: 단일 '설정 > AI 추론' 탭(4섹션)을 관측/설정 성격별로 분리 —
+  ① **감사 > AI 추론**(신규 위치): 자가 적대 리뷰 활동 + 메모리 노트 현황(관측·감사 데이터).
+  ② **설정 > 프롬프트 그룹**: [전역 시스템 프롬프트(편집) / 작동 지침(조회) / 스킬(조회)] 통합.
+  ③ 설정 > 운영 값 > AI 자가 리뷰(REDTEAM_* 설정): 무변경.
+  전역 시스템 프롬프트 비교·검토 결과: 기본 시스템 프롬프트 fallback(system-prompt-base)은
+  전역 시스템 프롬프트와 중복이라 작동 지침 목록에서 제외(편집 정본 단일화).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (AI 추론 탭 감사 그룹 이동·pane 리뷰/노트만·
+    설정 프롬프트 그룹에 작동 지침/스킬 항목+article)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (권한 맵 감사 재배치·loadReasoning/renderReasoning
+    지침·스킬 섹션 제거·설정 mountGuidanceRegistryPanel(guidance/skills)·showGuidanceDetail detailId 파라미터화)
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_reasoning.py` (guidance 권한 console.reasoning.read
+    → system_prompt.global.read·?kind 필터)
+  - `unit/feature-0003-agent-web-ui/src/web_context.py` (console.reasoning.read 감사 카테고리 재배치·
+    라벨/설명 감사 성격, group audit)
+  - `unit/feature-0002-agent-core/src/modules/guidance_registry.py` (system-prompt-base 항목 제외)
+  - `unit/feature-0003-agent-web-ui/tests/test_admin_reasoning.py` (권한 분리·kind 필터·fallback 제외 테스트)
+  - `docs/ROUTEMAP.md` (guidance 권한 재생성)
+- Impact: UI/IA 재배치 + 권한 카테고리 재배치(read-only, 비파괴). 백엔드 엔드포인트·데이터 무변경.
+  기존 admin catchup 은 권한 자체가 동일해 재backfill 불요(카테고리 매핑만 변경).
+- Rollback Notes: 커밋 revert. 데이터/마이그레이션 영향 없음.

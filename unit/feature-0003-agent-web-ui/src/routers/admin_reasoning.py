@@ -1,14 +1,15 @@
-"""routers/admin_reasoning.py — AI 추론 구조 조회 API (feature-0021).
+"""routers/admin_reasoning.py — AI 추론 조회 API (feature-0021).
 
-관리 콘솔 > 시스템 > AI 추론 탭의 데이터 소스. **읽기 전용** — 파괴적 쓰기 없음.
-권한: `console.reasoning.read` (admin 전용).
+**읽기 전용** — 파괴적 쓰기 없음. console-ia(2026-07-16) 재구성으로 화면·권한이 성격별로 분리:
 
-  - GET /api/admin/reasoning/guidance          지침/스킬 레지스트리 목록 (progressive
-                                               disclosure — 메타만). ?key= 로 단건 본문.
-  - GET /api/admin/reasoning/redteam           자가 적대 리뷰 요약 통계 + 최근 판정
-                                               (id DESC keyset cursor 페이징 — ai-ops 패턴).
-  - GET /api/admin/reasoning/notes             세션/제품 메모리 노트 임시 파일 현황
-                                               (/shared/agent-notes, TTL 잔여 포함).
+  - GET /api/admin/reasoning/redteam           [감사 > AI 추론] 자가 적대 리뷰 요약 통계 +
+                                               최근 판정. 권한 `console.reasoning.read`.
+  - GET /api/admin/reasoning/notes             [감사 > AI 추론] 세션/제품 메모리 노트 임시
+                                               파일 현황. 권한 `console.reasoning.read`.
+  - GET /api/admin/reasoning/guidance          [설정 > 프롬프트 > 작동 지침 / 스킬] 지침/스킬
+                                               레지스트리 (progressive disclosure — 목록 메타만,
+                                               ?key= 단건 본문, ?kind=guidance|skill 필터).
+                                               권한 `system_prompt.global.read` (프롬프트 조회 재사용).
 
 설계 (ai_ops.py 규약 답습):
   - PG(agent_runtime.redteam_reviews) 읽기는 `_pg_connect_ro`(least-privilege) + **부분
@@ -39,16 +40,21 @@ _log = logging.getLogger(__name__)
 
 _REVIEW_LIMIT_DEFAULT = 30
 _REVIEW_LIMIT_MAX = 100
-_PERM_MSG = "AI 추론 구조 조회 권한이 필요합니다 (운영자 전용)."
+# console-ia(2026-07-16): 리뷰 활동/노트(감사) = console.reasoning.read, 지침/스킬(설정>프롬프트)
+# 조회 = system_prompt.global.read 재사용(프롬프트 조회 성격 일치, 신규 권한 최소화).
+_PERM_MSG = "AI 추론 활동 조회 권한이 필요합니다 (운영자 전용)."
+_GUIDANCE_PERM_MSG = "프롬프트 지침/스킬 조회 권한이 필요합니다 (전역 시스템 프롬프트 조회 권한)."
 
 
 @router.get("/api/admin/reasoning/guidance")
 def admin_reasoning_guidance(
     request: Request,
-    account=Depends(app.require_permission("console.reasoning.read", message=_PERM_MSG)),
+    account=Depends(app.require_permission("system_prompt.global.read", message=_GUIDANCE_PERM_MSG)),
 ) -> JSONResponse:
-    """작동 지침/스킬 레지스트리 — 목록(메타만) 또는 ?key= 단건 본문(progressive disclosure)."""
+    """작동 지침/스킬 레지스트리 — 목록(메타만) 또는 ?key= 단건 본문(progressive disclosure).
+    ?kind=guidance|skill 로 필터(설정 > 프롬프트 > 작동 지침 / 스킬 항목이 각각 사용)."""
     key = str(request.query_params.get("key") or "").strip()
+    kind = str(request.query_params.get("kind") or "").strip().lower()
     try:
         from modules import guidance_registry as _reg
     except Exception:
@@ -65,6 +71,8 @@ def admin_reasoning_guidance(
         return JSONResponse({"item": item, "registry_available": True})
     try:
         items = _reg.list_guidance()
+        if kind in ("guidance", "skill"):
+            items = [it for it in items if it.get("kind") == kind]
     except Exception:
         _log.debug("guidance list failed", exc_info=True)
         items = []

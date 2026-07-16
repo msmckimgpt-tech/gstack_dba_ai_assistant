@@ -76,6 +76,14 @@
           <span class="admin-tab-label">AI 운영 현황</span>
         </button>
 
+        <!-- feature-0021 (console-ia): AI 추론 — 답변 자가 적대(red-team) 리뷰 활동 + 세션/제품 메모리
+             노트 현황 (관측·감사 성격이라 '감사' 그룹에 배치, AI 운영 현황 옆). console.reasoning.read
+             없으면 숨김. 작동 지침/스킬 레지스트리는 '설정 > 프롬프트'로 분리됨. -->
+        <button type="button" class="admin-tab" data-admin-tab="reasoning" id="adminTabReasoning" style="display:none"
+                title="답변 전 자가 적대(red-team) 리뷰의 판정·통계와 세션/제품 메모리 노트 현황을 조회합니다.">
+          <span class="admin-tab-label">AI 추론</span>
+        </button>
+
         <!-- admin-metadata-relocate: 메타데이터/샘플 검수는 '감사'(읽기전용 모니터링)가 아닌
              지식베이스(KB) 거버넌스(kb.* 권한)라 별도 그룹으로 분리한다. 그룹 경계는
              admin.js applyAdminTabVisibility() 가 DOM 순서로 동적 계산하고 권한 게이팅은
@@ -99,11 +107,6 @@
         <div class="admin-tab-group-label">시스템</div>
         <button type="button" class="admin-tab" data-admin-tab="settings" id="adminTabSettings">
           <span class="admin-tab-label">설정</span>
-        </button>
-        <!-- feature-0021: AI 추론 구조 조회 (console.reasoning.read 없으면 숨김) — 지침/스킬 레지스트리 ·
-             자가 적대(red-team) 리뷰 활동 · 세션/제품 메모리 노트 현황 (read-only). -->
-        <button type="button" class="admin-tab" data-admin-tab="reasoning" id="adminTabReasoning" style="display:none">
-          <span class="admin-tab-label">AI 추론</span>
         </button>
         <!-- 릴리즈 노트: 비민감 정보 → 콘솔 진입자 모두에게 노출(권한 매핑 없음). 콘텐츠는 release-notes-data.js. -->
         <button type="button" class="admin-tab" data-admin-tab="release-notes" id="adminTabReleaseNotes">
@@ -948,14 +951,16 @@
               <span class="admin-list-count" id="settingsListCount" aria-live="polite"></span>
             </div>
             <div class="admin-list" id="settingsList" role="listbox" aria-label="설정 항목 목록">
-              <!-- 첫 항목: 전역 시스템 프롬프트. 추가 항목은 같은 .admin-list-row 형태로 등록. -->
+              <!-- 프롬프트 그룹: [전역 시스템 프롬프트(편집) / 작동 지침(조회) / 스킬(조회)].
+                   feature-0021 console-ia: assistant 프롬프트 구성을 한 그룹으로 통합. 전역 시스템
+                   프롬프트만 편집 가능(WebSystemPrompts DB), 작동 지침·스킬은 코드 상수 조회 전용. -->
               <button
                 type="button"
                 class="admin-list-row admin-list-row--nav is-active"
                 role="option"
                 aria-selected="true"
                 data-settings-tab="global-prompt"
-                data-settings-group="시스템 프롬프트"
+                data-settings-group="프롬프트"
                 data-settings-keywords="전역 시스템 프롬프트 global system prompt base"
               >
                 <span class="admin-list-row-cb" aria-hidden="true"></span>
@@ -963,7 +968,43 @@
                   <span class="admin-list-row-title">
                     <span class="admin-list-row-name">전역 시스템 프롬프트</span>
                   </span>
-                  <span class="admin-list-row-meta">모든 대화 기본값</span>
+                  <span class="admin-list-row-meta">모든 대화 기본값 (편집)</span>
+                </span>
+              </button>
+              <!-- feature-0021 console-ia: 작동 지침 (조회 전용 — 코드 상수 레지스트리) -->
+              <button
+                type="button"
+                class="admin-list-row admin-list-row--nav"
+                role="option"
+                aria-selected="false"
+                data-settings-tab="guidance"
+                data-settings-group="프롬프트"
+                data-settings-keywords="작동 지침 guidance 방언 dialect 능동 해석 mermaid 인젝션 redteam 노트"
+              >
+                <span class="admin-list-row-cb" aria-hidden="true"></span>
+                <span class="admin-list-row-main">
+                  <span class="admin-list-row-title">
+                    <span class="admin-list-row-name">작동 지침</span>
+                  </span>
+                  <span class="admin-list-row-meta">프롬프트 주입 지침 (조회)</span>
+                </span>
+              </button>
+              <!-- feature-0021 console-ia: 스킬 (조회 전용 — 도구 정의) -->
+              <button
+                type="button"
+                class="admin-list-row admin-list-row--nav"
+                role="option"
+                aria-selected="false"
+                data-settings-tab="skills"
+                data-settings-group="프롬프트"
+                data-settings-keywords="스킬 도구 tool skill execute_sql describe_routine graph_navigate"
+              >
+                <span class="admin-list-row-cb" aria-hidden="true"></span>
+                <span class="admin-list-row-main">
+                  <span class="admin-list-row-title">
+                    <span class="admin-list-row-name">스킬 (도구)</span>
+                  </span>
+                  <span class="admin-list-row-meta">assistant 호출 도구 (조회)</span>
                 </span>
               </button>
               <!-- feature-0018: 실행 타임아웃 -->
@@ -1030,6 +1071,26 @@
               </header>
               <div class="admin-settings-panel-body" id="globalPromptEditorMount">
                 <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
+              </div>
+            </article>
+            <!-- feature-0021 console-ia: 작동 지침 (조회 전용 레지스트리) -->
+            <article class="admin-settings-panel" data-settings-panel="guidance">
+              <header class="admin-settings-panel-head">
+                <h3>작동 지침</h3>
+                <p class="admin-settings-panel-hint">assistant 프롬프트에 주입되는 코드 내장 지침입니다(방언·능동 해석·다이어그램·인젝션 방어·자가 리뷰 등). <strong>조회 전용</strong> — 편집 가능한 기본 프롬프트는 <strong>전역 시스템 프롬프트</strong>에서 관리합니다. 항목을 클릭하면 전체 본문을 확인할 수 있습니다.</p>
+              </header>
+              <div class="admin-settings-panel-body" id="guidancePanelMount">
+                <!-- mountGuidanceRegistryPanel('guidancePanelMount','guidance') 가 마운트 -->
+              </div>
+            </article>
+            <!-- feature-0021 console-ia: 스킬(도구) (조회 전용) -->
+            <article class="admin-settings-panel" data-settings-panel="skills">
+              <header class="admin-settings-panel-head">
+                <h3>스킬 (도구)</h3>
+                <p class="admin-settings-panel-hint">assistant 가 답변 중 자율 호출하는 함수 도구입니다. <strong>조회 전용</strong> — 항목을 클릭하면 전체 스키마(JSON)를 확인할 수 있습니다.</p>
+              </header>
+              <div class="admin-settings-panel-body" id="skillsPanelMount">
+                <!-- mountGuidanceRegistryPanel('skillsPanelMount','skill') 가 마운트 -->
               </div>
             </article>
             <!-- feature-0018: 실행 타임아웃 패널 (전용 UI — 카테고리별 그룹 + 즉시/재배포 반영 배지) -->
