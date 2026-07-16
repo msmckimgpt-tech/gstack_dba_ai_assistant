@@ -5956,5 +5956,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 진단: perm-atomic-split `8e01cc24`(07-15)가 프론트 게이트를 `Boolean(state.user?.permissions?.["datasource.test"])` 로 변경 → 이 코드베이스는 `state.user.permissions` 미직렬화(TASK-0098 컨벤션)라 항상 false → 버튼 미렌더. 라이브 b8658bee 세션 실측 `hasPermissions:false` 확인.
 - [x] 수정(app.js `_dsTestable` 1줄): `Boolean(state.user?.permissions?.["datasource.test"])` → `can("datasource.test")`. 순 게이트 = `!viewOnly && canOpenAdminConsole()`(07-13 동작 복구). 보안 무영향(백엔드 admin_test_datasource console.access+datasource.test 요구 불변).
 - [x] 검증: `node --check` PASS · `can()` global · 회귀 하네스 short-circuit 무영향. §18.8 full 패널 skip(1줄 display-only 회귀 복구·보안 posture 불변, REVIEW 근거).
-- [ ] verify-completion → 머지·push → web 재배포(deploy_scope: included) → POST-DEPLOY PB-0008 라이브 복구 확인(admin 계정 DS 버튼 재렌더·클릭 성공 토스트·pageerror 0).
+- [x] verify-completion PASS → 머지(PR #855, main e6ca5e4b) → web 재배포(`make deploy-web` 무중단 soak PASS) → **POST-DEPLOY PB-0008 라이브 PASS**: DS 테스트 버튼 14개 재렌더(수정 전 0)·클릭→"✓ 연결 성공 (13.6ms)" 상단 토스트·pageerror 0 — 회귀 복구 실증. test-runs.d/20260716T051931-ds-test-gate-fix.md POST-DEPLOY 갱신.
 - 관련 flag: 동일 커밋 app.js ≈L2006 권한 표시 UI 도 부재 `state.user.permissions` 의존 — 별도 feature 소유(본 scope 밖).

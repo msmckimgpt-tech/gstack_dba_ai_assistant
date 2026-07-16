@@ -11,6 +11,10 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260716T052500-ds-test-gate-fix-postverify (TASK-20260716T051931-ds-test-gate-fix POST-DEPLOY 회귀 복구 라이브 기록, 비-정책 doc-only)
+- Date: 2026-07-16. 코드/자산 무변경 — test-runs.d POST-DEPLOY append + TASK 체크박스 완료. 배포 PR #855→main e6ca5e4b, `make deploy-web` 무중단(soak PASS).
+- 라이브 실측(win-browser relay, bootstrap_admin): DS 테스트 버튼 14개 재렌더(수정 전 0)·클릭→"✓ 연결 성공 (13.6ms)" 상단 토스트·pageerror 0 → 사용자 신고 회귀 해소. Cross-ref: REV-20260716T052500-ds-test-gate-fix-postverify · CHG-20260716T051931-ds-test-gate-fix.
+
 ## CHG-20260716T051931-ds-test-gate-fix (TASK-20260716T051931-ds-test-gate-fix — 작업화면 데이터소스 '연결 테스트' 버튼 렌더 회귀 수정, Minor §12.3)
 - Date: 2026-07-16. 사용자 신고(회귀): 07-13 출하 DS 테스트 버튼 미표시.
 - 변경: `static/app.js` `buildProductDropupItem` `_dsTestable` 게이트 1줄 — `Boolean(state.user?.permissions?.["datasource.test"])` → `can("datasource.test")`. 근거: `state.user.permissions` 는 `/api/session` 미직렬화(TASK-0098 "표시 허용 + backend 403" 컨벤션)라 항상 undefined→false→버튼 미렌더. `can()` 은 display-permissive(로그인=true), 실제 거부는 백엔드 403(admin_test_datasource console.access+datasource.test). 순 게이트 = `!viewOnly && canOpenAdminConsole()`(07-13 동작 복구).
