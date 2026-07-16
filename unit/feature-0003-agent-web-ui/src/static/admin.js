@@ -308,8 +308,8 @@ const PERMISSION_DEPENDENCIES = {
   "system_prompt.global.write": "system_prompt.global.read",
   "system.runtime.read": "console.system.access",
   "system.runtime.write": "system.runtime.read",
-  // feature-0021(redteam-review): AI 추론 구조 조회(read-only) — 시스템 카테고리 하위.
-  "console.reasoning.read": "console.system.access",
+  // feature-0021: AI 추론 활동 조회(read-only) — console-ia(2026-07-16) 감사 카테고리 하위로 재배치.
+  "console.reasoning.read": "console.audit.access",
   // ── 운영 권한 (TASK-0269 — own/any 그룹 분리 + "목록 조회" 게이트) ──
   //   내 대화 권한(conversation_own): "내 대화 목록 조회"(list.own) 가 카테고리 접근(조회) 게이트 —
   //     루트(항상 표시). perm-category-hier: "대화 생성"(create)도 동작 권한이므로 게이트 하위로 정합
@@ -2134,7 +2134,7 @@ const ADMIN_TAB_CATEGORY_ACCESS = {
   metadata: "console.kb.access",
   graph: "console.kb.access",
   settings: "console.system.access",
-  reasoning: "console.system.access",
+  reasoning: "console.audit.access",
 };
 
 function canSeeTab(tabKey) {
@@ -2404,18 +2404,19 @@ function renderAiOps(data) {
 /* ── feature-0021: AI 추론 탭 (지침/스킬 레지스트리 · red-team 리뷰 활동 · 메모리 노트) ──
  * read-only 조회 — 데이터 소스: /api/admin/reasoning/{guidance,redteam,notes}.
  * 지침 목록은 progressive disclosure(메타만) — 항목 클릭 시 ?key= 단건 본문 로드. */
+// console-ia(2026-07-16): '감사 > AI 추론' = red-team 리뷰 활동 + 메모리 노트만 (관측 데이터).
+// 작동 지침/스킬 레지스트리는 '설정 > 프롬프트 > 작동 지침 / 스킬'로 분리(mountGuidanceRegistryPanel).
 async function loadReasoning() {
   const body = $("reasoningBody");
   if (body) body.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
   try {
-    const [guidance, redteam, notes] = await Promise.all([
-      apiFetch("/api/admin/reasoning/guidance"),
+    const [redteam, notes] = await Promise.all([
       apiFetch("/api/admin/reasoning/redteam"),
       apiFetch("/api/admin/reasoning/notes"),
     ]);
     if (!adminState.reasoning) adminState.reasoning = { initialized: true, redteamCursor: null };
     adminState.reasoning.redteamCursor = redteam.next_cursor || null;
-    renderReasoning(guidance, redteam, notes);
+    renderReasoning(redteam, notes);
   } catch (e) {
     const msg = String((e && e.message) || e).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
     if (body) body.innerHTML = '<div class="admin-detail-empty">AI 추론 정보를 불러오지 못했습니다: ' + msg + "</div>";
@@ -2449,7 +2450,7 @@ function _reasoningReviewRowHtml(esc, it) {
   </div>`;
 }
 
-function renderReasoning(guidance, redteam, notes) {
+function renderReasoning(redteam, notes) {
   const body = $("reasoningBody");
   if (!body) return;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -2477,17 +2478,7 @@ function renderReasoning(guidance, redteam, notes) {
   const moreBtnHtml = adminState.reasoning && adminState.reasoning.redteamCursor
     ? '<button type="button" class="btn-secondary" id="reasoningMoreBtn">더 보기</button>' : "";
 
-  // ── 2. 지침/스킬 레지스트리 (progressive disclosure — 클릭 시 본문 로드) ──
-  const gItems = Array.isArray(guidance && guidance.items) ? guidance.items : [];
-  const gRows = (kind) => gItems.filter((g) => g.kind === kind).map((g) =>
-    `<button type="button" class="reasoning-guidance-row" data-guidance-key="${esc(g.key)}">
-      <span class="reasoning-guidance-name">${esc(g.name)}</span>
-      <span class="reasoning-guidance-desc">${esc(g.description)}</span>
-      <span class="reasoning-guidance-meta">${esc(g.injection || "")}${g.chars != null ? " · " + esc(g.chars) + "자" : ""}</span>
-    </button>`
-  ).join("");
-
-  // ── 3. 메모리 노트 현황 ──
+  // ── 2. 메모리 노트 현황 ──
   const nItems = Array.isArray(notes && notes.items) ? notes.items : [];
   const noteRows = nItems.map((n) => {
     const days = Math.floor((n.expires_in_sec || 0) / 86400);
@@ -2503,21 +2494,10 @@ function renderReasoning(guidance, redteam, notes) {
   body.innerHTML = `
     <div class="reasoning-section">
       <h3 class="reasoning-section-title">자가 적대 리뷰 활동</h3>
-      <p class="reasoning-section-hint">답변 전달 전 별도 모델이 수행한 red-team 검증 판정입니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong> 에서 조정합니다.</p>
+      <p class="reasoning-section-hint">답변 전달 전 별도 모델이 수행한 red-team 검증 판정입니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong>, assistant 작동 지침·스킬은 <strong>설정 &gt; 프롬프트</strong>에서 확인합니다.</p>
       ${statHtml}
       <div class="reasoning-review-list" id="reasoningReviewList">${reviewListHtml}</div>
       <div class="reasoning-more">${moreBtnHtml}</div>
-    </div>
-    <div class="reasoning-section">
-      <h3 class="reasoning-section-title">작동 지침</h3>
-      <p class="reasoning-section-hint">assistant 프롬프트에 주입되는 지침 레지스트리입니다. 항목을 클릭하면 전체 본문을 확인할 수 있습니다. (기본 시스템 프롬프트의 운영 정본 편집은 설정 &gt; 전역 시스템 프롬프트)</p>
-      <div class="reasoning-guidance-list">${gRows("guidance") || '<div class="admin-detail-empty">레지스트리를 불러올 수 없습니다.</div>'}</div>
-      <div class="reasoning-guidance-detail" id="reasoningGuidanceDetail" hidden></div>
-    </div>
-    <div class="reasoning-section">
-      <h3 class="reasoning-section-title">스킬 (도구)</h3>
-      <p class="reasoning-section-hint">assistant 가 답변 중 자율 호출할 수 있는 함수 도구입니다. 클릭 시 전체 스키마(JSON)를 표시합니다.</p>
-      <div class="reasoning-guidance-list">${gRows("skill") || '<div class="admin-detail-empty">레지스트리를 불러올 수 없습니다.</div>'}</div>
     </div>
     <div class="reasoning-section">
       <h3 class="reasoning-section-title">메모리 노트 (임시 파일)</h3>
@@ -2527,9 +2507,6 @@ function renderReasoning(guidance, redteam, notes) {
 
   const moreBtn = $("reasoningMoreBtn");
   if (moreBtn) moreBtn.addEventListener("click", loadReasoningMoreReviews);
-  body.querySelectorAll("[data-guidance-key]").forEach((btn) => {
-    btn.addEventListener("click", () => showGuidanceDetail(btn.getAttribute("data-guidance-key")));
-  });
 }
 
 async function loadReasoningMoreReviews() {
@@ -2553,8 +2530,9 @@ async function loadReasoningMoreReviews() {
   }
 }
 
-async function showGuidanceDetail(key) {
-  const detail = $("reasoningGuidanceDetail");
+async function showGuidanceDetail(key, detailId) {
+  // console-ia: detailId 로 마운트 지점 지정(설정 프롬프트 패널 재사용). 미지정 시 기존 reasoning pane.
+  const detail = $(detailId || "reasoningGuidanceDetail");
   if (!detail || !key) return;
   detail.hidden = false;
   detail.textContent = "불러오는 중…";
@@ -6585,6 +6563,9 @@ adminState.settings = {
 
 const SETTINGS_PANEL_MOUNTERS = {
   "global-prompt": mountGlobalPromptPanel,
+  // feature-0021 console-ia: 작동 지침 / 스킬 조회 (프롬프트 그룹, 조회 전용 레지스트리).
+  "guidance": () => mountGuidanceRegistryPanel("guidancePanelMount", "guidance"),
+  "skills": () => mountGuidanceRegistryPanel("skillsPanelMount", "skill"),
   // feature-0018: 실행 타임아웃 / 모델별 추론 예산 — 각자 전용 UI, 레거시 admin-settings-panel 정합.
   "runtime-timeouts": mountRuntimeTimeoutsPanel,
   "model-thinking-budgets": mountModelThinkingBudgetsPanel,
@@ -7121,6 +7102,43 @@ function buildBudgetSliderRow(item, canWrite, getTotal) {
   // 총 출력이 바뀌면 슬라이더 상한/본문 파생을 다시 그린다(카드가 호출).
   row._rsRecompute = refresh;
   return row;
+}
+
+/* ── feature-0021 console-ia: 작동 지침 / 스킬 조회 패널 (설정 > 프롬프트) ─────────
+ * /api/admin/reasoning/guidance?kind=guidance|skill 의 레지스트리를 progressive disclosure
+ * (목록은 메타만, 클릭 시 ?key= 로 본문 lazy 로드)로 조회 전용 렌더. 권한 게이트는
+ * 백엔드(system_prompt.global.read) — FE 는 조회 실패 시 안내. */
+async function mountGuidanceRegistryPanel(mountId, kind) {
+  const mount = $(mountId);
+  if (!mount) return;
+  if (!can("system_prompt.global.read")) {
+    mount.innerHTML = '<div class="admin-detail-empty">프롬프트 지침/스킬 조회 권한이 없습니다.</div>';
+    return;
+  }
+  mount.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
+  let data;
+  try {
+    data = await apiFetch("/api/admin/reasoning/guidance?kind=" + encodeURIComponent(kind));
+  } catch (err) {
+    mount.innerHTML = '<div class="admin-detail-empty">조회 실패: ' + String((err && err.message) || err).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])) + "</div>";
+    return;
+  }
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const items = Array.isArray(data && data.items) ? data.items : [];
+  const rows = items.map((g) =>
+    `<button type="button" class="reasoning-guidance-row" data-guidance-key="${esc(g.key)}">
+      <span class="reasoning-guidance-name">${esc(g.name)}</span>
+      <span class="reasoning-guidance-desc">${esc(g.description)}</span>
+      <span class="reasoning-guidance-meta">${esc(g.injection || "")}${g.chars != null ? " · " + esc(g.chars) + "자" : ""}</span>
+    </button>`
+  ).join("");
+  const detailId = mountId + "Detail";
+  mount.innerHTML =
+    '<div class="reasoning-guidance-list">' + (rows || '<div class="admin-detail-empty">항목이 없습니다.</div>') + "</div>" +
+    '<div class="reasoning-guidance-detail" id="' + detailId + '" hidden></div>';
+  mount.querySelectorAll("[data-guidance-key]").forEach((btn) => {
+    btn.addEventListener("click", () => showGuidanceDetail(btn.getAttribute("data-guidance-key"), detailId));
+  });
 }
 
 /* ── feature-0021: 자가 적대(red-team) 리뷰 · 메모리 노트 운영 값 패널 ─────────

@@ -1,24 +1,45 @@
-"""feature-0021 — 관리 콘솔 `AI 추론` 조회 API RBAC/degrade 테스트.
+"""feature-0021 — 관리 콘솔 AI 추론 조회 API RBAC/degrade 테스트.
+
+console-ia(2026-07-16) IA 재구성 반영:
+- 리뷰 활동/노트(`/redteam`·`/notes`) = 감사 카테고리 권한 `console.reasoning.read`.
+- 작동 지침/스킬(`/guidance`) = 설정>프롬프트, `system_prompt.global.read` 재사용 + ?kind 필터.
+- 기본 시스템 프롬프트 fallback(system-prompt-base)은 작동 지침 목록에서 제외(편집 정본 단일화).
 
 TestClient + as_account(conftest) 로 require_permission 게이트를 실제로 태운다(RP 패턴).
-make test 환경(--no-deps): PG 미가용 → redteam 활동은 pg_available=false 부분 degrade,
-notes 는 /shared 부재 → 빈 목록. 실데이터 왕복은 라이브 통합 QA(PB-0008) 로 검증한다.
-런타임 설정 REDTEAM_* 스펙 노출은 GET /api/admin/settings/runtime 의 redteam 그룹으로 검증.
+make test(--no-deps): PG 미가용 → redteam 부분 degrade, notes 는 /shared 부재 → 빈 목록.
 """
 from __future__ import annotations
 
-READ_PERMS = {"console.access": True, "console.reasoning.read": True}
+REVIEW_PERMS = {"console.access": True, "console.reasoning.read": True}
+PROMPT_PERMS = {"console.access": True, "system_prompt.global.read": True}
 
 GUIDANCE = "/api/admin/reasoning/guidance"
 REDTEAM = "/api/admin/reasoning/redteam"
 NOTES = "/api/admin/reasoning/notes"
 
 
-# ── RBAC (3 endpoint 공통) ──────────────────────────────────────────────────
-def test_endpoints_require_permission(client, as_account):
+# ── RBAC 분리 (guidance=프롬프트 권한, redteam/notes=감사 권한) ──────────────
+def test_review_notes_require_reasoning_permission(client, as_account):
     as_account(perms={"console.access": True})  # console.reasoning.read 없음
-    for ep in (GUIDANCE, REDTEAM, NOTES):
+    for ep in (REDTEAM, NOTES):
         assert client.get(ep).status_code == 403, ep
+
+
+def test_guidance_requires_prompt_permission(client, as_account):
+    as_account(perms={"console.access": True})  # system_prompt.global.read 없음
+    assert client.get(GUIDANCE).status_code == 403
+
+
+def test_guidance_denied_with_only_reasoning_perm(client, as_account):
+    # 감사 권한만으로는 지침/스킬(프롬프트) 조회 불가 — 권한 분리 확인.
+    as_account(perms=REVIEW_PERMS)
+    assert client.get(GUIDANCE).status_code == 403
+
+
+def test_review_denied_with_only_prompt_perm(client, as_account):
+    # 프롬프트 권한만으로는 리뷰 활동 조회 불가.
+    as_account(perms=PROMPT_PERMS)
+    assert client.get(REDTEAM).status_code == 403
 
 
 def test_endpoints_anonymous_401(client, as_anonymous):
@@ -27,9 +48,9 @@ def test_endpoints_anonymous_401(client, as_anonymous):
         assert client.get(ep).status_code == 401, ep
 
 
-# ── guidance (progressive disclosure) ───────────────────────────────────────
+# ── guidance (progressive disclosure + kind 필터 + fallback 제외) ───────────
 def test_guidance_list_meta_only(client, as_account):
-    as_account(perms=READ_PERMS)
+    as_account(perms=PROMPT_PERMS)
     resp = client.get(GUIDANCE)
     assert resp.status_code == 200
     body = resp.json()
@@ -37,16 +58,25 @@ def test_guidance_list_meta_only(client, as_account):
     assert len(items) >= 5
     keys = {it["key"] for it in items}
     assert "redteam-review" in keys and "active-interpretation" in keys
+    # console-ia: 기본 시스템 프롬프트 fallback 은 작동 지침 목록에서 제외(전역 시스템 프롬프트가 정본).
+    assert "system-prompt-base" not in keys
     # progressive disclosure: 목록엔 본문(text) 없음.
     assert all("text" not in it for it in items)
-    kinds = {it["kind"] for it in items}
-    assert "guidance" in kinds
     # 스킬(도구) 카탈로그 동반 노출 (execute_sql 등).
     assert any(it["key"].startswith("tool:") for it in items)
 
 
+def test_guidance_kind_filter(client, as_account):
+    as_account(perms=PROMPT_PERMS)
+    g = client.get(GUIDANCE + "?kind=guidance").json().get("items") or []
+    s = client.get(GUIDANCE + "?kind=skill").json().get("items") or []
+    assert g and all(it["kind"] == "guidance" for it in g)
+    assert s and all(it["kind"] == "skill" for it in s)
+    assert all(it["key"].startswith("tool:") for it in s)
+
+
 def test_guidance_detail_returns_text(client, as_account):
-    as_account(perms=READ_PERMS)
+    as_account(perms=PROMPT_PERMS)
     resp = client.get(GUIDANCE + "?key=redteam-review")
     assert resp.status_code == 200
     item = resp.json().get("item") or {}
@@ -55,13 +85,13 @@ def test_guidance_detail_returns_text(client, as_account):
 
 
 def test_guidance_unknown_key_404(client, as_account):
-    as_account(perms=READ_PERMS)
+    as_account(perms=PROMPT_PERMS)
     assert client.get(GUIDANCE + "?key=no-such-key").status_code == 404
 
 
 # ── redteam 활동 (PG 미가용 부분 degrade) ───────────────────────────────────
 def test_redteam_degrades_without_pg(client, as_account):
-    as_account(perms=READ_PERMS)
+    as_account(perms=REVIEW_PERMS)
     resp = client.get(REDTEAM)
     assert resp.status_code == 200  # 503 아님 — ai-ops 부분 degrade 규약
     body = resp.json()
@@ -72,13 +102,13 @@ def test_redteam_degrades_without_pg(client, as_account):
 
 
 def test_redteam_cursor_param_tolerant(client, as_account):
-    as_account(perms=READ_PERMS)
+    as_account(perms=REVIEW_PERMS)
     assert client.get(REDTEAM + "?cursor=abc&limit=9999").status_code == 200
 
 
 # ── notes 현황 ───────────────────────────────────────────────────────────────
 def test_notes_empty_without_volume(client, as_account):
-    as_account(perms=READ_PERMS)
+    as_account(perms=REVIEW_PERMS)
     resp = client.get(NOTES)
     assert resp.status_code == 200
     body = resp.json()
@@ -86,7 +116,7 @@ def test_notes_empty_without_volume(client, as_account):
     assert set(body.get("ttl_days") or {}) == {"session", "product"}
 
 
-# ── 런타임 설정 redteam 그룹 노출 ────────────────────────────────────────────
+# ── 런타임 설정 redteam 그룹 노출 (설정>운영 값>AI 자가 리뷰 — 무변경) ──────
 def test_runtime_settings_expose_redteam_group(client, as_account):
     as_account(perms={"console.access": True, "system.runtime.read": True})
     resp = client.get("/api/admin/settings/runtime")

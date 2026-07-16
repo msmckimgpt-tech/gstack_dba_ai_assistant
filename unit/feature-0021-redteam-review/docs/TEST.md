@@ -51,6 +51,14 @@ source_of_truth: true
   worktree 네트워크에는 PG 가 없어 연결 실패 (테스트가 컨테이너 환경의 라이브 DB 에 암묵
   의존 — REPORT §8 개선 후보로 기록).
 
+### Run 2026-07-16 — 콘솔 IA 재구성 (컨테이너 make test)
+- Environment: CLI
+- Command: `make test` (agent 이미지, --no-deps)
+- Result: **PASS (본 변경 범위)** — IA 재구성 관련 62건 PASS (admin_reasoning 권한 분리/kind/
+  fallback 제외 · permission_dependency_map M5 정합 · route-parity 경로 불변 · redteam · agent_notes).
+  Windows-browser 는 배포 직후 PB-0008 (test-runs.d/20260716T090000-console-ia-restructure.md). ruff PASS.
+- 잔여 FAILED 4건은 pre-existing 환경 의존(PG 부재·env) — 본 diff 무관(위 Run 2026-07-15 §3 동일).
+
 ## 4. Integration Coverage
 - 리뷰어 실 LLM 판정·redteam_reviews INSERT·노트 실볼륨 축적은 배포 후 라이브 실증
   (POST-DEPLOY Run 으로 §3 에 append). 콘솔 화면은 PB-0008 Windows-browser 검증.

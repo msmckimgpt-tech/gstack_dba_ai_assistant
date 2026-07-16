@@ -43,8 +43,9 @@ feature_status_updated: 2026-07-15
       권한 + admin.html/admin.js + 설정 패널 "AI 자가 리뷰")
 - [x] TASK-20260715T140101-tests-routemap: 단위 테스트 (redteam fail-open/게이팅,
       agent_notes cap/TTL, 라우터 RBAC) + ROUTEMAP 재생성 + make test
-- [ ] TASK-20260715T140102-deploy-verify: PR 병합 → 배포 (deploy-web.sh 스파인) →
-      alembic 0042 적용 검증 → PB-0008 시각검증 + 라이브 리뷰 1건 실증
+- [x] TASK-20260715T140102-deploy-verify: PR #819/#821 병합·배포(23b8faba)·alembic 0042·PB-0008 PASS
+- [ ] TASK-20260716-console-ia: 관리 콘솔 IA 재구성 — 감사>AI추론(리뷰/노트) + 설정>프롬프트
+      [전역/지침/스킬] 분리, 전역 프롬프트 비교·검토(fallback 중복 제거) (사용자 요청)
 
 ## 4. In Progress
 - 없음

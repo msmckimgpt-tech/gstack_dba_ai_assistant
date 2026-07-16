@@ -8,7 +8,7 @@ source_of_truth: false
 
 # Current Report
 
-## 1. Summary
+## 1. Summary (2026-07-16 IA 재구성 반영)
 assistant 답변 전달 전 자가 적대(red-team) 리뷰 — Claude Code 추론 패턴 (fresh-context
 find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완료. 코어 오케스트레이션
 (agent_core choke-point) + [세션, 제품] 메모리 노트 (TTL) + 런타임 설정 + 관리 콘솔 "AI 추론"
@@ -21,9 +21,15 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   choke-point 훅, alembic 0042, REDTEAM_* 런타임 설정, 권한+admin_reasoning 라우터,
   콘솔 탭/설정 패널, 단위 테스트 34건, ROUTEMAP 재생성, route-parity golden 갱신
 
+## 2b. 관리 콘솔 IA (console-ia, 2026-07-16)
+- **감사 > AI 추론**: red-team 리뷰 활동·판정 + 메모리 노트 현황 (console.reasoning.read, 감사 카테고리)
+- **설정 > 프롬프트**: [전역 시스템 프롬프트(편집) / 작동 지침(조회) / 스킬(조회)] (지침/스킬 = system_prompt.global.read)
+- **설정 > 운영 값 > AI 자가 리뷰**: REDTEAM_* 설정 (무변경)
+- 전역 프롬프트 비교·검토: 기본 시스템 프롬프트 fallback 은 편집 정본(전역 프롬프트)과 중복이라 작동 지침 목록에서 제외
+
 ## 3. Recent Changes
 - CHG-20260715-0001 — 최초 구현 (상세 MODIFY.md)
-- 총 변경 횟수: 1
+- 총 변경 횟수: 3 (CHG-0001 구현 · CHG-0002 anchor 정합 · CHG-0003 콘솔 IA 재구성)
 
 ## 4. Open Issues
 - make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):

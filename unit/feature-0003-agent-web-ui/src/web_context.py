@@ -815,14 +815,15 @@ PERMISSION_DEFINITIONS = (
         "description": "실행 타임아웃·모델별 추론 예산을 수정/초기화할 수 있다. 서비스 응답 지연·비용에 직접 영향이 가므로 운영자 한정.",
         "group": "settings",
     },
-    # feature-0021 (redteam-review): 관리 콘솔 `시스템 > AI 추론` read-only 조회 권한 —
-    # assistant 작동 지침/스킬 레지스트리, 답변 자가 적대(red-team) 리뷰 활동, 세션/제품
-    # 메모리 노트 현황. 조회 전용이라 write 페어 없음. admin only auto-grant (least-privilege).
+    # feature-0021: 관리 콘솔 `감사 > AI 추론` read-only 조회 권한 — 답변 자가 적대(red-team)
+    # 리뷰 활동·판정과 세션/제품 메모리 노트 현황(관측·감사 데이터). 조회 전용이라 write 페어
+    # 없음. admin only auto-grant (least-privilege). console-ia(2026-07-16): 카테고리 감사로
+    # 재배치(AI 운영 현황과 나란히) + 지침/스킬 조회는 system_prompt.global.read 로 분리.
     {
         "code": "console.reasoning.read",
-        "label": "AI 추론 구조 조회",
-        "description": "assistant 작동 지침·스킬 레지스트리, 답변 자가 적대(red-team) 리뷰 활동, 세션/제품 메모리 노트 현황을 조회할 수 있다.",
-        "group": "settings",
+        "label": "AI 추론 활동 조회",
+        "description": "답변 자가 적대(red-team) 리뷰 활동·판정과 세션/제품 메모리 노트 현황을 조회할 수 있다.",
+        "group": "audit",
     },
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
@@ -912,6 +913,8 @@ _CONSOLE_CATEGORY_ACCESS_LEAVES = {
     "console.audit.access": (
         "audit.read.own", "audit.read.any", "audit.export", "audit.purge",
         "conversation.archive.read.any", "console.usage.read", "console.aiops.read",
+        # feature-0021 console-ia: AI 추론(red-team 리뷰 활동·메모리 노트) 은 감사 관측 데이터.
+        "console.reasoning.read",
     ),
     "console.kb.access": (
         # perm-atomic-split(2026-07-15): 레거시 묶음(kb.ingest.manual·metadata.*.manage)은 grid 숨김·
@@ -926,7 +929,6 @@ _CONSOLE_CATEGORY_ACCESS_LEAVES = {
     "console.system.access": (
         "system_prompt.global.read", "system_prompt.global.write",
         "system.runtime.read", "system.runtime.write",
-        "console.reasoning.read",
     ),
 }
 
@@ -2067,7 +2069,7 @@ def _ensure_seed_roles(conn) -> None:
             "datasource.create", "datasource.update", "datasource.delete", "datasource.test",
             # feature-0021(redteam-review): admin 의 AI 추론 구조 조회 catchup. **필수** — 신규 권한은
             # role 생성 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row 에는 retroactive
-            # 미적용. 미보정 시 기존 admin 이 `시스템 > AI 추론` 탭을 못 본다(lockout). 타 역할 미부여.
+            # 미적용. 미보정 시 기존 admin 이 `감사 > AI 추론` 탭을 못 본다(lockout). 타 역할 미부여.
             "console.reasoning.read",
         ):
             permission_id = int(permission_map.get(code) or 0)

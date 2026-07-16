@@ -28,9 +28,14 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 - REQ-20260715T140002-memory-notes: [세션(대화), 제품] 2계층 자가리뷰·메모리 문서를
   `/shared/agent-notes/` 임시 파일로 축적·프롬프트 참조하고, TTL 만료 시 주기적으로
   정리한다 (세션 기본 7일, 제품 기본 30일). 대화 격리를 보존한다.
-- REQ-20260715T140003-console-visibility: 작동 지침 (시스템 프롬프트·가이던스 블록·
-  red-team rubric) 과 스킬 (assistant 도구) 레지스트리, red-team 활동/판정, 메모리
-  문서 현황을 관리 콘솔에서 read-only 조회할 수 있다 (신규 권한 `console.reasoning.read`).
+- REQ-20260715T140003-console-visibility: 작동 지침 (가이던스 블록·red-team rubric) 과 스킬
+  (assistant 도구) 레지스트리, red-team 활동/판정, 메모리 문서 현황을 관리 콘솔에서 read-only
+  조회할 수 있다.
+- REQ-20260716-console-ia: 위 조회 화면을 성격별로 분리 배치한다 (사용자 요청) — **감사 >
+  AI 추론** = red-team 리뷰 활동·판정 + 메모리 노트 현황 (권한 `console.reasoning.read`, 감사
+  카테고리); **설정 > 프롬프트 그룹** = 전역 시스템 프롬프트(편집) + 작동 지침(조회) + 스킬(조회)
+  (지침/스킬 조회 = `system_prompt.global.read` 재사용). 기본 시스템 프롬프트 fallback 은 전역
+  시스템 프롬프트와 중복이라 작동 지침 목록에서 제외 (편집 정본 단일화).
 
 ## 3. In Scope
 - `modules/redteam.py` — 리뷰어 프롬프트·오케스트레이션·판정 저장 (feature-0002).
