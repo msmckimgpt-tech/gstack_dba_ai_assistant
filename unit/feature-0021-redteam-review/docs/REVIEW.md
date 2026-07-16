@@ -86,3 +86,23 @@ source_of_truth: true
   →탭 노출 무회귀; guidance FE 게이트(system_prompt.global.read)↔백엔드 일치; renderReasoning/
   showGuidanceDetail 시그니처 caller 정합; 설정 프롬프트 3항목(row/article/mounter) 키 일치; ROUTEMAP 재생성.
 - Human Approval Needed: 없음.
+
+## REV-20260716-0005 [SUBAGENT:general-purpose] — APPROVE-WITH-FIXES (반영 완료)
+- Related Change: CHG-20260716-0004 (콘솔 서브탭 통합)
+- Reason: §18.8 dispatch — 서브탭 권한 OR·pane 재조립 회귀·FE 정합 렌즈.
+- 판정: 기능(서브탭 게이팅·lazy load·요소 id 바인딩·HTML 균형·권한맵) CLEAN, key-drift 회귀 MAJOR 2
+  + MINOR 2 — 전건 반영:
+  - **MAJOR#1 대시보드 딥링크 빈 pane**: 서버 위젯이 옛 키(tab:"usage"·"ai-ops")를 보내는데 통합으로
+    해당 pane 부재 → switchTab 착지 시 전 pane 비활성=빈 화면. → switchTab 진입부에 레거시 키 별칭
+    매핑(usage→usage·ai-ops→ops·reasoning→reasoning) + ai-console 전환 후 `activateAiConsoleSubtab`
+    으로 대응 서브탭 활성화(권한 게이팅 반영). 서버 계약(admin_console.py:562/594) 실측 정합 확인.
+  - **MAJOR#2 통합 pane 스크롤 유실**: styles.css scroll 그룹이 옛 3키만 열거 → ai-console 미포함
+    으로 하단 콘텐츠 잘림·가로 넘침(TASK-0198 회귀). → 그룹에 `data-admin-pane="ai-console"` 대체.
+  - **MINOR usage 레이아웃 가드 미연결**: `.admin-pane[data-admin-pane="usage"] .summary-metrics/> *`
+    → `.admin-subpane[data-ai-subpane="usage"]` 재타겟.
+  - **MINOR(방어) bindPaneSubtabs firstKey undefined**: 보이는 서브탭 0(현재 unreachable)이어도 정적
+    is-active 마크업이 미로드로 남지 않게 전 subpane 숨김 fallback 추가.
+- 검증됨(CLEAN): 서브탭 권한 게이팅(reasoning-only 사용자 → reasoning 서브탭만·loadReasoning만 호출),
+  요소 id 바인딩(initialize 1회·subpane nested 여도 getElementById resolve), adminState 초기화,
+  설정 prompts activateSettingsPanel/검색 필터, canSeeTab OR+AND, HTML 균형, permission_dependency_map.
+- Human Approval Needed: 없음 (프론트 전용, read-only, 데이터 무변경).

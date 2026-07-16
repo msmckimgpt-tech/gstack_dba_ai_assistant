@@ -2083,11 +2083,10 @@ const ADMIN_TAB_PERMISSIONS = {
   products: ["product.read", "product.manage"],
   datasources: ["datasource.read", "datasource.manage"],
   audits: ["audit.read.own", "audit.read.any"],
-  usage: ["console.usage.read"],
-  // TASK-AIOPS: AI 운영 현황 탭 — console.aiops.read 게이트. **필수(fail-open 방지)** — canSeeTab()
-  //   은 매핑 없는 탭을 fail-open(전원 노출)하므로, 이 항목 누락 = 권한 없는 사용자에게 ai-ops 탭
-  //   버튼 노출. cosmetic 이 아니라 enforcement 배선. key 는 data-admin-tab 과 동일한 "ai-ops"(hyphen).
-  "ai-ops": ["console.aiops.read"],
+  // feature-0021 console-subtabs(2026-07-16): LLM 사용량·운영 현황·추론을 'AI 운영 현황' 단일
+  //   탭(ai-console)으로 통합. **OR 게이트** — 세 조회 권한 중 하나라도 있으면 탭 노출(서브탭은
+  //   initAiConsoleSubtabs 가 권한별 게이팅). **필수(fail-open 방지)** — 누락 시 전원 노출.
+  "ai-console": ["console.usage.read", "console.aiops.read", "console.reasoning.read"],
   archives: ["conversation.archive.read.any"],
   // 샘플 검수(kb.sample.curate)는 메타데이터 탭 > 샘플쿼리 > 샘플 검수 큐 2차 보기로 통합(독립 탭 제거).
   // TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1): 용어/ENUM 메타데이터 CRUD.
@@ -2112,9 +2111,6 @@ const ADMIN_TAB_PERMISSIONS = {
   //   있던 것을 보강 — runtime read/write 단독 보유자도 설정 탭에 도달 가능(백엔드 엔드포인트 권한과 정합).
   settings: ["system_prompt.global.read", "system_prompt.global.write",
              "system.runtime.read", "system.runtime.write"],
-  // feature-0021: AI 추론 탭 — console.reasoning.read 게이트. **필수(fail-open 방지)** —
-  //   canSeeTab() 은 매핑 없는 탭을 fail-open(전원 노출)하므로 누락 = 권한 없는 사용자에게 탭 노출.
-  reasoning: ["console.reasoning.read"],
 };
 
 // perm-category-hier(Critical §12.3, 2026-07-14): 탭 → 소속 nav 카테고리의 최상위 '접근' 권한 매핑.
@@ -2129,12 +2125,11 @@ const ADMIN_TAB_CATEGORY_ACCESS = {
   datasources: "console.product.access",
   audits: "console.audit.access",
   archives: "console.audit.access",
-  usage: "console.audit.access",
-  "ai-ops": "console.audit.access",
+  // feature-0021 console-subtabs: 통합 'AI 운영 현황' 탭 — 감사 카테고리(usage/ai-ops/reasoning 공통).
+  "ai-console": "console.audit.access",
   metadata: "console.kb.access",
   graph: "console.kb.access",
   settings: "console.system.access",
-  reasoning: "console.audit.access",
 };
 
 function canSeeTab(tabKey) {
@@ -2561,7 +2556,94 @@ async function showGuidanceDetail(key, detailId) {
   }
 }
 
+/* ── feature-0021 console-subtabs(2026-07-16): 재사용 pane 서브탭 헬퍼 ──────────
+ * container 안의 [data-*-subtab] 버튼 ↔ [data-*-subpane] 컨텐츠를 전환한다.
+ * onActivate(key) 는 각 서브탭이 처음 활성화될 때 1회 호출(lazy load). visibleKeys 로
+ * 권한 게이팅(미포함 서브탭 버튼 숨김) — 첫 표시 서브탭은 보이는 것 중 첫째. */
+function bindPaneSubtabs(root, attr, onActivate, opts) {
+  opts = opts || {};
+  const btns = Array.from(root.querySelectorAll("[data-" + attr + "-subtab]"));
+  const panes = Array.from(root.querySelectorAll("[data-" + attr + "-subpane]"));
+  if (!btns.length) return;
+  const visible = opts.visibleKeys || null;
+  const mounted = new Set();
+  const keyOf = (el, kind) => el.getAttribute("data-" + attr + "-" + kind);
+
+  function activate(key) {
+    btns.forEach((b) => {
+      const on = keyOf(b, "subtab") === key;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    panes.forEach((p) => {
+      const on = keyOf(p, "subpane") === key;
+      p.classList.toggle("is-active", on);
+      p.hidden = !on;
+    });
+    if (!mounted.has(key)) {
+      mounted.add(key);
+      try { onActivate(key); } catch (e) { console.error("[subtab] activate failed:", key, e); }
+    }
+  }
+
+  // 권한 게이팅: visible 목록에 없는 서브탭 버튼·pane 숨김.
+  if (visible) {
+    btns.forEach((b) => { b.style.display = visible.includes(keyOf(b, "subtab")) ? "" : "none"; });
+  }
+  btns.forEach((b) => {
+    if (b.dataset.subtabBound === "1") return;
+    b.dataset.subtabBound = "1";
+    b.addEventListener("click", () => activate(keyOf(b, "subtab")));
+  });
+  // 첫 표시: 보이는 것 중 첫째(권한 게이팅 반영).
+  const firstKey = (visible ? btns.filter((b) => visible.includes(keyOf(b, "subtab"))) : btns)
+    .map((b) => keyOf(b, "subtab"))[0];
+  if (firstKey) {
+    activate(firstKey);
+  } else {
+    // 방어: 보이는 서브탭이 없으면(권한 0) 정적 is-active 마크업이 미로드 상태로 남지 않도록 전부 숨김.
+    panes.forEach((p) => { p.classList.remove("is-active"); p.hidden = true; });
+  }
+}
+
+// deep-link 로 지정된 ai-console 서브탭을 활성화(보이는 서브탭일 때만). 버튼 click 으로 트리거해
+// bindPaneSubtabs 의 activate(권한 게이팅·lazy load 포함)를 재사용한다.
+function activateAiConsoleSubtab(sub) {
+  const pane = document.querySelector('.admin-pane[data-admin-pane="ai-console"]');
+  if (!pane) return;
+  const btn = pane.querySelector('[data-ai-subtab="' + sub + '"]');
+  if (btn && btn.style.display !== "none") btn.click();
+}
+
+// 'AI 운영 현황' 통합 탭 서브탭 초기화 — 권한별 게이팅 + lazy load.
+function initAiConsoleSubtabs() {
+  const pane = document.querySelector('.admin-pane[data-admin-pane="ai-console"]');
+  if (!pane) return;
+  const visible = [];
+  if (can("console.usage.read")) visible.push("usage");
+  if (can("console.aiops.read")) visible.push("ops");
+  if (can("console.reasoning.read")) visible.push("reasoning");
+  bindPaneSubtabs(pane, "ai", (key) => {
+    if (key === "usage" && !adminState.usage.initialized) { adminState.usage.initialized = true; loadUsage(); }
+    else if (key === "ops" && !adminState.aiOps.initialized) { adminState.aiOps.initialized = true; loadAiOps(); }
+    else if (key === "reasoning" && !(adminState.reasoning && adminState.reasoning.initialized)) {
+      adminState.reasoning = { initialized: true, redteamCursor: null }; loadReasoning();
+    }
+  }, { visibleKeys: visible });
+}
+
 function switchTab(tabName) {
+  // feature-0021 console-subtabs(2026-07-16): 레거시 최상위 탭 키(usage/ai-ops/reasoning)는
+  // 'AI 운영 현황'(ai-console) 단일 탭 + 서브탭으로 통합됨. 대시보드 위젯 deep-link("열기 →")
+  // 등 서버가 옛 키(tab:"usage"/"ai-ops")를 보내는 경로가 남아 있어, 여기서 통합 탭으로 매핑하고
+  // 대응 서브탭을 활성화한다(빈 pane 착지 방지 — 적대검증 MAJOR#1).
+  const _AI_SUBTAB_ALIAS = { usage: "usage", "ai-ops": "ops", reasoning: "reasoning" };
+  if (_AI_SUBTAB_ALIAS[tabName]) {
+    const _sub = _AI_SUBTAB_ALIAS[tabName];
+    tabName = "ai-console";
+    // ai-console pane 활성화 후 서브탭 전환은 아래 초기화(initAiConsoleSubtabs) 뒤에 수행.
+    adminState._pendingAiSubtab = _sub;
+  }
   adminState.tab = tabName;
   document.querySelectorAll(".admin-tab").forEach((btn) => {
     btn.classList.toggle("is-active", btn.dataset.adminTab === tabName);
@@ -2575,21 +2657,18 @@ function switchTab(tabName) {
     loadAuditList();
     loadAuditFacets(); // TASK-0158: actor/resource facet 드롭다운 채우기
   }
-  // TASK-0136: LLM 사용량 tab 첫 진입 시 로드.
-  if (tabName === "usage" && !adminState.usage.initialized) {
-    adminState.usage.initialized = true;
-    loadUsage();
-    // TASK-20260623T014626-quota-ui-relocate: 사용 한도 설정은 역할/계정 상세 화면으로 이전(이 화면은 조회 전용).
-  }
-  // TASK-AIOPS: AI 운영 현황 tab 첫 진입 시 로드.
-  if (tabName === "ai-ops" && !adminState.aiOps.initialized) {
-    adminState.aiOps.initialized = true;
-    loadAiOps();
-  }
-  // feature-0021: AI 추론 tab 첫 진입 시 로드.
-  if (tabName === "reasoning" && !(adminState.reasoning && adminState.reasoning.initialized)) {
-    adminState.reasoning = { initialized: true, redteamCursor: null };
-    loadReasoning();
+  // feature-0021 console-subtabs(2026-07-16): LLM 사용량·운영 현황·추론을 'AI 운영 현황' 단일
+  // 탭(ai-console) + 서브탭으로 통합. 첫 진입 시 서브탭 바인딩 + 권한 게이팅 + 기본 서브탭 로드.
+  if (tabName === "ai-console") {
+    if (!adminState.aiConsole) {
+      adminState.aiConsole = { subtab: null };
+      initAiConsoleSubtabs();
+    }
+    // deep-link 로 특정 서브탭 지정 시(대시보드 위젯) 해당 서브탭으로 전환(권한 게이팅 반영).
+    if (adminState._pendingAiSubtab) {
+      activateAiConsoleSubtab(adminState._pendingAiSubtab);
+      adminState._pendingAiSubtab = null;
+    }
   }
   // TASK-0095: 설정 tab 첫 진입 시 sub-section 마운트.
   if (tabName === "settings" && !adminState.settings.initialized) {
@@ -6557,21 +6636,32 @@ async function _dsDelete(key) {
 
 adminState.settings = {
   initialized: false,
-  activeTab: "global-prompt",
+  activeTab: "prompts",
   mountedPanels: new Set(),
 };
 
 const SETTINGS_PANEL_MOUNTERS = {
-  "global-prompt": mountGlobalPromptPanel,
-  // feature-0021 console-ia: 작동 지침 / 스킬 조회 (프롬프트 그룹, 조회 전용 레지스트리).
-  "guidance": () => mountGuidanceRegistryPanel("guidancePanelMount", "guidance"),
-  "skills": () => mountGuidanceRegistryPanel("skillsPanelMount", "skill"),
+  // feature-0021 console-subtabs(2026-07-16): 프롬프트 = 단일 패널 + 서브탭[전역/지침/스킬].
+  "prompts": mountPromptsPanel,
   // feature-0018: 실행 타임아웃 / 모델별 추론 예산 — 각자 전용 UI, 레거시 admin-settings-panel 정합.
   "runtime-timeouts": mountRuntimeTimeoutsPanel,
   "model-thinking-budgets": mountModelThinkingBudgetsPanel,
   // feature-0021: 자가 적대(red-team) 리뷰 · 메모리 노트 운영 값 (runtime_settings redteam 그룹).
   "redteam-review": mountRedteamReviewPanel,
 };
+
+// feature-0021 console-subtabs: 프롬프트 패널 — 서브탭[전역 시스템 프롬프트 | 작동 지침 | 스킬].
+// 각 서브탭 첫 활성 시 기존 mounter 를 lazy 호출. 전역 시스템 프롬프트는 항상 표시(편집 권한은
+// 패널 내부 buildSystemPromptEditor 가 게이팅), 지침/스킬은 조회.
+function mountPromptsPanel() {
+  const panel = document.querySelector('.admin-settings-panel[data-settings-panel="prompts"]');
+  if (!panel) return;
+  bindPaneSubtabs(panel, "prompt", (key) => {
+    if (key === "global") mountGlobalPromptPanel();
+    else if (key === "guidance") mountGuidanceRegistryPanel("guidancePanelMount", "guidance");
+    else if (key === "skills") mountGuidanceRegistryPanel("skillsPanelMount", "skill");
+  });
+}
 
 function mountSettingsSections() {
   bindSettingsList();

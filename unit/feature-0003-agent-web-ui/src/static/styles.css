@@ -4380,9 +4380,9 @@ button.product-dropup-item-ds--test:disabled {
    (좌측 .admin-list / 우측 .admin-detail-col 가 각자 overflow-y:auto) pane 단일 스크롤에서 제외한다.
    pane 단일 overflow 를 남기면 list-detail 의 flex:1 fill + 컬럼 독립 스크롤과 충돌(이중 스크롤). */
 .admin-pane[data-admin-pane="dashboard"].is-active,
-.admin-pane[data-admin-pane="usage"].is-active,
-.admin-pane[data-admin-pane="ai-ops"].is-active,
-.admin-pane[data-admin-pane="reasoning"].is-active,
+/* feature-0021 console-subtabs: usage/ai-ops/reasoning 3 pane 을 통합한 'AI 운영 현황'(ai-console)
+   단일 pane. 옛 3키 → ai-console 1키로 대체(누락 시 하단 콘텐츠 잘림 — 적대검증 MAJOR#2). */
+.admin-pane[data-admin-pane="ai-console"].is-active,
 .admin-pane[data-admin-pane="release-notes"].is-active {
   /* aiops-scroll: AI 운영 현황 pane 은 배너/축/KPI/Attention/카테고리표/활동feed/커버리지의
      단순 세로 흐름(list-detail 아님)이라 dashboard/usage 와 동일하게 pane 자체 세로 스크롤 부여.
@@ -5371,14 +5371,16 @@ button.product-dropup-item-ds--test:disabled {
 .admin-usage-metric strong { font-size: 19px; font-weight: 800; }
 /* usage 요약 그리드도 약간 촘촘하게. TASK-0198: minmax 하한을 min(160px,100%) 로 — 좁은 폭에서
    grid track 합이 컨테이너를 초과해 수 px 가로 넘침이 나던 것 차단(전체 모델 5~6 카드 시). */
-.admin-pane[data-admin-pane="usage"] .summary-metrics {
+/* feature-0021 console-subtabs: usage 콘텐츠가 ai-console 통합 pane 의 usage 서브페인으로
+   이동 — 옛 pane 키 대신 서브페인으로 재타겟(적대검증 MINOR — 미연결 시 metric 그리드/가로 가드 유실). */
+.admin-subpane[data-ai-subpane="usage"] .summary-metrics {
   gap: 10px; margin-top: 0;
   grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
 }
-/* TASK-0198: usage pane 직접 자식이 내부 콘텐츠(차트 SVG·표·칩) 때문에 grow 하며 pane 폭을
+/* TASK-0198: usage 서브페인 직접 자식이 내부 콘텐츠(차트 SVG·표·칩) 때문에 grow 하며 폭을
    초과하지 않도록 min-width:0 보장(flex/grid 기본 min-content 넘침 차단). overflow-x:hidden 과 함께
    잔여 수 px 넘침까지 제거. */
-.admin-pane[data-admin-pane="usage"] > * { min-width: 0; max-width: 100%; }
+.admin-subpane[data-ai-subpane="usage"] > * { min-width: 0; max-width: 100%; }
 /* 차트 막대 위 SVG 텍스트·축은 JS 에서 var(--…) 직접 치환 (클래스로 분리 불가) */
 .admin-usage-legend {
   margin-top: 8px;
@@ -8795,3 +8797,25 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .reasoning-notes-table { width: 100%; }
 .reasoning-notes-table td, .reasoning-notes-table th { font-size: 12px; }
 .reasoning-note-ident { font-family: var(--mono, monospace); font-size: 11px; word-break: break-all; }
+
+/* ── feature-0021 console-subtabs(2026-07-16): 범용 pane 서브탭 (AI 운영 현황 / 설정 프롬프트) ── */
+.admin-subtabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.admin-subtab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  background: none;
+  cursor: pointer;
+  transition: color .13s, border-color .13s;
+}
+.admin-subtab:hover { color: var(--text); }
+.admin-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.admin-subpane[hidden] { display: none; }

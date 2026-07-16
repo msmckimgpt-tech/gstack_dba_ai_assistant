@@ -87,3 +87,24 @@ source_of_truth: true
 - Impact: UI/IA 재배치 + 권한 카테고리 재배치(read-only, 비파괴). 백엔드 엔드포인트·데이터 무변경.
   기존 admin catchup 은 권한 자체가 동일해 재backfill 불요(카테고리 매핑만 변경).
 - Rollback Notes: 커밋 revert. 데이터/마이그레이션 영향 없음.
+
+## CHG-20260716-0004
+- Date: 2026-07-16
+- Related Requirement: REQ-20260716-console-subtabs (사용자 요청 — 비슷한 구성을 탭으로 묶기)
+- Summary: 관리 콘솔에서 유사 성격 항목을 서브탭으로 통합 —
+  ① **감사 그룹**: LLM 사용량·AI 운영 현황·AI 추론 3개 최상위 탭 → **'AI 운영 현황' 단일 탭
+     (data-admin-tab=ai-console)** + 서브탭 [LLM 사용량 | 운영 현황 | 추론]. 탭 게이트는 3 조회
+     권한 OR, 서브탭은 각자 권한 게이팅(initAiConsoleSubtabs).
+  ② **설정 > 프롬프트**: list 3항목(전역/지침/스킬) → **단일 '프롬프트' 항목** + detail 서브탭
+     [전역 시스템 프롬프트 | 작동 지침 | 스킬] (mountPromptsPanel).
+  재사용 서브탭 헬퍼 `bindPaneSubtabs(root, attr, onActivate, {visibleKeys})` 신설(양쪽 공용).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (nav 3탭→1탭·pane 3개→통합 서브탭 pane·
+    설정 list 3행→1행·detail 3 article→1 article 서브탭)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (bindPaneSubtabs·initAiConsoleSubtabs·
+    mountPromptsPanel·switchTab ai-console 분기·ADMIN_TAB_PERMISSIONS ai-console OR·CATEGORY_ACCESS·
+    SETTINGS_PANEL_MOUNTERS prompts·activeTab prompts)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (범용 .admin-subtabs/.admin-subtab/.admin-subpane)
+- Impact: UI/IA 통합(프론트 전용). 백엔드 엔드포인트·권한 카탈로그·데이터 무변경. 권한 자체 불변
+  (탭 키만 admin.js 에서 통합). ROUTEMAP 무변경. 서브탭 권한 게이팅으로 기존 접근성 보존.
+- Rollback Notes: 커밋 revert (프론트 전용, 데이터 영향 없음).
