@@ -64,24 +64,12 @@
           <span class="admin-tab-label">보관 대화</span>
         </button>
 
-        <!-- TASK-0136: LLM 사용량 tab (admin 전용 — console.usage.read 없으면 숨김) -->
-        <button type="button" class="admin-tab" data-admin-tab="usage" id="adminTabUsage" style="display:none"
-                title="모델별·기간별 LLM 토큰 사용량과 추정 비용을 집계하고, 차트에서 관련 대화로 드릴다운합니다.">
-          <span class="admin-tab-label">LLM 사용량</span>
-        </button>
-
-        <!-- TASK-AIOPS: AI 운영 현황 tab (console.aiops.read 없으면 숨김 — canSeeTab + ADMIN_TAB_PERMISSIONS["ai-ops"]) -->
-        <button type="button" class="admin-tab" data-admin-tab="ai-ops" id="adminTabAiOps" style="display:none"
-                title="insight 워커·요청 처리·자동 분석 등 AI 구성요소의 실시간 상태와 최근 활동을 모니터링합니다.">
+        <!-- feature-0021 (console-subtabs 2026-07-16): AI 운영 현황 — LLM 사용량·운영 현황·추론(red-team)
+             3개를 단일 탭 + 서브탭으로 통합(사용자 요청). 셋 중 하나라도 조회 권한 보유 시 노출
+             (ADMIN_TAB_PERMISSIONS["ai-console"] OR). 서브탭은 각자 권한으로 게이팅. -->
+        <button type="button" class="admin-tab" data-admin-tab="ai-console" id="adminTabAiConsole" style="display:none"
+                title="LLM 토큰 사용량·AI 운영 현황·답변 자가 적대(red-team) 추론을 서브탭으로 조회합니다.">
           <span class="admin-tab-label">AI 운영 현황</span>
-        </button>
-
-        <!-- feature-0021 (console-ia): AI 추론 — 답변 자가 적대(red-team) 리뷰 활동 + 세션/제품 메모리
-             노트 현황 (관측·감사 성격이라 '감사' 그룹에 배치, AI 운영 현황 옆). console.reasoning.read
-             없으면 숨김. 작동 지침/스킬 레지스트리는 '설정 > 프롬프트'로 분리됨. -->
-        <button type="button" class="admin-tab" data-admin-tab="reasoning" id="adminTabReasoning" style="display:none"
-                title="답변 전 자가 적대(red-team) 리뷰의 판정·통계와 세션/제품 메모리 노트 현황을 조회합니다.">
-          <span class="admin-tab-label">AI 추론</span>
         </button>
 
         <!-- admin-metadata-relocate: 메타데이터/샘플 검수는 '감사'(읽기전용 모니터링)가 아닌
@@ -435,7 +423,14 @@
       </section>
 
       <!-- TASK-0136: LLM 사용량 pane (admin 전용). /api/admin/usage 집계 표시. -->
-      <section class="admin-pane" data-admin-pane="usage">
+      <!-- feature-0021 console-subtabs: AI 운영 현황 통합 pane — 서브탭 [LLM 사용량 | 운영 현황 | 추론] -->
+      <section class="admin-pane" data-admin-pane="ai-console">
+        <div class="admin-subtabs" role="tablist" aria-label="AI 운영 서브뷰">
+          <button type="button" class="admin-subtab is-active" data-ai-subtab="usage" role="tab">LLM 사용량</button>
+          <button type="button" class="admin-subtab" data-ai-subtab="ops" role="tab">운영 현황</button>
+          <button type="button" class="admin-subtab" data-ai-subtab="reasoning" role="tab">추론</button>
+        </div>
+      <div class="admin-subpane is-active" data-ai-subpane="usage">
         <header class="admin-pane-head">
           <div>
             <div class="drawer-label">Usage</div>
@@ -539,6 +534,35 @@
         </details>
         <!-- TASK-20260623T014626-quota-ui-relocate: LLM 사용 한도 설정은 '감사>LLM 사용량'(모니터링 목적)에서
              '계정' / '역할' 상세 화면으로 이전됨(각 항목 속성으로 구성). 이 화면은 사용량 조회 전용. -->
+      </div>
+      <div class="admin-subpane" data-ai-subpane="ops" hidden>
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">AI Ops</div>
+            <h2>AI 운영 현황</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="aiOpsRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="aiOpsBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </div>
+      <div class="admin-subpane" data-ai-subpane="reasoning" hidden>
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">AI Reasoning</div>
+            <h2>AI 추론</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="reasoningRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="reasoningBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </div>
       </section>
 
       <!-- TASK-0273: 보관 대화 pane (conversation.archive.read.any) — 오용 방지 감사 조회 -->
@@ -581,20 +605,6 @@
 
       <!-- TASK-AIOPS: AI 운영 현황 pane (console.aiops.read). 내부 콘텐츠(배너/KPI/Attention/
            카테고리 드릴다운/활동 feed/커버리지)는 admin.js renderAiOps() 가 #aiOpsBody 에 동적 렌더. -->
-      <section class="admin-pane" data-admin-pane="ai-ops">
-        <header class="admin-pane-head">
-          <div>
-            <div class="drawer-label">AI Ops</div>
-            <h2>AI 운영 현황</h2>
-          </div>
-          <div class="admin-pane-actions">
-            <button type="button" id="aiOpsRefreshBtn" class="btn-secondary">새로고침</button>
-          </div>
-        </header>
-        <div id="aiOpsBody">
-          <div class="admin-detail-empty">불러오는 중…</div>
-        </div>
-      </section>
 
       <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03):
            피드백 → 샘플쿼리 KB 환류 flywheel 검수 큐. 권한 kb.sample.curate. 사용자 답변
@@ -951,60 +961,24 @@
               <span class="admin-list-count" id="settingsListCount" aria-live="polite"></span>
             </div>
             <div class="admin-list" id="settingsList" role="listbox" aria-label="설정 항목 목록">
-              <!-- 프롬프트 그룹: [전역 시스템 프롬프트(편집) / 작동 지침(조회) / 스킬(조회)].
-                   feature-0021 console-ia: assistant 프롬프트 구성을 한 그룹으로 통합. 전역 시스템
-                   프롬프트만 편집 가능(WebSystemPrompts DB), 작동 지침·스킬은 코드 상수 조회 전용. -->
+              <!-- feature-0021 console-subtabs(2026-07-16): 프롬프트 = 단일 항목 + detail 서브탭
+                   [전역 시스템 프롬프트 / 작동 지침 / 스킬] (사용자 요청 — 비슷한 구성 탭 묶기).
+                   전역 시스템 프롬프트만 편집 가능(WebSystemPrompts DB), 작동 지침·스킬은 조회 전용. -->
               <button
                 type="button"
                 class="admin-list-row admin-list-row--nav is-active"
                 role="option"
                 aria-selected="true"
-                data-settings-tab="global-prompt"
+                data-settings-tab="prompts"
                 data-settings-group="프롬프트"
-                data-settings-keywords="전역 시스템 프롬프트 global system prompt base"
+                data-settings-keywords="프롬프트 전역 시스템 global system prompt base 작동 지침 guidance 스킬 도구 tool skill 방언 능동 해석 mermaid"
               >
                 <span class="admin-list-row-cb" aria-hidden="true"></span>
                 <span class="admin-list-row-main">
                   <span class="admin-list-row-title">
-                    <span class="admin-list-row-name">전역 시스템 프롬프트</span>
+                    <span class="admin-list-row-name">프롬프트</span>
                   </span>
-                  <span class="admin-list-row-meta">모든 대화 기본값 (편집)</span>
-                </span>
-              </button>
-              <!-- feature-0021 console-ia: 작동 지침 (조회 전용 — 코드 상수 레지스트리) -->
-              <button
-                type="button"
-                class="admin-list-row admin-list-row--nav"
-                role="option"
-                aria-selected="false"
-                data-settings-tab="guidance"
-                data-settings-group="프롬프트"
-                data-settings-keywords="작동 지침 guidance 방언 dialect 능동 해석 mermaid 인젝션 redteam 노트"
-              >
-                <span class="admin-list-row-cb" aria-hidden="true"></span>
-                <span class="admin-list-row-main">
-                  <span class="admin-list-row-title">
-                    <span class="admin-list-row-name">작동 지침</span>
-                  </span>
-                  <span class="admin-list-row-meta">프롬프트 주입 지침 (조회)</span>
-                </span>
-              </button>
-              <!-- feature-0021 console-ia: 스킬 (조회 전용 — 도구 정의) -->
-              <button
-                type="button"
-                class="admin-list-row admin-list-row--nav"
-                role="option"
-                aria-selected="false"
-                data-settings-tab="skills"
-                data-settings-group="프롬프트"
-                data-settings-keywords="스킬 도구 tool skill execute_sql describe_routine graph_navigate"
-              >
-                <span class="admin-list-row-cb" aria-hidden="true"></span>
-                <span class="admin-list-row-main">
-                  <span class="admin-list-row-title">
-                    <span class="admin-list-row-name">스킬 (도구)</span>
-                  </span>
-                  <span class="admin-list-row-meta">assistant 호출 도구 (조회)</span>
+                  <span class="admin-list-row-meta">전역 프롬프트 · 작동 지침 · 스킬</span>
                 </span>
               </button>
               <!-- feature-0018: 실행 타임아웃 -->
@@ -1064,33 +1038,40 @@
             </div>
           </div>
           <div class="admin-detail-col" id="settingsDetail">
-            <article class="admin-settings-panel is-active" data-settings-panel="global-prompt">
-              <header class="admin-settings-panel-head">
-                <h3>전역 시스템 프롬프트</h3>
-                <p class="admin-settings-panel-hint">모든 대화의 기본 프롬프트입니다. 비워두고 적용하면 기본값으로 되돌아갑니다.</p>
-              </header>
-              <div class="admin-settings-panel-body" id="globalPromptEditorMount">
-                <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
+            <!-- feature-0021 console-subtabs(2026-07-16): 프롬프트 = 단일 패널 + 서브탭
+                 [전역 시스템 프롬프트 | 작동 지침 | 스킬]. 전역만 편집, 지침·스킬은 조회 전용. -->
+            <article class="admin-settings-panel is-active" data-settings-panel="prompts">
+              <div class="admin-subtabs" role="tablist" aria-label="프롬프트 서브뷰">
+                <button type="button" class="admin-subtab is-active" data-prompt-subtab="global" role="tab">전역 시스템 프롬프트</button>
+                <button type="button" class="admin-subtab" data-prompt-subtab="guidance" role="tab">작동 지침</button>
+                <button type="button" class="admin-subtab" data-prompt-subtab="skills" role="tab">스킬</button>
               </div>
-            </article>
-            <!-- feature-0021 console-ia: 작동 지침 (조회 전용 레지스트리) -->
-            <article class="admin-settings-panel" data-settings-panel="guidance">
-              <header class="admin-settings-panel-head">
-                <h3>작동 지침</h3>
-                <p class="admin-settings-panel-hint">assistant 프롬프트에 주입되는 코드 내장 지침입니다(방언·능동 해석·다이어그램·인젝션 방어·자가 리뷰 등). <strong>조회 전용</strong> — 편집 가능한 기본 프롬프트는 <strong>전역 시스템 프롬프트</strong>에서 관리합니다. 항목을 클릭하면 전체 본문을 확인할 수 있습니다.</p>
-              </header>
-              <div class="admin-settings-panel-body" id="guidancePanelMount">
-                <!-- mountGuidanceRegistryPanel('guidancePanelMount','guidance') 가 마운트 -->
+              <div class="admin-subpane is-active" data-prompt-subpane="global">
+                <header class="admin-settings-panel-head">
+                  <h3>전역 시스템 프롬프트</h3>
+                  <p class="admin-settings-panel-hint">모든 대화의 기본 프롬프트입니다(편집 가능). 비워두고 적용하면 기본값으로 되돌아갑니다.</p>
+                </header>
+                <div class="admin-settings-panel-body" id="globalPromptEditorMount">
+                  <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
+                </div>
               </div>
-            </article>
-            <!-- feature-0021 console-ia: 스킬(도구) (조회 전용) -->
-            <article class="admin-settings-panel" data-settings-panel="skills">
-              <header class="admin-settings-panel-head">
-                <h3>스킬 (도구)</h3>
-                <p class="admin-settings-panel-hint">assistant 가 답변 중 자율 호출하는 함수 도구입니다. <strong>조회 전용</strong> — 항목을 클릭하면 전체 스키마(JSON)를 확인할 수 있습니다.</p>
-              </header>
-              <div class="admin-settings-panel-body" id="skillsPanelMount">
-                <!-- mountGuidanceRegistryPanel('skillsPanelMount','skill') 가 마운트 -->
+              <div class="admin-subpane" data-prompt-subpane="guidance" hidden>
+                <header class="admin-settings-panel-head">
+                  <h3>작동 지침</h3>
+                  <p class="admin-settings-panel-hint">assistant 프롬프트에 주입되는 코드 내장 지침입니다(방언·능동 해석·다이어그램·인젝션 방어·자가 리뷰 등). <strong>조회 전용</strong> — 편집 가능한 기본 프롬프트는 <strong>전역 시스템 프롬프트</strong> 서브탭에서 관리합니다. 항목을 클릭하면 전체 본문을 확인할 수 있습니다.</p>
+                </header>
+                <div class="admin-settings-panel-body" id="guidancePanelMount">
+                  <!-- mountGuidanceRegistryPanel('guidancePanelMount','guidance') 가 마운트 -->
+                </div>
+              </div>
+              <div class="admin-subpane" data-prompt-subpane="skills" hidden>
+                <header class="admin-settings-panel-head">
+                  <h3>스킬 (도구)</h3>
+                  <p class="admin-settings-panel-hint">assistant 가 답변 중 자율 호출하는 함수 도구입니다. <strong>조회 전용</strong> — 항목을 클릭하면 전체 스키마(JSON)를 확인할 수 있습니다.</p>
+                </header>
+                <div class="admin-settings-panel-body" id="skillsPanelMount">
+                  <!-- mountGuidanceRegistryPanel('skillsPanelMount','skill') 가 마운트 -->
+                </div>
               </div>
             </article>
             <!-- feature-0018: 실행 타임아웃 패널 (전용 UI — 카테고리별 그룹 + 즉시/재배포 반영 배지) -->
@@ -1128,20 +1109,6 @@
       </section>
 
       <!-- feature-0021: AI 추론 pane — 지침/스킬 레지스트리(progressive disclosure) + red-team 리뷰 활동 + 메모리 노트 현황 -->
-      <section class="admin-pane" data-admin-pane="reasoning">
-        <header class="admin-pane-head">
-          <div>
-            <div class="drawer-label">AI Reasoning</div>
-            <h2>AI 추론</h2>
-          </div>
-          <div class="admin-pane-actions">
-            <button type="button" id="reasoningRefreshBtn" class="btn-secondary">새로고침</button>
-          </div>
-        </header>
-        <div id="reasoningBody">
-          <div class="admin-detail-empty">불러오는 중…</div>
-        </div>
-      </section>
 
       <!-- 릴리즈 노트 pane — 작업 화면 프로필 탭과 동일 콘텐츠를 공유 렌더러로 표시 -->
       <section class="admin-pane" data-admin-pane="release-notes">

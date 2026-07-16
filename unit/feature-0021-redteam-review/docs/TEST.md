@@ -59,6 +59,14 @@ source_of_truth: true
   Windows-browser 는 배포 직후 PB-0008 (test-runs.d/20260716T090000-console-ia-restructure.md). ruff PASS.
 - 잔여 FAILED 4건은 pre-existing 환경 의존(PG 부재·env) — 본 diff 무관(위 Run 2026-07-15 §3 동일).
 
+### Run 2026-07-16 — 콘솔 서브탭 통합 (컨테이너 make test)
+- Environment: CLI
+- Command: `make test` (agent 이미지, --no-deps)
+- Result: **PASS (본 변경 범위)** — 통합 관련 33건 PASS (permission_dependency_map 권한 불변·
+  admin_reasoning 무변경·route-parity 경로 불변) + §18.8 적대검증(REV-0005) MAJOR 2 + MINOR 2 반영.
+  Windows-browser 는 배포 직후 PB-0008 (test-runs.d/20260716T140000-console-subtabs.md). ruff PASS.
+- 잔여 FAILED 4건은 pre-existing 환경 의존(PG 부재·env) — 본 diff(프론트 전용) 무관.
+
 ## 4. Integration Coverage
 - 리뷰어 실 LLM 판정·redteam_reviews INSERT·노트 실볼륨 축적은 배포 후 라이브 실증
   (POST-DEPLOY Run 으로 §3 에 append). 콘솔 화면은 PB-0008 Windows-browser 검증.

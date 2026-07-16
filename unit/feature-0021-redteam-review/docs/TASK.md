@@ -44,8 +44,9 @@ feature_status_updated: 2026-07-15
 - [x] TASK-20260715T140101-tests-routemap: 단위 테스트 (redteam fail-open/게이팅,
       agent_notes cap/TTL, 라우터 RBAC) + ROUTEMAP 재생성 + make test
 - [x] TASK-20260715T140102-deploy-verify: PR #819/#821 병합·배포(23b8faba)·alembic 0042·PB-0008 PASS
-- [ ] TASK-20260716-console-ia: 관리 콘솔 IA 재구성 — 감사>AI추론(리뷰/노트) + 설정>프롬프트
-      [전역/지침/스킬] 분리, 전역 프롬프트 비교·검토(fallback 중복 제거) (사용자 요청)
+- [x] TASK-20260716-console-ia: 관리 콘솔 IA 재구성 — 감사>AI추론 + 설정>프롬프트 분리 (배포·PB-0008 PASS)
+- [ ] TASK-20260716-console-subtabs: 유사 항목 서브탭 통합 — 'AI 운영 현황'[LLM 사용량/운영 현황/추론]
+      + 설정 '프롬프트'[전역/지침/스킬] (사용자 요청)
 
 ## 4. In Progress
 - 없음
