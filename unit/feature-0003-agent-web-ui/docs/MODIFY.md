@@ -11,6 +11,19 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260716T114705-graph-search-panel-groups (검색 결과 패널 3개선 — 2단 접기·검색 이력·설명문 간결화, Minor §12.3 프론트 단독·additive)
+- Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-panel-groups`(base main). 사용자 요청(/_template:entry 후속): ①스키마 클러스터·컨텐츠 카테고리 단위 구분·정렬·접기/펼치기 ②뒤로/앞으로가 검색에도 유효 ③검색 설명문 TMI 간결화. TASK-20260716T013714(검색 결과 패널) 후속.
+- **변경**: `src/static/graph/graph-ctxmenu.js`
+  - **①2단 접기**: `_metaGraphRenderSearchResults` 전면 재작성 — 결과 노드를 `_metaSchemaComboOf`(스키마 클러스터)로 1차, `cluster_label`(컨텐츠 카테고리, 없으면 "카테고리 미분류")로 2차 그룹. 정렬: 스키마=매칭수↓→이름, 카테고리=수↓→이름(미분류 맨끝), 노드=유사도↓→이름. nested `.amgr-srch-sc`/`.amgr-srch-cat` 박스 + `is-collapsed` class(부모에 붙이면 CSS 가 body `display:none`). 각 헤딩(스키마·카테고리) role=button·caret·aria-expanded·Enter/Space 토글, 접힘 상태 `_metaGraph._searchGroupCollapsed`(Set, 키 `sc:<combo>`·`cat:<combo><label>` — `` 구분자로 경계 충돌 방지) 에 유지(재렌더·키스트로크 간 보존, 새 그룹 기본 펼침). "모두 접기/펼치기" 버튼(재렌더로 반영). 헤딩 시각은 기존 `.amgr-ct-group` 재사용. 행은 카테고리가 그룹 헤딩이 되어 per-row `카테고리:` meta 제거(중복 해소).
+  - **②검색 이력**: 신규 `_metaGraphRecordSearch(q, nodes)` — 이력 top 이 `v:"search"` 면 in-place 갱신(키스트로크 항목 폭증 방지), 아니면 push(`{v:"search", k:q, nodes}`, 결과 캐시). `_metaGraphSearch` 가 렌더 직후 호출. 신규 `_metaGraphRestoreSearch(ent)` — 재fetch 없이 입력값만 세팅(input 이벤트 미발화=재검색 루프 없음) + 캐시 노드로 결과 재구성. `_metaGraphHistoryGo` 에 `ent.v==="search"` → `Promise.resolve(_metaGraphRestoreSearch)` 분기(search 의 `ent.k`=질의문자열이라 `_metaRenderedIdFor` 폴백·카메라 skip 자연 정합). **finding#5 해소**: 검색이 자기 이력 항목이 되어 스크롤 캡처(항상 현재 화면=현재 항목)가 정합 — 별도 마커 가드 불요.
+  - **③설명문 간결화**: 상태줄을 `'${q}' — ${nRaw}건`(+ 상한/숨김필터 짧은 힌트만)으로 축약(기존 "카드 badge=매칭/전체… 앰버 글로우 확인" 제거), 결과 패널 부제 삭제, 행 `title`=fqn 만("클릭하면 이 노드 상세를 봅니다" 제거), 유사도 배지 title 제거.
+  - `src/static/graph/graph.css`: `.amgr-srch-collapse-all`/`.amgr-srch-sc`/`.amgr-srch-cat` `is-collapsed` body 숨김/`.amgr-srch-subhead` 들여쓰기/`.amgr-srch-cat-none` 약화 표기/`.amgr-srch-cat-body` 노드 들여쓰기.
+- Why: 대규모 검색 결과를 그래프 3층 구조 그대로 접어 훑고(스키마·카테고리 단위), 검색↔노드 상세를 이력으로 오가며, 설명문은 짧게 — 탐색 효율·일관성.
+- Impact: 검색 결과 패널 렌더·검색 이력 항목만 확장. 노드/클러스터/관계 상세 이력·스크롤·캔버스 스키마 카드·글로우·백엔드/API 무변경. 캐시버스터 빌드 자동.
+- Rollback: `_metaGraphRenderSearchResults` 재작성 revert + record/restore/Go 분기·상태줄·CSS revert. 다른 경로 영향 0.
+- Deploy: web 재빌드(정적 자산 hash). alembic/백엔드 변경 없음.
+- Cross-ref: CHG-20260716T013714-graph-search-detail-panel(원 기능·finding#5) · feature-0016(그래프 정본, graph-detail-scroll 이력·스크롤) · REV-20260716T114705-graph-search-panel-groups.
+
 ## CHG-20260716T015800-graph-search-detail-postverify (POST-DEPLOY 시각검증 정합 — docs-only, 코드 변경 0)
 - Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-detail-postverify`(base main 03e8d1b0). CHG-20260716T013714-graph-search-detail-panel(PR #839 배포 완료) 의 POST-DEPLOY PB-0008 라이브 시각검증 결과를 원장에 정합.
 - 변경: `docs/test-runs.d/20260716T0137-graph-search-detail-panel.md` Run 3 DEFERRED→**PASS**(win-browser.py 실 Windows Chrome 라이브 실측 — 코스튬 7건 AI 분석 배지·플루토스 28건 카테고리 배지+cluster_label+유사도 63%·행 클릭→노드 상세·클리어→뷰 해제·pageerror 0) + verdict 갱신 + `docs/TASK.md` PB-0008 체크박스 [x]. **런타임 코드·CSS·백엔드 무변경**(순수 검증 원장 정합).

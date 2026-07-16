@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260716T114705-graph-search-panel-groups — 검색 결과 패널 3개선: 2단 접기(스키마 클러스터·컨텐츠 카테고리)·검색 이력(뒤로/앞으로)·설명문 간결화 (Minor §12.3 — feature-0003 프론트 단독, additive; 그래프 정본 feature-0016)
+- 출처: `/_template:entry` 후속 turn — "① '스키마 클러스터', '컨텐츠 카테고리' 단위로 구분 및 정렬하여 [접기/펼치기] 가능하도록 ② [뒤로/앞으로] 버튼이 검색에 대해서도 유효 ③ 검색 시 설명문 툴팁 텍스트가 TMI — 단순명료하게." (2026-07-16, 사용자 명시). TASK-20260716T013714(검색 결과 패널) 후속 개선.
+- **① 2단 접기**: 검색 결과를 그래프 3층 구조대로 **스키마 클러스터(`_metaSchemaComboOf`) → 컨텐츠 카테고리(`cluster_label`) → 노드**로 구분·정렬(스키마=매칭수↓, 카테고리=수↓·미분류 맨끝, 노드=유사도↓)하고 각 단 접기/펼치기 + "모두 접기/펼치기". 접힘 상태 `_metaGraph._searchGroupCollapsed`(재렌더·키스트로크 간 유지, 검색 해제 시 초기화).
+- **② 검색 이력**: 검색을 상세 패널 방문 이력에 편입 — 노드/클러스터/관계처럼 [뒤로/앞으로]로 되돌아온다. 키스트로크 in-place 갱신(항목 폭증 방지), 결과 노드 캐시로 재fetch 없이 복원. 부수효과: 직전 cycle finding#5(검색뷰 스크롤 오스냅샷)가 검색의 이력-항목화로 자연 해소.
+- **③ 설명문 간결화**: 상태줄 "질의 — N건"(+상한/숨김필터 짧은 힌트만), 부제 삭제, 행 title=fqn 만("클릭하면…" TMI 제거).
+- **병렬 세션**: graph-ctxmenu.js 활성 세션 겹침 없음(graph-detail-scroll 병합 완료). graph.css 는 `nav-focus-fade-fix` 세션과 잠재 겹침(신규 규칙, 다른 영역).
+
+### §1.1 Implementation Plan
+- `graph-ctxmenu.js`: `_metaGraphRenderSearchResults` 2단 그룹 재작성(nested box + `is-collapsed` 토글, `.amgr-ct-group` 시각 재사용) + 신규 `_metaGraphRecordSearch`/`_metaGraphRestoreSearch` + `_metaGraphHistoryGo` `ent.v==="search"` 분기 + `_metaGraphSearch`(렌더 후 record, 클리어 시 collapsed clear) + 상태줄 간결화.
+- `graph.css`: `.amgr-srch-sc`/`.amgr-srch-cat`/`is-collapsed`/`.amgr-srch-subhead`(들여쓰기)/`.amgr-srch-cat-none`/`.amgr-srch-collapse-all`.
+
+### §1.2 Completion Checklist
+- [x] 2단 접기 그룹(스키마 클러스터→컨텐츠 카테고리→노드)·정렬·모두 접기/펼치기·접힘 상태 유지
+- [x] 검색 이력 편입(record in-place/push·restore 재fetch 없음·history Go search 분기)·finding#5 해소
+- [x] 설명문 간결화(상태줄·부제·행 title) — 정보 손실 없이(상한/숨김 힌트 보존)
+- [x] node --check(ESM) PASS · graph.css brace 245:245·comment 76:76 밸런스
+- [x] §18.8 적대 리뷰(frontend correctness+UX — XSS·접기·이력 루프/가드·회귀·접근성)
+- [ ] 배포 후 PB-0008 실 Windows 브라우저 시각검증(2단 접기·뒤로/앞으로·간결 텍스트, visual_verification_scope: always)
+
 ## TASK-20260716T013714-graph-search-detail-panel — 그래프 뷰: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성 (Minor §12.3 — feature-0003 프론트 단독, additive·비파괴; 그래프 도메인 정본 feature-0016)
 - 출처: `/_template:entry` 후속 turn — "글로우가 나타나는 것을 확인했습니다. 추가로, 검색어가 입력되었을 경우엔 상세 패널 내 검색 결과를 구성하도록 동작시켜주세요. 트리거는 '검색어 갱신 시' 입니다." (2026-07-16, 사용자 명시). 직전 cycle(feature-0002 graph-search-content) 로 검색이 컨텐츠 카테고리·AI 능동 분석까지 매칭하게 된 것의 프론트 후속.
 - **배경**: 그래프 검색은 캔버스에 앰버 글로우 + 스키마 카드 badge 로만 결과를 표기했다. 사용자는 검색 시 상세 패널에서 매칭 노드 목록을 바로 훑고 싶어 한다. 백엔드 `search_nodes` 가 이미 노드별 `match_via`(name/category/analysis)·`cluster_label`·`score`(유사도 내림차순)를 반환하므로 프론트 렌더만 추가하면 된다.

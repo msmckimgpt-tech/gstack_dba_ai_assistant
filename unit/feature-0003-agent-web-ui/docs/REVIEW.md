@@ -10,6 +10,22 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260716T114705-graph-search-panel-groups [SUBAGENT:adversarial-frontend-correctness+ux] — 검색 결과 패널 3개선(2단 접기·검색 이력·간결화) SHIP-WITH-FIXES
+- Date: 2026-07-16
+- Cycle: TASK-20260716T114705-graph-search-panel-groups (검색 결과 2단 접기·검색 이력·설명문 간결화), **Minor §12.3** — 프론트 단독·additive.
+- Trigger: §18.8 — UI/패널/상호작용 변경(ux) + 이력 상태머신·렌더 correctness. 적대 코드리뷰(general-purpose outside voice, 6축 REFUTE: XSS·접기 로직·이력 편입 루프/가드/정합·회귀·UX·JS 참조). 이력 시스템·esc·input 배선·`_metaRenderedIdFor` 싱크 교차검증.
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0) — CONFIRMED 2 + PLAUSIBLE 2 흡수, 1 수용.
+- **흡수한 CONFIRMED**:
+  - **C1 (이력 forward 미절단)**: `_metaGraphRecordSearch` in-place 갱신이 `cur.v==="search"` 만 보고 forward 를 안 잘라, "뒤로→검색 항목→질의수정" 시 구 문맥 노드가 forward 에 잔존→앞으로가 무관 노드 복원. **수정**: in-place 시 `detailHistIdx < len-1` 이면 `splice(idx+1)` 로 forward 절단(노드/클러스터 새 방문 절단과 동형, top 갱신은 no-op).
+  - **C2 (stale collapsed id 누적)**: `_searchGroupCollapsed` 가 검색 해제에서만 clear 돼, 다른 질의의 접힘 id 가 남아 `collapsed.size>0` 기반 "모두 접기/펼치기" 라벨 오표시·유령 부활. **수정**: 렌더마다 `currentIds`(이번 그룹 id 집합)로 collapsed prune → 현재 그룹만 반영.
+- **흡수한 PLAUSIBLE**:
+  - **P1 (복원 상태 드리프트)**: `_metaGraphRestoreSearch` 가 패널만 재구성하고 `mode`/`searchMatchNodes` 미복원→이후 클리어 판정(그 상태 의존) 드리프트. **수정**: 복원 시 `mode="search"` + `searchMatchNodes`=결과 key 집합 복원(캔버스 글로우 재적용은 back-nav 비용 회피 위해 생략 — 상태 정합만).
+  - **P2 (질의문자열→카메라 focus, benign)**: `_metaGraphHistoryGo` 가 search 항목의 `ent.k`(질의)를 `_metaRenderedIdFor`/`AnimateFocus` 에 넘겨 우연 id 일치 시 오팬 가능. **수정**: `ent.v !== "search"` 가드로 search 항목 focus skip.
+- **수용(P3, 무시가능)**: 이력 항목당 결과 노드 참조 캐시(≤50) — deep copy 아님·인메모리 전용(직렬화/localStorage 경로 없음)·`h.shift()` 회수, 연속 검색은 in-place 로 1항목. 무시 가능.
+- **CONFIRMED-SAFE (리뷰어 실측 인용)**: XSS(전 문자열 esc·상태줄 q 는 textContent·상수 색/배지만 비-esc) · data-toggle/data-box 는 selector 미사용(getAttribute+parentElement)이라 제어문자/따옴표 안전, `\x01`(SOH) cat 구분자가 (scKey,cat) 경계 충돌 확실 차단 · 개별 접기 정합(Set+class+caret+aria 일괄, 헤딩은 body 형제라 이중 토글 없음) · 재검색 루프 없음(value 세팅은 input 미발화) · 항목 폭증 억제(top=search 만 in-place) · finding#5 해소 유효(검색=자기 이력 항목→captureScroll 정합, `_pendingDetailScroll` 은 v==="node" 게이팅) · 회귀 없음(nSchemas 제거 클린·matchBySchema/캔버스 글로우 불변) · 호이스트/import 정합.
+- Verification: `node --check`(ESM) PASS · graph.css brace 245:245·comment 76:76 밸런스 · 4개 수정 재검증 PASS. **PB-0008 라이브는 POST-DEPLOY**(test-runs.d/20260716T1147 Run 3, visual_verification_scope: always).
+- Cross-ref: CHG-20260716T114705-graph-search-panel-groups / TASK-20260716T114705 / CHG-20260716T013714-graph-search-detail-panel(원 기능·finding#5) / feature-0016(graph-detail-scroll 이력·스크롤).
+
 ## REV-20260716T015800-graph-search-detail-postverify [SKIPPED:post-deploy-visual-verification-reconciliation] — PB-0008 라이브 PASS 원장 정합 (docs-only, 코드 변경 0)
 - Date: 2026-07-16
 - Cycle: CHG-20260716T015800-graph-search-detail-postverify (test-runs.d Run 3 DEFERRED→PASS + TASK 체크박스), **Minor §12.3**.

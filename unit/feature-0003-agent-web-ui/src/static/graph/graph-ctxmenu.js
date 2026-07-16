@@ -462,6 +462,7 @@ async function _metaGraphSearch(q) {
     // graph-search-detail: 검색어가 비면 상세 패널의 검색결과 뷰만 해제(사용자가 결과를 클릭해 노드
     //   상세로 들어간 경우는 마커 부재라 보존). 노드 상세/클러스터 상세 렌더는 마커를 만들지 않는다.
     if (document.getElementById("metaGraphSearchResults")) _metaGraphRenderDetailEmpty();
+    if (_metaGraph._searchGroupCollapsed) _metaGraph._searchGroupCollapsed.clear();   // graph-search-groups: 접힘 상태 초기화
     // graph-navfilter(§54③): 검색어 클리어는 그래프 구성(펼침·배치·확장)을 보존한다 — 검색 잔재
     //   (pristine 카드·glow)만 걷어내고 제자리 rebuild. 초기 화면 복귀는 '그래프 초기화' 버튼 전용.
     //   §54③ 패널 MAJOR: 검색이 products 개요를 리셋하고 들어온 경우(base.mode=products)는 보존할
@@ -575,23 +576,21 @@ async function _metaGraphSearch(q) {
   if (seq !== _metaGraph._opSeq) return;   // await 사이 scope/roots 전환 — 이 검색의 tail(status) 폐기
   if (q !== _metaGraph.lastQuery) return;  // §54③ 패널 MINOR: 클리어는 _opSeq 무-bump — stale 검색 tail 은 lastQuery 로 폐기
   _metaGraphSyncAnalysisMarkers(scope);
-  // graph-search-detail: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성(매칭 근거·유사도 배지, 클릭 → 상세).
+  // graph-search-detail: 검색어 갱신 시 상세 패널에 검색 결과 구성(스키마 클러스터→컨텐츠 카테고리 2단 접기, 클릭 → 상세).
   _metaGraphRenderSearchResults(data.nodes, q);
+  _metaGraphRecordSearch(q, data.nodes);   // graph-search-groups(item2): 검색을 방문 이력에 편입(뒤로/앞으로).
   // §54③: preserve 시 첫 매칭 렌더 노드로 부드러운 팬(fit 없이) — 하이라이트 가시화.
   if (preserve && matchNodes.size) {
     const first = Array.from(matchNodes).find((k) => _metaRenderedIdFor(k));
     if (first) _metaGraphAnimateFocus(first, seq);
   }
-  const nSchemas = matchBySchema.size;
-  const capNote = _metaGraph.searchCapped ? " · 결과 상한(부분 카운트, 검색어를 좁혀 정확도↑)" : "";
-  // §54② 패널 MINOR: 매칭에 Routine 이 있는데 ƒ/⚙ 표시 필터가 꺼져 있으면 비가시 원인 안내.
+  // item3(단순명료): 상태줄은 "질의 — N건" + 필요 시 짧은 실행가능 힌트만(상한/숨김 필터). 자세한 설명은 패널 그룹 구조가 대신.
+  const capNote = _metaGraph.searchCapped ? " · 상한(검색어를 좁혀보세요)" : "";
   const anyHiddenRoutineMatch = (data.nodes || []).some((nd) => nd && nd.label === "Routine"
-    && _metaGraph.hiddenKinds.has((nd.routine_type === "function") ? "function" : "procedure"));   // 재검증 NIT: kind 별 대조(과잉 발화 방지)
-  const hiddenNote = anyHiddenRoutineMatch
-    ? " ※ 매칭된 함수/프로시저 일부는 표시 필터로 숨김 상태 — 툴바 ƒ/⚙ 토글을 켜세요." : "";
+    && _metaGraph.hiddenKinds.has((nd.routine_type === "function") ? "function" : "procedure"));
+  const hiddenNote = anyHiddenRoutineMatch ? " · 함수/프로시저 일부 숨김(ƒ/⚙ 토글)" : "";
   if (!nRaw) _metaGraphStatus("검색 결과 없음.");
-  else if (nSchemas === 0) _metaGraphStatus(`'${q}' — 용어·기타 ${terms.length}개 매칭(해당 스키마 테이블 없음).${capNote}${hiddenNote}`);
-  else _metaGraphStatus(`'${q}' — 스키마 ${nSchemas}개 매칭. 카드 badge = 매칭/전체 테이블. 카드 클릭으로 펼쳐 매칭 테이블(앰버 글로우)을 확인.${capNote}${hiddenNote}`);
+  else _metaGraphStatus(`'${q}' — ${nRaw}건${capNote}${hiddenNote}`);
 }
 
 // 선택 강조: 모델 selected 갱신 + 이전/현재 노드 state 만 갱신(전체 rebuild 없이 가벼움).
@@ -681,6 +680,40 @@ function _metaGraphHistoryRecord(key, view) {
   _metaGraph.detailHistIdx = h.length - 1;
   _metaGraphHistoryUpdateUI();
 }
+// graph-search-groups(item2): 검색을 방문 이력에 편입 — 노드/클러스터/관계 상세처럼 뒤로/앞으로로 되돌아온다.
+//   키스트로크마다 새 항목을 쌓지 않도록, 이력 top 이 이미 검색 항목이면 in-place 갱신(질의·결과 교체).
+//   결과 노드를 항목에 캐시해 복원 시 재fetch 없이 패널만 재구성. finding#5(검색뷰 스크롤 오스냅샷)도 검색이
+//   자기 이력 항목이 됨으로써 자연 해소(스크롤 캡처는 항상 현재 화면=현재 항목에 정합).
+function _metaGraphRecordSearch(q, nodes) {
+  if (_metaGraph._histNav) return;
+  const h = _metaGraph.detailHist;
+  const cur = h[_metaGraph.detailHistIdx];
+  if (cur && cur.v === "search") {
+    cur.k = q; cur.nodes = nodes;
+    // C1: 뒤로로 검색 항목에 돌아와 질의를 수정하면 질의 문맥이 바뀌므로 forward(구 문맥 노드 등)를 절단
+    //   (노드/클러스터 경로의 새 방문 절단과 동형). top 에서의 in-place 갱신은 splice no-op.
+    if (_metaGraph.detailHistIdx < h.length - 1) h.splice(_metaGraph.detailHistIdx + 1);
+    _metaGraphHistoryUpdateUI();
+    return;
+  }
+  _metaGraphHistoryCaptureScroll();                     // 떠나는(비-검색) 화면 스크롤 스냅샷
+  h.splice(_metaGraph.detailHistIdx + 1);
+  h.push({ v: "search", k: q, nodes });
+  if (h.length > _META_HIST_CAP) h.shift();
+  _metaGraph.detailHistIdx = h.length - 1;
+  _metaGraphHistoryUpdateUI();
+}
+// 검색 이력 항목 복원 — 재fetch 없이 입력값만 세팅(input 이벤트 미발화=재검색 트리거 없음) + 캐시 노드로 결과 재구성.
+//   P1: 검색 컨텍스트 상태(mode·searchMatchNodes)도 복원해, 이후 검색어 클리어 판정(mode/searchMatchNodes 의존)이
+//   드리프트하지 않게 한다(캔버스 앰버 글로우 재적용은 back-nav 재렌더 비용 회피 위해 생략 — 상태만 정합).
+function _metaGraphRestoreSearch(ent) {
+  const s = document.getElementById("metadataGraphSearch");
+  if (s) s.value = ent.k || "";
+  _metaGraph.lastQuery = ent.k || "";
+  _metaGraph.mode = "search";
+  _metaGraph.searchMatchNodes = new Set((ent.nodes || []).map((n) => n && n.key).filter(Boolean));
+  _metaGraphRenderSearchResults(ent.nodes || [], ent.k || "");
+}
 async function _metaGraphHistoryGo(dir) {
   const ni = _metaGraph.detailHistIdx + dir;
   if (ni < 0 || ni >= _metaGraph.detailHist.length) return;
@@ -692,7 +725,8 @@ async function _metaGraphHistoryGo(dir) {
   _metaGraph._histNav = true;                           // 각 show 함수의 Record(첫 await 이전 동기 구간)가 재기록하지 않게
   const p = (ent.v === "cluster") ? _metaGraphShowClusterDetailById(ent.k)
     : (ent.v === "rel") ? _metaGraphShowRelations(ent.k)
-      : _metaGraphShowDetail(ent.k);
+      : (ent.v === "search") ? Promise.resolve(_metaGraphRestoreSearch(ent))
+        : _metaGraphShowDetail(ent.k);
   _metaGraph._histNav = false;                          // M1: 억제창을 show 동기 접두부로 한정(Record 는 위 호출에서 이미 실행·억제).
                                                         //   전체 await 동안 유지하면 네비 중 사용자 클릭이 이력에서 누락되는 회귀.
   const seq = _metaGraph._opSeq;                        // await 이전 캡처(세대 가드 보존)
@@ -701,7 +735,8 @@ async function _metaGraphHistoryGo(dir) {
   _metaGraph._histNavBusy = false;
   _metaGraphHistoryRestoreScroll(ent);                  // graph-detail-scroll: 대상 화면 스크롤 복원(렌더 완료 후)
   // 카메라 재현(fire-and-forget) — 미렌더(접힘/모델 제거)면 skip, 패널은 API 재조회로 복원됨.
-  if (_metaRenderedIdFor(ent.k)) _metaGraphAnimateFocus(ent.k, seq);
+  //   P2: search 항목의 ent.k 는 질의문자열이라 노드 focus 대상 아님(우연히 렌더 id 와 일치 시 오팬 방지).
+  if (ent.v !== "search" && _metaRenderedIdFor(ent.k)) _metaGraphAnimateFocus(ent.k, seq);
   _metaGraphHistoryUpdateUI();
 }
 function _metaGraphHistoryReset() {
@@ -1308,9 +1343,11 @@ function _metaGraphRenderDetailEmpty() {
   el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p><p class="admin-meta-detail-note">노드를 <strong>우클릭</strong>하면 상세 보기·관계 상세·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다.</p></div>';
 }
 
-// graph-search-detail: 검색어 갱신 시 상세 패널에 **검색 결과 리스트**를 구성한다(트리거 = _metaGraphSearch).
-//   백엔드 search_nodes 가 반환한 노드(이름/FQN + 컨텐츠 카테고리 + AI 능동 분석 매칭, score 내림차순)를
-//   매칭 근거 배지(match_via: 이름/카테고리/AI분석)·유사도와 함께 나열한다. 행 클릭 시 그 노드 상세로 이동.
+// graph-search-detail: 검색어 갱신 시 상세 패널에 **검색 결과**를 구성한다(트리거 = _metaGraphSearch).
+//   백엔드 search_nodes 가 반환한 노드(이름/FQN + 컨텐츠 카테고리 + AI 능동 분석 매칭)를 그래프 3층 구조대로
+//   **스키마 클러스터 → 컨텐츠 카테고리 → 노드** 2단으로 구분·정렬하고, 각 단을 접기/펼치기 한다(graph-search-groups).
+//   행에 매칭 근거 배지(match_via: 이름/카테고리/AI분석)·유사도를 붙이고, 클릭 시 그 노드 상세로 이동.
+//   접힘 상태는 _metaGraph._searchGroupCollapsed(재렌더·키스트로크 간 유지, 검색 해제 시 초기화).
 //   컨테이너 id=metaGraphSearchResults 는 검색 해제 시 "검색결과 뷰인지" 판별 마커(노드 상세는 보존).
 function _metaGraphRenderSearchResults(nodes, q) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
@@ -1319,34 +1356,100 @@ function _metaGraphRenderSearchResults(nodes, q) {
   const list = (nodes || []).filter((n) => n && n.key);
   if (!list.length) {
     el.innerHTML = `<div id="metaGraphSearchResults" class="admin-detail-empty admin-meta-graph-searchres">`
-      + `<p><strong>'${esc(q)}'</strong> — 검색 결과가 없습니다.</p>`
-      + `<p class="admin-meta-detail-note">이름·FQN·컨텐츠 카테고리·AI 능동 분석 내용 어디에서도 찾지 못했습니다. 검색어를 바꿔보세요.</p></div>`;
+      + `<p><strong>'${esc(q)}'</strong> — 결과 없음.</p></div>`;
     return;
   }
-  // match_via(백엔드 부여) → 사람이 읽는 근거 배지. 다중 매칭이면 배지 여럿.
   const VIA = { name: ["이름", "amgr-via-name"], category: ["카테고리", "amgr-via-category"], analysis: ["AI 분석", "amgr-via-analysis"] };
-  const rows = list.map((n) => {
+  const collapsed = _metaGraph._searchGroupCollapsed || (_metaGraph._searchGroupCollapsed = new Set());
+  const CAT_NONE = "none";   // cluster_label 없는 노드 sentinel(카테고리 미분류)
+  // 2단 그룹 빌드: schemaCombo -> { label, count, cats: catLabel -> node[] }
+  const schemas = new Map();
+  list.forEach((n) => {
+    const sc = _metaSchemaComboOf(n) || _META_TERMS_COMBO;
+    if (!schemas.has(sc)) schemas.set(sc, { label: _metaComboName(sc), count: 0, cats: new Map() });
+    const g = schemas.get(sc); g.count += 1;
+    const cat = (n.cluster_label && String(n.cluster_label).trim()) ? String(n.cluster_label) : CAT_NONE;
+    if (!g.cats.has(cat)) g.cats.set(cat, []);
+    g.cats.get(cat).push(n);
+  });
+  // 정렬: 스키마=매칭수↓→이름 / 카테고리=수↓→이름(미분류 맨끝) / 노드=유사도↓→이름
+  const scArr = Array.from(schemas.entries()).sort((a, b) => b[1].count - a[1].count || _metaNatSort(a[1].label, b[1].label));
+  const rowHtml = (n) => {
     const via = Array.isArray(n.match_via) ? n.match_via : [];
     const badges = via.map((v) => VIA[v] ? `<span class="amgr-via ${VIA[v][1]}">${VIA[v][0]}</span>` : "").join("");
     const scorePct = (typeof n.score === "number" && n.score > 0)
-      ? ` <span class="admin-meta-graph-muted amgr-searchscore" title="검색어 유사도(pg_trgm)">유사도 ${Math.round(n.score * 100)}%</span>` : "";
-    const cluster = (via.indexOf("category") >= 0 && n.cluster_label)
-      ? `<span class="amgr-searchmeta">카테고리: ${esc(n.cluster_label)}</span>` : "";
+      ? ` <span class="admin-meta-graph-muted amgr-searchscore">유사도 ${Math.round(n.score * 100)}%</span>` : "";
     const color = _META_GRAPH_COLOR[n.label] || "#5c6773";
     const labelKo = _META_LABEL_KO[n.label] || n.label || "";
-    return `<li class="amgr-row amgr-searchres" data-goto="${esc(n.key)}" role="button" tabindex="0" title="${esc(n.fqn || n.name || n.key)} — 클릭하면 이 노드 상세를 봅니다">`
+    return `<li class="amgr-row amgr-searchres" data-goto="${esc(n.key)}" role="button" tabindex="0" title="${esc(n.fqn || n.name || n.key)}">`
       + `<div class="amgr-main"><span class="admin-meta-graph-badge" style="background:${color}">${esc(labelKo)}</span> <code>${esc(n.name || n.fqn || n.key)}</code>${scorePct}</div>`
-      + ((badges || cluster) ? `<div class="amgr-searchsub">${badges}${cluster}</div>` : "")
+      + (badges ? `<div class="amgr-searchsub">${badges}</div>` : "")
       + `</li>`;
-  }).join("");
+  };
+  const grpHead = (cls, id, coll, icon, label, n) =>
+    `<div class="amgr-ct-group ${cls}" role="button" tabindex="0" aria-expanded="${!coll}" data-toggle="${esc(id)}" title="접기/펼치기">`
+    + `<span class="amgr-ct-group-caret" aria-hidden="true">${coll ? "▸" : "▾"}</span>`
+    + `<span class="amgr-ct-group-label">${icon}${esc(label)}</span><span class="amgr-ct-group-n">${n}</span></div>`;
+  const parts = [], currentIds = new Set();   // C2: 이번 렌더의 그룹 id 집합 — stale(다른 질의) collapsed id prune 용
+  scArr.forEach(([scKey, g]) => {
+    const scId = "sc:" + scKey;
+    currentIds.add(scId);
+    const scColl = collapsed.has(scId);
+    parts.push(`<div class="amgr-srch-sc${scColl ? " is-collapsed" : ""}" data-box="${esc(scId)}">`);
+    parts.push(grpHead("amgr-srch-head", scId, scColl, "🗂 ", g.label, g.count));
+    parts.push(`<div class="amgr-srch-sc-body">`);
+    const catArr = Array.from(g.cats.entries()).sort((a, b) => {
+      if (a[0] === CAT_NONE) return 1; if (b[0] === CAT_NONE) return -1;
+      return b[1].length - a[1].length || _metaNatSort(a[0], b[0]);
+    });
+    catArr.forEach(([cat, arr]) => {
+      arr.sort((x, y) => (y.score || 0) - (x.score || 0) || _metaNatSort(x.name || x.key, y.name || y.key));
+      const catId = "cat:" + scKey + "" + cat;
+      currentIds.add(catId);
+      const catColl = collapsed.has(catId);
+      const isNone = cat === CAT_NONE;
+      parts.push(`<div class="amgr-srch-cat${catColl ? " is-collapsed" : ""}${isNone ? " amgr-srch-cat-none" : ""}" data-box="${esc(catId)}">`);
+      parts.push(grpHead("amgr-srch-subhead", catId, catColl, isNone ? "" : "🏷 ", isNone ? "(카테고리 미분류)" : cat, arr.length));
+      parts.push(`<ul class="amgr-list amgr-srch-cat-body">${arr.map(rowHtml).join("")}</ul>`);
+      parts.push(`</div>`);
+    });
+    parts.push(`</div></div>`);
+  });
+  // C2: 현재 렌더에 없는 stale group id 제거(다른 질의 잔재) — "모두 접기/펼치기" 라벨 오표시·유령 부활 방지.
+  for (const id of Array.from(collapsed)) { if (!currentIds.has(id)) collapsed.delete(id); }
+  const anyCollapsed = collapsed.size > 0;
   el.innerHTML = `<div id="metaGraphSearchResults" class="admin-meta-graph-card admin-meta-graph-searchres">`
-    + `<div class="admin-meta-graph-card-head"><strong>🔎 검색 결과</strong> <span class="admin-meta-graph-relbadge" title="매칭된 노드 수(유사도 내림차순)">${list.length}건</span></div>`
-    + `<p class="admin-meta-detail-note">'${esc(q)}' — 이름·FQN·<strong>컨텐츠 카테고리</strong>·<strong>AI 능동 분석</strong> 매칭. 행을 클릭하면 해당 노드 상세로 이동합니다.</p>`
-    + `<ul class="amgr-list amgr-searchlist">${rows}</ul></div>`;
-  el.querySelectorAll(".amgr-searchres[data-goto]").forEach((r) => {
+    + `<div class="admin-meta-graph-card-head"><strong>🔎 검색 결과</strong> <span class="admin-meta-graph-relbadge">${list.length}건</span>`
+    + ` <button type="button" class="amgr-link amgr-srch-collapse-all" id="metaGraphSearchCollapseAll">${anyCollapsed ? "모두 펼치기" : "모두 접기"}</button></div>`
+    + parts.join("") + `</div>`;
+  const root = document.getElementById("metaGraphSearchResults");
+  // 그룹 토글(스키마·카테고리 헤딩) — 재렌더 없이 class·caret·collapsed Set 만 갱신.
+  root.querySelectorAll(".amgr-ct-group[data-toggle]").forEach((h) => {
+    const tg = () => {
+      const id = h.getAttribute("data-toggle");
+      const nowColl = !collapsed.has(id);
+      if (nowColl) collapsed.add(id); else collapsed.delete(id);
+      const box = h.parentElement; if (box) box.classList.toggle("is-collapsed", nowColl);
+      const caret = h.querySelector(".amgr-ct-group-caret"); if (caret) caret.textContent = nowColl ? "▸" : "▾";
+      h.setAttribute("aria-expanded", String(!nowColl));
+      const ca = document.getElementById("metaGraphSearchCollapseAll");
+      if (ca) ca.textContent = collapsed.size > 0 ? "모두 펼치기" : "모두 접기";
+    };
+    h.addEventListener("click", tg);
+    h.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); tg(); } });
+  });
+  // 행 클릭 → 노드 상세.
+  root.querySelectorAll(".amgr-searchres[data-goto]").forEach((r) => {
     const go = () => { const k = r.getAttribute("data-goto"); if (k) _metaGraphShowDetail(k); };
     r.addEventListener("click", go);
     r.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } });
+  });
+  // 모두 접기/펼치기.
+  const collAll = document.getElementById("metaGraphSearchCollapseAll");
+  if (collAll) collAll.addEventListener("click", () => {
+    if (collapsed.size > 0) collapsed.clear();
+    else root.querySelectorAll(".amgr-ct-group[data-toggle]").forEach((h) => collapsed.add(h.getAttribute("data-toggle")));
+    _metaGraphRenderSearchResults(nodes, q);   // 상태 반영 재렌더
   });
 }
 
