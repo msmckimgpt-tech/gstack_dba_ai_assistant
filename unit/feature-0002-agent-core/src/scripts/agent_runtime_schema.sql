@@ -548,6 +548,10 @@ CREATE TABLE IF NOT EXISTS agent_runtime.redteam_reviews (
     latency_ms        INTEGER,
     reasoning_level   VARCHAR(16),
     is_group          BOOLEAN NOT NULL DEFAULT FALSE,
+    -- feature-0002 축 인지 재도출(도구 재추론) 관측치 (0043 migration 미러).
+    rederive_applied     BOOLEAN NOT NULL DEFAULT FALSE,
+    rederive_tool_rounds INTEGER NOT NULL DEFAULT 0,
+    rederive_axis        VARCHAR(64),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_redteam_reviews_conversation

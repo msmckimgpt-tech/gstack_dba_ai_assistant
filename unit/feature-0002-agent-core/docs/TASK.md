@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260716-redteam-axis-rederive (current cycle) — 자가검증 BLOCK 축 인지 재도출: 텍스트 다듬기만 하던 revise 를 sql/max-completeness 는 도구 재추론으로 승격 (Major §12.3 — core 답변 파이프라인·LLM 비용/지연)
+- 출처: `/_template:entry "서비스 내 assistant가 요청을 수행할 때, 자가 검증을 통한 BLOCK 이 확인되었지만 별도의 재추론을 진행하지 않고, 이미 구성된 답변을 바탕으로 다듬는 행위만 진행 후 제출하는듯한 현황"` (2026-07-16, 사용자 명시). 구성 승인 = **세 요소 모두 취하되 completeness 재도출은 '매우 높음(max)'에서만** (AskUserQuestion 3-round, 2026-07-16).
+- **근본원인(코드 확정)**: red-team 자가검증(feature-0021)이 `BLOCK`(verdict="revise")을 확정하면 `orchestrate_review`가 caller 의 `revise_fn`을 호출 → 그 실체 `agent_core._rt_revise`는 `_call_llm(..., tools 인자 없음)` **단발 completion**. 즉 (a) 도구 접근 없음 + (b) `build_revision_instruction`이 "증거 밖 신규 사실 추가 금지" 명시 + (c) evidence digest 1회 고정 재사용 → 구조적으로 **재추론 불가, 텍스트 다듬기만**. grounding/permission/honesty BLOCK은 다듬기가 정답이나, `sql`(틀린 쿼리)·일부 `completeness`(빠뜨린 조회)는 새 근거 없이는 못 고쳐 헤징 강등/미해소/근거없는 정정으로 귀결.
+- **해결(축 인지 라우팅)**: BLOCK 축에 따라 수정 경로 분기. `sql`(항상)·`completeness`(ordinal≥REDTEAM_REDERIVE_COMPLETENESS_MIN_LEVEL, 기본 3=매우높음)는 **도구 허용 재추론**(`rederive_fn`=`_rt_rederive`)으로 승격 — execute_sql 등을 상한 내 재호출해 근거 재수집 후 재도출, 새 근거로 evidence 재계산해 verify 최신 검증. 나머지 축·재추론 무산출은 기존 텍스트 재작성으로 폴백. 전 경로 fail-open 불변.
+
+### §1.1 Implementation
+- `src/modules/redteam.py`: `_REDERIVE_ALWAYS_AXES=("sql",)`·`_REDERIVE_LEVEL_GATED_AXES=("completeness",)`; `_rederive_enabled`/`_rederive_eligible_axes(ordinal)`/`_block_rederive_axes`; `build_rederive_instruction`(도구 재호출 허용·인젝션 sentinel 유지); `orchestrate_review`에 `rederive_fn` 파라미터 + 축 라우팅 루프 + evidence 재계산; `record_review` + meta 에 `rederive_applied/tool_rounds/axis`.
+- `src/agent_core.py`: `_rt_rederive` — `_run_tool_defs`+`execute_tool` 재사용 상한 도구 루프(REDTEAM_REDERIVE_MAX_TOOL_ROUNDS, 마지막 라운드 tools=None 확정, 라운드당 도구 3개, `_datamark_untrusted`+4000자 truncation 미러, build_evidence_digest 호환 step 생성), fail-open; `orchestrate_review` 호출에 `rederive_fn=_rt_rederive` 배선.
+- `shared/runtime_settings.py`: `REDTEAM_REDERIVE_ENABLED`(기본1)·`REDTEAM_REDERIVE_MAX_TOOL_ROUNDS`(기본3)·`REDTEAM_REDERIVE_COMPLETENESS_MIN_LEVEL`(기본3=max) live 설정.
+- `alembic/versions/20260716_0043_redteam_rederive_columns.py` + `MAX_MIGRATION.txt` + `src/scripts/agent_runtime_schema.sql` 미러: redteam_reviews 에 `rederive_applied/tool_rounds/axis` 컬럼(additive expand-safe, GRANT 불필요=ADD COLUMN 상속).
+- `tests/test_redteam.py`: 축별 라우팅·completeness max 게이팅·evidence 재계산·rederive disabled/무산출 폴백·인젝션 sentinel 9건 추가.
+
+### §1.2 Completion Checklist
+- [x] redteam.py 축 인지 라우팅 + evidence 재계산 + record_review/meta 확장
+- [x] agent_core.py `_rt_rederive` 상한 도구 루프(보안 datamark/truncation/cap 미러) + 배선
+- [x] runtime_settings 3개 live 설정 (completeness=max 게이트)
+- [x] migration 0043 + schema.sql 미러 + MAX_MIGRATION 범프 (additive expand-safe)
+- [x] test_redteam.py 확장 — 로컬 30 PASS, 전체 스위트(0002+0003) **2145 passed, 2 skipped, RC=0 회귀 0**(기존 agent 이미지+worktree 마운트, `.env`-less worktree 는 make test dc-build "invalid proto" → 이미지 재사용 정본 경로)
+- [x] py_compile(redteam/agent_core/runtime_settings) 통과
+- [x] §18.8 적대 리뷰(backend+security) SHIP-WITH-FIXES → B1(sentinel breakout)·W1(재도출 SQL 추적성)·W2(취소 존중) 흡수, W3 수용 → REV-20260716T075345-redteam-axis-rederive
+- [ ] 배포(web+worker 재빌드) 후 라이브 실증: 높음/매우높음 대화에서 sql BLOCK 시 redteam_reviews.rederive_applied=true·tool_rounds>0 관측
+
 ## TASK-20260716-graph-search-content-match (current cycle) — 그래프 뷰 검색 매칭 확장: 컨텐츠 카테고리 + AI 능동 분석 본문 (Minor §12.3 — 비파괴·읽기전용 검색 쿼리 확장·내부 API)
 - 출처: `/_template:entry "그래프 뷰 내부에서 검색을 진행할 때, '테이블, 컬럼, 용어' 뿐만 아니라, 컨텐츠 카테고리 및 AI 능동 분석을 통해 얻은 내용 또한 매칭될 수 있도록 구성해주세요."` (2026-07-16, 사용자 명시).
 - **교차 feature**: 그래프 뷰 기능 정본 = feature-0016-metadata-graph. 코드 거주 = feature-0002-agent-core `modules/metadata_graph.py`(검색은 서버사이드 `search_nodes` 가 정본, 프론트 `_metaGraphSearch` 는 반환 노드 렌더·글로우만 담당). 본 cycle 은 코드 거주 feature(0002)에 기록, 추적은 feature-0016 TASK/REPORT 에 cross-ref.
