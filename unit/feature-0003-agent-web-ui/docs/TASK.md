@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260716T140735-doc-sync-rn-0716b — 07-16 낮 머지분 릴리즈노트 정합(관계도 검색 확대/결과 목록·상세 [뒤로/앞으로] 탐색 UX·카테고리 헤딩 hover 이동·콘솔 유사 화면 서브탭 통합) (doc_sync, 비-정책 콘텐츠 doc, 2026-07-16)
+- 트리거: `/_dqa:doc_sync`(attended, 사용자 명시 호출). 직전 스케줄 run(01:05, cron wrapper v3 landing 위임)의 미landed 잔재 2 commit(META 0cc64c2b·operational eeabda19 — 07-15 블록 7항목)을 rebase harvest 한 뒤, 그 이후 07-16 낮 머지 델타(PR #837~#853, 34 commit)의 user-facing 분을 **date "2026-07-16" 새 블록 prepend**(4항목: admin 4) + generated 07-15→07-16. 기존 블록(07-15 이하 30개) 무삭제·무변형(총 31 블록).
+- [x] 신규 07-16 블록 4항목(admin 4): ① improved/admin 관계도 검색 콘텐츠 묶음·AI 분석 매칭 확대+상세 패널 검색 결과 목록+2단 접기·검색 이력·설명 간결화(graph-search content-match/detail-panel/panel-groups) ② improved/admin 상세 목록 [뒤로/앞으로] 스크롤 보존·바 상단 고정·비사용 시 반투명(+클릭 후 페이드 fix)(graph-detail-nav scroll/sticky/hover-fade/focus-fade-fix) ③ improved/admin 콘텐츠 묶음 제목 hover 시 화면 이동(graph-cluster-detail-group-hoverpan) ④ improved/admin 콘솔 유사 화면 하위 탭 통합('AI 운영 현황'·'프롬프트' 서브탭+sticky)(feature-0021 console-ia/subtabs/subtab-sticky).
+- [x] **사용자향 평이화**: feature-id·§번호·PR#·권한키(system_prompt.global.read 등)·함수명(bindPaneSubtabs 등)·내부표현(IA/sim-group/sticky/fam 등) 누출 0. 화면 체감 변화만 사용자 언어로.
+- [x] **제외(비-노출)**: 각 *-postverify 머지(배포 검증 문서)·guidance 권한 재배치/console.reasoning.read 감사 카테고리 이동(내부 권한 체계 — 화면 체감은 ④ 로 포괄)·기본 시스템 프롬프트 fallback 목록 제외(내부 중복 정리).
+- [x] **cache-buster**: 소스 `?v=dev` 고정 placeholder 유지 — index/admin.html 수기 bump 안 함(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` 배포 시 content-hash 주입·deploy-web `asset_stamp_verify` 하드게이트). 직전 doc-sync-rn-0713~0716 동일 판단.
+- [x] 검증: `node --check release-notes-data.js` PASS · vm 파서 구조검증(31 releases·releases[0].date=2026-07-16/items=4[admin 4]·releases[1].date=2026-07-15 보존[7항목]·스키마 type/area/title·누출 스캔 0).
+- [x] landing/배포: verify-completion(operational, feature-0003) → **attended run 이라 스킬이 landing/배포 소유** — 분리 commit→push→PR→merge→`make deploy-web`→end-state 서빙 검증까지 본 run 이 수행(2026-06-25 사용자 정책). META(SECURITY §23 정정·wiki Log/hot/카드·meta/REVIEW)는 별도 commit.
+- [ ] PB-0008 Windows-browser: 릴리즈노트 콘텐츠 데이터만(렌더 로직 `release-notes.js` 불변) — 신규 렌더 델타 없음. 원천 UI(그래프 검색/상세 내비/hover-pan·콘솔 서브탭)는 각 원천 cycle POST-DEPLOY PB-0008 이 이미 검증(PASS). 사유 TEST.md CHECK#13(2026-07-16b).
+
 ## TASK-20260716T114705-graph-search-panel-groups — 검색 결과 패널 3개선: 2단 접기(스키마 클러스터·컨텐츠 카테고리)·검색 이력(뒤로/앞으로)·설명문 간결화 (Minor §12.3 — feature-0003 프론트 단독, additive; 그래프 정본 feature-0016)
 - 출처: `/_template:entry` 후속 turn — "① '스키마 클러스터', '컨텐츠 카테고리' 단위로 구분 및 정렬하여 [접기/펼치기] 가능하도록 ② [뒤로/앞으로] 버튼이 검색에 대해서도 유효 ③ 검색 시 설명문 툴팁 텍스트가 TMI — 단순명료하게." (2026-07-16, 사용자 명시). TASK-20260716T013714(검색 결과 패널) 후속 개선.
 - **① 2단 접기**: 검색 결과를 그래프 3층 구조대로 **스키마 클러스터(`_metaSchemaComboOf`) → 컨텐츠 카테고리(`cluster_label`) → 노드**로 구분·정렬(스키마=매칭수↓, 카테고리=수↓·미분류 맨끝, 노드=유사도↓)하고 각 단 접기/펼치기 + "모두 접기/펼치기". 접힘 상태 `_metaGraph._searchGroupCollapsed`(재렌더·키스트로크 간 유지, 검색 해제 시 초기화).

@@ -639,3 +639,12 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(30 releases·07-15 head 7항목[admin 6·common 1]·07-14 보존[10]·스키마·누출0). `verify_release_notes.mjs` 33/34 PASS(1 FAIL=styles.css scroll 정규식 brittleness·본 cycle 미변경·pristine HEAD 동일 재현·feature-0003 소관).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - **landing/배포 소유=cron wrapper 위임**(로컬 commit 만·push/merge/deploy 미수행). META(wiki·SECURITY §23·meta/REVIEW)는 별도 commit(0cc64c2b, REV-20260716T010501-META-0037-doc-sync-0716).
+
+## CHG-20260716T140735-doc-sync-rn-0716b (TASK-20260716T140735-doc-sync-rn-0716b — 07-16 낮 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases 배열 head 에 **date "2026-07-16" 새 블록 prepend**(4항목: admin 4)·summary 작성. generated 07-15→07-16. 기존 30 블록 보존(총 31).
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입·deploy-web `asset_stamp_verify` 하드게이트). index/admin.html 편집 0.
+- 제외: 각 *-postverify(배포 검증 기록)·guidance 권한 재배치 등 내부 권한 체계 변화(화면 체감은 ④ 서브탭 통합으로 포괄)·기본 프롬프트 fallback 목록 제외(내부 정리).
+- Verification: `node --check` PASS · vm 구조검증(31 releases·07-16 head 4항목[admin 4]·07-15 보존[7]·스키마·누출0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- **attended run — landing/배포 스킬 소유**(분리 commit→PR→merge→deploy-web→서빙 검증). META(SECURITY §23 정정·wiki·meta/REVIEW)는 별도 commit. 직전 스케줄 잔재(0cc64c2b·eeabda19)는 rebase harvest.

@@ -1691,3 +1691,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-15" 블록 신규(7항목: admin 6·common 1) prepend·generated 07-15. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 평이화/비노출: feature-id·§번호·PR#·마이그·권한키·테이블/함수명·라이브러리명·내부표현(red-team·choke-point 등) 비노출(사용자 언어).
 - 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260716T010501-doc-sync-rn-0716. **landing/배포는 cron wrapper 소유(로컬 commit 만).**
+
+## (doc-sync-rn-0716b, 2026-07-16) 릴리즈노트 콘텐츠 — 07-16 블록 신규(관계도 검색 확대/결과 목록·상세 [뒤로/앞으로] 탐색 UX·카테고리 헤딩 hover 이동·콘솔 유사 화면 서브탭 통합)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-16" 블록 신규(4항목: admin 4) prepend·generated 07-16. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 평이화/비노출: feature-id·§번호·PR#·권한키·함수명·내부표현 비노출(사용자 언어).
+- 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260716T140735-doc-sync-rn-0716b. **attended run — landing/배포 스킬 소유(분리 commit→PR→merge→deploy-web→서빙 검증).**
