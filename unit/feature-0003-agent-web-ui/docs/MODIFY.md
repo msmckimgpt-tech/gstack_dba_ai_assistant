@@ -11,6 +11,14 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260716T051931-ds-test-gate-fix (TASK-20260716T051931-ds-test-gate-fix — 작업화면 데이터소스 '연결 테스트' 버튼 렌더 회귀 수정, Minor §12.3)
+- Date: 2026-07-16. 사용자 신고(회귀): 07-13 출하 DS 테스트 버튼 미표시.
+- 변경: `static/app.js` `buildProductDropupItem` `_dsTestable` 게이트 1줄 — `Boolean(state.user?.permissions?.["datasource.test"])` → `can("datasource.test")`. 근거: `state.user.permissions` 는 `/api/session` 미직렬화(TASK-0098 "표시 허용 + backend 403" 컨벤션)라 항상 undefined→false→버튼 미렌더. `can()` 은 display-permissive(로그인=true), 실제 거부는 백엔드 403(admin_test_datasource console.access+datasource.test). 순 게이트 = `!viewOnly && canOpenAdminConsole()`(07-13 동작 복구).
+- 회귀 유입: perm-atomic-split `8e01cc24`(07-15 Critical) — datasource.test 원자 권한 신설 시 프론트 게이트를 부재 permissions 맵으로 작성.
+- 비변경: 백엔드/스키마/RBAC/엔드포인트 shape 0(보안 posture 불변)·토스트·throttle·admin.js 무변경.
+- 검증: `node --check` PASS · 회귀 하네스 short-circuit 무영향. 라이브=POST-DEPLOY PB-0008. Cross-ref: REV-20260716T051931-ds-test-gate-fix · test-runs.d fragment.
+- 관련 flag: 동일 커밋 app.js ≈L2006 권한 표시 UI 도 `state.user.permissions` 의존(별도 feature 소유·본 scope 밖).
+
 ## CHG-20260716T120000-graph-search-groups-postverify (POST-DEPLOY 시각검증 정합 — docs-only, 코드 변경 0)
 - Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-groups-postverify`(base main). CHG-20260716T114705-graph-search-panel-groups(PR #846 배포 89c1e7b0)의 POST-DEPLOY PB-0008 라이브 시각검증 결과를 원장에 정합.
 - 변경: `docs/test-runs.d/20260716T1147-graph-search-panel-groups.md` Run 3 DEFERRED→**PASS**(라이브 실측 — 8 스키마→카테고리 2단 접기·모두 접기/펼치기 라벨 정합·검색 이력 뒤로/앞으로·verbose 부제 부재·pageerror 0) + verdict 갱신 + `docs/TASK.md` PB-0008 체크박스 [x]. **런타임 코드 무변경**.
