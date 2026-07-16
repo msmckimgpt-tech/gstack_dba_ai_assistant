@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260716-redteam-axis-rederive (자가검증 BLOCK 축 인지 재도출 — 텍스트 다듬기만 하던 revise 를 sql/max-completeness 는 도구 재추론으로 승격, Major §12.3 — core 답변 파이프라인·LLM 비용/지연)
+- Date: 2026-07-16. worktree `ai/claude-corp/feature-0002-redteam-rederive`(base main). 사용자 요청(/_template:entry): "자가 검증을 통한 BLOCK 이 확인되었지만 별도의 재추론을 진행하지 않고 이미 구성된 답변을 다듬는 행위만 진행 후 제출". 구성 승인 = 세 요소 모두 취하되 completeness 재도출은 매우높음(max)에서만.
+- **무엇을**: red-team 자가검증 revise 경로를 축 인지로 분기. 기존엔 모든 BLOCK을 `_rt_revise`(도구 없는 단발 텍스트 재작성)로만 고쳐, `sql`(틀린 쿼리)처럼 새 근거 필요 결함은 못 고치고 다듬기만 했음. 이제 `sql`(항상)·`completeness`(매우높음)는 `_rt_rederive`(도구 허용 재추론)로 승격.
+- **파일**: `src/modules/redteam.py`(`_REDERIVE_ALWAYS_AXES`/`_REDERIVE_LEVEL_GATED_AXES`·`_rederive_enabled`/`_rederive_eligible_axes`/`_block_rederive_axes`·`build_rederive_instruction`·`orchestrate_review(rederive_fn=)` 라우팅 루프+evidence 재계산·`record_review`/meta 확장); `src/agent_core.py`(`_rt_rederive` 상한 도구 루프 신규 — `_run_tool_defs`+`execute_tool` 재사용, `REDTEAM_REDERIVE_MAX_TOOL_ROUNDS` 상한, 마지막 라운드 tools=None, 라운드당 도구 3개 cap, 보안 `_datamark_untrusted`+4000자 truncation 미러, evidence 호환 step, fail-open + 배선); `shared/runtime_settings.py`(`REDTEAM_REDERIVE_ENABLED`1·`_MAX_TOOL_ROUNDS`3·`_COMPLETENESS_MIN_LEVEL`3 live); `alembic/.../20260716_0043_redteam_rederive_columns.py`+MAX_MIGRATION+`scripts/agent_runtime_schema.sql` 미러(redteam_reviews 3컬럼 additive).
+- **왜**: `sql`/`completeness` BLOCK을 다듬기로 "고치면" 헤징 강등·BLOCK 미해소·근거없는 정정(새 grounding 위반 주입) 중 하나로 귀결. 실제 도구 재실행 재추론만 정정 가능.
+- **호환/안전**: grounding/permission/honesty 는 기존 텍스트 재작성 유지(무회귀). 재추론 무산출/비활성(`REDTEAM_REDERIVE_ENABLED=0`)/예외는 텍스트 재작성으로 폴백(fail-open 불변). completeness 는 사용자 결정대로 max(ordinal 3)에서만 승격 — 모호축 비용/드리프트 위험을 최대사양 티어로 국한. migration additive expand-safe·GRANT 불필요(ADD COLUMN 상속). 검증: 전체 스위트(0002+0003) 2145 passed/2 skipped/RC=0 회귀 0.
+
 ## CHG-20260716-graph-search-content-match (그래프 뷰 검색 매칭 확장 — 컨텐츠 카테고리 + AI 능동 분석 본문, Minor §12.3; 교차 feature-0016 정본)
 - Date: 2026-07-16. 별도 worktree `ai/claude/feature-0016-graph-search-content`(base main). 사용자 요청(/_template:entry): "그래프 뷰 내부에서 검색을 진행할 때, '테이블, 컬럼, 용어' 뿐만 아니라, 컨텐츠 카테고리 및 AI 능동 분석을 통해 얻은 내용 또한 매칭될 수 있도록 구성해주세요."
 - **컨텍스트**: 그래프 뷰 검색은 서버사이드 정본이다 — 프론트 `_metaGraphSearch`(feature-0003 `graph-ctxmenu.js`)는 `/api/admin/metadata/graph?q=` 를 호출하고 반환 노드를 그대로 렌더·글로우한다. 실제 매칭은 `search_nodes()` Cypher 가 담당하며 기존엔 `n.name`/`n.fqn` CONTAINS 만이었다. "컨텐츠 카테고리" = §78~81 컨텐츠 단위 그룹(= AGE 노드 `semantic_cluster_label`, sim-group LLM 라벨). "AI 능동 분석 내용" = `node_analysis_jobs.analysis`(feature-0016 §69/ADR-034 — agent_kb 관계형 테이블, AGE 정점 아님). 프론트가 임의 매칭 노드를 이미 처리하므로 **백엔드 단독 변경**으로 요청 충족(활성 세션 `graph-ctxmenu.js` 편집과 스코프 충돌 회피).

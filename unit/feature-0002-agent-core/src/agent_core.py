@@ -4192,6 +4192,116 @@ def _run_agent_core(
                         # 초안과 동일하게 CSV 링크로 접는다(초안의 _collapse_large_tables 대칭 — 회귀 방지).
                         return _collapse_large_tables(_txt, all_csv) if all_csv else _txt
 
+                    # W1(추적성): 재도출이 돌린 SQL/도구를 바깥 steps·last_sql 에 반영하기 위한 캡처.
+                    # _rt_rederive 는 outer local(last_sql) 을 재바인딩할 수 없어(closure) dict 로 전달.
+                    _rederive_capture: dict[str, Any] = {"steps": [], "executed_sql": None}
+
+                    def _rt_rederive(instruction: str) -> dict[str, Any] | None:
+                        """도구 허용 재추론 콜백 (feature-0002 축 인지 라우팅).
+
+                        _rt_revise(도구 없는 텍스트 재작성)와 달리 도구(execute_sql 등)를 다시
+                        호출해 올바른 근거를 재수집한 뒤 답을 재도출한다. sql BLOCK(틀린 쿼리)·
+                        max 강도 completeness BLOCK 처럼 새 근거 없이는 못 고치는 결함 전용.
+                        상한 있는 루프(REDTEAM_REDERIVE_MAX_TOOL_ROUNDS)+ 전 경로 fail-open.
+                        반환: {"text","new_steps","executed_sql","tool_rounds"} 또는 None.
+
+                        메인 루프의 persistence/learning/activity side-channel 은 재현하지
+                        않되(수정 pass 엔 불필요), 보안 필수 요소는 미러링한다: 도구 결과
+                        datamark(_datamark_untrusted), 4000자 truncation, 라운드당 도구 3개 상한.
+                        """
+                        try:
+                            _max_rounds = max(1, _rts.get_int("REDTEAM_REDERIVE_MAX_TOOL_ROUNDS"))
+                        except Exception:
+                            _max_rounds = 3
+                        _rd_messages = messages + [
+                            {"role": "assistant", "content": answer},
+                            {"role": "system", "content": instruction},
+                        ]
+                        _rd_steps: list[dict[str, Any]] = []
+                        _rd_last_sql = last_sql
+                        _rd_rounds = 0
+                        _rd_final: str | None = None
+                        _rd_canceled = False
+                        # +1: 마지막 라운드는 도구 없이 최종 답변만 강제(예산 소진 → 확정).
+                        for _rd_i in range(_max_rounds + 1):
+                            # W2: 자가검증 중 사용자 취소 존중(메인 루프 대칭) — 즉시 중단, fail-open(초안 유지).
+                            if _cancel_requested_for_run(mem_conn, cid, run_id):
+                                break
+                            _rd_tools = _run_tool_defs if _rd_i < _max_rounds else None
+                            try:
+                                _rd_resp = _call_llm(client, _rd_messages, model,
+                                                     temperature=temperature, tools=_rd_tools,
+                                                     conversation_id=cid, run_id=run_id,
+                                                     reasoning_level=reasoning_level)
+                            except Exception:
+                                break
+                            _rd_tcs = getattr(_rd_resp, "tool_calls", None)
+                            if not _rd_tcs:
+                                _t = _strip_leaked_tool_notes(getattr(_rd_resp, "content", "") or "").strip()
+                                if _t:
+                                    _rd_final = _t
+                                break
+                            _rd_tcs = _rd_tcs[:3]  # 라운드당 도구 3개 상한(메인 루프 대칭)
+                            _rd_messages.append({
+                                "role": "assistant", "content": None,
+                                "tool_calls": [{
+                                    "id": tc.id, "type": "function",
+                                    "function": {"name": tc.function.name,
+                                                 "arguments": tc.function.arguments},
+                                } for tc in _rd_tcs],
+                            })
+                            _rd_rounds += 1
+                            for tc in _rd_tcs:
+                                if _cancel_requested_for_run(mem_conn, cid, run_id):
+                                    _rd_canceled = True
+                                    break
+                                _tn = tc.function.name
+                                try:
+                                    _ta = json.loads(tc.function.arguments)
+                                except (json.JSONDecodeError, TypeError):
+                                    _ta = {}
+                                if isinstance(_ta, dict):
+                                    _ta.pop("work", None)
+                                    _ta.pop("reason", None)
+                                if _tn == "execute_sql":
+                                    _rd_last_sql = _ta.get("sql", "") or _rd_last_sql
+                                try:
+                                    _tr = execute_tool(db_conn, _tn, _ta)
+                                except Exception as _te:
+                                    _tr = f"오류: 도구 실행 실패 ({_te})"
+                                _tr = _tr if isinstance(_tr, str) else str(_tr)
+                                _tr_len = len(_tr)
+                                if _tr_len > 4000:
+                                    _tr = _tr[:4000] + "\n... (truncated)"
+                                # 보안: 재추론 도구 결과도 인젝션 벡터 — 메인 루프와 동일 datamark.
+                                _rd_messages.append({
+                                    "role": "tool",
+                                    "content": _datamark_untrusted(_tr, f"도구 결과 {_tn}"),
+                                    "tool_call_id": tc.id,
+                                })
+                                # build_evidence_digest 가 읽는 키만 채운 호환 step.
+                                _rd_steps.append({
+                                    "tool_name": _tn,
+                                    "args": _ta if isinstance(_ta, dict) else {},
+                                    "result_preview": _tr[:300],
+                                    "result_length": _tr_len,
+                                })
+                            if _rd_canceled:
+                                break
+                        if not (_rd_final and _rd_final.strip()):
+                            return None
+                        _rd_final = _collapse_large_tables(_rd_final, all_csv) if all_csv else _rd_final
+                        if _rd_steps:
+                            # W1: 재도출 근거를 outer 로 반영(orchestrate 반환 후 채택 시 steps.extend + last_sql).
+                            _rederive_capture["steps"].extend(_rd_steps)
+                            _rederive_capture["executed_sql"] = _rd_last_sql
+                        return {
+                            "text": _rd_final,
+                            "new_steps": _rd_steps,
+                            "executed_sql": _rd_last_sql,
+                            "tool_rounds": _rd_rounds,
+                        }
+
                     _rt_answer, _rt_meta = _redteam.orchestrate_review(
                         question=user_message,
                         draft_answer=answer,
@@ -4202,10 +4312,17 @@ def _run_agent_core(
                         reasoning_level=reasoning_level,
                         is_group=bool(_group_sender_labels),
                         revise_fn=_rt_revise,
+                        rederive_fn=_rt_rederive,
                     )
                     if _rt_answer and _rt_answer.strip():
                         answer = _rt_answer
                         result["answer"] = answer
+                    # W1(추적성): 재도출이 채택돼 새 SQL/도구를 돌렸으면 outer steps·last_sql 에 반영해
+                    # 표시 step·result["executed_sql"] 이 초안이 아닌 재도출 근거를 가리키게 한다.
+                    if _rt_meta and _rt_meta.get("rederive_applied") and _rederive_capture["steps"]:
+                        steps.extend(_rederive_capture["steps"])
+                        if _rederive_capture["executed_sql"]:
+                            last_sql = _rederive_capture["executed_sql"]
                 _agent_notes.update_notes_after_answer(
                     conversation_id=cid, product_id=product_id,
                     steps=steps, review_meta=_rt_meta)

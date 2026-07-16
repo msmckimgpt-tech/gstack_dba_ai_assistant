@@ -10,6 +10,19 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260716T075345-redteam-axis-rederive [SUBAGENT:adversarial-backend+security] — 자가검증 BLOCK 축 인지 재도출 SHIP-WITH-FIXES
+- Date: 2026-07-16
+- Cycle: TASK-20260716-redteam-axis-rederive (red-team 자가검증 revise 를 축 인지로 분기 — sql/max-completeness BLOCK 은 도구 허용 재추론으로 승격), **Major §12.3** — core 답변 파이프라인·LLM 비용/지연.
+- Trigger: §18.8 — rederive 경로가 실제 도구(execute_sql) 재실행 + LLM 다회 호출 → **backend + security** 렌즈. 적대 코드리뷰(general-purpose outside voice, REFUTE: 인젝션 breakout/무한폭주/라우팅 회귀/fail-open/DB migration). `_datamark_untrusted` 정본 방어·메인 루프 도구 처리·0043 chain 교차검증.
+- VERDICT: **SHIP-WITH-FIXES** → BLOCK 1(B1) + WARN 3(W1/W2/W3), B1·W1·W2 흡수, W3 수용.
+- **CONFIRMED-SAFE (리뷰어 실측 인용)**: ①무한/폭주 — `_rt_rederive` `range(max_rounds+1)`+마지막 라운드 `tools=None` 결정론 종료, `orchestrate_review` while `revisions_done<max_revisions`(기본1·최대2) 종결, 비용 게이트(ENABLED+MAX_TOOL_ROUNDS+max_revisions) 모두 bounded·live. ②라우팅 correctness — 비-sql 축은 텍스트 경로 유지, completeness 는 ordinal≥MIN_LEVEL(기본3=max)에서만 승격, 무산출 시 revise_fn 폴백, new_steps 있으면 evidence 재계산 후 verify(전부 test 확인). ③fail-open — LLM/도구 각 try/except, 무산출 None, orchestrate 최상위 try/except → 예외가 답변 전달 막는 경로 없음. ④migration — 0043 순수 additive ADD COLUMN(PG11+ 메타데이터-only expand-safe), chain 일관(down_revision=0042·MAX_MIGRATION=0043·중복 head 없음), schema.sql 미러 일치, INSERT 15컬럼/15placeholder/15값 정합, GRANT 불필요(상속) 판단 타당.
+- **흡수한 B1 (BLOCK — sentinel breakout)**: `build_rederive_instruction`/`build_revision_instruction` 이 비신뢰 findings(claim/fix_hint/evidence — 리뷰어 LLM 산출·적대적 DB 텍스트 유래 가능)를 `<<REVIEW_FINDINGS>>` sentinel 로 감쌀 때 **그 마커를 findings 에서 strip 하지 않아** 위조 close 마커로 구획 breakout 가능. 정본 `_datamark_untrusted`(`_INJ_OPEN/_CLOSE` strip)를 우회. rederive 는 도구 활성이라 breakout→공격자 유도 쿼리 실행 위험 상승(blast radius 는 `execute_tool`/`db_conn` 스코프로 제한 — privilege escalation 아닌 injection foothold). **수정**: `_strip_review_sentinels`+`_findings_bullets` 헬퍼로 자유텍스트 3필드에서 open/close 마커 결정론 제거(`_datamark_untrusted` 대칭), 두 builder 공용. 텍스트 경로(pre-existing 동일 결함)도 함께 봉인. 테스트 `test_findings_bullets_strips_forged_sentinel_breakout`.
+- **흡수한 W1 (재도출 SQL 추적성)**: rederive 가 새 SQL 로 최종 답변 근거를 바꾸지만 그 SQL·도구가 steps/executed_sql 에 비가시 → "표시된 실행 SQL 로 추적 가능" 신뢰모델 위배(초안 SQL 만 보임). **수정**: `_rederive_capture`(closure→outer 전달 dict)로 재도출 steps/executed_sql 캡처, orchestrate 반환 후 `rederive_applied` 채택 시 `steps.extend`+`last_sql` 갱신 → `result["executed_sql"]`·표시 step 이 재도출 근거를 가리킴.
+- **흡수한 W2 (취소 미존중)**: rederive 도구 루프가 `_cancel_requested_for_run` 미확인 → 취소 후에도 상한까지 SQL/LLM 실행(폭주 아님·비용). **수정**: 라운드 상단 + 도구 실행 전 취소 확인, 취소 시 즉시 break→None(fail-open, 초안 유지).
+- **수용(범위 밖·follow-up) W3**: 재도출이 방출한 대형 표는 `all_csv`(초안 steps 산출)에 없어 CSV 링크로 안 접힐 수 있음(초안 CSV 만). 영향 낮음·`execute_tool` CSV 동작 의존 → 라이브 관측 시 follow-up(재도출 후 csv 재산출).
+- Verification: `tests/test_redteam.py` **31 PASS**(축 라우팅·completeness max 게이트·evidence 재계산·폴백·B1 sentinel strip) + 전체 스위트(0002+0003) 회귀 0(RC=0). py_compile(redteam/agent_core) PASS. **라이브 실증(높음/매우높음 대화 sql BLOCK 시 rederive_applied=true·tool_rounds>0)은 배포 게이트**.
+- Cross-ref: CHG-20260716-redteam-axis-rederive / TASK-20260716-redteam-axis-rederive / feature-0021(red-team 자가검증 정본).
+
 ## REV-20260716T010620-graph-search-content-match [SUBAGENT:adversarial-backend+security] — 그래프 뷰 검색 매칭 확장(컨텐츠 카테고리 + AI 능동 분석) SHIP-WITH-FIXES
 - Date: 2026-07-16
 - Cycle: TASK-20260716-graph-search-content-match (그래프 뷰 검색이 이름/FQN 외 컨텐츠 카테고리·AI 능동 분석 본문까지 매칭), **Minor §12.3** — 비파괴·읽기전용 검색 쿼리 확장·내부 API. 코드 거주 feature-0002, 정본 기능 feature-0016.
