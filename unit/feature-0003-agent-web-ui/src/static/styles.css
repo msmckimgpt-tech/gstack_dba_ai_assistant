@@ -8805,7 +8805,17 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   margin: 0 0 16px;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
+  /* feature-0021 subtab-sticky(2026-07-16, 사용자 요청): 서브탭 바를 스크롤 컨테이너 상단에 고정.
+     ai-console pane(overflow-y:auto)·설정 detail-col(overflow-y:auto) 각각의 상단에 붙는다.
+     스크롤되는 아래 콘텐츠(차트·표)를 덮도록 불투명 배경 + z-index. 배경은 컨테이너별로 아래에서
+     오버라이드(설정=--surface 기본, ai-console pane=--bg). 바 아래 콘텐츠 접근성은 불변(bind 무관). */
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--surface);
 }
+/* ai-console 통합 pane 은 카드형이 아닌 워크스페이스 배경(--bg) 위라 바 배경을 맞춘다. */
+.admin-pane[data-admin-pane="ai-console"] .admin-subtabs { background: var(--bg); }
 .admin-subtab {
   padding: 8px 14px;
   font-size: 13px;

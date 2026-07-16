@@ -106,3 +106,10 @@ source_of_truth: true
   요소 id 바인딩(initialize 1회·subpane nested 여도 getElementById resolve), adminState 초기화,
   설정 prompts activateSettingsPanel/검색 필터, canSeeTab OR+AND, HTML 균형, permission_dependency_map.
 - Human Approval Needed: 없음 (프론트 전용, read-only, 데이터 무변경).
+
+## REV-20260716-0006 [SKIPPED:non-policy-doc]
+- Related Change: CHG-20260716-0005 (서브탭 sticky)
+- Reason: CSS 전용(.admin-subtabs position:sticky) — 마크업·JS·백엔드·권한·데이터 무변경.
+  로직/보안/회귀 표면 없음(순수 시각 고정). §18.8 패널 dispatch 키워드 미매칭. 시각 검증은
+  배포 후 PB-0008(sticky 스크롤 동작)로 수행. 따라서 subagent 패널 SKIP.
+- Human Approval Needed: 없음.
