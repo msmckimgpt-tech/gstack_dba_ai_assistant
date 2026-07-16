@@ -352,6 +352,16 @@ ul.amgr-searchlist { list-style: none; margin: 6px 0 0; padding: 0; }
 .amgr-via-category { color: #7a4b12; background: rgba(232, 164, 0, .14); border-color: rgba(232, 164, 0, .42); }
 .amgr-via-analysis { color: #2b5a9e; background: rgba(43, 90, 158, .12); border-color: rgba(43, 90, 158, .35); }
 .amgr-searchmeta { font-size: 10.5px; color: var(--text-muted, var(--text-2)); }
+/* graph-search-groups: 검색 결과 2단 그룹(스키마 클러스터 → 컨텐츠 카테고리). 헤딩은 .amgr-ct-group 시각 재사용.
+   접힘은 부모 박스의 is-collapsed 로 body 를 display:none (행 낱개 토글 대신 서브트리 일괄). */
+.amgr-srch-collapse-all { margin-left: auto; font-size: 10.5px; padding: 1px 8px; }
+.amgr-srch-sc { margin: 2px 0; }
+.amgr-srch-sc.is-collapsed > .amgr-srch-sc-body { display: none; }
+.amgr-srch-cat.is-collapsed > .amgr-srch-cat-body { display: none; }
+.amgr-srch-subhead { margin-left: 10px; }                 /* 카테고리 단은 스키마 단 아래로 들여쓰기 */
+.amgr-srch-subhead .amgr-ct-group-label { font-weight: 600; color: #475569; }
+.amgr-srch-cat-none .amgr-ct-group-label { color: #94a3b8; font-style: italic; }   /* 카테고리 미분류 — 약하게 */
+ul.amgr-srch-cat-body { list-style: none; margin: 2px 0 4px 16px; padding: 0; }    /* 노드 행은 카테고리 아래로 더 들여쓰기 */
 /* reldedup(graph-detail): .admin-meta-graph-ai-rels 규칙 제거 — AI 박스 '연결 관계 추적' 목록이
    상단 컬럼 섹션과 중복이라 삭제되며 이 클래스의 유일 producer 가 사라졌다. */
 /* reldetail-colexpand ①②③: 컬럼 아코디언 + 방향 그룹 + 개수 배지 */
