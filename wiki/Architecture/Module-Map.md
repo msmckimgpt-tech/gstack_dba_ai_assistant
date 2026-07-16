@@ -61,7 +61,7 @@ sources:
 
 ### 2.2 Feature 디렉토리 인덱스
 
-- [[../Features/_Index|Features MOC]] — feature-0001 ~ feature-0020
+- [[../Features/_Index|Features MOC]] — feature-0001 ~ feature-0021
 
 #### 2.2.1 feature-0002 핵심 모듈 (멀티 데이터소스, 2026-06)
 

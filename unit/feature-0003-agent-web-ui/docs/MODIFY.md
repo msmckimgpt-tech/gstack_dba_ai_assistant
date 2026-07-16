@@ -630,3 +630,21 @@ source_of_truth: true
 - 실증(실 Windows Chrome relay, 배포 d2c72fdc, 로그인 세션): DK dk_data_release_main(66 컨텐츠 카테고리) 상세에서 (1) 66 그룹 전부 `data-pan-key`=첫 멤버 노드 key("NPC 콘텐츠"→Combine 테이블·"게임 콘텐츠 조회"→P_CashItem_ReadBy_BackOffice 프로시저), (2) 헤딩 hover(200ms intent) → 카메라 부드럽게 팬: "NPC 콘텐츠"(TitleInfo·MerchantName 영역)↔"게임 콘텐츠 조회"(SetItem·spDeleteCollection 영역) 서로 다른 위치로 이동·미니맵 뷰포트 박스 이동, (3) 행 hover-pan·클릭 조회 불변·pageerror 0. 서빙 자산 baked(grep=8). evidence: hover_g0.png·hover_g45.png.
 - Changes: `docs/test-runs.d/20260716T0128-graph-cluster-detail-group-hoverpan.md` Run 3 DEFERRED→PASS · `docs/TASK.md` POST-DEPLOY 체크박스 close · `docs/REPORT.md` 완결 갱신 · `docs/REVIEW.md` postverify REV.
 - Cross-ref: 원천 CHG-20260716T012805-graph-cluster-detail-group-hoverpan · ANCHOR 0003 무충돌.
+
+## CHG-20260716T010501-doc-sync-rn-0716 (TASK-20260716T010501-doc-sync-rn-0716 — 07-15~16 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases 배열 head 에 **date "2026-07-15" 새 블록 prepend**(7항목: admin 6·common 1)·summary 작성. generated 07-14→07-15. 기존 29 블록 보존(총 30).
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입·deploy-web `asset_stamp_verify` 하드게이트). index/admin.html 편집 0. release-notes-data.js 내용 변경만으로 전역 content-hash 변화 → wrapper 재빌드 시 서빙 토큰 자동 갱신(수동 bump 부적용·해시 불변).
+- 제외: 각 기능 *-postverify(배포 검증 기록)·#805 friction-ledger(내부)·probe/llm-probe 내부 안정성(⑥ 포괄)·feature-0021 red-team 백엔드(사용자 비가시 — 콘솔 'AI 추론' 표면만 노출).
+- Verification: `node --check` PASS · vm 구조검증(30 releases·07-15 head 7항목[admin 6·common 1]·07-14 보존[10]·스키마·누출0). `verify_release_notes.mjs` 33/34 PASS(1 FAIL=styles.css scroll 정규식 brittleness·본 cycle 미변경·pristine HEAD 동일 재현·feature-0003 소관).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- **landing/배포 소유=cron wrapper 위임**(로컬 commit 만·push/merge/deploy 미수행). META(wiki·SECURITY §23·meta/REVIEW)는 별도 commit(0cc64c2b, REV-20260716T010501-META-0037-doc-sync-0716).
+
+## CHG-20260716T140735-doc-sync-rn-0716b (TASK-20260716T140735-doc-sync-rn-0716b — 07-16 낮 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases 배열 head 에 **date "2026-07-16" 새 블록 prepend**(4항목: admin 4)·summary 작성. generated 07-15→07-16. 기존 30 블록 보존(총 31).
+- **cache-buster 무변경**: 소스 `?v=dev` placeholder 고정(§13.1 ITEM-09 what#3 — Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입·deploy-web `asset_stamp_verify` 하드게이트). index/admin.html 편집 0.
+- 제외: 각 *-postverify(배포 검증 기록)·guidance 권한 재배치 등 내부 권한 체계 변화(화면 체감은 ④ 서브탭 통합으로 포괄)·기본 프롬프트 fallback 목록 제외(내부 정리).
+- Verification: `node --check` PASS · vm 구조검증(31 releases·07-16 head 4항목[admin 4]·07-15 보존[7]·스키마·누출0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- **attended run — landing/배포 스킬 소유**(분리 commit→PR→merge→deploy-web→서빙 검증). META(SECURITY §23 정정·wiki·meta/REVIEW)는 별도 commit. 직전 스케줄 잔재(0cc64c2b·eeabda19)는 rebase harvest.

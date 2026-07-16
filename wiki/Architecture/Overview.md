@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 20 카드 (feature-0001 ~ feature-0020; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
+| Feature 수 | 21 카드 (feature-0001 ~ feature-0021; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
 
 ## 목차
 
@@ -89,6 +89,9 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0016-metadata-graph\|feature-0016-metadata-graph]] | 메타데이터 지식그래프 — 관계형 SSOT→AGE `metadata_kb` 투영 + 관리콘솔 그래프 뷰 + `graph_navigate` AI 도구 (cutover 라이브 완료 · 07-01 WebGL·암묵 관계 추론·AI 능동 분석·권한 5분할) |
 | [[../Features/feature-0016-zd-pg-pause-caddy\|feature-0016-zd-pg-pause-caddy]] | PG 재시작 무중단화 — pgbouncer PAUSE 래퍼 + deploy-web.sh Caddyfile reconcile |
 | [[../Features/feature-0017-deploy-build-gate\|feature-0017-deploy-build-gate]] | 배포 스파인 빌드 게이트 false-failure 수정 (snap-docker metadata-race 이미지 정합 검증) |
+| [[../Features/feature-0019-message-editing\|feature-0019-message-editing]] | 메시지 편집 — 1:1 대화 내부 브랜치 트리(단순/요청 분기 재답변 `< n/m >`) + 공유·그룹 단순 수정(@assistant 잠금) |
+| [[../Features/feature-0020-zd-deploy-all\|feature-0020-zd-deploy-all]] | 무중단 배포 커버리지 — deploy 스파인 확장(워커 자동 롤아웃·bedrock-gateway surge 무중단 교체·caddy/alembic stale-image 가드) |
+| [[../Features/feature-0021-redteam-review\|feature-0021-redteam-review]] | assistant 답변 자가 적대(red-team) 리뷰 — fresh-context 5축 검증 + [세션,제품] 메모리 노트 + 콘솔 'AI 추론' 탭 |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -110,6 +113,9 @@ unit/feature-NNNN-<purpose>/
 | feature-0016-metadata-graph | feature-0002, feature-0003, feature-0013, feature-0014 | uses | 동기화·투영·`graph_navigate`·introspection=0002, 그래프 뷰=0003, 관계 저장소=0013 재사용, AGE 이미지 cutover=0014 무중단 정합 |
 | feature-0016-zd-pg-pause-caddy | feature-0002, feature-0006 | uses | pg-restart=0002 PG/pgbouncer, reconcile_caddy=0006 Caddyfile |
 | feature-0017 | feature-0014 | extends | feature-0014 배포 스파인 build_image 게이트 보강 |
+| feature-0019 | feature-0003, feature-0002 | uses | 메시지 편집 UI·엔드포인트=0003, 대화 내부 브랜치 트리·active-path recall=0002 |
+| feature-0020 | feature-0014, feature-0002, feature-0007 | extends | deploy 스파인(0014) 확장 + 워커 이미지 핀(0002) + bedrock-gateway surge 교체(0007) |
+| feature-0021 | feature-0002, feature-0003 | uses | red-team choke-point 훅·agent-notes·guidance_registry=0002, 관리 콘솔 'AI 추론' 콘솔=0003 |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 
