@@ -25,7 +25,7 @@ source_of_truth: true
 - [x] 설명문 간결화(상태줄·부제·행 title) — 정보 손실 없이(상한/숨김 힌트 보존)
 - [x] node --check(ESM) PASS · graph.css brace 245:245·comment 76:76 밸런스
 - [x] §18.8 적대 리뷰(frontend correctness+UX — XSS·접기·이력 루프/가드·회귀·접근성)
-- [ ] 배포 후 PB-0008 실 Windows 브라우저 시각검증(2단 접기·뒤로/앞으로·간결 텍스트, visual_verification_scope: always)
+- [x] 배포(PR #846 → main 89c1e7b0, soak 통과) 후 PB-0008 실 Windows 브라우저 시각검증 PASS — 8 스키마 그룹→카테고리 2단 접기·모두 접기/펼치기(라벨 정합)·행 클릭→노드 상세→[뒤로]검색 복원(입력값·28건)→[앞으로]노드·verbose 부제 부재·pageerror 0 (test-runs.d/20260716T1147 Run 3)
 
 ## TASK-20260716T013714-graph-search-detail-panel — 그래프 뷰: 검색어 갱신 시 상세 패널에 검색 결과 리스트 구성 (Minor §12.3 — feature-0003 프론트 단독, additive·비파괴; 그래프 도메인 정본 feature-0016)
 - 출처: `/_template:entry` 후속 turn — "글로우가 나타나는 것을 확인했습니다. 추가로, 검색어가 입력되었을 경우엔 상세 패널 내 검색 결과를 구성하도록 동작시켜주세요. 트리거는 '검색어 갱신 시' 입니다." (2026-07-16, 사용자 명시). 직전 cycle(feature-0002 graph-search-content) 로 검색이 컨텐츠 카테고리·AI 능동 분석까지 매칭하게 된 것의 프론트 후속.

@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260716T120000-graph-search-groups-postverify (POST-DEPLOY 시각검증 정합 — docs-only, 코드 변경 0)
+- Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-groups-postverify`(base main). CHG-20260716T114705-graph-search-panel-groups(PR #846 배포 89c1e7b0)의 POST-DEPLOY PB-0008 라이브 시각검증 결과를 원장에 정합.
+- 변경: `docs/test-runs.d/20260716T1147-graph-search-panel-groups.md` Run 3 DEFERRED→**PASS**(라이브 실측 — 8 스키마→카테고리 2단 접기·모두 접기/펼치기 라벨 정합·검색 이력 뒤로/앞으로·verbose 부제 부재·pageerror 0) + verdict 갱신 + `docs/TASK.md` PB-0008 체크박스 [x]. **런타임 코드 무변경**.
+- Rollback: 문서 revert. Deploy: 없음. Cross-ref: CHG-20260716T114705-graph-search-panel-groups / REV-20260716T120000-graph-search-groups-postverify.
+
 ## CHG-20260716T114705-graph-search-panel-groups (검색 결과 패널 3개선 — 2단 접기·검색 이력·설명문 간결화, Minor §12.3 프론트 단독·additive)
 - Date: 2026-07-16. 별도 worktree `ai/claude/feature-0003-graph-search-panel-groups`(base main). 사용자 요청(/_template:entry 후속): ①스키마 클러스터·컨텐츠 카테고리 단위 구분·정렬·접기/펼치기 ②뒤로/앞으로가 검색에도 유효 ③검색 설명문 TMI 간결화. TASK-20260716T013714(검색 결과 패널) 후속.
 - **변경**: `src/static/graph/graph-ctxmenu.js`
