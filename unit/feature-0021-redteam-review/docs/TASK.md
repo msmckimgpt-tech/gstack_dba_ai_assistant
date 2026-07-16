@@ -45,8 +45,8 @@ feature_status_updated: 2026-07-15
       agent_notes cap/TTL, 라우터 RBAC) + ROUTEMAP 재생성 + make test
 - [x] TASK-20260715T140102-deploy-verify: PR #819/#821 병합·배포(23b8faba)·alembic 0042·PB-0008 PASS
 - [x] TASK-20260716-console-ia: 관리 콘솔 IA 재구성 — 감사>AI추론 + 설정>프롬프트 분리 (배포·PB-0008 PASS)
-- [ ] TASK-20260716-console-subtabs: 유사 항목 서브탭 통합 — 'AI 운영 현황'[LLM 사용량/운영 현황/추론]
-      + 설정 '프롬프트'[전역/지침/스킬] (사용자 요청)
+- [x] TASK-20260716-console-subtabs: 유사 항목 서브탭 통합 (배포·PB-0008 PASS)
+- [ ] TASK-20260716-subtab-sticky: 서브탭 바 화면 상단 sticky 고정 (CSS, 사용자 요청)
 
 ## 4. In Progress
 - 없음

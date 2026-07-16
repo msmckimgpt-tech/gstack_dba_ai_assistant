@@ -108,3 +108,14 @@ source_of_truth: true
 - Impact: UI/IA 통합(프론트 전용). 백엔드 엔드포인트·권한 카탈로그·데이터 무변경. 권한 자체 불변
   (탭 키만 admin.js 에서 통합). ROUTEMAP 무변경. 서브탭 권한 게이팅으로 기존 접근성 보존.
 - Rollback Notes: 커밋 revert (프론트 전용, 데이터 영향 없음).
+
+## CHG-20260716-0005
+- Date: 2026-07-16
+- Related Requirement: REQ-20260716-subtab-sticky (사용자 요청 — 서브탭 화면 상단 sticky)
+- Summary: 서브탭 바(.admin-subtabs)를 스크롤 시 스크롤 컨테이너 상단에 sticky 고정.
+  'AI 운영 현황'(ai-console pane, overflow-y:auto)·설정 '프롬프트'(detail-col, overflow-y:auto)
+  양쪽 서브탭 바가 하위 콘텐츠 스크롤 시 상단에 남는다. 불투명 배경(설정=--surface, ai-console
+  pane=--bg 오버라이드) + z-index:6 으로 아래 차트·표를 덮는다.
+- Files: `unit/feature-0003-agent-web-ui/src/static/styles.css` (.admin-subtabs position:sticky)
+- Impact: CSS 전용. 마크업·JS·백엔드 무변경. 서브탭 바가 스크롤 중에도 접근 가능.
+- Rollback Notes: 커밋 revert (CSS 전용).
