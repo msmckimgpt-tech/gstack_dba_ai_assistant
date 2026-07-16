@@ -83,12 +83,16 @@
   margin: 0 -14px 8px; padding: 14px 14px 8px;
   background: var(--surface, #fff); border-bottom: 1px solid var(--border);
   /* graph-detail-nav-hover-fade: 마우스 hover(또는 키보드 포커스)가 아닐 땐 바를 부드럽게 흐리게(반투명) —
-     비간섭 컨트롤로 콘텐츠를 덜 가림. hover/focus 시 완전 불투명 복원. 바는 레이아웃/포인터 타겟을 그대로
-     유지하므로 흐린 상태에서도 상단 영역에 커서를 올리면 즉시 되살아난다. */
+     비간섭 컨트롤로 콘텐츠를 덜 가림. hover/키보드 포커스 시 완전 불투명 복원. 바는 레이아웃/포인터 타겟을
+     그대로 유지하므로 흐린 상태에서도 상단 영역에 커서를 올리면 즉시 되살아난다. */
   opacity: .3; transition: opacity .18s ease;
 }
-.admin-meta-graph-detailnav:hover,
-.admin-meta-graph-detailnav:focus-within { opacity: 1; }
+.admin-meta-graph-detailnav:hover { opacity: 1; }
+/* graph-detail-nav-focus-fade-fix: 키보드 포커스(:focus-visible)일 때만 불투명 유지 — 마우스 클릭 포커스는 제외.
+   기존 :focus-within 은 마우스 클릭 포커스도 매칭해, [뒤로/앞으로]를 클릭한 뒤 버튼이 포커스를 유지하면
+   포인터가 떠나도 바가 계속 불투명해지는 버그였다(도착이 스키마 클러스터라 카메라 focusElement 로 포커스가
+   캔버스로 옮겨가지 않을 때 특히 발현). :has 미지원 브라우저는 이 규칙만 무시되고 위 :hover 규칙은 별도라 보존. */
+.admin-meta-graph-detailnav:has(:focus-visible) { opacity: 1; }
 /* 접근성: 모션 최소화 선호 시 페이드 전환 제거(즉시 전환). */
 @media (prefers-reduced-motion: reduce) { .admin-meta-graph-detailnav { transition: none; } }
 /* 이력 ≤1 로 바가 숨으면 body 가 최상단 → 제거한 aside 상단 padding 을 body 로 보전(진입 시 여백 유지). */
