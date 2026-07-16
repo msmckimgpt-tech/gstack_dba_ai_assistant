@@ -751,20 +751,22 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
   데이터소스 연결 테스트는 `datasource.test` 작동 단위로 분리(작업 화면 ds-conn-test 버튼 동일
   게이트 — 기존 '버튼 노출but 403' 괴리 해소).
 
-## 23. AI 추론 구조 조회 — assistant 자가 리뷰/노트 admin observability 표면 (feature-0021-redteam-review, 2026-07-15)
+## 23. AI 추론 구조 조회 — assistant 자가 리뷰/노트 admin observability 표면 (feature-0021-redteam-review, 2026-07-15 · 콘솔 IA 재구성 2026-07-16)
 
 > 색인 항목 — 전체 위협모델·적대 검증 정본은 `unit/feature-0021-redteam-review/docs/{REVIEW.md, FUNCTION.md}`
 > (권한 게이팅·세션/제품 노트 격리·prompt-injection 방어심층 렌즈, BLOCK 2·MAJOR 1 전건 in-cycle 반영·잔여 0).
 > 본 절은 신규 관측 표면의 boundary 색인 (§20 AI 운영 관제 패널과 동형).
 
-- **신규 표면**: 관리 콘솔 > 시스템 > 'AI 추론' 탭 — assistant 작동 지침/스킬 레지스트리(메타 목록 +
-  `?key=` 단건 본문, progressive disclosure)·자가 적대(red-team) 리뷰 요약 통계/최근 판정(id DESC keyset
-  cursor 페이징)·세션/제품 메모리 노트 임시 파일 현황(TTL 잔여)을 열람하는 **read-only** admin 관측 표면.
-  데이터 소스 = 신규 엔드포인트 3종 `GET /api/admin/reasoning/{guidance,redteam,notes}`
-  (`routers/admin_reasoning.py`, INCLUDE_ORDER=240).
-- **경계 가드**: 신규 read-only 권한 `console.reasoning.read`(**admin 전용**) 단독 게이트 — 3 라우트 전부
-  `Depends(app.require_permission("console.reasoning.read"))`. additive·비파괴, 기존 인증/인가·엔드포인트
-  enforcement 불변, 신규 쓰기·익명 표면 0.
+- **신규 표면**: 관리 콘솔 — 자가 적대(red-team) 리뷰 요약 통계/최근 판정(id DESC keyset cursor 페이징)·
+  세션/제품 메모리 노트 임시 파일 현황(TTL 잔여)은 **감사 > 'AI 운영 현황' 탭 > [추론] 서브탭**, assistant
+  작동 지침/스킬 레지스트리(메타 목록 + `?key=` 단건 본문, progressive disclosure)는 **설정 > 프롬프트
+  서브탭 [작동 지침|스킬]** 에서 열람하는 **read-only** admin 관측 표면(07-16 콘솔 IA 재구성 — 감사/설정
+  분리·유사 탭 서브탭 통합, 백엔드 엔드포인트 불변). 데이터 소스 = 엔드포인트 3종
+  `GET /api/admin/reasoning/{guidance,redteam,notes}` (`routers/admin_reasoning.py`, INCLUDE_ORDER=240).
+- **경계 가드**: read-only 권한 `console.reasoning.read`(**admin 전용**, 07-16 감사 카테고리로 재배치)가
+  redteam/notes 2 라우트 게이트. guidance 라우트는 07-16 IA 재구성에서 프롬프트 조회 성격에 맞춰
+  `system_prompt.global.read` 재사용(+`?kind` 필터)으로 전환 — 신규 권한 0. additive·비파괴, 기존
+  인증/인가·엔드포인트 enforcement 불변, 신규 쓰기·익명 표면 0.
 - **읽기전용·least-priv**: PG(`agent_runtime.redteam_reviews`) 읽기는 `_pg_connect_ro`(least-privilege) +
   **부분 degrade**(PG 미가용/테이블 부재도 200 + `pg_available:false`, §20 ai-ops 규약 답습). 지침 본문은
   agent-core `modules.guidance_registry` 코드 상수 lazy 참조 — 콘솔 조회를 위해 본문을 복제하지 않는다(단일
