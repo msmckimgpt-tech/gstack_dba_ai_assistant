@@ -748,8 +748,12 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
   `console-category-access-v1` **보다 먼저** 실행(fresh install 에서 카테고리 접근 backfill 의
   원자 leaves 판정 선행 조건). admin catchup 23종 동반(lockout 방지).
 - **서브탭 진입 게이트 = 조회(read)**: `_METADATA_SUBTAB_PERM(_SERVER)` manage→read 전환.
-  데이터소스 연결 테스트는 `datasource.test` 작동 단위로 분리(작업 화면 ds-conn-test 버튼 동일
-  게이트 — 기존 '버튼 노출but 403' 괴리 해소).
+  데이터소스 연결 테스트는 `datasource.test` 작동 단위로 분리 — 백엔드 `admin_test_datasource`
+  가 console.access+datasource.test 를 강제(enforcement choke-point, 불변). 작업 화면 ds-conn-test
+  버튼의 프론트 게이트는 표시 허용(`can()`, display-permissive)이고 실제 거부는 백엔드 403
+  (2026-07-16 ds-test-gate-fix — perm-atomic-split 이 시도한 미직렬화
+  `state.user.permissions["datasource.test"]` 의존이 버튼을 전소실시킨 회귀를 07-13 동작으로 복구;
+  표시 계층만 복구·enforcement 경계 불변·보안 무영향).
 
 ## 23. AI 추론 구조 조회 — assistant 자가 리뷰/노트 admin observability 표면 (feature-0021-redteam-review, 2026-07-15 · 콘솔 IA 재구성 2026-07-16)
 
