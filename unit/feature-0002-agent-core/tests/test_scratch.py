@@ -163,6 +163,15 @@ def test_tool_defs_hidden_when_disabled(monkeypatch):
     assert tools.with_scratch_tools(base) == base
 
 
+def test_statement_timeout_sql_not_parameterized():
+    # 회귀: PG 는 SET 값에 파라미터 바인딩을 허용하지 않는다 — 반드시 정수 인라인(placeholder 금지).
+    stmt = scratch._statement_timeout_sql()
+    assert stmt.startswith("SET statement_timeout = ")
+    assert "%s" not in stmt and "$" not in stmt
+    # 마지막 토큰이 정수여야 한다.
+    assert stmt.rsplit("= ", 1)[1].strip().isdigit()
+
+
 def test_scratch_guidance_constant_present():
     # feature-0022 guidance: assistant·ask-worker 가 scratch 를 적극 사용하도록 하는 프롬프트 지침이
     # 존재하고 4 도구를 언급하는지(활성 시 주입) 최소 sanity.
