@@ -1,0 +1,61 @@
+# Edit this file to introduce tasks to be run by cron.
+# 
+# Each task to run has to be defined through a single line
+# indicating with different fields when the task will be run
+# and what command to run for the task
+# 
+# To define the time you can provide concrete values for
+# minute (m), hour (h), day of month (dom), month (mon),
+# and day of week (dow) or use '*' in these fields (for 'any').
+# 
+# Notice that tasks will be started based on the cron's system
+# daemon's notion of time and timezones.
+# 
+# Output of the crontab jobs (including errors) is sent through
+# email to the user the crontab file belongs to (unless redirected).
+# 
+# For example, you can run a backup of all your user accounts
+# at 5 a.m every week with:
+# 0 5 * * 1 tar -zcf /var/backups/home.tgz /home/
+# 
+# For more information see the manual pages of crontab(5) and cron(8)
+# 
+# m h  dom mon dow   command
+##### wsl 정리 #####
+0 2 * * * /usr/local/bin/wsl-cleanup.sh >> ~/cleanup.log 2>&1
+##### gsheet 테스트 #####
+# * * * * * /bin/bash -c 'echo "Y" | /backup/bin/mysqlsh_backup.sh "gsheetapi"' >> ~/cronlog.log 2>&1
+##### RDS 실행/중지 #####
+# eu1 : Live - 버지니아
+# 중지 상태 유지
+# 30 18 * * * /bin/bash /root/rds_control/eu1/manage-aurora.sh stop
+# 30 09 * * 1-5 /bin/bash /root/rds_control/eu1/manage-aurora.sh start
+# an1 : Live - 도쿄
+# 30 18 * * * /bin/bash /root/rds_control/an1/manage-aurora.sh stop
+# 30 09 * * 1-5 /bin/bash /root/rds_control/an1/manage-aurora.sh start
+# an2 : QA - 서울
+# 30 18 * * * /bin/bash /root/rds_control/an2/manage-aurora.sh stop
+# 30 09 * * 1-5 /bin/bash /root/rds_control/an2/manage-aurora.sh start
+# an2 : QA - 서울(주말 종료)
+30 20 * * 5 /bin/bash /root/rds_control/an2/manage-aurora.sh stop
+30 09 * * 1 /bin/bash /root/rds_control/an2/manage-aurora.sh start
+# BEGIN XTRABACKUP_CONV:local
+#0 2 * * 0 /root/download/docker/xtrabackup/repo/unit/feature-0001-xtrabackup-assistant-scripts/src/xtrabackup.sh backup full --profile local --yes >> "/backup/xtrabackup-conv/schedules/xtrabackup-conv-$(date +\%Y\%m\%d).log" 2>&1
+#0 */6 * * * /root/download/docker/xtrabackup/repo/unit/feature-0001-xtrabackup-assistant-scripts/src/xtrabackup.sh backup auto --profile local --yes >> "/backup/xtrabackup-conv/schedules/xtrabackup-conv-$(date +\%Y\%m\%d).log" 2>&1
+#*/10 * * * * /root/download/docker/xtrabackup/repo/unit/feature-0001-xtrabackup-assistant-scripts/src/xtrabackup.sh binlog archive --profile local --yes >> "/backup/xtrabackup-conv/schedules/xtrabackup-conv-$(date +\%Y\%m\%d).log" 2>&1
+#15 4 * * * /root/download/docker/xtrabackup/repo/unit/feature-0001-xtrabackup-assistant-scripts/src/xtrabackup.sh cleanup prune --profile local --scope all --retention-days 35 --temp-retention-days 7 --yes >> "/backup/xtrabackup-conv/schedules/xtrabackup-conv-$(date +\%Y\%m\%d).log" 2>&1
+# END XTRABACKUP_CONV:local
+# BEGIN SCHEDULED_INSPECTION (ai_delegated_dev_template 정기 점검 — 2026-05-08 등록)
+35 7,12 * * 1-5 /root/.claude/projects/-root-ai-ai-delegated-dev-template/scheduled-inspection/run.sh >> /root/.claude/projects/-root-ai-ai-delegated-dev-template/scheduled-inspection/logs/$(date +\%Y-\%m-\%d).log 2>&1
+# END SCHEDULED_INSPECTION 
+# mysql_ai_delegated_dev : DQA LLM 게이트 OAuth 토큰 갱신 — claude-corp 회사 계정 (평일 10:00~19:00, 30분 주기)
+#   2026-07-02: 라이브 probe(429 감지, 2026-06-29 추가)가 매 실행마다 실사용 API 콜을 발생시켜
+#   claude-corp 5시간 rolling 세션 윈도우를 :00/:30 격자에 영구 고정 → session-keepalive-cron.sh
+#   (07:35/12:35 정렬 핑)가 무력화되는 충돌 확인. 새벽·야간·주말을 비워 keepalive 의 07:35 핑이
+#   매일 실제 윈도우 시작점이 되도록 평일 업무시간대로 제한.
+0,30 10-18 * * 1-5 bash /root/download/docker/mysql_ai_delegated_dev/repo/bin/refresh-claude-oauth-token.sh >> /tmp/refresh-oauth.log 2>&1
+0 19 * * 1-5 bash /root/download/docker/mysql_ai_delegated_dev/repo/bin/refresh-claude-oauth-token.sh >> /tmp/refresh-oauth.log 2>&1
+0 3 * * * cd /root/download/docker/mysql_ai_delegated_dev/repo && bin/backup.sh >> /root/download/docker/mysql_ai_delegated_dev/repo/../artifacts/backups/cron.log 2>&1 # feature-0015 zd-backup
+30 3 * * 0 cd /root/download/docker/mysql_ai_delegated_dev/repo && bin/restore-rehearsal.sh >> /root/download/docker/mysql_ai_delegated_dev/repo/../artifacts/backups/cron.log 2>&1 # feature-0015 zd-backup
+*/30 * * * * cd /root/download/docker/mysql_ai_delegated_dev/repo && bin/metadata-graph-sync.sh --incremental >> /root/download/docker/mysql_ai_delegated_dev/repo/../artifacts/metadata-graph/cron.log 2>&1 # feature-0016 metadata-graph-sync
+17 4 * * * cd /root/download/docker/mysql_ai_delegated_dev/repo && bin/metadata-graph-sync.sh --full >> /root/download/docker/mysql_ai_delegated_dev/repo/../artifacts/metadata-graph/cron.log 2>&1 # feature-0016 metadata-graph-sync

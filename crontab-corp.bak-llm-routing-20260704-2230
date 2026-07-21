@@ -1,0 +1,12 @@
+# ─── Managed by Claude (doc_sync 자동 정합) ───────────────────────────────────
+# /_dqa:doc_sync 일일 문서 정합 (정책문서·wiki·릴리즈노트 drift).
+# 스케줄: 월-금 23:05 KST (리셋 직후). 실행=claude-corp(비-root), 권한 단계는 스킬이 내부 sudo.
+# 래퍼: ~/.local/bin/dqa-doc-sync-cron.sh · 로그: <repo-wrapper>/artifacts/doc-sync-cron/
+MAILTO=""
+5 23 * * 1-5 /home/claude-corp/.local/bin/dqa-doc-sync-cron.sh
+# ─── Managed by Claude (session-keepalive 워밍) ──────────────────────────────
+# claude-corp 5시간 사용 윈도우를 업무 시작 전에 시작/갱신.
+# 작은 haiku 요청 1건. 래퍼: ~/.local/bin/session-keepalive-cron.sh
+# 로그: ~/.local/bin/artifacts/session-keepalive/  (서버 TZ=KST)
+MAILTO=""
+35 7,12 * * 1-5 /home/claude-corp/.local/bin/session-keepalive-cron.sh

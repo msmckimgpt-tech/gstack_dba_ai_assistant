@@ -1,0 +1,289 @@
+c5e259db Merge pull request #526 from msmckimgpt-tech/ai/claude/feature-0003-aiops-panel
+d443d4f5 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0003-aiops-panel
+654c05ff Merge pull request #525 from msmckimgpt-tech/ai/claude/feature-0012-routeparity-golden
+62a87709 Merge pull request #524 from msmckimgpt-tech/ai/claude/feature-0012-router-namequal
+91541447 Merge pull request #523 from msmckimgpt-tech/ai/claude/feature-0016-graph-panel-perms
+81d103b4 feat(web): 그래프 뷰 UX 3건 + 메타데이터 탭 권한 세분화(B안) (TASK-20260702-graph-panel-perms)
+344a5a80 Merge pull request #522 from msmckimgpt-tech/ai/claude/feature-0016-graphview-webgl-polish
+d2a1d50d fix(feature-0003): 그래프 뷰 WebGL 외곽선 선명화 + 테이블 단일클릭 컬럼 인라인 토글 + 접힘→재펼침 버그 (TASK-20260702-graphview-webgl-polish)
+042613eb Merge pull request #520 from msmckimgpt-tech/ai/claude/feature-0016-node-analysis-anchor
+573812fe Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-node-analysis-anchor
+361df3ed Merge pull request #521 from msmckimgpt-tech/ai/claude/feature-0003-convswitch-opacity-guard
+cb564672 fix(feature-0003): 좌측 대화 선택 시 대화창 미표시 방어 하드닝 — crossfade opacity 복구 finally 보장 (TASK-20260701T100738-convswitch-opacity-guard)
+d1667add docs(feature-0016): node-analysis-anchor 라이브 검증 결과 기록 (T16.8·T16.9)
+c6663696 Merge pull request #519 from msmckimgpt-tech/ai/claude/feature-0016-graph-perf2
+b0d678f2 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-graph-perf2
+f331d12b fix(feature-0016): 컬럼 blob·프레임 거침·느린 줌 수정 — 컬럼 정렬 fcose 제약→결정론 배치 (TASK-0016)
+7bca9b2a Merge pull request #518 from msmckimgpt-tech/ai/claude/feature-0016-node-analysis-anchor
+b77d8f09 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-node-analysis-anchor
+7c7f876e fix(feature-0016): 클러스터명 오버레이 WebGL 렌더러 호환 (TASK-20260701T220000-graphview-webgl-labels) (#517)
+04b75ac8 feat(feature-0016): AI 능동 분석 재귀 앵커-상대 관련도 게이팅 (node-analysis-anchor)
+24445e94 fix(feature-0016): 관리콘솔 메타데이터 그래프 뷰 출력 3건 수정 (TASK-20260701T163000-graphview-render) (#514)
+b3175b65 Merge pull request #516 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+3865d7b0 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0012-web-router-modularization
+61086fea Merge pull request #515 from msmckimgpt-tech/ai/claude/feature-0016-graph-webgl
+6fb5f8cc Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-graph-webgl
+2fcd91e2 feat(feature-0016): 그래프 렌더러 canvas-2D → WebGL 전환 — 프레임레이트 근본 해소 (TASK-0016)
+c031b5dc Merge pull request #513 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+260c8f2b Merge remote-tracking branch 'origin/main' into ai/claude/feature-0012-web-router-modularization
+9ffca265 Merge pull request #512 from msmckimgpt-tech/ai/claude/feature-0016-stack-declutter
+5fe2f301 docs(feature-0016): box-spread/tap 배포(a6bf0eb) + PB-0008 라이브 차단 기록 (TASK-0016)
+a6bf0eb3 Merge pull request #511 from msmckimgpt-tech/ai/claude/feature-0016-stack-declutter
+4d8d0def Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-stack-declutter
+530685f9 fix(admin-graph): ERD 박스 벌림 + 박스 클릭/더블클릭 정합 (TASK-0016)
+44053de5 Merge pull request #510 from msmckimgpt-tech/ai/claude/feature-0016-stack-declutter
+946db1d4 docs(feature-0016): ERD 카드 적대 리뷰 기록(REV — M1/M2/m1/m2 수정, M3 오탐) (TASK-0016)
+e899a2ac merge origin/main (graphux5 camfps/panelmove/showfix) into erd-card
+8895838c fix(feature-0016): 그래프 뷰 ERD 카드 — 컬럼을 테이블 compound 박스 안 ordinal 정렬(겹침 원천 차단) (TASK-0016)
+102da4e4 Merge pull request #509 from msmckimgpt-tech/ai/claude/feature-0016-graphux-camfps
+f6ca368c Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-graphux-camfps
+901d1fd5 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0012-web-router-modularization
+0b0df3ef Merge pull request #508 from msmckimgpt-tech/ai/claude/feature-0016-graphux5-panelmove
+ab1299ce fix(feature-0016): 세션 독립 폴 재개 시 진행 패널 표시 (graphux5-panelmove-showfix)
+799a06eb fix(feature-0016): 그래프 카메라 애니 프레임레이트 저하 수정 — layoutstop 라벨/엣지 복원 지연 (TASK-0016)
+90973dfc Merge pull request #507 from msmckimgpt-tech/ai/claude/feature-0016-graphux5-panelmove
+0ef447cb fix(feature-0016): AI 능동 분석 진행 패널 우측 이동 + 진행률 0%·세션종속 이슈 해소 (graphux5-panelmove)
+5fcd0548 docs(feature-0012): admin/metadata 마일스톤 배포·라이브 검증 완료 기록 (TASK-0012-11)
+0b91b1be Merge pull request #506 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+cce463aa Merge remote-tracking branch 'origin/main' into ai/claude/feature-0012-web-router-modularization
+8d9942b0 refactor(web): P5b router 추출 #10 — admin/metadata 34 핸들러 (TASK-0012-11)
+57931a7d refactor(web): P5b inline-heavy DI 전환 — admin/metadata 33 핸들러 byte-동치 (TASK-0012-11)
+e12ac55d Merge pull request #505 from msmckimgpt-tech/ai/claude/feature-0016-graphux5-progress
+e48912be feat(feature-0016): AI 능동 분석 진행 현황 화면 라이브·상세 (graphux5-progress)
+bb1d45b7 Merge pull request #504 from msmckimgpt-tech/ai/claude/feature-0016-expand-relax-verify
+0fac69bf docs(feature-0016): graphux-expand-relax 배포 번들 PB-0008 최종 확인 PASS 기록 (TASK-0016)
+e2efac23 Merge pull request #503 from msmckimgpt-tech/ai/claude/feature-0016-graphux-expand-relax
+6bd60dbb merge origin/main into graphux-expand-relax
+7fdcb6e0 fix(feature-0016): 더블클릭 확장 시 신규 노드가 주변 노드를 부드럽게 밀어내 겹침 해소 (graphux-expand-relax) (TASK-0016)
+17623242 Merge pull request #502 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+14c184d6 refactor(web): P5b Final router 추출 #9(batch 4) — share+system, 완전-DI 완료 (TASK-0012-11)
+955554b8 Merge pull request #501 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+408262bc refactor(web): P5b Final router 추출 #8(batch 3) — admin_console 5 핸들러 (TASK-0012-11)
+71141e89 Merge pull request #498 from msmckimgpt-tech/ai/claude/feature-0016-graphux5
+da90b0a9 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-graphux5
+ad29104f Merge pull request #500 from msmckimgpt-tech/ai/claude/feature-0016-graphux9-docs
+647dc0f9 docs(feature-0016): PB-0008 시각검증 PASS + graphux9/10 배포 완료 기록 (TASK-0016)
+82a1aab0 Merge pull request #499 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+d480912f fix(test): feature-0016 column_ordinal test-mock 보정 + P5b 골든 재생성 (TASK-0012-11)
+a4d49e92 feat(feature-0016): 관리콘솔 그래프뷰 UX 4항목 개선 (TASK-20260701T120000-graphux5)
+456f626d Merge remote-tracking branch 'origin/main' into ai/claude/feature-0012-web-router-modularization
+317343f8 refactor(web): P5b Final router 추출 #7 — admin_quotas + admin_sample_feedback (TASK-0012-11)
+b597769e Merge pull request #497 from msmckimgpt-tech/ai/claude/feature-0016-graphux11
+17d48f1d fix(feature-0016): 노드 드래그 시 엣지 사라짐 수정 + 더블클릭 애니메이션 복원 (TASK-0016)
+893255a4 refactor(web): P5b Final router 추출 #6 — conversations 도메인 10 핸들러 (TASK-0012-11)
+47d0f1a3 Merge pull request #496 from msmckimgpt-tech/ai/claude/feature-0016-graphux9-column-ordinal
+1e1562e7 merge origin/main (graphux9 perf #495) into graphux9-column-ordinal
+5bb5fc2b Merge pull request #495 from msmckimgpt-tech/ai/claude/feature-0016-graphux9
+87502e0b perf(feature-0016): 초기로드/검색 레이아웃 애니 근본 개선 — 계산량 축소 + 트윈 중 엣지 숨김 (TASK-0016)
+23a5cc62 feat(feature-0016): 그래프 뷰 컬럼 테이블 하단 실제순서(ordinal) 세로배치 + 부드럽게 꺾이는 엣지 (graphux5) (TASK-0016)
+b7bccb3f Merge pull request #494 from msmckimgpt-tech/ai/claude/feature-0016-graphux8b
+dd0be8a9 perf(feature-0016): 카메라 즉시 이동(애니 제거) + motionBlur 제거 — 근본원인 대응 (TASK-0016)
+1ca00b83 Merge pull request #492 from msmckimgpt-tech/ai/claude/feature-0016-implicit-edges
+d384316d Merge remote-tracking branch 'origin/main' into ai/claude/feature-0016-implicit-edges
+524bc915 feat(feature-0016): 암묵 관계(FK 미선언) 추론 + 자기교정 강화 엔진 (TASK-0016)
+48ff79c2 Merge pull request #491 from msmckimgpt-tech/ai/claude/feature-0016-graphux7
+f38f6d7a perf(feature-0016): 더블클릭 확장 element 애니 제거(즉시 배치)+카메라만 부드럽게 (TASK-0016)
+91b4a74c Merge pull request #490 from msmckimgpt-tech/ai/claude/feature-0016-graphux6
+1bb45f3b perf(feature-0016): 그래프 애니메이션 pixelRatio:1 + 증분 numIter 축소 (TASK-0016)
+90f792ec Merge pull request #489 from msmckimgpt-tech/ai/claude/feature-0016-graphux5
+ca57ddde perf(feature-0016): 그래프 애니메이션 프레임 개선 — 모션 중 라벨 숨김 + 렌더 힌트 (TASK-0016)
+2045379a Merge pull request #488 from msmckimgpt-tech/ai/claude/feature-0016-graphux4
+3cb024e5 perf(feature-0016): 더블클릭 확장 증분 레이아웃 + 서버 이웃 쿼리 raw-graphid 재작성 (TASK-0016)
+f95cb04a Merge pull request #486 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+24dd5886 Merge pull request #485 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+536edda9 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0012-web-router-modularization
+43023fcc docs(sync): doc_sync — feature-0016-metadata-graph 전 문서 신설 + 무중단군 0014~0017 정합 + 06-30 backfill
+0f0b4886 Merge pull request #484 from msmckimgpt-tech/ai/claude/feature-0016-graphux3
+a2aff551 perf(feature-0016): AGE 이웃 조회 60x 인덱스 + 클릭 동작 분리 (TASK-0016)
+4485e9b8 Merge origin/main into feature-0012 (P5b Final ship 준비)
+f3b72ff9 fix(feature-0017): deploy-web.sh 빌드 게이트 snap-docker metadata-file race false-failure 수정
+297756d6 Merge pull request #482 from msmckimgpt-tech/ai/claude/feature-0016-graphux2
+133f9c49 fix(feature-0016): 라벨 비겹침 펼침(fcose nodeDimensionsIncludeLabels+애니메이션) + dbo→DB명 클러스터링
+156531db Merge pull request #481 from msmckimgpt-tech/ai/claude/feature-0003-metadata-bs-prefill
+33a953cd fix(feature-0003): 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill (TASK-20260630T174000-metadata-bs-prefill)
+dcb3e027 Merge pull request #480 from msmckimgpt-tech/ai/claude/feature-0016-graphux
+a473efc9 feat(feature-0016): 그래프 뷰 UX — 반응형·관련도 사이징·카테고리 클러스터링(fcose)
+0bdf4b63 Merge pull request #479 from msmckimgpt-tech/ai/claude/feature-0016-perds
+65c269dd feat(feature-0016): per-datasource 그래프 — rag_objects 투영 + scope 필터
+b0097f62 docs(feature-0016): pg-restart 라이브 실증 기록 — postgres 재시작 중 RW OK=134/ERR=0 (near-zero)
+56ef9411 Merge pull request #478 from msmckimgpt-tech/ai/claude/feature-0016-zd-pg-pause-caddy
+73c424d0 feat(feature-0016): PG pgbouncer PAUSE 래퍼 + deploy-web.sh Caddyfile reconcile (무중단 승급)
+efef2e26 ops(feature-0016): 메타데이터 그래프 주기 동기화 cron installer (root crontab)
+6f7c8f72 test(feature-0016): route-parity 골든 +1 (/api/admin/metadata/graph) + cutover 완료 기록
+0c57e258 Merge pull request #477 from msmckimgpt-tech/ai/claude/feature-0016-metadata-graph
+89bb3db4 refactor(web): P5b Final router 추출 #5 — admin_usage 도메인 (TASK-0012-8)
+154f2e8f feat(feature-0016): compose AGE cutover 토글 (env-var, 기본값=현행)
+be68e682 refactor(web): P5b Final router 추출 #4 — admin_conversations 도메인 (TASK-0012-8)
+1f52d652 fix(feature-0016): BLOCKER B1 Cypher dollar-quote breakout 인젝션 + MINOR 하드닝
+07e906d4 refactor(web): P5b Final router 추출 #3 — static_pages 도메인 (TASK-0012-8)
+0250fc41 feat(feature-0016): graph_navigate AI tool + pgbouncer-safe search_path (Phase 4)
+6d001f52 refactor(web): P5b Final router 추출 #2 — media 도메인 (TASK-0012-8)
+3186bf2d feat(web): P5b Final 시작 — APIRouter 분할 파이프라인 + keywords router 추출 (TASK-0012-8)
+209e09b4 feat(feature-0016): 그래프 투영 API + Cytoscape UI (Phase 2+3)
+08621f03 feat(feature-0016): 그래프 동기화 파이프라인 (Phase 1c) — scripts + bin + flag
+bbafb523 feat(feature-0016): 관계형→AGE 동기화·투영 모듈 (Phase 1b) — 라이브 검증 PASS
+306f19c7 feat(feature-0016): AGE 메타데이터 지식그래프 토대 — 커스텀 PG16 이미지 + 그래프 스키마(alembic 0025)
+e57ed7a1 refactor(feature-0003): 메타데이터 패널 list-detail 2단 재구성(좌측 목록 선택 → 우측 상세 편집) (TASK-20260630T160000-metadata-list-detail)
+318bfe72 refactor(feature-0003): 메타데이터 패널 데이터소스 선택 UI 단일화(헤더 스코프 상속) + 공용 empty-state (TASK-20260630T110910-metadata-ds-single-ui)
+8baa7074 fix(feature-0003): 테이블 설명 인라인 입력란 행간 정렬(고정 폭 칸) (TASK-20260630T103235-metadata-bs-inline-align)
+a7652413 feat(feature-0003): 테이블 설명 모드 결과 행 평면화 + 설명 입력 인라인 (TASK-20260630T100802-metadata-bs-inline-desc)
+7ec9ad58 docs(feature-0003): share-joinable-confirm-persist 배포 완료 + 라이브 검증 기록 (TASK-20260630T005923-share-joinable-confirm-persist)
+2167cd0c fix(feature-0003): 공유 '링크 생성' 참여 허용 확인 모달 + '참여 허용' 체크박스 대화별 영속 (TASK-20260630T005923-share-joinable-confirm-persist)
+4359be58 feat(feature-0003): 스키마 골격 가져오기 결과 페이지네이션 + 여백 압축 (TASK-20260629T184726-metadata-bs-paging)
+9b83f1ed docs(feature-0003): point-scroll-easeoutexpo 배포 완료 + 서빙본 검증 기록 (TASK-20260629T181648-point-scroll-easeoutexpo)
+3931fa34 feat(feature-0003): 공유 대화 뷰 우측 스크롤바 가이드 뱃지(point rail) + 가이드 뱃지 클릭 스크롤 단축·EaseOutExpo (TASK-20260629T181648-point-scroll-easeoutexpo)
+251df5fd docs(feature-0003): diff-lineno-leak-fix 배포 완료 + 라이브 검증 기록 (TASK-20260629T172122-diff-lineno-prefix-leak)
+420eb160 docs(feature-0012): P5b DI seam Phase 1 완료 기록 closure (TASK-0012-6)
+d75152f3 fix(feature-0003): diff 블록 누출 <N>→ 줄번호 prefix 렌더 정규화 (TASK-20260629T172122-diff-lineno-prefix-leak)
+60c0d451 docs(feature-0003): glossary-role-fieldname-fix 배포 완료 + PB-0008 재검증 기록 (TASK-20260629T170913-glossary-role-fieldname-fix)
+83836522 docs(feature-0003): new-conv-dedup 배포 완료 + 라이브 검증 기록 (TASK-20260629T080500-new-conv-dedup)
+92751b40 fix(feature-0003): 새 대화 첫 전송 시 사이드바 대화 중복 제거 (TASK-20260629T080500-new-conv-dedup)
+8a35eeea docs(feature-0003): metadata-bs-flexclip 배포 완료 + PB-0008 재배포본 재검증 기록 (TASK-20260629-metadata-bs-flexclip)
+54dbfe37 fix(feature-0003): 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (PB-0008 적발) (TASK-20260629-metadata-bs-flexclip)
+dad75c33 docs(feature-0003): glossary-role-single-ui 배포 완료 + 라이브 검증 기록 (TASK-20260629T141637-glossary-role-single-ui)
+6aded3b0 docs(feature-0003): share-mermaid-responsive 배포-기록 REVIEW 정합 (TASK-20260629T143914-share-mermaid-responsive)
+357bf9f8 docs(feature-0003): share-mermaid-responsive 배포 완료 + PB-0008 검증 기록 (TASK-20260629T143914-share-mermaid-responsive)
+cbd54f48 fix(feature-0003): 공유 대화 뷰 mermaid 렌더 + 공유 페이지 전체 폭 반응형 (TASK-20260629T143914-share-mermaid-responsive)
+df7feee2 Merge pull request #463 from msmckimgpt-tech/ai/claude/metadata-bootstrap-collapse-search
+29c79949 fix(feature-0003): 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림 cache-buster 수정 (TASK-20260629-metadata-bs-collapse)
+0fa45f71 Merge pull request #461 from msmckimgpt-tech/ai/claude/metadata-table-desc-fix
+9f40c636 Merge remote-tracking branch 'origin/main' into ai/claude/metadata-table-desc-fix
+72c970fc docs(sync): doc_sync — 06-29 머지 backfill STATUS·ARCHITECTURE·wiki 정합 (feature-0012·피드백·용어사전)
+f7dcb078 docs(metadata): 용어 검토 큐 IA 중첩 배포 완료 기록 (TASK-20260629-glossary-review-nest)
+75a52371 fix(metadata): admin 정적 자산 cache-buster bump — IA 변경 전파 (TASK-20260629-glossary-review-nest)
+284e75a5 refactor(metadata): 용어 검토 큐를 용어사전 하위 2차 보기 탭으로 중첩 (TASK-20260629-glossary-review-nest)
+fea09cbc fix(feature-0003): 메타데이터 부트스트랩 MSSQL database 차원 + 패널 잘림 + describe_table 오버레이 정합 (TASK-20260629T114221-metadata-bootstrap-mssql-db)
+40c0de0a feat(metadata): 용어사전 대화 자율등록 + 역할 분리 + 유사어 참조 (TASK-20260629-glossary-conv-autoreg)
+03db9f36 Merge pull request #456 from msmckimgpt-tech/ai/claude/feature-0012-web-router-modularization
+99bffb14 test(feature-0003): P5b route-parity 안전망 + feature-0012 추적 cycle (TASK-0012-2/3)
+c11cc27c docs(sync): doc_sync — 06-25 후속 버그픽스 STATUS·wiki 정합 (feature-0003/0009)
+3e553e9b Merge pull request #455 from msmckimgpt-tech/ai/claude/feature-0009-group-conversation
+d90e1e25 fix(group-conversation): 읽음 커서 id-space 불일치 수정 — 항상 MAX(core_messages.id)로 전진 (TASK-20260625T225851-gc-unread-read-idspace-fix)
+92753ab6 fix(group-conversation): 공유 대화 join 불가 수정 — PG named-param 타입 모순(AmbiguousParameter) 해소
+0ed65023 Merge pull request #453 from msmckimgpt-tech/ai/claude/feature-0009-group-conversation
+e9adab90 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0009-group-conversation
+36ad1385 fix(group-conversation): 읽음 API POST /read silent 500 수정 — modules.db→shared.db 로 커서 전진 복구 (TASK-20260625T202817-gc-unread-read-500-fix)
+c2ed5809 fix(feature-0003): app.js cache-buster bump — 단계 보기 수정 전파 보강
+bec35bd3 fix(group-conversation): @assistant 전송 시 입력창 즉시 클리어 (R1 누락분) (TASK-20260625T195400-composer-clear-input-on-send)
+4737b762 fix(group-conversation): @assistant·채팅 전송 직후 발신자 말풍선 owner 오표시 깜빡임 수정 (TASK-20260625T104906-gc-optimistic-sender-attrib)
+99971560 Merge pull request #447 from msmckimgpt-tech/ai/claude/feature-0009-group-conversation
+9b1dc16f fix(group-conversation): 읽은 대화 unread 배지 미감소 — 읽음 커서 전진 누락 보정 (TASK-20260625T194159-gc-unread-read-fix)
+998376b8 fix(feature-0003): 새 요청 진행 중 이전 답변 "단계 보기" 버튼 소실 수정
+334c8583 feat(group-conversation): composer 입력창 비잠금 + 그룹 @assistant 중복차단 + 1:1 인터럽트 재요청 (TASK-20260625T191040-composer-nonblock-interrupt)
+f3041c8a Merge pull request #442 from msmckimgpt-tech/ai/claude/feature-0009-group-conversation
+151679bc fix(group-conversation): unread 배지 baseline 보정 — 읽지 않은 신규 메세지만 집계 (TASK-20260625T165320-gc-unread-baseline)
+908fadeb feat(group): 공유 대화 참가자 per-message 제품 선택·발화 (TASK-20260625T163424-gc-participant-product-select)
+1f370c4d fix(group-conversation): 동시 run 충돌 '처리 중' 고착/채팅 블로킹 해소 (TASK-20260625T163744-gc-run-status-stuck) 그룹대화에서 UserA 의 @assistant 처리 중 UserB 가 채팅을 보내면 Assistant 가 '처리 중' 에서 완료 처리가 진행되지 않고(실제 완료돼도) 다른 사용자의 채팅이 블로킹되던 버그 수정.
+1a69f70b feat(group): 그룹대화 @assistant user 메시지 발신자 귀속 정정 (TASK-20260625T162000-gc-ask-sender-attrib)
+b7862ef7 Merge pull request #436 from msmckimgpt-tech/ai/claude/feature-0009-group-conversation
+09114eda feat(group-conversation): 그룹 대화 사이드바 안 읽은 메세지·@멘션 배지 (read cursor REQ-GC-R8) (TASK-20260625T065840-gc-unread-badge)
+fead5cfe Merge pull request #424 from msmckimgpt-tech/ai/claude/feature-0003-rule-db-coverage
+00e39118 Merge pull request #421 from msmckimgpt-tech/ai/claude/admin-metadata-relocate
+874f15e2 refactor(feature-0003): 관리 콘솔 사이드바 '메타데이터'·'샘플 검수'를 신설 '지식베이스' 그룹으로 재배치
+2fa82d70 docs(feature-0003-agent-web-ui): FUNCTION.md 에 cache-buster 배포 단계 기록 (check#4 정합)
+a6d168cc chore(feature-0003-agent-web-ui): 릴리즈노트 cache-buster bump (06-24 14항목 배포 반영)
+dca8f814 feat(feature-0009-group-conversation): 공유 '참여 허용' 토글 owner-only 게이트
+343283fd Merge pull request #411 from msmckimgpt-tech/ai/claude/feature-0003-metadata-ai-autocomplete
+d7f4a406 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0003-metadata-ai-autocomplete
+393d15c4 feat(web): 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정 (TASK-20260624-metadata-ai-autocomplete)
+4051c8c4 Merge pull request #406 from msmckimgpt-tech/ai/claude/feature-0003-scope-key-unify
+803b7829 Merge pull request #404 from msmckimgpt-tech/ai/claude/feature-0003-item11-phase2
+5f4f45b4 feat(feature-0003-agent-web-ui): 대화 ··· 메뉴 '보관'을 설정 팝업으로 이동 + 그룹 참여자 '나가기' (gc-settings-archive-leave)
+8e1538ea Merge pull request #401 from msmckimgpt-tech/ai/claude/feature-0003-item11-metadata
+d91be5a2 Merge pull request #397 from msmckimgpt-tech/ai/claude/feature-0003-item08-fix-with-ai
+cd0d5540 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0003-agent-web-ui
+8e6bb737 docs(feature-0003): TASK-0308 PB-0008 Windows-browser PASS 기록 + 마감
+4a9ab9bd feat(feature-0003): 제품 탭에 데이터소스 인사이트 탐색 상태 표시 (TASK-0308)
+6df7fac6 fix(group-conversation): 멘션 알림 본문 발신자명 대괄호 제거
+e3c02af4 Merge pull request #393 from msmckimgpt-tech/ai/claude/gc-share-group-sync
+eb463029 fix(group-conversation): 공유 직후 메시지를 사람채팅으로 즉시 전환 (assistant 오호출/422 block 해소)
+b09c50e6 Merge pull request #389 from msmckimgpt-tech/ai/claude/gc-group-authz-flag
+9a715bd6 Merge remote-tracking branch 'origin/main' into ai/claude/gc-group-authz-flag
+43687e9f feat(group-conversation): 보유자 authz·공유후 오호출·사이드바 그룹가시성·공유시 그룹전환 (4종)
+fc1d12cc Merge pull request #387 from msmckimgpt-tech/ai/claude/feature-0003-sample-feedback-curation
+4723fd9d fix(feature-0003): ITEM-03 보안 하드닝 (REV-20260623-0334 SHIP-WITH-FIXES 흡수)
+e5acb431 feat(feature-0003): 답변 피드백 → 샘플쿼리 KB 환류 flywheel web 층 (TASK-20260623T090440-sample-feedback-curation)
+132b7c8a fix(group-conversation): 멘션 하이라이트 표시 + Windows 알림 형식 재구성
+e7c963f6 docs(feature-0003): db-rule pending 재배선 배포 + PB-0008 시각검증 evidence (TASK-20260619T120000)
+18dfe189 fix(group-conversation): 메시지 프로필 아바타를 Identicon 으로 정합 (글자→실제 프로필 아이콘)
+6567bbcd feat(group-conversation): 라이브 UX 2차 — 적응형 폴링·멘션 자동완성 TTL·피멘션 알림/하이라이트·제품 아바타 (TASK-20260619T023140-group-conversation)
+4306767b feat(group-conversation): 라이브 UX — 실시간 폴링·@멘션 자동완성·발신자 아바타 (TASK-20260619T023140-group-conversation)
+39858114 feat(group-conversation): 공유 링크로 그룹 대화 참여(join) 일원화 (TASK-20260619T023140-group-conversation)
+6c2a639a fix(feature-0003): LLM 사용 한도 UI 를 역할·계정 상세로 이전
+684bc376 docs(group-conversation): 릴리즈 노트 개선 — 멤버끼리 채팅 + @assistant 멘션 반영 (TASK-20260619T023140-group-conversation)
+17a065b2 docs(feature-0003): 보안 보강 6종 릴리즈 노트 기록 (사용자 향, 내부 비노출)
+ab958ed3 feat(feature-0003): 2단계 인증 (TOTP, self-service + 관리자 해제)
+6542e973 fix(group-conversation): alembic 0012 — 그룹 대화 스키마 prod 적용 (TASK-20260619T023140-group-conversation)
+3a74497a Merge pull request #359 from msmckimgpt-tech/ai/claude/feature-0009-group-conversation
+b33e9ad9 Merge remote-tracking branch 'origin/main' into ai/claude/feature-0009-group-conversation
+041e3d46 docs(group-conversation): S5 잔여 배포-후 이연 결정 + 코어 완성 상태 기록 (TASK-20260619T023140-group-conversation)
+5c75c842 feat(group-conversation): S3c 발신자 표시 + 연속 user 병합 (TASK-20260619T023140-group-conversation)
+1b7ba471 feat(group-conversation): send-routing — 멘션 게이팅 사람 채팅 (TASK-20260619T023140-group-conversation)
+29b34f55 feat(feature-0003): Google 계정 OAuth 로그인 토대 (비파괴, 기본 비활성)
+f5036304 docs(group-conversation): 릴리즈 노트 — 그룹 대화 사용자 안내 (TASK-20260619T023140-group-conversation)
+fa23367e feat(group-conversation): S2 roster UI — 멤버 패널(목록·초대·제거) (TASK-20260619T023140-group-conversation)
+25423595 feat(group-conversation): S4 멤버 @assistant 발화 게이트 (actor RBAC, 열람≠발화) (TASK-20260619T023140-group-conversation)
+76da62d9 feat(group-conversation): S3 backend core — 발신자 귀속·사람 채팅·F1 첨부 주입 스코프 (TASK-20260619T023140-group-conversation)
+05d58d14 feat(feature-0003): LLM 사용량 한도 (역할 기본 + 계정 특수)
+eb707e27 feat(group-conversation): S3 canonical 멘션 파서 (FE/BE + parity) (TASK-20260619T023140-group-conversation)
+8ef65983 feat(group-conversation): S2 멤버십 열람 접근제어 + 멤버 관리 엔드포인트 (TASK-20260619T023140-group-conversation)
+bc9e6e32 feat(feature-0003): 감사 기록 변조방지 — 해시 체인 + 검증 + 로그 앵커
+489deb5a feat(group-conversation): S1 멤버십·발신자 귀속 스키마 + 데이터접근 모듈 (TASK-20260619T023140-group-conversation)
+6ee11ddd docs(feature-0003): 릴리즈 노트에 LLM 사용 제한 안내 항목 추가 (TASK-20260619T022449)
+e8f5bb2a feat(feature-0003): 잘못된 로그인 시도 제한 (계정 잠금 + IP throttle)
+172d62ad feat(feature-0003): 대화 공유 링크 시간 기반 만료 (설정 가능)
+77763b28 docs(feature-0003): TASK-20260618T061703 PB-0008 Windows-browser evidence (db-rule-multi)
+b4736c1e feat(feature-0003): DB allowlist 정규식 규칙 다중 설정 + DB 종속(중첩) UI (TASK-20260618T061703)
+ec4d57e0 docs(feature-0003): 릴리즈 노트 영역숨김+스크롤 PB-0008 evidence (TASK-20260618T061520)
+9b98b531 docs(feature-0003): TASK-20260618T044318 PB-0008 Windows-browser evidence (db-rule-autosync)
+30e697f7 fix(feature-0003): db-rule audit action 미등록 500 수정 (PB-0008 적발, TASK-20260618T044318)
+3d6d787d feat(feature-0003): 제품 DB allowlist 정규식 규칙 자동 동기화 (안전 하이브리드) (TASK-20260618T044318)
+27aee4ed docs(feature-0003): 릴리즈 노트 PB-0008 Windows-browser evidence (TASK-20260618T044611)
+8c2070d7 docs(feature-0003): TASK-20260618T025755 PB-0008 Windows-browser evidence 기록 (dbpicker 검색+정규식)
+837a8145 docs(feature-0003): TASK-20260618T024517 PB-0008 Windows-browser evidence 기록 (product-picker-search) (#333)
+158b34c2 feat(feature-0003): '+ 데이터베이스 추가' picker 검색 필터 + 정규식 일괄 선택 (TASK-20260618T025755)
+ebd2849d feat(feature-0003): 제품 선택 드롭업 명칭 검색 필터 추가 (TASK-20260618T024517) (#327)
+5a8e52a3 docs(feature-0003): TASK-0301 마감 — PB-0008 render-injection PASS(13px match) + evidence 스크린샷
+022c0a9d fix(feature-0003): 관리 콘솔 제품 목록 항목 글꼴 크기 정합 TASK-0301 (#316)
+aaa10807 docs(feature-0003): TASK-0291 PB-0008 Windows-browser PASS evidence (CHG-20260616-0301) (#290)
+9bdb9f81 fix(feature-0003): 관리 콘솔 계정 탭 배지 개수 활성 계정만 집계 (TASK-0291) (#287)
+af027fd8 docs(feature-0003): TASK-0287 말풍선 칩 다운로드 PB-0008 evidence (CHG-20260616-0298) (#282)
+c5b4823c fix(feature-0003): 말풍선 첨부 칩 다운로드 실패 수정 — navigation→fetch+blob 통일 (TASK-0287) (#281)
+7ec211d0 docs(feature-0003): TASK-0286 PB-0008 시각검증 + 라이브 프롬프트 갱신 evidence (CHG-20260616-0296) (#279)
+b884b67b feat(feature-0003): 첨부 수정본 전달 — 전체 본문 노출 제거 + 변경점만(diff) + 파일 명시 전달 (TASK-0286) (#278)
+dd84ca8a docs(feature-0003): TASK-0285 PB-0008 Windows-browser 시각검증 evidence 기록 (CHG-20260616-0294) (#277)
+1c4737d8 feat(feature-0003): 첨부 버전 현황 표면화 — 목록 버전 배지·assistant 말풍선 칩·진행 단계 (TASK-0285) (#275)
+41903651 fix(feature-0003): TASK-0284 첨부 cross-account LLM 주입·외부 다운로드·파일명 지칭 수정 (#271)
+fe173d7a docs(feature-0003): 데이터소스 목록 다중 선택 PB-0008 시각검증 PASS evidence (TASK ds-list-multiselect) (#262)
+3605443c feat(feature-0003): 관리 콘솔 데이터소스 목록 다중 선택 구조 (TASK-20260615T183409-ds-list-multiselect) (#254)
+481b3efe feat(feature-0003): 관리 콘솔 '보관 대화' 탭 UI 정합화 — audits 동형 list-detail (TASK-0276) (#247)
+0122531a feat(feature-0003): assistant 첨부 수정 → 새 버전 materialize + 버전 관리 (TASK-0275) (#245)
+93b13dd6 feat(feature-0003): 대화 삭제 → soft-archive(보관) + admin 조회 + 맥락 참조 (TASK-0273) (#239)
+b6612c62 docs(feature-0003): TASK-0269/0270 권한 편집기 PB-0008 시각검증 PASS 기록 — TASK-0271
+bad2c1e2 docs(feature-0003-agent-web-ui): TASK-0256d no-cache 전달 검증 PASS 기록
+2cdd465c feat(feature-0003): 사용자 프로필 / 제품 아이콘 이미지 + Identicon 기본 (TASK-0268)
+48f2a22b fix(feature-0003-agent-web-ui): HTML 엔트리포인트 no-cache 로 캐시버스터 무력화 해소 (TASK-0256d)
+b46e21df docs(feature-0003): TASK-0267 권한 트리 UI PB-0008 시각검증 PASS 기록 — TASK-0268
+5db04e06 docs(feature-0003-agent-web-ui): TASK-0256c PB-0008 PASS 기록 (줄번호 + 복사 클린)
+0b431588 feat(feature-0003-agent-web-ui): diff 블록 줄번호(old|new) + 복사 시 마커·번호 제외 (TASK-0256c)
+4f0abe2f fix(feature-0003): usage/conversations interval 파라미터 PG 문법 오류 핫픽스 (TASK-0266)
+6c60841c docs(feature-0003): TASK-0264 권한 disclosure 단순화 PB-0008 시각검증 PASS 기록 — TASK-0265
+169c4343 feat(feature-0003): LLM 사용량 차트 hover 비용 + 클릭→집계 기여 대화목록 모달 (TASK-0263)
+e7c1d2e4 docs(feature-0003): TASK-0262 PB-0008 Windows-browser 시각검증 PASS 기록 + 재현 시나리오 (TASK-0262b)
+1d8cbedf docs(feature-0003-agent-web-ui): TASK-0256b PB-0008 재검증 PASS 기록 (단일 줄 간격)
+070b01be fix(feature-0003): 선택 제품 chip dot 도 datasource 네트워크 상태색 (TASK-0262)
+1b20fb1f fix(feature-0003-agent-web-ui): diff 블록 라인 이중 줄바꿈 제거 (TASK-0256b)
+1205c620 docs(feature-0003-agent-web-ui): TASK-0256 PB-0008 Windows-browser 렌더 시각검증 PASS 기록
+8306d7a3 feat(feature-0003): 대화 화면 제품 드롭업에 datasource 네트워크 상태 배지 (TASK-0261)
+fa3da708 fix(feature-0003): 답변 결과셋 ◀▶ 전환 시 확장 높이 보존 — 스크롤 점프 제거 (TASK-0260)
+43192209 Merge pull request #180 from msmckimgpt-tech/ai/claude-corp/feature-0003-agent-web-ui
+f68b8bb7 Merge pull request #178 from msmckimgpt-tech/ai/claude-corp/feature-0003-agent-web-ui
+72f6306f docs(feature-0003): TASK-0217/0218 완료 체크박스 갱신
+cf80a970 fix(feature-0003): 데이터소스 키 명시적 rename 지원 + AAD 자가수복 (TASK-0218)
+c1911e11 test(feature-0003-agent-web-ui): TASK-0213 PB-0008 Windows-browser 검증 결과 기록
+e09701f6 docs(feature-0003-agent-web-ui): TASK-0213 cycle docs 보완 — REVIEW/MODIFY 엔트리 추가
+e76e2108 docs(feature-0003-agent-web-ui): TASK-0204 PB-0008 Windows-browser 시각검증 기록
+05710391 docs(feature-0003-agent-web-ui): FUNCTION.md scenario 파일 엔트리 추가
+d22715db test(feature-0003-agent-web-ui): TASK-0197 검증 시나리오 파일 추가 (PB-0008 follow-up)
+c82fb162 test(feature-0003-agent-web-ui): TASK-0197 Windows-browser 검증 기록 (PB-0008)
+cef65667 docs(feature-0003-agent-web-ui): TASK-0197 Git 동기화 결과 REPORT.md 기록
