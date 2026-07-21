@@ -603,3 +603,16 @@ source_of_truth: true
 - 타깃별 실질 검증(doc_sync Phase 4): `node --check` PASS · vm 구조검증(31 releases·07-16 head 4항목[admin 4]·07-15 보존 7·스키마·누출0).
 - **cache-buster**: 소스 `?v=dev` 고정 — ITEM-09 what#3(`inject_asset_stamp.py` content-hash 빌드주입·deploy-web `asset_stamp_verify` 하드게이트) 이후 수기 bump 폐지. 직전 doc-sync-rn-0713~0716 동일 판단.
 - Cross-ref: CHG/TASK/FUNCTION/TEST-20260716T140735-doc-sync-rn-0716b / META REV-20260716T140735-META-0038-doc-sync-0716b(별도 commit) / 원천 PR #837~#853. **attended run — landing/배포 스킬 소유.**
+
+## REV-20260721T175800-realtime-progress-propagation [SUBAGENT:general-purpose] — ACCEPTED-WITH-FIXES (고위험 결함 0, low-med 2건 반영·1건 정밀화·2건 bounded 문서화)
+- 대상: `static/app.js` 유휴 run-감지 폴러 diff(+133/추가 함수 `detectNewRun`·`scheduleRunDetectPolling`·`startRunDetectPolling`·`stopRunDetectPolling`·`clearRunDetectTimer` + `loadHistory`/`selectConversation`/`handleLogout`/`visibilitychange` 배선). 적대 리뷰 프롬프트: 폭주/중복 폴링·lifecycle 누수·baseline race·feature-0009 foreign-run 하이재킹·myAskInFlight 오귀속·비용/백오프·일반 correctness.
+- 종합 판정: **핵심 메커니즘 건전** — seq-gating(monotonic `runDetectSeq` + stale bailout)과 4-신호 dormant 가드가 (a) 활성 폴러와의 중복 fetch, (b) 로컬 본인 run 하이재킹("처리 중" 고착)의 두 최악 시나리오를 정확히 차단. runaway-timer/stuck 시나리오 구성 실패(=안전).
+- **D1 (low-med, 반영)**: 감지기가 트리거한 `loadHistory()` 가 throw(`/api/history` 네트워크 blip)하면 `reschedule=false`(await 전 설정)+outer catch 삼킴 → 감지기 영구 disarm. **Fix**: `_detectHandoffReload(seq)` 헬퍼 도입 — loadHistory 성공 시 loadHistory 가 감지기 상태 관장(idle 재무장/processing 정지), throw 시 seq 유효하면 재무장. 회귀 테스트 S7 추가.
+- **D3 (pre-existing, 정밀화 반영)**: `myAskInFlight.add` 가 `!isGroupConversation` 만 게이트해 **모니터링(타 계정 소유) 1:1** 도 포함 → 유휴 감지기가 loadHistory 자동 트리거 시 관찰자에게 동작 안 하는 중단/즉시답변 버튼 오표시(cosmetic·send/cancel 은 백엔드 권한 차단). 리뷰어 확인 "신규 회귀 아님". **Fix**: 문서화된 의도("본인 대화")대로 `isOwnConversation() && !isGroupConversation()` 로 정밀화(그룹은 종전대로 제외).
+- **re-entrancy(반영)**: `detectNewRun` 재진입 가드 부재(리뷰어: 최대 1회 transient 중복 fetch) + `runDetectInFlight` write-only dead-state 지적 → dormant 가드에 `state.runDetectInFlight` 추가(dead-state 를 re-entrancy 가드로 활용). 회귀 테스트 S8 추가.
+- **방어(반영)**: `beginPendingConversation`·`_switchToPendingConversationContext` 가 `stopProgressPolling` 만 하고 `stopRunDetectPolling` 누락(리뷰어: activeConversationId="" 로 self-terminate 하므로 현재 무해하나 fragile asymmetry) → lifecycle 대칭 위해 `stopRunDetectPolling()` 추가.
+- **D2 (bounded, 문서화)**: 무장 후 첫 폴링에서 `loadHistory`↔첫 `/api/progress` 사이(1 라운드트립) run 이 start+complete 하면 그 terminal run 이 baseline 에 흡수돼 미로드. 첫 폴링 한정·다음 run 에서 self-heal — 원 버그의 축소 잔재(신규 회귀 아님). 완전 봉인은 `/api/history` 가 terminal run_id 도 반환하는 백엔드 변경 필요(feature-0012 라우터분할 충돌 회피 위해 이연). 
+- **hide/show gap (bounded, 문서화)**: 탭 숨김 중 run 이 전부 완료되면 재가시 시 다음 run/전환 전까지 미반영(재가시는 미래 감지만 arm). pre-feature 거동과 동일(신규 회귀 아님)·숨김 중엔 "실시간" 관측 불가라 실질 영향 경미.
+- **비용(정상)**: 숨김 탭 `stopRunDetectPolling` 로 완전 정지·활성 탭 4s clean reschedule — 백오프 정상. "모든 대화 유휴 폴링" 은 사용자 선택 scope 의 product 결정(구현 결함 아님).
+- 반영 후 검증: `node --check` PASS · 유닛 `verify_run_detect_poll.mjs` **28/28**(D1 재무장 S7·re-entrancy S8 포함). feature-0009 그룹 경로 안전(리뷰어 확인 — foreign run 을 progressRunId 로 채택, 5870 가드 무충돌).
+- Cross-ref: CHG-20260721T1758-realtime-progress-propagation · ANCHOR feature-0003 §1-§3 무충돌 · TEST §16.6 PB-0008 PASS(실 Windows Chrome 150).
