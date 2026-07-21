@@ -778,3 +778,21 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
 - **격리·주입 경계**: red-team 리뷰가 소비한 untrusted DB 텍스트가 fix_hint→revise system 메시지·세션 노트로
   승격되는 방어심층 회귀를 봉인(untrusted-data/no-instruction 규칙 + `<<REVIEW_FINDINGS>>` sentinel 구획,
   §14 정합). 세션/제품 노트 경로 traversal·bounded 크기 억제 격리는 feature-0021 REVIEW 정본에서 검증.
+
+## 24. assistant PG 자율 작업공간 — write-capable scratch DB 표면 (feature-0022-agent-scratch-workspace, 2026-07-21)
+
+> 색인 항목 — 전체 위협모델·적대 검증 정본은 `unit/feature-0022-agent-scratch-workspace/docs/{REVIEW.md, DECISIONS.md}`
+> (scratch_guard allowlist·DB/role/스키마 격리·prompt-injection 렌즈, 적대 리뷰 BLOCK 1·HIGH 1·MEDIUM 2 전건 in-cycle 반영).
+> 본 절은 신규 표면의 boundary 색인 (§19/§23 과 동형 — 정책 본문 신규 서술 아님).
+
+- **신규 표면(프로젝트 최초 assistant-제어 파괴적 쓰기)**: assistant 가 전용 PG DB `agent_scratch` 안에서 도구 4종
+  (`scratch_import`/`scratch_sql`/`scratch_list`/`scratch_reset`)으로 대화별 스키마(`s_<hash>`)에 **CREATE/DROP TABLE·
+  INSERT/UPDATE/DELETE 등 파괴적 쓰기**를 수행. 사용자 데이터소스(§19 등)는 여전히 read-only(`execute_sql` SELECT-only)
+  — 쓰기는 오직 격리된 scratch DB 로 한정. **2026-07-21 라이브 활성**(`AGENT_SCRATCH_ENABLED=1`·기본값 OFF 게이트).
+- **격리 경계**: 전용 DB `agent_scratch` + 전용 role `agent_scratch_rw`(NOSUPERUSER) — CONNECT 는 이 DB 로만,
+  KB/runtime/web/datasource DB 무-grant(물리 격리, ADR-SCRATCH-0001 · bootstrap 시 KB PUBLIC CONNECT harden
+  3중 검증). 대화별 스키마 격리(ADR-SCRATCH-0002; 현재 scratch_guard allowlist 가 대화 격리 강제 — PG-레벨 대화별
+  전용 role 승격은 후속 TASK-0013).
+- **경계 가드(scratch_guard)**: allowlist 반전 — 허용 root 명시 + CREATE/DROP=TABLE/INDEX kind 한정, 함수/프로시저/
+  뷰/DO/CALL/EXTENSION 거부, `pg_` 접두(카탈로그 열거) 차단, search_path pin + `statement_timeout`. governed 반입은
+  `execute_sql` 신뢰경계·heavy-query 게이트 재사용(ADR-SCRATCH-0003). 시간기반 TTL reaper(기본 24h, ADR-SCRATCH-0004).

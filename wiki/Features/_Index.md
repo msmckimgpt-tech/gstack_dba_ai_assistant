@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 21 active |
+| Feature 수 | 22 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-21 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+22 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -66,6 +66,7 @@ sources:
 | feature-0019-message-editing | in-progress | 메시지 편집 — 1:1 대화 내부 브랜치 트리(단순 수정 / 요청 수정=분기 재답변 `< n/m >` 페이징)·공유(그룹)=단순 수정만 · Phase 1+2 라이브(마이그 0041·PB-0008) | [[feature-0019-message-editing]] | `unit/feature-0019-message-editing/docs/FUNCTION.md` |
 | feature-0020-zd-deploy-all | in-progress | 무중단 배포 커버리지 완성 — 워커(insight/ask) 자동 롤아웃·bedrock-gateway surge 무중단 교체·caddy 이미지 드리프트·alembic stale-image 가드 (deploy 스파인 확장) | [[feature-0020-zd-deploy-all]] | `unit/feature-0020-zd-deploy-all/docs/FUNCTION.md` |
 | feature-0021-redteam-review | in-progress | assistant 답변 자가 적대(red-team) 리뷰 — fresh-context 5축 검증(find→revise→verify·강도 게이팅·fail-open)+[세션,제품] 메모리 노트(TTL)+콘솔 'AI 추론' 탭 (Claude Code 패턴 이식, 코드 거주 0002/0003/shared) | [[feature-0021-redteam-review]] | `unit/feature-0021-redteam-review/docs/FUNCTION.md` |
+| feature-0022-agent-scratch-workspace | in-progress | assistant PG 자율 작업공간 — 전용 DB `agent_scratch`(대화별 격리 스키마)에서 외부 데이터소스 반입·cross-source JOIN·TTL(24h 기본) 정리·scratch_guard allowlist (2026-07-21 라이브 활성·기본값 OFF 게이트 · 코드 거주 0002/shared) | [[feature-0022-agent-scratch-workspace]] | `unit/feature-0022-agent-scratch-workspace/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

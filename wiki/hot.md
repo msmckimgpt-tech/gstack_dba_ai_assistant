@@ -1,14 +1,15 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-07-16
+last_updated: 2026-07-22
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-07-16
+2026-07-22
 
 ## Key Recent Facts
+- 07-21 feature-0022 agent-scratch-workspace(Major 신규·**2026-07-21 라이브 활성**) + feature-0003 진행상황 실시간 전파: **assistant PG 자율 작업공간** — 전용 DB `agent_scratch`(전용 role NOSUPERUSER·CONNECT 격리·대화별 스키마 `s_<hash>`)에서 외부 데이터소스 governed 반입(execute_sql 신뢰경계 재사용)→cross-source JOIN, 도구 4종(scratch_import/sql/list/reset)·scratch_guard allowlist(root 명시+CREATE/DROP=TABLE/INDEX·함수/뷰/pg_ 거부)·시간기반 TTL reaper(24h)·`AGENT_SCRATCH_*` 설정. 백엔드 코어+단위 22 PASS·회귀 0·**2026-07-21 라이브 활성**(bootstrap+`AGENT_SCRATCH_ENABLED=1`·스모크 PASS·run_sql 수정; 기본값 OFF 게이트; 잔여=cross-source JOIN e2e 실증 TASK-0011·관측 UI·대화별 role 승격). 코드 거주 0002/shared·repo-level bootstrap, feature-local ADR-SCRATCH-0001~0004. · **진행상황 실시간 전파**(feature-0003) — 그룹/모니터링 대화를 열어둔 유휴 관찰자에게 타 사용자 assistant 진행상황/답변이 재로드·전환 없이 실시간 전파(frontend-only run-감지 폴러·백엔드 무변경, PB-0008 라이브). 코드 거주 0003.
 - 07-16 그래프 검색·상세 내비 + 콘솔 IA 재구성(feature-0003·0016·0021): 그래프 뷰 검색이 컨텐츠 카테고리·AI 능동 분석 텍스트까지 매칭(graph-search-content-match)+검색어 갱신 시 상세 패널 검색 결과 리스트(graph-search-detail-panel)+결과 패널 2단 접기·검색 이력(뒤로/앞으로)·설명 간결화(graph-search-panel-groups) · 상세 패널 [뒤로/앞으로] 스크롤 보존·바 sticky·비hover 반투명 페이드+focus-fade fix(graph-detail-nav) · 컨텐츠 카테고리 헤딩 hover-pan(타깃=첫 멤버 노드) · 관리 콘솔 'AI 추론' IA 재구성 — 감사>'AI 운영 현황' 단일 탭+서브탭[LLM 사용량|운영 현황|추론]/설정>프롬프트 단일 항목+서브탭[전역|지침|스킬](bindPaneSubtabs)·guidance 권한 system_prompt.global.read 재사용·console.reasoning.read 감사 재배치·서브탭 바 sticky(SECURITY §23 정정 동반). 전건 POST-DEPLOY 라이브. 코드 거주 0003·0016·0021.
 - 07-15~16 그래프 상세·우클릭·엣지 + 권한 원자화 + ENUM 묶음 큐 + agent-core 정확도(feature-0003·0002): 그래프 클러스터 상세에 함수/프로시저 컨텐츠 카테고리 포함·전체 출력·카테고리별 접기(cluster-detail routines/cap/fulllist/collapse)·우클릭 3대상 hit-test/band-wins/sim-group 정합(ctxmenu hittest/band-priority/content-category)·노드/제품 카테고리 드래그 시 관계선 즉시 추종+per-frame 재그림 최적화(edge-follow-drag/drag-perf)·도움말 팝업 줄바꿈/반응형 · 관리 콘솔 권한 최소단위 원자화(추가/수정/삭제 분리·레거시 묶음 grid 숨김)+'접근' 카테고리 계층(perm-atomic-split/category-hier, backfill 마커) · ENUM 코드사전 검토 큐 구조 묶음 승인 체크리스트+일괄 등록(enum-review-bundle) · agent-core check_table_coverage 도구·스키마명 server-case drift 0행 봉인·model alias 누출 Bedrock 400 봉인·LLM 헬스 probe 오탐/throttle 수정. 전건 POST-DEPLOY 라이브. 코드 거주 0003·0002.
 - feature-0021 자가 적대 리뷰(07-15, Major 신규): 답변 전달 전 **red-team 자가 검증** — fresh-context haiku 리뷰어 5축(grounding/SQL/권한/완전성/정직성)·BLOCK 만 수정 유발(≤1회)·높음+ 재검증·전 경로 fail-open. [세션,제품] 노트 `/shared/agent-notes`(TTL 7d/30d reaper)·REDTEAM_* 런타임 설정·alembic 0042 `agent_runtime.redteam_reviews`·콘솔 'AI 추론' 탭(`console.reasoning.read`)+설정>'AI 자가 리뷰'. 코드 거주 0002(redteam/agent_notes/guidance_registry·choke-point 훅)·0003(admin_reasoning INCLUDE_ORDER=240)·shared(runtime_settings redteam 그룹). Claude Code find→verify·auto-memory·progressive disclosure 이식 (unit DECISIONS ADR-20260715T140000~2).
