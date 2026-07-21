@@ -37,3 +37,11 @@ source_of_truth: true
 - 문서(scratch.py·schema.sql·FUNCTION·DECISIONS): CONNECT 격리 근거를 실제 메커니즘으로 정정 +
   단일-role 잔여 위험·후속(대화별 role) 명시.
 - `test_scratch.py`: 하드닝 guard 회귀 5건 추가(총 20건).
+
+## CHG-20260721-guidance — 사용 지침 주입 + bootstrap superuser 결함 수정 (follow-up)
+- `agent_core.py`: `_SCRATCH_WORKSPACE_GUIDANCE` 상수 + scratch 활성 시 조건부 주입(mermaid 지침 뒤).
+  assistant·ask-worker(동일 `_run_agent_core` 경로)가 cross-source JOIN 시 scratch 를 적극 사용하도록 유도.
+- `bin/scratch-pg-bootstrap.sh`: superuser 를 `AGENT_KB_PG_USER`(운영=non-superuser agent_kb_rw) 대신
+  전용 `AGENT_SCRATCH_PG_SUPERUSER`(기본 `postgres`)로 + unix 소켓 trust/peer 연결(`-h localhost` 제거)
+  → 운영 환경 `createdb permission denied` 해소. 헤더/격리 근거 주석 정확화.
+- `test_scratch.py`: guidance 상수 sanity 테스트 1건 추가(총 21건).

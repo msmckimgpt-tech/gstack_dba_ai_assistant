@@ -44,3 +44,13 @@ scratch_guard(allowlist)+search_path 가 격리를 강제한다. 근본 강화(�
 후속으로 이월(DECISIONS ADR-SCRATCH-0002 잔여 위험 항목).
 
 **검증**: test_scratch.py 20건 PASS(하드닝 guard 회귀 5건 포함). feature-0002/0003 전체 회귀 0.
+
+## REV-20260721T090000-scratch-guidance [SKIPPED: minor] — Verdict: PASS
+**Scope**: follow-up — (a) scratch 사용 guidance 프롬프트 주입(`_SCRATCH_WORKSPACE_GUIDANCE`, 활성 시
+조건부·비활성 무증가) (b) bin/scratch-pg-bootstrap.sh superuser 결함 수정(전용 superuser override +
+unix 소켓 trust 연결).
+**왜 SKIPPED(패널 생략)**: 신규 런타임 공격 표면 0 — (a) 는 프롬프트 텍스트(도구 실행 게이트·scratch_guard
+불변, 이미 REV-…073500 에서 적대 검증 완료), (b) 는 운영 bootstrap 스크립트의 연결 자격 해석 수정
+(런타임 데이터 경로 무관, superuser 소켓 trust 는 기존 kb bootstrap 과 동형). Minor·behavior-additive.
+**검증**: test_scratch.py 21건 PASS(guidance sanity 포함), feature-0002/0003 회귀 0, bash -n PASS,
+활성화 라이브 스모크(별도).

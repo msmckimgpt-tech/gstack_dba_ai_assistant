@@ -163,6 +163,16 @@ def test_tool_defs_hidden_when_disabled(monkeypatch):
     assert tools.with_scratch_tools(base) == base
 
 
+def test_scratch_guidance_constant_present():
+    # feature-0022 guidance: assistant·ask-worker 가 scratch 를 적극 사용하도록 하는 프롬프트 지침이
+    # 존재하고 4 도구를 언급하는지(활성 시 주입) 최소 sanity.
+    import agent_core
+    g = agent_core._SCRATCH_WORKSPACE_GUIDANCE
+    assert isinstance(g, str) and len(g) > 100
+    for tok in ("scratch_import", "scratch_sql", "scratch_list", "scratch_reset"):
+        assert tok in g, tok
+
+
 def test_tool_defs_shown_when_enabled(monkeypatch):
     import modules.tools as tools
     monkeypatch.setattr(scratch, "enabled", lambda: True)

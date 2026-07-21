@@ -40,3 +40,9 @@ source_of_truth: true
 - [x] MEDIUM: CONNECT 격리 문서 정확성 정정 + `--harden-kb-isolation` sibling DB(agent_runtime/
   agent_memory/web) 확대(opt-in).
 - [x] MEDIUM: scratch_import 에 execute_sql parity heavy-query 게이트 추가.
+
+## 후속 cycle (guidance + bootstrap fix, 2026-07-21)
+- [x] TASK-0014: scratch 사용 guidance(`_SCRATCH_WORKSPACE_GUIDANCE`) agent_core 조건부 주입 —
+  assistant·ask-worker 가 cross-source JOIN 시 적극 사용하도록 유도(사용자 요청).
+- [x] TASK-0015: bootstrap superuser 결함 수정(운영 AGENT_KB_PG_USER=non-superuser → createdb
+  permission denied) — 전용 superuser override + 소켓 trust 연결.
