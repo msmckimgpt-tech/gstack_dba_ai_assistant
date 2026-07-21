@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="doc_type" content="PRESENTATION_DECK" />
+<title>DBA AI Assistant 개발 진척 보고 · 2026-06-17 ~ 2026-07-22</title>
+<meta name="description" content="2026-06-17~07-22 DBA AI Assistant 개발 진척 상부보고 — 대화 경험·답변 신뢰·안전한 공유·자율 지식·데이터베이스 지도(관계도)·AI 관제·무중단 기반. 이전 기간(5/19~6/17) 대비 '개별 대화 다듬기'에서 '협업·신뢰·지도·운영 플랫폼'으로의 도약. 검증된 성과와 발전 과제를 구분." />
+<style>
+/* =========================================================================
+   DBA AI Assistant 개발 진척 보고 덱 (2026-06-17 ~ 2026-07-22) — 자기완결(offline).
+   디자인 언어는 서비스/이전 보고덱(docs/presentation/index.html · 2026-06-17_2026-07-08/v1/deck.html)의
+   :root 토큰 상속(warm neutral + 단일 파랑 accent + 2겹 soft-shadow + 시스템 폰트).
+   2026 트렌드 정합(리서치): 데이터-스토리텔링(슬라이드당 단일 강조수치)·접근성 우선(WCAG 2.2 AA)·
+   의미론 색·중립 베이스만 채택. 표현적 serif 헤드라인·에디토리얼 사진·kinetic 타입은 3중 필터(봉투·offline·절제) 탈락.
+   외부 CDN/폰트/이미지/JS 0 — 전부 인라인(아이콘·전후 도식은 인라인 SVG).
+   접근성: 색+라벨+형태 3중, focus-visible, prefers-reduced-motion,
+   keep-all 한국어 타이포, clamp() rem 타입 + 문서 스크롤(브라우저 줌 보존).
+   ========================================================================= */
+:root{
+  --bg:#f7f7f4; --surface:#ffffff; --surface-2:#fafaf7;
+  --border:#e6e5e0; --border-subtle:#f0efea;
+  --text:#26251e; --text-2:#5a5852; --text-muted:#807d72;
+  --primary:#2563eb; --primary-dark:#1d4ed8; --primary-soft:#eff6ff;
+  --success:#16a34a; --warning:#d97706; --danger:#dc2626;
+  --code-bg:#1a1b26; --code-fg:#c0caf5;
+  --font:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;
+  --mono:"D2Coding","Cascadia Code","SFMono-Regular",Consolas,"Noto Sans Mono CJK KR",ui-monospace,Menlo,monospace;
+  --r-sm:6px; --r-md:10px; --r-lg:14px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:0 4px 14px rgba(0,0,0,.10);
+  --shadow-lg:0 10px 32px rgba(0,0,0,.14);
+  /* 파생(대비 실측 통과값) */
+  --text-3:#6b6960; --accent-soft:#eef4ff;
+  --ok-ink:#15803d; --ok-bg:#f0f8f2; --ok-bd:#bfe3c8;
+  --warn-ink:#b45309; --warn-bg:#fdf6ec; --warn-bd:#f0d9b0;
+  --new-bg:#eef4ff; --new-bd:#cfe0ff; --new-ink:#1d4ed8;
+  --carry-bg:#f2f1ec; --carry-bd:#dedcd4; --carry-ink:#5a5852;
+  --done-bg:#f0f8f2; --done-bd:#bfe3c8; --done-ink:#15803d;
+  --before-bg:#f4f3ef; --before-bd:#e0ded6; --before-ink:#8a877e;
+  --after-bg:#eff5ff; --after-bd:#cfe0ff;
+  --mute1:#d8d6cf; --mute2:#b8b5ac;   /* 전(before) 도식 계열 회색 */
+  --acc2:#93b4f5;                       /* 후(after) 도식 보조 파랑 */
+  --role-a:#0072B2; --role-b:#E69F00; --role-c:#009E73; /* Okabe-Ito(색맹친화) 역할 예시 */
+  --dur:.28s; --ease:cubic-bezier(.22,.61,.36,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--font); color:var(--text);
+  word-break:keep-all; overflow-wrap:anywhere; hyphens:none; line-break:strict;
+  background:
+    radial-gradient(1100px 560px at 85% -12%, #eef4ff 0%, transparent 55%),
+    radial-gradient(820px 460px at -8% 112%, #f3f0ff 0%, transparent 52%),
+    var(--bg);
+  -webkit-font-smoothing:antialiased; line-height:1.62;
+}
+h1,h2,h3{text-wrap:balance;line-height:1.2;letter-spacing:-.01em}
+p,li,.lead,.cell p,.rowlab{text-wrap:pretty}
+.mono{font-family:var(--mono)}
+
+/* 상단 크롬 */
+.topbar{position:fixed;top:0;left:0;right:0;z-index:60;pointer-events:none}
+.progress{height:3px;background:linear-gradient(90deg,var(--primary),#7aa2ff);width:0;transition:width var(--dur) var(--ease)}
+.chrome{position:fixed;top:11px;left:14px;right:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;z-index:61}
+.pill{pointer-events:auto;background:var(--surface);border:1px solid var(--border);border-radius:999px;box-shadow:var(--shadow-sm);font-size:12.5px;font-weight:650;color:var(--text-2)}
+button.pill{cursor:pointer;font-family:inherit;transition:color var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.menu-btn{display:inline-flex;align-items:center;gap:8px;padding:7px 14px}
+.menu-btn:hover{color:var(--primary);border-color:#cdd9f5}
+.menu-btn .bars{display:inline-flex;flex-direction:column;gap:2.6px}
+.menu-btn .bars i{width:14px;height:2px;background:currentColor;border-radius:2px}
+.brand{display:flex;align-items:center;gap:8px;padding:6px 13px;font-weight:750;color:var(--text)}
+.brand .mk{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,var(--primary),#60a5fa);display:grid;place-items:center;color:#fff;font-size:10px;font-weight:800}
+.brand .rng{font-size:10.5px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid #dbe6ff;border-radius:999px;padding:1px 8px}
+.counter{padding:7px 13px;font-variant-numeric:tabular-nums;font-size:12px;color:var(--text-muted)}
+
+/* 슬라이드 스테이지(문서 스크롤 — 줌 보존) */
+.deck{position:fixed;inset:0;overflow:hidden}
+.slide{position:absolute;inset:0;display:none;overflow-y:auto;overflow-x:hidden;padding:64px clamp(18px,4vw,60px) 52px}
+.slide.is-active{display:block;animation:fade var(--dur) var(--ease) both}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.wrap{max-width:1080px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;justify-content:center}
+.kicker{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;font-size:11.5px;font-weight:750;letter-spacing:.02em;color:var(--primary);background:var(--primary-soft);border:1px solid #dbe6ff;padding:4px 11px;border-radius:999px;margin-bottom:13px}
+.kicker .dot{width:6px;height:6px;border-radius:50%;background:var(--primary)}
+h1.title{font-size:clamp(24px,3.6vw,40px);font-weight:820}
+h2.title{font-size:clamp(20px,2.7vw,30px);font-weight:800}
+.lead{font-size:clamp(14px,1.5vw,16.5px);color:var(--text-2);margin-top:12px;max-width:62em}
+.muted{color:var(--text-muted)}
+
+/* 클릭 넘김(시맨틱 button) */
+.zone{position:fixed;top:0;bottom:0;width:12%;z-index:40;border:0;background:transparent;cursor:pointer;padding:0}
+.zone.l{left:0} .zone.r{right:0}
+.zone:focus-visible{outline:3px solid var(--primary);outline-offset:-6px;background:rgba(37,99,235,.04)}
+
+/* 배지: 색 + 라벨 + 형태(SVG) */
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:750;border-radius:999px;padding:2px 9px;border:1px solid;white-space:nowrap}
+.badge svg{width:11px;height:11px;flex:0 0 auto}
+.b-new{background:var(--new-bg);border-color:var(--new-bd);color:var(--new-ink)}
+.b-carry{background:var(--carry-bg);border-color:var(--carry-bd);color:var(--carry-ink)}
+.b-done{background:var(--done-bg);border-color:var(--done-bd);color:var(--done-ink)}
+.b-ok{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok-ink)}
+.b-warn{background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-ink)}
+
+/* 카드 / grid */
+.grid{display:grid;gap:14px;margin-top:18px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:15px 16px;box-shadow:var(--shadow-sm)}
+.card h3{font-size:14.5px;font-weight:750;margin-bottom:7px;display:flex;align-items:center;gap:8px}
+.card p,.card li{font-size:13px;color:var(--text-2)}
+.card ul{margin:0;padding-left:16px} .card li{margin:3px 0}
+.cap{font-size:11px;font-weight:750;letter-spacing:.03em;color:var(--text-muted);text-transform:uppercase}
+
+/* 기능 5블록 bento — 전/후 시각 밴드를 전폭으로 */
+.bento{display:grid;gap:12px;margin-top:16px;grid-template-columns:1.1fr 1fr 1fr;
+  grid-template-areas:"bg flow flow" "cmp cmp cmp" "why why effect";}
+.bento .blk{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px;box-shadow:var(--shadow-sm)}
+.blk.bg{grid-area:bg} .blk.flow{grid-area:flow} .blk.cmp{grid-area:cmp}
+.blk.why{grid-area:why} .blk.effect{grid-area:effect}
+.blk .lab{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;color:var(--text-muted);letter-spacing:.03em;margin-bottom:6px}
+.blk .lab .n{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:5px;background:var(--primary-soft);color:var(--primary);font-size:10px;font-weight:800}
+.blk p,.blk li{font-size:12.5px;color:var(--text-2)}
+.blk ul{margin:0;padding-left:15px} .blk li{margin:2px 0}
+.blk strong{color:var(--text);font-weight:700}
+
+/* 전/후 시각 도식 밴드 */
+.bav{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:stretch;margin-top:2px}
+.mock{border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 10px 8px}
+.mock.before{background:var(--before-bg);border-color:var(--before-bd)}
+.mock.after{background:var(--after-bg);border-color:var(--after-bd)}
+.mock figcaption{font-size:9.5px;font-weight:800;letter-spacing:.05em;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.mock.before figcaption{color:var(--before-ink)} .mock.after figcaption{color:var(--primary-dark)}
+.mock figcaption .d{width:6px;height:6px;border-radius:50%}
+.mock.before figcaption .d{background:var(--mute2)} .mock.after figcaption .d{background:var(--primary)}
+.mock svg{width:100%;height:auto;display:block}
+.mock .cc{font-size:11px;margin-top:6px}
+.mock.before .cc{color:var(--before-ink)} .mock.after .cc{color:var(--text)}
+.baArrow{display:grid;place-items:center;color:var(--primary)}
+.schem{font-size:10px;color:var(--text-muted);margin-top:7px;display:inline-flex;gap:5px;align-items:center}
+
+/* KPI 타일 */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:13px 15px;box-shadow:var(--shadow-sm)}
+.kpi .v{font-size:clamp(20px,2.4vw,28px);font-weight:820;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .v .u{font-size:14px;font-weight:700;color:var(--primary);margin-left:2px}
+.kpi .k{font-size:12px;color:var(--text-2);margin-top:2px}
+.kpi .src{font-size:10.5px;color:var(--text-muted);margin-top:6px;display:inline-flex;align-items:center;gap:4px}
+.kpi .src svg{width:10px;height:10px;color:var(--success)}
+.kpi .src.agg svg{color:var(--text-muted)}
+
+/* 흐름도 */
+.flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.node{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 10px;font-size:11.5px;font-weight:650;color:var(--text);box-shadow:var(--shadow-sm)}
+.node.on{border-color:#cfe0ff;background:var(--accent-soft);color:var(--primary-dark)}
+.arrowc{color:var(--text-muted);display:grid;place-items:center;font-size:12px}
+
+/* agenda */
+.agenda{display:grid;gap:9px;margin-top:16px}
+.ag{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 15px;box-shadow:var(--shadow-sm)}
+.ag .num{font-variant-numeric:tabular-nums;font-weight:820;color:var(--primary);font-size:15px;min-width:20px}
+.ag .t{font-weight:720;font-size:14px} .ag .d{font-size:12px;color:var(--text-2);margin-top:1px}
+
+/* 콜아웃 */
+.callout{margin-top:16px;border-left:3px solid var(--primary);background:var(--primary-soft);border-radius:0 var(--r-md) var(--r-md) 0;padding:12px 16px;font-size:13.5px;color:var(--text)}
+.callout.warn{border-left-color:var(--warning);background:var(--warn-bg)}
+.callout.warn strong{color:var(--warn-ink)}
+
+/* 비교표(리스크) */
+table.cmp{width:100%;border-collapse:collapse;margin-top:8px;font-size:12.5px}
+table.cmp th,table.cmp td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+table.cmp th{background:var(--surface-2);font-weight:750;color:var(--text);font-size:11.5px}
+table.cmp td.b{background:var(--before-bg);color:var(--text-2)}
+table.cmp td.a{background:var(--after-bg);color:var(--text)}
+.rowlab{font-weight:700;color:var(--text);background:var(--surface-2)!important}
+
+/* 목차 오버레이(rgba 단색 — backdrop-filter 미사용) */
+.idx{position:fixed;inset:0;z-index:80;background:rgba(20,20,18,.62);display:none;opacity:0;transition:opacity var(--dur) var(--ease)}
+.idx.open{display:block;opacity:1}
+.idx-panel{position:absolute;top:0;left:0;bottom:0;width:min(430px,88vw);background:var(--surface);box-shadow:var(--shadow-md);padding:24px 18px;transform:translateX(-104%);transition:transform var(--dur) var(--ease);overflow:auto}
+.idx.open .idx-panel{transform:none}
+.idx-title{font-size:12px;font-weight:750;color:var(--text-muted);letter-spacing:.05em;margin-bottom:12px}
+.idx-item{display:flex;gap:12px;align-items:flex-start;padding:10px 11px;border-radius:var(--r-md);cursor:pointer;width:100%;text-align:left;border:0;background:transparent;font-family:inherit;transition:background var(--dur) var(--ease)}
+.idx-item:hover{background:var(--primary-soft)}
+.idx-item.active{background:var(--primary-soft);box-shadow:inset 3px 0 0 var(--primary)}
+.idx-num{font-variant-numeric:tabular-nums;font-weight:820;color:var(--primary);font-size:13.5px;min-width:20px}
+.idx-name{font-weight:720;font-size:14px;color:var(--text)}
+.idx-sub{font-size:11.5px;color:var(--text-muted);margin-top:2px}
+.idx-hint{margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.7;border-top:1px solid var(--border-subtle);padding-top:12px}
+kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--text-2)}
+
+/* cover */
+.cover .big{font-size:clamp(28px,5vw,52px);font-weight:840;letter-spacing:-.025em;line-height:1.08;margin-top:6px}
+.cover .tag{font-size:clamp(15px,2vw,19px);color:var(--text-2);margin-top:14px;max-width:44em}
+.cover .meta{margin-top:26px;display:flex;flex-wrap:wrap;gap:10px}
+.chip{font-size:12.5px;font-weight:650;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 13px;box-shadow:var(--shadow-sm)}
+.chip b{color:var(--text);font-weight:800}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+
+/* focus-visible(신규 구축) */
+a:focus-visible,button:focus-visible,.idx-item:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:4px}
+@media (forced-colors:active){a:focus-visible,button:focus-visible,.zone:focus-visible{outline:2px solid CanvasText}}
+
+/* 반응형(문서 모드) */
+@media (max-width:860px){
+  .g2,.g3,.kpis{grid-template-columns:1fr}
+  .bento{grid-template-columns:1fr;grid-template-areas:"bg" "flow" "cmp" "why" "effect"}
+  .bav{grid-template-columns:1fr} .baArrow{transform:rotate(90deg)}
+  .zone{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001s!important;transition-duration:.08s!important;scroll-behavior:auto!important}}
+
+/* 인쇄/PDF 핸드오프(하이브리드 — 자기완결 유지) */
+@media print{
+  .zone,.chrome,.topbar,.idx{display:none!important}
+  .deck{position:static;overflow:visible}
+  .slide{position:static;display:block;overflow:visible;min-height:auto;page-break-after:always;padding:24px}
+  .slide.is-active{animation:none}
+  .wrap{justify-content:flex-start}
+  body{background:#fff}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar"><div class="progress" id="prog"></div></div>
+<div class="chrome">
+  <button class="pill menu-btn" id="menuBtn" aria-label="목차 열기" aria-haspopup="true"><span class="bars"><i></i><i></i><i></i></span>목차</button>
+  <span class="pill brand"><span class="mk">DQA</span>개발 진척 보고<span class="rng">6/17–7/22</span></span>
+  <span class="pill counter" id="counter" role="status" aria-live="polite">1 / 14</span>
+</div>
+
+<button class="zone l" id="zoneL" aria-label="이전 슬라이드"></button>
+<button class="zone r" id="zoneR" aria-label="다음 슬라이드"></button>
+
+<main class="deck" id="deck">
+
+<!-- 0 · 표지 -->
+<section class="slide cover is-active" data-key="cover" aria-label="표지">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>개발 진척 보고 · 상부보고용</span>
+    <div class="big">DBA AI Assistant<br/>개발 진척 보고</div>
+    <div class="tag">자연어로 데이터베이스에 묻고, 안전하게 검증된 조회 결과를 받는 사내 AI 어시스턴트 — 약 5주간(6/17~7/22)의 진척을 정리합니다. 직전 기간이 <strong>"개별 대화 화면 다듬기"</strong>였다면, 이번 기간의 무게중심은 <strong>"협업·신뢰·지도·운영 플랫폼으로의 도약"</strong>: 대화를 편집·검증하고, 안전하게 나눠 보고, 대규모 데이터베이스를 지도로 탐색하며, 배포·운영이 끊기지 않게 합니다.</div>
+    <div class="meta">
+      <span class="chip">기간 <b>2026-06-17 ~ 2026-07-22</b></span>
+      <span class="chip">직전 대비 <b>2026-05-19 ~ 2026-06-17</b></span>
+      <span class="chip">버전 <b>v1</b></span>
+      <span class="chip">작성 <b>2026-07-21</b></span>
+      <span class="chip">대상 <b>기획·운영·관리·개발</b></span>
+    </div>
+    <div class="legend" aria-label="배지 범례">
+      <span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span>
+      <span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span>
+      <span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료</span>
+      <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨</span>
+      <span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 10V3M3 6l3-3 3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>발전 예정</span>
+    </div>
+  </div>
+</section>
+
+<!-- 1 · 핵심 요약(BLUF) -->
+<section class="slide" data-key="summary" aria-label="핵심 요약">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>핵심 요약 · 먼저 결론</span>
+    <h1 class="title">"개별 대화 다듬기"에서 "협업·신뢰·지도·운영 플랫폼"으로</h1>
+    <p class="lead">직전 기간(5/19~6/17)은 <strong>개별 대화 화면·권한·데이터소스 관리</strong>를 다듬는 데 집중했습니다. 이번 약 5주는 그 위에서 <strong>플랫폼의 격을 올렸습니다</strong> — <strong>①대화를 편집·조율</strong>, <strong>②답변을 스스로 검증(신뢰)</strong>, <strong>③안전하게 나눠 보기</strong>, <strong>④지식이 스스로 쌓임</strong>, <strong>⑤대규모 데이터베이스를 '지도'로 탐색</strong>, <strong>⑥AI를 한눈에 관제</strong>, <strong>⑦끊김 없는 배포·운영</strong>.</p>
+    <div class="kpis">
+      <div class="kpi"><div class="v">18<span class="u">개</span></div><div class="k">진척한 기능 영역 <span class="muted">(직전 8개)</span></div><div class="src"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨 · 개발 이력</div></div>
+      <div class="kpi"><div class="v">229<span class="u">건</span></div><div class="k">개발·반영된 작업 단위</div><div class="src agg"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>개발 이력 집계 · 산식 있음</div></div>
+      <div class="kpi"><div class="v">23,465<span class="u">개</span></div><div class="k">지도에 자동 적재·군집한 객체</div><div class="src"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨 · 라이브 적재(서버측)</div></div>
+      <div class="kpi"><div class="v">0<span class="u">회</span></div><div class="k">배포 중 접속 중단(무중단 운영)</div><div class="src"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>검증됨 · 부하 시험</div></div>
+    </div>
+    <div class="callout">직전 기간 대비: 5월 중순~6월 중순에는 <strong>개별 대화 UI·권한 트리·데이터소스 관리</strong>를 다듬었습니다. 이번 기간에는 그 위에서 <strong>메시지 편집·답변 자가검증·관계도 지도(렌더러 전면 교체)·무중단 배포 완성·AI 작업공간</strong> 등 <strong>새로운 축</strong>이 대거 추가됐습니다. 각 장에서 <strong>검증된 성과</strong>와 <strong>앞으로 더 키울 발전 과제</strong>를 함께 표시합니다.</div>
+  </div>
+</section>
+
+<!-- 2 · 개발 배경(SCQA) -->
+<section class="slide" data-key="background" aria-label="개발 배경">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>개발 배경 · 왜 이 일을 했나</span>
+    <h2 class="title">"낱개 기능은 다듬었는데, 함께·믿고·크게 쓰기가 아직"</h2>
+    <div class="grid g2">
+      <div class="card"><h3><span class="cap">상황 (직전 기간까지 · 5/19~6/17)</span></h3><ul>
+        <li>개별 대화 화면을 다듬었습니다 — <strong>첨부·조회결과 표시·감사 드로어·권한 트리·데이터소스 관리</strong>.</li>
+        <li>대체로 <strong>혼자·한 대화</strong>를 잘 쓰는 데 초점. 협업·자율 지식·관계도·무중단은 <strong>아직 없었습니다</strong>.</li>
+      </ul></div>
+      <div class="card"><h3><span class="cap">문제 (이번에 풀 것)</span></h3><ul>
+        <li>보낸 말은 <strong>고칠 수 없고</strong>, 답변이 근거에 맞는지 <strong>스스로 점검</strong>하지 않았습니다.</li>
+        <li>공유하면 <strong>대화 전체가 노출</strong>됐고, 수천 개 테이블은 여전히 <strong>평면 목록</strong>이라 관계 파악이 어려웠습니다.</li>
+        <li>재배포 때마다 <strong>웹만 무중단</strong>이고 뒤의 처리기·AI 게이트웨이는 <strong>끊길 수</strong> 있었습니다.</li>
+      </ul></div>
+    </div>
+    <div class="callout"><strong>그래서 이번 기간의 목표</strong> — (1) 대화를 <strong>편집·조율</strong>하고, (2) 답변을 <strong>스스로 검증</strong>하며, (3) <strong>안전하게 나눠</strong> 쓰고, (4) 지식이 <strong>스스로 쌓이게</strong> 하며, (5) 대규모 데이터베이스를 <strong>지도처럼 탐색</strong>하고, (6) <strong>AI를 한눈에 관제</strong>하며, (7) 그 모든 게 <strong>끊김 없이</strong> 돌게. 아래는 사용자가 화면을 만나는 순서로 설명합니다.</div>
+  </div>
+</section>
+
+<!-- 3 · 이번 기간 개요 -->
+<section class="slide" data-key="agenda" aria-label="이번 기간 개요">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>이번 기간 개요 · 화면 흐름 순</span>
+    <h2 class="title">사용자가 만나는 순서로 본 7가지 변화</h2>
+    <div class="agenda">
+      <div class="ag"><span class="num">1</span><div><div class="t">대화를 편집하고 조율한다</div><div class="d">보낸 말 수정·요청 바꿔 재답변(버전 비교) · 생각 깊이 4단계 · 실시간 진행</div></div><span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span></div>
+      <div class="ag"><span class="num">2</span><div><div class="t">답변을 스스로 검증한다 (신뢰·정직)</div><div class="d">AI가 자기 답변을 스스로 비판·수정 · 첨부 내용과 답변의 일치 확증</div></div><span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span></div>
+      <div class="ag"><span class="num">3</span><div><div class="t">안전하게 나눠 본다 (공유 범위 지정)</div><div class="d">"여기부터/여기까지"만 공유 · 가린 구간은 화면·AI 기억·복제에서 물리 배제</div></div><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span></div>
+      <div class="ag"><span class="num">4</span><div><div class="t">스스로 똑똑해지는 지식 (용어·코드값·제품)</div><div class="d">대화에서 뜻을 배워 검토 후 지식으로 · 제품 분류도 'AI 제안→사람 승인'</div></div><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span></div>
+      <div class="ag"><span class="num">5</span><div><div class="t">데이터베이스를 '지도'로 탐색한다 (관계도)</div><div class="d">평면 목록 → 대화형 지도 · 렌더 엔진 전면 교체로 대규모 탐색이 매끄럽게</div></div><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음·대폭 확장</span></div>
+      <div class="ag"><span class="num">6</span><div><div class="t">AI를 관제하고 콘솔을 정돈한다</div><div class="d">AI 상태·비용·지연 한 화면 · 관리 콘솔 정보구조·권한 체계 재정비</div></div><span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3l3 3-3 3M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span></div>
+      <div class="ag"><span class="num">7</span><div><div class="t">끊김 없이 배포하고 스스로 회복한다 (기반)</div><div class="d">무중단 배포 전 구성요소로 완성 · 코드 자동 지도화 · AI 전용 작업공간 격리</div></div><span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료·신규</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 · 대화를 편집하고 조율한다 (headline: 메시지 편집) -->
+<section class="slide" data-key="feat-converse" aria-label="대화를 편집하고 조율한다">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>1. 대화를 편집하고 조율한다 <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">보낸 말을 고치고, 요청을 바꿔 다시 답변받되 이전 답변도 남깁니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>대화는 <strong>보낸 말을 고칠 수 없어</strong>, 오타 하나에도 새로 써야 했습니다. "질문을 조금 바꿔 다시 답변받되 <strong>이전 답변과 비교</strong>"하는 흐름도 불가했고, 모든 질문이 <strong>똑같은 생각의 양</strong>으로 처리됐습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">내 말풍선 hover</span><span class="arrowc">›</span><span class="node on">수정</span><span class="arrowc">›</span><span class="node">단순 수정 · 요청 바꿔 재답변</span><span class="arrowc">›</span><span class="node on">&lt; 1 / 2 &gt; 버전 비교</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">더불어 <strong>생각 깊이 4단계</strong>(낮음·일반·높음·매우높음)·<strong>실시간 진행 표시</strong>·<strong>지연 시 조용한 자동 재연결</strong>.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 수정 불가</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 보낸 메시지에 자물쇠가 걸려 수정할 수 없고, 답변은 한 갈래뿐이라 이전 답변과 비교 불가">
+              <rect x="70" y="12" width="118" height="16" rx="5" fill="var(--mute1)" stroke="var(--mute2)"/>
+              <g><rect x="168" y="14" width="12" height="12" rx="2" fill="none" stroke="var(--mute2)"/><path d="M171 17a3 3 0 016 0v1h-6z" fill="none" stroke="var(--mute2)" stroke-width="1"/></g>
+              <rect x="12" y="34" width="150" height="12" rx="5" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="70" y="52" width="118" height="12" rx="5" fill="var(--mute1)" stroke="var(--mute2)"/>
+              <rect x="12" y="70" width="150" height="12" rx="5" fill="#fff" stroke="var(--mute2)"/>
+              <text x="100" y="92" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">보낸 말 고정 · 답변 한 갈래</text>
+            </svg>
+            <div class="cc">수정 불가 · 이전 답변 비교 불가</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 편집·분기</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 보낸 메시지를 수정 버튼으로 고치고, 요청을 바꾸면 새 가지로 갈라져 재답변, 답변 위 버전 페이저로 이전 답변과 비교">
+              <rect x="70" y="10" width="118" height="16" rx="5" fill="var(--accent-soft)" stroke="var(--primary)"/>
+              <g><path d="M172 12l4 4-9 9-4 1 1-4z" fill="none" stroke="var(--primary)" stroke-width="1.2"/></g>
+              <!-- 분기 -->
+              <path d="M100 26v8M100 34h-28M100 34h28M72 34v8M128 34v8" stroke="var(--acc2)" stroke-width="1.2" fill="none"/>
+              <rect x="46" y="42" width="52" height="13" rx="4" fill="#fff" stroke="var(--acc2)"/><text x="72" y="51" font-size="7" fill="var(--text-2)" text-anchor="middle" font-family="var(--font)">답변 v1</text>
+              <rect x="102" y="42" width="52" height="13" rx="4" fill="var(--primary-soft)" stroke="var(--primary)"/><text x="128" y="51" font-size="7" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">답변 v2</text>
+              <!-- 버전 페이저 -->
+              <g font-family="var(--font)"><rect x="78" y="62" width="44" height="14" rx="7" fill="#fff" stroke="var(--primary)"/><text x="86" y="72" font-size="8" fill="var(--primary)" text-anchor="middle">‹</text><text x="100" y="72" font-size="8" fill="var(--primary-dark)" text-anchor="middle">1 / 2</text><text x="114" y="72" font-size="8" fill="var(--primary)" text-anchor="middle">›</text></g>
+              <text x="100" y="90" font-size="7.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">이전 답변 보존 · 버전 비교</text>
+            </svg>
+            <div class="cc"><strong>수정·분기 재답변 · &lt;n/m&gt; 버전 페이징</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>재사용성 + 무결성</strong>. 대화를 통째로 새로 만들지 않고 <strong>대화 안에서 가지를 치는</strong> 방식(ChatGPT식)이라 사이드바가 지저분해지지 않습니다. 가지가 없는 대화는 <strong>기존과 완전히 동일</strong>하게 동작(회귀 0). 그룹·공유 대화는 답변 근거 보호를 위해 <strong>단순 수정만</strong> 허용.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">개발·검증 완료</span></div><p>오타는 즉석 수정, 요청 변경은 분기 재답변으로 <strong>이전 답변까지 비교</strong>. 1:1·그룹 모두 <strong>실 화면 검증(실 Windows) 통과</strong> · 적대적 보안 리뷰로 결함 3건을 찾아 봉인. 그룹 편집 보안 세부는 실화면 재확인 예정.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 · 답변을 스스로 검증한다 (headline: 자가검증 + 첨부 근거) -->
+<section class="slide" data-key="feat-trust" aria-label="답변을 스스로 검증한다">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>2. 답변을 스스로 검증한다 (신뢰·정직) <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">AI가 자기 답변을 스스로 비판하고, 첨부와의 일치를 확증합니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>AI는 답변을 <strong>곧바로 전달</strong>했고, 근거에 맞는지 되짚는 단계가 없었습니다. 특히 <strong>첨부파일과 실제 데이터를 비교</strong>할 때, <strong>일부만 본 결과를 전부로 단정</strong>해 실재하는 항목을 "누락"이라 오진하는 <strong>환각</strong>이 사용자에게 보고됐습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>동작 흐름</div>
+        <div class="flow"><span class="node">답변 초안</span><span class="arrowc">›</span><span class="node on">별도 리뷰어 · 5축 적대 점검</span><span class="arrowc">›</span><span class="node">문제 시 수정</span><span class="arrowc">›</span><span class="node on">전달</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">5축 = 근거 정합·SQL 정확성·권한/정보누출·완전성·정직성. 첨부는 <strong>코드가 대소문자까지 대조</strong>. 운영자는 '감사 &gt; AI 추론'에서 조회.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 무검증·과단정</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 답변이 점검 없이 바로 전달되고, 첨부의 일부만 본 결과를 전부로 단정해 실재 항목을 누락으로 오진">
+              <rect x="12" y="16" width="70" height="30" rx="6" fill="#fff" stroke="var(--mute2)"/><text x="47" y="34" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">답변 초안</text>
+              <path d="M84 31h44M120 26l8 5-8 5" stroke="var(--mute2)" stroke-width="1.6" fill="none"/>
+              <rect x="130" y="16" width="58" height="30" rx="6" fill="#fff" stroke="var(--mute2)"/><text x="159" y="34" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">바로 전달</text>
+              <g><path d="M96 58l7 12H89z" fill="none" stroke="var(--warning)" stroke-width="1.6"/><path d="M96 62v4M96 68v1" stroke="var(--warning)" stroke-width="1.6"/></g>
+              <text x="100" y="88" font-size="7.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">점검 없음 · "일부=전부" 환각</text>
+            </svg>
+            <div class="cc">2차 점검 없음 · 과단정 환각</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 자가검증·근거대조</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 답변 초안을 별도 리뷰어가 5개 축으로 적대적으로 점검하고 문제 시 수정한 뒤 전달, 첨부는 코드가 대소문자까지 실제 대조">
+              <rect x="10" y="10" width="46" height="22" rx="5" fill="#fff" stroke="var(--acc2)"/><text x="33" y="24" font-size="7.5" fill="var(--text-2)" text-anchor="middle" font-family="var(--font)">답변 초안</text>
+              <path d="M58 21h12" stroke="var(--primary)" stroke-width="1.4"/>
+              <rect x="72" y="6" width="60" height="30" rx="5" fill="var(--primary-soft)" stroke="var(--primary)"/>
+              <text x="102" y="16" font-size="6.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">별도 리뷰어(5축)</text>
+              <g font-family="var(--font)" font-size="5.5" fill="var(--primary-dark)" text-anchor="middle"><text x="84" y="26">근거</text><text x="102" y="26">SQL</text><text x="120" y="26">누출</text><text x="93" y="33">완전</text><text x="111" y="33">정직</text></g>
+              <path d="M134 21h12M142 16l6 5-6 5" stroke="var(--primary)" stroke-width="1.4" fill="none"/>
+              <rect x="150" y="10" width="40" height="22" rx="5" fill="var(--ok-bg)" stroke="var(--ok-bd)"/><path d="M158 21l3 3 5-5" stroke="var(--ok-ink)" stroke-width="1.6" fill="none"/><text x="176" y="24" font-size="7" fill="var(--ok-ink)" text-anchor="middle" font-family="var(--font)">전달</text>
+              <rect x="10" y="44" width="180" height="16" rx="4" fill="#fff" stroke="var(--acc2)"/><text x="18" y="55" font-size="7" fill="var(--text)" font-family="var(--font)">첨부 항목 ↔ 실 DB 테이블</text><path d="M150 52l3 3 5-5" stroke="var(--success)" stroke-width="1.6" fill="none"/><text x="178" y="55" font-size="6.5" fill="var(--ok-ink)" text-anchor="end" font-family="var(--font)">코드 대조</text>
+              <text x="100" y="76" font-size="7.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">대소문자 차이=오진 봉인 · '미확인'은 미확인이라 명시</text>
+            </svg>
+            <div class="cc"><strong>자가 적대 검증 · 첨부 근거를 코드가 확증</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>신뢰 향상 + 가용성 보존</strong>. 검증은 <strong>품질 계층</strong>일 뿐 답변을 막는 관문이 아니게(문제 있어도 최소한 답은 나옴). 첨부 대조는 확률적 프롬프트 대신 <strong>코드가 결정론적으로</strong> 판정 — 대소문자 같은 차이로 흔들리지 않습니다. 근거 못 대면 <strong>'미확인'이라고 정직하게</strong> 말하도록 계약.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn" style="margin-left:auto">효과(재발 감소) 측정 예정</span></div><p>근거 미부합·과단정 답변의 사전 차단, 첨부 대조 환각 감소. <strong>개발·배포 완료</strong>(테스트·적대 리뷰 통과). "라이브에서 결함을 실제로 잘 잡는가·환각이 줄었는가"는 <strong>다음 기간 실측</strong>합니다.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 · 안전하게 나눠 본다 -->
+<section class="slide" data-key="feat-share" aria-label="안전하게 나눠 본다">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>3. 안전하게 나눠 본다 (공유 범위 지정) <span class="badge b-carry" style="margin-left:8px">이어받음</span></span>
+    <h2 class="title">대화의 "보여줄 구간"만 나누고, 나머지는 완전히 가립니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>대화를 공유하면 <strong>처음부터 끝까지 전부</strong> 노출됐습니다. 앞부분에 <strong>민감한 데이터·다른 계정 정보</strong>가 있어도 가릴 수 없었고, 참여자가 나중에 "앞 대화 보여줘"라고 <strong>AI를 속여 캐낼</strong> 위험도 있었습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">말풍선 ☰ 메뉴</span><span class="arrowc">›</span><span class="node on">여기부터/여기까지 공유</span><span class="arrowc">›</span><span class="node">공유·초대·복제</span><span class="arrowc">›</span><span class="node on">가린 구간은 어디서도 안 보임</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">참여 시 '참여 알림'·기존 멤버 unread 표시(이벤트는 AI 기억에서 배제).</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 전체 노출</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 공유하면 민감 구간을 포함한 대화 전체가 상대에게 노출">
+              <g>
+                <rect x="14" y="12" width="120" height="11" rx="3" fill="var(--mute2)"/><text x="140" y="21" font-size="7" fill="var(--danger)" font-family="var(--font)">민감</text>
+                <rect x="14" y="28" width="150" height="11" rx="3" fill="var(--mute1)"/>
+                <rect x="14" y="44" width="130" height="11" rx="3" fill="var(--mute1)"/>
+                <rect x="14" y="60" width="150" height="11" rx="3" fill="var(--mute1)"/>
+              </g>
+              <path d="M8 8h180v70H8z" fill="none" stroke="var(--mute2)" stroke-dasharray="3 3"/>
+              <text x="100" y="90" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">공유 = 처음부터 끝까지 전부</text>
+            </svg>
+            <div class="cc">전체 노출 · 가릴 수 없음</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 창(window)만</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 여기부터 여기까지 창만 공유되고, 가린 구간은 자물쇠로 물리적으로 배제되어 화면·AI 기억·복제에서 모두 안 보임">
+              <rect x="14" y="12" width="120" height="11" rx="3" fill="var(--mute1)"/>
+              <g><rect x="10" y="9" width="150" height="17" rx="4" fill="none" stroke="var(--mute2)"/>
+                <path d="M150 14a2.2 2.2 0 014.4 0v2h-4.4z" fill="var(--mute2)"/><rect x="150" y="15.5" width="4.4" height="3" rx="1" fill="var(--mute2)"/></g>
+              <rect x="14" y="34" width="150" height="11" rx="3" fill="var(--acc2)"/>
+              <rect x="14" y="50" width="130" height="11" rx="3" fill="var(--acc2)"/>
+              <rect x="8" y="30" width="184" height="36" rx="5" fill="none" stroke="var(--primary)" stroke-width="1.6"/>
+              <text x="176" y="42" font-size="7" fill="var(--primary-dark)" font-family="var(--font)" text-anchor="end">여기부터</text>
+              <text x="100" y="90" font-size="7.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">가린 구간=화면·AI 기억·복제에서 물리 배제</text>
+            </svg>
+            <div class="cc"><strong>[여기부터~여기까지]만 · 인젝션으로도 못 캐냄</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>보안 최우선</strong>. 가린 구간을 화면에서만 숨기는 게 아니라 <strong>AI가 읽는 데이터 자체에서 빼버렸습니다</strong>(물리 배제) — 없는 것은 아무리 캐물어도 나오지 않습니다. 오류가 나면 <strong>무조건 차단</strong>(안전 우선), 재공유로 범위를 넓히는 것도 막았습니다.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn" style="margin-left:auto">실화면 검증 예정</span></div><p>민감 구간 유출 없이 부분 공유. <strong>기능·보안 개발 완료</strong>(적대적 보안 리뷰로 초기 누출 1건을 찾아 봉인). 실제 화면 시각검증은 <strong>배포 후 확인 예정</strong>입니다.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 · 스스로 똑똑해지는 지식 -->
+<section class="slide" data-key="feat-knowledge" aria-label="스스로 똑똑해지는 지식">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>4. 스스로 똑똑해지는 지식 (용어·코드값·제품 분류) <span class="badge b-carry" style="margin-left:8px">이어받음</span></span>
+    <h2 class="title">대화에서 배운 뜻을, 검토를 거쳐 지식으로 쌓습니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>회사 고유 <strong>용어</strong>·<strong>코드값</strong>(예: 상태 1=결제완료)·<strong>제품 분류</strong>를 사람이 일일이 등록·매핑해야 했습니다. 용어 사전 <strong>수단</strong>은 갖췄지만 후보가 흩어져 관리가 번거로웠습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>선순환 흐름</div>
+        <div class="flow"><span class="node">대화·분석</span><span class="arrowc">›</span><span class="node on">AI 후보 제안</span><span class="arrowc">›</span><span class="node">채택 인박스</span><span class="arrowc">›</span><span class="node on">관리자 검토·승인</span><span class="arrowc">↻</span><span class="node">더 정확한 답</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">신뢰도 높은 후보는 자동 등록, 낮으면 검토 큐로 — 나쁜 지식 오염 방지.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 전수 수동</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 사람이 용어와 제품 분류를 하나하나 손으로 등록, 코드값은 사전 없음, 후보 흩어짐">
+              <circle cx="34" cy="48" r="12" fill="var(--mute1)" stroke="var(--mute2)"/><circle cx="34" cy="44" r="4" fill="var(--mute2)"/><path d="M26 55a8 8 0 0116 0z" fill="var(--mute2)"/>
+              <path d="M52 48h20M68 43l6 5-6 5" stroke="var(--mute2)" stroke-width="1.6" fill="none"/>
+              <rect x="80" y="30" width="106" height="14" rx="3" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="80" y="50" width="106" height="14" rx="3" fill="#fff" stroke="var(--mute2)"/>
+              <text x="100" y="88" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">일일이 손으로 · 코드값 사전 없음</text>
+            </svg>
+            <div class="cc">수동 등록 · 후보 흩어짐</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 채택 인박스</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: AI가 용어와 코드값과 제품 분류 후보를 제안하고, 신뢰도 높으면 자동 등록, 낮으면 검토 큐로 모여 관리자가 승인">
+              <rect x="10" y="10" width="180" height="16" rx="4" fill="var(--accent-soft)" stroke="var(--primary)"/><text x="100" y="21" font-size="8" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">채택 인박스 (용어 · 코드값 · 제품 분류)</text>
+              <g font-family="var(--font)" font-size="7">
+                <rect x="16" y="32" width="80" height="18" rx="4" fill="#fff" stroke="var(--success)"/><path d="M22 41l3 3 5-5" stroke="var(--success)" stroke-width="1.6" fill="none"/><text x="58" y="44" fill="var(--ok-ink)" text-anchor="middle">자동 등록(신뢰↑)</text>
+                <rect x="104" y="32" width="80" height="18" rx="4" fill="#fff" stroke="var(--warning)"/><path d="M110 41l3-3 3 3" stroke="var(--warn-ink)" stroke-width="1.4" fill="none"/><text x="146" y="44" fill="var(--warn-ink)" text-anchor="middle">검토 큐(신뢰↓)</text>
+                <rect x="40" y="58" width="120" height="16" rx="4" fill="var(--primary-soft)" stroke="var(--primary)"/><text x="100" y="69" fill="var(--primary-dark)" text-anchor="middle">관리자 승인 / 거부 / 되돌리기</text>
+              </g>
+              <text x="100" y="90" font-size="7.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">대화·분석에서 배워 → 검토 → 지식화</text>
+            </svg>
+            <div class="cc"><strong>AI 자율수집 · 신뢰도 게이트 · 사람이 최종 승인</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>자율성 + 오염 방지</strong>. 지식은 답변에 직접 쓰이므로 자동 학습을 <strong>일부러 막아왔지만</strong>, 전수 기록·되돌리기·<strong>사람 검토</strong>를 붙여 안전하게 열었습니다. 제품 분류도 AI는 <strong>제안까지만</strong>, 접근 경계에 영향 주는 최종 승인은 <strong>사람이</strong> 합니다.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn" style="margin-left:auto">일부 실화면 검증 예정</span></div><p>손이 덜 가면서 지식이 쌓여 답 정확도에 기여. <strong>개발 완료</strong> — 제품 분류 제안은 라이브 실증, 용어 사전은 실화면 검증 통과, 코드값·채택 인박스는 배포 후 확인 예정.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 · 데이터베이스를 지도로 (headline: 렌더 엔진 전면 교체) -->
+<section class="slide" data-key="feat-graph" aria-label="데이터베이스를 지도로 탐색한다">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>5. 데이터베이스를 '지도'로 탐색한다 (관계도 뷰) <span class="badge b-carry" style="margin-left:8px">이어받음·대폭 확장</span></span>
+    <h2 class="title">수천 개 테이블을 지도로 — 이제 대규모도 매끄럽게 움직입니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>운영 데이터베이스는 <strong>테이블 수천 개</strong>인데 화면은 <strong>평면 목록</strong>이었습니다. 관계·역할이 보이는 <strong>대화형 지도</strong>는 갖췄지만, 노드가 많아지자 <strong>화면 이동(팬)이 계속 버벅여</strong> 사용자가 반복 신고했습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>탐색 흐름 (영역별)</div>
+        <div class="flow"><span class="node on">제품 카테고리</span><span class="arrowc">›</span><span class="node">스키마 묶음</span><span class="arrowc">›</span><span class="node on">컨텐츠 군집</span><span class="arrowc">›</span><span class="node">테이블·함수</span><span class="arrowc">›</span><span class="node on">검색·관계 추적</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">역할 색상 · 실선(신뢰)/점선(추정) 관계 · 함수·프로시저 노드 · AI 능동 분석 · 컨텐츠 검색.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후 (렌더 엔진 전면 교체)</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 팬 버벅임</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 이전 렌더 엔진은 화면 안 도형을 매 프레임 CPU로 다시 그려, 노드가 많으면 화면 이동이 톱니처럼 끊김">
+              <rect x="8" y="10" width="184" height="58" rx="6" fill="#fff" stroke="var(--mute2)"/>
+              <circle cx="46" cy="30" r="6" fill="var(--mute1)" stroke="var(--mute2)"/><circle cx="92" cy="46" r="6" fill="var(--mute1)" stroke="var(--mute2)"/><circle cx="140" cy="28" r="6" fill="var(--mute1)" stroke="var(--mute2)"/><circle cx="160" cy="52" r="6" fill="var(--mute1)" stroke="var(--mute2)"/>
+              <line x1="46" y1="30" x2="92" y2="46" stroke="var(--mute2)"/><line x1="92" y1="46" x2="140" y2="28" stroke="var(--mute2)"/>
+              <!-- 톱니(끊김) 프레임 -->
+              <polyline points="14,80 22,72 30,80 38,72 46,80 54,72 62,80 70,74 78,80" fill="none" stroke="var(--warning)" stroke-width="1.6"/>
+              <text x="150" y="80" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">뚝뚝 끊김</text>
+            </svg>
+            <div class="cc">매 프레임 CPU 재계산 · 대규모 팬 버벅임</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · GPU 상주(매끄러움)</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 새 렌더 엔진은 화면을 GPU에 상주시켜, 노드가 많아도 화면 이동이 매끄럽게 흐름, 역할 색과 함수 노드도 그대로">
+              <rect x="8" y="10" width="184" height="58" rx="6" fill="#fff" stroke="var(--after-bd)"/>
+              <rect x="14" y="14" width="84" height="50" rx="5" fill="var(--accent-soft)" opacity=".55"/><rect x="104" y="14" width="82" height="50" rx="5" fill="#f3f0ff" opacity=".6"/>
+              <line x1="44" y1="32" x2="82" y2="48" stroke="var(--primary)" stroke-width="1.3"/><line x1="44" y1="32" x2="132" y2="28" stroke="var(--acc2)" stroke-width="1.1" stroke-dasharray="3 2"/>
+              <circle cx="44" cy="32" r="7" fill="var(--role-a)"/><text x="44" y="35" font-size="6" fill="#fff" text-anchor="middle" font-family="var(--font)">계정</text>
+              <circle cx="82" cy="48" r="7" fill="var(--role-c)"/><text x="82" y="51" font-size="6" fill="#fff" text-anchor="middle" font-family="var(--font)">거래</text>
+              <circle cx="132" cy="28" r="7" fill="var(--role-b)"/><text x="132" y="31" font-size="6" fill="#fff" text-anchor="middle" font-family="var(--font)">로그</text>
+              <rect x="150" y="44" width="15" height="13" rx="3" fill="#fff" stroke="var(--primary)"/><text x="157.5" y="54" font-size="8" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">ƒ</text>
+              <!-- 매끄러운 프레임 -->
+              <path d="M14,80 q32,-8 64,0 t64,0 t44,0" fill="none" stroke="var(--success)" stroke-width="1.8"/>
+              <text x="150" y="80" font-size="8" fill="var(--ok-ink)" text-anchor="middle" font-family="var(--font)">매끄럽게</text>
+            </svg>
+            <div class="cc"><strong>GPU 상주 렌더 · 컨텐츠 군집·검색 · 함수 노드</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식 · 실선=신뢰 관계, 점선=추정 관계</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>근본 해소 + 안전한 이관</strong>. 앱 최적화로는 한계라, 화면을 <strong>GPU에 상주</strong>시키는 웹 표준 방식으로 렌더 엔진을 교체했습니다(무거운 게임엔진은 기각 — 이득 원천은 GPU 상주라 웹으로도 획득). <strong>보이는 화면은 그대로</strong> 유지하는 계약 아래 이관하고, 비상 시 <strong>옛 엔진으로 되돌릴</strong> 안전장치도 남겼습니다.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">라이브 검증(중간 규모)</span> <span class="badge b-warn" style="margin-left:6px">실 규모 확인 예정</span></div><p>낯선 데이터베이스도 구조·흐름을 눈으로 파악, 화면 이동이 매끄러워짐. <strong>실 화면에서 60fps 검증(약 400개 규모)</strong> · 컨텐츠 군집 <strong>23,465개 적재</strong>. 정작 문제였던 <strong>수천 규모의 실 체감은 다음 기간 확인</strong>.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 · AI 관제·콘솔 -->
+<section class="slide" data-key="feat-ops" aria-label="AI를 관제하고 콘솔을 정돈한다">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>6. AI를 관제하고 콘솔을 정돈한다 <span class="badge b-carry" style="margin-left:8px">이어받음</span></span>
+    <h2 class="title">AI가 무엇을·얼마에·얼마나 빠르게 하는지 한눈에, 콘솔은 성격대로 정돈</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>AI가 여러 경로에서 일하는데 <strong>상태·비용·지연</strong>을 한눈에 볼 화면이 없었습니다. 관리 콘솔도 <strong>관측 데이터와 설정 값이 뒤섞이고</strong> 탭이 과밀했으며, 권한은 <strong>평면 구조</strong>라 최소권한 부여가 어려웠습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">관리 콘솔 · 감사</span><span class="arrowc">›</span><span class="node on">AI 운영 현황</span><span class="arrowc">›</span><span class="node">상태·KPI·활동</span><span class="arrowc">›</span><span class="node on">활동 클릭 → 상세·대화 링크</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">콘솔 정보구조 재편(관측/설정 분리·서브탭) + 권한 <strong>카테고리 계층</strong>·원자 단위 부여.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 흩어짐·혼재</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: AI 상태와 비용 지연이 흩어져 있고, 관리 콘솔 탭에 관측 데이터와 설정이 뒤섞여 과밀">
+              <rect x="14" y="14" width="40" height="22" rx="4" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="120" y="18" width="46" height="20" rx="4" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="30" y="54" width="36" height="22" rx="4" fill="#fff" stroke="var(--mute2)"/>
+              <rect x="132" y="54" width="42" height="24" rx="4" fill="#fff" stroke="var(--mute2)"/>
+              <path d="M54 25h66M66 65h66" stroke="var(--mute1)" stroke-width="1" stroke-dasharray="2 2"/>
+              <text x="100" y="46" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">?</text>
+              <text x="100" y="90" font-size="7.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">상태·비용 흩어짐 · 탭 과밀 · 권한 평면</text>
+            </svg>
+            <div class="cc">단일 관제 화면 없음 · 권한 평면</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 관제·정돈</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 상태 배너와 KPI 타일 활동 피드를 갖춘 AI 운영 현황 대시보드, 서브탭으로 관측과 설정을 분리, 권한은 카테고리 계층">
+              <rect x="8" y="10" width="184" height="11" rx="3" fill="var(--ok-bg)" stroke="var(--ok-bd)"/><circle cx="17" cy="15.5" r="3" fill="var(--success)"/><text x="25" y="19" font-size="7" fill="var(--ok-ink)" font-family="var(--font)">상태: 정상</text>
+              <g font-family="var(--font)" font-size="6.5" text-anchor="middle">
+                <rect x="8" y="24" width="34" height="12" rx="3" fill="var(--primary-soft)" stroke="var(--primary)"/><text x="25" y="32" fill="var(--primary-dark)">사용량</text>
+                <rect x="44" y="24" width="40" height="12" rx="3" fill="var(--surface-2)" stroke="var(--border)"/><text x="64" y="32" fill="var(--text-2)">운영 현황</text>
+                <rect x="86" y="24" width="30" height="12" rx="3" fill="var(--surface-2)" stroke="var(--border)"/><text x="101" y="32" fill="var(--text-2)">추론</text>
+              </g>
+              <g font-family="var(--font)" font-size="6.5" text-anchor="middle">
+                <rect x="8" y="40" width="58" height="16" rx="4" fill="var(--surface-2)" stroke="var(--border)"/><text x="37" y="46" font-size="9" font-weight="800" fill="var(--text)">비용</text><text x="37" y="53" fill="var(--text-2)">집계</text>
+                <rect x="70" y="40" width="58" height="16" rx="4" fill="var(--surface-2)" stroke="var(--border)"/><text x="99" y="46" font-size="9" font-weight="800" fill="var(--primary-dark)">지연</text><text x="99" y="53" fill="var(--text-2)">단계 간격</text>
+                <rect x="132" y="40" width="58" height="16" rx="4" fill="var(--surface-2)" stroke="var(--border)"/><text x="161" y="46" font-size="9" font-weight="800" fill="var(--text)">활동</text><text x="161" y="53" fill="var(--text-2)">실시간</text>
+              </g>
+              <rect x="8" y="60" width="184" height="8" rx="2" fill="#fff" stroke="var(--acc2)"/>
+              <text x="100" y="80" font-size="7.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">활동 클릭 → 모델·토큰·비용·대화 링크 · 권한=카테고리 계층</text>
+            </svg>
+            <div class="cc"><strong>운영 현황 한 화면 · 서브탭 정돈 · 권한 계층</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>운영 편의 + 정직한 지표</strong>. 지연을 '답변 전체 시간'(길이에 좌우) 대신 <strong>'단계 사이 간격'</strong>으로 재정의해 진짜 신호를 봅니다. 콘솔은 <strong>관측/설정 성격대로 분리</strong>하고 유사 탭을 서브탭으로 묶어 발견성을 회복. 권한은 <strong>화면 구조와 정합</strong>하는 계층 + 실제 액션 단위(등록/수정/삭제) 최소권한.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">콘솔·권한 라이브 검증</span> <span class="badge b-warn" style="margin-left:6px">패널 지표 축적 예정</span></div><p>문제를 빨리 발견·진단, 콘솔·권한 부여가 명료. <strong>콘솔 정보구조·권한 계층은 실화면 검증 통과</strong>. 패널 실화면과 재정의 지연 지표는 <strong>배포 후 실트래픽으로 확인 예정</strong>.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 · 끊김 없이 배포하고 스스로 회복한다 (기반) -->
+<section class="slide" data-key="feat-foundation" aria-label="끊김 없이 배포하고 스스로 회복한다">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>7. 끊김 없이 배포하고 스스로 회복한다 (기반) <span class="badge b-done" style="margin-left:8px">완료·신규</span></span>
+    <h2 class="title">재배포·재시작해도 안 끊기게, 그리고 AI는 안전한 전용 공간에서</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>지난 기간 <strong>웹 화면만</strong> 무중단이 됐고, 그 뒤의 <strong>처리기(응답·분석 워커)·AI 게이트웨이</strong> 재배포는 여전히 <strong>순간 끊길</strong> 수 있었습니다. 또 AI가 여러 데이터를 모아 분석할 <strong>안전한 격리 공간</strong>이 없었습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>동작 구조</div>
+        <div class="flow"><span class="node on">웹 2대 롤링</span><span class="arrowc">+</span><span class="node">워커 정상확인 후 교체</span><span class="arrowc">+</span><span class="node on">게이트웨이 무중단 교체</span><span class="arrowc">+</span><span class="node">엣지</span><span class="arrowc">=</span><span class="node on">중단 0</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">거대 코드 파일은 <strong>21개 모듈</strong>로 정리(겉보기 동작 그대로) + AI가 코드를 스스로 찾는 지도.</p>
+      </div>
+      <div class="blk cmp"><div class="lab"><span class="n">3</span>변경 전 → 후</div>
+        <div class="bav">
+          <figure class="mock before"><figcaption><span class="d"></span>변경 전 · 웹만 무중단</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 전: 웹 서버만 무중단이고 뒤의 처리기 워커와 AI 게이트웨이는 재배포 때 순간 끊길 수 있음">
+              <rect x="12" y="30" width="44" height="26" rx="5" fill="#fff" stroke="var(--primary)"/><text x="34" y="46" font-size="7.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">웹(무중단)</text><path d="M46 34l2 2 4-4" stroke="var(--success)" stroke-width="1.4" fill="none"/>
+              <rect x="72" y="30" width="44" height="26" rx="5" fill="var(--before-bg)" stroke="var(--mute2)"/><text x="94" y="46" font-size="7.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">워커</text><path d="M100 32l7 12H93z" fill="none" stroke="var(--warning)" stroke-width="1.4"/>
+              <rect x="132" y="30" width="52" height="26" rx="5" fill="var(--before-bg)" stroke="var(--mute2)"/><text x="158" y="46" font-size="7.5" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">게이트웨이</text><path d="M164 32l7 12h-14z" fill="none" stroke="var(--warning)" stroke-width="1.4"/>
+              <text x="100" y="76" font-size="8" fill="var(--before-ink)" text-anchor="middle" font-family="var(--font)">뒤쪽 재배포 = 순간 끊김 가능</text>
+            </svg>
+            <div class="cc">웹만 무중단 · 워커·게이트웨이 끊김 가능</div>
+          </figure>
+          <div class="baArrow"><svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true"><path d="M2 10h18M15 4l7 6-7 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+          <figure class="mock after"><figcaption><span class="d"></span>변경 후 · 전체 무중단 + 격리 공간</figcaption>
+            <svg viewBox="0 0 200 96" role="img" aria-label="변경 후: 웹 워커 게이트웨이 엣지가 모두 무중단으로 교체되고 문제 시 직전 정상본으로 복귀, AI는 격리된 전용 작업공간에서 여러 데이터를 모아 분석">
+              <g font-family="var(--font)" font-size="7" text-anchor="middle">
+                <rect x="10" y="12" width="40" height="20" rx="5" fill="var(--surface)" stroke="var(--primary)"/><text x="30" y="24" fill="var(--primary-dark)">웹</text><path d="M40 14l2 2 4-4" stroke="var(--success)" stroke-width="1.4" fill="none"/>
+                <rect x="54" y="12" width="40" height="20" rx="5" fill="var(--surface)" stroke="var(--primary)"/><text x="74" y="24" fill="var(--primary-dark)">워커</text><path d="M84 14l2 2 4-4" stroke="var(--success)" stroke-width="1.4" fill="none"/>
+                <rect x="98" y="12" width="46" height="20" rx="5" fill="var(--surface)" stroke="var(--primary)"/><text x="121" y="24" fill="var(--primary-dark)">게이트웨이</text><path d="M134 14l2 2 4-4" stroke="var(--success)" stroke-width="1.4" fill="none"/>
+                <rect x="148" y="12" width="42" height="20" rx="5" fill="var(--surface)" stroke="var(--primary)"/><text x="169" y="24" fill="var(--primary-dark)">엣지</text><path d="M180 14l2 2 4-4" stroke="var(--success)" stroke-width="1.4" fill="none"/>
+              </g>
+              <rect x="52" y="38" width="96" height="12" rx="6" fill="var(--success)" opacity=".12"/><text x="100" y="47" font-size="7.5" fill="var(--ok-ink)" text-anchor="middle" font-family="var(--font)">중단 0 · 문제 시 직전 정상본 복귀</text>
+              <rect x="30" y="56" width="140" height="22" rx="5" fill="var(--accent-soft)" stroke="var(--primary)" stroke-dasharray="4 2"/>
+              <text x="100" y="66" font-size="7" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">AI 전용 격리 작업공간</text>
+              <text x="100" y="74" font-size="6.5" fill="var(--text-2)" text-anchor="middle" font-family="var(--font)">여러 데이터 모아 분석 · 대화별 분리 · 자동 정리</text>
+              <text x="100" y="90" font-size="7.5" fill="var(--primary-dark)" text-anchor="middle" font-family="var(--font)">전 구성요소 무중단 + AI 작업공간 격리</text>
+            </svg>
+            <div class="cc"><strong>웹+워커+게이트웨이+엣지 무중단 · AI 격리 공간</strong></div>
+          </figure>
+        </div>
+        <span class="schem"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>실제 화면 대신 개념 도식</span>
+      </div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>안정성·운영편의·안전</strong>. 검증된 웹 무중단 방식을 <strong>재사용·확장</strong>했고, 게이트웨이는 상시 2중화 대신 <strong>배포 순간에만</strong> 임시 복제(평상시 비용 0). AI 작업공간은 <strong>별도 DB로 물리 격리</strong>하고 대화별로 나눠, 자율 분석을 안전하게 담았습니다(기본은 꺼짐).</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">라이브 실증</span> <span class="badge b-warn" style="margin-left:6px">자동 롤백·전체 e2e 후속</span></div><p>재배포·재시작 중 <strong>중단 0 실증</strong>(부하 시험). 코드 정리 완료 + AI 코드 자동 지도. 작업공간 <strong>배포·활성화 완료</strong>. 실패 시 <strong>자동 롤백</strong>·작업공간 <strong>전체 흐름 실증</strong>은 후속.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 · 기대 효과·성과 종합 -->
+<section class="slide" data-key="impact" aria-label="기대 효과 성과 종합">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>기대 효과 · 성과 종합</span>
+    <h2 class="title">검증된 성과와, 앞으로 더 키울 발전 과제</h2>
+    <div class="grid g2">
+      <div class="card"><h3><span class="badge b-ok">검증됨</span> 근거 있는 성과</h3><ul>
+        <li><strong>메시지 편집</strong>(1:1·그룹) 실화면 검증 통과 · 적대적 보안 리뷰 3건 봉인.</li>
+        <li><strong>무중단 운영 완성</strong>: 웹+워커+게이트웨이+엣지로 확장, 배포·재시작 중 접속 중단·읽기/쓰기 오류 <strong>0건</strong>(단일 호스트 부하 시험).</li>
+        <li><strong>관계도 렌더 엔진 전면 교체</strong> — 실 화면 60fps 검증(약 400개 규모), 컨텐츠 <strong>23,465개</strong> 자동 적재·군집.</li>
+        <li><strong>답변 자가검증·첨부 근거정합</strong> 개발·배포 완료(테스트·적대 리뷰 통과).</li>
+        <li><strong>콘솔 정보구조·권한 계층·제품분류 AI 제안</strong> 실화면/라이브 검증 통과.</li>
+        <li>웹 코드 <strong>19,650줄 → 3,722줄(-81%)·21개 라우터</strong> 정리 완료(겉보기 동작 불변).</li>
+      </ul></div>
+      <div class="card"><h3><span class="badge b-warn">발전 과제</span> 앞으로 더 키울 영역</h3><ul>
+        <li><strong>답변 신뢰 "효과" 실측</strong> — 자가검증 검출력·첨부 환각 감소를 라이브 트래픽으로.</li>
+        <li><strong>실 규모 지도 체감(FPS)</strong> — 수천 테이블 규모 라이브 팬을 실 하드웨어에서.</li>
+        <li><strong>실화면 시각검증</strong> — 공유 범위·운영 관제 패널·메시지 편집 그룹 보안.</li>
+        <li><strong>무중단 자동 롤백·AI 작업공간 전체 흐름</strong> — 실패 상황·TTL 정리까지 실증.</li>
+        <li><strong>정확도·체감 개선폭 수치화</strong> — 답 정확도 향상, 사용자 만족도.</li>
+      </ul></div>
+    </div>
+    <div class="callout"><strong>보고 원칙</strong> — 성과는 <strong>검증된 것만, 측정 조건과 함께</strong> 수치로. 발전 과제는 <strong>성장 로드맵으로</strong> 제시합니다. 예: 렌더 "60fps"는 <strong>약 400개 규모의 실 화면 실측</strong>이며, <strong>수천 규모 체감과는 다릅니다</strong>(별도 측정 예정). "23,465개"는 <strong>서버측 적재</strong> 수치입니다.</div>
+  </div>
+</section>
+
+<!-- 12 · 발전 과제·발전 방향 -->
+<section class="slide" data-key="risk" aria-label="발전 과제 및 발전 방향">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>발전 과제 · 발전 방향</span>
+    <h2 class="title">더 발전시킬 과제와 방향</h2>
+    <p class="lead">아래는 이번 성과를 <strong>다음 단계로 키우기 위한 로드맵</strong>입니다. 정직성을 위해 <strong>"개발 완료"와 "라이브 검증/효과 실측"을 구분</strong>합니다 — 준비된 수준과 나아갈 방향을 함께 담았습니다.</p>
+    <table class="cmp" aria-label="발전 과제 및 발전 방향">
+      <thead><tr><th style="width:26%">과제</th><th style="width:38%">현재 수준</th><th>발전 방향</th></tr></thead>
+      <tbody>
+        <tr><td class="rowlab">답변 신뢰의 "효과"</td><td class="b">자가검증·첨부대조 <strong>개발·배포 완료</strong> · 라이브 검출력·환각 감소 미측정</td><td class="a">대화 감사로 재발 감소·리뷰어 검출력을 수치로 확인</td></tr>
+        <tr><td class="rowlab">실 규모 지도 체감</td><td class="b">렌더 엔진 교체 완료 · 실 화면 60fps는 <strong>약 400개 규모</strong>까지 검증</td><td class="a">수천 테이블 규모의 실 하드웨어 라이브 팬 체감 측정</td></tr>
+        <tr><td class="rowlab">공유 범위·관제 패널</td><td class="b">기능·보안 <strong>개발 완료</strong> · 실화면 시각검증/지표 축적 전</td><td class="a">배포 후 실 브라우저 육안 + 지연 지표 실트래픽 안정화</td></tr>
+        <tr><td class="rowlab">무중단 자동 롤백</td><td class="b">설계·절차 <strong>완료</strong> · 실패 상황 자동 롤백 검증 전</td><td class="a">배포 리허설로 자동 롤백·무손실 실증</td></tr>
+        <tr><td class="rowlab">AI 작업공간</td><td class="b">배포·활성화·반입/분석 <strong>확인</strong> · 전체 흐름(자동 정리·대화 격리) 실증 전</td><td class="a">두 소스 반입→분석→자동 정리 라이브 e2e + 대화별 격리 강화</td></tr>
+        <tr><td class="rowlab">답 정확도 수치</td><td class="b">측정 수단·자율 지식 <strong>확보</strong> · 향상폭 미측정(이월)</td><td class="a">평가 A/B로 전·후 정확도를 수치로 제시</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 13 · 마무리 -->
+<section class="slide" data-key="outro" aria-label="마무리 및 다음 기간">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>마무리 · 다음 기간</span>
+    <h2 class="title">정리하면 — 개별 대화 다듬기에서 '플랫폼'으로 도약한 5주</h2>
+    <div class="grid g3">
+      <div class="card"><h3>이번 기간</h3><p>대화 편집·<strong>답변 자가검증</strong>·안전한 공유·자율 지식·<strong>데이터베이스 지도(렌더 엔진 교체)</strong>·AI 관제·<strong>무중단 완성</strong>·AI 작업공간 — <strong>18개 기능 영역</strong>이 진척(직전 8개). 무중단·메시지 편집·지도·콘솔/권한 등 <strong>핵심은 라이브 검증까지</strong>, 나머지는 순차 검증 예정.</p></div>
+      <div class="card"><h3>다음 기간(예정)</h3><p><strong>답변 신뢰 효과 실측</strong>(재발 감소·검출력) · <strong>실 규모 지도 체감</strong>(FPS) · 공유·관제 <strong>실화면 검증</strong> · 자동 롤백·작업공간 <strong>전체 흐름 실증</strong> · 정확도 수치화.</p></div>
+      <div class="card"><h3>권장 방향</h3><p>이번에 갖춘 <strong>편집·검증·관제·측정 수단</strong>으로, 다음 보고에서는 오늘의 "예정"을 <strong>수치로 확인된 성과</strong>로 바꿔 보고드리겠습니다.</p></div>
+    </div>
+    <div class="callout">이 자료의 모든 수치·주장은 개발 이력·기록에 근거하며, <strong>검증된 성과와 발전 과제를 구분</strong>해 과장 없이 성장 방향을 담았습니다. 감사합니다 — 질문 받겠습니다.</div>
+  </div>
+</section>
+
+</main>
+
+<!-- 목차 -->
+<div class="idx" id="idx" role="dialog" aria-modal="true" aria-label="목차">
+  <nav class="idx-panel" id="idxPanel" aria-label="슬라이드 목차">
+    <div class="idx-title">목차 · 클릭하면 이동</div>
+    <div id="idxList"></div>
+    <div class="idx-hint">← / → · Space 로 이동 · <kbd>Esc</kbd> 목차 열고 닫기 · 주소 끝 <kbd>#키</kbd> 로 특정 장 직행</div>
+  </nav>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var titles = [
+    ['표지','DBA AI Assistant 개발 진척 보고'],
+    ['핵심 요약','먼저 결론 — 개별 대화에서 플랫폼으로'],
+    ['개발 배경','낱개는 다듬었는데, 함께·믿고·크게가 아직'],
+    ['이번 기간 개요','화면 흐름 순 7가지 변화'],
+    ['1. 대화 편집·조율','메시지 편집·분기 재답변·추론 강도'],
+    ['2. 답변 자가검증','스스로 비판·첨부 근거정합(신뢰)'],
+    ['3. 안전한 공유','여기부터/여기까지 · 물리 배제'],
+    ['4. 자율 지식','용어·코드값·제품분류 AI 제안'],
+    ['5. 데이터베이스 지도','관계도 뷰 · 렌더 엔진 전면 교체'],
+    ['6. AI 관제·콘솔','운영 현황·정보구조·권한 계층'],
+    ['7. 끊김 없는 기반','무중단 완성·코드 지도·AI 작업공간'],
+    ['기대 효과','검증된 성과 + 발전 과제'],
+    ['발전 과제','발전 방향과 다음 단계'],
+    ['마무리','다음 기간 예고']
+  ];
+  var cur = 0, N = slides.length;
+  var prog = document.getElementById('prog');
+  var counter = document.getElementById('counter');
+  var idx = document.getElementById('idx');
+  var idxList = document.getElementById('idxList');
+
+  slides.forEach(function(s, i){
+    var b = document.createElement('button');
+    b.className = 'idx-item'; b.type = 'button'; b.setAttribute('data-i', i);
+    var t = titles[i] || [s.getAttribute('data-key')||('슬라이드 '+(i+1)),''];
+    b.innerHTML = '<span class="idx-num">'+(i+1)+'</span><span><span class="idx-name">'+t[0]+'</span><span class="idx-sub">'+(t[1]||'')+'</span></span>';
+    b.addEventListener('click', function(){ go(i); closeIdx(); });
+    idxList.appendChild(b);
+  });
+  var idxItems = Array.prototype.slice.call(idxList.querySelectorAll('.idx-item'));
+
+  function render(){
+    slides.forEach(function(s, i){ s.classList.toggle('is-active', i===cur); });
+    prog.style.width = (N>1 ? (cur/(N-1))*100 : 100) + '%';
+    counter.textContent = (cur+1) + ' / ' + N;
+    idxItems.forEach(function(b, i){ b.classList.toggle('active', i===cur); });
+    var key = slides[cur].getAttribute('data-key');
+    if (key && ('#'+key) !== location.hash) history.replaceState(null,'','#'+key);
+    var act = slides[cur]; act.setAttribute('tabindex','-1'); act.scrollTop = 0;
+  }
+  function go(i){ cur = Math.max(0, Math.min(N-1, i)); render(); }
+  function next(){ go(cur+1); } function prev(){ go(cur-1); }
+  function openIdx(){ idx.classList.add('open'); var a=idxList.querySelector('.idx-item.active'); if(a) a.focus(); }
+  function closeIdx(){ idx.classList.remove('open'); }
+  function toggleIdx(){ idx.classList.contains('open') ? closeIdx() : openIdx(); }
+
+  document.getElementById('zoneL').addEventListener('click', prev);
+  document.getElementById('zoneR').addEventListener('click', next);
+  document.getElementById('menuBtn').addEventListener('click', toggleIdx);
+  idx.addEventListener('click', function(e){ if(e.target===idx) closeIdx(); });
+  document.addEventListener('keydown', function(e){
+    if (e.key==='Escape'){ toggleIdx(); return; }
+    if (idx.classList.contains('open')) return;
+    if (e.key==='ArrowRight' || e.key===' ' || e.key==='PageDown'){ e.preventDefault(); next(); }
+    else if (e.key==='ArrowLeft' || e.key==='PageUp'){ e.preventDefault(); prev(); }
+    else if (e.key==='Home'){ go(0); } else if (e.key==='End'){ go(N-1); }
+  });
+  (function(){
+    var h = (location.hash||'').replace('#','');
+    if (h){ for (var i=0;i<slides.length;i++){ if (slides[i].getAttribute('data-key')===h){ cur=i; break; } } }
+    render();
+  })();
+})();
+</script>
+</body>
+</html>
