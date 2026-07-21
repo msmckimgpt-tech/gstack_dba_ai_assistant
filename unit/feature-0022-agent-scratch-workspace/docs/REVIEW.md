@@ -1,0 +1,46 @@
+---
+doc_type: REVIEW
+feature_id: feature-0022-agent-scratch-workspace
+status: active
+edit_policy: append
+source_of_truth: true
+---
+
+# Review
+
+## REV-20260721T073500-agent-scratch-workspace [SUBAGENT: security] — Verdict: PASS (after fixes)
+
+**Scope**: feature-0022 agent PG scratch workspace — 격리·권한 경계 적대적 보안 리뷰
+(§18.8, fresh-context subagent, 목표=결함 적발). 대상: scratch.py(guard·materialize·run_sql·
+reaper) · agent_scratch_schema.sql · scratch-pg-bootstrap.sh · tools.py scratch 핸들러 4종 ·
+db._pg_connect_scratch · config AGENT_SCRATCH_*.
+
+**핵심 발견 → 조치**:
+- **[BLOCK] CREATE FUNCTION 문자열 본문 우회** — 초기 denylist guard 는 `Create` 노드를 통과시켜,
+  함수 본문(문자열 리터럴)에 은닉된 cross-대화 스키마 read/write/drop 이 가능했다(모든 s_* 가 동일
+  role 소유 → 대화 격리 붕괴). → **guard 를 allowlist 로 반전**: 허용 root(Select/With/SetOp/
+  Insert/Update/Delete/TruncateTable + CREATE·DROP 은 kind∈{TABLE,INDEX}) 만 통과, FUNCTION/
+  PROCEDURE/VIEW/TRIGGER/DO/CALL/EXTENSION/Command 전면 거부. CTAS/INSERT 본문의 cross-schema
+  참조는 AST 로 노출돼 차단. **FIXED + 회귀 테스트**(test_guard_blocks_function_body_bypass 등).
+- **[HIGH] pg_catalog 무자격 참조 열거** — `SELECT FROM pg_class/pg_namespace` 로 타 대화 스키마/
+  컬럼 열거 가능(무자격이라 db-qualifier 검사 우회). → 테이블명·함수명 **`pg_` 접두 전면 차단**
+  + materialize 도 pg_ 접두 반입 테이블명 회피. **FIXED + 회귀 테스트**(test_guard_blocks_pg_catalog_enumeration).
+- **[MEDIUM] CONNECT 격리 문서 과장** — "grant 0 → 물리적 도달 불가"는 부정확(role 은 PUBLIC 멤버
+  라 sibling DB CONNECT 잔존; 현 시점 미악용). → 문서를 실제 메커니즘(non-superuser + dbname 고정
+  + PG cross-DB 불가 + 무-grant)으로 정정 + `--harden-kb-isolation` 을 sibling DB(agent_runtime/
+  agent_memory/web) 로 확대(opt-in). **FIXED**.
+- **[MEDIUM] scratch_import heavy-query 게이트 누락** — execute_sql 의 AGENT_QUERY_GUARD_MODE 부하
+  게이트가 없어 대량 반입 우회 가능. → scratch_import 에 동일 게이트(gate 차단/warn 경고 +
+  confirm_heavy override) 추가. **FIXED**.
+- **[LOW]** 약한 기본 비밀번호(opt-in·경고 뒤)·_rt fail-open 방향(OFF 기본=fail-safe) — 조치 불요.
+
+**리뷰어가 확인한 막혀 있는 벡터**: 직접 cross-schema/cross-DB 참조(모든 분기 db/catalog 검사),
+다중문, materialize 식별자 주입(sql.Identifier+_safe_ident), search_path pin, reaper DROP 대상
+s_* 정규식 한정, conversation_id ContextVar finally 해제(스레드 재사용 stale 없음), enabled 기본
+OFF 이중 게이트.
+
+**잔여(accepted with mitigation)**: 모든 s_* 가 동일 role 소유 → PG 레벨 대화 격리 부재. 현재는
+scratch_guard(allowlist)+search_path 가 격리를 강제한다. 근본 강화(대화별 전용 role)는 TASK-0013
+후속으로 이월(DECISIONS ADR-SCRATCH-0002 잔여 위험 항목).
+
+**검증**: test_scratch.py 20건 PASS(하드닝 guard 회귀 5건 포함). feature-0002/0003 전체 회귀 0.

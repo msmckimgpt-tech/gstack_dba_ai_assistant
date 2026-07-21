@@ -4,6 +4,8 @@ __all__ = [
     "_pg_available",
     "_pg_connect",
     "_pg_connect_ro",
+    "_pg_connect_scratch",
+    "_scratch_pg_available",
     "_pg_mark_kb_invalidation",
     "_pg_check_kb_invalidation",
     "_should_retry_db_error",
@@ -921,6 +923,56 @@ def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
     ]
     conninfo = " ".join(conninfo_parts)
     conn = _psycopg.connect(conninfo)
+    if autocommit:
+        conn.autocommit = True
+    return conn
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# feature-0022: agent PG scratch workspace connection.
+#
+# assistant 전용 낙서장 DB(`agent_scratch`)에 `agent_scratch_rw` role 로 접속한다. 이 role 은
+# 해당 DB 안에서 완전 자율(스키마/테이블 DDL·CRUD)이나 CONNECT 는 agent_scratch 에만·다른 DB
+# 에는 grant 0 → 물리적으로 도달 불가(ADR-SCRATCH-0001). host/port/sslmode 는 KB Postgres
+# 클러스터를 재사용(config 가 fallback 처리).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _scratch_pg_available() -> bool:
+    """psycopg import + AGENT_SCRATCH_PG_* 인프라 자격이 모두 갖춰졌으면 True.
+
+    런타임 ON/OFF 스위치(AGENT_SCRATCH_ENABLED)는 별개 — modules/scratch.enabled() 가 판정.
+    본 함수는 순수 인프라 준비 여부만 확인(network 부담 0)."""
+    return (_psycopg is not None) and AGENT_SCRATCH_PG_CONFIGURED
+
+
+def _pg_connect_scratch(autocommit: bool = True):
+    """agent_scratch DB 에 agent_scratch_rw role 로 connection 을 연다.
+
+    Raises:
+        RuntimeError: psycopg 미설치 또는 AGENT_SCRATCH_PG_* 미설정 (bootstrap 미완).
+        psycopg.OperationalError: connection 실패.
+    """
+    if _psycopg is None:
+        raise RuntimeError(
+            f"psycopg not importable (scratch workspace prerequisite). "
+            f"original error: {_PSYCOPG_IMPORT_ERR!r}"
+        )
+    if not AGENT_SCRATCH_PG_CONFIGURED:
+        raise RuntimeError(
+            "AGENT_SCRATCH_PG_HOST / AGENT_SCRATCH_PG_USER 미설정 — "
+            "bin/scratch-pg-bootstrap.sh 실행 + .env 의 AGENT_SCRATCH_PG_* 설정 필요."
+        )
+    conninfo_parts = [
+        f"host={AGENT_SCRATCH_PG_HOST}",
+        f"port={AGENT_SCRATCH_PG_PORT}",
+        f"dbname={AGENT_SCRATCH_PG_DB}",
+        f"user={AGENT_SCRATCH_PG_USER}",
+        f"password={AGENT_SCRATCH_PG_PASSWORD}",
+        f"sslmode={AGENT_SCRATCH_PG_SSLMODE}",
+        f"connect_timeout={_controlplane_connect_timeout()}",
+        "application_name=agent_core_scratch",
+    ]
+    conn = _psycopg.connect(" ".join(conninfo_parts))
     if autocommit:
         conn.autocommit = True
     return conn

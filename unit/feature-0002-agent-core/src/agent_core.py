@@ -3439,6 +3439,7 @@ def run_agent(
         # 다른 request-scoped ContextVar 와 동일 위치(run_agent finally)에서 — _run_agent_core
         # 의 평문 해제는 예외 시 누락돼 ask-worker 스레드 재사용 stale 위험(REV-20260610-P5 M1).
         cfg.set_active_datasource(None)
+        cfg.set_active_conversation_id(None)  # feature-0022: scratch 대화 컨텍스트 해제
         _ATTACHMENT_IDS_CTX.reset(_att_tokens[0])
         _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
@@ -3881,6 +3882,10 @@ def _run_agent_core(
         # TASK-0205 B1: effective default_db(제품별 override 반영) 를 cross-DB 가드에 주입.
         default_db=(_ds.get("default_db") if _ds else None),
     )
+    # feature-0022: scratch 도구가 대화별 작업공간 스키마를 고르도록 활성 대화 id 를 ContextVar 에 set.
+    # (tool 핸들러 시그니처는 (conn,args) 라 인자로 못 받음 — set_active_datasource 와 동일 패턴.)
+    # 해제는 아래 finally 에서 set_active_datasource(None) 와 함께 예외 안전하게 수행.
+    cfg.set_active_conversation_id(conversation_id)
     # TASK-0228 (1:N): 멀티 datasource 라우터 등록. tool 호출마다 datasource 선택 + 그 컨텍스트 활성화.
     # 등록 token 은 finally 에서 reset(예외 안전). 라우터는 primary 를 기본 활성 컨텍스트로 둔다.
     _ds_router_token = None
@@ -3903,6 +3908,14 @@ def _run_agent_core(
             )
         except Exception:
             _run_tool_defs = TOOL_DEFINITIONS
+    # feature-0022: scratch workspace 도구는 런타임 활성(+인프라 준비) 시에만 노출(단일/멀티 ds 공통).
+    try:
+        import modules.tools as _tools_reg2
+        _run_tool_defs = _tools_reg2.with_scratch_tools(
+            _run_tool_defs, _ds_router.labels() if _ds_router is not None else None
+        )
+    except Exception:
+        pass
     knowledge_ctx = ""
     try:
         knowledge_ctx = _build_knowledge_context(
@@ -4678,6 +4691,7 @@ def _run_agent_core(
         pass
     # 멀티 datasource(P5): run-wide datasource·dialect 컨텍스트 해제 (스레드 재사용 stale 방지).
     cfg.set_active_datasource(None)
+    cfg.set_active_conversation_id(None)  # feature-0022: scratch 대화 컨텍스트 해제
     cfg.CURRENT_RUN_ID = ""
 
     return result
