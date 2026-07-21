@@ -382,6 +382,12 @@ def scratch_guard(sql: str, conv_schema: str) -> tuple[bool, str]:
     return (True, "")
 
 
+def _statement_timeout_sql() -> str:
+    """`SET statement_timeout = <int>` 문. PostgreSQL 은 SET 값에 파라미터 바인딩($1)을 허용하지
+    않으므로(psycopg `%s` → "syntax error at $1") int() 로 강제 정수화해 안전하게 인라인한다(주입 불가)."""
+    return f"SET statement_timeout = {int(_rt('AGENT_SCRATCH_STMT_TIMEOUT_MS'))}"
+
+
 def run_sql(conversation_id: Any, sql: str) -> dict[str, Any]:
     """대화 스키마 안에서 자율 SQL(DDL/DML/JOIN) 실행. guard + search_path pin + timeout.
 
@@ -405,7 +411,7 @@ def run_sql(conversation_id: Any, sql: str) -> dict[str, Any]:
         with conn.cursor() as cur:
             # 대화 스키마로 search_path 고정(무자격 이름은 여기서만 해석) + 문당 timeout.
             cur.execute(_sql.SQL("SET search_path TO {}").format(_sql.Identifier(schema)))
-            cur.execute("SET statement_timeout = %s", (int(_rt("AGENT_SCRATCH_STMT_TIMEOUT_MS")),))
+            cur.execute(_statement_timeout_sql())
             cur.execute(sql)
             if cur.description is not None:
                 colnames = [d.name for d in cur.description]

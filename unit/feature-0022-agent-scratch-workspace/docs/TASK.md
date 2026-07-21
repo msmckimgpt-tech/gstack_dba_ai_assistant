@@ -46,3 +46,10 @@ source_of_truth: true
   assistant·ask-worker 가 cross-source JOIN 시 적극 사용하도록 유도(사용자 요청).
 - [x] TASK-0015: bootstrap superuser 결함 수정(운영 AGENT_KB_PG_USER=non-superuser → createdb
   permission denied) — 전용 superuser override + 소켓 trust 연결.
+
+## 라이브 활성화 (2026-07-21) — 배포·스모크
+- [x] TASK-0016: 배포 (make deploy-all, main ba60f4b9 — web-a/b·ask/insight-worker healthy).
+- [x] TASK-0017: agent_scratch DB/role/레지스트리 생성 + KB PUBLIC CONNECT harden(격리 3중 검증).
+- [x] TASK-0018: .env AGENT_SCRATCH_PG_* (postgres 직결 — pgbouncer 우회, userlist 미등록 회피).
+- [x] TASK-0019: AGENT_SCRATCH_ENABLED=1 (WebRuntimeSettings DB + 스냅샷).
+- [x] TASK-0020: 라이브 스모크가 run_sql SET 버그 적발 → 수정(CHG-runsql-fix) → 재배포·재스모크.

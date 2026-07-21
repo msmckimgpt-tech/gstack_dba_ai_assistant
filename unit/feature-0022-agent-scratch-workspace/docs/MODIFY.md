@@ -45,3 +45,10 @@ source_of_truth: true
   전용 `AGENT_SCRATCH_PG_SUPERUSER`(기본 `postgres`)로 + unix 소켓 trust/peer 연결(`-h localhost` 제거)
   → 운영 환경 `createdb permission denied` 해소. 헤더/격리 근거 주석 정확화.
 - `test_scratch.py`: guidance 상수 sanity 테스트 1건 추가(총 21건).
+
+## CHG-20260721-runsql-fix — run_sql SET statement_timeout 파라미터화 버그 수정 (라이브 스모크 적발)
+- `scratch.py`: `run_sql` 의 `SET statement_timeout = %s`(psycopg 파라미터) 는 PostgreSQL 이
+  SET 값 바인딩을 불허해 **모든 scratch_sql 이 "syntax error at $1" 로 실패**하던 버그를 수정.
+  `_statement_timeout_sql()` 헬퍼로 int 인라인(주입 불가). 라이브 end-to-end 스모크(반입→JOIN)가
+  적발 — 유닛테스트는 PG 없이 guard 만 검증해 놓친 경로.
+- `test_scratch.py`: `_statement_timeout_sql` placeholder-free 회귀 테스트 추가(총 22건).

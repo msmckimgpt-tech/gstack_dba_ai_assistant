@@ -54,3 +54,12 @@ unix 소켓 trust 연결).
 (런타임 데이터 경로 무관, superuser 소켓 trust 는 기존 kb bootstrap 과 동형). Minor·behavior-additive.
 **검증**: test_scratch.py 21건 PASS(guidance sanity 포함), feature-0002/0003 회귀 0, bash -n PASS,
 활성화 라이브 스모크(별도).
+
+## REV-20260721T093000-scratch-runsql-fix [SKIPPED: minor-bugfix] — Verdict: PASS
+**Scope**: 라이브 활성화 스모크가 적발한 `run_sql` 버그 수정 — `SET statement_timeout = %s`(psycopg
+파라미터)를 PostgreSQL 이 불허(SET 값 바인딩 불가)해 모든 scratch_sql 이 실패하던 것을 int 인라인
+(`_statement_timeout_sql()`)으로 수정.
+**왜 SKIPPED**: 단일 SQL 구문 버그 수정 — 신규 공격 표면 0(int() 강제 인라인, 주입 불가), scratch_guard/
+격리/materialize 불변. 라이브 psql 시퀀스로 수정 검증(SET+JOIN 정상) + placeholder-free 회귀 테스트.
+**검증**: test_scratch.py 22건 PASS, agent_scratch_rw 직접 `SET statement_timeout=30000`+JOIN 정상,
+배포 후 라이브 end-to-end 재스모크로 최종 확인.
