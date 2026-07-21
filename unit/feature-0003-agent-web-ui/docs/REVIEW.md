@@ -604,6 +604,9 @@ source_of_truth: true
 - **cache-buster**: 소스 `?v=dev` 고정 — ITEM-09 what#3(`inject_asset_stamp.py` content-hash 빌드주입·deploy-web `asset_stamp_verify` 하드게이트) 이후 수기 bump 폐지. 직전 doc-sync-rn-0713~0716 동일 판단.
 - Cross-ref: CHG/TASK/FUNCTION/TEST-20260716T140735-doc-sync-rn-0716b / META REV-20260716T140735-META-0038-doc-sync-0716b(별도 commit) / 원천 PR #837~#853. **attended run — landing/배포 스킬 소유.**
 
+## REV-20260722T010501-doc-sync-rn-0722 [SKIPPED:non-policy-doc] — 릴리즈노트 07-21 블록 신규 1항목(진행상황 실시간 전파) (TASK-20260722T010501-doc-sync-rn-0722, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`)뿐 — 비-정책 doc-only. 렌더 로직·백엔드·스키마·RBAC·엔드포인트·cache-buster(빌드 자동주입) 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현·완료형 정당성(a999594e frontend-only 머지→wrapper 배포로 라이브·별도 활성 불요)·area(work — 대화/작업 화면 가시 변화)·누출 회피는 doc_sync 가 정본(feature-0003 TASK/REPORT realtime-progress-propagation + git log 8f3dd00b..HEAD) 대비 직접 검증 + ULTRACODE 타깃별 적대 verify(wf_b9eb441a 초판 — feature-0022 상태 오류 등 8건 적발 → 정정, wf_97d7d599 정정 재검증).
+
 ## REV-20260721T175800-realtime-progress-propagation [SUBAGENT:general-purpose] — ACCEPTED-WITH-FIXES (고위험 결함 0, low-med 2건 반영·1건 정밀화·2건 bounded 문서화)
 - 대상: `static/app.js` 유휴 run-감지 폴러 diff(+133/추가 함수 `detectNewRun`·`scheduleRunDetectPolling`·`startRunDetectPolling`·`stopRunDetectPolling`·`clearRunDetectTimer` + `loadHistory`/`selectConversation`/`handleLogout`/`visibilitychange` 배선). 적대 리뷰 프롬프트: 폭주/중복 폴링·lifecycle 누수·baseline race·feature-0009 foreign-run 하이재킹·myAskInFlight 오귀속·비용/백오프·일반 correctness.
 - 종합 판정: **핵심 메커니즘 건전** — seq-gating(monotonic `runDetectSeq` + stale bailout)과 4-신호 dormant 가드가 (a) 활성 폴러와의 중복 fetch, (b) 로컬 본인 run 하이재킹("처리 중" 고착)의 두 최악 시나리오를 정확히 차단. runaway-timer/stuck 시나리오 구성 실패(=안전).

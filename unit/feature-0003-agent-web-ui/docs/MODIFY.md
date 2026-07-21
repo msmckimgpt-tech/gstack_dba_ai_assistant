@@ -678,3 +678,11 @@ source_of_truth: true
 - Verification: `node --check` PASS · 유닛 `verify_run_detect_poll.mjs` 23/23 · feature-0003 pytest RC=0(무회귀) · 실 Windows 브라우저(Chrome 150) 유휴 탭 실시간 감지+"처리 중" 말풍선 렌더 실측+스크린샷(§16.6, TEST.md). 검증 후 라이브 배포본 원복.
 - Files: `static/app.js`, `tests/verify_run_detect_poll.mjs`, `docs/{TASK,REPORT,TEST,FUNCTION,MODIFY,REVIEW}.md`.
 - landing/배포: verify-completion(operational, feature-0003) → commit → push → PR/머지·배포는 자동 동기화 정책/wrapper 소유.
+
+## CHG-20260722T010501-doc-sync-rn-0722 (TASK-20260722T010501-doc-sync-rn-0722 — 07-21 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경: `static/release-notes-data.js` releases head 에 "2026-07-21" 블록 prepend(1항목 improved/work: 다른 참여자 질문에 대한 AI 답변 과정 실시간 표시·멀티탭 동기화) + generated 2026-07-16→2026-07-21. 렌더 로직·백엔드·스키마·RBAC·엔드포인트 0.
+- cache-buster: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py` + deploy-web.sh `asset_stamp_verify` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침).
+- 근거 정본: feature-0003 TASK/REPORT realtime-progress-propagation(a999594e — 유휴 관찰자 run-감지) + git log 8f3dd00b..HEAD.
+- Verification: `node --check` PASS · vm 구조검증(releases 수·07-21 head 1항목[improved/work]·07-16 보존·스키마·누출0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).

@@ -5979,3 +5979,8 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] Python baseline: feature-0003 pytest RC=0(프론트 전용, 무회귀). `make test` dc-build 는 worktree env 부재로 실패(알려진 gotcha) → 기존 agent 이미지 마운트로 직접 pytest.
 - [x] 실브라우저 검증(§16.6, Windows Chrome 150 / win-browser): 수정 app.js 를 web-a/b 주입(stamp bump)→ 유휴 대화에서 detector 가 `/api/progress`(client_run_id 없이) 폴링 확인 → `set_run_status` 로 새 processing run 주입 → **재로드/전환 없이** assistant "처리 중" 말풍선 실시간 등장 확인(net 로그: detector progress → history 재로드 → active poll 전환) + 스크린샷 증적. 라이브 서비스 배포본 원복(주입 app.js/stamp/KV 되돌림).
 - [ ] verify-completion(operational, feature-0003) → commit → push → PR/머지·배포는 정책(자동 동기화)/wrapper 소유.
+
+## 20260722T010501-doc-sync-rn-0722 — 릴리즈노트 07-21 블록: 진행상황 실시간 전파 (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` releases head 에 "2026-07-21" 블록 prepend(1항목 improved/work — 그룹/모니터링 대화 관찰자에게 assistant 진행상황·답변 실시간 표시·멀티탭 동기화) + generated 2026-07-16→2026-07-21. 렌더 로직·cache-buster(`?v=dev` 빌드 자동주입) 무변경.
+- [x] 검증: `node --check` PASS · vm 구조검증(블록순서·스키마·누출0). 근거 정본 = feature-0003 realtime-progress-propagation(a999594e).
+- [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(Windows-browser 미수행 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3).

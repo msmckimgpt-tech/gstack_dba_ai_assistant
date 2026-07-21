@@ -1710,3 +1710,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 감지 범위: **모든 대화**(사용자 선택 — 그룹·모니터링·내 1:1 멀티탭 동기화 포함).
 - 불변식: feature-0009 foreign-run 규약(활성 `progressRunId`/pendingBubble 존재 시 내 run 갈아타지 않음) 존중 — 감지기는 활성 추적 중 dormant. 백엔드 무변경(`/api/progress` 가 terminal run_id 도 노출 → baseline 을 프론트에서 완결; 서버는 `conversation.read.any` 로 관찰자에게도 이미 live 반환).
 - 검증: 유닛 `tests/verify_run_detect_poll.mjs` 23/23 · feature-0003 pytest RC=0 · 실 Windows 브라우저(§16.6, TEST.md) 유휴 탭 실시간 감지+렌더 실측+스크린샷. CHG/REV-20260721T1758-realtime-progress-propagation.
+
+## (doc-sync-rn-0722, 2026-07-22) 릴리즈노트 콘텐츠 — 07-21 블록 신규(진행상황 실시간 전파)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-21" 블록 신규(1항목: improved/work — 그룹/모니터링 대화 관찰자에게 assistant 진행상황·답변 실시간 표시·멀티탭 동기화) prepend·generated 2026-07-16→2026-07-21. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
+- 평이화/비노출: feature-id·§번호·PR#·함수명·내부표현(run-감지 폴러·/api/progress·loadHistory 등) 비노출(사용자 언어).
