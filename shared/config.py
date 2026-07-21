@@ -271,6 +271,13 @@ __all__ = [
     "AGENT_KB_PG_SSLMODE",
     "AGENT_KB_PG_ENABLED",
     "AGENT_KB_READ_BACKEND",
+    "AGENT_SCRATCH_PG_DB",
+    "AGENT_SCRATCH_PG_USER",
+    "AGENT_SCRATCH_PG_PASSWORD",
+    "AGENT_SCRATCH_PG_HOST",
+    "AGENT_SCRATCH_PG_PORT",
+    "AGENT_SCRATCH_PG_SSLMODE",
+    "AGENT_SCRATCH_PG_CONFIGURED",
     "AGENT_KB_EMBEDDING_MODEL",
     "AGENT_KB_EMBEDDING_DIM",
     "AGENT_KB_EMBEDDING_BATCH_SIZE",
@@ -528,6 +535,25 @@ def get_active_datasource():
     return _ACTIVE_DATASOURCE_KEY.get()
 
 
+# feature-0022: 현재 컨텍스트의 활성 대화 id. scratch 도구(scratch_import/scratch_sql/
+# scratch_reset)가 대화별 스키마(s_<hash>)를 고르려면 tool 실행 시점에 conversation_id 를
+# 알아야 하는데, tool 핸들러 시그니처는 (conn, args) 라 인자로 못 받는다. set_active_datasource
+# 와 동일한 ContextVar 패턴으로 run 시작 시 agent_core 가 설정하고 scratch 핸들러가 읽는다.
+_ACTIVE_CONVERSATION_ID: "_contextvars.ContextVar[str | None]" = _contextvars.ContextVar(
+    "active_conversation_id", default=None
+)
+
+
+def set_active_conversation_id(conversation_id: str | None) -> None:
+    """현재 컨텍스트(스레드/태스크)의 활성 대화 id 설정. None=미지정(CLI/legacy)."""
+    _ACTIVE_CONVERSATION_ID.set((str(conversation_id).strip() or None) if conversation_id else None)
+
+
+def get_active_conversation_id():
+    """활성 대화 id (scratch 대화별 스키마 스코프용). None=미지정."""
+    return _ACTIVE_CONVERSATION_ID.get()
+
+
 def ds_fact_key(source: str, suffix: str, *, ds_key=_DS_KEY_SENTINEL) -> str:
     """datasource 로 스코프한 fact/fingerprint 키. ds_key 미지정 시 ContextVar 사용."""
     if ds_key is _DS_KEY_SENTINEL:
@@ -616,6 +642,25 @@ AGENT_KB_PG_ENABLED = bool(AGENT_KB_PG_HOST) and bool(AGENT_KB_PG_USER)
 AGENT_KB_PG_HOST_RO = os.getenv("AGENT_KB_PG_HOST_RO", "").strip() or AGENT_KB_PG_HOST
 AGENT_KB_PG_PORT_RO = int(os.getenv("AGENT_KB_PG_PORT_RO", "5432") or "5432")
 AGENT_KB_READ_BACKEND = (os.getenv("AGENT_KB_READ_BACKEND", "mysql").strip() or "mysql").lower()
+
+# ── Agent PG scratch workspace (feature-0022) ─────────────────────────────
+# assistant 가 PG 안에서 자기 전용 낙서장 DB(`agent_scratch`)를 자율적으로 다루는 기능의
+# 인프라 자격. host/port/sslmode 는 KB Postgres 와 동일 클러스터를 재사용하되, database·
+# role 은 분리된 전용값(agent_scratch / agent_scratch_rw)을 쓴다 — PG database-level 격리로
+# 이 role 은 agent_kb/runtime/web/datasource 에 도달 불가(ADR-SCRATCH-0001).
+#
+# 활성화 게이트는 이중이다: (1) 인프라 — 아래 host+user 가 설정돼 있어야 함(bootstrap 완료),
+# (2) 런타임 스위치 — runtime 설정 AGENT_SCRATCH_ENABLED(기본 0=OFF). 병합만으로 런타임
+# 동작이 바뀌지 않도록 기본 OFF (bootstrap 후 운영자가 콘솔/설정에서 명시 활성화).
+AGENT_SCRATCH_PG_DB = os.getenv("AGENT_SCRATCH_PG_DB", "agent_scratch").strip() or "agent_scratch"
+AGENT_SCRATCH_PG_USER = os.getenv("AGENT_SCRATCH_PG_USER", "").strip()
+AGENT_SCRATCH_PG_PASSWORD = os.getenv("AGENT_SCRATCH_PG_PASSWORD", "")
+# host/port/sslmode 는 미설정 시 KB Postgres 값으로 fallback (동일 클러스터 전제).
+AGENT_SCRATCH_PG_HOST = os.getenv("AGENT_SCRATCH_PG_HOST", "").strip() or AGENT_KB_PG_HOST
+AGENT_SCRATCH_PG_PORT = int(os.getenv("AGENT_SCRATCH_PG_PORT", "").strip() or str(AGENT_KB_PG_PORT))
+AGENT_SCRATCH_PG_SSLMODE = os.getenv("AGENT_SCRATCH_PG_SSLMODE", "").strip() or AGENT_KB_PG_SSLMODE
+# 인프라 준비 여부(psycopg 는 db.py 가 별도 확인). 런타임 ON/OFF 는 runtime_settings 가 판정.
+AGENT_SCRATCH_PG_CONFIGURED = bool(AGENT_SCRATCH_PG_HOST) and bool(AGENT_SCRATCH_PG_USER)
 
 # M3 (TASK-0023) — Embedding worker (texts.embedding 컬럼 일괄 생성).
 # Blocker B-4 결정 (M1 ADR-0021): TextHash 별 단일 embedding — fact_entries /

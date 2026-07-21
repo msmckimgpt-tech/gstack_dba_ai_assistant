@@ -409,6 +409,13 @@ def run_ask_worker_loop() -> None:
                 sweep_expired_notes()
             except Exception as exc:
                 log.warning("ask-worker: agent-notes sweep 실패(무시): %s", exc)
+            # feature-0022: agent PG scratch workspace TTL 정리 — 마지막 사용 후 TTL(기본 24h)
+            # 초과 대화 스키마를 DROP. 인프라 미설정/비활성이면 no-op. 실패해도 워커 루프 무영향.
+            try:
+                from modules.scratch import sweep_expired_schemas
+                sweep_expired_schemas()
+            except Exception as exc:
+                log.warning("ask-worker: scratch sweep 실패(무시): %s", exc)
             last_reap = now
 
         try:

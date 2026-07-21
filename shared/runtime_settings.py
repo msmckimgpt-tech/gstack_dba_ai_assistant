@@ -649,6 +649,95 @@ def _redteam_specs() -> tuple[dict[str, Any], ...]:
     return tuple(dict(spec, group=GROUP_REDTEAM) for spec in _REDTEAM_SPECS)
 
 
+GROUP_SCRATCH = "scratch"
+
+# feature-0022: agent PG scratch workspace. assistant 가 PG 안 자기 전용 낙서장 DB 에서
+# 자율적으로 테이블을 만들고, 외부 데이터소스 데이터를 반입해 JOIN 하고, TTL 주기로 비운다.
+_SCRATCH_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "key": "AGENT_SCRATCH_ENABLED",
+        "category": "작업공간(스크래치)",
+        "label": "PG 스크래치 작업공간 사용",
+        "description": "assistant 가 PG 전용 낙서장 DB(agent_scratch)에서 대화별 테이블을 자율적으로 만들고, 외부 데이터소스 데이터를 반입해 cross-source JOIN 을 수행하도록 허용합니다 (1=사용, 0=중지). 사용 전 bin/scratch-pg-bootstrap.sh 로 DB/role 이 준비돼야 합니다. 기본 0(안전).",
+        "unit": "0/1",
+        "default": 0,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_SCRATCH_TTL_HOURS",
+        "category": "작업공간(스크래치)",
+        "label": "임시데이터 삭제 주기",
+        "description": "대화별 스크래치 스키마의 TTL. 마지막 사용 후 이 시간이 지나면 주기 정리(ask-worker reaper)에서 DROP 됩니다. 반입 데이터는 임시이므로 짧게 두는 것을 권장합니다.",
+        "unit": "시간",
+        "default": 24,
+        "minimum": 1,
+        "maximum": 720,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_SCRATCH_MAX_IMPORT_ROWS",
+        "category": "작업공간(스크래치)",
+        "label": "1회 반입 최대 행수",
+        "description": "scratch_import 로 외부 데이터소스에서 한 번에 반입할 수 있는 최대 행수. 초과분은 잘리고 그 사실이 assistant 에 통지됩니다(디스크 폭주 방지).",
+        "unit": "행",
+        "default": 100000,
+        "minimum": 100,
+        "maximum": 5000000,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_SCRATCH_MAX_TABLES_PER_CONV",
+        "category": "작업공간(스크래치)",
+        "label": "대화당 최대 테이블 수",
+        "description": "한 대화의 스크래치 스키마가 보유할 수 있는 최대 테이블 수. 초과 시 scratch_reset 로 정리해야 합니다.",
+        "unit": "개",
+        "default": 50,
+        "minimum": 1,
+        "maximum": 500,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_SCRATCH_MAX_SCHEMAS",
+        "category": "작업공간(스크래치)",
+        "label": "전역 최대 대화 스키마 수",
+        "description": "agent_scratch DB 전체가 동시에 보유할 수 있는 대화 스키마 수 상한(디스크 폭주 방지). 도달 시 만료분을 먼저 정리하며, 그래도 초과면 새 작업공간 생성이 잠시 거부됩니다.",
+        "unit": "개",
+        "default": 500,
+        "minimum": 10,
+        "maximum": 10000,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_SCRATCH_STMT_TIMEOUT_MS",
+        "category": "작업공간(스크래치)",
+        "label": "scratch_sql 문당 타임아웃",
+        "description": "scratch_sql 한 문(SELECT/JOIN/DDL)의 실행 상한(밀리초). 초과 시 해당 문이 취소됩니다(폭주 backstop).",
+        "unit": "ms",
+        "default": 30000,
+        "minimum": 1000,
+        "maximum": 600000,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_SCRATCH_QUERY_PREVIEW_ROWS",
+        "category": "작업공간(스크래치)",
+        "label": "scratch_sql 미리보기 행수",
+        "description": "scratch_sql 이 SELECT 결과를 assistant 에 돌려줄 때의 미리보기 행수 상한(토큰 절약). 초과 시 잘린 사실이 통지됩니다.",
+        "unit": "행",
+        "default": 200,
+        "minimum": 10,
+        "maximum": 2000,
+        "apply_mode": "live",
+    },
+)
+
+
+def _scratch_specs() -> tuple[dict[str, Any], ...]:
+    return tuple(dict(spec, group=GROUP_SCRATCH) for spec in _SCRATCH_SPECS)
+
+
 # 스펙은 프로세스 수명 내 정적이다(타임아웃=리터럴, 모델 예산=import-time 고정 카탈로그 순회).
 # get_int·model_thinking_budget_override 가 매 MCP 요청·매 timeout 해석마다 spec_for 를 호출하므로
 # 전체 스펙/인덱스를 1회 계산 후 메모이즈한다(적대 backend MINOR — hot-path 재빌드 제거).
@@ -666,6 +755,7 @@ def list_specs() -> tuple[dict[str, Any], ...]:
             + _model_budget_specs()
             + _reasoning_budget_specs()
             + _redteam_specs()
+            + _scratch_specs()
         )
     return _SPECS_CACHE
 

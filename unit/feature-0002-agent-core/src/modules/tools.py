@@ -992,6 +992,99 @@ def _inject_step_narration_params(tool_defs: list[dict[str, Any]]) -> None:
 _inject_step_narration_params(TOOL_DEFINITIONS_FULL)
 
 
+# ── feature-0022: agent PG scratch workspace 도구 (런타임 활성 시에만 노출) ──────
+# assistant 가 PG 전용 낙서장에서 외부 데이터소스 데이터를 반입해 cross-source JOIN 을 수행.
+_SCRATCH_TOOL_DEFS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_import",
+            "description": (
+                "외부 데이터소스에서 읽은 데이터를 PG 작업공간(scratch)의 테이블로 가져온다(반입). "
+                "여러 데이터소스/DB 의 데이터를 각각 반입한 뒤 scratch_sql 로 PG 안에서 JOIN 할 때 쓴다 "
+                "(엔진이 다른 소스 간 JOIN 을 이 작업공간에서 수행). sql 은 execute_sql 과 동일한 "
+                "단일 SELECT/CTE 만 허용되며 같은 권한·정책 게이트를 통과한 데이터만 반입된다. "
+                "결과는 dest_table 이름의 테이블로 적재되고(기존 동명 테이블은 대체), 대량이면 상한까지 잘린다. "
+                "작업공간 데이터는 임시이며 설정된 주기(기본 24시간)마다 자동으로 비워진다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "반입할 데이터를 고르는 단일 SELECT/CTE 쿼리(대상 데이터소스에서 실행)."},
+                    "dest_table": {"type": "string", "description": "작업공간에 만들 테이블 이름(영문/숫자/밑줄). 예: 'orders', 'users_a'."},
+                    "confirm_heavy": {"type": "boolean", "description": "무거운 반입으로 추정돼 차단됐을 때만, 범위를 더 좁힐 수 없는 경우 true 로 재호출해 강행(최후수단)."},
+                },
+                "required": ["sql", "dest_table"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_sql",
+            "description": (
+                "PG 작업공간(scratch) 안에서 SQL 을 실행한다. scratch_import 로 반입한 테이블들을 "
+                "대상으로 SELECT·JOIN·집계는 물론 CREATE/INSERT/UPDATE/DELETE/DROP 등 자율적 조작이 "
+                "가능하다(PostgreSQL 방언). 이 작업공간은 현재 대화 전용으로 격리돼 있고, 여기서만 "
+                "접근 가능하다(외부 데이터소스·다른 대화·시스템 DB 참조 불가). 단일 statement 만 허용. "
+                "테이블 이름은 스키마 없이 그대로 쓴다(예: FROM orders o JOIN users u ON ...)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "작업공간에서 실행할 단일 SQL 문(SELECT/JOIN/DDL/DML)."},
+                },
+                "required": ["sql"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_list",
+            "description": "현재 대화의 PG 작업공간(scratch)에 있는 테이블 목록과 대략 행수를 조회한다. 이미 반입한 데이터를 확인해 중복 반입을 피할 때 쓴다.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_reset",
+            "description": "현재 대화의 PG 작업공간(scratch)을 통째로 비운다(모든 반입 테이블 삭제). 새 분석을 처음부터 시작하거나 테이블 한도에 도달했을 때 쓴다.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
+
+_inject_step_narration_params(_SCRATCH_TOOL_DEFS)
+
+
+def scratch_tool_defs() -> list[dict[str, Any]]:
+    """scratch 워크스페이스가 런타임 활성(+인프라 준비)이면 도구 정의(깊은 복사) 반환, 아니면 []."""
+    try:
+        from . import scratch as _scratch
+        if not _scratch.enabled():
+            return []
+    except Exception:
+        return []
+    import copy
+    return copy.deepcopy(_SCRATCH_TOOL_DEFS)
+
+
+def with_scratch_tools(base_defs: list[dict[str, Any]], labels: "list[str] | None" = None) -> list[dict[str, Any]]:
+    """base 도구 정의에 scratch 도구를 (활성 시) 덧붙인다. 멀티 datasource 면 scratch_import 에도
+    datasource 선택 인자를 주입(어느 소스에서 반입할지 LLM 이 지정)."""
+    extra = scratch_tool_defs()
+    if not extra:
+        return base_defs
+    if labels and len(labels) >= 2:
+        try:
+            extra = build_tool_definitions_for_datasources(extra, labels)
+        except Exception:
+            pass
+    return list(base_defs) + extra
+
+
 def build_tool_definitions_for_datasources(base_defs: list[dict[str, Any]], labels: list[str]) -> list[dict[str, Any]]:
     """TASK-0228 (1:N): 제품이 여러 datasource 에 바인딩됐을 때, 각 DB 도구에 `datasource` 선택 인자를
     주입한 **깊은 복사본** tool 정의를 만든다(원본 전역 정의 불변 — 단일 datasource run 영향 0).
@@ -2153,6 +2246,146 @@ def get_last_execute_sql_context():
     return _LAST_SQL_EXEC_CTX.get()
 
 
+# ── feature-0022: scratch workspace 도구 핸들러 ──────────────────────────────
+def _scratch_conversation_id() -> "str | None":
+    import shared.config as _cfg
+    return _cfg.get_active_conversation_id()
+
+
+def _tool_scratch_import(conn, args: dict) -> str:
+    from . import scratch as _scratch
+    if not _scratch.enabled():
+        return "오류: PG 작업공간(scratch)이 비활성 상태입니다(관리 콘솔 설정에서 활성화 필요)."
+    conv = _scratch_conversation_id()
+    if not conv:
+        return "오류: 대화 컨텍스트가 없어 작업공간을 사용할 수 없습니다."
+    sql = str(args.get("sql", "")).strip()
+    dest = str(args.get("dest_table", "")).strip()
+    if not sql or not dest:
+        return "오류: sql 과 dest_table 은 필수입니다."
+    # execute_sql 과 동일한 신뢰경계: sql_guard(단일 SELECT/CTE) + 제품 allowlist·cross-DB 게이트.
+    # 반입은 "이미 SELECT 가능하던 데이터"만 — 새 데이터 유출 표면 0.
+    from .sql_guard import validate_sql_for_sandbox
+    guard = validate_sql_for_sandbox(
+        sql, forbidden_schemas=_INTERNAL_SCHEMAS, dialect=_dialects.active().sqlglot
+    )
+    if not guard.ok:
+        return (
+            f"오류: 보안 정책상 차단된 SQL — {guard.error_reason}. "
+            f"scratch_import 는 execute_sql 과 동일하게 단일 SELECT/CTE 만 허용합니다. "
+            f"{_dialect_correction_hint(sql)}"
+        )
+    err = _freeform_sql_access_error(sql)
+    if err:
+        return err
+    # execute_sql 과 parity: 무거운 쿼리 사전 부하 게이트(gate 모드 차단 / warn 모드 경고).
+    # scratch_import 로 execute_sql 게이트를 우회해 대량 반입하는 것을 막는다(적대 리뷰 MEDIUM).
+    import shared.config as _cfg
+    guard_mode = str(getattr(_cfg, "AGENT_QUERY_GUARD_MODE", "off") or "off").lower()
+    _cv = args.get("confirm_heavy")
+    confirm_heavy = (_cv is True) or (isinstance(_cv, str) and _cv.strip().lower() in ("true", "1", "yes"))
+    if not bool(getattr(_cfg, "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", True)):
+        confirm_heavy = False
+    if guard_mode in ("warn", "gate") and not confirm_heavy:
+        _dialect = _dialects.active()
+        if guard_mode == "gate" and not _dialect.supports_load_estimate:
+            return ("⚠ 이 데이터소스 엔진은 사전 부하추정을 지원하지 않아, 부하게이트(gate) 모드에서 "
+                    "반입을 사전 차단합니다. 범위를 좁혀(WHERE/기간/집계/TOP) 다시 시도하세요.")
+        est = _estimate_explain_rows(conn, sql)
+        warn_thr = int(getattr(_cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1000000) or 1000000)
+        if est is None and guard_mode == "gate" and _dialect.gate_fail_closed_on_estimate_error:
+            return ("⚠ 사전 부하추정 실패(실행계획 미취득) — 부하게이트(gate) 모드에서 반입을 차단합니다. "
+                    "범위를 좁혀 다시 시도하세요.")
+        if est is not None and est > warn_thr and guard_mode == "gate":
+            return (f"⚠ 무거운 반입으로 추정됩니다 (예상 ~{est:,}행 > 임계 {warn_thr:,}행) — 반입하지 않았습니다. "
+                    f"WHERE/기간/집계로 범위를 좁혀 다시 시도하거나, 꼭 필요하면 confirm_heavy=true 로 재호출하세요.")
+    _apply_query_cap(conn)
+    try:
+        result_sets, _ = _raw_execute_sql(conn, sql)
+    except Exception as e:
+        return f"scratch_import: 원본 데이터소스 조회 오류: {e}"
+    columns: list = []
+    rows: list = []
+    for kind, cols, rws in result_sets:
+        if kind == "rows" and isinstance(cols, list):
+            columns = [str(c) for c in cols]
+            rows = [list(r) if isinstance(r, (list, tuple)) else [r] for r in (rws or [])]
+            break
+    if not columns:
+        return "scratch_import: 반입할 행 결과가 없습니다(SELECT 결과가 비어 있거나 행 형태가 아님)."
+    res = _scratch.materialize(conv, dest, columns, rows)
+    if not res.get("ok"):
+        return f"scratch_import 실패: {res.get('error')}"
+    coltxt = ", ".join(f"{c['name']}:{c['type']}" for c in res["columns"])
+    note = " (상한 초과분 잘림)" if res.get("truncated") else ""
+    return (
+        f"작업공간에 반입 완료 — 테이블 '{res['table']}' ({res['row_count']:,}행{note}). "
+        f"컬럼: {coltxt}. 이후 scratch_sql 로 이 테이블을 조회·JOIN 할 수 있습니다."
+    )
+
+
+def _fmt_scratch_rows(columns, rows, truncated=False) -> str:
+    if not columns:
+        return "(결과 컬럼 없음)"
+    lines = [" | ".join(str(c) for c in columns)]
+    for r in rows:
+        lines.append(" | ".join("" if v is None else str(v) for v in r))
+    out = "\n".join(lines)
+    if truncated:
+        out += "\n… (미리보기 상한까지만 표시 — 전체는 더 많음. 범위를 좁혀 재조회하세요)"
+    return out
+
+
+def _tool_scratch_sql(conn, args: dict) -> str:
+    from . import scratch as _scratch
+    if not _scratch.enabled():
+        return "오류: PG 작업공간(scratch)이 비활성 상태입니다."
+    conv = _scratch_conversation_id()
+    if not conv:
+        return "오류: 대화 컨텍스트가 없어 작업공간을 사용할 수 없습니다."
+    sql = str(args.get("sql", "")).strip()
+    if not sql:
+        return "오류: sql 은 필수입니다."
+    res = _scratch.run_sql(conv, sql)
+    if not res.get("ok"):
+        return f"오류: {res.get('error')}"
+    if "columns" in res:
+        body = _fmt_scratch_rows(res["columns"], res["rows"], res.get("truncated"))
+        return f"{res['row_count']:,}행 반환:\n{body}"
+    return f"실행 완료 (영향 행수: {res.get('rowcount', 0)})."
+
+
+def _tool_scratch_list(conn, args: dict) -> str:
+    from . import scratch as _scratch
+    if not _scratch.enabled():
+        return "오류: PG 작업공간(scratch)이 비활성 상태입니다."
+    conv = _scratch_conversation_id()
+    if not conv:
+        return "오류: 대화 컨텍스트가 없습니다."
+    res = _scratch.list_workspace(conv)
+    if not res.get("ok"):
+        return f"오류: {res.get('error')}"
+    tables = res.get("tables") or []
+    if not tables:
+        return "작업공간이 비어 있습니다(반입된 테이블 없음). scratch_import 로 데이터를 가져오세요."
+    return "작업공간 테이블:\n" + "\n".join(
+        f"- {t['table']} (~{t['approx_rows']:,}행)" for t in tables
+    )
+
+
+def _tool_scratch_reset(conn, args: dict) -> str:
+    from . import scratch as _scratch
+    if not _scratch.enabled():
+        return "오류: PG 작업공간(scratch)이 비활성 상태입니다."
+    conv = _scratch_conversation_id()
+    if not conv:
+        return "오류: 대화 컨텍스트가 없습니다."
+    res = _scratch.reset(conv)
+    if not res.get("ok"):
+        return f"오류: {res.get('error')}"
+    return "작업공간을 비웠습니다. 새로 scratch_import 로 데이터를 가져올 수 있습니다."
+
+
 _TOOL_HANDLERS = {
     "list_schemas": _tool_list_schemas,
     "describe_schema": _tool_describe_schema,
@@ -2166,6 +2399,10 @@ _TOOL_HANDLERS = {
     "get_table_indexes": _tool_get_table_indexes,
     "get_foreign_keys": _tool_get_foreign_keys,
     "graph_navigate": _tool_graph_navigate,
+    "scratch_import": _tool_scratch_import,
+    "scratch_sql": _tool_scratch_sql,
+    "scratch_list": _tool_scratch_list,
+    "scratch_reset": _tool_scratch_reset,
 }
 
 
