@@ -1633,3 +1633,10 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **수정(CHG-20260715T110000)**: app.js lazy-create+staged 블록에서 `uploadedIds` 를 `new_attachment_ids` 에도 union(attachment_ids 대칭). 라벨-only(접근 스코프는 attachment_ids) → IDOR/인가 무영향.
 - **검증**: `node --check` PASS + de-risk(대칭 로직 분석·적대 패널·서버측 소비 추적). 라이브 PB-0008(신규 대화 staged 첨부 ★신규 인지·"반영 안 됨" 미발생)은 정적자산 web 이미지 baked → 배포 후 실측(TEST.md §3).
 - **②-frontend 로 axis ② 마감**: friction(2) xlsx 접근은 이미 수정됨(491310e5+958df646). friction(1) 은 ②-backend(cap-note 정직화)+②-frontend(라벨 대칭) 양면 봉인.
+
+## assistant 진행상황/답변 실시간 전파 — 유휴 관찰자 run-감지 폴러 (realtime-progress-propagation, 2026-07-21)
+- **계기**: 사용자 신고 — 타 계정 대화 모니터링 중 해당 사용자가 요청을 보내면 관찰자 화면에 assistant 말풍선이 실시간으로 안 뜨고, 다른 대화로 갔다 돌아와야 표시됨. 그룹 대화의 타 멤버 요청도 동일.
+- **RC**: 진행상황 폴링(`pollProgress`)이 (a) 본인 `sendPrompt` / (b) `loadHistory` 가 대화 (재)로드 시 `last_status==processing` 감지 시에만 시작. 대화를 이미 열어둔 채 유휴로 보는 관찰자에게는 **새 run 시작을 감지할 배경 폴링이 부재** → 재진입(loadHistory 재실행)해야 표시. 서버 `/api/progress`·`/api/history` 는 `conversation.read.any` 로 관찰자에게도 live 반환하므로 순수 프론트 결함.
+- **수정(app.js, +133, frontend-only)**: 유휴 run-감지 폴러 추가. 대화 열림+활성 run 추적 없음 → `/api/progress`(client_run_id 없이) ~4s(숨김 15s) 폴링, 서버 `run_id` 가 baseline 과 달라지면 검증된 `loadHistory()` 위임(전환-복귀와 동일 경로: 메시지 재로드+pending 말풍선+활성 폴링 시작). 활성 폴링 중 dormant. `loadHistory`(idle arm/processing·no-conv stop, `!append`)·`selectConversation`·`handleLogout`·`visibilitychange` 배선. 감지 범위 = 모든 대화(사용자 선택 — 내 1:1 멀티탭 포함). 백엔드 무변경(`/api/progress` 가 terminal run_id 도 노출 → baseline 프론트 완결; 병행 feature-0012 라우터분할 충돌 표면 0).
+- **feature-0009 정합**: `applyProgressPayload` 의 foreign-run 불변식(내 run 갈아타기 금지) 존중 — detector 는 활성 `progressRunId`/pendingBubble 존재 시 dormant.
+- **검증**: 유닛 `verify_run_detect_poll.mjs` 23/23 PASS(감지 결정 매트릭스+정적 배선) · feature-0003 pytest RC=0(무회귀) · 실브라우저(Windows Chrome 150) — 유휴 대화에서 detector 폴링 확인→ 새 processing run 주입→ **재로드 없이** "처리 중" 말풍선 실시간 등장(net 로그+스크린샷). 검증 후 라이브 서비스 배포본 원복.

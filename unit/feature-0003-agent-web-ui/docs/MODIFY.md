@@ -669,3 +669,12 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(31 releases·07-16 head 4항목[admin 4]·07-15 보존[7]·스키마·누출0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - **attended run — landing/배포 스킬 소유**(분리 commit→PR→merge→deploy-web→서빙 검증). META(SECURITY §23 정정·wiki·meta/REVIEW)는 별도 commit. 직전 스케줄 잔재(0cc64c2b·eeabda19)는 rebase harvest.
+
+## CHG-20260721T1758-realtime-progress-propagation (20260721T1758-realtime-progress-propagation — assistant 진행상황/답변 실시간 전파, Major §12.3, frontend-only)
+- 계기: 사용자 신고 — 타 계정 대화 모니터링(또는 그룹 대화) 중 대화를 열어둔 관찰자에게 다른 사용자가 시작한 run 의 assistant 말풍선이 실시간으로 안 뜸(다른 대화 갔다 와야 표시).
+- 근본원인: 진행상황 폴링(`pollProgress`)이 본인 `sendPrompt` / `loadHistory` 의 `last_status==processing` 감지 시에만 시작 → 유휴 관찰자에겐 새 run 을 감지할 배경 폴링 부재. 서버는 무결(`/api/progress`·`/api/history` 가 `conversation.read.any` 로 관찰자에게도 live 반환).
+- 변경(`static/app.js`, +133): 유휴 run-감지 폴러 추가(활성 run 추적 없을 때 `/api/progress` client_run_id 없이 ~4s/숨김 15s 폴링 → 서버 run_id 가 baseline 과 달라지면 `loadHistory` 위임). `loadHistory`(유휴 arm/processing·no-conv stop, `!append`)·`selectConversation`·`handleLogout`·`visibilitychange` 배선. 감지 범위=모든 대화(사용자 선택). feature-0009 foreign-run 불변식 존중(활성 추적 중 dormant). 백엔드 무변경.
+- 보안/인가 무영향: 감지·재로드는 기존 `/api/progress`·`/api/history`(read.own|read.any) 를 그대로 사용 — 새 권한 표면·데이터 노출 없음.
+- Verification: `node --check` PASS · 유닛 `verify_run_detect_poll.mjs` 23/23 · feature-0003 pytest RC=0(무회귀) · 실 Windows 브라우저(Chrome 150) 유휴 탭 실시간 감지+"처리 중" 말풍선 렌더 실측+스크린샷(§16.6, TEST.md). 검증 후 라이브 배포본 원복.
+- Files: `static/app.js`, `tests/verify_run_detect_poll.mjs`, `docs/{TASK,REPORT,TEST,FUNCTION,MODIFY,REVIEW}.md`.
+- landing/배포: verify-completion(operational, feature-0003) → commit → push → PR/머지·배포는 자동 동기화 정책/wrapper 소유.

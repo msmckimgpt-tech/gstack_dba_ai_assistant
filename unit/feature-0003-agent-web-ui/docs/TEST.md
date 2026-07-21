@@ -116,6 +116,14 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260721T1758-realtime-progress-propagation assistant 진행상황/답변 실시간 전파 — 유휴 관찰자 run-감지 폴러 (Major §12.3, 2026-07-21, feature-0003 web/UI 단독) — **Environment: Windows-browser (유휴 대화에서 다른 액터가 시작한 run 을 재로드 없이 실시간 표시하는지는 실 브라우저 폴링 타이밍+DOM 렌더가 필요 — jsdom 은 폴링/타이머 정본 아님; de-risk=`node --check` PASS + 유닛 `verify_run_detect_poll.mjs` 23/23 + feature-0003 pytest RC=0, visual_verification_scope: always)**
+- 증상: 타 계정 대화 모니터링(또는 그룹 대화) 중, 대화를 열어둔 관찰자에게 다른 사용자가 시작한 run 의 assistant 말풍선이 실시간으로 안 뜸(다른 대화 갔다 와야 표시).
+- 근본원인/수정: 유휴 대화에 배경 폴링 부재 → app.js 에 유휴 run-감지 폴러 추가(활성 run 추적 없을 때 `/api/progress` ~4s/숨김 15s 폴링 → 서버 run_id 변화 시 `loadHistory` 위임). 상세 REPORT/TASK 참조.
+- 기대: 유휴로 보고 있는 대화에서 다른 액터가 요청→run 시작 시, **재로드/전환 없이** assistant "처리 중" 말풍선이 자동 등장하고 완료 시 답변까지 반영.
+- **유닛 검증 — PASS**: `node tests/verify_run_detect_poll.mjs` 23/23(감지 결정 매트릭스: 무장 baseline·새 processing/terminal run 재로드·동일 run 무재로드·활성 추적/pending dormant + 정적 배선 4건). `node --check app.js` PASS. feature-0003 pytest RC=0(프론트 전용, 무회귀).
+- **PB-0008 Windows-browser 라이브 실측 — PASS (Environment: Windows-browser, 2026-07-21, 실 Windows Chrome/150 via `bin/win-browser.py` relay @ 172.26.144.1:9223, `https://localhost/` 로그인 세션 bootstrap_admin)**: 수정 app.js 를 web-a/b docker cp 주입(index stamp bump 로 캐시 무효화) → 유휴 대화(`20260721075408-f534747e`)에서 detector 가 `/api/progress?conversation_id=...`(client_run_id 없이) 폴링 확인 → `set_run_status(cid,"processing","qa-realtime-inject-01")` 로 새 run 주입 → **재로드/전환 없이** assistant "처리 중" 말풍선 실시간 등장(`#pendingAssistantBubble` 존재+elapsed 타이머, 스크린샷 증적). net 로그로 detector `/api/progress`(무 client_run_id) → `/api/history` 재로드 위임 → `/api/progress?client_run_id=qa-realtime-inject-01` active poll 전환 시퀀스 확인. 검증 후 라이브 서비스 배포본 원복(주입 app.js/stamp/KV 되돌림). 배포(main 병합+web 재빌드) 후 POST-DEPLOY 재확인은 배포 시점 잔여.
+- Pass/Fail: **PASS** (유닛 23/23 · pytest RC=0 · 실 Windows 브라우저 실시간 감지+렌더 실측+스크린샷). Runner: AI.
+
 ### TASK-20260715T110000-attach-new-label-symmetry staged-flush 첨부 new_attachment_ids 라벨 대칭 (Minor §12.3, 2026-07-15, deferred ②-frontend) — **Environment: Windows-browser (신규 대화 staged 첨부 업로드→전송→assistant 가 ★신규로 인지하는 전 과정은 실 브라우저 파일선택+업로드+ask 왕복이 필요해 headless 대체 불가 — de-risk=`node --check` PASS + 로직 대칭 분석(attachment_ids/new_attachment_ids union 대칭) + §18.8 적대 패널(스코프/IDOR REFUTED, 라벨-only) + 서버측 new_attachment_ids 소비 추적(★/◆ 라벨+version-diff 게이트 전용), 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
 - 증상(실데이터 감사, 대화 20260615061233-140adf6f): 신규 대화에서 파일을 첨부(staged)하고 전송하면, assistant 가 "현재 첨부된 파일 목록에는 여전히 모두 이전 세션 파일(◆세션)만 있습니다 / 새 파일이 반영 안 됨"이라 오판. 근본: staged→flush 업로드된 id 가 `attachment_ids` 에만 union 되고 `new_attachment_ids` 엔 누락(스냅샷 시점 status="staged"≠"ready") → 프롬프트에서 ◆세션 오라벨.
 - 수정: `app.js` lazy-create+staged 블록에서 `uploadedIds` 를 `new_attachment_ids` 에도 union(attachment_ids 대칭).

@@ -74,6 +74,14 @@ const PROGRESS_POLL_IDLE_MS = 3000;
 const PROGRESS_POLL_HIDDEN_MS = 10000;
 const PROGRESS_POLL_ERROR_MS = 8000;
 
+// feature-0003 realtime-progress-propagation: 대화를 열어둔 채 유휴 상태(활성 run 추적 없음)
+// 일 때, 다른 사용자(그룹 멤버 · 모니터링 대상 계정 소유자) 또는 다른 탭/기기의 나 자신이
+// 시작한 새 run 을 감지하기 위한 배경 폴링 주기. 활성 폴러(pollProgress)와 독립하며 활성 run
+// 을 추적 중일 때는 dormant. 감지 시 검증된 loadHistory 경로(=대화 전환-복귀와 동일)로 위임해
+// 메시지 재로드 + pending 말풍선 복원 + 활성 폴링 시작을 수행한다.
+const RUN_DETECT_POLL_MS = 4000;
+const RUN_DETECT_POLL_HIDDEN_MS = 15000;
+
 // TASK-0041: 클라이언트 타임아웃 시 attach/resume 파라미터
 const ASK_ATTACH_POLL_WAIT_SEC = 45;
 const ASK_ATTACH_MAX_TOTAL_SEC = 1800;
@@ -124,6 +132,14 @@ const state = {
   progressAfterStep: 0,
   progressErrorCount: 0,
   progressSteps: [],
+  // feature-0003 realtime-progress-propagation: 유휴 run-감지 폴러 상태.
+  runDetectPoller: null,
+  runDetectInFlight: false,
+  runDetectSeq: 0,
+  // 감지기가 "이미 반영한" run_id(baseline). loadHistory 재무장 시 null 로 리셋되고 첫 감지
+  // 폴링이 서버의 현재 run_id 로 확정한다. 이후 서버 run_id 가 이 값과 달라지면 새 run(진행
+  // 중 또는 방금 완료)으로 보고 loadHistory 로 전체 동기화한다.
+  detectBaselineRunId: null,
   toastTimer: null,
   // TASK-0047: 제품 컨텍스트 (대화 단위) state.
   // - productMode: 사용자 의도. 'auto' = 일반 대화, 'pinned' = 특정 제품 고정.
@@ -6002,9 +6018,122 @@ function startProgressPolling({ reset = false, runId = "" } = {}) {
   scheduleProgressPolling(0, state.progressPollSeq);
 }
 
+// ── feature-0003 realtime-progress-propagation: 유휴 run-감지 폴러 ──────────────
+// pollProgress(활성 run 추적)와 독립. 대화가 열려 있고 활성 run 추적이 없을 때만 완만한
+// 주기로 /api/progress 를 폴링해, "다른 사용자(그룹 멤버·모니터링 대상 계정 소유자) 또는
+// 다른 탭/기기의 나 자신"이 시작한 새 run 을 감지한다. 감지 시 검증된 loadHistory 경로
+// (=대화 전환-복귀와 동일)로 위임해 메시지 재로드 + pending 말풍선 복원 + 활성 폴링 시작을
+// 수행한다. 활성 폴링 중에는 dormant(중복 /api/progress fetch 없음).
+function clearRunDetectTimer() {
+  if (state.runDetectPoller) {
+    clearTimeout(state.runDetectPoller);
+    state.runDetectPoller = null;
+  }
+}
+
+function stopRunDetectPolling() {
+  state.runDetectSeq += 1;
+  clearRunDetectTimer();
+  state.runDetectInFlight = false;
+}
+
+function scheduleRunDetectPolling(delayMs = RUN_DETECT_POLL_MS, seq = state.runDetectSeq) {
+  clearRunDetectTimer();
+  if (!state.activeConversationId) return;
+  const nextDelay = document.hidden
+    ? Math.max(delayMs, RUN_DETECT_POLL_HIDDEN_MS)
+    : Math.max(delayMs, 0);
+  state.runDetectPoller = window.setTimeout(() => {
+    detectNewRun(seq).catch(() => {});
+  }, nextDelay);
+}
+
+// 대화 진입/재로드 시 감지기를 (재)무장. baseline 을 리셋하고 즉시 1회 폴링해 현재 서버
+// run_id 를 baseline 으로 확정한다(불필요한 재로드 없이). loadHistory 유휴 분기에서 호출.
+function startRunDetectPolling() {
+  stopRunDetectPolling();
+  state.runDetectSeq += 1;
+  state.detectBaselineRunId = null;
+  if (!state.activeConversationId) return;
+  scheduleRunDetectPolling(0, state.runDetectSeq);
+}
+
+// 감지 → loadHistory 위임. 성공 시 loadHistory 가 감지기 상태를 관장한다(유휴 분기=재무장,
+// processing 분기=정지). loadHistory 가 throw(예: /api/history 네트워크 blip)하면 감지기가
+// 영구 disarm 되지 않도록 여기서 재무장한다(seq 유효할 때만 — pollProgress 의 error backoff 와 동형).
+async function _detectHandoffReload(seq) {
+  try {
+    await loadHistory();
+  } catch (_e) {
+    if (seq === state.runDetectSeq) scheduleRunDetectPolling(RUN_DETECT_POLL_MS, seq);
+  }
+}
+
+async function detectNewRun(seq = state.runDetectSeq) {
+  if (!state.activeConversationId || seq !== state.runDetectSeq) return;
+  // 활성 run 을 이미 추적 중(pollProgress 동작 중 또는 pending 말풍선 존재)이거나 이미 감지
+  // fetch 가 in-flight 이면 감지기는 dormant — 재스케줄만 하고 fetch 하지 않는다(중복
+  // /api/progress 호출·재진입 방지). 활성 폴링이 끝나면 refreshWorkspace→loadHistory 재무장이
+  // 감지기를 다시 켠다.
+  if (
+    state.progressRunId ||
+    state.pendingBubble ||
+    state.progressPoller ||
+    state.progressPollInFlight ||
+    state.runDetectInFlight
+  ) {
+    scheduleRunDetectPolling(RUN_DETECT_POLL_MS, seq);
+    return;
+  }
+  state.runDetectInFlight = true;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), PROGRESS_FETCH_TIMEOUT_MS);
+  let reschedule = true;
+  try {
+    const params = new URLSearchParams({ conversation_id: state.activeConversationId });
+    // client_run_id 미지정 — 서버가 대화의 현재(또는 최신) run 상태를 반환한다(관찰자도
+    // conversation.read.any 로 해석됨). raw_status/run_id 로 새 run 여부만 판정한다.
+    const payload = await apiFetch(`/api/progress?${params.toString()}`, {
+      signal: controller.signal,
+    });
+    if (seq !== state.runDetectSeq || !state.activeConversationId) {
+      reschedule = false;
+      return;
+    }
+    // fetch await 사이 활성 추적이 시작됐으면(sendPrompt 등) 감지기는 물러난다.
+    if (state.progressRunId || state.pendingBubble) return;
+    const runId = String(payload.run_id || "").trim();
+    const rawStatus = String(payload.raw_status || payload.status || "").trim().toLowerCase();
+    if (state.detectBaselineRunId === null) {
+      // 무장 후 첫 폴링: 현재 서버 run 을 baseline 으로 확정.
+      state.detectBaselineRunId = runId;
+      // loadHistory 가 유휴로 판단한 직후 새 run 이 막 시작된 race — processing 이면 즉시 동기화.
+      if (rawStatus === "processing" && runId && runId !== state.progressRunId) {
+        reschedule = false;
+        await _detectHandoffReload(seq);
+      }
+    } else if (runId && runId !== state.detectBaselineRunId) {
+      // 새 run(진행 중 또는 방금 완료) 감지 → 전체 동기화. loadHistory 가 processing 이면
+      // 활성 폴링을 시작(감지기 dormant), 완료면 최종 메시지를 화면에 반영하고 감지기 재무장.
+      state.detectBaselineRunId = runId;
+      reschedule = false;
+      await _detectHandoffReload(seq);
+    }
+  } catch (_error) {
+    // 네트워크 blip / abort: 다음 주기에 재시도(감지는 비긴급이라 error backoff 불필요).
+  } finally {
+    window.clearTimeout(timeoutId);
+    state.runDetectInFlight = false;
+    if (reschedule && seq === state.runDetectSeq) {
+      scheduleRunDetectPolling(RUN_DETECT_POLL_MS, seq);
+    }
+  }
+}
+
 async function loadHistory({ append = false } = {}) {
   if (!state.activeConversationId) {
     stopProgressPolling({ reset: true });
+    stopRunDetectPolling();
     state.messages = [];
     state.hasMoreHistory = false;
     state.nextBeforeId = null;
@@ -6056,7 +6185,11 @@ async function loadHistory({ append = false } = {}) {
       // composer-nonblock-interrupt: 1:1(본인 대화)은 처리 중 run 이 곧 *내* run 이므로 새로고침/복원
       // 시 myAskInFlight 도 복원 → 중단 버튼·R3 인터럽트가 새로고침 후에도 동작. 그룹은 타 멤버 run 일
       // 수 있어 제외(오귀속 방지) — 그룹의 내 중복 차단은 새로고침 직후 1회 한해 완화(허용, slot=6).
-      if (!isGroupConversation(currentConversation())) {
+      // realtime-progress-propagation: "본인 대화" 판정을 `isOwnConversation() && !그룹` 으로 정밀화.
+      // 기존 `!그룹` 만으로는 **모니터링(타 계정 소유) 1:1** 도 포함돼, 유휴 감지기가 loadHistory 를
+      // 자동 트리거할 때 관찰자에게 동작 안 하는 중단/즉시답변 버튼이 오표시되던 오귀속을 차단
+      // (send/cancel 은 백엔드 권한으로 이미 차단 — 표시 정합만 개선).
+      if (isOwnConversation() && !isGroupConversation(currentConversation())) {
         state.myAskInFlight.add(state.activeConversationId);
       }
       // 새로고침/복원 경로에서는 클라이언트 현재 시각이 아니라 서버가 알려준 run 시작
@@ -6084,6 +6217,9 @@ async function loadHistory({ append = false } = {}) {
       reset: payload.last_run_id !== state.progressRunId,
       runId: payload.last_run_id || "",
     });
+    // 활성 폴링이 이 run 을 담당하므로 유휴 감지기는 물러난다(dormant). 완료 후 refreshWorkspace
+    // →loadHistory 유휴 분기가 감지기를 재무장한다.
+    if (!append) stopRunDetectPolling();
     renderProgress({ status: payload.last_status, steps: state.progressSteps.slice() });
   } else {
     stopProgressPolling({ reset: true });
@@ -6095,6 +6231,10 @@ async function loadHistory({ append = false } = {}) {
       delete state._savedPendingBubbles[state.activeConversationId];
     }
     renderProgress();
+    // realtime-progress-propagation: 유휴 대화를 열어둔 채 다른 사용자/탭이 시작하는 새 run
+    // 을 배경 감지한다(모든 대화 대상 — 그룹·모니터링·내 1:1 멀티탭). pagination(append) 로드
+    // 에는 재무장하지 않는다. 감지 시 이 loadHistory 를 재호출해 전환-복귀와 동일하게 동기화.
+    if (!append) startRunDetectPolling();
   }
   renderComposer();
   // attach-count-scope: 활성 대화 history 를 (재)로드한 컨텍스트의 첨부 배지를 그 대화
@@ -6357,6 +6497,9 @@ async function selectConversation(conversationId) {
     // 렌더). beginPendingConversation 이 새 대화 진입 시 쓰는 것과 동일한 패턴이며,
     // 위에서 스냅샷을 _savedPendingBubbles 에 보존했으므로 복귀 시 복원 가능하다.
     stopProgressPolling({ reset: true });
+    // realtime-progress-propagation: 전환 중(use_conversation await gap) 직전 대화의 감지기가
+    // 새 대화로 누출되지 않도록 정지. 직후 loadHistory 가 새 대화 기준으로 재무장한다.
+    stopRunDetectPolling();
     await apiFetch("/api/use_conversation", {
       method: "POST",
       body: JSON.stringify({ conversation_id: conversationId }),
@@ -6428,6 +6571,7 @@ function beginPendingConversation() {
   // 활성화 안 되던 증상의 근본 fix.
   // 진행 중 ask 가 있는 대화의 사이드바 컨텍스트를 깨지 않도록 polling 만 중단(상태 자체는 보존).
   stopProgressPolling({ reset: true });
+  stopRunDetectPolling();  // realtime-progress-propagation: lifecycle 대칭(activeConversationId 비움 전 정지).
   state.activeConversationId = "";
   state.pendingNewConversation = true;
   state.pendingSentinel = _newPendingSentinel();
@@ -6458,6 +6602,7 @@ function _switchToPendingConversationContext(entry) {
   if (!state.pendingConversationEntries.has(entry.sentinel)) return;
   // polling 중단 (다른 컨텍스트가 polling 중이었을 수 있음) + 상태 보존.
   stopProgressPolling({ reset: false, abort: true });
+  stopRunDetectPolling();  // realtime-progress-propagation: lifecycle 대칭(activeConversationId 비움 전 정지).
   state.activeConversationId = "";
   state.pendingNewConversation = true;
   state.pendingSentinel = entry.sentinel;
@@ -9818,6 +9963,8 @@ async function handleLogout() {
   // 열려있는 드로어를 먼저 닫아야 로그아웃 후 뒤에 드로어가 남지 않음
   closeProfile();
   stopProgressPolling({ reset: true });
+  // realtime-progress-propagation: 세션 종료 시 배경 감지기도 정지(로그아웃 후 폴링 잔류 방지).
+  stopRunDetectPolling();
   await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
   state.user = null;
   state.session = null;
@@ -10256,12 +10403,17 @@ async function initialize() {
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopProgressPolling({ reset: false, abort: true });
+    // realtime-progress-propagation: 숨김 탭에서는 배경 감지기도 멈춘다(재가시 시 재개).
+    stopRunDetectPolling();
     return;
   }
   const active = currentConversation();
   const isProcessing = String(active?.status || "").toLowerCase() === "processing";
   if (state.activeConversationId && (isProcessing || state.progressRunId || isCurrentConvBusy())) {
     startProgressPolling({ reset: false, runId: state.progressRunId });
+  } else if (state.activeConversationId) {
+    // 유휴 대화: 재가시 시 배경 감지기 재개(새 run 실시간 전파).
+    startRunDetectPolling();
   }
 });
 

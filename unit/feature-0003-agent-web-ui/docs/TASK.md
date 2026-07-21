@@ -5968,3 +5968,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check` PASS · `can()` global · 회귀 하네스 short-circuit 무영향. §18.8 full 패널 skip(1줄 display-only 회귀 복구·보안 posture 불변, REVIEW 근거).
 - [x] verify-completion PASS → 머지(PR #855, main e6ca5e4b) → web 재배포(`make deploy-web` 무중단 soak PASS) → **POST-DEPLOY PB-0008 라이브 PASS**: DS 테스트 버튼 14개 재렌더(수정 전 0)·클릭→"✓ 연결 성공 (13.6ms)" 상단 토스트·pageerror 0 — 회귀 복구 실증. test-runs.d/20260716T051931-ds-test-gate-fix.md POST-DEPLOY 갱신.
 - 관련 flag: 동일 커밋 app.js ≈L2006 권한 표시 UI 도 부재 `state.user.permissions` 의존 — 별도 feature 소유(본 scope 밖).
+
+## 20260721T1758-realtime-progress-propagation — assistant 진행상황/답변 실시간 전파 (유휴 관찰자 감지) (Major §12.3 — 크로스-유저 실시간·비파괴 additive, feature-0003 web/UI 프론트 단독. /_template:entry arg-given dispatch, PLAN-APPROVED)
+- 트리거: 사용자 신고(`/_template:entry`). "타 계정 대화 모니터링 중, 해당 사용자가 assistant 에게 요청을 보내면 assistant 말풍선이 관찰자 화면에 안 뜬다(다른 대화 갔다 오면 정상)". 요구: assistant 진행상황·답변이 항상 실시간으로 각 사용자에게 전파.
+- [x] 진단(근본원인): 진행상황 폴링(`pollProgress`)이 (a) 본인 `sendPrompt` 또는 (b) `loadHistory` 가 진입/재로드 시 `last_status==processing` 감지 시에만 시작. **대화를 이미 열어둔 채 유휴로 보는 관찰자**(그룹 멤버·모니터링 대상 계정 소유자·다른 탭의 나)에게는 새 run 시작을 감지할 배경 폴링이 전무(`setInterval` 은 elapsed·LLM health 뿐) → 재진입(loadHistory 재실행) 전까지 미표시. 서버는 무결(`/api/progress`·`/api/history` 가 `conversation.read.any` 로 관찰자에게도 live 반환). = 순수 프론트 결함.
+- [x] 결정: frontend-only(app.js 단독). `/api/progress` 가 terminal run 도 `run_id` 노출 → baseline 을 프론트에서 완결(백엔드 무변경 → 병행 feature-0012 라우터분할과 충돌 표면 0). 감지 범위 = **모든 대화**(사용자 선택, AskUserQuestion) — 내 1:1 멀티탭 동기화 포함.
+- [x] 구현(app.js, +133): 유휴 run-감지 폴러 `detectNewRun`/`scheduleRunDetectPolling`/`startRunDetectPolling`/`stopRunDetectPolling`/`clearRunDetectTimer`. 대화 열림+활성 run 추적 없음 → `/api/progress`(client_run_id 없이) ~4s(숨김 15s) 폴링. 서버 `run_id` 가 baseline 과 달라지면(새 processing 또는 방금 완료된 run) 검증된 `loadHistory()` 위임(=전환-복귀 경로: 메시지 재로드+pending 말풍선 복원+활성 폴링 시작). 활성 폴링 중 dormant(중복 fetch 없음). feature-0009 foreign-run 불변식(내 run 갈아타기 금지) 존중.
+- [x] 배선: `loadHistory` 유휴 분기 arm / processing·no-conv 분기 stop(모두 `!append`), `selectConversation` teardown, `handleLogout`, `visibilitychange`(숨김 stop·재가시 유휴 재개).
+- [x] 유닛 검증: `tests/verify_run_detect_poll.mjs` **23/23 PASS** — detector 결정 매트릭스(무장 baseline·새 processing/terminal run 재로드·동일 run 무재로드·활성 추적 dormant·pending 존재 dormant) + 정적 배선 4건.
+- [x] Python baseline: feature-0003 pytest RC=0(프론트 전용, 무회귀). `make test` dc-build 는 worktree env 부재로 실패(알려진 gotcha) → 기존 agent 이미지 마운트로 직접 pytest.
+- [x] 실브라우저 검증(§16.6, Windows Chrome 150 / win-browser): 수정 app.js 를 web-a/b 주입(stamp bump)→ 유휴 대화에서 detector 가 `/api/progress`(client_run_id 없이) 폴링 확인 → `set_run_status` 로 새 processing run 주입 → **재로드/전환 없이** assistant "처리 중" 말풍선 실시간 등장 확인(net 로그: detector progress → history 재로드 → active poll 전환) + 스크린샷 증적. 라이브 서비스 배포본 원복(주입 app.js/stamp/KV 되돌림).
+- [ ] verify-completion(operational, feature-0003) → commit → push → PR/머지·배포는 정책(자동 동기화)/wrapper 소유.

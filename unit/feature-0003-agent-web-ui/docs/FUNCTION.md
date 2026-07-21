@@ -1702,3 +1702,11 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 기존 07-16 블록 items 에 fixed/work 1항목 추가(작업 화면 데이터소스 ‘연결 테스트’ 버튼 미표시 회귀 복구) + summary 1문장. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. generated 07-16 유지·releases 31 불변.
 - 평이화/비노출: feature-id·§번호·PR#·권한키·함수명·내부표현 비노출(사용자 언어).
 - 배포 전파: cache-buster `?v=dev` 고정 placeholder(빌드 `inject_asset_stamp.py` content-hash 주입·수기 bump 없음). CHG/REV-20260717T010501-doc-sync-rn-0717. **무인 스케줄 run — landing/배포는 cron wrapper 소유(로컬 commit 만).**
+
+## (20260721T1758-realtime-progress-propagation, 2026-07-21) assistant 진행상황/답변 실시간 전파 — 유휴 관찰자 run-감지 폴러 (web/UI, Major §12.3, frontend-only additive)
+- 기능: 대화를 열어둔 채 유휴로 보는 사용자(그룹 멤버·모니터링 대상 계정 소유자·다른 탭/기기의 나)에게, 다른 액터가 시작한 run 의 assistant 진행상황·답변이 **재로드·전환 없이 실시간 전파**되게 한다.
+- 동작(`static/app.js`): 유휴 run-감지 폴러 추가 — 활성 대화가 열려 있고 활성 run 추적(`pollProgress`)이 없을 때 `/api/progress`(client_run_id 없이)를 활성탭 ~4s·숨김탭 ~15s 로 폴링. 서버가 보고한 `run_id` 가 감지기가 확정한 baseline 과 달라지면(새 processing run 또는 방금 완료된 run) 기존에 검증된 `loadHistory()` 를 위임 호출(=대화 전환-복귀와 동일 경로: 메시지 재로드 + pending 말풍선 복원 + 활성 폴링 시작). 활성 폴링 중에는 dormant(중복 fetch 없음), 완료 후 자동 재무장.
+- 신규 함수: `detectNewRun`·`scheduleRunDetectPolling`·`startRunDetectPolling`·`stopRunDetectPolling`·`clearRunDetectTimer`. state: `runDetectPoller`·`runDetectInFlight`·`runDetectSeq`·`detectBaselineRunId`. 배선: `loadHistory`(유휴 arm / processing·no-conv stop, `!append`)·`selectConversation` teardown·`handleLogout`·`visibilitychange`(숨김 stop·재가시 유휴 재개).
+- 감지 범위: **모든 대화**(사용자 선택 — 그룹·모니터링·내 1:1 멀티탭 동기화 포함).
+- 불변식: feature-0009 foreign-run 규약(활성 `progressRunId`/pendingBubble 존재 시 내 run 갈아타지 않음) 존중 — 감지기는 활성 추적 중 dormant. 백엔드 무변경(`/api/progress` 가 terminal run_id 도 노출 → baseline 을 프론트에서 완결; 서버는 `conversation.read.any` 로 관찰자에게도 이미 live 반환).
+- 검증: 유닛 `tests/verify_run_detect_poll.mjs` 23/23 · feature-0003 pytest RC=0 · 실 Windows 브라우저(§16.6, TEST.md) 유휴 탭 실시간 감지+렌더 실측+스크린샷. CHG/REV-20260721T1758-realtime-progress-propagation.
