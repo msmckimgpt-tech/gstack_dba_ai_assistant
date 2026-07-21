@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.37.2
+template_version: v3.39.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1913,6 +1913,28 @@ surface 에서 개별 실행 검증**이 필수다 — 한 경로 동작 확인�
   항목에 **CDP 실-paint 또는 host-side real-browser evidence** 첨부를 요구한다 — 헤드리스 rAF-FPS
   수치는 이 게이트의 근거로 인정하지 않는다(수치가 실 체감과 반대일 수 있음).
 
+**라이브 검증 stress case (도착 상태·데이터 규모·권한 게이팅) (v3.39.0)**: 위 시각·인터랙션 검증은
+기본 진입 경로(좌클릭 네비게이션)와 소규모 대표 데이터에 치우치기 쉽다. 다음 3 클래스는 완료 선언 전
+**명시적 stress case 로 확인**한다 — 소비자 라이브 검증 체크리스트(예: PB-0008)에 표준 항목으로 편입한다:
+- **(1) 대량-N / row-cap 임계 초과 데이터셋**: 집계·목록·페이지네이션 UI 는 소규모 스키마만으로
+  검증하면 row-cap(예: 상한 500) 도입·초과 시의 회귀를 놓친다. 임계를 초과하는 대표 데이터셋에서 렌더
+  결과(누락·절단·집계 오차)를 확인한다. "1건 이상 표출" 확인(위 *데이터 의존 UI 요소*)의 상한-경계
+  확장판이다 — 임계 초과 데이터를 실제로 seed 하는 fixture/주입 경로가 있어야 nominal 체크로 전락하지 않는다.
+- **(2) 브라우저 [뒤로/앞으로] 히스토리 내비게이션 도착 상태**: 좌클릭 진입 경로만으로는 불충분하다.
+  히스토리 pop(뒤로/앞으로)으로 도착한 상태는 forward-stack 미절단·도착 시 스타일(투명도·활성표시)
+  미적용 같은 회귀가 별도 코드패스에서 노출된다. 변경이 라우팅/뷰 상태에 영향을 주면 `/browse` 스킬로
+  뒤로/앞으로를 실제 구동해 도착 상태를 검증 대상에 포함한다(§16.6 `/browse` 정본 경로).
+- **(3) 권한 키 rename/원자화 시 게이트 전수 감사 + 양방향(fail-open·fail-closed) 확인**: 권한 키를
+  rename·원자화(분할·병합)하면 그 키를 읽는 **모든** 게이트가 함께 갱신돼야 한다. `require_permission`·
+  `can()`/`permissions[]`·세션 하이드레이션(`/api/session` 의 `include_permissions`)뿐 아니라 **미들웨어/
+  라우트 데코레이터, DB row-level security, 캐시·메모이즈된 권한 집합, 권한·역할 seed/enum 데이터(코드
+  grep 이 아닌 데이터 마이그레이션), 토큰/OAuth scope 맵, 테스트·fixture·config·IaC** 도 대상이다.
+  **grep(literal) 은 necessary-but-insufficient** — 조합 키(`f"{resource}.{action}"`·문자열 concat·enum
+  기반)는 literal 검색을 빠져나가므로 키가 어떻게 구성되는지 먼저 확인한다. 검증은 **양방향**으로: 권한
+  *없는* principal 이 백엔드에서 실제로 거부되는지(**fail-open** = 게이트 소실로 무권한 접근 허용 — 가장
+  위험한 회귀이며 UI 렌더수만으로는 잡히지 않는다)를 **1차**로, 권한 *있는* principal 이 기대 개수만큼
+  렌더되는지(**fail-closed** = 조용한 0개 렌더 회귀)를 **2차**로 확인한다.
+
 **체크리스트 연동**: §16.2 Completion Checklist 의 `(웹 UI 프로젝트만)` 항목으로 자동 참조 — 생성
 HTML 산출물의 author-added clickable 도 이 항목의 범위에 포함한다.
 해당 항목 미체크 상태로 완료 선언 시 §16.5 금지 패턴과 동일하게 처리.
@@ -3713,6 +3735,34 @@ cron 자기위임이 `claude` 스킬을 호출하면 실행 계정의 usage/quot
 자기위임 job(쓰기·외부 알림·deploy)은 부분 완료 후 재발화가 double-apply 를 낼 수 있으므로, 재시도
 전에 checkpoint 로 재진입 지점을 보장한다(reference run.sh 는 inspection 재실행이 무해한 idempotent
 설계라 본 전제를 자동 충족).
+
+**7. standing 연속-드레인 지시 continuation 계약 (v3.39.0)**: 사용자가 세션 상에서 명시적으로
+"토큰·컨텍스트·잔여 ready 작업이 남는 한 자발 중단 금지"(예: "끊임없이", "토큰 소진까지 계속") 같은
+*standing 연속-드레인 지시* 를 세운 경우, AI 작업자는 **단일 cycle·단일 작업의 완료를 자동 종료점으로
+삼지 않는다** — 완수 보고 후 잔여 ready 작업이 있으면 연속한다. `/_template:resume`·`/_template:entry`
+persona 의 불변 제약에 대응 계약이 명문화돼 있다.
+- **"ready 작업" 정의**: 사용자가 남긴/승인한 **기존 backlog**(ROADMAP·TODO·잔여 todos)에 한한다.
+  agent 가 continuation 을 정당화하려 *새로 만들어낸* 작업은 ready 작업이 아니다 — self-manufactured
+  work 로 budget 을 소진하지 않는다.
+- **하드스톱 (하나라도 해당하면 연속 중단, 완료 보고 후 종료)**: 토큰/컨텍스트 소진 · 사용자의 명시적
+  stop · ANCHOR conflict(§18.3) · **BLOCKED**(외부 의존·권한·미해결 결정 대기) · **승인 대기**(외부
+  영향 행동 confirm 필요) · **no-forward-progress**(동일 item 이 N회(예: 2~3) 연속 무진전). repo 자동
+  동기화 정책의 "BLOCKED 없음 + 승인 대기 없음" 정지 전제와 정합한다.
+- **상태 변화 checkpoint (auto-continue 를 멈추고 사용자에게 surface)**: 다음이 *새로* 발생하면 자동
+  연속하지 말고 한 줄로 상태를 표면화한 뒤 계속/중단 신호를 받는다 — scope 확장(원 요청 밖 작업), 새
+  외부 의존·비용 발생, 방향 전환. standing 지시는 *기존 backlog 소진*을 auto-continue 할 뿐 방향을 새로
+  발명하지 않는다(§Resume≠Re-scope 정합) — 잘못된 line of work 를 확신하며 지속하는 blast radius 를 억제.
+- ⚠️ **self-recall 경계 (기존 금지 유지·혼동 차단)**: 이 continuation 은 **세션 내부**에서 다음
+  작업으로 이어가는 것이다. 하네스-추적 백그라운드 작업(예: `make test`·리뷰 서브에이전트) 완료 대기용
+  `ScheduleWakeup`/`/loop` self-recall 은 **여전히 금지**(stale-resume incident 방지). quota-reset 경계
+  대기(item6)는 *하네스-미추적 외부상태*를 다루는 **별개 축**이며 본 continuation 계약의 구현 수단이
+  아니다 — token/context 소진은 본 계약상 **in-session terminal stop** 이므로, 그것을 quota-reset
+  heartbeat 로 우회해 self-recall 을 정당화하지 않는다(item6 을 쓰더라도 "stale wakeup → 재실행·재예약
+  없이 종료" guard 준수).
+
+본 계약은 item6(quota-reset 발화경계 인지)·v3.38.0(완료 리마인드 정직성)과 축이 다른 continuation
+축으로, "가용량이 남은 상태에서의 자발적 조기 중단"(under-continuation)과 "self-manufactured work·방향
+이탈로의 무한 spin"(over-continuation)을 동시에 막는다.
 
 **범위 밖 (비-actionable)**: 모델-tier 강제(예: ultracode 기본화)는 harness/모델 설정이지 코드
 템플릿이 강제할 수 있는 대상이 아니다. 본 recipe 는 **CLI/env 보편 사실의 문서화**에 한정하고,

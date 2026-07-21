@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: append-only
 source_of_truth: true
-template_version: v3.37.2
+template_version: v3.39.0
 domain: [architecture, history]
 ai_read_priority: 9
 ---
