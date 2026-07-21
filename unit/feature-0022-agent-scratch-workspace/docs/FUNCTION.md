@@ -34,6 +34,10 @@ source_of_truth: true
 - REQ-20260721-scratch-isolation: 반입/생성 데이터는 **대화별 스키마**(`s_<hash>`)로 격리돼,
   대화 A 가 대화 B 의 데이터를 볼 수 없다(datasource 가시성/공유 window RBAC 격리를
   materialization 후에도 보존).
+- REQ-20260721-scratch-guidance: assistant·ask-worker 가 이 자율구조를 **파악하고 적극
+  사용**하도록, scratch 활성 대화에 `_SCRATCH_WORKSPACE_GUIDANCE`(agent_core 시스템 프롬프트,
+  4 도구 사용법 + cross-source JOIN 트리거 신호)를 조건부 주입한다. ask-worker 도 동일
+  `_run_agent_core` 경로라 양쪽 모두 지침을 받는다. 비활성 시 미주입(프롬프트 무증가).
 
 ## 3. In Scope
 - 전용 PG DB(`agent_scratch`) + 전용 login role(`agent_scratch_rw`) bootstrap

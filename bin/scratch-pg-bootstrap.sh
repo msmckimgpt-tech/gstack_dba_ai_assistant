@@ -12,8 +12,9 @@
 #
 # Role 권한 모델 (feature-0022 ADR-SCRATCH-0001):
 #   agent_scratch_rw — agent_scratch DB 안에서 완전 자율(스키마/테이블 CREATE·DROP·CRUD).
-#                      non-superuser. CONNECT 는 agent_scratch 에만. agent_kb/runtime/web/
-#                      datasource 에는 grant 0 → 물리적으로 도달 불가.
+#                      non-superuser. CONNECT 는 agent_scratch 에만(+무-grant·코드 dbname 고정·
+#                      PG cross-DB 불가) → agent_kb/runtime/web/datasource 실질 도달 불가.
+#                      --harden-kb-isolation 로 sibling DB PUBLIC CONNECT 회수 시 role 레벨까지 봉인.
 #
 # 격리 강화(선택): --harden-kb-isolation 은 REVOKE CONNECT ON DATABASE agent_kb FROM PUBLIC
 #   를 수행해 scratch role(및 여타 PUBLIC-의존 role)의 agent_kb 접속 자체를 차단한다. agent_kb_rw/
@@ -63,9 +64,12 @@ env_get() {
   printf '%s' "$val"
 }
 
-# Superuser (agent_kb bootstrap 과 동일 superuser 를 재사용).
-SUPER_USER="$(env_get AGENT_KB_PG_USER postgres)"
-SUPER_PW="$(env_get AGENT_KB_PG_PASSWORD)"
+# Superuser: agent_scratch DB/role 생성엔 실제 PG superuser 가 필요하다. 운영에서 AGENT_KB_PG_USER 는
+# 감사용 non-superuser(agent_kb_rw)로 바뀌어 있을 수 있으므로(ADR-0021 권장) 별도 superuser 를 쓴다.
+# 기본 'postgres'(컨테이너 unix 소켓 trust/peer — 비밀번호 불요). AGENT_SCRATCH_PG_SUPERUSER /
+# AGENT_SCRATCH_PG_SUPERUSER_PW 로 override 가능(비-소켓·비-trust 환경).
+SUPER_USER="$(env_get AGENT_SCRATCH_PG_SUPERUSER)"; [ -z "$SUPER_USER" ] && SUPER_USER="postgres"
+SUPER_PW="${AGENT_SCRATCH_PG_SUPERUSER_PW:-$(env_get AGENT_SCRATCH_PG_SUPERUSER_PW)}"
 KB_DB="$(env_get AGENT_KB_PG_DB agent_kb)"
 
 # scratch DB / role.
@@ -105,13 +109,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$SUPER_PW" ] || { echo "AGENT_KB_PG_PASSWORD empty in $ENV_FILE" >&2; exit 1; }
+# 소켓 trust/peer(기본 postgres)면 비밀번호 불요 — SUPER_PW 는 override 시에만 사용(빈 값 무해).
 
 psql_super() {
   local db="${1:-postgres}"
   shift
   docker exec -i -e PGPASSWORD="$SUPER_PW" "$PG_CONTAINER" \
-    psql -h localhost -p 5432 -U "$SUPER_USER" -d "$db" -tAc "$@" 2>&1 \
+    psql  -U "$SUPER_USER" -d "$db" -tAc "$@" 2>&1 \
     | grep -v '^psql:' || true
 }
 
@@ -122,7 +126,7 @@ create_database() {
     echo "  DB '${SCRATCH_DB}' already exists — skip"
   else
     docker exec -i -e PGPASSWORD="$SUPER_PW" "$PG_CONTAINER" \
-      createdb -h localhost -p 5432 -U "$SUPER_USER" "${SCRATCH_DB}"
+      createdb  -U "$SUPER_USER" "${SCRATCH_DB}"
     echo "  DB '${SCRATCH_DB}' created"
   fi
 }
@@ -130,7 +134,7 @@ create_database() {
 create_roles() {
   echo "[STEP] CREATE ROLE ${SCRATCH_USER}"
   docker exec -i -e PGPASSWORD="$SUPER_PW" "$PG_CONTAINER" \
-    psql -h localhost -p 5432 -U "$SUPER_USER" -d postgres <<SQL
+    psql  -U "$SUPER_USER" -d postgres <<SQL
 DO \$do\$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${SCRATCH_USER}') THEN
@@ -153,7 +157,7 @@ apply_schema() {
     return 1
   fi
   docker exec -i -e PGPASSWORD="$SUPER_PW" "$PG_CONTAINER" \
-    psql -h localhost -p 5432 -U "$SUPER_USER" -d "${SCRATCH_DB}" -v ON_ERROR_STOP=1 < "$SCHEMA_SQL"
+    psql  -U "$SUPER_USER" -d "${SCRATCH_DB}" -v ON_ERROR_STOP=1 < "$SCHEMA_SQL"
 }
 
 harden_kb_isolation() {
@@ -167,7 +171,7 @@ harden_kb_isolation() {
     if psql_super postgres "SELECT 1 FROM pg_database WHERE datname='${db}'" 2>&1 | grep -qx '1'; then
       echo "[STEP] HARDEN: REVOKE CONNECT ON DATABASE ${db} FROM PUBLIC"
       docker exec -i -e PGPASSWORD="$SUPER_PW" "$PG_CONTAINER" \
-        psql -h localhost -p 5432 -U "$SUPER_USER" -d postgres -v ON_ERROR_STOP=1 \
+        psql  -U "$SUPER_USER" -d postgres -v ON_ERROR_STOP=1 \
         -c "REVOKE CONNECT ON DATABASE ${db} FROM PUBLIC;" || echo "  (skip ${db} — revoke 실패, 계속)"
     fi
   done
@@ -176,7 +180,7 @@ harden_kb_isolation() {
 rotate_password() {
   [ -n "$ROTATE_PW" ] || { echo "Usage: --rotate-password <new-pw>" >&2; exit 2; }
   docker exec -i -e PGPASSWORD="$SUPER_PW" "$PG_CONTAINER" \
-    psql -h localhost -p 5432 -U "$SUPER_USER" -d postgres \
+    psql  -U "$SUPER_USER" -d postgres \
     -c "ALTER ROLE ${SCRATCH_USER} WITH PASSWORD '${ROTATE_PW}';"
   echo "rotated password for ${SCRATCH_USER}"
 }

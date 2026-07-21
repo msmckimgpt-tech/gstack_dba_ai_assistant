@@ -306,6 +306,40 @@ Rules:
 """
 
 
+# feature-0022: PG scratch workspace 사용 지침. scratch 도구가 노출된(활성) 대화에만 주입한다
+# (비활성이면 프롬프트 무증가). ask-worker 도 동일 _run_agent_core 경로를 타므로 양쪽 모두 이 지침을 받는다.
+_SCRATCH_WORKSPACE_GUIDANCE = """
+
+## PRIVATE PG WORKSPACE — COMBINE DATA ACROSS DATASOURCES (be proactive)
+You have a private, per-conversation PostgreSQL **scratch workspace**. Use it whenever answering a
+question needs data from MORE THAN ONE datasource/DB combined, or multi-step analysis that needs
+intermediate tables. A single `execute_sql` runs against ONE datasource and **cannot JOIN across
+different sources** (especially different engines, e.g. MySQL ↔ MSSQL). The workspace solves this:
+pull each source's relevant rows in, then JOIN/aggregate them inside PostgreSQL.
+
+Tools:
+- `scratch_import(sql, dest_table[, datasource])` — run a read-only SELECT against a datasource and
+  load its result into workspace table `dest_table`. Same permission gate as `execute_sql` (you can
+  only import what you could already SELECT). **Scope each import** with WHERE/limits — import the
+  subset you need, not entire tables.
+- `scratch_sql(sql)` — run SQL in the workspace: JOIN/aggregate across imported tables or build
+  derived tables (SELECT/JOIN/CREATE/INSERT/UPDATE/DELETE). Reference tables by plain name (no schema
+  prefix); the workspace is isolated — you cannot reach other datasources, other conversations, or
+  system catalogs from here.
+- `scratch_list` — list tables you already imported (avoid re-importing).
+- `scratch_reset` — clear the workspace to start over.
+
+When to reach for it (signals): the question spans two+ datasources/DBs — "대조", "합쳐/결합",
+"매칭", "A 와 B 를 비교", "cross-DB", data from system A vs system B. Typical flow:
+`scratch_import(<A subset>, 'a')` → `scratch_import(<B subset>, 'b')` →
+`scratch_sql('SELECT ... FROM a JOIN b ON ...')`. Present only rows the workspace actually returned.
+
+Do NOT use it for a single-source query that `execute_sql` handles directly. The workspace is
+**temporary** (auto-cleared on a schedule) and private to THIS conversation — never assume its data
+persists across conversations.
+"""
+
+
 # gc-assistant-dialect-context (RC-2): 그룹대화일 때만 덧붙이는 **다자-특화** 맥락 지침(발신자 라벨·
 # 사람-사람 대화 해석). 능동 해석·추정·스키마 발견·데이터소스 일관성 등 modality 무관 지침은
 # _ACTIVE_INTERPRETATION_GUIDANCE(위, 모든 대화 주입)로 분리됨. 1:1(None)은 본 블록 무회귀.
@@ -4024,6 +4058,14 @@ def _run_agent_core(
             pass
     # feature-0013: flow/관계/구조 질문에 mermaid 다이어그램 발화 유도 (knowledge context 뒤 = 마지막 강조)
     system_content += _MERMAID_DIAGRAM_GUIDANCE
+    # feature-0022: scratch 작업공간이 활성일 때만 사용 지침 주입(비활성이면 프롬프트 무증가).
+    # ask-worker(worker-mode)도 본 _run_agent_core 경로를 타므로 assistant·워커 양쪽에 동일 적용.
+    try:
+        from modules import scratch as _scratch_mod
+        if _scratch_mod.enabled():
+            system_content += _SCRATCH_WORKSPACE_GUIDANCE
+    except Exception:
+        pass
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_content},
     ]
