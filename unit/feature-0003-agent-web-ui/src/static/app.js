@@ -6331,7 +6331,10 @@ async function loadHistory({ append = false } = {}) {
 
 const WINDOW_VIEWPORT_MULTIPLE = 4;   // 기본 렌더 창 = 뷰포트 높이 × 4 (상한·하한 목표).
 const WINDOW_FILL_MAX_PAGES = 25;     // 하한 채움 시 자동 서버 append 상한(무한루프 방지).
-const WINDOW_INITIAL_RENDER = 8;      // 대화 로드 시 최초 렌더할 최근 메시지 수(이후 4배까지 확장).
+const WINDOW_INITIAL_RENDER = 3;      // 대화 로드 시 최초 렌더할 최근 메시지 수. 작게 시작해
+                                      // 상한 로직이 높이 4배까지 확장한다(짧은 메시지 대화는
+                                      // 4배까지 채우고, 개별 메시지가 큰 대화는 소수에서 멈춰
+                                      // 4배 근처 유지 — "일부만 로딩"이 대화 종류와 무관히 성립).
 const WINDOW_RENDER_BATCH = 10;       // 상한 조정·최상단 확장 시 렌더 창 증가 단위.
 
 // point-rail-range window: DOM 에 렌더할 "최근 renderCount 개" 를 반환한다. renderCount 가

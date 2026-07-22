@@ -721,3 +721,8 @@ source_of_truth: true
 - C 강화: `state.renderCount` DOM 윈도잉. `_visibleMessages`·`_ensureMessageRendered`·`_applyRenderWindowSoon`(상한 렌더창 확대+하한 서버 페이징)·`_maybeExpandOrLoadOlder`(최상단 창 확장→서버 로드). `renderMessages`/`renderMessagePointRail` 이 최근 창만 렌더. `loadHistory` renderCount 관리(초기 8·floor 포함·append 확장). 검색/캘린더 점프 창 확장. `_windowBase` 절대 인덱스 복원.
 - 적대리뷰(REV subagent) 발견1(절대idx)·2(floor 칩)·5(검색 optimistic id=null)·6(주석) 반영, 3(live-poll 슬라이딩)·4(연쇄 확장) known-limitation.
 - 검증: `node --check app.js` PASS. POST-DEPLOY PB-0008 재검증 예정(conv[2] 일부만 로딩).
+
+## CHG-20260722T1440-point-rail-window-initial-tuning (윈도잉 초기값 튜닝, frontend-only)
+- Files: `unit/feature-0003-agent-web-ui/src/static/app.js` (`WINDOW_INITIAL_RENDER` 8→3).
+- 라이브 실측(conv[2] 14개·개별 메시지 큼)에서 초기 8개가 높이 뷰포트 13배 → "4배만" 미달. 초기값을 낮춰 큰 메시지 대화도 4배 근처 유지. 짧은 메시지 대화는 상한 로직(`_applyRenderWindowSoon`)이 4배까지 채워 무손실. 로직 변경 없음(상수만).
+- 검증: `node --check` PASS. POST-DEPLOY 재검증(conv[2] 초기 ~3개).

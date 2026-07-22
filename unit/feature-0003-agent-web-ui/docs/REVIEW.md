@@ -648,3 +648,6 @@ source_of_truth: true
 - 적대리뷰(general-purpose subagent) 반영: **발견1(필수·회귀)** `_visibleMsgs.forEach` 의 `_msgIdx` 가 절대→창-상대로 바뀌어 `_precedingUserQuestion`(피드백 Q↔A 매칭)·투표 게이트·공유 range idx 비교가 윈도잉된 긴 대화(주 사용 케이스)에서 깨짐 → `_windowBase` 로 절대 인덱스 복원. 발견2(floor 칩 창밖 — loadHistory renderCount 리셋 시 floor 포함). 발견5(검색 첫 매칭이 optimistic id=null 이면 중단 — skip). 발견6(주석).
 - Known limitation(미수정, 엣지): 발견3(윈도잉+위 스크롤 중 live-poll 도착 시 tail 창 슬라이딩으로 scrollTop 보존이 어긋나 소폭 튐)·발견4(`_maybeExpandOrLoadOlder` 확장이 짧은 메시지 다수 시 여러 배치 연쇄 — total 상한이라 무한 아님·순간 부하). 별도 cycle 재검토 여지.
 - 위험도 Major: `renderMessages` 렌더 경로 변경(창 렌더). 비파괴 additive — 인증/데이터 무영향.
+
+## REV-20260722T144000-point-rail-window-initial-tuning [SKIPPED:param-tuning-no-logic-change] — 윈도잉 초기 렌더 개수 튜닝
+- Panel skip 사유(§18.8): 상수(`WINDOW_INITIAL_RENDER` 8→3) 1개 변경, 로직 불변. 윈도잉 구현 리뷰 정본 = REV-20260722T142000-...([SUBAGENT:general-purpose]). 라이브 실측 근거(conv[2] 초기 8개=높이 13배 → "4배만" 미달)로 초기값만 하향.
