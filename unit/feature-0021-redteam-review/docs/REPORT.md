@@ -29,7 +29,10 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 
 ## 3. Recent Changes
 - CHG-20260715-0001 — 최초 구현 (상세 MODIFY.md)
-- 총 변경 횟수: 3 (CHG-0001 구현 · CHG-0002 anchor 정합 · CHG-0003 콘솔 IA 재구성)
+- CHG-20260722-0001 — "리뷰 실패" 진단(=리뷰어 100% 타임아웃, DB 실측 8/8 @25s) + 리뷰어 토큰
+  할당량(REDTEAM_MAX_TOKENS) 콘솔 설정 신설 (타임아웃은 기존 노출). 표시/fail-open 은 의도된
+  설계였고, 근본 원인은 리뷰어 alias 고정 thinking(5000) → 상시 25s. 상세 MODIFY.md.
+- 총 변경 횟수: 4+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정)
 
 ## 4. Open Issues
 - make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):
@@ -40,8 +43,11 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 ## 5. Test Status
 - 자동 테스트: 신규 34건 PASS (redteam 18 · agent_notes 8 · admin_reasoning 8) + 기존 스위트
   회귀 0 (환경 의존 4건 제외 — 상세 TEST.md §3). 적대 패널(REV-0002) BLOCK2+MAJOR1+MINOR3 반영·재검증 완료.
+- (2026-07-22 CHG-0001) 리뷰어 토큰 설정 추가 후 test_redteam 36건(신규 5) + runtime_settings +
+  admin_reasoning 합산 87건 PASS·ruff clean (TEST.md §3 Run 2026-07-22). 프론트 무변경.
 - 수동 테스트: 배포 후 PB-0008 Windows-browser 콘솔 검증 + 라이브 리뷰 실증 예정
-- 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰)
+  (설정 패널 "리뷰어 토큰 할당량" 노출 + 조정 반영 포함)
+- 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰), 토큰 상향/타임아웃 튜닝의 리뷰 실패율 영향(라이브 관찰)
 
 ## 6. Blocked Items
 - 없음

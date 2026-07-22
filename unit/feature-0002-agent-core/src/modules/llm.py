@@ -785,6 +785,7 @@ def _openai_chat_completion_with_deadline(
     task: str = "agent",
     conversation_id: str | None = None,
     run_id: str | None = None,
+    max_tokens_override: int | None = None,
 ):
     # TASK-0129 (#3): model 의 tier 에 맞는 client 로 재해석. caller 가 default client 를
     # 넘겨도 'edge'/'core' 는 local gateway, 'claude-*' 는 Bedrock 으로 보장 (라우팅 회귀 차단).
@@ -800,7 +801,12 @@ def _openai_chat_completion_with_deadline(
         "messages": messages,
         "timeout": _openai_request_timeout(timeout_sec),
     }
-    create_kwargs.update(_max_tokens_kwargs(model, task))
+    # feature-0021: 호출 단위 max_tokens override — 양수면 task 별 카탈로그 cap 대신 사용
+    # (redteam 리뷰어의 REDTEAM_MAX_TOKENS 런타임 설정 경로). None/비양수면 종전대로 task cap.
+    if max_tokens_override is not None and int(max_tokens_override) > 0:
+        create_kwargs["max_tokens"] = int(max_tokens_override)
+    else:
+        create_kwargs.update(_max_tokens_kwargs(model, task))
     create_kwargs.update(_temperature_kwargs(model))
     _lat_t0 = time.perf_counter_ns()  # TASK-AIOPS: 순수 API 왕복 지연 측정 시작(submit 직전)
     future = executor.submit(

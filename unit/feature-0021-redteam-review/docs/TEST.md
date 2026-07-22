@@ -67,6 +67,20 @@ source_of_truth: true
   Windows-browser 는 배포 직후 PB-0008 (test-runs.d/20260716T140000-console-subtabs.md). ruff PASS.
 - 잔여 FAILED 4건은 pre-existing 환경 의존(PG 부재·env) — 본 diff(프론트 전용) 무관.
 
+### Run 2026-07-22 — 리뷰어 토큰 할당량 콘솔 설정 (기존 agent 이미지 직접 pytest)
+- Environment: CLI
+- Command: `docker run --rm -v <worktree>:/work mysql-ai-agent:current` 로 pytest 직접 실행
+  (worktree 에 `.env` 부재로 `make test` 의 `dc-build` 가 "invalid proto" 실패 — 기존 baked
+  agent 이미지에 worktree 마운트 + PYTHONPATH 우회. project-pytest-worktree-pycache-gotcha 선례).
+- Result: **PASS** — `test_redteam.py` 36건(신규 5: `_review_max_tokens` read/0-fallback/error +
+  `run_review` override 전달·미설정 None) + `test_runtime_settings.py` + `test_admin_reasoning.py`
+  합산 87건 전건 통과, 실패 0. ruff clean(변경 4파일). `REDTEAM_MAX_TOKENS` 가 `serialize_registry()`
+  의 `redteam` 그룹에 노출됨 확인.
+- windows-browser: 배포 직후 PB-0008 로 설정 패널 "리뷰어 토큰 할당량" 렌더 + 조정 반영 검증 예정
+  (POST-DEPLOY — 본 Run 은 단위·격리 범위).
+- 참고: 이번 diff 는 프론트 무변경(설정 패널 data-driven)·backend additive 라 pre-existing 환경
+  의존 4건과 무관.
+
 ## 4. Integration Coverage
 - 리뷰어 실 LLM 판정·redteam_reviews INSERT·노트 실볼륨 축적은 배포 후 라이브 실증
   (POST-DEPLOY Run 으로 §3 에 append). 콘솔 화면은 PB-0008 Windows-browser 검증.

@@ -223,6 +223,19 @@ def _sanitize_findings(payload: dict[str, Any]) -> dict[str, Any]:
     return {"verdict": "revise" if has_block else "pass", "findings": findings}
 
 
+def _review_max_tokens() -> int | None:
+    """리뷰어 호출 max_tokens (REDTEAM_MAX_TOKENS 런타임 설정).
+
+    양수면 그 값을, 0/미설정/실패면 None 을 반환해 호출측이 기존 task 별 카탈로그 cap
+    (claude → 8192 fallback)으로 폴백하게 한다. 리뷰어 모델의 고정 thinking 예산(현 5000)보다
+    커야 하는 하한은 spec(minimum=6000)이 UI·clamp 단에서 보장한다."""
+    try:
+        v = _rts.get_int("REDTEAM_MAX_TOKENS")
+        return v if v and v > 0 else None
+    except Exception:
+        return None
+
+
 def run_review(question: str, draft_answer: str, evidence_digest: str, *,
                is_group: bool = False,
                conversation_id: str | None = None,
@@ -250,6 +263,7 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
             task="redteam",
             conversation_id=conversation_id,
             run_id=run_id,
+            max_tokens_override=_review_max_tokens(),
         )
         if resp is None:
             return None

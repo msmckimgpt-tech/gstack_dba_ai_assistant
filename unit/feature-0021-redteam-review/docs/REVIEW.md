@@ -113,3 +113,27 @@ source_of_truth: true
   로직/보안/회귀 표면 없음(순수 시각 고정). §18.8 패널 dispatch 키워드 미매칭. 시각 검증은
   배포 후 PB-0008(sticky 스크롤 동작)로 수행. 따라서 subagent 패널 SKIP.
 - Human Approval Needed: 없음.
+
+## REV-20260722-0001 [SKIPPED:additive-runtime-knob]
+- Related Change: CHG-20260722-0001 (리뷰어 토큰 할당량 콘솔 설정 신설 + "리뷰 실패" 타임아웃 진단)
+- Reason: 사용자 요청 — 콘솔 "리뷰 실패" 표시가 내부 에러인지 의도인지 검토 + 에러면 수정.
+  진단 결론: verdict=`error` = 리뷰어 LLM 100% 타임아웃 (라이브 DB 8/8 @ ~25s, fast-fail 0).
+  표시·fail-open 은 의도된 설계이나 실패율 ~17% 는 운영 결함(리뷰어 alias 의 고정 thinking 5000
+  → 상시 25s). 사용자 결정: 콘솔에서 토큰·타임아웃 튜닝하도록 knob 노출.
+- Risk Grade: Minor→Major (additive 런타임 설정 + optional 인자 + 배포 필요). 인증/인가·개인정보·
+  파괴적 데이터·마이그레이션 없음.
+- Alternatives Considered: (a) thinking-off 전용 리뷰어 alias 신설 — 근본 해결이나 litellm
+  라우팅/fallback 변경 폭이 크고 리뷰 품질 trade-off — 기각(사용자 미선택). (b) 타임아웃만
+  상향(무배포) — 근본 미해결·답변 지연↑ — 부분책. 사용자가 콘솔 knob 방식(토큰+타임아웃 노출) 선택.
+- Risks/Mitigations:
+  ① `max_tokens` 를 리뷰어 고정 thinking 예산(5000) 아래로 내리면 Anthropic 호출 400 →
+     오히려 "리뷰 실패" 증가. 완화: spec `minimum=6000` 이 UI·clamp 단에서 하한 강제.
+  ② 토큰 상향은 호출 지연을 줄이지 않음(지연 주범은 thinking) — 오해 방지 위해 설명에 명시
+     ("값을 올려도 지연은 줄지 않습니다 — 지연은 타임아웃으로 조절").
+  ③ 하위호환: override None/0 이면 기존 8192 task cap 과 동치 — 무설정 시 byte-동치(무회귀).
+- Verification: 자동 87건 통과(test_redteam 36[신규 5]·test_runtime_settings·test_admin_reasoning),
+  ruff clean, `REDTEAM_MAX_TOKENS` serialize `redteam` 그룹 노출 확인. 배포 후 PB-0008 로 설정
+  패널 "리뷰어 토큰 할당량" 렌더 + 조정 반영 확인 (POST-DEPLOY).
+- Subagent Panel: reasoned-skip — additive 런타임 설정 + optional 인자, 보안/인가/데이터/스키마
+  표면 없음, §18.8 dispatch 키워드 미매칭. 결정론 로직(override 전달·하한·폴백)은 단위 테스트로 커버.
+- Human Approval Needed: 배포 confirm (외부 영향 행동) — 사용자 승인 후 진행.
