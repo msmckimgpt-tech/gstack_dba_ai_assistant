@@ -625,3 +625,7 @@ source_of_truth: true
 - 적대 자문점 자체점검: ① 특이도 — 신규 `.message.is-user .message-bubble.message-bubble-editing`(0,4,0) > 파랑 `.message.is-user .message-bubble`(0,3,0), 실브라우저 렌더로 bubble bg=흰 서피스(255,255,255) 실측 확인. ② 클래스 충돌 — `message-bubble-editing` unique(기존 `is-editing`(admin dashboard)·`.dashboard-widgets.is-editing` 와 선택자 분리). ③ 잔존 위험 — 재렌더로 클래스 소멸(취소=renderMessages/성공=refreshWorkspace) → 편집 취소 후 말풍선 원래 파랑 복귀. ④ 회귀 — 편집 진입(innerHTML 교체) 컨텍스트에만 적용, 일반 말풍선/컨텐츠 렌더 미접촉. ⑤ 라이트 전용 콘솔(styles.css H1)이라 다크 분기 불요.
 - 검증: `node --check` PASS · headless Chromium 실측(수정본 textarea 15.38:1·재답변버튼 5.17:1·편집 말풍선 중립전환 / 수정전 1.0:1 버그 재현) + 스크린샷 · POST-DEPLOY PB-0008 Windows-browser(잔여, visual_verification_scope=always).
 - Cross-ref: CHG/TASK/TEST-20260722T020408-msg-edit-textarea-contrast · feature-0019 ANCHOR §1-§3 무충돌.
+
+## REV-20260722T024500-msg-edit-textarea-contrast-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 메시지 편집 UI 대비 수정 POST-DEPLOY 라이브 실증 기록 (CHG-20260722T024500-msg-edit-textarea-contrast-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 실 구현 코드 리뷰 정본 = REV-20260722T020408-msg-edit-textarea-contrast([SKIPPED:trivial-display-only]). 본 cycle 은 배포(f7a14e9a)+Windows Chrome 150 라이브 실측 결과 append 만.
+- 실증: textarea color=rgb(38,37,30) on bg=rgb(255,255,255)(대비 ~15.4:1)·편집 말풍선 `message-bubble-editing`=true·bg=흰 서피스(중립 전환)·재답변버튼 흰글자 on 파랑 + 스크린샷 육안. 사용자 신고(흰 글자 on 흰 배경) 해소 확인.
