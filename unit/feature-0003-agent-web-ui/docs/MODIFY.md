@@ -11,6 +11,10 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260722T105320-share-menu-perm-wiring-postverify (TASK-20260722T103254-share-menu-perm-wiring POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-22. 코드/자산 무변경 — test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료 + evidence PNG. 배포 PR #885→main 066cec5e, `make deploy-web-only` 무중단(soak PASS).
+- 라이브 실측(win-browser relay Chrome 150, bootstrap_admin 본인 대화 ☰): `여기까지 공유`·`여기부터 공유` 항목 `is-access-blocked` 없음(수정 전 항상 blocked 회귀 복구)·`여기부터 공유` 클릭 → onSelect 실행(비차단·오류토스트0)·floor arm 배너/마커 표시·pageerror 0. 서빙 app.js `action:"conversation.share.create"` 0매치. Cross-ref: REV-20260722T105320-share-menu-perm-wiring-postverify · CHG-20260722T103254-share-menu-perm-wiring.
+
 ## CHG-20260722T103254-share-menu-perm-wiring (TASK-20260722T103254-share-menu-perm-wiring — 말풍선 ☰ '여기까지/여기부터 공유' 권한 연결(action 매핑) 회귀 수정, Minor §12.3)
 - Date: 2026-07-22. 사용자 신고: 대화 '여기부터/여기까지 분기'(말풍선 ☰ 여기서 분기·여기부터/여기까지 공유) 권한 연결 미작동.
 - 근본원인: ☰ 메뉴 '여기까지 공유'/'여기부터 공유'(`openMessageBubbleMenu`)가 `make` 팩토리에 `action` 으로 **권한 코드** `"conversation.share.create"` 를 전달. `requiredPermissionsFor(action)`(app.js ~L589)는 **추상 action 이름**("conversation.share")만 switch 처리 → 미매칭 `default:{codes:[]}` → `markAccessBlocked` 가 `blocked=!hasAnyPermission([])=true` 로 두 항목을 **모든 로그인 사용자에게 항상 비활성**(is-access-blocked·클릭 시 onSelect 대신 오류 토스트) → ☰ 경로 공유(여기부터/여기까지) 완전 동작 불능.
