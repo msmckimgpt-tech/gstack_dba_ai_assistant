@@ -2321,6 +2321,92 @@ def _persist_datasource_health(rows: dict, run_id: str) -> None:
                 pass
 
 
+def _enum_self_heal(swept_scopes: set, *, mem_conn, engine, known_schemas, scanned) -> "dict | None":
+    """활성 datasource scope 의 '없는 DB(schema)' ENUM 소급 자가수리 (insight tick else-block, best-effort).
+
+    스캔이 예외 없이 완료(카탈로그 refresh)됐고 scope ContextVar 가 유효한 else 지점에서 호출된다. 방금
+    로드된 **완전한** 실제 스키마 목록(`_scan_schemas` = load_known_schemas — budget 무관·전량)을 기준으로,
+    그 scope 의 enum 중 `schema_name`(=DB)이 실재하지 않는 항목(예: auth scope 에 없는 `dbLog.*`)을 회수한다.
+    (a) 예방 게이트 도입 전 등록된 환각, (b) 예방 게이트 fail-open 창에 유입된 환각, (c) DB 삭제로 사후
+    ungrounded 가 된 항목의 소급 정리 — 예방 게이트(_enum_autopropose)와 상호보완.
+
+    안전 설계(적대 리뷰 BLOCKER/MAJOR/MINOR 흡수):
+    - **실제 스키마 목록 기준**(table_insight 점진 카탈로그가 아님) → 목록이 완전하므로 legit enum
+      false-deletion 없음. `schema_name` 이 **빈** enum 은 건드리지 않는다(DB 판정 불가 — 안전).
+    - **MySQL-family 전용(allowlist)**: schema==database 라 known_schemas 가 곧 실제 DB 목록. MySQL 이 아니면
+      (MSSQL 등 schema≠database) 제외(오삭제 방지 — 수동 스크립트로 정리). engine 미지정은 기본 MySQL 로 간주.
+    - **catalog-shrink 가드(MINOR-A)**: 스키마 부재를 **직전 scanned tick + 이번 tick 2회 연속** 관측할 때만
+      삭제(per-scope KV persistence). 권한 회수/부분조회로 known_schemas 가 일시 축소된 tick 의 오삭제 흡수.
+    - **`scanned`(이번 tick 실제 스캔) 게이트**: 매 8s tick 낭비/파괴 반복 방지(refresh 발생 시에만).
+    - **예방 게이트(AGENT_ENUM_SCHEMA_GROUNDING)와 결합**: 게이트 off(운영자 무검증 허용)면 self-heal 도 no-op.
+      `AGENT_ENUM_SELF_HEAL=0` 이면 비활성.
+    - cycle-local dedup(`swept_scopes`), source='auto' 만 DELETE(수동 큐레이션 보존), 예외는 tick 비전파.
+    반환: 변경 있었으면 sweep 결과 dict, 아니면 None.
+    """
+    try:
+        from shared import config as _cfg
+        # 예방 게이트 결합 + self-heal 스위치: 둘 다 on 일 때만 파괴적 grounding 강제.
+        if not (getattr(_cfg, "AGENT_ENUM_SCHEMA_GROUNDING", True)
+                and getattr(_cfg, "AGENT_ENUM_SELF_HEAL", True)):
+            return None
+        if not scanned:
+            return None  # 이번 tick 에 실제 카탈로그 스캔이 일어났을 때만(매 tick 낭비/파괴 반복 방지)
+        if str(engine or "mysql").strip().lower() != "mysql":
+            return None  # MySQL(schema==database)만 — MSSQL 등은 오삭제 위험, self-heal 제외(수동 스크립트)
+        if not known_schemas:
+            return None  # 실제 스키마 목록 미확보 → fail-open(오삭제 방지)
+        scope_key = _cfg.get_active_datasource() or "common"
+        if scope_key in swept_scopes:
+            return None
+        swept_scopes.add(scope_key)  # 성공/실패 무관 이번 cycle 재시도 방지(다음 cycle 재시도)
+        from shared.db import _pg_available, _pg_connect
+        if not _pg_available():
+            return None
+        # catalog-shrink 가드: 직전 scanned tick 의 unknown 스키마 집합(per-scope KV)을 로드.
+        _prev_key = _cfg.ds_scope_name("enum_self_heal_prev_unknown")
+        _prev_unknown: set = set()
+        try:
+            _raw = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _prev_key)
+            if _raw:
+                _prev_unknown = {str(s).strip().lower() for s in json.loads(_raw) if str(s or "").strip()}
+        except Exception:
+            _prev_unknown = set()
+        from modules import kb_glossary as _kg
+        pg = _pg_connect(autocommit=False)
+        try:
+            res = _kg.sweep_unknown_schema_enum(
+                pg, scope_key, known_schemas, dry_run=False, confirm_lower=_prev_unknown)
+            pg.commit()
+        except Exception:
+            try:
+                pg.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+        # 이번 tick 의 unknown 후보(전체)를 다음 scanned tick 의 confirm 집합으로 저장(2회-연속 persistence).
+        try:
+            _now_unknown = sorted({str(u.get("schema_name") or "").strip().lower()
+                                   for u in res.get("ungrounded", []) if str(u.get("schema_name") or "").strip()})
+            save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _prev_key, json.dumps(_now_unknown))
+        except Exception:
+            pass
+        if res.get("dict_deleted") or res.get("feedback_rejected"):
+            logging.getLogger("insight").info(
+                "enum_self_heal scope=%s unknown_schemas=%d dict_deleted=%s feedback_rejected=%s",
+                scope_key, len(res["ungrounded"]), res["dict_deleted"], res["feedback_rejected"],
+            )
+            return res
+        return None
+    except Exception:
+        logging.getLogger("insight").debug("enum_self_heal 실패(무시)", exc_info=True)
+        return None
+
+
 def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
     cycle_run_id = str(run_id or "").strip() or _new_insight_worker_run_id()
     started = time.perf_counter()
@@ -2422,6 +2508,7 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             schema_count = 0
             ds_health_rows: dict[str, dict] = {}  # TASK-0255 R2: scope_key → 연결 health 행(PG 영속)
             _seen_scan_keys: set = set()  # TASK-0255 M-1: 이번 cycle 관측한 (scope_key, db_name) — stale prune 용
+            _enum_swept_scopes: set = set()  # enum self-heal cycle-local dedup(같은 scope DB 다중 시 1회만)
             plan_start = time.perf_counter()
             for _ds_key, _ds_coords in ds_targets:
                 # feature-0015: cycle 내 협조적 graceful 체크포인트. 긴 cycle(다수 datasource·LLM) 중
@@ -2621,6 +2708,14 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                             _ds_auth_cooldown_set(_ds_key)
                             _auth_break = True
                     else:
+                        # enum self-heal: 스캔이 예외 없이 완료됐고 scope ContextVar 가 아직 유효(finally 리셋 전)한
+                        # 이 지점에서, 방금 로드된 **완전한** 실제 스키마 목록(_scan_schemas)으로 '없는 DB' enum 을
+                        # 소급 회수한다. `_ds_key is not None` 가드 '앞'에 둬야 기본 단일 MySQL(ds=None, 'common')도 커버.
+                        _enum_self_heal(
+                            _enum_swept_scopes, mem_conn=mem_conn, engine=_ds_engine,
+                            known_schemas=_scan_schemas,
+                            scanned=bool(isinstance(_rep, dict) and _rep.get("scan_started")),
+                        )
                         # TASK-0255: 예외 없이 스캔 완료 — R1 상태 캐시 healthy 갱신(직전 실패면 INFO recovered),
                         # R2 health 행 ok 기록. **try 밖(else)이라 여기서 난 예외는 미스캔으로 오분류 안 됨**.
                         # MINOR(FP-6 방어): else 문장은 모두 비-raise 이지만 R1/R2 격리를 명문화하려 try 로 감싼다.

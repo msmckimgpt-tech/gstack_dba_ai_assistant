@@ -103,6 +103,8 @@ __all__ = [
     "AGENT_ENUM_SUGGEST_MODEL",
     "AGENT_ENUM_AUTOPROMOTE_THRESHOLD",
     "AGENT_ENUM_SUGGEST_MAX",
+    "AGENT_ENUM_SCHEMA_GROUNDING",
+    "AGENT_ENUM_SELF_HEAL",
     "AGENT_ASK_EXECUTION_MODE",
     "AGENT_ASK_WORKER_ENABLED",
     "AGENT_ASK_WORKER_TICK_SEC",
@@ -938,6 +940,22 @@ try:
     )
 except ValueError:
     AGENT_ENUM_SUGGEST_MAX = 5
+# ENUM 자동등록 schema-grounding 게이트. LLM 이 대화 답변에서 추론한 (schema,table) 이 활성
+# datasource 의 실제 스키마 카탈로그(table_insight fact — agent 가 LLM 에 주입하는 grounding 정본)
+# 에 명백히 부재하면 등록·큐잉을 skip 한다(환각 DB/테이블 차단, 예: auth scope 에 없는 dbLog.Currency).
+# 카탈로그 미가용/빈 scope 는 fail-open(기존 동작 보존 — false-reject 방지). 기본 on.
+AGENT_ENUM_SCHEMA_GROUNDING = (
+    os.getenv("AGENT_ENUM_SCHEMA_GROUNDING", "1").strip().lower() in ("1", "true", "yes")
+)
+# ENUM 자동등록 자가수리(self-heal). insight-worker tick 이 스키마를 스캔한 직후, 그 scope 의
+# enum 중 `schema_name`(=DB)이 **실재하지 않는** 항목(예: auth scope 에 없는 dbLog.*)을 소급 회수한다.
+# 검증 기준 = 워커가 방금 로드한 **완전한** 실제 스키마 목록(load_known_schemas, budget 무관) → legit
+# enum false-deletion 없음. schema-존재만 검증(빈 schema_name·table-레벨은 미터치 — 수동 스크립트 담당),
+# MySQL-family 전용(MSSQL 제외), 실제 스캔 tick(~6h)에만, 스키마 부재 2회 연속 관측 시에만 삭제(일시
+# 축소 흡수). 예방 게이트(AGENT_ENUM_SCHEMA_GROUNDING)와 **결합**(둘 다 on 일 때만 동작). 기본 on.
+AGENT_ENUM_SELF_HEAL = (
+    os.getenv("AGENT_ENUM_SELF_HEAL", "1").strip().lower() in ("1", "true", "yes")
+)
 
 AGENT_LOG_DIR = os.getenv("AGENT_LOG_DIR", "/shared/logs")
 # 단일 앱 로그 파일 크기 상한(bytes). 초과 시 .1 로 1회 회전. 회전 없이 append 만

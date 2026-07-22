@@ -2286,6 +2286,31 @@ def _glossary_autopropose(conversation_id: str, user_message: str, answer: str, 
             pass
 
 
+def _enum_known_table_index() -> "set | None":
+    """활성 datasource 의 '알려진 테이블' 인덱스(소문자 정규화). None = 카탈로그 미가용(검증 skip).
+
+    소스 = `table_insight` fact 카탈로그(부트스트랩 introspection 정본 — _load_schema_list 가 LLM
+    grounding 으로 주입하는 바로 그 카탈로그). `cfg.ds_fact_like` 로 활성 datasource 에 한정되므로
+    scope-정확하다. enum 자동등록 grounding 게이트(_enum_autopropose)에서 (schema, table) 대조용.
+    정규화 전개는 kb_glossary.build_known_table_index(순수·SQL-free)에 위임한다.
+    빈 카탈로그([]) 또는 PG 미가용(None) → None 반환 → 호출측 fail-open(false-reject 방지).
+    """
+    try:
+        # 카탈로그(table_insight fact)는 05-27 cutover 후 PG 정본이다. read-backend flag
+        # (AGENT_KB_READ_BACKEND) 에 결합하지 않는다 — PG 가 읽히면 게이트가 작동해야 하며,
+        # _global_insight_rows_pg 가 _pg_available() 로 자체 가드(미가용→None→fail-open)한다.
+        t_like, t_nlike = cfg.ds_fact_like("table_insight")
+        rows = _global_insight_rows_pg(t_like, with_text=False, not_like_pattern=t_nlike)
+        if not rows:
+            return None
+        from modules import kb_glossary as _kg
+        names = [cfg.ds_strip_prefix("table_insight", fk) for fk, _ in rows]
+        idx = _kg.build_known_table_index(names)
+        return idx or None
+    except Exception:
+        return None
+
+
 def _enum_autopropose(conversation_id: str, user_message: str, answer: str, run_id: str) -> None:
     """대화 답변 직후 ENUM 코드사전 자율수집(0039) — best-effort, ask 경로 차단 금지.
 
@@ -2306,9 +2331,22 @@ def _enum_autopropose(conversation_id: str, user_message: str, answer: str, run_
         if not _pg_available():
             return
         scope_key = _cfg.get_active_datasource() or "common"
+        # schema-grounding 게이트: LLM 이 환각한 (schema,table)(예: auth scope 에 없는 dbLog.Currency)
+        # 을 활성 datasource 의 실제 카탈로그와 대조해 등록·큐잉 전에 차단. 카탈로그 미가용 → fail-open.
+        grounding_on = getattr(_cfg, "AGENT_ENUM_SCHEMA_GROUNDING", True)
+        known_idx = _enum_known_table_index() if grounding_on else None
         pg = _pg_connect(autocommit=False)
         try:
             for s in suggestions:
+                if grounding_on and not _kg.is_enum_grounded(
+                    known_idx, s.get("schema_name"), s.get("table_name")
+                ):
+                    _log("enum_autopropose_skip_ungrounded", {
+                        "scope": scope_key, "schema": s.get("schema_name"),
+                        "table": s.get("table_name"), "column": s.get("column_name"),
+                        "code": s.get("code"),
+                    })
+                    continue
                 _kg.auto_promote_or_queue_enum(
                     pg, scope_key, s.get("schema_name"), s.get("table_name"),
                     s.get("column_name"), s.get("code"), s.get("label"),
