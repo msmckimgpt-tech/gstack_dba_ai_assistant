@@ -6,6 +6,42 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-datetime-tz-server-vs-stored — fixed:undeployed (L1 grounding 지침 lever)
+
+- **status**: `fixed:undeployed` — L1 프롬프트 lever(`_DATA_GROUNDING_GUIDANCE` 신설·항상 주입) 출하, 배포 전. 배포 후 시각-필터 질의에서 저장값 TZ 추측 대신 확인·가정 명시 관측 시 `fixed:deployed:unverified-live` 로 전이.
+- **source**: DQA 마찰개선사항_20260722_v2.md B-1(라이브 대화 아닌 AI 작업자 집계작업 관측 — provenance 정직 표기). `/_template:entry` 로 검토·개선.
+- **last_seen**: 2026-07-22 · **seen_count**: 1 · **seen_distinct_conv**: 1 (FGT 집계 세션)
+- **symptom_confidence**: high (작업자 명시 + 데이터 교차검증으로 재현) · **rootcause_confidence**: high (동작 원인 명확 — 프롬프트에 저장값 TZ grounding 부재)
+- **suspected_layers**: **L1**(프롬프트 grounding 부재) — 모델이 `@@time_zone`(서버 설정)을 저장값 의미로 오해석
+- **증상(signal)**: `I-FALSE` 거짓 확신 — assistant 가 서버 TZ 설정(Asia/Tokyo)만 보고 "저장값=JST → -9h=UTC" 라고 확신 오판. 실제 저장 DATETIME 은 UTC(MySQL DATETIME 은 TZ 미저장) → 집계 기간 9시간 어긋날 뻔(전 시트 오염 위험). 사용자 경고 + 오픈시각↔가입 램프업 정렬 교차검증으로 겨우 정정.
+- **confirmed_root_cause(요지)**: 시스템 프롬프트에 "서버 TZ 설정 ≠ 저장값 의미(naive DATETIME 은 TZ 미저장)" grounding 이 없어, 모델이 `@@time_zone`/`NOW() vs UTC_TIMESTAMP()` 를 저장값 기준 TZ 로 오추론. 게임-무관·모든 MySQL datasource 일반.
+- **fix**: TASK-20260722-dqa-data-grounding / `feature-0002-agent-core` `_DATA_GROUNDING_GUIDANCE`(타임존 블록: 서버 TZ≠저장값 명시 + 불확실 시 알려진 기준점 데이터 교차검증 + 변환 가정 답변 명시 + 미확정 시 임의 offset 금지). Major(core 시스템 프롬프트). test_gc_dialect_context 3건.
+- **필요한 사람 액션(1줄)**: (후속·별도) datasource 메타데이터에 "저장값 기준 TZ" 명시 필드 + 시각-필터 질의 시 자동 표면화(스키마·UI 붙는 큰 lever) — 이번엔 즉효 프롬프트 grounding 만.
+
+## FR-enum-code-hallucination — fixed:undeployed (L1 grounding 지침 lever; D-2 분리저장 동반)
+
+- **status**: `fixed:undeployed` — L1 프롬프트 lever(`_DATA_GROUNDING_GUIDANCE` ENUM·분리저장 블록) 출하, 배포 전.
+- **source**: DQA 마찰개선사항_20260722_v2.md D-1(+D-2 분리저장). 라이브 대화 아닌 집계작업 관측(provenance 정직).
+- **last_seen**: 2026-07-22 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **symptom_confidence**: high (정본 LogType 사전과 대조로 오류 확정) · **rootcause_confidence**: high
+- **suspected_layers**: **L1↔L4**(프롬프트 grounding 부재 + KB ENUM 사전 미매칭 시 폴백 없음)
+- **증상(signal)**: `I-FALSE` — CurrencyType 코드를 기억으로 "3=Stamina" 환각(정본 4=스태미너). 코드 오지정 시 완전히 틀린 집계. 병행 D-2: 재화가 Gold/GemV2/Currency 테이블 분리 → "전체 재화" 를 한 테이블만 집계하면 조용한 누락.
+- **confirmed_root_cause(요지)**: GLOSSARY & ENUM VALUES 주입 인프라(L1574)는 있으나 미매칭 시 모델이 환각으로 코드↔의미를 지어냄. 프롬프트에 "코드 의미 추측 금지 → 사전/샘플링 grounding 또는 미보유 고백" 지침 부재.
+- **fix**: TASK-20260722-dqa-data-grounding / `feature-0002-agent-core` `_DATA_GROUNDING_GUIDANCE`(ENUM 블록: 코드 의미 지어내기 금지 + GLOSSARY & ENUM VALUES·`get_sample_rows`/`GROUP BY` 분포 확인·미보유 고백 / 분리저장 블록: "전체 X" 커버리지 명시). Major(core). test 포함.
+- **필요한 사람 액션(1줄)**: (해당 게임 KB 데이터) KR_LIVE 제품 ENUM 사전에 CurrencyType/ChangeReasonType 정본 적재는 데이터 입력(코드 아님) — 지침이 미보유 시 환각 대신 고백을 강제하므로 안전판 확보.
+
+## FR-scratch-result-csv-missing — fixed:undeployed (L7 결과추출 lever)
+
+- **status**: `fixed:undeployed` — scratch_sql 결과 CSV export 구현, 배포 전.
+- **source**: DQA 마찰개선사항_20260722_v2.md F-5/C-3.
+- **last_seen**: 2026-07-22 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **symptom_confidence**: high · **rootcause_confidence**: high (코드 경로 확정)
+- **suspected_layers**: **L7**(결과 추출/다운로드) — scratch 결과가 inline 절단 + `/shared/out` CSV 미export
+- **증상(signal)**: `E-AST` 대량 결과 회수 곤란 — cross-DS 병합(scratch_sql) 결과가 미리보기(~200행) 절단 + CSV 미저장 → 수백 행 결과를 사용자가 회수 불가(execute_sql 은 CSV 저장됨과 비대칭).
+- **confirmed_root_cause**: `scratch.run_sql` 이 미리보기 상한까지만 fetch 하고 `save_csv` 미호출. execute_sql 은 전체 fetch + save_csv + "CSV 저장:" emit → 웹 `CSV_PATH_RE` 파싱으로 다운로드 링크 생성. scratch 만 그 경로 부재.
+- **fix**: TASK-20260722-dqa-scratch-csv-export / 코드 `feature-0002-agent-core`(정본 feature-0022) — `run_sql` export 상한(100000)까지 전체 fetch + `_tool_scratch_sql` save_csv parity. 프론트 무변경(기존 CSV_PATH_RE 재사용). Minor(비파괴 결과추출). test_scratch 3건.
+- **필요한 사람 액션(1줄)**: 없음(자기완결) — 배포 후 라이브 e2e(대량 scratch 병합→CSV 다운로드)로 verify.
+
 ## FR-nl2sql-schema-discovery-giveup — fixed:deployed:unverified-live (L1+casing 프롬프트 lever; L2 deferred)
 
 - **status**: `fixed:deployed:unverified-live` — **부분 수정**: L1 프롬프트 lever(능동 해석 modality 무관 일반화 → 1:1 도 주입; assume-vs-ask·give-up 금지) + casing 프롬프트 lever(MySQL 식별자 표기 보존·소문자화 금지) 출하·배포. **단 L2 lever(거부/에러 피드백에 교정 힌트 부착)는 미구현 — report-only 유지**(single-conv idiosyncratic·Major, corroboration 임계 미달 → 임계 돌파 시 plan 후 promote). live 재감사 측정 전이라 `unverified-live`(거짓 `verified` 금지).

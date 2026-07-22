@@ -2338,22 +2338,58 @@ def _tool_scratch_sql(conn, args: dict) -> str:
     if not res.get("ok"):
         return f"오류: {res.get('error')}"
     if "columns" in res:
-        # execute_sql 과 **동일한 표(Markdown) 포매터**를 재사용해 출력 형식을 통일한다
-        # (기존 plain-text ` | ` 나열 → `| col | ... |` + 구분선 표). result_sets 형태
-        # [(kind, columns, rows)] 로 감싸 넘긴다.
-        result_sets = [("rows", res.get("columns") or [], res.get("rows") or [])]
+        columns = res.get("columns") or []
+        rows = res.get("rows") or []
+        total = int(res.get("row_count") or len(rows))
+        # F-5(DQA 마찰 — scratch 결과 CSV 미export): execute_sql 과 동일하게 **전체 결과를
+        # /shared/out CSV 로 저장**한다. 웹 UI(feature-0003)는 tool 결과의 "CSV 저장: <path>" 를
+        # CSV_PATH_RE 로 파싱해 다운로드 링크를 만들므로, 대량 scratch 병합 결과도 execute_sql 처럼
+        # 회수 가능해진다. 파일쓰기 실패(디렉토리 부재 등)는 미리보기까지의 결과를 막지 않도록 흡수.
+        csv_path: str | None = None
+        if columns and rows:
+            csv_rows = [list(r) if isinstance(r, (list, tuple)) else [r] for r in rows]
+            try:
+                csv_path = save_csv("scratch_resultset1", [str(c) for c in columns], csv_rows)
+            except Exception:
+                csv_path = None
+        # execute_sql 과 **동일한 표(Markdown) 포매터**로 미리보기만 inline 출력(전체는 CSV).
+        result_sets = [("rows", columns, rows)]
+        _pv_stats: dict = {}
         preview = _format_result_sets(
             result_sets,
             max_rows=_TOOL_PREVIEW_ROWS,
             expand_rows=_TOOL_PREVIEW_ROWS_MAX,
             expand_char_budget=_TOOL_PREVIEW_CHAR_BUDGET,
+            stats=_pv_stats,
         )
-        out = (f"{res['row_count']:,}행 반환:\n{preview}" if preview
-               else f"{res['row_count']:,}행 반환 (표시할 열 없음).")
-        if res.get("truncated"):
-            out += ("\n… (작업공간 미리보기 상한까지만 표시 — 전체는 더 많음. "
-                    "범위를 좁혀 재조회하세요)")
-        return out
+        parts: list[str] = [
+            f"{total:,}행 반환:\n{preview}" if preview
+            else f"{total:,}행 반환 (표시할 열 없음)."
+        ]
+        if csv_path:
+            parts.append(f"CSV 저장: {csv_path}")
+        # 미리보기 절단 시 epistemic 안내(execute_sql parity — 미열람 행 단정 금지 + CSV 회수 유도).
+        if _pv_stats.get("truncated"):
+            shown = int(_pv_stats.get("shown_rows") or 0)
+            note = ""
+            if res.get("export_truncated"):
+                note += ("(⚠ 결과가 작업공간 export 상한을 초과해 CSV 에도 상한까지만 담겼습니다 — "
+                         "전체가 필요하면 범위를 좁혀 재조회하세요.)\n")
+            note += (
+                f"(전체 {total}행 — 위 표는 미리보기 {shown}행입니다. 나머지 {max(total - shown, 0)}행을 "
+                f"당신은 보지 못했습니다: 보지 못한 행에 대한 존재/부재/개수/완전성 단정은 금지입니다. "
+                f"전수 확인·누락 검증이 필요하면 WHERE 필터·집계(COUNT/GROUP BY) 등으로 좁혀 재조회하세요. "
+            )
+            # 적대 리뷰(backend PLAUSIBLE): CSV 다운로드 안내는 실제 CSV 저장 성공 시에만(execute_sql
+            # 은 `if csv_paths:` 안에 중첩). save_csv 실패(디렉토리 부재 등)로 csv_path=None 이면 없는
+            # 링크를 참조하도록 유도하면 안 됨 → 범위 좁히기 fallback 로 정직 안내.
+            if csv_path:
+                note += ("CSV 는 사용자 다운로드 전용이라 당신은 읽을 수 없습니다. 답변에 전체 표를 "
+                         "삽입하지 말고 CSV 다운로드 링크를 제공하세요.)")
+            else:
+                note += ("(전체 결과 CSV 저장에 실패했으니, 범위를 좁혀 재조회해 필요한 부분만 확인하세요.)")
+            parts.append(note)
+        return "\n\n".join(parts)
     return f"실행 완료 (영향 행수: {res.get('rowcount', 0)})."
 
 

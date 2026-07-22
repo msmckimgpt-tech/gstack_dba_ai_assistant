@@ -178,6 +178,8 @@ def test_scratch_sql_output_is_markdown_table(monkeypatch):
     import shared.config as cfg
     monkeypatch.setattr(scratch, "enabled", lambda: True)
     monkeypatch.setattr(cfg, "get_active_conversation_id", lambda: "conv-x")
+    # F-5: 핸들러가 save_csv 를 호출하므로 실제 파일쓰기 대신 경로만 반환하도록 대체.
+    monkeypatch.setattr(tools, "save_csv", lambda name, cols, rows_: f"/shared/out/{name}_t.csv")
     monkeypatch.setattr(scratch, "run_sql", lambda conv, sql: {
         "ok": True,
         "columns": ["server", "version"],
@@ -190,6 +192,73 @@ def test_scratch_sql_output_is_markdown_table(monkeypatch):
     assert "|---|---|" in out                    # 구분선
     assert "| mv | 8.0.33 |" in out              # 데이터 행
     assert " | " not in out.split("\n")[0]       # 선두 요약줄은 표가 아님(행수 안내)
+
+
+def test_scratch_sql_exports_csv_download_path(monkeypatch):
+    # F-5(DQA 마찰): scratch_sql 결과가 execute_sql 처럼 /shared/out CSV 로 export 되고,
+    # agent_core CSV_PATH_RE(웹 다운로드 링크 파서)가 그 경로를 추출할 수 있어야 한다.
+    import modules.tools as tools
+    import shared.config as cfg
+    import agent_core
+    monkeypatch.setattr(scratch, "enabled", lambda: True)
+    monkeypatch.setattr(cfg, "get_active_conversation_id", lambda: "conv-x")
+    monkeypatch.setattr(tools, "save_csv", lambda name, cols, rows_: f"/shared/out/{name}.csv")
+    monkeypatch.setattr(scratch, "run_sql", lambda conv, sql: {
+        "ok": True, "columns": ["a", "b"], "rows": [[1, 2], [3, 4]],
+        "row_count": 2, "truncated": False,
+    })
+    out = tools._tool_scratch_sql(None, {"sql": "SELECT 1"})
+    assert "CSV 저장: /shared/out/scratch_resultset1.csv" in out
+    assert agent_core._extract_csv_paths(out) == ["/shared/out/scratch_resultset1.csv"]
+
+
+def test_scratch_sql_large_result_full_csv_and_preview_truncation(monkeypatch):
+    # F-5: 대량 결과 → CSV 는 전체를 담고(미리보기 상한 무관), 미리보기는 절단되며 미열람 행 단정 금지 안내.
+    import modules.tools as tools
+    import shared.config as cfg
+    monkeypatch.setattr(scratch, "enabled", lambda: True)
+    monkeypatch.setattr(cfg, "get_active_conversation_id", lambda: "conv-x")
+    saved: dict = {}
+
+    def _fake_save(name, cols, rows_):
+        saved["rows"] = len(rows_)
+        return f"/shared/out/{name}.csv"
+
+    monkeypatch.setattr(tools, "save_csv", _fake_save)
+    big = [[i, f"r{i}"] for i in range(1000)]
+    monkeypatch.setattr(scratch, "run_sql", lambda conv, sql: {
+        "ok": True, "columns": ["id", "label"], "rows": big,
+        "row_count": 1000, "truncated": False, "export_truncated": False,
+    })
+    out = tools._tool_scratch_sql(None, {"sql": "SELECT 1"})
+    assert saved.get("rows") == 1000                 # CSV 는 전체 1000행
+    assert "CSV 저장:" in out
+    assert "보지 못했습니다" in out                    # 미리보기 절단 → epistemic 안내
+    assert "CSV 다운로드 링크를 제공하세요" in out
+
+
+def test_scratch_sql_save_csv_failure_no_false_download_claim(monkeypatch):
+    # 적대 리뷰(backend PLAUSIBLE) 흡수: save_csv 실패(디렉토리 부재 등) + 미리보기 절단 시,
+    # 없는 CSV 다운로드 링크를 참조하도록 유도하면 안 된다(execute_sql parity — 링크 안내는 csv 성공 시만).
+    import modules.tools as tools
+    import shared.config as cfg
+    monkeypatch.setattr(scratch, "enabled", lambda: True)
+    monkeypatch.setattr(cfg, "get_active_conversation_id", lambda: "conv-x")
+
+    def _boom(name, cols, rows_):
+        raise OSError("no such dir /shared/out")
+
+    monkeypatch.setattr(tools, "save_csv", _boom)
+    big = [[i, f"r{i}"] for i in range(1000)]
+    monkeypatch.setattr(scratch, "run_sql", lambda conv, sql: {
+        "ok": True, "columns": ["id", "label"], "rows": big,
+        "row_count": 1000, "truncated": False, "export_truncated": False,
+    })
+    out = tools._tool_scratch_sql(None, {"sql": "SELECT 1"})
+    assert "CSV 저장:" not in out                      # 저장 실패 → CSV 라인 없음
+    assert "CSV 다운로드 링크를 제공하세요" not in out    # 없는 링크 참조 유도 금지
+    assert "보지 못했습니다" in out                     # 미열람 행 안내는 유지
+    assert "CSV 저장에 실패" in out                     # 정직한 fallback 안내
 
 
 def test_scratch_guidance_constant_present():

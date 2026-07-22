@@ -53,6 +53,13 @@ def _guidance_entries() -> list[dict[str, Any]]:
             lambda: str(getattr(_agent_core(), "_ACTIVE_INTERPRETATION_GUIDANCE", "")),
         ),
         entry(
+            "data-grounding", "데이터 의미 grounding 지침",
+            "저장값의 의미(날짜/시각 타임존·ENUM 코드값·분리저장)를 추측하지 말고 확인·명시하도록 하는 지침 "
+            "(DQA 마찰 B-1 타임존 오판·D-1 ENUM 환각·D-2 분리저장 누락).",
+            "always",
+            lambda: str(getattr(_agent_core(), "_DATA_GROUNDING_GUIDANCE", "")),
+        ),
+        entry(
             "group-conversation", "그룹 대화 지침",
             "그룹 대화에서 발신자 라벨로 화자를 구분하고 멘션 직전 맥락에서 의도를 해석하는 지침.",
             "conditional (그룹 대화)",

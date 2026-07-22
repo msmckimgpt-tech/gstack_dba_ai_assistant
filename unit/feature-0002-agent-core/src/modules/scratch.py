@@ -43,7 +43,9 @@ _DEFAULTS = {
     "AGENT_SCRATCH_MAX_TABLES_PER_CONV": 50,  # 대화당 최대 테이블 수
     "AGENT_SCRATCH_MAX_SCHEMAS": 500,         # 전역 최대 대화 스키마 수 (disk 폭주 방지)
     "AGENT_SCRATCH_STMT_TIMEOUT_MS": 30000,   # scratch_sql 문당 statement_timeout
-    "AGENT_SCRATCH_QUERY_PREVIEW_ROWS": 200,  # scratch_sql SELECT 미리보기 행수
+    "AGENT_SCRATCH_QUERY_PREVIEW_ROWS": 200,  # (레거시) scratch_sql SELECT 미리보기 행수 — 표시는 이제
+                                              # tools 핸들러의 _TOOL_PREVIEW_ROWS 가 담당(execute_sql parity).
+    "AGENT_SCRATCH_MAX_RESULT_ROWS": 100000,  # scratch_sql SELECT 결과 CSV export 상한(F-5 대량 회수용).
 }
 
 _ADMIN_SCHEMA = "_scratch_admin"
@@ -391,8 +393,12 @@ def _statement_timeout_sql() -> str:
 def run_sql(conversation_id: Any, sql: str) -> dict[str, Any]:
     """대화 스키마 안에서 자율 SQL(DDL/DML/JOIN) 실행. guard + search_path pin + timeout.
 
-    반환: SELECT 계열이면 {ok, columns, rows(preview), row_count, truncated};
+    반환: SELECT 계열이면 {ok, columns, rows(전체 up to export cap), row_count, truncated(=export 상한 초과)};
     그 외(DDL/DML)면 {ok, rowcount, message}. 오류면 {ok:False, error}.
+
+    F-5(DQA 마찰 — scratch 결과 CSV 미export): 과거엔 미리보기 상한(200행)까지만 fetch 해 대량 결과를
+    회수할 수 없었다. 이제 export 상한(AGENT_SCRATCH_MAX_RESULT_ROWS)까지 fetch 해 전체를 반환하고,
+    tools 핸들러가 execute_sql 과 동일하게 save_csv 로 /shared/out CSV 를 만든다(미리보기는 핸들러가 절단).
     """
     if not enabled():
         return {"ok": False, "error": "scratch workspace 가 비활성 상태입니다."}
@@ -415,14 +421,16 @@ def run_sql(conversation_id: Any, sql: str) -> dict[str, Any]:
             cur.execute(sql)
             if cur.description is not None:
                 colnames = [d.name for d in cur.description]
-                preview_cap = _rt("AGENT_SCRATCH_QUERY_PREVIEW_ROWS")
-                fetched = cur.fetchmany(preview_cap + 1)
-                truncated = len(fetched) > preview_cap
-                data = [list(r) for r in fetched[:preview_cap]]
+                # F-5: export 상한까지 전체 fetch(CSV 회수용). 표시 절단은 tools 핸들러가 담당.
+                export_cap = _rt("AGENT_SCRATCH_MAX_RESULT_ROWS")
+                fetched = cur.fetchmany(export_cap + 1)
+                truncated = len(fetched) > export_cap   # export 상한 초과 여부
+                data = [list(r) for r in fetched[:export_cap]]
                 _touch(conn, schema)
                 return {
                     "ok": True, "columns": colnames, "rows": data,
                     "row_count": len(data), "truncated": truncated,
+                    "export_truncated": truncated,
                 }
             rc = cur.rowcount
         _touch(conn, schema)

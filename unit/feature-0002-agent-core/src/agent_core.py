@@ -260,6 +260,45 @@ _ACTIVE_INTERPRETATION_GUIDANCE = """
 """
 
 
+# dqa-grounding (DQA 마찰 B-1 타임존 오판 + D-1 ENUM 코드 환각 + D-2 분리저장 누락):
+# 라이브 집계 작업에서 LLM 이 데이터의 "표기"와 "의미"를 혼동해 조용히 틀린 집계를 낸 관측:
+#   - B-1: DB 서버 TZ 설정(@@time_zone=Asia/Tokyo)만 보고 "저장값은 JST → -9h=UTC" 라고 확신 오판.
+#     실제 저장 DATETIME 값은 UTC 라 집계 기간 전체가 9시간 어긋날 뻔함(전 시트 오염 위험). MySQL
+#     DATETIME 은 TZ 를 저장하지 않아 서버 TZ 설정과 저장값 의미는 별개다.
+#   - D-1: CurrencyType 코드를 기억으로 "3=Stamina" 환각(정본은 4=스태미너). 코드↔의미 매핑은 KB
+#     용어사전/ENUM 사전(위 GLOSSARY & ENUM VALUES 주입) 또는 샘플링으로 grounding 해야 한다.
+#   - D-2: 재화가 Gold/GemV2/Currency 로 테이블 분리 저장 → "전체 재화" 를 Currency 만 집계하면 조용한 누락.
+# 능동 해석(스키마/식별자 발견)과 별개의 축(값의 "의미" grounding)이라 전용 블록으로 분리해 항상 주입한다.
+# base SYSTEM_PROMPT·product 프롬프트 뒤 last-writer 로 데이터 의미 추측 금지를 권위화(_ACTIVE_INTERPRETATION
+# 직후 주입). GLOSSARY & ENUM VALUES 는 knowledge_ctx(더 뒤)에 주입되므로 "if provided" 로 위치-중립 서술.
+_DATA_GROUNDING_GUIDANCE = """
+
+## 데이터 의미 grounding — 저장값의 "의미"를 추측하지 말고 확인하세요
+데이터의 **표기**(숫자·문자열)와 그 **의미**는 다릅니다. 확인 없이 의미를 단정하면 조용히 틀린 집계가 됩니다.
+
+- **날짜/시각의 타임존 (매우 중요)**: DB 서버의 타임존 설정(`@@time_zone`, `SESSION_TIMEZONE`,
+  `NOW()` vs `UTC_TIMESTAMP()` 비교 등)은 **컬럼에 저장된 datetime 값이 어느 타임존 기준인지 알려주지
+  않습니다.** MySQL `DATETIME`(및 대부분의 naive datetime 컬럼)은 타임존을 저장하지 않아 그 기준 TZ 는
+  애플리케이션 규약(흔히 **UTC**)이고, `TIMESTAMP` 는 내부적으로 UTC 로 저장돼 **조회 시 세션 TZ 로
+  변환되어 보이므로** 세션 TZ 에 따라 표시가 달라집니다 — 어느 쪽이든 서버 TZ 설정만으로 저장 의미를
+  단정할 수 없습니다. **서버 TZ 설정만 보고 "저장값은 로컬시각(JST 등)"이라고 단정하지 마세요** — 이
+  혼동은 집계 기간 전체를 몇 시간 어긋나게 해 모든 결과를 오염시킵니다.
+  - 사용자가 특정 타임존(예: KST)의 기간으로 요청했고 저장값 기준 TZ 가 불확실하면: (a) 저장값 기준 TZ 를
+    먼저 확인하고, 가능하면 **알려진 기준점으로 데이터 교차검증**하세요(예: 알려진 이벤트/서버 오픈 시각
+    ↔ 저장값의 활동 급증 시각을 정렬해 offset 확인). (b) 변환해 필터했다면 그 **가정과 변환을 답변에
+    한 줄로 밝히세요**(예: "저장값을 UTC 로 보고 KST 기간에서 -9h 하여 필터했습니다 — 다르면 알려주세요").
+  - 기준 TZ 를 끝까지 확정 못 하면, 임의 offset 으로 **조용히 변환하지 말고** 불확실성과 확인 방법을 밝히세요.
+- **코드/ENUM 값의 의미**: 상태·유형·사유 코드(예: `Type=3`, `ReasonType`, `Status`)의 의미를 기억으로
+  **지어내지 마세요.** 질문에 매칭된 코드 사전이 컨텍스트에 제공됐으면(GLOSSARY & ENUM VALUES) 그것을
+  정본으로 쓰고, 없으면 데이터를 샘플링(`get_sample_rows`, `SELECT code, COUNT(*) … GROUP BY code`)해
+  실제 분포를 확인하거나, **정본 매핑이 없다는 사실을 밝히세요**. "3 = X" 를 근거 없이 단정하면 완전히
+  틀린 집계가 됩니다 — 확인된 매핑만 코드↔의미로 사용하세요.
+- **분리·중복 저장**: 같은 개념(예: 재화·포인트·보상)이 여러 컬럼/테이블에 나뉘어 저장될 수 있습니다.
+  "전체 X" 요청에 일부 소스만 집계하면 조용한 누락이 됩니다. 스키마를 확인해 관련 소스를 빠짐없이 포함하거나,
+  포함 범위(어느 테이블/컬럼을 합산했는지)를 답변에 밝히세요.
+"""
+
+
 # feature-0013 relationship-diagrams: flow/관계/구조 질문에 mermaid 다이어그램으로 답하도록 유도.
 # system prompt 끝(knowledge context 뒤)에 주입한다. 관계 데이터는 (a) knowledge context 의
 # RELATIONSHIP DATA digest(insight worker introspection + 대화 학습) 와 (b) get_foreign_keys/
@@ -4024,6 +4063,11 @@ def _run_agent_core(
     # (conv-audit FR-nl2sql-schema-discovery-giveup, 1:1 conv 20260626034832). 기존 그룹-한정 주입을
     # modality 무관으로 일반화. base SYSTEM_PROMPT·product 프롬프트 뒤 last-writer 로 능동 해석을 권위화.
     system_content += _ACTIVE_INTERPRETATION_GUIDANCE
+
+    # ── dqa-grounding: 데이터 의미 grounding 지침(타임존·ENUM 코드·분리저장 — modality 무관, 항상 주입) ──
+    # DQA 마찰 B-1(서버 TZ 설정만 보고 저장값 UTC 를 JST 로 오판 → 집계 9h 어긋남)·D-1(ENUM 코드 환각
+    # "3=Stamina")·D-2(재화 3테이블 분리 → 부분집계). 능동 해석(식별자/스키마 발견)과 별개 축(값의 의미).
+    system_content += _DATA_GROUNDING_GUIDANCE
 
     # ── gc-assistant-dialect-context (RC-2): 그룹대화 **다자-특화** 맥락 지침 주입 ──────────────
     # _group_sender_labels 가 truthy(멤버 ≥ 2)면 그룹대화 — 발신자 라벨로 누가 무슨 말을 했는지 구분하고

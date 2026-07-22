@@ -23,6 +23,14 @@ source_of_truth: true
 - [x] TASK-0007: 단위 테스트(guard/스키마명/타입추론/enabled 게이트) 15건 + make test 회귀 대조
   (feature-0002/0003 RC=0, 회귀 0).
 - [x] TASK-0008: unit 문서(FUNCTION/TASK/DECISIONS/TEST/ANCHOR/REVIEW) + wiki 카드.
+- [x] TASK-0014: scratch_sql 결과 CSV export (DQA 마찰 F-5/C-3, 2026-07-22, 코드 feature-0002 거주).
+  과거엔 `run_sql` 이 미리보기 상한(200행)까지만 fetch 하고 CSV 미저장 → 대량 cross-DS 병합 결과
+  회수 곤란. 해결: `run_sql` 을 export 상한(`AGENT_SCRATCH_MAX_RESULT_ROWS`=100000)까지 전체
+  fetch(+`export_truncated`), `_tool_scratch_sql` 이 execute_sql parity 로 `save_csv(
+  "scratch_resultset1", …)` → "CSV 저장: <path>" emit. 웹은 기존 `CSV_PATH_RE` 로 다운로드 링크
+  생성(프론트 무변경). 미리보기는 execute_sql 표 포매터(50/adaptive) 절단 + 미열람 행 단정 금지 안내.
+  테스트 3건(`test_scratch.py`: CSV 경로 추출·대량 전체 export·표 포매터 회귀). 정본 코드 TASK =
+  `feature-0002-agent-core/docs/TASK.md` TASK-20260722-dqa-scratch-csv-export.
 
 ## 다음 액션 (활성화 — 운영자/후속 cycle)
 - [ ] TASK-0009: 배포 호스트에서 `bin/scratch-pg-bootstrap.sh` 실행(agent_scratch DB/role 생성)
