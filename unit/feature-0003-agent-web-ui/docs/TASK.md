@@ -6008,3 +6008,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] PB-0008 재검증(POST-DEPLOY): conv[2](14개·높이 20배)에서 초기 최근 8개만 렌더·최상단 스크롤 시 창 확장 실측.
 - [x] 윈도잉 튜닝: `WINDOW_INITIAL_RENDER` 8→3. 라이브 검증에서 개별 메시지가 큰 대화(conv[2])는 초기 8개도 높이 뷰포트 13배로 "4배만"에 미달 → 초기값을 낮춰 큰 메시지 대화도 4배 근처 유지(짧은 메시지 대화는 상한 로직이 4배까지 채워 첫 화면 손실 없음). 라이브 재검증 예정.
 - [x] PB-0008 POST-DEPLOY 윈도잉 재검증(2026-07-22·배포본 66d1e735): conv[2](14개) 초기 렌더 **3개**(ratio 8→3 튜닝으로 13.2→7.7배)·최상단 스크롤 3→13→14 확장·뱃지 동기·A 막대 정상. 사용자 후속 요구(긴 대화 일부만 로딩+추가 로딩) 라이브 실증 완료. evidence/point-rail-windowing-live.png.
+
+## 20260722T1927-history-top-indicator — 대화 상단 '위에 더 있음' 페이드 신호 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 표시 전용. /_template:entry 후속)
+
+- 트리거(사용자 요청): 대화 상단에 추가로 불러올 대화가 있을 때 가시적 효과. 검토 후 사용자 결정 = **페이드 그라데이션만**(칩·텍스트·스피너 없이 최소 신호로 난잡함 회피), 최상단 특정 지점 점프는 기존 캘린더 사용, 로드는 스크롤 자동 동작.
+- [x] index.html: `messages-wrap` 에 `#historyTopIndicator` 페이드 div (칩/버튼 없음·aria-hidden·pointer-events:none — 스크롤/클릭 무방해).
+- [x] styles.css: `.history-top-indicator` 상단 페이드(linear-gradient bg→transparent·height 44px·rail 16px 폭 제외·opacity transition·모바일 full-width).
+- [x] app.js: `_updateHistoryTopIndicator` — `renderCount<total`(윈도우 밖 로드분) 또는 `hasMoreHistory`(서버 미로드) 면 페이드 표시, 아니면 숨김. `renderMessages` 끝 + empty 경로에서 호출(대화 전환 잔류 방지).
+- [x] 검증: `node --check` PASS. display-only(백엔드·RBAC·스키마·엔드포인트 0).
+- [ ] PB-0008 POST-DEPLOY: 긴 대화(윈도잉 활성) 상단 페이드 표시·최상단까지 로드 후/짧은 대화는 페이드 숨김 실측.

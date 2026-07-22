@@ -40,6 +40,7 @@ const progressStepsEl = document.getElementById("progressSteps");
 const progressSummaryEl = document.getElementById("progressSummary");
 const messageLogEl = document.getElementById("messageLog");
 const loadMoreBtn = document.getElementById("loadMoreBtn");
+const historyTopIndicatorEl = document.getElementById("historyTopIndicator");
 // REQ-20260608-0158 (TASK-0158): 즉시 답변 진입점을 composer 로 재배치. 구 #cancelBtn/#finalizeBtn 은
 // 영구 숨김 #progressCard 안 고아였음 — 제거. 중단은 send-버튼 모핑(TASK-0157)으로 이미 노출.
 const composerFinalizeBtn = document.getElementById("composerFinalizeBtn");
@@ -4246,6 +4247,7 @@ function renderMessages() {
     empty.className = "empty-state";
     empty.innerHTML = "<strong>아직 표시할 대화가 없습니다.</strong><span>좌측 목록에서 대화를 선택하거나 새 대화를 생성하세요.</span>";
     messageLogEl.appendChild(empty);
+    _updateHistoryTopIndicator(); // 빈 대화/대화 없음 → 페이드 숨김(직전 대화 잔류 방지)
     return;
   }
 
@@ -4567,6 +4569,18 @@ function renderMessages() {
   messageLogEl.scrollTop = messageLogEl.scrollHeight;
   // TASK-0061 Phase 4 (REQ-20260515-0006): point rail 동기화.
   renderMessagePointRail();
+  _updateHistoryTopIndicator();
+}
+
+// history-top-indicator: 위에 더 불러올 대화(윈도우 밖 로드분 renderCount<total, 또는 서버
+// 미로드 hasMoreHistory)가 있으면 상단 페이드를 표시, 없으면 숨긴다. 텍스트·칩·스피너 없이
+// 페이드만 — 위에 콘텐츠가 더 있음을 알리는 최소 신호(점프는 캘린더, 로드는 스크롤이 담당).
+function _updateHistoryTopIndicator() {
+  if (!historyTopIndicatorEl) return;
+  const total = Array.isArray(state.messages) ? state.messages.length : 0;
+  const rc = state.renderCount != null ? Math.min(state.renderCount, total) : total;
+  const hasMoreAbove = rc < total || Boolean(state.hasMoreHistory);
+  historyTopIndicatorEl.classList.toggle("hidden", !hasMoreAbove);
 }
 
 // TASK-0061 Phase 1 (REQ-20260515-0003): pending assistant bubble — spinner + elapsed timer +

@@ -1737,3 +1737,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 
 ## (20260722T1440-point-rail-window-initial-tuning, 2026-07-22) 윈도잉 초기 렌더 개수 튜닝 (web/UI, frontend-only 상수)
 - AC-PRRW-3 파라미터 조정: `WINDOW_INITIAL_RENDER` 8→3. 라이브 실측(conv[2] 14개·개별 메시지 큼) 결과 초기 8개도 높이 뷰포트 13배로 "4배만"에 미달 → 초기 렌더 개수를 낮춰 개별 메시지가 큰 대화도 렌더 창이 4배 근처에서 멈추게 한다. 짧은 메시지 대화는 `_applyRenderWindowSoon` 상한 로직이 4배까지 채우므로 첫 화면 손실 없음. 로직 불변(상수만).
+
+## (20260722T1927-history-top-indicator, 2026-07-22) 대화 상단 '위에 더 있음' 페이드 신호 (web/UI, Minor §12.3, frontend-only 표시전용)
+
+- REQ-20260722T192736-history-top-indicator (사용자 요청·검토 후 결정): 대화 로그에서 위로 더 불러올 대화가 있을 때 사용자에게 가시적 신호를 준다. 스타일은 사용자 결정에 따라 **상단 페이드 그라데이션만**(칩·텍스트·스피너 없이 최소 신호로 시각적 난잡함 회피). 최상단 특정 지점 점프는 기존 캘린더(날짜 분기선)를 사용하고, 실제 로드는 스크롤 최상단 근접 시 윈도우 확장/서버 페이징이 자동 담당한다.
+- AC-HTI-1 (페이드 표시 조건): `#historyTopIndicator`(messages-wrap 내 absolute·pointer-events:none·rail 16px 폭 제외) 가 `_updateHistoryTopIndicator()` 에 의해, `state.renderCount < state.messages.length`(윈도잉으로 DOM 창 밖에 있는 로드분) **또는** `state.hasMoreHistory`(서버에 미로드 페이지) 이면 상단 페이드를 표시(`hidden` 제거), 둘 다 아니면(전부 로드·전부 렌더) 숨긴다. `renderMessages` 종료부와 empty-state 경로에서 호출해 대화 전환·창 확장·페이징·전송 후 상태를 항상 반영한다. 페이드는 `linear-gradient(bg→transparent)` 이며 `pointer-events:none` 이라 스크롤/클릭을 막지 않는다. 백엔드·RBAC·스키마·엔드포인트·편집 로직 무영향(point-rail-range window 위에 얹은 순수 표시 레이어).
