@@ -796,3 +796,14 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
 - **경계 가드(scratch_guard)**: allowlist 반전 — 허용 root 명시 + CREATE/DROP=TABLE/INDEX kind 한정, 함수/프로시저/
   뷰/DO/CALL/EXTENSION 거부, `pg_` 접두(카탈로그 열거) 차단, search_path pin + `statement_timeout`. governed 반입은
   `execute_sql` 신뢰경계·heavy-query 게이트 재사용(ADR-SCRATCH-0003). 시간기반 TTL reaper(기본 24h, ADR-SCRATCH-0004).
+
+## 25. 외부 AI Conversation API — Bearer 토큰 인증 경로·scope 강제 표면 (feature-0023-conversation-api-access, 2026-07-22)
+
+> 색인 항목 — 전체 위협모델·적대 검증 정본은 `unit/feature-0023-conversation-api-access/docs/{REVIEW.md, FUNCTION.md}`
+> (Bearer fallback·`WebApiTokens` 해시 저장·scope 교집합 choke-point·절대 denylist·prompt-injection/LAN 렌즈, 적대 보안 리뷰 REV-20260722-0002 HIGH 2·MEDIUM 1 in-cycle 수정·LOW 1 수용).
+> 본 절은 신규 인증/인가 표면의 boundary 색인 (§3 승인 필요 변경·§5/§6 자격 저장·§7.2 LAN 전제와 정합 — 정책 본문 신규 서술 아님).
+
+- **신규 표면(세션 쿠키와 별개인 프로그램적 외부 인증 경로)**: 외부 AI(에이전트·자동화 클라이언트)가 `Authorization: Bearer <token>` 로 관리 콘솔을 제외한 "작업 화면 대화"(`/api/ask` 등 `conversation.*`)를 프로그램 구동. 세션 쿠키 부재 시에만 fallback(`_get_account_by_api_token`, 쿠키 우선 무회귀·fail-closed). 토큰은 저권한 서비스 계정 귀속·CLI 발급(`bin/api-token-issue.sh`, 관리 콘솔 밖·audit). 사내 LAN 전제 유지(외부 인터넷 노출 out-of-scope, §7.2 정합).
+- **자격 저장 경계**: `WebApiTokens`(`_ensure_web_api_tokens_schema`, additive `CREATE TABLE IF NOT EXISTS`) — 토큰 원문 미저장, SHA-256 해시(`TokenHash` UNIQUE)만 저장·scope·`ExpiresAt`·revoke(`RevokedAt`)·`LastUsedAt`. 발급/폐기는 `WebAuditEvents`(`apitoken.issue`/`apitoken.revoke`) 기록. (§5 현재 저장 경계·§6 자격증명 관리 정합)
+- **인가 경계(scope 강제, 단일 choke-point)**: `_account_permissions` 가 api_token 인증 시 `scope ∩ 계정권한` 교집합 위에 **절대 denylist**(`_api_token_permission_denied`)를 AND — scope·계정권한 무관하게 `*.any`(교차계정) + 관리 네임스페이스(`console./audit./account./role./system./quota./insight./datasource./metadata./kb./graph./product.manage|read|create|delete`)를 무조건 effective=False → 관리 콘솔·타 계정 대화 원천 봉인. scope=None 은 무제한 아님 — 안전 기본 allowlist(`conversation.,product.access.`) + denylist 적용(fail-closed). CLI 도 관리/`.any` scope 입력 거부·privileged(admin/operator/dba) 계정 발급 경고.
+- **적대 검증·실증**: 적대적 보안 리뷰(REV-20260722-0002)가 HIGH-1(scope-escape — `conversation.` prefix allowlist 가 `*.any` 통과)·HIGH-2(fail-open — 빈/NULL scope 무제한) 적발→in-cycle 수정(런타임 denylist·안전 기본 fail-closed), 재검증 host 15 assertion + 단위 테스트(`test_cross_account_any_blocked_despite_conversation_scope`) PASS. 쿠키 병존 강등 없음·SQL injection 없음·토큰 원문 누출 없음(3중 확인). 라이브 e2e: 토큰→`/api/ask` 200·admin 엔드포인트 403·무토큰 401(배포 66a48870 soak PASS).

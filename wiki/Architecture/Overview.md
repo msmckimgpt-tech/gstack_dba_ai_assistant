@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 22 카드 (feature-0001 ~ feature-0022; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
+| Feature 수 | 23 카드 (feature-0001 ~ feature-0023; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
 
 ## 목차
 
@@ -93,6 +93,7 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0020-zd-deploy-all\|feature-0020-zd-deploy-all]] | 무중단 배포 커버리지 — deploy 스파인 확장(워커 자동 롤아웃·bedrock-gateway surge 무중단 교체·caddy/alembic stale-image 가드) |
 | [[../Features/feature-0021-redteam-review\|feature-0021-redteam-review]] | assistant 답변 자가 적대(red-team) 리뷰 — fresh-context 5축 검증 + [세션,제품] 메모리 노트 + 콘솔 'AI 추론' 탭 |
 | [[../Features/feature-0022-agent-scratch-workspace\|feature-0022-agent-scratch-workspace]] | assistant PG 자율 작업공간 — 전용 DB `agent_scratch`(대화별 격리 스키마)에서 외부 데이터소스 반입·cross-source JOIN·TTL(기본 24h) 정리 (2026-07-21 라이브 활성·기본값 OFF 게이트 · 코드 거주 0002/shared) |
+| [[../Features/feature-0023-conversation-api-access\|feature-0023-conversation-api-access]] | 외부 AI용 Conversation API — Bearer 토큰 인증(scope allowlist ∩ 계정권한·관리 네임스페이스 절대 denylist) + 대화 tool 화 MCP 서버(tool 4종) (2026-07-22 배포·라이브 e2e 통과·코드 거주 0003/0002) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -118,6 +119,7 @@ unit/feature-NNNN-<purpose>/
 | feature-0020 | feature-0014, feature-0002, feature-0007 | extends | deploy 스파인(0014) 확장 + 워커 이미지 핀(0002) + bedrock-gateway surge 교체(0007) |
 | feature-0021 | feature-0002, feature-0003 | uses | red-team choke-point 훅·agent-notes·guidance_registry=0002, 관리 콘솔 'AI 추론' 콘솔=0003 |
 | feature-0022 | feature-0002 | uses | scratch 코어·도구 4종·워커 TTL reaper=0002, bootstrap=repo-level `bin/scratch-pg-bootstrap.sh`, `shared/` 설정 공유 · governed 반입=`execute_sql` 신뢰경계 재사용 |
+| feature-0023 | feature-0003, feature-0002, feature-0005 | uses | Bearer 토큰 인증 fallback·scope 교집합 게이트·`WebApiTokens` 스키마 = feature-0003(web_context/_bootstrap_schema), 대화 API(`/api/ask`) ask = feature-0002 agent_core, MCP 서버 패턴 = feature-0005 재사용; 발급 CLI(`bin/api-token-issue.sh`)는 repo-level·MCP 서버 코드는 feature-0023 unit |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 
