@@ -629,3 +629,13 @@ source_of_truth: true
 ## REV-20260722T024500-msg-edit-textarea-contrast-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 메시지 편집 UI 대비 수정 POST-DEPLOY 라이브 실증 기록 (CHG-20260722T024500-msg-edit-textarea-contrast-postverify)
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 실 구현 코드 리뷰 정본 = REV-20260722T020408-msg-edit-textarea-contrast([SKIPPED:trivial-display-only]). 본 cycle 은 배포(f7a14e9a)+Windows Chrome 150 라이브 실측 결과 append 만.
 - 실증: textarea color=rgb(38,37,30) on bg=rgb(255,255,255)(대비 ~15.4:1)·편집 말풍선 `message-bubble-editing`=true·bg=흰 서피스(중립 전환)·재답변버튼 흰글자 on 파랑 + 스크린샷 육안. 사용자 신고(흰 글자 on 흰 배경) 해소 확인.
+
+## REV-20260722T125200-point-rail-range-window [SUBAGENT:general-purpose] — ACCEPTED-WITH-FIXES (Major §12.3 — feature-0003 web/UI, /_template:entry arg-given dispatch)
+- 요청 해석: "우측 대화 뱃지" = 메인 뷰 point rail(`app.js`/`styles.css`). 공유 읽기전용 뷰(`share.*`)는 별도 코드라 범위 제외("assistant와 대화를 주고받는 화면"=메인). 3요구 A(범위화)/B(클릭 비례)/C(윈도잉).
+- 설계 판단:
+  - A: rail 을 대화 세로 미니맵으로. top%/height% 는 messageLog scrollHeight 대비(기존 중심점 top% 와 동일 기준) → rail(뷰포트 높이)에 압축 표시. min-height 로 짧은 메시지 클릭성 보장.
+  - B: 신규 `scrollMessagePointToRatio` 로 클릭 y→메시지 [top,bottom] 매핑. 기존 center 함수는 검색/앵커 점프가 재사용하므로 비파괴 유지.
+  - C: 신규 DOM 가상화 대신 **기존 `loadHistory` 서버 페이징 재사용**(회귀면 최소화 — 완전 가상화는 첨부/읽음/optimistic/live-poll 상호작용 위험 큼). "화면 4배만 로딩"=초기 로드 목표 높이(하한 채움). 아래로 unload 미수행(요청은 "추가 로딩"만).
+- 적대 코드리뷰(REV subagent) 반영: R1(cross-conversation `state.messages` 오염 — `loadHistory` gen-guard)·R2(프로그래매틱 점프 중 자동로드가 목표 어긋냄 — `_pointScrolling`)·B1(전역 `_fillingWindow` 가 빠른 전환 시 새 대화 fill 억제·이전 루프 오염 — 대화별 `_fillToken`). 핵심 우려 preserveScroll flag leak 은 flag 제거 재설계로 원천 소거(리뷰어 moot 확인).
+- Known limitation B2 (코너케이스, 미수정): append(과거 자동로드)와 그 대화의 processing 새 run pending-bubble 최초 생성이 동시일 때, `_endAppendScrollPreserve` 의 `delta = scrollHeight - preH` 가 바닥 성장분(pending bubble)을 포함해 소폭 과도 스크롤(뷰가 pending 높이만큼 위로 튐). 발생 조건 희소(유휴 과거 탐색 중 새 run 최초 pending)·자기치유(다음 클린 로드)·영향 경미(pending 높이 소). 별도 cycle 재검토 여지.
+- 위험도 Major: 다중 파일·스크롤 로직·회귀 위험(신규 가상화 아님·기존 페이징 재사용으로 완화). 비파괴 additive — 인증/인가/데이터 무영향.

@@ -702,3 +702,11 @@ source_of_truth: true
 - POST-DEPLOY PB-0008 Windows-browser 라이브 실증 기록 append + TASK 체크박스 완료. 코드/자산 0 — test-runs.d fragment 20260722T020408 POST-DEPLOY 갱신 + TASK.md 박스.
 - 배포본 main f7a14e9a(PR #866) — `deploy-web --web-only` 무중단(soak PASS). Windows Chrome 150 실측: textarea 대비 ~15.4:1(글자 판독)·편집 말풍선 중립 전환·재답변버튼 판독. 사용자 신고 해소 실증.
 - Files: `docs/TASK.md`, `docs/test-runs.d/20260722T020408-msg-edit-textarea-contrast.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
+
+## CHG-20260722T1252-point-rail-range-window (20260722T1252-point-rail-range-window — 대화 뷰 우측 미니맵 뱃지 범위화 + 클릭 위치 비례 스크롤 + 로그 윈도잉, Major §12.3, frontend-only additive)
+- Files: `unit/feature-0003-agent-web-ui/src/static/app.js`, `unit/feature-0003-agent-web-ui/src/static/styles.css`.
+- A(뱃지 범위화): `layoutMessagePointRail()` — `dot.style.top`(상단%) + `dot.style.height`(범위%) 막대 배치(logRect 루프 밖 1회 측정). CSS `.message-point-dot` 점(8×8 원)→막대(width 6px·min-height 4px·border-radius 3px·translateX만·is-active/hover 폭 11px).
+- B(클릭 비례): rail 클릭 핸들러가 뱃지 내 클릭 y 비율 계산 → 신설 `scrollMessagePointToRatio(target, ratio)`(메시지 [top,bottom] 대응점을 뷰포트 중앙, EaseOutExpo). 기존 `scrollMessagePointIntoCenter`(항상 중앙) 유지 — 검색결과/앵커 점프 재사용.
+- C(윈도잉): `loadHistory` conversation-generation 가드(`_loadGenConvId` — apiFetch 후 전환 시 bail, R1)·`_beginAppendScrollPreserve`/`_endAppendScrollPreserve`(prepend 후 scrollTop 보정, flag 無 — 예외 시 맨-아래 fallback)·`_fillInitialWindowSoon`(대화별 `_fillToken`·뷰포트 4배 목표·rAF·25p 상한, B1)·`_loadOlderGuarded`(자동/버튼 공용 단일 가드)·`_maybeAutoLoadOlder`(`_pointScrolling` 억제, R2)·`_animatePointScroll` `_pointScrolling` flag. `renderMessages` 맨-아래 스크롤 무변경(가드 flag 제거 재설계). scroll 리스너 + loadMoreBtn 배선.
+- 검증: `node --check app.js` PASS · 적대 코드리뷰(REV subagent) R1/R2/B1 반영. 핵심 우려 preserveScroll leak = flag 제거로 moot 확인.
+- landing/배포: verify-completion(feature-0003) → commit → push → PR/머지(자동 동기화) → `deploy-web`(deploy_scope: included, 외부영향 1줄 표면화) → POST-DEPLOY PB-0008.

@@ -5993,3 +5993,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 보안/데이터 무영향: 순수 표시(CSS + classList) — 백엔드·엔드포인트·RBAC·스키마·편집 로직 불변. feature-0019 ANCHOR §1-§3 무충돌. `message-bubble-editing` unique 클래스(기존 `is-editing` 미충돌).
 - [x] 검증(PRE-DEPLOY): `node --check` PASS · **실브라우저(headless Chromium) 대비 실측** — 수정본 textarea **15.38:1**(WCAG AA 상회)·편집 말풍선 파랑→중립 전환·재답변버튼 5.17:1 / 수정 전 재현 **1.0:1**(버그 재현). 스크린샷 증적.
 - [x] PB-0008 Windows-browser (POST-DEPLOY, 2026-07-22 라이브 PASS): PR #866 머지 → main f7a14e9a → `deploy-web --web-only` 무중단 롤링(soak PASS)·`/healthz` f7a14e9a. Windows Chrome 150 실측(bootstrap_admin, 실 대화 편집) — textarea color=rgb(38,37,30) on bg=rgb(255,255,255)(대비 ~15.4:1·글자 판독)·편집 말풍선 `message-bubble-editing`=true·bg=흰 서피스(중립 전환)·재답변버튼 흰글자 on 파랑. 스크린샷 육안 확인. 사용자 신고 해소 라이브 실증 완료. test-runs.d fragment 20260722T020408 POST-DEPLOY 갱신.
+
+## 20260722T1252-point-rail-range-window — 대화 뷰 우측 미니맵 뱃지 범위화 + 클릭 위치 비례 스크롤 + 로그 윈도잉 (Major §12.3 — feature-0003 web/UI 프론트 단독, 비파괴 additive. /_template:entry arg-given dispatch)
+
+- 트리거(사용자 요청): assistant 와 대화를 주고받는 화면(메인 뷰)의 우측 대화 뱃지(point rail)를 ① 실제 스크롤 내 차지 범위만큼 버튼 높이 확장, ② 늘어난 버튼 클릭 시 클릭 위치 비례 스크롤(현재는 항상 중간지점 이동), ③ 긴 대화 뱃지 밀집 완화 — 기본 뷰포트 높이 4배만 로딩(뱃지 포함)·최상단 상승 시 이전 대화 추가 로딩.
+- 대상: `unit/feature-0003-agent-web-ui/src/static/app.js` · `styles.css`. 공유 읽기전용 뷰(`share.*`)는 별도 코드 — 이번 범위 제외("주고받는 화면"=메인 뷰).
+- [x] A(뱃지 범위화): `layoutMessagePointRail()` 이 각 뱃지를 고정 점(8×8) → 메시지가 messageLog scrollHeight 에서 차지하는 `[top%, height%]` 세로 막대로 배치. CSS `.message-point-dot` 막대화(translateY 제거·min-height·is-active/hover 폭 강조). rail 전체가 대화 세로 미니맵.
+- [x] B(클릭 비례): rail 클릭 핸들러가 뱃지 내 클릭 y 비율(0~1)을 계산 → 신설 `scrollMessagePointToRatio(target, ratio)` 로 메시지 `[top,bottom]` 대응 지점을 뷰포트 중앙으로 EaseOutExpo 이동. 기존 `scrollMessagePointIntoCenter`(항상 중앙)는 검색결과 점프(app.js ~5534)가 재사용하므로 유지.
+- [x] C(윈도잉): 기존 `loadHistory({append})` 서버 페이징(limit 20·before_id·prepend) 재사용. `_fillInitialWindowSoon`(초기 로드 후 뷰포트 4배 미만이면 자동 append 채움·rAF·재진입가드·25p 상한)·`_maybeAutoLoadOlder`(scroll 최상단 0.5뷰포트 근접 자동 로드)·`_loadOlderGuarded`(자동/버튼 공용 단일 가드 — 같은 before_id 이중 prepend 방지)·`_begin/_endAppendScrollPreserve`(prepend 후 scrollTop 보정으로 점프 방지 — flag 無 설계라 예외 시 맨-아래 fallback, 잔류 회귀 없음). scroll 리스너 + loadMoreBtn 배선. 아래로 unload 는 미수행(요청은 "추가 로딩"만 · 회귀 최소화).
+- [x] 검증(PRE): `node --check app.js` PASS · 신규 심볼 6종(scrollMessagePointToRatio·_begin/_endAppendScrollPreserve·_fillInitialWindowSoon·_loadOlderGuarded·_maybeAutoLoadOlder) 정의/참조 정합 · 적대 코드리뷰(회귀 focus) 반영.
+- [ ] PB-0008 Windows-browser (POST-DEPLOY 예정): 웹/UI 변경 — visual_verification_scope: always. merge → `deploy-web`(origin/main) → 라이브 win-browser 실측(뱃지 막대 렌더·막대 상/하단 클릭 비례 이동·긴 대화 초기 4배 로딩·최상단 스크롤 자동 로드) → test-runs.d fragment 기록. 사유 TEST.md CHECK#13.
