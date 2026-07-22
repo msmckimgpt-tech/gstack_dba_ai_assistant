@@ -4264,9 +4264,20 @@ function renderMessages() {
   const _assistantSeed = _pinnedProd ? (_pinnedProd.product_key || _pinnedProd.name || "") : "";
   const _myName = String((state.user && state.user.username) || "").toLowerCase();
 
+  // point-rail-range window: renderCount 가 설정되면 state.messages 전체가 아니라 최근 그
+  // 개수만 DOM 에 렌더한다(긴 대화에서 뷰포트 4배 상한 — 사용자 "일부만 로딩"; rail 뱃지도
+  // 같은 창을 쓴다). 미설정(null)이면 전체 렌더(기존 동작 호환). 최신 메시지는 항상 창 안에
+  // 있으므로(최근 기준) optimistic/전송/live-poll 병합은 그대로 보인다.
+  const _visibleMsgs = _visibleMessages();
+
   // REQ-20260518-0001: Slack 패턴 — 날짜 분기선 click 으로 캘린더 popover anchored 오픈.
   let lastDateKey = "";
-  state.messages.forEach((message, _msgIdx) => {
+  // point-rail-range window: 창-상대 인덱스가 아니라 state.messages 절대 인덱스를 유지한다.
+  // 다운스트림(_precedingUserQuestion 의 앞선 질문 스캔·공유 range idx 비교·샘플 등록)이
+  // 절대 인덱스를 전제하므로, 윈도잉으로 tail 슬라이스를 순회해도 절대값으로 환산해 넘긴다.
+  const _windowBase = state.messages.length - _visibleMsgs.length;
+  _visibleMsgs.forEach((message, _localIdx) => {
+    const _msgIdx = _localIdx + _windowBase;
     const createdAt = message.created_at ? new Date(message.created_at) : null;
     if (createdAt && !isNaN(createdAt.getTime())) {
       const key = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, "0")}-${String(createdAt.getDate()).padStart(2, "0")}`;
@@ -5193,7 +5204,9 @@ function renderMessagePointRail() {
   const rail = document.getElementById("messagePointRail");
   if (!rail) return;
   rail.innerHTML = "";
-  const messages = Array.isArray(state.messages) ? state.messages : [];
+  // point-rail-range window: 뱃지도 DOM 렌더 창(최근 renderCount 개)만 표시한다
+  // (사용자 "뱃지도 마찬가지"). 위로 스크롤해 창이 확장되면 그만큼 뱃지도 늘어난다.
+  const messages = _visibleMessages();
   // 1 개 이하면 rail 숨김.
   if (messages.length <= 1) {
     rail.classList.add("hidden");
@@ -5297,7 +5310,7 @@ function _animatePointScroll(setter, from, to) {
   const delta = to - from;
   if (delta === 0) return;
   // point-rail-range window: 프로그래매틱 스크롤(막대 클릭·검색·앵커 점프) 중에는 최상단
-  // 자동 로드를 억제한다(_maybeAutoLoadOlder). 애니메이션이 최상단 근처를 지날 때 prepend 가
+  // 자동 로드를 억제한다(_maybeExpandOrLoadOlder). 애니메이션이 최상단 근처를 지날 때 prepend 가
   // 끼어들면 목표 메시지가 한 페이지 어긋나기 때문(R2). 마지막 프레임의 scroll 이벤트까지
   // 커버하도록 해제를 rAF 로 한 틱 미룬다.
   state._pointScrolling = true;
@@ -5564,7 +5577,8 @@ async function jumpToHistoryAnchor(atString) {
       showToast("해당 시각의 메시지를 찾을 수 없습니다.", true);
       return;
     }
-    const target = document.getElementById(`message-${mid}`);
+    // point-rail-range window: 대상이 렌더 창 밖이면 창을 확장해 element 를 확보한 뒤 점프.
+    const target = _ensureMessageRendered(mid);
     if (target) {
       // anim-pref: 네이티브 smooth 대신 pref-aware EaseOutExpo(point-rail 과 동일 경로).
       // 브라우저가 reduce-motion 을 보고해도 인앱 '항상 켬' 이면 부드럽게 이동한다.
@@ -6207,6 +6221,22 @@ async function loadHistory({ append = false } = {}) {
   state.messages = append
     ? [...payload.messages, ...state.messages]
     : payload.messages;
+  // point-rail-range window: 렌더 창(renderCount) 관리. 초기(비-append) 로드는 최근 소수로
+  // 리셋(이후 _applyRenderWindowSoon 이 뷰포트 4배 상한까지 확장), append(이전 페이지 prepend)는
+  // 로드된 만큼 창을 확장해 방금 온 메시지가 창 안에 들어오게 한다.
+  if (!append) {
+    let _rc = Math.min(WINDOW_INITIAL_RENDER, state.messages.length);
+    // 리뷰 발견2: share floor 가 arm 됐으면 그 메시지까지 창에 포함해 '공유 시작' 칩이
+    // 사라지지 않게 한다(같은 대화 refresh 시 renderCount 리셋으로 floor 가 창 밖이 되는 것 방지).
+    if (state.shareRange && state.shareRange.floorMessageId != null) {
+      const _fidx = state.messages.findIndex(
+        (m) => m && m.id != null && Number(m.id) === Number(state.shareRange.floorMessageId));
+      if (_fidx >= 0) _rc = Math.max(_rc, state.messages.length - _fidx);
+    }
+    state.renderCount = _rc;
+  } else if (state.renderCount != null) {
+    state.renderCount = Math.min(state.renderCount + payload.messages.length, state.messages.length);
+  }
   state.hasMoreHistory = Boolean(payload.has_more);
   state.nextBeforeId = payload.next_before_id || null;
   loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
@@ -6291,7 +6321,7 @@ async function loadHistory({ append = false } = {}) {
   // point-rail-range window: append(prepend) 로드는 렌더 후 스크롤 위치를 보정하고,
   // 초기(비-append) 로드는 기본 창(뷰포트 4배)이 안 차면 이전 기록을 자동으로 더 당긴다.
   _endAppendScrollPreserve(append);
-  if (!append) _fillInitialWindowSoon();
+  if (!append) _applyRenderWindowSoon();
 }
 
 // ── point-rail-range window: 대화 로그 창(windowing) 헬퍼 ──────────────────
@@ -6299,8 +6329,36 @@ async function loadHistory({ append = false } = {}) {
 // 스크롤이 최상단에 근접하면 기존 loadHistory({append}) 페이징을 자동 트리거한다.
 // prepend 시 renderMessages 가 맨-아래로 이동시키므로, 렌더 전 위치를 기억해 보정한다.
 
-const WINDOW_VIEWPORT_MULTIPLE = 4;   // 기본 로드 창 = 뷰포트 높이 × 4.
-const WINDOW_FILL_MAX_PAGES = 25;     // 초기 채움 시 자동 append 상한(무한루프 방지).
+const WINDOW_VIEWPORT_MULTIPLE = 4;   // 기본 렌더 창 = 뷰포트 높이 × 4 (상한·하한 목표).
+const WINDOW_FILL_MAX_PAGES = 25;     // 하한 채움 시 자동 서버 append 상한(무한루프 방지).
+const WINDOW_INITIAL_RENDER = 8;      // 대화 로드 시 최초 렌더할 최근 메시지 수(이후 4배까지 확장).
+const WINDOW_RENDER_BATCH = 10;       // 상한 조정·최상단 확장 시 렌더 창 증가 단위.
+
+// point-rail-range window: DOM 에 렌더할 "최근 renderCount 개" 를 반환한다. renderCount 가
+// null(미설정)이면 state.messages 전체(기존 동작 호환). 긴 대화에서 뷰포트 4배 상한을 걸어
+// "일부만 로딩"(뱃지도 동일 창)을 구현하는 단일 소스 — renderMessages·renderMessagePointRail
+// 이 공유한다. 최신 메시지는 항상 배열 끝(=창 안)이라 전송·optimistic·live-poll 은 그대로 보인다.
+function _visibleMessages() {
+  const all = Array.isArray(state.messages) ? state.messages : [];
+  const rc = (state.renderCount != null && state.renderCount > 0)
+    ? Math.min(state.renderCount, all.length) : all.length;
+  return rc >= all.length ? all : all.slice(all.length - rc);
+}
+
+// 특정 메시지가 DOM 렌더 창 밖이면(윈도잉) 그 메시지가 창에 들어올 때까지 renderCount 를
+// 늘려 재렌더한다. 검색/캘린더 점프가 창 밖 메시지를 대상으로 할 때 사용. 반환: 해당 element
+// 또는 null(state 에도 없어 확장 불가 — 다른 대화·미로드).
+function _ensureMessageRendered(messageId) {
+  let el = document.getElementById(`message-${messageId}`);
+  if (el) return el;
+  const all = Array.isArray(state.messages) ? state.messages : [];
+  const idx = all.findIndex((m) => m && m.id != null && String(m.id) === String(messageId));
+  if (idx < 0) return null;
+  const needed = all.length - idx; // 최근 needed 개를 렌더해야 이 메시지가 창 안에 든다.
+  state.renderCount = Math.min(Math.max(needed, state.renderCount || 0), all.length);
+  renderMessages();
+  return document.getElementById(`message-${messageId}`);
+}
 
 // append(prepend) 로드는 renderMessages 가 맨-아래로 스크롤하므로, 로드 전 위치를 기억해
 // (_begin) 렌더 후 "위에 추가된 높이만큼만" scrollTop 을 밀어 사용자가 보던 지점을 유지한다
@@ -6320,43 +6378,56 @@ function _endAppendScrollPreserve(append) {
   layoutMessagePointRail();
 }
 
-// 초기(비-append) 로드 직후, 로드된 콘텐츠 높이가 뷰포트 4배 미만이면 이전 기록을
-// 자동으로 몇 페이지 더 당겨 기본 창을 채운다(사용자 스크롤 없이 맥락 확보). 재진입 가드.
-function _fillInitialWindowSoon() {
+// 대화 로드 직후 렌더 창(renderCount)을 뷰포트 4배 목표에 맞춘다. ① 상한: state 에 이미
+// 로드된 메시지 안에서 창을 최근부터 늘려, 높이가 4배를 처음 넘기는 지점에서 멈춘다(긴
+// 대화도 "일부만" 렌더 — conv 가 20개 미만이어도 높이 기준 상한). ② 하한: 로드된 걸 다
+// 렌더해도 4배 미만이고 서버에 더 있으면 이전 페이지를 당겨 맥락을 채운다. 대화별 토큰으로
+// 격리(빠른 전환 시 이전 루프 자가 중단, B1). 토큰 non-null = 진행 중 → 최상단 확장은 양보.
+function _applyRenderWindowSoon() {
   if (!messageLogEl) return;
-  // point-rail-range window: fill 은 대화별 토큰으로 격리한다. 빠른 대화 전환 시 새 fill 이
-  // 토큰을 갱신하면 이전 대화의 fill 루프가 다음 iteration 에서 스스로 중단하고(전역 flag 로
-  // 새 대화 fill 이 억제되던 B1 해소), 매 대화가 자기 창을 채운다. 토큰이 non-null 이면
-  // "fill 진행 중"이라 최상단 자동 로드는 양보한다(_loadOlderGuarded).
   const myToken = state.activeConversationId;
   state._fillToken = myToken;
   requestAnimationFrame(async () => {
     try {
-      let pages = 0;
       const target = () => messageLogEl.clientHeight * WINDOW_VIEWPORT_MULTIPLE;
+      // ① 상한: 로드된 것 안에서 창 확대(높이 4배 넘으면 멈춤).
       while (
         state._fillToken === myToken &&
         state.activeConversationId === myToken &&
+        (state.renderCount == null || state.renderCount < state.messages.length) &&
+        messageLogEl.scrollHeight < target()
+      ) {
+        const before = messageLogEl.scrollHeight;
+        const cur = state.renderCount == null ? state.messages.length : state.renderCount;
+        state.renderCount = Math.min(cur + WINDOW_RENDER_BATCH, state.messages.length);
+        renderMessages();
+        if (messageLogEl.scrollHeight <= before) break; // 진전 없으면 중단.
+      }
+      // ② 하한: 로드된 걸 다 렌더해도 4배 미만 + 서버에 더 있으면 이전 페이지 당김.
+      let pages = 0;
+      while (
+        state._fillToken === myToken &&
+        state.activeConversationId === myToken &&
+        state.renderCount >= state.messages.length &&
         state.hasMoreHistory &&
         messageLogEl.scrollHeight < target() &&
         pages < WINDOW_FILL_MAX_PAGES
       ) {
         pages++;
-        const before = messageLogEl.scrollHeight;
-        await loadHistory({ append: true });
-        if (messageLogEl.scrollHeight <= before) break; // 진전 없으면 중단.
+        const before = state.messages.length;
+        await loadHistory({ append: true }); // renderCount 도 로드분만큼 확장(loadHistory 내).
+        if (state.messages.length <= before) break;
       }
     } catch (_e) {
-      // 초기 채움 실패는 비치명 — 사용자는 스크롤/버튼으로 계속 로드할 수 있다.
+      // 실패는 비치명 — 사용자는 스크롤/버튼으로 계속 로드할 수 있다.
     } finally {
       if (state._fillToken === myToken) state._fillToken = null;
     }
   });
 }
 
-// 이전 기록 1페이지 로드 — 자동(최상단 스크롤)·수동(버튼) 공용 단일 게이트. _loadingOlder
-// (중복 요청) + _fillToken(초기 채움 진행 중) 가드로, 같은 before_id 를 두 트리거가 동시에
-// 요청해 같은 페이지가 이중 prepend 되는 것을 막는다.
+// 이전 기록 1페이지 서버 로드 — 자동(최상단)·수동(버튼) 공용 단일 게이트. _loadingOlder
+// (중복) + _fillToken(창 조정 중) 가드로 같은 before_id 이중 prepend 를 막는다.
 function _loadOlderGuarded() {
   if (!state.hasMoreHistory || state._loadingOlder || state._fillToken) return;
   state._loadingOlder = true;
@@ -6365,13 +6436,26 @@ function _loadOlderGuarded() {
     .finally(() => { state._loadingOlder = false; });
 }
 
-// 스크롤이 최상단(0.5 뷰포트)에 근접하면 이전 기록을 자동 로드한다. 단, 막대/검색/앵커
-// 점프의 프로그래매틱 스크롤(_pointScrolling) 중에는 억제해 목표 어긋남을 막는다(R2).
-function _maybeAutoLoadOlder() {
+// 스크롤이 최상단(0.5 뷰포트)에 근접하면: ① 렌더 창이 로드분보다 작으면 DOM 창을 먼저
+// 확장(이미 state 에 있는 이전 메시지를 추가 렌더)하고 ② 다 렌더됐고 서버에 더 있으면 이전
+// 페이지를 로드한다. 프로그래매틱 점프(_pointScrolling) 중에는 억제(목표 어긋남 방지, R2).
+function _maybeExpandOrLoadOlder() {
   if (!messageLogEl || state._pointScrolling) return;
+  if (state._loadingOlder || state._fillToken) return;
   const threshold = Math.max(200, messageLogEl.clientHeight * 0.5);
   if (messageLogEl.scrollTop > threshold) return;
-  _loadOlderGuarded();
+  const total = state.messages.length;
+  const rc = state.renderCount != null ? Math.min(state.renderCount, total) : total;
+  if (rc < total) {
+    // DOM 창 확장(이미 로드된 이전 메시지). renderMessages 가 맨-아래로 가므로 위치 보정.
+    const preH = messageLogEl.scrollHeight, preT = messageLogEl.scrollTop;
+    state.renderCount = Math.min(rc + WINDOW_RENDER_BATCH, total);
+    renderMessages();
+    messageLogEl.scrollTop = preT + (messageLogEl.scrollHeight - preH);
+    layoutMessagePointRail();
+  } else if (state.hasMoreHistory) {
+    _loadOlderGuarded(); // 서버 페이징(로드 후 renderCount 확장 + _end 위치 보정)
+  }
 }
 
 async function loadConversations(preferredConversationId = "", { allowCurrentFallback = true } = {}) {
@@ -10486,7 +10570,7 @@ async function initialize() {
   if (messageLogEl) {
     messageLogEl.addEventListener("scroll", () => {
       highlightActivePoint();
-      _maybeAutoLoadOlder();  // point-rail-range window: 최상단 근접 시 이전 기록 자동 로드.
+      _maybeExpandOrLoadOlder();  // point-rail-range window: 최상단 근접 시 창 확장 or 이전 기록 로드.
     }, { passive: true });
   }
   window.addEventListener("resize", () => {
@@ -10686,17 +10770,22 @@ function _jumpToSearchMatchedMessage() {
     return;
   }
   const needle = q.toLowerCase();
-  const rows = messageLogEl.querySelectorAll(".message");
-  let matched = null;
-  for (const row of rows) {
-    const text = (row.textContent || "").toLowerCase();
-    if (text.indexOf(needle) !== -1) {
-      matched = row;
+  // point-rail-range window: 렌더 창(DOM)이 아니라 state.messages 전체에서 매칭을 찾아(창
+  // 밖이면) 렌더 창을 확장한 뒤 점프한다 — 윈도잉으로 매칭이 DOM 밖일 수 있기 때문.
+  const all = Array.isArray(state.messages) ? state.messages : [];
+  let matchId = null;
+  for (const m of all) {
+    // 리뷰 발견5: id=null(optimistic) 메시지는 점프 대상이 될 수 없으므로 건너뛴다
+    // (매칭했는데 id 없어 조용히 중단되는 것 방지).
+    if (m && m.id != null && m.content != null && String(m.content).toLowerCase().indexOf(needle) !== -1) {
+      matchId = m.id;
       break;
     }
   }
   sm.pendingJumpQuery = "";
   sm.pendingJumpConvId = "";
+  if (matchId == null) return;
+  const matched = _ensureMessageRendered(matchId);
   if (!matched) return;
   try {
     // anim-pref: 네이티브 smooth 대신 pref-aware EaseOutExpo(point-rail·캘린더와 동일 경로).
