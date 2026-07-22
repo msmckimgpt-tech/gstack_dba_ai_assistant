@@ -184,3 +184,108 @@ def test_sweep_all_grounded_no_mutation():
     res = G.sweep_ungrounded_enum(conn, "mysql-kr-an1-auth", idx, dry_run=False)
     assert res["ungrounded"] == [] and res["dict_deleted"] == 0
     assert _dml(conn.captured) == []
+
+
+# ── sweep_unknown_schema_enum (self-heal 안전판 — 실제 스키마 목록 기준 DB 존재) ──────
+class _SchemaSweepCursor:
+    def __init__(self, state):
+        self.state = state
+        self._rows = []
+        self.rowcount = 0
+
+    def execute(self, sql, params=None):
+        self.state["captured"].append((sql, params))
+        norm = " ".join(sql.split()).upper()
+        if norm.startswith("SELECT DISTINCT SCHEMA_NAME FROM ENUM_DICTIONARY"):
+            self._rows = [(s,) for s in self.state["schemas"]]
+            self.rowcount = len(self._rows)
+        elif norm.startswith("DELETE FROM ENUM_DICTIONARY"):
+            self.rowcount = self.state["delete_rc"]
+        elif norm.startswith("UPDATE ENUM_FEEDBACK"):
+            self.rowcount = self.state["update_rc"]
+        else:
+            self._rows = []
+            self.rowcount = 0
+
+    def fetchall(self):
+        return self._rows
+
+    def close(self):
+        pass
+
+
+class _SchemaSweepConn:
+    def __init__(self, schemas, delete_rc=1, update_rc=1):
+        self.state = {"captured": [], "schemas": list(schemas),
+                      "delete_rc": delete_rc, "update_rc": update_rc}
+
+    def cursor(self):
+        return _SchemaSweepCursor(self.state)
+
+    @property
+    def captured(self):
+        return self.state["captured"]
+
+
+def test_schema_sweep_empty_known_failopen():
+    conn = _SchemaSweepConn(["dbLog"])
+    res = G.sweep_unknown_schema_enum(conn, "mysql-kr-an1-auth", [], dry_run=False)
+    assert res["scanned"] == 0 and res["ungrounded"] == []
+    assert conn.captured == []   # known 없으면 SELECT 조차 안 함
+
+
+def test_schema_sweep_dry_run_lists_unknown():
+    conn = _SchemaSweepConn(["dbAuth", "dbLog"])
+    res = G.sweep_unknown_schema_enum(conn, "mysql-kr-an1-auth", ["dbAuth", "dbGame"], dry_run=True)
+    assert res["scanned"] == 2
+    assert [u["schema_name"] for u in res["ungrounded"]] == ["dbLog"]  # 실존 dbAuth 제외
+    assert res["dict_deleted"] == 0
+    assert _dml(conn.captured) == []
+
+
+def test_schema_sweep_execute_removes_unknown_db():
+    conn = _SchemaSweepConn(["dbAuth", "dbLog"], delete_rc=5, update_rc=1)
+    res = G.sweep_unknown_schema_enum(conn, "mysql-kr-an1-auth", ["dbauth"], dry_run=False)  # 대소문자 무시
+    assert [u["schema_name"] for u in res["ungrounded"]] == ["dbLog"]
+    assert res["dict_deleted"] == 5 and res["feedback_rejected"] == 1
+    dml = _dml(conn.captured)
+    assert len(dml) == 2
+    assert "source='auto'" in dml[0][0]
+    assert dml[0][1] == ("mysql-kr-an1-auth", "dbLog")
+    assert "status='rejected'" in dml[1][0]
+    assert dml[1][1] == ("mysql-kr-an1-auth", "dbLog")
+
+
+def test_schema_sweep_all_known_no_mutation():
+    conn = _SchemaSweepConn(["dbAuth", "dbGame"])
+    res = G.sweep_unknown_schema_enum(conn, "mysql-kr-an1-auth", ["dbAuth", "dbGame"], dry_run=False)
+    assert res["ungrounded"] == [] and res["dict_deleted"] == 0
+    assert _dml(conn.captured) == []
+
+
+def _deleted_schemas(captured):
+    return {p[1][1] for p in _dml(captured) if "DELETE" in " ".join(p[0].split()).upper()}
+
+
+def test_schema_sweep_confirm_gate_defers_first_seen():
+    # catalog-shrink 가드: confirm_lower 에 있는(직전 tick 도 unknown) dbLog 만 삭제, 처음 본 dbTmp 는 보류
+    conn = _SchemaSweepConn(["dbAuth", "dbLog", "dbTmp"], delete_rc=1, update_rc=1)
+    res = G.sweep_unknown_schema_enum(conn, "s", ["dbAuth"], dry_run=False, confirm_lower={"dblog"})
+    assert {u["schema_name"] for u in res["ungrounded"]} == {"dbLog", "dbTmp"}  # 후보 전체 기록
+    assert _deleted_schemas(conn.captured) == {"dbLog"}                         # 확인된 것만 삭제
+
+
+def test_schema_sweep_confirm_none_deletes_all_unknown():
+    # confirm_lower=None(게이트 없음, 운영자 경로) → unknown 전체 삭제
+    conn = _SchemaSweepConn(["dbAuth", "dbLog", "dbTmp"], delete_rc=1, update_rc=1)
+    G.sweep_unknown_schema_enum(conn, "s", ["dbAuth"], dry_run=False, confirm_lower=None)
+    assert _deleted_schemas(conn.captured) == {"dbLog", "dbTmp"}
+
+
+def test_schema_sweep_select_excludes_empty_schema():
+    # 빈 schema_name enum(bare-schema)은 조회에서 제외 → 절대 미터치(안전)
+    conn = _SchemaSweepConn(["dbLog"])
+    G.sweep_unknown_schema_enum(conn, "s", ["dbAuth"], dry_run=True)
+    sel = [sql for sql, _ in conn.captured
+           if "SELECT DISTINCT SCHEMA_NAME" in " ".join(sql.split()).upper()]
+    assert sel and "schema_name <> ''" in sel[0]

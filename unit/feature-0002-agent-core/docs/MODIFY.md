@@ -404,6 +404,23 @@ source_of_truth: true
   - `shared/config.py`: `AGENT_ENUM_SCHEMA_GROUNDING`(기본 "1", `__all__` 등록).
   - `scripts/enum_grounding_sweep.py`: 운영자용 소급 정리(dry-run 기본·`--execute`·`--scope`, common scope=active None 정합).
   - `tests/test_kb_enum_grounding.py`(14: 정규화·판정·재현 시나리오·sweep) + `tests/test_enum_autopropose_gate.py`(3: wiring 환각 차단·flag off·fail-open).
-- 비변경: manual promote/create 경로·검토 큐 승인/거부(admin_metadata)·enum_dictionary/enum_feedback 스키마·마이그레이션·RBAC 0. label 내용·column-레벨 검증 미포함(범위 밖).
-- 검증: 신규 20 PASS · 기존 enum/glossary 35 PASS · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
+- 자가수리(self-heal, 사용자 추가 요청):
+  - `src/modules/insight.py` `_enum_self_heal(swept_scopes, *, engine, known_schemas, scanned)` 신설 + `run_insight_cycle` per-(scope,db) `else` 블록 배선(카탈로그 refresh 직후·scope 유효·`_ds_key is not None` 가드 앞→기본 MySQL 커버) + cycle-local dedup `_enum_swept_scopes`. 워커가 방금 로드한 **완전한** 실제 스키마 목록(`_scan_schemas`) 기준 '없는 DB' enum 회수. `scan_started` 게이트 + grounding flag 결합 + MSSQL 제외.
+  - `src/modules/kb_glossary.py` `sweep_unknown_schema_enum(conn, scope_key, known_schemas, *, dry_run, confirm_lower)` 신설(schema_name ∉ 실제목록 제거·bare-schema 미터치·source='auto' DELETE·scope 바인딩·case-insensitive·`confirm_lower` catalog-shrink 가드=2회 연속 관측 시에만 삭제).
+  - `shared/config.py` `AGENT_ENUM_SELF_HEAL`(기본 "1", `__all__` 등록).
+  - `tests/test_enum_self_heal.py`(10) + `sweep_unknown_schema_enum`(4).
+- 비변경: manual promote/create 경로·검토 큐 승인/거부(admin_metadata)·enum_dictionary/enum_feedback 스키마·마이그레이션·RBAC·ask-worker(예방 게이트로 이미 커버) 0. label 내용·column-레벨 검증 미포함(범위 밖).
+- 검증: 신규 37 PASS(예방 20 + self-heal 계열 17) · 기존 enum/glossary 35 PASS · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
 - Cross-ref: REV/TASK/TEST-20260722T033854-enum-schema-grounding · 선행 CHG-20260629-glossary-conv-autoreg(대칭 용어사전 경로)·0039 enum autopropose · cross-ref feature-0003 admin_metadata(검토 큐 UI, 무편집) · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260722T033854-enum-self-heal (ENUM 자가수리 — insight-worker 주기 소급 정리, 사용자 추가 요청, Major §12.3)
+> 예방 게이트(CHG-20260722T033854-enum-schema-grounding)에 이은 후속(같은 cycle·같은 branch). 사용자 추가 요청 "재발해도 insight/ask-worker 동작에 따라 자가수리". 예방 게이트 commit(87b06a1f) 이후 self-heal 을 별도 change set 으로 추가.
+- Changes(feature-0002):
+  - `src/modules/insight.py` `_enum_self_heal(swept_scopes, *, mem_conn, engine, known_schemas, scanned)` 신설 + `run_insight_cycle` per-(scope,db) `else` 블록 배선(스캔 성공·scope 유효·`_ds_key is not None` 가드 앞→기본 MySQL 커버) + cycle-local dedup `_enum_swept_scopes`. 워커가 방금 로드한 **완전한** 실제 스키마 목록(`_scan_schemas`=load_known_schemas) 기준 '없는 DB' enum 회수.
+  - `src/modules/kb_glossary.py` `sweep_unknown_schema_enum(conn, scope_key, known_schemas, *, dry_run, confirm_lower)` 신설.
+  - `shared/config.py` `AGENT_ENUM_SELF_HEAL`(기본 "1", `__all__` 등록).
+  - `tests/test_enum_self_heal.py`(13) + `tests/test_kb_enum_grounding.py` sweep_unknown_schema_enum(confirm/빈-schema).
+- 안전(§18.8 적대 패널 2 라운드 — 파괴적 자동 DELETE): Round1 BLOCKER1(부분 카탈로그 오삭제)+MAJOR2(매8s·decoupling) → 재설계 Round2 RESOLVED — 완전 실제 스키마 목록 기준·MySQL allowlist·`scan_started` 게이트·grounding flag 결합. 잔여 MINOR-A(권한회수 축소) → catalog-shrink 가드(2회 연속 관측 KV persistence). NIT-C/D 정리.
+- 비변경: ask-worker(예방 게이트로 이미 커버)·enum 스키마·마이그레이션·RBAC 0. table-레벨/bare-schema 자동 정리는 미포함(운영자 `scripts/enum_grounding_sweep.py`).
+- 검증: 신규 self-heal 계열 17 PASS · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
+- Cross-ref: REV/TASK/TEST-20260722T033854-enum-schema-grounding(self-heal 라운드) · 선행 CHG-20260722T033854-enum-schema-grounding(예방 게이트) · insight-worker(§16.3)·0039 enum autopropose · ANCHOR 0002 §1~§3 무충돌.

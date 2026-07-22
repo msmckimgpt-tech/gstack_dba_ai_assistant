@@ -434,3 +434,19 @@ source_of_truth: true
 - **QA 공백(수정)**: 순수함수+FakeConn happy-path 위주 지적 → 게이트 wiring 통합테스트 신설(`test_enum_autopropose_gate.py` 3: 환각 차단·flag off 전건통과·fail-open) + 빈-set sweep no-op 테스트 추가. `not is_enum_grounded` 분기 뒤집기 검출 가능.
 - 검증: 신규 20 PASS(grounding 14 + wiring 3 + sweep 추가 3) · 기존 enum/glossary 35 PASS · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
 - Cross-ref: CHG/TASK/TEST-20260722T033854-enum-schema-grounding · ANCHOR 0002 §1~§3(core/modules 책임분리) 무충돌 · cross-ref feature-0003 admin_metadata(검토 큐 UI, 무편집).
+
+## REV-20260722T033854-enum-schema-grounding [SUBAGENT:adversarial-backend+security+qa ×2 rounds] self-heal 라운드 — insight-worker ENUM 자가수리 (사용자 추가 요청)
+- 맥락: 예방 게이트에 이어 "재발해도 insight/ask-worker 동작에 따라 자가수리". insight-worker tick 이 스키마 스캔 직후 활성 scope 의 '없는 DB' enum 을 주기 회수(파괴적 자동 DELETE) → 적대 패널 2라운드.
+- **Round 1 — BLOCKER 1 + MAJOR 2 적발(초안: table_insight 점진 카탈로그 기반 table-레벨 sweep)**:
+  - **BLOCKER-1**: 부분(불완전) 카탈로그에서 legit enum 영구 오삭제 — table_insight 는 batch·6h·budget rotation 축적이라 buildup/auth-cooldown 창에 **항상** 불완전, 미분석 테이블의 source='auto' enum 을 DELETE.
+  - **MAJOR-2**: `else` 블록이 6h interval 미경과 조기 return 에도 실행 → 매 8s tick 낭비·파괴 반복("refresh 직후" 서사 거짓).
+  - **MAJOR-3**: `AGENT_ENUM_SCHEMA_GROUNDING=0`(게이트 off)이 self-heal 파괴를 못 막음 → register/delete thrash·명시 허용분 삭제.
+- **안전 재설계 → Round 2 재검증 RESOLVED(코드 라인 근거)**:
+  - BLOCKER-1 **RESOLVED**: table_insight 카탈로그 폐기, 워커가 방금 로드한 **완전한** 실제 스키마 목록(`_scan_schemas`=`load_known_schemas`=단일 `information_schema.SCHEMATA` 조회, budget/rotation 무관 전량)으로 `sweep_unknown_schema_enum` 이 schema(=DB) 존재만 검증. 빈 schema_name 은 SQL `<> ''` + 루프로 절대 미터치. 목록 완전 → false-deletion 원천 차단.
+  - MSSQL 제외 **RESOLVED**: `engine != 'mysql'`(allowlist, NIT-D 반영) → schema≠database 엔진 오삭제 차단. MySQL `_db_targets=[None]` 단일이라 다중 DB last-value 문제 없음.
+  - MAJOR-2 **RESOLVED**: `scanned=_rep.get('scan_started')` 게이트 → 실제 스캔 tick(~6h)에만. 신규 sweep 은 `SELECT DISTINCT schema_name` 1회로 구설계 full-catalog read 대비 경량.
+  - MAJOR-3 **RESOLVED**: `AGENT_ENUM_SCHEMA_GROUNDING and AGENT_ENUM_SELF_HEAL` 결합(둘 다 on 일 때만).
+- **Round 2 잔여 MINOR-A(권한 회수/부분조회로 known_schemas 일시 축소 시 오삭제) → catalog-shrink 가드로 봉인**: per-scope KV(`enum_self_heal_prev_unknown`)로 스키마 부재를 **직전 scanned tick + 이번 tick 2회 연속** 관측할 때만 삭제(`sweep_unknown_schema_enum(confirm_lower=)`) → 일시 축소 tick 의 오삭제 흡수(transient 는 재출현 시 confirm 에서 빠져 미삭제). NIT-C(config 주석 stale) 갱신, NIT-D(denylist→allowlist) 반영.
+- **범위(정직·MINOR-B)**: self-heal 자동 정리는 **whole-nonexistent-DB enum** 만(안전 subset). 실존 DB 안 wrong-table·bare-schema(db prefix 無)·system-schema 환각은 보존 → 운영자 dry-run 검증 `scripts/enum_grounding_sweep.py`(table-레벨) 담당. ask-worker(run_agent→_enum_autopropose) 경로는 예방 게이트로 이미 커버(무변경).
+- 검증: 신규 self-heal 14 PASS(게이트 결합·scanned·engine allowlist·fail-open·dedup·예외·shrink-가드 confirm/저장·빈-schema 제외) · feature-0002 전체 회귀 신규 실패 0 · ruff clean. Round-2 판정: BLOCKER/MAJOR 구조적 흡수, 잔여 MINOR 봉인.
+- Cross-ref: CHG/TASK/TEST-20260722T033854-enum-schema-grounding(self-heal) · `modules/insight.py _enum_self_heal`+`sweep_unknown_schema_enum` · ANCHOR 0002 §1~§3 무충돌.
