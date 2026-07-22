@@ -736,3 +736,7 @@ source_of_truth: true
 - 위에 더 불러올 대화(윈도우 밖 renderCount<total 또는 서버 미로드 hasMoreHistory)가 있으면 messageLog 상단에 페이드 그라데이션만 표시(칩·텍스트·스피너 없음 — 사용자 결정: 최소 시각 신호). pointer-events:none(무방해)·rail 폭 제외. `_updateHistoryTopIndicator` 를 renderMessages 끝+empty 경로에서 호출.
 - 백엔드/편집로직/RBAC/스키마 무영향. point-rail-range window(renderCount) 위에 얹은 순수 표시 레이어.
 - 검증: `node --check` PASS. POST-DEPLOY PB-0008 예정.
+
+## CHG-20260722T195000-history-top-indicator-postverify (POST-DEPLOY 라이브 검증, 비-정책 doc-only)
+- POST-DEPLOY PB-0008 라이브 PASS(배포본 029927dc): 위에 더 있음→페이드 표시·전부 로드→숨김·짧은 대화→없음·pointer-events:none 무방해. 사용자 요구 실증. 코드 0(스크린샷 evidence 추가). 배포 초회 transient soak 롤백→재실행 remedy.
+- Files: `docs/test-runs.d/20260722T192736-history-top-indicator.md`, `docs/test-runs.d/evidence/history-top-fade-live.png`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.

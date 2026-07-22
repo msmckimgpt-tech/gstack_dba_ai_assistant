@@ -658,3 +658,6 @@ source_of_truth: true
 ## REV-20260722T192736-history-top-indicator [SKIPPED:trivial-display-only] — 대화 상단 페이드 신호 (Minor §12.3 — feature-0003 web/UI, /_template:entry 후속)
 - Panel skip 사유(§18.8): 순수 표시 변경 — 페이드 div 1개(pointer-events:none) + CSS gradient + `_updateHistoryTopIndicator`(renderCount/hasMoreHistory 판정으로 hidden 토글). 백엔드·엔드포인트·RBAC·스키마·편집 로직 0, 보안 posture 불변. 선례 REV-20260722T020408-msg-edit-textarea-contrast([SKIPPED:trivial-display-only])·ds-test-gate-fix 와 동류.
 - 설계: 사용자 검토 후 결정 — 페이드만(칩·스피너·텍스트 제거로 난잡함 회피), 점프=캘린더·로드=스크롤 자동. 위에 더 있음 판정 = `renderCount<total || hasMoreHistory` (윈도잉 창 밖 + 서버 미로드 둘 다 포함).
+
+## REV-20260722T195000-history-top-indicator-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 라이브 검증 기록
+- Panel skip 사유(§18.8): 코드 0(문서 전용 POST-DEPLOY 실증). 구현 리뷰 정본 = REV-20260722T192736-history-top-indicator([SKIPPED:trivial-display-only]). 배포(029927dc)+라이브 실측(페이드 표시/숨김/무방해) append 만.
