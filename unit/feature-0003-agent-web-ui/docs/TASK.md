@@ -6026,5 +6026,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 보안/데이터 무영향: 백엔드 `create_conversation_share` 의 `conversation.share.create` 403·소유 IDOR 게이트 불변 — 순수 표시 게이트 복구(RBAC/스키마/엔드포인트 shape 0).
 - [x] 검증(pre-commit): `make test` 전체 GREEN(신규 3 PASS)·ruff PASS. 첫 run 4건 실패=`--no-deps` `postgres-replica` 레이스 flake(base main·재실행 RC=0 확증·2건은 feature-0002라 인과 없음).
 - [x] §18.8 적대적 리뷰(security/ux, general-purpose subagent) — REVIEW.md REV-20260722T103254-share-menu-perm-wiring.
-- [ ] PB-0008 Windows-browser (POST-DEPLOY 예정): merge → `deploy-web`(origin/main) → 라이브 win-browser 실측(☰ '여기까지/여기부터 공유' 활성·클릭 동작·floor arm 배너·pageerror 0) → test-runs.d fragment 20260722T103254 갱신. 사유 TEST.md CHECK#13.
-- [ ] verify-completion(feature-0003) → commit → push → PR/머지·배포(deploy_scope: included).
+- [x] verify-completion(feature-0003) PASS → commit `7a5b092a` → push → PR #885 → 병렬 PR #883 충돌 rebase(FUNCTION.md union) → CI `test` PASS → main 병합 `066cec5e` → `make deploy-web-only` 무중단 롤링(soak PASS).
+- [x] PB-0008 Windows-browser (POST-DEPLOY 라이브 PASS, 2026-07-22·배포본 066cec5e): win-browser relay(Chrome 150) bootstrap_admin 본인 대화 ☰ 실측 — `여기까지 공유`·`여기부터 공유` 항목 **`is-access-blocked` 없음**(수정 전 항상 blocked 회귀 복구)·`여기부터 공유` 클릭 → onSelect 실행(비차단·오류토스트0·메뉴 닫힘) → floor arm 배너·마커 표시·pageerror 0. 서빙 app.js `share.create` 리터럴 0. 사용자 신고 해소 라이브 실증 완료. test-runs.d fragment 20260722T103254 POST-DEPLOY 갱신 + evidence/share-menu-perm-wiring-live.png.

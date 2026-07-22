@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260722T105320-share-menu-perm-wiring-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260722T103254-share-menu-perm-wiring, 비-정책 doc-only)
+- Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료 + evidence PNG 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260722T103254-share-menu-perm-wiring(SHIP).
+- 라이브 실측(배포 066cec5e, https://localhost/ bootstrap_admin, win-browser Chrome relay): 본인 대화 말풍선 ☰ 3항목(`여기서 분기`·`여기까지 공유`·`여기부터 공유`) 모두 `is-access-blocked` 없음(수정 전 공유 2항목 항상 blocked 회귀 복구)·`여기부터 공유` 클릭 → onSelect(beginShareFloor) 실행·floor arm 배너/마커 표시·pageerror 0. 서빙 app.js `conversation.share.create` action 리터럴 0.
+
 ## REV-20260722T103254-share-menu-perm-wiring [SUBAGENT:adversarial-security+ux] — 말풍선 ☰ '여기까지/여기부터 공유' 권한 연결(action 매핑) 회귀 수정 (TASK-20260722T103254-share-menu-perm-wiring, Minor §12.3 frontend-only) — SHIP
 - 대상 diff: `static/app.js` 2줄(☰ 공유 항목 action `"conversation.share.create"`→`"conversation.share"`) + `tests/test_menu_action_permission_wiring.py` 신규. §18.8 적대 패널(general-purpose subagent, security/ux 렌즈) — 결함 적발 목적.
 - **Q1 정확성 CONFIRMED-OK**: `"conversation.share"` → switch(app.js:606-607) → codes `["conversation.share.create"]` 정확 매핑. share.create 는 own/any 분기 없는 단일 flat 권한이라 ownership 분기 불요(rename/delete 와 다름). 형제 conv-item '공유'(app.js:7763)와 동작 동일 — `markAccessBlocked` 가 `blocked=!can("conversation.share.create")=false` 로 정상 활성.
