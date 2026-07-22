@@ -639,3 +639,6 @@ source_of_truth: true
 - 적대 코드리뷰(REV subagent) 반영: R1(cross-conversation `state.messages` 오염 — `loadHistory` gen-guard)·R2(프로그래매틱 점프 중 자동로드가 목표 어긋냄 — `_pointScrolling`)·B1(전역 `_fillingWindow` 가 빠른 전환 시 새 대화 fill 억제·이전 루프 오염 — 대화별 `_fillToken`). 핵심 우려 preserveScroll flag leak 은 flag 제거 재설계로 원천 소거(리뷰어 moot 확인).
 - Known limitation B2 (코너케이스, 미수정): append(과거 자동로드)와 그 대화의 processing 새 run pending-bubble 최초 생성이 동시일 때, `_endAppendScrollPreserve` 의 `delta = scrollHeight - preH` 가 바닥 성장분(pending bubble)을 포함해 소폭 과도 스크롤(뷰가 pending 높이만큼 위로 튐). 발생 조건 희소(유휴 과거 탐색 중 새 run 최초 pending)·자기치유(다음 클린 로드)·영향 경미(pending 높이 소). 별도 cycle 재검토 여지.
 - 위험도 Major: 다중 파일·스크롤 로직·회귀 위험(신규 가상화 아님·기존 페이징 재사용으로 완화). 비파괴 additive — 인증/인가/데이터 무영향.
+
+## REV-20260722T135500-point-rail-range-window-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 라이브 시각검증 기록 (CHG-20260722T1355-point-rail-range-window-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 실 구현 코드 리뷰 정본 = REV-20260722T125200-point-rail-range-window([SUBAGENT:general-purpose]). 본 cycle 은 배포(22c3b9cb)+Windows Chrome 150 라이브 실측(A·B 라이브 PASS·C 자동 페이징 20개+ 대화 부재로 미트리거) 결과 append 만.
