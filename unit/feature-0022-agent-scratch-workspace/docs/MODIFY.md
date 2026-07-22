@@ -52,3 +52,9 @@ source_of_truth: true
   `_statement_timeout_sql()` 헬퍼로 int 인라인(주입 불가). 라이브 end-to-end 스모크(반입→JOIN)가
   적발 — 유닛테스트는 PG 없이 guard 만 검증해 놓친 경로.
 - `test_scratch.py`: `_statement_timeout_sql` placeholder-free 회귀 테스트 추가(총 22건).
+
+## CHG-20260722-scratchsql-table — scratch_sql 결과셋 출력을 표 형식으로 통일 (사용자 피드백)
+- `tools.py`: `_tool_scratch_sql` 이 결과셋을 plain-text(` | ` 나열) 대신 **execute_sql 과 동일한
+  `_format_result_sets`**(Markdown 표: `| col |` + 구분선 + 행수 footer)로 출력하도록 변경. 죽은
+  `_fmt_scratch_rows` 제거. 미리보기 캡·절단 안내는 execute_sql 파라미터(_TOOL_PREVIEW_*)와 동일.
+- `test_scratch.py`: scratch_sql 출력이 Markdown 표(헤더·구분선·데이터행)인지 회귀 테스트 추가(총 23건).

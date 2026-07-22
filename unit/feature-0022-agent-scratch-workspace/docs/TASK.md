@@ -53,3 +53,7 @@ source_of_truth: true
 - [x] TASK-0018: .env AGENT_SCRATCH_PG_* (postgres 직결 — pgbouncer 우회, userlist 미등록 회피).
 - [x] TASK-0019: AGENT_SCRATCH_ENABLED=1 (WebRuntimeSettings DB + 스냅샷).
 - [x] TASK-0020: 라이브 스모크가 run_sql SET 버그 적발 → 수정(CHG-runsql-fix) → 재배포·재스모크.
+- [x] TASK-0021: 라이브 자율 사용 확인 — cross-source(2 dev DS) import→UNION→합산 중앙값을 assistant 가
+  scratch 로 자율 수행(scratch_import×2 + scratch_sql). 검증 후 임시 테스트 제품·잔재 정리.
+- [x] TASK-0022: 사용자 피드백 — scratch_sql 결과셋 출력을 execute_sql 동일 표(_format_result_sets)
+  형식으로 통일(plain-text ` | ` 나열 → Markdown 표). 죽은 _fmt_scratch_rows 제거·회귀 테스트.
