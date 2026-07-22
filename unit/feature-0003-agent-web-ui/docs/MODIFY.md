@@ -767,3 +767,9 @@ source_of_truth: true
 - Verification: `py_compile` 5 + `node --check` 2 · 보안 단위 10 PASS · §18.8 적대 보안 리뷰(REVIEW) · POST-DEPLOY 양 surface PB-0008.
 - Files: `routers/{_conv_store,conversations,share}.py`, `app.py`, `static/{app.js,share.js,share.css}`, `tests/test_shared_branch_readonly_paging.py`, `docs/{TASK,MODIFY,FUNCTION,REPORT,TEST,REVIEW}.md`, `../feature-0019-message-editing/docs/ANCHOR.md`(INV-4 개정).
 - landing/배포: verify-completion → commit → PR/머지=자동 동기화. 배포=외부 영향 confirm(이미 승인 범위).
+
+## CHG-20260722T130000-shared-branch-readonly-paging-postverify (shared-branch-readonly-paging POST-DEPLOY, 비-정책 doc-only)
+- POST-DEPLOY 배포·양 surface 라이브 검증 기록 + TASK 완료. 코드/자산 0.
+- 배포: PR #887 → main 622b7434 → `deploy-web.sh --web-only`(soak PASS).
+- 라이브(배포본 622b7434, 대화 20260722015229-79da15cb=group+active share): 공유-링크 익명 API — pager 메타·branch_view 읽기전용 전환·999999999 fail-closed. 인앱 그룹 인증 API — pager(window-scoped)·branch_view 전환·active_leaf 불변. Windows-browser 시각 미수행(브리지 다운, §15.4.1 escape — API 실측+단위 12 로 보완).
+- Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/TEST.md`.

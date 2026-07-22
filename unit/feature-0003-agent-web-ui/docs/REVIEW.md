@@ -686,3 +686,7 @@ source_of_truth: true
   - **[3-2] 권고(bounded 문서화)**: 브랜치된 그룹 **동시 @assistant overlap** 시 cross-run fork 로 한쪽 turn 이 비활성 sibling 으로 갈 수 있음(per-run 커서는 run 내부만 봉인 — branch-chain-race fix 의 알려진 경계, [5] version-active 격하). 드묾·availability(누출 아님)·재답변으로 복구 가능. 후속 하드닝(첫 write active_leaf read 를 SELECT FOR UPDATE 직렬화) 여지 — 본 cycle 범위 밖 문서화.
 - 반영 후 검증: `py_compile` 5 + `node --check` 2 · 보안 단위 `tests/test_shared_branch_readonly_paging.py` **12 PASS**(id-범위/window 스코핑·resolver fail-closed·[3] 그룹채팅 체인/비분기 무회귀) · feature-0003 전체 회귀(예정).
 - Cross-ref: CHG/TASK/FUNCTION/TEST-20260722T122635 · feature-0019 ANCHOR INV-4 개정(mutation 잠금 유지+read 가시성 확장) · POST-DEPLOY 양 surface PB-0008.
+
+## REV-20260722T130000-shared-branch-readonly-paging-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 공유 읽기전용 페이징 배포 + 양 surface 라이브 검증 기록 (CHG-20260722T130000)
+- Panel skip 사유(§18.8): 코드 0(POST-DEPLOY 실증·TASK 완료). 코드/보안 리뷰 정본 = REV-20260722T122635([SUBAGENT:general-purpose] SHIP-WITH-FIXES, 누출 0).
+- 실증(배포본 622b7434): **공유-링크(익명)** pager 메타 1/2·branch_view=1313 읽기전용 전환·999999999 fail-closed. **인앱 그룹(인증)** pager window-scoped·branch_view 전환·active_leaf 불변(읽기전용 확인). 서빙 자산 반영. Windows-browser 시각 스크린샷은 브리지 다운으로 미수행(§15.4.1 escape) — API end-to-end + 단위 12 PASS 로 보완, 시각 확인은 브리지 복구/사용자 브라우저 잔여.
