@@ -8729,13 +8729,31 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-ai-btn:disabled { opacity: .6; cursor: progress; }
 
 /* ═══ feature-0019 message-editing: 메시지 편집 UI + ChatGPT식 버전 페이징 ═══════ */
-.message-edit-box { display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
+/* edit-ui-contrast: 편집 UI 는 파란 user 말풍선(.message.is-user .message-bubble,
+   background:var(--bubble-user)/color:#fff) 안에 삽입된다. textarea 가 흰 배경(--surface)에
+   말풍선의 흰 글자색을 상속(color:inherit)하면 글자가 사라진다. 편집 진입 시 말풍선을
+   중립 편집 패널로 전환(.message-bubble-editing)하고, 컨트롤은 명시 전경색을 쓴다. */
+.message-edit-box {
+  display: flex; flex-direction: column; gap: 8px; min-width: 240px;
+  color: var(--text);                 /* 말풍선 흰 글자색(#fff) 상속 차단 */
+}
 .message-edit-textarea {
   width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px;
   padding: 8px 10px; border: 1px solid var(--primary); border-radius: 10px;
-  font: inherit; font-size: 14px; line-height: 1.5; background: var(--surface); color: inherit;
+  font: inherit; font-size: 14px; line-height: 1.5;
+  background: var(--surface); color: var(--text);   /* was color:inherit → 흰 배경 위 흰 글자(안 보임) 해소 */
 }
-.message-edit-textarea:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; }
+.message-edit-textarea::placeholder { color: var(--text-muted); }
+.message-edit-textarea:focus { outline: 2px solid var(--primary-soft); outline-offset: 1px; border-color: var(--primary); }
+
+/* 편집 진입 시 파란 말풍선 → 중립 편집 패널: 컨트롤 색이 배경과 싸우지 않도록.
+   own(파랑) 말풍선 규칙 `.message.is-user .message-bubble`(특이도 0,3,0)을 이기려면 0,4,0 필요. */
+.message.is-user .message-bubble.message-bubble-editing {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
 .message-edit-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .message-edit-btn {
   font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px;

@@ -686,3 +686,14 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(releases 수·07-21 head 1항목[improved/work]·07-16 보존·스키마·누출0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+
+## CHG-20260722T020408-msg-edit-textarea-contrast (20260722T020408-msg-edit-textarea-contrast — 메시지 '수정' 편집 UI 글자 비가시 수정 + 편집 폼 재구성, Minor §12.3, frontend-only 표시전용)
+- 계기: 사용자 신고 — 보낸 요청 메시지를 '수정' 기능(단순 수정 / 요청사항 수정)으로 편집할 때 텍스트박스 배경색과 글자색이 같아 글자가 안 보임. "실제 사람이 사용할 수 있도록 UI 재구성" 요청.
+- 근본원인: `.message-edit-textarea` 가 흰 배경(`var(--surface)`#fff)에 `color:inherit` — 편집 UI 가 삽입되는 파란 user 말풍선(`.message.is-user .message-bubble`, `color:#fff`)의 흰 글자색을 상속 → 흰 글자 on 흰 배경(대비 1:1) 비가시.
+- 변경(`static/styles.css`): ① textarea `color:inherit`→`color:var(--text)`(#26251e) ② `.message-edit-box` `color:var(--text)` 상속 차단(방어) ③ `.message.is-user .message-bubble.message-bubble-editing`(특이도 0,4,0 — 파랑 0,3,0 을 이김) 신설로 편집 진입 시 파란 말풍선 → 중립 편집 패널(surface/border/shadow) 전환 ④ `::placeholder` 색·focus border 보강.
+- 변경(`static/app.js` `_startInlineEdit`, +1행 +주석): `bubbleEl.classList.add("message-bubble-editing")`. 취소(renderMessages)/성공(refreshWorkspace) 재렌더 경로에서 말풍선 재생성되어 클래스 자동 소멸(제거 불필요).
+- 보안/인가 무영향: 표시 계층만 — 편집 엔드포인트(`_submitMessageEdit`)·브랜치/IDOR 게이트·RBAC·스키마 0. `message-bubble-editing` 은 신규 unique 클래스(기존 `is-editing`(admin dashboard)·`.dashboard-widgets.is-editing` 와 선택자 분리·미충돌). feature-0019 ANCHOR §1-§3(브랜치 데이터 모델·INV-1~5) 무충돌.
+- cache-buster: `?v=dev` 고정(index/admin.html 편집 0 — inject_asset_stamp.py 빌드 자동주입·deploy-web asset_stamp_verify 하드게이트, 수동 bump 폐지).
+- Verification: `node --check` PASS · **headless Chromium 실측**(실 styles.css cascade) — 수정본 textarea 대비 15.38:1·편집 말풍선 파랑→중립전환·재답변버튼 5.17:1 / 수정 전 재현 1.0:1(버그 확인) · 스크린샷. **POST-DEPLOY PB-0008 Windows-browser 라이브 예정**(TEST.md CHECK#13, test-runs.d fragment).
+- Files: `static/styles.css`, `static/app.js`, `docs/{TASK,REPORT,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260722T020408-msg-edit-textarea-contrast.md`.
+- landing/배포: verify-completion(feature-0003) → commit → push → PR/머지=자동 동기화 정책. **배포(`make deploy-web`)는 외부 영향 — 사용자 confirm**.

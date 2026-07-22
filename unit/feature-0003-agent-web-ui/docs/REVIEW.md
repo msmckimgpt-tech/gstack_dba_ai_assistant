@@ -619,3 +619,9 @@ source_of_truth: true
 - **비용(정상)**: 숨김 탭 `stopRunDetectPolling` 로 완전 정지·활성 탭 4s clean reschedule — 백오프 정상. "모든 대화 유휴 폴링" 은 사용자 선택 scope 의 product 결정(구현 결함 아님).
 - 반영 후 검증: `node --check` PASS · 유닛 `verify_run_detect_poll.mjs` **28/28**(D1 재무장 S7·re-entrancy S8 포함). feature-0009 그룹 경로 안전(리뷰어 확인 — foreign run 을 progressRunId 로 채택, 5870 가드 무충돌).
 - Cross-ref: CHG-20260721T1758-realtime-progress-propagation · ANCHOR feature-0003 §1-§3 무충돌 · TEST §16.6 PB-0008 PASS(실 Windows Chrome 150).
+
+## REV-20260722T020408-msg-edit-textarea-contrast [SKIPPED:trivial-display-only] — 메시지 '수정' 편집 UI 글자 비가시 수정 + 편집 폼 재구성 (20260722T020408-msg-edit-textarea-contrast, Minor §12.3)
+- Panel skip 사유(§18.8): 순수 표시 변경 — `styles.css` 색/특이도 규칙 + `app.js` 1행 `classList.add`. 백엔드·엔드포인트·RBAC·스키마·편집 로직(`_submitMessageEdit`·브랜치·IDOR 게이트) 0, 보안 posture 불변. 선례 REV-20260716T051931-ds-test-gate-fix([SKIPPED:trivial-regression-fix-display-only]) 와 동류(§18.8 표: display-only 프론트 표시 수정 → full 패널 skip).
+- 적대 자문점 자체점검: ① 특이도 — 신규 `.message.is-user .message-bubble.message-bubble-editing`(0,4,0) > 파랑 `.message.is-user .message-bubble`(0,3,0), 실브라우저 렌더로 bubble bg=흰 서피스(255,255,255) 실측 확인. ② 클래스 충돌 — `message-bubble-editing` unique(기존 `is-editing`(admin dashboard)·`.dashboard-widgets.is-editing` 와 선택자 분리). ③ 잔존 위험 — 재렌더로 클래스 소멸(취소=renderMessages/성공=refreshWorkspace) → 편집 취소 후 말풍선 원래 파랑 복귀. ④ 회귀 — 편집 진입(innerHTML 교체) 컨텍스트에만 적용, 일반 말풍선/컨텐츠 렌더 미접촉. ⑤ 라이트 전용 콘솔(styles.css H1)이라 다크 분기 불요.
+- 검증: `node --check` PASS · headless Chromium 실측(수정본 textarea 15.38:1·재답변버튼 5.17:1·편집 말풍선 중립전환 / 수정전 1.0:1 버그 재현) + 스크린샷 · POST-DEPLOY PB-0008 Windows-browser(잔여, visual_verification_scope=always).
+- Cross-ref: CHG/TASK/TEST-20260722T020408-msg-edit-textarea-contrast · feature-0019 ANCHOR §1-§3 무충돌.

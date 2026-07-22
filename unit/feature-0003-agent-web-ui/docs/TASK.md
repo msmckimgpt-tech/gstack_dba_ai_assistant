@@ -5984,3 +5984,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] `static/release-notes-data.js` releases head 에 "2026-07-21" 블록 prepend(1항목 improved/work — 그룹/모니터링 대화 관찰자에게 assistant 진행상황·답변 실시간 표시·멀티탭 동기화) + generated 2026-07-16→2026-07-21. 렌더 로직·cache-buster(`?v=dev` 빌드 자동주입) 무변경.
 - [x] 검증: `node --check` PASS · vm 구조검증(블록순서·스키마·누출0). 근거 정본 = feature-0003 realtime-progress-propagation(a999594e).
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(Windows-browser 미수행 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3).
+
+## 20260722T020408-msg-edit-textarea-contrast — 메시지 '수정' 편집 UI 글자 안 보임 수정 + 편집 폼 재구성 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 표시 전용. cross-cut 정본 feature-0019-message-editing. /_template:entry arg-given dispatch)
+
+- [x] 진단(사용자 신고): 보낸 요청 메시지를 '수정'(단순 수정 / 요청사항 수정)으로 편집할 때 textarea 글자가 안 보임. RC = 편집 UI 가 파란 user 말풍선(`color:#fff`) 안에 삽입되는데 `.message-edit-textarea { background:var(--surface)#fff; color:inherit }` 라 말풍선 흰 글자색을 상속 → 흰 글자 on 흰 배경(대비 1:1) 비가시.
+- [x] 수정(styles.css): ① textarea `color:inherit`→`color:var(--text)` ② `.message-edit-box` color 리셋 ③ `.message.is-user .message-bubble.message-bubble-editing`(0,4,0) 신설 — 편집 진입 시 파란 말풍선 → 중립 편집 패널 전환(모든 컨트롤이 배경과 대비되는 실사용 폼으로 재구성) ④ placeholder·focus border 보강.
+- [x] 수정(app.js `_startInlineEdit`, +1행): `bubbleEl.classList.add("message-bubble-editing")` — 재렌더 경로에서 자동 소멸(취소=renderMessages / 성공=refreshWorkspace).
+- [x] 보안/데이터 무영향: 순수 표시(CSS + classList) — 백엔드·엔드포인트·RBAC·스키마·편집 로직 불변. feature-0019 ANCHOR §1-§3 무충돌. `message-bubble-editing` unique 클래스(기존 `is-editing` 미충돌).
+- [x] 검증(PRE-DEPLOY): `node --check` PASS · **실브라우저(headless Chromium) 대비 실측** — 수정본 textarea **15.38:1**(WCAG AA 상회)·편집 말풍선 파랑→중립 전환·재답변버튼 5.17:1 / 수정 전 재현 **1.0:1**(버그 재현). 스크린샷 증적.
+- [ ] PB-0008 Windows-browser (POST-DEPLOY): 정적 자산 web 이미지 baked → merge + 배포 후 https://localhost/ 에서 보낸 메시지 ☰→수정 진입 시 글자 가시성·폼 렌더 라이브 실측. 사유·계획 TEST.md CHECK#13(test-runs.d fragment 20260722T020408).

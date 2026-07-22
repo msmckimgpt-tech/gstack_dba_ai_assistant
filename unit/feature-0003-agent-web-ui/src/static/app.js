@@ -4088,6 +4088,10 @@ function _startInlineEdit(message, bubbleEl) {
   btnRow.appendChild(cancelBtn);
   editor.appendChild(btnRow);
   bubbleEl.innerHTML = "";
+  // edit-ui-contrast: 파란 말풍선 → 중립 편집 패널로 전환(흰-글자 상속으로 textarea 글자가
+  // 사라지던 문제 해소). renderMessages()/refreshWorkspace() 재렌더 시 말풍선이 새로 만들어져
+  // 클래스는 자동 소멸하므로 별도 제거 불필요(취소·성공 모두 재렌더 경로).
+  bubbleEl.classList.add("message-bubble-editing");
   bubbleEl.appendChild(editor);
   try { ta.focus(); } catch (_e) {}
 }

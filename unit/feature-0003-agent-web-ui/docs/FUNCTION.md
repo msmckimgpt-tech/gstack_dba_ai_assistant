@@ -1714,3 +1714,12 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 ## (doc-sync-rn-0722, 2026-07-22) 릴리즈노트 콘텐츠 — 07-21 블록 신규(진행상황 실시간 전파)
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-21" 블록 신규(1항목: improved/work — 그룹/모니터링 대화 관찰자에게 assistant 진행상황·답변 실시간 표시·멀티탭 동기화) prepend·generated 2026-07-16→2026-07-21. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
 - 평이화/비노출: feature-id·§번호·PR#·함수명·내부표현(run-감지 폴러·/api/progress·loadHistory 등) 비노출(사용자 언어).
+
+## (20260722T020408-msg-edit-textarea-contrast, 2026-07-22) 메시지 '수정' 편집 UI 글자 가시성 + 편집 폼 재구성 (web/UI, Minor §12.3, frontend-only 표시전용)
+- 기능: 보낸 요청 메시지를 '수정'(단순 수정 / 요청사항 수정) 인라인 편집할 때 textarea 글자가 배경과 대비되어 보이고, 파란 말풍선이 실사용 가능한 중립 편집 폼으로 전환되게 한다.
+- 근본원인: 편집 UI(`_startInlineEdit`)가 파란 user 말풍선(`.message.is-user .message-bubble`, `color:#fff`) 안에 삽입되는데 `.message-edit-textarea` 가 흰 배경(`var(--surface)`)에 `color:inherit` → 말풍선 흰 글자색 상속 → 흰 글자 on 흰 배경(대비 1:1) 비가시.
+- 동작(`static/styles.css`): ① `.message-edit-textarea` `color:var(--text)`(명시 전경색) ② `.message-edit-box` `color:var(--text)`(말풍선 흰 글자색 상속 차단) ③ `.message.is-user .message-bubble.message-bubble-editing`(특이도 0,4,0 — 파랑 규칙 0,3,0 override) 신설로 편집 진입 시 말풍선을 중립 편집 패널(`var(--surface)`+border+shadow)로 전환 → textarea·재답변(primary 파랑)·단순수정/취소(중립 pill) 모두 배경 대비 확보 ④ `::placeholder` 색·focus `border-color` 보강.
+- 동작(`static/app.js` `_startInlineEdit`): `bubbleEl.innerHTML=""` 직후 `bubbleEl.classList.add("message-bubble-editing")`. 취소(`renderMessages`)·성공(`refreshWorkspace`) 재렌더 시 말풍선이 새로 생성되어 클래스 자동 소멸(명시 제거 불필요).
+- 신규 CSS 클래스: `message-bubble-editing`(unique — 기존 `is-editing`(admin dashboard 위젯)·`.dashboard-widgets.is-editing` 와 선택자 분리·미충돌).
+- 불변식: 편집 엔드포인트(`_submitMessageEdit`)·브랜치/버전 페이징·IDOR 게이트·RBAC·스키마·백엔드 무변경. feature-0019 ANCHOR §1-§3(INV-1~5) 무충돌. 라이트 전용 콘솔(styles.css H1)이라 다크 분기 불요.
+- 검증: `node --check` PASS · headless Chromium 실측(실 styles.css cascade — 수정본 textarea 대비 15.38:1·편집 말풍선 파랑→중립 전환·재답변버튼 5.17:1 / 수정 전 재현 1.0:1 버그) + 스크린샷 · POST-DEPLOY PB-0008 Windows-browser(§16.6, TEST.md). CHG/REV-20260722T020408-msg-edit-textarea-contrast.
