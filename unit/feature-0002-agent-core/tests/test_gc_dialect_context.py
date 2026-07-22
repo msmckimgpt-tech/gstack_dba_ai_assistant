@@ -125,6 +125,46 @@ def test_group_guidance_keeps_only_multiparty_specifics():
         assert _p not in g, f"general 문구 '{_p}' 가 group 블록에 재등장 — split de-dup 위반"
 
 
+# ── dqa-grounding: 저장값 "의미" grounding 지침(타임존 B-1 · ENUM 코드 D-1 · 분리저장 D-2) ──
+def test_data_grounding_guidance_present():
+    g = agent_core._DATA_GROUNDING_GUIDANCE
+    assert isinstance(g, str) and len(g) > 200
+    # B-1 타임존: 서버 TZ 설정 ≠ 저장값 의미(MySQL DATETIME 은 TZ 미저장) 핵심 문구.
+    assert "타임존" in g
+    assert "DATETIME" in g
+    assert "UTC" in g
+    assert "서버 TZ 설정만 보고" in g  # 오판 유발 지점 명시
+    # D-1 ENUM: 코드 의미 추측 금지 + GLOSSARY & ENUM VALUES / 샘플링 grounding.
+    assert "지어내지" in g
+    assert "GLOSSARY & ENUM VALUES" in g
+    assert "get_sample_rows" in g
+    # D-2 분리저장: "전체 X" 부분집계 누락 경고.
+    assert "분리" in g and "누락" in g
+
+
+def test_data_grounding_injected_unconditionally():
+    # _ACTIVE_INTERPRETATION 직후, 그룹 if-블록 밖(무조건)에서 주입되어야 1:1·그룹 모두 받는다.
+    src = inspect.getsource(agent_core._run_agent_core)
+    lines = src.splitlines()
+    inj = [l for l in lines if "system_content += _DATA_GROUNDING_GUIDANCE" in l]
+    assert inj, "데이터 grounding 주입 라인이 _run_agent_core 에 있어야 한다"
+    indent = len(inj[0]) - len(inj[0].lstrip())
+    grp = [l for l in lines if "system_content += _GROUP_CONVERSATION_GUIDANCE" in l]
+    assert grp, "그룹 지침 주입 라인 존재"
+    grp_indent = len(grp[0]) - len(grp[0].lstrip())
+    assert indent < grp_indent, (
+        f"데이터 grounding(indent={indent})이 그룹 if-블록(indent={grp_indent}) 밖이어야 1:1 도 주입됨"
+    )
+
+
+def test_data_grounding_registered_in_guidance_registry():
+    from modules import guidance_registry as gr
+    keys = {g["key"] for g in gr.list_guidance()}
+    assert "data-grounding" in keys, "data-grounding 지침이 레지스트리 목록에 있어야 한다"
+    detail = gr.get_guidance("data-grounding")
+    assert detail and "타임존" in (detail.get("text") or "")
+
+
 def test_active_interpretation_injected_unconditionally_for_1to1():
     # _run_agent_core 에서 능동해석 주입이 그룹 조건(if _group_sender_labels) 밖(무조건)이어야 1:1 도 받는다.
     src = inspect.getsource(agent_core._run_agent_core)

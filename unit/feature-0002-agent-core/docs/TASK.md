@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260722-dqa-data-grounding (current cycle) — 데이터 의미 grounding 지침: 저장값 타임존·ENUM 코드·분리저장 추측 금지 (Major §12.3 — core 시스템 프롬프트·정확성; DQA 마찰 B-1/D-1/D-2)
+- 출처: `/_template:entry` DQA_assistant_마찰개선사항_20260722_v2.md 검토·개선 (2026-07-22, 사용자 명시). FGT 통계 집계를 DQA 로 수행하며 관측된 **정확성 결함**을 서비스 grounding 지침으로 해소.
+- **근본원인(관측)**: LLM 이 데이터의 "표기"와 "의미"를 혼동해 조용히 틀린 집계를 냄.
+  - **B-1(★최우선)**: DB 서버 TZ 설정(`@@time_zone`=Asia/Tokyo)만 보고 "저장값은 JST → -9h=UTC" 라고 확신 오판. 실제 저장 DATETIME 값은 UTC(MySQL DATETIME 은 TZ 미저장) → 집계 기간 전체가 9시간 어긋나 전 시트 오염 위험(본건은 사용자 경고·데이터 교차검증으로 겨우 정정).
+  - **D-1**: CurrencyType 코드를 기억으로 "3=Stamina" 환각(정본 4=스태미너). KB 용어사전/ENUM 사전(GLOSSARY & ENUM VALUES 주입)·샘플링으로 grounding 해야 함.
+  - **D-2**: 재화가 Gold/GemV2/Currency 로 테이블 분리 저장 → "전체 재화" 를 한 테이블만 집계하면 조용한 누락.
+- **해결(항상 주입 grounding 블록)**: 능동 해석(식별자/스키마 발견)과 별개 축(값의 "의미") 으로 분리한 `_DATA_GROUNDING_GUIDANCE` 신설. (a) 서버 TZ 설정 ≠ 저장값 의미 명시 + 불확실 시 알려진 기준점 데이터 교차검증·가정 명시, (b) 코드/ENUM 의미 추측 금지 + GLOSSARY & ENUM VALUES·샘플링 grounding·미보유 고백, (c) 분리·중복 저장 시 커버리지 명시. 게임-무관 일반 지침이라 모든 datasource 에 적용.
+
+### §1.1 Implementation
+- `src/agent_core.py`: `_DATA_GROUNDING_GUIDANCE` 상수 신설 + `_run_agent_core` compose 에서 `_ACTIVE_INTERPRETATION_GUIDANCE` 직후 무조건(그룹 if-블록 밖) 주입 — 1:1·그룹 공통, base/product 프롬프트 뒤 last-writer 로 권위화.
+- `src/modules/guidance_registry.py`: `data-grounding` 지침 항목 등록(관리 콘솔 작동지침 목록 노출).
+- `tests/test_gc_dialect_context.py`: 지침 본문(타임존·DATETIME·GLOSSARY·분리)·무조건 주입 위치(그룹 if 밖)·레지스트리 등록 3건.
+
+### §1.2 Completion Checklist
+- [x] `_DATA_GROUNDING_GUIDANCE` 신설 + 무조건 주입(_ACTIVE_INTERPRETATION 직후) + guidance_registry 등록
+- [x] test_gc_dialect_context.py 3건 + test_scratch.py 3건 + py_compile 통과 · 로컬 변경-특화 38 PASS · 인접스위트 회귀 0
+- [x] §18.8 적대 리뷰(backend/correctness + security 2 렌즈) SHIP-WITH-FIXES → backend PLAUSIBLE(save_csv 실패 시 거짓 CSV 링크) 흡수 + TIMESTAMP/DATETIME 정밀도 nit 반영 → REV-20260722T034138-dqa-data-grounding-and-scratch-csv
+- [x] make test(컨테이너) — 잔여 실패는 기존 비결정 flake(postgres-replica --no-deps + 순서-의존 runtime_settings/attachment; clean main 기준선도 다른 15건 실패) · 변경-특화 테스트 양쪽 부재 = 회귀 0
+- [ ] 배포(web+worker 재빌드, deploy_scope: included) 후 라이브: 시각 필터 질의에서 저장값 TZ 추측 대신 확인·가정 명시 관측 / 대량 scratch→CSV 다운로드
+
+## TASK-20260722-dqa-scratch-csv-export — scratch_sql 결과 CSV export (Minor §12.3 — 비파괴 결과추출; DQA 마찰 F-5; 코드 feature-0002 거주·정본 feature-0022)
+- 출처: 위 동일 DQA 마찰 문서 F-5/C-3. scratch 병합 결과가 inline(~200행) 절단 + `/shared/out` CSV 미export → 대량 cross-DS 병합 결과 회수 곤란.
+- **해결**: `scratch.run_sql` 을 export 상한(`AGENT_SCRATCH_MAX_RESULT_ROWS`, 기본 100000)까지 전체 fetch 하도록 바꾸고, `_tool_scratch_sql` 이 execute_sql 과 동일하게 `save_csv("scratch_resultset1", …)` 로 CSV 저장 + "CSV 저장: <path>" emit. 웹 UI 는 기존 `CSV_PATH_RE` 로 그 경로를 파싱해 다운로드 링크 생성(추가 프론트 변경 불필요). 미리보기는 execute_sql 표 포매터(50/adaptive)로 절단 + 미열람 행 단정 금지 안내.
+- 상세 정본: `unit/feature-0022-agent-scratch-workspace/docs/TASK.md`.
+
 ## TASK-20260716-redteam-axis-rederive (current cycle) — 자가검증 BLOCK 축 인지 재도출: 텍스트 다듬기만 하던 revise 를 sql/max-completeness 는 도구 재추론으로 승격 (Major §12.3 — core 답변 파이프라인·LLM 비용/지연)
 - 출처: `/_template:entry "서비스 내 assistant가 요청을 수행할 때, 자가 검증을 통한 BLOCK 이 확인되었지만 별도의 재추론을 진행하지 않고, 이미 구성된 답변을 바탕으로 다듬는 행위만 진행 후 제출하는듯한 현황"` (2026-07-16, 사용자 명시). 구성 승인 = **세 요소 모두 취하되 completeness 재도출은 '매우 높음(max)'에서만** (AskUserQuestion 3-round, 2026-07-16).
 - **근본원인(코드 확정)**: red-team 자가검증(feature-0021)이 `BLOCK`(verdict="revise")을 확정하면 `orchestrate_review`가 caller 의 `revise_fn`을 호출 → 그 실체 `agent_core._rt_revise`는 `_call_llm(..., tools 인자 없음)` **단발 completion**. 즉 (a) 도구 접근 없음 + (b) `build_revision_instruction`이 "증거 밖 신규 사실 추가 금지" 명시 + (c) evidence digest 1회 고정 재사용 → 구조적으로 **재추론 불가, 텍스트 다듬기만**. grounding/permission/honesty BLOCK은 다듬기가 정답이나, `sql`(틀린 쿼리)·일부 `completeness`(빠뜨린 조회)는 새 근거 없이는 못 고쳐 헤징 강등/미해소/근거없는 정정으로 귀결.
