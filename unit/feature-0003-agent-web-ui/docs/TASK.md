@@ -6017,3 +6017,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] app.js: `_updateHistoryTopIndicator` — `renderCount<total`(윈도우 밖 로드분) 또는 `hasMoreHistory`(서버 미로드) 면 페이드 표시, 아니면 숨김. `renderMessages` 끝 + empty 경로에서 호출(대화 전환 잔류 방지).
 - [x] 검증: `node --check` PASS. display-only(백엔드·RBAC·스키마·엔드포인트 0).
 - [ ] PB-0008 POST-DEPLOY: 긴 대화(윈도잉 활성) 상단 페이드 표시·최상단까지 로드 후/짧은 대화는 페이드 숨김 실측.
+- [x] PB-0008 POST-DEPLOY 라이브 PASS(2026-07-22·배포본 029927dc): conv[2](윈도잉 활성) 상단 페이드 표시(3/14)·전부 로드 시 숨김(14/14)·짧은 대화 페이드 없음(2개)·pointer-events:none 무방해. 스크린샷 evidence/history-top-fade-live.png. 사용자 요구 실증 완료. (배포 초회 transient soak 롤백→재실행 표준 remedy.)
