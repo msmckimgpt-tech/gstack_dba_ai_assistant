@@ -32,3 +32,15 @@ source_of_truth: true
   경로 무회귀(쿠키 유효 시 토큰 fallback 미발동). scope=None 이면 권한 무변경.
 - Rollback Notes: 코드 revert 로 인증 경로 원복(토큰 인증 비활성). WebApiTokens 테이블은
   잔존해도 무해(참조하는 코드 없으면 dead). MCP 서버/런처는 gated OFF 기본이라 무영향.
+
+## CHG-20260722-0002
+- Date: 2026-07-22
+- Related Requirement: REQ-20260722-conversation-api-access (라이브 e2e 후속 hotfix)
+- Summary: `bin/api-token-issue.sh` 가 실행 서비스를 `web` 로 하드코딩해 무중단 배포
+  환경(feature-0014 web-a/web-b)에서 "service web is not running" 으로 실패하던 결함 수정.
+  running 서비스 자동 감지(web → web-a → web-b → agent) 추가. 라이브 e2e(admin 계정 토큰
+  → /api/ask 200 + admin 엔드포인트 403 + 무토큰 401) 로 인증·scope 코어는 정상 확인됨 —
+  본 수정은 발급 CLI 의 운영 편의성 결함만 해소(인증/scope 로직 무변경).
+- Files: `bin/api-token-issue.sh` (서비스 감지 블록 추가).
+- Impact: 호스트 스크립트 전용(web 이미지·배포 무관). 인증/scope 로직 불변.
+- Rollback Notes: 감지 블록 revert 시 `web` 하드코딩으로 복귀(무중단 배포 환경에서 재실패).

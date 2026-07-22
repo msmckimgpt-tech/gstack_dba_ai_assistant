@@ -42,7 +42,9 @@ source_of_truth: true
 - [x] TASK-0007: §18.8 적대적 보안 리뷰 (HIGH-1/HIGH-2 적발→수정, REV-20260722-0002)
 - [x] TASK-0008: MCP 서버 (`conversation_mcp_server.py` + `bin/conversation-mcp.sh` gated, tool 4종)
 - [x] TASK-0009: MCP smoke(tool 등록·gated) + `.mcp.json` 등록 + example env + gitignore
-- [ ] TASK-0010: verify-completion + STATUS.md + commit/push + cycle-final + 배포 + 라이브 e2e
+- [x] TASK-0010: verify-completion + STATUS.md + commit/push + cycle-final + 배포 + 라이브 e2e
+  (배포 66a48870 soak PASS · 라이브 e2e: 토큰→/api/ask 200 · admin 엔드포인트 403 · 무토큰 401)
+- [x] TASK-0011: 발급 CLI 서비스명 hotfix (web→web-a/web-b 자동감지, CHG-20260722-0002)
 
 ## 4. In Progress
 - TASK-0010 (verify-completion → 배포)
