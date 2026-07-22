@@ -39,6 +39,8 @@ persona_kind: maintenance/reporting (파이프라인 단계 아님 — 사람 �
 
 > **하드닝 이력(2026-07-02)**: 첫 실행(범위 2026-06-01~07-02 v1)을 사용자·codex·red team 이 검증한 결과를 스킬 규율로 승격했다 — (1) **성장 지향 톤 ↔ 정직성 경계**(미검증을 "완료/검증"으로 단정 금지), (2) **발표자 전용/청중 분리 + 청중 덱 식별자 스크럽**, (3) **대표 수치(KPI) 검증 축 규율**(파생·집계는 "검증됨" 금지·산식 명시), (4) **전후 폴백은 인라인 SVG 도식 강제**(텍스트-only 금지), (5) **EVIDENCE 측정조건·산식·배포근거·stale 엄밀성**, (6) **모든 배지 색+라벨+형태**. 불변 제약·§5.2·§5.3·Phase 4·Phase 6 에 반영.
 
+> **하드닝 이력(2026-07-22)**: 세 번째 실행(범위 2026-06-17~07-22)에서 사용자가 (1) 발표자료 텍스트가 **자동 줄바꿈 의존으로 가시성 낮음**, (2) **고정 폭/높이로 표현 제한** 을 지적 → 규율로 승격. §5.0(c) 에 **텍스트 줄바꿈·가시성**(의미 단위 불릿화)·**반응형**(fluid wrap·명시 다단계 breakpoint·넘침 세로 스크롤·auto-fit 금지) 규율 신설, §5.0(e)·§5.1·§5.3 을 반응형 기본으로 정정, Phase 6 에 **반응형·가시성 게이트** 추가. 아울러 (3) **구글 드라이브 MCP=기능 토대만·서비스 미통합**, (4) **공유·관계도 지도=상부보고 첫 공개(신규 표기)**, (5) **프로덕션 라이브 배포/복제본은 보안 결정·환경 제약으로 유보** 를 정직성 규율로 반영(검증 환경 vs 라이브 운영 구분).
+
 > **하드닝 이력(2026-07-08)**: 두 번째 실행(범위 2026-06-17~07-08 v1)에서 산출물이 worktree 에 **커밋되지 않은 채 갇혀** `repo/docs/presentation` 에서 보이지 않던 이슈를 사용자가 보고 → 규율로 승격. Phase 7 을 **필수 autoland** 로 전환한다 — 자기검증 통과 시 `commit → push → PR 생성 → PR 병합 → 로컬 main 동기화 → worktree 정리`까지 **confirm 없이 완수**(산출물 stranding 금지). **자기검증·민감정보 게이트 통과가 하드 전제**(하나라도 실패 시 push 금지 — 특히 민감정보 스캔 실패 시 절대 push 안 함). 배포·외부 발송은 여전히 안 함(정적 doc — 배포 대상 없음). 불변 제약(§본 스킬이 만드는 것·§read-only governance)·Phase 7·종료 조건에 반영.
 
 ---
@@ -235,6 +237,8 @@ companion: ./deck.html
 - **파생 셰이드**: OKLCH `color-mix` 는 **사용처 프로퍼티 2회 선언(hex 먼저)** 로만 — 예 `background:#fef2f2; background:color-mix(in oklch,var(--danger) 8%,var(--surface));`. 커스텀 프로퍼티 값에 직접 넣지 말 것(미지원 시 initial 무색·핫픽스 불가).
 - **타입**: `clamp()` 유동(preferred 항 rem 필수, 순수 vw 금지), 보수적 비율 1.2~1.333, 한글 body line-height 1.6~1.7, 극적 hero swing 금지.
 - **한국어 줄바꿈**: 전역 `word-break:keep-all` + `overflow-wrap:anywhere`(봉투 break-word 에서 상향), 제목 `text-wrap:balance`/본문 `pretty`, `break-all`·`hyphens` 금지. SVG `<text>` 는 CSS 줄바꿈 무효 → `<foreignObject>` HTML 또는 `<tspan>` 수동 분할/길이 clamp+말줄임.
+- **텍스트 줄바꿈·가시성 (필수)**: 문장을 자동 줄바꿈에만 의존하지 말고 **의미 단위로 명시 줄바꿈**한다 — 좁은 bento 컬럼의 dense 문단(2문장+)은 **짧은 불릿 리스트**(예 `.pts`, 한 줄=한 생각)로, 긴 lead/callout 은 절 경계에서 `<br>` 또는 문장 분할로. 한 블록에 run-on 문단 금지(가시성↓). (검증: v1~v3 이 dense 문단 자동 줄바꿈으로 "가시성 낮음" 지적 → v4 에서 `.pts` 불릿화.)
+- **반응형 (브라우저 크기 반응 — 필수)**: **고정 폭/높이·단일 fit-scale 의존 금지.** fluid wrap(`max-width:min(1160px,94vw)`)·유동 여백(`clamp()` 패딩)·**명시적 다단계 breakpoint**(예 ~1080/920/720/480px)로 bento·KPI·before-after·표를 점진 리플로우(다열→2열→1열, 전후는 세로 병치+화살표 회전, 표는 `overflow-x` 래핑). 콘텐츠가 뷰포트보다 길면 **세로 스크롤 허용(클리핑 금지)** — `.wrap{margin:auto}` 로 짧으면 중앙·길면 상단부터. **auto-fit/minmax 는 여전히 금지**(위계 왜곡) — 반응형은 명시 breakpoint 로만. (검증: v1~v3 고정 크기가 "표현 제한" 지적 → v4 반응형.)
 - **레이아웃**: 5블록=bento 타일(크기=우선순위, 재정렬은 CSS 아닌 DOM 순서), before-after=정적 2패널(왼=전/오른=후, 중앙 SVG 화살표, BEFORE/AFTER 칩+색+형태), flow-diagram=flex+SVG 커넥터(5~7노드, 단일 accent).
 - **elevation**: hairline border(`--border`) + 2겹 soft-shadow(`--shadow-sm/md`) + `--r-sm|md|lg`. hover 는 box-shadow-lift 만(geometry 불변).
 - **차트**: zero-dependency 인라인 SVG(`<polyline>/<rect>/<line>/<circle>`) — 라이브러리·Houdini `paint()`·`@property`(정적 fallback 없이) 금지. 데이터-잉크 미니멀(격자 후퇴·0 기준선·단위·핵심 수치 1~2), `role="img"`+`aria-label`, legend 대신 직접 라벨링(계열 3+면 강조 1개만).
@@ -245,12 +249,12 @@ kinetic 타이포 · parallax/3D depth · spring/bounce easing · scroll-driven/
 
 #### (e) 모션 예산 · 접근성 · 성능
 - **모션**: 구조적 용도만 토큰화(`--dur` 180~360ms, `--ease` 봉투 cubic(.22,.61,.36,1)), `transform/opacity` 만. 진입 stagger·draw-on 은 **슬라이드 활성화 콜백(display:block 확정 후)** 에 결선·`getTotalLength()` 1회 캐시(**IntersectionObserver 금지** — 비활성 슬라이드 display:none 이라 부정확). `prefers-reduced-motion` 은 봉투 가드 계승 + matchMedia 분기로 즉시 최종상태(정보전달 페이드·draw-on 최종상태는 유지). 금지: kinetic·parallax·3D·spring·scroll-driven·idle 장식·`left/top/width` 애니메이트.
-- **접근성**: 색+라벨+형태 3중 · 대비 실측(≥4.5:1 텍스트/≥3:1 non-text·focus) · **focus-visible 신규 구축**(`outline:2px solid var(--primary)`+offset, box-shadow 단독 금지; `.zone`·`.idx-item`·`.menu-btn` 등 비시맨틱 요소를 button/a+tabindex 로 키보드 도달 가능화 선행; forced-colors 폴백) · 시맨틱 HTML+ARIA(슬라이드 role/aria-label, 진행 `role=status` live region, 차트 `role=img`) · DOM 순서=읽기 순서 · **fit-scale 은 프로젝터/키노트 모드 한정** + 저시력·브라우저 줌·async 열람용 `clamp()` rem+세로스크롤 문서 폴백 모드 병행(WCAG 1.4.4/1.4.10).
+- **접근성**: 색+라벨+형태 3중 · 대비 실측(≥4.5:1 텍스트/≥3:1 non-text·focus) · **focus-visible 신규 구축**(`outline:2px solid var(--primary)`+offset, box-shadow 단독 금지; `.zone`·`.idx-item`·`.menu-btn` 등 비시맨틱 요소를 button/a+tabindex 로 키보드 도달 가능화 선행; forced-colors 폴백) · 시맨틱 HTML+ARIA(슬라이드 role/aria-label, 진행 `role=status` live region, 차트 `role=img`) · DOM 순서=읽기 순서 · **레이아웃 기본 = 브라우저 크기 반응형(§5.0(c) 반응형 규율)** — fluid + 명시 breakpoint + 세로스크롤(클리핑 금지); 고정 fit-scale 은 기본으로 쓰지 않는다(프로젝터 전용이 꼭 필요하면 반응형과 병행하되 기본 아님). 브라우저 줌·저시력·async 열람에서 `clamp()` rem 타입 유지(WCAG 1.4.4/1.4.10).
 - **성능/자기완결**: 단일 `.html` — 외부 URL·`<link rel=stylesheet>`·`@import`·`<img src=외부>`·CDN·webfont URL **0건**(생성 후 grep 검증). 아이콘/그래픽은 인라인 SVG 또는 data:URI(percent-encode). grain/ambient gradient 는 텍스트 없는 cover/divider 에만 극절제(fit-scale 밖 고정 배경 1회 래스터). box-shadow elevation 당 ≤3겹.
 
 ### 5.1 deck.html — 구조 (하이브리드 골격)
 
-자기완결 HTML/CSS(외부 의존 0, offline). `docs/presentation/index.html` 의 디자인 토큰(색·폰트·`--`변수)·slide 모델(`.slide`/`.is-active`)·목차(☰)·상단 진행바·키보드 네비(→/Space/←/Esc)·딥링크 해시·자동 축소(세로 스크롤 없음)·`word-break:keep-all`·`text-wrap:balance/pretty`(한국어 타이포)를 계승한다. 단 **보고 성격에 맞게 재구성**한다.
+자기완결 HTML/CSS(외부 의존 0, offline). `docs/presentation/index.html` 의 디자인 토큰(색·폰트·`--`변수)·slide 모델(`.slide`/`.is-active`)·목차(☰)·상단 진행바·키보드 네비(→/Space/←/Esc)·딥링크 해시·**브라우저 크기 반응형 리플로우(고정 폭/높이 금지 · 콘텐츠 넘침 시 세로 스크롤 허용, 클리핑 금지 — §5.0(c) 반응형)**·`word-break:keep-all`·`text-wrap:balance/pretty`(한국어 타이포)를 계승한다. 단 **보고 성격에 맞게 재구성**한다. **텍스트 블록은 의미 단위 줄바꿈(불릿·짧은 줄)으로 — run-on 문단 금지(§5.0(c) 가시성).**
 
 슬라이드 순서(키):
 
@@ -283,7 +287,7 @@ kinetic 타이포 · parallax/3D depth · spring/bounce easing · scroll-driven/
 ### 5.3 시각 컴포넌트(권장, self-contained)
 - 전후 병치 카드(좌 회색톤/우 강조톤, 좌→우 화살표), 비교표, 순수 CSS/SVG 구조도·흐름도(외부 이미지·CDN 금지 — 없으면 data-URI 또는 인라인 SVG).
 - 상태 배지(신규/이어받음/완료)·확인/확인필요 배지·**목차/개요(agenda) 등 리스트 배지까지** 모두 **색 + 라벨 + 형태(구분 SVG 아이콘)** 3중으로 표기한다(색+텍스트만 금지 — 색맹·저대비 대응).
-- 진행바·목차·카운터. 창 높이에 맞춰 자동 축소.
+- 진행바·목차·카운터. **브라우저 창 크기에 반응(고정 폭/높이 금지 — 명시 breakpoint 리플로우, 넘침 시 세로 스크롤). 텍스트는 의미 단위 줄바꿈(불릿·짧은 줄).**
 
 ### 5.4 SCRIPT.md — 발표 스크립트
 `docs/presentation/SCENARIO.md` 형식 계승 + frontmatter 규약: `doc_type: PRESENTATION_SCRIPT`, `source_of_truth: false`, `companion: ./deck.html`, `range`/`version`. 본문: 발표 개요(대상 청중·소요·핵심 메시지) + 구간별 {화면 설명 / 발표 대사 / 전환}. **확인필요 항목**은 스크립트에서 정직하게 표현하는 문구를 함께 제공한다("이 수치는 아직 측정 전이라 목표치로 말씀드립니다" 류). 압축 발표(요약+본문 핵심+리스크)와 풀 발표 두 경로를 안내.
@@ -305,6 +309,7 @@ kinetic 타이포 · parallax/3D depth · spring/bounce easing · scroll-driven/
 - **디자인·접근성 게이트(§5.0)**: 디자인/시각효과가 3중 필터(봉투 정합·자기완결·절제 톤) 통과분만인가; 구조·서사 불변인가; 신규 텍스트/상태/focus 색 WCAG 대비 실측(≥4.5:1/≥3:1); 색+라벨+형태 3중 병기; `prefers-reduced-motion`·focus-visible 존재; `--diff-*` 를 before-after 에 오용하지 않음; `color-mix` 는 hex 폴백 동반; 외부 URL/`@import`/webfont 0건(grep).
 - **정직성 경계 게이트 (필수)**: 청중 덱·스크립트에서 **미검증 항목이 "완료/검증/배포"로 단정되지 않았는가.** "완료"가 개발 기준으로 한정됐는가(리스크/후속 "현재 수준"에 미검증을 done 으로 쓰지 않음). 리스크는 "발전 과제" 프레이밍이되 미검증을 성과로 포장하지 않았는가.
 - **청중 덱 식별자 스크럽 게이트 (필수)**: 청중 슬라이드에 내부 식별자(E-/U- 코드·`EVIDENCE.md`/`SCRIPT.md`·`feature-NNNN`·PR#·커밋해시·PB-0008) 노출 **0**(grep). 발표자 전용 색인 슬라이드가 청중 덱에 없는가(발표 슬라이드는 "마무리"로 종료).
+- **반응형·가시성 게이트 (필수)**: (가시성) 텍스트 블록이 자동 줄바꿈 의존 대신 **의미 단위 줄바꿈**(불릿·짧은 줄)으로 구성됐는가 — dense run-on 문단 없는가. (반응형) 고정 폭/높이 없이 브라우저 크기에 반응하는가 — **여러 폭(예 ~1280/1024/768/420px)에서 리플로우·미클리핑 확인**(headless `/browse` 리사이즈 또는 명시 breakpoint 존재 + `auto-fit`/고정 px 폭 미사용 코드 확인); 표는 `overflow-x` 래핑.
 - **전후 시각 게이트 (필수)**: 각 기능 전/후 블록이 **인라인 SVG 도식**을 포함(텍스트-only 아님)하고 `role=img`+aria-label 이 있는가. 도식이 업무 관점 변화를 전달하는가.
 - **KPI 검증축 게이트**: "검증됨" 배지 수치는 검증 가능한가; 집계·파생 수치는 "개발 이력 집계"로 낮추고 EVIDENCE 산식이 있는가.
 - **완전성**: 기능 단위가 화면 흐름 순인가, 이전 대비(신규/이어받음/완료)가 부여됐나, 리스크·후속이 정직하게 포함됐나.
@@ -350,5 +355,6 @@ kinetic 타이포 · parallax/3D depth · spring/bounce easing · scroll-driven/
 - [ ] EVIDENCE.md 로 모든 주장 근거·상태 추적, 특별 주의 항목 단정 없음.
 - [ ] deck.html 자기완결·렌더 OK(외부 URL/CDN/webfont 0), SCRIPT.md 동반.
 - [ ] 디자인/시각효과는 §5.0 절차로 최신 트렌드를 3중 필터(봉투·offline·절제) 통과분만 반영, **구조·서사 불변**; 대비·색+라벨+형태·reduced-motion·focus-visible 게이트 통과.
+- [ ] **가시성·반응형(§5.0(c)·Phase 6)**: 텍스트 의미 단위 줄바꿈(불릿·짧은 줄, run-on 문단 금지) + 브라우저 크기 반응형(fluid wrap·명시 다단계 breakpoint·넘침 세로 스크롤; 고정 폭/높이·auto-fit 금지).
 - [ ] Anti-pattern 8종 스캔 통과, 민감정보 미포함.
 - [ ] 코드·정책 정본 무수정. **자기검증 통과 시 산출물 필수 autoland** = commit → push → PR 병합 → 로컬 main 동기화 → worktree 정리(게이트 실패 시 push 금지; 환경 제약 시 가능 단계까지+미수행 명시 보고). **배포·외부 발송(메일·슬랙 등)은 안 함**(정적 doc — 배포 대상 없음).
