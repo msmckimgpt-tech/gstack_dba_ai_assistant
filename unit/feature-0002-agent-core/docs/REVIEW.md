@@ -426,3 +426,11 @@ source_of_truth: true
 ## REV-20260722T055000-branch-chain-race-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 브랜치 체이닝 수정 배포 + 데이터 복구 실증 기록 (CHG-20260722T055000-branch-chain-race-postverify)
 - Panel skip 사유(§18.8): 코드 변경 0(POST-DEPLOY 실증 기록·TASK 완료). 코드 리뷰 정본 = REV-20260722T050006-branch-chain-race([SUBAGENT:general-purpose] SHIP-WITH-FIXES).
 - 실증: 배포 main 5a32a480(web+워커 롤아웃 soak PASS). 데이터 복구 트랜잭션(UPDATE 1 display + UPDATE 4 core, dry-run count 일치)·복구 후 active-path 에 user 1299 복귀·오염 잔존 0·`/api/history`(bootstrap_admin read.any)가 복구된 트리 6 메시지 반환("로그 흐름만…" 포함) — UI 렌더 경로 실검증. 오염 범위=이 대화 1건뿐.
+## REV-20260722T033854-enum-schema-grounding [SUBAGENT:adversarial-backend+security+qa] READY-TO-SHIP — ENUM 자동등록 schema-grounding 게이트 (환각 DB/테이블 차단, Major §12.3)
+- Panel(§18.8 3렌즈 — 자동등록 grounding·scope 격리·소급 정리 파괴성): **BLOCKER 0**. 재현 버그 클래스(`dbLog.Currency`/bare `Currency`) 차단·scope 격리·SQLi·트랜잭션 견고 확인(REFUTED).
+- **MAJOR 1 (수정)**: sweep 스크립트가 common scope 를 `set_active_datasource("common")` 로 넘겨 `table_insight:ds:common:%` 오조회 → 빈 카탈로그→소급 정리 누락 + 운영자 오도(라이브 게이트는 common 을 active=None 로 grounding). → `None if scope == FACT_SCOPE_COMMON else scope` 로 수정(라이브 게이트와 정합). 보고된 prod scope(mysql-kr-an1-auth)는 datasource scope 라 무영향(완결성 gap).
+- **MINOR (수정)**: ① `_enum_known_table_index` 가 `_kb_read_is_pg()`(read-backend flag)에 결합 → mysql-read+PG쓰기 조합에서 게이트 무음 무력화. 카탈로그는 cutover 후 PG 정본이므로 `_kb_read_is_pg()` 게이팅 제거(`_global_insight_rows_pg` 의 `_pg_available()` 자체 가드에 위임). ② `sweep_ungrounded_enum` fail-open 가드 `is None`→`not known_idx`(빈 set 주입 시 전건 DELETE 파괴 footgun 봉인).
+- **MINOR (수용)**: 부분 카탈로그 시 실존 table 의 legit enum false-reject 가능(best-effort 자동수집 트레이드오프 — reject 는 `enum_autopropose_skip_ungrounded` 로깅, 답변 비차단). label 내용 검증은 설계 범위 밖(grounding 은 (schema,table) 실존만; 악성 label 공격면 불변).
+- **QA 공백(수정)**: 순수함수+FakeConn happy-path 위주 지적 → 게이트 wiring 통합테스트 신설(`test_enum_autopropose_gate.py` 3: 환각 차단·flag off 전건통과·fail-open) + 빈-set sweep no-op 테스트 추가. `not is_enum_grounded` 분기 뒤집기 검출 가능.
+- 검증: 신규 20 PASS(grounding 14 + wiring 3 + sweep 추가 3) · 기존 enum/glossary 35 PASS · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
+- Cross-ref: CHG/TASK/TEST-20260722T033854-enum-schema-grounding · ANCHOR 0002 §1~§3(core/modules 책임분리) 무충돌 · cross-ref feature-0003 admin_metadata(검토 큐 UI, 무편집).

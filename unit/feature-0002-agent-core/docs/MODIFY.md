@@ -396,3 +396,14 @@ source_of_truth: true
 - 배포: PR #874 → main 5a32a480 → `deploy-web.sh` 전체(web 롤링 soak PASS + insight/ask-worker mysql-ai-agent:5a32a480 healthy + gateway 무드리프트).
 - 데이터 복구: 대화 20260722015229-79da15cb 오염 5행 재링크(트랜잭션 UPDATE 1 display + UPDATE 4 core, dry-run 일치) → active-path 에 user 1299 복귀·오염 잔존 0·`/api/history` 에 "로그 흐름만…" 반환 확인.
 - Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+## CHG-20260722T033854-enum-schema-grounding (ENUM 자동등록 schema-grounding 게이트 — 환각 DB/테이블 차단, Major §12.3)
+- 계기: 메타데이터 거버넌스 "ENUM 검토 큐"에 `scope: mysql-kr-an1-auth`(auth) 기준 없는 `dbLog` DB + 없는 `Currency` 테이블이 자동등록. RC=`_enum_autopropose` 가 LLM 추출 (schema,table,column) 을 실제 카탈로그 대조 없이 verbatim 등록(가드는 비어있음만 검사).
+- Changes(feature-0002):
+  - `src/agent_core.py` `_enum_known_table_index()` 신설: 활성 datasource 의 `table_insight` fact 카탈로그(`cfg.ds_fact_like` 한정)로 알려진 테이블 인덱스 구성(정규화는 kb_glossary 위임). `_enum_autopropose` 루프에 게이트 삽입 — `AGENT_ENUM_SCHEMA_GROUNDING` on 시 카탈로그 부재 (schema,table) 은 `auto_promote_or_queue_enum` 호출 전 skip + `enum_autopropose_skip_ungrounded` 로깅. 카탈로그 미가용/빈 → fail-open.
+  - `src/modules/kb_glossary.py`: 순수 함수 `build_known_table_index`(MySQL/MSSQL 계층 전개·대소문자 무시)·`is_enum_grounded`(idx=None→fail-open) + `sweep_ungrounded_enum`(소급 정리 SQL: source='auto' DELETE + feedback pending/auto_promoted→rejected, manual 보존, scope_key 바인딩).
+  - `shared/config.py`: `AGENT_ENUM_SCHEMA_GROUNDING`(기본 "1", `__all__` 등록).
+  - `scripts/enum_grounding_sweep.py`: 운영자용 소급 정리(dry-run 기본·`--execute`·`--scope`, common scope=active None 정합).
+  - `tests/test_kb_enum_grounding.py`(14: 정규화·판정·재현 시나리오·sweep) + `tests/test_enum_autopropose_gate.py`(3: wiring 환각 차단·flag off·fail-open).
+- 비변경: manual promote/create 경로·검토 큐 승인/거부(admin_metadata)·enum_dictionary/enum_feedback 스키마·마이그레이션·RBAC 0. label 내용·column-레벨 검증 미포함(범위 밖).
+- 검증: 신규 20 PASS · 기존 enum/glossary 35 PASS · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
+- Cross-ref: REV/TASK/TEST-20260722T033854-enum-schema-grounding · 선행 CHG-20260629-glossary-conv-autoreg(대칭 용어사전 경로)·0039 enum autopropose · cross-ref feature-0003 admin_metadata(검토 큐 UI, 무편집) · ANCHOR 0002 §1~§3 무충돌.

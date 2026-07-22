@@ -890,6 +890,105 @@ def reject_enum_feedback(conn, feedback_id) -> int:
         cur.close()
 
 
+# ── ENUM schema-grounding (환각 DB/테이블 자동등록 차단) ──────────────────────────
+# 대화 자율수집(_enum_autopropose)은 LLM 이 답변 프로즈에서 뽑은 (schema, table, column) 을 그대로
+# 신뢰해 왔다 → 존재하지 않는 DB/테이블(예: auth scope 에 없는 dbLog.Currency)까지 등록되는 결함.
+# 아래 두 순수 함수(SQL-free)는 활성 datasource 의 실제 카탈로그(table_insight fact — agent 가 LLM 에
+# 주입하는 grounding 정본)로 (schema, table) 실존을 대조한다. 카탈로그 fetch·prefix strip 은 호출측
+# (agent_core._enum_known_table_index)이 수행하고, 여기서는 정규화 전개·판정만 한다(코어 SQL-only 계약).
+
+def build_known_table_index(qualified_names) -> set:
+    """알려진 테이블 qualified 이름들 → grounding 매칭용 정규화 인덱스(소문자).
+
+    각 이름 `{schema}.{table}`(MySQL) 또는 `{db}.{schema}.{table}`(MSSQL) 을 여러 매칭 형태로 전개:
+      - full            : 원본 전체
+      - bare table      : 마지막 segment (schema 미지정 제안 대비)
+      - `{first}.{last}`: MSSQL enum 은 (schema_name=db, table_name) 라 `db.table` 로 대조된다
+      - `{last two}`    : MySQL `schema.table`
+    is_enum_grounded 의 대조 집합. 빈/None 입력 → 빈 set.
+    """
+    idx: set = set()
+    for name in (qualified_names or []):
+        low = str(name or "").strip().lower()
+        segs = [s for s in low.split(".") if s]
+        if not segs:
+            continue
+        idx.add(low)
+        idx.add(segs[-1])
+        if len(segs) >= 2:
+            idx.add(f"{segs[0]}.{segs[-1]}")
+            idx.add(".".join(segs[-2:]))
+    return idx
+
+
+def is_enum_grounded(idx, schema_name, table_name) -> bool:
+    """제안된 (schema, table) 이 알려진 카탈로그 idx 에 존재하는가.
+
+    idx=None(카탈로그 미가용) → True(검증 skip, fail-open — false-reject 방지). schema 명시 시 그
+    schema 에 해당 table 이 있어야 통과, schema 미지정 시 어떤 schema 든 그 table 이 있으면 통과.
+    table 미지정 → False.
+    """
+    if idx is None:
+        return True
+    sn = str(schema_name or "").strip().lower()
+    tb = str(table_name or "").strip().lower()
+    if not tb:
+        return False
+    if sn:
+        return f"{sn}.{tb}" in idx
+    return tb in idx
+
+
+def sweep_ungrounded_enum(conn, scope_key, known_idx, *, dry_run=True) -> dict:
+    """scope 의 enum_dictionary + enum_feedback 중 known_idx 로 grounding 되지 않은 (schema, table) 정리.
+
+    소급 정리용(예방 게이트 도입 전 이미 등록된 환각 항목 회수). known_idx = build_known_table_index(...)
+    결과를 호출측이 주입(카탈로그 소스는 호출측 — 코어 SQL-only 계약 유지). known_idx=None(카탈로그
+    미가용)이면 아무것도 안 함(fail-open, 안전). dry_run=True → 대상 집계만(변경 없음).
+    실제 정리(dry_run=False):
+      - enum_dictionary: source='auto' 행만 삭제(수동 큐레이션 source='manual' 은 보존).
+      - enum_feedback  : status in ('pending','auto_promoted') → 'rejected'(감사 추적 유지, 재유입 차단).
+    반환: {"scope", "scanned", "ungrounded": [{schema_name, table_name}], "dict_deleted",
+           "feedback_rejected", "dry_run"}.
+    """
+    sk = _normalize_scope_key(scope_key)
+    result = {"scope": sk, "scanned": 0, "ungrounded": [], "dict_deleted": 0,
+              "feedback_rejected": 0, "dry_run": bool(dry_run)}
+    if not known_idx:
+        return result  # fail-open — 카탈로그 없음(None) 또는 빈 set 이면 아무것도 건드리지 않음(파괴 footgun 방지)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT DISTINCT schema_name, table_name FROM enum_dictionary WHERE scope_key = %s "
+            "UNION SELECT DISTINCT schema_name, table_name FROM enum_feedback WHERE scope_key = %s",
+            (sk, sk),
+        )
+        pairs = [(str(r[0] or ""), str(r[1] or "")) for r in (cur.fetchall() or [])]
+        result["scanned"] = len(pairs)
+        for sn, tb in pairs:
+            if is_enum_grounded(known_idx, sn, tb):
+                continue
+            result["ungrounded"].append({"schema_name": sn, "table_name": tb})
+            if dry_run:
+                continue
+            cur.execute(
+                "DELETE FROM enum_dictionary WHERE scope_key=%s AND schema_name=%s "
+                "AND table_name=%s AND source='auto'",
+                (sk, sn, tb),
+            )
+            result["dict_deleted"] += int(cur.rowcount or 0)
+            cur.execute(
+                "UPDATE enum_feedback SET status='rejected', updated_at=now() "
+                "WHERE scope_key=%s AND schema_name=%s AND table_name=%s "
+                "AND status IN ('pending','auto_promoted')",
+                (sk, sn, tb),
+            )
+            result["feedback_rejected"] += int(cur.rowcount or 0)
+        return result
+    finally:
+        cur.close()
+
+
 def infer_enum_suggestions(user_message, assistant_answer, *, max_terms=None) -> list:
     """대화 한 턴(질문+답변)에서 ENUM 코드↔라벨 후보 추론(LLM 위임).
 
