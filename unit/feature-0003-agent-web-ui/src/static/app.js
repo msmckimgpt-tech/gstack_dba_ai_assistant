@@ -7822,13 +7822,17 @@ function openMessageBubbleMenu(message, msgIdx, triggerEl) {
         }));
       }
       if (canShareHere) {
+        // requiredPermissionsFor 는 추상 action 이름을 받는다("conversation.share" → codes:["conversation.share.create"]).
+        // 권한 코드("conversation.share.create")를 그대로 넘기면 switch default 로 빠져 codes:[] → markAccessBlocked
+        // 가 항상 blocked 처리(모든 사용자에게 비활성 + 클릭 시 오류 토스트)하는 회귀가 있었다(share-menu-perm-wiring).
+        // 형제 conv-item '공유'(openConvItemMenu)와 동일하게 추상 action 이름을 사용한다.
         menu.appendChild(make("여기까지 공유", {
-          action: "conversation.share.create",
+          action: "conversation.share",
           conversation,
           onSelect: () => onShareCeiling(message, msgIdx),
         }));
         menu.appendChild(make("여기부터 공유", {
-          action: "conversation.share.create",
+          action: "conversation.share",
           conversation,
           onSelect: () => beginShareFloor(message, msgIdx),
         }));

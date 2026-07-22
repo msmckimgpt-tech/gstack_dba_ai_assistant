@@ -11,6 +11,17 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260722T103254-share-menu-perm-wiring (TASK-20260722T103254-share-menu-perm-wiring — 말풍선 ☰ '여기까지/여기부터 공유' 권한 연결(action 매핑) 회귀 수정, Minor §12.3)
+- Date: 2026-07-22. 사용자 신고: 대화 '여기부터/여기까지 분기'(말풍선 ☰ 여기서 분기·여기부터/여기까지 공유) 권한 연결 미작동.
+- 근본원인: ☰ 메뉴 '여기까지 공유'/'여기부터 공유'(`openMessageBubbleMenu`)가 `make` 팩토리에 `action` 으로 **권한 코드** `"conversation.share.create"` 를 전달. `requiredPermissionsFor(action)`(app.js ~L589)는 **추상 action 이름**("conversation.share")만 switch 처리 → 미매칭 `default:{codes:[]}` → `markAccessBlocked` 가 `blocked=!hasAnyPermission([])=true` 로 두 항목을 **모든 로그인 사용자에게 항상 비활성**(is-access-blocked·클릭 시 onSelect 대신 오류 토스트) → ☰ 경로 공유(여기부터/여기까지) 완전 동작 불능.
+- 변경: `static/app.js` **2줄** — 두 항목 `action: "conversation.share.create"` → `action: "conversation.share"`(conv-item '공유'가 이미 쓰는 정상 case). → codes `["conversation.share.create"]` 매핑 → `can()` display-permissive(로그인=true) → blocked=false → 정상 활성.
+- 회귀 유입: `36ca1d4d`(2026-07-04 말풍선 ☰ 통합). 신규 항목이 conv-item '공유'의 추상 action 이름 대신 권한 코드 사용(ds-test-gate-fix `8e01cc24`/REV-20260716T051931 와 동형 프론트 게이트 배선 오류).
+- 회귀 잠금: `tests/test_menu_action_permission_wiring.py` 신규 — 모든 메뉴 `action:` 이 requiredPermissionsFor 처리 case 인지 소스 파싱 검증(pre-fix FAIL·fixed PASS 실증).
+- 비변경: 백엔드/스키마/RBAC/엔드포인트 shape 0(보안 posture 불변 — `create_conversation_share` 의 `conversation.share.create` 403·소유 IDOR 게이트 유지)·conv-item 메뉴·admin.js 무변경.
+- **cache-buster 무변경**: 소스 `?v=dev` 고정(Dockerfile `inject_asset_stamp.py` content-hash 빌드주입·deploy-web `asset_stamp_verify` 하드게이트).
+- 검증: `make test` 전체 GREEN(신규 3 PASS)·ruff PASS(첫 run 4 실패=`--no-deps` postgres-replica 레이스 flake·base main·재실행 RC=0 확증). 라이브=POST-DEPLOY PB-0008. Cross-ref: REV-20260722T103254-share-menu-perm-wiring · test-runs.d fragment 20260722T103254.
+- Files: `static/app.js`, `tests/test_menu_action_permission_wiring.py`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md` + test-runs.d fragment.
+
 ## CHG-20260717T010501-doc-sync-rn-0717 (TASK-20260717T010501-doc-sync-rn-0717 — 07-16 후속 머지분 릴리즈노트 정합, 비-정책 doc-only)
 - 변경:
   - `static/release-notes-data.js`: 기존 releases[0] "2026-07-16" 블록 items 에 **fixed/work 항목 1개 추가**(작업 화면 데이터소스 ‘연결 테스트’ 버튼 미표시 회귀 복구) + summary 1문장 append. generated 07-16 유지·신규 dated 블록 미생성·releases 31 불변.
