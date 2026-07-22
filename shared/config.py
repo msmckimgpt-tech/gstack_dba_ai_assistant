@@ -554,6 +554,47 @@ def get_active_conversation_id():
     return _ACTIVE_CONVERSATION_ID.get()
 
 
+# feature-0019 message-editing (branch-hardening): 브랜치 대화(has_branches=true)의 한 run 이
+# 여러 메시지(user + assistant/tool 다수)를 순차 append 할 때, 각 _save_message(core)/
+# save_memory_message(display)는 core_conversations.active_leaf 를 매번 재조회해 부모로 삼는다.
+# 이 재조회 사이에 다른 조작(브랜치 페이징 전환 등)이 active_leaf 를 바꾸면, 실행 중 답변의 부모
+# 체인이 타 브랜치 leaf 로 산란한다(cross-branch parent scatter). run 시작 시 None 으로 초기화하고,
+# 각 append 가 run-local last-leaf 를 여기 실어 다음 append 가 DB active_leaf 대신 이 값을 부모로
+# 쓰게 해 run 내부 체인을 격리한다. core_messages id 공간과 messages(display) id 공간이 달라 2개
+# 분리. None = 이 run 이 아직 브랜치 append 를 안 함(→ DB active_leaf 사용, 기존 동작 유지).
+_RUN_ACTIVE_LEAF_CORE: "_contextvars.ContextVar[int | None]" = _contextvars.ContextVar(
+    "run_active_leaf_core", default=None
+)
+_RUN_ACTIVE_LEAF_DISPLAY: "_contextvars.ContextVar[int | None]" = _contextvars.ContextVar(
+    "run_active_leaf_display", default=None
+)
+
+
+def reset_run_active_leaf() -> None:
+    """run 시작 시 run-local last-leaf(core/display) 초기화 — worker 스레드 재사용 시 이전 run 의
+    leaf 가 새 run 의 첫 브랜치 append 부모로 새는 것을 막는다."""
+    _RUN_ACTIVE_LEAF_CORE.set(None)
+    _RUN_ACTIVE_LEAF_DISPLAY.set(None)
+
+
+def get_run_active_leaf_core():
+    """run-local core last-leaf. None=이 run 이 아직 core 브랜치 append 를 안 함."""
+    return _RUN_ACTIVE_LEAF_CORE.get()
+
+
+def set_run_active_leaf_core(leaf_id) -> None:
+    _RUN_ACTIVE_LEAF_CORE.set(int(leaf_id) if leaf_id is not None else None)
+
+
+def get_run_active_leaf_display():
+    """run-local display last-leaf. None=이 run 이 아직 display 브랜치 append 를 안 함."""
+    return _RUN_ACTIVE_LEAF_DISPLAY.get()
+
+
+def set_run_active_leaf_display(leaf_id) -> None:
+    _RUN_ACTIVE_LEAF_DISPLAY.set(int(leaf_id) if leaf_id is not None else None)
+
+
 def ds_fact_key(source: str, suffix: str, *, ds_key=_DS_KEY_SENTINEL) -> str:
     """datasource 로 스코프한 fact/fingerprint 키. ds_key 미지정 시 ContextVar 사용."""
     if ds_key is _DS_KEY_SENTINEL:

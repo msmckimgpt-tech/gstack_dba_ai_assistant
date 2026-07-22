@@ -83,3 +83,29 @@ sibling(같은 parent)으로 체인 + 재답변. 형제 버전 그룹핑 = 공�
 - §18.8 적대적 보안 리뷰(security subagent) — 결과는 REVIEW.md.
 
 **남은 Phase 1**: 배포(마이그 0041 적용 + agent/insight-worker/web 재빌드) + PB-0008 라이브 시각검증.
+
+---
+
+## 2026-07-22 — 예방적 하드닝 (HANDOFF "대화 누출" 신고 진단 후속, TASK-20260722T-branch-hardening)
+
+**신고**: 편집·재요청 시 답변이 타 사용자 대화로 오배송(cross-user 누출)된다는 HANDOFF.
+
+**진단 결과 — 신고 결함은 존재하지 않음(오진)**:
+- 라이브 DB forensics(agent_kb.agent_runtime): 신고 두 대화(d23ad939 owner=1 / 79da15cb owner=10)는
+  완벽 격리(user 메시지 sender 전부 자기 owner). 최근 7일 `1:1 sender≠owner` 누출 시그니처 0건.
+  신고가 지목한 core_messages 5124–5138 은 **계정10(admin) 본인의 정상 ChatGPT식 편집·재답변**(5091
+  분기)이며, 동시 in-flight였던 두 대화의 전역 message-id 교차 배열을 ID-순 DB 스캔에서 누출로 오독한
+  것. **계정 매핑도 신고와 반대**: 계정1=bootstrap_admin(FGT/킹스레이드), 계정10=admin(GunZ).
+- PB-0008 통제 재현(win-browser, bootstrap_admin): 편집·재답변 UX(동일 대화 렌더 + `‹ 2/2 ›` 페이징
+  전환) PASS + 두 대화 동시 in-flight 격리(교차오염 0) PASS. 재답변 실패도 없음(jobs done).
+
+**발견한 실재 잠재 결함 2건 — 예방적 봉인(이번 신고 원인 아님, defense-in-depth)**:
+- **footgun A** (ADR-ME-0002, INV-6): `_run_agent_core` 의 conversation_id 전역/공유 파일 폴백을
+  웹/ask 경로에서 fail-closed. `agent_core.py`.
+- **footgun B** (ADR-ME-0003, INV-7): `_save_message`(core)+`save_memory_message`(display) 브랜치
+  체인을 run-scoped last-leaf 로 격리(생성 중 브랜치 전환 산란 방지). `agent_core.py`·`memory.py`·
+  신규 `shared/config` contextvar.
+
+**검증**: `tests/test_branch_hardening.py` 9 PASS + 전체 회귀(feature-0002+0003) 2206 passed/2 skipped/
+0 failed. §18.8 적대적 리뷰=REV-20260722T051126-branch-hardening. route/RBAC/웹자산 무변경(PB-0008 게이트
+비대상 — 진단 PB-0008 은 별도 수행·PASS). **잔여**: PR·배포 confirm(사용자).

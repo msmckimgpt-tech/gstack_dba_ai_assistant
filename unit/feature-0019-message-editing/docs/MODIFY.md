@@ -100,3 +100,26 @@ source_of_truth: true
   알림, core role='user' / display role='system' 비대칭) 제외 — 서수 매핑 오손상 방지(SEC #5).
 - 성격: 그룹 단순편집 활성화(AC-ME-6). route 무변경(로직만). 1:1 무회귀.
 - 검증: make test 회귀 0(4 pre-existing local-env) + AST OK. §18.8 보안 = REV-0005.
+
+## CHG-20260722T-branch-hardening (예방적 하드닝 — cross-conversation 누출 표면 봉인 + 브랜치 체인 격리)
+- **배경**: 2026-07-22 "메시지 편집·재요청 답변이 타 사용자 대화로 누출" 신고(HANDOFF)를 진단.
+  라이브 DB forensics(agent_kb.agent_runtime) + PB-0008 통제 재현 결과 **실제 누출·재답변 실패는
+  없음**을 확정(오진 — 동시 in-flight 두 대화의 전역 message-id 교차 배열을 ID-순 DB 스캔에서 누출로
+  오독). 계정 매핑도 반대(계정1=bootstrap_admin, 계정10=admin). 다만 조사 중 발견한 **실재 잠재
+  결함 2건**을 예방적으로 봉인. **이번 신고 원인 아님 — defense-in-depth.**
+- **footgun A (fail-closed 대화 바인딩)** — `feature-0002 agent_core._run_agent_core`: 웹/ask 경로
+  (`account_id` 지정)에서 `conversation_id` 가 falsy 면 `_get_conversation_id()` 가 프로세스 전역
+  env(`AGENT_CONVERSATION_ID`)·호스트 공유 파일(`/shared/conversation_id`)로 폴백하던 것을 fail-closed
+  로 차단(LLM/DB 작업 이전 조기 가드). CLI/console/eval(`account_id=None`)은 파일 폴백 유지(정당).
+- **footgun B (run-scoped active-leaf)** — `feature-0002 agent_core._save_message`(core) +
+  `feature-0002 modules/memory.save_memory_message`(display): 브랜치 대화(`has_branches=true`)의 한
+  run 이 여러 메시지를 순차 append 할 때 매 append 가 DB `active_leaf` 를 재조회하던 것을, run 첫
+  append 만 DB 를 쓰고 이후는 **run-local last-leaf**(신규 `shared/config` contextvar
+  `_RUN_ACTIVE_LEAF_CORE/_DISPLAY`)로 체인해 생성 중 브랜치 페이징 전환이 부모 체인을 산란시키지
+  못하게 격리. run 시작(`reset_run_active_leaf()`)+`run_agent` finally 이중 리셋(스레드 재사용 bleed 방지).
+- **불변식(ANCHOR §3)**: INV-1(비분기 byte-identical) 보존 — 위 블록은 `has_branches=true` 에서만
+  진입. 신규 INV-6(fail-closed 대화 바인딩)·INV-7(run-scoped 브랜치 체인) 추가.
+- **성격**: route/handler/RBAC 무변경(로직·contextvar만). 웹 자산(HTML/CSS/JS) 무변경 → PB-0008
+  게이트 비대상(진단 단계 PB-0008 은 별도 수행·PASS). Major(코어 write 경로·격리).
+- **검증**: 신규 `tests/test_branch_hardening.py` 9건 + 기존 `test_message_branching.py` 전건 +
+  전체 회귀 스위트(feature-0002+0003) **2206 passed / 2 skipped / 0 failed**. §18.8 적대적 리뷰 = REV-20260722T051126-branch-hardening.

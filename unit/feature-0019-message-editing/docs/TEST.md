@@ -69,3 +69,24 @@ source_of_truth: true
 - [x] PB-0008 Phase 2: 그룹 편집 UI(단순 수정만·재답변 미노출) 라이브 검증.
 - [x] 서수 매핑 그룹 이벤트 제외(__event__) — REV #5 수정.
 - [ ] 그룹 sender IDOR·@assistant 잠금·window 정합 — §18.8 Phase 2 보안 리뷰(REVIEW.md).
+
+## 5. 예방적 하드닝 (2026-07-22 — HANDOFF 누출신고 진단 후속)
+### Run 2026-07-22 — 진단(누출 반증) + PB-0008 통제 재현
+- **DB forensics** (라이브 agent_kb.agent_runtime): 신고 두 대화(d23ad939 owner=1 / 79da15cb owner=10)
+  완벽 격리 — user 메시지 sender 전부 자기 owner. 최근 7일 `1:1 sender≠owner` 누출 시그니처 **0건**.
+  신고가 지목한 core_messages 5124–5138 = **계정10(admin) 본인의 정상 편집·재답변**(전역 message-id
+  교차 배열을 ID-순 스캔에서 오독). 계정 매핑 정정: 1=bootstrap_admin, 10=admin.
+- **PB-0008 통제 재현** (win-browser, https://localhost/, bootstrap_admin):
+  - Test1 편집·재답변 UX: 편집→요청사항 수정(재답변)→새 답변 **동일 대화** 렌더 + `‹ 2/2 ›` 브랜치
+    페이저 표시·전환(2/2↔1/2). has_branches=t·active_leaf 전진·job done. ✅ PASS
+  - Test2 동시 in-flight 격리: 두 대화(dbCommon 추가 / dbRanking) 동시 in-flight → 직렬 워커 순차
+    처리 → **교차오염 0**(conv1 dbCommon 3·dbRanking 0 / conv2 dbRanking 3·dbCommon 0). ✅ PASS
+  - 테스트 대화 2건 soft-archive 정리. 스크린샷 pb0008/01~03.
+- **결론**: 신고 결함(누출·재답변 실패) 데이터·재현상 **없음**(오진). 시스템 정상.
+
+### Run 2026-07-22 — 하드닝 단위/회귀 (footgun A·B)
+- `tests/test_branch_hardening.py` 신규 9건: footgun A fail-closed 3(웹 None/빈문자열 차단·전역폴백
+  미호출·CLI 미발동) + footgun B 6(run-local 격리·reset·INV-1 비분기 무영향·명시 parent 우회·display
+  격리·core↔display 독립). **9 PASS**.
+- 전체 회귀(feature-0002+0003, agent 이미지): **2206 passed / 2 skipped / 0 failed** (exit=0).
+- Result: **하드닝 검증 PASS**. (웹 자산 무변경 → PB-0008 게이트 비대상.)

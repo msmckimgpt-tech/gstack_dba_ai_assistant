@@ -87,3 +87,7 @@ source_of_truth: true
 - AC-ME-8 (감사): edit·branch.switch 가 `WebAuditEvents` 에 기록된다(§9 audit).
 - AC-ME-9 (시각검증): PB-0008 실 Windows 브라우저에서 편집·재답변·페이징 시각검증
   (visual_verification_scope: always).
+- AC-ME-10 (branch-hardening, 2026-07-22): 답변 persist·전송 대상 대화는 **요청 conversation_id 와
+  일치**해야 하며(웹/ask 경로 conversation_id 미지정 시 fail-closed — 전역/공유 폴백 금지, INV-6),
+  한 run 의 브랜치 append 부모 체인은 생성 중 브랜치 전환에 오염되지 않는다(run-scoped leaf, INV-7).
+  비분기 대화는 무영향(AC-ME-2/INV-1). 회귀 테스트=`tests/test_branch_hardening.py`.

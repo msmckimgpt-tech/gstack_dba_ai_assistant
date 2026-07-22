@@ -2139,7 +2139,13 @@ def _save_message(conn, conversation_id: str, role: str,
                 try:
                     _bs = backend.load_branch_state(pg_conn, conversation_id=conversation_id)
                     if isinstance(_bs, dict) and _bs.get("has_branches"):
-                        _chain_parent = _bs.get("active_leaf_id")
+                        # branch-hardening (footgun B): run 이 이번 대화에 이미 append 한 leaf 가
+                        # 있으면 그걸 부모로 쓴다(run-local). DB active_leaf 를 매 append 마다 재조회하면
+                        # 생성 중 브랜치 페이징 전환이 active_leaf 를 바꿔 실행 중 답변의 부모 체인이
+                        # 타 브랜치로 산란한다. run 첫 append 만 DB active_leaf 를 쓰고, 이후는 run-local
+                        # last-leaf 로 체인을 격리한다(비분기 대화는 이 블록 자체 미진입 → INV-1 불변).
+                        _run_leaf = cfg.get_run_active_leaf_core()
+                        _chain_parent = _run_leaf if _run_leaf is not None else _bs.get("active_leaf_id")
                         _advance_leaf = True
                 except Exception:
                     _chain_parent = None  # fail-soft → 기존 linear append
@@ -2151,6 +2157,11 @@ def _save_message(conn, conversation_id: str, role: str,
                 recall_floor_created_at=recall_floor_created_at,
                 parent_message_id=_chain_parent)
             if _advance_leaf and new_id:
+                # run-local last-leaf 전진(다음 append 격리) + DB active_leaf 전진(브랜치 트리 정본).
+                try:
+                    cfg.set_run_active_leaf_core(new_id)
+                except Exception:
+                    pass
                 try:
                     backend.set_active_leaf(pg_conn, conversation_id=conversation_id, leaf_id=new_id)
                 except Exception as _exc2:
@@ -3513,6 +3524,7 @@ def run_agent(
         # 의 평문 해제는 예외 시 누락돼 ask-worker 스레드 재사용 stale 위험(REV-20260610-P5 M1).
         cfg.set_active_datasource(None)
         cfg.set_active_conversation_id(None)  # feature-0022: scratch 대화 컨텍스트 해제
+        cfg.reset_run_active_leaf()  # branch-hardening (footgun B): run-local leaf 해제(스레드 재사용 bleed 방지, _run_agent_core 시작 reset 과 이중 안전)
         _ATTACHMENT_IDS_CTX.reset(_att_tokens[0])
         _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
@@ -3673,6 +3685,23 @@ def _run_agent_core(
     # provider 제한 해소(ok) 를 run 당 1회만 기록하기 위한 가드.
     _provider_ok_recorded = False
 
+    # ── branch-hardening (footgun A, fail-closed) — 대화 바인딩 검증 (LLM/DB 작업 이전) ──
+    # 웹/ask 경로(account_id 지정)는 conversation_id 를 반드시 명시받아야 한다. falsy 면 아래
+    # _get_conversation_id 가 프로세스 전역 env(AGENT_CONVERSATION_ID)·호스트 공유 파일
+    # (/shared/conversation_id)로 폴백하는데, 이는 동시 요청·세션 간 대화가 뒤섞이는
+    # cross-conversation 누출 표면이다(§18.8 격리 불변식). account_id 지정 + conversation_id 비어있음은
+    # 정상 경로에서 발생하지 않으며(worker enqueue 가드·web 핸들러가 항상 명시 전달), 발생 시 폴백을
+    # 쓰지 않고 fail-closed 로 중단한다. CLI/console/eval(account_id=None)은 파일 폴백을 유지한다
+    # (정당 — 단일 사용자 로컬 컨텍스트, 공유 상태 아님).
+    if account_id is not None and not conversation_id:
+        result["error"] = "대화 컨텍스트를 확인할 수 없습니다(conversation_id 미지정)."
+        logging.getLogger("agent_core").error(
+            "run_agent fail-closed: web/ask path 인데 conversation_id 가 비어 있음 "
+            "(account_id=%s) — 전역/공유 대화 폴백 차단(cross-conversation 누출 방지)",
+            account_id,
+        )
+        return result
+
     # ── LLM 클라이언트 초기화 (feature-0007 단일 env 경로) ──
     if not OpenAI:
         result["error"] = "openai 패키지를 찾을 수 없습니다."
@@ -3703,8 +3732,13 @@ def _run_agent_core(
     )
 
     # ── 대화 ID 관리 ──
+    # account_id 지정(웹/ask) 경로의 conversation_id 비어있음은 위(footgun A fail-closed)에서 이미
+    # 차단했다. 여기 도달하면 conversation_id 명시(웹/ask) 또는 account_id=None(CLI/eval, 파일 폴백 정당).
     cid = conversation_id or _get_conversation_id(conv_file)
     result["conversation_id"] = cid
+    # branch-hardening (footgun B): run-local last-leaf(core/display) 초기화 — 브랜치 대화의
+    # 다중-메시지 append 가 생성 중 브랜치 전환에 오염되지 않도록 run 시작마다 리셋(worker 스레드 재사용).
+    cfg.reset_run_active_leaf()
     # run_id: caller(ask-worker)가 claim 별로 주입하면 그대로, 아니면(in-process) 새로 생성.
     run_id = run_id or _new_run_id()
     result["run_id"] = run_id

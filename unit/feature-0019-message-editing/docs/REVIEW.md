@@ -75,3 +75,29 @@ source_of_truth: true
     메시지) → 가려진 구간 편집 불가. 콘텐츠 누출·window 우회 없음.
   - mode 강제: 그룹에서 reanswer/branch 차단(mode!='simple' → 400), 그룹 판정·disp 로드 후 순서 정합.
 - Human Approval: PLAN-APPROVED(2026-07-13). deploy_scope: included.
+
+## REV-20260722T051126-branch-hardening [SUBAGENT:branch-hardening-security] SHIP
+- Scope: 예방적 하드닝 diff — footgun A(대화 바인딩 fail-closed, `agent_core._run_agent_core`) +
+  footgun B(run-scoped active-leaf, `_save_message`/`memory.save_memory_message`/`shared/config`
+  contextvar). 2026-07-22 HANDOFF 누출신고 진단 후속(신고 결함=오진, 실누출 없음 확정 — 본 리뷰는
+  예방 하드닝 대상).
+- 적대적 검증 6축 전건 HOLDS(REFUTE 실패 = 안전):
+  1. footgun A fail-closed 가 모든 caller 안전 — web inproc(conv_id 항상 비어있지 않음)·worker
+     (enqueue 400 가드 선행)·eval/CLI(account_id=None → 가드 skip, 파일 폴백 유지). LLM/DB 작업 이전 배치.
+  2. **run-local reset 전 경로 보장(핵심)** — 모든 caller 가 `run_agent` 래퍼 경유(직접
+     `_run_agent_core` 호출 없음; web 의 `_run_agent_core` 는 `run_agent` alias), 래퍼 finally
+     reset 이 예외·early-return 포함 항상 실행, 모든 message-save 는 시작 reset 이후. stale leaf 도달 불가.
+  3. INV-1 — 비분기(has_branches=false)는 블록 미진입 → byte-identical(테스트 실증).
+  4. core/display 별도 contextvar — 교차 사용 없음.
+  5. 동시성 — inproc `to_thread` = `copy_context()` per-run 격리, worker 직렬 + 이중 reset.
+  6. 신규 버그 없음(int 강제·fail-soft 무해).
+- **지적사항(수정 불요, 정직 기록)**:
+  - (LOW, **기존·범위 외**) `set_active_leaf`/`set_active_display_leaf` **포인터** write-race 잔존:
+    본 수정은 생성 중 브랜치 전환 시 실행 답변의 *부모 체인* 산란은 봉인했으나, DB active_leaf
+    *포인터* 자체는 여전히 run 이 last-writer 로 덮어써(전환 후 포인터가 run 브랜치를 가리킬 수 있음).
+    footgun B 이전에도 존재한 한계이며 부모-체인 정합만 개선. **후속 항목**(별도 triage, 필요 시
+    포인터 CAS/버전 가드) — 사용자-대면 질문→답변 경로엔 무영향.
+  - (INFO) footgun-A early-return result 는 conversation_id 빈값·run_id 없음 — worker 경로 미발화·
+    비정상 conv 해석 실패 시에만 발화하는 clean error 라 무해.
+- 검증: test_branch_hardening.py 9 PASS + 전체 회귀 2206 passed/2 skipped/0 failed.
+- Human Approval: [1] 예방적 하드닝 진행 승인(2026-07-22). PR·배포는 별도 confirm 대기.

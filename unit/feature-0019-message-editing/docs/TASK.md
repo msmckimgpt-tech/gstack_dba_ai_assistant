@@ -60,3 +60,16 @@ source_of_truth: true
 - [x] TASK-P2-2 프론트 _canEditMessage 그룹 지원(본인 발신·비-@assistant) + 인라인 재답변 버튼 그룹 미노출
 - [x] TASK-P2-3 서수 매핑 그룹 이벤트(__event__) 제외 — SEC #5
 - [ ] TASK-P2-4 §18.8 그룹 편집 보안 리뷰 + verify + 배포 + PB-0008(그룹 대화 단순수정·잠금·미노출)
+
+## 7. 예방적 하드닝 (TASK-20260722T-branch-hardening — HANDOFF 누출신고 진단 후속)
+2026-07-22 "편집·재요청 답변 타 대화 누출" 신고 진단: DB forensics + PB-0008 통제 재현으로 **실제
+누출·재답변 실패 없음**(오진) 확정. 편집·재답변 UX·동시 in-flight 격리 모두 PASS. 조사 중 발견한
+잠재 결함 2건을 예방적으로 봉인(이번 신고 원인 아님 — defense-in-depth). 상세=REPORT §, MODIFY
+CHG-20260722T-branch-hardening, DECISIONS ADR-ME-0002/0003.
+- [x] TASK-H1 진단 — 라이브 DB forensics(누출 시그니처 0, 계정 매핑 정정 1=bootstrap_admin/10=admin)
+- [x] TASK-H2 PB-0008 통제 재현 — 편집·재답변(‹ 2/2 › 페이징) + 두 대화 동시 in-flight 격리(교차오염 0) PASS
+- [x] TASK-H3 footgun A — 웹/ask 경로 conversation_id falsy fail-closed(전역/공유 대화 폴백 차단, INV-6)
+- [x] TASK-H4 footgun B — run-scoped active-leaf(core+display)로 생성 중 브랜치 전환 부모-체인 산란 격리(INV-7)
+- [x] TASK-H5 회귀 테스트(test_branch_hardening.py 9건) + 전체 스위트 2206 passed/0 fail
+- [x] TASK-H6 §18.8 적대적 리뷰(REV-20260722T051126-branch-hardening) + verify-completion
+- [ ] TASK-H7 PR·배포 confirm(사용자) — 배포 시 web-a/web-b + ask-worker/insight-worker 재빌드

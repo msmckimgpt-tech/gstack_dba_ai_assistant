@@ -34,6 +34,15 @@ LLM 문맥 recall 이 대화 전체를 native 메시지로 주입하고(§14 dat
 - INV-4: 그룹 대화에서 `@assistant` 호출(유발) 메시지는 **편집 잠금**. 그룹은 브랜치/재답변 없음.
 - INV-5: 두 store(core_messages/messages)의 브랜치 포인터는 **각 store 내부 id 로 저장**
   (cross-store 시각 cut 불필요 — fork F1 회피). bridge 는 created_at 유지.
+- INV-6 (branch-hardening, 2026-07-22): **답변 persist 의 대화 바인딩은 명시 conversation_id 만.**
+  웹/ask 경로(`account_id` 지정)에서 conversation_id 가 falsy 면 프로세스 전역 env·호스트 공유 파일
+  폴백(`_get_conversation_id`)을 쓰지 않고 **fail-closed**. 위반 시 동시 요청·세션 간 cross-conversation
+  누출 표면. CLI/eval(`account_id=None`)만 파일 폴백 정당(단일 사용자 로컬).
+- INV-7 (branch-hardening, 2026-07-22): **한 run 의 브랜치 append 부모 체인은 run-local.**
+  브랜치 대화(`has_branches=true`)의 run 은 첫 append 만 DB active_leaf 를 부모로 쓰고 이후는
+  run-local last-leaf(config contextvar)로 체인 → 생성 중 브랜치 페이징 전환이 DB active_leaf 를 바꿔도
+  실행 중 답변의 부모 체인이 타 브랜치로 산란하지 않는다. run 시작+finally 이중 리셋으로 스레드 재사용
+  bleed 방지. 비분기 대화는 이 경로 미진입(INV-1 보존).
 
 ## §4. 외부 검증 로그 (append-only)
 (엔트리 없음 — §18.8 적대적 보안 리뷰(REV-20260714-0003 [SUBAGENT] SHIP-WITH-FIXES)·PB-0008 시각검증 기록은 REVIEW.md/TEST.md. 본 §4 는 major 외부 검증 챌린지 전용, feature-0009 §4 규약 답습.)

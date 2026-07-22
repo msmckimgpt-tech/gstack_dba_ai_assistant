@@ -174,7 +174,12 @@ def save_memory_message(
                 try:
                     _bs = backend.load_display_branch_state(pg_conn, conversation_id=conversation_id)
                     if isinstance(_bs, dict) and _bs.get("has_branches"):
-                        _chain_parent = _bs.get("active_leaf_id")
+                        # branch-hardening (footgun B): _save_message(core)와 동일 — run 이 이미
+                        # append 한 display leaf 가 있으면 그걸 부모로(run-local). 생성 중 브랜치 전환이
+                        # active_display_leaf 를 바꿔 부모 체인이 산란하는 것을 방지. run 첫 append 만
+                        # DB 조회, 이후는 run-local(비분기 대화는 미진입 → INV-1 불변).
+                        _run_leaf = cfg.get_run_active_leaf_display()
+                        _chain_parent = _run_leaf if _run_leaf is not None else _bs.get("active_leaf_id")
                         _advance_leaf = True
                 except Exception:
                     _chain_parent = None  # fail-soft → 기존 linear append
@@ -184,6 +189,10 @@ def save_memory_message(
                 parent_message_id=_chain_parent, edit_root_message_id=edit_root_message_id,
                 edit_version=edit_version, core_message_id=core_message_id)
             if _advance_leaf and new_id:
+                try:
+                    cfg.set_run_active_leaf_display(new_id)
+                except Exception:
+                    pass
                 try:
                     backend.set_active_display_leaf(pg_conn, conversation_id=conversation_id, leaf_id=new_id)
                 except Exception as _exc2:
