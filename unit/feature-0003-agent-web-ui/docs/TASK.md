@@ -6008,7 +6008,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] PB-0008 재검증(POST-DEPLOY): conv[2](14개·높이 20배)에서 초기 최근 8개만 렌더·최상단 스크롤 시 창 확장 실측.
 - [x] 윈도잉 튜닝: `WINDOW_INITIAL_RENDER` 8→3. 라이브 검증에서 개별 메시지가 큰 대화(conv[2])는 초기 8개도 높이 뷰포트 13배로 "4배만"에 미달 → 초기값을 낮춰 큰 메시지 대화도 4배 근처 유지(짧은 메시지 대화는 상한 로직이 4배까지 채워 첫 화면 손실 없음). 라이브 재검증 예정.
 - [x] PB-0008 POST-DEPLOY 윈도잉 재검증(2026-07-22·배포본 66d1e735): conv[2](14개) 초기 렌더 **3개**(ratio 8→3 튜닝으로 13.2→7.7배)·최상단 스크롤 3→13→14 확장·뱃지 동기·A 막대 정상. 사용자 후속 요구(긴 대화 일부만 로딩+추가 로딩) 라이브 실증 완료. evidence/point-rail-windowing-live.png.
-
 ## 20260722T1927-history-top-indicator — 대화 상단 '위에 더 있음' 페이드 신호 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 표시 전용. /_template:entry 후속)
 
 - 트리거(사용자 요청): 대화 상단에 추가로 불러올 대화가 있을 때 가시적 효과. 검토 후 사용자 결정 = **페이드 그라데이션만**(칩·텍스트·스피너 없이 최소 신호로 난잡함 회피), 최상단 특정 지점 점프는 기존 캘린더 사용, 로드는 스크롤 자동 동작.
@@ -6018,3 +6017,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check` PASS. display-only(백엔드·RBAC·스키마·엔드포인트 0).
 - [ ] PB-0008 POST-DEPLOY: 긴 대화(윈도잉 활성) 상단 페이드 표시·최상단까지 로드 후/짧은 대화는 페이드 숨김 실측.
 - [x] PB-0008 POST-DEPLOY 라이브 PASS(2026-07-22·배포본 029927dc): conv[2](윈도잉 활성) 상단 페이드 표시(3/14)·전부 로드 시 숨김(14/14)·짧은 대화 페이드 없음(2개)·pointer-events:none 무방해. 스크린샷 evidence/history-top-fade-live.png. 사용자 요구 실증 완료. (배포 초회 transient soak 롤백→재실행 표준 remedy.)
+## 20260722T1032-share-menu-perm-wiring — 말풍선 ☰ '여기까지/여기부터 공유' 권한 연결(action 매핑) 회귀 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 표시 게이트 복구. cross-cut 공유창=feature-0009-group-conversation. /_template:entry arg-given dispatch)
+
+- [x] 진단(사용자 신고 "'여기부터/여기까지 분기' 기능 권한 연결 미작동"): 말풍선 ☰ 메뉴 '여기까지 공유'/'여기부터 공유' 항목이 `make` 팩토리에 `action` 으로 **권한 코드** `"conversation.share.create"` 를 넘김. `requiredPermissionsFor`(app.js ~L589) switch 는 **추상 action 이름**만 처리 → 미매칭 `default:{codes:[]}` → `markAccessBlocked` 가 `blocked=!hasAnyPermission([])=true` → 두 항목이 **모든 로그인 사용자에게 항상 비활성**·클릭 시 onSelect 대신 오류 토스트 → ☰ 경로 공유 기능 동작 불능. 형제 '여기서 분기'(`conversation.create`)·conv-item '공유'(`conversation.share`)는 정상 case.
+- [x] provenance: `36ca1d4d`(2026-07-04 말풍선 ☰ 통합). 신규 항목이 conv-item '공유'의 추상 action 이름 대신 권한 코드 사용(ds-test-gate-fix REV-20260716T051931 와 동형 프론트 게이트 배선 오류).
+- [x] 수정(`static/app.js`, 2줄): 두 항목 `action: "conversation.share.create"` → `action: "conversation.share"`. → codes `["conversation.share.create"]` 매핑 → `can()` display-permissive(로그인=true) → blocked=false → 정상 활성.
+- [x] 회귀 잠금(`tests/test_menu_action_permission_wiring.py` 신규): 모든 메뉴 `action:` 문자열이 `requiredPermissionsFor` 처리 case 인지 소스 파싱 검증. pre-fix FAIL(`unresolved: conversation.share.create`)·fixed PASS 실증.
+- [x] 보안/데이터 무영향: 백엔드 `create_conversation_share` 의 `conversation.share.create` 403·소유 IDOR 게이트 불변 — 순수 표시 게이트 복구(RBAC/스키마/엔드포인트 shape 0).
+- [x] 검증(pre-commit): `make test` 전체 GREEN(신규 3 PASS)·ruff PASS. 첫 run 4건 실패=`--no-deps` `postgres-replica` 레이스 flake(base main·재실행 RC=0 확증·2건은 feature-0002라 인과 없음).
+- [x] §18.8 적대적 리뷰(security/ux, general-purpose subagent) — REVIEW.md REV-20260722T103254-share-menu-perm-wiring.
+- [ ] PB-0008 Windows-browser (POST-DEPLOY 예정): merge → `deploy-web`(origin/main) → 라이브 win-browser 실측(☰ '여기까지/여기부터 공유' 활성·클릭 동작·floor arm 배너·pageerror 0) → test-runs.d fragment 20260722T103254 갱신. 사유 TEST.md CHECK#13.
+- [ ] verify-completion(feature-0003) → commit → push → PR/머지·배포(deploy_scope: included).
