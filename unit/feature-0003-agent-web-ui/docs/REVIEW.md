@@ -690,3 +690,6 @@ source_of_truth: true
 ## REV-20260722T130000-shared-branch-readonly-paging-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 공유 읽기전용 페이징 배포 + 양 surface 라이브 검증 기록 (CHG-20260722T130000)
 - Panel skip 사유(§18.8): 코드 0(POST-DEPLOY 실증·TASK 완료). 코드/보안 리뷰 정본 = REV-20260722T122635([SUBAGENT:general-purpose] SHIP-WITH-FIXES, 누출 0).
 - 실증(배포본 622b7434): **공유-링크(익명)** pager 메타 1/2·branch_view=1313 읽기전용 전환·999999999 fail-closed. **인앱 그룹(인증)** pager window-scoped·branch_view 전환·active_leaf 불변(읽기전용 확인). 서빙 자산 반영. Windows-browser 시각 스크린샷은 브리지 다운으로 미수행(§15.4.1 escape) — API end-to-end + 단위 12 PASS 로 보완, 시각 확인은 브리지 복구/사용자 브라우저 잔여.
+
+## REV-20260723T010501-doc-sync-rn-0723 [SKIPPED:non-policy-doc] — 릴리즈노트 07-22 블록 신규 6항목(대화 UI 안정화·탐색) (TASK-20260723T010501-doc-sync-rn-0723, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`)뿐 — 비-정책 doc-only. 렌더 로직·백엔드·스키마·RBAC·엔드포인트·cache-buster(빌드 자동주입) 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현·완료형 정당성(6항목 전부 owning POST-DEPLOY 커밋으로 라이브 확증; f0a32980 은 브리지 다운 §15.4.1 escape·API e2e+단위 12 보완)·area(work)·누출 회피는 doc_sync 가 정본(각 항목 owning POST-DEPLOY 커밋 + git log cfa647df..HEAD) 대비 직접 검증 + ULTRACODE 타깃별 적대 verify(wf_4ab4d814 — RN 6 INCLUDE holds·feature-0023 등 8 EXCLUDE 사유 정확 confirmed, cross-target cross-fault 회피 스코프).

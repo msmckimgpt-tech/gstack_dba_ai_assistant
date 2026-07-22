@@ -773,3 +773,11 @@ source_of_truth: true
 - 배포: PR #887 → main 622b7434 → `deploy-web.sh --web-only`(soak PASS).
 - 라이브(배포본 622b7434, 대화 20260722015229-79da15cb=group+active share): 공유-링크 익명 API — pager 메타·branch_view 읽기전용 전환·999999999 fail-closed. 인앱 그룹 인증 API — pager(window-scoped)·branch_view 전환·active_leaf 불변. Windows-browser 시각 미수행(브리지 다운, §15.4.1 escape — API 실측+단위 12 로 보완).
 - Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/TEST.md`.
+
+## CHG-20260723T010501-doc-sync-rn-0723 (TASK-20260723T010501-doc-sync-rn-0723 — 07-22 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경: `static/release-notes-data.js` releases head 에 "2026-07-22" 블록 prepend(6항목 fixed/work 3·improved/work 3 — 재답변 후 내 메시지 소실 복구·'수정' 창 글자 비가시·말풍선 공유 회귀·상단 '위에 더 있음' 흐림 신호·오른쪽 위치 막대 클릭 이동·공유/그룹 편집 버전 읽기전용 페이징) + generated 2026-07-21→2026-07-22. 렌더 로직·백엔드·스키마·RBAC·엔드포인트 0.
+- cache-buster: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py` + deploy-web.sh `asset_stamp_verify` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침).
+- 근거 정본: 각 항목 owning POST-DEPLOY 커밋(4edb7701/5dbe7992·0ebbac8e/a8fb33d1·7a5b092a/94e2cadd·0db6fc36/109befe1·a92492e6/a70f8382·f0a32980/20562ff9) + git log cfa647df..HEAD.
+- Verification: `node --check` PASS · vm 구조검증(33 releases·07-22 head 6항목[fixed 3·improved 3·area work]·07-21 보존·스키마·누출0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).

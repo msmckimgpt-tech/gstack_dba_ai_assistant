@@ -1756,3 +1756,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 프론트: `app.js` 그룹 `_pageBranch`→`loadHistory({branchView})`(GET `/api/history?branch_view=`, 읽기전용 로컬 렌더). `share.js` `buildShareBranchPager`/`pageBranchShare`(GET `/api/public/share/{token}?branch_view=`). pager 는 version_count>1 이면 렌더(그룹 게이트 없음). 그룹 재답변 버튼은 계속 숨김.
 - 불변식: has_branches=false·1:1 owner(window=None) 무회귀. `/branch/switch`(영속) 그룹 400 유지(mutation lock). feature-0019 ANCHOR INV-4 개정(mutation 잠금 유지, read 가시성 확장).
 - 검증: 보안 단위 `tests/test_shared_branch_readonly_paging.py` 10 PASS + §18.8 적대 보안 리뷰 + 양 surface PB-0008. CHG/REV-20260722T122635-shared-branch-readonly-paging.
+
+## (doc-sync-rn-0723, 2026-07-22) 릴리즈노트 콘텐츠 — 07-22 블록 신규(대화 UI 안정화·탐색 6항목)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-22" 블록 신규(6항목: fixed/work 3·improved/work 3 — 재답변 후 내 메시지 소실 복구·'수정' 창 글자 비가시·말풍선 공유 회귀·상단 흐림 신호·오른쪽 위치 막대·공유/그룹 편집 버전 읽기전용 페이징) prepend·generated 2026-07-21→2026-07-22. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
+- 평이화/비노출: feature-id·§번호·PR#·함수명·내부표현(active_leaf/브랜치 체이닝·color:inherit·point rail/renderCount·branch_view 등) 비노출(사용자 언어).
