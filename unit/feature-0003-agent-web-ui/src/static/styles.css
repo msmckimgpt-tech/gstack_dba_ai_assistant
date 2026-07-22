@@ -6547,32 +6547,36 @@ button.product-dropup-item-ds--test:disabled {
 .message-point-dot {
   position: absolute;
   left: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  /* point-rail-range: 고정 점(8×8 원) → 세로 막대. top(상단 기준) 과 height 는
+     JS(layoutMessagePointRail)가 메시지 실 스크롤 범위 비례로 인라인 지정한다.
+     짧은 메시지도 클릭 가능하도록 min-height 를 둔다. */
+  width: 6px;
+  min-height: 4px;
+  border-radius: 3px;
   border: none;
   padding: 0;
   margin: 0;
   cursor: pointer;
   background: var(--border-soft, rgba(0, 0, 0, 0.2));
-  transition: background 0.15s, top 0.15s;
-  transform: translate(-50%, -50%);
+  transition: background 0.15s, opacity 0.15s, width 0.1s;
+  transform: translateX(-50%);
 }
 .message-point-dot.is-user {
   background: var(--color-primary, #2563eb);
-  opacity: 0.6;
+  opacity: 0.55;
 }
 .message-point-dot.is-assistant {
   background: var(--text-muted, #6b7280);
-  opacity: 0.6;
+  opacity: 0.5;
 }
 .message-point-dot.is-active {
-  /* translate 와 scale 을 함께 — translate 가 사라지면 dot 가 좌측으로 튐 */
-  transform: translate(-50%, -50%) scale(1.8);
+  /* 막대는 scale 대신 폭 확대 + 불투명도로 강조(translateY 제거 — top 이 상단 기준). */
+  width: 11px;
   opacity: 1;
 }
 .message-point-dot:hover {
-  opacity: 1;
+  width: 11px;
+  opacity: 0.95;
 }
 .is-anchor-highlight {
   outline: 2px solid var(--color-primary, #2563eb);

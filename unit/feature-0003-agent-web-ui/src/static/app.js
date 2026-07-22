@@ -5213,9 +5213,17 @@ function renderMessagePointRail() {
     dot.addEventListener("click", (ev) => {
       ev.preventDefault();
       const target = document.getElementById(`message-${message.id}`);
-      // 가이드 뱃지 클릭: native scrollIntoView(behavior:smooth, 브라우저 임의 duration)
-      // 대신 EaseOutExpo 커스텀 애니메이션으로 더 짧게 이동(REQ-20260629-point-scroll).
-      if (target) scrollMessagePointIntoCenter(target);
+      if (!target) return;
+      // point-rail-range: 뱃지(막대) 내 클릭 y 위치(0=상단~1=하단)를 대상 메시지의
+      // [top,bottom] 범위에 매핑해 그 지점으로 스크롤한다. 기존엔 클릭 위치와 무관하게
+      // 항상 메시지 중앙으로 이동했다(scrollMessagePointIntoCenter). 막대가 메시지의
+      // 실 스크롤 점유 구간을 표현하므로, 막대 위쪽 클릭=메시지 위쪽, 아래쪽 클릭=메시지
+      // 아래쪽으로 정밀 이동한다(EaseOutExpo 애니메이션은 유지, REQ-20260629-point-scroll).
+      const dotRect = dot.getBoundingClientRect();
+      const ratio = dotRect.height > 0
+        ? Math.max(0, Math.min(1, (ev.clientY - dotRect.top) / dotRect.height))
+        : 0.5;
+      scrollMessagePointToRatio(target, ratio);
     });
     rail.appendChild(dot);
   });
@@ -5224,27 +5232,30 @@ function renderMessagePointRail() {
   highlightActivePoint();
 }
 
-// TASK-0062 (REQ-20260515-0012): 각 dot 의 top 을 messageLog 의 scrollHeight 비례로 배치.
-// 메시지 1 개가 매우 길어도 dot 가 실 message 의 중심점 비례 위치로 표시된다.
+// TASK-0062 (REQ-20260515-0012) + point-rail-range: 각 뱃지를 messageLog scrollHeight
+// 대비 해당 메시지가 실제로 차지하는 [top, height] 범위 비례의 세로 막대로 배치한다.
+// 기존엔 중심점 top% 만 지정한 고정 8px 점이었다. 이제 막대 높이 = 메시지 스크롤 점유
+// 비율이라 rail 전체가 대화의 세로 미니맵이 되고, 긴 메시지일수록 막대가 길어진다.
 function layoutMessagePointRail() {
   const rail = document.getElementById("messagePointRail");
   if (!rail || !messageLogEl) return;
   const dots = rail.querySelectorAll(".message-point-dot");
   if (!dots.length) return;
   const totalHeight = Math.max(1, messageLogEl.scrollHeight);
+  // logRect 는 dot 마다 불변 — 루프 밖에서 1회만 측정(reflow 절감).
+  const logRect = messageLogEl.getBoundingClientRect();
   dots.forEach((dot) => {
     const messageId = dot.dataset.messageId;
     if (!messageId) return;
     const el = document.getElementById(`message-${messageId}`);
     if (!el) return;
-    // offsetTop 은 가장 가까운 positioned ancestor 기준. messageLog 가 그 ancestor 여야 정확.
-    // messageLog 가 position: static 이면 offsetTop 이 더 위 ancestor 기준 — getBoundingClientRect 보정 사용.
+    // messageLog 가 position: static 일 수 있어 offsetTop 대신 getBoundingClientRect 로 보정.
     const messageRect = el.getBoundingClientRect();
-    const logRect = messageLogEl.getBoundingClientRect();
     const offsetTopInLog = messageRect.top - logRect.top + messageLogEl.scrollTop;
-    const center = offsetTopInLog + messageRect.height / 2;
-    const pct = Math.max(0, Math.min(100, (center / totalHeight) * 100));
-    dot.style.top = `${pct}%`;
+    const topPct = Math.max(0, Math.min(100, (offsetTopInLog / totalHeight) * 100));
+    const heightPct = Math.max(0, Math.min(100 - topPct, (messageRect.height / totalHeight) * 100));
+    dot.style.top = `${topPct}%`;
+    dot.style.height = `${heightPct}%`;
   });
 }
 
@@ -5285,14 +5296,21 @@ function _easeOutExpo(t) {
 function _animatePointScroll(setter, from, to) {
   const delta = to - from;
   if (delta === 0) return;
-  if (_prefersReducedMotion()) { setter(to); return; }
+  // point-rail-range window: 프로그래매틱 스크롤(막대 클릭·검색·앵커 점프) 중에는 최상단
+  // 자동 로드를 억제한다(_maybeAutoLoadOlder). 애니메이션이 최상단 근처를 지날 때 prepend 가
+  // 끼어들면 목표 메시지가 한 페이지 어긋나기 때문(R2). 마지막 프레임의 scroll 이벤트까지
+  // 커버하도록 해제를 rAF 로 한 틱 미룬다.
+  state._pointScrolling = true;
+  const _release = () => { state._pointScrolling = false; };
+  if (_prefersReducedMotion()) { setter(to); requestAnimationFrame(_release); return; }
   const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : null;
-  if (t0 == null) { setter(to); return; } // performance.now 부재 환경 폴백.
+  if (t0 == null) { setter(to); requestAnimationFrame(_release); return; } // performance.now 부재 환경 폴백.
   function step(now) {
     const elapsed = now - t0;
     const p = Math.min(1, elapsed / POINT_SCROLL_DURATION_MS);
     setter(from + delta * _easeOutExpo(p));
     if (p < 1) requestAnimationFrame(step);
+    else requestAnimationFrame(_release);
   }
   requestAnimationFrame(step);
 }
@@ -5304,6 +5322,23 @@ function scrollMessagePointIntoCenter(target) {
   const from = messageLogEl.scrollTop;
   const elTopInLog = elRect.top - logRect.top + from;
   const dest = elTopInLog - (messageLogEl.clientHeight - elRect.height) / 2;
+  const maxTop = Math.max(0, messageLogEl.scrollHeight - messageLogEl.clientHeight);
+  const to = Math.max(0, Math.min(maxTop, dest));
+  _animatePointScroll((y) => { messageLogEl.scrollTop = y; }, from, to);
+}
+
+// point-rail-range: 대상 메시지의 세로 범위 내 ratio(0=상단~1=하단) 지점을 messageLog
+// 뷰포트 중앙에 오도록 EaseOutExpo 스크롤한다. rail 막대 클릭 위치 비례 이동에 쓰인다.
+// (scrollMessagePointIntoCenter 는 항상 메시지 중앙 — 검색 결과 점프가 재사용하므로 유지.)
+function scrollMessagePointToRatio(target, ratio) {
+  if (!messageLogEl || !target) return;
+  const r = Math.max(0, Math.min(1, Number(ratio)));
+  const logRect = messageLogEl.getBoundingClientRect();
+  const elRect = target.getBoundingClientRect();
+  const from = messageLogEl.scrollTop;
+  const elTopInLog = elRect.top - logRect.top + from;
+  const pointInLog = elTopInLog + elRect.height * r;
+  const dest = pointInLog - messageLogEl.clientHeight / 2;
   const maxTop = Math.max(0, messageLogEl.scrollHeight - messageLogEl.clientHeight);
   const to = Math.max(0, Math.min(maxTop, dest));
   _animatePointScroll((y) => { messageLogEl.scrollTop = y; }, from, to);
@@ -6163,7 +6198,12 @@ async function loadHistory({ append = false } = {}) {
   // feature-0003 (N1 적대검증): 이 로드 시작 시각. 아래 hydration 이 fetch await 동안 사용자가
   // 새로 고른 추론 강도를 덮어쓰지 않도록, 픽 시각(state._reasoningPickedAt)과 비교하는 seq 가드.
   const _histLoadStartedAt = Date.now();
+  // point-rail-range window: 이 로드가 시작된 대화. 자동 fill/최상단 자동 로드가 매 대화
+  // 열림마다 append 를 in-flight 로 만드므로, apiFetch 도중 사용자가 다른 대화로 전환하면
+  // stale 응답을 현재 대화에 반영하지 않는다(cross-conversation state.messages 오염 차단, R1).
+  const _loadGenConvId = state.activeConversationId;
   const payload = await apiFetch(`/api/history?${params.toString()}`);
+  if (state.activeConversationId !== _loadGenConvId) return;
   state.messages = append
     ? [...payload.messages, ...state.messages]
     : payload.messages;
@@ -6180,6 +6220,7 @@ async function loadHistory({ append = false } = {}) {
     state.reasoningLevel = _isValidReasoningLevel(_rl) ? _rl : null;
     _updateComposerReasoningLabel();
   }
+  _beginAppendScrollPreserve(append);
   renderMessages();
   if (payload.last_status === "processing") {
     // 새 대화 전송 후 clearPendingBubble 이 먼저 호출되는 경우, 또는 페이지 새로고침 후
@@ -6247,6 +6288,90 @@ async function loadHistory({ append = false } = {}) {
   // switchConversation 경로는 직후 _loadConversationAttachments 가 서버 ground truth 로
   // 다시 확정하므로 이 렌더는 무해한 선-렌더(항상 현재 활성 대화 컨텍스트 기준).
   _renderAttachmentPills();
+  // point-rail-range window: append(prepend) 로드는 렌더 후 스크롤 위치를 보정하고,
+  // 초기(비-append) 로드는 기본 창(뷰포트 4배)이 안 차면 이전 기록을 자동으로 더 당긴다.
+  _endAppendScrollPreserve(append);
+  if (!append) _fillInitialWindowSoon();
+}
+
+// ── point-rail-range window: 대화 로그 창(windowing) 헬퍼 ──────────────────
+// 목적: 긴 대화에서 뱃지 밀집·과다 렌더를 줄이기 위해 기본은 뷰포트 4배만 로드하고,
+// 스크롤이 최상단에 근접하면 기존 loadHistory({append}) 페이징을 자동 트리거한다.
+// prepend 시 renderMessages 가 맨-아래로 이동시키므로, 렌더 전 위치를 기억해 보정한다.
+
+const WINDOW_VIEWPORT_MULTIPLE = 4;   // 기본 로드 창 = 뷰포트 높이 × 4.
+const WINDOW_FILL_MAX_PAGES = 25;     // 초기 채움 시 자동 append 상한(무한루프 방지).
+
+// append(prepend) 로드는 renderMessages 가 맨-아래로 스크롤하므로, 로드 전 위치를 기억해
+// (_begin) 렌더 후 "위에 추가된 높이만큼만" scrollTop 을 밀어 사용자가 보던 지점을 유지한다
+// (_end). flag 없이 렌더 뒤 최종 보정만 하므로, 중간에 예외가 나도 잔류 상태가 없다(맨-아래
+// fallback). _begin 은 apiFetch 성공 후(prepend 직전, renderMessages 전) 호출돼 실패 로드에는
+// 영향이 없고, _end 는 loadHistory 의 마지막 renderMessages 뒤에 최종값으로 덮어쓴다.
+function _beginAppendScrollPreserve(append) {
+  if (!append || !messageLogEl) return;
+  state._preAppendScrollTop = messageLogEl.scrollTop;
+  state._preAppendScrollHeight = messageLogEl.scrollHeight;
+}
+
+function _endAppendScrollPreserve(append) {
+  if (!append || !messageLogEl) return;
+  const delta = messageLogEl.scrollHeight - (state._preAppendScrollHeight || 0);
+  messageLogEl.scrollTop = (state._preAppendScrollTop || 0) + delta;
+  layoutMessagePointRail();
+}
+
+// 초기(비-append) 로드 직후, 로드된 콘텐츠 높이가 뷰포트 4배 미만이면 이전 기록을
+// 자동으로 몇 페이지 더 당겨 기본 창을 채운다(사용자 스크롤 없이 맥락 확보). 재진입 가드.
+function _fillInitialWindowSoon() {
+  if (!messageLogEl) return;
+  // point-rail-range window: fill 은 대화별 토큰으로 격리한다. 빠른 대화 전환 시 새 fill 이
+  // 토큰을 갱신하면 이전 대화의 fill 루프가 다음 iteration 에서 스스로 중단하고(전역 flag 로
+  // 새 대화 fill 이 억제되던 B1 해소), 매 대화가 자기 창을 채운다. 토큰이 non-null 이면
+  // "fill 진행 중"이라 최상단 자동 로드는 양보한다(_loadOlderGuarded).
+  const myToken = state.activeConversationId;
+  state._fillToken = myToken;
+  requestAnimationFrame(async () => {
+    try {
+      let pages = 0;
+      const target = () => messageLogEl.clientHeight * WINDOW_VIEWPORT_MULTIPLE;
+      while (
+        state._fillToken === myToken &&
+        state.activeConversationId === myToken &&
+        state.hasMoreHistory &&
+        messageLogEl.scrollHeight < target() &&
+        pages < WINDOW_FILL_MAX_PAGES
+      ) {
+        pages++;
+        const before = messageLogEl.scrollHeight;
+        await loadHistory({ append: true });
+        if (messageLogEl.scrollHeight <= before) break; // 진전 없으면 중단.
+      }
+    } catch (_e) {
+      // 초기 채움 실패는 비치명 — 사용자는 스크롤/버튼으로 계속 로드할 수 있다.
+    } finally {
+      if (state._fillToken === myToken) state._fillToken = null;
+    }
+  });
+}
+
+// 이전 기록 1페이지 로드 — 자동(최상단 스크롤)·수동(버튼) 공용 단일 게이트. _loadingOlder
+// (중복 요청) + _fillToken(초기 채움 진행 중) 가드로, 같은 before_id 를 두 트리거가 동시에
+// 요청해 같은 페이지가 이중 prepend 되는 것을 막는다.
+function _loadOlderGuarded() {
+  if (!state.hasMoreHistory || state._loadingOlder || state._fillToken) return;
+  state._loadingOlder = true;
+  loadHistory({ append: true })
+    .catch((error) => showToast((error && error.message) || "이전 기록을 불러오지 못했습니다.", true))
+    .finally(() => { state._loadingOlder = false; });
+}
+
+// 스크롤이 최상단(0.5 뷰포트)에 근접하면 이전 기록을 자동 로드한다. 단, 막대/검색/앵커
+// 점프의 프로그래매틱 스크롤(_pointScrolling) 중에는 억제해 목표 어긋남을 막는다(R2).
+function _maybeAutoLoadOlder() {
+  if (!messageLogEl || state._pointScrolling) return;
+  const threshold = Math.max(200, messageLogEl.clientHeight * 0.5);
+  if (messageLogEl.scrollTop > threshold) return;
+  _loadOlderGuarded();
 }
 
 async function loadConversations(preferredConversationId = "", { allowCurrentFallback = true } = {}) {
@@ -10327,9 +10452,8 @@ async function initialize() {
     });
   }
   loadMoreBtn.addEventListener("click", () => {
-    loadHistory({ append: true }).catch((error) => {
-      showToast(error.message || "이전 기록을 불러오지 못했습니다.", true);
-    });
+    // point-rail-range window: 자동 로드와 동일한 단일 가드 경로(중복 prepend 방지).
+    _loadOlderGuarded();
   });
   // REQ-20260608-0158: 즉시 답변 진입점 — composer 버튼. (중단은 send-버튼 모핑 TASK-0157.)
   if (composerFinalizeBtn) {
@@ -10360,7 +10484,10 @@ async function initialize() {
   // TASK-0061 Phase 4 (REQ-20260515-0006): point rail 의 active dot 갱신 — scroll + resize.
   // TASK-0062 (REQ-20260515-0012): scrollHeight 변화 시 dot 위치도 재배치.
   if (messageLogEl) {
-    messageLogEl.addEventListener("scroll", () => highlightActivePoint(), { passive: true });
+    messageLogEl.addEventListener("scroll", () => {
+      highlightActivePoint();
+      _maybeAutoLoadOlder();  // point-rail-range window: 최상단 근접 시 이전 기록 자동 로드.
+    }, { passive: true });
   }
   window.addEventListener("resize", () => {
     layoutMessagePointRail();
