@@ -697,3 +697,8 @@ source_of_truth: true
 - Verification: `node --check` PASS · **headless Chromium 실측**(실 styles.css cascade) — 수정본 textarea 대비 15.38:1·편집 말풍선 파랑→중립전환·재답변버튼 5.17:1 / 수정 전 재현 1.0:1(버그 확인) · 스크린샷. **POST-DEPLOY PB-0008 Windows-browser 라이브 예정**(TEST.md CHECK#13, test-runs.d fragment).
 - Files: `static/styles.css`, `static/app.js`, `docs/{TASK,REPORT,TEST,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260722T020408-msg-edit-textarea-contrast.md`.
 - landing/배포: verify-completion(feature-0003) → commit → push → PR/머지=자동 동기화 정책. **배포(`make deploy-web`)는 외부 영향 — 사용자 confirm**.
+
+## CHG-20260722T024500-msg-edit-textarea-contrast-postverify (msg-edit-textarea-contrast POST-DEPLOY, 비-정책 doc-only)
+- POST-DEPLOY PB-0008 Windows-browser 라이브 실증 기록 append + TASK 체크박스 완료. 코드/자산 0 — test-runs.d fragment 20260722T020408 POST-DEPLOY 갱신 + TASK.md 박스.
+- 배포본 main f7a14e9a(PR #866) — `deploy-web --web-only` 무중단(soak PASS). Windows Chrome 150 실측: textarea 대비 ~15.4:1(글자 판독)·편집 말풍선 중립 전환·재답변버튼 판독. 사용자 신고 해소 실증.
+- Files: `docs/TASK.md`, `docs/test-runs.d/20260722T020408-msg-edit-textarea-contrast.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
