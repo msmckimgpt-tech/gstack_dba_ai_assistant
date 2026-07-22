@@ -1503,5 +1503,5 @@ TASK-0015 (plan-review):
 - [x] 단위 테스트(`tests/test_branch_chain_race.py`, 4 PASS): ①active_leaf 리셋에도 답변→user 체인 ②멀티스텝(user→step→step→답변) run 내 체인 ③비분기 무영향(parent None·leaf 미전진, INV-1) ④teardown 커서 해제(스레드 재사용 leak 방지).
 - [x] 회귀: `py_compile` 3파일 OK · feature-0002 전체 pytest **PASS**(agent 이미지 마운트, 2 skip·0 fail). `make test` 는 이 환경 docker build 인프라 실패(`invalid proto:`)로 미실행 — 마운트 우회.
 - [x] §18.8 적대적 리뷰(subagent, general-purpose) 완료: SHIP-WITH-FIXES — [1] teardown 예외-비안전 needs-fix 반영(end()→run_agent finally + entry 무조건 리셋), 6축 not-a-defect. 리뷰 권고 테스트 2종(core-store·leak 봉인) 추가 → 단위 6 PASS. REV-20260722T050006-branch-chain-race.
-- [ ] 배포(무중단, deploy-all — 워커 코드 변경이므로 web-only 아님) + POST-DEPLOY 라이브 PB-0008: 재답변 후 user 메시지 정상 표시 실측.
-- [ ] 데이터 복구(POST-DEPLOY): 대화 `20260722015229-79da15cb` 오염 5행 재링크(display 1300→1299, core 5188→5187·5190→5189·5198→5197·5243→5242). dry-run 확정. 오염 범위=이 대화 1건뿐(전수 탐지).
+- [x] 배포(무중단, deploy-all, 2026-07-22): PR #874 머지 → main **5a32a480** → `sudo -E bin/deploy-web.sh`(web-a/b 롤링 soak PASS + insight-worker·ask-worker `mysql-ai-agent:5a32a480` 롤아웃 healthy + gateway 무드리프트). 워커 코드 변경이라 전체 스코프.
+- [x] 데이터 복구(POST-DEPLOY, 2026-07-22): 대화 `20260722015229-79da15cb` 오염 5행 재링크 — 트랜잭션 `UPDATE 1`(display 1300→1299) + `UPDATE 4`(core 5188→5187·5190→5189·5198→5197·5243→5242) COMMIT(dry-run count 일치). 복구 후 active-path=`1269→1270→1299→1300→1311→1312`(사라졌던 user 1299 복귀)·오염 잔존 0·**`/api/history` 6 메시지 반환에 "로그 흐름만…" 포함**(UI 렌더 경로 실검증). 오염 범위=이 대화 1건뿐(전수 탐지).
