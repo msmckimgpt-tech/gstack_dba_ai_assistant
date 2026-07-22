@@ -618,3 +618,16 @@
   .share-message-content pre,
   .share-sql { white-space: pre-wrap; word-break: break-word; }
 }
+
+/* feature-0019 shared-readonly-paging: 편집된 user 메시지 버전 읽기전용 페이저 (< n/m >) */
+.share-branch-pager { display: inline-flex; align-items: center; gap: 2px; margin-top: 6px; user-select: none; }
+.share-message-user .share-branch-pager { align-self: flex-end; }
+.share-branch-pager-btn {
+  font-size: 13px; line-height: 1; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 999px;
+  border: 1px solid var(--share-border); background: var(--share-surface); color: var(--share-text-muted);
+  cursor: pointer; padding: 0;
+}
+.share-branch-pager-btn:hover:not(:disabled) { border-color: var(--share-primary); color: var(--share-primary); }
+.share-branch-pager-btn:disabled { opacity: .4; cursor: default; }
+.share-branch-pager-label { font-size: 11px; color: var(--share-text-muted); padding: 0 4px; font-variant-numeric: tabular-nums; }

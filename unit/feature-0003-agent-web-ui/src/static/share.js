@@ -80,8 +80,12 @@
     });
   }
 
-  async function fetchShare(tok) {
-    const res = await fetch(`/api/public/share/${encodeURIComponent(tok)}`, {
+  async function fetchShare(tok, branchView) {
+    // feature-0019 shared-readonly-paging: branchView 가 주어지면 그 버전의 브랜치를 읽기전용으로
+    // 요청한다(서버는 공유 window 내 검증 후에만 반영·active_leaf 불변). 범위 밖이면 서버가 무시.
+    let _url = `/api/public/share/${encodeURIComponent(tok)}`;
+    if (branchView != null) _url += `?branch_view=${encodeURIComponent(String(branchView))}`;
+    const res = await fetch(_url, {
       credentials: "same-origin",
     });
     if (res.status === 404) throw new Error("공유 링크를 찾을 수 없습니다.");
@@ -142,7 +146,7 @@
         empty.textContent = "공유된 메시지가 없습니다.";
         messagesEl.appendChild(empty);
       } else {
-        messages.forEach((msg, idx) => messagesEl.appendChild(renderMessage(msg, idx)));
+        messages.forEach((msg, idx) => messagesEl.appendChild(renderMessage(msg, idx, tok)));
       }
     }
 
@@ -168,7 +172,46 @@
     }
   }
 
-  function renderMessage(msg, idx) {
+  // feature-0019 shared-readonly-paging: 공유 뷰에서도 편집된 user 메시지의 버전을 < n/m > 로
+  // 읽기전용 열람. 서버가 sibling_ids/version_number/version_count 를 공유 window 내로 scoped 부착
+  // (범위 밖 버전은 카운트·존재 비노출). active_leaf 미변경 — 조회만.
+  function buildShareBranchPager(msg, tok) {
+    const pager = document.createElement("div");
+    pager.className = "share-branch-pager";
+    const cur = Number(msg.version_number || 1);
+    const total = Number(msg.version_count || 1);
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "share-branch-pager-btn";
+    prev.textContent = "‹";
+    prev.disabled = cur <= 1;
+    prev.setAttribute("aria-label", "이전 버전");
+    prev.addEventListener("click", (ev) => { ev.stopPropagation(); pageBranchShare(tok, msg, -1); });
+    const label = document.createElement("span");
+    label.className = "share-branch-pager-label";
+    label.textContent = `${cur} / ${total}`;
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "share-branch-pager-btn";
+    next.textContent = "›";
+    next.disabled = cur >= total;
+    next.setAttribute("aria-label", "다음 버전");
+    next.addEventListener("click", (ev) => { ev.stopPropagation(); pageBranchShare(tok, msg, 1); });
+    pager.append(prev, label, next);
+    return pager;
+  }
+
+  function pageBranchShare(tok, msg, direction) {
+    const sibs = Array.isArray(msg.sibling_ids) ? msg.sibling_ids : [];
+    const cur = Number(msg.version_number || 1);
+    const nextIdx = (cur - 1) + direction;
+    if (nextIdx < 0 || nextIdx >= sibs.length) return;
+    fetchShare(tok, sibs[nextIdx])
+      .then((data) => render(data, tok))
+      .catch((err) => showError(err && err.message ? err.message : "버전 전환에 실패했습니다."));
+  }
+
+  function renderMessage(msg, idx, tok) {
     const row = document.createElement("article");
     const role = msg && msg.role === "user" ? "user" : "assistant";
     row.className = `share-message share-message-${role}`;
@@ -197,6 +240,11 @@
     if (msg.role === "assistant" && msg.meta) {
       const details = renderAssistantDetails(msg.meta);
       if (details) row.appendChild(details);
+    }
+
+    // 편집된 user 메시지 버전 페이저(읽기전용).
+    if (role === "user" && Number(msg.version_count || 0) > 1) {
+      row.appendChild(buildShareBranchPager(msg, tok));
     }
 
     return row;

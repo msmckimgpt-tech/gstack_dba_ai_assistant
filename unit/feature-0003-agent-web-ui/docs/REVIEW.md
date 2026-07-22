@@ -673,3 +673,16 @@ source_of_truth: true
 
 ## REV-20260722T195000-history-top-indicator-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 라이브 검증 기록
 - Panel skip 사유(§18.8): 코드 0(문서 전용 POST-DEPLOY 실증). 구현 리뷰 정본 = REV-20260722T192736-history-top-indicator([SKIPPED:trivial-display-only]). 배포(029927dc)+라이브 실측(페이드 표시/숨김/무방해) append 만.
+
+## REV-20260722T122635-shared-branch-readonly-paging [SUBAGENT:general-purpose] — SHIP-WITH-FIXES (1 real-defect 반영, 6축 not-a-defect, 신규 누출 0) — 공유/그룹·익명 공유-링크 뷰 편집 버전 읽기전용 페이징 (20260722T122635, Major §12.3, PLAN-APPROVED design-review C)
+- §18.8 적대적 **보안** 리뷰(general-purpose, 7축). **익명 공유 뷰 신규 누출 없음** — 변경 전 `_share_load_messages` 는 [floor,anchor] 내 모든 브랜치를 평면 노출했고, 이 변경은 기본 노출을 active 브랜치로 축소 + branch_view 도 동일 id-범위로만 한정(범위 밖 content·존재 차단). 배포 차단 사유(누출) 없음.
+  - **[3] real-defect (반영 완료)**: 브랜치된 그룹의 **평문 멤버 채팅**(`_save_group_chat_message_pg`)이 parent 없이·leaf 전진 없이 고아 삽입 → 새 active-path 필터(그룹 enrich)에서 결정론적 은닉(멤버 채팅 사라짐, availability 회귀). 옛 SEC MINOR-B skip 이 이걸 막던 것. **수정**: `_save_group_chat_message_pg` 의 두 store 쓰기를 has_branches 시 active_leaf 에 체인+전진(memory.py 래퍼 로직 답습). 비분기는 parent None(무회귀). 회귀 테스트 2건(체인/비분기) 추가.
+  - **[1] 범위 밖 버전 누출 not-a-defect**: `_branch_version_groups(visible_pred)` count/sibling 배제 + `_branch_resolve_readonly_leaf` fail-closed. leaf-범위안·조상/후손-범위밖 우회도 (messages ∩ active_ids) 교집합 + 형제≠후손으로 차단. 존재 oracle 없음(범위밖/미존재 응답 동일).
+  - **[2] active-path 조상 누출 not-a-defect**: 교집합 `messages`(상위 window/id-범위 필터됨)가 방어 — 범위 밖 조상은 애초에 messages 부재.
+  - **[4] 읽기전용 불변 not-a-defect**: override 경로 로컬 변수만·DB 미기록. `/branch/switch`·reanswer 그룹 400 유지(INV-4).
+  - **[5] 주입/타입 not-a-defect**: branch_view int 강제·공유는 try/except→None. resolver SELECT `conversation_id=%s AND id=%s` 로 타대화/음수/거대 무매칭→None. leaf CTE table allowlist+cid 스코프.
+  - **[6] 비분기/1:1 회귀 not-a-defect**: has_branches=false 전체 skip. 1:1 owner(window=None→pred None→전체) 페이징·switch 영속 불변. FE 1:1 은 `_switchBranch` 영속 라우팅 유지.
+  - **[7] fail-soft not-a-defect**: enrich 예외 시 원본 반환 — 그러나 messages 는 상위 window/id-범위로 이미 잘려 범위 밖 누출 불가(옛 flat 수준으로만, 경계 내).
+  - **[3-2] 권고(bounded 문서화)**: 브랜치된 그룹 **동시 @assistant overlap** 시 cross-run fork 로 한쪽 turn 이 비활성 sibling 으로 갈 수 있음(per-run 커서는 run 내부만 봉인 — branch-chain-race fix 의 알려진 경계, [5] version-active 격하). 드묾·availability(누출 아님)·재답변으로 복구 가능. 후속 하드닝(첫 write active_leaf read 를 SELECT FOR UPDATE 직렬화) 여지 — 본 cycle 범위 밖 문서화.
+- 반영 후 검증: `py_compile` 5 + `node --check` 2 · 보안 단위 `tests/test_shared_branch_readonly_paging.py` **12 PASS**(id-범위/window 스코핑·resolver fail-closed·[3] 그룹채팅 체인/비분기 무회귀) · feature-0003 전체 회귀(예정).
+- Cross-ref: CHG/TASK/FUNCTION/TEST-20260722T122635 · feature-0019 ANCHOR INV-4 개정(mutation 잠금 유지+read 가시성 확장) · POST-DEPLOY 양 surface PB-0008.

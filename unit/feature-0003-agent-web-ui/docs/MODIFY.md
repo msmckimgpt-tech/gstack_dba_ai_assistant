@@ -755,3 +755,15 @@ source_of_truth: true
 ## CHG-20260722T195000-history-top-indicator-postverify (POST-DEPLOY 라이브 검증, 비-정책 doc-only)
 - POST-DEPLOY PB-0008 라이브 PASS(배포본 029927dc): 위에 더 있음→페이드 표시·전부 로드→숨김·짧은 대화→없음·pointer-events:none 무방해. 사용자 요구 실증. 코드 0(스크린샷 evidence 추가). 배포 초회 transient soak 롤백→재실행 remedy.
 - Files: `docs/test-runs.d/20260722T192736-history-top-indicator.md`, `docs/test-runs.d/evidence/history-top-fade-live.png`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
+
+## CHG-20260722T122635-shared-branch-readonly-paging (20260722T122635-shared-branch-readonly-paging — 공유/그룹·익명 공유-링크 뷰 편집 버전 읽기전용 페이징, Major §12.3, PLAN-APPROVED design-review C)
+- 계기: 사용자 요청 — 공유 대화 + '링크 공유' 출력 화면에서도 편집 버전 `< n/m >` 페이징이 정합하게 동작하도록. 현재는 브랜치된 대화 공유 시 비활성 버전이 평면 노출됨(pager 없음).
+- 방향(design-review C): 읽기전용 — active_leaf(공유 근거)를 바꾸지 않고 기존 브랜치 버전을 조회만. 새 재답변/영속 전환은 그룹에서 계속 잠금(INV-4 mutation lock 불변).
+- 변경(`routers/_conv_store.py`, +189): `_branch_enrich_display`(두 로더 공용 active-path 필터+가시성-scoped 버전메타·읽기전용)·`_branch_version_groups(visible_pred)`·`_branch_window_pred`/`_branch_idrange_pred`(가시성 술어)·`_branch_resolve_readonly_leaf`(대상 검증+leaf, fail-closed)·`_branch_readonly_thread_ids`. `_get_history`/`_share_load_messages` 에 `override_active_leaf`(비영속). `_get_history` 그룹 enrich(이전 SEC MINOR-B skip 대체, window-scoped).
+- 변경(`routers/conversations.py`,`routers/share.py`): `/api/history`·`public_share_view` 에 `branch_view` 파라미터 → resolver(멤버 window / 공유 [floor,anchor] 검증) → override. `app.py`: `_branch_resolve_readonly_leaf` re-export.
+- 변경(프론트): `app.js`(그룹 `_pageBranch`→`loadHistory({branchView})` 읽기전용)·`share.js`(공유 뷰 pager+read-only nav)·`share.css`(pager 스타일).
+- 보안(핵심): 가시 범위 밖 버전은 카운트·sibling_ids·존재·내용 모두 fail-closed 차단(window/id-범위 술어). active_leaf 불변(읽기전용).
+- 비변경(회귀 0): has_branches=false 대화는 fast-path skip. 1:1 owner(window=None)는 `visible_pred=None`→전체(기존 페이징·`/branch/switch` 영속 불변). 백엔드 write/RBAC/스키마 0.
+- Verification: `py_compile` 5 + `node --check` 2 · 보안 단위 10 PASS · §18.8 적대 보안 리뷰(REVIEW) · POST-DEPLOY 양 surface PB-0008.
+- Files: `routers/{_conv_store,conversations,share}.py`, `app.py`, `static/{app.js,share.js,share.css}`, `tests/test_shared_branch_readonly_paging.py`, `docs/{TASK,MODIFY,FUNCTION,REPORT,TEST,REVIEW}.md`, `../feature-0019-message-editing/docs/ANCHOR.md`(INV-4 개정).
+- landing/배포: verify-completion → commit → PR/머지=자동 동기화. 배포=외부 영향 confirm(이미 승인 범위).

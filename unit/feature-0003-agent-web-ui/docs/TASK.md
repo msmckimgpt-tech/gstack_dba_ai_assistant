@@ -6028,3 +6028,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] §18.8 적대적 리뷰(security/ux, general-purpose subagent) — REVIEW.md REV-20260722T103254-share-menu-perm-wiring.
 - [x] verify-completion(feature-0003) PASS → commit `7a5b092a` → push → PR #885 → 병렬 PR #883 충돌 rebase(FUNCTION.md union) → CI `test` PASS → main 병합 `066cec5e` → `make deploy-web-only` 무중단 롤링(soak PASS).
 - [x] PB-0008 Windows-browser (POST-DEPLOY 라이브 PASS, 2026-07-22·배포본 066cec5e): win-browser relay(Chrome 150) bootstrap_admin 본인 대화 ☰ 실측 — `여기까지 공유`·`여기부터 공유` 항목 **`is-access-blocked` 없음**(수정 전 항상 blocked 회귀 복구)·`여기부터 공유` 클릭 → onSelect 실행(비차단·오류토스트0·메뉴 닫힘) → floor arm 배너·마커 표시·pageerror 0. 서빙 app.js `share.create` 리터럴 0. 사용자 신고 해소 라이브 실증 완료. test-runs.d fragment 20260722T103254 POST-DEPLOY 갱신 + evidence/share-menu-perm-wiring-live.png.
+
+## 20260722T122635-shared-branch-readonly-paging — 공유/그룹 대화 + 익명 공유-링크 뷰 편집 버전 읽기전용 페이징 (Major §12.3, PLAN-APPROVED design-review C — cross-cut 정본 feature-0019-message-editing)
+- [x] 설계: /plan-design-review C(읽기전용 페이징) 채택 — 공유 근거 무결성 유지, active_leaf 불변, 기존 브랜치 read 가시성만 확장. 사용자 승인(방향 C + 공유-링크 뷰 포함).
+- [x] 근본원인(현재 결함): 브랜치된 1:1 이 공유되면 (a) in-app 로더(`_get_conversation_history`)는 `not _conversation_is_group` 게이트로 브랜치 enrich skip → 비활성 버전 평면 노출, (b) 익명 공유 로더(`_share_load_messages`)는 브랜치 인지 전무 → 동일 평면 노출. pager 미표시.
+- [x] 백엔드 공용화: `_branch_enrich_display`(active-path 필터 + 가시성-scoped 버전메타, 읽기전용) + `_branch_version_groups(visible_pred)` + `_branch_window_pred`(created_at)/`_branch_idrange_pred`(공유 id범위). 두 로더 모두 enrich(그룹·익명 공유 포함).
+- [x] 읽기전용 네비: 로더 `override_active_leaf`(비영속) + `/api/history?branch_view=`·`/api/public/share/{token}?branch_view=` — `_branch_resolve_readonly_leaf` 가 대상이 **가시 범위 내 user 메시지**인지 검증 후에만 override(fail-closed). active_leaf 절대 불변(INV-4 mutation lock 유지, `/branch/switch` 그룹 400 유지).
+- [x] 프론트: `app.js` 그룹 pager 는 `loadHistory({branchView})` 읽기전용(재답변 버튼 그룹 숨김 유지)·`share.js`+`share.css` 공유 뷰 pager 신설(read-only nav).
+- [x] 보안 단위 테스트 `tests/test_shared_branch_readonly_paging.py` **10 PASS**: id-범위 술어 경계·window 스코핑(범위 밖 형제 카운트/sibling_ids 배제)·resolver fail-closed(범위밖·비user·없음·None). `py_compile` 5파일 + `node --check` app.js/share.js OK.
+- [x] §18.8 적대적 **보안** 리뷰(general-purpose) 완료: SHIP-WITH-FIXES — **신규 누출 0**(익명 공유 뷰 노출 오히려 감소), [3] 그룹 평문채팅 고아 은닉 real-defect 반영(`_save_group_chat_message_pg` 체인+전진, 회귀 2테스트), 6축 not-a-defect, [3-2] cross-run overlap bounded 문서화. 단위 12 PASS. REV-20260722T122635.
+- [ ] PB-0008 **양 surface**(인앱 그룹 + 공유-링크) + 무중단 배포. (웹/UI 자산 변경 — CHECK#13 always.)

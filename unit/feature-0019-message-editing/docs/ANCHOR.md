@@ -31,7 +31,14 @@ LLM 문맥 recall 이 대화 전체를 native 메시지로 주입하고(§14 dat
   (게이트 fast-path — `has_restricted_members` 패턴. 위반 시 전 대화 회귀.)
 - INV-2: 편집은 **본인 발신 메시지만**(`sender_account_id == actor` claim). IDOR 게이트.
 - INV-3: 공유 window 술어는 active-path CTE 에 **항상 합성** — 가려진 구간은 물리 배제(fail-closed).
-- INV-4: 그룹 대화에서 `@assistant` 호출(유발) 메시지는 **편집 잠금**. 그룹은 브랜치/재답변 없음.
+- INV-4: 그룹 대화에서 `@assistant` 호출(유발) 메시지는 **편집 잠금**. 그룹/공유는 **새 재답변·브랜치
+  생성 없음**(mutation lock — `/branch/switch` 영속 전환도 400, active_leaf 불변). **개정(shared-readonly-paging,
+  20260722, design-review C·사용자 승인)**: 공유 전 1:1 에서 생성된 **기존 브랜치**는 공유/그룹 in-app 뷰와
+  익명 '링크 공유' 뷰에서 **owner-active 고정 + 가시성(멤버 created_at window / 공유 id-범위 [floor,anchor])-scoped
+  읽기전용 페이징**(`< n/m >`)으로 **조회 가능**하다. 읽기전용 열람은 `override_active_leaf`(비영속)+`branch_view`
+  파라미터로 하며 `_branch_resolve_readonly_leaf` 가 대상이 가시 범위 내 user 메시지인지 검증 후에만 반영한다
+  (범위 밖 버전은 카운트·sibling_ids·존재·내용까지 fail-closed 차단 — 누출 방지). **mutation 잠금은 그대로 유지**하고
+  **read 가시성만 확장**한 것이다(공유 근거 무결성 불변). 공용 로더 정합 = feature-0003 `_branch_enrich_display`.
 - INV-5: 두 store(core_messages/messages)의 브랜치 포인터는 **각 store 내부 id 로 저장**
   (cross-store 시각 cut 불필요 — fork F1 회피). bridge 는 created_at 유지.
 - INV-6 (branch-hardening, 2026-07-22): **답변 persist 의 대화 바인딩은 명시 conversation_id 만.**
