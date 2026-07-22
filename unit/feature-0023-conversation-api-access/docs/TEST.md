@@ -1,0 +1,67 @@
+---
+doc_type: TEST
+feature_id: feature-0023-conversation-api-access
+status: active
+edit_policy: mixed
+source_of_truth: true
+---
+
+# Test
+
+## 1. Test Scope
+- 검증: Bearer 헤더 파싱·정규화, scope allowlist 파싱/매칭, `_account_permissions`
+  scope 교집합(관리 네임스페이스 차단), `_account_has_permission`/`_account_has_product_access`
+  가 scope 존중, `_get_account_by_api_token` fail-closed, MCP tool 등록·gated 런처.
+- 제외: 라이브 e2e(실토큰→/api/ask 왕복)는 배포 후 §3 Run 으로 기록. **UI 자산 변경 없음**
+  → PB-0008 Windows-browser 시각검증 **불필요**(python/bash/docs 만 변경, static/template
+  무변경). 검증 환경 = `CLI`(서버 계약).
+
+## 2. Test Cases
+### TEST-20260722T024107-conversation-api-access-1 (Bearer 파싱)
+- Purpose: `Authorization: Bearer <token>` 정상 추출, 형식 불일치/injection 거부.
+- Steps: valid/case-insensitive/missing/Basic/injection-char 헤더로 `_extract_bearer_token`·
+  `_sanitize_api_token` 호출.
+- Expected Result: 정상 토큰 추출, 형식 불일치=빈문자, injection 문자 제거·128자 상한.
+
+### TEST-20260722T024107-conversation-api-access-2 (scope 강제)
+- Purpose: 토큰 인증 시 관리 권한이 effective=False.
+- Steps: `permissions` 에 console.manage/audit.read.any=True 인 계정 + `_auth_via=api_token`
+  + `_token_scopes=["conversation.","product.access."]` → `_account_permissions`.
+- Expected Result: conversation.*/product.access.* True, console.manage/audit.read.any False.
+  scope=None·비-토큰 계정은 무변경.
+
+### TEST-20260722T024107-conversation-api-access-3 (인증 fail-closed)
+- Purpose: 미존재/미인증 토큰은 None, 유효 토큰은 계정+scope 부착.
+- Steps: fake conn 으로 `_get_account_by_api_token` — 헤더 없음/토큰 row 없음/유효 row.
+- Expected Result: 헤더·row 없으면 None(계정 조회 skip), 유효 시 `_auth_via`/`_token_id`/
+  `_token_scopes` 부착.
+
+### TEST-20260722T024107-conversation-api-access-4 (MCP)
+- Purpose: MCP tool 4종 등록 + 런처 gated 동작.
+- Steps: dummy env 로 서버 import→`list_tools`; 런처 비활성/활성-누락 실행.
+- Expected Result: [ask,get_history,list_conversations,new_conversation]; 비활성 exit0·
+  누락 exit2.
+
+### TEST-20260722T024107-conversation-api-access-5 (라이브 e2e — 배포 후)
+- Purpose: 실토큰으로 /api/ask 왕복, 스코프-밖 admin 403.
+- Steps: bin/api-token-issue.sh 발급 → curl -H "Authorization: Bearer <t>" POST /api/ask;
+  같은 토큰으로 admin 엔드포인트 호출.
+- Expected Result: /api/ask 200 + output; admin 403.
+
+## 3. Test Run History
+
+### Run 2026-07-22-001
+- Date: 2026-07-22
+- Environment: CLI
+- Runner: AI
+- Bridge: n/a (서버 계약·단위 검증, UI 무변경)
+- Evidence: host pure-logic 24 assertion PASS(scope/파싱/인증 게이트) + MCP tool 등록·
+  런처 gated smoke PASS. py_compile 3파일 OK.
+- Result Summary: TEST-1~4 로직 PASS. 정식 pytest(test_api_token_auth.py)는 컨테이너
+  make test 에서 수집(conftest app import). TEST-5 라이브는 배포 후.
+- Pass/Fail: PASS (단위·smoke). 라이브 e2e 미수행(배포 후).
+- Notes: web_context.py 는 fastapi 만 의존해 host bare import 가능.
+
+## 4. Untested Areas
+- 라이브 토큰→/api/ask 왕복 및 스코프-밖 admin 403 (배포 후 §3 append 예정).
+- 다수 동시 토큰 요청 부하(quota 상속으로 커버, 별도 부하테스트 없음).

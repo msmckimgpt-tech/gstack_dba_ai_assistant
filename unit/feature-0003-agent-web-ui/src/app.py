@@ -3284,6 +3284,7 @@ from routers._bootstrap_schema import (  # noqa: E402
     _ensure_seed_global_system_prompt,
     _ensure_seed_role_system_prompts,
     _ensure_web_account_totp_schema,
+    _ensure_web_api_tokens_schema,
     _ensure_web_attachment_derived_messages_schema,
     _ensure_web_audit_chain_schema,
     _ensure_web_audit_events_schema,
