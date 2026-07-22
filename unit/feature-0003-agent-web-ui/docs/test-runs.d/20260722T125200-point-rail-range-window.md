@@ -21,3 +21,5 @@ verdict: PRE-DEPLOY PASS (정적/문법/적대리뷰) · POST-DEPLOY Windows-bro
   - **Pass/Fail: A·B 라이브 PASS · C 코드/적대리뷰 검증 + 라이브 회귀 없음(자동 페이징은 20개+ 대화 부재로 미실측)**.
 
 - **[윈도잉 강화 2026-07-22] Environment: Windows-browser (사용자 후속 요청 — 긴 대화 일부만 로딩)**: 서버 페이징만으론 20개 미만이나 높이 4배 초과 대화(conv[2] 14개·ratio 20.9)가 전부 렌더되던 gap 을 `state.renderCount` DOM 윈도잉으로 해소. PRE: `node --check` PASS·적대리뷰 발견1(절대 인덱스 복원)·2·5·6 반영, 3·4 known-limitation. **POST-DEPLOY 재검증 예정**: conv[2] 초기 최근 8개만 렌더(dots≈8, msgCount<14)·최상단 스크롤 시 창 확장(dots·msg 증가)·피드백/공유 idx 정합.
+
+- **[윈도잉 튜닝 2026-07-22] Environment: Windows-browser** — 라이브 실측: conv[2](14개) 초기 렌더 8개(dots 8)·최상단 스크롤 시 14개로 확장(dots 14)·loadMore 없음 = "일부만 로딩 + 최상단 추가 로딩" 실증. 단 개별 메시지가 커 8개도 높이 13배 → `WINDOW_INITIAL_RENDER` 8→3 하향(POST-DEPLOY 재검증 예정: conv[2] 초기 ~3개).
