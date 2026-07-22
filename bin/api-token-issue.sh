@@ -27,7 +27,8 @@
 # 권장: 발급 대상은 conversation.ask/create + 필요한 product.access.* 만 가진 **전용
 #       저권한 서비스 계정**. scope 는 그 위에 얹는 2차 방어선이다.
 #
-# Requires: docker compose 가 동작 중이고 web·mysql 서비스가 healthy 여야 함.
+# Requires: docker compose 가 동작 중이고 web(web-a/web-b)·mysql 서비스가 healthy 여야 함.
+#   실행 서비스는 자동 감지한다(web → web-a → web-b → agent 순, 무중단 배포 web-a/web-b 대응).
 
 set -euo pipefail
 
@@ -65,14 +66,27 @@ if [[ "$MODE" == "revoke" && -z "$REVOKE_TARGET" ]]; then
   echo "ERROR: --revoke 에 token-id 또는 prefix 가 필요합니다." >&2; exit 2
 fi
 
-# 파이썬 로직을 web 컨테이너 안에서 실행(mysql.connector·env 보유). 값은 env 로 전달해
+# 파이썬 로직을 web/agent 컨테이너 안에서 실행(mysql.connector·env 보유). 값은 env 로 전달해
 # 쿼리는 파라미터라이즈드(%s)로 조립 — injection 차단.
 export TOK_MODE="$MODE" TOK_ACCOUNT="$ACCOUNT" TOK_LABEL="$LABEL" \
        TOK_SCOPES="$SCOPES" TOK_EXPIRES_DAYS="$EXPIRES_DAYS" TOK_REVOKE="$REVOKE_TARGET"
 
+# 실행 서비스 자동 감지 — 무중단 배포(feature-0014)는 web 을 web-a/web-b 로 나눴으므로
+# 하드코딩된 'web' 은 "service web is not running" 으로 실패한다. 후보 중 running 인 첫 서비스 사용.
+SVC=""
+RUNNING="$(docker compose ps --services --status running 2>/dev/null)"
+for cand in web web-a web-b agent; do
+  if printf '%s\n' "$RUNNING" | grep -qx "$cand"; then SVC="$cand"; break; fi
+done
+if [ -z "$SVC" ]; then
+  echo "ERROR: 실행 중인 web/agent 서비스를 찾지 못했습니다 (docker compose ps: web-a/web-b/web/agent)." >&2
+  echo "       docker compose 가 기동 중인지 확인하세요." >&2
+  exit 2
+fi
+
 docker compose --ansi=never exec -T \
   -e TOK_MODE -e TOK_ACCOUNT -e TOK_LABEL -e TOK_SCOPES -e TOK_EXPIRES_DAYS -e TOK_REVOKE \
-  web python3 - <<'PY'
+  "$SVC" python3 - <<'PY'
 import hashlib, json, os, secrets, sys
 
 def _connect():

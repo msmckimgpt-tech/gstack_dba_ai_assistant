@@ -51,3 +51,10 @@ source_of_truth: true
 - 안전 확인: 쿠키 병존 강등 없음·SQL injection 없음·토큰 원문 누출 없음(리뷰어 3중 확인).
 - 재검증: HIGH-1/HIGH-2 수정 후 host 15 assertion PASS(`conversation.*.any` 차단·scope=None
   fail-closed) + 단위 테스트 `test_cross_account_any_blocked_despite_conversation_scope` 추가.
+
+## REV-20260722-0003 [SKIPPED:non-code-hotfix] 발급 CLI 서비스명 hotfix
+- Related Change: CHG-20260722-0002 (`bin/api-token-issue.sh` 서비스 자동감지)
+- [SKIPPED] 사유: 인증/scope 로직 무변경 — 호스트 CLI 가 실행 컨테이너 서비스명을 `web` 로
+  하드코딩해 무중단 배포(web-a/web-b)에서 실패하던 **운영 편의 결함**만 수정(패널 대상 아님).
+  인증·scope 코어는 라이브 e2e(토큰→/api/ask 200·admin 403·무토큰 401)로 이미 실증됨.
+  서비스 감지 로직은 `docker compose ps --status running` 화이트리스트 순회로 injection 무관.
