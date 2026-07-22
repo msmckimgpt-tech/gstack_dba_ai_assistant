@@ -100,3 +100,19 @@ source_of_truth: true
   알림, core role='user' / display role='system' 비대칭) 제외 — 서수 매핑 오손상 방지(SEC #5).
 - 성격: 그룹 단순편집 활성화(AC-ME-6). route 무변경(로직만). 1:1 무회귀.
 - 검증: make test 회귀 0(4 pre-existing local-env) + AST OK. §18.8 보안 = REV-0005.
+
+## CHG-20260722T054238-conv-bind-failclosed (대화 바인딩 fail-closed 예방 하드닝)
+- **배경**: 2026-07-22 HANDOFF "편집·재요청 답변 타 대화 누출" 신고 진단 결과 **실누출·재답변 실패
+  없음(오진)** 확정(라이브 DB forensics + PB-0008 통제 재현 — 편집·재답변 UX·동시 in-flight 격리
+  PASS, 상세 REPORT §). 조사 중 발견한 잠재 결함 중 **브랜치 체인 산란(footgun B)은 병렬 세션이
+  PR #874/#875 'branch-chain-race'로 이미 main 랜딩**(runtime_backend `branch_run_active`/
+  `branch_chain_*`) → 중복이라 본 cycle 미포함. 남은 **fail-closed 대화 바인딩(footgun A)만** 봉인.
+- **변경**: `feature-0002 agent_core._run_agent_core` — 웹/ask 경로(`account_id` 지정)에서
+  `conversation_id` 가 falsy 면 `_get_conversation_id()` 의 프로세스 전역 env(`AGENT_CONVERSATION_ID`)·
+  호스트 공유 파일(`/shared/conversation_id`) 폴백을 쓰지 않고 **fail-closed**(LLM/DB 작업 이전 조기
+  return + error 로그). CLI/console/eval(`account_id=None`)은 파일 폴백 유지(정당 — 단일 사용자 로컬).
+- **불변식**: INV-6(fail-closed 대화 바인딩) 추가. INV-1(비분기 byte-identical) 무관·보존.
+- **성격**: route/handler/RBAC/웹자산 무변경(가드 1개). never-fires 방어(정상 경로 미발동). Major(코어 격리).
+- **검증**: 신규 `tests/test_conv_bind_failclosed.py` 4건(웹 None/빈문자열 차단·전역폴백 미호출·CLI
+  미발동·명시 cid 통과) PASS. §18.8 적대적 리뷰 = REV-20260722T054238-conv-bind-failclosed(claim
+  footgun A HOLDS — 모든 caller 안전, SHIP).

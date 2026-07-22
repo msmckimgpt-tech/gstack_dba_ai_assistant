@@ -69,3 +69,19 @@ source_of_truth: true
 - [x] PB-0008 Phase 2: 그룹 편집 UI(단순 수정만·재답변 미노출) 라이브 검증.
 - [x] 서수 매핑 그룹 이벤트 제외(__event__) — REV #5 수정.
 - [ ] 그룹 sender IDOR·@assistant 잠금·window 정합 — §18.8 Phase 2 보안 리뷰(REVIEW.md).
+
+## 5. 예방적 하드닝 (2026-07-22 — HANDOFF 누출신고 진단 후속)
+### Run 2026-07-22 — 진단(누출 반증) + PB-0008 통제 재현
+- **DB forensics**(라이브 agent_kb.agent_runtime): 신고 두 대화(d23ad939 owner=1 / 79da15cb owner=10)
+  완벽 격리 — user 메시지 sender 전부 자기 owner. 최근 7일 `1:1 sender≠owner` 누출 시그니처 0건.
+  신고가 지목한 core_messages 5124–5138 = 계정10(admin) 본인의 정상 편집·재답변(전역 message-id
+  교차 배열 오독). 계정 매핑 정정: 1=bootstrap_admin, 10=admin.
+- **PB-0008 통제 재현**(win-browser, bootstrap_admin): Test1 편집·재답변 UX(동일 대화 렌더 + `‹ 2/2 ›`
+  페이저 전환) PASS · Test2 두 대화 동시 in-flight 격리(교차오염 0: conv1 dbCommon 3·dbRanking 0 /
+  conv2 dbRanking 3·dbCommon 0) PASS. 테스트 대화 soft-archive. 스크린샷 pb0008/01~03.
+- **결론**: 신고 결함(누출·재답변 실패) 데이터·재현상 없음(오진).
+
+### Run 2026-07-22 — fail-closed 대화 바인딩(footgun A) 단위
+- `tests/test_conv_bind_failclosed.py` 4건: 웹 None·빈문자열 fail-closed(전역폴백 미호출) + CLI 미발동
+  + 명시 cid 통과. **4 PASS**. (웹 자산 무변경 → PB-0008 게이트 비대상 — 진단 PB-0008 은 별도 수행.)
+- footgun B(브랜치 체인 산란)는 PR #874/#875 'branch-chain-race'가 별도 봉인·테스트 → 본 cycle 미포함.

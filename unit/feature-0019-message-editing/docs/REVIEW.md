@@ -75,3 +75,16 @@ source_of_truth: true
     메시지) → 가려진 구간 편집 불가. 콘텐츠 누출·window 우회 없음.
   - mode 강제: 그룹에서 reanswer/branch 차단(mode!='simple' → 400), 그룹 판정·disp 로드 후 순서 정합.
 - Human Approval: PLAN-APPROVED(2026-07-13). deploy_scope: included.
+
+## REV-20260722T054238-conv-bind-failclosed [SUBAGENT:branch-hardening-security] SHIP
+- Related Change: CHG-20260722T054238-conv-bind-failclosed (fail-closed 대화 바인딩, footgun A).
+- Scope: `agent_core._run_agent_core` fail-closed 가드(웹/ask 경로 conversation_id falsy → 전역/공유
+  대화 폴백 차단). 2026-07-22 HANDOFF 누출신고 진단 후속(신고=오진, 실누출 없음 확정).
+- 적대적 검증(§18.8): footgun A claim **HOLDS** — 모든 caller 안전:
+  - web inproc(conv_id 항상 비어있지 않음: 기존 conv=request_conversation_id, 신규 conv=create_if_missing
+    실 id, conversation.create 403 선행) · worker(enqueue 400 가드 선행) · eval/CLI(account_id=None →
+    가드 skip, 파일 폴백 유지). 가드는 LLM 클라이언트·DB 연결 이전 배치 — side-effect 없음.
+  - 정상 경로 미발동(never-fires) · 회귀 시 조용한 누출 대신 clean error.
+- Verdict: **SHIP**(신규 결함 0). footgun B(브랜치 체인)는 PR #874/#875 로 이미 랜딩 → 본 리뷰 범위 밖.
+- 검증: test_conv_bind_failclosed.py 4 PASS.
+- Human Approval: [1] 예방적 하드닝 진행 + PR·무중단 배포 승인(2026-07-22, AskUserQuestion).

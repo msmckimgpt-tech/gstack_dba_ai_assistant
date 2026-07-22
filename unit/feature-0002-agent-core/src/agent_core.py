@@ -3745,6 +3745,23 @@ def _run_agent_core(
     # provider 제한 해소(ok) 를 run 당 1회만 기록하기 위한 가드.
     _provider_ok_recorded = False
 
+    # ── branch-hardening (fail-closed 대화 바인딩) — LLM/DB 작업 이전 ──
+    # 웹/ask 경로(account_id 지정)는 conversation_id 를 반드시 명시받아야 한다. falsy 면 아래
+    # _get_conversation_id 가 프로세스 전역 env(AGENT_CONVERSATION_ID)·호스트 공유 파일
+    # (/shared/conversation_id)로 폴백하는데, 이는 동시 요청·세션 간 대화가 뒤섞이는
+    # cross-conversation 누출 표면이다(§18.8 격리 불변식). account_id 지정 + conversation_id 비어있음은
+    # 정상 경로에서 발생하지 않으며(worker enqueue 가드·web 핸들러가 항상 명시 전달), 발생 시 폴백을
+    # 쓰지 않고 fail-closed 로 중단한다. CLI/console/eval(account_id=None)은 파일 폴백을 유지한다
+    # (정당 — 단일 사용자 로컬 컨텍스트, 공유 상태 아님).
+    if account_id is not None and not conversation_id:
+        result["error"] = "대화 컨텍스트를 확인할 수 없습니다(conversation_id 미지정)."
+        logging.getLogger("agent_core").error(
+            "run_agent fail-closed: web/ask path 인데 conversation_id 가 비어 있음 "
+            "(account_id=%s) — 전역/공유 대화 폴백 차단(cross-conversation 누출 방지)",
+            account_id,
+        )
+        return result
+
     # ── LLM 클라이언트 초기화 (feature-0007 단일 env 경로) ──
     if not OpenAI:
         result["error"] = "openai 패키지를 찾을 수 없습니다."
