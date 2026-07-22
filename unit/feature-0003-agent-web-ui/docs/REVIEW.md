@@ -639,3 +639,12 @@ source_of_truth: true
 - 적대 코드리뷰(REV subagent) 반영: R1(cross-conversation `state.messages` 오염 — `loadHistory` gen-guard)·R2(프로그래매틱 점프 중 자동로드가 목표 어긋냄 — `_pointScrolling`)·B1(전역 `_fillingWindow` 가 빠른 전환 시 새 대화 fill 억제·이전 루프 오염 — 대화별 `_fillToken`). 핵심 우려 preserveScroll flag leak 은 flag 제거 재설계로 원천 소거(리뷰어 moot 확인).
 - Known limitation B2 (코너케이스, 미수정): append(과거 자동로드)와 그 대화의 processing 새 run pending-bubble 최초 생성이 동시일 때, `_endAppendScrollPreserve` 의 `delta = scrollHeight - preH` 가 바닥 성장분(pending bubble)을 포함해 소폭 과도 스크롤(뷰가 pending 높이만큼 위로 튐). 발생 조건 희소(유휴 과거 탐색 중 새 run 최초 pending)·자기치유(다음 클린 로드)·영향 경미(pending 높이 소). 별도 cycle 재검토 여지.
 - 위험도 Major: 다중 파일·스크롤 로직·회귀 위험(신규 가상화 아님·기존 페이징 재사용으로 완화). 비파괴 additive — 인증/인가/데이터 무영향.
+
+## REV-20260722T135500-point-rail-range-window-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 라이브 시각검증 기록 (CHG-20260722T1355-point-rail-range-window-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 실 구현 코드 리뷰 정본 = REV-20260722T125200-point-rail-range-window([SUBAGENT:general-purpose]). 본 cycle 은 배포(22c3b9cb)+Windows Chrome 150 라이브 실측(A·B 라이브 PASS·C 자동 페이징 20개+ 대화 부재로 미트리거) 결과 append 만.
+
+## REV-20260722T142000-point-rail-range-window-dom-windowing [SUBAGENT:general-purpose] — ACCEPTED-WITH-FIXES (윈도잉 강화, Major §12.3 — feature-0003 web/UI, 사용자 후속 요청)
+- 사용자 후속 요청: "다른 대화도 확인하여, 이전 대화가 너무 많이 불러와졌을 경우 일부만 로딩되는지 검증". 라이브 실측에서 이 환경 대화 모두 20개 미만(hasMoreHistory=false)이라 서버 페이징 gap 발견 — 20개 미만이나 높이 4배 초과 대화(conv 14개·높이 20배)가 전부 렌더됨. → `state.renderCount` DOM 윈도잉으로 진짜 4배 상한 구현.
+- 적대리뷰(general-purpose subagent) 반영: **발견1(필수·회귀)** `_visibleMsgs.forEach` 의 `_msgIdx` 가 절대→창-상대로 바뀌어 `_precedingUserQuestion`(피드백 Q↔A 매칭)·투표 게이트·공유 range idx 비교가 윈도잉된 긴 대화(주 사용 케이스)에서 깨짐 → `_windowBase` 로 절대 인덱스 복원. 발견2(floor 칩 창밖 — loadHistory renderCount 리셋 시 floor 포함). 발견5(검색 첫 매칭이 optimistic id=null 이면 중단 — skip). 발견6(주석).
+- Known limitation(미수정, 엣지): 발견3(윈도잉+위 스크롤 중 live-poll 도착 시 tail 창 슬라이딩으로 scrollTop 보존이 어긋나 소폭 튐)·발견4(`_maybeExpandOrLoadOlder` 확장이 짧은 메시지 다수 시 여러 배치 연쇄 — total 상한이라 무한 아님·순간 부하). 별도 cycle 재검토 여지.
+- 위험도 Major: `renderMessages` 렌더 경로 변경(창 렌더). 비파괴 additive — 인증/데이터 무영향.

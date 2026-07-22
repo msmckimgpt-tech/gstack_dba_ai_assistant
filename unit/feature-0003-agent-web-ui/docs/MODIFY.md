@@ -710,3 +710,14 @@ source_of_truth: true
 - C(윈도잉): `loadHistory` conversation-generation 가드(`_loadGenConvId` — apiFetch 후 전환 시 bail, R1)·`_beginAppendScrollPreserve`/`_endAppendScrollPreserve`(prepend 후 scrollTop 보정, flag 無 — 예외 시 맨-아래 fallback)·`_fillInitialWindowSoon`(대화별 `_fillToken`·뷰포트 4배 목표·rAF·25p 상한, B1)·`_loadOlderGuarded`(자동/버튼 공용 단일 가드)·`_maybeAutoLoadOlder`(`_pointScrolling` 억제, R2)·`_animatePointScroll` `_pointScrolling` flag. `renderMessages` 맨-아래 스크롤 무변경(가드 flag 제거 재설계). scroll 리스너 + loadMoreBtn 배선.
 - 검증: `node --check app.js` PASS · 적대 코드리뷰(REV subagent) R1/R2/B1 반영. 핵심 우려 preserveScroll leak = flag 제거로 moot 확인.
 - landing/배포: verify-completion(feature-0003) → commit → push → PR/머지(자동 동기화) → `deploy-web`(deploy_scope: included, 외부영향 1줄 표면화) → POST-DEPLOY PB-0008.
+
+## CHG-20260722T1355-point-rail-range-window-postverify (POST-DEPLOY 라이브 시각검증, 비-정책 doc-only)
+- POST-DEPLOY PB-0008 Windows-browser 라이브 실증(배포본 22c3b9cb, PR #873). A(막대 범위화)·B(클릭 위치 비례) 라이브 PASS. C(윈도잉) 자동 페이징은 환경 대화 모두 20 메시지 미만(hasMoreHistory=false)이라 미트리거 — 코드/리뷰 검증 + 회귀 없음. gap: 20개 미만 대화 "4배 상한" 미적용(기존 서버 페이징 재사용 트레이드오프).
+- Files: `docs/test-runs.d/20260722T125200-point-rail-range-window.md`(POST-DEPLOY append), `docs/test-runs.d/evidence/point-rail-range-window-live.png`, `docs/TASK.md`, `docs/MODIFY.md`.
+- 코드/자산 변경 0.
+
+## CHG-20260722T1420-point-rail-range-window-dom-windowing (윈도잉 강화 — 사용자 후속 요청, Major §12.3, frontend-only)
+- Files: `unit/feature-0003-agent-web-ui/src/static/app.js`.
+- C 강화: `state.renderCount` DOM 윈도잉. `_visibleMessages`·`_ensureMessageRendered`·`_applyRenderWindowSoon`(상한 렌더창 확대+하한 서버 페이징)·`_maybeExpandOrLoadOlder`(최상단 창 확장→서버 로드). `renderMessages`/`renderMessagePointRail` 이 최근 창만 렌더. `loadHistory` renderCount 관리(초기 8·floor 포함·append 확장). 검색/캘린더 점프 창 확장. `_windowBase` 절대 인덱스 복원.
+- 적대리뷰(REV subagent) 발견1(절대idx)·2(floor 칩)·5(검색 optimistic id=null)·6(주석) 반영, 3(live-poll 슬라이딩)·4(연쇄 확장) known-limitation.
+- 검증: `node --check app.js` PASS. POST-DEPLOY PB-0008 재검증 예정(conv[2] 일부만 로딩).
