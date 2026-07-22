@@ -1640,3 +1640,10 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **수정(app.js, +133, frontend-only)**: 유휴 run-감지 폴러 추가. 대화 열림+활성 run 추적 없음 → `/api/progress`(client_run_id 없이) ~4s(숨김 15s) 폴링, 서버 `run_id` 가 baseline 과 달라지면 검증된 `loadHistory()` 위임(전환-복귀와 동일 경로: 메시지 재로드+pending 말풍선+활성 폴링 시작). 활성 폴링 중 dormant. `loadHistory`(idle arm/processing·no-conv stop, `!append`)·`selectConversation`·`handleLogout`·`visibilitychange` 배선. 감지 범위 = 모든 대화(사용자 선택 — 내 1:1 멀티탭 포함). 백엔드 무변경(`/api/progress` 가 terminal run_id 도 노출 → baseline 프론트 완결; 병행 feature-0012 라우터분할 충돌 표면 0).
 - **feature-0009 정합**: `applyProgressPayload` 의 foreign-run 불변식(내 run 갈아타기 금지) 존중 — detector 는 활성 `progressRunId`/pendingBubble 존재 시 dormant.
 - **검증**: 유닛 `verify_run_detect_poll.mjs` 23/23 PASS(감지 결정 매트릭스+정적 배선) · feature-0003 pytest RC=0(무회귀) · 실브라우저(Windows Chrome 150) — 유휴 대화에서 detector 폴링 확인→ 새 processing run 주입→ **재로드 없이** "처리 중" 말풍선 실시간 등장(net 로그+스크린샷). 검증 후 라이브 서비스 배포본 원복.
+
+## 20260722T020408-msg-edit-textarea-contrast — 메시지 '수정' 편집 UI 글자 비가시 수정 + 편집 폼 재구성 (Minor §12.3, frontend-only 표시전용)
+- **계기**: 사용자 신고 — 보낸 요청 메시지를 '수정' 기능으로 편집할 때 텍스트박스 색과 글자 색이 같아 글자가 안 보임(제공 스크린샷: 파란 말풍선 속 빈 흰 textarea). "실제 사람이 쓸 수 있게 UI 재구성" 요청.
+- **RC**: 편집 UI(`_startInlineEdit`)가 파란 user 말풍선(`.message.is-user .message-bubble` `color:#fff`) 안으로 삽입되는데 `.message-edit-textarea` 가 흰 배경(`var(--surface)`)에 `color:inherit` → 말풍선의 흰 글자색을 상속 → 흰 글자 on 흰 배경(대비 1:1). 순수 표시 결함.
+- **수정(styles.css + app.js, 표시전용)**: textarea 전경색을 `var(--text)` 로 명시 + `.message-edit-box` color 리셋(상속 차단) + 편집 진입 시 파란 말풍선을 중립 편집 패널로 전환하는 `.message-bubble-editing`(0,4,0) 신설 + app.js `classList.add`. 재구성 결과: textarea 진한 글자(대비 15.38:1), '요청사항 수정(재답변)'=파란 primary 버튼, '단순 수정'/'취소'=중립 pill — 배경과 싸우지 않는 표준 편집 폼.
+- **무영향**: 백엔드·편집 엔드포인트·브랜치/IDOR·RBAC·스키마 0. feature-0019 ANCHOR §1-§3 무충돌. 라이트 전용 콘솔이라 다크 분기 불요.
+- **검증**: `node --check` PASS · headless Chromium 실측(수정본 15.38:1 / 수정전 1.0:1 버그 재현 · 말풍선 중립 전환 · 재답변버튼 5.17:1) + 스크린샷 · POST-DEPLOY PB-0008 Windows-browser(잔여).
