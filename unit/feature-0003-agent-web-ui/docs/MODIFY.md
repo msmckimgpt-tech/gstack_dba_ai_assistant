@@ -726,3 +726,7 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/static/app.js` (`WINDOW_INITIAL_RENDER` 8→3).
 - 라이브 실측(conv[2] 14개·개별 메시지 큼)에서 초기 8개가 높이 뷰포트 13배 → "4배만" 미달. 초기값을 낮춰 큰 메시지 대화도 4배 근처 유지. 짧은 메시지 대화는 상한 로직(`_applyRenderWindowSoon`)이 4배까지 채워 무손실. 로직 변경 없음(상수만).
 - 검증: `node --check` PASS. POST-DEPLOY 재검증(conv[2] 초기 ~3개).
+
+## CHG-20260722T1450-point-rail-windowing-postverify (POST-DEPLOY 윈도잉 재검증, 비-정책 doc-only)
+- POST-DEPLOY PB-0008 라이브 재검증(배포본 66d1e735): conv[2](14개) 초기 3개 렌더·최상단 스크롤 확장(3→13→14)·뱃지 동기·A 막대 정상. 사용자 후속 요구 실증 완료. 코드/자산 0(스크린샷 evidence 추가).
+- Files: `docs/test-runs.d/20260722T125200-point-rail-range-window.md`, `docs/test-runs.d/evidence/point-rail-windowing-live.png`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
