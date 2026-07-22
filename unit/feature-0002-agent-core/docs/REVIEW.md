@@ -422,3 +422,7 @@ source_of_truth: true
   - **[7] 반환값 not-a-defect**: `_save_message` 가 `_saved_id` 반환 추가 — 7 호출자 전부 bare statement 로 무시. 무영향.
 - 반영 후 검증: `py_compile` 3파일 · 단위 `tests/test_branch_chain_race.py` **6 PASS**(리뷰 권고 추가: core-store `_save_message` 체인 + leak-후 비분기 write 미오염). feature-0002 전체 회귀 PASS(마운트).
 - Cross-ref: CHG/TASK/FUNCTION/TEST-20260722T050006-branch-chain-race · feature-0019 ANCHOR §1-§3(INV-1~5) 무충돌 · 데이터 복구(오염 5행)=POST-DEPLOY.
+
+## REV-20260722T055000-branch-chain-race-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 브랜치 체이닝 수정 배포 + 데이터 복구 실증 기록 (CHG-20260722T055000-branch-chain-race-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(POST-DEPLOY 실증 기록·TASK 완료). 코드 리뷰 정본 = REV-20260722T050006-branch-chain-race([SUBAGENT:general-purpose] SHIP-WITH-FIXES).
+- 실증: 배포 main 5a32a480(web+워커 롤아웃 soak PASS). 데이터 복구 트랜잭션(UPDATE 1 display + UPDATE 4 core, dry-run count 일치)·복구 후 active-path 에 user 1299 복귀·오염 잔존 0·`/api/history`(bootstrap_admin read.any)가 복구된 트리 6 메시지 반환("로그 흐름만…" 포함) — UI 렌더 경로 실검증. 오염 범위=이 대화 1건뿐.
