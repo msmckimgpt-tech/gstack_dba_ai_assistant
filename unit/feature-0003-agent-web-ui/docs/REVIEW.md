@@ -654,3 +654,7 @@ source_of_truth: true
 
 ## REV-20260722T145000-point-rail-windowing-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 윈도잉 라이브 재검증 기록 (CHG-20260722T1450-point-rail-windowing-postverify)
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 윈도잉 구현/튜닝 리뷰 정본 = REV-20260722T142000-...([SUBAGENT])·REV-20260722T144000-...([SKIPPED:param-tuning]). 본 cycle 은 배포(66d1e735) 라이브 실측(conv[2] 초기 3개·확장) append 만.
+
+## REV-20260722T192736-history-top-indicator [SKIPPED:trivial-display-only] — 대화 상단 페이드 신호 (Minor §12.3 — feature-0003 web/UI, /_template:entry 후속)
+- Panel skip 사유(§18.8): 순수 표시 변경 — 페이드 div 1개(pointer-events:none) + CSS gradient + `_updateHistoryTopIndicator`(renderCount/hasMoreHistory 판정으로 hidden 토글). 백엔드·엔드포인트·RBAC·스키마·편집 로직 0, 보안 posture 불변. 선례 REV-20260722T020408-msg-edit-textarea-contrast([SKIPPED:trivial-display-only])·ds-test-gate-fix 와 동류.
+- 설계: 사용자 검토 후 결정 — 페이드만(칩·스피너·텍스트 제거로 난잡함 회피), 점프=캘린더·로드=스크롤 자동. 위에 더 있음 판정 = `renderCount<total || hasMoreHistory` (윈도잉 창 밖 + 서버 미로드 둘 다 포함).

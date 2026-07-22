@@ -730,3 +730,9 @@ source_of_truth: true
 ## CHG-20260722T1450-point-rail-windowing-postverify (POST-DEPLOY 윈도잉 재검증, 비-정책 doc-only)
 - POST-DEPLOY PB-0008 라이브 재검증(배포본 66d1e735): conv[2](14개) 초기 3개 렌더·최상단 스크롤 확장(3→13→14)·뱃지 동기·A 막대 정상. 사용자 후속 요구 실증 완료. 코드/자산 0(스크린샷 evidence 추가).
 - Files: `docs/test-runs.d/20260722T125200-point-rail-range-window.md`, `docs/test-runs.d/evidence/point-rail-windowing-live.png`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
+
+## CHG-20260722T192736-history-top-indicator (대화 상단 '위에 더 있음' 페이드 신호, Minor §12.3, frontend-only 표시전용)
+- Files: `unit/feature-0003-agent-web-ui/src/static/{index.html,styles.css,app.js}`.
+- 위에 더 불러올 대화(윈도우 밖 renderCount<total 또는 서버 미로드 hasMoreHistory)가 있으면 messageLog 상단에 페이드 그라데이션만 표시(칩·텍스트·스피너 없음 — 사용자 결정: 최소 시각 신호). pointer-events:none(무방해)·rail 폭 제외. `_updateHistoryTopIndicator` 를 renderMessages 끝+empty 경로에서 호출.
+- 백엔드/편집로직/RBAC/스키마 무영향. point-rail-range window(renderCount) 위에 얹은 순수 표시 레이어.
+- 검증: `node --check` PASS. POST-DEPLOY PB-0008 예정.
