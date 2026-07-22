@@ -119,3 +119,31 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/static/styles.css` (.admin-subtabs position:sticky)
 - Impact: CSS 전용. 마크업·JS·백엔드 무변경. 서브탭 바가 스크롤 중에도 접근 가능.
 - Rollback Notes: 커밋 revert (CSS 전용).
+
+## CHG-20260722-0001
+- Date: 2026-07-22
+- Related Requirement: 사용자 요청 (entry arg-given dispatch, 2026-07-22) — 관리 콘솔
+  "AI 운영 현황 > 추론"의 "리뷰 실패" 가 내부 에러인지 의도인지 검토 + 에러면 수정.
+- Summary: **진단** — "리뷰 실패"(verdict=`error`)는 리뷰어 LLM 호출이 `None` 을 반환할 때만
+  기록되는 값이고, 라이브 DB 실측 결과 verdict='error' 8건 **전부 latency 25001~25039ms**
+  (24000ms 미만 fast-fail 0건) = **100% 타임아웃**. 근본 원인은 리뷰어 alias
+  `claude-haiku-4-chat` 의 고정 extended thinking(budget_tokens=5000)으로 인한 상시 20~25s
+  지연(정상 통과도 median ~18.6s). 표시/기록/fail-open 은 **의도된 설계**(버그 아님)이나
+  실패율 ~17%(8/47)는 **운영 결함**. **수정(사용자 결정)** — 운영자가 관리 콘솔 '설정 > AI
+  자가 리뷰'에서 튜닝하도록 리뷰어 토큰 할당량(`REDTEAM_MAX_TOKENS`) 런타임 설정 신설.
+  타임아웃(`REDTEAM_TIMEOUT_SEC`)은 기존 노출 — 설명만 보강.
+- Files:
+  - `shared/runtime_settings.py` (`_REDTEAM_SPECS` 에 `REDTEAM_MAX_TOKENS` 추가 — category
+    "자가 리뷰", default 8192·minimum 6000(리뷰어 thinking 5000 floor 상회 보장)·maximum
+    32000·apply_mode live; `REDTEAM_TIMEOUT_SEC` description 에 "리뷰 실패=타임아웃" 안내 보강)
+  - `unit/feature-0002-agent-core/src/modules/llm.py` (`_openai_chat_completion_with_deadline`
+    에 `max_tokens_override` 인자 additive — 양수면 task 별 카탈로그 cap 대신 사용, None/0 이면
+    종전대로 `_max_tokens_kwargs`)
+  - `unit/feature-0002-agent-core/src/modules/redteam.py` (`_review_max_tokens()` 헬퍼 신설 +
+    `run_review` 가 `REDTEAM_MAX_TOKENS` 를 `max_tokens_override` 로 전달)
+  - `unit/feature-0002-agent-core/tests/test_redteam.py` (신규 5건 — `_review_max_tokens`
+    read/0-fallback/error 3 + `run_review` override 전달·미설정 None 2)
+- Impact: **프론트 무변경** — 설정 패널(`renderRedteamReviewSettings`)이 `data.redteam` 그룹을
+  data-driven 자동 렌더하므로 새 spec 이 자동 노출. 하위호환: override 미설정(0) 시 기존
+  8192 task cap 과 byte-동치. 배포 대상 = web(설정 직렬화) + worker/ask-worker(리뷰어 호출).
+- Rollback Notes: 커밋 revert. 런타임 override 는 콘솔에서 초기화(기본 8192) 가능 — 코드 롤백 없이도 무력화.

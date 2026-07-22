@@ -65,6 +65,66 @@ def test_plan_settings_error_fails_open(monkeypatch):
     assert redteam.review_plan("high") is None
 
 
+# ── REDTEAM_MAX_TOKENS (리뷰어 토큰 할당량 런타임 설정) ─────────────────────
+
+class _FakeMsg:
+    def __init__(self, content): self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content): self.message = _FakeMsg(content)
+
+
+class _FakeResp:
+    def __init__(self, content): self.choices = [_FakeChoice(content)]
+
+
+def test_review_max_tokens_reads_setting(monkeypatch):
+    _settings(monkeypatch, REDTEAM_MAX_TOKENS=12000)
+    assert redteam._review_max_tokens() == 12000
+
+
+def test_review_max_tokens_zero_falls_back_none(monkeypatch):
+    _settings(monkeypatch, REDTEAM_MAX_TOKENS=0)
+    assert redteam._review_max_tokens() is None
+
+
+def test_review_max_tokens_error_none(monkeypatch):
+    monkeypatch.setattr(_rts, "get_int", lambda key: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert redteam._review_max_tokens() is None
+
+
+def test_run_review_passes_max_tokens_override(monkeypatch):
+    """run_review 가 REDTEAM_MAX_TOKENS 를 리뷰어 호출의 max_tokens_override 로 전달한다."""
+    _settings(monkeypatch, REDTEAM_MAX_TOKENS=9000)
+    import modules.llm as _llm
+    captured: dict = {}
+
+    def _fake_call(client, model, messages, **kwargs):
+        captured.update(kwargs)
+        return _FakeResp('{"verdict":"pass","findings":[]}')
+
+    monkeypatch.setattr(_llm, "_openai_chat_completion_with_deadline", _fake_call)
+    out = redteam.run_review("q", "draft", "digest")
+    assert out == {"verdict": "pass", "findings": []}
+    assert captured.get("max_tokens_override") == 9000
+
+
+def test_run_review_max_tokens_none_when_unset(monkeypatch):
+    """REDTEAM_MAX_TOKENS 미설정(0)이면 override=None 으로 전달(호출측 task cap 폴백)."""
+    _settings(monkeypatch)  # REDTEAM_MAX_TOKENS 미포함 → get_int 0 반환
+    import modules.llm as _llm
+    captured: dict = {}
+
+    def _fake_call(client, model, messages, **kwargs):
+        captured.update(kwargs)
+        return _FakeResp('{"verdict":"pass","findings":[]}')
+
+    monkeypatch.setattr(_llm, "_openai_chat_completion_with_deadline", _fake_call)
+    redteam.run_review("q", "draft", "digest")
+    assert captured.get("max_tokens_override") is None
+
+
 # ── JSON 파싱·스키마 강제 ──────────────────────────────────────────────────
 
 def test_extract_json_plain_and_fenced():
