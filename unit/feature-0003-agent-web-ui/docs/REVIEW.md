@@ -651,3 +651,6 @@ source_of_truth: true
 
 ## REV-20260722T144000-point-rail-window-initial-tuning [SKIPPED:param-tuning-no-logic-change] — 윈도잉 초기 렌더 개수 튜닝
 - Panel skip 사유(§18.8): 상수(`WINDOW_INITIAL_RENDER` 8→3) 1개 변경, 로직 불변. 윈도잉 구현 리뷰 정본 = REV-20260722T142000-...([SUBAGENT:general-purpose]). 라이브 실측 근거(conv[2] 초기 8개=높이 13배 → "4배만" 미달)로 초기값만 하향.
+
+## REV-20260722T145000-point-rail-windowing-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 윈도잉 라이브 재검증 기록 (CHG-20260722T1450-point-rail-windowing-postverify)
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 윈도잉 구현/튜닝 리뷰 정본 = REV-20260722T142000-...([SUBAGENT])·REV-20260722T144000-...([SKIPPED:param-tuning]). 본 cycle 은 배포(66d1e735) 라이브 실측(conv[2] 초기 3개·확장) append 만.
