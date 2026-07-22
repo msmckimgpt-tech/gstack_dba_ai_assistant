@@ -9,6 +9,8 @@
 .env.secret
 # TASK-20260619T034522-oauth-google-foundation: Google OAuth client 자격증명 (web 진입점 전용).
 .env.oauth
+# feature-0023: Conversation API MCP 서버용 Bearer 토큰·base URL (클라이언트 측 시크릿).
+.env.conversation-mcp
 .env.local
 __pycache__/
 *.py[cod]

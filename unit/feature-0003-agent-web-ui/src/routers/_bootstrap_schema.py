@@ -521,6 +521,8 @@ def _ensure_web_tables():
         app._ensure_oauth_identity_schema(conn)
         # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 테이블 (slow path).
         app._ensure_web_account_totp_schema(conn)
+        # feature-0023 (REQ-20260722-conversation-api-access): Bearer API 토큰 테이블 (slow path).
+        app._ensure_web_api_tokens_schema(conn)
         # TASK-20260623T190000-gdrive-foundation (feature-0010): 계정별 Google Drive 토큰 테이블 (slow path).
         app._ensure_web_gdrive_tokens_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
@@ -2180,6 +2182,58 @@ def _ensure_web_account_totp_schema(conn) -> None:
     finally:
         cur.close()
 
+def _ensure_web_api_tokens_schema(conn) -> None:
+    """feature-0023 (REQ-20260722-conversation-api-access): 외부 AI 프로그래매틱 접근용
+    Bearer API 토큰 테이블 (멱등 CREATE).
+
+    세션 쿠키(WebAuthSessions)와 별개로, 저권한 서비스 계정에 귀속된 장수명 토큰을
+    보관한다. **토큰 원문은 저장하지 않고 SHA-256 해시(`TokenHash`)만 저장** — 세션
+    토큰(SessionTokenHash)·share 토큰(token_prefix) 패턴 답습. 인증 경로
+    (`web_context._get_authenticated_account`)가 쿠키 부재 시 `Authorization: Bearer`
+    를 이 테이블로 조회한다.
+
+    컬럼:
+      - AccountId          : 토큰이 귀속되는 WebAccounts.Id (그 계정의 RBAC 적용).
+      - TokenHash CHAR(64) : SHA-256 hex. UNIQUE (조회 키).
+      - TokenPrefix        : 원문 앞 12자(식별/로그용, 민감도 낮음 — full token 아님).
+      - Label              : 사람이 읽는 용도 라벨("n8n integration" 등).
+      - Scopes             : 콤마구분 권한 접두 allowlist(예: "conversation."). NULL =
+                             서비스 계정 권한 전체(권장 안 함 — 항상 scope 지정).
+      - ExpiresAt          : 만료 시각(DB 시계 기준). NULL = 무기한.
+      - LastUsedAt         : 마지막 사용 시각(관측/미사용 토큰 식별).
+      - RevokedAt          : 폐기 시각. NOT NULL = 인증 거부.
+      - CreatedByAccountId : 발급자(운영자) 계정. CLI 발급 시 서비스 계정/운영자.
+
+    fast-path(_ensure_seed_catchup)·slow-path(_ensure_web_tables) 양쪽 호출
+    (_ensure_llm_quota_schema idiom 동형) — 기존 배포 자동 적용. additive·비파괴.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebApiTokens (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                TokenHash CHAR(64) NOT NULL,
+                TokenPrefix VARCHAR(16) NOT NULL,
+                Label VARCHAR(128) NULL,
+                Scopes VARCHAR(512) NULL,
+                ExpiresAt DATETIME NULL,
+                LastUsedAt DATETIME NULL,
+                CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CreatedByAccountId BIGINT NULL,
+                RevokedAt DATETIME NULL,
+                UNIQUE KEY UQ_WebApiTokens_Hash (TokenHash),
+                KEY IX_WebApiTokens_Account (AccountId),
+                KEY IX_WebApiTokens_Active (RevokedAt, ExpiresAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    except Exception:
+        pass
+    finally:
+        cur.close()
+
 def _ensure_avatar_icon_schema(conn) -> None:
     """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
     / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
@@ -2288,6 +2342,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_oauth_identity_schema(conn)
     # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 테이블 (fast path).
     _ensure_web_account_totp_schema(conn)
+    # feature-0023 (REQ-20260722-conversation-api-access): Bearer API 토큰 테이블 (fast path).
+    _ensure_web_api_tokens_schema(conn)
     # TASK-20260623T190000-gdrive-foundation (feature-0010): 계정별 Google Drive 토큰 테이블 (fast path).
     _ensure_web_gdrive_tokens_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).

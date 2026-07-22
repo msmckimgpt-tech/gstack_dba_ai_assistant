@@ -3,6 +3,10 @@
     "playwright": {
       "command": "bash",
       "args": ["${CLAUDE_PROJECT_DIR}/repo/bin/playwright-mcp.sh"]
+    },
+    "conversation-api": {
+      "command": "bash",
+      "args": ["${CLAUDE_PROJECT_DIR}/repo/bin/conversation-mcp.sh"]
     }
   }
 }

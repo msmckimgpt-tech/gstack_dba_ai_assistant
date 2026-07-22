@@ -45,6 +45,90 @@ def _hash_session_token(token: str) -> str:
     return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
 
 
+# ── feature-0023 (REQ-20260722-conversation-api-access): Bearer API 토큰 ───────────
+def _sanitize_api_token(value: str) -> str:
+    """API 토큰 정규화. url-safe 문자([A-Za-z0-9_-])만 허용, 128자 상한.
+
+    발급 CLI 는 `matk_` + secrets.token_urlsafe(...) 로 이 charset 만 생성하므로
+    정상 토큰에는 no-op 이고, garbage/injection 입력만 걸러낸다(세션 쿠키
+    `_sanitize_session_id` 와 동형 — 단 API 토큰은 더 길어 128자 허용)."""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "", value or "")
+    return cleaned[:128]
+
+
+def _extract_bearer_token(request: Request) -> str:
+    """`Authorization: Bearer <token>` 헤더에서 토큰 추출·정규화. 없거나 형식 불일치면 ''."""
+    raw = str(request.headers.get("authorization", "") or "")
+    if not raw:
+        return ""
+    parts = raw.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return ""
+    return _sanitize_api_token(parts[1].strip())
+
+
+def _parse_token_scopes(raw) -> list[str] | None:
+    """WebApiTokens.Scopes(콤마구분 권한 접두 allowlist) 파싱.
+
+    NULL/빈 문자열 → None (= scope 무제한, 서비스 계정 권한 전체). 그 외 → 정규화된
+    접두 리스트(예: ["conversation.", "product.access."]). 접두가 '.' 로 끝나면 그
+    네임스페이스 전체를 허용(conversation. → conversation.*)."""
+    if not raw:
+        return None
+    items = [s.strip() for s in str(raw).split(",")]
+    items = [s for s in items if s]
+    return items or None
+
+
+def _permission_in_token_scopes(permission: str, scopes: list[str]) -> bool:
+    """permission 코드가 토큰 scope allowlist 중 하나에 매칭되면 True.
+
+    - 정확 일치(`conversation.ask` == `conversation.ask`)
+    - 네임스페이스 접두 일치(scope 가 '.' 로 끝나면 startswith): `conversation.` 은
+      `conversation.ask`/`conversation.create`/… 전부 허용.
+
+    ⚠️ 이 allowlist 는 positive 필터일 뿐 최종 결정이 아니다 — `_account_permissions` 가
+    이 위에 **절대 denylist**(`_api_token_permission_denied`)를 AND 로 얹어, allowlist 를
+    통과하더라도 `*.any`·관리 네임스페이스는 무조건 차단한다(REV-20260722 HIGH-1)."""
+    for s in scopes:
+        if not s:
+            continue
+        if permission == s:
+            return True
+        if s.endswith(".") and permission.startswith(s):
+            return True
+    return False
+
+
+# feature-0023 (REV-20260722 HIGH-1/HIGH-2): API 토큰 인증의 **절대 denylist**.
+# scope allowlist·서비스 계정 권한과 무관하게 항상 차단한다 — "관리 콘솔/교차계정 절대 불가"를
+# scope 문자열이 아니라 코드 구조로 못박는다. allowlist 가 `conversation.` 이라 통과시킨
+# `conversation.list.any`·`conversation.archive.read.any`(group=audit) 같은 교차계정/관리
+# 코드를 여기서 무조건 죽인다. scope=None(빈 토큰)이어도 이 floor 는 항상 적용된다.
+_API_TOKEN_HARD_DENY_PREFIXES = (
+    "console.", "audit.", "account.", "role.", "permission",
+    "system.", "system", "quota.", "insight.", "datasource.",
+    "metadata.", "kb.", "graph.",
+    # product 는 접근(product.access.*)만 허용하고 관리(manage/read/create/delete)는 차단.
+    "product.manage", "product.read", "product.create", "product.delete",
+)
+# 토큰 Scopes 가 NULL/빈 값일 때 적용할 **안전 기본 allowlist**(fail-closed — 무제한 금지).
+_API_TOKEN_SAFE_DEFAULT_SCOPES = ("conversation.", "product.access.")
+
+
+def _api_token_permission_denied(code: str) -> bool:
+    """api_token 인증이 절대 exercise 못 하는 권한(관리/교차계정)이면 True.
+
+    - `*.any` 로 끝나는 모든 교차계정 권한(다른 계정 대화 열람/삭제/감사 등).
+    - `_API_TOKEN_HARD_DENY_PREFIXES` 로 시작하는 관리 네임스페이스."""
+    if code.endswith(".any"):
+        return True
+    for p in _API_TOKEN_HARD_DENY_PREFIXES:
+        if code.startswith(p):
+            return True
+    return False
+
+
 _TrustedNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
@@ -2714,8 +2798,30 @@ def _account_permissions(account: dict[str, Any] | None) -> dict[str, bool]:
         # TASK-0052 Phase 1B: cached map 은 _decorate_account_rows 에서 dynamic catalog 로 빌드됐으므로
         # 그대로 dict() 복사해 dynamic codes (e.g. product.access.<key>) 도 보존한다.
         # 기존엔 `for code in PERMISSION_CODES` 로 iterate 해 dynamic codes 가 silently drop 됐다.
-        return {str(code): bool(value) for code, value in cached.items()}
-    return _empty_permission_map()
+        perms = {str(code): bool(value) for code, value in cached.items()}
+    else:
+        perms = _empty_permission_map()
+    # feature-0023 (REQ-20260722-conversation-api-access): API 토큰 인증 시 유효 권한을
+    # 두 겹으로 제약한다(단일 choke-point — _account_has_permission·_account_has_any_permission·
+    # _account_has_product_access·직접 .get 소비처가 모두 존중).
+    #   (1) positive allowlist: 토큰 Scopes(또는 NULL 이면 안전 기본값 — REV-20260722 HIGH-2,
+    #       무제한 금지 fail-closed).
+    #   (2) absolute denylist: scope·계정 권한과 무관하게 `*.any`·관리 네임스페이스는 무조건
+    #       False(REV-20260722 HIGH-1). allowlist 가 `conversation.` 이라 새어든
+    #       conversation.list.any·conversation.archive.read.any(group=audit) 를 여기서 봉인.
+    # → 서비스 계정이 관리/교차계정 권한을 보유해도, 토큰이 어떤 scope 여도 관리 콘솔 접근 불가.
+    if account.get("_auth_via") == "api_token":
+        scopes = account.get("_token_scopes")
+        allow = scopes if scopes is not None else list(_API_TOKEN_SAFE_DEFAULT_SCOPES)
+        perms = {
+            code: (
+                bool(granted)
+                and _permission_in_token_scopes(code, allow)
+                and not _api_token_permission_denied(code)
+            )
+            for code, granted in perms.items()
+        }
+    return perms
 
 def _account_has_permission(account: dict[str, Any] | None, permission: str) -> bool:
     permissions = _account_permissions(account)
@@ -2944,13 +3050,74 @@ def _product_permission_code(product_key: str) -> str:
 # _audit_user_action · _metadata_audit · _connect_memory · _account_can_access_conversation.
 # 이들은 app.py 의 종국 역할(runtime hub·DI seam·패치-단일점)의 일부로 영구 잔류한다.
 
-def _get_authenticated_account(conn, request: Request) -> dict[str, Any] | None:
-    token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
+def _get_account_by_api_token(conn, request: Request) -> dict[str, Any] | None:
+    """feature-0023 (REQ-20260722-conversation-api-access): Bearer API 토큰으로 서비스
+    계정을 해석한다(세션 쿠키 fallback — 프로그래매틱 접근 전용).
+
+    - 토큰 원문은 SHA-256 해시로만 대조(WebApiTokens.TokenHash) — 원문 미저장.
+    - not revoked + (무기한 OR 미만료) 만 유효. 만료/폐기/미존재는 None(미인증).
+    - 유효 시 계정 dict 에 `_auth_via="api_token"` + `_token_scopes` 부착 → 다운스트림
+      `_account_permissions` 가 scope 로 유효 권한을 교집합(관리 엔드포인트 원천 차단).
+    - fail-closed: 조회/파싱 예외는 None(우회 금지). 브루트포스 잠금 대상 아님(고엔트로피).
+    """
+    token = _extract_bearer_token(request)
     if not token:
+        return None
+    token_hash = _hash_session_token(token)
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+SELECT Id, AccountId, Scopes
+FROM WebApiTokens
+WHERE TokenHash = %s
+  AND RevokedAt IS NULL
+  AND (ExpiresAt IS NULL OR ExpiresAt > CURRENT_TIMESTAMP)
+LIMIT 1
+            """,
+            (token_hash,),
+        )
+        trow = cur.fetchone()
+        cur.close()
+    except Exception:
+        return None
+    if not trow:
+        return None
+    account_id = trow.get("AccountId")
+    if account_id is None:
         return None
     rows = _fetch_account_rows(
         conn,
-        """
+        "a.Id = %s AND a.IsActive = 1 AND a.DeletedAt IS NULL",
+        (int(account_id),),
+        include_password=False,
+        limit_sql="LIMIT 1",
+    )
+    rows = _decorate_account_rows(conn, rows)
+    row = rows[0] if rows else None
+    if not row:
+        return None
+    row["_auth_via"] = "api_token"
+    row["_token_id"] = trow.get("Id")
+    row["_token_scopes"] = _parse_token_scopes(trow.get("Scopes"))
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE WebApiTokens SET LastUsedAt = CURRENT_TIMESTAMP WHERE Id = %s",
+            (trow.get("Id"),),
+        )
+        cur.close()
+    except Exception:
+        pass
+    return row
+
+
+def _get_authenticated_account(conn, request: Request) -> dict[str, Any] | None:
+    token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
+    if token:
+        rows = _fetch_account_rows(
+            conn,
+            """
 a.Id = (
     SELECT s.AccountId
     FROM WebAuthSessions s
@@ -2961,31 +3128,34 @@ a.Id = (
 )
 AND a.IsActive = 1
 AND a.DeletedAt IS NULL
-        """,
-        (_hash_session_token(token),),
-        include_password=False,
-        limit_sql="LIMIT 1",
-    )
-    rows = _decorate_account_rows(conn, rows)
-    row = rows[0] if rows else None
-    if row:
-        cur = conn.cursor()
-        cur.execute(
-            """
+            """,
+            (_hash_session_token(token),),
+            include_password=False,
+            limit_sql="LIMIT 1",
+        )
+        rows = _decorate_account_rows(conn, rows)
+        row = rows[0] if rows else None
+        if row:
+            cur = conn.cursor()
+            cur.execute(
+                """
 UPDATE WebAuthSessions
 SET LastSeenAt = CURRENT_TIMESTAMP,
     RemoteAddr = %s,
     UserAgent = %s
 WHERE SessionTokenHash = %s
-            """,
-            (
-                _get_client_ip(request),
-                str(request.headers.get("user-agent", "") or "")[:255],
-                _hash_session_token(token),
-            ),
-        )
-        cur.close()
-    return row
+                """,
+                (
+                    _get_client_ip(request),
+                    str(request.headers.get("user-agent", "") or "")[:255],
+                    _hash_session_token(token),
+                ),
+            )
+            cur.close()
+            return row
+    # feature-0023: 유효 세션 쿠키가 없으면 Bearer API 토큰 fallback(프로그래매틱 접근).
+    # 쿠키가 유효하면 위에서 이미 반환됐으므로 사람 세션은 무회귀(토큰 경로 미발동).
+    return _get_account_by_api_token(conn, request)
 
 def _build_actor_from_request(
     request: Request | None,
