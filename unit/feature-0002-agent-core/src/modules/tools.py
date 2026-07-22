@@ -2324,18 +2324,6 @@ def _tool_scratch_import(conn, args: dict) -> str:
     )
 
 
-def _fmt_scratch_rows(columns, rows, truncated=False) -> str:
-    if not columns:
-        return "(결과 컬럼 없음)"
-    lines = [" | ".join(str(c) for c in columns)]
-    for r in rows:
-        lines.append(" | ".join("" if v is None else str(v) for v in r))
-    out = "\n".join(lines)
-    if truncated:
-        out += "\n… (미리보기 상한까지만 표시 — 전체는 더 많음. 범위를 좁혀 재조회하세요)"
-    return out
-
-
 def _tool_scratch_sql(conn, args: dict) -> str:
     from . import scratch as _scratch
     if not _scratch.enabled():
@@ -2350,8 +2338,22 @@ def _tool_scratch_sql(conn, args: dict) -> str:
     if not res.get("ok"):
         return f"오류: {res.get('error')}"
     if "columns" in res:
-        body = _fmt_scratch_rows(res["columns"], res["rows"], res.get("truncated"))
-        return f"{res['row_count']:,}행 반환:\n{body}"
+        # execute_sql 과 **동일한 표(Markdown) 포매터**를 재사용해 출력 형식을 통일한다
+        # (기존 plain-text ` | ` 나열 → `| col | ... |` + 구분선 표). result_sets 형태
+        # [(kind, columns, rows)] 로 감싸 넘긴다.
+        result_sets = [("rows", res.get("columns") or [], res.get("rows") or [])]
+        preview = _format_result_sets(
+            result_sets,
+            max_rows=_TOOL_PREVIEW_ROWS,
+            expand_rows=_TOOL_PREVIEW_ROWS_MAX,
+            expand_char_budget=_TOOL_PREVIEW_CHAR_BUDGET,
+        )
+        out = (f"{res['row_count']:,}행 반환:\n{preview}" if preview
+               else f"{res['row_count']:,}행 반환 (표시할 열 없음).")
+        if res.get("truncated"):
+            out += ("\n… (작업공간 미리보기 상한까지만 표시 — 전체는 더 많음. "
+                    "범위를 좁혀 재조회하세요)")
+        return out
     return f"실행 완료 (영향 행수: {res.get('rowcount', 0)})."
 
 

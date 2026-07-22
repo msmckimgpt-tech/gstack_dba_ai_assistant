@@ -172,6 +172,26 @@ def test_statement_timeout_sql_not_parameterized():
     assert stmt.rsplit("= ", 1)[1].strip().isdigit()
 
 
+def test_scratch_sql_output_is_markdown_table(monkeypatch):
+    # scratch_sql 결과셋이 execute_sql 과 동일한 Markdown 표 형식으로 출력되는지(plain-text 회귀 방지).
+    import modules.tools as tools
+    import shared.config as cfg
+    monkeypatch.setattr(scratch, "enabled", lambda: True)
+    monkeypatch.setattr(cfg, "get_active_conversation_id", lambda: "conv-x")
+    monkeypatch.setattr(scratch, "run_sql", lambda conv, sql: {
+        "ok": True,
+        "columns": ["server", "version"],
+        "rows": [["mv", "8.0.33"], ["gz", "8.0.42"]],
+        "row_count": 2,
+        "truncated": False,
+    })
+    out = tools._tool_scratch_sql(None, {"sql": "SELECT 1"})
+    assert "| server | version |" in out       # 헤더 행
+    assert "|---|---|" in out                    # 구분선
+    assert "| mv | 8.0.33 |" in out              # 데이터 행
+    assert " | " not in out.split("\n")[0]       # 선두 요약줄은 표가 아님(행수 안내)
+
+
 def test_scratch_guidance_constant_present():
     # feature-0022 guidance: assistant·ask-worker 가 scratch 를 적극 사용하도록 하는 프롬프트 지침이
     # 존재하고 4 도구를 언급하는지(활성 시 주입) 최소 sanity.

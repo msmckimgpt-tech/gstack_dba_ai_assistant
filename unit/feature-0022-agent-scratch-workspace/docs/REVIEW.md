@@ -63,3 +63,11 @@ unix 소켓 trust 연결).
 격리/materialize 불변. 라이브 psql 시퀀스로 수정 검증(SET+JOIN 정상) + placeholder-free 회귀 테스트.
 **검증**: test_scratch.py 22건 PASS, agent_scratch_rw 직접 `SET statement_timeout=30000`+JOIN 정상,
 배포 후 라이브 end-to-end 재스모크로 최종 확인.
+
+## REV-20260722T022416-scratch-sql-table [SKIPPED: minor-ux] — Verdict: PASS
+**Scope**: 라이브 사용 피드백 — `scratch_sql` 결과셋 출력이 plain-text(` | ` 나열)라 기존 execute_sql
+표 형식과 불일치. `_format_result_sets`(execute_sql 표 포매터) 재사용으로 통일 + 죽은 `_fmt_scratch_rows` 제거.
+**왜 SKIPPED**: 출력 문자열 포맷 변경만 — 데이터 경로·scratch_guard·격리·권한 불변, 신규 공격 표면 0.
+동일 포매터 재사용이라 절단/미리보기 캡 정책도 execute_sql 과 자동 일치.
+**검증**: test_scratch.py 23건 PASS(표 마크다운 회귀 포함), 샘플 출력 육안 확인(`| col |`+구분선+footer),
+배포 후 라이브 재확인.
