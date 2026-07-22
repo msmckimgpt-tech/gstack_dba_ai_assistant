@@ -4104,10 +4104,17 @@ async function _pageBranch(message, direction) {
   const cur = Number(message.version_number || 1);
   const nextIdx = (cur - 1) + direction;
   if (!cid || nextIdx < 0 || nextIdx >= sibs.length) return;
+  const targetId = sibs[nextIdx];
   showToast("버전 전환 중…");
   try {
-    await _switchBranch(cid, sibs[nextIdx]);
-    await refreshWorkspace(cid);
+    if (isGroupConversation(currentConversation())) {
+      // 공유/그룹 대화: 읽기전용 페이징 — active_leaf(공유 근거)를 바꾸지 않고 해당 버전만 로컬
+      // 열람한다(전원 화면을 바꾸지 않음). 새 재답변/전환 영속은 계속 잠금(INV-4).
+      await loadHistory({ branchView: targetId });
+    } else {
+      await _switchBranch(cid, targetId);
+      await refreshWorkspace(cid);
+    }
   } catch (e) {
     showToast((e && e.message) || "버전 전환에 실패했습니다.", true);
   }
@@ -6197,7 +6204,7 @@ async function detectNewRun(seq = state.runDetectSeq) {
   }
 }
 
-async function loadHistory({ append = false } = {}) {
+async function loadHistory({ append = false, branchView = null } = {}) {
   if (!state.activeConversationId) {
     stopProgressPolling({ reset: true });
     stopRunDetectPolling();
@@ -6222,6 +6229,12 @@ async function loadHistory({ append = false } = {}) {
   });
   if (append && state.nextBeforeId) {
     params.set("before_id", String(state.nextBeforeId));
+  }
+  // feature-0019 shared-readonly-paging: 공유/그룹 대화에서 다른 버전을 읽기전용으로 열람할 때
+  // branch_view 를 전달한다. 서버는 active_leaf 를 변경하지 않고 해당 버전의 브랜치만 반환(공유 근거
+  // 불변). window 밖 대상은 서버가 fail-closed 무시(SEC).
+  if (branchView != null) {
+    params.set("branch_view", String(branchView));
   }
   // feature-0003 (N1 적대검증): 이 로드 시작 시각. 아래 hydration 이 fetch await 동안 사용자가
   // 새로 고른 추론 강도를 덮어쓰지 않도록, 픽 시각(state._reasoningPickedAt)과 비교하는 seq 가드.

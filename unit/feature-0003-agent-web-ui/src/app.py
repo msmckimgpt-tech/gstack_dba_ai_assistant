@@ -3245,6 +3245,8 @@ from routers._conv_store import (  # noqa: E402
     _branch_display_state,
     _branch_active_display_ids,
     _branch_version_groups,
+    # feature-0019 shared-readonly-paging — 공유/그룹·익명 공유 뷰 읽기전용 버전 페이징
+    _branch_resolve_readonly_leaf,
 )
 # ITEM-10 routers-p7: 라우터·테스트 참조 보존 (record_audit_event 는 app 정의 유지 — setattr 12× 패치-단일점).
 from routers._audit_infra import (  # noqa: E402

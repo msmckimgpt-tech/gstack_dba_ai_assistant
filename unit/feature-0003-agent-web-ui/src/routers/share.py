@@ -291,12 +291,23 @@ WHERE Token = %s AND RevokedAt IS NULL
                 share_policy_version = int(share_policy_version_raw) if share_policy_version_raw is not None else None
             except Exception:
                 share_policy_version = None
+            # feature-0019 shared-readonly-paging: 익명 공유 뷰도 branch_view 로 다른 버전을 읽기전용
+            # 열람(active_leaf 미변경). 대상이 공유 window[floor,anchor] 내 user 메시지인지 검증 후에만
+            # leaf override(fail-closed — 공유 범위 밖 버전 존재/내용 누출 차단, SEC).
+            _share_override_leaf = None
+            _bv_raw = request.query_params.get("branch_view")
+            if _bv_raw:
+                _share_override_leaf = app._branch_resolve_readonly_leaf(
+                    conversation_id, _bv_raw,
+                    floor_id=floor_id_view_int, anchor_id=anchor_id_int,
+                )
             messages = app._share_load_messages(
                 conn,
                 conversation_id,
                 anchor_id_int,
                 floor_message_id=floor_id_view_int,
                 share_token_policy_version=share_policy_version,
+                override_active_leaf=_share_override_leaf,
             )
         except Exception:
             logging.getLogger(__name__).warning(

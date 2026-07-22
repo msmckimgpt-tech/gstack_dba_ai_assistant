@@ -135,6 +135,7 @@ def history(
     conversation_id: str | None = None,
     before_id: int | None = None,
     limit: int = 10,
+    branch_view: int | None = None,
     account=Depends(app.get_current_account),
     conn=Depends(app.get_conn),
 ) -> JSONResponse:
@@ -165,9 +166,19 @@ def history(
         if _display_window == "DENY":
             messages, has_more, oldest_id, total_count, user_count = [], False, None, 0, 0
         else:
+            # feature-0019 shared-readonly-paging: branch_view 가 주어지면 읽기전용으로 그 버전의
+            # 브랜치를 렌더한다(active_leaf 미변경 — 공유 근거 불변). 대상이 멤버 가시 window 내 user
+            # 메시지인지 검증 후에만 leaf override(fail-closed — 범위 밖 버전 열람·프로빙 차단, SEC).
+            _override_leaf = None
+            if branch_view is not None:
+                _override_leaf = app._branch_resolve_readonly_leaf(
+                    conv_id, branch_view,
+                    window=(_display_window if isinstance(_display_window, dict) else None),
+                )
             messages, has_more, oldest_id, total_count, user_count = app._get_history(
                 conv_id, limit=limit, before_id=before_id,
                 window=(_display_window if isinstance(_display_window, dict) else None),
+                override_active_leaf=_override_leaf,
             )
         # 새로고침·대화 전환 후에도 이미 부여한 👍/👎 를 복원해 중복 부여를 막는다(고유 피드백).
         # best-effort: 피드백 상태 복원 실패는 history 응답을 막지 않는다(첨부 영속과 동형 fail-soft).

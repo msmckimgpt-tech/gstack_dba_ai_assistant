@@ -1647,3 +1647,10 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **수정(styles.css + app.js, 표시전용)**: textarea 전경색을 `var(--text)` 로 명시 + `.message-edit-box` color 리셋(상속 차단) + 편집 진입 시 파란 말풍선을 중립 편집 패널로 전환하는 `.message-bubble-editing`(0,4,0) 신설 + app.js `classList.add`. 재구성 결과: textarea 진한 글자(대비 15.38:1), '요청사항 수정(재답변)'=파란 primary 버튼, '단순 수정'/'취소'=중립 pill — 배경과 싸우지 않는 표준 편집 폼.
 - **무영향**: 백엔드·편집 엔드포인트·브랜치/IDOR·RBAC·스키마 0. feature-0019 ANCHOR §1-§3 무충돌. 라이트 전용 콘솔이라 다크 분기 불요.
 - **검증**: `node --check` PASS · headless Chromium 실측(수정본 15.38:1 / 수정전 1.0:1 버그 재현 · 말풍선 중립 전환 · 재답변버튼 5.17:1) + 스크린샷 · POST-DEPLOY PB-0008 Windows-browser(잔여).
+
+## 20260722T122635-shared-branch-readonly-paging — 공유/그룹·익명 공유-링크 뷰 편집 버전 읽기전용 페이징 (Major §12.3, PLAN-APPROVED design-review C)
+- **계기**: 사용자 — 공유 대화 및 '링크 공유' 출력 화면에서 편집 버전 페이징이 정합 동작하도록. 현재 브랜치된 대화 공유 시 비활성 버전 평면 노출(pager 없음).
+- **방향(설계리뷰 C)**: 읽기전용. active_leaf 불변(공유 근거 무결성), 기존 브랜치 read 가시성만 확장. 새 재답변 그룹 잠금 유지.
+- **구현**: 두 로더(in-app `_get_history` / 익명 공유 `_share_load_messages`) 공용 `_branch_enrich_display` — active-path 필터 + 가시성-scoped 버전 메타. 읽기전용 네비 = `override_active_leaf`(비영속) + `branch_view` 파라미터 + `_branch_resolve_readonly_leaf`(가시 범위 검증 fail-closed). 프론트 app.js(그룹 읽기전용 pager)·share.js/css(공유 뷰 pager).
+- **보안(핵심)**: 멤버 window / 공유 id-범위 밖 버전은 카운트·sibling_ids·존재·내용 모두 fail-closed 차단(익명 공유 뷰 누출 방지). active_leaf DB 불변.
+- **검증**: 보안 단위 10 PASS(범위밖 형제 배제·resolver fail-closed) · py_compile 5 + node --check 2 · §18.8 적대 보안 리뷰 · 양 surface PB-0008(POST-DEPLOY).

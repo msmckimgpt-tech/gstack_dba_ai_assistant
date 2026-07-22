@@ -1332,8 +1332,13 @@ WHERE conversation_id = %s
     )
 
 def _get_history(
-    conversation_id: str, limit: int = 5, before_id: int | None = None, window=None
+    conversation_id: str, limit: int = 5, before_id: int | None = None, window=None,
+    override_active_leaf=None,
 ) -> tuple[list[dict[str, Any]], bool, int | None, int, int]:
+    # feature-0019 shared-readonly-paging: override_active_leaf 가 주어지면(읽기전용 버전 열람 —
+    # /api/history?branch_view=<id>) 지속된 active_leaf 대신 그 leaf 로 active-path 를 구성한다.
+    # active_leaf(대화 공유 포인터)는 **변경하지 않는다**(공유 근거 불변, INV-4). 호출자(라우트)가
+    # 대상이 멤버 가시 window 내 user 메시지인지 검증 후 leaf 를 넘긴다(fail-closed).
     if not conversation_id:
         return [], False, None, 0, 0
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
@@ -1400,33 +1405,19 @@ def _get_history(
         #   노출하고 버전 페이징 메타(version_number/version_count/sibling_ids)를 부착한다. 게이트
         #   fast-path — has_branches=false(거의 모든 대화)면 이 블록 전체 skip(무회귀).
         _has_branches, _active_disp_leaf = _branch_display_state(conversation_id)
-        # SEC MINOR-B: 브랜치 활성경로 필터/버전 메타는 1:1 소유 대화(편집 대상)에만. 브랜치된 1:1 이
-        #   share/join 으로 그룹 승격된 경우엔 비활성 버전 id 노출·타 멤버 메시지 은닉을 피하려 skip(전체 노출).
-        if _has_branches and not _conversation_is_group(conversation_id):
-            try:
-                from shared.db import _pg_connect as _pgc
-                _bpg = _pgc()
-                try:
-                    _active_ids = _branch_active_display_ids(_bpg, conversation_id, _active_disp_leaf)
-                    _vgroups = _branch_version_groups(_bpg, conversation_id)
-                finally:
-                    _bpg.close()
-                messages_pg = [m for m in messages_pg if int(m["id"]) in _active_ids]
-                _id_to_sibs: dict[int, list] = {}
-                for _sibs in _vgroups.values():
-                    for _sid in _sibs:
-                        _id_to_sibs[_sid] = _sibs
-                for m in messages_pg:
-                    if str(m.get("role") or "").lower() == "user":
-                        _sibs = _id_to_sibs.get(int(m["id"]))
-                        if _sibs and len(_sibs) > 1:
-                            m["version_number"] = _sibs.index(int(m["id"])) + 1
-                            m["version_count"] = len(_sibs)
-                            m["sibling_ids"] = _sibs
-            except Exception:
-                logging.getLogger(__name__).warning(
-                    "branch history enrich failed (cid=%s)", conversation_id, exc_info=True
-                )
+        if override_active_leaf is not None:
+            # 읽기전용 버전 열람: 지속 active_leaf 를 무시하고 대상 버전의 leaf 로 경로 구성(비영속).
+            _has_branches, _active_disp_leaf = True, int(override_active_leaf)
+        # feature-0019 shared-readonly-paging: 1:1(window=None)뿐 아니라 공유/그룹 멤버(window 지정)도
+        #   active-path 필터 + (window-scoped) 버전 페이징 메타를 받는다. 그룹은 여기서 **읽기전용 노출**만 —
+        #   재답변·브랜치 전환(active_leaf 변경)은 엔드포인트에서 계속 잠금(INV-4 mutation lock 불변). 이전
+        #   SEC MINOR-B skip(그룹 전체 평면 노출)을 대체: window 스코핑으로 가려진 버전 id 누출을 막고,
+        #   멤버 메시지는 active_leaf 체이닝(branch-chain-race fix) 으로 활성 가지에 있어 은닉되지 않는다.
+        if _has_branches:
+            messages_pg = _branch_enrich_display(
+                messages_pg, conversation_id, _active_disp_leaf,
+                visible_pred=_branch_window_pred(window),
+            )
         needs_core_pg = not messages_pg or not any(str(i.get("role", "")).lower() == "assistant" for i in messages_pg)
         # share-visibility-window: bounded 멤버(window 지정)는 core fallback(core_messages 직접
         # 읽기 — window 미적용)을 건너뛴다. 표시 store 만으로 window 정합 응답을 준다(유출 방지).
@@ -3044,7 +3035,7 @@ def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, di
         meta_clean["redacted_by_share_policy"] = True
     return app.SHARE_POLICY_REDACT_TEXT, True, meta_clean
 
-def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, floor_message_id: int | None = None, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
+def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, floor_message_id: int | None = None, share_token_policy_version: int | None = None, override_active_leaf: int | None = None) -> list[dict[str, Any]]:
     """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive, "여기까지 공유").
 
     share-visibility-window: floor_message_id 가 주어지면 `Id >= floor` (inclusive, "여기부터 공유").
@@ -3111,6 +3102,23 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
                 "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
                 "meta": meta_obj,
             }
+        )
+    # feature-0019 shared-readonly-paging: 익명 공유 스냅샷도 브랜치 대화면 active-path 필터 +
+    #   (공유 id-범위로 scoped) 읽기전용 버전 페이징 메타를 부착. 이전엔 브랜치 인지가 없어 비활성
+    #   버전이 평면 노출됐다(결함). active_leaf 는 변경하지 않는다(읽기전용). sibling_ids 는 공유
+    #   window[floor,anchor] 로 필터돼 범위 밖 버전 존재를 누출하지 않는다(fail-closed, SEC).
+    try:
+        _has_branches, _active_disp_leaf = _branch_display_state(conversation_id)
+        if override_active_leaf is not None:
+            _has_branches, _active_disp_leaf = True, int(override_active_leaf)  # 읽기전용 버전 열람(비영속)
+        if _has_branches:
+            visible = _branch_enrich_display(
+                visible, conversation_id, _active_disp_leaf,
+                visible_pred=_branch_idrange_pred(floor_message_id, anchor_message_id),
+            )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "share branch enrich failed (cid=%s)", conversation_id, exc_info=True
         )
     return visible
 
@@ -4616,13 +4624,38 @@ def _save_group_chat_message_pg(
         return 0
     try:
         be = _get_pg_runtime_backend()
+        # feature-0019 shared-readonly-paging [SEC-3 fix]: 브랜치된 대화(has_branches)면 사람-채팅
+        # 미러도 두 store 의 active_leaf 에 체인 + 전진시킨다. 안 그러면 parent NULL 고아로 삽입돼,
+        # 공유/그룹 읽기전용 페이징의 active-path 필터에서 결정론적으로 은닉된다(멤버 채팅 사라짐 —
+        # 적대 보안리뷰 [3]). 비분기 대화(거의 전부)는 parent None(기존 linear append, 무회귀).
+        _core_parent = None
+        _disp_parent = None
+        _chat_advance = False
+        try:
+            _cbs = be.load_branch_state(pg_conn, conversation_id=conversation_id)
+            if isinstance(_cbs, dict) and _cbs.get("has_branches"):
+                _core_parent = _cbs.get("active_leaf_id")
+                _dbs = be.load_display_branch_state(pg_conn, conversation_id=conversation_id)
+                _disp_parent = _dbs.get("active_leaf_id") if isinstance(_dbs, dict) else None
+                _chat_advance = True
+        except Exception:
+            _core_parent = _disp_parent = None
+            _chat_advance = False
         mid = be.save_core_message(
             pg_conn,
             conversation_id=conversation_id,
             role="user",
             content=content,
             sender_account_id=int(account_id),
+            parent_message_id=_core_parent,
         )
+        if _chat_advance and mid:
+            try:
+                be.set_active_leaf(pg_conn, conversation_id=conversation_id, leaf_id=mid)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "group chat core active_leaf advance failed (cid=%s)", conversation_id, exc_info=True
+                )
         # 표시 store 미러 (sender meta 포함) — /api/history 노출.
         try:
             meta = json.dumps(
@@ -4633,9 +4666,17 @@ def _save_group_chat_message_pg(
                 },
                 ensure_ascii=False,
             )
-            be.save_memory_message(
-                pg_conn, conversation_id=conversation_id, role="user", content=content, meta_json=meta
+            _disp_id = be.save_memory_message(
+                pg_conn, conversation_id=conversation_id, role="user", content=content, meta_json=meta,
+                parent_message_id=_disp_parent,
             )
+            if _chat_advance and _disp_id:
+                try:
+                    be.set_active_display_leaf(pg_conn, conversation_id=conversation_id, leaf_id=_disp_id)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "group chat display active_leaf advance failed (cid=%s)", conversation_id, exc_info=True
+                    )
         except Exception:
             logging.getLogger(__name__).warning(
                 "group chat display mirror failed (conversation_id=%s)", conversation_id, exc_info=True
@@ -6170,20 +6211,133 @@ def _branch_active_display_ids(pg, conversation_id: str, active_leaf):
         return {int(r[0]) for r in (cur.fetchall() or [])}
 
 
-def _branch_version_groups(pg, conversation_id: str):
+def _branch_version_groups(pg, conversation_id: str, visible_pred=None):
     """편집된 user 메시지의 형제 버전 그룹. 반환 {parent_key: [display_id...(id ASC)]}.
     형제 = 같은 parent_message_id 를 공유하는 user 메시지(DEC-3). parent NULL 은 '__root__' 키.
-    version_count>1 인 그룹만 반환(페이징 표식 대상)."""
+    version_count>1 인 그룹만 반환(페이징 표식 대상).
+
+    feature-0019 shared-readonly-paging: visible_pred!=None(공유/그룹 멤버·익명 공유 스냅샷)이면 각
+    형제 버전을 **가시성 술어로 필터**한다 — 가려진 구간(합류 전·floor 아래·ceiling 위·공유 id 범위
+    밖)에 생성된 버전은 카운트·sibling_ids·존재 모두 배제(fail-closed 누출 게이트, SEC). 술어 시그니처
+    = `pred(mid:int, created_at, meta:dict|None, role:str) -> bool`(True=가시). visible_pred=None 이면
+    owner/1:1 전체(기존 동작 불변)."""
+    _filtered = visible_pred is not None
     with pg.cursor() as cur:
         cur.execute(
-            "SELECT COALESCE(parent_message_id::text, '__root__') AS pk, id "
-            "FROM agent_runtime.messages "
+            ("SELECT COALESCE(parent_message_id::text, '__root__') AS pk, id, created_at, meta_json, role "
+             if _filtered else
+             "SELECT COALESCE(parent_message_id::text, '__root__') AS pk, id ")
+            + "FROM agent_runtime.messages "
             "WHERE conversation_id = %s AND role = 'user' "
             "ORDER BY pk, id ASC",
             (conversation_id,),
         )
         rows = cur.fetchall() or []
     groups: dict[str, list] = {}
-    for pk, mid in rows:
+    for row in rows:
+        if _filtered:
+            pk, mid, _created_at, _meta_json, _role = row
+            _meta = _meta_json if isinstance(_meta_json, dict) else None
+            if not visible_pred(int(mid), _created_at, _meta, str(_role or "")):
+                continue  # 가려진 버전은 카운트·노출·존재 차단(fail-closed)
+        else:
+            pk, mid = row
         groups.setdefault(str(pk), []).append(int(mid))
     return {k: v for k, v in groups.items() if len(v) > 1}
+
+
+def _branch_window_pred(window):
+    """created_at window 객체(in-app history 로더) → 가시성 술어. window=None 이면 None(전체)."""
+    if window is None:
+        return None
+    return lambda mid, created_at, meta, role: not app._msg_outside_window(mid, created_at, meta, role, window)
+
+
+def _branch_idrange_pred(floor_id, anchor_id):
+    """id 범위[floor,anchor](익명 공유 스냅샷) → 가시성 술어. 둘 다 None 이면 None(전체)."""
+    if floor_id is None and anchor_id is None:
+        return None
+    _lo = int(floor_id) if floor_id is not None else None
+    _hi = int(anchor_id) if anchor_id is not None else None
+    def _pred(mid, created_at, meta, role):
+        if _lo is not None and mid < _lo:
+            return False
+        if _hi is not None and mid > _hi:
+            return False
+        return True
+    return _pred
+
+
+def _branch_enrich_display(messages, conversation_id: str, active_leaf, visible_pred=None):
+    """두 로더(in-app history / 익명 공유 view) 공용 브랜치 표시 정합.
+
+    (1) active-path 필터: active_leaf 에서 parent 역추적한 활성 가지 id 만 남긴다(옛 브랜치·평면
+        노출 제거). (2) 가시성-scoped 버전 페이징 메타(version_number/count/sibling_ids)를 user
+        메시지에 부착. **읽기전용** — active_leaf(대화 공유 포인터)를 절대 변경하지 않는다(공유 근거
+        불변, INV-4). active_leaf=None 또는 예외 → messages 원본 반환(fail-soft, 무회귀).
+
+    `messages` 는 이미 상위에서 window/id-범위 필터된 목록이어야 한다 → 최종 노출 = (가시성 ∩ 활성가지).
+    """
+    if active_leaf is None:
+        return messages
+    try:
+        from shared.db import _pg_connect as _pgc
+        _bpg = _pgc()
+        try:
+            active_ids = _branch_active_display_ids(_bpg, conversation_id, active_leaf)
+            vgroups = _branch_version_groups(_bpg, conversation_id, visible_pred=visible_pred)
+        finally:
+            _bpg.close()
+        if not active_ids:
+            return messages
+        out = [m for m in messages if int(m["id"]) in active_ids]
+        id_to_sibs: dict[int, list] = {}
+        for _sibs in vgroups.values():
+            for _sid in _sibs:
+                id_to_sibs[_sid] = _sibs
+        for m in out:
+            if str(m.get("role") or "").lower() == "user":
+                _sibs = id_to_sibs.get(int(m["id"]))
+                if _sibs and len(_sibs) > 1:
+                    m["version_number"] = _sibs.index(int(m["id"])) + 1
+                    m["version_count"] = len(_sibs)
+                    m["sibling_ids"] = _sibs
+        return out
+    except Exception:
+        logging.getLogger(__name__).warning("branch enrich failed (cid=%s)", conversation_id, exc_info=True)
+        return messages
+
+
+def _branch_resolve_readonly_leaf(conversation_id: str, branch_view_id, *, window=None, floor_id=None, anchor_id=None):
+    """읽기전용 페이징(/api/history?branch_view=·공유 뷰) 대상 검증 + leaf 해소.
+
+    branch_view_id 가 (1) 이 대화의 **user 메시지**이고 (2) **가시성 술어**(created_at window 또는
+    공유 id-범위)를 통과하면 그 브랜치 leaf 를 반환한다. 아니면 None → 호출자가 override 를 무시하고
+    지속 active_leaf 를 쓴다(fail-closed). SEC: 멤버·익명 뷰어가 자기 가시 범위 **밖** 버전을 열람하거나
+    존재를 프로빙하지 못하게 한다(주입 방어). None/파싱실패 → None."""
+    if branch_view_id is None:
+        return None
+    try:
+        _bv = int(branch_view_id)
+    except Exception:
+        return None
+    _pred = _branch_window_pred(window) if window is not None else _branch_idrange_pred(floor_id, anchor_id)
+    from shared.db import _pg_connect as _pgc
+    _bpg = _pgc()
+    try:
+        with _bpg.cursor() as cur:
+            cur.execute(
+                "SELECT id, created_at, meta_json, role FROM agent_runtime.messages "
+                "WHERE conversation_id = %s AND id = %s LIMIT 1",
+                (conversation_id, _bv),
+            )
+            r = cur.fetchone()
+        if not r or str(r[3] or "").lower() != "user":
+            return None
+        if _pred is not None:
+            _meta = r[2] if isinstance(r[2], dict) else None
+            if not _pred(int(r[0]), r[1], _meta, str(r[3] or "")):
+                return None  # 가시 범위 밖 → 열람 거부(fail-closed)
+        return _branch_leaf_of(_bpg, "messages", conversation_id, _bv)
+    finally:
+        _bpg.close()
