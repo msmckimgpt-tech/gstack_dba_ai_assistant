@@ -87,3 +87,7 @@ source_of_truth: true
 - AC-ME-8 (감사): edit·branch.switch 가 `WebAuditEvents` 에 기록된다(§9 audit).
 - AC-ME-9 (시각검증): PB-0008 실 Windows 브라우저에서 편집·재답변·페이징 시각검증
   (visual_verification_scope: always).
+- AC-ME-10 (branch-hardening, 2026-07-22): 답변 persist 의 대화 바인딩은 **명시 conversation_id 만**.
+  웹/ask 경로(`account_id` 지정) conversation_id 미지정 시 전역 env·호스트 공유 파일 폴백을 쓰지 않고
+  **fail-closed**(cross-conversation 누출 표면 봉인, INV-6). CLI/eval(account_id=None)만 파일 폴백 정당.
+  (브랜치 체인 산란 방지는 PR #874/#875 'branch-chain-race'가 별도 봉인.) 회귀=`tests/test_conv_bind_failclosed.py`.

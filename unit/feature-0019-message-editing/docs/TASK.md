@@ -60,3 +60,14 @@ source_of_truth: true
 - [x] TASK-P2-2 프론트 _canEditMessage 그룹 지원(본인 발신·비-@assistant) + 인라인 재답변 버튼 그룹 미노출
 - [x] TASK-P2-3 서수 매핑 그룹 이벤트(__event__) 제외 — SEC #5
 - [ ] TASK-P2-4 §18.8 그룹 편집 보안 리뷰 + verify + 배포 + PB-0008(그룹 대화 단순수정·잠금·미노출)
+
+## 7. 예방적 하드닝 (TASK-20260722T054238-conv-bind-failclosed — HANDOFF 누출신고 진단 후속)
+2026-07-22 "편집·재요청 답변 타 대화 누출" 신고: DB forensics + PB-0008 통제 재현으로 **실누출·재답변
+실패 없음(오진)** 확정(UX·동시 in-flight 격리 PASS). 조사 중 발견한 잠재 결함 중 브랜치 체인 산란
+(footgun B)은 병렬 세션이 PR #874/#875 'branch-chain-race'로 이미 랜딩 → 중복 철회. 남은 fail-closed
+대화 바인딩(footgun A)만 봉인. 상세=REPORT §, MODIFY CHG-20260722T054238, DECISIONS ADR-ME-0002.
+- [x] TASK-H1 진단 — 라이브 DB forensics(누출 시그니처 0, 계정 매핑 정정 1=bootstrap_admin/10=admin) + PB-0008 통제 재현 PASS
+- [x] TASK-H2 footgun A — 웹/ask 경로 conversation_id falsy fail-closed(전역/공유 대화 폴백 차단, INV-6)
+- [x] TASK-H3 회귀 테스트(test_conv_bind_failclosed.py 4건) + §18.8 적대적 리뷰(SHIP) + verify-completion
+- [x] TASK-H4 footgun B 중복 확인(#874/#875 이미 랜딩) → 철회
+- [ ] TASK-H5 PR·무중단 배포(web-a/b + ask/insight-worker 재빌드) + post-deploy 검증
