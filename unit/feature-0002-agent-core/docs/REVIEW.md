@@ -410,3 +410,15 @@ source_of_truth: true
   ④ "flake 실증?" → monotonic=10<60·ts=0.0·restricted 재현 시 수정본 1 ping(구 0). 결정적.
 - 검증: `test_llm_provider_health.py` 39 PASS(회귀 잠금 2 신규) · flake 조건 재현 확증.
 - Cross-ref: CHG/TASK/TEST-20260715T234757-probe-throttle-monotonic-flake · 선행 1c1889e4(recovery-only gate) · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260722T050006-branch-chain-race [SUBAGENT:general-purpose] — SHIP-WITH-FIXES (1 needs-fix 반영, 6축 not-a-defect) — 재답변 브랜치 체이닝 동시성 경합 수정 (20260722T050006-branch-chain-race, Major §12.3, PLAN-APPROVED)
+- §18.8 적대적 리뷰(general-purpose subagent, 7축 실패-시나리오 탐색). 원 버그(답변이 자기 run 의 user 형제로 붙어 user 가 active-path 에서 사라짐)는 per-run thread-local 커서로 **정확히 봉인** — 답변이 항상 자기 run 직전 write 에 체인, user 는 자신의 답변을 후손으로 가짐. 판정 요지:
+  - **[1] needs-fix (반영 완료)**: `branch_run_end()` 가 `_run_agent_core` 평문 말미(finally 아님)라 예외 escape 시 skip → 워커 스레드 stale 커서 잔존, 게다가 begin 이 has_branches 프로브와 같은 try 라 프로브 raise 시 begin skip → 다음 run 이 타 대화 stale id 에 체인 가능(저확률·실재, REV-20260610-P5 M1 이 이미 데인 평문-해제 패턴). **수정**: ⓐ `branch_run_end()` 를 `run_agent` 래퍼 finally(datasource/contextvar 해제와 동일 위치·예외 안전)로 이동, 평문 tail end() 제거. ⓑ `_run_agent_core` entry 에서 프로브 **전** 무조건 리셋(`branch_run_end()`) 후 has_branches 성공 시에만 `branch_run_begin(True)` — 프로브 raise 에도 stale leak 0.
+  - **[2] 비분기 회귀 not-a-defect**: `branch_run_active()`=false 면 else 블록이 수정 전과 로직 동일(load_branch_state→chain|linear). INV-1 byte-identical. ([1] 수정으로 leak 시 오진입 경로도 봉인.)
+  - **[3] 첫-write not-a-defect**: 첫 write 가 active_leaf 1회 read 중 리셋돼 user.parent 가 어긋나도, 답변은 커서(user)에 체인 + leaf=답변 → user 는 항상 active-path 에 잔존(원 "user 사라짐" 재현 불가). 잘못된 분기점은 [5] version-active 로 격하.
+  - **[4] 비-run 호출자 not-a-defect**: 커서 소비 함수(`_save_message`/`save_memory_message`)의 비-run 호출자 리포 전역 부재(전부 `_run_agent_core` 경유). 엔드포인트 sibling 은 `edit_version==1 and edit_root is None` 가드로 커서 경로 우회. 신선 스레드 기본 active=False.
+  - **[5] overlap 잔여 not-a-defect(version-active 로 격하)**: thread-local 이라 각 run 내부 체인 무결. 진짜 동시 run 이면 공유 active_leaf 를 마지막 write 가 점유 → 진 run 의 turn(user+answer **함께**)이 비활성 sibling 으로 감(=버전 활성 경합, "user 만 사라짐" 아님). 원 버그 봉인됨.
+  - **[6] store 혼선 not-a-defect**: `_save_message`='core'/`save_memory_message`='disp' 별도 thread-local 속성 키. core_messages.id / messages.id 각 store 커서에만 저장·소비.
+  - **[7] 반환값 not-a-defect**: `_save_message` 가 `_saved_id` 반환 추가 — 7 호출자 전부 bare statement 로 무시. 무영향.
+- 반영 후 검증: `py_compile` 3파일 · 단위 `tests/test_branch_chain_race.py` **6 PASS**(리뷰 권고 추가: core-store `_save_message` 체인 + leak-후 비분기 write 미오염). feature-0002 전체 회귀 PASS(마운트).
+- Cross-ref: CHG/TASK/FUNCTION/TEST-20260722T050006-branch-chain-race · feature-0019 ANCHOR §1-§3(INV-1~5) 무충돌 · 데이터 복구(오염 5행)=POST-DEPLOY.

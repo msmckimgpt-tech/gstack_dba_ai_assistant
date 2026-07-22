@@ -893,6 +893,52 @@ def _get_pg_runtime_backend() -> PgRuntimeBackend:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# feature-0019 message-editing — run-scoped branch chain cursor (thread-local)
+#
+# 브랜치 대화(has_branches=true)의 재답변 run 에서 새 메시지(user·tool 스텝·답변)의
+# parent 를 **대화 단위 공유 포인터 active_leaf 를 매 write 마다 재-read** 하는 대신,
+# 한 run 안에서 직전에 쓴 메시지 id 를 이 thread-local 커서로 이어붙인다. 그래야 run 이
+# 겹치거나(이전 답변 생성 중 다음 재답변) active_leaf 가 다른 turn/분기점 값으로 리셋돼도
+# `user → (tool…) → 답변` 체인이 자기 run 안에서 무결하게 유지된다(답변이 user 의 형제로
+# 붙어 user 가 active-path 에서 사라지던 결함 봉인). 워커 스레드는 한 번에 run 하나만 처리
+# 하므로 thread-local 로 충분하다. `_run_agent_core` 가 run 시작 시 begin(has_branches),
+# 종료 teardown 에서 end() 를 호출해 스레드 재사용 stale 을 방지한다.
+# 비분기 대화(active=False, 거의 모든 대화)는 이 경로를 타지 않고 기존 auto append 그대로(회귀 0).
+# ─────────────────────────────────────────────────────────────────────────────
+
+import threading as _threading
+
+_branch_run_chain = _threading.local()
+
+
+def branch_run_begin(active: bool) -> None:
+    """run 시작: 브랜치 체인 커서 초기화. active = 이 대화 has_branches 여부."""
+    _branch_run_chain.active = bool(active)
+    _branch_run_chain.core = None
+    _branch_run_chain.disp = None
+
+
+def branch_run_end() -> None:
+    """run 종료(teardown): 커서 해제 — 워커 스레드 재사용 시 stale 커서 leak 방지."""
+    _branch_run_chain.active = False
+    _branch_run_chain.core = None
+    _branch_run_chain.disp = None
+
+
+def branch_run_active() -> bool:
+    return bool(getattr(_branch_run_chain, "active", False))
+
+
+def branch_chain_get(store: str):
+    """store in ('core','disp'). 이 run 이 해당 store 에 직전에 쓴 메시지 id(없으면 None)."""
+    return getattr(_branch_run_chain, store, None)
+
+
+def branch_chain_set(store: str, message_id) -> None:
+    setattr(_branch_run_chain, store, message_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # internal connection helper (kb_backend.py _get_pg_conn 패턴 답습)
 # ─────────────────────────────────────────────────────────────────────────────
 

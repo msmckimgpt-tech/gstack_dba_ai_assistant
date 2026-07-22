@@ -161,7 +161,10 @@ def save_memory_message(
             meta_json = json.dumps(auto_meta, ensure_ascii=False)
         except Exception:
             meta_json = json.dumps({"value": str(auto_meta)}, ensure_ascii=False)
-    from .runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    from .runtime_backend import (
+        _get_pg_runtime_backend, _get_pg_runtime_conn,
+        branch_run_active, branch_chain_get, branch_chain_set,
+    )
     pg_conn = _get_pg_runtime_conn()
     new_id = 0
     if pg_conn:
@@ -171,13 +174,31 @@ def save_memory_message(
             _advance_leaf = False
             # 명시 브랜치 인자(엔드포인트 sibling 생성)가 없으면 정상 append — 브랜치 대화면 체이닝.
             if _chain_parent is None and edit_version == 1 and edit_root_message_id is None:
-                try:
-                    _bs = backend.load_display_branch_state(pg_conn, conversation_id=conversation_id)
-                    if isinstance(_bs, dict) and _bs.get("has_branches"):
-                        _chain_parent = _bs.get("active_leaf_id")
+                # feature-0019 branch-chain-race: 브랜치 run 이면 active_display_leaf 를 매 write 마다
+                # 재-read 하지 않고 이 run 의 직전 display write id(커서)에 이어붙인다. 표시 store 는
+                # 한 run 에 user·답변 2개만 쓰므로, 재-read 시 리셋된 active_display_leaf 때문에 답변이
+                # user 의 형제로 붙어 active-path 걷기에서 user 가 사라지던 결함을 봉인한다.
+                if branch_run_active():
+                    _cur = branch_chain_get("disp")
+                    if _cur is not None:
+                        _chain_parent = _cur
                         _advance_leaf = True
-                except Exception:
-                    _chain_parent = None  # fail-soft → 기존 linear append
+                    else:
+                        try:  # run 첫 display write: 분기점(active_display_leaf)만 1회 read
+                            _bs = backend.load_display_branch_state(pg_conn, conversation_id=conversation_id)
+                            if isinstance(_bs, dict) and _bs.get("has_branches"):
+                                _chain_parent = _bs.get("active_leaf_id")
+                            _advance_leaf = True
+                        except Exception:
+                            _chain_parent = None
+                else:
+                    try:
+                        _bs = backend.load_display_branch_state(pg_conn, conversation_id=conversation_id)
+                        if isinstance(_bs, dict) and _bs.get("has_branches"):
+                            _chain_parent = _bs.get("active_leaf_id")
+                            _advance_leaf = True
+                    except Exception:
+                        _chain_parent = None  # fail-soft → 기존 linear append
             new_id = backend.save_memory_message(pg_conn,
                 conversation_id=conversation_id, role=role,
                 content=content, meta_json=meta_json,
@@ -189,6 +210,8 @@ def save_memory_message(
                 except Exception as _exc2:
                     import logging as _log
                     _log.getLogger("agent_core.memory").warning("display active_leaf advance failed: %s", _exc2)
+                if branch_run_active():
+                    branch_chain_set("disp", new_id)  # 다음 display write 가 이 id 에 이어붙도록 커서 전진
         except Exception as _exc:
             import logging as _log
             _log.getLogger("agent_core.memory").warning("save_memory_message PG write failed: %s", _exc)

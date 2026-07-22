@@ -379,3 +379,14 @@ source_of_truth: true
 - 비변경: 분류기·record/read health·recovery-only gate·thinking budget·RBAC/스키마/마이그레이션 0.
 - 검증: `test_llm_provider_health.py` 39 PASS · flake 조건 재현(monotonic=10<60·ts=0.0·restricted → 수정 1 ping, 구 0) · §18.8 [SKIPPED] 적대 자가검토.
 - Cross-ref: 원천 flake=무관 PR #832 CI · 선행 CHG(1c1889e4, TASK-20260715-llm-probe-thinking-budget, recovery-only gate 도입) · REV/TEST-20260715T234757-probe-throttle-monotonic-flake · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260722T050006-branch-chain-race (20260722T050006-branch-chain-race — 재답변 브랜치 체이닝 동시성 경합 수정, Major §12.3, PLAN-APPROVED)
+- 계기: 사용자 신고 — 재답변 편집 후 보낸 메시지가 화면에서 사라지고 assistant 답변만 쌓임(라이브 대화 20260722015229-79da15cb).
+- 근본원인: 브랜치 대화 새 메시지 parent 를 대화-공유 `active_leaf`/`active_display_leaf` 를 매 write 재-read 로 결정 → 동시 재답변 setup/overlap 으로 분기점(M.parent)/타 turn 값 리셋 시 답변이 user 형제로 붙어 active-path 에서 user 누락(read-modify-write race).
+- 변경(`src/modules/runtime_backend.py`, +46): thread-local run-cursor API — `branch_run_begin(active)`/`branch_run_end()`/`branch_run_active()`/`branch_chain_get(store)`/`branch_chain_set(store,id)`. store∈{core,disp} 각 id-space 독립.
+- 변경(`src/agent_core.py`): `_save_message`(core store) — 브랜치 run(`branch_run_active()`)이면 active_leaf 재-read 대신 run 커서(직전 write id)에 체인(첫 write 만 active_leaf 1회 read)·leaf 전진·커서 갱신, 반환 id 추가. `_run_agent_core` — user write 직전 `branch_run_begin(has_branches)`, teardown(스레드 재사용 stale 정리 지점)에 `branch_run_end()`.
+- 변경(`src/modules/memory.py`): `save_memory_message`(display store) — 동일 커서 체인('disp').
+- 비변경(회귀 0): 비분기 대화(has_branches=false, `branch_run_active()`=false)는 기존 auto append 경로 byte-identical(feature-0019 ANCHOR INV-1 보존). 엔드포인트 sibling 생성(명시 parent/edit_version>1)·비-run 호출자 무영향. 백엔드/RBAC/스키마/마이그레이션 0.
+- Verification: `py_compile` 3파일 · 단위 `tests/test_branch_chain_race.py` 4 PASS · feature-0002 전체 pytest PASS(마운트, 0 fail) · §18.8 subagent 적대 리뷰(REVIEW). POST-DEPLOY 라이브 PB-0008 + 데이터 복구(오염 5행) 예정.
+- Files: `src/agent_core.py`, `src/modules/memory.py`, `src/modules/runtime_backend.py`, `tests/test_branch_chain_race.py`, `docs/{TASK,MODIFY,FUNCTION,REPORT,TEST,REVIEW}.md`.
+- landing/배포: verify-completion → commit → push → PR/머지=자동 동기화. 배포(deploy-all, 워커 코드 변경)=외부 영향 confirm. 데이터 복구=POST-DEPLOY.
