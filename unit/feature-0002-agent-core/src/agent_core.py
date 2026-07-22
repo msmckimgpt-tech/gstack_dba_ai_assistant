@@ -2128,21 +2128,44 @@ def _save_message(conn, conversation_id: str, role: str,
     현재 active_leaf 에 체인하고 leaf 를 전진시킨다 — 정상 대화(has_branches=false)는 branch 조회
     후 즉시 기존 INSERT 경로(parent=None) 그대로(회귀 0). parent_message_id 명시 시 그 값 우선.
     """
-    from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
+    from modules.runtime_backend import (
+        _get_pg_runtime_backend, _get_pg_runtime_conn,
+        branch_run_active, branch_chain_get, branch_chain_set,
+    )
     pg_conn = _get_pg_runtime_conn()
+    _saved_id = None
     if pg_conn:
         try:
             backend = _get_pg_runtime_backend()
             _chain_parent = parent_message_id
             _advance_leaf = False
             if _chain_parent is None:
-                try:
-                    _bs = backend.load_branch_state(pg_conn, conversation_id=conversation_id)
-                    if isinstance(_bs, dict) and _bs.get("has_branches"):
-                        _chain_parent = _bs.get("active_leaf_id")
+                # feature-0019 branch-chain-race: 브랜치 run 이면 대화-공유 active_leaf 를 매 write
+                # 마다 재-read 하지 않고 이 run 의 직전 write id(thread-local 커서)에 이어붙인다.
+                # active_leaf 는 동시 재답변 setup·overlap 으로 다른 turn/분기점 값으로 리셋될 수
+                # 있어(REV race), 재-read 시 답변이 user 의 형제로 붙어 user 가 active-path 에서
+                # 사라졌다. 커서는 run 내부 체인을 그 리셋과 무관하게 무결로 유지한다.
+                if branch_run_active():
+                    _cur = branch_chain_get("core")
+                    if _cur is not None:
+                        _chain_parent = _cur
                         _advance_leaf = True
-                except Exception:
-                    _chain_parent = None  # fail-soft → 기존 linear append
+                    else:
+                        try:  # run 첫 write: 분기점(active_leaf)만 1회 read
+                            _bs = backend.load_branch_state(pg_conn, conversation_id=conversation_id)
+                            if isinstance(_bs, dict) and _bs.get("has_branches"):
+                                _chain_parent = _bs.get("active_leaf_id")
+                            _advance_leaf = True
+                        except Exception:
+                            _chain_parent = None
+                else:
+                    try:
+                        _bs = backend.load_branch_state(pg_conn, conversation_id=conversation_id)
+                        if isinstance(_bs, dict) and _bs.get("has_branches"):
+                            _chain_parent = _bs.get("active_leaf_id")
+                            _advance_leaf = True
+                    except Exception:
+                        _chain_parent = None  # fail-soft → 기존 linear append
             new_id = backend.save_core_message(pg_conn,
                 conversation_id=conversation_id, role=role,
                 content=content, tool_calls=tool_calls,
@@ -2150,15 +2173,19 @@ def _save_message(conn, conversation_id: str, role: str,
                 sender_account_id=sender_account_id,
                 recall_floor_created_at=recall_floor_created_at,
                 parent_message_id=_chain_parent)
+            _saved_id = new_id
             if _advance_leaf and new_id:
                 try:
                     backend.set_active_leaf(pg_conn, conversation_id=conversation_id, leaf_id=new_id)
                 except Exception as _exc2:
                     logger.warning("_save_message active_leaf advance failed: %s", _exc2)
+                if branch_run_active():
+                    branch_chain_set("core", new_id)  # 다음 write 가 이 id 에 이어붙도록 커서 전진
         except Exception as _exc:
             logger.warning("_save_message PG write failed: %s", _exc)
         finally:
             pg_conn.close()
+    return _saved_id
 
 
 def _ensure_conversation(conn, conversation_id: str):
@@ -3513,6 +3540,13 @@ def run_agent(
         # 의 평문 해제는 예외 시 누락돼 ask-worker 스레드 재사용 stale 위험(REV-20260610-P5 M1).
         cfg.set_active_datasource(None)
         cfg.set_active_conversation_id(None)  # feature-0022: scratch 대화 컨텍스트 해제
+        # feature-0019 branch-chain-race: run-scoped 브랜치 체인 커서를 예외-안전하게 해제
+        # (예외 escape 시에도 워커 스레드에 stale 커서가 남아 다음 run/타 대화를 오염시키지 않게 — §18.8 리뷰 [1]).
+        try:
+            from modules.runtime_backend import branch_run_end as _branch_run_end_f
+            _branch_run_end_f()
+        except Exception:
+            pass
         _ATTACHMENT_IDS_CTX.reset(_att_tokens[0])
         _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
@@ -3884,6 +3918,31 @@ def _run_agent_core(
         mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels,
         visibility=_recall_visibility,
     )
+
+    # feature-0019 branch-chain-race: 이 대화가 편집으로 브랜치가 생긴 상태(has_branches)면 이 run 의
+    # 모든 메시지(user·tool 스텝·답변)를 run-scoped 커서로 이어붙인다 — 동시 재답변 setup/overlap 으로
+    # 대화-공유 active_leaf 가 리셋돼도 체인이 무결(답변이 user 형제로 붙어 user 가 사라지던 결함 봉인).
+    # 비분기 대화(거의 전부)는 active=False → 기존 auto append 경로 그대로(회귀 0, INV-1 보존).
+    try:
+        from modules.runtime_backend import (
+            branch_run_begin as _branch_run_begin, branch_run_end as _branch_run_end0,
+            _get_pg_runtime_backend as _brb, _get_pg_runtime_conn as _brc,
+        )
+        # 무조건 리셋 먼저 — 직전 run 의 teardown 이 예외로 skip 됐거나 아래 has_branches 프로브가
+        # raise 해 begin 이 skip 되더라도 이 스레드에 stale 커서가 남지 않게(cross-conversation 오염
+        # 차단, §18.8 리뷰 [1]). 활성화는 프로브 성공 + has_branches 일 때만.
+        _branch_run_end0()
+        _hb = False
+        _bpc = _brc()
+        if _bpc is not None:
+            try:
+                _hb = bool((_brb().load_branch_state(_bpc, conversation_id=cid) or {}).get("has_branches"))
+            finally:
+                _bpc.close()
+        if _hb:
+            _branch_run_begin(True)
+    except Exception:
+        pass
 
     # ── 사용자 메시지 저장 ──
     # feature-0009: 그룹 대화 발신자 귀속 — account_id(=actor, ask 호출자)를 sender 로 기록.
@@ -4779,6 +4838,9 @@ def _run_agent_core(
     cfg.set_active_datasource(None)
     cfg.set_active_conversation_id(None)  # feature-0022: scratch 대화 컨텍스트 해제
     cfg.CURRENT_RUN_ID = ""
+    # feature-0019 branch-chain-race: run-scoped 브랜치 체인 커서 해제는 예외-안전을 위해 run_agent
+    # 래퍼의 finally 에서 수행한다(datasource/contextvar 해제와 동일 위치 — REV-20260610-P5 M1 정본).
+    # 여기(평문 말미)서 하면 예외 escape 시 skip 돼 stale leak 위험(§18.8 리뷰 [1]).
 
     return result
 

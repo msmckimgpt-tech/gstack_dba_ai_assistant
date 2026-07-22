@@ -461,3 +461,10 @@ app.py 조회실패 debug 로그) 반영.
 - **② cap-note 정직화**: 인라인 개수 상한 초과 또는 판독실패로 map 에 없는 text 파일 노트 `(content unavailable — check MinIO connectivity)` 가 원인을 MinIO 로 오귀속 → 모델이 인프라 장애를 fabrication(관측 20260615061233). 원인 미단정 + 회복경로(재첨부 — 파일명 지정 우선순위는 존재하지 않아 거짓약속이었음, 패널 정정) + len 분기(>0 cap 언급, ==0 판독실패 가능·cap 귀속 안 함)로 교체.
 - **범위 판단**: ②-frontend(app.js staged-flush → new_attachment_ids 라벨 대칭)는 웹 자산 변경이라 visual verification(PB-0008) 필요 → **Cycle C 분리**. friction(2) xlsx 접근은 이미 수정됨(491310e5+958df646, 2026-05-26 — idempotent, 무조치).
 - **검증**: 신규 4 PASS(text 인라인·content_len·len==0/len>0 노트). feature-0002 전체 회귀 신규 실패 0. 적대 패널 → REV-20260715T060000. 라이브 배포 후 재현(상한 초과 대화에서 MinIO fabrication 소멸)은 배포검증분.
+
+## 20260722T050006-branch-chain-race — 재답변 브랜치 체이닝 동시성 경합 (Major §12.3, PLAN-APPROVED)
+- **계기**: 사용자 신고 — admin `아이템 로그 흐름 설명` 대화에서 '요청사항 수정(재답변)' 후 보낸 메시지가 로그에 안 뜨고 assistant 답변만 연속 표시.
+- **RC(라이브 데이터 확정)**: 브랜치 대화 새 메시지 parent 를 대화-공유 `active_leaf`(core)/`active_display_leaf`(display)를 write 마다 재-read 로 결정. 동시 재답변 setup(`_branch_reanswer_setup` → active_leaf=M.parent)/overlap 으로 리셋 시 답변이 그 턴 user 의 형제로 붙음(자식 아님) → active-path(leaf→root parent 역추적)에서 user 누락. display 실측: 답변 1300 parent=1270(분기점, user 1299 와 동일) → 걷기 1300→1270→1269 에서 1299 빠짐. core 4행 동일 오염(5243→5091 등, 다른 turn 답변에 체인된 것도).
+- **수정**: per-run thread-local 커서(runtime_backend `branch_run_*`) — `_run_agent_core` 가 run 시작 시 begin(has_branches), `_save_message`/`save_memory_message` 가 커서(직전 write)에 체인, teardown 에서 end(). active_leaf 리셋과 무관하게 run 내부 체인 무결. 비분기(거의 전부)는 기존 경로(INV-1 byte-identical).
+- **검증**: 단위 4 PASS(mock 백엔드로 active_leaf 리셋 중에도 답변→user 확인) · feature-0002 전체 pytest PASS(0 fail) · §18.8 적대 리뷰. 오염 범위 전수 탐지 = 이 대화 1건뿐.
+- **POST-DEPLOY(잔여)**: deploy-all(워커 코드 변경) → 라이브 PB-0008(재답변 후 user 메시지 표시 실측) + 데이터 복구(오염 5행 재링크, dry-run 확정: display 1300→1299, core 5188→5187·5190→5189·5198→5197·5243→5242).

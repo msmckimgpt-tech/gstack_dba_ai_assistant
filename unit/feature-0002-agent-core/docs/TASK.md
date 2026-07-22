@@ -1494,3 +1494,14 @@ TASK-0015 (plan-review):
 - 수정: [x] `llm_provider_health.py` throttle 판정에 `last_ts > 0.0 and` 가드 추가 — `ts=0.0`(미-probe 센티넬)은 monotonic 절대값 무관하게 throttle 되지 않음(첫 probe 항상 허용). 실제 스탬프(ts>0) 이후에만 TTL/5s throttle 적용(정상 동작 불변). 테스트 무의존 수정(테스트가 ts 를 리셋하지 않아도 결정적).
 - 검증: [x] `test_llm_provider_health.py` 39 PASS(신규 회귀 잠금 2: ts=0.0 센티넬 non-throttle·최근 ts throttle 유지) · [x] **flake 조건 재현**(monotonic=10<60·ts=0.0·restricted → 수정본 복구 ping 1회, 구코드는 0) · [ ] verify-completion → PR·머지(→ #832 CI green 재개).
 - worktree `ai/claude/feature-0002-probe-throttle-monotonic-flake`(base main 2188fb34). REV/CHG/TEST-20260715T234757-probe-throttle-monotonic-flake.
+
+## 20260722T050006-branch-chain-race — 재답변(reanswer) 브랜치 체이닝 동시성 경합으로 내 메시지가 화면에서 사라짐 (Major §12.3, PLAN-APPROVED — 코어 write 경로, cross-cut 정본 feature-0019-message-editing. /_template:entry arg-given dispatch)
+
+- [x] 진단(사용자 신고 + 라이브 데이터 확정): 브랜치 대화 `20260722015229-79da15cb` 에서 '요청사항 수정(재답변)' 후 **보낸 user 메시지가 로그에서 사라지고 assistant 답변만 쌓임**. 근본원인: 새 메시지 parent 를 대화-공유 포인터 `active_leaf`(core)/`active_display_leaf`(display)를 **매 write 마다 재-read**해 결정 → 동시 재답변 setup/overlap 으로 리셋되면 최종 답변이 그 턴 user 의 **형제**로 붙어(자식 아님) active-path 걷기에서 user 누락. display 트리 실측: 답변 1300 parent=1270(분기점) ← user 1299 형제. core 도 5243→5091 등 4행 오염.
+- [x] 결정(사용자 승인, AskUserQuestion): per-run thread-local 커서로 한 run 안 write 를 이어붙여 active_leaf 리셋과 무관하게 체인 무결. 비분기 대화는 기존 경로 그대로(INV-1). + 이미 오염된 대화 데이터 복구 + 배포.
+- [x] 구현(3 파일): `runtime_backend.py` run-cursor API(`branch_run_begin/end/active`·`branch_chain_get/set`, thread-local) · `agent_core.py` `_save_message`(core) 커서 체인 + `_run_agent_core` begin(has_branches)/teardown end() · `memory.py` `save_memory_message`(display) 커서 체인. 커서 활성 시 첫 write 만 active_leaf 1회 read, 이후 run 커서에 이어붙임 + leaf 전진. `branch_run_active()`=false(비분기·비-run 호출) 면 완전 기존 경로.
+- [x] 단위 테스트(`tests/test_branch_chain_race.py`, 4 PASS): ①active_leaf 리셋에도 답변→user 체인 ②멀티스텝(user→step→step→답변) run 내 체인 ③비분기 무영향(parent None·leaf 미전진, INV-1) ④teardown 커서 해제(스레드 재사용 leak 방지).
+- [x] 회귀: `py_compile` 3파일 OK · feature-0002 전체 pytest **PASS**(agent 이미지 마운트, 2 skip·0 fail). `make test` 는 이 환경 docker build 인프라 실패(`invalid proto:`)로 미실행 — 마운트 우회.
+- [x] §18.8 적대적 리뷰(subagent, general-purpose) 완료: SHIP-WITH-FIXES — [1] teardown 예외-비안전 needs-fix 반영(end()→run_agent finally + entry 무조건 리셋), 6축 not-a-defect. 리뷰 권고 테스트 2종(core-store·leak 봉인) 추가 → 단위 6 PASS. REV-20260722T050006-branch-chain-race.
+- [ ] 배포(무중단, deploy-all — 워커 코드 변경이므로 web-only 아님) + POST-DEPLOY 라이브 PB-0008: 재답변 후 user 메시지 정상 표시 실측.
+- [ ] 데이터 복구(POST-DEPLOY): 대화 `20260722015229-79da15cb` 오염 5행 재링크(display 1300→1299, core 5188→5187·5190→5189·5198→5197·5243→5242). dry-run 확정. 오염 범위=이 대화 1건뿐(전수 탐지).

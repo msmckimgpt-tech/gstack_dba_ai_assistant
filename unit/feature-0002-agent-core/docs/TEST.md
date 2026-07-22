@@ -144,3 +144,10 @@ source_of_truth: true
 - acceptance (d): CI "Migration gate" 스텝 실행은 본 cycle PR checks 로그로 확인(머지 게이트 편입).
 - guard 검증: 머지된 revision(예: 0039)에 reparent 시도 시 origin/main 존재 검사로 die — 코드 경로 확인(스크립트 guard 절).
 - TEST-20260715-schema-name-case-drift: `pytest unit/feature-0002-agent-core/tests/test_schema_name_case_drift.py` (15) — 스키마명 서버-실제-case 해소(FR-schema-name-case-drift). (a) case-map: 소문자→실제case·모호(대소문자만 다른 동명 복수) 제외·conn 캐시·조회실패 빈맵 4. (b) canonicalize: 유일매칭 실제case·미발견/빈값 원본·args in-place 3. (c) **보안 불변식**: canonicalize 소문자-equivalence 보존·미허용 스키마(global_db) 게이트 여전히 거부(경계 무변) 2. (d) refresh_case: `_allow_schemas` 실제case rewrite·idempotent·MSSQL no-op 3. (e) execute_tool choke: 라우터/비라우터 canonicalize·MSSQL 라우터 no-op 3. 회귀 게이트: `test_sql_trust_boundary`·`test_mssql_security_boundary`·`test_multi_datasource`·`test_product_multi_datasource`·`test_mssql_crossdb_discovery` 재통과(보안·격리 회귀 0). 전체 feature-0002+0003 2107 passed/2 skipped.
+
+### Run (2026-07-22) — branch-chain-race: 재답변 브랜치 체이닝 동시성 경합 수정 (Major §12.3 — feature-0002 코어 write 경로, PLAN-APPROVED) — Environment: unit + full-suite (backend, no web/UI asset → CHECK#13 skip)
+
+- **단위(`tests/test_branch_chain_race.py`, 4 PASS)**: mock display backend 로 ① run 도중 active_leaf 가 분기점으로 리셋돼도 답변이 user(커서)에 체인(분기점 아님) ② user→step→step→답변 run 내 순차 체인 ③ 비분기(active=False) → parent None·leaf 미전진(INV-1) ④ branch_run_end 후 커서/active 해제.
+- **회귀**: `py_compile` agent_core.py·memory.py·runtime_backend.py OK · **feature-0002 전체 pytest PASS**(mysql-ai-agent:current 이미지 마운트+PYTHONPATH, 2 skip·0 fail). `make test` 는 이 환경 `dc-build` 인프라 실패(`invalid proto:`)로 미실행 → 마운트 우회(메모리 gotcha 답습).
+- **Pass/Fail: PASS(단위+전체 회귀)**. 백엔드 변경이라 CHECK#13(웹/UI 자산) 미해당. 사용자 체감(재답변 후 user 메시지 표시)은 POST-DEPLOY 라이브 PB-0008 로 실측 예정.
+- **POST-DEPLOY(append 예정)**: deploy-all 후 라이브 재답변 → user 메시지 active-path 표시 확인 + 데이터 복구 5행 적용 후 대화 20260722015229-79da15cb active-path 에 user 복귀 확인.
