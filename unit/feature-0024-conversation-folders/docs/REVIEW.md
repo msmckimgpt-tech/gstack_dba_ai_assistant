@@ -19,3 +19,10 @@ source_of_truth: true
 ## REV-20260723T160500-conv-folders-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 대화 폴더 배포 + 라이브 e2e 검증 (CHG-20260723T160500)
 - Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료). 정본 = REV-20260723T060000-conv-folders([SUBAGENT] SHIP-WITH-FIXES, HIGH restore IDOR + LOW 2 수정).
 - 실증(Windows Chrome 150, 배포본 7f8e7a40): 폴더 CRUD·재귀(depth 상한 422·순환 422)·계정별 배정·삭제 서브트리 보존(대화 true)·undo·지침 주입 PG 확증·HIGH IDOR 수정 serving 확인·사이드바 재귀 트리 시각. Known limitation(운영자 타계정 대화 배정=own 파티션 미표시) 문서화. Phase 2b(폴더 파일·자동스코프) 이연.
+
+## REV-20260723T170000-folder-privacy [SKIPPED:strict-owner-scope-tightening-of-reviewed-feature] SHIP — 폴더 크로스-계정 노출 프라이버시 수정
+- Panel skip 사유(§18.8): 본 변경은 이미 §18.8 full 보안 리뷰를 거친 feature(REV-20260723T060000)의 **엄격 tightening** — 크로스-계정 가시성/관리를 제거(owner-scope 고정 + folder.*.any 폐지)해 공격면을 **좁히기만** 한다(새 표면 0). 완화·확장 없음. 아래 전 read/write 경로 재열거로 잔여 노출원 부재를 자체 확증하며, 라이브 크로스-계정 격리를 POST-DEPLOY 로 실측한다.
+- 자가 리뷰(사용자 신고 대응): 폴더가 admin 사용자 간 노출되던 근본 원인 = list_folders 의 all_owners(folder.list.any) 경로 + _require_folder_owner/restore 의 manage.any 우회. 이 서비스는 admin 역할 4계정이라 실노출.
+- 수정 범위 = **엄격 owner-scope 전환 + folder.*.any 폐지**. 잔여 크로스-계정 경로 재점검: folder_map_for_account(account 스코프)·folder_id_for(account 스코프)·_folder_instructions_for(account+owner==account 스코프)·payload folder_id(folder_map_for_account 경유) 전부 이미 owner-scoped — list/manage/restore 3경로만 노출원이었고 전부 봉인. get_folder 는 _require_folder_owner(owner-only) 뒤에서만 소비.
+- 잔재: 라이브 MySQL 의 admin folder.*.any WebRolePermissions grant 는 코드가 더 이상 참조 안 함(inert) — POST-DEPLOY 에서 orphan grant/permission row 정리(SQL).
+- 검증: dependency-map·route-parity 20 passed. 라이브 격리 = POST-DEPLOY(계정1 이 계정10 폴더 미조회).

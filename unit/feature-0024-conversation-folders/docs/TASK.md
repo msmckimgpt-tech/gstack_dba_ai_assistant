@@ -63,3 +63,9 @@ source_of_truth: true
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
+
+## TASK-20260723T170000-folder-privacy — 폴더 크로스-계정 노출 프라이버시 수정 (Critical §12.3, 사용자 신고)
+- [x] 진단: `GET /api/folders` all_owners(folder.list.any) + _require_folder_owner/restore manage.any 우회 → admin 역할 4계정 간 폴더 상호 노출.
+- [x] 수정: list_folders 항상 owner-scope(재귀 하위 owner 재확인)·_require_folder_owner/restore owner-only(404 단일화)·folder.*.any 정의/catchup/deps 폐지. folder.*.own 만 존치.
+- [x] 검증: py_compile·node --check·dependency-map·route-parity 20 passed.
+- [ ] 배포 + POST-DEPLOY 크로스-계정 격리 실측(계정1 이 계정10 folder 미조회) + orphan folder.*.any grant 정리.
