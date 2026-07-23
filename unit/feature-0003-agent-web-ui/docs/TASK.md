@@ -17,8 +17,8 @@ source_of_truth: true
 - [x] `styles.css`: `.conv-date-group-sub`(중첩 서브헤더)·`.conv-date-group-label`(라벨+배지 flex·ellipsis)·`.conv-date-group-count`(집계 개수 배지, tabular-nums).
 - [x] 로컬 검증: `node --check` app.js OK · 결정적 트리 단위테스트 4/4 PASS(6월 top-level 노드 1개·항목 3·2025년 branch 월자식 2·__other__). 사용처 잔존 참조 0.
 - [x] §18.8 적대적 프론트/UX 리뷰(general-purpose): (결과 REV-20260723T034321-conv-date-tree 참조).
-- [ ] Environment: Windows-browser — 정적 자산 baked → **POST-DEPLOY PB-0008 라이브 검증 예정**(6월 단일 집계 노드·연>월 중첩 펼침·개수 배지·중복 소멸 시각 실측).
-- [ ] 배포(deploy_scope: included) + POST-DEPLOY 라이브 append.
+- [x] 배포(deploy_scope: included, 2026-07-23): PR #893 → main **0b15a0ea** → `deploy-web.sh --web-only`(web-a/web-b 무중단 롤링·90s soak PASS·caddy no-op·자산 스탬프 066695609710 주입). CI test PASS.
+- [x] POST-DEPLOY PB-0008 Windows-browser 라이브 검증 (PASS, 실 Windows Chrome 150 via win-browser.py, 배포본 0b15a0ea): 배포본 `_buildOwnDateTree` 합성 실행 6/6(6월 단일 노드·2025년 연>월 중첩·__other__) + 실계정 사이드바 **단일 "6월"[배지 38]·"5월"[배지 15]·중복 라벨 0**(이전 ~10개 "6월" 소멸) + 6월 토글 펼침 conv-item 4→42(배지 38건 정확) + 스크린샷(scratchpad/conv-date-tree-live.png)·pageerror 0. 정본 = TEST Run(2026-07-23 conv-date-tree) POST-DEPLOY.
 
 ## TASK-20260717T010501-doc-sync-rn-0717 — 07-16 후속 머지분 릴리즈노트 정합(작업 화면 데이터소스 ‘연결 테스트’ 버튼 렌더 회귀 복구) (doc_sync, 비-정책 콘텐츠 doc, 2026-07-17)
 - 트리거: `/_dqa:doc_sync ultracode`(무인 스케줄, cron wrapper v3). 직전 doc-sync(b8658bee, 07-16) 이후 머지 델타 중 user-facing = ds-test-gate-fix(PR #855/#856) 1건. 기존 07-16 블록에 fixed/work 항목 1개 추가 + summary 1문장(신규 dated 블록 미생성·generated 07-16 유지·releases 31 불변).
