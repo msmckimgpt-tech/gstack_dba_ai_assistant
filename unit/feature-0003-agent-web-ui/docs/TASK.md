@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260723T034321-conv-date-tree — 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계) + "6월 중복" 시각 혼잡 해소 (Major §12.3 — feature-0003 web/UI 프론트 단독. /_template:entry arg-given dispatch)
+- 진단(사용자 신고): 오래된 대화가 "6월/6월/6월…"로 중복 렌더돼 시각 혼잡. RC = `_getDateGroupKey`가 오늘/어제 외 **모든 날짜에 일 단위 키(YYYY-MM-DD)** 부여 → 서로 다른 6월 날짜가 각각 별개 헤더가 되는데, `_formatDateGroupLabel`은 30일 초과 날짜 라벨을 "M월"로만 축약 → 다른 키가 전부 같은 "6월" 텍스트로 렌더. 집계 단위(월/연)로 묶이지 않고 라벨만 축약된 것이 근본.
+- 사용자 요청: 오래된 날짜에 **그룹핑 트리 깊이 추가** → 월 단위·년 단위 집계 가능. 중복 텍스트 혼잡 해소. 이 깊이 구조를 **향후 대화 폴더 기능**의 기반으로.
+- [x] 설계: 적응형 3단 트리(사용자 선택 — AskUserQuestion "적응형 3단"). 오늘/어제·이번 달 = 일 노드(top-level) / 올해 지난 달 = 월 노드(단일) / 지난 해 = 연 노드 > 월 서브노드 > 대화.
+- [x] `_buildOwnDateTree(items)` 신설: 나이 기반으로 집계 단위 키를 부여(day:/month:/year:), 지난 해는 연>월 중첩. 반환 {nodes, keys}. `_getDateGroupKey`/`_formatDateGroupLabel` 폐기(사용처 renderConversationList 한정 확인 후 제거).
+- [x] `renderConversationList`: 재귀 `renderDateNode`(depth 들여쓰기·연>월 중첩)·공통 `toggleDateGroup`·월/연 집계 노드 대화 개수 배지. `_seedDateGroupsCollapsedOnce`는 전체 keys(중첩 포함) 수신 — 최근 그룹만 펼침·나머지 접힘(기존 계약 유지).
+- [x] `styles.css`: `.conv-date-group-sub`(중첩 서브헤더)·`.conv-date-group-label`(라벨+배지 flex·ellipsis)·`.conv-date-group-count`(집계 개수 배지, tabular-nums).
+- [x] 로컬 검증: `node --check` app.js OK · 결정적 트리 단위테스트 4/4 PASS(6월 top-level 노드 1개·항목 3·2025년 branch 월자식 2·__other__). 사용처 잔존 참조 0.
+- [x] §18.8 적대적 프론트/UX 리뷰(general-purpose): (결과 REV-20260723T034321-conv-date-tree 참조).
+- [ ] Environment: Windows-browser — 정적 자산 baked → **POST-DEPLOY PB-0008 라이브 검증 예정**(6월 단일 집계 노드·연>월 중첩 펼침·개수 배지·중복 소멸 시각 실측).
+- [ ] 배포(deploy_scope: included) + POST-DEPLOY 라이브 append.
+
 ## TASK-20260717T010501-doc-sync-rn-0717 — 07-16 후속 머지분 릴리즈노트 정합(작업 화면 데이터소스 ‘연결 테스트’ 버튼 렌더 회귀 복구) (doc_sync, 비-정책 콘텐츠 doc, 2026-07-17)
 - 트리거: `/_dqa:doc_sync ultracode`(무인 스케줄, cron wrapper v3). 직전 doc-sync(b8658bee, 07-16) 이후 머지 델타 중 user-facing = ds-test-gate-fix(PR #855/#856) 1건. 기존 07-16 블록에 fixed/work 항목 1개 추가 + summary 1문장(신규 dated 블록 미생성·generated 07-16 유지·releases 31 불변).
 - [x] 07-16 블록 fixed/work 1항목: 작업 화면 데이터소스 ‘연결 테스트’ 버튼이 일부 사용자에게 미표시되던 회귀를 07-13 출하 동작으로 복구. 07-13 블록이 이 버튼을 type:new/work 로 소개했으므로 재소개가 아닌 ‘보이지 않던 문제 수정’ 프레이밍.

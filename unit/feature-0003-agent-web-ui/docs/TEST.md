@@ -2177,3 +2177,8 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - PRE: node --check app.js OK. 진단 근거 — 백엔드 branch_view=1289/1299 스레드·버전메타 정상(curl), 프론트 renderCount 리셋(WINDOW_INITIAL_RENDER=3)+window-soon 생략이 긴 스레드에서 브랜치 메시지(pager) 창 밖으로 밀어냄. 수정=preserveScroll 시 전체 렌더.
 - Environment: Windows-browser — PRE-COMMIT 미수행(자산 baked). **POST-DEPLOY 실측 예정**: admin '간단한 덧셈 계산' 3→4 페이징 시 pager 유지 + scrollTop 보존.
 - Pass/Fail: PRE 문법 PASS · 라이브=POST-DEPLOY. CHECK#13 충족.
+
+### Run (2026-07-23) — conv-date-tree: 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계)·"6월 중복" 혼잡 해소 (Major §12.3 — feature-0003 web/UI 프론트, frontend-only) — **Environment: Windows-browser**
+- **PRE**: `node --check` app.js OK. 그룹핑 로직은 순수 함수라 결정적 단위테스트로 정본 검증 — `_buildOwnDateTree` 복제 + now=2026-07-23 주입, 샘플 12건(오늘/어제/이번달 2/6월 3/5월 1/2025 12·11월/2024 8월/날짜미확인): **4/4 PASS** — 6월 top-level 노드 정확히 **1개**(중복 소멸)·항목 3·2025년=branch 월자식 2·__other__ 존재. 사용처 잔존 참조(_getDateGroupKey/_formatDateGroupLabel) 0.
+- **Environment: Windows-browser — PRE-COMMIT 미수행 사유**: 정적 자산(app.js/styles.css)이 web 이미지에 baked → merge + `deploy-web` 재배포 후에만 서빙 자산 실측 가능(feature-0003 정적자산 동일 패턴). **POST-DEPLOY PB-0008 라이브 append 예정**: (a) 오래된 대화가 단일 "6월 (N)" 집계 노드로 통합(중복 텍스트 소멸), (b) "2025년" 연 노드 펼침→"12월/11월" 월 서브노드 들여쓰기 중첩, (c) 월/연 개수 배지 렌더, (d) 접기/펼치기 토글·pageerror 0.
+- **Pass/Fail: PRE 문법+결정적 단위테스트 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·POST-DEPLOY 계획).

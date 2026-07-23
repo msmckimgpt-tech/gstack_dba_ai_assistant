@@ -252,6 +252,10 @@ function _newPendingSentinel() {
 
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 const COLLAPSED_GROUPS_LS_KEY = "mad.collapsedGroups.v1";
+// conv-date-tree: 집계 노드(month:/year:)는 안정 키라 "처음 본 순간 1회만" 접힘 seed 후
+// 사용자 토글을 영속 존중한다. 이미 seed 한 집계 키 집합을 영속해 매 로드 강제 재접힘(→
+// 사용자 영속 펼침 선호 파괴)을 방지한다. 상대적 일(日) 키는 이 목록과 무관(로드당 재적용).
+const SEEDED_AGG_LS_KEY = "mad.seededAggGroups.v1";
 const SEND_MODE_LS_KEY = "mad.sendMode.v1";
 // feature-0003 reasoning-effort-selector: 사용자가 composer 에서 고른 추론 강도의 per-user
 // 로컬 미러(신규 대화의 기본 선택값). 대화별 값은 서버(KV)가 정본이고 /api/history 로 hydration,
@@ -343,6 +347,20 @@ try {
   }
 } catch (_) {}
 
+// conv-date-tree: 이미 접힘 seed 한 집계 노드(month:/year:) 키 집합(영속).
+let _seededAggKeys = new Set();
+try {
+  const _saRaw = localStorage.getItem(SEEDED_AGG_LS_KEY);
+  if (_saRaw) {
+    const _saArr = JSON.parse(_saRaw);
+    if (Array.isArray(_saArr)) _seededAggKeys = new Set(_saArr);
+  }
+} catch (_) {}
+// conv-date-tree: 집계(월/연) 노드 키 판별 — 안정 키라 영속 존중 대상.
+function _isAggregateGroupKey(k) {
+  return typeof k === "string" && (k.startsWith("month:") || k.startsWith("year:"));
+}
+
 // 처음 진입 시 "타 계정 대화" 그룹은 접힌 상태로 시작한다(1회 seed). 이후 사용자가
 // 펼치면 그 선호가 collapsedDateGroups(localStorage)에 영속되어 그대로 존중된다.
 // (seed 플래그가 없을 때만 1회 __others__ 를 접힘 set 에 추가 — date 그룹 토글과 독립.)
@@ -359,18 +377,22 @@ function _seedOthersCollapsedOnce() {
 }
 _seedOthersCollapsedOnce();
 
-// 처음 진입(매 페이지 로드)마다, 내 대화 날짜 그룹은 "가장 최근 일자 1개만 펼치고
-// 나머지 오래된 일자는 접힌 상태"로 시작한다. 날짜 그룹 키(__today__/__yesterday__/
-// YYYY-MM-DD)는 상대적이라 영속 seed 가 다음 날 무의미해지므로, localStorage 에
+// 처음 진입(매 페이지 로드)마다, 내 대화의 "일(日) 단위" 그룹은 "가장 최근 일자 1개만
+// 펼치고 나머지 오래된 일자는 접힌 상태"로 시작한다. 일 단위 키(__today__/__yesterday__/
+// day:YYYY-MM-DD/__other__)는 상대적이라 영속 seed 가 다음 날 무의미하므로 localStorage 에
 // 영속하지 않고 in-memory 플래그로 페이지 로드당 1회만 적용한다(reload 시 재적용).
-// 같은 로드 안에서 사용자가 펼친 토글은 플래그가 막아 그대로 존중된다.
+// ★ 집계 키(month:/year:)는 안정적이라 여기서 건드리지 않는다 — 매 로드 강제 재접힘이
+//   사용자의 영속 펼침 선호를 조용히 파괴하던 회귀를 막기 위함(_seedAggregateGroupsCollapsedOnce
+//   가 최초 1회만 접힘 seed + 영속). 같은 로드 안에서 사용자가 펼친 토글은 플래그가 막아 존중.
 let _dateGroupsSeededThisLoad = false;
-function _seedDateGroupsCollapsedOnce(sortedDateKeys) {
+function _seedDateGroupsCollapsedOnce(sortedKeys) {
   if (_dateGroupsSeededThisLoad) return;
-  // 그룹이 아직 없으면(대화 미로드) 플래그를 세우지 않고 다음 렌더에서 재시도.
-  if (!Array.isArray(sortedDateKeys) || sortedDateKeys.length === 0) return;
+  if (!Array.isArray(sortedKeys) || sortedKeys.length === 0) return;
+  const dayKeys = sortedKeys.filter((k) => !_isAggregateGroupKey(k));
+  // 일 단위 그룹이 아직 없으면(대화 미로드/전부 집계) 플래그를 세우지 않고 다음 렌더에서 재시도.
+  if (dayKeys.length === 0) return;
   _dateGroupsSeededThisLoad = true;
-  sortedDateKeys.forEach((dateKey, idx) => {
+  dayKeys.forEach((dateKey, idx) => {
     if (idx === 0) {
       // 가장 최근 일자 그룹 — 펼침 보장(직전 세션 영속 접힘이 남아있어도 해제).
       state.collapsedDateGroups.delete(dateKey);
@@ -380,6 +402,27 @@ function _seedDateGroupsCollapsedOnce(sortedDateKeys) {
     }
   });
   // 영속 안 함(_saveCollapsedGroups 미호출) — 세션 단위 기본값. 사용자 토글만 영속.
+}
+
+// conv-date-tree: 집계 노드(월/연)는 "처음 본 순간 1회만" 접힘 seed + 영속한다. 새 월/연이
+// 나타날 때마다 idempotent 하게 적용(_seededAggKeys 로 재접힘 방지). 이후 사용자 토글은
+// toggleDateGroup + _saveCollapsedGroups 로 영속되며, 이미 seed 된 키라 다시 접히지 않는다.
+function _seedAggregateGroupsCollapsedOnce(keys) {
+  if (!Array.isArray(keys)) return;
+  let changed = false;
+  keys.forEach((k) => {
+    if (_isAggregateGroupKey(k) && !_seededAggKeys.has(k)) {
+      state.collapsedDateGroups.add(k);   // 기본 접힘(최대 declutter)
+      _seededAggKeys.add(k);
+      changed = true;
+    }
+  });
+  if (changed) {
+    _saveCollapsedGroups();  // 기본 접힘 상태 영속(사용자 첫 토글 전까지)
+    try {
+      localStorage.setItem(SEEDED_AGG_LS_KEY, JSON.stringify(Array.from(_seededAggKeys)));
+    } catch (_) {}
+  }
 }
 
 // Restore send mode from localStorage
@@ -2633,35 +2676,104 @@ async function handlePasswordChange(event) {
   }
 }
 
-// UX-COMPACT: 날짜 그룹 키 계산 — today / yesterday / YYYY-MM-DD / __other__
-function _getDateGroupKey(dateStr) {
-  if (!dateStr) return "__other__";
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return "__other__";
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
-  const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  if (dDay.getTime() === today.getTime()) return "__today__";
-  if (dDay.getTime() === yesterday.getTime()) return "__yesterday__";
-  return dDay.toISOString().slice(0, 10);
+// conv-date-tree: 로컬 날짜(YYYY-MM-DD) 문자열.
+function _ymdKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-// UX-COMPACT: 날짜 키를 표시 라벨로 변환
-function _formatDateGroupLabel(dateKey) {
-  if (dateKey === "__today__") return "오늘";
-  if (dateKey === "__yesterday__") return "어제";
-  if (dateKey === "__other__") return "날짜 미확인";
-  const d = new Date(dateKey);
-  if (isNaN(d.getTime())) return dateKey;
+// conv-date-tree: 내 대화를 "나이(age)에 따른 적응형 트리"로 그룹핑한다.
+//   - 오늘 / 어제 ................ 일 단위 top-level 노드 (연·월 경계 무관, 항상 최근)
+//   - 이번 달(올해·이번 달)의 그 외 날짜 .. 일 단위 top-level 노드 (M월 D일 (요일))
+//   - 올해 지난 달 ............... 월 노드 (M월) — 그 달 대화를 직접 담음
+//   - 지난 해 ................... 연 노드 (YYYY년) > 월 서브노드 (M월) > 대화
+//   - 날짜 미확인 ................ __other__ 노드
+// 이전 구현은 오래된 날짜에도 일 단위 키(YYYY-MM-DD)를 부여하면서 라벨만 "M월"로
+// 축약해, 서로 다른 일자 그룹이 전부 같은 "6월" 텍스트로 중복 렌더되는 시각 혼잡이
+// 있었다. 여기서는 집계 단위(일/월/연)로 키 자체를 묶어 중복을 제거하고, 지난 해는
+// 연>월 로 중첩해 실제 트리 깊이를 부여한다. 이 depth·collapse 모델은 이후 대화
+// 폴더 기능의 기반이 된다.
+// 반환: { nodes: [topNode...], keys: [모든 collapsible key, 표시 순서] }
+//   leaf   노드: { kind:'leaf',   key, label, depth, items:[conv...] }
+//   branch 노드: { kind:'branch', key, label, depth, children:[node...] }
+function _buildOwnDateTree(items) {
   const now = new Date();
-  const diffDays = Math.floor((now - d) / 86400000);
-  const days = ["일", "월", "화", "수", "목", "금", "토"];
-  if (diffDays > 30 && d.getFullYear() !== now.getFullYear()) {
-    return `${d.getFullYear()}년 ${d.getMonth() + 1}월`;
+  const nowY = now.getFullYear();
+  const nowM = now.getMonth();
+  const today = new Date(nowY, nowM, now.getDate()).getTime();
+  const yesterday = today - 86400000;
+  const WD = ["일", "월", "화", "수", "목", "금", "토"];
+  const mKeyOf = (y, m) => `month:${y}-${String(m + 1).padStart(2, "0")}`;
+
+  const dayMap = new Map();    // dayKey       -> { key, label, sort, items }
+  const monthMap = new Map();  // month:YYYY-MM -> { key, label, sort, items }  (올해 지난 달)
+  const yearMap = new Map();   // year:YYYY     -> { key, label, sort, months:Map }
+  const undated = [];
+
+  items.forEach((item) => {
+    const raw = item.last_activity_at || item.created_at;
+    const d = raw ? new Date(raw) : null;
+    if (!d || isNaN(d.getTime())) { undated.push(item); return; }
+    const dY = d.getFullYear();
+    const dM = d.getMonth();
+    // 미래 last_activity_at(데이터 이상)은 today 로 clamp — "오늘" 위로 정렬되거나
+    // 유령 미래 월 노드가 생기는 시각 이상을 방지(미래 날짜는 "오늘" 버킷에 합류).
+    const dStart = Math.min(new Date(dY, dM, d.getDate()).getTime(), today);
+
+    if (dStart === today || dStart === yesterday || (dY === nowY && dM === nowM)) {
+      // 일 단위 (오늘 / 어제 / 이번 달)
+      let key, label;
+      if (dStart === today) { key = "__today__"; label = "오늘"; }
+      else if (dStart === yesterday) { key = "__yesterday__"; label = "어제"; }
+      else { key = `day:${_ymdKey(d)}`; label = `${dM + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`; }
+      let node = dayMap.get(key);
+      if (!node) { node = { key, label, sort: dStart, items: [] }; dayMap.set(key, node); }
+      node.items.push(item);
+    } else if (dY === nowY) {
+      // 올해 지난 달 → 월 노드
+      const key = mKeyOf(dY, dM);
+      let node = monthMap.get(key);
+      if (!node) { node = { key, label: `${dM + 1}월`, sort: dY * 12 + dM, items: [] }; monthMap.set(key, node); }
+      node.items.push(item);
+    } else {
+      // 지난 해 → 연 > 월
+      const yKey = `year:${dY}`;
+      let yNode = yearMap.get(yKey);
+      if (!yNode) { yNode = { key: yKey, label: `${dY}년`, sort: dY, months: new Map() }; yearMap.set(yKey, yNode); }
+      const mKey = mKeyOf(dY, dM);
+      let mNode = yNode.months.get(mKey);
+      if (!mNode) { mNode = { key: mKey, label: `${dM + 1}월`, sort: dM, items: [] }; yNode.months.set(mKey, mNode); }
+      mNode.items.push(item);
+    }
+  });
+
+  const nodes = [];
+  const keys = [];
+
+  // 1) 일 노드 (오늘 → 어제 → 이번 달 일자 desc)
+  Array.from(dayMap.values()).sort((a, b) => b.sort - a.sort).forEach((n) => {
+    nodes.push({ kind: "leaf", key: n.key, label: n.label, depth: 0, items: n.items });
+    keys.push(n.key);
+  });
+  // 2) 월 노드 (올해 지난 달, 최신 월 desc)
+  Array.from(monthMap.values()).sort((a, b) => b.sort - a.sort).forEach((n) => {
+    nodes.push({ kind: "leaf", key: n.key, label: n.label, depth: 0, items: n.items });
+    keys.push(n.key);
+  });
+  // 3) 연 노드 (지난 해, 최신 연 desc) > 월 서브노드 (월 desc)
+  Array.from(yearMap.values()).sort((a, b) => b.sort - a.sort).forEach((y) => {
+    const children = Array.from(y.months.values()).sort((a, b) => b.sort - a.sort)
+      .map((m) => ({ kind: "leaf", key: m.key, label: m.label, depth: 1, items: m.items }));
+    nodes.push({ kind: "branch", key: y.key, label: y.label, depth: 0, children });
+    keys.push(y.key);
+    children.forEach((c) => keys.push(c.key));
+  });
+  // 4) 날짜 미확인
+  if (undated.length) {
+    nodes.push({ kind: "leaf", key: "__other__", label: "날짜 미확인", depth: 0, items: undated });
+    keys.push("__other__");
   }
-  if (diffDays > 30) return `${d.getMonth() + 1}월`;
-  return `${d.getMonth() + 1}월 ${d.getDate()}일 (${days[d.getDay()]})`;
+
+  return { nodes, keys };
 }
 
 function _saveCollapsedGroups() {
@@ -2890,60 +3002,68 @@ function renderConversationList() {
   if (hasInFlightPending) appendInFlightPendingItems();
   if (hasDraftPending) appendPendingItem();
 
-  // 날짜별 그룹화
-  const dateGroups = new Map();
-  own.forEach((item) => {
-    const key = _getDateGroupKey(item.last_activity_at || item.created_at);
-    if (!dateGroups.has(key)) dateGroups.set(key, []);
-    dateGroups.get(key).push(item);
-  });
+  // conv-date-tree: 나이 기반 적응형 트리(일 → 월 → 연>월)로 그룹핑.
+  const dateTree = _buildOwnDateTree(own);
 
-  // 최신 날짜 우선 정렬 (today → yesterday → YYYY-MM-DD desc → __other__)
-  const sortedDateKeys = Array.from(dateGroups.keys()).sort((a, b) => {
-    const rank = { "__today__": 0, "__yesterday__": 1, "__other__": 999 };
-    const ra = rank[a] ?? 2;
-    const rb = rank[b] ?? 2;
-    if (ra !== rb) return ra - rb;
-    return b.localeCompare(a);
-  });
+  // 처음 진입 시 가장 최근 그룹(keys[0])만 펼치고 나머지(월/연/서브월 포함)는 접힘(1회/로드).
+  _seedDateGroupsCollapsedOnce(dateTree.keys);
+  // 집계(월/연) 노드는 최초 1회만 접힘 seed + 영속 — 이후 사용자 토글 존중(안정 키).
+  _seedAggregateGroupsCollapsedOnce(dateTree.keys);
 
-  // 처음 진입 시 가장 최근 일자 그룹(sortedDateKeys[0])만 펼치고 나머지는 접힘(1회/로드).
-  _seedDateGroupsCollapsedOnce(sortedDateKeys);
+  // 그룹 접힘 토글 (일/월/연 공통) — 상태 영속 후 재렌더.
+  const toggleDateGroup = (key) => {
+    if (state.collapsedDateGroups.has(key)) state.collapsedDateGroups.delete(key);
+    else state.collapsedDateGroups.add(key);
+    _saveCollapsedGroups();
+    renderConversationList();
+  };
 
-  sortedDateKeys.forEach((dateKey) => {
-    const groupItems = dateGroups.get(dateKey);
-    const isCollapsed = state.collapsedDateGroups.has(dateKey);
+  // 트리 노드 재귀 렌더 — leaf(일/월)는 대화 항목을, branch(연)는 자식 노드를 담는다.
+  //   depth 는 들여쓰기 단계(연>월 중첩). 폴더 기능도 같은 depth·collapse 모델을 재사용한다.
+  const renderDateNode = (node) => {
+    const isCollapsed = state.collapsedDateGroups.has(node.key);
+    const isAggregate = node.key.startsWith("month:") || node.key.startsWith("year:");
 
     const header = document.createElement("div");
-    header.className = `conv-date-group-header${isCollapsed ? " is-collapsed" : ""}`;
+    header.className = `conv-date-group-header${node.depth > 0 ? " conv-date-group-sub" : ""}${isCollapsed ? " is-collapsed" : ""}`;
     header.setAttribute("role", "button");
     header.setAttribute("aria-expanded", String(!isCollapsed));
-    header.dataset.dateKey = dateKey;
+    header.dataset.dateKey = node.key;
+    if (node.depth > 0) header.style.paddingLeft = `${10 + node.depth * 14}px`;
 
     const labelSpan = document.createElement("span");
-    labelSpan.textContent = _formatDateGroupLabel(dateKey);
+    labelSpan.className = "conv-date-group-label";
+    labelSpan.textContent = node.label;
+    // 월/연 집계 노드는 대화 개수 배지를 함께 표시(접힘 상태에서도 규모를 한눈에).
+    if (isAggregate) {
+      const count = node.kind === "branch"
+        ? node.children.reduce((sum, c) => sum + c.items.length, 0)
+        : node.items.length;
+      const badge = document.createElement("span");
+      badge.className = "conv-date-group-count";
+      badge.textContent = String(count);
+      labelSpan.appendChild(badge);
+    }
     const chevron = document.createElement("span");
     chevron.className = "conv-date-group-chevron";
     header.append(labelSpan, chevron);
-
-    header.addEventListener("click", () => {
-      if (state.collapsedDateGroups.has(dateKey)) {
-        state.collapsedDateGroups.delete(dateKey);
-      } else {
-        state.collapsedDateGroups.add(dateKey);
-      }
-      _saveCollapsedGroups();
-      renderConversationList();
-    });
+    header.addEventListener("click", () => toggleDateGroup(node.key));
     conversationListEl.appendChild(header);
 
-    if (!isCollapsed) {
-      groupItems.forEach((item) => {
+    if (isCollapsed) return;
+    if (node.kind === "branch") {
+      node.children.forEach(renderDateNode);
+    } else {
+      node.items.forEach((item) => {
         const idx = ownVisibleIds.indexOf(String(item.id));
-        conversationListEl.appendChild(buildCompactItem(item, idx, ownVisibleIds));
+        const el = buildCompactItem(item, idx, ownVisibleIds);
+        if (node.depth > 0) el.style.paddingLeft = `${8 + node.depth * 14}px`;
+        conversationListEl.appendChild(el);
       });
     }
-  });
+  };
+
+  dateTree.nodes.forEach(renderDateNode);
 
   // --- 타 계정 대화: owner별 그룹화, 최신 activity 순 정렬 ---
   if (others.length) {
