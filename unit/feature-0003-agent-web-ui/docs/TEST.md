@@ -2172,3 +2172,8 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **Pass/Fail: PRE 문법 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경·POST-DEPLOY 계획).
 
 - **[POST-DEPLOY 2026-07-23] paging-scroll-preserve 양 surface 라이브 실측 (PASS)**: PR #889 → main 4ee7ea1d → deploy-web --web-only(soak PASS). 서빙 app.js `preserveScroll`(10)·share.js `savedY`(2) 반영. **인앱 그룹**(Windows Chrome, selectConversation open): 페이징 후 목적지 scrollable(scrollHeight 10235·maxTop 9538)인데 scrollTop=0 유지(맨아래 안 튐)·스크린샷 육안(pager `‹1/2›` 상단). **공유-링크**(짧은 버전→긴 버전 maxY 11535 scrollable): 페이징 후 window.scrollY=0 유지. 양 surface verdict=PRESERVED. layout 의존이라 실브라우저 실측이 정본(jsdom 부적합).
+
+### Run (2026-07-23) — paging-scroll-longhistory: 긴 이력 페이징 스크롤 보존 회귀 수정 (Minor §12.3 — feature-0003 web/UI, frontend-only) — **Environment: Windows-browser**
+- PRE: node --check app.js OK. 진단 근거 — 백엔드 branch_view=1289/1299 스레드·버전메타 정상(curl), 프론트 renderCount 리셋(WINDOW_INITIAL_RENDER=3)+window-soon 생략이 긴 스레드에서 브랜치 메시지(pager) 창 밖으로 밀어냄. 수정=preserveScroll 시 전체 렌더.
+- Environment: Windows-browser — PRE-COMMIT 미수행(자산 baked). **POST-DEPLOY 실측 예정**: admin '간단한 덧셈 계산' 3→4 페이징 시 pager 유지 + scrollTop 보존.
+- Pass/Fail: PRE 문법 PASS · 라이브=POST-DEPLOY. CHECK#13 충족.

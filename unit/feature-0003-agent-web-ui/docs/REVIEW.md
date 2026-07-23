@@ -703,3 +703,8 @@ source_of_truth: true
 ## REV-20260723T033000-paging-scroll-preserve-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 페이징 스크롤 보존 배포 + 양 surface 라이브 실측 (CHG-20260723T033000)
 - Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료). 정본 = REV-20260723T024724-paging-scroll-preserve([SKIPPED:trivial-frontend-ux]).
 - 실증(Windows Chrome, 배포본 4ee7ea1d): 인앱 그룹 페이징 scrollTop=0(scrollable maxTop 9538)·스크린샷 육안 상단 pager. 공유-링크 페이징 window.scrollY=0(scrollable maxY 11535). 둘 다 맨-아래 튐 해소(PRESERVED). layout 의존 실브라우저 실측(jsdom 부적합)으로 정본 검증.
+
+## REV-20260723T033143-paging-scroll-longhistory [SKIPPED:trivial-frontend-ux] — 긴 이력 페이징 스크롤 보존 회귀 수정 (20260723T033143-paging-scroll-longhistory, Minor §12.3)
+- Panel skip(§18.8): 프론트 렌더창 1줄 로직(preserveScroll 시 renderCount=len). 백엔드·RBAC·스키마 0. 이전 REV(paging-scroll-preserve) 후속 회귀 수정.
+- 자체점검: ① 전체 렌더는 preserveScroll(페이징)에만 — append/일반 로드 무변경. ② 형제 버전 분기점-위 이력 동일 → 절대 scrollTop 보존 정확·pager 항상 렌더. ③ 스레드=활성 경로라 크기 bounded(전체 렌더 perf 허용). ④ 공유 뷰(share.js)는 원래 전체 렌더라 무영향(별도 확인).
+- 검증: node --check PASS · POST-DEPLOY PB-0008.

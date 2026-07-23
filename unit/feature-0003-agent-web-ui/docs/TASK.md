@@ -6051,3 +6051,8 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 수정(share.js): `pageBranchShare` 가 `window.scrollY` 저장 → `render` 후 rAF 로 `window.scrollTo` 복원(문서 스크롤 보존).
 - [x] 검증(PRE): `node --check` app.js/share.js OK. 스크롤은 layout 의존이라 jsdom 부적합(memory scroll-restore gotcha) → **POST-DEPLOY headless Chromium/Windows 실측**으로 페이징 전후 scrollTop 델타 측정.
 - [x] PB-0008 Windows-browser(POST-DEPLOY, 2026-07-23 라이브 PASS): PR #889 → main 4ee7ea1d → deploy-web --web-only(soak PASS)·서빙 app.js preserveScroll/share.js savedY 반영. **인앱 그룹**(Windows Chrome, selectConversation 로 브랜치 대화 open): 페이징 후 목적지 scrollable(maxTop 9538)인데 **scrollTop=0 유지**(맨아래 안 튐)·스크린샷 육안(pager 상단 노출). **공유-링크**(짧은 버전→긴 버전 maxY 11535 scrollable): 페이징 후 **window.scrollY=0 유지**. 양 surface verdict=PRESERVED.
+
+## 20260723T033143-paging-scroll-longhistory — 긴 이전 대화내역에서 페이징 스크롤 보존 회귀 수정 (Minor §12.3 — feature-0003 web/UI, paging-scroll-preserve 후속. cross-cut 정본 feature-0019)
+- [x] 진단(사용자 신고, admin '간단한 덧셈 계산' 3→4): preserveScroll 이 `_applyRenderWindowSoon` 를 생략하는데 loadHistory 가 renderCount 를 WINDOW_INITIAL_RENDER(3)로 리셋 → 브랜치 메시지 뒤 후속 턴(예: 1300/1311/1312)이 있는 긴 버전 스레드에서 브랜치 메시지(pager)가 최근-3 창 밖으로 밀려 **pager 소실 + scrollHeight 급변 → 스크롤 보존 실패**. 라이브 재현(3→4 시 pager "3/4"→엉뚱, rendered 축소)·백엔드 branch_view=1289/1299 스레드·메타는 정상(curl 확인) → 프론트 렌더창 결함.
+- [x] 수정(app.js loadHistory): preserveScroll(페이징) 시 `renderCount = messages.length`(스레드 전체 렌더). 형제 버전은 분기점 위 이력 동일 → 전체 렌더 시 pager 항상 렌더 + 절대 scrollTop 정확 보존. append/일반 로드 무변경(회귀 0).
+- [ ] PB-0008(POST-DEPLOY): admin '간단한 덧셈 계산' 3→4 페이징 시 pager 유지 + 스크롤 위치 보존 실측.
