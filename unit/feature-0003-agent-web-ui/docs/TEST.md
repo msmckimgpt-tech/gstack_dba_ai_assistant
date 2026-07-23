@@ -2170,3 +2170,5 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **PRE**: `node --check` app.js/share.js OK. 스크롤 위치 보존은 layout 의존이라 jsdom 검증 부적합(scroll-restore gotcha: jsdom 은 scrollTop clamp 없이 verbatim 저장 → 실브라우저 0-clamp 미검출) → 실브라우저 실측이 정본.
 - **Environment: Windows-browser — PRE-COMMIT 미수행 사유**: 정적 자산 baked → 배포 후 서빙. **POST-DEPLOY headless Chromium/Windows-browser 실측 예정**: 인앱 그룹 + 공유-링크에서 페이징(`< >`) 전후 scrollTop(공유는 window.scrollY) 델타 ≈0(맨-아래 안 튐) 측정.
 - **Pass/Fail: PRE 문법 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경·POST-DEPLOY 계획).
+
+- **[POST-DEPLOY 2026-07-23] paging-scroll-preserve 양 surface 라이브 실측 (PASS)**: PR #889 → main 4ee7ea1d → deploy-web --web-only(soak PASS). 서빙 app.js `preserveScroll`(10)·share.js `savedY`(2) 반영. **인앱 그룹**(Windows Chrome, selectConversation open): 페이징 후 목적지 scrollable(scrollHeight 10235·maxTop 9538)인데 scrollTop=0 유지(맨아래 안 튐)·스크린샷 육안(pager `‹1/2›` 상단). **공유-링크**(짧은 버전→긴 버전 maxY 11535 scrollable): 페이징 후 window.scrollY=0 유지. 양 surface verdict=PRESERVED. layout 의존이라 실브라우저 실측이 정본(jsdom 부적합).
