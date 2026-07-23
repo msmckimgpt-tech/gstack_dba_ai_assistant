@@ -44,3 +44,9 @@ source_of_truth: true
 - 결정(2026-07-23): 폴더는 대화를 만들 수 있는 모든 역할의 개인 기능 → conversation.create 보유 역할에 folder.list.own/folder.manage.own 부여.
 - 구현: ① SEED_ROLE_DEFINITIONS operator/sales 에 folder.*.own 추가(신규 시드) ② `_backfill_folder_perms_v1`(1회 마커 guard) — conversation.create 명시 보유 **모든 역할**(배포 전용 dba/dev_server/dos_web/usermanager 포함, 역할명 하드코딩 없이 동적)에 folder.*.own INSERT IGNORE. admin=이미 전권. pending=conversation.create 없어 제외.
 - 1회 guard 근거: 매 startup 재부여 시 admin 의 의도적 회수를 무력화하므로 마커로 1회만(이후 콘솔 통제). 검증: py_compile·dependency-map/route-parity 20 passed. 라이브 부여=POST-DEPLOY(백필 startup 실행).
+
+## CHG-20260723T190000-folder-ux (사용자 요청 — 폴더 UX 6개 개선)
+- Date: 2026-07-23. Files: `static/app.js`·`static/styles.css`. 프론트 전용(기존 owner-scoped 폴더 API 재사용, 신규 엔드포인트/권한/백엔드 0).
+- ① 새 폴더 무프롬프트 생성("새 폴더")+생성 직후 인라인 이름편집 ② 폴더 ··· '설정' 모달(지침 textarea+삭제) ③ 이름변경 인라인(라벨→텍스트박스, Enter/Esc/blur) ④ 지침=모달 textarea(멀티라인) ⑤ 대화 '이동' 모달(검색·정렬[이름/최근]·새폴더·빼기) ⑥ DnD(대화→폴더·폴더→폴더·도구바 root존).
+- prompt/confirm 전면 제거: createFolderFlow(name="새 폴더")·renameFolderFlow(인라인)·openFolderSettings(지침/삭제)·openMoveConversationDialog·deleteFolderFlow(confirm→undo배너). 미사용 _foldersFlatForPicker 제거.
+- 검증: node --check OK·함수 정합. 라이브 6개 실측=POST-DEPLOY PB-0008. Cross-ref: REV/TEST-20260723T190000-folder-ux.

@@ -68,3 +68,9 @@ source_of_truth: true
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
 
 - **[POST-DEPLOY 2026-07-23] folder-perms-broaden 부여 실측 (PASS, CLI/MySQL, 라이브 f5341ccc)**: PR #903 → main f5341ccc → deploy-web(두 replica healthy·3-probe f5341ccc 일관). backfill 마커 `folder-perms-broaden-v1` 기록 + **conversation.create 보유 7역할(admin·dba·dev_server·dos_web·operator·sales·usermanager) 전부 folder.list.own+folder.manage.own 보유** 확인(WebRolePermissions). pending(conversation.create 없음) 제외 확인. Pass/Fail: **PASS**.
+
+### Run 2026-07-23-004 (folder-ux 6개 개선)
+- Date: 2026-07-23 · Environment: CLI · Runner: AI
+- Result Summary: **PRE-DEPLOY** — node --check app.js OK · 신규 함수(openFolderSettings/openMoveConversationDialog/_commitFolderRename 등) 정의·호출 정합 · 미사용 _foldersFlatForPicker 제거.
+- Environment: Windows-browser — 정적 자산 baked → **POST-DEPLOY PB-0008 예정**: ①새 폴더=이름입력 없이 생성+인라인편집 포커스 ②'설정' 모달 지침 저장 ③이름 인라인 텍스트박스 전환 ④지침 멀티라인 textarea ⑤'이동' 모달 검색/정렬/새폴더/빼기 ⑥DnD 대화→폴더·폴더→폴더·root빼기.
+- Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.

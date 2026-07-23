@@ -95,6 +95,7 @@ const state = {
   folders: [],
   folderMaxDepth: 4,
   pendingFolderUndo: null,  // 폴더 삭제 직후 6초 undo 상태 {ids, name}
+  folderRenamingId: null,   // 사이드바 인라인 이름변경 중인 folder_id (라벨→텍스트박스)
   activeConversationId: "",
   messages: [],
   hasMoreHistory: false,
@@ -2815,20 +2816,10 @@ function _toggleFolder(id) {
   renderConversationList();
 }
 
-// 트리 순서로 펼친 폴더 목록(이동 picker 용, 들여쓴 라벨).
-function _foldersFlatForPicker() {
-  const out = [];
-  const walk = (parentId, depth) => {
-    _folderChildren(parentId).forEach((f) => {
-      out.push({ id: Number(f.folder_id), label: `${"　".repeat(depth)}${f.name}` });
-      walk(f.folder_id, depth + 1);
-    });
-  };
-  walk(null, 0);
-  return out;
-}
+// feature-0024 folder-ux: 드래그 중 페이로드(모듈 변수 — dragover 에서 dataTransfer.getData 불가 대응).
+let _dqaDrag = null;  // { type: 'conv'|'folder', id }
 
-async function createFolderFlow(parentFolderId = null) {
+async function createFolderFlow(parentFolderId = null, { autoRename = true } = {}) {
   if (parentFolderId != null) {
     const parent = _folderById(parentFolderId);
     if (parent && Number(parent.depth) + 1 > _folderDepthCap()) {
@@ -2836,55 +2827,230 @@ async function createFolderFlow(parentFolderId = null) {
       return null;
     }
   }
-  const name = (window.prompt(parentFolderId ? "새 하위 폴더 이름" : "새 폴더 이름", "") || "").trim();
-  if (!name) return null;
   try {
+    // 이름 입력 없이 "새 폴더" 로 즉시 생성 — 이름 변경은 사용자 몫(생성 직후 인라인 편집 진입).
     const res = await apiFetch("/api/folders", {
-      method: "POST", body: JSON.stringify({ name, parent_folder_id: parentFolderId }),
+      method: "POST", body: JSON.stringify({ name: "새 폴더", parent_folder_id: parentFolderId }),
     });
+    const newId = res && res.folder ? Number(res.folder.folder_id) : null;
     await loadFolders();
+    if (parentFolderId != null) state.collapsedDateGroups.delete(`folder:${parentFolderId}`);  // 상위 펼침
+    if (newId != null && autoRename) state.folderRenamingId = newId;
     renderConversationList();
-    return res && res.folder ? res.folder.folder_id : null;
+    if (newId != null && autoRename) _focusFolderRenameInput(newId);
+    return newId;
   } catch (e) {
     showToast(e.message || "폴더 생성에 실패했습니다.", true);
     return null;
   }
 }
 
-async function renameFolderFlow(folder) {
-  const name = (window.prompt("폴더 이름 변경", folder.name || "") || "").trim();
-  if (!name || name === folder.name) return;
+// 인라인 이름변경 — 라벨을 텍스트박스로 전환(브라우저 prompt 대체). state.folderRenamingId 로 렌더 분기.
+function _startFolderRename(folderId) {
+  state.folderRenamingId = Number(folderId);
+  renderConversationList();
+  _focusFolderRenameInput(folderId);
+}
+function _focusFolderRenameInput(folderId) {
+  requestAnimationFrame(() => {
+    const inp = document.querySelector(`.conv-folder-rename-input[data-folder-id="${folderId}"]`);
+    if (inp) { inp.focus(); inp.select(); }
+  });
+}
+async function _commitFolderRename(folderId, rawName) {
+  const name = String(rawName || "").trim();
+  const folder = _folderById(folderId);
+  state.folderRenamingId = null;
+  if (!name || (folder && name === folder.name)) { renderConversationList(); return; }
   try {
-    await apiFetch(`/api/folders/${folder.folder_id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    await apiFetch(`/api/folders/${folderId}`, { method: "PATCH", body: JSON.stringify({ name }) });
     await loadFolders();
-    renderConversationList();
   } catch (e) { showToast(e.message || "이름 변경에 실패했습니다.", true); }
+  renderConversationList();
+}
+function _cancelFolderRename() {
+  state.folderRenamingId = null;
+  renderConversationList();
+}
+async function renameFolderFlow(folder) {
+  _startFolderRename(folder.folder_id);
 }
 
-// feature-0024: 폴더 지침(프롬프트) 편집 — 이 폴더 안 대화의 AI 에게 ask-time 에 항상 주입된다.
-async function editFolderInstructionsFlow(folder) {
-  const cur = folder.instructions || "";
-  const next = window.prompt(
-    `'${folder.name}' 폴더 지침\n(이 폴더 안 모든 대화에서 AI 에게 항상 적용됩니다. 예: "저장 datetime 은 UTC, 서버 TZ 와 별개")`,
-    cur,
-  );
-  if (next === null) return;  // 취소
-  try {
-    await apiFetch(`/api/folders/${folder.folder_id}`, {
-      method: "PATCH", body: JSON.stringify({ instructions: next }),
+// 폴더 설정 모달 — 지침(멀티라인 textarea) + 삭제. 브라우저 prompt/confirm 대체.
+function openFolderSettings(folder) {
+  closeFloatingMenus();
+  const f = _folderById(folder.folder_id) || folder;
+  const backdrop = document.createElement("div");
+  backdrop.className = "share-mgr-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.innerHTML =
+    '<div class="share-mgr-panel folder-settings-panel">' +
+    '  <div class="share-mgr-head">' +
+    '    <h3 class="share-mgr-title">폴더 설정</h3>' +
+    '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+    '  </div>' +
+    '  <div class="folder-settings-body"></div>' +
+    '</div>';
+  const close = () => { if (backdrop.parentNode) document.body.removeChild(backdrop); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+  backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
+  const body = backdrop.querySelector(".folder-settings-body");
+
+  const nameLine = document.createElement("div");
+  nameLine.className = "folder-settings-name";
+  nameLine.innerHTML = '<span class="folder-settings-ic">🗂</span>';
+  const nameText = document.createElement("span");
+  nameText.textContent = f.name;
+  nameLine.appendChild(nameText);
+  body.appendChild(nameLine);
+
+  // 지침 섹션
+  const instrSec = document.createElement("div");
+  instrSec.className = "folder-settings-sec";
+  const instrHead = document.createElement("div");
+  instrHead.className = "folder-settings-sec-title";
+  instrHead.textContent = "폴더 지침";
+  const instrDesc = document.createElement("div");
+  instrDesc.className = "folder-settings-sec-desc";
+  instrDesc.textContent = "이 폴더 안 모든 대화에서 AI 에게 항상 적용됩니다. (예: 저장 datetime 은 UTC 로 해석)";
+  const ta = document.createElement("textarea");
+  ta.className = "folder-settings-instr";
+  ta.rows = 9;
+  ta.placeholder = "예) 저장 datetime 은 UTC 로 해석한다. ENUM 코드는 사전 매핑만 사용한다.";
+  ta.value = f.instructions || "";
+  const actions = document.createElement("div");
+  actions.className = "folder-settings-actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button"; saveBtn.className = "btn-primary"; saveBtn.textContent = "지침 저장";
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    try {
+      await apiFetch(`/api/folders/${f.folder_id}`, { method: "PATCH", body: JSON.stringify({ instructions: ta.value }) });
+      await loadFolders();
+      renderConversationList();
+      showToast(ta.value.trim() ? "폴더 지침을 저장했습니다." : "폴더 지침을 비웠습니다.");
+      close();
+    } catch (e) { showToast(e.message || "지침 저장에 실패했습니다.", true); saveBtn.disabled = false; }
+  });
+  actions.appendChild(saveBtn);
+  instrSec.append(instrHead, instrDesc, ta, actions);
+  body.appendChild(instrSec);
+
+  // 삭제 섹션(danger)
+  const delSec = document.createElement("div");
+  delSec.className = "folder-settings-sec folder-settings-danger";
+  const delHead = document.createElement("div");
+  delHead.className = "folder-settings-sec-title"; delHead.textContent = "폴더 삭제";
+  const delDesc = document.createElement("div");
+  delDesc.className = "folder-settings-sec-desc";
+  delDesc.textContent = "이 폴더(및 하위 폴더)를 삭제합니다. 폴더 안 대화는 그대로 보관되며, 삭제 후 잠시 '실행 취소'로 되돌릴 수 있습니다.";
+  const delBtn = document.createElement("button");
+  delBtn.type = "button"; delBtn.className = "btn-danger"; delBtn.textContent = "이 폴더 삭제";
+  delBtn.addEventListener("click", async () => { close(); await deleteFolderFlow(f); });
+  delSec.append(delHead, delDesc, delBtn);
+  body.appendChild(delSec);
+
+  requestAnimationFrame(() => ta.focus());
+}
+
+// 대화 → 폴더 이동 모달 — 폴더 검색 + 정렬 + 새 폴더 + 빼기.
+function openMoveConversationDialog(cid) {
+  closeFloatingMenus();
+  const conversation = state.conversations.find((c) => String(c.id) === String(cid));
+  if (!conversation) return;
+  const curFolderId = conversation.folder_id;
+  const backdrop = document.createElement("div");
+  backdrop.className = "share-mgr-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.innerHTML =
+    '<div class="share-mgr-panel folder-move-panel">' +
+    '  <div class="share-mgr-head">' +
+    '    <h3 class="share-mgr-title">폴더로 이동</h3>' +
+    '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+    '  </div>' +
+    '  <div class="folder-move-body"></div>' +
+    '</div>';
+  const close = () => { if (backdrop.parentNode) document.body.removeChild(backdrop); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+  backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
+  const body = backdrop.querySelector(".folder-move-body");
+
+  // 컨트롤: 검색 + 정렬
+  const controls = document.createElement("div");
+  controls.className = "folder-move-controls";
+  const search = document.createElement("input");
+  search.type = "text"; search.className = "folder-move-search"; search.placeholder = "폴더 검색…";
+  const sortSel = document.createElement("select");
+  sortSel.className = "folder-move-sort";
+  sortSel.innerHTML = '<option value="name">이름순</option><option value="recent">최근 생성순</option>';
+  controls.append(search, sortSel);
+  body.appendChild(controls);
+
+  // 상단 고정: 새 폴더로 이동 / 폴더에서 빼기
+  const fixed = document.createElement("div");
+  fixed.className = "folder-move-fixed";
+  const newBtn = document.createElement("button");
+  newBtn.type = "button"; newBtn.className = "folder-move-opt folder-move-new";
+  newBtn.innerHTML = '<span class="folder-move-ic">＋</span><span class="folder-move-name">새 폴더 만들어 이동</span>';
+  newBtn.addEventListener("click", async () => { close(); await createFolderAndMove(cid); });
+  fixed.appendChild(newBtn);
+  if (curFolderId != null && _folderById(curFolderId)) {
+    const outBtn = document.createElement("button");
+    outBtn.type = "button"; outBtn.className = "folder-move-opt folder-move-out";
+    outBtn.innerHTML = '<span class="folder-move-ic">↥</span><span class="folder-move-name">폴더에서 빼기 (최상위)</span>';
+    outBtn.addEventListener("click", async () => { close(); await moveConversationToFolder(cid, null); });
+    fixed.appendChild(outBtn);
+  }
+  body.appendChild(fixed);
+
+  const listEl = document.createElement("div");
+  listEl.className = "folder-move-list";
+  body.appendChild(listEl);
+
+  const renderList = () => {
+    listEl.innerHTML = "";
+    const q = (search.value || "").trim().toLowerCase();
+    let folders = state.folders.slice();
+    if (q) folders = folders.filter((f) => String(f.name || "").toLowerCase().includes(q));
+    if (sortSel.value === "recent") folders.sort((a, b) => Number(b.folder_id) - Number(a.folder_id));
+    else folders.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    if (!folders.length) {
+      const empty = document.createElement("div");
+      empty.className = "folder-move-empty";
+      empty.textContent = q ? "검색 결과가 없습니다." : "폴더가 없습니다. 위에서 새로 만드세요.";
+      listEl.appendChild(empty);
+      return;
+    }
+    folders.forEach((f) => {
+      const isCur = Number(f.folder_id) === Number(curFolderId);
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "folder-move-opt folder-move-row" + (isCur ? " is-current" : "");
+      row.innerHTML = '<span class="folder-move-ic">🗂</span><span class="folder-move-name"></span>' +
+        (isCur ? '<span class="folder-move-curtag">현재</span>' : "");
+      row.querySelector(".folder-move-name").textContent = f.name;
+      if (isCur) { row.disabled = true; }
+      else row.addEventListener("click", async () => { close(); await moveConversationToFolder(cid, f.folder_id); });
+      listEl.appendChild(row);
     });
-    await loadFolders();
-    renderConversationList();
-    showToast(next.trim() ? "폴더 지침을 저장했습니다." : "폴더 지침을 비웠습니다.");
-  } catch (e) { showToast(e.message || "지침 저장에 실패했습니다.", true); }
+  };
+  search.addEventListener("input", renderList);
+  sortSel.addEventListener("change", renderList);
+  renderList();
+  requestAnimationFrame(() => search.focus());
 }
 
 async function deleteFolderFlow(folder) {
-  const childCount = _folderChildren(folder.folder_id).length;
-  const msg = childCount > 0
-    ? `'${folder.name}' 폴더와 하위 폴더 ${childCount}개를 삭제합니다. 폴더 안 대화는 그대로 보관됩니다. 계속할까요?`
-    : `'${folder.name}' 폴더를 삭제합니다. 폴더 안 대화는 그대로 보관됩니다. 계속할까요?`;
-  if (!window.confirm(msg)) return;
+  // 삭제는 '설정' 모달의 명시적 danger 버튼에서만 진입 — 별도 브라우저 confirm 없이 즉시 삭제 후
+  // '실행 취소' 배너(6초)로 되돌릴 수 있게 한다(대화는 보관).
   try {
     const res = await apiFetch(`/api/folders/${folder.folder_id}`, { method: "DELETE" });
     await loadFolders();
@@ -2964,11 +3130,11 @@ function openFolderMenu(folder, triggerEl) {
         menu.appendChild(make("하위 폴더 추가", { onSelect: () => createFolderFlow(folder.folder_id) }));
       }
       menu.appendChild(make("이름 변경", { onSelect: () => renameFolderFlow(folder) }));
-      menu.appendChild(make(folder.instructions ? "지침 편집 ✎" : "지침 추가", { onSelect: () => editFolderInstructionsFlow(folder) }));
+      // 설정: 지침(멀티라인 모달) + 삭제. (지침/삭제는 팝업 안에서 수행 — prompt/confirm 제거.)
+      menu.appendChild(make("설정", { onSelect: () => openFolderSettings(folder) }));
       if (folder.parent_folder_id != null) {
         menu.appendChild(make("최상위로 꺼내기", { onSelect: () => moveFolderTo(folder.folder_id, null) }));
       }
-      menu.appendChild(make("삭제", { danger: true, onSelect: () => deleteFolderFlow(folder) }));
     },
   });
 }
@@ -3186,6 +3352,19 @@ function renderConversationList() {
       if (ev.key === "Enter" || ev.key === " ") toggleMenu(ev);
     });
     button.appendChild(menuTrigger);
+    // 개선6: 자기 대화는 드래그로 폴더에 넣거나 뺄 수 있다(folder.manage.own 보유 시).
+    if (mine && can("folder.manage.own")) {
+      button.setAttribute("draggable", "true");
+      button.addEventListener("dragstart", (ev) => {
+        _dqaDrag = { type: "conv", id: String(item.id) };
+        try { ev.dataTransfer.setData("text/plain", String(item.id)); ev.dataTransfer.effectAllowed = "move"; } catch (_) {}
+        button.classList.add("is-dragging");
+      });
+      button.addEventListener("dragend", () => {
+        _dqaDrag = null; button.classList.remove("is-dragging");
+        document.querySelectorAll(".folder-drop-hover").forEach((n) => n.classList.remove("folder-drop-hover"));
+      });
+    }
     return button;
   };
 
@@ -3236,6 +3415,20 @@ function renderConversationList() {
     if (!can("folder.manage.own")) addBtn.disabled = true;
     addBtn.addEventListener("click", () => createFolderFlow(null));
     tools.appendChild(addBtn);
+    // 개선6: 도구 바 = root 드롭 존 — 여기로 끌어다 놓으면 폴더에서 빼기(대화)/최상위로(폴더).
+    tools.addEventListener("dragover", (ev) => {
+      if (!_dqaDrag) return;
+      ev.preventDefault(); try { ev.dataTransfer.dropEffect = "move"; } catch (_) {}
+      tools.classList.add("folder-drop-hover");
+    });
+    tools.addEventListener("dragleave", () => tools.classList.remove("folder-drop-hover"));
+    tools.addEventListener("drop", async (ev) => {
+      ev.preventDefault(); tools.classList.remove("folder-drop-hover");
+      const d = _dqaDrag; _dqaDrag = null;
+      if (!d) return;
+      if (d.type === "conv") await moveConversationToFolder(d.id, null);
+      else if (d.type === "folder") await moveFolderTo(Number(d.id), null);
+    });
     conversationListEl.appendChild(tools);
   }
 
@@ -3302,17 +3495,25 @@ function renderConversationList() {
 
   // feature-0024: 폴더 트리(재귀) 먼저 — 각 폴더 헤더(접힘/메뉴/개수) → 하위 폴더(재귀) → 폴더 대화(flat 최근순).
   //   depth 들여쓰기·collapse 는 사이드바 모델 재사용. 폴더 안 대화는 날짜 트리 대신 flat(프로젝트式).
+  const _appendFolderChildren = (folder, depth, isCollapsed) => {
+    if (isCollapsed) return;
+    _folderChildren(folder.folder_id).forEach((c) => renderFolderNode(c, depth + 1));
+    (_foldered.get(Number(folder.folder_id)) || []).slice().sort(
+      (a, b) => new Date(b.last_activity_at || b.created_at || 0) - new Date(a.last_activity_at || a.created_at || 0),
+    ).forEach((item) => {
+      const el = buildCompactItem(item, ownVisibleIds.indexOf(String(item.id)), ownVisibleIds);
+      el.style.paddingLeft = `${8 + (depth + 1) * 14}px`;
+      conversationListEl.appendChild(el);
+    });
+  };
   const renderFolderNode = (folder, depth) => {
     const key = `folder:${folder.folder_id}`;
     const isCollapsed = state.collapsedDateGroups.has(key);
-    const childFolders = _folderChildren(folder.folder_id);
-    const directConvs = (_foldered.get(Number(folder.folder_id)) || []).slice().sort(
-      (a, b) => new Date(b.last_activity_at || b.created_at || 0) - new Date(a.last_activity_at || a.created_at || 0),
-    );
+    const isRenaming = Number(state.folderRenamingId) === Number(folder.folder_id);
     const totalCount = _folderTotalConvCount(folder.folder_id, _foldered);
 
     const header = document.createElement("div");
-    header.className = `conv-folder-header${isCollapsed ? " is-collapsed" : ""}`;
+    header.className = `conv-folder-header${isCollapsed ? " is-collapsed" : ""}${isRenaming ? " is-renaming" : ""}`;
     header.setAttribute("role", "button");
     header.setAttribute("aria-expanded", String(!isCollapsed));
     header.setAttribute("tabindex", "0");
@@ -3324,6 +3525,30 @@ function renderConversationList() {
     const icon = document.createElement("span");
     icon.className = "conv-folder-icon";
     icon.textContent = "🗂";
+
+    // 개선3: 인라인 이름변경 — 라벨을 그대로 텍스트박스로 전환(브라우저 prompt 대체).
+    if (isRenaming) {
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.className = "conv-folder-rename-input";
+      inp.dataset.folderId = String(folder.folder_id);
+      inp.value = folder.name || "";
+      inp.setAttribute("aria-label", "폴더 이름");
+      inp.addEventListener("keydown", (ev) => {
+        ev.stopPropagation();
+        if (ev.key === "Enter") { ev.preventDefault(); _commitFolderRename(folder.folder_id, inp.value); }
+        else if (ev.key === "Escape") { ev.preventDefault(); _cancelFolderRename(); }
+      });
+      inp.addEventListener("blur", () => {
+        if (Number(state.folderRenamingId) === Number(folder.folder_id)) _commitFolderRename(folder.folder_id, inp.value);
+      });
+      inp.addEventListener("click", (ev) => ev.stopPropagation());
+      header.append(chevron, icon, inp);
+      conversationListEl.appendChild(header);
+      _appendFolderChildren(folder, depth, isCollapsed);
+      return;
+    }
+
     const nameSpan = document.createElement("span");
     nameSpan.className = "conv-folder-name";
     nameSpan.textContent = folder.name;
@@ -3344,16 +3569,35 @@ function renderConversationList() {
     const toggleF = () => _toggleFolder(folder.folder_id);
     header.addEventListener("click", toggleF);
     header.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleF(); } });
-    conversationListEl.appendChild(header);
 
-    if (isCollapsed) return;
-    childFolders.forEach((c) => renderFolderNode(c, depth + 1));
-    directConvs.forEach((item) => {
-      const idx = ownVisibleIds.indexOf(String(item.id));
-      const el = buildCompactItem(item, idx, ownVisibleIds);
-      el.style.paddingLeft = `${8 + (depth + 1) * 14}px`;
-      conversationListEl.appendChild(el);
+    // 개선6: 드래그&드롭 — 폴더 자체 드래그(이동) + 대화/폴더 드롭 대상.
+    header.setAttribute("draggable", "true");
+    header.addEventListener("dragstart", (ev) => {
+      _dqaDrag = { type: "folder", id: Number(folder.folder_id) };
+      try { ev.dataTransfer.setData("text/plain", "folder:" + folder.folder_id); ev.dataTransfer.effectAllowed = "move"; } catch (_) {}
+      header.classList.add("is-dragging");
     });
+    header.addEventListener("dragend", () => {
+      _dqaDrag = null; header.classList.remove("is-dragging");
+      document.querySelectorAll(".folder-drop-hover").forEach((n) => n.classList.remove("folder-drop-hover"));
+    });
+    header.addEventListener("dragover", (ev) => {
+      if (!_dqaDrag) return;
+      if (_dqaDrag.type === "folder" && Number(_dqaDrag.id) === Number(folder.folder_id)) return;  // 자기 자신 제외
+      ev.preventDefault(); try { ev.dataTransfer.dropEffect = "move"; } catch (_) {}
+      header.classList.add("folder-drop-hover");
+    });
+    header.addEventListener("dragleave", () => header.classList.remove("folder-drop-hover"));
+    header.addEventListener("drop", async (ev) => {
+      ev.preventDefault(); header.classList.remove("folder-drop-hover");
+      const d = _dqaDrag; _dqaDrag = null;
+      if (!d) return;
+      if (d.type === "conv") await moveConversationToFolder(d.id, folder.folder_id);
+      else if (d.type === "folder" && Number(d.id) !== Number(folder.folder_id)) await moveFolderTo(Number(d.id), folder.folder_id);
+    });
+
+    conversationListEl.appendChild(header);
+    _appendFolderChildren(folder, depth, isCollapsed);
   };
   _folderChildren(null).forEach((root) => renderFolderNode(root, 0));
 
@@ -8242,17 +8486,9 @@ function openConversationItemMenu(cid, triggerEl) {
     buildItems: (menu, make) => {
       menu.appendChild(make("공유", { action: "conversation.share", conversation, onSelect: () => openShareDialog(cid) }));
       menu.appendChild(make("설정", { action: "conversation.read", conversation, onSelect: () => openConversationSettings(cid) }));
-      // feature-0024-conversation-folders: 폴더로 이동/빼기(folder.manage.own 보유 시).
+      // 개선5: 폴더 '이동' — 별도 팝업(검색·정렬·새 폴더·빼기)에서 수행(folder.manage.own 보유 시).
       if (can("folder.manage.own")) {
-        const curFolderId = conversation.folder_id;
-        if (curFolderId != null && _folderById(curFolderId)) {
-          menu.appendChild(make("폴더에서 빼기", { onSelect: () => moveConversationToFolder(cid, null) }));
-        }
-        _foldersFlatForPicker().forEach((f) => {
-          if (Number(f.id) === Number(curFolderId)) return;  // 현재 폴더 제외
-          menu.appendChild(make(`▸ ${f.label}`, { onSelect: () => moveConversationToFolder(cid, f.id) }));
-        });
-        menu.appendChild(make("＋ 새 폴더로 이동", { onSelect: () => createFolderAndMove(cid) }));
+        menu.appendChild(make("이동", { onSelect: () => openMoveConversationDialog(cid) }));
       }
     },
   });
