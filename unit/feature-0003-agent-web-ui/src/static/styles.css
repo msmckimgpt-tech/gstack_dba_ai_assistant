@@ -616,6 +616,25 @@ a { color: inherit; }
   font-size: 10px;
   opacity: .85;
 }
+/* conv-date-tree: 연>월 중첩 서브 헤더(들여쓰기는 렌더러가 depth 로 inline 지정). */
+.conv-date-group-sub {
+  font-size: 10px;
+  opacity: .9;
+}
+/* conv-date-tree: 라벨 + 집계 개수 배지를 한 줄에 배치(라벨은 항상 짧아 말줄임 불필요). */
+.conv-date-group-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+/* conv-date-tree: 월/연 집계 노드의 대화 개수 배지(접힘 상태에서도 규모 파악). */
+.conv-date-group-count {
+  font-size: 9px;
+  font-weight: 500;
+  opacity: .55;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
 .conv-date-group-chevron {
   font-size: 10px;
   transition: transform .15s;

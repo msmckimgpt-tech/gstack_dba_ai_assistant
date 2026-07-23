@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260723T034321-conv-date-tree (TASK-20260723T034321-conv-date-tree — 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계)·"6월 중복" 시각 혼잡 해소, Major §12.3)
+- Date: 2026-07-23. Files: `static/app.js`(+`_buildOwnDateTree` 신설·`_getDateGroupKey`/`_formatDateGroupLabel` 폐기·`renderConversationList` 재귀 트리 렌더러)·`static/styles.css`(`.conv-date-group-sub/-label/-count`). frontend-only, additive/비파괴(그룹핑 표현만 변경, 데이터·API·RBAC·엔드포인트 0).
+- 변경: 오늘/어제·이번 달=일 노드, 올해 지난 달=월 노드(단일 — 이전엔 일 단위 키가 전부 "M월" 라벨로 중복 렌더돼 "6월/6월/6월" 혼잡), 지난 해=연 노드>월 서브노드(들여쓰기)>대화. 월/연 집계 노드에 대화 개수 배지. depth·collapse 모델(`state.collapsedDateGroups`)은 향후 대화 폴더 기능의 재사용 기반.
+- 호환: collapse 키가 일 단위(YYYY-MM-DD, 매일 변경)→집계 단위(day:/month:YYYY-MM/year:YYYY, 안정)로 변경. localStorage 영속 키는 무해하게 stale(기존 값 미매칭 = 미접힘 = 기본 펼침, 회귀 아님). `_seedDateGroupsCollapsedOnce`가 매 로드 최근만 펼치는 기존 계약 유지.
+- 검증: `node --check` PASS · 결정적 트리 단위테스트 4/4 PASS · POST-DEPLOY PB-0008 예정. Cross-ref: TASK-20260723T034321-conv-date-tree · REV-20260723T034321-conv-date-tree · TEST Run(2026-07-23 conv-date-tree).
+
 ## CHG-20260722T105320-share-menu-perm-wiring-postverify (TASK-20260722T103254-share-menu-perm-wiring POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-22. 코드/자산 무변경 — test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료 + evidence PNG. 배포 PR #885→main 066cec5e, `make deploy-web-only` 무중단(soak PASS).
 - 라이브 실측(win-browser relay Chrome 150, bootstrap_admin 본인 대화 ☰): `여기까지 공유`·`여기부터 공유` 항목 `is-access-blocked` 없음(수정 전 항상 blocked 회귀 복구)·`여기부터 공유` 클릭 → onSelect 실행(비차단·오류토스트0)·floor arm 배너/마커 표시·pageerror 0. 서빙 app.js `action:"conversation.share.create"` 0매치. Cross-ref: REV-20260722T105320-share-menu-perm-wiring-postverify · CHG-20260722T103254-share-menu-perm-wiring.

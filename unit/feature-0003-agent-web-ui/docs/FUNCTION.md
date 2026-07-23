@@ -1770,3 +1770,12 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 
 ## (20260723T033143-paging-scroll-longhistory, 2026-07-23) 긴 이력 페이징 스크롤 보존 (web/UI, Minor §12.3, paging-scroll-preserve 후속)
 - loadHistory: preserveScroll(페이징) 시 renderCount=messages.length(버전 스레드 전체 렌더). 최근-N 창 truncate 로 브랜치 메시지(pager)가 창 밖으로 밀려 소실·scrollHeight 급변하던 회귀 봉인. 형제 버전은 분기점 위 이력 동일 → 전체 렌더로 pager 유지 + 절대 scrollTop 정확 보존. append/일반 로드 무변경. CHG/REV-20260723T033143.
+
+## (20260723T034321-conv-date-tree, 2026-07-23) 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계) (web/UI, Major §12.3, frontend-only)
+- 목적: 오래된 대화가 "6월/6월/6월…" 중복 텍스트로 시각 혼잡하던 문제 해소 + 오래된 날짜에 그룹핑 트리 깊이(연>월)를 부여해 월/년 집계. 이 depth·collapse 모델은 향후 대화 폴더 기능의 기반.
+- RC(기존): `_getDateGroupKey` 가 오늘/어제 외 모든 날짜에 일 단위 키(YYYY-MM-DD) 부여 → 서로 다른 6월 날짜가 각각 별개 헤더인데 `_formatDateGroupLabel` 이 30일 초과 라벨을 "M월"로 축약 → 다른 키가 전부 같은 "6월"로 중복 렌더. 집계 단위로 묶이지 않고 라벨만 축약된 것이 근본.
+- 동작(`static/app.js` `_buildOwnDateTree(items)`): 나이 기반으로 집계 단위 키 부여 — 오늘/어제·이번 달의 다른 날 = 일 노드(top-level, `__today__`/`__yesterday__`/`day:YYYY-MM-DD`), 올해 지난 달 = 월 노드(`month:YYYY-MM`, 단일), 지난 해 = 연 노드(`year:YYYY`) > 월 서브노드(`month:YYYY-MM`) > 대화. 미래 `last_activity_at` 은 today clamp(유령 미래 노드 방지). 파싱불가/무날짜 = `__other__`. 반환 `{nodes, keys}`(nodes=재귀 leaf/branch, keys=표시순 전체 collapsible 키). `_getDateGroupKey`/`_formatDateGroupLabel` 폐기.
+- 렌더(`renderConversationList` `renderDateNode`): 재귀 트리 렌더 — leaf(일/월)는 대화 항목, branch(연)는 자식 월 노드. depth>0 헤더/항목은 inline `paddingLeft`(header `10+depth*14`, item `8+depth*14` — 기존 depth-0 패턴 item=header−2px 일관) 들여쓰기. 월/연 집계 노드는 대화 개수 배지(`.conv-date-group-count`, branch=자식 items 합·leaf=items.length). `toggleDateGroup` 공통 토글(collapse 영속 후 재렌더).
+- collapse 영속 규약: 일 단위 키(상대적)는 `_seedDateGroupsCollapsedOnce` 가 로드당 "최근 1개만 펼침·나머지 접힘"(비영속). 집계 키(month:/year:, 안정)는 `_seedAggregateGroupsCollapsedOnce` 가 "처음 본 순간 1회만 접힘 seed + 영속"(`_seededAggKeys`·localStorage `mad.seededAggGroups.v1`), 이후 사용자 토글은 `state.collapsedDateGroups`(`mad.collapsedGroups.v1`)로 영속 존중. 안정 키를 매 로드 강제 재접힘하면 사용자 영속 펼침 선호가 파괴되던 회귀를 이 분리가 차단(§18.8 리뷰 MAJOR).
+- 불변식: "타 계정 대화" owner 그룹 섹션·pending 항목 렌더 무변경. 백엔드/API/RBAC/엔드포인트 무관(그룹핑 표현 계층 전용, frontend-only additive). 정렬은 backend updated_at desc 유지.
+- 검증: `node --check` PASS · 결정적 트리 단위테스트(그룹핑 4/4 + 경계 edge 월/연/미래/파싱불가 + seed 영속 회귀 9/9) · POST-DEPLOY PB-0008. CHG/REV-20260723T034321-conv-date-tree.

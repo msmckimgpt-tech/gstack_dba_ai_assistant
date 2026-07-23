@@ -712,3 +712,12 @@ source_of_truth: true
 ## REV-20260723T034500-paging-scroll-longhistory-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 긴 이력 페이징 스크롤 보존 배포+라이브 실측 (CHG-20260723T034500)
 - Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료). 정본=REV-20260723T033143-paging-scroll-longhistory.
 - 실증(Windows Chrome, 배포본 2cdb7907): '간단한 덧셈 계산' 3→4 페이징 시 전체 렌더(rendered 6)로 pager '4/4' 유지·브랜치 메시지 뷰포트 위치 298px 동일 보존·맨아래 안 튐(maxTop 11286, atBottom=false)·스크린샷 육안. 회귀(pager 소실+스크롤 급변) 해소 확정.
+
+## REV-20260723T034321-conv-date-tree [SUBAGENT:general-purpose] SHIP-WITH-FIXES — 대화목록 날짜 그룹핑 적응형 트리(월/년 집계) (TASK-20260723T034321-conv-date-tree, Major §12.3)
+- 적대적 프론트/UX 리뷰(general-purpose, 코드 직접 판독) 6축 점검. 판정: SHIP 아님 → **MAJOR 1건 in-cycle 수정 후 SHIP-WITH-FIXES**.
+- **[MAJOR — 수정 완료]** seed × 안정 집계 키의 영속 충돌/파괴: `_seedDateGroupsCollapsedOnce`가 매 로드 최근 그룹 외 전부를 강제 접힘시키는데, 기존 일(日) 키는 매일 바뀌어 무해했으나 `month:`/`year:`는 안정 키라 — ① 사용자가 펼친 6월이 reload 시 재접힘돼 localStorage 와 불일치, ② 이후 무관 그룹 토글 시 `_saveCollapsedGroups`가 in-memory set 전체 저장 → 사용자 영속 펼침 선호를 조용히 collapse 로 덮어씀. **폴더 기능이 이 collapse-영속 모델 위에 세워지므로 근본 수정 필수.** 수정: seed 분리 — 일 단위 키만 로드당 재적용(`_seedDateGroupsCollapsedOnce`가 `_isAggregateGroupKey` 필터), 집계 키는 `_seedAggregateGroupsCollapsedOnce`가 `_seededAggKeys`(신규 localStorage `mad.seededAggGroups.v1`)로 "처음 본 순간 1회만 접힘 seed + 영속" 후 사용자 토글 존중. 결정적 재현 테스트 9/9 PASS(첫 로드 기본 접힘·펼침 영속·reload 강제 재접힘 없음·무관 토글 후 선호 보존).
+- **[MINOR — 수정 완료]** 미래 `last_activity_at`(데이터 이상)이 "오늘" 위 정렬/유령 미래 월 노드: `dStart = Math.min(rawStart, today)` clamp 로 미래 날짜를 "오늘" 버킷 합류.
+- **[NIT — 수정 완료]** `.conv-date-group-label` inline-flex 하에서 무효였던 `text-overflow: ellipsis`/`overflow`/`white-space`/`min-width` 死코드 제거(라벨 항상 짧음).
+- **[NIT — 유지·근거]** 서브 대화 항목(depth1 22px) < 월 서브헤더(24px) 2px: 기존 depth-0 패턴(일 헤더 10px / 항목 8px = 헤더−2px)과 **일관**. 각 depth 에서 항목=헤더−2px 유지가 사이드바 전체 톤과 정합(회귀 아님) + 항목엔 leading dot+gap 이 있어 실제 텍스트는 더 우측. 유지.
+- **[NIT — pre-existing·defer]** 날짜 그룹 헤더 키보드 조작 불가(`role=button`+click 만, tabindex/keydown 부재): 기존 owner/date 헤더 전체가 동일 — 이번 diff 신규 결함 아님. 새 집계 노드만 고치면 owner 헤더와 불일치하므로 본 cycle scope 밖. 헤더 전체 a11y 일괄 개선은 후속 항목으로 defer(TODOS 성 기록).
+- **[안전 확인]** 키 충돌 없음(top-level 월 노드는 `dY===nowY`·연-자식 월 노드는 else 분기 → `YYYY` 상이로 collapse 상태 공유 불가) · 집계 정확(Map 키 병합 단일 노드·"6월 중복" 소멸) · 리스너 누수 없음(`innerHTML=""` 전체 초기화) · 배지 계산 정확(branch=자식 items 합·leaf=items.length) · 월/연 경계 timestamp 산술로 정확 · 파싱불가→__other__·dangling ref 0 · folder-readiness 재귀 모델 재사용 가능.
