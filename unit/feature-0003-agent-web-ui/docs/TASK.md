@@ -8,6 +8,32 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260723T071355-universal-ctxmenu — 서비스 UI 우클릭 = 보편적 확장 메뉴 단축 (대화 목록·폴더='···', 대화 로그(말풍선)='☰') (Major §12.3 — feature-0003 web/UI 프론트 단독, 비파괴 additive. /_template:entry arg-given dispatch)
+- 요청(사용자, 2026-07-23): "서비스 내 UI에서, 각 요소들의 우클릭이 보편적인 확장기능으로 작동하도록 구성. 대화 및 목록창은 확장('···') 상호작용. 대화 내 로그는 햄버거 버튼('☰') 상호작용. 등과 같이 구성."
+- 해석: 각 요소를 우클릭하면 그 요소가 이미 가진 overflow/확장 메뉴(좌측 대화 항목·폴더 헤더의 '···', 대화 로그 말풍선의 '☰')가 열리는 **보편적 단축**을 제공한다. 트리거가 없는 요소는 브라우저 기본 우클릭 유지. "등과 같이" = 향후 요소는 설정표에 한 줄 추가로 확장.
+- 현행 구조(조사): 3개 트리거(`.conv-item-menu-trigger`→openConversationItemMenu / `.conv-folder-menu-trigger`→openFolderMenu / `.message-menu-trigger`→openMessageBubbleMenu)가 모두 공유 `openFloatingMenu(triggerEl,…)` 를 click 으로 호출. app.js 에 우클릭 핸들러 없음(그래프 뷰만 admin.js/graph-ctxmenu.js 별도 소유).
+
+### §1.1 Implementation Plan
+- **영향 파일**: `unit/feature-0003-agent-web-ui/src/static/app.js` (단일 파일 — 2 지점). CSS 무변경(기존 메뉴 스타일 재사용).
+- **변경 1 — `openFloatingMenu` 커서 앵커** (~L8162): 모듈 전역 `_floatingMenuAnchorPoint`(1회 소비·즉시 해제) 도입. 우클릭 진입이면 커서 좌표 기준으로 메뉴 위치, 아니면(버튼 클릭) 기존 trigger-rect 기준 — anchor=null 경로는 기존 로직과 **byte-동치**(회귀 0).
+- **변경 2 — 단일 위임 contextmenu 핸들러** (하단 initialize() 전): `_CTX_MENU_TARGETS` 설정표 `[{host:".conv-item",trigger:".conv-item-menu-trigger"},{".conv-folder-header",…},{".message",".message-menu-trigger"}]` 기반. `document` 위임 리스너가 `ev.target.closest(host)` 매칭 → 호스트 내 trigger 존재 시 `preventDefault` + 커서좌표 실어 트리거 synthetic click 재발화(권한 게이트·항목·토글 100% 재사용). trigger 없으면 기본 우클릭 유지.
+- **기본 우클릭 양보**(`_ctxMenuShouldDeferToNative`): 텍스트 선택 활성(답변/SQL 복사 보존)·input/textarea/select·`a[href]`·contentEditable 위에서는 브라우저 기본 메뉴 우선.
+- **완료 판정(acceptance)**:
+  - [AC-1] 좌측 대화 항목 우클릭 → 해당 대화의 '···' 메뉴(공유/설정/폴더)가 커서 위치에 열림(버튼 클릭과 동일 항목·권한 게이트).
+  - [AC-2] 폴더 헤더 우클릭 → 폴더 '···' 메뉴(하위 폴더/이름 변경/지침/삭제).
+  - [AC-3] 대화 로그(말풍선) 우클릭 → '☰' 메뉴(샘플 등록/분기/공유/AI로 고치기) — 단, 메뉴가 없는 말풍선은 기본 우클릭 유지.
+  - [AC-4] 말풍선 내 텍스트 선택 후 우클릭 → 브라우저 기본 메뉴(복사) 유지(회귀 방지).
+  - [AC-5] 기존 '···'/'☰' 버튼 클릭 동작·위치 불변(anchor=null 경로 byte-동치).
+- **위험도**: Major(§12.3 — 2 지점 변경이나 단일 파일·비파괴 additive·RBAC/스키마/엔드포인트 0·전부 프론트 display). 롤백 = 변경 revert.
+- **범위 밖(follow-up)**: 관리 콘솔(admin.js)의 다수 메뉴는 별도 파일 — 본 cycle 은 작업 화면(index.html/app.js)으로 한정. 그래프 캔버스 우클릭은 이미 graph-ctxmenu.js 소유(무간섭).
+
+### §1.2 Completion Checklist
+- [x] 변경 1 openFloatingMenu 커서 앵커(anchor=null byte-동치)
+- [x] 변경 2 위임 contextmenu 핸들러 + 설정표 + 기본 양보(input/link/미디어/선택 중)
+- [x] `node --check app.js` PASS
+- [x] §18.8 적대적 프론트/UX 리뷰 (general-purpose, REV-20260723T071355-universal-ctxmenu): verdict **SHIP** (BLOCKING/MAJOR 0). 앵커 수명·anchor=null byte-동치·synthetic click 무-사이드이펙트(우클릭이 대화 선택/폴더 토글 유발 안 함)·예외 가드 검증 통과. MINOR 3건 반영: ①미디어(img/svg/canvas/video) 네이티브 양보(이미지 저장·mermaid SVG 보존) ②키보드 contextmenu(0,0) trigger-rect 폴백 ③`_hasSelectionWithin` → `intersectsNode` 정밀화(stale 교차 선택 과잉차단 제거). NIT 2(토글 비대칭·focus parity) 무해 유지.
+- [ ] POST-DEPLOY PB-0008 Windows-browser 라이브 검증(AC-1~5) — §15.4.1 웹/UI 완료 게이트 (배포 후 수행 — 배포는 사용자 confirm 대상, deploy_scope 미선언)
+
 ## TASK-20260723T034321-conv-date-tree — 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계) + "6월 중복" 시각 혼잡 해소 (Major §12.3 — feature-0003 web/UI 프론트 단독. /_template:entry arg-given dispatch)
 - 진단(사용자 신고): 오래된 대화가 "6월/6월/6월…"로 중복 렌더돼 시각 혼잡. RC = `_getDateGroupKey`가 오늘/어제 외 **모든 날짜에 일 단위 키(YYYY-MM-DD)** 부여 → 서로 다른 6월 날짜가 각각 별개 헤더가 되는데, `_formatDateGroupLabel`은 30일 초과 날짜 라벨을 "M월"로만 축약 → 다른 키가 전부 같은 "6월" 텍스트로 렌더. 집계 단위(월/연)로 묶이지 않고 라벨만 축약된 것이 근본.
 - 사용자 요청: 오래된 날짜에 **그룹핑 트리 깊이 추가** → 월 단위·년 단위 집계 가능. 중복 텍스트 혼잡 해소. 이 깊이 구조를 **향후 대화 폴더 기능**의 기반으로.

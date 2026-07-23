@@ -821,3 +821,12 @@ source_of_truth: true
 - POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. 배포 PR #891 → main 2cdb7907 → deploy-web --web-only(soak PASS).
 - 라이브(Windows Chrome '간단한 덧셈 계산' 3→4): rendered 3→6(전체 렌더), pager '4/4' 유지, 브랜치 메시지 뷰포트 298px→298px 동일(scrollTop 4985, scrollable maxTop 11286, atBottom=false)·스크린샷 육안. verdict PRESERVED.
 - Files: docs/{TASK,MODIFY,REVIEW}.md.
+
+## CHG-20260723T071355-universal-ctxmenu (서비스 UI 우클릭 = 보편적 확장 메뉴 단축, Major §12.3, frontend-only)
+- 계기: 사용자 요청(`/_template:entry`) — "각 요소 우클릭이 보편적 확장기능으로 동작. 대화·목록창='···', 대화 로그='☰'. 등과 같이."
+- 변경(`static/app.js`, 2지점 additive):
+  - `openFloatingMenu`: 모듈 전역 `_floatingMenuAnchorPoint`(우클릭 시 커서 좌표·1회 소비·finally 방어 해제) 도입, 위치 계산이 anchor 있으면 커서 기준·없으면 기존 trigger-rect 기준(**anchor=null byte-동치**·회귀 0).
+  - 신규 `_CTX_MENU_TARGETS` 설정표 + `_hasSelectionWithin`(Range.intersectsNode) + `_onUniversalContextMenu`(document 위임 리스너) — 호스트(`.conv-item`/`.conv-folder-header`/`.message`) 매칭 시 기존 트리거 synthetic click 재발화(open 함수·권한·항목·토글 100% 재사용). input/link/미디어(img·svg·canvas·video)/contentEditable·호스트 내 텍스트 선택·키보드 contextmenu(0,0)는 기본 우클릭 양보.
+- 비변경: 기존 '···'/'☰' 버튼 클릭 동작·위치, 대화 선택/폴더 토글(우클릭이 유발 안 함), admin.js, 그래프 우클릭(graph-ctxmenu.js), 백엔드/RBAC/스키마/엔드포인트 0.
+- Verification: `node --check` PASS(2회) · §18.8 적대 리뷰 SHIP(MINOR 3 반영) · POST-DEPLOY PB-0008(AC-1~5).
+- Files: `static/app.js`, docs/{TASK,FUNCTION,REPORT,REVIEW,TEST-runs}.md.

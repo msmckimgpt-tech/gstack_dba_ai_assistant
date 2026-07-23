@@ -8159,8 +8159,14 @@ function makeMenuItem(label, { action = null, conversation = null, danger = fals
   return item;
 }
 
+// universal-ctxmenu: 우클릭(contextmenu) 진입 시 커서 좌표를 담아 openFloatingMenu 가 1회 소비한다.
+// null(기본 = '···'/'☰' 버튼 클릭)이면 기존 trigger-rect 기준 위치로 동작 → anchor=null 경로 byte-동치(회귀 0).
+let _floatingMenuAnchorPoint = null;
+
 function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", dataset = {}, buildItems } = {}) {
   closeFloatingMenus();
+  const anchorPoint = _floatingMenuAnchorPoint;  // 1회 소비 후 즉시 해제 — 다음 버튼 클릭에 좌표 누출 방지.
+  _floatingMenuAnchorPoint = null;
   const menu = document.createElement("div");
   menu.id = id;
   menu.className = className;
@@ -8171,16 +8177,17 @@ function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", dataset
 
   document.body.appendChild(menu);
 
-  // 위치 계산 — trigger 의 오른쪽 아래로 띄우되 viewport 안에 머무르도록.
+  // 위치 계산 — 우클릭 진입(anchorPoint)이면 커서 위치 기준, 아니면 trigger 오른쪽 아래.
+  // 어느 쪽이든 viewport 안에 머무르도록 동일하게 클램프한다.
   const rect = triggerEl.getBoundingClientRect();
   const menuRect = menu.getBoundingClientRect();
-  let top = rect.bottom + 4;
-  let left = rect.right - menuRect.width;
+  let top = anchorPoint ? anchorPoint.y + 4 : rect.bottom + 4;
+  let left = anchorPoint ? anchorPoint.x : rect.right - menuRect.width;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   if (left < 8) left = 8;
   if (left + menuRect.width > vw - 8) left = vw - menuRect.width - 8;
-  if (top + menuRect.height > vh - 8) top = rect.top - menuRect.height - 4;
+  if (top + menuRect.height > vh - 8) top = (anchorPoint ? anchorPoint.y : rect.top) - menuRect.height - 4;
   menu.style.top = `${Math.max(8, top)}px`;
   menu.style.left = `${left}px`;
 
@@ -11850,6 +11857,70 @@ if (promptInputEl) {
   }, true);
   promptInputEl.addEventListener("blur", () => { window.setTimeout(_closeMentionAC, 120); });
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// universal-ctxmenu (2026-07-23, feature-0003-universal-ctxmenu):
+// 서비스 UI 의 각 요소에서 "우클릭"이 그 요소가 이미 가진 확장 메뉴(overflow 트리거)를
+// 여는 보편적 단축으로 동작하게 한다. 좌측 대화 항목·폴더 헤더는 '···' 메뉴, 대화 로그
+// (말풍선)는 '☰' 메뉴로 — 각 요소의 기존 트리거 click 을 그대로 재발화(synthetic click)
+// 하므로 권한 게이트·항목 구성·토글 로직이 100% 재사용된다(중복 0). 트리거가 없는 요소
+// (=메뉴 없음)는 브라우저 기본 우클릭을 그대로 둔다.
+//
+// 새 확장 요소가 생기면 이 표에 { host, trigger } 한 줄만 추가하면 된다("등과 같이" 확장점).
+const _CTX_MENU_TARGETS = [
+  { host: ".conv-item",          trigger: ".conv-item-menu-trigger" },    // 좌측 대화 항목 → '···'
+  { host: ".conv-folder-header", trigger: ".conv-folder-menu-trigger" },  // 좌측 폴더 헤더 → '···'
+  { host: ".message",            trigger: ".message-menu-trigger" },      // 대화 로그(말풍선) → '☰'
+];
+
+// 우클릭한 호스트(hostEl) 안에서 사용자가 텍스트를 드래그 선택한 상태인지.
+// 선택이 있으면 기본 우클릭(복사 등)을 우선해 답변/SQL 복사를 보존한다(회귀 방지).
+// 선택 범위를 "그 호스트"로 스코핑해, 다른 곳(예: 로그) 선택이 사이드바 우클릭을
+// 과잉 차단하지 않게 한다.
+function _hasSelectionWithin(el) {
+  const sel = window.getSelection ? window.getSelection() : null;
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+  if (String(sel).trim().length === 0) return false;
+  for (let i = 0; i < sel.rangeCount; i++) {
+    const r = sel.getRangeAt(i);
+    if (typeof r.intersectsNode === "function") {
+      if (r.intersectsNode(el)) return true;  // 선택 범위가 이 호스트와 실제로 겹칠 때만(다른 곳 stale 선택 무시).
+    } else if (el.contains(r.startContainer) || el.contains(r.endContainer) || el.contains(r.commonAncestorContainer)) {
+      return true;  // 폴백(구형 브라우저): 경계 컨테이너 containment.
+    }
+  }
+  return false;
+}
+
+function _onUniversalContextMenu(ev) {
+  const target = ev.target;
+  if (!target || typeof target.closest !== "function") return;
+  // 입력 요소·링크·미디어(이미지/다이어그램 등)·편집 가능 영역 위 우클릭은 언제나 브라우저 기본
+  // 메뉴로 둔다 — 이미지 저장·링크 열기 등 기본 동작 보존(관계 다이어그램 mermaid SVG 포함).
+  if (target.closest("input, textarea, select, a[href], img, svg, canvas, video")) return;
+  if (target.nodeType === 1 && target.isContentEditable) return;
+  // 키보드로 연 컨텍스트 메뉴(Menu 키·Shift+F10)는 일부 브라우저가 좌표를 (0,0) 으로 준다 —
+  // 그 경우 커서 앵커 대신 trigger 기준 위치로 폴백(anchor=null)해 좌상단 오배치를 막는다.
+  const fromKeyboard = (ev.clientX <= 0 && ev.clientY <= 0);
+  for (const { host, trigger } of _CTX_MENU_TARGETS) {
+    const hostEl = target.closest(host);
+    if (!hostEl) continue;
+    const trig = hostEl.querySelector(trigger);
+    if (!trig) return;  // 호스트는 맞지만 이 항목엔 확장 메뉴가 없음 → 기본 우클릭 유지.
+    if (_hasSelectionWithin(hostEl)) return;  // 이 호스트 안 텍스트 선택 중 → 기본 메뉴(복사) 우선.
+    ev.preventDefault();
+    // 커서 좌표를 openFloatingMenu 가 소비하도록 실어 보낸 뒤 기존 트리거 click 을 재발화한다.
+    _floatingMenuAnchorPoint = fromKeyboard ? null : { x: ev.clientX, y: ev.clientY };
+    try {
+      trig.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    } finally {
+      // toggle-close 경로(메뉴 미개방)에서 좌표가 남아 다음 클릭에 누출되지 않도록 방어적 해제.
+      _floatingMenuAnchorPoint = null;
+    }
+    return;
+  }
+}
+document.addEventListener("contextmenu", _onUniversalContextMenu, false);
 
 initialize().catch((error) => {
   showToast(error.message || "페이지 초기화에 실패했습니다.", true);
