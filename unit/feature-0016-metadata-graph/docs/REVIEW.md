@@ -329,3 +329,14 @@ source_of_truth: true
   - **#3·#4 [MINOR] 메시지 오단정** — 폴백 문구가 "다른 데이터소스이거나 표시 상한" 으로 단정하나 실제로는 foreign scope·cap·**컬럼 줌 LOD 억제**·**Routine kind 숨김 토글**·in-flight race 5원인. → 원인 단정 제거, "하위 노드는 확대하거나 검색으로 직접 탐색" 일반 안내로 완화(흡수).
 - **잔여(수용, 비파괴)**: (#4 심층) 컬럼-LOD 활성(zoom<0.5 & 펼친컬럼>200) 시 현재 far-out 줌에서 reveal 대상 컬럼이 억제돼 조상(소속 테이블)로 폴백 — 팬-후-확대로 표시되나 자동 zoom-in-to-reveal 은 미구현(범위 규율, 안내로 '확대' 유도). (#7 NIT) 이미 렌더 노드=선택 불변·팬만 / 미렌더 노드=reveal 후 선택 — 같은 버튼 2거동이나 의도(노출 노드에 시선 앵커).
 - **검증**: 수정 후 `node --check --input-type=module` PASS · `test_graph_reveal.js` 17 PASS 유지. #1 가드·#6 try/finally 는 DOM-event 핸들러 내부라 헤드리스 미커버 → 코드 inspection + POST-DEPLOY PB-0008(TX.5). Verdict SHIP-WITH-FIXES → 권고 수정 전량 흡수.
+
+## REV-20260723T183000-analysis-completeness [SUBAGENT: FAIL→전량 흡수] — 'DB 전체 AI 능동 분석' 미완결 근본 개선 diff 적대 리뷰
+- 대상: node_analysis(_ensure_table_columns/_introspect/_resolve)·semantic_cluster(freshness due·cache_keys·투영)·metadata_graph(project_cluster_props)·graph-ctxmenu.js(RC3 병합/RC4 재분석)·config. general-purpose 적대 리뷰어(backend+qa)가 diff+호출처 역추적, verdict **FAIL(B1)** → 지적 전량 in-cycle 흡수 후 재검증.
+- **흡수한 수정**:
+  - **B1 [BLOCKING] datasource 해석 프로덕션 무효** — `connect()` 무지정이 default DB 미선택 연결 → `_all_db_datasources` 조용히 {}(기지 결함 클래스, routine_backfill 에 명문화) → RC1 이 DB 레지스트리 datasource(mysql-local 포함)에서 전혀 동작 안 함. → `connect(database=_cfg.MEMORY_DB)` + scope 키를 `datasources.scope_key(coords)` 계산(.env 레거시 scope_key 미보유 포함). **resolve 본문 관통 테스트**(all_datasources 만 fake) 추가 — 리뷰 요구사항 이행.
+  - **M1 [MAJOR] 부분 큐레이션 영구 배제 + M2 부분 쓰기 봉인 + m4 큐레이션 race** — 행-존재 게이트 폐기 → **누락분-only insert**(ON CONFLICT **DO NOTHING**, 기존 행 어떤 경로로도 불변)·부분 쓰기는 다음 프로세스가 잔여만 멱등 삽입·그래프 MERGE 는 신규 insert 행만(기존 행 정점 투영 = 30분 sync 정본 — 큐레이션 layering 보존).
+  - **M3 [MAJOR] 드레인 중 15분 재클러스터/재라벨 churn** — freshness due 에 미임베딩 시그니처 잔존 가드 추가(백필 캡·임베딩 데몬 드레인 완료 후 1회 재클러스터, 임베딩 착지가 재트리거라 자가치유).
+  - **m1** project_cluster_props SAVEPOINT 행 격리(주입 non-autocommit conn tx 오염 차단) · **m2** `AGENT_MULTI_DATASOURCE_ENABLED` OFF 시 introspection 전체 skip(레거시 DB_HOST 오염 차단) · **m3** forceAll confirm 수치를 2차 dry_run(only_missing:false) planned/capped 로 정확화(SCHEMA_CAP 절단 미은폐) · **n1** Table 투영 키를 object_key 마지막 세그먼트로(_rag_effective 동형).
+- **수용(비파괴, 문서화)**: m5 cache_keys 도입 1회성 라벨 캐시 전패(재라벨 LLM 스파이크 1회·구 kv 행 잔존 — 정리 경로 없음, 크기 유계) · n2 MSSQL 테이블명-only 매칭의 다스키마 동명 합산(기존 /graph/columns 동형 tradeoff) · n3 forceAll noop race 문구 · n4 freshness probe 인덱스 없는 embedded_at 스캔(현 규모 수용) · n5 pass 중 착지 임베딩 신호 소실(드레인 자가치유).
+- **리뷰어 확인 축(결함 없음)**: pgbouncer/search_path(_cypher ag_catalog 정규화)·Cypher injection(_cq/화이트리스트/dollar-tag)·freshness SQL 파라미터 정합·RC3 전 API 공급원 실사(허위 null clear 없음)·Routine 투영 키 일치·RC4 연타 가드·테스트 패딩 의미 불변.
+- **재검증**: 흡수 후 타깃 40 PASS(신규 resolve 관통·DO NOTHING·SAVEPOINT 격리·드레인 가드 포함) + 전체 스위트(0002+0003) 컨테이너 PASS(exit 0).

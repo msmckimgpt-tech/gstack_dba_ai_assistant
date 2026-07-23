@@ -2202,3 +2202,9 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **PRE**: node --check app.js OK. 프론트 전용(기존 폴더 API 재사용).
 - **Environment: Windows-browser — PRE-COMMIT 미수행 사유**: 정적 자산 baked → merge+deploy 후 서빙. **POST-DEPLOY PB-0008 실측**: 무프롬프트 생성+인라인편집·설정 모달(지침/삭제)·인라인 이름변경·이동 모달(검색/정렬)·DnD(대화↔폴더·폴더↔폴더·root).
 - **Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족.
+
+### Run (2026-07-23) — analysis-completeness: 'DB 전체 AI 능동 분석' 프론트 2건 — stale 클러스터 병합 수정 + 전체 재분석 경로 (Major §12.3 — feature-0003 web/UI 자산 graph-ctxmenu.js, 정본 feature-0016 TASK/MODIFY/REPORT 20260723T1830-analysis-completeness) — **Environment: Windows-browser**
+- **정적·단위 실증**: `node --check --input-type=module` PASS(graph-ctxmenu.js). 백엔드 동반 변경(node_analysis/semantic_cluster/metadata_graph)은 컨테이너 pytest 전체(0002+0003) PASS + 타깃 40 PASS. §18.8 적대 리뷰가 RC3 의 null-clear 안전성을 **전 API 공급원 실사**로 확증(neighborhood/search 는 cluster 필드 미포함→보존, scope_roots/schema_tables 만 항상 포함→서버 정본 값 반영 — 허위 null clear 경로 없음) + RC4 연타 가드(_analyzePending 전 구간 유지) 확인.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산(ES module)이 web 이미지에 baked → 서빙본 반영은 merge + `deploy-web` 재배포 선행(graph-node-reveal 등 동일 패턴). '전체 재분석' confirm 은 window.confirm(네이티브 다이얼로그)이라 headless 로 실 UX 검증 불가. 캐시버스터 `?v=dev` 고정 + 빌드 inject_asset_stamp 자동주입(수기 bump 금지).
+- **POST-DEPLOY win-browser 육안 검증(TAC.8, 예정)**: 그래프 로그인 → mysql-local/log_v2 스키마 클러스터 상세 → 'DB 전체 AI 능동 분석' 클릭 → ① "분석 대상 없음" 차단 대신 "전체 재분석" confirm(이번 실행 수치·상한 안내) ② 진행 패널 가동·컬럼 잡 생성 확대(>10, PG node_analysis_jobs Column 카운트) ③ run 완료 후 ≤15분 재클러스터·라벨 갱신(PG rag_objects)·AGE 투영 → 그래프 재로드 시 밴드 갱신·stale 밴드 소멸 ④ 클러스터 상세 패널 그룹 ↔ 캔버스 밴드 정합 ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]**
+- **Pass/Fail: pre-commit 정적·단위 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·POST-DEPLOY 계획·pre-commit 미수행 사유 기록).

@@ -1332,9 +1332,13 @@ function _metaGraphIngest(nodes, edges) {
     // graph-product-cat(§43): Product/Datasource 부가 필드 보존(제품 라벨 개수 · datasource scope drill).
     if (n.scope_key != null) rec.scope_key = n.scope_key;
     if (typeof n.datasource_count === "number") rec.datasource_count = n.datasource_count;
-    // Phase C(semantic-embed): 의미 클러스터 id/라벨 보존 → _metaSimGroups 가 be: 그룹으로 소비(affix 폴백).
-    if (n.cluster_id != null) rec.cluster_id = n.cluster_id;
-    if (n.cluster_label != null) rec.cluster_label = n.cluster_label;
+    // Phase C(semantic-embed): 의미 클러스터 id/라벨 → _metaSimGroups 가 be: 그룹으로 소비(affix 폴백).
+    //   analysis-freshness(2026-07-23): 필드가 payload 에 **존재하면 null 포함 항상 반영** — 종전
+    //   `!= null` 가드는 백엔드 재클러스터로 클러스터 해제/변경 시 열린 세션 모델이 stale 값을
+    //   영구 보존해, 캔버스 밴드(모델 stale)와 상세 패널(신선한 API 노드)이 어긋나는 원인.
+    //   필드 자체가 없는 payload(neighborhood 등 비클러스터 응답)는 기존값 보존.
+    if ("cluster_id" in n) rec.cluster_id = n.cluster_id;
+    if ("cluster_label" in n) rec.cluster_label = n.cluster_label;
     if (!existing) {
       _metaGraph.nodes.set(n.key, rec); added.push(n.key);
       // graph-perf-bg: 새 Column 노드면 소속 테이블의 colsByTable 카운트 증가(_metaTableHasCols O(1) 단일소스).
@@ -2263,16 +2267,39 @@ async function _metaGraphAnalyzeSchema(schemaKey) {
       _metaGraphPollRun(dry.run_id, null);
       return;
     }
+    let forceAll = false;
     if (!dry || !dry.planned) {
-      _metaGraphStatus(`${nm}: 분석 대상 없음 — 테이블 ${dry ? (dry.total_tables || 0) : 0}개 · 함수/프로시저 ${dry ? (dry.total_routines || 0) : 0}개 전부 분석 완료(또는 대상 없음)`);
-      return;
+      const totalAll = dry ? ((dry.total_tables || 0) + (dry.total_routines || 0)) : 0;
+      if (!totalAll) {
+        _metaGraphStatus(`${nm}: 분석 대상 없음 — 이 DB(스키마)에 테이블·함수/프로시저가 없습니다.`);
+        return;
+      }
+      // analysis-freshness(2026-07-23, 사용자 리포트): 전부 분석 완료 상태여도 재시도를 차단하지
+      //   않는다 — §55 refine-not-override(기존 분석문과 비교·융합) 전체 재분석을 confirm 후
+      //   only_missing:false 로 시작. 스키마 변화·컬럼 인벤토리 보강분도 이 경로로 재탐색된다.
+      //   §18.8 m3: confirm 수치는 재분석 기준 2차 dry_run(only_missing:false)의 planned/capped 로
+      //   정확히 — 총계만 보여주고 백엔드 SCHEMA_CAP 절단(예: 500 승인→200 실행)을 숨기지 않는다.
+      let dryAll = null;
+      try {
+        dryAll = await apiFetch(`/api/admin/metadata/graph/analyze-schema`, {
+          method: "POST", body: JSON.stringify({ schema_key: schemaKey, dry_run: true, only_missing: false }),
+        });
+      } catch (_) { dryAll = null; }
+      const planAll = (dryAll && dryAll.planned) ? dryAll.planned : totalAll;
+      const capTxtAll = (dryAll && dryAll.capped)
+        ? `\n※ 상한 적용: 전체 ${dryAll.missing}개 중 이번 실행 ${dryAll.planned}개 — 완료 후 재실행하면 이어서 분석합니다.` : "";
+      if (!window.confirm(`'${nm}' 의 테이블 ${dry.total_tables || 0}개 · 함수/프로시저 ${dry.total_routines || 0}개는 모두 분석 완료 상태입니다.\n\n전체 재분석을 시작할까요?\n· 기존 분석문은 삭제되지 않으며, 이전 분석과 비교·융합(refine)해 갱신됩니다.\n· 최신 스키마·관계·컬럼 기준으로 다시 탐색하며, 이번 실행 ${planAll}개 항목마다 LLM 분석이 수행됩니다(백그라운드).${capTxtAll}`)) return;
+      forceAll = true;
+    } else {
+      const cappedTxt = dry.capped ? `\n※ 상한 적용: 미분석 ${dry.missing}개 중 이번 실행 ${dry.planned}개 — 완료 후 재실행하면 이어서 분석합니다.` : "";
+      if (!window.confirm(`'${nm}' DB 전체 AI 능동 분석을 시작합니다.\n\n테이블 ${dry.total_tables}개 · 함수/프로시저 ${dry.total_routines || 0}개 · 미분석 ${dry.missing}개 · 이번 실행 ${dry.planned}개${cappedTxt}\n\n이번 실행 대상 ${dry.planned}개 항목(테이블·함수·프로시저)마다 LLM 분석이 수행됩니다(백그라운드). 진행할까요?`)) return;
     }
-    const cappedTxt = dry.capped ? `\n※ 상한 적용: 미분석 ${dry.missing}개 중 이번 실행 ${dry.planned}개 — 완료 후 재실행하면 이어서 분석합니다.` : "";
-    if (!window.confirm(`'${nm}' DB 전체 AI 능동 분석을 시작합니다.\n\n테이블 ${dry.total_tables}개 · 함수/프로시저 ${dry.total_routines || 0}개 · 미분석 ${dry.missing}개 · 이번 실행 ${dry.planned}개${cappedTxt}\n\n이번 실행 대상 ${dry.planned}개 항목(테이블·함수·프로시저)마다 LLM 분석이 수행됩니다(백그라운드). 진행할까요?`)) return;
     let res;
     try {
       res = await apiFetch(`/api/admin/metadata/graph/analyze-schema`, {
-        method: "POST", body: JSON.stringify({ schema_key: schemaKey }),
+        method: "POST",
+        body: JSON.stringify(forceAll ? { schema_key: schemaKey, only_missing: false }
+                                      : { schema_key: schemaKey }),
       });
     } catch (err) {
       _metaGraphStatus(`${nm}: DB 단위 분석 시작 실패 — ${(err && err.message) || "오류"}`);

@@ -76,6 +76,7 @@ __all__ = [
     "AGENT_NODE_ANALYSIS_REFINE_MAX",
     "AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX",
     "AGENT_NODE_ANALYSIS_PARENT_TABLE_REL",
+    "AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP",
     "AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT",
     "AGENT_INSIGHT_OBJECT_FASTPATH",
     "AGENT_INSIGHT_OBJECT_MAX_CANDIDATES",
@@ -1219,6 +1220,14 @@ AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX",
 AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX", "4"))
 # ADR-017 부모 테이블 same-depth 승격 관련도(기존 getattr 폴백 0.5 의 명시 선언 — 동작 불변).
 AGENT_NODE_ANALYSIS_PARENT_TABLE_REL = float(os.getenv("AGENT_NODE_ANALYSIS_PARENT_TABLE_REL", "0.5"))
+# ── 컬럼 인벤토리 lazy introspection (node-analysis-completeness, 사용자 리포트 2026-07-23) ──
+#  §55 의 "직계 컬럼 게이트 면제 편입"은 그래프 HAS_COLUMN 이웃에 의존하는데, Column 정점은
+#  큐레이션(column_descriptions)·관계 끝점만 투영된다 — 메타데이터 부트스트랩을 거치지 않은
+#  datasource(예: mysql-local/log_v2)는 그래프에 컬럼이 없어 DB 전체 분석이 테이블/루틴만 다뤘다.
+#  Table 잡 처리 직전 datasource 라이브 INFORMATION_SCHEMA 로 컬럼 목록(+ordinal·comment)을
+#  column_descriptions 스켈레톤으로 채우고(관계형 SSOT 우선) Column 정점을 targeted MERGE 한다.
+#  테이블당 컬럼 상한(초과분 절단). 0 = introspection 비활성.
+AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP", "200"))
 # ── 앵커-상대 관련도 게이팅 (feature-0016 node-analysis-anchor, 사용자 결정 2026-07-01) ──
 #  문제: 기존 재귀는 방문한 모든 노드의 이웃 전부를 무차별 재큐 → 일반 허브 컬럼(예 UniqueID)이나 부모
 #  Schema 노드를 만나면 그 노드를 새 중심으로 삼아 무관한 테이블로 fan-out(원래 대상에 앵커되지 않음).

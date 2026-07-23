@@ -481,6 +481,176 @@ def _fetch_routine_returns(node_key: str, fqn: str, conn) -> str:
         return ""
 
 
+# ── 컬럼 인벤토리 lazy introspection (node-analysis-completeness, 2026-07-23) ──
+#  §55 "직계 컬럼 게이트 면제 편입"·payload 컬럼 컨텍스트는 그래프 HAS_COLUMN 이웃에 의존하는데,
+#  Column 정점은 큐레이션(column_descriptions)·관계 끝점만 투영된다. 부트스트랩을 거치지 않은
+#  datasource(사용자 리포트: mysql-local/log_v2 — 컬럼 잡 10/전체, 테이블당 0~2개)는 그래프에
+#  컬럼이 없어 "DB 전체 AI 능동 분석"이 컬럼을 사실상 건너뛰었다. Table 잡 처리 직전 1회,
+#  datasource 라이브 INFORMATION_SCHEMA 로 컬럼 목록(+ordinal·native comment)을
+#  column_descriptions 스켈레톤 upsert(관계형 SSOT — 그래프 재생성 생존) + Column 정점 targeted
+#  MERGE 한다. 실패는 전부 삼킴(fail-soft — 종전 동작으로 저하), 프로세스 내 dedup.
+_COLS_ENSURED: set = set()          # node_key — 프로세스 수명 dedup(잡 재시도·refine 재진입 무비용)
+_DS_CACHE: dict = {"at": 0.0, "map": {}}   # scope_key(해시) → datasource dict (TTL 캐시)
+_DS_CACHE_TTL_SEC = 300
+
+
+def _resolve_datasource_by_scope(scope: str) -> dict | None:
+    """scope_key(엔드포인트 해시, node_key 접두) → datasource 좌표 dict. 제어면 MySQL 1회 조회 + TTL 캐시.
+
+    §18.8 B1: 레지스트리 정본 = MEMORY_DB 의 WebDatasources — DB 미지정 connect() 는 default DB
+    미선택 연결이 되어 _all_db_datasources 가 조용히 {} 를 반환(routine_backfill 동일 규약).
+    scope 키는 `_datasources.scope_key(coords)` 로 계산(.env 레거시 dict 는 scope_key 필드 미보유)."""
+    import time as _time
+    now = _time.monotonic()
+    if _DS_CACHE["map"] and (now - _DS_CACHE["at"]) < _DS_CACHE_TTL_SEC:
+        return _DS_CACHE["map"].get(scope)
+    try:
+        from shared import datasources as _datasources
+        from shared import db as _db
+        mem = _db.connect(database=_cfg.MEMORY_DB)
+        try:
+            m = {}
+            for _k, _v in (_datasources.all_datasources(mem) or {}).items():
+                if not _v:
+                    continue
+                sk = _datasources.scope_key(_v) or _k
+                if sk:
+                    m[str(sk)] = _v
+            _DS_CACHE["map"] = m
+            _DS_CACHE["at"] = now
+        finally:
+            try:
+                mem.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        _log.debug("resolve_datasource_failed scope=%s err=%r", scope, exc)
+        return _DS_CACHE["map"].get(scope) if _DS_CACHE["map"] else None
+    return _DS_CACHE["map"].get(scope)
+
+
+def _introspect_table_columns(ds: dict, schema: str, table: str, cap: int) -> list:
+    """datasource 라이브 INFORMATION_SCHEMA 컬럼 조회 → [(name, ordinal, comment)] (ordinal 순, cap 절단).
+
+    MySQL: information_schema 가 인스턴스 전역 — TABLE_SCHEMA=<schema>(DB) 필터.
+    MSSQL: INFORMATION_SCHEMA 가 DB(catalog)별 — <schema>=effective DB 로 재연결, 테이블명만 매칭
+    (기본 dbo 외 사용자 스키마도 포섭 — dialects.describe_columns 의 빈-스키마 관례와 동형)."""
+    from shared import db as _db
+    engine = str((ds or {}).get("engine") or "mysql").strip().lower()
+    conn = _db.connect(database=(schema if engine == "mssql" else None), datasource=ds)
+    try:
+        cur = conn.cursor()
+        try:
+            if engine == "mssql":
+                cur.execute(
+                    "SELECT COLUMN_NAME, ORDINAL_POSITION, '' FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_NAME = %s ORDER BY ORDINAL_POSITION", (table,))
+            else:
+                cur.execute(
+                    "SELECT COLUMN_NAME, ORDINAL_POSITION, COALESCE(COLUMN_COMMENT, '') "
+                    "FROM information_schema.columns "
+                    "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION",
+                    (schema, table))
+            rows = cur.fetchall() or []
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        out = []
+        for r in rows[:max(0, cap)]:
+            name = str(r[0] or "").strip()
+            if not name:
+                continue
+            try:
+                ordn = int(r[1])
+            except (TypeError, ValueError):
+                ordn = None
+            out.append((name, ordn, str(r[2] or "").strip()[:400]))
+        return out
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _ensure_table_columns(c, node_key: str) -> int:
+    """Table 잡 처리 직전 컬럼 인벤토리 보강 — **신규 insert(누락분만)** 수 반환(0=완비/비활성/실패).
+
+    c = node_analysis 의 PG RW conn(같은 세션에서 column_descriptions insert + AGE MERGE).
+    §18.8 M1·M2·m4 반영: 행-존재 게이트 대신 **누락분-only insert**(ON CONFLICT DO NOTHING) —
+    부분 큐레이션 테이블(수동 1~2컬럼)도 나머지가 채워지고, 부분 쓰기(중단)는 다음 프로세스
+    재시도가 잔여만 멱등 삽입하며, 큐레이션 설명은 어떤 race 에서도 덮어쓰지 않는다.
+    그래프 MERGE 는 이번에 insert 된 행만(기존 행의 정점 투영은 30분 sync 정본 경로 소관 —
+    큐레이션 layering 보존). §18.8 m2: 멀티 datasource 비활성 환경은 전체 skip(레거시 DB_HOST
+    로 붙어 엉뚱한 서버 컬럼을 기록하는 오염 차단)."""
+    cap = int(getattr(_cfg, "AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP", 200) or 0)
+    if cap <= 0 or not node_key or ":" not in node_key:
+        return 0
+    if not bool(getattr(_cfg, "AGENT_MULTI_DATASOURCE_ENABLED", False)):
+        return 0
+    if node_key in _COLS_ENSURED:
+        return 0
+    _COLS_ENSURED.add(node_key)   # 프로세스 수명 dedup(실패 포함 — 재기동/다음 워커가 재시도)
+    scope, _, rest = node_key.partition(":")
+    schema, _, table = rest.rpartition(".")
+    if not scope or not schema or not table:
+        return 0
+    try:
+        ds = _resolve_datasource_by_scope(scope)
+        if not ds:
+            return 0
+        cols = _introspect_table_columns(ds, schema, table, cap)
+        if not cols:
+            return 0
+        # 누락분 산정 — 기존 행(큐레이션·부트스트랩·선행 introspection)은 절대 불변.
+        cur = c.cursor()
+        try:
+            cur.execute("SELECT column_name FROM column_descriptions "
+                        "WHERE scope_key=%s AND schema_name=%s AND table_name=%s",
+                        (scope, schema, table))
+            existing = {str(r[0]).casefold() for r in cur.fetchall() if r and r[0]}
+        finally:
+            cur.close()
+        missing = [(n, o, cm) for (n, o, cm) in cols if n.casefold() not in existing]
+        if not missing:
+            return 0
+        from modules import metadata_graph as _mg
+        inserted = []
+        cur = c.cursor()
+        try:
+            for (name, ordn, comment) in missing:
+                cur.execute(
+                    "INSERT INTO column_descriptions "
+                    "(scope_key, schema_name, table_name, column_name, description, source, ordinal) "
+                    "VALUES (%s,%s,%s,%s,%s,'introspect',%s) "
+                    "ON CONFLICT (scope_key, schema_name, table_name, column_name) DO NOTHING",
+                    (scope, schema, table, name, comment, ordn))
+                if int(cur.rowcount or 0) > 0:
+                    inserted.append((name, ordn, comment))
+        finally:
+            cur.close()
+        if inserted:
+            gcur = c.cursor()
+            try:
+                _mg._set_age_path(gcur)
+                for (name, ordn, comment) in inserted:
+                    _mg.sync_column(gcur, scope, schema, table, name,
+                                    description=comment, source="introspect", ordinal=ordn)
+            finally:
+                try:
+                    gcur.close()
+                except Exception:
+                    pass
+        _log.info("node_analysis ensure_columns node=%s introspected=%s inserted=%s (cap=%s)",
+                  node_key, len(cols), len(inserted), cap)
+        return len(inserted)
+    except Exception as exc:
+        _log.warning("ensure_table_columns_failed node=%s err=%r", node_key, exc)
+        return 0
+
+
 def _build_payload(node: dict, ctx: dict) -> dict:
     """LLM 입력 payload (NODE_ANALYSIS_PROMPT 계약). 이웃 리스트는 cap 으로 토큰 보호."""
     def _names(items, n):
@@ -827,6 +997,11 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             touched_runs.add(run_id)
             anchor = None
             try:
+                # node-analysis-completeness: Table 은 컨텍스트 수집 전에 컬럼 인벤토리 보강 —
+                #   같은 틱의 _fetch_context 가 HAS_COLUMN 자식을 보고 (a) payload 컬럼 컨텍스트
+                #   (b) §55 직계 컬럼 게이트 면제 편입이 함께 살아난다. fail-soft(0 = 종전 동작).
+                if (node_label or "") == "Table":
+                    _ensure_table_columns(c, node_key)
                 ctx = _fetch_context(node_key, c)
                 root = ctx.get("root") or {"label": node_label, "name": node_name,
                                            "fqn": node_fqn, "key": node_key}

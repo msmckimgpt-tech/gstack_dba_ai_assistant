@@ -401,6 +401,65 @@ def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", 
                      **({"cross_ds": "1"} if (r or {}).get("cross") else {})})
 
 
+def project_cluster_props(changes, conn=None) -> int:
+    """재클러스터 변경분의 semantic_cluster_id/label 을 해당 정점에만 targeted SET (analysis-freshness).
+
+    changes: [{"label": "Table"|"Routine", "key": <graph vertex key>, "cid": int|None, "lab": str|None}].
+    30분 incremental sync(cron·flock, §82)는 정본 경로로 유지하되, 재클러스터 직후 결과가 그래프 뷰
+    다음 로드부터 보이도록 변경 정점의 두 속성만 즉시 투영한다 — 사용자 리포트(2026-07-23 log_v2):
+    'DB 전체 AI 능동 분석' 완료 후에도 컨텐츠 클러스터가 수십 분~시간 단위로 이전 구조로 남던 지연의
+    투영 구간 절반을 제거. MATCH(MERGE 아님)라 미투영 정점은 no-op(구조 생성은 sync 정본 소관).
+    cid/lab None 은 `= null` clear(_props_set — 이탈 stale phantom 방지). 실패는 행 단위 삼킴(fail-soft)."""
+    done = 0
+    items = [ch for ch in (changes or [])
+             if ch and ch.get("key") and ch.get("label") in ("Table", "Routine")]
+    if not items:
+        return 0
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return 0
+    try:
+        cur = c.cursor()
+        _set_age_path(cur)
+        for ch in items:
+            setc = _props_set("t", {"semantic_cluster_id": ch.get("cid"),
+                                    "semantic_cluster_label": ch.get("lab")})
+            if not setc:
+                continue
+            # SAVEPOINT 행 격리(§18.8 m1) — 주입 non-autocommit conn 에서 한 행의 실패가 블록
+            # 트랜잭션을 aborted 로 남겨 caller 의 후속 statement 를 연쇄 실패시키지 않게
+            # (semantic_cluster 루틴 fetch 동형). autocommit 에서는 SAVEPOINT 실패가 무해(삼킴).
+            try:
+                cur.execute("SAVEPOINT mg_proj_cluster")
+            except Exception:
+                pass
+            try:
+                _cypher(cur, f"MATCH (t:{ch['label']} {{key: {_cq(ch['key'])}}}) "
+                             f"SET {setc} RETURN 1", 1)
+                done += 1
+                try:
+                    cur.execute("RELEASE SAVEPOINT mg_proj_cluster")
+                except Exception:
+                    pass
+            except Exception as exc:
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT mg_proj_cluster")
+                    cur.execute("RELEASE SAVEPOINT mg_proj_cluster")
+                except Exception:
+                    pass
+                _log.debug("project_cluster_props_failed key=%s err=%r", ch.get("key"), exc)
+        cur.close()
+    except Exception as exc:
+        _log.warning("project_cluster_props 실패: %r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return done
+
+
 def sync_glossary_term(cur, scope, term, definition="", source="manual") -> None:
     gkey = _vkey(scope, f"term:{term}")
     _merge_vertex(cur, "GlossaryTerm", gkey,

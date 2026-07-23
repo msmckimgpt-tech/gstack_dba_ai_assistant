@@ -269,7 +269,11 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
             rep["processed"] += 1
             try:
                 eff = _effective_schema(dsk, okey, sch)
-                cols = _fetch_columns(cur, scope, sch, tbl)
+                # analysis-completeness(2026-07-23): 컬럼 사전은 (rag scope, raw schema) 외에
+                # (datasource_key, effective schema) 로도 조회 — 부트스트랩(mssql: schema=DB명)과
+                # node_analysis lazy introspection(scope=ds 해시·schema=eff)이 이 좌표로 적재한다.
+                cols = _fetch_columns(cur, scope, sch, tbl) or (
+                    _fetch_columns(cur, dsk, eff, tbl) if dsk else [])
                 desc = _fetch_table_desc(cur, scope, sch, tbl)
                 # content-cluster RC4: 그래프 노드 키(`<ds>:<eff>.<table>`)로 최신 done 분석문 소싱.
                 ana = _fetch_analysis_text(cur, scope, dsk, f"{dsk}:{eff}.{tbl}") if dsk else ""
@@ -682,7 +686,9 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
     ns = _label_ns_hash(datasource_key, eff_schema)
     misses = []
     for cl in clusters:
-        kv_key = f"label:{ns}:{_member_set_hash(cl['keys'])}"
+        # analysis-freshness: cache_keys(멤버키#시그니처해시) 우선 — 시그니처(분석문 포함) 변경 시
+        # 캐시 미스로 재라벨. 미전달 caller(하위호환)는 종전 멤버셋 키 유지.
+        kv_key = f"label:{ns}:{_member_set_hash(cl.get('cache_keys') or cl['keys'])}"
         cached = _valid_label(_kv_get(cur, kv_key))
         if cached:
             out[cl["idx"]] = cached
@@ -782,22 +788,23 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
         return rep
     try:
         cur = c.cursor()
-        items = []   # {kind, id, key, name, emb, cur_cid, cur_lab, schema}
+        items = []   # {kind, id, key, name, emb, cur_cid, cur_lab, schema, sig}
         cur.execute(
             "SELECT o.id, o.object_key, o.table_name, t.embedding, o.semantic_cluster_id, "
-            "o.semantic_cluster_label, o.schema_name "
+            "o.semantic_cluster_label, o.schema_name, o.signature_text_hash "
             "FROM rag_objects o JOIN texts t ON o.signature_text_hash = t.text_hash "
             "WHERE o.object_type = 'table' AND o.scope_key = %s AND o.datasource_key = %s "
             "AND o.signature_text_hash IS NOT NULL AND t.embedding IS NOT NULL",
             (scope_key, datasource_key),
         )
-        for (rid, okey, tbl, emb, ccid, clab, sch) in cur.fetchall():
+        for (rid, okey, tbl, emb, ccid, clab, sch, sig) in cur.fetchall():
             vec = _parse_embedding(emb)
             if vec is None:
                 continue
             eff = _effective_schema(datasource_key, okey, sch)
             items.append({"kind": "table", "id": rid, "key": okey or "", "name": tbl or "",
-                          "emb": vec, "cur_cid": ccid, "cur_lab": clab, "schema": eff})
+                          "emb": vec, "cur_cid": ccid, "cur_lab": clab, "schema": eff,
+                          "sig": str(sig or "")})
         # 루틴 합동 편입(RC3) — 0040 미적용 창/컬럼 부재는 1회 경고 후 테이블만 클러스터.
         # SAVEPOINT 격리(라이브 프로브 적발): caller 가 non-autocommit conn 을 주입하면 실패 SELECT 가
         # 트랜잭션을 aborted 로 남겨 이후 UPDATE 전부 InFailedSqlTransaction 으로 연쇄 실패한다.
@@ -812,19 +819,20 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             # datasource_key 등가가 실질 파티션이므로 scope 필터를 제거한다(백필 쿼리와 동형).
             cur.execute(
                 "SELECT r.id, r.schema_name, r.routine_name, t.embedding, r.semantic_cluster_id, "
-                "r.semantic_cluster_label "
+                "r.semantic_cluster_label, r.signature_text_hash "
                 "FROM routine_objects r JOIN texts t ON r.signature_text_hash = t.text_hash "
                 "WHERE r.datasource_key = %s "
                 "AND r.signature_text_hash IS NOT NULL AND t.embedding IS NOT NULL",
                 (datasource_key,),
             )
-            for (rid, sch, name, emb, ccid, clab) in cur.fetchall():
+            for (rid, sch, name, emb, ccid, clab, sig) in cur.fetchall():
                 vec = _parse_embedding(emb)
                 if vec is None:
                     continue
                 items.append({"kind": "routine", "id": rid,
                               "key": f"{datasource_key}:{sch}.{name}()", "name": f"{name}()",
-                              "emb": vec, "cur_cid": ccid, "cur_lab": clab, "schema": sch or ""})
+                              "emb": vec, "cur_cid": ccid, "cur_lab": clab, "schema": sch or "",
+                              "sig": str(sig or "")})
             try:
                 cur.execute("RELEASE SAVEPOINT sc_routine_fetch")
             except Exception:
@@ -888,8 +896,13 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             # 클러스터에 한해 lazy 수집(패널 m2: 게이트 OFF/전량 적중 시 per-member 점조회 0).
             label_inputs = []
             for local_idx, (_key, members) in enumerate(valid):
+                # analysis-freshness(2026-07-23): 라벨 캐시 키에 멤버 **시그니처 해시**를 합성 —
+                #   멤버셋이 불변이어도 분석문/설명이 갱신(시그니처 변경)되면 캐시 미스 → 재라벨.
+                #   종전 멤버셋-only 키는 'DB 전체 AI 능동 분석' 후에도 스켈레톤 시절 라벨이 영구 고착.
                 label_inputs.append({"idx": local_idx, "_members": members, "_eff": eff,
                                      "keys": [items[i]["key"] for i in members],
+                                     "cache_keys": [f"{items[i]['key']}#{(items[i].get('sig') or '')[:12]}"
+                                                    for i in members],
                                      "names": [items[i]["name"] for i in members]})
 
             def _summaries_for(cl):
@@ -943,6 +956,7 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             total_clusters += len(valid)
         rep["clusters"] = total_clusters
         # 역기록: 변경분만 UPDATE (싱글턴/미클러스터 → NULL 회수, skip 스키마는 보존).
+        changed = []   # analysis-freshness: 변경 정점 → AGE targeted 투영(30분 sync 대기 제거)
         for i, it in enumerate(items):
             if i in skipped_idx:
                 continue
@@ -955,7 +969,25 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                 (new_cid, new_lab, it["id"]),
             )
             rep["updated"] += 1
+            # graph vertex key: Table = <ds>:<eff_schema>.<table> — 테이블 세그먼트는 object_key
+            # 마지막 세그먼트(_rag_effective parts[-1] 동형, §18.8 n1 — table_name 컬럼과 미묘하게
+            # 다를 수 있는 특이 키 대비). Routine = items.key 자체가 그래프 키(`<ds>:<schema>.<name>()`).
+            if it["kind"] == "table":
+                _seg = (it["key"].split(":", 1)[-1]).split(".")[-1] if it.get("key") else ""
+                gkey = f"{datasource_key}:{it['schema']}.{_seg or it['name']}"
+            else:
+                gkey = it["key"]
+            changed.append({"label": "Table" if it["kind"] == "table" else "Routine",
+                            "key": gkey, "cid": new_cid, "lab": new_lab})
         cur.close()
+        if changed:
+            # 같은 RW conn 재사용(트랜잭션/풀 부하 최소) — 실패해도 관계형 SSOT 는 이미 갱신됨(30분
+            # incremental sync 가 회수). §82 flock 전체-sync 경로와 무관한 소량 targeted SET.
+            try:
+                from . import metadata_graph as _mg
+                _mg.project_cluster_props(changed, conn=c)
+            except Exception as exc:
+                _log.debug("cluster_props_projection_failed scope=%s err=%r", scope_key, exc)
     except Exception as exc:
         _log.warning("semantic_cluster_pass(%s) 실패: %r", scope_key, exc)
         rep["error"] = str(exc)[:200]
@@ -983,6 +1015,66 @@ def _cadence_due(cur, key, sec) -> bool:
         return cur.fetchone() is None
     except Exception:
         return True
+
+
+def _fresh_embeddings_since_mark(cur, scope_key, datasource_key, key) -> bool:
+    """마지막 재클러스터 mark 이후 이 scope 에 **새 시그니처 임베딩**이 생겼는지 — 데이터 기반 due.
+
+    analysis-freshness(사용자 리포트 2026-07-23 log_v2): 'DB 전체 AI 능동 분석' 완료로 분석문이
+    시그니처에 반영·재임베딩돼도, 종전에는 RECOMPUTE_SEC(기본 6h) 시간 cadence 만이 재클러스터를
+    깨워 컨텐츠 클러스터가 수 시간 이전 구조로 남았다. 임베딩(texts.embedded_at)이 mark(kv
+    updated_at)보다 새로우면 cadence 를 기다리지 않고 다음 maintenance pass(INTERVAL_SEC, 기본
+    15분)에서 재클러스터한다. routine_objects 는 datasource_key 파티션(h1 비대칭 — scope 필터 0-match).
+    kv 행 부재는 _cadence_due 가 이미 due. 예외 → False(시간 cadence 폴백, fail-soft).
+    churn 가드: 이 datasource 에 **진행 중 분석 run**(node_analysis_runs running, lease 이내)이
+    있으면 유예 — 장시간 run 도중 매 pass 부분-신선 데이터로 재클러스터·재라벨(LLM)이 반복되는
+    것을 막고, run 완료 후 다음 pass 에서 완전한 분석문 기준으로 1회 재클러스터한다."""
+    try:
+        cur.execute(
+            "SELECT 1 FROM agent_runtime.kv v "
+            "WHERE v.conversation_id = %s AND v.key = %s AND ("
+            " EXISTS (SELECT 1 FROM rag_objects o JOIN texts t ON o.signature_text_hash = t.text_hash"
+            "  WHERE o.object_type = 'table' AND o.scope_key = %s AND o.datasource_key = %s"
+            "  AND t.embedded_at IS NOT NULL AND t.embedded_at > v.updated_at)"
+            " OR EXISTS (SELECT 1 FROM routine_objects r JOIN texts t2 ON r.signature_text_hash = t2.text_hash"
+            "  WHERE r.datasource_key = %s"
+            "  AND t2.embedded_at IS NOT NULL AND t2.embedded_at > v.updated_at))",
+            (_CLUSTER_KV_CONV, key, scope_key, datasource_key, datasource_key),
+        )
+        if cur.fetchone() is None:
+            return False
+        try:
+            lease = max(60, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_LEASE_SEC", 900)))
+            cur.execute(
+                "SELECT 1 FROM node_analysis_runs WHERE scope_key = ANY(%s) AND status = 'running' "
+                "AND updated_at > now() - make_interval(secs => %s) LIMIT 1",
+                (sorted({s for s in (str(scope_key or ""), str(datasource_key or "")) if s}), lease),
+            )
+            if cur.fetchone() is not None:
+                return False   # run 진행 중 — 완료 후 재클러스터(다음 pass)
+        except Exception:
+            pass   # runs 테이블 부재(마이그 창) 등 — 가드 없이 due 유지
+        # §18.8 M3(드레인 churn 가드): 이 scope 에 **미임베딩 시그니처**가 남아 있으면 유예 —
+        # 백필(패스당 캡)·임베딩 데몬 드레인 중 매 pass 부분-멤버셋 재클러스터가 라벨 캐시 전패
+        # (LLM 재라벨 반복)·밴드 flap 을 만든다. 드레인 완료 후 임베딩 착지가 재트리거(자가치유).
+        try:
+            cur.execute(
+                "SELECT 1 WHERE EXISTS ("
+                " SELECT 1 FROM rag_objects o JOIN texts t ON o.signature_text_hash = t.text_hash"
+                " WHERE o.object_type = 'table' AND o.scope_key = %s AND o.datasource_key = %s"
+                " AND t.embedding IS NULL)"
+                " OR EXISTS ("
+                " SELECT 1 FROM routine_objects r JOIN texts t2 ON r.signature_text_hash = t2.text_hash"
+                " WHERE r.datasource_key = %s AND t2.embedding IS NULL)",
+                (scope_key, datasource_key, datasource_key),
+            )
+            if cur.fetchone() is not None:
+                return False   # 임베딩 드레인 중 — 완결 후 재클러스터
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 def _kv_put(cur, key, value) -> None:
@@ -1019,7 +1111,8 @@ def run_cluster_maintenance(conn=None) -> dict:
         try:
             for (scope, dsk) in scopes:
                 key = f"cluster_at:{scope}:{dsk}"
-                if not _cadence_due(cur, key, rsec):
+                # 시간 cadence(RECOMPUTE_SEC) 또는 데이터 기반 due(mark 이후 새 임베딩) — analysis-freshness.
+                if not _cadence_due(cur, key, rsec) and not _fresh_embeddings_since_mark(cur, scope, dsk, key):
                     continue
                 r = run_semantic_cluster_pass(scope, dsk, conn=c)
                 _cadence_mark(cur, key)
