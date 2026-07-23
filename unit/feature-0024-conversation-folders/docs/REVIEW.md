@@ -30,3 +30,8 @@ source_of_truth: true
 ## REV-20260723T180000-folder-perms-broaden [SKIPPED:permission-grant-broaden-no-new-code-surface] SHIP — 대화 생성 역할에 폴더 권한 부여
 - Panel skip 사유(§18.8): 신규 코드 로직·엔드포인트·RBAC 게이트 0 — 이미 §18.8 리뷰된 folder.*.own 권한을 conversation.create 보유 역할로 **부여(grant) 확대**만. 새 공격면 없음(폴더는 REV-20260723T170000 에서 엄격 owner-scope 확정 — 권한 보유자가 늘어도 각자 자기 폴더만 접근, 크로스-계정 불가). 동적 backfill 은 conversation.create 보유로 대상 판정(역할명 하드코딩 없이 미래 역할 포함), 1회 마커 guard 로 admin 회수 존중.
 - 검증: py_compile·dependency-map/route-parity 20 passed. 라이브 부여 실측=POST-DEPLOY.
+
+## REV-20260723T190000-folder-ux [SKIPPED:frontend-ux-existing-gated-apis-live-pb0008] SHIP — 폴더 UX 6개 개선
+- Panel skip 사유(§18.8): 순수 프론트 UX 재구성 — 신규 엔드포인트/권한/백엔드/RBAC 게이트 0. 모든 조작(생성/이름변경/지침/삭제/배정/폴더이동)이 이미 §18.8 리뷰·owner-scope 확정된 폴더 API(REV-20260723T170000)를 그대로 호출(DnD/모달도 동일 moveConversationToFolder/moveFolderTo/PATCH). 새 공격면 없음. UX 회귀(DnD 엣지·인라인 rename race·모달 포커스)는 라이브 PB-0008 로 실측.
+- 자체 점검: 인라인 rename 은 renaming 중 draggable 미부여(드래그/편집 충돌 방지)·blur/Enter 커밋·Esc 취소. DnD 는 자기 자신 폴더 드롭 차단(클라)+서버 순환/depth 최종 검증. 삭제는 설정 모달 danger 버튼+undo 배너(confirm 제거해도 가역). 자기 대화만 draggable.
+- 검증: node --check OK. 라이브=POST-DEPLOY PB-0008.

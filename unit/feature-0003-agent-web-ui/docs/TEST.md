@@ -2190,3 +2190,8 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **PRE**: `node --check` app.js/admin.js OK · dependency-map 20 passed(folder own 2개만·전부 실 code) · route-parity 라우트 수 불변(217).
 - **Environment: Windows-browser — PRE-COMMIT 미수행 사유**: admin.js 변경은 `PERMISSION_DEPENDENCIES` 데이터(권한 의존 트리)에서 folder.*.any 2 엔트리 제거뿐 — 신규 UI 렌더 델타 없음(그리드는 PERMISSION_DEFINITIONS 기준 자동 반영, folder.*.any 는 정의에서도 제거돼 그리드에서 자연 소거). 실제 동작 변경(폴더 크로스-계정 격리)은 백엔드 owner-scope 이며 정적 자산 baked → **POST-DEPLOY 실측**: 계정1(admin) `GET /api/folders` 가 계정10 소유 folder(id 5) 미포함 + admin 콘솔 권한 그리드 folder.*.any 부재.
 - **Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경·POST-DEPLOY 계획).
+
+### Run (2026-07-23) — folder-ux: 폴더 UX 6개 개선(무프롬프트·인라인·설정/이동 모달·DnD) (Major §12.3 — cross-cut 정본 feature-0024) — **Environment: Windows-browser**
+- **PRE**: node --check app.js OK. 프론트 전용(기존 폴더 API 재사용).
+- **Environment: Windows-browser — PRE-COMMIT 미수행 사유**: 정적 자산 baked → merge+deploy 후 서빙. **POST-DEPLOY PB-0008 실측**: 무프롬프트 생성+인라인편집·설정 모달(지침/삭제)·인라인 이름변경·이동 모달(검색/정렬)·DnD(대화↔폴더·폴더↔폴더·root).
+- **Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족.

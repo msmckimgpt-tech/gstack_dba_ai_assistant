@@ -74,3 +74,7 @@ source_of_truth: true
 - [x] 진단: folder.*.own 이 admin 만 보유 → 폴더가 admin 전용. conversation.create 보유는 admin·dba·dev_server·dos_web·operator·sales·usermanager 7역할.
 - [x] 구현: SEED operator/sales + _backfill_folder_perms_v1(conversation.create 보유 전 역할 동적 부여·1회 마커). py_compile·테스트 20 passed.
 - [x] 배포(PR #903→main f5341ccc, deploy-web) + POST-DEPLOY 부여 실측: backfill 마커 기록 + **conversation.create 보유 7역할(admin·dba·dev_server·dos_web·operator·sales·usermanager) 전부 folder.list.own+manage.own 보유**, pending 제외. 두 replica healthy·f5341ccc.
+
+## TASK-20260723T190000-folder-ux — 폴더 동작 UX 6개 개선 (사용자 요청)
+- [x] ①무프롬프트 생성+자동 인라인편집 ②설정 모달 ③인라인 이름변경 ④지침 모달 ⑤이동 모달(검색·정렬) ⑥DnD. prompt/confirm 제거. node --check OK.
+- [ ] 배포 + POST-DEPLOY PB-0008(6개 라이브 실측).
