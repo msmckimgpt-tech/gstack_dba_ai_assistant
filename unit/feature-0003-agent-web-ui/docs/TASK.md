@@ -64,8 +64,8 @@ source_of_truth: true
 - [x] 프론트 재구성(admin.js): `_reasoningStageTimeline`(① 초안 → ② 적대 리뷰[결함 N·BLOCK/WARN] → ③ 결함 수정[도구 재추론 축·라운드 / 텍스트 재작성 / 미적용 fail-open] → ④ 재검증[verify_verdict] → ⑤ 최종) + `_reasoningFindingHtml`(claim 수정전 → fix_hint 수정후 전/후 대비 + evidence 근거) + `_reasoningAxisSummary`(5축 집계 배지) + `_reasoningConvLink`(대화 딥링크, `__` sentinel=시스템 라벨). 강도 한글화(낮음/일반/높음/매우높음). 힌트 문구 진행 과정 설명으로 갱신.
 - [x] styles.css: `.reasoning-timeline/-stage(-done/warn/skip/na/err)`·`.reasoning-finding(-block/warn)`·`.reasoning-ba(-col before/after)`·`.reasoning-sev`·`.reasoning-axis--{grounding/sql/permission/completeness/honesty}`·`.reasoning-axis-summary/-badge`·`.reasoning-conv` — 기존 CSS 변수 재사용, 라이트/다크 대응.
 - [x] 로컬 검증: `node --check`(ESM) admin.js OK · `py_compile` admin_reasoning.py OK · 실제 소스 추출 harness 단위 22/22 PASS(5단계 타임라인·rederive 축/라운드·강도 한글화·전후 대비·축 라벨·재검증·pass/error·sentinel 분기·축 집계·XSS 이스케이프).
-- [ ] §18.8 적대 panel(프론트/UX/보안 + 백엔드/QA general-purpose) — REV-20260723T074530-reasoning-timeline.
-- [ ] 배포(deploy_scope: included) + POST-DEPLOY PB-0008 라이브 시각검증(Environment: Windows-browser, hard gate) — 사용자 confirm 후 PR/배포.
+- [x] §18.8 적대 panel(프론트/UX/보안 + 백엔드/QA general-purpose) — REV-20260723T074530-reasoning-timeline: BLOCK 1(B1 pass+WARN-only 오표기)/WARN 2(W2 축집계 페이징·W4 카운트) in-cycle 수정 + 백엔드 hardening. harness 21/21.
+- [x] 배포(deploy_scope: included) + POST-DEPLOY PB-0008 라이브 시각검증(Environment: Windows-browser, hard gate): PR #901 → main **e4ef9384** → deploy-web --web-only(web-a/b 롤링·soak PASS·stamp d09bcdc34a46) → 라이브 리뷰 30건 타임라인(150 stages)·전후 47·rederive(SQL)·5축·딥링크 30·**W2 47→93 재계산**·**B1 pass 정확**·pageerror 0 PASS.
 - 위험도: Major §12.3(프론트+API·behavior 추가·웹UI). 인증/인가/파괴적데이터/마이그레이션 없음(Critical 아님). API=additive read-only. 권한 게이트(`console.reasoning.read`) 불변.
 - AC-20260723T074530-reasoning-timeline-1: 각 리뷰 판정이 초안→리뷰→수정→재검증→최종 진행 단계로 표시된다.
 - AC-20260723T074530-reasoning-timeline-2: 결함이 claim(수정전)→fix_hint(수정후) 전/후 대비로 표시된다.
