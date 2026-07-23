@@ -1,6 +1,6 @@
 {
-  "total_routes": 211,
-  "api_routes": 210,
+  "total_routes": 217,
+  "api_routes": 216,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -501,6 +501,48 @@
       "path": "/api/ask",
       "methods": [
         "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/folders",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/folders",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/folders/{folder_id}",
+      "methods": [
+        "PATCH"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/folders/{folder_id}",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/folders/{folder_id}/restore",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/conversations/{conversation_id}/folder",
+      "methods": [
+        "PATCH"
       ],
       "type": "APIRoute"
     },
