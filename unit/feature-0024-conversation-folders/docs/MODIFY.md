@@ -28,3 +28,7 @@ source_of_truth: true
 - Phase 2a(TASK-0010): 요청자 배정 폴더 instructions 를 ACCOUNT PREFERENCES 뒤 주입(per-asker·ask-time·IDOR 안전·fail-open). datasource/product 자동스코프+폴더 파일=Phase 2b 이연.
 - 보안 수정(TASK-0011, §18.8 REV-20260723T060000): **HIGH** restore IDOR(body ids owner 무검증 un-archive) → `restore_folders(owner_account_id)` SQL owner 스코프. **LOW** `_folder_instructions_for` 조인에 `f.owner_account_id=m.account_id`. **LOW** create/update 에서 datasource/product 수신 제거(inert 무권한 저장 방지, Phase 2b 이연).
 - 검증: node --check app.js · py_compile 전체 · migrate-lint head 0044 · dependency-map 90pairs PASS. 라이브=POST-DEPLOY PB-0008. Cross-ref: REV/TEST-20260723 conv-folders.
+
+## CHG-20260723T160500-conv-folders-postverify (TASK-0012 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-23. 코드/자산 무변경 — POST-DEPLOY 검증 원장. 배포 PR #895 → main 7f8e7a40 → deploy-web --web-only(soak PASS·alembic 0044 적용·폴더테이블+GRANT).
+- 라이브 e2e(win-browser Chrome 150, bootstrap_admin): 폴더 CRUD·하위폴더(depth2)·목록(max_depth4)·대화 배정·지침 설정 전부 200 + 무결성(depth상한 d5 422·순환 422·삭제 서브트리 archive·대화 보존 true·undo 4) + 지침 주입 PG 확증 + HIGH IDOR 수정 serving 확인 + 사이드바 재귀 폴더 트리 시각 렌더. 테스트 데이터 정리(PG 활성폴더 0). Cross-ref: REV-20260723T060000-conv-folders · TEST Run(conv-folders POST-DEPLOY).

@@ -35,7 +35,7 @@ source_of_truth: true
 - [x] TASK-0009 프론트: 사이드바 재귀 폴더 렌더(app.js:3022) + 메뉴 이동/CRUD UI + undo + cache-buster(?v=dev 자동) · 커밋 308aecff (node --check PASS)
 - [x] TASK-0010 Phase2a: 폴더 지침 ask-time 주입(compose_system_prompt 요청자 폴더) · 커밋 6fb4e976. **폴더 파일 + datasource/product 자동 스코프 = Phase 2b 이연**(첨부 IDOR 스코프 전용 보안 리뷰 필요).
 - [x] TASK-0011 §18.8 적대 보안 리뷰(general-purpose, IDOR/격리/RBAC/SQLi/injection/깊이) — HIGH 1(restore IDOR) + LOW 2 **전부 in-cycle 수정**(REV-20260723T060000). py_compile PASS. 단위 e2e 는 POST-DEPLOY PB-0008(폴더 테이블 배포 시 생성).
-- [ ] TASK-0012 verify-completion + PB-0008 라이브 시각검증 + 배포(deploy_scope: included) (▶ 진행 중)
+- [x] TASK-0012 verify-completion PASS + 배포(PR #895→main 7f8e7a40, deploy-web soak PASS, alembic 0044 적용·폴더테이블·GRANT 확인) + **POST-DEPLOY PB-0008 라이브 e2e PASS**(CRUD·재귀·계정별 배정·삭제 보존·undo·깊이/순환 무결성·지침 주입·IDOR 수정 전부 라이브 확증, 테스트 데이터 정리 완료). Phase 1 + Phase 2a **완결**.
 
 ## 4. In Progress
 - TASK-0009 (프론트 사이드바 폴더 UI) — 다음 착수. 백엔드 전 계층 완료.
