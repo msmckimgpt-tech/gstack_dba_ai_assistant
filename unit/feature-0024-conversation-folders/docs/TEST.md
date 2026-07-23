@@ -58,3 +58,5 @@ source_of_truth: true
 - Result Summary: **PRE-DEPLOY** — py_compile(folders/_folder_store/web_context) · node --check(app.js/admin.js) · dependency-map(folder own 2개만·전부 실 code) · route-parity **20 passed**(라우트 수 불변 217). list_folders 항상 owner-scope, _require_folder_owner/restore owner-only, folder.*.any 폐지.
 - Environment: Windows-browser — **POST-DEPLOY 크로스-계정 격리 실측 예정**: 계정1(admin) GET /api/folders 응답이 계정10 소유 folder(id 5) 를 **미포함**함을 확인 + admin 콘솔 권한 그리드에 folder.*.any 부재.
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
+
+- **[POST-DEPLOY 2026-07-23] folder-privacy 크로스-계정 격리 실측 (PASS, Windows-browser/API, 라이브 92c89b46)**: PR #899 → main 92c89b46 → deploy-web(soak PASS). 서빙 `_folder_store.py` owner-scope 3매치·`all_owners` 0. **격리 확증**: 계정10 소유 folder(id 5) 활성 존재 상태에서, 계정1(bootstrap_admin, 수정 전 folder.list.any 로 노출되던) `GET /api/folders` = **빈 배열**(seesAccount10Folder=false, allOwnedByMe=true). 크로스-계정 노출 해소. orphan folder.*.any 권한/grant 라이브 DB 정리(folder.*.own 만 잔존). Pass/Fail: **PASS**.
