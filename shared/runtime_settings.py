@@ -70,6 +70,8 @@ __all__ = [
     "GROUP_REASONING_BUDGET",
     "GROUP_AGENT_MAX_OUTPUT",
     "GROUP_REDTEAM",
+    "GROUP_FOLDER",
+    "folder_max_depth",
 ]
 
 GROUP_TIMEOUT = "timeout"
@@ -749,6 +751,33 @@ def _scratch_specs() -> tuple[dict[str, Any], ...]:
     return tuple(dict(spec, group=GROUP_SCRATCH) for spec in _SCRATCH_SPECS)
 
 
+# ── 대화 폴더(프로젝트) (feature-0024) ────────────────────────────────────
+GROUP_FOLDER = "folder"
+
+_FOLDER_SPECS: tuple[dict[str, Any], ...] = (
+    {
+        "key": "folder_max_depth",
+        "category": "대화 폴더",
+        "label": "폴더 최대 중첩 깊이",
+        "description": "대화 폴더를 몇 단계까지 중첩할 수 있는지의 상한(1=중첩 없음). 이 값을 낮춰도 이미 더 깊어진 기존 폴더는 그대로 보존되며, 앞으로 그보다 더 깊게 만들거나 옮기는 것만 막힙니다(같거나 얕은 이동은 항상 허용).",
+        "unit": "단계",
+        "default": 4,
+        "minimum": 1,
+        "maximum": 20,
+        "apply_mode": "live",
+    },
+)
+
+
+def _folder_specs() -> tuple[dict[str, Any], ...]:
+    return tuple(dict(spec, group=GROUP_FOLDER) for spec in _FOLDER_SPECS)
+
+
+def folder_max_depth() -> int:
+    """대화 폴더 최대 중첩 깊이(런타임 override 반영, 기본 4). create/move 에서만 강제(grandfathering)."""
+    return get_int("folder_max_depth")
+
+
 # 스펙은 프로세스 수명 내 정적이다(타임아웃=리터럴, 모델 예산=import-time 고정 카탈로그 순회).
 # get_int·model_thinking_budget_override 가 매 MCP 요청·매 timeout 해석마다 spec_for 를 호출하므로
 # 전체 스펙/인덱스를 1회 계산 후 메모이즈한다(적대 backend MINOR — hot-path 재빌드 제거).
@@ -767,6 +796,7 @@ def list_specs() -> tuple[dict[str, Any], ...]:
             + _reasoning_budget_specs()
             + _redteam_specs()
             + _scratch_specs()
+            + _folder_specs()
         )
     return _SPECS_CACHE
 

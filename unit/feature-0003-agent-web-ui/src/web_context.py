@@ -721,6 +721,32 @@ PERMISSION_DEFINITIONS = (
         "description": "모든 계정의 대화 첨부를 조회할 수 있다. 운영자 한정.",
         "group": "conversation_any",
     },
+    # feature-0024-conversation-folders: 대화 폴더(프로젝트) 권한. 폴더는 계정별 개인
+    # 조직 오버레이라 conversation_own/any 운영 카테고리에 합류(별도 group 미신설).
+    {
+        "code": "folder.list.own",
+        "label": "내 폴더 조회",
+        "description": "자신의 대화 폴더 트리를 볼 수 있다.",
+        "group": "conversation_own",
+    },
+    {
+        "code": "folder.list.any",
+        "label": "전체 폴더 조회",
+        "description": "모든 계정의 대화 폴더를 볼 수 있다. 운영자 한정.",
+        "group": "conversation_any",
+    },
+    {
+        "code": "folder.manage.own",
+        "label": "내 폴더 관리",
+        "description": "자신의 대화 폴더를 만들고 이름변경·삭제·이동하고, 접근 가능한 대화를 자신의 폴더에 배정할 수 있다.",
+        "group": "conversation_own",
+    },
+    {
+        "code": "folder.manage.any",
+        "label": "전체 폴더 관리",
+        "description": "모든 계정의 대화 폴더를 관리할 수 있다. 운영자 한정.",
+        "group": "conversation_any",
+    },
     # TASK-0161: attachment.execute_sql_on.own/.any 제거 (거짓 컨트롤).
     #   TASK-0094 Sprint 1 Phase 12 가 이를 defense-in-depth 의 RBAC 층으로 정의했으나
     #   enforce 가 한 번도 배선되지 않아(권한 체크 호출처 0) 관리 권한 그리드의 두 체크박스가
@@ -2155,6 +2181,15 @@ def _ensure_seed_roles(conn) -> None:
             # role 생성 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row 에는 retroactive
             # 미적용. 미보정 시 기존 admin 이 `감사 > AI 추론` 탭을 못 본다(lockout). 타 역할 미부여.
             "console.reasoning.read",
+            # feature-0024-conversation-folders: admin 의 대화 폴더 권한 4건 catchup. **필수** —
+            # 신규 권한은 role 생성 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row
+            # 에는 retroactive 미적용. 미보정 시 기존 admin 이 폴더 조회·관리(사이드바 폴더 UI·
+            # /api/folders)를 잃는다(fail-closed lockout). 폴더는 계정별 개인 오버레이라 own 이 실사용,
+            # any 는 latent 운영 역량. operator/sales/dba/pending 미부여(least-privilege).
+            "folder.list.own",
+            "folder.list.any",
+            "folder.manage.own",
+            "folder.manage.any",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
