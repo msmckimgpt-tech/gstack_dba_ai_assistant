@@ -1640,7 +1640,15 @@ async def post_branch_switch(cid: str, request: Request) -> JSONResponse:
 
 @router.get("/api/conversations/{cid}/shares")
 def list_conversation_shares(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
-    """해당 대화의 share 목록 (활성 + revoked 모두). 조회 권한: read.own/any."""
+    """해당 대화의 share 목록. owner/`.any` 감사자는 전체, 그 외(멤버·API 토큰)는 **본인 생성분만**.
+
+    보안(SEC-20260723 REV-share-window): share 토큰은 anonymous 접근을 부여하는 민감 자격이다.
+    이전엔 `read.own` 멤버도 **전** share 토큰을 볼 수 있어, 윈도우 제한 멤버가 owner 의
+    `scope_mode="full"` share 토큰을 얻어 자기 가시성 윈도우를 escape할 수 있었다(SECURITY.md
+    §21.4/§21.6 위반; API 토큰 멤버로도 악용). 수정: owner(또는 감사용 `.any`)가 아니면 반환
+    목록을 `CreatedBy = 본인`으로 필터 — 타인(owner 포함) 토큰은 숨기되(escape 봉인) 비-owner
+    멤버가 백엔드 허용대로 만든 view-only 자기 공유의 목록/취소 관리는 보존한다(REV FINDING-1).
+    """
     if not app._account_can_access_conversation(
         conn,
         account,
@@ -1649,19 +1657,37 @@ def list_conversation_shares(cid: str, request: Request, account=Depends(app.get
         "conversation.read.any",
     ):
         return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    # owner/`.any` 감사자만 전체 열람. 그 외(멤버·토큰)는 본인 생성 share 로 한정(escape 봉인).
+    is_owner_or_auditor = bool(
+        app._conversation_owned_by_account(conn, cid, int(account["id"]))
+        or app._account_has_permission(account, "conversation.read.any")
+    )
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute(
-            """
+        if is_owner_or_auditor:
+            cur.execute(
+                """
 SELECT Id, Token, ScopeMode, AnchorMessageId, CreatedBy, CreatedAt,
        RevokedAt, RevokedBy, ViewCount, LastViewedAt, ExpiresAt,
        (ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()) AS IsExpired
 FROM WebConversationShares
 WHERE ConversationId = %s
 ORDER BY CreatedAt DESC, Id DESC
-            """,
-            (cid,),
-        )
+                """,
+                (cid,),
+            )
+        else:
+            cur.execute(
+                """
+SELECT Id, Token, ScopeMode, AnchorMessageId, CreatedBy, CreatedAt,
+       RevokedAt, RevokedBy, ViewCount, LastViewedAt, ExpiresAt,
+       (ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()) AS IsExpired
+FROM WebConversationShares
+WHERE ConversationId = %s AND CreatedBy = %s
+ORDER BY CreatedAt DESC, Id DESC
+                """,
+                (cid, int(account["id"])),
+            )
         rows = cur.fetchall() or []
     finally:
         cur.close()

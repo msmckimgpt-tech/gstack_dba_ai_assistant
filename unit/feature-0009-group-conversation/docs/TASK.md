@@ -175,4 +175,5 @@ source_of_truth: true
 - [x] TEST.md에 테스트 결과가 기록되었다
 - [x] docs/SECURITY.md 에 AR-1/AR-2 수용 위험이 등재되었다 (§18 원본 + §21 windowed 한정 반전 — share-visibility-window)
 - [x] STATUS.md에 기능 상태가 갱신되었다
+- [x] SEC-20260723 share-list owner 게이트 + revoke oracle 균질화 (§21.6, CHG-20260723T093806)
 - [ ] Git 커밋·원격 동기화가 완료되었거나 보류 사유가 기록되었다
