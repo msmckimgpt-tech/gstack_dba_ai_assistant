@@ -29,25 +29,25 @@ source_of_truth: true
 - [x] TASK-0003 기반 스키마: alembic 0044(conversation_folders + folder_conversation_map) + GRANT 트랩 + schema.sql parity — migrate-lint(head 단일·expand-safe) PASS·py_compile PASS
 - [ ] TASK-0004 RBAC: `folder.*` own/any 4지점(web_context 정의·seed catchup·admin.js 의존성·section) + dependency-map 테스트 동기화
 - [ ] TASK-0005 런타임 설정 `folder_max_depth`(WebRuntimeSettings, 기본 4) + admin UI
-- [ ] TASK-0006 백엔드 folder CRUD 라우트(routers/folders.py, _pg_connect) + 재귀 CTE(depth cap·순환 방지)
-- [ ] TASK-0007 대화 배정/이동 `PATCH /api/conversations/{cid}/folder`(계정별 upsert·접근 게이트) + 폴더 삭제(archived_at soft·undo·대화 보존)
-- [ ] TASK-0008 대화 목록 payload 에 요청자 스코프 folder_id(_list_conversations_pg, additive)
-- [ ] TASK-0009 프론트: 사이드바 재귀 폴더 렌더(app.js:3022) + 드래그·우클릭 이동 + 폴더 CRUD UI + breadcrumb + cache-buster
+- [x] TASK-0006 백엔드 folder CRUD 라우트(routers/folders.py) + 스토어(_folder_store.py) 재귀 CTE(depth cap·순환 방지·grandfathering) — py_compile PASS · 커밋 ca7c398e
+- [x] TASK-0007 대화 배정/이동 `PATCH /api/conversations/{cid}/folder`(계정별 upsert·2중 게이트[대화 read + 폴더 소유]) + 폴더 삭제(soft-delete 서브트리·undo·대화 보존) · 커밋 ca7c398e
+- [x] TASK-0008 대화 목록 payload 요청자 스코프 folder_id(_build_conversations_payload, additive·fail-open) · 커밋 ca7c398e
+- [ ] TASK-0009 프론트: 사이드바 재귀 폴더 렌더(app.js:3022) + 우클릭/메뉴 이동 + 폴더 CRUD UI + breadcrumb + cache-buster (▶ 다음 증분)
 - [ ] TASK-0010 Phase2: 폴더 지침 ask-time 주입(compose_system_prompt, 요청자 폴더) + 폴더 파일(첨부 스코프 요청자-폴더 확장) + 쿼리 스코프 핀
 - [ ] TASK-0011 단위 테스트(배정 계정격리·depth/순환·삭제 보존·IDOR) + §18.8 적대 보안 리뷰(IDOR/그룹)
 - [ ] TASK-0012 verify-completion + PB-0008 라이브 시각검증 + 배포(deploy_scope: included)
 
 ## 4. In Progress
-- TASK-0004 (RBAC) — 다음 착수.
+- TASK-0009 (프론트 사이드바 폴더 UI) — 다음 착수. 백엔드 전 계층 완료.
 
 ## 5. Blocked
 - 없음
 
 ## 6. Done
-- TASK-0001·0002·0003 (리서치·설계·스펙·기반 스키마).
+- TASK-0001~0008 (리서치·설계·스펙·기반 스키마·RBAC·런타임 설정·백엔드 스토어/라우트/배정/삭제/payload). 백엔드 계층 완성·py_compile/migrate-lint 검증. 라이브 미배포(프론트+배포 후 PB-0008).
 
 ## 7. Next Action
-- RBAC `folder.*` 권한 4지점 등록 + 런타임 max-depth 설정.
+- 프론트 사이드바 재귀 폴더 렌더 + CRUD/이동 UI(app.js:3022 seam) → Phase2 컨텍스트 주입 → 테스트/보안리뷰/배포.
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

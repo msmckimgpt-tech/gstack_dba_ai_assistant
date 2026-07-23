@@ -16,7 +16,7 @@ source_of_truth: true
 ## 2. Goal
 - REQ-20260723-folder-organize: 대화를 폴더로 **이동/제외**한다. 배정은 **계정별 독립**(소유자·공유 멤버 각자 자기 폴더 트리에 그 대화를 배치). 이동은 이후 대화 컨텍스트만 바꾸고 과거 응답은 불변.
 - REQ-20260723-folder-delete-keep: 폴더를 **삭제하면 대화는 보관**(대화의 폴더 배정만 해제/승격, soft-archive 아님). 폴더 삭제는 Trash+undo(우발 손실 방지), 하위 대화/서브폴더는 부모(또는 root)로 승격.
-- REQ-20260723-folder-recursive: 폴더 **재귀 중첩**. 최대 깊이는 **런타임 설정값**(WebRuntimeSettings, 기본 4)으로 조절. 생성/이동 시 상한 강제 + 순환 방지.
+- REQ-20260723-folder-recursive: 폴더 **재귀 중첩**. 최대 깊이는 **런타임 설정값**(WebRuntimeSettings, 기본 4)으로 조절. **grandfathering**: 설정을 낮춰도 이미 깊어진 폴더는 소급 강제·평탄화하지 않고 그대로 보존한다. 상한은 **create/move 시점에만** 강제하되 "더 깊어지는 경우"만 차단(같거나 얕아지는 이동은 항상 허용). 순환 방지.
 - REQ-20260723-folder-knowledge: 폴더 단위 **커스텀 프롬프트** + **미리 첨부된 파일**. 요청 시 **요청자의 폴더 기준**으로 시스템 프롬프트·첨부 컨텍스트에 주입(per-asker, ask-time). 폴더 소유자=요청자라 IDOR 안전.
 - REQ-20260723-folder-query-scope: (DQA 특화) 폴더에 **기본 데이터소스/제품·스키마 스코프**·규약 지침을 핀 → 폴더 내 대화가 상속(반복 마찰 차단).
 - REQ-20260723-folder-rbac: 폴더 조작 권한을 own/any 패턴으로 RBAC 카탈로그에 등록(`folder.*`), 기존 그룹 ACL 과 정합.
@@ -57,7 +57,7 @@ source_of_truth: true
 
 ## 8. Edge Cases
 - 순환 참조(parent 체인에 자기 포함) → 거부.
-- depth cap 초과 이동/생성 → 거부(설정값 기준).
+- depth cap 초과 **신규** 이동/생성 → 거부(설정값 기준). 단 grandfathering: 이미 상한 초과인 기존 폴더는 보존, create=`parent_depth+1 > cap` 거부, move=결과 절대깊이가 상한 초과 **AND** 기존보다 깊어질 때만 거부(같음/얕아짐은 허용).
 - 공유 대화를 멤버가 자기 폴더에 배정 → 소유자 뷰 불변(계정별 격리).
 - 폴더 삭제 시 하위 서브폴더/대화 승격.
 - 접근 불가 대화를 폴더에 배정 시도 → `_account_can_access_conversation` 게이트 거부.
