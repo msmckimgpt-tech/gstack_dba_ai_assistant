@@ -31,6 +31,7 @@ source_of_truth: true
 - RBAC `folder.*`(list/create/rename/delete/move .own·.any) 4지점 등록.
 
 ## 4. Out of Scope
+- **Phase 2b (후속 증분)**: 폴더 **파일**(폴더-소유 첨부 저장 + ask-time 요청자-폴더 주입 + 첨부 IDOR 스코프 확장) 및 **datasource/product 자동 스코프 핀**(폴더 컬럼은 스키마에 이미 존재 — 향후 배선). 첨부 스코프 IDOR 확장은 별도 저장·보안 표면이 크므로 전용 적대 리뷰와 함께 별도 증분. Phase 2a 는 폴더 **지침(프롬프트)** ask-time 주입만 포함.
 - feature-0022 scratch 작업공간의 폴더별 승격(지속 cross-source JOIN) — 별도 후속(D3=A 첨부 seed 채택, scratch 승격은 v2+).
 - 공유 폴더 자체(폴더 트리를 타 계정과 공유) — v1 은 폴더=개인 조직 오버레이. 공유 대화는 각 멤버가 자기 폴더에 배치(REQ-organize)하되 폴더 구조 자체는 공유 안 함.
 - 저장 쿼리를 폴더 1급 자산으로(확장 ⑧) — 후속.

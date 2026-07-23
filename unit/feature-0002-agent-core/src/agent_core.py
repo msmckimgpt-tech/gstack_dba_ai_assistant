@@ -1087,6 +1087,47 @@ def _build_attachment_context_section(
     return "\n".join(lines)
 
 
+def _folder_instructions_for(account_id, conversation_id) -> str | None:
+    """feature-0024-conversation-folders: 요청 계정이 그 대화를 배정한 활성 폴더의 지침(instructions).
+
+    폴더는 계정별 개인 오버레이라 "이 대화의 폴더 컨텍스트"는 요청자(account_id)의 배정 폴더다
+    (per-asker, ask-time). 폴더 소유자=요청자라 IDOR 안전(자기 폴더의 자기 지침). 폴더 미배정/
+    미부트스트랩/PG 오류면 None(fail-open — 폴더 없이 정상 답변). 지침은 폴더 소유자 본인이
+    작성한 자기 지침이므로 account preferences 와 동급의 신뢰(주입 가드 대상 아님)."""
+    if not account_id or not conversation_id:
+        return None
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return None
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                """
+SELECT f.instructions
+FROM agent_runtime.folder_conversation_map m
+JOIN agent_runtime.conversation_folders f
+  ON f.folder_id = m.folder_id AND f.archived_at IS NULL
+WHERE m.account_id = %s AND m.conversation_id = %s
+  AND f.instructions IS NOT NULL AND btrim(f.instructions) <> ''
+""",
+                (int(account_id), conversation_id),
+            )
+            row = cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if not row or not row[0]:
+        return None
+    text = str(row[0]).strip()
+    return text or None
+
+
 def compose_system_prompt(
     mem_conn,
     *,
@@ -1248,6 +1289,17 @@ def compose_system_prompt(
             f"### {block_label}\n{block_content.strip()}" for block_label, block_content in account_blocks
         )
         parts.append(f"\n\n## ACCOUNT PREFERENCES\n{account_text}\n")
+
+    # feature-0024-conversation-folders: 요청자가 이 대화를 배정한 폴더(프로젝트)의 커스텀 지침을
+    # ACCOUNT PREFERENCES 뒤에 주입한다(폴더가 더 구체적 맥락). per-asker·ask-time — 폴더는 계정별
+    # 오버레이라 "이 대화의 폴더"는 지금 질문하는 사람의 배정 폴더다. 폴더 소유자=요청자라 IDOR 안전.
+    # 실패(미배정/미부트스트랩/PG 오류)는 fail-open(폴더 없이 정상 답변).
+    try:
+        _folder_instr = _folder_instructions_for(account_id, conversation_id)
+        if _folder_instr:
+            parts.append(f"\n\n## FOLDER INSTRUCTIONS\n{_folder_instr}\n")
+    except Exception:
+        pass
 
     try:
         cur.close()

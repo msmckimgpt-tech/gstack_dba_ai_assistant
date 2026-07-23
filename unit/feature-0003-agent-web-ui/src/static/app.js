@@ -2861,6 +2861,24 @@ async function renameFolderFlow(folder) {
   } catch (e) { showToast(e.message || "이름 변경에 실패했습니다.", true); }
 }
 
+// feature-0024: 폴더 지침(프롬프트) 편집 — 이 폴더 안 대화의 AI 에게 ask-time 에 항상 주입된다.
+async function editFolderInstructionsFlow(folder) {
+  const cur = folder.instructions || "";
+  const next = window.prompt(
+    `'${folder.name}' 폴더 지침\n(이 폴더 안 모든 대화에서 AI 에게 항상 적용됩니다. 예: "저장 datetime 은 UTC, 서버 TZ 와 별개")`,
+    cur,
+  );
+  if (next === null) return;  // 취소
+  try {
+    await apiFetch(`/api/folders/${folder.folder_id}`, {
+      method: "PATCH", body: JSON.stringify({ instructions: next }),
+    });
+    await loadFolders();
+    renderConversationList();
+    showToast(next.trim() ? "폴더 지침을 저장했습니다." : "폴더 지침을 비웠습니다.");
+  } catch (e) { showToast(e.message || "지침 저장에 실패했습니다.", true); }
+}
+
 async function deleteFolderFlow(folder) {
   const childCount = _folderChildren(folder.folder_id).length;
   const msg = childCount > 0
@@ -2946,6 +2964,7 @@ function openFolderMenu(folder, triggerEl) {
         menu.appendChild(make("하위 폴더 추가", { onSelect: () => createFolderFlow(folder.folder_id) }));
       }
       menu.appendChild(make("이름 변경", { onSelect: () => renameFolderFlow(folder) }));
+      menu.appendChild(make(folder.instructions ? "지침 편집 ✎" : "지침 추가", { onSelect: () => editFolderInstructionsFlow(folder) }));
       if (folder.parent_folder_id != null) {
         menu.appendChild(make("최상위로 꺼내기", { onSelect: () => moveFolderTo(folder.folder_id, null) }));
       }
