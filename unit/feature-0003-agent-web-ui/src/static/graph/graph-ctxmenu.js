@@ -833,6 +833,41 @@ function _metaGraphPanToRelation(targetKey) {
     ? `→ ${nm} 로 카메라 이동 (더블클릭 = 상세 패널 전환).`
     : `→ ${nm} 소속 테이블로 카메라 이동 · 선택됨 (더블클릭 = 펼쳐 상세 전환).`);
 }
+// graph-node-reveal(사용자 요구 2026-07-23): 대상 노드가 화면에 없을 때 **차단하지 않고 부모 체인을
+//   활성화(펼침)** 해 노출한다. 노드 계층은 `scope:schema.table.column` — 렌더 게이트는 두 Set:
+//   schemaExpanded(접힌 스키마 카드 SC:↔combo)·expanded(테이블 컬럼). 소속 스키마를 펼치고
+//   (_metaGraphExpandSchema — 테이블·함수 Routine 로드), 컬럼이면 소속 테이블의 컬럼도 펼친다
+//   (_metaGraphToggleColumns). 두 확장 함수는 각각 _opSeq bump·busy·fetch 를 관리하는 기존 async op
+//   이므로 순차 await(경합 없음 — 앞 op 가 완주한 뒤 뒤 op 시작). 반환: 활성화 후 노드가 렌더됐으면
+//   true, 아니면 false(호출측이 조상 승격 폴백 처리).
+//   scope 가드 — _metaGraphExpandSchema 는 현재 scope(데이터소스) 소속 스키마만 펼친다(교차-scope
+//   fetch 오염 방지, 그 함수 내부 가드와 동형). 타 데이터소스 노드는 여기서 false 를 반환해 조상
+//   승격/검색 유도로 위임한다.
+// 재진입 가드(리뷰 REV-20260723T083434 #1): 버튼 핸들러가 async 라 확장 fetch 대기 중 연타하면
+//   _metaGraphToggleColumns 는 in-flight 가드가 없어(colsByTable 는 ingest 후에야 채워짐) 중복
+//   /columns fetch + 같은 seq 이중 팬이 발생할 수 있다. 모듈 플래그로 진행 중 재진입을 차단한다.
+let _metaGraphFocusSelBusy = false;
+async function _metaGraphRevealNode(key) {
+  if (!_metaGraph.graph || !key) return false;
+  if (_metaRenderedIdFor(key)) return true;   // 이미 렌더(자신 또는 SC: 카드) — 활성화 불필요
+  const gn = _metaGraph.nodes.get(key);
+  const fqn = gn && gn.fqn;
+  const cidx = key.indexOf(":");
+  const kscope = cidx >= 0 ? key.slice(0, cidx) : "";
+  if (!kscope || kscope !== (adminState.metadata.scopeKey || "")) return false;   // 타 데이터소스 — 펼침 불가
+  // 1) 소속 스키마 펼치기 — 접힌 카드(SC:)를 combo 로 전환, 테이블·함수(Routine) 로드.
+  const sc = _metaCatParent(key, fqn);
+  if (sc && !_metaGraph.schemaExpanded.has(sc)) {
+    await _metaGraphExpandSchema(sc);
+    if (_metaRenderedIdFor(key)) return true;   // 테이블·함수면 스키마 펼침만으로 렌더됨
+  }
+  // 2) 컬럼이면 소속 테이블의 컬럼 펼치기(테이블 노드는 위 스키마 펼침으로 이미 렌더돼 있음).
+  const tk = _metaColParent(key, fqn);
+  if (tk && tk !== key && !_metaTableHasCols(tk)) {
+    await _metaGraphToggleColumns(tk);   // 비-Table 이면 내부 label 가드로 no-op(무해)
+  }
+  return !!_metaRenderedIdFor(key);
+}
 // graphux7(#2): 관계 행 클릭 라우팅 — 단일=카메라 이동만, 더블=상세 전환(+대상을 화면에 가져오기).
 //   짧은 타이머(260ms)로 단일/더블 구분: 더블클릭이면 예약된 단일(카메라) 취소 후 전환만 실행.
 //   키보드(Enter/Space)=상세 전환(commit — 키보드는 '더블' 표현이 어려워 실질 네비게이션을 기본으로).
@@ -1551,7 +1586,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button> <button type="button" class="amgr-link" id="metaGraphFocusSelBtn" style="margin-left:0" title="선택한 이 노드로 그래프 카메라를 이동합니다(구조·선택 유지, 팬만).">🎯 이 노드로 이동</button></div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button> <button type="button" class="amgr-link" id="metaGraphFocusSelBtn" style="margin-left:0" title="선택한 이 노드로 그래프 카메라를 이동합니다. 화면에 없으면 상위 스키마·테이블을 펼쳐 노출합니다.">🎯 이 노드로 이동</button></div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
@@ -1722,17 +1757,46 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   el.innerHTML = parts.join("");
   // 실행 컨트롤 바인딩(+hover 지침 popover) — _canAnalyze 일 때만(버튼·popover 미렌더 시 skip). 결과 로드는 아래 무조건.
   if (_canAnalyze) _metaGraphBindAiPopover(self.key, selfScopeKey);
-  // graph-focus-selected: 상세 패널의 선택 노드로 카메라만 팬한다(그래프 구조·선택 상태 불변 —
-  //   _metaGraphPanToRelation 패턴 재사용). 렌더 안 된 노드(접힌 스키마 등)면 안내만 하고 팬 skip.
+  // graph-focus-selected: 상세 패널의 선택 노드로 카메라를 팬한다(_metaGraphPanToRelation 패턴 재사용).
+  //   graph-node-reveal(사용자 요구 2026-07-23): 렌더 안 된 노드(접힌 스키마 소속 테이블·함수, 미펼침
+  //   테이블의 컬럼 등)여도 차단하지 않고, 부모 스키마·테이블을 펼쳐 화면에 노출한 뒤 팬한다. 이미
+  //   렌더된 노드는 기존대로 구조 불변·팬만(비동기 확장 없음).
   const focusSelBtn = document.getElementById("metaGraphFocusSelBtn");
-  if (focusSelBtn) focusSelBtn.addEventListener("click", () => {
+  if (focusSelBtn) focusSelBtn.addEventListener("click", async () => {
     const key = self.key;
     if (!_metaGraph.graph || !key) return;
-    const rel = _metaRenderedIdFor(key);   // 렌더 노드, 접힌 스키마면 카드(SC:)
-    if (!rel) { _metaGraphStatus("이 노드가 현재 화면에 없습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
-    const seq = _metaGraph._opSeq;
-    _metaGraphAnimateFocus(key, seq);       // key→렌더 요소 내부 해소 후 카메라 팬(+판독 줌 클램프)
+    if (_metaGraphFocusSelBusy) return;   // 진행 중 재진입 차단(연타 시 중복 fetch·이중 팬 방지 — 리뷰 #1)
     const nm = (_metaGraph.nodes.get(key) || {}).name || self.name || key;
+    let rel = _metaRenderedIdFor(key);   // 렌더 노드, 접힌 스키마면 카드(SC:)
+    if (!rel) {
+      // 미렌더 — 부모 체인 활성화(펼침)로 노출 시도(차단하지 않음).
+      _metaGraphFocusSelBusy = true;
+      _metaGraphStatus(`'${nm}' 을(를) 화면에 표시하려고 상위 스키마·테이블을 펼치는 중…`);
+      try {
+        await _metaGraphRevealNode(key);
+      } catch (_) {
+        // 확장 중 예외(rebuild 실패 등) — 상태 고착 방지(리뷰 #6): 안내 후 종료(finally 가 busy 해제).
+        _metaGraphStatus(`'${nm}' 표시 실패 — 확대하거나 검색으로 탐색해 보세요.`);
+        return;
+      } finally {
+        _metaGraphFocusSelBusy = false;
+      }
+      rel = _metaRenderedIdFor(key);
+      if (!rel) {
+        // 활성화로도 못 띄움(타 데이터소스·표시 상한·줌 LOD 억제·kind 숨김 등 다양) → 조상 승격 폴백.
+        //   원인이 여럿이라 특정 원인을 단정하지 않고 '확대·검색' 을 일반 안내한다(리뷰 #3·#4).
+        const anc = _metaRenderedAncestorFor(key);
+        if (anc) {
+          _metaGraphAnimateFocus(anc, _metaGraph._opSeq);
+          _metaGraphStatus(`→ '${nm}' 소속 상위 객체로 카메라 이동 (하위 노드는 확대하거나 검색으로 직접 탐색할 수 있습니다).`);
+        } else {
+          _metaGraphStatus(`'${nm}' 은(는) 현재 화면에 표시할 수 없습니다 — 확대하거나 검색으로 직접 탐색해 보세요.`);
+        }
+        return;
+      }
+      _metaGraphSetSelected(key);   // 펼쳐 노출된 노드를 선택 강조(사용자 시선 앵커)
+    }
+    _metaGraphAnimateFocus(key, _metaGraph._opSeq);   // key→렌더 요소 내부 해소 후 카메라 팬(+판독 줌 클램프)
     _metaGraphStatus(`→ ${nm} 로 카메라 이동.`);
   });
   const relBtn = document.getElementById("metaGraphRelBtn");

@@ -1,5 +1,28 @@
 # Report
 
+## 2026-07-23 · "🎯 이 노드로 이동" 미렌더 노드 부모 활성화 노출 (20260723T0834-graph-node-reveal)
+
+### 요청 (사용자, entry persona dispatch)
+"그래프 뷰에서 '이 노드로 이동' 기능 사용 시 '이 노드가 현재 화면에 없습니다…' 구문과 함께 기능이 정상 동작하지 않아 많은 사용자가 불편을 호소. 동작을 블로킹하기보다 해당 노드의 부모노드를 모두 활성화하여 화면에 노출해 달라."
+
+### 근본 원인
+상세 패널 카드 헤더의 🎯 버튼(`metaGraphFocusSelBtn`) 핸들러가 대상 노드 미렌더(`_metaRenderedIdFor(key)` null) 시 안내만 하고 `return` — 차단. 미렌더는 (a) 접힌 스키마(SC: 카드) 소속 테이블·함수, (b) 미펼침 테이블의 컬럼에서 발생. 노드 계층 `scope:schema.table.column` 의 렌더 게이트(`schemaExpanded`·`expanded` 두 Set)를 버튼이 활성화하지 않았다.
+
+### 처리 결과 (Minor, cross-cut 코드 거주 feature-0003 static/graph)
+- `graph-ctxmenu.js`: 신규 `_metaGraphRevealNode(key)` — 부모 체인 순차 활성화(① 소속 스키마 `_metaGraphExpandSchema` ② 컬럼이면 소속 테이블 `_metaGraphToggleColumns`). 기존 async 확장 op 재사용(`_opSeq`/busy/fetch 가드 상속, 순차 await). scope 가드로 타 데이터소스 노드는 false 반환.
+- 버튼 핸들러 async 재작성: 미렌더 → reveal 노출 → 성공 시 선택 강조+팬 / 실패 시 조상 승격 폴백. 이미 렌더된 노드는 구조 불변·팬만(기존 계약 보존). 차단 메시지 제거·tooltip 갱신.
+- 신규 헤드리스 `tests/headless/test_graph_reveal.js` 17 PASS(실 소스 함수 추출 + 확장 double 주입 — 확장 순서·scope 가드·fast-path·폴백 결정론 검증).
+
+### 검증
+- `node --check --input-type=module` PASS(graph-ctxmenu/core/state). 헤드리스 17 PASS. PixiJS 컬링 비활성 → 부모 펼침 후 노드 방출 보장.
+- §18.8 general-purpose 적대 리뷰(REV-20260723T083434-graph-node-reveal). PB-0008 라이브 육안은 배포 후(deploy_scope: included) TX.5.
+
+### Git 동기화 결과
+- Task-Cycle: graph-node-reveal (ai/claude-corp/feature-0016-graph-node-reveal, worktree).
+- verify-completion: PASS (pre-commit, 전 체크 통과 — CHECK#13 visual PASS·CHECK#9 REVIEW PASS).
+- Push: 완료 (feature 브랜치 origin push — §16.3 Step 4: BLOCKED 없음·Critical/Major 승인 대기 없음·Minor).
+- PR 생성 / main 병합 / 배포: **사용자 confirm 대기** (외부 영향 행동 — 사용자 전역 정책). deploy_scope: included 이나 배포는 confirm 후.
+
 ## 2026-07-16 · [뒤로/앞으로] 클릭 후 바 페이드 미적용 버그 수정 (20260716T0240-graph-detail-nav-focus-fade-fix)
 
 ### 요청 (사용자, 버그 리포트)
