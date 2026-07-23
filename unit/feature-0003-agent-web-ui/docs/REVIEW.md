@@ -699,3 +699,7 @@ source_of_truth: true
 - 자체점검: ① append/일반 로드 경로 무변경(preserveScroll 미지정 시 기존 맨-아래/prepend). ② 1:1 은 refreshWorkspace 유지(사이드바 프리뷰 등 갱신 보존)하고 preserveScroll 만 전달 — behavior 드롭 없음. ③ rAF 복원(layout 확정 후, scroll-restore 규약)·`Math.min(saved,maxTop)` clamp(오버스크롤 방지). ④ 공유 뷰 문서 스크롤도 rAF+clamp. ⑤ 브랜치 대화(has_branches) 페이징에만 preserveScroll — 일반 대화 무영향.
 - 검증: `node --check` app.js/share.js PASS · POST-DEPLOY 실브라우저 scrollTop 실측(layout 의존, jsdom 부적합).
 - Cross-ref: CHG/TASK/FUNCTION/TEST-20260723T024724 · feature-0019 브랜치 페이징(PR#887) 후속 UX.
+
+## REV-20260723T033000-paging-scroll-preserve-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 페이징 스크롤 보존 배포 + 양 surface 라이브 실측 (CHG-20260723T033000)
+- Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료). 정본 = REV-20260723T024724-paging-scroll-preserve([SKIPPED:trivial-frontend-ux]).
+- 실증(Windows Chrome, 배포본 4ee7ea1d): 인앱 그룹 페이징 scrollTop=0(scrollable maxTop 9538)·스크린샷 육안 상단 pager. 공유-링크 페이징 window.scrollY=0(scrollable maxY 11535). 둘 다 맨-아래 튐 해소(PRESERVED). layout 의존 실브라우저 실측(jsdom 부적합)으로 정본 검증.

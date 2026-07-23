@@ -792,3 +792,9 @@ source_of_truth: true
 - Verification: `node --check` 2 · POST-DEPLOY headless/Windows 실측(페이징 전후 scrollTop 보존).
 - Files: `static/app.js`, `static/share.js`, `docs/{TASK,MODIFY,FUNCTION,REPORT,TEST,REVIEW}.md`.
 - landing/배포: verify-completion → commit → PR/머지=자동 동기화. 배포=web-only(정적자산·백엔드 무관).
+
+## CHG-20260723T033000-paging-scroll-preserve-postverify (paging-scroll-preserve POST-DEPLOY, 비-정책 doc-only)
+- POST-DEPLOY 배포·양 surface 라이브 스크롤 실측 기록 + TASK 완료. 코드/자산 0.
+- 배포: PR #889 → main 4ee7ea1d → deploy-web --web-only(soak PASS). 서빙 app.js `preserveScroll`·share.js `savedY` 반영.
+- 라이브(Windows Chrome 4ee7ea1d): 인앱 그룹 브랜치 대화 페이징 후 scrollTop=0(scrollable maxTop 9538, 맨아래 안 튐)·스크린샷 육안. 공유-링크 짧은→긴(maxY 11535) 페이징 후 window.scrollY=0. 양 surface PRESERVED.
+- Files: docs/{TASK,MODIFY,REVIEW,TEST}.md.
