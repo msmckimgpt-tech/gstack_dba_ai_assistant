@@ -2421,30 +2421,153 @@ async function loadReasoning() {
   }
 }
 
+// red-team 5축(redteam.py REDTEAM_REVIEW_PROMPT) 한글 라벨 + 추론 강도 라벨.
+const _REASONING_AXIS_LABELS = {
+  grounding: "근거", sql: "SQL", permission: "권한", completeness: "완전성", honesty: "정직성",
+};
+const _REASONING_LEVEL_LABELS = { low: "낮음", normal: "일반", high: "높음", max: "매우높음" };
+function _reasoningAxisLabel(axis) { return _REASONING_AXIS_LABELS[axis] || axis || "기타"; }
+
 function _reasoningVerdictBadge(esc, verdict) {
   const map = { pass: ["정상 통과", "ok"], revise: ["결함 수정", "warn"], error: ["리뷰 실패", "err"] };
   const [label, cls] = map[verdict] || [verdict || "?", ""];
   return `<span class="reasoning-verdict reasoning-verdict--${cls}">${esc(label)}</span>`;
 }
 
+// 이 리뷰가 개선한 실제 대화로의 딥링크. 예약 sentinel(__ 접두 — insight/ask worker,
+// global, kb_manual 등)은 실제 대화가 아니므로 링크 대신 시스템 라벨만 (ai-ops feed 규약).
+function _reasoningConvLink(esc, cid) {
+  if (!cid) return "";
+  const s = String(cid);
+  if (s.startsWith("__")) {
+    return `<span class="reasoning-conv reasoning-conv--system" title="시스템 활동 (실제 대화 아님)">시스템 · ${esc(s.slice(0, 16))}</span>`;
+  }
+  return `<a class="reasoning-conv" href="/?conversation=${encodeURIComponent(s)}" target="_blank" rel="noopener" title="이 개선이 일어난 대화 열기">대화 열기 ↗</a>`;
+}
+
+// 진행 단계 타임라인 — ① 초안 → ② 적대 리뷰 → ③ 결함 수정 → ④ 재검증 → ⑤ 최종.
+// 저장된 verdict/findings/revision_applied/rederive_*/verify_verdict 로 각 단계 상태를 재구성한다.
+function _reasoningStageTimeline(esc, it) {
+  const findings = Array.isArray(it.findings) ? it.findings : [];
+  const err = it.verdict === "error";
+  // severity 카운트는 실제 표시되는 findings 에서 일원화(손상 데이터에서 컬럼과의 내부 모순 방지, W4).
+  // findings 파싱 실패(빈 배열)면 서버 집계 컬럼(block_count/warn_count)으로만 폴백.
+  let nBlock = findings.filter((f) => f && f.severity === "BLOCK").length;
+  let nWarn = findings.filter((f) => f && f.severity === "WARN").length;
+  if (!findings.length) { nBlock = it.block_count || 0; nWarn = it.warn_count || 0; }
+  // 미해결 결함(BLOCK) 여부 — 백엔드 verdict 규약(redteam.py): BLOCK 이 있으면 verdict=revise,
+  // WARN-only 는 verdict=pass(자문 신호이며 수정 대상 아님). WARN-only 를 '수정 실패'로 오표기하지 않는다(B1).
+  const hasBlock = it.verdict === "revise" || nBlock > 0;
+  const warnOnly = !hasBlock && nWarn > 0;
+  const stages = [];
+  stages.push({ icon: "①", label: "초안 답변", state: "done", detail: "assistant 1차 답변 생성" });
+  if (err) {
+    stages.push({ icon: "②", label: "적대 리뷰", state: "err", detail: "리뷰 수행 실패 (fail-open — 초안 그대로 전달)" });
+  } else if (hasBlock) {
+    stages.push({ icon: "②", label: "적대 리뷰", state: "warn", detail: `결함 검출 — BLOCK ${nBlock}${nWarn ? " · WARN " + nWarn : ""}` });
+  } else if (warnOnly) {
+    stages.push({ icon: "②", label: "적대 리뷰", state: "done", detail: `통과 — 경고(자문) ${nWarn}건, 수정 불필요` });
+  } else {
+    stages.push({ icon: "②", label: "적대 리뷰", state: "done", detail: "결함 없음 — 통과" });
+  }
+  if (it.revision_applied) {
+    let how;
+    if (it.rederive_applied) {
+      const ax = it.rederive_axis
+        ? String(it.rederive_axis).split(",").map((a) => _reasoningAxisLabel(a.trim())).filter(Boolean).join("·") : "";
+      how = `도구 재추론${ax ? " (" + ax + ")" : ""}${it.rederive_tool_rounds ? " · " + it.rederive_tool_rounds + "라운드" : ""}`;
+    } else {
+      how = "텍스트 재작성";
+    }
+    stages.push({ icon: "③", label: "결함 수정", state: "done", detail: how });
+  } else if (err) {
+    stages.push({ icon: "③", label: "결함 수정", state: "na", detail: "해당 없음" });
+  } else if (hasBlock) {
+    stages.push({ icon: "③", label: "결함 수정", state: "skip", detail: "미적용 (수정 실패 — 초안 유지, fail-open)" });
+  } else if (warnOnly) {
+    stages.push({ icon: "③", label: "결함 수정", state: "na", detail: "불필요 (경고성 자문 — 수정 대상 아님)" });
+  } else {
+    stages.push({ icon: "③", label: "결함 수정", state: "na", detail: "불필요 (결함 없음)" });
+  }
+  if (it.verify_verdict) {
+    const vpass = it.verify_verdict === "pass";
+    stages.push({
+      icon: "④", label: "재검증", state: vpass ? "done" : "warn",
+      detail: vpass ? "수정본 재검증 통과" : `재검증 판정 = ${esc(it.verify_verdict)}`,
+    });
+  } else {
+    stages.push({ icon: "④", label: "재검증", state: "na", detail: "해당 없음 (강도별 skip 또는 미수행)" });
+  }
+  stages.push({
+    icon: "⑤", label: "최종 전달", state: "done",
+    detail: it.revision_applied ? "개선된 답변 전달" : "답변 전달",
+  });
+  const stageHtml = stages.map((s) =>
+    `<li class="reasoning-stage reasoning-stage--${s.state}">
+      <span class="reasoning-stage-icon" aria-hidden="true">${esc(s.icon)}</span>
+      <span class="reasoning-stage-body"><span class="reasoning-stage-label">${esc(s.label)}</span><span class="reasoning-stage-detail">${esc(s.detail)}</span></span>
+    </li>`).join("");
+  return `<ol class="reasoning-timeline">${stageHtml}</ol>`;
+}
+
+// 결함별 수정 전/후 대비 — 지적(수정 전) → 수정 방향, 근거(evidence).
+function _reasoningFindingHtml(esc, f) {
+  const sev = (f.severity === "BLOCK") ? "block" : "warn";
+  const claim = esc(f.claim || "(내용 없음)");
+  const fix = f.fix_hint ? esc(f.fix_hint) : "";
+  const ev = f.evidence ? esc(f.evidence) : "";
+  const axisKey = f.axis || "etc";
+  return `<div class="reasoning-finding reasoning-finding--${sev}">
+    <div class="reasoning-finding-tags">
+      <span class="reasoning-sev reasoning-sev--${sev}">${esc(f.severity || "?")}</span>
+      <span class="reasoning-axis reasoning-axis--${esc(axisKey)}">${esc(_reasoningAxisLabel(f.axis))}</span>
+    </div>
+    <div class="reasoning-ba">
+      <div class="reasoning-ba-col reasoning-ba-col--before"><span class="reasoning-ba-tag">수정 전 · 지적</span><span class="reasoning-ba-text">${claim}</span></div>
+      ${fix ? `<span class="reasoning-ba-arrow" aria-hidden="true">→</span><div class="reasoning-ba-col reasoning-ba-col--after"><span class="reasoning-ba-tag">수정 방향</span><span class="reasoning-ba-text">${fix}</span></div>` : ""}
+    </div>
+    ${ev ? `<div class="reasoning-finding-ev"><span class="reasoning-ba-tag">근거</span> ${ev}</div>` : ""}
+  </div>`;
+}
+
+// 현재 목록 리뷰들의 findings 를 5축별로 집계한 배지 요약.
+function _reasoningAxisSummary(esc, reviews) {
+  const counts = {};
+  let total = 0;
+  reviews.forEach((it) => {
+    (Array.isArray(it.findings) ? it.findings : []).forEach((f) => {
+      const ax = f.axis || "etc";
+      counts[ax] = (counts[ax] || 0) + 1;
+      total += 1;
+    });
+  });
+  if (!total) return "";
+  const order = ["grounding", "sql", "permission", "completeness", "honesty"];
+  const keys = order.filter((k) => counts[k]).concat(Object.keys(counts).filter((k) => order.indexOf(k) < 0));
+  const badges = keys.map((k) =>
+    `<span class="reasoning-axis-badge reasoning-axis--${esc(k)}">${esc(_reasoningAxisLabel(k))} <b>${counts[k]}</b></span>`).join("");
+  return `<div class="reasoning-axis-summary"><span class="reasoning-axis-summary-label">검출 축 분포 (현재 목록 ${total}건):</span>${badges}</div>`;
+}
+
 function _reasoningReviewRowHtml(esc, it) {
   const findings = Array.isArray(it.findings) ? it.findings : [];
-  const findingHtml = findings.map((f) =>
-    `<div class="reasoning-finding"><strong>[${esc(f.severity)}/${esc(f.axis)}]</strong> ${esc(f.claim)}` +
-    (f.fix_hint ? ` <span class="reasoning-finding-fix">→ ${esc(f.fix_hint)}</span>` : "") + `</div>`
-  ).join("");
+  const findingHtml = findings.length ? findings.map((f) => _reasoningFindingHtml(esc, f)).join("") : "";
+  const lvl = _REASONING_LEVEL_LABELS[it.reasoning_level] || it.reasoning_level || "";
   const metaBits = [
     it.created_at ? esc(String(it.created_at).replace("T", " ").slice(0, 19)) : "",
-    esc(it.reasoning_level || ""),
+    lvl ? esc(lvl) + " 강도" : "",
     it.is_group ? "그룹" : "1:1",
     it.latency_ms != null ? `${esc(it.latency_ms)}ms` : "",
-    it.revision_applied ? "수정 적용됨" : "",
-    it.verify_verdict ? `재검증=${esc(it.verify_verdict)}` : "",
+    it.model ? esc(it.model) : "",
   ].filter(Boolean).join(" · ");
   return `<div class="reasoning-review-row">
-    <div class="reasoning-review-head">${_reasoningVerdictBadge(esc, it.verdict)}
-      <span class="reasoning-review-meta">${metaBits}</span></div>
-    ${findingHtml || '<div class="reasoning-finding reasoning-finding--none">지적 없음</div>'}
+    <div class="reasoning-review-head">
+      ${_reasoningVerdictBadge(esc, it.verdict)}
+      ${_reasoningConvLink(esc, it.conversation_id)}
+      <span class="reasoning-review-meta">${metaBits}</span>
+    </div>
+    ${_reasoningStageTimeline(esc, it)}
+    ${findingHtml ? `<div class="reasoning-findings">${findingHtml}</div>` : ""}
   </div>`;
 }
 
@@ -2465,6 +2588,9 @@ function renderReasoning(redteam, notes) {
       <div class="reasoning-stat"><div class="reasoning-stat-num">${st.avg_latency_ms_7d != null ? esc(st.avg_latency_ms_7d) + "ms" : "–"}</div><div class="reasoning-stat-label">평균 지연 (7d)</div></div>
     </div>`;
   const reviews = Array.isArray(redteam && redteam.items) ? redteam.items : [];
+  // 누적 목록 추적 — "더 보기" 페이징 후 축 집계 재계산 기준(W2).
+  if (adminState.reasoning) adminState.reasoning.reviewsAll = reviews.slice();
+  const axisSummaryHtml = _reasoningAxisSummary(esc, reviews);
   const _reviewEmptyMsg = (redteam && redteam.pg_available === false)
     ? "저장소(PG)에 연결할 수 없습니다."
     : (redteam && redteam.table_available === false)
@@ -2492,8 +2618,9 @@ function renderReasoning(redteam, notes) {
   body.innerHTML = `
     <div class="reasoning-section">
       <h3 class="reasoning-section-title">자가 적대 리뷰 활동</h3>
-      <p class="reasoning-section-hint">답변 전달 전 별도 모델이 수행한 red-team 검증 판정입니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong>, assistant 작동 지침·스킬은 <strong>설정 &gt; 프롬프트</strong>에서 확인합니다.</p>
+      <p class="reasoning-section-hint">답변 전달 전 별도 모델(red-team)이 <strong>초안 → 적대 리뷰 → 결함 수정 → 재검증 → 최종 전달</strong> 과정으로 답변을 검증·개선한 기록입니다. 각 판정 카드에 진행 단계와 결함별 수정 전/후가 함께 표시되며, "대화 열기"로 해당 답변이 개선된 실제 대화를 확인할 수 있습니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong>, assistant 작동 지침·스킬은 <strong>설정 &gt; 프롬프트</strong>에서 확인합니다.</p>
       ${statHtml}
+      <div id="reasoningAxisSummaryWrap">${axisSummaryHtml}</div>
       <div class="reasoning-review-list" id="reasoningReviewList">${reviewListHtml}</div>
       <div class="reasoning-more">${moreBtnHtml}</div>
     </div>
@@ -2516,9 +2643,17 @@ async function loadReasoningMoreReviews() {
   try {
     const data = await apiFetch(`/api/admin/reasoning/redteam?cursor=${encodeURIComponent(cursor)}`);
     const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-    (data.items || []).forEach((it) => {
+    const newItems = data.items || [];
+    newItems.forEach((it) => {
       if (listEl) listEl.insertAdjacentHTML("beforeend", _reasoningReviewRowHtml(esc, it));
     });
+    // 축 집계는 누적 목록 기준 재계산 — "현재 목록 N건" 라벨과 표시 행을 정합(W2).
+    if (adminState.reasoning) {
+      const all = (adminState.reasoning.reviewsAll || []).concat(newItems);
+      adminState.reasoning.reviewsAll = all;
+      const sumWrap = $("reasoningAxisSummaryWrap");
+      if (sumWrap) sumWrap.innerHTML = _reasoningAxisSummary(esc, all);
+    }
     adminState.reasoning.redteamCursor = data.next_cursor || null;
     if (!data.next_cursor && moreBtn) moreBtn.remove();
   } catch (e) {

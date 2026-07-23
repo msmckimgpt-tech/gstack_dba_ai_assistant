@@ -79,10 +79,21 @@ def admin_reasoning_guidance(
     return JSONResponse({"items": items, "registry_available": True})
 
 
-def _query_reviews(cur, *, cursor: int | None, limit: int) -> tuple[list[dict], int | None]:
-    """redteam_reviews 를 id DESC keyset 으로 페이징 (ai-ops _query_activity 규약)."""
-    cols = ("id, conversation_id, run_id, verdict, findings, block_count, warn_count, "
-            "verify_verdict, revision_applied, model, latency_ms, reasoning_level, is_group, created_at")
+def _query_reviews(cur, *, cursor: int | None, limit: int,
+                   include_rederive: bool = False) -> tuple[list[dict], int | None]:
+    """redteam_reviews 를 id DESC keyset 으로 페이징 (ai-ops _query_activity 규약).
+
+    include_rederive=True 면 0043 마이그 컬럼(rederive_applied/rederive_tool_rounds/
+    rederive_axis)까지 SELECT 해 콘솔의 '결함 수정' 진행 단계에서 도구 재추론(rederive)
+    발동 여부·라운드·축을 노출한다. stale agent 이미지(0043 미적용)에서는 호출부가
+    information_schema 로 컬럼 부재를 감지해 include_rederive=False 로 폴백하므로 기존
+    동작(리뷰 목록 노출)이 회귀 없이 유지된다.
+
+    기본값은 fail-safe 로 False — 컬럼 존재를 확인한 호출자만 명시적으로 True 를 전달한다
+    (kwarg 생략 시 base-only SELECT 라 stale 이미지에서도 UndefinedColumn 이 나지 않는다)."""
+    base_cols = ("id, conversation_id, run_id, verdict, findings, block_count, warn_count, "
+                 "verify_verdict, revision_applied, model, latency_ms, reasoning_level, is_group, created_at")
+    cols = base_cols + (", rederive_applied, rederive_tool_rounds, rederive_axis" if include_rederive else "")
     if cursor is not None:
         cur.execute(
             "SELECT " + cols + " FROM agent_runtime.redteam_reviews WHERE id < %s ORDER BY id DESC LIMIT %s",
@@ -103,14 +114,21 @@ def _query_reviews(cur, *, cursor: int | None, limit: int) -> tuple[list[dict], 
                 findings = json.loads(findings)
             except Exception:
                 findings = []
-        items.append({
+        item = {
             "id": int(r[0]), "conversation_id": r[1], "run_id": r[2], "verdict": r[3],
             "findings": findings or [], "block_count": int(r[5] or 0), "warn_count": int(r[6] or 0),
             "verify_verdict": r[7], "revision_applied": bool(r[8]), "model": r[9],
             "latency_ms": (int(r[10]) if r[10] is not None else None),
             "reasoning_level": r[11], "is_group": bool(r[12]),
             "created_at": (r[13].isoformat() if r[13] else None),
-        })
+            # rederive_* 기본값 — 컬럼 부재 폴백/error 경로 호환 (프론트 stage 렌더가 항상 참조).
+            "rederive_applied": False, "rederive_tool_rounds": 0, "rederive_axis": None,
+        }
+        if include_rederive:
+            item["rederive_applied"] = bool(r[14])
+            item["rederive_tool_rounds"] = int(r[15] or 0)
+            item["rederive_axis"] = r[16]
+        items.append(item)
     next_cursor = items[-1]["id"] if (has_more and items) else None
     return items, next_cursor
 
@@ -178,8 +196,21 @@ def admin_reasoning_redteam(
                             pass
                         stats = {}
                         table_available = False
+                # 0043 rederive_* 컬럼 존재 여부 — stale agent 이미지(0043 미적용) 방어:
+                # 부재 시 include_rederive=False 로 폴백해 UndefinedColumn 없이 기존 목록 노출.
+                _has_rederive = True
                 try:
-                    items, next_cursor = _query_reviews(cur, cursor=cursor, limit=limit)
+                    cur.execute(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_schema='agent_runtime' AND table_name='redteam_reviews' "
+                        "AND column_name='rederive_applied'"
+                    )
+                    _has_rederive = cur.fetchone() is not None
+                except Exception:
+                    _has_rederive = False
+                try:
+                    items, next_cursor = _query_reviews(
+                        cur, cursor=cursor, limit=limit, include_rederive=_has_rederive)
                 except Exception:
                     # 테이블 부재/스키마 불일치 — 빈 목록과 구분해 table_available=False.
                     try:

@@ -1795,3 +1795,16 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 수정(SSOT·drift-proof): `openFloatingMenu` 가 만든 모든 메뉴에 `data-floating-menu` 마커 부여 → `closeFloatingMenus` 가 `[data-floating-menu]` id 무관 일괄 제거(향후 신규 메뉴 자동 포함) + 트리거 리셋 selector 에 `.conv-folder-menu-trigger.is-open` 추가. 정합: `_attachShareRangeEsc`·`_maybeSyncConversationListUnread` 의 열린-메뉴 가드에 folderMenu 포함, `styles.css` `.conv-folder-menu-trigger.is-open{opacity:1}`(열림 중 '···' 유지).
 - 불변식: conv-item '···'·말풍선 '☰' 닫힘 동작은 마커 제거가 기존 id 제거의 superset 이라 무회귀. 백엔드/RBAC/스키마/엔드포인트 0.
 - 검증: `node --check` PASS · §18.8 적대 리뷰 SHIP · POST-DEPLOY PB-0008(AC-1~5 폴더 메뉴 바깥클릭/ESC/scroll/to글 닫힘). CHG/REV/TEST-20260723T080415-floating-menu-close-fix.
+## (20260723T074530-reasoning-timeline, 2026-07-23) AI 운영 현황 > 추론: 리뷰 결함수정 전/후 과정 + 답변 개선 과정 가시화 (web/UI + additive read-only API, Major §12.3, cross-cut 데이터 feature-0021/0002)
+- REQ-20260723T074530-reasoning-timeline: 「관리 콘솔 > AI 운영 현황 > 추론」이 각 red-team 리뷰 활동의 결함 수정 전/후 과정과 대화별 답변 개선 과정을 명확히 드러내 서비스 관제 신뢰성을 높인다. 접근 A(기존 데이터 재구성) — 저장된 `redteam_reviews` 관측치만 재시각화, 마이그레이션·계측·답변원문 저장 없음.
+- 데이터 소스(불변): `agent_runtime.redteam_reviews`(feature-0021 `redteam.orchestrate_review` 기록) — verdict(pass|revise|error), findings JSONB[{axis,severity,claim,evidence,fix_hint}], block_count/warn_count, revision_applied, verify_verdict, rederive_applied/rederive_tool_rounds/rederive_axis(0043), model/latency_ms/reasoning_level/is_group/conversation_id/created_at. API=`GET /api/admin/reasoning/redteam`(권한 `console.reasoning.read` 불변).
+- API 변경(additive, read-only): `_query_reviews` 가 0043 rederive 3컬럼을 SELECT·응답 노출(`include_rederive`). 호출부는 `information_schema` 로 컬럼 존재 감지 후 부재 시(stale agent 이미지) 폴백 → 회귀0. error/폴백 경로도 rederive 3필드 기본값(False/0/None) 보장(프론트 KeyError 방지).
+- 화면(admin.js `renderReasoning`):
+  - 진행 단계 타임라인(`_reasoningStageTimeline`): ① 초안 답변 → ② 적대 리뷰(결함 N·BLOCK n·WARN m / 결함없음 통과 / 리뷰실패 fail-open) → ③ 결함 수정(도구 재추론 축·라운드 / 텍스트 재작성 / 미적용 fail-open / 불필요) → ④ 재검증(verify_verdict pass|기타) → ⑤ 최종 전달. 단계 상태 done/warn/skip/na/err.
+  - 결함 전/후 대비(`_reasoningFindingHtml`): 심각도·축 태그 + `수정 전·지적`(claim) → `수정 방향`(fix_hint) 2단 + `근거`(evidence). 전부 `esc()` 이스케이프.
+  - 5축 집계(`_reasoningAxisSummary`): 현재 목록 findings 를 grounding/sql/permission/completeness/honesty 별 카운트 배지.
+  - 대화 딥링크(`_reasoningConvLink`): 실제 대화=`/?conversation=<id>`(encodeURIComponent), `__` 접두 sentinel=시스템 라벨(링크 없음) — audit-nav-ux 의 conv-link-fix 규약 계승.
+  - 추론 강도 한글화(낮음/일반/높음/매우높음). 통계 6타일·페이징(loadReasoningMoreReviews)·메모리 노트 섹션 보존.
+- 불변식: 백엔드 계측(`redteam.py record_review`)·스키마·RBAC·엔드포인트 무변경. cache-buster `?v=dev` 고정(빌드 자동 주입·수기 bump 없음).
+- AC-20260723T074530-reasoning-timeline-1~7: 진행단계 표시 / claim→fix_hint 전후 대비 / rederive 축·라운드 / 5축 집계 / 대화 딥링크(sentinel 제외) / PG·컬럼부재 degrade 회귀0 / POST-DEPLOY PB-0008 PASS.
+- 검증: `node --check`(ESM)·`py_compile`·실제 소스 추출 harness 22/22 PASS. REV-20260723T074530-reasoning-timeline. POST-DEPLOY PB-0008(Environment: Windows-browser).
