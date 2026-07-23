@@ -1779,3 +1779,13 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - collapse 영속 규약: 일 단위 키(상대적)는 `_seedDateGroupsCollapsedOnce` 가 로드당 "최근 1개만 펼침·나머지 접힘"(비영속). 집계 키(month:/year:, 안정)는 `_seedAggregateGroupsCollapsedOnce` 가 "처음 본 순간 1회만 접힘 seed + 영속"(`_seededAggKeys`·localStorage `mad.seededAggGroups.v1`), 이후 사용자 토글은 `state.collapsedDateGroups`(`mad.collapsedGroups.v1`)로 영속 존중. 안정 키를 매 로드 강제 재접힘하면 사용자 영속 펼침 선호가 파괴되던 회귀를 이 분리가 차단(§18.8 리뷰 MAJOR).
 - 불변식: "타 계정 대화" owner 그룹 섹션·pending 항목 렌더 무변경. 백엔드/API/RBAC/엔드포인트 무관(그룹핑 표현 계층 전용, frontend-only additive). 정렬은 backend updated_at desc 유지.
 - 검증: `node --check` PASS · 결정적 트리 단위테스트(그룹핑 4/4 + 경계 edge 월/연/미래/파싱불가 + seed 영속 회귀 9/9) · POST-DEPLOY PB-0008. CHG/REV-20260723T034321-conv-date-tree.
+
+## (20260723T071355-universal-ctxmenu, 2026-07-23) 서비스 UI 우클릭 = 보편적 확장 메뉴 단축 (web/UI, Major §12.3, frontend-only)
+- 목적: 작업 화면 각 요소를 **우클릭**하면 그 요소가 이미 가진 확장(overflow) 메뉴가 열리는 보편적 단축. 대화 목록 항목·폴더 헤더 = '···' 메뉴, 대화 로그(말풍선) = '☰' 메뉴. "등과 같이" — 향후 확장 요소는 설정표에 한 줄 추가로 편입.
+- 동작(`static/app.js`, 2지점 additive):
+  - **커서 앵커**: 모듈 전역 `_floatingMenuAnchorPoint`(우클릭 진입 시 `{x,y}` 세팅·`openFloatingMenu` 가 1회 소비 후 즉시 null·`finally` 방어 해제). `openFloatingMenu` 위치 계산이 anchor 있으면 커서 기준, 없으면(버튼 클릭) 기존 trigger-rect 기준 — **anchor=null 경로는 기존 로직과 byte-동치**(버튼 클릭 동작·위치·회귀 0).
+  - **위임 핸들러**: `document` 단일 `contextmenu` 리스너(`_onUniversalContextMenu`) + 설정표 `_CTX_MENU_TARGETS`(`{host,trigger}` 3행: `.conv-item`→`.conv-item-menu-trigger` / `.conv-folder-header`→`.conv-folder-menu-trigger` / `.message`→`.message-menu-trigger`). `ev.target.closest(host)` 매칭 + 호스트 내 trigger 존재 시 `preventDefault` + 커서 좌표 세팅 후 **기존 트리거 synthetic click 재발화**(`dispatchEvent(new MouseEvent("click"))`) → 각 트리거의 기존 open 함수(openConversationItemMenu/openFolderMenu/openMessageBubbleMenu)·권한 게이트·항목 구성·토글 로직 100% 재사용(중복 0).
+  - **기본 우클릭 양보**: input/textarea/select·`a[href]`·미디어(img/svg/canvas/video — mermaid 관계 다이어그램·이미지 저장 보존)·contentEditable 위, 그리고 우클릭한 호스트 안에 텍스트 선택이 걸친 경우(`_hasSelectionWithin` — `Range.intersectsNode`, 답변/SQL 복사 보존)는 브라우저 기본 메뉴 유지. 키보드 contextmenu(Menu키/Shift+F10, 좌표 0,0)는 anchor=null trigger-rect 폴백.
+- 불변식: 트리거가 없는 요소(메뉴 없는 말풍선·pending/disabled 대화 항목)는 기본 우클릭 유지(no-op 폴백). 우클릭(button2)은 native click 미발화 + 트리거 stopPropagation → 대화 선택·폴더 접기/펼치기 유발 안 함. admin.js·그래프 캔버스 우클릭(graph-ctxmenu.js 자체 소유)·백엔드/RBAC/스키마/엔드포인트 무관.
+- 범위 밖(follow-up): 관리 콘솔(admin.js)의 다수 메뉴 우클릭 편입.
+- 검증: `node --check` PASS(2회) · §18.8 적대 리뷰(general-purpose) SHIP(MINOR 3 in-cycle 반영) · POST-DEPLOY PB-0008(AC-1~5). CHG/REV/TEST-20260723T071355-universal-ctxmenu.
