@@ -2493,3 +2493,25 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### Git 동기화 결과
 - Task-Cycle: graph-detail-nav-focus-fade-fix (ai/claude/feature-0016-graph-detail-nav-focus-fade-fix, worktree).
+
+## 20260723T0834-graph-node-reveal — "🎯 이 노드로 이동" 미렌더 노드 부모 활성화 노출 (2026-07-23, 사용자 요청 · entry persona dispatch)
+
+### 맥락 (사용자 요청)
+그래프 뷰에서 '이 노드로 이동' 기능 사용 시, 대상 노드가 화면에 없으면 "이 노드가 현재 화면에 없습니다…" 안내와 함께 **동작이 차단**돼 다수 사용자가 불편을 호소. → 차단 대신 **해당 노드의 부모노드를 모두 활성화(펼침)해 화면에 노출**하도록 변경.
+
+### 근본 원인
+`_metaGraphRenderDetail` 의 `metaGraphFocusSelBtn`(🎯) 핸들러가 `_metaRenderedIdFor(key)` null(미렌더 — 접힌 스키마 소속 테이블·함수, 미펼침 테이블의 컬럼)이면 안내만 하고 `return`(차단). 노드 계층 `scope:schema.table.column` 의 렌더 게이트는 `schemaExpanded`(스키마 카드 SC:↔combo)·`expanded`(테이블 컬럼) 두 Set 인데, 버튼은 이를 활성화하지 않았다.
+
+### 처리 (본 cycle — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] TX.1 신규 `_metaGraphRevealNode(key)` (graph-ctxmenu.js) — 미렌더 노드의 부모 체인을 순차 활성화: ① 소속 스키마 펼침(`_metaGraphExpandSchema` — 테이블·함수 Routine 로드) ② 컬럼이면 소속 테이블 컬럼 펼침(`_metaGraphToggleColumns`). 두 확장은 각각 `_opSeq` bump·busy·fetch 를 관리하는 기존 async op → 순차 await(경합 없음). 반환: 활성화 후 렌더되면 true.
+- [x] TX.2 scope 가드 — `_metaGraphExpandSchema` 는 현재 데이터소스(scope) 소속 스키마만 펼치므로(교차-scope fetch 오염 방지), 타 데이터소스 노드는 `_metaGraphRevealNode` 가 false 반환 → 호출측이 조상 승격 폴백(소속 테이블/접힌 스키마 카드로 이동) 또는 검색 유도.
+- [x] TX.3 버튼 핸들러 재작성(async) — 미렌더면 `_metaGraphRevealNode` 로 노출 시도 → 성공 시 `_metaGraphSetSelected`(선택 강조) + `_metaGraphAnimateFocus`(팬). 실패 시 조상 승격 폴백. 이미 렌더된 노드는 기존대로 구조 불변·팬만(비동기 확장 없음). 기존 차단 메시지 "이 노드가 현재 화면에 없습니다…" 제거. 버튼 tooltip 갱신.
+- [x] TX.4 헤드리스 결정론 테스트 신규 `tests/headless/test_graph_reveal.js` **17 PASS** — 실제 소스에서 `_metaGraphRevealNode` 본문을 추출해 확장 함수를 test double 로 주입, ① 이미 렌더 fast-path(확장 0) ② 컬럼: 스키마→테이블컬럼 순차 2회 ③ 테이블: 스키마 1회만 ④ 이미 펼친 스키마: 컬럼만 ⑤ 타 scope: 즉시 false·확장 0 ⑥ 함수(Routine): 스키마 1회 ⑦ 끝내 미렌더: false.
+- [ ] TX.5 POST-DEPLOY PB-0008 라이브 육안 — 접힌 스키마 소속 테이블/컬럼을 상세 패널에서 '🎯 이 노드로 이동' 클릭 → 부모 스키마·테이블 자동 펼침 + 대상 노드 화면 노출·중앙 팬·선택 강조, 차단 메시지 미노출. (deploy_scope: included — merge 후 자동 배포)
+
+### 검증
+- `node --check --input-type=module` PASS(graph-ctxmenu.js·graph-core.js·graph-state.js). 헤드리스 test_graph_reveal.js 17 PASS. PixiJS 렌더러라 뷰포트 컬링 비활성 → 부모 펼침 후 노드 확실히 방출(_metaRenderedIdFor 참). 상세: TEST.md(feature-0003) Run(2026-07-23) graph-node-reveal, REVIEW.md REV-20260723T083434-graph-node-reveal.
+
+### Git 동기화 결과
+- Task-Cycle: graph-node-reveal (ai/claude-corp/feature-0016-graph-node-reveal, worktree).
+- verify-completion PASS(pre-commit) → commit + feature 브랜치 push 자동(§16.3 Step 4). PR 생성·main 병합·배포는 사용자 confirm 대기.

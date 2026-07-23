@@ -319,3 +319,13 @@ source_of_truth: true
   - **PASS P2 (주경로 leave-capture 배치 정합)**: `_metaGraphHistoryRecord` 의 캡처가 두 early-return(억제·중복) 뒤·push 앞이라 실제 새 항목 기록 시에만 실행, Record 는 렌더 전 호출이라 캡처 시 aside 는 이전 콘텐츠(올바른 값). 결함 없음 확인.
 - 재검증: `graph-ctxmenu.js`·`graph-state.js` `node --check`(ES module) PASS + 신규 심볼(`_histNavBusy`/`_pendingDetailScroll`/`_metaGraphReapplyPendingScroll`) 참조 정합 + 3함수 Record-before-await 순서 코드 확증. 최종 diff 2파일(graph-ctxmenu.js·graph-state.js).
 - Human Approval: deploy_scope: included(FIRST_REQUEST.md 전역). visual_verification_scope: always → PB-0008 라이브(TS.6)가 배포 후 완료 게이트.
+
+## REV-20260723T083434-graph-node-reveal [SUBAGENT: SHIP-WITH-FIXES→흡수] — "🎯 이 노드로 이동" 미렌더 노드 부모 활성화 diff 적대 리뷰
+- 대상: `graph-ctxmenu.js` `_metaGraphRevealNode` + `metaGraphFocusSelBtn` async 핸들러. general-purpose 적대 리뷰어가 실 구현(graph-core.js 렌더 게이팅·`_opSeq`·LOD·hiddenKinds·`_metaGraphExpandSchema`/`_metaGraphToggleColumns` 가드) 역추적 후 반증 시도. **BLOCKER 0.**
+- **검증된 안전(NON-ISSUE)**: (Q2) 팬 seq — `await` 후 `_metaGraph._opSeq` 재-read 는 정확(abort 토큰 = "더 새 op 나오면 중단", setSelected 의 bake 는 `_opSeq` 미bump·매프레임 bounds 재조회 self-heal). (Q5) scope 가드 `kscope !== scopeKey` 는 `_metaGraphExpandSchema` 내부 하드닝 가드(V-B)와 byte-동치 — same-scope false-negative·foreign fetch 없음. (Q4 하위) 컬럼 렌더는 `colsByTable` 키잉이라 `_metaTableHasCols` 가 정확한 will-render proxy(‘이미 로드·다르게 접힘’ 비이슈).
+- **흡수한 수정**:
+  - **#1 [MINOR] 연타 재진입** — 핸들러 async 인데 in-flight 가드 없음 → 미렌더 컬럼 연타 시 `_metaGraphToggleColumns`(in-flight 가드 부재) 중복 `/columns` fetch + 같은 seq 이중 팬(table-center↔column-center 다툼). → 모듈 플래그 `_metaGraphFocusSelBusy` 로 진행 중 재진입 차단(흡수).
+  - **#6 [MINOR] 상태 고착** — `_metaGraphExpandSchema` 의 `await _metaG6Apply` 가 try 밖 → rebuild throw 시 async 핸들러로 rejection 전파 + 상태 "펼치는 중…" 영구 고착. → reveal 호출을 `try/catch`(실패 안내)+`finally`(busy 해제) 로 감쌈(흡수).
+  - **#3·#4 [MINOR] 메시지 오단정** — 폴백 문구가 "다른 데이터소스이거나 표시 상한" 으로 단정하나 실제로는 foreign scope·cap·**컬럼 줌 LOD 억제**·**Routine kind 숨김 토글**·in-flight race 5원인. → 원인 단정 제거, "하위 노드는 확대하거나 검색으로 직접 탐색" 일반 안내로 완화(흡수).
+- **잔여(수용, 비파괴)**: (#4 심층) 컬럼-LOD 활성(zoom<0.5 & 펼친컬럼>200) 시 현재 far-out 줌에서 reveal 대상 컬럼이 억제돼 조상(소속 테이블)로 폴백 — 팬-후-확대로 표시되나 자동 zoom-in-to-reveal 은 미구현(범위 규율, 안내로 '확대' 유도). (#7 NIT) 이미 렌더 노드=선택 불변·팬만 / 미렌더 노드=reveal 후 선택 — 같은 버튼 2거동이나 의도(노출 노드에 시선 앵커).
+- **검증**: 수정 후 `node --check --input-type=module` PASS · `test_graph_reveal.js` 17 PASS 유지. #1 가드·#6 try/finally 는 DOM-event 핸들러 내부라 헤드리스 미커버 → 코드 inspection + POST-DEPLOY PB-0008(TX.5). Verdict SHIP-WITH-FIXES → 권고 수정 전량 흡수.
