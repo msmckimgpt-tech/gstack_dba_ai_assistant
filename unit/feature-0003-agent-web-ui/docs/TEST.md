@@ -2197,3 +2197,8 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산(ES module)이 web 이미지에 baked → 서빙본에 반영하려면 merge + `deploy-web` 재배포 선행(§57·§65·§67·graph-focus-selected 등 동일 패턴). 실 카메라 팬·스키마/컬럼 펼침 애니메이션은 PixiJS 인스턴스(`_metaGraph.graph`) 의존이라 WSL headless 미재현(오케스트레이션 로직만 격리검증). 캐시버스터는 `?v=dev` 고정 + 빌드 inject_asset_stamp 자동주입(수기 bump 금지).
 - **POST-DEPLOY win-browser 육안 검증(TX.5, 예정)**: 그래프 로그인(https://localhost/admin, switchTab('graph')) → **접힌 스키마 소속 테이블/함수, 또는 미펼침 테이블의 컬럼**을 (검색·관계행 등으로) 상세 패널에 띄운 뒤 카드 헤더 `🎯 이 노드로 이동` 클릭 → ① 차단 메시지 미노출(사용자 불편 해소 실증) ② 부모 스키마·(컬럼이면)테이블 자동 펼침 ③ 대상 노드가 화면에 노출·뷰포트 중앙 팬·선택 강조 ④ 상태줄 "→ <노드명> 로 카메라 이동" ⑤ 타 데이터소스 대상 시 소속 상위 객체로 팬 + 검색 유도 안내(graceful) ⑥ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(`_metaGraphRevealNode` 서빙) + win-browser 육안 PASS append.
 - **Pass/Fail: pre-commit 정적·헤드리스 PASS(node --check + test_graph_reveal 17) · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·POST-DEPLOY 계획·pre-commit 미수행 사유 기록).
+
+### Run (2026-07-23) — folder-ux: 폴더 UX 6개 개선(무프롬프트·인라인·설정/이동 모달·DnD) (Major §12.3 — cross-cut 정본 feature-0024) — **Environment: Windows-browser**
+- **PRE**: node --check app.js OK. 프론트 전용(기존 폴더 API 재사용).
+- **Environment: Windows-browser — PRE-COMMIT 미수행 사유**: 정적 자산 baked → merge+deploy 후 서빙. **POST-DEPLOY PB-0008 실측**: 무프롬프트 생성+인라인편집·설정 모달(지침/삭제)·인라인 이름변경·이동 모달(검색/정렬)·DnD(대화↔폴더·폴더↔폴더·root).
+- **Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족.
