@@ -806,3 +806,8 @@ source_of_truth: true
 - 비변경: append/일반 로드 renderCount 무변경(회귀 0). 백엔드 0.
 - Verification: node --check · POST-DEPLOY PB-0008(3→4 pager 유지+스크롤 보존).
 - Files: `static/app.js`, docs.
+
+## CHG-20260723T034500-paging-scroll-longhistory-postverify (paging-scroll-longhistory POST-DEPLOY, 비-정책 doc-only)
+- POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. 배포 PR #891 → main 2cdb7907 → deploy-web --web-only(soak PASS).
+- 라이브(Windows Chrome '간단한 덧셈 계산' 3→4): rendered 3→6(전체 렌더), pager '4/4' 유지, 브랜치 메시지 뷰포트 298px→298px 동일(scrollTop 4985, scrollable maxTop 11286, atBottom=false)·스크린샷 육안. verdict PRESERVED.
+- Files: docs/{TASK,MODIFY,REVIEW}.md.

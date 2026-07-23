@@ -708,3 +708,7 @@ source_of_truth: true
 - Panel skip(§18.8): 프론트 렌더창 1줄 로직(preserveScroll 시 renderCount=len). 백엔드·RBAC·스키마 0. 이전 REV(paging-scroll-preserve) 후속 회귀 수정.
 - 자체점검: ① 전체 렌더는 preserveScroll(페이징)에만 — append/일반 로드 무변경. ② 형제 버전 분기점-위 이력 동일 → 절대 scrollTop 보존 정확·pager 항상 렌더. ③ 스레드=활성 경로라 크기 bounded(전체 렌더 perf 허용). ④ 공유 뷰(share.js)는 원래 전체 렌더라 무영향(별도 확인).
 - 검증: node --check PASS · POST-DEPLOY PB-0008.
+
+## REV-20260723T034500-paging-scroll-longhistory-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 긴 이력 페이징 스크롤 보존 배포+라이브 실측 (CHG-20260723T034500)
+- Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료). 정본=REV-20260723T033143-paging-scroll-longhistory.
+- 실증(Windows Chrome, 배포본 2cdb7907): '간단한 덧셈 계산' 3→4 페이징 시 전체 렌더(rendered 6)로 pager '4/4' 유지·브랜치 메시지 뷰포트 위치 298px 동일 보존·맨아래 안 튐(maxTop 11286, atBottom=false)·스크린샷 육안. 회귀(pager 소실+스크롤 급변) 해소 확정.
