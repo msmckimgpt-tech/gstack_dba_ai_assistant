@@ -843,3 +843,8 @@ source_of_truth: true
 - 비변경: conv-item '···'·말풍선 '☰' 닫힘(마커 제거=id 제거 superset), 백엔드/RBAC/스키마/엔드포인트 0.
 - Verification: `node --check` PASS · §18.8 적대 리뷰 SHIP(NIT 3 fold-in) · POST-DEPLOY PB-0008(AC-1~5).
 - Files: `static/app.js`, `static/styles.css`, docs/{TASK,FUNCTION,REPORT,REVIEW,TEST-runs}.md.
+
+## CHG-20260723T081500-floating-menu-close-fix-postverify (floating-menu-close-fix 배포 + 라이브 실측 POST-DEPLOY, 비-정책 doc-only)
+- POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. PR #902 → main **57ecc758** → `deploy-web.sh --web-only`(soak PASS·자산 스탬프 8373a9f479e2). deploy_scope: included(전역).
+- 라이브(win-browser Chrome 150, https://localhost/, 테스트 폴더 API 생성 id=6 후 실 이벤트 dispatch, 검증 후 삭제·프로덕션 잔여 0): AC-1 폴더메뉴 바깥클릭 닫힘·AC-2 ESC 닫힘·AC-3 scroll 닫힘·AC-4 토글 닫힘+트리거 aria-expanded=false·is-open 제거·AC-5 conv-item 무회귀·errCount 0. 서빙 app.js `data-floating-menu` 2 hit·css `.conv-folder-menu-trigger.is-open` 1 hit.
+- Files: docs/{TASK,MODIFY,REPORT,REVIEW,TEST-runs}.md.

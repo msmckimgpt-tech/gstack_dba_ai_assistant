@@ -28,7 +28,8 @@ source_of_truth: true
 - [ ] `openFloatingMenu` `data-floating-menu` 마커
 - [ ] 정합 3건(share-range ESC·unread-sync 가드·CSS keep-visible)
 - [ ] `node --check` PASS · §18.8 적대 리뷰
-- [ ] POST-DEPLOY PB-0008 Windows-browser(AC-1~5) — §15.4.1
+- [x] 배포(deploy_scope: included): PR #902 → main **57ecc758** → `deploy-web.sh --web-only`(soak PASS·자산 스탬프 `8373a9f479e2`).
+- [x] POST-DEPLOY PB-0008 Windows-browser(AC-1~5) — §15.4.1 (PASS, 실 Windows Chrome 150, 배포본 57ecc758, 테스트 폴더 생성→검증→삭제): AC-1 바깥클릭 닫힘·AC-2 ESC 닫힘·AC-3 scroll 닫힘·AC-4 토글 닫힘+트리거 aria/is-open 복원·AC-5 conv-item 무회귀·errCount 0. 사용자 신고 해소. 정본 = TEST Run(2026-07-23 floating-menu-close-fix) POST-DEPLOY.
 
 ## TASK-20260723T071355-universal-ctxmenu — 서비스 UI 우클릭 = 보편적 확장 메뉴 단축 (대화 목록·폴더='···', 대화 로그(말풍선)='☰') (Major §12.3 — feature-0003 web/UI 프론트 단독, 비파괴 additive. /_template:entry arg-given dispatch)
 - 요청(사용자, 2026-07-23): "서비스 내 UI에서, 각 요소들의 우클릭이 보편적인 확장기능으로 작동하도록 구성. 대화 및 목록창은 확장('···') 상호작용. 대화 내 로그는 햄버거 버튼('☰') 상호작용. 등과 같이 구성."
