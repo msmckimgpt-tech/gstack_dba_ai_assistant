@@ -1,8 +1,9 @@
 """feature-0024-conversation-folders — 대화 폴더(프로젝트) APIRouter.
 
-폴더는 계정별 개인 조직 오버레이다. 모든 엔드포인트는 요청 계정 스코프로 동작하며,
-folder.manage.own(자기 폴더) / folder.manage.any(운영자 latent) RBAC + 폴더 소유 게이트를
-적용한다. 대화 배정은 폴더 소유(요청자) + 대화 접근권(read own/any) 둘 다 통과해야 한다.
+폴더는 **엄격한 개인(per-user)** 조직 오버레이다. 모든 엔드포인트는 요청 계정 스코프로만
+동작하며(크로스-계정 가시성·관리 없음 — folder.*.any 폐지, 프라이버시), folder.list.own /
+folder.manage.own RBAC + 폴더 소유 게이트를 적용한다. 대화 배정은 폴더 소유(요청자) + 대화
+접근권(read own/any) 둘 다 통과해야 한다.
 
 저장은 routers/_folder_store.py(PG agent_runtime). app 정본 헬퍼(get_current_account/get_conn/
 require_permission/_account_can_access_conversation/_account_has_permission/_json_error)를 재사용한다.
@@ -25,21 +26,21 @@ def _acct_id(account: dict[str, Any]) -> int:
     return int(account.get("id") or 0)
 
 
-def _has_any(account: dict[str, Any]) -> bool:
-    return bool(app._account_has_permission(account, "folder.manage.any"))
-
-
 def _folder_err(e: store.FolderError) -> JSONResponse:
     return app._json_error(e.message, e.code)
 
 
 def _require_folder_owner(account: dict[str, Any], folder_id: int) -> tuple[dict[str, Any] | None, JSONResponse | None]:
-    """폴더 존재 + (소유자 OR folder.manage.any) 게이트. (folder, error) 반환."""
+    """폴더 존재 + **소유자 전용** 게이트. (folder, error) 반환.
+
+    ★ 폴더는 엄격한 개인 오버레이 — folder.manage.any 크로스-계정 우회 없음(프라이버시 수정).
+    타 계정 폴더는 어떤 권한으로도 조회·수정·삭제·이동할 수 없다. 존재 여부도 404 로 단일화해
+    타 계정 folder_id 존재 oracle 을 주지 않는다."""
     folder = store.get_folder(int(folder_id))
     if not folder or folder.get("archived_at") is not None:
         return None, app._json_error("폴더를 찾을 수 없습니다.", 404)
-    if not _has_any(account) and int(folder.get("owner_account_id") or 0) != _acct_id(account):
-        return None, app._json_error("폴더에 대한 권한이 없습니다.", 403)
+    if int(folder.get("owner_account_id") or 0) != _acct_id(account):
+        return None, app._json_error("폴더를 찾을 수 없습니다.", 404)
     return folder, None
 
 
@@ -49,9 +50,9 @@ def _require_folder_owner(account: dict[str, Any], folder_id: int) -> tuple[dict
 async def list_folders(
     account=Depends(app.require_permission("folder.list.own")),
 ) -> JSONResponse:
-    all_owners = _has_any(account) and app._account_has_permission(account, "folder.list.any")
+    # ★ 항상 요청 계정 소유 폴더만 — 크로스-계정 가시성 없음(프라이버시 수정, folder.list.any 폐지).
     try:
-        folders = store.list_folders(_acct_id(account), all_owners=bool(all_owners))
+        folders = store.list_folders(_acct_id(account))
     except Exception:
         return app._json_error("폴더 목록을 불러오지 못했습니다.", 500)
     from shared import runtime_settings
@@ -166,14 +167,12 @@ async def restore_folder(
     root = store.get_folder(int(folder_id))
     if not root:
         return app._json_error("폴더를 찾을 수 없습니다.", 404)
-    if not _has_any(account) and int(root.get("owner_account_id") or 0) != _acct_id(account):
-        return app._json_error("폴더에 대한 권한이 없습니다.", 403)
-    # ★ HIGH IDOR 차단: body 의 ids 는 공격자 통제 + folder_id 열거 가능(IDENTITY 순차 PK)이므로,
-    #    restore 를 요청자 owner 스코프로 SQL 강제한다(manage.any 운영자만 전역). path 소유 검증만으로는
-    #    body 의 타 계정 folder_id 를 막지 못한다(REV HIGH).
-    owner_scope = None if _has_any(account) else _acct_id(account)
+    if int(root.get("owner_account_id") or 0) != _acct_id(account):
+        return app._json_error("폴더를 찾을 수 없습니다.", 404)
+    # ★ 프라이버시/IDOR: body 의 ids 는 공격자 통제 + folder_id 열거 가능(IDENTITY 순차 PK)이므로,
+    #    restore 를 **항상** 요청자 owner 스코프로 SQL 강제한다(크로스-계정 복구 불가, manage.any 폐지).
     try:
-        store.restore_folders(ids, owner_account_id=owner_scope)
+        store.restore_folders(ids, owner_account_id=_acct_id(account))
     except Exception:
         return app._json_error("폴더 복구에 실패했습니다.", 500)
     return JSONResponse({"ok": True, "restored_folder_ids": ids})

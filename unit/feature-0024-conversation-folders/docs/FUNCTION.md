@@ -19,7 +19,7 @@ source_of_truth: true
 - REQ-20260723-folder-recursive: 폴더 **재귀 중첩**. 최대 깊이는 **런타임 설정값**(WebRuntimeSettings, 기본 4)으로 조절. **grandfathering**: 설정을 낮춰도 이미 깊어진 폴더는 소급 강제·평탄화하지 않고 그대로 보존한다. 상한은 **create/move 시점에만** 강제하되 "더 깊어지는 경우"만 차단(같거나 얕아지는 이동은 항상 허용). 순환 방지.
 - REQ-20260723-folder-knowledge: 폴더 단위 **커스텀 프롬프트** + **미리 첨부된 파일**. 요청 시 **요청자의 폴더 기준**으로 시스템 프롬프트·첨부 컨텍스트에 주입(per-asker, ask-time). 폴더 소유자=요청자라 IDOR 안전.
 - REQ-20260723-folder-query-scope: (DQA 특화) 폴더에 **기본 데이터소스/제품·스키마 스코프**·규약 지침을 핀 → 폴더 내 대화가 상속(반복 마찰 차단).
-- REQ-20260723-folder-rbac: 폴더 조작 권한을 own/any 패턴으로 RBAC 카탈로그에 등록(`folder.*`), 기존 그룹 ACL 과 정합.
+- REQ-20260723-folder-rbac: 폴더 조작 권한을 RBAC 카탈로그에 등록. **폴더는 엄격한 개인(per-user) 오버레이**이므로 `folder.list.own`/`folder.manage.own` **own 권한만** 둔다(2026-07-23 프라이버시 수정 — `folder.*.any` 크로스-계정 권한은 폴더 노출 벡터라 폐지). 폴더는 어떤 권한으로도 타 계정에 노출·관리되지 않는다.
 
 ## 3. In Scope
 - PG `agent_runtime` 신규 테이블 `conversation_folders`(계정 소유·재귀 self-FK·지침·스코프 핀) + `folder_conversation_map`(계정별 대화↔폴더 배정) + alembic 0044 + GRANT + `agent_runtime_schema.sql` parity.

@@ -32,3 +32,9 @@ source_of_truth: true
 ## CHG-20260723T160500-conv-folders-postverify (TASK-0012 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-23. 코드/자산 무변경 — POST-DEPLOY 검증 원장. 배포 PR #895 → main 7f8e7a40 → deploy-web --web-only(soak PASS·alembic 0044 적용·폴더테이블+GRANT).
 - 라이브 e2e(win-browser Chrome 150, bootstrap_admin): 폴더 CRUD·하위폴더(depth2)·목록(max_depth4)·대화 배정·지침 설정 전부 200 + 무결성(depth상한 d5 422·순환 422·삭제 서브트리 archive·대화 보존 true·undo 4) + 지침 주입 PG 확증 + HIGH IDOR 수정 serving 확인 + 사이드바 재귀 폴더 트리 시각 렌더. 테스트 데이터 정리(PG 활성폴더 0). Cross-ref: REV-20260723T060000-conv-folders · TEST Run(conv-folders POST-DEPLOY).
+
+## CHG-20260723T170000-folder-privacy (프라이버시 수정 — 폴더 크로스-계정 노출 차단)
+- Date: 2026-07-23. Files: `routers/_folder_store.py`(list_folders owner-scope 고정)·`routers/folders.py`(_require_folder_owner/restore/list owner-only, _has_any 제거)·`web_context.py`(folder.*.any 정의·catchup 제거)·`static/admin.js`(folder.*.any deps 제거).
+- **버그**: `GET /api/folders` 가 folder.list.any(+manage.any) 보유 시 all_owners=True 로 전 계정 폴더 반환. 이 서비스는 admin 역할 계정이 4개라 admin 사용자끼리 서로의 폴더가 노출됨(사용자 신고).
+- **수정**: 폴더를 **엄격한 개인(per-user)** 오버레이로 — list_folders 항상 owner_account_id 스코프(재귀 하위 노드도 owner 재확인), _require_folder_owner/restore 소유자 전용(manage.any 우회 제거), 타 계정 폴더 존재는 404 단일화(oracle 차단). folder.*.any 권한 폐지(정의·catchup·deps 제거). folder.*.own 만 존치.
+- 검증: py_compile · node --check · dependency-map(folder own 2개만·전부 실 code) · route-parity 20 passed. 라이브 크로스-계정 격리 = POST-DEPLOY(계정1 GET /api/folders 가 계정10 folder 5 미포함).
