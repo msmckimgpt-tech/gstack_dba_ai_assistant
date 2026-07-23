@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 23 카드 (feature-0001 ~ feature-0023; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
+| Feature 수 | 24 카드 (feature-0001 ~ feature-0024; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
 
 ## 목차
 
@@ -94,6 +94,7 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0021-redteam-review\|feature-0021-redteam-review]] | assistant 답변 자가 적대(red-team) 리뷰 — fresh-context 5축 검증 + [세션,제품] 메모리 노트 + 콘솔 'AI 추론' 탭 |
 | [[../Features/feature-0022-agent-scratch-workspace\|feature-0022-agent-scratch-workspace]] | assistant PG 자율 작업공간 — 전용 DB `agent_scratch`(대화별 격리 스키마)에서 외부 데이터소스 반입·cross-source JOIN·TTL(기본 24h) 정리 (2026-07-21 라이브 활성·기본값 OFF 게이트 · 코드 거주 0002/shared) |
 | [[../Features/feature-0023-conversation-api-access\|feature-0023-conversation-api-access]] | 외부 AI용 Conversation API — Bearer 토큰 인증(scope allowlist ∩ 계정권한·관리 네임스페이스 절대 denylist) + 대화 tool 화 MCP 서버(tool 4종) (2026-07-22 배포·라이브 e2e 통과·코드 거주 0003/0002) |
+| [[../Features/feature-0024-conversation-folders\|feature-0024-conversation-folders]] | 대화 폴더(프로젝트 워크스페이스) — 재귀 폴더 조직·이동·삭제 후 대화 보관(승격)·폴더별 지침 ask-time 주입·런타임 max-depth·엄격 per-user 격리(`folder.*.own`, `folder.*.any` 폐지) (2026-07-23 라이브 완결·코드 거주 0002/0003) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -120,6 +121,7 @@ unit/feature-NNNN-<purpose>/
 | feature-0021 | feature-0002, feature-0003 | uses | red-team choke-point 훅·agent-notes·guidance_registry=0002, 관리 콘솔 'AI 추론' 콘솔=0003 |
 | feature-0022 | feature-0002 | uses | scratch 코어·도구 4종·워커 TTL reaper=0002, bootstrap=repo-level `bin/scratch-pg-bootstrap.sh`, `shared/` 설정 공유 · governed 반입=`execute_sql` 신뢰경계 재사용 |
 | feature-0023 | feature-0003, feature-0002, feature-0005 | uses | Bearer 토큰 인증 fallback·scope 교집합 게이트·`WebApiTokens` 스키마 = feature-0003(web_context/_bootstrap_schema), 대화 API(`/api/ask`) ask = feature-0002 agent_core, MCP 서버 패턴 = feature-0005 재사용; 발급 CLI(`bin/api-token-issue.sh`)는 repo-level·MCP 서버 코드는 feature-0023 unit |
+| feature-0024 | feature-0002, feature-0003, feature-0009 | uses | 폴더 스토어(재귀 CTE)·CRUD/배정/이동/삭제/restore 라우터(`routers/folders.py`)·RBAC(`folder.*.own`)·사이드바 재귀 렌더·DnD/모달 = feature-0003, 폴더 지침 ask-time 주입(`compose_system_prompt`)·신규 테이블 alembic 0044(`agent_runtime`) = feature-0002, 대화 배정 2중 게이트(대화 read + 그룹멤버 + 폴더 소유)가 그룹 멤버십 재사용 = feature-0009; max-depth 런타임 설정 = `shared/runtime_settings`(feature-0018 슬라이스)·`shared/db` 공유 · cross-cut docs-only 코드 거주 0002/0003(feature-0019 선례) |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 

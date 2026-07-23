@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 23 active |
+| Feature 수 | 24 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-23 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+24 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -68,6 +68,7 @@ sources:
 | feature-0021-redteam-review | in-progress | assistant 답변 자가 적대(red-team) 리뷰 — fresh-context 5축 검증(find→revise→verify·강도 게이팅·fail-open)+[세션,제품] 메모리 노트(TTL)+콘솔 'AI 추론' 탭 (Claude Code 패턴 이식, 코드 거주 0002/0003/shared) | [[feature-0021-redteam-review]] | `unit/feature-0021-redteam-review/docs/FUNCTION.md` |
 | feature-0022-agent-scratch-workspace | in-progress | assistant PG 자율 작업공간 — 전용 DB `agent_scratch`(대화별 격리 스키마)에서 외부 데이터소스 반입·cross-source JOIN·TTL(24h 기본) 정리·scratch_guard allowlist (2026-07-21 라이브 활성·기본값 OFF 게이트 · 코드 거주 0002/shared) | [[feature-0022-agent-scratch-workspace]] | `unit/feature-0022-agent-scratch-workspace/docs/FUNCTION.md` |
 | feature-0023-conversation-api-access | in-progress | 외부 AI용 Conversation API — 세션 쿠키 없이 **Bearer 토큰**으로 대화 API(`/api/ask` 등) 호출 + 대화를 tool 화하는 MCP 서버(tool 4종) · scope allowlist(`conversation.*`+`product.access.*`) ∩ 계정권한 · `*.any`/관리 네임스페이스 절대 denylist → 관리 콘솔 차단 (2026-07-22 배포·라이브 e2e 통과: 토큰→/api/ask 200·admin 403·무토큰 401 · 코드 거주 0003/0002) | [[feature-0023-conversation-api-access]] | `unit/feature-0023-conversation-api-access/docs/FUNCTION.md` |
+| feature-0024-conversation-folders | in-progress | 대화 폴더(프로젝트 워크스페이스) — 사이드바 재귀 폴더로 대화 조직/이동·폴더 삭제해도 대화 보관(Trash·undo·승격)·런타임 max-depth(기본 4·grandfathering)·폴더별 커스텀 지침 ask-time 주입(요청자 폴더 기준)·엄격 per-user 격리(folder.*.own, Critical privacy 수정) (2026-07-23 라이브 완결 Phase1+2a·PR #895/#899/#903/#908·PB-0008 PASS·코드 거주 0002/0003) | [[feature-0024-conversation-folders]] | `unit/feature-0024-conversation-folders/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 
