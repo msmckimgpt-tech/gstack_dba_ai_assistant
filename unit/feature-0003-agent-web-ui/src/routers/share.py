@@ -30,12 +30,15 @@ def revoke_share(share_id: int, request: Request, account=Depends(app.get_curren
         cur.close()
     if not row:
         return app._json_error("공유 링크를 찾을 수 없습니다.", 404)
-    if row.get("RevokedAt") is not None:
-        return JSONResponse({"id": int(row.get("Id")), "already_revoked": True})
     is_creator = int(row.get("CreatedBy") or 0) == int(account["id"])
     is_admin = app._account_has_permission(account, "conversation.read.any")
     if not (is_creator or is_admin):
-        return app._json_error("요청을 수행할 수 없습니다.", 403)
+        # LOW(SEC-20260723 REV-share-window): 미인가자는 share_id 존재/상태(revoked 포함)를 알 수
+        # 없도록 not-found 와 동일 응답으로 균질화(존재 oracle 제거). authz 를 already_revoked
+        # 분기보다 **앞**에 두어, 미인가자가 200 already_revoked 로 존재를 추론하는 경로도 봉인.
+        return app._json_error("공유 링크를 찾을 수 없습니다.", 404)
+    if row.get("RevokedAt") is not None:
+        return JSONResponse({"id": int(row.get("Id")), "already_revoked": True})
     cur = conn.cursor()
     try:
         cur.execute(

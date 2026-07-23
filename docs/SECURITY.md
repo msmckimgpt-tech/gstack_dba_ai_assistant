@@ -689,6 +689,29 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
 4. **PG 전용**: windowing 은 PG 런타임에서만 유효(MySQL-only 배포는 익명 뷰 snapshot 만).
 5. **외부 배포**: §7.2 IP allowlist / token 비밀번호가 windowed 공유에도 동일 적용(외부 노출 시).
 
+### 21.6 share 목록 owner 게이트 — 윈도우 escape 봉인 (SEC-20260723 REV-share-window)
+
+feature-0023 Bearer API 토큰 cross-account 감사(2026-07-23)에서 발견된 §21 윈도우 격리
+위반 2건을 봉인했다. (choke-points §21.2 에 추가.)
+
+- **MEDIUM — `GET /api/conversations/{cid}/shares` (`list_conversation_shares`)**: 기존엔
+  `_account_can_access_conversation`(read.own/any)만 게이트해 **윈도우 제한 멤버도 전 share
+  토큰을 열람**할 수 있었다. 멤버가 owner 의 `scope_mode="full"` share 토큰을 얻어 anonymous
+  `GET /api/public/share/{token}`(범위=share 행의 floor/anchor, 멤버 윈도우 무관)로 자기
+  가시성 윈도우를 escape. → **owner/`.any` 감사자가 아니면 반환 목록을 `CreatedBy = 본인`으로
+  필터**. 타인(owner 포함) 토큰은 은닉(escape 봉인)하되, 백엔드가 허용하는 비-owner 멤버의
+  view-only 자기 공유 관리(목록·취소)는 보존한다(§18.8 REV FINDING-1 — 단순 owner-only 403
+  은 정당한 멤버 공유 관리 UI 를 깨뜨림). 멤버·API 토큰(`.any` denylist)은 owner 의 full-scope
+  토큰을 못 본다. `/api/history` 윈도우 강제와 정합(누락 보정).
+- **LOW — `revoke_share` (`DELETE /api/share/{share_id}`) 존재 oracle**: 미인가자가
+  404(미존재)/403(존재-미인가)로 share_id 존재를 구분. + `already_revoked` 분기가 authz
+  앞이라 200 응답으로도 존재 추론 가능. → authz 를 앞으로 이동 + 미인가 응답 403→404
+  균질화(내용·토큰 미노출은 기존과 동일, 존재 여부만 봉인).
+- **적용 범위**: cookie 세션 + API 토큰 양쪽 동일(인가 choke-point 공유). 순수 cross-account
+  (비-멤버)는 이전에도 `_account_can_access_conversation`이 404로 차단했음 — 본 수정은
+  **멤버 윈도우 격리** 강화. 정합 정본 = feature-0009 MODIFY.md CHG-20260723·REVIEW.md
+  REV-20260723.
+
 ## 22. 관리 콘솔 권한 카테고리 계층 — 카테고리 '접근' 게이트 (perm-category-hier, TASK-20260714T181936-perm-category-hier)
 
 관리 콘솔 `계정 및 역할` 의 권한 체계를 좌측 nav 카테고리(계정/제품/감사/지식베이스/시스템) 정합

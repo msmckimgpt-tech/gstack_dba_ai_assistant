@@ -493,3 +493,35 @@ source_of_truth: true
 - 핵심 판정: **BLOCKER 1 + MAJOR 3 적발 → 전부 봉인, 재검증 후 잔여 BLOCKER/MAJOR 0.** MINOR 존재-oracle 3 수용(콘텐츠 미노출).
 - Verification: `make test`(agent 이미지 --no-deps) **전체 PASS**(신규/수정 포함) + ruff PASS + `node --check`(app.js) + `py_compile` 전 파일. **PB-0008 미실측**(worktree WSL 무인 브리지 3중벽 — 배포 후 라이브 시각검증: ☰ 메뉴·여기부터 범위 배너·windowed 공유 뷰·bounded 멤버 recall 격리 실측 권장).
 - Human Approval Needed: 아니오 (사용자 PLAN-APPROVED Critical, 아키텍처·owner-answer 결정 사전 승인). deploy_scope: included → 배포 자동(첫 배포 1줄 표면화).
+
+## REV-20260723T093806-share-list-owner-gate [SUBAGENT:share-window-escape·revoke-oracle·정당흐름회귀·형제정합 §18.8]
+- Related Change: CHG-20260723T093806-share-list-owner-gate
+- Reason: feature-0023 Bearer 토큰 cross-account 감사에서 §21 윈도우 격리 위반 2건 발견(사용자
+  "LOW까지 함께 수정" 결정, 2026-07-23). share 토큰은 anonymous 접근 자격이라 owner 만 열람해야 함.
+- Alternatives Considered: (a) owner 2차 게이트(형제 정합, 채택) vs (b) 반환 토큰을 호출자
+  윈도우로 필터. (a)가 형제 엔드포인트와 일관되고 최소 변경. revoke oracle 은 404 균질화(403 유지 대안은
+  존재 노출 잔존).
+- Risks: 정당한 비-owner 멤버 share-list UI 흐름이 있으면 회귀 — §18.8 리뷰로 확인(share 관리는
+  owner 액션이라 회귀 없음 예상). authz 재배치가 creator/admin 정상 revoke 를 깨지 않아야 함.
+- §18.8 적대 보안 리뷰: (아래 결과 append 예정 — general-purpose subagent, 4렌즈: MEDIUM 실효·정당흐름
+  회귀·LOW 실효·형제정합/우회).
+- Open Questions: 없음.
+- Human Approval Needed: 사용자 "LOW까지 함께 수정" 승인 완료. deploy_scope: included → 배포 자동.
+
+### §18.8 적대 보안 리뷰 결과 (general-purpose subagent, 4렌즈) — REV-20260723T093806 append
+- **두 수정 실효 확인(우회 없음)**: MEDIUM 게이트가 윈도우 제한 멤버(비-owner·`.any` 없음)를
+  차단하고 owner/`.any` 감사자는 통과(`_conversation_owned_by_account` DB 기반 위조 불가).
+  API 토큰은 `.any` denylist 로 has_any=False → 비-owner 멤버 차단, 토큰 owner 는 ownership
+  으로 정상(escalation 아님). LOW: authz 를 already_revoked 앞으로 이동+404 균질화로 존재
+  oracle(200 already_revoked 추론 포함) 봉인, creator/admin 정상 revoke·audit 보존, None
+  크래시 없음(get_current_account 미인증 시 401 raise).
+- **FINDING-1 (LOW~MEDIUM 정당흐름 회귀) 적발→수정**: 백엔드는 비-owner 멤버의 view-only
+  공유 생성을 허용(conversations.py:812-814)하는데 단순 owner-only 403 게이트는 그 멤버의
+  자기 공유 목록/취소 UI(app.js) 를 파손. → owner-only 403 을 폐기하고 **비-owner 는
+  `CreatedBy=본인` 필터**로 변경: escape 는 여전히 봉인(owner full-scope 토큰 은닉)하되 멤버
+  자기 공유 관리 보존. 테스트도 필터 검증으로 갱신.
+- **FINDING-B (테스트 앵커 tautology) 수정**: revoke 테스트가 주석 텍스트 'already_revoked'
+  를 앵커해 약했음 → 실코드 분기 `RevokedAt") is not None` 앵커 + 미인가 구간 403 부재까지 검증.
+- INFO(무해): shares 는 `.any` 감사자 허용, bans 는 owner-only — 비대칭이나 `.any`=정당
+  교차계정 감사 권한이라 escalation 아님(방어 가능).
+- 재검증: 소스-구조 테스트 컨테이너 2 passed + 라이브 멤버 배터리(TEST.md §3, 배포 후) 예정.

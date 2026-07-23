@@ -518,3 +518,23 @@ source_of_truth: true
 - Impact: 비파괴 additive-nullable. has_restricted_members=false(거의 전부)면 필터 완전 우회(무회귀). PG-only feature(MySQL-only 는 익명 뷰 snapshot 만). 신규 RBAC 0(기존 conversation.share.create/read 재사용).
 - Rollback Notes: alembic downgrade 0036(컬럼 nullable 이라 잔존도 무해) + 코드 revert + static 캐시버스터. 완전 가역, 데이터 무손실.
 - 검증: `make test`(agent 이미지 --no-deps) **전체 PASS**(신규 28: feature-0002 17 recall-visibility/never-widen/answer-tag + feature-0003 11 view-filter/copy-window/attachment-clip) + ruff PASS + `node --check`(app.js). §18.8 적대 보안 패널 1렌즈(general-purpose, 7 lens: recall 완전성·id-space bridge·fork exfil·필터 우회·owner-answer tag·view surface·lifecycle) — 결과 REVIEW.md 해당 엔트리. **PB-0008 미실측**(worktree WSL, 무인 브리지 3중벽 — 배포 후 라이브 시각검증: ☰ 메뉴·여기부터 범위 배너·windowed 공유 뷰 권장).
+
+## CHG-20260723T093806-share-list-owner-gate (Critical §12.3 — 공유창 윈도우 escape 봉인 + revoke oracle 균질화)
+- Date: 2026-07-23
+- Related Requirement: SECURITY.md §21.6 (feature-0023 Bearer 토큰 cross-account 감사 파생)
+- Summary: §21 윈도우 격리 위반 2건 봉인.
+  - **MEDIUM**: `list_conversation_shares`(`GET /api/conversations/{cid}/shares`)가 owner 게이트
+    없이 `read.own` 멤버에게 전 share 토큰을 노출 → 윈도우 제한 멤버가 owner 의 `scope_mode="full"`
+    share 토큰으로 자기 가시성 윈도우 escape. owner/`.any` 감사자가 아니면 반환 목록을
+    `CreatedBy=본인`으로 필터(타인 토큰 은닉→escape 봉인, 멤버 자기 view-only 공유 관리 보존 —
+    §18.8 REV FINDING-1: 단순 owner-only 403 은 정당한 멤버 공유 관리 UI 파손).
+  - **LOW**: `revoke_share`(`DELETE /api/share/{share_id}`) 미인가자 404/403 존재 oracle +
+    authz 전 `already_revoked` 200 누출 → authz 를 앞으로 이동 + 미인가 응답 403→404 균질화.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/conversations.py` (`list_conversation_shares` owner 게이트).
+  - `unit/feature-0003-agent-web-ui/src/routers/share.py` (`revoke_share` authz 재배치·404 균질화).
+  - `docs/SECURITY.md` §21.6 신설.
+  - `unit/feature-0003-agent-web-ui/tests/test_share_list_owner_gate.py` (소스-구조 회귀 가드).
+- Impact: 비파괴. cookie 세션 + API 토큰 동일 인가 choke-point. 순수 cross-account(비-멤버)는
+  이전에도 404 차단 — 본 수정은 멤버 윈도우 격리 강화. owner/`.any` 감사자 흐름 무회귀.
+- Rollback Notes: 코드 revert(게이트 제거) 시 윈도우 escape 재현. 완전 가역, 데이터 무관.
