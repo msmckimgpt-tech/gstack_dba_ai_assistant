@@ -693,3 +693,9 @@ source_of_truth: true
 
 ## REV-20260723T010501-doc-sync-rn-0723 [SKIPPED:non-policy-doc] — 릴리즈노트 07-22 블록 신규 6항목(대화 UI 안정화·탐색) (TASK-20260723T010501-doc-sync-rn-0723, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`)뿐 — 비-정책 doc-only. 렌더 로직·백엔드·스키마·RBAC·엔드포인트·cache-buster(빌드 자동주입) 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현·완료형 정당성(6항목 전부 owning POST-DEPLOY 커밋으로 라이브 확증; f0a32980 은 브리지 다운 §15.4.1 escape·API e2e+단위 12 보완)·area(work)·누출 회피는 doc_sync 가 정본(각 항목 owning POST-DEPLOY 커밋 + git log cfa647df..HEAD) 대비 직접 검증 + ULTRACODE 타깃별 적대 verify(wf_4ab4d814 — RN 6 INCLUDE holds·feature-0023 등 8 EXCLUDE 사유 정확 confirmed, cross-target cross-fault 회피 스코프).
+
+## REV-20260723T024724-paging-scroll-preserve [SKIPPED:trivial-frontend-ux] — 브랜치 페이징 스크롤 위치 보존 (20260723T024724-paging-scroll-preserve, Minor §12.3)
+- Panel skip 사유(§18.8): 순수 프론트 스크롤 UX — `app.js`(loadHistory preserveScroll 옵션·_pageBranch/refreshWorkspace 배선)·`share.js`(window.scrollY 보존). 백엔드·엔드포인트·RBAC·스키마·데이터 0, 보안 표면 없음.
+- 자체점검: ① append/일반 로드 경로 무변경(preserveScroll 미지정 시 기존 맨-아래/prepend). ② 1:1 은 refreshWorkspace 유지(사이드바 프리뷰 등 갱신 보존)하고 preserveScroll 만 전달 — behavior 드롭 없음. ③ rAF 복원(layout 확정 후, scroll-restore 규약)·`Math.min(saved,maxTop)` clamp(오버스크롤 방지). ④ 공유 뷰 문서 스크롤도 rAF+clamp. ⑤ 브랜치 대화(has_branches) 페이징에만 preserveScroll — 일반 대화 무영향.
+- 검증: `node --check` app.js/share.js PASS · POST-DEPLOY 실브라우저 scrollTop 실측(layout 의존, jsdom 부적합).
+- Cross-ref: CHG/TASK/FUNCTION/TEST-20260723T024724 · feature-0019 브랜치 페이징(PR#887) 후속 UX.

@@ -1760,3 +1760,10 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 ## (doc-sync-rn-0723, 2026-07-22) 릴리즈노트 콘텐츠 — 07-22 블록 신규(대화 UI 안정화·탐색 6항목)
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-22" 블록 신규(6항목: fixed/work 3·improved/work 3 — 재답변 후 내 메시지 소실 복구·'수정' 창 글자 비가시·말풍선 공유 회귀·상단 흐림 신호·오른쪽 위치 막대·공유/그룹 편집 버전 읽기전용 페이징) prepend·generated 2026-07-21→2026-07-22. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
 - 평이화/비노출: feature-id·§번호·PR#·함수명·내부표현(active_leaf/브랜치 체이닝·color:inherit·point rail/renderCount·branch_view 등) 비노출(사용자 언어).
+
+## (20260723T024724-paging-scroll-preserve, 2026-07-23) 브랜치 버전 페이징 스크롤 위치 보존 (web/UI, Minor §12.3, cross-cut 정본 feature-0019)
+- 목적: 편집 버전 `< n/m >` 페이징 시 스크롤이 맨 아래로 튀지 않고 위치를 보존해 연속 페이징을 매끄럽게.
+- 동작(`static/app.js`): `loadHistory({preserveScroll})` — 재렌더 전 `messageLogEl.scrollTop` 저장, renderMessages(맨-아래) 후 `_applyRenderWindowSoon`(rAF 재-스크롤) 생략 + `requestAnimationFrame` 으로 저장 위치 복원(`Math.min(saved, maxTop)` clamp, layout 확정 후 — scroll-restore rAF 규약). `refreshWorkspace(_, {preserveScroll})` 가 그 히스토리 재로드에 전달. `_pageBranch`: 그룹=`loadHistory({branchView, preserveScroll:true})`, 1:1=`refreshWorkspace(cid, {preserveScroll:true})`.
+- 동작(`static/share.js`): `pageBranchShare` 가 `window.scrollY` 저장 → `render()` 후 rAF 로 `window.scrollTo(0, min(saved,maxY))` 복원(문서 스크롤).
+- 불변식: append(prepend)·일반 로드·전송 후 스크롤은 기존 동작 유지(preserveScroll 미지정). 백엔드 무관.
+- 검증: `node --check` 2 · POST-DEPLOY 실브라우저(scrollTop 페이징 전후 델타 ≈0) — layout 의존이라 jsdom 부적합(scroll-restore gotcha). CHG/REV-20260723T024724-paging-scroll-preserve.

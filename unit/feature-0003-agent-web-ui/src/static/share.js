@@ -206,8 +206,17 @@
     const cur = Number(msg.version_number || 1);
     const nextIdx = (cur - 1) + direction;
     if (nextIdx < 0 || nextIdx >= sibs.length) return;
+    // feature-0019 paging-scroll-preserve: 공유 뷰(문서 스크롤)도 페이징 재렌더 시 위치를 보존한다.
+    // render() 가 #shareMessages 를 통째로 교체하므로 그대로 두면 스크롤이 튄다. 저장 후 rAF 로 복원.
+    const savedY = window.scrollY || window.pageYOffset || 0;
     fetchShare(tok, sibs[nextIdx])
-      .then((data) => render(data, tok))
+      .then((data) => {
+        render(data, tok);
+        requestAnimationFrame(() => {
+          const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+          window.scrollTo(0, Math.min(savedY, maxY));
+        });
+      })
       .catch((err) => showError(err && err.message ? err.message : "버전 전환에 실패했습니다."));
   }
 
