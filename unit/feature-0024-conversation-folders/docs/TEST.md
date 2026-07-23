@@ -74,3 +74,5 @@ source_of_truth: true
 - Result Summary: **PRE-DEPLOY** — node --check app.js OK · 신규 함수(openFolderSettings/openMoveConversationDialog/_commitFolderRename 등) 정의·호출 정합 · 미사용 _foldersFlatForPicker 제거.
 - Environment: Windows-browser — 정적 자산 baked → **POST-DEPLOY PB-0008 예정**: ①새 폴더=이름입력 없이 생성+인라인편집 포커스 ②'설정' 모달 지침 저장 ③이름 인라인 텍스트박스 전환 ④지침 멀티라인 textarea ⑤'이동' 모달 검색/정렬/새폴더/빼기 ⑥DnD 대화→폴더·폴더→폴더·root빼기.
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
+
+- **[POST-DEPLOY 2026-07-23] folder-ux 6개 개선 라이브 e2e (PASS, Windows-browser, 라이브 65848910)**: PR #908 → main 65848910 → deploy-web(soak PASS). 서빙 app.js 신규 UX 심볼 24 hit·styles.css 5 hit. **6개 전부 PASS**(win-browser eval, bootstrap_admin 로그인): ①createFolderFlow(null)→prompt 없이 "새 폴더"(delta 1)+folderRenamingId set+rename input rendered·**focused** ②openFolderSettings→folder-settings-panel+삭제 버튼+지침 textarea(rows≥5) ③_commitFolderRename→"매출 분석" 반영·input 제거 ④멀티라인 지침("UTC…\nENUM…") 저장·모달 닫힘 ⑤openMoveConversationDialog→검색(필터 동작)+정렬(2옵션)+새폴더+닫기 ⑥conv/folder draggable=true + 시뮬 dragstart→drop→대화 폴더 배정(count 1). 스크린샷 scratchpad/folder-settings-modal.png(설정 모달 멀티라인 지침+삭제). 브리지 다운 후 stale 로그 제거+relaunch+로그인으로 복구. Pass/Fail: **PASS**.
