@@ -1789,3 +1789,9 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 불변식: 트리거가 없는 요소(메뉴 없는 말풍선·pending/disabled 대화 항목)는 기본 우클릭 유지(no-op 폴백). 우클릭(button2)은 native click 미발화 + 트리거 stopPropagation → 대화 선택·폴더 접기/펼치기 유발 안 함. admin.js·그래프 캔버스 우클릭(graph-ctxmenu.js 자체 소유)·백엔드/RBAC/스키마/엔드포인트 무관.
 - 범위 밖(follow-up): 관리 콘솔(admin.js)의 다수 메뉴 우클릭 편입.
 - 검증: `node --check` PASS(2회) · §18.8 적대 리뷰(general-purpose) SHIP(MINOR 3 in-cycle 반영) · POST-DEPLOY PB-0008(AC-1~5). CHG/REV/TEST-20260723T071355-universal-ctxmenu.
+
+## (20260723T080415-floating-menu-close-fix, 2026-07-23) floating 메뉴 닫힘 결함 수정 — folderMenu 1급 승격 (web/UI, Minor §12.3, universal-ctxmenu 후속)
+- 결함: `closeFloatingMenus()` 가 제거 대상 id 를 `["convItemMenu","bubbleMsgMenu"]` 하드코딩 → feature-0024 폴더 메뉴(`id="folderMenu"`) 누락으로 바깥클릭/ESC/scroll/toggle 어느 경로도 폴더 '···' 메뉴를 못 닫음(공존·트리거 상태 잔존).
+- 수정(SSOT·drift-proof): `openFloatingMenu` 가 만든 모든 메뉴에 `data-floating-menu` 마커 부여 → `closeFloatingMenus` 가 `[data-floating-menu]` id 무관 일괄 제거(향후 신규 메뉴 자동 포함) + 트리거 리셋 selector 에 `.conv-folder-menu-trigger.is-open` 추가. 정합: `_attachShareRangeEsc`·`_maybeSyncConversationListUnread` 의 열린-메뉴 가드에 folderMenu 포함, `styles.css` `.conv-folder-menu-trigger.is-open{opacity:1}`(열림 중 '···' 유지).
+- 불변식: conv-item '···'·말풍선 '☰' 닫힘 동작은 마커 제거가 기존 id 제거의 superset 이라 무회귀. 백엔드/RBAC/스키마/엔드포인트 0.
+- 검증: `node --check` PASS · §18.8 적대 리뷰 SHIP · POST-DEPLOY PB-0008(AC-1~5 폴더 메뉴 바깥클릭/ESC/scroll/to글 닫힘). CHG/REV/TEST-20260723T080415-floating-menu-close-fix.

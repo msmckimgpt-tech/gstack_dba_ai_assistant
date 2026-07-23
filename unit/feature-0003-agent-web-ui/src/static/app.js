@@ -8119,12 +8119,11 @@ async function leaveConversation(targetCid = "") {
 // primitive 3종. 기존 openConversationItemMenu 는 openFloatingMenu 의 thin caller 로 재구현하여
 // mount/viewport-clamp/positioning + outside-click·ESC·scroll·resize teardown 로직 drift 를 없앤다.
 function closeFloatingMenus() {
-  ["convItemMenu", "bubbleMsgMenu"].forEach((id) => {
-    const existing = document.getElementById(id);
-    if (existing) existing.remove();
-  });
-  // trigger aria-expanded 갱신(conv-item ··· + 말풍선 ☰ 양쪽).
-  document.querySelectorAll(".conv-item-menu-trigger.is-open, .message-menu-trigger.is-open").forEach((t) => {
+  // openFloatingMenu 가 만든 모든 floating menu 를 id 무관하게 제거한다 — 신규 메뉴(folderMenu 등)가
+  // 하드코딩 id 목록에서 누락돼 바깥클릭/ESC/scroll 로 안 닫히던 drift 를 data-마커 단일 SSOT 로 봉인.
+  document.querySelectorAll("[data-floating-menu]").forEach((m) => m.remove());
+  // trigger aria-expanded/is-open 복원 (conv-item ··· + 폴더 ··· + 말풍선 ☰ 3종).
+  document.querySelectorAll(".conv-item-menu-trigger.is-open, .conv-folder-menu-trigger.is-open, .message-menu-trigger.is-open").forEach((t) => {
     t.classList.remove("is-open");
     t.setAttribute("aria-expanded", "false");
   });
@@ -8170,6 +8169,7 @@ function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", dataset
   const menu = document.createElement("div");
   menu.id = id;
   menu.className = className;
+  menu.dataset.floatingMenu = "1";  // closeFloatingMenus 가 id 무관하게 일괄 제거하는 마커(drift 방지).
   menu.setAttribute("role", "menu");
   Object.keys(dataset).forEach((k) => { menu.dataset[k] = dataset[k]; });
 
@@ -8379,8 +8379,8 @@ function _attachShareRangeEsc() {
   _shareRangeEscHandler = (ev) => {
     if (ev.key !== "Escape") return;
     if (!state.shareRange) return;
-    // 플로팅 메뉴가 열려 있으면 메뉴 자체 ESC 핸들러에 양보(메뉴만 닫힘).
-    if (document.getElementById("bubbleMsgMenu") || document.getElementById("convItemMenu")) return;
+    // 플로팅 메뉴(말풍선 ☰ · 대화 ··· · 폴더 ···)가 열려 있으면 메뉴 자체 ESC 핸들러에 양보(메뉴만 닫힘).
+    if (document.getElementById("bubbleMsgMenu") || document.getElementById("convItemMenu") || document.getElementById("folderMenu")) return;
     ev.preventDefault();
     cancelShareRange();
   };
@@ -11659,7 +11659,8 @@ async function _maybeSyncConversationListUnread() {
   if (document.hidden) return;
   if (state.pendingNewConversation) return;
   if (state.searchModal && state.searchModal.open) return;
-  if (document.getElementById("convItemMenu")) return;
+  // 열린 좌측 메뉴(대화 ··· / 폴더 ···)가 있으면 재렌더로 trigger 가 떨어져 나가지 않게 skip.
+  if (document.getElementById("convItemMenu") || document.getElementById("folderMenu")) return;
   const now = Date.now();
   if (now - _lastSidebarUnreadSyncAt < SIDEBAR_UNREAD_SYNC_MS) return;
   _lastSidebarUnreadSyncAt = now;

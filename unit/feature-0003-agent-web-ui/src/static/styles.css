@@ -696,6 +696,7 @@ a { color: inherit; }
   transition: opacity .12s, color .12s;
 }
 .conv-folder-header:hover .conv-folder-menu-trigger,
+.conv-folder-menu-trigger.is-open,
 .conv-folder-menu-trigger:focus-visible { opacity: 1; }
 .conv-folder-menu-trigger:hover { color: var(--text-1); }
 .conv-group-collapsible {
