@@ -327,6 +327,9 @@ const PERMISSION_DEPENDENCIES = {
   "conversation.member.manage": "conversation.list.own",
   "conversation.attachment.upload.own": "conversation.list.own",
   "conversation.attachment.read.own": "conversation.list.own",
+  // feature-0024-conversation-folders: 폴더 조회/관리(내 폴더). folder.manage.own 은 folder.list.own 하위.
+  "folder.list.own": "conversation.list.own",
+  "folder.manage.own": "folder.list.own",
   //   전체 대화 권한(conversation_any): "전체 대화 목록 조회"(list.any) 가 게이트(루트).
   "conversation.read.any": "conversation.list.any",
   "conversation.file.read.any": "conversation.list.any",
@@ -339,6 +342,9 @@ const PERMISSION_DEPENDENCIES = {
   "conversation.duplicate.any": "conversation.list.any",
   "conversation.attachment.upload.any": "conversation.list.any",
   "conversation.attachment.read.any": "conversation.list.any",
+  // feature-0024-conversation-folders: 전체 폴더 조회/관리(운영자 latent). folder.manage.any 는 folder.list.any 하위.
+  "folder.list.any": "conversation.list.any",
+  "folder.manage.any": "folder.list.any",
 };
 
 /* ── Bulk action contract — CONVENTIONS.md §10 + DESIGN.md §4~§9 ───── */
