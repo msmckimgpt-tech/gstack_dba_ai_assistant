@@ -558,6 +558,53 @@ CREATE INDEX IF NOT EXISTS ix_redteam_reviews_conversation
     ON agent_runtime.redteam_reviews (conversation_id, id DESC);
 
 -- ============================================================================
+-- 6b. conversation_folders + folder_conversation_map — feature-0024 대화 폴더(프로젝트)
+--     (parity: alembic 0044_conversation_folders — revision 이 prod 스키마 권위)
+--     conversation_folders = 계정 소유 재귀 폴더(self-FK). folder_conversation_map = 계정별 대화 배정.
+--     폴더 삭제(archived_at soft-delete)와 대화 보존은 별개 — 대화 정본은 core_conversations.
+--     §7 의 GRANT ... ON ALL TABLES/SEQUENCES 가 본 테이블·IDENTITY 시퀀스를 자동 커버(부트스트랩 스냅샷).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_runtime.conversation_folders (
+    folder_id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    owner_account_id  bigint       NOT NULL,
+    parent_folder_id  bigint,
+    name              varchar(120) NOT NULL,
+    instructions      text,
+    datasource_id     bigint,
+    product_id        bigint,
+    sort_order        integer      NOT NULL DEFAULT 0,
+    archived_at       timestamptz,
+    created_at        timestamptz  NOT NULL DEFAULT now(),
+    updated_at        timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT fk_conv_folders_parent
+        FOREIGN KEY (parent_folder_id)
+        REFERENCES agent_runtime.conversation_folders (folder_id)
+        ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS ix_conv_folders_owner
+    ON agent_runtime.conversation_folders (owner_account_id, parent_folder_id);
+
+CREATE TABLE IF NOT EXISTS agent_runtime.folder_conversation_map (
+    account_id       bigint       NOT NULL,
+    conversation_id  varchar(128) NOT NULL,
+    folder_id        bigint       NOT NULL,
+    assigned_at      timestamptz  NOT NULL DEFAULT now(),
+    PRIMARY KEY (account_id, conversation_id),
+    CONSTRAINT fk_folder_map_folder
+        FOREIGN KEY (folder_id)
+        REFERENCES agent_runtime.conversation_folders (folder_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_folder_map_conv
+        FOREIGN KEY (conversation_id)
+        REFERENCES agent_runtime.core_conversations (conversation_id)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ix_folder_map_folder
+    ON agent_runtime.folder_conversation_map (folder_id);
+CREATE INDEX IF NOT EXISTS ix_folder_map_account
+    ON agent_runtime.folder_conversation_map (account_id, folder_id);
+
+-- ============================================================================
 -- 7. Role grants (post-table creation)
 --    DEFAULT PRIVILEGES 가 이미 설정됐으므로 bootstrapped role 에는 자동 적용됨.
 --    하지만 명시적 grant 로 이중 보장.
