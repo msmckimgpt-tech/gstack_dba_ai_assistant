@@ -4395,8 +4395,16 @@ def _build_conversations_payload(conn, account: dict[str, Any]) -> dict[str, Any
         items=items,
         create_if_missing=False,
     )
+    # feature-0024-conversation-folders: 요청 계정 스코프 folder_id 보강(계정별 배정, additive).
+    #   실패(폴더 미부트스트랩/PG 오류)해도 목록은 folder 없이 정상 동작(순수 additive·fail-open).
+    try:
+        from routers import _folder_store as _fs
+        _fmap = _fs.folder_map_for_account(int(account.get("id") or 0))
+    except Exception:
+        _fmap = {}
     for item in items:
         item["is_current"] = item.get("id") == current_id
+        item["folder_id"] = _fmap.get(str(item.get("id")))
     return {"items": items, "current": current_id}
 
 def _build_worker_agent_result(job_id: int, conv_id: str) -> dict[str, Any]:
