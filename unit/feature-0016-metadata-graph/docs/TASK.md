@@ -2515,3 +2515,28 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 ### Git 동기화 결과
 - Task-Cycle: graph-node-reveal (ai/claude-corp/feature-0016-graph-node-reveal, worktree).
 - verify-completion PASS(pre-commit) → commit + feature 브랜치 push 자동(§16.3 Step 4). PR 생성·main 병합·배포는 사용자 confirm 대기.
+
+## 20260723T1830-analysis-completeness — 'DB 전체 AI 능동 분석' 미완결 근본 개선 (2026-07-23, 사용자 리포트 · entry persona dispatch)
+
+### 맥락 (사용자 리포트 — mysql-local/log_v2)
+스키마 클러스터 'DB 전체 AI 능동 분석'이 done 으로 끝나도 ① 각 테이블 컬럼 미분석 ② 컨텐츠 라벨링 클러스터가 분석 결과를 반영하지 않고 이전 구조 유지 ③ 그래프 밴드 ↔ 상세 패널 그룹 불일치 ④ 재시도 시 "분석 대상 없음" 차단. 라이브 진단(run 95b344de, 16:44~17:27 done 61/61): 컬럼 잡 10개(관계 끝점만), column_descriptions=log_v2 0행, 클러스터 mark 13:19(분석 이전), 시그니처/임베딩은 17:35 재생성 완료 상태.
+
+### 근본 원인 (4건)
+- RC1(컬럼): §55 "직계 컬럼 게이트 면제 편입"은 그래프 HAS_COLUMN 이웃 의존 — Column 정점은 큐레이션(column_descriptions)·관계 끝점만 투영. 부트스트랩 미수행 datasource 는 그래프에 컬럼이 없어 컬럼 분석·payload 컬럼 컨텍스트가 공동(空洞).
+- RC2(클러스터 stale): 재클러스터는 RECOMPUTE_SEC(6h) 시간 cadence 전용 + AGE 투영은 30분 cron — 분석 완료(시그니처/임베딩 갱신)가 어떤 것도 깨우지 않음. 라벨 LLM 캐시 키가 멤버셋 해시 뿐이라 멤버 불변 시 스켈레톤 시절 라벨 영구 고착.
+- RC3(밴드↔패널 불일치): 프론트 `_metaGraphMergeNodes` 가 cluster_id/label 를 `!= null` 일 때만 병합 — 백엔드가 클러스터 해제/변경(null)해도 열린 세션 모델(캔버스 밴드)이 stale 값 영구 보존, 패널은 신선한 API 노드 사용.
+- RC4(재시도 차단): 시드 전부 done → dry_run planned=0 → 프론트가 차단. 백엔드 only_missing:false(§55 refine-not-override 재분석)는 있는데 프론트 경로 부재.
+
+### 처리 (cross-cut 코드 거주 feature-0002 modules · feature-0003 static/graph · shared/config)
+- [x] TAC.1 (RC1) `node_analysis._ensure_table_columns` — Table 잡 처리 직전 1회: column_descriptions 부재 시 datasource 라이브 INFORMATION_SCHEMA introspection(mysql=인스턴스 전역 TABLE_SCHEMA 필터 / mssql=effective DB 재연결·테이블명 매칭) → `kb_metadata.upsert_column_desc`(source='introspect', ordinal·native comment) + `metadata_graph.sync_column` targeted MERGE. process_pending 훅(fail-soft — 0 = 종전 동작). 신규 config `AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP`(기본 200, 0=off).
+- [x] TAC.2 (RC2a) `semantic_cluster` 두 SELECT 에 signature_text_hash 추가 → 라벨 캐시 키 `label:<ns>:<hash(멤버키#시그해시)>` 합성(cache_keys) — 분석문 갱신(시그니처 변경) 시 재라벨. 하위호환(cache_keys 부재 caller = 종전 키).
+- [x] TAC.3 (RC2b) `metadata_graph.project_cluster_props` 신설 — 재클러스터 변경분만 AGE 정점 MATCH…SET(semantic_cluster_id/label, null clear 포함). run_semantic_cluster_pass 가 write-back 후 동일 conn 으로 호출(30분 sync 대기 제거, §82 flock 전체-sync 경로와 무관한 소량 targeted SET).
+- [x] TAC.4 (RC2c) `run_cluster_maintenance` due 판정 = 시간 cadence OR `_fresh_embeddings_since_mark`(mark 이후 새 시그니처 임베딩 → 다음 pass(15분) 재클러스터). churn 가드: 해당 ds 에 진행 중 node_analysis_runs(lease 이내) 있으면 유예 — run 완료 후 완전한 분석문 기준 1회 재클러스터.
+- [x] TAC.5 (RC3) `graph-ctxmenu.js _metaGraphMergeNodes` — cluster_id/label 를 payload 에 필드가 존재하면 null 포함 항상 반영(`"in"` 체크). 필드 없는 응답(neighborhood/search 등)은 기존값 보존.
+- [x] TAC.6 (RC4) `_metaGraphAnalyzeSchema` — planned=0 && 총계>0 이면 "전체 재분석(refine)" confirm → only_missing:false POST. 총계 0 만 차단 유지.
+- [x] TAC.7 단위 검증 — 신규 test_node_analysis_completeness.py + test_semantic_cluster_content.py 확장(freshness due·cache_keys·projection 키·maintenance 통합, fixture sig 패딩). 전체 스위트(0002+0003) 컨테이너 PASS(exit 0).
+- [x] TAC.9 §18.8 적대 리뷰 FAIL(B1)→전량 흡수 — B1(datasource 해석 MEMORY_DB 연결+scope 계산: 프로덕션 무효였던 RC1 소생), M1+M2+m4(행-존재 게이트→누락분-only DO NOTHING insert — 부분 큐레이션 보완·부분 쓰기 자가치유·큐레이션 불변), M3(임베딩 드레인 유예 가드), m1(SAVEPOINT 행 격리)·m2(멀티 ds OFF skip)·m3(forceAll 2차 dry_run 수치)·n1(투영 키 object_key 세그먼트). 흡수 후 타깃 40 PASS.
+- [ ] TAC.8 POST-DEPLOY 라이브 검증 — log_v2 '전체 재분석' 트리거 → 컬럼 잡 생성(>10)·column_descriptions 적재·재클러스터/라벨 갱신·AGE 투영·그래프 뷰 반영(PB-0008). (deploy_scope: included)
+
+### 검증
+- 컨테이너 pytest 전체(0002+0003) PASS(exit 0) + 타깃 40 PASS. `node --check` ES module PASS. §18.8 적대 리뷰: REVIEW.md REV-20260723T183000-analysis-completeness (FAIL→전량 흡수→재검증). 상세 Run: TEST.md `## analysis-completeness`.

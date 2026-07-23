@@ -1022,3 +1022,14 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 
 ### Run (예정) — 실 cron 배포 후 관찰 (Environment: prod-cron)
 - 배포 후 첫 30분 cron 사이클에서 `artifacts/metadata-graph/cron.log` 에 정상 skip/진행 로그가 기대대로 나타나는지 육안 확인(1회성, 비차단).
+
+## analysis-completeness — 'DB 전체 AI 능동 분석' 미완결 근본 개선 (2026-07-23)
+
+### Run — 컨테이너 단위 테스트 (Environment: docker mysql-ai-agent, pytest) — TAC.7
+- 신규 `test_node_analysis_completeness.py` 10 PASS — RC1(_ensure_table_columns 존재검사 skip/upsert+MERGE/dedup·cap off·bad key/fail-soft, engine 디스패치 mysql↔mssql·cap 절단) + RC2 보조(project_cluster_props MATCH…SET int 리터럴·null clear·미지원 label skip·fail-soft).
+- `test_semantic_cluster_content.py` 확장 26 PASS — 라벨 캐시 키 시그해시 합성(cache_keys 상이→키 상이·부재→종전 키), 변경분 투영 키(Table=<ds>:<eff>.<t> dbo 제거·Routine=items.key), `_fresh_embeddings_since_mark`(due/진행중 run 유예/무신선 False/예외 False), maintenance freshness 통합. 기존 fixture 는 sig 자동 패딩(의미 불변).
+- 전체 스위트(0002+0003) 컨테이너 실행 exit 0 (2026-07-23 18:2x KST) — 회귀 0.
+- 정적: `python3 -m py_compile` 4파일 PASS · `node --check`(ES module) graph-ctxmenu.js PASS.
+
+### Run (예정) — POST-DEPLOY 라이브 (Environment: Windows-browser, PB-0008) — TAC.8
+- log_v2 스키마 클러스터 상세 → 'DB 전체 AI 능동 분석' 재시도: "전체 재분석" confirm 노출(차단 메시지 아님) → 시작 → 컬럼 잡 생성 확대(>10)·column_descriptions log_v2 적재 확인(PG) → run 완료 후 ≤15분 재클러스터·라벨 갱신·AGE 투영 → 그래프 뷰(새 fetch) 밴드·상세 패널 그룹 정합 육안.

@@ -193,6 +193,10 @@ def _pass_env(monkeypatch, rag_rows, routine_rows, routine_exc=None):
     raise_on = {}
     if routine_exc is not None:
         raise_on["FROM routine_objects r JOIN texts"] = routine_exc
+    # analysis-freshness(2026-07-23): 두 SELECT 가 signature_text_hash 를 추가 반환(라벨 캐시 키
+    # 신선도 합성) — 기존 fixture 튜플(rag 7·routine 6)은 sig 자리를 자동 패딩(테스트 표기 최소화).
+    rag_rows = [tuple(r) + (f"sig{r[0]}",) if len(r) == 7 else tuple(r) for r in (rag_rows or [])]
+    routine_rows = [tuple(r) + (f"sig{r[0]}",) if len(r) == 6 else tuple(r) for r in (routine_rows or [])]
     cur = FakeCursor(rows={
         "FROM rag_objects o JOIN texts": rag_rows,
         "FROM routine_objects r JOIN texts": routine_rows,
@@ -200,6 +204,11 @@ def _pass_env(monkeypatch, rag_rows, routine_rows, routine_exc=None):
     monkeypatch.setattr(sc, "_rw_conn", lambda conn: (FakeConn(cur), False))
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", False, raising=False)
     monkeypatch.setattr(sc, "_ROUTINE_COLS_WARNED", {"done": False})
+    # analysis-freshness: 변경분 AGE targeted 투영 캡처(실 cypher 미실행) — cur.projected 로 검증.
+    from modules import metadata_graph as _mg
+    cur.projected = []
+    monkeypatch.setattr(_mg, "project_cluster_props",
+                        lambda changes, conn=None: cur.projected.extend(changes) or len(changes))
     return cur
 
 
@@ -475,3 +484,76 @@ def test_llm_labels_payload_uses_display_label(monkeypatch):
     ns = sc._label_ns_hash("mssql-06656002eda6", "cc_data_main")
     inserts = [p for (q, p) in cur.executed if "INSERT INTO agent_runtime.kv" in q]
     assert inserts and inserts[0][1].startswith(f"label:{ns}:")   # 캐시 키는 해시 ns 불변
+
+
+# ── analysis-freshness(2026-07-23, 사용자 리포트 log_v2): 분석 완료 → 클러스터 신선도 ──
+def test_llm_labels_cache_key_uses_signature_hash(monkeypatch):
+    """라벨 캐시 키에 멤버 시그니처 해시 합성 — 멤버셋 불변 + 분석문(시그니처) 갱신이면 캐시 미스
+    → 재라벨. cache_keys 미전달 caller 는 종전 멤버셋 키(하위호환)."""
+    from modules import llm as llm_mod
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
+    monkeypatch.setattr(llm_mod, "llm_cluster_label",
+                        lambda payload: {"labels": [{"idx": 0, "label": "새 라벨"}]})
+    ns = sc._label_ns_hash("ds1", "db")
+    base = {"idx": 0, "keys": ["k1", "k2"], "names": ["t1", "t2"], "summaries": []}
+    cur1 = FakeCursor()
+    sc._llm_content_labels(cur1, "ds1", "db", [dict(base, cache_keys=["k1#aaaa", "k2#bbbb"])])
+    key1 = [p[1] for (q, p) in cur1.executed if "SELECT value FROM agent_runtime.kv" in q][0]
+    cur2 = FakeCursor()
+    sc._llm_content_labels(cur2, "ds1", "db", [dict(base, cache_keys=["k1#aaaa", "k2#cccc"])])
+    key2 = [p[1] for (q, p) in cur2.executed if "SELECT value FROM agent_runtime.kv" in q][0]
+    assert key1 != key2 and key1.startswith(f"label:{ns}:") and key2.startswith(f"label:{ns}:")
+    # 하위호환: cache_keys 부재 → 멤버셋 키(순서 불변)
+    cur3 = FakeCursor()
+    sc._llm_content_labels(cur3, "ds1", "db", [dict(base)])
+    key3 = [p[1] for (q, p) in cur3.executed if "SELECT value FROM agent_runtime.kv" in q][0]
+    assert key3 == f"label:{ns}:{sc._member_set_hash(base['keys'])}"
+
+
+def test_pass_projects_changed_cluster_props(monkeypatch):
+    """변경분 AGE targeted 투영 — Table 은 <ds>:<eff_schema>.<table>(MSSQL dbo 제거 동형),
+    Routine 은 items.key 그대로. 무변경 행은 투영 대상 아님."""
+    pytest.importorskip("numpy")
+    rag = [
+        (1, "ds1:aaa.dbo.t1", "t1", [1.0, 0.0], None, None, "dbo"),
+        (2, "ds1:aaa.dbo.t2", "t2", [0.999, 0.01], None, None, "dbo"),
+    ]
+    routines = [(11, "aaa", "sp_r1", [0.998, 0.02], None, None)]
+    cur = _pass_env(monkeypatch, rag, routines)
+    rep = sc.run_semantic_cluster_pass("common", "ds1")
+    assert rep["error"] is None and rep["updated"] == 3
+    got = {(c["label"], c["key"]) for c in cur.projected}
+    assert got == {("Table", "ds1:aaa.t1"), ("Table", "ds1:aaa.t2"), ("Routine", "ds1:aaa.sp_r1()")}
+    assert all(c["cid"] == 0 and c["lab"] for c in cur.projected)
+
+
+def test_fresh_embeddings_since_mark_due_and_guards():
+    """mark 이후 새 임베딩 → due. 진행 중 run(lease 이내) → 유예. 신선 임베딩 없음/예외 → False."""
+    fresh = FakeCursor(rows={"FROM agent_runtime.kv v": (1,)})   # 신선 임베딩 존재( run 없음 → fetchone None)
+    # 첫 execute(kv+EXISTS) → (1,), 둘째 execute(node_analysis_runs) → rows 미매칭 → None
+    assert sc._fresh_embeddings_since_mark(fresh, "common", "ds1", "cluster_at:common:ds1") is True
+    stale = FakeCursor()   # kv 미매칭 → fetchone None
+    assert sc._fresh_embeddings_since_mark(stale, "common", "ds1", "k") is False
+    running = FakeCursor(rows={"FROM agent_runtime.kv v": (1,),
+                               "FROM node_analysis_runs WHERE scope_key = ANY": (1,)})
+    assert sc._fresh_embeddings_since_mark(running, "common", "ds1", "k") is False
+    # §18.8 M3: 임베딩 드레인(미임베딩 시그니처 잔존) 중 유예 — 부분-멤버셋 재클러스터 churn 차단.
+    draining = FakeCursor(rows={"FROM agent_runtime.kv v": (1,), "t.embedding IS NULL": (1,)})
+    assert sc._fresh_embeddings_since_mark(draining, "common", "ds1", "k") is False
+    boom = FakeCursor(raise_on={"FROM agent_runtime.kv v": RuntimeError("pg down")})
+    assert sc._fresh_embeddings_since_mark(boom, "common", "ds1", "k") is False
+
+
+def test_maintenance_freshness_triggers_recluster(monkeypatch):
+    """cadence 미도래여도 신선 임베딩이면 재클러스터 — run_cluster_maintenance due 판정 통합."""
+    calls = []
+    monkeypatch.setattr(sc, "run_signature_backfill_pass", lambda max_rows=None, conn=None: {"changed": 0})
+    monkeypatch.setattr(sc, "list_cluster_scopes", lambda conn=None: [("common", "ds1")])
+    monkeypatch.setattr(sc, "_cadence_due", lambda cur, key, sec: False)          # 시간 cadence 미도래
+    monkeypatch.setattr(sc, "_fresh_embeddings_since_mark", lambda cur, s, d, k: True)
+    monkeypatch.setattr(sc, "run_semantic_cluster_pass",
+                        lambda scope, dsk, conn=None: calls.append((scope, dsk)) or {"updated": 1, "clusters": 1})
+    cur = FakeCursor()
+    monkeypatch.setattr(sc, "_rw_conn", lambda conn: (FakeConn(cur), False))
+    rep = sc.run_cluster_maintenance()
+    assert calls == [("common", "ds1")] and rep["updated"] == 1

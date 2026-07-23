@@ -1953,3 +1953,15 @@ PR #759 → main b69e4111 무중단 배포. 라이브 admin(건즈 409 객체): 
 
 ### Git 동기화 결과
 - 병합 PR #759 → main b69e4111. 배포 deploy-web.sh(무중단). POST-DEPLOY docs(본 커밋).
+
+## 2026-07-23 · analysis-completeness — 'DB 전체 AI 능동 분석' 미완결 근본 개선 (사용자 리포트, mysql-local/log_v2)
+라이브 진단(run 95b344de 16:44~17:27 done 61/61)으로 4개 근본 원인 확정 후 일괄 수정:
+- **RC1 컬럼 미분석**: Column 정점이 큐레이션·관계 끝점만 투영(log_v2 는 column_descriptions 0행 → 그래프 컬럼 10개) → §55 직계 컬럼 편입이 사실상 no-op. → Table 잡 처리 직전 datasource 라이브 INFORMATION_SCHEMA introspection 으로 column_descriptions 스켈레톤(+ordinal·comment) 적재 + Column 정점 MERGE (`_ensure_table_columns`, cap 200·fail-soft·기존 행 존중).
+- **RC2 클러스터 stale**: 재클러스터 6h cadence·AGE 투영 30분 cron·라벨 캐시 멤버셋 키 → 분석 완료가 아무것도 깨우지 않음. → ① 임베딩 신선도 기반 due(15분 pass, 진행 중 run 유예) ② 라벨 캐시 키에 시그니처 해시 합성(분석문 갱신 시 재라벨) ③ 변경분 AGE targeted 투영(`project_cluster_props`).
+- **RC3 밴드↔패널 불일치**: 프론트 병합이 null 을 보존해 캔버스 모델이 stale — 필드 존재 시 null 포함 반영으로 수정.
+- **RC4 재시도 차단**: planned=0 차단 → "전체 재분석(refine, only_missing:false)" confirm 경로 신설.
+- 검증: 컨테이너 pytest 전체(0002+0003) PASS·신규/확장 36 PASS·정적 검사 PASS. §18.8 적대 리뷰 REV-20260723T183000-analysis-completeness. POST-DEPLOY 라이브 재분석 검증(log_v2)·PB-0008 은 TAC.8.
+
+### Git 동기화 결과
+- Task-Cycle: analysis-completeness (ai/claude/feature-0016-analysis-completeness, worktree).
+- verify-completion / commit / PR / 병합 / 배포: 본 cycle 종료 시 §16.3 Step 4~6 + deploy_scope: included 에 따라 자동 진행 — 결과는 PR·아래 POST-DEPLOY 절에 기록.
