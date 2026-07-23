@@ -1109,6 +1109,7 @@ SELECT f.instructions
 FROM agent_runtime.folder_conversation_map m
 JOIN agent_runtime.conversation_folders f
   ON f.folder_id = m.folder_id AND f.archived_at IS NULL
+  AND f.owner_account_id = m.account_id
 WHERE m.account_id = %s AND m.conversation_id = %s
   AND f.instructions IS NOT NULL AND btrim(f.instructions) <> ''
 """,

@@ -32,10 +32,10 @@ source_of_truth: true
 - [x] TASK-0006 백엔드 folder CRUD 라우트(routers/folders.py) + 스토어(_folder_store.py) 재귀 CTE(depth cap·순환 방지·grandfathering) — py_compile PASS · 커밋 ca7c398e
 - [x] TASK-0007 대화 배정/이동 `PATCH /api/conversations/{cid}/folder`(계정별 upsert·2중 게이트[대화 read + 폴더 소유]) + 폴더 삭제(soft-delete 서브트리·undo·대화 보존) · 커밋 ca7c398e
 - [x] TASK-0008 대화 목록 payload 요청자 스코프 folder_id(_build_conversations_payload, additive·fail-open) · 커밋 ca7c398e
-- [ ] TASK-0009 프론트: 사이드바 재귀 폴더 렌더(app.js:3022) + 우클릭/메뉴 이동 + 폴더 CRUD UI + breadcrumb + cache-buster (▶ 다음 증분)
-- [ ] TASK-0010 Phase2: 폴더 지침 ask-time 주입(compose_system_prompt, 요청자 폴더) + 폴더 파일(첨부 스코프 요청자-폴더 확장) + 쿼리 스코프 핀
-- [ ] TASK-0011 단위 테스트(배정 계정격리·depth/순환·삭제 보존·IDOR) + §18.8 적대 보안 리뷰(IDOR/그룹)
-- [ ] TASK-0012 verify-completion + PB-0008 라이브 시각검증 + 배포(deploy_scope: included)
+- [x] TASK-0009 프론트: 사이드바 재귀 폴더 렌더(app.js:3022) + 메뉴 이동/CRUD UI + undo + cache-buster(?v=dev 자동) · 커밋 308aecff (node --check PASS)
+- [x] TASK-0010 Phase2a: 폴더 지침 ask-time 주입(compose_system_prompt 요청자 폴더) · 커밋 6fb4e976. **폴더 파일 + datasource/product 자동 스코프 = Phase 2b 이연**(첨부 IDOR 스코프 전용 보안 리뷰 필요).
+- [x] TASK-0011 §18.8 적대 보안 리뷰(general-purpose, IDOR/격리/RBAC/SQLi/injection/깊이) — HIGH 1(restore IDOR) + LOW 2 **전부 in-cycle 수정**(REV-20260723T060000). py_compile PASS. 단위 e2e 는 POST-DEPLOY PB-0008(폴더 테이블 배포 시 생성).
+- [ ] TASK-0012 verify-completion + PB-0008 라이브 시각검증 + 배포(deploy_scope: included) (▶ 진행 중)
 
 ## 4. In Progress
 - TASK-0009 (프론트 사이드바 폴더 UI) — 다음 착수. 백엔드 전 계층 완료.

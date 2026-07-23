@@ -315,18 +315,28 @@ def soft_delete_folder(folder_id: int) -> list[int]:
     return archived
 
 
-def restore_folders(folder_ids: list[int]) -> None:
-    """undo — 방금 삭제된 서브트리를 복구."""
+def restore_folders(folder_ids: list[int], owner_account_id: int | None = None) -> None:
+    """undo — 방금 삭제된 서브트리를 복구. ★ owner_account_id 지정 시 SQL 에서 소유 스코프 강제
+    (restore IDOR 차단 — body 의 folder_ids 를 무검증 복구하면 타 계정 archived 폴더를 열거·부활
+    시킬 수 있으므로 반드시 owner 필터. manage.any 운영자만 None 으로 전역 복구)."""
     if not folder_ids:
         return
+    ids = [int(x) for x in folder_ids]
     pg = _pg()
     try:
         with pg.cursor() as cur:
-            cur.execute(
-                "UPDATE agent_runtime.conversation_folders SET archived_at = NULL, updated_at = now() "
-                "WHERE folder_id = ANY(%s)",
-                ([int(x) for x in folder_ids],),
-            )
+            if owner_account_id is None:
+                cur.execute(
+                    "UPDATE agent_runtime.conversation_folders SET archived_at = NULL, updated_at = now() "
+                    "WHERE folder_id = ANY(%s)",
+                    (ids,),
+                )
+            else:
+                cur.execute(
+                    "UPDATE agent_runtime.conversation_folders SET archived_at = NULL, updated_at = now() "
+                    "WHERE folder_id = ANY(%s) AND owner_account_id = %s",
+                    (ids, int(owner_account_id)),
+                )
         pg.commit()
     finally:
         pg.close()

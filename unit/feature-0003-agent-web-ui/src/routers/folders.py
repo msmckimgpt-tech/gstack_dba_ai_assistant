@@ -78,11 +78,11 @@ async def create_folder(
     if instructions is not None:
         instructions = str(instructions)
     try:
+        # datasource_id/product_id 핀은 Phase 2b(접근 게이트 동반)로 이연 — 현재 저장하지 않는다
+        # (inert 필드에 무권한 값 저장 방지, REV LOW-2). 스키마 컬럼은 향후 배선용으로 존치.
         folder = store.create_folder(
             _acct_id(account), name, parent_folder_id=parent_id,
             instructions=instructions,
-            datasource_id=(data or {}).get("datasource_id"),
-            product_id=(data or {}).get("product_id"),
         )
     except store.FolderError as e:
         return _folder_err(e)
@@ -115,10 +115,7 @@ async def update_folder(
     if "instructions" in (data or {}):
         iv = data.get("instructions")
         kwargs["instructions"] = None if iv in (None, "") else str(iv)
-    if "datasource_id" in (data or {}):
-        kwargs["datasource_id"] = data.get("datasource_id")
-    if "product_id" in (data or {}):
-        kwargs["product_id"] = data.get("product_id")
+    # datasource_id/product_id 핀은 Phase 2b(접근 게이트 동반)로 이연 — 여기서 받지 않는다(REV LOW-2).
     if "parent_folder_id" in (data or {}):
         pv = data.get("parent_folder_id")
         kwargs["parent_folder_id"] = None if pv in (None, "", "null") else int(pv)
@@ -171,8 +168,12 @@ async def restore_folder(
         return app._json_error("폴더를 찾을 수 없습니다.", 404)
     if not _has_any(account) and int(root.get("owner_account_id") or 0) != _acct_id(account):
         return app._json_error("폴더에 대한 권한이 없습니다.", 403)
+    # ★ HIGH IDOR 차단: body 의 ids 는 공격자 통제 + folder_id 열거 가능(IDENTITY 순차 PK)이므로,
+    #    restore 를 요청자 owner 스코프로 SQL 강제한다(manage.any 운영자만 전역). path 소유 검증만으로는
+    #    body 의 타 계정 folder_id 를 막지 못한다(REV HIGH).
+    owner_scope = None if _has_any(account) else _acct_id(account)
     try:
-        store.restore_folders(ids)
+        store.restore_folders(ids, owner_account_id=owner_scope)
     except Exception:
         return app._json_error("폴더 복구에 실패했습니다.", 500)
     return JSONResponse({"ok": True, "restored_folder_ids": ids})
