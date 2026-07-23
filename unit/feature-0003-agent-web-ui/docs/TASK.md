@@ -57,6 +57,23 @@ source_of_truth: true
 - [x] §18.8 적대적 프론트/UX 리뷰 (general-purpose, REV-20260723T071355-universal-ctxmenu): verdict **SHIP** (BLOCKING/MAJOR 0). 앵커 수명·anchor=null byte-동치·synthetic click 무-사이드이펙트(우클릭이 대화 선택/폴더 토글 유발 안 함)·예외 가드 검증 통과. MINOR 3건 반영: ①미디어(img/svg/canvas/video) 네이티브 양보(이미지 저장·mermaid SVG 보존) ②키보드 contextmenu(0,0) trigger-rect 폴백 ③`_hasSelectionWithin` → `intersectsNode` 정밀화(stale 교차 선택 과잉차단 제거). NIT 2(토글 비대칭·focus parity) 무해 유지.
 - [x] 배포(deploy_scope: included — FIRST_REQUEST.md 전역, cycle 시작 전 선언, §12.2 사전 승인): PR #897 → main **c6f7f98a** → `deploy-web.sh --web-only`(web-a/web-b 무중단 롤링·90s soak PASS·caddy no-op·자산 스탬프 `e6d39fde416f` 주입). end-state 서빙 app.js 신규 심볼 전부 hit.
 - [x] POST-DEPLOY PB-0008 Windows-browser 라이브 검증 (PASS, 실 Windows Chrome 150 via win-browser.py, 배포본 c6f7f98a) — §15.4.1 웹/UI 완료 게이트: **AC-1** 대화항목 우클릭→'···' 커서개방(공유/설정/폴더)·**AC-2** 폴더헤더 우클릭→폴더메뉴·**AC-3** 말풍선 우클릭→'☰'(분기/공유)·**AC-4** 텍스트 663자 선택 후 우클릭→native 메뉴 보존(☰ 미개방)·**AC-5** 버튼 클릭 trigger-rect byte-동치·**pageerror 0**. 정본 = TEST Run(2026-07-23 universal-ctxmenu) POST-DEPLOY.
+## TASK-20260723T074530-reasoning-timeline — 관리 콘솔 > AI 운영 현황 > 추론: 리뷰 결함수정 전/후 과정 + 대화별 답변 개선 과정 가시화 (Major §12.3 — feature-0003 web/UI 프론트 + additive read-only API. cross-cut 데이터=feature-0021 redteam·feature-0002. /_template:entry arg-given dispatch)
+- 진단(사용자 신고): 「AI 운영 현황 > 추론」이 각 리뷰 활동의 결함 수정 전/후 과정을 명확히 드러내지 못해 서비스 관제 신뢰성이 낮음. 답변이 개선된 과정도 안 보임. RC = 기존 화면이 통계 6타일 + 평면 판정 리스트(verdict 배지 + `[severity/axis] claim → fix_hint` 나열)만 표시 → (a) 초안→리뷰→수정→재검증 진행 단계가 흐름으로 안 보이고, (b) 도구 재추론(rederive_*, 0043 컬럼)이 API SELECT 누락으로 화면에 아예 미노출, (c) 결함이 어떻게 교정됐는지 전/후 대비 없음, (d) 리뷰↔실제 대화 연결 없음.
+- 방향 결정(AskUserQuestion): **접근 A — 기존 데이터 재구성**(마이그레이션·계측·답변원문 저장 없음). 이미 저장된 `redteam_reviews`(verdict/findings JSONB[axis,severity,claim,evidence,fix_hint]/revision_applied/verify_verdict/rederive_*)만으로 과정 서사 재구성. 답변 원문 전/후 diff(접근 B)는 대화 원문을 관제 테이블에 복제→개인정보/보안 Critical+마이그레이션이라 미채택.
+- [x] API(additive, read-only): `admin_reasoning.py _query_reviews` 에 `rederive_applied/rederive_tool_rounds/rederive_axis` SELECT + `include_rederive` 파라미터. 호출부는 `information_schema` 로 0043 컬럼 존재 감지→부재 시(stale agent 이미지) `include_rederive=False` 폴백(회귀0). error/폴백 경로도 3필드 기본값 보장.
+- [x] 프론트 재구성(admin.js): `_reasoningStageTimeline`(① 초안 → ② 적대 리뷰[결함 N·BLOCK/WARN] → ③ 결함 수정[도구 재추론 축·라운드 / 텍스트 재작성 / 미적용 fail-open] → ④ 재검증[verify_verdict] → ⑤ 최종) + `_reasoningFindingHtml`(claim 수정전 → fix_hint 수정후 전/후 대비 + evidence 근거) + `_reasoningAxisSummary`(5축 집계 배지) + `_reasoningConvLink`(대화 딥링크, `__` sentinel=시스템 라벨). 강도 한글화(낮음/일반/높음/매우높음). 힌트 문구 진행 과정 설명으로 갱신.
+- [x] styles.css: `.reasoning-timeline/-stage(-done/warn/skip/na/err)`·`.reasoning-finding(-block/warn)`·`.reasoning-ba(-col before/after)`·`.reasoning-sev`·`.reasoning-axis--{grounding/sql/permission/completeness/honesty}`·`.reasoning-axis-summary/-badge`·`.reasoning-conv` — 기존 CSS 변수 재사용, 라이트/다크 대응.
+- [x] 로컬 검증: `node --check`(ESM) admin.js OK · `py_compile` admin_reasoning.py OK · 실제 소스 추출 harness 단위 22/22 PASS(5단계 타임라인·rederive 축/라운드·강도 한글화·전후 대비·축 라벨·재검증·pass/error·sentinel 분기·축 집계·XSS 이스케이프).
+- [ ] §18.8 적대 panel(프론트/UX/보안 + 백엔드/QA general-purpose) — REV-20260723T074530-reasoning-timeline.
+- [ ] 배포(deploy_scope: included) + POST-DEPLOY PB-0008 라이브 시각검증(Environment: Windows-browser, hard gate) — 사용자 confirm 후 PR/배포.
+- 위험도: Major §12.3(프론트+API·behavior 추가·웹UI). 인증/인가/파괴적데이터/마이그레이션 없음(Critical 아님). API=additive read-only. 권한 게이트(`console.reasoning.read`) 불변.
+- AC-20260723T074530-reasoning-timeline-1: 각 리뷰 판정이 초안→리뷰→수정→재검증→최종 진행 단계로 표시된다.
+- AC-20260723T074530-reasoning-timeline-2: 결함이 claim(수정전)→fix_hint(수정후) 전/후 대비로 표시된다.
+- AC-20260723T074530-reasoning-timeline-3: 도구 재추론(rederive) 발동 시 축·라운드가 표시된다(API+프론트).
+- AC-20260723T074530-reasoning-timeline-4: 5축 검출 분포 집계가 표시된다.
+- AC-20260723T074530-reasoning-timeline-5: 각 리뷰에서 실제 대화로 딥링크 이동한다(sentinel 제외).
+- AC-20260723T074530-reasoning-timeline-6: PG 미가용/0043 컬럼 부재 시 기존 degrade 동작 보존(회귀0).
+- AC-20260723T074530-reasoning-timeline-7: POST-DEPLOY PB-0008 Windows 브라우저 시각검증 PASS.
 
 ## TASK-20260723T034321-conv-date-tree — 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계) + "6월 중복" 시각 혼잡 해소 (Major §12.3 — feature-0003 web/UI 프론트 단독. /_template:entry arg-given dispatch)
 - 진단(사용자 신고): 오래된 대화가 "6월/6월/6월…"로 중복 렌더돼 시각 혼잡. RC = `_getDateGroupKey`가 오늘/어제 외 **모든 날짜에 일 단위 키(YYYY-MM-DD)** 부여 → 서로 다른 6월 날짜가 각각 별개 헤더가 되는데, `_formatDateGroupLabel`은 30일 초과 날짜 라벨을 "M월"로만 축약 → 다른 키가 전부 같은 "6월" 텍스트로 렌더. 집계 단위(월/연)로 묶이지 않고 라벨만 축약된 것이 근본.

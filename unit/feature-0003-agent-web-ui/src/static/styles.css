@@ -8890,15 +8890,67 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .reasoning-stat-label { font-size: 11px; color: var(--text-muted); }
 .reasoning-review-list { display: flex; flex-direction: column; gap: 8px; }
 .reasoning-review-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
-.reasoning-review-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.reasoning-review-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .reasoning-review-meta { font-size: 11px; color: var(--text-muted); }
 .reasoning-verdict { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
 .reasoning-verdict--ok { color: #2e7d32; border-color: rgba(46,125,50,.4); background: rgba(46,125,50,.08); }
 .reasoning-verdict--warn { color: #b26a00; border-color: rgba(178,106,0,.4); background: rgba(178,106,0,.08); }
 .reasoning-verdict--err { color: #c62828; border-color: rgba(198,40,40,.4); background: rgba(198,40,40,.08); }
-.reasoning-finding { font-size: 12px; margin-top: 2px; word-break: break-word; }
-.reasoning-finding--none { color: var(--text-muted); }
-.reasoning-finding-fix { color: var(--text-muted); }
+/* ── feature-0003-reasoning-timeline: 진행 단계 · 결함 전/후 · 축 집계 · 대화 링크 ── */
+.reasoning-conv { font-size: 11px; text-decoration: none; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--primary); white-space: nowrap; }
+.reasoning-conv:hover { border-color: var(--primary); }
+.reasoning-conv--system { color: var(--text-muted); cursor: default; }
+
+.reasoning-axis-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 12px; }
+.reasoning-axis-summary-label { font-size: 11px; color: var(--text-muted); }
+.reasoning-axis-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); }
+.reasoning-axis-badge b { font-variant-numeric: tabular-nums; }
+
+/* 진행 단계 타임라인 (초안 → 리뷰 → 수정 → 재검증 → 최종) */
+.reasoning-timeline { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.reasoning-stage { display: flex; align-items: flex-start; gap: 6px; flex: 1 1 150px; min-width: 138px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.reasoning-stage-icon { font-size: 12px; font-weight: 700; line-height: 1.5; }
+.reasoning-stage-body { display: flex; flex-direction: column; min-width: 0; }
+.reasoning-stage-label { font-size: 12px; font-weight: 600; }
+.reasoning-stage-detail { font-size: 11px; color: var(--text-muted); word-break: break-word; }
+.reasoning-stage--done { border-color: rgba(46,125,50,.4); }
+.reasoning-stage--done .reasoning-stage-icon { color: #2e7d32; }
+.reasoning-stage--warn { border-color: rgba(178,106,0,.4); }
+.reasoning-stage--warn .reasoning-stage-icon { color: #b26a00; }
+.reasoning-stage--err { border-color: rgba(198,40,40,.4); }
+.reasoning-stage--err .reasoning-stage-icon { color: #c62828; }
+.reasoning-stage--skip { border-style: dashed; }
+.reasoning-stage--skip .reasoning-stage-icon { color: var(--text-muted); }
+.reasoning-stage--na { opacity: .55; }
+.reasoning-stage--na .reasoning-stage-icon { color: var(--text-muted); }
+
+/* 결함별 수정 전/후 대비 */
+.reasoning-findings { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.reasoning-finding { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  background: var(--surface); border-left-width: 3px; word-break: break-word; }
+.reasoning-finding--block { border-left-color: #c62828; }
+.reasoning-finding--warn { border-left-color: #b26a00; }
+.reasoning-finding-tags { display: flex; gap: 6px; margin-bottom: 6px; }
+.reasoning-sev { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; }
+.reasoning-sev--block { color: #c62828; background: rgba(198,40,40,.1); }
+.reasoning-sev--warn { color: #b26a00; background: rgba(178,106,0,.1); }
+.reasoning-axis { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+  color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); }
+.reasoning-axis--grounding { color: #1565c0; border-color: rgba(21,101,192,.4); }
+.reasoning-axis--sql { color: #6a1b9a; border-color: rgba(106,27,154,.4); }
+.reasoning-axis--permission { color: #c62828; border-color: rgba(198,40,40,.4); }
+.reasoning-axis--completeness { color: #2e7d32; border-color: rgba(46,125,50,.4); }
+.reasoning-axis--honesty { color: #b26a00; border-color: rgba(178,106,0,.4); }
+.reasoning-ba { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.reasoning-ba-col { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.reasoning-ba-col--after { padding: 4px 8px; border-radius: 6px; background: rgba(46,125,50,.06); }
+.reasoning-ba-tag { font-size: 10px; font-weight: 600; color: var(--text-muted); letter-spacing: .02em; }
+.reasoning-ba-text { font-size: 12px; word-break: break-word; }
+.reasoning-ba-arrow { align-self: center; color: var(--text-muted); font-size: 14px; }
+.reasoning-finding-ev { margin-top: 6px; font-size: 11px; color: var(--text-muted); word-break: break-word; }
 .reasoning-more { margin-top: 10px; }
 .reasoning-guidance-list { display: flex; flex-direction: column; gap: 6px; }
 .reasoning-guidance-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;

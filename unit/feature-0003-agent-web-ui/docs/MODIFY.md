@@ -821,7 +821,6 @@ source_of_truth: true
 - POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. 배포 PR #891 → main 2cdb7907 → deploy-web --web-only(soak PASS).
 - 라이브(Windows Chrome '간단한 덧셈 계산' 3→4): rendered 3→6(전체 렌더), pager '4/4' 유지, 브랜치 메시지 뷰포트 298px→298px 동일(scrollTop 4985, scrollable maxTop 11286, atBottom=false)·스크린샷 육안. verdict PRESERVED.
 - Files: docs/{TASK,MODIFY,REVIEW}.md.
-
 ## CHG-20260723T071355-universal-ctxmenu (서비스 UI 우클릭 = 보편적 확장 메뉴 단축, Major §12.3, frontend-only)
 - 계기: 사용자 요청(`/_template:entry`) — "각 요소 우클릭이 보편적 확장기능으로 동작. 대화·목록창='···', 대화 로그='☰'. 등과 같이."
 - 변경(`static/app.js`, 2지점 additive):
@@ -848,3 +847,10 @@ source_of_truth: true
 - POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. PR #902 → main **57ecc758** → `deploy-web.sh --web-only`(soak PASS·자산 스탬프 8373a9f479e2). deploy_scope: included(전역).
 - 라이브(win-browser Chrome 150, https://localhost/, 테스트 폴더 API 생성 id=6 후 실 이벤트 dispatch, 검증 후 삭제·프로덕션 잔여 0): AC-1 폴더메뉴 바깥클릭 닫힘·AC-2 ESC 닫힘·AC-3 scroll 닫힘·AC-4 토글 닫힘+트리거 aria-expanded=false·is-open 제거·AC-5 conv-item 무회귀·errCount 0. 서빙 app.js `data-floating-menu` 2 hit·css `.conv-folder-menu-trigger.is-open` 1 hit.
 - Files: docs/{TASK,MODIFY,REPORT,REVIEW,TEST-runs}.md.
+## CHG-20260723T074530-reasoning-timeline (20260723T074530-reasoning-timeline — AI 운영 현황 > 추론 결함수정 전/후·답변개선 과정 가시화, Major §12.3, web/UI 프론트 + additive read-only API)
+- 배경: 「AI 운영 현황 > 추론」이 리뷰 결함 수정 전/후 과정·답변 개선 과정을 드러내지 못해 관제 신뢰성 낮음(사용자 신고). 접근 A(기존 `redteam_reviews` 데이터 재구성 — 마이그레이션·계측·답변원문 저장 없음, AskUserQuestion 승인).
+- `unit/feature-0003-agent-web-ui/src/routers/admin_reasoning.py`: `_query_reviews` 에 `include_rederive` 파라미터 + 0043 컬럼(`rederive_applied/rederive_tool_rounds/rederive_axis`) additive SELECT·응답 노출. 호출부 `admin_reasoning_redteam` 에 `information_schema` 컬럼 존재 감지 → 부재 시 `include_rederive=False` 폴백(stale agent 이미지, 회귀0). 모든 경로에서 rederive 3필드 기본값 보장.
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`: reasoning 탭 렌더 재구성 — 신규 `_reasoningConvLink`·`_reasoningStageTimeline`·`_reasoningFindingHtml`·`_reasoningAxisSummary` + 상수 `_REASONING_AXIS_LABELS`/`_REASONING_LEVEL_LABELS`. `_reasoningReviewRowHtml`·`renderReasoning` 개편(진행 5단계 타임라인·claim→fix_hint 전/후 대비·5축 집계·대화 딥링크·강도 한글화·힌트 문구). 통계 타일·페이징·메모리 노트 보존.
+- `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.reasoning-timeline/-stage(-done/warn/skip/na/err)`·`.reasoning-finding(-block/warn)`·`.reasoning-ba(-col/-tag/-text/-arrow)`·`.reasoning-sev(-block/warn)`·`.reasoning-axis--{5축}`·`.reasoning-axis-summary/-badge`·`.reasoning-conv(-system)` 추가. 기존 `.reasoning-review-head` flex-wrap. 기존 `.reasoning-finding*` 3줄 재정의. CSS 변수 재사용·라이트/다크 대응.
+- 검증: `node --check`(ESM) OK · `py_compile` OK · 실제 소스 추출 harness 단위 22/22 PASS. §18.8 panel(프론트/UX/보안 + 백엔드/QA) = REV-20260723T074530-reasoning-timeline.
+- 불변: 백엔드 계측·스키마·RBAC·엔드포인트 무변경. cache-buster `?v=dev` 고정(빌드 자동 주입). POST-DEPLOY PB-0008(Environment: Windows-browser) 예정.
