@@ -41,42 +41,37 @@ def _to_int(v: Any) -> int | None:
 
 # ── 조회 ────────────────────────────────────────────────────────────────
 
-def list_folders(owner_account_id: int, *, all_owners: bool = False) -> list[dict[str, Any]]:
-    """활성(archived_at IS NULL) 폴더 + 계산된 절대 depth 를 반환(트리 조립은 호출측).
+def list_folders(owner_account_id: int) -> list[dict[str, Any]]:
+    """요청 계정 **소유** 폴더 + 계산된 절대 depth 반환(트리 조립은 호출측).
 
-    all_owners=True(folder.list.any 운영자)면 전 계정 폴더. 아니면 owner 스코프.
+    ★ 폴더는 엄격한 개인(per-user) 오버레이 — 항상 owner_account_id 스코프. 타 계정 폴더는
+    어떤 권한으로도 노출하지 않는다(folder.list.any 크로스-계정 가시성 제거, 프라이버시 수정).
     depth: 루트=1, 자식=부모+1. archived 폴더는 제외되며, archived 부모의 서브트리도
-    체인이 끊겨 함께 제외된다(soft-delete 서브트리와 정합).
+    체인이 끊겨 함께 제외된다. 재귀 하위 노드도 소유자 조건을 재확인해 교차-소유 유입을 원천 차단.
     """
     pg = _pg()
     try:
         with pg.cursor() as cur:
-            if all_owners:
-                root_pred = "parent_folder_id IS NULL AND archived_at IS NULL"
-                params: list[Any] = []
-            else:
-                root_pred = "parent_folder_id IS NULL AND archived_at IS NULL AND owner_account_id = %s"
-                params = [int(owner_account_id)]
             cur.execute(
-                f"""
+                """
 WITH RECURSIVE tree AS (
     SELECT folder_id, parent_folder_id, owner_account_id, name, instructions,
            datasource_id, product_id, sort_order, 1 AS depth
     FROM agent_runtime.conversation_folders
-    WHERE {root_pred}
+    WHERE parent_folder_id IS NULL AND archived_at IS NULL AND owner_account_id = %s
     UNION ALL
     SELECT f.folder_id, f.parent_folder_id, f.owner_account_id, f.name, f.instructions,
            f.datasource_id, f.product_id, f.sort_order, t.depth + 1
     FROM agent_runtime.conversation_folders f
     JOIN tree t ON f.parent_folder_id = t.folder_id
-    WHERE f.archived_at IS NULL
+    WHERE f.archived_at IS NULL AND f.owner_account_id = %s
 )
 SELECT folder_id, parent_folder_id, owner_account_id, name, instructions,
        datasource_id, product_id, sort_order, depth
 FROM tree
 ORDER BY depth, sort_order, name
 """,
-                params,
+                (int(owner_account_id), int(owner_account_id)),
             )
             rows = cur.fetchall()
     finally:
