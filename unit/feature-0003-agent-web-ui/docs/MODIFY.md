@@ -859,3 +859,12 @@ source_of_truth: true
 - POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. PR #901 → main **e4ef9384** → `deploy-web.sh --web-only`(web-a/web-b 무중단 롤링·soak PASS·자산 스탬프 d09bcdc34a46).
 - 라이브(win-browser Chrome 150, https://localhost/admin, 리뷰 30건): 진행 타임라인 150 stages(30×5)·전후 대비 47·5축 집계(근거15/SQL6/완전성12/정직성14)·rederive "도구 재추론(SQL)"·대화 딥링크 30·통계 타일 6·pageerror 0. **W2 페이징 축 갱신** 47→93 재계산 확증. verdict pass 카드 **B1 정확**("결함 없음—통과"/"불필요(결함 없음)"). 서빙 admin.js 신규 심볼 8 hit.
 - Files: docs/{test-runs.d/20260723T074530-reasoning-timeline.md, MODIFY.md, REVIEW.md}.
+
+## CHG-20260724T010501-doc-sync-rn-0724 (TASK-20260724T010501-doc-sync-rn-0724 — 07-23 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경: `static/release-notes-data.js` releases head 에 "2026-07-23" 블록 prepend(7항목 new/work 2·improved/work 2·fixed/work 1·improved/admin 2 — 대화 폴더·폴더별 AI 지침·대화목록 월·연 날짜 묶음·우클릭 메뉴·메시지 버전/긴 이전 대화 페이징 스크롤·AI 답변 다듬기 전·후 보기·DB 전체 AI 자동 분석 완결성) + generated 2026-07-22→2026-07-23. 렌더 로직·백엔드·스키마·RBAC·엔드포인트 0.
+- cache-buster: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py` + deploy-web.sh `asset_stamp_verify` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침).
+- 근거 정본: owning POST-DEPLOY 커밋(폴더 9392cf51/e3fec503/0a1378f3/1a2f2595·날짜트리 8b384b8a·우클릭 b51f93e9·페이징 fce9ab2b/5d0f8467·추론타임라인 a17fd1a7·DB분석 6da5e621) + git log aac76889..HEAD.
+- 제외: graph-node-reveal(feature-0016)은 자체 POST-DEPLOY PB-0008 미기록이라 보류(배포 게이트 미해소)·floating-menu-close-fix/share-list-window-fix 흡수/비노출.
+- Verification: `node --check` PASS · vm 구조검증(34 releases·07-23 head 7항목·07-22 보존·스키마·누출0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).

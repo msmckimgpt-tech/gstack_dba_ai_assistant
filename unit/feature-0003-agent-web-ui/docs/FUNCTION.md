@@ -1808,3 +1808,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 불변식: 백엔드 계측(`redteam.py record_review`)·스키마·RBAC·엔드포인트 무변경. cache-buster `?v=dev` 고정(빌드 자동 주입·수기 bump 없음).
 - AC-20260723T074530-reasoning-timeline-1~7: 진행단계 표시 / claim→fix_hint 전후 대비 / rederive 축·라운드 / 5축 집계 / 대화 딥링크(sentinel 제외) / PG·컬럼부재 degrade 회귀0 / POST-DEPLOY PB-0008 PASS.
 - 검증: `node --check`(ESM)·`py_compile`·실제 소스 추출 harness 22/22 PASS. REV-20260723T074530-reasoning-timeline. POST-DEPLOY PB-0008(Environment: Windows-browser).
+
+## (doc-sync-rn-0724, 2026-07-23) 릴리즈노트 콘텐츠 — 07-23 블록 신규(대화 폴더·탐색·관리 콘솔 7항목)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-23" 블록 신규(7항목: new/work 2·improved/work 2·fixed/work 1·improved/admin 2 — 대화 폴더·폴더별 AI 지침·대화목록 월·연 날짜 묶음·우클릭 메뉴·페이징 스크롤 보존·AI 답변 다듬기 전·후 보기·DB 전체 AI 자동 분석) prepend·generated 2026-07-22→2026-07-23. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
+- 평이화/비노출: feature-id·§번호·PR#·함수명·내부표현(folder.*.own/IDOR·compose_system_prompt·alembic·scope·introspection/클러스터 등) 비노출(사용자 언어). graph-node-reveal 은 배포게이트 미해소로 보류.
