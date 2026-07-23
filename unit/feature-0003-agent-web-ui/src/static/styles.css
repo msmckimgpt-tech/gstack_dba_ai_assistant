@@ -699,6 +699,82 @@ a { color: inherit; }
 .conv-folder-menu-trigger.is-open,
 .conv-folder-menu-trigger:focus-visible { opacity: 1; }
 .conv-folder-menu-trigger:hover { color: var(--text-1); }
+/* folder-ux 개선3: 인라인 이름변경 텍스트박스(라벨 자리) */
+.conv-folder-rename-input {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 11.5px; font-weight: 600; color: var(--text-1);
+  background: var(--surface, #fff);
+  border: 1px solid var(--accent, #2563eb);
+  border-radius: var(--r-sm); padding: 2px 6px; margin: -2px 0;
+  outline: none;
+}
+/* folder-ux 개선6: 드래그&드롭 시각 피드백 */
+.conv-item.is-dragging, .conv-folder-header.is-dragging { opacity: .45; }
+.conv-folder-header.folder-drop-hover {
+  background: rgba(37,99,235,.14);
+  box-shadow: inset 0 0 0 1.5px var(--accent, #2563eb);
+}
+.conv-folder-tools.folder-drop-hover {
+  background: rgba(37,99,235,.10);
+  outline: 1.5px dashed var(--accent, #2563eb); outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+.conv-folder-tools.folder-drop-hover .conv-folder-add-btn::after {
+  content: " · 여기로 놓으면 폴더에서 빼기"; font-weight: 400; opacity: .7;
+}
+
+/* folder-ux 개선2/4: 폴더 설정 모달 (share-mgr-panel 재사용) */
+.folder-settings-panel, .folder-move-panel { max-width: 460px; width: min(92vw, 460px); }
+.folder-settings-body, .folder-move-body { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.folder-settings-name {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 14px; font-weight: 640; color: var(--text-1);
+  padding-bottom: 10px; border-bottom: 1px solid var(--line, #e5e7eb);
+}
+.folder-settings-ic { font-size: 15px; }
+.folder-settings-sec { display: flex; flex-direction: column; gap: 6px; }
+.folder-settings-sec-title { font-size: 12.5px; font-weight: 640; color: var(--text-1); }
+.folder-settings-sec-desc { font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+.folder-settings-instr {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px;
+  font-size: 12.5px; line-height: 1.6; color: var(--text-1);
+  background: var(--surface, #fff); border: 1px solid var(--line-strong, #d1d5db);
+  border-radius: var(--r-sm); padding: 9px 11px; font-family: inherit;
+}
+.folder-settings-instr:focus { outline: none; border-color: var(--accent, #2563eb); }
+.folder-settings-actions { display: flex; justify-content: flex-end; }
+.folder-settings-danger { border-top: 1px solid var(--line, #e5e7eb); padding-top: 12px; }
+.folder-settings-danger .folder-settings-sec-title { color: var(--danger, #dc2626); }
+
+/* folder-ux 개선5: 대화 이동 모달 */
+.folder-move-controls { display: flex; gap: 8px; }
+.folder-move-search {
+  flex: 1 1 auto; min-width: 0; font-size: 12.5px;
+  border: 1px solid var(--line-strong, #d1d5db); border-radius: var(--r-sm);
+  padding: 7px 10px; background: var(--surface, #fff); color: var(--text-1);
+}
+.folder-move-search:focus { outline: none; border-color: var(--accent, #2563eb); }
+.folder-move-sort {
+  flex: 0 0 auto; font-size: 12px; border: 1px solid var(--line-strong, #d1d5db);
+  border-radius: var(--r-sm); padding: 6px 8px; background: var(--surface, #fff); color: var(--text-1); cursor: pointer;
+}
+.folder-move-fixed { display: flex; flex-direction: column; gap: 4px; }
+.folder-move-list { display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow-y: auto; }
+.folder-move-opt {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font-size: 12.5px; color: var(--text-1); background: transparent;
+  border: 1px solid transparent; border-radius: var(--r-sm); padding: 8px 10px; cursor: pointer;
+  transition: background .12s;
+}
+.folder-move-opt:hover:not(:disabled) { background: rgba(0,0,0,.05); }
+.folder-move-opt:disabled { cursor: default; }
+.folder-move-new { color: var(--accent, #2563eb); font-weight: 600; border-color: color-mix(in srgb, var(--accent, #2563eb) 30%, transparent); border-style: dashed; }
+.folder-move-out { color: var(--text-2); }
+.folder-move-ic { flex: 0 0 auto; font-size: 13px; width: 15px; text-align: center; }
+.folder-move-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-move-row.is-current { opacity: .6; }
+.folder-move-curtag { flex: 0 0 auto; font-size: 10px; color: var(--text-2); background: var(--surface-2, #eef1f4); border-radius: 8px; padding: 1px 7px; }
+.folder-move-empty { font-size: 12px; color: var(--text-2); text-align: center; padding: 18px 0; }
 .conv-group-collapsible {
   display: flex;
   align-items: center;
