@@ -854,3 +854,8 @@ source_of_truth: true
 - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.reasoning-timeline/-stage(-done/warn/skip/na/err)`·`.reasoning-finding(-block/warn)`·`.reasoning-ba(-col/-tag/-text/-arrow)`·`.reasoning-sev(-block/warn)`·`.reasoning-axis--{5축}`·`.reasoning-axis-summary/-badge`·`.reasoning-conv(-system)` 추가. 기존 `.reasoning-review-head` flex-wrap. 기존 `.reasoning-finding*` 3줄 재정의. CSS 변수 재사용·라이트/다크 대응.
 - 검증: `node --check`(ESM) OK · `py_compile` OK · 실제 소스 추출 harness 단위 22/22 PASS. §18.8 panel(프론트/UX/보안 + 백엔드/QA) = REV-20260723T074530-reasoning-timeline.
 - 불변: 백엔드 계측·스키마·RBAC·엔드포인트 무변경. cache-buster `?v=dev` 고정(빌드 자동 주입). POST-DEPLOY PB-0008(Environment: Windows-browser) 예정.
+
+## CHG-20260723T084235-reasoning-timeline-postverify (reasoning-timeline 배포 + 라이브 실측 POST-DEPLOY, 비-정책 doc-only)
+- POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. PR #901 → main **e4ef9384** → `deploy-web.sh --web-only`(web-a/web-b 무중단 롤링·soak PASS·자산 스탬프 d09bcdc34a46).
+- 라이브(win-browser Chrome 150, https://localhost/admin, 리뷰 30건): 진행 타임라인 150 stages(30×5)·전후 대비 47·5축 집계(근거15/SQL6/완전성12/정직성14)·rederive "도구 재추론(SQL)"·대화 딥링크 30·통계 타일 6·pageerror 0. **W2 페이징 축 갱신** 47→93 재계산 확증. verdict pass 카드 **B1 정확**("결함 없음—통과"/"불필요(결함 없음)"). 서빙 admin.js 신규 심볼 8 hit.
+- Files: docs/{test-runs.d/20260723T074530-reasoning-timeline.md, MODIFY.md, REVIEW.md}.

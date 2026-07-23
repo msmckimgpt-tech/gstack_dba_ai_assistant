@@ -757,3 +757,7 @@ source_of_truth: true
   - [NIT defer] 모든 링크 동일 문구 "대화 열기 ↗"(WCAG 2.4.4 문맥, 경미) — 후속.
 - 재검증: 실제 소스 추출 harness **21/21 PASS**(5단계·rederive·강도 한글화·전후 대비·5축·재검증·pass/error·B1 c7·c8·sentinel·축 집계·XSS·null 안전) · `node --check`(ESM) · `py_compile`.
 - 판단: additive read-only API + frontend 표시 재구성. 인증/인가/파괴적/스키마/RBAC/엔드포인트 무변경 → Critical 아님(Major). POST-DEPLOY PB-0008(Environment: Windows-browser, hard gate) 예정.
+
+## REV-20260723T084235-reasoning-timeline-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — AI 운영 현황 > 추론 배포 + 라이브 시각검증 (CHG-20260723T084235-reasoning-timeline-postverify)
+- Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료 기록). 정본 = REV-20260723T074530-reasoning-timeline([SUBAGENT:general-purpose] SHIP-WITH-FIXES).
+- 실증(Windows Chrome 150, 라이브 e4ef9384): 추론 탭 리뷰 30건 — 진행 타임라인 5단계(stages 150)·전후 대비 47·5축 집계(근거15/SQL6/완전성12/정직성14)·rederive "도구 재추론(SQL)"·대화 딥링크 30·통계 타일 6·pageerror 0. **W2 페이징 축 재계산 47→93** 확증. **B1** verdict pass 카드 "결함 없음—통과" 실렌더(WARN-only 오표기 없음). AC-1~6 라이브 확정.
