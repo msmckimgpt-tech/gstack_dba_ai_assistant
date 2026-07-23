@@ -11,6 +11,10 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260723T130200-conv-date-tree-postverify (TASK-20260723T034321-conv-date-tree POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-23. 코드/자산 무변경 — POST-DEPLOY 검증 원장 기록. 배포 PR #893 → main 0b15a0ea → `deploy-web.sh --web-only` 무중단(soak PASS·자산 스탬프 066695609710).
+- 라이브 실측(win-browser Chrome 150, bootstrap_admin): 배포본 `_buildOwnDateTree` 합성 6/6(6월 단일·2025 연>월 중첩) + 실계정 사이드바 단일 "6월"[38]·"5월"[15]·중복 라벨 0(이전 ~10개 "6월" 소멸) + 6월 토글 4→42(배지 정확) + 스크린샷·pageerror 0. Cross-ref: REV-20260723T034321-conv-date-tree · TEST Run(conv-date-tree POST-DEPLOY).
+
 ## CHG-20260723T034321-conv-date-tree (TASK-20260723T034321-conv-date-tree — 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계)·"6월 중복" 시각 혼잡 해소, Major §12.3)
 - Date: 2026-07-23. Files: `static/app.js`(+`_buildOwnDateTree` 신설·`_getDateGroupKey`/`_formatDateGroupLabel` 폐기·`renderConversationList` 재귀 트리 렌더러)·`static/styles.css`(`.conv-date-group-sub/-label/-count`). frontend-only, additive/비파괴(그룹핑 표현만 변경, 데이터·API·RBAC·엔드포인트 0).
 - 변경: 오늘/어제·이번 달=일 노드, 올해 지난 달=월 노드(단일 — 이전엔 일 단위 키가 전부 "M월" 라벨로 중복 렌더돼 "6월/6월/6월" 혼잡), 지난 해=연 노드>월 서브노드(들여쓰기)>대화. 월/연 집계 노드에 대화 개수 배지. depth·collapse 모델(`state.collapsedDateGroups`)은 향후 대화 폴더 기능의 재사용 기반.

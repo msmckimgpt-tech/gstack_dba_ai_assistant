@@ -721,3 +721,7 @@ source_of_truth: true
 - **[NIT — 유지·근거]** 서브 대화 항목(depth1 22px) < 월 서브헤더(24px) 2px: 기존 depth-0 패턴(일 헤더 10px / 항목 8px = 헤더−2px)과 **일관**. 각 depth 에서 항목=헤더−2px 유지가 사이드바 전체 톤과 정합(회귀 아님) + 항목엔 leading dot+gap 이 있어 실제 텍스트는 더 우측. 유지.
 - **[NIT — pre-existing·defer]** 날짜 그룹 헤더 키보드 조작 불가(`role=button`+click 만, tabindex/keydown 부재): 기존 owner/date 헤더 전체가 동일 — 이번 diff 신규 결함 아님. 새 집계 노드만 고치면 owner 헤더와 불일치하므로 본 cycle scope 밖. 헤더 전체 a11y 일괄 개선은 후속 항목으로 defer(TODOS 성 기록).
 - **[안전 확인]** 키 충돌 없음(top-level 월 노드는 `dY===nowY`·연-자식 월 노드는 else 분기 → `YYYY` 상이로 collapse 상태 공유 불가) · 집계 정확(Map 키 병합 단일 노드·"6월 중복" 소멸) · 리스너 누수 없음(`innerHTML=""` 전체 초기화) · 배지 계산 정확(branch=자식 items 합·leaf=items.length) · 월/연 경계 timestamp 산술로 정확 · 파싱불가→__other__·dangling ref 0 · folder-readiness 재귀 모델 재사용 가능.
+
+## REV-20260723T130200-conv-date-tree-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 대화목록 날짜 그룹핑 적응형 트리 배포 + 라이브 시각검증 (CHG-20260723T130200-conv-date-tree-postverify)
+- Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료 기록). 정본 = REV-20260723T034321-conv-date-tree([SUBAGENT:general-purpose] SHIP-WITH-FIXES).
+- 실증(Windows Chrome 150, 배포본 0b15a0ea): 배포본 `_buildOwnDateTree` 합성 6/6 + 실계정 사이드바 단일 "6월"[38]·"5월"[15]·중복 라벨 0(이전 ~10개 소멸) + 6월 토글 4→42(배지 정확) + 스크린샷·pageerror 0. 중복 "6월" 혼잡 해소·월/연 집계·연>월 중첩·개수 배지·토글 라이브 확정.
