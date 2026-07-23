@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260723T080415-floating-menu-close-fix — floating 메뉴(특히 폴더 '···')가 바깥클릭/ESC 로 안 닫히던 결함 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독, frontend-only. universal-ctxmenu 후속 사용자 신고)
+- 신고(사용자, 2026-07-23): 우클릭 확장은 정합하게 동작하나 **폴더 '···' 메뉴는 열리지만 다른 항목 클릭 등으로 닫는 동작이 안 됨**.
+- 근본원인: `closeFloatingMenus()` 가 제거 대상 id 를 `["convItemMenu","bubbleMsgMenu"]` 로 **하드코딩** — feature-0024 가 폴더 메뉴(`id="folderMenu"`)를 추가할 때 이 목록에 누락. 어떤 close 경로(바깥클릭 `onDocClick`·ESC `onKey`·scroll·toggle)도 `folderMenu` 를 제거 못함 → 안 닫힘 + 다른 메뉴와 공존 가능 + 폴더 트리거 `is-open`/`aria-expanded` 영구 잔존. universal-ctxmenu(우클릭)가 폴더 메뉴를 쉽게 열게 되며 이 pre-existing drift 를 표면화.
+- 수정(drift-proof SSOT, frontend-only 2파일):
+  - `openFloatingMenu`: 생성 메뉴에 `menu.dataset.floatingMenu="1"` 마커 부여.
+  - `closeFloatingMenus`: 하드코딩 id 목록 → `document.querySelectorAll("[data-floating-menu]")` 일괄 제거(id 무관, 신규 메뉴 자동 포함) + 트리거 리셋 selector 에 `.conv-folder-menu-trigger.is-open` 추가.
+  - 정합 3건(리뷰 NIT, folderMenu=1급 승격): `_attachShareRangeEsc`(8383)·`_maybeSyncConversationListUnread`(11662) 의 열린-메뉴 가드에 `folderMenu` 포함 + `styles.css` `.conv-folder-menu-trigger.is-open{opacity:1}`(메뉴 열림 중 '···' 유지, 다른 트리거와 동형).
+- 완료 판정(acceptance):
+  - [AC-1] 폴더 '···' 메뉴(우클릭 또는 버튼) 열린 뒤 다른 항목/빈 곳 클릭 → 메뉴 닫힘.
+  - [AC-2] 폴더 메뉴 열린 뒤 ESC → 닫힘.
+  - [AC-3] 폴더 메뉴 열린 뒤 스크롤 → 닫힘.
+  - [AC-4] 폴더 '···' 다시 클릭 → 토글로 닫힘; 닫힌 후 폴더 트리거 `is-open`/`aria-expanded=false` 복원.
+  - [AC-5] conv-item '···' · 말풍선 '☰' 닫힘 동작 무회귀(마커 기반 제거가 superset).
+- 위험도: Minor(§12.3 — 단일 primitive 3줄 + 정합 3건, 비파괴, RBAC/스키마/엔드포인트 0, display 계층). 롤백 = revert.
+
+### §1.2 Completion Checklist
+- [ ] `closeFloatingMenus` 마커 기반 제거 + 폴더 트리거 리셋
+- [ ] `openFloatingMenu` `data-floating-menu` 마커
+- [ ] 정합 3건(share-range ESC·unread-sync 가드·CSS keep-visible)
+- [ ] `node --check` PASS · §18.8 적대 리뷰
+- [ ] POST-DEPLOY PB-0008 Windows-browser(AC-1~5) — §15.4.1
+
 ## TASK-20260723T071355-universal-ctxmenu — 서비스 UI 우클릭 = 보편적 확장 메뉴 단축 (대화 목록·폴더='···', 대화 로그(말풍선)='☰') (Major §12.3 — feature-0003 web/UI 프론트 단독, 비파괴 additive. /_template:entry arg-given dispatch)
 - 요청(사용자, 2026-07-23): "서비스 내 UI에서, 각 요소들의 우클릭이 보편적인 확장기능으로 작동하도록 구성. 대화 및 목록창은 확장('···') 상호작용. 대화 내 로그는 햄버거 버튼('☰') 상호작용. 등과 같이 구성."
 - 해석: 각 요소를 우클릭하면 그 요소가 이미 가진 overflow/확장 메뉴(좌측 대화 항목·폴더 헤더의 '···', 대화 로그 말풍선의 '☰')가 열리는 **보편적 단축**을 제공한다. 트리거가 없는 요소는 브라우저 기본 우클릭 유지. "등과 같이" = 향후 요소는 설정표에 한 줄 추가로 확장.

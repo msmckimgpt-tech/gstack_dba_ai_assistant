@@ -835,3 +835,11 @@ source_of_truth: true
 - POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. PR #897 → main **c6f7f98a** → `deploy-web.sh --web-only`(web-a/web-b 무중단 롤링·90s soak PASS·caddy no-op·자산 스탬프 e6d39fde416f). deploy_scope: included(FIRST_REQUEST.md 전역·§12.2 사전 승인).
 - 라이브(win-browser Chrome 150, https://localhost/ 작업 화면, 실 contextmenu button2): AC-1 대화항목 우클릭→'···' 커서개방(공유/설정/폴더·aria=true)·AC-2 폴더헤더→폴더메뉴(하위/이름/지침/삭제)·AC-3 말풍선→'☰'(분기/공유·커서개방)·AC-4 텍스트 663자 선택 후 우클릭→native 보존(defaultPrevented=false·☰ 미개방)·AC-5 버튼 클릭 trigger-rect byte-동치(rightAligned·belowTrigger)·**errCount 0**. 서빙 app.js 신규 심볼 전부 hit.
 - Files: docs/{TASK,MODIFY,REPORT,REVIEW,TEST-runs}.md.
+
+## CHG-20260723T080415-floating-menu-close-fix (floating 메뉴 닫힘 결함 수정 — folderMenu 1급 승격, Minor §12.3, frontend-only)
+- 계기: universal-ctxmenu 후속 사용자 신고 — 폴더 '···' 메뉴가 열린 뒤 바깥클릭/ESC 로 안 닫힘.
+- 근본원인: `closeFloatingMenus()` 제거 id 하드코딩 `["convItemMenu","bubbleMsgMenu"]` → feature-0024 `id="folderMenu"` 누락(pre-existing drift). universal-ctxmenu 우클릭이 폴더 메뉴를 쉽게 열게 되며 표면화.
+- 변경(`static/app.js`+`static/styles.css`): ① `openFloatingMenu` 생성 메뉴에 `menu.dataset.floatingMenu="1"` 마커. ② `closeFloatingMenus` 를 `[data-floating-menu]` id 무관 일괄 제거 + 트리거 리셋 selector 에 `.conv-folder-menu-trigger.is-open` 추가. ③ 정합: `_attachShareRangeEsc`(8383)·`_maybeSyncConversationListUnread`(11662) 열린-메뉴 가드에 folderMenu 포함 + `styles.css` `.conv-folder-menu-trigger.is-open{opacity:1}`.
+- 비변경: conv-item '···'·말풍선 '☰' 닫힘(마커 제거=id 제거 superset), 백엔드/RBAC/스키마/엔드포인트 0.
+- Verification: `node --check` PASS · §18.8 적대 리뷰 SHIP(NIT 3 fold-in) · POST-DEPLOY PB-0008(AC-1~5).
+- Files: `static/app.js`, `static/styles.css`, docs/{TASK,FUNCTION,REPORT,REVIEW,TEST-runs}.md.
