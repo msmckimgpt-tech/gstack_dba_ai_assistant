@@ -6256,6 +6256,14 @@ async function loadHistory({ append = false, branchView = null, preserveScroll =
   // 로드된 만큼 창을 확장해 방금 온 메시지가 창 안에 들어오게 한다.
   if (!append) {
     let _rc = Math.min(WINDOW_INITIAL_RENDER, state.messages.length);
+    // feature-0019 paging-scroll-preserve(long-history fix): 페이징(preserveScroll)은 이 버전 스레드
+    // 전체를 렌더한다. 최근 N개(WINDOW_INITIAL_RENDER) 창으로 truncate 하면, 브랜치 메시지 뒤에 후속
+    // 턴이 있는 긴 버전 스레드에서 브랜치 메시지(pager)가 창 밖으로 밀려 pager 소실 + scrollHeight
+    // 급변 → 스크롤 보존 실패(사용자 신고 3→4). 형제 버전은 분기점 위 이력이 동일하므로 전체 렌더 시
+    // 절대 scrollTop 이 정확히 보존되고 pager 도 항상 렌더된다. (스레드=활성 경로라 크기 bounded.)
+    if (preserveScroll) {
+      _rc = state.messages.length;
+    }
     // 리뷰 발견2: share floor 가 arm 됐으면 그 메시지까지 창에 포함해 '공유 시작' 칩이
     // 사라지지 않게 한다(같은 대화 refresh 시 renderCount 리셋으로 floor 가 창 밖이 되는 것 방지).
     if (state.shareRange && state.shareRange.floorMessageId != null) {

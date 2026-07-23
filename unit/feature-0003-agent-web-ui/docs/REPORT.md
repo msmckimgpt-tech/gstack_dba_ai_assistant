@@ -1660,3 +1660,6 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **RC**: `renderMessages` 매 재렌더 맨-아래 스크롤 + 비-append loadHistory 의 `_applyRenderWindowSoon` rAF 재-스크롤 + 공유 뷰 innerHTML 교체.
 - **수정**: `loadHistory({preserveScroll})`(저장 top 복원 + window-soon 생략, rAF) + `_pageBranch`/`refreshWorkspace` 배선 + share.js window.scrollY 보존. append/일반 로드 무변경.
 - **검증**: `node --check` 2 · POST-DEPLOY 실브라우저 scrollTop 실측(jsdom 부적합 — layout 의존).
+
+## 20260723T033143-paging-scroll-longhistory — 긴 이력 페이징 스크롤 보존 회귀 (Minor §12.3)
+- 계기: admin '간단한 덧셈 계산' 3→4 페이징 스크롤 보존 실패. RC: preserveScroll 이 window-soon 생략 + renderCount=3 리셋 → 긴 버전 스레드서 브랜치 메시지(pager) 창 밖. 수정: preserveScroll 시 전체 렌더. 백엔드 정상(curl). POST-DEPLOY PB-0008.

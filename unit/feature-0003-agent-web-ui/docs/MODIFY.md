@@ -798,3 +798,11 @@ source_of_truth: true
 - 배포: PR #889 → main 4ee7ea1d → deploy-web --web-only(soak PASS). 서빙 app.js `preserveScroll`·share.js `savedY` 반영.
 - 라이브(Windows Chrome 4ee7ea1d): 인앱 그룹 브랜치 대화 페이징 후 scrollTop=0(scrollable maxTop 9538, 맨아래 안 튐)·스크린샷 육안. 공유-링크 짧은→긴(maxY 11535) 페이징 후 window.scrollY=0. 양 surface PRESERVED.
 - Files: docs/{TASK,MODIFY,REVIEW,TEST}.md.
+
+## CHG-20260723T033143-paging-scroll-longhistory (20260723T033143-paging-scroll-longhistory — 긴 이력 페이징 스크롤 보존 회귀 수정, Minor §12.3, frontend-only)
+- 계기: 사용자 신고(admin '간단한 덧셈 계산' 3→4) — 이전 대화내역 길면 페이징 스크롤 보존 실패.
+- 근본원인: preserveScroll 이 `_applyRenderWindowSoon` 생략 + loadHistory renderCount=WINDOW_INITIAL_RENDER(3) 리셋 → 긴 버전 스레드(브랜치 메시지 뒤 후속 턴)에서 브랜치 메시지(pager) 창 밖 → pager 소실·scrollHeight 급변.
+- 변경(`static/app.js` loadHistory): preserveScroll 시 renderCount=messages.length(전체 렌더). 형제 버전 분기점-위 이력 동일 → 전체 렌더로 pager 유지 + scrollTop 정확 보존.
+- 비변경: append/일반 로드 renderCount 무변경(회귀 0). 백엔드 0.
+- Verification: node --check · POST-DEPLOY PB-0008(3→4 pager 유지+스크롤 보존).
+- Files: `static/app.js`, docs.

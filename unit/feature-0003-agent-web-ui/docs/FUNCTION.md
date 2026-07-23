@@ -1767,3 +1767,6 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 동작(`static/share.js`): `pageBranchShare` 가 `window.scrollY` 저장 → `render()` 후 rAF 로 `window.scrollTo(0, min(saved,maxY))` 복원(문서 스크롤).
 - 불변식: append(prepend)·일반 로드·전송 후 스크롤은 기존 동작 유지(preserveScroll 미지정). 백엔드 무관.
 - 검증: `node --check` 2 · POST-DEPLOY 실브라우저(scrollTop 페이징 전후 델타 ≈0) — layout 의존이라 jsdom 부적합(scroll-restore gotcha). CHG/REV-20260723T024724-paging-scroll-preserve.
+
+## (20260723T033143-paging-scroll-longhistory, 2026-07-23) 긴 이력 페이징 스크롤 보존 (web/UI, Minor §12.3, paging-scroll-preserve 후속)
+- loadHistory: preserveScroll(페이징) 시 renderCount=messages.length(버전 스레드 전체 렌더). 최근-N 창 truncate 로 브랜치 메시지(pager)가 창 밖으로 밀려 소실·scrollHeight 급변하던 회귀 봉인. 형제 버전은 분기점 위 이력 동일 → 전체 렌더로 pager 유지 + 절대 scrollTop 정확 보존. append/일반 로드 무변경. CHG/REV-20260723T033143.
