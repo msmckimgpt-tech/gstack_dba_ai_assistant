@@ -73,4 +73,4 @@ source_of_truth: true
 ## TASK-20260723T180000-folder-perms-broaden — 대화 생성 권한 역할에 폴더 권한 부여 (사용자 결정)
 - [x] 진단: folder.*.own 이 admin 만 보유 → 폴더가 admin 전용. conversation.create 보유는 admin·dba·dev_server·dos_web·operator·sales·usermanager 7역할.
 - [x] 구현: SEED operator/sales + _backfill_folder_perms_v1(conversation.create 보유 전 역할 동적 부여·1회 마커). py_compile·테스트 20 passed.
-- [ ] 배포(백필 startup 실행) + POST-DEPLOY 부여 실측(7역할 folder.*.own 보유 확인).
+- [x] 배포(PR #903→main f5341ccc, deploy-web) + POST-DEPLOY 부여 실측: backfill 마커 기록 + **conversation.create 보유 7역할(admin·dba·dev_server·dos_web·operator·sales·usermanager) 전부 folder.list.own+manage.own 보유**, pending 제외. 두 replica healthy·f5341ccc.
