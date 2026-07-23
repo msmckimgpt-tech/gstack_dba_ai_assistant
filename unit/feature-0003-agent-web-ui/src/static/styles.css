@@ -641,6 +641,63 @@ a { color: inherit; }
 }
 .conv-date-group-header:not(.is-collapsed) .conv-date-group-chevron::after { content: "▾"; }
 .conv-date-group-header.is-collapsed .conv-date-group-chevron::after { content: "›"; }
+
+/* feature-0024-conversation-folders: 폴더(프로젝트) UI */
+.conv-folder-tools { padding: 4px 8px 2px; }
+.conv-folder-add-btn {
+  width: 100%;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px dashed var(--border, rgba(0,0,0,.14));
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.conv-folder-add-btn:hover:not(:disabled) { background: rgba(0,0,0,.04); color: var(--text-1); }
+.conv-folder-add-btn:disabled { opacity: .5; cursor: not-allowed; }
+.conv-folder-undo {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 2px 8px 4px; padding: 5px 8px;
+  font-size: 11px; color: var(--text-2);
+  background: rgba(37,99,235,.08); border-radius: var(--r-sm);
+}
+.conv-folder-undo-btn {
+  font-size: 11px; font-weight: 600; color: var(--accent, #2563eb);
+  background: transparent; border: none; cursor: pointer; padding: 0; white-space: nowrap;
+}
+.conv-folder-undo-btn:hover { text-decoration: underline; }
+/* 폴더 헤더 — 날짜 그룹 헤더보다 약간 강조(아이콘 + 이름 + 개수 + 메뉴) */
+.conv-folder-header {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 600; color: var(--text-1);
+  padding: 5px 8px 5px 8px; margin-top: 1px;
+  cursor: pointer; user-select: none; border-radius: var(--r-sm);
+  transition: background .12s;
+}
+.conv-folder-header:hover { background: rgba(0,0,0,.04); }
+.conv-folder-chevron { font-size: 9px; color: var(--text-muted); width: 9px; flex: 0 0 auto; transition: transform .15s; }
+.conv-folder-header:not(.is-collapsed) .conv-folder-chevron::after { content: "▾"; }
+.conv-folder-header.is-collapsed .conv-folder-chevron::after { content: "›"; }
+.conv-folder-icon { font-size: 12px; flex: 0 0 auto; opacity: .85; }
+.conv-folder-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conv-folder-count {
+  font-size: 9.5px; font-weight: 500; opacity: .55;
+  font-variant-numeric: tabular-nums; flex: 0 0 auto;
+}
+.conv-folder-menu-trigger {
+  flex: 0 0 auto; font-size: 13px; line-height: 1; color: var(--text-muted);
+  opacity: 0; cursor: pointer; padding: 0 2px; letter-spacing: -1px;
+  transition: opacity .12s, color .12s;
+}
+.conv-folder-header:hover .conv-folder-menu-trigger,
+.conv-folder-menu-trigger:focus-visible { opacity: 1; }
+.conv-folder-menu-trigger:hover { color: var(--text-1); }
 .conv-group-collapsible {
   display: flex;
   align-items: center;

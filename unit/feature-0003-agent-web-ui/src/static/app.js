@@ -91,6 +91,10 @@ const state = {
   user: null,
   session: null,
   conversations: [],
+  // feature-0024-conversation-folders: 요청 계정의 폴더 트리(GET /api/folders) + 런타임 최대 깊이.
+  folders: [],
+  folderMaxDepth: 4,
+  pendingFolderUndo: null,  // 폴더 삭제 직후 6초 undo 상태 {ids, name}
   activeConversationId: "",
   messages: [],
   hasMoreHistory: false,
@@ -2782,6 +2786,174 @@ function _saveCollapsedGroups() {
   } catch (_) {}
 }
 
+// ── feature-0024-conversation-folders: 폴더(프로젝트) UI ─────────────────────
+async function loadFolders() {
+  try {
+    const fp = await apiFetch("/api/folders");
+    state.folders = Array.isArray(fp.folders) ? fp.folders : [];
+    if (typeof fp.max_depth === "number") state.folderMaxDepth = fp.max_depth;
+  } catch (_) {
+    state.folders = [];  // 권한 없음/미부트스트랩 — 폴더 없이 정상 동작
+  }
+}
+function _folderById(id) {
+  return state.folders.find((f) => Number(f.folder_id) === Number(id)) || null;
+}
+function _folderChildren(parentId) {
+  return state.folders
+    .filter((f) => (parentId == null ? f.parent_folder_id == null : Number(f.parent_folder_id) === Number(parentId)))
+    .sort((a, b) => (a.sort_order - b.sort_order) || String(a.name || "").localeCompare(String(b.name || "")));
+}
+function _folderDepthCap() { return Number(state.folderMaxDepth) || 4; }
+
+// 폴더 collapse — 사이드바 collapse 모델 재사용(state.collapsedDateGroups, key=folder:{id}).
+function _toggleFolder(id) {
+  const key = `folder:${id}`;
+  if (state.collapsedDateGroups.has(key)) state.collapsedDateGroups.delete(key);
+  else state.collapsedDateGroups.add(key);
+  _saveCollapsedGroups();
+  renderConversationList();
+}
+
+// 트리 순서로 펼친 폴더 목록(이동 picker 용, 들여쓴 라벨).
+function _foldersFlatForPicker() {
+  const out = [];
+  const walk = (parentId, depth) => {
+    _folderChildren(parentId).forEach((f) => {
+      out.push({ id: Number(f.folder_id), label: `${"　".repeat(depth)}${f.name}` });
+      walk(f.folder_id, depth + 1);
+    });
+  };
+  walk(null, 0);
+  return out;
+}
+
+async function createFolderFlow(parentFolderId = null) {
+  if (parentFolderId != null) {
+    const parent = _folderById(parentFolderId);
+    if (parent && Number(parent.depth) + 1 > _folderDepthCap()) {
+      showToast(`폴더 최대 중첩 깊이(${_folderDepthCap()}단)를 초과합니다.`, true);
+      return null;
+    }
+  }
+  const name = (window.prompt(parentFolderId ? "새 하위 폴더 이름" : "새 폴더 이름", "") || "").trim();
+  if (!name) return null;
+  try {
+    const res = await apiFetch("/api/folders", {
+      method: "POST", body: JSON.stringify({ name, parent_folder_id: parentFolderId }),
+    });
+    await loadFolders();
+    renderConversationList();
+    return res && res.folder ? res.folder.folder_id : null;
+  } catch (e) {
+    showToast(e.message || "폴더 생성에 실패했습니다.", true);
+    return null;
+  }
+}
+
+async function renameFolderFlow(folder) {
+  const name = (window.prompt("폴더 이름 변경", folder.name || "") || "").trim();
+  if (!name || name === folder.name) return;
+  try {
+    await apiFetch(`/api/folders/${folder.folder_id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    await loadFolders();
+    renderConversationList();
+  } catch (e) { showToast(e.message || "이름 변경에 실패했습니다.", true); }
+}
+
+async function deleteFolderFlow(folder) {
+  const childCount = _folderChildren(folder.folder_id).length;
+  const msg = childCount > 0
+    ? `'${folder.name}' 폴더와 하위 폴더 ${childCount}개를 삭제합니다. 폴더 안 대화는 그대로 보관됩니다. 계속할까요?`
+    : `'${folder.name}' 폴더를 삭제합니다. 폴더 안 대화는 그대로 보관됩니다. 계속할까요?`;
+  if (!window.confirm(msg)) return;
+  try {
+    const res = await apiFetch(`/api/folders/${folder.folder_id}`, { method: "DELETE" });
+    await loadFolders();
+    _offerFolderUndo(res && res.archived_folder_ids, folder.name);
+    renderConversationList();
+  } catch (e) { showToast(e.message || "폴더 삭제에 실패했습니다.", true); }
+}
+
+function _offerFolderUndo(archivedIds, name) {
+  if (!Array.isArray(archivedIds) || !archivedIds.length) return;
+  state.pendingFolderUndo = { ids: archivedIds, name };
+  setTimeout(() => {
+    if (state.pendingFolderUndo && state.pendingFolderUndo.ids === archivedIds) {
+      state.pendingFolderUndo = null;
+      renderConversationList();
+    }
+  }, 6000);
+}
+
+async function undoFolderDelete() {
+  const u = state.pendingFolderUndo;
+  if (!u) return;
+  state.pendingFolderUndo = null;
+  try {
+    await apiFetch(`/api/folders/${u.ids[0]}/restore`, {
+      method: "POST", body: JSON.stringify({ archived_folder_ids: u.ids }),
+    });
+    await loadFolders();
+  } catch (e) { showToast(e.message || "폴더 복구에 실패했습니다.", true); }
+  renderConversationList();
+}
+
+async function moveConversationToFolder(cid, folderId) {
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/folder`, {
+      method: "PATCH", body: JSON.stringify({ folder_id: folderId }),
+    });
+    const item = state.conversations.find((c) => String(c.id) === String(cid));
+    if (item) item.folder_id = folderId;
+    renderConversationList();
+    await loadConversations(state.activeConversationId);
+  } catch (e) { showToast(e.message || "폴더 이동에 실패했습니다.", true); }
+}
+
+async function createFolderAndMove(cid) {
+  const fid = await createFolderFlow(null);
+  if (fid != null) await moveConversationToFolder(cid, fid);
+}
+
+async function moveFolderTo(folderId, newParentId) {
+  try {
+    await apiFetch(`/api/folders/${folderId}`, {
+      method: "PATCH", body: JSON.stringify({ parent_folder_id: newParentId }),
+    });
+    await loadFolders();
+    renderConversationList();
+  } catch (e) { showToast(e.message || "폴더 이동에 실패했습니다.", true); }
+}
+
+// 폴더의 대화 총계(직속 + 후손) — 접힘 배지용.
+function _folderTotalConvCount(folderId, folderedMap) {
+  let n = (folderedMap.get(Number(folderId)) || []).length;
+  _folderChildren(folderId).forEach((c) => { n += _folderTotalConvCount(c.folder_id, folderedMap); });
+  return n;
+}
+
+// 폴더 헤더 ··· 메뉴.
+function openFolderMenu(folder, triggerEl) {
+  const existing = document.getElementById("folderMenu");
+  if (existing && existing.dataset.folderId === String(folder.folder_id)) { closeFloatingMenus(); return; }
+  openFloatingMenu(triggerEl, {
+    id: "folderMenu",
+    className: "conv-item-menu",
+    dataset: { folderId: String(folder.folder_id) },
+    buildItems: (menu, make) => {
+      if (Number(folder.depth) + 1 <= _folderDepthCap()) {
+        menu.appendChild(make("하위 폴더 추가", { onSelect: () => createFolderFlow(folder.folder_id) }));
+      }
+      menu.appendChild(make("이름 변경", { onSelect: () => renameFolderFlow(folder) }));
+      if (folder.parent_folder_id != null) {
+        menu.appendChild(make("최상위로 꺼내기", { onSelect: () => moveFolderTo(folder.folder_id, null) }));
+      }
+      menu.appendChild(make("삭제", { danger: true, onSelect: () => deleteFolderFlow(folder) }));
+    },
+  });
+}
+
 function renderConversationList() {
   conversationListEl.innerHTML = "";
   const hasDraftPending = Boolean(state.pendingNewConversation) && !state.pendingConversationEntries.has(state.pendingSentinel);
@@ -3002,8 +3174,54 @@ function renderConversationList() {
   if (hasInFlightPending) appendInFlightPendingItems();
   if (hasDraftPending) appendPendingItem();
 
-  // conv-date-tree: 나이 기반 적응형 트리(일 → 월 → 연>월)로 그룹핑.
-  const dateTree = _buildOwnDateTree(own);
+  // feature-0024-conversation-folders: own 을 폴더 배정(활성 폴더) 기준으로 분할.
+  //   미배정 or archived 폴더 대화는 root(미분류)로 → 기존 날짜 트리. 폴더 배정 대화는 폴더 하위.
+  const _activeFolderIds = new Set(state.folders.map((f) => Number(f.folder_id)));
+  const _foldered = new Map();  // folderId -> [conv]
+  const _unfoldered = [];
+  own.forEach((item) => {
+    const fid = item.folder_id;
+    if (fid != null && _activeFolderIds.has(Number(fid))) {
+      const k = Number(fid);
+      if (!_foldered.has(k)) _foldered.set(k, []);
+      _foldered.get(k).push(item);
+    } else {
+      _unfoldered.push(item);
+    }
+  });
+
+  // 폴더 삭제 undo 배너(6초).
+  if (state.pendingFolderUndo) {
+    const bar = document.createElement("div");
+    bar.className = "conv-folder-undo";
+    const txt = document.createElement("span");
+    txt.textContent = `'${state.pendingFolderUndo.name}' 폴더 삭제됨`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "conv-folder-undo-btn";
+    btn.textContent = "실행 취소";
+    btn.addEventListener("click", () => undoFolderDelete());
+    bar.append(txt, btn);
+    conversationListEl.appendChild(bar);
+  }
+
+  // 폴더 도구 바 — "새 폴더"(폴더 권한 보유 시).
+  if (can("folder.list.own") && (state.folders.length || can("folder.manage.own"))) {
+    const tools = document.createElement("div");
+    tools.className = "conv-folder-tools";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "conv-folder-add-btn";
+    addBtn.textContent = "＋ 새 폴더";
+    addBtn.title = "새 폴더를 만듭니다";
+    if (!can("folder.manage.own")) addBtn.disabled = true;
+    addBtn.addEventListener("click", () => createFolderFlow(null));
+    tools.appendChild(addBtn);
+    conversationListEl.appendChild(tools);
+  }
+
+  // conv-date-tree: 미분류 대화만 나이 기반 적응형 트리(일 → 월 → 연>월)로 그룹핑.
+  const dateTree = _buildOwnDateTree(_unfoldered);
 
   // 처음 진입 시 가장 최근 그룹(keys[0])만 펼치고 나머지(월/연/서브월 포함)는 접힘(1회/로드).
   _seedDateGroupsCollapsedOnce(dateTree.keys);
@@ -3063,6 +3281,64 @@ function renderConversationList() {
     }
   };
 
+  // feature-0024: 폴더 트리(재귀) 먼저 — 각 폴더 헤더(접힘/메뉴/개수) → 하위 폴더(재귀) → 폴더 대화(flat 최근순).
+  //   depth 들여쓰기·collapse 는 사이드바 모델 재사용. 폴더 안 대화는 날짜 트리 대신 flat(프로젝트式).
+  const renderFolderNode = (folder, depth) => {
+    const key = `folder:${folder.folder_id}`;
+    const isCollapsed = state.collapsedDateGroups.has(key);
+    const childFolders = _folderChildren(folder.folder_id);
+    const directConvs = (_foldered.get(Number(folder.folder_id)) || []).slice().sort(
+      (a, b) => new Date(b.last_activity_at || b.created_at || 0) - new Date(a.last_activity_at || a.created_at || 0),
+    );
+    const totalCount = _folderTotalConvCount(folder.folder_id, _foldered);
+
+    const header = document.createElement("div");
+    header.className = `conv-folder-header${isCollapsed ? " is-collapsed" : ""}`;
+    header.setAttribute("role", "button");
+    header.setAttribute("aria-expanded", String(!isCollapsed));
+    header.setAttribute("tabindex", "0");
+    header.dataset.folderId = String(folder.folder_id);
+    header.style.paddingLeft = `${8 + depth * 14}px`;
+
+    const chevron = document.createElement("span");
+    chevron.className = "conv-folder-chevron";
+    const icon = document.createElement("span");
+    icon.className = "conv-folder-icon";
+    icon.textContent = "🗂";
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "conv-folder-name";
+    nameSpan.textContent = folder.name;
+    const countBadge = document.createElement("span");
+    countBadge.className = "conv-folder-count";
+    if (totalCount > 0) countBadge.textContent = String(totalCount);
+    const menuTrig = document.createElement("span");
+    menuTrig.className = "conv-folder-menu-trigger";
+    menuTrig.setAttribute("role", "button");
+    menuTrig.setAttribute("tabindex", "0");
+    menuTrig.setAttribute("aria-label", "폴더 메뉴 열기");
+    menuTrig.textContent = "···";
+    const openMenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); openFolderMenu(folder, menuTrig); };
+    menuTrig.addEventListener("click", openMenu);
+    menuTrig.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") openMenu(ev); });
+
+    header.append(chevron, icon, nameSpan, countBadge, menuTrig);
+    const toggleF = () => _toggleFolder(folder.folder_id);
+    header.addEventListener("click", toggleF);
+    header.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleF(); } });
+    conversationListEl.appendChild(header);
+
+    if (isCollapsed) return;
+    childFolders.forEach((c) => renderFolderNode(c, depth + 1));
+    directConvs.forEach((item) => {
+      const idx = ownVisibleIds.indexOf(String(item.id));
+      const el = buildCompactItem(item, idx, ownVisibleIds);
+      el.style.paddingLeft = `${8 + (depth + 1) * 14}px`;
+      conversationListEl.appendChild(el);
+    });
+  };
+  _folderChildren(null).forEach((root) => renderFolderNode(root, 0));
+
+  // 미분류(root) 대화 날짜 트리.
   dateTree.nodes.forEach(renderDateNode);
 
   // --- 타 계정 대화: owner별 그룹화, 최신 activity 순 정렬 ---
@@ -6638,6 +6914,8 @@ function _maybeExpandOrLoadOlder() {
 async function loadConversations(preferredConversationId = "", { allowCurrentFallback = true } = {}) {
   const payload = await apiFetch("/api/conversations");
   state.conversations = Array.isArray(payload.items) ? payload.items : [];
+  // feature-0024-conversation-folders: 폴더 트리 병행 로드(folder.list.own 없으면 403 → 빈 목록, graceful).
+  await loadFolders();
   // TASK-0059: pending 모드 race 가드. "새 대화" 버튼을 누른 직후 (state.activeConversationId="")
   // 다른 비동기 path 가 refreshWorkspace 를 호출하면 payload.current (직전 대화 id) 로 active 가
   // 복귀해 신규 의도가 깨지던 회귀를 차단. pending 모드일 때는 사이드바 리스트만 갱신하고 active 는 보존.
@@ -7938,6 +8216,18 @@ function openConversationItemMenu(cid, triggerEl) {
     buildItems: (menu, make) => {
       menu.appendChild(make("공유", { action: "conversation.share", conversation, onSelect: () => openShareDialog(cid) }));
       menu.appendChild(make("설정", { action: "conversation.read", conversation, onSelect: () => openConversationSettings(cid) }));
+      // feature-0024-conversation-folders: 폴더로 이동/빼기(folder.manage.own 보유 시).
+      if (can("folder.manage.own")) {
+        const curFolderId = conversation.folder_id;
+        if (curFolderId != null && _folderById(curFolderId)) {
+          menu.appendChild(make("폴더에서 빼기", { onSelect: () => moveConversationToFolder(cid, null) }));
+        }
+        _foldersFlatForPicker().forEach((f) => {
+          if (Number(f.id) === Number(curFolderId)) return;  // 현재 폴더 제외
+          menu.appendChild(make(`▸ ${f.label}`, { onSelect: () => moveConversationToFolder(cid, f.id) }));
+        });
+        menu.appendChild(make("＋ 새 폴더로 이동", { onSelect: () => createFolderAndMove(cid) }));
+      }
     },
   });
 }
