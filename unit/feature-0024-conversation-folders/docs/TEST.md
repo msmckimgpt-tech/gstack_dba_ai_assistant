@@ -60,3 +60,9 @@ source_of_truth: true
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
 
 - **[POST-DEPLOY 2026-07-23] folder-privacy 크로스-계정 격리 실측 (PASS, Windows-browser/API, 라이브 92c89b46)**: PR #899 → main 92c89b46 → deploy-web(soak PASS). 서빙 `_folder_store.py` owner-scope 3매치·`all_owners` 0. **격리 확증**: 계정10 소유 folder(id 5) 활성 존재 상태에서, 계정1(bootstrap_admin, 수정 전 folder.list.any 로 노출되던) `GET /api/folders` = **빈 배열**(seesAccount10Folder=false, allOwnedByMe=true). 크로스-계정 노출 해소. orphan folder.*.any 권한/grant 라이브 DB 정리(folder.*.own 만 잔존). Pass/Fail: **PASS**.
+
+### Run 2026-07-23-003 (folder-perms-broaden)
+- Date: 2026-07-23 · Environment: CLI · Runner: AI
+- Result Summary: **PRE-DEPLOY** — py_compile(web_context) · dependency-map/route-parity **20 passed**(권한 grant 확대는 deps/route 무변경). backfill 함수·호출·마커·SEED(operator/sales) 정합.
+- Environment: (백엔드 권한 seed/backfill — 웹/UI 렌더 델타 없음, Windows-browser 부적용). **POST-DEPLOY 부여 실측 예정**: conversation.create 보유 7역할이 배포 후 folder.list.own/folder.manage.own 보유(MySQL WebRolePermissions).
+- Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.

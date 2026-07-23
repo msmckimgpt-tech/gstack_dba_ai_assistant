@@ -69,3 +69,8 @@ source_of_truth: true
 - [x] 수정: list_folders 항상 owner-scope(재귀 하위 owner 재확인)·_require_folder_owner/restore owner-only(404 단일화)·folder.*.any 정의/catchup/deps 폐지. folder.*.own 만 존치.
 - [x] 검증: py_compile·node --check·dependency-map·route-parity 20 passed.
 - [ ] 배포 + POST-DEPLOY 크로스-계정 격리 실측(계정1 이 계정10 folder 미조회) + orphan folder.*.any grant 정리.
+
+## TASK-20260723T180000-folder-perms-broaden — 대화 생성 권한 역할에 폴더 권한 부여 (사용자 결정)
+- [x] 진단: folder.*.own 이 admin 만 보유 → 폴더가 admin 전용. conversation.create 보유는 admin·dba·dev_server·dos_web·operator·sales·usermanager 7역할.
+- [x] 구현: SEED operator/sales + _backfill_folder_perms_v1(conversation.create 보유 전 역할 동적 부여·1회 마커). py_compile·테스트 20 passed.
+- [ ] 배포(백필 startup 실행) + POST-DEPLOY 부여 실측(7역할 folder.*.own 보유 확인).

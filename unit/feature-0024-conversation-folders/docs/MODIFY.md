@@ -38,3 +38,9 @@ source_of_truth: true
 - **버그**: `GET /api/folders` 가 folder.list.any(+manage.any) 보유 시 all_owners=True 로 전 계정 폴더 반환. 이 서비스는 admin 역할 계정이 4개라 admin 사용자끼리 서로의 폴더가 노출됨(사용자 신고).
 - **수정**: 폴더를 **엄격한 개인(per-user)** 오버레이로 — list_folders 항상 owner_account_id 스코프(재귀 하위 노드도 owner 재확인), _require_folder_owner/restore 소유자 전용(manage.any 우회 제거), 타 계정 폴더 존재는 404 단일화(oracle 차단). folder.*.any 권한 폐지(정의·catchup·deps 제거). folder.*.own 만 존치.
 - 검증: py_compile · node --check · dependency-map(folder own 2개만·전부 실 code) · route-parity 20 passed. 라이브 크로스-계정 격리 = POST-DEPLOY(계정1 GET /api/folders 가 계정10 folder 5 미포함).
+
+## CHG-20260723T180000-folder-perms-broaden (사용자 결정 — 대화 생성 권한 역할에 폴더 권한 부여)
+- Date: 2026-07-23. Files: `web_context.py`(SEED operator/sales + _backfill_folder_perms_v1 + 마커).
+- 결정(2026-07-23): 폴더는 대화를 만들 수 있는 모든 역할의 개인 기능 → conversation.create 보유 역할에 folder.list.own/folder.manage.own 부여.
+- 구현: ① SEED_ROLE_DEFINITIONS operator/sales 에 folder.*.own 추가(신규 시드) ② `_backfill_folder_perms_v1`(1회 마커 guard) — conversation.create 명시 보유 **모든 역할**(배포 전용 dba/dev_server/dos_web/usermanager 포함, 역할명 하드코딩 없이 동적)에 folder.*.own INSERT IGNORE. admin=이미 전권. pending=conversation.create 없어 제외.
+- 1회 guard 근거: 매 startup 재부여 시 admin 의 의도적 회수를 무력화하므로 마커로 1회만(이후 콘솔 통제). 검증: py_compile·dependency-map/route-parity 20 passed. 라이브 부여=POST-DEPLOY(백필 startup 실행).

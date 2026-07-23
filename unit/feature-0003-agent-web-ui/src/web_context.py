@@ -1040,6 +1040,10 @@ _CONSOLE_CATEGORY_ACCESS_MIGRATION_KEY = "console-category-access-v1"
 #   1회 규약 근거는 위와 동일 — 단, 묶음은 grid 숨김이라 분리 이후 신규 묶음 부여 경로가 없어
 #   재실행 위험 자체가 작다(방어적 1회 유지).
 _ATOMIC_PERM_SPLIT_MIGRATION_KEY = "atomic-perm-split-v1"
+# feature-0024-conversation-folders: 대화 폴더는 대화를 만들 수 있는 모든 역할이 개인 단위로
+# 쓰는 일반 기능이다(사용자 결정 2026-07-23). 도입 시 기존 배포의 conversation.create 보유
+# 역할에 folder.list.own/folder.manage.own 을 1회 backfill 로 부여한다.
+_FOLDER_PERMS_BROADEN_MIGRATION_KEY = "folder-perms-broaden-v1"
 
 
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
@@ -1353,6 +1357,9 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
             # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤 — 실제 게이트는 allowlist+attachment_reader+sql_guard).
+            # feature-0024-conversation-folders: 대화 폴더 개인 사용(conversation.create 보유 역할).
+            "folder.list.own",
+            "folder.manage.own",
         },
     },
     {
@@ -1378,6 +1385,9 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.attachment.upload.own",
             "conversation.attachment.read.own",
             # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤).
+            # feature-0024-conversation-folders: 대화 폴더 개인 사용(conversation.create 보유 역할).
+            "folder.list.own",
+            "folder.manage.own",
         },
     },
     {
@@ -2297,6 +2307,74 @@ VALUES (%s, %s)
     # perm-category-hier(Critical §12.3, 2026-07-14): 카테고리 접근 권한 5종 도입 시점의 기존 principal
     #   접근을 1회 backfill 로 보존(console.access + 카테고리 세부 권한 보유자에 접근 권한 자동 부여).
     _backfill_console_category_access_v1(conn)
+    # feature-0024-conversation-folders(사용자 결정 2026-07-23): conversation.create 보유 역할 전체에
+    #   folder.list.own/folder.manage.own 을 1회 backfill 로 부여(폴더=대화 만드는 모두의 개인 기능).
+    _backfill_folder_perms_v1(conn)
+
+
+def _backfill_folder_perms_v1(conn) -> None:
+    """feature-0024(사용자 결정 2026-07-23) — 대화 폴더는 대화를 만들 수 있는 모든 역할의 개인 기능.
+
+    도입 시점의 기존 배포에서 `conversation.create` 를 명시 보유한 **모든 역할**에
+    `folder.list.own` + `folder.manage.own` 을 1회 부여한다. SEED_ROLE_DEFINITIONS 는 operator/sales
+    신규 시드만 커버하므로, 배포 전용 역할(dba/dev_server/dos_web/usermanager 등 시드 밖)은 본 동적
+    backfill 이 conversation.create 보유 여부로 커버한다(역할명 하드코딩 없이 미래 역할도 자동 포함).
+
+    **1회 guard**(WebSchemaMigrations 마커): 매 startup 무조건 실행하면 admin 이 특정 역할의 폴더
+    권한을 의도적으로 회수해도 재기동마다 재부여돼 admin 통제를 무력화하므로, 정확히 1회만 부여하고
+    마커를 남긴다(이후 역할별 부여/회수는 콘솔 admin 통제 — folder.*.own 은 conversation 카테고리
+    그리드에 노출). best-effort — 마커 실패 시 다음 startup 재시도(INSERT IGNORE 라 무해).
+    graph-perm-split 와 동일 규약: fast/slow 양 경로 호출 대비 마커 테이블 IF NOT EXISTS 자족 보장.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+CREATE TABLE IF NOT EXISTS WebSchemaMigrations (
+    MigrationKey VARCHAR(191) NOT NULL PRIMARY KEY,
+    AppliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cur.execute(
+            "SELECT 1 FROM WebSchemaMigrations WHERE MigrationKey = %s LIMIT 1",
+            (_FOLDER_PERMS_BROADEN_MIGRATION_KEY,),
+        )
+        already = cur.fetchone()
+        cur.close()
+    except Exception:
+        return
+    if already:
+        return
+    permission_map = _permission_id_map(conn)
+    conv_create_pid = int(permission_map.get("conversation.create") or 0)
+    list_pid = int(permission_map.get("folder.list.own") or 0)
+    manage_pid = int(permission_map.get("folder.manage.own") or 0)
+    if conv_create_pid > 0 and list_pid > 0 and manage_pid > 0:
+        cur = conn.cursor()
+        # conversation.create 를 명시 보유한 역할에 folder.list.own + folder.manage.own 부여(멱등).
+        for target_pid in (list_pid, manage_pid):
+            cur.execute(
+                """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT DISTINCT rp.RoleId, %s
+FROM WebRolePermissions rp
+WHERE rp.PermissionId = %s
+                """,
+                (target_pid, conv_create_pid),
+            )
+        cur.close()
+    # 마커 기록(멱등) — 권한 id 미해석 시엔 마커 미기록으로 다음 startup 재시도.
+    if conv_create_pid > 0 and list_pid > 0 and manage_pid > 0:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT IGNORE INTO WebSchemaMigrations (MigrationKey) VALUES (%s)",
+                (_FOLDER_PERMS_BROADEN_MIGRATION_KEY,),
+            )
+            cur.close()
+        except Exception:
+            pass
 
 
 def _backfill_graph_perm_split_v1(conn) -> None:

@@ -26,3 +26,7 @@ source_of_truth: true
 - 수정 범위 = **엄격 owner-scope 전환 + folder.*.any 폐지**. 잔여 크로스-계정 경로 재점검: folder_map_for_account(account 스코프)·folder_id_for(account 스코프)·_folder_instructions_for(account+owner==account 스코프)·payload folder_id(folder_map_for_account 경유) 전부 이미 owner-scoped — list/manage/restore 3경로만 노출원이었고 전부 봉인. get_folder 는 _require_folder_owner(owner-only) 뒤에서만 소비.
 - 잔재: 라이브 MySQL 의 admin folder.*.any WebRolePermissions grant 는 코드가 더 이상 참조 안 함(inert) — POST-DEPLOY 에서 orphan grant/permission row 정리(SQL).
 - 검증: dependency-map·route-parity 20 passed. 라이브 격리 = POST-DEPLOY(계정1 이 계정10 폴더 미조회).
+
+## REV-20260723T180000-folder-perms-broaden [SKIPPED:permission-grant-broaden-no-new-code-surface] SHIP — 대화 생성 역할에 폴더 권한 부여
+- Panel skip 사유(§18.8): 신규 코드 로직·엔드포인트·RBAC 게이트 0 — 이미 §18.8 리뷰된 folder.*.own 권한을 conversation.create 보유 역할로 **부여(grant) 확대**만. 새 공격면 없음(폴더는 REV-20260723T170000 에서 엄격 owner-scope 확정 — 권한 보유자가 늘어도 각자 자기 폴더만 접근, 크로스-계정 불가). 동적 backfill 은 conversation.create 보유로 대상 판정(역할명 하드코딩 없이 미래 역할 포함), 1회 마커 guard 로 admin 회수 존중.
+- 검증: py_compile·dependency-map/route-parity 20 passed. 라이브 부여 실측=POST-DEPLOY.
