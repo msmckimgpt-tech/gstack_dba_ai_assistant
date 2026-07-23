@@ -66,3 +66,5 @@ source_of_truth: true
 - Result Summary: **PRE-DEPLOY** — py_compile(web_context) · dependency-map/route-parity **20 passed**(권한 grant 확대는 deps/route 무변경). backfill 함수·호출·마커·SEED(operator/sales) 정합.
 - Environment: (백엔드 권한 seed/backfill — 웹/UI 렌더 델타 없음, Windows-browser 부적용). **POST-DEPLOY 부여 실측 예정**: conversation.create 보유 7역할이 배포 후 folder.list.own/folder.manage.own 보유(MySQL WebRolePermissions).
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
+
+- **[POST-DEPLOY 2026-07-23] folder-perms-broaden 부여 실측 (PASS, CLI/MySQL, 라이브 f5341ccc)**: PR #903 → main f5341ccc → deploy-web(두 replica healthy·3-probe f5341ccc 일관). backfill 마커 `folder-perms-broaden-v1` 기록 + **conversation.create 보유 7역할(admin·dba·dev_server·dos_web·operator·sales·usermanager) 전부 folder.list.own+folder.manage.own 보유** 확인(WebRolePermissions). pending(conversation.create 없음) 제외 확인. Pass/Fail: **PASS**.
