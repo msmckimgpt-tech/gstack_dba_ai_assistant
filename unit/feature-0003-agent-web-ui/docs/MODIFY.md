@@ -830,3 +830,8 @@ source_of_truth: true
 - 비변경: 기존 '···'/'☰' 버튼 클릭 동작·위치, 대화 선택/폴더 토글(우클릭이 유발 안 함), admin.js, 그래프 우클릭(graph-ctxmenu.js), 백엔드/RBAC/스키마/엔드포인트 0.
 - Verification: `node --check` PASS(2회) · §18.8 적대 리뷰 SHIP(MINOR 3 반영) · POST-DEPLOY PB-0008(AC-1~5).
 - Files: `static/app.js`, docs/{TASK,FUNCTION,REPORT,REVIEW,TEST-runs}.md.
+
+## CHG-20260723T075215-universal-ctxmenu-postverify (universal-ctxmenu 배포 + 라이브 실측 POST-DEPLOY, 비-정책 doc-only)
+- POST-DEPLOY 라이브 실측 + TASK 완료. 코드 0. PR #897 → main **c6f7f98a** → `deploy-web.sh --web-only`(web-a/web-b 무중단 롤링·90s soak PASS·caddy no-op·자산 스탬프 e6d39fde416f). deploy_scope: included(FIRST_REQUEST.md 전역·§12.2 사전 승인).
+- 라이브(win-browser Chrome 150, https://localhost/ 작업 화면, 실 contextmenu button2): AC-1 대화항목 우클릭→'···' 커서개방(공유/설정/폴더·aria=true)·AC-2 폴더헤더→폴더메뉴(하위/이름/지침/삭제)·AC-3 말풍선→'☰'(분기/공유·커서개방)·AC-4 텍스트 663자 선택 후 우클릭→native 보존(defaultPrevented=false·☰ 미개방)·AC-5 버튼 클릭 trigger-rect byte-동치(rightAligned·belowTrigger)·**errCount 0**. 서빙 app.js 신규 심볼 전부 hit.
+- Files: docs/{TASK,MODIFY,REPORT,REVIEW,TEST-runs}.md.

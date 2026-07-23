@@ -731,3 +731,7 @@ source_of_truth: true
 - **[MINOR ×3 — in-cycle 수정 완료]** ① 미디어(img/svg/canvas/video)·assistant 답변 mermaid SVG/이미지 우클릭이 ☰ 로 가로채져 "이미지 저장/링크 열기" native 손실 → 양보 selector 에 `img,svg,canvas,video` 추가. ② 키보드 contextmenu(Menu키/Shift+F10, 일부 브라우저 clientX/Y=0)가 좌상단 오배치 → `fromKeyboard`(coords≤0) 시 anchor=null trigger-rect 폴백. ③ `_hasSelectionWithin` 의 commonAncestor-wrap 분기가 stale 교차-메시지 선택 시 무관 호스트 우클릭 과잉차단 → `Range.intersectsNode`(실제 겹침만·구형 브라우저 containment 폴백)로 교체.
 - **[NIT ×2 — 무해 유지]** 우클릭 토글 비대칭(호스트 body 우클릭은 mousedown-close→contextmenu-reopen 재배치 / 트리거 정확 우클릭만 toggle-close) · synthetic click 이 focus 미이동(aria-expanded 정합·ESC focus 복원 동작) — 컨텍스트 메뉴 관례상 무해.
 - 검증: `node --check app.js` PASS(리뷰 반영 후) · CHECK#13 POST-DEPLOY PB-0008 (TEST fragment 20260723T071355-universal-ctxmenu, AC-1~5).
+
+## REV-20260723T075215-universal-ctxmenu-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — 서비스 UI 우클릭 보편 확장 메뉴 배포 + 라이브 실측 (CHG-20260723T075215-universal-ctxmenu-postverify)
+- Panel skip: 코드 0(POST-DEPLOY 실증·TASK 완료 기록). 정본 = REV-20260723T071355-universal-ctxmenu([SUBAGENT:general-purpose] SHIP).
+- 실증(win-browser Chrome 150, 배포본 c6f7f98a, https://localhost/): 서빙 app.js(stamp e6d39fde416f) 신규 심볼 5종 전부 hit + 실 contextmenu(button2) dispatch — AC-1 대화항목→'···' 커서(226,68)·AC-2 폴더헤더→폴더메뉴(168,48)·AC-3 말풍선→'☰' 커서(191,588)·AC-4 텍스트 663자 선택 후 우클릭 defaultPrevented=false native 보존·☰ 미개방·AC-5 버튼 클릭 menuRight==trigRight byte-동치·errCount 0. 우클릭=보편 확장 단축·기본 우클릭 양보·버튼 경로 무회귀 라이브 확정.

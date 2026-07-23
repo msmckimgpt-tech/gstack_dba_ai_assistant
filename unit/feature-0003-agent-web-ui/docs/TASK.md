@@ -32,7 +32,8 @@ source_of_truth: true
 - [x] 변경 2 위임 contextmenu 핸들러 + 설정표 + 기본 양보(input/link/미디어/선택 중)
 - [x] `node --check app.js` PASS
 - [x] §18.8 적대적 프론트/UX 리뷰 (general-purpose, REV-20260723T071355-universal-ctxmenu): verdict **SHIP** (BLOCKING/MAJOR 0). 앵커 수명·anchor=null byte-동치·synthetic click 무-사이드이펙트(우클릭이 대화 선택/폴더 토글 유발 안 함)·예외 가드 검증 통과. MINOR 3건 반영: ①미디어(img/svg/canvas/video) 네이티브 양보(이미지 저장·mermaid SVG 보존) ②키보드 contextmenu(0,0) trigger-rect 폴백 ③`_hasSelectionWithin` → `intersectsNode` 정밀화(stale 교차 선택 과잉차단 제거). NIT 2(토글 비대칭·focus parity) 무해 유지.
-- [ ] POST-DEPLOY PB-0008 Windows-browser 라이브 검증(AC-1~5) — §15.4.1 웹/UI 완료 게이트 (배포 후 수행 — 배포는 사용자 confirm 대상, deploy_scope 미선언)
+- [x] 배포(deploy_scope: included — FIRST_REQUEST.md 전역, cycle 시작 전 선언, §12.2 사전 승인): PR #897 → main **c6f7f98a** → `deploy-web.sh --web-only`(web-a/web-b 무중단 롤링·90s soak PASS·caddy no-op·자산 스탬프 `e6d39fde416f` 주입). end-state 서빙 app.js 신규 심볼 전부 hit.
+- [x] POST-DEPLOY PB-0008 Windows-browser 라이브 검증 (PASS, 실 Windows Chrome 150 via win-browser.py, 배포본 c6f7f98a) — §15.4.1 웹/UI 완료 게이트: **AC-1** 대화항목 우클릭→'···' 커서개방(공유/설정/폴더)·**AC-2** 폴더헤더 우클릭→폴더메뉴·**AC-3** 말풍선 우클릭→'☰'(분기/공유)·**AC-4** 텍스트 663자 선택 후 우클릭→native 메뉴 보존(☰ 미개방)·**AC-5** 버튼 클릭 trigger-rect byte-동치·**pageerror 0**. 정본 = TEST Run(2026-07-23 universal-ctxmenu) POST-DEPLOY.
 
 ## TASK-20260723T034321-conv-date-tree — 좌측 대화목록 날짜 그룹핑 적응형 트리(월/년 집계) + "6월 중복" 시각 혼잡 해소 (Major §12.3 — feature-0003 web/UI 프론트 단독. /_template:entry arg-given dispatch)
 - 진단(사용자 신고): 오래된 대화가 "6월/6월/6월…"로 중복 렌더돼 시각 혼잡. RC = `_getDateGroupKey`가 오늘/어제 외 **모든 날짜에 일 단위 키(YYYY-MM-DD)** 부여 → 서로 다른 6월 날짜가 각각 별개 헤더가 되는데, `_formatDateGroupLabel`은 30일 초과 날짜 라벨을 "M월"로만 축약 → 다른 키가 전부 같은 "6월" 텍스트로 렌더. 집계 단위(월/연)로 묶이지 않고 라벨만 축약된 것이 근본.
