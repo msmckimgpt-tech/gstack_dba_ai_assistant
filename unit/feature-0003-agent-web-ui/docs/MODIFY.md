@@ -781,3 +781,14 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(33 releases·07-22 head 6항목[fixed 3·improved 3·area work]·07-21 보존·스키마·누출0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+
+## CHG-20260723T024724-paging-scroll-preserve (20260723T024724-paging-scroll-preserve — 브랜치 페이징 스크롤 위치 보존, Minor §12.3, frontend-only UX)
+- 계기: 사용자 신고 — 편집 버전 페이징 시 스크롤이 맨 아래로 튀어 연속 페이징 번거로움.
+- 근본원인: `renderMessages()` 는 매 재렌더 `scrollTop=scrollHeight`; 비-append `loadHistory` 는 `_applyRenderWindowSoon`(rAF)로 재-스크롤; 공유 뷰 `render` 는 `#shareMessages` 교체로 문서 스크롤 튐.
+- 변경(`static/app.js`): `loadHistory` 에 `preserveScroll` 옵션(저장 top 복원 + window-soon 생략, rAF). `refreshWorkspace(opts.preserveScroll)` 전달. `_pageBranch` 그룹/1:1 페이징에 preserveScroll 적용.
+- 변경(`static/share.js`): `pageBranchShare` window.scrollY 저장→rAF 복원.
+- 비변경(회귀 0): append(이전 이력 prepend)·일반 대화 로드·전송 후 스크롤은 기존(맨-아래/prepend 보존). preserveScroll 미지정 경로 전부 동일. 백엔드/스키마/RBAC 0.
+- cache-buster: `?v=dev` 고정(빌드 자동주입).
+- Verification: `node --check` 2 · POST-DEPLOY headless/Windows 실측(페이징 전후 scrollTop 보존).
+- Files: `static/app.js`, `static/share.js`, `docs/{TASK,MODIFY,FUNCTION,REPORT,TEST,REVIEW}.md`.
+- landing/배포: verify-completion → commit → PR/머지=자동 동기화. 배포=web-only(정적자산·백엔드 무관).

@@ -1654,3 +1654,9 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **구현**: 두 로더(in-app `_get_history` / 익명 공유 `_share_load_messages`) 공용 `_branch_enrich_display` — active-path 필터 + 가시성-scoped 버전 메타. 읽기전용 네비 = `override_active_leaf`(비영속) + `branch_view` 파라미터 + `_branch_resolve_readonly_leaf`(가시 범위 검증 fail-closed). 프론트 app.js(그룹 읽기전용 pager)·share.js/css(공유 뷰 pager).
 - **보안(핵심)**: 멤버 window / 공유 id-범위 밖 버전은 카운트·sibling_ids·존재·내용 모두 fail-closed 차단(익명 공유 뷰 누출 방지). active_leaf DB 불변.
 - **검증**: 보안 단위 10 PASS(범위밖 형제 배제·resolver fail-closed) · py_compile 5 + node --check 2 · §18.8 적대 보안 리뷰 · 양 surface PB-0008(POST-DEPLOY).
+
+## 20260723T024724-paging-scroll-preserve — 브랜치 페이징 스크롤 위치 보존 (Minor §12.3, frontend-only UX)
+- **계기**: 사용자 — 편집 버전 페이징 시 스크롤이 맨 아래로 튀어 연속 페이징 번거로움.
+- **RC**: `renderMessages` 매 재렌더 맨-아래 스크롤 + 비-append loadHistory 의 `_applyRenderWindowSoon` rAF 재-스크롤 + 공유 뷰 innerHTML 교체.
+- **수정**: `loadHistory({preserveScroll})`(저장 top 복원 + window-soon 생략, rAF) + `_pageBranch`/`refreshWorkspace` 배선 + share.js window.scrollY 보존. append/일반 로드 무변경.
+- **검증**: `node --check` 2 · POST-DEPLOY 실브라우저 scrollTop 실측(jsdom 부적합 — layout 의존).

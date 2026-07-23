@@ -4110,10 +4110,13 @@ async function _pageBranch(message, direction) {
     if (isGroupConversation(currentConversation())) {
       // 공유/그룹 대화: 읽기전용 페이징 — active_leaf(공유 근거)를 바꾸지 않고 해당 버전만 로컬
       // 열람한다(전원 화면을 바꾸지 않음). 새 재답변/전환 영속은 계속 잠금(INV-4).
-      await loadHistory({ branchView: targetId });
+      // preserveScroll: 페이징 시 스크롤이 맨 아래로 튀지 않게 위치 보존(연속 페이징 UX).
+      await loadHistory({ branchView: targetId, preserveScroll: true });
     } else {
+      // 1:1: 브랜치 전환 영속 후 refreshWorkspace(사이드바 프리뷰 등 갱신 유지). preserveScroll 을
+      // 그 히스토리 재로드에 전달해 스크롤 위치 보존(기존 맨-아래 튐 해소).
       await _switchBranch(cid, targetId);
-      await refreshWorkspace(cid);
+      await refreshWorkspace(cid, { preserveScroll: true });
     }
   } catch (e) {
     showToast((e && e.message) || "버전 전환에 실패했습니다.", true);
@@ -6204,7 +6207,7 @@ async function detectNewRun(seq = state.runDetectSeq) {
   }
 }
 
-async function loadHistory({ append = false, branchView = null } = {}) {
+async function loadHistory({ append = false, branchView = null, preserveScroll = false } = {}) {
   if (!state.activeConversationId) {
     stopProgressPolling({ reset: true });
     stopRunDetectPolling();
@@ -6277,6 +6280,10 @@ async function loadHistory({ append = false, branchView = null } = {}) {
     state.reasoningLevel = _isValidReasoningLevel(_rl) ? _rl : null;
     _updateComposerReasoningLabel();
   }
+  // feature-0019 paging-scroll-preserve: 페이징(preserveScroll) 재렌더 전 스크롤 위치를 저장한다.
+  // renderMessages() 는 항상 맨-아래로 이동시키므로, 아래에서 이 값을 복원해 페이징 시 스크롤이
+  // 바닥으로 튀는 것을 막는다(연속 페이징 UX). append 경로는 기존 _beginAppendScrollPreserve 유지.
+  const _psTop = (preserveScroll && messageLogEl) ? messageLogEl.scrollTop : null;
   _beginAppendScrollPreserve(append);
   renderMessages();
   if (payload.last_status === "processing") {
@@ -6348,7 +6355,19 @@ async function loadHistory({ append = false, branchView = null } = {}) {
   // point-rail-range window: append(prepend) 로드는 렌더 후 스크롤 위치를 보정하고,
   // 초기(비-append) 로드는 기본 창(뷰포트 4배)이 안 차면 이전 기록을 자동으로 더 당긴다.
   _endAppendScrollPreserve(append);
-  if (!append) _applyRenderWindowSoon();
+  if (preserveScroll) {
+    // feature-0019 paging-scroll-preserve: 페이징 재렌더는 렌더 창 확장(_applyRenderWindowSoon —
+    // 다시 맨-아래로 스크롤)을 생략하고, 저장한 스크롤 위치를 rAF(layout 확정 후)로 복원한다.
+    if (messageLogEl && _psTop != null) {
+      requestAnimationFrame(() => {
+        const _maxTop = Math.max(0, messageLogEl.scrollHeight - messageLogEl.clientHeight);
+        messageLogEl.scrollTop = Math.min(_psTop, _maxTop);
+        try { layoutMessagePointRail(); } catch (_e) {}
+      });
+    }
+  } else if (!append) {
+    _applyRenderWindowSoon();
+  }
 }
 
 // ── point-rail-range window: 대화 로그 창(windowing) 헬퍼 ──────────────────
@@ -6520,7 +6539,9 @@ async function refreshWorkspace(preferredConversationId = "", opts = {}) {
   await loadConversations(preferredConversationId, opts);
   renderConversationHeader();
   renderAccessNotice();
-  await loadHistory();
+  // feature-0019 paging-scroll-preserve: opts.preserveScroll(브랜치 페이징) 시 히스토리 재로드에서
+  // 스크롤 위치를 보존한다(맨-아래 튐 해소). 그 외 경로는 기존 동작(맨-아래).
+  await loadHistory(opts.preserveScroll ? { preserveScroll: true } : {});
   // feature-0009 gc-unread-read-fix: refreshWorkspace(페이지 로드·복원·주기 갱신)로 진입/복원된
   // active 대화도 읽음 처리한다 — selectConversation 을 거치지 않아 커서가 전진하지 않던 누락 보정.
   // (새로고침 후 복원된 대화는 아무리 봐도 사이드바 안 읽은 배지가 줄지 않던 버그.)
