@@ -955,3 +955,8 @@ source_of_truth: true
 - **Files**: `src/static/app.js`, `src/static/share.js`, `src/static/styles.css`, `unit/feature-0002-agent-core/src/agent_core.py`, `unit/feature-0002-agent-core/src/modules/tools.py` + tests(`unit/feature-0002-agent-core/tests/test_collapse_csv_block_download.py`(신규), `unit/feature-0003-agent-web-ui/tests/verify_csv_block_download.mjs`(신규), `test_partial_evidence_grounding.py`·`test_scratch.py` 가이던스 문구 정합).
 - **Verification**: 전체 pytest **2303 passed / 2 skipped**(무회귀) · jsdom 18 PASS · `node --check` app.js/share.js. check #13(visual_verification_scope=always) 활성 → test-runs.d Windows-browser fragment 동반, POST-DEPLOY 라이브 PB-0008.
 - **잔여**: verify → commit → deploy(web+worker) → POST-DEPLOY PB-0008.
+
+## CHG-20260724T133000-csv-download-wiring-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- 코드/자산 0 — csv-download-wiring 배포(dc316152) 후 라이브 검증 결과 기록만.
+- test-runs.d/20260724T123600-csv-download-wiring.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 표기 + TASK 최종 체크박스 + REVIEW REV-20260724T133000-csv-download-wiring-postverify.
+- 실측: 대화 515c0fd9 인라인 ```csv``` 블록 아래 "📥 CSV 다운로드" 버튼 렌더·클릭 Blob text/csv size=2603 다운로드·콘솔 에러 0. 서빙 자산 curl 확증. 사용자 요청 해소.
