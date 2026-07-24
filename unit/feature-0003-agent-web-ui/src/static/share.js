@@ -691,6 +691,103 @@
     }
   }
 
+  // ```sql 코드블록 구문 하이라이트 — app.js enhanceSqlBlocks 의 로컬 복제(share 번들 단독 로드,
+  // diff/attachment 헬퍼와 동일 패턴). 외부 하이라이터 없이 경량 토크나이저 → <span class="sql-tok-*">.
+  // 토큰 텍스트는 textContent 로만 넣어 XSS 무첨가(이후 DOMPurify 가 span+class 만 통과).
+  const SQL_HL_LANGS = new Set([
+    "sql", "mysql", "mariadb", "postgresql", "postgres", "pgsql", "plpgsql",
+    "plsql", "tsql", "sqlite", "oracle", "mssql",
+  ]);
+  const SQL_HL_KEYWORDS = new Set([
+    "SELECT","FROM","WHERE","AND","OR","NOT","NULL","IS","IN","LIKE","ILIKE",
+    "RLIKE","REGEXP","BETWEEN","EXISTS","ANY","SOME","JOIN","INNER","LEFT",
+    "RIGHT","FULL","OUTER","CROSS","NATURAL","ON","USING","GROUP","BY","ORDER",
+    "HAVING","LIMIT","OFFSET","UNION","INTERSECT","EXCEPT","MINUS","ALL",
+    "DISTINCT","AS","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE",
+    "ALTER","DROP","TRUNCATE","TABLE","VIEW","MATERIALIZED","INDEX","SEQUENCE",
+    "TRIGGER","DATABASE","SCHEMA","WITH","RECURSIVE","CASE","WHEN","THEN","ELSE",
+    "END","ASC","DESC","NULLS","FIRST","LAST","PRIMARY","KEY","FOREIGN",
+    "REFERENCES","CONSTRAINT","UNIQUE","CHECK","DEFAULT","AUTO_INCREMENT",
+    "IDENTITY","ENGINE","PROCEDURE","FUNCTION","RETURNS","RETURN","DECLARE",
+    "BEGIN","IF","ELSEIF","WHILE","LOOP","FOR","CALL","EXEC","EXECUTE","GRANT",
+    "REVOKE","COMMIT","ROLLBACK","SAVEPOINT","TRANSACTION","START","EXPLAIN",
+    "ANALYZE","DESCRIBE","SHOW","USE","ADD","COLUMN","MODIFY","CHANGE","RENAME",
+    "TO","CASCADE","RESTRICT","TEMPORARY","TEMP","REPLACE","IGNORE","PARTITION",
+    "OVER","WINDOW","ROWS","RANGE","UNBOUNDED","PRECEDING","FOLLOWING","CURRENT",
+    "ROW","TOP","FETCH","NEXT","ONLY","LATERAL","PIVOT","UNPIVOT","MERGE",
+    "MATCHED","OUTPUT","GO","ESCAPE","COLLATE","INTERVAL","TRUE","FALSE",
+    "UNKNOWN","PRINT","INTO","SEPARATOR","STRAIGHT_JOIN","FORCE","LOCK","UNLOCK",
+  ]);
+  const SQL_HL_TYPES = new Set([
+    "INT","INTEGER","BIGINT","SMALLINT","TINYINT","MEDIUMINT","DECIMAL","NUMERIC",
+    "FLOAT","DOUBLE","REAL","BIT","BOOLEAN","BOOL","CHAR","VARCHAR","NCHAR",
+    "NVARCHAR","VARCHAR2","TEXT","TINYTEXT","MEDIUMTEXT","LONGTEXT","NTEXT",
+    "DATE","DATETIME","DATETIME2","SMALLDATETIME","TIMESTAMP","TIME","YEAR",
+    "BLOB","TINYBLOB","MEDIUMBLOB","LONGBLOB","BINARY","VARBINARY","JSON","JSONB",
+    "UUID","SERIAL","BIGSERIAL","MONEY","ENUM","GEOMETRY","XML","CLOB","NUMBER",
+    "UNSIGNED","ZEROFILL",
+  ]);
+
+  function highlightSqlInto(codeEl, raw) {
+    const text = String(raw || "").replace(/\n$/, "");
+    const RE = /(\/\*[\s\S]*?\*\/|--[^\n]*)|('[^']*(?:''[^']*)*'|"[^"]*(?:""[^"]*)*")|(`[^`]*(?:``[^`]*)*`)|(@{0,2}[A-Za-z_][A-Za-z0-9_$]*)|(0[xX][0-9A-Fa-f]+|\d+\.?\d*(?:[eE][+-]?\d+)?)|(\s+)|([\s\S])/g;
+    const frag = document.createDocumentFragment();
+    let pending = "";
+    const flush = () => { if (pending) { frag.appendChild(document.createTextNode(pending)); pending = ""; } };
+    const span = (cls, s) => {
+      flush();
+      const el = document.createElement("span");
+      el.className = cls;
+      el.textContent = s;
+      frag.appendChild(el);
+    };
+    let m;
+    while ((m = RE.exec(text)) !== null) {
+      if (m[1]) span("sql-tok-comment", m[1]);
+      else if (m[2]) span("sql-tok-string", m[2]);
+      else if (m[3]) pending += m[3];
+      else if (m[4]) {
+        const w = m[4];
+        if (w[0] === "@") span("sql-tok-var", w);
+        else {
+          const W = w.toUpperCase();
+          if (SQL_HL_KEYWORDS.has(W)) span("sql-tok-keyword", w);
+          else if (SQL_HL_TYPES.has(W)) span("sql-tok-type", w);
+          else if (/^\s*\(/.test(text.slice(RE.lastIndex))) span("sql-tok-func", w);
+          else pending += w;
+        }
+      }
+      else if (m[5]) span("sql-tok-number", m[5]);
+      else pending += m[0];
+    }
+    flush();
+    codeEl.textContent = "";
+    codeEl.appendChild(frag);
+  }
+
+  function enhanceSqlBlocks(html) {
+    if (typeof document === "undefined") return html;
+    if (!html || html.indexOf("language-") === -1) return html;
+    try {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = html;
+      let touched = false;
+      tpl.content.querySelectorAll("pre > code[class*='language-']").forEach((codeEl) => {
+        const mlang = /(?:^|\s)language-([A-Za-z0-9_+-]+)/.exec(codeEl.className || "");
+        if (!mlang || !SQL_HL_LANGS.has(mlang[1].toLowerCase())) return;
+        const raw = codeEl.textContent || "";
+        if (!raw.trim()) return;
+        highlightSqlInto(codeEl, raw);
+        const pre = codeEl.closest("pre");
+        if (pre) pre.classList.add("sql-block");
+        touched = true;
+      });
+      return touched ? tpl.innerHTML : html;
+    } catch (_) {
+      return html;
+    }
+  }
+
   function csvDownloadFilename() {
     const d = new Date();
     const pad = (n) => String(n).padStart(2, "0");
@@ -761,7 +858,7 @@
       const enhanceMmd =
         typeof window.enhanceMermaidBlocks === "function" ? window.enhanceMermaidBlocks : (h) => h;
       target.innerHTML = window.DOMPurify.sanitize(
-        enhanceMmd(enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source))))
+        enhanceMmd(enhanceAttachmentEditBlocks(enhanceSqlBlocks(enhanceDiffBlocks(window.marked.parse(source)))))
       );
       markExternalLinks(target);
       enhanceCsvBlockDownloads(target);

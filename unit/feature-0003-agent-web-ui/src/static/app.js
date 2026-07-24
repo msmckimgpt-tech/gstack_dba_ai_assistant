@@ -998,6 +998,113 @@ function enhanceAttachmentEditBlocks(html) {
   }
 }
 
+// ```sql 코드블록 구문 하이라이트 — assistant 답변의 쿼리를 색 구분해 가독성을 높인다.
+// 외부 하이라이터(highlight.js/prism) 없이 경량 토크나이저로 처리(vendor 무추가). marked 가 만든
+// <pre><code class="language-sql"> 의 텍스트를 토큰화해 <span class="sql-tok-*"> 로 감싼다.
+// enhanceDiffBlocks 와 동일 패턴 — sanitize(DOMPurify) 이전 html 문자열을 template 에서 조작 후
+// 반환하며, 토큰 텍스트는 textContent 로만 넣어 XSS 무첨가(이후 DOMPurify 가 span+class 만 통과).
+// share.js 에 동일 로컬 복제가 있다(diff/attachment 헬퍼와 동일 — share 번들 단독 로드).
+const SQL_HL_LANGS = new Set([
+  "sql", "mysql", "mariadb", "postgresql", "postgres", "pgsql", "plpgsql",
+  "plsql", "tsql", "sqlite", "oracle", "mssql",
+]);
+// 방언 공통 예약어(대문자 비교). 집계/스칼라 함수명은 제외 — 뒤에 '(' 가 오면 함수로
+// 분류하는 휴리스틱이 담당한다(함수 목록 유지 불필요).
+const SQL_HL_KEYWORDS = new Set([
+  "SELECT","FROM","WHERE","AND","OR","NOT","NULL","IS","IN","LIKE","ILIKE",
+  "RLIKE","REGEXP","BETWEEN","EXISTS","ANY","SOME","JOIN","INNER","LEFT",
+  "RIGHT","FULL","OUTER","CROSS","NATURAL","ON","USING","GROUP","BY","ORDER",
+  "HAVING","LIMIT","OFFSET","UNION","INTERSECT","EXCEPT","MINUS","ALL",
+  "DISTINCT","AS","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE",
+  "ALTER","DROP","TRUNCATE","TABLE","VIEW","MATERIALIZED","INDEX","SEQUENCE",
+  "TRIGGER","DATABASE","SCHEMA","WITH","RECURSIVE","CASE","WHEN","THEN","ELSE",
+  "END","ASC","DESC","NULLS","FIRST","LAST","PRIMARY","KEY","FOREIGN",
+  "REFERENCES","CONSTRAINT","UNIQUE","CHECK","DEFAULT","AUTO_INCREMENT",
+  "IDENTITY","ENGINE","PROCEDURE","FUNCTION","RETURNS","RETURN","DECLARE",
+  "BEGIN","IF","ELSEIF","WHILE","LOOP","FOR","CALL","EXEC","EXECUTE","GRANT",
+  "REVOKE","COMMIT","ROLLBACK","SAVEPOINT","TRANSACTION","START","EXPLAIN",
+  "ANALYZE","DESCRIBE","SHOW","USE","ADD","COLUMN","MODIFY","CHANGE","RENAME",
+  "TO","CASCADE","RESTRICT","TEMPORARY","TEMP","REPLACE","IGNORE","PARTITION",
+  "OVER","WINDOW","ROWS","RANGE","UNBOUNDED","PRECEDING","FOLLOWING","CURRENT",
+  "ROW","TOP","FETCH","NEXT","ONLY","LATERAL","PIVOT","UNPIVOT","MERGE",
+  "MATCHED","OUTPUT","GO","ESCAPE","COLLATE","INTERVAL","TRUE","FALSE",
+  "UNKNOWN","PRINT","INTO","SEPARATOR","STRAIGHT_JOIN","FORCE","LOCK","UNLOCK",
+]);
+// 데이터 타입(대문자 비교).
+const SQL_HL_TYPES = new Set([
+  "INT","INTEGER","BIGINT","SMALLINT","TINYINT","MEDIUMINT","DECIMAL","NUMERIC",
+  "FLOAT","DOUBLE","REAL","BIT","BOOLEAN","BOOL","CHAR","VARCHAR","NCHAR",
+  "NVARCHAR","VARCHAR2","TEXT","TINYTEXT","MEDIUMTEXT","LONGTEXT","NTEXT",
+  "DATE","DATETIME","DATETIME2","SMALLDATETIME","TIMESTAMP","TIME","YEAR",
+  "BLOB","TINYBLOB","MEDIUMBLOB","LONGBLOB","BINARY","VARBINARY","JSON","JSONB",
+  "UUID","SERIAL","BIGSERIAL","MONEY","ENUM","GEOMETRY","XML","CLOB","NUMBER",
+  "UNSIGNED","ZEROFILL",
+]);
+
+// SQL 텍스트를 토큰화해 codeEl 자식으로 재구성한다(textContent 만 사용 — XSS 무첨가).
+function highlightSqlInto(codeEl, raw) {
+  const text = String(raw || "").replace(/\n$/, "");
+  // 우선순위: 주석 → 문자열 → 백틱식별자 → 단어(@변수/예약어/타입/함수/식별자) → 숫자 → 공백/기타.
+  // 문자열/백틱은 linear(비-backtrack) 형태로 ReDoS 회피. '#' 라인주석은 T-SQL #temp 와
+  // 충돌하므로 미지원(-- 과 /* */ 만) — MySQL '# 주석' 은 색만 안 입고 깨지지 않음.
+  const RE = /(\/\*[\s\S]*?\*\/|--[^\n]*)|('[^']*(?:''[^']*)*'|"[^"]*(?:""[^"]*)*")|(`[^`]*(?:``[^`]*)*`)|(@{0,2}[A-Za-z_][A-Za-z0-9_$]*)|(0[xX][0-9A-Fa-f]+|\d+\.?\d*(?:[eE][+-]?\d+)?)|(\s+)|([\s\S])/g;
+  const frag = document.createDocumentFragment();
+  let pending = "";
+  const flush = () => { if (pending) { frag.appendChild(document.createTextNode(pending)); pending = ""; } };
+  const span = (cls, s) => {
+    flush();
+    const el = document.createElement("span");
+    el.className = cls;
+    el.textContent = s;
+    frag.appendChild(el);
+  };
+  let m;
+  while ((m = RE.exec(text)) !== null) {
+    if (m[1]) span("sql-tok-comment", m[1]);
+    else if (m[2]) span("sql-tok-string", m[2]);
+    else if (m[3]) pending += m[3];               // 백틱 식별자 → 평문
+    else if (m[4]) {
+      const w = m[4];
+      if (w[0] === "@") span("sql-tok-var", w);
+      else {
+        const W = w.toUpperCase();
+        if (SQL_HL_KEYWORDS.has(W)) span("sql-tok-keyword", w);
+        else if (SQL_HL_TYPES.has(W)) span("sql-tok-type", w);
+        else if (/^\s*\(/.test(text.slice(RE.lastIndex))) span("sql-tok-func", w);
+        else pending += w;                        // 일반 식별자 → 평문
+      }
+    }
+    else if (m[5]) span("sql-tok-number", m[5]);
+    else pending += m[0];                          // 공백/연산자/구두점 → 평문
+  }
+  flush();
+  codeEl.textContent = "";
+  codeEl.appendChild(frag);
+}
+
+function enhanceSqlBlocks(html) {
+  if (typeof document === "undefined") return html;
+  if (!html || html.indexOf("language-") === -1) return html;
+  try {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    let touched = false;
+    tpl.content.querySelectorAll("pre > code[class*='language-']").forEach((codeEl) => {
+      const mlang = /(?:^|\s)language-([A-Za-z0-9_+-]+)/.exec(codeEl.className || "");
+      if (!mlang || !SQL_HL_LANGS.has(mlang[1].toLowerCase())) return;
+      const raw = codeEl.textContent || "";
+      if (!raw.trim()) return;
+      highlightSqlInto(codeEl, raw);
+      const pre = codeEl.closest("pre");
+      if (pre) pre.classList.add("sql-block");
+      touched = true;
+    });
+    return touched ? tpl.innerHTML : html;
+  } catch (_) {
+    return html;
+  }
+}
+
 // feature-0013 mermaid 헬퍼(enhanceMermaidBlocks / ensureMermaidInit / renderMermaidDiagrams /
 // mermaidFallback)는 mermaid-render.js 로 추출했다(공유 대화 뷰 share.js 와 단일 소스 — strict
 // 보안 설정 일원화). index.html 이 mermaid.min.js → mermaid-render.js → app.js 순으로 로드하므로
@@ -1014,7 +1121,7 @@ function markdownToHtml(text = "") {
     const enhanceMmd =
       typeof enhanceMermaidBlocks === "function" ? enhanceMermaidBlocks : (h) => h;
     const rendered = enhanceMmd(
-      enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source)))
+      enhanceAttachmentEditBlocks(enhanceSqlBlocks(enhanceDiffBlocks(window.marked.parse(source))))
     );
     return window.DOMPurify.sanitize(rendered);
   }
