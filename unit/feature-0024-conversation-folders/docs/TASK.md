@@ -81,4 +81,4 @@ source_of_truth: true
 
 ## TASK-20260723T200000-newfolder-btn — '+ 새 폴더' 바를 '새 대화' 우측 폴더 아이콘으로(미니멀) (사용자 요청)
 - [x] 도구바 제거 + 헤더 폴더 아이콘 버튼(#newFolderBtn) + 권한 동기화 + DnD root 드롭 이관. node --check OK.
-- [ ] 배포 + POST-DEPLOY PB-0008(헤더 폴더 버튼 생성·바 제거 확인).
+- [x] 배포(PR #929→main c5af349c) + **POST-DEPLOY PB-0008 PASS**: 헤더 폴더 아이콘 버튼 노출·활성, 기존 '＋ 새 폴더' 바 제거(oldToolsBarGone), 클릭→무프롬프트 '새 폴더' 생성+인라인편집. 스크린샷 newfolder-btn-header.png([새 대화][🗂][🔍]). 테스트 폴더 정리(활성 0).
