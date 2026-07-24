@@ -2,7 +2,7 @@
 run_at: 2026-07-24T11:24:46+09:00
 session: ai/claude-corp/feature-0003-share-scroll-bottom
 scope: [web-ui, frontend, share, scroll]
-verdict: PASS (PRE-COMMIT; POST-DEPLOY 라이브 예정)
+verdict: PASS (PRE-COMMIT + POST-DEPLOY 라이브)
 ---
 
 ### Run (2026-07-24) — share-scroll-bottom: 공유 대화 링크 진입 시 문서 스크롤 맨 아래(최신 메시지) 고정 (Minor §12.3 — feature-0003 web/UI 프론트 `static/share.js` 단독, frontend-only) — **Environment: Windows-browser**
@@ -17,4 +17,9 @@ verdict: PASS (PRE-COMMIT; POST-DEPLOY 라이브 예정)
   - AC-6: 메시지 0개(빈 공유) 진입 시 스크롤 예외/점프 없음(maxY=0 no-op)·pageerror 0.
 - **Pass/Fail: PRE-COMMIT 문법 + 적대 리뷰 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 존재 + POST-DEPLOY 계획 + headless 부적용 사유 기록 — 카고컬트 방지).
 
-<!-- [POST-DEPLOY 갱신 placeholder] 배포(main 병합 + deploy-web) 후 실 Windows Chrome PB-0008 실측 결과(AC-1~6·스크린샷·pageerror)를 여기에 append. -->
+- **[POST-DEPLOY 2026-07-24] PB-0008 Windows-browser 라이브 실측 PASS** (Environment: Windows-browser, AI 직접 — 실 Windows Chrome via `bin/win-browser.py` relay, 배포본 **94b4003a**): PR #918 → main 94b4003a → `make deploy-web-only`(web-a/web-b 무중단 롤링·90s soak PASS·이미지 `mysql-ai-web:94b4003a`, `?v=dev`→content-hash 스탬프 주입 확인). **서빙 자산(curl)**: `/static/share.js`(47,901B)에 신 심볼 `engageInitialBottomPin`(2)·`scrollShareToBottom`(3)·`releaseShareBottomPin`(12)·`onShareBottomPinKeydown`(3)·`SHARE_BOTTOM_PIN_SETTLE_MS`(2) 존재 · dead `window load` 리스너 소멸(잔존 2건 = 기존 point-rail L308 + 신규 img-capture L509). **라이브 실측**(실 공유 링크, 16-메시지 대화):
+  - **AC-SSB-1 PASS** — 진입 시 `scrollY=53282 == maxY=53282`(scrollHeight 54118·innerHeight 836), `atBottom=true` → 문서 맨 아래(최신 메시지)에서 시작. `window.__errs` **0**.
+  - **AC-SSB-3 PASS(무회귀)** — `window.scrollTo(0,0)` 후 `scrollY=0`·`stayedAtTop=true` → 진입 pin 이 settle 타이머/상한으로 해제되어 사용자 스크롤을 되돌리지 않음(snap-back 없음). `__errs` 0.
+  - **AC-SSB-2 함의 PASS** — 16-메시지+표 등 지연 콘텐츠가 안정된 최종 문서 높이(54118px)에서 정확히 maxY 안착 → settle-timer 재고정 동작 확증.
+  - 스크린샷: `artifacts/feature-0003-agent-web-ui/20260724-share-scroll-bottom/01-entry-bottom.png`.
+- **Pass/Fail: PASS** (CHECK#13 실충족 — POST-DEPLOY 라이브 실측 완료. 공유 대화 링크 진입 시 문서 스크롤이 최신 메시지 맨 아래에 안착·사용자 조작 무회귀·pageerror 0 라이브 확증. 사용자 요청 해소).

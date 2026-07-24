@@ -11,6 +11,10 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260724T140000-share-scroll-bottom-postverify (TASK-20260724T112446-share-scroll-bottom POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-24. 코드/자산 무변경 — test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료 + REPORT 갱신. 배포 PR #918 → main **94b4003a**, `make deploy-web-only` 무중단 롤링(web-a/web-b·90s soak PASS·이미지 mysql-ai-web:94b4003a).
+- 라이브 실측(win-browser relay 실 Windows Chrome, 실 공유 링크 16-메시지 대화): **AC-SSB-1** 진입 `scrollY=53282==maxY`(scrollHeight 54118·innerHeight 836)·`atBottom=true` · **AC-SSB-3** `scrollTo(0,0)` 후 `stayedAtTop`(snap-back 없음, pin 정상 해제) · **AC-SSB-2** 최종 54118px 안착 · pageerror 0. 서빙 `/static/share.js`(47,901B) 신 심볼 5종 존재·dead window-load 리스너 소멸 curl 확증. Cross-ref: REV-20260724T140000-share-scroll-bottom-postverify · CHG-20260724T112446-share-scroll-bottom · TEST Run(2026-07-24 share-scroll-bottom POST-DEPLOY).
+
 ## CHG-20260724T112446-share-scroll-bottom (TASK-20260724T112446-share-scroll-bottom — 공유 대화 링크 화면 진입 시 문서 스크롤 맨 아래(최신 메시지) 고정, Minor §12.3)
 - Date: 2026-07-24. Files: `static/share.js`(단일). frontend-only, additive/비파괴(진입 스크롤 위치 동작만 추가, 데이터·API·RBAC·엔드포인트 0).
 - 요청(사용자, `/_template:entry`): "공유된 대화 링크 화면에 진입 시, 화면 스크롤이 가장 아래부터 위치하도록 구성해주세요."
