@@ -920,3 +920,8 @@ source_of_truth: true
   - 회귀: lang 필터로 diff/mermaid/attachment/비-SQL/인라인 코드와 disjoint 확인(headless 23/23).
 - **테마**: `.message-content pre` 는 라이트/다크 무관 항상 다크(#1a1b26 / share #1e293b)라 diff-block 과 동일 Tokyo Night 팔레트를 재사용, 테마 분기 불필요. 사용자 말풍선(primary 색 위)에 sql 블록이 실릴 경우만 배경을 다크로 고정해 대비 보장.
 - **검증**: headless chromium 실 vendor 파이프라인 23/23 PASS · node --check PASS · 시각증거 캡처. POST-DEPLOY PB-0008 라이브(Windows-browser) = 배포 후 정본.
+
+## REV-20260724T184500-sql-md-highlight-postverify [SKIPPED:non-policy-doc] SQL 하이라이트 POST-DEPLOY 라이브 실증 + deploy_scope 근거 기록
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 실 구현 리뷰 정본 = REV-20260724T180458-sql-md-highlight([SUBAGENT] 6/6축 SHIP·BLOCK/MAJOR 0). 본 cycle 은 배포(0313b135) 라이브 실측 + §12.2 배포 근거 기록만.
+- **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 cycle-final(PR #946 머지, main 0313b135) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. 첫 배포 직전 "deploy_scope: included 활성" 1줄 표면화 완료. 배포=web-a/web-b one-at-a-time 롤링·90s soak 통과·caddy no-drift·롤백 0.
+- **POST-DEPLOY 실증(Windows-browser, PB-0008)**: 실 Windows Chrome/150 배포본 `markdownToHtml` eval → sql-tok 26토큰·getComputedStyle Tokyo Night 팔레트 정확(keyword #bb9af7/600·func #7aa2f7·string #9ece6a·number #ff9e64·comment #737aa2·pre #1a1b26)·텍스트 무손실·script 주입 0·콘솔 에러 0. test-runs.d POST-DEPLOY 결과 + evidence/pb0008-sql-highlight-live-20260724.png.
