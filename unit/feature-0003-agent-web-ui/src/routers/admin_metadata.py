@@ -745,7 +745,8 @@ def admin_list_glossary_feedback(request: Request, account=Depends(app.require_p
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
     try:
         rows = _kg.list_glossary_feedback(pg, status=status, scope_key=scope_filter)
-        pending_count = _kg.count_glossary_feedback(pg, status="pending")
+        # 배지 pending_count 도 list 와 동일 scope 로 한정 — datasource 선택 시 배지↔리스트 카운트 정합.
+        pending_count = _kg.count_glossary_feedback(pg, status="pending", scope_key=scope_filter)
     except Exception:
         logging.getLogger(__name__).warning("admin_list_glossary_feedback 조회 실패", exc_info=True)
         return app._json_error("검토 큐 조회 실패", 503)
@@ -1103,7 +1104,8 @@ def admin_list_enum_feedback(request: Request, account=Depends(app.require_permi
         return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
     try:
         rows = _kg.list_enum_feedback(pg, status=status, scope_key=scope_filter)
-        pending_count = _kg.count_enum_feedback(pg, status="pending")
+        # 배지 pending_count 도 list 와 동일 scope 로 한정 — datasource 선택 시 배지↔리스트 카운트 정합.
+        pending_count = _kg.count_enum_feedback(pg, status="pending", scope_key=scope_filter)
     except Exception:
         logging.getLogger(__name__).warning("admin_list_enum_feedback 조회 실패", exc_info=True)
         return app._json_error("검토 큐 조회 실패", 503)

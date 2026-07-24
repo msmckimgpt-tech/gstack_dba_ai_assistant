@@ -172,7 +172,7 @@ def test_feedback_list_serializes(monkeypatch):
     #       source_run_id, conversation_id, promoted_glossary_id, approved_by, created_at, updated_at)
     rows = [(5, "common", "*", "리드", "영업 잠재고객", 0.7, "pending", "run1", "c1", None, None, ts, ts)]
     monkeypatch.setattr(_kg, "list_glossary_feedback", lambda conn, **k: rows)
-    monkeypatch.setattr(_kg, "count_glossary_feedback", lambda conn, status="pending": 3)
+    monkeypatch.setattr(_kg, "count_glossary_feedback", lambda conn, status="pending", scope_key=None: 3)
     resp = admin_metadata.admin_list_glossary_feedback(_FakeRequest(query={"status": "pending"}), account=acct)
     assert resp.status_code == 200
     out = _body(resp)
