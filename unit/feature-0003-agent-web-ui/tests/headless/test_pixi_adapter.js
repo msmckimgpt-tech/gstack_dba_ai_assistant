@@ -215,6 +215,29 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(Pure.hexToTint("white").valid === false, "T20 named → valid:false");
 }
 
+// T20b hasEmoji (graph-emoji-color fix — 색 이모지 라벨은 BitmapText 아닌 Text 경로. 실 PixiAdapterPure.hasEmoji 검증)
+//   버그: BitmapText 는 색 이모지를 alpha 마스크+tint 로 단색 실루엣(검은/흰)으로만 렌더 → _makeText 에서 emoji 포함 시 Text 강등.
+{
+  // 테이블 역할 아이콘(_META_ROLE.icon) 전종 — 전부 emoji 로 감지돼야(→ Text 컬러 렌더)
+  ok(Pure.hasEmoji("📊 stats_daily"), "T20b 📊 stats(1F4CA) 감지");
+  ok(Pure.hasEmoji("👤 members"), "T20b 👤 account(1F464) 감지");
+  ok(Pure.hasEmoji("💳 orders"), "T20b 💳 transaction(1F4B3) 감지");
+  ok(Pure.hasEmoji("📜 audit_log"), "T20b 📜 log(1F4DC) 감지");
+  ok(Pure.hasEmoji("🔗 user_role_map"), "T20b 🔗 mapping(1F517) 감지");
+  ok(Pure.hasEmoji("⚙️ sys_config"), "T20b ⚙️ config(2699+FE0F VS16) 감지");
+  ok(Pure.hasEmoji("📘 code_master"), "T20b 📘 master(1F4D8) 감지");
+  ok(Pure.hasEmoji("📦 etc_misc"), "T20b 📦 etc(1F4E6) 감지");
+  ok(Pure.hasEmoji("🗂 카테고리"), "T20b 🗂 카테고리 헤더(1F5C2) 감지");
+  // 평문 라벨(테이블/컬럼명·컨트롤 글리프)은 비-emoji → BitmapText 최적 경로 유지
+  ok(!Pure.hasEmoji("orders"), "T20b 평문 라벨 비-emoji");
+  ok(!Pure.hasEmoji("user_id"), "T20b 컬럼명 비-emoji");
+  ok(!Pure.hasEmoji("−"), "T20b 접기 컨트롤 −(U+2212 minus) 비-emoji");
+  ok(!Pure.hasEmoji("+"), "T20b 펼침 컨트롤 + 비-emoji");
+  ok(!Pure.hasEmoji("ƒ get_total"), "T20b 함수 접두 ƒ(U+0192) 비-emoji");
+  ok(!Pure.hasEmoji("스키마명 한글"), "T20b 한글 라벨 비-emoji");
+  ok(Pure.hasEmoji(null) === false && Pure.hasEmoji(undefined) === false, "T20b null/undefined 안전");
+}
+
 // ── T21 _pick 3-tier 층서 (graph-ctxmenu hit-test 회귀): 구체요소 > 스키마 combo > cat-bg ──
 //   결함(수정 전): CAT 밴드 배경이 node(z=-1)로 built.nodes 에 있어 _pick 의 node-우선 반환이
 //   스키마 클러스터 빈 배경(combo 폴백 대상) 우클릭을 CAT node 로 가로채 '카테고리 메뉴' 오라우팅했고,

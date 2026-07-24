@@ -1827,3 +1827,15 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
     raw 보존 → 상세 펼침에서 '요청 → 서빙' 라우팅(계정 분기·gemma 폴백)을 그대로 audit 가능(정보 손실 없음).
 - 불변식: 비용(_estimate_llm_cost_usd 내부 canonical)·categories 출력·엔드포인트 계약 무변경.
   AC-20260724T020632-aiops-model-canonical-1: 전 코드베이스 raw COALESCE 모델 그룹핑 0건. 검증: pytest 2287 passed + POST-DEPLOY PB-0008.
+
+## (graph-emoji-color, 2026-07-24) 그래프 뷰 테이블 노드 역할 이모지 컬러 렌더 복원
+- 증상: 그래프 뷰에서 분석 완료 테이블 노드의 역할 아이콘 이모지(📊 stats / 👤 account / 💳 transaction / 📜 log / 🔗 mapping 등)가
+  색 없이 **검은색 단색 실루엣**으로만 표시(일부). 원인 = 라벨 렌더러 `_makeText` 의 기본 BitmapText 경로가 색 이모지의
+  색 채널을 소실(white-base glyph atlas + tint). dark 역할(labelFill=#161b22)이 검은 실루엣으로 부각됐다.
+- 수정: 라벨 텍스트에 색 이모지가 포함되면(`PixiAdapterPure.hasEmoji`) BitmapText 대신 canvas `PIXI.Text` 로 렌더 —
+  Text 는 브라우저 색 이모지 폰트로 글리프 고유 색을 그린다. Text 폴백 fontFamily 에 색 이모지 폰트를 명시.
+  이모지 없는 라벨(컬럼·테이블명·컨트롤 −/+)은 종전 BitmapText 최적 경로 유지.
+- 불변식: 라벨 배치/폭 클램프/생략(`_label`·`_ellipsize`)·엣지·combo 라벨 계약 무변경(Text/BitmapText 공용 `.text`/`.width`/`.anchor`/`.position` API).
+  이모지+평문 혼합 라벨은 평문 부분이 `fill`(labelFill)로 정상 렌더되고 이모지만 고유 색으로 렌더된다.
+  AC-20260724T031956-graph-emoji-color-1: `hasEmoji` 가 역할 아이콘 8종+🗂 전부 감지, `−`(U+2212)·`ƒ`(U+0192)·평문·한글 비-매칭.
+  검증: test_pixi_adapter.js T20b 16-assert PASS(전체 112 PASS) · POST-DEPLOY PB-0008 라이브(그래프 캔버스 실 렌더).

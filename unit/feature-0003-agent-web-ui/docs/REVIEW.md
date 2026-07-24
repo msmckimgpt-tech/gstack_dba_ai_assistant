@@ -10,6 +10,18 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T031956-graph-emoji-color [SUBAGENT:adversarial-frontend] — 그래프 뷰 테이블 노드 역할 이모지 검은 실루엣 렌더 수정 (TASK-20260724T031956-graph-emoji-color, Minor §12.3 frontend-only) — SHIP
+- 대상 diff: `static/graph/graph-renderer-pixi.js`(+`hasEmoji` 순수 헬퍼 · `_makeText` BitmapText 게이트에 `!hasEmoji` · Text 폴백 fontFamily 색 이모지 폰트) · `tests/headless/test_pixi_adapter.js`(T20b 16-assert). §18.8 적대 패널(general-purpose subagent, 정확성+회귀+성능+fillStyle+혼합라벨 5렌즈) — 결함 적발 목적, 실 소스 882줄+소비처 계약+PixiJS v8.19.0 실측 프로브.
+- **VERDICT: SHIP — BLOCKING 결함 0.** 5개 렌즈 전부 REFUTED:
+  - **정확성 REFUTED**: 실측 프로브로 역할 아이콘 9종(📘👤💳📜🔗📊📦🗂 전부 1F000-1FAFF, ⚙️=2699+FE0F) 전량 매칭·누락 0. 평문/컨트롤(`−`2212·`+`·`ƒ`0192·`×`·한글·col-lod 배지 `▤`25A4·`…`2026) 비매칭 → 과강등 0(BitmapText 최적 경로 보존). 과매칭 가능 심볼(✓/★/⌘)은 `graph-ctxmenu.js` **DOM 버튼**에만 존재, `_makeText` 를 타는 Pixi labelText 엔 0건 → 실현 안 되는 이론적 여지.
+  - **회귀 REFUTED**: PixiJS v8.19.0 `Text`·`BitmapText` 는 공통 `AbstractText`(anchor·text·width)+`ViewContainer`(position) 상속 — 소비처(`_label`·`_ellipsize`·`_drawCombo`·`_paintEdge`)가 쓰는 4 API 양쪽 동일 계약. 강등 시 파손 0. (`_ellipsize` 선두 서로게이트 슬라이싱은 **기존** 동작·실 maxW=140 에서 미발동 → 회귀 아님, nit.)
+  - **성능 REFUTED-as-blocking**: 이모지는 분석완료 테이블 칩에만 부착(컬럼·미분석표·접힌 카드 0) → 대량 요소 컬럼 라벨은 전부 BitmapText atlas 배칭 유지. 강등분은 viewport-cull(§67) bounded + render-on-demand(매 프레임 아님) → draw-call 폭증 아님. `hasEmoji` 리터럴 regex(V8 캐시) µs.
+  - **fillStyle 무시 REFUTED**: 색 이모지 폰트(Segoe COLR/CPAL·Apple sbix·Noto CBDT)는 canvas fillText 시 색 레이어 자체 렌더·fillStyle 무시(표준). Pixi v8 `Text`=canvas2D 래스터(white-base+tint 아님, tint 미설정) → 이모지 색 채널 보존·fill/tint 로 어두워질 위험 0.
+  - **혼합 라벨 REFUTED**: "📊 stats_daily" → 평문 "stats_daily" 는 `fill`(dark=#161b22, 노란 칩 대비 확보) 정상 적용, 📊 만 네이티브 색. 평문 색 손실 0.
+- 설계 정합: BitmapText 는 색 이모지 미지원 → PIXI.Text 강등이 Pixi v8 문서화 정석. 기존 "비-hex 색→col.valid=false→Text 강등" seam(L189-190) 과 동형 편입.
+- 비-blocking 유의(반영): ① **[필수 게이트]** 실 색 렌더 증적은 PB-0008 win-browser 실측 필수(규약 visual_verification_scope=always) — T20b 는 regex 만 커버, 수정전 실루엣 재현→수정후 색 렌더 라이브 캡처는 배포 후 잔여(deploy_scope: included). ② `_ellipsize` nit·③ regex 과매칭 심볼(Pixi 라벨 미사용)=무해 → 코드 수정 불요.
+- 검증: `node --check --input-type=module` PASS · `test_pixi_adapter.js` **112 PASS / 0 FAIL**(기존 96 회귀 0 + T20b 16) · verify-completion #1~#16(§16.3) PASS. 라이브 PB-0008 는 배포 후. Cross-ref: TASK/CHG/TEST-20260724T031956-graph-emoji-color.
+
 ## REV-20260724T140000-share-scroll-bottom-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260724T112446-share-scroll-bottom, 비-정책 doc-only)
 - Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료 + MODIFY/REPORT 갱신 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260724T112446-share-scroll-bottom(SHIP-WITH-FIXES).
 - 라이브 실측(배포 94b4003a, `bin/win-browser.py` relay 실 Windows Chrome, 실 공유 링크 16-메시지 대화): AC-SSB-1 진입 scrollY 53282==maxY·atBottom=true·pageerror 0 · AC-SSB-3 top 스크롤 후 stayedAtTop(snap-back 없음) · AC-SSB-2 최종 54118px 안착. 서빙 /static/share.js 신 심볼 5종·dead window-load 소멸 curl 확증. 사용자 요청("공유 링크 진입 시 스크롤 맨 아래") 해소.

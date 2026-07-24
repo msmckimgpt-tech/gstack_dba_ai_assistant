@@ -196,6 +196,18 @@ export const PixiAdapterPure = {
     return { tint: parseInt(full, 16), valid: true };
   },
 
+  // graph-emoji-color(fix): 문자열에 색 이모지(pictographic)가 포함됐는지. 포함 시 BitmapText 를 피하고 PIXI.Text 로
+  //   강등시키기 위한 판정. 이유 — BitmapText 는 dynamic font atlas 에 glyph 를 **alpha 커버리지 단색 마스크**로
+  //   래스터화한 뒤 tint 를 곱하므로 색 이모지의 색 채널이 소실돼 labelFill 색(어두운 역할=#161b22 → 검은색)의
+  //   **단색 실루엣**으로만 렌더된다(PixiJS BitmapText 원천 한계). Text(canvas)는 브라우저 색 이모지 폰트로 네이티브
+  //   렌더하므로 테이블 역할 아이콘(📊/👤/💳/📜/🔗/⚙️/📘/📦·🗂)이 제 색으로 보인다. 범위: 주요 pictographic 블록
+  //   + Misc Symbols/Dingbats(2600-27BF, ⚙ 포함) + VS16(FE0F, ⚙️ 결합)·ZWJ(200D, 결합 이모지). `−`(2212)·`ƒ`(0192)
+  //   같은 텍스트 글리프는 비-매칭(불필요한 Text 강등 회피 = BitmapText draw-call 최적화 보존).
+  hasEmoji(text) {
+    if (text == null) return false;
+    return /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/u.test(String(text));
+  },
+
   // 두 built scene diff (오브젝트 풀 재사용 판정). id 기준 add/remove/keep.
   diffScene(prevIds, built) {
     const next = new Set(), add = [], keep = [];
@@ -687,7 +699,10 @@ export class PixiGraphAdapter {
     const engine = this.cfg.labelEngine || "bitmap";
     const col = PixiAdapterPure.hexToTint(fill);
     // bitmap 은 white-base glyph + tint 로 색을 낸다 → tint 로 표현 불가한 색(비-hex rgb()/named)은 Text 로 강등(m1).
-    if (engine === "bitmap" && P.BitmapText && col.valid) {
+    // graph-emoji-color(fix): 색 이모지 포함 라벨도 Text 로 강등한다 — BitmapText(alpha 마스크 + tint)는 색 채널을
+    //   잃어 검은/흰 단색 실루엣만 남기므로(테이블 역할 아이콘 📊/👤/💳 등이 실루엣으로 보이던 버그). Text 는 canvas
+    //   색 이모지 폰트로 네이티브 렌더. 이모지 없는 대다수 라벨(컬럼·테이블명)은 BitmapText 경로 유지(draw-call 최적화 보존).
+    if (engine === "bitmap" && P.BitmapText && col.valid && !PixiAdapterPure.hasEmoji(text)) {
       try {
         const b = new P.BitmapText({ text: String(text), style: { fontFamily: "system-ui, 'Segoe UI', sans-serif", fontSize: size, fill: "#ffffff", fontWeight: weight } });
         b.tint = col.tint;
@@ -697,7 +712,10 @@ export class PixiGraphAdapter {
         return b;
       } catch (_) { /* dynamic font 래스터화 실패 → Text 폴백(아래) */ }
     }
-    return new P.Text({ text: String(text), style: { fontFamily: "system-ui, 'Segoe UI', sans-serif", fontSize: size, fill: fill, fontWeight: weight }, resolution: this._labelRes });
+    // graph-emoji-color(fix): 폴백 폰트 스택에 색 이모지 폰트를 명시 추가 — 색 이모지가 캔버스에서 확실히 컬러 글리프로
+    //   렌더되도록(브라우저 per-glyph 폰트 폴백: 텍스트는 Segoe UI, 이모지 코드포인트만 이모지 폰트로). 색 이모지는
+    //   fillStyle 을 무시하고 고유 색으로 그려지므로 fill 은 주변 텍스트에만 적용된다.
+    return new P.Text({ text: String(text), style: { fontFamily: "system-ui, 'Segoe UI', 'Segoe UI Emoji', 'Noto Color Emoji', 'Apple Color Emoji', sans-serif", fontSize: size, fill: fill, fontWeight: weight }, resolution: this._labelRes });
   }
 
   _label(text, s) {
