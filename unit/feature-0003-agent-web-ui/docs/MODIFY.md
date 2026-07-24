@@ -960,3 +960,21 @@ source_of_truth: true
 - 코드/자산 0 — csv-download-wiring 배포(dc316152) 후 라이브 검증 결과 기록만.
 - test-runs.d/20260724T123600-csv-download-wiring.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 표기 + TASK 최종 체크박스 + REVIEW REV-20260724T133000-csv-download-wiring-postverify.
 - 실측: 대화 515c0fd9 인라인 ```csv``` 블록 아래 "📥 CSV 다운로드" 버튼 렌더·클릭 Blob text/csv size=2603 다운로드·콘솔 에러 0. 서빙 자산 curl 확증. 사용자 요청 해소.
+
+## CHG-20260724T053457-metadata-review-ds-scope — 메타데이터 거버넌스 검토 큐 datasource 필터 + 자동승급 목록 정합 + 등록 시각 표시 (Major §12.3, frontend-only)
+- **계기**: 사용자 신고(`/_template:entry`) — `관리 콘솔 > 지식베이스 > 메타데이터 > [용어사전/ENUM 코드사전/샘플쿼리]`: ① 출력 요소가 선택 데이터소스로 필터 안 됨(검토 큐) ② 검토 큐에서 자동 승급된 항목이 목록 내부에서 조회 안 됨 ③ 각 요소 등록 시점 알 수 없음.
+- **RC**:
+  - ①/② scope-decoupling — 목록(`loadMetadata`)은 상단 데이터소스 셀렉터 `adminState.metadata.scopeKey`(기본 'common')를 `?scope_key=` 로 전송하나, 검토·검수 큐 로더(`loadFeedbackQueue`/`loadSampleReview`)는 `scope_key` 미전송(=백엔드 전체 반환)이라 큐가 전 datasource 후보를 무필터 표시. 자동승급 항목은 대화 datasource scope 로 `kb_glossary`/`enum_dictionary` 에 기록되므로 목록(기본 common scope)에선 미조회 → "큐엔 보이는데 목록엔 없음". 백엔드 3개 큐 엔드포인트(glossary-feedback/enum-feedback/sample-feedback)는 이미 optional `scope_key` 지원(=프론트 결함).
+  - ③ 목록 행(`_metaListRow`)이 `수정(updated_at)`만 표시하고 `created_at` 미표시. glossary/ENUM 검토 큐 행·상세, ENUM 묶음 행에도 등록 시각 없음(sample 상세엔 기존 존재). 백엔드는 세 목록·세 큐 모두 `created_at` 이미 반환.
+- **수정(admin.js, additive·표시 계층 + 쿼리 파라미터, behavior-neutral for 목록 경로)**:
+  - `_metaReviewScopeParam()` 신규 — `adminState.metadata.scopeKey` 기반, 특정 datasource 선택 시 URL-encoded scope_key, '공용(common)'=""(무필터=전 datasource triage, Option A: pending 배지 전-scope 집계와 정합·자동수집 후보 항상 ds-scoped 라 common 필터 시 영구 빈 큐 회피).
+  - `loadFeedbackQueue`: `?status=…` 에 `&scope_key=` 추가(sp 있을 때). `loadSampleReview`: `/api/admin/sample-feedback` 에 `?scope_key=` 추가(sp 있을 때). 셀렉터 변경 핸들러(`_metaBindControls`)는 이미 review 보기에서 `loadMetadata`→큐 로더 재호출 → 즉시 재필터(배선 무변경).
+  - `_metaListRow`: meta 줄 `등록 <created_at>` + 수정 시각 상이 시 `· 수정 <updated_at>` 병기(null 안전 폴백). `renderFeedbackQueue`(glossary/enum 행): tags 뒤 `등록 <created_at>` meta 줄. `_metaRenderReviewDetail`(glossary/enum else 분기): `등록 <created_at>` 태그. `_metaBuildEnumBundle`(묶음 코드 행): `등록 <created_at>` 태그. 모두 `_metaFmtDt` + `textContent`(XSS 안전).
+- **§18.8 적대 리뷰 반영(SHIP-WITH-FIXES, 3건 전부)**:
+  - **Finding 1 (MAJOR, backend additive)**: 큐 리스트는 scoped 됐으나 pending 배지가 unscoped(`count_glossary_feedback`/`count_enum_feedback` scope 미적용) → 특정 ds 선택 시 리스트 N건↔배지 전체 불일치. 수정: `unit/feature-0002-agent-core/src/modules/kb_glossary.py` 두 count 함수에 `scope_key=None` additive 파라미터(지정 시 `AND scope_key=%s`·`_normalize_scope_key`; 미지정=기존 전체 집계 byte-동치) + `admin_metadata.py` glossary-feedback/enum-feedback 이 `scope_filter` 전달 → 배지=scoped pending.
+  - **Finding 2 (MINOR, frontend)**: `_metaPrimeReviewBadge` 가 `_metaReviewScopeParam` 로 scope 전송 + scope-change 핸들러가 변경 시 배지 재-prime(list 보기·타 서브탭 stale 해소).
+  - **Finding 3 (MINOR, frontend)**: sample 큐 행·상세 날짜를 `등록 ${_metaFmtDt}` 로 통일(glossary/ENUM 와 라벨·포맷 정합).
+- **무영향**: RBAC·스키마·마이그·인증 0. 백엔드 변경은 count 2함수의 additive `scope_key` 파라미터 + 엔드포인트 인자 전달뿐(미지정 시 byte-동치, 여타 호출자 없음 — admin 전용). 목록(`loadMetadata`) 경로 무변경. auto-promote write(`_insert_glossary_auto`)↔목록 read(`list_glossary_admin`) scope 정규화(`_normalize_scope_key`) 동일 — divergence 없음.
+- **Files**: `src/static/admin.js`(feature-0003) · `unit/feature-0002-agent-core/src/modules/kb_glossary.py`(count 함수 scope, cross-cut) · `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`(엔드포인트 scope_filter 전달) · 테스트 monkeypatch 시그니처 2건(`test_metadata_glossary_autoreg.py`·`test_metadata_enum_feedback.py`).
+- **Verification**: `node --check`(ESM) PASS · `verify_metadata_list_detail.mjs` baseline 대조 신규 회귀 0(26 PASS/3 FAIL·[D] crash 는 pre-existing 하니스 노후화, clean main 동일) · `py_compile`(kb_glossary/admin_metadata) · pytest **116 PASS**(feature-0003 metadata glossary-autoreg/enum-feedback/sample-curation 44 + feature-0002 glossary/enum 72) · §18.8 적대 리뷰(SUBAGENT, SHIP-WITH-FIXES→3건 반영). 정적 자산 web 이미지 baked → 라이브 PB-0008 = POST-DEPLOY(visual_verification_scope=always).
+- **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008.

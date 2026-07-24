@@ -303,6 +303,11 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - 없음.
 
 ## 6. Done
+- [x] **llm-timeout-align** (2026-07-24, cc-identity-inject 후속): sonnet 작동 후 후반 라운드 "Request timed out"
+  발견 → 근본은 앱 client timeout(AGENT_TIMEOUT_SEC=300) > gateway litellm request_timeout(120) 불일치로
+  gateway 가 먼저 컷. litellm request_timeout 120→300(앱 정합). 개별 호출은 빠름(high 19s)이라 effort/max_tokens
+  무변경. 검증: YAML OK, 배포 후 실행 config 300 + sonnet 대화 정상. streaming 전환은 §8 이연.
+  (CHG-20260724T141420-llm-timeout-align / REV-20260724T141420-llm-timeout-align)
 - [x] **cc-identity-inject** (2026-07-24, sonnet5-upgrade 후속·최종): 사용자 요청으로 sonnet 계정 용량 직접
   확인 → 직접 api.anthropic.com 호출로 **두 계정 sonnet-5 200(용량 有)** 확인, 429의 실 원인은 **OAuth 구독
   토큰이 frontier(Sonnet 5)에 Claude Code identity 첫 system 블록을 요구**함(haiku 미요구, gateway 미주입).

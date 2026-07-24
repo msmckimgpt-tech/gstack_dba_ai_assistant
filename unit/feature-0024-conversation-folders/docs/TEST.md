@@ -76,3 +76,11 @@ source_of_truth: true
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
 
 - **[POST-DEPLOY 2026-07-23] folder-ux 6개 개선 라이브 e2e (PASS, Windows-browser, 라이브 65848910)**: PR #908 → main 65848910 → deploy-web(soak PASS). 서빙 app.js 신규 UX 심볼 24 hit·styles.css 5 hit. **6개 전부 PASS**(win-browser eval, bootstrap_admin 로그인): ①createFolderFlow(null)→prompt 없이 "새 폴더"(delta 1)+folderRenamingId set+rename input rendered·**focused** ②openFolderSettings→folder-settings-panel+삭제 버튼+지침 textarea(rows≥5) ③_commitFolderRename→"매출 분석" 반영·input 제거 ④멀티라인 지침("UTC…\nENUM…") 저장·모달 닫힘 ⑤openMoveConversationDialog→검색(필터 동작)+정렬(2옵션)+새폴더+닫기 ⑥conv/folder draggable=true + 시뮬 dragstart→drop→대화 폴더 배정(count 1). 스크린샷 scratchpad/folder-settings-modal.png(설정 모달 멀티라인 지침+삭제). 브리지 다운 후 stale 로그 제거+relaunch+로그인으로 복구. Pass/Fail: **PASS**.
+
+### Run 2026-07-23-005 (newfolder-btn)
+- Date: 2026-07-23 · Environment: CLI · Runner: AI
+- Result Summary: **PRE** — node --check app.js OK · #newFolderBtn 정의(index.html)·클릭/드롭/동기화 wiring(app.js)·도구바 CSS 제거·잔존 참조 0.
+- Environment: Windows-browser — 정적 baked → **POST-DEPLOY PB-0008**: '새 대화' 우측 폴더 아이콘 노출(folder 권한)·클릭 시 무프롬프트 생성+인라인편집·기존 '＋ 새 폴더' 바 미표시·DnD 폴더 아이콘 root 드롭.
+- Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
+
+- **[POST-DEPLOY 2026-07-23] newfolder-btn 라이브 (PASS, Windows-browser, c5af349c)**: PR #929→main c5af349c→deploy-web(soak PASS). 서빙 index.html #newFolderBtn·app.js _syncNewFolderBtn 확인. win-browser(bootstrap_admin): 헤더 폴더 아이콘 버튼 exists/visible/enabled=true·**oldToolsBarGone=true**(기존 바 제거)·클릭→폴더 생성(delta 1)+인라인 rename 진입·기본명 "새 폴더". 상단 [＋ 새 대화][🗂 폴더][🔍 검색] 정합(스크린샷 scratchpad/newfolder-btn-header.png). 테스트 폴더 정리(활성 0). Pass/Fail: **PASS**.

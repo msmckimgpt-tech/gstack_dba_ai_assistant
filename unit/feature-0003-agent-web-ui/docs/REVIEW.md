@@ -10,6 +10,15 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T053457-metadata-review-ds-scope [SUBAGENT:frontend-correctness-security] — 메타데이터 거버넌스 검토 큐 datasource 필터 + 자동승급 목록 정합 + 등록 시각 (TASK-20260724T053457, Major §12.3) — SHIP-WITH-FIXES (1 MAJOR/2 MINOR in-cycle 반영)
+- 범위: `관리 콘솔 > 지식베이스 > 메타데이터 > [용어사전/ENUM/샘플쿼리]` 거버넌스 UI 3결함. 초안=frontend(admin.js): 검토 큐 scope_key 전송(Fix1)·큐↔목록 scope 정합(Fix2)·등록 시각 표시(Fix3).
+- **적대 리뷰(general-purpose, frontend/correctness/security 렌즈) verdict = SHIP-WITH-FIXES → 지적 3건 전부 반영 후 SHIP**:
+  · **Finding 1 (MAJOR, 반영)**: 검토 큐 리스트는 Fix1 로 scoped 됐으나 pending 배지는 여전히 unscoped(`count_glossary_feedback`/`count_enum_feedback` 가 scope_key 미적용) → 특정 ds 선택 시 리스트 N건 ↔ 배지 전체 건수 지속 불일치(Fix1 의도 정면 위반, 유일한 사용자-가시 오정보). **수정(backend additive)**: 두 count 함수에 `scope_key=None` 파라미터 추가(지정 시 `AND scope_key=%s`·`_normalize_scope_key`) + 엔드포인트(admin_metadata.py glossary-feedback/enum-feedback)가 `scope_filter` 전달 → 배지=scoped pending(리스트와 정합, '공용'=전체). 테스트 monkeypatch 시그니처 2건 동반 갱신(glossary-autoreg/enum-feedback).
+  · **Finding 2 (MINOR, 반영)**: datasource 변경 시 배지 미재산정(list 보기·타 서브탭 stale). **수정(frontend)**: `_metaPrimeReviewBadge` 가 `_metaReviewScopeParam` 로 scope 전송 + scope-change 핸들러가 변경 시 배지 재-prime.
+  · **Finding 3 (MINOR, 반영)**: sample 큐 날짜(`_sfFmtDt`, 무-prefix)가 glossary/ENUM(`_metaFmtDt`+"등록") 와 포맷·라벨 불일치. **수정(frontend)**: sample 큐 행·상세를 `등록 ${_metaFmtDt}` 로 통일.
+- 리뷰 통과(NON-issue, 명시 검증): XSS 없음(전 created_at textContent/mkTag) · 크로스-DS 누출 없음(표시-측 narrowing·백엔드 RBAC=permission-based `kb.*.curate`·'공용'=권한 내 전체) · URL well-formed(`?scope_key`/`&scope_key` 정합·단일 encodeURIComponent) · created_at null-safe(전 가드+`_metaFmtDt` "" 폴백·미존재 시 기존 '수정만' 동작 보존) · 백엔드 3목록/3큐 모두 created_at 반환(no-op 아님) · scope 필터 3큐 균일 · enum bundle 경로 created_at 도달 · auto-promote write↔list read scope 정규화(`_normalize_scope_key`) 동일.
+- 검증: `node --check`(ESM) PASS · `verify_metadata_list_detail.mjs` baseline 신규 회귀 0(26 PASS/3 FAIL·[D] crash=pre-existing) · py_compile(kb_glossary/admin_metadata) · pytest(feature-0003 metadata glossary-autoreg/enum-feedback/sample-curation 44 + feature-0002 glossary/enum 72) ALL PASS · 정적 자산 baked → POST-DEPLOY PB-0008 Windows-browser(정본, test-runs.d fragment 20260724T053457).
+
 ## REV-20260724T133000-csv-download-wiring-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260724T123600-csv-download-wiring, 비-정책 doc-only)
 - Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + REPORT 완결 + TASK 체크박스 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260724T123600-csv-download-wiring(SHIP-WITH-FIXES).
 - 라이브 실측(배포 dc316152, `bin/win-browser.py` relay 실 Windows Chrome 150, bootstrap_admin 세션): 대화 `20260724022429-515c0fd9`('도전 던전 전투 로그…' = 배틀 로그 차원별 집계, 16 메시지) 인라인 ```csv``` 블록 아래 "📥 CSV 다운로드" 버튼 렌더(visible·ready=1·linkAfter=false)·클릭 시 Blob `text/csv;charset=utf-8;` size=2603 다운로드 트리거·콘솔 에러 0. 서빙 app.js/share.js/styles.css 신 심볼 curl 확증. 사용자 요청("CSV 다운로드 가능 답변인데 실제 다운로드 수단 없음") 해소.

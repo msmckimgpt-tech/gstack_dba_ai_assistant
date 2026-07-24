@@ -3006,7 +3006,9 @@ async function loadSampleReview() {
   listEl.replaceChildren();
   listEl.appendChild(_metaLoadingSkeleton());
   try {
-    const data = await apiFetch("/api/admin/sample-feedback");
+    const sp = _metaReviewScopeParam();   // Issue 1: 선택 datasource 로 샘플 검수 큐 필터('공용'=전체).
+    const url = sp ? `/api/admin/sample-feedback?scope_key=${sp}` : "/api/admin/sample-feedback";
+    const data = await apiFetch(url);
     adminState.sampleReview.items = (data && data.items) || [];
     adminState.sampleReview.truncated = Boolean(data && data.truncated);
   } catch (err) {
@@ -3084,7 +3086,8 @@ function renderSampleReview() {
     }
     const ts = document.createElement("span");
     ts.className = "admin-sf-ts";
-    ts.textContent = _sfFmtDt(it.created_at);
+    // Finding 3: glossary/ENUM 큐와 동일 "등록 <시각>" 라벨·포맷(_metaFmtDt)으로 통일.
+    ts.textContent = it.created_at ? `등록 ${_metaFmtDt(it.created_at)}` : "";
     head.appendChild(ts);
     row.appendChild(head);
     const q = document.createElement("div");
@@ -3484,7 +3487,7 @@ function _metaRenderReviewDetail(kind, it) {
     tags.appendChild(vote);
     if (it.scope_key != null) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`, "admin-meta-tag-neutral"));
     if (it.suggested) tags.appendChild(mkTag("샘플 등록 요청", "admin-meta-tag-info"));
-    if (it.created_at) tags.appendChild(mkTag(_sfFmtDt(it.created_at), "admin-meta-tag-neutral"));
+    if (it.created_at) tags.appendChild(mkTag(`등록 ${_metaFmtDt(it.created_at)}`, "admin-meta-tag-neutral"));
   } else {
     if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`, "admin-meta-tag-conf"));
     if (kind === "glossary") {
@@ -3498,6 +3501,8 @@ function _metaRenderReviewDetail(kind, it) {
       const stCls = st === "promoted" ? "admin-meta-tag-ok" : st === "rejected" ? "admin-meta-tag-danger" : "admin-meta-tag-neutral";
       tags.appendChild(mkTag(stLabel, stCls));
     }
+    // Issue 3: 등록 시각(created_at) — glossary/ENUM 후보 상세에도 언제 수집됐는지 표기(sample 은 위 분기에 이미 존재).
+    if (it.created_at) tags.appendChild(mkTag(`등록 ${_metaFmtDt(it.created_at)}`, "admin-meta-tag-neutral"));
   }
   if (tags.childNodes.length) box.appendChild(tags);
 
@@ -3622,11 +3627,14 @@ async function _metaPrimeReviewBadge() {
     const cfg = _METADATA_REVIEW[sub];
     if (!can(cfg.reviewPerm)) continue;
     try {
+      const sp = _metaReviewScopeParam();   // Finding 1: 배지도 선택 datasource 로 한정('공용'=전체) — 큐 리스트 카운트와 정합.
       if (cfg.kind === "sample") {
-        const data = await apiFetch(cfg.endpoint);
+        const data = await apiFetch(sp ? `${cfg.endpoint}?scope_key=${sp}` : cfg.endpoint);
         md.reviewPending[sub] = (data && data.count != null) ? Number(data.count) : ((data && data.items) ? data.items.length : 0);
       } else {
-        const data = await apiFetch(`${cfg.endpoint}?status=pending`);
+        let u = `${cfg.endpoint}?status=pending`;
+        if (sp) u += `&scope_key=${sp}`;
+        const data = await apiFetch(u);
         md.reviewPending[sub] = (data && data.pending_count) || 0;
       }
       _metaRefreshReviewBadge(sub);
@@ -3774,6 +3782,7 @@ function _metaBindControls() {
       if (adminState.metadata.detailMode !== "bootstrap") adminState.metadata.detailMode = "empty";
       _metaRenderDetail();
       loadMetadata();
+      _metaPrimeReviewBadge();   // Finding 2: datasource 변경 시 검토 배지도 새 scope 로 재산정(전 review 서브탭·list 보기 포함).
     });
   }
   document.querySelectorAll(".admin-meta-subtab").forEach((btn) => {
@@ -4319,7 +4328,11 @@ function _metaListRow(it, sub, canEdit, grouped) {
   }
   const meta = document.createElement("div");
   meta.className = "admin-meta-row-meta";
-  meta.textContent = it.updated_at ? `수정 ${_metaFmtDt(it.updated_at)}` : "";
+  // Issue 3: 등록 시각(created_at) 표기 — 수정 시각과 다르면 병기(언제 등록됐는지 항상 노출).
+  const _cAt = it.created_at ? _metaFmtDt(it.created_at) : "";
+  const _uAt = it.updated_at ? _metaFmtDt(it.updated_at) : "";
+  meta.textContent = (_cAt && _uAt && _cAt !== _uAt) ? `등록 ${_cAt} · 수정 ${_uAt}`
+    : _cAt ? `등록 ${_cAt}` : _uAt ? `수정 ${_uAt}` : "";
   main.appendChild(meta);
   row.appendChild(main);
   if (canEdit) {
@@ -4717,6 +4730,15 @@ function _metaReviewCfgOf(kind) {
   return { sub, cfg: _METADATA_REVIEW[sub] };
 }
 
+// 검토·검수 큐 datasource 필터(Issue 1) — 상단 데이터소스 셀렉터(scopeKey)를 목록과 동일 축으로 적용.
+//   특정 datasource 선택 시 그 scope_key 로 후보를 한정한다. '공용(common)' 은 전체(전 datasource) triage 로
+//   표시한다(자동수집 후보는 항상 ds-scoped 라 common 을 문자 그대로 필터하면 큐가 영구히 비고 pending 배지와
+//   불일치 — Option A). 반환: URL-encoded scope_key 또는 ""(전체).
+function _metaReviewScopeParam() {
+  const scope = String(adminState.metadata.scopeKey || "common");
+  return (scope && scope !== "common") ? encodeURIComponent(scope) : "";
+}
+
 async function loadFeedbackQueue(kind) {
   const { sub, cfg } = _metaReviewCfgOf(kind);
   const listEl = document.getElementById("metadataList");
@@ -4726,7 +4748,9 @@ async function loadFeedbackQueue(kind) {
   listEl.appendChild(_metaLoadingSkeleton());
   const status = adminState.metadata.feedback.status || "pending";
   try {
-    const url = `${cfg.endpoint}?status=${encodeURIComponent(status)}`;
+    let url = `${cfg.endpoint}?status=${encodeURIComponent(status)}`;
+    const sp = _metaReviewScopeParam();   // Issue 1: 선택 datasource 로 검토 큐 필터('공용'=전체).
+    if (sp) url += `&scope_key=${sp}`;
     const data = await apiFetch(url);
     adminState.metadata.feedback.items = (data && data.items) || [];
     adminState.metadata.feedback.pendingCount = (data && data.pending_count) || 0;
@@ -4859,6 +4883,13 @@ function renderFeedbackQueue(kind) {
       : "admin-meta-tag-neutral";
     tags.appendChild(mkTag(stLabel, stCls));
     main.appendChild(tags);
+    // Issue 3: 등록 시각(created_at) — 후보가 언제 수집·제안됐는지 표기.
+    if (it.created_at) {
+      const cMeta = document.createElement("div");
+      cMeta.className = "admin-meta-row-meta";
+      cMeta.textContent = `등록 ${_metaFmtDt(it.created_at)}`;
+      main.appendChild(cMeta);
+    }
     row.appendChild(main);
 
     if (canCurate) {
@@ -5009,6 +5040,12 @@ function _metaBuildEnumBundle(b, canCurate) {
       t.className = "admin-meta-tag admin-meta-tag-conf";
       t.textContent = `신뢰도 ${Number(it.confidence).toFixed(2)}`;
       tags.appendChild(t);
+    }
+    if (it.created_at) {   // Issue 3: 등록 시각 — 묶음 내 각 코드 후보의 수집 시점.
+      const ct = document.createElement("span");
+      ct.className = "admin-meta-tag admin-meta-tag-neutral";
+      ct.textContent = `등록 ${_metaFmtDt(it.created_at)}`;
+      tags.appendChild(ct);
     }
     const st = String(it.status || "");
     if (st !== "pending") {

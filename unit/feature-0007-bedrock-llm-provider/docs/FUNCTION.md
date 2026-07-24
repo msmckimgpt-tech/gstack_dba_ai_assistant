@@ -170,6 +170,11 @@ source_of_truth: true
     litellm 이 최종 `edge-fallback`(gemma)으로 **상시 강등**한다(하드실패 아님, best-effort — gemma JSON 품질이
     낮아 일부 insight 는 skip 수렴). "root Max 품질" 이점은 업무시간 + 신선 토큰 창에서만 신뢰적. 24/7 품질이
     필요하면 refresh cron 을 상시화하거나(토큰 갱신 빈도↑) Bedrock 자격 복구가 후속 과제.
+- **요청 타임아웃 정합 (llm-timeout-align 2026-07-24)**: gateway `litellm_settings.request_timeout` 는 앱
+  `AGENT_TIMEOUT_SEC`(운영 300s, `_get_llm_client` client timeout) **이상**이어야 한다. 짧으면(구 120s) gateway 가
+  앱보다 먼저 Anthropic 응답을 컷해 Sonnet 5 adaptive 대화의 장문-답변 후반 라운드가 "LLM 호출 오류: Request
+  timed out" 으로 실패한다. request_timeout=300 으로 정합화. 총 run 예산은 앱 AGENT_TIMEOUT_SEC*3(=900s)가
+  라운드 합계로 별도 강제. (장기: 대화 경로 streaming 전환이 장문 타임아웃의 정본 회피 — REPORT §8.)
 - gateway 503 → `/api/ask` 가 사용자에게 "LLM 서비스 일시 장애" 안내. 재시도
   가능. agent loop 가 중단되어도 conversation 은 보존.
 - Bedrock 자격증명 회수 / 만료: gateway 컨테이너 startup fail-loud (gateway

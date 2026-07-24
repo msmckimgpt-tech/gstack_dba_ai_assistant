@@ -232,6 +232,11 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
   probe 제거와 무관한 별도 버그로 보이며, 별 cycle 에서 조사 권장.
 
 ## 8. Suggested Improvements
+- **대화 경로 streaming 전환** (llm-timeout-align 2026-07-24 장기 과제): 현 `agent_core._call_llm` 은 비-streaming
+  `client.chat.completions.create`. claude-api skill 은 장문/high max_tokens 요청에 **streaming 을 타임아웃 회피
+  정본**으로 권장(비-streaming 은 긴 답변에서 request timeout 위험). request_timeout 300 정합으로 즉시 해소했으나,
+  근본적으로는 agent loop 를 streaming(tool_calls 스트림 처리 포함)으로 전환하면 장문 sonnet 답변의 타임아웃을
+  구조적으로 제거. 리팩터 규모·회귀위험 커 별 cycle.
 - **per-user token quota** (배포 후 별 cycle): gateway 의 callback hook 으로
   `WebAuditEvents.conversation.ask` ChangeJson 에 `input_tokens` / `output_tokens`
   / `bedrock_model` 첨부. role 별 token tier (admin/operator 무제한, sales 제한).
