@@ -11,6 +11,14 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260724T112446-share-scroll-bottom (TASK-20260724T112446-share-scroll-bottom — 공유 대화 링크 화면 진입 시 문서 스크롤 맨 아래(최신 메시지) 고정, Minor §12.3)
+- Date: 2026-07-24. Files: `static/share.js`(단일). frontend-only, additive/비파괴(진입 스크롤 위치 동작만 추가, 데이터·API·RBAC·엔드포인트 0).
+- 요청(사용자, `/_template:entry`): "공유된 대화 링크 화면에 진입 시, 화면 스크롤이 가장 아래부터 위치하도록 구성해주세요."
+- 변경: 초기 `fetchShare(token).then(render...)` 체인에 `engageInitialBottomPin()` 1회 호출 추가. 신설 함수 `scrollShareToBottom()`(문서 맨 아래로 `window.scrollTo(0, scrollHeight-innerHeight)`, 파일 내 기존 idiom L216-217/L388 과 동일 clamp), `engageInitialBottomPin()`(즉시 맨 아래 + 지연 콘텐츠 재고정 + 조작 시 해제), `releaseShareBottomPin()`(멱등 해제 — 리스너 remove + observer disconnect). 모듈 var `_shareBottomPinActive`/`_shareBottomPinObserver`.
+- 지연 콘텐츠(마크다운 표·mermaid·이미지·point rail 비동기 렌더로 문서 높이 증가) 대응: `#shareMessages` `ResizeObserver` 재고정(미조작 동안), 미지원 시 `[150,400,1000,2500]ms`+`window load` 폴백(setupSharePointRail 동형 임계).
+- 무회귀 보장: `pageBranchShare`(feature-0019 페이징 위치보존)·`scrollShareMessageIntoCenter`(rail 점프) 진입에서 `releaseShareBottomPin()` 선행 → 진입 pin 이 사용자/기존 로직 스크롤과 싸우지 않음. 3s 안전 타임아웃으로 이후 레이아웃 변화가 사용자를 끌어내리지 않게 자동 해제.
+- 검증: `node --check` PASS · §18.8 적대 리뷰 REV-20260724T112446-share-scroll-bottom · CHECK#13 test-runs.d Windows-browser fragment(PRE-COMMIT PASS + POST-DEPLOY 라이브 계획, headless layout 부재로 스크롤 실측 불가 사유 기록). Cross-ref: TASK/REV-20260724T112446-share-scroll-bottom · TEST Run(2026-07-24 share-scroll-bottom).
+
 ## CHG-20260723T130200-conv-date-tree-postverify (TASK-20260723T034321-conv-date-tree POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-23. 코드/자산 무변경 — POST-DEPLOY 검증 원장 기록. 배포 PR #893 → main 0b15a0ea → `deploy-web.sh --web-only` 무중단(soak PASS·자산 스탬프 066695609710).
 - 라이브 실측(win-browser Chrome 150, bootstrap_admin): 배포본 `_buildOwnDateTree` 합성 6/6(6월 단일·2025 연>월 중첩) + 실계정 사이드바 단일 "6월"[38]·"5월"[15]·중복 라벨 0(이전 ~10개 "6월" 소멸) + 6월 토글 4→42(배지 정확) + 스크린샷·pageerror 0. Cross-ref: REV-20260723T034321-conv-date-tree · TEST Run(conv-date-tree POST-DEPLOY).

@@ -45,7 +45,11 @@
   setupCopyLink();
 
   fetchShare(token)
-    .then((data) => render(data, token))
+    .then((data) => {
+      render(data, token);
+      // 진입 시 대화의 최신(맨 아래) 메시지부터 보이도록 문서 스크롤을 맨 아래로 둔다.
+      engageInitialBottomPin();
+    })
     .catch((err) => showError(err && err.message ? err.message : "공유 데이터를 불러오지 못했습니다."));
 
   // 수신자가 현재 공유 링크를 손쉽게 재전달할 수 있도록 "링크 복사" 버튼을 연결한다.
@@ -208,6 +212,8 @@
     if (nextIdx < 0 || nextIdx >= sibs.length) return;
     // feature-0019 paging-scroll-preserve: 공유 뷰(문서 스크롤)도 페이징 재렌더 시 위치를 보존한다.
     // render() 가 #shareMessages 를 통째로 교체하므로 그대로 두면 스크롤이 튄다. 저장 후 rAF 로 복원.
+    // 진입 bottom-pin 이 아직 활성이면(진입 직후 페이징) 여기의 위치 보존이 우선하도록 해제한다.
+    releaseShareBottomPin();
     const savedY = window.scrollY || window.pageYOffset || 0;
     fetchShare(tok, sibs[nextIdx])
       .then((data) => {
@@ -381,6 +387,8 @@
   }
   function scrollShareMessageIntoCenter(target) {
     if (!target) return;
+    // rail 점프는 사용자가 명시적으로 특정 메시지로 이동하려는 조작이므로 진입 pin 해제.
+    releaseShareBottomPin();
     const rect = target.getBoundingClientRect();
     const currentY = window.scrollY || window.pageYOffset || 0;
     const topInDoc = rect.top + currentY;
@@ -398,6 +406,112 @@
       if (p < 1) requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 진입 시 초기 스크롤 위치 — 대화의 최신(맨 아래) 메시지가 보이도록 문서 스크롤을
+  // 맨 아래로 둔다(메신저·채팅 UI 관례: 진입 시 마지막 대화부터 보기). 마크다운 표·
+  // mermaid 다이어그램·외부 이미지·point rail 은 비동기로 늦게 렌더되며 문서 높이가
+  // 커지므로, 사용자가 아직 조작하지 않았다면 콘텐츠 안정 시점마다 다시 맨 아래로
+  // 고정한다(setupSharePointRail 의 지연 재배치와 동형). "안정"은 고정 시간이 아니라
+  // 성장 신호(ResizeObserver·img load)마다 리셋되는 settle 타이머로 판정하고, 절대
+  // 상한(ceiling)으로 무한 pin 을 막는다 — 느린 mermaid/이미지가 상한 안에 끝나면
+  // 무거운 대화도 확실히 맨 아래로 안착한다. 사용자가 스크롤(휠/터치/스크롤-의도 키)
+  // 하거나 컨트롤에 focus(Tab/클릭) 하거나 버전 페이징·rail 점프 등 명시적 조작을 하면
+  // 즉시 pin 을 해제해 자동 스크롤이 사용자 조작과 싸우지 않게 한다. pageBranchShare
+  // (스크롤 위치 보존)와 scrollShareMessageIntoCenter(rail 점프)는 진입 pin 을 명시
+  // 해제한다.
+  // ─────────────────────────────────────────────────────────────────────────
+  const SHARE_BOTTOM_PIN_SETTLE_MS = 600;   // 성장이 멈춘 뒤 이만큼 지나면 해제.
+  const SHARE_BOTTOM_PIN_CEILING_MS = 8000; // 성장이 안 멈춰도 이 상한에서 강제 해제.
+  let _shareBottomPinActive = false;
+  let _shareBottomPinObserver = null;
+  let _shareBottomPinImgHandler = null;
+  let _shareBottomPinSettleTimer = 0;
+  let _shareBottomPinCeilingTimer = 0;
+
+  function scrollShareToBottom() {
+    const maxY = Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
+    window.scrollTo(0, maxY);
+  }
+
+  // 스크롤 의도 키에서만 해제(Tab·수식키 과다 트리거 방지 — focus 는 focusin 이 담당).
+  function onShareBottomPinKeydown(ev) {
+    switch (ev && ev.key) {
+      case "ArrowUp": case "ArrowDown": case "PageUp": case "PageDown":
+      case "Home": case "End": case " ": case "Spacebar":
+        releaseShareBottomPin();
+    }
+  }
+
+  function releaseShareBottomPin() {
+    if (!_shareBottomPinActive) return;
+    _shareBottomPinActive = false;
+    window.removeEventListener("wheel", releaseShareBottomPin);
+    window.removeEventListener("touchstart", releaseShareBottomPin);
+    window.removeEventListener("keydown", onShareBottomPinKeydown);
+    window.removeEventListener("focusin", releaseShareBottomPin);
+    if (_shareBottomPinObserver) {
+      try { _shareBottomPinObserver.disconnect(); } catch (_) {}
+      _shareBottomPinObserver = null;
+    }
+    if (_shareBottomPinImgHandler) {
+      const el = document.getElementById("shareMessages");
+      if (el) el.removeEventListener("load", _shareBottomPinImgHandler, true);
+      _shareBottomPinImgHandler = null;
+    }
+    if (_shareBottomPinSettleTimer) { clearTimeout(_shareBottomPinSettleTimer); _shareBottomPinSettleTimer = 0; }
+    if (_shareBottomPinCeilingTimer) { clearTimeout(_shareBottomPinCeilingTimer); _shareBottomPinCeilingTimer = 0; }
+  }
+
+  function engageInitialBottomPin() {
+    _shareBottomPinActive = true;
+    scrollShareToBottom();
+
+    // 사용자 조작 시 즉시 pin 해제: 스크롤 제스처(휠/터치)·스크롤 의도 키·컨트롤 focus.
+    window.addEventListener("wheel", releaseShareBottomPin, { passive: true });
+    window.addEventListener("touchstart", releaseShareBottomPin, { passive: true });
+    window.addEventListener("keydown", onShareBottomPinKeydown);
+    window.addEventListener("focusin", releaseShareBottomPin);
+
+    // 성장이 멈춘 뒤 settle_ms 지나면 해제. 성장 신호마다 리셋한다.
+    const armSettle = () => {
+      if (!_shareBottomPinActive) return;
+      if (_shareBottomPinSettleTimer) clearTimeout(_shareBottomPinSettleTimer);
+      _shareBottomPinSettleTimer = window.setTimeout(releaseShareBottomPin, SHARE_BOTTOM_PIN_SETTLE_MS);
+    };
+    // 늦게 렌더되는 콘텐츠(표·mermaid·이미지)로 문서 높이가 커지는 동안, 아직 사용자가
+    // 조작하지 않았다면 다시 맨 아래로 고정하고 settle 타이머를 리셋한다.
+    const repin = () => {
+      if (!_shareBottomPinActive) return;
+      scrollShareToBottom();
+      armSettle();
+    };
+    const messagesEl = document.getElementById("shareMessages");
+    if (messagesEl && typeof ResizeObserver !== "undefined") {
+      try {
+        _shareBottomPinObserver = new ResizeObserver(repin);
+        _shareBottomPinObserver.observe(messagesEl); // observe 즉시 1회 콜백 → 초기 arm.
+      } catch (_) {
+        [150, 400, 1000, 2500].forEach((ms) => window.setTimeout(repin, ms));
+      }
+    } else {
+      // ResizeObserver 미지원 환경: 알려진 지연 시점 재고정(point rail 과 동일 임계).
+      [150, 400, 1000, 2500].forEach((ms) => window.setTimeout(repin, ms));
+    }
+    // 외부 이미지는 intrinsic size 가 없어 늦게 로드되며 문서를 늘린다 — 로드 시 재고정
+    // (load 는 버블하지 않으므로 capture 로 컨테이너에서 포착).
+    if (messagesEl) {
+      _shareBottomPinImgHandler = (ev) => {
+        const t = ev && ev.target;
+        if (t && t.tagName === "IMG") repin();
+      };
+      messagesEl.addEventListener("load", _shareBottomPinImgHandler, true);
+    }
+
+    // settle 최초 arm + 절대 상한(성장이 안 멈춰도 무한 pin 방지).
+    armSettle();
+    _shareBottomPinCeilingTimer = window.setTimeout(releaseShareBottomPin, SHARE_BOTTOM_PIN_CEILING_MS);
   }
 
   // 메시지 본문을 markdown → HTML 로 렌더한다. 메인 UI(app.js markdownToHtml)와
