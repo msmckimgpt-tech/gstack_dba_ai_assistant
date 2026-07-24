@@ -6211,5 +6211,5 @@ REQ: (사용자, `/_template:entry`) "그래프 뷰에서, 테이블 노드의 �
 - [x] `tests/headless/test_pixi_adapter.js` T20b hasEmoji 16-assert 추가 (역할 아이콘 8종+🗂 감지 · 평문/−/ƒ/한글 비-매칭 · null 안전)
 - [x] 정적·단위 검증: `node --check --input-type=module` PASS · test_pixi_adapter.js **112 PASS / 0 FAIL**(기존 96 + T20b 16)
 - [x] §18.8 적대 리뷰(프론트엔드/렌더링 렌즈, SUBAGENT)
-- [ ] 배포(web-only, deploy_scope: included) + POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증(역할 이모지 컬러 렌더, visual_verification_scope: always)
+- [x] 배포(web-only, deploy_scope: included, c709ad3f soak PASS) + POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증(실 Windows Chrome canvas 프로브 — 색 이모지 컬러 렌더 확증, 그레이스케일 이모지 3종은 폰트 디자인·비-실루엣) — PASS
 정본 rationale=REVIEW.md REV-20260724T031956-graph-emoji-color, 변경이력=MODIFY.md CHG-20260724T031956-graph-emoji-color.
