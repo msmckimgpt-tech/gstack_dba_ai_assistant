@@ -475,3 +475,8 @@ source_of_truth: true
 - **수용된 트레이드오프(MINOR, by-design)**: 메시지당 컨텍스트/비용 상한이 4k→최대 100k(describe_routine)·~12k(execute_sql 자체 `_TOOL_PREVIEW_CHAR_BUDGET`) 로 상향. 히스토리 reload 는 **메시지 수**(`max_messages=50`) 기준 윈도우라 대형 결과 누적 시 context_length 도달 가능 — 단 `classify_llm_provider_error` context_length 분류(persist_health=False·글로벌 배너 미오염)로 **graceful degradation**(친절 에러) + 유한·env 튜닝 가능(`AGENT_TOOL_RESULT_MAX_CHARS`). 사용자 결정("전 도구 대형 캡")의 명시적 수용 범위. **운영 note**: 필요 시 캡 하향 또는 byte-기준 히스토리 윈도우는 후속 별도 lever.
 - 반영된 NIT 3건: (a) rederive docstring `4000자 truncation`→`_cap_tool_result 대형 backstop 캡`(agent_core.py:4636) (b) 저장 comment `원문 유지`→`datamark 미적용(원문); 캡은 이미 적용된 tool_result 저장`으로 명확화(:4926) (c) `_cap_tool_result` 중복 가드 `if cap and cap > 0`→`if cap > 0`(2791, 동작 동일·가독).
 - Cross-ref: CHG/TASK/TEST-20260724T155534-tool-result-cap-raise · FUNCTION.md(tool_result 대형 backstop 캡 항목) · FRICTION_LEDGER FR-procedure-analysis-result-truncated · 선행 FR-show-create-routine-blocked(describe_routine) · FR-partial-evidence-false-verification(절단 epistemic) · subagent id a2af724b865cf671a · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260724T085937-sonnet-reasoning-budget-guide [SKIPPED:test-only-code-review-canonical-in-feature-0003] — PASS
+- 대상(feature-0002): `tests/test_runtime_settings.py` 의 sonnet-budget 단정 갱신(shared runtime_settings 가 adaptive 죽은 budget 스펙 제거함에 따름). src 코드 변경 0(test-only).
+- 리뷰 방식([SKIPPED] 사유): 로직 정본(shared/runtime_settings + admin UI)의 적대 리뷰가 feature-0003 REV-20260724T085937-sonnet-reasoning-budget-guide [SUBAGENT:adversarial-general-purpose] **SHIP-WITH-FIXES**(Finding D 반영). feature-0002 는 그 변경에 대한 테스트 계약 갱신뿐이라 추가 패널 판별력 낮음.
+- Cross-ref: feature-0003 REVIEW/CHG/TASK · shared MODIFY 동일 slug.
