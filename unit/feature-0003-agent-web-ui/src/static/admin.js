@@ -7558,6 +7558,8 @@ async function renderModelThinkingBudgets(mount) {
   const totals = Array.isArray(data.agent_max_outputs) ? data.agent_max_outputs : [];
   const models = Array.isArray(data.model_thinking_budgets) ? data.model_thinking_budgets : [];
   const levels = Array.isArray(data.reasoning_budgets) ? data.reasoning_budgets : [];
+  // adaptive(Sonnet 5) 계열: budget_tokens 미적용(effort 로 제어) → 죽은 예산 슬라이더 대신 guide-note.
+  const adaptiveModels = new Set(Array.isArray(data.adaptive_models) ? data.adaptive_models : []);
   if (!totals.length && !models.length && !levels.length) {
     rsErrorPlaceholder(mount, "extended thinking 을 지원하는 모델이 카탈로그에 없습니다.");
     return;
@@ -7627,31 +7629,43 @@ async function renderModelThinkingBudgets(mount) {
       body.append(sub, list);
     }
 
-    // ② 추론 강도별 (추론 ↔ 본문 배분 슬라이더)
-    const explicit = bucket.levels.slice().sort((a, b) => (levelRank[a.level] ?? 9) - (levelRank[b.level] ?? 9));
-    if (explicit.length) {
-      const sub = document.createElement("div");
-      sub.className = "rs-subgroup-title";
-      sub.textContent = "추론 강도별 예산 (추론 ↔ 본문 배분)";
-      const list = document.createElement("div");
-      list.className = "rs-list";
-      for (const it of explicit) {
-        const r = buildBudgetSliderRow(it, canWrite, () => currentTotal(m));
-        sliderRows.push(r);
-        list.appendChild(r);
+    if (adaptiveModels.has(m)) {
+      // adaptive(Sonnet 5): budget_tokens 미적용 — 죽은 ②③ 슬라이더 대신 guide-note.
+      // 추론 강도는 대화 화면의 '추론 강도' 선택기가 Anthropic effort 로 직접 제어한다.
+      const gsub = document.createElement("div");
+      gsub.className = "rs-subgroup-title";
+      gsub.textContent = "추론 강도 (adaptive thinking)";
+      const gnote = document.createElement("div");
+      gnote.className = "rs-readonly-note";
+      gnote.textContent = "이 모델은 adaptive thinking 계열입니다 — 추론 강도는 관리자 예산(토큰)이 아니라 대화 화면의 '추론 강도' 선택이 Anthropic effort 로 직접 제어합니다 (낮음→low · 일반→모델 기본 · 높음→high · 매우 높음→max). 따라서 모델별 thinking budget(토큰) 설정은 적용되지 않아 감췄습니다. 위 '라운드당 출력'만 이 모델에 유효합니다.";
+      body.append(gsub, gnote);
+    } else {
+      // ② 추론 강도별 (추론 ↔ 본문 배분 슬라이더) — budget 계열(Haiku 등)만.
+      const explicit = bucket.levels.slice().sort((a, b) => (levelRank[a.level] ?? 9) - (levelRank[b.level] ?? 9));
+      if (explicit.length) {
+        const sub = document.createElement("div");
+        sub.className = "rs-subgroup-title";
+        sub.textContent = "추론 강도별 예산 (추론 ↔ 본문 배분)";
+        const list = document.createElement("div");
+        list.className = "rs-list";
+        for (const it of explicit) {
+          const r = buildBudgetSliderRow(it, canWrite, () => currentTotal(m));
+          sliderRows.push(r);
+          list.appendChild(r);
+        }
+        body.append(sub, list);
       }
-      body.append(sub, list);
-    }
 
-    // ③ '일반'(모델 기본) — 선택적 override(비우면 모델 기본 thinking 유지).
-    if (bucket.model.length) {
-      const sub = document.createElement("div");
-      sub.className = "rs-subgroup-title";
-      sub.textContent = "일반(모델 기본) thinking budget — 비우면 모델 기본값 유지";
-      const list = document.createElement("div");
-      list.className = "rs-list";
-      for (const it of bucket.model) list.appendChild(buildRuntimeSettingRow(it, canWrite, { emptyWhenNoOverride: true }));
-      body.append(sub, list);
+      // ③ '일반'(모델 기본) — 선택적 override(비우면 모델 기본 thinking 유지).
+      if (bucket.model.length) {
+        const sub = document.createElement("div");
+        sub.className = "rs-subgroup-title";
+        sub.textContent = "일반(모델 기본) thinking budget — 비우면 모델 기본값 유지";
+        const list = document.createElement("div");
+        list.className = "rs-list";
+        for (const it of bucket.model) list.appendChild(buildRuntimeSettingRow(it, canWrite, { emptyWhenNoOverride: true }));
+        body.append(sub, list);
+      }
     }
 
     updateHead();

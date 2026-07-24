@@ -46,9 +46,15 @@ def test_get_returns_registry(client, as_account):
     assert isinstance(body.get("agent_max_outputs"), list) and len(body["agent_max_outputs"]) >= 1
     assert isinstance(body.get("reasoning_budgets"), list)
     amo = {r["key"] for r in body["agent_max_outputs"]}
-    assert "agent_max_output:claude-sonnet-4" in amo
+    assert "agent_max_output:claude-sonnet-4" in amo  # 총 출력(①)은 adaptive 도 live — 유지
     rbk = {r["key"] for r in body["reasoning_budgets"]}
-    assert "reasoning_budget:claude-sonnet-4:max" in rbk
+    # sonnet-reasoning-budget-guide(2026-07-24): adaptive(Sonnet 5)는 effort 로 제어 → 죽은 예산 키
+    # 미노출. budget 계열(haiku)만 남고, adaptive_models 목록으로 UI 가 guide-note 를 렌더한다.
+    assert "reasoning_budget:claude-haiku-4:max" in rbk
+    assert "reasoning_budget:claude-sonnet-4:max" not in rbk
+    mtb = {r["key"] for r in body["model_thinking_budgets"]}
+    assert "model_thinking_budget:claude-sonnet-4" not in mtb
+    assert "claude-sonnet-4" in body.get("adaptive_models", [])
     keys = {t["key"] for t in body["timeouts"]}
     assert "AGENT_TIMEOUT_SEC" in keys and "MCP_TIMEOUT_SEC" in keys
     # 무 DB(get_conn=None) → override 없음 → effective == default.
@@ -95,17 +101,27 @@ def test_put_valid_value_passes_validation_then_needs_db(client, as_account):
 
 def test_put_model_budget_key_validates(client, as_account):
     as_account(perms=WRITE_PERMS)
-    # reasoning-budget-per-model: 상한이 모델 native−1024(sonnet 126976)로 확대. native 초과만 400.
-    resp = client.put(ENDPOINT, json={"key": "model_thinking_budget:claude-sonnet-4", "value": 999999})
+    # 상한이 모델 native−1024(haiku 62976)로 확대. native 초과만 400. (budget 계열 haiku 로 검증.)
+    resp = client.put(ENDPOINT, json={"key": "model_thinking_budget:claude-haiku-4", "value": 999999})
     assert resp.status_code == 400
 
 
 def test_put_model_budget_over_old_cap_now_valid(client, as_account):
-    # 회귀 방향 반대 가드: 예전 16000 상한을 넘던 값(30000)이 이제 검증을 통과한다(400 아님).
+    # 회귀 방향 반대 가드: 예전 16000 상한을 넘던 값(30000)이 이제 검증을 통과한다(400 아님, haiku).
     as_account(perms=WRITE_PERMS)
-    resp = client.put(ENDPOINT, json={"key": "model_thinking_budget:claude-sonnet-4", "value": 30000})
+    resp = client.put(ENDPOINT, json={"key": "model_thinking_budget:claude-haiku-4", "value": 30000})
     assert resp.status_code in (200, 500)  # 검증 통과 → conn 단계(DB 미기동 시 500)
     assert resp.status_code != 400
+
+
+def test_put_adaptive_sonnet_budget_keys_rejected(client, as_account):
+    # sonnet-reasoning-budget-guide(2026-07-24): adaptive(Sonnet 5) 예산 키는 스펙 제거로 미등록 →
+    # 저장 시도는 400(등록되지 않은 설정 키). effort(대화별 추론 강도 선택기)로만 제어된다.
+    as_account(perms=WRITE_PERMS)
+    r1 = client.put(ENDPOINT, json={"key": "model_thinking_budget:claude-sonnet-4", "value": 20000})
+    assert r1.status_code == 400
+    r2 = client.put(ENDPOINT, json={"key": "reasoning_budget:claude-sonnet-4:max", "value": 20000})
+    assert r2.status_code == 400
 
 
 def test_put_per_model_reasoning_key_validates(client, as_account):

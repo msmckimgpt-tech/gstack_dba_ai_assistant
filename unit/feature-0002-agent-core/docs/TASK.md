@@ -1544,3 +1544,7 @@ TASK-0015 (plan-review):
 - [x] 단위테스트 `tests/test_tool_result_cap.py` 6건(기본 캡≥100k·프로시저-크기 전문 통과·초과 절단+note·경계·무제한 sentinel·짧은 결과 무변경).
 - [ ] verify-completion → §18.8 적대 패널(backend+qa) → PR·머지 → 배포(영향 서비스 ask-worker/insight-worker/web 재빌드) → 라이브 실측(긴 프로시저 describe_routine 전문 도달).
 - worktree `ai/root/feature-0002-agent-core`(base main 3d228632).
+
+## TASK-20260724T085937-sonnet-reasoning-budget-guide (test-only) — adaptive sonnet 죽은 budget 스펙 제거 대응 테스트 갱신 (정본 feature-0003+shared)
+- [x] `tests/test_runtime_settings.py` sonnet budget 단정 → haiku 전환 + adaptive dead(override None)·adaptive_models 신규 단정. agent_max_output sonnet 유지.
+- [x] 전체 pytest(0002+0003) RC=0. 정본 리뷰=feature-0003 REV-20260724T085937.

@@ -456,3 +456,9 @@ source_of_truth: true
 - **위험등급**: Major(§12.3 — 코어 LLM 루프·전 도구 결과 경로) → 사용자 결정(scope) 후 구현 + PR/deploy confirm.
 - **Rollback**: 세 지점을 `[:4000]`/`> 4000` 하드코딩으로 복원 + 헬퍼·상수·테스트 제거(프로시저 재절단 재발).
 - **Cross-ref**: FRICTION_LEDGER FR-procedure-analysis-result-truncated · 선행 FR-show-create-routine-blocked(describe_routine 신설) · FR-partial-evidence-false-verification(절단 epistemic 계약) · REV-20260724T155534-tool-result-cap-raise · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260724T085937-sonnet-reasoning-budget-guide (test-only — sonnet adaptive 죽은 budget 스펙 제거에 따른 runtime_settings 테스트 갱신, 정본 feature-0003+shared)
+- Date: 2026-07-24. shared/runtime_settings.py 가 adaptive(Sonnet 5)의 reasoning_budget/model_thinking_budget 스펙을 제거(effort 로 제어 — 죽은 컨트롤 봉인)함에 따라, feature-0002 소유 `tests/test_runtime_settings.py` 의 sonnet-budget 단정을 갱신한다(코드 로직 변경 0, 테스트만).
+- Changes(feature-0002 `tests/test_runtime_settings.py`): sonnet budget/clamp 검증을 haiku(budget 계열, native−1024=62976)로 전환 + adaptive sonnet 은 override 항상 None(스펙 제거)·reasoning_budgets haiku-only 3행·`adaptive_models` 표면화 신규 단정. agent_max_output(①) sonnet 검증은 유지(adaptive 도 live).
+- 비변경: agent_core 등 src 코드 0. effort/thinking style 매핑·budget 계열 동작 불변.
+- Cross-ref(정본): feature-0003 MODIFY/FUNCTION/REVIEW/TASK-20260724T085937-sonnet-reasoning-budget-guide · shared MODIFY 동일 slug · REVIEW-20260724T085937(cross-ref).
