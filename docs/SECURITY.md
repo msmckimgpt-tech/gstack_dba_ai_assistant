@@ -109,10 +109,17 @@ ai_read_priority: 4
 | `/share/{token}` | GET | anonymous | 대화 공유 페이지 (`share.html` FileResponse) | TASK-0058 (REQ-20260514-0001) |
 | `/api/public/share/{token}` | GET | anonymous | 공유된 대화 read-only 조회 (메시지 + SQL + 결과셋) | TASK-0058 |
 | `/api/public/share/{token}/fork` | POST | **로그인 필요** + `conversation.create` | 공유받은 viewer 가 본인 계정으로 fork (`_optional_account` 가 아닌 `_require_account` 사용) | TASK-0058 |
+| `/llms.txt` | GET | anonymous | LLM 발견 표준 파일 (static contract, 데이터 0) | feature-0023 api-discovery (SEC-20260724) |
+| `/.well-known/ai-conversation-api.json` | GET | anonymous | AI Conversation API 매니페스트 (엔드포인트 카탈로그·인증·스코프, static contract) | feature-0023 api-discovery |
+| `/api/ai/manifest` | GET | anonymous | 위 매니페스트 alias (API 네임스페이스) | feature-0023 api-discovery |
+| `/api/ai/guide` | GET | anonymous | AI 학습 가이드라인 (`static/ai-api-guide.md`, static contract) | feature-0023 api-discovery |
+| ~~`/openapi.json`·`/docs`·`/redoc`~~ | GET | **비활성화** | FastAPI 기본 anonymous 노출(admin 포함 전체 스키마) → SEC-20260724 로 disable. 대체: 위 큐레이션 발견 + admin-gated `/api/admin/openapi.json`(`console.access`) | feature-0023 api-discovery |
 
 ### 7.1 운영 정책
 
 - `/api/public/...` 네임스페이스는 **공유 view 외 다른 anonymous endpoint 추가 금지**. 신규 anonymous endpoint 가 필요하면 본 표를 갱신 + REVIEW.md 등재.
+- **`/api/ai/*`·`/llms.txt`·`/.well-known/ai-*` = 발견(discovery) 네임스페이스 (feature-0023, SEC-20260724)**: 외부 AI 가 Conversation API 를 인지·학습하기 위한 **static contract** 만 제공한다. 불변식: (1) **인스턴스 데이터 0** — 계정/대화/결과셋 등 런타임 데이터를 절대 반환하지 않는다(정적 API 계약·문서만). (2) **conversation-only** — 관리(`/api/admin/*`)·인증·계정 엔드포인트를 카탈로그에 포함하지 않는다. (3) 매니페스트 카탈로그(`ai_discovery._CONVERSATION_ENDPOINTS`)는 수기 관리 정본 — 자동 route introspection(admin 유출 위험)으로 생성하지 않는다. 이 세 불변식을 깨는 변경은 §18.8 보안 리뷰 필수.
+- **FastAPI 기본 `/openapi.json`·`/docs`·`/redoc` 비활성화 (SEC-20260724)**: `app = FastAPI(..., docs_url=None, redoc_url=None, openapi_url=None)`. 기본값은 admin 포함 전체 스키마를 anonymous 로 유출했다. 전체 스키마가 필요한 개발자는 admin-gated `GET /api/admin/openapi.json`(`console.access`)로 조회한다.
 - 공유 페이지는 사내 IP 가정 (운영 LAN 또는 VPN 경유) 으로 활성화돼 있다. 외부 LAN 노출이 발생하면 SQL 원문 + 결과셋이 외부로 그대로 전달된다.
 - 공유 페이지의 `share.html` 은 `meta robots noindex,nofollow` 와 fixed footer "사내 공유용 — 외부 IP 로 전달 시 데이터 노출 위험" 안내를 포함한다.
 

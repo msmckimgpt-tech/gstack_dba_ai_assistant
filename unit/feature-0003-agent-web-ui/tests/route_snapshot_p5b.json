@@ -1,35 +1,7 @@
 {
-  "total_routes": 217,
-  "api_routes": 216,
+  "total_routes": 218,
+  "api_routes": 217,
   "ordered": [
-    {
-      "path": "/openapi.json",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
-    {
-      "path": "/docs",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
-    {
-      "path": "/docs/oauth2-redirect",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
-    {
-      "path": "/redoc",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
     {
       "path": "/static",
       "methods": [],
@@ -1514,6 +1486,41 @@
     },
     {
       "path": "/api/admin/reasoning/notes",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/.well-known/ai-conversation-api.json",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/manifest",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/llms.txt",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/guide",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/openapi.json",
       "methods": [
         "GET"
       ],

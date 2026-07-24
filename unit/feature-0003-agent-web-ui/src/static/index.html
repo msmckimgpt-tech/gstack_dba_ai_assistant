@@ -4,6 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant</title>
+  <!-- feature-0023 api-discovery: 외부 AI/에이전트가 사이트 탐색 중 Conversation API 를
+       자연스럽게 인지하도록 하는 발견 포인터(기계판독, 화면 무영향). 상세: /api/ai/guide -->
+  <link rel="ai-conversation-api" type="application/json" href="/.well-known/ai-conversation-api.json" />
+  <meta name="ai-conversation-api-guide" content="/api/ai/guide" />
+  <meta name="ai-conversation-api-manifest" content="/.well-known/ai-conversation-api.json" />
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css?v=dev" />
