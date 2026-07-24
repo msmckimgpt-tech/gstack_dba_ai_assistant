@@ -131,6 +131,7 @@ __all__ = [
     "AGENT_MASK_PII",
     "AGENT_MAX_SHOW",
     "AGENT_MAX_STEPS",
+    "AGENT_TOOL_RESULT_MAX_CHARS",
     "AGENT_MEMORY_CLEAR_KEEP_IDS",
     "AGENT_MEMORY_MAX_TURNS",
     "AGENT_META_EXPLORATION_BUDGET",
@@ -1007,6 +1008,14 @@ AGENT_CSV_ANALYZE_MAX_ROWS = int(os.getenv("AGENT_CSV_ANALYZE_MAX_ROWS", "200000
 AGENT_CSV_ANALYZE_MAX_BYTES = int(os.getenv("AGENT_CSV_ANALYZE_MAX_BYTES", str(5 * 1024 * 1024)))
 AGENT_MODE = os.getenv("AGENT_MODE", "sql").lower()
 AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "128"))
+# FR-procedure-analysis-result-truncated: 에이전트 도구 루프가 LLM 에 되먹이는 도구 결과의
+# 문자 상한(대형 backstop). 원래 4000 하드코딩은 저장 프로시저 정의(describe_routine 은 정의를
+# 전문 반환) 처럼 길고 단일-권위 텍스트를 잘라 프로시저 분석을 한 번에 못 하게 만들었다.
+# 사용자 결정(2026-07-24): 도구별 분기 없이 전 도구에 큰 유한 캡을 적용 — 실무 프로시저는
+# 사실상 무제한(전문 도달)이되 병리적 대량 결과(넓은 표 대량 행 등)는 컨텍스트 폭주를 막는
+# backstop 이 유지된다. 캡 초과 시에만 절단 note 를 붙여 FR-partial-evidence epistemic 계약
+# (미열람분 전수 단정 금지)을 보존한다. 0/음수는 무제한으로 해석.
+AGENT_TOOL_RESULT_MAX_CHARS = int(os.getenv("AGENT_TOOL_RESULT_MAX_CHARS", "100000"))
 AGENT_COLUMN_SCAN_LIMIT = int(os.getenv("AGENT_COLUMN_SCAN_LIMIT", "2000"))
 AGENT_GLOBAL_KB_MIN_WEIGHT = int(os.getenv("AGENT_GLOBAL_KB_MIN_WEIGHT", "4"))
 AGENT_GLOBAL_KB_MAX_ENTRIES = int(os.getenv("AGENT_GLOBAL_KB_MAX_ENTRIES", "80"))

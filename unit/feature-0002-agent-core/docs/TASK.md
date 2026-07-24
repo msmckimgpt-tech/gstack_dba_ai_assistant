@@ -1532,3 +1532,15 @@ TASK-0015 (plan-review):
 - [x] FUNCTION.md(LLM 타임아웃 콘솔 동기화 항목)·MODIFY.md·REVIEW.md 기록.
 - [ ] verify-completion → PR·머지 → 배포(`sudo -E bin/deploy-web.sh`, gateway+worker reconcile) → 라이브 검증(콘솔 AGENT_TIMEOUT_SEC 변경 → gateway 실제 요청 타임아웃 추종 + sonnet 대화 정상 + edge ping 1회).
 - worktree `ai/claude/feature-0007-timeout-console-sync`(base main 6c5afe7c).
+
+## TASK-20260724T155534-tool-result-cap-raise — 도구 결과 4000자 하드캡 → 대형 설정 backstop (프로시저 정의 절단 해소, Major §12.3; /_dqa:conversation_audit FR-procedure-analysis-result-truncated)
+> 계기(사용자): "assistant 가 추론·내부 도구로 프로시저를 분석할 때 텍스트가 길면 잘려 한 번에 탐색 불가 — 반환 문자열 길이 제한 제거". describe_routine 은 정의를 전문 반환하나 에이전트 루프의 전역 4000자 캡이 재절단해 도구 목적 무력화.
+
+### §1.2 Completion Checklist
+- [x] 진단: 근본 = `agent_core.py` 도구 루프 3지점(메인 루프·rederive 루프·저장 copy)의 `tool_result[:4000]` 전역 하드캡. describe_routine(CHG-20260713T140405) 정의 전문 반환을 재절단. rootcause high(코드 file:line 확정).
+- [x] 결정(AskUserQuestion 2026-07-24): 3안 중 **전 도구 대형 캡**(도구별 분기 없음·유한 backstop 유지) 선택.
+- [x] `shared/config.py` `AGENT_TOOL_RESULT_MAX_CHARS`(env override, 기본 100000, `__all__` 등록).
+- [x] `agent_core._cap_tool_result` 헬퍼(초과 시에만 `... (truncated)` note — FR-partial-evidence 계약 보존; `cap<=0`=무제한) + 3지점 치환. 저장 copy 는 PG text(무제한) 이라 overflow 없음.
+- [x] 단위테스트 `tests/test_tool_result_cap.py` 6건(기본 캡≥100k·프로시저-크기 전문 통과·초과 절단+note·경계·무제한 sentinel·짧은 결과 무변경).
+- [ ] verify-completion → §18.8 적대 패널(backend+qa) → PR·머지 → 배포(영향 서비스 ask-worker/insight-worker/web 재빌드) → 라이브 실측(긴 프로시저 describe_routine 전문 도달).
+- worktree `ai/root/feature-0002-agent-core`(base main 3d228632).

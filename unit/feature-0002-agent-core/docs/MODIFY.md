@@ -444,3 +444,15 @@ source_of_truth: true
 - 검증: feature-0002+0003 전체 pytest RC=0(신규 실패 0), 변경 3파일(reasoning_effort/conversation_answer/llm_provider_health) 타겟 전부 PASS. 배포 후 라이브: 콘솔 AGENT_TIMEOUT_SEC 변경→gateway 실행 로그/실제 요청 timeout 추종 확인 예정.
 - Rollback: extra_body 를 조건부(thinking/effort 있을 때만) 로 되돌리고 client/run 예산을 정적 `AGENT_TIMEOUT_SEC` 로 복원(단 콘솔↔gateway drift 재발).
 - Cross-ref: REV-20260724T054326-timeout-console-sync · feature-0007 MODIFY/REVIEW/TASK-20260724T054326-timeout-console-sync · 선행 CHG-20260724T141420-llm-timeout-align(feature-0007, 정적 300) · shared/config.py AGENT_TIMEOUT_SEC · runtime_settings AGENT_TIMEOUT_SEC(live, apply_mode) · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260724T155534-tool-result-cap-raise (도구 결과 4000자 하드캡 → 대형 설정 backstop; 프로시저 정의 절단 해소 — Major §12.3)
+> 계기(사용자, /_dqa:conversation_audit): "assistant 가 추론·내부 도구로 프로시저를 분석할 때 텍스트가 길면 내용이 잘려 한 번에 탐색 불가 — 반환 문자열 길이 제한이 없도록". 마찰 = **FR-procedure-analysis-result-truncated**.
+- **근본원인(L2 도구 피드백, 코드 file:line 확정)**: 에이전트 도구 루프가 **모든 도구 결과를 4000자로 하드캡**한 뒤 LLM 에 되먹임 — `agent_core.py` 메인 루프(구 4905)·재추론(rederive) 루프(구 4684)·저장 copy(구 4933). 프로시저 정의 전용 도구 `describe_routine`(CHG-20260713T140405)은 핸들러에서 정의 본문을 **전문 반환**하지만 이 루프 캡이 4000자 초과 본문을 다시 잘라 도구 목적을 무력화 → 나머지를 못 채운 assistant 가 반복 재조회/포기(타임아웃). 실무 프로시저 본문은 4000자 초과가 흔함. **describe_routine 개선의 직접 후속 갭.**
+- **결정(사용자, 2026-07-24 AskUserQuestion)**: 세 선택지(정의 도구만 무제한 / 전 도구 무제한 / **전 도구 대형 캡**) 중 **전 도구 대형 캡** — 도구별 분기 없이 큰 유한 캡을 전 도구에 적용. 실무 프로시저는 사실상 무제한(전문 도달)이되, 병리적 대량 결과(넓은 표 대량 행 등)의 컨텍스트/토큰 폭주는 유한 backstop 이 계속 막는다.
+- **무엇을**: (1) `shared/config.py` `AGENT_TOOL_RESULT_MAX_CHARS` 신설(env override, 기본 **100000**, `__all__` 등록). (2) `agent_core._cap_tool_result(text)` 헬퍼 신설 — cap 초과 시에만 `... (truncated)` note 부착(FR-partial-evidence epistemic 계약: 미열람분 존재/부재/개수 전수 단정 금지 보존), `cap<=0` 은 무제한 sentinel. (3) 세 캡 지점(메인 루프·rederive 루프·저장 copy)을 헬퍼/상수로 치환. 저장 copy 는 이미 캡된 `tool_result` 를 그대로 저장(PG `agent_runtime.core_messages.content`=text 무제한이라 컬럼 overflow 없음).
+- **파일**: `shared/config.py`(상수+`__all__`); `unit/feature-0002-agent-core/src/agent_core.py`(`_cap_tool_result` 헬퍼 + 3지점 치환); `tests/test_tool_result_cap.py`(신규 6건).
+- **왜**: 프로시저 등 길고 단일-권위 텍스트를 한 번에 못 봐 분석이 타임아웃되던 마찰의 근본 봉인. describe_routine 이 정의를 전문 반환해도 루프 캡이 재절단하던 모순 제거.
+- **호환/안전**: sql_guard·RBAC·datasource 바인딩·PII 경로 **불변**(가드 표면 0 변경 — 순수 컨텍스트 사이징 정책). 절단이 실제 발생하는 경우(캡 초과)엔 기존 epistemic note 보존 → 완전성 오단정 회귀 없음. execute_sql/scratch 는 자체 bounding(미리보기 50행·확장 12000자·셀 100자) 유지 — 이 루프 캡은 그 위의 backstop. 스키마/마이그레이션 변경 0.
+- **위험등급**: Major(§12.3 — 코어 LLM 루프·전 도구 결과 경로) → 사용자 결정(scope) 후 구현 + PR/deploy confirm.
+- **Rollback**: 세 지점을 `[:4000]`/`> 4000` 하드코딩으로 복원 + 헬퍼·상수·테스트 제거(프로시저 재절단 재발).
+- **Cross-ref**: FRICTION_LEDGER FR-procedure-analysis-result-truncated · 선행 FR-show-create-routine-blocked(describe_routine 신설) · FR-partial-evidence-false-verification(절단 epistemic 계약) · REV-20260724T155534-tool-result-cap-raise · ANCHOR 0002 §1~§3 무충돌.
