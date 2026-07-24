@@ -10,6 +10,16 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T112446-share-scroll-bottom [SUBAGENT:adversarial-frontend] — 공유 대화 링크 진입 시 문서 스크롤 맨 아래 고정 (TASK-20260724T112446-share-scroll-bottom, Minor §12.3 frontend-only) — SHIP-WITH-FIXES
+- 대상 diff: `static/share.js` 단일(+70) — 진입 `fetchShare→render` 체인에 `engageInitialBottomPin()` 1회 + `scrollShareToBottom`/`releaseShareBottomPin`/`onShareBottomPinKeydown` 신설 + `pageBranchShare`·`scrollShareMessageIntoCenter` 에서 명시 pin 해제. §18.8 적대 패널(general-purpose subagent, correctness+regression+UX 렌즈 9축) — 결함 적발 목적.
+- **헤드라인 회귀 2건 CONFIRMED-OK**: (1) feature-0019 버전 페이징 위치보존(`pageBranchShare` savedY)과 진입 pin 이 싸우지 않음 — 페이저 클릭(마우스 click, wheel/touch/key 아님)이라 명시 `releaseShareBottomPin()`(savedY 캡처 전 선행)이 유일 방어이고 정상 배치·disconnect 후 재-fire 불가. (2) rail dot 점프(`scrollShareMessageIntoCenter`)도 함수 진입 즉시 명시 해제 → eased 스크롤과 무충돌. **BLOCKING/데이터-정확성 defect 0.**
+- **누수/멱등 CONFIRMED-OK**: `releaseShareBottomPin` early-return 멱등 · observer disconnect+null · `{passive:true}` add ↔ 옵션 없는 remove 매칭 정상(passive 는 match key 아님) · repin 클로저 `_shareBottomPinActive` 가드. maxY 수식은 파일 내 기존 idiom(L216-217/L388)과 동치 · 빈 공유(messages 0)=maxY 0 no-op CONFIRMED-OK. scroll-behavior:smooth 부재 grep 확인(instant 진입 스크롤 정상, reduced-motion moot). fixed `.share-footer` 는 `.share-container` bottom padding 80px 로 마지막 메시지 안 가림(CONFIRMED-OK).
+- **반영한 findings (SHIP-WITH-FIXES → 3건 흡수)**:
+  - **[MINOR top-priority, finding#9] 고정 3s 상한이 느린 성장 놓침**: mermaid/외부 이미지가 3s 후 완료되면 pin 해제 후 최신 메시지가 fold 아래로 밀려 무거운 대화에서 "맨 아래" 계약 위배. → **성장 신호(ResizeObserver·img `load` capture)마다 리셋되는 settle 타이머(600ms) + 절대 상한(8s)** 으로 교체(고정 3s 폐기). 이미지 지연 로드 재고정 추가.
+  - **[NIT, finding#3] dead `window load` 리스너 제거**: engage 는 resolved fetch promise 안에서 실행돼 window.load 는 이미 발화 → 무효 + 미제거 leak. → 삭제.
+  - **[MINOR, finding#5] keydown 과다 트리거 + Tab yank**: any-key 해제가 keyboard/AT 사용자를 조기 해제. → **스크롤 의도 키(PageUp/Down·arrows·Home/End·Space)만** 해제 + **`focusin`** 해제 추가(Tab/클릭 focus 시 헤더로 focus-scroll 을 pin 이 방해하지 않도록).
+- 검증: `node --check` PASS(수정 후) · verify-completion #1~#16(§16.3) · CHECK#13 test-runs.d Windows-browser fragment(PRE-COMMIT PASS + POST-DEPLOY 라이브 계획, headless layout 부재 사유). 라이브 PB-0008(AC-SSB-1~3)은 배포 후(deploy_scope: included). Cross-ref: TASK/CHG/TEST-20260724T112446-share-scroll-bottom.
+
 ## REV-20260722T105320-share-menu-perm-wiring-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260722T103254-share-menu-perm-wiring, 비-정책 doc-only)
 - Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료 + evidence PNG 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260722T103254-share-menu-perm-wiring(SHIP).
 - 라이브 실측(배포 066cec5e, https://localhost/ bootstrap_admin, win-browser Chrome relay): 본인 대화 말풍선 ☰ 3항목(`여기서 분기`·`여기까지 공유`·`여기부터 공유`) 모두 `is-access-blocked` 없음(수정 전 공유 2항목 항상 blocked 회귀 복구)·`여기부터 공유` 클릭 → onSelect(beginShareFloor) 실행·floor arm 배너/마커 표시·pageerror 0. 서빙 app.js `conversation.share.create` action 리터럴 0.

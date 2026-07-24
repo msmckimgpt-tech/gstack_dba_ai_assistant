@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260724T112446-share-scroll-bottom — 공유 대화 링크 화면 진입 시 문서 스크롤을 맨 아래(최신 메시지)부터 위치 (Minor §12.3 — feature-0003 web/UI 프론트 `static/share.js` 단독, frontend-only)
+- 요청(사용자, 2026-07-24, `/_template:entry` arg-given): "공유된 대화 링크 화면에 진입 시, 화면 스크롤이 가장 아래부터 위치하도록 구성해주세요."
+- 현상: `/share/{token}` 페이지는 `fetchShare→render` 후 스크롤을 건드리지 않아 진입 시 문서 맨 위(첫 메시지)에서 시작. 대화는 시간순 append 라 최신 메시지가 맨 아래 → 진입 즉시 최신을 보려면 사용자가 매번 아래로 스크롤해야 함(메신저/채팅 UI 관례 위배).
+- 수정(frontend-only, `static/share.js` 단독):
+  - `engageInitialBottomPin()` 신설 — 초기 `fetchShare(token).then(render...)` 체인에서 **1회만** 호출. `scrollShareToBottom()`(문서 맨 아래로 `window.scrollTo`)을 즉시 실행.
+  - 지연 콘텐츠(표/mermaid/이미지/point rail 비동기 렌더로 문서 높이 증가) 대응: `#shareMessages` 를 `ResizeObserver` 로 관찰, 사용자 미조작(`_shareBottomPinActive`) 동안 재고정(repin). 미지원 환경은 `[150,400,1000,2500]ms` setTimeout 폴백(setupSharePointRail 과 동형 임계) + `window load`.
+  - pin 해제 트리거: 사용자 조작(wheel/touch/keydown), 3s 안전 타임아웃, `pageBranchShare`(feature-0019 위치보존 우선), `scrollShareMessageIntoCenter`(rail 점프). 해제 시 리스너 제거 + observer disconnect(멱등).
+- 완료 판정(체크리스트):
+  - [x] AC-SSB-1 구현: 초기 render 후 `engageInitialBottomPin()` 1회 호출 + `scrollShareToBottom()` (문서 맨 아래).
+  - [x] AC-SSB-2 구현: 지연 콘텐츠(표/mermaid/이미지) 높이 증가 대응 재고정(ResizeObserver + setTimeout 폴백, 미조작 게이트).
+  - [x] AC-SSB-3 구현: 사용자 조작 시 재고정 중단(wheel/touch/keydown+3s) · `pageBranchShare`/`scrollShareMessageIntoCenter` 무회귀 pin 해제 · 빈 공유 no-op(maxY=0).
+  - [x] `node --check` PASS · §18.8 적대 프론트 리뷰(REV-20260724T112446-share-scroll-bottom) 반영.
+  - [x] CHECK#13 = test-runs.d Windows-browser fragment(PRE-COMMIT PASS 기록 + POST-DEPLOY 라이브 계획, headless layout 부재 사유).
+  - [ ] POST-DEPLOY: main 병합 + `deploy-web` 후 실 Windows Chrome PB-0008 라이브 실측(AC-SSB-1~3 / AC-1~6) — deploy_scope: included(FIRST_REQUEST.md 전역 §12.2).
+- 위험도: Minor(§12.3 — 단일 파일 display-계층 추가, 비파괴, RBAC/스키마/엔드포인트 0). 롤백 = revert.
+
 ## TASK-20260723T080415-floating-menu-close-fix — floating 메뉴(특히 폴더 '···')가 바깥클릭/ESC 로 안 닫히던 결함 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독, frontend-only. universal-ctxmenu 후속 사용자 신고)
 - 신고(사용자, 2026-07-23): 우클릭 확장은 정합하게 동작하나 **폴더 '···' 메뉴는 열리지만 다른 항목 클릭 등으로 닫는 동작이 안 됨**.
 - 근본원인: `closeFloatingMenus()` 가 제거 대상 id 를 `["convItemMenu","bubbleMsgMenu"]` 로 **하드코딩** — feature-0024 가 폴더 메뉴(`id="folderMenu"`)를 추가할 때 이 목록에 누락. 어떤 close 경로(바깥클릭 `onDocClick`·ESC `onKey`·scroll·toggle)도 `folderMenu` 를 제거 못함 → 안 닫힘 + 다른 메뉴와 공존 가능 + 폴더 트리거 `is-open`/`aria-expanded` 영구 잔존. universal-ctxmenu(우클릭)가 폴더 메뉴를 쉽게 열게 되며 이 pre-existing drift 를 표면화.
