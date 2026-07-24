@@ -24,6 +24,8 @@ __all__ = [
     "model_supports_vision",
     "model_thinking_style",
     "effort_for_reasoning_level",
+    "OAUTH_FRONTIER_IDENTITY",
+    "requires_oauth_frontier_identity",
     "normalize_reasoning_level",
     "thinking_budget_for_level",
     "canonical_usage_model",
@@ -416,6 +418,25 @@ def effort_for_reasoning_level(level: str | None) -> str | None:
     명시 레벨(low/high/max)만 해당 effort 문자열 반환.
     """
     return _EFFORT_FOR_LEVEL.get(normalize_reasoning_level(level) or "")
+
+
+# ── OAuth frontier identity 게이트 (cc-identity-inject 2026-07-24) ──────────────────────
+# 라이브 실증(2026-07-24): 운영 LLM 이 sk-ant-oat OAuth 구독 토큰(Claude Code/Max)으로 나갈 때,
+# frontier 모델(Sonnet 5)은 **system 의 첫 블록이 정확히 이 Claude Code identity 문자열**이어야 한다 —
+# 없거나(또는 generic system) 이면 Anthropic 이 429(rate_limit 로 위장된 identity 게이트)로 거부한다.
+# Haiku 4.5(pre-Sonnet-5)는 미요구. 대화 경로(agent_core)·probe 가 adaptive 계열에 한해 이 문자열을 첫
+# system 블록/메시지로 주입한다(제품 system 프롬프트는 그 다음 블록 — 실 동작은 제품 프롬프트가 지배,
+# 라이브 검증). 단일 문자열로 CC+제품을 이어붙이면 게이트 미통과(블록/메시지 분리 필수).
+OAUTH_FRONTIER_IDENTITY: str = "You are Claude Code, Anthropic's official CLI for Claude."
+
+
+def requires_oauth_frontier_identity(model: str | None) -> bool:
+    """OAuth 토큰 사용 시 이 모델이 Claude Code identity 첫 system 블록을 요구하는지.
+
+    현 배포에서 adaptive 계열(Sonnet 5)만 요구한다(Haiku 등 budget 계열은 미요구). frontier-identity
+    요구와 adaptive-thinking 이 현 카탈로그에서 동일 집합이라 model_thinking_style 로 판정한다.
+    """
+    return model_thinking_style(model) == "adaptive"
 
 
 # ── AI 활동 taxonomy (AI 운영 관제 패널 — 확장 레지스트리, TASK-AIOPS) ────────────

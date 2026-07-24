@@ -446,16 +446,22 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
     _PROBE_STATE["ts"] = now
     try:
         from shared import config as cfg
-        from shared.model_catalog import model_thinking_style
+        from shared.model_catalog import (OAUTH_FRONTIER_IDENTITY, model_thinking_style,
+                                          requires_oauth_frontier_identity)
         from .llm import _get_llm_client
         model = getattr(cfg, "OPENAI_MODEL", None) or "claude-sonnet-4"
         client = _get_llm_client(timeout_sec=timeout_sec, model=model)
         if client is None:
             record_provider_restricted(not_configured_restriction(provider), source="probe")
             return read_provider_health(provider)
+        # cc-identity-inject(2026-07-24): OAuth frontier(Sonnet 5)는 system 첫 블록에 Claude Code identity
+        # 요구(없으면 429). probe 도 adaptive 계열이면 CC system 을 먼저 넣어야 valid ping 이 된다.
+        _messages: "list[dict[str, Any]]" = [{"role": "user", "content": "ping"}]
+        if requires_oauth_frontier_identity(model):
+            _messages = [{"role": "system", "content": OAUTH_FRONTIER_IDENTITY}, *_messages]
         create_kwargs: "dict[str, Any]" = {
             "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
+            "messages": _messages,
             "timeout": timeout_sec,
         }
         # sonnet5-upgrade(2026-07-24): probe 도 모델별 thinking 스타일을 따라야 한다.

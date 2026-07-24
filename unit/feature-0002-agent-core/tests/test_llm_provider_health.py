@@ -330,7 +330,19 @@ def test_probe_adaptive_model_sends_effort_not_budget(monkeypatch):
     assert kw.get("extra_body") == {"output_config": {"effort": "low"}}
     assert "thinking" not in kw.get("extra_body", {})   # budget_tokens 절대 미주입
     assert kw["max_tokens"] > 1                          # adaptive 여유(잘림 방지)
+    # cc-identity-inject: adaptive probe 는 Claude Code identity 를 첫 system 블록으로 주입(없으면 429).
+    from shared.model_catalog import OAUTH_FRONTIER_IDENTITY
+    assert kw["messages"][0] == {"role": "system", "content": OAUTH_FRONTIER_IDENTITY}
     assert len(ok_calls) == 1                            # valid ping 성공 → 배너 자동해소
+
+
+def test_probe_budget_model_no_cc_identity(monkeypatch):
+    # budget 계열(haiku)은 CC identity 미요구 → probe 도 미주입(첫 메시지 = user ping).
+    from shared.model_catalog import OAUTH_FRONTIER_IDENTITY
+    captured, _ = _run_probe(monkeypatch, "claude-haiku-4-interactive", True)
+    kw = captured[0]
+    assert kw["messages"][0].get("role") == "user"
+    assert all(m.get("content") != OAUTH_FRONTIER_IDENTITY for m in kw["messages"])
 
 
 # ── recovery-only gate: ok/unknown 은 실제 호출 없이 cached 반환(5h 윈도우 재고정 방지) ──

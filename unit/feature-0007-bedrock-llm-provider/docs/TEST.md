@@ -315,6 +315,24 @@ source_of_truth: true
   (사용자 하드리프레시 Ctrl+F5 권장). full PB-0008 win-browser 시각 확인은 계정 용량 확보 후 sonnet 답변 실측과
   함께 수행 권장.
 
+### Run 2026-07-24-003 (cc-identity-inject 검증)
+- Date: 2026-07-24
+- Environment: agent 이미지 격리 컨테이너(pytest) + **직접 api.anthropic.com 호출**(gateway 컨테이너, 두 OAuth
+  토큰) + gateway `/v1/chat/completions` 실 probe.
+- Runner: AI (Claude)
+- Result Summary: 근본 원인 라이브 실증 + 단위 PASS. 배포 후 sonnet 실 대화 최종 확정 예정.
+- Pass/Fail:
+  - **직접 Anthropic 호출(계정 용량 직접 확인)**: claude-corp·root **claude-sonnet-5 200**(unified-status:
+    allowed) — 용량 有. system 없음/generic → **429**. `"You are Claude Code…"` 단독 → 200. `CC+"\n\n"+제품`
+    단일 문자열 → 429. **`system 블록배열 [CC,제품]` / `2 system 메시지 [CC,제품]` → 200**. haiku-4-5 system
+    없이 → 200(미요구). thinking `{type:adaptive}`+`output_config.effort` 도 직접 200(param 무관).
+  - **동작 검증**: CC-first + DB 제품 system → 답변 DB 어시스턴트(SQL·쿼리·분석), Claude Code 코딩 아님.
+  - **단위 pytest PASS(rc=0)**: `test_requires_oauth_frontier_identity`·`test_sonnet_prepends_cc_identity_system`·
+    `test_haiku_no_cc_identity_injection`·`test_probe_adaptive_model_sends_effort_not_budget`(+CC)·
+    `test_probe_budget_model_no_cc_identity`.
+- Notes(배포 후 최종): 배포 후 gateway 로 `claude-sonnet-4-chat` 실 대화 ping → **200 확정**(CC identity 주입이
+  litellm→Anthropic 통과). PB-0008: 새 대화 sonnet 선택 → 정상 답변(429 아님). 실패 시 rollback.
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel

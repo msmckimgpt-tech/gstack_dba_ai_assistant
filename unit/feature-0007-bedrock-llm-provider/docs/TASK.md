@@ -303,6 +303,13 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - 없음.
 
 ## 6. Done
+- [x] **cc-identity-inject** (2026-07-24, sonnet5-upgrade 후속·최종): 사용자 요청으로 sonnet 계정 용량 직접
+  확인 → 직접 api.anthropic.com 호출로 **두 계정 sonnet-5 200(용량 有)** 확인, 429의 실 원인은 **OAuth 구독
+  토큰이 frontier(Sonnet 5)에 Claude Code identity 첫 system 블록을 요구**함(haiku 미요구, gateway 미주입).
+  model_catalog `OAUTH_FRONTIER_IDENTITY`+`requires_oauth_frontier_identity` 신설, agent_core `_call_llm`·
+  probe 가 adaptive 모델에 CC identity 첫 system 주입. 동작 왜곡 없음(제품 프롬프트 지배) 실증. 검증: pytest
+  PASS(rc=0), gateway 매핑 실증. **배포 후 sonnet 실 대화 200 + PB-0008 최종.** 사용자 결정: identity 주입 구현.
+  (CHG-20260724T123503-cc-identity-inject / REV-20260724T123503-cc-identity-inject)
 - [x] **sonnet5-upgrade** (2026-07-24, sonnet-chat-fallback 후속): 라이브 검증서 sonnet 두 계정 모두 429
   발견 → 실 원인은 폐기된 `anthropic/claude-sonnet-4-6` 라우팅(현행 Sonnet 5). ⓵ litellm sonnet alias 3개를
   `anthropic/claude-sonnet-5` 로 repoint + **thinking 을 adaptive 로 마이그**(Sonnet 5 는 budget_tokens 400 —

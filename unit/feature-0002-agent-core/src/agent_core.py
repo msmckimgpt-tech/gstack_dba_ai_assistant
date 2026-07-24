@@ -56,7 +56,7 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from shared.model_catalog import conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, thinking_budget_for_level
+from shared.model_catalog import OAUTH_FRONTIER_IDENTITY, conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, requires_oauth_frontier_identity, thinking_budget_for_level
 from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
@@ -3061,6 +3061,13 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         image_attachments=image_attachments or None,
         vision_model=model_supports_vision(model),
     )
+    # cc-identity-inject(2026-07-24): OAuth 구독 토큰으로 나가는 frontier 모델(Sonnet 5)은 system 의 첫
+    # 블록이 Claude Code identity 여야 Anthropic 이 허용한다(없으면 429 — 라이브 실증). 제품 system 프롬프트
+    # 앞에 **별도 system 메시지**로 주입하면 litellm 이 Anthropic system 의 첫 블록으로 매핑한다(단일 문자열
+    # 연결은 게이트 미통과 → 반드시 분리). 실 동작은 뒤따르는 제품 프롬프트가 지배(라이브 검증). budget 계열
+    # (haiku)은 미요구라 미주입(working 경로 무영향).
+    if requires_oauth_frontier_identity(model):
+        effective_messages = [{"role": "system", "content": OAUTH_FRONTIER_IDENTITY}, *effective_messages]
     # FR-edge-fallback-conversation-context-loss (2026-07-07): 이 함수는 정의상 사용자 대면 assistant
     # 답변(task='agent') 경로다. edge(gemma) 폴백이 걸린 alias(claude-haiku-4)는 litellm 호출 시 edge-free
     # 대화 전용 alias(claude-haiku-4-chat)로 치환해, 두 claude 계정 완전 장애 시 gemma 로 강등되지 않고

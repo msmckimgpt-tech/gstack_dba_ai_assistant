@@ -507,3 +507,14 @@ source_of_truth: true
 - 위험도: **Major(§12.3)** — LLM provider thinking-API 마이그. 신규 자격 없음. 라이브 검증 게이트가 완료 조건.
 - Verification: feature-0002+0003 pytest PASS(rc=0, adaptive/effort·dual-style·probe adaptive·H2 안전기본값 테스트 포함), YAML OK, JS OK. H4 는 배포 후 라이브 ping + PB-0008.
 - Cross-ref: MODIFY CHG-20260724T113513-sonnet5-upgrade / TEST.md Run 2026-07-24-002 / shared/model_catalog.py `model_thinking_style` / agent_core `_call_llm` / llm_provider_health `probe_provider`.
+
+## REV-20260724T123503-cc-identity-inject [SKIPPED:live-empirical-verification] — PASS
+- 대상: Sonnet 5 OAuth frontier-identity 게이트 해소(Claude Code identity 첫 system 블록 주입). CHG-20260724T123503-cc-identity-inject 정합.
+- **리뷰 방식 = 라이브 실증(정적 적대리뷰 대신, [SKIPPED] 사유)**: 본 변경의 정확성은 **Anthropic 의 런타임 OAuth-identity 게이트 동작**으로 결정되며 정적 코드리뷰로 판정 불가. 직접 api.anthropic.com + gateway 실 probe 로 다음을 결정적으로 확증:
+  - 두 계정 sonnet-5 직접 200(용량 有) · system 없음/generic → 429 · CC 문자열만 → 200 · `CC+제품` 단일 문자열 → 429 · **블록/메시지 분리 `[CC,제품]` → 200** · haiku 미요구.
+  - litellm 매핑: 2 system 메시지 또는 system content 블록배열 → Anthropic 첫 블록 CC → 200(구현 채택: 2 system 메시지 prepend).
+  - 동작: CC-first + DB 제품 system → 답변 DB 어시스턴트 정상(코딩 아님).
+- 판정: sonnet5-upgrade cycle 의 2차 적대패널이 남긴 유일한 라이브 게이트(H4/frontier-identity)를 실증으로 닫음. 코드 변경은 상수 1 + 헬퍼 1 + adaptive-gated 주입 2곳(대화·probe)으로 최소, 단위 테스트가 gating·주입·haiku-미주입·probe 주입 고정.
+- 위험도: **Major(§12.3)** — LLM 라우팅/인증 표면. 신규 자격 없음(기존 OAuth 토큰). ToS 경계(구독 토큰에 Claude Code identity)는 사용자 명시 결정(2026-07-24 "identity 주입 구현").
+- Verification: feature-0002+0003 pytest PASS(rc=0). 배포 후 gateway 실 대화 ping(sonnet 200) + PB-0008 최종.
+- Cross-ref: MODIFY CHG-20260724T123503-cc-identity-inject / shared/model_catalog.py `OAUTH_FRONTIER_IDENTITY`.

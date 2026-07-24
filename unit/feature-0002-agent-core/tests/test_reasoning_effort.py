@@ -201,6 +201,35 @@ def test_sonnet_adaptive_normal_no_override(monkeypatch):
         assert "extra_body" not in kwargs, level
 
 
+# ── 2d. cc-identity-inject: OAuth frontier(Sonnet 5) 는 Claude Code identity 첫 system 블록 요구 ──
+def test_requires_oauth_frontier_identity():
+    from shared.model_catalog import requires_oauth_frontier_identity as R, OAUTH_FRONTIER_IDENTITY
+    assert R("claude-sonnet-4") is True           # Sonnet 5 서빙 alias
+    assert R("claude-sonnet-4-chat") is True
+    assert R("claude-sonnet-5") is True
+    assert R("claude-haiku-4") is False           # budget 계열은 미요구
+    assert R("edge") is False
+    assert R(None) is False
+    assert OAUTH_FRONTIER_IDENTITY.startswith("You are Claude Code")
+
+
+def test_sonnet_prepends_cc_identity_system(monkeypatch):
+    # sonnet(adaptive)은 effective_messages 첫 블록에 Claude Code identity system 을 주입해야 429 회피.
+    from shared.model_catalog import OAUTH_FRONTIER_IDENTITY
+    kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
+    msgs = kwargs["messages"]
+    assert msgs[0] == {"role": "system", "content": OAUTH_FRONTIER_IDENTITY}
+    assert msgs[1] == {"role": "user", "content": "hi"}   # 원 메시지 보존, CC 는 앞에만
+
+
+def test_haiku_no_cc_identity_injection(monkeypatch):
+    # budget 계열(haiku)은 identity 미요구 → 미주입(working 경로 무영향).
+    from shared.model_catalog import OAUTH_FRONTIER_IDENTITY
+    kwargs = _call(monkeypatch, "claude-haiku-4", "normal")
+    assert kwargs["messages"][0] == {"role": "user", "content": "hi"}
+    assert all(m.get("content") != OAUTH_FRONTIER_IDENTITY for m in kwargs["messages"])
+
+
 # ── 2b. feature-0018 reasoning-budgets: 관리 콘솔 override precedence ─────────
 @pytest.fixture(autouse=True)
 def _reset_runtime_settings(monkeypatch, tmp_path):
