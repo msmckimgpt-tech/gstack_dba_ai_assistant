@@ -9,11 +9,11 @@ ctx 4096)으로 silent 강등돼 ~30K 토큰 대화 히스토리가 잘리고 �
 
 본 테스트가 고정하는 계약:
 - G1  conversation_answer_model: claude-haiku-4 → claude-haiku-4-chat 치환.
-- G2  claude-sonnet-4 등 매핑 밖 model 은 identity(무회귀; sonnet 은 애초에 edge
-      폴백이 없다).
+- G2  conversation_answer_model: claude-sonnet-4 → claude-sonnet-4-chat 치환
+      (sonnet-chat-fallback 2026-07-24). 미매핑 claude alias 는 identity(무회귀).
 - G3  _call_llm 이 litellm(create)에 보내는 'model' kwarg 는 치환된 -chat alias.
-- G4  단, _record_llm_usage 로는 **원본** model(claude-haiku-4)을 기록한다(표시/집계
-      정합 유지; 실제 서빙 모델은 resolved_model 로 추적).
+- G4  단, _record_llm_usage 로는 **원본** model(claude-haiku-4 / claude-sonnet-4)을 기록한다
+      (표시/집계 정합 유지; 실제 서빙 모델은 resolved_model 로 추적).
 
 `make test`(agent 이미지)에서 DB 없이 monkeypatch 로 실행된다.
 """
@@ -67,11 +67,18 @@ def test_conversation_answer_model_maps_haiku_to_chat():
     assert conversation_answer_model("claude-haiku-4") == "claude-haiku-4-chat"
 
 
-def test_conversation_answer_model_identity_for_registered_claude():
-    # 등록된 Claude 모델은 identity(무회귀). sonnet 은 litellm fallbacks 목록에 없어 edge 강등 없음.
-    assert conversation_answer_model("claude-sonnet-4") == "claude-sonnet-4"
+def test_conversation_answer_model_maps_sonnet_to_chat():
+    # sonnet-chat-fallback(2026-07-24): sonnet 도 edge-free 대화 chat alias 로 치환된다.
+    # bare claude-sonnet-4 는 root fallback 이 없어 claude-corp 429 시 즉시 실패했다 → -chat 2계정 체인.
+    assert conversation_answer_model("claude-sonnet-4") == "claude-sonnet-4-chat"
+
+
+def test_conversation_answer_model_identity_for_unmapped_claude():
+    # 매핑 밖 claude alias 는 identity(무회귀).
+    assert conversation_answer_model("claude-opus-4") == "claude-opus-4"
     # 이미 해소된 chat alias 는 멱등.
     assert conversation_answer_model("claude-haiku-4-chat") == "claude-haiku-4-chat"
+    assert conversation_answer_model("claude-sonnet-4-chat") == "claude-sonnet-4-chat"
     # 공백/None 은 identity(호출측이 상위에서 기본 모델로 해소; 여기서 변형하지 않음).
     assert conversation_answer_model("") == ""
     assert conversation_answer_model(None) == ""
@@ -121,7 +128,7 @@ def test_call_llm_routes_haiku_to_edge_free_chat_alias(monkeypatch):
     assert recorded == [("claude-haiku-4", "agent")]
 
 
-def test_call_llm_leaves_sonnet_unchanged(monkeypatch):
+def test_call_llm_routes_sonnet_to_edge_free_chat_alias(monkeypatch):
     sink: dict = {}
     recorded: list = []
     _patch_side_effects(monkeypatch, recorded)
@@ -130,8 +137,9 @@ def test_call_llm_leaves_sonnet_unchanged(monkeypatch):
         _CaptureClient(sink), [{"role": "user", "content": "hi"}], "claude-sonnet-4",
     )
 
-    # sonnet 은 매핑 밖 → litellm·기록 모두 원본.
-    assert sink["model"] == "claude-sonnet-4"
+    # sonnet-chat-fallback(2026-07-24): litellm 에는 edge-free 2계정 chat alias 가 나간다.
+    assert sink["model"] == "claude-sonnet-4-chat"
+    # 기록/표시 model 은 원본 유지(집계 정합).
     assert recorded == [("claude-sonnet-4", "agent")]
 
 
@@ -196,6 +204,60 @@ def test_default_conversation_model_chain_is_edge_free():
     )
     # 명시적으로 gemma/edge alias 자체가 도달 불가임을 재확인.
     assert "edge-fallback" not in reachable
+
+
+# ── G5b: sonnet 대화 체인도 라우팅 가능 + edge-free + 2계정 fallback 보유 (sonnet-chat-fallback) ──
+# 증상 봉인: 새 대화 sonnet 선택이 "서비스 자체의 요청량 한도"로 실패한 근본 원인은 bare claude-sonnet-4
+# 가 root fallback 없는 단일 계정이라 claude-corp 429 시 즉시 raise 된 것. 이 테스트는 sonnet 대화
+# 아웃바운드(claude-sonnet-4-chat)가 (1) litellm 에 등록돼 라우팅 가능하고, (2) 두 번째 계정(-chat-root)
+# 으로 fallback 되며, (3) 그 체인이 edge(gemma)에 도달하지 않음을 고정한다. 셋 중 하나라도 깨지면 회귀.
+def test_sonnet_conversation_chain_has_two_accounts_and_is_edge_free():
+    yaml = pytest.importorskip("yaml")
+    with open(_LITELLM_CFG, encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+
+    model_of = {
+        m["model_name"]: str(m.get("litellm_params", {}).get("model", ""))
+        for m in cfg["model_list"]
+    }
+    api_key_of = {
+        m["model_name"]: str(m.get("litellm_params", {}).get("api_key", ""))
+        for m in cfg["model_list"]
+    }
+    fb_map: dict[str, list[str]] = {}
+    for entry in cfg.get("litellm_settings", {}).get("fallbacks", []):
+        for k, v in entry.items():
+            fb_map[k] = list(v)
+
+    outbound = conversation_answer_model("claude-sonnet-4")
+    assert outbound == "claude-sonnet-4-chat"
+    assert outbound in model_of, f"sonnet 대화 아웃바운드 '{outbound}' 가 litellm 에 미등록 — 라우팅 불가"
+
+    reachable = _reachable_aliases(fb_map, outbound)
+    # (2) 두 번째 계정으로 fallback — root 계정 alias 가 도달 가능해야 한다(단일 계정 429 생존).
+    assert "claude-sonnet-4-chat-root" in reachable, (
+        "sonnet 대화 체인에 root 계정 fallback 이 없다 — claude-corp 429 시 즉시 실패(원 결함 재발)."
+    )
+    # 두 계정이 서로 다른 자격 slot(ANTHROPIC_API_KEY vs _ROOT)을 써야 실질 2계정.
+    assert "ANTHROPIC_API_KEY_ROOT" in api_key_of.get("claude-sonnet-4-chat-root", "")
+    assert api_key_of.get("claude-sonnet-4-chat", "").endswith("ANTHROPIC_API_KEY")
+    # (3) edge-free — 체인의 모든 도달 alias 실 model 은 anthropic/*(gemma/로컬 도달 금지).
+    offenders = {
+        a: model_of.get(a, "<unknown>")
+        for a in reachable
+        if not model_of.get(a, "").startswith("anthropic/")
+    }
+    assert not offenders, f"sonnet 대화 폴백 체인에서 비-anthropic 모델 도달: {offenders}"
+    assert "edge-fallback" not in reachable
+
+    # 격리 불변식(NIT-a): bare claude-sonnet-4 는 대화 경로가 쓰지 않는 probe/OPENAI_MODEL/node_analysis
+    # 전용이라 **단일 계정·fallback 미등록**으로 유지돼야 한다. 미래에 bare sonnet 에 fallback 을 잘못
+    # 추가하면(격리 파괴) 이 단정이 잡는다.
+    assert "claude-sonnet-4" in model_of, "bare claude-sonnet-4 deployment 가 사라짐 — probe 경로 회귀"
+    assert "claude-sonnet-4" not in fb_map, (
+        "bare claude-sonnet-4 에 fallback 이 생겼다 — 비대화 경로(probe/node_analysis)까지 root 로 폴백"
+        "시켜 격리를 깬다(대화 회복성은 -chat 체인이 전담)."
+    )
 
 
 # ── G6: 누출 alias 해소 대상이 litellm 에 실제 등록된 model_name 인지 (config invariant) ──
@@ -270,3 +332,41 @@ def test_call_llm_sizes_budget_from_outbound_for_leaking_alias(monkeypatch):
     )
     # 기록/표시는 원본('auto') 유지.
     assert recorded == [("auto", "agent")]
+
+
+# ── G8b: sonnet 대화 예산 경로 — budget_model=원본, max_tokens>16000 (sonnet-chat-fallback, NIT-b/c) ──
+# sonnet 은 thinking-capable claude-* 라 budget_model=원본(claude-sonnet-4). 예산 경로를 실제로 태워
+# (1) outbound 가 -chat, (2) 예산 키가 **원본 claude-sonnet-4**(outbound 아님), (3) max_tokens 가
+# sonnet-chat config 고정 thinking(16000) 초과 → Anthropic max_tokens>budget 만족(2차 400 없음)을 고정.
+def test_call_llm_sizes_sonnet_budget_from_original_model(monkeypatch):
+    sink: dict = {}
+    recorded: list = []
+    budget_calls: list = []
+    monkeypatch.setattr(
+        agent_core, "_record_llm_usage",
+        lambda model, task, resp, conversation_id=None, run_id=None, latency_ms=None,
+        target=None, step_gap_ms=None: recorded.append((model, task)),
+    )
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_images", lambda: None)
+    monkeypatch.setattr(agent_core, "messages_for_provider", lambda messages, **kw: messages)
+    monkeypatch.setattr(agent_core, "model_supports_vision", lambda m: False)
+    monkeypatch.setattr(agent_core, "thinking_budget_for_level", lambda level: None)
+    monkeypatch.setattr(agent_core._rts, "reasoning_budget_override", lambda m, lvl: None)
+    monkeypatch.setattr(agent_core._rts, "model_thinking_budget_override", lambda m: None)
+    # agent_max_output 스파이(호출 model 기록 + sonnet default 40000) — DB 비의존·결정론.
+    monkeypatch.setattr(agent_core._rts, "agent_max_output", lambda m: budget_calls.append(m) or 40000)
+
+    agent_core._call_llm(
+        _CaptureClient(sink), [{"role": "user", "content": "hi"}], "claude-sonnet-4",
+        conversation_id="conv-S", run_id="run-S",
+    )
+
+    assert sink["model"] == "claude-sonnet-4-chat"          # 아웃바운드(edge-free 2계정)
+    # sonnet 은 thinking-capable → 예산 키는 **원본** claude-sonnet-4(outbound 아님) — usage/override 정합.
+    assert budget_calls == ["claude-sonnet-4"]
+    assert isinstance(sink["max_tokens"], int) and sink["max_tokens"] > 16000, (
+        f"sonnet max_tokens={sink.get('max_tokens')} 가 -chat 고정 thinking budget 16000 이하 "
+        f"→ Anthropic max_tokens>budget_tokens 위반(2차 400)."
+    )
+    # 기록/표시는 원본 유지.
+    assert recorded == [("claude-sonnet-4", "agent")]

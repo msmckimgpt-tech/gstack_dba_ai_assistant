@@ -111,6 +111,30 @@ model_list:
         type: "enabled"
         budget_tokens: 5000
 
+  # ── sonnet-chat-fallback(2026-07-24): claude-sonnet-4 대화 답변(task='agent') 전용 edge-free alias ──
+  #    증상: 새 대화에서 사용자가 sonnet 을 고르면 "서비스 자체의 요청량 한도에 도달했습니다"로 실패(계정
+  #    quota 무관). 근본 원인: bare claude-sonnet-4(위)는 **단일 계정(claude-corp)이고 root fallback 이
+  #    없어**, claude-corp OAuth 가 5h rolling rate-limit(429)에 걸리면 sonnet 대화가 즉시 raise 됐다.
+  #    haiku 는 claude-haiku-4-chat → -chat-root 2계정 체인으로 같은 429 를 생존한다(위). 이 비대칭을 해소:
+  #    sonnet 도 -chat(claude-corp) → -chat-root(root) 2계정 체인을 부여한다. edge(gemma) 폴백은 대화 정책
+  #    (2026-07-07 사용자 결정)대로 **의도적 배제** — 두 계정 모두 실패면 429/401 을 그대로 raise 해 정직하게
+  #    실패한다(맥락 파괴한 2B gemma 답변 원천 차단). bare claude-sonnet-4 는 probe/OPENAI_MODEL 기본값 등
+  #    비대화 경로 전용으로 무변경(격리). thinking budget(16000)은 bare claude-sonnet-4 와 동일.
+  - model_name: claude-sonnet-4-chat
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+      thinking:
+        type: "enabled"
+        budget_tokens: 16000
+  - model_name: claude-sonnet-4-chat-root
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+      thinking:
+        type: "enabled"
+        budget_tokens: 16000
+
   # ── insight-llm-fallback: 최종(3순위) 폴백 = 로컬 gemma(edge) via local-llm-gateway ──
   # claude-corp·root 두 계정 모두 429/실패 시 로컬 LLM 으로 우회(rate-limit 없음). local-llm-gateway 는
   # OpenAI 호환 chat(gemma4:e2b) — thinking 미지원이라 litellm drop_params 가 thinking 파라미터 제거.
@@ -196,12 +220,16 @@ litellm_settings:
   #    두 계정 모두 실패면 gemma 로 강등하지 않고 429/401 raise → agent_core 가 정직하게 실패 안내.
   #  · claude-haiku-4-chat-root              → **fallback 미등록**(체인 종단). 마지막 시도가 실패하면 그
   #    에러(429/401)를 그대로 올려 깨끗이 실패한다. edge 로 넘어가지 않는 것이 의도.
+  #  · claude-sonnet-4-chat(대화 답변)        → sonnet-4-chat-root **로 끝**(edge 없음). sonnet-chat-fallback
+  #    (2026-07-24): sonnet 도 haiku-chat 과 동형 2계정 체인. 두 계정 모두 실패면 429/401 raise(정직 실패).
+  #  · claude-sonnet-4-chat-root             → **fallback 미등록**(체인 종단, edge 없음 — haiku-chat-root 동일).
   fallbacks:
     - {"claude-haiku-4": ["claude-haiku-4-root", "edge-fallback"]}
     - {"claude-haiku-4-root": ["edge-fallback"]}
     - {"claude-haiku-4-interactive": ["claude-haiku-4-interactive-root", "edge-fallback"]}
     - {"claude-haiku-4-interactive-root": ["edge-fallback"]}
     - {"claude-haiku-4-chat": ["claude-haiku-4-chat-root"]}
+    - {"claude-sonnet-4-chat": ["claude-sonnet-4-chat-root"]}
 
 # ── 모니터링 (옵션) ───────────────────────────────────────────────────
 # LiteLLM 의 success/failure callback hook 으로 audit 확장 가능. 본 cycle 에서는

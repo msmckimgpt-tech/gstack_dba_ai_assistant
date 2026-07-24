@@ -251,6 +251,27 @@ source_of_truth: true
   - crontab 변경은 git 미추적 runtime 상태 — 백업 `/tmp/crontab-root-backup-
     20260707112835.txt`, 설치 확인 `crontab -l` diff 로 일치 확인.
 
+### Run 2026-07-24-001 (sonnet-chat-fallback 검증)
+- Date: 2026-07-24
+- Environment: agent 이미지 격리 컨테이너(`mysql-ai-agent:current`), worktree 마운트 +
+  `PYTHONDONTWRITEBYTECODE=1`, `pip install pytest pyyaml`. DB 미기동(monkeypatch·YAML 파싱만).
+- Runner: AI (Claude)
+- Result Summary: sonnet-chat-fallback 관련 계약 + 전체 회귀 PASS.
+- Pass/Fail:
+  - `test_conversation_answer_no_edge_alias.py` (17건): **PASS**. 신규 G2
+    `test_conversation_answer_model_maps_sonnet_to_chat`(sonnet→claude-sonnet-4-chat),
+    개명 `test_call_llm_routes_sonnet_to_edge_free_chat_alias`(litellm outbound=-chat·기록=원본),
+    신규 G5b `test_sonnet_conversation_chain_has_two_accounts_and_is_edge_free`(litellm_config
+    실파싱: sonnet-chat 라우팅 가능·`-chat-root` 도달·edge-fallback 미도달) 포함.
+  - feature-0002-agent-core + feature-0003-agent-web-ui **전체 스위트: PASS(rc=0)** — 회귀 0.
+  - YAML lint: `yaml.safe_load` OK(11 deployment, fallback 6 — sonnet-chat 체인 정확).
+- Notes:
+  - sonnet-chat·-chat-root `budget_tokens: 16000` = bare `claude-sonnet-4` 동일 →
+    max_tokens(원본 키 agent_max_output=40000) > thinking(16000), 2차 400 무회귀 확인.
+  - 미검증(배포 후 라이브): 실 claude-corp 429 상황에서의 `-chat`→`-chat-root` 실 우회 발동.
+    현재 rate-limit 미발생 기간이면 반응형 fallback 자체가 트리거되지 않음(정상). PB-0008
+    win-browser 로 새 대화 sonnet 선택 → 정상 답변 생성 실측 권장.
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel

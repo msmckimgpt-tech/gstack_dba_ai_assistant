@@ -246,6 +246,26 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
 - **모델 selector UI 신설** (사용자 요청 발생 시): 현 구현은 server default
   (`claude-haiku-4`) 사용. 사용자가 turn 별로 Sonnet ↔ Haiku 선택권 필요 시
   composer chip 옆에 모델 selector dropup 신설.
+- **node_analysis(AI 능동 분석)도 bare `claude-sonnet-4` 사용 — 동일 취약성 잔존**
+  (sonnet-chat-fallback 2026-07-24 발견): `AGENT_NODE_ANALYSIS_MODEL=claude-sonnet-4`
+  는 `conversation_answer_model` 을 거치지 않아 여전히 root 계정 fallback 없는 단일 계정
+  bare alias 로 나간다. 대화(agent)만 본 cycle 에서 `-chat` 2계정 체인으로 격리했으므로,
+  claude-corp 429 시 node_analysis 는 아직 즉시 실패 가능(백그라운드 경로라 사용자 차단은
+  아니나 분석 누락). 필요 시 별 cycle 로 `-interactive` 계열처럼 sonnet 분석 alias 에도
+  2계정 체인 부여 검토.
+- **config 고정 thinking budget 대비 `agent_max_output` 하한 가드**(모든 thinking alias
+  공통, sonnet-chat-fallback 시 재확인): admin 이 `agent_max_output(model)` 을 litellm
+  config 의 고정 `budget_tokens`(haiku 5000 / sonnet 16000) 미만으로 낮추면 '일반' 레벨
+  요청이 `max_tokens < thinking.budget_tokens` BadRequestError(2차 400)로 실패한다
+  (TEST.md §7 haiku-chat-root 노트의 근인 후보). runtime_settings 에서 하한을 모델별
+  config thinking 이상으로 clamp 하는 가드를 별 cycle 로 검토 권장.
+- **`_LLM_PRICE_USD_PER_1M` 에 `-chat`/-chat-root alias 단가 미등록**(sonnet-chat-fallback 시
+  적대 패널 재확인): 관리 콘솔 비용 뷰 중 계정별/일별은 `COALESCE(resolved_model, model)` 로
+  키잉하는데, litellm 이 서빙 alias 를 `resp.model`(=resolved_model)로 에코하면
+  `claude-sonnet-4-chat`·`claude-haiku-4-chat`(-root/-interactive 포함)가 단가표에 없어 **$0
+  으로 오표시**된다(by_model 차트는 원본 model 키라 정상). 기존 gap 의 sonnet 확장 —
+  `admin_usage._LLM_PRICE_USD_PER_1M` 에 alias→원본 단가 매핑(또는 resolved→원본 정규화)을
+  추가해 일괄 해소 권장(별 cycle).
 
 <!-- 본 cycle 의 누적 변경 — REPORT.md 는 rewrite 정책 이지만 추가 commit 의
      사항을 §3 Recent Changes 의 last commit 기록 형태로 누적. -->

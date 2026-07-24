@@ -147,11 +147,19 @@ def is_local_llm_model(value: str | None) -> bool:
 # "서비스 요청량 한도… 잠시 후 다시 시도"로 안내)가 되게 한다.
 #
 # _call_llm(정의상 task='agent' 경로)이 litellm 에 보내는 model 만 edge-free alias 로 치환한다. 저장/표시/
-# usage `model` 컬럼은 원본 alias(claude-haiku-4)를 유지하고, 실제 서빙 모델은 resolved_model(resp.model)
-# 로 추적한다. 매핑에 없는 model(예: claude-sonnet-4 — 애초에 litellm fallbacks 목록에 없어 edge 강등이
-# 없음)은 identity 로 그대로 반환한다(무회귀).
+# usage `model` 컬럼은 원본 alias(claude-haiku-4 / claude-sonnet-4)를 유지하고, 실제 서빙 모델은
+# resolved_model(resp.model)로 추적한다. 매핑에 없는 model 은 identity 로 그대로 반환한다(무회귀).
+#
+# sonnet-chat-fallback(2026-07-24): claude-sonnet-4 도 대화 전용 edge-free chat alias
+# (claude-sonnet-4-chat)로 치환한다. 이전엔 sonnet 이 identity 로 통과했는데, litellm 의 bare
+# claude-sonnet-4 deployment 는 **단일 계정(claude-corp)이고 root 계정 fallback 이 없어**, claude-corp
+# OAuth 가 5h rolling rate-limit(429)에 걸리면 sonnet 대화가 즉시 실패("서비스 자체의 요청량 한도")했다
+# (haiku 는 claude-haiku-4-chat → -chat-root 2계정 체인으로 생존). claude-sonnet-4-chat →
+# claude-sonnet-4-chat-root 2계정 체인(edge-free, gemma 강등 없음)으로 haiku 와 parity 복원. bare
+# claude-sonnet-4 는 probe/OPENAI_MODEL 기본값 등 비대화 경로가 그대로 쓰므로 무변경(격리).
 _CONVERSATION_ANSWER_ALIAS: dict[str, str] = {
     "claude-haiku-4": "claude-haiku-4-chat",
+    "claude-sonnet-4": "claude-sonnet-4-chat",
 }
 # 대화 답변 경로가 Bedrock 프록시로 보낼 때 쓸 기본 chat 모델(edge-free, litellm 등록 model_name).
 # haiku 는 API_MODEL_OPTIONS 상 "기본값" 이며 claude-haiku-4-chat 가 그 edge-free chat alias 다.
@@ -171,8 +179,9 @@ def conversation_answer_model(value: str | None) -> str:
     Bedrock 프록시가 "Invalid model name passed in model=..." 400** 을 반환한다(실측: 다수 대화의
     `LLM 호출 오류` + `__ask_worker__`). 운영 `.env` 의 `OPENAI_MODEL=auto` 가 대표 트리거.
     이들을 대화 기본 chat 모델(claude-haiku-4-chat)로 fail-loud 해소해 raw alias 가 Bedrock 으로
-    새지 않게 한다(대화는 Claude 유지 — gemma 로 강등하지 않음). 등록된 Claude 모델
-    (claude-sonnet-4 등)과 이미 해소된 chat alias 는 identity(무회귀).
+    새지 않게 한다(대화는 Claude 유지 — gemma 로 강등하지 않음). 등록된 대화 Claude 모델
+    (claude-haiku-4 / claude-sonnet-4)은 위 _CONVERSATION_ANSWER_ALIAS 로 -chat 치환되고, 미매핑
+    claude alias 및 이미 해소된 chat alias 는 identity(무회귀).
     """
     name = str(value or "").strip()
     mapped = _CONVERSATION_ANSWER_ALIAS.get(name)
