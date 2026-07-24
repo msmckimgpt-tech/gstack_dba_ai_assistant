@@ -6224,5 +6224,5 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 백엔드 tools.py: execute_sql·scratch_sql 다운로드 가이던스 항상 노출(링크 자동제공·인라인 붙여넣기 금지)
 - [x] 단위 테스트: pytest 2303 passed/2 skipped(신규 6 + 무회귀) · jsdom 18 PASS · 기존 가이던스 assert 2건 신문구 정합
 - [x] docs 갱신 (REPORT/TASK/MODIFY/FUNCTION/REVIEW/TEST) — feature-0003 홈, feature-0002 cross-cut note
-- [ ] verify-completion PASS → commit → deploy(web+worker, deploy_scope: included) → POST-DEPLOY PB-0008 라이브(대화 515c0fd9 재로드 csv 블록 다운로드 버튼)
+- [x] verify-completion PASS → PR #926 머지(main dc316152) → make deploy-web(web+worker 무중단·soak PASS) → POST-DEPLOY PB-0008 라이브 PASS(대화 515c0fd9 csv 블록 '📥 CSV 다운로드' 버튼·클릭 Blob text/csv 2603B·콘솔 에러 0)
 정본 rationale=REVIEW.md REV-20260724T123600-csv-download-wiring, 변경이력=MODIFY.md CHG-20260724T123600-csv-download-wiring.

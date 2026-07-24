@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T133000-csv-download-wiring-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260724T123600-csv-download-wiring, 비-정책 doc-only)
+- Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + REPORT 완결 + TASK 체크박스 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260724T123600-csv-download-wiring(SHIP-WITH-FIXES).
+- 라이브 실측(배포 dc316152, `bin/win-browser.py` relay 실 Windows Chrome 150, bootstrap_admin 세션): 대화 `20260724022429-515c0fd9`('도전 던전 전투 로그…' = 배틀 로그 차원별 집계, 16 메시지) 인라인 ```csv``` 블록 아래 "📥 CSV 다운로드" 버튼 렌더(visible·ready=1·linkAfter=false)·클릭 시 Blob `text/csv;charset=utf-8;` size=2603 다운로드 트리거·콘솔 에러 0. 서빙 app.js/share.js/styles.css 신 심볼 curl 확증. 사용자 요청("CSV 다운로드 가능 답변인데 실제 다운로드 수단 없음") 해소.
+
 ## REV-20260724T123600-csv-download-wiring [SUBAGENT:adversarial-review] — assistant "CSV 다운로드 가능" 답변의 실제 다운로드 배선 누락 수정 (TASK-20260724T123600-csv-download-wiring, Major cross-cut) — SHIP-WITH-FIXES (2 MAJOR/MINOR in-cycle 반영)
 - 범위: 프론트 `static/{app.js,share.js,styles.css}` + cross-cut feature-0002 `agent_core.py`(`_collapse_large_csv_blocks`/`_collapse_result_blocks`)·`modules/tools.py`(가이던스). §18.8 적대 리뷰(general-purpose subagent, 전 파일 Read·양 렌더 파이프라인·sanitize·재사용 헬퍼·테스트 정독).
 - **[MAJOR] 반영**: share.js `enhanceCsvBlockDownloads` 가 app.js 의 "`/api/file` 링크 뒤따름 → 버튼 skip" 가드를 누락 → 백엔드가 절단한 5행 미리보기 블록에 공유 뷰가 "CSV 다운로드" 버튼을 붙여 *일부 행만 받는 오해*(markExternalLinks 가 /api/file 링크를 익명 401 외부링크로 만들어 유일 작동 다운로드가 5행 버튼). **수정**: app.js 동형 skip 가드를 share.js 에 미러(nextElementSibling `a[href*="/api/file?"]` → skip + csvDownloadReady 마킹). .mjs 회귀 잠금 2건 추가(share/2).
