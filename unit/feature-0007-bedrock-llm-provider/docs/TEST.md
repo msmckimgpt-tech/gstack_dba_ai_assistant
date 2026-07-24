@@ -343,6 +343,19 @@ source_of_truth: true
   게이트) 전부 해소·배포·라이브 확정. 라벨(claude-sonnet/claude-haiku) 서빙 정상. 잔여 PB-0008 win-browser 시각
   확인은 사용자 UI 재현 시 권장(백엔드 경로는 실측 200 확정).
 
+### Run 2026-07-24-004 (llm-timeout-align 검증)
+- Date: 2026-07-24
+- Environment: gateway 컨테이너 실 config introspect + 실 호출 latency 측정 + 배포 후 sonnet 대화.
+- Runner: AI (Claude)
+- Result Summary: 근본원인 라이브 확정 + config 정합. 배포 후 실행 config 300 + 대화 정상 확정 예정.
+- Pass/Fail:
+  - **진단**: 배포 worker AGENT_TIMEOUT_SEC=**300**, gateway litellm request_timeout=**120** → 불일치(gateway 조기 컷).
+  - **latency 실측**(무거운 routine-분석 시뮬, gateway 실 ping): high effort **19.0s**(out 1443, finish stop),
+    medium **14.0s** — 개별 호출은 대체로 빠름. timeout 은 장문-답변 후반 라운드/재시도·fallback 복합이 120s 초과.
+  - **fix**: request_timeout 120→300(앱 per-call 예산 정합). YAML OK.
+- Notes(배포 후 최종): bedrock-gateway reconcile 후 `/app/config.yaml` request_timeout=300 확인 + sonnet 대화
+  ping 정상(429/timeout 아님). 장문 sonnet 대화 실사용 관찰 권장.
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel

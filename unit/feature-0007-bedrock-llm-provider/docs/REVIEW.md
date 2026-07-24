@@ -518,3 +518,11 @@ source_of_truth: true
 - 위험도: **Major(§12.3)** — LLM 라우팅/인증 표면. 신규 자격 없음(기존 OAuth 토큰). ToS 경계(구독 토큰에 Claude Code identity)는 사용자 명시 결정(2026-07-24 "identity 주입 구현").
 - Verification: feature-0002+0003 pytest PASS(rc=0). 배포 후 gateway 실 대화 ping(sonnet 200) + PB-0008 최종.
 - Cross-ref: MODIFY CHG-20260724T123503-cc-identity-inject / shared/model_catalog.py `OAUTH_FRONTIER_IDENTITY`.
+
+## REV-20260724T141420-llm-timeout-align [SKIPPED:minor-config-alignment] — PASS
+- 대상: litellm request_timeout 120→300 (Sonnet 5 대화 "Request timed out" 해소). CHG-20260724T141420-llm-timeout-align 정합.
+- 리뷰 방식([SKIPPED] 사유): 단일 config 값 정합화(로직 변경 0). 근본원인은 라이브 실측으로 결정적 확정 — 배포 AGENT_TIMEOUT_SEC=300(앱 client) > litellm request_timeout=120(gateway) 불일치로 gateway 가 앱보다 먼저 컷. config 주석이 명시한 "request_timeout ≥ AGENT_TIMEOUT_SEC" 의도를 복원하는 것이라 정적 적대리뷰의 추가 판별력 낮음.
+- 대안 검토: (a) effort 를 medium 기본으로 낮춰 latency 단축 — 개별 호출 실측이 19s(high)로 이미 빠르고 답변 품질 저하 우려라 미채택(근본은 타임아웃 불일치). (b) 대화 경로 streaming 전환 — claude-api skill 권장(장문/high max_tokens 타임아웃 회피 정본)이나 agent loop 대규모 리팩터·회귀위험 → REPORT §8 장기 과제로 이연. 본 cycle 은 명백한 불일치(120<300)만 정합화하는 최소·고신뢰 fix.
+- 위험도: Minor(§12.3) — 타임아웃 상향, 비파괴. 상향은 느린 호출을 더 기다릴 뿐 회귀 없음(빠른 호출 무영향).
+- Verification: YAML OK. 배포 후 실행 config request_timeout=300 + sonnet 대화 정상 확인.
+- Cross-ref: MODIFY CHG-20260724T141420-llm-timeout-align / TEST.md Run 2026-07-24-004.
