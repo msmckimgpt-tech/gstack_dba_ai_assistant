@@ -18,7 +18,9 @@
 ## Discovery (기계판독)
 
 - [/.well-known/ai-conversation-api.json](/.well-known/ai-conversation-api.json): 매니페스트
-  (인증·엔드포인트 카탈로그·에러·스코프·MCP). `/api/ai/manifest` 도 동일.
+  (인증·엔드포인트 카탈로그·에러·스코프·MCP·토큰 문의처). `/api/ai/manifest` 도 동일.
+- [/api/ai/openapi.json](/api/ai/openapi.json): 기계판독 OpenAPI 3.1 스펙(conversation-only,
+  관리 콘솔 제외) — 코드젠·엄밀 검증용.
 - [/api/ai/guide](/api/ai/guide): 상세 학습 가이드라인(엔드포인트별 요청/응답/에러/예제).
 
 ## 사용 방법 (요약)

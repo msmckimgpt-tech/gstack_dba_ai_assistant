@@ -1,6 +1,6 @@
 {
-  "total_routes": 218,
-  "api_routes": 217,
+  "total_routes": 219,
+  "api_routes": 218,
   "ordered": [
     {
       "path": "/static",
@@ -1500,6 +1500,13 @@
     },
     {
       "path": "/api/ai/manifest",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/openapi.json",
       "methods": [
         "GET"
       ],

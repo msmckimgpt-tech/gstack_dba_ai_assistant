@@ -64,3 +64,19 @@ source_of_truth: true
 - Impact: additive. 신규 익명 엔드포인트는 static contract 전용(인스턴스 데이터 0·conversation only).
   openapi 비활성화는 익명 스키마 유출 제거(개발자 admin-gated 대체) — 기존 인증/대화 경로 무영향.
 - Rollback Notes: 라우터/파일 revert + FastAPI 설정 원복(openapi 재노출). 완전 가역.
+
+## CHG-20260724-0004 (Minor §12.3 — API 발견 blackbox 검증 후속: 가이드 정확화 + 기계판독 OpenAPI)
+- Date: 2026-07-24
+- Related Requirement: REQ-20260722-conversation-api-access (발견 진입점 검증 후속)
+- Summary: 서브에이전트에 URL 만 주고 발견·학습을 blackbox 검증한 결과(성공) 드러난 가이드 공백 보정.
+  - #4 **`GET /api/ai/openapi.json` 신설** — 외부 AI 코드젠용 수기 OpenAPI 3.1(conversation-only,
+    관리 제외, JSON Schema + 예제 + Bearer securityScheme). `app.openapi()`(admin 포함) 미사용.
+  - #1 가이드 401 vs 403 계층 명확화(무토큰=401 신원없음 / 유효토큰-스코프밖=403).
+  - #3 `/api/ask` 동기(블로킹) 계약 명시 + 폴링은 진행 중 run 관찰용(비동기 시작 엔드포인트 없음).
+  - #5 base_url 정본=매니페스트 origin(가이드 예제 도메인은 예시) 주석.
+  - #2 토큰 문의 연락처 — 매니페스트 `auth.contact`(env `AI_API_TOKEN_CONTACT`, 기본 placeholder).
+  - llms.txt 에 openapi 링크. 매니페스트 errors/notes/openapi_url 보강.
+- Files: `routers/ai_discovery.py`(_openapi_spec + route + manifest 보강), `static/{ai-api-guide.md,llms.txt}`,
+  `docs/SECURITY.md`(§7 allowlist), `tests/test_ai_discovery.py`(+openapi·contact 계약), route golden.
+- Impact: additive. 신규 익명 엔드포인트는 static contract(수기 OpenAPI, admin 제외, 데이터 0). 문서 정확화.
+- Rollback Notes: 라우터/스펙/문서 revert. 완전 가역.

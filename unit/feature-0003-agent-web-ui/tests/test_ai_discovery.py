@@ -42,6 +42,32 @@ def test_manifest_contract_and_security_invariants(client):
         assert "denylist" in blob or "관리" in m["ai_api"]["excluded"]
 
 
+def test_manifest_has_contact_and_openapi_and_sync(client):
+    m = client.get("/api/ai/manifest").json()["ai_api"]
+    # REV FINDING #2: 토큰 문의 연락처 노출
+    assert m["auth"].get("contact"), "auth.contact(토큰 문의처) 누락"
+    # REV FINDING #4: 기계판독 스키마 링크
+    assert m.get("openapi_url", "").endswith("/api/ai/openapi.json")
+    # REV FINDING #3: /api/ask 동기 dispatch 명시
+    ask = [e for e in m["endpoints"] if e["path"] == "/api/ask"][0]
+    assert "synchronous" in ask.get("dispatch", "")
+
+
+def test_curated_openapi_conversation_only(client):
+    r = client.get("/api/ai/openapi.json")
+    assert r.status_code == 200, r.status_code
+    spec = r.json()
+    assert spec["openapi"].startswith("3.1")
+    paths = list(spec["paths"].keys())
+    assert "/api/ask" in paths and "/api/history" in paths
+    # ★ 보안 불변식: 큐레이션 스펙에 관리 경로 없어야
+    assert all(not p.startswith("/api/admin") for p in paths), paths
+    # Bearer 보안 스킴
+    assert spec["components"]["securitySchemes"]["bearerAuth"]["scheme"] == "bearer"
+    # AskRequest 스키마가 message 필수
+    assert "message" in spec["components"]["schemas"]["AskRequest"]["required"]
+
+
 def test_guide_served(client):
     r = client.get("/api/ai/guide")
     assert r.status_code == 200, r.status_code
@@ -74,5 +100,9 @@ def test_manifest_catalog_source_is_curated_not_introspected():
     # app.openapi() 자동 스키마를 매니페스트에 쓰지 않아야(admin 유출 방지) — 매니페스트 함수는
     # _CONVERSATION_ENDPOINTS 를 쓰고, app.app.openapi() 는 admin-gated 라우트에서만.
     assert "def _manifest" in txt
-    manifest_fn = txt[txt.index("def _manifest"):txt.index("def well_known_ai_api")]
+    # `_manifest` 함수 본문만 슬라이스(다음 top-level def 까지). 뒤에 _openapi_spec 등이 와도
+    # 그 docstring 의 "openapi()" 언급에 오검출되지 않게 함수 경계로 자른다.
+    start = txt.index("def _manifest")
+    nxt = txt.index("\ndef ", start + 1)
+    manifest_fn = txt[start:nxt]
     assert "openapi()" not in manifest_fn, "매니페스트가 자동 openapi introspection 을 쓰면 admin 유출 위험"

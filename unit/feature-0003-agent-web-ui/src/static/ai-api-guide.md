@@ -28,12 +28,16 @@ Authorization: Bearer <token>
 ```
 
 - 토큰 형식: `matk_…` (URL-safe). 원문은 **발급 시 1회만** 노출되며 서버는 SHA-256 해시만 저장한다.
-- **토큰 취득**: 서비스 운영자에게 요청한다. 운영자는 관리 콘솔이 아닌 CLI 로 발급한다:
+- **토큰 취득 (self-serve 없음)**: API 로는 토큰을 발급받을 수 없다 — 서비스 **운영자에게 요청**해야
+  한다. 운영자는 관리 콘솔이 아닌 CLI 로 발급한다:
   ```
   bin/api-token-issue.sh --account <저권한 서비스계정> --label "<통합 용도>"
   # 옵션: --scopes "conversation.,product.access."  --expires-days 90
   ```
   발급된 토큰 원문을 안전한 곳(비밀 관리자, MCP `.env`)에 보관한다. 분실 시 재발급.
+  - **누구에게 요청하나**: 매니페스트(`/api/ai/manifest`)의 `ai_api.auth.contact` 필드를 보라 —
+    이 배포의 운영자 연락처가 들어 있다(운영자가 `AI_API_TOKEN_CONTACT` env 로 설정). 외부 AI 는
+    토큰이 없으면 여기서 멈추고 그 연락처로 발급을 요청해야 한다.
 - 세션 쿠키(사람 로그인)와 별개 경로다. 토큰이 있으면 쿠키 없이 API 를 쓸 수 있다.
 - **폐기**: 운영자가 `bin/api-token-issue.sh --revoke <token-id|prefix>`. 또는 서비스 계정을
   비활성화/삭제하면 그 토큰은 즉시 무효가 된다.
@@ -42,9 +46,13 @@ Authorization: Bearer <token>
 
 ## 3. 베이스 URL & 전송
 
-- 베이스 URL 은 서비스 배포 origin 이다(예: `https://mysql-ai.company.local`). 사내 LAN 전제.
+- 베이스 URL 은 서비스 배포 origin 이다. **정본은 매니페스트(`/api/ai/manifest`)의 `ai_api.base_url`**
+  — 이 문서 예제의 `https://mysql-ai.company.local` 은 예시일 뿐이니, 실제로는 매니페스트를 서빙한
+  origin(= 당신이 이 파일을 받은 host)을 쓴다. 사내 LAN 전제.
 - 사내 self-signed TLS 인 경우 클라이언트에서 인증서 검증을 조정해야 할 수 있다(`curl -k`).
 - 요청/응답 본문은 JSON(`Content-Type: application/json`).
+- **기계판독 스키마**: 코드젠·엄밀 검증이 필요하면 `GET /api/ai/openapi.json`(conversation-only
+  OpenAPI 3.1, 관리 콘솔 제외)을 사용한다.
 
 ---
 
@@ -88,8 +96,12 @@ curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"message":"그중 이탈한 비율은?","conversation_id":"2026...-abcd"}'
 ```
 
-> `/api/ask` 는 동시 요청 슬롯이 제한된다. 초과 시 429. 긴 응답을 비동기로 다루려면 아래 폴링
-> 엔드포인트를 사용한다.
+> **동기(블로킹) 호출이다.** `/api/ask` 는 답변이 준비될 때까지 블로킹한 뒤 `output` 에 담아
+> 반환한다(inprocess·worker 모드 모두 동일한 동기 응답 계약). 즉 **별도의 "비동기 시작"
+> 엔드포인트는 없다** — 답변은 이 한 번의 요청으로 받는다. 아래 폴링 엔드포인트(§4.5)는 *이미
+> 진행 중인* run 을 **관찰**할 때만 쓴다(예: 긴 질의 진행률 표시, 같은 대화에서 다른 세션이 시작한
+> run 관찰). 동시 요청 슬롯이 제한돼 초과 시 429 — 지수 backoff 로 재시도한다. 긴 질의는 HTTP
+> 클라이언트 타임아웃을 넉넉히(예: 120s) 잡는다.
 
 ### 4.2 `POST /api/new_conversation` — 새 대화 생성
 
@@ -105,10 +117,12 @@ curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
 본인 소유(또는 멤버)인 대화의 메시지 목록. 응답 `{ conversation_id, messages: [{id, role, content, created_at, ...}], ... }`.
 소유/멤버가 아닌 대화 id 를 넣으면 빈 결과(`messages: []`)를 반환한다(데이터 미노출).
 
-### 4.5 폴링 — `GET /api/ask_status`, `GET /api/ask_result`, `GET /api/progress`
+### 4.5 폴링(관찰용) — `GET /api/ask_status`, `GET /api/ask_result`, `GET /api/progress`
 
-`conversation_id` 로 진행 중/완료 상태·결과·진행 단계를 조회한다(read-only, ask 슬롯 미점유).
-스트리밍 대신 폴링으로 긴 응답을 다룰 때 사용.
+`conversation_id` 로 그 대화의 **진행 중/최근 완료 run** 을 관찰한다(read-only, ask 슬롯 미점유).
+`/api/ask` 는 동기라 보통 이 폴링이 필요 없다 — 이미 답변을 받았기 때문이다. 이 엔드포인트들은
+(a) 긴 질의의 진행률을 별도로 보여주거나, (b) **같은 대화에서 다른 세션/액터가 시작한 run** 을
+관찰할 때 쓴다. 폴링은 `conversation_id` 의 **최신/활성 run** 을 반영한다(개별 run id 지정 아님).
 
 ### 4.6 `POST /api/cancel` — 진행 중 ask 취소
 
@@ -136,11 +150,15 @@ body `{ "conversation_id": "..." }`.
 
 | HTTP | 의미 | 대응 |
 |---|---|---|
-| 400 | 잘못된 요청(빈 메시지·허용 안 된 모델 등) | 요청 형식 점검 |
-| 401 | 인증 실패(토큰 없음/만료/폐기/변조) | 토큰 확인·재발급 |
-| 403 | 권한/스코프 부족(관리·타 계정·발화권한) | 정당한 범위인지 확인 |
-| 429 | 동시 요청 제한 또는 사용량 quota 초과 | 잠시 후 재시도 |
+| 400 | 잘못된 요청(빈 메시지·허용 안 된 모델 등). **단 토큰이 없으면 body 검증 전에 401** | 요청 형식 점검 |
+| 401 | **인증 실패 = 신원 없음**(토큰 없음/만료/폐기/변조) | 토큰 확인·재발급 |
+| 403 | **인증은 됨, 권한 없음**(유효 토큰인데 관리·타 계정·발화권한 밖) | 정당한 범위인지 확인 |
+| 429 | 동시 요청 슬롯 제한 또는 사용량 quota 초과 | 지수 backoff 재시도 |
 | 503 | LLM/자격증명 일시 불가 | 재시도 |
+
+> **401 vs 403 구분(중요)**: 인증(신원)이 권한·body 검증보다 **먼저** 평가된다. 그래서 **토큰이
+> 없으면** 관리 엔드포인트를 호출해도 403 이 아니라 **401**(신원 없음)을 받는다. 403 은 **유효한
+> 토큰을 제시했으나** 그 스코프로 허용되지 않을 때만 나온다. 즉 401=로그인 필요, 403=권한 부족.
 
 응답 body 는 오류 시 `{ "error": "<메시지>" }` 형태다(`/api/ask` 는 성공 200 에도 `error`
 필드가 비어 있는지 확인).
