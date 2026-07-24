@@ -6263,3 +6263,25 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] §18.8 적대 패널(AGENT-TEAM security+backend) → MAJOR RBAC 우회·MINOR 배지/cap/파서 전부 in-cycle 반영
 - [ ] verify-completion → commit → (PR/deploy 별도 confirm) → POST-DEPLOY PB-0008
 정본 rationale=REVIEW REV-20260724T181106-brandnew-script-attachment, 변경이력=MODIFY CHG-20260724T181106-brandnew-script-attachment.
+
+## 20260724T1806-share-point-rail-bars — 공유링크 뷰 대화 뱃지 막대화 + 클릭 위치 비례 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 표시전용. /_template:entry 후속)
+
+- 트리거(사용자 요청): 공유링크 내 화면의 대화 뱃지도 메인 뷰처럼 막대 형식으로. 현재는 이전(단순 포인트) 형식.
+- [x] share.js `layoutSharePointRail`: dot 중심점 top%-only → top%+height%(메시지 실 범위 비례 막대, 공유는 window/문서 좌표).
+- [x] share.js 클릭 핸들러: 막대 내 클릭 y 비율 → 신설 `scrollShareMessageToRatio(target, ratio)`(메시지 [top,bottom] 대응점 뷰포트 중앙, window.scrollTo EaseOutExpo). 기존 `scrollShareMessageIntoCenter`(항상 중앙)는 유지(재사용 대비).
+- [x] share.css `.share-point-dot`: 점(8×8 원) → 막대(width 6px·min-height 4px·border-radius 3px·translateX만·is-active/hover 폭 11px).
+- [x] 검증: `node --check share.js` PASS. 메인 뷰 A+B(적대리뷰·라이브 검증 완료)의 동형 이식(좌표계만 window scroll). display-only.
+- [ ] PB-0008 POST-DEPLOY: 공유링크 라이브에서 막대 렌더·클릭 위치 비례 이동 실측.
+## TASK-20260724T085937-sonnet-reasoning-budget-guide — '모델별 추론 예산' adaptive(Sonnet 5) 죽은 슬라이더 제거 + guide-note (Minor §12.3, cross-feature 정본 feature-0003+shared)
+> 사용자 요청: 추론 수준이 claude-code effort 를 따르므로 `관리콘솔 > 설정 > 모델별 추론 예산`의 sonnet 구성을 가이드 노트로 전환.
+
+### §1.2 Completion Checklist
+- [x] 검토: adaptive(Sonnet 5) 추론 강도 = output_config.effort(=Claude Code 내부 effort) 매핑 확인 — `_call_llm` adaptive 분기는 budget override 미조회(죽은 컨트롤 확정).
+- [x] shared/runtime_settings.py: `_budget_thinking_models()`/`_adaptive_thinking_models()` + ②③ 스펙 adaptive 제외 + serialize `adaptive_models`.
+- [x] admin.js `renderModelThinkingBudgets`: adaptive 카드 = ①+guide-note(②③ 대신), budget 계열 ①②③ 유지. 신규 CSS 0(기존 클래스 재사용).
+- [x] 테스트: feature-0002 test_runtime_settings.py(sonnet dead·haiku clamp 62976·reasoning_budgets haiku-only·adaptive_models) + feature-0003 test_runtime_settings_api.py(sonnet 키 400·adaptive_models·agent_max_output 유지). 전체 pytest RC=0.
+- [x] §18.8 적대 리뷰(general-purpose) — spec 제거 side-effect·orphan override·프론트·필터·테스트 무결성 검증.
+- [x] FUNCTION.md·MODIFY.md(feature-0003+shared)·REVIEW.md 기록.
+- [ ] verify-completion → PR·머지 → 배포(web 재빌드, static asset) → PB-0008: sonnet 카드=①+guide(②③ 없음), haiku 카드=①②③.
+- worktree `ai/claude/feature-0003-sonnet-reasoning-budget-guide`(base main 28ec78b3).
+- [x] PB-0008 POST-DEPLOY 공유링크 라이브 PASS(2026-07-24·배포본 c1358190): conv[2] 공유 뷰 rail 14개 뱃지 막대(height 1~14% 비례)·클릭 상단 scrollY 62/하단 1551 비례 이동. 메인 뷰와 동일 막대 형식. 스크린샷 evidence/share-rail-bars-live.png. 사용자 요구 실증 완료.

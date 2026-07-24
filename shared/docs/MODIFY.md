@@ -55,3 +55,8 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 ## CHG-20260707T130000-reasoning-budgets (TASK-20260707T130000-reasoning-budgets — runtime_settings 추론 강도별 예산 레지스트리, cross-unit: 정본 feature-0003, Major §12.3)
 - Date: 2026-07-07. `shared/runtime_settings.py`: `reasoning_budget:{low,high,max}` 스펙(`_reasoning_budget_specs` — model_catalog.REASONING_LEVELS 순회, thinking_budget_for_level None(=normal) 제외, 기본값=그 함수값 2000/10000/16000, min1024 max16000, group=reasoning_budget, apply_mode live) + `reasoning_budget_override(level)` resolver(clamp, 미등록/normal→None) + serialize `reasoning_budgets` 버킷 + `__all__`(reasoning_budget_override·REASONING_BUDGET_KEY_PREFIX·GROUP_REASONING_BUDGET). model_catalog(os/typing 만 import) 순회라 순환 없음. 검증·validate·스냅샷·audit 는 기존 경로 재사용(신규 키만).
 - Cross-ref: feature-0003·feature-0002 MODIFY 동일 slug.
+
+## CHG-20260724T085937-sonnet-reasoning-budget-guide (runtime_settings: adaptive(Sonnet 5) 죽은 budget 스펙 제거 + adaptive_models 표면화, cross-unit: 정본 feature-0003, Minor §12.3)
+- Date: 2026-07-24. `shared/runtime_settings.py`: `_budget_thinking_models()`(= `_thinking_models()` − adaptive) + `_adaptive_thinking_models()` 신설. `_reasoning_budget_specs()`·`_model_budget_specs()` 가 `_budget_thinking_models()` 순회로 전환(adaptive 모델 ②③ 스펙 미생성). `agent_max_output`(①)은 전체 thinking 모델 유지. `serialize_registry` 에 `adaptive_models` 버킷 추가. model_catalog.model_thinking_style 판정 재사용(순환 없음 — model_catalog 는 os/typing 만 import). override resolver 는 spec 부재 시 이미 None 반환이라 무변경(죽은 sonnet override 는 조회 시 None).
+- 이유: adaptive(Sonnet 5)는 output_config.effort 로 추론 강도 제어 → budget_tokens override 무의미(agent_core._call_llm adaptive 분기 미조회). 관리 콘솔 죽은 슬라이더를 registry 레벨에서 차단.
+- Cross-ref: feature-0003·feature-0002 MODIFY 동일 slug · 선행 CHG-20260707T130000-reasoning-budgets.

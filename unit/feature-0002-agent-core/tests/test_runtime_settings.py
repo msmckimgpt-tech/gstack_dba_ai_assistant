@@ -39,10 +39,14 @@ def snap(tmp_path, monkeypatch):
 def test_registry_has_timeouts_and_model_budgets():
     reg = rs.serialize_registry({})
     assert len(reg["timeouts"]) >= 20, "현재 구성된 timeout 을 모두 등록해야 한다"
-    # 카탈로그의 thinking 지원 모델(claude-*)마다 예산 항목이 자동 생성된다.
+    # budget 계열(Haiku 등) thinking 모델마다 예산 항목이 자동 생성된다.
     keys = {m["key"] for m in reg["model_thinking_budgets"]}
-    assert "model_thinking_budget:claude-sonnet-4" in keys
     assert "model_thinking_budget:claude-haiku-4" in keys
+    # sonnet-reasoning-budget-guide(2026-07-24): adaptive(Sonnet 5)는 effort 로 제어 →
+    # 죽은 budget 스펙 미생성(admin UI 는 guide-note). adaptive_models 로 표면화.
+    assert "model_thinking_budget:claude-sonnet-4" not in keys
+    assert "claude-sonnet-4" in reg["adaptive_models"]
+    assert "claude-haiku-4" not in reg["adaptive_models"]
 
 
 def test_flagship_timeout_is_live_mode():
@@ -124,19 +128,27 @@ def test_startup_int_unregistered_key_returns_env_default(snap):
 
 # ── model thinking budget override (B1 무회귀) ──────────────────────────────
 def test_model_budget_override_none_without_setting(snap):
-    # 미설정 → None → _call_llm 이 주입 안 함 → 모델 config 기본값 유지(B1).
-    assert rs.model_thinking_budget_override("claude-sonnet-4") is None
+    # budget 계열(haiku) 미설정 → None → _call_llm 이 주입 안 함 → 모델 config 기본값 유지(B1).
+    assert rs.model_thinking_budget_override("claude-haiku-4") is None
 
 
 def test_model_budget_override_applies_and_clamps(snap):
+    snap({"model_thinking_budget:claude-haiku-4": 9000})
+    assert rs.model_thinking_budget_override("claude-haiku-4") == 9000
+    snap({"model_thinking_budget:claude-haiku-4": 10**6})
+    _max = rs.spec_for("model_thinking_budget:claude-haiku-4")["maximum"]
+    assert _max == 62976  # haiku native(64000) - 1024
+    assert rs.model_thinking_budget_override("claude-haiku-4") == _max  # native cap
+    snap({"model_thinking_budget:claude-haiku-4": 10})
+    assert rs.model_thinking_budget_override("claude-haiku-4") == 1024  # min (Anthropic)
+
+
+def test_model_budget_override_adaptive_sonnet_is_dead(snap):
+    # sonnet-reasoning-budget-guide(2026-07-24): adaptive(Sonnet 5)는 budget 스펙이 제거돼
+    # 스냅샷에 값이 있어도 override 는 항상 None(effort 로 제어 — 죽은 컨트롤 봉인).
+    assert rs.spec_for("model_thinking_budget:claude-sonnet-4") is None
     snap({"model_thinking_budget:claude-sonnet-4": 9000})
-    assert rs.model_thinking_budget_override("claude-sonnet-4") == 9000
-    snap({"model_thinking_budget:claude-sonnet-4": 10**6})
-    _max = rs.spec_for("model_thinking_budget:claude-sonnet-4")["maximum"]
-    assert _max == 126976  # sonnet native(128000) - 1024
-    assert rs.model_thinking_budget_override("claude-sonnet-4") == _max  # native cap
-    snap({"model_thinking_budget:claude-sonnet-4": 10})
-    assert rs.model_thinking_budget_override("claude-sonnet-4") == 1024  # min (Anthropic)
+    assert rs.model_thinking_budget_override("claude-sonnet-4") is None
 
 
 def test_model_budget_override_unknown_model_none(snap):
@@ -198,11 +210,12 @@ def test_serialize_timeout_row_shape(snap):
 
 def test_serialize_model_row_shape(snap):
     reg = rs.serialize_registry({})
-    row = next(r for r in reg["model_thinking_budgets"] if r["model"] == "claude-sonnet-4")
+    # sonnet-reasoning-budget-guide: adaptive sonnet 제거 → budget 계열(haiku) 행으로 shape 검증.
+    row = next(r for r in reg["model_thinking_budgets"] if r["model"] == "claude-haiku-4")
     for f in ("key", "model", "label", "default", "code_default", "minimum", "maximum",
               "apply_mode", "effective", "has_override", "default_known"):
         assert f in row, f"model row missing render field: {f}"
-    assert row["default_known"] is True and row["default"] == 16000
+    assert row["default_known"] is True and row["default"] == 5000
 
 
 def test_get_int_unregistered_ignores_snapshot_override(snap):
@@ -256,10 +269,12 @@ def test_config_applies_restart_override_at_import(tmp_path):
 def test_reasoning_budget_specs_low_high_max_normal_excluded(snap):
     reg = rs.serialize_registry({})
     rb = reg["reasoning_budgets"]
-    # 모델 × 레벨(normal 제외). 레벨 집합은 {low,high,max}, 모델별로 6행(sonnet/haiku × 3).
+    # sonnet-reasoning-budget-guide(2026-07-24): adaptive(Sonnet 5)는 effort 로 제어 → budget 스펙
+    # 미생성. budget 계열(haiku)만 남는다: 레벨 {low,high,max}, haiku × 3 = 3행. normal 제외(B1).
     assert {r["level"] for r in rb} == {"low", "high", "max"}
-    assert {r["model"] for r in rb} == {"claude-sonnet-4", "claude-haiku-4"}
-    assert len(rb) == 6
+    assert {r["model"] for r in rb} == {"claude-haiku-4"}
+    assert "claude-sonnet-4" not in {r["model"] for r in rb}
+    assert len(rb) == 3
     # base default 는 모델 무관(low2000/high10000/max16000).
     by = {r["level"]: r for r in rb}
     assert by["low"]["default"] == 2000 and by["high"]["default"] == 10000 and by["max"]["default"] == 16000
@@ -285,17 +300,20 @@ def test_reasoning_budget_override_applies_and_clamps(snap):
     assert rs.reasoning_budget_override("claude-haiku-4", "high") == 1024   # min(Anthropic)
 
 
-def test_reasoning_budget_per_model_isolated(snap):
-    # 모델별 분리: sonnet override 는 haiku 조회에 영향 없음.
-    snap({"reasoning_budget:claude-sonnet-4:max": 60000})
-    assert rs.reasoning_budget_override("claude-sonnet-4", "max") == 60000
-    assert rs.reasoning_budget_override("claude-haiku-4", "max") is None
+def test_reasoning_budget_adaptive_sonnet_is_dead(snap):
+    # sonnet-reasoning-budget-guide(2026-07-24): adaptive(Sonnet 5)는 reasoning_budget 스펙이
+    # 제거돼 스냅샷에 값이 있어도 override 항상 None(effort 로 제어 — 죽은 컨트롤). haiku(budget)는
+    # 독립적으로 적용된다(모델별 분리 계약 유지).
+    snap({"reasoning_budget:claude-sonnet-4:max": 60000, "reasoning_budget:claude-haiku-4:max": 20000})
+    assert rs.reasoning_budget_override("claude-sonnet-4", "max") is None   # 죽음(스펙 제거)
+    assert rs.reasoning_budget_override("claude-haiku-4", "max") == 20000   # budget 계열은 유효
 
 
 def test_reasoning_budget_validate_and_reset_registered(snap):
     ok, val, _ = rs.validate_value("reasoning_budget:claude-haiku-4:low", "2500"); assert ok and val == 2500
     ok, _, _ = rs.validate_value("reasoning_budget:claude-haiku-4:low", "500"); assert not ok  # < min 1024
-    assert rs.spec_for("reasoning_budget:claude-sonnet-4:max") is not None
+    # sonnet-reasoning-budget-guide: adaptive sonnet 예산 스펙 제거 → 미등록(guide-note 전환).
+    assert rs.spec_for("reasoning_budget:claude-sonnet-4:max") is None
     assert rs.spec_for("reasoning_budget:claude-sonnet-4:normal") is None    # normal 미등록
     assert rs.spec_for("reasoning_budget:high") is None    # 구 스킴(모델 없음) 미등록
 
@@ -324,11 +342,12 @@ def test_agent_max_output_override_and_clamp(snap):
 
 def test_serialize_reasoning_row_has_model_and_level(snap):
     reg = rs.serialize_registry({})
-    row = next(r for r in reg["reasoning_budgets"] if r["key"] == "reasoning_budget:claude-sonnet-4:max")
+    # sonnet-reasoning-budget-guide: adaptive sonnet 제거 → budget 계열(haiku) 행으로 shape 검증.
+    row = next(r for r in reg["reasoning_budgets"] if r["key"] == "reasoning_budget:claude-haiku-4:max")
     for f in ("key", "model", "level", "label", "default", "minimum", "maximum",
               "apply_mode", "effective", "has_override", "default_known"):
         assert f in row, f"reasoning row missing render field: {f}"
-    assert row["model"] == "claude-sonnet-4" and row["level"] == "max"
+    assert row["model"] == "claude-haiku-4" and row["level"] == "max"
 
 
 def test_old_reasoning_key_ignored_backward_compat(snap):

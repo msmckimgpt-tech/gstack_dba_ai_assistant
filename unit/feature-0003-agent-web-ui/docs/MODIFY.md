@@ -987,7 +987,6 @@ source_of_truth: true
 - 코드/자산 0 — metadata-review-ds-scope(PR #931·main 2b22b5ff) 배포 후 라이브 검증 결과 기록만.
 - test-runs.d/20260724T053457-metadata-review-ds-scope.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260724T053457-metadata-review-ds-scope-postverify.
 - 실측(실 Windows Chrome, https://localhost/admin): 검토 큐 공용 96건→mysql-kr-an1-auth 16건 필터·배지 96→16 정합(MAJOR Finding 1)·목록 84건 중 82 자동등록 가시(Fix 2)·전 행 `등록 <시각>`(Fix 3)·pageerror 0. 사용자 3결함 전부 해소 확인.
-
 ## CHG-20260724T181106-brandnew-script-attachment — assistant 신규 스크립트 첨부 전달 경로 (Major §12.3)
 - **What**: source 없이 새로 생성한 스크립트/쿼리를 다운로드 첨부(root 첨부)로 전달하는 `attachment-new` 경로 신설. 기존 편집 경로(source_attachment_id 필수)와 별개.
 - **Why(RC)**: FR-brandnew-script-attachment-delivery-gap — 첨부 생성 경로가 기존 첨부 편집만 지원해 "생성한 스크립트를 첨부로" 요청 시 assistant 거부(대화 …f1c535ec msg 1384). 재발경로=capability gap.
@@ -996,3 +995,23 @@ source_of_truth: true
 - **보안**: 확장자 allowlist(sql/txt/csv/md/markdown/json/yaml/yml/xml/log, 그 외→.txt), account/conv scope(IDOR 0), 크기 1MB·개수 캡 편집과 합산(remaining_count), **업로드 RBAC 게이트**(§18.8 MAJOR: `conversation.attachment.upload.own/any`). 보안 회귀 0.
 - **Verification**: pytest 2369 PASS(신규 27) · py_compile 4파일 · node --check app.js · §18.8 AGENT-TEAM(security+backend) MAJOR/MINOR 전부 반영. 정적 자산 baked → 라이브 PB-0008 = POST-DEPLOY.
 - **잔여**: verify-completion → commit → PR/deploy(별도 confirm) → POST-DEPLOY PB-0008.
+## CHG-20260724T180649-share-point-rail-bars (공유링크 뷰 대화 뱃지 막대화 + 클릭 위치 비례, Minor §12.3, frontend-only 표시전용)
+- Files: `unit/feature-0003-agent-web-ui/src/static/{share.js,share.css}`.
+- A(막대화): `layoutSharePointRail` top%+height%(범위 비례) + CSS 점→막대. B(클릭 비례): 클릭 핸들러가 막대 내 y 비율 → 신설 `scrollShareMessageToRatio`(window.scrollTo EaseOutExpo). 메인 뷰(app.js scrollMessagePointToRatio·layoutMessagePointRail) 동형 이식 — 공유는 window/문서 좌표.
+- `scrollShareMessageIntoCenter` 유지(항상 중앙 — 재사용 대비, dead 아님으로 보존). 백엔드·RBAC·스키마 무영향.
+- 검증: `node --check` PASS. POST-DEPLOY PB-0008 예정.
+## CHG-20260724T085937-sonnet-reasoning-budget-guide — 관리 콘솔 '모델별 추론 예산'의 adaptive(Sonnet 5) 죽은 budget 슬라이더 제거 + guide-note 전환 (Minor §12.3, cross-feature: 정본 feature-0003+shared, tests feature-0002)
+> 계기(사용자): "추론 수준이 claude-code 내부 effort 를 따르면 `관리콘솔 > 설정 > 모델별 추론 예산`의 sonnet 구성을 제거하거나 가이드만 남긴 상태로 전환 검토". 확인 결과 adaptive(Sonnet 5)는 추론 강도가 output_config.effort(=Anthropic/Claude Code 내부 effort: 낮음→low·일반→기본 high·높음→high·매우높음→max)로 제어되고, `_call_llm` adaptive 분기는 reasoning_budget/model_thinking_budget override 를 **조회조차 안 함** → 해당 섹션의 sonnet budget_tokens 슬라이더 ②③은 저장해도 무효과인 죽은 컨트롤(이전 이연 H5). 사용자 선택 = "가이드 노트 전환".
+- Changes(shared `shared/runtime_settings.py`): `_budget_thinking_models()`(= `_thinking_models()` 중 `model_thinking_style != "adaptive"`) + `_adaptive_thinking_models()` 신설. `_reasoning_budget_specs()`·`_model_budget_specs()` 가 `_budget_thinking_models()` 순회로 전환 → adaptive 모델은 ②③ 스펙 **미생성**(registry→API→UI 로 죽은 슬라이더 미노출). `agent_max_output` 스펙(①)은 `_thinking_models()` 전체 유지(adaptive 도 live max_tokens). `serialize_registry` 에 `adaptive_models: [...]` 추가(UI guide-note 대상 표면화).
+- Changes(feature-0003 `src/static/admin.js` `renderModelThinkingBudgets`): `data.adaptive_models` set 로드. 모델 카드가 adaptive 면 ②(추론 강도별 예산)·③(일반 기본 budget) 슬라이더 대신 **guide-note**("adaptive thinking — 추론 강도는 대화 화면의 추론 강도 선택기가 effort 로 제어, 모델별 budget 미적용, 라운드당 출력만 유효") 렌더. budget 계열(haiku)은 기존 ②③ 그대로. ①(라운드당 출력)은 전 모델 유지. 가이드는 기존 CSS 클래스(`rs-subgroup-title`·`rs-readonly-note`) 재사용 — **신규 CSS 없음**(cache-buster 표면 admin.js 만).
+- Behavior 불변: 실제 LLM 호출은 무변경(adaptive 는 이미 budget 미조회, effort 만 사용). 죽은 override 가 DB 에 있어도 무효(serializer 는 override 없는 spec 만 순회 — orphan override 는 live 미반영). agent_max_output(①)·haiku budget·effort 매핑·RBAC·마이그레이션 0.
+- Tests: feature-0002 `test_runtime_settings.py`(sonnet budget 스펙 부재·override 항상 None·haiku clamp 62976·reasoning_budgets haiku-only 3행·adaptive_models 표면화), feature-0003 `test_runtime_settings_api.py`(sonnet 예산 키 PUT 400·adaptive_models 페이로드·agent_max_output sonnet 유지). 전체 pytest(0002+0003) RC=0.
+- Verification: 배포 후 PB-0008 — 관리 콘솔 '모델별 추론 예산'에서 sonnet 카드가 ①+guide-note(②③ 슬라이더 없음), haiku 카드는 ①②③ 그대로.
+- Rollback: `_reasoning_budget_specs`/`_model_budget_specs` 를 `_thinking_models()` 순회로 복원 + admin.js guide 분기 제거(죽은 슬라이더 재노출).
+- Cross-ref: shared/feature-0002 MODIFY 동일 slug · REVIEW-20260724T085937-sonnet-reasoning-budget-guide · model_catalog.effort_for_reasoning_level/model_thinking_style · 선행 CHG-20260707T130000-reasoning-budgets · [[project-sonnet5-oauth-frontier-identity-gate]] H5 이연 해소 · ANCHOR 0003 무충돌.
+## CHG-20260724T085937-sonnet-reasoning-budget-guide-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- Date: 2026-07-24. main 8f7b148f 배포(web+worker 재빌드) 후 실 Windows Chrome + https://localhost/admin PB-0008 **PASS**: sonnet 카드=①+guide-note(②③ 슬라이더 부재), haiku 카드=①②③, 라이브 API `adaptive_models=["claude-sonnet-4"]`(budget/reasoning 는 haiku만), 콘솔 에러 0. test-runs.d fragment 결과 기입.
+- Cross-ref: CHG-20260724T085937-sonnet-reasoning-budget-guide(정본) · test-runs.d/20260724T085937-sonnet-reasoning-budget-guide.md.
+## CHG-20260724T1830-share-point-rail-bars-postverify (POST-DEPLOY 공유링크 라이브 검증, 비-정책 doc-only)
+- POST-DEPLOY PB-0008 공유링크 라이브 PASS(배포본 c1358190): 공유 뷰 rail 14 뱃지 막대(범위 비례)·클릭 위치 비례(상단 62/하단 1551). 메인 뷰와 동일 막대 형식. 사용자 요구 실증. 코드 0(스크린샷 evidence 추가).
+- Files: `docs/test-runs.d/20260724T180649-share-point-rail-bars.md`, `docs/test-runs.d/evidence/share-rail-bars-live.png`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.

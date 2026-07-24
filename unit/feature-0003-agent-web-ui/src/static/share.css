@@ -157,9 +157,12 @@
 .share-point-dot {
   position: absolute;
   left: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  /* share-point-rail-bars: 고정 점(8×8 원) → 세로 막대. top(상단 기준)·height 는
+     JS(layoutSharePointRail)가 메시지 실 스크롤 범위 비례로 인라인 지정한다(메인 뷰 동형).
+     짧은 메시지도 클릭 가능하도록 min-height 를 둔다. */
+  width: 6px;
+  min-height: 4px;
+  border-radius: 3px;
   border: none;
   padding: 0;
   margin: 0;
@@ -167,17 +170,17 @@
   pointer-events: auto;             /* rail 의 통과 설정을 dot 만 되돌린다. */
   background: var(--share-border-strong, rgba(0, 0, 0, 0.2));
   opacity: 0.55;
-  /* translate 와 scale 을 함께 — translate 가 사라지면 dot 가 좌측으로 튄다(메인 UI 동일 주의). */
-  transform: translate(-50%, -50%);
-  transition: background 0.15s, transform 0.15s, opacity 0.15s;
+  transform: translateX(-50%);      /* top 이 상단 기준 — translateY 제거(막대). */
+  transition: background 0.15s, width 0.1s, opacity 0.15s;
 }
 .share-point-dot.is-user { background: var(--share-primary, #2563eb); }
-.share-point-dot.is-assistant { background: var(--share-text-muted, #6b7280); }
+.share-point-dot.is-assistant { background: var(--share-text-muted, #6b7280); opacity: 0.5; }
 .share-point-dot.is-active {
-  transform: translate(-50%, -50%) scale(1.8);
+  /* 막대는 scale 대신 폭 확대 + 불투명도로 강조(translateY 제거 — top 이 상단 기준). */
+  width: 11px;
   opacity: 1;
 }
-.share-point-dot:hover { opacity: 1; }
+.share-point-dot:hover { width: 11px; opacity: 0.95; }
 /* 키보드 포커스 가시성(8px 점은 브라우저 기본 링이 약함) — anonymous 공유 페이지 a11y. */
 .share-point-dot:focus-visible {
   outline: 2px solid var(--share-primary, #2563eb);

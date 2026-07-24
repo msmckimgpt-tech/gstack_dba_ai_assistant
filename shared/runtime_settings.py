@@ -421,6 +421,34 @@ def _thinking_models() -> tuple[str, ...]:
     return tuple(seen)
 
 
+def _budget_thinking_models() -> tuple[str, ...]:
+    """thinking budget_tokens override 가 **실제 의미가 있는** 모델만(budget 스타일 한정).
+
+    sonnet5-upgrade(2026-07-24) 이후 adaptive 계열(Sonnet 5)은 budget_tokens 대신
+    output_config.effort 로 추론 강도를 제어하며(agent_core._call_llm adaptive 분기는
+    reasoning_budget_override / model_thinking_budget_override 를 **조회조차 안 함**),
+    관리 콘솔의 '추론 강도별 예산'·'모델 기본 thinking budget' 슬라이더는 adaptive 모델에서
+    저장해도 무효과인 죽은 컨트롤이 된다. 이 함수는 그 두 그룹의 스펙 생성 대상을 **budget 스타일로
+    한정**해, 죽은 슬라이더가 registry→API→admin UI 로 새어나가지 않게 한다(guide-note 전환).
+
+    ⚠️ 필터는 `== "budget"`(agent_core `_call_llm` 의 budget 분기 조건과 **동형**)로 둔다. `!= "adaptive"`
+    로 두면 style=None 인 미상/미래 claude(예: claude-opus-4-8 — model_catalog 는 미상 claude 를 안전하게
+    None 으로 분류; budget_tokens 주입 시 400)가 budget 스펙에 포함돼, `_call_llm` 이 None 스타일엔 아무
+    thinking override 도 주입하지 않으므로 **또다시 죽은 슬라이더**가 생긴다(적대리뷰 Finding D). budget 계열만
+    통과시키면 미상 claude 는 ②③ 슬라이더도 guide-note 도 없이 ①(총 출력, live)만 노출 — 죽은 컨트롤 0.
+    총 출력(agent_max_output)은 adaptive/None 도 live 로 읽으므로 _thinking_models() 전체를 유지한다.
+    """
+    return tuple(
+        m for m in _thinking_models()
+        if model_catalog.model_thinking_style(m) == "budget"
+    )
+
+
+def _adaptive_thinking_models() -> tuple[str, ...]:
+    """adaptive thinking 계열(effort 로 제어, budget 미적용) — admin UI 가 guide-note 를 띄울 대상."""
+    return tuple(m for m in _thinking_models() if model_catalog.model_thinking_style(m) == "adaptive")
+
+
 def _agent_max_output_specs() -> tuple[dict[str, Any], ...]:
     """thinking 지원 모델마다 대화 총 출력(max_tokens) 스펙 1개. maximum = 모델 native."""
     specs: list[dict[str, Any]] = []
@@ -459,7 +487,7 @@ def _reasoning_budget_specs() -> tuple[dict[str, Any], ...]:
         str(o.get("value")): str(o.get("label") or o.get("value"))
         for o in model_catalog.REASONING_LEVEL_OPTIONS
     }
-    for model in _thinking_models():
+    for model in _budget_thinking_models():  # adaptive(Sonnet 5) 제외 — effort 로 제어, budget 죽은 컨트롤
         meta = model_catalog.get_api_model_meta(model) or {}
         model_label = str(meta.get("label") or model)
         budget_max = _thinking_budget_max(model)
@@ -494,7 +522,7 @@ def _model_budget_key(model: str) -> str:
 
 def _model_budget_specs() -> tuple[dict[str, Any], ...]:
     specs: list[dict[str, Any]] = []
-    for model in _thinking_models():
+    for model in _budget_thinking_models():  # adaptive(Sonnet 5) 제외 — budget 죽은 컨트롤(effort 로 제어)
         meta = model_catalog.get_api_model_meta(model) or {}
         default = _MODEL_BUDGET_DEFAULTS.get(model, _MODEL_BUDGET_FALLBACK_DEFAULT)
         known = model in _MODEL_BUDGET_DEFAULTS
@@ -1306,6 +1334,10 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
         "agent_max_outputs": agent_outputs,
         "model_thinking_budgets": models,
         "reasoning_budgets": reasoning,
+        # adaptive(Sonnet 5) 계열: budget_tokens 미적용(effort 로 제어). 위 model_thinking_budgets/
+        # reasoning_budgets 에 이 모델들의 행은 없으며(스펙 미생성), admin UI 가 이 목록으로 해당
+        # 모델 카드에 죽은 슬라이더 대신 guide-note 를 렌더한다(총 출력 agent_max_outputs 는 유지).
+        "adaptive_models": list(_adaptive_thinking_models()),
         "redteam": redteam,
         "performance": performance,
         "meta": {
