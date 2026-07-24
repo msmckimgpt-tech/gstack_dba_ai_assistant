@@ -303,6 +303,15 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - 없음.
 
 ## 6. Done
+- [x] **sonnet-chat-fallback** (2026-07-24): 새 대화 sonnet 선택 시 "서비스 자체의 요청량 한도"
+  실패(계정 quota 무관) 수정 — 근본 원인은 sonnet 대화가 root 계정 fallback 없는 bare
+  `claude-sonnet-4` 로 나가 claude-corp 429 시 즉시 실패(haiku 는 `-chat`→`-chat-root` 2계정
+  생존). haiku-chat 과 동형 parity: litellm 에 `claude-sonnet-4-chat`(claude-corp)·
+  `claude-sonnet-4-chat-root`(root) 신설 + fallback(edge-free) + model_catalog
+  `_CONVERSATION_ANSWER_ALIAS` 에 sonnet→sonnet-chat 매핑. bare `claude-sonnet-4`(probe/
+  OPENAI_MODEL/node_analysis) 무변경. 검증: YAML OK(11 deployment/6 fallback), feature-0002+
+  0003 pytest PASS(rc=0), 신규 G5b 체인 고정. 배포=bedrock-gateway 재생성(confirm 대기).
+  (CHG-20260724T105132-sonnet-chat-fallback / REV-20260724T105132-sonnet-chat-fallback)
 - [x] **cron-static-refresh** (2026-07-07): `refresh-claude-oauth-token.sh` 의 24/7 라이브
   probe 가 claude-corp 세션 윈도우를 오염시키던 원인 제거 — static_check() 단독 판정 전환 +
   로그 기반 무비용 관측 신설 + stale crontab 주석 정리. litellm 401/429 fallback 을

@@ -131,8 +131,17 @@ source_of_truth: true
   무중단. deployment 별 자격: `claude-haiku-4`=ANTHROPIC_API_KEY(claude-corp), `claude-haiku-4-root`=
   ANTHROPIC_API_KEY_ROOT(root). 두 토큰은 `bin/refresh-claude-oauth-token.sh` 가 병행 주입(각 slot 독립
   static+probe 검사, 사용가능 시만 갱신, 만료/401/429 는 litellm 이 다음 fallback 으로 흡수). edge 는
-  thinking 미지원이나 `drop_params:true` 가 미지원 파라미터 제거. `claude-sonnet-4`(=ANTHROPIC_API_KEY)는
-  fallback 미구성(주력 대화용, 별도).
+  thinking 미지원이나 `drop_params:true` 가 미지원 파라미터 제거.
+- **대화 답변(task='agent') 전용 edge-free 2계정 체인** (no-edge 2026-07-07 + sonnet-chat-fallback 2026-07-24):
+  사용자 대면 assistant 답변은 `agent_core._call_llm` 이 `conversation_answer_model()` 로 outbound alias 를
+  edge-free `-chat` 계열로 치환한다 — `claude-haiku-4`→`claude-haiku-4-chat`(→`-chat-root`),
+  `claude-sonnet-4`→`claude-sonnet-4-chat`(→`-chat-root`). 각 체인은 claude-corp→root **2계정**이고
+  **edge(gemma) 미포함** — 두 계정 모두 429/401 이면 gemma 로 강등하지 않고 그 에러를 raise 해 정직하게 실패
+  (맥락 파괴한 2B gemma 답변 차단, 2026-07-07 사용자 결정). 저장/표시/usage `model` 은 원본 alias
+  (claude-sonnet-4/claude-haiku-4) 유지, 실제 서빙은 resolved_model 로 추적. **bare `claude-sonnet-4`
+  (=ANTHROPIC_API_KEY, fallback 미구성)는 probe·`OPENAI_MODEL` 기본값·node_analysis 등 비대화 경로 전용**
+  으로 무변경(격리) — 대화 경로만 -chat 체인이 회복성을 전담한다. (이전엔 sonnet 이 -chat 미매핑이라 bare
+  단일 계정으로 나가 claude-corp 429 시 "서비스 자체의 요청량 한도"로 즉시 실패했다 — sonnet-chat-fallback 수정.)
   - **운영 인지(강등 SLO)**: refresh cron 은 평일 업무시간(`0,30 10-18 * * 1-5`)만 돈다. root/claude-corp
     accessToken 은 short-lived(~수시간)이므로 **야간·주말**에는 두 토큰이 만료돼 claude 요청이 401 →
     litellm 이 최종 `edge-fallback`(gemma)으로 **상시 강등**한다(하드실패 아님, best-effort — gemma JSON 품질이

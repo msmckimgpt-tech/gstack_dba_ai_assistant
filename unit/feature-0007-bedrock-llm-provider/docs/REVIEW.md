@@ -475,3 +475,20 @@ source_of_truth: true
 - 배포 전 권장(비차단): (1) 라이브 fallback 실측(main-stable unpinned), (2) cron 창 밖 강등 운영 문서화, (3) litellm 버전 핀.
 - Verification: litellm_config YAML OK(5 deployment)·refresh bash -n OK·--check(corp 200/root 200) PASS. ANCHOR §1·§2 무충돌.
 - Cross-ref: CHG-20260703-insight-llm-fallback / TASK-0308 / feature-0002 REPORT.
+
+## REV-20260724T105132-sonnet-chat-fallback [SUBAGENT:backend-infra-adversarial] — PASS-WITH-NITS
+- 대상: 새 대화 sonnet 선택 시 "서비스 자체의 요청량 한도" 실패(계정 quota 무관) 수정. CHG-20260724T105132-sonnet-chat-fallback 정합.
+- 적대 패널(backend/infra, general-purpose subagent) verdict: **PASS-WITH-NITS**. 6개 가설 전부 REFUTED(신규 회귀 0):
+  ①max_tokens>thinking(40000>16000, bare sonnet 과 동형·무회귀) ②격리(conversation_answer_model 유일 호출처=_call_llm, probe/node_analysis/insight 미경유; bare sonnet deployment 1바이트 무변경) ③fallback 체인(sonnet-chat→chat-root 종단·edge 미도달·haiku 체인 불변) ④api_key(chat=ANTHROPIC_API_KEY=claude-corp, chat-root=_ROOT — 실 2계정) ⑤usage(원본 claude-sonnet-4 기록→by_model 단가 정상).
+  - NIT 대응(본 cycle 반영): (a) G5b 에 bare claude-sonnet-4 단일계정·fallback-미등록 격리 불변식 단정 추가, (b/c) G8b `test_call_llm_sizes_sonnet_budget_from_original_model` 신설(예산 키=원본·max_tokens>16000 실경로 검증).
+  - 잔여 NIT(사전존재·본 cycle 미대응): 계정별/일별 비용 뷰가 `COALESCE(resolved_model, model)` 키잉이라 litellm 이 `-chat` alias 를 resp.model 로 에코하면 단가표 미등록으로 $0 오표시 — haiku-chat/-interactive/-root 에 이미 존재하는 gap 의 sonnet 확장(별 cycle, admin_usage `_LLM_PRICE_USD_PER_1M` 에 -chat alias 추가로 해소). REPORT §8 기록.
+- 문제 정의: 대화 답변 경로에서 haiku 는 `claude-haiku-4-chat`→`-chat-root` 2계정 edge-free 체인으로 claude-corp 429 를 생존하나, sonnet 은 `conversation_answer_model` 미매핑(identity)이라 bare `claude-sonnet-4`(단일 계정·fallback 미등록)로 나가 429 시 즉시 실패. haiku 대비 sonnet 이 **엄격히 열등한 회복성** — 의도적 설계가 아니라 no-edge-conversation(2026-07-07) 당시 "sonnet 은 edge 폴백 없음"만 보고 root 계정 fallback 부재를 간과한 결함.
+- 결정: haiku-chat 패턴과 **동형 parity 복원** — sonnet 에도 `-chat`(claude-corp)→`-chat-root`(root) 2계정 edge-free 체인 부여.
+  - 대안 A(채택): 대화 전용 `claude-sonnet-4-chat` alias 신설 + `_CONVERSATION_ANSWER_ALIAS` 매핑. bare `claude-sonnet-4`(probe/OPENAI_MODEL/node_analysis) 무변경으로 격리 — haiku 가 `-chat` 를 신설한 것과 정확히 동일 구조. 무회귀.
+  - 대안 B(기각): bare `claude-sonnet-4` 에 직접 fallback 추가. probe·node_analysis 등 비대화 경로까지 root 계정으로 폴백시켜 blast radius 확대. 격리 원칙 위배.
+  - 대안 C(기각): sonnet 을 haiku 로 강제 강등. 사용자가 명시 선택한 frontier 모델을 조용히 바꾸는 것은 기대 위반.
+- 위험도: **Major(§12.3)** — LLM provider 라우팅 변경. 외부 자격/비용 경계: 신규 자격 없음(기존 두 OAuth 계정 재사용). root 계정(개인 Max 5x)이 sonnet 대화 fallback 트래픽을 받게 됨 — haiku-chat 이 이미 동일 취급이라 정책적 신규 노출 아니나, **sonnet(frontier)은 haiku 대비 root 계정 창을 더 빨리 소진**할 수 있음(운영 인지 항목). 종량 과금 아닌 구독 용량이라 per-token 외부 비용 증가는 없음.
+- max_tokens/thinking 정합: sonnet-chat·-chat-root 의 config `budget_tokens: 16000` 은 bare `claude-sonnet-4` 와 동일. 대화 경로 max_tokens 는 원본 `claude-sonnet-4` 키의 `agent_max_output`(default 40000)로 산정(무회귀) → 40000>16000 만족. '일반' 레벨은 override 미주입(config 16000 유지), 명시 레벨은 `_call_llm` 이 min(budget, max_tokens−1024)로 clamp → Anthropic max_tokens>budget 항상 보장. **bare sonnet 과 동일 관계라 2차 400 무회귀.**
+- 잠재 사전존재 이슈(본 변경 범위 밖, 미도입): TEST.md §7 의 `claude-haiku-4-chat-root` "max_tokens must be greater than thinking.budget_tokens" 노트는, admin 이 `agent_max_output(model)` 을 config 고정 thinking(haiku 5000 / sonnet 16000) 미만으로 낮췄을 때 발생하는 잠재 조건(모든 thinking alias 공통, bare 포함). sonnet default 40000≫16000 이라 정상 운영에서 미발생. 별도 cycle 로 "config 고정 thinking 대비 agent_max_output 하한 가드" 검토 권장(REPORT §8 기록).
+- Verification: YAML lint OK(11 deployment/6 fallback), feature-0002+0003 pytest PASS(rc=0), 신규 G5b 가 sonnet 체인 라우팅·2계정·edge-free 3속성 고정.
+- Cross-ref: MODIFY CHG-20260724T105132-sonnet-chat-fallback / TEST.md Run 2026-07-24-001 / shared/model_catalog.py.
