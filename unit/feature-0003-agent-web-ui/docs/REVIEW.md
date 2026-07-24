@@ -897,3 +897,6 @@ source_of_truth: true
 - 공격각 CLEAN: A(PUT/validate — 제거 키 400, 테스트 커버), C(프론트 — `adaptive_models` Array 가드·textContent XSS-safe·① 유지·중복렌더 없음), C2(빈 sliderRows forEach no-op), E(테스트 non-vacuous — len==3·sonnet not in·haiku live 20000·clamp 62976/default 5000 실측 일치), F(agent_max_output:claude-sonnet-4 spec·`_call_llm` max_tokens 계약 보존).
 - 검증: 수정 후 feature-0002 test_runtime_settings 39/39 + feature-0003 test_runtime_settings_api RC=0. POST-DEPLOY PB-0008(sonnet 카드 guide-note·haiku 슬라이더) 예정.
 - Cross-ref: CHG/TASK/TEST-20260724T085937-sonnet-reasoning-budget-guide · shared/feature-0002 MODIFY 동일 slug · subagent id a77c815ebdf2d791f · ANCHOR 0003 무충돌.
+
+## REV-20260724T183000-share-point-rail-bars-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 공유링크 라이브 검증 기록
+- Panel skip 사유(§18.8): 코드 0(문서 전용 POST-DEPLOY 실증). 구현 리뷰 정본 = REV-20260724T180649-share-point-rail-bars([SKIPPED:trivial-display-only-port-of-reviewed-main]). 배포(c1358190)+공유링크 라이브 실측(막대·클릭 비례) append 만.
