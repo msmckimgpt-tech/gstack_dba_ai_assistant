@@ -8545,14 +8545,14 @@ function openConversationItemMenu(cid, triggerEl) {
     // gc-settings-archive-leave UI 정리: '보관'을 ··· 메뉴에서 제거하고 '설정' 팝업의
     // '대화 관리' 섹션(openConversationSettings)으로 이동한다. 보관 권한이 없는 그룹 대화
     // 참여자에게는 같은 섹션에서 보관 대신 '나가기'(self-leave)를 노출한다. '복사' 제거(메시지
-    // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 설정.
+    // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 이동 | 설정.
     buildItems: (menu, make) => {
       menu.appendChild(make("공유", { action: "conversation.share", conversation, onSelect: () => openShareDialog(cid) }));
-      menu.appendChild(make("설정", { action: "conversation.read", conversation, onSelect: () => openConversationSettings(cid) }));
       // 개선5: 폴더 '이동' — 별도 팝업(검색·정렬·새 폴더·빼기)에서 수행(folder.manage.own 보유 시).
       if (can("folder.manage.own")) {
         menu.appendChild(make("이동", { onSelect: () => openMoveConversationDialog(cid) }));
       }
+      menu.appendChild(make("설정", { action: "conversation.read", conversation, onSelect: () => openConversationSettings(cid) }));
     },
   });
 }

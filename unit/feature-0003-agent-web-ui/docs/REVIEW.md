@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T073848-conv-menu-order [SKIPPED:trivial-cosmetic-reorder] — 대화 목록 '···' 확장 메뉴 항목 순서 변경 (TASK-20260724T073848-conv-menu-order, Minor §12.3, frontend-only)
+- Panel skip 사유(§18.8): 순수 렌더 순서 재정렬(`공유 → 이동 → 설정`) — 기존 3항목의 append 순서만 교체. 신규 로직·권한 게이트·onSelect 핸들러·action 인자·데이터 흐름·보안 표면 0. `folder.manage.own` 조건부 게이트·`conversation.share`/`conversation.read` action 불변. 적대 리뷰가 표면화할 correctness/security 리스크 없음 → SKIPPED 정당.
+- 검증: `node --check` PASS · 항목 3종(공유/이동/설정) 전부 유지 · 순서를 assert 하는 테스트 부재 확인(`verify_settings_archive_leave.mjs` 존재검사만 — 재정렬 무영향; 선존 2 FAIL 은 HEAD 부터의 `makeItem` vs `make` 정규식 drift, 본 변경 무관).
+
 ## REV-20260724T053457-metadata-review-ds-scope-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260724T053457-metadata-review-ds-scope, 비-정책 doc-only)
 - Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + REPORT 완결 + TASK 체크박스 + MODIFY CHG 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260724T053457-metadata-review-ds-scope(SHIP-WITH-FIXES, 3건 반영).
 - 라이브 실측(실 Windows Chrome via `bin/win-browser.py`, https://localhost/admin, 배포 2b22b5ff): 검토 큐 datasource 필터(공용 96→mysql-kr-an1-auth 16, 전 행 해당 scope) · 배지 정합(96→16, Finding 1 MAJOR) · 자동승급 목록 가시(목록 84 중 82 자동등록) · 등록 시각 전 행 표시 · pageerror 0. 사용자 3결함 전부 해소.
