@@ -805,3 +805,26 @@ source_of_truth: true
   · [NIT·범위 밖] `ai_ops.py:319` task×model 은 raw GROUP BY 유지(운영 관제 activity 패널). category 롤업이라
     raw granularity 미노출·per-category 비용은 canonical 단가 계상 → 가시 불일치 없음. follow-up(§8.1) 기록.
   · [NIT] SQL(ELSE NULL/'') vs Python('(미상)') 빈값 divergence — model NOT NULL + COALESCE 로 도달 불가(주석 명시).
+
+## REV-20260724T020632-aiops-model-canonical [SUBAGENT:general-purpose] SHIP-WITH-FIXES (MINOR §12.3) — '운영 현황' 서브탭 모델 canonical 정합 (usage-model-canonical 후속)
+- 위험도(§12.3): Minor — 읽기전용 표시/집계 정합. 인증·인가·데이터·마이그레이션·계약 변경 없음.
+- 범위: 사용자 요청("나머지 범위 또한 실제값과 정합"). 직전 PR#914 가 남긴 유일 raw 모델 그룹핑 = ai_ops('운영 현황').
+- 변경: (1) categories 집계 canonical GROUP BY, (2) 활동 feed 주 배지 canonical(req/resolved raw 보존).
+- **적대 리뷰(general-purpose) verdict = SHIP-WITH-FIXES → 지적 3건 전부 반영 후 SHIP**:
+  · **M1 (MAJOR, 반영)**: `admin.js:2208` 상세 폴백 `srvM = r.resolved_model || r.model` 이 이번에 canonical 화된
+    `r.model` 을 끌어와, `resolved_model=NULL` + 비-canonical `req_model`(예 `auto`·보조 task/pre-migration 행)에서
+    상세에 **날조된 라우팅 화살표(`auto → edge`)** 를 생성(cycle 의 "상세=raw audit·손실 없음" 계약 위반 — 손실
+    아닌 날조). **수정**: `srvM = r.resolved_model || r.req_model` (canonical `r.model` 미참조 → 상세 100% raw).
+    resolved NULL 이면 srvM=reqM → 화살표 소거(변경 전 동작 복원), resolved 존재 시 실 라우팅 유지. **실 Windows
+    Chrome(win-browser eval) 4시나리오 확증**: 정상변형·gemma폴백=실화살표 / NULL+auto=`auto`(날조 없음) / NULL+haiku=단일.
+  · **m1 (MINOR, 반영)**: categories "출력 불변/byte-동일" 주장 정정 — calls/total_tokens 는 정수 sum 이라 완전
+    불변이나, cost 는 `_estimate` 가 호출마다 round(…,4) 하여 raw 다중그룹→canonical 단일그룹 재결합 시 최하위
+    4번째 소수(≈$0.0001)에서 미세 변동 가능(단일 round 라 오히려 더 정확). ai_ops.py 주석 + 문서 톤다운.
+  · **m2 (MINOR, 반영)**: NULL-resolved+비canonical req 케이스 백엔드 회귀 테스트 추가
+    (test_query_activity_null_resolved_badge_canonical_raw_preserved) — 배지=canonical('edge'), req=raw'auto',
+    resolved=None 유지. unknown passthrough 는 기존 test_c2(merged)로 커버.
+- 리뷰 통과 항목: SQL `GROUP BY task,2` ordinal=CASE 정합·starts_with %-이스케이프 안전 / SSOT(Python↔SQL 규칙
+  동일) / 비용 일관(배지 canonical ↔ _estimate 내부 canonical) / 정보 복구(resolved 존재 시 라우팅 완전 표시) /
+  두 엔드포인트(/ai-ops·/ai-ops/activity) 배지 일관 · categories try/except degrade 온전.
+- 검증: 전체 pytest 2287 passed/2 skipped · admin.js `node --check` · Windows-browser modelDetail eval PASS ·
+  POST-DEPLOY PB-0008(운영 현황 배지·활동 상세 라우팅 라이브) = 배포 후 후속(test-runs.d fragment).

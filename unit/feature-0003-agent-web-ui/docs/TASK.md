@@ -6165,3 +6165,18 @@ REQ: 관리 콘솔 > 감사 > AI 운영 현황 > LLM 사용량 '모델별 비중
 - [x] 실 PG 90일 병합 실측 (7→3 세그먼트)
 - [x] docs 갱신 (MODIFY/REVIEW/REPORT/FUNCTION/TASK)
 - [ ] 배포(web/워커 재빌드) + POST-DEPLOY PB-0008 라이브 도넛 시각검증
+
+## 20260724T1106-aiops-model-canonical
+REQ: (usage-model-canonical 후속) 관리 콘솔 '감사 > AI 운영 현황' 의 나머지 범위('운영 현황' 서브탭 ai_ops)도
+실제값(canonical 실 모델명)과 정합하게 수정. (feature-0003, Minor §12.3, worktree ai/claude-corp/aiops-model-canonical)
+
+### 완료 체크리스트
+- [x] ai_ops.py categories 집계 GROUP BY canonical (출력 불변·SSOT 일관·재분점 예방)
+- [x] ai_ops.py _query_activity 주 배지 model → canonical, req_model/resolved_model raw 보존(라우팅 audit)
+- [x] test_ai_ops.py 갱신(배지 canonical 기대) + 폴백행 신규 테스트
+- [x] 전체 pytest 2287 passed / 2 skipped
+- [x] 잔존 raw COALESCE 모델 그룹핑 0건 확인 (grep)
+- [x] docs 갱신 (MODIFY/REVIEW/REPORT/FUNCTION/TASK)
+- [ ] 배포(web-only) + POST-DEPLOY 라이브 검증(운영 현황 배지·활동 상세 라우팅)
+정본 rationale=REVIEW.md REV-20260724T020632-aiops-model-canonical, 변경이력=MODIFY.md CHG-20260724T020632-aiops-model-canonical.
+- [x] [적대 리뷰 M1] admin.js 활동 상세 폴백 raw 교정(날조 화살표 차단) + Windows-browser eval 검증

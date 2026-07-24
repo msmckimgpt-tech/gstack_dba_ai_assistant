@@ -1818,3 +1818,11 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 드릴다운(`/api/admin/usage/conversations`·profile) 모델 필터도 canonical 기준 — 도넛 클릭 키(canonical) ↔ 대화목록 필터 정합.
 - 추정 비용(`_estimate_llm_cost_usd`)은 canonical 키로 단가표를 조회 — 변형 alias/실ID 도 올바른 단가로 계상(비용 $0 오표시 gap 해소), edge/gemma 는 로컬 무료 0.
 - 불변식: admin.js/스키마/RBAC/엔드포인트 계약 무변경(백엔드 집계 SQL 만). AC-20260724T012954-usage-model-canonical-1: 실 PG 90일 7세그먼트→3 실제모델 병합 실측. 검증: pytest 2280 passed/2 skipped + POST-DEPLOY PB-0008.
+
+## (aiops-model-canonical, 2026-07-24) '운영 현황' 서브탭 모델 표기 = canonical family
+- `감사 > AI 운영 현황 > 운영 현황`(ai_ops) 도 모델 표기를 canonical family 로 통일(LLM 사용량 도넛과 정합, usage-model-canonical 후속):
+  - categories 집계는 canonical 로 GROUP BY(카테고리 롤업이라 출력 불변 — SSOT 일관·재분점 예방).
+  - '최근 활동' feed 주 배지(`model`)는 canonical 실 모델명. 단 `req_model`(요청 alias)·`resolved_model`(실 서빙)은
+    raw 보존 → 상세 펼침에서 '요청 → 서빙' 라우팅(계정 분기·gemma 폴백)을 그대로 audit 가능(정보 손실 없음).
+- 불변식: 비용(_estimate_llm_cost_usd 내부 canonical)·categories 출력·엔드포인트 계약 무변경.
+  AC-20260724T020632-aiops-model-canonical-1: 전 코드베이스 raw COALESCE 모델 그룹핑 0건. 검증: pytest 2287 passed + POST-DEPLOY PB-0008.
