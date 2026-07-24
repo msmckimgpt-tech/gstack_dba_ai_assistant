@@ -570,3 +570,13 @@ source_of_truth: true
 - Rollback: request_timeout 120 복원(단 장문 sonnet 대화 timeout 재발).
 - ANCHOR 정합: §1·§2 무충돌. 타임아웃 상향은 자격/보안/라우팅 경계 변경 아님.
 - Cross-ref(정본): litellm_config.yaml `litellm_settings.request_timeout` · shared/config.py AGENT_TIMEOUT_SEC(300) · REVIEW.md REV-20260724T141420-llm-timeout-align.
+
+## CHG-20260724T054326-timeout-console-sync (litellm request_timeout ↔ 관리 콘솔 AGENT_TIMEOUT_SEC(live) 요청 단위 동기화 — 주석만 변경, 정본 로직=feature-0002)
+- Date: 2026-07-24. 사용자 요청: "`request_timeout` 또한 `설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃` 설정값과 동기화되도록 구성". 선행 llm-timeout-align(CHG-20260724T141420) 이 request_timeout 을 정적 300 으로 올렸으나, gateway 는 앱과 별도 프로세스라 콘솔 live 변경을 추종 못 하는 drift 잔존.
+- 진단(라이브 결정 실험): litellm 은 요청 body 의 `timeout` 을 per-attempt upstream 타임아웃으로 존중(body=5→408·=200→200 @11.7s) → 앱이 요청마다 live 값을 body 로 전달하면 gateway 재기동·재배포 없이 즉시 동기화(정적 config 로는 불가능).
+- 변경(litellm_config.yaml): `litellm_settings.request_timeout: 300` **값 무변경**. 주석만 갱신 — 앱(`agent_core._call_llm`)이 요청마다 live body timeout 을 전달하며, config request_timeout 은 body timeout 미전달 경로(외부 소비자 등)의 정적 fallback ceiling 임을 명문화. 앱 대화·probe 경로는 body timeout(live)이 override.
+- 정본(코드·로직·테스트): **feature-0002** `src/agent_core.py _call_llm`(extra_body 항상 timeout + thinking/effort 병합)·ask() client·run 예산 live 전환 + tests. feature-0002 CHG/REV/TASK-20260724T054326-timeout-console-sync.
+- Verification: YAML 파싱 OK(request_timeout=300 무변경). 배포=bedrock-gateway reconcile(config bind-mount, 주석변경이라 동작 무영향) + feature-0002 worker/web 재빌드. 배포 후 라이브: 콘솔 AGENT_TIMEOUT_SEC 변경 → 요청 실제 타임아웃 추종 확인.
+- Rollback: 주석 원복(기능 영향 0). 로직 rollback 은 feature-0002 CHG 참조.
+- ANCHOR 정합: §1·§2 무충돌(자격/보안/라우팅 경계 변경 아님).
+- Cross-ref(정본): feature-0002 MODIFY/REVIEW/TASK-20260724T054326-timeout-console-sync · litellm_config.yaml `litellm_settings.request_timeout` 주석 · 선행 CHG-20260724T141420-llm-timeout-align · REVIEW.md REV-20260724T054326-timeout-console-sync.

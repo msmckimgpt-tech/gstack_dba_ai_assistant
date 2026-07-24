@@ -3221,6 +3221,18 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     #    이 기본(effort high)이고, 명시 추론강도(low/high/max)만 output_config.effort 로 전달한다
     #    ('일반'=무override=기본 high — B1 무회귀 원칙 동형). budget override(reasoning_budget_override /
     #    model_thinking_budget_override)는 budget 계열에만 의미가 있으므로 adaptive 에서는 조회하지 않는다.
+    # feature-0007 timeout-console-sync: LLM upstream 타임아웃을 관리 콘솔 '설정 > 실행 타임아웃 >
+    # 에이전트/쿼리 실행 타임아웃'(AGENT_TIMEOUT_SEC, apply_mode=live) 값과 요청 단위로 동기화한다.
+    # litellm 은 요청 body 의 timeout 을 per-attempt upstream 타임아웃으로 존중(라이브 검증: body
+    # timeout=5→408, =200→11.7s 200). gateway litellm_config.request_timeout 는 body timeout 미전달
+    # 경로(타 서비스 등)의 정적 fallback 으로만 남는다. gateway 는 별도 프로세스라 정적 config/env 로는
+    # 콘솔 live 값 변경을 추종하지 못하므로(drift), 앱이 요청마다 live 값을 실어 보내는 것이 유일한
+    # 실동기화 수단이다. 총-대기 축인 클라이언트(httpx) 타임아웃(ask() 진입 시 아래에서 로컬 생성하는
+    # OpenAI(timeout=) — _get_llm_client 캐시 경로 아님)도 같은 콘솔 값을 읽으므로, 정상 흐름(콘솔 값 고정)
+    # 에서 총-대기(client)와 per-attempt(body)가 일치한다. (콘솔 값이 run 도중 상향되면 client 는 ask()
+    # 진입 시점 값에서 컷 → 실효 per-attempt=min(client,body); 다음 ask() 에서 자동 정합.)
+    # min 5s 는 runtime_settings 스펙 하한과 일치.
+    _extra_body: dict[str, Any] = {"timeout": max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC")))}
     _think_style = model_thinking_style(model)
     if _think_style == "budget":
         _think_budget = thinking_budget_for_level(reasoning_level)
@@ -3238,14 +3250,14 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
             _mt = kwargs.get("max_tokens")
             if isinstance(_mt, int) and _mt > 0:
                 _safe_budget = min(_safe_budget, max(1024, _mt - 1024))
-            kwargs["extra_body"] = {
-                "thinking": {"type": "enabled", "budget_tokens": _safe_budget},
-            }
+            _extra_body["thinking"] = {"type": "enabled", "budget_tokens": _safe_budget}
     elif _think_style == "adaptive":
         # Sonnet 5: budget_tokens 미전달(400 방지). 명시 레벨만 output_config.effort 로. '일반'은 미주입(기본 high).
         _effort = effort_for_reasoning_level(reasoning_level)
         if _effort is not None:
-            kwargs["extra_body"] = {"output_config": {"effort": _effort}}
+            _extra_body["output_config"] = {"effort": _effort}
+    # extra_body 는 timeout(항상)+thinking/output_config(해당 시)를 병합해 항상 전달한다.
+    kwargs["extra_body"] = _extra_body
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)
     # TASK-0163: 메인 agentic loop 의 LLM 호출을 토큰 회계에 기록(best-effort).
@@ -3963,9 +3975,13 @@ def _run_agent_core(
     client_kwargs: dict[str, Any] = {"api_key": LLM_API_KEY}
     if LLM_BASE_URL:
         client_kwargs["base_url"] = LLM_BASE_URL
+    # feature-0007 timeout-console-sync: 클라이언트(httpx) 총-대기 타임아웃도 관리 콘솔 live 값
+    # (AGENT_TIMEOUT_SEC)을 ask() 진입 시점에 읽어 반영한다. 정적 config.AGENT_TIMEOUT_SEC(import
+    # 시 고정)를 쓰면 콘솔에서 값을 올려도 client 가 옛 값에서 조기 컷 → per-request body timeout(live)
+    # 과 어긋난다. _call_llm 의 body timeout 과 동일 소스를 읽어 총-대기와 per-attempt 를 정합화.
     client = OpenAI(
         **client_kwargs,
-        timeout=max(5, int(AGENT_TIMEOUT_SEC)),
+        timeout=max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC"))),
         max_retries=max(0, int(AGENT_OPENAI_MAX_RETRIES)),
     )
 
@@ -4421,8 +4437,10 @@ def _run_agent_core(
 
     # ── 에이전트 루프 ──
     run_start = time.perf_counter()
+    # feature-0007 timeout-console-sync: 에이전트 루프 전체(run) 예산도 콘솔 live 값 기반으로 산출한다
+    # (per-request 타임아웃의 3배 = 다단계 루프 여유). 정적 AGENT_TIMEOUT_SEC 를 쓰면 콘솔 변경과 어긋난다.
     run_timeout_sec = max(
-        AGENT_TIMEOUT_SEC * 3,
+        max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC"))) * 3,
         max(1, int(cfg.AGENT_EARLY_FINALIZE_MS / 1000)),
     )
     last_sql = ""

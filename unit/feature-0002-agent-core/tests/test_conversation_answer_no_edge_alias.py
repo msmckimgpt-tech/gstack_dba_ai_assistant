@@ -367,8 +367,11 @@ def test_call_llm_sonnet_adaptive_no_budget_tokens(monkeypatch):
     assert budget_calls == ["claude-sonnet-4"]
     assert isinstance(sink["max_tokens"], int) and sink["max_tokens"] == 40000
     # 핵심(sonnet5-upgrade): adaptive 이므로 '일반'에서 budget_tokens/thinking override 를 주입하지 않는다
-    # (Sonnet 5 는 thinking budget_tokens 를 400 으로 거부). _CaptureCompletions 는 extra_body 키를 항상
-    # 세팅하므로(미주입 시 None) 값이 None 임을 확인한다.
-    assert sink["extra_body"] is None, f"adaptive sonnet 에 override 누출: {sink['extra_body']}"
+    # (Sonnet 5 는 thinking budget_tokens 를 400 으로 거부). feature-0007 timeout-console-sync 이후
+    # extra_body 에는 항상 body timeout(live AGENT_TIMEOUT_SEC)이 실리므로 None 이 아니라, thinking/
+    # output_config 가 **없음**을 확인한다(timeout 은 존재하되 추론 override 는 누출 없음).
+    _eb = sink["extra_body"] or {}
+    assert isinstance(_eb.get("timeout"), int) and _eb["timeout"] >= 5, f"body timeout 누락: {_eb}"
+    assert "thinking" not in _eb and "output_config" not in _eb, f"adaptive sonnet 에 override 누출: {_eb}"
     # 기록/표시는 원본 유지.
     assert recorded == [("claude-sonnet-4", "agent")]
