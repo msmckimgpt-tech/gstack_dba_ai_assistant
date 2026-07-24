@@ -357,6 +357,16 @@
 .share-message-content pre.diff-block .diff-hunk { color: #7aa2f7; }
 .share-message-content pre.diff-block .diff-meta { color: #94a3b8; }
 
+/* TASK-20260724T180458: ```sql 코드블록 구문 하이라이트(공유 뷰) — app.js/styles.css 와 동형.
+   --share-code-bg(#1e293b) 다크 배경 위에서 읽히는 Tokyo Night 팔레트. */
+.share-message-content pre.sql-block .sql-tok-keyword { color: #bb9af7; font-weight: 600; }
+.share-message-content pre.sql-block .sql-tok-func    { color: #7aa2f7; }
+.share-message-content pre.sql-block .sql-tok-type    { color: #2ac3de; }
+.share-message-content pre.sql-block .sql-tok-string  { color: #9ece6a; }
+.share-message-content pre.sql-block .sql-tok-number  { color: #ff9e64; }
+.share-message-content pre.sql-block .sql-tok-var     { color: #e0af68; }
+.share-message-content pre.sql-block .sql-tok-comment { color: #94a3b8; font-style: italic; }
+
 /* 본문 내 markdown 표 — DB 질의 응답의 핵심 가시화 요소 */
 .share-message-content table {
   width: 100%;

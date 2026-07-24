@@ -1546,6 +1546,24 @@ a { color: inherit; }
 .message-content pre.diff-block .diff-hunk { color: #7aa2f7; }
 .message-content pre.diff-block .diff-meta { color: #737aa2; }
 
+/* TASK-20260724T180458: ```sql 코드블록 구문 하이라이트 — enhanceSqlBlocks 가 토큰을
+   <span class="sql-tok-*"> 로 감싼다. assistant 말풍선의 .message-content pre 는 라이트/다크
+   무관 다크 배경(#1a1b26)이라 diff-block 과 동일 Tokyo Night 팔레트를 쓰고 테마 분기가 불필요.
+   (사용자 말풍선만 기본 반투명 배경이라 아래에서 sql-block 배경을 다크로 별도 고정한다.) */
+.message-content pre.sql-block .sql-tok-keyword { color: #bb9af7; font-weight: 600; }
+.message-content pre.sql-block .sql-tok-func    { color: #7aa2f7; }
+.message-content pre.sql-block .sql-tok-type    { color: #2ac3de; }
+.message-content pre.sql-block .sql-tok-string  { color: #9ece6a; }
+.message-content pre.sql-block .sql-tok-number  { color: #ff9e64; }
+.message-content pre.sql-block .sql-tok-var     { color: #e0af68; }
+.message-content pre.sql-block .sql-tok-comment { color: #737aa2; font-style: italic; }
+/* 사용자 말풍선(primary 색 위 반투명 흰 배경)에 드물게 sql 블록이 실릴 때 — 배경을 assistant 와
+   동일한 다크로 고정해 위 Tokyo Night 팔레트 대비를 보장한다(색상 규칙 중복 불필요). */
+.message.is-user .message-content pre.sql-block {
+  background: #1a1b26;
+  color: #c0caf5;
+}
+
 .message-content h1, .message-content h2, .message-content h3 {
   margin: 14px 0 6px;
   font-size: 15px;

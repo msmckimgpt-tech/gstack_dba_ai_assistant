@@ -6271,3 +6271,25 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [ ] verify-completion → PR·머지 → 배포(web 재빌드, static asset) → PB-0008: sonnet 카드=①+guide(②③ 없음), haiku 카드=①②③.
 - worktree `ai/claude/feature-0003-sonnet-reasoning-budget-guide`(base main 28ec78b3).
 - [x] PB-0008 POST-DEPLOY 공유링크 라이브 PASS(2026-07-24·배포본 c1358190): conv[2] 공유 뷰 rail 14개 뱃지 막대(height 1~14% 비례)·클릭 상단 scrollY 62/하단 1551 비례 이동. 메인 뷰와 동일 막대 형식. 스크린샷 evidence/share-rail-bars-live.png. 사용자 요구 실증 완료.
+## TASK-20260724T180458-sql-md-highlight — assistant markdown 답변의 SQL 코드블록 구문 하이라이트 적용 (Minor §12.3 — feature-0003 web/UI 프론트 static, frontend-only, /_template:entry arg-given)
+- 요청(사용자, 2026-07-24, `/_template:entry` arg-given): "서비스 내 assistant 가 md 형식으로 쿼리를 전달할 때, sql 관련 하이라이트가 적용된 상태로 전달하도록 구성해주세요. 현재는 md 내 plaintext 와 같이 전달하고 있어 가독성이 떨어집니다."
+- 현상: 답변 렌더 파이프라인(`markdownToHtml` = `marked.parse` → `enhance*Blocks` 체인 → `DOMPurify.sanitize`)에 syntax highlighter(highlight.js/prism)가 없어 ` ```sql ` 코드블록이 `<pre><code class="language-sql">` 로만 렌더 → 색 없는 monospace(plaintext) 로 보여 가독성 저하.
+- 접근(외부 vendor 무추가 · 기존 `enhanceDiffBlocks` 패턴 정합):
+  - 경량 SQL 토크나이저 `enhanceSqlBlocks(html)` 신설 — comment(`--`,`/* */`)·string(`'..'`,`".."`)·number·keyword·type·function(`(` 휴리스틱)·variable(`@`,`@@`) 을 `<span class="sql-tok-*">` 로 감싼다. 토큰 텍스트는 `textContent` 로만 주입(XSS 무첨가) → 이후 DOMPurify 통과(span+class 허용).
+  - 체인 배선: `marked.parse` → `enhanceDiffBlocks` → **`enhanceSqlBlocks`** → `enhanceAttachmentEditBlocks` → mermaid → `DOMPurify.sanitize`. lang 필터(sql/mysql/tsql/postgresql 등)로 diff·mermaid·attachment 블록과 disjoint.
+  - 색: diff-block 과 동일 Tokyo Night 팔레트 → `pre` 가 라이트/다크 무관 항상 다크(#1a1b26 / share #1e293b)라 테마 분기 불필요.
+- 영향 파일(구체 경로):
+  - `unit/feature-0003-agent-web-ui/src/static/app.js` — `enhanceSqlBlocks`/`highlightSqlInto` + 상수(`SQL_HL_LANGS/KEYWORDS/TYPES`), `markdownToHtml` 체인 1줄.
+  - `unit/feature-0003-agent-web-ui/src/static/share.js` — 로컬 동일 `enhanceSqlBlocks` + `renderMarkdownContent` 체인 1줄 (diff/attachment 와 동일하게 share 번들 로컬 복제).
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` — `.message-content pre.sql-block .sql-tok-*` 팔레트.
+  - `unit/feature-0003-agent-web-ui/src/static/share.css` — `.share-message-content pre.sql-block .sql-tok-*` 팔레트.
+- 완료 판정 기준(acceptance): (1) ` ```sql ` 블록의 keyword/string/number/comment 가 색 구분되어 렌더 (2) diff/mermaid/attachment 블록·인라인 코드 회귀 0 (3) DOMPurify 통과 후에도 span·class 보존 (4) 비-SQL lang·SQL 아닌 텍스트 무영향 (5) `node --check` PASS.
+- 위험도: Minor (비파괴 additive frontend, 인증/데이터/마이그레이션/외부비용 무관).
+
+### 완료 체크리스트
+- [x] app.js: `enhanceSqlBlocks`/`highlightSqlInto` + 체인 배선
+- [x] share.js: 동일 로컬 함수 + 체인 배선
+- [x] styles.css / share.css: `.sql-block .sql-tok-*` 팔레트
+- [x] headless chromium 실 파이프라인 렌더 검증(marked+DOMPurify+enhanceSqlBlocks · 실 vendor 파일) — 23/23 PASS, 시각증거 evidence/sql-md-highlight-20260724.png
+- [ ] verify-completion PASS → PR → (deploy-web + POST-DEPLOY PB-0008 라이브)
+정본 rationale=REVIEW.md REV-20260724T180458-sql-md-highlight, 변경이력=MODIFY.md CHG-20260724T180458-sql-md-highlight, Run 기록=test-runs.d/20260724T180458-sql-md-highlight.md.

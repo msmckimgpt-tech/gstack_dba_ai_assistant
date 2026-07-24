@@ -900,3 +900,18 @@ source_of_truth: true
 
 ## REV-20260724T183000-share-point-rail-bars-postverify [SKIPPED:doc-only-postdeploy-verification-record-no-code] — POST-DEPLOY 공유링크 라이브 검증 기록
 - Panel skip 사유(§18.8): 코드 0(문서 전용 POST-DEPLOY 실증). 구현 리뷰 정본 = REV-20260724T180649-share-point-rail-bars([SKIPPED:trivial-display-only-port-of-reviewed-main]). 배포(c1358190)+공유링크 라이브 실측(막대·클릭 비례) append 만.
+## REV-20260724T180458-sql-md-highlight [SUBAGENT: SHIP — 6/6축 PASS · BLOCK/MAJOR 0 · 보안·정합성 결함 0] assistant markdown SQL 코드블록 구문 하이라이트 (Minor §12.3, frontend-only)
+- **[SUBAGENT] 적대 패널 판정 (§18.8, 보안+프론트 렌즈, 정적분석 + 경험적 테스트 — jsdom 주입 열거 + node ReDoS 1.12M자)**: **VERDICT SHIP**. ① XSS PASS — 토큰 텍스트 `textContent`/`createTextNode` 전용, `tpl.innerHTML` 직렬화가 `<>&` 엔티티 이스케이프 → 주입 payload(`'<img onerror>'`·`</code></pre><script>`·백틱-`</span><script>`·`'"><iframe srcdoc>`) 전부 PRE/CODE/SPAN + `class="sql-tok-*"` 로만 물질화, 금지 태그/속성 0; span class 는 하드코딩 상수(포징 불가); DOMPurify 최종 backstop 유지. ② ReDoS/토크나이저 PASS — unrolled-loop 문자열 패턴(선형)·lazy 블록주석·zero-width 매치 없음(전 분기 ≥1자 소비 + `[\s\S]` fallback)·200k~1.12M자 입력 0.4~64ms 선형·무한루프 없음·미종결 문자열/주석 graceful. ③ 회귀/disjoint PASS — lang 게이트 early-return 로 diff/mermaid/attachment/인라인/plain 무영향, `[class*='language-']` 오탐 없음(`(?:^|\s)language-` 경계), 체인 순서 양파일 정합. ④ 텍스트 무손실 PASS — 전 테스트 100% round-trip(스크립트/`&<>"`/비ASCII/CRLF/탭/이스케이프따옴표/`.5`/`1e`), 트레일링 `\n` strip 은 enhanceDiffBlocks 관례와 동일. ⑤ app.js↔share.js PASS — 마스터 정규식 byte-identical, 함수/Set 동치(차이=app.js 한국어 주석 3줄뿐). ⑥ CSS PASS — 토큰 규칙 `pre.sql-block .sql-tok-*` 이중 조건이라 non-SQL bleed 없음, 사용자 말풍선 override specificity 정합.
+- **잔여(수정 안 함 — 코스메틱·text-safe)**: NIT — comment 토큰 `#737aa2`/`#1a1b26` 대비 ≈4.1:1(기존 `.diff-meta` 와 동일 페어 재사용, 의도적 de-emphasis). MINOR(coverage 한계, 결함 아님) — PostgreSQL `$$…$$` dollar-quoted·MySQL `#` 라인주석 미토큰화 시 내부가 일반 SQL 로 색칠될 수 있음(텍스트·안전 무영향, 순수 오색칠). `#` 는 코드 주석에 이미 명시, `$$` 는 향후 확장 여지.
+- **결정**: 외부 syntax highlighter 라이브러리(highlight.js/prism) 도입 대신, 기존 `enhanceDiffBlocks`/`enhanceAttachmentEditBlocks` 와 동일한 code-block post-processor 패턴의 경량 토크나이저 `enhanceSqlBlocks` 를 추가한다.
+- **대안 검토**:
+  - (A) highlight.js/prism vendor 추가 → 번들 크기(+수십~수백KB)·CSP/오프라인 정합·theme CSS 추가 부담·과잉. 서비스가 쓰는 SQL 방언(MySQL/T-SQL/PG) 한정이면 경량 커스텀으로 충분. **불채택**.
+  - (B) marked 커스텀 renderer 로 코드 하이라이트 → marked 버전/renderer API 결합 증가, 기존 enhance 체인과 이질. **불채택**.
+  - (C) **경량 토크나이저 post-processor(채택)** — 기존 패턴 정합, 의존성 0, 방언 공통 예약어/타입 세트 + `(`휴리스틱 함수 인식. app.js/share.js 로컬 복제는 diff/attachment 선례와 동일.
+- **리스크·완화**:
+  - XSS: 토큰 텍스트를 `textContent` 로만 span 에 주입(innerHTML 미사용) + 체인 말미 DOMPurify.sanitize 이중 방어. headless 라이브 DOM 실측으로 `<script>/<img>/on*` 0·alert 미발화 확증.
+  - ReDoS: 문자열/백틱 토큰을 linear(비-backtrack) 형태(`'[^']*(?:''[^']*)*'`)로, 블록주석은 lazy 로 작성.
+  - 방언 충돌: MySQL `#` 라인주석은 T-SQL `#temp` 식별자와 충돌하므로 미지원(`--`,`/* */` 만) — 색만 안 입고 깨지지 않음(무손실).
+  - 회귀: lang 필터로 diff/mermaid/attachment/비-SQL/인라인 코드와 disjoint 확인(headless 23/23).
+- **테마**: `.message-content pre` 는 라이트/다크 무관 항상 다크(#1a1b26 / share #1e293b)라 diff-block 과 동일 Tokyo Night 팔레트를 재사용, 테마 분기 불필요. 사용자 말풍선(primary 색 위)에 sql 블록이 실릴 경우만 배경을 다크로 고정해 대비 보장.
+- **검증**: headless chromium 실 vendor 파이프라인 23/23 PASS · node --check PASS · 시각증거 캡처. POST-DEPLOY PB-0008 라이브(Windows-browser) = 배포 후 정본.

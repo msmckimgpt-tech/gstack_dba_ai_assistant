@@ -1007,3 +1007,10 @@ source_of_truth: true
 ## CHG-20260724T1830-share-point-rail-bars-postverify (POST-DEPLOY 공유링크 라이브 검증, 비-정책 doc-only)
 - POST-DEPLOY PB-0008 공유링크 라이브 PASS(배포본 c1358190): 공유 뷰 rail 14 뱃지 막대(범위 비례)·클릭 위치 비례(상단 62/하단 1551). 메인 뷰와 동일 막대 형식. 사용자 요구 실증. 코드 0(스크린샷 evidence 추가).
 - Files: `docs/test-runs.d/20260724T180649-share-point-rail-bars.md`, `docs/test-runs.d/evidence/share-rail-bars-live.png`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
+## CHG-20260724T180458-sql-md-highlight — assistant markdown 답변 ```sql``` 코드블록 구문 하이라이트 (Minor §12.3, frontend-only)
+- **요청(사용자, /_template:entry arg-given)**: assistant 가 md 로 쿼리를 전달할 때 SQL 하이라이트가 적용된 상태로 전달하도록 구성 (현재 plaintext 로 렌더되어 가독성 저하).
+- **원인**: 렌더 파이프라인(`markdownToHtml`=`marked.parse`→`enhance*Blocks`→`DOMPurify.sanitize`)에 syntax highlighter(highlight.js/prism) 부재 → ```sql``` 블록이 `<pre><code class="language-sql">` 로만 렌더돼 색 없는 monospace(plaintext) 로 보임.
+- **변경**: 경량 SQL 토크나이저 `enhanceSqlBlocks(html)` 신설(외부 vendor 무추가) — 기존 `enhanceDiffBlocks` 패턴 정합. comment/string/number/keyword/type/function(`(`휴리스틱)/variable 을 `<span class="sql-tok-*">` 로 감싸고(토큰 텍스트는 `textContent` 로만 주입 → XSS 무첨가·DOMPurify 통과), lang 필터(sql/mysql/tsql/postgresql 등)로 diff/mermaid/attachment 와 disjoint.
+- **Files**: `src/static/app.js`(`enhanceSqlBlocks`/`highlightSqlInto`+`SQL_HL_LANGS/KEYWORDS/TYPES`, `markdownToHtml` 체인 배선) · `src/static/share.js`(공유 뷰 로컬 미러 + `renderMarkdownContent` 체인 배선 — diff/attachment 헬퍼와 동일하게 share 번들 로컬 복제) · `src/static/styles.css`(`.message-content pre.sql-block .sql-tok-*` Tokyo Night 팔레트 + 사용자 말풍선 sql-block 다크 배경 고정) · `src/static/share.css`(`.share-message-content pre.sql-block .sql-tok-*`).
+- **Verification**: headless chromium(chromium-1208 via playwright) 실 vendor(marked+DOMPurify) 파이프라인 **23/23 PASS**(토큰화·텍스트 무손실·DOMPurify span/class 보존·XSS 라이브 DOM 무력화·비-SQL 블록 disjoint·getComputedStyle 색 실측) · `node --check` app.js·share.js PASS · 시각증거 `docs/evidence/sql-md-highlight-20260724.png`. 정적 자산 web 이미지 baked → 라이브 PB-0008 = POST-DEPLOY(visual_verification_scope: always).
+- **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008(Windows-browser).
