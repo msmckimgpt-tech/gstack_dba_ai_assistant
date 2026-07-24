@@ -514,7 +514,8 @@ a { color: inherit; }
   flex: 1 1 auto;
   min-width: 0;
 }
-.sidebar-head .btn-search-conv {
+.sidebar-head .btn-search-conv,
+.sidebar-head .btn-new-folder {
   flex: 0 0 auto;
   width: 30px;
   height: 30px;
@@ -528,14 +529,23 @@ a { color: inherit; }
   cursor: pointer;
   transition: background .13s, color .13s, border-color .13s;
 }
-.sidebar-head .btn-search-conv:hover {
+.sidebar-head .btn-search-conv:hover,
+.sidebar-head .btn-new-folder:hover:not(:disabled) {
   background: var(--surface);
   color: var(--primary);
   border-color: var(--primary);
 }
-.sidebar-head .btn-search-conv:focus-visible {
+.sidebar-head .btn-search-conv:focus-visible,
+.sidebar-head .btn-new-folder:focus-visible {
   outline: 2px solid var(--primary, #8ab4f8);
   outline-offset: 2px;
+}
+.sidebar-head .btn-new-folder[hidden] { display: none; }
+.sidebar-head .btn-new-folder:disabled { opacity: .4; cursor: not-allowed; }
+/* feature-0024 newfolder-btn: 폴더 아이콘 버튼이 root 드롭 존일 때 시각 피드백(대화/폴더 빼기). */
+.sidebar-head .btn-new-folder.folder-drop-hover {
+  background: rgba(37,99,235,.14); color: var(--primary); border-color: var(--primary);
+  border-style: dashed;
 }
 
 .btn-new-conv {
@@ -643,21 +653,8 @@ a { color: inherit; }
 .conv-date-group-header.is-collapsed .conv-date-group-chevron::after { content: "›"; }
 
 /* feature-0024-conversation-folders: 폴더(프로젝트) UI */
-.conv-folder-tools { padding: 4px 8px 2px; }
-.conv-folder-add-btn {
-  width: 100%;
-  text-align: left;
-  font-size: 11.5px;
-  color: var(--text-2);
-  background: transparent;
-  border: 1px dashed var(--border, rgba(0,0,0,.14));
-  border-radius: var(--r-sm);
-  padding: 4px 8px;
-  cursor: pointer;
-  transition: background .12s, color .12s;
-}
-.conv-folder-add-btn:hover:not(:disabled) { background: rgba(0,0,0,.04); color: var(--text-1); }
-.conv-folder-add-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* newfolder-btn: '＋ 새 폴더' 사이드바 바(.conv-folder-tools/.conv-folder-add-btn)는 '새 대화' 우측
+   폴더 아이콘 버튼(.btn-new-folder)으로 통합되어 제거됨. */
 .conv-folder-undo {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   margin: 2px 8px 4px; padding: 5px 8px;
@@ -713,14 +710,6 @@ a { color: inherit; }
 .conv-folder-header.folder-drop-hover {
   background: rgba(37,99,235,.14);
   box-shadow: inset 0 0 0 1.5px var(--accent, #2563eb);
-}
-.conv-folder-tools.folder-drop-hover {
-  background: rgba(37,99,235,.10);
-  outline: 1.5px dashed var(--accent, #2563eb); outline-offset: -2px;
-  border-radius: var(--r-sm);
-}
-.conv-folder-tools.folder-drop-hover .conv-folder-add-btn::after {
-  content: " · 여기로 놓으면 폴더에서 빼기"; font-weight: 400; opacity: .7;
 }
 
 /* folder-ux 개선2/4: 폴더 설정 모달 (share-mgr-panel 재사용) */

@@ -2807,6 +2807,18 @@ function _folderChildren(parentId) {
 }
 function _folderDepthCap() { return Number(state.folderMaxDepth) || 4; }
 
+// feature-0024 newfolder-btn: 헤더 '새 폴더' 아이콘 버튼 노출/활성 동기화(권한 기준).
+//   folder.list.own 없으면 숨김, folder.manage.own 없으면 비활성(생성 불가).
+function _syncNewFolderBtn() {
+  const btn = document.getElementById("newFolderBtn");
+  if (!btn) return;
+  const canSee = typeof can === "function" && can("folder.list.own");
+  const canMake = typeof can === "function" && can("folder.manage.own");
+  btn.hidden = !canSee;
+  btn.disabled = !canMake;
+  btn.title = canMake ? "새 폴더" : "새 폴더 (권한 없음)";
+}
+
 // 폴더 collapse — 사이드바 collapse 모델 재사용(state.collapsedDateGroups, key=folder:{id}).
 function _toggleFolder(id) {
   const key = `folder:${id}`;
@@ -3096,7 +3108,8 @@ async function moveConversationToFolder(cid, folderId) {
 }
 
 async function createFolderAndMove(cid) {
-  const fid = await createFolderFlow(null);
+  // 이동 맥락에선 인라인 rename 진입 없이 "새 폴더" 생성 후 즉시 이동(포커스는 이동 결과에).
+  const fid = await createFolderFlow(null, { autoRename: false });
   if (fid != null) await moveConversationToFolder(cid, fid);
 }
 
@@ -3403,34 +3416,9 @@ function renderConversationList() {
     conversationListEl.appendChild(bar);
   }
 
-  // 폴더 도구 바 — "새 폴더"(폴더 권한 보유 시).
-  if (can("folder.list.own") && (state.folders.length || can("folder.manage.own"))) {
-    const tools = document.createElement("div");
-    tools.className = "conv-folder-tools";
-    const addBtn = document.createElement("button");
-    addBtn.type = "button";
-    addBtn.className = "conv-folder-add-btn";
-    addBtn.textContent = "＋ 새 폴더";
-    addBtn.title = "새 폴더를 만듭니다";
-    if (!can("folder.manage.own")) addBtn.disabled = true;
-    addBtn.addEventListener("click", () => createFolderFlow(null));
-    tools.appendChild(addBtn);
-    // 개선6: 도구 바 = root 드롭 존 — 여기로 끌어다 놓으면 폴더에서 빼기(대화)/최상위로(폴더).
-    tools.addEventListener("dragover", (ev) => {
-      if (!_dqaDrag) return;
-      ev.preventDefault(); try { ev.dataTransfer.dropEffect = "move"; } catch (_) {}
-      tools.classList.add("folder-drop-hover");
-    });
-    tools.addEventListener("dragleave", () => tools.classList.remove("folder-drop-hover"));
-    tools.addEventListener("drop", async (ev) => {
-      ev.preventDefault(); tools.classList.remove("folder-drop-hover");
-      const d = _dqaDrag; _dqaDrag = null;
-      if (!d) return;
-      if (d.type === "conv") await moveConversationToFolder(d.id, null);
-      else if (d.type === "folder") await moveFolderTo(Number(d.id), null);
-    });
-    conversationListEl.appendChild(tools);
-  }
+  // feature-0024 newfolder-btn: '＋ 새 폴더' 사이드바 바 제거 — '새 대화' 우측 폴더 아이콘 버튼으로
+  //   통합(미니멀). 버튼 노출/활성은 권한 기준 동기화(정적 헤더 요소라 목록 밖에서 제어).
+  _syncNewFolderBtn();
 
   // conv-date-tree: 미분류 대화만 나이 기반 적응형 트리(일 → 월 → 연>월)로 그룹핑.
   const dateTree = _buildOwnDateTree(_unfoldered);
@@ -3589,7 +3577,8 @@ function renderConversationList() {
     });
     header.addEventListener("dragleave", () => header.classList.remove("folder-drop-hover"));
     header.addEventListener("drop", async (ev) => {
-      ev.preventDefault(); header.classList.remove("folder-drop-hover");
+      ev.preventDefault(); ev.stopPropagation();  // 컨테이너 root 드롭 핸들러로 버블 방지(폴더 배정 우선)
+      header.classList.remove("folder-drop-hover");
       const d = _dqaDrag; _dqaDrag = null;
       if (!d) return;
       if (d.type === "conv") await moveConversationToFolder(d.id, folder.folder_id);
@@ -11269,6 +11258,26 @@ async function initialize() {
       showToast(error.message || "새 대화 생성에 실패했습니다.", true);
     }
   });
+  // feature-0024 newfolder-btn: '새 대화' 우측 폴더 아이콘 = 새 폴더 생성(무프롬프트 + 인라인 이름편집).
+  //   + root 드롭 존(대화/폴더를 여기로 끌어다 놓으면 폴더에서 빼기/최상위로) — 기존 도구바 대체.
+  const newFolderBtn = document.getElementById("newFolderBtn");
+  if (newFolderBtn) {
+    newFolderBtn.addEventListener("click", () => { createFolderFlow(null); });
+    newFolderBtn.addEventListener("dragover", (ev) => {
+      if (!_dqaDrag) return;
+      ev.preventDefault(); try { ev.dataTransfer.dropEffect = "move"; } catch (_) {}
+      newFolderBtn.classList.add("folder-drop-hover");
+      newFolderBtn.title = _dqaDrag.type === "conv" ? "여기로 놓으면 폴더에서 빼기" : "여기로 놓으면 최상위로";
+    });
+    newFolderBtn.addEventListener("dragleave", () => { newFolderBtn.classList.remove("folder-drop-hover"); newFolderBtn.title = "새 폴더"; });
+    newFolderBtn.addEventListener("drop", async (ev) => {
+      ev.preventDefault(); newFolderBtn.classList.remove("folder-drop-hover"); newFolderBtn.title = "새 폴더";
+      const d = _dqaDrag; _dqaDrag = null;
+      if (!d) return;
+      if (d.type === "conv") await moveConversationToFolder(d.id, null);
+      else if (d.type === "folder") await moveFolderTo(Number(d.id), null);
+    });
+  }
   // REQ-20260518-0005: composer product chip — click 시 drop-up dropdown 토글.
   const productChipEl = document.getElementById("productChip");
   if (productChipEl) {

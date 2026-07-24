@@ -35,3 +35,6 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 순수 프론트 UX 재구성 — 신규 엔드포인트/권한/백엔드/RBAC 게이트 0. 모든 조작(생성/이름변경/지침/삭제/배정/폴더이동)이 이미 §18.8 리뷰·owner-scope 확정된 폴더 API(REV-20260723T170000)를 그대로 호출(DnD/모달도 동일 moveConversationToFolder/moveFolderTo/PATCH). 새 공격면 없음. UX 회귀(DnD 엣지·인라인 rename race·모달 포커스)는 라이브 PB-0008 로 실측.
 - 자체 점검: 인라인 rename 은 renaming 중 draggable 미부여(드래그/편집 충돌 방지)·blur/Enter 커밋·Esc 취소. DnD 는 자기 자신 폴더 드롭 차단(클라)+서버 순환/depth 최종 검증. 삭제는 설정 모달 danger 버튼+undo 배너(confirm 제거해도 가역). 자기 대화만 draggable.
 - 검증: node --check OK. 라이브=POST-DEPLOY PB-0008.
+
+## REV-20260723T200000-newfolder-btn [SKIPPED:frontend-ux-button-relocation-existing-api] SHIP — '+ 새 폴더' 바 → '새 대화' 우측 폴더 아이콘
+- Panel skip 사유(§18.8): 순수 프론트 UX — 폴더 생성 버튼 위치만 이동(도구바→헤더 아이콘). 신규 엔드포인트/권한/백엔드 0, 동일 createFolderFlow/moveConversationToFolder/moveFolderTo 재사용. 권한 게이팅(_syncNewFolderBtn)은 기존 can() 기준. 새 공격면 없음. 라이브=PB-0008.
