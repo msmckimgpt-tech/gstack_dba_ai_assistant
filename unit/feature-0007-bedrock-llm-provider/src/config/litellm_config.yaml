@@ -205,11 +205,17 @@ general_settings:
 #   `logit_bias`) 는 Bedrock Claude 가 지원하지 않으므로 LiteLLM 가 silently
 #   drop. 본 코드 베이스의 `_openai_chat_completion_with_deadline` 호출이
 #   `temperature` 만 추가하므로 drop 대상 거의 없음.
-# - request_timeout: 본 backend 의 `AGENT_TIMEOUT_SEC` 와 정합. 사용자 turn 응답
+# - request_timeout: 본 backend 의 `AGENT_TIMEOUT_SEC`(운영 300s) 와 정합. 사용자 turn 응답
 #   timeout 보다 짧게 잡지 않는다.
+#   llm-timeout-align(2026-07-24): 120 → 300. 기존 120 은 앱 client timeout(AGENT_TIMEOUT_SEC=300)보다
+#   짧아, gateway 가 Anthropic 응답을 300s 까지 기다릴 수 있는 앱보다 먼저 120s 에서 컷했다. Sonnet 5
+#   adaptive thinking 대화의 장문-답변 후반 라운드(전체 컨텍스트 + 심층 추론 + 긴 산출)가 120s 를 넘겨
+#   "LLM 호출 오류: Request timed out" 으로 실패(라이브 재현). num_retries=1 재시도·fallback 이 겹치면
+#   120s×N 이 앱 300s 를 넘겨 조기 실패도 유발. request_timeout 을 앱 per-call 예산(300)과 맞춰 정합화.
+#   (총 run 예산은 앱측 AGENT_TIMEOUT_SEC*3=900s 가 라운드 합계로 별도 강제.)
 litellm_settings:
   drop_params: true
-  request_timeout: 120
+  request_timeout: 300
   # insight-llm-fallback(2026-07-03): claude-haiku-4(claude-corp) 실패(429 rate-limit 등) 시 순서 폴백 —
   # claude-haiku-4-root(root Max 5x) → edge-fallback(로컬 gemma). insight 의 burst 호출이 한 계정의
   # RPM/TPM 을 넘겨 429 가 나도 다음 계정/로컬로 즉시 우회해 생성이 끊기지 않는다. num_retries=1 로

@@ -562,3 +562,11 @@ source_of_truth: true
 - Rollback: model_catalog 상수/헬퍼 + agent_core/probe 주입 revert → sonnet 429 복귀(단 코드-정확 상태로).
 - ANCHOR 정합: §1(운영자 자격 일원화 — 동일 OAuth 계정, 신규 자격 없음)·§2(Alt-A gateway) 무충돌. system 첫 블록 identity 주입은 라우팅/인증 경계 확장 아님(기존 OAuth 토큰 사용).
 - Cross-ref(정본 코드): shared/model_catalog.py `OAUTH_FRONTIER_IDENTITY`/`requires_oauth_frontier_identity` · agent_core.py `_call_llm` · llm_provider_health.py `probe_provider` · REVIEW.md REV-20260724T123503-cc-identity-inject.
+
+## CHG-20260724T141420-llm-timeout-align (litellm request_timeout 120→300 — Sonnet 5 대화 "Request timed out" 해소)
+- Date: 2026-07-24. cc-identity-inject 로 sonnet 이 작동(tool use 여러 단계)하기 시작한 뒤, 후반 라운드에서 "LLM 호출 오류: Request timed out" 발견(사용자 신고, 상태 error). 진단: 배포 **AGENT_TIMEOUT_SEC=300**(앱 client timeout, `_get_llm_client`)인데 gateway **litellm request_timeout=120** — gateway 가 앱보다 먼저 120s 에서 Anthropic 응답을 컷. Sonnet 5 adaptive thinking 대화의 장문-답변 후반 라운드(전체 컨텍스트+심층 추론+긴 산출)가 120s 초과 → timeout. num_retries=1·fallback 겹치면 120s×N 이 앱 300s 를 넘겨 조기 실패도 유발. 개별 호출 latency 실측은 19s(high)/14s(medium)로 대체로 빠르나, 장문 답변 라운드가 예외적으로 김.
+- 변경(litellm_config.yaml): `litellm_settings.request_timeout` 120 → **300**(앱 AGENT_TIMEOUT_SEC 와 정합 — config 주석의 "짧게 잡지 않는다" 의도 복원). 총 run 예산은 앱측 AGENT_TIMEOUT_SEC*3=900s 가 라운드 합계로 별도 강제(무변경). effort/max_tokens 무변경(개별 호출은 빠름 — 근본은 gateway<app 타임아웃 불일치).
+- Verification: YAML OK(request_timeout=300). 배포=bedrock-gateway reconcile(config bind-mount). 배포 후 실행 config request_timeout=300 확인 + sonnet 대화 정상.
+- Rollback: request_timeout 120 복원(단 장문 sonnet 대화 timeout 재발).
+- ANCHOR 정합: §1·§2 무충돌. 타임아웃 상향은 자격/보안/라우팅 경계 변경 아님.
+- Cross-ref(정본): litellm_config.yaml `litellm_settings.request_timeout` · shared/config.py AGENT_TIMEOUT_SEC(300) · REVIEW.md REV-20260724T141420-llm-timeout-align.
