@@ -124,9 +124,9 @@ run_agent(user_message, conversation_id, model, ...)
 1. `_raw_execute_sql()` 로 전체 결과를 얻는다.
 2. 각 result set 을 **통째로 CSV 파일**로 저장한다 — `render.save_csv("resultset{idx}", ...)`. 경로는 `/shared/out/...csv` 형식.
 3. LLM 으로 돌려주는 문자열에는 **미리보기만** 넣는다 — `_format_result_sets(result_sets, max_rows=_TOOL_PREVIEW_ROWS)` (`_TOOL_PREVIEW_ROWS=50`, [tools.py:455](../src/modules/tools.py#L455)).
-4. 미리보기 뒤에 `CSV 저장: <path>` 라인을 덧붙이고, 전체 행 수가 미리보기보다 많으면 *"답변에 전체 표를 삽입하지 말고 CSV 링크를 제공하세요"* 라는 지시를 함께 전달한다.
+4. 미리보기 뒤에 `CSV 저장: <path>` 라인을 덧붙이고, *"저장된 CSV 는 사용자에게 다운로드 버튼으로 자동 제공된다 — 링크/URL 을 직접 만들 필요 없음, 전체 데이터를 답변에 붙여넣지 말 것"* 이라는 지시를 (절단 여부와 무관하게) 함께 전달한다. (conv-audit csv-inline-no-download: 이전의 *"CSV 다운로드 링크를 제공하세요"* — 모델이 URL 을 직접 생성 — 지시는 모델이 없는 링크를 참조하거나 인라인 데이터만 붙이는 dead-end 를 유발해 폐기.)
 
-답변 렌더링 단계에서 `_collapse_large_tables()` ([agent_core.py:547](../src/agent_core.py#L547)) 가 다시 한 번 안전망 역할을 한다. 마크다운 표의 데이터 행이 `_TABLE_ROW_THRESHOLD=5` 를 넘으면 상위 5 행만 남기고 그 아래를 `📎 [전체 N행 미리보기](/api/file?path=...)` 링크로 치환한다.
+답변 렌더링 단계에서 `_collapse_result_blocks()` 가 다시 한 번 안전망 역할을 한다 — `_collapse_large_tables()`(마크다운 표) + `_collapse_large_csv_blocks()`(```csv 펜스 블록)를 공유 used 집합으로 순차 적용. 데이터 행이 `_TABLE_ROW_THRESHOLD=5` 를 넘고 매칭 CSV 가 있으면 상위 5 행만 남기고 그 아래를 `📎 [전체 N행 미리보기](/api/file?path=...)` 링크로 치환한다. 프론트(`static/app.js`·`share.js`)의 `enhanceCsvBlockDownloads` 는 남은 ```csv 블록마다 클라이언트 Blob 다운로드 버튼을 붙여, 서버 파일이 없거나 모델이 인라인으로만 제시해도 사용자가 항상 CSV 를 받게 한다.
 
 결과적으로 **LLM 은 항상 최대 50 행만 읽고, 사용자는 CSV 로 전체를 받을 수 있다**. 이것이 대형 결과셋에서 컨텍스트를 터뜨리지 않는 핵심 장치다.
 

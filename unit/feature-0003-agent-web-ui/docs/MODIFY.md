@@ -942,3 +942,16 @@ source_of_truth: true
 - **m2 반영**: NULL-resolved+비canonical req 백엔드 테스트 추가.
 - Files(정정): `src/routers/ai_ops.py`, `src/static/admin.js`, `tests/test_ai_ops.py`, `docs/test-runs.d/20260724T020632-aiops-model-canonical.md`.
 - admin.js 변경으로 check #13(visual_verification_scope=always) 활성 → test-runs.d fragment(Windows-browser Run) 동반, POST-DEPLOY 라이브 PB-0008 후속.
+
+## CHG-20260724T123600-csv-download-wiring — assistant "CSV 다운로드 가능" 답변의 실제 다운로드 배선 누락 수정 (conv-audit csv-inline-no-download, Major cross-cut)
+- **증상**: 대화 '킹스레이드 배틀 로그 차원별 집계'(515c0fd9, bootstrap_admin)에서 assistant 가 결과를 인라인 ```csv``` 텍스트로 붙이고 "다운로드하실 수 있습니다"라고 안내했으나 클릭할 다운로드 대상이 전무(8메시지 중 5개). `/api/file` 엔드포인트·권한 게이트·`/shared/out` 저장은 정상 — 링크 주입 책임이 LLM 즉흥에 의존.
+- **근본원인**: 답변→링크 후처리기 `agent_core._collapse_large_tables` 가 Markdown 표(`|...|`)만 인식, ```csv``` fenced 블록은 blind spot. 모델이 (툴 가이던스 "전체 표를 삽입하지 말고"를) csv 블록으로 해석 → 링크 미주입 dead-end.
+- **수정 (3계층, additive·behavior-neutral for non-csv)**:
+  - `src/static/app.js`: `enhanceCsvBlockDownloads(target)` + `_csvDownloadFilename()` 추가, `renderMessageContent` assistant 분기에 배선(enhanceFilePreviewLinks 뒤). ```csv``` 블록마다 클라이언트 Blob(UTF-8 BOM) "📥 CSV 다운로드" 버튼. 바로 뒤에 `/api/file` 링크가 있으면(백엔드 절단-미리보기) 버튼 skip.
+  - `src/static/share.js`: 공유 뷰 동일 미러(기존 `.share-csv-download-btn` 재사용, `renderMarkdownContent` 배선). 인라인 CSV 는 이미 가시 텍스트라 신규 노출 없음(서버 파일·step csv_paths 는 공유 redaction 유지).
+  - `src/static/styles.css`: `.csv-block-actions`(flex bar)·`.csv-download-btn`(border+primary hover).
+  - (cross-cut 코드 거주 feature-0002) `src/agent_core.py`: `_collapse_large_csv_blocks(answer, csv_paths)` — 대형 ```csv``` 블록을 값-토큰 매칭(`_match_csv_for_table`/`_csv_signatures` 재사용)으로 저장 CSV 찾아 헤더+미리보기 접기 + `📎 [전체 N행 미리보기](/api/file?path=)` 주입. 매칭 실패 시 원문 유지(데이터 손실 방지). 초안(3계층)·redteam 수정·redteam 최종 3경로에 `_collapse_large_tables` 뒤 체인.
+  - (cross-cut 코드 거주 feature-0002) `src/modules/tools.py`: execute_sql·scratch_sql 툴 출력에 "저장 CSV 는 다운로드 버튼으로 자동 제공 — 링크 직접 생성 불필요, 전체 데이터 붙여넣기 금지" 항상(절단 무관) 안내. 기존 "CSV 다운로드 링크를 제공하세요"(모델이 URL 생성) 지시 폐기.
+- **Files**: `src/static/app.js`, `src/static/share.js`, `src/static/styles.css`, `unit/feature-0002-agent-core/src/agent_core.py`, `unit/feature-0002-agent-core/src/modules/tools.py` + tests(`unit/feature-0002-agent-core/tests/test_collapse_csv_block_download.py`(신규), `unit/feature-0003-agent-web-ui/tests/verify_csv_block_download.mjs`(신규), `test_partial_evidence_grounding.py`·`test_scratch.py` 가이던스 문구 정합).
+- **Verification**: 전체 pytest **2303 passed / 2 skipped**(무회귀) · jsdom 18 PASS · `node --check` app.js/share.js. check #13(visual_verification_scope=always) 활성 → test-runs.d Windows-browser fragment 동반, POST-DEPLOY 라이브 PB-0008.
+- **잔여**: verify → commit → deploy(web+worker) → POST-DEPLOY PB-0008.

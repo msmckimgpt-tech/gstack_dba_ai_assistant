@@ -424,3 +424,9 @@ source_of_truth: true
 - 비변경: ask-worker(예방 게이트로 이미 커버)·enum 스키마·마이그레이션·RBAC 0. table-레벨/bare-schema 자동 정리는 미포함(운영자 `scripts/enum_grounding_sweep.py`).
 - 검증: 신규 self-heal 계열 17 PASS · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
 - Cross-ref: REV/TASK/TEST-20260722T033854-enum-schema-grounding(self-heal 라운드) · 선행 CHG-20260722T033854-enum-schema-grounding(예방 게이트) · insight-worker(§16.3)·0039 enum autopropose · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260724T123600-csv-download-wiring (cross-cut — cycle home = feature-0003)
+- conv-audit(csv-inline-no-download): assistant 가 인라인 ```csv``` 블록으로 결과를 제시하며 "다운로드 가능"이라 안내하나 실제 다운로드 수단이 없던 마찰 수정의 백엔드 몫.
+- `src/agent_core.py`: `_collapse_large_csv_blocks(answer, csv_paths)` 신설 — 답변 내 대형 ```csv``` 펜스 블록을 `_collapse_large_tables`(MD표) 와 동일하게 값-토큰 매칭으로 저장 CSV 찾아 미리보기+`/api/file` 링크 주입(매칭 실패 시 원문 유지). 초안·redteam 수정·redteam 최종 3경로에 `_collapse_large_tables` 뒤 체인. 기존 `_collapse_large_tables`/`_csv_signatures`/`_match_csv_for_table` 무변경(재사용).
+- `src/modules/tools.py`: execute_sql·scratch_sql 툴 출력 가이던스 — "저장 CSV 는 다운로드 버튼으로 자동 제공(링크 직접 생성 불필요)·전체 데이터 붙여넣기 금지" 항상 안내로 정합(기존 "다운로드 링크를 제공하세요" 폐기).
+- 프론트(app.js/share.js/styles.css)·docs·검증·배포 정본 = feature-0003 REPORT/MODIFY/TASK/REVIEW/TEST-20260724T123600-csv-download-wiring. 테스트: `tests/test_collapse_csv_block_download.py`(신규 6) + `test_partial_evidence_grounding.py`·`test_scratch.py` 가이던스 문구 정합. 전체 pytest 2303 passed/2 skipped.

@@ -1839,3 +1839,14 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
   이모지+평문 혼합 라벨은 평문 부분이 `fill`(labelFill)로 정상 렌더되고 이모지만 고유 색으로 렌더된다.
   AC-20260724T031956-graph-emoji-color-1: `hasEmoji` 가 역할 아이콘 8종+🗂 전부 감지, `−`(U+2212)·`ƒ`(U+0192)·평문·한글 비-매칭.
   검증: test_pixi_adapter.js T20b 16-assert PASS(전체 112 PASS) · POST-DEPLOY PB-0008 라이브(그래프 캔버스 실 렌더).
+
+## (csv-download-wiring, 2026-07-24) 답변 CSV 다운로드 배선 — 인라인 ```csv``` 블록 다운로드 보장
+- assistant 가 SQL/scratch 결과를 답변 본문에 인라인 ```csv``` 코드블록으로 제시할 때, 사용자가 그 데이터를 항상 파일로 받을 수 있어야 한다(이전엔 "다운로드하실 수 있습니다"라고 안내만 하고 실제 다운로드 수단이 없는 dead-end 였음 — conv-audit csv-inline-no-download).
+- **프론트(`static/app.js`·`share.js`) `enhanceCsvBlockDownloads`**: sanitize 이후 라이브 DOM 의 `pre > code.language-csv` 마다 "📥 CSV 다운로드" 버튼을 붙여 화면에 렌더된 CSV 텍스트를 클라이언트 Blob(UTF-8 BOM — Excel 한글)으로 저장한다. 서버 파일(/api/file)·csv_paths 영속·LLM 준수에 비의존 — ```csv``` 블록이 있으면 항상 다운로드 가능. 멱등(`data-csvDownloadReady`). 바로 뒤 형제에 `/api/file` 링크가 있으면(백엔드가 대형 블록을 절단하고 전체 링크 주입) 절단-미리보기에 버튼을 붙이지 않는다(일부 행만 받는 오해 방지). 메인 UI 는 `.csv-block-actions`+`.tool-btn.csv-download-btn`, 공유 뷰는 기존 `.share-csv-download-btn` 재사용.
+- **백엔드(`agent_core._collapse_large_csv_blocks`, cross-cut 코드 거주 feature-0002)**: 답변 내 대형 ```csv``` 펜스 블록(데이터 행 > threshold)을 Markdown 표(`_collapse_large_tables`)와 동일 처리 — 값 토큰 매칭(`_match_csv_for_table`/`_csv_signatures`)으로 저장 CSV 를 찾으면 헤더+미리보기 N행으로 접고 `📎 [전체 N행 미리보기](/api/file?path=)` 를 주입한다(전체는 다운로드로). 매칭 CSV 가 없으면(서버 파일 미저장 등) 블록을 원문 그대로 두어 데이터 손실을 만들지 않는다(프론트 버튼이 보장). 초안·redteam 수정·redteam 최종 3경로에 `_collapse_large_tables` 뒤로 체인.
+- **가이던스(`modules/tools.py`, cross-cut 코드 거주 feature-0002)**: execute_sql·scratch_sql 툴 출력에 "저장된 CSV 는 사용자에게 다운로드 버튼으로 자동 제공 — 링크/URL 직접 생성 불필요, 전체 데이터 답변 붙여넣기 금지" 를 (절단 여부 무관) 항상 안내. 기존 "CSV 다운로드 링크를 제공하세요"(모델이 URL 생성) 지시 폐기.
+- 불변식: `/api/file` 엔드포인트·권한 게이트(`conversation.file.read.own/any`)·`_safe_shared_path`·`/shared/out` 저장·스키마·RBAC 무변경. 공유 뷰 redaction(서버 파일·step csv_paths) 무변경 — 프론트 버튼은 이미 가시화된 답변 본문 텍스트만 저장(신규 노출 없음). cache-buster `?v=dev` 고정(빌드 자동 주입).
+- AC-20260724T123600-csv-download-1: assistant 답변에 ```csv``` 블록이 있으면 그 블록마다 "📥 CSV 다운로드" 버튼이 렌더되고 클릭 시 해당 CSV 가 `.csv` 파일로 다운로드된다.
+- AC-20260724T123600-csv-download-2: 대형 ```csv``` 블록(> threshold) + 저장 CSV 매칭 시 답변이 미리보기로 접히고 `/api/file` 전체 링크가 주입되며, 그 절단-미리보기 블록엔 프론트 다운로드 버튼이 붙지 않는다(전체 링크가 canonical).
+- AC-20260724T123600-csv-download-3: non-csv 코드블록(language-sql/diff/mermaid)·빈 csv 블록엔 버튼이 붙지 않고, 재렌더(폴러) 시 버튼이 중복 삽입되지 않는다.
+- 검증: pytest 2305 passed/2 skipped(신규 `test_collapse_csv_block_download.py` 8 + 무회귀) · jsdom `verify_csv_block_download.mjs` 22 PASS · `node --check`. REV-20260724T123600-csv-download-wiring. POST-DEPLOY PB-0008(Environment: Windows-browser — 대화 515c0fd9 재로드).

@@ -1816,6 +1816,25 @@ a { color: inherit; }
   gap: 6px;
 }
 
+/* conv-audit (csv-inline-no-download): 답변 본문 ```csv 블록 아래 다운로드 버튼 바. */
+.csv-block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 10px;
+}
+.csv-download-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-2);
+}
+.csv-download-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37, 99, 235, .2);
+}
+
 .result-table-wrap.is-full-data {
   max-height: min(70vh, 560px);
   overflow: auto;

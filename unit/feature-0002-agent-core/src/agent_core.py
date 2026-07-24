@@ -2588,8 +2588,12 @@ def _match_csv_for_table(
     return None
 
 
-def _collapse_large_tables(answer: str, csv_paths: list[str]) -> str:
+def _collapse_large_tables(answer: str, csv_paths: list[str], _sigs=None, _used=None) -> str:
     """답변 내 대형 마크다운 표를 미리보기 + CSV 링크로 치환.
+
+    `_sigs`/`_used` 를 넘기면 그 signature/used 집합을 공유한다(=`_collapse_result_blocks`
+    가 MD표·```csv 블록 두 패스에 동일 used 를 threading 해 같은 CSV 이중 매칭·오링크 방지).
+    미지정(기본)이면 자체 계산 — 단독 호출(기존 테스트) 하위호환.
 
     TASK-0174: 기존엔 답변 속 대형 표를 csv_paths 에 **위치 인덱스**로 1:1
     매칭했으나, csv_paths 에는 표로 렌더되지 않은 보조 쿼리(MIN/MAX 등) 결과
@@ -2601,8 +2605,8 @@ def _collapse_large_tables(answer: str, csv_paths: list[str]) -> str:
     """
     if not answer or not csv_paths:
         return answer
-    csv_sigs = _csv_signatures(csv_paths)
-    used = [False] * len(csv_paths)
+    csv_sigs = _sigs if _sigs is not None else _csv_signatures(csv_paths)
+    used = _used if _used is not None else [False] * len(csv_paths)
     lines = answer.split("\n")
     result: list[str] = []
     i = 0
@@ -2654,6 +2658,117 @@ def _collapse_large_tables(answer: str, csv_paths: list[str]) -> str:
             result.append(lines[i])
             i += 1
     return "\n".join(result)
+
+
+_CSV_FENCE_OPEN_RE = re.compile(r"^\s*```csv\s*$", re.IGNORECASE)
+_CSV_FENCE_CLOSE_RE = re.compile(r"^\s*```\s*$")
+
+
+def _collapse_large_csv_blocks(answer: str, csv_paths: list[str], _sigs=None, _used=None) -> str:
+    """답변 내 대형 ```csv 펜스 코드블록을 미리보기 + /api/file 링크로 치환.
+
+    conv-audit (csv-inline-no-download): _collapse_large_tables 는 Markdown 표
+    (`|...|`) 만 인식하는 blind spot 이 있어, 모델이 결과를 ```csv 펜스 블록으로
+    붙이면(라이브에서 관측된 지배적 패턴 — 툴 가이던스 "전체 표를 삽입하지 말고"를
+    모델이 csv 블록으로 해석) 다운로드 링크가 전혀 주입되지 않고 "다운로드하실 수
+    있습니다" 안내가 dead-end 가 됐다. 본 함수는 대형 ```csv 블록을 MD 표와 동일하게
+    처리한다 — 값 토큰 매칭(_match_csv_for_table)으로 저장된 CSV 를 찾으면 헤더+
+    미리보기 N행으로 접고 전체는 /api/file 링크로 제공한다.
+
+    매칭 CSV 가 없으면(서버 파일 미저장·측정값 전용 등) 블록을 **그대로 둔다**
+    — 데이터 손실을 만들지 않고, 프론트 enhanceCsvBlockDownloads 가 화면의 CSV
+    텍스트를 그대로 클라이언트 다운로드하게 한다(항상 다운로드 보장). 값 토큰
+    파싱은 퍼지 매칭용이라 단순 comma split 으로 충분하다(csv 모듈 불요).
+    """
+    if not answer or not csv_paths:
+        return answer
+    if "```csv" not in answer.lower():
+        return answer
+    csv_sigs = _sigs if _sigs is not None else _csv_signatures(csv_paths)
+    used = _used if _used is not None else [False] * len(csv_paths)
+    lines = answer.split("\n")
+    result: list[str] = []
+    n = len(lines)
+    i = 0
+    while i < n:
+        if not _CSV_FENCE_OPEN_RE.match(lines[i]):
+            result.append(lines[i])
+            i += 1
+            continue
+        # ```csv 펜스 시작 — 닫는 펜스까지 수집.
+        open_line = lines[i]
+        body: list[str] = []
+        j = i + 1
+        closed = False
+        while j < n:
+            if _CSV_FENCE_CLOSE_RE.match(lines[j]):
+                closed = True
+                break
+            body.append(lines[j])
+            j += 1
+        if not closed:
+            # 닫히지 않은 펜스 — 손대지 않는다(원문 보존).
+            result.append(lines[i])
+            i += 1
+            continue
+        close_line = lines[j]
+        data_idxs = [k for k, ln in enumerate(body) if ln.strip() != ""]
+        body_rows = max(len(data_idxs) - 1, 0)  # 첫 비어있지 않은 줄 = 헤더
+        if body_rows > _TABLE_ROW_THRESHOLD:
+            header_idx = data_idxs[0]
+            header_cells = [c.strip() for c in body[header_idx].split(",")]
+            sample_cells: list[str] = []
+            for k in data_idxs[1:_CSV_MATCH_SAMPLE_ROWS + 1]:
+                sample_cells.extend(c.strip() for c in body[k].split(","))
+            table_tokens = _distinctive_tokens(sample_cells)
+            match_idx = _match_csv_for_table(table_tokens, len(header_cells), csv_sigs, used)
+            if match_idx is not None:
+                used[match_idx] = True
+                # 헤더 + 미리보기 threshold행만 유지, 나머지 데이터 행은 링크로 대체.
+                kept: list[str] = []
+                kept_data = 0
+                for k, ln in enumerate(body):
+                    if k == header_idx:
+                        kept.append(ln)
+                    elif ln.strip() == "":
+                        kept.append(ln)
+                    elif kept_data < _TABLE_ROW_THRESHOLD:
+                        kept.append(ln)
+                        kept_data += 1
+                    else:
+                        break
+                result.append(open_line)
+                result.extend(kept)
+                result.append(close_line)
+                result.append("")
+                result.append(
+                    f"📎 [전체 {body_rows}행 미리보기]"
+                    f"(/api/file?path={csv_paths[match_idx]})"
+                )
+                result.append("")
+                i = j + 1
+                continue
+            # 매칭 CSV 없음 → 블록 원문 유지(데이터 손실 방지, 프론트가 다운로드 보장).
+        # 소형 블록 또는 매칭 실패 → 펜스 블록 원문 그대로.
+        result.extend(lines[i:j + 1])
+        i = j + 1
+    return "\n".join(result)
+
+
+def _collapse_result_blocks(answer: str, csv_paths: list[str]) -> str:
+    """답변의 대형 결과 표현(Markdown 표 + ```csv 펜스 블록)을 미리보기 + CSV 링크로 접는다.
+
+    MD표(`_collapse_large_tables`)와 ```csv 블록(`_collapse_large_csv_blocks`)을 **공유
+    signature/used 집합**으로 순차 처리 — 한 답변에 같은 결과가 표·csv 블록 양쪽으로
+    나와도 동일 CSV 가 이중 매칭되거나(중복 링크), token-less 동일-컬럼수 CSV 가 엇갈려
+    붙는(오링크) 것을 막는다(적대 리뷰 MINOR)."""
+    if not answer or not csv_paths:
+        return answer
+    sigs = _csv_signatures(csv_paths)
+    used = [False] * len(csv_paths)
+    out = _collapse_large_tables(answer, csv_paths, _sigs=sigs, _used=used)
+    out = _collapse_large_csv_blocks(out, csv_paths, _sigs=sigs, _used=used)
+    return out
 
 
 def _extract_csv_paths(text: str) -> list[str]:
@@ -4433,9 +4548,10 @@ def _run_agent_core(
                         "content": "Write a concise Korean Markdown answer. Do not expose hidden reasoning; summarize the result only.",
                     })
                     continue
-            # 대형 표 → CSV 링크 후처리
+            # 대형 표/```csv 블록 → CSV 링크 후처리 (MD 표는 _collapse_large_tables,
+            # ```csv 펜스 블록은 _collapse_large_csv_blocks — 두 표현 모두 다운로드 배선).
             all_csv = _step_csv_paths(steps)
-            answer = _collapse_large_tables(raw_answer, all_csv) if all_csv else raw_answer
+            answer = _collapse_result_blocks(raw_answer, all_csv) if all_csv else raw_answer
             result["answer"] = answer
 
             # feature-0021: 자가 적대 red-team 리뷰 — 전달 전 fresh-context 검증 (fail-open).
@@ -4464,9 +4580,9 @@ def _run_agent_core(
                         _txt = _txt.strip()
                         if not _txt:
                             return None
-                        # 수정 모델이 raw 도구 결과를 보고 대형 인라인 표를 재방출할 수 있으므로
-                        # 초안과 동일하게 CSV 링크로 접는다(초안의 _collapse_large_tables 대칭 — 회귀 방지).
-                        return _collapse_large_tables(_txt, all_csv) if all_csv else _txt
+                        # 수정 모델이 raw 도구 결과를 보고 대형 인라인 표/```csv 블록을 재방출할 수
+                        # 있으므로 초안과 동일하게 CSV 링크로 접는다(초안 대칭 — 회귀 방지).
+                        return _collapse_result_blocks(_txt, all_csv) if all_csv else _txt
 
                     # W1(추적성): 재도출이 돌린 SQL/도구를 바깥 steps·last_sql 에 반영하기 위한 캡처.
                     # _rt_rederive 는 outer local(last_sql) 을 재바인딩할 수 없어(closure) dict 로 전달.
@@ -4566,7 +4682,8 @@ def _run_agent_core(
                                 break
                         if not (_rd_final and _rd_final.strip()):
                             return None
-                        _rd_final = _collapse_large_tables(_rd_final, all_csv) if all_csv else _rd_final
+                        if all_csv:
+                            _rd_final = _collapse_result_blocks(_rd_final, all_csv)
                         if _rd_steps:
                             # W1: 재도출 근거를 outer 로 반영(orchestrate 반환 후 채택 시 steps.extend + last_sql).
                             _rederive_capture["steps"].extend(_rd_steps)
