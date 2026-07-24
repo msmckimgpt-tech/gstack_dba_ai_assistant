@@ -78,3 +78,7 @@ source_of_truth: true
 ## TASK-20260723T190000-folder-ux — 폴더 동작 UX 6개 개선 (사용자 요청)
 - [x] ①무프롬프트 생성+자동 인라인편집 ②설정 모달 ③인라인 이름변경 ④지침 모달 ⑤이동 모달(검색·정렬) ⑥DnD. prompt/confirm 제거. node --check OK.
 - [x] 배포(PR #908→main 65848910) + **POST-DEPLOY PB-0008 6개 전부 라이브 PASS**: ①무프롬프트 '새 폴더' 생성+인라인편집 자동포커스 ②설정 모달(멀티라인 지침 textarea+삭제) ③인라인 이름변경('매출 분석') ④지침 멀티라인 저장 ⑤이동 모달(검색 필터·정렬·새폴더·닫기) ⑥DnD(draggable+drop 배정). 스크린샷 folder-settings-modal.png. 테스트 데이터 정리(활성폴더 0).
+
+## TASK-20260723T200000-newfolder-btn — '+ 새 폴더' 바를 '새 대화' 우측 폴더 아이콘으로(미니멀) (사용자 요청)
+- [x] 도구바 제거 + 헤더 폴더 아이콘 버튼(#newFolderBtn) + 권한 동기화 + DnD root 드롭 이관. node --check OK.
+- [ ] 배포 + POST-DEPLOY PB-0008(헤더 폴더 버튼 생성·바 제거 확인).

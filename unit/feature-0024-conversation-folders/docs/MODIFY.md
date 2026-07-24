@@ -50,3 +50,8 @@ source_of_truth: true
 - ① 새 폴더 무프롬프트 생성("새 폴더")+생성 직후 인라인 이름편집 ② 폴더 ··· '설정' 모달(지침 textarea+삭제) ③ 이름변경 인라인(라벨→텍스트박스, Enter/Esc/blur) ④ 지침=모달 textarea(멀티라인) ⑤ 대화 '이동' 모달(검색·정렬[이름/최근]·새폴더·빼기) ⑥ DnD(대화→폴더·폴더→폴더·도구바 root존).
 - prompt/confirm 전면 제거: createFolderFlow(name="새 폴더")·renameFolderFlow(인라인)·openFolderSettings(지침/삭제)·openMoveConversationDialog·deleteFolderFlow(confirm→undo배너). 미사용 _foldersFlatForPicker 제거.
 - 검증: node --check OK·함수 정합. 라이브 6개 실측=POST-DEPLOY PB-0008. Cross-ref: REV/TEST-20260723T190000-folder-ux.
+
+## CHG-20260723T200000-newfolder-btn (사용자 요청 — '+ 새 폴더' 바를 '새 대화' 우측 폴더 아이콘으로)
+- Date: 2026-07-23. Files: `static/index.html`(폴더 아이콘 버튼 #newFolderBtn)·`static/app.js`(클릭·권한 동기화·root 드롭 이관·도구바 제거)·`static/styles.css`(.btn-new-folder 스타일·도구바 CSS 제거).
+- 좌측 대화목록의 `conv-folder-tools`('＋ 새 폴더' 바) 제거 → '새 대화' 버튼 우측 폴더 아이콘 버튼으로 통합(미니멀). 검색 아이콘과 동일 30x30 스타일. 클릭→createFolderFlow(null). _syncNewFolderBtn: folder.list.own 없으면 hidden·manage.own 없으면 disabled. DnD root 드롭 존을 폴더 아이콘 버튼으로 이관(hover 힌트). createFolderAndMove=autoRename:false.
+- 검증: node --check OK. 라이브=POST-DEPLOY PB-0008. Cross-ref: REV/TEST-20260723T200000-newfolder-btn.
