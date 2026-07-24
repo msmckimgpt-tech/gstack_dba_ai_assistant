@@ -82,3 +82,5 @@ source_of_truth: true
 - Result Summary: **PRE** — node --check app.js OK · #newFolderBtn 정의(index.html)·클릭/드롭/동기화 wiring(app.js)·도구바 CSS 제거·잔존 참조 0.
 - Environment: Windows-browser — 정적 baked → **POST-DEPLOY PB-0008**: '새 대화' 우측 폴더 아이콘 노출(folder 권한)·클릭 시 무프롬프트 생성+인라인편집·기존 '＋ 새 폴더' 바 미표시·DnD 폴더 아이콘 root 드롭.
 - Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY.
+
+- **[POST-DEPLOY 2026-07-23] newfolder-btn 라이브 (PASS, Windows-browser, c5af349c)**: PR #929→main c5af349c→deploy-web(soak PASS). 서빙 index.html #newFolderBtn·app.js _syncNewFolderBtn 확인. win-browser(bootstrap_admin): 헤더 폴더 아이콘 버튼 exists/visible/enabled=true·**oldToolsBarGone=true**(기존 바 제거)·클릭→폴더 생성(delta 1)+인라인 rename 진입·기본명 "새 폴더". 상단 [＋ 새 대화][🗂 폴더][🔍 검색] 정합(스크린샷 scratchpad/newfolder-btn-header.png). 테스트 폴더 정리(활성 0). Pass/Fail: **PASS**.
