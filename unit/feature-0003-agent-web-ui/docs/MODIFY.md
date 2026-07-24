@@ -1022,3 +1022,8 @@ source_of_truth: true
 - **Files**: `src/static/app.js`(`enhanceSqlBlocks`/`highlightSqlInto`+`SQL_HL_LANGS/KEYWORDS/TYPES`, `markdownToHtml` 체인 배선) · `src/static/share.js`(공유 뷰 로컬 미러 + `renderMarkdownContent` 체인 배선 — diff/attachment 헬퍼와 동일하게 share 번들 로컬 복제) · `src/static/styles.css`(`.message-content pre.sql-block .sql-tok-*` Tokyo Night 팔레트 + 사용자 말풍선 sql-block 다크 배경 고정) · `src/static/share.css`(`.share-message-content pre.sql-block .sql-tok-*`).
 - **Verification**: headless chromium(chromium-1208 via playwright) 실 vendor(marked+DOMPurify) 파이프라인 **23/23 PASS**(토큰화·텍스트 무손실·DOMPurify span/class 보존·XSS 라이브 DOM 무력화·비-SQL 블록 disjoint·getComputedStyle 색 실측) · `node --check` app.js·share.js PASS · 시각증거 `docs/evidence/sql-md-highlight-20260724.png`. 정적 자산 web 이미지 baked → 라이브 PB-0008 = POST-DEPLOY(visual_verification_scope: always).
 - **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008(Windows-browser).
+
+## CHG-20260724T184500-sql-md-highlight-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- 코드/자산 0 — sql-md-highlight(PR #946·main 0313b135) 배포 후 라이브 검증 결과 기록만.
+- test-runs.d/20260724T180458-sql-md-highlight.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260724T184500-sql-md-highlight-postverify(§12.2 deploy 근거 포함) + evidence/pb0008-sql-highlight-live-20260724.png.
+- 실측(실 Windows Chrome/150, https://localhost/ bootstrap_admin): 배포본 markdownToHtml → sql-tok 26토큰·Tokyo Night 색 정확·텍스트 무손실·script 0. 사용자 요청 라이브 해소 확인.

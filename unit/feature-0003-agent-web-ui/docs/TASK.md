@@ -6305,5 +6305,5 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] share.js: 동일 로컬 함수 + 체인 배선
 - [x] styles.css / share.css: `.sql-block .sql-tok-*` 팔레트
 - [x] headless chromium 실 파이프라인 렌더 검증(marked+DOMPurify+enhanceSqlBlocks · 실 vendor 파일) — 23/23 PASS, 시각증거 evidence/sql-md-highlight-20260724.png
-- [ ] verify-completion PASS → PR → (deploy-web + POST-DEPLOY PB-0008 라이브)
-정본 rationale=REVIEW.md REV-20260724T180458-sql-md-highlight, 변경이력=MODIFY.md CHG-20260724T180458-sql-md-highlight, Run 기록=test-runs.d/20260724T180458-sql-md-highlight.md.
+- [x] verify-completion PASS → PR #946 머지(main 0313b135) → deploy-web-only(soak PASS) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, sql-tok 26토큰·Tokyo Night 색 정확·evidence/pb0008-sql-highlight-live-20260724.png) — **완결**
+정본 rationale=REVIEW.md REV-20260724T180458-sql-md-highlight, 변경이력=MODIFY.md CHG-20260724T180458-sql-md-highlight, Run 기록=test-runs.d/20260724T180458-sql-md-highlight.md, POST-DEPLOY=REV/CHG-20260724T184500-sql-md-highlight-postverify.

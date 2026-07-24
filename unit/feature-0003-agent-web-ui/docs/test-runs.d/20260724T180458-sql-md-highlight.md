@@ -20,3 +20,9 @@ verdict: PRE-COMMIT PASS (headless chromium 실 vendor 파이프라인 23/23·JS
   - headless 한계: 실 대화 스트림 위 시각 배치·실 Windows Chrome 폰트/서브픽셀 렌더·배포 자산 서빙은 headless 로 정본 확인 불가 → 아래 POST-DEPLOY PB-0008 로 정본 확인(카고컬트 방지 — headless 로 통과 위장하지 않음).
   - 시각 증거: `docs/evidence/sql-md-highlight-20260724.png`(렌더된 SQL 블록 캡처 — keyword/function/string/number/comment 색 구분 육안 확인).
 - POST-DEPLOY PB-0008 라이브 계획(정본, Windows-browser): 배포(deploy-web) 후 실 Windows Chrome(`bin/win-browser.py` CDP relay)로 `https://localhost/admin` 로그인 → assistant 가 ```sql``` 쿼리를 답한 대화 재로드 → 코드블록이 색 구분(keyword 보라·string 초록·number 주황·comment 이탤릭)되어 렌더되는지 + 공유 뷰(`/share/{token}`)도 동일 확인 + pageerror 0. → 결과를 본 fragment 하단·REPORT/REVIEW 에 append.
+
+### POST-DEPLOY 결과 (2026-07-24, 배포 0313b135, deploy-web-only) — **Environment: Windows-browser** — PASS
+- 방법: PB-0008 — `bin/win-browser.py` relay 실 Windows Chrome/150(CDP, 172.26.144.1:9223), `https://localhost/` 작업 화면 로그인 세션(bootstrap_admin, KR_LIVE). 배포=`make deploy-web-only`(web-a/web-b 0313b135 one-at-a-time 롤링·90s soak 통과·caddy no-drift·asset stamp `?v=dev` 잔존 0·마이그레이션 없음). 서빙 자산 curl 확증(app.js `enhanceSqlBlocks`·share.js 체인·styles.css/share.css `.sql-tok-*` + `/livez` git_commit=0313b135).
+- 확인(실 배포 `markdownToHtml` eval — 배포본 app.js): ```sql``` 샘플(월별 매출 집계) 렌더 → `pre.sql-block` 생성·토큰 26개. getComputedStyle 실측: keyword `rgb(187,154,247)`(#bb9af7)·weight 600 / func(COUNT) `rgb(122,162,247)`(#7aa2f7) / string `rgb(158,206,106)`(#9ece6a) / number `rgb(255,158,100)`(#ff9e64) / comment `rgb(115,122,162)`(#737aa2) / `pre` 배경 `rgb(26,27,38)`(#1a1b26). 텍스트 무손실(`SELECT u.id`…`LIMIT 10;` 보존)·주입 `<script>` 0.
+- 육안: 실 화면 캡처에서 comment(회청 이탤릭)·keyword(보라 굵게)·function(파랑)·string(초록)·number(주황)이 다크 배경 위 명확히 구분됨. 스크린샷: `docs/evidence/pb0008-sql-highlight-live-20260724.png`.
+- 결과: **PASS** — 콘솔 에러 0. 원 요청("SQL 하이라이트 적용된 상태로 전달") 라이브 해소 확인. 검증 후 probe DOM 정리(라이브 화면 오염 0).
