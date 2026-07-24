@@ -175,6 +175,14 @@ source_of_truth: true
   앱보다 먼저 Anthropic 응답을 컷해 Sonnet 5 adaptive 대화의 장문-답변 후반 라운드가 "LLM 호출 오류: Request
   timed out" 으로 실패한다. request_timeout=300 으로 정합화. 총 run 예산은 앱 AGENT_TIMEOUT_SEC*3(=900s)가
   라운드 합계로 별도 강제. (장기: 대화 경로 streaming 전환이 장문 타임아웃의 정본 회피 — REPORT §8.)
+- **콘솔 live 동기화 (timeout-console-sync 2026-07-24)**: 위 정적 정합의 한계 — gateway 는 앱과 **별도 프로세스**라
+  관리 콘솔 '설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃'(`AGENT_TIMEOUT_SEC`, apply_mode=live)을 바꿔도
+  정적 `request_timeout` 은 추종 못 하는 drift 가 남았다. 봉인: 앱(`agent_core._call_llm`)이 **요청마다** live
+  `AGENT_TIMEOUT_SEC` 를 요청 body 의 `timeout` 으로 실어 보내고, litellm 이 이를 **per-attempt upstream
+  타임아웃**으로 존중한다(라이브 검증: body `timeout=5`→408, `=200`→200). 콘솔 변경이 gateway 재기동·재배포
+  없이 즉시 반영. `request_timeout: 300`(config)은 값 무변경이나 이제 **body timeout 미전달 경로(외부 소비자
+  등)의 정적 fallback ceiling** 으로만 의미를 가지며, 앱 대화·probe 경로는 body timeout(live)이 override.
+  정본 코드/로직 = feature-0002 `_call_llm`(FUNCTION.md · CHG/REV-20260724T054326-timeout-console-sync).
 - gateway 503 → `/api/ask` 가 사용자에게 "LLM 서비스 일시 장애" 안내. 재시도
   가능. agent loop 가 중단되어도 conversation 은 보존.
 - Bedrock 자격증명 회수 / 만료: gateway 컨테이너 startup fail-loud (gateway

@@ -1518,3 +1518,17 @@ TASK-0015 (plan-review):
 - [x] self-heal 테스트: `test_enum_self_heal.py`(13: 게이트 결합·scanned·engine allowlist·fail-open·dedup·예외·shrink-가드) + `sweep_unknown_schema_enum`(confirm/빈-schema 포함). 총 신규 **37 PASS** · feature-0002 전체 회귀 신규 실패 0 · ruff clean.
 - [ ] verify-completion → PR·머지 → 배포(make deploy-web) → 라이브 검증(기존 dbLog.* 정리 실증 + self-heal 동작). ①즉시 정리=`scripts/enum_grounding_sweep.py` 운영자 실행 ②지속 self-heal=insight tick 자동.
 - worktree `ai/claude/enum-schema-grounding`(base main 66a48870). commit 87b06a1f(예방 게이트) + self-heal(후속).
+
+## TASK-20260724T054326-timeout-console-sync — LLM upstream 타임아웃 ↔ 관리 콘솔 AGENT_TIMEOUT_SEC(live) 요청 단위 동기화 (Major §12.3 — hot-path LLM 호출·타임아웃; /_template:entry saga 6층·cross-feature primary=feature-0002+feature-0007)
+> 계기(사용자): "`request_timeout` 또한 `설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃` 설정값과 동기화되도록 구성". 선행 llm-timeout-align 이 gateway request_timeout 을 정적 300 으로 올렸으나 gateway 는 별도 프로세스라 콘솔 live 변경을 추종 못 하는 drift 잔존.
+
+### §1.2 Completion Checklist
+- [x] 진단(라이브 결정 실험): litellm 이 요청 body `timeout` 을 per-attempt upstream 타임아웃으로 존중 확인(body=5→408·=200→200 @11.7s) → 앱이 요청마다 live 값 body 전달이 유일한 실동기화 수단.
+- [x] `_call_llm`: extra_body 항상 `{"timeout": live AGENT_TIMEOUT_SEC}` 초기화 + thinking(budget)/output_config(effort) 병합(이전 조건부 세팅 대체).
+- [x] ask() client(`OpenAI(timeout=)`)·run 예산(`AGENT_TIMEOUT_SEC*3`) → 정적 import 상수 대신 live `_rts.get_int` 로 전환(콘솔 상향 시 조기컷 gap 봉인).
+- [x] feature-0007 litellm_config.yaml `request_timeout: 300` 주석 갱신(값 무변경, body timeout 미전달 경로 fallback 명문화).
+- [x] 테스트: reasoning_effort `_xb()` 헬퍼 + body-timeout 상시검증 + 신규 sync 2건 · conversation_answer G8b timeout 병존/누출가드 · feature-0002+0003 전체 pytest RC=0(신규 실패 0).
+- [x] §18.8 적대 리뷰(general-purpose 1렌즈 7공격각) → **SHIP**(BLOCKER/MAJOR 0), NIT 2·3(주석 정확성) 반영, Finding 1(콘솔 3600 상향 시 serial worker 점유 확대) by-design 수용 → REV-20260724T054326-timeout-console-sync.
+- [x] FUNCTION.md(LLM 타임아웃 콘솔 동기화 항목)·MODIFY.md·REVIEW.md 기록.
+- [ ] verify-completion → PR·머지 → 배포(`sudo -E bin/deploy-web.sh`, gateway+worker reconcile) → 라이브 검증(콘솔 AGENT_TIMEOUT_SEC 변경 → gateway 실제 요청 타임아웃 추종 + sonnet 대화 정상 + edge ping 1회).
+- worktree `ai/claude/feature-0007-timeout-console-sync`(base main 6c5afe7c).

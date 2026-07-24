@@ -213,6 +213,13 @@ general_settings:
 #   "LLM 호출 오류: Request timed out" 으로 실패(라이브 재현). num_retries=1 재시도·fallback 이 겹치면
 #   120s×N 이 앱 300s 를 넘겨 조기 실패도 유발. request_timeout 을 앱 per-call 예산(300)과 맞춰 정합화.
 #   (총 run 예산은 앱측 AGENT_TIMEOUT_SEC*3=900s 가 라운드 합계로 별도 강제.)
+#   timeout-console-sync(2026-07-24): 이제 앱(agent_core._call_llm)이 **요청마다** 관리 콘솔
+#   '설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃'(AGENT_TIMEOUT_SEC, apply_mode=live)의 live 값을
+#   요청 body 의 timeout 으로 실어 보낸다 — litellm 이 이를 per-attempt upstream 타임아웃으로 존중
+#   (라이브 검증: body timeout=5→408, =200→200). 따라서 콘솔에서 값을 바꾸면 gateway 재기동/재배포
+#   없이 즉시 반영된다(별도 프로세스인 gateway 를 정적 config 로 동기화할 수 없는 drift 해소). 아래
+#   request_timeout: 300 은 body timeout 을 싣지 않는 경로(외부 소비자 등)의 **정적 fallback ceiling**
+#   으로만 남으며, 앱 대화·probe 경로에서는 body timeout(live)이 이를 override 한다.
 litellm_settings:
   drop_params: true
   request_timeout: 300

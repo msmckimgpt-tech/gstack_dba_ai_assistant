@@ -321,6 +321,18 @@ source_of_truth: true
   자신 있게 틀린 답을 내는 것을 원천 차단). 표시·저장·usage `model` 컬럼·max_tokens·thinking·vision 판정은
   **원본** model(claude-haiku-4)을 유지하고 실제 서빙은 `resolved_model` 로 추적. insight 배치(`claude-haiku-4`)·
   분석(`claude-haiku-4-interactive`)의 gemma 강등은 무영향(alias 분리).
+- LLM 타임아웃 콘솔 동기화 (CHG-20260724T054326-timeout-console-sync): 대화 LLM 호출의 upstream 타임아웃을
+  관리 콘솔 **'설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃'**(`AGENT_TIMEOUT_SEC`, apply_mode=live)과
+  **요청 단위로 실동기화**한다. gateway(bedrock-gateway=litellm)는 앱과 별도 프로세스라 정적 `litellm_config`
+  `request_timeout` 만으로는 콘솔 live 변경을 추종하지 못한다(drift). 봉인: `_call_llm` 이 매 호출마다
+  `_rts.get_int("AGENT_TIMEOUT_SEC")`(live)를 요청 body 의 `timeout` 으로 실어 보내며, litellm 이 이를
+  **per-attempt upstream 타임아웃**으로 존중한다(라이브 검증: body `timeout=5`→408, `=200`→200 @11.7s).
+  extra_body 는 이제 항상 `{"timeout": <live>}` 를 포함하고 thinking(budget)/output_config(effort)는 해당
+  모델에서 병합된다. 총-대기 축도 정합화 — ask() 진입 시 클라이언트(httpx) 타임아웃(`OpenAI(timeout=)`)과
+  run 예산(`AGENT_TIMEOUT_SEC*3`)도 정적 상수가 아닌 live `_rts.get_int` 값을 읽는다(이전엔 import-time 고정
+  `config.AGENT_TIMEOUT_SEC` → 콘솔 상향 시 client 가 옛 값에서 조기 컷하던 gap). `litellm_config.request_timeout`
+  은 body timeout 미전달 경로(외부 소비자 등)의 정적 fallback ceiling 으로만 잔존. probe(`probe_provider`)는
+  기존대로 짧은 헬스 ping 타임아웃(8s) 유지. Cross-ref: feature-0007 litellm_config.yaml `request_timeout` 주석.
 - 로그: `../../../../artifacts/shared/logs`
   - `insight_worker.log` — 백그라운드 Insight 워커 사이클 결과 (JSON lines: `run_id`, `status`, `duration_ms`, `skipped_schemas/tables`, `event=fingerprint_skip` 등). 해석 가이드는 [INSIGHTS.md §9](./INSIGHTS.md#9-로그--신호--사용자-해석-가이드).
   - `llm_warn.log` — LLM 호출 실패/빈 응답/JSON 파싱 실패 (`_log_llm_warn()`).
