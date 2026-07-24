@@ -24,6 +24,8 @@ __all__ = [
     "model_supports_vision",
     "normalize_reasoning_level",
     "thinking_budget_for_level",
+    "canonical_usage_model",
+    "canonical_usage_model_sql",
 ]
 
 
@@ -417,3 +419,66 @@ def taxonomy_for(task: str | None) -> dict[str, Any]:
 def ai_categories() -> dict[str, str]:
     """카테고리 코드 → 표시 라벨 (패널 드릴다운 그룹 라벨). 등록 category 의 상위 그룹핑."""
     return dict(AI_CATEGORY_LABELS)
+
+
+# ── 사용량 집계용 canonical model family (admin '감사 > AI 운영 현황 > LLM 사용량') ──
+# llm_usage 의 model(요청 alias)·resolved_model(LiteLLM 해소 = 실 서빙 모델)에는 **같은 논리
+# 모델의 여러 표기**가 섞인다:
+#   · 라우팅 변형 alias — claude-haiku-4 / -root / -interactive / -interactive-root / -chat /
+#     -chat-root (모두 anthropic/claude-haiku-4-5 로 라우팅. litellm_config.yaml 참조)
+#   · 실 모델 ID — resp.model 이 실제 모델 ID 를 돌려줄 때(예: claude-haiku-4-5-20251001)
+#   · edge 폴백 — 두 claude 계정 429/401 시 gemma 로 강등된 호출의 실 모델(gemma4:e2b);
+#     insight 워커가 보내는 요청 alias 'edge'
+# 이 값을 그대로 COALESCE(resolved_model, model) 로 GROUP BY 하면 '모델별 비중' 도넛이 한 논리
+# 모델을 여러 조각으로 쪼갠다(중복 명칭 분점 — 관측된 이슈). 아래로 canonical family 로 접어
+# **실 서빙 모델 기준의 실제 사용량 비중**을 낸다:
+#   claude-haiku-4*  → 'claude-haiku-4'   (Haiku 4.5 — 모든 라우팅/실ID 변형)
+#   claude-sonnet-4* → 'claude-sonnet-4'  (Sonnet 4.6)
+#   gemma* / edge / edge-fallback / auto / core / code → 'edge'  (로컬 게이트웨이·gemma 폴백)
+#   그 외(미등록/신규 모델) → 원본 유지  (self-surface — 새 모델이 조용히 사라지지 않게)
+# canonical family 키는 API_MODEL_OPTIONS 의 요청 alias 표기(claude-haiku-4 / claude-sonnet-4)와
+# 동일해, 단가표(_LLM_PRICE_USD_PER_1M) 조회 키로도 그대로 쓰인다 → alias 변형이 단가 미매칭으로
+# 비용 $0 로 오표시되던 gap 도 함께 해소된다.
+
+_EDGE_USAGE_ALIASES: frozenset[str] = frozenset({"edge", "edge-fallback", "auto", "core", "code"})
+
+
+def canonical_usage_model(name: str | None) -> str:
+    """llm_usage 의 model/resolved_model 표기를 canonical family 키로 접는다 (Python 측).
+
+    canonical_usage_model_sql() 의 SQL CASE 와 **동일 규칙** — 본 모듈이 단일 SSOT.
+    idempotent 하다: canonical_usage_model('claude-haiku-4') == 'claude-haiku-4'.
+    빈 값은 '(미상)' (SQL 은 col NULL 시 NULL 유지 — model 컬럼은 NOT NULL 이라 실무상 무관).
+    """
+    n = str(name or "").strip()
+    if not n:
+        return "(미상)"
+    low = n.lower()
+    if low.startswith("claude-haiku-4"):
+        return "claude-haiku-4"
+    if low.startswith("claude-sonnet-4"):
+        return "claude-sonnet-4"
+    if low.startswith("gemma") or low in _EDGE_USAGE_ALIASES:
+        return "edge"
+    return n
+
+
+def canonical_usage_model_sql(col: str) -> str:
+    """`col`(예: "COALESCE(resolved_model, model)")을 canonical family 로 접는 SQL CASE 식.
+
+    canonical_usage_model() 와 **동일 규칙**(SSOT). PostgreSQL `starts_with()` 를 써서 LIKE 'x%'
+    패턴을 피한다 → SQL 문자열에 리터럴 '%' 가 없어, 파라미터 있는(cur.execute(sql, params)) 쿼리와
+    없는 쿼리 양쪽에서 psycopg %-이스케이프 없이 안전하다.
+
+    ⚠ `col` 은 신뢰된 컬럼/표현식만 전달한다 (사용자 입력을 이 인자로 보간 금지 — SQL injection).
+    반환식은 GROUP BY / SELECT / WHERE 어디에든 삽입 가능하며, GROUP BY 는 SELECT 의 동일 식 또는
+    그 ordinal 을 참조한다.
+    """
+    return (
+        "CASE "
+        f"WHEN starts_with(lower({col}), 'claude-haiku-4') THEN 'claude-haiku-4' "
+        f"WHEN starts_with(lower({col}), 'claude-sonnet-4') THEN 'claude-sonnet-4' "
+        f"WHEN starts_with(lower({col}), 'gemma') "
+        f"OR lower({col}) IN ('edge','edge-fallback','auto','core','code') THEN 'edge' "
+        f"ELSE {col} END"
+    )

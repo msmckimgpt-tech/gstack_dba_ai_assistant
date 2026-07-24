@@ -764,3 +764,44 @@ source_of_truth: true
 
 ## REV-20260724T010501-doc-sync-rn-0724 [SKIPPED:non-policy-doc] — 릴리즈노트 07-23 블록 신규 7항목(대화 폴더·탐색·관리 콘솔) (TASK-20260724T010501-doc-sync-rn-0724, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`)뿐 — 비-정책 doc-only. 렌더 로직·백엔드·스키마·RBAC·엔드포인트·cache-buster(빌드 자동주입) 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현·완료형 정당성(7항목 전부 owning POST-DEPLOY 커밋으로 라이브 확증 — 폴더 9392cf51/e3fec503/0a1378f3/1a2f2595·날짜트리 8b384b8a·우클릭 b51f93e9·페이징 fce9ab2b/5d0f8467·추론타임라인 a17fd1a7·DB분석 6da5e621)·area(work 5·admin 2)·누출 회피는 doc_sync 가 정본(owning POST-DEPLOY 커밋 + git log aac76889..HEAD) 대비 직접 검증 + ULTRACODE 타깃별 적대 verify(wf_ded08a66 — RN major 1[graph-node-reveal 자체 POST-DEPLOY PB-0008 미기록 → 사용자 릴리즈노트 hold, 함정 #15] 반영·나머지 INCLUDE holds, cross-target cross-fault 회피 스코프).
+
+## REV-20260724T012954-usage-model-canonical [SUBAGENT:general-purpose] SHIP (MINOR §12.3) — LLM 사용량 '모델별 비중' canonical 집계
+- 위험도(§12.3): **Minor** — 읽기전용 분석/표시 집계 + 추정비용 정확화. 인증·인가·파괴적 데이터·마이그레이션·
+  외부 비용 구조 변경 없음. admin.js(프론트)·스키마·엔드포인트 계약 무변경. AI 자율 진행 + 본 기록(§12.3).
+- 근거(원인): `by_model` 등 사용량 집계가 `COALESCE(resolved_model, model)` 를 그대로 GROUP BY 해, litellm
+  라우팅 변형 alias·실 모델 ID·gemma 폴백 실모델이 별도 세그먼트가 되어 한 논리 모델이 도넛을 분점.
+  litellm_config.yaml 상 `claude-haiku-4*` 6개 alias 는 모두 anthropic/claude-haiku-4-5 로 라우팅됨을 확인.
+- 결정: canonical family 를 SSOT(`shared/model_catalog.py`)에 두고 SQL/Python 양측이 동일 규칙 사용. 실
+  서빙 모델 기준(COALESCE(resolved, model))을 유지(TASK-0163 의도 보존)하되 family 로 접음 = "실제 사용량".
+- 대안 검토:
+  1. 프론트(admin.js) JS 집계 — 기각: 백엔드 by_model/by_day_model/by_account 4곳 + 드릴다운 필터가 백엔드라
+     프론트만으론 불완전, 색맵/칩/필터 전면 재작성 필요. 백엔드 canonical 이 프론트 무변경으로 정합.
+  2. Python fold(SQL 은 raw 유지) — 기각: run_id distinct 가 canonical 그룹 횡단 시 과대계상, 드릴다운 필터가
+     canonical↔raw 매핑 역질의 필요. SQL CASE(starts_with) 그룹핑이 run_id dedup·필터를 한 번에 정합 해결.
+  3. LIKE 'x%' — 기각: 파라미터 쿼리(`_query_usage_conversations`)에서 '%' 이스케이프(%%) 필요, no-param
+     쿼리와 이스케이프 불일치 footgun. PG `starts_with()` 로 '%' 자체를 제거해 양쪽 안전.
+- 리스크/완화: (a) 실 서빙 모델 기준이라 gemma 폴백(haiku 요청→gemma 서빙)은 edge 로 계상 — TASK-0163 의
+  기존 규약(resolved 우선)과 정합, 오히려 haiku 단가 과대계상 정정. (b) 미등록/신규 모델은 원본 유지(self-surface)
+  로 조용히 사라지지 않음. (c) 프론트 드릴다운 클릭 키(canonical) ↔ 백엔드 필터(canonical) 정합을 test_c4·
+  test_q2 로 회귀 가드. profile 도넛도 동일 canonical 화하여 공유 헬퍼(`_query_usage_conversations`) 필터
+  변경으로 인한 profile 드릴다운 미매칭 회귀를 예방.
+- 검증: 전체 pytest 2280 passed/2 skipped(baseline), 신규 test_c1~c4 + test_q2_model_filter 갱신. 실 PG(90일)
+  실측 — 7 세그먼트 → 3 실제 모델(haiku 64.5M·edge 30.4M·sonnet 0.79M) 병합 확인. POST-DEPLOY PB-0008 예정.
+- 완료 정합: 코드 변경은 백엔드 .py 만(html/templates/static 무변경) → §10.5 web/UI 트리거(check #13)
+  하드 게이트 대상 아님. 다만 산출물이 렌더 도넛이므로 배포 후 라이브 시각검증(PB-0008)을 완료 근거로 첨부.
+- Panel(§18.8): backend/qa/correctness 축 [SUBAGENT:general-purpose] 적대 리뷰 수행(diff + 실 소스 + 프론트
+  admin.js 호환 + PG 버전 + canonical Python 런타임 실행 + 생성 SQL 문자열 실측). **Verdict: SHIP** —
+  BLOCKING/MAJOR 0. 확인: 리터럴 `%` 0개(starts_with)로 param/no-param 쿼리 이스케이프 안전 · GROUP BY=SELECT
+  동일 `_canon` 문자열/ordinal · ORDER BY pos 4→3 정정(model 컬럼 제거 shift) · **단가표 키가 canonical family
+  키와 정확 일치**(실ID 형태였다면 전부 $0 되는 BLOCKING 이었을 지점 — 안전 확증) · 컬럼 인덱스 r[0..5] 정합 ·
+  `_canon` 스코프 정의-후-사용 보장 · 프론트 라운드트립(도넛 라벨=canonical → 클릭 → 백엔드 canonical 필터 매칭) ·
+  run_id canonical 그룹 dedup(과대계상 없음, 오히려 완화) · profile 드릴다운 미스매치 회귀 없음.
+- Findings fold-in (전부 의도된 동작/ pre-existing — 코드 수정 불요):
+  · [MINOR] 사용량 상세표의 "alias → resolved" 화살표는 model==resolved_model 이라 미렌더 — canonical 통일의
+    의도된 결과(패널이 "실제 모델 기준"으로 전환). req→resolved 추적은 AI 운영 관제 activity 피드(ai_ops)가 보존.
+  · [MINOR·pre-existing] 'edge' 세그먼트 드릴다운은 `conversation_id IS NOT NULL` 강제라 비대화 insight/worker
+    usage 가 빈/부분 결과일 수 있음(도넛=전체 vs 드릴=대화귀속분 의미차, canonical 이 edge 를 단일 큰 세그먼트로
+    합쳐 더 두드러짐). 코드 결함 아님 — 정직한 표현.
+  · [NIT·범위 밖] `ai_ops.py:319` task×model 은 raw GROUP BY 유지(운영 관제 activity 패널). category 롤업이라
+    raw granularity 미노출·per-category 비용은 canonical 단가 계상 → 가시 불일치 없음. follow-up(§8.1) 기록.
+  · [NIT] SQL(ELSE NULL/'') vs Python('(미상)') 빈값 divergence — model NOT NULL + COALESCE 로 도달 불가(주석 명시).

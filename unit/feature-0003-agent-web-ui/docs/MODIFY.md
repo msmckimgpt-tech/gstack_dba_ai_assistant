@@ -868,3 +868,27 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(34 releases·07-23 head 7항목·07-22 보존·스키마·누출0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+
+## CHG-20260724T012954-usage-model-canonical — LLM 사용량 '모델별 비중' 중복 명칭 분점 해소
+- 문제: 관리 콘솔 > 감사 > AI 운영 현황 > **LLM 사용량** 서브탭의 '모델별 비중' 도넛이 같은 논리 모델을
+  여러 조각으로 분점. 원인 = `by_model` 집계가 `COALESCE(resolved_model, model)` 로 GROUP BY 하는데
+  이 값에 litellm 라우팅 변형 alias(`-interactive`/`-chat`/`-root`/`-interactive-root`/`-chat-root`)·실
+  모델 ID(`claude-haiku-4-5-20251001`)·edge 폴백 실모델(`gemma4:e2b`)이 섞여 한 모델이 N 세그먼트로 쪼개짐.
+- 수정: `shared/model_catalog.py` 에 canonical family 함수 2종 추가(SSOT):
+  `canonical_usage_model(name)`(Python) + `canonical_usage_model_sql(col)`(PG `starts_with` CASE, LIKE '%' 회피
+  → 파라미터 쿼리 이스케이프 불필요). 규칙: `claude-haiku-4*`→`claude-haiku-4`, `claude-sonnet-4*`→
+  `claude-sonnet-4`, `gemma*`/`edge`/`edge-fallback`/`auto`/`core`/`code`→`edge`, 그 외 원본 유지(self-surface).
+- 적용: `admin_usage.py` — by_model·by_account·by_day_model GROUP BY + `_query_usage_conversations` 모델
+  필터·모델 분해를 canonical 로 통일. by_model row 는 `model==resolved_model==canonical` 로 채워 프론트
+  (modelKeyOf/도넛 라벨/색맵/드릴다운) **무변경** 정합. `profile.py`(개인 사용량 도넛·드릴다운 일관성)·
+  `admin_console.py`(대시보드 '모델별 토큰' 위젯) 동일 적용.
+- 부수: `_estimate_llm_cost_usd` 단가 조회 키를 canonical 화 — 단가표(`_LLM_PRICE_USD_PER_1M`)가 base alias
+  만 등록해 변형/실ID 가 비용 $0 로 오표시되던 gap 해소(모든 app.X 호출부에 중앙 반영). edge/gemma 는
+  단가 미등록 → 0(로컬 무료) 정직 유지. gemma 폴백 호출도 실 서빙 모델 기준 집계라 haiku 단가 과대계상 정정.
+- 실 PG 검증(90일): 기존 7 세그먼트 → 3 실제 모델 병합 — claude-haiku-4(64,552,777 tok)·edge(30,431,975)·
+  claude-sonnet-4(785,900). run_id distinct 도 canonical 그룹 단위 dedup(요청 수 과대계상 없음).
+- Files: `shared/model_catalog.py`, `unit/feature-0003-agent-web-ui/src/routers/{admin_usage,profile,admin_console}.py`,
+  `unit/feature-0003-agent-web-ui/tests/test_usage_conversations.py`.
+- Verification: 전체 pytest 2280 passed / 2 skipped(기존 baseline) · py ast 문법 · 실 PG canonical 쿼리 실측.
+- Follow-up(§8.1 기록만): `ai_ops.py`(운영 현황 task×model, line 319) 는 동일 canonical 함수로 접을 수 있으나
+  별도 축(task 우선)이라 이 cycle 범위 밖 — 미해소. TASK.md 1.2MB(§5.6 hygiene 임계 초과) 아카이빙 권고.

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from typing import Any
 
 import app
+from shared.model_catalog import canonical_usage_model_sql
 
 INCLUDE_ORDER = 130  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
@@ -99,16 +100,20 @@ def profile_llm_usage(request: Request, account=Depends(app.get_current_account)
                       "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
                       "requests": int(t[4])}
             # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(hover 표시). 본인 범위라 owner enrich 불요.
+            # usage-model-canonical: 실 서빙 모델을 canonical family 로 접어 개인 사용량 도넛의 중복 분점
+            # 해소 + admin 과 동일 규칙. model==resolved_model==canonical 로 채워 드릴다운 필터
+            # (_query_usage_conversations, canonical)와 클릭 키가 정합(프론트 무변경).
+            _canon_u = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
             cur.execute(
-                "SELECT COALESCE(u.resolved_model, u.model) AS m, u.model, count(*), "
+                f"SELECT {_canon_u} AS m, count(*), "
                 f"sum(u.total_tokens), count(distinct u.run_id), sum(u.prompt_tokens), sum(u.completion_tokens) {base} "
-                "GROUP BY COALESCE(u.resolved_model, u.model), u.model "
-                "ORDER BY 4 DESC NULLS LAST LIMIT 50",
+                f"GROUP BY {_canon_u} "
+                "ORDER BY 3 DESC NULLS LAST LIMIT 50",
                 (aid,),
             )
-            by_model = [{"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
-                         "total_tokens": int(r[3] or 0), "requests": int(r[4] or 0),
-                         "cost_usd": app._estimate_llm_cost_usd(r[1], int(r[5] or 0), int(r[6] or 0))}
+            by_model = [{"model": r[0], "resolved_model": r[0], "calls": int(r[1]),
+                         "total_tokens": int(r[2] or 0), "requests": int(r[3] or 0),
+                         "cost_usd": app._estimate_llm_cost_usd(r[0], int(r[4] or 0), int(r[5] or 0))}
                         for r in (cur.fetchall() or [])]
             cur.execute(
                 f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens) {base} "
@@ -118,7 +123,7 @@ def profile_llm_usage(request: Request, account=Depends(app.get_current_account)
             by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)}
                       for r in (cur.fetchall() or [])]
             cur.execute(
-                f"SELECT {bucket_expr} AS b, COALESCE(u.resolved_model, u.model), sum(u.total_tokens), "
+                f"SELECT {bucket_expr} AS b, {_canon_u}, sum(u.total_tokens), "
                 f"sum(u.prompt_tokens), sum(u.completion_tokens) "
                 f"{base} AND {bucket_expr} IN (SELECT {bucket_expr} {base} "
                 f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) GROUP BY 1, 2 ORDER BY 1",

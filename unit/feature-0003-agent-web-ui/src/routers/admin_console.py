@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 import app
+from shared.model_catalog import canonical_usage_model_sql
 
 INCLUDE_ORDER = 40  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
@@ -523,8 +524,12 @@ def _dash_widget_usage(pg, days: int) -> dict:
     prior_lo = f"now() - interval '{2 * d} days'"
 
     def _cost_tok_for(cur, where):
+        # usage-model-canonical: 대시보드 'AI 상태 > 사용량' 위젯의 '모델별 토큰' 목록도 canonical
+        # family 로 접어(admin 콘솔 LLM 사용량 도넛과 동일 규칙) 라우팅 변형/실ID/gemma 폴백 중복 분점
+        # 해소. 위젯이 deep-link 로 LLM 사용량 탭을 여므로 표기 정합 유지.
+        _canon = canonical_usage_model_sql("COALESCE(resolved_model, model)")
         cur.execute(
-            f"SELECT COALESCE(resolved_model, model), sum(total_tokens), sum(prompt_tokens), sum(completion_tokens) "
+            f"SELECT {_canon}, sum(total_tokens), sum(prompt_tokens), sum(completion_tokens) "
             f"FROM agent_runtime.llm_usage WHERE {where} GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 50"
         )
         rows = cur.fetchall() or []

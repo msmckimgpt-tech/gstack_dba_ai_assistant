@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 import app
+from shared.model_catalog import canonical_usage_model, canonical_usage_model_sql
 
 INCLUDE_ORDER = 30  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
@@ -46,8 +47,10 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
     win = "now() - %s::interval"
     where = ["u.conversation_id IS NOT NULL", "u.created_at >= " + win]
     params: list = [f"{int(days)} days"]
+    # 모델 필터는 canonical family 기준 — 도넛/차트 라벨(canonical_usage_model_sql)과 동일 규칙이라
+    # 'claude-haiku-4' 클릭이 -interactive/-chat/실ID 변형 대화까지 모두 매칭(차트 수치 ↔ 대화목록 정합).
     if model:
-        where.append("COALESCE(u.resolved_model, u.model) = %s")
+        where.append(canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)") + " = %s")
         params.append(model)
     if account_ids is not None:
         # 빈 집합이면 결과 0 (역할에 계정이 없음).
@@ -67,16 +70,18 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
         params.append(day_label)
     where_sql = " AND ".join(where)
     # 대화별 × 모델 분해(모델 stacked·비용용) → Python fold. LIMIT 은 대화 수 기준(+1 로 truncated 감지).
+    # 모델 분해 키도 canonical family — 대화 모달의 models[] 가 도넛과 동일 표기로 표시(라우팅 변형 미분점).
+    _canon_m = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
     sql = (
         "SELECT u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, "
-        "c.blocked_at, COALESCE(u.resolved_model, u.model) AS m, count(*) AS calls, "
+        f"c.blocked_at, {_canon_m} AS m, count(*) AS calls, "
         "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
         "max(u.created_at) AS last_used "
         "FROM agent_runtime.llm_usage u "
         "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
         f"WHERE {where_sql} "
         "GROUP BY u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, c.blocked_at, "
-        "COALESCE(u.resolved_model, u.model)"
+        f"{_canon_m}"
     )
     fold: dict = {}
     with pg.cursor() as cur:
@@ -165,32 +170,38 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
             totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
                       "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
                       "requests": int(t[4])}
-            # TASK-0163: resolved_model(실제 서빙 모델, LiteLLM 해소 결과) 기준으로
-            # 집계하되 요청 별칭(model)도 함께 노출 → claude 계열 식별 + 별칭 추적.
+            # usage-model-canonical: 실제 서빙 모델(COALESCE(resolved_model, model))을 canonical
+            # family 로 접어 집계 → 라우팅 변형 alias(-interactive/-chat/-root)·실 모델 ID·gemma 폴백이
+            # 한 논리 모델로 합쳐진다('모델별 비중' 도넛 중복 분점 해소). run_id distinct 도 canonical
+            # 그룹 단위로 dedup 되어 요청 수 과대계상이 없다. model==resolved_model==canonical 로 채워
+            # 프론트 modelKeyOf/도넛 라벨/색맵/드릴다운 필터가 동일 키로 정합(admin.js 무변경).
+            _canon = canonical_usage_model_sql("COALESCE(resolved_model, model)")
             cur.execute(
-                f"SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens), "
+                f"SELECT {_canon} AS m, count(*), sum(total_tokens), "
                 f"sum(prompt_tokens), sum(completion_tokens), count(distinct run_id) "
                 f"FROM agent_runtime.llm_usage "
-                f"WHERE created_at >= {win} GROUP BY COALESCE(resolved_model, model), model "
-                f"ORDER BY 4 DESC NULLS LAST LIMIT 50"
+                f"WHERE created_at >= {win} GROUP BY {_canon} "
+                f"ORDER BY 3 DESC NULLS LAST LIMIT 50"
             )
             by_model = []
             for r in (cur.fetchall() or []):
-                pt_m, ct_m = int(r[4] or 0), int(r[5] or 0)
-                by_model.append({"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
-                                 "requests": int(r[6] or 0),
-                                 "total_tokens": int(r[3] or 0), "prompt_tokens": pt_m,
+                m = r[0]
+                pt_m, ct_m = int(r[3] or 0), int(r[4] or 0)
+                by_model.append({"model": m, "resolved_model": m, "calls": int(r[1]),
+                                 "requests": int(r[5] or 0),
+                                 "total_tokens": int(r[2] or 0), "prompt_tokens": pt_m,
                                  "completion_tokens": ct_m,
-                                 "cost_usd": app._estimate_llm_cost_usd(r[1], pt_m, ct_m)})
+                                 "cost_usd": app._estimate_llm_cost_usd(m, pt_m, ct_m)})
             # TASK-0176: 계정 × 모델 분해 → 계정별 추정 비용 산출(비용은 모델별 단가라
             # 모델 분해 필수). Python 으로 계정별 fold(calls/tokens/cost). 역할별 비용은
             # _aggregate_usage_by_role 가 enrich 된 by_account 의 cost_usd 를 재합산.
+            _canon_u = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
             cur.execute(
-                f"SELECT c.owner_account_id, COALESCE(u.resolved_model, u.model), count(*), "
+                f"SELECT c.owner_account_id, {_canon_u}, count(*), "
                 f"sum(u.total_tokens), sum(u.prompt_tokens), sum(u.completion_tokens) "
                 f"FROM agent_runtime.llm_usage u "
                 f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-                f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id, COALESCE(u.resolved_model, u.model)"
+                f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id, {_canon_u}"
             )
             _acct_fold: dict = {}
             for r in (cur.fetchall() or []):
@@ -233,7 +244,7 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
             # (서브쿼리로 by_day 와 동일 버킷 집합 보장 → 차트 정합).
             # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(cost_usd) 산출 → hover 표시.
             cur.execute(
-                f"SELECT {bucket_expr} AS b, COALESCE(resolved_model, model), sum(total_tokens), "
+                f"SELECT {bucket_expr} AS b, {_canon} , sum(total_tokens), "
                 f"sum(prompt_tokens), sum(completion_tokens) "
                 f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
                 f"AND {bucket_expr} IN (SELECT {bucket_expr} FROM agent_runtime.llm_usage "
@@ -336,8 +347,15 @@ def admin_usage_conversations(request: Request, account=Depends(app.get_current_
 # ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (4종). app 전역은 app.X 동적 참조. ====
 
 def _estimate_llm_cost_usd(model: str | None, prompt_tokens: int, completion_tokens: int) -> float:
-    """TASK-0166: 모델 토큰 → 추정 비용(USD). 단가 미상(로컬 등)은 0."""
-    p = app._LLM_PRICE_USD_PER_1M.get(str(model or "").strip())
+    """TASK-0166: 모델 토큰 → 추정 비용(USD). 단가 미상(로컬/edge 등)은 0.
+
+    usage-model-canonical: 단가 조회 키를 canonical family 로 접는다. 단가표
+    (_LLM_PRICE_USD_PER_1M)는 base alias(claude-haiku-4/claude-sonnet-4)만 등록돼, 라우팅 변형
+    (claude-haiku-4-chat/-interactive)이나 실 모델 ID(claude-haiku-4-5-20251001)가 그대로 들어오면
+    미매칭으로 비용 $0 로 오표시되던 gap 이 있었다. canonical 화로 변형/실ID 도 올바른 단가로 계상되고,
+    gemma 폴백(edge)은 canonical 'edge' → 단가 미등록 → 0(로컬 무료) 로 정직하게 남는다."""
+    key = canonical_usage_model(model)
+    p = app._LLM_PRICE_USD_PER_1M.get(key)
     if not p:
         return 0.0
     return round((prompt_tokens or 0) / 1e6 * p["in"] + (completion_tokens or 0) / 1e6 * p["out"], 4)
