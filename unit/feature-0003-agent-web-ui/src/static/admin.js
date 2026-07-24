@@ -2204,8 +2204,12 @@ function aiOpsActivityRowsHtml(items) {
   return (items || []).map((r) => {
     // 과거 기록 페이징이라 연도까지 표시(YYYY-MM-DD HH:MM:SS) — 연도 경계 넘어가는 모호성 방지.
     const ts = String(r.created_at || "").replace("T", " ").slice(0, 19);
+    // aiops-model-canonical: 주 배지(r.model)는 canonical family(도넛 정합)이나, 상세 '요청→서빙'은
+    //   100% raw 필드(req_model/resolved_model)로만 구성해 실제 라우팅만 표시한다. 폴백을 canonical r.model
+    //   이 아닌 raw req_model 로 둬야, resolved_model=NULL 행(보조 task·pre-migration)에서 canonical 화된
+    //   요청 alias 가 '가짜 라우팅 화살표'(예: auto → edge)로 날조되는 것을 막는다.
     const reqM = r.req_model || "";
-    const srvM = r.resolved_model || r.model || "";
+    const srvM = r.resolved_model || r.req_model || "";
     const modelDetail = (reqM && srvM && reqM !== srvM) ? (E(reqM) + " → " + E(srvM)) : E(srvM || reqM || "—");
     const cid = r.conversation_id;
     // 예약 sentinel(__insight_worker__·__ask_worker__·__global__·__kb_manual__ 등, 전부 "__" 접두)은

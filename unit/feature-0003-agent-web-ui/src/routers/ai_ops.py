@@ -27,6 +27,7 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 import app
+from shared.model_catalog import canonical_usage_model, canonical_usage_model_sql
 
 INCLUDE_ORDER = 220  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
@@ -196,12 +197,17 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
     items = []
     for r in rows[:limit]:
         tx = taxonomy_for(r[1])
-        served = r[3] or r[2]  # COALESCE(resolved_model, model) — 행 표시·비용은 서빙 모델 기준(기존 규약 보존)
+        served = r[3] or r[2]  # COALESCE(resolved_model, model) — 비용 계산·라우팅 상세의 서빙 기준
+        # aiops-model-canonical: 활동 목록의 주 모델 배지는 canonical family 로 표시 → 관리 콘솔
+        # LLM 사용량 도넛/기타 표기와 정합(라우팅 변형·실 모델 ID·gemma 폴백이 통일된 실 모델명으로 노출).
+        # req_model(요청 alias)·resolved_model(실 서빙)은 아래에서 raw 로 보존 → 상세 펼침의
+        # '요청 → 서빙' 라우팅(계정 분기·gemma 폴백 등) audit 정보는 그대로 유지(정보 손실 없음).
+        served_canonical = canonical_usage_model(served)
         prompt_t = int(r[5] or 0)
         completion_t = int(r[6] or 0)
         items.append({
             "id": int(r[0]), "task": r[1], "category": tx["category"], "label": tx["label"],
-            "model": served, "total_tokens": int(r[4] or 0),
+            "model": served_canonical, "total_tokens": int(r[4] or 0),
             "cost_usd": app._estimate_llm_cost_usd(served, prompt_t, completion_t),
             "latency_ms": (int(r[7]) if r[7] is not None else None),
             "created_at": (r[8].isoformat() if r[8] else None),
@@ -314,9 +320,16 @@ def admin_ai_ops(
             lat_by_task: dict[str, dict] = {}
             with pg.cursor() as cur:
                 # 1) 카테고리/태스크 × 모델 (호출·토큰·비용). taxonomy self-surface.
+                # usage-model-canonical 정합(aiops-model-canonical): 서빙 모델을 canonical family 로 접어
+                # 집계. 출력은 taxonomy 카테고리 롤업이라 모델 차원이 노출되지 않는다. calls/total_tokens 는
+                # 정수 sum 이라 그룹 세분도와 무관하게 카테고리 합계가 불변. cost 는 _estimate 가 호출마다
+                # round(…,4) 하므로 raw 다중 그룹→canonical 단일 그룹 재결합으로 카테고리 cost 가 최하위
+                # 4번째 소수(≈$0.0001) 수준에서 미세 변동할 수 있다(단일 round 라 오히려 더 정확 — pricing 은
+                # _estimate 내부 canonical 로 이미 정확했음). 마지막 raw 모델 그룹핑을 제거해 향후 모델 차원
+                # 노출 시 라우팅 변형 재분점을 구조적으로 예방하는 것이 본 변경의 실질 효과.
                 try:
                     cur.execute(
-                        f"SELECT task, COALESCE(resolved_model, model) AS m, count(*), "
+                        f"SELECT task, {canonical_usage_model_sql('COALESCE(resolved_model, model)')} AS m, count(*), "
                         f"sum(prompt_tokens), sum(completion_tokens), sum(total_tokens) "
                         f"FROM agent_runtime.llm_usage WHERE created_at >= {win} GROUP BY task, 2"
                     )

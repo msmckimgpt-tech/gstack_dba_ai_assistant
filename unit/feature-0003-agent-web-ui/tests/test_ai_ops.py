@@ -303,8 +303,11 @@ def test_query_activity_no_cursor_has_more():
     # TASK-20260702-audit-nav-ux: 상세 확장용 additive 필드 노출 + 서빙/요청 모델 분리.
     assert {"req_model", "resolved_model", "prompt_tokens", "completion_tokens",
             "run_id", "conversation_id"} <= set(items[0].keys())
-    assert items[0]["model"] == "claude-haiku-4-served"     # 행 표시=서빙(resolved) 우선
-    assert items[0]["req_model"] == "claude-haiku-4"        # 요청 별칭 별도 보존
+    # aiops-model-canonical: 주 모델 배지는 canonical family 로 표시(도넛과 정합). 'claude-haiku-4-served'
+    #   → 'claude-haiku-4'. req_model/resolved_model 은 raw 보존(상세 '요청→서빙' 라우팅 audit).
+    assert items[0]["model"] == "claude-haiku-4"            # 행 배지=canonical family
+    assert items[0]["req_model"] == "claude-haiku-4"        # 요청 별칭 raw 보존
+    assert items[0]["resolved_model"] == "claude-haiku-4-served"  # 실 서빙 raw 보존(canonical 화 안 함)
     assert items[0]["prompt_tokens"] == 60 and items[0]["completion_tokens"] == 40
     assert items[0]["run_id"] == "run-100" and items[0]["conversation_id"] == "conv-100"
     assert items[1]["conversation_id"] is None              # 홀수 index=대화 미귀속(정직 안내 경로)
@@ -349,6 +352,34 @@ def test_query_activity_target_column_absent_fallback():
     assert len(items) == 3                         # 폴백해도 피드는 살아있음(usage 계측 무중단)
     assert all(it["target"] is None for it in items)   # target 컬럼 부재 → 전부 None(가드)
     assert ", target" not in cur.sql               # 최종 실행 SQL = base 컬럼(폴백 성공)
+
+
+def test_query_activity_model_canonical_preserves_routing():
+    """aiops-model-canonical: gemma 폴백 행 — 주 배지는 canonical('edge'),
+    req_model/resolved_model 은 raw 보존(상세 '요청→서빙' 라우팅 audit 손실 없음)."""
+    from routers.ai_ops import _query_activity
+    # (id, task, model, resolved_model, total, prompt, completion, latency, created_at, run_id, conversation_id, target)
+    row = (900, "agent", "claude-haiku-4", "gemma4:e2b", 100, 60, 40, 12,
+           _dt.datetime(2026, 7, 2, 0, 0, 0), "run-900", "conv-900", None)
+    items, _ = _query_activity(_PlainCur([row]), taxonomy_for, limit=3)
+    it = items[0]
+    assert it["model"] == "edge"                  # 배지 = canonical(gemma4:e2b) — 도넛과 정합
+    assert it["req_model"] == "claude-haiku-4"     # raw 요청 alias 보존
+    assert it["resolved_model"] == "gemma4:e2b"    # raw 실 서빙(폴백 audit) 보존
+
+
+def test_query_activity_null_resolved_badge_canonical_raw_preserved():
+    """M1 회귀 가드: resolved_model=NULL + 비-canonical req_model('auto', 보조 task/pre-migration 행).
+    배지는 canonical('edge')로 정합화되나 resolved_model 은 None 유지(canonical 화 금지) — 프론트 상세가
+    req_model 폴백(admin.js srvM=resolved||req_model)으로 '가짜 라우팅 화살표'(auto→edge)를 날조하지 않게 한다."""
+    from routers.ai_ops import _query_activity
+    row = (901, "summary", "auto", None, 50, 30, 20, 8,
+           _dt.datetime(2026, 7, 2, 0, 0, 1), "run-901", None, None)
+    items, _ = _query_activity(_PlainCur([row]), taxonomy_for, limit=3)
+    it = items[0]
+    assert it["model"] == "edge"                  # 배지 = canonical('auto')
+    assert it["req_model"] == "auto"               # raw 요청 alias
+    assert it["resolved_model"] is None            # 실 서빙 미기록 → None 유지(raw, canonical 화 안 함)
 
 
 def test_activity_endpoint_with_data(monkeypatch):

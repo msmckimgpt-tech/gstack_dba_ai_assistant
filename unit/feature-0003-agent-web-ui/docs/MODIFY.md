@@ -892,3 +892,29 @@ source_of_truth: true
 - Verification: 전체 pytest 2280 passed / 2 skipped(기존 baseline) · py ast 문법 · 실 PG canonical 쿼리 실측.
 - Follow-up(§8.1 기록만): `ai_ops.py`(운영 현황 task×model, line 319) 는 동일 canonical 함수로 접을 수 있으나
   별도 축(task 우선)이라 이 cycle 범위 밖 — 미해소. TASK.md 1.2MB(§5.6 hygiene 임계 초과) 아카이빙 권고.
+
+## CHG-20260724T020632-aiops-model-canonical — '운영 현황' 서브탭 잔존 raw 모델 표기 canonical 정합(usage-model-canonical 후속)
+- 배경: PR#914(usage-model-canonical)이 'LLM 사용량' 도넛·집계를 canonical family 로 통일한 뒤, 같은 감사
+  화면의 '운영 현황' 서브탭(`ai_ops.py`)에 남은 마지막 raw 모델 표기 2곳을 정합화(사용자 요청 "나머지 범위 또한 실제값과 정합").
+- 변경 (`ai_ops.py` 단일 파일 + test):
+  1. categories 집계 쿼리(admin_ai_ops): `COALESCE(resolved_model, model)` → `canonical_usage_model_sql(...)`.
+     이 집계는 taxonomy 카테고리로 fold 되어 모델 차원 미노출 + 비용은 `_estimate_llm_cost_usd`(내부 canonical)
+     이라 **출력 불변**이나, 마지막 raw 모델 그룹핑을 제거해 SSOT 일관성 확보 + 향후 모델 차원 노출 시 재분점 예방.
+  2. `_query_activity`(최근 활동 feed) 주 모델 배지: `"model": served` → `canonical_usage_model(served)` — 활동
+     목록 배지가 도넛과 동일한 canonical 실 모델명으로 표시. **`req_model`(r[2])·`resolved_model`(r[3])은 raw 보존**
+     → 상세 펼침의 '요청 alias → 서빙 모델' 라우팅(계정 분기·gemma 폴백) audit 정보 손실 없음. 비용 무변경.
+- 비변경: admin.js/스키마/RBAC/엔드포인트 계약, `_estimate_llm_cost_usd`, categories 출력(calls/tokens/cost), 활동
+  상세의 req→resolved 표시. `shared/model_catalog.py` 는 PR#914 에서 이미 main.
+- Files: `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`, `unit/feature-0003-agent-web-ui/tests/test_ai_ops.py`.
+- Verification: 전체 pytest 2287 passed / 2 skipped(기존 baseline) · py ast · 신규 test_query_activity_model_canonical_preserves_routing(폴백행 배지=edge, req/resolved raw 보존).
+- 잔여: 없음 — 전 코드베이스 raw `COALESCE(resolved_model, model)` 모델 그룹핑 0건(grep 확인).
+
+### CHG-20260724T020632 리뷰 반영 addendum (적대 리뷰 SHIP-WITH-FIXES → 3건 반영)
+- **M1(MAJOR) 수정**: `static/admin.js` 활동 상세 폴백 `srvM = r.resolved_model || r.model` → `|| r.req_model`.
+  배지 canonical 화로 `r.model` 이 canonical 이 되어, resolved_model=NULL + 비-canonical req_model(auto 등) 행에서
+  상세가 '가짜 라우팅 화살표'(auto→edge)를 날조하던 것을 차단(상세=100% raw). Windows-browser eval 4시나리오 확증.
+- **m1 정정**: categories "출력 불변" → calls/total_tokens 불변(정수 sum), cost 는 round 재결합으로 최하위 4번째
+  소수(≈$0.0001) 미세 변동 가능(단일 round 라 더 정확). ai_ops.py 주석 톤다운.
+- **m2 반영**: NULL-resolved+비canonical req 백엔드 테스트 추가.
+- Files(정정): `src/routers/ai_ops.py`, `src/static/admin.js`, `tests/test_ai_ops.py`, `docs/test-runs.d/20260724T020632-aiops-model-canonical.md`.
+- admin.js 변경으로 check #13(visual_verification_scope=always) 활성 → test-runs.d fragment(Windows-browser Run) 동반, POST-DEPLOY 라이브 PB-0008 후속.
