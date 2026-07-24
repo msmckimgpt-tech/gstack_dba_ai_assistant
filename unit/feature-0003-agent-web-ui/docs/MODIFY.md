@@ -11,6 +11,10 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260724T033500-graph-emoji-color-postverify (TASK-20260724T031956-graph-emoji-color POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-24. 코드/자산 무변경 — TEST.md POST-DEPLOY 결과 append + TASK 체크박스 완료 + REVIEW postverify entry. 배포 PR #922 → main **c709ad3f**, `make deploy-web-only` 무중단 롤링(web-a/web-b·soak PASS·이미지 mysql-ai-web:c709ad3f·asset stamp 413567bad705).
+- 라이브 실측(win-browser relay 실 Windows Chrome): 서빙 `/static/graph/graph-renderer-pixi.js` 에 `hasEmoji`·`!PixiAdapterPure.hasEmoji(text)` 게이트·emoji 폰트 스택 curl 확증. 버그 유발 조건(dark labelFill `#161b22` + emoji 폰트) canvas 2D fillText 프로브로 역할 아이콘 9종 chroma 측정: 📊217·💳255·📜75·📘177·📦214·🗂255 컬러 렌더, 👤·🔗·⚙️=0(Segoe UI Emoji 그레이스케일 디자인 이모지 — flat 실루엣 아닌 실 글리프). 9종 전부 flat 틴트 실루엣이 아닌 폰트 실 글리프 → "검은색 실루엣" 해소 확인. Cross-ref: REV-20260724T033500-graph-emoji-color-postverify · CHG/TASK-20260724T031956-graph-emoji-color · TEST Run(2026-07-24 graph-emoji-color POST-DEPLOY).
+
 ## CHG-20260724T031956-graph-emoji-color (TASK-20260724T031956-graph-emoji-color — 그래프 뷰 테이블 노드 역할 이모지가 검은색 실루엣으로만 렌더되던 버그 수정, Minor §12.3)
 - Date: 2026-07-24. Files: `static/graph/graph-renderer-pixi.js`(수정) · `tests/headless/test_pixi_adapter.js`(T20b 추가). frontend-only, additive/비파괴(라벨 렌더 경로 분기만 추가, 데이터·API·RBAC·엔드포인트·레이아웃 0).
 - 요청(사용자, `/_template:entry`): "그래프 뷰에서, 테이블 노드의 일부 이모지가 검은색 실루엣으로만 출력되는 이슈가 확인되어 수정이 필요합니다."

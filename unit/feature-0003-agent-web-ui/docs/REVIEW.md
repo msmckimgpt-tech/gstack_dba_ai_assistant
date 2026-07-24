@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T033500-graph-emoji-color-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260724T031956-graph-emoji-color, 비-정책 doc-only)
+- Panel skip 사유(§18.8): TEST.md POST-DEPLOY 결과 append + TASK 체크박스 완료 + MODIFY 갱신 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260724T031956-graph-emoji-color(SHIP).
+- 라이브 실측(배포 c709ad3f, `bin/win-browser.py` relay 실 Windows Chrome): 서빙 graph-renderer-pixi.js 에 fix(hasEmoji 게이트·emoji 폰트) curl 확증. 버그 유발 조건(dark labelFill `#161b22` + emoji 폰트 스택) canvas fillText chroma 프로브 — 6종 컬러(📊217·💳255·📜75·📘177·📦214·🗂255)·3종 그레이스케일(👤·🔗·⚙️=0, Segoe 폰트 디자인, 실 글리프). 9종 전부 flat 틴트 실루엣 아님 → 사용자 리포트("테이블 노드 일부 이모지 검은색 실루엣") 해소 확인.
+
 ## REV-20260724T031956-graph-emoji-color [SUBAGENT:adversarial-frontend] — 그래프 뷰 테이블 노드 역할 이모지 검은 실루엣 렌더 수정 (TASK-20260724T031956-graph-emoji-color, Minor §12.3 frontend-only) — SHIP
 - 대상 diff: `static/graph/graph-renderer-pixi.js`(+`hasEmoji` 순수 헬퍼 · `_makeText` BitmapText 게이트에 `!hasEmoji` · Text 폴백 fontFamily 색 이모지 폰트) · `tests/headless/test_pixi_adapter.js`(T20b 16-assert). §18.8 적대 패널(general-purpose subagent, 정확성+회귀+성능+fillStyle+혼합라벨 5렌즈) — 결함 적발 목적, 실 소스 882줄+소비처 계약+PixiJS v8.19.0 실측 프로브.
 - **VERDICT: SHIP — BLOCKING 결함 0.** 5개 렌즈 전부 REFUTED:
