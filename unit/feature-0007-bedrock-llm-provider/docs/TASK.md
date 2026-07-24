@@ -367,3 +367,9 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [ ] `bin/verify-completion.sh --pre-commit feature-0007-bedrock-llm-provider` PASS
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
+
+## TASK-20260724T054326-timeout-console-sync — request_timeout ↔ 콘솔 AGENT_TIMEOUT_SEC(live) 동기화 (config 주석; 정본 feature-0002)
+- [x] litellm_config.yaml request_timeout 주석 갱신(값 무변경 300, body timeout 미전달 fallback 명문화)
+- [x] FUNCTION.md §콘솔 live 동기화 항목 추가
+- [x] MODIFY.md CHG + REVIEW.md REV([SKIPPED] — 정본=feature-0002 적대리뷰 SHIP) 기록
+- [ ] 배포(gateway reconcile + feature-0002 worker/web 재빌드) 후 라이브: 콘솔 AGENT_TIMEOUT_SEC 변경 → 요청 실제 타임아웃 추종 확인

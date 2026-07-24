@@ -128,36 +128,50 @@ def _call(monkeypatch, model, reasoning_level):
     )
     assert out == "FINAL"
     assert len(sink) == 1
-    return sink[0]
+    kw = sink[0]
+    # feature-0007 timeout-console-sync: _call_llm 은 모델·레벨 무관하게 항상 live
+    # AGENT_TIMEOUT_SEC 를 body timeout 으로 싣는다(gateway upstream 타임아웃 동기화).
+    _tmo = (kw.get("extra_body") or {}).get("timeout")
+    assert isinstance(_tmo, int) and _tmo >= 5, f"body timeout 누락/무효: {kw.get('extra_body')}"
+    return kw
+
+
+def _xb(kwargs):
+    """extra_body 에서 feature-0007 항상-주입 timeout 을 제외한 thinking/effort 부분만 반환.
+    기존 회귀 가드(thinking/output_config 정확 매칭)를 timeout 주입과 독립적으로 유지한다."""
+    eb = dict(kwargs.get("extra_body") or {})
+    eb.pop("timeout", None)
+    return eb
 
 
 def test_reasoning_level_injects_thinking_for_claude(monkeypatch):
     kwargs = _call(monkeypatch, "claude-haiku-4", "high")
-    assert kwargs.get("extra_body") == {
+    assert _xb(kwargs) == {
         "thinking": {"type": "enabled", "budget_tokens": 10000},
     }
 
 
 def test_reasoning_level_none_leaves_config_default(monkeypatch):
+    # thinking/effort 미주입(config 기본 유지). timeout 은 별도로 항상 주입되므로 _xb 로 분리 검증.
     kwargs = _call(monkeypatch, "claude-haiku-4", None)
-    assert "extra_body" not in kwargs
+    assert _xb(kwargs) == {}
 
 
 def test_reasoning_level_normal_leaves_config_default(monkeypatch):
-    # B1 회귀 가드(주입 레이어): '일반' 은 extra_body 를 넣지 않아 sonnet config 기본(16000)이 유지된다.
+    # B1 회귀 가드(주입 레이어): '일반' 은 thinking/effort 를 넣지 않아 sonnet config 기본(16000)이 유지된다.
     kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
-    assert "extra_body" not in kwargs
+    assert _xb(kwargs) == {}
 
 
 def test_reasoning_level_ignored_for_non_thinking_model(monkeypatch):
-    # 로컬 LLM(gemma/edge) 은 thinking 미지원 → 주입 안 함(LiteLLM drop_params 방지 겸).
+    # 로컬 LLM(gemma/edge) 은 thinking 미지원 → thinking/effort 주입 안 함(LiteLLM drop_params 방지 겸).
     kwargs = _call(monkeypatch, "edge", "max")
-    assert "extra_body" not in kwargs
+    assert _xb(kwargs) == {}
 
 
 def test_invalid_reasoning_level_not_injected(monkeypatch):
     kwargs = _call(monkeypatch, "claude-haiku-4", "ultra")
-    assert "extra_body" not in kwargs
+    assert _xb(kwargs) == {}
 
 
 # ── 2c. sonnet5-upgrade: adaptive thinking(Sonnet 5) — budget_tokens 대신 output_config.effort ──
@@ -190,7 +204,7 @@ def test_sonnet_adaptive_injects_effort_not_budget(monkeypatch):
     # Sonnet 5: 명시 레벨 → output_config.effort. budget_tokens 는 400 이므로 절대 주입 금지.
     for level, effort in (("low", "low"), ("high", "high"), ("max", "max")):
         kwargs = _call(monkeypatch, "claude-sonnet-4", level)
-        assert kwargs.get("extra_body") == {"output_config": {"effort": effort}}, level
+        assert _xb(kwargs) == {"output_config": {"effort": effort}}, level
         assert "thinking" not in kwargs.get("extra_body", {}), level
 
 
@@ -198,7 +212,7 @@ def test_sonnet_adaptive_normal_no_override(monkeypatch):
     # '일반'/미지정 → effort 미주입(config adaptive 기본 high 유지). budget_tokens 절대 미주입.
     for level in ("normal", None):
         kwargs = _call(monkeypatch, "claude-sonnet-4", level)
-        assert "extra_body" not in kwargs, level
+        assert _xb(kwargs) == {}, level
 
 
 # ── 2d. cc-identity-inject: OAuth frontier(Sonnet 5) 는 Claude Code identity 첫 system 블록 요구 ──
@@ -253,13 +267,13 @@ def test_reasoning_level_admin_override_beats_default(monkeypatch, tmp_path):
     # 관리 콘솔에서 (haiku,high) 레벨 budget 을 12000 으로 설정 → 기본 10000 대신 주입.
     _stage_snapshot(tmp_path, monkeypatch, {"reasoning_budget:claude-haiku-4:high": 12000})
     kwargs = _call(monkeypatch, "claude-haiku-4", "high")
-    assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 12000}}
+    assert _xb(kwargs) == {"thinking": {"type": "enabled", "budget_tokens": 12000}}
 
 
 def test_reasoning_level_default_when_no_override(monkeypatch, tmp_path):
     # override 없으면 model_catalog 기본(high=10000) 유지.
     kwargs = _call(monkeypatch, "claude-haiku-4", "high")
-    assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 10000}}
+    assert _xb(kwargs) == {"thinking": {"type": "enabled", "budget_tokens": 10000}}
 
 
 def test_normal_ignores_reasoning_override_but_model_override_applies(monkeypatch, tmp_path):
@@ -270,7 +284,7 @@ def test_normal_ignores_reasoning_override_but_model_override_applies(monkeypatc
         "model_thinking_budget:claude-haiku-4": 9000,
     })
     kwargs = _call(monkeypatch, "claude-haiku-4", "normal")
-    assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 9000}}
+    assert _xb(kwargs) == {"thinking": {"type": "enabled", "budget_tokens": 9000}}
 
 
 def test_reasoning_and_total_are_per_model(monkeypatch, tmp_path):
@@ -282,7 +296,7 @@ def test_reasoning_and_total_are_per_model(monkeypatch, tmp_path):
     })
     ks = _call(monkeypatch, "claude-sonnet-4", "max")
     assert ks["max_tokens"] == 100000  # 총 출력 override 는 adaptive 에도 적용
-    assert ks.get("extra_body") == {"output_config": {"effort": "max"}}  # budget 아닌 effort
+    assert _xb(ks) == {"output_config": {"effort": "max"}}  # budget 아닌 effort
     kh = _call(monkeypatch, "claude-haiku-4", "max")
     assert kh["max_tokens"] == 24000  # haiku 기본 총 출력(override 무관)
     assert kh["extra_body"]["thinking"]["budget_tokens"] == 16000  # haiku 기본 max 예산
@@ -297,6 +311,30 @@ def test_budget_clamped_to_total_minus_headroom(monkeypatch, tmp_path):
     k = _call(monkeypatch, "claude-haiku-4", "max")
     assert k["max_tokens"] == 8000
     assert k["extra_body"]["thinking"]["budget_tokens"] == 8000 - 1024  # clamp
+
+
+# ── 2e. feature-0007 timeout-console-sync: body timeout 이 콘솔 AGENT_TIMEOUT_SEC(live)를 추종 ──
+
+def test_body_timeout_synced_with_console_agent_timeout(monkeypatch, tmp_path):
+    # 관리 콘솔 '설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃'(AGENT_TIMEOUT_SEC, apply_mode=live)
+    # 을 450 으로 올리면, _call_llm 이 요청 body 의 timeout 으로 그 값을 실어 gateway upstream
+    # 타임아웃과 요청 단위로 동기화한다(litellm 이 per-attempt timeout 으로 존중 — 라이브 검증).
+    _stage_snapshot(tmp_path, monkeypatch, {"AGENT_TIMEOUT_SEC": 450})
+    # '일반' sonnet: thinking/effort 는 미주입이지만 timeout 은 항상 실린다.
+    kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
+    assert kwargs["extra_body"]["timeout"] == 450
+    assert _xb(kwargs) == {}  # timeout 외 override 없음(B1 무회귀)
+    # budget 계열(haiku)에도 동일하게 timeout 이 실린다(thinking 과 병존).
+    kh = _call(monkeypatch, "claude-haiku-4", "high")
+    assert kh["extra_body"]["timeout"] == 450
+    assert kh["extra_body"]["thinking"]["budget_tokens"] == 10000
+
+
+def test_body_timeout_default_when_no_console_override(monkeypatch):
+    # override 없으면 runtime_settings 기본값(>=5)이 실린다 — 항상 유효한 양의 정수.
+    kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
+    assert isinstance(kwargs["extra_body"]["timeout"], int)
+    assert kwargs["extra_body"]["timeout"] >= 5
 
 
 # ── 3. worker 경로 패리티 (_payload_to_kwargs) ───────────────────────────────

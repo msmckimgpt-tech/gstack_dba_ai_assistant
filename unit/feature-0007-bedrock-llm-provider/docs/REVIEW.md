@@ -526,3 +526,8 @@ source_of_truth: true
 - 위험도: Minor(§12.3) — 타임아웃 상향, 비파괴. 상향은 느린 호출을 더 기다릴 뿐 회귀 없음(빠른 호출 무영향).
 - Verification: YAML OK. 배포 후 실행 config request_timeout=300 + sonnet 대화 정상 확인.
 - Cross-ref: MODIFY CHG-20260724T141420-llm-timeout-align / TEST.md Run 2026-07-24-004.
+
+## REV-20260724T054326-timeout-console-sync [SKIPPED:doc-comment-only-code-review-canonical-in-feature-0002] — PASS
+- 대상(feature-0007): litellm_config.yaml `request_timeout: 300` **주석만** 갱신(값 무변경). 콘솔 AGENT_TIMEOUT_SEC(live) ↔ gateway upstream 타임아웃 요청 단위 동기화의 config-측 문서화.
+- 리뷰 방식([SKIPPED] 사유): feature-0007 변경은 주석-only(로직·값 변경 0). 실제 코드/로직(앱이 요청마다 live body timeout 전달, extra_body 항상-timeout 병합, client/run 예산 live 전환)은 feature-0002 에 거주하며, 그 적대 리뷰가 정본 = **REV-20260724T054326-timeout-console-sync [SUBAGENT:adversarial-general-purpose] SHIP**(7 공격각 CLEAN, NIT 2·3 반영, Finding 1 by-design 수용). 본 feature-0007 엔트리는 config 주석 정합 기록.
+- Cross-ref: feature-0002 REVIEW/CHG/TASK-20260724T054326-timeout-console-sync / MODIFY CHG-20260724T054326-timeout-console-sync / TEST.md Run 2026-07-24-timeout-console-sync.

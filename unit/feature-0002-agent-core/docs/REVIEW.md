@@ -450,3 +450,17 @@ source_of_truth: true
 - **범위(정직·MINOR-B)**: self-heal 자동 정리는 **whole-nonexistent-DB enum** 만(안전 subset). 실존 DB 안 wrong-table·bare-schema(db prefix 無)·system-schema 환각은 보존 → 운영자 dry-run 검증 `scripts/enum_grounding_sweep.py`(table-레벨) 담당. ask-worker(run_agent→_enum_autopropose) 경로는 예방 게이트로 이미 커버(무변경).
 - 검증: 신규 self-heal 14 PASS(게이트 결합·scanned·engine allowlist·fail-open·dedup·예외·shrink-가드 confirm/저장·빈-schema 제외) · feature-0002 전체 회귀 신규 실패 0 · ruff clean. Round-2 판정: BLOCKER/MAJOR 구조적 흡수, 잔여 MINOR 봉인.
 - Cross-ref: CHG/TASK/TEST-20260722T033854-enum-schema-grounding(self-heal) · `modules/insight.py _enum_self_heal`+`sweep_unknown_schema_enum` · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260724T054326-timeout-console-sync [SUBAGENT:adversarial-general-purpose] SHIP — LLM upstream 타임아웃 ↔ 관리 콘솔 AGENT_TIMEOUT_SEC(live) 요청 단위 동기화 (CHG-20260724T054326-timeout-console-sync, Major §12.3 — hot-path LLM 호출·타임아웃 계약)
+- Trigger(§18.8): 변경이 메인 agentic loop 의 LLM 호출 경로(`_call_llm` extra_body·client·run 예산 타임아웃)를 건드림 → 적대 리뷰 1렌즈(general-purpose, "이건 깨진다" 기본자세 7개 공격각). 결과 **SHIP**(BLOCKER/MAJOR 0).
+- 공격각 검증 결과:
+  - A(SDK forwarding/collision) **CLEAN**: openai 2.26.0 `extra_body`(body JSON 추가)와 `timeout`(httpx)은 별개 파라미터. `_call_llm` kwargs 에 top-level `timeout` 없음 → double-set 없음. body `timeout` 은 litellm 예약 파라미터로 소비(gemma 로 미전달). 선행 라이브 실험(body=5→408·=200→200)이 litellm per-attempt 소비 확증.
+  - B(edge/gemma) **CLEAN(코드)**: 모든 agent 요청은 단일 LLM_BASE_URL litellm 프록시 경유·`timeout` 은 litellm 소비. extra_body 가 edge 에서 비어야 한다는 assert 없음(구 `"extra_body" not in kwargs` edge 가드 → `_xb(kwargs)=={}` 로 올바르게 마이그). 잔여: 결정 실험이 sonnet-only → POST-DEPLOY edge ping 1회로 완전 봉인.
+  - C(`_rts.get_int` 안전) **CLEAN(실증)**: 항상 int 반환·None/예외 없음(파일 read guarded, bad value fallback). override 시 [5,3600] clamp, 무override 시 .env/스펙 기본(60). 450→450·999999→3600·1→5·"notanint"→60 확인. `max(5,int(...))` 은 redundant-safe.
+  - D(client 캐싱) **CLEAN**: ask() client(≈3979)는 `_run_agent_core` 당 신규 로컬 생성(모듈 캐시 아님) → 콘솔 변경이 다음 ask() 에 반영.
+  - E(retry/fallback wall-clock) **CLEAN**: 앱→litellm 단일 HTTP; httpx client timeout(=콘솔값)이 총량 bound → num_retries=1+fallback 의 다중 slow attempt chain 을 컷(빠른 429/401 fallback 은 fit). 변경 전과 동일 구조.
+  - F(테스트 정확성) **CLEAN(전부 PASS)**: `_xb()` 는 timeout 만 pop → 모든 thinking/effort 정확매칭 가드 보존. Sonnet5-never-budget_tokens·'일반' no-override 불변식 유지. `test_body_timeout_synced_...`(450∈[5,3600] → write_snapshot 미거부·미clamp) **non-vacuous**.
+  - G(probe 미변경) **CLEAN**: `probe_provider` 는 top-level `timeout=8`(httpx)·body timeout 무 → 8s 헬스 ping bound 유지. probe 테스트 유효.
+- 수용된 트레이드오프(Finding 1, MINOR by-design): 콘솔을 스펙 max **3600** 으로 상향 시 단건 hung 호출이 serial ask-worker 를 최대 ~3600s(client), 병리적 다라운드는 run 예산 상한(~10800s)까지 점유 가능. **이는 사용자가 명시 요청한 sync 의 의도된 결과**(운영자가 3600 을 고르면 그 호출을 3600s 허용하겠다는 뜻)이며 스펙 max 로 이미 bounded — client httpx 를 콘솔과 무관하게 독립 cap 하면 sync 목적 자체를 훼손하므로 미채택. 운영자 판단 영역(REPORT §트레이드오프 기록).
+- 반영된 NIT(2·3, 주석 정확성): `_call_llm` 타임아웃 주석에서 (2) client 는 ask() 진입 시점 값이라 run 도중 콘솔 상향 시 min(client,body)·다음 ask() 자동정합, (3) 이 client 는 로컬 생성 OpenAI 로 `_get_llm_client` 캐시 경로 아님을 명시하도록 수정.
+- Cross-ref: CHG/TASK/TEST-20260724T054326-timeout-console-sync · feature-0007 REVIEW-20260724T054326-timeout-console-sync(config 주석) · subagent id a600d2a00c460bae7 · ANCHOR 0002 §1~§3 무충돌.
