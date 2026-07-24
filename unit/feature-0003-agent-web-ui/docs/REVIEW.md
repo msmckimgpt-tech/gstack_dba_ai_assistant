@@ -887,3 +887,7 @@ source_of_truth: true
   두 엔드포인트(/ai-ops·/ai-ops/activity) 배지 일관 · categories try/except degrade 온전.
 - 검증: 전체 pytest 2287 passed/2 skipped · admin.js `node --check` · Windows-browser modelDetail eval PASS ·
   POST-DEPLOY PB-0008(운영 현황 배지·활동 상세 라우팅 라이브) = 배포 후 후속(test-runs.d fragment).
+
+## REV-20260724T180649-share-point-rail-bars [SKIPPED:trivial-display-only-port-of-reviewed-main] — 공유링크 뷰 rail 막대화 + 클릭 비례 (Minor §12.3 — feature-0003 web/UI, /_template:entry 후속)
+- Panel skip 사유(§18.8): 메인 뷰 A(막대화)+B(클릭 위치 비례)를 공유 뷰(share.js/share.css)에 **동형 이식** — 원본은 REV-20260722T125200-point-rail-range-window([SUBAGENT:general-purpose]) 적대리뷰 + 라이브 PB-0008 PASS 완료분. 차이는 좌표계뿐(messageLog 내부 스크롤 → window/문서 스크롤): `layoutSharePointRail` topInDoc=rect.top+scrollY·totalHeight=documentElement.scrollHeight·`scrollShareMessageToRatio` window.scrollTo. 백엔드·엔드포인트·RBAC·스키마 0, 순수 표시+간단 인터랙션. anonymous 노출면이나 dot.title/aria-label 은 기존 DOM API(innerHTML 아님) 유지 — XSS 무첨가.
+- `scrollShareMessageIntoCenter`(항상 중앙) 는 제거하지 않고 유지(향후 재사용·메인 대칭). 윈도잉(C)은 공유 뷰 범위 밖(read-only 스냅샷·페이징 없음) — 미적용.

@@ -987,3 +987,9 @@ source_of_truth: true
 - 코드/자산 0 — metadata-review-ds-scope(PR #931·main 2b22b5ff) 배포 후 라이브 검증 결과 기록만.
 - test-runs.d/20260724T053457-metadata-review-ds-scope.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260724T053457-metadata-review-ds-scope-postverify.
 - 실측(실 Windows Chrome, https://localhost/admin): 검토 큐 공용 96건→mysql-kr-an1-auth 16건 필터·배지 96→16 정합(MAJOR Finding 1)·목록 84건 중 82 자동등록 가시(Fix 2)·전 행 `등록 <시각>`(Fix 3)·pageerror 0. 사용자 3결함 전부 해소 확인.
+
+## CHG-20260724T180649-share-point-rail-bars (공유링크 뷰 대화 뱃지 막대화 + 클릭 위치 비례, Minor §12.3, frontend-only 표시전용)
+- Files: `unit/feature-0003-agent-web-ui/src/static/{share.js,share.css}`.
+- A(막대화): `layoutSharePointRail` top%+height%(범위 비례) + CSS 점→막대. B(클릭 비례): 클릭 핸들러가 막대 내 y 비율 → 신설 `scrollShareMessageToRatio`(window.scrollTo EaseOutExpo). 메인 뷰(app.js scrollMessagePointToRatio·layoutMessagePointRail) 동형 이식 — 공유는 window/문서 좌표.
+- `scrollShareMessageIntoCenter` 유지(항상 중앙 — 재사용 대비, dead 아님으로 보존). 백엔드·RBAC·스키마 무영향.
+- 검증: `node --check` PASS. POST-DEPLOY PB-0008 예정.

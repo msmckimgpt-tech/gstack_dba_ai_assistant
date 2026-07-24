@@ -330,7 +330,14 @@
       dot.addEventListener("click", (ev) => {
         ev.preventDefault();
         const target = document.getElementById(`share-msg-${idx}`);
-        if (target) scrollShareMessageIntoCenter(target);
+        if (!target) return;
+        // share-point-rail-bars: 막대 내 클릭 y 위치(0=상단~1=하단)를 메시지 [top,bottom] 에
+        // 매핑해 그 지점으로 스크롤(메인 뷰 scrollMessagePointToRatio 와 동형). 기존엔 항상 중앙.
+        const dotRect = dot.getBoundingClientRect();
+        const ratio = dotRect.height > 0
+          ? Math.max(0, Math.min(1, (ev.clientY - dotRect.top) / dotRect.height))
+          : 0.5;
+        scrollShareMessageToRatio(target, ratio);
       });
       rail.appendChild(dot);
     });
@@ -350,9 +357,13 @@
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const topInDoc = rect.top + scrollY;       // 뷰포트 좌표 → 문서 좌표.
-      const center = topInDoc + rect.height / 2;
-      const pct = Math.max(0, Math.min(100, (center / totalHeight) * 100));
-      dot.style.top = `${pct}%`;
+      // share-point-rail-bars: 메인 뷰와 동일하게 각 뱃지를 메시지 실 스크롤 범위 비례 세로
+      // 막대로 배치(기존 중심점 top%-only → top%+height%). 긴 메시지=긴 막대라 rail 이 대화
+      // 세로 미니맵이 된다(공유 페이지는 window/문서 좌표 기준).
+      const topPct = Math.max(0, Math.min(100, (topInDoc / totalHeight) * 100));
+      const heightPct = Math.max(0, Math.min(100 - topPct, (rect.height / totalHeight) * 100));
+      dot.style.top = `${topPct}%`;
+      dot.style.height = `${heightPct}%`;
     });
   }
 
@@ -393,6 +404,33 @@
     const currentY = window.scrollY || window.pageYOffset || 0;
     const topInDoc = rect.top + currentY;
     const dest = topInDoc - (window.innerHeight - rect.height) / 2;
+    const maxY = Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
+    const to = Math.max(0, Math.min(maxY, dest));
+    const delta = to - currentY;
+    if (delta === 0) return;
+    if (sharePrefersReducedMotion()) { window.scrollTo(0, to); return; }
+    const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : null;
+    if (t0 == null) { window.scrollTo(0, to); return; } // performance.now 부재 폴백.
+    function step(now) {
+      const p = Math.min(1, (now - t0) / SHARE_POINT_SCROLL_DURATION_MS);
+      window.scrollTo(0, currentY + delta * shareEaseOutExpo(p));
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  // share-point-rail-bars: 대상 메시지의 세로 범위 내 ratio(0=상단~1=하단) 지점을 뷰포트
+  // 중앙으로 EaseOutExpo 스크롤한다. rail 막대 클릭 위치 비례 이동에 쓰인다
+  // (scrollShareMessageIntoCenter 는 항상 메시지 중앙 — 다른 진입 재사용 대비 유지).
+  function scrollShareMessageToRatio(target, ratio) {
+    if (!target) return;
+    releaseShareBottomPin();
+    const r = Math.max(0, Math.min(1, Number(ratio)));
+    const rect = target.getBoundingClientRect();
+    const currentY = window.scrollY || window.pageYOffset || 0;
+    const topInDoc = rect.top + currentY;
+    const pointInDoc = topInDoc + rect.height * r;
+    const dest = pointInDoc - window.innerHeight / 2;
     const maxY = Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
     const to = Math.max(0, Math.min(maxY, dest));
     const delta = to - currentY;

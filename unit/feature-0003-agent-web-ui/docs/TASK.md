@@ -6250,3 +6250,12 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] docs 갱신 (FUNCTION/MODIFY/TASK/REPORT/REVIEW/TEST) — feature-0003 홈
 - [x] verify-completion PASS → PR #931 merge(main 2b22b5ff) → deploy-web(무중단·web-a/b·워커 soak PASS) → **POST-DEPLOY PB-0008 Windows-browser 라이브 PASS**(검토 큐 96공용→16 ds 필터·배지 정합·목록 82 자동등록 가시·전 행 등록시각·pageerror 0)
 정본 rationale=REVIEW.md REV-20260724T053457-metadata-review-ds-scope, 변경이력=MODIFY.md CHG-20260724T053457-metadata-review-ds-scope.
+
+## 20260724T1806-share-point-rail-bars — 공유링크 뷰 대화 뱃지 막대화 + 클릭 위치 비례 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 표시전용. /_template:entry 후속)
+
+- 트리거(사용자 요청): 공유링크 내 화면의 대화 뱃지도 메인 뷰처럼 막대 형식으로. 현재는 이전(단순 포인트) 형식.
+- [x] share.js `layoutSharePointRail`: dot 중심점 top%-only → top%+height%(메시지 실 범위 비례 막대, 공유는 window/문서 좌표).
+- [x] share.js 클릭 핸들러: 막대 내 클릭 y 비율 → 신설 `scrollShareMessageToRatio(target, ratio)`(메시지 [top,bottom] 대응점 뷰포트 중앙, window.scrollTo EaseOutExpo). 기존 `scrollShareMessageIntoCenter`(항상 중앙)는 유지(재사용 대비).
+- [x] share.css `.share-point-dot`: 점(8×8 원) → 막대(width 6px·min-height 4px·border-radius 3px·translateX만·is-active/hover 폭 11px).
+- [x] 검증: `node --check share.js` PASS. 메인 뷰 A+B(적대리뷰·라이브 검증 완료)의 동형 이식(좌표계만 window scroll). display-only.
+- [ ] PB-0008 POST-DEPLOY: 공유링크 라이브에서 막대 렌더·클릭 위치 비례 이동 실측.
