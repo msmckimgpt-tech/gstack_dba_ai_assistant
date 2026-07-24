@@ -6250,6 +6250,20 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] docs 갱신 (FUNCTION/MODIFY/TASK/REPORT/REVIEW/TEST) — feature-0003 홈
 - [x] verify-completion PASS → PR #931 merge(main 2b22b5ff) → deploy-web(무중단·web-a/b·워커 soak PASS) → **POST-DEPLOY PB-0008 Windows-browser 라이브 PASS**(검토 큐 96공용→16 ds 필터·배지 정합·목록 82 자동등록 가시·전 행 등록시각·pageerror 0)
 정본 rationale=REVIEW.md REV-20260724T053457-metadata-review-ds-scope, 변경이력=MODIFY.md CHG-20260724T053457-metadata-review-ds-scope.
+
+### TASK-20260724T181106-brandnew-script-attachment-delivery — assistant 신규 스크립트 첨부 전달 (Major §12.3, 2026-07-24, primary feature-0003 + cross-ref feature-0002)
+`/_dqa:conversation_audit` FR-brandnew-script-attachment-delivery-gap. 진단(대화 …f1c535ec, 2026-07-24, 1:1): 사용자가 "전체 스크립트 개선안을 첨부파일로 전달해주세요.(답변 본문이 아닌)" 을 중복 재전송(I-INT)했으나 assistant 가 "describe_routine 으로 생성한 결과라 원본 첨부가 없어 전달 불가" 거부(msg 1384) — 첨부 생성 경로가 기존 첨부 편집(`attachment-edit`, source_attachment_id 필수)만 존재. corroboration 120일 생성물 파일전달 명시요청 2대화(근본 코드 file:line confirmed capability gap → fix-now). PLAN-APPROVED(AskUserQuestion 2026-07-24).
+
+#### 완료 체크리스트
+- [x] 진단: 삼각측량(코드 _conv_store parse/materialize source 필수 + agent_core 프롬프트 inline 유도 + DB msg 1384 거부 전사) rootcause_confidence high
+- [x] Fix(feature-0003): source-less `attachment-new` 경로 — `_attachment_block_spans`(edit/new 공통 경계 헬퍼) + `_parse_attachment_new_blocks` + `_materialize_assistant_attachment_new`(root 첨부 v1·CreatedByRole=assistant) + `_strip_attachment_new_blocks` + caller 배선(materialize/step/strip/result) + app.js 배지/토스트
+- [x] Fix(feature-0002 cross-ref): `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` 코드-권위 주입 + base SYSTEM_PROMPT 섹션 + inline-only 예외
+- [x] 보안 가드: 확장자 allowlist(데이터·마크업, 실행형→.txt) + account/conv scope + 크기 1MB·개수 캡(편집과 합산) + **업로드 RBAC 게이트**(§18.8 MAJOR)
+- [x] 단위테스트: test_attachment_new.py 27건 + 회귀(versioning/task0286) — 전체 2369 PASS/0 FAIL
+- [x] §18.8 적대 패널(AGENT-TEAM security+backend) → MAJOR RBAC 우회·MINOR 배지/cap/파서 전부 in-cycle 반영
+- [ ] verify-completion → commit → (PR/deploy 별도 confirm) → POST-DEPLOY PB-0008
+정본 rationale=REVIEW REV-20260724T181106-brandnew-script-attachment, 변경이력=MODIFY CHG-20260724T181106-brandnew-script-attachment.
+
 ## 20260724T1806-share-point-rail-bars — 공유링크 뷰 대화 뱃지 막대화 + 클릭 위치 비례 (Minor §12.3 — feature-0003 web/UI 프론트 단독, 표시전용. /_template:entry 후속)
 
 - 트리거(사용자 요청): 공유링크 내 화면의 대화 뱃지도 메인 뷰처럼 막대 형식으로. 현재는 이전(단순 포인트) 형식.

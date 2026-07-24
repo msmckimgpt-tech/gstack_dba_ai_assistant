@@ -1699,3 +1699,11 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **무영향**: RBAC·스키마·마이그·인증 0. 백엔드는 count 2함수 additive scope 파라미터 + 엔드포인트 인자 전달뿐(미지정 byte-동치·admin 전용 호출). 목록 경로 무변경. auto-promote write↔list read scope 정규화 동일.
 - **검증**: `node --check`(ESM) PASS · `verify_metadata_list_detail.mjs` baseline 신규 회귀 0(26 PASS/3 FAIL·[D] crash=pre-existing 하니스, clean main 동일) · py_compile · pytest 116 PASS(metadata 44 + glossary/enum 72) · §18.8 적대 리뷰(SUBAGENT, SHIP-WITH-FIXES→3건 반영) · 정적 자산 baked → POST-DEPLOY PB-0008 Windows-browser 라이브. 정본 REVIEW REV-20260724T053457-metadata-review-ds-scope · MODIFY CHG-20260724T053457-metadata-review-ds-scope · TASK-20260724T053457-metadata-review-ds-scope.
 - **[POST-DEPLOY 완결 2026-07-24] PR #931 main 병합(2b22b5ff) → make deploy-web 무중단(web-a/b·워커·gateway 2b22b5ff soak PASS) → PB-0008 Windows-browser 라이브 PASS**: 실 Windows Chrome(https://localhost/admin) — 검토 큐 datasource 필터(공용 96건→mysql-kr-an1-auth 16건, 전 행 해당 scope)·배지 정합(96→16, §18.8 Finding 1 MAJOR)·자동승급 목록 가시(용어 목록 84 중 82 자동등록)·전 행 등록 시각·pageerror 0. 사용자 원 3결함 전부 해소. 스크린샷 scratchpad metadata-ds-list-registered.png. postverify=REV/CHG-20260724T053457-metadata-review-ds-scope-postverify.
+
+### [feature-0003] FR-brandnew-script-attachment-delivery-gap — assistant 신규 스크립트 첨부 전달 (Major, 2026-07-24, conversation_audit)
+- **계기**: `/_dqa:conversation_audit` 라이브 대화 마찰 — 대화 …f1c535ec(2026-07-24, 1:1)에서 사용자가 "전체 스크립트 개선안을 첨부파일로 전달해주세요.(답변 본문이 아닌)" 중복 재전송(I-INT), assistant 는 "describe_routine 으로 생성한 결과라 원본 첨부가 없어 전달 불가" 거부(msg 1384).
+- **RC**: 첨부 생성 경로가 기존 첨부 편집(`attachment-edit`, source_attachment_id 필수)만 존재 — brand-new 스크립트를 다운로드 첨부로 만드는 경로 전무. 프롬프트도 brand-new SQL 을 inline ```sql 로 유도. 재발경로=capability gap. corroboration 120일 생성물 파일전달 명시요청 2대화(근본 코드 file:line confirmed → fix-now).
+- **수정**: source-less `attachment-new` 경로(root 첨부 생성, feature-0003) + 코드-권위 프롬프트 지침(feature-0002 cross-ref). 보안 가드 편집 경로와 전부 공유 + 업로드 RBAC 게이트.
+- **무영향**: 편집 경로·스키마·마이그·RBAC 스키마 0. 순수 additive(업로드 권한 게이트 추가). 보안 회귀 0.
+- **검증**: pytest 2369 PASS · §18.8 AGENT-TEAM(security MAJOR RBAC + backend MINOR 배지/cap/파서) 전부 반영. 라이브 실측=POST-DEPLOY PB-0008(배포 후 동일입력 재현).
+- 정본 REVIEW REV-20260724T181106-brandnew-script-attachment · MODIFY CHG-20260724T181106-brandnew-script-attachment · 원장 FRICTION_LEDGER FR-brandnew-script-attachment-delivery-gap.
