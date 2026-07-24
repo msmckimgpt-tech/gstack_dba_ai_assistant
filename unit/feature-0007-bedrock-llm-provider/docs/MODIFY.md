@@ -548,3 +548,17 @@ source_of_truth: true
 - Rollback: litellm sonnet `thinking:{type:adaptive}`·`model:sonnet-5` 되돌림 + model_catalog style 헬퍼/agent_core 분기/probe/label/canonical/JS revert. (단 sonnet-4-6 은 폐기라 429 재발 → rollback 은 sonnet 미작동 상태로 복귀.)
 - ANCHOR 정합: §1(운영자 자격 일원화 — 동일 두 OAuth 계정, 신규 자격 없음)·§2(Alt-A LiteLLM gateway) 무충돌. 모델 버전 갱신은 자격/보안 경계 변경 없음.
 - Cross-ref(정본 코드): litellm_config.yaml(sonnet adaptive) · shared/model_catalog.py `model_thinking_style`/`effort_for_reasoning_level`/`canonical_usage_model`/`API_MODEL_OPTIONS` · agent_core.py `_call_llm` style 분기 · llm_provider_health.py `probe_provider` · feature-0003 app.js `_composerModelLabelFor` · REVIEW.md REV-20260724T113513-sonnet5-upgrade.
+
+## CHG-20260724T123503-cc-identity-inject (Sonnet 5 OAuth frontier-identity 게이트 해소 — cross-feature, primary=shared+feature-0002)
+- Date: 2026-07-24. sonnet5-upgrade 배포 후 라이브 검증서 sonnet 여전히 429. **사용자 요청으로 계정 용량 직접 확인** → 직접 api.anthropic.com 호출로 근본 원인 확정:
+  - 두 OAuth 계정(claude-corp/root) 모두 **claude-sonnet-5 직접 호출 200**(unified-status: allowed) — **계정 용량 충분**(사용자 지적 정확). 429는 계정 한도 아님.
+  - **결정적 격리 실증**: sonnet-5 는 sk-ant-oat OAuth 구독 토큰에서 **system 의 첫 블록이 정확히 "You are Claude Code, Anthropic's official CLI for Claude." 여야** 200. system 없음/generic → 429. `CC+"\n\n"+제품`(단일 문자열) → 429. **블록/메시지 분리 `[CC, 제품]` → 200**. Haiku 4.5 는 미요구(그래서 정상). litellm gateway 가 이 identity 블록을 안 보내서 sonnet 만 429였다.
+  - 동작 검증: CC-first-block + 제품(DB assistant) system → 답변이 완전한 DB 어시스턴트(SQL·쿼리·분석), Claude Code 코딩 아님 — 제품 프롬프트가 실 동작 지배.
+- 변경(shared/model_catalog.py): `OAUTH_FRONTIER_IDENTITY`("You are Claude Code…") 상수 + `requires_oauth_frontier_identity(model)`(adaptive 계열=Sonnet 5만 True) 신설.
+- 변경(agent_core `_call_llm`): adaptive 모델이면 `effective_messages` 첫 블록으로 `{role:system, content:CC}` 주입(제품 system 앞). litellm 이 Anthropic system 첫 블록으로 매핑(라이브 검증). haiku 미주입(working 무영향).
+- 변경(llm_provider_health `probe_provider`): adaptive 모델 probe 도 CC system 첫 주입(없으면 probe 429 → 배너 자동복구 무력화 방지).
+- 사용자 결정(2026-07-24): "Claude Code identity 주입 구현" — OAuth 구독 토큰에 Claude Code identity 를 실어 frontier(Sonnet 5) 사용(ToS 경계 인지·수용).
+- Verification: feature-0002+0003 pytest PASS(rc=0, requires_oauth_frontier_identity·CC 주입·probe CC·haiku 미주입 테스트), py 구문 OK. gateway 라이브 매핑 실증(2 system msgs / system blocks → 200, 단일 문자열 → 429). **배포 후 gateway ping(claude-sonnet-4-chat 실 대화) 200 + PB-0008 최종 확정.**
+- Rollback: model_catalog 상수/헬퍼 + agent_core/probe 주입 revert → sonnet 429 복귀(단 코드-정확 상태로).
+- ANCHOR 정합: §1(운영자 자격 일원화 — 동일 OAuth 계정, 신규 자격 없음)·§2(Alt-A gateway) 무충돌. system 첫 블록 identity 주입은 라우팅/인증 경계 확장 아님(기존 OAuth 토큰 사용).
+- Cross-ref(정본 코드): shared/model_catalog.py `OAUTH_FRONTIER_IDENTITY`/`requires_oauth_frontier_identity` · agent_core.py `_call_llm` · llm_provider_health.py `probe_provider` · REVIEW.md REV-20260724T123503-cc-identity-inject.

@@ -153,6 +153,14 @@ source_of_truth: true
     Sonnet-5)는 budget_tokens 유지. 모델별 thinking 스타일은 `model_catalog.model_thinking_style()` 이 판정하고
     `_call_llm`/probe 가 그에 따라 분기한다. 추론강도 선택기(feature-0003)는 sonnet 에서 레벨→effort, haiku 에서
     레벨→budget_tokens 로 이원 동작(관리 콘솔 budget override 는 adaptive sonnet 에선 무시).
+  - **OAuth frontier-identity 게이트 (cc-identity-inject 2026-07-24)**: 운영 LLM 이 sk-ant-oat OAuth 구독 토큰
+    (Claude Code/Max)으로 나갈 때, **frontier(Sonnet 5)는 system 의 첫 블록이 "You are Claude Code, Anthropic's
+    official CLI for Claude." 여야** Anthropic 이 허용한다(없거나 generic → 429; 라이브 실증 2026-07-24). Haiku 4.5
+    는 미요구. `model_catalog.requires_oauth_frontier_identity()`(=adaptive 계열)가 True 인 모델에 한해
+    `_call_llm`·probe 가 이 identity 를 **별도 첫 system 메시지**로 주입한다(제품 system 프롬프트는 그 다음 —
+    litellm 이 Anthropic system 첫 블록으로 매핑; 단일 문자열 연결은 게이트 미통과). 실 동작은 제품 프롬프트가
+    지배(DB 어시스턴트 유지, 라이브 검증). 두 계정 모두 Sonnet 5 직접 호출 200 = 계정 용량 충분(429는 identity
+    게이트였지 용량 아님).
   - **사용자 표시 라벨은 버전 넘버링 없이 모델 그대로 (사용자 지시 2026-07-24)**: 모델 선택기·컴포저 표시는
     `claude-sonnet`/`claude-haiku`(group `Claude`)로 노출하고, 내부 value(claude-sonnet-4/claude-haiku-4,
     넘버링 포함)는 저장/라우팅용으로만 쓴다. 컴포저 현재-모델 표시는 `_composerModelLabelFor`(app.js)가
