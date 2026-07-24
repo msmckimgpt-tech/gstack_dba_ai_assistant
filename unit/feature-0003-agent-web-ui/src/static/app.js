@@ -9789,9 +9789,23 @@ function _composerCurrentModel() {
     || "claude-sonnet-4";
 }
 
+// 사용자 표시용: 내부 model value(예: claude-sonnet-4)를 카탈로그 label(예: claude-sonnet)로 해석한다.
+// 사용자 지시(2026-07-24): 제공되는 alias 명칭은 버전 넘버링 없이 모델 그대로 — 표시 라벨은 카탈로그
+// label 을 쓰고, 내부 value(넘버링 포함, 저장/라우팅용)를 사용자 화면에 그대로 노출하지 않는다.
+// 카탈로그 미로드/미등록 value 는 value 그대로(안전 fallback — 조용히 사라지지 않게).
+function _composerModelLabelFor(value) {
+  const catalog = state.modelCatalog || state.apiVaultOptions;
+  const models = Array.isArray(catalog?.models) ? catalog.models : [];
+  for (const m of models) {
+    if (typeof m === "string") { if (m === value) return m; continue; }
+    if (m.value === value) return m.label || value;
+  }
+  return value;
+}
+
 function _updateComposerModelLabel() {
   const labelEl = document.getElementById("composerActionsModelLabel");
-  if (labelEl) labelEl.textContent = _composerCurrentModel();
+  if (labelEl) labelEl.textContent = _composerModelLabelFor(_composerCurrentModel());
   // 모델이 바뀌면 추론 강도 항목의 활성/라벨도 함께 최신화(thinking 미지원 모델이면 비활성).
   _updateComposerReasoningLabel();
 }

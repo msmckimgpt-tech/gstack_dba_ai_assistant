@@ -259,6 +259,13 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
   요청이 `max_tokens < thinking.budget_tokens` BadRequestError(2차 400)로 실패한다
   (TEST.md §7 haiku-chat-root 노트의 근인 후보). runtime_settings 에서 하한을 모델별
   config thinking 이상으로 clamp 하는 가드를 별 cycle 로 검토 권장.
+- **관리 콘솔에 adaptive sonnet 의 죽은 thinking-budget 슬라이더 잔존**(sonnet5-upgrade 적대리뷰 H5,
+  이연): sonnet 이 adaptive thinking(effort)으로 전환됐으나 `runtime_settings._reasoning_budget_specs`/
+  `_model_budget_specs` 가 `model_supports_thinking`(claude-* True) 기반이라 `reasoning_budget:claude-sonnet-4:*`·
+  `model_thinking_budget:claude-sonnet-4` 스펙을 계속 생성 → 관리 콘솔에 sonnet budget 슬라이더가 남는데 실제
+  주입은 안 됨(operator 혼란, 400/사용자 영향 없음). 클린 fix(budget spec 생성부에서 `model_thinking_style==
+  'adaptive'` 제외)는 test_runtime_settings 4곳 cascade → 라이브 배포 앞 회귀위험 회피 위해 별 cycle 로 이연.
+  대신 adaptive sonnet 에 맞는 **effort 스펙**(모델별 기본 effort 관리)을 신설하는 방향도 함께 검토.
 - **`_LLM_PRICE_USD_PER_1M` 에 `-chat`/-chat-root alias 단가 미등록**(sonnet-chat-fallback 시
   적대 패널 재확인): 관리 콘솔 비용 뷰 중 계정별/일별은 `COALESCE(resolved_model, model)` 로
   키잉하는데, litellm 이 서빙 alias 를 `resp.model`(=resolved_model)로 에코하면

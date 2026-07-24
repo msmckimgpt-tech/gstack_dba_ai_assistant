@@ -492,3 +492,18 @@ source_of_truth: true
 - 잠재 사전존재 이슈(본 변경 범위 밖, 미도입): TEST.md §7 의 `claude-haiku-4-chat-root` "max_tokens must be greater than thinking.budget_tokens" 노트는, admin 이 `agent_max_output(model)` 을 config 고정 thinking(haiku 5000 / sonnet 16000) 미만으로 낮췄을 때 발생하는 잠재 조건(모든 thinking alias 공통, bare 포함). sonnet default 40000≫16000 이라 정상 운영에서 미발생. 별도 cycle 로 "config 고정 thinking 대비 agent_max_output 하한 가드" 검토 권장(REPORT §8 기록).
 - Verification: YAML lint OK(11 deployment/6 fallback), feature-0002+0003 pytest PASS(rc=0), 신규 G5b 가 sonnet 체인 라우팅·2계정·edge-free 3속성 고정.
 - Cross-ref: MODIFY CHG-20260724T105132-sonnet-chat-fallback / TEST.md Run 2026-07-24-001 / shared/model_catalog.py.
+
+## REV-20260724T113513-sonnet5-upgrade [SUBAGENT:backend-infra-adversarial ×2] — PASS-WITH-NITS (라이브 검증 게이트 有)
+- 대상: sonnet → Sonnet 5 라우팅 + **thinking API budget_tokens → adaptive/effort 마이그** + 버전-무관 사용자 라벨. CHG-20260724T113513-sonnet5-upgrade 정합.
+- 문제 정의: sonnet-chat-fallback 배포 후 라이브서 sonnet 두 계정 모두 429 발견 → 실 원인은 **폐기 모델 `claude-sonnet-4-6` 라우팅**. 1차 수정(sonnet-5 repoint, budget_tokens 유지)을 적대 패널이 **FAIL** 판정: **Anthropic 스펙(claude-api skill 확인)상 Sonnet 5 는 `thinking:{type:enabled,budget_tokens}` 를 400 으로 거부** — 429→400 으로 바뀔 뿐 여전히 실패. adaptive thinking + output_config.effort 로 재설계.
+- 2차 적대 패널(adaptive 마이그) verdict: **PASS-WITH-NITS**. 가설 판정:
+  - H1 budget_tokens 누출 **REFUTED** — 주입 지점 2곳(agent_core `_call_llm`:3103/probe:463)만 존재하고 둘 다 `_think_style=="budget"` gate. sonnet 3 alias config 전부 adaptive. node_analysis 기본값=claude-haiku-4-interactive(budget). 잔존 누출 경로 0.
+  - H3 max_tokens 정합 **REFUTED** — adaptive 는 budget<max 제약 제거, max_tokens(40000)만 유효.
+  - H2 style 분류 기본값 **LATENT-DEFECT → 수정 완료**: 미상 claude 를 'budget' 기본 처리하면 미래 adaptive-only(opus-4-8/sonnet-6)에 budget_tokens 주입 → 400. `_BUDGET_THINKING_PREFIXES` 명시 + 미상 claude → **None(안전, 미주입)** 으로 수정. 테스트 `model_thinking_style("claude-opus-4-8")/("claude-sonnet-6") is None` 추가.
+  - H7 probe 테스트 부재 **→ 수정 완료**: `test_probe_adaptive_model_sends_effort_not_budget`(effort low·budget 미주입·max_tokens>1) 추가.
+  - H6 probe 주석 부정확 **→ 정정**.
+  - H5 관리 콘솔 죽은 sonnet budget 슬라이더 **CONFIRMED(minor, 이연)**: cosmetic(400/사용자 영향 없음)이나 fix 가 test_runtime_settings 4곳 cascade → 라이브 배포 앞 회귀위험 회피 위해 **REPORT §8 이연**(effort 스펙 신설 방향 병기).
+  - **H4 litellm 통과 CONFIRMED 라이브 게이트(차단)**: litellm(main-stable)이 config-level `thinking:{type:adaptive}` 를 통과시키고 `drop_params:true` 가 요청 `output_config.effort` 를 stripping 하지 않는지는 **코드로 확정 불가**. `adaptive` enum 거부 시 sonnet 전부 400, effort strip 시 추론강도 선택기 sonnet 무음 no-op(회귀). **배포 후 gateway ping(sonnet-4-chat + effort) 200 실측 필수 — 실패 시 rollback.**
+- 위험도: **Major(§12.3)** — LLM provider thinking-API 마이그. 신규 자격 없음. 라이브 검증 게이트가 완료 조건.
+- Verification: feature-0002+0003 pytest PASS(rc=0, adaptive/effort·dual-style·probe adaptive·H2 안전기본값 테스트 포함), YAML OK, JS OK. H4 는 배포 후 라이브 ping + PB-0008.
+- Cross-ref: MODIFY CHG-20260724T113513-sonnet5-upgrade / TEST.md Run 2026-07-24-002 / shared/model_catalog.py `model_thinking_style` / agent_core `_call_llm` / llm_provider_health `probe_provider`.

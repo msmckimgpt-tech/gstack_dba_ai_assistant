@@ -56,7 +56,7 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from shared.model_catalog import conversation_answer_model, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, thinking_budget_for_level
+from shared.model_catalog import conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, thinking_budget_for_level
 from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
@@ -3093,34 +3093,37 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # budget 으로 주입. thinking 지원 모델(claude-*)에만 적용 — 로컬 LLM 은 LiteLLM
     # drop_params 가 제거하므로 애초에 넣지 않는다. budget 은 아래에서 min(budget, max_tokens-1024)
     # 로 clamp 되므로 Anthropic 제약(budget < max_tokens) 을 항상 만족한다.
-    _think_budget = thinking_budget_for_level(reasoning_level)
-    if _think_budget is not None:
-        # reasoning-budget-per-model: 명시 추론강도(low/high/max)일 때, 관리 콘솔
-        # (`시스템 > 설정 > 모델별 추론 예산`)에서 이 (모델, 레벨)에 설정한 budget override 를 적용
-        # (없으면 model_catalog base 기본값 유지). '일반(normal)'은 thinking_budget_for_level 이 None →
-        # 이 분기 미진입 → 아래 model override 경로(B1 무회귀).
-        _lvl_override = _rts.reasoning_budget_override(model, reasoning_level)
-        if _lvl_override is not None:
-            _think_budget = _lvl_override
-    if _think_budget is None:
-        # 사용자가 요청 단위 추론강도('일반'/미지정)를 안 골랐을 때, 관리 콘솔에서 이 모델에 설정한
-        # thinking budget override 를 적용한다. override 미설정이면 None → 아래 조건 미충족 →
-        # 미주입 → 모델 config 기본 thinking 유지(B1 무회귀).
-        _think_budget = _rts.model_thinking_budget_override(model)
-    # client thinking 주입 게이트는 **원본 model** 기준(무회귀). 비-thinking 원본(로컬 alias 등)은
-    # client thinking 을 넣지 않고 outbound(-chat) config 의 고정 thinking(5000)에 맡긴다 — 위에서 max_tokens 를
-    # budget_model(outbound) 로 20000 잡았으므로 max_tokens(20000)>config budget(5000) 안전(2차 400 없음).
-    if _think_budget is not None and model_supports_thinking(model):
-        # Anthropic 제약(budget_tokens < max_tokens) 안전 보장 — 주입 budget 을 이 요청의
-        # max_tokens 미만으로 clamp(content 최소 1024 확보). reasoning-budget-per-model 이후
-        # budget 이 총 출력 근처까지 커질 수 있어 이 clamp 가 실질 안전판(본문 여유 보장).
-        _safe_budget = int(_think_budget)
-        _mt = kwargs.get("max_tokens")
-        if isinstance(_mt, int) and _mt > 0:
-            _safe_budget = min(_safe_budget, max(1024, _mt - 1024))
-        kwargs["extra_body"] = {
-            "thinking": {"type": "enabled", "budget_tokens": _safe_budget},
-        }
+    # sonnet5-upgrade(2026-07-24): thinking API 는 모델별로 다르다(Anthropic 스펙, claude-api skill).
+    #  · budget 계열(Haiku 4.5 등): 요청 단위 thinking budget_tokens override(기존 동작 그대로).
+    #  · adaptive 계열(Sonnet 5): budget_tokens 는 400 → 절대 주입 금지. litellm config 의 adaptive thinking
+    #    이 기본(effort high)이고, 명시 추론강도(low/high/max)만 output_config.effort 로 전달한다
+    #    ('일반'=무override=기본 high — B1 무회귀 원칙 동형). budget override(reasoning_budget_override /
+    #    model_thinking_budget_override)는 budget 계열에만 의미가 있으므로 adaptive 에서는 조회하지 않는다.
+    _think_style = model_thinking_style(model)
+    if _think_style == "budget":
+        _think_budget = thinking_budget_for_level(reasoning_level)
+        if _think_budget is not None:
+            # reasoning-budget-per-model: 명시 추론강도(low/high/max)일 때 관리 콘솔의 (모델,레벨) budget override.
+            _lvl_override = _rts.reasoning_budget_override(model, reasoning_level)
+            if _lvl_override is not None:
+                _think_budget = _lvl_override
+        if _think_budget is None:
+            # '일반'/미지정: 관리 콘솔 모델 budget override(없으면 None → 미주입 → config 기본 유지, B1 무회귀).
+            _think_budget = _rts.model_thinking_budget_override(model)
+        if _think_budget is not None and model_supports_thinking(model):
+            # Anthropic 제약(budget_tokens < max_tokens) — max_tokens 미만으로 clamp(content 최소 1024).
+            _safe_budget = int(_think_budget)
+            _mt = kwargs.get("max_tokens")
+            if isinstance(_mt, int) and _mt > 0:
+                _safe_budget = min(_safe_budget, max(1024, _mt - 1024))
+            kwargs["extra_body"] = {
+                "thinking": {"type": "enabled", "budget_tokens": _safe_budget},
+            }
+    elif _think_style == "adaptive":
+        # Sonnet 5: budget_tokens 미전달(400 방지). 명시 레벨만 output_config.effort 로. '일반'은 미주입(기본 high).
+        _effort = effort_for_reasoning_level(reasoning_level)
+        if _effort is not None:
+            kwargs["extra_body"] = {"output_config": {"effort": _effort}}
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)
     # TASK-0163: 메인 agentic loop 의 LLM 호출을 토큰 회계에 기록(best-effort).

@@ -22,6 +22,8 @@ __all__ = [
     "model_supports_temperature",
     "model_supports_thinking",
     "model_supports_vision",
+    "model_thinking_style",
+    "effort_for_reasoning_level",
     "normalize_reasoning_level",
     "thinking_budget_for_level",
     "canonical_usage_model",
@@ -79,22 +81,31 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
 # 단일 source-of-truth 로 관리.
 API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
     {
+        # sonnet5-upgrade(2026-07-24): 내부 value 는 하위호환 위해 claude-sonnet-4 유지(저장 대화·
+        # node_analysis·probe·단가·runtime_settings 키 무변경 — haiku value 가 haiku-4-5 를 서빙하는
+        # 것과 동형), 라우팅 실 모델은 현행 Sonnet 5(litellm_config claude-sonnet-4 → anthropic/
+        # claude-sonnet-5). 사용자 표시 label 만 실 버전(claude-sonnet-5)으로 갱신. 배경: 폐기된
+        # claude-sonnet-4-6 이 429 를 반환해 sonnet 대화가 "요청량 한도"로 실패하던 결함 수정.
         "value": "claude-sonnet-4",
-        "label": "claude-sonnet-4",
-        "group": "Claude 4",
-        "description": "Anthropic Claude Sonnet 4.x (frontier, 고품질)",
+        # 사용자 표시 label 은 버전 넘버링 없이 모델 그대로(사용자 지시 2026-07-24) — 실 서빙 버전이
+        # 올라가도(sonnet-4-6 → 5 → …) label 은 불변, litellm 라우팅만 갱신하면 된다(버전 혼동 원천 차단).
+        "label": "claude-sonnet",
+        "group": "Claude",
+        "description": "Anthropic Claude Sonnet (frontier, 최고 품질)",
         # Extended thinking (effort=high) 활성화 — temperature 는 반드시 1 이어야
         # 하므로 _temperature_kwargs 에서 temperature=0 을 주입하지 않도록 False.
         "supports_temperature": False,
-        # TASK-0094 Sprint 2 (D13) — Claude Sonnet 4.x 는 native multimodal.
+        # TASK-0094 Sprint 2 (D13) — Claude Sonnet 은 native multimodal.
         # _build_attachment_context_section 의 kind=image 분기 routing 활성.
         "supports_vision": True,
     },
     {
         "value": "claude-haiku-4",
-        "label": "claude-haiku-4",
-        "group": "Claude 4",
-        "description": "Anthropic Claude Haiku 4.x (가성비, 기본값)",
+        # 사용자 표시 label 은 버전 넘버링 없이 모델 그대로(사용자 지시 2026-07-24). value(claude-haiku-4)는
+        # 내부 alias(litellm claude-haiku-4 → anthropic/claude-haiku-4-5)로 유지 — 저장 대화·단가·키 무변경.
+        "label": "claude-haiku",
+        "group": "Claude",
+        "description": "Anthropic Claude Haiku (가성비, 기본값)",
         # Extended thinking 활성화 — temperature=1 고정 요구사항으로 False.
         "supports_temperature": False,
         # TASK-0094 Sprint 2 (D13) — Claude Haiku 4.x 는 native multimodal.
@@ -361,6 +372,52 @@ def model_supports_thinking(model: str | None) -> bool:
     return str(model or "").strip().lower().startswith("claude-")
 
 
+# ── extended thinking API 스타일 (sonnet5-upgrade 2026-07-24) ──────────────────────────
+# Anthropic 스펙(claude-api skill 확인): Sonnet 5 는 thinking budget_tokens 를 400 으로 거부하고
+# adaptive thinking + output_config.effort 를 쓴다. Haiku 4.5(pre-Sonnet-5)는 여전히 budget_tokens.
+# 대화 경로(agent_core._call_llm)·probe 가 모델별로 올바른 thinking 파라미터를 보내도록 style 을 구분한다.
+# alias claude-sonnet-4 는 실제로 Sonnet 5 를 서빙하므로 sonnet-4/-5 prefix 둘 다 adaptive.
+_ADAPTIVE_THINKING_PREFIXES: tuple[str, ...] = ("claude-sonnet-4", "claude-sonnet-5")
+# budget_tokens 를 쓰는(pre-Sonnet-5) claude 계열. 여기 명시된 모델만 'budget' 으로 분류하고,
+# 그 외 미상 claude(예: 미래 claude-opus-4-8/claude-sonnet-6 — 모두 adaptive-only, budget_tokens 400)는
+# **안전하게 None**(app-level thinking override 미주입 → litellm config 에 위임)으로 떨어뜨린다.
+# ("budget" 기본값은 미상 adaptive 모델에 budget_tokens 를 주입해 400 을 유발하는 지뢰였다 — 적대리뷰 H2.)
+_BUDGET_THINKING_PREFIXES: tuple[str, ...] = ("claude-haiku-4", "claude-haiku-3")
+
+# reasoning 강도 레벨 → Anthropic output_config.effort (adaptive 모델용). 'normal'/미지정은 None(=기본 high).
+_EFFORT_FOR_LEVEL: dict[str, str] = {"low": "low", "high": "high", "max": "max"}
+
+
+def model_thinking_style(model: str | None) -> str | None:
+    """모델의 extended-thinking API 스타일.
+
+    'adaptive' — Sonnet 5 계열(budget_tokens 금지, adaptive + output_config.effort).
+    'budget'   — Haiku 4.5 등 pre-Sonnet-5 claude(요청 단위 budget_tokens).
+    None       — 비-claude(로컬/edge) **또는 미상 claude**(app-level thinking override 미주입 → litellm config
+                 에 위임). 미상 claude 를 'budget' 으로 기본 처리하면 adaptive-only 신모델에 budget_tokens 를
+                 주입해 400 을 낸다(적대리뷰 H2) → 안전하게 None.
+    """
+    name = str(model or "").strip().lower()
+    if not name.startswith("claude-"):
+        return None
+    for p in _ADAPTIVE_THINKING_PREFIXES:
+        if name.startswith(p):
+            return "adaptive"
+    for p in _BUDGET_THINKING_PREFIXES:
+        if name.startswith(p):
+            return "budget"
+    return None
+
+
+def effort_for_reasoning_level(level: str | None) -> str | None:
+    """adaptive thinking 모델(Sonnet 5)의 output_config.effort 매핑.
+
+    'normal'/미지정/미상은 None → override 미주입(모델 기본 effort=high 유지, B1 무회귀 원칙 동형).
+    명시 레벨(low/high/max)만 해당 effort 문자열 반환.
+    """
+    return _EFFORT_FOR_LEVEL.get(normalize_reasoning_level(level) or "")
+
+
 # ── AI 활동 taxonomy (AI 운영 관제 패널 — 확장 레지스트리, TASK-AIOPS) ────────────
 # llm_usage.task literal 을 관제 카테고리로 매핑한다. 신규 AI 활동은 아래 dict 에 한 줄만
 # 추가하면 패널 드릴다운에 편입되고, 미등록 task 는 taxonomy_for() 가 ai.other.unmapped 로
@@ -442,7 +499,8 @@ def ai_categories() -> dict[str, str]:
 # 모델을 여러 조각으로 쪼갠다(중복 명칭 분점 — 관측된 이슈). 아래로 canonical family 로 접어
 # **실 서빙 모델 기준의 실제 사용량 비중**을 낸다:
 #   claude-haiku-4*  → 'claude-haiku-4'   (Haiku 4.5 — 모든 라우팅/실ID 변형)
-#   claude-sonnet-4* → 'claude-sonnet-4'  (Sonnet 4.6)
+#   claude-sonnet-4* / claude-sonnet-5* → 'claude-sonnet-4'  (Sonnet — alias 는 sonnet-4 유지, 실 서빙은
+#                                          Sonnet 5. sonnet5-upgrade 2026-07-24. 단가 family 키는 sonnet-4)
 #   gemma* / edge / edge-fallback / auto / core / code → 'edge'  (로컬 게이트웨이·gemma 폴백)
 #   그 외(미등록/신규 모델) → 원본 유지  (self-surface — 새 모델이 조용히 사라지지 않게)
 # canonical family 키는 API_MODEL_OPTIONS 의 요청 alias 표기(claude-haiku-4 / claude-sonnet-4)와
@@ -465,7 +523,10 @@ def canonical_usage_model(name: str | None) -> str:
     low = n.lower()
     if low.startswith("claude-haiku-4"):
         return "claude-haiku-4"
-    if low.startswith("claude-sonnet-4"):
+    # sonnet5-upgrade(2026-07-24): sonnet alias 는 claude-sonnet-4(하위호환)로 유지하되 실 서빙 모델은
+    # Sonnet 5 다. resolved_model(resp.model)이 claude-sonnet-5* 로 돌아와도 canonical 단가 family
+    # (claude-sonnet-4, 단가표 등록 키)로 접어 $0 오표시를 막는다.
+    if low.startswith("claude-sonnet-4") or low.startswith("claude-sonnet-5"):
         return "claude-sonnet-4"
     if low.startswith("gemma") or low in _EDGE_USAGE_ALIASES:
         return "edge"
@@ -486,7 +547,10 @@ def canonical_usage_model_sql(col: str) -> str:
     return (
         "CASE "
         f"WHEN starts_with(lower({col}), 'claude-haiku-4') THEN 'claude-haiku-4' "
-        f"WHEN starts_with(lower({col}), 'claude-sonnet-4') THEN 'claude-sonnet-4' "
+        # sonnet5-upgrade(2026-07-24): claude-sonnet-4(하위호환 alias)·claude-sonnet-5(실 서빙 모델) 모두
+        # canonical 'claude-sonnet-4' 로 접어 단가표 매칭 유지.
+        f"WHEN starts_with(lower({col}), 'claude-sonnet-4') "
+        f"OR starts_with(lower({col}), 'claude-sonnet-5') THEN 'claude-sonnet-4' "
         f"WHEN starts_with(lower({col}), 'gemma') "
         f"OR lower({col}) IN ('edge','edge-fallback','auto','core','code') THEN 'edge' "
         f"ELSE {col} END"

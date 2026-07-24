@@ -272,6 +272,30 @@ source_of_truth: true
     현재 rate-limit 미발생 기간이면 반응형 fallback 자체가 트리거되지 않음(정상). PB-0008
     win-browser 로 새 대화 sonnet 선택 → 정상 답변 생성 실측 권장.
 
+### Run 2026-07-24-002 (sonnet5-upgrade 검증)
+- Date: 2026-07-24
+- Environment: agent 이미지 격리 컨테이너(`mysql-ai-agent:current`) — pytest; `node --check` — JS 문법;
+  gateway `/v1/chat/completions` 실 ping(worker 컨테이너) — 배포 후 Sonnet 5 도달성.
+- Runner: AI (Claude)
+- Result Summary: 정적/단위 PASS. Sonnet 5 실 도달성·시각검증은 아래 배포 후 항목.
+- Pass/Fail:
+  - feature-0002 + feature-0003 전체 pytest: **PASS(rc=0)** — sonnet 라우팅·adaptive thinking 마이그·label·
+    canonical sonnet-5 fold 무회귀. 신규/갱신: `test_model_thinking_style`·`test_effort_for_reasoning_level`·
+    `test_sonnet_adaptive_injects_effort_not_budget`·`test_sonnet_adaptive_normal_no_override`·
+    `test_reasoning_and_total_are_per_model`(dual-style)·`test_call_llm_sonnet_adaptive_no_budget_tokens`·
+    canonical sonnet-5 fold. haiku budget 경로 무회귀 재확인.
+  - `node --check app.js`: **PASS** — `_composerModelLabelFor` 신설 문법 정상.
+  - litellm_config YAML: **PASS** — sonnet 3 alias `anthropic/claude-sonnet-5` + `thinking:{type:adaptive}`,
+    haiku 는 `{type:enabled,budget_tokens:5000}` 유지.
+- Notes(배포 후 라이브 — 별도 POST-DEPLOY 기록으로 갱신 예정):
+  - **⚠ litellm adaptive/effort 통과는 코드로 미확정**: config-level `thinking:{type:adaptive}` 와 요청
+    `output_config.effort` 를 litellm(main-stable)이 Anthropic 으로 올바로 통과시키는지는 배포 전 확정 불가.
+    **배포 후 worker 컨테이너에서 `claude-sonnet-4-chat`(→sonnet-5) valid-ping(adaptive+effort) 200 확인 필수**
+    (400/미통과 시 즉시 rollback). drop_params:true 가 thinking/output_config 를 제거하지 않는지도 이 ping 으로 확정.
+  - **Environment: Windows-browser (PB-0008) — 배포 후 실측 예정**: 라이브 배포(gateway reconcile + web/worker
+    재빌드) 후에만 반영되므로 배포 완료 후 수행(미배포 코드에서 실측 불가 — 미수행 사유). 검증 항목: (1) 새 대화
+    sonnet 선택 시 정상 답변(429/400 아님), (2) 모델 선택기·컴포저에 `claude-sonnet`/`claude-haiku`(넘버링 없음) 표시.
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel
