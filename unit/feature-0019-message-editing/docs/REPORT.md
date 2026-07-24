@@ -83,3 +83,36 @@ sibling(같은 parent)으로 체인 + 재답변. 형제 버전 그룹핑 = 공�
 - §18.8 적대적 보안 리뷰(security subagent) — 결과는 REVIEW.md.
 
 **남은 Phase 1**: 배포(마이그 0041 적용 + agent/insight-worker/web 재빌드) + PB-0008 라이브 시각검증.
+
+## 2026-07-24 — 요청사항 수정 재답변 model·추론강도 선택 반영 (reanswer-model-select)
+
+**신고**: 사용자가 assistant 요청사항을 수정하기 전 사용할 model + 추론 강도를 sonnet + 매우높음으로
+변경해 재요청했으나, 실제로는 **haiku + 일반 추론**으로 동작.
+
+**근본원인**: 재답변(요청사항 수정) 경로가 정상 `/api/ask` 와 비대칭. 프론트 `_submitMessageEdit` 은
+`{mode, new_content}` 만 전송하고, backend `post_edit_message` 의 reanswer `ask_body` 도
+`{message, conversation_id}` 만 구성 → 재dispatch 된 `ask()` 가 `model = data.get("model") or
+API_DEFAULT_MODEL`(=`claude-haiku-4`), `reasoning_level = normalize(None)`(override 없음 = 모델 config
+기본)로 폴백. 정상 ask 는 `state.selectedModel`(fallback chain) + `_composerCurrentReasoningLevel()`
+을 실어 보내므로 선택이 반영되던 것과 대조.
+
+**수정 (2 hunk, 정상 ask 와 대칭·additive)**:
+- 프론트 `app.js` `_submitMessageEdit`: reanswer 모드에 `model=_composerCurrentModel()` +
+  `reasoning_level=_composerCurrentReasoningLevel()` 추가(정상 askBody 와 동일 helper). 추론 선택기 변경은
+  로컬(localStorage)만 반영되고 즉시 backend POST 하지 않으므로, KV 의존 대신 현재 선택을 명시 전송해
+  faithful. simple 수정은 재답변이 없어 미포함 유지.
+- 백엔드 `conversations.py` `post_edit_message`: reanswer `ask_body` 에 편집 body 의 model(비어있지
+  않을 때)·reasoning_level(None/"" 아닐 때) forward. 부재 시 미포함 → `ask()` 기본 폴백 하위호환. 형식/
+  allowlist/reasoning 정규화·override 계약은 전적으로 `ask()` 책임(부재 필드 강제 대입 금지 — 구
+  클라이언트 sonnet config 강등 회귀 방지 계약 보존).
+
+**검증**: 신규 단위테스트 `test_message_editing_reanswer_model.py` 4건 —
+- F1 model+reasoning 제공 → ask_body 로 forward.
+- F2 부재(구 클라이언트) → ask_body 미포함(기본 폴백 보존).
+- F3 명시 'normal'(일반) → forward(빈값/None 만 미포함).
+- S1 simple 수정 → ask 미dispatch.
++ make test 회귀 0. POST-DEPLOY PB-0008(sonnet+매우높음 선택→요청사항 수정 재답변→AI 운영 계측
+resolved model=sonnet·추론예산 상향 확인).
+
+**Risk**: Minor — 동작 수정·additive, 기존 검증된 ask 경로 재사용. 인증/스키마/파괴 없음. 1:1 reanswer
+만 영향(그룹/공유 simple 전용 무영향). 웹 UI 동작 변경이라 완료 게이트에 PB-0008 포함.

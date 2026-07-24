@@ -71,3 +71,18 @@ source_of_truth: true
 - [x] TASK-H3 회귀 테스트(test_conv_bind_failclosed.py 4건) + §18.8 적대적 리뷰(SHIP) + verify-completion
 - [x] TASK-H4 footgun B 중복 확인(#874/#875 이미 랜딩) → 철회
 - [ ] TASK-H5 PR·무중단 배포(web-a/b + ask/insight-worker 재빌드) + post-deploy 검증
+
+## 20260724T0641-reanswer-model-select (요청사항 수정 재답변이 선택한 model·추론강도 무시 회귀 수정)
+2026-07-24 사용자 신고: assistant 요청사항을 수정하기 전 model + 추론 강도를 변경(sonnet + 매우높음)
+했으나, 재답변(요청사항 수정)이 **haiku + 일반 추론**으로 동작. 근본원인 = reanswer 재dispatch 경로가
+정상 `/api/ask` 와 달리 선택된 model·reasoning 을 싣지 않아 `ask()` 가 `API_DEFAULT_MODEL`
+(claude-haiku-4) + 모델 config 기본 추론으로 폴백. 수정 = 정상 ask 와 대칭으로 프론트가 현재 선택한
+model + reasoning_level 을 edit body 에 실어 보내고 backend 가 reanswer ask_body 로 forward.
+상세=REPORT §2026-07-24, MODIFY CHG-20260724T064140.
+- Risk: **Minor** (동작 수정·additive·기존 검증된 ask 경로 재사용, 인증/스키마/파괴 없음. 웹 UI 동작 변경이라 완료 게이트에 PB-0008 포함)
+- [x] TASK-RM-1 프론트 `_submitMessageEdit` — reanswer 모드에 `model=_composerCurrentModel()` + `reasoning_level=_composerCurrentReasoningLevel()` 추가(정상 ask 와 동일 helper, simple 은 미포함 유지)
+- [x] TASK-RM-2 백엔드 `post_edit_message` — 편집 body 의 model/reasoning_level 을 reanswer ask_body 로 forward(존재 시만·부재 시 기존 기본 폴백 하위호환, ask() 가 형식·allowlist·정규화 재검증)
+- [x] TASK-RM-3 단위테스트 `test_message_editing_reanswer_model.py` **6 PASS**(F1 forward·F2 부재 미포함·F3 명시 normal·F4 non-2xx→브랜치 복원·F5 2xx→미복원·S1 simple 미dispatch)
+- [x] TASK-RM-3b §18.8 적대 리뷰(security+correctness) = SHIP·MINOR(non-2xx 보상 복원) in-cycle 하드닝(REV-20260724T064140)
+- [ ] TASK-RM-4 make test 회귀 0 + verify-completion --pre-commit(CHECK#9 REVIEW·#13 시각검증 포함 통과)
+- [ ] TASK-RM-5 commit·push·main 병합·무중단 배포 + POST-DEPLOY PB-0008(sonnet+매우높음 선택→요청사항 수정 재답변→AI 운영 계측에서 resolved model=sonnet·추론예산 상향 확인)

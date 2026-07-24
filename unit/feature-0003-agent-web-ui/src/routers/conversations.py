@@ -1576,16 +1576,42 @@ async def post_edit_message(cid: str, mid: int, request: Request) -> JSONRespons
         logging.getLogger(__name__).warning("branch reanswer setup failed (cid=%s mid=%s)", cid, mid, exc_info=True)
         return app._json_error("재답변 준비 중 오류가 발생했습니다.", 500)
     ask_body = {"message": new_content, "conversation_id": cid}
+    # feature-0019 reanswer-model-select: 재답변은 정상 /api/ask 와 동일하게 사용자가 현재
+    # 선택한 model + 추론 강도(reasoning_level)로 재요청한다. 클라이언트가 전달하면 forward,
+    # 부재 시 ask() 가 API_DEFAULT_MODEL(claude-haiku-4) / 모델 config 기본 추론으로 폴백(구
+    # 클라이언트 하위호환). model 형식·allowlist·reasoning 정규화는 ask() 가 재검증하므로 여기선
+    # 원문만 전달한다(부재 필드를 기본값으로 강제 대입하지 않음 — ask() reasoning override 계약 보존).
+    _sel_model = str(data.get("model") or "").strip()
+    if _sel_model:
+        ask_body["model"] = _sel_model
+    _sel_reasoning = data.get("reasoning_level")
+    if _sel_reasoning not in (None, ""):
+        ask_body["reasoning_level"] = _sel_reasoning
     internal_req = app._make_internal_ask_request(request, ask_body)
     try:
-        return await ask(internal_req)
+        resp = await ask(internal_req)
     except Exception:
         # /api/ask 재dispatch 가 raise(워커 오류·disconnect 등) → active_leaf 가 M.parent 에 고착돼
-        # 대화 tail 이 사라지므로 편집 직전 상태로 보상 복원(SEC MAJOR #2). error 결과(예외 아님)는
-        # 새 user 메시지가 저장돼 active_leaf 전진 → tail 소실 없음(복원 불요).
+        # 대화 tail 이 사라지므로 편집 직전 상태로 보상 복원(SEC MAJOR #2).
         app._branch_restore_state(cid, _prior)
         logging.getLogger(__name__).warning("reanswer ask dispatch raised (cid=%s mid=%s)", cid, mid, exc_info=True)
         return app._json_error("재답변 생성에 실패했습니다. 잠시 후 다시 시도하세요.", 500)
+    # ask() 가 검증 실패(400 — 예: forward 된 model 이 allowlist 위반)·쿼터(429)를 **예외가 아닌
+    # non-2xx JSONResponse** 로 반환하면, 이는 ask() 상단 게이트(= 새 user 메시지 저장 이전)에서
+    # 나온 것이라 active_leaf 가 M.parent 에 고착(tail 은닉)된다 → 예외 경로와 동일하게 편집 직전
+    # 브랜치 상태로 보상 복원한다. ask() 계약상 message 저장 이후의 실패는 200+error 본문으로 오므로
+    # (위 except 주석 참조), status>=400 은 저장-전 게이트 실패와 1:1 대응 — 저장된 재답변을 잘못
+    # 되돌리지 않는다. (reanswer-model-select 가 model forward 로 400 도달 경로를 신설했으므로 이
+    # 보상을 함께 확장 — REV-20260724T0641-reanswer-model-select MINOR.)
+    try:
+        _status = int(getattr(resp, "status_code", 200) or 200)
+    except Exception:
+        _status = 200
+    if _status >= 400:
+        app._branch_restore_state(cid, _prior)
+        logging.getLogger(__name__).warning(
+            "reanswer ask returned %s (cid=%s mid=%s) — 편집 직전 브랜치 상태 복원", _status, cid, mid)
+    return resp
 
 
 @router.post("/api/conversations/{cid}/branch/switch")

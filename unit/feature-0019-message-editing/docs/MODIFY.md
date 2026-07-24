@@ -116,3 +116,28 @@ source_of_truth: true
 - **검증**: 신규 `tests/test_conv_bind_failclosed.py` 4건(웹 None/빈문자열 차단·전역폴백 미호출·CLI
   미발동·명시 cid 통과) PASS. §18.8 적대적 리뷰 = REV-20260722T054238-conv-bind-failclosed(claim
   footgun A HOLDS — 모든 caller 안전, SHIP).
+
+## CHG-20260724T064140-reanswer-model-select (요청사항 수정 재답변 model·추론강도 선택 반영)
+- **배경**: 사용자 신고(2026-07-24) — 요청사항 수정 전 model+추론강도를 sonnet+매우높음으로 변경했으나
+  재답변이 haiku+일반으로 동작. 근본원인 = reanswer 재dispatch 가 정상 `/api/ask` 와 달리 선택된
+  model·reasoning 을 전달하지 않아 `ask()` 가 `API_DEFAULT_MODEL`(claude-haiku-4) + 모델 config 기본
+  추론(override 없음)으로 폴백.
+- **변경**:
+  - feature-0003 `static/app.js` `_submitMessageEdit`: mode==="reanswer" 일 때 body 에
+    `model=_composerCurrentModel()` + `reasoning_level=_composerCurrentReasoningLevel()` 추가(정상 ask
+    askBody 와 동일 helper·동일 fallback chain). simple 수정은 재답변 없어 미포함 유지.
+  - feature-0003 `routers/conversations.py` `post_edit_message`: reanswer 분기의 `ask_body` 에 편집
+    요청 body 의 `model`(비어있지 않을 때)·`reasoning_level`(None/"" 아닐 때)을 forward. 부재 시 미포함
+    → `ask()` 가 기존대로 기본값 폴백(구 클라이언트 하위호환). 형식·allowlist·reasoning 정규화는 `ask()`
+    가 재검증(부재 필드를 기본값으로 강제 대입하지 않음 — reasoning override 계약 §ask 2649-2653 보존).
+  - feature-0003 `routers/conversations.py` `post_edit_message`(하드닝, §18.8 적대 리뷰 MINOR
+    in-cycle 수정): reanswer 재dispatch 가 `ask()` 의 **non-2xx JSONResponse**(400 — forward model
+    allowlist 위반·429 쿼터)를 반환하면, 예외 경로와 동일하게 `_branch_restore_state` 로 편집 직전
+    브랜치 상태 복원(기존은 `except Exception` 에만 복원 → active_leaf 가 M.parent 에 고착·tail 은닉).
+    model forward 가 model-400 도달 경로를 신설했으므로 footgun 확장 방지. status>=400 은 ask() 계약상
+    저장-전 게이트 실패와 1:1 대응(저장-후 실패는 200+error) → 저장된 재답변 오복원 없음.
+- **성격**: 동작 수정(선택 반영)·additive + never-fires 보상 복원 하드닝. route/RBAC/스키마/마이그레이션
+  무변경. 정상 ask 경로와 대칭. 1:1 reanswer 만 영향(그룹/공유는 simple 전용 — 무영향). Minor(§12.3).
+- **검증**: 신규 `tests/test_message_editing_reanswer_model.py` 6건(F1 model+reasoning forward·F2 부재 시
+  미포함·F3 명시 'normal' forward·F4 non-2xx→브랜치 복원·F5 2xx→미복원·S1 simple 미dispatch) PASS +
+  py_compile/node --check OK + make test 회귀 0. §18.8 적대 리뷰=REV-20260724T064140(SHIP). POST-DEPLOY PB-0008.
