@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T053457-metadata-review-ds-scope-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260724T053457-metadata-review-ds-scope, 비-정책 doc-only)
+- Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + REPORT 완결 + TASK 체크박스 + MODIFY CHG 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260724T053457-metadata-review-ds-scope(SHIP-WITH-FIXES, 3건 반영).
+- 라이브 실측(실 Windows Chrome via `bin/win-browser.py`, https://localhost/admin, 배포 2b22b5ff): 검토 큐 datasource 필터(공용 96→mysql-kr-an1-auth 16, 전 행 해당 scope) · 배지 정합(96→16, Finding 1 MAJOR) · 자동승급 목록 가시(목록 84 중 82 자동등록) · 등록 시각 전 행 표시 · pageerror 0. 사용자 3결함 전부 해소.
+
 ## REV-20260724T053457-metadata-review-ds-scope [SUBAGENT:frontend-correctness-security] — 메타데이터 거버넌스 검토 큐 datasource 필터 + 자동승급 목록 정합 + 등록 시각 (TASK-20260724T053457, Major §12.3) — SHIP-WITH-FIXES (1 MAJOR/2 MINOR in-cycle 반영)
 - 범위: `관리 콘솔 > 지식베이스 > 메타데이터 > [용어사전/ENUM/샘플쿼리]` 거버넌스 UI 3결함. 초안=frontend(admin.js): 검토 큐 scope_key 전송(Fix1)·큐↔목록 scope 정합(Fix2)·등록 시각 표시(Fix3).
 - **적대 리뷰(general-purpose, frontend/correctness/security 렌즈) verdict = SHIP-WITH-FIXES → 지적 3건 전부 반영 후 SHIP**:

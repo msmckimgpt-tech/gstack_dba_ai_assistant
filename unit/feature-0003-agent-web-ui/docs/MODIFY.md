@@ -978,3 +978,8 @@ source_of_truth: true
 - **Files**: `src/static/admin.js`(feature-0003) · `unit/feature-0002-agent-core/src/modules/kb_glossary.py`(count 함수 scope, cross-cut) · `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`(엔드포인트 scope_filter 전달) · 테스트 monkeypatch 시그니처 2건(`test_metadata_glossary_autoreg.py`·`test_metadata_enum_feedback.py`).
 - **Verification**: `node --check`(ESM) PASS · `verify_metadata_list_detail.mjs` baseline 대조 신규 회귀 0(26 PASS/3 FAIL·[D] crash 는 pre-existing 하니스 노후화, clean main 동일) · `py_compile`(kb_glossary/admin_metadata) · pytest **116 PASS**(feature-0003 metadata glossary-autoreg/enum-feedback/sample-curation 44 + feature-0002 glossary/enum 72) · §18.8 적대 리뷰(SUBAGENT, SHIP-WITH-FIXES→3건 반영). 정적 자산 web 이미지 baked → 라이브 PB-0008 = POST-DEPLOY(visual_verification_scope=always).
 - **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008.
+
+## CHG-20260724T053457-metadata-review-ds-scope-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- 코드/자산 0 — metadata-review-ds-scope(PR #931·main 2b22b5ff) 배포 후 라이브 검증 결과 기록만.
+- test-runs.d/20260724T053457-metadata-review-ds-scope.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260724T053457-metadata-review-ds-scope-postverify.
+- 실측(실 Windows Chrome, https://localhost/admin): 검토 큐 공용 96건→mysql-kr-an1-auth 16건 필터·배지 96→16 정합(MAJOR Finding 1)·목록 84건 중 82 자동등록 가시(Fix 2)·전 행 `등록 <시각>`(Fix 3)·pageerror 0. 사용자 3결함 전부 해소 확인.

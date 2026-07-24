@@ -6237,5 +6237,5 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 정적·단위 검증: `node --check`(ESM) PASS · `verify_metadata_list_detail.mjs` baseline 대조 신규 회귀 0 · py_compile · pytest 116 PASS(metadata glossary-autoreg/enum-feedback/sample-curation 44 + feature-0002 glossary/enum 72)
 - [x] §18.8 적대 리뷰(SUBAGENT, SHIP-WITH-FIXES) → Finding 1(MAJOR: 배지 unscoped→count scope 파라미터 backend additive)·2(MINOR: 배지 재-prime)·3(MINOR: sample 날짜 통일) 전부 in-cycle 반영
 - [x] docs 갱신 (FUNCTION/MODIFY/TASK/REPORT/REVIEW/TEST) — feature-0003 홈
-- [ ] verify-completion PASS → PR → merge → deploy-web(deploy_scope: included) → POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증
+- [x] verify-completion PASS → PR #931 merge(main 2b22b5ff) → deploy-web(무중단·web-a/b·워커 soak PASS) → **POST-DEPLOY PB-0008 Windows-browser 라이브 PASS**(검토 큐 96공용→16 ds 필터·배지 정합·목록 82 자동등록 가시·전 행 등록시각·pageerror 0)
 정본 rationale=REVIEW.md REV-20260724T053457-metadata-review-ds-scope, 변경이력=MODIFY.md CHG-20260724T053457-metadata-review-ds-scope.
