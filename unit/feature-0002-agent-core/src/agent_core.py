@@ -2777,6 +2777,22 @@ def _extract_csv_paths(text: str) -> list[str]:
     return [match.group(1) for match in CSV_PATH_RE.finditer(text)]
 
 
+def _cap_tool_result(text: str) -> str:
+    """도구 결과를 LLM 되먹임 전 대형 backstop 캡으로 절단(초과 시에만 절단 note 부착).
+
+    FR-procedure-analysis-result-truncated: 상한은 `cfg.AGENT_TOOL_RESULT_MAX_CHARS`(대형 유한값,
+    기본 100k). 원래 4000 하드코딩은 저장 프로시저 정의(`describe_routine` 은 정의를 전문 반환)처럼
+    길고 단일-권위 텍스트를 잘라 프로시저 분석을 한 번에 못 하게 만들었다. 캡을 크게 두어 실무
+    프로시저는 사실상 무제한(전문 도달)이되, 병리적 대량 결과(넓은 표 대량 행 등)의 컨텍스트
+    폭주는 backstop 이 막는다. 캡 초과 시에만 `... (truncated)` note 를 붙여 FR-partial-evidence
+    epistemic 계약(미열람분의 존재/부재/개수 전수 단정 금지)을 보존한다. cap<=0 은 무제한.
+    """
+    cap = cfg.AGENT_TOOL_RESULT_MAX_CHARS
+    if cap > 0 and len(text) > cap:
+        return text[:cap] + "\n... (truncated)"
+    return text
+
+
 def _build_step_result_summary(tool_name: str, tool_result: str) -> dict[str, Any] | None:
     summary: dict[str, Any] = {}
     preview = str(tool_result or "").strip()
@@ -4617,7 +4633,7 @@ def _run_agent_core(
 
                         메인 루프의 persistence/learning/activity side-channel 은 재현하지
                         않되(수정 pass 엔 불필요), 보안 필수 요소는 미러링한다: 도구 결과
-                        datamark(_datamark_untrusted), 4000자 truncation, 라운드당 도구 3개 상한.
+                        datamark(_datamark_untrusted), _cap_tool_result 대형 backstop 캡, 라운드당 도구 3개 상한.
                         """
                         try:
                             _max_rounds = max(1, _rts.get_int("REDTEAM_REDERIVE_MAX_TOOL_ROUNDS"))
@@ -4681,8 +4697,7 @@ def _run_agent_core(
                                     _tr = f"오류: 도구 실행 실패 ({_te})"
                                 _tr = _tr if isinstance(_tr, str) else str(_tr)
                                 _tr_len = len(_tr)
-                                if _tr_len > 4000:
-                                    _tr = _tr[:4000] + "\n... (truncated)"
+                                _tr = _cap_tool_result(_tr)  # 재추론 경로도 동일 대형 backstop 캡
                                 # 보안: 재추론 도구 결과도 인젝션 벡터 — 메인 루프와 동일 datamark.
                                 _rd_messages.append({
                                     "role": "tool",
@@ -4901,14 +4916,15 @@ def _run_agent_core(
                 except Exception:
                     pass
 
-            # 결과가 너무 길면 잘라내기
-            if len(tool_result) > 4000:
-                tool_result = tool_result[:4000] + "\n... (truncated)"
+            # 결과가 너무 길면 잘라내기 (대형 backstop 캡 — 프로시저 정의 등 긴 단일-권위
+            # 텍스트는 전문 도달, 병리적 대량 결과만 컨텍스트 폭주 방지 절단; FR-procedure-analysis)
+            tool_result = _cap_tool_result(tool_result)
 
             # 결과 메시지 추가 — TASK-20260619T033714-prompt-injection-defense (보안 ⑤,
             # outside-voice MAJOR 흡수): execute_sql 결과는 공격자 데이터(예: notes 컬럼의
             # "이전 지시 무시" 류)를 담을 수 있는 최대 인젝션 벡터 → LLM-facing 결과를 datamark
-            # sentinel 로 구획(guard notice 의 "쿼리 실행 결과" 약속을 실제 이행). 저장 copy 는 원문 유지.
+            # sentinel 로 구획(guard notice 의 "쿼리 실행 결과" 약속을 실제 이행). 저장 copy 는 datamark 미적용
+            # (원문; 단 _cap_tool_result 대형 backstop 캡은 이미 적용된 tool_result 를 그대로 저장).
             _tool_content = _datamark_untrusted(tool_result, f"도구 결과 {tool_name}")
             # ITEM-07: execute_sql 의 **수정 가능한** 실패에 명시 bounded 자가수정 넛지를 결과에
             # 동봉(cap=AGENT_SELF_REFLECTION_MAX). 보안 가드 차단은 대상 아님(우회 유도 금지).
@@ -4930,7 +4946,7 @@ def _run_agent_core(
             if _writes_allowed(mem_conn, cid):
                 _save_message(
                     mem_conn, cid, "tool",
-                    content=tool_result[:4000],  # 저장 시 길이 제한
+                    content=tool_result,  # 이미 _cap_tool_result 로 대형 backstop 캡 적용됨(PG text 무제한)
                     tool_call_id=tc.id,
                     name=tool_name,
                 )
