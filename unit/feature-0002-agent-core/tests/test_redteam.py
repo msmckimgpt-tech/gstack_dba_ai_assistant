@@ -207,7 +207,7 @@ def test_orchestrate_pass_keeps_answer(monkeypatch):
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="normal", is_group=False,
-        revise_fn=lambda instr: "MUST NOT BE CALLED")
+        revise_fn=lambda instr, draft=None: "MUST NOT BE CALLED")
     assert answer == "draft"
     assert meta["verdict"] == "pass" and meta["revision_applied"] is False
 
@@ -223,9 +223,10 @@ def test_orchestrate_block_revises_and_verifies(monkeypatch):
         calls["review"] += 1
         return block if calls["review"] == 1 else {"verdict": "pass", "findings": []}
 
-    def fake_revise(instruction):
+    def fake_revise(instruction, draft=None):
         calls["revise"] += 1
         assert "grounding" in instruction
+        assert draft == "draft"  # 1회차 수정은 원 초안을 앵커로 받는다.
         return "revised answer"
 
     monkeypatch.setattr(redteam, "run_review", fake_review)
@@ -251,8 +252,11 @@ def test_orchestrate_revises_up_to_max_on_high(monkeypatch):
         # find(1) + verify1(revise) + verify2(pass): 3번째 호출에서 pass.
         return block if calls["review"] < 3 else {"verdict": "pass", "findings": []}
 
-    def fake_revise(instruction):
+    drafts_seen = []
+
+    def fake_revise(instruction, draft=None):
         calls["revise"] += 1
+        drafts_seen.append(draft)
         return f"revised-{calls['revise']}"
 
     monkeypatch.setattr(redteam, "run_review", fake_review)
@@ -262,6 +266,8 @@ def test_orchestrate_revises_up_to_max_on_high(monkeypatch):
         revise_fn=fake_revise)
     assert calls["revise"] == 2  # 상한 2회 도달
     assert answer == "revised-2" and meta["verify_verdict"] == "pass"
+    # 다회 수정 draft 앵커링(적대 리뷰 WARN 수정): 1회차는 원 초안, 2회차는 직전 수정본.
+    assert drafts_seen == ["draft", "revised-1"]
 
 
 def test_orchestrate_max_revisions_zero_records_only(monkeypatch):
@@ -274,7 +280,7 @@ def test_orchestrate_max_revisions_zero_records_only(monkeypatch):
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
-        revise_fn=lambda instr: "MUST NOT BE CALLED")
+        revise_fn=lambda instr, draft=None: "MUST NOT BE CALLED")
     assert answer == "draft" and meta["revision_applied"] is False
 
 
@@ -301,7 +307,7 @@ def test_orchestrate_normal_no_verify_pass(monkeypatch):
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="normal", is_group=False,
-        revise_fn=lambda instr: "revised")
+        revise_fn=lambda instr, draft=None: "revised")
     assert answer == "revised"
     assert calls["review"] == 1  # 일반 강도: verify 재검증 없음
     assert meta["verify_verdict"] is None
@@ -316,7 +322,7 @@ def test_orchestrate_revise_failure_keeps_draft(monkeypatch):
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="normal", is_group=False,
-        revise_fn=lambda instr: None)
+        revise_fn=lambda instr, draft=None: None)
     assert answer == "draft" and meta["revision_applied"] is False
 
 
@@ -525,7 +531,7 @@ def test_orchestrate_default_model_when_no_answer_model(monkeypatch):
 def _rederive_fn(text="rederived", new_steps=None, executed_sql="SELECT fixed", rounds=1):
     calls = {"n": 0}
 
-    def fn(instruction):
+    def fn(instruction, draft=None):
         calls["n"] += 1
         return {"text": text, "new_steps": new_steps or [], "executed_sql": executed_sql,
                 "tool_rounds": rounds}
@@ -549,7 +555,7 @@ def test_orchestrate_sql_block_routes_to_rederive(monkeypatch):
     monkeypatch.setattr(redteam, "run_review", fake_review)
     rd = _rederive_fn(text="정정된 답변", rounds=2)
 
-    def revise_must_not(instr):
+    def revise_must_not(instr, draft=None):
         raise AssertionError("revise_fn 이 호출되면 안 됨 (sql 은 재도출 경로)")
 
     answer, meta = redteam.orchestrate_review(
@@ -578,13 +584,13 @@ def test_orchestrate_grounding_block_uses_text_revise_not_rederive(monkeypatch):
 
     monkeypatch.setattr(redteam, "run_review", fake_review)
 
-    def rederive_must_not(instr):
+    def rederive_must_not(instr, draft=None):
         raise AssertionError("rederive_fn 이 호출되면 안 됨 (grounding 은 텍스트 경로)")
 
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
-        revise_fn=lambda instr: "텍스트 다듬은 답변", rederive_fn=rederive_must_not)
+        revise_fn=lambda instr, draft=None: "텍스트 다듬은 답변", rederive_fn=rederive_must_not)
     assert answer == "텍스트 다듬은 답변"
     assert meta["rederive_applied"] is False and meta["rederive_axis"] is None
 
@@ -610,7 +616,7 @@ def test_orchestrate_completeness_gated_high_uses_text_max_uses_rederive(monkeyp
     answer_h, meta_h = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
-        revise_fn=lambda instr: "텍스트경로", rederive_fn=rd_high)
+        revise_fn=lambda instr, draft=None: "텍스트경로", rederive_fn=rd_high)
     assert answer_h == "텍스트경로" and rd_high.calls["n"] == 0
     assert meta_h["rederive_applied"] is False
 
@@ -620,7 +626,7 @@ def test_orchestrate_completeness_gated_high_uses_text_max_uses_rederive(monkeyp
     answer_m, meta_m = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="max", is_group=False,
-        revise_fn=lambda instr: "MUST NOT", rederive_fn=rd_max)
+        revise_fn=lambda instr, draft=None: "MUST NOT", rederive_fn=rd_max)
     assert answer_m == "재도출경로" and rd_max.calls["n"] == 1
     assert meta_m["rederive_applied"] is True and meta_m["rederive_axis"] == "completeness"
 
@@ -647,7 +653,7 @@ def test_orchestrate_rederive_recomputes_evidence_for_verify(monkeypatch):
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="SELECT old",
         conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
-        revise_fn=lambda instr: "MUST NOT", rederive_fn=rd)
+        revise_fn=lambda instr, draft=None: "MUST NOT", rederive_fn=rd)
     assert answer == "정정"
     # find(1) evidence 엔 새 SQL 없음, verify(2) evidence 엔 재도출 새 SQL 이 반영됨.
     assert "SELECT corrected_value" not in evidences[0]
@@ -662,13 +668,13 @@ def test_orchestrate_rederive_disabled_falls_back_to_text(monkeypatch):
         "verdict": "revise", "findings": [
             {"axis": "sql", "severity": "BLOCK", "claim": "c", "evidence": "e", "fix_hint": "f"}]})
 
-    def rederive_must_not(instr):
+    def rederive_must_not(instr, draft=None):
         raise AssertionError("REDTEAM_REDERIVE_ENABLED=0 이면 rederive 안 함")
 
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="normal", is_group=False,
-        revise_fn=lambda instr: "텍스트폴백", rederive_fn=rederive_must_not)
+        revise_fn=lambda instr, draft=None: "텍스트폴백", rederive_fn=rederive_must_not)
     assert answer == "텍스트폴백" and meta["rederive_applied"] is False
 
 
@@ -682,6 +688,6 @@ def test_orchestrate_rederive_no_output_falls_back_to_text(monkeypatch):
     answer, meta = redteam.orchestrate_review(
         question="q", draft_answer="draft", steps=[], executed_sql="",
         conversation_id="c", run_id="r", reasoning_level="normal", is_group=False,
-        revise_fn=lambda instr: "텍스트폴백", rederive_fn=lambda instr: None)
+        revise_fn=lambda instr, draft=None: "텍스트폴백", rederive_fn=lambda instr, draft=None: None)
     assert answer == "텍스트폴백"
     assert meta["rederive_applied"] is False and meta["revision_applied"] is True
