@@ -44,3 +44,23 @@ source_of_truth: true
 - Files: `bin/api-token-issue.sh` (서비스 감지 블록 추가).
 - Impact: 호스트 스크립트 전용(web 이미지·배포 무관). 인증/scope 로직 불변.
 - Rollback Notes: 감지 블록 revert 시 `web` 하드코딩으로 복귀(무중단 배포 환경에서 재실패).
+
+## CHG-20260724-0003 (Major §12.3 — 외부 AI용 API 발견 진입점 + 학습 가이드라인)
+- Date: 2026-07-24
+- Related Requirement: REQ-20260722-conversation-api-access 확장(외부 AI 발견성/학습)
+- Summary: 외부 AI 가 웹사이트를 탐색하며 Conversation API 를 자연스럽게 인지·학습하도록
+  큐레이션된(관리 콘솔 제외) 익명 static 발견 자료 추가 + FastAPI 기본 openapi 익명 노출 차단.
+  - 익명 발견: `GET /llms.txt`(LLM 표준)·`GET /.well-known/ai-conversation-api.json`(매니페스트)·
+    `GET /api/ai/manifest`(alias)·`GET /api/ai/guide`(상세 가이드라인 markdown).
+  - `routers/ai_discovery.py` 신규(자동 등록). 매니페스트 카탈로그 `_CONVERSATION_ENDPOINTS`는
+    수기 관리 정본(자동 introspection 아님 — admin 유출 방지).
+  - **SEC-20260724**: FastAPI 기본 `/openapi.json`·`/docs`·`/redoc`(admin 포함 전체 스키마
+    익명 유출) 비활성화(`docs_url=None,redoc_url=None,openapi_url=None`). 전체 스키마는
+    admin-gated `GET /api/admin/openapi.json`(console.access)로 대체.
+  - `static/index.html` head 에 발견 포인터(`<link rel="ai-conversation-api">` + meta, 화면 무영향).
+  - `static/llms.txt`·`static/ai-api-guide.md` 신규. SECURITY.md §7 allowlist + §7.1 발견 네임스페이스 정책.
+- Files: `routers/ai_discovery.py`(신규), `app.py`(FastAPI 설정), `static/{llms.txt,ai-api-guide.md,index.html}`,
+  `docs/SECURITY.md`, `tests/test_ai_discovery.py`(신규 6 계약·불변식 테스트).
+- Impact: additive. 신규 익명 엔드포인트는 static contract 전용(인스턴스 데이터 0·conversation only).
+  openapi 비활성화는 익명 스키마 유출 제거(개발자 admin-gated 대체) — 기존 인증/대화 경로 무영향.
+- Rollback Notes: 라우터/파일 revert + FastAPI 설정 원복(openapi 재노출). 완전 가역.

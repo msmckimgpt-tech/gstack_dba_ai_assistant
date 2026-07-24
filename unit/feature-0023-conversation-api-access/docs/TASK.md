@@ -45,6 +45,7 @@ source_of_truth: true
 - [x] TASK-0010: verify-completion + STATUS.md + commit/push + cycle-final + 배포 + 라이브 e2e
   (배포 66a48870 soak PASS · 라이브 e2e: 토큰→/api/ask 200 · admin 엔드포인트 403 · 무토큰 401)
 - [x] TASK-0011: 발급 CLI 서비스명 hotfix (web→web-a/web-b 자동감지, CHG-20260722-0002)
+- [x] TASK-0012: 외부 AI API 발견 진입점(llms.txt/manifest/guide)+가이드라인+openapi 익명 차단 (CHG-20260724-0003)
 
 ## 4. In Progress
 - TASK-0010 (verify-completion → 배포)

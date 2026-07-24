@@ -284,7 +284,12 @@ OAUTH_NO_PASSWORD_SENTINEL = "oauth-google:no-local-password"
 # 확인(login-CSRF/세션 고정 차단, outside-voice MAJOR-1). state.b == 쿠키값(constant-time)일 때만 수락.
 OAUTH_BIND_COOKIE = "mysql_ai_oauth_bind"
 
-app = FastAPI(title="mysql_ai web")
+# feature-0023 api-discovery (SEC-20260724): 익명 /openapi.json·/docs·/redoc 비활성화.
+# FastAPI 기본값은 이들을 anonymous 로 노출해 **관리 콘솔 포함 전 엔드포인트 스키마**가 무인증
+# 유출됐다("관리 콘솔 제외" 취지 위반). 외부 AI 용 발견은 큐레이션된 conversation-only 매니페스트
+# (`routers/ai_discovery.py` — /llms.txt·/.well-known·/api/ai/*)로 대체하고, 전체 스키마가 필요한
+# 개발자는 admin-gated `GET /api/admin/openapi.json`(console.access)로 조회한다.
+app = FastAPI(title="mysql_ai web", docs_url=None, redoc_url=None, openapi_url=None)
 
 # TASK-0159: 프로세스 부팅 시각(UTC naive). startup orphan reconciliation 이
 # "이 프로세스 기동 전부터 processing 이던" 고아 run 만 정리하도록 가드로 사용한다

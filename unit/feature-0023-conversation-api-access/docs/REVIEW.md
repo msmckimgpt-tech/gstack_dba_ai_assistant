@@ -58,3 +58,32 @@ source_of_truth: true
   하드코딩해 무중단 배포(web-a/web-b)에서 실패하던 **운영 편의 결함**만 수정(패널 대상 아님).
   인증·scope 코어는 라이브 e2e(토큰→/api/ask 200·admin 403·무토큰 401)로 이미 실증됨.
   서비스 감지 로직은 `docker compose ps --status running` 화이트리스트 순회로 injection 무관.
+
+## REV-20260724-0004 [SUBAGENT:data-leak·conversation-only·openapi-disable·admin-gate·path-traversal·base_url §18.8] API 발견 진입점
+- Related Change: CHG-20260724-0003
+- Reason: 외부 AI 발견성 요구(사용자) — 익명 발견 자료 + openapi 익명 노출 차단. 신규 익명 표면이라
+  §18.8 보안 리뷰 필수(SECURITY §7).
+- Alternatives Considered: (a) 익명 static contract 발견(채택, 사용자 결정) vs 토큰 게이트.
+  (b) openapi 익명 차단(채택, 사용자 결정) vs 유지. 매니페스트 카탈로그는 자동 introspection 대신
+  수기 정본(admin 유출 방지).
+- Risks: 익명 데이터 누출·매니페스트 admin 노출·base_url(Host) 반영 오염·path traversal·admin_openapi
+  게이트 우회. → §18.8 리뷰(아래 결과 append).
+- §18.8 적대 보안 리뷰: (general-purpose subagent, 6렌즈 — 결과 append 예정).
+- Open Questions: 없음.
+- Human Approval Needed: 사용자 결정(익명 static + openapi 차단) 완료. deploy_scope: included → 배포 자동.
+
+### §18.8 적대 보안 리뷰 결과 (general-purpose subagent, 6렌즈) — REV-20260724-0004 append
+- **판정: BLOCK/HIGH/MEDIUM 결함 0.** 익명 발견 표면 견고. 6점검 전부 PASS(실증 포함):
+  - #1 데이터 누출 0: 매니페스트는 수기 dict, 유일 런타임값 base_url 은 TrustedHostMiddleware 가
+    off-allowlist Host 를 400 거부(실증). X-Forwarded-Host 미반영. llms.txt/guide 는 정적·데이터 0.
+  - #2 conversation-only: `_CONVERSATION_ENDPOINTS` 수기 리터럴(admin 없음), `openapi()` 호출은
+    admin-gated 라우트 1곳뿐(repo-wide grep 확인).
+  - #3 openapi 비활성화 완전: /openapi.json·/docs·/redoc·/docs/oauth2-redirect 전부 404(실증),
+    app.openapi()는 admin 라우트에서 정상 동작.
+  - #4 admin_openapi fail-closed: console.access 필요, 토큰은 denylist(`console.`)로 구조적 차단.
+  - #5 static 서빙 traversal 불가(고정 파일명).
+  - #6 SECURITY §7 정합(4개 등재 + openapi 비활성 명시).
+- **LOW(수정 반영)**: base_url 안전이 non-wildcard WEB_ALLOWED_HOSTS 전제 → `_manifest` 에 주석 1줄 추가.
+- **LOW(수용)**: 발견 텍스트가 bin 스크립트·matk_ prefix·스코프 모델 노출 — 비밀 아님·AI 발견 의도·LAN 전제.
+  공개 인터넷 노출 시 §7.2 IP allowlist/noindex 가 lever.
+- 재검증: 계약·불변식 테스트 6 passed(컨테이너) + 라이브 발견 검증(배포 후).
