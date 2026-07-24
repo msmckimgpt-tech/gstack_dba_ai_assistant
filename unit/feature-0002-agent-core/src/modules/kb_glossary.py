@@ -459,14 +459,21 @@ def list_glossary_feedback(conn, status="pending", scope_key=None, role_key=None
         cur.close()
 
 
-def count_glossary_feedback(conn, status="pending") -> int:
-    """검토 큐 건수(배지용). status 기본 pending."""
+def count_glossary_feedback(conn, status="pending", scope_key=None) -> int:
+    """검토 큐 건수(배지용). status 기본 pending. scope_key 지정 시 그 scope 로 한정 — 검토 큐 목록
+    필터(list_glossary_feedback)와 동일 축이라 배지↔리스트 카운트가 datasource 선택 시 정합한다."""
+    clauses: list = []
+    params: list = []
+    if status:
+        clauses.append("status = %s")
+        params.append(str(status))
+    if scope_key:
+        clauses.append("scope_key = %s")
+        params.append(_normalize_scope_key(scope_key))
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     cur = conn.cursor()
     try:
-        if status:
-            cur.execute("SELECT count(*) FROM glossary_feedback WHERE status = %s", (str(status),))
-        else:
-            cur.execute("SELECT count(*) FROM glossary_feedback")
+        cur.execute("SELECT count(*) FROM glossary_feedback" + where, tuple(params))
         row = cur.fetchone()
         return int(row[0]) if row else 0
     finally:
@@ -798,14 +805,21 @@ def list_enum_feedback(conn, status="pending", scope_key=None, limit=_FEEDBACK_A
         cur.close()
 
 
-def count_enum_feedback(conn, status="pending") -> int:
-    """검토 큐 건수(배지용). status 기본 pending."""
+def count_enum_feedback(conn, status="pending", scope_key=None) -> int:
+    """검토 큐 건수(배지용). status 기본 pending. scope_key 지정 시 그 scope 로 한정 — 검토 큐 목록
+    필터(list_enum_feedback)와 동일 축이라 배지↔리스트 카운트가 datasource 선택 시 정합한다."""
+    clauses: list = []
+    params: list = []
+    if status:
+        clauses.append("status = %s")
+        params.append(str(status))
+    if scope_key:
+        clauses.append("scope_key = %s")
+        params.append(_normalize_scope_key(scope_key))
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     cur = conn.cursor()
     try:
-        if status:
-            cur.execute("SELECT count(*) FROM enum_feedback WHERE status = %s", (str(status),))
-        else:
-            cur.execute("SELECT count(*) FROM enum_feedback")
+        cur.execute("SELECT count(*) FROM enum_feedback" + where, tuple(params))
         row = cur.fetchone()
         return int(row[0]) if row else 0
     finally:

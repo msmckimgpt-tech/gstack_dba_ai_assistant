@@ -6226,3 +6226,16 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] docs 갱신 (REPORT/TASK/MODIFY/FUNCTION/REVIEW/TEST) — feature-0003 홈, feature-0002 cross-cut note
 - [x] verify-completion PASS → PR #926 머지(main dc316152) → make deploy-web(web+worker 무중단·soak PASS) → POST-DEPLOY PB-0008 라이브 PASS(대화 515c0fd9 csv 블록 '📥 CSV 다운로드' 버튼·클릭 Blob text/csv 2603B·콘솔 에러 0)
 정본 rationale=REVIEW.md REV-20260724T123600-csv-download-wiring, 변경이력=MODIFY.md CHG-20260724T123600-csv-download-wiring.
+## TASK-20260724T053457-metadata-review-ds-scope — 메타데이터 거버넌스 검토 큐 datasource 필터 + 자동승급 목록 정합 + 등록 시각 표시
+`/_template:entry` arg-given. Major §12.3, frontend-only(feature-0003 `static/admin.js` 단독). 요청: `관리 콘솔 > 지식베이스 > 메타데이터 > [용어사전/ENUM 코드사전/샘플쿼리]` — ① 검토 큐가 선택 데이터소스로 필터되지 않음 ② 자동 승급 항목이 목록에서 조회 안 됨 ③ 각 요소 등록 시점 알 수 없음. RC: 큐 로더가 scope_key 미전송(목록은 전송) → scope-decoupling; 목록 행이 created_at 미표시.
+
+### 완료 체크리스트
+- [x] 진단: 3개 큐 엔드포인트(glossary/enum/sample-feedback)는 이미 optional scope_key + created_at 반환 → 프론트 결함 확정. auto-promote write ↔ list read scope 정규화 동일(divergence 없음)
+- [x] Fix 1: `_metaReviewScopeParam` 신규 + `loadFeedbackQueue`/`loadSampleReview` 가 선택 datasource scope_key 전송('공용'=전체 triage)
+- [x] Fix 2: 큐·목록 셀렉터 공유로 scope 정합(자동승급 항목이 해당 ds 목록에서 조회) + 큐 scope 배지 유지
+- [x] Fix 3: `_metaListRow`(등록+수정)·`renderFeedbackQueue`·`_metaRenderReviewDetail`·`_metaBuildEnumBundle` 에 등록 시각 표시
+- [x] 정적·단위 검증: `node --check`(ESM) PASS · `verify_metadata_list_detail.mjs` baseline 대조 신규 회귀 0 · py_compile · pytest 116 PASS(metadata glossary-autoreg/enum-feedback/sample-curation 44 + feature-0002 glossary/enum 72)
+- [x] §18.8 적대 리뷰(SUBAGENT, SHIP-WITH-FIXES) → Finding 1(MAJOR: 배지 unscoped→count scope 파라미터 backend additive)·2(MINOR: 배지 재-prime)·3(MINOR: sample 날짜 통일) 전부 in-cycle 반영
+- [x] docs 갱신 (FUNCTION/MODIFY/TASK/REPORT/REVIEW/TEST) — feature-0003 홈
+- [ ] verify-completion PASS → PR → merge → deploy-web(deploy_scope: included) → POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증
+정본 rationale=REVIEW.md REV-20260724T053457-metadata-review-ds-scope, 변경이력=MODIFY.md CHG-20260724T053457-metadata-review-ds-scope.

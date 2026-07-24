@@ -1687,3 +1687,10 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 
 ## 20260723T033143-paging-scroll-longhistory — 긴 이력 페이징 스크롤 보존 회귀 (Minor §12.3)
 - 계기: admin '간단한 덧셈 계산' 3→4 페이징 스크롤 보존 실패. RC: preserveScroll 이 window-soon 생략 + renderCount=3 리셋 → 긴 버전 스레드서 브랜치 메시지(pager) 창 밖. 수정: preserveScroll 시 전체 렌더. 백엔드 정상(curl). POST-DEPLOY PB-0008.
+
+## 20260724T053457-metadata-review-ds-scope — 메타데이터 거버넌스 검토 큐 datasource 필터 + 자동승급 목록 정합 + 등록 시각 표시 (Major §12.3, frontend-only)
+- **계기**: 사용자(`/_template:entry`) — `관리 콘솔 > 지식베이스 > 메타데이터 > [용어사전/ENUM 코드사전/샘플쿼리]`: ① 출력 요소가 선택 데이터소스로 필터 안 됨(검토 큐) ② 검토 큐 자동 승급 항목이 목록에서 조회 안 됨 ③ 각 요소 등록 시점 미표시.
+- **RC**: ①/② scope-decoupling — 목록(`loadMetadata`)은 상단 데이터소스 셀렉터(`scopeKey`, 기본 common)를 `?scope_key=` 로 전송하나 검토·검수 큐 로더(`loadFeedbackQueue`/`loadSampleReview`)는 미전송 → 큐가 전 datasource 무필터. 자동승급 항목은 대화 datasource scope 로 기록돼 common 목록엔 미조회. 백엔드 3개 큐 엔드포인트는 이미 optional scope_key 지원(프론트 결함). ③ `_metaListRow` 가 updated_at 만 표시.
+- **수정**: (frontend admin.js) `_metaReviewScopeParam` 신규(특정 ds→scope_key, 공용→전체 triage=Option A)로 3개 큐 로더에 scope 전송(Fix 1) → 큐·목록 셀렉터 공유로 자동승급 항목 정합(Fix 2) + `_metaListRow`/`renderFeedbackQueue`/`_metaRenderReviewDetail`/`_metaBuildEnumBundle` 등록 시각 표시(Fix 3). (§18.8 반영) 배지도 scoped 로 정합 — `kb_glossary.count_glossary_feedback`/`count_enum_feedback` additive `scope_key` 파라미터 + admin_metadata 엔드포인트 `scope_filter` 전달(Finding 1 MAJOR), `_metaPrimeReviewBadge` scope 전송 + scope-change 재-prime(Finding 2), sample 날짜 `등록 <_metaFmtDt>` 통일(Finding 3).
+- **무영향**: RBAC·스키마·마이그·인증 0. 백엔드는 count 2함수 additive scope 파라미터 + 엔드포인트 인자 전달뿐(미지정 byte-동치·admin 전용 호출). 목록 경로 무변경. auto-promote write↔list read scope 정규화 동일.
+- **검증**: `node --check`(ESM) PASS · `verify_metadata_list_detail.mjs` baseline 신규 회귀 0(26 PASS/3 FAIL·[D] crash=pre-existing 하니스, clean main 동일) · py_compile · pytest 116 PASS(metadata 44 + glossary/enum 72) · §18.8 적대 리뷰(SUBAGENT, SHIP-WITH-FIXES→3건 반영) · 정적 자산 baked → POST-DEPLOY PB-0008 Windows-browser 라이브. 정본 REVIEW REV-20260724T053457-metadata-review-ds-scope · MODIFY CHG-20260724T053457-metadata-review-ds-scope · TASK-20260724T053457-metadata-review-ds-scope.

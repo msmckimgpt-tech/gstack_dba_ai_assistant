@@ -143,7 +143,7 @@ def test_enum_feedback_list_serializes(monkeypatch):
     rows = [(5, "common", "public", "orders", "status", "P", "결제대기", 0.7, "pending",
              "run1", "c1", None, None, ts, ts)]
     monkeypatch.setattr(_kg, "list_enum_feedback", lambda conn, **k: rows)
-    monkeypatch.setattr(_kg, "count_enum_feedback", lambda conn, status="pending": 3)
+    monkeypatch.setattr(_kg, "count_enum_feedback", lambda conn, status="pending", scope_key=None: 3)
     resp = admin_metadata.admin_list_enum_feedback(_FakeRequest(query={"status": "pending"}), account=acct)
     assert resp.status_code == 200
     out = _body(resp)
