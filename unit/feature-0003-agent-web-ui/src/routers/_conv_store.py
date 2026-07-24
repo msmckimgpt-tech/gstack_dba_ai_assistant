@@ -1775,6 +1775,183 @@ def _materialize_assistant_attachment_edits(
             created.append(app._serialize_attachment_for_api(new_row))
     return created
 
+def _materialize_assistant_attachment_new(
+    conn,
+    *,
+    account: dict[str, Any],
+    conversation_id: str,
+    answer: str,
+    message_id: int | None = None,
+    request: "Request | None" = None,
+    remaining_count: int | None = None,
+) -> list[dict[str, Any]]:
+    """assistant 답변의 ```attachment-new``` 블록을 **brand-new (root) 첨부**로 materialize.
+
+    FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): 사용자가 새로
+    생성한 스크립트/쿼리를 다운로드 첨부(첨부파일 항목)로 요청할 때(기존 첨부 편집이 아님)
+    쓰는 source-less 경로. 편집 경로(_materialize_assistant_attachment_edits)와 **보안 가드를
+    전부 공유**하되 source 없이 root 첨부(RootAttachmentId=NULL, VersionNumber=1,
+    CreatedByRole='assistant')를 만든다. 확장자는 allowlist(_ASSISTANT_NEW_ALLOWED_EXT)로 강제해
+    실행형/바이너리를 차단하고, 파일명은 코드가 권위적으로 정화한다.
+
+    Returns: 생성된 첨부의 직렬화 dict 리스트(0개면 빈 리스트). 모든 실패는 fail-open(로깅만)
+    — materialize 실패가 사용자 답변을 막지 않는다.
+    """
+    blocks = app._parse_attachment_new_blocks(answer)
+    if not blocks:
+        return []
+
+    account_id = int(account.get("id") or 0)
+
+    # 보안(§18.8 security 패널 MAJOR): 편집 경로는 source 첨부 소유권으로 업로드 권한을 간접
+    # 게이팅하지만(같은 account 소유 source 필수), 신규(source-less) 경로는 그 바운드가 없다.
+    # 수동 업로드 엔드포인트(upload_conversation_attachment)와 **동일한 첨부 업로드 권한**을
+    # 명시적으로 게이팅해, `conversation.ask` 만 가진 주체가 첨부 업로드를 우회 생성하는 RBAC
+    # 회귀를 막는다(권한 없으면 materialize 하지 않고 조용히 skip). account/conversation scope 는
+    # caller 가 인증 account + 서버 파생 conversation_id 로 이미 바인딩(IDOR 없음).
+    if not app._account_can_access_conversation(
+            conn, account, conversation_id,
+            "conversation.attachment.upload.own", "conversation.attachment.upload.any"):
+        logging.getLogger(__name__).info(
+            "attachment-new: upload permission denied (account=%s, conv=%s) — skip",
+            account_id, conversation_id)
+        return []
+
+    try:
+        from web.modules import storage_minio
+    except Exception:
+        return []
+
+    # turn 당 개수 cap: 편집 경로와 **합산**해 총 _ASSISTANT_EDIT_COUNT_CAP 을 넘지 않도록
+    # caller 가 remaining_count(=CAP - 이미 materialize 된 편집 수)를 전달한다(§18.8 MINOR — 편집+신규
+    # 이중 카운팅으로 실질 cap 이 배가되지 않게). 미전달 시(단독 호출·테스트) 기존 cap 을 그대로 적용.
+    _cap = app._ASSISTANT_EDIT_COUNT_CAP if remaining_count is None else max(0, int(remaining_count))
+    created: list[dict[str, Any]] = []
+    import uuid as _uuid
+
+    for block in blocks[:_cap]:
+        content = str(block.get("content") or "")
+        body_bytes = content.encode("utf-8")
+
+        # 가드 4: 빈 내용 skip + size cap(텍스트 계열, 편집 경로와 동일 상한).
+        if not body_bytes:
+            continue
+        if len(body_bytes) > app._ASSISTANT_EDIT_SIZE_CAP_BYTES:
+            logging.getLogger(__name__).warning(
+                "attachment-new: content too large (%d bytes) — skip", len(body_bytes))
+            continue
+
+        # 파일명·확장자 코드-권위 결정(SEC): 경로구분자 제거 → stem 내부 dot 제거(이중확장자 차단)
+        # → 확장자 allowlist 강제(미허용/누락은 안전 텍스트). LLM 이 무엇을 주든 실행형/바이너리
+        # 확장자는 여기서 안전 텍스트로 정규화된다.
+        raw_name = str(block.get("filename") or "").replace("/", "_").replace("\\", "_").strip()
+        raw_name = raw_name.lstrip(".")   # 선행 dot(숨김/확장자-only) 제거
+        if "." in raw_name:
+            stem, ext = raw_name.rsplit(".", 1)
+            ext = ext.lower().strip()
+        else:
+            stem, ext = raw_name, ""
+        # stem: 내부 dot 제거(x.exe.sql → x_exe.sql) 후 안전 문자만, 과도 길이 제한, 빈값 기본명.
+        stem = stem.replace(".", "_")
+        stem = app.re.sub(r"[^\w\- ]", "_", stem).strip()[:120].strip() or "script"
+        if ext not in app._ASSISTANT_NEW_ALLOWED_EXT:
+            ext = app._ASSISTANT_NEW_FALLBACK_EXT
+        filename = f"{stem}.{ext}"
+        new_kind = "csv" if ext == "csv" else "text"
+        mime_type = "text/csv" if new_kind == "csv" else "text/plain; charset=utf-8"
+
+        # 가드 3: per-file/conv/account size cap 재사용(편집 경로와 동일).
+        ok, _reason = app._check_attachment_size_caps(
+            conn, account_id=account_id, conversation_id=conversation_id,
+            new_size_bytes=len(body_bytes),
+        )
+        if not ok:
+            logging.getLogger(__name__).warning("attachment-new: size cap exceeded — skip")
+            continue
+
+        sha256_hex = hashlib.sha256(body_bytes).hexdigest()
+        attachment_uuid = str(_uuid.uuid4())
+        object_key = storage_minio.make_object_key(conversation_id, attachment_uuid, filename)
+
+        # 원자성(V8): MinIO put 을 INSERT 전에 수행 — put 성공 후에만 DB row 생성(orphan DB row 방지).
+        try:
+            storage_minio.put_object_bytes(
+                object_key, body_bytes, content_type=mime_type,
+                metadata={
+                    "conversation-id": conversation_id,
+                    "uploader-account-id": str(account_id),
+                    "assistant-generated": "1",
+                },
+            )
+        except Exception:
+            logging.getLogger(__name__).warning("attachment-new: MinIO put failed — skip")
+            continue
+
+        # INSERT root 첨부 row(사용자 업로드 root 와 동형: RootAttachmentId=NULL, VersionNumber=1).
+        new_id = 0
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO WebConversationAttachments (
+                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, MetaJson, RootAttachmentId, VersionNumber, CreatedByRole
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, NULL, 1, 'assistant')
+                """,
+                (
+                    conversation_id, account_id, object_key, filename,
+                    app._hmac_filename(filename), mime_type, len(body_bytes),
+                    app._size_bucket(len(body_bytes)), sha256_hex, new_kind,
+                    json.dumps({"assistant_generated": True, "message_id": int(message_id or 0),
+                                "message_id_space": "display"}),
+                ),
+            )
+            new_id = int(cur.lastrowid or 0)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "attachment-new: INSERT failed — skip", exc_info=True)
+        finally:
+            cur.close()
+        if not new_id:
+            continue
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # PG dual-write mirror(flag-gated, fail-soft) — 편집 경로와 대칭.
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            if _apm.dual_write_enabled():
+                _apm.mirror_attachments(conn, [int(new_id)])
+        except Exception:
+            pass
+
+        # 추적성(V10): assistant 자동 생성 첨부 audit(카테고리 메타만, raw filename/bytes 미노출).
+        new_row = app._load_attachment_row(conn, new_id)
+        try:
+            _audit_ctx = app._serialize_attachment_for_audit(new_row)
+            _audit_ctx.update({
+                "assistant_generated": True,
+                "version_number": 1,
+                "created_by_role": "assistant",
+            })
+            app._audit_user_action(
+                conn, request, account,
+                action="attachment.assistant.create",
+                resource_type="attachment",
+                resource_id=str(new_id),
+                request_ctx=_audit_ctx,
+            ) if request is not None else None
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "attachment-new: audit dispatch failed (new=%s)", new_id, exc_info=True)
+
+        if new_row:
+            created.append(app._serialize_attachment_for_api(new_row))
+    return created
+
 def _load_step_meta(
     conn,
     conversation_id: str,
@@ -3255,6 +3432,28 @@ def _parse_attachment_edit_blocks(answer: str) -> list[dict[str, Any]]:
         fname = header.get("filename")
         out.append({
             "source_attachment_id": src_id,
+            "filename": str(fname).strip() if fname else None,
+            "content": content,
+        })
+    return out
+
+def _parse_attachment_new_blocks(answer: str) -> list[dict[str, Any]]:
+    """assistant 답변에서 ```attachment-new``` 블록을 파싱(brand-new 첨부 생성).
+
+    각 블록의 첫 줄은 JSON 헤더({filename?}), 나머지는 파일 내용. source_attachment_id 는 없다
+    (편집이 아니라 신규 생성이므로). filename 이 없으면 materialize 가 코드-권위 기본명을 부여한다.
+    Returns: [{"filename": str|None, "content": str}, ...]. 형식 오류 블록은 조용히 skip.
+    """
+    out: list[dict[str, Any]] = []
+    for _oi, _ci, header_line, content in app._attachment_new_block_spans(answer):
+        try:
+            header = json.loads(header_line.strip())
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(header, dict):
+            continue
+        fname = header.get("filename")
+        out.append({
             "filename": str(fname).strip() if fname else None,
             "content": content,
         })
@@ -4863,25 +5062,39 @@ def _size_bucket(size_bytes: int) -> str:
         return "10-25MB"
     return ">25MB"
 
-def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
-    """답변에서 attachment-edit 블록들의 (open_idx, close_idx, header_line, body) 를 라인 기반으로
-    추출한다(TASK-0286 보안리뷰 MAJOR 수정).
+# attachment 블록 여는 펜스 태그(전부 서로의 경계) — edit/new 가 한 답변에 공존해도 span 파서가
+# 서로의 본문을 삼키지 않도록 두 태그 모두를 블록 경계(next_open)로 취급한다.
+_ATTACHMENT_BLOCK_TAGS = ("```attachment-edit", "```attachment-new")
 
-    기존 lazy 정규식 ```` ```attachment-edit\\n(.*?)\\n``` ```` 은 **편집 대상 파일 본문에 ``` 라인이
-    포함**되면(markdown/텍스트 등) 거기서 조기 종료해 본문을 절단 저장하고, strip 시 잔여 본문이
-    평문으로 노출됐다. 라인 기반으로 바꿔, 여는 ```` ```attachment-edit ```` 다음 줄을 JSON 헤더로,
-    그 이후 (다음 여는 펜스 직전까지의) **마지막 단독 ``` 줄**을 닫는 펜스로 본다 → 본문 내부의
-    ``` 코드펜스를 허용한다(닫는 펜스는 항상 블록의 가장 마지막 ``` 이므로).
+def _attachment_block_spans(answer: str, tag: str) -> list[tuple[int, int, str, str]]:
+    """<tag> 블록들의 (open_idx, close_idx, header_line, body) 를 라인 기반으로 추출(TASK-0286
+    보안리뷰 MAJOR 수정 규율 유지). 여는 ```` ```<tag> ```` 다음 줄을 JSON 헤더로, **다음 attachment
+    블록(edit/new 무관) 여는 펜스 직전까지의 마지막 단독 ``` 줄**을 닫는 펜스로 본다 → 본문 내부의
+    일반 ``` 코드펜스를 허용하고(닫는 펜스는 블록의 가장 마지막 ```), **잘-형성된(각자 닫힌)
+    edit/new 블록이 공존**할 때 상호 본문 삼킴을 막는다.
+
+    알려진 한계(§18.8 backend 패널, 실트리거 ≈0 for SQL/CSV): 한 블록의 **본문 안**에 상대 태그
+    (예: edit 본문에 `` ```attachment-new `` 로 시작하는 줄)가 나타나면 그 줄을 경계로 오인해 바깥
+    블록이 조기 종료/드롭될 수 있다. 이는 자기 문서화용 마크다운/텍스트에서만 현실성이 있고
+    SQL/CSV 첨부에는 사실상 발생하지 않는다. 대안(상대 태그를 경계로 무시)은 더 흔한 공존 케이스를
+    깨므로 현 트레이드오프를 유지한다(회귀 테스트로 동작 고정 — test_attachment_new).
     """
     text = answer or ""
-    if "attachment-edit" not in text:
+    if tag not in text:
         return []
     lines = text.split("\n")
     n = len(lines)
-    opens = [i for i, ln in enumerate(lines) if ln.strip().startswith("```attachment-edit")]
+    # 경계 = 모든 attachment 블록(edit/new) 여는 펜스. 이 블록 다음의 첫 경계가 next_open.
+    boundaries = [i for i, ln in enumerate(lines)
+                  if any(ln.strip().startswith(t) for t in _ATTACHMENT_BLOCK_TAGS)]
+    opens = [i for i, ln in enumerate(lines) if lines[i].strip().startswith(tag)]
     spans: list[tuple[int, int, str, str]] = []
-    for k, oi in enumerate(opens):
-        next_open = opens[k + 1] if k + 1 < len(opens) else n
+    for oi in opens:
+        next_open = n
+        for b in boundaries:
+            if b > oi:
+                next_open = b
+                break
         if oi + 1 >= n:
             continue
         header_line = lines[oi + 1]
@@ -4896,6 +5109,18 @@ def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]
         body = "\n".join(lines[oi + 2:close_idx])
         spans.append((oi, close_idx, header_line, body))
     return spans
+
+def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
+    """attachment-edit 블록 span 추출(_attachment_block_spans 위임). 편집 파일 본문 내 ``` 허용."""
+    return _attachment_block_spans(answer, "```attachment-edit")
+
+def _attachment_new_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
+    """attachment-new(brand-new 첨부) 블록 span 추출(_attachment_block_spans 위임).
+
+    FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): assistant 가 **새로
+    생성한** 스크립트/쿼리를 다운로드 첨부로 전달하는 source-less 블록.
+    """
+    return _attachment_block_spans(answer, "```attachment-new")
 
 def _next_version_filename(original: str, version_number: int) -> str:
     """원본 파일명에서 버전 접미사를 붙인 기본 파일명 생성(버전 체인과 정합).

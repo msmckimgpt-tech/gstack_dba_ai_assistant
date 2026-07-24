@@ -987,3 +987,12 @@ source_of_truth: true
 - 코드/자산 0 — metadata-review-ds-scope(PR #931·main 2b22b5ff) 배포 후 라이브 검증 결과 기록만.
 - test-runs.d/20260724T053457-metadata-review-ds-scope.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260724T053457-metadata-review-ds-scope-postverify.
 - 실측(실 Windows Chrome, https://localhost/admin): 검토 큐 공용 96건→mysql-kr-an1-auth 16건 필터·배지 96→16 정합(MAJOR Finding 1)·목록 84건 중 82 자동등록 가시(Fix 2)·전 행 `등록 <시각>`(Fix 3)·pageerror 0. 사용자 3결함 전부 해소 확인.
+
+## CHG-20260724T181106-brandnew-script-attachment — assistant 신규 스크립트 첨부 전달 경로 (Major §12.3)
+- **What**: source 없이 새로 생성한 스크립트/쿼리를 다운로드 첨부(root 첨부)로 전달하는 `attachment-new` 경로 신설. 기존 편집 경로(source_attachment_id 필수)와 별개.
+- **Why(RC)**: FR-brandnew-script-attachment-delivery-gap — 첨부 생성 경로가 기존 첨부 편집만 지원해 "생성한 스크립트를 첨부로" 요청 시 assistant 거부(대화 …f1c535ec msg 1384). 재발경로=capability gap.
+- **Files(feature-0003)**: `src/routers/_conv_store.py`(`_attachment_block_spans` 공통 헬퍼 리팩터 + `_attachment_new_block_spans`·`_parse_attachment_new_blocks`·`_materialize_assistant_attachment_new`), `src/routers/conversations.py`(ask 배선 + `_strip_attachment_new_blocks`), `src/app.py`(allowlist 상수 + import), `src/static/app.js`(배지 생성/수정 구분 + new_attachments 토스트).
+- **Files(feature-0002 cross-ref)**: `src/agent_core.py` — CHG-20260724T181106-attach-new-directive(`_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` 주입 + base 섹션 + inline 예외).
+- **보안**: 확장자 allowlist(sql/txt/csv/md/markdown/json/yaml/yml/xml/log, 그 외→.txt), account/conv scope(IDOR 0), 크기 1MB·개수 캡 편집과 합산(remaining_count), **업로드 RBAC 게이트**(§18.8 MAJOR: `conversation.attachment.upload.own/any`). 보안 회귀 0.
+- **Verification**: pytest 2369 PASS(신규 27) · py_compile 4파일 · node --check app.js · §18.8 AGENT-TEAM(security+backend) MAJOR/MINOR 전부 반영. 정적 자산 baked → 라이브 PB-0008 = POST-DEPLOY.
+- **잔여**: verify-completion → commit → PR/deploy(별도 confirm) → POST-DEPLOY PB-0008.

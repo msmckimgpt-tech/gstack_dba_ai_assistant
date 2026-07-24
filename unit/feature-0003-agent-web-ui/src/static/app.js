@@ -9181,11 +9181,21 @@ function _renderAttachmentPills() {
     const versionNum = Number(it.version_number || 1);
     if (it.is_assistant_generated || versionNum > 1) {
       const verBadge = document.createElement("span");
+      // FR-brandnew-script-attachment-delivery-gap: assistant 생성 첨부는 신규 생성(v1)과
+      // 기존 파일 수정(v>1)을 구분 표기. 신규는 "AI 생성", 수정은 "vN · AI 수정".
+      const aiCreated = it.is_assistant_generated && versionNum <= 1;
+      const aiEdited = it.is_assistant_generated && versionNum > 1;
       verBadge.className = "pill-version" + (it.is_assistant_generated ? " ai-edited" : "");
-      verBadge.textContent = it.is_assistant_generated ? `v${versionNum} · AI 수정` : `v${versionNum}`;
-      verBadge.title = it.is_assistant_generated
-        ? "assistant 가 수정한 버전입니다. 버전 기록은 첨부 메뉴에서 확인하세요."
-        : `버전 ${versionNum}`;
+      if (aiCreated) {
+        verBadge.textContent = "AI 생성";
+        verBadge.title = "assistant 가 생성한 첨부 파일입니다.";
+      } else if (aiEdited) {
+        verBadge.textContent = `v${versionNum} · AI 수정`;
+        verBadge.title = "assistant 가 수정한 버전입니다. 버전 기록은 첨부 메뉴에서 확인하세요.";
+      } else {
+        verBadge.textContent = `v${versionNum}`;
+        verBadge.title = `버전 ${versionNum}`;
+      }
       pill.appendChild(verBadge);
     }
 
@@ -10588,6 +10598,15 @@ async function sendPrompt() {
         .map((a) => `${a.original_filename || "파일"} (v${a.version_number || 2})`)
         .join(", ");
       showToast(`assistant 가 첨부를 수정했습니다: ${names}`);
+    }
+    // FR-brandnew-script-attachment-delivery-gap: assistant 가 새 스크립트/쿼리를 다운로드 첨부로
+    // 생성했으면 안내. 실제 다운로드 칩은 히스토리 재렌더(_load_assistant_attachments_by_message)로
+    // assistant 말풍선에 표시된다(편집 새 버전과 동일 경로).
+    if (Array.isArray(payload.new_attachments) && payload.new_attachments.length) {
+      const names = payload.new_attachments
+        .map((a) => `${a.original_filename || "파일"}`)
+        .join(", ");
+      showToast(`assistant 가 첨부 파일을 생성했습니다: ${names}`);
     }
     const newCid = String(payload.conversation_id || targetConvId || "");
     if (isLazyCreate && newCid) {

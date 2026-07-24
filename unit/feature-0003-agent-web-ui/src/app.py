@@ -1326,6 +1326,19 @@ _ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT = 1_073_741_824  # 1 GB
 _ASSISTANT_EDIT_COUNT_CAP = 5          # turn 당 최대 materialize 첨부 수
 _ASSISTANT_EDIT_SIZE_CAP_BYTES = 1024 * 1024   # 단일 materialize 내용 1MB (텍스트 계열)
 
+# ──────────────────────────────────────────────────────────────────────────
+# FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24):
+# assistant 가 **새로 생성한** 스크립트/쿼리를 다운로드 첨부(첨부파일 항목)로 전달하는
+# source-less 생성 경로(```attachment-new```)의 확장자 allowlist. 편집 경로와 달리 원본
+# 첨부가 없어 확장자를 LLM 이 정하므로, 코드가 **데이터·마크업 텍스트 계열만** 허용하고
+# 실행형(.sh/.py/.js 등)·바이너리·미허용 확장자는 안전 텍스트(_ASSISTANT_NEW_FALLBACK_EXT)로
+# 강제한다(사용자 결정 2026-07-24: 데이터·마크업 확장). 편집 경로의 보안 가드(크기 캡·개수
+# 캡·account/conv scope·MinIO-먼저 원자성)는 전부 공유.
+_ASSISTANT_NEW_ALLOWED_EXT = frozenset({
+    "sql", "txt", "csv", "md", "markdown", "json", "yaml", "yml", "xml", "log",
+})
+_ASSISTANT_NEW_FALLBACK_EXT = "txt"   # 미허용/누락 확장자 → 안전 텍스트로 정규화(실행형 차단)
+
 
 
 
@@ -3241,6 +3254,7 @@ from routers._conv_store import (  # noqa: E402
     _copy_conversation_attachments,
     _fork_conversation_impl,
     _materialize_assistant_attachment_edits,
+    _materialize_assistant_attachment_new,
     # feature-0019 message-editing — 브랜치 오케스트레이션
     _branch_get_display_message,
     _branch_reanswer_setup,
@@ -3358,6 +3372,7 @@ from routers._conv_store import (  # noqa: E402
     _serialize_attachment_for_audit,
     _serialize_attachment_for_api,
     _parse_attachment_edit_blocks,
+    _parse_attachment_new_blocks,
     _resolve_step_display,
     _load_last_run_id,
     _load_progress_status,
@@ -3492,6 +3507,7 @@ from routers._conv_store import (  # noqa: E402
     _extension_bucket,
     _size_bucket,
     _attachment_edit_block_spans,
+    _attachment_new_block_spans,
     _next_version_filename,
     _find_latest_same_name_attachment,
     _compute_version_diff,
@@ -3539,6 +3555,7 @@ from routers.conversations import (  # noqa: E402
     _normalize_search_query,
     _infer_kind,
     _strip_attachment_edit_blocks,
+    _strip_attachment_new_blocks,
     _update_assistant_message_content,
     _model_to_llm_provider,
     _dispatch_ask_run,

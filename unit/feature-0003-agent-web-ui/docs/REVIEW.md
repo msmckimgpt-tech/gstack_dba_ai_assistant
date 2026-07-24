@@ -887,3 +887,9 @@ source_of_truth: true
   두 엔드포인트(/ai-ops·/ai-ops/activity) 배지 일관 · categories try/except degrade 온전.
 - 검증: 전체 pytest 2287 passed/2 skipped · admin.js `node --check` · Windows-browser modelDetail eval PASS ·
   POST-DEPLOY PB-0008(운영 현황 배지·활동 상세 라우팅 라이브) = 배포 후 후속(test-runs.d fragment).
+
+## REV-20260724T181106-brandnew-script-attachment [AGENT-TEAM: security+backend] SHIP-WITH-FIXES — §18.8 Verification Panel
+- **Trigger**: 새 첨부 쓰기 경로(INSERT WebConversationAttachments) + 프롬프트 변경 → dispatch 키워드 `schema/query`(→backend+qa) + 새 write/RBAC 표면(→security); 프롬프트 변경=full-panel default. 렌즈: security, backend correctness.
+- **[AGENT-TEAM: security] MAJOR(반영)**: 신규 source-less 경로가 `conversation.attachment.upload.own/any` 권한 미검사 → `conversation.ask`만 가진 주체(또는 그 scope API 토큰)가 첨부 업로드를 우회 생성(편집 경로는 source 소유권으로 간접 게이팅). **Fix**: `_materialize_assistant_attachment_new` 최상단 `_account_can_access_conversation` 업로드 권한 게이트(권한 없으면 skip, 수동 업로드 엔드포인트와 동일). / **검증-SAFE(REFUTED)**: 확장자 allowlist·이중확장자(x.exe.sql→x_exe.sql)·경로traversal·leading-dot·IDOR(account/conv 서버바인딩)·SQL injection(parametrized)·크기/개수 캡·kind/MIME(비클라이언트)·strip parity 전부 방어 확인.
+- **[AGENT-TEAM: backend] MINOR(반영)**: (1) 프론트 배지 v1 신규를 "AI 수정"으로 오표기 → "AI 생성"/"AI 수정" 구분(app.js). (2) turn당 개수 cap 편집+신규 이중카운팅(실질 10) → 공유 예산(remaining_count) 합산 ≤5. (3) span 파서 리팩터: 한 블록 본문에 상대 태그 fence-start 줄 포함 시 조기종료(실트리거 ≈0 for SQL/CSV) → 코멘트 정직화 + 회귀 테스트(test_p6)로 동작 고정(더 흔한 공존 케이스 보존 트레이드오프). / **검증-SAFE(REFUTED)**: root INSERT(RootAttachmentId=NULL·v1·UNIQUE NULL-distinct)·history 칩 렌더(message_id display-space 정합)·fail-open·step_index(편집 뒤 +1 충돌無)·mirror/audit 시그니처 전부 확인.
+- **판정**: SHIP-WITH-FIXES → 전 findings in-cycle 반영. 보안 회귀 0(가드 불변 + 업로드 권한 게이트 추가). 잔여 라이브 실측=POST-DEPLOY PB-0008(동일입력 재현으로 거부 소멸 확인).

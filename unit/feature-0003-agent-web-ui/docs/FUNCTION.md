@@ -1859,3 +1859,14 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 대화 사이드바 각 항목의 '···' 확장 메뉴(`openConversationItemMenu`) 항목 렌더 순서를 `공유 → 설정 → 이동` 에서 `공유 → 이동 → 설정` 으로 변경(사용자 요청, `/_template:entry` arg-given). '이동'(폴더 이동, `openMoveConversationDialog`)은 `folder.manage.own` 보유 시에만 노출되는 조건부 항목 — 이 조건부 블록을 '설정'(`openConversationSettings`) append 앞으로 옮긴 순수 렌더 순서 변경.
 - 불변식: 항목 3종의 존재·권한 게이트(`conversation.share`/`conversation.read`/`folder.manage.own`)·onSelect 핸들러(openShareDialog/openMoveConversationDialog/openConversationSettings)·action 인자·백엔드/RBAC/스키마 무변경. 우클릭 universal-ctxmenu(`_CTX_MENU_TARGETS`)·`openFolderMenu`·말풍선 `☰` 메뉴 무관. cache-buster `?v=dev` 고정. 헤더 주석 "최종 순서" 문자열도 동기화.
 - 검증: `node --check` PASS · 순서 assert 테스트 부재 확인 · POST-DEPLOY PB-0008(Environment: Windows-browser — 대화 목록 '···'/우클릭 메뉴 항목 순서 육안). CHG/REV/TASK-20260724T073848-conv-menu-order.
+
+### 신규 스크립트 첨부 전달 (attachment-new, CHG-20260724T181106) — source-less root 첨부 생성
+FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** 스크립트/쿼리를 다운로드 첨부로 전달하는 경로(기존 편집 경로 `attachment-edit` 와 별개, source_attachment_id 불필요).
+- `_attachment_block_spans(answer, tag)` (routers/_conv_store.py): `_attachment_edit_block_spans`/`_attachment_new_block_spans` 의 공통 헬퍼. 두 태그(`_ATTACHMENT_BLOCK_TAGS`)를 모두 블록 경계로 취급해 edit/new 공존 시 상호 본문 삼킴 방지(잘-형성 블록 기준). 알려진 한계: 한 블록 본문 내 상대 태그 fence-start 줄은 경계 오인(실트리거 ≈0 SQL/CSV; test_p6 고정).
+- `_parse_attachment_new_blocks(answer)`: `attachment-new` 블록 파싱({filename?} 헤더 + 본문, source 없음).
+- `_materialize_assistant_attachment_new(conn, *, account, conversation_id, answer, message_id, request, remaining_count)`: source 없이 root 첨부(RootAttachmentId=NULL·VersionNumber=1·CreatedByRole='assistant') 생성. 가드: 업로드 RBAC(`conversation.attachment.upload.own/any`)·확장자 allowlist(`_ASSISTANT_NEW_ALLOWED_EXT`, 그 외→`_ASSISTANT_NEW_FALLBACK_EXT`=txt)·크기 1MB·개수 캡(편집과 합산 remaining_count)·account/conv scope·MinIO-먼저 원자성·PG mirror·audit. fail-open.
+- `_strip_attachment_new_blocks(answer, materialized)` (routers/conversations.py): 답변에서 attachment-new 블록 제거 + "📎 첨부 전달" 안내 치환(전체 본문 미노출).
+- ask 배선(routers/conversations.py): materialize 호출(remaining_count=CAP-편집수) + step 기록 + strip + `result["new_attachments"]`. 프론트(static/app.js): 배지 "AI 생성"(v1)/"AI 수정"(v>1) 구분 + new_attachments 토스트.
+- 상수(app.py): `_ASSISTANT_NEW_ALLOWED_EXT`(sql/txt/csv/md/markdown/json/yaml/yml/xml/log), `_ASSISTANT_NEW_FALLBACK_EXT`(txt).
+- 히스토리 렌더: `_load_assistant_attachments_by_message` 가 CreatedByRole='assistant' 미삭제 첨부를 (message_id, id_space)로 그룹핑 → 신규 첨부도 동일 경로로 assistant 말풍선 다운로드 칩 렌더(편집 새 버전과 동일).
+활성화 프롬프트=feature-0002 `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE`(cross-ref).

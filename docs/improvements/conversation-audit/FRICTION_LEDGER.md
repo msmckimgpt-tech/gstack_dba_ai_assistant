@@ -238,3 +238,20 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 - 첫 audit: 2026-06-29, `/_dqa:conversation_audit account=mckim conversation="게임 스테이지 성공률 통계"` (dogfood 검증 run). 두 마찰 모두 **report-only** — 스킬의 과적합 가드(단일 대화·Major·idiosyncratic → 자동수정 보류)가 의도대로 작동.
 - 문서 정합(STATUS·wiki)은 `/_dqa:doc_sync` 위임. 본 원장은 ledger·LEARNINGS 만 관할.
+
+## FR-brandnew-script-attachment-delivery-gap — fixed:undeployed (L2↔L4 capability gap; source-less 첨부 생성 경로 신설 + L1 프롬프트 지침)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 27 + 회귀, 전체 2369 PASS) + §18.8 AGENT-TEAM 패널(security MAJOR RBAC + backend MINOR 전부 in-cycle 반영) 완료, 배포 전. 배포 후 원 마찰 대화(…f1c535ec) 동일입력 재현으로 거부 소멸 관측 시 `fixed:deployed:unverified-live` → 다음 audit corroboration 재측정 시 `verified`.
+- **source**: `/_dqa:conversation_audit` 라이브 대화 직접 탐색(사용자 명시 scope "스크립트 첨부파일 전달 요청" + "assistant 가 '첨부파일' 항목에 실제 쿼리도 생성하도록 구성"). 명시 지시 promote.
+- **last_seen**: 2026-07-24 · **seen_count**: 1 · **seen_distinct_conv**: 1(직접 확정) — corroboration 120일 생성물 파일전달 명시요청 distinct_conv 2(오늘 건 포함)
+- **modality**: 1:1 동기 · **conv(마스킹)**: …f1c535ec · **msg**: user 1382/1383(중복 재전송 I-INT), assistant 1384(capability-gap 거부)
+- **symptom_confidence**: high (사용자 명시 지시 `E-USR` + 중복 재전송 `I-INT` + assistant 거부 `E-AST` 전사 재현) · **rootcause_confidence**: high (코드 file:line + DB 전사 + 프롬프트 삼각측량)
+- **suspected_layers**: **L2↔L4**(capability gap — 첨부 생성 경로가 편집(source 필수)만 존재, brand-new root 첨부 생성 코드 부재) + **L1**(프롬프트가 brand-new SQL 을 inline ```sql 로 유도, 첨부 전달은 편집-only 게이팅)
+- **증상(signal)**: `E-USR@…f1c535ec#1382` 명시 지시 + over-spec("답변 본문이 아닌") · `I-INT@…f1c535ec#1383` 중복 재전송(마찰) · `E-AST@…f1c535ec#1384` capability-gap 거부(정직한 거부, 환각 아님) — assistant 가 개선 스크립트를 다운로드 첨부로 못 만들고 우회안(빈 파일 첨부 or 본문 재붙여넣기)만 제시.
+- **confirmed_root_cause**: 첨부 생성 경로 `_parse_attachment_edit_blocks`(src_id≤0 skip)·`_materialize_assistant_attachment_edits`(source 첨부 로드·버전체이닝 필수)가 **기존 첨부 편집만** 지원 → source(사용자 첨부 파일)가 없으면(예: `describe_routine` 으로 DB 조회·생성한 스크립트) 첨부 전달 불가. 프롬프트(agent_core.py:158 "brand-new SQL → inline ```sql", `_ATTACHMENT_DELIVERY_DIRECTIVE` 편집-only)가 이를 강화. 재발경로 = **capability gap**(기능 부재).
+- **corroboration**: 생성물 파일전달 명시요청 = **idiosyncratic**(distinct_conv 2, 저빈도) 이나 **근본이 코드 file:line 으로 confirmed 된 capability gap** → Phase 7 "명백한 구조결함" fix-now(저빈도=저검출성, 저심각도 아님) + 사용자 명시 지시. (리뷰 요청 "첨부 쿼리 리뷰"류 28대화는 편집 경로로 이미 처리 — 별개.)
+- **봉인**: (feature-0003 primary) source-less `attachment-new` 경로 — `_attachment_block_spans` 공통 헬퍼(edit/new 공존 경계) + `_parse_attachment_new_blocks` + `_materialize_assistant_attachment_new`(root 첨부 v1·CreatedByRole=assistant, 편집 경로 보안 가드 전부 공유 + **업로드 RBAC 게이트**) + `_strip_attachment_new_blocks` + ask 배선 + app.js 배지/토스트. (feature-0002 cross-ref) `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` 코드-권위 주입(AUTH-1a) + base 섹션 + inline 예외. **보안 회귀 0**(확장자 allowlist·크기/개수 캡·account/conv scope·업로드 권한 게이트 추가).
+- **fix**: CHG-20260724T181106-brandnew-script-attachment / **primary `feature-0003-agent-web-ui`** + secondary cross-ref `feature-0002-agent-core`(CHG-20260724T181106-attach-new-directive) / REVIEW REV-20260724T181106-brandnew-script-attachment. Major(코어 LLM 경로 + 새 첨부 쓰기 경로) → PLAN-APPROVED(AskUserQuestion 2026-07-24) → PR/deploy 별도 confirm.
+- **rc_ids**: RC-1(이 audit) · **batch-id**: B-20260724T181106-brandnew-script-attachment
+- **라이브 실측 필요분(§정직)**: 코드/테스트/패널은 "attachment-new 경로 동작·보안 가드·프롬프트 주입"을 증명. "실제 대화에서 사용자가 첨부로 받는지" 는 배포 후 라이브 실측분(미수행) → 배포 후 원 마찰 입력(…f1c535ec, "전체 스크립트 개선안을 첨부파일로") 동일 재현 + 다음 audit corroboration(생성물 파일전달 거부 distinct_conv↓) 재측정 → 개선 시 `verified`, 재증가 시 `regressed`.
+- **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 POST-DEPLOY PB-0008 라이브 재현 + doc_sync(STATUS/wiki/릴리즈노트 정합).

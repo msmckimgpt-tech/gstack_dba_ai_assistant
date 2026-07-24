@@ -456,3 +456,10 @@ source_of_truth: true
 - **위험등급**: Major(§12.3 — 코어 LLM 루프·전 도구 결과 경로) → 사용자 결정(scope) 후 구현 + PR/deploy confirm.
 - **Rollback**: 세 지점을 `[:4000]`/`> 4000` 하드코딩으로 복원 + 헬퍼·상수·테스트 제거(프로시저 재절단 재발).
 - **Cross-ref**: FRICTION_LEDGER FR-procedure-analysis-result-truncated · 선행 FR-show-create-routine-blocked(describe_routine 신설) · FR-partial-evidence-false-verification(절단 epistemic 계약) · REV-20260724T155534-tool-result-cap-raise · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260724T181106-attach-new-directive — 신규 스크립트 첨부 전달 프롬프트 지침 (Major §12.3, cross-ref feature-0003 primary)
+- **What**: 사용자가 새로 생성한 스크립트/쿼리를 다운로드 첨부/파일로 요청 시 `attachment-new` 블록으로 전달하라는 지침을 base SYSTEM_PROMPT 섹션 + 코드-권위 `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE`(compose_system_prompt parts 항상 주입)로 추가. base "brand-new SQL → inline ```sql" 규칙(line 158)에 "파일/첨부 요청 시 attachment-new 예외" 명시.
+- **Why**: FR-brandnew-script-attachment-delivery-gap(conversation_audit) — 마찰 정본·구현 primary 는 feature-0003(materialize 경로). 본 변경은 그 경로를 활성화하는 프롬프트(cross-ref). AUTH-1a 코드-권위 주입으로 운영자 WebSystemPrompts global row drift 봉인(`_ATTACHMENT_DELIVERY_DIRECTIVE` 선례).
+- **Files**: `src/agent_core.py`(SYSTEM_PROMPT 섹션 + `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` + line 158 예외 + compose parts 주입).
+- **Verification**: test_attachment_new.py PR1/PR2(drift-proof 주입: 운영자 base 가 지침 제거해도 코드-권위로 살아있음) + 전체 2369 PASS. 라이브=POST-DEPLOY(ask-worker 재빌드 후 실 LLM turn).
+- **Cross-ref**: primary REVIEW/MODIFY/TASK/REPORT = feature-0003 CHG/REV-20260724T181106-brandnew-script-attachment · 원장 FRICTION_LEDGER FR-brandnew-script-attachment-delivery-gap.

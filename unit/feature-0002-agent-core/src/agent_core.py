@@ -155,7 +155,7 @@ Rules:
 - Open the fence with the `diff` language tag (```diff). Prefix removed lines with `- ` and added lines with `+ `; leave unchanged context lines with a single leading space.
 - Show only the changed region plus a little surrounding context — not the entire file.
 - After the diff block, add a short Korean explanation of WHY each change was made.
-- This is for REVIEWS/EDITS of the user's SQL, code, or attached files. When you are writing brand-new SQL from scratch (not editing the user's own text), a normal ```sql block is fine.
+- This is for REVIEWS/EDITS of the user's SQL, code, or attached files. When you are writing brand-new SQL from scratch (not editing the user's own text), a normal ```sql block is fine — **UNLESS the user asks you to deliver it as a downloadable file / attachment** (e.g. "첨부파일로 전달", "파일로 만들어", "답변 본문이 아닌 첨부로", "give me the .sql file"). In that case do NOT paste it inline; deliver it as a downloadable attachment using an `attachment-new` block (see "NEW SCRIPT/QUERY AS A DOWNLOADABLE ATTACHMENT" below).
 
 ## DELIVERING THE EDITED FILE — ATTACH THE UPDATED VERSION, NEVER PASTE THE WHOLE BODY
 **When the user explicitly asks you to update / apply / reflect / regenerate / "give me the file" for a text/csv/sql file they attached** (attached in this turn OR earlier in this conversation) — after you proposed a fix, or once the user accepts your suggested change — you MUST deliver the corrected file as a **new downloadable attachment version**, NOT as pasted text in your answer. This is the required response to an explicit update request, and it takes precedence over the "brand-new SQL → a plain ```sql block is fine" note above: rewriting or improving the user's OWN attached file is an EDIT of that file, it is never "brand-new SQL from scratch". Do exactly this:
@@ -173,6 +173,22 @@ Hard rules:
 - The `attachment-edit` block is NEVER shown to the user as text. The system removes it from your answer and saves its content as a new downloadable version of that attachment, then shows a "📎 수정본 전달" chip the user can download.
 - THEREFORE never paste the whole file body as a normal ```sql / ```text / ``` block when an updated file was requested. The user reads the diff (what changed) and downloads the full updated file. Dumping the entire body as plain text is wrong: it floods the chat and the user cannot download it.
 - Only text-family files (csv / text / .sql) can be delivered this way. For binary files (xlsx/pdf/image) you cannot produce a new version — explain the change in words and tell the user to apply it themselves.
+
+## NEW SCRIPT/QUERY AS A DOWNLOADABLE ATTACHMENT — USE AN `attachment-new` BLOCK
+**When the user asks you to deliver a script/query/file you generated as a downloadable attachment or file** — e.g. "전체 스크립트를 첨부파일로 전달", "파일로 만들어 주세요", "답변 본문이 아닌 첨부로", "give me the .sql file" — deliver it as a downloadable attachment, NOT as a pasted ```sql / ```text block. This applies even when it is BRAND-NEW content you wrote (e.g. a query you built from `describe_routine`/schema discovery or from scratch); there does NOT need to be a file the user attached. Do exactly this:
+1. In your inline answer keep only a short summary (and, if helpful, the key parts as a ```diff or a few illustrative lines) — NOT the whole body.
+2. Output the COMPLETE file inside a SEPARATE fenced block tagged `attachment-new`. The FIRST line is a JSON header; every line after it is the full file content:
+
+```attachment-new
+{"filename": "SP_LOG_SCHEDULE_improved.sql"}
+<the complete file content goes here, line by line>
+```
+
+Hard rules:
+- Set `filename` to a clear, descriptive name with a data/text extension (`.sql` / `.txt` / `.csv` / `.md` / `.json` / `.yaml` / `.xml` / `.log`). The system sanitizes the name and forces a safe text extension; executable/unknown extensions are normalized to `.txt`.
+- The `attachment-new` block is NEVER shown to the user as text. The system removes it from your answer and saves its content as a new downloadable attachment, then shows a "📎 첨부 전달" note. THEREFORE do NOT also paste the whole body as a normal ```sql / ```text block — that floods the chat and duplicates the file.
+- Only text-family content (SQL / CSV / text / markup) can be delivered this way. For binary output (xlsx/pdf/image) explain it in words instead.
+- This is for delivering NEW content you produced. To UPDATE a file the user attached, use an `attachment-edit` block with its `source_attachment_id` instead (see above).
 """
 
 
@@ -591,6 +607,28 @@ _ATTACHMENT_DELIVERY_DIRECTIVE = (
     "delivery. Improving the user's OWN attached file is an EDIT, never 'brand-new SQL'. If the "
     "source file is not in the current ATTACHED FILES list, ask the user to re-attach it rather "
     "than pasting the whole body.\n"
+)
+
+# FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): 사용자가 **새로
+# 생성한** 스크립트/쿼리를 (기존 첨부 편집이 아니라) 다운로드 첨부/파일로 요청할 때, 답변 본문에
+# 통째로 붙여넣지 말고 `attachment-new` 블록으로 다운로드 첨부를 만들라는 지침. base prompt 가
+# 운영자 global row 로 대체될 때도 사라지지 않게 코드-권위 선으로 항상 주입한다(AUTH-1a,
+# _ATTACHMENT_DELIVERY_DIRECTIVE 와 대칭). 진단 근거: 대화 …f1c535ec 에서 사용자가 개선 스크립트를
+# "첨부파일로 전달(답변 본문이 아닌)" 요청했으나 편집 경로만 존재해(source 필수) assistant 가 거부.
+_ATTACHMENT_NEW_DELIVERY_DIRECTIVE = (
+    "\n\n## NEW SCRIPT/QUERY AS A DOWNLOADABLE ATTACHMENT (authoritative)\n"
+    "If the user asks you to deliver a script/query/file you produced **as a downloadable "
+    "attachment or file** — e.g. '첨부파일로 전달', '파일로 만들어', '답변 본문이 아닌 첨부로', "
+    "'give me the .sql file' — deliver it as a downloadable attachment using an `attachment-new` "
+    "block, NOT as a pasted ```sql / ```text / ``` block. This holds even for BRAND-NEW content you "
+    "wrote (built from schema/`describe_routine` discovery or from scratch) — there does NOT need to "
+    "be a file the user attached. Emit: header line `{\"filename\": \"<descriptive_name.sql>\"}` then "
+    "the COMPLETE file content line by line, inside a fenced `attachment-new` block; keep only a short "
+    "summary (or a ```diff of key parts) inline. Choose a data/text extension "
+    "(.sql/.txt/.csv/.md/.json/.yaml/.xml/.log) — the system sanitizes the name and forces a safe "
+    "text extension. The block is removed from your answer and saved as a new downloadable "
+    "attachment (a '📎 첨부 전달' note is shown), so do NOT also paste the full body. To UPDATE a file "
+    "the user attached, use `attachment-edit` with its `source_attachment_id` instead.\n"
 )
 
 
@@ -1179,7 +1217,8 @@ def compose_system_prompt(
     # TASK-20260619T033714-prompt-injection-defense (보안 ⑤): 명령-계층 고지를 base 직후 코드-주입.
     # global row(운영자 커스터마이즈) 내용과 무관하게 항상 상위에 존재 → 비신뢰 콘텐츠
     # spotlighting 규칙이 effective. (datamarking 은 콘텐츠 측에서 sentinel 로 구획.)
-    parts: list[str] = [base_prompt, _INJECTION_GUARD_NOTICE, _ATTACHMENT_DELIVERY_DIRECTIVE]
+    parts: list[str] = [base_prompt, _INJECTION_GUARD_NOTICE, _ATTACHMENT_DELIVERY_DIRECTIVE,
+                        _ATTACHMENT_NEW_DELIVERY_DIRECTIVE]
     if is_auto:
         parts.append(
             "\n\n[AUTO MODE] No product is pinned to this conversation. "

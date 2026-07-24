@@ -3410,6 +3410,63 @@ async def ask(request: Request) -> JSONResponse:
                         conversation_id, exc_info=True,
                     )
 
+        # FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): assistant 가
+        # 답변 본문에 ```attachment-new``` 블록을 넣었으면(사용자가 새로 생성한 스크립트/쿼리를
+        # 다운로드 첨부로 요청) source 없이 root 첨부로 materialize. 편집 경로와 동일 fail-open,
+        # 응답 new_attachments 로 표면화. 편집(수정본)과 신규(새 파일)를 별도 리스트로 추적한다.
+        new_attachments: list[dict[str, Any]] = []
+        if conversation_id and render_output and not agent_result.get("error"):
+            try:
+                _new_msg_id = int((latest_message or {}).get("id") or 0) if conversation_id else 0
+                new_attachments = app._materialize_assistant_attachment_new(
+                    conn,
+                    account=account,
+                    conversation_id=conversation_id,
+                    answer=str(render_output),
+                    message_id=_new_msg_id,
+                    request=request,
+                    # turn 당 개수 cap 을 편집 경로와 합산(§18.8 MINOR): 이미 materialize 된 편집 수를 뺀 잔여.
+                    remaining_count=app._ASSISTANT_EDIT_COUNT_CAP - len(materialized_attachments),
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "ask: assistant attachment-new materialize failed (conversation_id=%s)",
+                    conversation_id, exc_info=True,
+                )
+            if new_attachments:
+                try:
+                    _new_run_id = ""
+                    _new_max_idx = -1
+                    for _s in (render_steps or []):
+                        if _s.get("run_id"):
+                            _new_run_id = str(_s.get("run_id") or "")
+                        try:
+                            _new_max_idx = max(_new_max_idx, int(_s.get("step_index", 0) or 0))
+                        except Exception:
+                            pass
+                    if _new_run_id:
+                        _new_names = ", ".join(
+                            f"'{a.get('original_filename') or '파일'}'" for a in new_attachments
+                        )
+                        _new_step = {
+                            "step_index": _new_max_idx + 1,
+                            "action": "attachment_create",
+                            "tool": "materialize_attachment",
+                            "work": f"새 첨부 {_new_names}을(를) 파일로 저장했습니다.",
+                            "reason": "생성한 스크립트를 사용자에게 다운로드 첨부로 제공합니다.",
+                            "args": {"attachment_ids": [int(a.get("id") or 0) for a in new_attachments]},
+                        }
+                        from modules.memory import save_memory_step as _save_step
+                        _save_step(conn, conversation_id, _new_run_id, _new_step)
+                        render_steps = list(render_steps or []) + [
+                            {**_new_step, "run_id": _new_run_id, "work_source": "llm", "reason_source": "llm"}
+                        ]
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ask: attachment-new step record failed (conversation_id=%s)",
+                        conversation_id, exc_info=True,
+                    )
+
         # ★ TASK-0286: attachment-edit 블록을 답변에서 제거 → 전체 수정본 본문이 채팅에 노출되지
         # 않게 한다(변경점은 diff 블록으로, 전체 수정본은 첨부 새 버전으로 전달). materialize 성공분은
         # "📎 수정본 전달" 명시 문구로 치환. render_output(응답)뿐 아니라 DB content 도 갱신해
@@ -3429,6 +3486,23 @@ async def ask(request: Request) -> JSONResponse:
                         conversation_id, exc_info=True,
                     )
 
+        # FR-brandnew-script-attachment-delivery-gap: attachment-new 블록도 답변에서 제거 →
+        # 전체 스크립트 본문이 채팅에 노출되지 않게 하고 "📎 첨부 전달" 안내로 치환(전체 파일은
+        # 다운로드 첨부로 전달). 편집 strip 과 동일 정책 — DB content 도 갱신.
+        if conversation_id and isinstance(render_output, str) and "attachment-new" in render_output:
+            _stripped_new = app._strip_attachment_new_blocks(render_output, new_attachments)
+            if _stripped_new != render_output:
+                render_output = _stripped_new
+                try:
+                    _strip_new_msg_id = int((latest_message or {}).get("id") or 0)
+                    if _strip_new_msg_id > 0:
+                        app._update_assistant_message_content(conn, conversation_id, _strip_new_msg_id, _stripped_new)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ask: attachment-new strip content update failed (conversation_id=%s)",
+                        conversation_id, exc_info=True,
+                    )
+
         result = {
             "output": render_output,
             "executed_sql": render_sql,
@@ -3441,6 +3515,8 @@ async def ask(request: Request) -> JSONResponse:
         }
         if materialized_attachments:
             result["edited_attachments"] = materialized_attachments
+        if new_attachments:
+            result["new_attachments"] = new_attachments
         conn.close()
         return JSONResponse(result)
     finally:
@@ -3734,6 +3810,33 @@ def _strip_attachment_edit_blocks(answer: str, materialized: list[dict[str, Any]
         notes = "\n".join(
             f"📎 수정본 **{a.get('original_filename') or '파일'}** (v{a.get('version_number') or 2}) 을(를) "
             f"첨부 파일로 전달했습니다. 위 변경점을 확인하고 첨부에서 다운로드하세요."
+            for a in materialized
+        )
+        stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
+    return stripped or answer
+
+def _strip_attachment_new_blocks(answer: str, materialized: list[dict[str, Any]]) -> str:
+    """답변에서 ```attachment-new``` 블록을 제거하고 "📎 첨부 전달" 안내 문구로 치환.
+
+    FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): assistant 가 새로
+    생성한 전체 스크립트 본문이 채팅에 그대로 노출되는 것을 막고(사용자가 명시적으로 "본문이
+    아닌 첨부로" 요청), 전체 파일은 다운로드 첨부(materialize)로 전달한다. materialize 가 실패한
+    블록도 제거해 본문 노출을 막는다(fail-open 일관). 전부 제거돼 본문이 비면 원문을 유지한다.
+    편집 strip(_strip_attachment_edit_blocks)과 동일 규율, 신규 첨부용 안내 문구만 다르다.
+    """
+    spans = app._attachment_new_block_spans(answer)
+    if not spans:
+        return answer
+    lines = (answer or "").split("\n")
+    remove: set[int] = set()
+    for _oi, _ci, _h, _b in spans:
+        remove.update(range(_oi, _ci + 1))
+    stripped = "\n".join(ln for i, ln in enumerate(lines) if i not in remove)
+    stripped = app.re.sub(r"\n{3,}", "\n\n", stripped).strip()
+    if materialized:
+        notes = "\n".join(
+            f"📎 **{a.get('original_filename') or '파일'}** 을(를) 첨부 파일로 전달했습니다. "
+            f"첨부 목록·말풍선에서 다운로드하세요."
             for a in materialized
         )
         stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
