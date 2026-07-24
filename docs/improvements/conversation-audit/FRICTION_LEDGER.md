@@ -216,6 +216,22 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **범위 밖(deferred, §정직)**: 단일-ds freeform grounding(활성 drift 제품 0·구조화 arg-canonicalize 봉인) · admin.js `.toLowerCase()` 자체(프론트·visual verification·write-path 정규화가 상쇄) · datasource-scoped picker 실제 case 표시 · 기존 저장 소문자 18행 백필(admin 별도 — A 런타임 + 재저장 write-path 가 점진 seal) · SCHEMATA 프로브 sql_guard/breaker 미경유(security MINOR, 비-경계).
 - **라이브 실측 필요분(§정직)**: 코드/테스트/datasource 프로브는 "canonicalize 로직 정확·게이트 불변·0→63 flip". "실제 대화에서 describe/search 가 DEV_1_1_1_20 63테이블 반환·give-up 소멸" 은 배포 후 원 입력 재현분(미수행) → 다음 audit corroboration 재측정.
 
+## FR-procedure-analysis-result-truncated — fixed:deployed:unverified-live (L2 도구결과 전역 4000자 캡; 대형 backstop 상향)
+
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 `test_tool_result_cap.py` 6 PASS + feature-0002+0003 전체 회귀 exit=0·FAILED/ERROR 0) + §18.8 3렌즈 적대 패널(backend+security+qa) **SHIP**(BLOCKING/MAJOR 0·4 REFUTED·NIT 3 반영) + verify-completion PASS + **배포 완료**(2026-07-24, PR #935 merge main `64daae28` → `deploy-web` 전체 롤아웃, 워커 `a1982ca3`·web `3264cf9d` 재빌드·gateway reconcile·soak 통과; 4서비스 전부 내 머지 64daae28 포함). **ask-worker 런타임 baked 실증**: `AGENT_TOOL_RESULT_MAX_CHARS=100000` 로드·10530자 프로시저(>4000) `_cap_tool_result` **전문 반환·절단 0**(옛 4000 캡이면 잘렸을 입력)·초대형 150k→100k+`(truncated)` note backstop; web-a/web-b docker healthy + baked healthcheck exit=0. **실제 긴 프로시저 describe_routine 라이브 대화 e2e 는 미수행** → `unverified-live`(런타임 baked 실증이 강하게 시사·`_cap_tool_result` 가 describe_routine 출력의 유일 캡). 다음 audit 에서 동일 시나리오 재현/corroboration(도구결과 절단 노출률) 재측정 시 `verified`.
+- **fix(요지)**: CHG-20260724T155534-tool-result-cap-raise / **코드 거주 `feature-0002-agent-core`** / REV-20260724T155534-tool-result-cap-raise (subagent a2af724b865cf671a). 사용자 결정=**전 도구 대형 캡**(AskUserQuestion 2026-07-24 — 3안[정의 도구만 무제한/전 도구 무제한/전 도구 대형 캡] 중 도구별 분기 없는 유한 backstop). Major(§12.3 코어 LLM 루프) → 사용자 scope 결정 후 구현 + PR/deploy confirm(전건 승인).
+- **last_seen**: 2026-07-24 · **seen_count**: 1 · **seen_distinct_conv**: 1 (사용자 직접 보고)
+- **modality**: (사용자 직접 보고 — 대화 미지정) · **conv(마스킹)**: "타임아웃된 프로시저 분석" 사용자 명시 보고
+- **symptom_confidence**: high (사용자 명시 보고 `E-USR`) · **rootcause_confidence**: high (코드 file:line 삼각측량 확정)
+- **suspected_layers**: **L2**(도구 결과 → LLM 되먹임 전역 4000자 캡이 `describe_routine` 정의 전문 반환을 재절단 — 진짜 결함)
+- **증상(signal)**: `E-USR` — assistant 가 긴 저장 프로시저를 추론·내부 도구로 분석할 때 정의 본문이 4000자에서 잘려 한 번에 탐색 불가 → 나머지를 못 채워 반복 재조회·포기(타임아웃).
+- **confirmed_root_cause**: `agent_core.py` 도구 루프 3지점(메인 루프·rederive 루프·PG `core_messages` 저장 copy)의 `tool_result[:4000]` 전역 하드캡. `describe_routine`(FR-show-create-routine-blocked, 정의 본문 **전문 반환**)을 재절단해 도구 목적 무력화. 재발경로 = **capability/design gap**(전역 컨텍스트-보호 캡이 정의-반환 도구 목적과 충돌). **describe_routine 개선의 직접 후속 갭.**
+- **봉인**: `shared/config.py` `AGENT_TOOL_RESULT_MAX_CHARS`(env override, 기본 **100000**, `cap<=0`=무제한) + `agent_core._cap_tool_result` 헬퍼(초과 시에만 `... (truncated)` note — FR-partial-evidence epistemic 계약 보존). 3지점 상수화. 저장은 PG `agent_runtime.core_messages.content`=text(무제한, overflow 0). **보안 회귀 0**: sql_guard/RBAC/datasource 바인딩/PII/datamark 경계 불변(순수 context-sizing).
+- **corroboration**: 미측정(단일·사용자 명시 보고; 외부 게임 datasource 거주 프로시저라 빈도 실측 불가). **disposition=fix-now** 근거: **명백한 구조결함**(코드 file:line confirmed·rootcause high) + describe_routine 개선 직접 후속 갭 — 빈도 corroboration 없이 fix-now 자격(명백결함 예외). Major → 사용자 scope 결정(AskUserQuestion) 후 구현.
+- **수용 tradeoff(MINOR, §18.8 패널 by-design)**: 메시지당 컨텍스트/비용 상한 상향(describe_routine 최대 100k·execute_sql 자체 캡 ~12k). 히스토리 reload 는 메시지 수(50) 윈도우라 대형 결과 누적 시 context_length 도달 가능 — 단 `classify_llm_provider_error` context_length 분류(persist_health=False·글로벌 배너 미오염)로 **graceful degradation** + 유한·env 튜닝 가능. 사용자 결정의 명시 수용 범위. 후속 lever(캡 하향/byte-기준 윈도우)는 필요 시 별도.
+- **rc_ids**: RC-1(이 audit) · **batch-id**: B-20260724T155534-tool-result-cap-raise
+- **라이브 실측 필요분(§정직)**: 코드/테스트/패널/런타임 baked 실증은 "긴 도구 결과가 캡 미만이면 전문 도달·경계·절단 시 note 보존"을 배포본에서 증명. "실제 대화에서 긴 프로시저 describe_routine 분석 마찰 소멸"은 배포 후 라이브 e2e 분(미수행) → 다음 audit corroboration 재측정 → 유지 시 `verified`, 재발 시 `regressed`.
+
 ---
 
 ### 메타 (이 원장의 첫 기록)
