@@ -10,6 +10,10 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260724T140000-share-scroll-bottom-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260724T112446-share-scroll-bottom, 비-정책 doc-only)
+- Panel skip 사유(§18.8): test-runs.d fragment POST-DEPLOY append + TASK 체크박스 완료 + MODIFY/REPORT 갱신 뿐 — 코드/자산 0. 코드 리뷰 정본 = REV-20260724T112446-share-scroll-bottom(SHIP-WITH-FIXES).
+- 라이브 실측(배포 94b4003a, `bin/win-browser.py` relay 실 Windows Chrome, 실 공유 링크 16-메시지 대화): AC-SSB-1 진입 scrollY 53282==maxY·atBottom=true·pageerror 0 · AC-SSB-3 top 스크롤 후 stayedAtTop(snap-back 없음) · AC-SSB-2 최종 54118px 안착. 서빙 /static/share.js 신 심볼 5종·dead window-load 소멸 curl 확증. 사용자 요청("공유 링크 진입 시 스크롤 맨 아래") 해소.
+
 ## REV-20260724T112446-share-scroll-bottom [SUBAGENT:adversarial-frontend] — 공유 대화 링크 진입 시 문서 스크롤 맨 아래 고정 (TASK-20260724T112446-share-scroll-bottom, Minor §12.3 frontend-only) — SHIP-WITH-FIXES
 - 대상 diff: `static/share.js` 단일(+70) — 진입 `fetchShare→render` 체인에 `engageInitialBottomPin()` 1회 + `scrollShareToBottom`/`releaseShareBottomPin`/`onShareBottomPinKeydown` 신설 + `pageBranchShare`·`scrollShareMessageIntoCenter` 에서 명시 pin 해제. §18.8 적대 패널(general-purpose subagent, correctness+regression+UX 렌즈 9축) — 결함 적발 목적.
 - **헤드라인 회귀 2건 CONFIRMED-OK**: (1) feature-0019 버전 페이징 위치보존(`pageBranchShare` savedY)과 진입 pin 이 싸우지 않음 — 페이저 클릭(마우스 click, wheel/touch/key 아님)이라 명시 `releaseShareBottomPin()`(savedY 캡처 전 선행)이 유일 방어이고 정상 배치·disconnect 후 재-fire 불가. (2) rail dot 점프(`scrollShareMessageIntoCenter`)도 함수 진입 즉시 명시 해제 → eased 스크롤과 무충돌. **BLOCKING/데이터-정확성 defect 0.**

@@ -21,7 +21,7 @@ source_of_truth: true
   - [x] AC-SSB-3 구현: 사용자 조작 시 재고정 중단(wheel/touch/keydown+3s) · `pageBranchShare`/`scrollShareMessageIntoCenter` 무회귀 pin 해제 · 빈 공유 no-op(maxY=0).
   - [x] `node --check` PASS · §18.8 적대 프론트 리뷰(REV-20260724T112446-share-scroll-bottom) 반영.
   - [x] CHECK#13 = test-runs.d Windows-browser fragment(PRE-COMMIT PASS 기록 + POST-DEPLOY 라이브 계획, headless layout 부재 사유).
-  - [ ] POST-DEPLOY: main 병합 + `deploy-web` 후 실 Windows Chrome PB-0008 라이브 실측(AC-SSB-1~3 / AC-1~6) — deploy_scope: included(FIRST_REQUEST.md 전역 §12.2).
+  - [x] POST-DEPLOY: main 병합(#918→94b4003a) + `deploy-web-only`(soak PASS) 후 실 Windows Chrome PB-0008 라이브 실측 **PASS** — AC-SSB-1(진입 scrollY 53282==maxY, atBottom)·AC-SSB-3(top 스크롤 후 stayedAtTop, snap-back 없음)·AC-SSB-2(최종 54118px 안착)·pageerror 0. 서빙 자산 curl 확증. deploy_scope: included(FIRST_REQUEST.md 전역 §12.2).
 - 위험도: Minor(§12.3 — 단일 파일 display-계층 추가, 비파괴, RBAC/스키마/엔드포인트 0). 롤백 = revert.
 
 ## TASK-20260723T080415-floating-menu-close-fix — floating 메뉴(특히 폴더 '···')가 바깥클릭/ESC 로 안 닫히던 결함 수정 (Minor §12.3 — feature-0003 web/UI 프론트 단독, frontend-only. universal-ctxmenu 후속 사용자 신고)
