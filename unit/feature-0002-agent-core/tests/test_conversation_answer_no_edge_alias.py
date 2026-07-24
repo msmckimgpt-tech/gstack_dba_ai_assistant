@@ -334,11 +334,12 @@ def test_call_llm_sizes_budget_from_outbound_for_leaking_alias(monkeypatch):
     assert recorded == [("auto", "agent")]
 
 
-# ── G8b: sonnet 대화 예산 경로 — budget_model=원본, max_tokens>16000 (sonnet-chat-fallback, NIT-b/c) ──
-# sonnet 은 thinking-capable claude-* 라 budget_model=원본(claude-sonnet-4). 예산 경로를 실제로 태워
-# (1) outbound 가 -chat, (2) 예산 키가 **원본 claude-sonnet-4**(outbound 아님), (3) max_tokens 가
-# sonnet-chat config 고정 thinking(16000) 초과 → Anthropic max_tokens>budget 만족(2차 400 없음)을 고정.
-def test_call_llm_sizes_sonnet_budget_from_original_model(monkeypatch):
+# ── G8b: sonnet 대화 경로 — adaptive thinking(Sonnet 5), budget_tokens 절대 미주입 (sonnet5-upgrade) ──
+# sonnet(claude-sonnet-4 alias)은 Sonnet 5 를 서빙하며 adaptive thinking 을 쓴다. 예산 경로를 실제로 태워
+# (1) outbound 가 -chat, (2) max_tokens 키가 **원본 claude-sonnet-4**(outbound 아님)의 agent_max_output,
+# (3) '일반'(reasoning_level 미지정)에서 budget_tokens/thinking override 를 **절대 주입하지 않음**(Sonnet 5
+# budget_tokens 400 방지)을 고정한다.
+def test_call_llm_sonnet_adaptive_no_budget_tokens(monkeypatch):
     sink: dict = {}
     recorded: list = []
     budget_calls: list = []
@@ -362,11 +363,12 @@ def test_call_llm_sizes_sonnet_budget_from_original_model(monkeypatch):
     )
 
     assert sink["model"] == "claude-sonnet-4-chat"          # 아웃바운드(edge-free 2계정)
-    # sonnet 은 thinking-capable → 예산 키는 **원본** claude-sonnet-4(outbound 아님) — usage/override 정합.
+    # max_tokens 키는 **원본** claude-sonnet-4(outbound 아님)의 agent_max_output — usage/override 정합.
     assert budget_calls == ["claude-sonnet-4"]
-    assert isinstance(sink["max_tokens"], int) and sink["max_tokens"] > 16000, (
-        f"sonnet max_tokens={sink.get('max_tokens')} 가 -chat 고정 thinking budget 16000 이하 "
-        f"→ Anthropic max_tokens>budget_tokens 위반(2차 400)."
-    )
+    assert isinstance(sink["max_tokens"], int) and sink["max_tokens"] == 40000
+    # 핵심(sonnet5-upgrade): adaptive 이므로 '일반'에서 budget_tokens/thinking override 를 주입하지 않는다
+    # (Sonnet 5 는 thinking budget_tokens 를 400 으로 거부). _CaptureCompletions 는 extra_body 키를 항상
+    # 세팅하므로(미주입 시 None) 값이 None 임을 확인한다.
+    assert sink["extra_body"] is None, f"adaptive sonnet 에 override 누출: {sink['extra_body']}"
     # 기록/표시는 원본 유지.
     assert recorded == [("claude-sonnet-4", "agent")]

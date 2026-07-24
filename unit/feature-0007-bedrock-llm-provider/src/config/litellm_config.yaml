@@ -12,8 +12,13 @@
 # 사용한다.
 
 model_list:
-  # ── Claude Sonnet 4.6 (frontier, ACTIVE — global inference profile) ──
-  # 2026-05-21 Phase E 검증 결과:
+  # ── Claude Sonnet 5 (frontier, ACTIVE) — sonnet5-upgrade 2026-07-24 ──
+  #    alias 는 하위호환 위해 claude-sonnet-4 로 유지하되(저장 대화·node_analysis·probe·단가·
+  #    runtime_settings 키 무변경 — haiku alias 가 haiku-4-5 를 서빙하는 것과 동형), 라우팅 실 모델은
+  #    현행 Sonnet 5 로 올린다. 배경: claude-sonnet-4-6 은 폐기된 버전이라 두 OAuth 계정 모두 429
+  #    (rate_limit_error)를 반환 → 새 대화 sonnet 선택이 "서비스 자체의 요청량 한도"로 실패했다
+  #    (haiku-4-5 는 현행이라 정상). 실 서비스 버전은 Sonnet 5 (사용자 확인 2026-07-24).
+  # 2026-05-21 Phase E 검증 결과(참고 — Bedrock 배포 경로):
   # 1. Bedrock Seoul region 의 ACTIVE Sonnet/Haiku 는 on-demand 호출 미지원
   #    (inference profile 강제).
   # 2. APAC inference profile 은 LEGACY Sonnet 4 만 (30일 미사용 access denied).
@@ -22,20 +27,21 @@ model_list:
   # 결정 (사용자 reanchor 2026-05-21): 사내 한정 + 비-개인정보 SQL 작업 가정으로
   # global routing 수용. 데이터 잔류 정책은 PIPA 엄격 적용 시 별 cycle 의
   # Provisioned throughput 또는 별 provider 로 재검토. ADR-0022 보강 필요.
-  # Extended thinking: effort=high 수준 (budget_tokens=16000). thinking 활성화 시
-  # temperature 는 LiteLLM 내부에서 1로 고정 (Anthropic 요구사항).
+  # Thinking: Sonnet 5 는 adaptive thinking 만 지원(budget_tokens 400). effort 는 요청 단위
+  # output_config.effort(agent_core)로 조절, 미지정 시 기본 high. temperature 는 미전달(Anthropic 고정 1).
   - model_name: claude-sonnet-4
     litellm_params:
       # ── 개발 단계 (2026-06-23): claude-corp OAuth 계정(masangsoft.com)으로 Anthropic
       #    direct 호출. ANTHROPIC_API_KEY 에 OAuth access token 주입 → litellm 이
       #    sk-ant-oat 토큰을 감지해 Authorization: Bearer + oauth-2025-04-20 로 전송.
       #    배포 시 아래 Bedrock 2줄(model/aws_region_name)로 주석 토글 복구. ──
-      model: anthropic/claude-sonnet-4-6
-      # model: bedrock/global.anthropic.claude-sonnet-4-6   # 배포용 (Bedrock)
-      # aws_region_name: ap-northeast-2                       # 배포용 (Bedrock)
+      model: anthropic/claude-sonnet-5   # sonnet5-upgrade(2026-07-24): claude-sonnet-4-6(폐기) → Sonnet 5
+      # model: bedrock/global.anthropic.claude-sonnet-5   # 배포용 (Bedrock) — 복구 시 실 inference profile ID 확인
+      # aws_region_name: ap-northeast-2                    # 배포용 (Bedrock)
+      # sonnet5-upgrade(2026-07-24): Sonnet 5 는 budget_tokens 를 400 으로 거부한다(Anthropic 스펙 —
+      # claude-api skill 확인). adaptive thinking + output_config.effort 로 전환. effort 기본 high.
       thinking:
-        type: "enabled"
-        budget_tokens: 16000
+        type: "adaptive"
 
   # ── Claude Haiku 4.5 (가성비, ACTIVE — global inference profile) ─────
   # Extended thinking 활성화 (budget_tokens=5000). Haiku 4.5 는 Claude 4 시리즈로
@@ -119,21 +125,23 @@ model_list:
   #    sonnet 도 -chat(claude-corp) → -chat-root(root) 2계정 체인을 부여한다. edge(gemma) 폴백은 대화 정책
   #    (2026-07-07 사용자 결정)대로 **의도적 배제** — 두 계정 모두 실패면 429/401 을 그대로 raise 해 정직하게
   #    실패한다(맥락 파괴한 2B gemma 답변 원천 차단). bare claude-sonnet-4 는 probe/OPENAI_MODEL 기본값 등
-  #    비대화 경로 전용으로 무변경(격리). thinking budget(16000)은 bare claude-sonnet-4 와 동일.
+  #    비대화 경로 전용으로 무변경(격리). thinking 은 bare claude-sonnet-4 와 동일한 adaptive.
   - model_name: claude-sonnet-4-chat
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
+      model: anthropic/claude-sonnet-5
       api_key: os.environ/ANTHROPIC_API_KEY
+      # sonnet5-upgrade(2026-07-24): Sonnet 5 는 budget_tokens 를 400 으로 거부한다(Anthropic 스펙 —
+      # claude-api skill 확인). adaptive thinking + output_config.effort 로 전환. effort 기본 high.
       thinking:
-        type: "enabled"
-        budget_tokens: 16000
+        type: "adaptive"
   - model_name: claude-sonnet-4-chat-root
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
+      model: anthropic/claude-sonnet-5
       api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+      # sonnet5-upgrade(2026-07-24): Sonnet 5 는 budget_tokens 를 400 으로 거부한다(Anthropic 스펙 —
+      # claude-api skill 확인). adaptive thinking + output_config.effort 로 전환. effort 기본 high.
       thinking:
-        type: "enabled"
-        budget_tokens: 16000
+        type: "adaptive"
 
   # ── insight-llm-fallback: 최종(3순위) 폴백 = 로컬 gemma(edge) via local-llm-gateway ──
   # claude-corp·root 두 계정 모두 429/실패 시 로컬 LLM 으로 우회(rate-limit 없음). local-llm-gateway 는

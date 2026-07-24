@@ -303,6 +303,15 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - 없음.
 
 ## 6. Done
+- [x] **sonnet5-upgrade** (2026-07-24, sonnet-chat-fallback 후속): 라이브 검증서 sonnet 두 계정 모두 429
+  발견 → 실 원인은 폐기된 `anthropic/claude-sonnet-4-6` 라우팅(현행 Sonnet 5). ⓵ litellm sonnet alias 3개를
+  `anthropic/claude-sonnet-5` 로 repoint + **thinking 을 adaptive 로 마이그**(Sonnet 5 는 budget_tokens 400 —
+  claude-api skill 확인). ⓶ 모델별 thinking 스타일 분기(`model_thinking_style`/`effort_for_reasoning_level`,
+  `_call_llm`/probe: adaptive=effort, budget=budget_tokens) — 추론강도 선택기 이원화, haiku 무회귀. ⓷ 사용자
+  지시로 표시 label 버전-무관화(claude-sonnet/claude-haiku, value 유지) + canonical fold sonnet-5 + 컴포저 라벨
+  resolver(app.js). 검증: pytest PASS(rc=0, adaptive/effort·dual-style 테스트)·YAML OK·JS OK. **litellm 의
+  adaptive/effort 통과는 배포 후 gateway ping 라이브 확정 필수**(실패 시 rollback) + PB-0008.
+  (CHG-20260724T113513-sonnet5-upgrade / REV-20260724T113513-sonnet5-upgrade)
 - [x] **sonnet-chat-fallback** (2026-07-24): 새 대화 sonnet 선택 시 "서비스 자체의 요청량 한도"
   실패(계정 quota 무관) 수정 — 근본 원인은 sonnet 대화가 root 계정 fallback 없는 bare
   `claude-sonnet-4` 로 나가 claude-corp 429 시 즉시 실패(haiku 는 `-chat`→`-chat-root` 2계정

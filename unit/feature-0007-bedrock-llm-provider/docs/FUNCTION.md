@@ -142,6 +142,21 @@ source_of_truth: true
   (=ANTHROPIC_API_KEY, fallback 미구성)는 probe·`OPENAI_MODEL` 기본값·node_analysis 등 비대화 경로 전용**
   으로 무변경(격리) — 대화 경로만 -chat 체인이 회복성을 전담한다. (이전엔 sonnet 이 -chat 미매핑이라 bare
   단일 계정으로 나가 claude-corp 429 시 "서비스 자체의 요청량 한도"로 즉시 실패했다 — sonnet-chat-fallback 수정.)
+  - **모델 버전 = Sonnet 5 (sonnet5-upgrade 2026-07-24)**: sonnet alias 3개(claude-sonnet-4/-chat/-chat-root)의
+    litellm 라우팅 실 모델은 `anthropic/claude-sonnet-5`(현행). 이전 `claude-sonnet-4-6` 은 폐기돼 두 계정 모두
+    429 를 반환했다(sonnet-chat-fallback 배포 후 라이브 검증서 발견 — haiku-4-5 는 현행이라 정상). **내부 alias
+    이름은 claude-sonnet-4 유지**(하위호환: 저장 대화·node_analysis·probe·단가·runtime_settings 키 무변경 —
+    haiku alias 가 haiku-4-5 를 서빙하는 것과 동형).
+  - **Sonnet 5 thinking API = adaptive (budget_tokens 아님)**: Anthropic 스펙상 Sonnet 5 는 `thinking:{type:
+    enabled, budget_tokens:N}` 을 **400 으로 거부**한다. sonnet alias 의 litellm `thinking` 을 `{type:adaptive}` 로
+    두고, 추론강도는 요청 단위 `output_config.effort`(agent_core; 미지정 시 기본 high)로 조절한다. Haiku 4.5(pre-
+    Sonnet-5)는 budget_tokens 유지. 모델별 thinking 스타일은 `model_catalog.model_thinking_style()` 이 판정하고
+    `_call_llm`/probe 가 그에 따라 분기한다. 추론강도 선택기(feature-0003)는 sonnet 에서 레벨→effort, haiku 에서
+    레벨→budget_tokens 로 이원 동작(관리 콘솔 budget override 는 adaptive sonnet 에선 무시).
+  - **사용자 표시 라벨은 버전 넘버링 없이 모델 그대로 (사용자 지시 2026-07-24)**: 모델 선택기·컴포저 표시는
+    `claude-sonnet`/`claude-haiku`(group `Claude`)로 노출하고, 내부 value(claude-sonnet-4/claude-haiku-4,
+    넘버링 포함)는 저장/라우팅용으로만 쓴다. 컴포저 현재-모델 표시는 `_composerModelLabelFor`(app.js)가
+    value→카탈로그 label 로 해석. 버전 업그레이드 시 라벨 불변 → 사용자 혼동(sonnet-4↔5) 원천 차단.
   - **운영 인지(강등 SLO)**: refresh cron 은 평일 업무시간(`0,30 10-18 * * 1-5`)만 돈다. root/claude-corp
     accessToken 은 short-lived(~수시간)이므로 **야간·주말**에는 두 토큰이 만료돼 claude 요청이 401 →
     litellm 이 최종 `edge-fallback`(gemma)으로 **상시 강등**한다(하드실패 아님, best-effort — gemma JSON 품질이

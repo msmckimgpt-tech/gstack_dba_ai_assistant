@@ -321,6 +321,18 @@ def test_probe_non_thinking_model_uses_minimal_max_tokens(monkeypatch):
     assert len(ok_calls) == 1
 
 
+def test_probe_adaptive_model_sends_effort_not_budget(monkeypatch):
+    # sonnet5-upgrade H7(적대리뷰): adaptive 모델(Sonnet 5 계열=claude-sonnet-4 alias) probe 는
+    # budget_tokens(400 유발) 대신 output_config.effort 를 보낸다. max_tokens 는 여유(>1)를 준다.
+    captured, ok_calls = _run_probe(monkeypatch, "claude-sonnet-4", True)
+    assert len(captured) == 1
+    kw = captured[0]
+    assert kw.get("extra_body") == {"output_config": {"effort": "low"}}
+    assert "thinking" not in kw.get("extra_body", {})   # budget_tokens 절대 미주입
+    assert kw["max_tokens"] > 1                          # adaptive 여유(잘림 방지)
+    assert len(ok_calls) == 1                            # valid ping 성공 → 배너 자동해소
+
+
 # ── recovery-only gate: ok/unknown 은 실제 호출 없이 cached 반환(5h 윈도우 재고정 방지) ──
 
 def test_probe_skips_real_call_when_state_ok(monkeypatch):

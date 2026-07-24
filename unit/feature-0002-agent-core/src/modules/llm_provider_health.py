@@ -446,7 +446,7 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
     _PROBE_STATE["ts"] = now
     try:
         from shared import config as cfg
-        from shared.model_catalog import model_supports_thinking
+        from shared.model_catalog import model_thinking_style
         from .llm import _get_llm_client
         model = getattr(cfg, "OPENAI_MODEL", None) or "claude-sonnet-4"
         client = _get_llm_client(timeout_sec=timeout_sec, model=model)
@@ -458,13 +458,21 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
             "messages": [{"role": "user", "content": "ping"}],
             "timeout": timeout_sec,
         }
-        if model_supports_thinking(model):
-            # thinking 강제 alias — Anthropic 제약(max_tokens > budget_tokens) 충족하도록
+        # sonnet5-upgrade(2026-07-24): probe 도 모델별 thinking 스타일을 따라야 한다.
+        _style = model_thinking_style(model)
+        if _style == "budget":
+            # budget 강제 alias(Haiku 등) — Anthropic 제약(max_tokens > budget_tokens) 충족하도록
             # 최소 budget override + max_tokens 를 그 위로. valid 성공 → OK 기록 → 배너 자동 해소.
             create_kwargs["max_tokens"] = _PROBE_THINKING_BUDGET + 64
             create_kwargs["extra_body"] = {
                 "thinking": {"type": "enabled", "budget_tokens": _PROBE_THINKING_BUDGET}
             }
+        elif _style == "adaptive":
+            # Sonnet 5: budget_tokens 는 400. adaptive thinking + output_config.effort=low 로 저비용 valid ping.
+            # (adaptive 는 budget<max_tokens 제약이 없어 max_tokens=1 도 400 은 아니나 응답이 잘려 무의미 →
+            #  최소 여유(1088)를 준다.)
+            create_kwargs["max_tokens"] = _PROBE_THINKING_BUDGET + 64
+            create_kwargs["extra_body"] = {"output_config": {"effort": "low"}}
         else:
             create_kwargs["max_tokens"] = 1
         try:

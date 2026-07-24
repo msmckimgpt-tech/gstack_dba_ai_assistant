@@ -306,8 +306,10 @@ def test_c1_canonical_usage_model_families():
               "claude-haiku-4-interactive-root", "claude-haiku-4-chat", "claude-haiku-4-chat-root",
               "claude-haiku-4-5-20251001", "CLAUDE-HAIKU-4-CHAT"):
         assert C(v) == "claude-haiku-4", v
-    # Sonnet 4.6
-    for v in ("claude-sonnet-4", "claude-sonnet-4-6", "anthropic/claude-sonnet-4-6".split("/")[-1]):
+    # Sonnet — alias 는 claude-sonnet-4(하위호환) 유지, 실 서빙은 Sonnet 5 (sonnet5-upgrade 2026-07-24).
+    # sonnet-4* 변형과 sonnet-5* 실 모델 ID 모두 canonical 단가 family 'claude-sonnet-4' 로 접힌다.
+    for v in ("claude-sonnet-4", "claude-sonnet-4-6", "claude-sonnet-4-chat", "claude-sonnet-4-chat-root",
+              "claude-sonnet-5", "claude-sonnet-5-20260101", "anthropic/claude-sonnet-5".split("/")[-1]):
         assert C(v) == "claude-sonnet-4", v
     # 로컬 게이트웨이·gemma 폴백 → edge
     for v in ("edge", "edge-fallback", "gemma4:e2b", "gemma2", "auto", "core", "code"):

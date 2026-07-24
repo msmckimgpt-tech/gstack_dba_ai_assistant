@@ -160,6 +160,47 @@ def test_invalid_reasoning_level_not_injected(monkeypatch):
     assert "extra_body" not in kwargs
 
 
+# ── 2c. sonnet5-upgrade: adaptive thinking(Sonnet 5) — budget_tokens 대신 output_config.effort ──
+def test_model_thinking_style():
+    from shared.model_catalog import model_thinking_style
+    # claude-sonnet-4 alias 는 실제로 Sonnet 5 를 서빙 → adaptive.
+    assert model_thinking_style("claude-sonnet-4") == "adaptive"
+    assert model_thinking_style("claude-sonnet-5") == "adaptive"
+    assert model_thinking_style("claude-sonnet-4-chat") == "adaptive"
+    assert model_thinking_style("claude-haiku-4") == "budget"       # Haiku 4.5 = pre-Sonnet-5
+    assert model_thinking_style("claude-haiku-4-chat") == "budget"
+    assert model_thinking_style("edge") is None
+    assert model_thinking_style(None) is None
+    # H2(적대리뷰): 미상 claude(카탈로그 밖·미래 adaptive-only 모델)는 안전하게 None — budget_tokens 미주입.
+    assert model_thinking_style("claude-opus-4-8") is None
+    assert model_thinking_style("claude-sonnet-6") is None
+
+
+def test_effort_for_reasoning_level():
+    from shared.model_catalog import effort_for_reasoning_level
+    assert effort_for_reasoning_level("low") == "low"
+    assert effort_for_reasoning_level("high") == "high"
+    assert effort_for_reasoning_level("max") == "max"
+    assert effort_for_reasoning_level("normal") is None   # 기본 high 유지(무override)
+    assert effort_for_reasoning_level(None) is None
+    assert effort_for_reasoning_level("nope") is None
+
+
+def test_sonnet_adaptive_injects_effort_not_budget(monkeypatch):
+    # Sonnet 5: 명시 레벨 → output_config.effort. budget_tokens 는 400 이므로 절대 주입 금지.
+    for level, effort in (("low", "low"), ("high", "high"), ("max", "max")):
+        kwargs = _call(monkeypatch, "claude-sonnet-4", level)
+        assert kwargs.get("extra_body") == {"output_config": {"effort": effort}}, level
+        assert "thinking" not in kwargs.get("extra_body", {}), level
+
+
+def test_sonnet_adaptive_normal_no_override(monkeypatch):
+    # '일반'/미지정 → effort 미주입(config adaptive 기본 high 유지). budget_tokens 절대 미주입.
+    for level in ("normal", None):
+        kwargs = _call(monkeypatch, "claude-sonnet-4", level)
+        assert "extra_body" not in kwargs, level
+
+
 # ── 2b. feature-0018 reasoning-budgets: 관리 콘솔 override precedence ─────────
 @pytest.fixture(autouse=True)
 def _reset_runtime_settings(monkeypatch, tmp_path):
@@ -193,25 +234,26 @@ def test_reasoning_level_default_when_no_override(monkeypatch, tmp_path):
 
 
 def test_normal_ignores_reasoning_override_but_model_override_applies(monkeypatch, tmp_path):
-    # '일반'은 레벨 예산 대상 아님(B1) → reasoning override 무시. 대신 모델 override 가 적용된다.
+    # '일반'은 레벨 예산 대상 아님(B1) → reasoning override 무시. 대신 모델 override 가 적용된다(budget 계열=haiku).
+    # (sonnet 은 sonnet5-upgrade 이후 adaptive 라 budget override 자체가 대상 아님 — 아래 별도 테스트.)
     _stage_snapshot(tmp_path, monkeypatch, {
-        "reasoning_budget:claude-sonnet-4:high": 12000,
-        "model_thinking_budget:claude-sonnet-4": 9000,
+        "reasoning_budget:claude-haiku-4:high": 12000,
+        "model_thinking_budget:claude-haiku-4": 9000,
     })
-    kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
+    kwargs = _call(monkeypatch, "claude-haiku-4", "normal")
     assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 9000}}
 
 
 def test_reasoning_and_total_are_per_model(monkeypatch, tmp_path):
-    # reasoning-budget-per-model: (모델,레벨) 예산과 총 출력이 모델별로 분리된다.
-    # sonnet 의 총 출력·max 예산을 크게 올려도 haiku 요청은 자기 기본값을 그대로 쓴다.
+    # per-model 분리 + dual thinking style(sonnet5-upgrade): sonnet(adaptive)은 output_config.effort +
+    # 자기 총출력, haiku(budget)는 budget_tokens + 자기 총출력. 서로의 override 가 섞이지 않는다.
     _stage_snapshot(tmp_path, monkeypatch, {
         "agent_max_output:claude-sonnet-4": 100000,
-        "reasoning_budget:claude-sonnet-4:max": 60000,
+        "reasoning_budget:claude-sonnet-4:max": 60000,  # adaptive sonnet 에선 무시(budget 미사용)
     })
     ks = _call(monkeypatch, "claude-sonnet-4", "max")
-    assert ks["max_tokens"] == 100000
-    assert ks["extra_body"]["thinking"]["budget_tokens"] == 60000  # < 100000-1024
+    assert ks["max_tokens"] == 100000  # 총 출력 override 는 adaptive 에도 적용
+    assert ks.get("extra_body") == {"output_config": {"effort": "max"}}  # budget 아닌 effort
     kh = _call(monkeypatch, "claude-haiku-4", "max")
     assert kh["max_tokens"] == 24000  # haiku 기본 총 출력(override 무관)
     assert kh["extra_body"]["thinking"]["budget_tokens"] == 16000  # haiku 기본 max 예산
