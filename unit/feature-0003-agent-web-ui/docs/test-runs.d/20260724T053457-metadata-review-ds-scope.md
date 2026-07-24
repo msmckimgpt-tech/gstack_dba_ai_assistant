@@ -13,3 +13,11 @@
   2. **자동승급 목록 정합**: 자동승급(auto_promoted) 후보가 있는 datasource 선택 → 검토 큐에서 확인 → '목록' 보기로 전환 시 동일 항목이 목록에 조회됨.
   3. **등록 시각**: 용어/ENUM/샘플 목록 행 + 검토 큐 행·상세 + ENUM 묶음 행에 `등록 <시각>` 표시.
   - pageerror 0 확인. 결과를 본 fragment 하단·REPORT/REVIEW 에 append.
+
+### POST-DEPLOY 결과 (2026-07-24, 배포 2b22b5ff → main) — **Environment: Windows-browser** — PASS
+- 방법: PB-0008 — `bin/win-browser.py` CDP relay 실 Windows Chrome, https://localhost/admin(bootstrap_admin 세션). eval "1+1"=2 relay 게이트 통과. `/livez` git_commit=2b22b5ff · 서빙 `/static/admin.js?v=e8a2d7019ebb` 에 `_metaReviewScopeParam` 4건 curl 확증.
+- **Fix 1 (검토 큐 datasource 필터) PASS**: `지식베이스 > 메타데이터 > 용어사전 > 용어 검토 큐`, scope=**공용**일 때 96건(여러 datasource: mysql-kr-an1-auth·mysql-mv-dev… 혼재=전체 triage), 데이터소스 셀렉터를 **mysql-kr-an1-auth**(scope_key mysql-ce4d6fb514bc)로 변경 시 **16건**으로 필터되고 16행 전부 `scope: mysql-kr-an1-auth`(타 datasource 후보 미표시).
+- **MAJOR 배지 정합(§18.8 Finding 1) PASS**: 용어 검토 큐 배지가 공용=**96**(=리스트 96건), mysql-kr-an1-auth=**16**(=리스트 16건) — 배지↔리스트 카운트 datasource 선택에 정합(수정 전이면 배지 96 고정 표시).
+- **Fix 2 (자동승급 항목 목록 가시성) PASS**: mysql-kr-an1-auth 에서 '용어 목록' 보기 전환 → **84건**, 그중 **82건 "자동등록" 배지**(자동수집/자동승급 kb_glossary 항목이 해당 datasource 목록에서 조회). 스크린샷에 dbGame·전용보물·ItemIndex 등 자동등록 용어 확인.
+- **Fix 3 (등록 시각) PASS**: 검토 큐 96행·목록 84행 전부 `등록 2026. 07. 24. 오후/오전 …` 표기(`_metaFmtDt`). 스크린샷 각 행 하단 "등록 …" 육안 확인.
+- pageerror 0(window.__errs). 스크린샷: scratchpad `metadata-ds-list-registered.png`(mysql-kr-an1-auth 용어 목록 84건·자동등록 배지·등록 시각·검토 큐 배지 16). 원 마찰 3건(datasource 미필터·자동승급 목록 미조회·등록 시점 미표시) 전부 해소 확인.
