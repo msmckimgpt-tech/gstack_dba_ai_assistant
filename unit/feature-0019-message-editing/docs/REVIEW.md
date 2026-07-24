@@ -88,3 +88,29 @@ source_of_truth: true
 - Verdict: **SHIP**(신규 결함 0). footgun B(브랜치 체인)는 PR #874/#875 로 이미 랜딩 → 본 리뷰 범위 밖.
 - 검증: test_conv_bind_failclosed.py 4 PASS.
 - Human Approval: [1] 예방적 하드닝 진행 + PR·무중단 배포 승인(2026-07-22, AskUserQuestion).
+
+## REV-20260724T064140-reanswer-model-select [SUBAGENT:reanswer-model-security] SHIP
+- Related Change: CHG-20260724T064140-reanswer-model-select (요청사항 수정 재답변이 선택 model·추론강도 반영).
+- Scope: `static/app.js` `_submitMessageEdit`(reanswer 시 model+reasoning_level 전송) +
+  `routers/conversations.py` `post_edit_message`(ask_body forward + non-2xx 보상 복원 확장).
+- 적대적 검증(§18.8, security+correctness 렌즈): **신규 결함 0 (blocker/major 없음)** — verdict SHIP.
+  - **보안 CLEAN**: forward 된 model/reasoning 은 편집 엔드포인트가 소비하지 않고 원문만 ask_body 에
+    실어 재dispatch. `ask()` 가 정상 `/api/ask` 와 **동일 검증**을 재수행 — `_is_safe_model_name`
+    (regex ≤64) + `_is_allowed_api_model`(로컬 모델 거부·allowlist) → 위반 시 **400 조기 차단**,
+    `normalize_reasoning_level` 로 enum clamp. 스코프 복제로 인증 컨텍스트 동일(IDOR·권한 재검사).
+    reanswer 는 `conversation.ask` 필요 = 이미 정상 ask 로 임의 allowlist 모델 사용 가능 → **권한
+    상승·allowlist 우회·injection 없음**(재답변 = 정상 ask 의 부분집합).
+  - **정확성 CLEAN**: `_composerCurrentModel()`/`_composerCurrentReasoningLevel()` 은 빈값 반환 안 함
+    (fallback 종단 sonnet-4/normal). 부재→미forward→기본 폴백(하위호환). 정상 askBody 와 대칭.
+  - **회귀 CLEAN**: forward 는 `if mode=="simple": return` 이후에만 도달, 프론트도 reanswer 에서만
+    필드 설정. 그룹/공유는 non-simple 400 차단 → 무영향. simple 경로 byte-identical.
+- **MINOR [FIXED in-cycle] 재답변 non-2xx 보상 복원 확장**: `_branch_reanswer_setup` 이 active_leaf 를
+  M.parent 로 **커밋 이동**한 뒤 dispatch. 기존 코드는 `except Exception` 에서만 `_branch_restore_state`
+  호출 → `ask()` 가 검증실패(400)·쿼터(429)를 **예외 아닌 non-2xx JSONResponse** 로 반환하면 복원 스킵
+  → active_leaf 가 M.parent 에 고착(tail 은닉, **데이터 손실 아님·복원 가능**). 429 는 pre-existing 이나
+  본 변경의 **model forward 가 model-400 도달 경로를 신설** → footgun 확장 방지 위해 `status>=400` 이면
+  예외 경로와 동일 보상 복원하도록 확장(ask() 계약상 저장-후 실패는 200+error 라 status>=400 은 저장-전
+  게이트 실패와 1:1 대응 → 저장된 재답변 오복원 없음). 리뷰어 제안 옵션 1 채택.
+- **Human Approval**: PLAN-APPROVED(2026-07-13, feature-0019 상위) 유효 범위 내 Minor 후속. deploy_scope: included.
+- 검증: `test_message_editing_reanswer_model.py` **6 PASS**(F1 forward·F2 부재 미포함·F3 명시 normal·F4
+  non-2xx 복원·F5 2xx 미복원·S1 simple 미dispatch) + py_compile/node --check OK. POST-DEPLOY PB-0008.

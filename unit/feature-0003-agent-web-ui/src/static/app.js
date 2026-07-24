@@ -4732,9 +4732,19 @@ function _canEditMessage(message, role, msgIsOwn) {
 }
 
 async function _submitMessageEdit(cid, mid, mode, newContent) {
+  const body = { mode, new_content: newContent };
+  // feature-0019 reanswer-model-select: 요청사항 수정(reanswer)은 정상 /api/ask 와 동일하게
+  // 사용자가 현재 composer 에서 고른 model + 추론 강도로 재요청한다. 미전송 시 backend 가
+  // API_DEFAULT_MODEL(claude-haiku-4) + 모델 config 기본 추론으로 폴백해, 사용자가 고른
+  // sonnet + 매우높음 선택이 haiku + 일반으로 무시되던 회귀 해소. (simple 수정은 재답변이
+  // 없으므로 model/reasoning 무관 — 미포함 유지.)
+  if (mode === "reanswer") {
+    body.model = _composerCurrentModel();
+    body.reasoning_level = _composerCurrentReasoningLevel();
+  }
   return apiFetch(
     `/api/conversations/${encodeURIComponent(cid)}/messages/${encodeURIComponent(mid)}/edit`,
-    { method: "POST", body: JSON.stringify({ mode, new_content: newContent }) },
+    { method: "POST", body: JSON.stringify(body) },
   );
 }
 
