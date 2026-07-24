@@ -296,6 +296,25 @@ source_of_truth: true
     재빌드) 후에만 반영되므로 배포 완료 후 수행(미배포 코드에서 실측 불가 — 미수행 사유). 검증 항목: (1) 새 대화
     sonnet 선택 시 정상 답변(429/400 아님), (2) 모델 선택기·컴포저에 `claude-sonnet`/`claude-haiku`(넘버링 없음) 표시.
 
+#### POST-DEPLOY 라이브 검증 (2026-07-24, 배포 e88cce6f, Environment: gateway 실 ping + 배포 이미지 introspect)
+- **배포**: 3계층 전부 `e88cce6f`(web-a/b·ask/insight-worker·bedrock-gateway reconcile), soak 통과. gateway
+  `/v1/models` 에 sonnet 3 alias 등록 확인.
+- **H4 (litellm adaptive/effort 통과) — PASS**: worker 컨테이너에서 `claude-sonnet-4-chat`(→anthropic/
+  claude-sonnet-5)에 adaptive(config)·`output_config.effort=high/low` ping → **HTTP 429**(param 거부 400 아님).
+  요청이 Anthropic 까지 도달해 rate-limit 을 받았으므로 **adaptive thinking + output_config.effort 가 litellm→
+  Anthropic 정상 통과**(drop_params 미제거) 확정. 대조: haiku-chat 은 budget<max_tokens 제약 여전히 유효
+  (max=2048<budget5000 → 400; max=24000 → **200** "Hey! Yes, I'm here…") = dual-style 정상.
+- **⚠ Sonnet 5 계정 용량 (코드 밖) — 429 THROTTLED (양 계정)**: `claude-sonnet-4-chat`(claude-corp)·
+  `claude-sonnet-4-chat-root`(root) **단발 요청**에도 지속 429(throttling_error). 두 OAuth 구독 계정
+  (claude-corp masangsoft·root Max)에 **Sonnet 5 사용 가능 용량이 없음**(haiku-4-5 는 양쪽 200). 코드 마이그는
+  정확하나 런타임 sonnet 은 여전히 "요청량 한도"(정직한 429). **사용자 결정(2026-07-24): 계정 용량 확인 먼저** —
+  Anthropic 콘솔/플랜에서 Sonnet 5 접근 확보 시 코드 수정 없이 즉시 작동(이미 배포됨). rollback 안 함(폐기 sonnet-4-6
+  회귀=더 나쁨).
+- **라벨 딜리버러블 — PASS**: 배포된 web 이미지 `PUBLIC_API_MODEL_OPTIONS` = `claude-sonnet`/`claude-haiku`
+  (넘버링 없음, group `Claude`), value 는 claude-sonnet-4/claude-haiku-4 유지. 모델 선택기·컴포저 표시 정상 예상
+  (사용자 하드리프레시 Ctrl+F5 권장). full PB-0008 win-browser 시각 확인은 계정 용량 확보 후 sonnet 답변 실측과
+  함께 수행 권장.
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel
