@@ -1001,3 +1001,7 @@ source_of_truth: true
 - Verification: 배포 후 PB-0008 — 관리 콘솔 '모델별 추론 예산'에서 sonnet 카드가 ①+guide-note(②③ 슬라이더 없음), haiku 카드는 ①②③ 그대로.
 - Rollback: `_reasoning_budget_specs`/`_model_budget_specs` 를 `_thinking_models()` 순회로 복원 + admin.js guide 분기 제거(죽은 슬라이더 재노출).
 - Cross-ref: shared/feature-0002 MODIFY 동일 slug · REVIEW-20260724T085937-sonnet-reasoning-budget-guide · model_catalog.effort_for_reasoning_level/model_thinking_style · 선행 CHG-20260707T130000-reasoning-budgets · [[project-sonnet5-oauth-frontier-identity-gate]] H5 이연 해소 · ANCHOR 0003 무충돌.
+
+## CHG-20260724T085937-sonnet-reasoning-budget-guide-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- Date: 2026-07-24. main 8f7b148f 배포(web+worker 재빌드) 후 실 Windows Chrome + https://localhost/admin PB-0008 **PASS**: sonnet 카드=①+guide-note(②③ 슬라이더 부재), haiku 카드=①②③, 라이브 API `adaptive_models=["claude-sonnet-4"]`(budget/reasoning 는 haiku만), 콘솔 에러 0. test-runs.d fragment 결과 기입.
+- Cross-ref: CHG-20260724T085937-sonnet-reasoning-budget-guide(정본) · test-runs.d/20260724T085937-sonnet-reasoning-budget-guide.md.
