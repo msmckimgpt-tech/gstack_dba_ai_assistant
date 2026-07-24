@@ -44,3 +44,24 @@ feature-0019-message-editing(`docs/{TASK,MODIFY,REPORT}.md`, CHG-20260724T064140
   →요청사항 수정(재답변), (c) 재답변 생성 후 **관리 콘솔 'AI 운영' 활동/사용 내역**에서 해당 재답변의
   resolved model=sonnet · 추론예산 상향(≠haiku·≠일반) 확인, (d) `< n/m >` 버전 페이징·simple 수정 무회귀.
   pageerror 0. → 결과를 본 fragment 하단·REPORT/REVIEW 에 append.
+
+### POST-DEPLOY 결과 (2026-07-24, 배포 3264cf9d) — **Environment: Windows-browser** — PASS
+- 방법: PB-0008 — `bin/win-browser.py` relay 실 Windows Chrome 150 (CDP), `https://localhost/` 로그인 세션
+  bootstrap_admin. 서빙 자산 확증: `/livez`·`/readyz` git_commit=3264cf9d(web-a/web-b healthy), 서빙
+  `/static/app.js` 에 `if (mode === "reanswer") { body.model = _composerCurrentModel(); body.reasoning_level
+  = _composerCurrentReasoningLevel(); }` 존재(curl).
+- 대상 대화: `20260724030217-41496652` '전용무기·전용보물 보유 계정 수 집계'(1:1, bootstrap_admin), user
+  메시지 mid 1359.
+- **① 선택 반영**: 컴포저 `+` 모델 메뉴에서 **claude-sonnet**, 추론 메뉴에서 **매우 높음** 클릭 →
+  `_composerCurrentModel()`=`claude-sonnet-4`·`_composerCurrentReasoningLevel()`=`max` 확인.
+- **② 프론트 payload(정본, fetch 인터셉터 캡처)**: 라이브 서빙 `_submitMessageEdit(cid,1359,'reanswer',…)`
+  이 `POST /api/conversations/20260724030217-41496652/messages/1359/edit` 로 전송한 body =
+  `{"mode":"reanswer","new_content":"…","model":"claude-sonnet-4","reasoning_level":"max"}` — 선택한
+  sonnet+max 가 실려 나감(수정 전엔 `{mode,new_content}` 뿐). 캡처 단계는 차단-반환이라 부작용 0.
+- **③ 백엔드 end-to-end(실 재답변)**: 인터셉터 해제 후 실 reanswer 트리거 → user 메시지 **버전 2/2 브랜치
+  생성**(신규 sibling id 1376, `< n/m >` 페이징 동작) → **관리 콘솔 'AI 운영' 최근 활동**에서 해당 대화
+  `20260724030217-41496652` 의 재답변 LLM 호출 4건이 모두 **`claude-sonnet-4`**(16:44:47~16:46:01 KST) —
+  haiku 아님. `/api/profile/usage` by_model 에 신규 `claude-sonnet-4` 요청 1건(96K tokens) 집계.
+- **결과: PASS** — 사용자 원 마찰("요청사항 수정 재요청 시 선택한 sonnet+매우높음이 haiku+일반으로 무시")
+  해소 라이브 실증. 프론트 전송(sonnet+max)→백엔드 forward→ask() resolved model=claude-sonnet-4 전 링크 확인.
+  pageerror 0(콘솔). 스크린샷 대신 payload/AI-ops JSON 캡처를 정본 증거로 사용(계측이 화면보다 정밀).

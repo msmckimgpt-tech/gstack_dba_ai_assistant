@@ -116,3 +116,10 @@ resolved model=sonnet·추론예산 상향 확인).
 
 **Risk**: Minor — 동작 수정·additive, 기존 검증된 ask 경로 재사용. 인증/스키마/파괴 없음. 1:1 reanswer
 만 영향(그룹/공유 simple 전용 무영향). 웹 UI 동작 변경이라 완료 게이트에 PB-0008 포함.
+
+**출하·POST-DEPLOY (2026-07-24)**: PR #937 → main `3264cf9d` 병합 → 무중단 web 배포(deploy_scope: included).
+**POST-DEPLOY PB-0008 라이브 PASS**(Windows-browser, `bin/win-browser.py` relay): 대화
+`20260724030217-41496652` 에서 컴포저 sonnet+매우높음 선택 → 라이브 `_submitMessageEdit` 재답변 payload =
+`{model:claude-sonnet-4, reasoning_level:max}`(fetch 인터셉터 캡처) → 실 재답변이 버전 2/2 브랜치 생성 →
+관리 콘솔 'AI 운영' 최근 활동에서 해당 대화 재답변 LLM 호출이 **claude-sonnet-4**(≠haiku) 실증. 상세=TEST
+fragment `docs/test-runs.d/20260724T064140-reanswer-model-select.md` §POST-DEPLOY 결과.
