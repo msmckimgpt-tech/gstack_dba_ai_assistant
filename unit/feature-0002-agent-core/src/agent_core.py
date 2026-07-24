@@ -2906,6 +2906,31 @@ def _strip_leaked_tool_notes(answer: str) -> str:
     return cleaned.strip()
 
 
+def _build_self_review_messages(base_messages: list[dict], draft_answer: str,
+                                instruction: str) -> list[dict]:
+    """feature-0021 red-team revise/rederive 재프롬프트 메시지 조립 (단일 불변식).
+
+    초안(assistant turn) 뒤에 수정 지시를 **반드시 role=user** 로 붙인다. 지시를
+    role=system 으로 붙이면 결함이 난다 — LiteLLM/Anthropic 어댑터는 messages 배열의
+    system 메시지를 top-level `system` 파라미터로 hoist 하므로, trailing system 은
+    (a) 지시가 거대한 시스템 프롬프트 끝에 묻혀 무시되고 (b) 초안 assistant 가 배열의
+    마지막 turn = **Anthropic prefill** 이 되어 모델이 재작성 대신 초안을 *이어쓰기* 한다.
+    완결된 초안은 이어쓸 게 없어 ~빈 응답(라이브 실측 completion_tokens=3)을 내고,
+    호출부가 None→fail-open 으로 **미수정 초안을 그대로 전달**한다(콘솔 '추론' 탭이
+    '결함 수정 미적용'으로 정확히 표시). 지시를 trailing user turn 으로 두면 초안은
+    prefill 이 아닌 정상 컨텍스트 turn 이 되고 모델이 지시에 응답해 전문을 재작성한다
+    (코드베이스의 기존 empty-answer 재요청 패턴도 role=user 사용 — 정합).
+
+    보안: 지시 본문의 신뢰불가 findings 는 build_revision_instruction/
+    build_rederive_instruction 이 sentinel datamark 로 이미 구획한다. user turn 은
+    system 보다 낮은 권한 채널이라 인젝션 승격 위험이 오히려 낮다(무회귀).
+    """
+    return base_messages + [
+        {"role": "assistant", "content": draft_answer},
+        {"role": "user", "content": instruction},
+    ]
+
+
 def _extract_sql_tables(sql_text: str) -> list[str]:
     sql = str(sql_text or "")
     if not sql:
@@ -4601,11 +4626,11 @@ def _run_agent_core(
                 if _redteam.review_plan(reasoning_level) is not None:
                     _emit_activity("답변을 자가 검증하는 중 (red-team 리뷰)")
 
-                    def _rt_revise(instruction: str) -> str | None:
-                        _rev_messages = messages + [
-                            {"role": "assistant", "content": answer},
-                            {"role": "system", "content": instruction},
-                        ]
+                    def _rt_revise(instruction: str, draft: str) -> str | None:
+                        # draft = orchestrate 가 넘긴 현재 최선 답변(다회 수정 시 직전 수정본).
+                        # 지시는 trailing user turn 이어야 초안이 prefill 로 처리되지 않고
+                        # 모델이 재작성한다 (_build_self_review_messages docstring 참조).
+                        _rev_messages = _build_self_review_messages(messages, draft, instruction)
                         _rev = _call_llm(client, _rev_messages, model,
                                          temperature=temperature,
                                          conversation_id=cid, run_id=run_id,
@@ -4622,7 +4647,7 @@ def _run_agent_core(
                     # _rt_rederive 는 outer local(last_sql) 을 재바인딩할 수 없어(closure) dict 로 전달.
                     _rederive_capture: dict[str, Any] = {"steps": [], "executed_sql": None}
 
-                    def _rt_rederive(instruction: str) -> dict[str, Any] | None:
+                    def _rt_rederive(instruction: str, draft: str) -> dict[str, Any] | None:
                         """도구 허용 재추론 콜백 (feature-0002 축 인지 라우팅).
 
                         _rt_revise(도구 없는 텍스트 재작성)와 달리 도구(execute_sql 등)를 다시
@@ -4639,10 +4664,10 @@ def _run_agent_core(
                             _max_rounds = max(1, _rts.get_int("REDTEAM_REDERIVE_MAX_TOOL_ROUNDS"))
                         except Exception:
                             _max_rounds = 3
-                        _rd_messages = messages + [
-                            {"role": "assistant", "content": answer},
-                            {"role": "system", "content": instruction},
-                        ]
+                        # draft = orchestrate 가 넘긴 현재 최선 답변(다회 수정 시 직전 수정본).
+                        # 지시는 trailing user turn 이어야 초안이 prefill 로 처리되지 않고
+                        # 모델이 도구 재호출·재도출한다 (_build_self_review_messages docstring 참조).
+                        _rd_messages = _build_self_review_messages(messages, draft, instruction)
                         _rd_steps: list[dict[str, Any]] = []
                         _rd_last_sql = last_sql
                         _rd_rounds = 0

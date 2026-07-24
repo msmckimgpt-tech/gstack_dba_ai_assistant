@@ -147,7 +147,6 @@ source_of_truth: true
   data-driven 자동 렌더하므로 새 spec 이 자동 노출. 하위호환: override 미설정(0) 시 기존
   8192 task cap 과 byte-동치. 배포 대상 = web(설정 직렬화) + worker/ask-worker(리뷰어 호출).
 - Rollback Notes: 커밋 revert. 런타임 override 는 콘솔에서 초기화(기본 8192) 가능 — 코드 롤백 없이도 무력화.
-
 ## CHG-20260724-0001
 - Date: 2026-07-24
 - Related Requirement: 사용자 요청 (entry arg-given dispatch, 2026-07-24) — "서비스 assistant
@@ -186,3 +185,39 @@ source_of_truth: true
   env pin 으로 전량 haiku 강제 가능.
 - Rollback Notes: 커밋 revert. 또는 `AGENT_REDTEAM_MODEL=claude-haiku-4-chat` env 로 코드 롤백 없이
   종전 동작(전량 haiku) 복원. effort 는 `AGENT_REDTEAM_EFFORT` env 로 조정.
+## CHG-20260724-0002
+- Date: 2026-07-24
+- Related Requirement: 사용자 요청 (entry arg-given dispatch, 2026-07-24) — assistant 대화에서
+  red-team 리뷰가 BLOCK 을 검출·수정 대상 확인했으나 관리 콘솔 '감사 > AI 운영 현황 > 추론'
+  에서 **결함 미수정 상태로 답변 전달**됨. 대화 추적하여 근본 원인 파악 후 수정.
+- Summary: **근본 원인 (라이브 추적·확증)** — red-team revise/rederive 재프롬프트가 수정 지시를
+  초안(assistant turn) 뒤에 **`role: system` 메시지로 append**. LiteLLM/Anthropic 어댑터가
+  trailing system 을 top-level `system` 파라미터로 hoist → 초안 assistant 가 배열의 마지막
+  turn = **Anthropic prefill** 이 되어 모델이 재작성 대신 초안을 *이어쓰기* 시도. 완결된
+  프로덕션 초안은 이어쓸 게 없어 ~빈 응답을 내고, 호출부가 None→**fail-open 으로 미수정 초안을
+  그대로 전달**. 콘솔 '추론' 탭은 이를 정확히 표시(③ 결함 수정 '미적용', ⑤ '답변 전달')한 것 —
+  **콘솔 정상, 전달 파이프라인 결함**. 라이브 실측: `agent_runtime.redteam_reviews` verdict='revise'
+  42건 중 **35건(83%) revision_applied=false** (매일 일관); 실패 run 의 revise LLM 호출은 전부
+  `llm_usage.completion_tokens=3`(사실상 빈 응답). 동일 gateway·모델 재현: trailing system →
+  출력이 `\n---\n**자가 검증 통과 후 수정된 답변:**...` 로 시작(초안 이어쓴 prefill·리뷰 과정
+  누설), trailing user → 완결된 재작성. **수정** — 지시 메시지 `role: system` → `role: user`
+  (코드베이스의 기존 empty-answer 재요청 패턴과 정합; user 는 system 보다 낮은 권한 채널이라
+  인젝션 승격 위험도 하락, 무회귀). 메시지 조립을 단일 불변식 헬퍼로 추출해 회귀 고정.
+- Files:
+  - `unit/feature-0002-agent-core/src/agent_core.py` (`_build_self_review_messages` 헬퍼 신설 —
+    지시를 **trailing user turn** 으로 두는 불변식 + 결함 기전 docstring; `_rt_revise`·`_rt_rederive`
+    두 closure 가 기존 인라인 `messages + [assistant, system]` 대신 헬퍼 사용 + closure 가 stale
+    outer `answer` 대신 orchestrate 가 넘긴 `draft` 인자 사용)
+  - `unit/feature-0002-agent-core/src/modules/redteam.py` (적대 리뷰 WARN 반영 — `orchestrate_review`
+    가 revise_fn/rederive_fn 을 `(instruction, draft=final_answer)` 로 호출: 다회 수정
+    (REDTEAM_MAX_REVISIONS=2, 높음/매우높음)에서 2회차가 원 초안이 아닌 직전 수정본을 앵커로 받게
+    해 stale-draft 오앵커링 차단. 콜백 계약 v2 — 타입힌트 `Callable[[str,str],...]` + docstring)
+  - `unit/feature-0002-agent-core/tests/test_self_review_messages.py` (신규 3건 — 지시=trailing
+    user turn·system 회귀 가드·base 무변형/보존)
+  - `unit/feature-0002-agent-core/tests/test_redteam.py` (콜백 2-arg 계약 반영 + 다회 수정 draft
+    앵커링 assert 강화 — `drafts_seen == ["draft","revised-1"]`)
+- Impact: **프론트 무변경**. 배포 대상 = worker/ask-worker(답변 파이프라인 = revise/rederive 실행
+  경로) + web(동일 이미지). 하위호환: 메시지 구조만 교정 — API·스키마·설정 무변경. 수정 후
+  revise 가 정상 동작하면 BLOCK 검출 대화의 답변이 실제로 재작성되어 전달됨(의도된 동작 복원).
+- Rollback Notes: 커밋 revert. 런타임 즉시 무력화가 필요하면 콘솔 '설정 > AI 자가 리뷰'에서
+  `REDTEAM_MAX_REVISIONS=0`(기록만·수정 안 함) 또는 `REDTEAM_ENABLED=0` 로 리뷰 자체 중지 가능.

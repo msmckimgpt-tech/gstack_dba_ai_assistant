@@ -137,7 +137,6 @@ source_of_truth: true
 - Subagent Panel: reasoned-skip — additive 런타임 설정 + optional 인자, 보안/인가/데이터/스키마
   표면 없음, §18.8 dispatch 키워드 미매칭. 결정론 로직(override 전달·하한·폴백)은 단위 테스트로 커버.
 - Human Approval Needed: 배포 confirm (외부 영향 행동) — 사용자 승인 후 진행.
-
 ## REV-20260724T071500-redteam-model-align [SUBAGENT: BLOCK 0 — MAJOR1(effort=low) + MINOR2(doc·forward-caveat) 반영·수용]
 - Related Change: CHG-20260724-0001 (리뷰어 모델을 답변 모델에 정합)
 - Decision Rationale:
@@ -176,3 +175,36 @@ source_of_truth: true
   배포 후 라이브 실증(sonnet 대화의 리뷰가 sonnet 으로·effort=low 로 timeout 소멸, admin 'AI 추론'
   탭 model 컬럼에 sonnet 표기)은 POST-DEPLOY.
 - Human Approval Needed: 배포 confirm (외부 영향 행동) — 사용자 승인 후 진행.
+## REV-20260724-0001 [SUBAGENT:general-purpose] — APPROVE-WITH-FIXES (반영 완료)
+- Related Change: CHG-20260724-0002 (BLOCK 검출 후 답변 미수정 전달 근본 원인 수정 — revise/rederive
+  재프롬프트 지시 role system→user)
+- Related Requirement: 사용자 요청 (entry arg-given dispatch, 2026-07-24) — 콘솔 '추론' 이
+  결함 미수정 전달을 보고, 근본 원인 추적·수정.
+- Risk Grade: Major (핵심 답변 전달 파이프라인 correctness — revise 경로가 사실상 비동작이던 것을
+  정상화). 인증/인가·개인정보·파괴적 데이터·마이그레이션 없음. 프론트·API·스키마·설정 무변경.
+- Root-cause 확증 (라이브): redteam_reviews verdict='revise' 42건 중 35건(83%) revision_applied=false
+  (매일 일관); 실패 run 전부 revise LLM 호출 completion_tokens=3(빈 응답). trailing `role: system`
+  지시가 litellm 에서 top-level system 으로 hoist → 초안 assistant 가 마지막 turn=Anthropic prefill
+  → 재작성 대신 이어쓰기 → 완결 초안은 빈 응답 → None→fail-open 미수정 전달. 동일 gateway·모델
+  재현으로 prefill 연속(리뷰과정 누설) vs user turn 완결 재작성 대조 확인.
+- Subagent Panel: [SUBAGENT:general-purpose] 적대 리뷰 — VERDICT=APPROVE-WITH-FIXES.
+  - 확인(결함 없음): (1) Anthropic 메시지 시퀀스 유효(호출 시점 messages 는 절대 assistant 로
+    끝나지 않음 — tool-branch 는 assistant(tool_calls)→tool 로 닫히고 최종 텍스트 답변은 messages 에
+    미append) → assistant(draft)+user(instruction) 부착이 모든 도달 상태에서 유효 alternation.
+    (2) 보안: 지시의 신뢰불가 findings 는 sentinel datamark 로 이미 구획(role 무관) — system→user
+    이동은 신뢰불가 콘텐츠가 최고권한 system 채널에서 빠지므로 인젝션 posture 오히려 개선(무회귀).
+    (3) rederive 도구 루프: 매 _call_llm 앞이 user/tool turn — 어느 라운드도 trailing assistant
+    prefill 아님. (4) fail-open 보존·개선(prefill 연속 답변 대체 class 제거). (5) 회귀 테스트가
+    불변식 고정.
+  - WARN 1건(반영): closure 가 stale outer `answer` 를 캡처 → REDTEAM_MAX_REVISIONS=2(높음/매우높음)
+    2회차 수정이 원 초안(draft A)을 앵커로 findings(draft B 대상)를 수정하는 mis-anchor. 기존 prefill
+    결함이 1회차에서 empty→break 로 마스킹했으나 본 수정이 2회차를 도달 가능하게 만들어 노출.
+    **수정**: orchestrate_review 가 revise_fn/rederive_fn 을 `(instruction, draft=final_answer)` 로
+    호출(콜백 계약 v2) + closure 가 `draft` 인자 사용. 테스트 `drafts_seen==["draft","revised-1"]` 로
+    앵커링 고정.
+- Verification: 자동 39건 통과(test_self_review_messages 3[신규]·test_redteam 36[콜백 2-arg 계약·
+  다회 draft 앵커링 강화 포함]), 결정론 재현(gateway A/B), ruff/py_compile clean. 전체 make test 의
+  잔여 실패 5건은 라이브-PG/env 의존 pre-existing flaky(REPORT.md §4/§8 — main 대조 시 실패 셋이
+  런마다 상이[2·4·5], revise 경로 무관). 배포 후 라이브 재검증: 신규 revise 의 revision_applied=true
+  확인 (POST-DEPLOY).
+- Human Approval Needed: 배포 confirm (외부 영향 행동 — 답변 파이프라인 변경) — 사용자 승인 후 진행.

@@ -467,8 +467,8 @@ def orchestrate_review(*, question: str, draft_answer: str,
                        steps: list[dict[str, Any]] | None, executed_sql: str,
                        conversation_id: str | None, run_id: str | None,
                        reasoning_level: str | None, is_group: bool,
-                       revise_fn: Callable[[str], str | None] | None = None,
-                       rederive_fn: Callable[[str], dict[str, Any] | None] | None = None,
+                       revise_fn: Callable[[str, str], str | None] | None = None,
+                       rederive_fn: Callable[[str, str], dict[str, Any] | None] | None = None,
                        answer_model: str | None = None,
                        ) -> tuple[str, dict[str, Any] | None]:
     """choke-point 오케스트레이터 — (최종 답변, 리뷰 meta | None) 반환.
@@ -480,6 +480,12 @@ def orchestrate_review(*, question: str, draft_answer: str,
     리뷰어 모델을 도출한다(haiku 답변→haiku 리뷰, sonnet 답변→sonnet 리뷰; env pin 우선).
     미지정이면 기본/env pin(REDTEAM_MODEL). find/verify 전 패스가 동일 리뷰어 모델을 쓰고,
     redteam_reviews.model / meta['model'] 에 실제 리뷰어 모델을 기록한다.
+
+    콜백 계약 (v2 — draft 인자 추가): revise_fn/rederive_fn 은 `(instruction, draft)`
+    로 호출된다. `draft` 는 **이번에 수정할 현재 최선 답변** (첫 수정=원 초안, 2회차
+    수정=1회차 수정본). 콜백은 재프롬프트의 assistant turn 을 이 `draft` 로 두어야
+    findings 가 가리키는 텍스트와 재작성 대상이 일치한다 (REDTEAM_MAX_REVISIONS=2 등
+    다회 수정에서 stale 원 초안 앵커링 방지 — 적대 리뷰 WARN 반영).
 
     revise 축 인지 라우팅 (feature-0002): BLOCK 축이 재도출 대상(sql / max 강도
     completeness)이고 REDTEAM_REDERIVE_ENABLED=1 + rederive_fn 제공 시, 문장 재작성
@@ -536,7 +542,8 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 # 도구 허용 재추론 경로 (sql / max 강도 completeness).
                 rd = None
                 try:
-                    rd = rederive_fn(build_rederive_instruction(current_review["findings"]))
+                    # draft=final_answer: 현재 최선 답변(다회 수정 시 직전 수정본) 을 앵커로 전달.
+                    rd = rederive_fn(build_rederive_instruction(current_review["findings"]), final_answer)
                 except Exception:
                     rd = None
                 if rd and (rd.get("text") or "").strip():
@@ -555,7 +562,8 @@ def orchestrate_review(*, question: str, draft_answer: str,
             if revised is None and revise_fn is not None:
                 # 텍스트 재작성 경로 (grounding/permission/honesty, 또는 재추론 무산출 폴백).
                 try:
-                    revised = revise_fn(build_revision_instruction(current_review["findings"]))
+                    # draft=final_answer: 현재 최선 답변(다회 수정 시 직전 수정본) 을 앵커로 전달.
+                    revised = revise_fn(build_revision_instruction(current_review["findings"]), final_answer)
                 except Exception:
                     revised = None
             if not (revised and revised.strip()):

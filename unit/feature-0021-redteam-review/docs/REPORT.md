@@ -38,7 +38,13 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   identity 주입(429 게이트) + adaptive effort=low(적대 패널 MAJOR — timeout→리뷰 skip 회귀 방지,
   CHG-0722 의 25s 타임아웃 근본 원인과 동일 lever). `redteam_reviews.model` 실제 리뷰어 기록.
   상세 MODIFY.md · 적대 패널 REV-20260724T071500.
-- 총 변경 횟수: 5+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정 · 모델 정합)
+- CHG-20260724-0002 — **BLOCK 검출 후 답변 미수정 전달 근본 원인 수정**: revise/rederive
+  재프롬프트가 지시를 trailing `role: system` 으로 붙여 초안이 Anthropic prefill 이 됨 →
+  재작성 대신 이어쓰기 → 완결 초안은 빈 응답 → fail-open 미수정 전달. 라이브 실측
+  redteam_reviews verdict='revise' 42건 중 35건(83%) revision_applied=false ·
+  실패 run 전부 revise 호출 completion_tokens=3. 지시 `role: user` 로 교정 +
+  `_build_self_review_messages` 불변식 헬퍼 + 다회 draft 앵커링(적대 WARN) + 회귀 테스트. 상세 MODIFY.md.
+- 총 변경 횟수: 6+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정 · 모델 정합 · revise prefill 수정)
 
 ## 4. Open Issues
 - make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):

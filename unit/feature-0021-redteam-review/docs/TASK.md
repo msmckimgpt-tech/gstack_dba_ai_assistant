@@ -85,3 +85,14 @@ feature_status_updated: 2026-07-15
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
+
+## 9. 후속 수정 — revise/rederive prefill 결함 (2026-07-24)
+BLOCK 검출 후 답변이 미수정 전달되던 근본 원인(수정 지시를 trailing `role: system` 으로 붙여
+초안이 Anthropic prefill 이 됨 → 재작성 대신 이어쓰기 → 완결 초안은 빈 응답 → fail-open 미수정
+전달) 을 라이브 추적으로 확증하고 `role: user` 로 교정. 상세: MODIFY.md CHG-20260724-0002.
+- [x] 근본 원인 라이브 추적·재현 확증 (redteam_reviews 83% revision_applied=false · completion_tokens=3 · gateway 재현)
+- [x] `_build_self_review_messages` 헬퍼 신설 + 두 closure 적용 (지시=trailing user turn)
+- [x] 적대 리뷰 WARN(다회 수정 stale-draft 앵커링) 반영 — 콜백 (instruction, draft) 계약
+- [x] 회귀 테스트 추가 (test_self_review_messages 3 + test_redteam 다회 draft 앵커링) — 통과
+- [x] verify-completion --pre-commit PASS + 커밋(79f8bda5) + PR #938
+- [ ] main 병합(rebase 후) + 배포 (worker/ask-worker/web) + 라이브 재검증 (신규 revise revision_applied=true)
