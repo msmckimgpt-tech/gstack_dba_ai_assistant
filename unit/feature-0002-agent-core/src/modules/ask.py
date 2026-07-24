@@ -392,16 +392,44 @@ def run_ask_worker_loop() -> None:
     except Exception as exc:
         log.warning("ask-worker: conn_health 모니터 시작 실패(무시하고 진행): %s", exc)
 
-    last_sweep = 0.0
-    last_reap = 0.0
-    while not _SHUTDOWN.is_set():
+    # feature-0025: 동시 처리 수(관리 콘솔 '답변 동시 처리 수'). restart 반영 — 루프 진입 시 1회 읽는다.
+    #   1 이면 아래 단일 직렬 루프(기존 동작 byte-동치). 2 이상이면 전용 PG 커넥션을 가진 N 개 executor
+    #   스레드가 각자 claim→execute 하고, main 스레드는 유지보수(heartbeat/sweep/reap) coordinator 로 분리된다.
+    #   claim 은 FOR UPDATE SKIP LOCKED + per-claim run_id/lease_epoch 라 동시 실행이 exactly-once·fencing-safe
+    #   (다중 워커 확장을 이미 상정한 설계). run_agent 는 web inprocess 모드가 asyncio.to_thread 로 이미
+    #   동시 실행하는 검증된 경로이며, 각 스레드는 독립 ContextVar 컨텍스트를 가진다.
+    #   ⚠ caveat(리뷰 MINOR-3, web inprocess 와 동일 기존 한계가 ask 병렬로 확장): run_agent 는 모듈 전역
+    #   `cfg.CURRENT_RUN_ID` 를 설정한다 — 동시 run 간 이 전역이 덮어써지면 helper LLM 토큰 귀속·메시지
+    #   run_id 메타가 오귀속될 수 있다(과금/계측 정확도 한정). **답변 라우팅은 명시 conversation_id 인자로
+    #   이뤄져 사용자 간 오전달은 없다**(TASK-0163). 정밀 귀속이 필요하면 run_id 를 전역 대신 인자로 흐르게
+    #   하는 후속 작업 필요.
+    try:
+        from shared import runtime_settings as _rts_ask
+        _ask_conc = max(1, min(8, int(_rts_ask.ask_worker_concurrency())))
+    except Exception:
+        _ask_conc = 1
+
+    def _current_idle_poll() -> float:
+        # feature-0025: 관리 콘솔 override(AGENT_ASK_WORKER_IDLE_POLL_MS)가 설정돼 있으면 그 값(ms→초),
+        #   없으면 **기존 env knob** AGENT_ASK_WORKER_IDLE_POLL_SEC(= idle_poll_sec)을 그대로 존중한다.
+        #   신규 ms knob 이 기존 sec env 를 조용히 무력화하지 않도록(리뷰 MAJOR-2/FINDING-A byte-동치 보존).
+        try:
+            from shared import runtime_settings as _rts_ip
+            if "AGENT_ASK_WORKER_IDLE_POLL_MS" in _rts_ip.read_overrides():
+                return _rts_ip.ask_worker_idle_poll_sec()
+        except Exception:
+            pass
+        return idle_poll_sec
+
+    def _run_maintenance(mconn, mstate) -> None:
+        """heartbeat + stale sweep + 고아 temp/notes/scratch reap. 단일(coordinator) 스레드에서만 호출."""
         _write_worker_heartbeat()
         now = time.monotonic()
-        if now - last_sweep >= sweep_every:
-            _do_sweep(conn)
-            last_sweep = now
-        if now - last_reap >= max(sweep_every, 300):
-            _reap_orphan_inline_files(conn)
+        if now - mstate["sweep"] >= sweep_every:
+            _do_sweep(mconn)
+            mstate["sweep"] = now
+        if now - mstate["reap"] >= max(sweep_every, 300):
+            _reap_orphan_inline_files(mconn)
             # feature-0021: 세션/제품 자가리뷰 노트 TTL 정리 (/shared/agent-notes,
             # mtime 기준 — runtime settings 로 TTL 조정). 실패해도 워커 루프 무영향.
             try:
@@ -416,30 +444,95 @@ def run_ask_worker_loop() -> None:
                 sweep_expired_schemas()
             except Exception as exc:
                 log.warning("ask-worker: scratch sweep 실패(무시): %s", exc)
-            last_reap = now
+            mstate["reap"] = now
 
-        try:
-            job = ask_jobs.claim_ask_job(conn, worker_id)
-        except Exception as exc:
-            log.warning("ask-worker: claim 실패(재연결 시도): %s", exc)
+    if _ask_conc <= 1:
+        # ── 단일 직렬 루프(기존 동작 byte-동치) ──
+        state = {"sweep": 0.0, "reap": 0.0}
+        while not _SHUTDOWN.is_set():
+            _run_maintenance(conn, state)
             try:
-                conn.close()
+                job = ask_jobs.claim_ask_job(conn, worker_id)
+            except Exception as exc:
+                log.warning("ask-worker: claim 실패(재연결 시도): %s", exc)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                try:
+                    conn = _pg()
+                except Exception:
+                    time.sleep(tick_sec)
+                continue
+
+            if job is None:
+                # pending 없음 — idle_poll 만큼 쉬되 shutdown 즉시 반응(TASK-0289: 큐 대기 단축).
+                _SHUTDOWN.wait(_current_idle_poll())
+                continue
+
+            log.info("ask-worker: claim job=%s conv=%s attempts=%s",
+                     job["id"], job["conversation_id"], job["attempts"])
+            _execute_job(conn, job)
+    else:
+        # ── 병렬: N executor 스레드(전용 conn·worker_id#k) + coordinator 유지보수 ──
+        log.info("ask-worker: 병렬 모드 활성 concurrency=%d", _ask_conc)
+
+        def _executor(wid: str) -> None:
+            try:
+                cx = _pg()
+            except Exception as exc:
+                log.error("ask-worker[%s]: PG 연결 실패 — 스레드 종료: %s", wid, exc)
+                return
+            # 동일 pid 재기동 대비 자가 소유 running job 회수(대개 no-op; 크로스-프로세스 stale 은 sweeper 담당).
+            try:
+                ask_jobs.reclaim_worker_jobs_on_boot(cx, wid)
             except Exception:
                 pass
+            while not _SHUTDOWN.is_set():
+                try:
+                    job = ask_jobs.claim_ask_job(cx, wid)
+                except Exception as exc:
+                    log.warning("ask-worker[%s]: claim 실패(재연결 시도): %s", wid, exc)
+                    try:
+                        cx.close()
+                    except Exception:
+                        pass
+                    try:
+                        cx = _pg()
+                    except Exception:
+                        _SHUTDOWN.wait(tick_sec)
+                    continue
+                if job is None:
+                    _SHUTDOWN.wait(_current_idle_poll())
+                    continue
+                log.info("ask-worker[%s]: claim job=%s conv=%s attempts=%s",
+                         wid, job["id"], job["conversation_id"], job["attempts"])
+                _execute_job(cx, job)
             try:
-                conn = _pg()
+                cx.close()
             except Exception:
-                time.sleep(tick_sec)
-            continue
+                pass
 
-        if job is None:
-            # pending 없음 — idle_poll 만큼 쉬되 shutdown 즉시 반응(TASK-0289: 큐 대기 단축).
-            _SHUTDOWN.wait(idle_poll_sec)
-            continue
-
-        log.info("ask-worker: claim job=%s conv=%s attempts=%s",
-                 job["id"], job["conversation_id"], job["attempts"])
-        _execute_job(conn, job)
+        threads = []
+        for _k in range(_ask_conc):
+            t = threading.Thread(target=_executor, args=(f"{worker_id}#{_k}",),
+                                 name=f"ask-exec-{_k}", daemon=True)
+            t.start()
+            threads.append(t)
+        state = {"sweep": 0.0, "reap": 0.0}
+        while not _SHUTDOWN.is_set():
+            _run_maintenance(conn, state)
+            _SHUTDOWN.wait(min(sweep_every, 5.0))
+        # graceful drain(리뷰 MAJOR-1): SIGTERM 후 executor 들이 **현재 job 을 마칠 시간**을 compose
+        #   stop_grace_period(ask-worker: 70s) 예산 안에서 준다 — 직렬 경로가 현재 job 을 grace 창 안에
+        #   완주하는 것과 동치화(2초 만에 유기 → orphan → ~18분 재큐 회귀 방지). **공유 deadline** 이라
+        #   스레드 합산이 예산을 넘지 않고, 예산 초과분만 daemon+SIGKILL 후 lease heartbeat 중단→sweeper requeue.
+        _drain_deadline = time.monotonic() + 65.0
+        for t in threads:
+            _rem = _drain_deadline - time.monotonic()
+            if _rem <= 0:
+                break
+            t.join(timeout=max(0.0, _rem))
 
     log.info("ask-worker 종료: %s", worker_id)
     try:

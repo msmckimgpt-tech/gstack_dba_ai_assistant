@@ -703,15 +703,16 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
     # 표시용 datasource 식별자(해시 → 사용자 지정 라벨) — LLM 프롬프트 문맥 + llm_usage.target 기록.
     # 미스가 있을 때만 1회 조회(전량 캐시 적중 시 추가 쿼리 0 — 패널 m2 정신과 정합).
     ds_label = _ds_display_label(cur, datasource_key)
-    for start in range(0, len(misses), _LABEL_CLUSTERS_PER_CALL):
-        batch = misses[start:start + _LABEL_CLUSTERS_PER_CALL]
+
+    def _payload_for(batch):
+        # summary lazy 수집(cur/fetch_summaries — **단일 스레드에서만 호출**) + 배치 payload 조립.
         for (cl, _k) in batch:
             if "summaries" not in cl:
                 try:
                     cl["summaries"] = list(fetch_summaries(cl)) if fetch_summaries else []
                 except Exception:
                     cl["summaries"] = []
-        payload = {
+        return {
             "task": "cluster_label",
             "datasource": ds_label,
             "schema": eff_schema,
@@ -722,14 +723,11 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
                 for (cl, _k) in batch
             ],
         }
-        try:
-            res = _llm.llm_cluster_label(payload)
-        except Exception as exc:
-            _log.warning("llm_cluster_label 실패(affix 폴백): %r", exc)
-            return out
+
+    def _parse_labels(res):
         labels = (res or {}).get("labels") if isinstance(res, dict) else None
         if not isinstance(labels, list):
-            return out
+            return None
         got = {}
         for item in labels:
             if not isinstance(item, dict):
@@ -741,11 +739,60 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
                 continue
             if lab:
                 got[idx] = lab
-        for (cl, kv_key) in batch:
-            lab = got.get(cl["idx"])
-            if lab:
-                out[cl["idx"]] = lab
-                _kv_put(cur, kv_key, lab)   # 멤버셋 불변이면 다음 pass 는 캐시 적중(재호출 0)
+        return got
+
+    batches = [misses[i:i + _LABEL_CLUSTERS_PER_CALL]
+               for i in range(0, len(misses), _LABEL_CLUSTERS_PER_CALL)]
+    # feature-0025: 라벨 배치 LLM 호출 동시 수(관리 콘솔). 1 이면 기존처럼 배치 순차(byte-동치),
+    #   2 이상이면 배치를 병렬 LLM 호출한다. summary 수집·_kv_put 은 공유 cur 라 병렬 대상에서 제외.
+    try:
+        from shared import runtime_settings as _rts_cl
+        _cl_conc = max(1, min(4, int(_rts_cl.cluster_label_concurrency())))
+    except Exception:
+        _cl_conc = 1
+
+    if _cl_conc <= 1 or len(batches) <= 1:
+        # 직렬(기존 byte-동치): 배치 순차, LLM 실패/부적합 응답 시 남은 배치 중단(affix 폴백).
+        for batch in batches:
+            payload = _payload_for(batch)
+            try:
+                res = _llm.llm_cluster_label(payload)
+            except Exception as exc:
+                _log.warning("llm_cluster_label 실패(affix 폴백): %r", exc)
+                return out
+            got = _parse_labels(res)
+            if got is None:
+                return out
+            for (cl, kv_key) in batch:
+                lab = got.get(cl["idx"])
+                if lab:
+                    out[cl["idx"]] = lab
+                    _kv_put(cur, kv_key, lab)   # 멤버셋 불변이면 다음 pass 는 캐시 적중(재호출 0)
+    else:
+        # 병렬: payload(summary 수집 포함) 직렬 준비 → LLM 병렬 호출 → 파싱·_kv_put 직렬(cur).
+        #   직렬 경로와 달리 한 배치 실패가 나머지를 중단하지 않는다(그 배치만 affix 폴백 — 더 많은 라벨 확보).
+        payloads = [_payload_for(batch) for batch in batches]
+
+        def _call(p):
+            """DB 미접근 — 스레드 병렬 안전. 실패 시 None(해당 배치 affix 폴백)."""
+            try:
+                return _llm.llm_cluster_label(p)
+            except Exception as exc:
+                _log.warning("llm_cluster_label 실패(affix 폴백): %r", exc)
+                return None
+
+        import concurrent.futures as _cf
+        with _cf.ThreadPoolExecutor(max_workers=_cl_conc) as _ex:
+            results = list(_ex.map(_call, payloads))
+        for batch, res in zip(batches, results):
+            got = _parse_labels(res) if res is not None else None
+            if not got:
+                continue
+            for (cl, kv_key) in batch:
+                lab = got.get(cl["idx"])
+                if lab:
+                    out[cl["idx"]] = lab
+                    _kv_put(cur, kv_key, lab)
     return out
 
 
@@ -1102,8 +1149,14 @@ def run_cluster_maintenance(conn=None) -> dict:
     if c is None:
         return rep
     try:
+        # feature-0025: 시그니처 백필 배치 크기 live 조절(관리 콘솔). override 없으면 config 기본 = byte-동치.
+        try:
+            from shared import runtime_settings as _rts_sb
+            _sig_batch = max(1, int(_rts_sb.get_int("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS")))
+        except Exception:
+            _sig_batch = _cfg.AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS
         rep["signature"] = run_signature_backfill_pass(
-            max_rows=_cfg.AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS, conn=c)
+            max_rows=_sig_batch, conn=c)
         scopes = list_cluster_scopes(conn=c)
         rep["scopes"] = len(scopes)
         rsec = int(_cfg.AGENT_METADATA_CLUSTER_RECOMPUTE_SEC)

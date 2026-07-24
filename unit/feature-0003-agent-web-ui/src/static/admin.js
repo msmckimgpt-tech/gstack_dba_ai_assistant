@@ -6827,6 +6827,8 @@ const SETTINGS_PANEL_MOUNTERS = {
   "model-thinking-budgets": mountModelThinkingBudgetsPanel,
   // feature-0021: 자가 적대(red-team) 리뷰 · 메모리 노트 운영 값 (runtime_settings redteam 그룹).
   "redteam-review": mountRedteamReviewPanel,
+  // feature-0025: 워커 성능·병렬 처리 운영 값 (runtime_settings performance 그룹).
+  "performance-parallelism": mountPerformanceParallelismPanel,
 };
 
 // feature-0021 console-subtabs: 프롬프트 패널 — 서브탭[전역 시스템 프롬프트 | 작동 지침 | 스킬].
@@ -6959,6 +6961,14 @@ const RS_RESET = "__reset__";  // pending sentinel — 기본값 복원(DELETE) 
 const RS_MODEL_PREFIX = "model_thinking_budget:";
 const RS_REASONING_PREFIX = "reasoning_budget:";  // reasoning_budget:{model}:{level}
 const RS_AGENT_MAX_PREFIX = "agent_max_output:";  // 모델별 대화 총 출력(max_tokens)
+// feature-0025: performance 그룹 키 미러(= runtime_settings._PERF_SPECS). commit-bar 의 '성능·병렬 처리'
+// 서브탭 nav dot 라우팅 전용(prefix 공유 없음). 백엔드가 SSOT — 키 추가 시 함께 갱신.
+const RS_PERF_KEYS = new Set([
+  "AGENT_NODE_ANALYSIS_CONCURRENCY", "AGENT_NODE_ANALYSIS_BATCH_PER_TICK", "AGENT_INSIGHT_WORKER_TICK_SEC",
+  "AGENT_METADATA_CLUSTER_LABEL_CONCURRENCY", "AGENT_METADATA_CLUSTER_INTERVAL_SEC",
+  "AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "AGENT_ASK_WORKER_CONCURRENCY", "AGENT_ASK_WORKER_IDLE_POLL_MS",
+  "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "AGENT_KB_EMBEDDING_INTERVAL_SEC",
+]);
 
 function rsApplyBadge(applyMode) {
   const span = document.createElement("span");
@@ -7011,6 +7021,8 @@ function rerenderRuntimeSettingsPanels() {
   if (m && adminState.settings.mountedPanels.has("model-thinking-budgets")) renderModelThinkingBudgets(m);
   const r = $("redteamReviewMount");
   if (r && adminState.settings.mountedPanels.has("redteam-review")) renderRedteamReviewSettings(r);
+  const p = $("performanceParallelismMount");
+  if (p && adminState.settings.mountedPanels.has("performance-parallelism")) renderPerformanceParallelism(p);
 }
 
 // 정렬 grid 행(라벨+배지 / 설명 / 입력+단위 / 상태·기본값). timeouts·models 공용.
@@ -7187,6 +7199,63 @@ async function renderRuntimeTimeouts(mount) {
   const panel = document.createElement("div");
   panel.className = "rs-panel";
   // category 순서 보존 그룹핑.
+  const order = [];
+  const byCat = new Map();
+  for (const it of items) {
+    const cat = it.category || "기타";
+    if (!byCat.has(cat)) { byCat.set(cat, []); order.push(cat); }
+    byCat.get(cat).push(it);
+  }
+  for (const cat of order) {
+    const group = document.createElement("div");
+    group.className = "rs-group";
+    const gtitle = document.createElement("div");
+    gtitle.className = "rs-group-title";
+    gtitle.textContent = cat;
+    const list = document.createElement("div");
+    list.className = "rs-list";
+    for (const it of byCat.get(cat)) list.appendChild(buildRuntimeSettingRow(it, canWrite));
+    group.append(gtitle, list);
+    panel.appendChild(group);
+  }
+  if (!canWrite) {
+    const note = document.createElement("div");
+    note.className = "rs-readonly-note";
+    note.textContent = "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
+    panel.appendChild(note);
+  }
+  mount.appendChild(panel);
+}
+
+// feature-0025: 워커 성능·병렬 처리 패널 — runtime_settings 의 performance 그룹(그래프 노드 분석·
+// cluster_label·사용자 답변·임베딩)을 실행 타임아웃 패널과 동일한 정렬 grid + 카테고리 그룹으로 렌더.
+// buildRuntimeSettingRow 공용(즉시/재배포 반영 배지, pending 예약, commit-bar 적용). read/write 게이트 동일.
+async function mountPerformanceParallelismPanel() {
+  const mount = $("performanceParallelismMount");
+  if (!mount) return;
+  if (!can("system.runtime.read")) {
+    rsErrorPlaceholder(mount, "런타임 설정 조회 권한이 없습니다.");
+    return;
+  }
+  await renderPerformanceParallelism(mount);
+}
+
+async function renderPerformanceParallelism(mount) {
+  rsErrorPlaceholder(mount, "불러오는 중…");
+  let data;
+  try {
+    data = await apiFetch(RUNTIME_SETTINGS_ENDPOINT);
+  } catch (err) {
+    rsErrorPlaceholder(mount, `조회 실패: ${err.message || err}`);
+    return;
+  }
+  const canWrite = can("system.runtime.write");
+  const items = Array.isArray(data.performance) ? data.performance : [];
+  if (!items.length) { rsErrorPlaceholder(mount, "등록된 성능·병렬 항목이 없습니다."); return; }
+  mount.innerHTML = "";
+  const panel = document.createElement("div");
+  panel.className = "rs-panel";
+  // category 순서 보존 그룹핑(그래프 노드 분석 → cluster_label → 사용자 답변 처리 → 지식베이스 임베딩).
   const order = [];
   const byCat = new Map();
   for (const it of items) {
@@ -10037,10 +10106,11 @@ function refreshPendingUI() {
   // feature-0018 UX: 런타임 설정 pending 요약 + 설정 pane 좌측 nav row dirty 표시.
   const rsPending = adminState.pending.runtimeSettings || new Map();
   if (rsPending.size) detail.push(`설정 ${rsPending.size}`);
-  let rsTimeoutDirty = false, rsModelDirty = false;
+  let rsTimeoutDirty = false, rsModelDirty = false, rsPerfDirty = false;
   rsPending.forEach((_v, k) => {
     const key = String(k);
     if (key.startsWith(RS_MODEL_PREFIX) || key.startsWith(RS_REASONING_PREFIX) || key.startsWith(RS_AGENT_MAX_PREFIX)) rsModelDirty = true;
+    else if (RS_PERF_KEYS.has(key)) rsPerfDirty = true;  // feature-0025: 성능·병렬 서브탭으로 라우팅
     else rsTimeoutDirty = true;
   });
   // 설정 nav row: `.has-pending` 테두리 + `.admin-pending-dot`(계정·역할 row 와 일관 — 색 외 신호).
@@ -10061,6 +10131,7 @@ function refreshPendingUI() {
   };
   markSettingsNav("runtime-timeouts", rsTimeoutDirty);
   markSettingsNav("model-thinking-budgets", rsModelDirty);
+  markSettingsNav("performance-parallelism", rsPerfDirty);
   $("commitBarDetail").textContent = detail.length ? `(${detail.join(" · ")})` : "";
 
   // Dashboard auto-refresh if visible

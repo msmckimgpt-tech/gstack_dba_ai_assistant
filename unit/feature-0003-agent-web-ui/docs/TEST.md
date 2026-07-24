@@ -2222,3 +2222,8 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **PRE**: node --check app.js OK. index.html #newFolderBtn 추가·styles.css .btn-new-folder.
 - **Environment: Windows-browser — PRE-COMMIT 미수행 사유**: 정적 자산 baked → merge+deploy 후 서빙. **POST-DEPLOY PB-0008**: 헤더 폴더 아이콘 노출·클릭 생성·바 제거·DnD root.
 - **Pass/Fail: PRE PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족.
+
+### Run (2026-07-24) — feature-0025 워커 성능·병렬 처리 설정 서브탭 (Major §12.3 — feature-0003 web/UI 자산 admin.html/admin.js, 정본 feature-0025 TASK/FUNCTION/REVIEW) — **Environment: Windows-browser**
+- **의도**: 관리 콘솔 `시스템 > 설정`에 신규 '성능·병렬 처리' 서브탭이 렌더되고, runtime_settings `performance` 그룹 10 knob 이 카테고리 4그룹(그래프 노드 분석·cluster_label·사용자 답변 처리·지식베이스 임베딩)으로 표시되며, 값 편집→commit-bar '모두 적용'→override 저장/기본값 복원·nav dirty dot·즉시/재배포 배지·조회전용 게이트(system.runtime.write 무보유)가 기존 서브탭(실행 타임아웃/모델 예산/자가 리뷰)과 정합하게 동작하는지 실 Windows 브라우저에서 확인.
+- **PRE-COMMIT 정적·단위 (PASS)**: `node --check` (mjs) admin.js 구문 PASS. runtime_settings `performance` 버킷·accessor·clamp·apply_mode 단위 `test_worker_parallelism.py` 12 PASS(+runtime_settings 회귀 36 PASS). `serialize_registry({})["performance"]` 10행·타 버킷 미누출·RS_PERF_KEYS(10)==_PERF_SPECS(10) 대조.
+- **Environment: Windows-browser — PRE-COMMIT 라이브 미수행 사유**: 정적 자산(admin.html/admin.js)이 web 이미지에 baked → merge + `deploy-web` 재배포 후에만 서빙 자산 실측 가능(feature-0003 정적자산 동일 패턴). 관리 콘솔 렌더는 배포된 환경에서만 확인 가능. 캐시버스터 `?v=dev` 고정 + 빌드 inject_asset_stamp content-hash 자동주입(수기 bump 금지). **POST-DEPLOY PB-0008 라이브 append 예정**: (a) 서브탭 노출·category 4그룹 렌더, (b) 값 편집→'모두 적용'→override 저장·기본값 복원, (c) nav dirty dot·즉시/재배포 배지, (d) 조회전용 게이트, (e) 이어서 동시성 override(예: 노드 분석 4·답변 3) 후 워커 재시작 → '운영 현황'의 노드분석/cluster_label/답변 처리량 증가 관측·pgbouncer 풀 소진 무경보. pageerror 0.

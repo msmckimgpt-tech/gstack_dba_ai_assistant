@@ -3033,6 +3033,13 @@ def _embedding_backfill_loop() -> None:
     per_pass = max(1, int(AGENT_KB_EMBEDDING_BATCH_MAX_ROWS))
     _log = logging.getLogger("insight")
     while True:
+        # feature-0025: pass 행수·주기 live 조절(관리 콘솔). override 없으면 config 기본 = byte-동치.
+        try:
+            from shared import runtime_settings as _rts_kb
+            per_pass = max(1, int(_rts_kb.get_int("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS")))
+            interval = max(5, int(_rts_kb.get_int("AGENT_KB_EMBEDDING_INTERVAL_SEC")))
+        except Exception:
+            pass
         try:
             from scripts.kb_embedding_worker import run_embedding_pass
             rep = run_embedding_pass(max_rows=per_pass)
@@ -3083,6 +3090,12 @@ def _semantic_cluster_loop() -> None:
                 )
         except Exception as exc:   # 스레드 보호 — 어떤 예외도 루프를 죽이지 않음
             _log.warning("semantic_cluster pass 실패(무시): %s", exc)
+        # feature-0025: 클러스터링 데몬 주기 live 조절(관리 콘솔). override 없으면 config 기본 = byte-동치.
+        try:
+            from shared import runtime_settings as _rts_ci
+            interval = max(60, int(_rts_ci.get_int("AGENT_METADATA_CLUSTER_INTERVAL_SEC")))
+        except Exception:
+            pass
         time.sleep(interval)
 
 
@@ -3248,7 +3261,14 @@ def run_insight_worker_loop() -> None:
         if status in ("degraded_readback", "error"):
             _INSIGHT_SHUTDOWN.wait(degraded_backoff_sec)
         else:
-            _INSIGHT_SHUTDOWN.wait(tick_sec)
+            # feature-0025: tick 주기 live 조절(관리 콘솔). override 없으면 배포 env(=tick_sec) = byte-동치.
+            _tick_live = tick_sec
+            try:
+                from shared import runtime_settings as _rts_ti
+                _tick_live = max(5, int(_rts_ti.get_int("AGENT_INSIGHT_WORKER_TICK_SEC")))
+            except Exception:
+                _tick_live = tick_sec
+            _INSIGHT_SHUTDOWN.wait(_tick_live)
     try:
         console.print("insight-worker: graceful shutdown 완료(루프 종료).")
     except Exception:

@@ -71,7 +71,12 @@ __all__ = [
     "GROUP_AGENT_MAX_OUTPUT",
     "GROUP_REDTEAM",
     "GROUP_FOLDER",
+    "GROUP_PERF",
     "folder_max_depth",
+    "node_analysis_concurrency",
+    "cluster_label_concurrency",
+    "ask_worker_concurrency",
+    "ask_worker_idle_poll_sec",
 ]
 
 GROUP_TIMEOUT = "timeout"
@@ -778,6 +783,162 @@ def folder_max_depth() -> int:
     return get_int("folder_max_depth")
 
 
+# ── 워커 성능·병렬 처리 (feature-0025) ─────────────────────────────────────
+# 백그라운드 워커(insight-worker 의 그래프 노드 분석·cluster_label, ask-worker 의 사용자 답변)의
+# 처리 병렬도·페이싱·배치를 관리 콘솔에서 조절한다. 조사 결과 세 워크로드 모두 실효 병렬도 = 1
+# (단일 컨테이너·직렬 루프)이라, 아래 CONCURRENCY 계열은 **신규** 병렬도 knob(기본 1 = 현행 byte-동치,
+# opt-in)이고 나머지는 기존 페이싱/배치 상수를 노출한다.
+#
+# ⚠ 자원 한계(공격도 상향 시 병목 순서 — 각 설명에도 명시):
+#   ① pgbouncer 풀(compose DEFAULT_POOL_SIZE) — 2026-07-14 §82 사건의 근본 자원. 병렬도×잡별
+#      PG 커넥션이 이 풀을 잠식하면 전역 워커 장애. 상한(maximum)을 풀 여유 이하로 보수적 설정.
+#   ② Bedrock gateway LLM RPM/TPM — 능동 rate-limit 부재. 동시 LLM 호출이 곧 429 노출.
+#   ③ 소스 DB 커넥션 / 컨테이너 메모리(mem_limit).
+# 기본값은 shared/config.py 의 env 기본값과 반드시 일치(byte-동치). 값 변경 시 양쪽 함께 수정.
+GROUP_PERF = "performance"
+
+_PERF_SPECS: tuple[dict[str, Any], ...] = (
+    # ── 그래프 노드 분석 (insight-worker process_pending) ──
+    {
+        "key": "AGENT_NODE_ANALYSIS_CONCURRENCY",
+        "category": "그래프 노드 분석",
+        "label": "노드 분석 동시 처리 수",
+        "description": "insight-worker 가 한 tick 에서 claim 한 노드들을 동시에 분석하는 개수. 1 이면 현행처럼 노드마다 순차 LLM 호출, 2 이상이면 그만큼 병렬로 분석해 '그래프 노드 분석' 진행이 빨라집니다. 각 병렬 작업이 PG 커넥션 1개를 점유하므로, 값이 클수록 pgbouncer 풀·Bedrock LLM 한도를 더 소모합니다(과도하면 전역 지연). 보수적으로 시작해 관측하며 올리세요.",
+        "unit": "개",
+        "default": 1,
+        "minimum": 1,
+        "maximum": 8,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_NODE_ANALYSIS_BATCH_PER_TICK",
+        "category": "그래프 노드 분석",
+        "label": "tick 당 노드 처리량",
+        "description": "insight-worker 가 한 tick 에서 한 번에 claim(집어오는) 하는 노드 잡 수. 높이면 tick 당 더 많은 노드를 처리해 대기열이 빨리 줄지만, 동시 처리 수와 곱해져 LLM/DB 부하가 커집니다.",
+        "unit": "개",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 64,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_INSIGHT_WORKER_TICK_SEC",
+        "category": "그래프 노드 분석",
+        "label": "insight-worker tick 주기",
+        "description": "insight-worker 메인 사이클(스캔·노드 분석 배치 처리) 사이의 대기 시간. 낮추면 더 자주 처리해 공격적이지만, 소스 DB·LLM 재접속 빈도가 함께 늘어납니다. (배포 env 는 60초로 설정돼 있습니다.)",
+        "unit": "초",
+        "default": 8,
+        "minimum": 5,
+        "maximum": 3600,
+        "apply_mode": "live",
+    },
+    # ── cluster_label (semantic_cluster 데몬) ──
+    {
+        "key": "AGENT_METADATA_CLUSTER_LABEL_CONCURRENCY",
+        "category": "cluster_label(클러스터 라벨)",
+        "label": "클러스터 라벨 동시 생성 수",
+        "description": "cluster_label 생성 시 라벨 배치(≤40 클러스터/호출)를 동시에 LLM 호출하는 개수. 1 이면 현행처럼 배치 순차, 2 이상이면 병렬로 라벨을 생성해 클러스터 라벨링이 빨라집니다. 동시 LLM 호출이 늘어 Bedrock 한도를 더 씁니다.",
+        "unit": "개",
+        "default": 1,
+        "minimum": 1,
+        "maximum": 4,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_METADATA_CLUSTER_INTERVAL_SEC",
+        "category": "cluster_label(클러스터 라벨)",
+        "label": "클러스터링 데몬 주기",
+        "description": "의미 클러스터링·라벨 데몬이 한 pass 후 다음 pass 까지 쉬는 시간. 낮추면 새 분석 결과가 더 빨리 클러스터·라벨에 반영되지만 임베딩/LLM 부하가 늘어납니다.",
+        "unit": "초",
+        "default": 900,
+        "minimum": 60,
+        "maximum": 86400,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS",
+        "category": "cluster_label(클러스터 라벨)",
+        "label": "시그니처 백필 배치 크기",
+        "description": "클러스터링 전 단계인 메타데이터 시그니처 임베딩 백필의 pass 당 최대 행수. 높이면 백필이 빨리 따라잡지만 임베딩 호출 부하가 커집니다.",
+        "unit": "행",
+        "default": 500,
+        "minimum": 50,
+        "maximum": 5000,
+        "apply_mode": "live",
+    },
+    # ── 사용자 답변 처리 (ask-worker) ──
+    {
+        "key": "AGENT_ASK_WORKER_CONCURRENCY",
+        "category": "사용자 답변 처리",
+        "label": "답변 동시 처리 수",
+        "description": "ask-worker 한 컨테이너가 동시에 처리하는 사용자 답변(run) 수. 1 이면 현행처럼 한 번에 한 답변만 직렬 처리, 2 이상이면 여러 사용자의 답변을 병렬로 처리해 대기 시간이 줄어듭니다. 각 병렬 답변이 PG 커넥션(하트비트)+소스 DB 커넥션을 점유하고 동시 LLM 호출이 늘므로, pgbouncer 풀·LLM 한도·메모리(mem_limit) 여유 안에서 올리세요. 이 값은 워커 재시작/재배포 시 반영됩니다.",
+        "unit": "개",
+        "default": 1,
+        "minimum": 1,
+        "maximum": 8,
+        "apply_mode": "restart",
+    },
+    {
+        "key": "AGENT_ASK_WORKER_IDLE_POLL_MS",
+        "category": "사용자 답변 처리",
+        "label": "유휴 폴링 간격",
+        "description": "처리할 답변이 없을 때 ask-worker 가 큐를 다시 확인하기까지의 간격(밀리초). 낮추면 새 요청을 더 빨리 집어와 큐 대기가 줄지만, 유휴 시 DB 폴링이 잦아집니다. (기존 0.5초 = 500ms 와 동일한 기본값.)",
+        "unit": "밀리초",
+        "default": 500,
+        "minimum": 100,
+        "maximum": 5000,
+        "apply_mode": "live",
+    },
+    # ── 지식베이스 임베딩 (기타 워커 기능) ──
+    {
+        "key": "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS",
+        "category": "지식베이스 임베딩",
+        "label": "임베딩 백필 pass 당 행수",
+        "description": "insight-worker 임베딩 백필 데몬이 한 pass 에서 처리하는 최대 행수. 높이면 임베딩이 빨리 따라잡지만 embedding gateway 부하가 커집니다.",
+        "unit": "행",
+        "default": 100,
+        "minimum": 10,
+        "maximum": 2000,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_KB_EMBEDDING_INTERVAL_SEC",
+        "category": "지식베이스 임베딩",
+        "label": "임베딩 데몬 주기",
+        "description": "임베딩 백필 데몬이 한 pass 후 다음 pass 까지 쉬는 시간. 낮추면 임베딩이 더 자주 갱신되지만 부하가 늘어납니다.",
+        "unit": "초",
+        "default": 60,
+        "minimum": 10,
+        "maximum": 3600,
+        "apply_mode": "live",
+    },
+)
+
+
+def _perf_specs() -> tuple[dict[str, Any], ...]:
+    return tuple(dict(spec, group=GROUP_PERF) for spec in _PERF_SPECS)
+
+
+def node_analysis_concurrency() -> int:
+    """insight-worker 노드 분석 tick 당 병렬 처리 수(런타임 override 반영, 기본 1=순차)."""
+    return max(1, get_int("AGENT_NODE_ANALYSIS_CONCURRENCY"))
+
+
+def cluster_label_concurrency() -> int:
+    """cluster_label 배치 LLM 호출 병렬 수(런타임 override 반영, 기본 1=순차)."""
+    return max(1, get_int("AGENT_METADATA_CLUSTER_LABEL_CONCURRENCY"))
+
+
+def ask_worker_concurrency() -> int:
+    """ask-worker 컨테이너 내 동시 답변 처리 수(런타임 override 반영, 기본 1=직렬)."""
+    return max(1, get_int("AGENT_ASK_WORKER_CONCURRENCY"))
+
+
+def ask_worker_idle_poll_sec() -> float:
+    """ask-worker 유휴 폴링 간격(초). 런타임 override(ms)를 초로 환산, 기본 0.5초."""
+    return max(0.05, get_int("AGENT_ASK_WORKER_IDLE_POLL_MS") / 1000.0)
+
+
 # 스펙은 프로세스 수명 내 정적이다(타임아웃=리터럴, 모델 예산=import-time 고정 카탈로그 순회).
 # get_int·model_thinking_budget_override 가 매 MCP 요청·매 timeout 해석마다 spec_for 를 호출하므로
 # 전체 스펙/인덱스를 1회 계산 후 메모이즈한다(적대 backend MINOR — hot-path 재빌드 제거).
@@ -797,6 +958,7 @@ def list_specs() -> tuple[dict[str, Any], ...]:
             + _redteam_specs()
             + _scratch_specs()
             + _folder_specs()
+            + _perf_specs()
         )
     return _SPECS_CACHE
 
@@ -1097,6 +1259,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
     models: list[dict[str, Any]] = []
     reasoning: list[dict[str, Any]] = []
     redteam: list[dict[str, Any]] = []
+    performance: list[dict[str, Any]] = []
     for spec in list_specs():
         key = str(spec["key"])
         has_override = key in ov
@@ -1134,6 +1297,8 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
             reasoning.append(row)
         elif spec.get("group") == GROUP_REDTEAM:
             redteam.append(row)
+        elif spec.get("group") == GROUP_PERF:
+            performance.append(row)
         else:
             timeouts.append(row)
     return {
@@ -1142,6 +1307,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
         "model_thinking_budgets": models,
         "reasoning_budgets": reasoning,
         "redteam": redteam,
+        "performance": performance,
         "meta": {
             "snapshot_path": snapshot_path(),
             "disabled": _disabled(),
