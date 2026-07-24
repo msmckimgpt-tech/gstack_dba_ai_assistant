@@ -51,6 +51,10 @@ x-agent-common: &agent-common
     # 대신 fail-loud. depends_on(postgres healthy) 과 함께 cold-boot 시 PG 미준비 상태로
     # ask 받는 것을 차단.
     AGENT_RUNTIME_PG_REQUIRED: "1"
+    # feature-0025: insight-worker tick 배포값을 anchor 에 두어 web(설정 화면 baseline 표시)·워커가
+    #   동일 기준값(60초)을 본다(관리 콘솔 '성능·병렬' 서브탭 baseline 정합). insight-worker 서비스가
+    #   동일 값으로 명시 override 하며, 그 외 컨테이너는 이 값을 사용하지 않아 무해.
+    AGENT_INSIGHT_WORKER_TICK_SEC: "60"
   volumes:
     - ../artifacts/shared:/shared
   depends_on:
@@ -179,7 +183,8 @@ services:
       - -c
       - max_wal_size=2GB
       - -c
-      - max_connections=100
+      # feature-0025 인프라 여력: pgbouncer DEFAULT_POOL_SIZE(40) + 워커 병렬도 fan-out 을 수용(100→150).
+      - max_connections=150
       - -c
       - wal_level=replica
       - -c
@@ -225,8 +230,15 @@ services:
       DB_PASSWORD: ${AGENT_KB_PG_PASSWORD:-change_me_pg}
       DB_NAME: ${AGENT_KB_PG_DB:-agent_kb}
       POOL_MODE: transaction
-      MAX_CLIENT_CONN: "100"
-      DEFAULT_POOL_SIZE: "20"
+      # feature-0025 인프라 여력: 워커 병렬도('답변 동시 처리 수' 등) 상향 시 서버측 커넥션 풀에 여유를 준다.
+      #   ⚠ 2026-07-14 §82(풀 20 소진 → lock-wait → 전역 워커 장애) 재발 방지 — DEFAULT_POOL_SIZE(40) 는
+      #   PG max_connections(150) 이하로 유지. 병렬 활성 시 실제 부하는 구조 conn(ask executor cx + 잡별
+      #   heartbeat hb_conn + coordinator conn)뿐 아니라 run_agent 스텝마다의 memory/usage per-call 단명
+      #   연결 + insight 병렬(node≤8·cluster≤4) usage 연결 + web inprocess ask 까지 합산되므로 "ask≤8×2"
+      #   보다 크다. 단 이들은 autocommit·transaction-pooling 이라 서버 점유가 짧다. 또 DEFAULT_POOL_SIZE
+      #   는 (user,db) 쌍당이라 role 다수면 40×N 서버 conn 가능 → 병렬도를 크게 올리기 전 라이브 실측 권장.
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "40"
       AUTH_TYPE: scram-sha-256
       # feature-0016: admin 콘솔(PAUSE/RESUME)을 DB_USER(agent_kb_rw, userlist 보유)로 허용.
       # bin/pg-restart.sh 가 PG primary 재시작/config 변경을 near-zero RW 단절로 수행하는 데 필요.
@@ -273,7 +285,8 @@ services:
       - -c
       - hot_standby=on
       - -c
-      - max_connections=100
+      # feature-0025 인프라 여력: primary 와 정합(100→150). hot standby 는 primary max_connections 이상 필요.
+      - max_connections=150
       - -c
       - shared_buffers=128MB
       - -c

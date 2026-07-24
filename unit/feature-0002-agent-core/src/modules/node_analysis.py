@@ -941,8 +941,14 @@ def process_pending(max_nodes=None, conn=None) -> dict:
     rep = {"claimed": 0, "done": 0, "failed": 0, "enqueued": 0, "links": 0, "refined": 0}
     if not _cfg_enabled():
         return rep
-    max_nodes = _clamp(max_nodes if max_nodes is not None else _cfg.AGENT_NODE_ANALYSIS_BATCH_PER_TICK,
-                       1, 64, 4)
+    if max_nodes is None:
+        # feature-0025: tick 당 처리량을 관리 콘솔에서 live 조절(override 없으면 config 기본 10 = byte-동치).
+        try:
+            from shared import runtime_settings as _rts_bt
+            max_nodes = _rts_bt.get_int("AGENT_NODE_ANALYSIS_BATCH_PER_TICK")
+        except Exception:
+            max_nodes = _cfg.AGENT_NODE_ANALYSIS_BATCH_PER_TICK
+    max_nodes = _clamp(max_nodes, 1, 64, 4)
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -993,9 +999,23 @@ def process_pending(max_nodes=None, conn=None) -> dict:
         rep["claimed"] = len(claimed)
         touched_runs = set()
         anchors: dict = {}   # run_id[|anchor_key] -> anchor 서술자(틱 내 캐시, 앵커당 1회 그래프 조회)
-        for jid, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, anchor_key, pass_no, prev_text in claimed:
+        # feature-0025 병렬 처리: LLM 호출(느린 부분)만 스레드 병렬화하고, 노드 분석의 DB I/O(claim/
+        #   UPDATE/enqueue/backrefine)와 공유 상태(anchors·cur·c·rep)는 전부 단일 스레드 유지한다 — psycopg
+        #   커넥션은 스레드 비안전이므로 공유 conn 을 병렬 접근하지 않기 위함. (주의: LLM 단계 내부의
+        #   usage 회계(_record_llm_usage)는 호출당 단명 PG 연결을 열어 최대 concurrency 개가 병렬 생성될
+        #   수 있으나, autocommit·transaction-pooling 이라 서버측 점유가 짧다. §82 는 장기 lock-wait 풀
+        #   소진이 원인이었고, 여기선 그런 장기 점유를 만들지 않는다.) 아래
+        #   _gather/_persist 는 기존 per-job 본체를 두 단계로 분해한 것이며, concurrency==1(및 1건)은
+        #   gather→llm→persist 를 노드마다 인터리브해 **기존 동작 byte-동치**, >1 은 gather 전부 →
+        #   LLM 병렬(ThreadPoolExecutor) → persist 전부(claim 순서 유지)로 처리한다.
+        def _gather(job_row):
+            (jid, run_id, scope_key, node_key, node_label, node_name, node_fqn,
+             depth, anchor_key, pass_no, prev_text) = job_row
             touched_runs.add(run_id)
-            anchor = None
+            w = {"jid": jid, "run_id": run_id, "scope_key": scope_key, "node_key": node_key,
+                 "node_label": node_label, "node_name": node_name, "node_fqn": node_fqn,
+                 "depth": depth, "anchor_key": anchor_key, "pass_no": pass_no,
+                 "ctx": None, "root": None, "anchor": None, "payload": None, "err": None}
             try:
                 # node-analysis-completeness: Table 은 컨텍스트 수집 전에 컬럼 인벤토리 보강 —
                 #   같은 틱의 _fetch_context 가 HAS_COLUMN 자식을 보고 (a) payload 컬럼 컨텍스트
@@ -1025,7 +1045,32 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                     rf = _related_findings(cur, run_id, ctx, exclude_key=node_key)
                     if rf:
                         payload["related_findings"] = rf
-                obj = _llm.llm_node_analysis(payload)
+                w["ctx"], w["root"], w["anchor"], w["payload"] = ctx, root, anchor, payload
+            except Exception as exc:
+                w["err"] = exc
+            return w
+
+        def _run_llm(w):
+            """LLM 노드 분석 1회. **DB 미접근 — 스레드 병렬 안전**. 예외는 Exception 객체로 반환(직렬 persist 가 처리)."""
+            if w["err"] is not None or w["payload"] is None:
+                return None
+            try:
+                return _llm.llm_node_analysis(w["payload"])
+            except Exception as exc:
+                return exc
+
+        def _persist(w, obj):
+            """LLM 결과 반영(UPDATE·suggested_links·backrefine·enqueue). **단일 스레드에서만 호출**(cur/c/rep)."""
+            jid = w["jid"]; run_id = w["run_id"]; scope_key = w["scope_key"]
+            node_label = w["node_label"]; node_name = w["node_name"]; node_fqn = w["node_fqn"]
+            ctx = w["ctx"]; root = w["root"]; anchor = w["anchor"]
+            anchor_key = w["anchor_key"]; pass_no = w["pass_no"]; depth = w["depth"]
+            try:
+                # gather 또는 LLM 단계 예외는 기존 per-job try 와 동일하게 아래 except 로 흘려보낸다.
+                if w["err"] is not None:
+                    raise w["err"]
+                if isinstance(obj, Exception):
+                    raise obj
                 if isinstance(obj, dict):
                     analysis_text = json.dumps({
                         "summary": str(obj.get("summary") or "").strip(),
@@ -1097,6 +1142,26 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                         rep["failed"] += 1
                 except Exception:
                     pass
+
+        _na_conc = 1
+        try:
+            from shared import runtime_settings as _rts_na
+            _na_conc = max(1, min(8, int(_rts_na.node_analysis_concurrency())))
+        except Exception:
+            _na_conc = 1
+        if _na_conc <= 1 or len(claimed) <= 1:
+            # 직렬(기존 byte-동치): 노드마다 gather→llm→persist 인터리브.
+            for job_row in claimed:
+                w = _gather(job_row)
+                _persist(w, _run_llm(w))
+        else:
+            # 병렬: gather 전부(단일 스레드, anchors 캐시 안전) → LLM 병렬 → persist 전부(claim 순서, 단일 스레드).
+            works = [_gather(job_row) for job_row in claimed]
+            import concurrent.futures as _cf
+            with _cf.ThreadPoolExecutor(max_workers=_na_conc) as _ex:
+                objs = list(_ex.map(_run_llm, works))
+            for w, obj in zip(works, objs):
+                _persist(w, obj)
         # run 마감 판정
         for run_id in touched_runs:
             try:
