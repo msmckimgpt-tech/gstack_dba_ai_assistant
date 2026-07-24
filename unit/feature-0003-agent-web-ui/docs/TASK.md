@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260724T073848-conv-menu-order — 대화 목록 '···' 확장 메뉴 항목 순서 변경 (공유·설정·이동 → 공유·이동·설정) (Minor §12.3 — feature-0003 web/UI 프론트 `static/app.js` 단독, frontend-only, /_template:entry arg-given)
+- 요청(사용자, 2026-07-24, `/_template:entry` arg-given): "서비스 내 대화목록 요소의 확장에서 각 순서를 변경해주세요. 전: [공유, 설정, 이동] → 후: [공유, 이동, 설정]"
+- 현상: `openConversationItemMenu`(app.js) 가 `공유 → 설정 → 이동(folder.manage.own 조건부)` 순으로 항목을 append. 사용자는 '설정'과 '이동'의 순서를 맞바꿔 `공유 → 이동 → 설정` 을 원함.
+- 수정(frontend-only, `static/app.js` `openConversationItemMenu` 단독): '이동' 조건부 블록(`if (can("folder.manage.own"))`)을 '설정' append 앞으로 이동. 권한 게이트·onSelect·action 인자 전부 불변 — 순수 렌더 순서만 변경. 헤더 주석 "최종 순서: 공유 | 설정" → "공유 | 이동 | 설정" 갱신.
+
+### 완료 체크리스트
+- [x] app.js: `openConversationItemMenu` buildItems 항목 순서 재정렬(공유 → 이동 → 설정) + 헤더 주석 갱신
+- [x] 정적·회귀 검증: `node --check` PASS · 항목 3종 전부 유지(공유/이동/설정) · 순서를 assert 하는 테스트 없음 확인(`verify_settings_archive_leave.mjs` 는 존재만 검사 → 재정렬 무영향; 선존 2 FAIL 은 HEAD 부터의 테스트 정규식 `makeItem` vs 코드 `make` drift 로 본 변경과 무관)
+- [ ] verify-completion PASS → PR → deploy-web → POST-DEPLOY 라이브 검증
+정본 rationale=REVIEW.md REV-20260724T073848-conv-menu-order, 변경이력=MODIFY.md CHG-20260724T073848-conv-menu-order.
+
 ## TASK-20260724T112446-share-scroll-bottom — 공유 대화 링크 화면 진입 시 문서 스크롤을 맨 아래(최신 메시지)부터 위치 (Minor §12.3 — feature-0003 web/UI 프론트 `static/share.js` 단독, frontend-only)
 - 요청(사용자, 2026-07-24, `/_template:entry` arg-given): "공유된 대화 링크 화면에 진입 시, 화면 스크롤이 가장 아래부터 위치하도록 구성해주세요."
 - 현상: `/share/{token}` 페이지는 `fetchShare→render` 후 스크롤을 건드리지 않아 진입 시 문서 맨 위(첫 메시지)에서 시작. 대화는 시간순 append 라 최신 메시지가 맨 아래 → 진입 즉시 최신을 보려면 사용자가 매번 아래로 스크롤해야 함(메신저/채팅 UI 관례 위배).

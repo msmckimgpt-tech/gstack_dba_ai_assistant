@@ -11,6 +11,10 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260724T073848-conv-menu-order (TASK-20260724T073848-conv-menu-order — 대화 목록 '···' 확장 메뉴 항목 순서 변경, Minor §12.3, frontend-only)
+- Date: 2026-07-24. `unit/feature-0003-agent-web-ui/src/static/app.js` `openConversationItemMenu` 단독 — '이동'(folder.manage.own 조건부) 블록을 '설정' append 앞으로 옮겨 렌더 순서를 `공유 → 설정 → 이동` 에서 `공유 → 이동 → 설정` 으로 변경. 헤더 주석 "최종 순서: 공유 | 설정" → "공유 | 이동 | 설정". 로직·권한·핸들러·action 인자 무변경 — 순수 순서.
+- 영향: 대화 목록 각 항목의 '···' 확장 메뉴 항목 배열 순서만 변경. 백엔드·API·데이터·권한 무관. Cross-ref: TASK/REV-20260724T073848-conv-menu-order.
+
 ## CHG-20260724T033500-graph-emoji-color-postverify (TASK-20260724T031956-graph-emoji-color POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-24. 코드/자산 무변경 — TEST.md POST-DEPLOY 결과 append + TASK 체크박스 완료 + REVIEW postverify entry. 배포 PR #922 → main **c709ad3f**, `make deploy-web-only` 무중단 롤링(web-a/web-b·soak PASS·이미지 mysql-ai-web:c709ad3f·asset stamp 413567bad705).
 - 라이브 실측(win-browser relay 실 Windows Chrome): 서빙 `/static/graph/graph-renderer-pixi.js` 에 `hasEmoji`·`!PixiAdapterPure.hasEmoji(text)` 게이트·emoji 폰트 스택 curl 확증. 버그 유발 조건(dark labelFill `#161b22` + emoji 폰트) canvas 2D fillText 프로브로 역할 아이콘 9종 chroma 측정: 📊217·💳255·📜75·📘177·📦214·🗂255 컬러 렌더, 👤·🔗·⚙️=0(Segoe UI Emoji 그레이스케일 디자인 이모지 — flat 실루엣 아닌 실 글리프). 9종 전부 flat 틴트 실루엣이 아닌 폰트 실 글리프 → "검은색 실루엣" 해소 확인. Cross-ref: REV-20260724T033500-graph-emoji-color-postverify · CHG/TASK-20260724T031956-graph-emoji-color · TEST Run(2026-07-24 graph-emoji-color POST-DEPLOY).

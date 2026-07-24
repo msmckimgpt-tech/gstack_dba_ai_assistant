@@ -1854,3 +1854,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - AC-20260724T123600-csv-download-2: 대형 ```csv``` 블록(> threshold) + 저장 CSV 매칭 시 답변이 미리보기로 접히고 `/api/file` 전체 링크가 주입되며, 그 절단-미리보기 블록엔 프론트 다운로드 버튼이 붙지 않는다(전체 링크가 canonical).
 - AC-20260724T123600-csv-download-3: non-csv 코드블록(language-sql/diff/mermaid)·빈 csv 블록엔 버튼이 붙지 않고, 재렌더(폴러) 시 버튼이 중복 삽입되지 않는다.
 - 검증: pytest 2305 passed/2 skipped(신규 `test_collapse_csv_block_download.py` 8 + 무회귀) · jsdom `verify_csv_block_download.mjs` 22 PASS · `node --check`. REV-20260724T123600-csv-download-wiring. POST-DEPLOY PB-0008(Environment: Windows-browser — 대화 515c0fd9 재로드).
+
+## (conv-menu-order, 2026-07-24) 대화 목록 '···' 확장 메뉴 항목 순서 — 공유 | 이동 | 설정 (web/UI, Minor §12.3, frontend-only)
+- 대화 사이드바 각 항목의 '···' 확장 메뉴(`openConversationItemMenu`) 항목 렌더 순서를 `공유 → 설정 → 이동` 에서 `공유 → 이동 → 설정` 으로 변경(사용자 요청, `/_template:entry` arg-given). '이동'(폴더 이동, `openMoveConversationDialog`)은 `folder.manage.own` 보유 시에만 노출되는 조건부 항목 — 이 조건부 블록을 '설정'(`openConversationSettings`) append 앞으로 옮긴 순수 렌더 순서 변경.
+- 불변식: 항목 3종의 존재·권한 게이트(`conversation.share`/`conversation.read`/`folder.manage.own`)·onSelect 핸들러(openShareDialog/openMoveConversationDialog/openConversationSettings)·action 인자·백엔드/RBAC/스키마 무변경. 우클릭 universal-ctxmenu(`_CTX_MENU_TARGETS`)·`openFolderMenu`·말풍선 `☰` 메뉴 무관. cache-buster `?v=dev` 고정. 헤더 주석 "최종 순서" 문자열도 동기화.
+- 검증: `node --check` PASS · 순서 assert 테스트 부재 확인 · POST-DEPLOY PB-0008(Environment: Windows-browser — 대화 목록 '···'/우클릭 메뉴 항목 순서 육안). CHG/REV/TASK-20260724T073848-conv-menu-order.
