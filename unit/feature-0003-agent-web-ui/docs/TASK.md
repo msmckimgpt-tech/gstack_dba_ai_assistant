@@ -6141,3 +6141,27 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check` PASS · vm 구조검증(34 releases·07-23 head 7항목[new 2·improved 4·fixed 1, area work 5·admin 2]·07-22 보존·상위 8블록 내림차순[말단 '이전' sentinel 정상]·스키마 type/area/title/detail·누출0[feature-id·테이블·IDOR·alembic·scope 등 0]). 근거 정본 = 07-23 머지 owning POST-DEPLOY 커밋(폴더 9392cf51/e3fec503/0a1378f3/1a2f2595·날짜트리 8b384b8a·우클릭 b51f93e9·페이징 fce9ab2b/5d0f8467·추론타임라인 a17fd1a7·DB분석 6da5e621) + git log aac76889..HEAD.
 - [x] 제외: graph-node-reveal(feature-0016)은 자체 POST-DEPLOY PB-0008 미기록('배포됨-미검증')이라 사용자 릴리즈노트 보류(배포 게이트 해소 후 차기 블록)·floating-menu-close-fix 는 당일 신규 폴더 메뉴 결함이라 폴더 항목에 흡수·share-list-window-fix 는 내부 보안 하드닝(체감 0·메커니즘 비노출)·folder-privacy/perms-broaden/ux 는 폴더 신기능 facet 으로 통합.
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(Windows-browser 미수행 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3). 적대검증: ULTRACODE wf_ded08a66 — RN major 1(graph-node-reveal hold) 반영·나머지 INCLUDE holds.
+
+## 20260724T1029-usage-model-canonical
+REQ: 관리 콘솔 > 감사 > AI 운영 현황 > LLM 사용량 '모델별 비중' 도넛의 중복 명칭 모델 분점 이슈 — 원인 파악 후
+실제 사용량에 맞춰 출력. (feature-0003, Minor §12.3, worktree ai/claude-corp/usage-model-canonical)
+
+### 계획(§7.1) + 완료 판정
+- [완료] `shared/model_catalog.py`: `canonical_usage_model()` + `canonical_usage_model_sql()` 추가(SSOT).
+  AC: 라우팅 변형/실ID/gemma 폴백을 3 family(claude-haiku-4/claude-sonnet-4/edge)로 접고 idempotent·미등록 passthrough.
+- [완료] `admin_usage.py`: by_model·by_account·by_day_model GROUP BY + `_query_usage_conversations` 필터·분해 canonical.
+  `_estimate_llm_cost_usd` 단가키 canonical(비용 $0 gap 해소). AC: 프론트 무변경 정합 + 드릴다운 매칭.
+- [완료] `profile.py`(개인 사용량 도넛·드릴다운 일관성)·`admin_console.py`(대시보드 위젯) 동일 canonical 적용.
+- [완료] tests: test_q2_model_filter 갱신 + test_c1~c4(canonical family/idempotent/cost gap/그룹핑) 추가.
+- [완료] 검증: pytest 2280 passed/2 skipped · 실 PG(90일) 7→3 세그먼트 병합 실측.
+- [예정] 배포(web/워커 재빌드 — 백엔드 baked) + POST-DEPLOY PB-0008 라이브 도넛 시각검증.
+정본 rationale=REVIEW.md REV-20260724T012954-usage-model-canonical, 변경이력=MODIFY.md CHG-20260724T012954-usage-model-canonical.
+
+### 완료 체크리스트 (usage-model-canonical)
+- [x] canonical family SSOT 함수 추가 (shared/model_catalog.py)
+- [x] admin_usage.py 집계·필터·단가 canonical 적용
+- [x] profile.py / admin_console.py canonical 적용
+- [x] 테스트 갱신·추가 (2280 passed / 2 skipped)
+- [x] 실 PG 90일 병합 실측 (7→3 세그먼트)
+- [x] docs 갱신 (MODIFY/REVIEW/REPORT/FUNCTION/TASK)
+- [ ] 배포(web/워커 재빌드) + POST-DEPLOY PB-0008 라이브 도넛 시각검증

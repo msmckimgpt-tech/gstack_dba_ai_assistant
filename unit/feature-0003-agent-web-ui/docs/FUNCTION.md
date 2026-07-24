@@ -1812,3 +1812,9 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 ## (doc-sync-rn-0724, 2026-07-23) 릴리즈노트 콘텐츠 — 07-23 블록 신규(대화 폴더·탐색·관리 콘솔 7항목)
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-23" 블록 신규(7항목: new/work 2·improved/work 2·fixed/work 1·improved/admin 2 — 대화 폴더·폴더별 AI 지침·대화목록 월·연 날짜 묶음·우클릭 메뉴·페이징 스크롤 보존·AI 답변 다듬기 전·후 보기·DB 전체 AI 자동 분석) prepend·generated 2026-07-22→2026-07-23. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
 - 평이화/비노출: feature-id·§번호·PR#·함수명·내부표현(folder.*.own/IDOR·compose_system_prompt·alembic·scope·introspection/클러스터 등) 비노출(사용자 언어). graph-node-reveal 은 배포게이트 미해소로 보류.
+
+## (usage-model-canonical, 2026-07-24) LLM 사용량 모델별 집계 = canonical family
+- `감사 > AI 운영 현황 > LLM 사용량` 및 개인 사용량·대시보드의 모델별 집계(도넛/스택/표/드릴다운)는 `agent_runtime.llm_usage` 의 실 서빙 모델(`COALESCE(resolved_model, model)`)을 **canonical family** 로 접어 집계한다. 규칙(SSOT=`shared/model_catalog.py`): `claude-haiku-4*`→`claude-haiku-4`, `claude-sonnet-4*`→`claude-sonnet-4`, `gemma*`/`edge`/`edge-fallback`/`auto`/`core`/`code`→`edge`, 그 외 원본 유지(self-surface). litellm 라우팅 변형 alias·실 모델 ID·edge 폴백이 한 논리 모델로 합쳐져 '모델별 비중' 이 실제 사용량을 반영한다(중복 명칭 분점 제거).
+- 드릴다운(`/api/admin/usage/conversations`·profile) 모델 필터도 canonical 기준 — 도넛 클릭 키(canonical) ↔ 대화목록 필터 정합.
+- 추정 비용(`_estimate_llm_cost_usd`)은 canonical 키로 단가표를 조회 — 변형 alias/실ID 도 올바른 단가로 계상(비용 $0 오표시 gap 해소), edge/gemma 는 로컬 무료 0.
+- 불변식: admin.js/스키마/RBAC/엔드포인트 계약 무변경(백엔드 집계 SQL 만). AC-20260724T012954-usage-model-canonical-1: 실 PG 90일 7세그먼트→3 실제모델 병합 실측. 검증: pytest 2280 passed/2 skipped + POST-DEPLOY PB-0008.

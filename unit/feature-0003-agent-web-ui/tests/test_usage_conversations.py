@@ -117,12 +117,16 @@ def test_q1_fold_and_inner_join():
 # ── Q2: 차원 필터 → WHERE/params ───────────────────────────────────────────────
 
 def test_q2_model_filter():
+    # usage-model-canonical: 모델 필터는 canonical family 기준 — 도넛/차트 라벨과 동일 규칙으로
+    #   'claude-haiku-4' 클릭이 -interactive/-chat/실ID 변형 대화까지 매칭(차트 ↔ 대화목록 정합).
+    from shared.model_catalog import canonical_usage_model_sql
     sink = []
     app._query_usage_conversations(_FakePG([], sink), days=7, model="claude-haiku-4",
                                    account_ids=None, day_label=None, gran="day",
                                    owner_account_id=None, owner_is_null_ok=False)
     sql, params = sink[0]
-    assert "COALESCE(u.resolved_model, u.model) = %s" in sql
+    assert canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)") + " = %s" in sql
+    assert "COALESCE(u.resolved_model, u.model) = %s" not in sql  # 구 raw 필터 회귀 가드
     assert "claude-haiku-4" in params
     assert "7 days" in params  # days 바인드
 
@@ -288,3 +292,65 @@ def test_r1_role_to_accounts(monkeypatch):
     # 역할명 → 계정 IN 쿼리 결과
     out = app._usage_account_ids_for_role(_RoleConn([(7,), (9,)]), "sales")
     assert out == [7, 9]
+
+
+# ── C1~C4: usage-model-canonical — 모델별 비중 중복 명칭 분점 해소 ────────────────
+# 관리 콘솔 '감사 > AI 운영 현황 > LLM 사용량' 도넛이 같은 논리 모델의 라우팅 변형 alias
+# (-interactive/-chat/-root)·실 모델 ID(claude-haiku-4-5-20251001)·gemma 폴백을 별도 세그먼트로
+# 쪼개던 이슈. canonical family 로 접어 실제 사용량 비중을 낸다.
+
+def test_c1_canonical_usage_model_families():
+    from shared.model_catalog import canonical_usage_model as C
+    # Haiku 4.5 — 모든 라우팅 변형 alias + 실 모델 ID 가 한 family 로
+    for v in ("claude-haiku-4", "claude-haiku-4-root", "claude-haiku-4-interactive",
+              "claude-haiku-4-interactive-root", "claude-haiku-4-chat", "claude-haiku-4-chat-root",
+              "claude-haiku-4-5-20251001", "CLAUDE-HAIKU-4-CHAT"):
+        assert C(v) == "claude-haiku-4", v
+    # Sonnet 4.6
+    for v in ("claude-sonnet-4", "claude-sonnet-4-6", "anthropic/claude-sonnet-4-6".split("/")[-1]):
+        assert C(v) == "claude-sonnet-4", v
+    # 로컬 게이트웨이·gemma 폴백 → edge
+    for v in ("edge", "edge-fallback", "gemma4:e2b", "gemma2", "auto", "core", "code"):
+        assert C(v) == "edge", v
+
+
+def test_c2_canonical_idempotent_and_unknown_passthrough():
+    from shared.model_catalog import canonical_usage_model as C
+    # idempotent
+    assert C("claude-haiku-4") == "claude-haiku-4"
+    assert C("claude-sonnet-4") == "claude-sonnet-4"
+    assert C("edge") == "edge"
+    # 미등록/신규 모델은 원본 유지(self-surface — 조용히 사라지지 않게)
+    assert C("claude-opus-9") == "claude-opus-9"
+    assert C("some-future-model") == "some-future-model"
+    # 빈 값
+    assert C(None) == "(미상)"
+    assert C("  ") == "(미상)"
+
+
+def test_c3_estimate_cost_canonicalizes_price_key():
+    """단가표(_LLM_PRICE_USD_PER_1M)는 base alias 만 등록 — canonical 화로 라우팅 변형·실 모델 ID 도
+    올바른 단가로 계상(비용 $0 오표시 gap 해소). gemma 폴백(edge)은 단가 미등록 → 0(로컬 무료)."""
+    est = app._estimate_llm_cost_usd
+    base = est("claude-haiku-4", 1_000_000, 1_000_000)
+    assert base > 0
+    # 라우팅 변형·실 모델 ID 가 base 와 동일 단가로 계상돼야 함(예전엔 미매칭 → 0)
+    assert est("claude-haiku-4-chat", 1_000_000, 1_000_000) == base
+    assert est("claude-haiku-4-interactive", 1_000_000, 1_000_000) == base
+    assert est("claude-haiku-4-5-20251001", 1_000_000, 1_000_000) == base
+    # edge/gemma 폴백은 로컬 무료 → 0
+    assert est("gemma4:e2b", 1_000_000, 1_000_000) == 0.0
+    assert est("edge", 1_000_000, 1_000_000) == 0.0
+
+
+def test_c4_query_conversations_groups_by_canonical():
+    """대화별 fold SQL 의 모델 분해 키도 canonical — 대화 모달 models[] 가 도넛과 동일 표기."""
+    from shared.model_catalog import canonical_usage_model_sql
+    sink = []
+    app._query_usage_conversations(_FakePG([], sink), days=30, model=None, account_ids=None,
+                                   day_label=None, gran="day", owner_account_id=None, owner_is_null_ok=False)
+    sql, _ = sink[0]
+    canon = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
+    assert canon + " AS m" in sql
+    assert "GROUP BY COALESCE(u.resolved_model, u.model)" not in sql  # 구 raw 그룹핑 회귀 가드
+    assert "starts_with(" in sql  # LIKE '%' 회피 — 파라미터 쿼리에서 이스케이프 불필요
