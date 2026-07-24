@@ -333,6 +333,16 @@ source_of_truth: true
 - Notes(배포 후 최종): 배포 후 gateway 로 `claude-sonnet-4-chat` 실 대화 ping → **200 확정**(CC identity 주입이
   litellm→Anthropic 통과). PB-0008: 새 대화 sonnet 선택 → 정상 답변(429 아님). 실패 시 rollback.
 
+#### POST-DEPLOY 최종 확정 (2026-07-24, 배포 d4ede64b)
+- 3계층 전부 `d4ede64b`(web·worker·gateway reconcile). 배포된 `agent_core._call_llm` 실 경로 실측:
+  - `requires_oauth_frontier_identity("claude-sonnet-4")` = True → CC identity 자동 주입 활성.
+  - **`_call_llm(model="claude-sonnet-4")` → HTTP 200** "안녕하세요! DB 쿼리 어시스턴트입니다…" — **sonnet
+    end-to-end 복구**. 답변은 DB 어시스턴트(Claude Code 코딩 아님) = 동작 왜곡 없음 확정.
+  - `_call_llm(model="claude-haiku-4")` → 200 "준비됐습니다! 🎯" — **무회귀**.
+- 결론: sonnet 3층 근본원인(① root fallback 부재 ② 폐기 sonnet-4-6 ③ adaptive thinking ④ OAuth frontier-identity
+  게이트) 전부 해소·배포·라이브 확정. 라벨(claude-sonnet/claude-haiku) 서빙 정상. 잔여 PB-0008 win-browser 시각
+  확인은 사용자 UI 재현 시 권장(백엔드 경로는 실측 200 확정).
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel
