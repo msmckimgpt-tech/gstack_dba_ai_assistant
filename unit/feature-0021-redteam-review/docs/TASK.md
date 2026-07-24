@@ -14,7 +14,7 @@ feature_status_updated: 2026-07-15
 - State: in-progress
 - Owner: AI (claude)
 - Priority: high
-- Last Updated: 2026-07-15
+- Last Updated: 2026-07-24 (redteam-model-align cycle)
 
 ## 2. Implementation Plan
 
@@ -50,6 +50,10 @@ feature_status_updated: 2026-07-15
 - [x] TASK-20260722-review-token-setting: "리뷰 실패"=리뷰어 LLM 100% 타임아웃 진단(DB 8/8 @25s) +
   리뷰어 토큰 할당량(REDTEAM_MAX_TOKENS) 콘솔 '설정 > AI 자가 리뷰' 노출 (타임아웃은 기존 노출).
   테스트 87건 PASS·ruff clean·프론트 무변경. 배포 대기.
+- [x] TASK-20260724T0709-redteam-model-align: 리뷰어 모델을 답변 모델에 정합(haiku→haiku-chat,
+  sonnet→sonnet-chat; AGENT_REDTEAM_MODEL env pin 유지). 이전엔 항상 claude-haiku-4-chat 고정.
+  sonnet 리뷰어 OAuth identity 주입(429 게이트 회피) + adaptive effort=low(timeout/truncation 회피,
+  적대 패널 MAJOR) + record model/admin 표시 정합. 신규 테스트 9건 PASS·ruff clean·프론트 무변경.
 
 ## 4. In Progress
 - 없음

@@ -576,7 +576,7 @@ _REDTEAM_SPECS: tuple[dict[str, Any], ...] = (
         "key": "REDTEAM_MAX_TOKENS",
         "category": "자가 리뷰",
         "label": "리뷰어 토큰 할당량",
-        "description": "리뷰어 LLM 1회 호출의 최대 출력 토큰(모델 thinking + 판정 JSON 포함). 리뷰어는 짧은 JSON 판정만 내면 되지만, 리뷰어 모델(claude-haiku-4-chat)의 고정 thinking 예산(현 5000)보다 반드시 커야 하므로 하한(6000)을 둡니다. 값을 올려도 호출 지연은 줄지 않습니다(지연은 위 타임아웃으로 조절). 0/미설정이면 기존 기본 상한(8192)을 사용합니다.",
+        "description": "리뷰어 LLM 1회 호출의 최대 출력 토큰(모델 thinking + 판정 JSON 포함). 리뷰어 모델은 답변에 쓰인 모델에 정합합니다(haiku 답변→haiku 리뷰, sonnet 답변→sonnet 리뷰; AGENT_REDTEAM_MODEL 로 고정 가능). haiku 리뷰어는 고정 thinking 예산(현 5000)을 쓰므로 그보다 커야 하는 하한(6000)을 둡니다. sonnet 리뷰어는 adaptive thinking(effort=low 로 낮춰 truncation·지연 완화)입니다. 값을 올려도 호출 지연은 줄지 않습니다(지연은 위 타임아웃으로 조절). 0/미설정이면 기존 기본 상한(8192)을 사용합니다.",
         "unit": "토큰",
         "default": 8192,
         "minimum": 6000,

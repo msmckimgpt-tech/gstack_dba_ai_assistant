@@ -147,3 +147,42 @@ source_of_truth: true
   data-driven 자동 렌더하므로 새 spec 이 자동 노출. 하위호환: override 미설정(0) 시 기존
   8192 task cap 과 byte-동치. 배포 대상 = web(설정 직렬화) + worker/ask-worker(리뷰어 호출).
 - Rollback Notes: 커밋 revert. 런타임 override 는 콘솔에서 초기화(기본 8192) 가능 — 코드 롤백 없이도 무력화.
+
+## CHG-20260724-0001
+- Date: 2026-07-24
+- Related Requirement: 사용자 요청 (entry arg-given dispatch, 2026-07-24) — "서비스 assistant
+  답변 마무리 red-team 리뷰 시 각 선택된 모델에 정합하게 red-team 모델도 실행. 현재는 항상 haiku 추정."
+- Summary: **정합 매핑** — red-team 리뷰어 모델이 이전엔 항상 `claude-haiku-4-chat` 고정
+  (`REDTEAM_MODEL` 상수·`AGENT_REDTEAM_MODEL` env 미설정)이라, sonnet 답변을 haiku 리뷰어가
+  검증하는 tier 불일치가 있었다. 이제 리뷰어 모델을 **답변 모델에 정합**하게 도출한다
+  (`resolve_review_model`: `conversation_answer_model` 재사용 — claude-haiku-4→-chat,
+  claude-sonnet-4→-chat). `AGENT_REDTEAM_MODEL` env 설정 시 그 값으로 hard-pin(비용 통제
+  escape hatch 보존). **필수 호환 수정 2건**: (1) sonnet(adaptive/frontier) 리뷰어는 OAuth
+  토큰으로 나갈 때 첫 system 블록이 Claude Code identity 여야 429 를 안 맞으므로
+  `run_review` 가 `requires_oauth_frontier_identity` 시 `OAUTH_FRONTIER_IDENTITY` 를 첫 블록
+  주입(`_call_llm` cc-identity-inject 미러) — 없으면 sonnet 리뷰가 조용히 skip. (2) 적대 패널
+  MAJOR — sonnet-high 리뷰어는 `REDTEAM_TIMEOUT_SEC`(25s) 안에 못 끝내 timeout→error→리뷰 skip
+  (CHG-20260722-0001 이 haiku 에서 8/8 100% 타임아웃으로 이미 관측) + max_tokens 안 thinking 이
+  JSON truncate. adaptive 리뷰어에 `output_config.effort=low` 주입(짧은 JSON 판정엔 high 낭비)해
+  지연·truncation·비용 동시 완화(모델 tier 정합은 유지). `redteam_reviews.model`/meta 는 실제
+  리뷰어 모델 기록(admin 'AI 추론' 탭 관측 정합).
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/redteam.py` (`resolve_review_model` 신설 +
+    `_REDTEAM_MODEL_PIN`/`REDTEAM_MODEL_DEFAULT` 분리 + `_REDTEAM_ADAPTIVE_EFFORT`; `run_review`
+    에 `model` 인자·identity 주입·adaptive effort extra_body; `orchestrate_review` 에
+    `answer_model` 인자 + review_model 을 find/verify/record/meta 전 경로 스레딩)
+  - `unit/feature-0002-agent-core/src/agent_core.py` (choke-point `orchestrate_review(...,
+    answer_model=model)` — model = 대화별 사용자 선택 모델, ask.py payload)
+  - `unit/feature-0002-agent-core/src/modules/llm.py` (`_openai_chat_completion_with_deadline`
+    에 `extra_body` 인자 additive — adaptive 리뷰어 effort 주입 채널, 미전달이면 무변경)
+  - `shared/runtime_settings.py` (`REDTEAM_MAX_TOKENS` description 정정 — 리뷰어가 답변 모델에
+    정합·sonnet adaptive effort=low 반영, MINOR doc-drift)
+  - `unit/feature-0002-agent-core/tests/test_redteam.py` (신규 9건 — resolve 매핑·폴백·env pin 3,
+    identity 주입 sonnet/haiku 2, effort 주입 sonnet/haiku 2, orchestrate 스레딩·기본 2)
+- Impact: **프론트 무변경**. 하위호환: `answer_model` 미지정(레거시/테스트) 시 기존 haiku-chat
+  동작 유지, `extra_body` 미전달 시 llm 호출 무변경, `REDTEAM_MODEL` 상수 보존. `redteam_reviews.model`
+  VARCHAR(128) 은 새 alias(≤20자) 수용. 배포 대상 = worker/ask-worker(리뷰어 호출) + web(설정 설명).
+  **비용/지연**: sonnet 대화 리뷰가 haiku→sonnet(effort=low). haiku 대화 무변경. `AGENT_REDTEAM_MODEL`
+  env pin 으로 전량 haiku 강제 가능.
+- Rollback Notes: 커밋 revert. 또는 `AGENT_REDTEAM_MODEL=claude-haiku-4-chat` env 로 코드 롤백 없이
+  종전 동작(전량 haiku) 복원. effort 는 `AGENT_REDTEAM_EFFORT` env 로 조정.

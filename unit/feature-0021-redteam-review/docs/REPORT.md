@@ -32,7 +32,13 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 - CHG-20260722-0001 — "리뷰 실패" 진단(=리뷰어 100% 타임아웃, DB 실측 8/8 @25s) + 리뷰어 토큰
   할당량(REDTEAM_MAX_TOKENS) 콘솔 설정 신설 (타임아웃은 기존 노출). 표시/fail-open 은 의도된
   설계였고, 근본 원인은 리뷰어 alias 고정 thinking(5000) → 상시 25s. 상세 MODIFY.md.
-- 총 변경 횟수: 4+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정)
+- CHG-20260724-0001 — **리뷰어 모델을 답변 모델에 정합** (사용자 요청). 이전엔 항상
+  claude-haiku-4-chat 고정 → 이제 haiku 답변→haiku 리뷰, sonnet 답변→sonnet 리뷰
+  (`resolve_review_model`, `AGENT_REDTEAM_MODEL` env pin 유지). 필수 호환: sonnet OAuth
+  identity 주입(429 게이트) + adaptive effort=low(적대 패널 MAJOR — timeout→리뷰 skip 회귀 방지,
+  CHG-0722 의 25s 타임아웃 근본 원인과 동일 lever). `redteam_reviews.model` 실제 리뷰어 기록.
+  상세 MODIFY.md · 적대 패널 REV-20260724T071500.
+- 총 변경 횟수: 5+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정 · 모델 정합)
 
 ## 4. Open Issues
 - make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):
@@ -45,9 +51,14 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   회귀 0 (환경 의존 4건 제외 — 상세 TEST.md §3). 적대 패널(REV-0002) BLOCK2+MAJOR1+MINOR3 반영·재검증 완료.
 - (2026-07-22 CHG-0001) 리뷰어 토큰 설정 추가 후 test_redteam 36건(신규 5) + runtime_settings +
   admin_reasoning 합산 87건 PASS·ruff clean (TEST.md §3 Run 2026-07-22). 프론트 무변경.
+- (2026-07-24 CHG-20260724-0001) 모델 정합 후 test_redteam **45건 PASS**(신규 9 — resolve 매핑/폴백/pin 3·
+  identity 주입 sonnet/haiku 2·effort 주입 sonnet/haiku 2·orchestrate 스레딩 2)·ruff clean(변경 5파일).
+  전체 feature-0002+0003 회귀는 환경 의존 4건만 실패(내 변경 무관 — `.env` AGENT_TIMEOUT_SEC=300 2건은
+  `-e AGENT_TIMEOUT_SEC=60` 강제 시 2 passed 로 확증, PG 부재 2건). §18.8 적대 패널(REV-20260724T071500):
+  BLOCK 0, MAJOR1(effort=low)+MINOR2(doc·forward-caveat) 반영/수용. 상세 TEST.md §3(20260724T0709 fragment).
 - 수동 테스트: 배포 후 PB-0008 Windows-browser 콘솔 검증 + 라이브 리뷰 실증 예정
-  (설정 패널 "리뷰어 토큰 할당량" 노출 + 조정 반영 포함)
-- 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰), 토큰 상향/타임아웃 튜닝의 리뷰 실패율 영향(라이브 관찰)
+  (설정 패널 "리뷰어 토큰 할당량" 노출 + 조정 반영 + admin 'AI 추론' 탭 model 컬럼 sonnet 표기 포함)
+- 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰), effort=low 로 sonnet 리뷰 타임아웃 소멸(라이브 관찰)
 
 ## 6. Blocked Items
 - 없음

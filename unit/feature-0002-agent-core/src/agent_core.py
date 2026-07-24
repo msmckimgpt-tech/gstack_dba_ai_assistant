@@ -4724,6 +4724,7 @@ def _run_agent_core(
                         is_group=bool(_group_sender_labels),
                         revise_fn=_rt_revise,
                         rederive_fn=_rt_rederive,
+                        answer_model=model,  # 정합: 답변 모델과 같은 tier 로 리뷰어 도출(haiku/sonnet)
                     )
                     if _rt_answer and _rt_answer.strip():
                         answer = _rt_answer

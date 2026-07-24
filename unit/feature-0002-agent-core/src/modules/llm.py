@@ -786,6 +786,7 @@ def _openai_chat_completion_with_deadline(
     conversation_id: str | None = None,
     run_id: str | None = None,
     max_tokens_override: int | None = None,
+    extra_body: dict[str, Any] | None = None,
 ):
     # TASK-0129 (#3): model 의 tier 에 맞는 client 로 재해석. caller 가 default client 를
     # 넘겨도 'edge'/'core' 는 local gateway, 'claude-*' 는 Bedrock 으로 보장 (라우팅 회귀 차단).
@@ -808,6 +809,10 @@ def _openai_chat_completion_with_deadline(
     else:
         create_kwargs.update(_max_tokens_kwargs(model, task))
     create_kwargs.update(_temperature_kwargs(model))
+    # feature-0021 model-align: 호출 단위 extra_body(예: adaptive 리뷰어의 output_config.effort).
+    # _call_llm 의 thinking/effort 주입과 동형 채널 — 미전달이면 종전 동작 무변경.
+    if extra_body:
+        create_kwargs["extra_body"] = extra_body
     _lat_t0 = time.perf_counter_ns()  # TASK-AIOPS: 순수 API 왕복 지연 측정 시작(submit 직전)
     future = executor.submit(
         client.chat.completions.create,

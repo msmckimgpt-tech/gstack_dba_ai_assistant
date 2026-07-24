@@ -24,11 +24,55 @@ import time
 from typing import Any, Callable
 
 import shared.runtime_settings as _rts
-from shared.model_catalog import normalize_reasoning_level
+from shared.model_catalog import (
+    OAUTH_FRONTIER_IDENTITY,
+    conversation_answer_model,
+    model_thinking_style,
+    normalize_reasoning_level,
+    requires_oauth_frontier_identity,
+)
 
-# 리뷰어 모델 — 기본 haiku 급 저비용 + edge(gemma) 폴백 없는 대화 전용 alias.
-# (관계 분석 전용 haiku 분리와 같은 내부 라우팅 패턴 — 리뷰 품질/비용 균형.)
-REDTEAM_MODEL = os.getenv("AGENT_REDTEAM_MODEL", "claude-haiku-4-chat").strip() or "claude-haiku-4-chat"
+# adaptive(Sonnet 5 계열) 리뷰어의 output_config.effort. 리뷰어는 짧은 JSON 판정만 내는 경계된
+# 작업이라 high thinking 은 낭비이며, sonnet-high 는 REDTEAM_TIMEOUT_SEC(기본 25s) 안에 못 끝내
+# timeout→error→리뷰 skip(정합 목표 무력화) + max_tokens 안에서 thinking 이 JSON 을 truncate 하는
+# 회귀를 만든다(적대 리뷰 MAJOR). 'low' 로 고정해 지연·truncation·비용을 함께 줄인다(모델 tier 는
+# 정합 유지 — effort 만 낮춤). env 로 조정 가능(운영 튜닝 escape hatch). budget 계열(haiku)은 미적용.
+_REDTEAM_ADAPTIVE_EFFORT = (os.getenv("AGENT_REDTEAM_EFFORT") or "low").strip() or "low"
+
+# 리뷰어 모델 정합 (feature-0021 model-align) — 답변에 쓰인 모델에 맞춰 리뷰어 모델을 고른다.
+# 기본은 런타임에 답변 모델로부터 도출(resolve_review_model): 답변이 haiku 면 리뷰도 haiku,
+# sonnet 이면 리뷰도 sonnet(-chat alias). 이전에는 항상 claude-haiku-4-chat 고정이라, sonnet
+# 답변을 haiku 리뷰어가 검증하는 tier 불일치가 있었다.
+#   - AGENT_REDTEAM_MODEL env 를 명시 설정하면 그 값으로 hard-pin(운영 비용 통제 escape hatch —
+#     답변이 sonnet 이어도 리뷰어를 haiku 로 고정하고 싶을 때). 미설정이면 답변 모델 기반 도출.
+#   - 리뷰어도 대화 답변과 동일한 Bedrock/OAuth 라우팅을 타므로 edge(gemma) 폴백 없는 -chat alias
+#     정합(conversation_answer_model 재사용 — 관계 분석 전용 haiku 분리와 같은 내부 라우팅 패턴).
+_REDTEAM_MODEL_PIN = (os.getenv("AGENT_REDTEAM_MODEL") or "").strip()
+# 답변 모델을 알 수 없는 경로(레거시 호출·비대화/로컬 모델)의 최종 폴백 — 기존 기본값 유지.
+REDTEAM_MODEL_DEFAULT = _REDTEAM_MODEL_PIN or "claude-haiku-4-chat"
+# 하위호환 상수 — 기존 호출부/테스트가 참조하던 기본 리뷰어 모델(env pin 또는 폴백값).
+REDTEAM_MODEL = REDTEAM_MODEL_DEFAULT
+
+
+def resolve_review_model(answer_model: str | None) -> str:
+    """선택된 답변 모델에 정합한 리뷰어 모델 alias 를 도출한다.
+
+    - AGENT_REDTEAM_MODEL env 설정 시 그 값으로 hard-pin(운영 비용 통제 escape hatch).
+    - 미설정이면 conversation_answer_model 로 답변 모델의 edge-free -chat alias 를 쓴다
+      (claude-haiku-4 → claude-haiku-4-chat, claude-sonnet-4 → claude-sonnet-4-chat).
+      리뷰어 호출도 사용자 대면 답변과 동일한 Bedrock/OAuth 경로라 -chat alias 가 정합.
+    - answer_model 이 비거나 매핑 불가(로컬/edge/'claude')면 conversation_answer_model 이
+      기본 chat(claude-haiku-4-chat)으로 해소 → 안전 폴백. 전 경로 예외 fail-safe(폴백 반환).
+    """
+    if _REDTEAM_MODEL_PIN:
+        return _REDTEAM_MODEL_PIN
+    name = str(answer_model or "").strip()
+    if not name:
+        return REDTEAM_MODEL_DEFAULT
+    try:
+        return conversation_answer_model(name).strip() or REDTEAM_MODEL_DEFAULT
+    except Exception:
+        return REDTEAM_MODEL_DEFAULT
 
 _AXES = ("grounding", "sql", "permission", "completeness", "honesty")
 _MAX_FINDINGS = 5
@@ -241,8 +285,13 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
                conversation_id: str | None = None,
                run_id: str | None = None,
                timeout_sec: int = 25,
-               revised: bool = False) -> dict[str, Any] | None:
-    """fresh-context 리뷰어 1패스. 실패 시 None (fail-open — caller 가 원 초안 유지)."""
+               revised: bool = False,
+               model: str | None = None) -> dict[str, Any] | None:
+    """fresh-context 리뷰어 1패스. 실패 시 None (fail-open — caller 가 원 초안 유지).
+
+    model: 이 패스에 쓸 리뷰어 모델(정합 도출값). 미지정이면 REDTEAM_MODEL(기본/env pin).
+    """
+    review_model = str(model or "").strip() or REDTEAM_MODEL
     try:
         from modules.llm import _openai_chat_completion_with_deadline
         user_block = (
@@ -252,18 +301,38 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
             f"{evidence_digest}\n\n"
             f"CONTEXT: modality={'group' if is_group else '1:1'}"
         )
+        # sonnet(adaptive/frontier) 리뷰어는 OAuth 토큰으로 나갈 때 **첫 system 블록이 정확히
+        # Claude Code identity** 여야 Anthropic 이 허용한다(없으면 429 — cc-identity-inject).
+        # 대화 답변 경로는 agent_core._call_llm 이 주입하지만, 리뷰어가 쓰는
+        # _openai_chat_completion_with_deadline 은 이 주입을 하지 않는다 → 여기서 대칭 주입해
+        # sonnet 리뷰어가 identity 게이트로 조용히 실패(fail-open→리뷰 skip)하는 것을 막는다.
+        # haiku(budget 계열)는 미요구라 무주입(기존 동작 무회귀).
+        messages: list[dict[str, Any]] = []
+        try:
+            if requires_oauth_frontier_identity(review_model):
+                messages.append({"role": "system", "content": OAUTH_FRONTIER_IDENTITY})
+        except Exception:
+            pass
+        messages.append({"role": "system", "content": REDTEAM_REVIEW_PROMPT})
+        messages.append({"role": "user", "content": user_block})
+        # adaptive(sonnet) 리뷰어는 effort=low 로 낮춰 timeout(25s) 안에 끝나게 + JSON truncation 회피
+        # (_call_llm 의 output_config.effort 채널과 동형). budget 계열(haiku)은 미주입(기존 동작).
+        extra_body: dict[str, Any] | None = None
+        try:
+            if model_thinking_style(review_model) == "adaptive":
+                extra_body = {"output_config": {"effort": _REDTEAM_ADAPTIVE_EFFORT}}
+        except Exception:
+            extra_body = None
         resp = _openai_chat_completion_with_deadline(
             None,
-            REDTEAM_MODEL,
-            [
-                {"role": "system", "content": REDTEAM_REVIEW_PROMPT},
-                {"role": "user", "content": user_block},
-            ],
+            review_model,
+            messages,
             timeout_sec=timeout_sec,
             task="redteam",
             conversation_id=conversation_id,
             run_id=run_id,
             max_tokens_override=_review_max_tokens(),
+            extra_body=extra_body,
         )
         if resp is None:
             return None
@@ -400,11 +469,17 @@ def orchestrate_review(*, question: str, draft_answer: str,
                        reasoning_level: str | None, is_group: bool,
                        revise_fn: Callable[[str], str | None] | None = None,
                        rederive_fn: Callable[[str], dict[str, Any] | None] | None = None,
+                       answer_model: str | None = None,
                        ) -> tuple[str, dict[str, Any] | None]:
     """choke-point 오케스트레이터 — (최종 답변, 리뷰 meta | None) 반환.
 
     결정론 파이프라인: gate → find(리뷰) → (BLOCK 이면) revise ≤N → (높음+) verify.
     어떤 예외도 밖으로 던지지 않으며, 실패 시 (원 초안, None) 을 반환한다.
+
+    answer_model: 초안을 만든 답변 모델(정합용). resolve_review_model 이 이 값으로
+    리뷰어 모델을 도출한다(haiku 답변→haiku 리뷰, sonnet 답변→sonnet 리뷰; env pin 우선).
+    미지정이면 기본/env pin(REDTEAM_MODEL). find/verify 전 패스가 동일 리뷰어 모델을 쓰고,
+    redteam_reviews.model / meta['model'] 에 실제 리뷰어 모델을 기록한다.
 
     revise 축 인지 라우팅 (feature-0002): BLOCK 축이 재도출 대상(sql / max 강도
     completeness)이고 REDTEAM_REDERIVE_ENABLED=1 + rederive_fn 제공 시, 문장 재작성
@@ -419,18 +494,20 @@ def orchestrate_review(*, question: str, draft_answer: str,
         plan = review_plan(reasoning_level)
         if plan is None:
             return draft_answer, None
+        # 정합 리뷰어 모델을 1회 도출해 find/verify/record 전 경로에 동일 적용.
+        review_model = resolve_review_model(answer_model)
         t0 = time.perf_counter_ns()
         evidence = build_evidence_digest(steps, executed_sql)
         review = run_review(
             question, draft_answer, evidence,
             is_group=is_group, conversation_id=conversation_id, run_id=run_id,
-            timeout_sec=plan["timeout_sec"],
+            timeout_sec=plan["timeout_sec"], model=review_model,
         )
         if review is None:
             record_review(
                 conversation_id=conversation_id, run_id=run_id, verdict="error",
                 findings=None, verify_verdict=None, revision_applied=False,
-                model=REDTEAM_MODEL, latency_ms=int((time.perf_counter_ns() - t0) // 1_000_000),
+                model=review_model, latency_ms=int((time.perf_counter_ns() - t0) // 1_000_000),
                 reasoning_level=reasoning_level, is_group=is_group)
             return draft_answer, None
 
@@ -491,7 +568,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
             verify = run_review(
                 question, final_answer, evidence,
                 is_group=is_group, conversation_id=conversation_id, run_id=run_id,
-                timeout_sec=plan["timeout_sec"], revised=True,
+                timeout_sec=plan["timeout_sec"], revised=True, model=review_model,
             )
             if verify is None:
                 break  # 재검증 실패(fail-open) → 마지막 수정본 채택
@@ -509,12 +586,12 @@ def orchestrate_review(*, question: str, draft_answer: str,
             "rederive_tool_rounds": rederive_tool_rounds,
             "rederive_axis": rederive_axis,
             "latency_ms": latency_ms,
-            "model": REDTEAM_MODEL,
+            "model": review_model,
         }
         record_review(
             conversation_id=conversation_id, run_id=run_id, verdict=review["verdict"],
             findings=review["findings"], verify_verdict=verify_verdict,
-            revision_applied=revision_applied, model=REDTEAM_MODEL, latency_ms=latency_ms,
+            revision_applied=revision_applied, model=review_model, latency_ms=latency_ms,
             reasoning_level=reasoning_level, is_group=is_group,
             rederive_applied=rederive_applied, rederive_tool_rounds=rederive_tool_rounds,
             rederive_axis=rederive_axis)
