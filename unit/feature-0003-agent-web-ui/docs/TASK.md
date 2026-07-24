@@ -6196,3 +6196,20 @@ REQ: (usage-model-canonical 후속) 관리 콘솔 '감사 > AI 운영 현황' �
 - [ ] 배포(web-only) + POST-DEPLOY 라이브 검증(운영 현황 배지·활동 상세 라우팅)
 정본 rationale=REVIEW.md REV-20260724T020632-aiops-model-canonical, 변경이력=MODIFY.md CHG-20260724T020632-aiops-model-canonical.
 - [x] [적대 리뷰 M1] admin.js 활동 상세 폴백 raw 교정(날조 화살표 차단) + Windows-browser eval 검증
+
+## 20260724T031956-graph-emoji-color
+REQ: (사용자, `/_template:entry`) "그래프 뷰에서, 테이블 노드의 일부 이모지가 검은색 실루엣으로만 출력되는 이슈가
+확인되어 수정이 필요합니다." (feature-0003, Minor §12.3, worktree ai/claude/graph-emoji-color)
+
+### 완료 체크리스트 (graph-emoji-color)
+- [x] 근본원인 규명 — `_makeText` 기본 BitmapText(white-base glyph + tint) 가 색 이모지의 색 채널을 소실시켜
+      labelFill 색(dark 역할=#161b22) 단색 실루엣만 렌더 (테이블 역할 아이콘 📊/👤/💳/📜/🔗). "일부만 검은색"=
+      `_META_ROLE` dark:true 역할이 어두운 labelFill 사용.
+- [x] `PixiAdapterPure.hasEmoji(text)` 순수 헬퍼 추가 (pictographic 블록 + Misc Symbols/Dingbats + VS16/ZWJ)
+- [x] `_makeText` BitmapText 게이트에 `!hasEmoji(text)` 추가 → 이모지 라벨은 canvas PIXI.Text 로 강등(색 이모지 네이티브 렌더)
+- [x] Text 폴백 fontFamily 에 색 이모지 폰트(Segoe UI Emoji·Noto Color Emoji·Apple Color Emoji) 명시 추가
+- [x] `tests/headless/test_pixi_adapter.js` T20b hasEmoji 16-assert 추가 (역할 아이콘 8종+🗂 감지 · 평문/−/ƒ/한글 비-매칭 · null 안전)
+- [x] 정적·단위 검증: `node --check --input-type=module` PASS · test_pixi_adapter.js **112 PASS / 0 FAIL**(기존 96 + T20b 16)
+- [x] §18.8 적대 리뷰(프론트엔드/렌더링 렌즈, SUBAGENT)
+- [ ] 배포(web-only, deploy_scope: included) + POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증(역할 이모지 컬러 렌더, visual_verification_scope: always)
+정본 rationale=REVIEW.md REV-20260724T031956-graph-emoji-color, 변경이력=MODIFY.md CHG-20260724T031956-graph-emoji-color.
