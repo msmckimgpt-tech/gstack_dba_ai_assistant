@@ -96,8 +96,11 @@ def test_execute_sql_truncated_note_has_self_correction(monkeypatch):
     assert "보지 못했습니다" in out and "단정은 금지" in out
     assert "좁혀 재조회" in out
     assert "CSV 는 사용자 다운로드 전용" in out and "읽을 수 없습니다" in out
-    # 기존 표시 계약(답변에 전체 표 삽입 금지 + CSV 링크 제공) 유지
-    assert "답변에 전체 표를 삽입하지 말고" in out
+    # 표시 계약(conv-audit csv-inline-no-download): 저장 CSV 는 다운로드 버튼으로 자동 제공 +
+    # 전체 데이터 답변 붙여넣기 금지. (모델이 링크를 직접 만들 필요 없음 — 이전 "링크를 제공하세요"
+    # 지시는 없는 링크 참조·인라인 dead-end 를 유발해 폐기.)
+    assert "다운로드 버튼으로 자동 제공" in out
+    assert "붙여넣지 마세요" in out
 
 
 def test_execute_sql_small_result_no_truncation_note(monkeypatch):

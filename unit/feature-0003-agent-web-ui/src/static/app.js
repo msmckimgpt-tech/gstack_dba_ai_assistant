@@ -3745,6 +3745,7 @@ function renderMessageContent(target, content = "", role = "assistant") {
     target.innerHTML = markdownToHtml(content);
     collapseSqlCodeBlocksInContent(target);
     enhanceFilePreviewLinks(target);
+    enhanceCsvBlockDownloads(target);
     // feature-0013: ```mermaid → SVG (sanitize 이후 라이브 DOM). mermaid-render.js 미로드 시 가드(no-op).
     if (typeof renderMermaidDiagrams === "function") renderMermaidDiagrams(target);
     return;
@@ -3785,6 +3786,69 @@ function enhanceFilePreviewLinks(target) {
       evt.preventDefault();
       loadCsvAsInlineTable(csvPath, anchor);
     });
+  });
+}
+
+function _csvDownloadFilename() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(
+    d.getHours()
+  )}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  return `result_${ts}.csv`;
+}
+
+// conv-audit (csv-inline-no-download): assistant 가 결과를 인라인 ```csv 코드블록으로 제시하고
+// "다운로드하실 수 있습니다" 라고 안내하지만, 그 블록에는 클릭할 다운로드 대상이 없어 사용자가
+// 실제로 파일을 받지 못하던 마찰을 닫는다. 서버측 CSV 파일(/api/file)이 있으면 그 경로는
+// enhanceFilePreviewLinks 가 이미 처리하고, 서버 파일이 없더라도(소형 결과·직접 붙여넣은 CSV)
+// 화면에 렌더된 CSV 텍스트를 그대로 클라이언트 Blob 으로 저장해 항상 다운로드를 보장한다.
+// enhanceDiffBlocks/enhanceFilePreviewLinks 와 동일하게 sanitize 이후 라이브 DOM 에서 동작한다.
+function enhanceCsvBlockDownloads(target) {
+  if (typeof document === "undefined" || !target) return;
+  const blocks = target.querySelectorAll("pre > code.language-csv");
+  blocks.forEach((codeEl) => {
+    const pre = codeEl.closest("pre");
+    if (!pre || pre.dataset.csvDownloadReady === "1") return;
+    const csvText = (codeEl.textContent || "").replace(/\s+$/, "");
+    if (!csvText.trim()) return;
+    // 백엔드 _collapse_large_csv_blocks 가 이미 대형 블록을 미리보기로 접고 전체 파일
+    // /api/file 링크를 바로 뒤에 주입한 경우, 절단된 미리보기에 다운로드 버튼을 붙이면
+    // 일부 행만 받는 오해를 준다 → 그 경우 버튼 생략(전체 파일 링크가 canonical 다운로드).
+    const nextEl = pre.nextElementSibling;
+    if (nextEl && nextEl.querySelector && nextEl.querySelector('a[href*="/api/file?"]')) {
+      pre.dataset.csvDownloadReady = "1";
+      return;
+    }
+    pre.dataset.csvDownloadReady = "1";
+    pre.classList.add("csv-block");
+    const bar = document.createElement("div");
+    bar.className = "csv-block-actions";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tool-btn csv-download-btn";
+    btn.textContent = "📥 CSV 다운로드";
+    btn.title = "위 CSV 데이터를 파일로 저장합니다";
+    btn.addEventListener("click", () => {
+      try {
+        // UTF-8 BOM(U+FEFF) 부여 — Excel 에서 한글 CSV 가 깨지지 않게 한다.
+        const blob = new Blob(["\uFEFF" + csvText + "\n"], {
+          type: "text/csv;charset=utf-8;",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = _csvDownloadFilename();
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+      } catch (_) {
+        // best-effort — 다운로드 실패가 대화 렌더를 막지 않는다.
+      }
+    });
+    bar.appendChild(btn);
+    pre.parentNode.insertBefore(bar, pre.nextSibling);
   });
 }
 

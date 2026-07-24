@@ -6196,7 +6196,6 @@ REQ: (usage-model-canonical 후속) 관리 콘솔 '감사 > AI 운영 현황' �
 - [ ] 배포(web-only) + POST-DEPLOY 라이브 검증(운영 현황 배지·활동 상세 라우팅)
 정본 rationale=REVIEW.md REV-20260724T020632-aiops-model-canonical, 변경이력=MODIFY.md CHG-20260724T020632-aiops-model-canonical.
 - [x] [적대 리뷰 M1] admin.js 활동 상세 폴백 raw 교정(날조 화살표 차단) + Windows-browser eval 검증
-
 ## 20260724T031956-graph-emoji-color
 REQ: (사용자, `/_template:entry`) "그래프 뷰에서, 테이블 노드의 일부 이모지가 검은색 실루엣으로만 출력되는 이슈가
 확인되어 수정이 필요합니다." (feature-0003, Minor §12.3, worktree ai/claude/graph-emoji-color)
@@ -6213,3 +6212,17 @@ REQ: (사용자, `/_template:entry`) "그래프 뷰에서, 테이블 노드의 �
 - [x] §18.8 적대 리뷰(프론트엔드/렌더링 렌즈, SUBAGENT)
 - [x] 배포(web-only, deploy_scope: included, c709ad3f soak PASS) + POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증(실 Windows Chrome canvas 프로브 — 색 이모지 컬러 렌더 확증, 그레이스케일 이모지 3종은 폰트 디자인·비-실루엣) — PASS
 정본 rationale=REVIEW.md REV-20260724T031956-graph-emoji-color, 변경이력=MODIFY.md CHG-20260724T031956-graph-emoji-color.
+## TASK-20260724T123600-csv-download-wiring — assistant "CSV 다운로드 가능" 답변의 실제 다운로드 배선 누락 수정
+conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + feature-0002 agent_core/tools). `/_template:entry` arg-given. 요청: 대화 '킹스레이드 배틀 로그 차원별 집계'(bootstrap_admin)에서 assistant 가 CSV 다운로드 가능이라 답했으나 실제 다운로드 수단이 없음. 근본원인: `_collapse_large_tables` 가 MD표만 인식하고 ```csv``` fenced 블록 blind spot → 링크 미주입 dead-end.
+
+### 완료 체크리스트
+- [x] 진단: DB 실측(대화 515c0fd9 assistant 8메시지 중 5개 "다운로드 가능" 무-링크; msg 1342 차원별 집계 인라인 csv)
+- [x] 프론트 app.js: `enhanceCsvBlockDownloads` — ```csv``` 블록 클라이언트 Blob 다운로드 버튼 + renderMessageContent 배선 + /api/file-뒤따름 skip
+- [x] 프론트 share.js: 공유 뷰 동일 미러(`share-csv-download-btn` 재사용)
+- [x] styles.css: `.csv-block-actions`/`.csv-download-btn` (라이트/다크 변수)
+- [x] 백엔드 agent_core.py: `_collapse_large_csv_blocks`(대형 ```csv```→미리보기+/api/file 링크, 매칭 실패 원문 유지) 초안·redteam 3경로 체인
+- [x] 백엔드 tools.py: execute_sql·scratch_sql 다운로드 가이던스 항상 노출(링크 자동제공·인라인 붙여넣기 금지)
+- [x] 단위 테스트: pytest 2303 passed/2 skipped(신규 6 + 무회귀) · jsdom 18 PASS · 기존 가이던스 assert 2건 신문구 정합
+- [x] docs 갱신 (REPORT/TASK/MODIFY/FUNCTION/REVIEW/TEST) — feature-0003 홈, feature-0002 cross-cut note
+- [ ] verify-completion PASS → commit → deploy(web+worker, deploy_scope: included) → POST-DEPLOY PB-0008 라이브(대화 515c0fd9 재로드 csv 블록 다운로드 버튼)
+정본 rationale=REVIEW.md REV-20260724T123600-csv-download-wiring, 변경이력=MODIFY.md CHG-20260724T123600-csv-download-wiring.

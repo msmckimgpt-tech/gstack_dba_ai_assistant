@@ -1922,6 +1922,15 @@ def _tool_execute_sql(conn, args: dict) -> str:
         if csv_paths:
             for path in csv_paths:
                 parts.append(f"CSV 저장: {path}")
+            # conv-audit (csv-inline-no-download): 저장된 CSV 는 web UI 가 다운로드 버튼/링크로
+            # 자동 제공한다(모델이 URL 을 직접 만들 필요 없음). 절단 여부와 무관하게 항상 안내해,
+            # 모델이 전체 데이터를 답변에 그대로 붙여넣거나 "다운로드 가능"만 말하고 실제 링크는
+            # 없는 dead-end 를 만들지 않도록 유도한다.
+            parts.append(
+                "(저장된 CSV 는 사용자에게 다운로드 버튼으로 자동 제공됩니다 — 당신이 다운로드 "
+                "링크/URL 을 직접 만들 필요는 없습니다. 답변에는 핵심 미리보기(수 행)만 담고 전체 "
+                "데이터를 그대로 붙여넣지 마세요. 전체 결과는 사용자가 다운로드로 확인합니다.)"
+            )
             if _pv_stats.get("truncated"):
                 _shown = int(_pv_stats.get("shown_rows") or 0)
                 parts.append(
@@ -1929,8 +1938,7 @@ def _tool_execute_sql(conn, args: dict) -> str:
                     f"나머지 {max(total_row_count - _shown, 0)}행을 당신은 보지 못했습니다: 보지 못한 행에 "
                     f"대한 존재/부재/개수/완전성 단정은 금지입니다. 전수 확인·누락 검증·목록 비교가 "
                     f"필요하면 WHERE 필터·집계(COUNT/GROUP BY)·NOT IN 교차조회 등으로 좁혀 재조회하세요. "
-                    f"CSV 는 사용자 다운로드 전용이라 당신은 읽을 수 없습니다. "
-                    f"답변에 전체 표를 삽입하지 말고, CSV 다운로드 링크를 제공하세요.)"
+                    f"CSV 는 사용자 다운로드 전용이라 당신은 읽을 수 없습니다.)"
                 )
         parts.append(f"(실행 시간: {elapsed:.2f}초)")
         if cost_note:
@@ -2368,6 +2376,14 @@ def _tool_scratch_sql(conn, args: dict) -> str:
         ]
         if csv_path:
             parts.append(f"CSV 저장: {csv_path}")
+            # conv-audit (csv-inline-no-download): 저장된 CSV 는 web UI 가 다운로드 버튼으로 자동
+            # 제공한다(execute_sql parity) — 모델이 링크를 만들거나 전체 데이터를 붙여넣거나 없는
+            # 다운로드를 약속하지 않도록 항상 안내한다.
+            parts.append(
+                "(저장된 CSV 는 사용자에게 다운로드 버튼으로 자동 제공됩니다 — 당신이 링크/URL 을 "
+                "직접 만들 필요는 없습니다. 답변에는 핵심 미리보기(수 행)만 담고 전체 데이터를 그대로 "
+                "붙여넣지 마세요.)"
+            )
         # 미리보기 절단 시 epistemic 안내(execute_sql parity — 미열람 행 단정 금지 + CSV 회수 유도).
         if _pv_stats.get("truncated"):
             shown = int(_pv_stats.get("shown_rows") or 0)
@@ -2384,8 +2400,8 @@ def _tool_scratch_sql(conn, args: dict) -> str:
             # 은 `if csv_paths:` 안에 중첩). save_csv 실패(디렉토리 부재 등)로 csv_path=None 이면 없는
             # 링크를 참조하도록 유도하면 안 됨 → 범위 좁히기 fallback 로 정직 안내.
             if csv_path:
-                note += ("CSV 는 사용자 다운로드 전용이라 당신은 읽을 수 없습니다. 답변에 전체 표를 "
-                         "삽입하지 말고 CSV 다운로드 링크를 제공하세요.)")
+                note += ("CSV 는 사용자 다운로드 전용이라 당신은 읽을 수 없습니다. 전체 표를 답변에 "
+                         "붙여넣지 마세요 — 전체 결과는 사용자가 다운로드로 확인합니다.)")
             else:
                 note += ("(전체 결과 CSV 저장에 실패했으니, 범위를 좁혀 재조회해 필요한 부분만 확인하세요.)")
             parts.append(note)

@@ -234,7 +234,9 @@ def test_scratch_sql_large_result_full_csv_and_preview_truncation(monkeypatch):
     assert saved.get("rows") == 1000                 # CSV 는 전체 1000행
     assert "CSV 저장:" in out
     assert "보지 못했습니다" in out                    # 미리보기 절단 → epistemic 안내
-    assert "CSV 다운로드 링크를 제공하세요" in out
+    # conv-audit (csv-inline-no-download): 저장 CSV 는 다운로드 버튼으로 자동 제공 + 인라인 붙여넣기 금지.
+    assert "다운로드 버튼으로 자동 제공" in out
+    assert "붙여넣지 마세요" in out
 
 
 def test_scratch_sql_save_csv_failure_no_false_download_claim(monkeypatch):
@@ -256,7 +258,7 @@ def test_scratch_sql_save_csv_failure_no_false_download_claim(monkeypatch):
     })
     out = tools._tool_scratch_sql(None, {"sql": "SELECT 1"})
     assert "CSV 저장:" not in out                      # 저장 실패 → CSV 라인 없음
-    assert "CSV 다운로드 링크를 제공하세요" not in out    # 없는 링크 참조 유도 금지
+    assert "다운로드 버튼으로 자동 제공" not in out       # 없는 다운로드 자동 제공 안내 유도 금지(if csv_path 게이트)
     assert "보지 못했습니다" in out                     # 미열람 행 안내는 유지
     assert "CSV 저장에 실패" in out                     # 정직한 fallback 안내
 

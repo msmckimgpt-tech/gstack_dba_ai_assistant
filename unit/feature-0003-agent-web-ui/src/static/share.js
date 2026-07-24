@@ -653,6 +653,63 @@
     }
   }
 
+  function csvDownloadFilename() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(
+      d.getHours()
+    )}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    return `result_${ts}.csv`;
+  }
+
+  // conv-audit (csv-inline-no-download): 공유 대화 뷰도 메인 UI 와 동일하게 인라인 ```csv 블록에
+  // 다운로드 버튼을 붙인다. 공유 뷰에서 CSV 텍스트는 이미 본문에 가시화되어 있으므로(복사 가능),
+  // 화면에 보이는 그 텍스트를 클라이언트 Blob 으로 저장하는 것은 새로운 데이터 노출이 아니다.
+  // (서버 파일 /api/file 및 step csv_paths 는 공유 redaction 대상 — 여기선 손대지 않는다.)
+  function enhanceCsvBlockDownloads(target) {
+    if (typeof document === "undefined" || !target) return;
+    const blocks = target.querySelectorAll("pre > code.language-csv");
+    blocks.forEach((codeEl) => {
+      const pre = codeEl.closest("pre");
+      if (!pre || pre.dataset.csvDownloadReady === "1") return;
+      const csvText = (codeEl.textContent || "").replace(/\s+$/, "");
+      if (!csvText.trim()) return;
+      // 백엔드 _collapse_large_csv_blocks 가 대형 블록을 미리보기로 접고 전체 파일 /api/file
+      // 링크를 바로 뒤에 주입한 경우, 절단된 미리보기에 다운로드 버튼을 붙이면 일부 행만
+      // 받는 오해를 준다 → 버튼 skip(app.js enhanceCsvBlockDownloads 와 동일 가드).
+      const nextEl = pre.nextElementSibling;
+      if (nextEl && nextEl.querySelector && nextEl.querySelector('a[href*="/api/file?"]')) {
+        pre.dataset.csvDownloadReady = "1";
+        return;
+      }
+      pre.dataset.csvDownloadReady = "1";
+      // 기존 구조화 결과 다운로드 버튼(.share-csv-download-btn)과 동일 스타일 재사용.
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "share-csv-download-btn";
+      btn.textContent = "📥 CSV 다운로드";
+      btn.title = "위 CSV 데이터를 파일로 저장합니다";
+      btn.addEventListener("click", () => {
+        try {
+          const blob = new Blob(["\uFEFF" + csvText + "\n"], {
+            type: "text/csv;charset=utf-8;",
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = csvDownloadFilename();
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+        } catch (_) {
+          /* best-effort */
+        }
+      });
+      pre.parentNode.insertBefore(btn, pre.nextSibling);
+    });
+  }
+
   function renderMarkdownContent(target, text) {
     const source = String(text || "").trim();
     if (!source) {
@@ -669,6 +726,7 @@
         enhanceMmd(enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source))))
       );
       markExternalLinks(target);
+      enhanceCsvBlockDownloads(target);
       if (typeof window.renderMermaidDiagrams === "function") window.renderMermaidDiagrams(target);
     } else {
       // 폴백: 라이브러리 로드 실패 시 줄바꿈 보존 평문 (share.css .share-content-plain).
