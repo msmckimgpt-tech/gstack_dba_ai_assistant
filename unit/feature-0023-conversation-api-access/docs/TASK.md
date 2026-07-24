@@ -46,6 +46,7 @@ source_of_truth: true
   (배포 66a48870 soak PASS · 라이브 e2e: 토큰→/api/ask 200 · admin 엔드포인트 403 · 무토큰 401)
 - [x] TASK-0011: 발급 CLI 서비스명 hotfix (web→web-a/web-b 자동감지, CHG-20260722-0002)
 - [x] TASK-0012: 외부 AI API 발견 진입점(llms.txt/manifest/guide)+가이드라인+openapi 익명 차단 (CHG-20260724-0003)
+- [x] TASK-0013: 발견 blackbox 검증(URL-only 서브에이전트 성공) + 가이드 정확화(401/403·동기ask·base_url·토큰연락처) + 기계판독 OpenAPI /api/ai/openapi.json (CHG-20260724-0004)
 
 ## 4. In Progress
 - TASK-0010 (verify-completion → 배포)

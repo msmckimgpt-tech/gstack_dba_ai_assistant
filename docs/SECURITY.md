@@ -113,6 +113,7 @@ ai_read_priority: 4
 | `/.well-known/ai-conversation-api.json` | GET | anonymous | AI Conversation API 매니페스트 (엔드포인트 카탈로그·인증·스코프, static contract) | feature-0023 api-discovery |
 | `/api/ai/manifest` | GET | anonymous | 위 매니페스트 alias (API 네임스페이스) | feature-0023 api-discovery |
 | `/api/ai/guide` | GET | anonymous | AI 학습 가이드라인 (`static/ai-api-guide.md`, static contract) | feature-0023 api-discovery |
+| `/api/ai/openapi.json` | GET | anonymous | 큐레이션 OpenAPI 3.1 스펙 (conversation-only, 관리 제외, 수기 정본·코드젠용) | feature-0023 api-discovery-polish (SEC-20260724) |
 | ~~`/openapi.json`·`/docs`·`/redoc`~~ | GET | **비활성화** | FastAPI 기본 anonymous 노출(admin 포함 전체 스키마) → SEC-20260724 로 disable. 대체: 위 큐레이션 발견 + admin-gated `/api/admin/openapi.json`(`console.access`) | feature-0023 api-discovery |
 
 ### 7.1 운영 정책

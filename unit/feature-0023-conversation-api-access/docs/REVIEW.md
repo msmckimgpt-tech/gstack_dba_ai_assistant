@@ -87,3 +87,24 @@ source_of_truth: true
 - **LOW(수용)**: 발견 텍스트가 bin 스크립트·matk_ prefix·스코프 모델 노출 — 비밀 아님·AI 발견 의도·LAN 전제.
   공개 인터넷 노출 시 §7.2 IP allowlist/noindex 가 lever.
 - 재검증: 계약·불변식 테스트 6 passed(컨테이너) + 라이브 발견 검증(배포 후).
+
+## REV-20260724-0005 [SUBAGENT:openapi-conversation-only·data-leak·contact-env·doc정확성·엔드포인트정확성 §18.8] 발견 검증 후속(가이드+OpenAPI)
+- Related Change: CHG-20260724-0004
+- Reason: URL-only blackbox 검증(서브에이전트)에서 발견·학습 성공 확인 + 실통합 공백 5건 지목 →
+  가이드 정확화 + 기계판독 OpenAPI 신설(사용자 "문서 + 기계판독 스키마" 결정).
+- Alternatives Considered: OpenAPI 를 (a) 수기 conversation-only(채택, admin 유출 방지·§7.1 불변식 정합)
+  vs (b) app.openapi() 필터링(admin 유출 위험). 토큰 연락처는 env 반영(운영자 설정, 기본 placeholder).
+- Risks: openapi 가 관리 경로 광고·데이터 누출·base_url 오염·contact injection. → §18.8 리뷰(아래 append).
+- §18.8 적대 보안 리뷰: (general-purpose subagent, 5렌즈 — 결과 append 예정).
+- Human Approval Needed: 사용자 "문서 + 기계판독 스키마" 결정 완료. deploy_scope: included → 배포 자동.
+
+### §18.8 적대 보안 리뷰 결과 (general-purpose subagent, 5렌즈) — REV-20260724-0005 append
+- **판정: BLOCK/HIGH/MEDIUM 결함 0.** 5점검 전부 PASS(paths 실열거·소스 추적):
+  - openapi 스펙 conversation-only 수기 dict(app.openapi() 미사용; paths 8개 전부 conversation, admin 0).
+    app.app.openapi()(admin 포함)는 admin_openapi(console.access) 1곳에만.
+  - 데이터 누출 0: 유일 런타임값 base_url(TrustedHost non-wildcard 보호, 이전 cycle 동일). 예제
+    (executed_sql 등)는 전부 하드코딩 fake literal.
+  - AI_API_TOKEN_CONTACT env 는 JSON 으로만 방출(HTML/JS 렌더 없음) → injection sink 아님. 기본 placeholder 무해.
+  - 문서 변경은 기존 노출 사실 재진술(신규 비밀 0). 8 엔드포인트 전부 실재·conversation-scoped·owner-or-member 게이트.
+- **LOW(수정 반영)**: auth.contact 가 익명 공개 → 운영자는 팀/역할 채널 사용 권장. `_TOKEN_CONTACT` 주석+placeholder 에 명시.
+- 재검증: 계약·불변식 8 passed(컨테이너) + 라이브 curl + URL-only blackbox 재검증(배포 후).
