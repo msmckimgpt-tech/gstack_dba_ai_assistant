@@ -137,3 +137,42 @@ source_of_truth: true
 - Subagent Panel: reasoned-skip — additive 런타임 설정 + optional 인자, 보안/인가/데이터/스키마
   표면 없음, §18.8 dispatch 키워드 미매칭. 결정론 로직(override 전달·하한·폴백)은 단위 테스트로 커버.
 - Human Approval Needed: 배포 confirm (외부 영향 행동) — 사용자 승인 후 진행.
+
+## REV-20260724T071500-redteam-model-align [SUBAGENT: BLOCK 0 — MAJOR1(effort=low) + MINOR2(doc·forward-caveat) 반영·수용]
+- Related Change: CHG-20260724-0001 (리뷰어 모델을 답변 모델에 정합)
+- Decision Rationale:
+  ① **정합 매핑 수단 = 기존 `conversation_answer_model` 재사용** — 새 매핑 테이블을 만들지 않고,
+     사용자 대면 답변이 이미 쓰는 edge-free -chat alias 도출 함수를 재사용한다. 리뷰어 호출도
+     동일 Bedrock/OAuth 경로라 alias 정합이 자동 성립하고, 미래 모델 추가 시 단일 SSOT
+     (`_CONVERSATION_ANSWER_ALIAS`)만 갱신하면 리뷰어도 따라온다.
+  ② **env pin = hard-override 유지** — `AGENT_REDTEAM_MODEL` 설정 시 답변 모델과 무관하게 고정.
+     이전 동작(env→litellm 직결)과 동일 의미라 무회귀이자 운영 비용 통제 escape hatch. 미설정이
+     기본 = 답변 모델 정합.
+  ③ **identity 주입은 선택이 아닌 필수** — sonnet(adaptive)은 OAuth 토큰으로 나갈 때 첫 system
+     블록이 Claude Code identity 여야 429 를 안 맞는다(`_call_llm` 은 하고 리뷰어 경로는 안 했음).
+     주입 없이 model 만 바꾸면 sonnet 리뷰가 조용히 skip 되는 무동작 버그라, 미러 주입이 정합의 전제.
+  ④ **적대 패널 MAJOR 대응(effort=low)** — 리뷰어는 짧은 JSON 판정만 내는 경계 작업인데 sonnet
+     기본 effort=high 는 (a) `REDTEAM_TIMEOUT_SEC`(25s) 초과→timeout→error→리뷰 skip
+     (CHG-20260722-0001 이 haiku 에서 8/8 100% 타임아웃으로 이미 실측), (b) max_tokens 안 thinking 이
+     JSON truncate → 회귀. `output_config.effort=low` 로 지연·truncation·비용을 함께 낮추되 **모델
+     tier(정합)는 유지**. 대안 "timeout 상향"은 사용자 지연을 늘려 기각, "리뷰어 haiku 고정"은 사용자
+     요청(정합)에 반해 기각. `AGENT_REDTEAM_EFFORT` env 로 조정 가능.
+- Subagent Panel (§18.8, general-purpose 적대 리뷰어): **BLOCK 0**. correctness·security·routing 전 축
+  반박 시도 결과 크래시/오답전달/400/gemma-leak/무한루프 없음, fail-open 유지, identity 주입이
+  injection-defense 무약화 확인.
+  - **MAJOR (axis4) 반영**: 리뷰어 timeout/effort 가 haiku 튜닝인데 sonnet-high 에 적용돼 지연+리뷰
+    무력화 → effort=low 주입으로 해소(위 ④). MINOR(axis3) truncation 도 동일 수정으로 커버.
+  - **MINOR (axis5) 반영**: `REDTEAM_MAX_TOKENS` 콘솔 description 이 "리뷰어=haiku 고정 5000" 라 stale
+    → "답변 모델 정합·sonnet adaptive effort=low" 로 정정.
+  - **MINOR (axis2) 수용·미수정(설계)**: 미래 adaptive claude(예: sonnet-6)가 `_ADAPTIVE_THINKING_PREFIXES`
+    미등록이면 identity 미주입→429→리뷰 skip. 이는 이 diff 가 도입한 게 아니라 model_catalog 의
+    기존 H2 유지 위험(신모델 추가 시 prefix 갱신)의 재사용이며 프로덕션 경로와 동형. 단일 SSOT
+    (`_ADAPTIVE_THINKING_PREFIXES`)가 이미 있어 신모델 등록 시 함께 갱신하면 자동 정합. fail-open 이라
+    안전(오답 아님, error 로 관측). 별도 코드 추가 없이 컨벤션으로 관리.
+  - **NOTE (env pin 미검증 escape hatch)**: `AGENT_REDTEAM_MODEL=auto/edge/claude` 오설정 시 리뷰어가
+    gemma/400 로 샐 수 있으나 이는 pre-change 와 동일(무회귀), 운영자 명시 오설정 영역이라 미가드.
+- Verification: 자동 45건 통과(test_redteam — 기존 36 + 신규 9)·ruff clean(변경 5파일). 전체
+  feature-0002+0003 회귀는 llm.py 시그니처 변경 후 재실행(환경 의존 2건 제외 — TEST.md 참조).
+  배포 후 라이브 실증(sonnet 대화의 리뷰가 sonnet 으로·effort=low 로 timeout 소멸, admin 'AI 추론'
+  탭 model 컬럼에 sonnet 표기)은 POST-DEPLOY.
+- Human Approval Needed: 배포 confirm (외부 영향 행동) — 사용자 승인 후 진행.
