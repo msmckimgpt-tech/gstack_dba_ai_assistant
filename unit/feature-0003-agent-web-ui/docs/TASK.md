@@ -6270,3 +6270,4 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] FUNCTION.md·MODIFY.md(feature-0003+shared)·REVIEW.md 기록.
 - [ ] verify-completion → PR·머지 → 배포(web 재빌드, static asset) → PB-0008: sonnet 카드=①+guide(②③ 없음), haiku 카드=①②③.
 - worktree `ai/claude/feature-0003-sonnet-reasoning-budget-guide`(base main 28ec78b3).
+- [x] PB-0008 POST-DEPLOY 공유링크 라이브 PASS(2026-07-24·배포본 c1358190): conv[2] 공유 뷰 rail 14개 뱃지 막대(height 1~14% 비례)·클릭 상단 scrollY 62/하단 1551 비례 이동. 메인 뷰와 동일 막대 형식. 스크린샷 evidence/share-rail-bars-live.png. 사용자 요구 실증 완료.
