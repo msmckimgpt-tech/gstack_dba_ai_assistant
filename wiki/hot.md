@@ -1,14 +1,15 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-07-24
+last_updated: 2026-07-27
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-07-24
+2026-07-27
 
 ## Key Recent Facts
+- 07-24 feature-0025 worker-parallelism(Major 신규·머지 PR #933/01c4ba44): 백그라운드 워커(노드 분석·cluster_label)·답변·KB 임베딩 **병렬도·주기·배치**를 관리 콘솔 '시스템>설정>성능·병렬 처리' 서브탭에서 조절(feature-0018 runtime-settings 재사용·performance 10 knob). **기본 동시성 1=현행 직렬 byte-동치 opt-in**·LLM만 병렬/DB직렬·`system.runtime.*` RBAC 재사용(신규 표면 0)·clamp·pgbouncer 40/200·PG 150. 단위48+회귀166 PASS·§18.8 SHIP·배포후 PB-0008 잔여·ADR-0025-01~04·코드 거주 0002/0003/shared/compose. + 07-24 사용자 UX(0003·0019·0007·0016): SQL 강조·CSV 다운로드·새 폴더 버튼·공유 막대/진입 스크롤·그래프 이모지·검토 큐 ds 필터·재답변 모델 승계·Sonnet 5·타임아웃 동기화.
 - 07-23 feature-0024 conversation-folders(Major/일부 Critical 신규·**2026-07-23 Phase1+2a 라이브 완결**): 좌측 대화 목록에 재귀 **폴더(프로젝트 워크스페이스)** — 대화를 폴더로 조직·이동, 폴더 삭제해도 대화 보관(Trash·undo·부모/root 승격), 런타임 max-depth(기본 4·grandfathering·순환 방지), 폴더별 **커스텀 지침** ask-time 주입(요청자 폴더 기준). **엄격 per-user(owner-scope) 격리** — `folder.list.own`/`folder.manage.own` own-only(크로스-계정 노출 벡터 `folder.*.any` 폐지, Critical §12.3 privacy 수정)·restore IDOR(HIGH) 봉인. conversation.create 보유 7역할 folder.*.own 동적 backfill. 4 슬라이스(conversation-folders·folder-privacy·folder-perms-broaden·folder-ux 6종: 무프롬프트 생성·인라인 rename·설정/이동 모달·DnD). PR #895/#899/#903/#908·POST-DEPLOY PB-0008 각 슬라이스 PASS. Phase 2b(폴더 파일·datasource 자동스코프) 이연. 코드 거주 0002(스키마·alembic 0044·컨텍스트)·0003(라우터·RBAC·사이드바)·0009(그룹멤버 배정)·shared. feature-local REVIEW REV-20260723T060000/T170000.
 - 07-23 feature-0016 analysis-completeness(Major, 사용자 리포트 mysql-local/log_v2): 'DB 전체 AI 능동 분석' 미완결 근본 개선 — ① **컬럼 인벤토리 lazy introspection**(부트스트랩 미수행 datasource 도 Table 잡 처리 시 INFORMATION_SCHEMA→column_descriptions **누락분-only** insert(DO NOTHING, 큐레이션 불변)+Column 정점 MERGE → §55 직계 컬럼 분석·payload 컬럼 컨텍스트 실동작, `AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP`) ② 분석 완료→**재클러스터 신선도 배선**(임베딩 신선도 due — 6h cadence 비대기·진행 run/임베딩 드레인 유예·라벨 캐시 키에 시그해시 합성·변경분 AGE targeted 투영 `project_cluster_props`) ③ 프론트 stale 클러스터 병합 수정(`"in"` 체크 — 캔버스 밴드↔상세 패널 정합) ④ 전부 완료 시 **'전체 재분석(refine)'** confirm 경로(only_missing:false — "분석 대상 없음" 차단 해소). §18.8 적대 리뷰 FAIL(B1: datasource 해석이 MEMORY_DB 미지정으로 프로덕션 무효)→전량 흡수·타깃 40+전체 스위트 PASS. 코드 거주 0002(modules)·0003(graph-ctxmenu)·shared(config).
 - 07-22 feature-0023 conversation-api-access(Critical 신규·**배포·라이브 e2e 통과**): 외부 AI 가 세션 쿠키 없이 **Bearer API 토큰**으로 작업 화면 대화(`/api/ask`) 호출 + 대화 tool 화 **MCP 서버**(tool 4종). 토큰=해시 저장·scope allowlist ∩ 계정권한·`*.any`/관리 네임스페이스 **절대 denylist**(→ 관리 콘솔 차단)·저권한 서비스 계정 귀속, 발급/폐기=콘솔 밖 CLI(`bin/api-token-issue.sh`·web-a/web-b 자동감지). 라이브 e2e 토큰→/api/ask 200·admin 403·무토큰 401(배포 66a48870 soak PASS)·단위 17 PASS·§18.8 리뷰 REV-20260722-0002. 코드 거주 0003·0002·MCP=feature-0023 unit.
