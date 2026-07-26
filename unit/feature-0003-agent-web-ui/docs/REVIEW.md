@@ -925,3 +925,10 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록). 실 구현 리뷰 정본 = REV-20260724T180458-sql-md-highlight([SUBAGENT] 6/6축 SHIP·BLOCK/MAJOR 0). 본 cycle 은 배포(0313b135) 라이브 실측 + §12.2 배포 근거 기록만.
 - **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 cycle-final(PR #946 머지, main 0313b135) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. 첫 배포 직전 "deploy_scope: included 활성" 1줄 표면화 완료. 배포=web-a/web-b one-at-a-time 롤링·90s soak 통과·caddy no-drift·롤백 0.
 - **POST-DEPLOY 실증(Windows-browser, PB-0008)**: 실 Windows Chrome/150 배포본 `markdownToHtml` eval → sql-tok 26토큰·getComputedStyle Tokyo Night 팔레트 정확(keyword #bb9af7/600·func #7aa2f7·string #9ece6a·number #ff9e64·comment #737aa2·pre #1a1b26)·텍스트 무손실·script 주입 0·콘솔 에러 0. test-runs.d POST-DEPLOY 결과 + evidence/pb0008-sql-highlight-live-20260724.png.
+
+## REV-20260727T010501-doc-sync-rn-0727 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-07-24 블록(대화·공유·관리 UX 8항목) doc_sync 정합
+- **changeset (operational, feature-0003)**: `src/static/release-notes-data.js`(2026-07-24 블록 prepend·generated 갱신) + companion `docs/{TASK,MODIFY,FUNCTION,TEST}.md`. 비-정책 doc-only(렌더 로직·제품 코드·스키마·RBAC 0).
+- **[SKIPPED:non-policy-doc] 사유**: 사용자향 릴리즈노트 콘텐츠 데이터만(제품 코드·정책 무변경). §18.8 패널 불요(29ef0baf 등 선례 동일 토큰).
+- **검증**: `node --check` PASS · vm 구조검증(releases +1·head 8항목·이전 블록 보존·스키마 type/area/title/detail·내부용어 누출 0). 8항목 전부 owning POST-DEPLOY PB-0008 라이브검증(sql 35d6453f·csv 8bf643e0·reanswer 28ec78b3·newfolder f697eddf·share-scroll 5c9d5bf2·share-rail 6290ae1e·metadata-review c7e928c8·graph-emoji 791d5761). ULTRACODE 적대검증 wf_2676a918 — RN confirmed·minor 1(graph-emoji 문구 3종 그레이스케일 정합) fold-in.
+- **cache-buster**: `?v=dev` 고정(빌드 자동주입·index/admin 편집 0·수동 bump 폐지 ITEM-09).
+- **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).

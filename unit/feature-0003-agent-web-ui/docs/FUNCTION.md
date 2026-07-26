@@ -1890,3 +1890,7 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - AC-20260724T180458-sql-md-highlight-2: 토큰화가 SQL 원문 텍스트를 손실/변형하지 않는다(복사 시 원문 보존) + DOMPurify 통과 후 span·class 가 보존된다.
 - AC-20260724T180458-sql-md-highlight-3: SQL 코드 내 악성 문자열(`'<img onerror=...>'` 등)이 활성 HTML/속성/스크립트로 주입되지 않는다(이스케이프된 문자열 토큰 텍스트로만 존재) + diff/mermaid/attachment/비-SQL/인라인 코드는 무영향.
 - 검증: headless chromium(chromium-1208, 실 vendor marked+DOMPurify) 파이프라인 23/23 PASS · `node --check` · §18.8 [SUBAGENT] 적대 패널 6/6축 PASS(SHIP·BLOCK/MAJOR 0) · 시각증거 evidence/sql-md-highlight-20260724.png. REV/CHG/TASK-20260724T180458-sql-md-highlight. POST-DEPLOY PB-0008(Environment: Windows-browser — SQL 답변 대화 재로드 육안).
+
+## (doc-sync-rn-0727, 2026-07-24) 릴리즈노트 콘텐츠 — 2026-07-24 블록 신규(대화·공유·관리 UX 8항목)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-24" 블록 신규(8항목: improved/work 4·fixed/work 2·improved/admin 1·fixed/admin 1 — SQL 코드블록 구문 강조·답변 CSV 내려받기·'요청사항 수정' 재답변 모델/추론강도 승계·'새 폴더' 폴더 아이콘 버튼·공유 링크 진입 최신 메시지 스크롤·공유 링크 위치 막대·메타데이터 검토 datasource 스코프+등록시각·관계도 이모지 색 렌더) prepend·generated 2026-07-23→2026-07-24. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
+- 평이화/비노출: feature-id·§번호·PR#·함수명·모델명(Sonnet 5·haiku)·내부표현(effort·budget_tokens·_composerCurrentModel·ResizeObserver·folder.*.own 등) 비노출(사용자 언어). 제외 항목(운영자 노브·모델 라우팅·개발자 API·라이브 미검증)은 사용자 릴리즈노트 미포함.

@@ -1027,3 +1027,12 @@ source_of_truth: true
 - 코드/자산 0 — sql-md-highlight(PR #946·main 0313b135) 배포 후 라이브 검증 결과 기록만.
 - test-runs.d/20260724T180458-sql-md-highlight.md 에 POST-DEPLOY 결과(Windows-browser PASS) append + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260724T184500-sql-md-highlight-postverify(§12.2 deploy 근거 포함) + evidence/pb0008-sql-highlight-live-20260724.png.
 - 실측(실 Windows Chrome/150, https://localhost/ bootstrap_admin): 배포본 markdownToHtml → sql-tok 26토큰·Tokyo Night 색 정확·텍스트 무손실·script 0. 사용자 요청 라이브 해소 확인.
+
+## CHG-20260727T010501-doc-sync-rn-0727 (TASK-20260727T010501-doc-sync-rn-0727 — 07-24 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경: `static/release-notes-data.js` releases head 에 "2026-07-24" 블록 prepend(8항목 improved/work 4·fixed/work 2·improved/admin 1·fixed/admin 1) + generated 2026-07-23→2026-07-24. 렌더 로직·백엔드·스키마·RBAC·엔드포인트 0.
+- cache-buster: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py`(Dockerfile:39) + deploy-web.sh `asset_stamp_verify`(:788) 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시는 07-12 이전 regime → 부적용(현행 코드로 재검증).
+- 근거 정본: owning POST-DEPLOY 커밋(sql 35d6453f·csv 8bf643e0·reanswer 28ec78b3·newfolder f697eddf·share-scroll 5c9d5bf2·share-rail 6290ae1e·metadata-review c7e928c8·graph-emoji 791d5761) + git log 29ef0baf..HEAD.
+- 제외: conv-menu-order/attachment-new(POST-DEPLOY 부재)·sonnet-reasoning-budget-guide(모델 튜닝 노브)·feature-0025(운영자 노브+PB-0008 미검증)·feature-0007(모델 라우팅)·feature-0021(내부)·feature-0023(개발자 API)·model-canonical/convaudit(내부).
+- Verification: `node --check` PASS · vm 구조검증(releases +1·2026-07-24 head 8항목·2026-07-23 보존·스키마·누출0).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
