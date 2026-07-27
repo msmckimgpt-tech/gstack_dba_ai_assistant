@@ -2,34 +2,64 @@
   "name": "feature-0019 share-edit-usable — 공유(그룹) 대화 메시지 수정 상호작용 라이브 검증 (PB-0008)",
   "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/feature-0019-share-edit-fix",
   "steps": [
-    { "action": "goto", "url": "https://localhost/", "label": "open_app" },
-    { "action": "wait_for", "selector": "#conversationList", "timeout": 20000 },
+    {
+      "action": "goto",
+      "url": "https://localhost/",
+      "label": "open_app"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#conversationList",
+      "timeout": 20000
+    },
     {
       "action": "eval",
-      "label": "open_shared_conversation (대상 대화 확정 — 불일치 시 throw)",
-      "script": "(async()=>{const cid='20260722015451-d23ad939';if(typeof window.selectConversation!=='function')throw new Error('selectConversation 부재 — 앱 미로드');await window.selectConversation(cid);await new Promise(r=>setTimeout(r,4500));const conv=window.currentConversation&&window.currentConversation();if(!conv||conv.id!==cid)throw new Error('대상 공유 대화 미오픈: '+(conv&&conv.id));if(!conv.is_group)throw new Error('대상이 공유(그룹) 대화가 아님 — 시나리오 전제 붕괴');const rows=document.querySelectorAll('article.message.is-user').length;const trg=document.querySelectorAll('.message-edit-trigger').length;if(rows<1)throw new Error('user 메시지 0');if(trg<1)throw new Error(\"'수정' 버튼 미노출 — 편집 어포던스 회귀\");return JSON.stringify({cid:conv.id,isGroup:true,userRows:rows,editTriggers:trg});})()"
+      "label": "open_shared_conversation (목록 로드 폴링 후 확정 — 불일치 시 throw)",
+      "script": "(async()=>{const cid='20260722015451-d23ad939';let item=null;for(let i=0;i<40;i++){item=document.querySelector('[data-conversation-id=\"'+cid+'\"]');if(item)break;await new Promise(r=>setTimeout(r,500));}if(typeof window.selectConversation!=='function')throw new Error('selectConversation 부재 — 앱 미로드');await window.selectConversation(cid);let conv=null;for(let i=0;i<30;i++){conv=window.currentConversation&&window.currentConversation();if(conv&&conv.id===cid)break;await new Promise(r=>setTimeout(r,500));}if(!conv||conv.id!==cid)throw new Error('대상 공유 대화 미오픈: '+(conv&&conv.id));if(!conv.is_group)throw new Error('대상이 공유(그룹) 대화가 아님 — 시나리오 전제 붕괴');for(let i=0;i<20;i++){if(document.querySelectorAll('article.message.is-user').length>0)break;await new Promise(r=>setTimeout(r,500));}const rows=document.querySelectorAll('article.message.is-user').length;const trg=document.querySelectorAll('.message-edit-trigger').length;if(rows<1)throw new Error('user 메시지 0');if(trg<1)throw new Error(\"'수정' 버튼 미노출 — 편집 어포던스 회귀\");return JSON.stringify({cid:conv.id,isGroup:true,userRows:rows,editTriggers:trg});})()"
     },
-    { "action": "hover", "selector": "article.message.is-user .message-bubble" },
+    {
+      "action": "hover",
+      "selector": "article.message.is-user .message-bubble"
+    },
     {
       "action": "eval",
       "label": "AC1 액션 컨테이너 1개 + ☰·수정 각각 hit-test 도달 (미충족 시 throw)",
       "script": "(()=>{const row=document.querySelector('article.message.is-user');const conts=[...row.querySelectorAll('.message-actions')];const hit=(el)=>{const r=el.getBoundingClientRect();const t=document.elementFromPoint(Math.round(r.x+r.width/2),Math.round(r.y+r.height/2));return t===el||el.contains(t);};if(conts.length!==1)throw new Error('.message-actions 컨테이너 '+conts.length+'개 — 겹침 회귀(기대 1)');const edit=row.querySelector('.message-edit-trigger');if(!edit)throw new Error(\"'수정' 버튼 부재\");if(!hit(edit))throw new Error(\"'수정' 버튼 hit-test 도달 불가\");const menu=row.querySelector('.message-menu-trigger');if(menu&&!hit(menu))throw new Error('☰ 메뉴 버튼이 가려져 클릭 불가 — R2 회귀');return JSON.stringify({actionContainers:conts.length,editReachable:true,menuPresent:!!menu,menuReachable:menu?true:null});})()"
     },
-    { "action": "screenshot", "label": "30_hover_actions" },
-    { "action": "click", "selector": "article.message.is-user .message-edit-trigger" },
-    { "action": "wait_for", "selector": ".message-edit-textarea", "timeout": 8000 },
+    {
+      "action": "screenshot",
+      "label": "30_hover_actions"
+    },
+    {
+      "action": "click",
+      "selector": "article.message.is-user .message-edit-trigger"
+    },
+    {
+      "action": "wait_for",
+      "selector": ".message-edit-textarea",
+      "timeout": 8000
+    },
     {
       "action": "eval",
       "label": "AC2 편집창 폭 확장 (baseline 240px 회귀 시 throw)",
       "script": "(()=>{const row=document.querySelector('article.message.is-user.is-editing');if(!row)throw new Error('편집 행에 is-editing 미부여 — R1 회귀(폭 stretch 훅 부재)');const bub=row.querySelector('.message-bubble');const ta=document.querySelector('.message-edit-textarea');if(!ta)throw new Error('편집 textarea 부재');const log=document.querySelector('.messages, #messageLog');const logW=log?log.getBoundingClientRect().width:0;const taW=ta.getBoundingClientRect().width;if(taW<=300)throw new Error('textarea 폭 '+Math.round(taW)+'px — baseline(240px) 수준 회귀');if(logW&&taW<logW*0.6)throw new Error('textarea 폭 '+Math.round(taW)+'px 가 로그 폭 '+Math.round(logW)+'px 의 60% 미만 — stretch 미적용');if(Number(ta.rows)<3)throw new Error('textarea rows='+ta.rows+' — 최소 3행 미달');return JSON.stringify({rowHasIsEditing:true,logWidth:Math.round(logW),bubbleWidth:Math.round(bub.getBoundingClientRect().width),textareaWidth:Math.round(taW),textareaHeight:Math.round(ta.getBoundingClientRect().height),rows:Number(ta.rows),contentLen:String(ta.value||'').length,buttons:[...document.querySelectorAll('.message-edit-btn')].map(b=>b.textContent.trim())});})()"
     },
-    { "action": "screenshot", "label": "31_edit_box_widened" },
-    { "action": "click", "selector": ".message-edit-cancel" },
+    {
+      "action": "screenshot",
+      "label": "31_edit_box_widened"
+    },
+    {
+      "action": "click",
+      "selector": ".message-edit-cancel"
+    },
     {
       "action": "eval",
       "label": "AC3 취소 시 편집 상태 원복 (잔존 시 throw)",
       "script": "(async()=>{await new Promise(r=>setTimeout(r,1200));const editing=document.querySelectorAll('article.message.is-editing').length;const boxes=document.querySelectorAll('.message-edit-box').length;if(editing!==0)throw new Error('취소 후 is-editing 잔존 '+editing+'건');if(boxes!==0)throw new Error('취소 후 편집 박스 잔존 '+boxes+'건');const rows=document.querySelectorAll('article.message.is-user').length;if(rows<1)throw new Error('취소 후 user 메시지 소실');return JSON.stringify({editing:0,editBoxes:0,userRows:rows});})()"
     },
-    { "action": "screenshot", "label": "32_after_cancel" }
+    {
+      "action": "screenshot",
+      "label": "32_after_cancel"
+    }
   ]
 }

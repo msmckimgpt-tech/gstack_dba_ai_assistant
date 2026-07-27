@@ -165,3 +165,11 @@ POST-DEPLOY PB-0008 라이브 시각검증.
 근거 무결성)이라 '수정' 버튼이 뜨지 않는다. 해제하려면 ANCHOR/FUNCTION 개정 + 사용자 승인 필요.
 (b) 익명 **공유 링크 뷰(`/share/{token}`)** 는 read-only 뷰어라 편집 어포던스가 없다(FUNCTION §4
 Out of Scope). 실측으로 편집 트리거 0·컴포저 없음 확인. 편집 지원은 scope 확대 결정 사항.
+
+**완결 (2026-07-27, share-edit-usable)**: verify-completion PASS → PR #950 머지(main **bb66ef16**) →
+`make deploy-web-only` 무중단 롤링(web-a/web-b·90s soak 통과) → **POST-DEPLOY PB-0008 라이브 PASS**
+(win-browser 실 Windows Chrome, 공유 대화 `d23ad939`: 액션 컨테이너 **1개**·☰/'수정' 각각 hit-test
+도달·textarea **886px**(수정 전 240px)·rows 7(2)·377자 전문 가시·취소 원복, 13 step `ok:true`).
+서빙 `app.js`/`styles.css`(`?v=1e6cd74df162`) 신 심볼 curl 확증. **사용자 신고 해소.**
+deploy_scope: included(FIRST_REQUEST.md 전역 §12.2). worktree `ai/claude/feature-0019-share-edit-fix`
+(base main 0190b29e) · postverify `ai/claude/feature-0019-share-edit-postverify`(base b0f51256).

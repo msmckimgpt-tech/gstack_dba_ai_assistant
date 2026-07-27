@@ -95,8 +95,10 @@ source_of_truth: true
   말풍선 content 폭 소실로 `.message-edit-box` min-width(240px)까지 쪼그라들지 않고, 편집 중인 행이
   대화 로그 폭으로 stretch 된다(공유 대화 실측 661px→272px 회귀 봉인). textarea 행수는 개행 수뿐
   아니라 wrap 추정(문자수)도 반영해 줄바꿈 없는 장문이 2행 창에 갇히지 않는다. 회귀=`tests/
-  test_share_edit_usable.py`(F1·F2·F4·F5) + PB-0008 라이브 폭 실측.
+  test_share_edit_usable.py`(F1·F2·F4·F5) + PB-0008 라이브 폭 실측. **검증 완료(2026-07-27,
+  배포본 bb66ef16): textarea 886px·rows 7·377자 전문 가시**(수정 전 240px·2행).
 - AC-ME-12 (share-edit-usable): user 말풍선의 편집 어포던스가 기존 말풍선 액션(☰ 메뉴·피드백)과
   **동일 컨테이너**에 배치되어, 두 `.message-actions` 가 같은 absolute 좌표에 겹쳐 ☰ 메뉴가 '수정'
   버튼에 가려지는 상호작용 소실이 없다(hit-test 로 ☰·'수정' 각각 도달 가능). 회귀=
-  `tests/test_share_edit_usable.py`(F3) + PB-0008 hit-test.
+  `tests/test_share_edit_usable.py`(F3) + PB-0008 hit-test. **검증 완료(2026-07-27, bb66ef16):
+  액션 컨테이너 1개 · ☰/'수정' 각각 hit-test 도달**.
