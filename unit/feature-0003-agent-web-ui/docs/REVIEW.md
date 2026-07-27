@@ -943,3 +943,8 @@ source_of_truth: true
 - **잔여(수정 안 함)**: NIT — looksLikeSql/tokenizer 전용 단위테스트 부재(기존 browser-helper 관례, headless 검증으로 대체). 잔여 초희귀 FP(예: `<select>`+import 가 lookbehind 우회하는 변형)도 consequence=benign 오색칠뿐(안전·무손실 불변).
 - **결정 근거**: 외부 하이라이터 무추가·기존 enhanceDiffBlocks 패턴 정합·additive(비-SQL diff 무영향). add/del 신호는 배경·border·gutter 로 유지(color-only override 라 border/::before 불변).
 - **검증**: headless chromium(chromium-1208, 실 vendor marked+DOMPurify, app.js 추출 실소스) **22/22 PASS**(회귀·SQL diff 토큰·add/del 보존·평문 기본색·배경 tint·gutter·텍스트 무손실·비-SQL diff 무영향·게이트 오탐0·hunk 미토큰화·XSS 무력화) · `node --check` · 시각증거 evidence/sql-diff-highlight-20260727.png. POST-DEPLOY PB-0008(Windows-browser) = 배포 후 정본.
+
+## REV-20260727T110000-sql-diff-highlight-postverify [SKIPPED:non-policy-doc] SQL diff 하이라이트 POST-DEPLOY 라이브 실증 + deploy_scope 근거
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 기록). 실 구현 리뷰 정본 = REV-20260727T102027-sql-diff-highlight([SUBAGENT] SHIP-WITH-FIXES·MAJOR+MINOR3 in-cycle 수정).
+- **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 PR #948 머지(main 8d69490c) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. "deploy_scope: included 활성" 1줄 표면화 완료. 배포=web-a/web-b 8d69490c 롤링 재생성·healthy·RestartCount 0(롤백 0).
+- **POST-DEPLOY 실증(Windows-browser, PB-0008)**: 실 Windows Chrome/150 배포본 markdownToHtml eval(SQL diff) → diff-sql·sql-tok 9개·getComputedStyle Tokyo Night 색 정확(keyword #bb9af7·string #9ece6a·number #ff9e64)·평문 기본색 #c0caf5·add/del 배경 tint·hunk 미토큰화·gutter 보존·script 0·콘솔 에러 0. test-runs.d POST-DEPLOY 결과 + evidence/pb0008-sql-diff-live-20260727.png.

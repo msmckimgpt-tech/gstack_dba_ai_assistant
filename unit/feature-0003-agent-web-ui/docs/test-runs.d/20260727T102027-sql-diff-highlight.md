@@ -13,3 +13,9 @@ verdict: PRE-COMMIT PASS (headless chromium 실 vendor 파이프라인 21/21·JS
   - `node --check` app.js·share.js PASS.
   - 시각 증거: `docs/evidence/sql-diff-highlight-20260727.png`(SQL diff 렌더 — keyword 보라·string 초록·number 주황·comment 이탤릭 + del/add 빨강/초록 배경·border·gutter 육안 확인).
 - POST-DEPLOY PB-0008 라이브 계획(정본): 배포 후 실 Windows Chrome 로 assistant 가 ```diff 로 SQL 변경을 답한 대화(또는 eval 로 배포본 markdownToHtml) 확인 — diff 라인 내부 SQL 색 구분 + add/del 구분 유지 + 공유 뷰 동일 + pageerror 0.
+
+### POST-DEPLOY 결과 (2026-07-27, 배포 8d69490c, deploy-web-only) — **Environment: Windows-browser** — PASS
+- 방법: PB-0008 — `bin/win-browser.py` relay 실 Windows Chrome/150(CDP), `https://localhost/` 작업 화면 로그인(bootstrap_admin, KR_LIVE). 배포=`make deploy-web-only`(web-a/web-b 8d69490c 롤링 재생성·healthy·RestartCount 0). 서빙 자산 curl 확증(app.js sqlTokenizeToFragment/looksLikeSql/diff-sql·share.js·styles.css diff-sql + /livez git_commit=8d69490c).
+- 확인(배포본 markdownToHtml eval — SQL diff): `pre.diff-block.diff-sql` 부여·diff 내부 sql-tok 9개. getComputedStyle 실측: keyword `rgb(187,154,247)`(#bb9af7)·string `rgb(158,206,106)`(#9ece6a)·number `rgb(255,158,100)`(#ff9e64)·add 라인 평문색 `rgb(192,202,245)`(#c0caf5 기본)·add 배경 `rgba(158,206,106,.14)`·del 배경 `rgba(247,118,142,.14)`·**hunk 미토큰화(0)**·gutter(data-gutter) 보존·script 주입 0.
+- 육안: 실 화면 캡처에서 hunk(@@) 파랑·comment 회청·keyword 보라·function 파랑·string 초록·number 주황 구분 + del(빨강 배경+`-`)/add(초록 배경+`+`) 구분 확인. 스크린샷: `docs/evidence/pb0008-sql-diff-live-20260727.png`.
+- 결과: **PASS** — 콘솔 에러 0. 원 요청("diff 부분에서도 SQL 하이라이트") 라이브 해소 확인. 검증 후 probe DOM 정리(라이브 화면 오염 0).
