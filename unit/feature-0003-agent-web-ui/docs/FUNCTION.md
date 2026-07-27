@@ -1895,6 +1895,17 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-24" 블록 신규(8항목: improved/work 4·fixed/work 2·improved/admin 1·fixed/admin 1 — SQL 코드블록 구문 강조·답변 CSV 내려받기·'요청사항 수정' 재답변 모델/추론강도 승계·'새 폴더' 폴더 아이콘 버튼·공유 링크 진입 최신 메시지 스크롤·공유 링크 위치 막대·메타데이터 검토 datasource 스코프+등록시각·관계도 이모지 색 렌더) prepend·generated 2026-07-23→2026-07-24. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
 - 평이화/비노출: feature-id·§번호·PR#·함수명·모델명(Sonnet 5·haiku)·내부표현(effort·budget_tokens·_composerCurrentModel·ResizeObserver·folder.*.own 등) 비노출(사용자 언어). 제외 항목(운영자 노브·모델 라우팅·개발자 API·라이브 미검증)은 사용자 릴리즈노트 미포함.
 
+## (sql-diff-highlight, 2026-07-27) ```diff``` 코드블록 내 SQL 구문 하이라이트 (web/UI, Minor §12.3, frontend-only, sql-md-highlight 후속)
+- assistant 답변의 ```diff 코드블록이 SQL 변경(쿼리 diff)을 나타낼 때, diff 라인 내부 코드도 ```sql 블록처럼 keyword/function/string/number/comment/type/variable 색 구분되어 렌더된다(이전엔 diff 는 +/-/context 색만·SQL 미하이라이트 — 사용자 요청).
+- **프론트(`static/app.js`·`share.js`)**: SQL 토크나이저 코어를 `sqlTokenizeToFragment(text)→DocumentFragment` 로 추출해 ```sql 블록(`highlightSqlInto`)과 SQL diff 라인이 공용. `enhanceDiffBlocks` 는 diff 내용이 `looksLikeSql` 이면 각 라인 코드를 `sqlTokenizeToFragment` 로 토큰화(`<span class="sql-tok-*">`, textContent-only → XSS 무첨가·DOMPurify 통과) + `pre` 에 `diff-sql` 클래스 부여.
+- **SQL 판정(`looksLikeSql`)**: 강한 statement verb(SELECT/INSERT/UPDATE/DELETE/CREATE/ALTER/DROP/TRUNCATE/MERGE/GRANT/REVOKE) AND SQL 구조 clause(FROM/INTO/WHERE/JOIN/VALUES/TABLE/VIEW/INDEX/DATABASE/SCHEMA/PROCEDURE/GROUP BY/ORDER BY) 동시 존재 시에만 SQL diff 로 간주. `\b` 경계로 camelCase(updateState 등) 오탐 억제. 비-SQL 파일 diff(코드·설정)는 기존 렌더 그대로.
+- **CSS(`static/styles.css`·`share.css`)**: `.sql-tok-*` 셀렉터를 `pre.sql-block` 한정에서 `.message-content .sql-tok-*`/`.share-message-content .sql-tok-*` 로 일반화(토크나이저 전용 클래스라 bleed 없음 — ```sql·diff 공용). SQL diff(`pre.diff-block.diff-sql .diff-line`)는 라인 평문색을 기본 코드색(#c0caf5 / --share-code-fg)으로 되돌려 토큰이 syntax색을 내게 하고, add/del 구분은 배경 tint·좌측 border·gutter(+/-) 마커가 담당(GitHub 식).
+- 불변식: `enhanceDiffBlocks` 의 줄번호/gutter/마커/복사-클린/빈줄 처리·비-SQL diff 렌더·```sql 블록·mermaid/attachment/인라인 코드 무변경. 백엔드/스키마/RBAC 무관. cache-buster `?v=dev` 고정. vendor 무추가.
+- AC-20260727T102027-sql-diff-highlight-1: SQL 을 담은 ```diff 블록의 +/-/context 라인 내부에서 keyword/string/number/comment 가 색 구분되어 렌더된다(메인 UI + 공유 뷰).
+- AC-20260727T102027-sql-diff-highlight-2: diff 의 add/del 구분(배경·border·gutter +/-)·줄번호·복사 클린·텍스트 무손실이 유지된다.
+- AC-20260727T102027-sql-diff-highlight-3: 비-SQL diff(코드·설정 파일)는 SQL 토큰화되지 않고 기존 렌더 그대로다(looksLikeSql 게이트) + diff 라인 내 악성 문자열이 활성 HTML 로 주입되지 않는다.
+- 검증: headless chromium(실 vendor) 21/21 PASS · `node --check` · §18.8 [SUBAGENT] 적대 패널 · evidence/sql-diff-highlight-20260727.png. REV/CHG/TASK/AC-20260727T102027-sql-diff-highlight. POST-DEPLOY PB-0008(Environment: Windows-browser).
+
 ### 첨부 후처리 web 게이트 (CHG-20260727T105326) — routers/conversations.py
 - `_raw_block_left` / `_attach_postprocess_here = (not app._is_worker_mode()) or _raw_block_left`: 첨부 후처리(materialize 2곳 + strip 2곳)를 **증거 기반**으로 게이팅. 정상 worker 경로는 워커가 이미 strip 해 no-op, 블록이 남아 있으면(구버전 워커·web-only 배포·후처리 실패) web 이 self-heal(warning 로그).
 - worker 모드에서는 `agent_result["edited_attachments"|"new_attachments"]`(worker 후처리 산출)를 응답 `result` 로 forwarding — 프런트 토스트/표면화 패리티.

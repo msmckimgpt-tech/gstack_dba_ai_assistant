@@ -6313,3 +6313,23 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 검증: `node --check` PASS · vm 구조검증(releases +1·2026-07-24 head 8항목[improved 5·fixed 3, area work 6·admin 2]·2026-07-23 보존·상위 블록 내림차순[말단 '이전' sentinel 정상]·스키마 type/area/title/detail·누출0[feature-id·테이블·모델명·IDOR·scope·budget_tokens 등 0]). 근거 정본 = 각 항목 owning POST-DEPLOY PB-0008 커밋(sql 35d6453f·csv 8bf643e0·reanswer 28ec78b3·newfolder f697eddf·share-scroll 5c9d5bf2·share-rail 6290ae1e·metadata-review c7e928c8·graph-emoji 791d5761) + git log 29ef0baf..HEAD.
 - [x] 제외: conv-menu-order(#940)·attachment-new(#945)=POST-DEPLOY/PB-0008 라이브검증 커밋 부재로 보류(라이브 미검증)·sonnet-reasoning-budget-guide(#942)=모델 추론 튜닝 노브(운영자·모델 제어)·feature-0025 워커 병렬 설정=운영자 노브+PB-0008 미검증·feature-0007 sonnet5/모델라우팅·feature-0021 red-team·feature-0023 개발자향 API·model-canonical/convaudit-ledger=내부.
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(Windows-browser 미수행 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3). 적대검증: ULTRACODE wf_2676a918 — RN confirmed(8 INCLUDE holds·9 EXCLUDE 사유 정확)·minor 1(graph-emoji '제 색으로'→'검은 실루엣 없이 제 모습대로' 3종 그레이스케일 이모지 정합) fold-in.
+
+## TASK-20260727T102027-sql-diff-highlight — ```diff``` 코드블록 내 SQL 구문 하이라이트 적용 (Minor §12.3 — feature-0003 web/UI 프론트 static, frontend-only, /_template:entry arg-given, sql-md-highlight 후속)
+- 요청(사용자, /_template:entry arg-given): "diff 구문을 나타내는 부분에서도 SQL 하이라이트가 적용되도록 구성해주세요."
+- 현상: 직전 sql-md-highlight 로 ```sql``` 블록은 하이라이트되나, ```diff``` 블록(enhanceDiffBlocks)은 각 라인 코드를 plain textContent 로만 넣어 diff 내 SQL 이 색 구분 안 됨(+/-/context 색만).
+- 접근(additive · SQL diff 게이트):
+  - `highlightSqlInto` 의 토크나이저 코어를 `sqlTokenizeToFragment(text)→DocumentFragment` 로 추출(코드블록·diff 공용), `highlightSqlInto` 는 wrapper.
+  - `looksLikeSql(text)` 게이트 신설 — 강한 statement 동사(SELECT/INSERT/…) AND 보조 절 키워드(FROM/WHERE/SET/…) 동시 존재 시만 SQL 판정(비-SQL 파일 diff 오색칠 방지).
+  - `enhanceDiffBlocks`: sqlMode 면 각 diff 라인 코드를 sqlTokenizeToFragment 로 토큰화 + `pre.diff-sql` 마킹. add/del 신호(배경 tint·좌측 border·gutter 마커) 유지, 라인 평문색은 기본색(#c0caf5)으로(토큰이 syntax색 — GitHub 식). 비-SQL diff 는 기존 그대로.
+  - CSS: `.sql-tok-*` 셀렉터를 `pre.sql-block` 조건에서 `.message-content .sql-tok-*` 로 일반화(diff 커버, 토크나이저 전용 클래스라 bleed 없음) + `.diff-sql .diff-line` 기본색 override.
+- 영향 파일: static/app.js·share.js(공용 헬퍼+게이트+diff 배선)·styles.css·share.css(셀렉터 일반화 + diff-sql).
+- 완료 판정: (1) SQL diff 의 +/- 라인 내 keyword/string/number/comment 색 구분 (2) add/del 여전히 구분(배경·border·gutter) (3) 비-SQL diff·```sql``` 블록·mermaid/attachment 무회귀 (4) DOMPurify span/class 보존·XSS 무첨가 (5) node --check PASS.
+- 위험도: Minor (비파괴 additive frontend).
+
+### 완료 체크리스트
+- [x] app.js: sqlTokenizeToFragment 추출 + looksLikeSql + enhanceDiffBlocks 배선
+- [x] share.js: 동일
+- [x] styles.css/share.css: 셀렉터 일반화 + .diff-sql
+- [x] headless chromium 검증(sql 블록 무회귀 + diff SQL 하이라이트 + 비-SQL diff 무영향) — 22/22 PASS(적대리뷰 수정 후), 시각증거 evidence/sql-diff-highlight-20260727.png
+- [x] verify-completion PASS → PR #948 머지(main 8d69490c) → deploy-web-only(web-a/b 8d69490c healthy) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, diff-sql·sql-tok 9·hunk 미토큰화·evidence/pb0008-sql-diff-live-20260727.png) — **완결**
+정본 rationale=REVIEW REV-20260727T102027-sql-diff-highlight, 변경이력=MODIFY CHG-20260727T102027-sql-diff-highlight, Run 기록=test-runs.d/20260727T102027-sql-diff-highlight.md, POST-DEPLOY=REV/CHG-20260727T110000-sql-diff-highlight-postverify.

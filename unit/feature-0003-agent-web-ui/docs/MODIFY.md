@@ -1036,9 +1036,20 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(releases +1·2026-07-24 head 8항목·2026-07-23 보존·스키마·누출0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
-
 ## CHG-20260727T105326-web-postprocess-gate — 첨부 후처리 web 게이팅(증거 기반) + worker 결과 전달 (Major §12.3, cross-ref feature-0002 primary)
 - **What**: 첨부 후처리 소유자가 ask-worker 로 이전됨에 따라(primary CHG-20260727T105326-worker-attachment-postprocess) web `/api/ask` 의 후처리 4곳(materialize 2 + strip 2)을 **증거 기반 게이트**(`_raw_block_left`: 저장 답변에 블록이 남아 있을 때만 수행)로 감싸고, worker 가 만든 첨부 목록을 응답으로 forwarding. `_update_assistant_message_content` 는 성공 여부 bool 반환(§18.8 MINOR).
 - **Why**: (a) worker 모드에서 web 이 빈 목록으로 strip 하면 블록만 지워 저장돼 첨부가 영영 생성되지 않고 본문 소실(§18.8 BLOCKER) (b) 모드-only 게이팅은 혼합 버전 배포 창에서 같은 결과(§18.8 MAJOR) → 증거 기반이면 정상 경로 no-op·비정상 경로 self-heal.
 - **Files**: `src/routers/conversations.py`, `src/routers/_conv_store.py`(`_build_worker_agent_result` 첨부 키).
 - **Verification**: pytest 2384 PASS(web 게이팅 계약 테스트 포함) · §18.8 2라운드. **배포는 워커 포함 전체 스코프**(`--web-only` 금지).
+## CHG-20260727T102027-sql-diff-highlight — ```diff``` 코드블록 내 SQL 구문 하이라이트 (Minor §12.3, frontend-only, sql-md-highlight 후속)
+- **요청(사용자, /_template:entry arg-given)**: "diff 구문을 나타내는 부분에서도 SQL 하이라이트가 적용되도록 구성해주세요."
+- **원인**: 직전 sql-md-highlight 는 ```sql 블록만 처리. `enhanceDiffBlocks` 는 각 diff 라인 코드를 plain textContent 로만 넣어 diff 내 SQL 이 색 구분 안 됨(+/-/context 색만).
+- **변경**: ① SQL 토크나이저 코어를 `sqlTokenizeToFragment(text)→DocumentFragment` 로 추출(```sql·diff 공용), `highlightSqlInto` 는 wrapper. ② `looksLikeSql(text)` 게이트(verb 핵심 DML/DDL ∧ clause SQL 구조 키워드, \b 경계로 camelCase 오탐 억제) — SQL diff 에만 적용해 비-SQL 파일 diff 오색칠 방지. ③ `enhanceDiffBlocks`: sqlMode 면 diff 라인 코드를 `sqlTokenizeToFragment` 로 토큰화(textContent-only, XSS 무첨가) + `pre.diff-sql` 마킹. add/del 은 배경 tint·좌측 border·gutter 마커로 유지, 라인 평문색은 기본색(토큰이 syntax색 — GitHub 식). 비-SQL diff 는 기존 그대로.
+- **Files**: `src/static/app.js`(sqlTokenizeToFragment/highlightSqlInto/looksLikeSql/enhanceDiffBlocks) · `src/static/share.js`(동일 로컬 미러) · `src/static/styles.css`(`.sql-tok-*` 셀렉터 일반화 `pre.sql-block`→`.message-content .sql-tok-*` + `.diff-block.diff-sql .diff-line { color:#c0caf5 }`) · `src/static/share.css`(동일, `--share-code-fg`).
+- **Verification**: headless chromium(chromium-1208, 실 vendor) **21/21 PASS**(회귀·SQL diff 하이라이트·add/del 보존·평문 기본색·배경 tint·텍스트 무손실·비-SQL diff 무영향·게이트 오탐억제·XSS 무력화) · `node --check` · §18.8 [SUBAGENT] 적대 패널 · 시각증거 evidence/sql-diff-highlight-20260727.png. 정적 자산 web baked → 라이브 PB-0008 = POST-DEPLOY(visual_verification_scope: always).
+- **잔여**: verify-completion → commit → PR → merge → deploy-web-only → POST-DEPLOY PB-0008.
+
+## CHG-20260727T110000-sql-diff-highlight-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- 코드/자산 0 — sql-diff-highlight(PR #948·main 8d69490c) 배포 후 라이브 검증 결과 기록만.
+- test-runs.d/20260727T102027-sql-diff-highlight.md POST-DEPLOY 결과(Windows-browser PASS) + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260727T110000-...(§12.2 deploy 근거) + evidence/pb0008-sql-diff-live-20260727.png.
+- 실측(실 Windows Chrome/150, https://localhost/ bootstrap_admin): 배포본 SQL diff → diff-sql·sql-tok 9·Tokyo Night 색 정확·hunk 미토큰화·add/del 구분·script 0. 사용자 요청 라이브 해소.

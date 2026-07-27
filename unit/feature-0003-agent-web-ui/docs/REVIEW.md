@@ -932,3 +932,19 @@ source_of_truth: true
 - **검증**: `node --check` PASS · vm 구조검증(releases +1·head 8항목·이전 블록 보존·스키마 type/area/title/detail·내부용어 누출 0). 8항목 전부 owning POST-DEPLOY PB-0008 라이브검증(sql 35d6453f·csv 8bf643e0·reanswer 28ec78b3·newfolder f697eddf·share-scroll 5c9d5bf2·share-rail 6290ae1e·metadata-review c7e928c8·graph-emoji 791d5761). ULTRACODE 적대검증 wf_2676a918 — RN confirmed·minor 1(graph-emoji 문구 3종 그레이스케일 정합) fold-in.
 - **cache-buster**: `?v=dev` 고정(빌드 자동주입·index/admin 편집 0·수동 bump 폐지 ITEM-09).
 - **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
+
+## REV-20260727T102027-sql-diff-highlight [SUBAGENT: SHIP-WITH-FIXES — MAJOR(FP)+MINOR 3건 in-cycle 수정, 6축 나머지 PASS] ```diff``` 코드블록 내 SQL 구문 하이라이트 (Minor §12.3, frontend-only)
+- **[SUBAGENT] 적대 패널 판정 (§18.8, 보안+프론트, 경험적 실행 검증)**: **VERDICT SHIP-WITH-FIXES**. 1 XSS PASS(sqlTokenizeToFragment 는 createElement/textContent/createTextNode 전용·appendChild 는 안전노드 이동·innerHTML sink 무첨가·DOMPurify 최종) · 2 refactor 등가성 PASS(sqlTokenizeToFragment 추출+thin highlightSqlInto, 트레일링개행 strip 정위치, ```sql 무회귀) · 3 **MAJOR(FP)+MINOR(FN)** · 4 diff 구조 PASS(+MINOR hunk 토큰화) · 5 CSS PASS(+MINOR 2: hunk/meta 색·user-bubble parity) · 6 app/share drift PASS(line-for-line).
+- **in-cycle 수정 반영**:
+  - **[MAJOR Finding 3 — looksLikeSql 오탐] 수정**: verb∧clause(bare FROM 의존) 게이트가 `import…from`+`.delete()/.create()/.update()`·`Object.values()` 등 ORM/코드 관용구를 SQL 오탐. → **실제 SQL statement '모양' 앵커**로 재작성(`SELECT…FROM`(JSX `<select>` negative lookbehind 배제)·`INSERT INTO`·`UPDATE <tbl>…SET`·`DELETE FROM`·`(CREATE|ALTER|DROP) (TABLE|VIEW|…)`·`TRUNCATE`·`MERGE INTO`·`GRANT/REVOKE…ON`·`WITH cte AS (`). 리뷰 지적 FP 6종(TypeORM/JS/Python/Object.values/JSX/Dockerfile) 전부 false, 실제 SQL 13종(whereless UPDATE·CTE 포함) 전부 true 로 실측 확인.
+  - **[MINOR Finding 4 — hunk/meta 토큰화] 수정**: 토큰화를 내용 라인(diff-add/del/ctx)으로 한정 — hunk(`@@`)·meta 라인 미토큰화.
+  - **[MINOR Finding 5 — CSS] 수정**: `.diff-sql .diff-line` 색 override 에 `:not(.diff-hunk):not(.diff-meta)` 추가(hunk 파랑·meta 회색 고유색 유지) + `.message.is-user .message-content pre.diff-block.diff-sql { background:#1a1b26 }`(사용자 말풍선 SQL diff 다크 배경 parity).
+  - **[MINOR Finding 3 — FN]**: `SELECT NOW()`(FROM 없음) 등 일부 미탐은 benign(색 미적용, 텍스트·안전 무손상) — 잔존 허용.
+- **잔여(수정 안 함)**: NIT — looksLikeSql/tokenizer 전용 단위테스트 부재(기존 browser-helper 관례, headless 검증으로 대체). 잔여 초희귀 FP(예: `<select>`+import 가 lookbehind 우회하는 변형)도 consequence=benign 오색칠뿐(안전·무손실 불변).
+- **결정 근거**: 외부 하이라이터 무추가·기존 enhanceDiffBlocks 패턴 정합·additive(비-SQL diff 무영향). add/del 신호는 배경·border·gutter 로 유지(color-only override 라 border/::before 불변).
+- **검증**: headless chromium(chromium-1208, 실 vendor marked+DOMPurify, app.js 추출 실소스) **22/22 PASS**(회귀·SQL diff 토큰·add/del 보존·평문 기본색·배경 tint·gutter·텍스트 무손실·비-SQL diff 무영향·게이트 오탐0·hunk 미토큰화·XSS 무력화) · `node --check` · 시각증거 evidence/sql-diff-highlight-20260727.png. POST-DEPLOY PB-0008(Windows-browser) = 배포 후 정본.
+
+## REV-20260727T110000-sql-diff-highlight-postverify [SKIPPED:non-policy-doc] SQL diff 하이라이트 POST-DEPLOY 라이브 실증 + deploy_scope 근거
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 기록). 실 구현 리뷰 정본 = REV-20260727T102027-sql-diff-highlight([SUBAGENT] SHIP-WITH-FIXES·MAJOR+MINOR3 in-cycle 수정).
+- **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 PR #948 머지(main 8d69490c) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. "deploy_scope: included 활성" 1줄 표면화 완료. 배포=web-a/web-b 8d69490c 롤링 재생성·healthy·RestartCount 0(롤백 0).
+- **POST-DEPLOY 실증(Windows-browser, PB-0008)**: 실 Windows Chrome/150 배포본 markdownToHtml eval(SQL diff) → diff-sql·sql-tok 9개·getComputedStyle Tokyo Night 색 정확(keyword #bb9af7·string #9ece6a·number #ff9e64)·평문 기본색 #c0caf5·add/del 배경 tint·hunk 미토큰화·gutter 보존·script 0·콘솔 에러 0. test-runs.d POST-DEPLOY 결과 + evidence/pb0008-sql-diff-live-20260727.png.

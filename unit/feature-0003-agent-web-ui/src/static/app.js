@@ -944,6 +944,8 @@ function enhanceDiffBlocks(html) {
         const s = v === "" || v == null ? "" : String(v);
         return NB.repeat(Math.max(0, w - s.length)) + s;
       };
+      // diff 내용이 SQL 로 보이면 라인 코드에 SQL 토큰 하이라이트 적용(비-SQL 파일 diff 는 평문 유지).
+      const sqlMode = looksLikeSql(raw);
       codeEl.textContent = "";
       rows.forEach((r) => {
         const span = document.createElement("span");
@@ -953,12 +955,21 @@ function enhanceDiffBlocks(html) {
           padNo(r.oldNo) + NB + padNo(r.newNo) + NB + (r.mark || NB)
         );
         // 빈 줄도 한 줄 높이 유지(공백 1개). block span 이라 줄 사이 "\n" 불필요(TASK-0256b).
-        span.textContent = r.code.length ? r.code : " ";
+        // 내용 라인(add/del/ctx)만 토큰화 — hunk(@@)·meta 라인은 고유색 유지(§18.8 리뷰 MINOR).
+        const tokenize = sqlMode && r.code.length &&
+          (r.cls === "diff-add" || r.cls === "diff-del" || r.cls === "diff-ctx");
+        if (tokenize) {
+          span.appendChild(sqlTokenizeToFragment(r.code)); // 토큰 span 은 textContent-only(XSS 무첨가)
+        } else {
+          span.textContent = r.code.length ? r.code : " ";
+        }
         codeEl.appendChild(span);
       });
       const pre = codeEl.closest("pre");
       if (pre) {
         pre.classList.add("diff-block");
+        // SQL diff 는 라인 평문색을 기본색으로(add/del 은 배경·border·gutter 로 유지, 토큰이 syntax색).
+        if (sqlMode) pre.classList.add("diff-sql");
         // gutter 폭을 줄번호 자릿수에 맞춤. DOMPurify 가 style 을 떼어내도 CSS var 기본값 폴백.
         pre.style.setProperty("--diff-gutter-ch", String(2 * w + 3));
       }
@@ -1041,9 +1052,9 @@ const SQL_HL_TYPES = new Set([
   "UNSIGNED","ZEROFILL",
 ]);
 
-// SQL 텍스트를 토큰화해 codeEl 자식으로 재구성한다(textContent 만 사용 — XSS 무첨가).
-function highlightSqlInto(codeEl, raw) {
-  const text = String(raw || "").replace(/\n$/, "");
+// SQL 텍스트를 토큰화해 DocumentFragment 로 반환한다(textContent 만 사용 — XSS 무첨가).
+// highlightSqlInto(```sql 블록)·enhanceDiffBlocks(SQL diff 라인)가 공용으로 쓴다.
+function sqlTokenizeToFragment(text) {
   // 우선순위: 주석 → 문자열 → 백틱식별자 → 단어(@변수/예약어/타입/함수/식별자) → 숫자 → 공백/기타.
   // 문자열/백틱은 linear(비-backtrack) 형태로 ReDoS 회피. '#' 라인주석은 T-SQL #temp 와
   // 충돌하므로 미지원(-- 과 /* */ 만) — MySQL '# 주석' 은 색만 안 입고 깨지지 않음.
@@ -1078,8 +1089,33 @@ function highlightSqlInto(codeEl, raw) {
     else pending += m[0];                          // 공백/연산자/구두점 → 평문
   }
   flush();
+  return frag;
+}
+
+// SQL 텍스트를 토큰화해 codeEl 자식으로 재구성한다(```sql 블록 전용 — 트레일링 개행 strip).
+function highlightSqlInto(codeEl, raw) {
+  const text = String(raw || "").replace(/\n$/, "");
   codeEl.textContent = "";
-  codeEl.appendChild(frag);
+  codeEl.appendChild(sqlTokenizeToFragment(text));
+}
+
+// diff 블록 내용이 SQL 로 보이는지 판정 — SQL diff 에만 토큰 하이라이트를 적용해 비-SQL
+// 파일 diff(코드·설정 등) 오색칠을 방지한다. 강한 statement 동사(단어경계) AND 보조 절
+// 키워드 동시 존재를 요구해 단일 영어단어(update/set 등) 우연 매칭 오탐을 억제한다.
+function looksLikeSql(text) {
+  // 실제 SQL statement '모양'(verb+구조 앵커)을 요구한다 — 단순 키워드 co-occurrence 가 아니라.
+  // import…from·.create()/.delete()/.update()·Object.values() 같은 코드 관용구가 FROM/verb 를
+  // 우연히 품어도 매칭 안 되도록 앵커한다(§18.8 적대 리뷰 Finding 3). SELECT 는 JSX/HTML
+  // <select>·</select> 태그를 negative lookbehind 로 배제. camelCase 는 \b 로 이미 안전.
+  return /(?<![<\/])\bSELECT\b[\s\S]{0,3000}?\bFROM\b/i.test(text)                 // SELECT … FROM
+      || /\bINSERT\s+INTO\b/i.test(text)                                          // INSERT INTO
+      || /\bUPDATE\s+[`"\[\w.]+[\s\S]{0,2000}?\bSET\b/i.test(text)                 // UPDATE <tbl> … SET
+      || /\bDELETE\s+FROM\b/i.test(text)                                          // DELETE FROM
+      || /\b(CREATE|ALTER|DROP)\s+(OR\s+REPLACE\s+)?(TEMP(ORARY)?\s+)?(TABLE|VIEW|INDEX|DATABASE|SCHEMA|PROCEDURE|FUNCTION|TRIGGER|SEQUENCE|MATERIALIZED)\b/i.test(text) // DDL
+      || /\bTRUNCATE\s+(TABLE\s+)?[`"\[\w.]/i.test(text)                          // TRUNCATE [TABLE] t
+      || /\bMERGE\s+INTO\b/i.test(text)                                           // MERGE INTO
+      || /\b(GRANT|REVOKE)\b[\s\S]{0,200}?\bON\b/i.test(text)                     // GRANT/REVOKE … ON
+      || /\bWITH\s+[`"\w]+\s+AS\s*\(/i.test(text);                                // WITH cte AS (
 }
 
 function enhanceSqlBlocks(html) {
@@ -4870,8 +4906,14 @@ function _startInlineEdit(message, bubbleEl) {
   editor.className = "message-edit-box";
   const ta = document.createElement("textarea");
   ta.className = "message-edit-textarea";
-  ta.value = String(message.content || "");
-  ta.rows = Math.min(12, Math.max(2, String(message.content || "").split("\n").length + 1));
+  const _src = String(message.content || "");
+  ta.value = _src;
+  // share-edit-usable: rows 를 개행 수로만 계산하면 줄바꿈 없는 장문(공유 대화의 요구사항
+  // 서술 등)이 2행짜리 창에 갇힌다(실측 377자 → rows=2). 실제 렌더는 wrap 되므로 대략적인
+  // wrap 행수(문자수/60)도 함께 반영해 둘 중 큰 값을 쓴다.
+  const _lineCount = _src.split("\n").length;
+  const _wrapCount = Math.ceil(_src.length / 60);
+  ta.rows = Math.min(18, Math.max(3, Math.max(_lineCount + 1, _wrapCount)));
   editor.appendChild(ta);
   const btnRow = document.createElement("div");
   btnRow.className = "message-edit-actions";
@@ -4922,6 +4964,12 @@ function _startInlineEdit(message, bubbleEl) {
   // 사라지던 문제 해소). renderMessages()/refreshWorkspace() 재렌더 시 말풍선이 새로 만들어져
   // 클래스는 자동 소멸하므로 별도 제거 불필요(취소·성공 모두 재렌더 경로).
   bubbleEl.classList.add("message-bubble-editing");
+  // share-edit-usable: 말풍선 폭은 content 기반이라 innerHTML 을 비우는 순간 원문 폭 정보가
+  // 사라져 편집 창이 .message-edit-box 의 min-width 로 쪼그라든다(실측 공유 대화 661px→272px,
+  // 1:1 484px→303px). 편집 중에만 행(article)을 로그 폭으로 stretch 해 실사용 가능한 편집 폭을
+  // 확보한다 — 클래스는 말풍선 클래스와 동일하게 재렌더 시 자동 소멸한다.
+  const _rowEl = bubbleEl.closest("article.message");
+  if (_rowEl) _rowEl.classList.add("is-editing");
   bubbleEl.appendChild(editor);
   try { ta.focus(); } catch (_e) {}
 }
@@ -5320,8 +5368,6 @@ function renderMessages() {
       }
       // 수정 버튼은 hover 액션(다른 말풍선 액션과 동형).
       if (_canEditMessage(message, role, msgIsOwn)) {
-        const uActions = document.createElement("div");
-        uActions.className = "message-actions message-user-actions";
         const editBtn = document.createElement("button");
         editBtn.type = "button";
         editBtn.className = "message-action-btn message-edit-trigger";
@@ -5332,8 +5378,19 @@ function renderMessages() {
           ev.stopPropagation();
           _startInlineEdit(message, bubble);
         });
-        uActions.appendChild(editBtn);
-        bubble.appendChild(uActions);
+        // share-edit-usable: 위 말풍선 액션(☰ 메뉴·피드백)이 이미 있으면 **같은 컨테이너에
+        // 합류**시킨다. 별도 .message-actions 를 하나 더 만들면 두 컨테이너가 동일 absolute
+        // 좌표(bottom:-28px; right:0)에 겹쳐, 나중에 붙은 '수정'이 ☰ 를 완전히 덮어 ☰ 메뉴
+        // (여기부터/여기까지 공유·분기·샘플 등록)가 영구 클릭 불가가 된다(hit-test 실증).
+        const existingActions = bubble.querySelector(":scope > .message-actions");
+        if (existingActions) {
+          existingActions.insertBefore(editBtn, existingActions.firstChild);
+        } else {
+          const uActions = document.createElement("div");
+          uActions.className = "message-actions message-user-actions";
+          uActions.appendChild(editBtn);
+          bubble.appendChild(uActions);
+        }
       }
     }
 
