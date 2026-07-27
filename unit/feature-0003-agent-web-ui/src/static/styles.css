@@ -8945,8 +8945,22 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
    말풍선의 흰 글자색을 상속(color:inherit)하면 글자가 사라진다. 편집 진입 시 말풍선을
    중립 편집 패널로 전환(.message-bubble-editing)하고, 컨트롤은 명시 전경색을 쓴다. */
 .message-edit-box {
-  display: flex; flex-direction: column; gap: 8px; min-width: 240px;
+  display: flex; flex-direction: column; gap: 8px; min-width: 240px; width: 100%;
   color: var(--text);                 /* 말풍선 흰 글자색(#fff) 상속 차단 */
+}
+/* share-edit-usable: 편집 진입 시 말풍선이 content 기반이라 원문 폭이 사라지고 편집 창이
+   min-width(240px)로 쪼그라들던 문제 해소(실측 공유 대화 661px→272px·377자를 3행 창에서
+   편집). 편집 중인 행만 로그 폭으로 stretch 한다. `.message.is-user.is-other-message`
+   (특이도 0,3,0)의 align-self 를 이겨야 하므로 동일 특이도 + 후행 선언으로 배치. */
+.message.is-user.is-editing,
+.message.is-assistant.is-editing {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+}
+.message.is-editing .message-bubble.message-bubble-editing {
+  width: 100%;
+  max-width: 100%;
 }
 .message-edit-textarea {
   width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px;

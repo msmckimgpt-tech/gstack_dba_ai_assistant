@@ -86,3 +86,27 @@ model + reasoning_level 을 edit body 에 실어 보내고 backend 가 reanswer 
 - [x] TASK-RM-3b §18.8 적대 리뷰(security+correctness) = SHIP·MINOR(non-2xx 보상 복원) in-cycle 하드닝(REV-20260724T064140)
 - [ ] TASK-RM-4 make test 회귀 0 + verify-completion --pre-commit(CHECK#9 REVIEW·#13 시각검증 포함 통과)
 - [ ] TASK-RM-5 commit·push·main 병합·무중단 배포 + POST-DEPLOY PB-0008(sonnet+매우높음 선택→요청사항 수정 재답변→AI 운영 계측에서 resolved model=sonnet·추론예산 상향 확인)
+
+## 20260727T1030-share-edit-usable (공유 대화 메시지 텍스트 수정 상호작용 미동작 — 편집 창 축소 + ☰ 가림)
+2026-07-27 사용자 신고: "공유 대화에서 사용자의 메세지 텍스트 수정에 대한 상호작용이 진행되지 않음".
+PB-0008 라이브 실측(win-browser relay, bootstrap_admin)으로 **API·authz·저장 경로는 전부 정상**임을
+먼저 반증(그룹 편집 200·내용 반영·edited 배지)한 뒤, 실사용 불가의 근본원인 2건을 계측으로 확정:
+- **R1 편집 창 축소**: 말풍선 폭은 content 기반이라 `_startInlineEdit` 의 `innerHTML=""` 순간 원문 폭이
+  소실되어 편집 창이 `.message-edit-box` min-width(240px)로 쪼그라든다 — **공유 대화 661px→272px**
+  (textarea 240px·3행)에서 **377자**를 편집(1:1 은 484→303px). 게다가 `ta.rows` 가 개행 수만 세어
+  줄바꿈 없는 장문이 rows=2 로 고정. 공유 대화는 **단순 수정 전용**(INV-4)이라 재답변 우회로도 없다.
+- **R2 ☰ 메뉴 가림**: user 말풍선에 `.message-actions` 컨테이너가 2개(☰ 메뉴 + '수정') 생성되어 동일
+  absolute 좌표(bottom:-28px; right:0)에 겹치고, 나중에 붙은 '수정'(40px)이 ☰(30px)를 완전히 덮어
+  **☰ 메뉴가 영구 클릭 불가**(hit-test: ☰ 중심점 → `.message-edit-trigger` 반환). 공유 대화에서
+  '여기부터/여기까지 공유'·분기·샘플 등록 진입이 함께 막힌다.
+- Risk: **Minor** (프론트 정적 자산 전용 — app.js/styles.css. 인증·인가·스키마·백엔드 무변경, 비파괴.
+  웹 UI 변경이라 완료 게이트에 PB-0008 포함, `visual_verification_scope: always`)
+- [x] TASK-SE-1 라이브 실측 진단(PB-0008) — 정상 경로 반증 + R1/R2 계측 확정
+- [x] TASK-SE-2 R1 수정 — `_startInlineEdit` 이 편집 행에 `is-editing` 부여 + CSS 가 편집 중 행/말풍선을
+      로그 폭으로 stretch(`.message-edit-box` width:100%) + `ta.rows` wrap 추정(문자수/60) 반영
+- [x] TASK-SE-3 R2 수정 — 편집 버튼을 기존 `.message-actions` 에 합류(`:scope >` 조회 후 insertBefore),
+      부재 시에만 신규 컨테이너 생성(중복 absolute 컨테이너 제거)
+- [x] TASK-SE-4 회귀 테스트 `test_share_edit_usable.py` 5건(F1 is-editing·F2 rows wrap·F3 컨테이너 합류·
+      F4 CSS stretch·F5 edit-box width)
+- [x] TASK-SE-5 make test 회귀 0(잔여 4 = pre-existing local-env) + §18.8 리뷰(codex 0.145.0, REV-20260727T103000 SHIP-WITH-FIXES · P2 1건 in-cycle 수정) + verify-completion --pre-commit **PASS**
+- [ ] TASK-SE-6 commit·push·PR·머지·무중단 배포 + POST-DEPLOY PB-0008(공유 대화 편집 폭 실측·☰ 클릭 가능)

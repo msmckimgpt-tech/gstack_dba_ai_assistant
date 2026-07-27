@@ -91,3 +91,12 @@ source_of_truth: true
   웹/ask 경로(`account_id` 지정) conversation_id 미지정 시 전역 env·호스트 공유 파일 폴백을 쓰지 않고
   **fail-closed**(cross-conversation 누출 표면 봉인, INV-6). CLI/eval(account_id=None)만 파일 폴백 정당.
   (브랜치 체인 산란 방지는 PR #874/#875 'branch-chain-race'가 별도 봉인.) 회귀=`tests/test_conv_bind_failclosed.py`.
+- AC-ME-11 (share-edit-usable, 2026-07-27): 편집 진입 시 편집 창이 **실사용 가능한 폭**을 갖는다 —
+  말풍선 content 폭 소실로 `.message-edit-box` min-width(240px)까지 쪼그라들지 않고, 편집 중인 행이
+  대화 로그 폭으로 stretch 된다(공유 대화 실측 661px→272px 회귀 봉인). textarea 행수는 개행 수뿐
+  아니라 wrap 추정(문자수)도 반영해 줄바꿈 없는 장문이 2행 창에 갇히지 않는다. 회귀=`tests/
+  test_share_edit_usable.py`(F1·F2·F4·F5) + PB-0008 라이브 폭 실측.
+- AC-ME-12 (share-edit-usable): user 말풍선의 편집 어포던스가 기존 말풍선 액션(☰ 메뉴·피드백)과
+  **동일 컨테이너**에 배치되어, 두 `.message-actions` 가 같은 absolute 좌표에 겹쳐 ☰ 메뉴가 '수정'
+  버튼에 가려지는 상호작용 소실이 없다(hit-test 로 ☰·'수정' 각각 도달 가능). 회귀=
+  `tests/test_share_edit_usable.py`(F3) + PB-0008 hit-test.
