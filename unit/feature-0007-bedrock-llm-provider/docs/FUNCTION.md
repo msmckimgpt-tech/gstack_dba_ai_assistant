@@ -185,6 +185,10 @@ source_of_truth: true
       에 등록해 관리 콘솔 'LLM 사용량' 이 $0 로 오표시하지 않는다. **기본 모델은 haiku 유지**
       (`API_DEFAULT_MODEL`) — 새 대화가 조용히 상위 tier 로 올라가지 않는다. 백그라운드 계열
       (`AGENT_INSIGHT_MODEL`·`AGENT_NODE_ANALYSIS_MODEL` 등)에도 Opus 를 배선하지 않는다(대량 배치 × 5× 단가).
+    - **라이브 확정(2026-07-27 배포 413703b9)**: gateway 경유 `claude-opus-5-chat` 200 · PB-0008 실
+      브라우저 e2e(모델 선택기 최상단 노출 → 실 클릭 → 7초 정답) · `llm_usage` 가 `model=claude-opus-5` /
+      `resolved_model=claude-opus-5-chat` 로 기록 · red-team 리뷰어 자동 정합 · 비용 USD 계상 정상 ·
+      관리 콘솔 opus 카드 + adaptive guide-note. 잔여 = root 2순위 체인(계정 한도 리셋 후).
     - **canonical usage fold 는 버전-정확**(`claude-opus-5*` → `claude-opus-5`): thinking-style 과 달리 넓은
       `claude-opus` prefix 를 쓰지 않는다 — 미등록 Opus 버전까지 접으면 신규 모델 비용이 조용히 Opus 5 로
       오귀속된다(기존 self-surface 규약 보존).

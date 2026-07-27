@@ -550,3 +550,11 @@ source_of_truth: true
 - 위험도: **Major(§12.3 — 외부 비용)**. 신규 자격증명 0(기존 두 OAuth slot 재사용), 인증/인가 경계 변경 0, 스키마 변경 0, 전 변경 additive(기존 haiku/sonnet 경로 byte-동치).
 - Verification: feature-0002+0003 전체 pytest PASS(rc=0, 2452 tests, fail/error 0) · litellm YAML 파싱 OK(중복 0·dangling 0) · 라이브 직접호출 실증(위).
 - Cross-ref: MODIFY CHG-20260727T184425-opus5-model / TEST.md Run 2026-07-27-opus5-model / shared/model_catalog.py `_ADAPTIVE_THINKING_PREFIXES`·`_CONVERSATION_ANSWER_ALIAS` / 선례 REV-20260724T113513-sonnet5-upgrade · REV-20260724T123503-cc-identity-inject.
+
+## REV-20260727T190500-opus5-model-postdeploy [SKIPPED:post-deploy-live-evidence+copy-only] — PASS
+- 대상: opus5-model 배포 후 라이브 확정 기록 + 관리 콘솔 pane 헤더 카피 1줄 정정(admin.html).
+- 리뷰 방식([SKIPPED] 사유): 코드 변경은 **사용자-facing 카피 1줄**(동작·로직·경계 변경 0)이고, 나머지는 배포 후 관측 사실의 기록이다. 정본 적대 리뷰는 선행 REV-20260727T184425-opus5-model.
+- 확정된 것: gateway 경유 200 → 선행 REVIEW 의 잔여 위험 **R3(litellm 이 `anthropic/claude-opus-5` 를 아는가) 해소**. PB-0008 실 브라우저 e2e 로 §16.6 UI-affecting 게이트 충족(시각 캡처 3종 첨부).
+- 미해소로 남긴 것(정직 표기): **R1**(root 2순위 체인 — 실증 시점 root 계정 전체 한도 소진) · **R2**(모델별 RBAC 부재 — 사용자 결정 대기, REPORT §7).
+- 위험도: Minor(§12.3) — 카피 변경 비파괴.
+- Cross-ref: MODIFY CHG-20260727T190500-opus5-model-postdeploy / TEST Run 2026-07-27-opus5-model-POSTDEPLOY / 선행 REV-20260727T184425-opus5-model.
