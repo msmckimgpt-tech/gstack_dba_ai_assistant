@@ -62,6 +62,10 @@ feature_status_updated: 2026-07-15
 - [x] TASK-20260727T160100-reviewer-memory: 리뷰어가 대화 내부 격리 환경에서 자기 리뷰 이력과
   assistant 수정본을 기억해 맥락에 맞게 판정 (라운드 이력 + conversation 스코프 직전 판정
   REDTEAM_HISTORY_CONV_LIMIT, 해소된 지적 재보고 금지 프롬프트 — 반복 루프의 수렴 조건).
+- [x] TASK-20260727T182000-postverify: PR #957 배포분 POST-DEPLOY 라이브 검증 3건 —
+  alembic 0045 실재 · 공유창 window 격리 fail-closed 인과 실증(플래그 토글 대조) ·
+  PB-0008 콘솔 표면화(타일·타임라인 ③④⑤·미해소 블록·설정 신규 5항목). 실증용 임시 행은
+  삭제·잔존 0 확인. 실판정 수렴 분포는 트래픽 대기(TEST.md §4 미커버 명시).
 
 ## 4. In Progress
 - 없음

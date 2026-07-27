@@ -44,7 +44,22 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   redteam_reviews verdict='revise' 42건 중 35건(83%) revision_applied=false ·
   실패 run 전부 revise 호출 completion_tokens=3. 지시 `role: user` 로 교정 +
   `_build_self_review_messages` 불변식 헬퍼 + 다회 draft 앵커링(적대 WARN) + 회귀 테스트. 상세 MODIFY.md.
-- 총 변경 횟수: 6+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정 · 모델 정합 · revise prefill 수정)
+- CHG-20260727-0001 — **"warning·block 이 있어도 항상 1회 검증 후 답변" 리포트의 근본 수정**.
+  라이브 판정 데이터로 3원인 분리 — ① WARN 무조치 = 설계 의도(유지) · ② 일반 강도에 재검증이
+  아예 없음(`verify_pass = ordinal >= 2`) · ③ 재검증이 결함 잔존을 판정해도 `MAX_REVISIONS=1`
+  상한에서 종료. ②③ 을 결함으로 판정해 재검증 게이트 일반화(`REDTEAM_VERIFY_MIN_LEVEL` 기본 0)
+  + 결함 해소까지 반복(`REDTEAM_REVISE_UNTIL_RESOLVED` 기본 1, 상한 없음) + 사용자 '즉시 답변'
+  /취소 탈출구 + 무진전·백스톱 가드 + 잔존 결함 3중 표면화(alembic 0045 관측 컬럼 · 콘솔
+  타임라인 ⑤ · 답변 말미 고지). 리뷰어가 라운드 이력 + 같은 대화 직전 판정을 이어받아 해소
+  여부를 먼저 판정(수렴 조건). 상세 MODIFY.md.
+- CHG-20260727-0002 — §18.8 적대 패널(2 렌즈) **BLOCKING 4 · MAJOR 6 · MINOR 6 전건 반영**.
+  특히 리뷰 기억이 공유창 window 격리를 우회하는 5번째 LLM 도달 경로를 만들 뻔한 건을
+  fail-closed 로 봉인하고, 무효였던 '즉시 답변' 1회차를 run 스코프 플래그로 복구했다
+  (상한 제거의 안전성이 이 탈출구에 걸려 있음). 상세 REV-20260727T174500.
+- CHG-20260727-0003 — POST-DEPLOY 라이브 검증 기록(docs-only): alembic 0045 실재 · 격리
+  fail-closed 인과 실증 · PB-0008 콘솔 표면화. 상세 TEST.md §3 Run 2026-07-27.
+- 총 변경 횟수: 9+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정 · 모델 정합 ·
+  revise prefill 수정 · 수렴 반복 검증 · 적대 패널 반영 · POST-DEPLOY 검증)
 
 ## 4. Open Issues
 - make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):
@@ -62,9 +77,16 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   전체 feature-0002+0003 회귀는 환경 의존 4건만 실패(내 변경 무관 — `.env` AGENT_TIMEOUT_SEC=300 2건은
   `-e AGENT_TIMEOUT_SEC=60` 강제 시 2 passed 로 확증, PG 부재 2건). §18.8 적대 패널(REV-20260724T071500):
   BLOCK 0, MAJOR1(effort=low)+MINOR2(doc·forward-caveat) 반영/수용. 상세 TEST.md §3(20260724T0709 fragment).
-- 수동 테스트: 배포 후 PB-0008 Windows-browser 콘솔 검증 + 라이브 리뷰 실증 예정
-  (설정 패널 "리뷰어 토큰 할당량" 노출 + 조정 반영 + admin 'AI 추론' 탭 model 컬럼 sonnet 표기 포함)
-- 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰), effort=low 로 sonnet 리뷰 타임아웃 소멸(라이브 관찰)
+- (2026-07-27 CHG-20260727-0001/-0002) red-team 단위 **81건 PASS**(기존 46 + 신규 21 + 패널
+  회귀 14) + 전체 회귀 PASS · ruff clean · migrate-lint PASS(0045 expand-safe, head 단일).
+  상세 TEST.md §3 · test-runs.d/20260727T1600.
+- (2026-07-27 CHG-20260727-0003) **POST-DEPLOY 라이브 실증 PASS** — alembic 0045 실재 ·
+  공유창 window 격리 fail-closed 인과 확정(동일 대화 플래그 토글 0건↔1건) · PB-0008 실
+  Windows 브라우저로 '결함 잔존 전달 (7d)' 타일 · 타임라인 ③④⑤ · 미해소 지적 앰버 블록 ·
+  설정 패널 신규 5항목 렌더 확인. 실증용 임시 행 2건은 삭제·잔존 0 확인.
+- 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰), effort=low 로 sonnet 리뷰 타임아웃
+  소멸(라이브 관찰), **실제 답변에서의 수렴 분포**(`revision_rounds>1` · `stop_reason`) —
+  배포 이후 새 판정 표본 미발생, 렌더 경로만 합성 행으로 실증 (TEST.md §4).
 
 ## 6. Blocked Items
 - 없음

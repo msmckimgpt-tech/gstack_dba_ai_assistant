@@ -77,12 +77,26 @@ verdict: PASS
 - 결과 **PASS** — head 단일성(`0045_redteam_convergence_columns`, revision 45건, 번호 중복 0,
   MAX_MIGRATION 일치) + `20260727_0045_redteam_convergence_columns.py` **expand-safe**.
 
-### 잔여 (배포 후 필수)
+### 잔여 (배포 후 필수) — **2026-07-27 18:20 KST 전건 해소**
 
-- POST-DEPLOY: `alembic_version` 이 `0045_redteam_convergence_columns` 인지 직접 확인
-  (stale agent 이미지로 신규 마이그레이션을 놓치는 선례 있음).
-- POST-DEPLOY: 공유창 window 격리 fail-closed 실증 — `has_restricted_members=true` 대화에서
-  리뷰어 대화 기억이 조회되지 않는지(라이브 PG 경로, 단위 테스트로 커버 불가).
-- POST-DEPLOY PB-0008 (Environment: Windows-browser) — 관리 콘솔 감사 > AI 운영 현황 > 추론:
+- ✅ POST-DEPLOY: `alembic_version` 이 `0045_redteam_convergence_columns` 인지 직접 확인
+  (stale agent 이미지로 신규 마이그레이션을 놓치는 선례 있음). → **PASS** (컬럼 4개 실재).
+- ✅ POST-DEPLOY: 공유창 window 격리 fail-closed 실증 — `has_restricted_members=true` 대화에서
+  리뷰어 대화 기억이 조회되지 않는지(라이브 PG 경로, 단위 테스트로 커버 불가). → **PASS**
+  (동일 대화 플래그 토글로 인과 확정: TRUE→0건 / FALSE→1건).
+- ✅ POST-DEPLOY PB-0008 (Environment: Windows-browser) — 관리 콘솔 감사 > AI 운영 현황 > 추론:
   '결함 잔존 전달 (7d)' 통계 타일 · 타임라인 ④⑤ 문구 · 미해소 지적 블록 렌더 육안 검증
-  (`visual_verification_scope: always`, verify-completion check #13 hard gate).
+  (`visual_verification_scope: always`, verify-completion check #13 hard gate). → **PASS**
+  (설정 패널 신규 5항목 노출 포함).
+
+상세 실측·증적은 `docs/TEST.md §3 Run 2026-07-27 — POST-DEPLOY 라이브 실증`.
+
+### Run 6 — POST-DEPLOY 라이브 실증 (Environment: Windows-browser + 라이브 PG/ask-worker)
+
+- 배포 반영: web `486a587c` / ask-worker `491f639c` (PR #957 = `491f639c` 포함).
+- 격리 게이트 인과표(4케이스) · 잔존 분기 렌더(③④⑤ + 앰버 미해소 블록 + 타일 0→1→0) ·
+  설정 패널 신규 5항목 — 전건 PASS. 실증용 임시/합성 행 2건은 검증 직후 삭제(잔존 0 확인),
+  기존 라이브 대화 245건·리뷰 원장 무변경.
+- **여전히 미관측(트래픽 대기)**: 실제 답변에서 `revision_rounds>1` / `stop_reason` 이 기록된
+  표본. 배포(18:04) 이후 새 판정이 없어 관측 불가 — 렌더 경로만 합성 행으로 실증했다.
+  TEST.md §4 에 미커버로 명시.
