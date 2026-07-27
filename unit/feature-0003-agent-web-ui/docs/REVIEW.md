@@ -971,3 +971,10 @@ source_of_truth: true
 - **대안 검토**: (A) localStorage 미러 — 사용자 요구 위반, 불채택. (B) 대화 단위 단일 키 — 그룹 대화 교차 오염(C3), 불채택. (C) 요청 model 원문 저장 — 기본값 영구 pin(C2), 불채택. (D) **계정별 키 + 기본값-이탈 저장 + 전송 clobber 가드(채택)**.
 - **검증**: `test_model_persist.py` 14 PASS · `verify_model_persist.mjs` 32 PASS · `node --check`/`py_compile`/ruff PASS · `make test` 전체 회귀 0(선존 FAIL 4건은 clean main 84f2e5ab 에서 동일 재현 확인 — 본 변경 무관). POST-DEPLOY PB-0008(Windows-browser) = 배포 후 정본.
 - Human Approval Needed: no (Minor §12.3 — 스키마/RBAC/엔드포인트 0, additive 응답 필드 1개).
+
+## REV-20260727T124500-model-persist-postverify [SKIPPED:non-policy-doc] model-persist POST-DEPLOY 라이브 실증 + deploy_scope 근거
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 실증 기록 + 스크린샷 증거). 실 구현 리뷰 정본 = REV-20260727T113640-model-persist([SUBAGENT] 2라운드 BLOCK → 지적 10건 전건 수정).
+- **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 PR #953 머지(main **8cfa00b0**) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료. 배포 범위 = web 전용(변경 파일이 web 라우터·정적 자산 한정, 워커/agent 코드 무변경).
+- **POST-DEPLOY 실증(Windows-browser, PB-0008)**: AC-MP-1(재로드 복원 — `payload.model=claude-sonnet-4` 서버 왕복 + 라벨 `claude-sonnet`)·AC-MP-2(대화 간 격리·복귀)·AC-MP-3('+ 새 대화'=`claude-haiku`) **PASS**, 시각 증거 2건(`docs/evidence/pb0008-model-persist-{restore,newconv}-20260727.png`). **AC-MP-9 는 라이브 미검증** — 유발 트리거(일괄 삭제·실패 롤백)가 라이브 테넌트에서 파괴적/유발 불가라 단위검증(R3b/R4/R5)만으로 커버하고 그 사실을 test-runs.d 에 명시했다(미수행을 검증으로 오인 금지).
+- **부수 확인(선존 동작, 본 변경 무관)**: 인자 없는 새로고침은 `initializeWorkspace` 가 직전 대화를 자동 선택하지 않는 기존 설계(`allowCurrentFallback=false`)라 빈 화면으로 시작한다. 사용자 표현 "새로고침" 의 실질 충족 경로는 (a) deep-link 재로드 즉시 복원 (b) 재로드 후 대화 재진입 시 복원이며 양쪽 모두 PASS.
+- Human Approval Needed: no.

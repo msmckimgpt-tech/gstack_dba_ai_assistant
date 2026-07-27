@@ -37,7 +37,7 @@ source_of_truth: true
   - [x] 단위 테스트 신설 — `tests/test_model_persist.py` **14 PASS**(H1·H1b 계정격리·H2/H2b allowlist·H2c 열람불가·H2d DENY·H2e 식별불가 fail-closed·H3·H4·A1·A1b 기본값해제·A1c 400+미저장·A2·A2b) · `tests/verify_model_persist.mjs` **32 PASS**(G1~G5 hydration 가드·M1~M2 기본값·R1~R5 리셋/미전송 보존·D1~D4 clobber 가드·S1~S8 구조계약) · `node --check`·`py_compile` PASS · ruff PASS
   - [x] §18.8 적대 패널 **2라운드 모두 BLOCK → 전건 수정**: 1R(B1 랜딩·로그아웃 미커버 / C1 전환 대기 창 오염 / C2 기본값 영구고정 / C3 그룹 타멤버 누출 / C4 테스트 위양성) · 2R(B-B 랜딩 재로드가 미전송 선택 삭제 — 1R 수정이 만든 회귀 / C-A `moveConversationToFolder` hydration 공백 → 저장값 clobber / C-B 최종 fallback 리터럴 sonnet / C-C 열린 메뉴 하위 재렌더 / C-D `model:unknown` 공유 슬롯). B-A(스테이징 누락 지적)는 검토 시점 타이밍 아티팩트로 확인 — 현재 10 파일 전부 staged(마커 grep 확증)
   - [x] `make test` 전체 — 신규 8건 포함 PASS. 선존 FAIL 4건(`test_routine_dbanalysis`·`test_runtime_settings`·`test_item11_batch8_update_conv_product`·`test_runtime_settings_api`)은 **clean main(84f2e5ab)에서도 동일 재현** 확인 → 본 변경과 무관(DB 미기동 host resolve·.env AGENT_TIMEOUT_SEC=300 유입)
-  - [ ] verify-completion PASS → PR → deploy-web → POST-DEPLOY PB-0008 라이브 검증(AC-MP-1~3)
+  - [x] verify-completion PASS → PR #953 → main **8cfa00b0** → `make deploy-web-only`(soak PASS·no-drift) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150: AC-MP-1 재로드 복원·AC-MP-2 대화 간 격리/복귀·AC-MP-3 '+ 새 대화'=haiku, 시각증거 2건). **AC-MP-9 는 라이브 미검증** — 유발 트리거(일괄삭제·실패 롤백)가 라이브 테넌트에서 파괴적/유발 불가 → 단위검증(R3b/R4/R5)만으로 커버, test-runs.d 에 사유 명시
 - 위험도: Minor(§12.3 — additive 영속 1키 + 표시 계층 복원. 스키마 변경 0(기존 memory KV 재사용)·RBAC 0·엔드포인트 신설 0·응답 필드 1개 추가(하위호환: 구 클라이언트는 무시)). 롤백 = revert(잔존 KV 는 읽는 쪽이 없으면 무해).
 정본 rationale=REVIEW.md REV-20260727T113640-model-persist, 변경이력=MODIFY.md CHG-20260727T113640-model-persist.
 
