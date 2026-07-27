@@ -45,6 +45,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+import perf_metrics  # feature-0026: HTTP per-route 타이밍 계측 (fail-open, in-process)
+from shared import perf_counters as _perf_counters  # feature-0026: 요청당 DB conn 카운터
 from modules.memory import (
     cleanup_pending_delete_conversations,
     delete_conversation as delete_conversation_records,
@@ -317,6 +319,10 @@ if WEB_PUBLIC_HOST and WEB_PUBLIC_HOST not in WEB_ALLOWED_HOSTS:
 
 if WEB_ALLOWED_HOSTS:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=WEB_ALLOWED_HOSTS)
+
+# feature-0026 (M1): HTTP per-route 타이밍 + 요청당 DB 커넥션 계측. 순수 ASGI·fail-open —
+# 계측 예외는 요청 처리에 전파되지 않는다. 조회는 GET /api/admin/perf/http (admin_perf 라우터).
+app.add_middleware(perf_metrics.PerfTimingMiddleware)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -1147,7 +1153,9 @@ _GROUP_MEMBERS_BACKFILL_DONE = False
 
 def _connect_memory():
     try:
-        return _open_memory_connection()
+        conn = _open_memory_connection()
+        _perf_counters.incr("mysql_conns")  # feature-0026: 요청-스코프 계측 (컨텍스트 밖 no-op)
+        return conn
     except mysql.connector.Error as exc:
         if int(getattr(exc, "errno", 0) or 0) == 1049:
             _schedule_memory_runtime_bootstrap()

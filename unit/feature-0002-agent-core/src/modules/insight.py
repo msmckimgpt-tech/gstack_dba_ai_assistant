@@ -3264,11 +3264,29 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "auto_reanalysis_blocked": int(scan_report.get("auto_reanalysis_blocked", 0) or 0),
         }
     )
-    should_log = status != "ok" or bool(scan_report.get("scan_started"))
+    # feature-0026 (M4): 종전엔 cycle 로그에서 빠지던 처리량 신호 — 노드 분석(claimed/done/failed)과
+    # 관계 프로브 카운터를 payload 에 포함해 백그라운드 병목(직렬 LLM·프로브 소요)을 로그로 추적 가능하게.
+    _na = scan_report.get("node_analysis") or {}
+    if _na:
+        payload.update({
+            "node_analysis_claimed": int(_na.get("claimed", 0) or 0),
+            "node_analysis_done": int(_na.get("done", 0) or 0),
+            "node_analysis_failed": int(_na.get("failed", 0) or 0),
+        })
+    for _pk in ("relationships_probe_probed", "relationships_probe_positive",
+                "relationships_probe_negative", "relationships_probe_neutral",
+                "relationships_probe_failed"):
+        if scan_report.get(_pk):
+            payload[_pk] = int(scan_report.get(_pk, 0) or 0)
+    _base_log = status != "ok" or bool(scan_report.get("scan_started"))
+    # feature-0026: 노드 분석만 돈 tick 도 로그 라인은 남긴다(처리량 추적) — 단 timing 파일은
+    # 기존 조건에서만 생성(§18.8 C-4: 드레인 기간 tick 마다 무회전 파일 누적 방지).
+    should_log = _base_log or bool(_na.get("claimed"))
     if should_log:
-        timing_path = _write_timing_breakdown(timing)
-        if timing_path:
-            payload["timing_path"] = timing_path
+        if _base_log:
+            timing_path = _write_timing_breakdown(timing)
+            if timing_path:
+                payload["timing_path"] = timing_path
         append_log_line("insight_worker", json.dumps(payload, ensure_ascii=False))
     return payload
 

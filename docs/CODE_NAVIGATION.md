@@ -10,7 +10,7 @@ ai_read_priority: 4
 <!-- L1~L3 companion to docs/ROUTEMAP.md (L0 INDEX). 손유지(hand-maintained). freshness: 2026-07-13 · source_commit: f7ad45d7 -->
 > **이 문서가 답하는 것**: "바꿀 코드를 어떻게 *찾고*, 지금 보는 게 *뭘 하는지* 어떻게 *알고*, 인접 코드로 어떻게 *건너가나*."
 > **정본 아님(reference)**: 사실의 정본은 코드(`routers/`·`app.py`)와 [ROUTEMAP.md](./ROUTEMAP.md)(L0, 자동 생성). 본 문서는 그 위를 걷는 *지도*다 — 링크가 아니라 **이름과 grep 명령**을 준다(matklad codemap 원칙).
-> **대상 코드**: `unit/feature-0003-agent-web-ui/src/` — app.py(19,650→**3,722줄**, -81%)의 핸들러 전량이 `routers/` 28개 파일로 추출됨(23 route-module `@router` + 4 언더스코어 공유모듈 + `__init__` registrar). leaf helper 는 `src/web_context.py`.
+> **대상 코드**: `unit/feature-0003-agent-web-ui/src/` — app.py(19,650→**3,722줄**, -81%)의 핸들러 전량이 `routers/` 29개 파일로 추출됨(24 route-module `@router` + 4 언더스코어 공유모듈 + `__init__` registrar — feature-0026 이 `admin_perf.py`(HTTP 성능 스냅샷, INCLUDE_ORDER=250)·leaf 계측 `src/perf_metrics.py` 추가). leaf helper 는 `src/web_context.py`.
 
 > **grep 실행 위치**: 이하 모든 grep 은 **코드 루트 `unit/feature-0003-agent-web-ui/src/`** 에서 실행한다(여기서 `routers/`·`app.py`·`web_context.py` 가 형제, 테스트는 `../tests/`). 정규식 앵커 없이 **리터럴 grep** 만 쓴다.
 
