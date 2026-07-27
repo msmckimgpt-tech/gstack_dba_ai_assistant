@@ -1072,3 +1072,16 @@ source_of_truth: true
 - 코드/자산 0 — model-persist(PR #953·main 8cfa00b0) 배포 후 라이브 검증 결과 기록만.
 - test-runs.d/20260727T113640-model-persist.md POST-DEPLOY 결과(Windows-browser PASS) + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260727T124500-postverify(§12.2 deploy 근거) + evidence/pb0008-model-persist-{restore,newconv}-20260727.png.
 - 실측(실 Windows Chrome/150, https://localhost/ bootstrap_admin, 배포본 8cfa00b0): AC-MP-1 재로드 복원(`payload.model=claude-sonnet-4` + 라벨 `모델: claude-sonnet`)·AC-MP-2 대화 간 격리/복귀·AC-MP-3 '+ 새 대화'=`claude-haiku`. **AC-MP-9 라이브 미검증 — 유발 트리거가 파괴적/유발 불가, 단위검증만 커버(사유 명시)**. 사용자 요청 라이브 해소.
+
+## CHG-20260727T160748-product-picker-scroll — 제품 선택 드롭업 열림 시 선택 제품 중앙 스크롤 (Minor §12.3, frontend-only)
+- **요청(사용자, /_template:entry arg-given)**: "작업화면 내 제품(Product)를 선택하는 리스트에서, 현재 선택한 product 가 중앙에 위치하도록 스크롤을 위치시켜주세요. 현재는 항상 최상단에 위치하여 기존에 선택한 제품에서 상대적인 위치를 찾기 불편합니다."
+- **원인**: `openProductDropup()` 은 열 때마다 `renderProductDropupMenu()` 로 항목 DOM 을 새로 만들어 `scrollTop` 이 0(최상단)으로 시작한다. `.product-dropup-menu` 는 `max-height:320px; overflow-y:auto`(styles.css) 라 제품이 많으면 선택 항목이 스크롤 밖에 남는다 — 선택 상태를 나타내는 `is-selected`(배경+체크)는 있으나 화면에 보이지 않는다.
+- **변경(`src/static/app.js`)**:
+  - `scrollProductDropupToSelected(menu)` 신설 — `menu.querySelector(".product-dropup-item.is-selected")` 의 `offsetTop - (menu.clientHeight - offsetHeight)/2` 를 `[0, scrollHeight-clientHeight]` 로 clamp 해 `menu.scrollTop` 에 설정. 선택 항목·menu 부재는 조기 return(무간섭).
+  - `openProductDropup()`: 메뉴 표시 후 검색 입력 `focus()` → `focus({ preventScroll: true })` 로 변경하고, 그 뒤에 중앙 정렬 호출(포커스發 브라우저 자동 스크롤과의 충돌 차단 + preventScroll 미지원 폴백 순서).
+  - `renderProductChip()`: 메뉴가 열린 상태의 재렌더 분기에서 `renderProductDropupMenu()` 직후 중앙 정렬 재호출(재렌더가 scrollTop 을 0 으로 리셋하므로 복원).
+- **미채택**: `scrollIntoView({block:"center"})` — 조상 스크롤 컨테이너(페이지/messageLog)까지 스크롤해 컴포저 화면이 튄다. 메뉴 자신의 `scrollTop` 만 직접 계산·설정.
+- **Files**: `src/static/app.js`, `tests/headless/test_product_dropup_scroll.py`(신규), `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260727T160748-product-picker-scroll.md`, `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`(신규).
+- **Verification**: `tests/headless/test_product_dropup_scroll.py` **11/11 PASS**(실 chromium 145 레이아웃 + 실 app.js 함수 원문 추출 + 실 styles.css — offsetParent 계약·중앙 정렬 ±1px·가시성·상/하단 clamp·무선택 무간섭·짧은 목록·menu 부재 무예외·검색칸 유무 양 경로) · `node --check app.js` PASS.
+- **스키마/RBAC/백엔드**: 0 (프론트 표현계층 단독, 엔드포인트·응답 shape 무변경). cache-buster `?v=dev` 고정(빌드 `inject_asset_stamp.py` content-hash 자동주입 regime — 수기 bump 불요).
+- **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008(AC-PPSC-1~3 라이브).

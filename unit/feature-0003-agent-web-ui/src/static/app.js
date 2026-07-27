@@ -1485,8 +1485,11 @@ function renderProductChip() {
   chipEl.classList.remove("is-disabled");
   chipEl.title = "이 대화에 적용할 제품을 선택합니다. auto 는 일반 대화 모드입니다.";
   // 메뉴가 열려 있으면 옵션 리스트도 즉시 갱신.
+  //  재렌더는 항목 DOM 을 새로 만들어 scrollTop 이 0(최상단)으로 리셋되므로,
+  //  선택 항목 중앙 정렬을 다시 맞춘다(open 시점과 동일 규칙 — 아래 함수 주석 참조).
   if (chipEl.getAttribute("aria-expanded") === "true") {
     renderProductDropupMenu();
+    scrollProductDropupToSelected(document.getElementById("productDropupMenu"));
   }
 }
 
@@ -1847,6 +1850,22 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   return item;
 }
 
+// 현재 선택된 제품 항목이 드롭업 목록의 세로 중앙에 오도록 메뉴 스크롤을 맞춘다(사용자 요청).
+//  기본 동작(scrollTop=0)은 목록을 항상 최상단부터 보여줘, 제품이 많으면 직전에 고른 제품이
+//  전체에서 어디쯤인지·주변에 무엇이 있는지 가늠하기 어렵다(선택 항목이 화면 밖일 수도 있음).
+//  scrollIntoView({block:"center"}) 는 조상 스크롤 컨테이너(페이지)까지 움직일 수 있어 쓰지 않고,
+//  메뉴 자신의 scrollTop 만 직접 계산한다. 항목의 offsetParent 는 .product-dropup-menu
+//  (position:absolute)라 offsetTop 과 scrollTop 이 같은 기준(패딩 박스)이다.
+//  목록이 메뉴보다 짧거나 선택 항목이 양 끝이면 clamp 되어 자연스럽게 최상단/최하단에 멈춘다.
+function scrollProductDropupToSelected(menu) {
+  if (!menu) return;
+  const selected = menu.querySelector(".product-dropup-item.is-selected");
+  if (!selected) return;   // auto 모드 등 선택 항목이 없으면 기존 동작(최상단) 유지
+  const target = selected.offsetTop - (menu.clientHeight - selected.offsetHeight) / 2;
+  const max = Math.max(0, menu.scrollHeight - menu.clientHeight);
+  menu.scrollTop = Math.max(0, Math.min(target, max));
+}
+
 function openProductDropup() {
   const chip = document.getElementById("productChip");
   const menu = document.getElementById("productDropupMenu");
@@ -1856,8 +1875,11 @@ function openProductDropup() {
   menu.classList.remove("hidden");
   chip.setAttribute("aria-expanded", "true");
   // 제품이 많아 검색 입력이 렌더된 경우 즉시 포커스 → 키보드로 바로 명칭 타이핑.
+  //  preventScroll 로 포커스에 따른 브라우저 자동 스크롤을 막는다(아래 중앙 정렬과 충돌 방지).
+  //  미지원 브라우저 대비로 포커스를 먼저, 중앙 정렬을 나중에 수행한다.
   const searchInput = menu.querySelector(".product-dropup-search");
-  if (searchInput) { try { searchInput.focus(); } catch (e) {} }
+  if (searchInput) { try { searchInput.focus({ preventScroll: true }); } catch (e) {} }
+  scrollProductDropupToSelected(menu);
   const detach = () => {
     document.removeEventListener("mousedown", onDocClick, true);
     document.removeEventListener("keydown", onKey, true);
