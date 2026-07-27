@@ -20,9 +20,14 @@
 - 컨테이너 pytest: 파이썬 스위트가 **flaky** — 같은 main 기준선 2회 실행에서 실패 집합이 상이(교집합 `runtime_settings` 2건). 본 cycle 의 파이썬 변경은 `neighborhood()` additive 플래그뿐이며 해당 실패들과 무관.
 - §18.8 적대 리뷰 2렌즈(ux · 프론트엔드 회귀): **FAIL(BLOCKING 2)→전량 in-cycle 흡수** — REVIEW.md REV-20260727T173000-detail-db-groups.
 - PB-0008 라이브 육안은 정적 자산이 web 이미지에 baked 되므로 배포 후(TDG.7).
+- **POST-DEPLOY PB-0008 PASS (2026-07-27, 라이브 `66575331`)** — 실제 Windows Chrome 150 실증으로 (a)~(g) 전건 통과:
+  루틴 60건 전량 렌더(`… 외 N건` 0건) · 크로스-DB DB 머리글(`gunzgame 6`/`gunzlogin 2`) · 머리글 토글 왕복 ·
+  '모두 접기/펼치기' 일괄(접힘 중 총계 유지) · 관계 상세 23건 구획 전량 · 컬럼 아코디언 lazy 4건 · pageerror 0.
+  증적 `unit/feature-0003-agent-web-ui/docs/evidence/pb0008-detail-db-groups-live-20260727.png`.
+  미재현 한계(정직): 대형 그룹(>300) 접힘·백엔드 `truncated` 배너는 현 데이터셋에 사례가 없어 유닛 검증에 머묾.
 
 ### Git 동기화 결과
-- Task-Cycle: detail-db-groups (`ai/claude/feature-0016-detail-db-groups`, worktree).
+- Task-Cycle: detail-db-groups (`ai/claude/feature-0016-detail-db-groups`, worktree) → PR #959 머지(main `66575331`) → `make deploy-web` 롤아웃(web-a/web-b + 워커, soak 통과) → healthz `git_commit=66575331` 확인 → POST-DEPLOY PB-0008 PASS.
 
 ## 2026-07-23 · "🎯 이 노드로 이동" 미렌더 노드 부모 활성화 노출 (20260723T0834-graph-node-reveal)
 
