@@ -928,6 +928,316 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
                 pass
 
 
+# ── 구조 변동 자동 재분석 (change-reanalysis, 사용자 결정 2026-07-27) ────────────
+#: 자동 run 의 root_key 접미 — 사용자의 수동 'DB 전체 분석' run(root_key=<schema_key>)과 **분리**한다.
+#  같은 root_key 를 쓰면 enqueue_schema_analysis 의 진행-중 dedup 이 자동 run 을 잡아, 사용자가 전체
+#  분석을 눌렀을 때 "이미 분석 중"(실은 변경 노드 몇 개짜리 run)으로 흡수돼 planned 수치가 허위가 된다.
+_AUTO_ROOT_SUFFIX = "#auto"
+#: 자동 run 의 root_label — 사용자 run('Schema')과 구분해 조회·감사에서 식별 가능하게 한다.
+_AUTO_ROOT_LABEL = "SchemaAuto"
+
+
+def auto_root_key(schema_key: str) -> str:
+    """스키마 key → 자동 재분석 run 의 root_key."""
+    return f"{schema_key}{_AUTO_ROOT_SUFFIX}"
+
+
+#: `AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP` 의 3-state 규약 — 관리 콘솔 숫자 하나로 라이브 전환한다.
+#    >0  = 발동(그 값이 1회 시드 상한)
+#     0  = 완전 정지(신규 트리거 차단 + 이미 큐잉된 SchemaAuto 잡도 drain 보류 — process_pending 게이트)
+#    -1  = shadow(후보 산출·계측만, enqueue 0 · 비용 0)
+#  단일 int knob 으로 둔 이유: 안전 모드 전환에 **재배포가 필요하면 사고 시 무용**이기 때문이다
+#  (적대 리뷰 C3 — env-only shadow 는 전환·복귀 모두 재배포). runtime_settings 는 int 스펙이라
+#  문자열 3-state 대신 음수 sentinel 을 쓴다. env `AUTO_ON_CHANGE=shadow` 도 계속 유효(하위호환).
+AUTO_CAP_SHADOW = -1
+
+
+def auto_cap_value() -> int:
+    """현재 유효 cap(라이브 override 우선). 3-state 규약은 `AUTO_CAP_SHADOW` 참조."""
+    return auto_setting_int("AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP", 50)
+
+
+def auto_shadow_mode() -> bool:
+    """shadow(계측만) 여부 — cap==-1(라이브) 또는 env 3-state 문자열."""
+    if auto_cap_value() == AUTO_CAP_SHADOW:
+        return True
+    return str(getattr(_cfg, "AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE_MODE", "1")).strip().lower() == "shadow"
+
+
+def _auto_enabled() -> bool:
+    """자동 재분석 경로가 살아 있는지. cap==0(라이브 kill switch)만 완전 비활성 —
+    shadow(-1)는 후보 산출까지는 살아 있어야 규모를 계측할 수 있으므로 여기서 막지 않는다."""
+    return bool(_cfg_enabled()
+                and getattr(_cfg, "AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE", True)
+                and auto_cap_value() != 0)
+
+
+def auto_setting_int(key: str, fallback: int) -> int:
+    """자동 재분석 노브 조회 — 관리 콘솔 live override(runtime_settings) 우선, 실패 시 config env.
+
+    사람 confirm 게이트가 없는 자동 LLM 지출 경로라 **라이브 정지 스위치**가 필요하다(적대 리뷰 C1):
+    `AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP` 을 0 으로 내리면 재배포 없이 즉시 비활성. import 시점
+    상수(star-import 복사본)로 읽으면 이 조절이 반영되지 않으므로 **호출 시점 조회**한다."""
+    try:
+        from shared import runtime_settings as _rs
+        v = _rs.get_int(key)
+        if v is not None:
+            return int(v)
+    except Exception:
+        pass
+    try:
+        return int(getattr(_cfg, key))
+    except Exception:
+        return fallback
+
+
+def schema_analysis_completed(scope_key: str, schema_key: str, conn=None) -> bool:
+    """해당 스키마(DB)에 **'DB 전체 AI 능동 분석' 완료 이력**이 있는지 (자동 재분석 자격 판정).
+
+    사용자 요청(2026-07-27): 자동 재분석은 "'DB 전체 AI 능동 분석'이 이루어진 DB" 에만 발동한다.
+    판정 = 그 스키마를 루트로 한 **사용자 run(root_label='Schema')** 중 `status='done'` 이면서
+    **성공이 과반**(`done*2 >= enqueued`)인 run 1건 이상.
+
+    - 자동 run(root_label='SchemaAuto')은 자격 판정에서 제외 — 자기 자신이 자격을 만드는 순환 차단.
+    - **과반 조건(적대 리뷰 B3)**: `process_pending` 의 run 마감은 `done > 0` 이면 'done' 이라,
+      500 노드 중 1개만 성공한 run 도 'done' 이 된다. 그런 run 을 '전체 분석 완료'로 인정하면
+      사실상 분석되지 않은 DB 가 영구 자동 지출 대상이 된다.
+    - **scope·root_key 대소문자(적대 리뷰 C6 + 재검증 Q3b)**: 수동 run 기록 경로는 scope_key 를
+      소문자화해 저장하는데 `.env` 레거시 datasource 는 라벨 원형(예 `KR_LIVE`)을 쓴다. **root_key 는
+      그 scope 문자열을 그대로 품은 파생**(`<scope>:<schema>`)이라 같은 방어가 없으면 한 글자 차이로
+      기능이 100% 침묵 사망한다(남는 신호가 정상 상태와 동일한 `ineligible` 뿐이라 관측도 안 된다)
+      → 두 축 모두 원형·소문자 매칭(`IN` 이라 인덱스 ix_node_analysis_runs_scope_root 유지).
+
+    PG 미가용·예외 → **False (fail-closed)**. 자동 LLM 비용을 유발하는 경로이므로, 모르면 발동하지
+    않는 쪽이 안전하다."""
+    if not schema_key:
+        return False
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return False
+    try:
+        sk = (scope_key or "common")[:96]
+        rk = str(schema_key)
+        cur = c.cursor()
+        cur.execute("SELECT 1 FROM node_analysis_runs "
+                    "WHERE scope_key IN (%s, %s) AND root_key IN (%s, %s) AND root_label='Schema' "
+                    "AND status='done' AND done > 0 AND done * 2 >= enqueued "
+                    "LIMIT 1", (sk, sk.lower(), rk, rk.lower()))
+        row = cur.fetchone()
+        cur.close()
+        return bool(row)
+    except Exception as exc:
+        _log.debug("schema_analysis_completed_failed schema=%s err=%r", schema_key, exc)
+        return False
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+
+def enqueue_change_analysis(scope_key: str, schema_key: str, node_keys, *,
+                            reason: str = "structure_changed",
+                            requested_by: str = "auto:insight-change",
+                            cap=None, conn=None) -> dict:
+    """구조 변동 감지 노드를 시드로 하는 **자동** 재귀 분석 run 생성 (change-reanalysis).
+
+    insight-worker 가 스키마/테이블 지문·루틴 정의 해시로 구조 변동(테이블 신규, 컬럼 구성 변경,
+    루틴 신규·정의 변경)을 감지하면 이 함수를 호출한다. 시드는 `enqueue_schema_analysis` 와 동일한
+    §55 규약(depth=0 + anchor_key=자기 자신 = per-seed 앵커)이라, 변경 노드에서 출발해 **관련 노드까지
+    재귀 전개**되고 기존 분석문은 refine-not-override 로 갱신된다.
+
+    비용 가드(사용자 결정 2026-07-27 — 자동 발동은 사람 confirm 게이트가 없다):
+      - 자격: `schema_analysis_completed` (사람이 한 번 전체 분석했고 그 run 이 과반 성공한 DB 에만).
+      - 그래프 실재: AGE 그래프에 아직 투영되지 않은 노드는 시드에서 제외(반환 `seeded_keys` 로 호출자가
+        스냅샷을 선택 갱신 → 투영 후 다음 사이클에 자연 재시도).
+      - 시드 상한: `AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP`(라이브 조절, **0=완전 비활성**).
+      - 쿨다운: 직전 자동 run 이 `AUTO_CHANGE_COOLDOWN_SEC` 이내면 skip(status='cooldown').
+      - **진행 중 자동 run 이 있으면 아무것도 하지 않는다(status='busy')** — 적대 리뷰 B2: 진행 중 run 에
+        시드를 append 하면 run 이 영구 'running' 이라 쿨다운이 한 번도 발동하지 못하고(사이클마다 cap 만큼
+        유입) node_budget 까지 ratchet 된다. 변경 누락은 호출자의 스냅샷 미갱신으로 이미 보장되므로
+        (다음 사이클 재시도) append 는 순이익 없이 무제한 증식 통로만 연다.
+
+    반환 {ok, status, run_id?, seeded, seeded_keys, skipped_missing, capped, reason?}.
+      status: running | busy | cooldown | ineligible | noop | disabled."""
+    base = {"seeded": 0, "seeded_keys": [], "skipped_missing": 0, "capped": False}
+    if not _auto_enabled():
+        return dict(base, ok=False, status="disabled", reason="자동 재분석 정지(cap 0)")
+    if not schema_key or ":" not in str(schema_key):
+        return dict(base, ok=False, status="noop", reason="schema_key 필수")
+    # scope 정규화 — 수동 라우터가 `.strip().lower()` 로 적재하므로 자동 경로도 같은 축을 써야
+    # `get_scope_analysis_status`/`only_missing` 중복 제거가 성립한다(적대 리뷰 재검증 C1:
+    # 축이 갈리면 사용자가 방금 비용을 낸 노드를 자동 경로가 통째로 재시드한다).
+    sk = (scope_key or str(schema_key).split(":", 1)[0] or "common").strip().lower()[:96]
+    keys, seen = [], set()
+    for k in (node_keys or []):
+        k = str(k or "").strip()
+        if k and k not in seen:
+            seen.add(k)
+            keys.append(k)
+    if not keys:
+        return dict(base, ok=True, status="noop", reason="변경 노드 없음")
+
+    cap_cfg = auto_cap_value()
+    # shadow — **여기서** 판정한다(적대 리뷰 재검증 C3: 호출자 규율에만 의존하면 다른 진입점이
+    # 안전 모드를 우회한다). 후보 수는 호출자가 이미 계측했고, seeded 가 비므로 호출자의 스냅샷
+    # 전진 로직은 변경 없이 그대로 "미전진 = 다음 사이클 재시도" 가 된다.
+    if auto_shadow_mode():
+        return dict(base, ok=True, status="shadow", reason="shadow 모드(후보 계측만, enqueue 없음)")
+    cap_req = cap if cap is not None else cap_cfg
+    if int(cap_req or 0) <= 0:
+        return dict(base, ok=False, status="disabled", reason="시드 상한 0(자동 재분석 정지)")
+    cap_v = _clamp(cap_req, 1,
+                   int(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_MAX", 2000) or 2000), cap_cfg)
+    lease = max(60, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_LEASE_SEC", 900)))
+    cooldown = max(0, auto_setting_int("AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC", 1800))
+    root_key = auto_root_key(schema_key)
+    schema_name = schema_key.split(":", 1)[1] if ":" in schema_key else schema_key
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return dict(base, ok=False, status="noop", reason="PG 미가용")
+    try:
+        cur = c.cursor()
+        # ① 자격 — 사람이 한 번 이상 'DB 전체 분석'을 마친 스키마에만 자동 발동(사용자 요청 범위).
+        #    AGE 그래프 조회(④)보다 **먼저** 판정해, 미자격 스키마의 구조 변동이 매 tick 그래프를
+        #    긁는 낭비를 막는다(인덱스 1행 조회로 종결).
+        if not schema_analysis_completed(sk, schema_key, conn=c):
+            cur.close()
+            return dict(base, ok=True, status="ineligible", reason="DB 전체 분석 이력 없음")
+        # ② 진행 중 run 이 있으면 **아무것도 하지 않는다**(적대 리뷰 B2). append 하면 run 이 계속
+        #    'running' 이라 쿨다운이 영구 미발동 + 사이클마다 cap 만큼 시드가 유입되고 node_budget 까지
+        #    ratchet 된다. 변경 누락은 호출자가 스냅샷을 갱신하지 않아 다음 사이클에 재시도되므로 0.
+        #    **수동 run 도 대상**(재검증 C2): 사용자가 방금 승인해 도는 '전체 분석' 위에 승인 없는
+        #    두 번째 분석을 겹치면 같은 노드가 두 run 에서 동시 분석돼 LLM 비용이 이중 지출되고
+        #    refine 세대(pass_no)가 경합한다. 자동은 그 run 이 끝난 뒤 이어받는 게 맞다.
+        cur.execute("SELECT run_id, root_label FROM node_analysis_runs "
+                    "WHERE scope_key=%s AND root_key IN (%s, %s) AND status='running' "
+                    "AND updated_at > now() - make_interval(secs => %s) "
+                    "ORDER BY created_at DESC LIMIT 1", (sk, root_key, schema_key, lease))
+        row = cur.fetchone()
+        if row:
+            cur.close()
+            manual = str(row[1] or "") != _AUTO_ROOT_LABEL
+            return dict(base, ok=True, status="busy", run_id=row[0],
+                        reason=("사용자 전체 분석 run 진행 중(완료 후 재시도)" if manual
+                                else "자동 재분석 run 진행 중(다음 사이클 재시도)"))
+        # ③ 쿨다운 — 직전 자동 run 이 최근이면 보류. 스냅샷 미갱신이라 쿨다운 만료 후 재시도된다.
+        if cooldown:
+            cur.execute("SELECT 1 FROM node_analysis_runs "
+                        "WHERE scope_key=%s AND root_key=%s "
+                        "AND created_at > now() - make_interval(secs => %s) LIMIT 1",
+                        (sk, root_key, cooldown))
+            if cur.fetchone():
+                cur.close()
+                return dict(base, ok=True, status="cooldown", reason="자동 재분석 쿨다운")
+        # ④ 그래프 실재 검증 — 신규 테이블·루틴은 AGE 투영(30분 cron)이 아직 안 됐을 수 있다. 미투영
+        #    노드를 시드하면 컨텍스트 없는 빈 분석이 되므로 제외한다. 호출자가 그 노드의 마커를 남기지
+        #    않으므로 투영 후 다음 사이클에 자연 재시도된다. (RO 라우팅 — 별도 커넥션)
+        from modules import metadata_graph as _mg
+        meta = {}
+        for row, label in ([(r, "Table") for r in (_mg.schema_table_keys(sk, schema_key,
+                                                                         limit=5000) or [])]
+                           + [(r, "Routine") for r in (_mg.schema_routine_keys(sk, schema_key,
+                                                                               limit=5000) or [])]):
+            if row.get("key"):
+                meta[row["key"]] = dict(row, label=label)
+        present = [k for k in keys if k in meta]
+        skipped_missing = len(keys) - len(present)
+        if not present:
+            cur.close()
+            return dict(base, ok=True, status="noop", skipped_missing=skipped_missing,
+                        reason="그래프 미투영(다음 sync 이후 재시도)")
+        capped = len(present) > cap_v
+        targets = present[:cap_v]
+        refine_ok = _refine_cols_ok(cur)
+        # ⑤ 신규 자동 run — enqueued 는 INSERT 시점에 확정값으로 넣는다(적대 리뷰 B7/C4). autocommit
+        #    이라 run INSERT 직후 시드가 claim 가능해지는데, 'enqueued=0 커밋 → 나중에 절대값 SET' 순서면
+        #    그 사이 `_enqueue_neighbors` 의 `enqueued = enqueued + n` 증분이 덮어써져 예산 회계가 깨진다
+        #    (수동 경로 enqueue_schema_analysis 는 애초에 INSERT 에 확정값을 넣어 이 창이 없다).
+        run_id = _new_run_id()
+        if refine_ok:
+            sdepth = _clamp(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_DEPTH", 2),
+                            1, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_MAX_DEPTH", 5)), 2)
+            factor = max(1.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_AUTO_EXPAND_FACTOR", 4) or 4))
+            run_max = max(1, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX", 4000) or 4000))
+            node_budget = max(len(targets), min(run_max, int(len(targets) * factor)))
+        else:
+            sdepth, node_budget = 1, len(targets)
+        cur.execute(
+            "INSERT INTO node_analysis_runs "
+            "(run_id, scope_key, root_key, root_label, root_name, depth_budget, node_budget, "
+            " status, enqueued, done, failed, requested_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,'running',%s,0,0,%s)",
+            (run_id, sk, root_key, _AUTO_ROOT_LABEL, f"{schema_name} (자동 재분석)"[:512],
+             sdepth, node_budget, len(targets), (requested_by or None)))
+        added, added_keys = _insert_seed_jobs(cur, run_id, sk, targets, meta, refine_ok)
+        if not added:
+            # 시드가 하나도 안 들어간 run 은 영구 'running' 으로 남아 이후 자동 트리거를 막는다(그리고
+            # lease 동안 busy·cooldown 을 점유) — 즉시 정리(jobs 는 FK ON DELETE CASCADE).
+            cur.execute("DELETE FROM node_analysis_runs WHERE run_id=%s", (run_id,))
+            cur.close()
+            return dict(base, ok=True, status="noop", skipped_missing=skipped_missing,
+                        reason="시드 삽입 0")
+        if added != len(targets):
+            # 일부 시드가 예외/충돌로 빠졌으면 회계를 실제 삽입분으로 보정(증분식이라 race-safe).
+            cur.execute("UPDATE node_analysis_runs SET enqueued = enqueued - %s WHERE run_id=%s",
+                        (len(targets) - added, run_id))
+        cur.close()
+        _log.info("node_analysis auto enqueue run=%s schema=%s seeded=%s/%s missing=%s capped=%s "
+                  "depth=%s budget=%s reason=%s",
+                  run_id, schema_key, added, len(keys), skipped_missing, capped,
+                  sdepth, node_budget, reason)
+        return dict(base, ok=True, status="running", run_id=run_id, seeded=added,
+                    seeded_keys=added_keys, skipped_missing=skipped_missing, capped=capped)
+    except Exception as exc:
+        _log.warning("enqueue_change_analysis_failed schema=%s err=%r", schema_key, exc)
+        return dict(base, ok=False, status="noop", reason="enqueue 실패")
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+
+def _insert_seed_jobs(cur, run_id: str, scope_key: str, keys, meta: dict, refine_ok: bool):
+    """시드 잡 삽입 — §55 규약(depth=0 + anchor_key=자기 자신). 반환 (삽입 수, 삽입된 key 목록).
+
+    ON CONFLICT (run_id,node_key) DO NOTHING 이라 같은 run 에 재삽입해도 중복되지 않는다.
+    **행 단위 try/except**(적대 리뷰 B7): 한 행의 INSERT 예외가 배치 전체를 중단시켜 시드 0 인
+    'running' run 이 남지 않도록 한다 — 실패 행은 건너뛰고 회계는 실제 삽입분으로 보정된다."""
+    added, added_keys = 0, []
+    for k in keys:
+        info = (meta or {}).get(k) or {}
+        label = info.get("label") or ("Routine" if str(k).endswith("()") else "Table")
+        fqn = info.get("fqn") or (str(k).split(":", 1)[1] if ":" in str(k) else "")
+        name = info.get("name") or (fqn.rsplit(".", 1)[-1] if fqn else k)
+        try:
+            if refine_ok:
+                cur.execute(
+                    "INSERT INTO node_analysis_jobs "
+                    "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, "
+                    " status, anchor_key) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,0,1.0,'pending',%s) "
+                    "ON CONFLICT (run_id, node_key) DO NOTHING",
+                    (run_id, scope_key, k, label, str(name)[:512], fqn, k))
+            else:
+                cur.execute(
+                    "INSERT INTO node_analysis_jobs "
+                    "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,1,1.0,'pending') "
+                    "ON CONFLICT (run_id, node_key) DO NOTHING",
+                    (run_id, scope_key, k, label, str(name)[:512], fqn))
+        except Exception as exc:
+            _log.debug("auto_seed_insert_failed run=%s node=%s err=%r", run_id, k, exc)
+            continue
+        if (cur.rowcount or 0) > 0:
+            added += 1
+            added_keys.append(k)
+    return added, added_keys
+
+
 def _cfg_enabled() -> bool:
     return bool(getattr(_cfg, "AGENT_NODE_ANALYSIS_ENABLED", True))
 
@@ -977,12 +1287,21 @@ def process_pending(max_nodes=None, conn=None) -> dict:
         #   많은 대형 run 이 신규 run 의 저관련 깊은 잡보다 먼저 소비될 수 있다(예산 캡·BATCH 로 지연만,
         #   영구 기아 아님. root 는 즉시 진행 표시). 엄격 per-run 공정성 필요 시 round-robin 후속.
         refine_ok = _refine_cols_ok(cur)
+        # change-reanalysis 라이브 정지(적대 리뷰 재검증 C2): cap==0 은 **신규 트리거만** 막을 뿐,
+        # 이미 적재된 SchemaAuto 잡은 계속 claim 돼 최대 node_budget(4000)까지 LLM 을 소진했다 —
+        # "폭주 시 즉시 정지" 라는 운영 기대와 어긋난다(중단 수단이 재배포/수동 SQL 뿐). cap==0 인
+        # 동안에는 자동 run 의 pending 잡을 **보류**(삭제 아님 — cap 을 되돌리면 그대로 재개)한다.
+        # 정상(cap>0)에서는 조건절이 붙지 않아 기존 claim 과 byte-동치.
+        auto_paused = auto_cap_value() == 0
+        pause_sql = ("  AND run_id NOT IN (SELECT run_id FROM node_analysis_runs "
+                     "                     WHERE root_label = '" + _AUTO_ROOT_LABEL + "') "
+                     if auto_paused else "")
         if refine_ok:
             # §55: anchor_key(per-seed 앵커)·pass_no(refine 세대)·analysis(재-pending 행의 직전 분석문 =
             # refine payload 의 previous_analysis) 를 함께 claim.
             cur.execute(
                 "UPDATE node_analysis_jobs SET status='running' WHERE id IN ("
-                "  SELECT id FROM node_analysis_jobs WHERE status='pending' "
+                "  SELECT id FROM node_analysis_jobs WHERE status='pending' " + pause_sql +
                 "  ORDER BY depth ASC, relevance DESC, created_at ASC LIMIT %s FOR UPDATE SKIP LOCKED) "
                 "RETURNING id, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, "
                 "          anchor_key, pass_no, analysis",
@@ -991,7 +1310,7 @@ def process_pending(max_nodes=None, conn=None) -> dict:
         else:
             cur.execute(
                 "UPDATE node_analysis_jobs SET status='running' WHERE id IN ("
-                "  SELECT id FROM node_analysis_jobs WHERE status='pending' "
+                "  SELECT id FROM node_analysis_jobs WHERE status='pending' " + pause_sql +
                 "  ORDER BY depth ASC, relevance DESC, created_at ASC LIMIT %s FOR UPDATE SKIP LOCKED) "
                 "RETURNING id, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth",
                 (max_nodes,))
