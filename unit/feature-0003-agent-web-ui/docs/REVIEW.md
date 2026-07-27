@@ -978,3 +978,27 @@ source_of_truth: true
 - **POST-DEPLOY 실증(Windows-browser, PB-0008)**: AC-MP-1(재로드 복원 — `payload.model=claude-sonnet-4` 서버 왕복 + 라벨 `claude-sonnet`)·AC-MP-2(대화 간 격리·복귀)·AC-MP-3('+ 새 대화'=`claude-haiku`) **PASS**, 시각 증거 2건(`docs/evidence/pb0008-model-persist-{restore,newconv}-20260727.png`). **AC-MP-9 는 라이브 미검증** — 유발 트리거(일괄 삭제·실패 롤백)가 라이브 테넌트에서 파괴적/유발 불가라 단위검증(R3b/R4/R5)만으로 커버하고 그 사실을 test-runs.d 에 명시했다(미수행을 검증으로 오인 금지).
 - **부수 확인(선존 동작, 본 변경 무관)**: 인자 없는 새로고침은 `initializeWorkspace` 가 직전 대화를 자동 선택하지 않는 기존 설계(`allowCurrentFallback=false`)라 빈 화면으로 시작한다. 사용자 표현 "새로고침" 의 실질 충족 경로는 (a) deep-link 재로드 즉시 복원 (b) 재로드 후 대화 재진입 시 복원이며 양쪽 모두 PASS.
 - Human Approval Needed: no.
+
+## REV-20260727T160748-product-picker-scroll [SKIPPED:session-policy-no-subagent] 제품 선택 드롭업 선택 항목 중앙 스크롤 (Minor §12.3, frontend-only)
+- **Panel 처리(§18.8) — 정직 표기**: dispatch 표상 UI/화면/레이아웃 키워드 매칭(ux·design) 대상이나, **본 세션은 사용자 환경 정책으로 subagent(Agent tool) 호출이 금지**되어 [SUBAGENT] 패널을 수행하지 못했다. 대체로 (a) 실 chromium 레이아웃 위 헤드리스 검증 11 케이스(경계·무간섭·무예외 포함)와 (b) 아래 자체 적대 검토(H1~H8)를 수행했다. **패널 미수행 사실을 "검증함"으로 오인하지 않는다** — 다음 cycle 에서 패널 재개 시 본 변경을 대상에 포함할 수 있다.
+- **변경 요지**: `scrollProductDropupToSelected(menu)` 신설 + `openProductDropup()`·`renderProductChip()`(열린-상태 재렌더) 2곳 호출 + 검색 입력 `focus({preventScroll:true})`. 계산식 `scrollTop = clamp(selected.offsetTop - (menu.clientHeight - selected.offsetHeight)/2, 0, scrollHeight-clientHeight)`.
+- **자체 적대 검토(H1~H8)**:
+  - **H1 (재렌더 점프)**: `renderProductChip()` 은 컴포저 상태 갱신 경로(L6658 busy 동기화 등)에서 자주 호출된다 — 메뉴가 열린 채 재렌더되면 위치가 이동한다. 단 이는 **pre-existing**: 재렌더가 항목 DOM 을 새로 만들어 `scrollTop` 이 이미 0(최상단)으로 리셋되므로, 본 변경은 "최상단 점프"를 "선택 항목 중앙 복원"으로 바꿀 뿐 새 점프를 만들지 않는다(요청 취지에 부합). 사용자가 스크롤해 다른 제품을 훑던 중의 위치 손실은 재렌더 자체가 원인이며 본 cycle 범위 밖(개선 여지로 기록).
+  - **H2 (검색 필터와의 상호작용)**: `filterProductDropupItems` 는 항목을 `hidden` 토글만 하고 스크롤을 만지지 않는다. 필터로 `scrollHeight` 가 줄면 브라우저가 `scrollTop` 을 자동 clamp 하므로 "빈 영역만 보이는" 상태가 생기지 않는다(결과가 뷰포트보다 짧으면 0). 필터 후 재정렬은 하지 않는다 — 검색 중 커서/포커스를 방해하지 않기 위함(의도).
+  - **H3 (`preventScroll` 미지원)**: 옵션 객체를 무시하는 구형 엔진에서는 포커스가 스크롤을 유발할 수 있으나, **포커스 → 중앙 정렬 순서**라 마지막 설정이 이긴다. 예외는 `try/catch` 로 이미 감싸져 있다.
+  - **H4 (다중 `.is-selected`)**: `buildProductDropupItem` 은 view-only 그룹을 항상 `selected:false` 로 만들고, auto/pinned 중 하나만 selected 다. `querySelector`(첫 매칭)로 충분하며 오탐 없음.
+  - **H5 (숨김 상태 호출)**: `.hidden`(display:none) 상태면 `offsetTop`/`clientHeight` 가 0 이라 `scrollTop=0` — 무해한 no-op. 호출 2곳 모두 표시 상태(`hidden` 제거 후 / `aria-expanded="true"`)라 실제로는 발생하지 않는다.
+  - **H6 (좌표계 가정)**: `offsetTop` 은 `offsetParent` 기준이므로 메뉴가 `position:absolute` 여야 `scrollTop` 과 같은 기준이 된다 — 가정을 헤드리스 T1 이 **실측 assert**(`sel.offsetParent === menu`)한다. sticky 검색 wrap 은 항목의 조상이 아니라 형제라 무관(T2b 가 검색칸 유무 양 경로 확인).
+  - **H7 (성능)**: 레이아웃 읽기 1회 + `querySelector` 1회, 메뉴 open 시점 한정. 강제 reflow 비용은 이미 발생하는 렌더 경로 안이라 체감 영향 없음.
+  - **H8 (접근성·모션)**: 즉시 스크롤이라 애니메이션 없음(reduced-motion 무관). 포커스는 검색칸에 유지되고 DOM/ARIA 를 바꾸지 않아 스크린리더 흐름 무변경.
+- **결정 근거**: `scrollIntoView({block:"center"})` 는 한 줄로 끝나지만 **조상 스크롤 컨테이너(페이지/messageLog)까지 스크롤**해 컴포저 주변 화면이 튄다 — 메뉴 자신의 `scrollTop` 만 계산·설정하는 편이 부작용 표면이 좁다. 선택 항목이 없을 때(=auto) 스크롤을 건드리지 않는 것도 의도 — auto 는 목록 최상단 근처라 기존 동작이 이미 최적이며, 불필요한 스크롤 변경을 만들지 않는다.
+- **검증**: `tests/headless/verify_product_dropup_scroll.py` **11/11 PASS**(chromium 145, 실 app.js 함수 원문 + 실 styles.css) · `node --check app.js` PASS · 시각 증거 `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`(before=최상단·선택 항목 미표시 / after=선택 항목 중앙). POST-DEPLOY PB-0008(Windows-browser) = 배포 후 정본.
+- **스키마/RBAC/백엔드**: 0. Human Approval Needed: no (Minor §12.3).
+
+## REV-20260727T163000-product-picker-scroll-ci-fix [SKIPPED:test-harness-rename-no-runtime-change] 헤드리스 검증 스크립트 rename (CI 수집 회피)
+- **Panel skip 사유(§18.8)**: 런타임 코드 변경 0 — 검증 하네스 파일명 rename + 문서 경로 참조 갱신뿐(`src/**` 무변경). 실 구현 리뷰 정본 = REV-20260727T160748-product-picker-scroll.
+- **문제**: 신규 검증 스크립트가 `test_` prefix 라 CI pytest 가 수집 → 러너 playwright 부재로 collection error(exit 2) → test job FAIL. **본 cycle 이 직접 유발한 red 이므로 무관 flake 로 분류하지 않고 즉시 수정**했다.
+- **수정**: `verify_` prefix 로 rename(프로젝트 `tests/verify_*.mjs` 관례와 동일). 헤드리스 검증은 명시 호출 전용이며, CI 는 pytest 단위테스트만 게이트한다는 기존 계약을 존중한다(헤드리스/브라우저 검증은 로컬·PB-0008 축).
+- **대안 검토**: (A) CI 에 playwright 설치 — 러너 시간·유지비 증가, 본 cycle 범위 밖. (B) 파일 상단 `pytest.importorskip` — 수집은 계속 일어나 취약. (C) **rename(채택)** — 수집 자체를 회피, 관례 정합.
+- **검증**: rename 후 11/11 PASS 재확인 · ruff PASS · pyproject 에 `python_files` 커스텀 없음 확인(기본 패턴만 수집).
+- Human Approval Needed: no.
