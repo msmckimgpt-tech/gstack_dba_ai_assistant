@@ -1067,3 +1067,8 @@ source_of_truth: true
 - **Verification**: `test_model_persist.py` 14 PASS · `verify_model_persist.mjs` 32 PASS · `node --check`·`py_compile`·ruff PASS · `make test` 전체(신규 포함 PASS; 선존 FAIL 4건은 clean main 84f2e5ab 에서도 동일 재현 — 본 변경 무관) · §18.8 [SUBAGENT] 적대 패널 2라운드(1R BLOCK → B1/C1/C2/C3/C4 수정 후 재검증).
 - **스키마/RBAC**: 0(기존 memory KV 재사용, 신규 엔드포인트 0, `/api/history` 응답 필드 1개 additive — 구 클라이언트 무시). cache-buster `?v=dev` 고정(빌드 자동주입 regime).
 - **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008(AC-MP-1~3 라이브).
+
+## CHG-20260727T124500-model-persist-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- 코드/자산 0 — model-persist(PR #953·main 8cfa00b0) 배포 후 라이브 검증 결과 기록만.
+- test-runs.d/20260727T113640-model-persist.md POST-DEPLOY 결과(Windows-browser PASS) + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260727T124500-postverify(§12.2 deploy 근거) + evidence/pb0008-model-persist-{restore,newconv}-20260727.png.
+- 실측(실 Windows Chrome/150, https://localhost/ bootstrap_admin, 배포본 8cfa00b0): AC-MP-1 재로드 복원(`payload.model=claude-sonnet-4` + 라벨 `모델: claude-sonnet`)·AC-MP-2 대화 간 격리/복귀·AC-MP-3 '+ 새 대화'=`claude-haiku`. **AC-MP-9 라이브 미검증 — 유발 트리거가 파괴적/유발 불가, 단위검증만 커버(사유 명시)**. 사용자 요청 라이브 해소.
