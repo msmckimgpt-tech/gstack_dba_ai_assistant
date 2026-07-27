@@ -6383,5 +6383,5 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] app.js: `scrollProductDropupToSelected` + 호출 2곳 + `focus({preventScroll:true})`
 - [x] 헤드리스 chromium 실 레이아웃 검증(실 app.js 함수 + 실 styles.css) — 11/11 PASS, 시각증거 evidence/product-dropup-scroll-{before,after}-20260727.png
 - [x] CI red 수정 — 검증 스크립트를 `test_product_dropup_scroll.py` → `verify_product_dropup_scroll.py` rename(CI 러너엔 playwright 부재 → pytest 수집 시 ModuleNotFoundError collection error, exit 2). pytest 기본 수집 패턴(`test_*.py`) 밖으로 이동, 로컬 11/11 재확인·ruff PASS
-- [ ] verify-completion PASS → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008 라이브(AC-PPSC-1~3)
+- [x] verify-completion PASS → PR #955 머지(main b30bb45d) → deploy-web-only(web-a/web-b b30bb45d soak 통과) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, centerDelta=0·양단 clamp·검색 포커스 유지·evidence/pb0008-product-picker-scroll-live-20260727.png) — **완결**
 정본 rationale=REVIEW REV-20260727T160748-product-picker-scroll, 변경이력=MODIFY CHG-20260727T160748-product-picker-scroll, Run 기록=test-runs.d/20260727T160748-product-picker-scroll.md.

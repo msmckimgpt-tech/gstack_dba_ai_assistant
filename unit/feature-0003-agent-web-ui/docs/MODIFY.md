@@ -1091,3 +1091,8 @@ source_of_truth: true
 - **변경**: `tests/headless/test_product_dropup_scroll.py` → **`tests/headless/verify_product_dropup_scroll.py`** (`git mv`). 프로젝트의 브라우저 검증 스크립트 관례(`tests/verify_*.mjs`)와 동일한 `verify_` prefix — pytest 수집 대상에서 벗어나고, 헤드리스 실행은 명시 호출로 유지. 스크립트 본문·문서 내 경로 참조 동반 갱신(FUNCTION/TASK/REVIEW/REPORT/test-runs.d).
 - **런타임 코드 변경 0** — `src/static/app.js` 무변경(제품 드롭업 동작 불변).
 - **Verification**: rename 후 `PLAYWRIGHT_BROWSERS_PATH=… python3 tests/headless/verify_product_dropup_scroll.py` **11/11 PASS** 재확인 · `ruff check` PASS · pytest 수집 패턴 확인(pyproject 에 `python_files` 커스텀 없음 → 기본 `test_*.py`/`*_test.py` 만 수집).
+
+## CHG-20260727T165500-product-picker-scroll-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- 코드/자산 0 — product-picker-scroll(PR #955·main b30bb45d) 배포 후 라이브 검증 결과 기록만.
+- test-runs.d/20260727T160748-product-picker-scroll.md POST-DEPLOY 결과(Windows-browser PASS) + TASK 최종 체크박스 + REPORT 완결 + REVIEW REV-20260727T165500-postverify(§12.2 deploy 근거) + evidence/pb0008-product-picker-scroll-live-20260727.png.
+- 실측(실 Windows Chrome/150.0.7871.115, https://localhost/ bootstrap_admin, 배포본 b30bb45d): AC-PPSC-1 중앙 정렬(제품 17개 중 index 8 선택 → scrollTop 254 · **centerDelta 0** · fullyVisible)·AC-PPSC-2 양단 clamp(마지막 항목 선택 시 scrollTop 447 == maxScroll)·AC-PPSC-3 검색 입력 자동 포커스 유지·페이지 에러 0. 서빙 반영 확인(`typeof scrollProductDropupToSelected === "function"`, asset stamp `?v=c121d0831994`). 사용자 요청 라이브 해소.
