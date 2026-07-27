@@ -2,7 +2,7 @@
 run_at: 2026-07-27T18:00:36+09:00
 session: ai/claude/feature-0003-share-bar-layout
 scope: [share-view, footer-bar, actions, view-count, hover-expand]
-verdict: PRE-COMMIT PASS (헤드리스 chromium 8/8 · 구조 회귀 5/5 · make test 회귀 0) · POST-DEPLOY PB-0008 대기
+verdict: PASS (PRE-COMMIT 헤드리스 chromium 8/8 · 구조 회귀 5/5 · make test 회귀 0 / POST-DEPLOY PB-0008 Windows-browser 라이브 PASS)
 ---
 
 ### Run (2026-07-27) — share-bar-layout (공유 대화 뷰 액션 하단 바 이동 · 조회수 상단 이동 · 바 hover 확장) — **Environment: chromium-headless(레이아웃 실측)**
@@ -33,12 +33,30 @@ REV-20260727T180036-share-bar-layout · CHG-20260727T180036-share-bar-layout.
   `share-bar-layout-after-20260727.png`(변경 후 기본 — 상단 meta 에 `조회 6회`, 하단 바 우측에 `링크 복사`/`내 계정에서 fork`, 바 높이 기존과 동일) ·
   `share-bar-layout-hover-20260727.png`(hover — 바·버튼 확장 + 상단 그림자).
 
-- **Environment: Windows-browser (PB-0008) — 미수행(배포 후 예정)**: 공유 뷰 정적 자산은 web 컨테이너 이미지에
-  포함되므로 **배포 전에는 실 사용자 화면 실측이 불가**하다(§15.4.1 — 헤드리스는 실 CSS 기반이나 정본이 아니다).
-  배포 후 검증 항목:
-  1. 실제 공유 링크 진입 → 하단 바 우측에 `링크 복사`·(권한 시)`내 계정에서 fork` 표시, 헤더 meta 에 `조회 N회`(AC-SBL-1/2).
-  2. 바에 마우스를 올리면 부드럽게(0.18s) 확장되고 벗어나면 되돌아옴 — 기본 상태 높이가 기존과 체감상 동일(AC-SBL-3/4).
-  3. `링크 복사` 클릭 시 `복사됨 ✓` 토글, fork 동작 무회귀. 마지막 메시지가 바에 가리지 않음.
+- **Environment: Windows-browser (PB-0008) — POST-DEPLOY 라이브 PASS (2026-07-27 18:17~18:20 KST)**
+  - **Runner**: AI · **Bridge**: relay @ `http://172.26.144.1:9223` · **Browser**: 실 Windows Chrome/150.0.7871.115
+  - **대상**: `https://localhost/share/<token>` (실 공유 링크, 대화 '코드 리뷰 결과 정리 및 액션 아이템 생성', 로그인 상태 —
+    join/fork 노출 경로까지 커버). **서빙 배포본 66575331**, asset stamp `share.css?v=9e94270c8829`.
+    ⚠️ 원 cycle 배포본은 486a587c 였으나 검증 중 다른 cycle 이 PR #959(66575331)를 배포 — `git merge-base
+    --is-ancestor 486a587c 66575331` 로 본 변경이 서빙본에 포함됨을 확인 후 실측(최신 배포본 기준 실증).
+  - **AC-SBL-1 PASS** — 액션 4종(`링크 복사`·`대화에 참여`·`내 계정에서 fork`·로그인 링크[hidden])이 `.share-footer`
+    내부, `actions.x=956 > note.x=16`(안내문보다 오른쪽), 바 우측 여백 **16px**, 헤더 잔존 `.share-actions` **0**.
+  - **AC-SBL-2 PASS** — `조회 16회` 가 헤더 `.share-meta` **4번째** 항목(`소유자 admin` · `범위: 대화 전체` ·
+    `제품 국내 웹 - QA` · `조회 16회`), y=96 < 바 y=801.
+  - **AC-SBL-3 PASS** — 기본 바 높이 **35px**(pre-commit 헤드리스 35.2px·변경 전 35.0px 와 정합), 패딩 6px.
+  - **AC-SBL-4 PASS** — 실 마우스 hover 시 **53px**(+18px), 패딩 6→10px, 버튼 22→32px, 배경
+    `rgba(255,255,255,.96)`→`rgb(255,255,255)`, 상단 그림자 `rgba(15,23,42,.06) 0 -2px 10px` 부여,
+    `transition: padding 0.18s, background 0.18s, box-shadow 0.18s`.
+  - **추가 PASS** — `링크 복사` 실클릭 → 텍스트 `복사됨 ✓` + class `is-copied` · 최하단 스크롤
+    (`scrollY=maxY=8303`)에서 마지막 메시지 bottom **732** < 바 top **783**(hover 상태) → 미가림 ·
+    `elementFromPoint` hit-test 가 `shareCopyLinkBtn`/`shareForkBtn` 반환(바 위 요소의 클릭 가로채기 없음) ·
+    페이지 `error`/`console.error` **0**.
+  - **검증 위생**: fork(신규 대화 생성)·참여(그룹 멤버십 변경)는 라이브 부작용을 피해 **클릭하지 않고** 노출·좌표·
+    hit-test 로만 확인(본 cycle 은 HTML 이동 + CSS 뿐이고 `share.js` 무변경 — id·배선 보존은 구조 회귀 L3 가 게이트).
+    검증 후 `win-browser.py down`.
+  - **Evidence**: `docs/evidence/pb0008-share-bar-layout-live-default-20260727.png`(기본 바 — 우측 액션 3종) ·
+    `…-hover-20260727.png`(hover 확장) · `…-header-20260727.png`(헤더 meta 의 `조회 16회`) ·
+    `…-copied-20260727.png`(`복사됨 ✓` 토글).
 - **Notes**: §18.8 subagent 패널은 **본 세션의 사용자 환경 정책(Agent tool 미허용)으로 미수행** — REVIEW
   REV-20260727T180036-share-bar-layout 에 [SKIPPED:session-policy-no-subagent] 로 사유와 대체 검증
   (헤드리스 8 + 구조 5 + 자체 적대 검토 H1~H7) 을 명시했다.
