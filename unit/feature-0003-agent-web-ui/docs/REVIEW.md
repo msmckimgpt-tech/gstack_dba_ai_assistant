@@ -1028,3 +1028,11 @@ source_of_truth: true
 - **검증**: 구조 회귀 `tests/test_share_bar_layout.py` 5 PASS · 헤드리스 레이아웃 `tests/headless/verify_share_bar_layout.py` **8/8 PASS**(T4 바 높이 35.0→35.2px Δ+0.2 · T5 hover 52.5px · T6 transition 0.18s · T8 버튼 31.5px) · `make test` 전체 실패 15건이 clean main baseline 과 **차집합 0**(회귀 없음) · ruff PASS. 시각 증거 `docs/evidence/share-bar-layout-{before,after,hover}-20260727.png`.
 - **검증 환경 정직 기록**: 위는 모두 헤드리스/정적 검증이다. `visual_verification_scope: always`(FIRST_REQUEST.md) 에 따른 **Windows-browser(PB-0008) 라이브 검증은 배포 후 수행**한다 — 정적 자산이 컨테이너 이미지에 포함돼 미배포 코드로는 실 화면 실측이 불가하기 때문(선례와 동일 순서).
 - Human Approval Needed: no (Minor §12.3 — 비파괴 frontend 배치 변경).
+
+## REV-20260727T182000-share-bar-layout-postverify [SKIPPED:non-policy-doc] 공유 대화 뷰 하단 바 레이아웃 POST-DEPLOY 라이브 실증 + deploy_scope 근거
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 기록 + 스크린샷 증거 4건). 실 구현 리뷰 정본 = REV-20260727T180036-share-bar-layout([SKIPPED:session-policy-no-subagent] — 헤드리스 8 + 구조 5 + 자체 적대 검토 H1~H7 로 대체).
+- **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 PR #958 머지(main **486a587c**) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료(원 cycle 세션). 배포 범위 = web 전용(변경 파일이 정적 자산·문서 한정, 워커/agent 코드 무변경). Caddyfile 무변경으로 caddy blip 0, post-cutover soak 90s 통과, 롤백 0.
+- **POST-DEPLOY 실증(Windows-browser, PB-0008)**: AC-SBL-1(액션 4종 하단 바 우측 — 바 우측 여백 16px, 안내문보다 오른쪽, 헤더 잔존 액션 0)·AC-SBL-2(`조회 16회` 헤더 `.share-meta` 4번째, y=96 < 바 y=801)·AC-SBL-3(기본 바 높이 **35px** — 변경 전 35.0px 대비 체감 동일)·AC-SBL-4(hover 시 **53px** + 패딩 6→10px + 상단 그림자 + 배경 불투명, `transition … 0.18s`) **전부 PASS**. 추가로 `링크 복사` → `복사됨 ✓`(class `is-copied`) 토글, 최하단 스크롤에서 마지막 메시지 미가림(bottom 732 < 바 top 783), 버튼 `elementFromPoint` hit-test 통과, 페이지 에러 0. 시각 증거 `docs/evidence/pb0008-share-bar-layout-live-{default,hover,header,copied}-20260727.png`.
+- **검증 시점 배포본 주의(정직 기록)**: 검증 중 다른 cycle 이 PR #959 를 배포해 서빙 SHA 가 486a587c → **66575331** 로 전진했다. `git merge-base --is-ancestor 486a587c 66575331` 로 본 변경이 서빙본에 포함됨을 확인한 뒤 실측했으므로 검증은 유효하며, 오히려 최신 배포본 기준 실증이다.
+- **검증 위생**: fork(신규 대화 생성)·참여(그룹 멤버십 변경) 는 라이브 부작용을 피해 **클릭하지 않고** 노출·좌표·hit-test 로만 확인 — 본 cycle 변경이 HTML 구조 이동 + CSS 뿐이고 `share.js` 무변경이라 클릭 핸들러 자체는 회귀 대상이 아니다(구조 회귀 테스트 L3 가 id·배선 보존을 이미 게이트). 검증 후 `win-browser.py down` 으로 드라이버 인스턴스만 종료.
+- Human Approval Needed: no.
