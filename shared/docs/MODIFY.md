@@ -82,3 +82,10 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - `shared/runtime_settings.py`: `_AGENT_MAX_OUTPUT_DEFAULT["claude-opus-5"] = 40000`. budget 계열 스펙(②③)은 `_budget_thinking_models()` 가 adaptive 를 제외하므로 자동 미생성 → admin UI 는 guide-note(죽은 슬라이더 0, CHG-20260724T085937 규약 그대로 적용).
 - Affected Features: feature-0007-bedrock-llm-provider(정본 — litellm 3 deployment + fallback), feature-0002-agent-core(`_call_llm` adaptive/CC 분기·redteam 리뷰어 정합 — 코드 무변경, 카탈로그 자동 파급), feature-0003-agent-web-ui(모델 선택기·runtime-settings pane 자동 파급 + `admin_usage._LLM_PRICE_USD_PER_1M` 단가 등록).
 - Cross-ref: unit/feature-0007-bedrock-llm-provider/docs/MODIFY.md CHG-20260727T184425-opus5-model(정본) · 동 REVIEW.md REV-20260727T184425-opus5-model · TEST.md Run 2026-07-27-opus5-model.
+
+## CHG-20260727T234439-model-picker-copy (model_catalog: 모델 선택기 description 축약, cross-unit: 정본 feature-0003, Minor §12.3)
+- Date: 2026-07-27. 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0003-model-picker-copy`.
+- `shared/model_catalog.py`: `API_MODEL_OPTIONS` 3개 항목의 **`description` 문자열만** 축약(`value`/`label`/`group`/`supports_*` 무변경). label·group 배지와 겹치는 "Anthropic Claude <tier>" 접두 제거 + tier 간 중복어(`frontier`) 제거 + 세 항목을 동일 축(성능 등급 · 용도)으로 병렬 서술. 사용자 지적(선택기 부자연스러운 줄바꿈·가독성) 대응.
+- 표시 전용 필드라 라우팅·단가·runtime_settings 키·저장 대화 영향 0.
+- Affected Features: feature-0003-agent-web-ui(정본 — 렌더 규약·CSS), feature-0007-bedrock-llm-provider(카탈로그 소유 cycle — 선행 CHG-20260727T184425-opus5-model 이 도입한 문구를 다듬음).
+- Cross-ref: unit/feature-0003-agent-web-ui/docs/MODIFY.md CHG-20260727T234439-model-picker-copy(정본) · 동 REVIEW · test-runs.d/20260727T234439-model-picker-copy.md.

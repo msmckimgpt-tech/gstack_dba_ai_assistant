@@ -92,7 +92,12 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         "value": "claude-opus-5",
         "label": "claude-opus",
         "group": "Claude",
-        "description": "Anthropic Claude Opus (frontier 최상위, 장기 추론·에이전트 작업)",
+        # model-picker-copy(2026-07-27): description 은 **label·group 과 겹치지 않는 차별점만** 담는다.
+        # 이전엔 세 항목 모두 "Anthropic Claude <tier> (…)" 로 시작해 label(claude-opus)·group 배지(Claude)
+        # 와 같은 단어를 3중 반복했고, 그 길이 때문에 선택기(360px)에서 한국어가 단어 중간("작|업")에서
+        # 줄바꿈돼 가독성이 떨어졌다(사용자 지적). tier 3개가 나란히 보이는 UI 라 **서로 비교 가능한
+        # 동일 축**(성능 등급 · 용도)으로 짧게 맞춘다.
+        "description": "최상위 성능 · 장기 추론과 복잡한 분석",
         # Opus 5 는 temperature/top_p/top_k 를 400 으로 거부한다(Anthropic 스펙, claude-api skill).
         # sonnet 과 동일하게 False — _temperature_kwargs 가 temperature=0 을 주입하지 않게 한다.
         "supports_temperature": False,
@@ -110,7 +115,7 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         # 올라가도(sonnet-4-6 → 5 → …) label 은 불변, litellm 라우팅만 갱신하면 된다(버전 혼동 원천 차단).
         "label": "claude-sonnet",
         "group": "Claude",
-        "description": "Anthropic Claude Sonnet (frontier, 최고 품질)",
+        "description": "고성능 · 품질과 속도의 균형",
         # Extended thinking (effort=high) 활성화 — temperature 는 반드시 1 이어야
         # 하므로 _temperature_kwargs 에서 temperature=0 을 주입하지 않도록 False.
         "supports_temperature": False,
@@ -124,7 +129,7 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         # 내부 alias(litellm claude-haiku-4 → anthropic/claude-haiku-4-5)로 유지 — 저장 대화·단가·키 무변경.
         "label": "claude-haiku",
         "group": "Claude",
-        "description": "Anthropic Claude Haiku (가성비, 기본값)",
+        "description": "빠르고 경제적 · 기본값",
         # Extended thinking 활성화 — temperature=1 고정 요구사항으로 False.
         "supports_temperature": False,
         # TASK-0094 Sprint 2 (D13) — Claude Haiku 4.x 는 native multimodal.

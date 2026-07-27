@@ -1036,3 +1036,15 @@ source_of_truth: true
 - **검증 시점 배포본 주의(정직 기록)**: 검증 중 다른 cycle 이 PR #959 를 배포해 서빙 SHA 가 486a587c → **66575331** 로 전진했다. `git merge-base --is-ancestor 486a587c 66575331` 로 본 변경이 서빙본에 포함됨을 확인한 뒤 실측했으므로 검증은 유효하며, 오히려 최신 배포본 기준 실증이다.
 - **검증 위생**: fork(신규 대화 생성)·참여(그룹 멤버십 변경) 는 라이브 부작용을 피해 **클릭하지 않고** 노출·좌표·hit-test 로만 확인 — 본 cycle 변경이 HTML 구조 이동 + CSS 뿐이고 `share.js` 무변경이라 클릭 핸들러 자체는 회귀 대상이 아니다(구조 회귀 테스트 L3 가 id·배선 보존을 이미 게이트). 검증 후 `win-browser.py down` 으로 드라이버 인스턴스만 종료.
 - Human Approval Needed: no.
+
+## REV-20260727T234439-model-picker-copy [SKIPPED:session-policy-no-subagent] — PASS
+- 대상: 모델 선택기 중복 문자열 제거 + 설명 축약 + `word-break: keep-all`. CHG-20260727T234439-model-picker-copy 정합.
+- 리뷰 방식([SKIPPED] 사유): §18.8 subagent 패널은 **본 세션의 사용자 환경 정책(Agent tool 미허용)** 으로 미수행. 대체 검증 = 실 Windows 브라우저 **BEFORE/AFTER 정량 실측**(줄 수·문자 수·배지 수·메뉴 높이) + 전체 pytest rc=0 + `node --check` + 아래 자기 적대 검토. 변경면이 표시 문자열 3개·JS 조건 1줄·CSS 1속성이라 정적 패널의 추가 판별력이 낮다.
+- 자기 적대 검토:
+  - *배지를 무조건 제거하지 않은 이유*: `group` 은 provider 혼재 카탈로그(Local LLM `auto`/`edge`/`core`/`code`)에서 실제 구분 기능을 한다. 지금 무의미한 건 "label 이 이미 group 명으로 시작할 때"뿐이므로 그 조건에서만 생략한다 — 미래에 비-Claude provider 가 카탈로그에 들어오면 배지가 자동으로 다시 살아난다(하드코딩 제거였다면 그때 회귀).
+  - *`keep-all` 이 과한가*: 아니다. 문구 단축은 "지금 이 문구·이 폭"에서만 성립하는 완화이고, 근본 원인(한국어 음절 단위 줄바꿈)은 남는다. 두 조치는 중복이 아니라 계층이 다르다.
+  - *정보 손실*: "Anthropic"·"Claude"·"frontier" 는 label·배지·형제 행에서 이미 알 수 있는 정보라 제거해도 변별력이 줄지 않는다. 오히려 세 행을 **같은 축**(성능 등급 · 용도)으로 맞춰 비교가 쉬워졌다.
+  - *값 오염 없음*: `value`(claude-opus-5 등)는 저장 대화·단가·runtime_settings 키라 손대지 않았다. description 은 표시 전용.
+- 위험도: Minor(§12.3) — 표시 문자열·CSS. RBAC·라우팅·스키마 0.
+- Verification: PRE-COMMIT Windows-browser 실측 PASS(2줄→1줄, 배지 3→0) · pytest rc=0 · node --check OK. POST-DEPLOY 배포본 육안 재확인 예정.
+- Cross-ref: MODIFY CHG-20260727T234439-model-picker-copy / test-runs.d/20260727T234439-model-picker-copy.md.

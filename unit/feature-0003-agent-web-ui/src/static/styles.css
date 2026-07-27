@@ -2273,6 +2273,10 @@ a { color: inherit; }
   font-size: 12px;
   color: var(--text-muted, #6b7280);
   line-height: 1.4;
+  /* model-picker-copy(2026-07-27): 한국어는 기본 줄바꿈 규칙상 음절 사이 어디서나 끊겨
+     "장기 추론과 복잡한 분|석" 처럼 단어 중간에서 갈라진다(실측). keep-all 로 어절 경계에서만
+     끊기게 한다 — 설명문 단축과 별개로, 폭이 더 좁아지거나 문구가 길어져도 가독성이 유지된다. */
+  word-break: keep-all;
 }
 
 /* 화면 좁을 때 secondary popup 이 화면 밖으로 튀어나가지 않도록 fallback. */
