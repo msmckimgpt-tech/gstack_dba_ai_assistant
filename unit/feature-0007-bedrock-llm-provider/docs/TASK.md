@@ -373,3 +373,18 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [x] FUNCTION.md §콘솔 live 동기화 항목 추가
 - [x] MODIFY.md CHG + REVIEW.md REV([SKIPPED] — 정본=feature-0002 적대리뷰 SHIP) 기록
 - [ ] 배포(gateway reconcile + feature-0002 worker/web 재빌드) 후 라이브: 콘솔 AGENT_TIMEOUT_SEC 변경 → 요청 실제 타임아웃 추종 확인
+
+## TASK-20260727T184425-opus5-model — assistant 선택 모델에 Claude Opus 5 추가 (사용자 요청, Major §12.3 외부비용)
+- [x] 선행 라이브 실증 — gateway 컨테이너에서 api.anthropic.com 직접 호출로 (a) Opus 5 OAuth 접근성, (b) CC identity 게이트 재현, (c) root 429 원인 격리(계정 전체 한도 vs 모델 게이팅)
+- [x] litellm_config.yaml — opus bare / -chat / -chat-root 3 deployment + `{"claude-opus-5-chat": ["claude-opus-5-chat-root"]}` fallback(edge 미포함 종단)
+- [x] shared/model_catalog.py — 카탈로그 항목 · `-chat` alias · `claude-opus` adaptive prefix(=CC identity) · native max 128000 · canonical fold(버전-정확)
+- [x] shared/runtime_settings.py — `agent_max_output:claude-opus-5` 기본 40000 (budget 스펙은 adaptive 라 자동 미생성)
+- [x] admin_usage.py — `_LLM_PRICE_USD_PER_1M["claude-opus-5"]` = $5/$25
+- [x] .env.example — 선택 catalog 3종 명시 · API_DEFAULT_MODEL stale 정정 · 배치 계열 Opus 배선 금지 주석
+- [x] 단위 테스트 8건 신규/갱신 (alias 2계정 체인·adaptive effort·CC identity·runtime adaptive_models·canonical fold·단가)
+- [x] 전체 pytest PASS (rc=0, 2452 tests, fail/error 0) + litellm YAML 파싱 검증(중복 0·dangling 0)
+- [x] FUNCTION/MODIFY/REVIEW/TASK/TEST + shared/docs/MODIFY.md 기록
+- [ ] **배포 후 라이브 e2e**: gateway reconcile(config bind-mount) + web/worker 재빌드 → 대화에서 `claude-opus` 선택 → 200 답변 확인
+- [ ] **PB-0008 시각검증**: 모델 선택기에 `claude-opus` 노출 · 추론 강도 선택기 활성 · 관리 콘솔 '설정 > 모델 총 출력' 에 opus 행 + budget 슬라이더 대신 guide-note
+- [ ] **R1 재확인**: root 계정 한도 윈도우 리셋 후 `claude-opus-5-chat-root` 실 200 (2순위 체인)
+- [ ] **R2 이월 결정**: 모델별 RBAC 부재 — 전 사용자가 Opus 선택 가능(비용 노출). 사용자 결정 필요 (REPORT §8)

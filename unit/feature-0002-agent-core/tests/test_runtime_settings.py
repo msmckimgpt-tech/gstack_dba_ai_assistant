@@ -47,6 +47,12 @@ def test_registry_has_timeouts_and_model_budgets():
     assert "model_thinking_budget:claude-sonnet-4" not in keys
     assert "claude-sonnet-4" in reg["adaptive_models"]
     assert "claude-haiku-4" not in reg["adaptive_models"]
+    # opus5-model(2026-07-27): Opus 5 도 adaptive → 죽은 budget 스펙 미생성 + adaptive_models 표면화.
+    # (신규 모델이 budget 스펙을 달고 들어오면 저장해도 무효과인 죽은 슬라이더가 다시 생긴다.)
+    assert "model_thinking_budget:claude-opus-5" not in keys
+    assert "claude-opus-5" in reg["adaptive_models"]
+    # 총 출력(①)은 adaptive 도 live 로 읽히므로 모델별 스펙이 있어야 한다.
+    assert "agent_max_output:claude-opus-5" in {m["key"] for m in reg["agent_max_outputs"]}
 
 
 def test_flagship_timeout_is_live_mode():

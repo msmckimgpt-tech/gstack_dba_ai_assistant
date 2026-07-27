@@ -161,10 +161,38 @@ source_of_truth: true
     litellm 이 Anthropic system 첫 블록으로 매핑; 단일 문자열 연결은 게이트 미통과). 실 동작은 제품 프롬프트가
     지배(DB 어시스턴트 유지, 라이브 검증). 두 계정 모두 Sonnet 5 직접 호출 200 = 계정 용량 충분(429는 identity
     게이트였지 용량 아님).
+  - **Claude Opus 5 추가 (opus5-model 2026-07-27, 사용자 요청)**: assistant 선택 가능 모델에 frontier 최상위
+    tier `claude-opus-5`(표시 label `claude-opus`)를 추가한다. sonnet 이 bare 단일계정으로 출발해 claude-corp
+    429 시 즉시 실패했던 이력을 반복하지 않도록 **도입 시점부터 3 deployment** 를 둔다 —
+    `claude-opus-5`(bare, probe·`OPENAI_MODEL` 명시 등 비대화 경로 전용·fallback 미등록 격리) /
+    `claude-opus-5-chat`(claude-corp) → `claude-opus-5-chat-root`(root Max). 셋 다 실 모델
+    `anthropic/claude-opus-5`, thinking `{type:adaptive}`. 대화 체인은 haiku/sonnet 과 동형으로 **edge(gemma)
+    미포함** — 두 계정 모두 실패면 429/401 을 raise 해 정직하게 실패한다. 사용자 요청 문구 "claude-corp 및
+    root 계정 포함" 을 이 2계정 체인이 충족한다.
+    - **thinking = adaptive**: Opus 계열은 `budget_tokens` 를 400 으로 거부한다(Anthropic 스펙). `model_catalog`
+      의 `_ADAPTIVE_THINKING_PREFIXES` 가 `claude-opus` prefix 를 포함해 Opus 전 버전·전 라우팅 변형이 adaptive
+      로 분류되고, 추론강도는 `output_config.effort`(명시 레벨만; '일반'=미주입=기본 high)로 전달된다.
+      관리 콘솔 '모델별 추론 예산'·'추론 강도별 예산' 슬라이더는 adaptive 라 **스펙 자체가 생성되지 않고**
+      guide-note 로 렌더된다(죽은 컨트롤 0). '모델 총 출력'(agent_max_output)만 live 로 유효 — 기본 40000,
+      상한 native 128000.
+    - **OAuth frontier-identity 게이트 동일 적용**: 2026-07-27 claude-corp 토큰 직접 호출 실증 — system 없이
+      보내면 429(`{"message":"Error"}`, unified-status 헤더 없음), Claude Code identity 를 첫 system 블록으로
+      넣으면 200(`model=claude-opus-5`, unified-status=allowed). `requires_oauth_frontier_identity()`
+      (=adaptive 계열) 가 True 라 `_call_llm`·probe 가 자동 주입한다. 같은 실증에서 root 계정은 haiku/sonnet
+      까지 전부 429(`unified-status: rejected`, "would exceed your account's rate limit") — **계정 전체 한도
+      소진**이지 Opus 모델 게이팅이 아니다(윈도우 리셋 후 정상).
+    - **비용**: Opus 5 = $5 / $25 per MTok (haiku 대비 in·out 5×, sonnet 대비 ~1.67×). `_LLM_PRICE_USD_PER_1M`
+      에 등록해 관리 콘솔 'LLM 사용량' 이 $0 로 오표시하지 않는다. **기본 모델은 haiku 유지**
+      (`API_DEFAULT_MODEL`) — 새 대화가 조용히 상위 tier 로 올라가지 않는다. 백그라운드 계열
+      (`AGENT_INSIGHT_MODEL`·`AGENT_NODE_ANALYSIS_MODEL` 등)에도 Opus 를 배선하지 않는다(대량 배치 × 5× 단가).
+    - **canonical usage fold 는 버전-정확**(`claude-opus-5*` → `claude-opus-5`): thinking-style 과 달리 넓은
+      `claude-opus` prefix 를 쓰지 않는다 — 미등록 Opus 버전까지 접으면 신규 모델 비용이 조용히 Opus 5 로
+      오귀속된다(기존 self-surface 규약 보존).
   - **사용자 표시 라벨은 버전 넘버링 없이 모델 그대로 (사용자 지시 2026-07-24)**: 모델 선택기·컴포저 표시는
-    `claude-sonnet`/`claude-haiku`(group `Claude`)로 노출하고, 내부 value(claude-sonnet-4/claude-haiku-4,
-    넘버링 포함)는 저장/라우팅용으로만 쓴다. 컴포저 현재-모델 표시는 `_composerModelLabelFor`(app.js)가
-    value→카탈로그 label 로 해석. 버전 업그레이드 시 라벨 불변 → 사용자 혼동(sonnet-4↔5) 원천 차단.
+    `claude-opus`/`claude-sonnet`/`claude-haiku`(group `Claude`)로 노출하고, 내부 value(claude-opus-5/
+    claude-sonnet-4/claude-haiku-4, 넘버링 포함)는 저장/라우팅용으로만 쓴다. 컴포저 현재-모델 표시는
+    `_composerModelLabelFor`(app.js)가 value→카탈로그 label 로 해석. 버전 업그레이드 시 라벨 불변 →
+    사용자 혼동(sonnet-4↔5) 원천 차단.
   - **운영 인지(강등 SLO)**: refresh cron 은 평일 업무시간(`0,30 10-18 * * 1-5`)만 돈다. root/claude-corp
     accessToken 은 short-lived(~수시간)이므로 **야간·주말**에는 두 토큰이 만료돼 claude 요청이 401 →
     litellm 이 최종 `edge-fallback`(gemma)으로 **상시 강등**한다(하드실패 아님, best-effort — gemma JSON 품질이

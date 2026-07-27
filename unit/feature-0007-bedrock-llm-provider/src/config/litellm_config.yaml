@@ -12,6 +12,38 @@
 # 사용한다.
 
 model_list:
+  # ── Claude Opus 5 (frontier 최상위, ACTIVE) — opus5-model 2026-07-27 ─────────────────
+  #    사용자 요청으로 assistant 선택 가능 모델에 Opus 를 추가한다("claude-corp 및 root 계정 포함").
+  #    sonnet 이 겪은 단일계정 실패 모드를 반복하지 않도록 **처음부터 3 deployment** 로 둔다:
+  #      · claude-opus-5            — bare. probe(llm_provider_health)·OPENAI_MODEL 명시 등 비대화 경로 전용.
+  #                                   fallback 미등록(격리) — 비대화 경로가 root 계정으로 새지 않게 한다.
+  #      · claude-opus-5-chat       — 대화 답변(task='agent') 1순위 = claude-corp OAuth.
+  #      · claude-opus-5-chat-root  — 2순위 = root(개인 Max) OAuth. edge(gemma) 폴백 없음(대화 정책).
+  #    Thinking: Opus 계열은 budget_tokens 를 400 으로 거부(Anthropic 스펙, claude-api skill) → adaptive.
+  #    effort 는 요청 단위 output_config.effort(agent_core)로 조절, 미지정 시 기본 high.
+  #    temperature 미전달(Opus 5 는 sampling 파라미터 400).
+  #    ⚠ OAuth frontier identity 게이트: Opus 5 도 Sonnet 5 와 동일하게 system 첫 블록이 Claude Code
+  #      identity 여야 200 이다(2026-07-27 claude-corp 토큰 직접 호출 실증 — 미주입 시 429). 주입은
+  #      앱(agent_core._call_llm / probe)이 model_catalog.requires_oauth_frontier_identity 로 수행한다.
+  - model_name: claude-opus-5
+    litellm_params:
+      model: anthropic/claude-opus-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      thinking:
+        type: "adaptive"
+  - model_name: claude-opus-5-chat
+    litellm_params:
+      model: anthropic/claude-opus-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      thinking:
+        type: "adaptive"
+  - model_name: claude-opus-5-chat-root
+    litellm_params:
+      model: anthropic/claude-opus-5
+      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+      thinking:
+        type: "adaptive"
+
   # ── Claude Sonnet 5 (frontier, ACTIVE) — sonnet5-upgrade 2026-07-24 ──
   #    alias 는 하위호환 위해 claude-sonnet-4 로 유지하되(저장 대화·node_analysis·probe·단가·
   #    runtime_settings 키 무변경 — haiku alias 가 haiku-4-5 를 서빙하는 것과 동형), 라우팅 실 모델은
@@ -244,6 +276,10 @@ litellm_settings:
   #  · claude-sonnet-4-chat(대화 답변)        → sonnet-4-chat-root **로 끝**(edge 없음). sonnet-chat-fallback
   #    (2026-07-24): sonnet 도 haiku-chat 과 동형 2계정 체인. 두 계정 모두 실패면 429/401 raise(정직 실패).
   #  · claude-sonnet-4-chat-root             → **fallback 미등록**(체인 종단, edge 없음 — haiku-chat-root 동일).
+  #  · claude-opus-5-chat(대화 답변)          → opus-5-chat-root **로 끝**(edge 없음). opus5-model(2026-07-27):
+  #    sonnet-chat 과 동형 2계정 체인. 두 계정 모두 실패면 429/401 raise(정직 실패, gemma 강등 없음).
+  #  · claude-opus-5-chat-root               → **fallback 미등록**(체인 종단).
+  #  · bare claude-opus-5                    → **fallback 미등록**(격리 — 비대화 probe 경로가 root 로 새지 않게).
   fallbacks:
     - {"claude-haiku-4": ["claude-haiku-4-root", "edge-fallback"]}
     - {"claude-haiku-4-root": ["edge-fallback"]}
@@ -251,6 +287,7 @@ litellm_settings:
     - {"claude-haiku-4-interactive-root": ["edge-fallback"]}
     - {"claude-haiku-4-chat": ["claude-haiku-4-chat-root"]}
     - {"claude-sonnet-4-chat": ["claude-sonnet-4-chat-root"]}
+    - {"claude-opus-5-chat": ["claude-opus-5-chat-root"]}
 
 # ── 모니터링 (옵션) ───────────────────────────────────────────────────
 # LiteLLM 의 success/failure callback hook 으로 audit 확장 가능. 본 cycle 에서는

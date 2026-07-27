@@ -356,6 +356,32 @@ source_of_truth: true
 - Notes(배포 후 최종): bedrock-gateway reconcile 후 `/app/config.yaml` request_timeout=300 확인 + sonnet 대화
   ping 정상(429/timeout 아님). 장문 sonnet 대화 실사용 관찰 권장.
 
+### Run 2026-07-27-opus5-model
+- Date: 2026-07-27 18:44 KST
+- Environment: CLI (컨테이너 pytest + gateway 컨테이너 라이브 직접호출) — **웹 UI 표면 미검증(PB-0008 배포 후)**
+- Scope: assistant 선택 모델 Claude Opus 5 추가 (CHG-20260727T184425-opus5-model)
+- Runner: AI (Claude)
+- Result Summary: 코드/구성 검증 PASS + Opus 5 OAuth 접근성 라이브 확증. 배포 후 gateway 경유 e2e + PB-0008 잔여.
+- Pass/Fail:
+  - **라이브 사전 실증**(gateway 컨테이너 → api.anthropic.com 직접, 토큰 미노출):
+    - `[corp/claude-opus-5/nosys]` HTTP **429** — `{"type":"rate_limit_error","message":"Error"}`, unified-status 헤더 **없음** (identity 게이트 시그니처)
+    - `[corp/claude-opus-5/cc]` HTTP **200** — `model=claude-opus-5`, `stop_reason=end_turn`, `unified-status: allowed` ✅
+    - `[root/claude-opus-5/cc]` HTTP 429 — `"would exceed your account's rate limit"`, `unified-status: rejected`
+    - 격리 대조 `[root/claude-haiku-4-5]` · `[root/claude-sonnet-5]` **동일 429/rejected**(reset epoch 1785159600)
+      → root 429 는 **계정 전체 한도 소진**이지 Opus 모델 게이팅 아님. (R1: 리셋 후 재확인)
+  - **단위 테스트**: feature-0002 + feature-0003 전체 `pytest -q` **rc=0, 2452 tests, fail 0 / error 0**.
+    신규·갱신 8건 — `test_conversation_answer_model_maps_opus_to_chat`,
+    `test_opus_conversation_chain_has_two_accounts_and_is_edge_free`(config 실파싱 5 단정),
+    `test_call_llm_opus_adaptive_with_cc_identity`, `test_opus_adaptive_injects_effort_not_budget`,
+    `test_opus_adaptive_normal_no_override`, `test_opus_prepends_cc_identity_system`,
+    runtime registry/API adaptive_models·budget-스펙-미생성, usage canonical fold + 단가.
+  - **litellm config 정적 검증**: YAML 파싱 OK · `model_name` 중복 0 · fallback dangling ref 0 ·
+    opus 체인 `claude-opus-5-chat → claude-opus-5-chat-root`(edge 미도달) · bare `claude-opus-5` fallback 미등록(격리).
+- Notes(배포 후 확정 대상): ① gateway reconcile 후 `/app/config.yaml` 에 opus 3 deployment 반영 ②
+  대화에서 `claude-opus` 선택 → 실 답변 200(gateway 경유 라우팅 확정, R3) ③ PB-0008 — 모델 선택기 노출·
+  추론강도 활성·관리 콘솔 '모델 총 출력' opus 행 + guide-note ④ R1 root 2순위 체인 ⑤ 'LLM 사용량' 도넛에
+  claude-opus-5 세그먼트 + 비용 > $0.
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel
