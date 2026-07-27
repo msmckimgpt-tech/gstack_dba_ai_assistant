@@ -450,7 +450,8 @@ state.sendMode = localStorage.getItem(SEND_MODE_LS_KEY) === "enter" ? "enter" : 
 // TASK-0269: 대화 그룹을 own/any 로 분리 — conversation → conversation_own(내 대화 권한) + conversation_any(전체 대화 권한).
 // perm-category-hier(2026-07-14): quota/datasource/kb 그룹 라벨 추가 — 백엔드 group 키가 라벨 맵에
 //   없으면 "기타"로 떨어지던 것을 정합(admin.js PERMISSION_GROUP_LABELS 와 동일 유지, CONVENTIONS §10.6).
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings", "conversation_own", "conversation_any", "attachment", "misc"];
+// model-access-rbac(2026-07-28): model_access(모델 사용) 그룹 추가 — admin.js 와 동일 키/라벨 유지(CONVENTIONS §10.6).
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings", "conversation_own", "conversation_any", "model_access", "attachment", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
@@ -459,6 +460,8 @@ const PERMISSION_GROUP_LABELS = {
   conversation_own: "내 대화 권한",
   conversation_any: "전체 대화 권한",
   product: "제품",
+  // model-access-rbac(2026-07-28): 계정/역할별 LLM 모델 선택 허용 범위(동적 model.access.<value>).
+  model_access: "모델 사용",
   datasource: "데이터소스",
   kb: "지식베이스",
   attachment: "첨부",
@@ -473,7 +476,9 @@ const PERMISSION_GROUP_LABELS = {
 // 표시되도록 group="audit" 을 manage section 에 추가. admin 콘솔 진입을 권유.
 const WORK_SCREEN_PERMISSION_SECTIONS = [
   // TASK-0094 Sprint 1 Phase 12: attachment group 추가 — 첨부 sandbox SQL 권한이 운영 권한 묶음에 표시.
-  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 접근 · 첨부", groups: ["conversation_own", "conversation_any", "product", "attachment"] },
+  // model-access-rbac(2026-07-28): model_access(모델 사용) 그룹 합류 — 작업 화면은 "내가 어떤 모델을
+  //   고를 수 있나" 를 자기 시점에서 확인하는 자리라 운영 권한 묶음이 맞다(admin.js 와 동일 배치).
+  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 접근 · 모델 사용 · 첨부", groups: ["conversation_own", "conversation_any", "product", "model_access", "attachment"] },
   // TASK-0095: settings 그룹은 작업 화면의 관리 권한 section 에 placeholder.
   // perm-category-hier(2026-07-14): quota/datasource/kb 그룹을 관리 권한 section 에 합류(라벨 맵 부재로
   //   "기타" fallback 되던 것을 정합) — 그룹 순서는 admin 콘솔 nav 카테고리 순서와 동일.
@@ -507,6 +512,9 @@ function permissionGroupOf(code = "") {
   if (codeStr.startsWith("system_prompt.global.")) return "settings";
   if (codeStr.startsWith("system_prompt.")) return "product";
   if (codeStr.startsWith("metadata.") || codeStr.startsWith("kb.")) return "kb";
+  // model-access-rbac(2026-07-28): `model.access.<value>` 는 prefix 추론(head="model")이 라벨 맵에
+  //   없어 "기타"로 떨어진다 → 명시 매핑. 백엔드 GroupName='model_access' 와 정합.
+  if (codeStr.startsWith("model.access.")) return "model_access";
   // TASK-0269: 대화 권한은 own/any 로 분리 — `.any` 는 전체 대화 권한, 나머지(create/ask/list.own/...own/share)는 내 대화 권한.
   if (codeStr.startsWith("conversation.")) return codeStr.endsWith(".any") ? "conversation_any" : "conversation_own";
   const head = codeStr.split(".", 1)[0] || "misc";

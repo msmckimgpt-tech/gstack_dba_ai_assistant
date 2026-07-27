@@ -27,6 +27,10 @@ import sys
 
 from fastapi import Request
 
+# model-access-rbac(2026-07-28): 모델 접근 권한 코드 namespace 의 SSOT. `shared/` 는 web_context 를
+# import 하지 않으므로 단방향(web_context → shared) 이고 순환이 없다 — 기존 shared 소비 패턴과 동일.
+from shared import model_catalog
+
 # app.py 의 AGENT_MODE(L91)와 동일 표현식의 env-mirror — web_context 를 app-free 로 유지하기
 # 위함(_parse_trusted_proxies 의 prod/staging fail-loud 분기가 참조). 둘 다 import 시점에 같은
 # 환경변수를 읽어 동일 값을 갖는다(파생 상수, 결정적). app 의 startup-validation 블록은 app 의
@@ -2915,7 +2919,19 @@ def _account_permissions(account: dict[str, Any] | None) -> dict[str, bool]:
         perms = {
             code: (
                 bool(granted)
-                and _permission_in_token_scopes(code, allow)
+                # model-access-rbac(2026-07-28): `model.access.*` 는 **scope allowlist 면제**.
+                # 근거: scope 는 "토큰이 어떤 *동작*을 할 수 있나"(conversation./product.access.)를
+                # 제한하는 축이고, 모델 tier 는 **서비스 계정의 역할 권한**이 정하는 별 축이다.
+                # 면제하지 않으면 (a) 이미 발급된 토큰(Scopes='conversation.' 등)이 전부
+                # `/api/ask` 403 으로 죽고(feature-0023 외부 AI 경로 파손), (b) 모델을 추가할
+                # 때마다 기존 토큰 scope 문자열을 일괄 재발급해야 한다. 면제해도 통제는 유지된다 —
+                # `bool(granted)`(서비스 계정 역할이 그 모델을 보유해야 함) + 아래 절대 denylist +
+                # `/api/ask` 게이트가 그대로 적용되므로, 저권한 서비스 계정에서 opus 를 해제하면
+                # 토큰도 opus 를 못 쓴다.
+                and (
+                    model_catalog.is_model_permission_code(code)
+                    or _permission_in_token_scopes(code, allow)
+                )
                 and not _api_token_permission_denied(code)
             )
             for code, granted in perms.items()
@@ -3133,6 +3149,106 @@ def _coerce_default_product_id(default_pid, products: list[dict[str, Any]]) -> i
     if products:
         return int(products[0].get("id") or 0)
     return 0
+
+def _account_has_model_access(
+    account: dict[str, Any] | None,
+    model: str | None,
+    *,
+    conn=None,
+) -> bool:
+    """model-access-rbac(2026-07-28): 계정이 특정 LLM 모델을 **선택**할 수 있는지 검사.
+
+    `product.access.<key>` 게이트(`_account_has_product_access`)의 모델 축 대응물이며,
+    `/api/ask` 단일 choke-point + `/api/session` 카탈로그 필터의 공통 판정 함수다.
+
+    판정 순서:
+      1. `account` 없음 → False (미인증은 애초에 상위 `_require_account` 가 차단).
+      2. 카탈로그에 없는 model → **판정 대상 아님** → True. 허용 여부는 기존
+         `_is_allowed_api_model`(400) 이 판정하는 별 축이라, 여기서 False 를 주면 같은 실패에
+         403/400 두 갈래 메시지가 생겨 진단이 흐려진다. 게이트는 "선택 가능한 모델" 에만 적용.
+      3. 계정이 `model.access.<value>` 보유 → True.
+      4. 미보유 + **그 권한 row 가 아직 DB 에 등록되지 않음** → True + WARNING 로그.
+         부트스트랩이 아직 seed 하지 않은 창(신규 배포 첫 요청·DB degraded)에서 strict-deny 하면
+         **모든 대화가 403** 이 된다 — 게이트 미설치 상태를 "전원 차단" 으로 해석하는 것이 훨씬 큰
+         사고이고, 사용자 결정("전부 기본 부여")과도 어긋난다. 이 경로는 조용히 넘기지 않고
+         WARNING 을 남겨 관측 가능하게 한다.
+      5. 미보유 + row 등록됨 → **False** (관리자가 명시 해제한 상태 — fail-closed).
+
+    `conn` 은 4번 판정(row 등록 여부)에만 쓰인다. `conn=None` 이면 row 확인이 불가하므로
+    **보수적으로 3번까지만 보고 미보유 시 False** — 인증된 경로는 항상 conn 을 갖고 있고,
+    conn 없는 호출측이 게이트를 우회하지 못하게 한다.
+    """
+    if not account:
+        return False
+    name = str(model or "").strip()
+    if not name:
+        return False
+    # (2) 카탈로그 밖 model — 본 게이트의 판정 대상 아님 (_is_allowed_api_model 이 400 으로 처리).
+    if not model_catalog.is_allowed_api_model(name):
+        return True
+    code = model_catalog.model_permission_code(name)
+    if not code:
+        return True
+    permissions = _account_permissions(account)
+    if bool(permissions.get(code)):
+        return True  # (3) 명시 보유
+    # (4) 게이트 미설치(부트스트랩 지연/degraded) 판별 — 등록 안 된 권한으로 전원 차단 방지.
+    if conn is not None:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM WebPermissions WHERE Code = %s LIMIT 1", (code,))
+            registered = cur.fetchone() is not None
+            cur.close()
+        except Exception:
+            # DB 조회 실패 — 등록 여부를 알 수 없다. 게이트 미설치일 수도 있어 통과시키되 시끄럽게 남긴다.
+            logging.getLogger(__name__).warning(
+                "model-access: WebPermissions 조회 실패로 모델 게이트 판정 불가 — 통과 처리 (model=%s code=%s)",
+                name, code,
+            )
+            return True
+        if not registered:
+            logging.getLogger(__name__).warning(
+                "model-access: 권한 row 미등록 상태에서 모델 요청 — 게이트 미설치로 보고 통과 "
+                "(model=%s code=%s). 부트스트랩이 _ensure_model_access_permissions 를 수행했는지 확인.",
+                name, code,
+            )
+            return True
+    # (5) row 는 등록됐고 계정은 미보유 → 관리자가 해제한 것. fail-closed.
+    return False
+
+
+def _filter_models_for_account_access(
+    account: dict[str, Any] | None,
+    models: list[dict[str, Any]],
+    *,
+    conn=None,
+) -> list[dict[str, Any]]:
+    """model-access-rbac: `/api/session` 이 내려주는 모델 카탈로그를 계정 권한으로 필터.
+
+    `_filter_products_for_account_access`(제품 목록 필터)와 동형 — 표시와 집행을 함께 닫는다
+    (선택기에 안 보이는 모델을 서버가 거부하고, 서버가 거부할 모델을 선택기에 안 보인다).
+
+    **전부 필터되면 필터 전 목록을 그대로 반환**한다: 관리자가 실수로 한 역할의 모든 모델을
+    해제하면 그 사용자는 모델 선택기가 빈 채로 대화를 아예 못 하게 되는데, 그 상태를 조용한
+    빈 목록으로 만들면 원인 파악이 어렵다(프론트는 "로딩 중" 으로 보인다). 집행은 `/api/ask`
+    게이트가 여전히 담당하므로 **표시만 관대**하게 두고 WARNING 을 남긴다(display-permissive ·
+    backend-enforced — 프론트 `can()` 규약과 동일 원칙).
+    """
+    if not account or not models:
+        return models
+    allowed = [
+        m for m in models
+        if _account_has_model_access(account, str((m or {}).get("value") or ""), conn=conn)
+    ]
+    if not allowed:
+        logging.getLogger(__name__).warning(
+            "model-access: 계정의 선택 가능 모델이 0개 — 표시는 필터 전 목록을 유지한다 "
+            "(집행은 /api/ask 게이트가 담당). account_id=%s",
+            (account or {}).get("id"),
+        )
+        return models
+    return allowed
+
 
 def _product_permission_code(product_key: str) -> str:
     """TASK-0052 Phase 1B: product_key 를 lowercase 권한 코드 namespace 로 변환.

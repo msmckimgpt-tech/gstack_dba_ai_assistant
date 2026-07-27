@@ -1055,3 +1055,22 @@ source_of_truth: true
 - **검증**: `node --check` PASS · vm 구조검증(releases[0] 2026-07-27 items 4→7·releases[1] 2026-07-24 8항목 보존·스키마·enum·내부용어 누출 0). 3항목 전부 owning POST-DEPLOY PB-0008 라이브검증(opus5 413703b9·share-bar 486a587c/2ec5e0aa·detail-db-groups 66575331/42ee04d0). 릴리즈노트 render 테스트 jsdom 미설치로 미실행(render 로직 미변경). ULTRACODE 적대검증 wf_c9bea2de — RN 3항목 CONTENT confirmed·verifier 가 초안 07-28 date framing REJECT→07-27 append 로 정정(제외 4건: model-picker-copy 미배포·change-reanalysis 백엔드·false-truncation unverified-live·feature-0026 측정전용).
 - **cache-buster**: `?v=dev` 고정(빌드 자동주입·index/admin 편집 0·수동 bump 폐지 ITEM-09; wrapper 헤더 수기 bump 지시는 07-12 이전 regime 부적용).
 - **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
+
+## REV-20260728T024258-model-access-rbac [SKIPPED:session-policy-no-subagent] — PASS
+- 대상: 계정/역할별 LLM 모델 사용 권한(동적 `model.access.<value>` RBAC). CHG-20260728T024258-model-access-rbac 정합. **Critical §12.3 — 인가 구조 변경, 사용자 승인 후 착수**(설계 3안 제시 → "전부 기본 부여" 채택).
+- 리뷰 방식([SKIPPED] 사유): §18.8 subagent 패널은 본 세션의 사용자 환경 정책(Agent tool 미허용)으로 미수행. 대체 = **인가 판정표를 테스트로 전수 고정**(25 케이스, 판정 5분기 + 경계 4종) + 전체 회귀 rc=0 + ruff + 아래 자기 적대 검토. Critical 등급이므로 검토 항목을 공격각 단위로 나열한다.
+- **자기 적대 검토 (공격각 8)**:
+  1. *게이트 우회 — 다른 진입점으로 model 을 넣을 수 있나?* 클라이언트 지정 model 경로를 전수 grep: `/api/ask` 의 `data.get("model")` 과 재답변(`_reanswer`)의 forward 뿐이며 후자는 `ask()` 재dispatch 로 동일 게이트를 재통과한다. 저장된 대화 모델 hydration(L256)은 **표시 전용**이고 실제 요청은 다시 ask() 를 탄다. → 단일 choke-point 성립.
+  2. *conn 없이 호출해 fail-open 분기를 탈 수 있나?* `conn=None` 이면 row 등록 여부를 확인할 수 없으므로 **미보유는 거부**로 닫았다(G4). fail-open 은 conn 이 있고 "row 가 실제로 없다" 를 확인했을 때만.
+  3. *fail-open 이 너무 넓은가?* 두 경우(row 미등록 / 조회 예외)로 한정하고 둘 다 WARNING 을 남긴다. 대안(전원 차단)은 신규 배포 첫 요청부터 모든 대화 403 — 통제 목적보다 큰 사고. 관측 가능성으로 보완.
+  4. *재배포가 관리자의 해제를 되살리나?* ← **가장 위험한 조용한 실패**. 제품 권한의 무조건 re-grant 패턴을 그대로 베끼면 발생한다. `rowcount>0` one-time 마커로 차단하고 G7 이 회귀를 고정한다.
+  5. *API 토큰이 게이트를 우회하나?* scope 면제는 **positive allowlist 축만** 면제이고 `bool(granted)`·절대 denylist·ask() 게이트는 그대로 AND 로 남는다(G6 3케이스). 저권한 서비스 계정에서 해제하면 토큰도 차단.
+  6. *표시 필터가 새 실패 모드를 만드나?* 전부 차단 시 원본 유지 + WARNING — 빈 선택기(사용자에겐 "로딩 중")로 원인 불명 상태를 만들지 않는다. 표시를 관대하게 둬도 집행은 ask() 가 담당하므로 인가 누출 아님.
+  7. *400/403 축이 섞이나?* 카탈로그 밖 model 은 본 게이트가 True 를 주고 `_is_allowed_api_model` 이 400 을 낸다(G2). 같은 실패가 두 갈래 메시지로 갈리지 않는다.
+  8. *프론트 변경이 기존 그룹을 깨나?* `excludeDynamic` 조건을 **좁히기만** 했다(`is_dynamic` → `is_dynamic && group==='product_access'`) — 제품 경로는 동일 분기를 그대로 타고, 전체 회귀 rc=0 이 뒷받침한다.
+- **잔여 위험(정직 표기)**:
+  - **POST-DEPLOY 미검증** — 권한 grid 의 모델 row 렌더·'모두 적용' 왕복·해제 후 403/선택기 소멸은 배포 후 PB-0008 로 확인해야 한다(부트스트랩 seed 선행 필요라 사전 검증 불가). 배포 직후 수행 + 기록 예정.
+  - **모델별 quota 는 범위 밖** — 본 cycle 은 "선택 가능/불가" 이진 통제다. "역할별 opus 월 N 토큰" 같은 상한은 기존 `quota` 그룹(LLM 사용 한도) 축이라 별 cycle.
+- 위험도: **Critical(§12.3 인가 구조 변경)**. 완화: 스키마·마이그레이션 0(기존 테이블 재사용) · 기본 전 부여로 배포 무회귀 · 신규 권한은 운영 권한 묶음(관리 콘솔 접근과 무관) · fail-closed 기본.
+- Verification: 단위 25 PASS · 전체 pytest rc=0 · ruff All passed · node --check OK.
+- Cross-ref: MODIFY CHG-20260728T024258-model-access-rbac / test-runs.d/20260728T024258-model-access-rbac.md / SECURITY §28 / CONVENTIONS §10.6 / feature-0007 REPORT §7 R2.

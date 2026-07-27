@@ -1959,3 +1959,21 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 ## (doc-sync-rn-0728, 2026-07-27) 릴리즈노트 콘텐츠 — 2026-07-27 블록에 3항목 append(답변 모델·공유뷰·관계도)
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 기존 date "2026-07-27" 블록에 3항목 append(new/work 답변 모델 선택기 'claude-opus' 추가[기본값 'claude-haiku' 불변] + improved/common 공유 대화 뷰 액션 하단 바 우측 재배치·조회수 상단 + improved/admin 관리 콘솔 관계도 상세 패널 관련 항목 DB단위 접기/펼치기·목록 '…외 N건' 상한 제거) + block summary 아울러-절 증강. generated 2026-07-27 불변. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
 - 평이화/비노출: feature-id·§번호·PR#·함수명·테이블명·내부 모델값(claude-opus-5·claude-haiku-4) 비노출(사용자 언어). 사용자가 UI 선택기에서 실제 보는 표시 라벨 'claude-opus'/'claude-sonnet'/'claude-haiku'(버전-free, 정본 shared/model_catalog.py)만 노출. 제외 항목(미배포 카피·백엔드 auto·라이브 미검증·측정 전용)은 사용자 릴리즈노트 미포함.
+
+### 모델 사용 권한 (model-access-rbac 2026-07-28, Critical §12.3)
+계정/역할별로 작업 화면 대화에서 **선택 가능한 LLM 모델**을 통제한다. 동적 권한
+`model.access.<model_value>`(`WebPermissions` IsDynamic=1 · GroupName='model_access')이며
+`product.access.<key>` 와 동일 패턴이라 역할 편집기·계정 override·감사·pending→'모두 적용' UI 를
+그대로 재사용한다(신규 테이블·마이그레이션·UI 0).
+- **코드 SSOT**: `shared/model_catalog.model_permission_code(value)`. 부트스트랩
+  `_ensure_model_access_permissions` 가 `PUBLIC_API_MODEL_OPTIONS` 순회로 권한 row 를 보장한다.
+- **기본 부여 = 전 역할**(사용자 결정 2026-07-28, 무회귀). grant 는 권한 row 가 **새로 생성된
+  순간에만** — 재부트스트랩·재배포가 관리자의 해제를 되살리지 않는다.
+- **집행**: `/api/ask` 단일 choke-point(`_account_has_model_access` → **403**). 재답변·'AI 로 고치기'
+  등 내부 재dispatch 는 `ask()` 재통과로 자동 커버. 표시는 `/api/api-vault/options` 의
+  `_filter_models_for_account_access` 가 담당(표시·집행 동시 닫힘).
+- **fail 경계**: 기본 fail-closed(권한 row 등록 + 계정 미보유 → 403). 권한 row 미등록·DB 오류만
+  통과 + WARNING(게이트 미설치를 전원차단으로 해석하는 사고 방지). `conn=None` 은 미보유 거부(우회 차단).
+- **API 토큰(feature-0023)**: `model.access.*` 는 scope allowlist 면제(기존 토큰 무회귀) —
+  통제는 서비스 계정 권한 + 절대 denylist + ask() 게이트가 유지.
+- 권한 grid 배치: **운영 권한 > 모델 사용**(관리 권한 아님). 상세 경계는 `docs/SECURITY.md §28`.

@@ -6422,3 +6422,17 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 검증: `node --check` PASS · vm 구조검증(releases[0].date=2026-07-27·items 4→7·releases[1] 2026-07-24 8항목 보존·스키마 type/area/title/detail·enum 유효·누출0[feature-id·테이블·admin_perf·claude-opus-5/haiku-4 등 내부값 0, 사용자 라벨 claude-opus/sonnet/haiku 만]). 근거 정본 = 각 항목 owning POST-DEPLOY PB-0008 커밋(opus5 413703b9·share-bar 486a587c/2ec5e0aa·detail-db-groups 66575331/42ee04d0) + git log 238065ff..HEAD.
 - [x] 제외: model-picker-copy(#968 미배포 카피)·change-reanalysis(백엔드 auto·postverify 부재)·false-truncation(fixed:deployed:unverified-live 8cc28d47 라이브 미검증)·feature-0026 perf-observability(측정 전용·사용자 가시 동작 0). 날짜: 07-27 배포분이라 07-28 신규 블록 아닌 기존 07-27 블록 append(block date=배포일 관례, 351ed406 선례).
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(jsdom 미설치로 render 테스트 불가·데이터 정적검증 대체 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3). 적대검증: ULTRACODE wf_c9bea2de — RN 3항목 CONTENT confirmed·verifier 가 초안 07-28 date framing REJECT→07-27 append 로 정정.
+
+## TASK-20260728T024258-model-access-rbac — 계정/역할별 LLM 모델 사용 권한 (사용자 요청, Critical §12.3)
+<!-- PLAN-APPROVED by user on 2026-07-28 (설계 3안 제시 → "전부 기본 부여" 채택) -->
+- [x] 설계 — 기존 `product.access.<key>` 동적 권한 패턴 재사용 결정(신규 테이블·마이그레이션·UI 0), 대안(WebRoles JSON 컬럼) 미채택 근거 기록
+- [x] `shared/model_catalog.py` — 코드 namespace SSOT(`model_permission_code`/`is_model_permission_code`)
+- [x] `_bootstrap_schema.py` — `_ensure_model_access_permissions` + 2지점 호출, **신규 row 만 전 역할 grant**(재부트스트랩 re-grant 금지)
+- [x] `web_context.py` — `_account_has_model_access`(fail-closed 기본 · fail-open 좁게+WARNING · conn=None 우회차단) + `_filter_models_for_account_access`
+- [x] `web_context._account_permissions` — API 토큰 scope 면제(기존 토큰 무회귀, 계정 권한·denylist 유지)
+- [x] `conversations.py` ask — 403 게이트(단일 choke-point) / `system.py` — 카탈로그 표시 필터
+- [x] 프론트 `admin.js`/`app.js` — model_access 그룹(ORDER·LABELS·operate section·prefix 매핑) + `excludeDynamic` 을 product_access 로 좁힘
+- [x] 정책문서 — CONVENTIONS §10.6 · SECURITY §28 신설
+- [x] 단위 25 PASS(G1~G8) · 전체 pytest rc=0 · ruff · node --check
+- [ ] **POST-DEPLOY PB-0008 (부여·해제 양방향)**: 권한 grid '모델 사용' 그룹 렌더 + 초기 전부 체크 → 특정 역할 opus 해제·'모두 적용' → 선택기 소멸 + 403 → 재부여 → 복귀
+- [ ] feature-0007 REPORT §7 의 R2 를 해소 처리(본 cycle 로 닫힘) — doc_sync 또는 후속 cycle

@@ -1130,3 +1130,19 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(releases[0] 2026-07-27 items 4→7·releases[1] 2026-07-24 보존·스키마·enum·누출0). 릴리즈노트 render 테스트(verify_release_notes.mjs)는 jsdom 미설치로 미실행(render 로직 미변경·데이터 정적검증 대체).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+
+## CHG-20260728T024258-model-access-rbac (계정/역할별 LLM 모델 사용 권한 — 동적 `model.access.<value>` RBAC, **Critical §12.3**)
+- Date: 2026-07-28. 사용자 요청("R2도 계정/역할 별 권한 범위를 구성해주세요"). 배경 = feature-0007 opus5-model 의 잔여 R2: Opus 도입으로 모델 tier 단가 격차가 5배(haiku $1/$5 ↔ opus $5/$25)로 벌어졌는데 카탈로그는 `conversation.ask` 보유자 전원에게 동일 노출돼 **사전 차단 수단이 없었다**(사후 관측만).
+- **설계 결정 — 기존 패턴 재사용**: `product.access.<key>`(IsDynamic=1) 가 이미 "리소스별 접근 제어" 를 정확히 같은 모양으로 풀어놨다. 모델도 같은 축이라 `model.access.<value>`(GroupName='model_access') 로 붙이면 역할 편집기·계정 override 그리드·감사·pending→'모두 적용' UI 가 전부 따라온다 → **신규 테이블 0 · 마이그레이션 0 · 신규 UI 0**. 대안(WebRoles 에 AllowedModels JSON 컬럼)은 기존 권한 체계(override·상속·progressive disclosure·감사) 밖의 별 축이 되어 UI·감사·§10.7 pending 흐름을 전부 새로 만들어야 해 미채택.
+- **기본 부여 = 전 역할**(사용자 결정 2026-07-28): 배포 시점 동작이 현행과 byte-동치(무회귀). 관리자가 콘솔에서 필요한 역할의 모델을 해제하는 방향.
+- 변경 ①(`shared/model_catalog.py`): `MODEL_ACCESS_PERMISSION_PREFIX`/`_GROUP` 상수 + `model_permission_code(value)`/`is_model_permission_code(code)` + `__all__`. 코드 namespace 를 카탈로그 SSOT 에 둬 모델 추가 시 자동 확장(별도 매핑 테이블 없음). `shared/` 는 web_context 를 import 하지 않으므로 단방향.
+- 변경 ②(`routers/_bootstrap_schema.py`): `_ensure_model_access_permissions(conn)` 신설 + fast path/slow-path catchup **2지점 호출**(제품 권한과 동형). ⚠️ **grant 는 권한 row 가 "새로 생성된 순간"에만** — `INSERT IGNORE` 의 `rowcount>0` 을 one-time 마커로 쓴다. 제품 권한(`DefaultRoleAccess=1`)은 매 부트스트랩 무조건 re-grant 하는데 그 방식이면 **관리자의 해제를 재기동/재배포가 조용히 되살려** 본 통제가 무력화된다(의도적 divergence, 테스트 G7 이 고정).
+- 변경 ③(`web_context.py`): `_account_has_model_access(account, model, *, conn)` 판정 함수 + `_filter_models_for_account_access`. **fail-closed 기본**(row 등록 + 미보유 → False), **fail-open 은 좁게·시끄럽게**(권한 row 미등록/DB 오류 → 통과 + WARNING — "게이트 미설치"를 전원 차단으로 해석하면 신규 배포 첫 요청부터 전 대화 403 이 되는 더 큰 사고). `conn=None` 은 우회 차단(미보유 거부).
+- 변경 ④(`web_context._account_permissions`): API 토큰(feature-0023) scope 교집합에서 `model.access.*` **면제**. scope 는 "어떤 *동작*" 축, 모델 tier 는 "계정 역할" 축 — 면제하지 않으면 이미 발급된 토큰(`Scopes='conversation.'`)이 전부 `/api/ask` 403 으로 죽고 모델 추가마다 토큰 재발급이 필요하다. 통제는 계정 권한 + 절대 denylist + ask() 게이트로 유지.
+- 변경 ⑤(`routers/conversations.py` ask): `_is_allowed_api_model`(400, 카탈로그 축) 직후에 `_account_has_model_access`(**403**, 인가 축) 추가 — **단일 choke-point**. 재답변·'AI 로 고치기' 등 내부 재dispatch 는 모두 `ask()` 를 다시 타 자동 커버.
+- 변경 ⑥(`routers/system.py` `/api/api-vault/options`): 인증 계정이면 `_filter_models_for_account_access` 로 카탈로그 필터(제품 목록 필터와 동형) — 표시·집행 동시 닫힘. 비인증·조회 실패는 필터 전 목록(fail-soft, 로그인 화면 프리로드 보존).
+- 변경 ⑦(프론트 `admin.js`/`app.js`): `model_access` 그룹을 ORDER·LABELS·**operate section** 에 추가, app.js 는 prefix 추론(head='model')이 라벨 맵에 없어 '기타'로 떨어지므로 명시 매핑. `groupedPermissions` 의 `excludeDynamic` 을 **`group === "product_access"` 로 좁힘** — 원래 의도는 "전용 embedded UI 가 따로 렌더하는 그룹 제외"였는데 조건이 `is_dynamic` 전체라 모델 row 까지 사라졌다(product 동작은 완전 동일).
+- 변경 ⑧(정책문서): `docs/CONVENTIONS.md §10.6` 화면별 section·group 키·라벨·동적 권한 절 갱신 · `docs/SECURITY.md §28` 신설(권한 모델·기본 부여·집행 경계 표·fail-open/closed 비대칭·API 토큰 상호작용·검증).
+- Verification: 신규 단위 **25 PASS**(G1~G8) · feature-0002+0003 전체 pytest **rc=0** · `ruff` All passed · `node --check` OK. **POST-DEPLOY PB-0008(부여·해제 양방향) 잔여** — 사유: 권한 grid 의 모델 row 는 부트스트랩이 seed 한 동적 권한을 받아 렌더하므로 배포 前 시각검증이 성립하지 않는다(test-runs.d 에 명시).
+- Rollback: 8지점 revert. 권한 row/grant 는 남지만 게이트가 사라져 현행 동작으로 복귀(무해).
+- Cross-ref: REVIEW REV-20260728T024258-model-access-rbac · test-runs.d/20260728T024258-model-access-rbac.md · SECURITY §28 · CONVENTIONS §10.6 · feature-0007 REPORT §7 의 R2(본 CHG 로 해소).

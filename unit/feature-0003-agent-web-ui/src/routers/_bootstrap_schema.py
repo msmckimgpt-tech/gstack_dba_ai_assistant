@@ -839,6 +839,18 @@ def _ensure_web_tables():
                 )
             except Exception:
                 pass
+        # model-access-rbac(2026-07-28): 카탈로그 모델별 `model.access.<value>` 동적 권한 보장.
+        # 제품 권한과 같은 시점(RBAC 마이그레이션 前)에 둬 effective permission 계산 정합을 맞춘다.
+        _model_perm_added = app._ensure_model_access_permissions(conn)
+        if _model_perm_added > 0:
+            try:
+                import sys as _sys
+                _sys.stderr.write(
+                    f"[model-access-rbac] model access backfill: {_model_perm_added} permission/role-permission rows added "
+                    "(신규 권한 row 는 전 역할 grant = 무회귀. 기존 row 는 grant 미변경 — 관리자 해제 보존)\n"
+                )
+            except Exception:
+                pass
         app._migrate_legacy_accounts_to_rbac(conn)
         bootstrap_admin_id = app._ensure_bootstrap_admin(conn)
         app._seed_legacy_conversations(conn, bootstrap_admin_id)
@@ -996,6 +1008,88 @@ SELECT r.Id, %s FROM WebRoles r
             added_total += int(cur.rowcount or 0)
             cur.close()
     return added_total
+
+def _ensure_model_access_permissions(conn) -> int:
+    """model-access-rbac(2026-07-28): 카탈로그의 각 사용자 선택 모델에 대응하는 동적 접근 권한을 보장.
+
+    `product.access.<key>`(_ensure_product_access_permissions) 와 동일 패턴 —
+    `WebPermissions` 에 IsDynamic=1 / GroupName='model_access' row 를 넣어 역할 편집기·계정
+    override 그리드·감사·pending→'모두 적용' UI 를 전부 재사용한다(신규 UI·신규 테이블 0).
+
+    ⚠️ **grant 는 권한 row 가 "새로 생성된 순간"에만** 전 역할에 부여한다(사용자 결정 2026-07-28:
+    "전부 기본 부여" = 배포 시 무회귀). 제품 쪽 `_ensure_product_access_permissions` 는
+    `DefaultRoleAccess=1` 이면 **매 부트스트랩마다** 무조건 re-grant 하는데, 그 방식을 그대로
+    쓰면 관리자가 콘솔에서 어떤 역할의 opus 를 해제해도 다음 배포/재기동이 조용히 되살린다
+    (관리 행위가 무효화 — 본 기능의 목적 자체가 무력화). 그래서 여기서는 **INSERT IGNORE 의
+    rowcount>0(=이 부트스트랩이 row 를 처음 만들었다)** 를 one-time 마커로 삼는다:
+      · 최초 배포        → row 신규 → 전 역할 grant (현행과 byte-동치 동작)
+      · 이후 재기동      → row 기존 → grant skip → 관리자의 해제가 보존된다
+      · 나중에 모델 추가 → 그 모델 row 만 신규 → 전 역할 grant (같은 정책 일관 적용)
+
+    카탈로그에서 사라진 모델의 권한 row 는 **삭제하지 않는다**(prune 없음) — 선택 불가 모델의
+    잔존 row 는 무해하고, 삭제하면 역할별 grant 이력이 사라져 모델 재도입 시 설정이 리셋된다.
+
+    Returns: 추가된 (permission row + role-permission row) 합계 — 운영 transparency 용.
+    """
+    from shared.model_catalog import (
+        MODEL_ACCESS_PERMISSION_GROUP,
+        PUBLIC_API_MODEL_OPTIONS,
+        model_permission_code,
+    )
+
+    added_total = 0
+    for item in PUBLIC_API_MODEL_OPTIONS:
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        code = model_permission_code(value)
+        if not code:
+            continue
+        label = str(item.get("label") or value)
+        cur = conn.cursor()
+        cur.execute(
+            """
+INSERT IGNORE INTO WebPermissions (Code, Label, Description, GroupName, IsDynamic, ProductId)
+VALUES (%s, %s, %s, %s, %s, NULL)
+            """,
+            (
+                code,
+                f"모델 사용 — {label}",
+                (
+                    f"작업 화면 대화에서 `{label}` 모델을 선택해 요청할 수 있습니다. "
+                    f"해제하면 모델 선택기에서 숨겨지고 서버가 요청을 거부합니다 (내부 alias: {value})."
+                ),
+                MODEL_ACCESS_PERMISSION_GROUP,
+            ),
+        )
+        newly_created = int(cur.rowcount or 0) > 0
+        cur.close()
+        if not newly_created:
+            # 이미 등록된 모델 — 역할별 grant/해제는 관리자 소관이므로 손대지 않는다(위 ⚠️).
+            continue
+        added_total += 1
+        cur = conn.cursor()
+        cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (code,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            continue
+        permission_id = int(row[0] or 0)
+        if permission_id <= 0:
+            continue
+        # 최초 생성 시에만: 전 역할 grant (무회귀 — 배포 직후 동작이 현행과 동일).
+        cur = conn.cursor()
+        cur.execute(
+            """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT r.Id, %s FROM WebRoles r
+            """,
+            (permission_id,),
+        )
+        added_total += int(cur.rowcount or 0)
+        cur.close()
+    return added_total
+
 
 def _migrate_legacy_accounts_to_rbac(conn) -> None:
     role_map = app._role_id_map(conn)
@@ -2369,6 +2463,17 @@ def _ensure_seed_catchup(conn) -> None:
             import sys as _sys
             _sys.stderr.write(
                 f"[TASK-0052 Phase 1B catchup] product access backfill: {_migration_added} permission/role-permission rows added\n"
+            )
+        except Exception:
+            pass
+    # model-access-rbac(2026-07-28): slow path(catchup)에서도 모델 접근 권한 보장 — 기존 배포가
+    # fast path 를 타지 않는 경로로 올라와도 권한 row 가 누락되지 않게(제품 권한과 동형 2지점 호출).
+    _model_perm_added = _ensure_model_access_permissions(conn)
+    if _model_perm_added > 0:
+        try:
+            import sys as _sys
+            _sys.stderr.write(
+                f"[model-access-rbac catchup] model access backfill: {_model_perm_added} permission/role-permission rows added\n"
             )
         except Exception:
             pass
