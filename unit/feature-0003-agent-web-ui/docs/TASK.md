@@ -6405,5 +6405,5 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 구조 회귀 테스트 `tests/test_share_bar_layout.py` 5 PASS (컨테이너 pytest)
 - [x] 헤드리스 chromium 레이아웃 실측 `tests/headless/verify_share_bar_layout.py` 8/8 PASS — 변경 전(main) 대비 바 높이 35.0→35.2px(Δ+0.2), hover 52.5px, transition 0.18s, 버튼 31.5px
 - [x] `make test` 전체 회귀 0 — 실패 15건이 clean main 과 **완전 동일**(차집합 0)
-- [ ] verify-completion PASS → commit/push → PR → 머지 → 배포 → POST-DEPLOY PB-0008 라이브 시각검증
+- [x] verify-completion PASS → PR #958 머지(main 486a587c) → deploy-web-only(web-a/web-b 486a587c soak 통과) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, 배포본 66575331 ⊇ 486a587c: 액션 하단 바 우측 여백 16px·조회 16회 헤더 meta·바 35px→hover 53px(0.18s)·`복사됨 ✓` 토글·최하단에서 마지막 메시지 미가림·페이지 에러 0, evidence/pb0008-share-bar-layout-live-{default,hover,header,copied}-20260727.png) — **완결**
 정본 rationale=REVIEW REV-20260727T180036-share-bar-layout, 변경이력=MODIFY CHG-20260727T180036-share-bar-layout, Run 기록=test-runs.d/20260727T180036-share-bar-layout.md.

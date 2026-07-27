@@ -326,3 +326,25 @@ source_of_truth: true
   admin.js XSS(전 경로 `esc()`), SQL 인젝션(전 경로 파라미터 바인딩), 권한 등급 불변.
 - Open Questions: 실제 수렴 라운드 분포와 백스톱 50 의 적정성은 라이브 `revision_rounds`/
   `stop_reason` 통계로 재평가. worker 큐 지연이 관측되면 `REDTEAM_WALL_BUDGET_SEC` 을 켠다.
+
+## REV-20260727T182000-postverify [SKIPPED:docs-only POST-DEPLOY 검증 기록 — 제품 코드 무변경]
+- Related Change: CHG-20260727-0003 (PR #957 배포분의 POST-DEPLOY 라이브 검증)
+- Panel skip 근거: 본 cycle 의 changeset 은 `unit/feature-0021-redteam-review/docs/*` 전용이다.
+  제품 코드·프론트 자산·마이그레이션·설정 스펙 무변경(§18.8 dispatch 키워드 비매칭, Minor).
+  검증 대상 코드 자체는 REV-20260727T174500-converge-panel 에서 2 렌즈 적대 패널을 이미 거쳤고,
+  본 cycle 은 그 패널이 "라이브 PG 경로라 단위로 커버 불가"로 남긴 항목을 실측해 닫는 작업이다.
+- 판단 근거 (검증 설계에서 의식적으로 택한 것):
+  - **인과 확정 방식**: 격리 fail-closed 를 "TRUE 대화에서 0건"만으로 주장하지 않았다. 0건은
+    데이터 부재·스코프 오류로도 나온다. 같은 임시 대화의 플래그만 TRUE↔FALSE 로 토글해
+    0건↔1건이 갈리는 것을 보여 **게이트가 유일 원인**임을 확정했다.
+  - **프로덕션 부작용 최소화**: 라이브에 `has_restricted_members=true` 대화가 0건이라 실증에
+    임시 행 주입이 불가피했다. 기존 행을 변조하는 대신 **전용 임시 대화·합성 리뷰 행**을 새로
+    만들고(식별 가능한 `zz-tmp-postverify-*` 접두), 검증 직후 삭제 + 잔존 0건을 확인했다.
+    기존 대화 245건·리뷰 원장은 무변경.
+  - **정직성 (과대보고 방지)**: 잔존 분기 렌더는 **합성 데이터**로 확인한 것이며 리뷰어의 실제
+    수렴 판정 관측이 아니다. 배포(18:04) 이후 새 판정 표본이 없어 `revision_rounds>1` /
+    `stop_reason` 의 실판정 분포는 여전히 미관측 — TEST.md §4 에 미커버로 명시하고 "PASS" 로
+    포장하지 않았다. 이는 위 Open Questions(백스톱 50 적정성 재평가)와 같은 축의 잔여다.
+- Open Questions: 라이브 트래픽 누적 후 `revision_rounds`·`stop_reason` 분포로 ① 무제한 반복이
+  실제로 몇 라운드에 수렴하는지, ② `unresolved_block_count>0` 전달 비율이 유의한지 재평가.
+  유의하면 답변 말미 고지 문구와 `REDTEAM_WALL_BUDGET_SEC` 기본값을 재검토한다.

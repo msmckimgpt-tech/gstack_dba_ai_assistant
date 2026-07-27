@@ -353,3 +353,7 @@ source_of_truth: true
 - **검증된 안전(NON-ISSUE)**: 초기 렌더 배치 바인딩 ↔ lazy payload `bind` 가 **배타적**(펼침 그룹은 lazy Map 미등재) → 이중/누락 바인딩 없음 · gid 전역 단조 증가라 셀렉터 오매칭 불가 · 중첩 `ul` 이 기존 CSS/셀렉터와 충돌 없음 · `dirRowsHTML` 인자 순서가 종전과 동일(수동 대조 후 ⑮ 로 고정).
 - **잔여(수용, 문서화)**: 헤드리스 스위트가 CI(pytest 전용)에 미배선 — 회귀 게이트가 아니라 cycle-내 검증 수단(test-runs 문서에 한계 명시, Makefile 배선은 별건). 파이썬 스위트 flaky(같은 main 을 두 번 돌려 실패 집합 상이) — 본 cycle 의 파이썬 변경은 additive 플래그 1개뿐.
 - **재검증**: 흡수 후 `node --check` PASS · 헤드리스 62 PASS · verify-completion 재실행.
+
+## REV-20260727T185000-detail-db-groups-postverify [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 대상: `feature-0016/docs/{TASK,REPORT,MODIFY,REVIEW}.md` + feature-0003 `docs/test-runs.d/20260727T173000-detail-db-groups.md` + 신규 PNG 증적. 실행 코드(js/py/css) 변경 없음 — §18.8 dispatch 표의 핵심 경로(send/render/auth/schema)·UI 키워드에 해당하는 *코드* 변경이 없어 적대 리뷰 panel 미실행.
+- 본 changeset 이 기록하는 대상 코드(PR #959)는 이미 REV-20260727T173000-detail-db-groups 에서 2렌즈 적대 리뷰 FAIL(BLOCKING 2)→전량 흡수를 거쳤고, 본 기록은 그 코드의 **배포본 실증 결과**다. 기록 자체의 정확성은 라이브 DOM 실측(머리글 `data-dbgrp-key`, `ul.amgr-list` 직속 `li` 카운트, `… 외 N건` 정규식 매치, 토글 전후 가시성 스냅샷)에 근거하며, 재현 불가한 항목은 "미재현 한계" 로 명시해 과대보고를 차단했다.

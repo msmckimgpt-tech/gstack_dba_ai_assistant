@@ -303,3 +303,26 @@ source_of_truth: true
 - Impact: CHG-20260727-0001 의 동작 계약은 유지하되 격리·수렴·정직성 결함을 제거. 공유창 window
   격리 대화에서는 리뷰어 대화 기억이 동작하지 않는다(의도된 fail-closed).
 - Rollback Notes: CHG-20260727-0001 과 동일 (런타임 설정 무재배포 롤백).
+
+## CHG-20260727-0003
+- Date: 2026-07-27
+- Related Requirement: REQ-20260727-converge-until-resolved, REQ-20260727-reviewer-memory
+  (CHG-20260727-0001 / -0002 의 POST-DEPLOY 검증 기록 — **docs-only, 코드 무변경**)
+- Summary: PR #957 배포분에 대해 test-runs.d 가 "배포 후 필수"로 남겨둔 라이브 검증 3건을
+  수행하고 결과를 정본에 반영.
+  - **마이그레이션**: 라이브 `alembic_version=0045_redteam_convergence_columns`, 0045 컬럼
+    4개 실재 확인.
+  - **격리 fail-closed**: `recent_conversation_reviews` 를 라이브 ask-worker 에서 직접 호출해
+    4케이스 인과표 확보 — 동일 임시 대화의 `has_restricted_members` 플래그만 TRUE↔FALSE 로
+    토글했을 때 조회 0건↔1건으로 갈리는 것을 확인(게이트가 유일 원인). 단위 테스트가 커버할 수
+    없던 라이브 PG 경로.
+  - **PB-0008 콘솔**: '결함 잔존 전달 (7d)' 타일 · 타임라인 ③"수정 N회 반복"/④"재검증에서 결함
+    잔존"/⑤"결함 잔존 상태로 전달 …(stop_reason 한글 라벨)" · "재검증에서 해소되지 않은 지적"
+    앰버 블록 · 설정 패널 신규 5항목 렌더를 실 Windows 브라우저로 육안 검증.
+- Files: `docs/TEST.md`(§3 POST-DEPLOY Run append + §4 미커버 명시),
+  `docs/test-runs.d/20260727T1600-converge-until-resolved.md`(잔여 3건 해소 + Run 6),
+  `docs/TASK.md`, `docs/REPORT.md`, `docs/REVIEW.md`, `docs/MODIFY.md`
+- Impact: 제품 동작 무변경(문서·검증 기록만). 라이브 DB 에 주입한 실증용 임시 행 2건
+  (`zz-tmp-postverify-f0021-isolation`, `zz-tmp-postverify-f0021-render`)은 검증 직후 삭제하고
+  잔존 0건을 확인했다 — 기존 대화 245건·리뷰 원장 무변경.
+- Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.

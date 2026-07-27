@@ -132,6 +132,7 @@ __all__ = [
     "AGENT_MAX_SHOW",
     "AGENT_MAX_STEPS",
     "AGENT_TOOL_RESULT_MAX_CHARS",
+    "AGENT_ROUTINE_DEF_CHUNK_CHARS",
     "AGENT_MEMORY_CLEAR_KEEP_IDS",
     "AGENT_MEMORY_MAX_TURNS",
     "AGENT_META_EXPLORATION_BUDGET",
@@ -1016,6 +1017,17 @@ AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "128"))
 # backstop 이 유지된다. 캡 초과 시에만 절단 note 를 붙여 FR-partial-evidence epistemic 계약
 # (미열람분 전수 단정 금지)을 보존한다. 0/음수는 무제한으로 해석.
 AGENT_TOOL_RESULT_MAX_CHARS = int(os.getenv("AGENT_TOOL_RESULT_MAX_CHARS", "100000"))
+# FR-false-truncation-belief(사용자 결정 2026-07-27): 위 backstop 캡은 유지하되, 캡보다 큰 저장
+# 루틴 정의도 **여러 번 호출로 전량 도달**할 수 있게 describe_routine 응답을 문자 offset 창으로
+# 나눈다. 한 응답에 담을 최대 문자수.
+#   0(기본) = **auto** — 창 = AGENT_TOOL_RESULT_MAX_CHARS - 여유. 즉 위 backstop 캡이 어차피 자를
+#     지점부터만 쪼갠다(캡 이하 정의는 종전처럼 한 응답에 전문 = 조각화 회귀 0). 캡이 무제한이면
+#     자를 이유가 없어 윈도잉 비활성.
+#   양수 = 명시 창 크기(하한 4000, 상한 캡-여유).
+#   음수 = 윈도잉 비활성(kill-switch — 전역 캡만 적용).
+# 실제 산정은 tools._routine_chunk_limit() 이 담당하며, 창은 항상 캡보다 작아야 한다(아니면 캡이
+# 조각 꼬리의 "다음 offset" 안내를 잘라 전량 도달 경로 자체가 사라진다).
+AGENT_ROUTINE_DEF_CHUNK_CHARS = int(os.getenv("AGENT_ROUTINE_DEF_CHUNK_CHARS", "0"))
 AGENT_COLUMN_SCAN_LIMIT = int(os.getenv("AGENT_COLUMN_SCAN_LIMIT", "2000"))
 AGENT_GLOBAL_KB_MIN_WEIGHT = int(os.getenv("AGENT_GLOBAL_KB_MIN_WEIGHT", "4"))
 AGENT_GLOBAL_KB_MAX_ENTRIES = int(os.getenv("AGENT_GLOBAL_KB_MAX_ENTRIES", "80"))

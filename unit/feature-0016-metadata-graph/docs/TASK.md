@@ -2566,7 +2566,14 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   - MINOR/NIT: 스키마 미상 정렬 모순(n1) · 동명 DB scope 병기(m2) · 비-스키마 라벨 유령 그룹 가드(m1) · 머리글 hover-pan 제거(m3 — 다른 DB 로 화면이 크게 튐) · stale payload 무음 대신 안내(MINOR-1) · Empty/검색 렌더 clear 누락(MINOR-3) · 스키마 미상 전역 슬롯 미기록(MINOR-5) · 같은 DB 형제 머리글 동기화(MINOR-6) · 기본 esc escaping 화 · 컬럼 안내 문구 보강.
   - **테스트 사각 지적 흡수** — 초판 36건은 호출부(`dirRowsHTML`)를 실행하지 않아 **인자 순서를 뒤집어도 전건 PASS** 했고 ROW_CAP·모두펼치기·형제동기화·컬럼 lazy 가 미커버. → 스위트 재작성 **62 PASS**(⑮ 인자 매핑 회귀·⑦ 예산·⑧ 모두펼치기·⑫ 형제 동기화·⑬ stale 안내·⑭ 컬럼 lazy·⑯ 배너/정적 회귀 추가).
   - **잔여(수용)**: 헤드리스 스위트가 CI(pytest 전용)에 미배선이라 회귀 게이트가 아님 — test-runs 문서에 한계 명시, Makefile 배선은 별건 제안(REPORT §8).
-- [ ] TDG.7 POST-DEPLOY PB-0008 라이브 육안 — 테이블 상세 `사용하는 함수·프로시저` 에 DB 머리글 노출·접기/펼치기 동작·`… 외 N건` 미노출, 관계 상세 동형, pageerror 0. (deploy_scope: included — merge 후 자동 배포)
+- [x] TDG.7 POST-DEPLOY PB-0008 라이브 육안 — **완료(2026-07-27, 배포 `66575331`)**. 실제 Windows Chrome 150 으로
+  `mysql-gz-qa-global`(gunzgame/gunzlog/gunzlogin) 스키마 그래프에서 (a)~(g) 전건 PASS: `gunzgame.character`
+  루틴 60건 **전량 렌더**(읽기 42 + 쓰기 18, `… 외 N건` 0건 — 종전 30 상한이면 12건 은닉) · `gunzgame.account`
+  크로스-DB 상세에 `▾ gunzgame 6` / `▾ gunzlogin 2` 머리글 + 총 8(≤60) 이라 전 그룹 펼침(리뷰 B1 수정 실증) ·
+  머리글 클릭 접기/펼치기 왕복(타 그룹 불변) · '모두 접기/펼치기' 일괄 + 라벨 토글 + 접힘 중 총계 유지 ·
+  관계 상세 `참조받음 23` 을 `gunzgame 21`/`gunzlogin 2` 로 구획해 전량 · 컬럼 아코디언 `AID` 캐럿 lazy 주입 4건 ·
+  pageerror 0(기존 benign ResizeObserver 경고만). 상세 Run 과 한계는 feature-0003 `docs/test-runs.d/20260727T173000-detail-db-groups.md`.
+  미재현 한계: 대형 그룹(>300) 기본 접힘 · 백엔드 `truncated` 고지 배너는 현 데이터셋(최대 이웃 64)에 사례 없음 → 유닛 검증에 머묾.
 
 ### 검증
 - `node --check --input-type=module` PASS(graph-ctxmenu.js·graph-state.js). 헤드리스 `test_detail_dbgroups.js` **62 PASS**(적대 리뷰 사각 흡수판).
