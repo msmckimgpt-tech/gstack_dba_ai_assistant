@@ -4906,8 +4906,14 @@ function _startInlineEdit(message, bubbleEl) {
   editor.className = "message-edit-box";
   const ta = document.createElement("textarea");
   ta.className = "message-edit-textarea";
-  ta.value = String(message.content || "");
-  ta.rows = Math.min(12, Math.max(2, String(message.content || "").split("\n").length + 1));
+  const _src = String(message.content || "");
+  ta.value = _src;
+  // share-edit-usable: rows 를 개행 수로만 계산하면 줄바꿈 없는 장문(공유 대화의 요구사항
+  // 서술 등)이 2행짜리 창에 갇힌다(실측 377자 → rows=2). 실제 렌더는 wrap 되므로 대략적인
+  // wrap 행수(문자수/60)도 함께 반영해 둘 중 큰 값을 쓴다.
+  const _lineCount = _src.split("\n").length;
+  const _wrapCount = Math.ceil(_src.length / 60);
+  ta.rows = Math.min(18, Math.max(3, Math.max(_lineCount + 1, _wrapCount)));
   editor.appendChild(ta);
   const btnRow = document.createElement("div");
   btnRow.className = "message-edit-actions";
@@ -4958,6 +4964,12 @@ function _startInlineEdit(message, bubbleEl) {
   // 사라지던 문제 해소). renderMessages()/refreshWorkspace() 재렌더 시 말풍선이 새로 만들어져
   // 클래스는 자동 소멸하므로 별도 제거 불필요(취소·성공 모두 재렌더 경로).
   bubbleEl.classList.add("message-bubble-editing");
+  // share-edit-usable: 말풍선 폭은 content 기반이라 innerHTML 을 비우는 순간 원문 폭 정보가
+  // 사라져 편집 창이 .message-edit-box 의 min-width 로 쪼그라든다(실측 공유 대화 661px→272px,
+  // 1:1 484px→303px). 편집 중에만 행(article)을 로그 폭으로 stretch 해 실사용 가능한 편집 폭을
+  // 확보한다 — 클래스는 말풍선 클래스와 동일하게 재렌더 시 자동 소멸한다.
+  const _rowEl = bubbleEl.closest("article.message");
+  if (_rowEl) _rowEl.classList.add("is-editing");
   bubbleEl.appendChild(editor);
   try { ta.focus(); } catch (_e) {}
 }
@@ -5356,8 +5368,6 @@ function renderMessages() {
       }
       // 수정 버튼은 hover 액션(다른 말풍선 액션과 동형).
       if (_canEditMessage(message, role, msgIsOwn)) {
-        const uActions = document.createElement("div");
-        uActions.className = "message-actions message-user-actions";
         const editBtn = document.createElement("button");
         editBtn.type = "button";
         editBtn.className = "message-action-btn message-edit-trigger";
@@ -5368,8 +5378,19 @@ function renderMessages() {
           ev.stopPropagation();
           _startInlineEdit(message, bubble);
         });
-        uActions.appendChild(editBtn);
-        bubble.appendChild(uActions);
+        // share-edit-usable: 위 말풍선 액션(☰ 메뉴·피드백)이 이미 있으면 **같은 컨테이너에
+        // 합류**시킨다. 별도 .message-actions 를 하나 더 만들면 두 컨테이너가 동일 absolute
+        // 좌표(bottom:-28px; right:0)에 겹쳐, 나중에 붙은 '수정'이 ☰ 를 완전히 덮어 ☰ 메뉴
+        // (여기부터/여기까지 공유·분기·샘플 등록)가 영구 클릭 불가가 된다(hit-test 실증).
+        const existingActions = bubble.querySelector(":scope > .message-actions");
+        if (existingActions) {
+          existingActions.insertBefore(editBtn, existingActions.firstChild);
+        } else {
+          const uActions = document.createElement("div");
+          uActions.className = "message-actions message-user-actions";
+          uActions.appendChild(editBtn);
+          bubble.appendChild(uActions);
+        }
       }
     }
 

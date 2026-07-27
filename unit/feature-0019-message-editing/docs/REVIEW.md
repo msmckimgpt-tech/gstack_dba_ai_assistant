@@ -114,3 +114,43 @@ source_of_truth: true
 - **Human Approval**: PLAN-APPROVED(2026-07-13, feature-0019 상위) 유효 범위 내 Minor 후속. deploy_scope: included.
 - 검증: `test_message_editing_reanswer_model.py` **6 PASS**(F1 forward·F2 부재 미포함·F3 명시 normal·F4
   non-2xx 복원·F5 2xx 미복원·S1 simple 미dispatch) + py_compile/node --check OK. POST-DEPLOY PB-0008.
+
+## REV-20260727T103000-share-edit-usable [CODEX:share-edit-usable] SHIP-WITH-FIXES
+- Related Change: CHG-20260727T103000-share-edit-usable (공유 대화 메시지 텍스트 수정 상호작용 회복).
+- Source: `codex review --uncommitted` (codex-cli 0.145.0, gpt-5.6-terra, reasoning xhigh) — §18.8.1
+  경량 경로. **경로 선택 근거(정직 표기)**: 본 세션은 사용자 환경 지시로 Agent(subagent) 호출이
+  비활성이라 §18.8 표준 panel(ux/design) dispatch 불가 → 사용자 결정(2026-07-27 AskUserQuestion:
+  "codex 업데이트 후 다시 시도")에 따라 codex 를 0.142.5→0.145.0 업그레이드 후 재실행(0.142.5 에서는
+  ChatGPT 계정 모델 미지원 400 으로 2회 실패). check #9 accepted verdict (§18.4·§18.9).
+- Scope: `static/app.js`(`_startInlineEdit` 폭 훅·rows 보정 / `renderMessages` 편집 버튼 컨테이너 합류)
+  + `static/styles.css`(편집 중 행·말풍선 stretch) + `tests/test_share_edit_usable.py`(신규 5) +
+  `unit/feature-0019-message-editing/src/scenario.share-edit-usable.json`(PB-0008) + 문서.
+- Trigger: UI/버튼/레이아웃 keyword matched (§18.8 dispatch — UI·화면·레이아웃).
+- Timestamp: 2026-07-27T10:30:00+09:00
+- Verdict: **SHIP-WITH-FIXES** — P1(GATE) **0건**, P2 **1건 in-cycle 수정**.
+- **P2 [FIXED in-cycle] POST-DEPLOY 시나리오의 false-green 위험**: `scenario.share-edit-usable.json`
+  의 `eval` step 들이 수집값을 **출력만** 하고 실패를 단언하지 않아, 대상 대화가 삭제·미오픈이거나
+  액션 컨테이너가 다시 2개가 되거나 textarea 폭이 240px 로 회귀해도 `win-browser.py run` 이
+  `ok:true` 로 끝난다(게다가 진단 잔재로 `stop_on_fail:false` 가 붙어 있어 실패 step 도 흐름을 멈추지
+  않음) → **UI 회귀를 PASS 로 기록**. 수정: (a) 모든 step 의 `stop_on_fail` override 제거(기본 true),
+  (b) 대상 확정 step 이 `conv.id` 불일치·`is_group=false`·user 메시지 0·'수정' 버튼 0 에서 throw,
+  (c) AC1 이 `.message-actions` 컨테이너 ≠1 / '수정'·☰ hit-test 미도달에서 throw, (d) AC2 가
+  `is-editing` 미부여 / textarea ≤300px(baseline 240px 수준) / 로그 폭의 60% 미만 / rows<3 에서
+  throw, (e) AC3 가 취소 후 `is-editing`·편집 박스 잔존에서 throw. 검증 시나리오가 실제 게이트로 동작.
+- **보안·인가 CLEAN**: 백엔드·route·RBAC·스키마·마이그레이션 **무변경**. 편집 authz(본인 발신 IDOR·
+  `conversation.ask`·그룹 mode 제한·@assistant 잠금)는 `post_edit_message` 서버 게이트가 정본이며
+  본 변경은 그 게이트를 건드리지 않는다(프론트 표시 계층만). `_canEditMessage` 게이트 로직 불변 —
+  버튼의 **배치 위치**만 기존 액션 컨테이너로 옮겼다(노출 조건 동일).
+- **회귀 CLEAN**: `is-editing`/`message-bubble-editing` 클래스는 말풍선 재생성(renderMessages·
+  refreshWorkspace) 시 자동 소멸 — 취소·저장 양 경로 모두 재렌더라 잔존 없음(AC3 가 단언). CSS 는
+  `.is-other-message`(0,3,0) 대비 동일 특이도 + 후행 선언으로 승리(파일 말미 편집 블록에 배치).
+  기존 액션 컨테이너가 없는 말풍선(공유 권한 없는 참가자 등)은 종전대로 신규 컨테이너 생성 — 분기
+  양쪽 모두 커버.
+- **잔여 관찰(비차단)**: rows 의 wrap 추정(문자수/60)은 근사치로, 실제 wrap 은 폭·글꼴에 따라 다르다.
+  과대 추정 시 상한 18행에서 clamp 되고 textarea 는 `resize: vertical` 이라 사용자가 조절 가능 —
+  실사용 저해 없음(정확한 auto-grow 는 별도 개선 여지, §8.1 후속 후보).
+- **Human Approval Needed**: no — Minor(§12.3, 프론트 표시·기하 전용). 상위 PLAN-APPROVED
+  (2026-07-13 feature-0019) 유효 범위 내 결함 수정. deploy_scope: included(FIRST_REQUEST.md 전역).
+- 검증: `tests/test_share_edit_usable.py` **5 PASS** + `node --check app.js` OK + `make test` 회귀 0
+  (잔여 4 = TEST.md 기록된 pre-existing local-env) + PRE 라이브 A/B 실측(textarea 240px→886px) +
+  POST-DEPLOY PB-0008(assert 내장 시나리오).

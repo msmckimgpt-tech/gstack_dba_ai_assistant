@@ -123,3 +123,45 @@ resolved model=sonnet·추론예산 상향 확인).
 `{model:claude-sonnet-4, reasoning_level:max}`(fetch 인터셉터 캡처) → 실 재답변이 버전 2/2 브랜치 생성 →
 관리 콘솔 'AI 운영' 최근 활동에서 해당 대화 재답변 LLM 호출이 **claude-sonnet-4**(≠haiku) 실증. 상세=TEST
 fragment `docs/test-runs.d/20260724T064140-reanswer-model-select.md` §POST-DEPLOY 결과.
+
+## 2026-07-27 — 공유 대화 메시지 텍스트 수정 상호작용 회복 (share-edit-usable)
+
+**신고**: "공유 대화에서, 사용자의 메세지 텍스트 수정에 대한 상호작용이 진행되지 않는 것으로 확인".
+
+**진단 순서(정상 경로 먼저 반증 — PB-0008 라이브, win-browser relay · bootstrap_admin)**:
+공유(그룹) 대화 `20260722015451-d23ad939`(is_group=true, owner=본인)에서
+① '수정' 버튼 렌더 ✅ ② 클릭 → 인라인 편집 UI([단순 수정 / 취소] — 그룹은 재답변 미노출, INV-4 정합) ✅
+③ `POST /messages/{mid}/edit` mode=simple → **200 `{ok:true}`** + 내용 반영 + `(편집됨)` 배지 ✅
+④ 백엔드 게이트 무해 프로브(그룹+reanswer) → **400 "그룹 대화는 단순 수정만 가능합니다"** = 접근·ask·
+per-message sender IDOR·@assistant 잠금 게이트를 모두 통과한 뒤의 응답 ✅.
+→ **API·authz·저장 경로는 결함 없음**. 실사용 불가의 원인은 UI 기하 2건이었다.
+
+**근본원인 (계측)**:
+- **R1 편집 창 축소**: 말풍선 폭이 content 기반이라 `_startInlineEdit` 의 `bubbleEl.innerHTML=""`
+  순간 원문 폭 정보가 사라지고, 편집 창이 `.message-edit-box` 의 min-width(240px)로 쪼그라든다.
+  실측 **공유 대화 661px → 272px**(textarea 240×60px)에서 **377자**를 편집해야 했다(1:1 은
+  484→303px). `ta.rows` 도 개행 수만 세어 줄바꿈 없는 장문이 rows=2 로 고정. 공유 대화는
+  **단순 수정 전용**이라 "요청사항 수정(재답변)" 우회로도 없어 체감상 "수정이 안 되는" 상태.
+- **R2 ☰ 메뉴 가림**: user 말풍선에 `.message-actions` 컨테이너가 2개(☰ 메뉴 + '수정') 생성되어
+  동일 absolute 좌표(bottom:-28px; right:0)에 겹치고, 나중에 붙은 '수정'(40px)이 ☰(30px)를 완전히
+  덮는다. hit-test 로 **☰ 중심점이 `.message-edit-trigger` 를 반환**함을 실증 — ☰ 메뉴('여기부터/
+  여기까지 공유'·분기·샘플 등록) 진입이 영구 불가. 공유 대화의 공유 범위 지정 상호작용도 함께 막혔다.
+
+**수정 (프론트 정적 자산 전용)**:
+- `static/app.js` `_startInlineEdit`: 편집 행에 `is-editing` 부여(폭 stretch 훅) + `ta.rows` 를
+  개행 수와 wrap 추정(문자수/60) 중 큰 값으로(하한 3·상한 18).
+- `static/app.js` `renderMessages`: 편집 버튼을 기존 `:scope > .message-actions` 에 `insertBefore`
+  로 합류(수정 좌·☰ 우), 부재 시에만 신규 컨테이너 생성 → absolute 컨테이너 중복 제거.
+- `static/styles.css`: 편집 중 행/말풍선 full-width stretch + `.message-edit-box { width:100% }`.
+
+**성격·위험**: Minor(§12.3) — 백엔드·route·RBAC·스키마·마이그레이션 무변경, 비파괴. 1:1 편집 UI 도
+동일 혜택을 받으며 동작 계약(그룹=단순 수정 전용, @assistant 잠금, IDOR)은 불변.
+
+**검증**: 신규 `tests/test_share_edit_usable.py` 5건 + `node --check` + make test 회귀 0 +
+POST-DEPLOY PB-0008 라이브 시각검증.
+
+**범위 밖(사용자 확인 필요 — 설계 변경)**: 신고가 아래를 가리킨 것이라면 별도 결정이 필요하다.
+(a) 그룹/공유 대화에서 **`@assistant` 를 호출한 메시지**는 설계상 편집 잠금(ANCHOR INV-4 — 공유 답변
+근거 무결성)이라 '수정' 버튼이 뜨지 않는다. 해제하려면 ANCHOR/FUNCTION 개정 + 사용자 승인 필요.
+(b) 익명 **공유 링크 뷰(`/share/{token}`)** 는 read-only 뷰어라 편집 어포던스가 없다(FUNCTION §4
+Out of Scope). 실측으로 편집 트리거 0·컴포저 없음 확인. 편집 지원은 scope 확대 결정 사항.

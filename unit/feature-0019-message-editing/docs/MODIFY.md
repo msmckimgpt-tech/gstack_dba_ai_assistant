@@ -141,3 +141,33 @@ source_of_truth: true
 - **검증**: 신규 `tests/test_message_editing_reanswer_model.py` 6건(F1 model+reasoning forward·F2 부재 시
   미포함·F3 명시 'normal' forward·F4 non-2xx→브랜치 복원·F5 2xx→미복원·S1 simple 미dispatch) PASS +
   py_compile/node --check OK + make test 회귀 0. §18.8 적대 리뷰=REV-20260724T064140(SHIP). POST-DEPLOY PB-0008.
+
+## CHG-20260727T103000-share-edit-usable (공유 대화 메시지 텍스트 수정 상호작용 회복)
+- **일시**: 2026-07-27 10:30 KST · **branch**: `ai/claude/feature-0019-share-edit-fix`
+- **신고**: "공유 대화에서 사용자의 메세지 텍스트 수정에 대한 상호작용이 진행되지 않음".
+- **진단(PB-0008 라이브 실측, win-browser relay · bootstrap_admin)**: 먼저 정상 경로를 **반증** —
+  그룹(공유) 대화 owner 의 '수정' 버튼 렌더·인라인 편집 UI·`POST /messages/{mid}/edit` (mode=simple)
+  200·내용 반영·`(편집됨)` 배지까지 전부 동작(백엔드 authz·IDOR·@assistant 잠금 게이트도 프로브로 통과
+  확인: 그룹+reanswer → 400 "그룹 대화는 단순 수정만"). 실사용 불가의 원인은 **UI 기하** 2건이었다.
+  - **R1**: 말풍선 폭이 content 기반이라 `_startInlineEdit` 의 `bubbleEl.innerHTML=""` 순간 원문 폭이
+    소실 → 편집 창이 `.message-edit-box` min-width(240px)로 축소. 실측 **공유 661px→272px**
+    (textarea 240×60px, 내용 377자) / 1:1 484→303px. `ta.rows` 도 개행 수만 세어 장문이 rows=2.
+    공유 대화는 단순 수정 전용(INV-4)이라 재답변 우회로가 없어 체감 "수정 불가".
+  - **R2**: user 말풍선에 `.message-actions` 가 2개 생성(☰ 메뉴 + '수정') → 동일 absolute 좌표
+    (bottom:-28px; right:0)에 겹쳐 '수정'(40px)이 ☰(30px)를 완전히 덮음. hit-test 로 ☰ 중심점이
+    `.message-edit-trigger` 를 반환함을 실증 → ☰ 메뉴(여기부터/여기까지 공유·분기·샘플) 클릭 불가.
+- **변경**:
+  - feature-0003 `static/app.js` `_startInlineEdit`: ① 편집 행 `article.message` 에 `is-editing`
+    클래스 부여(폭 stretch 훅, 말풍선 클래스와 동일하게 재렌더 시 자동 소멸) ② `ta.rows` 를 개행 수와
+    wrap 추정(문자수/60) 중 큰 값으로 산정(하한 3·상한 18).
+  - feature-0003 `static/app.js` `renderMessages` user 편집 어포던스: 기존 `:scope > .message-actions`
+    가 있으면 그 컨테이너에 `insertBefore` 로 합류(수정 좌·☰ 우), 없을 때만 신규 컨테이너 생성.
+  - feature-0003 `static/styles.css`: `.message.is-user.is-editing`/`.is-assistant.is-editing`
+    `align-self: stretch; width:100%` (`.is-other-message` 특이도 0,3,0 을 후행 선언으로 승) +
+    `.message.is-editing .message-bubble.message-bubble-editing { width:100% }` +
+    `.message-edit-box { width:100% }`.
+- **성격**: 프론트 정적 자산 전용(display/기하). 백엔드·route·RBAC·스키마·마이그레이션 **무변경**,
+  비파괴·additive. 1:1 편집 UI 도 동일 혜택(폭 확장·rows 보정)이며 동작 계약은 불변. Minor(§12.3).
+- **검증**: 신규 `tests/test_share_edit_usable.py` 5건(F1 is-editing 부여·F2 rows wrap 추정·F3 액션
+  컨테이너 합류·F4 CSS stretch·F5 edit-box width) + `node --check` OK + make test 회귀 0 +
+  POST-DEPLOY PB-0008 라이브 시각검증(공유 대화 편집 폭·☰ 클릭 가능).
