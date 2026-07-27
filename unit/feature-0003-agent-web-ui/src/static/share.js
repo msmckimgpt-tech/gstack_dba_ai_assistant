@@ -641,6 +641,7 @@
           const s = v === "" || v == null ? "" : String(v);
           return NB.repeat(Math.max(0, w - s.length)) + s;
         };
+        const sqlMode = looksLikeSql(raw); // SQL diff 만 라인 코드 토큰 하이라이트(비-SQL diff 는 평문 유지)
         codeEl.textContent = "";
         rows.forEach((r) => {
           const span = document.createElement("span");
@@ -649,12 +650,20 @@
             "data-gutter",
             padNo(r.oldNo) + NB + padNo(r.newNo) + NB + (r.mark || NB)
           );
-          span.textContent = r.code.length ? r.code : " ";
+          // 내용 라인(add/del/ctx)만 토큰화 — hunk(@@)·meta 라인 고유색 유지(§18.8 리뷰 MINOR).
+          const tokenize = sqlMode && r.code.length &&
+            (r.cls === "diff-add" || r.cls === "diff-del" || r.cls === "diff-ctx");
+          if (tokenize) {
+            span.appendChild(sqlTokenizeToFragment(r.code)); // 토큰 span textContent-only(XSS 무첨가)
+          } else {
+            span.textContent = r.code.length ? r.code : " ";
+          }
           codeEl.appendChild(span);
         });
         const pre = codeEl.closest("pre");
         if (pre) {
           pre.classList.add("diff-block");
+          if (sqlMode) pre.classList.add("diff-sql");
           pre.style.setProperty("--diff-gutter-ch", String(2 * w + 3));
         }
       });
@@ -728,8 +737,7 @@
     "UNSIGNED","ZEROFILL",
   ]);
 
-  function highlightSqlInto(codeEl, raw) {
-    const text = String(raw || "").replace(/\n$/, "");
+  function sqlTokenizeToFragment(text) {
     const RE = /(\/\*[\s\S]*?\*\/|--[^\n]*)|('[^']*(?:''[^']*)*'|"[^"]*(?:""[^"]*)*")|(`[^`]*(?:``[^`]*)*`)|(@{0,2}[A-Za-z_][A-Za-z0-9_$]*)|(0[xX][0-9A-Fa-f]+|\d+\.?\d*(?:[eE][+-]?\d+)?)|(\s+)|([\s\S])/g;
     const frag = document.createDocumentFragment();
     let pending = "";
@@ -761,8 +769,27 @@
       else pending += m[0];
     }
     flush();
+    return frag;
+  }
+
+  function highlightSqlInto(codeEl, raw) {
+    const text = String(raw || "").replace(/\n$/, "");
     codeEl.textContent = "";
-    codeEl.appendChild(frag);
+    codeEl.appendChild(sqlTokenizeToFragment(text));
+  }
+
+  // diff 내용이 SQL 로 보이는지 판정 — app.js looksLikeSql 과 동일(실제 SQL statement 모양 앵커,
+  // import…from·.create()/.delete() 코드 관용구 오탐 방지, <select> 태그 lookbehind 배제).
+  function looksLikeSql(text) {
+    return /(?<![<\/])\bSELECT\b[\s\S]{0,3000}?\bFROM\b/i.test(text)
+        || /\bINSERT\s+INTO\b/i.test(text)
+        || /\bUPDATE\s+[`"\[\w.]+[\s\S]{0,2000}?\bSET\b/i.test(text)
+        || /\bDELETE\s+FROM\b/i.test(text)
+        || /\b(CREATE|ALTER|DROP)\s+(OR\s+REPLACE\s+)?(TEMP(ORARY)?\s+)?(TABLE|VIEW|INDEX|DATABASE|SCHEMA|PROCEDURE|FUNCTION|TRIGGER|SEQUENCE|MATERIALIZED)\b/i.test(text)
+        || /\bTRUNCATE\s+(TABLE\s+)?[`"\[\w.]/i.test(text)
+        || /\bMERGE\s+INTO\b/i.test(text)
+        || /\b(GRANT|REVOKE)\b[\s\S]{0,200}?\bON\b/i.test(text)
+        || /\bWITH\s+[`"\w]+\s+AS\s*\(/i.test(text);
   }
 
   function enhanceSqlBlocks(html) {

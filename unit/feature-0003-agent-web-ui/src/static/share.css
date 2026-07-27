@@ -358,14 +358,19 @@
 .share-message-content pre.diff-block .diff-meta { color: #94a3b8; }
 
 /* TASK-20260724T180458: ```sql 코드블록 구문 하이라이트(공유 뷰) — app.js/styles.css 와 동형.
-   --share-code-bg(#1e293b) 다크 배경 위에서 읽히는 Tokyo Night 팔레트. */
-.share-message-content pre.sql-block .sql-tok-keyword { color: #bb9af7; font-weight: 600; }
-.share-message-content pre.sql-block .sql-tok-func    { color: #7aa2f7; }
-.share-message-content pre.sql-block .sql-tok-type    { color: #2ac3de; }
-.share-message-content pre.sql-block .sql-tok-string  { color: #9ece6a; }
-.share-message-content pre.sql-block .sql-tok-number  { color: #ff9e64; }
-.share-message-content pre.sql-block .sql-tok-var     { color: #e0af68; }
-.share-message-content pre.sql-block .sql-tok-comment { color: #94a3b8; font-style: italic; }
+   --share-code-bg(#1e293b) 다크 배경 위에서 읽히는 Tokyo Night 팔레트.
+   TASK-20260727T102027: sql-tok 는 ```sql 블록·SQL diff(pre.diff-sql) 양쪽에서 나오므로
+   pre.sql-block 한정에서 .sql-tok-* 로 일반화(토크나이저 전용 클래스라 bleed 없음). */
+.share-message-content .sql-tok-keyword { color: #bb9af7; font-weight: 600; }
+.share-message-content .sql-tok-func    { color: #7aa2f7; }
+.share-message-content .sql-tok-type    { color: #2ac3de; }
+.share-message-content .sql-tok-string  { color: #9ece6a; }
+.share-message-content .sql-tok-number  { color: #ff9e64; }
+.share-message-content .sql-tok-var     { color: #e0af68; }
+.share-message-content .sql-tok-comment { color: #94a3b8; font-style: italic; }
+/* SQL diff(pre.diff-sql): 내용 라인(add/del/ctx) 평문색을 기본 코드색으로 — 토큰이 syntax색,
+   add/del 은 배경·border·gutter. hunk/meta 는 :not 으로 제외해 고유색 유지(§18.8 리뷰 MINOR). */
+.share-message-content pre.diff-block.diff-sql .diff-line:not(.diff-hunk):not(.diff-meta) { color: var(--share-code-fg); }
 
 /* 본문 내 markdown 표 — DB 질의 응답의 핵심 가시화 요소 */
 .share-message-content table {
