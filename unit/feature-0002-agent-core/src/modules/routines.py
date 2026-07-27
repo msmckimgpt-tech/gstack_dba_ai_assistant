@@ -254,7 +254,7 @@ def _external_tables_for(kc, dsk) -> dict:
 
 def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_key="common",
                          datasource_key="", source_run_id=None, store_schema=None,
-                         cap=None, prune=True) -> int:
+                         cap=None, prune=True, inventory_sink=None) -> int:
     """한 schema 의 함수·프로시저를 introspect 해 routine_objects 에 upsert. 반환: **변경 upsert 행 수**
     (무변경 skip 은 미집계 — cur.rowcount 기준, §18.8 NIT).
 
@@ -263,6 +263,15 @@ def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_ke
     **prune(§18.8 MAJOR-보완)**: cap 절단이 없는 완전 스캔일 때, 이번 introspect 에 없는
     (scope, schema) 행을 삭제해 drop 된 routine 의 SSOT 잔존을 막는다(그래프 노드 prune 은
     테이블과 동일하게 투영 범위 밖 — ADR-016 알려진 한계).
+    **inventory_sink(change-reanalysis, 2026-07-27)**: dict 를 넘기면 이번 introspect 가 관측한
+    **루틴 전량**을 `sink["routines"] = {routine_name: definition_hash}` 로 채운다(반환형 불변 —
+    기존 호출자 무영향). insight-worker 가 이 인벤토리를 구조 스냅샷과 대조해 자동 재분석 시드를
+    만든다. **cap 절단(truncated) 시에는 `"routines"` 키를 넣지 않는다** — 부분집합을 전량으로
+    오인하면 절단 밖 루틴이 매 사이클 삭제→신규로 진동해 승인 없는 LLM 지출을 반복한다(prune 이
+    완전 스캔에서만 도는 것과 동일 규약). 키 유무가 곧 "인벤토리 신뢰 가능" 신호이므로, 루틴이
+    실제로 0건인 스키마(빈 dict)와 절단·조회 실패(키 부재)가 구분된다.
+    upsert 성공 여부와 무관하게 담는다 — 인벤토리는 DB 관측 사실이라, 일부 행의 upsert 예외로
+    항목이 빠지면 다음 사이클에 '신규'로 오탐된다.
     """
     if db_conn is None:
         return 0
@@ -277,6 +286,14 @@ def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_ke
         return 0
     truncated = len(fetched) > max(1, cap)
     routines = fetched[:max(1, cap)]
+    if inventory_sink is not None and not truncated:
+        # change-reanalysis: 완전 스캔일 때만 전량 인벤토리를 노출(부분집합 = 진동 원인).
+        # upsert 루프 밖에서 계산 — 개별 행의 upsert 예외가 인벤토리를 갉지 않게 한다.
+        inventory_sink["routines"] = {
+            r["name"]: hashlib.sha256(
+                (r["definition"] or "").encode("utf-8", "replace")).hexdigest()
+            for r in routines if r.get("definition")
+        }
     params_map, returns_map = _fetch_params(db_conn, schema) if routines else ({}, {})
     label = str(store_schema).strip() if store_schema is not None else str(schema or "")
     kc, kowned = _rw_conn(kb_conn)

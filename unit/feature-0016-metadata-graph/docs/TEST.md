@@ -1033,3 +1033,69 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 
 ### Run (예정) — POST-DEPLOY 라이브 (Environment: Windows-browser, PB-0008) — TAC.8
 - log_v2 스키마 클러스터 상세 → 'DB 전체 AI 능동 분석' 재시도: "전체 재분석" confirm 노출(차단 메시지 아님) → 시작 → 컬럼 잡 생성 확대(>10)·column_descriptions log_v2 적재 확인(PG) → run 완료 후 ≤15분 재클러스터·라벨 갱신·AGE 투영 → 그래프 뷰(새 fetch) 밴드·상세 패널 그룹 정합 육안.
+
+## change-reanalysis — 구조 변동 감지 시 AI 자동 재귀 분석 (2026-07-27)
+
+### Run — 단위 테스트 (Environment: CLI, pytest) — TCR.10
+- `test_node_analysis_change_reanalysis.py` **50 PASS** (구 노드-마커 설계 20 → 스냅샷 semantics 전면 갱신 + 2라운드 재검증 지적분 보강):
+  - `enqueue_change_analysis` — 스위치 OFF no-op / **CAP=0 라이브 정지**(자격 조회조차 안 함) /
+    자격 없음(ineligible)일 때 **AGE 조회 0회**(비용 순서 계약) / 자격 SQL 의 **과반 조건**(`done>0` +
+    `done*2 >= enqueued`) / **scope 원형·소문자 IN 매칭**(`KR_LIVE`/`kr_live`) / 쿨다운이 신규 run 차단
+    (그래프 조회 전) / **진행 중 자동 run 은 busy no-op**(새 run 0·jobs 0·`enqueued` 증분 0·그래프 조회 0)
+    / 그래프 미투영 노드 시드 0 + `skipped_missing` / 신규 run 의 `root_key=<schema_key>#auto`·
+    `root_label='SchemaAuto'`·시드 잡 `depth=0`+`anchor_key==node_key`+라벨(Table/Routine) 판별·
+    **`enqueued` INSERT 확정값**(사후 절대값 SET 부재) / cap 절단(capped) / **시드 1행 예외가 배치를
+    중단시키지 않고** 회계는 증분식 보정 / **시드 전멸 시 run 즉시 DELETE**(고아 running 방지) /
+    `schema_analysis_completed` fail-closed(PG 미가용=False)·true 경로.
+  - insight 구조 스냅샷 — 첫 관측 baseline 확립(후보 0) / 신규·변경만 후보(무변경 제외) /
+    **시드된 노드만 스냅샷 전진**(미시드는 이전 지문 유지 = 다음 사이클 재시도) / 삭제는 후보 아님 +
+    스냅샷에서 제거 / **관측 못한 축은 스냅샷 보존** / **축이 처음 켜지면 그 축 baseline 확립만**
+    (관측 공백 뒤 전량 오탐 차단) + 그 다음 사이클부터 정상 감지 / **스냅샷 키가 실 스키마로 분리**
+    (MSSQL DB명 라벨 공유 시 전량 진동 차단) / shadow 모드(enqueue 0·스냅샷 미전진·후보만 계측) /
+    report 카운터가 전부 int(datasource 순회 합산 규약) / enqueue 예외 흡수 + 스냅샷 동결 /
+    스위치 OFF·관측 축 0·scope 공백 시 미발동(KV 무기록).
+  - `routines.introspect_and_store(inventory_sink=…)` — 완전 스캔 시 **전량** 인벤토리(무변경 포함) /
+    **cap 절단 시 `"routines"` 키 부재**(부분집합을 전량으로 오인하면 진동) / 행 upsert 예외에도
+    인벤토리 보존 / sink 미전달 시 동작·반환형 불변.
+  - **2라운드 재검증 흡수분** — 라이브 정지 스위치를 `runtime_settings` **실경로**로 검증(스냅샷
+    override → CAP=0 정지 / 200 상향 / -1 shadow / 쿨다운 값이 쿼리 파라미터에 도달; `auto_setting_int`
+    를 patch 하지 않아 "config 만 읽고 통과"하는 허위 안심 제거) · 자격을 **행 판정 fake**로 평가
+    (1/500 성공 run 거부 · 260/500 승인 · 자동 run 은 자격 불성립 · scope·root_key 대소문자 변형 매칭)
+    · 자동 경로 scope 가 수동 라우터와 같은 소문자 축으로 적재 · **동일 구조 샤드 흡수**(신규 샤드
+    시드 0 + 스냅샷 즉시 반영으로 재탐지 없음 / 구조가 다른 신규는 정상 분석 / 기존 테이블 변경은
+    절대 흡수 안 됨) · **관측 실패 방어**(테이블 전량 소실 → 축 보존 + `axis_dropped` 계측 + 복귀
+    사이클 후보 0 / 8-of-10 소실도 보존 / 1-of-10 삭제는 정상 반영) · 수동 run 진행 중 busy ·
+    CAP=0 시 `SchemaAuto` 대기 잡 drain 보류(정상 시 claim SQL byte-동치) · KV 저장 실패 흡수 ·
+    파손 스냅샷 baseline 저하 · 레거시 축 플래그 추론 · 다중 datasource 스냅샷 분리 · 축 인터리브.
+- cross-feature `test_worker_parallelism.py` — 신규 knob 2종을 PERF_KEYS·config default 대조·env 격리에 등재.
+- 컨테이너 전체 스위트(0002+0003) **2,455 PASS · 0 failed · 0 error · 2 skipped**(junitxml 집계, 회귀 0).
+- 정적: ruff clean(`modules/`·`shared/`), `python3 -m py_compile` PASS.
+
+> **이 스위트의 한계(정직 표기)**: 스냅샷 판정은 `_auto_reanalyze_structure_changes` 를 직접 호출해
+> 검증한다 — `_scan_instance_schema_insights` 배선(어떤 상황에서 어떤 플래그로 부르는가)을 구동하는
+> 테스트는 없다. 2라운드 리뷰가 지적한 대로 이 기능의 위험은 판정 로직보다 호출 규약에 있으므로,
+> **방어를 helper 내부로 옮겨** 호출부가 어떤 값을 넘겨도 안전하도록 설계를 바꿨다(관측 실패 방어·
+> 자격 선확인·shadow 판정 모두 내부). 배선 자체의 회귀는 여전히 POST-DEPLOY(TCR.11)가 잡는다.
+
+### Run (예정) — POST-DEPLOY 라이브 (Environment: CLI + PG 조회) — TCR.11
+- **오탐 규모 우선 확인(적대 리뷰 Challenge)**: 구조를 **전혀 바꾸지 않은** 상태에서
+  `auto_reanalysis_candidates`(insight_worker 로그 payload)가 **0** 이고 `SchemaAuto` run 이 생성되지
+  않는지 먼저 확인한다. "변경하면 도는가" 보다 "변경이 없으면 안 도는가"가 이 기능의 위험 축이다.
+  **관측 창(2라운드 리뷰 지적)**: 2 사이클로는 부족하다 — 샤드 오탐은 **하루 경계**에서, 관측 실패
+  오탐은 복원/마이그레이션 창에서만 드러난다. 관리 콘솔에서 `AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP=-1`
+  (관찰 모드)로 두고 **최소 1 영업일(일별 샤드 생성 경계를 포함)** `candidates`·`absorbed` 추이를 본
+  뒤 정상 전환한다. 3-state 라 전환·복귀 모두 재배포 없이 콘솔에서 가능하다.
+- **루틴 축 첫 활성화 관측**: 루틴 introspect cadence(`rel_maintenance_due`)를 최소 1회 넘기는 구간까지
+  포함해야 축 baseline 전이가 드러난다(2 사이클 관측으로는 통과해 버린다).
+- **권한/목록 공백 재현**: 대상 스키마 계정 권한을 좁히거나 빈 스키마 상태를 1 사이클 통과시킨 뒤,
+  다음 사이클 `candidates` 가 **0** 이고 `auto_reanalysis_axis_dropped` 가 1 증가하는지 확인
+  (스냅샷 wipe → 전량 재시드 경로의 직접 검증).
+- 'DB 전체 AI 능동 분석'을 마친 DB 에서 ① 테이블 신규 생성 ② 기존 테이블 컬럼 추가 ③ 프로시저 정의 변경을
+  적용한 뒤, 다음 스캔 사이클에서 `node_analysis_runs` 에 `root_label='SchemaAuto'` run 이 생성되고 해당
+  노드의 `node_analysis_jobs` 가 done 으로 갱신되는지 확인.
+- 미분석 DB(사용자 run 이력 없음 또는 과반 미달 run)에서 같은 변경을 가했을 때 자동 run 이 **생성되지
+  않는지**(자격 게이트) 확인.
+- 쿨다운 이내 연속 변경이 run 을 남발하지 않고 `cooldown`/`busy` 로 보류되는지 로그(`auto_reanalysis
+  schema=… status=…`)로 확인. 진행 중 run 에 시드가 **append 되지 않는지**(`enqueued` 불변) 함께 확인.
+- 라이브 정지 스위치 실증: 관리 콘솔에서 `AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP=0` 저장 → 재배포 없이
+  다음 사이클에 `status=disabled` 로 무발동 전환되는지 확인.

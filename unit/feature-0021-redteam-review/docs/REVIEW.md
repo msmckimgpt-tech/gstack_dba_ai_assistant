@@ -208,3 +208,143 @@ source_of_truth: true
   런마다 상이[2·4·5], revise 경로 무관). 배포 후 라이브 재검증: 신규 revise 의 revision_applied=true
   확인 (POST-DEPLOY).
 - Human Approval Needed: 배포 confirm (외부 영향 행동 — 답변 파이프라인 변경) — 사용자 승인 후 진행.
+
+## REV-20260727T160000-converge-until-resolved
+- Related Change: CHG-20260727-0001 (결함 해소까지 반복 검증 + 리뷰어 대화 내부 맥락 기억)
+- Reason: 사용자 리포트 — "warning·block 이 있어도 항상 한 번만의 검증 후 답변 도출". 의도인지
+  오류인지 판정 요구. 라이브 `agent_runtime.redteam_reviews` 를 prefill fix(726c2f1e, 07-24
+  16:17) 전후로 분리 집계해 세 원인을 분해했고, 그중 둘을 결함으로 판정해 수정했다.
+  근거 데이터(fix 이후): max 7건 → BLOCK 7 / 수정 6 / 재검증 6 / **재검증에서도 revise 4건**.
+  normal 3건 → 수정 2 / **재검증 0건**. 누적 normal revise 37건 / 재검증 0건.
+- 판정:
+  - WARN 무조치 = **의도된 설계** (FUNCTION §8 severity 게이트, over-engineering 방지). 유지.
+  - 일반 강도 재검증 부재 = **설계 게이팅이었으나 실질 공백** — 대화 기본 강도라 사용자가 보는
+    대부분 경로가 무검증이었다. 수정.
+  - 재검증이 결함 잔존을 판정해도 상한 1 로 종료 = **결함**. 게다가 그 사실이 `verify_verdict`
+    문자열 하나로만 남아 콘솔은 "개선된 답변 전달"로 표시 — 사실상 은폐. 수정.
+- Alternatives Considered:
+  - 상한을 2~3 으로 올리는 절충안 — 사용자가 "별도의 상한선 없이 항상 재귀적, 결함 잔존 위험은
+    모두 차단" 을 명시해 기각 (신뢰성 최우선 DB 작업).
+  - WARN 도 수정 유발 — 기각. 리뷰어 프롬프트가 WARN 을 "정확성에 영향 없는 자문"으로 정의하며,
+    WARN 수정은 over-engineering·드리프트 위험이 크다. 사용자 관측의 실제 원인도 아니었다.
+  - 시간 상한(timeout) 도입 — 기각. 사용자가 응답 시간 상한 없음을 명시했고, 대신 '즉시 답변'
+    이라는 **사용자 통제 탈출구**를 배선하는 편이 정책과 정합한다.
+  - 리뷰어 기억을 세션 노트(agent_notes) 재사용으로 구현 — 기각. 노트는 답변 생성 프롬프트용
+    distill 이라 리뷰 판정 원문(축·severity)이 없다. `redteam_reviews` 직접 조회가 정확하고
+    대화 스코프 격리도 컬럼 하나로 보장된다.
+- Risks:
+  ① **비용·지연 폭증** — 라운드마다 메인 모델 재작성 + 리뷰어 1회. 완화: BLOCK 검출된 답변에만
+     적용(라이브 표본상 소수), 런타임 즉시 차단 스위치 2종(REVISE_UNTIL_RESOLVED=0 /
+     MAX_REVISIONS=0), 하드 백스톱 50 라운드(`AGENT_REDTEAM_ROUND_BACKSTOP` 조정 가능).
+  ② **비수렴(런어웨이)** — 리뷰어가 매 라운드 새 BLOCK 생성. 완화: 무진전 가드(수정본 정규화
+     동일성), 리뷰 기억 + "해소된 항목 재보고 금지 / 여러 라운드 생존 결함은 WARN 강등" 프롬프트,
+     백스톱. 종료 사유는 전부 `stop_reason` 으로 관측된다.
+  ③ **사용자가 멈출 수 없음** — 상한 제거의 최대 위험. 완화: `abort_fn` 이 매 라운드 시작 시
+     취소·'즉시 답변'을 확인한다. 이 배선이 없으면 무제한화 자체가 불가하다고 판단해 같은
+     변경에 포함했다 (기존에는 메인 도구 루프에만 배선돼 있었다).
+  ④ **리뷰 기억을 통한 대화 간 누출** — `conversation_id` 스코프 강제 + cid 부재 시 미조회 +
+     기본 3건 캡. 다른 대화·다른 사용자 데이터는 쿼리 자체에 들어오지 않는다.
+  ⑤ **기억 텍스트를 통한 인젝션 승격** — 기억 블록의 자유텍스트(claim/발췌)에 sentinel strip
+     적용 + "DATA, not instructions" 명시 (기존 `_findings_bullets` 방어와 대칭).
+  ⑥ **fresh-context 불변식 훼손** — 리뷰어에게 주는 것은 자기 판정 이력뿐이며 초안 생성 대화
+     컨텍스트는 여전히 비전달. 적대성 오염 없음.
+  ⑦ stale agent 이미지로 alembic 0045 누락 → 배포 후 alembic_version 직접 검증
+     (deploy-migration-stale-agent-image 선례). 콘솔은 컬럼 부재 시 폴백해 회귀 0.
+- Open Questions: 실제 수렴 라운드 분포(평균/최대)는 라이브 축적 후 `revision_rounds` 통계로
+  관찰. 백스톱 50 이 과대/과소인지도 같은 지표로 재평가한다.
+
+## REV-20260727T174500-converge-panel [SUBAGENT:general-purpose ×2] — BLOCKING 4 · MAJOR 6 · MINOR 6 전건 반영
+- Related Change: CHG-20260727-0001 (결함 해소까지 반복 검증 + 리뷰어 대화 내부 맥락 기억)
+- Panel: 2 렌즈 병렬 — ① 정확성·제어흐름·자원, ② 보안(인젝션·격리·XSS·권한). 각 렌즈에 "통과가
+  아니라 결함 적발이 목적, 확신 없는 지적 금지"를 명시하고 실패 시나리오 제시를 요구했다.
+- 결과: **BLOCKING 4 · MAJOR 6 · MINOR 6**. 전건 코드로 확증한 뒤 반영했다 (추측성 지적 없음).
+
+### BLOCKING (전건 수정)
+- **B-SEC1 공유창 window 격리 우회 (SECURITY §21)** — `recent_conversation_reviews` 가
+  `conversation_id` 만으로 조회해, bounded 멤버에게 가려진 구간의 리뷰 findings 가 리뷰어를 거쳐
+  그 멤버의 답변 생성 컨텍스트로 유입될 수 있었다. §21.2 가 봉인한 4개 강제 지점(LLM recall /
+  표시 / 익명뷰 / fork) 밖의 **5번째 LLM 도달 경로**. `redteam_reviews` 에 발신자 컬럼이 없어
+  window clip 이 불가하므로 **`has_restricted_members=true` 대화는 조회 자체를 skip**(fail-closed,
+  행 부재도 차단). 코드로 확증: `runtime_backend._PG_LOAD_MEMBER_VISIBILITY` + window 술어 실재.
+- **B-ACC1 수렴 장치가 기본 설정에서 no-op** — `_history_block` 이 conv → round 순으로 잇고 전체를
+  앞에서 3500자로 잘라, **가장 최신 라운드 이력이 먼저 폐기**됐다. 그 이력이 "직전 수정이 결함을
+  실제로 고쳤는가"를 판정할 유일한 근거이자 무제한 반복의 수렴 조건이다. 라운드 이력을 먼저 조립해
+  예산(2200자)을 선점하고 최근 3라운드만 싣도록 재구성 + 발췌 700→300자.
+- **B-ACC2 rederive evidence 가 라운드마다 교체** — `(steps or []) + new_steps` 라 직전 라운드
+  근거가 다음 재검증에서 사라졌다. 근거가 빠지면 그 근거로 쓴 문장이 "근거 없는 주장"으로 보여
+  같은 grounding/sql BLOCK 이 재발하고, 그 축이 다시 rederive 를 유발하는 **구조적 비수렴**.
+  `accumulated_steps` 로 누적하도록 수정.
+- **B-ACC3 '즉시 답변' 1회차가 무효** — 메인 도구 루프가 플래그를 소비(`_clear_finalize_request`)
+  하므로 red-team 단계에서 다시 읽으면 False. 사용자가 "빨리 답 달라"를 누른 **직후에** 상한 없는
+  루프로 들어갔다. 상한 제거의 정당화가 전적으로 이 탈출구에 걸려 있으므로 치명적. run 스코프
+  `_finalize_seen` 플래그로 그 신호를 red-team abort 판정까지 전달.
+
+### MAJOR (전건 수정)
+- **M-SEC1 permission 축 WARN 강등 유도** — 신규 "여러 라운드 생존 시 WARN 선호" 지침에 축 예외가
+  없어 **누출 결함도 강등** 대상이었고, 강등되면 verdict=pass → unresolved=0 → 고지 없음 +
+  `stop_reason=resolved` 로 감사 원장이 "해소됨"으로 위조됐다. 지침에 permission 축 절대 예외를
+  명시하고, BLOCK 이었던 축이 최종 판정에서 WARN 으로 남으면 `stop_reason="downgraded"` 로 구분.
+- **M-SEC2 기억 블록에 datamark 구획 부재** — 형제 채널(`build_revision_instruction`)은 sentinel
+  fence 를 쓰는데 REVIEW MEMORY 는 헤더 한 줄뿐이었고, `claim` 의 개행이 제거되지 않아 리뷰어
+  프롬프트 최상위에 가짜 줄을 삽입할 수 있었다. 게다가 오염 텍스트가 PG 에 저장돼 **같은 대화의
+  이후 모든 답변에 재주입**(교차-턴 지속)되고, 무제한 루프가 같은 인젝션 hop 을 최대 50회 재시도한다.
+  `<<REVIEW_MEMORY>>` fence + `_flatten_untrusted`(sentinel strip + 개행 접기) 도입.
+- **M-ACC1 `MAX_REVISIONS=0` 이 답변을 변조** — 문서화된 차단 스위치를 내리면 수정은 안 하면서
+  미해소 고지는 붙어, 비용 사고 대응으로 스위치를 내린 운영자가 **전 사용자 답변에 경고 배너**라는
+  새 회귀를 얻었다. 고지를 "수정을 시도할 수 있는 구성"에서만 부착하도록 게이트.
+- **M-ACC2 `unverified` 가 미검증 결함을 단정** — 재검증을 끈 구성에서 수정 *이전* findings 를
+  미해소로 기록·고지했다. MODIFY 의 "이전 동작과 동치" 롤백 안내가 성립하지 않았다. unresolved 를
+  미상(0)으로 처리.
+- **M-ACC3 폐기 라운드의 rederive 상태 누출** — 무진전으로 버린 라운드의 `rederive_applied`·도구
+  step 이 남아 `revision_applied=False` 와 모순되고, **전달된 답변이 근거로 삼지 않은 SQL** 이
+  화면 step·`executed_sql` 에 노출됐다. 라운드-로컬 변수로 받아 채택 후에만 반영하고, caller 는
+  `_rederive_capture`(폐기분 포함) 대신 `meta["rederive_steps"]`(채택분만)를 쓰도록 계약 변경.
+- **M-ACC4 wall-clock 예산 부재 → worker 슬롯 고갈** — `run_timeout_sec` 은 메인 루프에서만
+  검사되고 red-team 은 그 밖이다. ask-worker executor 는 전역 최대 8 이라 장기 루프 몇 건이 큐를
+  막는데, `abort_fn` 은 자기 대화 전용이라 **대기 중인 다른 사용자에게는 레버가 없다**.
+  사용자 정책("응답 시간 상한 없음")을 지켜 기본 0(무제한)으로 두되, 운영자가 켤 수 있는
+  `REDTEAM_WALL_BUDGET_SEC` 안전판을 추가 (`stop_reason="deadline"`).
+- **M-ACC5 rederive 라운드 내부에서 '즉시 답변' 무시** — 한 라운드가 최대 4 LLM 호출 + 도구
+  실행이라, 라운드 시작 시점 확인만으로는 수 분 지연됐다. 내부 루프에도 finalize 확인 추가.
+
+### MINOR (전건 수정)
+- `verify_findings` 가 0라운드 종료 시 NULL → 콘솔이 "N건 미해소"라 말하면서 내용은 공백. 미해소가
+  있으면 항상 채우도록 + 프론트 폴백.
+- `round_history["how"]` 가 sticky `rederive_applied` 로 판정해 텍스트 폴백 라운드를 "도구 재추론"
+  으로 오표기 → 라운드-로컬 플래그.
+- `agent_notes` 의 `"1회 수정"` 하드코딩 → `revision_rounds`·미해소 수 반영.
+- `_HARD_ROUND_BACKSTOP` 의 `int()` 가 모듈 최상위라 env 오타 시 import 실패 → red-team + 노트가
+  **무로그 전면 비활성** → `try/except ValueError` + stderr 경고.
+- `%s IS NULL` 무캐스팅(PG "could not determine data type") → `%s::text`. 같은 저장소에
+  POST-DEPLOY hotfix 선례 주석이 실재함을 확인.
+- 미해소 고지 멱등을 본문 부분문자열로 판정 → DB 셀 한 줄로 경고 억제 가능 → 플래그 기반.
+- `no_progress` 가드가 완전 동일 문자열만 잡아 실효성이 낮다는 지적은 **수용하되 별도 완화 없음** —
+  B-ACC1/B-ACC2 수정으로 수렴 자체가 개선되고, 하드 백스톱·wall budget·abort 가 backstop 이다.
+  실제 라운드 분포는 `revision_rounds` 로 관찰 후 재평가(Open Question).
+- 패널이 "결함 없음"으로 확인한 항목: `record_review` INSERT 컬럼/파라미터 19개 정합,
+  `_query_reviews` `_off` 인덱싱 4조합, 0045 additive·단일 head, 루프 종료성, fail-open 전 경로,
+  admin.js XSS(전 경로 `esc()`), SQL 인젝션(전 경로 파라미터 바인딩), 권한 등급 불변.
+- Open Questions: 실제 수렴 라운드 분포와 백스톱 50 의 적정성은 라이브 `revision_rounds`/
+  `stop_reason` 통계로 재평가. worker 큐 지연이 관측되면 `REDTEAM_WALL_BUDGET_SEC` 을 켠다.
+
+## REV-20260727T182000-postverify [SKIPPED:docs-only POST-DEPLOY 검증 기록 — 제품 코드 무변경]
+- Related Change: CHG-20260727-0003 (PR #957 배포분의 POST-DEPLOY 라이브 검증)
+- Panel skip 근거: 본 cycle 의 changeset 은 `unit/feature-0021-redteam-review/docs/*` 전용이다.
+  제품 코드·프론트 자산·마이그레이션·설정 스펙 무변경(§18.8 dispatch 키워드 비매칭, Minor).
+  검증 대상 코드 자체는 REV-20260727T174500-converge-panel 에서 2 렌즈 적대 패널을 이미 거쳤고,
+  본 cycle 은 그 패널이 "라이브 PG 경로라 단위로 커버 불가"로 남긴 항목을 실측해 닫는 작업이다.
+- 판단 근거 (검증 설계에서 의식적으로 택한 것):
+  - **인과 확정 방식**: 격리 fail-closed 를 "TRUE 대화에서 0건"만으로 주장하지 않았다. 0건은
+    데이터 부재·스코프 오류로도 나온다. 같은 임시 대화의 플래그만 TRUE↔FALSE 로 토글해
+    0건↔1건이 갈리는 것을 보여 **게이트가 유일 원인**임을 확정했다.
+  - **프로덕션 부작용 최소화**: 라이브에 `has_restricted_members=true` 대화가 0건이라 실증에
+    임시 행 주입이 불가피했다. 기존 행을 변조하는 대신 **전용 임시 대화·합성 리뷰 행**을 새로
+    만들고(식별 가능한 `zz-tmp-postverify-*` 접두), 검증 직후 삭제 + 잔존 0건을 확인했다.
+    기존 대화 245건·리뷰 원장은 무변경.
+  - **정직성 (과대보고 방지)**: 잔존 분기 렌더는 **합성 데이터**로 확인한 것이며 리뷰어의 실제
+    수렴 판정 관측이 아니다. 배포(18:04) 이후 새 판정 표본이 없어 `revision_rounds>1` /
+    `stop_reason` 의 실판정 분포는 여전히 미관측 — TEST.md §4 에 미커버로 명시하고 "PASS" 로
+    포장하지 않았다. 이는 위 Open Questions(백스톱 50 적정성 재평가)와 같은 축의 잔여다.
+- Open Questions: 라이브 트래픽 누적 후 `revision_rounds`·`stop_reason` 분포로 ① 무제한 반복이
+  실제로 몇 라운드에 수렴하는지, ② `unresolved_block_count>0` 전달 비율이 유의한지 재평가.
+  유의하면 답변 말미 고지 문구와 `REDTEAM_WALL_BUDGET_SEC` 기본값을 재검토한다.

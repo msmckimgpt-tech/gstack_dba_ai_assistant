@@ -356,6 +356,68 @@ source_of_truth: true
 - Notes(배포 후 최종): bedrock-gateway reconcile 후 `/app/config.yaml` request_timeout=300 확인 + sonnet 대화
   ping 정상(429/timeout 아님). 장문 sonnet 대화 실사용 관찰 권장.
 
+### Run 2026-07-27-opus5-model
+- Date: 2026-07-27 18:44 KST
+- Environment: CLI (컨테이너 pytest + gateway 컨테이너 라이브 직접호출) — **웹 UI 표면 미검증(PB-0008 배포 후)**
+- Scope: assistant 선택 모델 Claude Opus 5 추가 (CHG-20260727T184425-opus5-model)
+- Runner: AI (Claude)
+- Result Summary: 코드/구성 검증 PASS + Opus 5 OAuth 접근성 라이브 확증. 배포 후 gateway 경유 e2e + PB-0008 잔여.
+- Pass/Fail:
+  - **라이브 사전 실증**(gateway 컨테이너 → api.anthropic.com 직접, 토큰 미노출):
+    - `[corp/claude-opus-5/nosys]` HTTP **429** — `{"type":"rate_limit_error","message":"Error"}`, unified-status 헤더 **없음** (identity 게이트 시그니처)
+    - `[corp/claude-opus-5/cc]` HTTP **200** — `model=claude-opus-5`, `stop_reason=end_turn`, `unified-status: allowed` ✅
+    - `[root/claude-opus-5/cc]` HTTP 429 — `"would exceed your account's rate limit"`, `unified-status: rejected`
+    - 격리 대조 `[root/claude-haiku-4-5]` · `[root/claude-sonnet-5]` **동일 429/rejected**(reset epoch 1785159600)
+      → root 429 는 **계정 전체 한도 소진**이지 Opus 모델 게이팅 아님. (R1: 리셋 후 재확인)
+  - **단위 테스트**: feature-0002 + feature-0003 전체 `pytest -q` **rc=0, 2452 tests, fail 0 / error 0**.
+    신규·갱신 8건 — `test_conversation_answer_model_maps_opus_to_chat`,
+    `test_opus_conversation_chain_has_two_accounts_and_is_edge_free`(config 실파싱 5 단정),
+    `test_call_llm_opus_adaptive_with_cc_identity`, `test_opus_adaptive_injects_effort_not_budget`,
+    `test_opus_adaptive_normal_no_override`, `test_opus_prepends_cc_identity_system`,
+    runtime registry/API adaptive_models·budget-스펙-미생성, usage canonical fold + 단가.
+  - **litellm config 정적 검증**: YAML 파싱 OK · `model_name` 중복 0 · fallback dangling ref 0 ·
+    opus 체인 `claude-opus-5-chat → claude-opus-5-chat-root`(edge 미도달) · bare `claude-opus-5` fallback 미등록(격리).
+- Notes(배포 후 확정 대상): ① gateway reconcile 후 `/app/config.yaml` 에 opus 3 deployment 반영 ②
+  대화에서 `claude-opus` 선택 → 실 답변 200(gateway 경유 라우팅 확정, R3) ③ PB-0008 — 모델 선택기 노출·
+  추론강도 활성·관리 콘솔 '모델 총 출력' opus 행 + guide-note ④ R1 root 2순위 체인 ⑤ 'LLM 사용량' 도넛에
+  claude-opus-5 세그먼트 + 비용 > $0.
+
+### Run 2026-07-27-opus5-model-POSTDEPLOY
+- Date: 2026-07-27 19:05 KST
+- Environment: **Windows-browser** (`bin/win-browser.py`, PB-0008, Chrome/150.0.7871.115 · relay) + 라이브 컨테이너
+- Scope: opus5-model 배포 후 확정 (배포 SHA `413703b9`, `bin/deploy-web.sh` scope=all — web 롤링 + 워커 + gateway surge 교체, soak 통과)
+- Runner: AI (Claude)
+- Result Summary: **PASS** — 사용자 실경로 e2e 성립. 잔여는 R1(root 한도 리셋 후 2순위 체인)뿐.
+- Pass/Fail:
+  - **gateway config 반영**: `/app/config.yaml` model_list 에 `claude-opus-5` / `-chat` / `-chat-root` 3종 존재 ✅
+    (deploy-web 로그: "gateway 드리프트 감지: litellm config 변경 → surge 무중단 교체 완료")
+  - **gateway 경유 라우팅**(web-a 컨테이너 → bedrock-gateway): `claude-opus-5-chat` **HTTP 200**
+    (`resolved=claude-opus-5-chat`, 본문 `OPUS-LIVE-OK`) · bare `claude-opus-5` **HTTP 200** ✅ → R3 해소
+  - **카탈로그 직렬화**(라이브 web): `PUBLIC_API_MODEL_OPTIONS` = opus/sonnet/haiku 3종,
+    `API_DEFAULT_MODEL=claude-haiku-4`(기본 불변) · `adaptive_models=['claude-opus-5','claude-sonnet-4']` ·
+    `agent_max_output:claude-opus-5` 생성 · `reasoning_budgets` 모델 = haiku 뿐(opus 죽은 스펙 0) ✅
+  - **PB-0008 ① 모델 선택기**(실 Windows 브라우저, 로그인 상태): 컴포저 '+' → '모델' 메뉴에
+    `claude-opus`(설명 "Anthropic Claude Opus (frontier 최상위, 장기 추론·에이전트 작업)")가 **최상단**,
+    `claude-haiku` 에 ✓(기본값 유지) ✅ — evidence `docs/evidence/pb0008-opus5-model-menu-20260727.png`
+  - **PB-0008 ② 실 대화 e2e**: 메뉴에서 `claude-opus` 실제 클릭 → 컴포저 라벨 `claude-opus` 전환 →
+    프롬프트 전송 → **7초(준비 1.7초 · 추론 5.3초)만에 정답 `OPUS-PB0008-OK` 렌더**, 상태 done ✅
+    — evidence `docs/evidence/pb0008-opus5-live-answer-20260727.png`
+  - **사용량 원장 계약**(PG `agent_runtime.llm_usage`): `task=agent` 행이 `model=claude-opus-5`(원본 alias 보존) /
+    `resolved_model=claude-opus-5-chat`(실 서빙) 로 기록 ✅ — 설계한 표시/집계 계약과 정확히 일치.
+    추가로 `task=redteam` 행이 `claude-opus-5-chat` 으로 기록 → **red-team 리뷰어 모델 자동 정합 실동작 확인**
+    (코드 변경 0 — `conversation_answer_model` 재사용 경로).
+  - **비용 귀속**: 배포 이미지 단가표에 `claude-opus-5={in:5.0,out:25.0}` 반영. 실 행 계상 —
+    agent 행 39,552/14 tok → **USD 0.1981**($0 오표시 아님), `-chat` 변형도 canonical fold 로 동일 family.
+    1M/1M 기준 opus 30.0 > sonnet 18.0 > haiku 6.0 (tier 순서 정합) ✅
+  - **PB-0008 ③ 관리 콘솔**(시스템 > 설정 > 모델별 추론 예산): `CLAUDE-OPUS` 카드 = 라운드당 40,000 tokens ·
+    '즉시 반영' 배지 · **'추론 강도 (ADAPTIVE THINKING)' guide-note** 렌더("…모델별 thinking budget(토큰)
+    설정은 적용되지 않아 감췄습니다") · **죽은 budget 슬라이더 0** ✅
+    — evidence `docs/evidence/pb0008-opus5-admin-budget-pane-20260727.png`
+- 발견·수정(같은 cycle): 위 pane 헤더 카피가 `max_tokens, Sonnet 128K / Haiku 64K 까지` 로 남아 Opus 를
+  누락(본 변경으로 stale 해진 문구) → `Opus·Sonnet 128K / Haiku 64K` 로 정정(admin.html).
+- 잔여(R1): root(개인 Max) 계정이 실증 시점 전 모델 429(`unified-status: rejected`) — 한도 윈도우 리셋 후
+  `claude-opus-5-chat-root` 실 200 재확인 필요. 1순위(claude-corp) 경로는 위와 같이 정상.
+
 ## 4. Untested Areas
 
 - **실 AWS Bedrock 호출**: 본 cycle 의 정적 검증만 PASS, 실 InvokeModel

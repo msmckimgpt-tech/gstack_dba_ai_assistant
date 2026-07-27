@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.39.0
+template_version: v3.40.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -2168,6 +2168,48 @@ cross-ref/anchor 무결성 점검을 1회 수행한다 — 내부 §-참조가 �
 blast radius가 가장 크고, 이 기계적 점검은 bundle-only reviewer가 검증 못하는 영역을 메운다.
 
 순수 비정책 doc은 기존대로 표 첫 행의 `[SKIPPED:non-policy-doc]`로 처리한다.
+#### §18.8.2 검증 착수의 자율성 — confirm 대상 아님 (v3.40.0+)
+
+검증(panel dispatch / review 채널 선택 / 경량 경로 실행)의 **착수 여부는 사용자 confirm
+대상이 아니다.** 판정 순서:
+
+1. **사용자 지시가 있으면 그 지시대로 검증한다** — "리뷰해라" / "전체 panel" / "이번엔
+   검증 생략" 같은 명시 지시가 최우선이다.
+2. **지시가 없으면 AI 작업자가 스스로 필요성을 판단하고, 필요하다고 판단되면 능동적으로
+   검증을 수행한다.** 착수 여부를 되묻지 않는다. 사용자에게 물어야 하는 것은 검증의
+   *실행 여부* 가 아니라, 검증이 드러낸 *설계 선택* 이다.
+
+**세션-레벨 도구 제약과의 충돌 해소 (MUST)**: 위임 세션에 "요청 없이 subagent / Agent
+tool 을 호출하지 말라" 류 도구-사용 제약이 걸려 있는데 위 dispatch 표가 panel 을 요구하는
+경우, 두 규칙은 실제로 충돌하지 않는다 — 사용자가 위임한 작업에는 그 작업의 완료 조건
+(§16.3 / check #9)이 내포되며, 검증은 자율적 도구 남용이 아니라 **위임된 작업의 이행**이다.
+다만 마찰이 적은 순서로 해소한다:
+
+1. **제약 없는 채널 우선** — §18.8.1 경량 경로(`codex review --uncommitted`, built-in
+   `/review`·`/security-review`, 기계적 cross-ref/anchor 점검)로 검증을 수행한다. 이
+   채널들은 subagent 호출이 아니므로 도구-사용 제약과 무관하다.
+2. **coverage 가 부족하면 panel 을 호출한다** — 위 채널로 dispatch 표가 요구하는 도메인
+   (security/backend/qa 등)을 덮지 못하면 subagent panel 을 호출한다. 이 호출은 본 §에
+   의해 사전 승인된 것으로 간주한다.
+3. **충돌을 이유로 멈추지 않는다** — 규칙 간 긴장을 사용자 결정 대기(blocking 질문)로
+   전가하며 작업을 중단하지 않는다. 선택한 채널과 그 근거를 REVIEW.md index entry 의
+   `Trigger` 필드에 기록해 추적 가능하게 남긴다 (§18.9).
+4. **물리적으로 불가할 때만 skip** — 검증 채널이 환경에 아예 없으면 `[SKIPPED:<reason>]`
+   entry 로 명시 트레이스를 남기고 진행한다. "환경상 불가" 단정 전에 §16.3 의 검증
+   사전-descope 금지를 먼저 consult 한다.
+
+**상위 우선순위 지시 carve-out (MUST)**: 위 해소는 *repo 정책과 세션 관행* 사이의 긴장에만
+적용된다. 시스템·개발자·하네스 수준의 **상위 우선순위 지시가 특정 도구 사용을 명시적으로
+금지**한 경우 그 지시가 우선하며, 본 §를 그 제약의 우회 근거로 쓰지 않는다 — 2번의 "사전
+승인" 은 repo 정책이 부여할 수 있는 범위(= 사용자 위임) 안에서만 유효하다. 그 경우에도
+멈추지 않는다: 제약 없는 채널로 가능한 검증을 수행하고, 덮지 못한 도메인이 남으면
+`[SKIPPED:tool-restricted:<domain>]` 로 미검증 범위를 **명시**한 뒤 진행한다. 미검증을
+완료로 오인 보고하지 않는다 (§16.3 정직성).
+
+비용이 큰 검증(full panel 5 reviewer, 장시간 라이브 검증)이라도 **착수 자체는 confirm
+대상이 아니다.** 비용 통제는 §18.8.1 경량 경로를 우선 선택하는 방식으로 달성하며,
+사용자에게 되묻는 방식으로 달성하지 않는다.
+
 #### Subagent per-invocation model 분기 (v2.1.154+, 비용·품질 최적화)
 
 subagent 는 entry persona 와 달리 **호출 시점에 model 을 지정할 수 있다**

@@ -377,6 +377,11 @@ _AGENT_MAX_OUTPUT_MIN = 4096
 # maximum(ceiling)은 model_catalog.model_native_max_output(모델 native). 미등록 모델은 task cap fallback.
 # (plan/insight 등 "agent" task 공유 소비자와 분리 — model_catalog.max_tokens_for_model 은 무변경.)
 _AGENT_MAX_OUTPUT_DEFAULT: dict[str, int] = {
+    # opus5-model(2026-07-27): Opus 5 도 native 128K 이지만 라운드당 출력 default 는 sonnet 과 동일한
+    # 40000 으로 둔다 — native 근처 값은 라운드마다 느려져 '에이전트/쿼리 실행 타임아웃'을 넘기고
+    # (스펙 description 참조) Opus 단가($5/$25)에서 비용도 함께 뛴다. 필요 시 관리 콘솔
+    # '설정 > 모델 총 출력' 에서 모델별로 상향(상한 = native 128000).
+    "claude-opus-5": 40000,
     "claude-sonnet-4": 40000,
     "claude-haiku-4": 24000,
 }
@@ -582,11 +587,66 @@ _REDTEAM_SPECS: tuple[dict[str, Any], ...] = (
         "key": "REDTEAM_MAX_REVISIONS",
         "category": "자가 리뷰",
         "label": "BLOCK 결함 수정 상한",
-        "description": "리뷰가 BLOCK 결함을 찾았을 때 답변을 수정하는 최대 횟수. 0 이면 기록만 하고 수정하지 않습니다.",
+        "description": "리뷰가 BLOCK 결함을 찾았을 때 답변을 수정하는 최대 횟수. 0 이면 기록만 하고 수정하지 않습니다(반복 수정 설정보다 우선하는 차단 스위치). 아래 '결함 해소까지 반복 수정'이 켜져 있고 이 값이 1 이상이면, 이 상한 대신 결함이 사라질 때까지 반복합니다.",
         "unit": "회",
         "default": 1,
         "minimum": 0,
-        "maximum": 2,
+        "maximum": 10,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_REVISE_UNTIL_RESOLVED",
+        "category": "자가 리뷰",
+        "label": "결함 해소까지 반복 수정",
+        "description": "재검증에서 BLOCK 결함이 또 검출되면 위 '수정 상한'과 무관하게 결함이 사라질 때까지 수정→재검증을 반복합니다 (1=사용, 0=중지=상한 적용). 신뢰성 우선 정책 — 응답이 길어질 수 있으며, 사용자는 작업 화면의 '즉시 답변'으로 언제든 그 시점 답변을 받을 수 있습니다. 비용/지연 급증 시 0 으로 즉시 차단하세요.",
+        "unit": "0/1",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_WALL_BUDGET_SEC",
+        "category": "자가 리뷰",
+        "label": "반복 수정 전체 시간 예산",
+        "description": "'결함 해소까지 반복 수정'이 한 답변에서 쓸 수 있는 총 시간 상한(초). 기본 0 = 무제한(사용자 정책 — 신뢰성 우선, 대신 사용자가 '즉시 답변'으로 중단). 반복이 길어지면 답변 처리 슬롯을 오래 점유해 다른 사용자의 대기가 길어질 수 있으므로, 대기열 지연이 관측되면 이 값을 설정해 상한을 두세요.",
+        "unit": "초",
+        "default": 0,
+        "minimum": 0,
+        "maximum": 3600,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_VERIFY_MIN_LEVEL",
+        "category": "자가 리뷰",
+        "label": "수정본 재검증 최소 추론 강도",
+        "description": "수정된 답변을 리뷰어가 다시 검증할 최소 추론 강도 (0=낮음, 1=일반, 2=높음, 3=매우높음, 4=사실상 비활성). 기본 0 — 모든 강도에서 수정본을 재검증합니다. 재검증이 없으면 수정이 결함을 실제로 고쳤는지 확인되지 않은 채 답변이 전달됩니다.",
+        "unit": "level",
+        "default": 0,
+        "minimum": 0,
+        "maximum": 4,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_HISTORY_CONV_LIMIT",
+        "category": "자가 리뷰",
+        "label": "리뷰어 대화 기억 건수",
+        "description": "리뷰어가 같은 대화의 직전 답변에서 자기가 내렸던 판정을 몇 건까지 이어받을지 (0=기억 안 함). 리뷰어는 이 기억으로 '이 대화에서 반복되는 문제'를 인지해 맥락에 맞게 판단하고, 이미 해소된 지적을 다시 올리지 않습니다. 같은 답변 안의 수정 라운드 이력은 이 값과 무관하게 항상 이어받습니다. 다른 대화의 내용은 절대 포함되지 않습니다.",
+        "unit": "건",
+        "default": 3,
+        "minimum": 0,
+        "maximum": 10,
+        "apply_mode": "live",
+    },
+    {
+        "key": "REDTEAM_UNRESOLVED_NOTICE",
+        "category": "자가 리뷰",
+        "label": "미해소 결함 답변 고지",
+        "description": "반복 수정에도 결함이 남은 채 답변이 전달될 때(즉시 답변·취소·수정 실패 등), 답변 말미에 내부 검증에서 결함이 남았다는 짧은 고지를 덧붙입니다 (1=사용, 0=중지). 결함 잔존 답변이 조용히 전달되는 것을 막는 정직성 장치입니다.",
+        "unit": "0/1",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
         "apply_mode": "live",
     },
     {
@@ -858,6 +918,31 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "default": 8,
         "minimum": 5,
         "maximum": 3600,
+        "apply_mode": "live",
+    },
+    # ── 구조 변동 자동 재분석 (change-reanalysis) ──
+    #   사람 confirm 게이트가 없는 자동 LLM 지출 경로라 **라이브 kill switch 가 필수**다
+    #   (적대 리뷰 C1/C2: env-only 면 폭주 시 재배포해야 멈춘다). 상한 0 = 자동 트리거 완전 비활성.
+    {
+        "key": "AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP",
+        "category": "그래프 노드 분석",
+        "label": "구조 변동 자동 재분석 1회 시드 상한",
+        "description": "'DB 전체 AI 능동 분석'을 마친 DB 에서 구조 변동(테이블 신규·컬럼 구성 변경·프로시저/함수 정의 변경)이 감지됐을 때, 사용자 실행 없이 자동으로 분석할 노드 수의 1회 상한입니다. 초과분은 다음 감지 사이클로 이월됩니다. 값이 클수록 변경 반영은 빨라지지만 승인 없는 LLM 호출이 늘어납니다. **0 = 완전 정지**(신규 발동 차단 + 이미 대기 중인 자동 분석 작업도 보류 — 값을 되돌리면 그대로 재개). **-1 = 관찰 모드**(감지 규모만 기록하고 분석은 하지 않음 — 비용 0). 재배포 없이 즉시 적용됩니다.",
+        "unit": "개",
+        "default": 50,
+        "minimum": -1,
+        "maximum": 500,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC",
+        "category": "그래프 노드 분석",
+        "label": "구조 변동 자동 재분석 쿨다운",
+        "description": "같은 DB 에서 자동 재분석을 다시 시작하기까지 기다리는 최소 시간. 마이그레이션처럼 짧은 시간에 DDL 이 몰릴 때 분석 run 이 남발되는 것을 막습니다. 짧게 하면 변경이 더 빨리 반영되고, 길게 하면 비용이 더 촘촘히 묶입니다.",
+        "unit": "초",
+        "default": 1800,
+        "minimum": 60,
+        "maximum": 86400,
         "apply_mode": "live",
     },
     # ── cluster_label (semantic_cluster 데몬) ──

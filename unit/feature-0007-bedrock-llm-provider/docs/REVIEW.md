@@ -531,3 +531,30 @@ source_of_truth: true
 - 대상(feature-0007): litellm_config.yaml `request_timeout: 300` **주석만** 갱신(값 무변경). 콘솔 AGENT_TIMEOUT_SEC(live) ↔ gateway upstream 타임아웃 요청 단위 동기화의 config-측 문서화.
 - 리뷰 방식([SKIPPED] 사유): feature-0007 변경은 주석-only(로직·값 변경 0). 실제 코드/로직(앱이 요청마다 live body timeout 전달, extra_body 항상-timeout 병합, client/run 예산 live 전환)은 feature-0002 에 거주하며, 그 적대 리뷰가 정본 = **REV-20260724T054326-timeout-console-sync [SUBAGENT:adversarial-general-purpose] SHIP**(7 공격각 CLEAN, NIT 2·3 반영, Finding 1 by-design 수용). 본 feature-0007 엔트리는 config 주석 정합 기록.
 - Cross-ref: feature-0002 REVIEW/CHG/TASK-20260724T054326-timeout-console-sync / MODIFY CHG-20260724T054326-timeout-console-sync / TEST.md Run 2026-07-24-timeout-console-sync.
+
+## REV-20260727T184425-opus5-model [SKIPPED:live-empirical-verification+precedent-checklist] — PASS
+- 대상: assistant 선택 모델에 Claude Opus 5 추가(3 deployment · 2계정 edge-free 체인 · adaptive thinking · CC identity · 단가 원장). CHG-20260727T184425-opus5-model 정합.
+- **리뷰 방식([SKIPPED] 사유)**: 본 변경의 정확성을 결정하는 두 축이 모두 **정적 코드리뷰로 판정 불가**한 런타임 계약이다 — (a) Anthropic OAuth identity 게이트 동작, (b) 계정별 모델 접근성/한도. sonnet 선례(REV-20260724T123503-cc-identity-inject)와 동일하게 **코드 작성 전 라이브 실증**으로 확증했고, 그 위에 **sonnet 4차 수정 이력을 회귀 체크리스트로 역이용**했다. 정적 패널이 추가로 판별할 여지가 낮다고 판단.
+- **선례 역이용 체크리스트(sonnet 이 사후에 겪은 4개 결함을 도입 시점에 차단)**:
+  1. *bare 단일계정 → claude-corp 429 즉시 실패*(#915) → 도입 시점부터 `-chat`/`-chat-root` 2계정 체인. 단위 테스트 `test_opus_conversation_chain_has_two_accounts_and_is_edge_free` 가 (등록·root 도달·자격 slot 분리·edge 미도달·bare 격리) 5개를 config 실파싱으로 고정.
+  2. *폐기 모델 ID 라우팅*(#920) → `claude-api` skill 정본 + 라이브 200 응답의 `model=claude-opus-5` 로 실 ID 확인.
+  3. *budget_tokens 400*(#920) → `_ADAPTIVE_THINKING_PREFIXES` 에 `claude-opus`. `test_opus_adaptive_injects_effort_not_budget` / `_normal_no_override` 가 주입 0 을 고정.
+  4. *OAuth frontier-identity 게이트 429*(#923) → 사전 실증 후 `requires_oauth_frontier_identity` 자동 적용. `test_call_llm_opus_adaptive_with_cc_identity` 가 첫 메시지 = 별도 CC system 블록임을 고정(단일 문자열 연결 회귀 차단).
+- **자기 적대 검토(설계 선택 2건, 의도적 비대칭)**:
+  - `_ADAPTIVE_THINKING_PREFIXES` 는 **넓은** `claude-opus`, `canonical_usage_model` 은 **좁은** `claude-opus-5`. 축이 다르다 — 전자는 *안전*(어떤 Opus 버전에도 budget_tokens 를 주입하지 않음; 미분류 시 thinking override 가 조용히 사라지는 회귀), 후자는 *정직*(미등록 Opus 를 Opus 5 단가·비중으로 오귀속하지 않고 self-surface). 두 규칙을 같게 맞추면 어느 한쪽이 손해다. 부작용으로 `model_thinking_style("claude-opus-4-8")` 이 None→adaptive 로 바뀌는데(기존 테스트 1건 갱신), Opus 4.8 도 실제 adaptive-only 라 사실 정합이 개선된다.
+  - Opus 를 **대화 경로에만** 노출: `API_DEFAULT_MODEL` 은 haiku 유지, `AGENT_*_MODEL` 배선 없음. 근거 = 단가 5×(vs haiku)가 배치 볼륨에 곱해지는 것이 본 변경의 최대 비용 리스크. `.env.example` 에 금지 주석 명문화.
+- **잔여 위험(정직 표기)**:
+  - (R1) **root 계정 2순위 체인은 라이브 미검증** — 실증 시점에 root 가 계정 전체 한도 소진(haiku·sonnet 도 429, `unified-status: rejected`)이라 opus 만의 문제가 아님을 격리 확인했을 뿐, opus-chat-root 실 200 은 윈도우 리셋 후 확인 대상(배포 후 TEST Run 에 기록).
+  - (R2) **모델별 접근 권한(RBAC) 부재** — 현 카탈로그는 `/api/session` 으로 전 사용자에게 동일 노출된다. `conversation.ask` 보유자면 누구나 Opus 선택 가능 → 조직 단위 비용 노출. per-model RBAC 은 신규 권한 표면(§12.3 Critical)이라 본 cycle 범위 밖 — REPORT §8 후속 과제로 이연하고 사용자에게 표면화.
+  - (R3) litellm 이 `anthropic/claude-opus-5` 를 알고 있는지는 배포 후 gateway 실 ping 으로 최종 확정(직접 호출은 200 확인, gateway 경유는 미확인).
+- 위험도: **Major(§12.3 — 외부 비용)**. 신규 자격증명 0(기존 두 OAuth slot 재사용), 인증/인가 경계 변경 0, 스키마 변경 0, 전 변경 additive(기존 haiku/sonnet 경로 byte-동치).
+- Verification: feature-0002+0003 전체 pytest PASS(rc=0, 2452 tests, fail/error 0) · litellm YAML 파싱 OK(중복 0·dangling 0) · 라이브 직접호출 실증(위).
+- Cross-ref: MODIFY CHG-20260727T184425-opus5-model / TEST.md Run 2026-07-27-opus5-model / shared/model_catalog.py `_ADAPTIVE_THINKING_PREFIXES`·`_CONVERSATION_ANSWER_ALIAS` / 선례 REV-20260724T113513-sonnet5-upgrade · REV-20260724T123503-cc-identity-inject.
+
+## REV-20260727T190500-opus5-model-postdeploy [SKIPPED:post-deploy-live-evidence+copy-only] — PASS
+- 대상: opus5-model 배포 후 라이브 확정 기록 + 관리 콘솔 pane 헤더 카피 1줄 정정(admin.html).
+- 리뷰 방식([SKIPPED] 사유): 코드 변경은 **사용자-facing 카피 1줄**(동작·로직·경계 변경 0)이고, 나머지는 배포 후 관측 사실의 기록이다. 정본 적대 리뷰는 선행 REV-20260727T184425-opus5-model.
+- 확정된 것: gateway 경유 200 → 선행 REVIEW 의 잔여 위험 **R3(litellm 이 `anthropic/claude-opus-5` 를 아는가) 해소**. PB-0008 실 브라우저 e2e 로 §16.6 UI-affecting 게이트 충족(시각 캡처 3종 첨부).
+- 미해소로 남긴 것(정직 표기): **R1**(root 2순위 체인 — 실증 시점 root 계정 전체 한도 소진) · **R2**(모델별 RBAC 부재 — 사용자 결정 대기, REPORT §7).
+- 위험도: Minor(§12.3) — 카피 변경 비파괴.
+- Cross-ref: MODIFY CHG-20260727T190500-opus5-model-postdeploy / TEST Run 2026-07-27-opus5-model-POSTDEPLOY / 선행 REV-20260727T184425-opus5-model.

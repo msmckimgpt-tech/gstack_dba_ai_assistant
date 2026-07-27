@@ -10354,10 +10354,15 @@ function _renderComposerModelMenu() {
     item.className = "composer-model-item" + (value === current ? " is-selected" : "");
     item.setAttribute("role", "menuitem");
     item.setAttribute("data-model-value", value);
+    // model-picker-copy(2026-07-27): group 배지가 label 과 같은 단어를 반복하면(예: label
+    // `claude-opus` + group `Claude`) 정보가 0 이고 행만 시끄러워진다(사용자 지적). label 이 이미
+    // group 명으로 시작하면 배지를 생략한다 — provider 가 섞이는 카탈로그(Local LLM 등)에서는
+    // label 접두가 다르므로 배지가 그대로 살아 구분 기능을 유지한다(조건부 생략, 무조건 제거 아님).
+    const groupRedundant = !!group && label.toLowerCase().startsWith(group.toLowerCase());
     item.innerHTML = `
       <div class="composer-model-item-head">
         <span class="composer-model-item-label">${escapeHtml(label)}</span>
-        ${group ? `<span class="composer-model-item-group">${escapeHtml(group)}</span>` : ""}
+        ${group && !groupRedundant ? `<span class="composer-model-item-group">${escapeHtml(group)}</span>` : ""}
         ${value === current ? '<span class="composer-model-item-check" aria-label="현재 선택">✓</span>' : ""}
       </div>
       ${description ? `<div class="composer-model-item-desc">${escapeHtml(description)}</div>` : ""}

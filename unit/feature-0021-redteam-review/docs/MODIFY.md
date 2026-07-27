@@ -221,3 +221,108 @@ source_of_truth: true
   revise 가 정상 동작하면 BLOCK 검출 대화의 답변이 실제로 재작성되어 전달됨(의도된 동작 복원).
 - Rollback Notes: 커밋 revert. 런타임 즉시 무력화가 필요하면 콘솔 '설정 > AI 자가 리뷰'에서
   `REDTEAM_MAX_REVISIONS=0`(기록만·수정 안 함) 또는 `REDTEAM_ENABLED=0` 로 리뷰 자체 중지 가능.
+
+## CHG-20260727-0001
+- Date: 2026-07-27
+- Related Requirement: REQ-20260727-converge-until-resolved, REQ-20260727-reviewer-memory
+- Summary: **결함 해소까지 반복 검증 + 리뷰어 대화 내부 맥락 기억**. 사용자 리포트("warning·block
+  이 있어도 항상 한 번의 검증 후 답변 도출")를 라이브 판정 데이터로 진단해 세 원인을 분리하고,
+  그중 실제 결함 두 가지를 수정했다.
+  - **진단 (prefill fix 726c2f1e 배포 = 07-24 16:17 이후 표본)**: 매우높음 7건 전부 BLOCK 검출 →
+    6건 수정 → 6건 재검증 → **4건이 재검증에서도 'revise'(결함 잔존)인 채 전달**. 일반 강도 3건은
+    수정 2건 / 재검증 **0건**. 누적으로는 일반 강도 revise 37건 중 재검증 0건.
+  - 원인① WARN 무조치 = 설계 의도 (BLOCK 만 수정 유발, `_sanitize_findings` verdict 규약) — 유지.
+  - 원인② 일반 강도 재검증 없음 (`verify_pass = ordinal >= 2`) → `REDTEAM_VERIFY_MIN_LEVEL`
+    (기본 0 = 모든 강도)로 일반화. 기본 강도 대화의 수정본이 무검증 전달되던 공백 해소.
+  - 원인③ `REDTEAM_MAX_REVISIONS=1` 상한 → `REDTEAM_REVISE_UNTIL_RESOLVED`(기본 1)로 상한 제거,
+    결함이 해소될 때까지 수정→재검증 반복. 탈출구: 사용자 '즉시 답변'/취소(`abort_fn`, 매 라운드
+    확인), 무진전(수정본 동일성), 하드 백스톱(기본 50), 수정 무산출, 재검증 실패.
+  - **관측**: `stop_reason`·`unresolved_block_count`·`revision_rounds`·`verify_findings` 를 신규
+    기록(alembic 0045). 콘솔 타임라인 ⑤가 결함 잔존 시 "개선된 답변 전달"로 포장하지 않고
+    "결함 잔존 상태로 전달 — BLOCK N건 미해소 (사유)"로 표시. 답변 말미 정직성 고지
+    (`REDTEAM_UNRESOLVED_NOTICE`).
+  - **리뷰어 기억**: 리뷰어가 (a) 현재 답변의 라운드 이력(자기 findings + assistant 수정본 발췌),
+    (b) 같은 `conversation_id` 의 직전 판정(`REDTEAM_HISTORY_CONV_LIMIT`, 기본 3)을 이어받는다.
+    프롬프트에 "해소 여부 먼저 판정 / 이미 고친 것 재보고 금지 / 여러 라운드 생존한 결함은 WARN
+    강등" 규칙 추가 — 무제한 반복의 수렴 조건이자 사용자 요청 사항. fresh-context 불변식 유지
+    (초안 생성 대화는 여전히 비전달), 대화 격리 유지(다른 대화 미포함, cid 없으면 미조회).
+  - 진행 표시: 라운드마다 activity 방출(`progress_fn`) — "검증 1회"로 보이던 UX 오인 해소.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/redteam.py` (review_plan 게이트 일반화·수렴 루프·
+    abort/progress 콜백·리뷰 기억 조립·미해소 고지·record_review 확장)
+  - `unit/feature-0002-agent-core/src/agent_core.py` (`_rt_abort` 즉시답변/취소 배선 +
+    `progress_fn=_emit_activity`)
+  - `shared/runtime_settings.py` (REDTEAM_REVISE_UNTIL_RESOLVED / REDTEAM_VERIFY_MIN_LEVEL /
+    REDTEAM_HISTORY_CONV_LIMIT / REDTEAM_UNRESOLVED_NOTICE 신규 4 spec + MAX_REVISIONS 상한 10)
+  - `unit/feature-0002-agent-core/alembic/versions/20260727_0045_redteam_convergence_columns.py`
+    (신규 — verify_findings/unresolved_block_count/revision_rounds/stop_reason, additive)
+  - `unit/feature-0002-agent-core/alembic/versions/MAX_MIGRATION.txt`
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_reasoning.py` (0045 컬럼 stale-image 폴백
+    SELECT + unresolved_7d/revision_rounds_7d 요약)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (stop_reason 라벨·타임라인 ④⑤ 정직화·
+    미해소 지적 블록·통계 타일)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (reasoning-stat--warn / reasoning-unresolved)
+  - `unit/feature-0002-agent-core/tests/test_redteam.py` (신규 21건 — 수렴·abort·무진전·백스톱·
+    고지·관측 기록·리뷰어 기억·격리)
+- Impact: BLOCK 이 검출된 답변에서 수정→재검증이 결함 해소까지 반복되므로 **해당 답변의 지연과
+  LLM 비용이 라운드 수에 비례해 증가**한다 (사용자 결정: 신뢰성 최우선, 시간 상한 없음).
+  BLOCK 미검출 답변(라이브 표본 다수)은 기존과 동일하게 리뷰 1패스. 일반 강도는 수정이 발생한
+  경우에만 재검증 1회가 추가된다. 급증 시 `REDTEAM_REVISE_UNTIL_RESOLVED=0`(상한 복귀) 또는
+  `REDTEAM_MAX_REVISIONS=0`(수정 차단)으로 즉시 되돌릴 수 있다. 마이그레이션은 순수 additive.
+- Rollback Notes: 런타임 설정으로 무재배포 롤백 — `REDTEAM_REVISE_UNTIL_RESOLVED=0` +
+  `REDTEAM_VERIFY_MIN_LEVEL=2` 면 이전 동작(높음+ 만 재검증, 상한 1)과 동치. 완전 롤백은 커밋
+  revert + alembic downgrade 0044.
+
+## CHG-20260727-0002
+- Date: 2026-07-27
+- Related Requirement: REQ-20260727-converge-until-resolved, REQ-20260727-reviewer-memory
+  (CHG-20260727-0001 의 in-cycle 보강)
+- Summary: §18.8 적대 검증 패널(2 렌즈 병렬) 지적 **BLOCKING 4 · MAJOR 6 · MINOR 6 전건 반영**.
+  상세 근거·대안은 REV-20260727T174500-converge-panel.
+  - **격리**: `recent_conversation_reviews` 가 `has_restricted_members=true` 대화(공유창 window
+    격리 대상)에서는 조회 자체를 skip — 가려진 구간 리뷰가 bounded 멤버의 답변 컨텍스트로 유입되던
+    5번째 LLM 도달 경로 봉인 (SECURITY §21, fail-closed).
+  - **수렴**: 리뷰 기억 블록이 라운드 이력에 예산을 선점하도록 재구성(최근 3라운드·발췌 300자) —
+    cap 포화 시 최신 라운드가 먼저 잘려 수렴 장치가 무력화되던 결함 해소. rederive 근거를
+    라운드마다 교체하지 않고 누적(`accumulated_steps`).
+  - **탈출구**: 메인 루프가 소비한 '즉시 답변' 신호를 run 스코프 `_finalize_seen` 으로 red-team
+    abort 판정까지 전달 + rederive 내부 루프에도 finalize 확인 + abort 확인 연속 실패 시 종료.
+  - **인젝션**: 기억 블록을 `<<REVIEW_MEMORY>>` fence 로 구획 + `_flatten_untrusted`(sentinel
+    strip + 개행 접기)로 줄 위조 차단. permission 축 WARN 강등 금지를 리뷰어 지침에 명시.
+  - **정직성**: `MAX_REVISIONS=0`(차단 스위치)·`unverified`(미검증) 경로에서 미해소 단정·고지
+    금지. BLOCK→WARN 강등은 `stop_reason="downgraded"` 로 구분해 '해소'로 위조하지 않음.
+  - **추적성**: 폐기(무진전) 라운드의 rederive 도구가 화면 step·`executed_sql` 에 새지 않도록
+    caller 계약을 `meta["rederive_steps"]`(채택분만)로 변경.
+  - **운영**: `REDTEAM_WALL_BUDGET_SEC`(기본 0=무제한) 안전판 추가 — 반복이 ask-worker 슬롯을
+    점유해 다른 사용자 대기가 길어질 때 운영자가 켠다. `_HARD_ROUND_BACKSTOP` env 파싱을
+    try/except 로 감싸 오타가 red-team·노트를 무로그 비활성화하지 않게 함.
+  - 기타: `%s::text` 캐스팅(PG 파라미터 타입 결정 실패 선례), 고지 멱등을 플래그 기반으로,
+    `agent_notes` 의 "1회 수정" 하드코딩 → 실제 라운드 수, 콘솔 `verify_findings` 폴백.
+- Files: `redteam.py`, `agent_core.py`, `modules/agent_notes.py`, `shared/runtime_settings.py`,
+  `routers/admin_reasoning.py` 무변경, `static/admin.js`, `tests/test_redteam.py`(회귀 잠금 14건 추가)
+- Impact: CHG-20260727-0001 의 동작 계약은 유지하되 격리·수렴·정직성 결함을 제거. 공유창 window
+  격리 대화에서는 리뷰어 대화 기억이 동작하지 않는다(의도된 fail-closed).
+- Rollback Notes: CHG-20260727-0001 과 동일 (런타임 설정 무재배포 롤백).
+
+## CHG-20260727-0003
+- Date: 2026-07-27
+- Related Requirement: REQ-20260727-converge-until-resolved, REQ-20260727-reviewer-memory
+  (CHG-20260727-0001 / -0002 의 POST-DEPLOY 검증 기록 — **docs-only, 코드 무변경**)
+- Summary: PR #957 배포분에 대해 test-runs.d 가 "배포 후 필수"로 남겨둔 라이브 검증 3건을
+  수행하고 결과를 정본에 반영.
+  - **마이그레이션**: 라이브 `alembic_version=0045_redteam_convergence_columns`, 0045 컬럼
+    4개 실재 확인.
+  - **격리 fail-closed**: `recent_conversation_reviews` 를 라이브 ask-worker 에서 직접 호출해
+    4케이스 인과표 확보 — 동일 임시 대화의 `has_restricted_members` 플래그만 TRUE↔FALSE 로
+    토글했을 때 조회 0건↔1건으로 갈리는 것을 확인(게이트가 유일 원인). 단위 테스트가 커버할 수
+    없던 라이브 PG 경로.
+  - **PB-0008 콘솔**: '결함 잔존 전달 (7d)' 타일 · 타임라인 ③"수정 N회 반복"/④"재검증에서 결함
+    잔존"/⑤"결함 잔존 상태로 전달 …(stop_reason 한글 라벨)" · "재검증에서 해소되지 않은 지적"
+    앰버 블록 · 설정 패널 신규 5항목 렌더를 실 Windows 브라우저로 육안 검증.
+- Files: `docs/TEST.md`(§3 POST-DEPLOY Run append + §4 미커버 명시),
+  `docs/test-runs.d/20260727T1600-converge-until-resolved.md`(잔여 3건 해소 + Run 6),
+  `docs/TASK.md`, `docs/REPORT.md`, `docs/REVIEW.md`, `docs/MODIFY.md`
+- Impact: 제품 동작 무변경(문서·검증 기록만). 라이브 DB 에 주입한 실증용 임시 행 2건
+  (`zz-tmp-postverify-f0021-isolation`, `zz-tmp-postverify-f0021-render`)은 검증 직후 삭제하고
+  잔존 0건을 확인했다 — 기존 대화 245건·리뷰 원장 무변경.
+- Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.

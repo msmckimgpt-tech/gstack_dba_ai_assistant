@@ -1560,3 +1560,20 @@ TASK-0015 (plan-review):
 - [x] 단위테스트: worker 후처리 12건(순서계약·defer terminal·fail-soft·cap·RBAC) + web 게이팅 계약 — 전체 2384 PASS/0 FAIL
 - [ ] verify-completion → commit → PR/deploy(**워커 우선 전체 스코프 배포 필수**) → POST-DEPLOY 라이브 재현
 정본 rationale=REVIEW REV-20260727T105326-worker-attachment-postprocess, 변경이력=MODIFY CHG-20260727T105326-worker-attachment-postprocess.
+
+### TASK-20260727T175800-false-truncation-belief — 허위 절단 인식 봉인 + 루틴 정의 offset 이어읽기 (Major §12.3, 2026-07-27)
+`/_dqa:conversation_audit "문서 내부 조회 프로시저 탐색"` — 사용자 지목("`describe_routine` 도구 한계로 프로시저 본문이 잘림")을 데이터로 검증한 결과 **절단은 실제로 없었고**(대상 대화 describe_routine 11건 전부 전문 반환·execute_sql 181행 전량 렌더), assistant 가 **없는 도구 한계를 지어내** 분석을 3건으로 축소한 것이 진짜 마찰이었다. RC=CSV 안내문의 "미리보기" 어휘가 SYSTEM_PROMPT 절단 트리거와 충돌 + 완전성 확인 신호 부재(비대칭). 사용자 결정(AskUserQuestion): 캡 무제한화 제외, 허위 절단 봉인 + offset 페이징으로 초대형 정의 전량 도달.
+
+#### 완료 체크리스트
+- [x] 진단 삼각측량(코드 file:line + PG core_messages 전사/집계 + 대화 재구성) — rootcause_confidence high, 사용자 지목분은 미발현으로 정직 기각
+- [x] A1 CSV 안내문 트리거 어휘 제거(execute_sql·scratch_sql parity)
+- [x] A2 절단 없는 결과에 완전성 명시 + "도구 한계 주장 금지" — **행·셀·export 3축 미절단일 때만** 단정(§18.8 BLOCKER: 셀 100자 절단이 행 플래그에 미집계돼 허위 완전성) + 셀 절단 마커 + 0행 대칭 신호
+- [x] A3 SYSTEM_PROMPT: 절단 신호 **열린 집합** + 완전성은 **긍정 신호로만**(`침묵 ≠ 완전`, `NO MARKER = COMPLETE` 폐기 — 무통지 절단 13곳을 프롬프트 레벨에서 일괄 무해화) + `CHUNKED ROUTINE DEFINITIONS` 산술 종료조건(본문 위조 방어)
+- [x] B `describe_routine(offset)` 문자 이어읽기 + `_routine_chunk_limit`(**0=auto = 캡-여유**로 캡 이하 정의 조각화 회귀 제거 / `room<=0`·캡무제한·음수=윈도잉 비활성 — 구 `max(1_000, cap-2_000)` 바닥값이 작은 캡에서 이어읽기 안내를 잘라 전량 도달 경로를 지우던 실패 봉인) + 권위 산술 머리말 + offset 형식오류 명시·범위초과 클램프
+- [x] 단위테스트 `tests/test_false_truncation_belief.py` **23건**(완전성 대칭·트리거 어휘 부재·절단 시 기존 경고 유지·**셀 절단 억제 + stats out-param**·0행 대칭·**scratch parity 3건(실제 핸들러 호출)**·프롬프트 열린집합/부정단정·산술 종료조건·**창 산정 전수 테이블**·캡 이하 미분할·캡 통과 후 offset 안내 생존·**실전형 본문(빈 줄·SQL 펜스) 전량 복원**·**본문 위조 방어**·범위초과 클램프·형식오류 명시·병리적 값 예외 비노출·핸들러 배선·TOOL_DEFINITIONS) + `test_partial_evidence_grounding.py` 계약 반영 2건
+- [x] §18.8 적대 3렌즈 패널(security/backend/qa) — BLOCKER 2 / MAJOR 8 / MINOR 7 / NIT 3 중 12건 in-cycle 반영, 4건 정직 이연, 1건 by-design 수용 → REV-20260727T175800-false-truncation-belief
+- [x] 컨테이너 `make test` 회귀 **2,428건 중 2,422 PASS / 4 FAIL(전부 pre-existing 환경의존 — `git archive HEAD` 무변경 체크아웃 동일 실패로 확증) / 2 skip** + ruff PASS
+- [x] verify-completion PASS → PR #963 머지(main `ef24448c`) → **배포 완료**(`make deploy-web` 전체 스코프: web-a/web-b 롤링 + ask/insight-worker 재빌드 + gateway reconcile, soak 90s 통과, 4서비스 GIT_COMMIT=ef24448c, `/healthz` ok) → 배포본 런타임 실측 9항 확인(auto 창 99,000 · 초대형 머리말 · offset 안내 캡 생존 · 캡 이하 미분할 · 셀 절단 stats 분리 · 프롬프트 신규 계약 4항)
+- [ ] 라이브 대화 실측(동일 입력 재현으로 "도구 한계" 문구 소멸 · offset 이어읽기 관측) → 원장 `verified` 전이. 현재 `fixed:deployed:unverified-live`.
+- worktree `ai/root/feature-0002-agent-core`(base main cdf4acf1) → 후속 원장 전이 cycle `ai/claude-corp/feature-0002-agent-core`(base main ef24448c).
+정본 rationale=REVIEW REV-20260727T175800-false-truncation-belief, 변경이력=MODIFY CHG-20260727T175800-false-truncation-belief.

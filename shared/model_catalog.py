@@ -83,6 +83,28 @@ _LOCAL_LLM_MODELS: tuple[dict[str, Any], ...] = (
 # 단일 source-of-truth 로 관리.
 API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
     {
+        # opus5-model(2026-07-27): frontier 상위 tier 로 Claude Opus 5 추가(사용자 요청). sonnet/haiku 와
+        # 달리 하위호환 부채가 없는 신규 alias 라 value 를 실 모델과 같은 claude-opus-5 로 둔다(저장 대화·
+        # 단가·runtime_settings 키의 최초 기준값). 사용자 표시 label 은 sonnet/haiku 와 동일하게 버전
+        # 넘버링 없이 `claude-opus` — 실 서빙 버전이 올라가도 label 은 불변, litellm 라우팅만 갱신한다.
+        # 선택기 표시 순서상 frontier 최상단(opus → sonnet → haiku). 기본값은 여전히 haiku
+        # (API_DEFAULT_MODEL) 라 새 대화가 조용히 상위 tier 로 올라가지 않는다(비용 회귀 차단).
+        "value": "claude-opus-5",
+        "label": "claude-opus",
+        "group": "Claude",
+        # model-picker-copy(2026-07-27): description 은 **label·group 과 겹치지 않는 차별점만** 담는다.
+        # 이전엔 세 항목 모두 "Anthropic Claude <tier> (…)" 로 시작해 label(claude-opus)·group 배지(Claude)
+        # 와 같은 단어를 3중 반복했고, 그 길이 때문에 선택기(360px)에서 한국어가 단어 중간("작|업")에서
+        # 줄바꿈돼 가독성이 떨어졌다(사용자 지적). tier 3개가 나란히 보이는 UI 라 **서로 비교 가능한
+        # 동일 축**(성능 등급 · 용도)으로 짧게 맞춘다.
+        "description": "최상위 성능 · 장기 추론과 복잡한 분석",
+        # Opus 5 는 temperature/top_p/top_k 를 400 으로 거부한다(Anthropic 스펙, claude-api skill).
+        # sonnet 과 동일하게 False — _temperature_kwargs 가 temperature=0 을 주입하지 않게 한다.
+        "supports_temperature": False,
+        # Opus 5 는 native multimodal (고해상도 vision) — 첨부 image kind 의 base64 inline 분기 활성.
+        "supports_vision": True,
+    },
+    {
         # sonnet5-upgrade(2026-07-24): 내부 value 는 하위호환 위해 claude-sonnet-4 유지(저장 대화·
         # node_analysis·probe·단가·runtime_settings 키 무변경 — haiku value 가 haiku-4-5 를 서빙하는
         # 것과 동형), 라우팅 실 모델은 현행 Sonnet 5(litellm_config claude-sonnet-4 → anthropic/
@@ -93,7 +115,7 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         # 올라가도(sonnet-4-6 → 5 → …) label 은 불변, litellm 라우팅만 갱신하면 된다(버전 혼동 원천 차단).
         "label": "claude-sonnet",
         "group": "Claude",
-        "description": "Anthropic Claude Sonnet (frontier, 최고 품질)",
+        "description": "고성능 · 품질과 속도의 균형",
         # Extended thinking (effort=high) 활성화 — temperature 는 반드시 1 이어야
         # 하므로 _temperature_kwargs 에서 temperature=0 을 주입하지 않도록 False.
         "supports_temperature": False,
@@ -107,7 +129,7 @@ API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         # 내부 alias(litellm claude-haiku-4 → anthropic/claude-haiku-4-5)로 유지 — 저장 대화·단가·키 무변경.
         "label": "claude-haiku",
         "group": "Claude",
-        "description": "Anthropic Claude Haiku (가성비, 기본값)",
+        "description": "빠르고 경제적 · 기본값",
         # Extended thinking 활성화 — temperature=1 고정 요구사항으로 False.
         "supports_temperature": False,
         # TASK-0094 Sprint 2 (D13) — Claude Haiku 4.x 는 native multimodal.
@@ -170,9 +192,15 @@ def is_local_llm_model(value: str | None) -> bool:
 # (haiku 는 claude-haiku-4-chat → -chat-root 2계정 체인으로 생존). claude-sonnet-4-chat →
 # claude-sonnet-4-chat-root 2계정 체인(edge-free, gemma 강등 없음)으로 haiku 와 parity 복원. bare
 # claude-sonnet-4 는 probe/OPENAI_MODEL 기본값 등 비대화 경로가 그대로 쓰므로 무변경(격리).
+#
+# opus5-model(2026-07-27): claude-opus-5 도 같은 규약을 따른다 — 신규 모델을 bare alias 로 내보내면
+# sonnet 이 겪었던 단일계정(claude-corp) 실패 모드를 그대로 재현한다(claude-corp 5h rolling 429 시
+# 즉시 실패). 처음부터 claude-opus-5-chat → claude-opus-5-chat-root 2계정 edge-free 체인으로 둔다
+# (사용자 요청: "claude-corp 및 root 계정 포함"). bare claude-opus-5 는 probe/비대화 경로 전용(격리).
 _CONVERSATION_ANSWER_ALIAS: dict[str, str] = {
     "claude-haiku-4": "claude-haiku-4-chat",
     "claude-sonnet-4": "claude-sonnet-4-chat",
+    "claude-opus-5": "claude-opus-5-chat",
 }
 # 대화 답변 경로가 Bedrock 프록시로 보낼 때 쓸 기본 chat 모델(edge-free, litellm 등록 model_name).
 # haiku 는 API_MODEL_OPTIONS 상 "기본값" 이며 claude-haiku-4-chat 가 그 edge-free chat alias 다.
@@ -193,7 +221,7 @@ def conversation_answer_model(value: str | None) -> str:
     `LLM 호출 오류` + `__ask_worker__`). 운영 `.env` 의 `OPENAI_MODEL=auto` 가 대표 트리거.
     이들을 대화 기본 chat 모델(claude-haiku-4-chat)로 fail-loud 해소해 raw alias 가 Bedrock 으로
     새지 않게 한다(대화는 Claude 유지 — gemma 로 강등하지 않음). 등록된 대화 Claude 모델
-    (claude-haiku-4 / claude-sonnet-4)은 위 _CONVERSATION_ANSWER_ALIAS 로 -chat 치환되고, 미매핑
+    (claude-haiku-4 / claude-sonnet-4 / claude-opus-5)은 위 _CONVERSATION_ANSWER_ALIAS 로 -chat 치환되고, 미매핑
     claude alias 및 이미 해소된 chat alias 는 identity(무회귀).
     """
     name = str(value or "").strip()
@@ -238,8 +266,9 @@ def model_supports_vision(value: str | None) -> bool:
 # ── 모델별 max_tokens 관리 ──
 # 로컬 LLM: 4K 컨텍스트 내에서 reasoning + content 수용
 # Claude (Bedrock): default cap 미명시 시 비용 폭주 worst-case (codex blindspot
-# #4, CHG-0004) — task 별 명시 cap 추가. Claude native max output 은 Sonnet 4.6=128K /
-# Haiku 4.5=64K 이며, 대화(agent) 경로는 아래 _CLAUDE_MODEL_MAX_OUTPUT 로 모델별 관리한다.
+# #4, CHG-0004) — task 별 명시 cap 추가. Claude native max output 은 Opus 5=128K /
+# Sonnet 4.6=128K / Haiku 4.5=64K 이며, 대화(agent) 경로는 아래 _CLAUDE_MODEL_MAX_OUTPUT 로
+# 모델별 관리한다.
 _LOCAL_LLM_MAX_TOKENS: dict[str, int] = {
     "insight": 1024,   # 인사이트: JSON 출력, reasoning ~700 + content ~200
     "agent": 2048,     # 에이전트 루프: tool calls + 복잡한 응답
@@ -270,6 +299,7 @@ _CLAUDE_MAX_TOKENS: dict[str, int] = {
 # 순환 import(config→runtime_settings→model_catalog) 방지를 위해 여기서는 native ceiling 만 노출하고,
 # max_tokens_for_model 의 task 별 cap 은 건드리지 않는다(plan/insight 등 "agent" task 공유 소비자 무회귀).
 _CLAUDE_MODEL_MAX_OUTPUT: dict[str, int] = {
+    "claude-opus-5": 128000,    # Opus 5 native max output (opus5-model 2026-07-27)
     "claude-sonnet-4": 128000,  # Sonnet 4.6 native max output
     "claude-haiku-4": 64000,    # Haiku 4.5 native max output
 }
@@ -379,9 +409,13 @@ def model_supports_thinking(model: str | None) -> bool:
 # adaptive thinking + output_config.effort 를 쓴다. Haiku 4.5(pre-Sonnet-5)는 여전히 budget_tokens.
 # 대화 경로(agent_core._call_llm)·probe 가 모델별로 올바른 thinking 파라미터를 보내도록 style 을 구분한다.
 # alias claude-sonnet-4 는 실제로 Sonnet 5 를 서빙하므로 sonnet-4/-5 prefix 둘 다 adaptive.
-_ADAPTIVE_THINKING_PREFIXES: tuple[str, ...] = ("claude-sonnet-4", "claude-sonnet-5")
+# opus5-model(2026-07-27): Opus 계열(4.6/4.7/4.8/5)은 전부 budget_tokens 를 400 으로 거부하는 adaptive-only
+# 다(Anthropic 스펙, claude-api skill). 버전별 열거 대신 `claude-opus` prefix 로 두어 향후 Opus 버전
+# 상향(resolved_model 이 claude-opus-6* 등으로 회신)에도 자동 정합한다 — 미분류로 떨어져 thinking
+# override 가 조용히 사라지는 회귀 차단.
+_ADAPTIVE_THINKING_PREFIXES: tuple[str, ...] = ("claude-sonnet-4", "claude-sonnet-5", "claude-opus")
 # budget_tokens 를 쓰는(pre-Sonnet-5) claude 계열. 여기 명시된 모델만 'budget' 으로 분류하고,
-# 그 외 미상 claude(예: 미래 claude-opus-4-8/claude-sonnet-6 — 모두 adaptive-only, budget_tokens 400)는
+# 그 외 미상 claude(예: 미래 claude-sonnet-6 — adaptive-only, budget_tokens 400)는
 # **안전하게 None**(app-level thinking override 미주입 → litellm config 에 위임)으로 떨어뜨린다.
 # ("budget" 기본값은 미상 adaptive 모델에 budget_tokens 를 주입해 400 을 유발하는 지뢰였다 — 적대리뷰 H2.)
 _BUDGET_THINKING_PREFIXES: tuple[str, ...] = ("claude-haiku-4", "claude-haiku-3")
@@ -393,7 +427,7 @@ _EFFORT_FOR_LEVEL: dict[str, str] = {"low": "low", "high": "high", "max": "max"}
 def model_thinking_style(model: str | None) -> str | None:
     """모델의 extended-thinking API 스타일.
 
-    'adaptive' — Sonnet 5 계열(budget_tokens 금지, adaptive + output_config.effort).
+    'adaptive' — Sonnet 5 / Opus 계열(budget_tokens 금지, adaptive + output_config.effort).
     'budget'   — Haiku 4.5 등 pre-Sonnet-5 claude(요청 단위 budget_tokens).
     None       — 비-claude(로컬/edge) **또는 미상 claude**(app-level thinking override 미주입 → litellm config
                  에 위임). 미상 claude 를 'budget' 으로 기본 처리하면 adaptive-only 신모델에 budget_tokens 를
@@ -424,6 +458,10 @@ def effort_for_reasoning_level(level: str | None) -> str | None:
 # 라이브 실증(2026-07-24): 운영 LLM 이 sk-ant-oat OAuth 구독 토큰(Claude Code/Max)으로 나갈 때,
 # frontier 모델(Sonnet 5)은 **system 의 첫 블록이 정확히 이 Claude Code identity 문자열**이어야 한다 —
 # 없거나(또는 generic system) 이면 Anthropic 이 429(rate_limit 로 위장된 identity 게이트)로 거부한다.
+# opus5-model(2026-07-27) 재실증: **Opus 5 도 동일 게이트** — claude-corp 토큰 직접 호출에서 system 없이
+# 보내면 429(`{"message":"Error"}`, unified-status 헤더 없음), CC identity system 을 첫 블록으로 넣으면
+# 200(`model=claude-opus-5`, unified-status=allowed). 실 계정 한도 거절(429 + `unified-status: rejected`
+# + "would exceed your account's rate limit")과는 응답 형태가 달라 구분 가능하다.
 # Haiku 4.5(pre-Sonnet-5)는 미요구. 대화 경로(agent_core)·probe 가 adaptive 계열에 한해 이 문자열을 첫
 # system 블록/메시지로 주입한다(제품 system 프롬프트는 그 다음 블록 — 실 동작은 제품 프롬프트가 지배,
 # 라이브 검증). 단일 문자열로 CC+제품을 이어붙이면 게이트 미통과(블록/메시지 분리 필수).
@@ -433,8 +471,9 @@ OAUTH_FRONTIER_IDENTITY: str = "You are Claude Code, Anthropic's official CLI fo
 def requires_oauth_frontier_identity(model: str | None) -> bool:
     """OAuth 토큰 사용 시 이 모델이 Claude Code identity 첫 system 블록을 요구하는지.
 
-    현 배포에서 adaptive 계열(Sonnet 5)만 요구한다(Haiku 등 budget 계열은 미요구). frontier-identity
-    요구와 adaptive-thinking 이 현 카탈로그에서 동일 집합이라 model_thinking_style 로 판정한다.
+    현 배포에서 adaptive 계열(Sonnet 5 · Opus 5)만 요구한다(Haiku 등 budget 계열은 미요구).
+    frontier-identity 요구와 adaptive-thinking 이 현 카탈로그에서 동일 집합이라 model_thinking_style
+    로 판정한다 (opus5-model 2026-07-27 라이브 재실증 — Opus 5 도 CC identity 없으면 429).
     """
     return model_thinking_style(model) == "adaptive"
 
@@ -522,6 +561,11 @@ def ai_categories() -> dict[str, str]:
 #   claude-haiku-4*  → 'claude-haiku-4'   (Haiku 4.5 — 모든 라우팅/실ID 변형)
 #   claude-sonnet-4* / claude-sonnet-5* → 'claude-sonnet-4'  (Sonnet — alias 는 sonnet-4 유지, 실 서빙은
 #                                          Sonnet 5. sonnet5-upgrade 2026-07-24. 단가 family 키는 sonnet-4)
+#   claude-opus-5*   → 'claude-opus-5'   (Opus 5 — 요청 alias + 라우팅 변형 -chat/-chat-root + 실ID.
+#                                          opus5-model 2026-07-27. ⚠ 여기서는 thinking-style 처럼
+#                                          넓은 `claude-opus` prefix 를 쓰지 않는다 — 미등록 Opus
+#                                          버전(claude-opus-9 등)까지 접으면 단가·비중이 조용히
+#                                          Opus 5 로 오귀속된다. 미등록은 원본 유지(self-surface).)
 #   gemma* / edge / edge-fallback / auto / core / code → 'edge'  (로컬 게이트웨이·gemma 폴백)
 #   그 외(미등록/신규 모델) → 원본 유지  (self-surface — 새 모델이 조용히 사라지지 않게)
 # canonical family 키는 API_MODEL_OPTIONS 의 요청 alias 표기(claude-haiku-4 / claude-sonnet-4)와
@@ -549,6 +593,11 @@ def canonical_usage_model(name: str | None) -> str:
     # (claude-sonnet-4, 단가표 등록 키)로 접어 $0 오표시를 막는다.
     if low.startswith("claude-sonnet-4") or low.startswith("claude-sonnet-5"):
         return "claude-sonnet-4"
+    # opus5-model(2026-07-27): 요청 alias(claude-opus-5)·라우팅 변형(-chat/-chat-root)·실 모델 ID
+    # (claude-opus-5*)를 단일 family 로 접어 단가표 매칭($0 오표시)과 '모델별 비중' 분점을 함께 차단.
+    # 버전-정확 prefix — 미등록 Opus(claude-opus-9 등)는 passthrough 로 self-surface 시킨다.
+    if low.startswith("claude-opus-5"):
+        return "claude-opus-5"
     if low.startswith("gemma") or low in _EDGE_USAGE_ALIASES:
         return "edge"
     return n
@@ -572,6 +621,9 @@ def canonical_usage_model_sql(col: str) -> str:
         # canonical 'claude-sonnet-4' 로 접어 단가표 매칭 유지.
         f"WHEN starts_with(lower({col}), 'claude-sonnet-4') "
         f"OR starts_with(lower({col}), 'claude-sonnet-5') THEN 'claude-sonnet-4' "
+        # opus5-model(2026-07-27): claude-opus-5(요청 alias)·-chat/-chat-root(라우팅 변형)·실ID 를 fold.
+        # 버전-정확 prefix — 미등록 Opus 는 passthrough(self-surface). Python 측과 동일 규칙(SSOT).
+        f"WHEN starts_with(lower({col}), 'claude-opus-5') THEN 'claude-opus-5' "
         f"WHEN starts_with(lower({col}), 'gemma') "
         f"OR lower({col}) IN ('edge','edge-fallback','auto','core','code') THEN 'edge' "
         f"ELSE {col} END"

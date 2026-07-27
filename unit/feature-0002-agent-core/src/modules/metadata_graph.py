@@ -1477,8 +1477,13 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
     (3) 해소 = vertex 라벨 테이블 `id = ANY(gids)`(pk). 측정 45ms(112엣지) vs Cypher 332ms.
     **방향**: start_id=source, end_id=target 로 물리적 저장 방향 보존(무방향 -[r]- 의 프론티어 기준
     역전·역중복 버그 제거). ag_catalog.ag_label 은 앱 role 권한 없음 → 라벨명은 _VLABELS/_ELABELS
-    상수로 순회(gid 는 정확히 한 라벨 테이블에만 속함)."""
-    result = {"nodes": [], "edges": []}
+    상수로 순회(gid 는 정확히 한 라벨 테이블에만 속함).
+
+    **truncated (detail-db-groups, 2026-07-27)**: 이웃 노드가 `_NEIGHBOR_NODE_CAP` 에 걸려 BFS 가
+    끊기면 `result["truncated"] = True` 를 세팅한다. 종전엔 이 경로만 플래그를 세팅하지 않아
+    (scope_schemas/schema_tables 는 세팅) 상세 패널이 **부분 이웃을 전체로 오인 표시**했다 — 프론트가
+    상한 절단을 사용자에게 명시하려면 이 신호가 필요하다(무음 절단 제거)."""
+    result = {"nodes": [], "edges": [], "truncated": False}
     if not node_key:
         return result
     depth = max(1, min(int(depth or 1), 3))
@@ -1512,7 +1517,10 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
         frontier = [sg0]
         seen_edges = set()
         for _hop in range(depth):
-            if not frontier or len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
+            if len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
+                result["truncated"] = True   # cap 도달로 남은 hop 미탐색 — 부분 이웃임을 프론트에 알린다
+                break
+            if not frontier:
                 break
             farr = _gid_array(frontier)
             # (2) 프론티어에 걸린 엣지를 엣지 라벨 UNION ALL 로 1왕복 수집(방향=start->end 보존).
@@ -1545,6 +1553,7 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                 cur.execute(resolve_sql)
                 for idt, pt, lbl in cur.fetchall():
                     if len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
+                        result["truncated"] = True   # 해소 중 cap 도달 — 나머지 이웃과 그 엣지는 생략된다
                         break
                     g = int(idt); props = json.loads(pt); k = props.get("key")
                     if not k:

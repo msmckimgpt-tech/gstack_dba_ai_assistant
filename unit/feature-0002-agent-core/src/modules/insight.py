@@ -310,6 +310,352 @@ def _save_fingerprint(mem_conn, key: str, fingerprint: str) -> None:
         pass
 
 
+# ── 구조 변동 자동 재귀 분석 (change-reanalysis, 사용자 결정 2026-07-27) ─────────
+#: 자동 재분석 전용 **구조 스냅샷** KV prefix — 스키마당 1건에 그 시점의 전체 구조를 담는다:
+#    {"t": {table: fingerprint12}, "r": {routine: definition_hash12}}
+#
+#  **왜 insight 지문(table_fp)을 쓰지 않는가 (적대 리뷰 B1 — 이 설계의 핵심)**: `table_fp` 는
+#  insight artifact 발행이 성공한 테이블만, 그것도 스캔당 `SCAN_TABLE_LIMIT`(기본 12)개씩 저장된다.
+#  즉 "스키마의 일부만 지문 보유" 가 정상 상태이고, publish 가 필터링된 테이블은 영구히 지문이 없다.
+#  그 부재를 '신규'로 읽으면 **이미 전체 분석을 마친 DB 의 테이블 대부분이 구조 변동으로 오탐**되어
+#  승인 없는 대량 LLM 지출이 된다. 전용 스냅샷은 첫 저장이 곧 완전한 baseline 이라 이 오탐이 원천 제거되고,
+#  동시에 (a) KV 키가 스키마당 1개라 `kv.key varchar(128)` 초과 위험(노드 key 는 최대 200자+)이 사라지며
+#  (b) 노드 수천 건의 KV 팽창·커넥션 반복(리뷰 C4/C5)도 함께 해소된다.
+_AUTO_SNAPSHOT_PREFIX = "na_struct_snap:"
+#: 지문 저장 길이 — 변경 감지용이라 12자(48bit)면 충돌 확률이 무시 가능하고 스냅샷 크기를 억제한다.
+_AUTO_FP_LEN = 12
+#: 스키마별 직전 자동 재분석 status — 상태가 바뀔 때만 info 로그(매 tick 도배 방지, _LAST_DS_SCAN_STATUS 동형).
+_LAST_AUTO_REANALYSIS_STATUS: dict[str, str] = {}
+
+
+def _auto_snapshot_key(scope_key: str, schema_label: str, probe_schema: str = "") -> str:
+    """구조 스냅샷 KV key — `kv.key varchar(128)` 안전을 위해 식별자를 해시로 접는다.
+
+    **probe_schema 를 키에 포함하는 이유**: MSSQL 은 저장 라벨(`schema_label`)이 DB(catalog)명이라
+    한 DB 안의 여러 실 스키마(dbo, sales …)가 같은 라벨을 공유한다. 라벨만으로 스냅샷을 잡으면
+    스키마 A 순회가 B 의 테이블을 '삭제'로, B 순회가 A 를 '신규'로 읽어 **매 사이클 전량 진동**한다
+    (승인 없는 대량 LLM 지출). 대조는 실 스키마 단위로 하고, 시드 노드 key 는 그래프 규약대로
+    저장 라벨로 만든다(대조 축과 노드 키 축의 분리 — store/query 분리 관례와 동형)."""
+    ident = f"{scope_key}:{schema_label}:{probe_schema}"
+    return f"{_AUTO_SNAPSHOT_PREFIX}{hashlib.sha1(ident.encode('utf-8', 'replace')).hexdigest()[:32]}"
+
+
+def _load_auto_snapshot(mem_conn, key: str):
+    """저장된 구조 스냅샷 → {"t": {...}, "r": {...}, "tb": bool, "rb": bool}.
+    부재/파손 시 None(= baseline 미확립).
+
+    `tb`/`rb` 는 **축별 baseline 확립 여부**다. 축이 꺼진 채(루틴 introspect 미발화 등) 저장된
+    스냅샷의 빈 축을 '확립됨' 으로 읽으면, 그 축이 처음 켜지는 사이클에 전량이 '신규'로 잡혀
+    승인 없는 대량 시드가 된다. 레거시(플래그 부재) 스냅샷은 '내용이 있으면 확립' 으로 추론한다."""
+    try:
+        raw = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, key)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None      # 파손된 스냅샷은 baseline 재확립(후보 0)으로 저하 — 오탐보다 안전
+    if not isinstance(obj, dict):
+        return None
+    tables = obj.get("t") if isinstance(obj.get("t"), dict) else {}
+    routines = obj.get("r") if isinstance(obj.get("r"), dict) else {}
+    return {"t": dict(tables), "r": dict(routines),
+            "tb": bool(obj.get("tb", bool(tables))), "rb": bool(obj.get("rb", bool(routines)))}
+
+
+def _save_auto_snapshot(mem_conn, key: str, snap: dict) -> None:
+    try:
+        save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, key,
+                       json.dumps({"t": snap.get("t") or {}, "r": snap.get("r") or {},
+                                   "tb": 1 if snap.get("tb") else 0,
+                                   "rb": 1 if snap.get("rb") else 0},
+                                  ensure_ascii=False, separators=(",", ":")))
+    except Exception:
+        logging.getLogger("insight").debug("auto_snapshot_save_failed key=%s", key, exc_info=True)
+
+
+def _auto_structure_inventory(current_table_fps, routine_inventory, *,
+                              include_tables: bool, include_routines: bool):
+    """이번 스캔이 관측한 **전체 구조 인벤토리** → {"t": {table: fp12}, "r": {routine: hash12}}.
+
+    - 테이블: `_compute_table_fingerprints_batch` 가 스키마의 **전 테이블**에 대해 산출한 컬럼 구성
+      지문(부분집합이 아님 — 그래서 스냅샷 대조가 성립한다).
+    - 루틴: `routines.introspect_and_store(inventory_sink=…)` 가 채운 전량 목록.
+    - **축별 비활성(include_*)**: 그 축의 관측이 이번 사이클에 없거나 신뢰할 수 없으면(루틴 introspect
+      미발화·cap 절단, 테이블 지문 계산 실패, MSSQL 루틴 라벨 다대일) 축 자체를 끈다. 인벤토리가
+      비는 것과 축이 꺼진 것은 다르다 — 전자는 '전부 삭제', 후자는 '이 축은 판단하지 않음'(스냅샷
+      보존)이라, 축을 끄지 않고 빈 인벤토리를 넘기면 다음 관측에서 전량이 '신규'로 오탐된다.
+    - 지문/해시가 빈 항목은 제외 — 스냅샷에 넣으면 다음 사이클에 '변경'으로 잡혀 진동한다."""
+    tables = {}
+    if include_tables:
+        for name, fp in (current_table_fps or {}).items():
+            n, f = str(name or "").strip(), str(fp or "").strip()
+            if n and f:
+                tables[n] = f[:_AUTO_FP_LEN]
+    routines = {}
+    if include_routines:
+        for name, h in (routine_inventory or {}).items():
+            n, f = str(name or "").strip(), str(h or "").strip()
+            if n and f:
+                routines[n] = f[:_AUTO_FP_LEN]
+    return {"t": tables, "r": routines}
+
+
+def _auto_structure_changes(scope_key, schema_label, snap, inventory, *,
+                            include_tables: bool, include_routines: bool):
+    """스냅샷 ↔ 현재 인벤토리 대조 → `(changes, absorbed)`.
+
+    - `changes` = 자동 분석 후보 `[(node_key, kind, name, fp)]` — 신규(스냅샷에 키 없음) + 변경(지문 다름).
+    - `absorbed` = **후보에서 뺐지만 스냅샷에는 즉시 반영**할 항목 `[(kind, name, fp)]`. 시드하지 않으면서
+      재탐지도 하지 않아야 하는 것들이다.
+
+    삭제는 분석 대상 노드가 없으므로 후보가 아니고 스냅샷에서 제거만 된다(그래프 prune·재클러스터 담당).
+    그래프 노드 key 규약: Table=`<scope>:<schema>.<table>` · Routine=`<scope>:<schema>.<name>()`.
+
+    **동일 구조 샤드 흡수 (적대 리뷰 재검증 B1 — 이 함수의 비용 핵심)**: 날짜/번호 샤드
+    (`daily_league_ranking_1_20250727`, `_20250726` …)는 매일 새로 생기지만 직전 샤드와 구조가
+    **완전히 동일**해 분석 가치가 0 이다. 이 제품은 2026-07-03 사용자 결정으로 이미 "동일 구조 샤드는
+    대표 1개만 LLM, 형제는 KV 상속"(`AGENT_INSIGHT_TABLE_GROUPING_ENABLED`)을 확정했는데, 신규 테이블을
+    이름만 보고 '구조 변동'으로 승격하면 자동 경로가 **승인 없이 그 결정을 되돌린다**(샤드가 매일
+    생기므로 수렴하지도 않는다). 따라서 신규 테이블의 그룹 서명 `(base_stem, fp)` 이 스냅샷에 이미
+    있는 형제와 같으면 후보에서 빼고 `absorbed` 로 넘긴다 — 진짜 구조 변경(기존 테이블의 fp 변화)은
+    그룹과 무관하게 항상 후보다."""
+    changes, absorbed = [], []
+    if not scope_key or not schema_label:
+        return changes, absorbed
+    if include_tables:
+        prev_t = (snap or {}).get("t") or {}
+        group_on = bool(AGENT_INSIGHT_TABLE_GROUPING_ENABLED)
+        prev_sigs = set()
+        if group_on and prev_t:
+            for pname, pfp in prev_t.items():
+                psig = _table_group_sig(pname, prev_t)
+                if psig is not None:
+                    prev_sigs.add(psig)
+        inv_t = inventory.get("t") or {}
+        for name, fp in inv_t.items():
+            prev_fp = prev_t.get(name)
+            if prev_fp == fp:
+                continue
+            if prev_fp is None and group_on:
+                sig = _table_group_sig(name, inv_t)
+                if sig is not None and sig in prev_sigs:
+                    absorbed.append(("t", name, fp))   # 기존 샤드와 동일 구조 — LLM 불요
+                    continue
+            changes.append((f"{scope_key}:{schema_label}.{name}", "t", name, fp))
+    if include_routines:
+        prev_r = (snap or {}).get("r") or {}
+        rout = []
+        for name, fp in (inventory.get("r") or {}).items():
+            if prev_r.get(name) != fp:
+                rout.append((f"{scope_key}:{schema_label}.{name}()", "r", name, fp))
+        # 축 인터리브(적대 리뷰 재검증 B4): cap 절단은 리스트 앞에서부터라, 테이블 후보를 먼저 전부
+        # 넣으면 테이블이 상시 cap 을 채우는 DB(대규모 마이그레이션·샤드 유입)에서 **루틴 축이 영구
+        # 기아**가 된다 — 미시드 후보는 스냅샷이 전진하지 않아 다음 사이클에도 같은 순서로 머리를
+        # 다시 점유하기 때문이다. 사용자 요청의 3축 중 "프로시저/함수 정의 변경"이 가장 바쁜 DB 에서
+        # 실동작하지 않는 것을 막으려면 절단 전에 축을 섞어야 한다.
+        if rout and changes:
+            merged, ti, ri = [], 0, 0
+            while ti < len(changes) or ri < len(rout):
+                if ti < len(changes):
+                    merged.append(changes[ti]); ti += 1
+                if ri < len(rout):
+                    merged.append(rout[ri]); ri += 1
+            changes = merged
+        else:
+            changes.extend(rout)
+    return changes, absorbed
+
+
+#: 축 관측을 '실패'로 간주하는 소실 비율/최소 개수. 둘 다 넘겨야 의심한다.
+#  진짜 대량 삭제라면 다음 사이클에도 같은 관측이 나오지만 후보는 여전히 0(삭제는 후보가 아님)이라
+#  손해가 없고, 관측 실패였다면 전량 오탐(승인 없는 대량 LLM 지출)을 막는다 — 비대칭 위험에 맞춘 기본값.
+#  **최소 개수를 둔 이유**: 비율만 보면 테이블 2개짜리 스키마에서 1개를 지운 정상 DDL 도 '과반 소실'
+#  이라 삭제 반영이 영원히 막힌다. 그 규모에서는 오탐이 나도 최대 2건이라 위험이 미미하다.
+_AUTO_AXIS_DROP_RATIO = 0.5
+_AUTO_AXIS_DROP_MIN = 5
+
+
+def _auto_axis_trusted(schema_key: str, axis: str, include: bool, inv: dict, prev: dict,
+                       report) -> bool:
+    """이번 사이클의 축 관측을 신뢰할 수 있는지 (적대 리뷰 재검증 B2 / qa Q2).
+
+    스냅샷에 항목이 있는데 이번 인벤토리가 비었거나 과반이 사라졌으면 '관측 실패'로 보고 축을 끈다
+    (= 대조도 갱신도 하지 않고 보존). 이 판정이 없으면 `information_schema` 가 권한·복원 창에서
+    돌려주는 일시적 0행이 스냅샷을 통째로 지우고, 복귀 사이클에 무변경 테이블 전량이 '신규'가 된다."""
+    if not include or not prev:
+        return include
+    lost = len(prev) - sum(1 for k in prev if k in inv)
+    # 전량 소실은 크기와 무관하게 의심한다(권한 필터·복원 창의 전형적 형태). 부분 소실은
+    # 비율·최소 개수를 함께 넘길 때만 — 소규모 스키마의 정상 DDL 을 막지 않기 위해.
+    if lost and (not inv
+                 or lost >= max(_AUTO_AXIS_DROP_MIN, int(len(prev) * _AUTO_AXIS_DROP_RATIO))):
+        if isinstance(report, dict):
+            report["auto_reanalysis_axis_dropped"] = int(
+                report.get("auto_reanalysis_axis_dropped", 0)) + 1
+        logging.getLogger("insight").warning(
+            "auto_reanalysis_axis_untrusted schema=%s axis=%s prev=%s observed=%s lost=%s "
+            "— 관측 실패로 간주해 스냅샷 보존(전량 재시드 방지)",
+            schema_key, axis, len(prev), len(inv), lost)
+        return False
+    return include
+
+
+def _auto_reanalyze_structure_changes(mem_conn, scope_key, schema_label, *, probe_schema="",
+                                      current_table_fps=None, routine_inventory=None,
+                                      include_tables=True, include_routines=True,
+                                      report=None) -> None:
+    """구조 변동이 감지된 그래프 노드에 **자동** AI 재귀 분석 run 을 건다 (change-reanalysis).
+
+    사용자 요청(2026-07-27): "'DB 전체 AI 능동 분석'이 이루어진 DB" 에서 테이블·컬럼·프로시저·함수
+    구조 변동이 감지되면, 사용자가 그래프 뷰에서 다시 실행하지 않아도 변경 노드가 재귀 분석된다.
+
+    절차: 전용 구조 스냅샷 로드 → (없으면 **baseline 확립만** 하고 종료 — 첫 관측을 변경으로 오탐하지
+    않는다) → 현재 인벤토리와 대조해 신규·변경 노드 산출 → `enqueue_change_analysis` →
+    **실제 시드된 노드만** 스냅샷에 반영(그래프 미투영·cap 절단·쿨다운·진행 중 run 으로 빠진 노드는
+    스냅샷에 남지 않아 다음 사이클에 자연 재시도). 삭제 항목은 스냅샷에서 즉시 제거.
+
+    **축별 baseline**: 이번 사이클에 관측하지 못한 축(`include_*=False`)은 대조도 갱신도 하지 않고
+    스냅샷을 보존한다. 그 축이 처음 켜지는 사이클은 해당 축만 baseline 확립(후보 0)으로 처리해,
+    "관측 공백 → 전량 신규 오탐 → 승인 없는 대량 LLM 지출" 경로를 봉인한다.
+
+    shadow 모드(`AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE=shadow`): 후보 산출·계측만 하고 enqueue 도
+    스냅샷 갱신도 하지 않는다 — 배포 직후 실제 후보 규모를 **비용 0** 으로 관측하기 위한 안전 모드.
+
+    전 경로 예외 흡수 — insight 스캔을 절대 차단하지 않는다."""
+    if not AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE or not scope_key or not schema_label:
+        return
+    schema_key = f"{scope_key}:{schema_label}"
+    log = logging.getLogger("insight")
+    try:
+        if not include_tables and not include_routines:
+            return          # 이번 사이클에 신뢰할 관측 축이 없음 — 스냅샷 무변경(오탐 봉인)
+        # 자격 선확인(적대 리뷰 재검증 B3): 자동 재분석이 **영원히 발동할 수 없는** 미자격 스키마의
+        # 스냅샷까지 적재하면, 그 blob(스키마 전 테이블 맵)이 스캔마다 KV 전량 덤프 경로에 올라타
+        # 대역·커넥션을 먹는다. 자격 획득 시 첫 사이클이 baseline 이 되므로 오탐도 늘지 않는다.
+        from . import node_analysis as _na
+        if not _na.schema_analysis_completed(scope_key, schema_key):
+            _auto_note_status(schema_key, "ineligible", 0, report)
+            return
+        inventory = _auto_structure_inventory(current_table_fps, routine_inventory,
+                                              include_tables=include_tables,
+                                              include_routines=include_routines)
+        snap_key = _auto_snapshot_key(scope_key, schema_label, probe_schema)
+        snap = _load_auto_snapshot(mem_conn, snap_key)
+        # 관측 신뢰 3-상태(적대 리뷰 재검증 B2 / qa Q2) — "축이 꺼짐" · "축이 켜졌고 관측 신뢰" 에
+        # 더해 **"축은 켜졌지만 이번 관측을 믿을 수 없음"** 을 명시한다. `information_schema.TABLES`
+        # 는 권한 필터 결과라 계정 교체·GRANT 축소·복원(DROP→CREATE→import) 창에서 **예외 없이 0행**
+        # 을 돌려준다. 그 한 사이클을 '전부 삭제'로 읽으면 스냅샷이 비고(무음), 복귀 사이클에 구조가
+        # 전혀 안 바뀐 전 테이블이 '신규'로 폭발한다 — 1차 리뷰 B1(승인 없는 대량 지출)의 재진입이다.
+        # 전량 소실·과반 소실은 '관측 실패'로 간주해 그 축을 이번 사이클만 보존한다.
+        if snap is not None:
+            include_tables = _auto_axis_trusted(
+                schema_key, "t", include_tables, inventory["t"], snap.get("t") or {}, report)
+            include_routines = _auto_axis_trusted(
+                schema_key, "r", include_routines, inventory["r"], snap.get("r") or {}, report)
+            if not include_tables and not include_routines:
+                return
+            inventory = _auto_structure_inventory(current_table_fps, routine_inventory,
+                                                  include_tables=include_tables,
+                                                  include_routines=include_routines)
+        if snap is None:
+            # baseline 확립 — 첫 관측(또는 스냅샷 파손 복구)은 후보 0. 다음 변경부터 감지된다.
+            _save_auto_snapshot(mem_conn, snap_key,
+                                dict(inventory, tb=include_tables, rb=include_routines))
+            _auto_note_status(schema_key, "baseline", 0, report)
+            return
+        # 이번에 처음 켜진 축 = 그 축만 baseline 확립(대조 제외). 관측 공백 뒤 전량 오탐 차단.
+        t_new_baseline = include_tables and not snap.get("tb")
+        r_new_baseline = include_routines and not snap.get("rb")
+        changes, absorbed = _auto_structure_changes(
+            scope_key, schema_label, snap, inventory,
+            include_tables=include_tables and not t_new_baseline,
+            include_routines=include_routines and not r_new_baseline)
+        if isinstance(report, dict) and changes:
+            report["auto_reanalysis_candidates"] = int(
+                report.get("auto_reanalysis_candidates", 0)) + len(changes)
+        # shadow 판정은 `enqueue_change_analysis` 안에 있다(재검증 C3 — 안전 모드가 호출자 규율에
+        # 의존하면 다른 진입점이 우회한다). shadow 면 status='shadow' + seeded 0 으로 돌아오므로
+        # 아래 스냅샷 전진 로직이 그대로 "미전진 = 계측만" 이 된다(축 baseline 확립은 유지).
+        seeded = set()
+        status = ""
+        if changes:
+            from . import node_analysis as _node_analysis
+            rep = _node_analysis.enqueue_change_analysis(
+                scope_key, schema_key, [c[0] for c in changes], reason="structure_changed") or {}
+            status = str(rep.get("status") or "")
+            seeded = set(rep.get("seeded_keys") or [])
+            if isinstance(report, dict) and seeded:
+                report["auto_reanalysis_seeded"] = int(
+                    report.get("auto_reanalysis_seeded", 0)) + len(seeded)
+            _auto_note_status(schema_key, status or "unknown", len(changes), report,
+                              seeded=len(seeded), run_id=rep.get("run_id"))
+        # 스냅샷 갱신 — 관측한 축만: 삭제 반영 + **시드 성공분만** 새 지문으로 전진.
+        # 새로 켜진 축(t/r_new_baseline)은 대조 없이 인벤토리 전량을 baseline 으로 굳힌다.
+        if not include_tables:
+            next_t = dict(snap.get("t") or {})
+        elif t_new_baseline:
+            next_t = dict(inventory["t"])
+        else:
+            next_t = {k: v for k, v in (snap.get("t") or {}).items() if k in inventory["t"]}
+        if not include_routines:
+            next_r = dict(snap.get("r") or {})
+        elif r_new_baseline:
+            next_r = dict(inventory["r"])
+        else:
+            next_r = {k: v for k, v in (snap.get("r") or {}).items() if k in inventory["r"]}
+        next_snap = {"t": next_t, "r": next_r,
+                     "tb": bool(snap.get("tb")) or include_tables,
+                     "rb": bool(snap.get("rb")) or include_routines}
+        for node_key, kind, name, fp in changes:
+            if node_key in seeded:
+                next_snap["t" if kind == "t" else "r"][name] = fp
+        # 흡수분(동일 구조 샤드)은 시드하지 않지만 **즉시 반영** — 안 하면 매 사이클 재탐지된다.
+        for kind, name, fp in absorbed:
+            next_snap["t" if kind == "t" else "r"][name] = fp
+        if isinstance(report, dict) and absorbed:
+            report["auto_reanalysis_absorbed"] = int(
+                report.get("auto_reanalysis_absorbed", 0)) + len(absorbed)
+        if next_snap != {"t": snap.get("t") or {}, "r": snap.get("r") or {},
+                         "tb": bool(snap.get("tb")), "rb": bool(snap.get("rb"))}:
+            _save_auto_snapshot(mem_conn, snap_key, next_snap)
+        if (t_new_baseline or r_new_baseline) and not changes:
+            _auto_note_status(schema_key, "baseline", 0, report)
+    except Exception:
+        log.warning("auto_reanalysis_failed schema=%s", schema_key, exc_info=True)
+
+
+#: 무발동 status — telemetry `auto_reanalysis_blocked` 로 집계(운영자가 "왜 안 도는가"를 수치로 본다).
+_AUTO_BLOCKED_STATUSES = frozenset({"ineligible", "cooldown", "busy", "disabled", "noop"})
+
+
+def _auto_note_status(schema_key: str, status: str, candidates: int, report,
+                      seeded: int = 0, run_id=None) -> None:
+    """자동 재분석 결과를 계측 + **상태 변화 시에만** info 로그(무발동 사유도 관측 가능하게).
+
+    적대 리뷰 C1: ineligible / cooldown / busy / 그래프 미투영 같은 무발동은 이전 구현에서 로그도
+    카운터도 남기지 않아 "왜 안 도는가" 를 운영자가 진단할 수 없었다. 매 tick 도배를 피하려고
+    스키마별 직전 status 와 다를 때만 info, 같으면 debug 로 낮춘다(_LAST_DS_SCAN_STATUS 동형).
+
+    계측은 **int 카운터로만** 남긴다 — report 는 datasource 순회마다 `int/float 합산 · bool OR ·
+    그 외 덮어쓰기` 로 병합되므로, dict 를 담으면 마지막 datasource 것만 남아 관측이 소실된다."""
+    if isinstance(report, dict) and status:
+        if status == "running":
+            report["auto_reanalysis_runs"] = int(report.get("auto_reanalysis_runs", 0)) + 1
+        elif status in _AUTO_BLOCKED_STATUSES:
+            report["auto_reanalysis_blocked"] = int(report.get("auto_reanalysis_blocked", 0)) + 1
+    changed = _LAST_AUTO_REANALYSIS_STATUS.get(schema_key) != status
+    _LAST_AUTO_REANALYSIS_STATUS[schema_key] = status
+    log = logging.getLogger("insight")
+    msg = "auto_reanalysis schema=%s status=%s candidates=%s seeded=%s run=%s"
+    if changed or seeded:
+        log.info(msg, schema_key, status, candidates, seeded, run_id)
+    else:
+        log.debug(msg, schema_key, status, candidates, seeded, run_id)
+
+
 def _insight_target_conversation_id() -> str:
     return str(GLOBAL_SESSION_CONVERSATION_ID or GLOBAL_CONVERSATION_ID or "").strip()
 
@@ -1351,6 +1697,16 @@ ORDER BY TABLE_NAME
                         _rt_prune_ok = False
                 except Exception:
                     pass
+                # change-reanalysis: 그래프 노드 key 의 scope 세그먼트(= datasource). 기본 DS 미지정
+                # (.env 레거시 단일 datasource)이면 그래프 투영도 `common:` 접두를 쓰므로
+                # (metadata_graph `f"{scope or 'common'}:{fqn}"`) 같은 폴백을 적용한다 — None 으로
+                # 두고 skip 하면 그 배치에서 기능이 통째로 미발동한다(적대 리뷰 C-scope).
+                # 수동 라우터가 `.strip().lower()` 로 적재하므로 자동 경로도 같은 축(재검증 C1).
+                _auto_scope = (get_active_datasource() or "common").strip().lower()
+                # MSSQL 은 routine 저장 라벨이 DB(catalog)명이라 한 라벨에 복수 실 스키마의 루틴이
+                # 섞이고 prune 도 꺼진다(_rt_prune_ok=False) → 루틴 축은 삭제 반영이 불가해 스냅샷
+                # semantics 가 성립하지 않는다. 테이블 축(그래프 키 규약 `db.table`)만 사용한다.
+                _auto_routines_dialect_ok = _rt_prune_ok
                 if (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
                         and rel_maintenance_due
                         and all_table_names):
@@ -1430,6 +1786,10 @@ ORDER BY TABLE_NAME
                 # 발화 게이트 = rel_maintenance_due(관계 유지보수와 동일 cadence). 정의 파싱으로
                 # 참조 테이블(read/write)을 추출해 그래프 ROUTINE_USES 투영 입력으로 쓴다.
                 # 전부 guarded — insight 스캔을 절대 차단하지 않는다(B-F7: 실패는 경고 1줄).
+                # change-reanalysis: 이번 스키마의 **루틴 전량 인벤토리**(자동 재분석 스냅샷 대조 입력).
+                # `"routines"` 키는 완전 스캔일 때만 채워진다 — 절단·미발화면 키가 없고, 그 경우
+                # 루틴 축을 꺼서(include_routines=False) 스냅샷을 보존한다.
+                _rt_sink: dict = {}
                 if AGENT_ROUTINE_INTROSPECT_ENABLED and rel_maintenance_due:
                     try:
                         from . import routines as _routines
@@ -1444,7 +1804,8 @@ ORDER BY TABLE_NAME
                             datasource_key=str(_rt_scope or ""), source_run_id=run_id,
                             store_schema=_rel_store_schema,
                             cap=AGENT_ROUTINE_INTROSPECT_CAP,
-                            prune=_rt_prune_ok)
+                            prune=_rt_prune_ok,
+                            inventory_sink=_rt_sink)
                         report["routines_introspected"] = int(
                             report.get("routines_introspected", 0)) + int(_n_rt or 0)
                     except Exception:
@@ -1607,6 +1968,14 @@ ORDER BY TABLE_NAME
                 if run_id == "init-memory":
                     batch = min(batch, 2)
                 if not all_table_names:
+                    # change-reanalysis: 테이블이 없는(프로시저·함수만 있는) 스키마도 루틴 변동은 트리거.
+                    # 테이블 축은 '진짜 0' 이므로 켠 채로 둔다(삭제 반영이 정상 동작).
+                    _auto_reanalyze_structure_changes(
+                        mem_conn, _auto_scope, _rel_store_schema, probe_schema=schema,
+                        current_table_fps={}, routine_inventory=_rt_sink.get("routines"),
+                        include_tables=True,
+                        include_routines=_auto_routines_dialect_ok and "routines" in _rt_sink,
+                        report=report)
                     try:
                         save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, offset_key, "0")
                     except Exception:
@@ -1643,6 +2012,22 @@ ORDER BY TABLE_NAME
                     elif (not has_stored_tfp) and table_refresh_due:
                         refresh_due_tables.append(tname)
                         reason_map[tname] = "refresh_due"
+
+                # change-reanalysis(사용자 결정 2026-07-27): 'DB 전체 AI 능동 분석' 이력이 있는 스키마에서
+                # 신규 테이블·컬럼 구성 변경·루틴 신규/정의 변경이 감지되면, 사용자가 그래프 뷰에서 다시
+                # 실행하지 않아도 그 노드를 시드로 재귀 분석 run 을 자동 생성한다. 여기서 후보를 만드는
+                # 이유는 이 시점이 스키마의 **테이블·루틴 변동 신호가 모두 모인 유일한 지점**이기 때문
+                # (insight artifact 선정/발행 성공 여부와 무관하게 구조 변동 자체를 신호로 쓴다).
+                # 테이블 축은 지문 계산이 실제로 성공했을 때만 신뢰한다 — 조회 실패로 빈 dict 이
+                # 오면 '전 테이블 삭제' 로 읽혀 스냅샷이 비고, 다음 사이클에 전량이 '신규' 로
+                # 재탐지돼 승인 없는 대량 LLM 지출이 된다.
+                _auto_reanalyze_structure_changes(
+                    mem_conn, _auto_scope, _rel_store_schema, probe_schema=schema,
+                    current_table_fps=current_table_fps,
+                    routine_inventory=_rt_sink.get("routines"),
+                    include_tables=bool(current_table_fps),
+                    include_routines=_auto_routines_dialect_ok and "routines" in _rt_sink,
+                    report=report)
 
                 ready_total = len(artifact_missing_tables) + len(changed_tables) + len(refresh_due_tables)
                 report["skipped_tables"] = int(report.get("skipped_tables", 0)) + max(
@@ -2870,6 +3255,13 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "db_failed_perm": int(scan_report.get("db_failed_perm", 0) or 0),
             "db_failed_circuit": int(scan_report.get("db_failed_circuit", 0) or 0),
             "db_failed_other": int(scan_report.get("db_failed_other", 0) or 0),
+            # change-reanalysis(2026-07-27): 승인 없이 LLM 을 쓰는 경로라 "얼마나 발동했나"와
+            # "왜 안 발동했나"가 모두 관측 가능해야 한다. 이 payload 는 명시 allow-list 라
+            # 여기 등재하지 않으면 어떤 계측도 운영자에게 도달하지 않는다.
+            "auto_reanalysis_candidates": int(scan_report.get("auto_reanalysis_candidates", 0) or 0),
+            "auto_reanalysis_seeded": int(scan_report.get("auto_reanalysis_seeded", 0) or 0),
+            "auto_reanalysis_runs": int(scan_report.get("auto_reanalysis_runs", 0) or 0),
+            "auto_reanalysis_blocked": int(scan_report.get("auto_reanalysis_blocked", 0) or 0),
         }
     )
     # feature-0026 (M4): 종전엔 cycle 로그에서 빠지던 처리량 신호 — 노드 분석(claimed/done/failed)과

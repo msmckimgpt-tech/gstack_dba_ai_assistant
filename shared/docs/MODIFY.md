@@ -60,3 +60,32 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - Date: 2026-07-24. `shared/runtime_settings.py`: `_budget_thinking_models()`(= `_thinking_models()` − adaptive) + `_adaptive_thinking_models()` 신설. `_reasoning_budget_specs()`·`_model_budget_specs()` 가 `_budget_thinking_models()` 순회로 전환(adaptive 모델 ②③ 스펙 미생성). `agent_max_output`(①)은 전체 thinking 모델 유지. `serialize_registry` 에 `adaptive_models` 버킷 추가. model_catalog.model_thinking_style 판정 재사용(순환 없음 — model_catalog 는 os/typing 만 import). override resolver 는 spec 부재 시 이미 None 반환이라 무변경(죽은 sonnet override 는 조회 시 None).
 - 이유: adaptive(Sonnet 5)는 output_config.effort 로 추론 강도 제어 → budget_tokens override 무의미(agent_core._call_llm adaptive 분기 미조회). 관리 콘솔 죽은 슬라이더를 registry 레벨에서 차단.
 - Cross-ref: feature-0003·feature-0002 MODIFY 동일 slug · 선행 CHG-20260707T130000-reasoning-budgets.
+
+## CHG-20260727T175800-false-truncation-belief (config: `AGENT_ROUTINE_DEF_CHUNK_CHARS` 신설 — describe_routine 정의 offset 페이징 창 크기, cross-unit: 정본 feature-0002, Major §12.3)
+- Date: 2026-07-27
+- Changed By: feature-0002-agent-core (AI) — 단일 mutator(§13.2.2 F2), worktree `ai/root/feature-0002-agent-core`, conversation_audit(FR-false-truncation-belief)
+- Summary: `shared/config.py` 에 `AGENT_ROUTINE_DEF_CHUNK_CHARS`(env override, 기본 **0 = auto**) 신설 + `__all__` 등록. 순수 additive 상수 1개 — 기존 상수·resolver·순환 의존 무변경. 소비처는 `tools._routine_chunk_limit()` 단일 지점. 의미(§18.8 적대 패널 반영 후 확정): **0=auto** → 실효 창 = `AGENT_TOOL_RESULT_MAX_CHARS - 1000`, 즉 **전역 backstop 캡이 어차피 자를 지점부터만** 쪼갠다(창을 캡보다 작게 고정하면 캡 이하 정의까지 불필요하게 조각나 부분 열람 위험이 새로 생긴다). **양수** → 명시 창(하한 4000, 상한 `캡-여유`). **음수** → 윈도잉 비활성 kill-switch. 캡이 무제한(`<=0`)이거나 `캡-여유 <= 0` 이면 윈도잉 비활성 — 창이 캡 이상이면 캡이 조각 꼬리("다음 offset" 안내)를 잘라 **전량 도달 경로 자체가 사라지므로**, 그 구간은 캡의 `... (truncated)` 가 정직한 절단 신호로 남는 편이 낫다. `0`/음수 의미는 형제 상수 `AGENT_TOOL_RESULT_MAX_CHARS`("0/음수=무제한")의 "그 값으로는 자르지 않는다" 규약과 정합한다.
+- 이유: 사용자 결정(2026-07-27 AskUserQuestion) — 전역 도구결과 캡의 무제한화는 **범위에서 제외**하고, 캡보다 큰 초대형 저장 루틴 정의는 `describe_routine(offset)` 반복 호출로 전량 도달하게 한다. 창 크기를 env 로 조정 가능하게 두어 컨텍스트 예산과 호출 횟수의 trade-off 를 운영에서 튜닝할 수 있게 했다.
+- Files: `shared/config.py`
+- Affected Features: feature-0002-agent-core(`modules/tools._routine_chunk_limit` 신규 소비 — 유일 소비처)
+- Cross-ref: unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260727T175800-false-truncation-belief(정본) · 동 feature REVIEW.md REV-20260727T175800-false-truncation-belief · FRICTION_LEDGER FR-false-truncation-belief · 선행 CHG-20260724T155534-tool-result-cap-raise(`AGENT_TOOL_RESULT_MAX_CHARS` backstop — 유지)
+
+## CHG-20260727T184425-opus5-model (model_catalog·runtime_settings: Claude Opus 5 카탈로그 추가, cross-unit: 정본 feature-0007, Major §12.3 외부비용)
+- Date: 2026-07-27. 사용자 요청("서비스 내 assistant 의 llm 모델에 claude opus 도 포함 … claude-corp 및 root 계정 포함"). 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0007-opus5-model`.
+- `shared/model_catalog.py` (순수 additive):
+  - `API_MODEL_OPTIONS` 선두에 `claude-opus-5`(label `claude-opus`, group `Claude`, supports_temperature=False — Opus 5 는 sampling 파라미터 400, supports_vision=True).
+  - `_CONVERSATION_ANSWER_ALIAS["claude-opus-5"] = "claude-opus-5-chat"` — 도입 시점부터 edge-free 2계정 체인(sonnet 의 bare 단일계정 429 결함 선반영 차단).
+  - `_ADAPTIVE_THINKING_PREFIXES` 에 **`claude-opus`**(넓은 prefix) — Opus 계열 전체가 adaptive-only(budget_tokens 400)라 미분류로 떨어지는 회귀를 원천 차단. `requires_oauth_frontier_identity()` 가 동일 집합이라 CC identity 주입도 자동 적용(2026-07-27 라이브 실증: Opus 5 도 system 첫 블록 CC 없으면 429).
+  - `_CLAUDE_MODEL_MAX_OUTPUT["claude-opus-5"] = 128000`(native).
+  - `canonical_usage_model`/`_sql` 에 **`claude-opus-5`(버전-정확)** fold — thinking-style 의 넓은 prefix 와 의도적 비대칭: 미등록 Opus 버전을 Opus 5 단가·비중으로 오귀속하지 않고 self-surface 시킨다(기존 규약 보존).
+  - ⚠ 부작용(의도): `model_thinking_style("claude-opus-4-8")` 이 None → `"adaptive"`. Opus 4.8 도 실제 adaptive-only 라 사실 정합 개선(테스트 1건 갱신).
+- `shared/runtime_settings.py`: `_AGENT_MAX_OUTPUT_DEFAULT["claude-opus-5"] = 40000`. budget 계열 스펙(②③)은 `_budget_thinking_models()` 가 adaptive 를 제외하므로 자동 미생성 → admin UI 는 guide-note(죽은 슬라이더 0, CHG-20260724T085937 규약 그대로 적용).
+- Affected Features: feature-0007-bedrock-llm-provider(정본 — litellm 3 deployment + fallback), feature-0002-agent-core(`_call_llm` adaptive/CC 분기·redteam 리뷰어 정합 — 코드 무변경, 카탈로그 자동 파급), feature-0003-agent-web-ui(모델 선택기·runtime-settings pane 자동 파급 + `admin_usage._LLM_PRICE_USD_PER_1M` 단가 등록).
+- Cross-ref: unit/feature-0007-bedrock-llm-provider/docs/MODIFY.md CHG-20260727T184425-opus5-model(정본) · 동 REVIEW.md REV-20260727T184425-opus5-model · TEST.md Run 2026-07-27-opus5-model.
+
+## CHG-20260727T234439-model-picker-copy (model_catalog: 모델 선택기 description 축약, cross-unit: 정본 feature-0003, Minor §12.3)
+- Date: 2026-07-27. 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0003-model-picker-copy`.
+- `shared/model_catalog.py`: `API_MODEL_OPTIONS` 3개 항목의 **`description` 문자열만** 축약(`value`/`label`/`group`/`supports_*` 무변경). label·group 배지와 겹치는 "Anthropic Claude <tier>" 접두 제거 + tier 간 중복어(`frontier`) 제거 + 세 항목을 동일 축(성능 등급 · 용도)으로 병렬 서술. 사용자 지적(선택기 부자연스러운 줄바꿈·가독성) 대응.
+- 표시 전용 필드라 라우팅·단가·runtime_settings 키·저장 대화 영향 0.
+- Affected Features: feature-0003-agent-web-ui(정본 — 렌더 규약·CSS), feature-0007-bedrock-llm-provider(카탈로그 소유 cycle — 선행 CHG-20260727T184425-opus5-model 이 도입한 문구를 다듬음).
+- Cross-ref: unit/feature-0003-agent-web-ui/docs/MODIFY.md CHG-20260727T234439-model-picker-copy(정본) · 동 REVIEW · test-runs.d/20260727T234439-model-picker-copy.md.

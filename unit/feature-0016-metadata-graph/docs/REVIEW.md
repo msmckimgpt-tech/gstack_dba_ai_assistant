@@ -340,3 +340,42 @@ source_of_truth: true
 - **수용(비파괴, 문서화)**: m5 cache_keys 도입 1회성 라벨 캐시 전패(재라벨 LLM 스파이크 1회·구 kv 행 잔존 — 정리 경로 없음, 크기 유계) · n2 MSSQL 테이블명-only 매칭의 다스키마 동명 합산(기존 /graph/columns 동형 tradeoff) · n3 forceAll noop race 문구 · n4 freshness probe 인덱스 없는 embedded_at 스캔(현 규모 수용) · n5 pass 중 착지 임베딩 신호 소실(드레인 자가치유).
 - **리뷰어 확인 축(결함 없음)**: pgbouncer/search_path(_cypher ag_catalog 정규화)·Cypher injection(_cq/화이트리스트/dollar-tag)·freshness SQL 파라미터 정합·RC3 전 API 공급원 실사(허위 null clear 없음)·Routine 투영 키 일치·RC4 연타 가드·테스트 패딩 의미 불변.
 - **재검증**: 흡수 후 타깃 40 PASS(신규 resolve 관통·DO NOTHING·SAVEPOINT 격리·드레인 가드 포함) + 전체 스위트(0002+0003) 컨테이너 PASS(exit 0).
+## REV-20260727T174100-ai-claude-feature-0016-change-reanalysis [SUBAGENT:backend] — BLOCK→전량 흡수 (change-reanalysis 1라운드)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: schema/스키마 · migration/마이그레이션 · query/쿼리 keyword matched (구조 변동 자동 재귀 분석 = 사람 confirm 없는 외부 LLM 지출)
+- Timestamp: 2026-07-27T17:41:00+09:00
+- Verdict: BLOCK
+- Artifact: [reviews/2026-07-27T17-41-00-backend.md](./reviews/2026-07-27T17-41-00-backend.md)
+- Critical issue: B1 — 변경 감지를 insight 지문(`table_fp`)에 얹으면, 그 지문이 artifact 발행분만·스캔당 12개씩 채워져 "일부만 보유"가 정상 상태라 **이미 전체 분석을 마친 DB 의 테이블 대부분이 '신규'로 오탐**돼 승인 없는 대량 LLM 지출이 된다.
+- Human Approval Needed: no (전량 in-cycle 흡수 후 재검증 패널 재실행 — 아래 REV-20260727T193000)
+- 흡수 요약(R1~R12, 상세 대조표는 TASK.md `## 20260727T1741-change-reanalysis` §리뷰 흡수): 감지원을 **전용 구조 스냅샷**으로 재설계(B1) · 진행 중 run **append 경로 제거**(B2, 무제한 증식 통로) · 자격 **과반 성공** 조건(B3) · MSSQL 루틴 축 비활성(B4) · KV 키 해시로 128자 초과 제거(B5) · scope `common` 폴백(B6) · `enqueued` INSERT 확정값 + 시드 행 단위 try/except + 전멸 시 run DELETE(B7) · runtime_settings 라이브 스위치(C1) · 후보 산출을 예외 흡수 범위 안으로(C3) · 노드당 KV·커넥션 제거(C4) · shadow 모드 신설(Challenge).
+- 원 dispatch 세션이 사용량 한도로 중단돼 결과가 미기록 상태였다 — 대화 기록에서 원문을 복원해 아티팩트로 보존했다(문면 무변경).
+
+## REV-20260727T193000-ai-claude-feature-0016-change-reanalysis [SUBAGENT:backend+qa] — BLOCK→전량 흡수 (재검증 2라운드)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: 1라운드 BLOCK 흡수 후 §18.8 재검증(설계가 크게 바뀜) + 1라운드에서 결과 미도착이던 qa 도메인
+- Timestamp: 2026-07-27T19:30:00+09:00
+- Verdict: BLOCK (backend 재검증 BLOCK · qa BLOCK)
+- Artifact: [reviews/2026-07-27T19-30-00-backend-rereview.md](./reviews/2026-07-27T19-30-00-backend-rereview.md) · [reviews/2026-07-27T19-30-00-qa.md](./reviews/2026-07-27T19-30-00-qa.md)
+- Critical issue: (backend B1) 날짜/번호 **샤드 신설**이 매일 자동 run 을 낳고 수렴하지 않는다 — 이 제품은 2026-07-03 사용자 결정으로 "동일 구조 샤드는 대표 1개만 LLM"을 이미 확정했는데 자동 경로가 승인 없이 그 결정을 되돌린다. 스냅샷 재설계로 막히는 오탐이 아니라 **비용 정책의 단위**(개별 테이블 vs 구조 family) 불일치.
+- Human Approval Needed: no (S1~S12 전량 in-cycle 흡수, 미반영분은 후속 TCR.12 로 명시 등재)
+- **양쪽 리뷰어가 독립적으로 같은 결함을 적발**(backend B2 = qa Q2): `not all_table_names` 분기가 스냅샷 t 축을 통째로 비워, `information_schema` 가 권한·복원 창에서 돌려주는 일시적 0행 한 사이클이 baseline 을 지우고 복귀 사이클에 무변경 전 테이블을 '신규'로 폭발시킨다(1라운드 B1 의 재진입). qa 는 컨테이너에서 실제 재현.
+- 흡수 요약(S1~S12, 상세 대조표는 TASK.md §리뷰 흡수 2라운드): 동일 구조 샤드 **흡수**(S1) · 관측 실패 방어 3-상태(S2) · `root_key` 대소문자 정합(S3) · scope 정규화 통일(S4) · CAP=0 시 **대기 잡 drain 보류**(S5) · CAP 3-state 로 shadow 라이브 전환 + 판정을 enqueue 내부로(S6) · 미자격 스키마 스냅샷 미적재(S7) · 축 라운드로빈(S8) · 수동 run 진행 중 busy(S9) · 테스트의 **허위 안심 제거**(S10 — `auto_setting_int` patch 걷어내고 runtime_settings 실경로 구동, 자격은 행 판정 fake) · KV 실패/파손/레거시/다중 ds 커버(S11) · 문서 문면 정정(S12).
+- **잔여 위험(문서에 명시, 후속 TCR.12)**: 자격이 "전체 분석"이 아니라 "과반 성공한 사용자 run 1건"이라 `only_missing`+`SCHEMA_CAP` 절단 run 도 자격을 만든다 · `SchemaAuto` run 목록/취소 엔드포인트 부재(정지 수단은 CAP=0, **실행 중인 잡 1건**은 완주) · 스냅샷 blob 이 KV 전량 덤프 경로에 잔류 · MSSQL 테이블 노드 key 다대일 접힘(그래프 투영 규약 자체의 기존 한계) · 관측 실패를 조회 성공/실패 플래그가 아니라 소실 비율로 추정.
+- 검증: 대상 스위트 50 PASS · 컨테이너 전체(0002+0003) **2,455 PASS · 0 failed · 0 error** · ruff clean.
+## REV-20260727T173000-detail-db-groups [AGENT-TEAM: FAIL(BLOCKING 2)→전량 흡수] — 상세 패널 DB 그룹·목록 생략 제거 diff 적대 리뷰
+- Trigger: `UI/layout/screen keyword matched` (§18.8 dispatch 표 — UI·화면·레이아웃) → 2렌즈 병렬 dispatch: **ux 렌즈** + **프론트엔드 정합성/회귀 렌즈**(general-purpose 적대 리뷰어). 양 리뷰어 모두 소스 유닛을 추출해 자체 프로브를 돌린 실측 기반.
+- 대상: `graph-ctxmenu.js`(DB 그룹 유닛·상세 3경로 전환·상한 제거), `graph-state.js`, `graph.css`, 신규 헤드리스 테스트.
+- **BLOCKING 2 (둘 다 "숨기지 말라"는 원 요구의 직접 위반) — 흡수**:
+  - **B1 은폐 악화** — 평면 폴백이 "단일 DB" 조건이라 DB 2개 이상이면 총 3건도 그룹화+접힘. 실측: `2 DB × 5건(self 그룹 없음)` → 즉시 가시 행 **0**(종전 10). → 펼침 규칙 재설계(총 ≤60 전 그룹 펼침 · self 그룹 부재 시 첫 그룹 펼침).
+  - **B2 예산 오계상** — 접혀서 DOM 을 안 만든 그룹이 `ROW_CAP` 을 소비 → 뒤 그룹 payload 가 빈 문자열이 되어 **펼치면 빈 목록**(무음). 실측: `[3990 접힘, 50]` → 뒤 그룹 payload 10행. → `if (open) emitted += shown`.
+- **MAJOR 흡수**: (프론트) 백엔드 `_NEIGHBOR_NODE_CAP=300` 절단이 `truncated` 미세팅이라 "전량/생략 없음" 문구가 상위 계층에서 거짓 → **백엔드 `truncated` 전파 + 프론트 고지 배너 + 문구 정정**(cross-cut feature-0002 `metadata_graph.py`) / 사용자 기록이 대형 그룹 가드보다 우선해 수천 행 즉시 렌더(실측 3001행) → **가드 우선** / 컬럼 아코디언 hidden 하위가 eager(컬럼 80 캡 제거로 최대 300, 행당 7 리스너) → **컬럼 본문 lazy 화** / (ux) 접힘 상태 전역 고착 + 일괄 해제 부재 → **'모두 펼치기/접기'** 신설.
+- **MINOR/NIT 흡수**: 스키마 미상 정렬 모순(selfDbKey="" 일 때 맨 앞) · 동명 DB scope 병기 · 비-스키마(GlossaryTerm) 유령 그룹 가드 · 머리글 hover-pan 제거(다른 DB 로 화면 급이동) · stale payload 시 무음 대신 안내 · Empty/검색 렌더 `_metaDbGrpLazy.clear()` 누락 · 스키마 미상 전역 슬롯 미기록 · 같은 DB 형제 머리글 동기화(재귀 가드 포함) · 기본 `esc` 를 escaping 으로 · 컬럼 섹션 안내 문구 보강.
+- **테스트 사각 지적(가장 값진 발견) 흡수**: 초판 36건은 호출부 `dirRowsHTML` 을 실행하지 않아 **`row(e, otherKey, selfEndKey, arrow)` 인자를 뒤집어도 전건 PASS** 했고, ROW_CAP 예산·모두펼치기·형제 동기화·컬럼 lazy·배너가 미커버였다. 스위트를 재작성해 **62 PASS**(⑮ 인자 매핑을 실제 실행으로 고정).
+- **검증된 안전(NON-ISSUE)**: 초기 렌더 배치 바인딩 ↔ lazy payload `bind` 가 **배타적**(펼침 그룹은 lazy Map 미등재) → 이중/누락 바인딩 없음 · gid 전역 단조 증가라 셀렉터 오매칭 불가 · 중첩 `ul` 이 기존 CSS/셀렉터와 충돌 없음 · `dirRowsHTML` 인자 순서가 종전과 동일(수동 대조 후 ⑮ 로 고정).
+- **잔여(수용, 문서화)**: 헤드리스 스위트가 CI(pytest 전용)에 미배선 — 회귀 게이트가 아니라 cycle-내 검증 수단(test-runs 문서에 한계 명시, Makefile 배선은 별건). 파이썬 스위트 flaky(같은 main 을 두 번 돌려 실패 집합 상이) — 본 cycle 의 파이썬 변경은 additive 플래그 1개뿐.
+- **재검증**: 흡수 후 `node --check` PASS · 헤드리스 62 PASS · verify-completion 재실행.
+
+## REV-20260727T185000-detail-db-groups-postverify [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 대상: `feature-0016/docs/{TASK,REPORT,MODIFY,REVIEW}.md` + feature-0003 `docs/test-runs.d/20260727T173000-detail-db-groups.md` + 신규 PNG 증적. 실행 코드(js/py/css) 변경 없음 — §18.8 dispatch 표의 핵심 경로(send/render/auth/schema)·UI 키워드에 해당하는 *코드* 변경이 없어 적대 리뷰 panel 미실행.
+- 본 changeset 이 기록하는 대상 코드(PR #959)는 이미 REV-20260727T173000-detail-db-groups 에서 2렌즈 적대 리뷰 FAIL(BLOCKING 2)→전량 흡수를 거쳤고, 본 기록은 그 코드의 **배포본 실증 결과**다. 기록 자체의 정확성은 라이브 DOM 실측(머리글 `data-dbgrp-key`, `ul.amgr-list` 직속 `li` 카운트, `… 외 N건` 정규식 매치, 토글 전후 가시성 스냅샷)에 근거하며, 재현 불가한 항목은 "미재현 한계" 로 명시해 과대보고를 차단했다.

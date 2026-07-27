@@ -1935,3 +1935,23 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - **미전송 선택 보존**: 랜딩·pending 컨텍스트의 재로드는 그 컨텍스트에 머무는 동안 반복되므로, 리셋을 hydration 과 동일한 가드로 감싼다 — '+ 새 대화'에서 고른 뒤 아직 안 보낸 모델이 사이드바 일괄삭제·롤백 등으로 사라지지 않는다.
 - **파생 동작(명시)**: 대화 복제(fork)·공유 링크 신규 참여자는 저장값이 없어 기본값에서 시작한다. 그룹 대화의 두 멤버가 같은 대화에 서로 다른 모델을 볼 수 있다(계정별 스코프의 의도된 귀결). 명시 선택과 같은 값으로 배포 기본값이 바뀐 뒤 재전송하면 저장이 해제된다(이탈-인코딩의 알려진 성질).
 - 검증: `tests/test_model_persist.py` 14 PASS(H1·H1b·H2·H2b·H2c·H2d·H2e·H3·H4·A1·A1b·A1c·A2·A2b) · `tests/verify_model_persist.mjs` 32 PASS(G/M/R/D/S 5계열) · `node --check`/`py_compile`/ruff PASS · §18.8 [SUBAGENT] 적대 패널 2라운드(전건 수정). REV/CHG/TASK-20260727T113640-model-persist. POST-DEPLOY PB-0008(Environment: Windows-browser).
+
+## (share-bar-layout, 2026-07-27) 공유 대화 뷰 — 액션 하단 바 이동 + 조회수 상단 이동 + hover 확장 (web/UI, Minor §12.3, frontend-only)
+
+- REQ-20260727T180036-share-bar-layout (사용자 요청, `/_template:entry` arg-given): 공유된 대화 링크 화면(`share.html`)에서 ① `['링크 복사', '내 계정에서 fork']` 등 액션 버튼을 하단 바(`.share-footer`) **내부 우측**으로 옮기고 ② 하단 바의 `조회 N회`(`#shareViewCount`)를 **페이지 상단**으로 옮긴다. 추가 요청(같은 turn): ③ 하단 바 크기는 **기존을 거의 유지**하고, 디자인상 키워야 하면 **mouse-hover 반응형 + 자연스러운 애니메이션**으로 확장한다.
+- AC-SBL-1 (액션 하단 바 우측 배치): `.share-actions`(링크 복사·대화에 참여·내 계정에서 fork·로그인 링크 4종 일괄)를 `<header class="share-header">` 에서 `<footer class="share-footer">` 안 안내문(`.share-footer-note`) 다음 위치로 이동한다. 바는 `justify-content: space-between` + `align-items:center` 라 안내문=좌측, 액션=우측(바 우측 패딩 16px 안쪽)에 놓인다. **액션 그룹 전체를 함께 이동**한다 — 조건부 노출(`hidden`)인 참여/로그인 링크만 헤더에 남기면 같은 성격의 조작이 상·하로 쪼개져 일관성이 깨지기 때문. 헤더에는 브랜드·제목·meta 만 남아 읽기 영역이 된다.
+- AC-SBL-2 (조회수 상단 이동): `#shareViewCount` 를 하단 바에서 헤더 `.share-meta` 의 마지막 항목으로 옮기고 클래스를 `share-footer-stats` → `share-meta-item` 으로 맞춘다(소유자·범위·제품·만료와 같은 줄·같은 스타일). `share.js` 는 이 요소를 **id 로만** 참조하므로(`document.getElementById("shareViewCount")`) 렌더 로직 변경은 없다.
+- AC-SBL-3 (하단 바 기본 높이 유지): 액션을 품은 뒤에도 하단 바의 **기본(non-hover) 높이는 변경 전과 동일 수준**을 유지한다 — 바 세로 패딩 8px→6px, 버튼 규격 `padding:2px 10px`·`font-size:0.75rem`·`line-height:1.35`. 실측 기준 변경 전 35.0px → 변경 후 35.2px(Δ+0.2px, 허용 ±2px).
+- AC-SBL-4 (hover/focus 확장 + 애니메이션): 포인터가 hover 가능한 환경(`@media (hover: hover)`)에서 `.share-footer:hover`·`.share-footer:focus-within`(키보드 탭 대응) 시 바 패딩 10px·버튼 `6px 13px`/`0.8125rem` 로 확장하고 배경 불투명화 + 상단 그림자를 얹는다. 변화는 `transition: padding .18s ease, background .18s ease, box-shadow .18s ease`(버튼은 padding·font-size .18s)로 애니메이션한다. 실측 35.2px → 52.5px, 버튼 높이 31.5px(클릭 타겟 확보). 터치 환경(`@media (hover: none)`)은 확장 트리거가 없으므로 처음부터 확장 규격을 적용하고, `prefers-reduced-motion: reduce` 는 크기 변화는 유지하되 transition 을 끈다.
+- 불변식: 백엔드·엔드포인트·RBAC·스키마·`share.js` 로직 무변경(HTML 구조 + CSS 만). 액션 4종의 id·이벤트 배선·조건부 노출(`viewer.can_join`/`can_fork`/`is_authenticated`) 그대로. `@media print` 의 `.share-actions`/`.share-footer` 숨김은 위치 이동 후에도 유효(액션이 footer 하위가 되어 이중 적용). 본문 하단 여백(`.share-container` padding-bottom 80px)이 hover 확장 높이(52.5px)를 덮어 마지막 메시지가 가려지지 않는다.
+
+### 모델 선택기 표시 규약 (model-picker-copy 2026-07-27)
+컴포저 '+' → '모델' 메뉴의 각 행은 **label · (조건부) group 배지 · description** 3요소로 렌더된다
+(`_renderComposerModelMenu`, app.js). 표시 문자열은 다음 규약을 따른다:
+- **label** = 카탈로그 `label`(버전 넘버링 없음 — `claude-opus`/`claude-sonnet`/`claude-haiku`).
+- **group 배지** = label 이 group 명으로 **시작하지 않을 때만** 표시. `claude-*` label + `Claude` group
+  처럼 같은 단어가 겹치면 생략한다(provider 혼재 카탈로그에서는 접두가 달라 배지가 유지된다).
+- **description** = label·배지와 겹치지 않는 **차별점만**, 세 tier 를 **동일 축(성능 등급 · 용도)** 으로
+  병렬 서술해 비교 가능하게 한다. 문구는 짧게 — 메뉴 폭 360px(desc 326px)에서 1줄이 기준.
+- `.composer-model-item-desc` 는 `word-break: keep-all` — 한국어가 단어 중간에서 갈라지지 않게 한다
+  (기본 규칙은 음절 사이 어디서나 끊긴다).
