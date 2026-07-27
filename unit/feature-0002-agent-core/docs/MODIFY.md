@@ -467,3 +467,12 @@ source_of_truth: true
 - Changes(feature-0002 `tests/test_runtime_settings.py`): sonnet budget/clamp 검증을 haiku(budget 계열, native−1024=62976)로 전환 + adaptive sonnet 은 override 항상 None(스펙 제거)·reasoning_budgets haiku-only 3행·`adaptive_models` 표면화 신규 단정. agent_max_output(①) sonnet 검증은 유지(adaptive 도 live).
 - 비변경: agent_core 등 src 코드 0. effort/thinking style 매핑·budget 계열 동작 불변.
 - Cross-ref(정본): feature-0003 MODIFY/FUNCTION/REVIEW/TASK-20260724T085937-sonnet-reasoning-budget-guide · shared MODIFY 동일 slug · REVIEW-20260724T085937(cross-ref).
+
+## CHG-20260727T105326-worker-attachment-postprocess — 첨부 후처리 소유자를 ask-worker 로 이전 (Major §12.3)
+- **What**: 답변의 `attachment-edit`/`attachment-new` 블록 후처리(첨부 materialize + 블록 strip)를 web 동기 핸들러에서 **ask-worker** 로 이전. 성공 경로의 KV terminal(done)을 후처리 뒤로 지연(`defer_terminal_status`)해 "terminal=모든 것이 끝난 시점" 계약 성립.
+- **Why(RC)**: 후처리가 web `/api/ask` 에만 있어 worker 모드 장기 run(라이브 11분) 중 연결 단절 시 미실행 → 첨부 미생성 + raw 블록 노출(라이브 실측: attachment-new emit 됐으나 첨부 0건). 답변 완료 시점을 아는 워커가 올바른 소유자.
+- **Files(feature-0002)**: `src/modules/ask.py`(`_postprocess_attachment_blocks`·`_record_attachment_step`·`_finalize_deferred_terminal`·`_warm_attachment_postprocess_deps`·`_slim_result` 키 추가·`_payload_to_kwargs` defer 요청·`_execute_job` 배선), `src/agent_core.py`(`defer_terminal_status` kwarg — 성공 경로 KV done 지연, error/cancel 은 즉시 유지).
+- **Files(feature-0003 cross-ref)**: CHG-20260727T105326-web-postprocess-gate — `routers/conversations.py`(후처리 4곳 증거 기반 게이팅·worker 결과 forwarding·`_update_assistant_message_content` bool), `routers/_conv_store.py`(worker 결과 shape 첨부 키).
+- **§18.8 반영**: BLOCKER1(web strip 미게이팅 → 블록 삭제 후 저장돼 첨부 영영 미생성·본문 소실) BLOCKER2(KV terminal 이 run_agent 내부라 순서계약 무효) MAJOR3(import 워밍업) MAJOR4(혼합 버전 배포 창 → 증거 기반 게이트 self-heal) MINOR(step 기록 패리티·error 경로 strip·update bool) LOW(terminal 유실 방지·pop 순서).
+- **Verification**: pytest 2384 PASS(신규 12) · py_compile · 적대 패널 2라운드(2nd pass 에서 BLOCKER 전부 CLOSED 확인).
+- **배포 주의**: web 이 worker 의 후처리를 전제하므로 **워커 포함 전체 스코프 배포**(`make deploy-web`, `--web-only` 금지). 증거 기반 게이트가 혼합 창을 self-heal 하지만 순서는 지킨다.

@@ -3353,8 +3353,31 @@ async def ask(request: Request) -> JSONResponse:
         # TASK-0274 (Task⑥): assistant 가 답변 본문에 ```attachment-edit``` 블록을 넣었으면
         # 텍스트 계열 첨부의 새 버전으로 자동 materialize(사용자 결정). fail-open — 실패해도
         # 사용자 답변은 그대로 반환. 생성된 버전은 응답 edited_attachments 로 표면화.
+        # FR-brandnew-script-attachment-delivery-gap 후속(2026-07-27): worker 모드에서는 첨부
+        # 후처리(materialize+strip)를 **ask-worker 가 terminal 전이 전에 이미 수행**한다
+        # (modules/ask.py `_postprocess_attachment_blocks`). 장기 run 중 이 요청이 끊겨도 첨부가
+        # 만들어지도록 소유자를 워커로 옮긴 것 — 여기서 또 하면 이중 materialize 위험이 있으므로
+        # inproc 모드(웹이 직접 run_agent 실행)에서만 수행하고, worker 모드는 워커 결과를 전달만 한다.
+        # 게이트는 **모드가 아니라 증거** 기준(§18.8 MAJOR — 혼합 버전 배포 창): worker 가 이미
+        # 후처리했다면 저장 답변에 블록이 남아있지 않으므로 여기서 할 일이 없다(no-op). 반대로
+        # 블록이 **아직 남아 있다**면 워커가 구버전이거나(web 먼저 롤아웃되는 deploy 순서·
+        # `deploy-web-only`) 후처리에 실패한 것이므로 web 이 self-heal 한다. 모드만으로 게이팅하면
+        # 그 창에서 첨부 미생성 + 원문 영구 잔존이 된다.
+        # 동시 이중 materialize 는 구조적으로 차단된다: worker 는 후처리를 마친 **뒤** KV terminal 을
+        # 찍고, 이 핸들러는 그 terminal 을 보고서야 답변을 읽는다. 조기 탈출(stale/timeout)이면
+        # `_build_worker_agent_result` 가 error 를 채우고 아래 조건의 `not agent_result.error` 가 막는다.
+        _raw_block_left = (
+            isinstance(render_output, str)
+            and ("attachment-edit" in render_output or "attachment-new" in render_output)
+        )
+        _attach_postprocess_here = (not app._is_worker_mode()) or _raw_block_left
+        if _raw_block_left and app._is_worker_mode():
+            logging.getLogger(__name__).warning(
+                "ask: worker 후처리 미완(첨부 블록 잔존) — web self-heal 수행 (conversation_id=%s)",
+                conversation_id,
+            )
         materialized_attachments: list[dict[str, Any]] = []
-        if conversation_id and render_output and not agent_result.get("error"):
+        if _attach_postprocess_here and conversation_id and render_output and not agent_result.get("error"):
             try:
                 _edit_msg_id = int((latest_message or {}).get("id") or 0) if conversation_id else 0
                 materialized_attachments = app._materialize_assistant_attachment_edits(
@@ -3415,7 +3438,7 @@ async def ask(request: Request) -> JSONResponse:
         # 다운로드 첨부로 요청) source 없이 root 첨부로 materialize. 편집 경로와 동일 fail-open,
         # 응답 new_attachments 로 표면화. 편집(수정본)과 신규(새 파일)를 별도 리스트로 추적한다.
         new_attachments: list[dict[str, Any]] = []
-        if conversation_id and render_output and not agent_result.get("error"):
+        if _attach_postprocess_here and conversation_id and render_output and not agent_result.get("error"):
             try:
                 _new_msg_id = int((latest_message or {}).get("id") or 0) if conversation_id else 0
                 new_attachments = app._materialize_assistant_attachment_new(
@@ -3472,7 +3495,11 @@ async def ask(request: Request) -> JSONResponse:
         # "📎 수정본 전달" 명시 문구로 치환. render_output(응답)뿐 아니라 DB content 도 갱신해
         # history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다. error 무관 — 블록 텍스트가
         # 남아 있으면 항상 제거(본문 노출 방지).
-        if conversation_id and isinstance(render_output, str) and "attachment-edit" in render_output:
+        # ⚠ worker 모드에서는 이 strip 도 수행하지 않는다(§18.8 BLOCKER). 후처리 소유자는 워커이고,
+        # 여기서 빈 materialize 목록으로 strip 하면 **첨부를 만들지 않은 채 블록만 지워 DB 에 저장**
+        # → 워커가 뒤이어 읽을 때 블록이 사라져 첨부가 영영 생성되지 않고 스크립트 본문도 소실된다
+        # (원 결함보다 악화). 워커의 후처리가 strip 까지 책임진다.
+        if _attach_postprocess_here and conversation_id and isinstance(render_output, str) and "attachment-edit" in render_output:
             _stripped_out = app._strip_attachment_edit_blocks(render_output, materialized_attachments)
             if _stripped_out != render_output:
                 render_output = _stripped_out
@@ -3489,7 +3516,8 @@ async def ask(request: Request) -> JSONResponse:
         # FR-brandnew-script-attachment-delivery-gap: attachment-new 블록도 답변에서 제거 →
         # 전체 스크립트 본문이 채팅에 노출되지 않게 하고 "📎 첨부 전달" 안내로 치환(전체 파일은
         # 다운로드 첨부로 전달). 편집 strip 과 동일 정책 — DB content 도 갱신.
-        if conversation_id and isinstance(render_output, str) and "attachment-new" in render_output:
+        # worker 모드 미수행 이유는 위 attachment-edit strip 주석과 동일(§18.8 BLOCKER).
+        if _attach_postprocess_here and conversation_id and isinstance(render_output, str) and "attachment-new" in render_output:
             _stripped_new = app._strip_attachment_new_blocks(render_output, new_attachments)
             if _stripped_new != render_output:
                 render_output = _stripped_new
@@ -3513,6 +3541,15 @@ async def ask(request: Request) -> JSONResponse:
             "error": agent_result.get("error", ""),
             "duration_ms": round((time.time() - start_ts) * 1000, 2),
         }
+        # worker 모드: 후처리는 워커가 수행했으므로 그 결과(첨부 목록)를 응답으로 전달(inproc 패리티
+        # — 프런트 토스트/표면화). inproc 모드면 위에서 web 이 직접 materialize 한 목록을 쓴다.
+        if not _attach_postprocess_here:
+            _w_edited = agent_result.get("edited_attachments")
+            _w_new = agent_result.get("new_attachments")
+            if isinstance(_w_edited, list) and _w_edited:
+                materialized_attachments = _w_edited
+            if isinstance(_w_new, list) and _w_new:
+                new_attachments = _w_new
         if materialized_attachments:
             result["edited_attachments"] = materialized_attachments
         if new_attachments:
@@ -3842,15 +3879,19 @@ def _strip_attachment_new_blocks(answer: str, materialized: list[dict[str, Any]]
         stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
     return stripped or answer
 
-def _update_assistant_message_content(conn, conversation_id: str, message_id: int, content: str) -> None:
+def _update_assistant_message_content(conn, conversation_id: str, message_id: int, content: str) -> bool:
     """assistant 메시지 content 갱신(TASK-0286 attachment-edit strip 반영을 DB 에도 영속).
 
     `_load_latest_assistant_message` 와 동일 라우팅(PG 우선·MySQL fallback)을 따른다 — message_id 는
     그 backend 의 id 이므로 정합. history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다.
     best-effort: 실패해도 사용자 응답을 막지 않는다(render_output 은 이미 strip 됨).
+
+    Returns: 영속 성공 여부(§18.8 MINOR — 내부에서 예외를 삼키므로 try/except 로는 실패를 알 수
+    없다. 호출자가 "저장 성공했을 때만 result.answer 를 stripped 로 교체" 같은 판단을 할 수 있게
+    bool 을 돌려준다). 기존 호출자는 반환값을 무시하므로 하위호환.
     """
     if not message_id or not conversation_id:
-        return
+        return False
     try:
         from shared.db import _pg_connect
         pg = _pg_connect()
@@ -3863,7 +3904,7 @@ def _update_assistant_message_content(conn, conversation_id: str, message_id: in
             pg.commit()
         finally:
             pg.close()
-        return
+        return True
     except Exception:
         logging.getLogger(__name__).warning(
             "_update_assistant_message_content: PG update failed (msg=%s) — MySQL fallback", message_id, exc_info=True)
@@ -3877,9 +3918,11 @@ def _update_assistant_message_content(conn, conversation_id: str, message_id: in
             conn.commit()
         finally:
             cur.close()
+        return True
     except Exception:
         logging.getLogger(__name__).warning(
             "_update_assistant_message_content: MySQL update failed (msg=%s)", message_id, exc_info=True)
+    return False
 
 def _model_to_llm_provider(model: str | None) -> str | None:
     """vision invoke 모델 → LLM provider 식별자 매핑 (audit 용).

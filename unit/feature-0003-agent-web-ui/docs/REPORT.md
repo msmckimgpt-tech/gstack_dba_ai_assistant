@@ -1707,3 +1707,6 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **무영향**: 편집 경로·스키마·마이그·RBAC 스키마 0. 순수 additive(업로드 권한 게이트 추가). 보안 회귀 0.
 - **검증**: pytest 2369 PASS · §18.8 AGENT-TEAM(security MAJOR RBAC + backend MINOR 배지/cap/파서) 전부 반영. 라이브 실측=POST-DEPLOY PB-0008(배포 후 동일입력 재현).
 - 정본 REVIEW REV-20260724T181106-brandnew-script-attachment · MODIFY CHG-20260724T181106-brandnew-script-attachment · 원장 FRICTION_LEDGER FR-brandnew-script-attachment-delivery-gap.
+
+### [cross-ref] 첨부 후처리 web 게이팅 — worker 이전 후속 (2026-07-27)
+primary=feature-0002 CHG-20260727T105326-worker-attachment-postprocess. web 은 후처리를 증거 기반으로만 수행(정상 경로 no-op, 워커 미완 시 self-heal)하고 worker 결과를 응답으로 전달. 정본 REVIEW=feature-0002 REV-20260727T105326-worker-attachment-postprocess.

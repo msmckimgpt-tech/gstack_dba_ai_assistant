@@ -1894,3 +1894,8 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 ## (doc-sync-rn-0727, 2026-07-24) 릴리즈노트 콘텐츠 — 2026-07-24 블록 신규(대화·공유·관리 UX 8항목)
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) releases head 에 date "2026-07-24" 블록 신규(8항목: improved/work 4·fixed/work 2·improved/admin 1·fixed/admin 1 — SQL 코드블록 구문 강조·답변 CSV 내려받기·'요청사항 수정' 재답변 모델/추론강도 승계·'새 폴더' 폴더 아이콘 버튼·공유 링크 진입 최신 메시지 스크롤·공유 링크 위치 막대·메타데이터 검토 datasource 스코프+등록시각·관계도 이모지 색 렌더) prepend·generated 2026-07-23→2026-07-24. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
 - 평이화/비노출: feature-id·§번호·PR#·함수명·모델명(Sonnet 5·haiku)·내부표현(effort·budget_tokens·_composerCurrentModel·ResizeObserver·folder.*.own 등) 비노출(사용자 언어). 제외 항목(운영자 노브·모델 라우팅·개발자 API·라이브 미검증)은 사용자 릴리즈노트 미포함.
+
+### 첨부 후처리 web 게이트 (CHG-20260727T105326) — routers/conversations.py
+- `_raw_block_left` / `_attach_postprocess_here = (not app._is_worker_mode()) or _raw_block_left`: 첨부 후처리(materialize 2곳 + strip 2곳)를 **증거 기반**으로 게이팅. 정상 worker 경로는 워커가 이미 strip 해 no-op, 블록이 남아 있으면(구버전 워커·web-only 배포·후처리 실패) web 이 self-heal(warning 로그).
+- worker 모드에서는 `agent_result["edited_attachments"|"new_attachments"]`(worker 후처리 산출)를 응답 `result` 로 forwarding — 프런트 토스트/표면화 패리티.
+- `_update_assistant_message_content(...) -> bool`: 내부에서 예외를 삼키므로 성공 여부를 bool 로 반환(호출자가 "저장 성공 시에만 answer 교체" 판단). 기존 호출자 하위호환.

@@ -3792,6 +3792,7 @@ def run_agent(
     queued_ms_seed: float | None = None,
     eval_datasource: "dict | None" = None,
     reasoning_level: str | None = None,
+    defer_terminal_status: bool = False,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
 
@@ -3812,6 +3813,15 @@ def run_agent(
     queued_ms_seed: TASK-0289 — worker 모드에서 enqueue→claim 까지의 큐 대기시간(ms).
     표시 수행시간을 진짜 end-to-end(큐 대기 포함)로 정직하게 집계하기 위한 seed. in-process
     경로는 None(=큐 대기 0).
+
+    defer_terminal_status (FR-brandnew-script-attachment-delivery-gap 후속, ask-worker 전용):
+    True 면 **성공 경로의 KV terminal(`done`) 기록을 하지 않고** 그 인자를 결과의
+    `_deferred_terminal` 에 담아 돌려준다(error/canceled 는 종전대로 즉시 기록 — 실패는 지연할
+    이유가 없다). 호출자(ask-worker)가 답변 **후처리(첨부 materialize + 블록 strip)를 마친 뒤**
+    직접 `set_run_status(done)` 를 찍어, KV terminal 을 "정말 모든 것이 끝난 시점"으로 만든다.
+    web long-poll(`/api/ask`·`/api/ask_result`)과 프런트 재조회는 이 KV terminal 을 보고
+    저장 메시지를 읽으므로, 이 지연이 없으면 후처리 전 **raw 블록이 노출**된다(§18.8 BLOCKER).
+    기본 False → in-process(web inproc) 경로 동작 무변경.
     """
     set_active_schema_allowlist(allowed_schemas)
     # TASK-0137: 첨부 메타를 os.environ 대신 contextvar 로 — 동시 요청 격리.
@@ -3840,6 +3850,7 @@ def run_agent(
             queued_ms_seed=queued_ms_seed,
             eval_datasource=eval_datasource,
             reasoning_level=reasoning_level,
+            defer_terminal_status=defer_terminal_status,
         )
     finally:
         clear_active_schema_allowlist()
@@ -3965,6 +3976,7 @@ def _run_agent_core(
     queued_ms_seed: float | None = None,
     eval_datasource: "dict | None" = None,
     reasoning_level: str | None = None,
+    defer_terminal_status: bool = False,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -5133,6 +5145,13 @@ def _run_agent_core(
             set_run_status(mem_conn, cid, "error", run_id=run_id, duration_ms=duration_ms, error=result["error"], only_if_current_run=True)
         except Exception:
             pass
+    elif defer_terminal_status:
+        # FR-brandnew-script-attachment-delivery-gap 후속(§18.8 BLOCKER): ask-worker 는 답변
+        # 후처리(첨부 materialize + 블록 strip)를 마친 **뒤** 직접 done 을 찍는다. 여기서 미리
+        # 찍으면 web long-poll/`/api/ask_result` 가 KV terminal 을 보고 곧바로 저장 메시지를
+        # 읽어 **raw 첨부 블록이 노출**된다. 호출자가 반드시 기록하도록 인자를 실어 반환한다
+        # (호출자는 finally 로 보장 — 미기록 시 프런트 무한 '처리중').
+        result["_deferred_terminal"] = {"run_id": run_id, "duration_ms": duration_ms}
     else:
         try:
             set_run_status(mem_conn, cid, "done", run_id=run_id, duration_ms=duration_ms, error="", only_if_current_run=True)

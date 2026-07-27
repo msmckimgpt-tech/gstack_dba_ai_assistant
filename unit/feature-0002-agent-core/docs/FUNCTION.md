@@ -603,3 +603,11 @@ red-team 자가검증(feature-0021)이 답변 초안에서 `BLOCK` 결함(verdic
 
 ### `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` (module const, CHG-20260724T181106) — 신규 첨부 전달 코드-권위 지침
 사용자가 새로 생성한 스크립트/쿼리를 다운로드 첨부로 요청 시 `attachment-new` 블록 사용을 강제하는 코드-권위 문자열. `compose_system_prompt` parts 에 base·`_INJECTION_GUARD_NOTICE`·`_ATTACHMENT_DELIVERY_DIRECTIVE` 뒤 항상 append(운영자 global row drift 봉인, AUTH-1a). base SYSTEM_PROMPT 에도 "NEW SCRIPT/QUERY AS A DOWNLOADABLE ATTACHMENT" 섹션 + line 158 inline-only 예외 병기. 마찰 근본=FR-brandnew-script-attachment-delivery-gap. 실제 첨부 생성 materialize 는 feature-0003 `_materialize_assistant_attachment_new`(cross-ref).
+
+### 답변 첨부 후처리 (worker 소유, CHG-20260727T105326) — modules/ask.py
+- `_postprocess_attachment_blocks(cid, account_id, result, run_id)`: 저장된 assistant 답변의 `attachment-edit`/`attachment-new` 블록을 첨부로 materialize 하고 본문에서 strip(+메시지 content 갱신, result 에 `edited_attachments`/`new_attachments` 주입). web 헬퍼(`web.app`) 재사용, request=None(audit 생략), 실패/취소 run 은 materialize skip·strip 은 수행. 전 구간 fail-soft.
+- `_record_attachment_step(...)`: 첨부 생성/수정을 진행 단계로 기록(web inproc TASK-0285 ④ 패리티).
+- `_finalize_deferred_terminal(cid, run_id, result)`: `run_agent(defer_terminal_status=True)` 가 미룬 KV terminal 을 **후처리 뒤** 기록(호출부 finally 보장 — 무한 '처리중' 방지). error 면 error 로 기록.
+- `_warm_attachment_postprocess_deps()`: 워커 기동 시 `web.app` 1회 import(첫 job 지연 제거, 실패는 error 로그).
+- `run_agent(..., defer_terminal_status=False)`(agent_core.py): True 면 성공 경로 KV done 을 쓰지 않고 `result["_deferred_terminal"]` 로 위임. error/cancel 은 종전대로 즉시 기록. 기본 False → inproc 무변경.
+- **순서 계약**: run_agent → 후처리(materialize+strip) → KV terminal → ask_jobs terminal. web/프런트는 KV terminal 을 보고 답변을 읽으므로 이 순서가 raw 블록 노출을 막는다.
