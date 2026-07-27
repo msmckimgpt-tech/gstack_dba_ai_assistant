@@ -37,6 +37,18 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
   (지침/스킬 조회 = `system_prompt.global.read` 재사용). 기본 시스템 프롬프트 fallback 은 전역
   시스템 프롬프트와 중복이라 작동 지침 목록에서 제외 (편집 정본 단일화).
 
+- REQ-20260727-converge-until-resolved: **결함이 해소될 때까지 반복 검증한다** (사용자 결정,
+  신뢰성 최우선 DB 작업). ① 수정본 재검증을 추론 강도로 게이팅하지 않는다 (기본 모든 강도).
+  ② 재검증이 다시 BLOCK 을 내면 상한 없이 수정→재검증을 반복한다. ③ 그럼에도 결함이 남은 채
+  전달되는 경우(사용자 '즉시 답변'·취소·수정 무산출·무진전)는 판정 저장·관리 콘솔·답변 고지의
+  3곳에서 **명시적으로 표면화**한다 (결함 잔존의 은폐 금지). 응답 시간 상한은 두지 않으며,
+  사용자는 작업 화면의 '즉시 답변'으로 언제든 그 시점 답변을 수령한다.
+- REQ-20260727-reviewer-memory: 리뷰어가 **대화 내부 격리 환경에서 자기 리뷰 이력을 기억**한다 —
+  자기가 직전에 지적한 항목과 그에 대해 assistant 가 내놓은 수정본을 이어받아, 해소 여부를
+  먼저 판정하고 이미 고쳐진 항목을 다시 보고하지 않는다. 기억 범위는 (a) 현재 답변의 라운드
+  이력, (b) 같은 `conversation_id` 의 직전 판정으로 한정한다 — 다른 대화의 내용은 포함하지
+  않으며, 초안을 만든 대화 컨텍스트도 여전히 보지 않는다 (fresh-context 불변식 유지).
+
 - REQ-20260716-console-subtabs: 유사 성격 항목을 서브탭으로 묶는다 (사용자 요청) — **감사 그룹**의
   LLM 사용량·AI 운영 현황·AI 추론 3개 탭을 'AI 운영 현황' 단일 탭 + 서브탭 [LLM 사용량 / 운영 현황 /
   추론]으로, **설정 > 프롬프트**의 3항목을 단일 '프롬프트' 항목 + 서브탭 [전역 시스템 프롬프트 /
@@ -62,8 +74,12 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 - 답변 초안 (`result["answer"]`), 사용자 질문, 도구 실행 digest (SQL·행수·도구 요약),
   modality (그룹 여부), reasoning_level, product_id.
 - 런타임 설정: `REDTEAM_ENABLED`, `REDTEAM_MAX_REVISIONS`,
+  `REDTEAM_REVISE_UNTIL_RESOLVED`, `REDTEAM_VERIFY_MIN_LEVEL`, `REDTEAM_UNRESOLVED_NOTICE`,
+  `REDTEAM_HISTORY_CONV_LIMIT`,
   `REDTEAM_NOTES_SESSION_TTL_DAYS`, `REDTEAM_NOTES_PRODUCT_TTL_DAYS`,
   `REDTEAM_NOTES_INJECT_MAX_CHARS`.
+- 중단 신호: 사용자 '즉시 답변'(`conversation.finalize.*`) / 요청 취소 — 반복 수정 루프의
+  매 라운드에서 확인 (`abort_fn`).
 - 환경: `AGENT_REDTEAM_MODEL` (기본 haiku 급 저비용 모델, model_catalog 로 해석).
 
 ## 6. Outputs
@@ -75,21 +91,62 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 ## 7. Main Flow
 1. `_run_agent_core` 가 최종 초안 확정 (`result["answer"]`).
 2. 게이트: `REDTEAM_ENABLED=1` 이고 reasoning_level ≥ 일반 → 리뷰 수행. 아니면 원경로.
-3. fresh-context 리뷰어 호출 (질문+초안+증거 digest 만 전달, 초안 생성 대화 비전달) →
-   JSON findings (axis / severity BLOCK|WARN / claim / evidence / fix_hint, 상한 5건).
-4. BLOCK 존재 → 초안 생성 컨텍스트에 findings 를 주입해 1회 수정 → (높음 이상) 재검증
-   1회. 수정 상한 도달 시 마지막 수정본 채택.
-5. 판정을 PG `agent_runtime.redteam_reviews` 에 저장 + 세션 노트에 distill 기록 →
-   답변 저장/전달 (기존 `_save_message`/`_mirror_message` 경로 무변경).
+3. fresh-context 리뷰어 호출 (질문+초안+증거 digest+**자기 리뷰 기억** 전달, 초안 생성 대화
+   비전달) → JSON findings (axis / severity BLOCK|WARN / claim / evidence / fix_hint, 상한 5건).
+4. BLOCK 존재 → 초안 생성 컨텍스트에 findings 를 주입해 수정 → 재검증. **재검증이 다시 BLOCK 을
+   내면 4를 반복한다** (`REDTEAM_REVISE_UNTIL_RESOLVED=1` 기본, 상한 없음). 매 라운드 시작 시
+   사용자 '즉시 답변'/취소를 확인하고, 라운드 진행을 activity 로 노출한다.
+5. 루프 종료 사유(`stop_reason`)와 미해소 BLOCK 수, 마지막 재검증 findings 를 PG
+   `agent_runtime.redteam_reviews` 에 저장 + 세션 노트에 distill 기록. 결함이 남았으면 답변
+   말미에 고지를 덧붙인 뒤 저장/전달 (기존 `_save_message`/`_mirror_message` 경로 무변경).
 6. ask-worker reaper 가 주기적으로 TTL 초과 노트 파일을 삭제.
+
+### 7.1 루프 종료 사유 (`stop_reason`)
+| 값 | 의미 | 결함 잔존 |
+|---|---|---|
+| `resolved` | 재검증 통과 — 지적 해소 | 아니오 |
+| `aborted` | 사용자 '즉시 답변'/취소 | 가능 |
+| `no_progress` | 수정본이 직전과 실질 동일 (반복 무의미) | 가능 |
+| `revise_failed` | 수정 산출 실패 (fail-open) | 가능 |
+| `verify_error` | 재검증 호출 실패 (fail-open) | 미상 |
+| `unverified` | `REDTEAM_VERIFY_MIN_LEVEL` 로 재검증을 끈 강도 | 미상 |
+| `budget` | `REDTEAM_REVISE_UNTIL_RESOLVED=0` + 수정 상한 도달 | 가능 |
+| `backstop` | 하드 안전 상한(기본 50 라운드) 도달 | 가능 |
+| `deadline` | `REDTEAM_WALL_BUDGET_SEC` 시간 예산 도달 (기본 0=무제한) | 가능 |
+| `abort_check_failed` | 중단 신호를 연속 3회 읽지 못함 (탈출구 불능 → 보수적 종료) | 가능 |
+| `downgraded` | BLOCK 이던 축이 최종 판정에서 WARN 으로 남아 pass 처리 | 강등 |
+| `review_error` | 최초 리뷰 호출 실패 (리뷰 자체 미수행) | 미상 |
+
+`unverified` / `review_error` / `verify_error` 는 **검증하지 않았음**을 뜻하므로 미해소로 단정하지
+않는다 (`unresolved_block_count=0`, 고지 미부착). `REDTEAM_MAX_REVISIONS=0`(수정 차단 스위치)도
+고지를 붙이지 않는다 — 운영자가 스위치를 내린 것이 사용자 답변 변조로 이어지면 안 된다.
+
+### 7.2 리뷰어 맥락 기억의 경계 (SECURITY §21 정합)
+- 기억 대상은 **자기 리뷰 판정**뿐이다. 초안을 만든 대화 컨텍스트는 여전히 리뷰어에게 가지 않는다
+  (fresh-context 불변식).
+- 대화 이력은 `conversation_id` 스코프. **`has_restricted_members=true`(공유창 window 격리) 대화는
+  조회 자체를 하지 않는다** — `redteam_reviews` 행에 발신자·가시성 정보가 없어 window clip 이
+  불가하므로 fail-closed 한다. 조회 실패·대화 메타 부재도 동일하게 차단.
+- 기억 블록은 `<<REVIEW_MEMORY>>` sentinel 로 구획되고 내부 자유텍스트는 sentinel 제거 + 개행
+  접기를 거친다 (구획 breakout·줄 위조 차단).
+- 라운드 이력이 예산을 선점한다 (최근 3라운드). 대화 이력은 남는 예산만 쓴다 — 수렴에 직결하는
+  최신 라운드가 cap 에 밀려 잘리면 안 되기 때문이다.
 
 ## 8. Edge Cases
 - 리뷰어가 findings 를 과잉 보고 → severity 게이트 (BLOCK 만 수정 유발) + 상한 5건 +
   over-engineering 경계 프롬프트.
-- 수정본이 재검증에서 다시 BLOCK → 수정 상한(기본 1회)에서 중단, WARN 으로 강등 기록.
+- 수정본이 재검증에서 다시 BLOCK → **결함이 해소될 때까지 반복** (기본). 리뷰어는 자기 이전
+  지적과 수정본을 기억하므로 해소된 항목을 재보고하지 않고, 여러 라운드를 버틴 결함은
+  WARN 으로 강등하도록 프롬프트가 유도한다 (수렴 압력).
+- 리뷰어가 매 라운드 새 BLOCK 을 생성하는 병리적 케이스 → 무진전 가드(수정본 동일성) + 하드
+  백스톱(기본 50 라운드)에서 결정론적으로 중단하고 `stop_reason` 으로 기록.
+- 반복이 길어져 사용자가 기다리기 어려움 → 작업 화면 '즉시 답변' 이 매 라운드 확인되어 그 시점
+  최선 답변으로 즉시 종료 (`stop_reason=aborted`).
+- 결함이 남은 채 전달 → `unresolved_block_count`/`verify_findings` 기록 + 콘솔 타임라인 ⑤가
+  "결함 잔존 상태로 전달"로 표시 + 답변 말미 고지(`REDTEAM_UNRESOLVED_NOTICE`).
 - 노트 파일 동시 접근 (드묾 — 대화당 답변 직렬) → 원자적 temp+rename 쓰기.
-- 매우 긴 초안/증거 → digest 절단 캡 (리뷰어 입력 상한) 후 리뷰.
-- PG 불가 → 판정 저장 skip (stderr 로그), 답변 경로 정상.
+- 매우 긴 초안/증거 → digest 절단 캡 (리뷰어 입력 상한) 후 리뷰. 리뷰 기억 블록도 별도 캡.
+- PG 불가 → 판정 저장 skip (stderr 로그), 대화 기억 조회도 빈 목록, 답변 경로 정상.
 
 ## 9. Error Handling
 - 리뷰어 호출 실패/타임아웃/JSON 파싱 실패 → **fail-open**: 원 초안 그대로 전달,
@@ -125,11 +182,45 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 - AC-20260715T140002-memory-notes-2: TTL 초과 노트가 reaper sweep 에서 삭제된다.
 - AC-20260715T140003-console-visibility-1: `console.reasoning.read` 보유 admin 이
   지침/스킬 목록·상세, red-team 활동, 노트 현황을 조회할 수 있고 무권한은 403.
+- AC-20260727T160000-converge-until-resolved-1: 재검증이 BLOCK 을 낸 상태에서 수정 상한(1)을
+  넘겨 반복하고, 결함이 해소되면 종료한다 (`stop_reason=resolved`).
+- AC-20260727T160000-converge-until-resolved-2: 일반 강도에서도 수정본이 재검증된다
+  (`verify_pass=True` 기본).
+- AC-20260727T160000-converge-until-resolved-3: `abort_fn`(즉시 답변/취소)이 True 를 내면
+  그 시점 최선 답변으로 즉시 종료하고 `stop_reason=aborted` 로 기록한다.
+- AC-20260727T160000-converge-until-resolved-4: 수정본이 직전과 실질 동일하면 무진전으로
+  중단하고, 하드 백스톱 도달 시 `stop_reason=backstop` 으로 기록한다 (런어웨이 차단).
+- AC-20260727T160000-converge-until-resolved-5: 결함이 남은 채 전달되면 답변 말미 고지 +
+  `unresolved_block_count`/`verify_findings`/`stop_reason` 기록 + 콘솔 ⑤단계가 "결함 잔존
+  상태로 전달"로 표시한다.
+- AC-20260727T160100-reviewer-memory-1: 2라운드째 리뷰어 호출에 자기 1라운드 findings 와
+  assistant 수정본 발췌가 함께 전달된다.
+- AC-20260727T160100-reviewer-memory-2: 대화 기억은 `conversation_id` 스코프로만 조회되며,
+  `conversation_id` 부재 또는 `REDTEAM_HISTORY_CONV_LIMIT=0` 이면 조회하지 않는다.
+- AC-20260727T160100-reviewer-memory-3: 기억 블록이 `<<REVIEW_MEMORY>>` sentinel 로 구획되고,
+  자유텍스트의 sentinel·개행이 제거되어 구획 breakout 과 줄 위조가 차단된다.
+- AC-20260727T160100-reviewer-memory-4: `has_restricted_members=true`(공유창 window 격리) 대화
+  에서는 대화 기억을 조회하지 않는다 (fail-closed — SECURITY §21).
+- AC-20260727T160100-reviewer-memory-5: cap 포화 시에도 최신 라운드 이력이 보존된다.
+- AC-20260727T174500-panel-1: `REDTEAM_MAX_REVISIONS=0` 또는 `unverified` 종료에서는 미해소 고지가
+  붙지 않고 `unresolved_block_count=0` 이다.
+- AC-20260727T174500-panel-2: 사용자가 메인 도구 루프 단계에서 '즉시 답변'을 눌렀으면 red-team
+  반복 수정이 즉시 종료된다 (`stop_reason=aborted`).
+- AC-20260727T174500-panel-3: 무진전으로 폐기된 라운드의 재도출 도구는 `meta["rederive_steps"]`
+  에 포함되지 않으며 `rederive_applied=False` 다.
+- AC-20260727T174500-panel-4: rederive 근거가 라운드 간 누적되어 마지막 재검증이 이전 라운드
+  근거까지 함께 본다.
 
 ## 12. Observability
 - 리뷰 LLM 호출은 기존 `_record_llm_usage` 계측 (category=redteam) 으로 ai-ops 에 노출.
-- `redteam_reviews` 행: verdict/축별 findings 수/latency_ms/모델/수정 적용 여부.
-- 콘솔 "AI 추론" 탭: 최근 활동 + 판정 분포. reaper 삭제 건수는 stderr 로그.
+- `redteam_reviews` 행: verdict/축별 findings 수/latency_ms/모델/수정 적용 여부 +
+  `revision_rounds`(반복 라운드 수) · `stop_reason`(§7.1) · `unresolved_block_count`(전달 시점
+  미해소 BLOCK) · `verify_findings`(마지막 재검증이 여전히 문제 삼은 항목).
+- 콘솔 "AI 추론" 탭: 최근 활동 + 판정 분포 + **'결함 잔존 전달 (7d)'** 통계 타일. 판정 카드
+  타임라인이 ③에 반복 라운드 수, ④에 미해소 BLOCK 수, ⑤에 "결함 잔존 상태로 전달 (사유)"를
+  표시하고, 미해소 지적 원문을 별도 블록으로 노출한다. reaper 삭제 건수는 stderr 로그.
+- 사용자 화면: 반복 라운드가 activity("결함을 수정하는 중 N회차" / "수정본을 재검증하는 중
+  N회차")로 실시간 노출되며, 결함이 남은 채 전달되면 답변 말미에 고지가 붙는다.
 
 ## 13. Pre-approved Changes
 - 없음 (전역 FIRST_REQUEST.md `deploy_scope: included` 적용 — cycle-final 후 배포 포함)

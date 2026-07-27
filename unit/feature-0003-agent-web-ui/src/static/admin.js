@@ -2449,6 +2449,27 @@ function _reasoningConvLink(esc, cid) {
   return `<a class="reasoning-conv" href="/?conversation=${encodeURIComponent(s)}" target="_blank" rel="noopener" title="이 개선이 일어난 대화 열기">대화 열기 ↗</a>`;
 }
 
+// 반복 수정 루프의 종료 사유(redteam.py stop_reason, 0045 컬럼) 한글 라벨.
+// 결함이 남은 채 전달된 경우 "왜 더 돌지 않았는가"를 운영자가 즉시 알 수 있게 한다.
+const _REASONING_STOP_REASONS = {
+  resolved: "결함 해소",
+  downgraded: "지적이 경고로 강등되어 종료",
+  aborted: "사용자 '즉시 답변'/취소",
+  no_progress: "수정본이 직전과 동일 — 반복 중단",
+  revise_failed: "수정 산출 실패",
+  verify_error: "재검증 호출 실패",
+  unverified: "재검증 미수행 설정",
+  abort_check_failed: "중단 신호 확인 불가 — 보수적 종료",
+  deadline: "시간 예산 도달",
+  budget: "수정 상한 도달",
+  backstop: "반복 안전 상한 도달",
+  review_error: "리뷰 호출 실패",
+};
+function _reasoningStopReasonLabel(reason) {
+  if (!reason) return "";
+  return _REASONING_STOP_REASONS[reason] || String(reason);
+}
+
 // 진행 단계 타임라인 — ① 초안 → ② 적대 리뷰 → ③ 결함 수정 → ④ 재검증 → ⑤ 최종.
 // 저장된 verdict/findings/revision_applied/rederive_*/verify_verdict 로 각 단계 상태를 재구성한다.
 function _reasoningStageTimeline(esc, it) {
@@ -2483,6 +2504,9 @@ function _reasoningStageTimeline(esc, it) {
     } else {
       how = "텍스트 재작성";
     }
+    // 반복 수정 라운드 수(0045) — 결함 해소까지 몇 번 돌았는지. 1회면 표기 생략(노이즈).
+    const rounds = Number(it.revision_rounds || 0);
+    if (rounds > 1) how += ` · 수정 ${rounds}회 반복`;
     stages.push({ icon: "③", label: "결함 수정", state: "done", detail: how });
   } else if (err) {
     stages.push({ icon: "③", label: "결함 수정", state: "na", detail: "해당 없음" });
@@ -2493,19 +2517,32 @@ function _reasoningStageTimeline(esc, it) {
   } else {
     stages.push({ icon: "③", label: "결함 수정", state: "na", detail: "불필요 (결함 없음)" });
   }
+  const unresolved = Number(it.unresolved_block_count || 0);
   if (it.verify_verdict) {
     const vpass = it.verify_verdict === "pass";
     stages.push({
       icon: "④", label: "재검증", state: vpass ? "done" : "warn",
-      detail: vpass ? "수정본 재검증 통과" : `재검증 판정 = ${esc(it.verify_verdict)}`,
+      detail: vpass
+        ? "수정본 재검증 통과 — 지적된 결함 해소"
+        : `재검증에서 결함 잔존${unresolved ? " — BLOCK " + unresolved + "건 미해소" : ""}`,
     });
   } else {
     stages.push({ icon: "④", label: "재검증", state: "na", detail: "해당 없음 (강도별 skip 또는 미수행)" });
   }
-  stages.push({
-    icon: "⑤", label: "최종 전달", state: "done",
-    detail: it.revision_applied ? "개선된 답변 전달" : "답변 전달",
-  });
+  // ⑤ 최종 전달 — 결함이 남은 채 전달됐으면 '개선된 답변'으로 포장하지 않는다(정직성).
+  // stop_reason(0045)이 왜 멈췄는지 알려준다: 사용자 '즉시 답변'/취소, 무진전, 수정 실패 등.
+  if (unresolved > 0) {
+    stages.push({
+      icon: "⑤", label: "최종 전달", state: "warn",
+      detail: `결함 잔존 상태로 전달 — BLOCK ${unresolved}건 미해소${
+        _reasoningStopReasonLabel(it.stop_reason) ? " (" + _reasoningStopReasonLabel(it.stop_reason) + ")" : ""}`,
+    });
+  } else {
+    stages.push({
+      icon: "⑤", label: "최종 전달", state: "done",
+      detail: it.revision_applied ? "결함 해소 후 개선된 답변 전달" : "답변 전달",
+    });
+  }
   const stageHtml = stages.map((s) =>
     `<li class="reasoning-stage reasoning-stage--${s.state}">
       <span class="reasoning-stage-icon" aria-hidden="true">${esc(s.icon)}</span>
@@ -2556,6 +2593,18 @@ function _reasoningAxisSummary(esc, reviews) {
 function _reasoningReviewRowHtml(esc, it) {
   const findings = Array.isArray(it.findings) ? it.findings : [];
   const findingHtml = findings.length ? findings.map((f) => _reasoningFindingHtml(esc, f)).join("") : "";
+  // 재검증에서 끝내 해소되지 않은 BLOCK — 결함 잔존 답변이 무엇 때문에 잔존인지 그대로 보인다.
+  // (verify_findings 는 0045 컬럼. 구 이미지/구 행에서는 비어 있으므로 최초 리뷰 findings 로
+  // 폴백한다 — 폴백이 없으면 ⑤가 "BLOCK N건 미해소"라 말하면서 내용은 못 보여 준다.)
+  const _vfRaw = (Array.isArray(it.verify_findings) && it.verify_findings.length)
+    ? it.verify_findings : findings;
+  const vf = (Array.isArray(_vfRaw) ? _vfRaw : []).filter((f) => f && f.severity === "BLOCK");
+  const unresolvedHtml = (Number(it.unresolved_block_count || 0) > 0 && vf.length)
+    ? `<div class="reasoning-unresolved">
+        <div class="reasoning-unresolved-title">재검증에서 해소되지 않은 지적 (${vf.length}건)</div>
+        ${vf.map((f) => _reasoningFindingHtml(esc, f)).join("")}
+      </div>`
+    : "";
   const lvl = _REASONING_LEVEL_LABELS[it.reasoning_level] || it.reasoning_level || "";
   const metaBits = [
     it.created_at ? esc(String(it.created_at).replace("T", " ").slice(0, 19)) : "",
@@ -2572,6 +2621,7 @@ function _reasoningReviewRowHtml(esc, it) {
     </div>
     ${_reasoningStageTimeline(esc, it)}
     ${findingHtml ? `<div class="reasoning-findings">${findingHtml}</div>` : ""}
+    ${unresolvedHtml}
   </div>`;
 }
 
@@ -2589,6 +2639,7 @@ function renderReasoning(redteam, notes) {
       <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.revise_7d ?? "–")}</div><div class="reasoning-stat-label">결함 검출 (7d)</div></div>
       <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.revisions_applied_7d ?? "–")}</div><div class="reasoning-stat-label">수정 적용 (7d)</div></div>
       <div class="reasoning-stat"><div class="reasoning-stat-num">${esc(st.errors_7d ?? "–")}</div><div class="reasoning-stat-label">리뷰 실패 (7d)</div></div>
+      <div class="reasoning-stat${Number(st.unresolved_7d || 0) > 0 ? " reasoning-stat--warn" : ""}"><div class="reasoning-stat-num">${esc(st.unresolved_7d ?? "–")}</div><div class="reasoning-stat-label">결함 잔존 전달 (7d)</div></div>
       <div class="reasoning-stat"><div class="reasoning-stat-num">${st.avg_latency_ms_7d != null ? esc(st.avg_latency_ms_7d) + "ms" : "–"}</div><div class="reasoning-stat-label">평균 지연 (7d)</div></div>
     </div>`;
   const reviews = Array.isArray(redteam && redteam.items) ? redteam.items : [];

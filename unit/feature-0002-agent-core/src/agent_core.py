@@ -4539,6 +4539,10 @@ def _run_agent_core(
     steps: list[dict[str, Any]] = []
     step_count = 0
     empty_retries = 0
+    # feature-0021: 이 run 에서 사용자가 '즉시 답변'을 눌렀는지. 메인 루프가 플래그를 소비
+    # (_clear_finalize_request)하므로 red-team 반복 단계가 다시 읽을 수 없다 — 여기에 남겨
+    # 그 단계의 abort 판정에 반영한다(dict = closure 재바인딩 회피).
+    _finalize_seen: dict[str, bool] = {"hit": False}
     reflection_count = 0  # ITEM-07: run 당 SQL 자가수정 넛지 횟수(cap=AGENT_SELF_REFLECTION_MAX)
     llm_round = 0  # TASK-0289: LLM 추론 호출 회차(activity 노출용)
     # TASK-20260703-aiops-ttft-latency (정의 A): 직전 라운드 LLM 호출 종료 시각(perf_counter_ns).
@@ -4561,6 +4565,11 @@ def _run_agent_core(
         finalize_now = _finalize_requested(mem_conn, cid, run_id)
         if finalize_now:
             _clear_finalize_request(mem_conn, cid)
+            # feature-0021: '즉시 답변' 은 여기서 소비(clear)되므로, 뒤따르는 red-team 반복
+            # 수정 단계에서 다시 읽으면 이미 False 다. 사용자가 "빨리 답 달라"고 누른 직후에
+            # 상한 없는 재작성 루프로 들어가는 것을 막기 위해 이 사실을 세션 플래그로 남긴다
+            # (적대 패널 BLOCKING — 가장 흔한 조작 경로에서 탈출구 첫 신호가 무효화됐다).
+            _finalize_seen["hit"] = True
             messages.append({
                 "role": "system",
                 "content": "User requested immediate answer. Write your final answer now based on information collected so far. No more tool calls. Answer in Korean Markdown.",
@@ -4694,10 +4703,6 @@ def _run_agent_core(
                         # 있으므로 초안과 동일하게 CSV 링크로 접는다(초안 대칭 — 회귀 방지).
                         return _collapse_result_blocks(_txt, all_csv) if all_csv else _txt
 
-                    # W1(추적성): 재도출이 돌린 SQL/도구를 바깥 steps·last_sql 에 반영하기 위한 캡처.
-                    # _rt_rederive 는 outer local(last_sql) 을 재바인딩할 수 없어(closure) dict 로 전달.
-                    _rederive_capture: dict[str, Any] = {"steps": [], "executed_sql": None}
-
                     def _rt_rederive(instruction: str, draft: str) -> dict[str, Any] | None:
                         """도구 허용 재추론 콜백 (feature-0002 축 인지 라우팅).
 
@@ -4727,8 +4732,20 @@ def _run_agent_core(
                         # +1: 마지막 라운드는 도구 없이 최종 답변만 강제(예산 소진 → 확정).
                         for _rd_i in range(_max_rounds + 1):
                             # W2: 자가검증 중 사용자 취소 존중(메인 루프 대칭) — 즉시 중단, fail-open(초안 유지).
+                            # '즉시 답변'도 함께 본다: 한 재도출 라운드는 최대 4회 LLM 호출 +
+                            # 도구 실행이라, 라운드 시작 시점에만 확인하면 사용자가 버튼을 눌러도
+                            # 수 분 뒤에야 반영된다(적대 패널 MAJOR).
                             if _cancel_requested_for_run(mem_conn, cid, run_id):
                                 break
+                            try:
+                                if _finalize_seen["hit"]:
+                                    break
+                                if _finalize_requested(mem_conn, cid, run_id):
+                                    _clear_finalize_request(mem_conn, cid)
+                                    _finalize_seen["hit"] = True
+                                    break
+                            except Exception:
+                                pass
                             _rd_tools = _run_tool_defs if _rd_i < _max_rounds else None
                             try:
                                 _rd_resp = _call_llm(client, _rd_messages, model,
@@ -4793,16 +4810,42 @@ def _run_agent_core(
                             return None
                         if all_csv:
                             _rd_final = _collapse_result_blocks(_rd_final, all_csv)
-                        if _rd_steps:
-                            # W1: 재도출 근거를 outer 로 반영(orchestrate 반환 후 채택 시 steps.extend + last_sql).
-                            _rederive_capture["steps"].extend(_rd_steps)
-                            _rederive_capture["executed_sql"] = _rd_last_sql
+                        # W1(추적성): 재도출 근거는 반환값으로만 넘긴다 — 오케스트레이터가 이
+                        # 라운드를 실제로 채택했을 때만 meta["rederive_steps"] 로 되돌려주고,
+                        # 그때 caller 가 outer steps·last_sql 에 반영한다. (콜백이 직접 outer 를
+                        # 채우면 폐기된 라운드의 도구까지 화면에 새어 나간다.)
                         return {
                             "text": _rd_final,
                             "new_steps": _rd_steps,
                             "executed_sql": _rd_last_sql,
                             "tool_rounds": _rd_rounds,
                         }
+
+                    def _rt_abort() -> bool:
+                        """반복 수정의 사용자 탈출구 — '즉시 답변' 또는 취소 요청.
+
+                        red-team 반복 수정은 결함이 해소될 때까지 시간 상한 없이 돌므로
+                        (REDTEAM_REVISE_UNTIL_RESOLVED, 사용자 결정: 신뢰성 우선), 사용자가
+                        언제든 그 시점 답변을 받을 수 있어야 한다.
+
+                        세 신호를 존중한다:
+                        ① 이 run 에서 이미 '즉시 답변'이 눌렸는가(`_finalize_seen`) — 메인 루프가
+                           플래그를 소비하므로 여기서 다시 읽으면 False 다. 그 신호를 무시하면
+                           "빨리 답 달라"는 명시적 요청 직후에 상한 없는 재작성 루프로 들어간다.
+                        ② 새로 들어온 '즉시 답변' 요청(소비 후 True).
+                        ③ 요청 취소.
+                        예외는 호출측이 연속 실패로 감지해 보수적으로 종료한다(신호를 읽을 수
+                        없는 상태에서 무한 반복 방지) — 여기서는 예외를 그대로 올린다.
+                        """
+                        if _finalize_seen["hit"]:
+                            return True
+                        if _cancel_requested_for_run(mem_conn, cid, run_id):
+                            return True
+                        if _finalize_requested(mem_conn, cid, run_id):
+                            _clear_finalize_request(mem_conn, cid)
+                            _finalize_seen["hit"] = True
+                            return True
+                        return False
 
                     _rt_answer, _rt_meta = _redteam.orchestrate_review(
                         question=user_message,
@@ -4816,16 +4859,24 @@ def _run_agent_core(
                         revise_fn=_rt_revise,
                         rederive_fn=_rt_rederive,
                         answer_model=model,  # 정합: 답변 모델과 같은 tier 로 리뷰어 도출(haiku/sonnet)
+                        abort_fn=_rt_abort,
+                        progress_fn=_emit_activity,
                     )
                     if _rt_answer and _rt_answer.strip():
                         answer = _rt_answer
                         result["answer"] = answer
                     # W1(추적성): 재도출이 채택돼 새 SQL/도구를 돌렸으면 outer steps·last_sql 에 반영해
                     # 표시 step·result["executed_sql"] 이 초안이 아닌 재도출 근거를 가리키게 한다.
-                    if _rt_meta and _rt_meta.get("rederive_applied") and _rederive_capture["steps"]:
-                        steps.extend(_rederive_capture["steps"])
-                        if _rederive_capture["executed_sql"]:
-                            last_sql = _rederive_capture["executed_sql"]
+                    # **오케스트레이터가 실제로 채택한 라운드의 step 만** 쓴다(meta["rederive_steps"]).
+                    # `_rederive_capture` 는 무진전으로 폐기된 라운드의 도구까지 담으므로, 그것을
+                    # 쓰면 전달된 답변이 근거로 삼지 않은 SQL 이 화면·executed_sql 에 노출된다
+                    # (적대 패널 MAJOR).
+                    _rt_adopted = (_rt_meta or {}).get("rederive_steps") or []
+                    if _rt_adopted:
+                        steps.extend(_rt_adopted)
+                        _rt_sql = (_rt_meta or {}).get("rederive_executed_sql")
+                        if _rt_sql:
+                            last_sql = _rt_sql
                 _agent_notes.update_notes_after_answer(
                     conversation_id=cid, product_id=product_id,
                     steps=steps, review_meta=_rt_meta)

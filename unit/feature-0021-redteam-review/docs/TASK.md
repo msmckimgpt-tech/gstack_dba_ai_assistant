@@ -54,6 +54,14 @@ feature_status_updated: 2026-07-15
   sonnet→sonnet-chat; AGENT_REDTEAM_MODEL env pin 유지). 이전엔 항상 claude-haiku-4-chat 고정.
   sonnet 리뷰어 OAuth identity 주입(429 게이트 회피) + adaptive effort=low(timeout/truncation 회피,
   적대 패널 MAJOR) + record model/admin 표시 정합. 신규 테스트 9건 PASS·ruff clean·프론트 무변경.
+- [x] TASK-20260727T160000-converge-until-resolved: 사용자 리포트("warning·block 이 있어도 항상
+  1회 검증") 진단 → 라이브 판정 데이터로 3원인 분해(WARN 무조치=의도 / 일반강도 재검증 부재 /
+  재검증 결함잔존에도 상한 1 종료). 재검증 게이트 일반화(REDTEAM_VERIFY_MIN_LEVEL 기본 0) +
+  결함 해소까지 반복(REDTEAM_REVISE_UNTIL_RESOLVED 기본 1, 상한 없음) + 사용자 '즉시 답변'/취소
+  탈출구(abort_fn) + 무진전·백스톱 가드 + 잔존 결함 3중 표면화(기록/콘솔/답변 고지, alembic 0045).
+- [x] TASK-20260727T160100-reviewer-memory: 리뷰어가 대화 내부 격리 환경에서 자기 리뷰 이력과
+  assistant 수정본을 기억해 맥락에 맞게 판정 (라운드 이력 + conversation 스코프 직전 판정
+  REDTEAM_HISTORY_CONV_LIMIT, 해소된 지적 재보고 금지 프롬프트 — 반복 루프의 수렴 조건).
 
 ## 4. In Progress
 - 없음
