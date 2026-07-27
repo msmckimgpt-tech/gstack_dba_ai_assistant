@@ -282,8 +282,8 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 | 화면 | 시각 | 섹션 순서 (상→하) |
 |---|---|---|
-| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation_own`, `conversation_any`, `product`, `attachment`) → **관리 권한** (`console`, `account`, `role`, `quota`, `datasource`, `audit`, `kb`, `settings`) → **기타** (`misc`) |
-| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`, `quota`, `product`, `datasource`, `audit`, `kb`, `settings`) → **운영 권한** (`conversation_own`, `conversation_any`, `product_access`, `attachment`) → **기타** (`misc`) |
+| 작업 화면 (`index.html` + `app.js`) | 본인이 보유한 권한을 보여주는 자기 자신 시점 | **운영 권한** (`conversation_own`, `conversation_any`, `product`, `model_access`, `attachment`) → **관리 권한** (`console`, `account`, `role`, `quota`, `datasource`, `audit`, `kb`, `settings`) → **기타** (`misc`) |
+| 관리 콘솔 (`admin.html` + `admin.js`) | 타인의 권한을 배치하는 관리자 시점 | **관리 권한** (`console`, `account`, `role`, `quota`, `product`, `datasource`, `audit`, `kb`, `settings`) → **운영 권한** (`conversation_own`, `conversation_any`, `product_access`, `model_access`, `attachment`) → **기타** (`misc`) |
 
 > TASK-0073: `audit` group 은 두 화면 모두 "관리 권한" 묶음에 합류한다. 작업 화면은 본인 `audit.read.own` 보유 여부에 따라 placeholder 만 (실 entry point 는 admin 콘솔). 관리 콘솔은 audit.read.own / .any / .export / .purge 4 권한이 모두 grid 에 노출된다.
 >
@@ -295,17 +295,30 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 #### 정합 규칙
 
-- 백엔드 group 키 (`console` / `account` / `role` / `quota` / `product` / `datasource` / `kb` / `conversation_own` / `conversation_any` / `attachment` / `audit` / `settings` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
+- 백엔드 group 키 (`console` / `account` / `role` / `quota` / `product` / `datasource` / `kb` / `conversation_own` / `conversation_any` / `product_access` / `model_access` / `attachment` / `audit` / `settings` / `misc`) 가 진실의 근원. FE 의 section 정의는 group 키를 묶기만 한다.
 - **관리 권한 section 의 group 순서는 관리 콘솔 좌측 nav 카테고리 순서와 정합한다** (perm-category-hier): `console` → 계정 카테고리(`account`·`role`·`quota`) → 제품 카테고리(`product`·`datasource`) → `audit`(감사) → `kb`(지식베이스) → `settings`(시스템).
 - 작업 화면은 사용자가 그 section 안의 어느 group 권한도 보유하지 않으면 **section 자체를 미렌더**한다. 특히 일반 사용자의 "관리 권한" section 은 자동 hide.
 - 관리 콘솔은 사용자(관리자) 가 보유한 권한과 무관하게 **모든 section 을 항상 표시**한다. 관리자가 배치 가능한 권한 전체를 보여주는 grid 이기 때문이다.
 - 두 화면의 section 정의는 코드 상수 1 곳에서 한다: 작업 화면 = `app.js` 의 `WORK_SCREEN_PERMISSION_SECTIONS`, 관리 콘솔 = `admin.js` 의 `ADMIN_PERMISSION_SECTIONS`.
 - 새 group 키가 백엔드에 추가되면 위 두 상수에 명시적으로 매핑한다. 매핑이 빠지면 "기타" section 으로 fallback 한다 (자동, but 권장 아님).
-- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `quota`="LLM 사용 한도", `datasource`="데이터소스", `kb`="지식베이스", `conversation_own`="내 대화 권한", `conversation_any`="전체 대화 권한", `product`="제품"(관리 콘솔은 "제품 관리"), `attachment`="첨부", `audit`="감사", `settings`="시스템 설정", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
+- group 키별 한글 label (`console`="관리 콘솔", `account`="계정", `role`="역할", `quota`="LLM 사용 한도", `datasource`="데이터소스", `kb`="지식베이스", `conversation_own`="내 대화 권한", `conversation_any`="전체 대화 권한", `product`="제품"(관리 콘솔은 "제품 관리"), `model_access`="모델 사용"(관리 콘솔은 "모델 사용 (작업 화면)"), `attachment`="첨부", `audit`="감사", `settings`="시스템 설정", `misc`="기타") 은 두 화면에서 동일하게 유지한다.
 
-#### 동적 권한 (`product.access.<key>`, `system_prompt.*`)
+#### 동적 권한 (`product.access.<key>`, `model.access.<value>`, `system_prompt.*`)
 
 - `product.access.<key>` (dynamic, IsDynamic=1) 는 백엔드에서 `group="product"` 로 들어오므로 두 화면 모두 자동으로 product 섹션에 합류한다.
+- **`model.access.<value>` (dynamic, IsDynamic=1, `group="model_access"`) — model-access-rbac(2026-07-28, Critical §12.3, 사용자 승인)**:
+  계정/역할별로 작업 화면 대화에서 **선택 가능한 LLM 모델**을 통제한다. `shared/model_catalog.PUBLIC_API_MODEL_OPTIONS`
+  순회로 부트스트랩이 권한 row 를 seed 하며(`_ensure_model_access_permissions`), 코드 namespace 는
+  `model_catalog.model_permission_code(value)` 가 SSOT 다. 집행은 `/api/ask` **단일 choke-point**
+  (`_account_has_model_access` → 403)이고 표시는 `/api/api-vault/options` 의
+  `_filter_models_for_account_access` 가 담당한다(표시·집행 동시 닫힘).
+  · **기본 부여 = 전 역할**(사용자 결정 2026-07-28 — 배포 무회귀). grant 는 권한 row 가 **새로 생성된
+    순간에만** 수행한다 — 매 부트스트랩 re-grant 하면 관리자의 해제를 재기동이 조용히 되살린다
+    (제품 권한 `DefaultRoleAccess=1` 경로와 의도적으로 다른 지점).
+  · `product_access` 와 달리 전용 subcatalog UI 가 없고 **일반 권한 row 로 렌더**된다 → admin.js
+    `groupedPermissions` 의 `excludeDynamic` 은 `group === "product_access"` 로 좁혀 둔다.
+  · API 토큰(feature-0023)은 `model.access.*` 를 **scope allowlist 면제**로 다룬다(scope=동작 축,
+    모델=계정 역할 축). 통제는 계정 권한 + 절대 denylist + ask() 게이트가 유지한다.
 - `system_prompt.*` 코드는 백엔드 정의가 `group="product"` 이고, 작업 화면 FE 의 `permissionGroupOf()` 는 prefix-only 추론이므로 `system_prompt.` 접두사를 명시적으로 `product` 로 매핑한다 (app.js).
 
 #### 점진적 세분화 (progressive disclosure) — 표시 단계 계층 (TASK-0257)

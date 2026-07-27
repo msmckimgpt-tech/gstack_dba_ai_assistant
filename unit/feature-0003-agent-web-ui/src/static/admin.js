@@ -163,7 +163,9 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // perm-category-hier(Critical §12.3, 사용자 승인 A안 2026-07-14): 그룹 순서를 관리 콘솔 좌측 nav
 //   카테고리 순서(계정[account·role·quota] → 제품[product·datasource] → 감사 → 지식베이스 → 시스템)와
 //   정합. 각 카테고리 최상위엔 '접근'(console.<cat>.access) 조회 게이트가 오고 세부 권한이 하위 종속.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
+// model-access-rbac(2026-07-28): model_access(모델 사용) 그룹 추가 — 운영 권한 묶음에서
+//   product_access(제품 사용) 바로 뒤. 둘 다 "작업 화면에서 무엇을 쓸 수 있나" 축의 동적 권한.
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings", "conversation_own", "conversation_any", "product_access", "model_access", "attachment", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
@@ -178,6 +180,8 @@ const PERMISSION_GROUP_LABELS = {
   conversation_any: "전체 대화 권한",
   product: "제품 관리",
   product_access: "제품 사용 (작업 화면)",
+  // model-access-rbac(2026-07-28): 계정/역할별 LLM 모델 선택 허용 범위(동적 model.access.<value>).
+  model_access: "모델 사용 (작업 화면)",
   attachment: "첨부",
   audit: "감사",
   settings: "시스템 설정",
@@ -196,7 +200,7 @@ const ADMIN_PERMISSION_SECTIONS = [
   { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · LLM 사용 한도 · 제품 관리 · 데이터소스 · 감사 · 지식베이스 · 시스템 설정", groups: ["console", "account", "role", "quota", "product", "datasource", "audit", "kb", "settings"] },
   // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
   // TASK-0288: 작업 화면 제품 사용(product_access)은 운영 권한 section — 관리 콘솔 제품 관리(product)와 분리.
-  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 사용 · 첨부", groups: ["conversation_own", "conversation_any", "product_access", "attachment"] },
+  { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 사용 · 모델 사용 · 첨부", groups: ["conversation_own", "conversation_any", "product_access", "model_access", "attachment"] },
   { id: "misc", title: "기타", description: null, groups: ["misc"] },
 ];
 
@@ -579,7 +583,12 @@ function groupedPermissions(opts = {}) {
   const { excludeDynamic = false } = opts;
   const groups = new Map();
   adminState.permissions.forEach((permission) => {
-    if (excludeDynamic && permission.is_dynamic) return;
+    // model-access-rbac(2026-07-28): excludeDynamic 은 **product_access 전용** 이다.
+    // 원래 의도는 "전용 embedded UI(buildRoleProductSubcatalog)가 따로 렌더하는 그룹을 일반 grid
+    // 에서 빼기" 였는데 조건이 `is_dynamic` 전체였다. 모델 접근(`model.access.*`)도 동적 권한이지만
+    // 전용 UI 가 없고 일반 권한 row 로 보여야 하므로(모델 수가 적어 subcatalog 가 과함), 그룹을
+    // 명시해 좁힌다 — product 동작은 완전 동일하고 신규 동적 그룹만 정상 렌더된다.
+    if (excludeDynamic && permission.is_dynamic && permission.group === "product_access") return;
     if (LEGACY_BUNDLE_PERMISSIONS.has(permission.code)) return;  // perm-atomic-split: 묶음 숨김.
     const group = permission.group || "misc";
     if (!groups.has(group)) groups.set(group, []);

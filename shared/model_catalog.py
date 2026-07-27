@@ -30,6 +30,10 @@ __all__ = [
     "thinking_budget_for_level",
     "canonical_usage_model",
     "canonical_usage_model_sql",
+    "MODEL_ACCESS_PERMISSION_PREFIX",
+    "MODEL_ACCESS_PERMISSION_GROUP",
+    "model_permission_code",
+    "is_model_permission_code",
 ]
 
 
@@ -158,6 +162,35 @@ PUBLIC_API_MODEL_OPTIONS: tuple[dict[str, Any], ...] = tuple(
     }
     for item in API_MODEL_OPTIONS
 )
+
+
+# ── 모델별 접근 권한 코드 namespace (model-access-rbac 2026-07-28) ──────────────────────
+# 계정/역할별로 "어떤 모델을 고를 수 있는가" 를 통제하는 동적 RBAC 코드. 제품 접근
+# (`product.access.<product_key>`, IsDynamic=1)과 **동일 패턴**이라 역할 편집기·계정 override
+# 그리드·감사·pending→'모두 적용' UI 가 전부 재사용된다(신규 UI 0).
+#
+# 코드 namespace 는 카탈로그 value 에서 파생하므로 SSOT 인 본 모듈에 둔다 — `shared/` 는
+# web_context(feature-0003)를 import 하지 않으므로 반대 방향 배치는 순환이 된다.
+# value 는 `claude-opus-5` 처럼 이미 lowercase + `[a-z0-9.-]` 라 그대로 붙인다(제품은 대문자
+# ProductKey → lower 변환이 필요했다는 점만 다르다).
+MODEL_ACCESS_PERMISSION_PREFIX = "model.access."
+# WebPermissions.GroupName — 작업 화면에서 쓰는 운영 권한이라 `product_access` 와 같은 계열.
+MODEL_ACCESS_PERMISSION_GROUP = "model_access"
+
+
+def model_permission_code(value: str | None) -> str:
+    """모델 value → 접근 권한 코드. e.g. `claude-opus-5` → `model.access.claude-opus-5`.
+
+    빈 값은 빈 문자열을 반환한다 — 호출측이 `permissions.get("")` 로 조용히 True 를 얻는 일이
+    없도록(빈 코드는 어떤 권한 맵에도 없으므로 자연히 False) 방어적으로 둔다.
+    """
+    name = str(value or "").strip()
+    return f"{MODEL_ACCESS_PERMISSION_PREFIX}{name}" if name else ""
+
+
+def is_model_permission_code(code: str | None) -> bool:
+    """주어진 권한 코드가 모델 접근 계열인지."""
+    return str(code or "").strip().startswith(MODEL_ACCESS_PERMISSION_PREFIX)
 
 
 def get_api_model_meta(value: str | None) -> dict[str, Any] | None:

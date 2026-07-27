@@ -208,11 +208,38 @@ def get_session(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 @router.get("/api/api-vault/options")
-def get_api_vault_options() -> JSONResponse:
+def get_api_vault_options(request: Request) -> JSONResponse:
+    """작업 화면 모델 선택기의 카탈로그 source.
+
+    model-access-rbac(2026-07-28): 인증된 계정이면 `model.access.<value>` 권한으로 모델 목록을
+    필터한다(`_filter_products_for_account_access` 가 제품 목록에 하는 것과 동형) — 선택기에 안
+    보이는 모델을 서버가 거부하고, 서버가 거부할 모델이 선택기에 안 보이게 표시·집행을 함께 닫는다.
+
+    비인증 요청은 **필터 전 카탈로그를 그대로** 반환한다(기존 동작 유지): 비인증은 애초에
+    `/api/ask` 가 401 이라 노출로 얻을 것이 없고, 로그인 화면의 카탈로그 프리로드를 깨지 않는다.
+    권한 판정 실패(DB 미가용 등)도 필터 전 목록으로 graceful — 집행은 ask() 게이트가 담당한다
+    (display-permissive · backend-enforced).
+    """
+    models = list(PUBLIC_API_MODEL_OPTIONS)
+    conn = None
+    try:
+        conn = app._connect_memory()
+        account = app._get_authenticated_account(conn, request)
+        if account:
+            models = app._filter_models_for_account_access(account, models, conn=conn)
+    except Exception:
+        # 카탈로그 조회는 화면 부트스트랩 경로 — 권한 필터 실패로 선택기를 비우지 않는다(fail-soft).
+        models = list(PUBLIC_API_MODEL_OPTIONS)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
     return JSONResponse(
         {
             "default_model": API_DEFAULT_MODEL,
-            "models": list(PUBLIC_API_MODEL_OPTIONS),
+            "models": models,
             "public_host": app.WEB_PUBLIC_HOST,
             "public_url": app.WEB_PUBLIC_URL,
             "provider": "bedrock-gateway",

@@ -870,3 +870,67 @@ feature-0023 Bearer API 토큰 cross-account 감사(2026-07-23)에서 발견된 
   (ADR-0020 digest-first 정합). 산출물 `artifacts/perf/` 는 umask 077/chmod 700 (소유자 전용).
 - **kill-switch**: `WEB_PERF_LOG_INTERVAL_SEC=0` ([perf-http] 주기 로그 off) · 미들웨어는 fail-open
   (계측 예외가 요청 처리에 전파되지 않음).
+
+## 28. 모델 사용 권한 — 계정/역할별 LLM 모델 선택 통제 표면 (model-access-rbac, 2026-07-28)
+
+**적용 배경**: Claude Opus 5 도입(feature-0007 opus5-model)으로 모델 tier 간 **단가 격차가 5배**
+(haiku $1/$5 ↔ opus $5/$25)로 벌어졌으나, 모델 카탈로그는 `conversation.ask` 보유자 전원에게 동일
+노출돼 **사전 차단 수단이 없었다**(사후 관측만 — feature-0007 REPORT §7 의 R2). 사용자 요청으로
+계정/역할별 모델 사용 범위를 통제하는 인가 축을 신설한다 (Critical §12.3 — 인가 구조 변경, 사용자 승인).
+
+### 28.1 권한 모델
+- **동적 권한** `model.access.<model_value>` — `WebPermissions` 에 `IsDynamic=1`,
+  `GroupName='model_access'`, `ProductId=NULL`. `product.access.<key>` 와 **완전 동일한 패턴**이라
+  역할 편집기·계정 override 그리드·감사(`WebAuditEvents`)·pending→'모두 적용'(CONVENTIONS §10.7)이
+  전부 재사용된다 — **신규 테이블·신규 마이그레이션·신규 UI 0**.
+- 코드 namespace SSOT = `shared/model_catalog.model_permission_code(value)`
+  (`MODEL_ACCESS_PERMISSION_PREFIX = "model.access."`). 카탈로그 value 에서 파생하므로 모델 추가 시
+  자동 확장되고, 별도 매핑 테이블을 유지하지 않는다.
+- **seed**: 부트스트랩 `_ensure_model_access_permissions(conn)` 이 `PUBLIC_API_MODEL_OPTIONS` 를
+  순회해 권한 row 를 보장한다(fast path + slow-path catchup 2지점 — 제품 권한과 동형).
+
+### 28.2 기본 부여 정책 (사용자 결정 2026-07-28)
+- **전 역할 기본 부여** — 배포 시점 동작이 현행과 byte-동치(무회귀). 관리자가 콘솔에서 필요한 역할의
+  모델을 **해제**하는 방향으로 운영한다.
+- ⚠️ **grant 는 권한 row 가 "새로 생성된 순간"에만** 수행한다(`INSERT IGNORE` 의 `rowcount>0` 을
+  one-time 마커로 사용). 제품 권한(`DefaultRoleAccess=1`)은 매 부트스트랩 무조건 re-grant 하는데,
+  그 방식이면 **관리자의 해제를 재기동/재배포가 조용히 되살려** 본 통제가 무력화된다 — 의도적 divergence.
+- 카탈로그에서 사라진 모델의 권한 row 는 prune 하지 않는다(선택 불가라 무해 + 역할별 grant 이력 보존).
+
+### 28.3 집행 경계
+| 축 | 지점 | 실패 코드 |
+|---|---|---|
+| **인가(계정/역할)** | `/api/ask` 단일 choke-point — `_account_has_model_access(account, model, conn=conn)` | **403** |
+| allowlist(카탈로그 소속) | 같은 지점 `_is_allowed_api_model` — 기존 축, 변경 없음 | 400 |
+| 표시 | `/api/api-vault/options` — `_filter_models_for_account_access` | (목록 제외) |
+
+- **단일 choke-point 근거**: 클라이언트가 model 을 지정하는 경로는 `/api/ask` 뿐이고, 재답변
+  (`_reanswer`, feature-0019)·'AI 로 고치기' 등 내부 재dispatch 는 모두 `ask()` 를 다시 타 재검증된다.
+- 표시와 집행을 함께 닫는다 — 선택기에 없는 모델을 서버가 거부하고, 서버가 거부할 모델이 선택기에
+  보이지 않는다(제품 목록 필터 `_filter_products_for_account_access` 와 동형).
+
+### 28.4 fail-closed / fail-open 경계 (의도적 비대칭 — 명시)
+- **fail-closed (기본)**: 권한 row 가 등록돼 있고 계정이 미보유 → **403**. 계정 override '거부'도 동일.
+- **fail-open (좁게, 시끄럽게)**: 아래 두 경우만 통과시키고 **WARNING 로그**를 남긴다.
+  1. `model.access.<value>` 권한 row 가 **아직 DB 에 없음**(신규 배포 부트스트랩 지연·DB degraded).
+  2. 등록 여부 조회 자체가 예외.
+  근거: "게이트 미설치" 를 전원 차단으로 해석하면 **신규 배포 첫 요청부터 모든 대화가 403** 이 되어
+  통제 목적보다 훨씬 큰 사고가 된다. 조용히 넘기지 않으므로(WARNING) 관측 가능하다.
+- **우회 차단**: `conn=None` 으로 호출하면 row 등록 여부를 확인할 수 없으므로 **미보유는 거부**한다 —
+  conn 없는 호출측이 fail-open 분기를 타고 게이트를 우회하지 못한다.
+- **표시 축은 관대**: 계정의 선택 가능 모델이 0개면 목록을 필터하지 않고 원본을 유지한다(+WARNING).
+  빈 선택기는 사용자에게 "로딩 중"으로 보여 원인 파악이 어렵고, 집행은 ask() 게이트가 이미 담당한다
+  (display-permissive · backend-enforced — 프론트 `can()` 규약과 동일 원칙).
+
+### 28.5 API 토큰(feature-0023) 상호작용
+- `model.access.*` 는 토큰 **scope allowlist 면제**다. scope 는 "토큰이 어떤 *동작*을 하나"
+  (`conversation.` / `product.access.`)를 제한하는 축이고, 모델 tier 는 **서비스 계정의 역할 권한**이
+  정하는 별 축이다. 면제하지 않으면 이미 발급된 토큰(`Scopes='conversation.'`)이 전부 `/api/ask` 403 으로
+  죽고, 모델 추가마다 토큰 scope 를 일괄 재발급해야 한다.
+- 면제해도 통제는 유지된다 — `bool(granted)`(서비스 계정 역할 보유) **AND** 절대 denylist
+  (`*.any`·관리 네임스페이스) **AND** ask() 게이트. 저권한 서비스 계정에서 opus 를 해제하면 토큰도 못 쓴다.
+
+### 28.6 검증
+`unit/feature-0003-agent-web-ui/tests/test_model_access_rbac.py` (G1~G8, 25 케이스) — 판정표 5분기·
+부트스트랩 지연 fail-open+로그·`conn=None` 우회 차단·표시 필터·API 토큰 면제와 그 경계·**재부트스트랩
+re-grant 금지**(★ 관리자 해제 보존)·프론트 그룹 키 parity.

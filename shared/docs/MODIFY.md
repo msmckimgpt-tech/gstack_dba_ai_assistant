@@ -89,3 +89,11 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - 표시 전용 필드라 라우팅·단가·runtime_settings 키·저장 대화 영향 0.
 - Affected Features: feature-0003-agent-web-ui(정본 — 렌더 규약·CSS), feature-0007-bedrock-llm-provider(카탈로그 소유 cycle — 선행 CHG-20260727T184425-opus5-model 이 도입한 문구를 다듬음).
 - Cross-ref: unit/feature-0003-agent-web-ui/docs/MODIFY.md CHG-20260727T234439-model-picker-copy(정본) · 동 REVIEW · test-runs.d/20260727T234439-model-picker-copy.md.
+
+## CHG-20260728T024258-model-access-rbac (model_catalog: 모델 접근 권한 코드 namespace, cross-unit: 정본 feature-0003, Critical §12.3)
+- Date: 2026-07-28. 사용자 요청("계정/역할 별 권한 범위를 구성"). 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0003-model-access-rbac`.
+- `shared/model_catalog.py` (순수 additive): `MODEL_ACCESS_PERMISSION_PREFIX`("model.access.") · `MODEL_ACCESS_PERMISSION_GROUP`("model_access") 상수 + `model_permission_code(value)` · `is_model_permission_code(code)` + `__all__` 등록. 기존 심볼·동작 무변경.
+- 배치 근거: 권한 코드 namespace 가 **카탈로그 value 에서 파생**하므로 SSOT 인 model_catalog 에 둔다. `shared/` 는 web_context(feature-0003)를 import 하지 않아 단방향이고, 반대 배치는 순환이 된다. 모델 추가 시 코드가 자동 확장돼 별도 매핑 테이블이 필요 없다.
+- `model_permission_code("")` 는 빈 문자열 — 호출측이 `permissions.get("")` 로 조용히 True 를 얻는 경로를 만들지 않는 방어.
+- Affected Features: feature-0003-agent-web-ui(정본 — 부트스트랩 seed·판정 함수·집행 게이트·표시 필터·권한 grid), feature-0007-bedrock-llm-provider(카탈로그 소유 — 모델 추가 시 권한 row 자동 확장), feature-0023-conversation-api-access(API 토큰 scope 면제 규약).
+- Cross-ref: unit/feature-0003-agent-web-ui/docs/MODIFY.md CHG-20260728T024258-model-access-rbac(정본) · 동 REVIEW · docs/SECURITY.md §28 · docs/CONVENTIONS.md §10.6.

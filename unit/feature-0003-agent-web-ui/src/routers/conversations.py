@@ -2738,6 +2738,14 @@ async def ask(request: Request) -> JSONResponse:
     elif not app._is_allowed_api_model(model):
         conn.close()
         return app._json_error("허용되지 않은 모델입니다.", 400)
+    # model-access-rbac(2026-07-28, Critical §12.3): 계정/역할별 모델 사용 권한 게이트.
+    # **단일 choke-point** — 재답변(`_reanswer`)·'AI 로 고치기' 등 내부 재dispatch 경로도 모두
+    # `ask()` 를 다시 타므로 여기 한 곳이 클라이언트 지정 model 의 전 진입면을 덮는다
+    # (`_is_allowed_api_model` 이 카탈로그 allowlist=400, 본 게이트가 계정 인가=403 — 축 분리).
+    # 표시(모델 선택기)는 `/api/session` 의 `_filter_models_for_account_access` 가 함께 닫는다.
+    elif not app._account_has_model_access(account, model, conn=conn):
+        conn.close()
+        return app._json_error("이 모델을 사용할 권한이 없습니다. 관리자에게 문의하세요.", 403)
     # 자격증명 검증은 backend 단일 env 소스로 이동 (config.py 의 LLM_API_KEY).
     # 호출 시점에 자격증명이 미설정이면 `_run_agent_core` 가 result["error"] 로
     # 보고 → user 에게 503 안내.
