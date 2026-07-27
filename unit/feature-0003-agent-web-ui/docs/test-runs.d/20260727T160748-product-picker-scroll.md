@@ -14,7 +14,7 @@ REV-20260727T160748-product-picker-scroll · CHG-20260727T160748-product-picker-
   + `[0, scrollHeight-clientHeight]` clamp) · `openProductDropup()`·`renderProductChip()` 열린-상태 재렌더
   분기 2곳 호출 · 검색 입력 `focus({preventScroll:true})`. 백엔드/RBAC/스키마 0.
 
-- **PRE-COMMIT — `tests/headless/test_product_dropup_scroll.py` 11/11 PASS**
+- **PRE-COMMIT — `tests/headless/verify_product_dropup_scroll.py` 11/11 PASS**
   (chromium 145.0.7632.6, 실 `app.js` 함수 원문 추출 + 실 `styles.css` 주입 — `offsetTop`/`clientHeight`/
   `scrollHeight` 는 레이아웃 산출물이라 DOM 없는 순수 단위검증으로 대체 불가):
   1. `T9` 실 CSS 가 메뉴를 스크롤 컨테이너로 만듦(clientHeight ≤ 320 < scrollHeight)
@@ -27,7 +27,7 @@ REV-20260727T160748-product-picker-scroll · CHG-20260727T160748-product-picker-
   8. `T7` 짧은 목록(3개) — `scrollTop=0`, 스크롤 미발생
   9. `T8` `menu` 부재(null / 없는 id) — 예외 없이 no-op
   10. `T2b` 검색칸 미노출 경로(제품 < `PRODUCT_DROPUP_SEARCH_MIN`)에서도 중앙 정렬 성립
-  실행: `PLAYWRIGHT_BROWSERS_PATH=/home/claude-corp/.cache/ms-playwright python3 tests/headless/test_product_dropup_scroll.py`
+  실행: `PLAYWRIGHT_BROWSERS_PATH=/home/claude-corp/.cache/ms-playwright python3 tests/headless/verify_product_dropup_scroll.py`
 - **PRE-COMMIT — `node --check app.js` PASS**(문법).
 - **시각 증거(헤드리스, 실 CSS)**: `docs/evidence/product-dropup-scroll-before-20260727.png`(현행 — 최상단,
   선택 항목 P_12 화면 밖) · `docs/evidence/product-dropup-scroll-after-20260727.png`(변경 후 — P_12 가 목록

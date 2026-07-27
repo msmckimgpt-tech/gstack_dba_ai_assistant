@@ -21,7 +21,7 @@ chromium 레이아웃 위에서 돌려 다음을 검증한다 — offsetTop/clie
   T9  실 CSS 적용 — 메뉴가 max-height(320px)로 스크롤 컨테이너가 됨
 
 실행:
-  PLAYWRIGHT_BROWSERS_PATH=<ms-playwright> python3 tests/headless/test_product_dropup_scroll.py
+  PLAYWRIGHT_BROWSERS_PATH=<ms-playwright> python3 tests/headless/verify_product_dropup_scroll.py
 
 라이브 화면 정본은 PB-0008(Windows-browser).
 """

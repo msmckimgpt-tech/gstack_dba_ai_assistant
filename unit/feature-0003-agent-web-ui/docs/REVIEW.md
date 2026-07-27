@@ -992,5 +992,13 @@ source_of_truth: true
   - **H7 (성능)**: 레이아웃 읽기 1회 + `querySelector` 1회, 메뉴 open 시점 한정. 강제 reflow 비용은 이미 발생하는 렌더 경로 안이라 체감 영향 없음.
   - **H8 (접근성·모션)**: 즉시 스크롤이라 애니메이션 없음(reduced-motion 무관). 포커스는 검색칸에 유지되고 DOM/ARIA 를 바꾸지 않아 스크린리더 흐름 무변경.
 - **결정 근거**: `scrollIntoView({block:"center"})` 는 한 줄로 끝나지만 **조상 스크롤 컨테이너(페이지/messageLog)까지 스크롤**해 컴포저 주변 화면이 튄다 — 메뉴 자신의 `scrollTop` 만 계산·설정하는 편이 부작용 표면이 좁다. 선택 항목이 없을 때(=auto) 스크롤을 건드리지 않는 것도 의도 — auto 는 목록 최상단 근처라 기존 동작이 이미 최적이며, 불필요한 스크롤 변경을 만들지 않는다.
-- **검증**: `tests/headless/test_product_dropup_scroll.py` **11/11 PASS**(chromium 145, 실 app.js 함수 원문 + 실 styles.css) · `node --check app.js` PASS · 시각 증거 `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`(before=최상단·선택 항목 미표시 / after=선택 항목 중앙). POST-DEPLOY PB-0008(Windows-browser) = 배포 후 정본.
+- **검증**: `tests/headless/verify_product_dropup_scroll.py` **11/11 PASS**(chromium 145, 실 app.js 함수 원문 + 실 styles.css) · `node --check app.js` PASS · 시각 증거 `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`(before=최상단·선택 항목 미표시 / after=선택 항목 중앙). POST-DEPLOY PB-0008(Windows-browser) = 배포 후 정본.
 - **스키마/RBAC/백엔드**: 0. Human Approval Needed: no (Minor §12.3).
+
+## REV-20260727T163000-product-picker-scroll-ci-fix [SKIPPED:test-harness-rename-no-runtime-change] 헤드리스 검증 스크립트 rename (CI 수집 회피)
+- **Panel skip 사유(§18.8)**: 런타임 코드 변경 0 — 검증 하네스 파일명 rename + 문서 경로 참조 갱신뿐(`src/**` 무변경). 실 구현 리뷰 정본 = REV-20260727T160748-product-picker-scroll.
+- **문제**: 신규 검증 스크립트가 `test_` prefix 라 CI pytest 가 수집 → 러너 playwright 부재로 collection error(exit 2) → test job FAIL. **본 cycle 이 직접 유발한 red 이므로 무관 flake 로 분류하지 않고 즉시 수정**했다.
+- **수정**: `verify_` prefix 로 rename(프로젝트 `tests/verify_*.mjs` 관례와 동일). 헤드리스 검증은 명시 호출 전용이며, CI 는 pytest 단위테스트만 게이트한다는 기존 계약을 존중한다(헤드리스/브라우저 검증은 로컬·PB-0008 축).
+- **대안 검토**: (A) CI 에 playwright 설치 — 러너 시간·유지비 증가, 본 cycle 범위 밖. (B) 파일 상단 `pytest.importorskip` — 수집은 계속 일어나 취약. (C) **rename(채택)** — 수집 자체를 회피, 관례 정합.
+- **검증**: rename 후 11/11 PASS 재확인 · ruff PASS · pyproject 에 `python_files` 커스텀 없음 확인(기본 패턴만 수집).
+- Human Approval Needed: no.

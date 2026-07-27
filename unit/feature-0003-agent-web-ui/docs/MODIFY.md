@@ -1081,7 +1081,13 @@ source_of_truth: true
   - `openProductDropup()`: 메뉴 표시 후 검색 입력 `focus()` → `focus({ preventScroll: true })` 로 변경하고, 그 뒤에 중앙 정렬 호출(포커스發 브라우저 자동 스크롤과의 충돌 차단 + preventScroll 미지원 폴백 순서).
   - `renderProductChip()`: 메뉴가 열린 상태의 재렌더 분기에서 `renderProductDropupMenu()` 직후 중앙 정렬 재호출(재렌더가 scrollTop 을 0 으로 리셋하므로 복원).
 - **미채택**: `scrollIntoView({block:"center"})` — 조상 스크롤 컨테이너(페이지/messageLog)까지 스크롤해 컴포저 화면이 튄다. 메뉴 자신의 `scrollTop` 만 직접 계산·설정.
-- **Files**: `src/static/app.js`, `tests/headless/test_product_dropup_scroll.py`(신규), `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260727T160748-product-picker-scroll.md`, `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`(신규).
-- **Verification**: `tests/headless/test_product_dropup_scroll.py` **11/11 PASS**(실 chromium 145 레이아웃 + 실 app.js 함수 원문 추출 + 실 styles.css — offsetParent 계약·중앙 정렬 ±1px·가시성·상/하단 clamp·무선택 무간섭·짧은 목록·menu 부재 무예외·검색칸 유무 양 경로) · `node --check app.js` PASS.
+- **Files**: `src/static/app.js`, `tests/headless/verify_product_dropup_scroll.py`(신규), `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260727T160748-product-picker-scroll.md`, `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`(신규).
+- **Verification**: `tests/headless/verify_product_dropup_scroll.py` **11/11 PASS**(실 chromium 145 레이아웃 + 실 app.js 함수 원문 추출 + 실 styles.css — offsetParent 계약·중앙 정렬 ±1px·가시성·상/하단 clamp·무선택 무간섭·짧은 목록·menu 부재 무예외·검색칸 유무 양 경로) · `node --check app.js` PASS.
 - **스키마/RBAC/백엔드**: 0 (프론트 표현계층 단독, 엔드포인트·응답 shape 무변경). cache-buster `?v=dev` 고정(빌드 `inject_asset_stamp.py` content-hash 자동주입 regime — 수기 bump 불요).
 - **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008(AC-PPSC-1~3 라이브).
+
+## CHG-20260727T163000-product-picker-scroll-ci-fix — 헤드리스 검증 스크립트 rename (CI pytest 수집 회피, 런타임 코드 0)
+- **원인**: `tests/headless/test_product_dropup_scroll.py` 가 pytest 기본 수집 패턴(`test_*.py`)에 걸려 CI(`pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests`)가 import → 러너에 playwright 미설치라 `ModuleNotFoundError: No module named 'playwright'` collection error(exit 2)로 전체 test job FAIL. 본 cycle 이 직접 유발한 red.
+- **변경**: `tests/headless/test_product_dropup_scroll.py` → **`tests/headless/verify_product_dropup_scroll.py`** (`git mv`). 프로젝트의 브라우저 검증 스크립트 관례(`tests/verify_*.mjs`)와 동일한 `verify_` prefix — pytest 수집 대상에서 벗어나고, 헤드리스 실행은 명시 호출로 유지. 스크립트 본문·문서 내 경로 참조 동반 갱신(FUNCTION/TASK/REVIEW/REPORT/test-runs.d).
+- **런타임 코드 변경 0** — `src/static/app.js` 무변경(제품 드롭업 동작 불변).
+- **Verification**: rename 후 `PLAYWRIGHT_BROWSERS_PATH=… python3 tests/headless/verify_product_dropup_scroll.py` **11/11 PASS** 재확인 · `ruff check` PASS · pytest 수집 패턴 확인(pyproject 에 `python_files` 커스텀 없음 → 기본 `test_*.py`/`*_test.py` 만 수집).

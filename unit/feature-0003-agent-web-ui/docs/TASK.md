@@ -6375,12 +6375,13 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
   - `scrollIntoView({block:"center"})` 는 **미채택** — 조상 스크롤 컨테이너(페이지·messageLog)까지 움직일 수 있어 컴포저 화면이 튄다. 메뉴 자신의 `scrollTop` 만 직접 설정.
   - 호출 2곳: `openProductDropup()`(열 때) · `renderProductChip()` 의 열린-상태 재렌더 분기(재렌더가 scrollTop 을 0 으로 리셋하므로 복원).
   - 검색 입력 자동 포커스는 `focus({preventScroll:true})` 로 변경(포커스發 자동 스크롤이 중앙 정렬을 되돌리는 것 차단) + 포커스→정렬 순서(preventScroll 미지원 브라우저 대비).
-- 영향 파일: `unit/feature-0003-agent-web-ui/src/static/app.js` (신규 함수 + 호출 2곳 + focus 옵션) · `tests/headless/test_product_dropup_scroll.py`(신규 검증) · `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` · `docs/test-runs.d/20260727T160748-product-picker-scroll.md` · `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`.
+- 영향 파일: `unit/feature-0003-agent-web-ui/src/static/app.js` (신규 함수 + 호출 2곳 + focus 옵션) · `tests/headless/verify_product_dropup_scroll.py`(신규 검증) · `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` · `docs/test-runs.d/20260727T160748-product-picker-scroll.md` · `docs/evidence/product-dropup-scroll-{before,after}-20260727.png`.
 - 완료 판정 기준(acceptance): (1) 선택 제품이 목록 세로 중앙(±1px) (2) 첫/마지막 항목은 clamp 되어 최상단/최하단에 멈추고 여전히 보임 (3) 선택 없음(auto)·짧은 목록·menu 부재에서 무간섭·무예외 (4) 검색 입력 포커스·필터·항목 선택 무회귀 (5) `node --check` PASS.
 - 위험도: Minor (비파괴 additive frontend, 인증/데이터/마이그레이션/외부비용 무관).
 
 ### 완료 체크리스트
 - [x] app.js: `scrollProductDropupToSelected` + 호출 2곳 + `focus({preventScroll:true})`
 - [x] 헤드리스 chromium 실 레이아웃 검증(실 app.js 함수 + 실 styles.css) — 11/11 PASS, 시각증거 evidence/product-dropup-scroll-{before,after}-20260727.png
+- [x] CI red 수정 — 검증 스크립트를 `test_product_dropup_scroll.py` → `verify_product_dropup_scroll.py` rename(CI 러너엔 playwright 부재 → pytest 수집 시 ModuleNotFoundError collection error, exit 2). pytest 기본 수집 패턴(`test_*.py`) 밖으로 이동, 로컬 11/11 재확인·ruff PASS
 - [ ] verify-completion PASS → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008 라이브(AC-PPSC-1~3)
 정본 rationale=REVIEW REV-20260727T160748-product-picker-scroll, 변경이력=MODIFY CHG-20260727T160748-product-picker-scroll, Run 기록=test-runs.d/20260727T160748-product-picker-scroll.md.
