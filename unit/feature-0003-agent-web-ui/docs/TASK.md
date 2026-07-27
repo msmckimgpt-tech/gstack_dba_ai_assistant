@@ -6407,3 +6407,12 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] `make test` 전체 회귀 0 — 실패 15건이 clean main 과 **완전 동일**(차집합 0)
 - [x] verify-completion PASS → PR #958 머지(main 486a587c) → deploy-web-only(web-a/web-b 486a587c soak 통과) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, 배포본 66575331 ⊇ 486a587c: 액션 하단 바 우측 여백 16px·조회 16회 헤더 meta·바 35px→hover 53px(0.18s)·`복사됨 ✓` 토글·최하단에서 마지막 메시지 미가림·페이지 에러 0, evidence/pb0008-share-bar-layout-live-{default,hover,header,copied}-20260727.png) — **완결**
 정본 rationale=REVIEW REV-20260727T180036-share-bar-layout, 변경이력=MODIFY CHG-20260727T180036-share-bar-layout, Run 기록=test-runs.d/20260727T180036-share-bar-layout.md.
+
+## TASK-20260727T234439-model-picker-copy — 모델 선택기 중복 문자열 제거 + 설명 축약 (사용자 지적, Minor)
+- [x] 실 Windows 브라우저로 BEFORE 실측 — opus desc 51자 2줄(단어 중간 끊김) · `Claude` 배지 3행 중복 · `frontier` 2행 중복 확인
+- [x] `shared/model_catalog.py` — description 3개를 차별점만 담아 축약(동일 축 병렬 서술)
+- [x] `app.js` — label 이 group 명으로 시작하면 배지 조건부 생략(provider 혼재 시 배지 유지)
+- [x] `styles.css` — `.composer-model-item-desc { word-break: keep-all }` (근본 가드)
+- [x] AFTER 실측 — 3행 전부 1줄 · 배지 0 · 메뉴 높이 209→192px + evidence 캡처
+- [x] 전체 pytest rc=0 · `node --check app.js` OK
+- [ ] POST-DEPLOY: 배포본에서 1줄 렌더·배지 생략 육안 재확인

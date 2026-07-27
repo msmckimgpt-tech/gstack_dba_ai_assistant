@@ -1944,3 +1944,14 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - AC-SBL-3 (하단 바 기본 높이 유지): 액션을 품은 뒤에도 하단 바의 **기본(non-hover) 높이는 변경 전과 동일 수준**을 유지한다 — 바 세로 패딩 8px→6px, 버튼 규격 `padding:2px 10px`·`font-size:0.75rem`·`line-height:1.35`. 실측 기준 변경 전 35.0px → 변경 후 35.2px(Δ+0.2px, 허용 ±2px).
 - AC-SBL-4 (hover/focus 확장 + 애니메이션): 포인터가 hover 가능한 환경(`@media (hover: hover)`)에서 `.share-footer:hover`·`.share-footer:focus-within`(키보드 탭 대응) 시 바 패딩 10px·버튼 `6px 13px`/`0.8125rem` 로 확장하고 배경 불투명화 + 상단 그림자를 얹는다. 변화는 `transition: padding .18s ease, background .18s ease, box-shadow .18s ease`(버튼은 padding·font-size .18s)로 애니메이션한다. 실측 35.2px → 52.5px, 버튼 높이 31.5px(클릭 타겟 확보). 터치 환경(`@media (hover: none)`)은 확장 트리거가 없으므로 처음부터 확장 규격을 적용하고, `prefers-reduced-motion: reduce` 는 크기 변화는 유지하되 transition 을 끈다.
 - 불변식: 백엔드·엔드포인트·RBAC·스키마·`share.js` 로직 무변경(HTML 구조 + CSS 만). 액션 4종의 id·이벤트 배선·조건부 노출(`viewer.can_join`/`can_fork`/`is_authenticated`) 그대로. `@media print` 의 `.share-actions`/`.share-footer` 숨김은 위치 이동 후에도 유효(액션이 footer 하위가 되어 이중 적용). 본문 하단 여백(`.share-container` padding-bottom 80px)이 hover 확장 높이(52.5px)를 덮어 마지막 메시지가 가려지지 않는다.
+
+### 모델 선택기 표시 규약 (model-picker-copy 2026-07-27)
+컴포저 '+' → '모델' 메뉴의 각 행은 **label · (조건부) group 배지 · description** 3요소로 렌더된다
+(`_renderComposerModelMenu`, app.js). 표시 문자열은 다음 규약을 따른다:
+- **label** = 카탈로그 `label`(버전 넘버링 없음 — `claude-opus`/`claude-sonnet`/`claude-haiku`).
+- **group 배지** = label 이 group 명으로 **시작하지 않을 때만** 표시. `claude-*` label + `Claude` group
+  처럼 같은 단어가 겹치면 생략한다(provider 혼재 카탈로그에서는 접두가 달라 배지가 유지된다).
+- **description** = label·배지와 겹치지 않는 **차별점만**, 세 tier 를 **동일 축(성능 등급 · 용도)** 으로
+  병렬 서술해 비교 가능하게 한다. 문구는 짧게 — 메뉴 폭 360px(desc 326px)에서 1줄이 기준.
+- `.composer-model-item-desc` 는 `word-break: keep-all` — 한국어가 단어 중간에서 갈라지지 않게 한다
+  (기본 규칙은 음절 사이 어디서나 끊긴다).
