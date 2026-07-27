@@ -6416,3 +6416,9 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] AFTER 실측 — 3행 전부 1줄 · 배지 0 · 메뉴 높이 209→192px + evidence 캡처
 - [x] 전체 pytest rc=0 · `node --check app.js` OK
 - [ ] POST-DEPLOY: 배포본에서 1줄 렌더·배지 생략 육안 재확인
+
+## 20260728T010301-doc-sync-rn-0728 — 릴리즈노트 2026-07-27 블록에 3항목 append: 답변 모델·공유뷰·관계도 (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` 기존 "2026-07-27" 블록(feature-0021 자체점검 서사)에 3항목 append(new/work 답변 모델 'claude-opus' 추가 + improved/common 공유 대화 뷰 하단 바 우측 재배치·조회수 상단 + improved/admin 관계도 상세 패널 DB단위 접기/펼치기·목록 '…외 N건' 상한 제거) + block summary 아울러-절 증강. 신규 블록 아님(관례: same-deploy-day append, 선례 85da43d9 07-16). generated "2026-07-27" 불변(top-block date=07-27). 렌더 로직·cache-buster(`?v=dev` 빌드 자동주입) 무변경.
+- [x] 검증: `node --check` PASS · vm 구조검증(releases[0].date=2026-07-27·items 4→7·releases[1] 2026-07-24 8항목 보존·스키마 type/area/title/detail·enum 유효·누출0[feature-id·테이블·admin_perf·claude-opus-5/haiku-4 등 내부값 0, 사용자 라벨 claude-opus/sonnet/haiku 만]). 근거 정본 = 각 항목 owning POST-DEPLOY PB-0008 커밋(opus5 413703b9·share-bar 486a587c/2ec5e0aa·detail-db-groups 66575331/42ee04d0) + git log 238065ff..HEAD.
+- [x] 제외: model-picker-copy(#968 미배포 카피)·change-reanalysis(백엔드 auto·postverify 부재)·false-truncation(fixed:deployed:unverified-live 8cc28d47 라이브 미검증)·feature-0026 perf-observability(측정 전용·사용자 가시 동작 0). 날짜: 07-27 배포분이라 07-28 신규 블록 아닌 기존 07-27 블록 append(block date=배포일 관례, 351ed406 선례).
+- [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(jsdom 미설치로 render 테스트 불가·데이터 정적검증 대체 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3). 적대검증: ULTRACODE wf_c9bea2de — RN 3항목 CONTENT confirmed·verifier 가 초안 07-28 date framing REJECT→07-27 append 로 정정.

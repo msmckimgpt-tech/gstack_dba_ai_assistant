@@ -1120,3 +1120,13 @@ source_of_truth: true
 - Verification: **PRE-COMMIT Windows-browser 실측** — BEFORE 2줄/1줄/1줄 + 배지 3개 → AFTER **전부 1줄** + 배지 0, 메뉴 높이 209→192px (test-runs.d/20260727T234439-model-picker-copy.md, evidence `docs/evidence/model-picker-copy-after-sim-20260727.png`). feature-0002+0003 전체 pytest rc=0 · `node --check` OK.
 - Rollback: 3파일 revert(표시만 원복, 동작 영향 0).
 - Cross-ref: REVIEW REV-20260727T234439-model-picker-copy · test-runs.d/20260727T234439-model-picker-copy.md · 선행 CHG-20260727T184425-opus5-model(본 desc 문구를 도입한 cycle).
+
+## CHG-20260728T010301-doc-sync-rn-0728 (TASK-20260728T010301-doc-sync-rn-0728 — 07-27 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경: `static/release-notes-data.js` 기존 "2026-07-27" 블록에 3항목 append(new/work 답변 모델 'claude-opus' + improved/common 공유뷰 하단바 우측·조회수 상단 + improved/admin 관계도 상세 DB단위 접기·'…외 N건' 제거) + block summary 아울러-절 증강. generated 2026-07-27 불변. 렌더 로직·백엔드·스키마·RBAC·엔드포인트 0.
+- cache-buster: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py`(Dockerfile:39) + deploy-web.sh `asset_stamp_verify`(:788) 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시(index/admin `?v=<new>`)는 07-12 이전 regime → 부적용(현행 코드로 재검증, 351ed406 동일 판정).
+- 날짜 관례: 07-27 배포분(block date=배포일, 351ed406=doc_sync 07-27 이 07-24 블록 생성)이라 신규 07-28 블록 아닌 기존 07-27 블록 append(same-deploy-day append 선례 85da43d9). generated=top-block date=07-27 불변.
+- 근거 정본: owning POST-DEPLOY 커밋(opus5 413703b9·share-bar 486a587c/2ec5e0aa·detail-db-groups 66575331/42ee04d0) + git log 238065ff..HEAD.
+- 제외: model-picker-copy(미배포)·change-reanalysis(백엔드 postverify 부재)·false-truncation(unverified-live)·feature-0026(측정 전용·사용자 가시 0).
+- Verification: `node --check` PASS · vm 구조검증(releases[0] 2026-07-27 items 4→7·releases[1] 2026-07-24 보존·스키마·enum·누출0). 릴리즈노트 render 테스트(verify_release_notes.mjs)는 jsdom 미설치로 미실행(render 로직 미변경·데이터 정적검증 대체).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).

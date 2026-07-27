@@ -1048,3 +1048,10 @@ source_of_truth: true
 - 위험도: Minor(§12.3) — 표시 문자열·CSS. RBAC·라우팅·스키마 0.
 - Verification: PRE-COMMIT Windows-browser 실측 PASS(2줄→1줄, 배지 3→0) · pytest rc=0 · node --check OK. POST-DEPLOY 배포본 육안 재확인 예정.
 - Cross-ref: MODIFY CHG-20260727T234439-model-picker-copy / test-runs.d/20260727T234439-model-picker-copy.md.
+
+## REV-20260728T010301-doc-sync-rn-0728 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-07-27 블록에 3항목 append(답변 모델·공유뷰·관계도) doc_sync 정합
+- **changeset (operational, feature-0003)**: `src/static/release-notes-data.js`(기존 2026-07-27 블록 3항목 append·summary 증강·generated 불변) + companion `docs/{TASK,MODIFY,FUNCTION,TEST}.md`. 비-정책 doc-only(렌더 로직·제품 코드·스키마·RBAC 0).
+- **[SKIPPED:non-policy-doc] 사유**: 사용자향 릴리즈노트 콘텐츠 데이터만(제품 코드·정책 무변경). §18.8 패널 불요(351ed406 등 선례 동일 토큰).
+- **검증**: `node --check` PASS · vm 구조검증(releases[0] 2026-07-27 items 4→7·releases[1] 2026-07-24 8항목 보존·스키마·enum·내부용어 누출 0). 3항목 전부 owning POST-DEPLOY PB-0008 라이브검증(opus5 413703b9·share-bar 486a587c/2ec5e0aa·detail-db-groups 66575331/42ee04d0). 릴리즈노트 render 테스트 jsdom 미설치로 미실행(render 로직 미변경). ULTRACODE 적대검증 wf_c9bea2de — RN 3항목 CONTENT confirmed·verifier 가 초안 07-28 date framing REJECT→07-27 append 로 정정(제외 4건: model-picker-copy 미배포·change-reanalysis 백엔드·false-truncation unverified-live·feature-0026 측정전용).
+- **cache-buster**: `?v=dev` 고정(빌드 자동주입·index/admin 편집 0·수동 bump 폐지 ITEM-09; wrapper 헤더 수기 bump 지시는 07-12 이전 regime 부적용).
+- **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).

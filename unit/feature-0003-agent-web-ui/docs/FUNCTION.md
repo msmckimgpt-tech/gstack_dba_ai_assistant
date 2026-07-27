@@ -1955,3 +1955,7 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
   병렬 서술해 비교 가능하게 한다. 문구는 짧게 — 메뉴 폭 360px(desc 326px)에서 1줄이 기준.
 - `.composer-model-item-desc` 는 `word-break: keep-all` — 한국어가 단어 중간에서 갈라지지 않게 한다
   (기본 규칙은 음절 사이 어디서나 끊긴다).
+
+## (doc-sync-rn-0728, 2026-07-27) 릴리즈노트 콘텐츠 — 2026-07-27 블록에 3항목 append(답변 모델·공유뷰·관계도)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 기존 date "2026-07-27" 블록에 3항목 append(new/work 답변 모델 선택기 'claude-opus' 추가[기본값 'claude-haiku' 불변] + improved/common 공유 대화 뷰 액션 하단 바 우측 재배치·조회수 상단 + improved/admin 관리 콘솔 관계도 상세 패널 관련 항목 DB단위 접기/펼치기·목록 '…외 N건' 상한 제거) + block summary 아울러-절 증강. generated 2026-07-27 불변. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(빌드 자동주입 — 수동 bump 안 함).
+- 평이화/비노출: feature-id·§번호·PR#·함수명·테이블명·내부 모델값(claude-opus-5·claude-haiku-4) 비노출(사용자 언어). 사용자가 UI 선택기에서 실제 보는 표시 라벨 'claude-opus'/'claude-sonnet'/'claude-haiku'(버전-free, 정본 shared/model_catalog.py)만 노출. 제외 항목(미배포 카피·백엔드 auto·라이브 미검증·측정 전용)은 사용자 릴리즈노트 미포함.
