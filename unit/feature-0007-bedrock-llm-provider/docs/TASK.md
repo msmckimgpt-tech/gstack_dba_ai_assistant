@@ -384,7 +384,8 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [x] 단위 테스트 8건 신규/갱신 (alias 2계정 체인·adaptive effort·CC identity·runtime adaptive_models·canonical fold·단가)
 - [x] 전체 pytest PASS (rc=0, 2452 tests, fail/error 0) + litellm YAML 파싱 검증(중복 0·dangling 0)
 - [x] FUNCTION/MODIFY/REVIEW/TASK/TEST + shared/docs/MODIFY.md 기록
-- [ ] **배포 후 라이브 e2e**: gateway reconcile(config bind-mount) + web/worker 재빌드 → 대화에서 `claude-opus` 선택 → 200 답변 확인
-- [ ] **PB-0008 시각검증**: 모델 선택기에 `claude-opus` 노출 · 추론 강도 선택기 활성 · 관리 콘솔 '설정 > 모델 총 출력' 에 opus 행 + budget 슬라이더 대신 guide-note
+- [x] **배포 후 라이브 e2e**: 배포 413703b9(scope=all, soak 통과) → gateway 경유 `claude-opus-5-chat` 200 · 대화에서 `claude-opus` 선택 → 7초 정답 렌더 (TEST Run 2026-07-27-opus5-model-POSTDEPLOY)
+- [x] **PB-0008 시각검증**: 모델 선택기 `claude-opus` 최상단(haiku 기본 ✓ 유지) · 실 클릭→대화 e2e · 관리 콘솔 opus 카드 40,000 + adaptive guide-note(죽은 슬라이더 0). evidence 3종 `docs/evidence/pb0008-opus5-*.png`
+- [x] 배포 후 발견 카피 정정: '모델별 추론 예산' pane 헤더 `Sonnet 128K / Haiku 64K` → `Opus·Sonnet 128K / Haiku 64K`(admin.html)
 - [ ] **R1 재확인**: root 계정 한도 윈도우 리셋 후 `claude-opus-5-chat-root` 실 200 (2순위 체인)
 - [ ] **R2 이월 결정**: 모델별 RBAC 부재 — 전 사용자가 Opus 선택 가능(비용 노출). 사용자 결정 필요 (REPORT §8)

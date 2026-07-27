@@ -598,3 +598,12 @@ source_of_truth: true
 - Rollback: 본 CHG 의 5 파일 revert → opus 선택지 소멸(기존 haiku/sonnet 경로 무영향 — 전부 additive).
 - ANCHOR 정합: §1(운영자 자격 일원화 — 신규 자격 0, 기존 두 OAuth slot 재사용)·§2(Alt-A gateway 경유) 무충돌. 신규 모델 alias 추가는 라우팅 표면 확장이나 인증/인가 경계 변경 아님.
 - Cross-ref: REVIEW.md REV-20260727T184425-opus5-model · TEST.md Run 2026-07-27-opus5-model · shared/docs/MODIFY.md 동일 CHG.
+
+## CHG-20260727T190500-opus5-model-postdeploy (opus5-model POST-DEPLOY 확정 + 관리 콘솔 카피 정정)
+- Date: 2026-07-27. 선행 CHG-20260727T184425-opus5-model 의 배포 후 라이브 확정 기록 + 그 과정에서 발견한 stale 카피 1건 정정.
+- 배포: `bin/deploy-web.sh`(scope=all) → **413703b9**. web-a/web-b 롤링(one-at-a-time) + soak 90s 통과 · 워커(insight/ask) `mysql-ai-agent:413703b9` 롤아웃 · **bedrock-gateway 드리프트 감지 → surge replica 무중단 교체**(litellm config 변경 반영).
+- 라이브 확정(상세 TEST Run 2026-07-27-opus5-model-POSTDEPLOY): gateway 경유 `claude-opus-5-chat` **200** · PB-0008 실 브라우저 모델 선택기 노출 + 실 클릭 → 대화 e2e **7초 정답** · `llm_usage` 가 `model=claude-opus-5` / `resolved_model=claude-opus-5-chat` 로 기록(설계 계약 일치) · red-team 리뷰어도 opus 로 자동 정합(코드 변경 0) · 비용 USD 0.1981 계상($0 오표시 아님) · 관리 콘솔 opus 카드 + adaptive guide-note(죽은 슬라이더 0).
+- 변경(`unit/feature-0003-agent-web-ui/src/static/admin.html`): '모델별 추론 예산' pane 헤더 힌트 `max_tokens, Sonnet 128K / Haiku 64K 까지` → `max_tokens, Opus·Sonnet 128K / Haiku 64K 까지`. 카탈로그에 Opus 가 추가되면서 본 문구가 실제 지원 모델을 누락(본 변경으로 stale 해진 문구) — 카피 1줄, 동작 영향 0.
+- Verification: PB-0008 evidence 3종(`docs/evidence/pb0008-opus5-{model-menu,live-answer,admin-budget-pane}-20260727.png`). 카피 정정은 재배포 후 육안 재확인.
+- 잔여(R1): root 계정 한도 윈도우 리셋 후 `claude-opus-5-chat-root` 실 200 재확인(1순위 claude-corp 경로는 정상 확정).
+- Cross-ref: 선행 CHG-20260727T184425-opus5-model · REVIEW REV-20260727T190500-opus5-model-postdeploy · TEST Run 2026-07-27-opus5-model-POSTDEPLOY.
