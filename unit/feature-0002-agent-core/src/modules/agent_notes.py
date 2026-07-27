@@ -167,7 +167,12 @@ def update_notes_after_answer(*, conversation_id: str | None, product_id: Any,
                     f"{f.get('claim', '')} → {f.get('fix_hint', '')}"
                 )
             if (review_meta or {}).get("revision_applied"):
-                entries.append(f"[{stamp}] 초안이 red-team 리뷰로 1회 수정됨")
+                # 반복 수정(feature-0021 2026-07-27)이라 라운드 수가 1 이 아닐 수 있다 —
+                # "1회" 하드코딩은 5라운드를 돈 답변도 1회로 적어 이후 프롬프트를 오도한다.
+                _rounds = int((review_meta or {}).get("revision_rounds") or 1)
+                _unresolved = int((review_meta or {}).get("unresolved_block_count") or 0)
+                _tail = f" (결함 {_unresolved}건 미해소 상태로 전달)" if _unresolved else ""
+                entries.append(f"[{stamp}] 초안이 red-team 리뷰로 {_rounds}회 수정됨{_tail}")
             if entries:
                 _append_entries(spath, f"세션 노트 {conversation_id}", entries)
 
