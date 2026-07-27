@@ -2540,7 +2540,6 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### 검증
 - 컨테이너 pytest 전체(0002+0003) PASS(exit 0) + 타깃 40 PASS. `node --check` ES module PASS. §18.8 적대 리뷰: REVIEW.md REV-20260723T183000-analysis-completeness (FAIL→전량 흡수→재검증). 상세 Run: TEST.md `## analysis-completeness`.
-
 ## 20260727T1741-change-reanalysis — 구조 변동 감지 시 AI 자동 재귀 분석 (2026-07-27, 사용자 요청 · entry persona dispatch)
 
 ### 맥락 (사용자 요청)
@@ -2613,3 +2612,41 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### 검증
 - 신규/갱신 31 PASS + 컨테이너 전체 스위트(0002+0003) PASS(회귀 0). ruff 변경파일 clean. `python3 -m py_compile` PASS. 상세 Run: TEST.md `## change-reanalysis`.
+## 20260727T1730-detail-db-groups — 상세 패널 관련 노드 목록 DB 단위 접기/펼치기 + "… 외 N건" 생략 제거 (2026-07-27, 사용자 요청 · entry persona dispatch)
+
+### 맥락 (사용자 요청)
+그래프 뷰 상세 패널이 **관련성 있는 다른 노드**를 나열할 때 ① 해당 노드가 포함된 **DB 단위로 접기/펼치기**가 가능해야 하고, ② **노드 목록이 생략되는 이슈**("… 외 N건" 으로 목록이 숨겨짐)를 수정해야 한다. 사용자 화면 증적: 테이블 상세의 `사용하는 함수·프로시저 · 읽기 …` 목록이 30건에서 잘리고 `… 외 23건` 만 남음.
+
+### 근본 원인
+`graph-ctxmenu.js` 의 상세 렌더가 섹션마다 하드코딩 상한으로 목록을 잘랐다 — `rtGroup` 읽기/쓰기 각 30건(`… 외 N건`), 관계 상세 `참조함/참조받음` 각 60건, `연관 용어` 30건, `주변 관계` 20건, 그리고 테이블 컬럼 목록 80개는 **표기조차 없는 무음 절단**(헤더 개수와 실제 행 수가 조용히 어긋남). 상한을 그냥 풀면 대형 스키마에서 한 섹션 수천 행이 즉시 렌더돼 DOM·리스너가 폭주하므로, **구획(DB 그룹) + 지연 렌더**를 함께 도입해야 상한 제거가 성립한다.
+
+### 처리 (본 cycle — cross-cut 코드 거주 feature-0003 static/graph, frontend-only·마이그 0·RBAC 0)
+- [x] TDG.1 DB 그룹 유닛 신설(`graph-ctxmenu.js`) — `_metaDbGroupKeyOf`(그룹 축 = `_metaCatParent` = `scope:db`, **캔버스 스키마 클러스터와 동일 축**) · `_metaDbGroupOpen`(기본 규칙) · `_metaDbGroupedRowsHTML`(그룹 조립) · `_metaBindDbGroups`/`_metaToggleDbGroup`(토글·lazy 주입). 머리글 시각은 클러스터 상세의 컨텐츠 카테고리 헤딩(`.amgr-ct-group`) 재사용 — 패널 내 구획 어포던스 일관.
+- [x] TDG.2 상한 제거(생략 없음) — `사용하는 함수·프로시저`(읽기/쓰기 각 30) · 관계 상세 `참조함/참조받음`(각 60) · `연관 용어`(30) · `주변 관계`(20) · 테이블 `컬럼`(80 무음) 전부 제거. 남은 것은 비현실 극단 전용 안전 가드 `_META_DBGRP_ROW_CAP=4000`(초과 시에만 명시 표기).
+- [x] TDG.3 성능 균형 — 접힌 DB 그룹은 **DOM 을 만들지 않고**(lazy) 행 HTML 만 `_metaDbGrpLazy` 에 보관, 펼칠 때 본문 컨테이너에 주입 + **그 컨테이너에 한정한 행 바인딩**(bind 콜백: 노드 상세=rtuse 클릭·trace 행·hover / 관계 상세=행 클릭·hover·큐레이션). 초기 렌더 비용이 종전(상한 30/60행) 수준으로 유지된다.
+- [x] TDG.4 기본 접힘 규칙 — 선택 노드와 **같은 DB 는 펼침 · 다른 DB 는 접힘**, 단 대형 그룹(> 300)은 같은 DB 라도 접힘. 사용자가 조작한 그룹은 `_metaGraph.panelDbGroupState`(Map: 펼침/접힘)에 기록돼 **기본 규칙을 이기고** 노드 상세↔관계 상세 전환 간에도 유지. 단일 DB + 짧은 목록(≤60)은 머리글 없이 평면(짧은 목록에 클릭 단계를 늘리지 않음).
+- [x] TDG.5 접근성·조작 파리티 — 머리글 `role="button"`+`tabindex`+`aria-expanded`+`aria-controls`, Enter/Space 토글, 캐럿 ▾/▸, hover 시 그 DB 첫 멤버로 카메라 팬(클러스터 상세 그룹 헤딩과 동일 제스처). `graph.css` 에 목록 맥락 여백·본문 들여쓰기 규칙 추가.
+- [x] TDG.6 헤드리스 결정론 테스트 신규 `tests/headless/test_detail_dbgroups.js` **36 PASS** — 소스에서 유닛 본문을 추출해 검증: 평면 폴백 · 다중 DB 구획/self 우선/기본 접힘 · **절단 부재(120건 전량·"외 N건" 미출현)** · 단일 DB 장문 머리글화 · 대형 그룹 lazy(301건 payload 보관·초기 0행) · 사용자 상태 우선 · 스키마 미상 후미 · 속성 이스케이프 · 토글 왕복(주입 1회·bind 1회·상태 기록) · 종전 상한 slice 정적 부재.
+- [x] TDG.8 §18.8 적대 리뷰 2렌즈(ux · 프론트엔드 회귀) **BLOCKING 2 + MAJOR 8 + MINOR/NIT 다수 → 전량 in-cycle 흡수**:
+  - **B1 [BLOCKING·ux] 은폐 악화** — 평면 폴백이 "단일 DB" 조건이라, DB 가 2개 이상이면 총 3건짜리 목록도 그룹화되고 self 외 전부 접혀 **종전보다 덜 보이는 퇴행**(크로스-DB 전용 사용은 self 그룹이 없어 0행). → 펼침 규칙을 총량 기준으로 재설계: 총 ≤60 이면 **전 그룹 펼침**, self 그룹이 없으면 **첫 그룹**을 펼쳐 빈 화면을 만들지 않는다.
+  - **B2 [BLOCKING·both] ROW_CAP 예산을 접힌(=DOM 0행) 그룹이 소비** → payload 가 빈 문자열이 되어 펼치면 아무것도 없는 목록(무음 실패, 이번 작업이 없애려던 실패 유형과 동일). → 예산은 **펼친 그룹만** 소비(`if (open) emitted += shown`), 절단 발생 시 본문에 명시 행 + aria-label 병기.
+  - **MAJOR-1 [프론트] "생략 없음" 이 상위 계층에서 거짓** — 백엔드 `neighborhood()` 의 `_NEIGHBOR_NODE_CAP=300` 절단이 `truncated` 플래그를 세팅하지 않아(다른 경로는 세팅) 부분 이웃을 전체로 오인 표시. → **백엔드에 `truncated` 전파 추가**(cross-cut feature-0002 `metadata_graph.py`) + 프론트 고지 배너(`_metaDbGrpTruncNotice`) + 안내 문구를 "잘라내지 않습니다"로 정정(전량 단언 철회).
+  - **M2/M3 [both] 성능 가드 무력화** — 사용자 기록이 대형 그룹 검사보다 우선해, 한 번 펼친 DB 가 이후 모든 노드 상세에서 수천 행 즉시 렌더(행별 리스너). → 대형 그룹(>300)은 **사용자 기록보다 우선해 초기 접힘**.
+  - **MAJOR-4 [프론트] 컬럼 아코디언 eager** — 컬럼 80 캡 제거로 hidden 아코디언 하위 관계 행이 전부 즉시 DOM+바인딩. → 컬럼 본문도 **lazy 화**(`_metaColBodyLazy`/`_metaColBodyReveal`, 기존 lazy 기계 재사용) — 초기 비용이 종전 80 캡보다 낮아짐.
+  - **M1/M3 [ux] 상태 고착·탈출로 부재** — 접힘이 DB 키 전역이라 self DB 가 접힌 채 고착되고 일괄 해제 수단이 없음. → **'모두 펼치기/접기' 컨트롤** 신설(클러스터 상세 파리티) + 라벨 재동기화.
+  - MINOR/NIT: 스키마 미상 정렬 모순(n1) · 동명 DB scope 병기(m2) · 비-스키마 라벨 유령 그룹 가드(m1) · 머리글 hover-pan 제거(m3 — 다른 DB 로 화면이 크게 튐) · stale payload 무음 대신 안내(MINOR-1) · Empty/검색 렌더 clear 누락(MINOR-3) · 스키마 미상 전역 슬롯 미기록(MINOR-5) · 같은 DB 형제 머리글 동기화(MINOR-6) · 기본 esc escaping 화 · 컬럼 안내 문구 보강.
+  - **테스트 사각 지적 흡수** — 초판 36건은 호출부(`dirRowsHTML`)를 실행하지 않아 **인자 순서를 뒤집어도 전건 PASS** 했고 ROW_CAP·모두펼치기·형제동기화·컬럼 lazy 가 미커버. → 스위트 재작성 **62 PASS**(⑮ 인자 매핑 회귀·⑦ 예산·⑧ 모두펼치기·⑫ 형제 동기화·⑬ stale 안내·⑭ 컬럼 lazy·⑯ 배너/정적 회귀 추가).
+  - **잔여(수용)**: 헤드리스 스위트가 CI(pytest 전용)에 미배선이라 회귀 게이트가 아님 — test-runs 문서에 한계 명시, Makefile 배선은 별건 제안(REPORT §8).
+- [x] TDG.7 POST-DEPLOY PB-0008 라이브 육안 — **완료(2026-07-27, 배포 `66575331`)**. 실제 Windows Chrome 150 으로
+  `mysql-gz-qa-global`(gunzgame/gunzlog/gunzlogin) 스키마 그래프에서 (a)~(g) 전건 PASS: `gunzgame.character`
+  루틴 60건 **전량 렌더**(읽기 42 + 쓰기 18, `… 외 N건` 0건 — 종전 30 상한이면 12건 은닉) · `gunzgame.account`
+  크로스-DB 상세에 `▾ gunzgame 6` / `▾ gunzlogin 2` 머리글 + 총 8(≤60) 이라 전 그룹 펼침(리뷰 B1 수정 실증) ·
+  머리글 클릭 접기/펼치기 왕복(타 그룹 불변) · '모두 접기/펼치기' 일괄 + 라벨 토글 + 접힘 중 총계 유지 ·
+  관계 상세 `참조받음 23` 을 `gunzgame 21`/`gunzlogin 2` 로 구획해 전량 · 컬럼 아코디언 `AID` 캐럿 lazy 주입 4건 ·
+  pageerror 0(기존 benign ResizeObserver 경고만). 상세 Run 과 한계는 feature-0003 `docs/test-runs.d/20260727T173000-detail-db-groups.md`.
+  미재현 한계: 대형 그룹(>300) 기본 접힘 · 백엔드 `truncated` 고지 배너는 현 데이터셋(최대 이웃 64)에 사례 없음 → 유닛 검증에 머묾.
+
+### 검증
+- `node --check --input-type=module` PASS(graph-ctxmenu.js·graph-state.js). 헤드리스 `test_detail_dbgroups.js` **62 PASS**(적대 리뷰 사각 흡수판).
+- 컨테이너 pytest 전체(0002+0003): 파이썬 스위트가 **비결정적(flaky)** — 같은 main 기준선을 두 번 돌려 실패 집합이 서로 달랐다(main `make test` 8건 실패: attachment_idor/attachment_user_version_context/runtime_settings 계열 / 본 worktree 4건: routine_dbanalysis·item11_batch8·runtime_settings 계열, 교집합은 runtime_settings 2건뿐). 본 cycle 의 파이썬 변경은 `metadata_graph.neighborhood()` 의 `truncated` 플래그 세팅(additive) 뿐이며 위 실패 테스트와 무관하다 — **백엔드 변경 전/후 worktree 실패 집합이 동일 4건으로 불변**(새 실패 0)이라는 실측이 이를 뒷받침한다. 스위트 flake 자체의 원인 규명은 본 cycle 범위 밖(별도 항목).
+- 상세 Run: feature-0003 `docs/TEST.md` §3 Run(2026-07-27) detail-db-groups.

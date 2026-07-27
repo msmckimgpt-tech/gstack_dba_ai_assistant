@@ -18,14 +18,9 @@
           <span id="shareScope" class="share-meta-item"></span>
           <span id="shareProduct" class="share-meta-item"></span>
           <span id="shareExpiry" class="share-meta-item"></span>
+          <!-- share-bar-layout: 조회수는 하단 바에서 상단 meta 로 이동 — 대화 정보(소유자·범위·제품·만료)와 한 줄에 모은다. -->
+          <span id="shareViewCount" class="share-meta-item"></span>
         </div>
-      </div>
-      <div class="share-actions">
-        <button type="button" id="shareCopyLinkBtn" class="share-copy-link-btn">링크 복사</button>
-        <!-- feature-0009: 공유 링크로 그룹 대화 참여(join) -->
-        <button type="button" id="shareJoinBtn" class="share-join-btn hidden">대화에 참여</button>
-        <button type="button" id="shareForkBtn" class="share-fork-btn hidden">내 계정에서 fork</button>
-        <a href="/" class="share-login-link hidden" id="shareLoginLink">로그인하고 참여 · fork</a>
       </div>
     </header>
     <main id="shareMessages" class="share-messages">
@@ -36,7 +31,15 @@
     <nav class="share-point-rail hidden" id="sharePointRail" aria-label="대화 메시지 빠른 이동"></nav>
     <footer class="share-footer">
       <span class="share-footer-note">사내 공유용 — 외부 IP 로 전달 시 데이터 노출 위험이 있습니다.</span>
-      <span id="shareViewCount" class="share-footer-stats"></span>
+      <!-- share-bar-layout: 액션(링크 복사·참여·fork·로그인)은 헤더에서 하단 바 우측으로 이동.
+           읽는 영역(제목·meta)과 조작 영역을 상/하로 분리해 본문 폭을 넓게 쓴다. -->
+      <div class="share-actions">
+        <button type="button" id="shareCopyLinkBtn" class="share-copy-link-btn">링크 복사</button>
+        <!-- feature-0009: 공유 링크로 그룹 대화 참여(join) -->
+        <button type="button" id="shareJoinBtn" class="share-join-btn hidden">대화에 참여</button>
+        <button type="button" id="shareForkBtn" class="share-fork-btn hidden">내 계정에서 fork</button>
+        <a href="/" class="share-login-link hidden" id="shareLoginLink">로그인하고 참여 · fork</a>
+      </div>
     </footer>
   </div>
   <script src="/static/vendor/marked.umd.js"></script>

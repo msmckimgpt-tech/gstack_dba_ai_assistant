@@ -9013,6 +9013,12 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .reasoning-stat { min-width: 96px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .reasoning-stat-num { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .reasoning-stat-label { font-size: 11px; color: var(--text-muted); }
+/* feature-0021: 결함이 해소되지 않은 채 전달된 답변 수 — 0 이 아니면 주의 색으로 띄운다. */
+.reasoning-stat--warn { border-color: var(--warn-border, #d9a441); background: var(--warn-surface, rgba(217, 164, 65, 0.10)); }
+.reasoning-stat--warn .reasoning-stat-num { color: var(--warn-text, #b8860b); }
+/* 재검증에서 끝내 해소되지 않은 지적 — findings 목록과 시각적으로 구분한다. */
+.reasoning-unresolved { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--warn-border, #d9a441); border-radius: 8px; background: var(--warn-surface, rgba(217, 164, 65, 0.08)); }
+.reasoning-unresolved-title { font-size: 12px; font-weight: 700; margin-bottom: 6px; color: var(--warn-text, #b8860b); }
 .reasoning-review-list { display: flex; flex-direction: column; gap: 8px; }
 .reasoning-review-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .reasoning-review-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }

@@ -80,8 +80,14 @@ def admin_reasoning_guidance(
 
 
 def _query_reviews(cur, *, cursor: int | None, limit: int,
-                   include_rederive: bool = False) -> tuple[list[dict], int | None]:
+                   include_rederive: bool = False,
+                   include_convergence: bool = False) -> tuple[list[dict], int | None]:
     """redteam_reviews 를 id DESC keyset 으로 페이징 (ai-ops _query_activity 규약).
+
+    include_convergence=True 면 0045 마이그 컬럼(verify_findings/unresolved_block_count/
+    revision_rounds/stop_reason)까지 SELECT 해, 반복 수정이 몇 라운드 돌았고 **결함이 남은
+    채 전달됐는지**를 콘솔 타임라인이 정직하게 표시할 수 있게 한다. include_rederive 와
+    동일한 stale-image 폴백 규약(부재 시 False).
 
     include_rederive=True 면 0043 마이그 컬럼(rederive_applied/rederive_tool_rounds/
     rederive_axis)까지 SELECT 해 콘솔의 '결함 수정' 진행 단계에서 도구 재추론(rederive)
@@ -94,6 +100,8 @@ def _query_reviews(cur, *, cursor: int | None, limit: int,
     base_cols = ("id, conversation_id, run_id, verdict, findings, block_count, warn_count, "
                  "verify_verdict, revision_applied, model, latency_ms, reasoning_level, is_group, created_at")
     cols = base_cols + (", rederive_applied, rederive_tool_rounds, rederive_axis" if include_rederive else "")
+    cols += (", verify_findings, unresolved_block_count, revision_rounds, stop_reason"
+             if include_convergence else "")
     if cursor is not None:
         cur.execute(
             "SELECT " + cols + " FROM agent_runtime.redteam_reviews WHERE id < %s ORDER BY id DESC LIMIT %s",
@@ -121,13 +129,29 @@ def _query_reviews(cur, *, cursor: int | None, limit: int,
             "latency_ms": (int(r[10]) if r[10] is not None else None),
             "reasoning_level": r[11], "is_group": bool(r[12]),
             "created_at": (r[13].isoformat() if r[13] else None),
-            # rederive_* 기본값 — 컬럼 부재 폴백/error 경로 호환 (프론트 stage 렌더가 항상 참조).
+            # rederive_*/수렴 관측 기본값 — 컬럼 부재 폴백/error 경로 호환
+            # (프론트 stage 렌더가 항상 참조).
             "rederive_applied": False, "rederive_tool_rounds": 0, "rederive_axis": None,
+            "verify_findings": [], "unresolved_block_count": 0, "revision_rounds": 0,
+            "stop_reason": None,
         }
+        _off = 14
         if include_rederive:
-            item["rederive_applied"] = bool(r[14])
-            item["rederive_tool_rounds"] = int(r[15] or 0)
-            item["rederive_axis"] = r[16]
+            item["rederive_applied"] = bool(r[_off])
+            item["rederive_tool_rounds"] = int(r[_off + 1] or 0)
+            item["rederive_axis"] = r[_off + 2]
+            _off += 3
+        if include_convergence:
+            _vf = r[_off]
+            if isinstance(_vf, str):
+                try:
+                    _vf = json.loads(_vf)
+                except Exception:
+                    _vf = []
+            item["verify_findings"] = _vf or []
+            item["unresolved_block_count"] = int(r[_off + 1] or 0)
+            item["revision_rounds"] = int(r[_off + 2] or 0)
+            item["stop_reason"] = r[_off + 3]
         items.append(item)
     next_cursor = items[-1]["id"] if (has_more and items) else None
     return items, next_cursor
@@ -196,6 +220,25 @@ def admin_reasoning_redteam(
                             pass
                         stats = {}
                         table_available = False
+                    # 0045 수렴 관측 요약 — 별도 try(컬럼 부재 stale 이미지에서 위 stats 와
+                    # table_available 판정을 오염시키지 않는다).
+                    if stats:
+                        try:
+                            cur.execute(
+                                "SELECT COUNT(*) FILTER (WHERE unresolved_block_count > 0 "
+                                "                        AND created_at >= now() - interval '7 days'), "
+                                "       COALESCE(SUM(revision_rounds) FILTER "
+                                "                (WHERE created_at >= now() - interval '7 days'), 0) "
+                                "FROM agent_runtime.redteam_reviews"
+                            )
+                            _crow = cur.fetchone() or (0, 0)
+                            stats["unresolved_7d"] = int(_crow[0] or 0)
+                            stats["revision_rounds_7d"] = int(_crow[1] or 0)
+                        except Exception:
+                            try:
+                                pg.rollback()
+                            except Exception:
+                                pass
                 # 0043 rederive_* 컬럼 존재 여부 — stale agent 이미지(0043 미적용) 방어:
                 # 부재 시 include_rederive=False 로 폴백해 UndefinedColumn 없이 기존 목록 노출.
                 _has_rederive = True
@@ -208,9 +251,21 @@ def admin_reasoning_redteam(
                     _has_rederive = cur.fetchone() is not None
                 except Exception:
                     _has_rederive = False
+                # 0045 수렴 관측 컬럼 존재 여부 — 동일 stale-image 방어.
+                _has_convergence = True
+                try:
+                    cur.execute(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_schema='agent_runtime' AND table_name='redteam_reviews' "
+                        "AND column_name='unresolved_block_count'"
+                    )
+                    _has_convergence = cur.fetchone() is not None
+                except Exception:
+                    _has_convergence = False
                 try:
                     items, next_cursor = _query_reviews(
-                        cur, cursor=cursor, limit=limit, include_rederive=_has_rederive)
+                        cur, cursor=cursor, limit=limit, include_rederive=_has_rederive,
+                        include_convergence=_has_convergence)
                 except Exception:
                     # 테이블 부재/스키마 불일치 — 빈 목록과 구분해 table_available=False.
                     try:

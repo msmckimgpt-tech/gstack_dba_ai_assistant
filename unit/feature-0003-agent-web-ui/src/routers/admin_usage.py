@@ -472,4 +472,7 @@ _USAGE_GRAN = {
 _LLM_PRICE_USD_PER_1M = {
     "claude-haiku-4": {"in": 1.0, "out": 5.0},
     "claude-sonnet-4": {"in": 3.0, "out": 15.0},
+    # opus5-model(2026-07-27): Opus 5 공시가 $5 / $25 per MTok. canonical family 키(claude-opus-5)와
+    # 동일해 -chat/-chat-root 라우팅 변형·실 모델 ID 도 이 단가로 계상된다(단가 $0 오표시 gap 차단).
+    "claude-opus-5": {"in": 5.0, "out": 25.0},
 }

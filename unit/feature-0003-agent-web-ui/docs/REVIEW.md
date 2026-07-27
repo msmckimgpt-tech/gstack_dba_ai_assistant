@@ -1009,3 +1009,30 @@ source_of_truth: true
 - **POST-DEPLOY 실증(Windows-browser, PB-0008)**: AC-PPSC-1(중앙 정렬 — centerDelta **0**, scrollTop 254 가 clamp 경계 밖이라 실제 정렬임을 확증)·AC-PPSC-2(양단 clamp — 마지막 항목 선택 시 scrollTop=maxScroll=447, fullyVisible)·AC-PPSC-3(검색 포커스 유지) **PASS**, `offsetParentIsMenu=true` 좌표계 계약 라이브 실측, 페이지 에러 0. 시각 증거 `docs/evidence/pb0008-product-picker-scroll-live-20260727.png`(선택 제품이 목록 한가운데 + 위아래 이웃 제품 동시 노출 — 사용자가 요청한 "상대적인 위치" 파악이 실제로 가능해짐).
 - **검증 위생**: 라이브 테넌트 부작용 최소화 — 대화 미선택(랜딩) 상태에서만 제품을 바꿔 owner PATCH 경로를 타지 않게 했고(로컬 pref 만), 검증 후 원래 선택(KR_LIVE)으로 복원 + `win-browser.py down` 으로 드라이버 인스턴스만 종료.
 - Human Approval Needed: no.
+
+## REV-20260727T180036-share-bar-layout [SKIPPED:session-policy-no-subagent] 공유 대화 뷰 액션/조회수 재배치 + 바 hover 확장
+- Trigger: UI/button/layout/버튼·레이아웃 keyword matched → §18.8 표상 `ux, design` subset 대상.
+- **Panel skip 사유(§18.8)**: 본 세션의 사용자 환경 정책이 "Do not call the AgentTool unless the user requested it" 로 subagent 호출을 금지하고 사용자 요청도 없었다. 동일 상황의 선례(REV-20260727T160748-product-picker-scroll)와 같은 처리이며, 대체 검증으로 **헤드리스 chromium 실 레이아웃 8 케이스 + 구조 회귀 5 케이스 + 자체 적대 검토(아래 H1~H7)** 를 수행했다. 미수행을 "검증함"으로 오인하지 않도록 여기에 명시한다.
+- **판단 근거**:
+  - **액션 그룹 전체 이동(참여/로그인 포함)**: 사용자 원문은 `['링크 복사','내 계정에서 fork']` 2종만 지목했으나, 같은 컨테이너의 나머지 2종(참여·로그인 링크)은 **조건부 노출(hidden)** 이라 사용자 화면에 안 보였을 뿐 성격이 동일한 조작이다. 2종만 옮기면 같은 액션군이 상·하로 쪼개져 일관성이 깨지므로 그룹 전체를 이동했다(요청 확대가 아니라 요청의 자연 경계 적용). 이 판단을 TASK/FUNCTION 에 명시.
+  - **바 높이 보존 방식**: 사용자 추가 요청("기존 크기 거의 유지, 필요 시 hover 확장")에 대해 (a) 버튼 규격 축소로 기본 높이를 유지하고 (b) hover/focus 에서만 확장하는 2단 구성을 택했다. `height` 대신 `padding` 을 전이시켜 fixed 바의 리플로우 범위를 줄였다.
+  - **접근성 보강(자율 판단)**: `:hover` 만 두면 키보드 사용자는 확장 없이 2px 패딩 버튼을 조작하게 되므로 `:focus-within` 을 함께 걸었고, hover 개념이 없는 터치 환경(`@media (hover:none)`)은 확장 규격을 상시 적용해 타겟 크기를 확보했다. `prefers-reduced-motion` 은 크기 변화는 유지하되 애니메이션만 끈다(기능 손실 없이 모션만 제거).
+- **자체 적대 검토(H1~H7, 전건 반영·확인)**:
+  - H1 하단 바가 커져 마지막 메시지를 가리는가 → `.share-container` padding-bottom 80px ≥ hover 확장 높이 52.5px, 헤드리스 T7 로 고정.
+  - H2 `@media print` 가 헤더 기준으로 `.share-actions` 를 숨겼는데 이동 후 무력화되는가 → 셀렉터가 클래스 기반이라 유효, 이제 `.share-footer` 숨김과 이중 적용(인쇄물에 버튼 미노출 유지).
+  - H3 조회수가 `.share-meta-item:empty{display:none}` 규칙에 걸려 안 보이는가 → `share.js` 가 항상 `조회 N회` 를 채우므로 비지 않는다(값 0 도 "조회 0회").
+  - H4 우측 스크롤 rail(`.share-point-rail`, z-index 50)이 높아진 바에 가려지는가 → rail z-index 가 footer(10)보다 높아 위에 그려지고 dot 클릭 유지(기존과 동일 관계).
+  - H5 좁은 화면에서 버튼이 안내문과 겹치는가 → `flex-wrap:wrap` + 600px 이하에서 안내문 100% 폭 + 액션 우측 정렬로 2줄 분리, 모바일 하단 여백 96px.
+  - H6 hover 확장이 커서 아래 콘텐츠를 덮어 클릭을 가로채는가 → 확장분 17px 은 바 자체 영역 내부이고, 확장 트리거가 바 hover 라 커서는 이미 바 위에 있다(콘텐츠 클릭 경로 무간섭).
+  - H7 `share.js` 가 DOM 위치에 의존하는가 → `getElementById` 4곳 + 이벤트 바인딩만이며 부모/형제 탐색 없음(`grep` 확인). 구조 이동에 안전.
+- **검증**: 구조 회귀 `tests/test_share_bar_layout.py` 5 PASS · 헤드리스 레이아웃 `tests/headless/verify_share_bar_layout.py` **8/8 PASS**(T4 바 높이 35.0→35.2px Δ+0.2 · T5 hover 52.5px · T6 transition 0.18s · T8 버튼 31.5px) · `make test` 전체 실패 15건이 clean main baseline 과 **차집합 0**(회귀 없음) · ruff PASS. 시각 증거 `docs/evidence/share-bar-layout-{before,after,hover}-20260727.png`.
+- **검증 환경 정직 기록**: 위는 모두 헤드리스/정적 검증이다. `visual_verification_scope: always`(FIRST_REQUEST.md) 에 따른 **Windows-browser(PB-0008) 라이브 검증은 배포 후 수행**한다 — 정적 자산이 컨테이너 이미지에 포함돼 미배포 코드로는 실 화면 실측이 불가하기 때문(선례와 동일 순서).
+- Human Approval Needed: no (Minor §12.3 — 비파괴 frontend 배치 변경).
+
+## REV-20260727T182000-share-bar-layout-postverify [SKIPPED:non-policy-doc] 공유 대화 뷰 하단 바 레이아웃 POST-DEPLOY 라이브 실증 + deploy_scope 근거
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 기록 + 스크린샷 증거 4건). 실 구현 리뷰 정본 = REV-20260727T180036-share-bar-layout([SKIPPED:session-policy-no-subagent] — 헤드리스 8 + 구조 5 + 자체 적대 검토 H1~H7 로 대체).
+- **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 PR #958 머지(main **486a587c**) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료(원 cycle 세션). 배포 범위 = web 전용(변경 파일이 정적 자산·문서 한정, 워커/agent 코드 무변경). Caddyfile 무변경으로 caddy blip 0, post-cutover soak 90s 통과, 롤백 0.
+- **POST-DEPLOY 실증(Windows-browser, PB-0008)**: AC-SBL-1(액션 4종 하단 바 우측 — 바 우측 여백 16px, 안내문보다 오른쪽, 헤더 잔존 액션 0)·AC-SBL-2(`조회 16회` 헤더 `.share-meta` 4번째, y=96 < 바 y=801)·AC-SBL-3(기본 바 높이 **35px** — 변경 전 35.0px 대비 체감 동일)·AC-SBL-4(hover 시 **53px** + 패딩 6→10px + 상단 그림자 + 배경 불투명, `transition … 0.18s`) **전부 PASS**. 추가로 `링크 복사` → `복사됨 ✓`(class `is-copied`) 토글, 최하단 스크롤에서 마지막 메시지 미가림(bottom 732 < 바 top 783), 버튼 `elementFromPoint` hit-test 통과, 페이지 에러 0. 시각 증거 `docs/evidence/pb0008-share-bar-layout-live-{default,hover,header,copied}-20260727.png`.
+- **검증 시점 배포본 주의(정직 기록)**: 검증 중 다른 cycle 이 PR #959 를 배포해 서빙 SHA 가 486a587c → **66575331** 로 전진했다. `git merge-base --is-ancestor 486a587c 66575331` 로 본 변경이 서빙본에 포함됨을 확인한 뒤 실측했으므로 검증은 유효하며, 오히려 최신 배포본 기준 실증이다.
+- **검증 위생**: fork(신규 대화 생성)·참여(그룹 멤버십 변경) 는 라이브 부작용을 피해 **클릭하지 않고** 노출·좌표·hit-test 로만 확인 — 본 cycle 변경이 HTML 구조 이동 + CSS 뿐이고 `share.js` 무변경이라 클릭 핸들러 자체는 회귀 대상이 아니다(구조 회귀 테스트 L3 가 id·배선 보존을 이미 게이트). 검증 후 `win-browser.py down` 으로 드라이버 인스턴스만 종료.
+- Human Approval Needed: no.

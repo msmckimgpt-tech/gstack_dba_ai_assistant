@@ -1,5 +1,34 @@
 # Report
 
+## 2026-07-27 · 상세 패널 관련 노드 목록 DB 단위 접기/펼치기 + 목록 생략 제거 (20260727T1730-detail-db-groups)
+
+### 요청 (사용자, entry persona dispatch)
+"`그래프 뷰` 내 상세패널에서, 관련성이 있는 다른 노드를 출력할 때 해당 노드가 포함된 DB 단위로 접기/펼치기가 가능하도록 구성해주세요. 또한, 노드 목록이 생략되는 이슈가 확인되어 수정이 필요합니다. (`... 외 N건` 으로 목록이 숨겨지는 이슈 확인됨)"
+
+### 근본 원인
+`graph-ctxmenu.js` 상세 렌더가 섹션마다 하드코딩 상한으로 목록을 절단 — `사용하는 함수·프로시저` 읽기/쓰기 각 30건(`… 외 N건`), 관계 상세 `참조함/참조받음` 각 60건, `연관 용어` 30건, `주변 관계` 20건, 테이블 `컬럼` 80개(표기조차 없는 **무음** 절단). 상한만 풀면 대형 스키마에서 한 섹션이 수천 행으로 즉시 렌더돼 DOM·리스너가 폭주하므로, 구획(DB 그룹) + 지연 렌더와 함께 제거해야 성립.
+
+### 처리 결과 (Minor, frontend-only, cross-cut 코드 거주 feature-0003 static/graph)
+- **DB 단위 구획·접기/펼치기** — 그룹 축 = `_metaCatParent`(`scope:db`)로 **캔버스 스키마 클러스터와 동일**. 머리글(캐럿·라벨·개수)은 클러스터 상세 컨텐츠 카테고리 헤딩 시각을 재사용, 클릭/Enter/Space 토글 + hover 시 그 DB 첫 멤버로 카메라 팬.
+- **생략 제거** — 위 5개 상한 전부 삭제. 남은 것은 비현실 극단 전용 안전 가드 4000(초과 시에만 명시).
+- **성능 균형** — 접힌 DB 그룹은 DOM 미생성(lazy), 펼칠 때 주입 + 그 컨테이너 한정 행 바인딩. 기본 규칙(같은 DB 펼침 / 다른 DB·대형(>300) 접힘)과 맞물려 초기 렌더 비용이 종전 수준.
+- **상태 유지** — 사용자가 조작한 그룹은 `panelDbGroupState`(Map)에 기록돼 기본 규칙보다 우선(단 대형 그룹은 성능 가드가 우선). 단일 DB + 짧은 목록(≤60)은 머리글 없이 평면(기존 UX).
+- **적대 리뷰 흡수(§18.8, 2렌즈)** — 총량이 적으면 전 그룹 펼침 / self 그룹 부재 시 첫 그룹 펼침(다중 DB 소량 목록이 종전보다 덜 보이던 퇴행 차단) · ROW_CAP 예산은 펼친 그룹만 소비(접힘이 예산을 먹어 펼치면 빈 목록이 되던 무음 실패 제거) · **백엔드 이웃 상한(300) 도달 시 `truncated` 전파 + 고지 배너**(프론트 상한만 없애면 남던 무음 절단) · 컬럼 아코디언 본문 lazy 화 · **'모두 펼치기/접기'** 컨트롤 · 형제 머리글 동기화 · 문구를 "잘라내지 않습니다"로 정정.
+
+### 검증
+- `node --check --input-type=module` PASS. 신규 헤드리스 `tests/headless/test_detail_dbgroups.js` **62 PASS**(절단 부재·구획·기본 펼침 규칙·ROW_CAP 예산·lazy·토글 왕복·형제 동기화·컬럼 lazy·**호출부 인자 매핑**·배너·정적 회귀).
+- 컨테이너 pytest: 파이썬 스위트가 **flaky** — 같은 main 기준선 2회 실행에서 실패 집합이 상이(교집합 `runtime_settings` 2건). 본 cycle 의 파이썬 변경은 `neighborhood()` additive 플래그뿐이며 해당 실패들과 무관.
+- §18.8 적대 리뷰 2렌즈(ux · 프론트엔드 회귀): **FAIL(BLOCKING 2)→전량 in-cycle 흡수** — REVIEW.md REV-20260727T173000-detail-db-groups.
+- PB-0008 라이브 육안은 정적 자산이 web 이미지에 baked 되므로 배포 후(TDG.7).
+- **POST-DEPLOY PB-0008 PASS (2026-07-27, 라이브 `66575331`)** — 실제 Windows Chrome 150 실증으로 (a)~(g) 전건 통과:
+  루틴 60건 전량 렌더(`… 외 N건` 0건) · 크로스-DB DB 머리글(`gunzgame 6`/`gunzlogin 2`) · 머리글 토글 왕복 ·
+  '모두 접기/펼치기' 일괄(접힘 중 총계 유지) · 관계 상세 23건 구획 전량 · 컬럼 아코디언 lazy 4건 · pageerror 0.
+  증적 `unit/feature-0003-agent-web-ui/docs/evidence/pb0008-detail-db-groups-live-20260727.png`.
+  미재현 한계(정직): 대형 그룹(>300) 접힘·백엔드 `truncated` 배너는 현 데이터셋에 사례가 없어 유닛 검증에 머묾.
+
+### Git 동기화 결과
+- Task-Cycle: detail-db-groups (`ai/claude/feature-0016-detail-db-groups`, worktree) → PR #959 머지(main `66575331`) → `make deploy-web` 롤아웃(web-a/web-b + 워커, soak 통과) → healthz `git_commit=66575331` 확인 → POST-DEPLOY PB-0008 PASS.
+
 ## 2026-07-23 · "🎯 이 노드로 이동" 미렌더 노드 부모 활성화 노출 (20260723T0834-graph-node-reveal)
 
 ### 요청 (사용자, entry persona dispatch)

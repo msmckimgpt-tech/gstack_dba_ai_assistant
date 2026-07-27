@@ -6385,3 +6385,25 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] CI red 수정 — 검증 스크립트를 `test_product_dropup_scroll.py` → `verify_product_dropup_scroll.py` rename(CI 러너엔 playwright 부재 → pytest 수집 시 ModuleNotFoundError collection error, exit 2). pytest 기본 수집 패턴(`test_*.py`) 밖으로 이동, 로컬 11/11 재확인·ruff PASS
 - [x] verify-completion PASS → PR #955 머지(main b30bb45d) → deploy-web-only(web-a/web-b b30bb45d soak 통과) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, centerDelta=0·양단 clamp·검색 포커스 유지·evidence/pb0008-product-picker-scroll-live-20260727.png) — **완결**
 정본 rationale=REVIEW REV-20260727T160748-product-picker-scroll, 변경이력=MODIFY CHG-20260727T160748-product-picker-scroll, Run 기록=test-runs.d/20260727T160748-product-picker-scroll.md.
+
+## TASK-20260727T180036-share-bar-layout — 공유 대화 뷰 액션을 하단 바 우측으로, 조회수를 상단으로 (Minor §12.3 — feature-0003 web/UI 프론트 static, frontend-only, /_template:entry arg-given)
+- 요청(사용자, /_template:entry arg-given): "공유된 대화 링크 내부에서, ['링크 복사', '내 계정에서 fork'] 버튼들을 bottom-bar 내부의 우측으로 옮겨주세요. bottom-bar 내부의 '조회 N회' 항목은 페이지 상단으로 옮겨주세요." + (같은 turn 추가) "하단 바의 크기는 기존의 크기를 거의 유지하도록 구성해주세요. 만약 디자인적 이슈로 크기를 늘려야 할 경우, mouse-hover를 통한 반응형 UI로 크기가 키워지도록 자연스러운 애니메이션을 구성해주세요."
+- 현상: `share.html` 의 액션 버튼 4종이 헤더 우측(`.share-header > .share-actions`)에 있어 제목·meta 와 시선이 경합하고, 조회수는 하단 고정 바 우측에 홀로 떨어져 대화 정보(소유자·범위·제품·만료)와 분리돼 있었다.
+- 접근(HTML 구조 이동 + CSS · 프론트 단독 · 백엔드 0):
+  - `.share-actions` 블록을 `<header>` → `<footer class="share-footer">` 안 `.share-footer-note` 뒤로 이동(바가 `space-between` 이라 자동 우측 정렬). 조건부 노출 버튼(참여/로그인)까지 **그룹 전체** 이동 — 같은 성격의 조작을 상·하로 쪼개지 않는다.
+  - `#shareViewCount` 를 footer → 헤더 `.share-meta` 마지막 항목으로 이동 + 클래스 `share-footer-stats` → `share-meta-item`. `share.js` 는 id 참조라 로직 무변경.
+  - **바 높이 보존(추가 요청)**: footer 세로 패딩 8→6px, 버튼 `2px 10px`/`0.75rem`/`line-height 1.35` 로 축소 → 기본 높이 35.0px(변경 전) → 35.2px.
+  - **hover 확장**: `@media (hover: hover)` 안에서 `.share-footer:hover, .share-footer:focus-within` 시 패딩 10px·버튼 `6px 13px`/`0.8125rem`·배경 불투명·상단 그림자. `transition ... .18s ease` 로 애니메이션. 터치(`hover:none`)는 확장 규격 상시 적용, `prefers-reduced-motion` 은 transition off.
+  - 대안 검토: (a) 액션을 헤더에 두고 조회수만 이동 → 요청 ①과 불일치로 미채택. (b) 바를 상시 크게 → 추가 요청("기존 크기 거의 유지")과 충돌해 미채택. (c) hover 시 `height` 애니메이션 → fixed 바에서 `padding` 전이가 리플로우 범위가 좁아 padding 채택.
+- 영향 파일: `unit/feature-0003-agent-web-ui/src/static/{share.html,share.css}` · `tests/test_share_bar_layout.py`(신규 구조 회귀) · `tests/headless/verify_share_bar_layout.py`(신규 레이아웃 실측) · `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md` · `docs/test-runs.d/20260727T180036-share-bar-layout.md` · `docs/evidence/share-bar-layout-{before,after,hover}-20260727.png`. `share.js` 무변경.
+- 완료 판정 기준(acceptance): (1) 액션 4종이 하단 바 내부 우측(안내문보다 오른쪽·바 우측 여백 ≤20px) (2) 조회수가 헤더 meta 안이며 하단 바보다 위 (3) 바 기본 높이가 변경 전과 ±2px 이내 (4) hover/focus 시 확장 + transition 존재 (5) 본문 하단 여백이 hover 확장 높이를 덮음 (6) `make test` 회귀 0.
+- 위험도: Minor (비파괴 frontend 배치 변경, 인증/데이터/마이그레이션/외부비용 무관).
+
+### 완료 체크리스트
+- [x] share.html: `.share-actions` → footer 이동 · `#shareViewCount` → 헤더 `.share-meta` 이동
+- [x] share.css: 바 기본 높이 보존 규격 + hover/focus 확장 + transition + `hover:none`/`prefers-reduced-motion` 분기 + 하단 여백 정합
+- [x] 구조 회귀 테스트 `tests/test_share_bar_layout.py` 5 PASS (컨테이너 pytest)
+- [x] 헤드리스 chromium 레이아웃 실측 `tests/headless/verify_share_bar_layout.py` 8/8 PASS — 변경 전(main) 대비 바 높이 35.0→35.2px(Δ+0.2), hover 52.5px, transition 0.18s, 버튼 31.5px
+- [x] `make test` 전체 회귀 0 — 실패 15건이 clean main 과 **완전 동일**(차집합 0)
+- [x] verify-completion PASS → PR #958 머지(main 486a587c) → deploy-web-only(web-a/web-b 486a587c soak 통과) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, 배포본 66575331 ⊇ 486a587c: 액션 하단 바 우측 여백 16px·조회 16회 헤더 meta·바 35px→hover 53px(0.18s)·`복사됨 ✓` 토글·최하단에서 마지막 메시지 미가림·페이지 에러 0, evidence/pb0008-share-bar-layout-live-{default,hover,header,copied}-20260727.png) — **완결**
+정본 rationale=REVIEW REV-20260727T180036-share-bar-layout, 변경이력=MODIFY CHG-20260727T180036-share-bar-layout, Run 기록=test-runs.d/20260727T180036-share-bar-layout.md.

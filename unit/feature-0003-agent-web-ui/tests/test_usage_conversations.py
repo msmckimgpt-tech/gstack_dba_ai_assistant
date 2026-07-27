@@ -311,6 +311,10 @@ def test_c1_canonical_usage_model_families():
     for v in ("claude-sonnet-4", "claude-sonnet-4-6", "claude-sonnet-4-chat", "claude-sonnet-4-chat-root",
               "claude-sonnet-5", "claude-sonnet-5-20260101", "anthropic/claude-sonnet-5".split("/")[-1]):
         assert C(v) == "claude-sonnet-4", v
+    # Opus 5 (opus5-model 2026-07-27) — 요청 alias·라우팅 변형·실 모델 ID 가 한 family 로.
+    for v in ("claude-opus-5", "claude-opus-5-chat", "claude-opus-5-chat-root",
+              "claude-opus-5-20260301", "CLAUDE-OPUS-5-CHAT"):
+        assert C(v) == "claude-opus-5", v
     # 로컬 게이트웨이·gemma 폴백 → edge
     for v in ("edge", "edge-fallback", "gemma4:e2b", "gemma2", "auto", "core", "code"):
         assert C(v) == "edge", v
@@ -322,8 +326,12 @@ def test_c2_canonical_idempotent_and_unknown_passthrough():
     assert C("claude-haiku-4") == "claude-haiku-4"
     assert C("claude-sonnet-4") == "claude-sonnet-4"
     assert C("edge") == "edge"
-    # 미등록/신규 모델은 원본 유지(self-surface — 조용히 사라지지 않게)
+    assert C("claude-opus-5") == "claude-opus-5"
+    # 미등록/신규 모델은 원본 유지(self-surface — 조용히 사라지지 않게). opus5-model 이후에도
+    # canonical fold 는 **버전-정확**(claude-opus-5*)이라 미등록 Opus 버전은 접히지 않는다 —
+    # 넓은 'claude-opus' prefix 로 접으면 신규 Opus 비용이 조용히 Opus 5 단가로 오귀속된다.
     assert C("claude-opus-9") == "claude-opus-9"
+    assert C("claude-opus-4-8") == "claude-opus-4-8"
     assert C("some-future-model") == "some-future-model"
     # 빈 값
     assert C(None) == "(미상)"
@@ -340,6 +348,12 @@ def test_c3_estimate_cost_canonicalizes_price_key():
     assert est("claude-haiku-4-chat", 1_000_000, 1_000_000) == base
     assert est("claude-haiku-4-interactive", 1_000_000, 1_000_000) == base
     assert est("claude-haiku-4-5-20251001", 1_000_000, 1_000_000) == base
+    # opus5-model(2026-07-27): Opus 5 단가($5/$25)도 등록 — 라우팅 변형까지 동일 단가로 계상되고,
+    # sonnet($3/$15)보다 커야 한다(단가표 오배치 가드).
+    opus = est("claude-opus-5", 1_000_000, 1_000_000)
+    assert opus == est("claude-opus-5-chat", 1_000_000, 1_000_000) == est("claude-opus-5-chat-root", 1_000_000, 1_000_000)
+    assert opus == round(5.0 + 25.0, 4)
+    assert opus > est("claude-sonnet-4", 1_000_000, 1_000_000) > base
     # edge/gemma 폴백은 로컬 무료 → 0
     assert est("gemma4:e2b", 1_000_000, 1_000_000) == 0.0
     assert est("edge", 1_000_000, 1_000_000) == 0.0

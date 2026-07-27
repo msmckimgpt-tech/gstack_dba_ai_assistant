@@ -580,3 +580,30 @@ source_of_truth: true
 - Rollback: 주석 원복(기능 영향 0). 로직 rollback 은 feature-0002 CHG 참조.
 - ANCHOR 정합: §1·§2 무충돌(자격/보안/라우팅 경계 변경 아님).
 - Cross-ref(정본): feature-0002 MODIFY/REVIEW/TASK-20260724T054326-timeout-console-sync · litellm_config.yaml `litellm_settings.request_timeout` 주석 · 선행 CHG-20260724T141420-llm-timeout-align · REVIEW.md REV-20260724T054326-timeout-console-sync.
+
+## CHG-20260727T184425-opus5-model (assistant 선택 모델에 Claude Opus 5 추가 — claude-corp + root 2계정 edge-free 체인)
+- Date: 2026-07-27. 사용자 요청: "서비스 내 assistant 의 llm 모델에 claude opus 도 포함 … 이전의 sonnet 을 추가했던 사례를 검토하여 꼼꼼하게 (`claude-corp` 및 `root` 계정 포함)". sonnet 추가 이력(CHG-20260724T…-sonnet-chat-fallback → -sonnet5-upgrade → -cc-identity-inject → -llm-timeout-align)이 **4차에 걸쳐 사후 수정**된 원인(bare 단일계정 · 폐기 모델 ID · budget_tokens 400 · OAuth identity 게이트)을 전부 도입 시점에 선반영했다.
+- **선행 라이브 실증(코드 작성 전, gateway 컨테이너에서 api.anthropic.com 직접 호출)**:
+  - claude-corp(`ANTHROPIC_API_KEY`) + `claude-opus-5` + **system 없음 → 429**(`{"type":"rate_limit_error","message":"Error"}`, unified-status 헤더 없음).
+  - claude-corp + `claude-opus-5` + **Claude Code identity 첫 system 블록 → 200**(`model=claude-opus-5`, `anthropic-ratelimit-unified-status: allowed`). → **Opus 5 도 Sonnet 5 와 동일한 OAuth frontier-identity 게이트**.
+  - root(`ANTHROPIC_API_KEY_ROOT`) → opus/sonnet-5/haiku-4-5 **전부 429**(`unified-status: rejected`, "would exceed your account's rate limit", reset epoch 1785159600) = **계정 전체 한도 소진**이지 Opus 모델 게이팅 아님(모델별 격리 probe 로 확인). 윈도우 리셋 후 2순위 체인 정상 동작 예상 — 배포 후 재확인 대상.
+- 변경(`unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml`): opus 3 deployment 신규 —
+  `claude-opus-5`(bare, `ANTHROPIC_API_KEY`, fallback 미등록=비대화 격리) / `claude-opus-5-chat`(`ANTHROPIC_API_KEY`) / `claude-opus-5-chat-root`(`ANTHROPIC_API_KEY_ROOT`). 전부 `model: anthropic/claude-opus-5` + `thinking:{type:adaptive}`. `litellm_settings.fallbacks` 에 `{"claude-opus-5-chat": ["claude-opus-5-chat-root"]}` 추가(edge 미포함 종단).
+- 변경(`shared/model_catalog.py`): ① `API_MODEL_OPTIONS` 선두에 `claude-opus-5`(label `claude-opus`, group `Claude`, supports_temperature=False, supports_vision=True) ② `_CONVERSATION_ANSWER_ALIAS["claude-opus-5"]="claude-opus-5-chat"` ③ `_ADAPTIVE_THINKING_PREFIXES` 에 `claude-opus` prefix(전 Opus 버전 adaptive-only — budget_tokens 400 방지; `requires_oauth_frontier_identity` 도 동일 집합이라 CC identity 자동 주입) ④ `_CLAUDE_MODEL_MAX_OUTPUT["claude-opus-5"]=128000` ⑤ `canonical_usage_model`/`_sql` 에 **버전-정확** `claude-opus-5*` fold(미등록 Opus 는 self-surface 유지).
+- 변경(`shared/runtime_settings.py`): `_AGENT_MAX_OUTPUT_DEFAULT["claude-opus-5"]=40000`(sonnet 동형; 상한은 native 128000). budget 계열 스펙은 `_budget_thinking_models()` 가 adaptive 를 제외하므로 자동 미생성 → admin UI 는 guide-note(죽은 슬라이더 0).
+- 변경(`unit/feature-0003-agent-web-ui/src/routers/admin_usage.py`): `_LLM_PRICE_USD_PER_1M["claude-opus-5"]={"in":5.0,"out":25.0}`(공시가). canonical family 키와 동일해 `-chat`/`-chat-root`/실ID 도 같은 단가로 계상.
+- 변경(`.env.example`): 선택 가능 catalog 3종 명시 + `API_DEFAULT_MODEL` stale 표기(`claude-sonnet-4`) → 실제값 `claude-haiku-4` 정정 + 전역 기본 상향 시 비용 파급 경고 + 백그라운드 `AGENT_*_MODEL` 계열에 Opus 배선 금지 주석.
+- **코드 변경 불필요(카탈로그 자동 파급) — 검증만**: 모델 선택기(`/api/session` → `PUBLIC_API_MODEL_OPTIONS`, index.html 은 빈 컨테이너) · 컴포저 라벨(`_composerModelLabelFor`) · 추론강도 활성 판정(`model_supports_thinking`) · red-team 리뷰어 정합(`redteam.resolve_review_model` → `conversation_answer_model`) · 재답변 모델 승계 · 대화별 모델 보존 · admin runtime-settings pane(`adaptive_models`).
+- Verification: feature-0002+0003 **전체 pytest PASS(rc=0, 2452 tests, 0 fail/0 error)** — 신규 opus 테스트 8건 포함. litellm YAML 파싱 OK(model_name 중복 0 · fallback dangling ref 0). 라이브 사전 실증(위). **배포 후 e2e(대화에서 claude-opus 선택 → 200 답변) + PB-0008 최종 확정 필요.**
+- Rollback: 본 CHG 의 5 파일 revert → opus 선택지 소멸(기존 haiku/sonnet 경로 무영향 — 전부 additive).
+- ANCHOR 정합: §1(운영자 자격 일원화 — 신규 자격 0, 기존 두 OAuth slot 재사용)·§2(Alt-A gateway 경유) 무충돌. 신규 모델 alias 추가는 라우팅 표면 확장이나 인증/인가 경계 변경 아님.
+- Cross-ref: REVIEW.md REV-20260727T184425-opus5-model · TEST.md Run 2026-07-27-opus5-model · shared/docs/MODIFY.md 동일 CHG.
+
+## CHG-20260727T190500-opus5-model-postdeploy (opus5-model POST-DEPLOY 확정 + 관리 콘솔 카피 정정)
+- Date: 2026-07-27. 선행 CHG-20260727T184425-opus5-model 의 배포 후 라이브 확정 기록 + 그 과정에서 발견한 stale 카피 1건 정정.
+- 배포: `bin/deploy-web.sh`(scope=all) → **413703b9**. web-a/web-b 롤링(one-at-a-time) + soak 90s 통과 · 워커(insight/ask) `mysql-ai-agent:413703b9` 롤아웃 · **bedrock-gateway 드리프트 감지 → surge replica 무중단 교체**(litellm config 변경 반영).
+- 라이브 확정(상세 TEST Run 2026-07-27-opus5-model-POSTDEPLOY): gateway 경유 `claude-opus-5-chat` **200** · PB-0008 실 브라우저 모델 선택기 노출 + 실 클릭 → 대화 e2e **7초 정답** · `llm_usage` 가 `model=claude-opus-5` / `resolved_model=claude-opus-5-chat` 로 기록(설계 계약 일치) · red-team 리뷰어도 opus 로 자동 정합(코드 변경 0) · 비용 USD 0.1981 계상($0 오표시 아님) · 관리 콘솔 opus 카드 + adaptive guide-note(죽은 슬라이더 0).
+- 변경(`unit/feature-0003-agent-web-ui/src/static/admin.html`): '모델별 추론 예산' pane 헤더 힌트 `max_tokens, Sonnet 128K / Haiku 64K 까지` → `max_tokens, Opus·Sonnet 128K / Haiku 64K 까지`. 카탈로그에 Opus 가 추가되면서 본 문구가 실제 지원 모델을 누락(본 변경으로 stale 해진 문구) — 카피 1줄, 동작 영향 0.
+- Verification: PB-0008 evidence 3종(`docs/evidence/pb0008-opus5-{model-menu,live-answer,admin-budget-pane}-20260727.png`). 카피 정정은 재배포 후 육안 재확인.
+- 잔여(R1): root 계정 한도 윈도우 리셋 후 `claude-opus-5-chat-root` 실 200 재확인(1순위 claude-corp 경로는 정상 확정).
+- Cross-ref: 선행 CHG-20260727T184425-opus5-model · REVIEW REV-20260727T190500-opus5-model-postdeploy · TEST Run 2026-07-27-opus5-model-POSTDEPLOY.

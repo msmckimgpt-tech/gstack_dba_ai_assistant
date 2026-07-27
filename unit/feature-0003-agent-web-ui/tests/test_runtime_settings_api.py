@@ -55,6 +55,11 @@ def test_get_returns_registry(client, as_account):
     mtb = {r["key"] for r in body["model_thinking_budgets"]}
     assert "model_thinking_budget:claude-sonnet-4" not in mtb
     assert "claude-sonnet-4" in body.get("adaptive_models", [])
+    # opus5-model(2026-07-27): Opus 5 도 adaptive — 죽은 예산 키 미노출 + guide-note 대상으로 표면화.
+    assert "agent_max_output:claude-opus-5" in amo
+    assert "reasoning_budget:claude-opus-5:max" not in rbk
+    assert "model_thinking_budget:claude-opus-5" not in mtb
+    assert "claude-opus-5" in body.get("adaptive_models", [])
     keys = {t["key"] for t in body["timeouts"]}
     assert "AGENT_TIMEOUT_SEC" in keys and "MCP_TIMEOUT_SEC" in keys
     # 무 DB(get_conn=None) → override 없음 → effective == default.

@@ -33,7 +33,12 @@ def test_small_result_under_cap_unchanged():
         max_rows=50, expand_rows=500, expand_char_budget=12_000, stats=stats,
     )
     assert "(10 행)" in out and "행만 표시" not in out
-    assert stats == {"total_rows": 10, "shown_rows": 10, "truncated": False}
+    # stats 계약은 FR-false-truncation-belief 에서 셀 절단 축(cell_truncated*)과 had_rows_set 이
+    # 추가됐다 — caller 가 행/셀 절단을 분리해 완전성 단정을 게이팅하는 근거(CHG-20260727T175800).
+    assert stats == {
+        "total_rows": 10, "shown_rows": 10, "truncated": False,
+        "had_rows_set": True, "cell_truncated": False, "cell_truncated_count": 0,
+    }
 
 
 def test_medium_result_expands_fully_within_char_budget():

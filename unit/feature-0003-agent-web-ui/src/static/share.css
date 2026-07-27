@@ -32,6 +32,8 @@
   /* feature-0013 후속: 고정폭(960px) → 브라우저 전체 폭 반응형. 넓은 표·다이어그램·코드블록이
      좁은 고정폭에 잘리지 않도록 컨테이너가 뷰포트 폭을 채운다(개별 wide 요소는 각자
      overflow-x:auto 로 컨테이너 안에서 스크롤). 큰 화면일수록 좌우 여백을 비례 확대. */
+  /* share-bar-layout: 하단 고정 바가 액션 버튼을 함께 담지만 기본 높이는 기존과 거의 같게
+     유지한다(hover 확장분까지 80px 여백 안에 들어온다). */
   max-width: 100%;
   margin: 0 auto;
   padding: 24px clamp(16px, 4vw, 48px) 80px;
@@ -66,21 +68,27 @@
 
 .share-meta-item:empty { display: none; }
 
-.share-actions { flex: 0 0 auto; display: flex; gap: 8px; align-items: center; }
+/* share-bar-layout: 액션 그룹은 헤더가 아니라 하단 고정 바(.share-footer) 우측에 배치된다.
+   기본 상태는 바 높이를 기존(안내문 한 줄)과 거의 같게 유지하는 초컴팩트 규격이고,
+   바에 mouse-hover(또는 키보드 focus) 하면 .share-footer 규칙이 이 값들을 확대한다. */
+.share-actions { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; }
 
 .share-join-btn,
 .share-fork-btn,
 .share-login-link {
   display: inline-block;
-  padding: 8px 14px;
+  padding: 2px 10px;
   border-radius: 6px;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
   font-weight: 500;
   cursor: pointer;
   background: var(--share-primary);
   color: #fff;
   border: none;
   text-decoration: none;
+  white-space: nowrap;
+  transition: padding .18s ease, font-size .18s ease, filter .12s;
 }
 
 /* feature-0009: 참여 버튼은 주 액션 — fork 보다 강조(진한 배경) */
@@ -549,13 +557,61 @@
   bottom: 0;
   background: rgba(255, 255, 255, 0.96);
   border-top: 1px solid var(--share-border);
-  padding: 8px 16px;
+  /* share-bar-layout: 액션 버튼을 품게 됐지만 기본 높이는 기존 바(안내문 한 줄)와 거의 같게
+     유지한다 — 조작이 필요한 순간(hover/focus)에만 아래 규칙으로 확장한다. */
+  padding: 6px 16px;
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  /* 좌측 안내문 + 우측 액션 버튼을 한 줄에 세로 중앙 정렬. 폭이 좁으면 줄바꿈. */
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
   font-size: 0.75rem;
   color: var(--share-text-muted);
   z-index: 10;
+  transition: padding .18s ease, background .18s ease, box-shadow .18s ease;
+}
+
+.share-footer-note { flex: 1 1 auto; min-width: 0; }
+
+/* share-bar-layout: hover 가능한 포인터 환경에서만 확장 — 터치 환경은 항상 기본(=충분한) 크기.
+   focus-within 을 함께 둬 키보드 탭 이동 시에도 동일하게 커진다. */
+@media (hover: hover) {
+  .share-footer:hover,
+  .share-footer:focus-within {
+    padding: 10px 16px;
+    background: #ffffff;
+    box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.06);
+  }
+  .share-footer:hover .share-copy-link-btn,
+  .share-footer:hover .share-join-btn,
+  .share-footer:hover .share-fork-btn,
+  .share-footer:hover .share-login-link,
+  .share-footer:focus-within .share-copy-link-btn,
+  .share-footer:focus-within .share-join-btn,
+  .share-footer:focus-within .share-fork-btn,
+  .share-footer:focus-within .share-login-link {
+    padding: 6px 13px;
+    font-size: 0.8125rem;
+  }
+}
+
+/* 터치 환경(hover 불가)은 확장 트리거가 없으므로 처음부터 손가락 타겟 크기로 둔다. */
+@media (hover: none) {
+  .share-footer { padding: 8px 16px; }
+  .share-copy-link-btn,
+  .share-join-btn,
+  .share-fork-btn,
+  .share-login-link { padding: 6px 13px; font-size: 0.8125rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 모션 최소화 환경: 크기 변화는 유지하되 애니메이션 없이 즉시 적용. */
+  .share-footer,
+  .share-copy-link-btn,
+  .share-join-btn,
+  .share-fork-btn,
+  .share-login-link { transition: none; }
 }
 
 .hidden { display: none !important; }
@@ -576,7 +632,7 @@
   background: #f0f0f0;
 }
 
-/* ── 헤더 브랜드 + 링크 복사 ───────────────────────────────────── */
+/* ── 헤더 브랜드 + 링크 복사(하단 바) ──────────────────────────── */
 .share-brand {
   display: inline-block;
   font-size: 0.72rem;
@@ -589,15 +645,18 @@
 
 .share-copy-link-btn {
   display: inline-block;
-  padding: 8px 14px;
+  /* share-bar-layout: 하단 바 배치 — 형제 액션 버튼과 동일한 컴팩트 규격(hover 시 함께 확장) */
+  padding: 2px 10px;
   border-radius: 6px;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
   font-weight: 500;
   cursor: pointer;
   background: var(--share-surface);
   color: var(--share-text);
   border: 1px solid var(--share-border-strong);
-  transition: background .12s, border-color .12s;
+  transition: background .12s, border-color .12s, padding .18s ease, font-size .18s ease;
+  white-space: nowrap;
 }
 .share-copy-link-btn:hover { background: #f1f5f9; }
 .share-copy-link-btn.is-copied {
@@ -608,10 +667,12 @@
 
 /* ── 반응형 ───────────────────────────────────────────────────── */
 @media (max-width: 600px) {
-  .share-container { padding: 16px 12px 80px 12px; }
+  /* share-bar-layout: 좁은 화면에서는 하단 바가 안내문/액션 2줄로 접히므로 본문 여백을 더 준다. */
+  .share-container { padding: 16px 12px 96px 12px; }
   .share-topic { font-size: 1.25rem; }
   .share-message { padding: 12px 14px; }
-  .share-actions { width: 100%; }
+  .share-footer-note { flex: 1 1 100%; }
+  .share-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
 }
 
 /* ── 인쇄 / PDF 저장 — 수신자가 보고서로 보관할 수 있도록 ──────── */

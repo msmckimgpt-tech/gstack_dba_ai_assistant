@@ -399,6 +399,21 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .amgr-col-body { padding: 2px 0 4px 18px; }
 .amgr-dir { margin: 4px 0; }
 .amgr-dir-head { font-size: 11px; font-weight: 600; color: var(--text-2); margin: 3px 0 2px; display: flex; align-items: center; gap: 4px; }
+/* detail-db-groups(사용자 요구 2026-07-27): 상세 패널 관련 노드 목록의 DB(스키마) 단위 그룹 머리글 + 본문.
+   머리글 시각은 클러스터 상세의 컨텐츠 카테고리 헤딩(.amgr-ct-group)을 그대로 재사용하고, 여기선 목록
+   맥락(amgr-list 안의 <li>)에 맞는 여백·본문 들여쓰기만 덧댄다. 본문은 접힘 시 hidden 속성으로 감춘다
+   (display:none 은 hidden 기본 스타일 — 별도 규칙 불필요하되 flex/grid 조상 대비 명시). */
+.amgr-list > li.amgr-ct-group.amgr-dbgrp { margin: 6px 0 2px; }
+.amgr-list > li.amgr-ct-group.amgr-dbgrp:first-child { margin-top: 2px; }
+.amgr-dbgrp .amgr-ct-group-label { font-size: 11px; }
+/* '모두 펼치기/접기' — 목록 첫 줄의 편의 컨트롤(클러스터 상세 .amgr-ct-collapse-all 과 같은 역할) */
+.amgr-dbgrp-allctl { list-style: none; display: flex; justify-content: flex-end; margin: 0 0 2px; }
+.amgr-dbgrp-all { margin-left: 0; font-size: 10.5px; font-weight: 600; }
+/* 백엔드 이웃 상한(300)으로 부분만 불러온 경우의 고지 — 조용한 절단 방지 */
+.amgr-trunc-note { color: #9a6a00; background: #fff8e6; border: 1px solid #f3e0b0; border-radius: 5px; padding: 4px 7px; }
+.amgr-dbgrp-body { padding-left: 12px; border-left: 2px solid var(--border, #e2e8f0); margin-left: 4px; }
+.amgr-dbgrp-body[hidden] { display: none; }
+.amgr-dbgrp-body > ul.amgr-list { list-style: none; margin: 0; padding: 0; }
 .amgr-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .amgr-main code { word-break: break-all; }   /* 장문 무공백 FQN 이 패널 행을 뚫지 않게(review) */
 .amgr-arrow { flex: none; font-weight: 700; color: var(--text-2); }
