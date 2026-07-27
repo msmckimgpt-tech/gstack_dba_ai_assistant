@@ -1086,3 +1086,12 @@ source_of_truth: true
 - 위험도: Minor(§12.3) — 선행 Critical cycle 의 버그 수정. 인가 판정 로직·경계 무변경(seed 경로만).
 - Verification: 단위 26 PASS · 전체 pytest rc=0 · ruff · ast.parse OK.
 - Cross-ref: MODIFY CHG-20260728T025614-model-access-seed-fix / test-runs.d/20260728T025614-model-access-seed-fix.md / 선행 REV-20260728T024258-model-access-rbac.
+
+## REV-20260728T031500-model-access-postverify [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+- 대상: 배포 `8db72012` 의 모델 권한 RBAC 라이브 부여·해제 양방향 검증 기록 + `SECURITY §28.6` 신설.
+- 리뷰 방식([SKIPPED] 사유): **코드 변경 0**. 산출물은 (a) 라이브 관측 사실, (b) 그 관측에서 드러난 기존 가드의 상호작용을 운영 규칙으로 옮긴 문서. 정본 적대 리뷰는 선행 REV-20260728T024258-model-access-rbac · REV-20260728T025614-model-access-seed-fix.
+- **확정된 것**: ① 기본 전부 부여 무회귀 렌더 ② 역할 해제가 대상 모델에만 적용(`7/8`, 타 모델 `8/8` 유지) ③ 표시 필터 + `/api/ask` **403**, 동시점 sonnet **200** 대조로 **모델 단위 스코프** 확정 ④ 재부여 완전 복귀(`8/8` ×3, override 0). → 선행 REVIEW 들이 POST-DEPLOY 로 이관했던 시각·집행 게이트(§16.6) 충족.
+- **새로 드러난 것(정직 표기)**: TASK-0300 권한상승 가드 × `model.access.*` = **관리자 자기 잠금 경로**. 결함이 아니라 기존 가드가 새 동적 그룹에 그대로 적용된 결과(=`product.access.*` 와 동일)이므로 **코드 변경 없이** `SECURITY §28.6` 운영 규칙으로 봉인. 완화하려고 가드에 예외를 두면 escalation 방어에 구멍이 생기므로 **의도적으로 하지 않았다**.
+- **검증 방법의 한계(정직 표기)**: 집행 검증은 `일반 사용자` 역할에 소속 계정이 0명이라 **자기 계정 override** 로 대리 수행했다. 역할 경유 집행(계정 → 역할 → 권한)의 라이브 관측은 아니지만, 두 경로는 `_account_permissions` 의 동일 병합 맵으로 수렴하고 역할 쓰기 경로는 ②·④ 에서 DB 로 별도 확정했다.
+- 위험도: **Minor(§12.3)** — 문서 전용, 동작 영향 0. 라이브 상태는 착수 전과 동일하게 원복됨.
+- Cross-ref: MODIFY CHG-20260728T031500-model-access-postverify / test-runs.d/20260728T031500-model-access-pb0008.md / SECURITY §28.6·§28.7 / feature-0007 REPORT §7 (R1·R2 해소).
