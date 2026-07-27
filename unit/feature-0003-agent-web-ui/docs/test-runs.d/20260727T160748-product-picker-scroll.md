@@ -2,10 +2,10 @@
 run_at: 2026-07-27T16:20:00+09:00
 session: ai/claude/feature-0003-product-picker-scroll
 scope: [product-picker, composer, dropup-scroll]
-verdict: PRE-COMMIT PASS (헤드리스 chromium 11/11 · node --check) · POST-DEPLOY PB-0008 배포 후 실측 예정
+verdict: PRE-COMMIT PASS (헤드리스 chromium 11/11 · node --check) · **POST-DEPLOY PB-0008 라이브 PASS**(2026-07-27, 배포 b30bb45d)
 ---
 
-### Run (2026-07-27) — product-picker-scroll (제품 선택 드롭업 선택 항목 중앙 스크롤) — **Environment: chromium-headless(레이아웃 실측) + Windows-browser(PB-0008 배포 후 실측 예정)**
+### Run (2026-07-27) — product-picker-scroll (제품 선택 드롭업 선택 항목 중앙 스크롤) — **Environment: chromium-headless(레이아웃 실측) + Windows-browser(PB-0008 라이브 PASS)**
 
 cycle: `ai/claude/feature-0003-product-picker-scroll` · 정본 = TASK-20260727T160748-product-picker-scroll ·
 REV-20260727T160748-product-picker-scroll · CHG-20260727T160748-product-picker-scroll.
@@ -33,7 +33,7 @@ REV-20260727T160748-product-picker-scroll · CHG-20260727T160748-product-picker-
   선택 항목 P_12 화면 밖) · `docs/evidence/product-dropup-scroll-after-20260727.png`(변경 후 — P_12 가 목록
   세로 중앙, 위아래 이웃 제품이 함께 보여 상대 위치 파악 가능).
 
-- **Environment: Windows-browser (PB-0008) — 배포 후 실측 예정(미수행 사유)**: 본 변경은 라이브 배포(web
+- **Environment: Windows-browser (PB-0008) — (배포 전 작성) 배포 후 실측 예정이었던 항목**: 본 변경은 라이브 배포(web
   재빌드 → 갱신된 `app.js` 서빙) 후에만 실 화면에 반영되므로 미배포 코드에서는 실측 불가. 헤드리스 검증은
   실 CSS·실 함수 기반이나 **실 사용자 화면(Windows 브라우저)의 정본이 아니다**(§15.4.1). 배포 후 검증 항목:
   1. 제품이 많은 계정으로 작업 화면 진입 → 컴포저 제품 chip 클릭 → 드롭업이 **현재 선택 제품을 중앙에 둔 채** 열림(AC-PPSC-1).
@@ -42,3 +42,21 @@ REV-20260727T160748-product-picker-scroll · CHG-20260727T160748-product-picker-
 - **Notes**: §18.8 subagent 패널은 **본 세션의 사용자 환경 정책(Agent tool 미허용)으로 미수행** — REVIEW
   REV-20260727T160748 에 [SKIPPED:session-policy-no-subagent] 로 사유와 대체 검증(헤드리스 11 케이스 +
   자체 적대 검토 H1~H8)을 명시했다.
+
+### POST-DEPLOY Run (2026-07-27 16:5x) — **Environment: Windows-browser · Runner: AI · Bridge: relay(http://172.26.144.1:9223) · PASS**
+
+배포본 `b30bb45d`(`make deploy-web-only`, web-a/web-b 롤링 + soak 통과) 를 **실 Windows Chrome/150.0.7871.115**
+로 검증(`bin/win-browser.py` launch/click/eval/screenshot, https://localhost/ · bootstrap_admin · 대화 미선택 랜딩).
+
+- **서빙 반영 확인**: `typeof scrollProductDropupToSelected === "function"` · asset stamp `app.js?v=c121d0831994`
+  (빌드 content-hash 자동주입 — 구 캐시 아님).
+- **AC-PPSC-1 (중앙 정렬) PASS**: 제품 17개 목록에서 중간 항목 `(GZ_DEV) 건즈 - 개발`(index 8) 선택 후 재오픈 →
+  `scrollTop=254`(0 < 254 < maxScroll 447 — clamp 아닌 실제 중앙 정렬), **centerDelta=0**(선택 항목 중심 ==
+  메뉴 뷰포트 중심), `fullyVisible=true`. 증거 `docs/evidence/pb0008-product-picker-scroll-live-20260727.png`
+  — 선택 제품이 목록 한가운데, 위아래 이웃 제품(MV_DEV·FH_QA / CC_QA·DK_QA·SR_QA)이 함께 보여 상대 위치 파악 가능.
+- **AC-PPSC-2 (양단 clamp) PASS**: 최초 열림 시 선택 제품이 마지막 항목(`(KR_LIVE) 킹스레이드 - 도쿄 Live`, index 16)
+  → `scrollTop=447 == maxScroll 447`(초과 없음) · `fullyVisible=true`. `offsetParentIsMenu=true` 로 좌표계 계약도
+  라이브에서 실측 확인.
+- **AC-PPSC-3 (검색 포커스 무회귀) PASS**: 재오픈 시 `document.activeElement === .product-dropup-search`(sticky 검색
+  입력 자동 포커스 유지) — `preventScroll` 적용 후에도 포커스 동작 불변. 콘솔/페이지 에러 0.
+- **정리**: 검증 후 제품 선택을 원래 값(KR_LIVE)으로 복원하고 `win-browser.py down` 으로 드라이버 인스턴스 종료.

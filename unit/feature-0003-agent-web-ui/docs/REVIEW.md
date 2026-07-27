@@ -1002,3 +1002,10 @@ source_of_truth: true
 - **대안 검토**: (A) CI 에 playwright 설치 — 러너 시간·유지비 증가, 본 cycle 범위 밖. (B) 파일 상단 `pytest.importorskip` — 수집은 계속 일어나 취약. (C) **rename(채택)** — 수집 자체를 회피, 관례 정합.
 - **검증**: rename 후 11/11 PASS 재확인 · ruff PASS · pyproject 에 `python_files` 커스텀 없음 확인(기본 패턴만 수집).
 - Human Approval Needed: no.
+
+## REV-20260727T165500-product-picker-scroll-postverify [SKIPPED:non-policy-doc] 제품 선택 드롭업 중앙 스크롤 POST-DEPLOY 라이브 실증 + deploy_scope 근거
+- Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 기록 + 스크린샷 증거). 실 구현 리뷰 정본 = REV-20260727T160748-product-picker-scroll([SKIPPED:session-policy-no-subagent] — 세션 정책상 subagent 패널 미수행, 헤드리스 11 케이스 + 자체 적대 검토 H1~H8 로 대체).
+- **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 PR #955 머지(main **b30bb45d**) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료. 배포 범위 = web 전용(변경 파일이 정적 자산·문서 한정, 워커/agent 코드 무변경). soak 통과(edge 일시 blip 1회 — 연속 3회 미만 회복, 롤백 0).
+- **POST-DEPLOY 실증(Windows-browser, PB-0008)**: AC-PPSC-1(중앙 정렬 — centerDelta **0**, scrollTop 254 가 clamp 경계 밖이라 실제 정렬임을 확증)·AC-PPSC-2(양단 clamp — 마지막 항목 선택 시 scrollTop=maxScroll=447, fullyVisible)·AC-PPSC-3(검색 포커스 유지) **PASS**, `offsetParentIsMenu=true` 좌표계 계약 라이브 실측, 페이지 에러 0. 시각 증거 `docs/evidence/pb0008-product-picker-scroll-live-20260727.png`(선택 제품이 목록 한가운데 + 위아래 이웃 제품 동시 노출 — 사용자가 요청한 "상대적인 위치" 파악이 실제로 가능해짐).
+- **검증 위생**: 라이브 테넌트 부작용 최소화 — 대화 미선택(랜딩) 상태에서만 제품을 바꿔 owner PATCH 경로를 타지 않게 했고(로컬 pref 만), 검증 후 원래 선택(KR_LIVE)으로 복원 + `win-browser.py down` 으로 드라이버 인스턴스만 종료.
+- Human Approval Needed: no.
