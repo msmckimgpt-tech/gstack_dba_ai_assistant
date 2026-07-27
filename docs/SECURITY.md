@@ -930,7 +930,31 @@ feature-0023 Bearer API 토큰 cross-account 감사(2026-07-23)에서 발견된 
 - 면제해도 통제는 유지된다 — `bool(granted)`(서비스 계정 역할 보유) **AND** 절대 denylist
   (`*.any`·관리 네임스페이스) **AND** ask() 게이트. 저권한 서비스 계정에서 opus 를 해제하면 토큰도 못 쓴다.
 
-### 28.6 검증
-`unit/feature-0003-agent-web-ui/tests/test_model_access_rbac.py` (G1~G8, 25 케이스) — 판정표 5분기·
+### 28.6 권한상승 가드와의 상호작용 — 관리자 **자기 잠금(self-lockout)** 경로 ⚠️
+TASK-0300 (REQ-0287) privilege-escalation 가드는 *"본인이 보유하지 않은 권한은 설정할 수 없습니다"*
+(`admin_accounts.py`) 를 역할 편집·계정 override 양쪽에 적용한다. `model.access.*` 도 동적 권한이므로
+`product.access.*` 와 **동일하게** 이 가드의 적용을 받는다 — 의도된 보안 동작이며 예외를 두지 않는다.
+
+**따라서 다음 순서가 자기 잠금을 만든다** (2026-07-28 PB-0008 라이브 실측):
+
+1. 관리자 A 가 **자기 계정** override 로 `model.access.claude-opus-5` = `거부`.
+2. 이후 A 는 그 모델을 **어떤 역할에도, 자기 자신에게도 다시 부여할 수 없다** —
+   `PATCH /api/admin/roles/{id}` · `PATCH /api/admin/accounts/{id}` 가 **403**
+   (UI 토스트 `N건 실패, 0건 성공`). A 가 미보유 권한을 부여하려는 것으로 정상 판정되기 때문.
+
+**탈출구**: (a) 그 모델을 보유한 **다른 관리자**가 복구, 또는 (b) DBA 가 `WebAccountPermissionOverrides`
+의 해당 행을 삭제.
+
+**운영 규칙**: 관리자 **자기 계정**의 모델 해제는 *그 모델을 보유한 관리자가 2인 이상 남는 환경에서만*
+수행한다. 통제 목적(비용 억제)은 **역할 단위 해제**로 달성하고, 자기 계정 override 는 통제 수단이 아니라
+예외 처리 수단으로만 쓴다.
+
+### 28.7 검증
+`unit/feature-0003-agent-web-ui/tests/test_model_access_rbac.py` (G1~G9, 26 케이스) — 판정표 5분기·
 부트스트랩 지연 fail-open+로그·`conn=None` 우회 차단·표시 필터·API 토큰 면제와 그 경계·**재부트스트랩
-re-grant 금지**(★ 관리자 해제 보존)·프론트 그룹 키 parity.
+re-grant 금지**(★ 관리자 해제 보존)·프론트 그룹 키 parity·seed SQL **arity/컬럼 길이 클립**(G9).
+
+**라이브(PB-0008, 배포 `8db72012`)** — `unit/feature-0003-agent-web-ui/docs/test-runs.d/
+20260728T031500-model-access-pb0008.md`: 기본 3/3 부여 렌더 → 역할 해제(`7/8`) → 선택기에서 opus 소멸
++ `/api/ask` opus **403** / sonnet **200**(모델 단위 스코프 대조) → 재부여(`8/8`)·선택기 복귀.
+§28.6 자기 잠금 경로도 이 검증에서 실측·복구됐다.

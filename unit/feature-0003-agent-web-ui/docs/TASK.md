@@ -6434,8 +6434,8 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 프론트 `admin.js`/`app.js` — model_access 그룹(ORDER·LABELS·operate section·prefix 매핑) + `excludeDynamic` 을 product_access 로 좁힘
 - [x] 정책문서 — CONVENTIONS §10.6 · SECURITY §28 신설
 - [x] 단위 25 PASS(G1~G8) · 전체 pytest rc=0 · ruff · node --check
-- [ ] **POST-DEPLOY PB-0008 (부여·해제 양방향)**: 권한 grid '모델 사용' 그룹 렌더 + 초기 전부 체크 → 특정 역할 opus 해제·'모두 적용' → 선택기 소멸 + 403 → 재부여 → 복귀
-- [ ] feature-0007 REPORT §7 의 R2 를 해소 처리(본 cycle 로 닫힘) — doc_sync 또는 후속 cycle
+- [x] **POST-DEPLOY PB-0008 (부여·해제 양방향)** — 배포 `8db72012` 라이브 확정: grid `모델 사용 3/3 선택` 렌더 + 초기 전부 체크 → 역할 opus 해제·'모두 적용'(DB `7/8`) → 선택기 opus 소멸 + `/api/ask` **403**(sonnet **200** 대조) → 재부여(`8/8`)·선택기 복귀. 증적 `docs/test-runs.d/20260728T031500-model-access-pb0008.md` + PNG 2장
+- [x] feature-0007 REPORT §7 의 R1·R2 해소 표기(본 postverify cycle 에서 닫음)
 
 ## TASK-20260728T025614-model-access-seed-fix — 모델 권한 seed SQL arity 수정 (배포 후 결함)
 - [x] 라이브 근본원인 확정 — 권한 row 0개 + `seed catchup skipped: Not enough parameters` + 컨테이너 내 직접 호출 재현
@@ -6444,5 +6444,14 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 호출 2지점 try/except 격리(후속 부트스트랩 단계 보호, 실패는 loud)
 - [x] 테스트 더블에 placeholder/param **arity 단정** + G9(클립·IsDynamic 계약) 신설 → 단위 26 PASS
 - [x] 전체 pytest rc=0 · ruff All passed
-- [ ] **POST-DEPLOY**: 권한 row 3개 + 전 역할 grant 생성 확인
-- [ ] **POST-DEPLOY PB-0008 (부여·해제 양방향)** — 선행 cycle 에서 이관된 항목
+- [x] **POST-DEPLOY**: 권한 row **3개** + 전 역할 grant **8/8** 생성 확인 (`[model-access-rbac catchup] model access backfill: 27 permission/role-permission rows added`)
+- [x] **POST-DEPLOY PB-0008 (부여·해제 양방향)** — 선행 cycle 에서 이관된 항목, 위 TASK-20260728T031500 에서 종결
+
+## TASK-20260728T031500-model-access-postverify — 모델 권한 라이브 부여·해제 양방향 검증 (POST-DEPLOY 종결)
+- [x] PB-0008 ① 역할 편집기 `모델 사용 (작업 화면) 3/3 선택` 그룹 렌더 + 3행 전부 체크(무회귀) + 행 카피 실측
+- [x] PB-0008 ② 역할 opus 해제 → `모두 적용` → `PATCH /api/admin/roles/2 200` → DB `7/8`(haiku·sonnet `8/8` 유지 = 모델 단위 적용)
+- [x] PB-0008 ③ 집행 — `/api/api-vault/options` 에서 opus 소멸 + `POST /api/ask{model:opus} ` **403** / 같은 시점 sonnet **200** 대조군
+- [x] PB-0008 ④ 재부여 → 토스트 `1건 적용됨` → DB `8/8` ×3 · override 0행 · 선택기 복귀 (착수 전 상태와 동일)
+- [x] **신규 발견** — TASK-0300 권한상승 가드 × `model.access.*` **자기 잠금 경로** 실측·복구 → `docs/SECURITY.md §28.6` 운영 규칙 명문화 (코드 변경 없음: 가드는 의도된 동작)
+- [x] feature-0007 REPORT §7 R1(root 2순위 체인)·R2(모델별 RBAC) 해소 표기
+- [x] 증적 — `docs/test-runs.d/20260728T031500-model-access-pb0008.md` · `docs/evidence/pb0008-model-access-{grid,deny}-20260728.png`

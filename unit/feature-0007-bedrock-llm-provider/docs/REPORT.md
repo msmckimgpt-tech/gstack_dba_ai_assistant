@@ -225,15 +225,25 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
 
 ## 7. Human Attention Needed
 
+- ~~**[opus5-model 2026-07-27] 모델별 접근 권한(RBAC) 부재 — 사용자 결정 필요**~~ →
+  **✅ 해소 (2026-07-28, feature-0003 model-access-rbac)**. 사용자 결정 "전부 기본 부여"(무회귀)로
+  동적 권한 `model.access.<value>` 를 신설, `/api/ask` 단일 choke-point **403** + 선택기 필터로
+  표시·집행을 함께 닫았다. 라이브(배포 `8db72012`) 부여·해제 양방향 확정 —
+  `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260728T031500-model-access-pb0008.md`,
+  정본 `docs/SECURITY.md §28`. 아래는 해소 이전 원문(맥락 보존):
 - **[opus5-model 2026-07-27] 모델별 접근 권한(RBAC) 부재 — 사용자 결정 필요**: 모델 카탈로그는
   `/api/session` 으로 전 사용자에게 동일 노출된다. 따라서 `conversation.ask` 보유자면 **누구나
   Claude Opus(단가 haiku 대비 in·out 5×)를 선택**할 수 있다. 현재 완화책은 (a) 기본값 haiku 유지,
   (b) 관리 콘솔 '모델 총 출력' 상한(기본 40000), (c) 'LLM 사용량' 원장의 사후 관측뿐이며 **사전
   차단 수단은 없다**. per-model RBAC(예: `conversation.model.opus`) 신설은 신규 권한 표면이라
   §12.3 Critical — 별 cycle + 사용자 승인 필요. 필요 여부를 결정해 주세요.
-- **[opus5-model 2026-07-27] root 계정 한도 소진 관측**: 실증 시점 root(개인 Max) 토큰이
-  haiku·sonnet·opus 전부 429(`unified-status: rejected`). 2순위 fallback 이 그동안 실효가 없다는
-  뜻이므로, root 소진이 상시적이면 2계정 체인의 회복성 가정이 약해진다 — 사용 패턴 점검 권장.
+- ~~**[opus5-model 2026-07-27] root 계정 한도 소진 관측**~~ → **✅ 해소 (2026-07-28)**.
+  윈도우 리셋 후 재실증: root(개인 Max) + Opus 5 직접 호출 **200**, gateway 경유
+  `claude-opus-5-chat-root` 배포본도 **200** → 2순위 체인 실효 확인. 당시 429 는 **계정 전체
+  한도 소진**(haiku·sonnet 도 동일 429 + `unified-status: rejected`)이었고 opus 고유 문제가
+  아니었음이 확정됐다. 단, root 소진이 *상시화*되면 체인 회복성 가정이 약해진다는 원 지적은
+  유효하므로 사용 패턴 점검 권장은 유지한다. 원문:
+  실증 시점 root(개인 Max) 토큰이 haiku·sonnet·opus 전부 429(`unified-status: rejected`).
 - **Phase E 회귀 검증** (사용자 수행): AWS 자격증명 주입 + Bedrock model access
   활성화 (Claude Sonnet 4.x + Haiku 4.x) + docker compose up 후 healthcheck
   PASS + `/api/ask` smoke test 1 conv. 회귀 발견 시 본 cycle 로 fix iteration.

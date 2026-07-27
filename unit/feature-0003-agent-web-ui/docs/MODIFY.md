@@ -1159,3 +1159,15 @@ source_of_truth: true
 - Verification: 단위 **26 PASS**(G1~G9) · 전체 pytest **rc=0** · ruff All passed. POST-DEPLOY: seed 성공(권한 row 3 + 전 역할 grant) 확인 + 선행 cycle 에서 이관한 **PB-0008 부여·해제 양방향** 검증.
 - Rollback: 3지점 revert(단 seed 가 다시 실패 상태로 복귀).
 - Cross-ref: REVIEW REV-20260728T025614-model-access-seed-fix · test-runs.d/20260728T025614-model-access-seed-fix.md · 선행 CHG-20260728T024258-model-access-rbac · SECURITY §28.
+
+## CHG-20260728T031500-model-access-postverify (모델 권한 라이브 부여·해제 양방향 검증 종결 + 자기 잠금 경로 명문화)
+- Date: 2026-07-28. 코드 변경 **0** — 배포 `8db72012` 에 대한 POST-DEPLOY 관측 기록 + 정책문서 1절 신설.
+- 검증 ①(렌더·무회귀): 역할 편집기에 `모델 사용 (작업 화면) 3/3 선택` 그룹이 `제품 사용` 다음에 렌더, 3행(haiku·opus·sonnet) 전부 체크 — 사용자 결정 "전부 기본 부여" 그대로. 계정 편집기는 tri-state(`상속`/`허용`/`거부`) override + 그룹 배지 집계(`거부 1 · 상속 2`) 정상.
+- 검증 ②(해제 쓰기): 역할 opus 해제 → `모두 적용` → `PATCH /api/admin/roles/2 200` → DB `model.access.claude-opus-5 7/8`, haiku·sonnet `8/8` 유지 → **해제가 대상 모델에만 적용**(그룹 붕괴 없음).
+- 검증 ③(집행): 계정 override `거부` 후 `/api/api-vault/options` 에서 opus **소멸**, `POST /api/ask{model:"claude-opus-5"}` → **403** `이 모델을 사용할 권한이 없습니다…`. **대조군** 같은 계정·같은 시점 sonnet → **200** → 게이트가 모델 단위로 동작(광역 차단 아님).
+- 검증 ④(재부여·원복): 역할 재체크 → `1건 적용됨` → DB `8/8` ×3 · `model_access` override **0행** · 선택기 3종 복귀. **최종 상태 = 검증 착수 전과 동일**.
+- **신규 발견(코드 변경 없음, 문서화)**: TASK-0300 권한상승 가드(`본인이 보유하지 않은 권한은 설정할 수 없습니다`)가 `model.access.*` 에도 동일 적용돼 **관리자 자기 잠금 경로**가 생긴다 — 자기 계정에서 모델을 `거부` 하면 그 모델을 어떤 역할에도·자신에게도 재부여할 수 없다(`PATCH … 403`). `product.access.*` 와 동일 성질이며 **의도된 보안 동작**이라 가드는 손대지 않고, `docs/SECURITY.md §28.6` 에 운영 규칙(자기 계정 해제는 해당 모델 보유 관리자 2인 이상 환경에서만 / 통제는 역할 단위로)으로 명문화. 본 검증에서는 override 행 DELETE 로 복구 후 UI 재부여 200 확인.
+- 문서: `docs/SECURITY.md §28.6` 신설 + §28.6→§28.7 번호 이동(검증 절에 G9·라이브 결과 반영) · feature-0007 `REPORT.md §7` 의 **R1·R2 해소 표기** · TASK 체크박스 4건 종결.
+- Verification: 라이브 실측(win-browser PB-0008 + `repo-mysql-1` 직접 질의 + web 컨테이너 액세스 로그). 코드 무변경이라 회귀 표면 0.
+- Rollback: 문서 revert (동작 영향 없음).
+- Cross-ref: REVIEW REV-20260728T031500-model-access-postverify · test-runs.d/20260728T031500-model-access-pb0008.md · 선행 CHG-20260728T024258-model-access-rbac · CHG-20260728T025614-model-access-seed-fix · SECURITY §28 · feature-0007 REPORT §7.
