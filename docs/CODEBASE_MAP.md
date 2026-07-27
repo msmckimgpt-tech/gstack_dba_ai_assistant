@@ -44,7 +44,7 @@ repo/
 │   ├── ROUTEMAP.md         # route → router:handler → auth 인덱스 (L0, 자동 생성)
 │   └── CODEBASE_MAP.md     # 이 문서
 ├── playbooks/              # PB-0001 ~ PB-0006, PB-0008
-├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유): __init__·model_catalog·config·db·conn_health·datasources (feature-0011 추출)
+├── shared/                 # 공통 모듈 패키지 (feature-0002·0003 공유): __init__·model_catalog·config·db·conn_health·datasources·runtime_settings·perf_counters (feature-0011 추출 + 0018/0026)
 ├── tests/integration/      # 통합 테스트
 └── unit/                   # 기능 단위
     ├── _template/
@@ -112,6 +112,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `shared/model_catalog.py` | LLM 모델 카탈로그 (순수 stdlib) | feature-0002·0003 |
 | `shared/config.py` | 설정·환경변수·플래그 (L0 foundation, fan-in 25; 16+ 모듈이 wildcard 재노출) | feature-0002·0003·컨테이너 |
 | `shared/db.py` | DB 연결/풀/PG 라우팅 (repo 최다결합, fan-in 17; `_pg_connect`·`_POOL_REGISTRY` 등 underscore 심볼) | feature-0002·0003·컨테이너·healthcheck |
+| `shared/perf_counters.py` | 요청-스코프 DB conn 카운터 (ContextVar, 컨텍스트 밖 no-op — feature-0026) | feature-0002·0003 (db 가 incr, web 미들웨어가 activate) |
 | `shared/conn_health.py` | per-datasource 연결 health 모니터 (TCP liveness, circuit) | feature-0002·0003 (db·datasources 와 lazy 상호참조) |
 | `shared/datasources.py` | datasource 레지스트리 (DB+`.env` 병합, 자격증명 복호) | feature-0002·0003 (cred_crypto back-dep — 아직 modules/) |
 
@@ -154,12 +155,12 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 | 계층 | 파일 | 책임 (1줄) |
 |------|------|-----------|
 | 조립 루트 | `src/app.py` (3,722줄) | DI seam(`get_conn`/`get_current_account`/`require_permission`)·인증보조(`_AuthError`/`_auth_error_handler`/`_json_error`/`_require_account`)·audit(`record_audit_event`, setattr 패치-단일점)·보안게이트(`_ssrf_check_host`/`_enforce_audit_prod_gate`)·lifecycle(`@app.on_event` startup/shutdown)·FastAPI app+미들웨어·config 상수·꼬리 rebind 블록·`register_all(app)` |
-| 도메인 router (24) | `src/routers/<domain>.py` | 각 파일이 `router = APIRouter()` + `@router.<method>` 핸들러 보유. 도메인 = static_pages·auth·conversations·share·system·profile·integrations·attachments·media·keywords·ai_ops + admin_*(console·usage·conversations·quotas·sample_feedback·metadata·audits·accounts·roles·datasources·products·settings·reasoning). 정확한 목록·INCLUDE_ORDER → ROUTEMAP.md |
+| 도메인 router (25) | `src/routers/<domain>.py` | 각 파일이 `router = APIRouter()` + `@router.<method>` 핸들러 보유. 도메인 = static_pages·auth·conversations·share·system·profile·integrations·attachments·media·keywords·ai_ops + admin_*(console·usage·conversations·quotas·sample_feedback·metadata·audits·accounts·roles·datasources·products·settings·reasoning·perf — perf=HTTP 성능 스냅샷 조회(feature-0026)). 정확한 목록·INCLUDE_ORDER → ROUTEMAP.md |
 | leaf helper | `src/web_context.py` (2,281줄) | app-internal 의존이 전혀 없는 순수 컨텍스트 조립 조각. **단방향 추출**(app→web_context 만, 역참조 없음). routers(auth·share 등)와 app 이 소비 |
 | 공유 헬퍼 (4, `_` 접두) | `src/routers/_audit_infra.py`·`_bootstrap_schema.py`·`_conv_store.py`·`_prompt_context.py` | 라우트 아님 → `register_all` 자동등록 제외(`_` 접두 필터). `_audit_infra`=감사 인프라(단, `record_audit_event` 는 app 잔류)·`_bootstrap_schema`=웹 테이블/시드 부트스트랩·`_conv_store`=대화 저장소(share/conversations 공유)·`_prompt_context`=프롬프트 컨텍스트 조립(admin_roles/admin_products/auth/conversations 4도메인 공유) |
 | 등록기 | `src/routers/__init__.py` | `register_all(app)` — non-`_`·`router` 보유 모듈 자동발견 후 `(INCLUDE_ORDER, name)` 순 include. 신규 라우터 = `router` 심볼 가진 파일 추가만(꼬리 배선 편집 불필요) |
 
-> 파일 수 = 23 route-module + `__init__.py` + 4 `_` 접두 공유헬퍼 = **28 파일** (task 표기 "5 공유모듈" = `__init__` + 4 underscore).
+> 파일 수 = 24 route-module + `__init__.py` + 4 `_` 접두 공유헬퍼 = **29 파일** (task 표기 "5 공유모듈" = `__init__` + 4 underscore). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가.
 
 ### 배선 규약 (7)
 

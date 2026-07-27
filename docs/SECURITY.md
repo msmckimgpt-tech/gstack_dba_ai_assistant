@@ -849,3 +849,24 @@ feature-0023 Bearer API 토큰 cross-account 감사(2026-07-23)에서 발견된 
 - **엄격 per-user(owner-scope) 격리 — 크로스-계정 노출 차단(Critical §12.3)**: list/manage/restore 3경로가 유일 노출원이었고 전부 owner-scope 로 봉인 — `folder.*.any`(크로스-계정) 권한 자체를 폐지(`folder.list.own`/`folder.manage.own` own-only 만 존치). folder_map·folder_id·`_folder_instructions_for`·목록 payload 경로는 이미 owner/account 스코프. 라이브 admin 역할 4계정 상호 폴더 노출 사용자 신고 → 근본 봉인(REV-20260723T170000; 참조 안 되는 inert orphan grant 는 POST-DEPLOY 정리).
 - **restore IDOR 봉인(HIGH)**: `restore_folder` 가 path `folder_id` 소유만 검증하고 body `archived_folder_ids` 를 무검증 전달 → `UPDATE ... WHERE folder_id = ANY(...)` owner 필터 부재로 순차 PK 열거·타계정 soft-delete 폴더 대량 부활(무결성/가용성 griefing, 기밀 누출 없음). 수정: `restore_folders(ids, owner_account_id)` 에 owner 필터 강제(`manage.any` 아니면 발화자 account 전달).
 - **폴더 RBAC·접근 게이트**: 폴더 소유 IDOR(update/delete/assign/move)=`_require_folder_owner`+move new_parent 소유 재확인, 대화 배정=[대화 read own/any(+그룹멤버) + 폴더 소유] 2중 게이트·404 단일화(존재 oracle 없음). conversation.create 보유 7역할에 `folder.*.own` 동적 backfill(역할명 하드코딩 없이·1회 마커·admin DENY 존중). 재귀 CTE·`ANY(...)`·SET 절 전부 파라미터화(SQLi 값 보간 0), self/subtree 차단+깊이 상한으로 순환·무한깊이 봉인.
+
+## 27. 성능 관측 인프라 — admin perf 스냅샷·edge access log 표면 (feature-0026-perf-observability, 2026-07-28)
+
+> 색인 항목 — 전체 설계·적대 검증 정본은 `unit/feature-0026-perf-observability/docs/{REVIEW.md, FUNCTION.md}`
+> (§18.8 3-렌즈 패널: backend F-1(inf 직렬화 500)·qa B1(unhandled 500 미계상)·security B1~B4(자격증명
+> argv/auth.log 노출·pg_stat 원문 SQL 민감문·edge log share 토큰) 전건 in-cycle 수정). §20/§23 과 동형 boundary 색인.
+
+- **신규 표면 ①**: `GET /api/admin/perf/http` (`routers/admin_perf.py`) — web HTTP per-route 지연·요청당
+  DB 커넥션 집계(in-process 메모리) read-only 조회. 게이트 `console.aiops.read`(admin 전용, §20 재사용 —
+  신규 권한 0). route 는 template 만(원시 경로/URL 비밀 비저장 — "(unmatched)"·"/static/*" 그룹), method
+  화이트리스트 정규화 + `_STATS` 하드 상한(비인증 카디널리티 DoS 억제), slow ring 은 축출 가능(증적 아님).
+- **신규 표면 ②**: Caddy edge access log (stdout JSON, docker json-file 20m×5) — `request>uri` 의
+  share 경로 토큰(`/share/*`·`/api/public/share/*`·`/api/share/*` = 무인증 bearer-capability, §9.2
+  prefix-only 원칙)과 쿼리스트링을 **regexp 필터로 마스킹**. 쿠키·Authorization 은 Caddy 기본 REDACTED
+  (실측). 로그 접근 범위 = docker 접근자.
+- **수집 CLI**: `bin/perf-snapshot.sh` — read-only. 자격증명은 argv 비노출(MySQL=`MYSQL_PWD` env,
+  pgbouncer=stdin 주입 — sudo auth.log/`ps` 잔류 차단, `bin/kb-cleanup-mysql.sh` C-1 선례 정합).
+  pg_stat_statements 는 민감문(`password|secret|identified by`) 배제 + 문자열 리터럴 마스킹 후 수집
+  (ADR-0020 digest-first 정합). 산출물 `artifacts/perf/` 는 umask 077/chmod 700 (소유자 전용).
+- **kill-switch**: `WEB_PERF_LOG_INTERVAL_SEC=0` ([perf-http] 주기 로그 off) · 미들웨어는 fail-open
+  (계측 예외가 요청 처리에 전파되지 않음).

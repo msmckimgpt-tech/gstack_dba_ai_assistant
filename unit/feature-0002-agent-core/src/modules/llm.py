@@ -1212,6 +1212,7 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_validation_model,
             messages=[
@@ -1222,7 +1223,7 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_validation_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
-        _record_llm_usage(_validation_model, "validate", resp)  # TASK-0136 (#11)
+        _record_llm_usage(_validation_model, "validate", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_validate_step", "exception", str(exc))
@@ -1238,6 +1239,7 @@ def llm_update_summary(payload: dict[str, Any]) -> str | None:
         return None
 
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_summary_model,
             messages=[
@@ -1248,7 +1250,7 @@ def llm_update_summary(payload: dict[str, Any]) -> str | None:
             **_temperature_kwargs(_summary_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
-        _record_llm_usage(_summary_model, "summary", resp)  # TASK-0136 (#11)
+        _record_llm_usage(_summary_model, "summary", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_update_summary", "exception", str(exc))
@@ -1316,6 +1318,7 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
         return "continue"
     payload = {"origin": origin[:500], "current": current[:500]}
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_classify_model,
             messages=[
@@ -1326,7 +1329,7 @@ def llm_classify_origin_shift(origin: str, current: str) -> str:
             **_temperature_kwargs(_classify_model),
             timeout=_openai_request_timeout(_classify_timeout),
         )
-        _record_llm_usage(_classify_model, "classify", resp)  # TASK-0136 (#11)
+        _record_llm_usage(_classify_model, "classify", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_classify_origin_shift", "exception", str(exc))
@@ -1363,6 +1366,7 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
         return None
 
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_topic_model,
             messages=[
@@ -1373,7 +1377,7 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
             **_temperature_kwargs(_topic_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
-        _record_llm_usage(_topic_model, "topic", resp)  # TASK-0136 (#11)
+        _record_llm_usage(_topic_model, "topic", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_generate_topic", "exception", str(exc))
@@ -1399,6 +1403,7 @@ def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if client is None:
         return []
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
             messages=[
@@ -1409,7 +1414,7 @@ def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
-        _record_llm_usage(_model, "glossary_suggest", resp)
+        _record_llm_usage(_model, "glossary_suggest", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_glossary_suggest", "exception", str(exc))
@@ -1449,6 +1454,7 @@ def llm_enum_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if client is None:
         return []
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
             messages=[
@@ -1459,7 +1465,7 @@ def llm_enum_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
             **_temperature_kwargs(_model),
             timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
         )
-        _record_llm_usage(_model, "enum_suggest", resp)
+        _record_llm_usage(_model, "enum_suggest", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_enum_suggest", "exception", str(exc))
@@ -1498,6 +1504,7 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
         return None
 
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_fix_model,
             messages=[
@@ -1508,7 +1515,7 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
             **_temperature_kwargs(_fix_model),
             timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
-        _record_llm_usage(_fix_model, "sql_fix", resp)  # TASK-0136 (#11)
+        _record_llm_usage(_fix_model, "sql_fix", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_fix_sql", "exception", str(exc))
@@ -1558,6 +1565,7 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     if client is None:
         return None
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
             messages=[
@@ -1570,6 +1578,7 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
         )
         _record_llm_usage(  # TASK-0136 (#11)
             _insight_model, "schema_insight", resp,
+            latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
             target=(str(payload.get("schema") or "").strip() or None),  # 0032: 대상=스키마
         )
         text = (resp.choices[0].message.content or "").strip()
@@ -1598,6 +1607,7 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     if client is None:
         return None
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
             messages=[
@@ -1610,6 +1620,7 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
         )
         _record_llm_usage(  # TASK-0136 (#11)
             _insight_model, "table_insight", resp,
+            latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
             # 0032: 대상=schema.table (빈 파트는 제외). llm_table_insight payload 계약: {schema, table, columns}.
             target=(".".join(p for p in (
                 str(payload.get("schema") or "").strip(),
@@ -1644,6 +1655,7 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     if client is None:
         return None
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
             messages=[
@@ -1654,7 +1666,7 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
-        _record_llm_usage(_insight_model, "account_insight", resp)
+        _record_llm_usage(_insight_model, "account_insight", resp, latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_account_insight", "exception", str(exc))
@@ -1690,6 +1702,7 @@ def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
     if client is None:
         return None
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_insight_model,
             messages=[
@@ -1702,6 +1715,7 @@ def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
         )
         _record_llm_usage(
             _insight_model, "node_analysis", resp,
+            latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
             # 0032: 대상=노드 FQN(없으면 name). _build_payload 계약: {label, name, fqn, ...}.
             target=(str(payload.get("fqn") or payload.get("name") or "").strip() or None),
         )
@@ -1823,6 +1837,7 @@ def llm_product_classify(payload: dict[str, Any]) -> dict[str, Any] | None:
     if client is None:
         return None
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
             messages=[
@@ -1834,6 +1849,7 @@ def llm_product_classify(payload: dict[str, Any]) -> dict[str, Any] | None:
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
         _record_llm_usage(_model, "product_classify", resp,
+                          latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
                           target=str(payload.get("datasource") or "").strip() or None)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
@@ -1881,6 +1897,7 @@ def llm_cluster_label(payload: dict[str, Any]) -> dict[str, Any] | None:
     if client is None:
         return None
     try:
+        _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
         resp = client.chat.completions.create(
             model=_model,
             messages=[
@@ -1892,6 +1909,7 @@ def llm_cluster_label(payload: dict[str, Any]) -> dict[str, Any] | None:
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
         _record_llm_usage(_model, "cluster_label", resp,
+                          latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
                           target=str(payload.get("datasource") or "").strip() or None)
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:

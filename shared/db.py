@@ -21,6 +21,15 @@ __all__ = [
 
 """Database connection management and SQL execution."""
 from .config import *
+try:
+    # feature-0026: 요청-스코프 conn 카운터. 이미지/마운트 skew 로 신규 파일이 없는 배포 창에서도
+    # shared.db 소비자(워커 전원)가 부트 실패하지 않도록 no-op 스텁 폴백 (§18.8 qa C1, fail-open 정합).
+    from . import perf_counters as _perf_counters
+except Exception:  # pragma: no cover — 배포 skew 방어
+    class _perf_counters:  # type: ignore[no-redef]
+        @staticmethod
+        def incr(key, n=1):
+            pass
 import logging
 import threading
 import time
@@ -874,6 +883,7 @@ def _pg_connect(database: str | None = None, autocommit: bool = True):
     ]
     conninfo = " ".join(conninfo_parts)
     conn = _psycopg.connect(conninfo)
+    _perf_counters.incr("pg_conns")  # feature-0026: 요청-스코프 계측 (컨텍스트 밖 no-op)
     if autocommit:
         conn.autocommit = True
     return conn
@@ -923,6 +933,7 @@ def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
     ]
     conninfo = " ".join(conninfo_parts)
     conn = _psycopg.connect(conninfo)
+    _perf_counters.incr("pg_ro_conns")  # feature-0026: 요청-스코프 계측 (컨텍스트 밖 no-op)
     if autocommit:
         conn.autocommit = True
     return conn

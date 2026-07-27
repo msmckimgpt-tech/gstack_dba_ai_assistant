@@ -20,6 +20,22 @@ http://{$WEB_PUBLIC_HOST}, :80 {
 https://{$WEB_PUBLIC_HOST}, :443 {
 	tls {$WEB_TLS_CERT_FILE} {$WEB_TLS_KEY_FILE}
 
+	# feature-0026 (M6): edge access log — 계측 사각 B2(엣지 QPS/상태코드/업스트림 지연 무기록) 해소.
+	# stdout(JSON) → docker json-file 로그(20m×5 rotate, compose 전역 상한)로 수집 — 별도 볼륨/파일 없음.
+	# 요청 지연은 duration 필드로 사후 분석(bin/perf-snapshot.sh 소비).
+	# §18.8 sec B4: uri 의 share 토큰(/share/<tok> 류 = 무인증 bearer-capability, SECURITY §9.2
+	# prefix-only 원칙)과 쿼리스트링을 마스킹해 로그면에 전문이 축적되지 않게 한다. 쿠키·Authorization
+	# 은 Caddy 기본 REDACTED(실측 확인). 필터 문법은 배포 시 reconcile_caddy 의 adapt 검증이 게이트.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp (/share/|/api/public/share/|/api/share/)[^/?]+|\?.* [REDACTED]
+			}
+		}
+	}
+
 	# TASK-20260617T083954-ai-claude-trust-bundle: 설치 후/직접 접근용으로 HTTPS 에서도 동일 번들을 서빙한다.
 	handle /trust {
 		redir {http.request.scheme}://{host}/trust/ permanent

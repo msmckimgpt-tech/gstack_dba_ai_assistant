@@ -23,6 +23,7 @@ import json
 import logging
 import math
 import os
+import time as _time  # feature-0026 (M4): sync duration 계측
 
 _log = logging.getLogger("metadata_graph")
 
@@ -540,6 +541,7 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
     rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0,
            "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "routines": 0,
            "errors": 0, "step_failures": 0, "since": since, "synced_at": None, "commits": 0}
+    _t0 = _time.perf_counter()  # feature-0026 (M4): sync 소요 계측 (cron.log 리포트에 포함)
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -816,6 +818,10 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                 c.close()
             except Exception:
                 pass
+        try:
+            rep["duration_ms"] = round((_time.perf_counter() - _t0) * 1000.0, 1)  # feature-0026 (M4)
+        except Exception:
+            pass
     return rep
 
 

@@ -8,7 +8,7 @@ ai_read_priority: 5
 # CODE_TASKS — TASK 카드 카탈로그 (변경유형 → 코드영역 → 재귀 실행)
 
 <!-- feature-0012 P5b Final 성과 위에 구축한 AI-navigation 카탈로그.
-     app.py 19,650 → 3,722 줄(-81%). 핸들러 전량이 routers/ 28개 파일로 추출됨.
+     app.py 19,650 → 3,722 줄(-81%). 핸들러 전량이 routers/ 29개 파일로 추출됨(feature-0026: admin_perf.py 추가).
      source: routers/*.py + docs/ROUTEMAP.md + static/graph/ 실측(2026-07-13). freshness 는 ROUTEMAP source_commit 로 검증. -->
 
 > **이 문서의 용도**: "무엇을 바꾸려는가"(변경유형)를 입력으로, **어느 파일:심볼에서 시작해 →
@@ -63,7 +63,7 @@ ai_read_priority: 5
 
 ## 영역 지도 (routers/ 28파일)
 
-- **23 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
+- **24 route-module** (`@router` + `INCLUDE_ORDER`, register_all 자동등록): `ROUTEMAP.md` 인덱스 표 참조.
 - **5 언더스코어 공유모듈** (register_all 제외, 꼬리 rebind 로 재부착):
   - `routers/__init__.py` — `register_all` 자동등록 기계.
   - `routers/_conv_store.py` — 대화 저장소 공용 데이터 계층(share + conversations 소비).
