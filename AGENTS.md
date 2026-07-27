@@ -1257,6 +1257,71 @@ push / PR merge 는 코드 완료이지 배포 완료가 아니다.
 아니므로 본 §13.2.9 비적용.
 
 
+#### §13.2.10 Cycle 스크립트 권한 어댑터 (Privilege Adapter, v3.39.1+)
+
+**문제.** 같은 프로젝트를 **여러 OS 계정**(예: `root` / `claude-corp`)이 번갈아 다루면,
+공유 운영 파일 `<project_root>/worktrees/REGISTRY.md` 의 소유자가 매 cycle 바뀐다.
+`mktemp` 는 파일을 `0600` 으로 만들고 `mv` 는 그 모드를 그대로 남기므로, 원자 rewrite
+를 한 번 거칠 때마다 REGISTRY 가 `0600 <직전 실행자>` 로 굳는다. POSIX ACL 이 걸린
+배치에서는 `chmod` 의 group 비트가 ACL `mask` 를 덮어써 `mask::---` 가 되고
+`user:<other>:rwx` 가 `#effective:---` 로 무효화된다 → 다음 cycle 을 **다른 계정으로
+돌리면 REGISTRY 접근이 통째로 막힌다**.
+
+2026-07-27 라이브에서 이 경로가 두 번 터졌다: ① `cycle-init` 의 REGISTRY 기록 실패,
+② `cycle-finalize` Step 6 이 그 **권한 실패를 "비-META-0029 스키마" 로 오진**해 있지도
+않은 포맷 차이를 안내. 두 cycle 이 수기 기록으로 우회했다.
+
+**규약: 최소 권한 · 최소 개입.** cycle 스크립트는 **`git`·`gh` 를 언제나 원 호출자로
+실행한다.** 권한 승격은 단 하나에만 쓴다 — 공유 운영 파일이 **다른 계정 소유로 굳어
+접근 불가일 때 그 접근권을 복구하는 것**.
+
+- 공용 어댑터: **`bin/lib/privilege.sh`**
+  (`priv_ensure_writable` / `priv_share_file` / `priv_share_dir` /
+  `priv_unreadable` / `priv_unwritable` / `priv_access_reason`).
+- **`priv_ensure_writable <file>`** — 이미 쓸 수 있으면 즉시 반환한다. **정상 상태에서는
+  `sudo` 를 한 번도 호출하지 않는다.** 접근 불가일 때만 최소 단계로 올라간다:
+  ① `chmod 0664` (ACL 배치에서는 이것만으로 `mask` 가 복원돼 named-user ACL 이 살아난다)
+  → ② 그래도 안 되면 `chown` 현재 실행자. 소유권 이전은 정말 필요할 때만 일어난다.
+- **`priv_share_file`** — 쓰기 직후(그리고 `mktemp` 직후, `mv` **전에**) 0664 로 되감아
+  다음 계정이 막히지 않게 한다. 위 열화의 직접 해독제이며 sudo 가 필요 없다.
+- **비차단 degrade** — `sudo -n` 실패(부재·암호 필요)면 경고 후 계속한다. 비대화
+  컨텍스트(hook·cron)에서 프롬프트로 멈추는 쪽이 더 나쁘다. 우회: `PRIV_NO_SUDO=1`.
+- **권한 실패 ≠ 부재/스키마 불일치** — `priv_access_reason` 으로 `read-denied` /
+  `write-denied` / `ok` 를 갈라 보고한다. `grep`·`awk` 는 읽지 못하면 조용히 false 를
+  내므로, 구분하지 않으면 권한 문제가 스키마 문제로 둔갑한다 (위 ②번 오진). 0664
+  정규화 이후 남는 실패는 대개 rewrite 용 **쓰기** 거부이므로 읽기만 보면 다시 오진한다.
+- **symlink 거부** — `chmod`/`chown` 은 링크를 추종한다. 호출자가 쓸 수 있는 디렉터리에
+  놓인 링크를 통해 임의 파일의 모드·소유권이 바뀌지 않도록, 대상이 symlink 면 거부한다
+  (`chown --no-dereference` 병용).
+
+> **폐기된 대안 — "non-root 면 스크립트 전체를 `sudo -E` 로 재실행"**: 먼저 이 방식을
+> 구현했고 §18.8 적대 검증이 격리 sandbox 실측으로 결함 3건을 재현해 폐기했다
+> (REV-20260727T190500).
+> ① `sudo` 는 `-E` 를 줘도 `USER`/`LOGNAME` 을 runas 로 **항상** 덮어쓴다(보존되는 건
+> `HOME`) → `--agent` 기본값이 `root` 가 되어 브랜치가 `ai/root/<feat>` 로 생성되고,
+> dry-run 프리뷰와 실제 실행의 브랜치명이 어긋난다.
+> ② `run_or_dryrun` 의 `eval` 이 root 로 실행되어, 기계가 만든 feature slug 한 개가
+> root 임의 명령 실행이 된다.
+> ③ `git` 이 root 로 돌면 `.git/worktrees/<name>`·`.worktrees`·`FETCH_HEAD`·
+> `refs/heads/<branch>` 가 root 소유로 남아, **ACL 없는 배치에서는 cycle-init 성공 직후
+> 원 호출자가 `git add` 조차 못 한다**.
+> 부수적으로 `secure_path` 가 PATH 를 교체해 `~/.local/bin` 의 `gh` 를 잃고(→ `gh not
+> found` 하드 실패), `sudo` 가 umask 를 `0022` 로 강제해 group-write 공유 배치를
+> 무력화하는 회귀도 확인됐다. 승격 범위를 좁히면 이 결함들이 **구조적으로 소멸**한다.
+
+> **입력 검증 (승격과 함께 닫은 기존 구멍)**: `run_or_dryrun` 은 `eval` 을 쓰므로
+> `FEATURE_ID`·`AGENT_NAME` 은 `^[A-Za-z0-9._-]+$`, `BASE_BRANCH` 는
+> `^[A-Za-z0-9._/-]+$` 화이트리스트로 강제한다. 기존 검증은 `/`·공백·백슬래시만 막아
+> `;`·`$`·백틱이 통과했고, feature slug 는 사람이 아닌 것(entry persona dispatch,
+> ROADMAP 항목 파생)이 만드는 경로가 있다. `AGENT_NAME` 기본값은
+> `${SUDO_USER:-${USER:-ai}}` — 누군가 스크립트를 `sudo` 로 감싸 호출해도 브랜치가
+> `ai/root/…` 로 어긋나지 않게 한다.
+
+> **범위 한정 (의도)**: 어댑터는 cycle 라이프사이클 스크립트(`cycle-init`,
+> `cycle-finalize`)에만 배선한다. `verify-completion.sh` 같은 read-only 게이트나
+> post-commit hook 경로는 건드리지 않는다 — 검증에 승격이 필요 없고, hook 에서의 sudo 는
+> 지연·프롬프트 위험만 늘린다.
+
 ### §13.3 계획-실행 분리 에이전트 (선택적 고급 패턴)
 
 프로젝트가 계획 에이전트와 실행 에이전트를 분리 운용하는 경우:

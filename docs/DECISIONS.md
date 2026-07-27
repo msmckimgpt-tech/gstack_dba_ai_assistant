@@ -892,3 +892,52 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - Consequences: REGISTRY 부재였던 §13.2.8 알림 경로(session_id)도 부트스트랩됨.
   cycle-finalize Step 6 의 기존 REGISTRY 이동 로직이 활성화. hard 차단 없음 — 게이트는
   전부 soft(경고·가시화). template base 전파 후보.
+
+## ADR-20260727T190000-cycle-privilege-adapter
+
+- Status: 승인 (사용자 결정 2026-07-27 — "root 계정을 통한 호출이 아닐 경우, 항상 sudo 로
+  작업되도록 구성" + "template-base 에도 적용". 구현 방식은 적대 검증 실측 후 **전체 재실행
+  → 범위 축소로 선회**, 사용자 재확인 2026-07-27)
+- Context: 같은 프로젝트를 여러 OS 계정(`root` / `claude-corp`)이 번갈아 다룬다. 공유 운영
+  파일 `<project_root>/worktrees/REGISTRY.md` 는 `mktemp`(0600) + `mv` 원자 rewrite 를 쓰는데,
+  `mv` 가 mktemp 의 모드를 그대로 남겨 **기록 한 번마다 `0600 <직전 실행자>` 로 굳는다**.
+  POSIX ACL 배치에서는 `chmod` 의 group 비트가 ACL `mask` 를 `---` 로 눌러
+  `user:<other>:rwx` 를 `#effective:---` 로 무효화한다. 2026-07-27 라이브에서 두 번 발현 —
+  ① cycle-init REGISTRY 기록 실패, ② cycle-finalize Step 6 이 **권한 실패를 "비-META-0029
+  스키마" 로 오진**(grep 이 읽기 실패 시 조용히 false). 두 cycle 이 수기 우회했다.
+- Decision (**§13.2.10 신설** + `bin/lib/privilege.sh` 공용 어댑터 — *최소 권한·최소 개입*):
+  (a) **`git`·`gh` 는 언제나 원 호출자로 실행**한다. 승격 대상은 오직 "공유 운영 파일이
+  다른 계정 소유로 굳어 접근 불가일 때 그 접근권 복구".
+  (b) **`priv_ensure_writable`** — 이미 쓸 수 있으면 즉시 반환(정상 상태에서 sudo 호출 0회).
+  불가할 때만 ① `chmod 0664`(ACL 배치는 `mask` 복원만으로 해결) → ② 그래도 안 되면
+  `chown` 현재 실행자. 소유권 이전은 최후 수단.
+  (c) **`priv_share_file`** — `mktemp` 직후·`mv` **전에** 0664 로 되감아 rewrite 순간의
+  접근 불가 창과 중간 실패 시 0600 영구화를 함께 없앤다. sudo 불요.
+  (d) **비차단 degrade** — `sudo -n` 실패면 경고 후 계속. 우회 `PRIV_NO_SUDO=1`.
+  (e) **오진 방지** — `priv_access_reason` 이 `read-denied`/`write-denied`/`ok` 를 구분.
+  0664 정규화 이후 남는 실패는 대개 **쓰기** 거부이므로 읽기만 보면 같은 오진이 재발한다.
+  (f) **symlink 거부 + `chown --no-dereference`** — `chmod`/`chown` 이 링크를 추종해 임의
+  파일의 모드·소유권을 바꿔주는 경로 차단.
+  (g) 승격과 함께 **기존 `eval` 구멍**도 닫는다 — `FEATURE_ID`/`AGENT_NAME`
+  `^[A-Za-z0-9._-]+$`, `BASE_BRANCH` `^[A-Za-z0-9._/-]+$`. `AGENT_NAME` 기본값은
+  `${SUDO_USER:-${USER:-ai}}`.
+- 대안 검토 (**폐기: 스크립트 전체 `sudo -E` 재실행**): 처음 구현한 방식이며, §18.8 적대
+  검증이 격리 sandbox(no-ACL) 실측으로 결함 3건을 재현해 폐기했다 (REV-20260727T190500).
+  ① `sudo` 는 `-E` 를 줘도 `USER`/`LOGNAME` 을 runas 로 덮어써(`HOME` 만 보존) `--agent`
+  기본값이 `root` → 브랜치 `ai/root/<feat>` 회귀 + dry-run 프리뷰와 실제 실행 불일치.
+  ② `run_or_dryrun` 의 `eval` 이 root 로 실행 → feature slug 한 개가 root 임의 명령 실행
+  (`--feature 'a;id>${PWD}pwn'` 로 worktree 밖 uid 0 파일 생성 실증).
+  ③ git 이 root 로 돌아 `.git/worktrees/<name>`·`.worktrees`·`FETCH_HEAD`·`refs/heads/*`
+  가 root 소유로 남고, no-ACL 배치에서 cycle-init 성공 직후 `git add` 가
+  `index.lock: Permission denied` 로 실패 — cycle 의 존재 이유가 파손. 이후
+  `PRIV_NO_SUDO=1` fallback 도 영구 실패하며 원인을 "non-fast-forward?" 로 오진(고치려던
+  패턴의 재발). 부수적으로 `secure_path` PATH 교체(→ `~/.local/bin` 의 `gh` 상실),
+  sudo umask 0022 강제(→ group-write 공유 배치 무력화) 회귀 확인.
+  범위를 좁히면 ①②③ + PATH·umask 회귀가 **구조적으로 소멸**한다.
+  - *`setfacl` 직접 조작*: 이식성이 낮고(`setfacl` 부재 환경), `chmod 0664` 만으로 `mask`
+    가 복원되는 것을 실측 확인해 채택하지 않았다.
+- Consequences: 정상 상태의 cycle 은 **동작·소유권·PATH·umask 가 종전과 완전히 동일**하다
+  (sudo 경로를 타지 않으므로). 권한이 깨진 경우에만 복구가 개입하고, 복구 불가 시에도
+  cycle 은 계속 진행하며 원인을 정확히 보고한다. 승격 범위가 좁아 `-E` 환경 전면 보존
+  (`GIT_SSH_COMMAND`·`GIT_CONFIG_*`·`HOME` 이 root git 에 먹히는 문제)도 발생하지 않는다.
+  template base 전파 대상 (§13.2.10 + `bin/lib/privilege.sh`).
