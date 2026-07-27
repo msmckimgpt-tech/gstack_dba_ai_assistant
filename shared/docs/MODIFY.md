@@ -69,3 +69,16 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - Files: `shared/config.py`
 - Affected Features: feature-0002-agent-core(`modules/tools._routine_chunk_limit` 신규 소비 — 유일 소비처)
 - Cross-ref: unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260727T175800-false-truncation-belief(정본) · 동 feature REVIEW.md REV-20260727T175800-false-truncation-belief · FRICTION_LEDGER FR-false-truncation-belief · 선행 CHG-20260724T155534-tool-result-cap-raise(`AGENT_TOOL_RESULT_MAX_CHARS` backstop — 유지)
+
+## CHG-20260727T184425-opus5-model (model_catalog·runtime_settings: Claude Opus 5 카탈로그 추가, cross-unit: 정본 feature-0007, Major §12.3 외부비용)
+- Date: 2026-07-27. 사용자 요청("서비스 내 assistant 의 llm 모델에 claude opus 도 포함 … claude-corp 및 root 계정 포함"). 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0007-opus5-model`.
+- `shared/model_catalog.py` (순수 additive):
+  - `API_MODEL_OPTIONS` 선두에 `claude-opus-5`(label `claude-opus`, group `Claude`, supports_temperature=False — Opus 5 는 sampling 파라미터 400, supports_vision=True).
+  - `_CONVERSATION_ANSWER_ALIAS["claude-opus-5"] = "claude-opus-5-chat"` — 도입 시점부터 edge-free 2계정 체인(sonnet 의 bare 단일계정 429 결함 선반영 차단).
+  - `_ADAPTIVE_THINKING_PREFIXES` 에 **`claude-opus`**(넓은 prefix) — Opus 계열 전체가 adaptive-only(budget_tokens 400)라 미분류로 떨어지는 회귀를 원천 차단. `requires_oauth_frontier_identity()` 가 동일 집합이라 CC identity 주입도 자동 적용(2026-07-27 라이브 실증: Opus 5 도 system 첫 블록 CC 없으면 429).
+  - `_CLAUDE_MODEL_MAX_OUTPUT["claude-opus-5"] = 128000`(native).
+  - `canonical_usage_model`/`_sql` 에 **`claude-opus-5`(버전-정확)** fold — thinking-style 의 넓은 prefix 와 의도적 비대칭: 미등록 Opus 버전을 Opus 5 단가·비중으로 오귀속하지 않고 self-surface 시킨다(기존 규약 보존).
+  - ⚠ 부작용(의도): `model_thinking_style("claude-opus-4-8")` 이 None → `"adaptive"`. Opus 4.8 도 실제 adaptive-only 라 사실 정합 개선(테스트 1건 갱신).
+- `shared/runtime_settings.py`: `_AGENT_MAX_OUTPUT_DEFAULT["claude-opus-5"] = 40000`. budget 계열 스펙(②③)은 `_budget_thinking_models()` 가 adaptive 를 제외하므로 자동 미생성 → admin UI 는 guide-note(죽은 슬라이더 0, CHG-20260724T085937 규약 그대로 적용).
+- Affected Features: feature-0007-bedrock-llm-provider(정본 — litellm 3 deployment + fallback), feature-0002-agent-core(`_call_llm` adaptive/CC 분기·redteam 리뷰어 정합 — 코드 무변경, 카탈로그 자동 파급), feature-0003-agent-web-ui(모델 선택기·runtime-settings pane 자동 파급 + `admin_usage._LLM_PRICE_USD_PER_1M` 단가 등록).
+- Cross-ref: unit/feature-0007-bedrock-llm-provider/docs/MODIFY.md CHG-20260727T184425-opus5-model(정본) · 동 REVIEW.md REV-20260727T184425-opus5-model · TEST.md Run 2026-07-27-opus5-model.

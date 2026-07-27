@@ -377,6 +377,11 @@ _AGENT_MAX_OUTPUT_MIN = 4096
 # maximum(ceiling)은 model_catalog.model_native_max_output(모델 native). 미등록 모델은 task cap fallback.
 # (plan/insight 등 "agent" task 공유 소비자와 분리 — model_catalog.max_tokens_for_model 은 무변경.)
 _AGENT_MAX_OUTPUT_DEFAULT: dict[str, int] = {
+    # opus5-model(2026-07-27): Opus 5 도 native 128K 이지만 라운드당 출력 default 는 sonnet 과 동일한
+    # 40000 으로 둔다 — native 근처 값은 라운드마다 느려져 '에이전트/쿼리 실행 타임아웃'을 넘기고
+    # (스펙 description 참조) Opus 단가($5/$25)에서 비용도 함께 뛴다. 필요 시 관리 콘솔
+    # '설정 > 모델 총 출력' 에서 모델별로 상향(상한 = native 128000).
+    "claude-opus-5": 40000,
     "claude-sonnet-4": 40000,
     "claude-haiku-4": 24000,
 }

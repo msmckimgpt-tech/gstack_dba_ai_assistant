@@ -64,6 +64,21 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
     작성.
 
 ## 3. Recent Changes
+
+### 2026-07-27 — opus5-model: assistant 선택 모델에 Claude Opus 5 추가 (사용자 요청, Major §12.3 외부비용)
+- **무엇**: `claude-opus-5`(표시 `claude-opus`)를 대화 모델 카탈로그 최상위에 추가. litellm 3 deployment
+  (bare / `-chat`=claude-corp / `-chat-root`=root Max) + `-chat → -chat-root` edge-free 2계정 fallback.
+  thinking=adaptive(effort), CC identity 자동 주입, native max 128000, 단가 $5/$25 원장 등록.
+- **왜 도입 시점에 2계정인가**: sonnet 은 bare 단일계정으로 출발해 claude-corp 429 시 즉시 실패했고,
+  이후 4차(chat-fallback → sonnet5-upgrade → cc-identity-inject → timeout-align)에 걸쳐 사후 수정됐다.
+  그 4개 결함(단일계정 · 폐기 모델 ID · budget_tokens 400 · OAuth identity 게이트)을 회귀 체크리스트로
+  역이용해 전부 선반영했다.
+- **라이브 사전 실증**: claude-corp + Opus 5 + CC identity → **200**(`unified-status: allowed`),
+  CC 없으면 **429**(identity 게이트). root 는 opus/sonnet/haiku 전부 429(`rejected`) = **계정 전체 한도
+  소진**이지 Opus 게이팅 아님.
+- **기본값 불변**: `API_DEFAULT_MODEL`=haiku 유지, 백그라운드 `AGENT_*_MODEL` 에 Opus 미배선(배치 × 5× 단가 차단).
+- 검증: 전체 pytest rc=0(2452, fail/error 0) · litellm YAML 정적검증 OK. **배포 후 gateway 경유 e2e + PB-0008 잔여.**
+- Cross-ref: CHG/REV/TASK-20260727T184425-opus5-model · TEST Run 2026-07-27-opus5-model.
 - **CHG-20260707-oauth-cron-static-refresh** (2026-07-07): `refresh-claude-oauth-token.sh`
   cron(24/7, 30분 주기)의 라이브 probe(Anthropic `/v1/messages` 실호출, 2026-06-29 도입)가
   claude-corp 5시간 rolling 세션 윈도우를 `:00`/`:30` 격자에 계속 재고정해
@@ -209,6 +224,16 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
 - 없음 (Phase A~D 자율 진행 완료).
 
 ## 7. Human Attention Needed
+
+- **[opus5-model 2026-07-27] 모델별 접근 권한(RBAC) 부재 — 사용자 결정 필요**: 모델 카탈로그는
+  `/api/session` 으로 전 사용자에게 동일 노출된다. 따라서 `conversation.ask` 보유자면 **누구나
+  Claude Opus(단가 haiku 대비 in·out 5×)를 선택**할 수 있다. 현재 완화책은 (a) 기본값 haiku 유지,
+  (b) 관리 콘솔 '모델 총 출력' 상한(기본 40000), (c) 'LLM 사용량' 원장의 사후 관측뿐이며 **사전
+  차단 수단은 없다**. per-model RBAC(예: `conversation.model.opus`) 신설은 신규 권한 표면이라
+  §12.3 Critical — 별 cycle + 사용자 승인 필요. 필요 여부를 결정해 주세요.
+- **[opus5-model 2026-07-27] root 계정 한도 소진 관측**: 실증 시점 root(개인 Max) 토큰이
+  haiku·sonnet·opus 전부 429(`unified-status: rejected`). 2순위 fallback 이 그동안 실효가 없다는
+  뜻이므로, root 소진이 상시적이면 2계정 체인의 회복성 가정이 약해진다 — 사용 패턴 점검 권장.
 - **Phase E 회귀 검증** (사용자 수행): AWS 자격증명 주입 + Bedrock model access
   활성화 (Claude Sonnet 4.x + Haiku 4.x) + docker compose up 후 healthcheck
   PASS + `/api/ask` smoke test 1 conv. 회귀 발견 시 본 cycle 로 fix iteration.

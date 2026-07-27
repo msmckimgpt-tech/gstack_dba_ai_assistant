@@ -185,8 +185,15 @@ def test_model_thinking_style():
     assert model_thinking_style("claude-haiku-4-chat") == "budget"
     assert model_thinking_style("edge") is None
     assert model_thinking_style(None) is None
-    # H2(적대리뷰): 미상 claude(카탈로그 밖·미래 adaptive-only 모델)는 안전하게 None — budget_tokens 미주입.
-    assert model_thinking_style("claude-opus-4-8") is None
+    # opus5-model(2026-07-27): Opus 계열은 전부 adaptive-only(budget_tokens 400) → `claude-opus` prefix.
+    # 요청 alias·라우팅 변형·실 모델 ID·미등재 Opus 버전이 모두 같은 스타일로 분류돼야 한다.
+    assert model_thinking_style("claude-opus-5") == "adaptive"
+    assert model_thinking_style("claude-opus-5-chat") == "adaptive"
+    assert model_thinking_style("claude-opus-5-chat-root") == "adaptive"
+    # 이전에는 미상 claude 로 None 이었으나(H2 보수 분류), Opus 4.8 도 budget_tokens 를 400 으로
+    # 거부하는 adaptive-only 라 prefix 분류가 사실에 더 부합한다(claude-api 스펙).
+    assert model_thinking_style("claude-opus-4-8") == "adaptive"
+    # H2(적대리뷰) 보수 기본값은 유지 — opus/sonnet prefix 밖 미상 claude 는 여전히 None(무주입).
     assert model_thinking_style("claude-sonnet-6") is None
 
 
@@ -215,12 +222,39 @@ def test_sonnet_adaptive_normal_no_override(monkeypatch):
         assert _xb(kwargs) == {}, level
 
 
+# ── 2c-opus. opus5-model: Opus 5 도 adaptive — effort 만, budget_tokens 는 절대 미주입 ──────
+def test_opus_adaptive_injects_effort_not_budget(monkeypatch):
+    for level, effort in (("low", "low"), ("high", "high"), ("max", "max")):
+        kwargs = _call(monkeypatch, "claude-opus-5", level)
+        assert _xb(kwargs) == {"output_config": {"effort": effort}}, level
+        assert "thinking" not in kwargs.get("extra_body", {}), level
+
+
+def test_opus_adaptive_normal_no_override(monkeypatch):
+    for level in ("normal", None):
+        kwargs = _call(monkeypatch, "claude-opus-5", level)
+        assert _xb(kwargs) == {}, level
+
+
+def test_opus_prepends_cc_identity_system(monkeypatch):
+    # opus(adaptive)도 CC identity 를 첫 **별도 system 메시지**로 주입해야 429(identity 게이트) 회피.
+    from shared.model_catalog import OAUTH_FRONTIER_IDENTITY
+    kwargs = _call(monkeypatch, "claude-opus-5", "normal")
+    msgs = kwargs["messages"]
+    assert msgs[0] == {"role": "system", "content": OAUTH_FRONTIER_IDENTITY}
+    assert msgs[1] == {"role": "user", "content": "hi"}   # 원 메시지 보존, CC 는 앞에만
+
+
 # ── 2d. cc-identity-inject: OAuth frontier(Sonnet 5) 는 Claude Code identity 첫 system 블록 요구 ──
 def test_requires_oauth_frontier_identity():
     from shared.model_catalog import requires_oauth_frontier_identity as R, OAUTH_FRONTIER_IDENTITY
     assert R("claude-sonnet-4") is True           # Sonnet 5 서빙 alias
     assert R("claude-sonnet-4-chat") is True
     assert R("claude-sonnet-5") is True
+    # opus5-model(2026-07-27) 라이브 실증: Opus 5 도 CC identity 없으면 429 → 요구 True.
+    assert R("claude-opus-5") is True
+    assert R("claude-opus-5-chat") is True
+    assert R("claude-opus-5-chat-root") is True
     assert R("claude-haiku-4") is False           # budget 계열은 미요구
     assert R("edge") is False
     assert R(None) is False
