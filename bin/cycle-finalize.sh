@@ -87,6 +87,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ── 권한 어댑터 로드 (§13.2.10) ───────────────────────────────────────────
+# git·gh 는 **언제나 원 호출자로** 실행한다 (승격하면 PATH 교체로 `~/.local/bin` 의 gh 를
+# 잃고, main worktree 산출물이 root 소유로 남는다 — 적대 검증 §6/§9 실측).
+# 승격은 Step 6 의 REGISTRY 접근권 복구에만 쓴다.
+# shellcheck source=lib/privilege.sh
+. "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/lib/privilege.sh"
+
 [ -n "$PR_NUMBER" ] || usage_die "--pr <N> required."
 
 case "$MERGE_STRATEGY" in
@@ -411,7 +418,23 @@ PROJECT_ROOT="$(dirname "$MAIN_REAL")"
 REGISTRY_PATH="$PROJECT_ROOT/worktrees/REGISTRY.md"
 SESSIONS_LOG_PATH="$MAIN_REAL/meta/SESSIONS_LOG.md"
 
-if [ ! -f "$REGISTRY_PATH" ]; then
+# §13.2.10: REGISTRY 가 다른 계정 소유 0600 으로 굳어 있으면 접근권을 먼저 복구한다
+# (정상 상태면 sudo 호출 0회). 복구 후에도 접근 불가면 아래에서 정직하게 갈라 보고한다.
+if [ -e "$REGISTRY_PATH" ]; then
+  priv_ensure_writable "$REGISTRY_PATH" || true
+  priv_ensure_writable "$REGISTRY_PATH.lock" || true
+fi
+
+REG_REASON="$(priv_access_reason "$REGISTRY_PATH")"
+if [ -e "$REGISTRY_PATH" ] && [ "$REG_REASON" != "ok" ]; then
+  # 권한 실패를 스키마 불일치로 오진하지 않는다. 아래 grep 은 읽지 못하면 조용히 false 를
+  # 내므로, 그대로 두면 "비-META-0029 형식" 안내로 새어나가 사용자가 있지도 않은 포맷
+  # 차이를 뒤지게 된다 (2026-07-27 라이브 오진 실증). 읽기·쓰기를 모두 본다 — 0664
+  # 정규화 이후 남는 실패는 대개 rewrite 용 **쓰기** 거부다.
+  log_warn "REGISTRY.md 접근 불가($REG_REASON) — entry 이동 skip: $REGISTRY_PATH (실행자: $(id -un))"
+  log_warn "  passwordless sudo 가용성을 확인하세요 (PRIV_NO_SUDO 미설정 여부 포함). 승격되면 자동 복구됩니다 (§13.2.10)."
+  log_warn "  수동 이동: '## Active' 의 '### $SELF_BRANCH' 블록을 '## Closed' 로"
+elif [ ! -f "$REGISTRY_PATH" ]; then
   log_info "REGISTRY.md 부재 (consumer §13.2.4 미채택) — skip."
 elif grep -qxF '## Active' "$REGISTRY_PATH" && grep -qxF '## Closed' "$REGISTRY_PATH"; then
   # META-0029 스키마(## Active/## Closed + `### <branch>` 블록) — 자기 entry 자동 이동.
@@ -421,6 +444,7 @@ elif grep -qxF '## Active' "$REGISTRY_PATH" && grep -qxF '## Closed' "$REGISTRY_
   REG_TMP=""
   if exec 8>"$REGISTRY_PATH.lock" && flock -w 10 8 \
      && REG_TMP="$(mktemp "$REGISTRY_PATH.XXXXXX")" \
+     && { priv_share_file "$REG_TMP"; true; } \
      && awk -v br="### $SELF_BRANCH" \
             -v closed="- closed_at: $(date +%Y-%m-%dT%H:%M:%S%z) (PR #${PR_NUMBER:-?})" '
           /^## Active$/ {act=1; print; next}
@@ -436,10 +460,22 @@ elif grep -qxF '## Active' "$REGISTRY_PATH" && grep -qxF '## Closed' "$REGISTRY_
         ' "$REGISTRY_PATH" >"$REG_TMP" \
      && ! awk '/^## Active$/{a=1;next} /^## Closed$/{a=0} a' "$REG_TMP" | grep -qxF "### $SELF_BRANCH" \
      && mv "$REG_TMP" "$REGISTRY_PATH"; then
+    # §13.2.10: mktemp(0600) → mv 가 남긴 모드 열화를 되감는다 (cycle-init 과 동일 축).
+    priv_share_file "$REGISTRY_PATH"
+    priv_share_file "$REGISTRY_PATH.lock"
     log_info "REGISTRY entry 이동 완료: $SELF_BRANCH → ## Closed"
   else
     rm -f "${REG_TMP:-/nonexistent}" 2>/dev/null || true
-    log_warn "REGISTRY entry 자동 이동 실패(또는 entry 부재) — 수동 이동 가능: '## Active' 의 '### $SELF_BRANCH' 블록을 '## Closed' 로"
+    # 실패 분기에서도 모드를 되감는다 — 실패 전에 mv 가 이미 통과했을 수 있고, 그 경우
+    # 되감지 않으면 0600 이 그대로 굳는다 (성공 분기에만 두면 생기는 구멍).
+    priv_share_file "$REGISTRY_PATH"
+    priv_share_file "$REGISTRY_PATH.lock"
+    _reg_reason_post="$(priv_access_reason "$REGISTRY_PATH")"
+    if [ "$_reg_reason_post" != "ok" ]; then
+      log_warn "REGISTRY entry 자동 이동 실패: 권한($_reg_reason_post) — $REGISTRY_PATH (실행자: $(id -un))"
+    else
+      log_warn "REGISTRY entry 자동 이동 실패(또는 entry 부재) — 수동 이동 가능: '## Active' 의 '### $SELF_BRANCH' 블록을 '## Closed' 로"
+    fi
   fi
   exec 8>&- 2>/dev/null || true
 else

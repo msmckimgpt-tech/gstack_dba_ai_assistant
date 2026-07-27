@@ -88,18 +88,37 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ── 권한 어댑터 로드 (§13.2.10) ───────────────────────────────────────────
+# git 은 **언제나 원 호출자로** 실행한다. 승격은 공유 운영 파일(REGISTRY)이 다른 계정
+# 소유 0600 으로 굳어 접근 불가일 때 `priv_ensure_writable` 이 복구하는 데만 쓴다
+# (정상 상태에서는 sudo 호출 0회). 스크립트 전체 sudo 재실행은 적대 검증이 실측으로
+# 결함 3건을 재현해 폐기했다 — 상세는 privilege.sh 헤더 + REV-20260727T190500.
+# `${BASH_SOURCE[0]}` + readlink: symlink 경유 호출에서도 lib 경로가 깨지지 않게.
+# shellcheck source=lib/privilege.sh
+. "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/lib/privilege.sh"
+
 [ -n "$FEATURE_ID" ] || usage_die "--feature <feature-id> required."
 
-# feature-id 검증 — slug 형태 (alnum, '-', '_' 만 허용, '/' 금지).
+# ── 인자 검증 — `run_or_dryrun` 의 `eval` 에 도달하므로 화이트리스트 강제 ──
+# 기존 검증은 '/'·공백·백슬래시만 막아 `;`·`$`·백틱·`|`·`&`·`>` 가 통과했다. feature
+# slug 는 사람이 아닌 것(entry persona dispatch, ROADMAP 항목 파생)이 만드는 경로가
+# 있어, 문자열 한 개가 임의 명령 실행이 될 수 있었다 (적대 검증 §2 실증).
 case "$FEATURE_ID" in
-  *[/\ \\]*) usage_die "feature-id 에 '/' / 공백 / 백슬래시 사용 불가: '$FEATURE_ID'" ;;
-  *) ;;
+  ""|-*) usage_die "feature-id 형식 오류 (빈 값 또는 '-' 시작): '$FEATURE_ID'" ;;
 esac
+[[ "$FEATURE_ID" =~ ^[A-Za-z0-9._-]+$ ]] \
+  || usage_die "feature-id 는 영숫자·'.'·'_'·'-' 만 허용: '$FEATURE_ID'"
 
 # AGENT_NAME default: $USER 또는 'ai'.
+# `SUDO_USER` 우선: 누군가 이 스크립트를 sudo 로 감싸 호출해도 브랜치가 `ai/root/…` 로
+# 어긋나지 않게 한다 (sudo 는 -E 를 줘도 USER/LOGNAME 을 runas 로 덮어쓴다 — 적대 검증 §1).
 if [ -z "$AGENT_NAME" ]; then
-  AGENT_NAME="${USER:-ai}"
+  AGENT_NAME="${SUDO_USER:-${USER:-ai}}"
 fi
+[[ "$AGENT_NAME" =~ ^[A-Za-z0-9._-]+$ ]] \
+  || usage_die "agent 이름은 영숫자·'.'·'_'·'-' 만 허용: '$AGENT_NAME'"
+[[ "$BASE_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] \
+  || usage_die "base branch 이름에 허용되지 않는 문자: '$BASE_BRANCH'"
 
 # ── Pre-flight: git repo + main worktree 식별 ─────────────────────────────
 command -v git >/dev/null 2>&1 || die "git not found in PATH."
@@ -219,6 +238,11 @@ REGISTRY_FILE="$PROJECT_ROOT/worktrees/REGISTRY.md"
 
 registry_record() {
   mkdir -p "$PROJECT_ROOT/worktrees" || return 1
+  priv_share_dir "$PROJECT_ROOT/worktrees"
+  # §13.2.10: REGISTRY·lock 이 다른 계정 소유 0600 으로 굳어 있으면 여기서 접근권을
+  # 복구한다 (정상 상태면 sudo 호출 0회). 실패해도 아래에서 정직하게 진단·경고한다.
+  priv_ensure_writable "$REGISTRY_FILE" || true
+  priv_ensure_writable "$REGISTRY_FILE.lock" || true
   # N-12: project_root 가 git working tree 인 배치만 .gitignore 등록(본 배치 wrapper 는 git 밖 — 비적용)
   if git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     grep -qxF 'worktrees/' "$PROJECT_ROOT/.gitignore" 2>/dev/null \
@@ -240,6 +264,13 @@ registry_record() {
 
 ## Closed
 REG
+  fi
+
+  # §13.2.10: 여기까지 와서도 접근 불가면(승격 실패·PRIV_NO_SUDO) 조기 반환한다.
+  # 그러지 않으면 아래 awk/grep 이 raw `Permission denied` 를 stderr 로 흘려 사용자가
+  # 스크립트 버그로 오인한다 — 진단은 호출부의 정직한 한 줄로만 낸다.
+  if priv_unreadable "$REGISTRY_FILE" || priv_unwritable "$REGISTRY_FILE"; then
+    return 1
   fi
 
   # 핫스팟 겹침 soft 게이트 — 지표 = 내 hot_paths 와 겹치는 **활성 브랜치(entry) distinct 수**
@@ -284,6 +315,9 @@ REG
   # 동일 디렉터리 mktemp → 삽입 성공 검증 → mv (중간 실패 시 원본 무손상 — MAJOR-2).
   local tmp
   tmp="$(mktemp "$REGISTRY_FILE.XXXXXX")" || return 1
+  # §13.2.10: mktemp 는 0600 을 만들고 mv 는 그 모드를 남긴다. mv **전에** 되감아,
+  # rewrite 순간에 다른 계정이 읽지 못하는 창(window)과 중간 실패 시 0600 영구화를 없앤다.
+  priv_share_file "$tmp"
   awk -v br="### $NEW_BRANCH" \
       -v sid="${CLAUDE_SESSION_ID:-claude-session-$PPID}" \
       -v ts="$(date +%Y-%m-%dT%H:%M:%S%z)" \
@@ -307,6 +341,11 @@ REG
   ' "$REGISTRY_FILE" >"$tmp" || { rm -f "$tmp"; return 1; }
   grep -qxF "### $NEW_BRANCH" "$tmp" || { rm -f "$tmp"; return 1; }
   mv "$tmp" "$REGISTRY_FILE" || { rm -f "$tmp"; return 1; }
+  # §13.2.10: mktemp 는 0600 으로 만들고 mv 는 그 모드를 남긴다 — 원자 rewrite 한 번마다
+  # REGISTRY 가 "0600 <직전 실행자>" 로 굳고, ACL 배치에서는 mask 가 `---` 로 눌려
+  # 다른 계정이 통째로 막힌다(2026-07-27 실증). 매 기록 후 공유 모드로 되감는다.
+  priv_share_file "$REGISTRY_FILE"
+  priv_share_file "$REGISTRY_FILE.lock"
   return 0
 }
 
@@ -314,7 +353,16 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$PRINT_ONLY" -eq 0 ]; then
   if registry_record; then
     log_info "REGISTRY entry 기록: $NEW_BRANCH ($REGISTRY_FILE)"
   else
-    log_warn "REGISTRY 기록 실패 — cycle 진행에는 영향 없음 (수동 기록 가능: $REGISTRY_FILE)"
+    # §13.2.10: "실패" 를 뭉뚱그리지 않는다. 권한이 원인이면 그렇게 말해야 사용자가
+    # sudo 가용성을 점검한다 (스키마·경로 문제로 오해하고 엉뚱한 곳을 뒤지지 않게).
+    # read/write 를 모두 본다 — 0664 정규화 이후 남는 실패는 대개 **쓰기** 거부다.
+    _reg_reason="$(priv_access_reason "$REGISTRY_FILE")"
+    if [ "$_reg_reason" != "ok" ]; then
+      log_warn "REGISTRY 기록 실패: 권한($_reg_reason) — $REGISTRY_FILE (실행자: $(id -un))."
+      log_warn "  passwordless sudo 가용성을 확인하세요 (PRIV_NO_SUDO 미설정 여부 포함). 승격되면 자동 복구됩니다 (§13.2.10)."
+    else
+      log_warn "REGISTRY 기록 실패 — cycle 진행에는 영향 없음 (수동 기록 가능: $REGISTRY_FILE)"
+    fi
   fi
   exec 9>&- 2>/dev/null || true
 fi

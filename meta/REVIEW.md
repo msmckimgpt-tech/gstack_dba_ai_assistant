@@ -778,7 +778,6 @@
 - **검증(타깃별 실질 + ULTRACODE 적대)**: gen-status --check exit 0(신규 0·passthrough 22·frontmatter 3, feature-0025 sparse 행 1줄만 추가·기존행 churn 0)·STATUS/§4/§6/§2.3/§2.4/_Index/§2.1/MOC 신규 행 pipe 무결(§4 파이프3[2컬럼]·§6 파이프5[4컬럼])·wiki feature-count sweep stale-24=0(ground-truth 25·9 token-edit=8참조/5파일)·신규 wikilink([[feature-0025-worker-parallelism]] 카드 실재)·§참조 무결(arch4 REV-20260724T053235 실재). 정본 독립 재검증(함정 #11): FUNCTION.md deps(코드 거주 0002/0003/shared/compose·재사용 0018·워크로드 0016)·DECISIONS.md ADR-0025-01~04 실레코드·severity=TASK.md Major. **ULTRACODE 적대 검증**: wf_2676a918 3-타깃 병렬 분석→타깃-스코프 적대 verify(cross-fault 회피, 함정 #12) — wiki confirmed(결함 0)·정책 confirmed(minor 1: arch4 bare §18.8→REV-ID doc-qualify 교정 반영)·릴리즈노트 confirmed(minor 1: graph-emoji '제 색으로'→'검은 실루엣 없이 제 모습대로' 3종 그레이스케일 이모지 정합 교정 반영).
 - **인용 무결성 확인**: 본 entry(META-0044) staged 실재. 동반 operational commit(feature-0003 release-notes-data.js + companion 5) 별도 — 서빙 static 변경이나 배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만).
 - **Human Approval Needed**: 아니오 (색인/미러 additive·구조/보안 경계 불변·제품 런타임 동작 0·pure-meta). 무인 스케줄 run — landing(push/merge)·배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만·감지·보고만).
-
 ## REV-20260728T010301-META-0045-doc-sync-0728 [SKIPPED:doc-sync-index-mirror-additive] — 01ad5060(07-27 doc-sync) 이후 델타 · 신규 머지 feature-0026-perf-observability(성능 관측 인프라, 측정 전용·사용자 가시 동작 변경 0, Minor, 2026-07-27 머지 396a9c67·단위 9 PASS·회귀 0·§18.8 3렌즈 패널) 인덱스/미러/색인 정합 + wiki 카운트 25→26 + docs/ARCHITECTURE §4/§6 backfill
 
 - **changeset (pure-meta, docs/**·wiki/** = META path → verify-completion META mode check #9 게이트)**: `wiki/overview.md`(서두 카운트 25→26·0001~0026·§2.2 "25-feature"→"26-feature"·§2.1 표 feature-0026 행·§1 (57) 2026-07-27 타임라인[feature-0026 신규 + 07-27 사용자향 UX·모델 bundle: opus5·share-bar·detail-db-groups — house-style (54)(55)(56) 윈도우 UX bundle 선례])·`wiki/Features/_Index.md`(헤더 "25 active"→"26 active"·개요 "25 개 feature 카드"→26)·`wiki/Architecture/Overview.md`(헤더 표 25카드/0025→26/0026·§2.3 기능맵 feature-0026 행·§2.4 의존성 feature-0026 행)·`wiki/Architecture/Module-Map.md`(§2.2 MOC 포인터 0025→0026)·`docs/ARCHITECTURE.md`(§4 기능맵·§6 의존성맵 feature-0026 backfill — feature 커밋 396a9c67 이 STATUS/SECURITY/ROUTEMAP/CODEBASE_MAP/CODE_NAVIGATION 은 갱신했으나 ARCHITECTURE 미터치, 함정 #15 정합)·`meta/REVIEW.md`(본 entry). **feature-0026 카드·_Index MOC 행·wiki/Index.md(서두 26-feature·MOC 카드26)·wiki/Log.md·docs/STATUS.md·docs/SECURITY.md §27 은 feature 커밋 396a9c67 이 이미 self-add → 재생성 안 함.** 동반 operational(feature-0003 별도 commit, REV-20260728T010301-doc-sync-rn-0728 [SKIPPED:non-policy-doc]): 릴리즈노트 기존 2026-07-27 블록에 3항목 append(답변 모델 claude-opus·공유뷰 하단바·관계도 상세 DB그룹) — cache-buster `?v=dev` 고정(ITEM-09 빌드 자동주입, 수기 bump 없음·index/admin 편집 0·wrapper 헤더 수기 bump 지시는 07-12 이전 regime 부적용, 351ed406 동일 판정).
@@ -786,3 +785,85 @@
 - **검증(타깃별 실질 + ULTRACODE 적대)**: wiki feature-count sweep stale-25=0(ground-truth 26=ls unit/feature-*=26·wiki/Features/feature-*.md=26 cards·6 token-edit=8참조 중 stale 6[Index.md 2참조는 feature 커밋이 이미 26])·신규 wikilink([[feature-0026-perf-observability]] 카드 실재)·표 행 pipe 무결(overview §2.1 3열·Architecture §2.3 2열/§2.4 4열·docs §4 2열/§6 4열)·feature-0026 각 타깃 표 1행씩(중복 0). 정본 독립 재검증(함정 #11): perf 수치 141s/agent87.8s(62%)/redteam46.4s(33%)/~34s/AGE590만·12.5d=REPORT.md §17-21 실측·symbol PerfTimingMiddleware/INCLUDE_ORDER=250(admin_perf.py:23 실코드)/`_ans_breakdown`/`_rt_ms`/relationships_probe=TASK.md §2.1 실존·모델 라벨 claude-opus(model_catalog.py:93·기본값 haiku-4)·severity=TASK.md:56 Minor·단위 9 PASS=TASK.md:77. **ULTRACODE 적대 검증**: wf_c9bea2de 4-dimension 병렬 analyze→dimension-스코프 적대 verify(cross-fault 회피, 함정 #12) — wiki-count 6 CONFIRMED(rejected/missed 0)·wiki-rows 4 CONFIRMED·docs-policy 2 CONFIRMED·relnotes 3항목 CONTENT CONFIRMED(verifier 가 초안 07-28 date framing REJECT→07-27 기존 블록 append 로 정정, block date=배포일·generated=top-block date 관례 351ed406/85da43d9 선례).
 - **인용 무결성 확인**: 본 entry(META-0045) staged 실재. 동반 operational commit(feature-0003 release-notes-data.js + companion TASK/MODIFY/FUNCTION/TEST/REVIEW) 별도 — 서빙 static(릴리즈노트) 변경이나 배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만).
 - **Human Approval Needed**: 아니오 (색인/미러 additive·구조/보안 경계 불변·제품 런타임 동작 0·pure-meta). 무인 스케줄 run — landing(push/merge)·배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만·감지·보고만).
+## REV-20260727T190500-META-0046-cycle-privilege-adapter [SUBAGENT:general-purpose] — BLOCKING 3 · MAJOR 7 · MINOR 5 → 설계 선회 후 전건 해소/무효화
+- Related Change: cycle 스크립트 권한 어댑터 (§13.2.10 신설 + `bin/lib/privilege.sh`),
+  ADR-20260727T190000-cycle-privilege-adapter
+- 번호 재배정: 착수 시 META-0045 로 잡았으나 병렬 doc_sync cycle 이 같은 번호를 먼저
+  랜딩(REV-20260728T010301-META-0045-doc-sync-0728) → **META-0046** 으로 이관. 브랜치·worktree
+  명(`ai/claude/meta-0045-privileged-cycle-scripts`)은 PR #971 이 이미 열려 있어 그대로 둔다.
+- Panel: 보안·권한 렌즈 1개. "통과가 아니라 결함 적발" 명시 + 확신 없는 추측성 지적 금지 +
+  실패 시나리오 제시 요구. 리뷰어가 **실제 sudoers/ACL 환경 확인 + 격리 sandbox(no-ACL)에서
+  스크립트를 실행해 각 지적을 재현**했다 (대상 파일 md5 조사 전후 동일 확인).
+- Trigger: 권한 승격 도입 = 보안 민감 변경. 승격 경로에 기계 생성 입력이 도달하는지,
+  소유권·환경·PATH 회귀가 있는지 독립 검증 필요.
+
+### 1차 구현(스크립트 전체 `sudo -E` 재실행)에 대한 BLOCKING 3건 — 실측 재현됨
+- **B1 `--agent` 기본값이 `root`** — `sudo` 는 `-E` 를 줘도 `USER`/`LOGNAME` 을 runas 로
+  항상 덮어쓴다(보존은 `HOME` 뿐). 재실행이 기본값 결정보다 앞서 브랜치가 `ai/root/<feat>` 로
+  생성되고, **dry-run 프리뷰(`ai/claude-corp/…`)와 실제 실행이 어긋난다** — 사전 검증 무의미.
+- **B2 기존 `eval` sink 가 root 로 실행** — `run_or_dryrun` 은 `eval "$@"`, `FEATURE_ID`
+  검증은 `/`·공백·백슬래시만 막아 `;`·`$`·백틱 통과, `AGENT_NAME` 은 검증 전무.
+  `--feature 'a;id>${PWD}pwn'` 로 **worktree 밖 uid 0 파일 생성 실증**. feature slug 를
+  기계가 만드는 경로(entry dispatch, ROADMAP 파생)가 root 임의 실행에 도달.
+- **B3 소유권 복원 불완전** — `chown -R` 대상이 체크아웃 디렉터리 하나뿐. no-ACL sandbox 에서
+  `.git/worktrees/<name>`·`.worktrees`·`FETCH_HEAD`·`refs/heads/*` 가 root 소유로 남아
+  cycle-init "성공" 직후 `git add` 가 `index.lock: Permission denied` 로 실패. 이후
+  `PRIV_NO_SUDO=1` fallback 도 영구 실패하며 원인을 **"non-fast-forward?" 로 오진** —
+  본 변경이 고치려던 오진 패턴의 재발.
+
+### MAJOR 7건 (요지)
+M1 `sudo -n true` 프로브가 `-E` 를 검증하지 않아 좁힌 sudoers 에서 `exec` 로 즉사(비차단
+degrade 선언 위반) · M2 호출자-쓰기가능 디렉터리의 lock 경로를 symlink 검사 없이 `>` 로 열고
+`chmod`/`chown`(링크 추종 → 임의 파일 절단·소유권 이전 실증) · M3 `secure_path` 가 `-E` 를
+무시하고 PATH 교체 → `~/.local/bin` 의 `gh` 상실로 `gh not found` 하드 실패 · M4 sudo umask
+0022 강제 + `.worktrees` 정규화 누락 → group-write 공유 배치 무력화 · M5 `priv_unreadable` 이
+`-r` 만 봐서 0664 이후 남는 **쓰기** 거부는 다시 오진 · M6 finalize 가 복원을 아예 미호출
+(init 과 비대칭, 안내문이 거짓) · M7 `-E` 전면 보존의 실질 위험은 loader(sudo 가 차단)가 아니라
+`GIT_SSH_COMMAND`/`GIT_CONFIG_*`/`HOME` 이 root git 에 먹히는 것.
+
+### 반영: 설계 선회 (사용자 재확인 후)
+패널이 B3·M4·M6 에서 반복해 낸 권고 — "전체 승격을 버리고 권한이 실제로 필요한 구간만
+`sudo`" — 를 채택했다. 실측 결과를 사용자에게 보고하고 방향을 재확인받아 선회.
+- **B1·B3·M1·M3·M4·M6·M7 → 구조적 소멸**: `git`·`gh` 가 원 호출자로 실행되므로 `USER`
+  덮어쓰기·root 산출물·PATH 교체·umask 강제·`-E` 환경 전파가 애초에 발생하지 않는다.
+  `exec sudo` 가 없어 M1 의 즉사 경로도 없다.
+- **B2 → 화이트리스트로 차단**: `FEATURE_ID`/`AGENT_NAME` `^[A-Za-z0-9._-]+$`,
+  `BASE_BRANCH` `^[A-Za-z0-9._/-]+$`. 승격과 무관하게 존재했던 구멍이라 이 cycle 에서 닫았다.
+  `AGENT_NAME` 기본값 `${SUDO_USER:-${USER:-ai}}` 로 외부 sudo 래핑에도 브랜치명 보존.
+- **M2 → symlink 거부**: `priv_ensure_writable`/`priv_share_file`/`priv_share_dir` 진입 시
+  `[ -L ]` 거부 + `chown --no-dereference`.
+- **M5 → `priv_unwritable`/`priv_access_reason` 신설**: `read-denied`/`write-denied`/`ok`
+  구분. 파일 `-w` 와 **부모 디렉터리 `-w`**(rewrite·lock 생성이 요구)를 함께 본다.
+- **MINOR 반영**: `$0` → `${BASH_SOURCE[0]}` + `readlink -f`(symlink 경유 호출) ·
+  `mktemp` 직후 `priv_share_file`(mv 전 — 접근 불가 창과 중간 실패 시 0600 영구화 제거) ·
+  finalize 실패 분기에도 모드 되감기 · `registry_record` 조기 반환으로 raw
+  `awk: Permission denied` 유출 제거 · 문구를 실제 계약에 맞춤.
+- **MINOR 무효화**: "필수 인자 검증보다 승격이 먼저"·"idempotent 재실행 시 `chown -R` 이
+  소유권 강탈" 은 승격·복원 제거로 소멸.
+
+### 패널이 "결함 없음" 으로 확인한 것 (선회 후에도 유효한 근거)
+`chown -R` 의 symlink 비추종(coreutils 9.4 실측 — 재귀 중 만난 링크는 링크 자체만, 타깃 불변) ·
+재귀 가드 · 비승격 경로(`--help`/`--dry-run`/`--print-only`) · `set -euo pipefail` × 헬퍼
+return code · flock fd 8/9 무간섭 · git dubious ownership 없음 · `chmod 0664` 대상이
+REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-commit hook 은
+`verify-completion.sh` 만 호출하므로 §13.2.10 범위 한정과 실제 코드 일치.
+
+### 재검증 (선회 후 — 라이브 실측 R1~R8)
+- R1 `--agent` 기본값: dry-run == 실제 == `ai/claude-corp/*` (B1 해소)
+- R2/R3 주입 payload(`a;id>${PWD}pwn`, AGENT_NAME 판): 검증에서 거부, 산출물 0 (B2 차단)
+- R4 산출물 소유권: worktree·`.git/worktrees` 모두 호출자 소유, `git add` 성공 (B3 해소)
+- R5 **실제 장애 재현 → 자동 복구**: REGISTRY 를 `root:root 0600` 으로 만들어 호출자 읽기
+  불가 상태를 재현 → cycle-init 이 `chmod 0664` 1단계로 복구(소유권 이전 없이 ACL `mask`
+  복원만으로 해결), 기록 성공, 결과 `0664` + `mask::rw-`
+- R6 정상 상태: `[privilege]` 로그 0줄 = **sudo 호출 0회** (최소 개입 확인)
+- R7/R8 `PRIV_NO_SUDO=1` + 장애 상태: 정확한 원인(`read-denied`) 보고 + raw awk 에러 없음 +
+  **exit 0**(비차단 degrade 확인)
+- 문법: 3파일 `bash -n` PASS. 폐기 심볼(`priv_reexec_as_root`/`PRIV_ORIG_ARGS`/
+  `PRIV_INVOKER_*`/`PRIV_NO_REEXEC`) 잔재 grep 0건. 테스트 worktree·REGISTRY entry·권한
+  전량 원복 확인.
+- Verdict: **SHIP** — BLOCKING 0 잔존. 1차 설계의 결함은 범위 축소로 소멸했고, 승격과 무관한
+  기존 `eval` 구멍은 이 cycle 에서 함께 닫았다.
+- Open Questions: `verify-completion.sh`·post-commit hook 은 의도적으로 비승격이다. 그 경로에서
+  공유 파일 접근이 필요해지면 §13.2.10 범위 한정을 재검토해야 한다(현재는 필요 없음 — 패널이
+  hook 호출 그래프로 확인). template base 전파 시 no-ACL 소비자에서 R5 형태의 복구 경로를
+  다시 실측할 것.
