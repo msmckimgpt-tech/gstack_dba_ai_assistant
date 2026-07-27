@@ -154,3 +154,11 @@ source_of_truth: true
 - 검증: `tests/test_share_edit_usable.py` **5 PASS** + `node --check app.js` OK + `make test` 회귀 0
   (잔여 4 = TEST.md 기록된 pre-existing local-env) + PRE 라이브 A/B 실측(textarea 240px→886px) +
   POST-DEPLOY PB-0008(assert 내장 시나리오).
+
+## REV-20260727T110000-share-edit-usable-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 기록 cycle
+- Related TASK: feature-0019-message-editing (TASK-SE-6 완료 기록).
+- Reason: 코드·정책 doc 변경 0 — 배포본 bb66ef16 의 POST-DEPLOY PB-0008 결과 기록(test-runs.d
+  fragment append + evidence 스크린샷) + 검증 시나리오 대기 보강(assert 강도 불변)뿐이라
+  §18.8 dispatch 표 첫 행(비정책 doc-only) 적용. 본 변경의 정본 리뷰는
+  REV-20260727T103000-share-edit-usable [CODEX] (SHIP-WITH-FIXES, P1 0·P2 1 in-cycle 수정).
+- Timestamp: 2026-07-27T11:00:00+09:00

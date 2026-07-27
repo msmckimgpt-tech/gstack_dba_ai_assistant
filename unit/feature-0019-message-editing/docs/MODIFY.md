@@ -171,3 +171,15 @@ source_of_truth: true
 - **검증**: 신규 `tests/test_share_edit_usable.py` 5건(F1 is-editing 부여·F2 rows wrap 추정·F3 액션
   컨테이너 합류·F4 CSS stretch·F5 edit-box width) + `node --check` OK + make test 회귀 0 +
   POST-DEPLOY PB-0008 라이브 시각검증(공유 대화 편집 폭·☰ 클릭 가능).
+
+## CHG-20260727T110000-share-edit-usable-postverify (POST-DEPLOY 라이브 검증 기록)
+- **일시**: 2026-07-27 11:00 KST · **branch**: `ai/claude/feature-0019-share-edit-postverify`
+- **내용**: 코드/자산 변경 0 — 배포본 **bb66ef16** 의 POST-DEPLOY PB-0008 라이브 결과 기록 +
+  검증 시나리오의 대화 목록 로드 대기 보강(첫 실행이 `selectConversation` 직후 `currentConversation()`
+  null 로 fail-fast 한 것을 폴링으로 해소 — assert 강도는 그대로, false-green 아님).
+- **결과**: 13 step `ok:true` 전부 PASS — actionContainers **1**(☰ 가림 해소, menuReachable true) ·
+  textarea **886px**(수정 전 240px)·height 165(60)·rows 7(2)·377자 전문 가시 · 취소 원복.
+- **Files**: `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260727T103000-share-edit-usable.md`
+  (POST-DEPLOY append), `.../test-runs.d/evidence/share-edit-usable-postdeploy.png`,
+  `unit/feature-0019-message-editing/src/scenario.share-edit-usable.json`(대기 보강),
+  `unit/feature-0019-message-editing/docs/{TASK,MODIFY,REPORT,REVIEW}.md`.

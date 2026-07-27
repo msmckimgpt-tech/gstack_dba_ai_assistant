@@ -109,4 +109,7 @@ PB-0008 라이브 실측(win-browser relay, bootstrap_admin)으로 **API·authz�
 - [x] TASK-SE-4 회귀 테스트 `test_share_edit_usable.py` 5건(F1 is-editing·F2 rows wrap·F3 컨테이너 합류·
       F4 CSS stretch·F5 edit-box width)
 - [x] TASK-SE-5 make test 회귀 0(잔여 4 = pre-existing local-env) + §18.8 리뷰(codex 0.145.0, REV-20260727T103000 SHIP-WITH-FIXES · P2 1건 in-cycle 수정) + verify-completion --pre-commit **PASS**
-- [ ] TASK-SE-6 commit·push·PR·머지·무중단 배포 + POST-DEPLOY PB-0008(공유 대화 편집 폭 실측·☰ 클릭 가능)
+- [x] TASK-SE-6 commit·push·PR #950·CI SUCCESS·머지(main **bb66ef16**)·`make deploy-web-only` 무중단
+      롤링(soak 통과) + **POST-DEPLOY PB-0008 PASS**(13 step ok:true — actionContainers 1·☰/수정 각각
+      hit-test 도달·textarea **886px**(240→)·height 165(60→)·rows 7(2→)·취소 원복). test-runs.d
+      fragment POST-DEPLOY 섹션 + evidence/share-edit-usable-postdeploy.png

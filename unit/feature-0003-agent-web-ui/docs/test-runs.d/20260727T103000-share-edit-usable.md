@@ -55,3 +55,30 @@ verdict: PRE PASS (라이브 실측 진단 + CSS 주입 폭 실증 + 단위 5/5)
   ① 공유 대화 user 말풍선 hover 시 `.message-actions` 컨테이너 **1개** + ☰·'수정' **각각 hit-test 도달 가능**
   ② '수정' 클릭 → 행에 `is-editing` + textarea 폭이 baseline 240px 대비 대폭 확장(로그 폭 근접)·rows≥3
   ③ '취소' → 편집 상태 원복(`is-editing` 0·편집 박스 0) ④ pageerror 0.
+
+---
+
+### [POST-DEPLOY 2026-07-27, 배포본 bb66ef16] Environment: Windows-browser (AI 직접 — `bin/win-browser.py` relay, Chrome 150)
+
+- **배포**: PR #950 머지(main **bb66ef16**) → `make deploy-web-only` 무중단 롤링(web-a/web-b 순차
+  recreate·`git_commit=bb66ef16` ready·Caddyfile no-drift·90s soak 통과, edge blip 1회 자동 회복).
+  `/healthz` = `{"status":"ok","git_commit":"bb66ef16","mysql_ok":true,"pg_ok":true}`.
+- **서빙본 확증(curl)**: `app.js?v=1e6cd74df162` 에 `classList.add("is-editing")` 1건 ·
+  `:scope > .message-actions` 1건, `styles.css?v=1e6cd74df162` 에 `.message.is-user.is-editing` 1건.
+  (content-hash 스탬프 자동 주입 — 구 캐시 자동 무효화.)
+- **시나리오**: `unit/feature-0019-message-editing/src/scenario.share-edit-usable.json`
+  (codex P2 반영 — 전 수용 조건을 `eval` throw 로 단언, `stop_on_fail` override 없음).
+  실행 결과 **`ok:true` · 13 step 전부 PASS**.
+
+| AC | 단언 | 실측 | 판정 |
+|---|---|---|---|
+| 대상 확정 | cid 일치·is_group·user 메시지·'수정' 버튼 존재 | `d23ad939` / is_group=true / userRows 1 / editTriggers 1 | PASS |
+| **AC1** ☰ 가림 해소 | `.message-actions` 컨테이너 == 1 · ☰·'수정' 각각 hit-test 도달 | **actionContainers 1**(수정 전 2) · editReachable **true** · **menuReachable true** | PASS |
+| **AC2** 편집창 폭 | `is-editing` 부여 · textarea > 300px · 로그 폭의 60% 이상 · rows ≥ 3 | logWidth 981 · bubble **918** · **textarea 886px**(수정 전 240) · height **165**(수정 전 60) · **rows 7**(수정 전 2) · 377자 · 버튼 `[단순 수정, 취소]`(그룹 재답변 미노출 유지) | PASS |
+| **AC3** 취소 원복 | 취소 후 `is-editing`·편집 박스 0 | editing 0 · editBoxes 0 · userRows 1 | PASS |
+
+- **육안**: evidence/share-edit-usable-postdeploy.png — 편집 창이 대화 폭 전체로 확장되고 **377자
+  전문이 7행으로 모두 보인다**(수정 전 240px·3행 잘림 대비). 그룹 규칙(단순 수정 전용)·'(편집됨)'
+  배지·좌우 정렬 등 기존 UI 계약 불변.
+- **Pass/Fail: POST-DEPLOY PB-0008 PASS** — 사용자 신고(공유 대화 메시지 텍스트 수정 상호작용
+  미진행) 해소. pageerror 관측 안 됨.
