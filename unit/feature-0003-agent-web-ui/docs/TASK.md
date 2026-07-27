@@ -6330,6 +6330,6 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] app.js: sqlTokenizeToFragment 추출 + looksLikeSql + enhanceDiffBlocks 배선
 - [x] share.js: 동일
 - [x] styles.css/share.css: 셀렉터 일반화 + .diff-sql
-- [x] headless chromium 검증(sql 블록 무회귀 + diff SQL 하이라이트 + 비-SQL diff 무영향) — 21/21 PASS, 시각증거 evidence/sql-diff-highlight-20260727.png
-- [ ] verify-completion → PR → deploy-web-only → POST-DEPLOY PB-0008
-정본 rationale=REVIEW REV-20260727T102027-sql-diff-highlight, 변경이력=MODIFY CHG-20260727T102027-sql-diff-highlight, Run 기록=test-runs.d/20260727T102027-sql-diff-highlight.md.
+- [x] headless chromium 검증(sql 블록 무회귀 + diff SQL 하이라이트 + 비-SQL diff 무영향) — 22/22 PASS(적대리뷰 수정 후), 시각증거 evidence/sql-diff-highlight-20260727.png
+- [x] verify-completion PASS → PR #948 머지(main 8d69490c) → deploy-web-only(web-a/b 8d69490c healthy) → **POST-DEPLOY PB-0008 라이브 PASS**(실 Windows Chrome/150, diff-sql·sql-tok 9·hunk 미토큰화·evidence/pb0008-sql-diff-live-20260727.png) — **완결**
+정본 rationale=REVIEW REV-20260727T102027-sql-diff-highlight, 변경이력=MODIFY CHG-20260727T102027-sql-diff-highlight, Run 기록=test-runs.d/20260727T102027-sql-diff-highlight.md, POST-DEPLOY=REV/CHG-20260727T110000-sql-diff-highlight-postverify.

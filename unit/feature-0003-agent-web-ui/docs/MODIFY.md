@@ -1044,3 +1044,8 @@ source_of_truth: true
 - **Files**: `src/static/app.js`(sqlTokenizeToFragment/highlightSqlInto/looksLikeSql/enhanceDiffBlocks) · `src/static/share.js`(동일 로컬 미러) · `src/static/styles.css`(`.sql-tok-*` 셀렉터 일반화 `pre.sql-block`→`.message-content .sql-tok-*` + `.diff-block.diff-sql .diff-line { color:#c0caf5 }`) · `src/static/share.css`(동일, `--share-code-fg`).
 - **Verification**: headless chromium(chromium-1208, 실 vendor) **21/21 PASS**(회귀·SQL diff 하이라이트·add/del 보존·평문 기본색·배경 tint·텍스트 무손실·비-SQL diff 무영향·게이트 오탐억제·XSS 무력화) · `node --check` · §18.8 [SUBAGENT] 적대 패널 · 시각증거 evidence/sql-diff-highlight-20260727.png. 정적 자산 web baked → 라이브 PB-0008 = POST-DEPLOY(visual_verification_scope: always).
 - **잔여**: verify-completion → commit → PR → merge → deploy-web-only → POST-DEPLOY PB-0008.
+
+## CHG-20260727T110000-sql-diff-highlight-postverify (POST-DEPLOY PB-0008 라이브 실측 기록, 비-정책 doc-only)
+- 코드/자산 0 — sql-diff-highlight(PR #948·main 8d69490c) 배포 후 라이브 검증 결과 기록만.
+- test-runs.d/20260727T102027-sql-diff-highlight.md POST-DEPLOY 결과(Windows-browser PASS) + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260727T110000-...(§12.2 deploy 근거) + evidence/pb0008-sql-diff-live-20260727.png.
+- 실측(실 Windows Chrome/150, https://localhost/ bootstrap_admin): 배포본 SQL diff → diff-sql·sql-tok 9·Tokyo Night 색 정확·hunk 미토큰화·add/del 구분·script 0. 사용자 요청 라이브 해소.
