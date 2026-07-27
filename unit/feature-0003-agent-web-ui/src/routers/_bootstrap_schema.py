@@ -841,7 +841,19 @@ def _ensure_web_tables():
                 pass
         # model-access-rbac(2026-07-28): 카탈로그 모델별 `model.access.<value>` 동적 권한 보장.
         # 제품 권한과 같은 시점(RBAC 마이그레이션 前)에 둬 effective permission 계산 정합을 맞춘다.
-        _model_perm_added = app._ensure_model_access_permissions(conn)
+        # model-access-seed-fix(2026-07-28): **격리 필수** — 이 seeder 가 던지면 뒤따르는
+        # _migrate_legacy_accounts_to_rbac · _ensure_bootstrap_admin · _seed_legacy_conversations 가
+        # 전부 skip 된다. 권한 seed 실패는 게이트 미설치(fail-open)로 흡수되는 국소 사건이어야 하고
+        # 부트스트랩 전체를 끌고 내려가선 안 된다. 실패는 stderr 로 loud 하게 남긴다(조용한 skip 금지).
+        try:
+            _model_perm_added = app._ensure_model_access_permissions(conn)
+        except Exception as _mp_exc:
+            _model_perm_added = 0
+            try:
+                import sys as _sys
+                _sys.stderr.write(f"[model-access-rbac] seed FAILED (부트스트랩 계속): {_mp_exc!r}\n")
+            except Exception:
+                pass
         if _model_perm_added > 0:
             try:
                 import sys as _sys
@@ -1046,7 +1058,22 @@ def _ensure_model_access_permissions(conn) -> int:
         if not code:
             continue
         label = str(item.get("label") or value)
+        # model-access-seed-fix(2026-07-28): 컬럼 길이 방어 클립 — Label VARCHAR(128) /
+        # Description VARCHAR(255). 초과하면 INSERT 가 1406(Data too long)으로 던지고 이 함수를
+        # 감싸는 부트스트랩 단계가 통째로 skip 된다(`_ensure_permission_catalog` 가 같은 fragility 를
+        # graph-perm-split 배포에서 실측하고 남긴 경고와 동일 축). 모델 label 이 길어져도 안전하게.
+        perm_label = f"모델 사용 — {label}"[:128]
+        perm_desc = (
+            f"작업 화면 대화에서 `{label}` 모델을 선택해 요청할 수 있습니다. "
+            f"해제하면 모델 선택기에서 숨겨지고 서버가 요청을 거부합니다 (내부 alias: {value})."
+        )[:255]
         cur = conn.cursor()
+        # ⚠️ placeholder 개수 = 파라미터 개수. IsDynamic 은 **반드시 바인딩**한다 — 이전 버전은
+        # placeholder 5개에 파라미터 4개를 넘겨 `ProgrammingError: Not enough parameters` 로
+        # 부트스트랩 seed 단계가 skip 됐다(라이브 실측 `[web.startup] seed catchup skipped`).
+        # 게이트가 fail-open('권한 row 미등록'=미설치)으로 설계돼 서비스 영향은 없었으나, 권한 row 가
+        # 생성되지 않아 기능 자체가 조용히 미적용됐다. 테스트 더블이 arity 를 검증하지 않아 단위
+        # 테스트를 통과한 것이 근본 gap → `_SeedCur` 가 이제 arity 를 단정한다.
         cur.execute(
             """
 INSERT IGNORE INTO WebPermissions (Code, Label, Description, GroupName, IsDynamic, ProductId)
@@ -1054,12 +1081,10 @@ VALUES (%s, %s, %s, %s, %s, NULL)
             """,
             (
                 code,
-                f"모델 사용 — {label}",
-                (
-                    f"작업 화면 대화에서 `{label}` 모델을 선택해 요청할 수 있습니다. "
-                    f"해제하면 모델 선택기에서 숨겨지고 서버가 요청을 거부합니다 (내부 alias: {value})."
-                ),
+                perm_label,
+                perm_desc,
                 MODEL_ACCESS_PERMISSION_GROUP,
+                1,  # IsDynamic — 동적 권한(제품 접근과 동일 규약)
             ),
         )
         newly_created = int(cur.rowcount or 0) > 0
@@ -2468,7 +2493,18 @@ def _ensure_seed_catchup(conn) -> None:
             pass
     # model-access-rbac(2026-07-28): slow path(catchup)에서도 모델 접근 권한 보장 — 기존 배포가
     # fast path 를 타지 않는 경로로 올라와도 권한 row 가 누락되지 않게(제품 권한과 동형 2지점 호출).
-    _model_perm_added = _ensure_model_access_permissions(conn)
+    # model-access-seed-fix(2026-07-28): 위와 동일 격리. 본 호출은 _ensure_seed_catchup 말미지만,
+    # 예외가 밖으로 나가면 caller 가 "seed catchup skipped" 로 함수 전체를 실패로 기록해 다음 재기동
+    # 까지 진단이 이 한 줄에 묶인다(라이브 실측). 국소 실패로 가둔다.
+    try:
+        _model_perm_added = _ensure_model_access_permissions(conn)
+    except Exception as _mp_exc:
+        _model_perm_added = 0
+        try:
+            import sys as _sys
+            _sys.stderr.write(f"[model-access-rbac catchup] seed FAILED (catchup 계속): {_mp_exc!r}\n")
+        except Exception:
+            pass
     if _model_perm_added > 0:
         try:
             import sys as _sys

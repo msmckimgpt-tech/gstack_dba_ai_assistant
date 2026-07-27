@@ -1976,4 +1976,8 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
   통과 + WARNING(게이트 미설치를 전원차단으로 해석하는 사고 방지). `conn=None` 은 미보유 거부(우회 차단).
 - **API 토큰(feature-0023)**: `model.access.*` 는 scope allowlist 면제(기존 토큰 무회귀) —
   통제는 서비스 계정 권한 + 절대 denylist + ask() 게이트가 유지.
+- **seed 견고성(model-access-seed-fix 2026-07-28)**: 권한 row seed 는 부트스트랩 2지점에서
+  `try/except` 로 격리된다 — 실패해도 후속 부트스트랩 단계(계정 RBAC 마이그·bootstrap admin·
+  레거시 대화 seed)를 끌고 내려가지 않고, 게이트는 fail-open(미설치)으로 현행 동작을 유지하며
+  실패는 stderr 에 loud 하게 남는다. `Label`/`Description` 은 컬럼 길이(128/255)로 방어 클립한다.
 - 권한 grid 배치: **운영 권한 > 모델 사용**(관리 권한 아님). 상세 경계는 `docs/SECURITY.md §28`.

@@ -1146,3 +1146,16 @@ source_of_truth: true
 - Verification: 신규 단위 **25 PASS**(G1~G8) · feature-0002+0003 전체 pytest **rc=0** · `ruff` All passed · `node --check` OK. **POST-DEPLOY PB-0008(부여·해제 양방향) 잔여** — 사유: 권한 grid 의 모델 row 는 부트스트랩이 seed 한 동적 권한을 받아 렌더하므로 배포 前 시각검증이 성립하지 않는다(test-runs.d 에 명시).
 - Rollback: 8지점 revert. 권한 row/grant 는 남지만 게이트가 사라져 현행 동작으로 복귀(무해).
 - Cross-ref: REVIEW REV-20260728T024258-model-access-rbac · test-runs.d/20260728T024258-model-access-rbac.md · SECURITY §28 · CONVENTIONS §10.6 · feature-0007 REPORT §7 의 R2(본 CHG 로 해소).
+
+## CHG-20260728T025614-model-access-seed-fix (모델 권한 seed SQL arity 수정 + 컬럼 길이 클립 + blast-radius 격리)
+- Date: 2026-07-28. 선행 CHG-20260728T024258-model-access-rbac 배포(28fcd71f) 후 라이브에서 `model.access.*` 권한 row **0개** 발견 — 기능 조용한 미적용.
+- 근본 원인: `_ensure_model_access_permissions` 의 `INSERT IGNORE INTO WebPermissions` 가 **placeholder 5개에 파라미터 4개**(`IsDynamic` 미바인딩) → `ProgrammingError: Not enough parameters for the SQL statement`. 라이브 로그 `[web.startup] seed catchup skipped: …` 로 확정.
+- **왜 단위 테스트를 통과했나(진짜 결함)**: 테스트 더블 `_SeedCur.execute` 가 SQL 문자열만 분기하고 **arity 를 검증하지 않았다** — 실 드라이버가 하는 검사를 더블이 생략해 통과. 더블의 충실도(fidelity) 부족이 근본 gap.
+- 영향 범위(실측): 예외가 `_ensure_seed_catchup` **말미**에서 발생하고 caller 가 잡아 로깅 → 같은 함수의 다른 seed 단계는 모두 선행 완료. 라이브 교차확인 — RoleId NULL 계정 0 · bootstrap_admin 존재 · 역할 8 · 권한 118 · product.access 19 · runtime_settings 스냅샷 정상. 게이트가 **fail-open(권한 row 미등록=미설치)** 로 설계돼 요청 경로는 현행 유지(403 폭주 없음) — 설계된 안전망이 실제로 작동, 손실은 기능 미적용 뿐.
+- 수정 ①: `IsDynamic` 파라미터 바인딩(`1`) — arity 정합.
+- 수정 ②: `Label`/`Description` **컬럼 길이 방어 클립**(VARCHAR 128/255). `_ensure_permission_catalog` 가 graph-perm-split 배포에서 실측·경고로 남긴 1406(Data too long) fragility 와 동일 축 — 모델 label 이 길어져도 seed 가 죽지 않게 선제 차단.
+- 수정 ③: **호출 2지점 try/except 격리**. seeder 실패가 slow path 의 후속 단계(`_migrate_legacy_accounts_to_rbac`·`_ensure_bootstrap_admin`·`_seed_legacy_conversations`)나 catchup 함수 전체를 끌고 내려가지 않게 한다. 권한 seed 실패는 게이트 미설치로 흡수되는 **국소 사건**이어야 한다. 실패는 stderr 로 loud(조용한 skip 금지).
+- 재발 가드: 테스트 더블이 `sql.count("%s") == len(params)` 를 **단정**(이 버그를 되돌리면 단위가 깨진다) + **G9 신설**(label 400자 fake 카탈로그 → Label<=128 · Description<=255 · IsDynamic==1 계약 고정).
+- Verification: 단위 **26 PASS**(G1~G9) · 전체 pytest **rc=0** · ruff All passed. POST-DEPLOY: seed 성공(권한 row 3 + 전 역할 grant) 확인 + 선행 cycle 에서 이관한 **PB-0008 부여·해제 양방향** 검증.
+- Rollback: 3지점 revert(단 seed 가 다시 실패 상태로 복귀).
+- Cross-ref: REVIEW REV-20260728T025614-model-access-seed-fix · test-runs.d/20260728T025614-model-access-seed-fix.md · 선행 CHG-20260728T024258-model-access-rbac · SECURITY §28.

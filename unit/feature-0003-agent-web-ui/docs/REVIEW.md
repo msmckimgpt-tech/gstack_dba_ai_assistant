@@ -1074,3 +1074,15 @@ source_of_truth: true
 - 위험도: **Critical(§12.3 인가 구조 변경)**. 완화: 스키마·마이그레이션 0(기존 테이블 재사용) · 기본 전 부여로 배포 무회귀 · 신규 권한은 운영 권한 묶음(관리 콘솔 접근과 무관) · fail-closed 기본.
 - Verification: 단위 25 PASS · 전체 pytest rc=0 · ruff All passed · node --check OK.
 - Cross-ref: MODIFY CHG-20260728T024258-model-access-rbac / test-runs.d/20260728T024258-model-access-rbac.md / SECURITY §28 / CONVENTIONS §10.6 / feature-0007 REPORT §7 R2.
+
+## REV-20260728T025614-model-access-seed-fix [SKIPPED:live-root-cause-confirmed+session-policy-no-subagent] — PASS
+- 대상: 모델 권한 seed SQL arity 수정 + 컬럼 길이 클립 + 호출부 격리. CHG-20260728T025614-model-access-seed-fix 정합.
+- 리뷰 방식([SKIPPED] 사유): 근본 원인이 **라이브 로그 + 컨테이너 내 직접 호출 재현**으로 결정적으로 확정됐고(추정 아님), 수정은 파라미터 1개 바인딩 + 클립 2줄 + try/except 2곳이다. §18.8 subagent 패널은 세션 정책(Agent tool 미허용)으로 미수행.
+- **배운 것(이번 cycle 의 핵심 교훈)**: 테스트 더블이 **실 드라이버의 계약을 흉내내지 않으면 단위 테스트가 통과 도장을 찍어준다**. 25개 테스트가 전부 green 이었는데 라이브에서 seed 가 한 번도 성공하지 못했다 — 더블이 SQL 문자열만 보고 arity 를 안 봤기 때문이다. 수정은 버그 자체보다 **더블에 그 검사를 심는 것**이 본질이다(그래서 arity 단정을 두 더블 모두에 넣었다).
+- 자기 적대 검토:
+  - *fail-open 설계가 결함을 가렸나?* 부분적으로 그렇다 — 403 폭주가 없어 즉시 드러나지 않았다. 그러나 대안(fail-closed)이었다면 이 버그가 **전 사용자 대화 403** 으로 터졌다. 설계는 옳았고, 부족한 것은 **seed 성공 여부의 능동 확인**이었다(POST-DEPLOY 체크리스트에 권한 row 카운트를 추가해 보완).
+  - *격리가 실패를 숨기나?* try/except 는 예외를 삼키지만 stderr 에 `seed FAILED` 를 loud 하게 남기고, POST-DEPLOY 가 권한 row 수를 직접 센다. "조용한 skip" 은 남지 않는다.
+  - *클립이 의미를 잘라 오해를 만드나?* Label 은 `모델 사용 — <label>` 로 짧고, Description 은 문장 끝이 잘릴 수 있으나 권한의 식별·판단은 Code/Label 로 하며 grid 는 Description 을 보조로만 쓴다. 1406 으로 seed 전체가 죽는 것보다 낫다.
+- 위험도: Minor(§12.3) — 선행 Critical cycle 의 버그 수정. 인가 판정 로직·경계 무변경(seed 경로만).
+- Verification: 단위 26 PASS · 전체 pytest rc=0 · ruff · ast.parse OK.
+- Cross-ref: MODIFY CHG-20260728T025614-model-access-seed-fix / test-runs.d/20260728T025614-model-access-seed-fix.md / 선행 REV-20260728T024258-model-access-rbac.
