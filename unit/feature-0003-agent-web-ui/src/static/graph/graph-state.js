@@ -103,6 +103,13 @@ const _metaGraph = {
   catCollapsed: new Set(),    // 접힌 카테고리 catKey(멤버 클러스터 미방출·헤더 밴드만)
   catMembers: new Map(),      // catKey -> [멤버 클러스터(comboId)] — 매 build 재구성(카테고리 드래그 소비)
   catLabelOf: new Map(),      // catKey -> 표시 라벨 — 매 build 재구성(상세·헤더)
+  // detail-db-groups(사용자 요구 2026-07-27): 상세 패널의 **관련 노드 목록**(사용 함수·프로시저, 참조함/
+  //   참조받음)을 소속 DB(스키마 클러스터 = _metaCatParent) 단위로 묶고 접기/펼치기 한다. 여기엔 사용자가
+  //   **명시적으로 조작한** 그룹만 기록한다(key=DB 그룹 key `scope:db`, val=true 펼침 / false 접힘).
+  //   미기록 그룹은 기본 규칙(선택 노드와 같은 DB=펼침 · 다른 DB=접힘)을 따른다 — Set 은 "접힘" 만 담을 수
+  //   있어 기본-접힘+사용자-펼침 기억을 표현하지 못하므로 Map 을 쓴다. DB key 기준이라 노드 상세↔관계 상세
+  //   전환 간에도 사용자의 펼침 의도가 유지된다(세션 한정, 리로드 초기화).
+  panelDbGroupState: new Map(),
   panelGroupCollapsed: new Set(),  // graph-funcproc(cluster-detail-collapse): 클러스터 상세 패널에서 접힌 컨텐츠 카테고리 그룹 key(sg.key="panel:"+name+""+fam). 같은 클러스터 재렌더 간 접힘 유지(세션 한정, 리로드 초기화).
 };
 

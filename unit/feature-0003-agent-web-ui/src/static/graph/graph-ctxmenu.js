@@ -773,7 +773,7 @@ async function _metaGraphShowDetail(key) {
   }
   _metaGraphSetSelected(key);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
-  _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], { truncated: !!data.truncated });
   const nb = Math.max(0, (data.nodes || []).length - 1);
   _metaGraphStatus(`상세: ${self.name || key} · 이웃 ${nb}개 (더블클릭 = 관계 확장 · 우클릭 = 상호작용 메뉴)`);
 }
@@ -1206,7 +1206,7 @@ async function _metaGraphExpand(key, depthOverride) {
   _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };
   _metaGraphHistoryRecord(key, "node");   // §54①: seq 가드 뒤 성공-기반 기록(실패/스테일 확장 미기록).
-  _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], { truncated: !!data.truncated });
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}${introspectNote}`);
 }
 
@@ -1244,7 +1244,7 @@ async function _metaGraphFocus(key) {
   _metaGraphSetSelected(key);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
   _metaGraphHistoryRecord(key, "node");   // §54①: seq 가드 뒤 성공-기반 기록(중심보기).
-  _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], { truncated: !!data.truncated });
   const nm = (_metaGraph.nodes.get(key) || {}).name || key;
   _metaGraphFocusChip(nm);   // review MAJOR-3: 부분 그래프임을 지속 표시 + '전체 보기' 복귀
   _metaGraphStatus(`${nm} 중심 ${depth}-hop — 노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length} ('전체 보기'로 복귀)`);
@@ -1379,6 +1379,7 @@ function _metaGraphRenderDetailEmpty() {
   // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
+  _metaDbGrpLazy.clear();   // detail-db-groups(review MINOR-3): 패널 비우기 — 미펼침 payload 도 함께 정리(누수 방지).
   el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p><p class="admin-meta-detail-note">노드를 <strong>우클릭</strong>하면 상세 보기·관계 상세·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다.</p></div>';
 }
 
@@ -1391,6 +1392,7 @@ function _metaGraphRenderDetailEmpty() {
 function _metaGraphRenderSearchResults(nodes, q) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
+  _metaDbGrpLazy.clear();   // detail-db-groups(review MINOR-3): 검색 결과로 패널 교체 — 미펼침 payload 정리(누수 방지).
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const list = (nodes || []).filter((n) => n && n.key);
   if (!list.length) {
@@ -1538,11 +1540,257 @@ function _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn) {
 }
 
 // 통합 엔티티 카드 — 클릭 노드의 이웃을 카테고리(컬럼·관계·용어)로 묶어 표시.
-function _metaGraphRenderDetail(self, nodes, edges) {
+// ── detail-db-groups(사용자 요구 2026-07-27) ────────────────────────────────────────────────
+//   상세 패널이 보여주는 **관련성 있는 다른 노드 목록**(사용하는 함수·프로시저, 참조함/참조받음)을
+//   ① 소속 **DB(스키마) 단위로 그룹**해 접기/펼치기 하고, ② 종전의 조용한 상한 절단("… 외 N건" 으로
+//   목록이 숨겨지던 이슈)을 제거해 **전량**을 그룹 안에서 볼 수 있게 한다.
+//
+//   그룹 축 = `_metaCatParent(key, fqn)` = `"<scope>:<db>"` — 캔버스의 스키마 클러스터와 **동일 축**이라
+//   패널 구획이 화면 구획과 1:1 로 대응한다(밴드=제품 카테고리 / 스키마 클러스터=DB / sim-group=컨텐츠 카테고리).
+//
+//   성능 — 상한 제거로 한 섹션이 수백~수천 행이 될 수 있으므로 **접힌 그룹은 DOM 을 만들지 않는다**(lazy).
+//   행 HTML 문자열만 `_metaDbGrpLazy` 에 보관했다가 사용자가 펼칠 때 body 컨테이너에 주입 + 그 컨테이너에
+//   한정해 행 바인딩(bind 콜백)을 수행한다. 기본 규칙(선택 노드와 같은 DB 만 펼침)과 맞물려 초기 렌더의
+//   DOM·리스너 비용이 종전(상한 30/60 행)과 같은 수준으로 유지된다.
+const _META_DBGRP_ROW_CAP = 4000;   // 비현실 극단 전용 안전 가드(브라우저 행 폭주 방지). 실사용은 사실상 무제한.
+const _META_DBGRP_FLAT_MAX = 60;    // 총 항목이 이 개수 이하면 전 그룹 기본 펼침(짧은 목록은 절대 숨기지 않는다).
+const _META_DBGRP_BIG = 300;        // 이 개수를 넘는 그룹은 초기 렌더에서 접힘(DOM·리스너 폭주 방지).
+const _metaDbGrpLazy = new Map();   // gid -> { html, bind } — 접힌 그룹의 지연 렌더 payload(패널 재렌더마다 초기화)
+let _metaDbGrpSeq = 0;
+
+// 노드 키의 DB(스키마) 그룹 key. 스키마 세그먼트가 없으면(스키마 노드 자신·용어 등) "".
+//   review m1: 용어(GlossaryTerm) 등 비-스키마 노드는 fqn 에 "." 이 있으면 유령 DB 그룹(예: "v1.0레벨" → "v1")을
+//   만들 수 있어, 호출부가 label 을 넘기면 스키마 소속 라벨(Table/Column/Routine)만 그룹 축으로 인정한다.
+const _META_DBGRP_LABELS = { Table: 1, Column: 1, Routine: 1 };
+function _metaDbGroupKeyOf(key, fqn, label) {
+  if (label && !_META_DBGRP_LABELS[label]) return "";
+  return _metaCatParent(key, fqn) || "";
+}
+
+// 그룹 펼침 여부 — 우선순위(review B1·M1·M2 반영):
+//   ① 대형 그룹(> _META_DBGRP_BIG)은 **사용자 기록보다 우선해 접힘** — 노드 전환 때마다 수천 행이 동기 렌더되며
+//      행별 리스너를 다는 것을 막는다(펼침은 그 패널 안에서 유지되고, 재렌더 시 다시 접힌 채 시작).
+//   ② 사용자가 조작한 적 있으면 그 상태.
+//   ③ 총 항목이 적으면(≤ _META_DBGRP_FLAT_MAX) **전 그룹 펼침** — 다중 DB 라는 이유로 3건짜리 목록이
+//      머리글 뒤로 숨는 퇴행(종전보다 덜 보임)을 차단한다.
+//   ④ 선택 노드와 같은 DB 는 펼침. self DB 그룹이 아예 없으면 **첫 그룹**을 펼쳐 빈 화면을 만들지 않는다.
+//   ⑤ 그 외 접힘.
+function _metaDbGroupOpen(gkey, selfDbKey, n, ctx) {
+  if ((n || 0) > _META_DBGRP_BIG) return false;
+  const st = _metaGraph.panelDbGroupState;
+  if (st && st.has(gkey)) return st.get(gkey) === true;
+  if (ctx && ctx.total <= _META_DBGRP_FLAT_MAX) return true;
+  if (gkey && gkey === selfDbKey) return true;
+  return !!(ctx && ctx.isFirst && !ctx.hasSelfGroup);
+}
+
+// 관련 노드 목록을 DB 그룹 <li> 시퀀스로 조립한다(호출부의 <ul class="amgr-list"> 안에 그대로 삽입).
+//   items: [{ key, fqn, label?, html }] — html 은 호출부가 만든 완성 행(<li>…</li>) 문자열.
+//   opts : { selfDbKey, esc, bind } — bind(containerEl) 는 lazy 주입 시 그 컨테이너에만 적용할 행 바인딩.
+//   단일 DB + 짧은 목록(≤ _META_DBGRP_FLAT_MAX)이면 머리글 없이 평면으로 반환한다(짧은 목록에 클릭 단계를
+//   늘리지 않음 — 기존 UX 유지). 그 외에는 [모두 펼치기 컨트롤] + DB 머리글 + 본문 <li> 를 방출한다.
+function _metaDbGroupedRowsHTML(items, opts) {
+  const list = items || [];
+  if (!list.length) return "";
+  // NIT(review): 기본 esc 는 항등이 아니라 escaping — 이 값들은 속성(data-*/aria-label)에 들어간다.
+  const esc = (opts && opts.esc) || ((s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"));
+  const selfDbKey = (opts && opts.selfDbKey) || "";
+  const bind = (opts && opts.bind) || null;
+  const groups = new Map();   // gkey -> items[]
+  list.forEach((it) => {
+    const gk = _metaDbGroupKeyOf(it.key, it.fqn, it.label);
+    if (!groups.has(gk)) groups.set(gk, []);
+    groups.get(gk).push(it);
+  });
+  // 전부 같은 DB + 짧은 목록이면 평면 — 클릭 단계를 늘리지 않는다(기존 UX 유지).
+  //   같은 단일 DB 라도 길면(> FLAT_MAX) 머리글을 만들어 접기/펼치기 + lazy 렌더 대상으로 삼는다.
+  if (groups.size <= 1 && list.length <= _META_DBGRP_FLAT_MAX) {
+    return list.map((it) => it.html).join("");
+  }
+  // 그룹 순서: 스키마 미상("")은 항상 마지막 → 선택 노드와 같은 DB 최우선 → 나머지 DB 명 자연정렬.
+  //   (review n1: "" 검사를 self 검사보다 먼저 — selfDbKey 가 "" 인 상세에서 미상 그룹이 맨 앞으로 오던 모순 제거.)
+  const order = [...groups.keys()].sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    if (a === selfDbKey) return -1;
+    if (b === selfDbKey) return 1;
+    return _metaNatSort(_metaComboName(a), _metaComboName(b));
+  });
+  // review m2: 서로 다른 datasource 의 동명 DB 가 같은 머리글로 두 번 보이지 않게, scope 가 섞였을 때만 병기.
+  const scopeOf = (k) => { const i = String(k).indexOf(":"); return i >= 0 ? String(k).slice(0, i) : ""; };
+  const multiScope = new Set(order.filter(Boolean).map(scopeOf)).size > 1;
+  const hasSelfGroup = groups.has(selfDbKey) && !!selfDbKey;
+  const setId = `dbs${++_metaDbGrpSeq}`;   // '모두 펼치기/접기' 가 다루는 그룹 세트(섹션마다 독립)
+  const heads = [];
+  let emitted = 0, anyCollapsed = false;
+  order.forEach((gk, idx) => {
+    const members = groups.get(gk);
+    const gid = `dbg${++_metaDbGrpSeq}`;
+    const open = _metaDbGroupOpen(gk, selfDbKey, members.length, { total: list.length, isFirst: idx === 0, hasSelfGroup });
+    if (!open) anyCollapsed = true;
+    const base = gk ? _metaComboName(gk) : "스키마 미상";
+    const label = (multiScope && gk) ? `${scopeOf(gk)} · ${base}` : base;
+    const panKey = members[0] ? members[0].key : "";
+    // review B2: ROW_CAP 예산은 **실제 DOM 을 만드는 펼친 그룹만** 소비한다. 접힌 그룹이 예산을 깎아
+    //   payload 가 빈 문자열이 되면, 펼쳤을 때 아무것도 없는 목록이 나오는 무음 실패가 된다.
+    const shown = open ? Math.min(members.length, Math.max(0, _META_DBGRP_ROW_CAP - emitted)) : members.length;
+    const cut = members.length - shown;
+    const trunc = cut > 0 ? ` <span class="amgr-ct-group-trunc">(${shown}/${members.length})</span>` : "";
+    heads.push(
+      `<li class="amgr-ct-group amgr-dbgrp${open ? "" : " is-collapsed"}" role="button" tabindex="0" aria-expanded="${open}" ` +
+      `data-dbgrp="${gid}" data-dbgrp-set="${setId}" data-dbgrp-key="${esc(gk)}"${panKey ? ` data-pan-key="${esc(panKey)}"` : ""} ` +
+      `aria-controls="amgr-dbgrp-body-${gid}" ` +
+      `aria-label="${esc(label)} DB · 항목 ${members.length}개${cut > 0 ? ` (표시 상한으로 ${shown}개만 표시)` : ""}">` +
+      `<span class="amgr-ct-group-caret" aria-hidden="true">${open ? "▾" : "▸"}</span>` +
+      `<span class="amgr-ct-group-label">${esc(label)}</span>` +
+      `<span class="amgr-ct-group-n">${members.length}</span>${trunc}</li>`
+    );
+    const rowsHTML = members.slice(0, shown).map((it) => it.html).join("")
+      + (cut > 0 ? `<li class="admin-meta-graph-muted amgr-more">… 외 ${cut}건 (표시 상한 ${_META_DBGRP_ROW_CAP})</li>` : "");
+    // 펼침이면 즉시 렌더(호출부의 일괄 바인딩이 그대로 적용), 접힘이면 비운 채 payload 만 보관(lazy).
+    if (open) {
+      emitted += shown;
+      heads.push(`<li class="amgr-dbgrp-body" id="amgr-dbgrp-body-${gid}" data-dbgrp-body="${gid}"><ul class="amgr-list">${rowsHTML}</ul></li>`);
+    } else {
+      _metaDbGrpLazy.set(gid, { html: rowsHTML, bind });
+      heads.push(`<li class="amgr-dbgrp-body" id="amgr-dbgrp-body-${gid}" data-dbgrp-body="${gid}" hidden><ul class="amgr-list"></ul></li>`);
+    }
+  });
+  // review M3: '모두 펼치기/접기' — 클러스터 상세(metaGraphCtCollapseAll)와 같은 편의 컨트롤. DB 가 여럿인
+  //   목록에서 그룹 수만큼 클릭해야 전체를 보던 마찰을 없애고, 기본 접힘·상태 고착의 탈출로가 된다.
+  const allCtl = `<li class="amgr-dbgrp-allctl"><button type="button" class="amgr-link amgr-dbgrp-all" data-dbgrp-all="${setId}" ` +
+    `title="이 목록의 모든 DB 를 한 번에 접거나 펼칩니다">${anyCollapsed ? "▾ 모두 펼치기" : "▸ 모두 접기"}</button></li>`;
+  return allCtl + heads.join("");
+}
+
+// DB 그룹 헤딩 토글 바인딩(노드 상세·관계 상세 공통). rootEl 은 패널 body — 매 렌더 innerHTML 로 교체되므로
+//   리스너가 누적되지 않는다(직전 DOM 은 리스너와 함께 GC).
+function _metaBindDbGroups(rootEl) {
+  if (!rootEl) return;
+  rootEl.querySelectorAll(".amgr-dbgrp[data-dbgrp]").forEach((h) => {
+    const act = () => _metaToggleDbGroup(h, rootEl);
+    h.addEventListener("click", act);
+    h.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+      e.preventDefault(); act();
+    });
+    // review m3: 머리글 hover 카메라 팬은 걸지 않는다 — 클러스터 상세의 컨텐츠 카테고리와 달리 이 머리글은
+    //   **다른 DB**(캔버스 반대편)를 가리켜, 어느 그룹을 펼칠지 고르며 훑는 동안 화면이 크게 튄다. 대상 이동은
+    //   그룹을 펼친 뒤 개별 행 hover/클릭으로 한다.
+  });
+  // '모두 펼치기/접기' — 같은 세트의 그룹을 일괄 토글(하나라도 접혀 있으면 전부 펼치고, 아니면 전부 접는다).
+  rootEl.querySelectorAll(".amgr-dbgrp-all[data-dbgrp-all]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation(); ev.preventDefault();
+      const setId = btn.getAttribute("data-dbgrp-all");
+      const hs = [...rootEl.querySelectorAll(`.amgr-dbgrp[data-dbgrp-set="${setId}"]`)];
+      if (!hs.length) return;
+      const expand = hs.some((h) => h.classList.contains("is-collapsed"));
+      hs.forEach((h) => { if (h.classList.contains("is-collapsed") === expand) _metaToggleDbGroup(h, rootEl); });
+      _metaSyncDbGrpAllLabel(rootEl, setId);
+    });
+  });
+}
+
+// review MAJOR-4: 컬럼 아코디언 본문(관계 행)의 지연 렌더 payload 등록 — 반환값은 body 의 data-collazy 토큰.
+//   DB 그룹의 lazy 기계(_metaDbGrpLazy)를 그대로 재사용해 상태·정리 경로를 하나로 유지한다.
+function _metaColBodyLazy(html, selfKey) {
+  const gid = `dbcol${++_metaDbGrpSeq}`;
+  _metaDbGrpLazy.set(gid, {
+    html,
+    bind: (c) => { _metaGraphBindTraceRows(c); _metaGraphBindDetailHover(c, selfKey); _metaBindDbGroups(c); },
+  });
+  return gid;
+}
+
+// 컬럼 아코디언 첫 펼침 — payload 주입 + 그 컨테이너 한정 바인딩(1회). payload 가 이미 소비됐으면 no-op.
+function _metaColBodyReveal(body, selfKey) {
+  if (!body) return;
+  const gid = body.getAttribute("data-collazy");
+  if (!gid) return;
+  const pend = _metaDbGrpLazy.get(gid);
+  if (pend) {
+    body.innerHTML = pend.html;
+    if (typeof pend.bind === "function") { try { pend.bind(body); } catch (_) { /* 바인딩 실패가 표시를 막지 않음 */ } }
+    _metaDbGrpLazy.delete(gid);
+    return;
+  }
+  // payload 가 없고 본문도 비어 있으면 = 패널 재렌더/예외로 payload 가 정리된 stale DOM. 무음 대신 안내.
+  if (!body.firstChild) body.innerHTML = `<p class="admin-meta-graph-desc admin-meta-graph-muted">목록을 다시 불러오세요 — 패널이 갱신되었습니다.</p>`;
+}
+
+// review MAJOR-1: 백엔드 이웃 투영이 `_NEIGHBOR_NODE_CAP`(300)에 걸려 **부분 이웃**을 돌려준 경우의 고지 배너.
+//   프론트 상한을 전부 없애도 이 상한이 남아 있으므로, 알리지 않으면 종전과 같은 "무음 절단" 이 된다.
+//   (백엔드가 `truncated: true` 를 세팅하는 경로에서만 뜬다 — 정상 응답에는 노출 없음.)
+function _metaDbGrpTruncNotice(meta) {
+  if (!meta || !meta.truncated) return "";
+  return `<p class="admin-meta-detail-note amgr-trunc-note">⚠ 이 노드의 이웃이 조회 상한에 걸려 <strong>일부만</strong> 불러왔습니다 — 아래 목록은 불러온 범위 안에서 생략 없이 전부 표시합니다. 더 보려면 '🕸 그래프에 펼치기' 로 이웃을 단계적으로 확장하세요.</p>`;
+}
+
+// '모두 펼치기/접기' 라벨을 현재 그룹 상태로 재동기화(개별 토글 후 라벨-동작 불일치 방지).
+function _metaSyncDbGrpAllLabel(rootEl, setId) {
+  if (!rootEl || !setId) return;
+  const btn = rootEl.querySelector(`.amgr-dbgrp-all[data-dbgrp-all="${setId}"]`);
+  if (!btn) return;
+  const hs = [...rootEl.querySelectorAll(`.amgr-dbgrp[data-dbgrp-set="${setId}"]`)];
+  if (!hs.length) return;
+  btn.textContent = hs.some((h) => h.classList.contains("is-collapsed")) ? "▾ 모두 펼치기" : "▸ 모두 접기";
+}
+
+function _metaToggleDbGroup(h, rootEl, syncSiblings) {
+  if (syncSiblings === undefined) syncSiblings = true;
+  if (!h || !rootEl) return;
+  const gid = h.getAttribute("data-dbgrp");
+  const gkey = h.getAttribute("data-dbgrp-key") || "";
+  const open = !h.classList.contains("is-collapsed");   // 현재 펼침 → 이번 클릭은 접기
+  const body = gid ? rootEl.querySelector(`.amgr-dbgrp-body[data-dbgrp-body="${gid}"]`) : null;
+  h.classList.toggle("is-collapsed", open);
+  h.setAttribute("aria-expanded", String(!open));
+  const caret = h.querySelector(".amgr-ct-group-caret");
+  if (caret) caret.textContent = open ? "▸" : "▾";
+  if (body) {
+    if (!open) {
+      // 펼치는 중 — lazy payload 가 남아 있으면 이때 주입하고 그 컨테이너에만 행 바인딩을 건다(1회).
+      const pend = gid ? _metaDbGrpLazy.get(gid) : null;
+      const ul = body.querySelector("ul");
+      if (pend) {
+        if (ul) {
+          ul.innerHTML = pend.html;
+          if (typeof pend.bind === "function") { try { pend.bind(ul); } catch (_) { /* 바인딩 실패는 표시를 막지 않음 */ } }
+        }
+        _metaDbGrpLazy.delete(gid);
+      } else if (ul && !ul.firstChild) {
+        // review MINOR-1: payload 가 없고 본문도 비었다 = 렌더 도중 예외 등으로 payload 만 정리된 stale DOM.
+        //   빈 목록을 조용히 보여주는 것이 이번 작업이 없애려던 무음 실패이므로, 상태를 명시한다.
+        ul.innerHTML = `<li class="admin-meta-graph-muted">목록을 다시 불러오세요 — 패널이 갱신되었습니다.</li>`;
+      }
+    }
+    body.hidden = open;
+  }
+  // 사용자 조작 기록 — 다음 렌더·다른 상세 뷰에서도 이 DB 의 펼침/접힘 의도가 유지된다.
+  //   (대형 그룹은 _metaDbGroupOpen 이 이 기록보다 우선해 접힌 채 시작한다 — review M2 성능 가드.)
+  //   review MINOR-5: 스키마 미상("") 버킷은 모든 패널이 한 슬롯을 공유해 의미가 뒤섞이므로 기록하지 않는다.
+  if (gkey && _metaGraph.panelDbGroupState) _metaGraph.panelDbGroupState.set(gkey, !open);
+  // review MINOR-6: 같은 렌더 안에 같은 DB 머리글이 여럿(읽기/쓰기·방향별·컬럼별)일 수 있다 — 형제도 같이 맞춘다.
+  //   `syncSiblings === false` 로 재진입해 무한 재귀를 막는다(형제 토글이 다시 형제를 찾지 않음).
+  if (gkey && syncSiblings) {
+    const want = !open;   // 이번 조작 후의 목표 상태(true=펼침)
+    rootEl.querySelectorAll(".amgr-dbgrp[data-dbgrp-key]").forEach((sib) => {
+      if (sib === h || sib.getAttribute("data-dbgrp-key") !== gkey) return;
+      if (!sib.classList.contains("is-collapsed") !== want) _metaToggleDbGroup(sib, rootEl, false);
+    });
+  }
+  // 같은 세트의 '모두 펼치기/접기' 라벨을 현재 상태로 재동기화(개별 토글 후 라벨-동작 불일치 방지).
+  _metaSyncDbGrpAllLabel(rootEl, h.getAttribute("data-dbgrp-set"));
+}
+
+function _metaGraphRenderDetail(self, nodes, edges, meta) {
   // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여(예약 팬·강조) 정리(mouseleave 미발화 경로 대비).
+  _metaDbGrpLazy.clear();   // detail-db-groups: 직전 패널의 미펼침 payload 폐기(재렌더로 gid 가 무효화되므로 누수 방지).
   // 항목1: 이 노드가 검색 결과라 그래프에 rel(유사도)이 실려 있으면 상세 헤더에 % 명시.
   const selfScopeKey = (self.key && self.key.indexOf(":") >= 0)
     ? self.key.slice(0, self.key.indexOf(":")) : (adminState.metadata.scopeKey || "common");
@@ -1558,6 +1806,8 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   //   raw scoped key 노출 방지(review LOW) — 모델에 없는 병합 끝점도 읽기 쉬운 fqn 으로 표시.
   const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || ((_metaGraph.nodes.get(k) || {}).fqn) || ((_metaGraph.nodes.get(k) || {}).name) || _metaKeyDisplayNode(k).fqn || k;
   const selfKey = self.key;
+  // detail-db-groups: 선택 노드가 속한 DB — 그룹 정렬(최우선)·기본 펼침 판정 기준.
+  const selfDbKey = _metaDbGroupKeyOf(selfKey, self.fqn || (_metaGraph.nodes.get(selfKey) || {}).fqn);
   // 컬럼(HAS_COLUMN out), 관계(REFERENCES), 용어(GlossaryTerm), 부모 스키마(HAS_TABLE in)
   const columns = [], refs = [], terms = [], routineUses = [];
   const refSeen = new Set();
@@ -1649,12 +1899,21 @@ function _metaGraphRenderDetail(self, nodes, edges) {
       `${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(_META_EDGE_SOURCE_KO[e.edge_source] || e.edge_source) + ")</span>" : ""}` +
       `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`;
   };
+  // detail-db-groups: 방향 그룹 안의 상대 노드를 **소속 DB 단위**로 다시 묶는다(크로스-DB 참조가 섞이면
+  //   어느 DB 의 무엇을 참조하는지 한눈에 구분). 단일 DB 면 그룹 계층 없이 평면(기존 UX 동일).
   const dirGroup = (list, dir) => {   // 방향 그룹(참조함/참조받음) + 개수
     if (!list.length) return "";
     const label = dir === "out" ? "참조함" : "참조받음";
     const arrow = dir === "out" ? "→" : "←";
+    const rows = _metaDbGroupedRowsHTML(
+      list.map((it) => {
+        const on = byKey[it.other] || _metaGraph.nodes.get(it.other) || {};
+        return { key: it.other, fqn: on.fqn, label: on.label, html: relRow(it, dir) };
+      }),
+      { selfDbKey, esc, bind: (c) => { _metaGraphBindTraceRows(c); _metaGraphBindDetailHover(c, selfKey); } }
+    );
     return `<div class="amgr-dir"><div class="amgr-dir-head"><span class="amgr-arrow">${arrow}</span> ${label} (${list.length})</div>` +
-      `<ul class="amgr-list">${list.map((it) => relRow(it, dir)).join("")}</ul></div>`;
+      `<ul class="amgr-list">${rows}</ul></div>`;
   };
 
   if (columns.length || selfIsColumn) {
@@ -1677,8 +1936,10 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     } else {
       // 테이블 상세: 컬럼 목록 — 관계 있는 컬럼은 아코디언(클릭 펼침).
       parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})${relSummary}</h4>`);
-      parts.push(`<p class="admin-meta-detail-note">컬럼을 클릭하면 선택되어 상세로 전환되고 그래프에서 강조됩니다. 관계가 있는 컬럼(🔗)은 캐럿(▸)으로 참조함/참조받음 관계를 그 자리에서 펼칠 수 있습니다. 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
-      columns.slice(0, 80).forEach((c) => {
+      parts.push(`<p class="admin-meta-detail-note">컬럼을 클릭하면 선택되어 상세로 전환되고 그래프에서 강조됩니다. 관계가 있는 컬럼(🔗)은 캐럿(▸)으로 참조함/참조받음 관계를 그 자리에서 펼칠 수 있습니다(상대가 여러 DB 면 DB 머리글로 묶임). 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
+      // detail-db-groups: 종전 80개 **무음** 절단(헤더 개수와 실제 행 수가 조용히 어긋남) 제거 — 전량 렌더.
+      //   컬럼은 선택 노드 자신의 소속이라 DB 그룹 축이 무의미하므로 그룹핑 없이 전량, 안전 가드만 유지.
+      columns.slice(0, _META_DBGRP_ROW_CAP).forEach((c) => {
         const cr = colRel.get(c.key);
         const nOut = cr ? cr.out.length : 0, nIn = cr ? cr.in.length : 0;
         if (!cr || (nOut + nIn) === 0) {
@@ -1693,16 +1954,19 @@ function _metaGraphRenderDetail(self, nodes, edges) {
           `🔗 <code>${esc(c.name)}</code>` +
           `<span class="amgr-col-relcount" title="참조함 ${nOut} · 참조받음 ${nIn}">→${nOut} ←${nIn}</span></button>` +
           `</div>` +
-          `<div class="amgr-col-body" id="amgr-colbody-${esc(c.key)}" data-colbody="${esc(c.key)}" hidden>${dirGroup(cr.out, "out")}${dirGroup(cr.in, "in")}</div>` +
+          `<div class="amgr-col-body" id="amgr-colbody-${esc(c.key)}" data-colbody="${esc(c.key)}" data-collazy="${_metaColBodyLazy(dirGroup(cr.out, "out") + dirGroup(cr.in, "in"), selfKey)}" hidden></div>` +
           `</li>`
         );
       });
+      if (columns.length > _META_DBGRP_ROW_CAP) parts.push(`<li class="amgr-col amgr-col-plain admin-meta-graph-muted">… 외 ${columns.length - _META_DBGRP_ROW_CAP}개 (표시 상한)</li>`);
       parts.push(`</ul></div>`);
     }
   }
   if (terms.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul>`);
-    terms.slice(0, 30).forEach((t) => parts.push(`<li><strong>${esc(t.name)}</strong>${t.description ? " — " + esc(t.description) : ""}</li>`));
+    // detail-db-groups: 종전 30건 무음 절단 제거 — 용어는 DB 소속이 아니라 그룹 축이 없으므로 전량 나열.
+    terms.slice(0, _META_DBGRP_ROW_CAP).forEach((t) => parts.push(`<li><strong>${esc(t.name)}</strong>${t.description ? " — " + esc(t.description) : ""}</li>`));
+    if (terms.length > _META_DBGRP_ROW_CAP) parts.push(`<li class="admin-meta-graph-muted">… 외 ${terms.length - _META_DBGRP_ROW_CAP}건 (표시 상한)</li>`);
     parts.push(`</ul></div>`);
   }
   // graph-funcproc(ADR-016): ROUTINE_USES — Routine 상세엔 "사용 테이블", Table 상세엔 "사용하는 함수·프로시저".
@@ -1710,29 +1974,50 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   //   평면 목록 + 항목별 읽기/쓰기 꼬리표 대신, 읽기/쓰기 소그룹 헤더(개수)로 묶어 데이터 흐름을
   //   한눈에 구분한다(REFERENCES 방향 그룹 dirGroup 과 동일한 amgr-dir 스타일 재사용). relation_type
   //   "write"=루틴→테이블(씀), 그 외("read"·미상)=테이블→루틴(읽음, 기존 kindKo 기본값과 정합).
-  //   각 그룹 30건 상한 + 초과분 "… 외 N건" 명시(기존 combined 30 무음 절단 개선).
+  //   detail-db-groups(사용자 요구 2026-07-27): 종전 그룹당 30건 상한 + "… 외 N건" 으로 **목록이 숨겨지던**
+  //   이슈를 제거한다 — 읽기/쓰기 각 그룹 안에서 상대 노드를 **소속 DB 단위**로 다시 묶고(접기/펼치기),
+  //   각 DB 그룹은 멤버 전량을 담는다. 크로스-DB 사용 관계가 많은 테이블에서 "어느 DB 의 어떤 루틴이
+  //   이 테이블을 읽고/쓰는가" 가 DB 별로 분리돼 보이고, 조용한 절단이 사라진다.
   if (routineUses.length) {
     const isRoutineSelf = self.label === "Routine";
+    const rtOther = (e) => (e.source === selfKey ? e.target : e.source);
     const rtRow = (e) => {
-      const other = e.source === selfKey ? e.target : e.source;
+      const other = rtOther(e);
       const on = byKey[other] || _metaGraph.nodes.get(other) || {};
       const disp = on.label === "Routine"
         ? `${_metaRoutineIcon(on.routine_type)} ${on.name || nm(other)}` : nm(other);
       return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button></li>`;
     };
-    const rtGroup = (list, label) => {   // 읽기/쓰기 소그룹(개수 + 30건 상한 + 초과 명시)
+    // lazy 주입되는 DB 그룹 body 에도 원래의 행 동작(클릭=상세+카메라, hover=연결선 강조)을 그대로 건다.
+    const rtBind = (c) => {
+      c.querySelectorAll("[data-rtuse]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const k = btn.getAttribute("data-rtuse");
+          if (!k) return;
+          _metaGraphPanToRelation(k);
+          _metaGraphShowDetail(k);
+        });
+      });
+      _metaGraphBindDetailHover(c, selfKey);
+    };
+    const rtGroup = (list, label) => {   // 읽기/쓰기 소그룹(개수 + DB 단위 하위 그룹, 절단 없음)
       if (!list.length) return "";
-      const rows = list.slice(0, 30).map(rtRow).join("");
-      // 초과행은 항목(amgr-link 버튼, 비-박스)과 시각 정합하도록 amgr-row 박스 없이 muted 텍스트 li (적대리뷰 NIT2).
-      const more = list.length > 30
-        ? `<li class="admin-meta-graph-muted amgr-more">… 외 ${list.length - 30}건</li>` : "";
+      const rows = _metaDbGroupedRowsHTML(
+        list.map((e) => {
+          const other = rtOther(e);
+          const on = byKey[other] || _metaGraph.nodes.get(other) || {};
+          return { key: other, fqn: on.fqn, label: on.label, html: rtRow(e) };
+        }),
+        { selfDbKey, esc, bind: rtBind }
+      );
       return `<div class="amgr-dir"><div class="amgr-dir-head">${label} (${list.length})</div>` +
-        `<ul class="amgr-list">${rows}${more}</ul></div>`;
+        `<ul class="amgr-list">${rows}</ul></div>`;
     };
     const rtWrites = routineUses.filter((e) => e.relation_type === "write");
     const rtReads = routineUses.filter((e) => e.relation_type !== "write");
     parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length}) <span class="admin-meta-graph-muted">· 읽기 ${rtReads.length} · 쓰기 ${rtWrites.length}</span></h4>`);
-    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다. 행 클릭 = 대상 상세 + 카메라 이동.</p>`);
+    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다 — <strong>목록을 잘라내지 않습니다</strong>. 대상이 여러 DB 에 걸치면 DB 머리글로 묶이며(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄), 접힌 DB 도 머리글의 개수가 실제 총계입니다. 행 클릭 = 대상 상세 + 카메라 이동.</p>`);
+    parts.push(_metaDbGrpTruncNotice(meta));
     parts.push(rtGroup(rtReads, "읽기"));
     parts.push(rtGroup(rtWrites, "쓰기"));
     parts.push(`</div>`);
@@ -1840,11 +2125,18 @@ function _metaGraphRenderDetail(self, nodes, edges) {
       btn.setAttribute("aria-expanded", open ? "false" : "true");
       const caret = btn.querySelector(".amgr-caret");
       if (caret) caret.textContent = open ? "▸" : "▾";
+      // detail-db-groups(review MAJOR-4): 컬럼 관계 본문은 lazy — 첫 펼침 때만 DOM 을 만들고 바인딩한다.
+      //   종전엔 hidden 이어도 전 컬럼의 관계 행이 즉시 DOM 이라, 컬럼 상한(80) 제거와 맞물려 넓은 테이블의
+      //   초기 렌더 비용이 커졌다. 지금은 펼친 컬럼만 비용을 낸다(종전 80 캡보다도 낮음).
+      if (body && !open) _metaColBodyReveal(body, self.key);
       if (body) body.hidden = open;
     });
   });
   // detail-hover-fx: 하위 항목 hover 강조 — 컬럼=노드 링, 참조·사용 행=연결선(엣지). 클릭/토글 바인딩과 병존.
   _metaGraphBindDetailHover(el, self.key);
+  // detail-db-groups: DB 그룹 헤딩 접기/펼치기(+lazy 주입) 바인딩. 위 일괄 바인딩은 이미 렌더된 행에만
+  //   적용되므로, 나중에 펼쳐지는 그룹은 각 payload 의 bind 콜백이 그 컨테이너에 한정해 처리한다.
+  _metaBindDbGroups(el);
   _metaGraphLoadNodeAnalysis(self.key);
 }
 
@@ -1899,17 +2191,20 @@ async function _metaGraphShowRelations(key) {
       });
     });
   }
-  _metaGraphRenderRelations(key, mNodes, mEdges);
+  _metaGraphRenderRelations(key, mNodes, mEdges, { truncated: !!data.truncated });
 }
 
-function _metaGraphRenderRelations(key, nodes, edges) {
+function _metaGraphRenderRelations(key, nodes, edges, meta) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
+  _metaDbGrpLazy.clear();   // detail-db-groups: 직전 패널의 미펼침 payload 폐기(gid 무효화 — 누수 방지).
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const byKey = {};
   (nodes || []).forEach((n) => { if (n && n.key) byKey[n.key] = n; });
   const self = byKey[key] || _metaGraph.nodes.get(key) || { key, name: key, label: "" };
+  // detail-db-groups: 선택 노드가 속한 DB — 관계 목록의 DB 그룹 정렬·기본 펼침 기준.
+  const selfDbKey = _metaDbGroupKeyOf(key, self.fqn || (_metaGraph.nodes.get(key) || {}).fqn);
   const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || k;
   // self 측 판정: 자신 또는 (테이블이면) 자기 소속 컬럼.
   const isSelf = (k) => {
@@ -1962,42 +2257,75 @@ function _metaGraphRenderRelations(key, nodes, edges) {
       `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}${curateBtns(e)}</div>` +
       `<div class="amgr-sub admin-meta-graph-muted">${esc(typeKo)}${srcKo ? " · 근거: " + esc(srcKo) : ""}${on.description ? " — " + esc(on.description) : ""}</div></li>`;
   };
-  // review: 60/30건 절단 시 "… 외 N건" 명시(헤더 카운트와 행 수의 침묵 불일치 방지).
-  const moreRow = (n) => `<li class="amgr-row amgr-plain"><div class="amgr-sub admin-meta-graph-muted">… 외 ${n}건 (그래프에 펼치기로 확인)</div></li>`;
+  // detail-db-groups(사용자 요구 2026-07-27): 종전 60/30/20건 상한 + "… 외 N건" 으로 목록이 숨겨지던 이슈를
+  //   제거하고, 방향 그룹 안의 상대 노드를 **소속 DB 단위**로 묶어 접기/펼치기 한다(안전 가드 초과분만 표기).
+  const moreRow = (n) => `<li class="amgr-row amgr-plain"><div class="amgr-sub admin-meta-graph-muted">… 외 ${n}건 (표시 상한 — 그래프에 펼치기로 확인)</div></li>`;
+  // 관계 행 바인딩(초기 렌더 + DB 그룹 lazy 주입 공용) — 행 클릭/hover 강조 + 큐레이션 버튼.
+  const bindRelRows = (c) => {
+    if (!c) return;
+    c.querySelectorAll(".amgr-row[data-key]").forEach((r) => {
+      // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
+      _metaGraphBindRelRow(r, r.getAttribute("data-key"));
+      // detail-hover-fx: hover 시 연결선(엣지) 강조 — self 끝점(data-edge-self)↔상대(data-key).
+      _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || key, r.getAttribute("data-key")]] });
+    });
+    // graph-category(§55 B): 큐레이션 버튼 — 행 클릭(카메라 이동)과 분리(stopPropagation).
+    c.querySelectorAll("button.amgr-cur").forEach((b) => {
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation(); ev.preventDefault();
+        _metaGraphCurateRelation(b.getAttribute("data-cur"), b.getAttribute("data-src"), b.getAttribute("data-tgt"), key);
+      });
+    });
+  };
+  // 방향 그룹 본문 — 상대 노드를 DB 단위로 묶어 전량 방출(단일 DB 면 평면).
+  //   dir "out": 상대 = e.target(self 끝점 e.source) · dir "in": 상대 = e.source(self 끝점 e.target).
+  const dirRowsHTML = (list, dir) => _metaDbGroupedRowsHTML(
+    list.map((e) => {
+      const otherKey = (dir === "out") ? e.target : e.source;
+      const selfEndKey = (dir === "out") ? e.source : e.target;
+      return {
+        key: otherKey,
+        fqn: (byKey[otherKey] || _metaGraph.nodes.get(otherKey) || {}).fqn,
+        html: row(e, otherKey, selfEndKey, dir === "out" ? "→" : "←"),
+      };
+    }),
+    { selfDbKey, esc, bind: bindRelRows }
+  );
   // review: REFERENCES 외 타입이 섞이면 "참조" 대신 중립 라벨.
   const dirLabel = (list, refLabel, neutral) => (list.every((e) => e.type === "REFERENCES") ? refLabel : neutral);
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
   parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || key)}</strong> <span class="admin-meta-graph-relbadge">관계 상세</span></div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
-  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 노드가 맺은 관계를 방향별로 봅니다 — 참조함 ${out.length} · 참조받음 ${inn.length} · 연관 용어 ${terms.length}${around.length ? ` · 주변 관계 ${around.length}` : ""}. 행을 클릭하면 상대 노드 상세로 이동합니다.</p>`);
+  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 노드가 맺은 관계를 방향별로 봅니다 — 참조함 ${out.length} · 참조받음 ${inn.length} · 연관 용어 ${terms.length}${around.length ? ` · 주변 관계 ${around.length}` : ""}. <strong>목록을 잘라내지 않으며</strong>, 상대가 여러 DB 에 걸치면 DB 머리글로 묶입니다(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄). 행을 클릭하면 상대 노드 상세로 이동합니다.</p>`);
+  parts.push(_metaDbGrpTruncNotice(meta));
   if (out.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>→ ${dirLabel(out, "참조함", "나가는 관계")} (${out.length})</h4><ul class="amgr-list">`);
-    out.slice(0, 60).forEach((e) => parts.push(row(e, e.target, e.source, "→")));
-    if (out.length > 60) parts.push(moreRow(out.length - 60));
+    parts.push(dirRowsHTML(out, "out"));
     parts.push(`</ul></div>`);
   }
   if (inn.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>← ${dirLabel(inn, "참조받음", "들어오는 관계")} (${inn.length})</h4><ul class="amgr-list">`);
-    inn.slice(0, 60).forEach((e) => parts.push(row(e, e.source, e.target, "←")));
-    if (inn.length > 60) parts.push(moreRow(inn.length - 60));
+    parts.push(dirRowsHTML(inn, "in"));
     parts.push(`</ul></div>`);
   }
   if (terms.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul class="amgr-list">`);
-    terms.slice(0, 30).forEach(({ e, node }) => {
+    // detail-db-groups: 종전 30건 절단 제거 — 용어는 DB 소속이 아니라 그룹 축 없이 전량(안전 가드만).
+    terms.slice(0, _META_DBGRP_ROW_CAP).forEach(({ e, node }) => {
       parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" data-edge-self="${esc(key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
         `<div class="amgr-main"><span class="amgr-arrow">◈</span><strong>${esc(node.name || node.key)}</strong></div>` +
         `<div class="amgr-sub admin-meta-graph-muted">${esc(_META_EDGE_TYPE_KO[e.type] || e.type)}${node.description ? " — " + esc(node.description) : ""}</div></li>`);
     });
-    if (terms.length > 30) parts.push(moreRow(terms.length - 30));
+    if (terms.length > _META_DBGRP_ROW_CAP) parts.push(moreRow(terms.length - _META_DBGRP_ROW_CAP));
     parts.push(`</ul></div>`);
   }
   if (around.length) {
     // 앵커에 직접 닿지 않는 이웃-이웃 관계 — 맥락 참고용으로만 접어서 나열(비클릭).
+    //   detail-db-groups: 종전 20건 절단 제거 — 전량(비클릭 텍스트 행이라 그룹 축 없이 나열, 안전 가드만).
     parts.push(`<div class="admin-meta-graph-sec"><h4>주변 관계 (${around.length})</h4><ul class="amgr-list">`);
-    around.slice(0, 20).forEach((e) => parts.push(`<li class="amgr-row amgr-plain"><div class="amgr-sub admin-meta-graph-muted"><code>${esc(nm(e.source))}</code> → <code>${esc(nm(e.target))}</code>${_metaEdgeTrustBadge(e)}</div></li>`));
-    if (around.length > 20) parts.push(`<li class="amgr-row amgr-plain"><div class="amgr-sub admin-meta-graph-muted">… 외 ${around.length - 20}건 (관계 확장으로 그래프에서 확인)</div></li>`);
+    around.slice(0, _META_DBGRP_ROW_CAP).forEach((e) => parts.push(`<li class="amgr-row amgr-plain"><div class="amgr-sub admin-meta-graph-muted"><code>${esc(nm(e.source))}</code> → <code>${esc(nm(e.target))}</code>${_metaEdgeTrustBadge(e)}</div></li>`));
+    if (around.length > _META_DBGRP_ROW_CAP) parts.push(`<li class="amgr-row amgr-plain"><div class="amgr-sub admin-meta-graph-muted">… 외 ${around.length - _META_DBGRP_ROW_CAP}건 (표시 상한 — 관계 확장으로 그래프에서 확인)</div></li>`);
     parts.push(`</ul></div>`);
   }
   if (!out.length && !inn.length && !terms.length) {
@@ -2006,19 +2334,10 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   parts.push(`<div class="amgr-actions"><button type="button" class="btn-secondary" id="amgrExpandBtn" title="이 노드의 이웃을 그래프 화면에 펼칩니다">🕸 그래프에 펼치기</button><button type="button" class="btn-secondary" id="amgrDetailBtn">📋 상세 보기</button></div>`);
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
-  el.querySelectorAll(".amgr-row[data-key]").forEach((r) => {
-    // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
-    _metaGraphBindRelRow(r, r.getAttribute("data-key"));
-    // detail-hover-fx: hover 시 연결선(엣지) 강조 — self 끝점(data-edge-self)↔상대(data-key).
-    _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || key, r.getAttribute("data-key")]] });
-  });
-  // graph-category(§55 B): 큐레이션 버튼 — 행 클릭(카메라 이동)과 분리(stopPropagation).
-  el.querySelectorAll("button.amgr-cur").forEach((b) => {
-    b.addEventListener("click", (ev) => {
-      ev.stopPropagation(); ev.preventDefault();
-      _metaGraphCurateRelation(b.getAttribute("data-cur"), b.getAttribute("data-src"), b.getAttribute("data-tgt"), key);
-    });
-  });
+  // 초기 렌더분 행 바인딩(행 클릭·hover 강조·큐레이션). 접힌 DB 그룹은 펼칠 때 같은 bindRelRows 로 처리된다.
+  bindRelRows(el);
+  // detail-db-groups: DB 그룹 헤딩 접기/펼치기(+lazy 주입).
+  _metaBindDbGroups(el);
   const eb = document.getElementById("amgrExpandBtn");
   if (eb) eb.addEventListener("click", () => _metaGraphExpand(key));
   const db = document.getElementById("amgrDetailBtn");
@@ -2032,6 +2351,7 @@ function _metaGraphShowCategoryDetail(catKey) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el || !catKey) return;
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
+  _metaDbGrpLazy.clear();   // detail-db-groups: 다른 상세 뷰로 전환 — 직전 패널의 미펼침 payload 폐기(누수 방지).
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const label = _metaGraph.catLabelOf.get(catKey) || (catKey === "PC:__none__" ? "미분류" : catKey);
   const members = _metaGraph.catMembers.get(catKey) || [];
@@ -2541,6 +2861,7 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
+  _metaDbGrpLazy.clear();   // detail-db-groups: 다른 상세 뷰로 전환 — 직전 패널의 미펼침 payload 폐기(누수 방지).
   // graph-funcproc(cluster-detail-collapse): `"` 도 이스케이프(파일 내 강한 esc 와 정합) — data-group-key/aria-label/title 등
   //   속성값이 상태-키 라운드트립까지 실어 나르므로 속성 breakout 방지(§18.8 적대 리뷰 MINOR #2 반영). 텍스트 노드엔 무해.
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

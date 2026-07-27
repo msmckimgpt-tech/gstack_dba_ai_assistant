@@ -340,3 +340,16 @@ source_of_truth: true
 - **수용(비파괴, 문서화)**: m5 cache_keys 도입 1회성 라벨 캐시 전패(재라벨 LLM 스파이크 1회·구 kv 행 잔존 — 정리 경로 없음, 크기 유계) · n2 MSSQL 테이블명-only 매칭의 다스키마 동명 합산(기존 /graph/columns 동형 tradeoff) · n3 forceAll noop race 문구 · n4 freshness probe 인덱스 없는 embedded_at 스캔(현 규모 수용) · n5 pass 중 착지 임베딩 신호 소실(드레인 자가치유).
 - **리뷰어 확인 축(결함 없음)**: pgbouncer/search_path(_cypher ag_catalog 정규화)·Cypher injection(_cq/화이트리스트/dollar-tag)·freshness SQL 파라미터 정합·RC3 전 API 공급원 실사(허위 null clear 없음)·Routine 투영 키 일치·RC4 연타 가드·테스트 패딩 의미 불변.
 - **재검증**: 흡수 후 타깃 40 PASS(신규 resolve 관통·DO NOTHING·SAVEPOINT 격리·드레인 가드 포함) + 전체 스위트(0002+0003) 컨테이너 PASS(exit 0).
+
+## REV-20260727T173000-detail-db-groups [AGENT-TEAM: FAIL(BLOCKING 2)→전량 흡수] — 상세 패널 DB 그룹·목록 생략 제거 diff 적대 리뷰
+- Trigger: `UI/layout/screen keyword matched` (§18.8 dispatch 표 — UI·화면·레이아웃) → 2렌즈 병렬 dispatch: **ux 렌즈** + **프론트엔드 정합성/회귀 렌즈**(general-purpose 적대 리뷰어). 양 리뷰어 모두 소스 유닛을 추출해 자체 프로브를 돌린 실측 기반.
+- 대상: `graph-ctxmenu.js`(DB 그룹 유닛·상세 3경로 전환·상한 제거), `graph-state.js`, `graph.css`, 신규 헤드리스 테스트.
+- **BLOCKING 2 (둘 다 "숨기지 말라"는 원 요구의 직접 위반) — 흡수**:
+  - **B1 은폐 악화** — 평면 폴백이 "단일 DB" 조건이라 DB 2개 이상이면 총 3건도 그룹화+접힘. 실측: `2 DB × 5건(self 그룹 없음)` → 즉시 가시 행 **0**(종전 10). → 펼침 규칙 재설계(총 ≤60 전 그룹 펼침 · self 그룹 부재 시 첫 그룹 펼침).
+  - **B2 예산 오계상** — 접혀서 DOM 을 안 만든 그룹이 `ROW_CAP` 을 소비 → 뒤 그룹 payload 가 빈 문자열이 되어 **펼치면 빈 목록**(무음). 실측: `[3990 접힘, 50]` → 뒤 그룹 payload 10행. → `if (open) emitted += shown`.
+- **MAJOR 흡수**: (프론트) 백엔드 `_NEIGHBOR_NODE_CAP=300` 절단이 `truncated` 미세팅이라 "전량/생략 없음" 문구가 상위 계층에서 거짓 → **백엔드 `truncated` 전파 + 프론트 고지 배너 + 문구 정정**(cross-cut feature-0002 `metadata_graph.py`) / 사용자 기록이 대형 그룹 가드보다 우선해 수천 행 즉시 렌더(실측 3001행) → **가드 우선** / 컬럼 아코디언 hidden 하위가 eager(컬럼 80 캡 제거로 최대 300, 행당 7 리스너) → **컬럼 본문 lazy 화** / (ux) 접힘 상태 전역 고착 + 일괄 해제 부재 → **'모두 펼치기/접기'** 신설.
+- **MINOR/NIT 흡수**: 스키마 미상 정렬 모순(selfDbKey="" 일 때 맨 앞) · 동명 DB scope 병기 · 비-스키마(GlossaryTerm) 유령 그룹 가드 · 머리글 hover-pan 제거(다른 DB 로 화면 급이동) · stale payload 시 무음 대신 안내 · Empty/검색 렌더 `_metaDbGrpLazy.clear()` 누락 · 스키마 미상 전역 슬롯 미기록 · 같은 DB 형제 머리글 동기화(재귀 가드 포함) · 기본 `esc` 를 escaping 으로 · 컬럼 섹션 안내 문구 보강.
+- **테스트 사각 지적(가장 값진 발견) 흡수**: 초판 36건은 호출부 `dirRowsHTML` 을 실행하지 않아 **`row(e, otherKey, selfEndKey, arrow)` 인자를 뒤집어도 전건 PASS** 했고, ROW_CAP 예산·모두펼치기·형제 동기화·컬럼 lazy·배너가 미커버였다. 스위트를 재작성해 **62 PASS**(⑮ 인자 매핑을 실제 실행으로 고정).
+- **검증된 안전(NON-ISSUE)**: 초기 렌더 배치 바인딩 ↔ lazy payload `bind` 가 **배타적**(펼침 그룹은 lazy Map 미등재) → 이중/누락 바인딩 없음 · gid 전역 단조 증가라 셀렉터 오매칭 불가 · 중첩 `ul` 이 기존 CSS/셀렉터와 충돌 없음 · `dirRowsHTML` 인자 순서가 종전과 동일(수동 대조 후 ⑮ 로 고정).
+- **잔여(수용, 문서화)**: 헤드리스 스위트가 CI(pytest 전용)에 미배선 — 회귀 게이트가 아니라 cycle-내 검증 수단(test-runs 문서에 한계 명시, Makefile 배선은 별건). 파이썬 스위트 flaky(같은 main 을 두 번 돌려 실패 집합 상이) — 본 cycle 의 파이썬 변경은 additive 플래그 1개뿐.
+- **재검증**: 흡수 후 `node --check` PASS · 헤드리스 62 PASS · verify-completion 재실행.
