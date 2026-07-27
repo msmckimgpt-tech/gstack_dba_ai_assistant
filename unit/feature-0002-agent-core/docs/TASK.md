@@ -1548,3 +1548,15 @@ TASK-0015 (plan-review):
 ## TASK-20260724T085937-sonnet-reasoning-budget-guide (test-only) — adaptive sonnet 죽은 budget 스펙 제거 대응 테스트 갱신 (정본 feature-0003+shared)
 - [x] `tests/test_runtime_settings.py` sonnet budget 단정 → haiku 전환 + adaptive dead(override None)·adaptive_models 신규 단정. agent_max_output sonnet 유지.
 - [x] 전체 pytest(0002+0003) RC=0. 정본 리뷰=feature-0003 REV-20260724T085937.
+
+### TASK-20260727T105326-worker-attachment-postprocess — 첨부 후처리 소유자를 ask-worker 로 이전 (Major §12.3, 2026-07-27, primary feature-0002 + cross-ref feature-0003)
+`/_dqa:conversation_audit` 후속 — FR-brandnew-script-attachment-delivery-gap 이 배포됐는데도 라이브에서 첨부가 생성되지 않는다는 사용자 보고(admin `기능 추가 파일 요청`). 실측(대화 …f1c535ec msg 1389, 배포 후 생성): assistant 는 `attachment-new` 블록을 **정상 emit**(프롬프트 수정 작동)했으나 첨부 0건 + raw 블록 노출. RC=첨부 후처리(materialize+strip)가 web `/api/ask` 동기 핸들러에만 있어, worker 모드 장기 run(11분) 중 연결이 끊기면 후처리 지점에 미도달. 시스템 전체 assistant root 첨부 0건으로 교차확인.
+
+#### 완료 체크리스트
+- [x] 재진단: 삼각측량(코드 경로 + PG 메시지 raw 블록 잔존 + MySQL 첨부 0건 + 11분 소요) rootcause_confidence high
+- [x] Fix(feature-0002): `_postprocess_attachment_blocks`(worker 소유 materialize+strip) + `_finalize_deferred_terminal` + `run_agent(defer_terminal_status=)` + `_warm_attachment_postprocess_deps` + step 기록 패리티
+- [x] Fix(feature-0003 cross-ref): web 후처리 4곳 **증거 기반** 게이팅(`_raw_block_left`) + worker 결과 forwarding + `_update_assistant_message_content` bool 반환
+- [x] §18.8 적대 패널 2라운드(backend+concurrency) — BLOCKER 2건(web strip 미게이팅 파괴적 회귀 / KV terminal 이 run_agent 내부라 순서계약 무효)·MAJOR 2건·MINOR 3건·LOW 2건 전부 반영, 재검증에서 CLOSED 확인
+- [x] 단위테스트: worker 후처리 12건(순서계약·defer terminal·fail-soft·cap·RBAC) + web 게이팅 계약 — 전체 2384 PASS/0 FAIL
+- [ ] verify-completion → commit → PR/deploy(**워커 우선 전체 스코프 배포 필수**) → POST-DEPLOY 라이브 재현
+정본 rationale=REVIEW REV-20260727T105326-worker-attachment-postprocess, 변경이력=MODIFY CHG-20260727T105326-worker-attachment-postprocess.

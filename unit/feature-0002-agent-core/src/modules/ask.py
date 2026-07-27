@@ -102,6 +102,10 @@ def _payload_to_kwargs(payload: dict[str, Any], account_id: int, run_id: str) ->
         "text_inline_path": payload.get("text_inline_path"),
         "reasoning_level": payload.get("reasoning_level"),  # feature-0003: 추론 강도(worker 경로 패리티)
         "run_id": run_id,
+        # FR-brandnew-script-attachment-delivery-gap 후속: 성공 경로의 KV terminal(done)을 워커가
+        # **첨부 후처리 뒤** 직접 찍는다(_finalize_deferred_terminal). run_agent 가 미리 찍으면 web
+        # long-poll 이 후처리 전 raw 블록을 읽어 노출된다(§18.8 BLOCKER).
+        "defer_terminal_status": True,
     }
 
 
@@ -111,12 +115,197 @@ def _slim_result(result: Optional[dict[str, Any]]) -> dict[str, Any]:
     if not isinstance(result, dict):
         return {"error": "worker: 결과 없음"}
     keep = ("answer", "conversation_id", "run_id", "executed_sql",
-            "result_csv_paths", "rationale", "error", "steps")
+            "result_csv_paths", "rationale", "error", "steps",
+            # FR-brandnew-script-attachment-delivery-gap (worker 후처리, 2026-07-27):
+            # worker 가 materialize 한 첨부를 web 응답 shape 로 그대로 전달(inproc 패리티).
+            "edited_attachments", "new_attachments")
     slim: dict[str, Any] = {}
     for k in keep:
         if k in result:
             slim[k] = result[k]
     return slim
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 답변 첨부 블록 후처리 (materialize + strip) — worker 소유
+# ──────────────────────────────────────────────────────────────────────────
+def _warm_attachment_postprocess_deps() -> None:
+    """`web.app` 을 워커 **기동 시** 1회 import 해 sys.modules 에 적재(§18.8 MAJOR).
+
+    후처리는 `import web.app` 을 지연 import 하는데, 첫 job 에서 그 비용(FastAPI/starlette/전
+    라우터 로드, ~1s)을 답변 완료 직후의 민감 구간에서 치르면 사용자가 후처리 지연을 체감한다.
+    기동 시 미리 데워 두면 job 경로에서는 sys.modules 캐시 히트(비용 ~0)다.
+    import 실패는 치명(첨부 전달 기능 전면 무력화)이라 **error** 로 남긴다 — 조용한 무력화 금지.
+    """
+    try:
+        import web.app  # noqa: F401
+        log.info("ask-worker: 첨부 후처리 의존(web.app) 워밍업 완료")
+    except Exception:
+        log.error("ask-worker: web.app import 실패 — 답변 첨부 전달(materialize)이 동작하지 않는다",
+                  exc_info=True)
+
+
+
+def _postprocess_attachment_blocks(cid: str, account_id: Any,
+                                   result: Optional[dict[str, Any]],
+                                   run_id: str = "") -> None:
+    """assistant 답변의 ```attachment-edit```/```attachment-new``` 블록을 첨부로 materialize
+    하고 답변 본문에서 블록을 strip 한다(worker 모드 정본).
+
+    FR-brandnew-script-attachment-delivery-gap 후속(conversation_audit 2026-07-27): 이 후처리는
+    원래 web `/api/ask` 동기 핸들러에만 있었다. worker 모드에서 답변 생성은 **이 워커**가 하고
+    web 은 long-poll 로 붙어 있을 뿐이라, 장기 run(수 분~십수 분) 중 클라이언트/프록시 연결이
+    끊기면 web 핸들러가 후처리 지점에 도달하지 못해 **첨부가 만들어지지 않고 raw 블록이 답변에
+    그대로 노출**됐다(라이브 관측: 11분 run, `attachment-new` 블록 미materialize). 답변 완료
+    시점을 아는 워커가 후처리를 소유하는 것이 옳다 — 연결 수명과 무관하게 항상 실행된다.
+
+    **terminal 전이(finish_ask_job) 전에 호출**해야 한다. web long-poll 은 terminal 을 보고
+    빠져나와 저장된 메시지를 읽으므로, 그 전에 strip·materialize 가 끝나 있어야 사용자가 raw
+    블록을 보지 않는다. 모든 실패는 fail-soft(로깅만) — 후처리 실패가 답변 전달을 막지 않는다.
+    """
+    if not cid or not isinstance(result, dict):
+        return
+    # 실패/취소 run: 첨부 생성(materialize)은 하지 않되 **strip 은 수행**한다(§18.8 MINOR).
+    # web 경로의 기존 정책이 "error 무관 — 블록이 남아 있으면 항상 제거(본문 노출 방지)" 였고,
+    # 취소 시 부분 답변(preserve_reasoning)에 블록이 실려 저장될 수 있다.
+    _failed = bool(str(result.get("error") or "").strip())
+
+    conn = None
+    try:
+        # web 헬퍼 재사용(지연 import — worker 이미지에 web 코드가 동봉돼 있고, 순환/기동 비용 회피).
+        # 첨부 정본은 MySQL(agent_memory)이고 MinIO 자격증명도 worker env 에 있어 동일 동작 가능.
+        import web.app as _web
+
+        conn = _web._connect_memory()
+        account = _web._load_account_by_id(conn, int(account_id or 0))
+        if not account:
+            log.warning("ask-worker: 첨부 후처리 account 미해소(account_id=%s) — skip", account_id)
+            return
+
+        latest = _web._load_latest_assistant_message(conn, cid) or {}
+        message_id = int(latest.get("id") or 0)
+        content = str(latest.get("content") or "")
+        if not content or message_id <= 0:
+            return
+        if ("attachment-edit" not in content) and ("attachment-new" not in content):
+            return  # 블록 없음 — 흔한 경로에서 조기 반환(비용 0)
+
+        # request=None: worker 에는 HTTP 요청 컨텍스트가 없어 web audit dispatch 는 생략된다
+        # (materialize 내부가 request None 이면 audit skip). 첨부 row 자체의 CreatedByRole=
+        # 'assistant' + MetaJson 이 provenance 를 남기고, 아래 로그가 워커 경로를 기록한다.
+        edited: list = []
+        created: list = []
+        if not _failed:
+            edited = _web._materialize_assistant_attachment_edits(
+                conn, account=account, conversation_id=cid, answer=content,
+                message_id=message_id, request=None,
+            ) or []
+            remaining = max(0, int(_web._ASSISTANT_EDIT_COUNT_CAP) - len(edited))
+            created = _web._materialize_assistant_attachment_new(
+                conn, account=account, conversation_id=cid, answer=content,
+                message_id=message_id, request=None, remaining_count=remaining,
+            ) or []
+
+        # strip 은 materialize 성패와 무관하게 수행 — 전체 파일 본문이 채팅에 노출되는 것을 막는다
+        # (web 경로와 동일 정책). 두 태그를 순차 적용.
+        stripped = _web._strip_attachment_edit_blocks(content, edited)
+        stripped = _web._strip_attachment_new_blocks(stripped, created)
+        if stripped != content:
+            # 영속 성공 시에만 result.answer 를 교체한다(§18.8 MINOR): UPDATE 가 실패했는데
+            # result_json 만 stripped 로 두면 ops view 와 실제 저장 메시지가 어긋난다.
+            try:
+                _web._update_assistant_message_content(conn, cid, message_id, stripped)
+                result["answer"] = stripped
+            except Exception:
+                log.warning("ask-worker: 첨부 strip content 갱신 실패 cid=%s mid=%s",
+                            cid, message_id, exc_info=True)
+
+        if edited or created:
+            result["edited_attachments"] = edited
+            result["new_attachments"] = created
+            log.info("ask-worker: 첨부 후처리 완료 cid=%s mid=%s edited=%d new=%d",
+                     cid, message_id, len(edited), len(created))
+            # 진행 단계(step) 기록 — TASK-0285 ④ 패리티. web inproc 경로는 첨부 materialize 를
+            # "단계 보기"에 노출하는데, worker 경로에서 누락되면 사용자가 첨부 생성 사실을 단계로
+            # 확인할 수 없다(§18.8 MINOR). run_id 없으면(=단순 답변) skip. fail-soft.
+            _record_attachment_step(cid, run_id, result, edited, created)
+    except Exception:
+        log.warning("ask-worker: 첨부 후처리 실패 cid=%s — 답변 전달은 계속", cid, exc_info=True)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _record_attachment_step(cid: str, run_id: str, result: dict[str, Any],
+                            edited: list, created: list) -> None:
+    """첨부 materialize 를 진행 단계(step)로 기록 — web inproc 경로(TASK-0285 ④)와 패리티.
+
+    step_index 는 이 run 의 마지막 step 다음. run_id 가 없으면(단순 답변) 기록하지 않는다.
+    fail-soft: 실패해도 첨부 전달·답변에 영향 없음.
+    """
+    if not run_id:
+        return
+    try:
+        from .memory import save_memory_step
+        steps = result.get("steps")
+        max_idx = -1
+        if isinstance(steps, list):
+            for s in steps:
+                if isinstance(s, dict):
+                    try:
+                        max_idx = max(max_idx, int(s.get("step_index", 0) or 0))
+                    except Exception:
+                        pass
+        names = ", ".join(
+            f"'{a.get('original_filename') or '파일'}'"
+            for a in list(edited) + list(created) if isinstance(a, dict)
+        )
+        action = "attachment_create" if created and not edited else "attachment_edit"
+        work = (f"새 첨부 {names}을(를) 파일로 저장했습니다." if created and not edited
+                else f"첨부 {names}을(를) 저장했습니다.")
+        save_memory_step(None, cid, run_id, {
+            "step_index": max_idx + 1,
+            "action": action,
+            "tool": "materialize_attachment",
+            "work": work,
+            "reason": "생성·수정한 파일을 사용자에게 다운로드 첨부로 제공합니다.",
+            "args": {"attachment_ids": [int(a.get("id") or 0)
+                                        for a in list(edited) + list(created)
+                                        if isinstance(a, dict)]},
+        })
+    except Exception:
+        log.warning("ask-worker: 첨부 step 기록 실패 cid=%s run=%s", cid, run_id, exc_info=True)
+
+
+def _finalize_deferred_terminal(cid: str, run_id: str, result: Optional[dict[str, Any]]) -> None:
+    """지연된 KV terminal(`done`)을 기록한다 — 첨부 후처리 **뒤** 호출(§18.8 BLOCKER 대응).
+
+    run_agent 를 `defer_terminal_status=True` 로 돌리면 성공 경로의 done 기록이 결과의
+    `_deferred_terminal` 로 넘어온다. 이 함수가 반드시(=호출부 finally) 찍어야 프런트가 무한
+    '처리중' 에 걸리지 않는다. 지연분이 없으면(에러/취소 경로 — run_agent 가 이미 기록) no-op.
+    `_deferred_terminal` 은 내부 전달용이라 기록 후 결과에서 제거한다(result_json 오염 방지).
+    """
+    if not isinstance(result, dict):
+        return
+    deferred = result.get("_deferred_terminal")
+    if not isinstance(deferred, dict):
+        return
+    # error 가 (지연 마커 생성 이후에) 설정된 경우에도 terminal 은 반드시 남긴다 — 마커만 버리면
+    # KV 가 processing 에 고착돼 프런트가 무한 '처리중'(§18.8 LOW). 상태만 error 로 바꿔 기록한다.
+    _err = str(result.get("error") or "").strip()
+    try:
+        set_run_status(None, cid, "error" if _err else "done",
+                       run_id=str(deferred.get("run_id") or run_id or ""),
+                       duration_ms=deferred.get("duration_ms"),
+                       error=_err, only_if_current_run=True)
+    except Exception:
+        log.warning("ask-worker: 지연 KV terminal 기록 실패 cid=%s run=%s", cid, run_id, exc_info=True)
+    finally:
+        # 내부 전달용 마커 — 기록 시도 후 제거(result_json 오염 방지).
+        result.pop("_deferred_terminal", None)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -287,6 +476,17 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
         except Exception as exc:
             log.warning("ask-worker: KV error 기록 실패 job=%s: %s", job_id, exc)
 
+    # 답변 첨부 블록 후처리(materialize + strip) — **KV terminal(done) 기록 전**.
+    # web long-poll(`/api/ask`·`/api/ask_result`)과 프런트 재조회는 KV terminal 을 보고 저장
+    # 메시지를 읽으므로, 그 전에 후처리가 끝나야 raw 블록이 노출되지 않는다. run_agent 는
+    # defer_terminal_status=True 로 done 을 미뤄 뒀고, 아래 finally 가 반드시 찍는다(무한 '처리중' 방지).
+    # (FR-brandnew-script-attachment-delivery-gap 후속 — worker 가 후처리 소유자.)
+    if not raised:
+        try:
+            _postprocess_attachment_blocks(cid, account_id, result, run_id)
+        finally:
+            _finalize_deferred_terminal(cid, run_id, result)
+
     # ask_jobs terminal 전이(ops view + result_json). lease 박탈 시 no-op(fencing).
     err = str((result or {}).get("error") or "").strip()
     status = "error" if (raised or err) else "done"
@@ -345,6 +545,7 @@ def run_ask_worker_loop() -> None:
         return
     worker_id = _worker_id()
     _install_signal_handlers()
+    _warm_attachment_postprocess_deps()
     tick_sec = max(1, int(AGENT_ASK_WORKER_TICK_SEC))
     # TASK-0289: 유휴(claim 대기) 폴링 주기를 reconnect backoff(tick_sec)와 분리. 단일 직렬
     # worker 가 idle 상태일 때 새 job 을 발견하는 지연이 곧 사용자 큐 대기시간 → sub-second 화

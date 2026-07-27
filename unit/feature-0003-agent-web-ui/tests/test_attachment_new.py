@@ -404,3 +404,34 @@ def test_a1_ask_invokes_new_materialize_and_strip():
     assert "_materialize_assistant_attachment_new(" in src
     assert "_strip_attachment_new_blocks(" in src
     assert 'result["new_attachments"]' in src
+
+
+def test_a2_web_postprocess_is_evidence_gated():
+    """§18.8 회귀 방지 — web 후처리 게이트 2계약.
+
+    (BLOCKER) materialize **와 strip 4곳 전부**가 같은 게이트를 통과해야 한다. strip 만 게이트에서
+    빠지면 worker 모드에서 web 이 빈 목록으로 블록을 지워 저장 → 워커가 읽을 때 블록이 없어 첨부가
+    영영 생성되지 않고 스크립트 본문도 소실된다(원 결함보다 악화).
+
+    (MAJOR) 게이트는 **모드가 아니라 증거** 기준이어야 한다 — worker 가 이미 strip 했으면 블록이
+    없어 no-op 이고, 블록이 남아 있으면(구버전 워커·web-only 배포·후처리 실패) web 이 self-heal.
+    모드만으로 게이팅하면 혼합 버전 배포 창에서 첨부 미생성 + 원문 영구 잔존.
+    """
+    import inspect
+    import re
+    import routers.conversations as _rc
+    src = inspect.getsource(_rc)
+    # 증거 기반 게이트: worker 모드여도 블록이 남아 있으면 수행.
+    assert "_raw_block_left" in src
+    assert "(not app._is_worker_mode()) or _raw_block_left" in src
+    # materialize 2곳 + strip 2곳 = 4곳 전부 게이트 통과.
+    guarded = len(re.findall(r"if _attach_postprocess_here and ", src))
+    assert guarded >= 4, f"web 후처리 게이팅 누락(발견 {guarded}/4)"
+    for m in re.finditer(
+        r"^\s*if .*_strip_attachment_(?:edit|new)_blocks|^\s*if .*\"attachment-(?:edit|new)\" in render_output",
+        src, re.M,
+    ):
+        line = m.group(0)
+        if "_raw_block_left" in line:
+            continue    # 게이트 자체를 계산하는 줄
+        assert "_attach_postprocess_here" in line, f"게이트 없는 strip 분기: {line.strip()[:80]}"

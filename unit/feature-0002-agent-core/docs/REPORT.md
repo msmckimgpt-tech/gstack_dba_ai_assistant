@@ -490,3 +490,11 @@ app.py 조회실패 debug 로그) 반영.
 
 ### [cross-ref] FR-brandnew-script-attachment-delivery-gap — 신규 스크립트 첨부 전달 프롬프트 (2026-07-24, conversation_audit)
 feature-0003(primary, `_materialize_assistant_attachment_new` 경로)의 활성화 프롬프트. agent_core `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE`(코드-권위 주입) + base SYSTEM_PROMPT 섹션 + inline-only 예외. 정본 REVIEW/REPORT/원장 = feature-0003 REV-20260724T181106-brandnew-script-attachment / FRICTION_LEDGER FR-brandnew-script-attachment-delivery-gap. 라이브 실측=POST-DEPLOY(ask-worker 재빌드 후 실 LLM turn).
+
+### [feature-0002] 첨부 후처리 worker 이전 — FR-brandnew-script-attachment-delivery-gap 후속 (Major, 2026-07-27)
+- **계기**: 사용자 보고 — 배포된 첨부 생성 기능이 라이브(admin `기능 추가 파일 요청`)에서 동작하지 않음.
+- **실측**: assistant 는 `attachment-new` 블록을 정상 emit(프롬프트 수정 작동)했으나 첨부 0건 + raw 블록이 답변에 노출. 시스템 전체 assistant root 첨부 0건(편집 경로 12건은 정상 — 짧은 run).
+- **RC**: 첨부 후처리가 web 동기 핸들러 전용 → worker 모드 장기 run(11분) 중 연결 단절로 미실행. 재발경로=아키텍처 소유권 오배치.
+- **수정**: 후처리를 ask-worker 로 이전 + KV terminal 지연으로 "후처리 완료 후 공개" 순서 보장 + web 은 증거 기반 self-heal 게이트.
+- **검증**: pytest 2384 PASS · §18.8 2라운드 적대 검증(BLOCKER 2건 발견→수정→CLOSED). 라이브 실측=POST-DEPLOY(원 대화 동일 입력 재현).
+- 정본 REVIEW REV-20260727T105326-worker-attachment-postprocess · 원장 FRICTION_LEDGER FR-brandnew-script-attachment-delivery-gap.

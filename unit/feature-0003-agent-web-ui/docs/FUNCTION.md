@@ -1905,3 +1905,8 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - AC-20260727T102027-sql-diff-highlight-2: diff 의 add/del 구분(배경·border·gutter +/-)·줄번호·복사 클린·텍스트 무손실이 유지된다.
 - AC-20260727T102027-sql-diff-highlight-3: 비-SQL diff(코드·설정 파일)는 SQL 토큰화되지 않고 기존 렌더 그대로다(looksLikeSql 게이트) + diff 라인 내 악성 문자열이 활성 HTML 로 주입되지 않는다.
 - 검증: headless chromium(실 vendor) 21/21 PASS · `node --check` · §18.8 [SUBAGENT] 적대 패널 · evidence/sql-diff-highlight-20260727.png. REV/CHG/TASK/AC-20260727T102027-sql-diff-highlight. POST-DEPLOY PB-0008(Environment: Windows-browser).
+
+### 첨부 후처리 web 게이트 (CHG-20260727T105326) — routers/conversations.py
+- `_raw_block_left` / `_attach_postprocess_here = (not app._is_worker_mode()) or _raw_block_left`: 첨부 후처리(materialize 2곳 + strip 2곳)를 **증거 기반**으로 게이팅. 정상 worker 경로는 워커가 이미 strip 해 no-op, 블록이 남아 있으면(구버전 워커·web-only 배포·후처리 실패) web 이 self-heal(warning 로그).
+- worker 모드에서는 `agent_result["edited_attachments"|"new_attachments"]`(worker 후처리 산출)를 응답 `result` 로 forwarding — 프런트 토스트/표면화 패리티.
+- `_update_assistant_message_content(...) -> bool`: 내부에서 예외를 삼키므로 성공 여부를 bool 로 반환(호출자가 "저장 성공 시에만 answer 교체" 판단). 기존 호출자 하위호환.

@@ -239,7 +239,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - 첫 audit: 2026-06-29, `/_dqa:conversation_audit account=mckim conversation="게임 스테이지 성공률 통계"` (dogfood 검증 run). 두 마찰 모두 **report-only** — 스킬의 과적합 가드(단일 대화·Major·idiosyncratic → 자동수정 보류)가 의도대로 작동.
 - 문서 정합(STATUS·wiki)은 `/_dqa:doc_sync` 위임. 본 원장은 ledger·LEARNINGS 만 관할.
 
-## FR-brandnew-script-attachment-delivery-gap — fixed:undeployed (L2↔L4 capability gap; source-less 첨부 생성 경로 신설 + L1 프롬프트 지침)
+## FR-brandnew-script-attachment-delivery-gap — fixed:undeployed (L2↔L4 capability gap + **L6 실행경로 소유권**; source-less 첨부 생성 경로 + worker-side 후처리)
 
 - **status**: `fixed:undeployed` — 코드/테스트(신규 27 + 회귀, 전체 2369 PASS) + §18.8 AGENT-TEAM 패널(security MAJOR RBAC + backend MINOR 전부 in-cycle 반영) 완료, 배포 전. 배포 후 원 마찰 대화(…f1c535ec) 동일입력 재현으로 거부 소멸 관측 시 `fixed:deployed:unverified-live` → 다음 audit corroboration 재측정 시 `verified`.
 - **source**: `/_dqa:conversation_audit` 라이브 대화 직접 탐색(사용자 명시 scope "스크립트 첨부파일 전달 요청" + "assistant 가 '첨부파일' 항목에 실제 쿼리도 생성하도록 구성"). 명시 지시 promote.
@@ -255,3 +255,15 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **rc_ids**: RC-1(이 audit) · **batch-id**: B-20260724T181106-brandnew-script-attachment
 - **라이브 실측 필요분(§정직)**: 코드/테스트/패널은 "attachment-new 경로 동작·보안 가드·프롬프트 주입"을 증명. "실제 대화에서 사용자가 첨부로 받는지" 는 배포 후 라이브 실측분(미수행) → 배포 후 원 마찰 입력(…f1c535ec, "전체 스크립트 개선안을 첨부파일로") 동일 재현 + 다음 audit corroboration(생성물 파일전달 거부 distinct_conv↓) 재측정 → 개선 시 `verified`, 재증가 시 `regressed`.
 - **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 POST-DEPLOY PB-0008 라이브 재현 + doc_sync(STATUS/wiki/릴리즈노트 정합).
+
+### 후속 (2026-07-27) — 1차 배포 후 라이브 미동작 → 후처리 소유권 재배치 (2차 수정, 배포 전)
+
+- **재발 관측**: 1차 수정(cdee8f74, 07-24 배포) 후에도 사용자 보고 "첨부파일 생성 기능을 인지하지 못함"(admin 대화 `기능 추가 파일 요청` = 원 대화 …f1c535ec 재사용).
+- **실측 판정(중요 — 1차 수정은 절반만 작동)**: assistant 는 `attachment-new` 블록을 **정상 emit**(프롬프트 lever 작동, msg 1389 파서 well-formed open L18/close L328). 그러나 ① 첨부 0건 ② raw 블록이 답변에 노출. MySQL 전체 assistant **root(v1) 첨부 0건**(편집 chain 12건은 정상 — 모두 짧은 run).
+- **2차 RC(삼각측량 high)**: 첨부 후처리(materialize+strip)가 **web `/api/ask` 동기 핸들러에만** 존재. 프로덕션은 worker 모드라 답변 생성 주체는 ask-worker 이고 web 은 long-poll 일 뿐 — 장기 run(msg 1388→1389 **11분**) 중 클라이언트/프록시 연결이 끊기면 web 이 후처리 지점에 미도달. worker 는 raw 메시지만 저장. 재발경로 = **아키텍처 소유권 오배치**(편집·신규 경로 공통 잠재 결함이 장기 run 에서 발현).
+- **2차 봉인**: 후처리 소유자를 **ask-worker** 로 이전 — `_postprocess_attachment_blocks`(materialize+strip+step) + `run_agent(defer_terminal_status=)` 로 **KV terminal 을 후처리 뒤로 지연**(독자는 KV terminal 을 보고 답변을 읽으므로 이 순서가 노출을 막는 핵심) + `_finalize_deferred_terminal`(finally 보장) + 기동 시 import 워밍업. web 은 **증거 기반 게이트**(블록 잔존 시에만 self-heal)로 전환.
+- **fix**: CHG-20260727T105326-worker-attachment-postprocess / **primary `feature-0002-agent-core`** + cross-ref `feature-0003-agent-web-ui`(CHG-20260727T105326-web-postprocess-gate) / REVIEW REV-20260727T105326-worker-attachment-postprocess. Major. PLAN-APPROVED(2026-07-27).
+- **§18.8 2라운드**: BLOCKER 2건(web strip 미게이팅 → 블록 삭제 저장으로 **원 결함보다 악화** / KV terminal 이 run_agent 내부라 순서계약 무효) + MAJOR 2 + MINOR 3 + LOW 2 → 전부 in-cycle 반영, 2nd pass 재검증 CLOSED.
+- **검증**: pytest **2384 PASS**(신규 12). **라이브 실측은 배포 후**(원 입력 재현 + assistant root 첨부 ≥1 + 워커 로그) — 그 전까지 `fixed:undeployed` 유지(거짓 done 금지).
+- **배포 주의(운영)**: web 이 worker 후처리를 전제 → **워커 포함 전체 스코프 배포**(`make deploy-web`). `--web-only` 금지(혼합 창은 증거 기반 게이트가 self-heal 하지만 순서는 지킨다).
+- **교훈(LRN 후보)**: "web 동기 핸들러에 붙인 후처리는 worker 실행 모델에서 **연결 수명에 종속**된다 — 답변 완료 시점을 아는 실행 주체가 후처리를 소유해야 하고, 공개 시점(terminal 신호)은 후처리 뒤여야 한다." 1차 수정이 기능은 맞았으나 **실행 경로 소유권**을 놓쳐 라이브에서 0% 동작한 사례.

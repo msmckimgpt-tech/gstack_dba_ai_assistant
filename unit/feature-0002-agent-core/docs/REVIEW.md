@@ -480,3 +480,15 @@ source_of_truth: true
 - 대상(feature-0002): `tests/test_runtime_settings.py` 의 sonnet-budget 단정 갱신(shared runtime_settings 가 adaptive 죽은 budget 스펙 제거함에 따름). src 코드 변경 0(test-only).
 - 리뷰 방식([SKIPPED] 사유): 로직 정본(shared/runtime_settings + admin UI)의 적대 리뷰가 feature-0003 REV-20260724T085937-sonnet-reasoning-budget-guide [SUBAGENT:adversarial-general-purpose] **SHIP-WITH-FIXES**(Finding D 반영). feature-0002 는 그 변경에 대한 테스트 계약 갱신뿐이라 추가 패널 판별력 낮음.
 - Cross-ref: feature-0003 REVIEW/CHG/TASK · shared MODIFY 동일 slug.
+
+## REV-20260727T105326-worker-attachment-postprocess [AGENT-TEAM: backend+concurrency] SHIP-WITH-FIXES — §18.8 Verification Panel (2 rounds)
+- **Trigger**: worker 실행 경로 + 첨부 쓰기 + KV 상태 전이 순서 변경 → backend correctness + concurrency 렌즈(§18.8 `schema/query` + 상태머신). 2라운드(수정 후 재검증) 수행.
+- **[R1 BLOCKER 1 → 반영·R2 CLOSED]** worker 모드에서 web 의 **strip 블록이 미게이팅** — 빈 materialize 목록으로 블록을 지워 DB 저장 → 워커가 읽을 때 블록이 없어 첨부 영영 미생성 + 스크립트 본문 소실(원 결함보다 악화). Fix: web 후처리 **4곳 전부** 게이팅.
+- **[R1 BLOCKER 2 → 반영·R2 CLOSED]** 순서 계약 무효 — 독자(web attach loop·`/api/ask_result`·프런트 재조회)는 ask_jobs terminal 이 아니라 **KV last_status** 를 보고 탈출하는데, 그 done 은 `run_agent` **내부**(agent_core.py)에서 후처리 전에 기록됐다. Fix: `defer_terminal_status` 로 성공 경로 KV done 을 후처리 뒤로 이전(error/cancel 즉시 유지 + finally 보장).
+- **[R1 MAJOR 3 → 반영·R2 CLOSED]** `import web.app`(~0.93s 실측) 비용이 첫 job 의 민감 구간에 위치 → 기동 시 워밍업.
+- **[R2 MAJOR 4 → 반영]** **혼합 버전 배포 창**: 모드 기반 게이팅은 web(신)+worker(구) 구간에서 첨부 미생성 + 원문 영구 잔존(`deploy-web-only` 면 영구). Fix: **증거 기반 게이트**(`_raw_block_left` — 블록이 남아 있으면 web 이 self-heal). 배포는 워커 포함 전체 스코프.
+- **[R2 MINOR → 반영]** (a) worker 모드 첨부 step 기록 소실(TASK-0285 ④ 회귀) → `_record_attachment_step` (b) error/cancel 경로 strip 누락(web 정책은 무조건 strip) → materialize 만 skip (c) `_update_assistant_message_content` 가 예외를 삼켜 MINOR 가드가 inert → **bool 반환** 후 게이팅.
+- **[R2 LOW → 반영]** (a) error 가 늦게 설정되면 terminal 미기록 위험 → error 로라도 기록 (b) 마커 pop 순서.
+- **검증-SAFE(REFUTED)**: 이중 materialize(웹 게이팅+워커 직렬+error 가드)·lease fencing(`only_if_current_run`)·conn/커서 누수·inproc 경로 무변경·다른 답변 생산 경로 부재(fix-with-ai·reanswer 모두 `/api/ask` 재dispatch)·`/api/progress`·`/api/ask_status` 미노출.
+- **잔존(기존·미해결로 명시)**: `/api/history` 는 run-status 게이트가 없어 `_save_message`~strip 사이 raw 블록이 조회 가능(pre-existing — inproc 도 동일, 창은 수 초). 근본 해소는 저장 시점 strip 이며 별도 triage.
+- **판정**: SHIP-WITH-FIXES → 전 findings in-cycle 반영, 2라운드 재검증에서 BLOCKER/MAJOR CLOSED. 라이브 실측=POST-DEPLOY.

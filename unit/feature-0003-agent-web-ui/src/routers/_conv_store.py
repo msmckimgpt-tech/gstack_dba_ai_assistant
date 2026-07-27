@@ -4617,6 +4617,9 @@ def _build_worker_agent_result(job_id: int, conv_id: str) -> dict[str, Any]:
     base = {
         "answer": "", "conversation_id": conv_id, "steps": [],
         "executed_sql": "", "result_csv_paths": [], "rationale": "", "error": "",
+        # FR-brandnew-script-attachment-delivery-gap 후속: worker 가 후처리한 첨부(edit/new)를
+        # web 응답으로 그대로 전달(inproc 패리티 — 프런트 토스트/표면화).
+        "edited_attachments": [], "new_attachments": [],
     }
     pg = None
     try:

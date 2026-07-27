@@ -1036,7 +1036,11 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(releases +1·2026-07-24 head 8항목·2026-07-23 보존·스키마·누출0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
-
+## CHG-20260727T105326-web-postprocess-gate — 첨부 후처리 web 게이팅(증거 기반) + worker 결과 전달 (Major §12.3, cross-ref feature-0002 primary)
+- **What**: 첨부 후처리 소유자가 ask-worker 로 이전됨에 따라(primary CHG-20260727T105326-worker-attachment-postprocess) web `/api/ask` 의 후처리 4곳(materialize 2 + strip 2)을 **증거 기반 게이트**(`_raw_block_left`: 저장 답변에 블록이 남아 있을 때만 수행)로 감싸고, worker 가 만든 첨부 목록을 응답으로 forwarding. `_update_assistant_message_content` 는 성공 여부 bool 반환(§18.8 MINOR).
+- **Why**: (a) worker 모드에서 web 이 빈 목록으로 strip 하면 블록만 지워 저장돼 첨부가 영영 생성되지 않고 본문 소실(§18.8 BLOCKER) (b) 모드-only 게이팅은 혼합 버전 배포 창에서 같은 결과(§18.8 MAJOR) → 증거 기반이면 정상 경로 no-op·비정상 경로 self-heal.
+- **Files**: `src/routers/conversations.py`, `src/routers/_conv_store.py`(`_build_worker_agent_result` 첨부 키).
+- **Verification**: pytest 2384 PASS(web 게이팅 계약 테스트 포함) · §18.8 2라운드. **배포는 워커 포함 전체 스코프**(`--web-only` 금지).
 ## CHG-20260727T102027-sql-diff-highlight — ```diff``` 코드블록 내 SQL 구문 하이라이트 (Minor §12.3, frontend-only, sql-md-highlight 후속)
 - **요청(사용자, /_template:entry arg-given)**: "diff 구문을 나타내는 부분에서도 SQL 하이라이트가 적용되도록 구성해주세요."
 - **원인**: 직전 sql-md-highlight 는 ```sql 블록만 처리. `enhanceDiffBlocks` 는 각 diff 라인 코드를 plain textContent 로만 넣어 diff 내 SQL 이 색 구분 안 됨(+/-/context 색만).
