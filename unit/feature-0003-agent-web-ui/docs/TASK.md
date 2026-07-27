@@ -8,6 +8,39 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260727T113640-model-persist — 대화별 "마지막 요청 모델" 보존(새로고침·대화 복귀) + '+ 새 대화'는 haiku 유지 (Minor §12.3 — feature-0003 web/UI, 프론트 `static/app.js` + 백엔드 `routers/conversations.py`, /_template:entry arg-given)
+- 요청(사용자, 2026-07-27, `/_template:entry` arg-given): "대화 중, 서비스 내 assistant에게 마지막으로 요청했던 모델을 기준으로 새로고침이나 다른 대화에서 돌아왔을 때, 기준 모델의 선택을 보존시켜주세요. 다만 '+ 새 대화' 를 통해 선택되는 모델은 haiku 그대로입니다."
+- 현상(3중 결함): composer 모델 선택기 상태 `state.selectedModel` 은 **메모리 전용 전역**이라 (a) 새로고침하면 사라져 세션 기본값(haiku)으로 되돌아가고, (b) 대화를 전환해도 전역값이 그대로 남아 **직전 대화의 모델이 다른 대화로 누출**되며, (c) sonnet 을 고른 뒤 '+ 새 대화' 를 눌러도 sonnet 이 그대로 이어져 "새 대화는 haiku" 계약이 깨졌다. 추론 강도(reasoning-effort-selector)는 이미 대화별 KV 영속 + `/api/history` hydration 이 있으나 모델에는 대응 경로가 없었다.
+- 수정(추론 강도와 동형 구조, additive):
+  - **백엔드 `routers/conversations.py`**:
+    - `ask()` — 클라이언트가 **명시로** 실은 model(`model_explicit`)일 때만 대화별 KV `model` 저장. 미지정 내부 재dispatch('AI 로 고치기' fix_with_ai 등)는 기존 저장값을 보존(덮어쓰기 금지) — reasoning_level 의 "명시 값일 때만 저장" 계약과 동형. best-effort(저장 실패가 답변을 막지 않음), in-flight run 은 캡처된 run_kwargs 로 실행되어 영향 0.
+    - `history()` — 저장값을 payload `model` 로 반환. `_is_safe_model_name` + `_is_allowed_api_model` 을 **서버측 단일 검증점**으로 두어 allowlist 밖(로컬 LLM alias·카탈로그 개편 잔재)이면 `""` 로 내려 프론트가 기본값 폴백(stale alias 복원 → 다음 전송 400 차단).
+  - **프론트 `static/app.js`**:
+    - `loadHistory` — 비-append 로드에서 `payload.model` 로 `state.selectedModel` hydration(없으면 null → 기본값 폴백) + `_updateComposerModelLabel()`(모델별 thinking 지원에 따른 추론 강도 라벨도 동반 최신화).
+    - `_modelHydrationShouldSkip(state, convId)` 신설(순수 함수) — "이 대화에서 마지막 hydration 이후의 미전송 선택" 이면 hydration 건너뜀. 주기 `refreshWorkspace`·run 감지 재로드가 사용자의 미전송 선택을 되돌리는 것을 막고, 다른 대화를 들렀다 오면 `_modelHydratedAt` 전진으로 자동 해제되어 저장값이 정상 복원된다.
+    - 모델 선택 핸들러 — `_modelPickedAt`/`_modelPickedForConvId` 기록.
+    - `beginPendingConversation()`('+ 새 대화') — `selectedModel`/픽 마커 리셋 → 세션 기본값(`API_DEFAULT_MODEL=claude-haiku-4`)에서 시작. **모델은 localStorage 미러를 두지 않는다**(추론 강도와 의도적 비대칭 — 미러가 있으면 새 대화가 직전 모델을 상속해 요구를 깬다).
+    - pending 대화 entry 에 `model` 캡처 + `_switchToPendingConversationContext()` 복원 — 아직 cid(=KV)가 없는 컨텍스트로 swap 할 때 직전 대화 선택이 새어 들어오지 않게.
+- 완료 판정(acceptance):
+  - [AC-MP-1] 대화에서 모델을 골라 전송한 뒤 **새로고침** → 그 대화의 선택 모델이 복원된다.
+  - [AC-MP-2] 다른 대화로 전환했다가 **복귀** → 각 대화의 마지막 요청 모델이 각각 복원된다(전역 누출 없음).
+  - [AC-MP-3] '+ 새 대화' → 직전 대화 모델을 상속하지 않고 haiku(세션 기본값)에서 시작한다.
+  - [AC-MP-4] 'AI 로 고치기' 등 model 미지정 내부 재dispatch 가 대화의 저장 모델을 되돌리지 않는다.
+  - [AC-MP-5] allowlist 밖 저장값은 복원되지 않고 기본값으로 폴백한다(다음 전송 400 차단). 열람 불가 대화·가시 window `DENY`·계정 식별 불가도 동일하게 미복원.
+  - [AC-MP-6] **계정별 스코프(제품 결정)**: 저장은 (대화 × 요청 계정) 단위다. 그룹 대화에서 두 멤버가 같은 대화에 서로 다른 모델을 볼 수 있으며, 이는 사용자 표현("assistant 에게 **내가** 마지막으로 요청했던 모델")에 대한 의도된 해석이다. 파생 효과 — 대화 복제(fork)·공유 링크 신규 참여자는 저장값이 없어 세션 기본값(haiku)에서 시작한다.
+  - [AC-MP-7] **기본값-이탈 인코딩(제품 결정)**: KV 는 "세션 기본값에서의 이탈"만 담는다. 이 때문에 (a) 운영이 기본 모델을 올리면 명시 선택이 없던 기존 대화가 새 기본값을 따라가고, (b) 사용자의 명시 선택과 같은 값으로 기본값이 바뀐 뒤 그 대화에서 다시 전송하면 저장이 해제되어, 이후 기본값이 되돌아갈 때 그 선택이 남지 않는다. (b)는 알려진·수용된 성질이다.
+  - [AC-MP-8] **미hydration 대화 clobber 금지**: 화면이 그 대화의 저장값을 아직 읽지 않은 상태(hydration 전)로 전송하면 `model` 필드를 싣지 않아 서버가 기존 저장값을 보존한다 — 화면·대화 desync 가 사용자의 이전 선택을 영구 삭제하지 못한다.
+  - [AC-MP-9] **미전송 선택 보존**: '+ 새 대화'/랜딩 컨텍스트에서 고른 뒤 아직 보내지 않은 모델은, 그 컨텍스트에 머무는 동안의 재로드(주기 `refreshWorkspace`·일괄삭제·롤백)로 사라지지 않는다.
+- 완료 체크리스트
+  - [x] 백엔드 `ask()` KV 저장(명시 model 한정) + `history()` payload `model` 반환(allowlist 검증)
+  - [x] 프론트 hydration + 픽 가드 + '+ 새 대화' 리셋 + pending 컨텍스트 모델 캡처/복원
+  - [x] 단위 테스트 신설 — `tests/test_model_persist.py` **14 PASS**(H1·H1b 계정격리·H2/H2b allowlist·H2c 열람불가·H2d DENY·H2e 식별불가 fail-closed·H3·H4·A1·A1b 기본값해제·A1c 400+미저장·A2·A2b) · `tests/verify_model_persist.mjs` **32 PASS**(G1~G5 hydration 가드·M1~M2 기본값·R1~R5 리셋/미전송 보존·D1~D4 clobber 가드·S1~S8 구조계약) · `node --check`·`py_compile` PASS · ruff PASS
+  - [x] §18.8 적대 패널 **2라운드 모두 BLOCK → 전건 수정**: 1R(B1 랜딩·로그아웃 미커버 / C1 전환 대기 창 오염 / C2 기본값 영구고정 / C3 그룹 타멤버 누출 / C4 테스트 위양성) · 2R(B-B 랜딩 재로드가 미전송 선택 삭제 — 1R 수정이 만든 회귀 / C-A `moveConversationToFolder` hydration 공백 → 저장값 clobber / C-B 최종 fallback 리터럴 sonnet / C-C 열린 메뉴 하위 재렌더 / C-D `model:unknown` 공유 슬롯). B-A(스테이징 누락 지적)는 검토 시점 타이밍 아티팩트로 확인 — 현재 10 파일 전부 staged(마커 grep 확증)
+  - [x] `make test` 전체 — 신규 8건 포함 PASS. 선존 FAIL 4건(`test_routine_dbanalysis`·`test_runtime_settings`·`test_item11_batch8_update_conv_product`·`test_runtime_settings_api`)은 **clean main(84f2e5ab)에서도 동일 재현** 확인 → 본 변경과 무관(DB 미기동 host resolve·.env AGENT_TIMEOUT_SEC=300 유입)
+  - [ ] verify-completion PASS → PR → deploy-web → POST-DEPLOY PB-0008 라이브 검증(AC-MP-1~3)
+- 위험도: Minor(§12.3 — additive 영속 1키 + 표시 계층 복원. 스키마 변경 0(기존 memory KV 재사용)·RBAC 0·엔드포인트 신설 0·응답 필드 1개 추가(하위호환: 구 클라이언트는 무시)). 롤백 = revert(잔존 KV 는 읽는 쪽이 없으면 무해).
+정본 rationale=REVIEW.md REV-20260727T113640-model-persist, 변경이력=MODIFY.md CHG-20260727T113640-model-persist.
+
 ## TASK-20260724T073848-conv-menu-order — 대화 목록 '···' 확장 메뉴 항목 순서 변경 (공유·설정·이동 → 공유·이동·설정) (Minor §12.3 — feature-0003 web/UI 프론트 `static/app.js` 단독, frontend-only, /_template:entry arg-given)
 - 요청(사용자, 2026-07-24, `/_template:entry` arg-given): "서비스 내 대화목록 요소의 확장에서 각 순서를 변경해주세요. 전: [공유, 설정, 이동] → 후: [공유, 이동, 설정]"
 - 현상: `openConversationItemMenu`(app.js) 가 `공유 → 설정 → 이동(folder.manage.own 조건부)` 순으로 항목을 append. 사용자는 '설정'과 '이동'의 순서를 맞바꿔 `공유 → 이동 → 설정` 을 원함.

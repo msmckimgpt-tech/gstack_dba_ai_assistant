@@ -1053,3 +1053,17 @@ source_of_truth: true
 - 코드/자산 0 — sql-diff-highlight(PR #948·main 8d69490c) 배포 후 라이브 검증 결과 기록만.
 - test-runs.d/20260727T102027-sql-diff-highlight.md POST-DEPLOY 결과(Windows-browser PASS) + REPORT 완결 + TASK 최종 체크박스 + REVIEW REV-20260727T110000-...(§12.2 deploy 근거) + evidence/pb0008-sql-diff-live-20260727.png.
 - 실측(실 Windows Chrome/150, https://localhost/ bootstrap_admin): 배포본 SQL diff → diff-sql·sql-tok 9·Tokyo Night 색 정확·hunk 미토큰화·add/del 구분·script 0. 사용자 요청 라이브 해소.
+
+## CHG-20260727T113640-model-persist — 대화별 "마지막 요청 모델" 보존 + '+ 새 대화'는 haiku 유지 (Minor §12.3, web/UI + backend additive)
+- **요청(사용자, /_template:entry arg-given)**: "대화 중 assistant 에게 마지막으로 요청했던 모델을 기준으로, 새로고침이나 다른 대화에서 돌아왔을 때 그 선택을 보존. 다만 '+ 새 대화' 로 선택되는 모델은 haiku 그대로."
+- **원인**: `state.selectedModel` 이 메모리 전용 전역이라 ① 새로고침 시 소실(기본값 복귀) ② 대화를 바꿔도 전역값이 남아 직전 대화 모델이 다른 대화로 누출 ③ 선택 후 '+ 새 대화' 를 눌러도 그대로 이어져 "새 대화는 haiku" 계약 파손. 추론 강도는 이미 대화별 KV 영속 + `/api/history` hydration 이 있었으나 모델엔 대응 경로 부재.
+- **변경**:
+  - `src/routers/conversations.py`: `_model_kv_key(account)` 신설(키 = `model:<account_id>` — 그룹 대화 계정별 격리). `ask()` 가 `model_explicit`(클라이언트 명시 여부) 일 때만 KV 저장하되 **세션 기본값과 같으면 빈 값으로 해제**(기본값 이탈만 저장 → 이후 기본 모델 상향이 기존 대화에 반영됨). `history()` 가 저장값을 payload `model` 로 반환(`_is_safe_model_name`+`_is_allowed_api_model` 재검증, `_display_window == "DENY"` 면 미반환).
+  - `src/static/app.js`: `loadHistory` 비-append 로드에서 `payload.model` hydration(+`_updateComposerModelLabel`/`_renderComposerModelMenu`). `_modelHydrationShouldSkip(state, convId)`(미전송 선택 보존 판정)·`_resetComposerModelSelection(state)`(컨텍스트 이탈 리셋) 순수 함수 2종 신설. 리셋 호출 4곳 — `beginPendingConversation`·`selectConversation`(전환 즉시, 대기 창 오귀속 차단)·`loadHistory` 활성대화없음 분기·`handleLogout`. 모델 선택 핸들러가 `_modelPickedAt`/`_modelPickedForConvId` 기록. pending 대화 entry 에 요청 모델 캡처 + `_switchToPendingConversationContext` 복원.
+  - `src/static/index.html`: composer 모델 라벨 초기 텍스트 하드코딩 `claude-sonnet-4` → 중립 placeholder(카탈로그 로드 실패 시 실제 사용 모델과 다른 값 노출 방지).
+- **의도적 비대칭**: 추론 강도와 달리 모델은 localStorage 미러를 두지 않는다 — 미러가 있으면 새 대화가 직전 모델을 상속해 사용자 요구를 깬다. `verify_model_persist.mjs` S3/S3b 가 이 비대칭을 고정(대조군 포함).
+- **Files**: `src/routers/conversations.py`, `src/static/app.js`, `src/static/index.html`, `tests/test_model_persist.py`(신규), `tests/verify_model_persist.mjs`(신규), `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260727T113640-model-persist.md`.
+- **2R 적대 리뷰 반영(추가 변경)**: `loadHistory` 랜딩 분기 리셋을 미전송-선택 가드로 감쌈(B-B 자체 회귀) · `_shouldSendModelField` 신설 + `askBody.model` 조건부 동봉 + `_modelHydratedForConvId` 추적 + `moveConversationToFolder` 에 `loadHistory()` 추가(C-A clobber 차단) · `_composerCurrentModel` 최종 fallback `claude-sonnet-4`→`claude-haiku-4`(C-B) · 모델 메뉴 재렌더를 열린 상태로 한정(C-C) · `_model_kv_key` 식별불가 시 fail-closed 빈 키 + 저장·복원 skip(C-D).
+- **Verification**: `test_model_persist.py` 14 PASS · `verify_model_persist.mjs` 32 PASS · `node --check`·`py_compile`·ruff PASS · `make test` 전체(신규 포함 PASS; 선존 FAIL 4건은 clean main 84f2e5ab 에서도 동일 재현 — 본 변경 무관) · §18.8 [SUBAGENT] 적대 패널 2라운드(1R BLOCK → B1/C1/C2/C3/C4 수정 후 재검증).
+- **스키마/RBAC**: 0(기존 memory KV 재사용, 신규 엔드포인트 0, `/api/history` 응답 필드 1개 additive — 구 클라이언트 무시). cache-buster `?v=dev` 고정(빌드 자동주입 regime).
+- **잔여**: verify-completion → commit → PR → merge → deploy-web → POST-DEPLOY PB-0008(AC-MP-1~3 라이브).

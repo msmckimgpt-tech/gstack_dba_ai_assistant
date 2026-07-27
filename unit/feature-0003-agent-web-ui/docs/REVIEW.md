@@ -948,3 +948,26 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 코드 변경 0(문서 전용 POST-DEPLOY 기록). 실 구현 리뷰 정본 = REV-20260727T102027-sql-diff-highlight([SUBAGENT] SHIP-WITH-FIXES·MAJOR+MINOR3 in-cycle 수정).
 - **§12.2 deploy_scope 근거**: FIRST_REQUEST.md 전역 `deploy_scope: included`(cycle 시작 시점 기존 선언)에 근거해 PR #948 머지(main 8d69490c) 후 `make deploy-web-only` 무중단 배포를 confirm 없이 수행. "deploy_scope: included 활성" 1줄 표면화 완료. 배포=web-a/web-b 8d69490c 롤링 재생성·healthy·RestartCount 0(롤백 0).
 - **POST-DEPLOY 실증(Windows-browser, PB-0008)**: 실 Windows Chrome/150 배포본 markdownToHtml eval(SQL diff) → diff-sql·sql-tok 9개·getComputedStyle Tokyo Night 색 정확(keyword #bb9af7·string #9ece6a·number #ff9e64)·평문 기본색 #c0caf5·add/del 배경 tint·hunk 미토큰화·gutter 보존·script 0·콘솔 에러 0. test-runs.d POST-DEPLOY 결과 + evidence/pb0008-sql-diff-live-20260727.png.
+
+## REV-20260727T113640-model-persist [SUBAGENT: SHIP-WITH-FIXES — 2라운드 모두 BLOCK, 지적 10건(B1·C1~C4 / B-B·C-A~C-D) 전건 in-cycle 수정] 대화별 "마지막 요청 모델" 보존 + '+ 새 대화'=haiku (Minor §12.3, web/UI + backend additive)
+- **[SUBAGENT] 적대 패널 (§18.8, security+backend+qa+ux 4렌즈, 실 소스 추적 검증)** — 2라운드 수행. 두 라운드 모두 **BLOCK** 판정을 받았고 전건 수정 후 재검증했다.
+- **1R BLOCK 지적 → 수정**:
+  - **B1(high) 랜딩·로그아웃 경로 미커버**: 본 변경이 `state.selectedModel` 을 "명시 클릭으로만 설정" → "대화 로드마다 서버값으로 설정" 으로 바꿔, 대화 삭제/보관/나가기 후 랜딩 및 로그아웃→재로그인(페이지 리로드 없음) 시 직전 대화(직전 **계정**)의 모델이 다음 신규 대화 요청에 실림. → `_resetComposerModelSelection(state)` 신설 + 이탈 경로 4곳 적용.
+  - **C1(med) 대화 전환 대기 창**: `activeConversationId` 는 바뀌었으나 hydration 전인 창에서 전송하면 직전 대화 모델이 **대상 대화 KV 에 영구 저장**. → `selectConversation` 에서 전환 즉시 리셋.
+  - **C2(med) 기본값 영구 고정**: 웹은 선택기 미상호작용에도 항상 `model` 을 실어 보내므로 모든 대화가 "첫 전송 시점 기본값"에 pin → 이후 기본 모델 상향이 기존 대화에 영원히 미반영. → **기본값 이탈만 저장**(같으면 빈 값으로 해제).
+  - **C3(med) 그룹 대화 누출**: 대화 단위 키면 멤버 A 의 선택이 B 의 composer 를 바꾸고 **B 의 토큰 한도로 청구**. → KV 키를 `model:<account_id>` 로 계정별 분리 + `_display_window == "DENY"` 시 미반환.
+  - **C4(med) 테스트 위양성**: ask 하네스가 `_is_allowed_api_model`/`_is_safe_model_name` 을 patch 해 무력화(저장이 검증 게이트 위로 올라가는 회귀 미검출), S3 mirror 검출기가 두 조건 모두 false 라 vacuous. → patch 제거 + A1c(거부 alias 400 & KV 미도달)·H2c/H2d 추가, 검출기 재작성 + **S3b 대조군**(추론 강도 미러는 실제 검출되어야 함).
+- **2R BLOCK 지적 → 수정** (1R 수정이 만든 회귀 포함):
+  - **B-B(med, 자체 회귀) 랜딩 재로드가 미전송 선택 삭제**: `loadHistory` 활성대화없음 분기는 "이탈"이 아니라 랜딩/pending 에 **머무는 동안 반복 호출**되는 재렌더 경로 — 무조건 리셋이 '+ 새 대화'에서 고른 뒤 아직 안 보낸 선택을 사이드바 일괄삭제·제품 롤백 등에서 조용히 삭제. → hydration 경로와 동일 가드 적용(`!_modelHydrationShouldSkip(state, "")`) + R3b/R4/R5 회귀 테스트.
+  - **C-A(med) `moveConversationToFolder` hydration 공백**: `loadConversations` 만 호출해 `activeConversationId` 가 hydration 없이 재지정 → 다음 전송이 그 대화의 저장 모델을 기본값으로 clobber. → 폴더 이동 후 `loadHistory()` 추가 + **클래스 차원 가드** `_shouldSendModelField(state, targetConvId, isLazyCreate)`: 신규 대화 / 이 대화에서 명시 선택 / 이 대화 hydration 완료 중 하나일 때만 `askBody.model` 동봉(그 외 생략 → 서버가 기존 저장값 보존).
+  - **C-B(med) 최종 fallback 리터럴**: `_composerCurrentModel` 말단 안전망이 `"claude-sonnet-4"` — 카탈로그 로드 실패 시 "새 대화는 haiku" 계약과 반대로 상위 모델 전송. → `"claude-haiku-4"`(서버 `API_DEFAULT_MODEL` 과 동일)로 정정. 나머지 chain 발산은 위 clobber 가드가 흡수.
+  - **C-C(low) 열린 메뉴 하위 재렌더**: 매 로드마다 `_renderComposerModelMenu()` innerHTML 재생성 → 열린 상태에서 hover·클릭 대상 노드 교체. → 메뉴가 보일 때만 재렌더(사이드바 unread sync 의 열린-메뉴 skip 과 동일 패턴).
+  - **C-D(low) `model:unknown` 공유 슬롯**: 계정 식별 불가 호출자들이 한 키를 공유 → 계정별 분리로 막으려던 것을 재현. → **fail-closed**(빈 키 반환, 저장·복원 모두 skip) + H2e.
+  - **B-A(critical, process) 스테이징 누락 지적**: 리뷰어가 index 를 본 시점이 `git add` 전이라 1R 코드가 staged 로 보인 **타이밍 아티팩트**. 현재 10 파일 전부 staged 확증(`git show :…` 마커 grep — `_model_kv_key` 4·`_resetComposerModelSelection` 6·테스트 13(→14)·`index.html` placeholder 1). 지적 자체는 타당한 절차 리스크라 커밋 직전 재확인을 관례로 채택.
+- **잔여(수정 안 함 — 문서화)**:
+  - **C5 / fix_with_ai 는 기본 모델로 실행**: 'AI 로 고치기'는 model 없이 재dispatch 되므로 정정 run 이 대화의 선택 모델이 아닌 기본값으로 실행된다. 저장값은 덮어쓰지 않으므로(AC-MP-4) 사용자 선택은 보존된다. **본 cycle 에서 바꾸지 않는 근거는 "선존 동작" 만이 아니다 — 계정별 키 도입으로 "그 대화의 모델" 이 더 이상 단일 사실이 아니게 되어, 서버 주도 정정 run 이 어느 멤버의 선호를 택할지가 모호하다. 배포 기본값을 쓰는 편이 오히려 정합적**(리뷰어 §3 수용).
+  - **AC-MP-7(b) 기본값 통과 시 명시 선택 해제**: 이탈-인코딩의 알려진 성질. AC 에 명시해 다음 리뷰가 재논쟁하지 않게 고정.
+- **결정 근거**: 추론 강도 선택기(대화별 KV + `/api/history` hydration)의 검증된 구조를 재사용하되 **로컬 미러는 의도적으로 두지 않는다** — 미러가 있으면 새 대화가 직전 모델을 상속해 사용자 요구("'+ 새 대화'는 haiku")를 정면으로 깬다. 이 비대칭이 B1 의 근원이기도 했다(미러가 랜딩 상태를 무해하게 만들어 주던 안전망이 모델에는 없었다) → 리셋 헬퍼가 그 자리를 대신한다.
+- **대안 검토**: (A) localStorage 미러 — 사용자 요구 위반, 불채택. (B) 대화 단위 단일 키 — 그룹 대화 교차 오염(C3), 불채택. (C) 요청 model 원문 저장 — 기본값 영구 pin(C2), 불채택. (D) **계정별 키 + 기본값-이탈 저장 + 전송 clobber 가드(채택)**.
+- **검증**: `test_model_persist.py` 14 PASS · `verify_model_persist.mjs` 32 PASS · `node --check`/`py_compile`/ruff PASS · `make test` 전체 회귀 0(선존 FAIL 4건은 clean main 84f2e5ab 에서 동일 재현 확인 — 본 변경 무관). POST-DEPLOY PB-0008(Windows-browser) = 배포 후 정본.
+- Human Approval Needed: no (Minor §12.3 — 스키마/RBAC/엔드포인트 0, additive 응답 필드 1개).

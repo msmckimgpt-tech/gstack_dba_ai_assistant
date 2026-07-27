@@ -30,6 +30,25 @@ INCLUDE_ORDER = 90  # 등록 순서 고정 — 2026-07-10 현행 include 순서 
 router = APIRouter()
 
 
+def _model_kv_key(account: Any) -> str:
+    """feature-0003 model-persist: 대화별 '마지막 요청 모델' KV 키 (요청자 계정별로 분리).
+
+    그룹 대화는 여러 계정이 같은 conversation_id 를 공유하므로, 대화 단위로만 저장하면 멤버 A 의
+    모델 선택이 멤버 B 의 composer 를 바꾸고 B 의 토큰 한도로 청구된다. 사용자 요구가
+    "assistant 에게 **내가** 마지막으로 요청했던 모델" 이므로 계정별로 분리한다. 1:1 대화는
+    참여자가 1명이라 대화 단위 저장과 동작이 동일하다.
+
+    계정 id 를 해석할 수 없으면 **빈 문자열**을 돌려준다(fail-closed). 공유 sentinel 키
+    (`model:unknown`)를 쓰면 식별 불가 호출자들이 한 슬롯을 공유해, 계정별 분리로 막으려던
+    "타인의 선택이 내 composer 를 조종" 을 그대로 재현한다(2R 적대 리뷰 C-D). 호출부는 빈 키면
+    저장·복원을 모두 건너뛰어 기본값으로 동작한다.
+    """
+    try:
+        return f"model:{int((account or {}).get('id'))}"
+    except Exception:
+        return ""
+
+
 @router.post("/api/new_conversation")
 async def new_conversation(request: Request, account=Depends(app.require_permission("conversation.create")), conn=Depends(app.get_conn)) -> JSONResponse:
     try:
@@ -203,6 +222,15 @@ def history(
     # feature-0003 reasoning-effort-selector: 이 대화에 마지막으로 저장된 추론 강도(KV) 를 함께
     # 반환해, 대화 전환·새로고침 후 프론트 선택기가 저장값으로 복원되게 한다(hydration).
     reasoning_level = ""
+    # feature-0003 model-persist: 이 대화에 마지막으로 **명시 요청된 모델**(KV) 도 함께 반환해,
+    # 새로고침·대화 전환 후 복귀 시 composer 모델 선택기가 그 대화 기준으로 복원되게 한다
+    # (reasoning_level 과 동형 hydration). 저장값이 현재 allowlist 밖(카탈로그 개편·로컬 LLM
+    # alias 등)이면 빈 문자열로 내려 프론트가 기본값(API_DEFAULT_MODEL=haiku)으로 폴백하게 한다
+    # — stale alias 를 복원해 /api/ask 400 을 유발하지 않기 위한 서버측 단일 검증점.
+    # 저장은 **요청자(계정)별**이다(_model_kv_key) — 그룹 대화에서 다른 멤버의 선택이 내 composer 를
+    # 바꾸고 내 토큰 한도로 청구되는 것을 막는다(사용자 표현 "assistant 에게 **내가** 마지막으로
+    # 요청했던 모델"). 1:1 은 참여자가 1명이라 대화 단위 저장과 동작이 같다.
+    model = ""
     if conv_id:
         try:
             last_status = str(app.load_memory_kv(conn, conv_id, "last_status") or "").strip()
@@ -215,6 +243,19 @@ def history(
                 # run 시작 시각이다(클라이언트가 elapsed 기준점으로 사용).
                 last_run_started_at = str(app.load_memory_kv(conn, conv_id, "last_status_at") or "").strip()
             reasoning_level = str(app.load_memory_kv(conn, conv_id, "reasoning_level") or "").strip()
+            # DENY(가시 window 미해석 제약 대화)는 messages 를 비워 내려주는 경로다. 그 경우
+            # 모델도 내려주지 않는다 — 열람이 차단된 대화의 상태로 composer 를 재조준하지 않는다.
+            _model_key = _model_kv_key(account)
+            if _display_window != "DENY" and _model_key:
+                _saved_model = str(
+                    app.load_memory_kv(conn, conv_id, _model_key) or ""
+                ).strip()
+                if (
+                    _saved_model
+                    and app._is_safe_model_name(_saved_model)
+                    and app._is_allowed_api_model(_saved_model)
+                ):
+                    model = _saved_model
         except Exception:
             # best-effort: 상태 bubble 복원용 KV 조회 실패는 history 응답을 막지 않는다.
             logging.getLogger(__name__).warning(
@@ -228,6 +269,7 @@ def history(
         "last_run_id": last_run_id,
         "last_run_started_at": last_run_started_at,
         "reasoning_level": reasoning_level,
+        "model": model,  # feature-0003 model-persist: 대화별 마지막 명시 모델(빈 문자열 = 미저장 → FE 기본값)
         "has_more": has_more,
         "next_before_id": oldest_id,
         "total_messages": total_count,
@@ -2671,6 +2713,12 @@ async def ask(request: Request) -> JSONResponse:
     # 파라미터 폐기. backend 가 보유한 BEDROCK_GATEWAY_API_KEY (service-managed)
     # 가 단일 자격증명. 구 클라이언트가 cipher 를 보내도 silently 무시.
     model = str(data.get("model", "") or API_DEFAULT_MODEL).strip()
+    # feature-0003 model-persist: 클라이언트가 **명시로** model 을 실었는지(=사용자 선택 신호).
+    # 부재 시 위에서 API_DEFAULT_MODEL 로 폴백하므로 `model` 만으로는 명시/폴백을 구분할 수 없다.
+    # 이 플래그가 true 일 때만 대화별 KV 에 저장한다 — 'AI 로 고치기'(fix_with_ai) 처럼 서버가
+    # model 없이 재dispatch 하는 내부 경로가 대화의 선택 모델을 haiku 로 조용히 되돌리는 회귀 차단
+    # (reasoning_level 의 "명시 값일 때만 저장" 계약과 동형).
+    model_explicit = bool(str(data.get("model", "") or "").strip())
     request_conversation_id = str(data.get("conversation_id", "")).strip()
     # feature-0003 reasoning-effort-selector: 사용자가 대화 화면에서 고른 추론 강도.
     # 유효 레벨(low/normal/high/max)만 통과, 그 외(부재·미상)는 None → **override 안 함**(각 모델
@@ -3194,6 +3242,36 @@ async def ask(request: Request) -> JSONResponse:
             except Exception:
                 logging.getLogger(__name__).warning(
                     "ask: reasoning_level KV save failed (conversation_id=%s)",
+                    conv_id, exc_info=True,
+                )
+
+        # feature-0003 model-persist: 이 요청에 **명시 지정된** 모델을 (대화, 요청 계정)별로 영구
+        # 저장(KV)해, 새로고침·재접속·대화 전환 후 복귀 시 composer 선택기가 마지막 요청 모델로
+        # 복원되게 한다(/api/history 가 hydration). 위 reasoning_level 저장과 동일 계약:
+        #   - 저장은 '다음 로드'용이고 이번 run 은 run_kwargs 로 캡처한 값으로 끝까지 실행(in-flight 영향 0)
+        #   - best-effort — 저장 실패는 답변을 막지 않는다
+        #   - model_explicit=False(내부 재dispatch 등)면 기존 저장값을 보존한다(덮어쓰지 않음)
+        # 신규 대화(+ 새 대화)는 KV 가 비어 있으므로 첫 요청 전까지 프론트 기본값(haiku)이 유지된다.
+        #
+        # **세션 기본값과 같으면 빈 값으로 지운다(= '기본값에서의 이탈'만 저장, 적대 리뷰 C2)**:
+        # 웹 클라이언트는 사용자가 선택기를 건드리지 않아도 항상 model 을 실어 보내므로, 값을 그대로
+        # 저장하면 모든 대화가 "첫 전송 시점의 기본값"에 영구 고정되어 이후 운영이 기본 모델을 올려도
+        # 기존 대화에는 영원히 반영되지 않는다. 기본값과 같을 때 지우면 복원 결과(=기본값)는 동일하면서
+        # 기본값 변경이 자연히 따라온다. 사용자가 명시로 기본값을 다시 고른 경우에도 같은 경로로 해제된다.
+        _model_save_key = _model_kv_key(account)  # "" = 계정 식별 불가 → 저장 skip(fail-closed)
+        if conv_id and model_explicit and _model_save_key:
+            try:
+                _default_model = app._resolve_session_default_model()
+            except Exception:
+                _default_model = API_DEFAULT_MODEL
+            try:
+                app.save_memory_kv(
+                    conn, conv_id, _model_save_key,
+                    "" if model == _default_model else model,
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "ask: model KV save failed (conversation_id=%s)",
                     conv_id, exc_info=True,
                 )
 

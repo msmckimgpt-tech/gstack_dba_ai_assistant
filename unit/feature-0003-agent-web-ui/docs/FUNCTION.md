@@ -1910,3 +1910,24 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - `_raw_block_left` / `_attach_postprocess_here = (not app._is_worker_mode()) or _raw_block_left`: 첨부 후처리(materialize 2곳 + strip 2곳)를 **증거 기반**으로 게이팅. 정상 worker 경로는 워커가 이미 strip 해 no-op, 블록이 남아 있으면(구버전 워커·web-only 배포·후처리 실패) web 이 self-heal(warning 로그).
 - worker 모드에서는 `agent_result["edited_attachments"|"new_attachments"]`(worker 후처리 산출)를 응답 `result` 로 forwarding — 프런트 토스트/표면화 패리티.
 - `_update_assistant_message_content(...) -> bool`: 내부에서 예외를 삼키므로 성공 여부를 bool 로 반환(호출자가 "저장 성공 시에만 answer 교체" 판단). 기존 호출자 하위호환.
+
+## (TASK-20260727T113640-model-persist, 2026-07-27) 대화 화면 모델 선택 — 대화별 "마지막 요청 모델" 보존
+- **기능**: composer '+' 액션 메뉴의 모델 선택이 **(대화 × 요청 계정) 단위로 영속**한다. 새로고침·재접속·다른 대화에서 복귀해도 그 대화에서 마지막으로 요청했던 모델이 선택기에 복원된다. 추론 강도 선택기(TASK-20260706T013532-reasoning-effort)와 동형 구조이나 **로컬 미러가 없다** — 아래 '신규 대화' 참조.
+- **신규 대화 = 세션 기본값(haiku)**: '+ 새 대화'는 직전 대화의 모델을 상속하지 않고 `state.session.default_model`(= `_resolve_session_default_model()` → catalog 미등재 env 시 `API_DEFAULT_MODEL`=`claude-haiku-4`)에서 시작한다(사용자 요구). 추론 강도가 localStorage 미러로 "직전 값"을 새 대화에 이어주는 것과 **의도적으로 반대** — 모델은 미러를 두지 않는다.
+- **입력→출력**: `POST /api/ask` 의 `model` 이 **명시**된 요청만 대화별 KV 에 기록(`model:<account_id>`). `GET /api/history` 가 그 값을 payload `model` 로 반환하고 프론트 `loadHistory` 가 `state.selectedModel` 로 hydration.
+- **저장 규칙(기본값 이탈만 저장)**: 요청 model 이 세션 기본값과 같으면 KV 를 빈 값으로 지운다. 웹 클라이언트는 사용자가 선택기를 건드리지 않아도 항상 model 을 실어 보내므로, 값을 그대로 저장하면 모든 대화가 "첫 전송 시점의 기본값"에 영구 고정되어 이후 기본 모델 상향이 기존 대화에 반영되지 않는다. 지우면 복원 결과(=기본값)는 동일하면서 기본값 변경이 자연히 따라온다.
+- **명시 요청만 저장**: 'AI 로 고치기'(`fix_with_ai`)처럼 서버가 model 없이 `/api/ask` 를 재dispatch 하는 내부 경로는 기존 저장값을 덮어쓰지 않는다(`model_explicit` 게이트 — 추론 강도의 "명시 값일 때만 저장" 계약과 동형). **알려진 비대칭**: 그 정정 run 자체는 여전히 기본 모델로 실행된다(선존 동작, 본 cycle 범위 밖 — REVIEW C5 참조).
+- **계정별 격리**: KV 키가 요청 계정을 포함하므로 그룹 대화에서 멤버 A 의 선택이 멤버 B 의 composer 를 바꾸거나 B 의 토큰 한도로 청구되지 않는다. 1:1 은 참여자가 1명이라 대화 단위 저장과 동작이 같다.
+- **복원 안전장치**: 서버가 `_is_safe_model_name` + `_is_allowed_api_model` 로 재검증해 allowlist 밖(로컬 LLM alias·카탈로그 개편 잔재) 값은 `""` 로 내린다(stale alias 복원 → 다음 전송 400 차단). 열람 불가 대화(`conv_id=""`)·가시 window `DENY` 도 `""`.
+- **컨텍스트 이탈 리셋(`_resetComposerModelSelection`)**: 선택값은 이제 대화 로드마다 서버값으로 채워지므로, 대화 컨텍스트를 떠나는 모든 경로에서 리셋하지 않으면 직전 대화(또는 직전 계정)의 모델이 다음 신규 대화 요청에 실린다. 호출 지점 4곳 — '+ 새 대화', 대화 전환 즉시(응답 대기 창 오귀속 차단), 활성 대화 없는 랜딩(대화 삭제/보관/나가기 후), 로그아웃(계정 간 누출 차단).
+- **미전송 선택 보존(`_modelHydrationShouldSkip`)**: "이 대화에서 마지막 hydration 이후의 선택"이면 hydration 을 건너뛴다 — 주기 `refreshWorkspace`·run 감지 재로드가 아직 보내지 않은 사용자의 선택을 되돌리지 않는다. 다른 대화를 들르면 hydration 시각이 전진해 자동 해제된다.
+- **범위 봉인(무변경)**: 스키마/마이그레이션 0(기존 memory KV 재사용)·RBAC 0·신규 엔드포인트 0(`/api/history` 응답 필드 1개 additive — 구 클라이언트는 무시)·모델 카탈로그/라우팅/과금 로직 무변경. cache-buster `?v=dev` 고정(빌드 자동주입).
+- AC-MP-1: 대화에서 모델을 골라 전송 후 새로고침 → 그 대화의 선택 모델이 복원된다.
+- AC-MP-2: 다른 대화로 전환했다 복귀 → 각 대화가 각자의 마지막 요청 모델로 복원된다(전역 누출 없음).
+- AC-MP-3: '+ 새 대화'(및 활성 대화 없는 랜딩·로그아웃 후 재로그인)는 직전 모델을 상속하지 않고 haiku 에서 시작한다.
+- AC-MP-4: model 미지정 내부 재dispatch 가 대화의 저장 모델을 되돌리지 않는다.
+- AC-MP-5: allowlist 밖 저장값·열람 불가·DENY window 는 복원되지 않고 기본값으로 폴백한다.
+- **미hydration 대화 clobber 금지(`_shouldSendModelField`)**: 서버는 `model` 이 실려 오면 그 대화의 저장값을 덮어쓴다. 따라서 화면이 그 대화의 저장값을 아직 읽지 않은 상태로 전송하면 사용자가 고르지도 않은 기본값이 영구 기록된다. 신규 대화 / 이 대화에서 명시 선택 / 이 대화 hydration 완료 중 하나일 때만 `model` 을 싣고, 그 외에는 생략해 서버가 기존 저장값을 보존한다.
+- **미전송 선택 보존**: 랜딩·pending 컨텍스트의 재로드는 그 컨텍스트에 머무는 동안 반복되므로, 리셋을 hydration 과 동일한 가드로 감싼다 — '+ 새 대화'에서 고른 뒤 아직 안 보낸 모델이 사이드바 일괄삭제·롤백 등으로 사라지지 않는다.
+- **파생 동작(명시)**: 대화 복제(fork)·공유 링크 신규 참여자는 저장값이 없어 기본값에서 시작한다. 그룹 대화의 두 멤버가 같은 대화에 서로 다른 모델을 볼 수 있다(계정별 스코프의 의도된 귀결). 명시 선택과 같은 값으로 배포 기본값이 바뀐 뒤 재전송하면 저장이 해제된다(이탈-인코딩의 알려진 성질).
+- 검증: `tests/test_model_persist.py` 14 PASS(H1·H1b·H2·H2b·H2c·H2d·H2e·H3·H4·A1·A1b·A1c·A2·A2b) · `tests/verify_model_persist.mjs` 32 PASS(G/M/R/D/S 5계열) · `node --check`/`py_compile`/ruff PASS · §18.8 [SUBAGENT] 적대 패널 2라운드(전건 수정). REV/CHG/TASK-20260727T113640-model-persist. POST-DEPLOY PB-0008(Environment: Windows-browser).
