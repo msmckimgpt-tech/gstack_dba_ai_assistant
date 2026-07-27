@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.39.0
+template_version: v3.40.0
 domain: [workflow, tooling]
 ai_read_priority: 5
 ---
@@ -222,6 +222,15 @@ suggest a recovery action.
 - awk (POSIX)
 - grep (POSIX)
 - cut (POSIX)
+- `python3` — **content-delta hop 에만 필요** (정책 doc 본문 § 삽입을 수행하는 hop.
+  v3.6.1+ 의 다수 hop 이 이 계층에 해당하며, 원자적 기록(`os.replace`)과 UTF-8 안전성을
+  위해 사용한다). 오케스트레이터(`bin/template-upgrade.sh`)·state·frontmatter 계층 자체는
+  python3 없이 동작하므로, frontmatter-bump hop 만 경유하는 업그레이드 경로는 영향받지
+  않는다. python3 부재 시 **v3.40.0+ hop 은 어떤 파일도 건드리기 전에** 진단과 함께
+  중단한다. 다만 그 이전 hop 일부(예: `v3.6.0-to-v3.6.1`)는 자체 python3 확인보다 먼저
+  파일 복사를 시작하므로 **부분 적용 후 실패**할 수 있다 — pending 범위에 content-delta
+  hop 이 있으면 업그레이드 시작 전에 설치하는 것이 안전하다 (`--check-deps` 가 부재를
+  진단으로 알린다).
 
 **Maintainer side (CI only)**:
 - bats (for `bin/tests/migration_*.bats`)
@@ -229,7 +238,8 @@ suggest a recovery action.
 **Optional (per `--strategy=` flag — v3.7.0+)**:
 - `git merge-file` (only when `--strategy=merge` opt-in is added in v3.7.0+)
 
-No `yq`. No `jq`. No Python. Bash + git + POSIX text utilities only.
+No `yq`. No `jq`. 오케스트레이터·state·frontmatter 계층은 Bash + git + POSIX text
+utilities only (content-delta hop 의 `python3` 는 위 예외).
 
 ## Diagnostic commands
 
