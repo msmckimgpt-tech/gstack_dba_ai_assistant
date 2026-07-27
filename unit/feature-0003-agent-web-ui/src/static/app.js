@@ -127,6 +127,18 @@ const state = {
   // 사용자가 composer 의 `+` dropdown 에서 명시 선택한 모델 alias.
   // null = backend default (state.session.default_model) 사용.
   selectedModel: null,
+  // feature-0003 model-persist: 모델 선택기의 대화별 hydration 조정용 마커.
+  //   _modelPickedAt        — 마지막 명시 선택 시각(ms).
+  //   _modelPickedForConvId — 그 선택이 속한 대화 id("" = 활성 대화 없음/pending).
+  //   _modelHydratedAt      — /api/history 저장값으로 마지막 hydration 한 시각(ms).
+  //   _modelHydratedForConvId — 그 hydration 이 어느 대화의 값이었는지(전송 시 clobber 가드용).
+  // "같은 대화 + 마지막 hydration 이후의 선택" 이면 hydration 을 건너뛴다 — 주기 refreshWorkspace·
+  // run 감지 재로드가 아직 전송하지 않은 사용자의 선택을 되돌리지 않게(추론 강도는 localStorage
+  // 미러가 이 역할을 하지만, 모델은 "새 대화로 이어주지 않음" 요구 때문에 미러를 두지 않는다).
+  _modelPickedAt: 0,
+  _modelPickedForConvId: null,
+  _modelHydratedAt: 0,
+  _modelHydratedForConvId: null,
   // feature-0003 reasoning-effort-selector: 현재 대화에 적용할 추론 강도(low/normal/high/max).
   // 초기값은 로컬 미러(직전 사용값) → 없으면 기본 "normal". 대화 전환 시 서버 KV 값으로 hydration.
   reasoningLevel: null,
@@ -3247,6 +3259,11 @@ async function moveConversationToFolder(cid, folderId) {
     if (item) item.folder_id = folderId;
     renderConversationList();
     await loadConversations(state.activeConversationId);
+    // feature-0003 model-persist (2R 적대 리뷰 C-A): loadConversations 는 서버의 current 로
+    // activeConversationId 를 재지정할 수 있는데(랜딩 상태에서 특히), 여기엔 loadHistory 가 없어
+    // "활성 대화는 바뀌었는데 그 대화의 모델은 hydration 되지 않은" 상태가 만들어진다. 이어서
+    // 히스토리를 로드해 화면·선택기를 그 대화 기준으로 정합시킨다(전송 시 저장값 clobber 차단).
+    await loadHistory();
   } catch (e) { showToast(e.message || "폴더 이동에 실패했습니다.", true); }
 }
 
@@ -7100,6 +7117,17 @@ async function loadHistory({ append = false, branchView = null, preserveScroll =
     state.messages = [];
     state.hasMoreHistory = false;
     state.nextBeforeId = null;
+    // feature-0003 model-persist (적대 리뷰 B1): 활성 대화가 없는 랜딩(대화 삭제/보관/나가기 후)
+    // 으로 진입하면 직전 대화에서 hydration 된 모델 선택을 반드시 비운다. 이 리셋이 없으면 랜딩
+    // 상태에서의 첫 전송(lazy-create = 사실상 새 대화)이 직전 대화의 모델을 그대로 실어 보내
+    // "새 대화는 haiku" 계약이 깨진다('+ 새 대화' 버튼 경로와 동일하게 취급).
+    //
+    // **단, 이 분기는 "이탈" 이 아니라 랜딩/pending 컨텍스트에 **머무는 동안 반복 호출**되는
+    // 재렌더 경로다(refreshWorkspace → loadHistory). 무조건 리셋하면 '+ 새 대화'에서 모델을 고른
+    // 뒤 사이드바 일괄삭제·제품 롤백 등으로 refreshWorkspace 가 돌 때 **아직 전송하지 않은 사용자의
+    // 선택이 조용히 사라진다**(2R 적대 리뷰 B-B). hydration 경로와 동일한 가드를 적용해, 이 컨텍스트
+    // (convId="")에서 마지막 hydration 이후에 고른 선택은 보존한다.
+    if (!_modelHydrationShouldSkip(state, "")) _resetComposerModelSelection(state);
     renderMessages();
     renderProgress();
     renderComposer();
@@ -7164,6 +7192,26 @@ async function loadHistory({ append = false, branchView = null, preserveScroll =
   state.hasMoreHistory = Boolean(payload.has_more);
   state.nextBeforeId = payload.next_before_id || null;
   loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
+  // feature-0003 model-persist: 대화 로드(비-pagination) 시 서버가 내려준 이 대화의 **마지막
+  // 명시 요청 모델**로 composer 모델 선택기를 hydration. 새로고침·대화 전환 후 복귀 시 그 대화
+  // 기준 모델이 복원된다. 저장값이 없으면(신규 대화·첫 요청 전·allowlist 밖) null 로 비워
+  // _composerCurrentModel 이 세션 기본값(API_DEFAULT_MODEL=claude-haiku-4)으로 폴백하게 한다 —
+  // '+ 새 대화'가 haiku 로 시작하는 계약이 여기서 유지된다(추론 강도와 달리 로컬 미러 없음:
+  // 모델은 "직전에 쓰던 값"을 새 대화로 이어주지 않는 것이 사용자 요구).
+  // 가드 판정은 _modelHydrationShouldSkip(state, convId) 단일 정의를 따른다(그 주석이 정본).
+  // fetch await 중의 선택도 같은 조건으로 함께 보호된다(픽 시각 > 직전 hydration 시각).
+  if (!append && !_modelHydrationShouldSkip(state, _loadGenConvId)) {
+    const _pm = typeof payload.model === "string" ? payload.model.trim() : "";
+    state.selectedModel = _pm || null;
+    state._modelHydratedAt = Date.now();
+    state._modelHydratedForConvId = _loadGenConvId;
+    _updateComposerModelLabel();  // 추론 강도 라벨(모델별 thinking 지원)도 함께 최신화
+    // 모델 팝업이 **열려 있을 때만** 다시 그린다 — 열린 채 재-hydration 되면 ✓ 표식이 stale 해지지만,
+    // 닫힌 메뉴까지 매 로드마다 innerHTML 재생성하면 열려 있는 순간 hover·클릭 대상 노드가 교체된다
+    // (사이드바 unread sync 가 열린 메뉴 중 재렌더를 skip 하는 것과 동일 취지, 2R 적대 리뷰 C-C).
+    const _mm = document.getElementById("composerModelMenu");
+    if (_mm && !_mm.classList.contains("hidden")) _renderComposerModelMenu();
+  }
   // feature-0003 reasoning-effort-selector: 대화 로드(비-pagination) 시 서버가 내려준 이 대화의
   // 저장된 추론 강도로 선택기를 hydration. 저장값이 없는(신규/이력 없음) 대화면 로컬 미러/기본값을
   // 유지하도록 state 만 비운다(다음 _composerCurrentReasoningLevel 이 로컬→기본으로 폴백).
@@ -7665,6 +7713,13 @@ async function selectConversation(conversationId) {
       body: JSON.stringify({ conversation_id: conversationId }),
     });
     state.activeConversationId = conversationId;
+    // feature-0003 model-persist (적대 리뷰 C1): activeConversationId 는 여기서 바뀌지만 이 대화의
+    // 저장 모델은 아래 loadHistory 응답이 와야 확정된다. 그 대기 창에서 사용자가 전송하면 직전
+    // 대화의 모델이 **이 대화의 KV 로 영구 저장**되어(서버가 요청 model 을 그대로 기록) 일시적
+    // 오귀속이 영구 오염이 된다. 전환 즉시 선택을 비워 그 창 동안에는 세션 기본값으로 보내고,
+    // hydration 이 도착하면 이 대화의 저장값으로 대체된다. (로드 실패로 hydration 이 오지 않아도
+    // 직전 대화 값이 남지 않는다 — fail-safe 방향.)
+    _resetComposerModelSelection(state);
     renderConversationList();
     renderConversationHeader();
     await loadHistory();
@@ -7738,6 +7793,11 @@ function beginPendingConversation() {
   state.messages = [];
   state.hasMoreHistory = false;
   state.nextBeforeId = null;
+  // feature-0003 model-persist: '+ 새 대화'는 직전 대화의 모델 선택을 이어받지 않고 항상 세션
+  // 기본값(API_DEFAULT_MODEL=claude-haiku-4)에서 시작한다(사용자 요구). 대화별 복원은 실 대화의
+  // /api/history hydration 이 담당하고, pending(미생성) 대화는 복원 대상 KV 가 없으므로 기본값.
+  // 픽 마커도 함께 리셋 — 리셋 후 첫 loadHistory 의 hydration 이 가드에 걸려 건너뛰지 않게.
+  _resetComposerModelSelection(state);
   renderConversationList();
   renderConversationHeader();
   renderAccessNotice();
@@ -7769,6 +7829,14 @@ function _switchToPendingConversationContext(entry) {
   state.messages = [];
   state.hasMoreHistory = false;
   state.nextBeforeId = null;
+  // feature-0003 model-persist: 이 pending 컨텍스트가 실제로 요청한 모델로 선택기를 복원한다.
+  // entry.model 이 없는(구 세션에서 남은) 경우엔 null → 세션 기본값(haiku)으로 폴백하며, 어느
+  // 경우에도 직전 대화의 선택이 이 컨텍스트로 새어 들어오지 않는다.
+  _resetComposerModelSelection(state);
+  if (typeof entry.model === "string" && entry.model) {
+    state.selectedModel = entry.model;
+    _updateComposerModelLabel();
+  }
   // pendingBubble 복원 — entry 의 started_at 기준 elapsed timer 가 자연 이어짐.
   // sendPrompt 의 본 send 가 아직 in-flight 라 closure 에서 startProgressPolling 미호출 (cid 없음).
   // 응답 도착 시 success path 의 closure 일치 → state.activeConversationId=newCid + polling 시작.
@@ -10018,12 +10086,58 @@ function _bindComposerAttachmentEvents() {
 // secondary "모델 선택" popup 핸들러. ChatGPT 패턴 — primary 가 [파일 첨부,
 // 모델 선택] 2 항목. 모델 선택 click 시 secondary popup 에 alias + description
 // 노출.
+// feature-0003 model-persist: loadHistory 의 모델 hydration 을 건너뛸지 판정한다.
+// true = 사용자가 **이 대화에서** 마지막 hydration 이후 모델을 명시 선택했다(= 아직 전송하지 않은
+// 선택) → 주기 refreshWorkspace·run 감지 재로드가 그 선택을 저장값으로 되돌리지 않게 보존한다.
+// 다른 대화로 전환하면 그 사이 hydration 이 _modelHydratedAt 을 전진시키므로, 복귀 시에는
+// false 가 되어 그 대화의 저장값(마지막 요청 모델)이 정상 복원된다.
+// (state 를 인자로 받아 순수 함수 — jsdom 없이 verify_model_persist.mjs 가 직접 검증한다.)
+function _modelHydrationShouldSkip(state, convId) {
+  return state._modelPickedForConvId === convId
+    && state._modelPickedAt > state._modelHydratedAt;
+}
+
+// feature-0003 model-persist: 모델 선택을 "미선택"(=세션 기본값 폴백) 으로 되돌리는 단일 진입점.
+// selectedModel 은 이제 대화 로드마다 서버 저장값으로 채워지므로, **대화 컨텍스트를 떠나는 모든
+// 경로**에서 이 리셋을 걸지 않으면 직전 대화(또는 직전 계정)의 모델이 다음 lazy-create 요청에
+// 그대로 실려 "'+ 새 대화'는 haiku" 계약이 깨진다. 호출 지점(적대 리뷰 B1/C1 지적):
+//   - beginPendingConversation()            '+ 새 대화'
+//   - switchConversation()                  전환 즉시(응답 대기 창 동안의 오귀속 차단)
+//   - loadHistory() 활성 대화 없음 분기      대화 삭제/보관/나가기 후 랜딩
+//   - handleLogout()                        계정 간 선택 누출 차단
+// (state 를 인자로 받는 순수 함수 — verify_model_persist.mjs 가 직접 검증한다. 라벨 갱신은
+//  DOM 이 있을 때만 수행하므로 테스트 추출 시에는 typeof 가드로 자동 skip.)
+function _resetComposerModelSelection(state) {
+  state.selectedModel = null;
+  state._modelPickedAt = 0;
+  state._modelPickedForConvId = null;
+  if (typeof _updateComposerModelLabel === "function") _updateComposerModelLabel();
+}
+
+// feature-0003 model-persist (2R 적대 리뷰 C-A): 이 전송에 `model` 필드를 실을지 판정한다.
+// 서버는 model 이 실려 오면 그 값을 그 대화의 저장 모델로 **덮어쓴다**. 따라서 화면이 그 대화의
+// 저장값을 아직 읽지 않은 상태(hydration 전)에서 전송하면, 사용자가 고르지도 않은 기본값이 그
+// 대화에 영구 기록되어 이전 선택이 소실된다. `activeConversationId` 가 hydration 없이 바뀌는 경로
+// (예: moveConversationToFolder → loadConversations)가 실재하므로, 다음 셋 중 하나일 때만 싣는다:
+//   (a) 신규 대화(lazy-create) — 저장값 자체가 없어 덮어쓸 대상이 없다.
+//   (b) 사용자가 **이 대화에서** 명시로 골랐다 — 기록되어야 할 진짜 선택.
+//   (c) 이 대화의 저장값을 hydration 했다 — 화면 값이 그 대화 기준이라 기록해도 정합.
+// 그 외에는 생략 → 서버 `model_explicit=False` 경로가 기존 저장값을 보존한다.
+function _shouldSendModelField(state, targetConvId, isLazyCreate) {
+  if (isLazyCreate || !targetConvId) return true;
+  if (state._modelPickedForConvId === targetConvId) return true;
+  return state._modelHydratedForConvId === targetConvId;
+}
+
 function _composerCurrentModel() {
   return state.selectedModel
     || state.session?.default_model
     || state.modelCatalog?.default_model
     || state.apiVaultOptions?.default_model
-    || "claude-sonnet-4";
+    // 최종 안전망: 세션·카탈로그가 모두 미가용일 때의 리터럴. 서버 `API_DEFAULT_MODEL` 과 같은
+    // 값을 쓴다 — 구 리터럴(claude-sonnet-4)은 "새 대화는 haiku" 계약과 어긋나 카탈로그 로드 실패
+    // 시 사용자가 고르지도 않은 상위 모델로 전송되는 위험이 있었다(2R 적대 리뷰 C-B).
+    || "claude-haiku-4";
 }
 
 // 사용자 표시용: 내부 model value(예: claude-sonnet-4)를 카탈로그 label(예: claude-sonnet)로 해석한다.
@@ -10228,6 +10342,10 @@ function _renderComposerModelMenu() {
     `;
     item.addEventListener("click", () => {
       state.selectedModel = value;
+      // model-persist: 이 선택이 "어느 대화의, 언제" 선택인지 기록 — loadHistory hydration 이
+      // 아직 전송하지 않은 선택을 덮어쓰지 않도록(같은 대화 재로드) 판정하는 데 쓴다.
+      state._modelPickedAt = Date.now();
+      state._modelPickedForConvId = state.activeConversationId || "";
       _updateComposerModelLabel();
       _renderComposerModelMenu();
       _closeComposerActionsMenus();
@@ -10498,6 +10616,10 @@ async function sendPrompt() {
       message: message,  // 사이드바 라벨 + 클릭 swap 시 pendingBubble.userMessage 복원용
       started_at: Date.now(),
       status: "in_flight",
+      // feature-0003 model-persist: 이 pending 대화가 실제로 요청한 모델. 아직 cid 가 없어 서버
+      // KV(=대화별 복원 정본)가 존재하지 않으므로, 컨텍스트 swap 시 복원할 값을 entry 에 들고 간다
+      // (없으면 직전 대화의 선택이 그대로 노출되는 누출).
+      model: _composerCurrentModel(),
     });
     renderConversationList();
   }
@@ -10563,23 +10685,20 @@ async function sendPrompt() {
   }
   // TASK-0048: lazy create 분기에서 사용자의 직전 product 의도(state.productMode/pinnedProductId)를
   // backend 에 hint 로 전달. backend `/api/ask` 가 새 cid 직후 AgentCoreConversations.product_*에 반영한다.
-  // feature-0008 (composer-model-selector): model 결정 fallback chain.
-  //   1. state.selectedModel — 사용자가 composer 의 `+` dropdown 에서 명시 선택한 모델
-  //   2. state.session.default_model — backend `/api/session` 의 `_resolve_session_default_model()` (catalog 검증 후만)
-  //   3. state.modelCatalog.default_model — `/api/api-vault/options` 의 API_DEFAULT_MODEL
-  //   4. literal "claude-sonnet-4" — 최종 안전망
+  // feature-0008 (composer-model-selector): model 결정은 `_composerCurrentModel()` 단일 정의를 따른다
+  // (selectedModel → session.default_model → catalog default → 최종 안전망).
   const askBody = {
     message,
     conversation_id: targetConvId || "",
-    model: state.selectedModel
-      || state.session?.default_model
-      || state.modelCatalog?.default_model
-      || state.apiVaultOptions?.default_model
-      || "claude-sonnet-4",
     // feature-0003 reasoning-effort-selector: 사용자가 고른 추론 강도. backend 가 정규화·검증하고
     // thinking 지원 모델일 때만 요청 단위 budget 으로 주입(미지원 모델이면 무시).
     reasoning_level: _composerCurrentReasoningLevel(),
   };
+  // feature-0003 model-persist (2R 적대 리뷰 C-A): model 은 그 대화의 저장값을 덮어쓰므로,
+  // hydration 되지 않은 대화로는 싣지 않는다(그 경우 서버가 기존 저장값을 보존).
+  if (_shouldSendModelField(state, targetConvId, isLazyCreate)) {
+    askBody.model = _composerCurrentModel();
+  }
   if (isLazyCreate) {
     // TASK-0059: backend `/api/ask` 가 빈 conversation_id 를 "session 초기화 후 직전 대화 이어받기"
     // 로 폴백하지 않고 신규 cid 를 강제 생성하도록 명시적 hint. hint 없는 legacy client 흐름은
@@ -11179,6 +11298,10 @@ async function handleLogout() {
   state.conversations = [];
   state.activeConversationId = "";
   state.messages = [];
+  // feature-0003 model-persist (적대 리뷰 B1): 로그아웃은 페이지를 새로 고치지 않으므로, 리셋이
+  // 없으면 직전 계정이 보던 대화의 모델 선택이 다음 로그인 계정의 첫 요청에 그대로 실린다
+  // (공용 단말 계정 간 누출). 세션 경계에서 선택을 비운다.
+  _resetComposerModelSelection(state);
   // TASK-0048: 로그아웃 시 pending 새 대화 placeholder 도 정리.
   state.pendingNewConversation = false;
   renderConversationList();
