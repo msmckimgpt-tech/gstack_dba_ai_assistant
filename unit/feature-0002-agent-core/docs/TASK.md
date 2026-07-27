@@ -1573,6 +1573,7 @@ TASK-0015 (plan-review):
 - [x] 단위테스트 `tests/test_false_truncation_belief.py` **23건**(완전성 대칭·트리거 어휘 부재·절단 시 기존 경고 유지·**셀 절단 억제 + stats out-param**·0행 대칭·**scratch parity 3건(실제 핸들러 호출)**·프롬프트 열린집합/부정단정·산술 종료조건·**창 산정 전수 테이블**·캡 이하 미분할·캡 통과 후 offset 안내 생존·**실전형 본문(빈 줄·SQL 펜스) 전량 복원**·**본문 위조 방어**·범위초과 클램프·형식오류 명시·병리적 값 예외 비노출·핸들러 배선·TOOL_DEFINITIONS) + `test_partial_evidence_grounding.py` 계약 반영 2건
 - [x] §18.8 적대 3렌즈 패널(security/backend/qa) — BLOCKER 2 / MAJOR 8 / MINOR 7 / NIT 3 중 12건 in-cycle 반영, 4건 정직 이연, 1건 by-design 수용 → REV-20260727T175800-false-truncation-belief
 - [x] 컨테이너 `make test` 회귀 **2,428건 중 2,422 PASS / 4 FAIL(전부 pre-existing 환경의존 — `git archive HEAD` 무변경 체크아웃 동일 실패로 확증) / 2 skip** + ruff PASS
-- [ ] verify-completion → PR·머지 → 배포(ask-worker/insight-worker/web 재빌드) → 라이브 실측(동일 입력 재현으로 "도구 한계" 문구 소멸·offset 이어읽기 관측)
-- worktree `ai/root/feature-0002-agent-core`(base main cdf4acf1).
+- [x] verify-completion PASS → PR #963 머지(main `ef24448c`) → **배포 완료**(`make deploy-web` 전체 스코프: web-a/web-b 롤링 + ask/insight-worker 재빌드 + gateway reconcile, soak 90s 통과, 4서비스 GIT_COMMIT=ef24448c, `/healthz` ok) → 배포본 런타임 실측 9항 확인(auto 창 99,000 · 초대형 머리말 · offset 안내 캡 생존 · 캡 이하 미분할 · 셀 절단 stats 분리 · 프롬프트 신규 계약 4항)
+- [ ] 라이브 대화 실측(동일 입력 재현으로 "도구 한계" 문구 소멸 · offset 이어읽기 관측) → 원장 `verified` 전이. 현재 `fixed:deployed:unverified-live`.
+- worktree `ai/root/feature-0002-agent-core`(base main cdf4acf1) → 후속 원장 전이 cycle `ai/claude-corp/feature-0002-agent-core`(base main ef24448c).
 정본 rationale=REVIEW REV-20260727T175800-false-truncation-belief, 변경이력=MODIFY CHG-20260727T175800-false-truncation-belief.

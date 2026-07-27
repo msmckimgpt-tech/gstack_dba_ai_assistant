@@ -494,3 +494,12 @@ source_of_truth: true
 - **수용된 트레이드오프(by-design)**: 초대형 정의 페이징에 회차 예산이 없다(4MB 루틴 ≈ 42회 호출, 조각이 `role=tool` 히스토리로 이후 턴 재전송). **전량 도달이 사용자 명시 요구**라 강제 상한은 요구 위반 → auto 창(호출 수 ~절반)·머리말의 총 문자수 사전 고지·`AGENT_MAX_STEPS`(128) 유한성·음수 kill-switch 로 완화. 선행 CHG-20260724T155534-tool-result-cap-raise 의 동일 축 수용 전례와 정합.
 - **Rollback**: `AGENT_ROUTINE_DEF_CHUNK_CHARS` 를 음수로 두면 윈도잉만 즉시 비활성(재빌드 불필요). 전면 롤백은 A1/A2 문구·A3 계약 3줄·`_window_routine_output`/`_routine_chunk_limit`/`_routine_offset_error`/offset 파라미터·`_format_result_sets` 셀 절단 stats·config 상수·테스트 제거(허위 절단 오귀속 + 허위 완전성 + 초대형 정의 도달 불가 재발).
 - **Cross-ref**: FRICTION_LEDGER FR-false-truncation-belief · 선행 FR-partial-evidence-false-verification(절단 epistemic 계약 — 본 변경이 그 과발동을 좁힘) · FR-procedure-analysis-result-truncated(`AGENT_TOOL_RESULT_MAX_CHARS` 100k backstop — 유지) · FR-show-create-routine-blocked(describe_routine 신설) · REV-20260727T175800-false-truncation-belief · ANCHOR 0002 §1~§3 무충돌.
+
+## CHG-20260727T185742-false-truncation-belief-deploy-status — 배포 결과 원장 전이 (doc-only, Minor §12.3)
+> 선행 CHG-20260727T175800-false-truncation-belief 의 **배포 후 사실 전사**. 코드 변경 0.
+- **무엇을**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md` FR-false-truncation-belief status `triaged` → `fixed:deployed:unverified-live` + 배포/런타임 실측 증거 기록. `TASK.md` 완료 체크리스트의 배포 항목 체크.
+- **근거(측정)**: PR #963 merge main `ef24448c` → `make deploy-web` 전체 스코프 무중단 롤아웃(web-a/web-b + ask-worker/insight-worker + gateway reconcile), post-cutover soak 90s 통과, **4서비스 GIT_COMMIT=ef24448c**, web `/healthz`=ef24448c·mysql_ok·pg_ok. 배포본 ask-worker 런타임에서 신규 계약 실측: 열린 절단신호·"침묵 ≠ 완전"·구 `NO MARKER = COMPLETE` 제거·산술 종료조건·auto 창 99,000·250,000자 정의 머리말·캡 통과 후 `offset=` 안내 생존·60,000자 정의 미분할·셀 절단 stats 분리·offset 형식오류 명시.
+- **왜 `verified` 가 아닌가**: 라이브 대화 실측(동일 입력 재현으로 assistant 가 없는 도구 한계를 더는 지어내지 않는지)은 미수행. 원장 규약상 status 는 측정으로만 닫힌다(거짓 done 금지).
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`
+- **위험등급**: Minor(문서 전사 — 런타임 무영향). **Rollback**: status 문자열 원복.
+- **Cross-ref**: CHG/TASK/REV-20260727T175800-false-truncation-belief · REV-20260727T185742-false-truncation-belief-deploy-status · PR #963.

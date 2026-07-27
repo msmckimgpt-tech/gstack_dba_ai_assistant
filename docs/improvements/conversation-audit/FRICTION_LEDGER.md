@@ -268,9 +268,9 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **배포 주의(운영)**: web 이 worker 후처리를 전제 → **워커 포함 전체 스코프 배포**(`make deploy-web`). `--web-only` 금지(혼합 창은 증거 기반 게이트가 self-heal 하지만 순서는 지킨다).
 - **교훈(LRN 후보)**: "web 동기 핸들러에 붙인 후처리는 worker 실행 모델에서 **연결 수명에 종속**된다 — 답변 완료 시점을 아는 실행 주체가 후처리를 소유해야 하고, 공개 시점(terminal 신호)은 후처리 뒤여야 한다." 1차 수정이 기능은 맞았으나 **실행 경로 소유권**을 놓쳐 라이브에서 0% 동작한 사례.
 
-## FR-false-truncation-belief — triaged (L2↔L1 허위 절단 인식; 완전성 신호 대칭 + 루틴 정의 offset 페이징)
+## FR-false-truncation-belief — fixed:deployed:unverified-live (L2↔L1 허위 절단 인식; 완전성 신호 대칭 + 루틴 정의 offset 페이징)
 
-- **status**: `triaged` — 코드/테스트 완료, §18.8 패널·PR·배포 전. (배포 후 `fixed:deployed:unverified-live` → 다음 audit corroboration 재측정 시 `verified`.)
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트 + §18.8 적대 3렌즈 패널 완료 + **배포 완료**(2026-07-27, PR #963 merge main `ef24448c` → `make deploy-web` 전체 스코프 무중단 롤아웃: web-a/web-b 롤링 + insight-worker/ask-worker 재빌드 + gateway reconcile, post-cutover soak 90s 통과; **4서비스 GIT_COMMIT=ef24448c**; web `/healthz`=ef24448c·mysql_ok·pg_ok·insight_heartbeat 2s). **배포본 ask-worker 런타임 실측**: 열린 절단신호 목록 부착 True · "침묵 ≠ 완전" 계약 True · 구 `NO MARKER = COMPLETE` 제거 True · 산술 종료조건(`B == T` + 본문 문구 불신) True · auto 창 산정 **99,000**(= 캡 100k − 여유) · 250,000자 정의 머리말 `[정의 구간 0~99000 / 총 250000자 … 마지막 구간: 아니오]` · 전역 캡 통과 후 `offset=` 안내 생존 True · 60,000자 정의 **미분할** True(조각화 회귀 0) · 셀 절단 stats 분리(row=False/cell=True) True · offset 형식오류 명시 True. **라이브 대화 실측 미수행** → `unverified-live`. 다음 audit corroboration(assistant 의 "도구 한계/프리뷰 한계" 시그니처 distinct_conv, 절단 마커 없는 결과 뒤 불완전 주장) 재측정에서 감소 시 `verified`, 재증가 시 `regressed`.
 - **source**: `/_dqa:conversation_audit "문서 내부 조회 프로시저 탐색"` 라이브 대화 직접 탐색 + 사용자 명시 지시("'도구 한계' 이슈 해소, `describe_routine` 프로시저 본문을 글자수 제한 없이 조회").
 - **last_seen**: 2026-07-27 · **seen_count**: 1 · **seen_distinct_conv**: 1(대상) / 노출면 6대화(CSV 안내문 부착 대화 전량이 실제 절단 없음)
 - **modality**: 1:1 동기 · **conv(마스킹)**: `20260727081131-1dc26d26`(topic "문서 내부 조회 프로시저 탐색") · **msg**: assistant 5611·5619
