@@ -944,6 +944,8 @@ function enhanceDiffBlocks(html) {
         const s = v === "" || v == null ? "" : String(v);
         return NB.repeat(Math.max(0, w - s.length)) + s;
       };
+      // diff 내용이 SQL 로 보이면 라인 코드에 SQL 토큰 하이라이트 적용(비-SQL 파일 diff 는 평문 유지).
+      const sqlMode = looksLikeSql(raw);
       codeEl.textContent = "";
       rows.forEach((r) => {
         const span = document.createElement("span");
@@ -953,12 +955,21 @@ function enhanceDiffBlocks(html) {
           padNo(r.oldNo) + NB + padNo(r.newNo) + NB + (r.mark || NB)
         );
         // 빈 줄도 한 줄 높이 유지(공백 1개). block span 이라 줄 사이 "\n" 불필요(TASK-0256b).
-        span.textContent = r.code.length ? r.code : " ";
+        // 내용 라인(add/del/ctx)만 토큰화 — hunk(@@)·meta 라인은 고유색 유지(§18.8 리뷰 MINOR).
+        const tokenize = sqlMode && r.code.length &&
+          (r.cls === "diff-add" || r.cls === "diff-del" || r.cls === "diff-ctx");
+        if (tokenize) {
+          span.appendChild(sqlTokenizeToFragment(r.code)); // 토큰 span 은 textContent-only(XSS 무첨가)
+        } else {
+          span.textContent = r.code.length ? r.code : " ";
+        }
         codeEl.appendChild(span);
       });
       const pre = codeEl.closest("pre");
       if (pre) {
         pre.classList.add("diff-block");
+        // SQL diff 는 라인 평문색을 기본색으로(add/del 은 배경·border·gutter 로 유지, 토큰이 syntax색).
+        if (sqlMode) pre.classList.add("diff-sql");
         // gutter 폭을 줄번호 자릿수에 맞춤. DOMPurify 가 style 을 떼어내도 CSS var 기본값 폴백.
         pre.style.setProperty("--diff-gutter-ch", String(2 * w + 3));
       }
@@ -1041,9 +1052,9 @@ const SQL_HL_TYPES = new Set([
   "UNSIGNED","ZEROFILL",
 ]);
 
-// SQL 텍스트를 토큰화해 codeEl 자식으로 재구성한다(textContent 만 사용 — XSS 무첨가).
-function highlightSqlInto(codeEl, raw) {
-  const text = String(raw || "").replace(/\n$/, "");
+// SQL 텍스트를 토큰화해 DocumentFragment 로 반환한다(textContent 만 사용 — XSS 무첨가).
+// highlightSqlInto(```sql 블록)·enhanceDiffBlocks(SQL diff 라인)가 공용으로 쓴다.
+function sqlTokenizeToFragment(text) {
   // 우선순위: 주석 → 문자열 → 백틱식별자 → 단어(@변수/예약어/타입/함수/식별자) → 숫자 → 공백/기타.
   // 문자열/백틱은 linear(비-backtrack) 형태로 ReDoS 회피. '#' 라인주석은 T-SQL #temp 와
   // 충돌하므로 미지원(-- 과 /* */ 만) — MySQL '# 주석' 은 색만 안 입고 깨지지 않음.
@@ -1078,8 +1089,33 @@ function highlightSqlInto(codeEl, raw) {
     else pending += m[0];                          // 공백/연산자/구두점 → 평문
   }
   flush();
+  return frag;
+}
+
+// SQL 텍스트를 토큰화해 codeEl 자식으로 재구성한다(```sql 블록 전용 — 트레일링 개행 strip).
+function highlightSqlInto(codeEl, raw) {
+  const text = String(raw || "").replace(/\n$/, "");
   codeEl.textContent = "";
-  codeEl.appendChild(frag);
+  codeEl.appendChild(sqlTokenizeToFragment(text));
+}
+
+// diff 블록 내용이 SQL 로 보이는지 판정 — SQL diff 에만 토큰 하이라이트를 적용해 비-SQL
+// 파일 diff(코드·설정 등) 오색칠을 방지한다. 강한 statement 동사(단어경계) AND 보조 절
+// 키워드 동시 존재를 요구해 단일 영어단어(update/set 등) 우연 매칭 오탐을 억제한다.
+function looksLikeSql(text) {
+  // 실제 SQL statement '모양'(verb+구조 앵커)을 요구한다 — 단순 키워드 co-occurrence 가 아니라.
+  // import…from·.create()/.delete()/.update()·Object.values() 같은 코드 관용구가 FROM/verb 를
+  // 우연히 품어도 매칭 안 되도록 앵커한다(§18.8 적대 리뷰 Finding 3). SELECT 는 JSX/HTML
+  // <select>·</select> 태그를 negative lookbehind 로 배제. camelCase 는 \b 로 이미 안전.
+  return /(?<![<\/])\bSELECT\b[\s\S]{0,3000}?\bFROM\b/i.test(text)                 // SELECT … FROM
+      || /\bINSERT\s+INTO\b/i.test(text)                                          // INSERT INTO
+      || /\bUPDATE\s+[`"\[\w.]+[\s\S]{0,2000}?\bSET\b/i.test(text)                 // UPDATE <tbl> … SET
+      || /\bDELETE\s+FROM\b/i.test(text)                                          // DELETE FROM
+      || /\b(CREATE|ALTER|DROP)\s+(OR\s+REPLACE\s+)?(TEMP(ORARY)?\s+)?(TABLE|VIEW|INDEX|DATABASE|SCHEMA|PROCEDURE|FUNCTION|TRIGGER|SEQUENCE|MATERIALIZED)\b/i.test(text) // DDL
+      || /\bTRUNCATE\s+(TABLE\s+)?[`"\[\w.]/i.test(text)                          // TRUNCATE [TABLE] t
+      || /\bMERGE\s+INTO\b/i.test(text)                                           // MERGE INTO
+      || /\b(GRANT|REVOKE)\b[\s\S]{0,200}?\bON\b/i.test(text)                     // GRANT/REVOKE … ON
+      || /\bWITH\s+[`"\w]+\s+AS\s*\(/i.test(text);                                // WITH cte AS (
 }
 
 function enhanceSqlBlocks(html) {

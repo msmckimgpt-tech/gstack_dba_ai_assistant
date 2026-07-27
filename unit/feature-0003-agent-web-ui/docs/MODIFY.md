@@ -1036,3 +1036,11 @@ source_of_truth: true
 - Verification: `node --check` PASS · vm 구조검증(releases +1·2026-07-24 head 8항목·2026-07-23 보존·스키마·누출0).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+
+## CHG-20260727T102027-sql-diff-highlight — ```diff``` 코드블록 내 SQL 구문 하이라이트 (Minor §12.3, frontend-only, sql-md-highlight 후속)
+- **요청(사용자, /_template:entry arg-given)**: "diff 구문을 나타내는 부분에서도 SQL 하이라이트가 적용되도록 구성해주세요."
+- **원인**: 직전 sql-md-highlight 는 ```sql 블록만 처리. `enhanceDiffBlocks` 는 각 diff 라인 코드를 plain textContent 로만 넣어 diff 내 SQL 이 색 구분 안 됨(+/-/context 색만).
+- **변경**: ① SQL 토크나이저 코어를 `sqlTokenizeToFragment(text)→DocumentFragment` 로 추출(```sql·diff 공용), `highlightSqlInto` 는 wrapper. ② `looksLikeSql(text)` 게이트(verb 핵심 DML/DDL ∧ clause SQL 구조 키워드, \b 경계로 camelCase 오탐 억제) — SQL diff 에만 적용해 비-SQL 파일 diff 오색칠 방지. ③ `enhanceDiffBlocks`: sqlMode 면 diff 라인 코드를 `sqlTokenizeToFragment` 로 토큰화(textContent-only, XSS 무첨가) + `pre.diff-sql` 마킹. add/del 은 배경 tint·좌측 border·gutter 마커로 유지, 라인 평문색은 기본색(토큰이 syntax색 — GitHub 식). 비-SQL diff 는 기존 그대로.
+- **Files**: `src/static/app.js`(sqlTokenizeToFragment/highlightSqlInto/looksLikeSql/enhanceDiffBlocks) · `src/static/share.js`(동일 로컬 미러) · `src/static/styles.css`(`.sql-tok-*` 셀렉터 일반화 `pre.sql-block`→`.message-content .sql-tok-*` + `.diff-block.diff-sql .diff-line { color:#c0caf5 }`) · `src/static/share.css`(동일, `--share-code-fg`).
+- **Verification**: headless chromium(chromium-1208, 실 vendor) **21/21 PASS**(회귀·SQL diff 하이라이트·add/del 보존·평문 기본색·배경 tint·텍스트 무손실·비-SQL diff 무영향·게이트 오탐억제·XSS 무력화) · `node --check` · §18.8 [SUBAGENT] 적대 패널 · 시각증거 evidence/sql-diff-highlight-20260727.png. 정적 자산 web baked → 라이브 PB-0008 = POST-DEPLOY(visual_verification_scope: always).
+- **잔여**: verify-completion → commit → PR → merge → deploy-web-only → POST-DEPLOY PB-0008.
