@@ -265,6 +265,17 @@ class _SeedCur:
 
     def execute(self, sql, params=None):
         s = " ".join(str(sql).split())
+        # model-access-seed-fix(2026-07-28): ★ placeholder/param **arity 단정**.
+        # 이 fake 가 arity 를 검증하지 않아, placeholder 5개에 파라미터 4개를 넘긴 버그가 단위
+        # 테스트를 통과하고 라이브에서 `ProgrammingError: Not enough parameters` 로 터졌다
+        # (부트스트랩 seed 단계 skip → 권한 row 미생성 → 기능 조용한 미적용). 실 드라이버가
+        # 하는 검사를 더블도 하게 만들어 같은 계열 결함이 다시 새지 않게 한다.
+        n_ph = s.count("%s")
+        n_pa = 0 if params is None else len(params)
+        assert n_ph == n_pa, (
+            f"SQL placeholder({n_ph}) != params({n_pa}) — 실 mysql 드라이버는 "
+            f"ProgrammingError 를 던진다. SQL: {s[:120]}"
+        )
         if s.startswith("INSERT IGNORE INTO WebPermissions"):
             code = params[0]
             if code in self.st["existing_codes"]:
@@ -383,3 +394,46 @@ def test_g8_app_js_maps_model_access_prefix():
 # ── 기본 모델은 여전히 haiku (비용 회귀 가드) ──────────────────────────────────
 def test_default_model_unchanged():
     assert API_DEFAULT_MODEL == "claude-haiku-4"
+
+
+# ── G9: seed SQL arity + 컬럼 길이 클립 (model-access-seed-fix 2026-07-28) ─────
+def test_g9_seed_clips_label_and_description_to_column_limits(monkeypatch):
+    """Label VARCHAR(128) / Description VARCHAR(255) 초과 시 1406 으로 seed 단계가 죽는다.
+
+    `_ensure_permission_catalog` 가 graph-perm-split 배포에서 같은 fragility 를 실측하고 남긴
+    경고와 동일 축 — 모델 label 이 길어져도 부트스트랩이 무너지지 않게 클립을 계약으로 고정한다.
+    """
+    from shared import model_catalog as mc
+
+    long_label = "X" * 400
+    fake_catalog = ({"value": "claude-verylong-1", "label": long_label},)
+    monkeypatch.setattr(mc, "PUBLIC_API_MODEL_OPTIONS", fake_catalog, raising=True)
+
+    captured = {}
+
+    class _Cap:
+        rowcount = 1
+
+        def execute(self, sql, params=None):
+            s2 = " ".join(str(sql).split())
+            # arity 는 위 _SeedCur 와 동일하게 여기서도 단정.
+            assert s2.count("%s") == (0 if params is None else len(params))
+            if s2.startswith("INSERT IGNORE INTO WebPermissions"):
+                captured["label"] = params[1]
+                captured["desc"] = params[2]
+                captured["is_dynamic"] = params[4]
+
+        def fetchone(self):
+            return (1,)
+
+        def close(self):
+            pass
+
+    class _C:
+        def cursor(self, *a, **kw):
+            return _Cap()
+
+    _seeder()(_C())
+    assert len(captured["label"]) <= 128, "Label 이 컬럼 길이를 초과하면 1406 으로 seed 가 죽는다"
+    assert len(captured["desc"]) <= 255, "Description 이 컬럼 길이를 초과하면 1406 으로 seed 가 죽는다"
+    assert captured["is_dynamic"] == 1, "IsDynamic 이 바인딩되지 않으면 동적 권한으로 인식되지 않는다"

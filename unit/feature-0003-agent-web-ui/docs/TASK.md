@@ -6436,3 +6436,13 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] 단위 25 PASS(G1~G8) · 전체 pytest rc=0 · ruff · node --check
 - [ ] **POST-DEPLOY PB-0008 (부여·해제 양방향)**: 권한 grid '모델 사용' 그룹 렌더 + 초기 전부 체크 → 특정 역할 opus 해제·'모두 적용' → 선택기 소멸 + 403 → 재부여 → 복귀
 - [ ] feature-0007 REPORT §7 의 R2 를 해소 처리(본 cycle 로 닫힘) — doc_sync 또는 후속 cycle
+
+## TASK-20260728T025614-model-access-seed-fix — 모델 권한 seed SQL arity 수정 (배포 후 결함)
+- [x] 라이브 근본원인 확정 — 권한 row 0개 + `seed catchup skipped: Not enough parameters` + 컨테이너 내 직접 호출 재현
+- [x] 영향 범위 실측 — 다른 seed 단계 완료 확인(역할 8·권한 118·product.access 19·bootstrap_admin·스냅샷), 게이트 fail-open 으로 요청 경로 무영향
+- [x] `IsDynamic` 파라미터 바인딩 + Label/Description 컬럼 길이 클립
+- [x] 호출 2지점 try/except 격리(후속 부트스트랩 단계 보호, 실패는 loud)
+- [x] 테스트 더블에 placeholder/param **arity 단정** + G9(클립·IsDynamic 계약) 신설 → 단위 26 PASS
+- [x] 전체 pytest rc=0 · ruff All passed
+- [ ] **POST-DEPLOY**: 권한 row 3개 + 전 역할 grant 생성 확인
+- [ ] **POST-DEPLOY PB-0008 (부여·해제 양방향)** — 선행 cycle 에서 이관된 항목
