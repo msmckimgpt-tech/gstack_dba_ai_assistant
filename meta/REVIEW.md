@@ -785,9 +785,12 @@
 - **검증(타깃별 실질 + ULTRACODE 적대)**: wiki feature-count sweep stale-25=0(ground-truth 26=ls unit/feature-*=26·wiki/Features/feature-*.md=26 cards·6 token-edit=8참조 중 stale 6[Index.md 2참조는 feature 커밋이 이미 26])·신규 wikilink([[feature-0026-perf-observability]] 카드 실재)·표 행 pipe 무결(overview §2.1 3열·Architecture §2.3 2열/§2.4 4열·docs §4 2열/§6 4열)·feature-0026 각 타깃 표 1행씩(중복 0). 정본 독립 재검증(함정 #11): perf 수치 141s/agent87.8s(62%)/redteam46.4s(33%)/~34s/AGE590만·12.5d=REPORT.md §17-21 실측·symbol PerfTimingMiddleware/INCLUDE_ORDER=250(admin_perf.py:23 실코드)/`_ans_breakdown`/`_rt_ms`/relationships_probe=TASK.md §2.1 실존·모델 라벨 claude-opus(model_catalog.py:93·기본값 haiku-4)·severity=TASK.md:56 Minor·단위 9 PASS=TASK.md:77. **ULTRACODE 적대 검증**: wf_c9bea2de 4-dimension 병렬 analyze→dimension-스코프 적대 verify(cross-fault 회피, 함정 #12) — wiki-count 6 CONFIRMED(rejected/missed 0)·wiki-rows 4 CONFIRMED·docs-policy 2 CONFIRMED·relnotes 3항목 CONTENT CONFIRMED(verifier 가 초안 07-28 date framing REJECT→07-27 기존 블록 append 로 정정, block date=배포일·generated=top-block date 관례 351ed406/85da43d9 선례).
 - **인용 무결성 확인**: 본 entry(META-0045) staged 실재. 동반 operational commit(feature-0003 release-notes-data.js + companion TASK/MODIFY/FUNCTION/TEST/REVIEW) 별도 — 서빙 static(릴리즈노트) 변경이나 배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만).
 - **Human Approval Needed**: 아니오 (색인/미러 additive·구조/보안 경계 불변·제품 런타임 동작 0·pure-meta). 무인 스케줄 run — landing(push/merge)·배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만·감지·보고만).
-## REV-20260727T190500-META-0045-cycle-privilege-adapter [SUBAGENT:general-purpose] — BLOCKING 3 · MAJOR 7 · MINOR 5 → 설계 선회 후 전건 해소/무효화
+## REV-20260727T190500-META-0046-cycle-privilege-adapter [SUBAGENT:general-purpose] — BLOCKING 3 · MAJOR 7 · MINOR 5 → 설계 선회 후 전건 해소/무효화
 - Related Change: cycle 스크립트 권한 어댑터 (§13.2.10 신설 + `bin/lib/privilege.sh`),
   ADR-20260727T190000-cycle-privilege-adapter
+- 번호 재배정: 착수 시 META-0045 로 잡았으나 병렬 doc_sync cycle 이 같은 번호를 먼저
+  랜딩(REV-20260728T010301-META-0045-doc-sync-0728) → **META-0046** 으로 이관. 브랜치·worktree
+  명(`ai/claude/meta-0045-privileged-cycle-scripts`)은 PR #971 이 이미 열려 있어 그대로 둔다.
 - Panel: 보안·권한 렌즈 1개. "통과가 아니라 결함 적발" 명시 + 확신 없는 추측성 지적 금지 +
   실패 시나리오 제시 요구. 리뷰어가 **실제 sudoers/ACL 환경 확인 + 격리 sandbox(no-ACL)에서
   스크립트를 실행해 각 지적을 재현**했다 (대상 파일 md5 조사 전후 동일 확인).
