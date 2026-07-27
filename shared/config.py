@@ -77,6 +77,11 @@ __all__ = [
     "AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX",
     "AGENT_NODE_ANALYSIS_PARENT_TABLE_REL",
     "AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP",
+    "AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE",
+    "AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE_MODE",
+    "AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP",
+    "AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC",
+    "AGENT_NODE_ANALYSIS_AUTO_EXPAND_FACTOR",
     "AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT",
     "AGENT_INSIGHT_OBJECT_FASTPATH",
     "AGENT_INSIGHT_OBJECT_MAX_CANDIDATES",
@@ -1249,6 +1254,35 @@ AGENT_NODE_ANALYSIS_PARENT_TABLE_REL = float(os.getenv("AGENT_NODE_ANALYSIS_PARE
 #  column_descriptions 스켈레톤으로 채우고(관계형 SSOT 우선) Column 정점을 targeted MERGE 한다.
 #  테이블당 컬럼 상한(초과분 절단). 0 = introspection 비활성.
 AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP", "200"))
+# ── 구조 변동 자동 재분석 (change-reanalysis, 사용자 결정 2026-07-27) ─────────
+#  "DB 전체 AI 능동 분석"을 이미 마친 스키마에서 insight-worker 가 구조 변동(테이블 신규/컬럼 구성
+#  변경/루틴 신규·정의 변경)을 감지하면, 사용자가 그래프 뷰에서 다시 트리거하지 않아도 그 변경 노드를
+#  시드로 하는 node_analysis run 을 자동 생성한다(시드별 per-seed 앵커 재귀 = 수동 DB 전체 분석과 동일
+#  규약). **외부 LLM 비용 직결** 이라 4중 가드로 경계한다:
+#    (1) 자격 — 해당 스키마에 status='done' Schema run 이력이 있어야만 발동(미분석 DB 는 자동 발동 없음).
+#    (2) 시드 상한 — 1회 트리거당 AUTO_CHANGE_CAP 개.
+#    (3) 스키마별 쿨다운 — AUTO_CHANGE_COOLDOWN_SEC 이내 재발동 금지(대량 DDL 의 연쇄 트리거 차단).
+#    (4) 노드별 지문 마커 — 같은 지문으로는 재발동하지 않음(insight artifact 발행 실패와 무관하게 1회).
+#  **변경 감지는 insight 지문(table_fp)이 아니라 전용 구조 스냅샷**(`na_struct_snap:*` KV, 스키마당 1건)
+#  으로 한다 — table_fp 는 insight artifact 발행이 성공한 테이블만·스캔당 12개씩 채워져 커버리지가
+#  희소하므로, 그것의 부재를 '신규'로 읽으면 이미 분석된 DB 의 테이블 대부분이 오탐된다(적대 리뷰 B1).
+#  기본 ON(사용자 결정 2026-07-27 — "사용자의 별도 AI 분석 없이 자연스럽게").
+#  3-state: "1"/"on"=발동 · "shadow"=후보 산출·계측만(enqueue 0, 배포 직후 규모 측정용) · "0"/"off"=완전 차단.
+AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE_MODE = (
+    os.getenv("AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE", "1").strip().lower() or "1")
+AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE = AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE_MODE not in (
+    "0", "false", "no", "off")
+# 1회 자동 트리거의 시드 상한(변경 노드 수). 초과분은 스냅샷을 갱신하지 않아 다음 사이클에 이어서 처리된다.
+# **3-state (node_analysis.AUTO_CAP_SHADOW 규약 — 관리 콘솔에서 숫자 하나로 라이브 전환)**:
+#   >0 = 발동 · 0 = 완전 정지(신규 트리거 + 이미 큐잉된 SchemaAuto 잡 drain 보류) · -1 = shadow(계측만).
+# 안전 모드 전환에 재배포가 필요하면 사고 시 무용이라, 단일 int knob 으로 콘솔 즉시 전환을 보장한다.
+AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP", "50"))
+# 스키마별 자동 트리거 쿨다운(초). 마이그레이션처럼 짧은 시간에 다수 DDL 이 몰릴 때 run 남발을 막는다.
+AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC = int(
+    os.getenv("AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC", "1800"))
+# 자동 run 의 재귀 전개 배수(시드 수 × 배수 = node_budget, SCHEMA_RUN_BUDGET_MAX 로 캡).
+# 수동 SCHEMA_EXPAND_FACTOR(12)보다 보수적 — 자동 발동은 사람 confirm 게이트가 없기 때문.
+AGENT_NODE_ANALYSIS_AUTO_EXPAND_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_AUTO_EXPAND_FACTOR", "4"))
 # ── 앵커-상대 관련도 게이팅 (feature-0016 node-analysis-anchor, 사용자 결정 2026-07-01) ──
 #  문제: 기존 재귀는 방문한 모든 노드의 이웃 전부를 무차별 재큐 → 일반 허브 컬럼(예 UniqueID)이나 부모
 #  Schema 노드를 만나면 그 노드를 새 중심으로 삼아 무관한 테이블로 fan-out(원래 대상에 앵커되지 않음).

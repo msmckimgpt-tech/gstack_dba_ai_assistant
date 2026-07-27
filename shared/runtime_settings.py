@@ -920,6 +920,31 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "maximum": 3600,
         "apply_mode": "live",
     },
+    # ── 구조 변동 자동 재분석 (change-reanalysis) ──
+    #   사람 confirm 게이트가 없는 자동 LLM 지출 경로라 **라이브 kill switch 가 필수**다
+    #   (적대 리뷰 C1/C2: env-only 면 폭주 시 재배포해야 멈춘다). 상한 0 = 자동 트리거 완전 비활성.
+    {
+        "key": "AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP",
+        "category": "그래프 노드 분석",
+        "label": "구조 변동 자동 재분석 1회 시드 상한",
+        "description": "'DB 전체 AI 능동 분석'을 마친 DB 에서 구조 변동(테이블 신규·컬럼 구성 변경·프로시저/함수 정의 변경)이 감지됐을 때, 사용자 실행 없이 자동으로 분석할 노드 수의 1회 상한입니다. 초과분은 다음 감지 사이클로 이월됩니다. 값이 클수록 변경 반영은 빨라지지만 승인 없는 LLM 호출이 늘어납니다. **0 = 완전 정지**(신규 발동 차단 + 이미 대기 중인 자동 분석 작업도 보류 — 값을 되돌리면 그대로 재개). **-1 = 관찰 모드**(감지 규모만 기록하고 분석은 하지 않음 — 비용 0). 재배포 없이 즉시 적용됩니다.",
+        "unit": "개",
+        "default": 50,
+        "minimum": -1,
+        "maximum": 500,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC",
+        "category": "그래프 노드 분석",
+        "label": "구조 변동 자동 재분석 쿨다운",
+        "description": "같은 DB 에서 자동 재분석을 다시 시작하기까지 기다리는 최소 시간. 마이그레이션처럼 짧은 시간에 DDL 이 몰릴 때 분석 run 이 남발되는 것을 막습니다. 짧게 하면 변경이 더 빨리 반영되고, 길게 하면 비용이 더 촘촘히 묶입니다.",
+        "unit": "초",
+        "default": 1800,
+        "minimum": 60,
+        "maximum": 86400,
+        "apply_mode": "live",
+    },
     # ── cluster_label (semantic_cluster 데몬) ──
     {
         "key": "AGENT_METADATA_CLUSTER_LABEL_CONCURRENCY",

@@ -2540,7 +2540,78 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 ### 검증
 - 컨테이너 pytest 전체(0002+0003) PASS(exit 0) + 타깃 40 PASS. `node --check` ES module PASS. §18.8 적대 리뷰: REVIEW.md REV-20260723T183000-analysis-completeness (FAIL→전량 흡수→재검증). 상세 Run: TEST.md `## analysis-completeness`.
+## 20260727T1741-change-reanalysis — 구조 변동 감지 시 AI 자동 재귀 분석 (2026-07-27, 사용자 요청 · entry persona dispatch)
 
+### 맥락 (사용자 요청)
+> "그래프 뷰에서 'DB 전체 AI 능동 분석'이 이루어진 DB 일 경우, 해당 DB 내 구조의 변동사항이(테이블, 컬럼, 프로시저, 함수 등) 감지되었을 때(insight-worker 를 통해서) 사용자의 별도 AI 분석을 진행하지 않더라도, 자연스럽게 해당 변경에 따른 노드에 대해 AI 재귀 분석이 이루어질 수 있도록 구성해주세요."
+
+기존에는 스키마·테이블 지문(fingerprint)과 루틴 정의 해시로 **구조 변동을 이미 감지**하고 있었으나, 그 신호는 *insight 요약 재생성*에만 쓰였다. 그래프 노드의 AI 능동 분석(node_analysis)은 사용자가 그래프 뷰에서 명시 트리거할 때만 돌아, DB 구조가 바뀌어도 분석문은 이전 구조에 머물렀다.
+
+### 설계 결정 (사용자 confirm 2026-07-27)
+- **D1 기본 활성화 = ON** — 설정 없이 동작(요청 취지 "자연스럽게"). 완전 차단은 `AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE=0`.
+- **D2 분석 범위 = 변경 노드 + 재귀** — 시드는 §55 규약(depth=0 + `anchor_key`=자기 자신, per-seed 앵커)이라 변경 노드에서 관련 노드까지 재귀 전개되고, 기존 분석문은 refine-not-override 로 갱신된다.
+- 삭제된 객체는 분석 대상 노드가 없으므로 트리거하지 않는다(그래프 prune·재클러스터가 담당).
+- **D3 변경 감지원 = 전용 구조 스냅샷**(적대 리뷰 흡수, 아래 §리뷰 흡수 R1) — insight 지문(`table_fp`)이 아니라 스키마당 KV 1건의 전량 스냅샷으로 대조한다.
+- **D4 진행 중 자동 run 에는 append 하지 않는다**(적대 리뷰 R2) — append 하면 run 이 계속 `running` 이라 쿨다운이 영구 미발동하고 사이클마다 cap 만큼 시드가 유입돼 `node_budget` 까지 ratchet 된다. 변경 누락은 스냅샷 미갱신으로 다음 사이클에 재시도되므로 0 — append 는 순이익 없이 무제한 증식 통로만 연다.
+
+### 비용 경계 (§12.3 Major — 자동 LLM 호출)
+사람 confirm 게이트 없이 LLM 을 호출하므로 다중 가드:
+1. **자격** — 그 스키마에 사용자 run(`root_label='Schema'`, `status='done'`)이 **성공 과반**(`done*2 >= enqueued`)인 이력이 있을 때만(요청 범위 그대로). 자동 run 은 자격 판정에 쓰지 않는다(자기 자신이 자격을 만드는 순환 차단). scope 는 원형·소문자 둘 다 매칭(수동 기록 경로가 소문자화 저장 vs `.env` 레거시 라벨 원형).
+2. **시드 상한** — `AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP`(기본 50, **0=완전 정지**) + 재귀 예산 `AUTO_EXPAND_FACTOR`(기본 4, 수동 12 보다 보수적) × 시드, `SCHEMA_RUN_BUDGET_MAX` 캡. cap·쿨다운은 `runtime_settings` 에 노출돼 **재배포 없이 라이브 조절**(폭주 시 즉시 정지).
+3. **스키마별 쿨다운** — `AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC`(기본 1800). 마이그레이션처럼 DDL 이 몰릴 때 run 남발 차단. 진행 중 run(자동 **또는 사용자 수동**)이 있으면 **그 사이클은 no-op**(append 금지 — 아래 D4).
+4. **구조 스냅샷** — 스키마당 KV 1건(`na_struct_snap:<hash>`)의 전량 대조. 첫 관측·미관측 축은 baseline 확립만, **시드된 노드만** 전진.
+5. **3-state 스위치** — `AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE` = `1`(발동) / `shadow`(후보 계측만, 비용 0) / `0`(완전 차단).
+
+### 처리 (cross-cut 코드 거주 feature-0002 modules · shared/config)
+- [x] TCR.1 `node_analysis.schema_analysis_completed(scope, schema_key)` — 자격 판정(인덱스 1행 조회). PG 미가용·예외는 **fail-closed(False)** — 자동 비용 경로라 모르면 발동하지 않는다.
+- [x] TCR.2 `node_analysis.enqueue_change_analysis(scope, schema_key, node_keys, …)` 신설 — 판정 순서 = ① 자격 → ② 진행 중 run(자동+수동) → ③ 쿨다운 → ④ AGE 실재 검증 → ⑤ run 생성. AGE 조회를 마지막에 둬 미자격·쿨다운 스키마의 구조 변동이 매 tick 그래프를 긁지 않는다. 자동 run 은 `root_key=<schema_key>#auto` · `root_label='SchemaAuto'` 로 **사용자 수동 run 과 분리**(같은 root_key 면 수동 '전체 분석'이 자동 run 에 흡수돼 planned 수치가 허위가 된다). 시드 0 이면 run 행을 즉시 삭제(영구 'running' 잔존 방지). scope 는 수동 라우터와 같은 `.strip().lower()` 축으로 적재(중복 제거 정합).
+- [x] TCR.3 `routines.introspect_and_store(inventory_sink={})` — 관측된 루틴 **전량**을 `sink["routines"]={name: definition_hash}` 로 노출(반환형 불변 — 기존 호출자 무영향). **cap 절단 시 키 자체를 넣지 않는다**(부분집합을 전량으로 오인하면 절단 밖 루틴이 매 사이클 삭제→신규로 진동) — 키 유무가 "인벤토리 신뢰 가능" 신호라 루틴 0건 스키마와 절단이 구분된다. upsert 예외 행도 포함(인벤토리는 DB 관측 사실).
+- [x] TCR.4 `insight` 구조 스냅샷 — `_auto_snapshot_key`(scope+저장라벨+**실 스키마** 해시) / `_load|_save_auto_snapshot` / `_auto_structure_inventory` / `_auto_structure_changes`. 신규·변경만 후보, 삭제는 스냅샷에서 제거만. 축별 baseline 플래그(`tb`/`rb`)로 관측 공백 뒤 전량 오탐 차단.
+- [x] TCR.5 `insight._auto_reanalyze_structure_changes` — 스냅샷 대조 → `enqueue_change_analysis` → **시드된 노드만** 스냅샷 전진(그래프 미투영·cap 절단·쿨다운·busy 로 빠진 노드는 미전진이라 다음 사이클 재시도). shadow 모드 분기, 전 경로 예외 흡수(insight 스캔 비차단), `_auto_note_status` 로 무발동 사유까지 계측.
+- [x] TCR.6 배선 — `_scan_instance_schema_insights` 의 (a) 테이블·루틴 신호가 모두 모인 지점(테이블 지문 배치 계산 직후), (b) 테이블이 없는 스키마(프로시저·함수만 존재)의 조기 `continue` 직전 2곳. 축 판정: 테이블=지문 계산 성공, 루틴=완전 스캔(`"routines" in sink`) **AND 비-MSSQL**(저장 라벨이 DB명이라 복수 실 스키마가 섞이고 prune 불가). scope 는 `get_active_datasource() or "common"`(그래프 투영과 동일 폴백 — None skip 이면 `.env` 단일 datasource 배치에서 기능이 통째로 미발동).
+- [x] TCR.7 `shared/config.py` 설정 4종 + `__all__` 등재(`from shared.config import *` 소비 — 미등재 시 NameError 로 조용히 정지하던 rel-selfheal 사고 클래스 회피) + `shared/runtime_settings.py` performance 그룹에 cap·쿨다운 노출(라이브 kill switch).
+- [x] TCR.8 관측성 — insight-worker payload(명시 allow-list)에 `auto_reanalysis_{candidates,seeded,runs,blocked}` 등재. 계측은 **int 카운터만** — report 는 datasource 순회마다 `int 합산 · bool OR · 그 외 덮어쓰기` 로 병합돼 dict 를 담으면 마지막 datasource 것만 남는다.
+- [x] TCR.9 §18.8 적대 리뷰 흡수 — 1라운드 R1~R12 + **2라운드 재검증 S1~S12** 전량 in-cycle 반영(아래 '리뷰 흡수' 표 · REVIEW.md REV-20260727T174100 / REV-20260727T193000).
+- [x] TCR.10 단위 검증 — `test_node_analysis_change_reanalysis.py` **50 PASS**(구 마커 설계 → 스냅샷 semantics 전면 갱신 + 2라운드 지적분 보강: 실경로 kill switch·행 판정 자격·샤드 흡수·관측 실패 방어·수동 run busy·drain 보류·KV 실패/파손/레거시/다중 ds) + cross-feature `test_worker_parallelism.py` 정합 갱신. 컨테이너 전체 스위트(0002+0003) **2,455 PASS · 0 failed**·ruff clean.
+- [ ] TCR.11 POST-DEPLOY 라이브 확인 — TEST.md `## change-reanalysis` 의 Run(예정) 참조. **오탐 규모(변경 없을 때 run 0)를 최우선**으로 보고, 샤드 생성 경계를 포함하는 기간까지 관측한다.
+- [ ] TCR.12 후속(별 cycle) — 자격 커버리지 비율 기준 + 스키마별 opt-out · `SchemaAuto` run 목록/취소 엔드포인트 · 스냅샷을 KV 전량 덤프 경로에서 분리 · 자동 run 출처 UI 표기 · `information_schema` 조회 성공/실패 명시 플래그. (위 '미반영' 단락 상세)
+
+### 리뷰 흡수 (§18.8 적대 리뷰 → in-cycle 수정)
+| # | 지적 | 반영 |
+|---|---|---|
+| R1 | 변경 감지를 insight 지문(`table_fp`)에 얹으면 **오탐 폭주** — `table_fp` 는 artifact 발행 성공분만·스캔당 12개씩 채워져 "일부만 보유"가 정상 상태다. 부재를 '신규'로 읽으면 이미 분석된 DB 의 테이블 **대부분**이 자동 지출 대상이 된다. | 전용 구조 스냅샷(스키마당 KV 1건 전량)으로 재설계 — 첫 저장이 곧 완전한 baseline. 부수 효과로 노드별 KV 팽창·`kv.key` 128자 초과 위험도 소멸. |
+| R2 | 진행 중 자동 run 에 시드 **append** 하면 run 이 영구 `running` → 쿨다운 영구 미발동 + 사이클마다 cap 유입 + `node_budget` ratchet(무제한 증식). | append 경로 제거 → `status='busy'` no-op. 누락은 스냅샷 미갱신으로 다음 사이클 재시도. |
+| R3 | 자격 판정이 `status='done'` 만 보면 500 노드 중 1개 성공한 run 도 '전체 분석 완료'로 인정된다(`process_pending` 은 `done>0` 이면 done 마감). 또 수동 기록 경로는 scope 를 소문자화 저장하는데 `.env` 레거시는 라벨 원형을 쓴다. | `done>0 AND done*2 >= enqueued` 과반 조건 + `scope_key IN (원형, 소문자)`(인덱스 유지). |
+| R4 | MSSQL 은 루틴 저장 라벨이 DB명이라 한 라벨에 복수 실 스키마가 섞이고 prune 도 꺼져 삭제 반영 불가 → 스냅샷 semantics 불성립. | 루틴 축 비활성(`include_routines=False`). 테이블 축은 그래프 키 규약과 정합해 유지. 스냅샷 키에 실 스키마를 포함해 라벨 공유로 인한 전량 진동도 함께 봉인. |
+| R5 | `get_active_datasource()` 가 None 이면 skip → `.env` 단일 datasource 배치에서 기능 전체 미발동. | 그래프 투영과 동일하게 `"common"` 폴백. |
+| R6 | `enqueued=0` 커밋 후 절대값 SET 이면 autocommit 창에서 `_enqueue_neighbors` 증분이 덮어써져 예산 회계 파손. 시드 1행 예외가 배치 전체를 중단시키면 시드 0 인 `running` run 잔존. | `enqueued` 를 INSERT 확정값으로, 보정은 증분식(`enqueued - n`). `_insert_seed_jobs` 행 단위 try/except + 전멸 시 run 즉시 삭제. |
+| R7 | 무발동(ineligible·cooldown·busy·미투영)이 로그도 카운터도 없어 "왜 안 도는가" 진단 불가. insight payload 는 **명시 allow-list** 라 등재 없이는 어떤 계측도 도달하지 않고, dict 값은 datasource 순회 병합에서 소실된다. | `_auto_note_status`(상태 변화 시 info, 아니면 debug) + payload allow-list 에 int 카운터 4종 등재. |
+| R8 | env-only 노브면 폭주 시 **재배포해야** 멈춘다. | `runtime_settings` performance 그룹에 cap·쿨다운 노출 + `auto_setting_int` 호출 시점 조회(star-import 복사본 우회). |
+| R9 | 배포 직후 실제 후보 규모를 모른 채 발동. | `shadow` 모드 — 후보 산출·계측만, enqueue·스냅샷 전진 없음(비용 0). |
+| R10~R11 | 정지 스위치 부재 / cap 하한 미정의. | `CAP=0` = 완전 비활성(`_auto_enabled()` 에서 선차단 — 자격 조회조차 안 함), spec `minimum: 0`. |
+| R12 | 테스트가 구 마커 설계를 검증. | 스냅샷 semantics 로 전면 갱신 — 축 baseline·probe_schema 분리·busy·과반·대소문자·per-row 예외·shadow·카운터·인벤토리 절단. |
+
+**2라운드 — 재검증 패널(backend 재검증 + qa, 둘 다 verdict=BLOCK)**. 1라운드 흡수를 확인하되 남은 결함을 새로 적발했다. 특히 **양쪽이 독립적으로 같은 결함(테이블 목록 공백 → 스냅샷 wipe → 전량 재시드)** 을 지목했고, qa 는 실제 재현까지 했다.
+
+| # | 지적 | 반영 |
+|---|---|---|
+| S1 (be-B1, critical) | 날짜/번호 **샤드 신설**이 매일 자동 run 을 낳고 수렴하지 않는다. 이 제품은 2026-07-03 사용자 결정으로 "동일 구조 샤드는 대표 1개만 LLM"을 이미 확정했는데, 자동 경로가 이름만 보고 '구조 변동'으로 승격해 **승인 없이 그 결정을 되돌린다**. 스냅샷 재설계로 막히는 오탐이 아니라 **비용 정책의 단위**(개별 테이블 vs 구조 family) 불일치. | 신규 테이블의 그룹 서명 `(base_stem, fp)`이 스냅샷의 기존 형제와 같으면 후보에서 빼고 스냅샷에만 반영(`absorbed`) — 재탐지도 없다. 기존 테이블의 fp 변화는 그룹과 무관하게 항상 후보. `auto_reanalysis_absorbed` 로 계측. |
+| S2 (be-B2 = qa-Q2, high) | `not all_table_names` 분기가 `include_tables=True, fps={}` 로 호출해 **스냅샷 t 축을 통째로 비운다**. `information_schema` 는 권한 필터 결과라 계정 교체·GRANT 축소·복원(DROP→CREATE→import) 창에서 예외 없이 0행을 준다. 그 한 사이클이 baseline 을 지우고, 복귀 사이클에 무변경 전 테이블이 '신규'로 폭발(1차 B1 재진입). wipe 사이클 자체는 무음이라 오진까지 유발. | 방어를 **helper 안**으로 넣어 두 호출부 모두 보호 — 전량 소실(또는 5건 이상 & 과반 소실)은 '관측 실패'로 보고 그 축을 보존하고 `auto_reanalysis_axis_dropped` + WARN 로그. 소규모 삭제는 정상 반영(임계에 절대 하한을 둔 이유). |
+| S3 (qa-Q3b, high) | scope 축에는 대소문자 방어를 넣고 **정작 그 scope 를 품은 root_key 축**에는 안 넣었다 — 한 글자만 어긋나면 기능이 100% 침묵 사망하고, 남는 신호가 정상 상태와 같은 `ineligible` 뿐이라 관측도 불가. | `root_key IN (원형, 소문자)` 추가(인덱스 유지). 두 축 모두 행 판정 테스트로 고정. |
+| S4 (be-C1, high) | 자동 경로가 수동 라우터(`.strip().lower()`)와 **다른 scope 축**으로 적재하면 `only_missing`/`done_keys` 중복 제거가 깨져, 사용자가 방금 비용을 낸 노드를 자동이 통째로 재시드한다. | 자동도 `.strip().lower()` 로 통일 + run/jobs 적재 축을 테스트로 고정. |
+| S5 (qa-C1 = be-C2, high) | `CAP=0` 은 **신규 트리거만** 막고 이미 큐잉된 자동 잡은 `node_budget`(최대 4000)까지 LLM 을 소진한다 — 문서의 "폭주 시 즉시 정지"가 거짓. | `process_pending` claim 에 게이트 추가 — CAP=0 인 동안 `SchemaAuto` run 의 pending 잡을 **보류**(삭제 아님, 되돌리면 재개). 정상(CAP>0)에서는 조건절이 붙지 않아 기존 claim 과 byte-동치. |
+| S6 (be-C3 + qa-Challenge, high) | shadow 가 `runtime_settings` 미등록이라 **전환·복귀 모두 재배포** — 사고 시 무용이고 TCR.11 의 "shadow 로 규모 측정 후 전환" 계획이 실행 불가. 게다가 `enqueue_change_analysis` 는 shadow 를 몰라 다른 진입점이 우회 가능. | CAP 을 3-state 로(`>0` 발동 / `0` 정지 / `-1` shadow) — 콘솔 숫자 하나로 라이브 전환. shadow 판정을 `enqueue_change_analysis` 안으로 내려 `status='shadow'` 반환(호출자 분기 제거). |
+| S7 (be-B3, high) | 미자격 스키마(영원히 발동 불가)의 스냅샷 blob 까지 적재돼 스캔마다 KV 전량 덤프 대역·커넥션을 먹는다. | baseline 저장 전에 자격 선확인 — 미자격이면 스냅샷 미적재 + `blocked` 계측. (서버측 prefix 필터·일괄 로드는 TCR.12 후속.) |
+| S8 (be-B4, medium) | cap 절단이 테이블 우선 고정이라, 테이블 후보가 상시 cap 을 채우는 DB 에서 **루틴 축이 영구 기아** — 사용자 요청 3축 중 하나가 실동작하지 않는다. | 절단 전 축 라운드로빈 인터리브. |
+| S9 (qa-C2, medium) | 사용자 수동 run 이 도는 중에 자동 run 이 같은 노드를 동시 분석 → LLM 이중 지출 + refine 세대 경합. busy 판정이 자동 root_key 만 봤다. | busy 조회를 `root_key IN (auto, manual)` 로 확장 — 수동 run 진행 중이면 자동은 no-op(누락은 스냅샷 미갱신으로 재시도). |
+| S10 (qa-Q1 = be-C4, high) | 테스트가 `auto_setting_int` 를 config 직독 lambda 로 patch 해 **runtime_settings 실경로가 한 번도 실행되지 않았다** — "라이브 정지 스위치 검증 완료" 주장이 근거 없음. 과반 조건도 부분문자열 assertion 이라 무력화 변형이 통과. | patch 제거 + 스냅샷 경로를 tmp 격리해 실경로 구동(정지·상향·shadow·쿨다운 4건). 자격은 **행 판정 fake**(`RunRowCursor`)로 조건을 실제 평가. |
+| S11 (qa-C3, medium) | KV 쓰기 실패(조용한 삼킴)·파손 스냅샷·레거시 `tb/rb` 부재·다중 datasource 순회 테스트 전무. | 4종 추가 + 스냅샷 저장 실패 시 WARN 승격. |
+| S12 (qa-Q3a·문서 nit) | TCR.2 에 구설계 "append" 문면 잔존, 비용경계 D3/D4 오참조. | 정정(본 표 위). |
+
+**미반영 — 후속으로 등재(TCR.12)**: (a) 자격을 커버리지 비율 기준으로 강화 + 스키마별 opt-out — 현재는 `only_missing`+`SCHEMA_CAP` 절단 run 도 자격을 만든다(2,000 테이블 DB 의 200개 분석 = 자격). (b) `SchemaAuto` run 목록·취소 관리 엔드포인트(현재 정지 수단은 CAP=0 뿐이고 **실행 중인 잡 1건**은 끝까지 진행). (c) 스냅샷을 KV 전량 덤프 경로에서 분리(서버측 prefix 필터 또는 전용 테이블) + 스캔당 1회 일괄 로드. (d) 자동 run 출처의 UI 표기(노드 마커·상세 패널)와 수동 noop 메시지 정합. (e) `information_schema` 조회 성공/실패를 별도 플래그로 넘겨 "관측 실패"를 비율 추정이 아니라 사실로 판정.
+
+### 검증
+- 신규/갱신 31 PASS + 컨테이너 전체 스위트(0002+0003) PASS(회귀 0). ruff 변경파일 clean. `python3 -m py_compile` PASS. 상세 Run: TEST.md `## change-reanalysis`.
 ## 20260727T1730-detail-db-groups — 상세 패널 관련 노드 목록 DB 단위 접기/펼치기 + "… 외 N건" 생략 제거 (2026-07-27, 사용자 요청 · entry persona dispatch)
 
 ### 맥락 (사용자 요청)

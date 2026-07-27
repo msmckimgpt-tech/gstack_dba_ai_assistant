@@ -340,7 +340,29 @@ source_of_truth: true
 - **수용(비파괴, 문서화)**: m5 cache_keys 도입 1회성 라벨 캐시 전패(재라벨 LLM 스파이크 1회·구 kv 행 잔존 — 정리 경로 없음, 크기 유계) · n2 MSSQL 테이블명-only 매칭의 다스키마 동명 합산(기존 /graph/columns 동형 tradeoff) · n3 forceAll noop race 문구 · n4 freshness probe 인덱스 없는 embedded_at 스캔(현 규모 수용) · n5 pass 중 착지 임베딩 신호 소실(드레인 자가치유).
 - **리뷰어 확인 축(결함 없음)**: pgbouncer/search_path(_cypher ag_catalog 정규화)·Cypher injection(_cq/화이트리스트/dollar-tag)·freshness SQL 파라미터 정합·RC3 전 API 공급원 실사(허위 null clear 없음)·Routine 투영 키 일치·RC4 연타 가드·테스트 패딩 의미 불변.
 - **재검증**: 흡수 후 타깃 40 PASS(신규 resolve 관통·DO NOTHING·SAVEPOINT 격리·드레인 가드 포함) + 전체 스위트(0002+0003) 컨테이너 PASS(exit 0).
+## REV-20260727T174100-ai-claude-feature-0016-change-reanalysis [SUBAGENT:backend] — BLOCK→전량 흡수 (change-reanalysis 1라운드)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: schema/스키마 · migration/마이그레이션 · query/쿼리 keyword matched (구조 변동 자동 재귀 분석 = 사람 confirm 없는 외부 LLM 지출)
+- Timestamp: 2026-07-27T17:41:00+09:00
+- Verdict: BLOCK
+- Artifact: [reviews/2026-07-27T17-41-00-backend.md](./reviews/2026-07-27T17-41-00-backend.md)
+- Critical issue: B1 — 변경 감지를 insight 지문(`table_fp`)에 얹으면, 그 지문이 artifact 발행분만·스캔당 12개씩 채워져 "일부만 보유"가 정상 상태라 **이미 전체 분석을 마친 DB 의 테이블 대부분이 '신규'로 오탐**돼 승인 없는 대량 LLM 지출이 된다.
+- Human Approval Needed: no (전량 in-cycle 흡수 후 재검증 패널 재실행 — 아래 REV-20260727T193000)
+- 흡수 요약(R1~R12, 상세 대조표는 TASK.md `## 20260727T1741-change-reanalysis` §리뷰 흡수): 감지원을 **전용 구조 스냅샷**으로 재설계(B1) · 진행 중 run **append 경로 제거**(B2, 무제한 증식 통로) · 자격 **과반 성공** 조건(B3) · MSSQL 루틴 축 비활성(B4) · KV 키 해시로 128자 초과 제거(B5) · scope `common` 폴백(B6) · `enqueued` INSERT 확정값 + 시드 행 단위 try/except + 전멸 시 run DELETE(B7) · runtime_settings 라이브 스위치(C1) · 후보 산출을 예외 흡수 범위 안으로(C3) · 노드당 KV·커넥션 제거(C4) · shadow 모드 신설(Challenge).
+- 원 dispatch 세션이 사용량 한도로 중단돼 결과가 미기록 상태였다 — 대화 기록에서 원문을 복원해 아티팩트로 보존했다(문면 무변경).
 
+## REV-20260727T193000-ai-claude-feature-0016-change-reanalysis [SUBAGENT:backend+qa] — BLOCK→전량 흡수 (재검증 2라운드)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: 1라운드 BLOCK 흡수 후 §18.8 재검증(설계가 크게 바뀜) + 1라운드에서 결과 미도착이던 qa 도메인
+- Timestamp: 2026-07-27T19:30:00+09:00
+- Verdict: BLOCK (backend 재검증 BLOCK · qa BLOCK)
+- Artifact: [reviews/2026-07-27T19-30-00-backend-rereview.md](./reviews/2026-07-27T19-30-00-backend-rereview.md) · [reviews/2026-07-27T19-30-00-qa.md](./reviews/2026-07-27T19-30-00-qa.md)
+- Critical issue: (backend B1) 날짜/번호 **샤드 신설**이 매일 자동 run 을 낳고 수렴하지 않는다 — 이 제품은 2026-07-03 사용자 결정으로 "동일 구조 샤드는 대표 1개만 LLM"을 이미 확정했는데 자동 경로가 승인 없이 그 결정을 되돌린다. 스냅샷 재설계로 막히는 오탐이 아니라 **비용 정책의 단위**(개별 테이블 vs 구조 family) 불일치.
+- Human Approval Needed: no (S1~S12 전량 in-cycle 흡수, 미반영분은 후속 TCR.12 로 명시 등재)
+- **양쪽 리뷰어가 독립적으로 같은 결함을 적발**(backend B2 = qa Q2): `not all_table_names` 분기가 스냅샷 t 축을 통째로 비워, `information_schema` 가 권한·복원 창에서 돌려주는 일시적 0행 한 사이클이 baseline 을 지우고 복귀 사이클에 무변경 전 테이블을 '신규'로 폭발시킨다(1라운드 B1 의 재진입). qa 는 컨테이너에서 실제 재현.
+- 흡수 요약(S1~S12, 상세 대조표는 TASK.md §리뷰 흡수 2라운드): 동일 구조 샤드 **흡수**(S1) · 관측 실패 방어 3-상태(S2) · `root_key` 대소문자 정합(S3) · scope 정규화 통일(S4) · CAP=0 시 **대기 잡 drain 보류**(S5) · CAP 3-state 로 shadow 라이브 전환 + 판정을 enqueue 내부로(S6) · 미자격 스키마 스냅샷 미적재(S7) · 축 라운드로빈(S8) · 수동 run 진행 중 busy(S9) · 테스트의 **허위 안심 제거**(S10 — `auto_setting_int` patch 걷어내고 runtime_settings 실경로 구동, 자격은 행 판정 fake) · KV 실패/파손/레거시/다중 ds 커버(S11) · 문서 문면 정정(S12).
+- **잔여 위험(문서에 명시, 후속 TCR.12)**: 자격이 "전체 분석"이 아니라 "과반 성공한 사용자 run 1건"이라 `only_missing`+`SCHEMA_CAP` 절단 run 도 자격을 만든다 · `SchemaAuto` run 목록/취소 엔드포인트 부재(정지 수단은 CAP=0, **실행 중인 잡 1건**은 완주) · 스냅샷 blob 이 KV 전량 덤프 경로에 잔류 · MSSQL 테이블 노드 key 다대일 접힘(그래프 투영 규약 자체의 기존 한계) · 관측 실패를 조회 성공/실패 플래그가 아니라 소실 비율로 추정.
+- 검증: 대상 스위트 50 PASS · 컨테이너 전체(0002+0003) **2,455 PASS · 0 failed · 0 error** · ruff clean.
 ## REV-20260727T173000-detail-db-groups [AGENT-TEAM: FAIL(BLOCKING 2)→전량 흡수] — 상세 패널 DB 그룹·목록 생략 제거 diff 적대 리뷰
 - Trigger: `UI/layout/screen keyword matched` (§18.8 dispatch 표 — UI·화면·레이아웃) → 2렌즈 병렬 dispatch: **ux 렌즈** + **프론트엔드 정합성/회귀 렌즈**(general-purpose 적대 리뷰어). 양 리뷰어 모두 소스 유닛을 추출해 자체 프로브를 돌린 실측 기반.
 - 대상: `graph-ctxmenu.js`(DB 그룹 유닛·상세 3경로 전환·상한 제거), `graph-state.js`, `graph.css`, 신규 헤드리스 테스트.
