@@ -895,3 +895,13 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
   는 계층 분리(후자는 hop 전용 lib 으로 `log_*` 에 의존)로 인한 동일 계약 중복이다. 두 계층이
   공유할 최소 lib 로 승격하는 것은 template 측 별도 cycle 로 남긴다 — 소비자에서 선행 통합하면
   다음 template hop 과 충돌한다.
+
+## REV-20260728T120500-ai-root-perf-decisions-doc [SKIPPED:non-policy-doc] — 성능 결정 ADR 기록
+- Related TASK: _meta_ (docs/DECISIONS.md 단독 append)
+- Reason: 사용자 결정(2026-07-28)인 **red-team 게이팅 불채택**을 프로젝트 ADR 로 고정하는
+  append-only 기록. 정책 의미·구조 변경 0(이미 확정된 사용자 결정의 문서화), 코드·스키마·
+  인가 경계 무변경 → §18.8 패널 불요(docs-only, 결정 자체는 사용자가 내렸다).
+- 내용: ADR-20260728T120000-redteam-gating-not-adopted — 지연 46.4s/답변(전체 33%) 이지만
+  revision 적용 24%(21/89)로 품질 기여 실측 + '즉시 답변' 버튼이 시간 판단을 사용자에게
+  이미 위임 → 일괄 품질 하향 대신 현행 유지. 재검토 조건 명시.
+- Timestamp: 2026-07-28T12:05:00Z
