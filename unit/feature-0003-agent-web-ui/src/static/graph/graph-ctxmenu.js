@@ -7,7 +7,7 @@ import { _META_ROLE, _metaFocusAdjacency, _metaFocusKeyFor, _metaRoleChipHTML, _
 import { _metaApplyState, _metaCacheSig, _metaSetBusy, _metaSigRole, _metaStateSig, _metaYieldPaint } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency } from "./graph-rellayout.js?v=dev";
 import { _metaSimGroups } from "./graph-simgroups.js?v=dev";
-import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
+import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 
 // ── graph-ctxmenu: 노드 우클릭 상세 상호작용 (REQ-20260702T113000) ──────────────────
@@ -820,7 +820,7 @@ async function _metaGraphTraceRelation(targetKey) {
 function _metaGraphPanToRelation(targetKey) {
   if (!_metaGraph.graph || !targetKey) return;
   const direct = _metaRenderedIdFor(targetKey);            // 렌더 노드, 접힌 스키마면 카드(SC:)
-  const focusEl = direct || _metaRenderedAncestorFor(targetKey);   // 컬럼 미렌더 시 소속 테이블/스키마 카드로 승격
+  const focusEl = direct || _metaRenderedAncestorFor(targetKey);   // 미렌더 시 테이블→컨텐츠 카테고리→스키마→제품 카테고리 순 승격
   if (!focusEl) { _metaGraphStatus("대상이 아직 화면에 로드되지 않았습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
   // 선택은 대상(컬럼/테이블) 키 기준. (a) 자기 자신이 렌더됐거나 (b) 미렌더 컬럼이 소속 테이블/카드로 승격된 경우
   //   대상 키를 선택 — 펼쳐 렌더돼 있으면 노드 하이라이트, 미렌더면 선택 상태만 기록 + 하이라이트는 소속 테이블
@@ -830,9 +830,11 @@ function _metaGraphPanToRelation(targetKey) {
   const seq = _metaGraph._opSeq;
   _metaGraphAnimateFocus(focusEl, seq);   // 승격된 렌더 요소(노드/카드) 내부 해소 후 카메라 팬
   const nm = (_metaGraph.nodes.get(targetKey) || {}).name || _metaKeyDisplayNode(targetKey).name || targetKey;
+  // graph-catcluster-focus: 승격 안내는 **실제 승격 대상**을 명시한다(종전 "소속 테이블" 단정은 컨텐츠
+  //   카테고리·스키마 클러스터·제품 카테고리로 갔을 때 오안내였다).
   _metaGraphStatus(direct
     ? `→ ${nm} 로 카메라 이동 (더블클릭 = 상세 패널 전환).`
-    : `→ ${nm} 소속 테이블로 카메라 이동 · 선택됨 (더블클릭 = 펼쳐 상세 전환).`);
+    : `→ ${nm} 의 ${_metaAncestorKindKo(focusEl)}로 카메라 이동 · 선택됨 (더블클릭 = 펼쳐 상세 전환).`);
 }
 // graph-node-reveal(사용자 요구 2026-07-23): 대상 노드가 화면에 없을 때 **차단하지 않고 부모 체인을
 //   활성화(펼침)** 해 노출한다. 노드 계층은 `scope:schema.table.column` — 렌더 게이트는 두 Set:
@@ -919,19 +921,29 @@ function _metaBindHoverHighlight(row, spec) {
   row.addEventListener("focus", on);
   row.addEventListener("blur", off);
 }
+// detail-hover-flow(사용자 리포트 2026-07-28): 관계 행 DOM → hover 강조 spec.
+//   같은 두 객체 사이에는 관계선이 **여러 개** 존재할 수 있다 — 왕복 참조(참조함/참조받음)는 반대편 호로,
+//   루틴 사용은 읽기/쓰기가 별개 선으로(graph-edge-flow §83). 따라서 "self 끝점 + 상대" 만으로는 어느
+//   선인지 결정되지 않아 종전에는 어느 행을 hover 해도 첫 매칭 한 선만 강조됐다. 행이 모델 엣지의 실제
+//   (source,target) 과 relation_type 을 직접 싣고, 그대로 렌더러에 넘겨 그 선을 특정한다.
+//   구(舊) 마크업(속성 부재)은 레거시 [self, 상대] 쌍으로 폴백한다(방향 미상 — 렌더러가 근사).
+function _metaHoverEdgeSpec(el, selfFallbackKey, otherKey) {
+  const src = el.getAttribute("data-edge-src"), tgt = el.getAttribute("data-edge-tgt");
+  if (src && tgt) return { edgeKeyPairs: [{ from: src, to: tgt, relType: el.getAttribute("data-rel-type") || null }] };
+  return { edgeKeyPairs: [[el.getAttribute("data-edge-self") || selfFallbackKey, otherKey]] };
+}
 // 상세 패널 컨테이너 전체에 hover 강조 바인딩(공용): 컬럼 선택=노드 강조, 참조/사용 행=연결선 강조.
-//   selfKey 는 ROUTINE_USES(data-rtuse) 의 self 끝점 폴백. 참조 행(.amgr-trace)·관계 행(.amgr-row[data-key])은
-//   data-edge-self 를 self 끝점으로(없으면 selfKey) 사용 — 컬럼 단위 FK 도 정확한 연결선을 강조한다.
+//   selfKey 는 data-edge-src/tgt 이 없는 구 마크업의 self 끝점 폴백.
 function _metaGraphBindDetailHover(el, selfKey) {
   if (!el) return;
   el.querySelectorAll(".amgr-col-select[data-col]").forEach((b) => {
     _metaBindHoverHighlight(b, { nodeKeys: [b.getAttribute("data-col")] });
   });
   el.querySelectorAll(".amgr-trace[data-trace]").forEach((r) => {
-    _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || selfKey, r.getAttribute("data-trace")]] });
+    _metaBindHoverHighlight(r, _metaHoverEdgeSpec(r, selfKey, r.getAttribute("data-trace")));
   });
   el.querySelectorAll("[data-rtuse]").forEach((b) => {
-    _metaBindHoverHighlight(b, { edgeKeyPairs: [[b.getAttribute("data-edge-self") || selfKey, b.getAttribute("data-rtuse")]] });
+    _metaBindHoverHighlight(b, _metaHoverEdgeSpec(b, selfKey, b.getAttribute("data-rtuse")));
   });
 }
 
@@ -1363,6 +1375,10 @@ function _metaGraphIngest(nodes, edges) {
       count: (e.count != null && e.count !== "") ? Number(e.count) : "",
       ref_count: (e.ref_count != null && e.ref_count !== "") ? Number(e.ref_count) : "",
       use_count: (e.use_count != null && e.use_count !== "") ? Number(e.use_count) : "",
+      // routine-column-edges(2026-07-28): ROUTINE_USES 가 실제 참조하는 컬럼 목록
+      //   [{n: 컬럼명, k: 'read'|'write'}]. 대상 테이블이 **펼쳐져 컬럼이 렌더 중일 때만** 빌드가
+      //   이 목록으로 사용선을 컬럼별로 분해한다(접힘·부재·미매칭은 기존 테이블 연결 유지).
+      ref_columns: Array.isArray(e.ref_columns) ? e.ref_columns : null,
       weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" });
   });
   return added;
@@ -1567,6 +1583,9 @@ function _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn) {
 const _META_DBGRP_ROW_CAP = 4000;   // 비현실 극단 전용 안전 가드(브라우저 행 폭주 방지). 실사용은 사실상 무제한.
 const _META_DBGRP_FLAT_MAX = 60;    // 총 항목이 이 개수 이하면 전 그룹 기본 펼침(짧은 목록은 절대 숨기지 않는다).
 const _META_DBGRP_BIG = 300;        // 이 개수를 넘는 그룹은 초기 렌더에서 접힘(DOM·리스너 폭주 방지).
+// routine-column-edges(2026-07-28): 사용 관계 행에 병기하는 참조 컬럼 표시 개수(초과분은 "외 N").
+//   행 한 줄이 컬럼 나열로 뒤덮이지 않게 하는 표시 상한일 뿐, 캔버스 관계선은 전량 그려진다.
+const _META_RTCOL_SHOW = 8;
 const _metaDbGrpLazy = new Map();   // gid -> { html, bind } — 접힌 그룹의 지연 렌더 payload(패널 재렌더마다 초기화)
 let _metaDbGrpSeq = 0;
 
@@ -1905,7 +1924,10 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
     const tip = _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn);
     // detail-hover-fx: self 끝점 키(방향별 e.source/e.target) — hover 연결선 강조가 정확한 컬럼↔상대 엣지를 그린다.
     const selfEndKey = dir === "out" ? e.source : e.target;
-    return `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" data-edge-self="${esc(selfEndKey)}" role="button" tabindex="0" ` +
+    // detail-hover-flow: 모델 엣지의 **실제 방향**(source→target)을 그대로 싣는다 — 참조함/참조받음이
+    //   같은 두 컬럼 사이의 반대편 호이므로, 방향 없이는 어느 호를 강조할지 결정되지 않는다.
+    return `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" data-edge-self="${esc(selfEndKey)}" ` +
+      `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}" role="button" tabindex="0" ` +
       `title="${esc(tip)}">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(otherFqn)}</code>` +
       `${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}` +
@@ -1998,7 +2020,23 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
       const on = byKey[other] || _metaGraph.nodes.get(other) || {};
       const disp = on.label === "Routine"
         ? `${_metaRoutineIcon(on.routine_type)} ${on.name || nm(other)}` : nm(other);
-      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button></li>`;
+      // routine-column-edges(2026-07-28): 이 사용 관계가 **실제로 참조하는 컬럼**을 행에 병기한다
+      //   (캔버스에서 테이블을 펼치면 같은 정보가 컬럼별 관계선으로 드러난다 — 두 표현의 정합).
+      //   쓰기 컬럼은 ✎ 로 표식. 정의 파싱이 컬럼을 확정하지 못한 관계는 표기 없음(테이블 단위 유지).
+      let colsHtml = "";
+      const rcs = Array.isArray(e.ref_columns) ? e.ref_columns : null;
+      if (rcs && rcs.length) {
+        const shown = rcs.slice(0, _META_RTCOL_SHOW);
+        const txt = shown.map((c) => (c && c.k === "write" ? "✎" : "") + String((c && c.n) || "")).join(", ")
+          + (rcs.length > shown.length ? ` 외 ${rcs.length - shown.length}` : "");
+        colsHtml = ` <span class="amgr-rtcols admin-meta-graph-muted" title="이 관계가 참조하는 컬럼 (✎ = 쓰기)">${esc(txt)}</span>`;
+      }
+      // detail-hover-flow: 읽기/쓰기는 같은 (루틴, 테이블) 쌍 위의 **별개 관계선 2개**(graph-edge-flow §83 C1)
+      //   라, 행이 모델 엣지의 실제 끝점 + relation_type 을 실어야 hover 가 그 중 맞는 선을 강조한다.
+      const rk = e.relation_type === "write" ? "write" : "read";
+      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" ` +
+        `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}" data-rel-type="${rk}" ` +
+        `title="상세 보기">${esc(disp)}</button>${colsHtml}</li>`;
     };
     // lazy 주입되는 DB 그룹 body 에도 원래의 행 동작(클릭=상세+카메라, hover=연결선 강조)을 그대로 건다.
     const rtBind = (c) => {
@@ -2092,7 +2130,8 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
         const anc = _metaRenderedAncestorFor(key);
         if (anc) {
           _metaGraphAnimateFocus(anc, _metaGraph._opSeq);
-          _metaGraphStatus(`→ '${nm}' 소속 상위 객체로 카메라 이동 (하위 노드는 확대하거나 검색으로 직접 탐색할 수 있습니다).`);
+          // graph-catcluster-focus: 어느 상위 객체로 갔는지 명시 — 접힌 컨텐츠/제품 카테고리면 그 클러스터를 펼치면 된다는 다음 행동이 드러난다.
+          _metaGraphStatus(`→ '${nm}' 의 ${_metaAncestorKindKo(anc)}로 카메라 이동 (그 클러스터를 펼치거나 확대·검색으로 하위 노드를 직접 탐색할 수 있습니다).`);
         } else {
           _metaGraphStatus(`'${nm}' 은(는) 현재 화면에 표시할 수 없습니다 — 확대하거나 검색으로 직접 탐색해 보세요.`);
         }
@@ -2267,7 +2306,9 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
     const main = arrow === "→"
       ? `${localName ? `<code>${esc(localName)}</code> <span class="amgr-arrow">→</span> ` : ""}${counter}`
       : `${counter}${localName ? ` <span class="amgr-arrow">→</span> <code>${esc(localName)}</code>` : ""}`;
-    return `<li class="amgr-row" data-key="${esc(otherKey)}" data-edge-self="${esc(selfEndKey || key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
+    return `<li class="amgr-row" data-key="${esc(otherKey)}" data-edge-self="${esc(selfEndKey || key)}" ` +
+      `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}"${e.relation_type ? ` data-rel-type="${esc(e.relation_type === "write" ? "write" : "read")}"` : ""} ` +
+      `role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span>${main}` +
       `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}${curateBtns(e)}</div>` +
       `<div class="amgr-sub admin-meta-graph-muted">${esc(typeKo)}${srcKo ? " · 근거: " + esc(srcKo) : ""}${on.description ? " — " + esc(on.description) : ""}</div></li>`;
@@ -2281,8 +2322,8 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
     c.querySelectorAll(".amgr-row[data-key]").forEach((r) => {
       // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
       _metaGraphBindRelRow(r, r.getAttribute("data-key"));
-      // detail-hover-fx: hover 시 연결선(엣지) 강조 — self 끝점(data-edge-self)↔상대(data-key).
-      _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || key, r.getAttribute("data-key")]] });
+      // detail-hover-fx: hover 시 연결선(엣지) 강조. detail-hover-flow: 방향(data-edge-src/tgt)·읽기/쓰기까지 특정.
+      _metaBindHoverHighlight(r, _metaHoverEdgeSpec(r, key, r.getAttribute("data-key")));
     });
     // graph-category(§55 B): 큐레이션 버튼 — 행 클릭(카메라 이동)과 분리(stopPropagation).
     c.querySelectorAll("button.amgr-cur").forEach((b) => {
@@ -2329,7 +2370,8 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul class="amgr-list">`);
     // detail-db-groups: 종전 30건 절단 제거 — 용어는 DB 소속이 아니라 그룹 축 없이 전량(안전 가드만).
     terms.slice(0, _META_DBGRP_ROW_CAP).forEach(({ e, node }) => {
-      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" data-edge-self="${esc(key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
+      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" data-edge-self="${esc(key)}" ` +
+        `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
         `<div class="amgr-main"><span class="amgr-arrow">◈</span><strong>${esc(node.name || node.key)}</strong></div>` +
         `<div class="amgr-sub admin-meta-graph-muted">${esc(_META_EDGE_TYPE_KO[e.type] || e.type)}${node.description ? " — " + esc(node.description) : ""}</div></li>`);
     });
@@ -2850,7 +2892,77 @@ function _metaGroupFam(groupKey) {
   const i = s.indexOf(_META_GKEY_SEP);
   return i >= 0 ? s.slice(i + 1) : "";
 }
-// 패널의 해당 컨텐츠 카테고리 헤딩으로 스크롤 + 잠깐 강조. 반환: 매칭 헤딩 라벨(미매칭이면 null — 상태줄 보강용).
+// graph-catcluster-scroll(polish, 사용자 요청 2026-07-28 ②): 패널 스크롤을 브라우저 native smooth
+//   (가변·임의 duration, 장거리에서 수 초)에서 **대화 뷰 point-rail 과 동일한 280ms EaseOutExpo**
+//   (app.js `POINT_SCROLL_DURATION_MS`/`_easeOutExpo`, share.js `SHARE_POINT_SCROLL_DURATION_MS`)로
+//   교체한다 — "빠르게 도달 + 깔끔한 정착". 거리와 무관하게 항상 280ms 라 장거리 목록에서도 즉답감.
+const _META_PANEL_SCROLL_MS = 280;
+function _metaEaseOutExpo(t) { return t >= 1 ? 1 : 1 - Math.pow(2, -10 * t); }   // f(1)=1 정확(부동소수 분기)
+// 패널 aside 의 scrollTop 을 from→to 로 EaseOutExpo 구동. seqOf() 가 현재 세대와 달라지면 즉시 중단
+//   (연타 시 이전 애니메이션이 새 목표를 덮어쓰지 않게 — 세대 토큰은 _metaGraph._panelFocusSeq).
+function _metaAnimatePanelScroll(box, from, to, seqOf, reduce) {
+  const delta = to - from;
+  if (delta === 0) return;
+  if (reduce) { box.scrollTop = to; return; }
+  const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : null;
+  if (t0 == null) { box.scrollTop = to; return; }   // performance.now 부재 폴백
+  const step = (now) => {
+    if (!seqOf()) return;
+    const p = Math.min(1, (now - t0) / _META_PANEL_SCROLL_MS);
+    box.scrollTop = from + delta * _metaEaseOutExpo(p);
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// graph-catcluster-scroll(polish, 사용자 요청 2026-07-28 ②): 도착 연출 = **카테고리 헤딩 점멸 +
+//   하위 멤버 행이 파도(wave)처럼 순차 점멸**, 뒤로 갈수록 점멸 알파가 **선형 감쇠**.
+//   구현은 CSS 애니메이션(`.is-focus` / `.is-wave` + `--amgr-wave-a` 알파 변수 + `animation-delay`)이고
+//   JS 는 대상 선정·변수 주입·정리만 한다(합성 프로퍼티만 애니메이트 — 레이아웃 무비용).
+const _META_WAVE_MAX = 24;        // 파도 대상 상한 — 패널 뷰포트가 담는 행 수 정도(그 아래는 어차피 비가시)
+const _META_WAVE_STEP_MS = 26;    // 행 간 지연(파도 진행 속도)
+const _META_WAVE_LEAD_MS = 90;    // 헤딩 점멸이 시작된 뒤 파도가 따라붙는 offset
+const _META_WAVE_DUR_MS = 420;    // 행 1개의 점멸 길이(CSS keyframes 와 동일)
+let _metaWaveNodes = [];          // 현재 연출 중인 노드 — 새 연출 진입 시 즉시 원복(중첩 방지)
+function _metaClearPanelWave() {
+  _metaWaveNodes.forEach((el) => {
+    try {
+      el.classList.remove("is-focus", "is-wave");
+      el.style.removeProperty("animation-delay");
+      el.style.removeProperty("--amgr-wave-a");
+    } catch (_) { /* detached 노드 — 무해 */ }
+  });
+  _metaWaveNodes = [];
+}
+// target 헤딩 다음부터 다음 헤딩 전까지의 **보이는** 멤버 행(접힌 그룹은 display:none 이라 제외)에
+//   지연·알파를 주입한다. 알파는 A0 에서 0 까지 선형(요청: "점점 선형적으로 연하게").
+function _metaRunPanelWave(target, reduce) {
+  _metaClearPanelWave();
+  try { target.classList.add("is-focus"); } catch (_) { return; }
+  _metaWaveNodes.push(target);
+  // 모션 최소화 선호: 헤딩 정적 강조만(파도는 순차 모션 그 자체라 생략 — CSS 가 .is-focus 를 무애니로 분기).
+  if (reduce) return _META_WAVE_DUR_MS * 3;
+  const rows = [];
+  let n = target.nextElementSibling;
+  while (n && !n.classList.contains("amgr-ct-group") && rows.length < _META_WAVE_MAX) {
+    if (n.classList.contains("amgr-ct-row-li") && !n.classList.contains("amgr-ct-collapsed")) rows.push(n);
+    n = n.nextElementSibling;
+  }
+  const N = rows.length;
+  rows.forEach((li, i) => {
+    // 선형 감쇠: 첫 행 A0, 마지막 행 ~0. N=1 이면 A0 그대로(0으로 나누지 않음).
+    const a = (0.5 * (N > 1 ? (1 - i / (N - 1)) : 1)).toFixed(3);
+    try {
+      li.style.setProperty("--amgr-wave-a", a);
+      li.style.setProperty("animation-delay", (_META_WAVE_LEAD_MS + i * _META_WAVE_STEP_MS) + "ms");
+      li.classList.add("is-wave");
+      _metaWaveNodes.push(li);
+    } catch (_) { /* graceful */ }
+  });
+  return _META_WAVE_LEAD_MS + Math.max(0, N - 1) * _META_WAVE_STEP_MS + _META_WAVE_DUR_MS;
+}
+
+// 패널의 해당 컨텐츠 카테고리 헤딩으로 스크롤 + 도착 연출. 반환: 매칭 헤딩 라벨(미매칭이면 null — 상태줄 보강용).
 //   스크롤 컨테이너는 aside(#metadataGraphDetail, _metaGraphDetailScrollEl) 이므로 scrollIntoView(조상까지
 //   스크롤 — 관리콘솔 본문이 함께 움직임) 대신 aside.scrollTop 을 직접 계산해 국소 스크롤한다.
 function _metaGraphFocusPanelGroup(fam) {
@@ -2868,6 +2980,7 @@ function _metaGraphFocusPanelGroup(fam) {
   }
   if (!target) return null;   // 캔버스/패널 그룹 분할이 어긋난 경우(멤버 집합 차이) — graceful no-op
   const seq = ++_metaGraph._panelFocusSeq;
+  const fresh = () => seq === _metaGraph._panelFocusSeq;   // 더 최근 선택이 선점하면 stale
   // sticky 이력 바(.admin-meta-graph-detailnav, 표시 중일 때만)가 헤딩을 덮지 않도록 그 높이만큼 위 여백 확보.
   const nav = document.getElementById("metadataGraphDetailNav");
   const navH = (nav && !nav.hidden) ? Math.round(nav.getBoundingClientRect().height) : 0;
@@ -2875,16 +2988,16 @@ function _metaGraphFocusPanelGroup(fam) {
   try { reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (_) { reduce = false; }
   // rAF: 방금 교체된 innerHTML 의 레이아웃이 반영된 뒤 위치를 재야 clamp 되지 않는다(이력 스크롤 복원과 동형).
   requestAnimationFrame(() => {
-    if (seq !== _metaGraph._panelFocusSeq) return;   // 더 최근 선택이 선점 — stale 스크롤 금지
+    if (!fresh()) return;   // 더 최근 선택이 선점 — stale 스크롤 금지
     try {
       const top = box.scrollTop + (target.getBoundingClientRect().top - box.getBoundingClientRect().top) - navH - 6;
       const y = Math.max(0, Math.round(top));
-      if (typeof box.scrollTo === "function") box.scrollTo({ top: y, behavior: reduce ? "auto" : "smooth" });
-      else box.scrollTop = y;
-    } catch (_) { /* graceful — 스크롤 실패해도 강조는 남긴다 */ }
-    // 도착 지점 시선 앵커(1.8s 페이드). 재렌더로 노드가 교체돼도 stale 노드의 class 제거는 무해.
-    try { target.classList.add("is-focus"); } catch (_) {}
-    setTimeout(() => { try { target.classList.remove("is-focus"); } catch (_) {} }, 1800);
+      const maxTop = Math.max(0, box.scrollHeight - box.clientHeight);
+      _metaAnimatePanelScroll(box, box.scrollTop, Math.min(maxTop, y), fresh, reduce);
+    } catch (_) { /* graceful — 스크롤 실패해도 연출은 남긴다 */ }
+    // 도착 연출(헤딩 점멸 + 멤버 파도). 재렌더로 노드가 교체돼도 stale 노드의 class 제거는 무해.
+    const total = _metaRunPanelWave(target, reduce) || _META_WAVE_DUR_MS;
+    setTimeout(() => { if (fresh()) _metaClearPanelWave(); }, total + 120);
   });
   const lab = target.querySelector(".amgr-ct-group-label");
   return (lab && lab.textContent) || fam;

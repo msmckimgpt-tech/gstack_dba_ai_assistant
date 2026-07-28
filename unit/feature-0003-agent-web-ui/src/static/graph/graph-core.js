@@ -738,6 +738,27 @@ function _metaG6Build() {
     const sk = _metaCatParent(nodeKey, gn && gn.fqn);
     return (sk && present.has("SC:" + sk)) ? ("SC:" + sk) : null;
   };
+  // routine-column-edges(2026-07-28, 사용자 요청): 함수/프로시저 사용선을 **펼쳐진 테이블의 실제
+  //   참조 컬럼**에 붙이기 위한 컬럼 id 해소. Column 정점 키 규약은 `<테이블 키>.<컬럼명>`
+  //   (백엔드 `_vkey(scope, f"{fqn}.{col}")`)이라 테이블 렌더 id 에 컬럼명을 이어 붙이면 된다.
+  //   케이스 불일치(그래프 Column 정점은 column_descriptions 원천, 참조 컬럼은 데이터소스
+  //   INFORMATION_SCHEMA 원천 — 같은 DB 라도 케이스가 갈릴 수 있음) 는 소문자 인덱스로 1회 보정한다.
+  //   인덱스는 **참조 컬럼을 가진 사용선이 실제로 있을 때만** lazy 구축(무관 빌드 비용 0).
+  let _lowerIdIdx = null;
+  const resolveColId = (tableId, colName) => {
+    const nm = String(colName || "").trim();
+    if (!nm || !tableId || String(tableId).startsWith("SC:")) return null;
+    const exact = tableId + "." + nm;
+    if (present.has(exact)) return exact;
+    if (_lowerIdIdx === null) {
+      _lowerIdIdx = new Map();
+      for (let i = 0; i < nodes.length; i++) {
+        const nid = nodes[i] && nodes[i].id;
+        if (nid) _lowerIdIdx.set(String(nid).toLowerCase(), nid);
+      }
+    }
+    return _lowerIdIdx.get(exact.toLowerCase()) || null;
+  };
   // §57.5(사용자 피드백 "흐림 기준 체감 무작위"): 엣지 흐림(dim)은 단일 규칙 — **양끝이 모두 밝으면
   //   선도 밝다**(밝은 부분그래프 = 선택+1-hop 인접의 폐포). 예전 '선택에 직접 닿는 선만 선명'은
   //   밝은 이웃 노드 사이의 선이 흐려져 사람 눈에 무작위로 읽혔다. 무선택(fa=null)이면 false —
@@ -852,6 +873,46 @@ function _metaG6Build() {
         const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
         if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 루틴 사용선 제거(colLevel·agg 공통 — LOD 도달 전)
         if (rs === e.source && rt === e.target) {
+          // routine-column-edges(2026-07-28, 사용자 요청): 대상 테이블이 **펼쳐져 컬럼이 렌더 중**이면
+          //   사용선을 실제 참조 컬럼별로 분해한다 — 종전에는 컬럼이 드러나 있어도 테이블 헤더 한 곳에만
+          //   모여 붙어 "어느 컬럼을 읽고 쓰는지"가 보이지 않았다(FK 는 엣지 끝점이 컬럼 키라 이미
+          //   컬럼에 붙는다 — 그 정합을 사용 관계에도 맞춘 것). 규칙은 FK 승격과 동일 계열:
+          //     · 렌더 중인 컬럼 → 그 컬럼에 연결 (컬럼별 읽기/쓰기 방향·색 유지)
+          //     · 미렌더 컬럼(접힘·컬럼 컬링) → 테이블로 승격해 relation_type 별 1선으로 묶음
+          //     · ref_columns 부재(파싱 미확정·크로스-DB) → 아래 기존 단일 테이블선 그대로(폴백)
+          //   접힌 테이블의 동작은 완전히 불변이다(컬럼이 렌더될 수 없어 항상 폴백 경로).
+          const rcols = Array.isArray(e.ref_columns) ? e.ref_columns : null;
+          if (rcols && rcols.length) {
+            // 1-pass: 참조 컬럼 중 **실제로 렌더 중인 것**을 먼저 해소한다. 하나도 없으면(=테이블
+            //   접힘·컬럼 LOD 억제) 분해 자체를 포기하고 아래 기존 단일선으로 흐른다 — 접힘 상태에서
+            //   read/write 가 섞였다고 선이 2개로 갈라지면 그것 자체가 "기존대로" 계약 위반이다.
+            const hits = [], missKinds = new Set();
+            for (let ci = 0; ci < rcols.length; ci++) {
+              const rc = rcols[ci] || {};
+              const cn = String(rc.n || "").trim();
+              if (!cn) continue;
+              const rkind = (rc.k === "write") ? "write" : "read";
+              const cid = resolveColId(rt, cn);
+              if (cid) hits.push({ cid: cid, kind: rkind, name: cn });
+              else missKinds.add(rkind);
+            }
+            if (hits.length) {
+              for (let hi = 0; hi < hits.length; hi++) {
+                const h = hits[hi];
+                edges.push({ id: e.id + "::c::" + h.name, source: rs, target: h.cid,
+                  data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0,
+                          relation_type: h.kind, colEdge: true, ref_column: h.name },
+                  style: dimIf(_metaRoutineEdgeStyle(h.kind, xr), keep) });
+              }
+              // 렌더되지 않은 참조 컬럼 몫은 테이블로 승격(FK 승격 규약 동형) — relation_type 별 1선.
+              missKinds.forEach((mk) => {
+                edges.push({ id: e.id + "::t::" + mk, source: rs, target: rt,
+                  data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: mk },
+                  style: dimIf(_metaRoutineEdgeStyle(mk, xr), keep) });
+              });
+              return;
+            }
+          }
           // §85(사용자 요청): 프로시저/함수 사용선의 **줌아웃 LOD 축약 제거**. 축약은 얇은 잔점선이
           //   줌아웃에서 노이즈로만 남던 시절의 완화책이었는데, 실선 + 화면 고정 굵기 + 밀도 누적으로
           //   전환된 지금은 줌아웃에서도 사용 관계가 제 몫의 신호를 낸다. 오히려 축약이 "전체보기에서
@@ -1061,19 +1122,78 @@ function _metaRenderedIdFor(key) {
   return null;
 }
 
+// graph-catcluster-focus(사용자 보고 2026-07-28): 테이블·루틴 key → 소속 **컨텐츠 카테고리(sim-group)**
+//   블록의 렌더 요소 id("GB:"+groupKey). 접힌 sim-group 은 멤버를 방출하지 않고 헤더 기하의 GB/GH/GX 만
+//   남기지만(_metaG6Build emission 의 `if (b.collapsed) return`), groupOf 역인덱스는 **접힌 그룹의 멤버까지
+//   전량** 채워지므로(§50 REV-wiring fix) 여기서 역참조가 성립한다. 컬럼 key 는 groupOf 에 없어 자연히 null.
+//   renderedIds 로 게이팅하므로 stale groupOf(카드 강등·flat masonry 전환)는 자동으로 걸러진다.
+function _metaGroupElementFor(tableKey) {
+  if (!tableKey || !_metaGraph.groupOf) return null;
+  const gk = _metaGraph.groupOf.get(tableKey);
+  if (!gk) return null;
+  const r = _metaGraph.renderedIds;
+  return (r && r.has("GB:" + gk)) ? ("GB:" + gk) : null;
+}
+// graph-catcluster-focus: 스키마 클러스터 key → 소속 **제품 카테고리 밴드**의 렌더 요소 id("CAT:"+catKey).
+//   접힌 카테고리는 멤버 클러스터를 통째로 미방출(L.catHidden)하고 밴드만 남긴다 — 그 구간에서 스키마
+//   조상이 해소되지 않아 카메라가 아예 이동하지 않던 사각을 밴드로 메운다. catMembers 는 매 build 재구성,
+//   여기서도 renderedIds 로 게이팅(카테고리 비활성 build 의 stale 잔존분 차단). 카테고리 수는 수~수십이라
+//   선형 역탐색으로 충분(hover-pan 경로 포함해도 무시 가능한 비용).
+function _metaCategoryElementFor(schemaKey) {
+  const cm = _metaGraph.catMembers, r = _metaGraph.renderedIds;
+  if (!schemaKey || !cm || !cm.size || !r) return null;
+  let hit = null;
+  cm.forEach((members, ck) => {
+    if (hit || !members) return;
+    if (members.indexOf(schemaKey) >= 0 && r.has("CAT:" + ck)) hit = "CAT:" + ck;
+  });
+  return hit;
+}
 // reltrace-colnav(2026-07-10): 대상 키가 직접 렌더돼 있지 않을 때 **화면에 있는 가장 가까운 조상**의
-//   렌더 id 를 찾는다 — 컬럼(테이블 미펼침) → 소속 테이블 → 접힌 스키마 카드(SC:) 순 승격.
-//   _metaG6Build 의 renderEndpoint 승격 규칙과 동형이되, 여기선 실제 렌더 집합(renderedIds) 기준으로
-//   해소한다. 단일클릭 카메라 팬이 미렌더 컬럼에서 "화면에 없음"으로 죽지 않고 소속 테이블/카드로
-//   시선을 옮기게 하는 것이 목적. 조상도 미렌더(스키마 미로드·§67 뷰포트 컬링 등)면 null.
+//   렌더 id 를 찾는다. _metaG6Build 의 renderEndpoint 승격 규칙과 동형이되, 여기선 실제 렌더 집합
+//   (renderedIds) 기준으로 해소한다. 단일클릭 카메라 팬이 미렌더 컬럼에서 "화면에 없음"으로 죽지 않고
+//   소속 상위 객체로 시선을 옮기게 하는 것이 목적. 전 계층 미렌더면 null.
+// graph-catcluster-focus(사용자 보고 2026-07-28): 승격 사다리에서 **실제 렌더를 게이팅하는 두 클러스터
+//   계층이 빠져 있었다** — 컨텐츠 카테고리(sim-group, groupCollapsed)와 제품 카테고리 밴드(catCollapsed).
+//   특히 `_metaColParent("scope:db.tbl")` 는 (컬럼 키가 아니라 테이블 키를 받으면) **소속 스키마**를 돌려주므로,
+//   컨텐츠 카테고리가 접혀 테이블이 미렌더인 상황에서 사다리가 곧장 스키마 combo 로 뛰어 카메라가 **테이블의
+//   실제 상위 객체(접힌 컨텐츠 카테고리)가 아니라 스키마 클러스터 중앙**으로 이동했다(사용자 보고 증상).
+//   접힘은 지속 의도(groupCollapsed/catCollapsed 주석)이므로 자동 펼침이 아니라 **접힌 상위 객체를 조상으로
+//   승격**해 시선만 옮긴다. 최종 사다리:
+//     컬럼 → 소속 테이블 → 소속 컨텐츠 카테고리(GB:) → 소속 스키마 클러스터(combo | SC: 카드) → 제품 카테고리 밴드(CAT:)
 function _metaRenderedAncestorFor(key) {
   if (!key) return null;
   const gn = _metaGraph.nodes.get(key);
-  const pk = _metaColParent(key, gn && gn.fqn);   // 컬럼 → 소속 테이블 키
-  if (pk) { const r = _metaRenderedIdFor(pk); if (r) return r; }
+  const gb0 = _metaGroupElementFor(key);   // 테이블·루틴 자신이 접힌 컨텐츠 카테고리 소속(컬럼 key 는 null)
+  if (gb0) return gb0;
+  const pk = _metaColParent(key, gn && gn.fqn);   // 컬럼 → 소속 테이블 키(테이블 키면 소속 스키마 키)
+  if (pk) {
+    const r = _metaRenderedIdFor(pk); if (r) return r;
+    const gb1 = _metaGroupElementFor(pk); if (gb1) return gb1;   // 컬럼 → 소속 테이블의 컨텐츠 카테고리
+  }
   const sk = _metaCatParent(key, gn && gn.fqn);    // → 소속 스키마 키(접힘 시 SC: 카드)
-  if (sk) { const r = _metaRenderedIdFor(sk); if (r) return r; }
+  if (sk) {
+    const r = _metaRenderedIdFor(sk); if (r) return r;
+    const cb = _metaCategoryElementFor(sk); if (cb) return cb;   // 접힌 제품 카테고리 밴드
+  }
   return null;
+}
+// graph-catcluster-focus: 승격된 렌더 요소 id → 사용자에게 보일 상위 객체 한글 명칭(상태줄 정확도).
+//   종전 상태줄은 승격 대상과 무관하게 "소속 테이블" 로 단정해, 실제로는 스키마 클러스터·카테고리로
+//   이동했는데도 테이블로 갔다고 안내했다(오안내). 모델 키는 테이블/스키마 두 경우가 있어 라벨로 구분.
+//   ⚠ 반환 문자열은 호출측에서 조사 **"로"** 를 직접 붙인다 — 현재 전 후보가 모음(카테고리·클러스터·
+//   프로시저·객체) 또는 ㄹ 받침(테이블)으로 끝나 모두 "로" 가 맞다. 새 라벨을 추가할 때 이 불변식을
+//   깨면(예: 받침 있는 명사) 조사가 어긋나므로, 테스트 A12 가 어미를 단정한다.
+function _metaAncestorKindKo(elId) {
+  const s = String(elId || "");
+  if (s.startsWith("GB:") || s.startsWith("GH:")) return "컨텐츠 카테고리";
+  if (s.startsWith("CAT:") || s.startsWith("CATH:")) return "제품 카테고리";
+  if (s.startsWith("SC:")) return "스키마 클러스터";
+  const n = _metaGraph.nodes.get(s);
+  if (n && n.label === "Table") return "소속 테이블";
+  if (n && n.label === "Routine") return "소속 함수·프로시저";
+  if (n && n.label === "Schema") return "스키마 클러스터";
+  return "상위 객체";
 }
 
 // 모델 → 화면 반영(전체 재구성 setData + draw). fit=true 면 전체 맞춤.
@@ -1338,7 +1458,7 @@ async function _metaGraphAnimateFocusRun(g, key, seq, opts) {
   const abort = (opts && typeof opts.abort === "function") ? opts.abort : null;
   // API 부재 번들 폴백(getElementRenderBounds/getViewportByCanvas/translateBy 없으면 즉시 focus — 구 동작 보존).
   if (typeof g.getElementRenderBounds !== "function" || typeof g.getViewportByCanvas !== "function" || typeof g.translateBy !== "function") {
-    try { const fel = _metaRenderedIdFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}
+    try { const fel = _metaRenderedIdFor(key) || _metaRenderedAncestorFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}   // graph-catcluster-focus: 폴백 번들도 동일 승격 사다리
     return;
   }
   try {   // 판독 하한 줌 clamp(즉시 — 팬보다 먼저)
@@ -1357,7 +1477,11 @@ async function _metaGraphAnimateFocusRun(g, key, seq, opts) {
     try { const s = g.getSize(); W = s[0]; H = s[1]; } catch (_) { W = H = NaN; }
     let av = null;   // 앵커 현재 뷰포트 위치 재조회 — 재빌드로 이동·재생성돼도 최종 위치로 수렴.
     try {
-      const fel = _metaRenderedIdFor(key);
+      // graph-catcluster-focus: 모델 키가 끝내 미렌더면(접힌 컨텐츠/제품 카테고리 소속) 조상으로 승격한다.
+      //   종전엔 av 가 영영 null 이라 MAXMS(1.2s) 동안 헛돌다 **카메라가 아예 안 움직였다** — 관계 추적
+      //   (더블클릭)처럼 요소 id 가 아닌 모델 키로 들어오는 호출 경로의 사각. 이미 해소된 요소 id 를 받는
+      //   호출부(팬/hover)는 첫 조회에서 걸려 폴백이 발동하지 않는다(동작 불변).
+      const fel = _metaRenderedIdFor(key) || _metaRenderedAncestorFor(key);
       if (fel) {
         const b = g.getElementRenderBounds(fel);
         av = g.getViewportByCanvas([(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2]);
@@ -1401,8 +1525,14 @@ function _metaGraphHoverPanCancel() {
   _metaHoverPanGen++;   // 진행 중 hover-pan 루프(abort 체크) + 대기 타이머를 무효화
   if (_metaHoverPanTimer) { (typeof window !== "undefined" ? window.clearTimeout : clearTimeout)(_metaHoverPanTimer); _metaHoverPanTimer = null; }
 }
-// spec: { nodeKeys?: [key], edgeKeyPairs?: [[keyA,keyB]] }. key→렌더 요소 id 해소(미렌더면 조상=소속 테이블/카드로 승격).
-//   엣지는 양끝 렌더 요소 사이 연결선으로 강조하고 양끝 노드도 함께 링 강조(연결이 명확히 보이게).
+// spec: { nodeKeys?: [key], edgeKeyPairs?: [ [keyA,keyB] | {from,to,relType} ] }.
+//   key→렌더 요소 id 해소(미렌더면 조상=소속 테이블/카드로 승격). 엣지는 양끝 렌더 요소 사이 연결선으로
+//   강조하고 양끝 노드도 함께 링 강조(연결이 명확히 보이게).
+// detail-hover-flow(사용자 리포트 2026-07-28): 항목 형식을 **방향 있는 객체**로 확장한다. `[a,b]` 는
+//   "self 끝점, 상대" 순서라 방향(어느 쪽이 source 인가)을 담지 못했고, 렌더러가 첫 매칭 엣지를 잡아
+//   왕복 참조(참조함/참조받음)·읽기/쓰기 어느 쪽을 hover 해도 **늘 같은 호 하나**만 강조됐다.
+//   `{from,to}` 는 모델 엣지의 실제 (source,target) 이고 `relType` 은 ROUTINE_USES 의 읽기/쓰기다.
+//   레거시 배열 형식도 계속 받는다(방향 미상 → 렌더러가 종전처럼 근사).
 function _metaGraphSetHoverHighlight(spec) {
   const g = _metaGraph.graph;
   if (!g || typeof g.setHoverHighlight !== "function") return;   // G6 폴백 등 미지원 렌더러 → no-op
@@ -1411,9 +1541,12 @@ function _metaGraphSetHoverHighlight(spec) {
   const addNode = (id) => { if (id && nodeIds.indexOf(id) < 0) nodeIds.push(id); };
   ((spec && spec.nodeKeys) || []).forEach((k) => addNode(resolve(k)));
   const edges = [];
-  ((spec && spec.edgeKeyPairs) || []).forEach((pair) => {
-    const a = resolve(pair && pair[0]), b = resolve(pair && pair[1]);
-    if (a && b && a !== b) { edges.push([a, b]); addNode(a); addNode(b); }
+  ((spec && spec.edgeKeyPairs) || []).forEach((ent) => {
+    const isPair = Array.isArray(ent);
+    const fromK = isPair ? ent[0] : (ent && ent.from), toK = isPair ? ent[1] : (ent && ent.to);
+    const relType = isPair ? null : ((ent && ent.relType) || null);
+    const a = resolve(fromK), b = resolve(toK);
+    if (a && b && a !== b) { edges.push({ source: a, target: b, relType }); addNode(a); addNode(b); }
     else if (a) { addNode(a); }   // 상대 미렌더 — self 끝점만이라도 강조(연결선은 생략)
     else if (b) { addNode(b); }   // self 미렌더(컬링)·상대 렌더 — 상대 끝점만이라도 강조(적대리뷰 MINOR#4)
   });
@@ -2487,4 +2620,4 @@ function _metaGraphOnNodeClick(e) {
 }
 
 
-export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
+export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };

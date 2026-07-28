@@ -1,5 +1,32 @@
 # Report
 
+## 2026-07-28 · 함수/프로시저 사용 관계선을 실제 참조 컬럼에 연결 (20260728T161940-routine-column-edges)
+
+### 요청 (사용자, entry persona dispatch)
+"`그래프 뷰` 에서, 함수 및 프로시저가 테이블[로 부터/을 향해] 관계선을 표현할 때 연관된 컬럼이 아니라 테이블에만 연결되고 있는 것으로 확인되었습니다. 테이블 노드가 접힌 상태에서는 기존대로 작동하되, 펼쳐진 상태에서 각 컬럼이 드러났을 경우에는 실제 [읽기/쓰기]참조하는 컬럼에 관계선을 구성하도록 개선해주세요."
+
+### 근본 원인
+FK 관계(`REFERENCES`)는 AGE 엣지의 **양끝이 Column 키**라 `graph-core.js` 의 `renderEndpoint` 가 "컬럼 렌더 시 컬럼 / 미렌더 시 테이블 / 스키마 접힘 시 SC: 카드" 3단 승격을 자동 수행한다. 반면 `ROUTINE_USES` 는 SSOT(`routine_objects.referenced_tables = [{fqn, kind}]`)부터 **테이블 단위**라 승격할 컬럼 끝점이 아예 없었다. 즉 프론트만으로는 해결 불가이고, 정의 파싱에 컬럼 추출을 더하는 것이 유일한 경로다.
+
+### 처리 결과 (Major §12.3 — 3계층 변경, alembic 마이그 0 · RBAC/엔드포인트 계약 무변경, cross-cut 코드 거주 feature-0002/0003)
+- **파서·SSOT**(`routines.py`) — `parse_referenced_columns` 신설. **보수적 채택**(사용자 결정): ① alias/테이블명 수식 참조(`a.col`·`T_User.UserID`) = read ② `INSERT INTO T (c1,c2)` = write ③ `UPDATE T SET c1=…`(alias-UPDATE 포함) = write. 비수식 컬럼은 **추정하지 않고**, 실재하지 않는 컬럼·모호 alias(같은 alias 가 다른 테이블에 바인딩)·크로스-DB 참조는 폐기. `_fetch_columns` 가 **실제 참조로 채택된 테이블에만** `INFORMATION_SCHEMA.COLUMNS` 를 1회 질의(2-pass, cap 400). 결과는 `referenced_tables[].cols = [{n,k}]` 로 동봉 — jsonb 라 **마이그레이션 0**, 기존 `IS DISTINCT FROM` 가드가 다음 sync 에서 자동 backfill.
+- **그래프 투영·API**(`metadata_graph.py`) — `ROUTINE_USES` 엣지 속성 `ref_columns`(JSON 문자열) 투영 + `schema_tables`·`neighborhood` 응답 동봉(`_ref_columns_of` 가 정제·garbage 방어). 값이 없으면 속성을 SET 하지 않아 기존 엣지와 동치.
+- **렌더**(`graph-core.js`) — 대상 테이블의 **컬럼이 렌더 중일 때만** 사용선을 컬럼별로 분해(컬럼별 read/write 방향·색 유지). 미렌더 컬럼은 테이블로 relation_type 별 1선 승격(FK 승격 규약 동형), **렌더된 컬럼이 0이면 분해 자체를 포기**해 접힘 상태는 완전 불변. 케이스 불일치(그래프 Column 정점 ↔ INFORMATION_SCHEMA 원천)는 소문자 인덱스로 1회 보정(lazy).
+- **상세 패널**(`graph-ctxmenu.js`) — 사용 관계 행에 참조 컬럼 병기(`✎` = 쓰기, 표시 상한 8). 캔버스의 컬럼선과 같은 정보를 목록으로도 확인.
+
+### 검증
+- **PB-0008 실 Windows Chrome 150 PASS** — 격리 harness(라이브 무영향)에서 **접힘 vs 펼침 대조 실증**: 접힘은 사용선 3개 전부 테이블 연결(기존 동작·원본 id), 펼침은 `sp_UpdateUser` → `T_User` 의 UserID(읽기)/Point(쓰기)/Name(쓰기) **컬럼 3개에 개별 연결** + 미렌더 컬럼 몫 테이블 승격 + `ref_columns` 없는 대조군 무회귀. 상세 패널 `UserID, ✎Point, ✎Name` 병기. pageerror 0.
+- 헤드리스 신규 **30 PASS** + 그래프 전 스위트 18개 **0 FAIL**(722 PASS) · pytest 신규 **27건** · 컨테이너 전체 **2740 passed / 15 failed**(15건 전부 baseline — main worktree 대조로 동일 15건 실측) · ruff PASS.
+- **테스트가 실제 결함 2건 적발**: ① 접힘 상태에서 read/write 별로 선이 2개로 갈라지던 계약 위반 ② `_fetch_columns` 의 `cursor()` 획득이 try 밖이라 컬럼 조회 실패가 routine upsert 전체를 죽일 수 있던 경로. 둘 다 in-cycle 수정.
+
+### 잔여
+- **실데이터 e2e 는 POST-DEPLOY** — 라이브에서 컬럼선이 뜨려면 배포 후 ① routine 재-introspect(`cols` 채움) ② graph sync(AGE `ref_columns` 투영)가 선행되어야 한다. 본 cycle 은 렌더·상세 계약을 실 브라우저에서 실증했고, 실데이터 반영은 배포 후 재확인 대상.
+- 파싱 불완전성(동적 SQL·MSSQL 4000자 절단·`SELECT *`)은 폴백(테이블 연결)으로 흡수 — 손실이 아니라 종전 동작.
+
+### 정본
+TASK `20260728T1541-routine-column-edges` · CHG/REV `20260728T161940-…` · Run `feature-0003/docs/test-runs.d/20260728T161940-routine-column-edges.md`. §18.8 패널은 세션 정책상 미수행 — REVIEW 에 [SKIPPED:session-policy-no-subagent] + 자체 적대 검토 H1~H6.
+
+
 ## 2026-07-27 · 상세 패널 관련 노드 목록 DB 단위 접기/펼치기 + 목록 생략 제거 (20260727T1730-detail-db-groups)
 
 ### 요청 (사용자, entry persona dispatch)

@@ -8,6 +8,70 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T172000-graph-hover-flow-postverify — 상세 패널 hover 강조(방향·읽기/쓰기 관계선 특정 + 데이터 흐름 애니메이션) POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
+- 대상: PR #1016 머지(main `b36493a9`) + `make deploy-web-only` 무중단 롤링(web-a/web-b one-at-a-time + Caddyfile reconcile, soak 90s 통과) 이후 **main 기반 서빙본**에서 재확인. 사전 Run 은 §13.2.9 격리 컨테이너에 자산을 `docker cp` + 재스탬프한 이미지였으므로 빌드 파이프라인 산출물에서의 성립은 별도 사실(§16.3 — 머지 ≠ 배포 완료).
+- 완료 판정(acceptance):
+  - [x] 서빙 baked 2중 확인 — `/healthz git_commit=b36493a9` · `repo-web-a-1`/`repo-web-b-1` `GIT_COMMIT=b36493a9` · `admin.js?v=3772f0cfa0c5` · 서빙 `graph-renderer-pixi.js` 신규 심볼 **18건**(`_edgeMatchBetween`/`_startHoverFlow`/`_stopHoverFlow`/`_clearHoverLayer`/`flowForward`) · `graph-ctxmenu.js` `_metaHoverEdgeSpec` 4 · 런타임 관계 상세 **27/27 행**이 `data-edge-src`/`data-edge-tgt`(+루틴 `data-rel-type`) 적재.
+  - [x] 방향 축 — 같은 노드쌍의 참조함/참조받음이 서로 다른 호를 강조(**73px** 차, 대조군 0px)하고 **화살촉이 상대 끝 ↔ self 끝으로 반전**(4× 크롭 육안).
+  - [x] 읽기/쓰기 축 — 쓰기 `spDelete…` vs 읽기 `spGet…` **5,346px** 차 · bbox 완전 분리(544–722×144–631 vs 679–760×382–631). 다른 스키마 read 대조 **3,948px** 차로 대상별 분기 확정.
+  - [x] 데이터 흐름 애니메이션 — hover 유지·카메라 불변에서 250ms 간격 4구간 **440/434/440/433px**(정지 대조군 **0px**), 루틴선 쓰기 **814px**·읽기 **413px**.
+  - [x] 정리·잔재 — hover 전부 이탈 후 base 대비 **0px** · 전 시나리오 `pageerror` **0건**.
+  - [x] 기하 비례 대조(줌 3단) — 방향 차 **73→312px**, 참조 2행 차 **17→108px**, 대조군 **0px 유지** → 차분이 줌에 비례 = 서로 다른 선(근-동치 우려 해소).
+- 상태: **완결** — 사전 Run 의 두 축(방향·읽기/쓰기) + 흐름 애니가 배포본에서 전건 재현. TASK 20260728T1628-graph-hover-flow 종결.
+- 드라이버 마찰 2건(기록): ① "가장 큰 canvas" 휴리스틱이 콘솔 리셋 시 대시보드 차트를 집어 **위장 0-diff** 를 만들어 첫 1:1 줌 측정 전건을 폐기·재측정 → 캡처를 `#metadataGraphCanvas` 하위로 못 박고 그래프 가시성·상태줄 동시 기록. ② 공유 Chrome 탭 하이재킹(대상이 `gunzlogin` 으로 바뀜) → 전용 마커 URL(`?pb=hoverflowpost`)로 탭 핀 고정.
+- Run: `docs/test-runs.d/20260728T172000-graph-hover-flow-postdeploy.md`
+
+## TASK-20260728T163800-graph-catcluster-focus-postverify — 접힌 카테고리 클러스터 카메라 승격 POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
+- 대상: PR #1013 머지(main `f25c71bf`) + `make deploy-web` 무중단 전체 롤아웃(soak 90s 통과) 이후 **main 기반 서빙본**에서 재확인.
+- 완료 판정(acceptance):
+  - [x] 서빙 baked 확인 — 라이브 `graph-core.js` 신규 심볼 7건 · `graph-ctxmenu.js` 3건 · `admin.js?v=bff996bf90f7` · `repo-web-a-1 GIT_COMMIT=f25c71bf`.
+  - [x] 컨텐츠 카테고리 접힘 → 대상 블록 1189→3px 정착 · 스키마 클러스터 중앙 40→1148px 이탈.
+  - [x] 제품 카테고리 밴드 접힘 → 밴드 2px 정착 · 전부 펼침 회귀 2px · 상태줄 문구 3종 · 콘솔 에러 0.
+- 상태: **완결** — AC-CCF-1~4 전건이 배포본에서 재현. TASK-20260728T160000 종결.
+
+## TASK-20260728T170000-graph-catcluster-polish-postverify — 스크롤 polish POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
+- 대상: PR #1012 머지(main 9c434809) + `make deploy-web` 무중단 전체 롤아웃(soak 통과) 이후, **main 기반 서빙본**에서 재확인.
+- 완료 판정(acceptance):
+  - [x] 서빙 baked — 라이브 `graph-ctxmenu.js` `_metaRunPanelWave` 2건 · `graph.css` `amgrCtRowWave` 2건 (entry `admin.js?v=d9e63a464886`).
+  - [x] AC-CPS-5 스크롤 속도 — 샘플 t=213ms 9,457 → t=414ms 2,070 → t=820ms 2,017 정착(EaseOutExpo 초반 급가속 관측).
+  - [x] AC-CPS-6·7 파도 — `is-wave` 24행 · delay 90/116/142ms · alpha 0.500/0.239/0.000(선형).
+  - [x] AC-CPS-8 정리 — 잔여 클래스·인라인 변수 0 · 콘솔 에러 0.
+- 상태: **완결** — TASK-20260728T162000 종결.
+
+## TASK-20260728T162000-graph-catcluster-scroll-polish — 카테고리 선택 스크롤 polish: 280ms EaseOutExpo + 헤딩 점멸/멤버 파도(알파 선형 감쇠) (Minor §12.3 — feature-0003 프론트 `graph-ctxmenu.js` + `graph.css`, 정본 feature-0016, /_template:entry arg-given)
+- 요청(사용자, 2026-07-28, 직전 cycle 수용 후 개선 2건): "스크롤이 이동하는 속도를 좀 더 신속하게 구성해주세요. (assistant 대화 로그에서, 우측 막대뱃지를 클릭하여 대화 스크롤을 이동시키는 형태와 정합하게)" / "하이라이트 연출을 개선시켜 주세요 : 카테고리 스키마 점멸 + 하위 자식 요소를 파도 형태로 순차적으로 점멸(다만, 점멸 알파는 점점 선형적으로 연하게.)"
+- 진단: ① 직전 구현은 브라우저 native `scrollTo({behavior:'smooth'})` — duration 이 브라우저 임의라 17,000px 목록에서 수 초가 걸렸다(실측: 클릭 800ms 후 측정값이 이동 중간값). 대화 뷰는 이미 같은 문제를 **280ms EaseOutExpo**(REQ-20260629-point-scroll)로 해결해 둔 정본이 있다. ② 도착 강조가 헤딩 1.8s 단일 페이드라 "어느 카테고리인지"는 알려도 "그 카테고리가 무엇을 품는지"는 안 보였다.
+- 접근: ① `_metaAnimatePanelScroll`(rAF + `1-2^(-10t)`, 280ms) 로 교체 — `app.js`/`share.js` 와 동일 곡선·동일 duration. ② 헤딩은 2회 점멸, 멤버 행은 `animation-delay` 26ms 간격 파도 + `--amgr-wave-a` 알파를 A0=0.5 에서 0 까지 **선형** 감쇠. 상한 24행(패널 뷰포트 분량), 접힌 행 제외.
+- 완료 판정(acceptance):
+  - [x] [AC-CPS-5] 패널 스크롤이 대화 뷰 point-rail 과 동일한 280ms EaseOutExpo 로 구동된다(거리 무관 일정).
+  - [x] [AC-CPS-6] 도착 시 카테고리 헤딩이 점멸하고, 하위 멤버 행이 순차 파도로 점멸한다.
+  - [x] [AC-CPS-7] 파도 알파가 첫 행에서 마지막 행까지 선형으로 감쇠한다(균일 간격·단조 감소).
+  - [x] [AC-CPS-8] 연출 종료 후 클래스·인라인 변수가 전부 제거되고, 연타 시 직전 연출·스크롤이 즉시 선점된다.
+- 검증: 헤드리스 65 PASS(직전 36 → +29) + 회귀 328 PASS · PB-0008 실 Windows Chrome 라이브(격리 컨테이너) 6 시나리오 PASS · 콘솔 에러 0 · 파도 프레임 캡처 확보.
+- 상태: **완결** — 라이브 검증·정리 완료.
+
+## TASK-20260728T161326-graph-analyzed-halo-fit — AI 분석 완료 컬럼 노드의 상태 테두리가 노드보다 비대 (Minor §12.3 — feature-0003 프론트 `static/graph/graph-renderer-pixi.js`, 정본 feature-0016, /_template:entry arg-given)
+- 요청(사용자, 2026-07-28, 스크린샷 1매 — `masangsoft_modules` 컬럼 목록이 세로 보라색 관으로 이어진 화면): "`그래프 뷰` 에서 AI분석이 완료된 컬럼 노드에서, 노드 크기에 비해 테두리가 너무 비대하게 구성되어 있어 적절하게 재구성이 필요합니다."
+- 진단(코드 확정): 컬럼 노드는 `type:"circle"`(지름 11px)인데 `_applyNodeStates` 는 **모든 노드를 사각형으로 가정**했다. `h` 를 `Array.isArray(s.size) ? s.size[1] : 24` 로 잡아 **원형 노드에 h=24 기본값**이 적용되고, 여기에 여백 3 + 두께 3 이 붙어 **11px 점 주위에 17×30 알약**이 그려졌다. 컬럼 행 간격(~24px)보다 halo 가 높아 이웃 halo 끼리 겹치며 **세로 관** 으로 이어진 것이 사용자가 본 화면이다. 즉 지배 원인은 두께가 아니라 **모양·크기 계약의 부재**다.
+- 완료 판정(acceptance):
+  - [x] [AC-AHF-1] circle 노드는 **원형** halo — 반지름 = 노드 반지름 + 여백, 사각 알약 미생성(T27).
+  - [x] [AC-AHF-2] 두께·여백·동심링 간격이 노드 최소변에 비례(k=clamp(min(w,h)/24, 0.4, 1)) — 11px 컬럼에서 3px → ~1.4px(T27).
+  - [x] [AC-AHF-3] rect 노드(테이블·루틴·스키마 카드)는 **수치 그대로**(k=1) — 회귀 0(T27 좌표·radius·lw 전건 대조).
+  - [x] [AC-AHF-4] 점선 상태(running/busy)도 원형에서 성립 — 호 대시(`dashArcs`)가 직선 대시와 같은 화면 대시 길이(T27).
+  - [x] [AC-AHF-5] 라이브 대조 — 세로 보라 관 소멸, 컬럼마다 얇은 링이 개별 분리(PB-0008 Windows 브라우저 4× 확대 대조).
+- 상태: **완결** — 헤드리스 677 PASS / 0 FAIL · PB-0008 라이브 before/after 확보 · 주입 QA 원복(잔재 0).
+## TASK-20260728T160000-graph-catcluster-focus — 접힌 카테고리 클러스터 하위 테이블 추적 시 카메라가 스키마 클러스터로 오이동하는 결함 수정 (Minor §12.3 — feature-0003 프론트 `static/graph/` 2모듈, 정본 feature-0016, /_template:entry arg-given)
+- 요청(사용자, 2026-07-28): "`그래프 뷰` 에서, '카테고리 클러스터'가 접힌 상태에서 하위 테이블 노드의 위치를 추적할 경우 (상세 패널 내 테이블 요소 클릭, 테이블 노드가 선택된 상태에서 '이 노드로 이동' 등) 테이블 노드의 상위 객체인 '카테고리 클러스터' 가 아닌, '스키마 클러스터' 의 중앙 위치로 카메라가 이동하는 이슈가 확인되어 수정이 필요합니다."
+- 진단(근본원인): 미렌더 노드의 카메라 승격 사다리 `_metaRenderedAncestorFor`(graph-core.js)가 `컬럼 → 소속 테이블 → 소속 스키마` 만 훑고, **실제 렌더를 게이팅하는 두 클러스터 계층을 빠뜨렸다** — ① 컨텐츠 카테고리(sim-group): `groupCollapsed` 면 멤버 테이블을 방출하지 않고 `GB:`/`GH:`/`GX:` 헤더 기하만 남긴다, ② 제품 카테고리 밴드: `catCollapsed` 면 멤버 스키마 클러스터를 통째로 미방출(`L.catHidden`)하고 `CAT:` 밴드만 남긴다. 게다가 `_metaColParent(key)` 는 **테이블 키를 받으면 소속 스키마**를 돌려주므로(컬럼 키 전제 함수), ①에서 사다리가 곧장 스키마 combo 로 뛰어 카메라가 스키마 클러스터 중앙으로 갔다(= 보고 증상). ②에서는 승격 대상이 아예 없어(null) 카메라가 움직이지 않고 "표시할 수 없습니다"로 끝났다.
+- 접근: 사다리를 `컬럼 → 소속 테이블 → 컨텐츠 카테고리(GB:) → 스키마 클러스터(combo | SC:) → 제품 카테고리 밴드(CAT:)` 로 완성한다. 두 신설 해소기는 `groupOf`(접힌 그룹 멤버까지 전량 적재 — §50 REV-wiring fix)와 `catMembers` 역인덱스를 쓰되 **`renderedIds` 로 게이팅**해 stale 항목이 허위 카메라 이동을 만들지 않게 한다. **접힘은 지속 의도라 자동 펼침은 하지 않는다**(시선만 이동 — 사용자 요구 문장 그대로).
+- 완료 판정(acceptance):
+  - [x] [AC-CCF-1] 컨텐츠 카테고리 접힘 → 하위 테이블 추적 시 카메라가 **그 카테고리 블록**에 정착(스키마 클러스터 중앙 아님).
+  - [x] [AC-CCF-2] 제품 카테고리 밴드 접힘 → 카메라가 **그 밴드**로 이동(종전 미이동).
+  - [x] [AC-CCF-3] 접힘 없음 / 접힌 스키마 카드 경로는 종전 동작 유지, 승격 경로가 자동 펼침을 유발하지 않음.
+  - [x] [AC-CCF-4] 상태줄이 실제 승격 대상 종류를 표기(종전 "소속 테이블" 단정 오안내 해소).
+- 검증: 헤드리스 신규 `test_graph_ancestor_focus.js` **31 PASS / 0 FAIL** + 회귀 364 PASS(dbgroups 78 · pixi 190 · edge_flow 43 · reveal 17 · catcluster_panel_scroll 36) · **PB-0008 실 Windows Chrome/150 라이브**(§13.2.9 격리 컨테이너, 라이브 web-a/web-b 무접촉) 6 시나리오 PASS — 컨텐츠 카테고리 접힘에서 대상 블록 거리 **1189→3px**, 같은 조작에서 스키마 클러스터 중앙 거리 **40→1148px**(오이동 대상 이탈), 제품 카테고리 밴드 55px 정착, 전부 펼침 회귀 25px, 콘솔 에러 0.
+- 상태: **구현·검증 완료** → cycle-final(PR·머지·배포). deploy_scope: included(FIRST_REQUEST.md 전역 §12.2).
+
 ## TASK-20260728T153500-graph-catcluster-scroll-postverify — 캔버스 카테고리 선택 → 목록 스크롤 동기화 POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
 - 대상: PR #1008 머지(main 4a0174e5) + `make deploy-web` 무중단 전체 롤아웃(soak 통과) 이후, **main 기반 서빙본**에서 재확인.
 - 완료 판정(acceptance):
@@ -27,6 +91,19 @@ source_of_truth: true
   - [x] [AC-CPS-4] 미매칭·컨테이너 부재 등은 graceful no-op 이고, `prefers-reduced-motion` 에서는 즉시 스크롤한다.
 - 검증: 헤드리스 신규 36 PASS + 회귀 268 PASS · PB-0008 실 Windows Chrome 라이브(격리 컨테이너) 7 시나리오 PASS · 콘솔 에러 0.
 - 상태: **완결** — 라이브 검증·정리 완료.
+
+## TASK-20260728T161940-routine-column-edges — 함수/프로시저 사용 관계선을 실제 참조 컬럼에 연결(테이블 펼침 시) (Major §12.3 — 프론트 2모듈 + 백엔드 feature-0002 2모듈, 정본 feature-0016 `20260728T1541-routine-column-edges`)
+- 요청(사용자, 2026-07-28): "`그래프 뷰` 에서, 함수 및 프로시저가 테이블[로 부터/을 향해] 관계선을 표현할 때 연관된 컬럼이 아니라 테이블에만 연결되고 있는것으로 확인되었습니다. 테이블 노드가 접힌 상태에서는 기존대로 작동하되, 펼쳐진 상태에서 각 컬럼이 드러났을 경우에는 실제 [읽기/쓰기]참조하는 컬럼에 관계선을 구성하도록 개선해주세요."
+- 근본 원인: FK(`REFERENCES`)는 엣지 양끝이 Column 키라 `renderEndpoint` 3단 승격이 자동 동작하지만, `ROUTINE_USES` 는 SSOT(`routine_objects.referenced_tables`)부터 **테이블 단위**라 승격할 컬럼 끝점이 없었다 → 프론트 단독 해결 불가, 정의 파싱에 컬럼 추출 추가가 유일 경로.
+- 채택 기준(사용자 결정): **보수적** — 테이블이 확정된 컬럼만 연결, 확정 실패분은 테이블 연결 유지(폴백). 불확실한 참조를 컬럼에 그리면 "없는 관계"를 사실처럼 보여주는 환각이 된다.
+- 완료 판정(acceptance):
+  - [x] [AC-RCE-1] 테이블 접힘(컬럼 미렌더) 시 사용선은 종전과 동일한 단일 테이블선이고 엣지 id 도 모델 원본 그대로다.
+  - [x] [AC-RCE-2] 테이블 펼침(컬럼 렌더) 시 사용선이 실제 참조 컬럼별로 분해되고, 읽기/쓰기가 **컬럼 단위**로 갈려 화살표 방향이 반대로 유지된다.
+  - [x] [AC-RCE-3] 참조 컬럼 중 렌더되지 않은 몫은 테이블로 relation_type 별 1선 승격되어 컬럼선과 공존한다(FK 승격 규약 동형).
+  - [x] [AC-RCE-4] `ref_columns` 가 없는 사용 관계(파싱 미확정·크로스-DB)는 컬럼이 펼쳐져 있어도 종전 테이블 연결을 유지한다.
+  - [x] [AC-RCE-5] 상세 패널 사용 관계 행에 참조 컬럼이 병기된다(`✎` = 쓰기).
+- 검증: 헤드리스 신규 `test_graph_routine_colref.js` **30 PASS** + 그래프 전 스위트 18개 **0 FAIL**(722 PASS) · pytest 신규 `test_routine_column_refs.py` **27건** · 전체 **2740 passed / 15 failed**(전부 baseline, main 대조 동일) · ruff PASS · **PB-0008 실 Windows Chrome 150 PASS**(격리 harness — 접힘/펼침 대조·상세 병기·pageerror 0).
+- 상태: **완결**(코드·검증) — 실데이터 e2e(배포 후 routine 재-introspect + graph sync 선행)는 POST-DEPLOY 잔여.
 
 ## TASK-20260728T152141-graph-edge-hairline — 줌아웃 관계선 깨짐·계단·끊김: hairline 처리(1물리픽셀 + alpha 보상) (Minor §12.3 — feature-0003 프론트 2모듈, 정본 feature-0016 §87)
 - 요청(사용자, 2026-07-28): "줌 아웃을 진행하면 관계선에 깨짐 + 계단현상 + 선이 끊겨보이는것처럼 나타나는 이슈 … anti-aliasing 을 적용한다면 과도한 조치일지, 혹은 더 모범적인 렌더링 방법이 있을지 검토"
@@ -6666,3 +6743,19 @@ mouse-hover 툴팁으로 충분하니 제거.
     ① 애니 전 구간 카드 좌측 x=**249 단일값**(앞글자 이동 0) ② 유의 diff 가 원 카드 우측 끝 이후(캔버스 x 354~449)에만 발생
     ③ `agent_attachment_5f6353c47…` → 전체 명칭 노출 ④ 확장분이 우측 이웃 카드 **위**(이웃 위치는 불변) ⑤ 이탈 픽셀 동치 ⑥ pageerror 0
   - 증적: `docs/evidence/pb0008-graph-hover-anchor-{before,after}-20260728.png`
+
+## 20260728T1628-graph-hover-flow — 상세 패널 hover 강조: (방향·읽기/쓰기) 관계선 특정 + 데이터 흐름 애니메이션 (Minor §12.3 frontend-only)
+- 요청(사용자, 2026-07-28, `/_template:entry` arg-given): "상세 패널 내 참조관계를 개별 확인하려고 mouse-hover 하이라이트를 구성했는데, 연결선 중 [읽기/쓰기]에 따라 곡선의 형태를 구분하고 있지만 **하이라이트는 구분에 관계없이 하나의 관계선만** 나타난다. 실제 [읽기/쓰기]에 따른 곡선이 하이라이트 되도록 수정 필요. 추가로 하이라이트 처리된 부분은 **실제 데이터 흐름을 나타내는 애니메이션** 형태로 연출."
+- 진단(§7.1 Implementation Plan): 같은 두 노드 사이에 관계선이 **여러 개** 존재한다 — ① 왕복 REFERENCES(A→B / B→A)는 곡률이 진행방향 왼쪽 고정이라 반대편 호(§83 A2), ② ROUTINE_USES 는 읽기/쓰기가 별개 선 2개(§83 C1). 그런데 hover spec 이 `[self끝점, 상대]` 라 **방향을 담지 못했고**, `_edgeStyleBetween` 이 정/역·종류 구분 없이 **첫 매칭**을 반환했다. 그래서 참조함/참조받음(및 읽기/쓰기) 어느 행을 hover 해도 같은 호 하나만 강조됐다.
+- 영향 파일·심볼: `graph-ctxmenu.js`(`relRow`/`row`/`rtRow` 마크업 + 신규 `_metaHoverEdgeSpec` + `_metaGraphBindDetailHover`/`bindRelRows`) · `graph-core.js`(`_metaGraphSetHoverHighlight`) · `graph-renderer-pixi.js`(`PixiAdapterPure.dashPolyline` phase 인자 · 신규 `PixiAdapterPure.flowForward` · `setHoverHighlight` · 신규 `_edgeMatchBetween`/`_startHoverFlow`/`_stopHoverFlow`/`_clearHoverLayer` · `_edgeStyleBetween` 래퍼화).
+- 완료 판정: (a) 참조함/참조받음 두 행이 서로 다른(반대편) 호를 강조하고 화살촉 방향이 갈린다 (b) 읽기/쓰기 행이 각자의 선을 강조한다 (c) 강조선 위 대시가 데이터 흐름 방향으로 이동한다 (d) 기존 스위트 회귀 0.
+- [x] 행 마크업에 모델 엣지 실제 `(source,target)` + `relation_type` 적재 (`data-edge-src`/`data-edge-tgt`/`data-rel-type`, 구 마크업 레거시 폴백 유지)
+- [x] `_metaGraphSetHoverHighlight` spec 을 방향 객체 `{from,to,relType}` 로 확장(레거시 배열 병존)
+- [x] `_edgeMatchBetween` — 방향(1순위) > relation_type(2순위) 순위 + 역방향 정규화(곡률 부호 반전 + 화살표 키 교환)
+- [x] 흐름 애니메이션 — `dashPolyline(pts, dash, phase)` + hover 전용 rAF(`_startHoverFlow`), `prefers-reduced-motion` 정적 폴백
+- [x] 정지/정리 경로 4곳(hover 해제·새 hover 선점·`draw()` 재빌드·`destroy()`) + 오버레이 Graphics 파기
+- [x] 강조 기하 screen-space 정규화(§85 정합 — 종전 model 고정 3.5px)
+- [x] 신규 헤드리스 `test_graph_hover_flow.js` 41 PASS / 0 FAIL + 구현 이전 어댑터 적대 대조로 회귀 포착 확인
+- [x] 그래프 전 스위트 733 PASS / 0 FAIL (회귀 0)
+- [x] §18.8 검증 — `[CODEX:graph-hover-flow]` (subagent 패널은 세션 도구제약 — REVIEW 참조)
+- [x] **PB-0008 Windows-browser 라이브 시각검증** (`visual_verification_scope: always`) — §13.2.9 격리 컨테이너(:18097), 라이브 web-a/web-b 무접촉. 방향 2축·읽기/쓰기 2축·흐름 애니 전부 PASS, 페이지 에러 0. Run=`docs/test-runs.d/20260728T162844-graph-hover-flow.md`

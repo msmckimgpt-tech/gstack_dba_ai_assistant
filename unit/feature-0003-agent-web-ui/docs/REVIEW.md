@@ -10,6 +10,82 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T172000-graph-hover-flow-postverify [SKIPPED:non-policy-doc] — 상세 패널 hover 강조(방향·읽기/쓰기 + 흐름 애니) POST-DEPLOY PB-0008 검증 기록 (TASK 20260728T1628-graph-hover-flow, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- **왜 배포본에서 다시 봤는가**: 사전 검증은 §13.2.9 격리 컨테이너(`web-hoverflow-test`:18097)에서 했고 그 이미지는 worktree 자산을 `docker cp` + 재스탬프(`?v=dev` → `?v=28b8c65898a7`)한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니다**. main 기반 이미지가 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).
+- **관측 정합**: 사용자 리포트 두 축이 배포본에서 전건 재현 — 방향(같은 노드쌍 참조함/참조받음 **73px** 차 + 화살촉 상대끝↔self끝 반전) · 읽기/쓰기(**5,346px** 차 + bbox 완전 분리) · 흐름 애니(250ms 간격 4구간 **440/434/440/433px**, 정지 대조군 **0px**) · 잔재 **0px** · `pageerror` **0건**. 절대 수치는 사전 Run(441 / 3,517 / 151px)과 다르나 캔버스 해상도·줌·카메라가 다른 데서 오는 차이이고 **부호·구조는 동일**하다.
+- **적대적 자기검증 3건(수치를 믿기 전에 깬 가정)**: ① *측정 채널이 노이즈를 섞지 않는가* — 무hover 2프레임 diff **0px**, hover 전/후 원복 **0px** 로 노이즈 하한을 실측해 두었기에 이하 모든 비-0 을 실신호로 단정할 수 있다. ② *캔버스를 맞게 집었는가* — "가장 큰 canvas" 휴리스틱은 관리 콘솔이 대시보드로 리셋되면 **대시보드 차트**를 집어 hover 전후 0-diff 를 만든다. 첫 1:1 줌 측정이 전건 0px 로 나온 것이 바로 이 함정이었고(기능 실패로 오판할 형태), 전량 폐기 후 캡처 대상을 `#metadataGraphCanvas` 하위로 못 박고 매 캡처에 그래프 가시성·상태줄을 동시 기록해 무효 캡처를 raise 하도록 고쳐 재측정했다. ③ *두 참조 행이 같은 선을 강조하는 것 아닌가*(= 원 결함 재발 의심) — fit 줌에서 두 행 차가 **17px** 로 작았다. 줌 3단 확대에서 방향 차 **73→312px**, 참조 2행 차 **17→108px** 로 **차분이 줌에 비례 확대**되고(대조군은 0px 유지), 다른 스키마 루틴 대상과의 대조는 **3,948px** 로 분리됨을 확인해 "근접 배치로 인한 작은 차이"임을 확정했다.
+- **미검증으로 남긴 것(정직 표기)**: `prefers-reduced-motion` 정적 폴백은 OS 설정 토글이 공유 Windows 환경에 부작용을 남기므로 라이브 재확인하지 않았다 — 헤드리스 F 섹션(41 PASS)과 사전 Run 이 계약을 잠근다. 또한 #2 의 근-동치가 **컬럼 노드 미렌더 시 승격 대상이 동일 상위로 접힌 결과**인지는 직접 단정하지 않았고, 위 ③ 의 두 대조로 대상 특정 성립만 입증했다.
+- Cross-ref: MODIFY CHG-20260728T172000-graph-hover-flow-postverify / test-runs.d/20260728T172000-graph-hover-flow-postdeploy.md / 선행 REV-20260728T1628-graph-hover-flow.
+
+## REV-20260728T163800-graph-catcluster-focus-postverify [SKIPPED:non-policy-doc] — 카메라 승격 교정 POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T160000, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- **왜 배포본에서 다시 봤는가**: 사전 검증은 §13.2.9 격리 컨테이너에서 했고 그 이미지는 worktree 자산을 `docker cp` + 재스탬프한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니다**. main 기반 이미지가 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).
+- **관측 정합**: 사전 Run 과 POST-DEPLOY Run 의 수치(1189→3 / 40→1148 / 2 / 2)와 상태줄 문구가 **전건 동일**했다. 즉 이번 결함의 수정은 자산 주입 경로가 아니라 정식 빌드 산출물에서도 성립한다.
+- **미검증으로 남긴 것**: 사전 Run 과 동일 — `_metaGraphPanToRelation`·hover-pan 직접 호출, GX 좌표 합성 클릭. 둘 다 동일 `_metaRenderedAncestorFor` 를 공유하며 시나리오 1·3 이 그 해소 결과를 라이브에서 단정한다.
+- Cross-ref: MODIFY CHG-20260728T163800-graph-catcluster-focus-postverify / test-runs.d/20260728T163800-graph-catcluster-focus-postdeploy.md / 선행 REV-20260728T160000-graph-catcluster-focus.
+
+## REV-20260728T170000-graph-catcluster-polish-postverify [SKIPPED:non-policy-doc] — 스크롤 polish POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T162000, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- **배포본에서 다시 본 이유**: pre-commit 검증은 격리 컨테이너(§13.2.9)에서 `docker cp` + 재스탬프한 이미지였다 — 빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니므로, main 기반 이미지가 같은 코드를 서빙하는지는 별개 사실이다.
+- **스크롤 속도를 숫자로 남긴 이유**: "빨라졌다" 는 체감 주장이라 회귀를 못 잡는다. 샘플(t=213ms 9,457 / t=414ms 2,070 / t=820ms 2,017)은 EaseOutExpo 의 초반 급가속·후반 감속 형태를 그대로 보여 주며, 이후 누군가 native smooth 로 되돌리면 이 곡선이 무너진다.
+- **미검증으로 남긴 것(정직)**: 배포본에서는 좌클릭 1경로만 재현했다(우클릭 '소속 스키마 상세'·reduced-motion 분기는 헤드리스+스테이징에서 확인). 세 경로가 같은 함수로 수렴하고 배포본에서 그 함수가 정상 동작함을 확인했으므로 재현 부담을 줄였다. 파도 **시각 peak** 캡처도 스테이징 Run 이 정본이다 — 배포본 프레임은 tail 이 잡혔다(CSS `animation-delay` 라 프레임 선택이 결정적이지 않음).
+- **드라이버 마찰(정직)**: 공유 Windows Chrome 을 병렬 AI 세션 4곳이 점유해 `bin/win-browser.py` 의 `pages[0]` 고정 선택이 남의 탭을 잡았다. 전용 새 탭을 만들어 그 page 객체만 쓰는 단일-스크립트 드라이버로 회피(타 세션 무접촉, `down` 미사용 — 공유 브라우저를 죽인다). 부수 실측: 탭 전환은 trusted click 필요, `domcontentloaded` 직후 클릭은 부트스트랩 전이라 무효.
+- 검증: 서빙 baked 2파일 · 스크롤 샘플 4점 · 파도 24행/delay/alpha 선형 · 잔여 0 · 콘솔 에러 0 · 스크린샷 3매.
+- Cross-ref: MODIFY CHG-20260728T170000-graph-catcluster-polish-postverify / test-runs.d/20260728T170000-graph-catcluster-scroll-polish-postdeploy.md / 선행 REV-20260728T162000-graph-catcluster-scroll-polish.
+
+## REV-20260728T162000-graph-catcluster-scroll-polish [SKIPPED:session-policy-no-subagent] — 스크롤 280ms EaseOutExpo + 헤딩 점멸/멤버 파도 (TASK-20260728T162000, Minor §12.3, frontend-only)
+- Panel skip 사유(§18.8 / §18.8.2 상위 우선순위 지시 carve-out): 하네스 수준에서 `Agent` tool 사용이 금지돼 subagent panel(ux/design)을 호출할 수 없다. 제약 없는 채널로 대체 — 기계 검증(헤드리스 65, rAF 프레임 구동 포함) + PB-0008 실 브라우저 실측 + 아래 자체 적대 검토. 미검증 범위는 정직 표기.
+- 판단 근거:
+  - **왜 native smooth 를 버렸나**: `scrollTo({behavior:'smooth'})` 의 duration 은 **명세가 정하지 않는다** — Chrome 은 거리에 따라 늘리므로 17,000px 목록에서 수 초가 됐다(실측). 이 프로젝트엔 같은 문제를 이미 푼 정본이 있다(REQ-20260629-point-scroll: 280ms EaseOutExpo). 새 곡선을 만들지 않고 **그 정본을 그대로 재사용**해 대화 뷰와 그래프 뷰의 "점프 이동" 체감을 하나로 맞췄다.
+  - **왜 거리 비례가 아니라 고정 280ms 인가**: 사용자가 요청한 정합 대상(대화 뷰 point-rail)이 고정 duration 이다. 거리 비례로 하면 먼 카테고리일수록 느려져 "신속하게" 라는 요구와 반대로 간다. EaseOutExpo 는 초반에 90% 이상을 소화해 **먼 거리에서도 즉답감**을 준다.
+  - **왜 알파를 선형으로 감쇠하나**: 사용자 명시("점점 선형적으로 연하게"). 지수 감쇠면 두세 행 뒤로 사실상 0 이 되어 "파도" 로 안 읽힌다. 선형은 마지막 행까지 신호가 이어지면서도 방향(위→아래)을 분명히 준다.
+  - **상한 24행의 근거**: 패널 뷰포트가 담는 행 수가 대략 그 정도다(clientHeight ≈ 616px / 행 ≈ 25px). 그 아래는 보이지 않으므로 애니메이션 노드만 늘고 얻는 게 없다. 93 카테고리 × 수백 행 스키마에서 무제한 파도는 순수 낭비다.
+  - **CSS 애니메이션 + 인라인 변수 조합인 이유**: 지연·알파가 행마다 달라 정적 CSS 로는 표현할 수 없고, JS 로 매 프레임 그리면 메인 스레드를 먹는다. `animation-delay` + CSS 변수는 **컴포지터가 처리**하고 JS 는 클래스·변수 주입 1회로 끝난다. 애니메이트 대상은 배경색뿐이라 레이아웃·리플로우가 없다.
+- 자체 적대 검토:
+  - **H1 파도가 스크롤 애니메이션과 경쟁하지 않나** — 스크롤은 `scrollTop`(JS rAF), 파도는 배경색(CSS 컴포지터)이라 서로 다른 파이프라인이다. 라이브 샘플에서 스크롤이 780ms 안에 정착했고 파도는 그 위에서 정상 진행했다(프레임 캡처).
+  - **H2 연타 시 파도 중첩** — `_metaWaveNodes` 원장으로 새 연출이 직전 잔여를 **즉시** 원복한다(헤드리스 ⑦). 원장 없이 타이머만 믿으면 두 연출이 겹쳐 알파가 누적된다.
+  - **H3 stale 정리 타이머가 새 연출을 지우지 않나** — 정리 타이머는 `fresh()`(세대 토큰)를 확인한 뒤에만 `_metaClearPanelWave` 를 호출한다. 옛 세대의 타이머는 no-op.
+  - **H4 재렌더로 노드가 교체되면 잔여가 남나** — 남지 않는다. 목록은 `innerHTML` 교체라 새 `<li>` 는 클래스·인라인 변수가 없는 상태로 생성되고, 원장의 detached 노드 정리는 `try/catch` 로 흡수된다.
+  - **H5 24행 상한이 "전부 점멸" 기대를 배신하나** — 요청은 "하위 자식 요소를 파도 형태로 순차적으로" 이고, 선형 감쇠상 24번째 알파는 이미 0 이다. 상한을 늘려도 **보이는 결과가 같다**. 다만 이 절충은 정직 표기 대상이라 여기·Run 기록에 남긴다.
+  - **H6 `maxTop` 클램프 신설로 동작이 바뀌나** — 이전엔 `scrollTo` 가 내부적으로 클램프했으므로 결과는 동일하고, 직접 `scrollTop` 을 쓰는 경로에서 오버슛만 막는다(헤드리스 ⑥ 이 단정).
+  - **H7 접근성** — 스크롤은 포커스를 옮기지 않고, 강조는 색 단독이 아니라 좌측 3px 바를 동반한다. `prefers-reduced-motion` 은 즉시 점프 + 파도 미주입 + CSS `animation:none` 3중으로 끈다.
+  - **H8 duration 상수 이중 정의** — 파도 길이가 JS(`_META_WAVE_DUR_MS=420`, 정리 타이머 계산용)와 CSS(`420ms`, 실제 재생) 양쪽에 있다. 어긋나면 정리가 애니메이션 도중 끊거나 늦어진다 → 헤드리스 ⑪ 이 **두 값의 일치를 단정**해 드리프트를 잡는다.
+- **검증 방법의 마찰(정직 표기)**: 같은 Windows Chrome 을 병렬 AI 세션 4곳이 공유 중이라 `bin/win-browser.py`(항상 `contexts[0].pages[0]`)의 eval 이 **남의 탭에서 실행**됐다. 같은 relay 를 쓰되 **내 origin 의 탭만 URL 로 고르는** 전용 드라이버로 수행했고, 타 세션 탭·공유 Chrome 은 건드리지 않았다(`down` 미사용 — 공유 브라우저를 죽인다). 파도 시각 증거는 4-멤버 그룹(총 ≈588ms)에서는 캡처 타이밍이 프레임을 놓쳐, 총 길이가 긴 31-멤버 그룹(≈1.3s)에서 확보했다.
+- 검증: 헤드리스 **65 PASS / 0 FAIL** + 회귀 328 PASS · **PB-0008 라이브** 스크롤 샘플(420ms 2,147 → 827ms 1,698 정착) · 파도 delay `90/116/142/168ms` · alpha `0.500/0.333/0.167/0.000`(선형) · 잔여 0 · 콘솔 에러 0 · 프레임 캡처 5매.
+- 위험도: **Minor(§12.3)** — 연출·타이밍 전용. 백엔드·API·RBAC·스키마 무변경, 롤백 = static 2파일 + 테스트 1파일 revert.
+- Cross-ref: MODIFY CHG-20260728T162000-graph-catcluster-scroll-polish / FUNCTION REQ-20260728T162000(AC-CPS-5~8) / test-runs.d/20260728T162000-graph-catcluster-scroll-polish.md / 선행 REV-20260728T152000-graph-catcluster-panel-scroll.
+
+## REV-20260728T161326-graph-analyzed-halo-fit [SKIPPED:session-policy-no-subagent] — AI 분석 완료 컬럼 노드 상태 테두리 기하 보정 (TASK-20260728T161326, Minor §12.3, frontend-only)
+- Panel skip 사유(§18.8): 본 세션은 하네스 정책상 `Agent` tool 사용이 금지되어 subagent 패널을 띄울 수 없다. 기계 검증(T27 15건 + 그래프 전 스위트 677) + PB-0008 라이브 before/after 대조로 대체하고 범위를 정직 기록.
+- 판단 근거:
+  - **왜 "두께만 줄이기" 가 아니라 모양 계약을 고쳤나**: 사용자는 "테두리가 비대"로 보고했지만, 코드 확인 결과 halo 는 11px 원형 노드에 **17×30 사각 알약**이었다. 폭 초과(17 vs 11)보다 **높이 초과(30 vs 11)** 가 3배로 컸고, 이것이 컬럼 행 간격(~24px)을 넘어 이웃 halo 와 겹치며 "세로 관" 을 만든 지배 원인이다. 두께만 줄였다면 관이 얇아질 뿐 사라지지 않는다.
+  - **왜 비례 계수의 기준이 24 인가**: 테이블·루틴 칩의 높이가 24 다. 24 를 1.0 으로 두면 **모든 rect 노드에서 k=1** 이 되어 기존 수치가 산술적으로 보존된다(T27 이 좌표·radius·lw 를 전건 대조해 잠금). 즉 비례화의 대가로 다른 노드 종류가 흔들리지 않는다.
+  - **왜 기하를 순수 함수로 뺐나**: 렌더 경로(Pixi Graphics)는 헤드리스에서 검증하기 어렵다. 좌표 산술만 `PixiAdapterPure` 로 분리하면 `_applyNodeStates` 를 실제로 호출하지 않고도 회귀 0 을 기계로 증명할 수 있다(기존 §78 Phase B 계약과 동일 패턴).
+  - **왜 원형 대시를 새로 만들었나**: `dashSegments` 는 폴리라인 전용이라 원에 쓸 수 없다. 각도 = 호길이/r 로 변환하면 반지름과 무관하게 **직선 대시와 같은 화면 대시 길이**가 나온다 — running(4,3)·busy(2,2) 의 시각 아이덴티티가 노드 종류를 넘나들어도 유지된다.
+- 자체 적대 검토:
+  · **H1 다중 상태 동심링이 작은 노드에서 겹치지 않나(인정·한정)**: k 비례라 11px 컬럼에서 링 간격이 ~0.9px 로 좁아 analyzed+selected 동시 표기 시 부분 겹침이 남는다. 다만 **종전 rect 경로도 lw 3 / inset 2 라 이미 겹쳤고**(비율 동일), 11px 노드에서 두 링을 완전 분리하려면 halo 를 노드의 2배 밖까지 밀어야 해 원 요구("비대")와 정면으로 충돌한다. 겹침 시 나중 페인트(selected)가 위에 보이는 기존 우선순위 계약은 그대로다.
+  · **H2 두께 하한 1px 이 hairline 정책과 충돌하나(검증)**: 엣지의 §87 hairline 은 dpr 기반 물리픽셀 보정이고, 여기 하한은 **모델 좌표 하한**이라 축이 다르다. 하한이 없으면 6px 이하 노드에서 링이 0.75px 로 내려가 줌아웃 시 소실된다.
+  · **H3 hover 확장 카드 회귀(검증)**: `_showLabelExpand` 는 `{states, style:{size:[w,h]}}` 만 넘겨 `type` 이 없다 → `haloGeom` 이 rect 분기를 타 종전과 동일(T27 "type 미지정 → rect 경로" 로 잠금).
+  · **H4 무한 루프·성능(검증)**: `dashArcs` 는 `t += seg` 로 단조 증가하고 seg = min(dash[i], 남은 길이)라 종료가 보장된다. 실제 드로잉 호출 수를 스텁으로 계수 — circle analyzed 2 ops, running 15, busy 23, 4상태 동시 23, rect busy 189(종전과 동일 경로). 런어웨이 없음.
+  · **H5 라이브 검증 중 관측된 페이지 이탈이 본 변경 탓인가(반증 완료)**: 주입 QA 중 admin 화면이 대시보드로 되돌아가는 현상이 반복됐다. ① 원본 렌더러로 되돌린 대조에서도 재현 조건이 갈렸고, ② 수정본으로 재주입한 대조에서 `errs=[] · canvas 생존 · nav=navigate` 로 **정상**이었으며, ③ 최종적으로 Chrome 이 121테이블·300루틴 스키마 전개 중 **브리지째 죽는** 것을 확인(도구 `no_bridge`). 원인은 대형 스키마 전개의 브라우저 부하 + 내가 넣었던 `?v=haloqa1` 캐시버스터가 서버 측 asset-stamp 재주입으로 원복되며 생긴 import 불일치이지, 본 변경이 아니다. 가벼운 스키마로 옮겨 AFTER 를 정상 확보했다.
+- 검증: 헤드리스 `test_pixi_adapter.js` **205 PASS**(T27 15건 신설) · 그래프 전 스위트 **677 PASS / 0 FAIL** · `make test` pytest 는 attachment/runtime_settings 15건 실패이나 **전부 worktree 격리 네트워크 환경성 baseline**이고 본 변경은 Python 무접촉(ruff PASS) · PB-0008 실 Windows Chrome/150 relay 4× 확대 before/after · 주입 QA **원복 완료**(서빙 `haloGeom` 0건 · `/livez` 200).
+## REV-20260728T160000-graph-catcluster-focus [SKIPPED:tool-restricted:ux,design] — 접힌 카테고리 클러스터 하위 테이블 추적 카메라 승격 교정 (TASK-20260728T160000)
+- Trigger: `UI/화면/레이아웃` keyword matched (§18.8 표 3행 → ux, design). **패널 미수행 사유**: 본 세션은 하네스 상위 지시로 `Agent` tool 호출이 금지돼 있다 — §18.8.2 "상위 우선순위 지시 carve-out" 에 따라 제약 없는 채널(자체 적대 검토 + 헤드리스 결정론 스위트 + PB-0008 라이브 실측)로 검증하고, 덮지 못한 도메인을 본 태그로 **명시**한다(미검증을 완료로 오인 보고하지 않음).
+- **왜 이 결함이 생겼나(설계 관점)**: 승격 사다리가 *모델 계층*(`scope:schema.table.column` — key 파싱)으로만 서 있었고, **렌더 게이팅 계층**(sim-group `groupCollapsed` / 제품 카테고리 `catCollapsed`)은 사다리 밖에 있었다. 두 계층은 key 로 파생되지 않고 **build 가 만드는 역인덱스**(`groupOf` / `catMembers`)로만 알 수 있어서, 키 파싱만 하는 사다리에는 애초에 보이지 않았다. `_metaColParent` 가 테이블 키를 받으면 스키마를 돌려주는 성질(컬럼 전제 함수)이 그 구멍을 조용히 메워, 사다리가 **실패하지 않고 잘못된 대상으로 성공**한 것이 증상이 늦게 발견된 이유다.
+- **왜 자동 펼침이 아니라 승격인가**: `groupCollapsed`/`catCollapsed` 는 주석이 명시하듯 **사용자 지속 의도**이고 build 는 검색 매칭일 때만 강제 펼친다. 추적 한 번이 사용자의 접힘 의도를 되돌리면 대량 클러스터에서 화면이 통째로 재배치된다. 사용자 요구 문장도 "카테고리 클러스터로 카메라가 이동" 이지 "펼쳐라" 가 아니다 → **시선만 이동**. 테스트 A13 이 승격 경로에 `expand/toggle` 호출이 없음을 정적으로 고정한다.
+- **왜 `renderedIds` 게이팅인가**: `groupOf`/`catMembers` 는 매 build 재구성되지만 카드 강등·flat masonry·카테고리 비활성 build 에서는 **갱신되지 않고 이전 값이 남을 수 있다**. 게이팅 없이 쓰면 존재하지 않는 요소로 카메라를 보내 `getElementRenderBounds` 예외 → 무음 실패가 된다. 두 해소기 모두 `renderedIds.has(...)` 를 통과한 id 만 반환한다(A8/A9 가 단정).
+- **자체 적대 검토 H1~H6(전부 in-cycle 반영 또는 근거 기록)**:
+  - **H1 [scope]** 사다리에 GB 를 끼우면 *접힘* 뿐 아니라 **뷰포트 컬링으로 미렌더인 테이블**도 GB 로 간다 — 종전엔 스키마 combo 였다. 의도된 개선으로 판단(더 가까운 조상이고 combo 보다 정확)하되 **범위 확대임을 명시**한다. GB 박스는 컬링과 무관하게 전 멤버 place bbox 에서 파생되므로 부분 컬링 상태에서도 대표 위치가 맞다.
+  - **H2 [perf]** `_metaCategoryElementFor` 는 `catMembers` 선형 역탐색이다. 카테고리는 수~수십·멤버는 수십~수백이고, **스키마가 미렌더일 때만** 도달하는 마지막 단계라 hover-pan 경로에서도 무시 가능. 역맵 캐시는 build 마다 무효화 관리 비용이 이득보다 커 미채택.
+  - **H3 [정합]** 컬럼 키가 `groupOf` 에 들어올 가능성 → 없음(`b.sg.tables` = 테이블·루틴 항목만 적재). 따라서 `_metaGroupElementFor(columnKey)` 는 자연히 null 이고, 컬럼은 **테이블 우선** 규칙이 보존된다(A1 이 단정).
+  - **H4 [회귀]** `_metaGraphAnimateFocus` 앵커 해소에 조상 폴백을 넣으면 팬 도중 대상이 렌더되기 시작할 때 목표가 바뀔 수 있다 — 루프가 매 프레임 재해소하므로 **최종 수렴 대상은 노드**이고, 중간 방향 전환은 "재빌드 중에도 최종 위치로 수렴" 이라는 기존 설계 의도와 같은 성질. 반대로 폴백이 없으면 1.2s 를 헛돌다 **카메라가 아예 안 움직이는** 무음 실패라 교체가 명백히 낫다.
+  - **H5 [무음 실패]** 상태줄이 승격 대상과 무관하게 "소속 테이블" 로 단정하던 부분은 이번 결함의 *은폐 장치*였다 — 실제로는 스키마 클러스터로 갔는데 안내는 테이블이라 사용자가 오이동을 진단할 단서가 없었다. `_metaAncestorKindKo` 로 실제 대상을 표기해 다음 오이동은 화면에서 즉시 드러나게 한다.
+  - **H6 [i18n·라이브 포착]** 1차 라이브 Run 에서 상태줄 조사가 `카테고리(으)로` 로 어색함을 실화면 판독으로 포착 → 현재 전 라벨이 모음/ㄹ 받침이라 `로` 가 맞음을 확인해 정정하고, **받침 있는 라벨이 새로 들어오면 FAIL 하는 조사 불변식 테스트**(A12)를 추가. 정정본으로 라이브 6 시나리오를 **전건 재측정**했다.
+- 검증: 헤드리스 신규 32 PASS / 0 FAIL + 회귀 364 PASS(dbgroups 78 · pixi 190 · edge_flow 43 · reveal 17 · catcluster_panel_scroll 36) · `node --check`(ESM) PASS · PB-0008 실 Windows Chrome/150 라이브 6 시나리오 PASS(GB 거리 1189→3px · 스키마 combo 거리 40→1148px · CAT 밴드 2px · 회귀 2px · 콘솔 에러 0).
+- **미검증으로 남긴 것(정직 표기)**: ① `_metaGraphPanToRelation`(상세 패널 관계 행 단일 클릭)·hover-pan 은 모듈 export 가 아니라 라이브에서 직접 호출하지 않았다 — 다만 **동일한 `_metaRenderedAncestorFor` 를 공유**하고, 라이브 시나리오 1·4 가 그 해소 결과를 실 렌더 상태에서 직접 단정한다. ② 컨텐츠 카테고리 접기를 GX 컨트롤 **좌표 합성 클릭**이 아니라 동일 상태 경로(`groupCollapsed.add` + `_metaG6Apply`)로 유발했다(GX 히트테스트 자체는 직전 cycle 검증 범위). ③ ux/design 도메인 적대 패널(위 tool-restricted).
+- Cross-ref: MODIFY CHG-20260728T160000-graph-catcluster-focus / FUNCTION REQ-20260728T160000-graph-catcluster-focus(AC-CCF-1~4) / test-runs.d/20260728T160000-graph-catcluster-focus.md / 증적 `artifacts/shared/win-browser-shots-catcluster-focus/*.png`.
+
 ## REV-20260728T153500-graph-catcluster-scroll-postverify [SKIPPED:non-policy-doc] — 카테고리 선택 스크롤 동기화 POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T152000, 비-정책 doc-only)
 - 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
 - **왜 배포본에서 다시 봤는가**: pre-commit 검증은 §13.2.9 격리 컨테이너(라이브 무접촉)에서 했다. 그 이미지는 내 worktree 자산을 `docker cp` + 재스탬프한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 그대로 통과한 산출물이 아니다**. main 기반 이미지가 실제로 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).
@@ -38,6 +114,17 @@ source_of_truth: true
 - 검증: 헤드리스 신규 **36 PASS / 0 FAIL** + 회귀 `test_detail_dbgroups` 78 · `test_pixi_adapter` 190 PASS · `node --check` OK · **PB-0008 라이브**(실 Windows Chrome/150, 격리 컨테이너 §13.2.9) 좌클릭 2건·우클릭 1건·강조 부여/해제·상태줄·회귀경로·콘솔 에러 0 — 정착 위치가 모두 헤딩 상단 **+53px**(navH 47 + 6) 로 재현. 스크린샷 5매.
 - 위험도: **Minor(§12.3)** — 프론트 표시·네비게이션 전용. 백엔드·API·RBAC·스키마·데이터 fetch 무변경, 롤백 = static 4파일 + 테스트 1파일 revert.
 - Cross-ref: MODIFY CHG-20260728T152000-graph-catcluster-panel-scroll / FUNCTION REQ-20260728T152000-graph-catcluster-panel-scroll(AC-CPS-1~4) / test-runs.d/20260728T152000-graph-catcluster-panel-scroll.md.
+
+## REV-20260728T161940-routine-column-edges [SKIPPED:session-policy-no-subagent] — 사용 관계선 컬럼 단위 연결 (TASK-20260728T161940, Major §12.3)
+- Panel skip 사유(§18.8): 세션 정책상 `Agent` tool 미허용 — 자체 적대 검토 H1~H6 + 기계 검증(신규 57건·전 스위트 회귀)·실 브라우저 대조로 대체하고 범위를 정직 기록.
+- **자체 적대 검토가 실제 결함 2건을 확증**(둘 다 테스트가 적발, in-cycle 수정):
+  - **H1 — "접힘은 기존대로" 계약 위반**: 초판이 `ref_columns` 의 read/write 별로 테이블 승격선을 만들어, 컬럼 미렌더 상태에서 선이 1→2개로 갈라졌다(사용자 요구의 전제 파괴). → 렌더된 컬럼이 0이면 분해 포기.
+  - **H2 — 부가 기능이 본 경로를 죽임**: `_fetch_columns` 의 `cursor()` 획득이 try 밖이라 컬럼 조회 실패가 상위로 전파돼 그 스키마의 routine upsert 전체가 무산될 수 있었다. → cursor 획득을 try 내부로.
+- 반증 시도(기각): **H3 컬럼 오귀속 환각** — alias 재사용이 흔하므로 `_alias_map` 이 같은 alias 의 다른 테이블 바인딩을 감지해 그 alias 를 통째 폐기, 스키마 qualifier(`dbo.T`)는 alias map 부재로 자동 폐기. **H4 성능** — 참조로 채택된 테이블에만 COLUMNS 1회 질의(2-pass·cap 400), 참조 없으면 질의 자체 없음. 프론트 케이스 인덱스도 lazy. **H5 이행 위험** — jsonb additive(마이그 0)·`sync_routine` 이 ROUTINE_USES 전량 회수 후 재-MERGE 라 stale 없음·값 없으면 속성 미SET(기존 엣지와 동치). **H6 파싱 불완전성(수용)** — 동적 SQL·4000자 절단·`SELECT *` 는 폴백으로 흡수되며, 커버리지를 위해 비수식 컬럼을 추정하면 H3 위험이 되살아나므로 추정하지 않는다(사용자 결정).
+- **H7(rebase 중 확증·수정)**: 병합된 feature-0030 cyvol 의 `routine_refs_signature` 가 `cols` 를 담지 않아 기존 routine 이 재작성 생략에 걸려 `ref_columns` 가 라이브에서만 투영되지 않는 경로 — 서명 확장으로 수정 + 회귀 4건. 배포 후 첫 sync 1회 재작성 비용을 정직 고지.
+- 검증 경로 변경(정직 기록): 라이브 주입 QA 를 시작했으나 병렬 세션 6+ 가 브라우저·라이브 web 을 공유해 `win-browser.py` 의 `pages[0]` 고정이 타 세션 탭을 잡는 것을 실측 → **즉시 원복**(web-a/web-b md5 원본 일치·`/livez` 200) 후 격리 harness + CDP 신규 탭으로 전환. 상세 = test-runs fragment §3.
+- 위험도: **Major(§12.3)** — 다중 계층(파서·그래프 투영·렌더)이나 alembic 마이그 0, RBAC/엔드포인트 계약 무변경, 비파괴 additive. 롤백 = 6파일 revert.
+- Cross-ref: MODIFY CHG-20260728T161940-routine-column-edges / FUNCTION REQ-20260728T161940-routine-column-edges(AC-RCE-1~5) / test-runs.d/20260728T161940-routine-column-edges.md / 정본 feature-0016 REVIEW REV-20260728T161940-ai-claude-feature-0016-routine-column-edges.
 
 ## REV-20260728T152141-graph-edge-hairline [SKIPPED:session-policy-no-subagent] — 줌아웃 관계선 hairline 처리 (TASK-20260728T152141, Minor §12.3, frontend-only)
 - Panel skip 사유(§18.8): 세션 정책상 `Agent` tool 미허용 — 라이브 대조 + 기계 검증으로 대체하고 범위를 정직 기록.
@@ -1364,3 +1451,66 @@ CHG-20260728T121500-usage-records-hint-tooltip. 표시 전용 변경(렌더 1블
   모듈**을 계속 재사용해(HTTP 캐시 강제 갱신에도) 신 렌더가 관측되지 않았다. 배포는 새 asset
   stamp = 새 모듈 URL 이라 이 문제가 없다(직전 cycle 에서 POST-DEPLOY 즉시 정상 관측 확인).
   따라서 본 cycle 도 POST-DEPLOY 검증으로 확정한다.
+
+## REV-20260728T162844-graph-hover-flow [CODEX:graph-hover-flow] — PASS
+
+CHG-20260728T162844-graph-hover-flow. 프론트엔드 렌더 전용(백엔드/RBAC/스키마/엔드포인트 0).
+
+- **Related TASK**: feature-0003-agent-web-ui
+- **Trigger**: UI/screen/layout 키워드 매칭 (§18.8 dispatch → ux, design) + code change
+- **Source**: `codex review --uncommitted` (§18.8.1 #2 경량 경로)
+- **Timestamp**: 2026-07-28T16:28:44+09:00
+- **Verdict**: PASS (P1 GATE 0건 — "현재 diff에서 확실히 수정이 필요한 버그는 확인되지 않았습니다")
+- **Human Approval Needed**: no
+
+**검증 채널 선택 근거 (§18.8.2)**: 본 세션에는 하네스 수준의 "요청 없이 Agent tool 을 호출하지 말라"
+상위 지시가 걸려 있다. §18.8.2 의 *상위 우선순위 지시 carve-out* 에 따라 그 지시를 우선하되 **검증을
+건너뛰지 않고**, 도구 제약과 무관한 채널로 수행했다: (a) `codex review --uncommitted` 적대 리뷰,
+(b) 기계적 회귀 대조(구현 이전 어댑터 vs 신 어댑터 동일 시나리오 실행), (c) PB-0008 실 브라우저
+라이브 검증. dispatch 표가 지정한 ux/design 도메인은 (c) 의 실화면 관측이 경험적으로 덮는다
+(정적 렌더 + 인터랙션 결과 + 애니메이션 프레임 대조). subagent 패널 자체는 미수행 —
+`[SKIPPED:tool-restricted:ux,design-subagent]` 로 미검증 범위를 명시한다.
+
+**근본 원인 (왜 "하나의 관계선만" 이었나)**: 같은 두 노드 사이의 관계선은 **1:N** 이다.
+① 왕복 REFERENCES 는 곡률이 진행방향 왼쪽 고정이라 A→B 와 B→A 가 반대편 호(§83 A2, `curveMin=5` 는
+"근접 노드 왕복선도 반드시 갈라지게" 하려는 하한), ② ROUTINE_USES 는 집계 키에 `relation_type` 이
+포함돼 읽기/쓰기가 별개 선(§83 C1). 그런데 hover spec 은 `[self끝점, 상대]` 순서라 **어느 쪽이
+source 인지** 담지 못했고, `_edgeStyleBetween` 은 `e.source===sid&&e.target===tid` 와 역방향을
+**한 루프에서 먼저 만나는 쪽**으로 반환했다. 즉 방향도 종류도 판별 축이 아니었다.
+
+**자체 적대 검토 (H1~H7)**
+
+- **H1 — 순위가 뒤바뀌면?** 방향과 종류 중 무엇이 1순위인가가 정확성을 가른다. 왕복 REFERENCES 는
+  방향만이, 루틴 읽기/쓰기는 종류만이 판별 축이다. 둘을 같은 가중치로 두면 한쪽이 깨진다.
+  점수식을 `방향(2) > 종류(1)` 로 고정하고, `relType` 이 주어졌는데 정방향 엣지의 종류가 다르면
+  (score 3) 역방향+종류일치(score 2)보다 여전히 우선하게 했다 — 실데이터에서 ROUTINE_USES 는 항상
+  Routine→Table 이라 이 조합은 발생하지 않지만, 발생해도 방향이 이긴다.
+- **H2 — 역방향 정규화의 비대칭.** 곡률 부호만 뒤집고 화살표 키를 그대로 두면 호는 맞는데 **흐름이
+  거꾸로** 흐른다. `startArrow`/`endArrow` 를 함께 교환해 `(sid→tid)` 프레임을 완성했고,
+  테스트 M7 이 "부호 반전 + 키 교환 + 그래서 흐름도 역류" 3단을 함께 잠근다.
+- **H3 — rAF 누수.** hover 는 행마다 발생하므로 정지 경로 누락 하나가 곧 다중 루프다. 4경로
+  (hover 해제 · 새 hover 선점 · `draw()` 재빌드 · `destroy()`)에서 `_stopHoverFlow()` 를 **먼저**
+  호출하고, 세대 토큰(`this._hoverFlow !== state`)으로 이미 예약된 프레임도 자진 종료시킨다.
+  `draw()` 는 좌표가 바뀌어 폴리라인이 stale 이 되는 지점이라 특히 중요하다(분리된 Graphics 에
+  계속 페인트하면 보이지 않는 채로 매 프레임 `_render()` 를 유발).
+- **H4 — 기존 대시 호출부 회귀.** `dashPolyline` 에 3번째 인자를 더했다. 미지정 시 `phase` 는
+  falsy 라 위상 소비 블록 자체를 건너뛰므로 종전 경로와 동치이고(P1 이 이를 잠근다), `dash` 합이 0
+  인 병리 입력에서는 `T=0 → p=0` 으로 무한루프에 빠지지 않는다.
+- **H5 — XSS.** 새 `data-*` 값은 전부 기존 `esc()`(`& < > "`)를 거치고 속성은 큰따옴표로 감싼다.
+  `data-rel-type` 은 삼항식이 만든 리터럴(`"write"|"read"`)이라 외부 입력이 닿지 않는다.
+- **H6 — 미렌더 끝점.** 컬럼이 미렌더면 조상(테이블→스키마 카드)으로 승격되는 기존 동작은 그대로다.
+  승격 결과 양끝이 **같은 요소**가 되면 연결선 대신 노드 링만 남는다(방향 정보가 의미를 잃는 구간) —
+  종전과 동일한 graceful 동작이며, 라이브에서는 테이블 2개가 별개 노드라 문제되지 않았다.
+- **H7 — 알려진 한계(미수정, 의도).** 강조 기하는 hover 시점 zoom 으로 model 좌표에 bake 된다.
+  hover 중에 줌을 바꾸면 강조선 굵기만 화면 기준에서 어긋난다(본선은 `_syncEdgeZoom` 이 재페인트).
+  hover 는 커서가 우측 패널에 있는 transient 상태라 실사용에서 겹치지 않고, §85 의 "페인트 시점 zoom
+  bake" 어휘와 일관되므로 추가 리스너를 달지 않았다.
+
+**연출 선택 근거**: 흐름을 "움직이는 대시"로 표현하고 색은 흰색(본선 파랑 위 대비)으로 두었다.
+헤일로(α0.16)를 깔아 대시 사이 구간에서도 경로가 끊겨 보이지 않게 했고, 화살촉은 정적으로 유지해
+방향이 애니메이션 프레임에 의존하지 않게 했다(모션 민감 사용자·정지 캡처에서도 방향이 읽힌다).
+`prefers-reduced-motion` 에서는 rAF 를 아예 걸지 않고 정적 대시 + 화살촉만 남긴다.
+
+**라이브 근거**: PB-0008 실 Windows Chrome 150 — 참조함/참조받음 화살촉 반전 + 강조 픽셀 차 441px,
+읽기/쓰기 대상선 분기 3,517px, 같은 hover 420ms 프레임 차 151px(대시 진행), 페이지 에러 0.
+`docs/test-runs.d/20260728T162844-graph-hover-flow.md` · `docs/evidence/pb0008-graph-hover-*-20260728.png`.

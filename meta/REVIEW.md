@@ -905,3 +905,18 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
   revision 적용 24%(21/89)로 품질 기여 실측 + '즉시 답변' 버튼이 시간 판단을 사용자에게
   이미 위임 → 일괄 품질 하향 대신 현행 유지. 재검토 조건 명시.
 - Timestamp: 2026-07-28T12:05:00Z
+
+## REV-20260728T163000-ai-root-graph-cypher-volume [SUBAGENT:backend+qa] — 그래프 sync cypher 호출량 감축
+- Related TASK: CHG-20260728T163000-graph-cypher-volume (feature-0002-agent-core, Major §12.3)
+- 패널: 2렌즈 독립 fresh-context — (1) backend 정합성(캐시 생명주기·서명 정확성·실패 경로 추적), (2) QA 데이터 무결성(테스트 강도 · 변이 생존 실측).
+- **판정: 초안 REJECT — 결함 8건 흡수 후 재검증.** 초안은 "그래프 최종 상태 동일" 을 주장했으나 **거짓**이었다(MAJOR-1).
+- BLOCKER/MAJOR:
+  - **MAJOR-1**(backend, 실행 입증) 정점 key 에 routine_type 부재 + `sig_cache` 1회 스냅샷 → 동명 FUNCTION/PROCEDURE 두 행 중 두 번째가 stale 항목과 일치해 재작성 skip → 최종 엣지가 종전(마지막 행 우선)과 달라지고 **sync 마다 승자가 뒤바뀌는 영구 flip-flop**. → 첫 방문 게이트.
+  - **MAJOR-2**(backend) 서명 SET 예외 삼킴 → aborted tx 위에서 `_sync_row_guard` 가 성공 반환 → 다음 step 커밋이 조용히 ROLLBACK 으로 수렴 → **최대 500행 소실 + ok:true + 워터마크 전진**. → 전파.
+  - **B3/MAJOR-3**(양 렌즈 독립 지적) `--full` 의 무조건 재조정 상실 · 운영 탈출구 없음 → 선조회에 실제 ROUTINE_USES 차수 추가(cypher 1회/74ms), 차수 불일치 시 서명 무관 재작성.
+  - **B1/B2**(QA, 변이 실측) 초안 테스트 28 변이 중 **17 생존**. `sync_graph` 배선 0% 검증, fake 커서 `fetchall` 이 항상 빈 리스트라 선조회 루프 미실행 → 쓰기/읽기 속성명 불일치가 초록으로 통과(`refs_sig2` 생존). `psycopg.Cursor.__slots__`(feature-0029 B-1) 와 동일한 '라이브 100% 무효인데 초록' 결함면.
+  - **M1**(QA) 교차 feature 회귀 실증: 2열 선조회 튜플 언패킹이 feature-0016 `test_metadata_graph_load_spread` 를 깨뜨림(HEAD 1 → 변경 후 2). CI 게이트가 feature-0016 을 돌리지 않아 미검출.
+- MINOR: M3 부분엣지 영구 고착 창(REMOVE 선행으로 해소) · M2 선조회 실패 무음 · MINOR-1 중복 fqn 서명/엣지 불일치 · MINOR-2 scope 미필터 전량 덤프 · 서명 계산 위치로 인한 실패지점 이동.
+- 조치: 8건 전부 코드 수정. 테스트를 `sync_graph` end-to-end harness 로 교체(11 → **31건**), 속성명 커플링을 정규식 동일성으로 잠금, 롤백 행의 캐시 오염을 end-to-end 로 검증. **역검증 16종 되돌림 → 생존 0**. feature-0016 회귀 복구 확인(HEAD 동일 1건만 잔존, 기존).
+- 미채택/보류: `_props_set` 화이트리스트 우회(`refs_sig` 는 UI/LLM 비노출 내부 속성 — `_node_from_props` 가 고정 키만 선택함을 패널이 확인) 유지. `_cq` 제어문자 라운드트립 손실은 pre-existing(보수적 방향: 영구 재작성).
+- Timestamp: 2026-07-28T16:30:00Z

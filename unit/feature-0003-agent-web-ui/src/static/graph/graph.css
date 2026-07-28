@@ -264,16 +264,29 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 .amgr-ct-group-n { font-size: 10px; color: #7c8aa5; background: #eef2f8; border-radius: 8px; padding: 0 6px; }
 .amgr-ct-group-trunc { font-size: 10px; color: #9aa4b5; }
 /* graph-catcluster-scroll(사용자 요청 2026-07-28): 캔버스에서 컨텐츠 카테고리를 골라 이 헤딩으로 스크롤해 왔을 때의
-   도착 강조 — 1.8s 페이드 아웃(시선 앵커). 배경만 애니메이트하고 :hover 배경과 경쟁하지 않도록 hover 규칙 뒤에 둔다.
-   JS 가 같은 시간 뒤 클래스를 제거하므로 잔상 없이 원래 시각으로 복귀한다. */
-.amgr-ct-group.is-focus { animation: amgrCtGroupFocus 1.8s ease-out; }
+   도착 연출. polish(요청 ②): 단일 페이드 → **헤딩 2회 점멸 + 하위 멤버 행이 파도처럼 순차 점멸**(알파 선형 감쇠).
+   배경만 애니메이트하고 :hover 배경과 경쟁하지 않도록 hover 규칙 뒤에 둔다. JS 가 연출 종료 후 클래스·인라인
+   변수를 제거하므로 잔상 없이 원래 시각으로 복귀한다. */
+.amgr-ct-group.is-focus { animation: amgrCtGroupFocus 760ms ease-out both; }
 @keyframes amgrCtGroupFocus {
-  0%, 65% { background: #dbeafe; box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
-  100%    { background: transparent; box-shadow: inset 3px 0 0 transparent; }
+  0%       { background: transparent; box-shadow: inset 3px 0 0 transparent; }
+  12%, 30% { background: #dbeafe; box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
+  46%      { background: rgba(219, 234, 254, .28); box-shadow: inset 3px 0 0 rgba(37, 99, 235, .28); }
+  62%      { background: #dbeafe; box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
+  100%     { background: transparent; box-shadow: inset 3px 0 0 transparent; }
 }
-/* 접근성: 모션 최소화 선호 시 애니메이션 없이 정적 강조만(제거 타이머는 동일). */
+/* 멤버 행 파도 — JS 가 행마다 `--amgr-wave-a`(선형 감쇠 알파)와 `animation-delay`(순차)를 주입한다.
+   행 배경은 li 에 얹고 내부 버튼은 background:none 이라 그대로 비친다(hover 배경과 상호 무간섭). */
+.amgr-ct-row-li.is-wave { animation: amgrCtRowWave 420ms ease-out both; }
+@keyframes amgrCtRowWave {
+  0%       { background: transparent; }
+  38%      { background: rgba(37, 99, 235, var(--amgr-wave-a, .3)); }
+  100%     { background: transparent; }
+}
+/* 접근성: 모션 최소화 선호 시 점멸·파도 모두 정지하고 헤딩 정적 강조만(JS 도 파도 행을 주입하지 않는다). */
 @media (prefers-reduced-motion: reduce) {
   .amgr-ct-group.is-focus { animation: none; background: #dbeafe; box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
+  .amgr-ct-row-li.is-wave { animation: none; background: transparent; }
 }
 /* 접힌 그룹의 멤버 행 숨김 */
 .admin-meta-graph-sec ul.amgr-cluster-tables li.amgr-ct-row-li.amgr-ct-collapsed { display: none; }

@@ -11,6 +11,47 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T172000-graph-hover-flow-postverify (TASK 20260728T1628-graph-hover-flow POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- `docs/test-runs.d/20260728T172000-graph-hover-flow-postdeploy.md` 신설 — 배포(main `b36493a9`)·서빙 baked 2중 확인·PB-0008 10 시나리오·evidence 4매(+원본 프레임 전량).
+- TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.
+- 사전 Run(격리 컨테이너, stamp `28b8c65898a7`)과 절대 수치는 캔버스 해상도·줌 차이로 다르나 **구조 전건 동일**(방향 축 비-0 + 화살촉 반전 · 읽기/쓰기 대량 분리 · 흐름 프레임차 비-0 · 잔재 0) — 빌드 파이프라인 통과 산출물에서도 동일 코드 서빙 실증.
+- 드라이버 실측 2건 기록: **"가장 큰 canvas" 휴리스틱이 위장 0-diff 를 만든다**(콘솔 리셋 시 대시보드 차트를 집음 → 첫 1:1 줌 측정 전건 폐기·재측정) → 캡처를 `#metadataGraphCanvas` 하위로 못 박고 그래프 가시성·상태줄 동시 기록 / 공유 Chrome 탭 하이재킹 → 전용 마커 URL(`?pb=hoverflowpost`) 핀 고정.
+- Cross-ref: CHG-20260728T1628-graph-hover-flow · REV-20260728T172000-graph-hover-flow-postverify.
+
+## CHG-20260728T163800-graph-catcluster-focus-postverify (TASK-20260728T160000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- `docs/test-runs.d/20260728T163800-graph-catcluster-focus-postdeploy.md` 신설 — 배포(main `f25c71bf`)·서빙 baked 2중 확인·PB-0008 5 시나리오·evidence 4매.
+- TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.
+- 사전 Run(격리 컨테이너)과 수치·문구 전건 동일 — 빌드 파이프라인 통과 산출물에서도 동일 코드 서빙 실증.
+- Cross-ref: CHG-20260728T160000-graph-catcluster-focus · REV-20260728T163800-graph-catcluster-focus-postverify.
+
+## CHG-20260728T170000-graph-catcluster-polish-postverify (TASK-20260728T162000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- `docs/test-runs.d/20260728T170000-graph-catcluster-scroll-polish-postdeploy.md` 신설 — 배포(main 9c434809)·서빙 baked·PB-0008 5 시나리오·evidence 3매. **코드·자산 변경 0**.
+- 드라이버 실측 2건 기록: 공유 Chrome 병렬 점유로 `pages[0]` 하이재킹 → **전용 새 탭** 드라이버로 회피 / 관리 콘솔 탭 전환은 **trusted click + `wait_until='load'` + 부트스트랩 대기** 필요.
+- Cross-ref: CHG-20260728T162000-graph-catcluster-scroll-polish · REV-20260728T170000-graph-catcluster-polish-postverify.
+
+## CHG-20260728T162000-graph-catcluster-scroll-polish (TASK-20260728T162000 — 스크롤 280ms EaseOutExpo + 헤딩 점멸/멤버 파도, Minor §12.3, frontend-only)
+- `src/static/graph/graph-ctxmenu.js`: `_META_PANEL_SCROLL_MS = 280` + **`_metaEaseOutExpo`** + **`_metaAnimatePanelScroll(box, from, to, seqOf, reduce)`**(rAF 구동, 세대 토큰으로 진행 중 중단) 신설 — `scrollTo({behavior:'smooth'})` 대체. 목표에 `maxTop` 클램프 추가. 파도 연출: `_META_WAVE_MAX/STEP_MS/LEAD_MS/DUR_MS` 상수 + `_metaWaveNodes` 원장 + **`_metaClearPanelWave()`** + **`_metaRunPanelWave(target, reduce)`**(헤딩 `.is-focus`, 멤버 행 `.is-wave` + `animation-delay` + `--amgr-wave-a` 선형 감쇠 주입, 다음 헤딩 경계/접힘 행 제외/상한 24). `_metaGraphFocusPanelGroup` 이 이 둘을 호출하고 총 길이 후 정리 타이머 예약.
+- `src/static/graph/graph.css`: `.amgr-ct-group.is-focus` → `amgrCtGroupFocus` **760ms 2회 점멸**(12~30% 강 / 46% 감쇠 / 62% 재점등). `.amgr-ct-row-li.is-wave` + `@keyframes amgrCtRowWave`(420ms, `rgba(37,99,235, var(--amgr-wave-a))`) 신설. reduced-motion 분기에 파도 정지 추가.
+- `tests/headless/test_catcluster_panel_scroll.js`: rAF/`performance.now` test double 로 프레임 구동 재작성 + 파도/곡선/클램프/선점 단정 추가 — **36 → 65 PASS**.
+- docs: TASK/FUNCTION/REPORT/REVIEW + `test-runs.d/20260728T162000-graph-catcluster-scroll-polish.md`, `docs/STATUS.md`.
+- Verification: 헤드리스 65 PASS + 회귀 328 PASS · `node --check`(ESM) OK · **PB-0008 실 Windows Chrome**(격리 컨테이너 :18099, §13.2.9) — 스크롤 샘플 t=420ms 2,147 → t=827ms 1,698 정착 · 파도 delay `90/116/142/168ms` · alpha `0.500/0.333/0.167/0.000` · 31-멤버 그룹에서 파도 프레임 캡처 · 잔여 0 · 콘솔 에러 0.
+- Rollback: static 2파일 + 테스트 1파일 revert (데이터·API·스키마·RBAC 영향 0).
+- Cross-ref: REVIEW REV-20260728T162000-graph-catcluster-scroll-polish · `docs/test-runs.d/20260728T162000-graph-catcluster-scroll-polish.md` · FUNCTION REQ-20260728T162000(AC-CPS-5~8) · 선행 CHG-20260728T152000-graph-catcluster-panel-scroll · 정본 곡선 REQ-20260629-point-scroll(`app.js`/`share.js`).
+
+## CHG-20260728T161326-graph-analyzed-halo-fit (TASK-20260728T161326 — AI 분석 완료 컬럼 노드 상태 테두리 기하 보정, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js` `PixiAdapterPure`: **`haloGeom(n, i, lineWidth)`** 신설 — 노드 모양(`type==="circle"` → 원형 / 그 외 rect)과 크기 비례 계수 `k = clamp(min(w,h)/24, 0.4, 1)` 로 `{shape, r|x,y,w,h,radius, lw}` 산출. 여백 `max(1.5, 3k)`, 동심링 오프셋 `i·2k`, 두께 `max(1, lineWidth·k)`. rect 는 k=1 이라 종전 하드코딩(`-w/2-3-2i` · `radius+2+i·2` · lw 그대로)과 **수치 동일**.
+- `graph-renderer-pixi.js` `PixiAdapterPure`: **`dashArcs(r, dash)`** 신설 — 호 길이 기준 [on,off] 반복을 라디안 구간 `[[a0,a1],…]` 로 반환(각도 = 호길이/r → 직선 `dashSegments` 와 같은 화면 대시 길이).
+- `graph-renderer-pixi.js` `PixiGraphAdapter._applyNodeStates`: 하드코딩 rect 기하 제거 → `haloGeom` 소비. circle 은 `g.circle()`, circle+점선은 `moveTo().arc()` 반복, rect 는 종전 `roundRect`/4변 대시 경로 유지. 미사용이 된 지역 `w`/`h`/`s` 정리.
+- `tests/headless/test_pixi_adapter.js`: **T27 신설 15건** — rect 회귀 0(i=0·i=1 좌표·radius·lw 전건), circle 원형/비례 두께/외곽 상한/동심링 간격/size 폴백/type 미지정 rect 경로/두께 하한, dashArcs 총 on 길이·단조·상한·1바퀴. 205 PASS.
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+## CHG-20260728T160000-graph-catcluster-focus (TASK-20260728T160000 — 접힌 카테고리 클러스터 하위 테이블 추적 카메라 승격 교정, Minor §12.3, frontend-only)
+- `src/static/graph/graph-core.js`: **`_metaGroupElementFor(tableKey)`**(테이블·루틴 → 소속 컨텐츠 카테고리 블록 `GB:<groupKey>`, `groupOf` 역참조 + `renderedIds` 게이팅) · **`_metaCategoryElementFor(schemaKey)`**(스키마 클러스터 → 소속 제품 카테고리 밴드 `CAT:<catKey>`, `catMembers` 역탐색 + `renderedIds` 게이팅) · **`_metaAncestorKindKo(elId)`**(승격 대상 → 한글 명칭) 신설. `_metaRenderedAncestorFor` 사다리를 `컬럼 → 소속 테이블 → 컨텐츠 카테고리(GB:) → 스키마 클러스터(combo | SC:) → 제품 카테고리 밴드(CAT:)` 로 확장. `_metaGraphAnimateFocusRun` 의 앵커 해소(본 루프 + API 부재 폴백 번들 경로 양쪽)에 `|| _metaRenderedAncestorFor(key)` 폴백 추가 — 모델 키로 들어오는 호출(관계 추적 등)이 미렌더일 때 1.2s 헛돌다 카메라가 안 움직이던 사각 해소. export 에 `_metaAncestorKindKo` 추가.
+- `src/static/graph/graph-ctxmenu.js`: `_metaAncestorKindKo` import. `_metaGraphPanToRelation` 승격 안내와 `🎯 이 노드로 이동`(`#metaGraphFocusSelBtn`) 폴백 안내가 **실제 승격 대상 종류**를 표기하도록 교체(종전 "소속 테이블" 단정은 컨텐츠/제품 카테고리·스키마 클러스터로 갔을 때 오안내).
+- `tests/headless/test_graph_ancestor_focus.js` 신설 — 소스에서 5개 함수 본문 추출 + vm 격리 실행으로 사다리 5단 전수·두 접힘 계층·stale 역인덱스 게이팅·명칭 매핑·자동펼침 부재를 단정. **31 PASS / 0 FAIL**.
+- docs: TASK/FUNCTION/REPORT/REVIEW + `test-runs.d/20260728T160000-graph-catcluster-focus.md`, `docs/STATUS.md`.
+- **동작 불변 영역**: 접힘이 없는 경로·접힌 스키마 카드(`SC:`) 승격·컬럼→테이블 승격은 종전 그대로. 승격은 시선 이동만 하고 `groupCollapsed`/`catCollapsed`(사용자 지속 의도)를 건드리지 않는다.
+- Cross-ref: REV-20260728T160000-graph-catcluster-focus · 선행 CHG-20260728T152000-graph-catcluster-panel-scroll(같은 카테고리 클러스터 계층의 패널 스크롤 동기화).
+
 ## CHG-20260728T153500-graph-catcluster-scroll-postverify (TASK-20260728T152000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - `docs/test-runs.d/20260728T153500-graph-catcluster-panel-scroll-postdeploy.md` 신설 — 배포(main 4a0174e5)·서빙 baked 확인·PB-0008 4 시나리오·evidence 3매.
 - TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.
@@ -27,6 +68,17 @@ source_of_truth: true
 - Verification: 헤드리스 36 PASS(신규) + 78/190 PASS(회귀) · `node --check`(ESM) OK · **PB-0008 실 Windows Chrome**(격리 컨테이너 `web-catcluster-test`:18099, §13.2.9 — 라이브 web-a/web-b 무접촉) 7 시나리오 PASS · 콘솔 에러 0 · 스크린샷 5매.
 - Rollback: static 4파일 + 테스트 1파일 revert (데이터·API·스키마·RBAC 영향 0).
 - Cross-ref: REVIEW REV-20260728T152000-graph-catcluster-panel-scroll · `docs/test-runs.d/20260728T152000-graph-catcluster-panel-scroll.md` · FUNCTION REQ-20260728T152000-graph-catcluster-panel-scroll(AC-CPS-1~4) · 선행 `graph-funcproc(cluster-detail-fulllist)`(그룹당 캡 제거) · `graph-content-category`(3층 우클릭 분리).
+
+## CHG-20260728T161940-routine-column-edges (TASK-20260728T161940 — 사용 관계선 컬럼 단위 연결, Major §12.3, cross-cut 코드 거주)
+- `graph-core.js`: 빌드의 ROUTINE_USES 분기에 **컬럼 분해** 추가 — `resolveColId(tableId, col)`(Column 키 규약 `<테이블 키>.<컬럼명>` + 소문자 인덱스 lazy 케이스 보정)로 렌더 중인 컬럼을 해소해 컬럼별 엣지(`id + "::c::" + 컬럼`)를 방출하고, 미렌더 컬럼 몫은 테이블로 relation_type 별 1선(`::t::<kind>`) 승격. **렌더된 컬럼이 0이면 분해 자체를 포기**해 접힘 상태는 완전 불변.
+- `graph-ctxmenu.js`: 모델 엣지에 `ref_columns` 보존 + 상세 패널 사용 관계 행에 참조 컬럼 병기(`_META_RTCOL_SHOW=8`, `✎`=쓰기, `.amgr-rtcols`).
+- (백엔드 feature-0002) `routines.py`: `parse_referenced_columns`·`_alias_map`·`_fetch_columns` 신설 + `introspect_and_store` 2-pass 화 → `referenced_tables[].cols`. `metadata_graph.py`: `ROUTINE_USES` 속성 `ref_columns` 투영 + `schema_tables`/`neighborhood` 응답 동봉 + `_ref_columns_of` 정제.
+- (백엔드) `metadata_graph.routine_refs_signature`: 서명에 `cols` 포함 — 병합된 feature-0030 cyvol 재작성-생략 최적화가 컬럼 정보를 서명 밖에 두면 기존 routine 의 `ref_columns` 가 영영 투영되지 않는다(배포 후 첫 sync 1회 재작성 = backfill, §16.3 blast-radius 유한).
+- `tests/headless/test_graph_routine_colref.js` 신규 30 PASS · (feature-0002) `tests/test_routine_column_refs.py` 신규 27건.
+- docs: TASK/FUNCTION/REPORT/REVIEW + `test-runs.d/20260728T161940-routine-column-edges.md`.
+- Verification: 그래프 헤드리스 18 스위트 0 FAIL(722 PASS) · 전체 pytest 2740 passed/15 failed(baseline, main 대조 동일) · ruff PASS · **PB-0008 실 Windows Chrome 150**(격리 harness, 라이브 무접촉) 접힘/펼침 대조 PASS · pageerror 0.
+- Rollback: static 2파일 + 백엔드 2파일 + 테스트 2파일 revert (alembic 마이그 0 · RBAC/엔드포인트 계약 무변경 · `cols`/`ref_columns` 는 부재 시 종전 동작과 동치).
+- Cross-ref: REVIEW REV-20260728T161940-routine-column-edges · FUNCTION REQ-20260728T161940-routine-column-edges(AC-RCE-1~5) · 정본 feature-0016 MODIFY CHG-20260728T161940-ai-claude-feature-0016-routine-column-edges.
 
 ## CHG-20260728T152141-graph-edge-hairline (TASK-20260728T152141 — 줌아웃 관계선 hairline 처리, Minor §12.3, frontend-only)
 - `graph-renderer-pixi.js`: `edgeModelWidth` → **`edgeHairline(baseScreen, zoom, dpr)`** — 서브픽셀이면 폭을 `1/dpr` CSS px(=1물리픽셀)로 올리고 `fade = w_screen·dpr` 를 반환. `_paintEdge` 가 `alpha *= hair.fade` 로 합성하고 dpr 은 `app.renderer.resolution` → `window.devicePixelRatio` 순으로 해석.
@@ -1357,3 +1409,41 @@ TASK-20260728T121500-usage-records-hint-tooltip. branch `ai/claude/feature-0003-
 
 검증: `node --check`(ESM) PASS · web 테스트 스위트 PASS · 참조 잔재 grep 0 ·
 POST-DEPLOY PB-0008. RBAC·스키마·마이그·백엔드 0.
+
+## CHG-20260728T162844-graph-hover-flow (상세 패널 hover 강조: 방향·읽기/쓰기 관계선 특정 + 데이터 흐름 애니메이션)
+
+TASK-20260728T162844-graph-hover-flow. branch `ai/claude/feature-0003-hover-rw-edgeflow`.
+
+- `unit/feature-0003-agent-web-ui/src/static/graph/graph-ctxmenu.js` — 관계 행 3종
+  (`relRow` 컬럼 참조 · `row` 관계 상세 · `rtRow` 루틴 사용, + 연관 용어 행)이 **모델 엣지의 실제
+  `(source,target)`** 을 `data-edge-src`/`data-edge-tgt` 로, ROUTINE_USES 는 `data-rel-type`(read|write)
+  까지 싣는다. 신규 `_metaHoverEdgeSpec(el, selfFallbackKey, otherKey)` 가 이 속성을 hover spec 으로
+  변환하고, 속성이 없는 구 마크업은 레거시 `[self, 상대]` 쌍으로 폴백한다.
+  `_metaGraphBindDetailHover` 와 관계 상세의 `bindRelRows` 가 이 헬퍼를 공용한다.
+- `unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js` — `_metaGraphSetHoverHighlight` 의
+  `edgeKeyPairs` 항목을 **방향 객체 `{from,to,relType}`** 로 확장(레거시 배열 병존). 렌더 요소 해소
+  (미렌더 시 조상 승격) 후 `{source,target,relType}` 로 렌더러에 전달 — 방향이 보존된다.
+- `unit/feature-0003-agent-web-ui/src/static/graph/graph-renderer-pixi.js`
+  - `PixiAdapterPure.dashPolyline(pts, dash, phase)` — 선택적 위상 인자(호 길이 단위) 추가.
+    미지정 시 종전과 byte-동치. 실주기 계산은 홀수 길이 패턴의 on/off 반전을 고려(2×sum).
+  - `PixiAdapterPure.flowForward(style)` — 화살표 어휘 → 데이터 흐름 방향
+    (쓰기 endArrow=선언 방향 · 읽기 startArrow=역류 · 무향/양방향=선언 방향 폴백).
+  - `_edgeMatchBetween(sid, tid, relType)` — **방향(1순위) > relation_type(2순위)** 순위로 관계선을
+    특정하고, 역방향 등록 엣지는 `(sid→tid)` 프레임으로 정규화(곡률 부호 반전 + `startArrow`/`endArrow`
+    교환). 기존 `_edgeStyleBetween(sid,tid[,relType])` 은 이것의 얇은 래퍼로 남아 §83 A10 계약 유지.
+  - `setHoverHighlight` — 매칭된 **그 선**의 호 위에 헤일로(α0.16)+본선(α0.9)을 겹치고, 화살촉을
+    **흐름이 도착하는 끝**에 접선 각도로 찍는다. 굵기·화살촉 크기·대시 주기/속도는 화면 픽셀 기준
+    (`1/zoom`) — §85 정합(종전 model 고정 3.5px 는 줌인 리본·줌아웃 실종).
+  - `_startHoverFlow`/`_stopHoverFlow` — hover 중에만 도는 rAF 로 흰 대시를 흐름 방향으로 이동
+    (render-on-demand `autoStart:false` 라 자체 프레임 구동). 세대 토큰으로 선점 종료,
+    `prefers-reduced-motion` 이면 rAF 없이 정적 대시.
+  - `_clearHoverLayer` — 오버레이 Graphics 를 detach 가 아니라 **파기**(hover 는 행마다 발생 —
+    GPU 지오메트리 누적 차단). `draw()`·`clearHoverHighlight`·`setHoverHighlight`·`destroy` 4경로 배선.
+- `unit/feature-0003-agent-web-ui/tests/headless/test_graph_hover_flow.js` (신규) — 위상 대시 기하 ·
+  흐름 방향 어휘 · 관계선 특정 순위 · 역방향 정규화 · 패널 행 계약 · graph-core 해소 계약 41건.
+
+검증: 헤드리스 41 PASS(신규) · 그래프 전 스위트 **733 PASS / 0 FAIL** · `node --check`(ESM) 3모듈 PASS ·
+구현 이전 어댑터 적대 대조로 두 축 회귀 재현 확인 · **PB-0008 실 Windows Chrome 150 라이브 PASS**
+(§13.2.9 격리 컨테이너, 라이브 web-a/web-b 무접촉). Python 변경 0 · RBAC·스키마·마이그·백엔드·엔드포인트 0.
+Cross-ref: REVIEW REV-20260728T162844-graph-hover-flow · `docs/test-runs.d/20260728T162844-graph-hover-flow.md` ·
+FUNCTION REQ-20260728T162844-graph-hover-flow(AC-GHF-1~4) · 선행 REQ-20260728T114015-graph-edge-flow(§83).
