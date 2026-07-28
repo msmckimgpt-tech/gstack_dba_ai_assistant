@@ -300,8 +300,9 @@ export const PixiAdapterPure = {
   //   설계 제약(사용자 요구):
   //     ① **다른 노드 위치 불변** — 확장은 scene 모델(node.style.size)을 건드리지 않고 별도 오버레이 레이어에
   //        그린다. 따라서 masonry/shelf-pack 재배치·combo bbox·hit-grid·미니맵 전부 무영향(reflow 0).
-  //     ② **중심 고정 좌우 대칭 확장** — 원 칩과 중심이 같아 t=0 에서 픽셀 동일(팝 없음) + 한쪽으로만 밀려
-  //        옆 칩을 덮는 비대칭을 피한다.
+  //     ② **좌변 고정 + 우측 확장**(사용자 정정 2026-07-28 — 이전 중앙 대칭에서 변경) — 원 칩의 왼쪽 모서리를
+  //        앵커로 고정하고 오른쪽 모서리만 밀어낸다. t=0 에서 원 칩과 픽셀 동일(팝 없음)인 성질은 그대로이고,
+  //        이미 읽고 있던 앞글자가 제자리에 머문 채 뒷글자만 오른쪽에서 드러나 읽기 방향과 정합한다.
   //     ③ **z-order** — 오버레이 레이어가 최상단이라 확장분이 이웃 칩 아래로 숨지 않는다(어댑터 배선 참조).
   //   반환 null = 확장 불필요(라벨/상한 없음 · 이미 전부 보임 · 이득 < minGain).
   //   대상은 `labelPlacement:"center"` rect 칩(테이블·루틴·스키마 카드·용어·그룹/카테고리 헤더) — 즉 "노드 **안**
@@ -322,9 +323,27 @@ export const PixiAdapterPure = {
     //   inner1 = 확장 종단의 안쪽 폭. 루틴 칩처럼 labelMaxWidth(176)가 칩 폭(150)보다 큰 스타일이 있어(칩 밖으로
     //   라벨이 삐져나오는 기존 동작), 박스폭-pad 로 계산하면 t=0 에 원래 보이던 글자가 오히려 줄어드는 역-팝이
     //   난다(codex review P2). inner0 을 원 한계로 고정하면 t=0 이 항상 픽셀 동일.
-    return { x: s.x, y: s.y, w0, w1, h, pad, radius: s.radius || 0, capped: w1 >= cap,
+    // graph-label-hover-anchor(사용자 정정 2026-07-28): 확장 기준점은 **좌변 고정 + 우측으로만 성장**.
+    //   `left` 가 그 앵커(원 칩의 좌변, world x). 카드 중심은 폭에 따라 우측으로 밀린다(hoverCardCenterX).
+    //   중앙 대칭이던 이전 동작 대비: 이미 읽고 있던 앞부분 글자가 제자리에 머물고 뒷글자만 오른쪽에서
+    //   드러나므로 시선이 따라가기 쉽다(읽기 방향 정합).
+    return { x: s.x, y: s.y, left: s.x - w0 / 2, w0, w1, h, pad, radius: s.radius || 0, capped: w1 >= cap,
       inner0: s.labelMaxWidth, inner1: w1 - pad };
   },
+
+  // 폭 w 인 확장 카드의 중심 world x — 좌변(g.left)을 고정한 결과값. `left` 부재(구 geom)면 중앙 고정 폴백.
+  hoverCardCenterX(g, w) {
+    if (!g) return 0;
+    if (g.left == null) return g.x;
+    return g.left + (w > 0 ? w : g.w0) / 2;
+  },
+
+  // 라벨의 카드-로컬 x (anchor 0 = 좌측 정렬). **원 노드가 렌더하던 라벨의 절대 좌측(textLeft)을 그대로
+  //   유지**하도록 카드 중심 이동분만큼 상쇄한다 → 확장 내내 앞글자가 1px 도 움직이지 않고 뒷글자만 오른쪽에서
+  //   드러난다. textLeft 를 "칩 좌변 + pad/2" 로 계산하지 않는 이유: 루틴 칩은 `labelMaxWidth`(176)가 칩
+  //   폭(150)보다 커서 원 라벨이 이미 칩 밖으로 넘쳐 있다 — 그 경우 pad 기준으로 잡으면 hover 순간 라벨이
+  //   ~17px 튄다(codex review P2). 실제 렌더 폭에서 역산한 textLeft 만이 t=0 픽셀 동일을 보장한다.
+  hoverTextOffsetX(g, w, textLeft) { return textLeft - this.hoverCardCenterX(g, w); },
 
   // graph-label-hover-expand: 현재 폭 w 의 확장 카드 사각형 안에 model 점이 있는가.
   //   **필요한 이유(codex review P1)**: 카드가 넓어지면 드러난 좌우 영역은 원 노드 bbox 밖이라 hit-grid 가
@@ -778,10 +797,16 @@ export class PixiGraphAdapter {
     // 카드는 **항상 불투명**(alpha 1)이다. dim(§57.9) 된 노드의 alpha(0.38)를 카드에도 램프하면, 램프 도중
     //   아래 원 노드의 잘린 라벨이 비쳐 확장 중인 글자와 이중으로 겹친다(codex review P2). 애초에 사용자가
     //   hover 한 이유가 "이 이름을 읽으려고" 이므로 dim 노드도 즉시 판독 가능한 게 맞다.
-    const c = new P.Container(); c.position.set(g.x, g.y); c.alpha = 1;
+    const c = new P.Container(); c.position.set(PixiAdapterPure.hoverCardCenterX(g, g.w0), g.y); c.alpha = 1;
     const halo = new P.Container(), bg = new P.Graphics();
     const t = this._makeText(full, { size: s.labelFontSize || 12, fill: s.labelFill || "#ffffff", weight: s.labelFontWeight || 400 });
-    t.anchor.set(0.5, 0.5); t.position.set(0, 0);
+    // graph-label-hover-anchor: 텍스트도 **좌측 정렬**. 기준선(textLeft)은 pad 로 추정하지 않고 **원 노드가
+    //   실제로 렌더하던 잘린 라벨의 좌측**을 역산해 쓴다 — 원 라벨은 중앙 정렬이므로 `노드중심 - 렌더폭/2`.
+    //   (루틴 칩처럼 labelMaxWidth 가 칩 폭보다 큰 스타일에서 pad 기준을 쓰면 hover 순간 ~17px 튄다.)
+    t.anchor.set(0, 0.5);
+    this._fitText(t, full, g.inner0);
+    const tw0 = t.width;
+    const textLeft = (tw0 > 0) ? (g.x - tw0 / 2) : (g.left + g.pad / 2);
     c.addChild(halo, bg, t);
     layer.addChild(c);
     const card = { c, g, node: n, w: g.w0, raf: 0, paint: null };   // node = _pick tier0 프록시 대상
@@ -802,6 +827,7 @@ export class PixiGraphAdapter {
       // 텍스트 가용폭은 박스 폭과 분리 보간(inner0=원 한계 → inner1=종단 안쪽 폭) — 위 hoverExpandGeom 주석 참조.
       const span = g.w1 - g.w0, k = span > 0 ? Math.max(0, Math.min(1, (w - g.w0) / span)) : 1;
       this._fitText(t, full, Math.max(0, g.inner0 + (g.inner1 - g.inner0) * k));
+      t.position.set(PixiAdapterPure.hoverTextOffsetX(g, w, textLeft), 0);   // 앞글자 절대 위치 고정
     };
     this._hoverCard = card;
     card.paint(g.w0);
@@ -809,10 +835,12 @@ export class PixiGraphAdapter {
     this._tweenCard(card, g.w0, g.w1, HOVER_EXPAND_MS, null);
   }
 
-  // 확장 카드 중심의 world x — 뷰포트 + 미니맵 회피 클램프 반영. 순수 산술은 PixiAdapterPure.clampCardCenterX.
+  // 확장 카드 중심의 world x — 좌변 고정(hoverCardCenterX) 위에 뷰포트 + 미니맵 회피 클램프를 얹는다.
+  //   순수 산술은 PixiAdapterPure.hoverCardCenterX / clampCardCenterX.
   _clampCardX(g, w) {
+    const base = PixiAdapterPure.hoverCardCenterX(g, w);
     const [vw] = this.getSize();
-    if (!(vw > 0)) return g.x;
+    if (!(vw > 0)) return base;
     const cam = this._cam;
     let rightMax = vw;
     const mm = this._minimap;
@@ -821,7 +849,7 @@ export class PixiGraphAdapter {
       const cy = g.y * cam.zoom + cam.y, ch = Math.abs(g.h * cam.zoom) / 2;
       if (cy + ch > my0 && cy - ch < my1) rightMax = mm.c.position.x;
     }
-    const sx = PixiAdapterPure.clampCardCenterX(g.x * cam.zoom + cam.x, w * cam.zoom, vw, 6, rightMax);
+    const sx = PixiAdapterPure.clampCardCenterX(base * cam.zoom + cam.x, w * cam.zoom, vw, 6, rightMax);
     return (sx - cam.x) / cam.zoom;
   }
 
