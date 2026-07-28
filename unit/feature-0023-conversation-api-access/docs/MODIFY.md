@@ -135,3 +135,14 @@ source_of_truth: true
   대화 단위 키 미사용·stale alias 배제).
 - Impact: 읽기 전용 응답 필드 1개의 정확성 수정. 인가·스키마·다른 축 무변경.
 - Rollback Notes: 해당 블록 revert. 완전 가역.
+
+## CHG-20260728T120000-ai-claude-token-path-e2e (docs-only — 토큰 경로 라이브 e2e 기록)
+- Date: 2026-07-28
+- Related Requirement: REQ-20260722-conversation-api-access (AC-…-quality-controls-1~5 라이브 확증)
+- Summary: 배포 `fe6d3700` 에서 **Bearer 토큰 경로** 라이브 e2e 15/15 PASS 기록. 사용자 지시로
+  `bootstrap_admin` 단수명 토큰(1일) 발급 → 검증 → 즉시 revoke. 관리자 권한 계정 토큰이라는 최악
+  조건이 오히려 **절대 denylist 실증**(관리 엔드포인트 3종 403)이 됐다. 폴더 지침·제품·첨부
+  (multipart)·ask 전 축 반영, 타 계정 oracle 차단, revoke 후 401 확인. 코드 무변경.
+- Files: `docs/test-runs.d/TASK-20260728T115500-token-path-e2e.md`(신규), `docs/{TEST,REPORT,TASK}.md`.
+- Impact: 문서만. 잔여 미검증은 MCP 서버 프로세스 왕복(`mcp` SDK 미설치)으로 축소됐다.
+- Rollback Notes: 문서 revert.

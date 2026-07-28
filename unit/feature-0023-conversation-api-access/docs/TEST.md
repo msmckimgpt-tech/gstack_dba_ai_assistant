@@ -80,9 +80,15 @@ source_of_truth: true
 - [TASK-20260728T103500-conversation-quality-controls](./test-runs.d/TASK-20260728T103500-conversation-quality-controls.md)
   — CLI, PASS (신규·관련 39 passed / 전체 회귀 2586 passed·0 failed). UI 표면 무변경이라
   Windows-browser 미수행 — 사유는 fragment 에 명시(§15.4.1 예외).
+- [TASK-20260728T115500-token-path-e2e](./test-runs.d/TASK-20260728T115500-token-path-e2e.md)
+  — **Bearer 토큰 경로 라이브 e2e (배포 fe6d3700), 15/15 PASS**. `bootstrap_admin` 단수명 토큰으로
+  수행(사용자 지시) → 관리 엔드포인트 3종 **403** 실증(관리자 계정 토큰이어도 절대 denylist 가
+  차단) · 폴더 지침/제품/첨부/ask 전 축 반영 · revoke 후 401 · 토큰 폐기 완료.
 
 ## 4. Untested Areas
-- 라이브 토큰→/api/ask 왕복 및 스코프-밖 admin 403 (배포 후 §3 append 예정).
-- 라이브 품질 조정 e2e: capabilities 조회 → 제품/폴더 지침 변경 → 다음 답변 반영 확인 (배포 후).
-- MCP tool 실서버 왕복(`list_capabilities`·`upload_attachment` multipart) — 런처 gated smoke 만 수행.
+- **MCP 서버 프로세스 왕복** — `mcp` SDK 가 agent 이미지에 없어 tool 등록·stdio 왕복 미수행.
+  서버가 호출하는 HTTP 계약은 토큰 e2e(첨부 multipart 포함)로 전부 실증됐으므로 잔여 위험은
+  SDK 배선 레이어에 한정.
+- 전용 **저권한 서비스 계정** 기반 운영 검증 — 계정 신설은 운영 결정(현재 e2e 는 `bootstrap_admin`
+  단수명 토큰으로 대체, 검증 후 폐기).
 - 다수 동시 토큰 요청 부하(quota 상속으로 커버, 별도 부하테스트 없음).

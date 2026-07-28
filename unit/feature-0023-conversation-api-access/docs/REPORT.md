@@ -39,8 +39,9 @@ allowlist 위에 절대 denylist 를 얹어 관리/콘솔·교차계정을 원�
   CHG-20260728T103500-ai-claude-conversation-quality-controls)
 
 ## 4. Open Issues
-- 라이브 e2e(실토큰 ask 왕복 · 품질 조정 반영)는 배포 후 수행.
 - 기존 발급 토큰은 폴더 축이 닫혀 있다(저장된 scope). 폴더 지침을 쓰려면 **재발급** 필요 — 운영 안내 사항.
+- 운영 권장은 **전용 저권한 서비스 계정** — 현재 그런 계정이 없어 e2e 는 `bootstrap_admin` 단수명
+  토큰으로 수행하고 폐기했다. 상시 통합 시 저권한 계정 신설 필요(운영 결정).
 
 ## 5. Test Status
 - 신규·관련 39 passed (`test_ai_capabilities.py` 10 · `test_ai_discovery.py` 8 ·
@@ -50,8 +51,10 @@ allowlist 위에 절대 denylist 를 얹어 관리/콘솔·교차계정을 원�
 - §18.8 보안 리뷰(REV-20260728T111500): MEDIUM 1건(MCP 경로 세그먼트 미인코딩) in-cycle 수정 →
   PASS. 회귀 게이트 `test_mcp_path_segment.py` 신설 + `make test` 수집 범위에 feature-0023 tests 추가.
 - 의도적 기대값 갱신 2건: route 골든 스냅샷(+1 route), T9 필터 호출처 검증 강화(카운트→파일 집합).
-- MCP smoke: tool 등록 + 런처 gated PASS. 신규 tool 은 실서버 왕복 미검증(배포 후).
-- 미검증: 라이브 토큰 왕복·품질 조정 반영·MCP multipart 업로드.
+- **라이브 e2e 완료(배포 fe6d3700, 15/15 PASS)** — 쿠키 경로 + **Bearer 토큰 경로** 양쪽.
+  토큰 경로에서 관리 엔드포인트 3종 403 실증(관리자 계정 토큰이어도 절대 denylist 차단),
+  폴더 지침·제품·첨부(multipart)·ask 전 축 반영, revoke 후 401.
+- 미검증: MCP 서버 프로세스 왕복(`mcp` SDK 미설치) — HTTP 계약은 전부 실증됨.
 
 ## 6. Blocked Items
 - 없음

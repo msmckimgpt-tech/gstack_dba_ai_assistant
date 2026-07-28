@@ -96,12 +96,14 @@ feature_status_note: 외부 AI 용 Conversation API (Bearer 토큰·scope 교집
 - [x] TASK-0020: 문서 (FUNCTION/TASK/MODIFY/REVIEW/REPORT/TEST/ANCHOR·SECURITY §25.1·ARCHITECTURE·
       ROUTEMAP·STATUS·wiki)
 - [x] TASK-0021: §18.8 적대 검증 + verify-completion + commit/PR #981 merge + 배포(ebedc256) + 라이브 e2e
+- [x] TASK-0023: Bearer 토큰 경로 라이브 e2e (사용자 지시로 `bootstrap_admin` 단수명 토큰 —
+      15/15 PASS · 관리 403 실증 · 검증 후 revoke, TASK-20260728T115500 fragment)
 - [x] TASK-0022: 라이브 e2e 적발 핫픽스 — capabilities `conversation.model` 이 항상 null
       (대화 단위 `"model"` 키로 읽음 → 계정별 `model:<account_id>` 정정 + allowlist 검증,
       CHG-20260728T115000)
 
 ## 4. In Progress
-- TASK-0022 후속 배포·재검증
+- 없음 (품질 조정 표면 완결 — 잔여는 아래 Next Action 의 운영 결정 대기 항목)
 
 ## 5. Blocked
 - 없음
@@ -112,8 +114,9 @@ feature_status_note: 외부 AI 용 Conversation API (Bearer 토큰·scope 교집
 - TASK-0014~0020 (대화 품질 조정 표면).
 
 ## 7. Next Action
-- 핫픽스 배포 후 `conversation.model` 라이브 재확인. 이후 잔여: 저권한 서비스 계정 확보 시
-  **토큰 경로** e2e(현재는 쿠키 인증으로 대체 검증) + MCP tool 실서버 왕복.
+- (운영) 상시 통합용 **전용 저권한 서비스 계정** 신설 후 토큰 발급 — 현재 e2e 는 `bootstrap_admin`
+  단수명 토큰으로 수행·폐기했다.
+- (선택) MCP 서버 프로세스 왕복 검증 — `mcp` SDK 설치 환경 필요. HTTP 계약은 실증 완료.
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
