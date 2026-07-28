@@ -36,12 +36,18 @@ source_of_truth: true
 <!-- 승인 결정: 실행범위=Foundations+Tier2 끝까지 / :18080=Caddy :443 단일화 / SSE=pre-drain 게이트 -->
 
 ## 3. Task Queue
-- [ ] TASK-20260630T120100-migrate-lint: 마이그레이션 안전 게이트 + CONVENTIONS expand/contract 규칙 (P0a)
-- [ ] TASK-20260630T120101-hostport-override: 호스트포트 이전 + stop_grace_period + :18080 폐기 (P0b)
-- [ ] TASK-20260630T120102-readyz-livez: /readyz·/livez probe + active-stream 카운터 (P0d)
-- [ ] TASK-20260630T120103-deploy-spine: bin/deploy-web.sh (flock/sudo/TLS preflight/migrate/rollback) (P0c)
-- [ ] TASK-20260630T120104-two-replica: web→web-a/web-b + Caddy LB (P1)
-- [ ] TASK-20260630T120105-sse-asset: SSE pre-drain + 자산 content-hash (P2)
+- [x] TASK-20260630T120100-migrate-lint: 마이그레이션 안전 게이트 + CONVENTIONS expand/contract 규칙 (P0a)
+  ↳ 2026-07-28 실측: `bin/migrate-lint.sh` 실재 (feature-0021 cycle 의 test-runs 에서 실제 호출·PASS 기록).
+- [x] TASK-20260630T120101-hostport-override: 호스트포트 이전 + stop_grace_period + :18080 폐기 (P0b)
+  ↳ 2026-07-28 실측: `https://localhost:18080` 무응답(폐기 확인) · 443 이전 완료.
+- [x] TASK-20260630T120102-readyz-livez: /readyz·/livez probe + active-stream 카운터 (P0d)
+  ↳ 2026-07-28 실측: `/readyz` 200 · `/livez` 200 라이브 응답.
+- [x] TASK-20260630T120103-deploy-spine: bin/deploy-web.sh (flock/sudo/TLS preflight/migrate/rollback) (P0c)
+  ↳ 2026-07-28 실측: `bin/deploy-web.sh` 실재 (배포 canonical 경로로 상시 사용 중).
+- [x] TASK-20260630T120104-two-replica: web→web-a/web-b + Caddy LB (P1)
+  ↳ 2026-07-28 실측: `repo-web-a-1`·`repo-web-b-1` 2 replica 가동 + Caddy LB.
+- [x] TASK-20260630T120105-sse-asset: SSE pre-drain + 자산 content-hash (P2)
+  ↳ 2026-07-28 실측: asset stamp 파이프라인(`inject_asset_stamp`/`asset_stamp_verify`) 실재.
 - [ ] TASK-20260630T120106-wire-tests-docs: cycle-finalize wire + 수용 테스트 + 정적 검증 + 문서 (P3)
 - [x] TASK-20260713T073141-deploy-verify-checklist: 배포 후 사용자 인수 전 검증 체크리스트 상시화 (RUNBOOK §10 + deploy-web.sh `post_deploy_checklist` output-only + LEARNINGS). Minor §12.3, `bash -n` PASS. feature-0003 attach-user-version 회고 반영.
 

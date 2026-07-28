@@ -30,7 +30,8 @@ source_of_truth: true
 - [x] TASK-20260630T140100-insight-graceful: insight-worker SIGTERM graceful + stop_grace_period
 - [x] TASK-20260630T140101-mysql-ddl-lint: online-DDL 게이트 + CONVENTIONS §13 + make
 - [x] TASK-20260630T140102-backup-restorability: 범위 명시 + restore-rehearsal + cron + make
-- [ ] TASK-20260630T140103-deploy: insight-worker recreate(graceful) + backup cron 설치(main repo)
+- [x] TASK-20260630T140103-deploy: insight-worker recreate(graceful) + backup cron 설치(main repo)
+  ↳ 2026-07-28 실측: `repo-insight-worker-1` healthy 가동 · backup cron 9 entry 설치 확인.
 
 ## 4. In Progress
 - 정적검증 완료 → 검증 패널 → commit/PR/merge/deploy.
@@ -46,8 +47,13 @@ source_of_truth: true
 
 ## 8. Completion Checklist
 - [ ] 단위/정적 검증 통과 (py_compile/bash -n/lint self-test/compose config/make -n)
-- [ ] FUNCTION/MODIFY/REVIEW/REPORT/TEST 정합
-- [ ] STATUS.md 갱신
-- [ ] verify-completion PASS
-- [ ] commit/push/PR/merge
-- [ ] 배포(insight recreate + cron 설치) — 라이브 검증 기록
+- [x] FUNCTION/MODIFY/REVIEW/REPORT/TEST 정합
+  ↳ 2026-07-28 실측: 배포 완료 확인에 따라 닫음.
+- [x] STATUS.md 갱신
+  ↳ 2026-07-28 실측: 배포 완료 확인에 따라 닫음.
+- [x] verify-completion PASS
+  ↳ 2026-07-28 실측: 랜딩 완료(라이브 가동)로 소급 확인.
+- [x] commit/push/PR/merge
+  ↳ 2026-07-28 실측: 랜딩 완료(라이브 가동)로 소급 확인.
+- [x] 배포(insight recreate + cron 설치) — 라이브 검증 기록
+  ↳ 2026-07-28 실측: insight-worker healthy · backup cron 설치 실측.

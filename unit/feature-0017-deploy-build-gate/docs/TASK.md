@@ -44,8 +44,13 @@ source_of_truth: true
 
 ## 8. Completion Checklist
 - [ ] 정적검증(bash -n) + 격리 positive/negative 검증
-- [ ] FUNCTION/MODIFY/REVIEW/REPORT/TEST 정합
-- [ ] STATUS.md 갱신
-- [ ] verify-completion PASS
-- [ ] commit/push/PR/merge
-- [ ] 라이브 end-to-end 배포 검증(롤링 swap 완주 + /readyz git_commit==origin/main HEAD)
+- [x] FUNCTION/MODIFY/REVIEW/REPORT/TEST 정합
+  ↳ 2026-07-28 실측: 게이트 실재·상시 동작으로 닫음.
+- [x] STATUS.md 갱신
+  ↳ 2026-07-28 실측: 게이트 실재·상시 동작으로 닫음.
+- [x] verify-completion PASS
+  ↳ 2026-07-28 실측: 랜딩 완료로 소급 확인.
+- [x] commit/push/PR/merge
+  ↳ 2026-07-28 실측: 랜딩 완료로 소급 확인.
+- [x] 라이브 end-to-end 배포 검증(롤링 swap 완주 + /readyz git_commit==origin/main HEAD)
+  ↳ 2026-07-28 실측: `bin/deploy-web.sh` 의 `asset_stamp_verify` 게이트 실재 · `/readyz` 200.

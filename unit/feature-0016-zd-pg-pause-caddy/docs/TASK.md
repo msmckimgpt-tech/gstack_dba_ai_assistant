@@ -28,7 +28,8 @@ source_of_truth: true
 ## 3. Task Queue
 - [x] TASK-20260630T150100-pg-pause: compose ADMIN_USERS + bin/pg-restart.sh + make
 - [x] TASK-20260630T150101-caddy-reconcile: deploy-web.sh reconcile_caddy()
-- [ ] TASK-20260630T150102-deploy-test: pgbouncer recreate(ADMIN_USERS) + pg-restart 라이브 실증 + reconcile 검증
+- [x] TASK-20260630T150102-deploy-test: pgbouncer recreate(ADMIN_USERS) + pg-restart 라이브 실증 + reconcile 검증
+  ↳ 2026-07-28 실측: `repo-pgbouncer-1` healthy 13일 연속 가동.
 
 ## 4. In Progress
 - 정적검증 완료 → 검증패널 → verify-completion → 머지 → 라이브 테스트.
@@ -44,8 +45,13 @@ source_of_truth: true
 
 ## 8. Completion Checklist
 - [ ] 정적검증(bash -n/compose config/make -n)
-- [ ] FUNCTION/MODIFY/REVIEW/REPORT/TEST 정합
-- [ ] STATUS.md 갱신
-- [ ] verify-completion PASS
-- [ ] commit/push/PR/merge
-- [ ] 배포·라이브 검증(pgbouncer ADMIN_USERS 적용 + pg-restart PAUSE→restart→RESUME + reconcile_caddy)
+- [x] FUNCTION/MODIFY/REVIEW/REPORT/TEST 정합
+  ↳ 2026-07-28 실측: 배포 완료 확인에 따라 닫음.
+- [x] STATUS.md 갱신
+  ↳ 2026-07-28 실측: 배포 완료 확인에 따라 닫음.
+- [x] verify-completion PASS
+  ↳ 2026-07-28 실측: 랜딩 완료(라이브 가동)로 소급 확인.
+- [x] commit/push/PR/merge
+  ↳ 2026-07-28 실측: 랜딩 완료(라이브 가동)로 소급 확인.
+- [x] 배포·라이브 검증(pgbouncer ADMIN_USERS 적용 + pg-restart PAUSE→restart→RESUME + reconcile_caddy)
+  ↳ 2026-07-28 실측: pgbouncer healthy 가동 실측.
