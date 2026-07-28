@@ -96,9 +96,9 @@ const A = [0, 0], B = [100, 0];
   check("A9 직선 엣지는 종전대로 중점 히트", Pure.hitTestEdge(50, 0, straight, posOf, 4, 1) !== null);
 }
 {
-  // ── §85 screen-space 굵기 고정 ──
-  // 굵기를 model 좌표로 두면 world scale 이 곱해져 줌·포커스마다 선 두께가 변한다(사용자 리포트).
-  // 계약 = "어떤 줌에서도 **화면** 두께가 같다" + "굵기 서열은 의미(신뢰도)만 반영한다".
+  // ── §86 줌 두께 정책: 줌인=화면 고정 / 줌아웃=콘텐츠 비례 ──
+  // §84(줌아웃만 화면 고정)와 §85(전 구간 화면 고정)는 같은 축의 양극 실패였다 — 전자는 줌인에서
+  // 선이 부풀고, 후자는 극단 줌아웃에서 선이 화면을 뒤덮는다(둘 다 사용자 리포트). 구간별 정책이 답.
   const inst = Object.create(Adapter.prototype);
   const paint = (styleW, zoom) => {
     const rec = [];
@@ -112,14 +112,17 @@ const A = [0, 0], B = [100, 0];
     inst._paintEdge(g, { style: { lineWidth: styleW, strokeOpacity: 0.5, curve: 0.13, curveMax: 26, curveMin: 5 } }, [0, 0], [100, 0]);
     return rec[0];
   };
-  const ZS = [0.1, 0.25, 0.55, 1, 2, 4];
-  const screenW = ZS.map((z) => paint(0.75, z) * z);
-  check("A11 전 줌 구간에서 화면 굵기 불변", screenW.every((w) => approx(w, 0.75, 1e-6)),
-    ZS.map((z, i) => `${z}:${screenW[i].toFixed(3)}`));
-  check("A11 model 굵기는 zoom 에 반비례", approx(paint(0.75, 0.25) / paint(0.75, 1), 4, 1e-6),
-    { z025: paint(0.75, 0.25), z1: paint(0.75, 1) });
-  const thinS = paint(0.75, 0.25) * 0.25, trustS = paint(1.6, 0.25) * 0.25;
-  check("A11 굵기 서열은 의미만 반영(신뢰도 비례)", approx(trustS / thinS, 1.6 / 0.75, 1e-6), { thin: thinS, trusted: trustS });
+  const scr = (w, z) => paint(w, z) * z;   // 화면 두께
+  const BASE = 0.6;
+  for (const z of [1, 2, 4, 8]) {
+    check(`A11 zoom ${z} 확대해도 굵어지지 않음(화면 고정)`, approx(scr(BASE, z), BASE, 1e-6), { zoom: z, screen: scr(BASE, z) });
+  }
+  check("A11 zoom 0.5 는 콘텐츠 비례로 얇아짐", approx(scr(BASE, 0.5), BASE * 0.5, 1e-6), scr(BASE, 0.5));
+  check("A11 극단 줌아웃도 최소 두께는 남김(소실 방지)", scr(BASE, 0.02) >= 0.25 - 1e-9 && scr(BASE, 0.02) < BASE * 0.5,
+    scr(BASE, 0.02));
+  check("A11 줌아웃 화면 두께 단조 증가", scr(BASE, 0.2) < scr(BASE, 0.5) && scr(BASE, 0.5) < scr(BASE, 1),
+    [scr(BASE, 0.2), scr(BASE, 0.5), scr(BASE, 1)]);
+  check("A11 굵기 서열은 개수만 반영", approx(scr(2.2, 1) / scr(BASE, 1), 2.2 / BASE, 1e-6));
 }
 {
   // §85: 굵기는 페인트 시점 zoom 으로 bake 되므로 줌 변화 시 재페인트가 없으면 화면 두께가 다시 흐른다.
@@ -192,35 +195,34 @@ if (typeof g._metaG6Build !== "function" || !g.__M) {
 
 // ── B. 스타일 어휘 ───────────────────────────────────────────────────────────
 {
-  const S = g._metaEdgeStrands;
-  check("B1 관계 수→가닥: 1~3 = 1가닥", S(1) === 1 && S(2) === 1 && S(3) === 1, [S(1), S(2), S(3)]);
-  check("B1 4→2 · 8→3 · 16→4", S(4) === 2 && S(8) === 3 && S(16) === 4, [S(4), S(8), S(16)]);
-  check("B1 상한 4 클램프(1000)", S(1000) === 4, S(1000));
-  check("B1 단조 비감소", [1, 2, 4, 7, 8, 15, 16, 64].every((n, i, arr) => i === 0 || S(n) >= S(arr[i - 1])));
+  // §86: 개수 → 굵기(화면 px). 기본은 가늘고(1건 0.6), 로그로 증가하며 상한에서 포화한다.
+  const W = g._metaEdgeWidthFor;
+  check("B1 단건은 가늘게(0.6px)", approx(W(1), 0.6, 1e-9), W(1));
+  check("B1 개수 증가 → 굵기 단조 증가", [1, 2, 4, 8, 16, 64].every((n, i, arr) => i === 0 || W(n) > W(arr[i - 1])),
+    [1, 2, 4, 8, 16, 64].map((n) => W(n).toFixed(2)));
+  check("B1 로그 스케일(4건 1.10 · 16건 1.60)", approx(W(4), 1.1, 1e-9) && approx(W(16), 1.6, 1e-9), [W(4), W(16)]);
+  check("B1 대량 집계 포화(≤2.2px)", W(100000) <= 2.2 + 1e-9 && approx(W(100000), 2.2, 1e-9), W(100000));
 }
 {
-  const base = g._metaEdgeStyleFor("", 0), trusted = g._metaEdgeStyleFor("trusted", 0), cross = g._metaEdgeStyleFor("", 1);
-  // 요구 ②: 가늘고 반투명 → 겹칠수록 alpha 누적으로 진해진다.
-  check("B2 기본 관계선 가늘게(<1.2px)", base.lineWidth < 1.2, base.lineWidth);
-  check("B2 반투명 부여(0<α<1)", base.strokeOpacity > 0 && base.strokeOpacity < 1, base.strokeOpacity);
-  // §84: 단독 관계선이 사라지지 않을 가시성 바닥. 동시에 누적 여지도 남아야 한다(2겹 < 0.75).
-  // 바닥값은 라이브 실측으로 정했다 — α0.44/화면0.85px 는 배경 대비 44/255 에 그쳐 여전히 옅었다.
-  check("B2 가시성 바닥 α≥0.5", base.strokeOpacity >= 0.5, base.strokeOpacity);
-  // 누적은 "겹칠수록 진해진다"가 계약 — 2·3·4겹이 단조 증가하고 포화(=1)되지 않으면 된다.
-  const lay = (n) => 1 - Math.pow(1 - base.strokeOpacity, n);
-  check("B2 누적 단조 증가 + 미포화", lay(1) < lay(2) && lay(2) < lay(3) && lay(3) < lay(4) && lay(4) < 1,
-    [lay(1).toFixed(2), lay(2).toFixed(2), lay(3).toFixed(2), lay(4).toFixed(2)]);
-  check("B2 신뢰 강도가 높을수록 진함", trusted.strokeOpacity > base.strokeOpacity && trusted.lineWidth > base.lineWidth,
-    { t: trusted.strokeOpacity, b: base.strokeOpacity });
-  check("B2 곡률·상한·하한 전 분기 주입", [base, trusted, cross].every((s) => s.curve > 0 && s.curveMax > 0 && s.curveMin > 0));
-  // §85: 점선 폐지 — 신뢰도는 굵기 단일 축, 종류·교차는 색이 담당(대시 채널 미사용).
-  check("B2 관계선에 대시 없음(실선)", [base, trusted, cross].every((s) => s.lineDash === undefined),
-    [base.lineDash, trusted.lineDash, cross.lineDash]);
-  const cand = g._metaEdgeStyleFor("candidate", 0);
-  check("B2 신뢰도 굵기 단조(무상태<candidate<trusted)", base.lineWidth < cand.lineWidth && cand.lineWidth < trusted.lineWidth,
+  const base = g._metaEdgeStyleFor("", 0), trusted = g._metaEdgeStyleFor("trusted", 0), cand = g._metaEdgeStyleFor("candidate", 0);
+  const cross = g._metaEdgeStyleFor("", 1);
+  // §86 채널 직교화: 굵기=개수 / 진하기=신뢰도 / 색=종류. 굵기가 신뢰도를 담지 않아야 한다.
+  check("B2 같은 개수면 신뢰도가 달라도 굵기 동일", base.lineWidth === trusted.lineWidth && trusted.lineWidth === cand.lineWidth,
     [base.lineWidth, cand.lineWidth, trusted.lineWidth]);
-  check("B2 단일 관계는 가닥 키 없음(불필요 키 미방출)", base.strands === undefined, base.strands);
-  check("B2 집계 관계는 가닥 부여", g._metaEdgeStyleFor("", 0, 9).strands === 3, g._metaEdgeStyleFor("", 0, 9).strands);
+  check("B2 신뢰도 = 진하기 단조(inferred<candidate<trusted)",
+    base.strokeOpacity < cand.strokeOpacity && cand.strokeOpacity < trusted.strokeOpacity,
+    [base.strokeOpacity, cand.strokeOpacity, trusted.strokeOpacity]);
+  check("B2 기본은 가늘게(0.6px)", approx(base.lineWidth, 0.6, 1e-9), base.lineWidth);
+  check("B2 개수가 늘면 굵어진다", g._metaEdgeStyleFor("", 0, 16).lineWidth > base.lineWidth,
+    g._metaEdgeStyleFor("", 0, 16).lineWidth);
+  check("B2 관계선에 대시 없음(실선)", [base, trusted, cross, cand].every((s) => s.lineDash === undefined));
+  check("B2 다발 키 미방출(굵기로 통합)", [base, trusted, cross, cand].every((s) => s.strands === undefined));
+  check("B2 곡률 전 분기 주입", [base, trusted, cross, cand].every((s) => s.curve > 0 && s.curveMax > 0 && s.curveMin > 0));
+  check("B2 색은 종류·상태 채널", base.stroke !== trusted.stroke && cross.stroke === "#a855c7");
+  // 진하기 누적: 겹칠수록 진해지되 포화하지 않는다.
+  const lay = (n) => 1 - Math.pow(1 - base.strokeOpacity, n);
+  check("B2 누적 단조 증가 + 미포화", lay(1) < lay(2) && lay(2) < lay(3) && lay(4) < 1,
+    [lay(1).toFixed(2), lay(2).toFixed(2), lay(4).toFixed(2)]);
 }
 {
   const rd = g._metaRoutineEdgeStyle("read", 0), wr = g._metaRoutineEdgeStyle("write", 0);
@@ -230,18 +232,20 @@ if (typeof g._metaG6Build !== "function" || !g.__M) {
   check("C0 양쪽 모두 곡선·반투명", rd.curve > 0 && wr.curve > 0 && rd.strokeOpacity < 1 && wr.strokeOpacity < 1);
   // §85: 루틴 사용선도 실선 + 신뢰도 축에서 FK trusted 바로 아래(코드상 확정이나 입도가 거칢).
   check("C0 루틴 사용선 실선(점선 폐지)", rd.lineDash === undefined && wr.lineDash === undefined, [rd.lineDash, wr.lineDash]);
-  check("C0 루틴 굵기 = trusted 미만 · candidate 초과",
-    rd.lineWidth < g._metaEdgeStyleFor("trusted", 0).lineWidth && rd.lineWidth > g._metaEdgeStyleFor("candidate", 0).lineWidth,
-    { routine: rd.lineWidth, trusted: g._metaEdgeStyleFor("trusted", 0).lineWidth, cand: g._metaEdgeStyleFor("candidate", 0).lineWidth });
+  // §86: 루틴은 확정 참조 → 진하기가 trusted 바로 아래. 굵기는 개수 축이라 같은 개수면 동일.
+  check("C0 루틴 진하기 = candidate 초과 · trusted 미만",
+    rd.strokeOpacity > g._metaEdgeStyleFor("candidate", 0).strokeOpacity && rd.strokeOpacity < g._metaEdgeStyleFor("trusted", 0).strokeOpacity,
+    { routine: rd.strokeOpacity, cand: g._metaEdgeStyleFor("candidate", 0).strokeOpacity, trusted: g._metaEdgeStyleFor("trusted", 0).strokeOpacity });
+  check("C0 루틴 굵기도 개수 축(단건 0.6)", approx(rd.lineWidth, 0.6, 1e-9), rd.lineWidth);
 }
 {
   const s1 = g._metaSchemaRefEdgeStyle(1), s12 = g._metaSchemaRefEdgeStyle(12), s500 = g._metaSchemaRefEdgeStyle(500);
-  check("B4 부모 볼륨: 관계 수↑ → 가닥↑", (s1.strands || 1) < (s12.strands || 1) && (s12.strands || 1) < (s500.strands || 1),
-    [s1.strands, s12.strands, s500.strands]);
-  check("B4 굵기·불투명도도 단조 상승", s500.lineWidth > s1.lineWidth && s500.strokeOpacity > s1.strokeOpacity,
-    { w: [s1.lineWidth, s500.lineWidth], o: [s1.strokeOpacity, s500.strokeOpacity] });
-  check("B4 굵기는 완만(포화 방지 — 볼륨은 가닥이 담당)", s500.lineWidth < 1.8, s500.lineWidth);
-  check("B4 가닥 수 늘면 다발 간격도 확장", (s500.strandGap || 0) > (s12.strandGap || 0), [s12.strandGap, s500.strandGap]);
+  // §86: 부모 카드 간 집계도 같은 개수 축(굵기). 신뢰도는 혼합이라 중립 진하기 고정.
+  check("B4 개수↑ → 굵기↑", s1.lineWidth < s12.lineWidth && s12.lineWidth < s500.lineWidth,
+    [s1.lineWidth, s12.lineWidth, s500.lineWidth]);
+  check("B4 진하기는 중립 고정(신뢰도 혼합)", s1.strokeOpacity === s500.strokeOpacity, s1.strokeOpacity);
+  check("B4 대량 집계도 상한 내(≤2.2px)", s500.lineWidth <= 2.2 + 1e-9, s500.lineWidth);
+  check("B4 다발 미사용", s500.strands === undefined);
 }
 
 // ── C. 빌드 계약: 읽기/쓰기 분리 방출 ────────────────────────────────────────
@@ -312,8 +316,9 @@ const RU = (out) => out.edges.filter((x) => x.data && x.data.label === "ROUTINE_
   addTable(M, "a.t0"); addRoutine(M, "a.p1()");
   for (let i = 1; i <= 9; i++) addEdge(M, nk("a.p1()"), nk(`b.t${i}`), "ROUTINE_USES", { relation_type: "write" });
   const ru = RU(g._metaG6Build());
-  check("C4 부모 카드로 승격된 9건 = 1선(집계) + 가닥 3", ru.length === 1 && ru[0].data.count === 9 && ru[0].style.strands === 3,
-    ru.map((e) => ({ c: e.data.count, s: e.style.strands })));
+  check("C4 부모 카드로 승격된 9건 = 1선(집계) + 개수만큼 굵게", ru.length === 1 && ru[0].data.count === 9
+    && approx(ru[0].style.lineWidth, g._metaEdgeWidthFor(9), 1e-9) && ru[0].style.lineWidth > g._metaEdgeWidthFor(1),
+    ru.map((e) => ({ c: e.data.count, w: e.style.lineWidth })));
 }
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);

@@ -11,6 +11,13 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T142745-graph-edge-encoding (TASK-20260728T142745 — 줌 두께 정책 구간 분리 + 인코딩 축 재배치, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js`: `edgeScreenScale`(§85) → **`edgeModelWidth(baseScreen, zoom)`** — `clamp(base·min(1, zoom/EDGE_ZFULL), EDGE_MIN_SCREEN_W, base)/zoom`. 상수 `EDGE_ZFULL=1`·`EDGE_MIN_SCREEN_W=0.25`. 화살촉·다발 간격은 실효 배율(`lw/base`) 공유.
+- `graph-roleviz.js`: `_metaEdgeStrands` 폐지 → **`_metaEdgeWidthFor(count)`**(0.6 + min(1.6, log2(n)·0.25)) 신설·export. `_metaEdgeFlow` 는 곡선 키만 주입(다발 제거). 세 스타일 함수 재작성 — 굵기=개수 축 공통, 진하기=신뢰도(trusted 0.85 / 루틴 0.72 / candidate 0.5 / crossDs 0.5 / inferred 0.38 / SCHEMA_REF 중립 0.55).
+- `graph-core.js`: import 에 `_metaEdgeWidthFor` 추가, USES 사용선 굵기를 개수 축(`_metaEdgeWidthFor(1)`)으로 정합.
+- `tests/headless/test_graph_edge_flow.js`: A11 재작성(줌 구간별 정책 6건) · B1 개수→굵기 · B2 채널 직교화 · B4/C0/C4 갱신 — 66 PASS. `test_g6build_edge_visibility.js` T1 계약 갱신(다발 → 개수 굵기).
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+
 ## CHG-20260728T142000-graph-hover-anchor-postverify (TASK-20260728T135222 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-28. 코드·자산 **무변경** — test-runs.d fragment POST-DEPLOY 결과 + TASK 체크박스 종결 + evidence 2종.
 - 배포: PR #1000 → main **9158551b** → `make deploy-web-only` 무중단 롤링(web-a·web-b `git_commit=9158551b`, asset stamp `6fd0965e5b49`, 90s soak 통과).

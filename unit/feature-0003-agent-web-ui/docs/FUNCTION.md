@@ -12,6 +12,11 @@ source_of_truth: true
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 2. Goal
+- REQ-20260728T142745-graph-edge-encoding (20260728T1427-graph-edge-encoding, **Minor §12.3** — feature-0003 web/UI 프론트 `static/graph/` 3모듈, 렌더 인코딩 재배치·비파괴; 그래프 정본 feature-0016 §86, RBAC/스키마/백엔드/엔드포인트 무변경): 사용자 리포트 2건. **① 극단 줌아웃에서 선이 화면을 덮음** — §85 의 전 구간 screen-space 고정이 반대편 실패를 낳았다(노드·간격은 작아지는데 선만 같은 두께) → **줌 두께 정책 구간 분리**: `w_screen = clamp(base·min(1, zoom/ZFULL), MIN, base)` 로 **줌인은 화면 고정**(부풀지 않음)·**줌아웃은 콘텐츠 비례**(얇아짐), MIN=0.25px 로 완전 소실만 방지. **② 인코딩 축 재배치** — **굵기 = 관계 개수**(1건 0.6px → 로그 증가 → 2.2px 포화), **진하기 = 신뢰성**(trusted 0.85 > 루틴 0.72 > candidate 0.5 > inferred 0.38), 색=종류·화살촉=방향·곡률=왕복 분리로 채널 직교화. 기본은 가느다랗게(0.6px). **다발(strands) 제거** — 개수를 굵기가 담게 되어 중복이고 줌아웃 가림을 가중했다(§83 '부모 볼륨=가닥' → §86 '개수=굵기' 로 통합). REV-20260728T142745-graph-edge-encoding. AC-GEE-1 ~ AC-GEE-4.
+  - AC-GEE-1 (줌인 고정): zoom 1 이상에서 확대해도 화면 두께가 변하지 않는다.
+  - AC-GEE-2 (줌아웃 비례): zoom 1 미만에서 화면 두께가 콘텐츠와 함께 얇아지고(단조), 최소 0.25px 는 남는다.
+  - AC-GEE-3 (굵기=개수): 같은 개수면 신뢰도가 달라도 굵기가 동일하고, 개수가 늘면 로그로 굵어지며 상한에서 포화한다.
+  - AC-GEE-4 (진하기=신뢰도): inferred < candidate < trusted 로 진하기가 단조 증가하고, 다발 키는 방출되지 않는다.
 - REQ-20260728T135111-graph-edge-screenspace (20260728T1351-graph-edge-screenspace, **Minor §12.3** — feature-0003 web/UI 프론트 `static/graph/` 3모듈, 렌더 좌표계 변경·비파괴; 그래프 정본 feature-0016 §85, RBAC/스키마/백엔드/엔드포인트 무변경): 사용자 리포트 3건을 반영한다. **R1 굵기 변성 제거** — 굵기가 model 좌표라 world scale 이 곱해져 줌·포커스마다 두께가 변했고(§84 의 `max(1,…)` 바닥 보정이 화면 고정/model 고정 두 체제를 만들어 악화), 확대 시 선·화살촉·다발이 리본처럼 부풀었다 → **screen-space 고정**(`edgeScreenScale = 1/zoom`)으로 굵기·화살촉·다발 간격을 화면 픽셀로 해석하고, 줌 변화가 ≈25% 를 넘으면 전 엣지 in-place 재페인트(rAF 코얼레싱)해 화면 두께를 유지한다. **R2 프로시저·함수 관계선 LOD 축약 제거**(직접·집계 두 경로, REFERENCES LOD 는 유지). **R3 점선 폐지 → 신뢰도 굵기 단일 축**: ROUTINE_USES·candidate·교차DB 대시를 모두 제거해 실선화하고, 굵기 서열(화면 px)을 trusted 1.6 > ROUTINE_USES 1.3 > candidate 1.0 > 교차DB 1.0~1.15 > inferred 0.75 로 재편(종류=색, 방향=화살촉). ROUTINE_USES 는 AGE 속성이 `relation_type`·`cross_ds` 뿐인 **확정 참조**(루틴 본문 파싱)라 trusted 바로 아래에 둔다. REV-20260728T135111-graph-edge-screenspace. AC-GES-1 ~ AC-GES-4.
   - AC-GES-1 (굵기 불변): 줌 0.1~4 전 구간에서 관계선의 **화면** 두께가 동일하고, model 굵기는 zoom 에 반비례한다.
   - AC-GES-2 (줌 재동기화): 줌 변화가 임계(≈25%)를 넘을 때만 재페인트가 예약되고, 미세 줌·동일 줌은 no-op.

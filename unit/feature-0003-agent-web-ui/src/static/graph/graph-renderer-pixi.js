@@ -20,18 +20,27 @@
 //   모듈 상수로 고정한다(대다수 엣지가 단일 가닥 = 최다 호출 경로의 GC 압력 제거). 불변 사용.
 const EDGE_NO_STRAND = [0];
 
-// graph-edge-screenspace(§85): 관계선 굵기·화살촉·다발 간격은 **screen-space** 로 고정한다.
-//   즉 style 의 값을 화면 픽셀로 해석하고, 렌더 시 model 좌표로 되돌린다(`/zoom`).
+// graph-edge-encoding(§86): 두께의 줌 정책 = **줌인은 화면 고정, 줌아웃은 콘텐츠 비례**.
 //
-//   왜 필요한가 — 굵기를 model 좌표로 두면 world scale 이 그대로 곱해져 **줌·포커스 이동마다 선 굵기가
-//   변한다**(사용자 리포트: "카메라 줌 수준, 포커스 인/아웃에 따라 관계선의 굵기가 변성"). §84 의
-//   `edgeWidthBoost` 는 줌아웃 소실만 막으려고 `max(1, …)` 로 **바닥만** 걸었는데, 그 결과 임계 줌을
-//   경계로 (a) 화면 고정 구간과 (b) model 고정(=줌 비례 확대) 구간이 갈려 굵기 거동이 두 체제로 쪼개졌다.
-//   확대할수록 선이 굵어져 다발·화살촉이 리본처럼 부푸는 것도 같은 원인이다.
-//   screen-space 고정은 두 문제를 한 번에 없앤다 — 어떤 줌에서도 같은 굵기라 굵기가 오직 **의미
-//   (신뢰도·관계 종류)** 만 인코딩한다. 상용 그래프 도구(Neo4j Bloom·Gephi·Cytoscape)의 기본 관례이기도 하다.
-//   곡률·다발 오프셋의 *위치* 는 model 기하(노드 간 상대 관계)이므로 그대로 두고, *두께성* 값만 환산한다.
-function edgeScreenScale(zoom) { return 1 / Math.max(0.02, zoom || 1); }
+//   경위 — §84 는 줌아웃 소실만 막으려 화면 두께에 *바닥* 을 걸었고(줌인 구간은 model 고정 = 확대할수록
+//   굵어짐), §85 는 그 변성을 없애려 전 구간 화면 고정으로 갔다. 그런데 전 구간 고정은 반대편 실패를
+//   낳는다 — 극단 줌아웃에서 노드·간격은 작아지는데 선만 같은 두께로 남아 **선이 화면을 뒤덮는다**
+//   (사용자 리포트 + 스크린샷). 두 실패는 같은 축의 양극이고, 옳은 답은 구간별로 다른 정책이다.
+//
+//   `w_screen = clamp(base · min(1, zoom/ZFULL), MIN, base)` ⟹ `w_model = w_screen / zoom`
+//     - zoom ≥ ZFULL : w_screen = base            → 확대해도 굵어지지 않는다(§85 가 고친 변성).
+//     - zoom < ZFULL : w_screen ∝ zoom            → 축소하면 콘텐츠와 함께 얇아진다(화면을 가리지 않음).
+//     - 하한 MIN     : 완전 소실만 막는다          → 저밀도 단선은 희미해도, 겹치면 alpha 누적으로 드러난다.
+//   즉 model 좌표로는 "줌아웃 구간에서 상수, 줌인 구간에서 1/zoom" 이다.
+const EDGE_ZFULL = 1;            // 이 줌 이상에서 화면 두께를 고정(=기준 배율)
+const EDGE_MIN_SCREEN_W = 0.25;  // 극단 줌아웃에서도 남기는 최소 화면 두께(완전 소실만 방지 — 기본
+                                 //   굵기 0.6 대비 충분히 낮아야 줌아웃 비례 구간이 평탄해지지 않는다)
+// 화면 기준 두께(px)를 현재 줌에서 쓸 model 두께로 환산.
+function edgeModelWidth(baseScreen, zoom) {
+  const z = Math.max(0.02, zoom || 1);
+  const w = Math.max(EDGE_MIN_SCREEN_W, Math.min(baseScreen, baseScreen * (z / EDGE_ZFULL)));
+  return w / z;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 순수 로직 (엔진 무관) — node vm 테스트 대상
@@ -1277,9 +1286,9 @@ export class PixiGraphAdapter {
     const color = s.stroke || "#cbd2db";
     const lowFi = !!this._lowFi;
     const zoom = (this._cam && this._cam.zoom) || 1;
-    // §85: style.lineWidth 는 **화면 픽셀** 단위 — model 로 환산해 줌과 무관하게 같은 두께로 그린다.
-    const sc = edgeScreenScale(zoom);
-    const lw = (s.lineWidth || 1.4) * sc;
+    // §86: style.lineWidth 는 **화면 픽셀** 기준값 — 줌 정책(줌인 고정·줌아웃 비례)을 태워 model 로 환산.
+    const lw = edgeModelWidth(s.lineWidth || 1.4, zoom);
+    const sc = lw / (s.lineWidth || 1.4);   // 화살촉·다발 간격에 같은 정책을 태우기 위한 실효 배율
     const arc = PixiAdapterPure.edgeArc(a, b, s.curve || 0, s.curveMax, s.curveMin);
     const nStrand = lowFi ? 1 : Math.max(1, Math.min(6, (s.strands | 0) || 1));
     // 다발 간격도 화면 기준 — model 로 두면 줌아웃에서 가닥이 겹쳐 볼륨 표현이 사라진다(§85).
