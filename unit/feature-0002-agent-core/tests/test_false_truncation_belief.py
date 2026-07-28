@@ -105,10 +105,14 @@ def test_cell_truncation_stats_out_param(monkeypatch):
 
 
 def test_zero_row_result_gets_symmetric_signal(monkeypatch):
-    """0행 결과도 "도구가 자른 게 아니다" 를 명시 — '없다' 허위 단정의 최다 진입점(패널 MINOR)."""
+    """0행 결과도 "도구가 자른 게 아니다" 를 명시 — '없다' 허위 단정의 최다 진입점(패널 MINOR).
+
+    문구는 FR-false-absence-zero-row-catalog-scope(라이브 실측) 후 **부재 부정 우선**으로 강화됐다.
+    """
     _patch_exec(monkeypatch, [])
     out = T._tool_execute_sql(None, {"sql": "SELECT 1 WHERE 1=0"})
-    assert "조회 결과 0행" in out and "도구가 자른 것이 아니라" in out
+    assert "조회 결과 0행" in out and "도구가 자른 것은 아닙니다" in out
+    assert "0행은 '데이터가 없다'의 증거가 아닙니다" in out
     assert "전부**" not in out
 
 

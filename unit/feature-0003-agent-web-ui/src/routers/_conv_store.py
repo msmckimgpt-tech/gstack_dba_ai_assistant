@@ -5181,6 +5181,14 @@ def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: s
         if routine:
             return f"`{routine}` 프로시저/함수 정의를 확인한다"
         return "저장 프로시저/함수 정의를 확인한다"
+    if tool_name == "search_routines":
+        keyword = str(payload.get("keyword") or "").strip()
+        db = str(payload.get("database") or "").strip()
+        if keyword and db:
+            return f"`{db}`에서 `{keyword}` 관련 저장 프로시저/함수를 찾는다"
+        if keyword:
+            return f"`{keyword}` 관련 저장 프로시저/함수를 찾는다"
+        return "저장 프로시저/함수 목록을 열거한다"
     if tool_name == "search_tables":
         keyword = str(payload.get("keyword") or "").strip()
         schema = str(payload.get("schema_name") or "").strip()

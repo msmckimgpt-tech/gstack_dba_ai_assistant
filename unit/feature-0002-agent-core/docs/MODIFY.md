@@ -513,3 +513,25 @@ source_of_truth: true
 - **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`
 - **위험등급**: Minor(문서 전사 — 런타임 무영향, 배포 불필요). **Rollback**: status 문자열 원복 + 실측 절 제거.
 - **Cross-ref**: CHG/TASK/REV-20260727T175800-false-truncation-belief · CHG-20260727T185742-…-deploy-status · REV-20260728T104438-…-live-verified · FR-false-absence-zero-row-catalog-scope · PR #963.
+
+## CHG-20260728T114459-false-absence-catalog-scope — 0행→허위 부재 봉인: 루틴 열거 도구 + 카탈로그 스코프 인지 (Major §12.3, 보안 경계 완화 포함)
+> 계기: FR-false-truncation-belief **라이브 실측(2026-07-28)** 중 관측된 별개 축. 모델이 `masangsoftweb` 에 "저장 프로시저가 전혀 없습니다 / 0개" 라고 단정했으나 ground truth 는 **472 PROCEDURE + 10 FUNCTION = 482건**. 사용자 지시로 근본원인 규명 후 수정(범위 결정: RC-B 포함).
+- **근본원인 (ground truth 대조로 확정, 5층)**:
+  - **표층**: 모델이 2-part `INFORMATION_SCHEMA.ROUTINES` + `WHERE ROUTINE_CATALOG='masangsoftweb'` 를 실행. product 117 의 접근 DB 를 `(SortOrder, SchemaName)` 로 정렬한 첫 항목이 `_INDY_STATISTIC`(SortOrder 10)이라 연결은 거기 auto-pin 되고, `masangsoftweb` 은 28개 허용 DB 중 하나다 → 그 메타뷰의 `ROUTINE_CATALOG` 는 항상 `_INDY_STATISTIC` 이므로 **정의상 매치 불가 = 구조적 항상 0행**. 0행은 부재가 아니라 스코프 불일치였다.
+  - **RC-A(능력 공백)**: 도구 16종에 **루틴을 열거하는 도구가 없다**(`describe_routine` 은 정확한 이름 필요, `search_tables`/`describe_schema` 는 테이블 전용) → "어떤 프로시저가 있나" 에 답하려면 카탈로그 SQL 을 **손으로 써야** 했다.
+  - **RC-B(가드가 정본 경로를 닫음)**: MSSQL 정석인 `sys.objects`·`OBJECT_DEFINITION()`·`db_name()` 이 전부 차단(라이브 msg 5675/5677/5679 실증) → 남는 길이 INFORMATION_SCHEMA 뿐.
+  - **RC-C(grounding 공백)**: 프롬프트의 2-part/3-part 규칙이 **user table 기준**이라 메타뷰가 카탈로그 스코프라는 사실이 없었다 → 모델은 규칙을 지킨 쿼리를 썼다.
+  - **RC-D(피드백 공백)**: 0행에 스코프 진단 없음. 코드베이스에 `_mssql_crossdb_hint` 관용구가 이미 있고 `describe_schema` 빈 결과엔 쓰는데 freeform 경로엔 미적용.
+  - **RC-E(인식)**: 0행 → 부재 단정(배포 전 base rate 89건 중 5건 — 기존 실패 모드).
+  - **계보**: 프로젝트는 **이미 같은 실패 모드를 봉인**한 적이 있다(`FR-mssql-crossdb-structured-discovery`, 2026-07-14 — "MSSQL 카탈로그 뷰는 DB별이라 pin 된 DB만 보고 다른 DB 객체를 없음으로 오판"). 그 수정이 **구조화 도구에만** 적용됐고 루틴 열거에는 애초에 도구가 없어 freeform 으로 샜다. 본 변경은 그 봉인의 **누락된 형제**다.
+- **무엇을 (5 lever)**:
+  - **A** 신규 도구 `search_routines` — `search_tables` 의 cross-DB 패턴 그대로(허용 DB 전체 sweep, `database`/`schema_name` 선택, DB-qualified 반환). MSSQL 은 4000자 절단되는 `INFORMATION_SCHEMA.ROUTINE_DEFINITION` 대신 `sys.sql_modules.definition` 으로 **본문까지** 검색(원 사용자 의도 "문서 조회 프로시저 탐색" 은 이름만으론 불가능). 루틴 타입은 CLR/확장/복제필터 포함(`P,PC,X,RF,FN,IF,TF,FS,FT,AF`). `keyword` **선택**(열거 질의 지원). per-DB 실패·상한 포화를 **항상 명시 고지**.
+  - **B(보안 경계)** freeform 의 `sys` **전면 차단** → **DB 스코프 카탈로그 뷰 화이트리스트 21종**(`dialects.safe_sys_views()`)만 허용. 서버 스코프(`databases`/`dm_*`/로그인·주체), `synonyms`(linked server·타 DB 명 노출), `guest`/`db_*` 스키마, 메타데이터 **함수**(문자열 리터럴 인자라 AST catalog 게이트가 못 봄)는 계속 차단. 판정은 `sql_guard.collect_schema_object_refs` 의 `(schema, object)` all-or-nothing 대조.
+  - **C** MSSQL 프롬프트에 `CATALOG VIEWS ARE PER-DATABASE` — "2-part 메타뷰 + 다른 카탈로그 필터는 **절대** 행을 반환할 수 없다", 빈 카탈로그 결과는 **스코프의 증거이지 존재의 증거가 아님**, 루틴 열거는 `search_routines`. `sys` 경계 문구는 화이트리스트 SSOT(`_safe_sys_views_phrase`)로 생성해 코드↔프롬프트 불일치를 구조적으로 차단.
+  - **D** `_catalog_scope_hint` — 카탈로그 메타뷰를 **catalog 자격 없이** 조회하면 **행 수와 무관하게** 현재 pin DB·다른 허용 DB·대체 경로를 제시. AST 기반이라 `[sys].[objects]` 등 인용 변형을 잡고 문자열 리터럴·주석엔 오발화하지 않으며, 이미 3-part 인 쿼리엔 붙지 않는다. 진단이 붙는 결과엔 완전성 단정을 억제.
+  - **E** 0행 문구를 "**0행은 '데이터가 없다'의 증거가 아닙니다**" 우선 프레이밍으로. SYSTEM_PROMPT `ZERO ROWS IS NOT ABSENCE` 는 **메타데이터/카탈로그 조회 또는 스코프 경고 동반 시**로 한정(정당한 업무 0행·표적 probe 는 기존 규칙 유지 — 과교정 방지).
+- **파일**: `modules/tools.py`(도구 정의·핸들러·가드 판정·스코프 진단·0행 문구), `modules/dialects.py`(`search_routines` MySQL/MSSQL·`safe_sys_views`), `modules/sql_guard.py`(`collect_schema_object_refs`·`_collect_qualified_func_refs_named`·TSQL forbidden 함수/접두), `agent_core.py`(프롬프트 3곳·SSOT 헬퍼·step 서술 2곳), `feature-0003 routers/_conv_store.py`(step 서술 1곳), 테스트 3파일.
+- **호환/안전**: MySQL 경로 **동작 무변경**(`safe_sys_views()` 빈 집합, RC-B 코드는 `engine=="mssql" and active_ds` 블록 안). M1 불변식(시스템 DB catalog 차단)·DB allowlist·pin gate·RBAC·`_safe_ident` 불변. 스키마/마이그레이션 0. 신규 도구는 additive.
+- **위험등급**: Major(§12.3 — 코어 프롬프트 + 도구 표면 + **보안 경계 완화**) → 사용자 범위 결정 후 §18.8 적대 3렌즈 **2라운드** + PR/deploy confirm.
+- **Rollback**: `safe_sys_views()` 를 빈 집합으로 되돌리면 RC-B 만 즉시 원복(나머지 lever 는 독립). 전면 롤백은 신규 도구·프롬프트 3곳·진단 헬퍼·수집기 확장 제거.
+- **Cross-ref**: FRICTION_LEDGER FR-false-absence-zero-row-catalog-scope · 선행 FR-mssql-crossdb-structured-discovery(같은 실패 모드의 구조화-도구 판) · FR-false-truncation-belief(본 축을 실측으로 노출) · REV-20260728T114459-false-absence-catalog-scope.

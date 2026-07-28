@@ -1577,3 +1577,20 @@ TASK-0015 (plan-review):
 - [x] **라이브 대화 실측 완료(2026-07-28)** — 재현 대화 `20260728012534-a56ec98e`(product 117 / `claude-haiku-4`, 원 대화 동일 조건) 3 turn: 오귀속 시그니처 **0건**(대량 완전 결과 291행 카운트 + 200행 렌더 turn 포함) · 셀 절단 시 완전성 억제 + 마커 실증(20행 완전 + 13셀 절단) · 진짜 절단(루틴 482건 목록)엔 기존 경고 유지 · 구 트리거 어휘 0건/신규 안내문 9건 · 원 불만 대상 `MSP_SELECT_COMMENT_LIST` 2,386자 전문 수신(`END` 완결). corroboration distinct_conv 1→0(분모 23 assistant msg/4 conv 로 작음 — 판정 근거는 직접 재현+기전). offset 페이징은 실데이터 미도달(정의 35건 max 7,732자 « 창 99,000) → 배포본 직접 호출로 검증. 원장 `fixed:deployed:verified` 전이.
 - worktree `ai/root/feature-0002-agent-core`(base main cdf4acf1) → 후속 원장 전이 cycle `ai/claude-corp/feature-0002-agent-core`(base main ef24448c).
 정본 rationale=REVIEW REV-20260727T175800-false-truncation-belief, 변경이력=MODIFY CHG-20260727T175800-false-truncation-belief.
+
+### TASK-20260728T114459-false-absence-catalog-scope — 0행→허위 부재 봉인: 루틴 열거 도구 + 카탈로그 스코프 인지 (Major §12.3, 2026-07-28)
+FR-false-truncation-belief 라이브 실측 중 관측된 별개 축을 사용자 지시로 근본 규명·수정. 모델이 `masangsoftweb` 에 "프로시저 0개" 를 단정했으나 실제 **482건**. 원인은 "모델이 쿼리를 잘못 씀" 이 아니라 **구조적으로 항상 0행인 쿼리로 몰리는 경로**였다 — 루틴 열거 도구 부재(RC-A) + MSSQL 정본 경로 차단(RC-B) + 메타뷰 카탈로그 스코프 grounding 공백(RC-C) + 0행 스코프 진단 부재(RC-D) + 0행→부재 단정(RC-E). 사용자 범위 결정: **RC-B 포함**(보안 경계 재검토).
+
+#### 완료 체크리스트
+- [x] 근본원인 5층 규명 + ground truth 대조(`WebProductDatabases` pin=`_INDY_STATISTIC`, 루틴 472+10)
+- [x] 선행 봉인 계보 확인 — `FR-mssql-crossdb-structured-discovery` 의 **누락된 형제**임을 확정
+- [x] A: `search_routines` 신설(cross-DB sweep·본문 검색·CLR/확장 타입 포함·keyword 선택·실패/포화 명시 고지)
+- [x] B: `sys` 전면차단 → DB 스코프 카탈로그 뷰 화이트리스트 21종(서버 스코프·`synonyms`·`guest`/`db_*`·메타데이터 함수는 계속 차단)
+- [x] C: MSSQL 프롬프트 `CATALOG VIEWS ARE PER-DATABASE` + `sys` 경계 문구 SSOT 생성
+- [x] D: `_catalog_scope_hint` — AST 기반·행수 무관·3-part 제외·진단 시 완전성 억제
+- [x] E: 0행 문구 부재-부정 우선 + `ZERO ROWS IS NOT ABSENCE` 를 메타데이터 맥락으로 한정(과교정 방지)
+- [x] §18.8 적대 3렌즈 패널 **1라운드**: BLOCKER 3 / MAJOR 9 / MINOR 8 → 전건 반영(TVF piggyback·agent_memory 누출·COUNT 형태 미개입·pin DB AttributeError 등)
+- [x] 신규 `tests/test_false_absence_catalog_scope.py` **34건**(패널이 뚫은 경로 전부 회귀 가드) + 기존 보안 테스트 강화
+- [ ] §18.8 **2라운드** security 재검증 → verify-completion → PR·머지 → 배포 → 라이브 재실측(동일 질문으로 "0개" 오판 소멸 확인)
+- worktree `ai/claude-corp/feature-0002-agent-core`.
+정본 rationale=REVIEW REV-20260728T114459-false-absence-catalog-scope, 변경이력=MODIFY CHG-20260728T114459-false-absence-catalog-scope.

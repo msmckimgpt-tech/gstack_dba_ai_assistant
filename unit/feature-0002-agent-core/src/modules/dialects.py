@@ -176,6 +176,30 @@ class Dialect:
     def search_tables(self, keyword: str, sys_exclude: str, where_schema: str, db: str = "") -> str:
         raise NotImplementedError
 
+    def search_routines(self, keyword: str, schema: str = "", sys_exclude_schemas: "frozenset|set|tuple" = (), db: str = "") -> str:
+        """저장 루틴(PROCEDURE/FUNCTION) **열거·검색** SQL (FR-false-absence-zero-row-catalog-scope).
+
+        `schema` 는 **원시 스키마명**(빈값=전체)이고 각 dialect 가 자기 컬럼식으로 조립한다 —
+        문자열 조각(`AND t.TABLE_SCHEMA = …`)을 받아 치환하던 초기안은 caller 와의 문서화되지 않은
+        결합이라 MSSQL dialect + 비활성 datasource 조합에서 잘못된 컬럼을 주입했다(§18.8 패널).
+        `sys_exclude_schemas` 는 열거에서 제외할 시스템/내부 스키마(공백이면 제외 없음).
+        `keyword` 가 빈 문자열이면 **필터 없이 전체 열거**(개수 파악용).
+
+        컬럼 계약(엔진 무관, 위치 파싱): ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE.
+        이름·정의 본문에 keyword 가 포함된 루틴을 찾는다(본문 검색이라 "문서 조회 프로시저" 처럼
+        **이름만으로는 못 찾는** 탐색 의도를 충족). read-only 카탈로그 조회.
+        """
+        raise NotImplementedError
+
+    def safe_sys_views(self) -> frozenset:
+        """freeform 에서 **읽기 허용**하는 시스템 스키마 카탈로그 뷰 (lowercase view 명).
+
+        기본은 빈 집합(=시스템 스키마 전면 차단, 종전 동작). 엔진이 DB(catalog) 스코프임이 보장된
+        구조 카탈로그 뷰만 열거해 overblock 을 푼다 — 서버 스코프 뷰(`databases`/`dm_*`/로그인·
+        주체 뷰)는 **절대 포함하지 않는다**(제품 DB allowlist 를 우회하는 정보 노출 경로).
+        """
+        return frozenset()
+
     # ── 사전 부하추정 / 실행계획 (P6 부하게이트 — dialect 별 처리) ──
     def estimate_load_rows(self, run, sql: str) -> int | None:
         """사전 부하추정: 본 쿼리를 **실행하지 않고** 예상 처리 행수를 산출.
@@ -308,6 +332,35 @@ class MySQLDialect(Dialect):
             )
         ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
         LIMIT 50
+    """
+
+    def search_routines(self, keyword: str, schema: str = "", sys_exclude_schemas=(), db: str = "") -> str:
+        # MySQL 의 information_schema 는 **인스턴스 전역**이라 catalog 접두가 불필요(db 인자 무시).
+        # ROUTINE_DEFINITION(본문)까지 LIKE 검색 — 이름에 안 드러나는 조회 대상을 찾기 위함.
+        # 시스템·내부 스키마 제외는 `search_tables` 와 대칭으로 **필수**(§18.8 BLOCKER: 누락 시
+        # allowlist 무관 영구차단 대상인 agent_memory 루틴까지 열거·본문매칭됐다).
+        where = ""
+        if schema:
+            where += f"\n            AND ROUTINE_SCHEMA = '{schema}'"
+        for s in sorted(sys_exclude_schemas or ()):
+            where += f"\n            AND ROUTINE_SCHEMA != '{s}'"
+        if keyword:
+            where += (
+                f"\n            AND (\n"
+                f"                ROUTINE_NAME LIKE '%{keyword}%'\n"
+                f"                OR COALESCE(ROUTINE_DEFINITION, '') LIKE '%{keyword}%'\n"
+                f"                OR COALESCE(ROUTINE_COMMENT, '') LIKE '%{keyword}%'\n"
+                f"            )"
+            )
+        return f"""
+        SELECT
+            ROUTINE_SCHEMA,
+            ROUTINE_NAME,
+            ROUTINE_TYPE
+        FROM information_schema.ROUTINES
+        WHERE 1=1{where}
+        ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME
+        LIMIT 51
     """
 
     def estimate_load_rows(self, run, sql: str) -> int | None:
@@ -447,6 +500,21 @@ class MSSQLDialect(Dialect):
     # describe_* 구조화 도구(내부적으로 sys.* 를 쓰되 결과를 allowlist 로 필터)가 담당하므로, freeform
     # 의 sys.* 직접 조회는 차단해도 기능 손실이 없다. db_* 역할 스키마도 metadata 아님.
     _META = frozenset({"information_schema"})
+
+    # RC-B: freeform 읽기 허용 `sys` 카탈로그 뷰 — **DB(catalog) 스코프 구조 뷰만**.
+    # 서버 스코프(databases/dm_*/로그인·주체/구성) 는 의도적 제외(safe_sys_views docstring 참조).
+    _SAFE_SYS_VIEWS = frozenset({
+        "objects", "procedures", "tables", "views", "columns", "schemas",
+        "sql_modules", "parameters", "types", "indexes", "index_columns",
+        "foreign_keys", "foreign_key_columns", "key_constraints",
+        "check_constraints", "default_constraints", "triggers",
+        # `synonyms` 의도적 제외(§18.8 MINOR): base_object_name 이 allowlist 밖 DB·linked server 명을
+        # 그대로 노출해 "DB 스코프만 기술" 안전 논거의 반례이고, RC-A 에 불필요(최소범위 원칙).
+        "sequences", "identity_columns", "computed_columns", "extended_properties",
+        # 행수 관용구(`SUM(p.rows) FROM sys.partitions p WHERE p.index_id < 2`)·의존성 분석은
+        # "몇 건인가" 라는 원 질문 유형의 정본 경로다. 넷 다 현재 DB 범위만 기술(§18.8 2R MINOR).
+        "partitions", "allocation_units", "stats", "sql_expression_dependencies",
+    })
 
     # MSSQL 시스템 데이터베이스(catalog 차원). DB allowlist 무관 항상 catalog 허용(완결성). 단 그 안의
     # `sys`/`guest`/`db_*` 스키마는 `_SYS`(system_schemas)로 계속 차단 → master.sys.sql_logins 거부(M1 보존).
@@ -606,6 +674,56 @@ class MSSQLDialect(Dialect):
             )
         ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
     """
+
+    def search_routines(self, keyword: str, schema: str = "", sys_exclude_schemas=(), db: str = "") -> str:
+        # SQL Server 의 카탈로그는 **DB(catalog)별** — `[db].` 접두로 다른 허용 DB 를 훑는다
+        # (search_tables 와 동일 패턴, FR-mssql-crossdb-structured-discovery 계보).
+        # 본문은 INFORMATION_SCHEMA.ROUTINE_DEFINITION(4000자 절단) 대신 **sys.sql_modules.definition**
+        # (nvarchar(max))로 검색해야 4000자 뒤에 있는 참조 테이블도 잡힌다.
+        # 타입 필터(§18.8 패널 MAJOR): P/FN/IF/TF 만 보면 CLR(PC/FS/FT/AF)·확장(X)·복제필터(RF)
+        # 루틴이 통째로 빠져 **부재 방지 도구 안에 새 허위 부재**가 생긴다(그 루틴들은
+        # INFORMATION_SCHEMA.ROUTINES·describe_routine 으로는 보인다). CASE 도 함께 넓혀 오분류 방지.
+        # TOP 51 = 상한 50 + **포화 감지용 1건**(caller 가 절단을 명시 고지).
+        c = self._cat(db)
+        where = ""
+        if schema:
+            where += f"\n            AND SCHEMA_NAME(o.schema_id) = '{schema}'"
+        for s_ in sorted(sys_exclude_schemas or ()):
+            where += f"\n            AND SCHEMA_NAME(o.schema_id) != '{s_}'"
+        if keyword:
+            where += (
+                f"\n            AND (\n"
+                f"                o.name LIKE '%{keyword}%'\n"
+                f"                OR COALESCE(m.definition, '') LIKE '%{keyword}%'\n"
+                f"            )"
+            )
+        return f"""
+        SELECT TOP 51
+            SCHEMA_NAME(o.schema_id) AS ROUTINE_SCHEMA,
+            o.name AS ROUTINE_NAME,
+            CASE WHEN o.type IN ('P', 'PC', 'X', 'RF') THEN 'PROCEDURE' ELSE 'FUNCTION' END AS ROUTINE_TYPE
+        FROM {c}sys.objects o
+        LEFT JOIN {c}sys.sql_modules m ON m.object_id = o.object_id
+        WHERE o.type IN ('P', 'PC', 'X', 'RF', 'FN', 'IF', 'TF', 'FS', 'FT', 'AF'){where}
+        ORDER BY SCHEMA_NAME(o.schema_id), o.name
+    """
+
+    def safe_sys_views(self) -> frozenset:
+        """freeform 에서 읽기 허용하는 **DB 스코프** `sys` 카탈로그 뷰.
+
+        RC-B(FR-false-absence-zero-row-catalog-scope): `sys` 스키마 전면 차단이 SQL Server 의 정본
+        구조 탐색 경로를 닫아, 모델을 "2-part INFORMATION_SCHEMA + 다른 카탈로그 필터"(구조적 항상
+        0행)로 몰았다. 여기 열거된 뷰는 **현재 DB 범위만 기술**하므로, 이미 선행하는 catalog(DB)
+        allowlist 검사와 결합하면 제품 경계를 넘지 않는다.
+
+        **의도적 제외(서버 스코프 = allowlist 우회 노출)**: `databases`·`master_files`·`dm_*`(DMV)·
+        `server_principals`·`sql_logins`·`syslogins`·`credentials`·`configurations`·`endpoints`·
+        `availability_*` 등. 화이트리스트 방식이라 신규 서버 스코프 뷰가 생겨도 자동 차단된다.
+        **메타데이터 함수는 계속 차단**(`OBJECT_ID`/`OBJECT_DEFINITION`/`DB_NAME` …) — 인자가 문자열
+        리터럴이라 AST catalog 게이트가 볼 수 없어 `OBJECT_DEFINITION(OBJECT_ID('master.dbo.x'))`
+        같은 우회가 성립한다.
+        """
+        return self._SAFE_SYS_VIEWS
 
     def _showplan(self, run, sql: str):
         """`SET SHOWPLAN_ALL ON` → sql(미실행, 추정 실행계획 반환) → `OFF`. result_sets | None.
