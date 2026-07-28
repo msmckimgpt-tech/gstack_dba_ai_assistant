@@ -50,3 +50,21 @@ def test_base_messages_preserved_and_not_mutated():
     # base 전체가 순서대로 앞에 보존된다.
     assert out[: len(base)] == base
     assert len(out) == len(base) + 2
+
+
+# ── answer-origin-realign: 대화 목표 보조 앵커의 누출 게이트 (2026-07-28) ────
+# thread_goal/origin_request 는 대화의 (가려졌을 수 있는) 첫 요청에서 파생된 자유 텍스트라
+# message id 에 묶이지 않아 공유창 visibility window 로 자를 수 없다. bounded 발신자에게
+# 주입하면 수정 지시가 가려진 구간 요약을 그 발신자의 생성 컨텍스트로 실어나른다.
+
+def test_realign_thread_goal_suppressed_for_bounded_sender():
+    assert agent_core._realign_thread_goal("이 대화의 목표", True) == ""
+
+
+def test_realign_thread_goal_passthrough_for_unbounded_sender():
+    assert agent_core._realign_thread_goal("이 대화의 목표", False) == "이 대화의 목표"
+
+
+def test_realign_thread_goal_normalizes_empty():
+    assert agent_core._realign_thread_goal(None, False) == ""
+    assert agent_core._realign_thread_goal("", False) == ""

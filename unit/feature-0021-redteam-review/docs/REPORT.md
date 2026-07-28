@@ -64,6 +64,16 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 - 총 변경 횟수: 9+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정 · 모델 정합 ·
   revise prefill 수정 · 수렴 반복 검증 · 적대 패널 반영 · POST-DEPLOY 검증)
 
+- CHG-20260728-0002 — **원 요청 정합 교정 (answer-origin-realign)** (사용자 요청). 자가 검증
+  후 전달되는 답변이 처음 요청사항이 아니라 **직전 문맥(내부 리뷰 결함 목록)에 응답하는
+  뉘앙스**를 띠던 결함. 근본 원인은 수정 지시가 초안 컨텍스트의 trailing user turn 이라
+  생성 지점 최근접 맥락이 결함 목록이라는 **구조**(2026-07-24 prefill 회귀 방지 불변식의
+  부작용)다. 그 배치는 유지한 채 같은 recency 지렛대를 반대로 써서 ① 지시 **맨 끝**에 원 요청
+  재앵커 + 출력 계약(추가 호출 0), ② 잔재는 결정론 탐지 + 내용 보존 재서술 1회(콜백 내부 →
+  verify 통과). 폐기 가드(무산출·60% 미만 길이·메타 잔존)·연속 거절 2회 비용 가드·
+  `REDTEAM_ANSWER_REALIGN` 스위치·bounded 발신자 `thread_goal` 억제. 마이그레이션 없음.
+  상세 MODIFY.md · REV-20260728T093528.
+
 ## 4. Open Issues
 - make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):
   runtime_settings 2건은 `.env` 의 AGENT_TIMEOUT_SEC=300 이 기본값 60 단정과 충돌 (main 동일
@@ -87,9 +97,16 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   공유창 window 격리 fail-closed 인과 확정(동일 대화 플래그 토글 0건↔1건) · PB-0008 실
   Windows 브라우저로 '결함 잔존 전달 (7d)' 타일 · 타임라인 ③④⑤ · 미해소 지적 앰버 블록 ·
   설정 패널 신규 5항목 렌더 확인. 실증용 임시 행 2건은 삭제·잔존 0 확인.
+- (2026-07-28 CHG-20260728-0002) answer-origin-realign 후 **전체 2814 passed / 0 failed**
+  (동일 컨테이너·동일 명령의 main baseline 2791 대비 순증 23 = 신규 테스트 수, 회귀 0) ·
+  ruff clean · 마이그레이션 없음 · 프론트 자산 무변경. 인라인 자기검증에서 MAJOR2(재추론
+  재서술의 낡은 근거 되돌림 / 상한 없는 루프의 호출 증폭)+MINOR1(DBA 어휘 오탐) 적발·전건
+  커밋 전 반영. 상세 TEST.md §3 · test-runs.d/20260728T0935.
 - 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰), effort=low 로 sonnet 리뷰 타임아웃
   소멸(라이브 관찰), **실제 답변에서의 수렴 분포**(`revision_rounds>1` · `stop_reason`) —
-  배포 이후 새 판정 표본 미발생, 렌더 경로만 합성 행으로 실증 (TEST.md §4).
+  배포 이후 새 판정 표본 미발생, 렌더 경로만 합성 행으로 실증 (TEST.md §4),
+  **answer-origin-realign 의 라이브 교정 효과·재서술 발동률** (단위 테스트는 계약만 고정 —
+  문체 판정 불가, 트래픽 누적 후 stderr/`_rt_meta` 관측, TEST.md §4).
 
 ## 6. Blocked Items
 - 없음

@@ -1695,3 +1695,22 @@ rationale=REVIEW `REV-20260728T175400-cyvol-scope-prefetch-fix` ·
 변경이력=MODIFY `CHG-20260728T175400-cyvol-scope-prefetch-fix` ·
 Run=`docs/test-runs.d/20260728T175400-cyvol-scope-prefetch-fix.md` ·
 도입 cycle=`CHG-20260728T163000-graph-cypher-volume`.
+
+## TASK-20260728T182000-cyvol-scope-prefetch-postdeploy — cyvol scope-prefetch 수정 POST-DEPLOY 재확인 (종결)
+
+`TASK-20260728T175400-cyvol-scope-prefetch-fix` 의 잔여 항목("배포 → 스코프 sync 오류 소실 재확인")
+완결. 코드·자산 변경 0.
+
+### 진행
+- [x] 배포 — PR #1022 → main `44fe939d`, 전체 롤아웃(web 롤링 + 워커 + gateway), soak 통과.
+      web-a/web-b/ask-worker/insight-worker 전부 `44fe939d`
+- [x] 오류 소실 — 스코프 backfill 리포트 `errors=6` → **`errors: []`** · 워커 로그 해당 문자열 **0회**
+- [x] 데이터 무손상 — mysql-local scope `ROUTINE_USES` 601 / `ref_columns` 370
+- [x] 멱등 — 스코프 backfill 연속 2회 `with_cols` 257 불변
+- [x] 커버리지 실측(귀속 분리 표기) — cols 5,807 → 7,377 · AGE `ref_columns` 2,725 → 9,269 · scope 5 → 8
+- [x] 미해결 관측 기록 — `introspect_and_store` 예외 삼킴에 의한 **부분 성공 무음** 후보(§8.1, 미수정)
+
+### 정본
+rationale=REVIEW `REV-20260728T182000-cyvol-scope-prefetch-postdeploy` ·
+변경이력=MODIFY `CHG-20260728T182000-cyvol-scope-prefetch-postdeploy` ·
+Run=`docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md`.

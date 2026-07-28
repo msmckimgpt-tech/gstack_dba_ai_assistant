@@ -650,6 +650,17 @@ _REDTEAM_SPECS: tuple[dict[str, Any], ...] = (
         "apply_mode": "live",
     },
     {
+        "key": "REDTEAM_ANSWER_REALIGN",
+        "category": "자가 리뷰",
+        "label": "원 요청 기준 답변 정합 교정",
+        "description": "내부 검증으로 수정된 답변의 서두가 '사용자 질문'이 아니라 '내부 지적'에 응답하는 투로 남으면, 사실·수치·근거·고지를 그대로 둔 채 원 요청에 답하는 서술로 1회만 다시 쓰게 합니다 (1=사용, 0=중지). 사용자는 내부 검증을 볼 수 없으므로 그런 답변은 자기 질문과 어긋나 보입니다. 정상 답변에는 추가 호출이 발생하지 않으며(문제가 탐지될 때만 1회), 다시 쓴 결과가 짧아지거나 여전히 어긋나면 원문을 유지합니다.",
+        "unit": "0/1",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
         "key": "REDTEAM_TIMEOUT_SEC",
         "category": "자가 리뷰",
         "label": "리뷰어 호출 타임아웃",

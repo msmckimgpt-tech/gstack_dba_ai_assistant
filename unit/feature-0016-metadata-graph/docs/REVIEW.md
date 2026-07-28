@@ -409,7 +409,6 @@ source_of_truth: true
 - 대상: CHG-20260728T1750-graph-label-lod-postdeploy (TASK.md TL.10 결과표 + TL.12 후속 + MODIFY + TEST/test-runs.d + 증적 1매). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
 - 본 cycle 의 코드 적대 검증은 REV-20260728T170500 `[CODEX:frontend-render+lod]`(P1/GATE 0 · P2 2건 in-cycle 흡수)가 담당했고, 그 두 수정이 **배포본에서 실제로 발화**함을 TL.10 ⑦⑧ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
 - 기계적 점검: 배포 SHA 정합(edge `/healthz git_commit=2a843acd` = main 머지 커밋) · 서빙 자산에 두 수정 존재(`_META_LABEL_FONT_STEP` 2건 · `badgesDropped || 0` 1건) · 자산 스탬프 `?v=c9ce5fe33b65` 정합 · pageerror 0.
-
 ## REV-20260728T181100-ai-claude-corp-feature-0016-role-badge — 역할 인코딩 채널 재배치 판단 근거 (2026-07-28)
 - **문제 정의**: `node-role-viz`(§14)는 역할을 칩 **본체 fill** 로 인코딩했다. 이는 (a) 테이블만 "종류 = 본체색"
   규약에서 이탈해 노드 간 색 정합이 깨지고, (b) 색 채널이 범주와 강조를 동시에 담아 상태 테두리·검색 글로우·
@@ -470,3 +469,57 @@ source_of_truth: true
   발견하지 못했을 표면이고, 적대 검증의 가치가 실제로 발화한 지점이다.
 - **미검증 잔여**: running 상태의 실제 채도·주황 점선 판독성과 색 이모지 글리프 렌더는 GPU·폰트 의존이라
   PB-0008 라이브(RB.8)가 담당한다. 헤드리스는 alpha 전달 경로까지만 고정한다(렌더 결과 자체는 비관측).
+## REV-20260728T181000-graph-hdr-label-fit [CODEX:frontend-render+hittest] — PASS-WITH-FIXES (P1 1건 · P2 1건 전량 in-cycle 흡수)
+- 대상: CHG-20260728T1810-graph-hdr-label-fit (`graph-state.js` 폰트 파생·반동 밴드·게이트 / `graph-core.js` GH·CATH 방출 / `test_g6build_labellod.js` Section I·J·K).
+- 방법: **codex-review(`codex review --uncommitted`, codex-cli 0.145.0)** — §18.8 적대 검증. `[CODEX:*]` 는 §18.4/§18.9 의 check #9 accepted verdict. 본 세션은 `Agent` 툴 사용이 제한된 환경이고, 이 변경은 **레이아웃 상수(GGY·GHH·CATHH)와 hit-test 구현(`nodeBBox`·zIndex)을 함께** 봐야 판정되므로 repo 접근 리뷰어가 적합하다.
+- **CONFIRMED(P1/GATE, 수정)** — *칩 hit 영역이 이웃 그룹 블록을 침범해 클릭을 가로챈다.* 칩을 폰트에 무제한 비례시키면 폰트 64(=`MAX`)에서 높이 ~110 world 가 되고, 하단이 `top+22` 로 고정돼 **위 그룹 블록 안으로 72 world 침범**한다(실측: 그룹 행 간격 `GGY=16`, 행1 블록 40~168 / 행2 칩 하단 206). GH·CATH 는 `_METZ.GROUP_HD`(5) = 테이블 칩(4) 위 드래그 핸들이고 `PixiAdapterPure.hitTest`/`buildHitGrid` 가 `nodeBBox(style.size)` bbox + zIndex 로 판정하므로 **위 그룹 테이블의 클릭·드래그가 헤더에 먹힌다** — memory 에 2회 재발로 기록된 z-order↔hit-test 결함 계열(§52 · CAT_BG 우클릭 오라우팅)의 재발. **작성자(나)의 "reflow 0 이니 팔출은 안전" 판단이 불완전했다**: 자기 멤버 영역은 침범하지 않지만 *이웃 블록* 과 *hit 영역* 을 검토하지 않았다. **수정**: 칩(=hit 영역)만 상한으로 묶고 **폰트는 유지** — 라벨은 hit 대상이 아니라(두 함수가 `style.size` 만 본다) 텍스트가 칩을 넘어도 상호작용 영향 0, 판독성 이득 보존. 상한 GH `22+GGY=38` / CATH `27`(밴드 위쪽은 **상수로 보장된 간격이 없다** — 클러스터 shelf-pack 높이 파생이라 데이터 의존, 실측 56 이지만 구조적 하한은 음수 → 자기 예약 행 안에 묶는다). 텍스트가 칩을 넘는 구간은 알약을 옅게(`fillOpacity 0.45`·`lineWidth 0`)해 '밴드 위 글자'(지도 area-label)로 읽히게 하고, `zoom ≥ 1` 은 알약·칩 종전 그대로(회귀 0).
+- **CONFIRMED(P2, 수정)** — *위계 헤더가 없는 경로에서 `/h` 밴드가 무의미한 rebuild 를 유발한다.* `products` 모드는 `_metaG6Build()` 가 헤더 방출 전에 `_metaG6BuildProducts()` 로 조기 return 하므로, 1→0.89→0.71→0.57 같은 줌 전이가 전부 헛 `setData`/draw 다(박스가 좁아 `fit ≤ base` 인 헤더만 있는 경우도 동형). **수정**: 방출 시점에 `fit > base`(확장 여력)인 헤더를 세고(`_metaHdrFitNote`) 0 이면 `/h` 를 빼며, 리셋(`_metaHdrFitReset`)을 **products 디스패치보다 먼저** 둬 조기 return 경로도 0 이 되게 했다. 게이트는 **z-독립**이어야 한다 — "지금 확장됐나"로 판정하면 zoom 1(전부 base)에서 닫혀 줌아웃 시작 rebuild 가 영구히 안 걸리는 **self-lock** 이 된다(설계 시 명시적으로 회피).
+- **수정 전 재현 확인**: 상한 제거판 번들로 신규 **K2·K3·K7 이 실제로 FAIL**(칩 높이 52/52/42/52/46/46 · 이웃 블록 bbox 침범 · CATH 60/30) 함을 실측 — 테스트가 결함 자체를 잡는지 검증했고 통과만 보고 넘기지 않았다.
+- **회귀 확인**: 수정 후 `test_g6build_labellod.js` **71 PASS**(36 → +35: I 12 · J 11 · K 10 · B5 재진술 2) + 헤드리스 **전 스위트 21개 910 PASS / 0 FAIL** · `node --check` PASS(2 파일).
+- **정직 표기 — 잔여 표면**: 텍스트가 칩을 넘는 구간의 **시각적 수용성**(알약보다 큰 글자가 어떻게 읽히는지)과 확장 폰트의 실제 판독성은 GPU·폰트 렌더 의존이라 헤드리스가 판정할 수 없다 → HF.6 PB-0008 이 담당한다. 칩 상한으로 인해 **개선폭이 폰트가 아니라 알약 크기에서만 제한**되므로 억제 시작 줌 수치(HF.5 표)는 불변이다.
+## REV-20260728T161300-ai-claude-feature-0016-neighbor-depth-budget [CODEX:backend+qa] — PASS (P1 0건, 4라운드 · 지적 13건 중 12건 흡수 / 1건 잔여 명시)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: schema/스키마 · query/쿼리 · UI/화면 keyword matched (`neighborhood()` BFS 예산 재설계 + 상세 패널 절단 배너) → dispatch 표상 backend·qa
+- Timestamp: 2026-07-28T16:13:00+09:00
+- Verdict: PASS (R2·R3·R4 연속 **P1(GATE) 0건**; 지적 13건 중 12건 in-cycle 흡수 + 1건 근거 기록 후 수용)
+- Artifact: [reviews/2026-07-28T16-13-00-codex-hop-budget.md](./reviews/2026-07-28T16-13-00-codex-hop-budget.md) (4라운드 전문)
+- Critical issue (R1 P1, 흡수 완료): cap 도달 시 부모 Table 보강이 `break` 되어 관계로 들어온 Column 만 남고 그 부모가 탈락 → 프론트 `colsByTable` 이 부모 없는 컬럼을 드롭 → "참조로 이어지는 테이블이 화면에 없다"(HB.3 이 없애려던 실패)가 **cap 상황에서만 되살아나는 우선순위 역전**.
+- Human Approval Needed: no (전량 흡수 또는 근거 명시 수용; Minor 등급 유지 — 읽기 전용 투영 범위 조정)
+
+### 채널 선택 근거 (§18.8.2)
+원 세션의 subagent 패널(backend·qa)이 **사용량 한도**로 죽은 뒤 이어받은 세션에는 하네스 수준의 "요청 없는 Agent tool 호출 금지" 상위 지시가 있었다. §18.8.2 item 1(제약 없는 채널 우선) + 상위 우선순위 지시 carve-out 에 따라, subagent 가 아닌 `codex review --base origin/main`(repo 접근 있는 독립 리뷰어, check #9 accepted `[CODEX:*]`)로 수행했다. bundle-only subagent 와 달리 실제 repo·인접 모듈을 읽으므로 이 changeset(백엔드 BFS × 프론트 렌더 계약의 접합부)에는 오히려 적합했다 — 실제로 4라운드 모두 접합부 결함을 지목했다. 4라운드에서 종료한 근거: **P1 3연속 0건** + 남은 지적이 hot path 복잡도를 늘리는 미세 정련으로 수렴.
+
+### 흡수 대조 (라운드별 지적 → 처리)
+| # | 지적 | 처리 |
+|---|---|---|
+| R1-P1 | 부모 보강 예산 역전(cap 에서 참조 테이블 소실) | **흡수** — `_PARENT_BACKFILL_RESERVE`(60) 신설, 관계 Column 후보 수 상한으로 비례 축소, **관계 tier 에도 적용**(1차 수정은 tier 0 면제라 ROUTINE_USES 258건 홍수에서 재발 → 테스트가 적발) |
+| R1-P2 | 엣지 fetch LIMIT 무음 절단(`truncated=false` 인 부분 그래프) | **흡수** — `_EDGE_FETCH_CAP` 상수화 + 포화 시 절단 신고 |
+| R2-a | broken 엣지 끝점이 관계 우선권 획득 → 무효 이웃이 cap 소비 | **흡수** — `is_rel` 에서 `status=="broken"` 배제 |
+| R2-b | LIMIT 에 `ORDER BY` 부재 → 부분집합 비결정적 | **흡수** — UNION 항에 등급 리터럴 + `ORDER BY brk, prio, s, e` |
+| R2-c | 관계없음 힌트가 **1-hop** 관계 엣지에 속아 숨음 | **흡수** — 백엔드 `expanded_hops`(hop별 신규 노드) additive 보고, 프론트가 실적으로 판정 + 구 응답 폴백 |
+| R3-a | 정확히 cap 개일 때 절단 거짓 양성 | **흡수** — `LIMIT cap+1` fetch 후 `> cap` 일 때만 절단 |
+| R3-b | 노드 델타 0 ≠ 관계 없음(엣지만 추가 / 절단으로 미실행) | **흡수** — `expanded_hop_edges` 추가 + **절단 시 힌트 억제** |
+| R3-c | 부모 보강 순서 비결정적(DB 반환 순서 의존) | **흡수** — 두 쿼리 `ORDER BY` graphid |
+| R3-d | broken 행이 cap 적용 *이전* 에 배제되지 않아 fetch 예산을 먹음 | **흡수** — SQL 정렬 키 `brk` 신설(Python `is_rel` 필터는 LIMIT *이후* 라 늦다) |
+| R4-a | broken 관계로 도달한 Column 까지 부모 보강 → 없는 연결 표시 | **흡수** — 보강 대상을 `rel_gids` 소속으로 한정 |
+| R4-b | broken 관계행(prio0,brk1)이 유효 계층행(prio1,brk0)을 앞지름 | **흡수** — 정렬 키를 `brk, prio` 순으로 교체 |
+| R4-c | 예약을 **미해소 부모 수**로 잡아야(부모가 이미 있으면 예약 불필요) | **잔여 수용 (근거 기록)** — 정확 해소는 fill 루프 *이전* 에 부모를 해소하는 hot path 재구성을 요구한다. 손실은 "예산이 정확히 소진된 경계에서 관계 끝점 1개"로 한정되고, 응답이 `truncated`+`omitted_nodes` 로 그 사실을 보고하므로 **은폐가 없다**. 1-노드 경계 이득과 재구성 회귀 위험을 견주어 수용하고 후속 항목으로 남긴다(REPORT §8). |
+| R4-d | 구 응답(`truncated_hop` 부재)을 2-hop 절단으로 오표기 | **흡수** — hop 미상이면 완전성 주장 없이 일반 경고 |
+
+### 설계 판단 기록
+- **broken 배제를 `WHERE` 가 아니라 정렬 키로**: agtype 식이 기대와 다르게 동작하면(NULL 등) `WHERE` 는 **유효 행을 사라지게** 하지만 `ORDER BY` 는 정렬만 열화된다. 컨테이너 테스트로는 실 AGE SQL 을 돌리지 못하므로 fail-safe 방향을 택했다 — POST-DEPLOY 라이브 확인으로 보완.
+- **`expanded_hops`/`expanded_hop_edges` 는 additive**: 구 replica 가 필드를 안 주면 프론트가 종전 판정으로 폴백해 롤링 배포 창에서 회귀하지 않는다(헤드리스 ⑳·㉑ 이 폴백까지 단언).
+- 검증: pytest `test_graph_hop_budget.py` **9 → 21 PASS**(흡수분 회귀 12건 신설) · 전 스위트 **2809 passed / 0 failed** · 헤드리스 그래프 전 스위트 **865 PASS / 0 FAIL**(`test_detail_dbgroups.js` 95 → 107) · ruff clean.
+- **테스트가 수정을 두 번 반증했다**(자가검증 실효성 증거): ① R1-P1 1차 수정(tier 0 면제)이 관계-tier 홍수에서 실패 ② R3-d 흡수 후 fake 하네스가 새 SQL 의 `properties @>` 를 앵커 쿼리로 오인해 스위트 15건 붕괴 → 판별 조건을 `WHERE properties @>` 로 좁혀 해소.
+
+## REV-20260728T190000-hop-budget-final-rebase-record [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs only outside policy-doc list — 최종 rebase 재검증 수치 기록(실행 코드 0줄). 코드 변경분의 적대검증은 같은 cycle 의 REV-20260728T161300 [CODEX:backend+qa] 4라운드가 담당하며, 그 이후 코드 변경은 없다(rebase 는 upstream 병합이고 충돌은 append-only 문서뿐, 코드 충돌 0).
+- Timestamp: 2026-07-28T19:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+## REV-20260728T190000-graph-hdr-label-fit-postdeploy [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 대상: CHG-20260728T1900-graph-hdr-label-fit-postdeploy (TASK.md HF.6 결과표 + MODIFY + TEST/test-runs.d + 증적 3매). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
+- 본 cycle 의 코드 적대 검증은 REV-20260728T181000 `[CODEX:frontend-render+hittest]`(P1 1건 · P2 1건 in-cycle 흡수)가 담당했고, 그 수정 이후 상태가 **배포본에서 정상 동작**함을 HF.6 으로 실증했다 — 특히 P1 수정(칩 hit 영역 상한 + 폰트 유지)이 판독성 이득을 유지하면서 이웃 침범을 없앴다는 것이 zoom 0.1468 실촬로 확인됐다.
+- 기계적 점검: 배포 SHA 정합(edge `/healthz git_commit=4ea1d83b` = main 머지 커밋) · 서빙 자산에 수정 존재(`_metaHdrFitFont`·`_META_HDR_FIT_ZOOM_FLOOR`·`GH_CHIP_MAX`·`_metaHdrFitReset`) · 자산 스탬프 `?v=723750d86605` 정합 · pageerror 0.

@@ -1,0 +1,62 @@
+{
+  "name": "graph-hop-budget — 이웃 깊이 옵션 실효성 + 절단 경고 귀속 검증",
+  "base_url": "https://localhost",
+  "notes": [
+    "재현 대상(사용자 보고 2026-07-28): '보기 옵션 > 이웃 깊이' 를 1-hop 초과로 두면 상세 패널의",
+    "'사용하는 함수·프로시저' 섹션에 '⚠ 이웃 조회 상한 — 일부만 불러옴' 이 상시 출력됨.",
+    "검증: ① 그래프 뷰 정상 로드 ② 3-hop 확장 후 그 오귀속 배너가 사라짐",
+    "③ depth select 안내 문구가 실제 트리거(더블클릭·중심 보기)를 명시 ④ 스크린샷 증거."
+  ],
+  "steps": [
+    {
+      "action": "goto",
+      "url": "https://localhost/admin"
+    },
+    {
+      "action": "eval",
+      "name": "01-enter-graph-tab",
+      "script": "(async () => { const t = document.getElementById('adminTabGraph'); if (!t) return { error: 'no graph tab' }; t.click(); for (let i = 0; i < 60; i++) { await new Promise(r => setTimeout(r, 500)); const gv = document.getElementById('metadataGraphView'); const st = document.getElementById('metadataGraphStatus'); if (gv && (gv.offsetWidth || gv.offsetHeight) && st && /노드|관계|스키마/.test(st.textContent || '')) return { visible: true, waited_ms: i * 500, status: (st.textContent || '').trim().slice(0, 160) }; } const st2 = document.getElementById('metadataGraphStatus'); return { visible: false, status: st2 ? (st2.textContent || '').trim().slice(0, 160) : null }; })()"
+    },
+    {
+      "action": "eval",
+      "name": "01b-open-viewopts",
+      "script": "(() => { const b = document.getElementById('metaGraphViewOptsBtn'); if (b) b.click(); const sel = document.getElementById('metadataGraphDepth'); return { opened: !!(sel && (sel.offsetWidth || sel.offsetHeight)), current_depth: sel ? sel.value : null }; })()"
+    },
+    {
+      "action": "screenshot",
+      "name": "01-graph-view-loaded"
+    },
+    {
+      "action": "eval",
+      "name": "02-depth-label-tooltip",
+      "script": "(() => { const l = document.querySelector('label[for=\"metadataGraphDepth\"]'); const t = (l && l.getAttribute('title')) || ''; return { has_label: !!l, mentions_dblclick: /더블클릭/.test(t), mentions_single_is_1hop: /단일클릭 상세는 항상 1단계/.test(t), aria: (document.getElementById('metadataGraphDepth')||{}).getAttribute ? document.getElementById('metadataGraphDepth').getAttribute('aria-label') : null }; })()"
+    },
+    {
+      "action": "eval",
+      "name": "03-select-3hop-and-expand",
+      "script": "(async () => { const sel = document.getElementById('metadataGraphDepth'); if (!sel) return { error: 'no depth select' }; sel.value = '3'; sel.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(r => setTimeout(r, 1500)); const st = document.getElementById('metadataGraphStatus'); return { depth: sel.value, status: st ? st.textContent.trim().slice(0, 200) : null }; })()"
+    },
+    {
+      "action": "screenshot",
+      "name": "02-after-3hop-select"
+    },
+    {
+      "action": "eval",
+      "name": "04-open-node-detail-and-expand",
+      "script": "(async () => { const s = document.getElementById('metadataGraphSearch'); if (!s) return { error: 'no search input' }; s.value = 'masangsoft_document'; s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await new Promise(r => setTimeout(r, 4000)); const st = document.getElementById('metadataGraphStatus'); return { status: st ? st.textContent.trim().slice(0, 240) : null, canvas_present: !!document.getElementById('metadataGraphCanvas') }; })()"
+    },
+    {
+      "action": "screenshot",
+      "name": "03-after-search"
+    },
+    {
+      "action": "eval",
+      "name": "05-trunc-banner-attribution",
+      "script": "(() => { const panel = document.getElementById('metadataGraphDetailBody') || document.getElementById('metadataGraphDetail'); if (!panel) return { error: 'no detail panel' }; const notes = [...panel.querySelectorAll('.amgr-trunc-note')].map(n => n.textContent.trim()); const secs = [...panel.querySelectorAll('.admin-meta-graph-sec')].map(sec => { const h = sec.querySelector('h4'); return { head: h ? h.textContent.trim().slice(0, 60) : '', has_trunc_note: !!sec.querySelector('.amgr-trunc-note') }; }); return { trunc_notes: notes, sections: secs, funcproc_section_has_note: secs.some(s => /함수·프로시저|사용 테이블/.test(s.head) && s.has_trunc_note) }; })()"
+    },
+    {
+      "action": "screenshot",
+      "name": "04-detail-panel"
+    }
+  ]
+}

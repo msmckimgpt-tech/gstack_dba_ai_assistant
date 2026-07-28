@@ -776,8 +776,9 @@
               </button>
               <div class="amg-viewopts-menu" id="metaGraphViewOptsMenu" role="group" aria-label="보기 옵션" hidden>
                 <div class="amg-viewopts-row">
-                  <label class="amg-viewopts-rowlabel admin-meta-graph-depth-label" for="metadataGraphDepth">이웃 깊이</label>
-                  <select id="metadataGraphDepth" class="admin-meta-scope-select" aria-label="이웃 확장 깊이">
+                  <label class="amg-viewopts-rowlabel admin-meta-graph-depth-label" for="metadataGraphDepth"
+                         title="노드를 더블클릭(또는 우클릭 → '이 노드 중심으로 보기')할 때 관계를 몇 단계까지 따라갈지 정합니다. 2단계 이상은 참조·사용 관계만 따라가며(같은 스키마의 형제 나열은 제외), 확장할 관계가 없는 노드는 1-hop 과 같은 결과가 됩니다. 단일클릭 상세는 항상 1단계입니다.">이웃 깊이</label>
+                  <select id="metadataGraphDepth" class="admin-meta-scope-select" aria-label="이웃 확장 깊이 — 더블클릭·중심 보기에 적용">
                     <option value="1">1-hop</option>
                     <option value="2" selected>2-hop</option>
                     <option value="3">3-hop</option>
@@ -850,7 +851,7 @@
                     <li><span class="amg-help-k">가운데 버튼 드래그</span><span class="amg-help-d">노드 위에서도 어디서나 화면을 이동(팬)합니다.</span></li>
                     <li><span class="amg-help-k">휠 스크롤</span><span class="amg-help-d">커서 위치를 기준으로 확대·축소합니다.</span></li>
                     <li><span class="amg-help-k">미니맵(우하단)</span><span class="amg-help-d">클릭·드래그로 원하는 위치로 빠르게 이동합니다.</span></li>
-                    <li><span class="amg-help-k">검색·보기 옵션</span><span class="amg-help-d">상단 바에서 노드를 검색하고 이웃 깊이·표시 종류를 조절합니다.</span></li>
+                    <li><span class="amg-help-k">검색·보기 옵션</span><span class="amg-help-d">상단 바에서 노드를 검색하고 이웃 깊이·표시 종류를 조절합니다. 이웃 깊이는 <b>더블클릭·중심 보기</b>에 적용되며, 2단계 이상은 참조·사용 관계만 따라갑니다(단일클릭 상세는 항상 1단계).</span></li>
                   </ul>
                   <div class="amg-help-foot">
                     <button type="button" class="amg-help-ok" id="metadataGraphHelpOk">알겠습니다</button>

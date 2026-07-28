@@ -2865,7 +2865,6 @@ PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`base
   feature-0003 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
   `REV-20260728T173500-routine-column-edges-postdeploy` ·
   증적 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/`(6매).
-
 ## 20260728T1811-graph-role-badge — 테이블 역할색을 노드 전면 채움에서 좌측 배지로 이관 (2026-07-28, 사용자 요청 · entry persona dispatch)
 
 ### 맥락 (사용자 요청 원문)
@@ -2939,3 +2938,272 @@ PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`base
   (G1~G6 · F7~F9 · H1~H2). 본 세션은 `Agent` 툴 사용이 제한된 환경이라 subagent panel 대신 codex 를 택했다 —
   이 변경은 렌더러 2경로·상태 채널·범례 문구가 얽혀 **repo 전체 문맥**이 필요하므로 bundle-only reviewer 보다
   repo 접근 리뷰어가 적합하다.
+## 20260728T1810-graph-hdr-label-fit — 위계 헤더 라벨을 클러스터 범위만큼 확장 (2026-07-28, 사용자 요청 · 웹 리서치 동반 검토)
+
+### 맥락 (사용자 요청)
+label-lod(§20260728T1604) 배포를 확인한 뒤의 후속 요청:
+> "줌 아웃을 통해 노드의 문자열이 나타나지 않도록 처리하는 부분이 확인되었습니다. 해당 동작에 대응하여
+> '컨텐츠 카테고리 클러스터' 의 텍스트는 줌 아웃 시에도 상대적으로 명확하게 보이게 구성하기 위해
+> **클러스터 범위만큼 텍스트 크기가 확장되는 방안**을 검토해주세요. **웹 리서치**를 통해, 줌 아웃 시
+> 상위 노드를 더 잘 표현할 수 있는 수단이 있을지도 검토해주세요."
+
+사용자 결정(검토 결과 제시 후 3택): ① 방식 = **범위 + 화면 하한** ② 적용 = **위계 헤더 전부**(컨텐츠
+카테고리 + 제품 카테고리 밴드) ③ 칩 넘침 = **박스 위로 팔출**(reflow 0).
+
+### 진단 (코드 실증)
+- `group-hd`(컨텐츠 카테고리 = sim-group 헤더)는 `labelFontSize: 10.5` **고정**이었다. 칩 폭 `hdW` 는 박스
+  폭에 맞춰 늘어나지만 **폰트는 안 늘어나** 박스가 248px 든 920px 든 똑같이 zoom 3.2/10.5≈**0.305** 에서
+  억제됐다 — **박스 크기라는 정보가 이미 있는데 폰트가 그걸 쓰지 않았다.**
+- 한 단계 위 `cat-hd`(제품 카테고리 밴드, 12 고정)도 동형(억제 0.2667).
+- 블록 폭은 `COLW=224` 기준 열 수로 결정: 1열 **248** / 2열 **472** / 3열 **696** / 4열 **920+** px.
+
+### 웹 리서치 (사용자 요청 축 — 줌아웃 시 상위 노드 표현)
+- **면적 비례 라벨은 지도학 표준**: "scale label size proportionally to the feature size using a minimum
+  6-point font". 트리맵도 `font = min(w/4, h/2)` 처럼 셀 크기에서 파생한다.
+- **ArcGIS `scale-based label sizing`**: scale stop 사이를 **선형 보간**하며, 목적이 "reduce visual density at
+  smaller scales while retaining an appropriate relative size" — 본 문제와 동일한 정의.
+- **면적 라벨 배치**: polygon 의 가장 넓은 단면을 따라 수평으로 펼치고 자간을 넓히는 것이 정석(좌상단 칩보다
+  범위를 캔버스로 쓰는 배치).
+- **줌 레벨별 스타일 적응**·클러스터 아이콘 시각 속성↔클러스터 속성(노드 수·밀도) 대응은 대규모 그래프
+  시각화의 표준 전략.
+- 주의로 나온 것: "면적 크기를 시각적 위계와 혼동하지 말라". 본 케이스는 **박스 크기 = 테이블 수**라 상관관계가
+  성립하므로 해당하지 않는다.
+- **막힌 길(재시도 방지)**: **SDF/MSDF 폰트**는 "crisp at any size without generating larger textures" 로 근본
+  해법처럼 보이지만, PixiJS v8 공식 문서가 **"대형 문자셋(CJK·emoji)은 텍스처 메모리 제약으로 비현실적,
+  `Text`/`HTMLText` 를 쓰라"** 고 명시한다. 라벨이 한국어인 본 프로젝트에선 §79 T79.5 가 만난 벽과 같다 →
+  **비채택 확정**(TL.5 mipmap 철회와 같은 계열의 벤더 한계).
+- **불채택(재논의 대상)**: 극단 줌아웃에서 클러스터를 요약 metanode 로 강등(graph summarization·GrouseFlocks
+  계열). 리서치가 지지하는 정석이지만 **§67 에서 사용자 피드백("집계 = 규모 파악 어려움")으로 이미 폐기된
+  방향**이라 되살리려면 그 결정을 뒤집는 셈이다 — 본 cycle 범위 밖으로 둔다.
+
+### 계획 (§7.1 · 위험도 **Minor** — 표시 계층·비파괴, 스키마·인가·응답 shape 무변경)
+| 대상 파일 | 변경 symbol | 완료 판정 |
+|---|---|---|
+| `.../graph/graph-state.js` | `_META_HDR_FIT_ZOOM_FLOOR`·`_META_HDR_FIT_MAX`·`_META_HDR_FIT_CHARW`·`_META_HDR_FIT_PAD`·`_META_HDR_FIT_STEP_*`·`_metaHdrFitFont`·`_metaHdrFitBandOf`·`_metaLabelBandOf` | 폰트 파생·반동 밴드가 단일 소스로 존재 |
+| `.../graph/graph-core.js` | `_zNow`·GH(`group-hd`) 방출·CATH(`cat-hd`) 방출 | 두 위계 헤더가 범위+화면하한 폰트로 방출 + 칩 하단 앵커(reflow 0) |
+| `.../tests/headless/test_g6build_labellod.js` | Section I·J 신설 + `seedModel` names 옵션 + B5 계약 재진술 | 유닛(폰트 파생)·결합(실 방출)·reflow 0·밴드 합류 고정 |
+
+### 처리
+- [x] HF.1 **폰트 파생** — `_metaHdrFitFont(base, boxW, textLen, zoom)` = `clamp(base, min(base/zoom, 박스fit), MAX)`.
+  (a) `base/zoom` = **화면상 base 크기 유지**(지도 라벨 screen-space 관례 · 본 코드베이스 §85 `edgeScreenScale`
+  선례) (b) `박스fit = (boxW − pad) / (글자수 × 0.686)` = **라벨이 자기 범위를 절대 넘지 않게** 하는 상한
+  (트리맵 fit-to-box). fit 상한이 있어야 극단 줌아웃에서 헤더끼리 겹쳐 폭발하지 않는다 — 지도는 이 문제를
+  라벨 충돌 컬링으로 푸는데, **박스 상한은 그 복잡도 없이 같은 목적을 달성한다**(범위를 안 넘으면 이웃과도 안 겹침).
+  `z ≥ 1` 은 `base` 그대로 반환 — 줌인에서 부풀지 않는다(§86 "줌인은 화면 고정" 결정과 정합, 회귀 0).
+- [x] HF.2 **상한을 줌 하한에서 파생** — `MAX = ceil(헤더 판독 하한 3.2 / zoomRange 하한 0.05) = 64`.
+  근거: 역보정은 상한에 닿는 순간부터 화면 크기가 감쇠하므로(`MAX × z`), 상한이 곧 "어디까지 base 크기로
+  보이는가"(`z > base/MAX`)를 정한다. **상한 26 이면 실측 "전체 조망" 줌(라이브 136 스키마 = 0.2524)에서
+  이미 6.6px 로 감쇠**해 사용자 요구를 만족하지 못한다. 64 로 두면 그 줌이 **base 크기 유지 구간**에 들어온다.
+- [x] HF.3 **칩 기하 — 하단 앵커 상방 팔출**(사용자 결정): 칩 폭·높이를 폰트에 비례시키고(`hdW` 는 기존 추정계수
+  0.686 을 폰트에 곱해 일반화, 높이는 기존 10.5→18 / 12→22 비율 유지) **하단 y 를 종전 값으로 고정**해 커진
+  만큼 박스 *위로* 자란다. 예약 헤더 행(GHH=26 / CATHH=36) 아래 멤버 영역을 침범하지 않으므로 **reflow 0** —
+  좌표·size 가 바뀌는 것은 헤더 칩 자신뿐이고 멤버·combo extent 는 불변이다(지도 area-label 이 폴리곤을
+  넘어 배치되는 것과 같은 어포던스). GH 에는 없던 `labelMaxWidth` 안전망도 추가(확장 폰트에서 한글 실폭이
+  추정계수를 넘을 수 있다 — CATH 와 동형).
+- [x] HF.4 **반동 밴드 결합(필수)** — 폰트가 `base/z` 로 **연속** 변하는데 rebuild 는 밴드 전이에서만 걸리므로,
+  억제 밴드만으로는 폰트가 stale 해져 **역보정이 무의미해진다**. 역보정 배율을 **25% 승법 스텝**으로 양자화해
+  `_metaLabelBandOf` 에 `/h<step>` 으로 합류시켰다 — §85 가 엣지 재페인트에 채택한 것과 같은 허용 오차라
+  화면 크기 드리프트가 ≤25% 로 유계다. **상한 클램프 필수**: `base/z > MAX` 부터 폰트가 z 와 무관해지므로
+  스텝이 계속 늘면 **아무 변화 없는 rebuild** 가 극단 줌아웃 휠마다 걸린다 — 클램프 없이 넣었을 때 기존
+  F3·F7('무의미 rebuild 차단')이 **실제로 깨졌다**(실측 확인 후 `_META_HDR_FIT_STEP_CAP` 도입).
+- [x] HF.5 검증 — `test_g6build_labellod.js` **36 → 71 PASS**(신규 35: I 유닛 12 · J 결합 11 · K 리뷰흡수 10 · B5 재진술 2)
+  + 헤드리스 **전 스위트 21개 910 PASS / 0 FAIL** · `node --check` PASS(2 파일).
+  개선 실측(억제 시작 줌 — 낮을수록 좋음 / 실측 "전체 조망" 0.2524 에서의 화면 크기):
+  | 대상 | 현행(고정) | 1열 248 | 2열 472 | 3열 696 | 4열 920 |
+  |---|---|---|---|---|---|
+  | `group-hd` 억제 시작 | 0.3048 | **0.1416** | **0.0642** | **0.0500** | **0.0500** |
+  | 0.2524 화면 크기 | 2.65px | 5.7px | **10.5px** | **10.5px** | **10.5px** |
+  `cat-hd`(base 12·21자): 억제 0.2667 → bw 400 **0.1405** / bw ≥ 800 **0.0500**, 0.2524 화면 3.03px → **12.0px**.
+  즉 2열 이상 클러스터는 실측 개요 줌에서 **base 크기 그대로** 보이고, 3열 이상은 **줌 하한(0.05)까지 사라지지 않는다**.
+- [x] HF.7 **§18.8 적대 검증 — codex-review PASS-WITH-FIXES(P1 1건 · P2 1건 전량 in-cycle 흡수)**
+  - **P1(GATE) 칩 hit 영역이 이웃 그룹을 침범** — 칩을 폰트에 무제한 비례시키면 폰트 64 에서 높이 ~110 world 가
+    되고 하단이 `top+22` 로 고정돼 **위 그룹 블록 안으로 72 world 침범**한다(실측: 그룹 행 간격 GGY=16, 행1 블록
+    40~168 / 행2 칩 하단 206). GH·CATH 는 `_METZ.GROUP_HD`(5) = 테이블 칩(4) **위** 드래그 핸들이고
+    `hitTest`/`buildHitGrid` 가 `nodeBBox(style.size)` + zIndex 로 판정하므로 **위 그룹 테이블의 클릭·드래그를
+    가로챈다** — §52·sim-group z-order↔hit-test 결함 계열의 재발이다. **나의 "reflow 0 이니 팔출은 안전" 판단이
+    불완전했다**: 자기 멤버 영역은 안 침범하지만 *이웃 블록* 과 *hit 영역* 을 보지 않았다.
+    **수정**: 칩(=hit 영역)만 구조적 한계로 묶고 **폰트는 유지**한다 — 라벨은 hit 대상이 아니므로(위 두 함수가
+    `style.size` 만 본다) 텍스트가 칩을 넘어도 상호작용 영향이 0 이고 판독성 이득은 그대로다. 상한은
+    GH `22 + GGY = 38` / CATH `27`(**밴드는 위쪽에 상수로 보장된 간격이 없다** — 간격이 클러스터 shelf-pack
+    높이에서 파생돼 데이터 의존: 실측 56 이지만 구조적 하한은 음수 → 자기 예약 행 안에 묶는다).
+    텍스트가 칩을 넘는 구간은 알약을 옅게(`fillOpacity 0.45`·`lineWidth 0`) 해 '깨진 칩' 이 아니라 '밴드 위 글자'
+    (지도 area-label)로 읽히게 했다. `zoom ≥ 1` 은 알약·칩 종전 그대로(회귀 0).
+  - **P2 무의미 rebuild** — `/h` 성분을 무조건 붙이면 **위계 헤더를 아예 방출하지 않는 경로**에서도 줌 전이마다
+    full `setData`/draw 가 걸린다(`products` 모드는 `_metaG6Build()` 가 헤더 방출 전에 `_metaG6BuildProducts()` 로
+    조기 return). **수정**: 방출 시점에 `fit > base`(=확장 여력)인 헤더를 세어(`_metaHdrFitNote`) 0 이면 `/h` 를
+    빼고, 계수기 리셋(`_metaHdrFitReset`)을 **products 디스패치보다 먼저** 둬 조기 return 경로도 0 이 되게 했다.
+    게이트는 **z-독립**이어야 한다 — "지금 확장됐나"로 판정하면 zoom 1(전부 base)에서 닫혀 줌아웃 시작 rebuild 가
+    영구히 안 걸리는 **self-lock** 이 된다.
+  - **수정 전 재현 확인**: 상한 제거판 번들로 신규 K2·K3·K7 이 **실제로 FAIL**(칩 높이 52/52/42/52/46/46 · 이웃
+    블록 침범 · CATH 60/30) 함을 실측했다 — 테스트가 결함 자체를 잡는지 검증한 것이며 통과만 보고 넘기지 않았다.
+  - 신규 테스트 Section K(10건)가 칩 상한·**이웃 블록 bbox 침범 0**·폰트 유지·알약 소프트닝·zoom 1 회귀 0·
+    products 게이트·`/h` 부재를 고정. 상세는 REVIEW.md REV-20260728T181000-graph-hdr-label-fit.
+- [x] HF.6 **POST-DEPLOY PB-0008 실 Windows 브라우저 검증 PASS** (2026-07-28, 실 Chrome via `bin/win-browser.py`
+  relay, `https://localhost/admin`) — PR #1025 머지 → main `4ea1d83b` → `make deploy-web`(web-a/b 롤링 + 워커,
+  soak 통과) → edge `/healthz` `git_commit=4ea1d83b`. 서빙 자산 스탬프 `?v=723750d86605`, 배포된 `graph-state.js` 에
+  `_metaHdrFitFont`·`_META_HDR_FIT_ZOOM_FLOOR` / `graph-core.js` 에 `GH_CHIP_MAX`·`_metaHdrFitReset` 존재 확인
+  (**수정이 실제 서빙됨을 자산 내용으로 확인** — 격리 주입본이 아니다). 대상 `mysql-gz-qa-global`, `gunzgame`
+  스키마 펼침(테이블 121 · 함수·프로시저 300 = 421) → 위계 헤더 **84개**(GH + CATH) 방출.
+
+  | # | 항목 | 실측(배포본) |
+  |---|---|---|
+  | ① | **컨텐츠 카테고리 헤더 개요 줌 판독** | zoom **0.1468** band `24/22/h9` — 본문 라벨 **534/587 억제**로 색 블록만 남은 개요인데 GH 헤더는 판독 가능하게 유지(`계정캐릭터기본조회`·`아이템거래로그`·`캐릭터통계데이터`·`서버모니터링`·`IP 필터링 · 8` 등). **종전 고정 10.5px 의 억제 임계는 0.3048 이라 이 줌에서 전부 사라져 색 블록만 보였을 구간** |
+  | ② | 제품 카테고리 밴드 헤더 | `🗂 건즈 글로벌 QA · 3 DB · 184 테이블` 동일 줌에서 유지 |
+  | ③ | `headerDropped` 추이 | zoom 0.6078→0.249 전 구간 **0**(84개 전량 유지). 0.1992 부터 좁은 박스(1열) 헤더만 7→12→19→31 순차 억제 — fit 상한에 걸린 예상 동작 |
+  | ④ | **반동 추종(stale 없음)** | 줌아웃 h2→h3→h4→h5→h6→h7→h8→h9 단조 증가, 줌인 h7→h6→h5→h4→h1 **대칭 복귀**. `headerDropped` 3→0, 복귀 시 `dropped 0` — 폰트가 마지막 rebuild 값에 굳지 않고 25% 스텝마다 따라온다 |
+  | ⑤ | 칩 hit 영역 | 헤더 칩이 각 그룹 상단에 정렬돼 **위 행 블록과 겹치지 않음**(HF.7 P1 수정 육안 확인) |
+  | ⑥ | 텍스트 > 알약 구간 시각 | 알약 소프트닝으로 '밴드 위 글자'로 읽히고 '깨진 칩'으로 보이지 않음 |
+  | ⑦ | pageerror | **0** (`error`·`unhandledrejection` 전 구간 0건) |
+
+  증적: `artifacts/feature-0016-metadata-graph/20260728-graph-hdr-label-fit/`
+  (`hdrfit_live_1`=zoom 0.76 기준 · **`hdrfit_live_fit`=zoom 0.1468 핵심 증거** · `hdrfit_live_zoomout`).
+  **한계(정직 표기)**: ⑤⑥ 은 스크린샷 육안 판정이며 픽셀 단위 겹침 계측은 하지 않았다(칩 침범 0 의 기계적
+  보장은 헤드리스 K3 이 담당). 검증 중 페이지가 1회 새 내비게이션으로 리셋됐는데(canvas 부재 ·
+  `__META_GRAPH_PERF` 소실) 직전 `pageerror 0` 이었고 재설정 후 동일 경로가 정상 재현되어 **본 변경과의
+  인과는 확인되지 않았다** — 원인 미규명으로 남긴다.
+
+### 결정 기록
+- **왜 '범위 비례' 만으로 부족한가(사용자 제안의 정제)**: 폰트를 박스 폭에서만 파생하면 큰 클러스터는 개선되지만
+  **작은 클러스터는 전혀 개선되지 않는다**(1열 248px 은 0.305 그대로). 화면 하한 역보정을 결합해야 전 구간에서
+  개선된다(1열도 0.305 → 0.1416). 그래서 사용자 제안(범위)을 **상한**으로, 역보정을 **목표**로 배치했다.
+- **왜 `min(want, fit)` 이고 `max` 가 아닌가**: 라벨이 자기 박스를 넘으면 이웃 클러스터 헤더와 겹치고 클러스터
+  경계가 무너진다. fit 을 상한으로 둬야 "범위만큼" 이라는 사용자 표현이 문자 그대로 성립한다.
+- **팔출의 실제 한계(리뷰로 정정)**: "박스 위로 팔출 = reflow 0 이니 안전" 이라는 최초 판단은 **자기 멤버 영역만
+  본 불완전한 판단**이었다. 칩은 hit 영역이고 GH/CATH 는 테이블 칩보다 z 가 높은 드래그 핸들이라, 이웃 블록으로
+  넘어가면 그 블록 노드의 클릭을 가로챈다(HF.7 P1). 최종 설계는 **hit 영역(칩)은 구조적 한계로 묶고 텍스트만
+  자유롭게** 두는 분리다 — 라벨이 hit 대상이 아니라는 사실이 이 분리를 가능하게 한다.
+- **왜 칩을 위로 팔출시키는가(대안 2개 불채택)**: (나) 폰트 18 캡은 개선폭이 절반으로 줄고, (다) 줌아웃 시 박스
+  중앙 워터마크 전환은 개선폭이 가장 크지만 진짜 semantic zoom 이라 범위가 크다. (가) 상방 팔출은 **reflow 0 을
+  지키면서 폰트 상한을 열어주는** 최선의 비율이다(사용자 결정).
+- **왜 `MAX` 를 상수 리터럴로 두지 않았나**: 상한이 곧 "base 크기 유지 구간의 하한"이라는 의미를 가지므로,
+  판독 하한·줌 하한에서 파생시켜야 그 두 값이 바뀔 때 자동 추종한다. 리터럴 26 은 실측 개요 줌을 커버하지
+  못한다는 사실이 파생식으로 표현되지 않는다.
+
+
+---
+
+## 20260728T1613-graph-hop-budget — '보기 옵션 > 이웃 깊이' 실효성 검토 + 예산 우선순위 재설계 + 절단 경고 오귀속 제거 (2026-07-28, 사용자 요청 · entry persona dispatch)
+
+### 맥락 (사용자 요청)
+> `그래프 뷰` 에서, '보기 옵션' 중 '이웃 깊이' 에 대한 작동이 의미가 있는지 검토해주세요.
+> 현재는 '1-hop' 을 초과한 모든 항목에서 "이웃 조회 상한 - 일부만 불러옴" 과 같은 주의문구가 출력됩니다.
+
+검토 요청이었고, 실측 결과 "옵션이 의미를 갖는 범위가 매우 좁다" 로 확인돼 원인 교정까지 함께 수행(사용자 결정: "둘 다 한 사이클로").
+
+### 실측 진단 (라이브 AGE 그래프 — Table 18,116 / Routine 23,057 / Column 13,852 / Schema 340)
+컬럼이 투영된 Table 노드 40개 무작위 표본(seed 고정)으로 `neighborhood()` 를 depth 1/2/3 호출:
+
+| 지표 | 종전 |
+|---|---|
+| 1-hop 절단 | 0% |
+| 2-hop 절단 | **50%** |
+| 3-hop 절단 | **60%** |
+| **3-hop 결과 == 2-hop 결과** | **50%** (= 3-hop 선택이 결과를 전혀 바꾸지 못함) |
+
+- **원인 ①** `_NEIGHBOR_NODE_CAP=300` 이 hop 경계보다 먼저 걸린다. BFS 는 hop 진입 시 `len(seen_nodes) >= CAP` 면 남은 hop 을 **아예 실행하지 않고** break 하므로, 2-hop 에서 cap 에 닿은 앵커의 3-hop 은 정의상 2-hop 과 동일하다. 테이블이 많은 스키마 노드(web_ranking 719개 등)는 **1-hop 부터** 절단돼 1·2·3-hop 이 전부 같은 결과(300n)였다.
+- **원인 ②** 2-hop 이 계층 엣지(`HAS_TABLE`/`HAS_ROUTINE`/`HAS_COLUMN`)를 따라가, "앵커와 같은 스키마에 있다" 는 이유만으로 형제 수백 개가 예산을 소진했다. 실측 앵커 `masangsoftweb.masangsoft_documents_20260414`: 2-hop 300 노드 중 **Routine +258 / Table +0** — 사용자가 2-hop 에서 가장 보고 싶어할 "참조로 이어지는 다른 테이블" 이 0개.
+- **원인 ③** 절단 순서가 vertex 라벨 **알파벳 순**(`Column, Datasource, GlossaryTerm, Product, Routine, Schema, Table`)이라 **Table 이 맨 뒤 = 가장 먼저 탈락**. 절단이 의미가 아니라 문자열 정렬로 결정됐다.
+- **원인 ④ (사용자가 본 문구의 정체)** 경고 배너가 "사용하는 함수·프로시저" 섹션 헤더 아래에 붙지만, 그 목록의 원천인 앵커 직결 `ROUTINE_USES` 는 **1-hop 에서 전량 수집**되므로 절단되지 않는다. 실측: `fhgame1.FH_CHAR` 직결 155건이 depth 1·2·3 **모두 155건**인데 d2/d3 는 `truncated=true` → **완전한 목록 위에 "일부만 불러옴" 이 붙는 오귀속**. 사용자가 "함수 목록이 잘렸나" 로 오해하는 지점.
+- **원인 ⑤** depth select 상태 문구가 "노드를 **선택**/더블클릭하면 이 깊이로 확장됩니다" 였으나 단일클릭(선택) 상세 조회는 4곳 모두 `depth=1` 하드코딩 — 문구와 동작 불일치.
+
+### 처리 (cross-cut: 코드는 feature-0002 modules · feature-0003 static/routers 에 거주)
+- [x] HB.1 **2-hop 이상은 관계 엣지만 따라간다**(`metadata_graph.py neighborhood`) — hop 1 은 전 라벨 유지(앵커의 컬럼·소속 스키마·직결 루틴 = 상세 패널 원천), hop ≥ 2 는 `_REL_ELABELS`(REFERENCES·ROUTINE_USES·RELATED_TERM·USES·DESCRIBES) 만. 계층 엣지(`_HIER_ELABELS`)는 형제 폭발의 원인이라 확장 대상에서 제외. 형제 목록 자체가 필요한 화면은 `scope_schemas`/`schema_tables` 경로가 담당(역할 분리).
+- [x] HB.2 **절단 우선순위를 의미로 고정** — 이웃 해소를 전량 fetch 후 결정론 정렬: ① 관계 이웃(rel_gids) 우선(1-hop 에도 적용 — 1-hop 부터 cap 에 걸리는 대형 스키마에서 형제 나열보다 실제 참조를 남긴다) ② `_NEIGHBOR_LABEL_PRIORITY`(Table > Column > Routine > GlossaryTerm > Schema > Datasource > Product) ③ tie-break = graphid(같은 앵커·같은 depth 면 항상 같은 부분집합).
+- [x] HB.3 **관계 이웃 Column 의 소속 Table 보강** — `REFERENCES` 는 Column↔Column 이라 대상 컬럼만 넣으면 프론트가 그 컬럼을 렌더에서 드롭한다(`graph-core.js` 의 `colsByTable` 은 부모 Table 이 모델에 있을 때만 자식을 담는다). `HAS_COLUMN` **역참조**로 부모를 해소해 채우되(키 문자열 파싱이 아니라 엣지 역참조 — 테이블명에 dot 이 있어도 정확) **다음 프론티어에는 넣지 않는다**(그 테이블의 형제 재폭발 차단).
+- [x] HB.4 **절단 신호 세분화** — `truncated`(기존 계약 불변) + `truncated_hop`(1-based, 절단 hop) + `omitted_nodes`(버린 이웃 수 하한). API(`admin_metadata.py`)가 그대로 전달.
+- [x] HB.5 **절단 경고 귀속 수정**(`graph-ctxmenu.js`) — 노드 상세 전용 `_metaNbrTruncNotice` 신설 + **패널 상단 1곳**으로 이동, "사용하는 함수·프로시저" 섹션의 배너 제거. hop 별 분기: hop 1 = "직접 이웃이 조회 상한 초과 — N개+ 생략, **아래 목록도 일부만**", hop ≥ 2 = "N-hop 확장 이웃 N개+ 생략 · **아래 직접 연결 목록은 전량**". 목록 자체가 절단되는 클러스터/관계 상세의 `_metaDbGrpTruncNotice` 는 그대로 유지(그 경로는 실제 절단).
+- [x] HB.6 **문구 정합 + '확장할 관계 없음' 알림** — depth select 상태 문구를 실제 트리거(더블클릭 / 우클릭 → 중심 보기)로 정정, `label[title]`·`aria-label`·도움말 항목 갱신(단일클릭 상세는 항상 1단계임을 명시). 2-hop 이상인데 관계 엣지가 0이면 `_metaNoRelHint` 로 "이 노드에는 확장할 관계(참조·사용)가 없어 1-hop 과 동일합니다" 를 상태줄에 표기 — 실측 12%(5/40) 케이스를 "선택이 안 먹었다" 로 오해하지 않게.
+- [x] HB.7 테스트 — 신규 `test_graph_hop_budget.py` **9 PASS**(hop 별 엣지 라벨 계약 · 부모 보강 · 보강 부모의 프론티어 미진입 · cap 우선순위 2종 · 절단 신호 · 관계 없음 시 d1==d2 · 상수 분할 불변식) + `test_detail_dbgroups.js` **95 PASS/0 FAIL**(⑱⑲ 신설 — 경고 귀속·hop 분기·오귀속 정적 회귀·관계없음 힌트·depth 문구).
+- [x] HB.8 PB-0008 실 Windows 브라우저 시각검증 — 아래 검증 절 참조.
+- [x] HB.9 세션 이월 후 완수 — `origin/main` 재-rebase 2회(총 22커밋) · §18.8 적대검증 4라운드 흡수 · 전수 재검증 · 정본 docs 정합.
+
+### 개선 효과 (동일 표본 40개 · 같은 시드 A/B)
+| 지표 | 종전 | 개선 후 |
+|---|---|---|
+| 2-hop 절단 | 20/40 (50%) | **0/40 (0%)** |
+| 3-hop 절단 | 24/40 (60%) | **0/40 (0%)** |
+| 3-hop == 2-hop (선택 무의미) | 20/40 (50%) | **8/40 (20%)** |
+| 2-hop REFERENCES 엣지 합계 | 98 | **98 (동일 — 정보 손실 0)** |
+| 2-hop 노드 합계 | 8,652 | 411 (형제 나열 제거) |
+
+앵커 `masangsoft_documents_20260414`: 종전 d2 = 300n(Routine +258 / Table +0, TRUNC) · d3 = d2 와 완전 동일 → 개선 후 d2 = 48n(**Table 7 = 앵커 + 참조로 이어진 6개 테이블**, 절단 없음) · d3 = 48n/62e(관계 +15 — 3-hop 이 실제로 다른 결과).
+
+### 검증
+- 라이브 A/B 실측(web-a 컨테이너에서 구/신 모듈 동시 로드, 동일 시드 표본): 위 표.
+- 신규 pytest `test_graph_hop_budget.py` **9 PASS**(+ 기존 `test_graph_funcproc_uxfix.py` 21 PASS 동반 회귀 0). 헤드리스 `test_detail_dbgroups.js` **95 PASS / 0 FAIL**.
+- `make test`(컨테이너 전체) **15건 실패 — main(`2451a1a7`) 에서 동일 파일·동일 15건이 실패**함을 별도 실행으로 실증(attachment 계열 13 + runtime_settings 2). 본 cycle 과 무관한 환경성 baseline. ruff clean.
+- **PB-0008 실 Windows Chrome 150**(relay `http://172.26.144.1:9223`, `https://localhost/admin`) — 그래프 뷰 진입 → 3-hop 선택 → `fhgame1.FH_CHAR`(직결 루틴 155건) 상세: ① depth select 상태 문구가 새 문구로 렌더 ② 도움말 모달에 갱신 문구 렌더 ③ 1-hop 상세에 배너 0 ④ 3-hop 확장 후 배너는 **패널 상단 1개**("⚠ 3-hop 확장 이웃 135개+ 생략 · 아래 직접 연결 목록은 전량")이고 **"사용하는 함수·프로시저 (155) · 읽기 80 · 쓰기 75" 섹션에는 배너 없음** = 오귀속 해소 실화면 확증. 증적 4장 `artifacts/feature-0016-neighbor-depth-budget/pb0008/`. 상세 Run 은 feature-0003 `docs/test-runs.d/20260728T161300-graph-hop-budget.md`.
+- 검증 방식의 한계(정직 기록): 커밋 전 시각검증이라 배포 이미지 컨테이너(web-a/web-b)에 worktree 자산을 **임시 주입**해 수행했고, 검증 직후 `up -d --force-recreate --no-build` 로 **배포 이미지 상태로 원복**(잔재 grep 0 확인). 검증 중 다른 세션의 배포로 컨테이너가 1회 재생성되어 주입이 무효화된 사건이 있었고(16:00, 이미지 `b6882c7d`), 재주입 후 다시 수행했다.
+
+### 재-rebase (2026-07-28, 세션 이월 후) — `9c434809` → `origin/main 2c9eded1` (10 커밋)
+원 세션이 사용량 한도로 §18.8 패널 도중 끊긴 뒤 이어받는 과정에서, main 이 10 커밋(routine-column-edges
+#1014 · catcluster-focus #1013/#1017 · hover-flow #1016 · catcluster-polish-postverify #1015) 더
+전진해 재-rebase 했다. 충돌 3건 —
+
+- **`metadata_graph.py` (코드, 1건)**: upstream `routine-column-edges`(#1014)가 `edge_hits` 튜플에
+  `ep.get("ref_columns")` **10번째 필드**를 추가했고, 본 cycle 은 같은 자리에 `is_rel` 판정을 추가했다.
+  양쪽을 병존시키는 것만으로는 부족했다 — 본 cycle 의 HB.3 부모 보강이 합성 `HAS_COLUMN` 엣지를
+  **9필드**로 append 하므로 `(4)` 의 10필드 언팩에서 `ValueError` 로 죽는다(`py_compile` 은 통과하는
+  런타임 결함). `None` 을 1개 보강해 arity 를 맞췄다. **rebase 가 만든 결함이므로 원 세션의 검증으로는
+  잡히지 않는 부류** — 재-rebase 후 테스트 재실행이 필수임을 실증한다.
+- **`feature-0016/docs/TASK.md` · `feature-0003/docs/MODIFY.md` (append-only 문서, 2건)**: §16.4
+  "양쪽 신규 항목 추가 → 양쪽 모두 유지". main 에 이미 landed 한 항목을 그대로 두고 본 cycle 항목을
+  뒤에 이어붙였다(landing 순서 — landed 콘텐츠 무변경).
+- **파티션 불변식 재확인**: upstream 이 엣지 라벨을 추가했다면 `_REL_ELABELS ∪ _HIER_ELABELS == _ELABELS`
+  가 깨질 수 있었으나, `_ELABELS` 9종 = 관계 5 + 계층 4 로 여전히 정확히 분할된다(단위 테스트가 게이트).
+
+### §18.8 적대 검증 (codex review, 2026-07-28 · 3라운드) — 지적 5건 전량 in-cycle 흡수
+원 세션의 subagent 패널(backend·qa)이 사용량 한도로 죽었고, 재개 세션에는 **하네스 수준의 "요청 없는
+Agent tool 호출 금지"** 제약이 있었다. §18.8.2 item 1(제약 없는 채널 우선)에 따라 `codex review --base
+origin/main`(repo 접근 있는 독립 리뷰어, subagent 아님 — check #9 accepted `[CODEX:*]`)로 수행했다.
+
+- **R1-P1 (GATE) 부모 보강 예산 역전** — cap 도달 시 `(3b)` 부모 Table 보강이 그대로 `break` 되어,
+  관계로 들어온 Column 은 남는데 그 **부모가 탈락** → 프론트 `colsByTable` 이 부모 없는 컬럼을 렌더에서
+  드롭 → "참조로 이어지는 테이블이 화면에 없다"(HB.3 이 없애려던 실패)가 **cap 상황에서만 되살아나는**
+  우선순위 역전. → `_PARENT_BACKFILL_RESERVE`(60) 신설, 예약량은 **관계 Column 후보 수를 상한으로
+  비례 축소**, **관계 tier 에도 적용**(실측 홍수는 ROUTINE_USES 258건 = 관계 tier 라 tier 0 면제 시 재발 —
+  1차 수정이 이 지점에서 실패해 테스트가 잡아냈다). 남은 부모는 `omitted_nodes` 에 반영(무음 손실 제거).
+- **R1-P2 엣지 fetch LIMIT 무음 절단** — `LIMIT _NEIGHBOR_NODE_CAP*4` 가 우선순위 정렬 *이전* 에 자르는데
+  `truncated` 는 노드 cap 도달에만 세팅돼, **부분 그래프를 `truncated=false` 로 반환**했다. 그러면 본 cycle 이
+  새로 넣은 "아래 직접 연결 목록은 전량" 고지가 거짓이 된다. → `_EDGE_FETCH_CAP` 상수화 + 포화 시 절단 신고.
+- **R2-a broken 엣지가 우선순위 예산 소비** — `broken`(파단) 엣지는 `(4)` 에서 버려지는데 그 끝점이
+  `rel_gids` 에 들어가 tier 0 우선권을 받아, **표시도 안 되는 이웃이 cap 을 먹고 유효 이웃을 밀어냈다**
+  (sync 창 사이 stale). → `is_rel` 판정에서 `status == "broken"` 제외.
+- **R2-b LIMIT 이 비결정적** — `ORDER BY` 없이 자르므로 포화 시 PG 가 임의 부분집합을 반환할 수 있어
+  "관계 우선 · 재현 가능한 부분집합" 계약이 정작 예산이 빠듯할 때 거짓. → UNION 각 항에 관계/계층 등급을
+  리터럴로 실어 `ORDER BY u.prio, u.s, u.e LIMIT` 로 자른다.
+- **R2-c 관계없음 힌트가 hop1 엣지에 속아 숨음** — `_metaNoRelHint` 가 응답 엣지에 관계 라벨이 하나만
+  있어도 힌트를 숨겼는데, 그 관계가 1-hop 것이고 상대가 leaf 면 2·3-hop 이 아무것도 못 더하는데 안내가
+  없어 "선택이 안 먹었다" 오해가 남는다(HB.6 이 잡으려던 바로 그 오해). → 백엔드가 `expanded_hops`
+  (hop 별 신규 노드 수)를 additive 로 보고하고, 프론트는 **2-hop 이후 실적 합이 0** 일 때 힌트를 띄운다.
+  구 replica 응답(필드 부재)은 종전 판정으로 폴백 — 롤링 배포 중 회귀 방지.
+- **R3·R4(3·4라운드)**: 위 흡수 후 재검증 — 다시 P1 0건, P2 8건 추가 지적 중 7건 흡수(경계 절단 거짓양성 ·
+  노드델타만으로 관계없음 단정 · 부모 보강 순서 비결정 · broken 을 cap 이전에 후순위로 · broken 도달 컬럼
+  부모보강 배제 · broken 이 유효 계층행을 앞지르던 정렬 순서 · 구 응답의 완전성 거짓 주장), 1건은 근거 기록 후
+  수용(예약 산정 정밀화 — REPORT §8). 4라운드에서 종료: **P1 3연속 0건** + 남은 지적이 hot path 복잡도를
+  늘리는 미세 정련으로 수렴.
+
+**재-rebase + 적대 흡수 후 재측정** (원 세션 수치와 대조):
+- pytest `test_graph_hop_budget.py` **9 → 21 PASS**(적대 흡수분 회귀 12건 신설: 부모 예약 생존 · 예약
+  비적용 대조군 · 예약 비례축소 · LIMIT 포화 절단신고 · 미포화 대조군 · 경계(정확히 cap) 비절단 · broken
+  우선권 배제 · broken 도달 컬럼 부모보강 배제 · ORDER BY 결정론(brk 선행) · 부모쿼리 graphid 정렬 ·
+  `expanded_hops` 실적 · 엣지-only 실적).
+- 그래프 헤드리스 **전 스위트 865 PASS / 0 FAIL** (`test_detail_dbgroups.js` **95 → 107**, ⑳㉑ 신설 +
+  ⑱ hop-미상 3건 = R2-c/R3-b/R4-d 판정·폴백·형 방어 + upstream 신설 `test_graph_hover_flow.js` 41 · `test_graph_routine_colref.js`
+  30 · `test_graph_ancestor_focus.js` 32 동반 무회귀 — 같은 파일을 만진 세 cycle 의 상호작용이 검증됐다).
+- 컨테이너 pytest **전 스위트 2809 passed / 2 skipped / 0 failed**, ruff clean. 원 세션이 기록한
+  "15건 실패 = main 동일 baseline" 은 이번 실행에서 **0건** — 그 실패들이 환경성 flake 였음을 사후 확증한다
+  (TASK 위 항목의 flaky 관측과 정합).
+- **최종 rebase 후 재검증**: 검증·문서 작업 중 main 이 12커밋 더 전진해(#1018~#1022 — label-lod ·
+  routine-coledges POST-DEPLOY · hover-rw POST-DEPLOY · cyvol scope prefetch fix) 커밋 후 `origin/main`
+  `44fe939d` 위로 다시 rebase 했다. 충돌은 **append-only 문서 5건뿐**(코드 충돌 0 — `metadata_graph.py`
+  는 cyvol 수정과, `graph-core.js` 는 label-lod 와 서로 다른 구역이라 자동 병합). 재-rebase 후 전수 재실행:
+  컨테이너 pytest **2812 passed / 2 skipped / 0 failed** · 그래프 헤드리스 전 스위트 **904 PASS / 0 FAIL**
+  (상승분은 label-lod cycle 이 추가한 스위트) · ruff clean. 위 절의 2809/865 는 그 직전 라운드 수치다.
+- **PB-0008 은 재-rebase·적대흡수 이전 코드에서 수행됐다**(원 세션 16:06~16:13). 프론트 절단 배너 로직은
+  그대로이고 헤드리스 계약 100건이 유지되지만, R2-c 로 힌트 판정이 바뀌었으므로 실화면 재확인은 배포 후
+  POST-DEPLOY 로 수행한다(아래 잔여 항목).
+
+### 잔여 / 후속
+- 3-hop 이 2-hop 과 같아지는 20%(8/40)는 **관계 체인이 2단계에서 끝나는 노드** — 데이터의 성질이며 결함이 아니다(상태줄이 그 사실을 알린다).
+- 대형 스키마 노드(테이블 700개 등)는 여전히 1-hop 부터 cap 300 에 걸린다. 이 경로의 경고는 hop 1 분기로 "아래 목록도 일부만" 을 정직하게 표기하도록 바뀌었을 뿐, 상한 자체를 올리는 것은 별건(페이지네이션 또는 클러스터 경로 유도 검토 — REPORT §8).
