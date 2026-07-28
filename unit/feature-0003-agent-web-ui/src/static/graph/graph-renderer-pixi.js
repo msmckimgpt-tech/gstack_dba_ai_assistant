@@ -280,6 +280,63 @@ export const PixiAdapterPure = {
     return /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/u.test(String(text));
   },
 
+  // graph-label-hover-expand: 라벨이 ellipsis 로 잘린 칩의 **hover 확장 카드** 기하(순수 — node vm 테스트 대상).
+  //   문제: 테이블/루틴/카드 칩은 폭 고정(TW=150 등)이라 긴 이름이 `labelMaxWidth` 에서 잘리고(_ellipsize),
+  //   사용자가 전체 이름을 알려면 상세 패널까지 가야 했다. hover 시 그 칩만 부드럽게 넓어지며 나머지 글자를
+  //   드러낸다.
+  //   설계 제약(사용자 요구):
+  //     ① **다른 노드 위치 불변** — 확장은 scene 모델(node.style.size)을 건드리지 않고 별도 오버레이 레이어에
+  //        그린다. 따라서 masonry/shelf-pack 재배치·combo bbox·hit-grid·미니맵 전부 무영향(reflow 0).
+  //     ② **중심 고정 좌우 대칭 확장** — 원 칩과 중심이 같아 t=0 에서 픽셀 동일(팝 없음) + 한쪽으로만 밀려
+  //        옆 칩을 덮는 비대칭을 피한다.
+  //     ③ **z-order** — 오버레이 레이어가 최상단이라 확장분이 이웃 칩 아래로 숨지 않는다(어댑터 배선 참조).
+  //   반환 null = 확장 불필요(라벨/상한 없음 · 이미 전부 보임 · 이득 < minGain).
+  //   대상은 `labelPlacement:"center"` rect 칩(테이블·루틴·스키마 카드·용어·그룹/카테고리 헤더) — 즉 "노드 **안**
+  //   에 든 명칭". 컬럼 circle 의 우측 외부 라벨(placement:"right")은 노드 밖 텍스트라 본 확장 대상이 아니다.
+  hoverExpandGeom(n, fullW, opts) {
+    const s = (n && n.style) || {}, o = opts || {};
+    if (n && n.__combo) return null;                                  // combo(스키마 배경) 라벨은 상한 없음 — 잘리지 않는다
+    if (!s.labelText || !s.labelMaxWidth || !(fullW > 0)) return null;
+    if ((s.labelPlacement || "center") !== "center") return null;
+    if (!Array.isArray(s.size)) return null;                          // rect 칩만(circle=컬럼 점, 라벨이 노드 밖)
+    if (fullW <= s.labelMaxWidth + 0.5) return null;                  // 이미 전부 보임
+    const cap = o.maxWidth || 460, minGain = o.minGain == null ? 2 : o.minGain;
+    const w0 = s.size[0], h = s.size[1];
+    const pad = Math.max(8, w0 - s.labelMaxWidth);                    // 원 칩의 좌우 여백을 확장 카드도 보존
+    const w1 = Math.min(cap, Math.max(w0, Math.ceil(fullW + pad)));
+    if (w1 - w0 < minGain) return null;
+    // 텍스트 가용폭은 카드 박스 폭과 **분리**해 보간한다: inner0 = 원 노드가 실제로 쓰던 한계(labelMaxWidth),
+    //   inner1 = 확장 종단의 안쪽 폭. 루틴 칩처럼 labelMaxWidth(176)가 칩 폭(150)보다 큰 스타일이 있어(칩 밖으로
+    //   라벨이 삐져나오는 기존 동작), 박스폭-pad 로 계산하면 t=0 에 원래 보이던 글자가 오히려 줄어드는 역-팝이
+    //   난다(codex review P2). inner0 을 원 한계로 고정하면 t=0 이 항상 픽셀 동일.
+    return { x: s.x, y: s.y, w0, w1, h, pad, radius: s.radius || 0, capped: w1 >= cap,
+      inner0: s.labelMaxWidth, inner1: w1 - pad };
+  },
+
+  // graph-label-hover-expand: 현재 폭 w 의 확장 카드 사각형 안에 model 점이 있는가.
+  //   **필요한 이유(codex review P1)**: 카드가 넓어지면 드러난 좌우 영역은 원 노드 bbox 밖이라 hit-grid 가
+  //   null 을 돌려준다 → 사용자가 이름 뒷부분을 보려고 커서를 그쪽으로 옮기는 순간 카드가 닫히는 깜빡임.
+  //   보이는 카드 자체를 hover 유지 영역으로 삼아(WYSIWYG — _pick 층서 철학과 동일) 이를 없앤다.
+  hoverCardHit(mx, my, g, w, cx) {
+    if (!g) return false;
+    const hw = (w > 0 ? w : g.w0) / 2, hh = g.h / 2, x = (cx == null ? g.x : cx);
+    return mx >= x - hw && mx <= x + hw && my >= g.y - hh && my <= g.y + hh;
+  },
+
+  // graph-label-hover-expand: 확장 카드 중심의 화면 x 를 뷰포트 안으로 보정(codex review P2).
+  //   가장자리 칩은 카드가 캔버스 밖으로 나가 잘려 "확장했는데 여전히 안 보이는" 상태가 된다. 세로·중심 y 는
+  //   원 칩 그대로 두고 **가로만** 민다. 카드가 뷰포트보다 넓으면 좌측 정렬(이름 앞부분 판독 우선).
+  //   rightMax(선택) = 우측 가용 경계(screen x). 미니맵은 app.stage 자식이라 world 위에 그려지므로, 카드가
+  //   미니맵과 세로로 겹치면 그 왼쪽 변을 우측 경계로 넘겨 카드가 미니맵 밑에 깔리지 않게 한다.
+  clampCardCenterX(sx, wScreen, vw, pad, rightMax) {
+    const p = pad == null ? 6 : pad, half = wScreen / 2;
+    const lo = p, hi = (rightMax == null ? vw : rightMax) - p;
+    if (wScreen >= hi - lo) return lo + half;   // 가용 폭보다 넓음 → 좌측 정렬(이름 앞부분 판독 우선)
+    if (sx - half < lo) return lo + half;
+    if (sx + half > hi) return hi - half;
+    return sx;
+  },
+
   // 두 built scene diff (오브젝트 풀 재사용 판정). id 기준 add/remove/keep.
   diffScene(prevIds, built) {
     const next = new Set(), add = [], keep = [];
@@ -296,6 +353,15 @@ export const PixiAdapterPure = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DBLCLICK_MS = 320;
+// graph-label-hover-expand: 잘린 라벨 hover 확장 카드 파라미터.
+//   DELAY = hover-intent(노드 위를 빠르게 스쳐 지나갈 땐 뜨지 않게) · MS = 확장 애니 지속 · MAXW = 카드 폭 상한.
+//   MAXW 단위는 **model(world) px** 이다 — 화면 px 가 아니다(codex review P2 지적 반영한 의도 명시). 카드는
+//   world 자식이라 줌과 함께 스케일되므로, 상한을 화면 px 로 잡으면 같은 라벨이 줌마다 다르게 잘려(고배율에서
+//   오히려 안 보임) 확장의 목적을 잃는다. 460 = 테이블 칩(TW=150) 약 3배 — "그래프 대비" 상대 크기를 고정한다.
+const HOVER_EXPAND_DELAY_MS = 90;
+const HOVER_EXPAND_MS = 160;
+const HOVER_COLLAPSE_MS = 110;   // 이탈 축소 — 확장보다 짧게(되돌아감은 빠르게 느껴지는 게 자연스럽다)
+const HOVER_EXPAND_MAXW = 460;
 
 export class PixiGraphAdapter {
   constructor(cfg) {
@@ -308,6 +374,15 @@ export class PixiGraphAdapter {
     this._objs = new Map();            // id → PIXI.Container/Graphics (오브젝트 풀)
     this._hitGrid = null;
     this._labelRes = Math.min((typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1) * 2, 4);
+    // graph-label-hover-expand: hover 확장 상태. _hoverId=현재 확장 대상 노드 id(변화 시에만 재구성),
+    //   _labelWCache=전체 라벨 폭 측정 캐시(잘림 판정·목표폭 산출 — 폰트 파라미터+텍스트가 같으면 폭 동일).
+    this._hoverId = null;
+    this._hoverTimer = 0;
+    this._hoverProbeRaf = 0;
+    this._hoverPt = null;
+    this._hoverCard = null;   // 현재 확장 카드 {c, paint, g, a0, w, raf}
+    this._outCard = null;     // 축소(이탈) 진행 중 카드 — 동시 1장만
+    this._labelWCache = new Map();
     this._lastTap = 0;
     this.container = this.cfg.container || null;
     this.app = null;
@@ -335,6 +410,12 @@ export class PixiGraphAdapter {
     //   (어댑터는 raw canvas pointer 로 hit-test 하므로 hit 방해 0). draw() 는 _objs 만 정리하고 이 레이어는 보존.
     this._hoverLayer = new this.P.Container(); this._hoverLayer.zIndex = 99999; this._hoverLayer.eventMode = "none";
     this.world.addChild(this._hoverLayer);
+    // graph-label-hover-expand: 잘린 라벨 확장 카드 전용 레이어. detail-hover-fx 강조(z=99999) **바로 아래**,
+    //   그러나 전 노드·엣지·combo 보다 위 → 확장분이 이웃 칩에 가리지 않는다(z-order 요구). world 자식이라
+    //   팬/줌 자동 추종. eventMode="none" — 어댑터는 raw canvas pointer + 자체 hit-grid 로 picking 하므로
+    //   오버레이가 클릭/우클릭/드래그를 가로채지 않는다. _objs 밖이라 draw() 의 diff 정리 대상도 아니다.
+    this._labelHoverLayer = new this.P.Container(); this._labelHoverLayer.zIndex = 99998; this._labelHoverLayer.eventMode = "none";
+    this.world.addChild(this._labelHoverLayer);
     this._initMinimap();
     this._bindPointer();
     // autoResize(gap #15): 컨테이너/창 리사이즈 자동 추종.
@@ -399,14 +480,29 @@ export class PixiGraphAdapter {
     this._lastW = w; this._lastH = h;
     this.app.renderer.resize(w, h);
     this._positionMinimap();
+    this._repaintHoverCard();   // graph-label-hover-expand: 뷰포트 폭이 바뀌면 카드 클램프 재계산(codex review P2)
     this._render();
+  }
+
+  // 활성 확장 카드를 현재 카메라·뷰포트 기준으로 다시 그린다(폭 유지). 카메라·리사이즈 변경점 공용.
+  _repaintHoverCard() { if (this._hoverCard) { try { this._hoverCard.paint(this._hoverCard.w); } catch (_) {} } }
+  // 카메라가 바뀌면 커서 아래 대상이 달라질 수 있다 — wheel 뿐 아니라 focusElement/zoomTo/translateBy(더블클릭
+  //   앵커 팬 등) 도 포함해 마지막 포인터 위치로 재판정한다(codex review P2). 버튼 눌림 중(팬/드래그)엔
+  //   _probeHover 가 스스로 무동작이므로 매 팬 프레임 비용은 0.
+  _revalidateHover() {
+    const p = this._hoverPt;
+    if (p && !this._ptrDown) this._probeHover(p.x, p.y);
+    this._repaintHoverCard();
   }
 
   // render-on-demand: 변경 지점마다 명시 렌더(ticker autoStart:false). rAF-throttle 무관 즉시 페인트.
   _render() { if (this.app && this.app.renderer && this.world) { try { this.app.renderer.render(this.app.stage); } catch (_) {} } }
   // ── 카메라 상태 헬퍼 ──
   get _cam() { return this.world ? { zoom: this.world.scale.x, x: this.world.position.x, y: this.world.position.y } : { zoom: 1, x: 0, y: 0 }; }
-  _applyCam(c) { if (!this.world) return; this.world.scale.set(c.zoom); this.world.position.set(c.x, c.y); this._renderMinimapViewport(); this._render(); this._emitTransform(); }
+  // graph-label-hover-expand: 카메라가 바뀌면 확장 카드의 뷰포트 클램프도 다시 계산해야 한다(줌 중 카드가
+  //   화면 밖으로 밀리는 것 방지). 팬/드래그는 개시 시점에 hover 가 해제되므로 실제 발동은 wheel 줌 경로 한정.
+  _applyCam(c) { if (!this.world) return; this.world.scale.set(c.zoom); this.world.position.set(c.x, c.y); this._renderMinimapViewport();
+    this._revalidateHover(); this._render(); this._emitTransform(); }
   getSize() { return this.app ? [this.app.renderer.width / this.app.renderer.resolution, this.app.renderer.height / this.app.renderer.resolution] : [0, 0]; }
   getZoom() { return this._cam.zoom; }
   zoomTo(z, opts) { const c = this._cam; c.zoom = PixiAdapterPure.clampZoom(z, this.zoomRange); this._applyCam(c); }
@@ -483,11 +579,17 @@ export class PixiGraphAdapter {
     // 노드 이동 대상인가(gap #7, _metaElementDragEnable 등가): 좌클릭 + 노드/장식(SC:/GB:/GH:/CAT:/CATH: 등)이되
     //   접기 컨트롤(GX:/CATX:)·접힌 카테고리 밴드는 클릭 전용 → graph-core 핸들러가 최종 판정(어댑터는 dragstart 만 발화).
     el.addEventListener("wheel", (e) => { e.preventDefault();
-      const s = scr(e); this._applyCam(PixiAdapterPure.zoomAroundCursor(this._cam, e.deltaY < 0 ? 1.12 : 0.9, s, this.zoomRange)); }, { passive: false });
+      // graph-label-hover-expand: 줌으로 커서 아래 노드가 바뀌어도 pointermove 는 안 온다 → 최신 커서 좌표를
+      //   먼저 기록해 두면 _applyCam 의 _revalidateHover 가 그 좌표로 재판정한다.
+      const s = scr(e); this._hoverPt = s;
+      this._applyCam(PixiAdapterPure.zoomAroundCursor(this._cam, e.deltaY < 0 ? 1.12 : 0.9, s, this.zoomRange)); }, { passive: false });
     const onDown = (e) => {
+      this._ptrDown = true;   // graph-label-hover-expand: 버튼 눌림 동안 hover 판정 정지(아래 _probeHover 가드)
       const s = scr(e);
       // 이슈#3: 미니맵 영역 클릭/드래그 = 카메라 이동(그래프 드래그·선택보다 우선).
-      if (this._inMinimap(s.x, s.y)) { down = { minimap: true }; mode = "minimap"; this._minimapPanTo(s.x, s.y); return; }
+      // graph-label-hover-expand: 미니맵 조작 진입 시 확장 카드 정리 — 미니맵은 같은 캔버스라 pointerleave 가
+      //   없고, 이후 move/up 경로가 전부 프로브를 건너뛰어 카드가 남는다(codex review P2).
+      if (this._inMinimap(s.x, s.y)) { this._setLabelHover(null); down = { minimap: true }; mode = "minimap"; this._minimapPanTo(s.x, s.y); return; }
       const [mx, my] = PixiAdapterPure.screenToModel(s.x, s.y, this._cam);
       const hit = this._pick(mx, my);
       down = { sx: s.x, sy: s.y, button: e.button, ox: this._cam.x, oy: this._cam.y, hit, client: rawClient(e), mx, my, lmx: mx, lmy: my }; mode = null;
@@ -503,6 +605,7 @@ export class PixiGraphAdapter {
         const dragOk = down.hit && this._elementDragEnable(down.hit, e);
         if (midBtn(down.button) || !dragOk) mode = "pan";
         else { mode = "nodedrag"; this._emitDrag("dragstart", down.hit, e, s, mx, my); }
+        this._setLabelHover(null);   // graph-label-hover-expand: 팬/드래그 개시 = hover 종료(확장 카드 잔상 방지)
       }
       if (mode === "pan") this._applyCam({ zoom: this._cam.zoom, x: down.ox + dx, y: down.oy + dy });
       else if (mode === "nodedrag") {
@@ -514,6 +617,7 @@ export class PixiGraphAdapter {
     };
     window.addEventListener("pointermove", onMove);
     const up = (e) => {
+      this._ptrDown = false;   // graph-label-hover-expand
       if (!down) return;
       if (down.minimap) { down = null; mode = null; return; }   // 이슈#3: 미니맵 드래그 종료(클릭 억제)
       const finished = mode, d = down, s = scr(e); down = null; mode = null;
@@ -537,8 +641,215 @@ export class PixiGraphAdapter {
       this._emit(kindEvt + ":click", this._payload(hit, s, mx, my, e));
     };
     window.addEventListener("pointerup", up);
+    // pointercancel: 터치·펜에서 pointerup 없이 발화한다. 미처리 시 down/mode/_ptrDown 이 고착돼 다음
+    //   pointerdown 까지 hover 판정이 죽고, 진행 중이던 nodedrag 는 dragend 를 못 받아 graph-core 의
+    //   드래그 상태(_metaGraph._drag)·z 부스트가 남는다 → "놓은 자리에서 종료" 로 동치 처리한다(codex review P2).
+    const cancel = (e) => {
+      this._ptrDown = false;
+      const d = down, m = mode; down = null; mode = null;
+      this._cancelHoverProbe(true);   // 대기 중이던 프로브 rAF 도 함께 무효화(취소 후 카드 부활 차단)
+      if (m === "nodedrag" && d && d.hit) this._emitDrag("dragend", d.hit, e, { x: d.sx, y: d.sy }, d.lmx, d.lmy);
+    };
+    window.addEventListener("pointercancel", cancel);
     el.addEventListener("contextmenu", (e) => e.preventDefault());
-    this._winListeners = [["pointermove", onMove], ["pointerup", up]];   // m1: destroy 시 정리
+    // graph-label-hover-expand: hover 프로브(캔버스 한정 — window 가 아니라 el 에 건다). 드래그/팬 중(down)엔 억제.
+    //   rAF 코얼레싱: 고폴링 마우스의 pointermove 폭주에도 프레임당 1회만 hit-test(§76 엣지 재그림과 동일 패턴).
+    const onHoverMove = (e) => {
+      if (down) return;
+      this._hoverPt = scr(e);
+      if (this._hoverProbeRaf) return;
+      const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+      if (!raf) { const p = this._hoverPt; this._probeHover(p.x, p.y); return; }
+      this._hoverProbeRaf = raf(() => { this._hoverProbeRaf = 0; const p = this._hoverPt; if (p) this._probeHover(p.x, p.y); });
+    };
+    el.addEventListener("pointermove", onHoverMove);
+    // 이탈 시 **대기 중인 프로브까지** 무효화한다 — 그러지 않으면 leave 뒤 실행된 rAF 가 캔버스 안의 낡은
+    //   좌표로 재판정해 커서가 떠난 뒤 카드가 되살아난다(codex review P1).
+    el.addEventListener("pointerleave", () => this._cancelHoverProbe(true));
+    this._winListeners = [["pointermove", onMove], ["pointerup", up], ["pointercancel", cancel]];   // m1: destroy 시 정리
+  }
+
+  // ── graph-label-hover-expand: 잘린 라벨 hover 확장 ──────────────────────────
+  // 커서 아래 노드 판정. **tier1(실 요소 hit-grid)만** 쓴다 — _pick 의 tier2(hitTestCombo)는 combo 당
+  //   자식 union bbox 를 재계산해 O(combos×nodes) 라 매 pointermove 에 돌릴 수 없다(클릭 1회는 무방).
+  //   combo/cat-bg 는 애초 확장 대상도 아니므로(hoverExpandGeom 이 거른다) 기능 손실 0.
+  _probeHover(sx, sy) {
+    // 버튼 눌림 중(클릭/팬/노드드래그)엔 판정하지 않는다 — pointerdown **직전**에 예약된 rAF 프로브가 뒤늦게
+    //   실행되면 드래그 중 옛 좌표로 카드를 띄워, 노드가 이동한 뒤 제자리에 남는 유령 카드가 된다(codex review P2).
+    if (this._ptrDown) return;
+    if (this._inMinimap(sx, sy)) { this._setLabelHover(null); return; }
+    const [mx, my] = PixiAdapterPure.screenToModel(sx, sy, this._cam);
+    // 확장 카드 위에 커서가 있으면 현 hover 유지 — 드러난 좌우 영역은 원 노드 bbox 밖이라 그대로 두면
+    //   "이름 뒷부분을 보려고 다가가면 닫히는" 깜빡임이 난다(codex review P1).
+    const cur = this._hoverCard;
+    if (cur && PixiAdapterPure.hoverCardHit(mx, my, cur.g, cur.w, cur.c ? cur.c.position.x : null)) return;   // 클램프된 실제 중심 기준
+    const hit = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => !this._isCatBg(nd)) : null;
+    this._setLabelHover(hit || null);
+  }
+
+  // 대기 중인 hover 프로브 무효화(+ clear=true 면 현 hover 도 해제). pointerleave·destroy 공용.
+  _cancelHoverProbe(clear) {
+    if (this._hoverProbeRaf) { try { cancelAnimationFrame(this._hoverProbeRaf); } catch (_) {} this._hoverProbeRaf = 0; }
+    this._hoverPt = null;
+    if (clear) this._setLabelHover(null);
+  }
+
+  _setLabelHover(n) {
+    const id = n ? n.id : null;
+    if (id === this._hoverId) return;              // 같은 대상 — 재구성 없음(스윕 중 무한 rebuild 방지)
+    this._hoverId = id;
+    if (this._hoverTimer) { try { clearTimeout(this._hoverTimer); } catch (_) {} this._hoverTimer = 0; }
+    const had = this._clearLabelHoverVisual(true);   // 이탈은 축소 애니(툭 꺼지지 않게)
+    const geom = n ? this._labelExpandGeom(n) : null;
+    // render-on-demand 보존: 보이던 카드가 없고 새로 띄울 것도 없으면 렌더하지 않는다(마우스 스윕 = GPU 0).
+    if (!geom) { if (had) this._render(); return; }
+    const fire = () => { this._hoverTimer = 0; if (this._hoverId === id) this._showLabelExpand(n, geom); };
+    if (typeof setTimeout === "function" && HOVER_EXPAND_DELAY_MS > 0) this._hoverTimer = setTimeout(fire, HOVER_EXPAND_DELAY_MS);
+    else fire();
+  }
+
+  // 전체 라벨 폭을 측정해 순수 기하로 넘긴다(잘림 판정 + 목표 폭).
+  _labelExpandGeom(n) {
+    const s = (n && n.style) || {};
+    if (!this.P || !s.labelText || !s.labelMaxWidth) return null;
+    const fullW = this._measureLabel(String(s.labelText), s);
+    return PixiAdapterPure.hoverExpandGeom(n, fullW, { maxWidth: HOVER_EXPAND_MAXW });
+  }
+
+  // 전체 라벨 폭 측정(1회 캐시). 텍스트+폰트 파라미터가 같으면 폭도 같으므로 노드 id 가 아닌 그 조합이 캐시 키
+  //   (스코프 전환·rebuild 로 id 가 바뀌어도 재측정 없음). 측정용 텍스트는 씬에 붙이지 않고 즉시 destroy.
+  _measureLabel(text, s) {
+    const size = s.labelFontSize || 12, weight = s.labelFontWeight || 400;
+    const k = size + "|" + weight + "|" + text;
+    if (this._labelWCache.has(k)) return this._labelWCache.get(k);
+    let w = 0;
+    try { const t = this._makeText(text, { size, fill: s.labelFill || "#ffffff", weight }); w = t.width; t.destroy(); } catch (_) { w = 0; }
+    if (this._labelWCache.size > 4000) this._labelWCache.clear();   // 장기 세션 누적 방어(재측정은 저렴)
+    this._labelWCache.set(k, w);
+    return w;
+  }
+
+  // 확장 카드 구성 + rAF 트윈. 카드 = [상태 halo] + [칩 배경] + [전체 라벨(현재 폭에 맞춰 순차 노출)].
+  //   원 노드는 그대로 두고 그 위에 같은 중심·같은 높이·같은 색으로 덮으므로 t=0 에 시각적으로 동일 →
+  //   "칩이 스스로 넓어지는" 연속 애니가 된다(교체 팝 없음). scene 모델 미변경 = 이웃 노드 위치 불변.
+  _showLabelExpand(n, g) {
+    const P = this.P, layer = this._labelHoverLayer;
+    if (!P || !layer) return;
+    const s = n.style || {}, full = String(s.labelText);
+    // 카드는 **항상 불투명**(alpha 1)이다. dim(§57.9) 된 노드의 alpha(0.38)를 카드에도 램프하면, 램프 도중
+    //   아래 원 노드의 잘린 라벨이 비쳐 확장 중인 글자와 이중으로 겹친다(codex review P2). 애초에 사용자가
+    //   hover 한 이유가 "이 이름을 읽으려고" 이므로 dim 노드도 즉시 판독 가능한 게 맞다.
+    const c = new P.Container(); c.position.set(g.x, g.y); c.alpha = 1;
+    const halo = new P.Container(), bg = new P.Graphics();
+    const t = this._makeText(full, { size: s.labelFontSize || 12, fill: s.labelFill || "#ffffff", weight: s.labelFontWeight || 400 });
+    t.anchor.set(0.5, 0.5); t.position.set(0, 0);
+    c.addChild(halo, bg, t);
+    layer.addChild(c);
+    const card = { c, g, node: n, w: g.w0, raf: 0, paint: null };   // node = _pick tier0 프록시 대상
+    card.paint = (w) => {
+      card.w = w;
+      c.position.x = this._clampCardX(g, w);   // 가장자리 칩·미니맵 아래로 카드가 잘리지 않게 가로 보정
+      // 상태 테두리(selected/analyzed/running/match)를 확장 폭에 맞춰 다시 그린다 — 원 노드 halo 가 카드 밖으로
+      //   비죽 나와 보이는 어긋남 방지. _drawNode 와 동일 계약(_applyNodeStates) 재사용.
+      for (const ch of halo.removeChildren()) { try { ch.destroy({ children: true }); } catch (_) {} }
+      this._applyNodeStates(halo, { states: n.states, style: Object.assign({}, s, { size: [w, g.h] }) });
+      bg.clear();
+      // 반투명 fill(running desaturate)을 그대로 얹으면 아래 원 노드의 라벨이 비친다 → 캔버스 배경색 불투명
+      //   베이스를 깔고 같은 alpha 로 덮어 "노드가 배경 위에 합성된 모습"을 재현(불투명 + 상태 채도 동시 충족).
+      const fa = this._nodeFillAlpha(n);
+      if (fa < 1) bg.roundRect(-w / 2, -g.h / 2, w, g.h, g.radius).fill({ color: this.cfg.background || "#f6f8fb", alpha: 1 });
+      bg.roundRect(-w / 2, -g.h / 2, w, g.h, g.radius).fill({ color: s.fill || "#0f7d8c", alpha: fa });
+      if (s.lineWidth) bg.stroke({ color: s.stroke || "#ffffff", width: s.lineWidth });
+      // 텍스트 가용폭은 박스 폭과 분리 보간(inner0=원 한계 → inner1=종단 안쪽 폭) — 위 hoverExpandGeom 주석 참조.
+      const span = g.w1 - g.w0, k = span > 0 ? Math.max(0, Math.min(1, (w - g.w0) / span)) : 1;
+      this._fitText(t, full, Math.max(0, g.inner0 + (g.inner1 - g.inner0) * k));
+    };
+    this._hoverCard = card;
+    card.paint(g.w0);
+    this._render();
+    this._tweenCard(card, g.w0, g.w1, HOVER_EXPAND_MS, null);
+  }
+
+  // 확장 카드 중심의 world x — 뷰포트 + 미니맵 회피 클램프 반영. 순수 산술은 PixiAdapterPure.clampCardCenterX.
+  _clampCardX(g, w) {
+    const [vw] = this.getSize();
+    if (!(vw > 0)) return g.x;
+    const cam = this._cam;
+    let rightMax = vw;
+    const mm = this._minimap;
+    if (mm && mm.c) {   // 미니맵(app.stage 자식 = world 위)과 세로로 겹치면 그 왼쪽까지만 확장
+      const my0 = mm.c.position.y, my1 = my0 + mm.size[1];
+      const cy = g.y * cam.zoom + cam.y, ch = Math.abs(g.h * cam.zoom) / 2;
+      if (cy + ch > my0 && cy - ch < my1) rightMax = mm.c.position.x;
+    }
+    const sx = PixiAdapterPure.clampCardCenterX(g.x * cam.zoom + cam.x, w * cam.zoom, vw, 6, rightMax);
+    return (sx - cam.x) / cam.zoom;
+  }
+
+  // 카드 폭 트윈(확장/축소 공용). rAF 부재 환경(node vm 등)은 종단 상태 즉시 적용.
+  _tweenCard(card, w0, w1, dur, onEnd) {
+    const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+    const done = () => { if (onEnd) onEnd(); };
+    if (!raf) { card.paint(w1); this._render(); done(); return; }
+    const t0 = (typeof performance !== "undefined" ? performance.now() : 0);
+    const ease = (k) => 1 - Math.pow(1 - k, 3);   // easeOutCubic — _tween(카메라)과 동일 감속감
+    const step = (now) => {
+      card.raf = 0;
+      if (!card.c.parent) { done(); return; }     // rebuild/destroy 로 이미 떨어져 나감
+      const k = Math.min(1, (now - t0) / dur), e = ease(k);
+      card.paint(w0 + (w1 - w0) * e);
+      this._render();
+      if (k < 1) card.raf = raf(step); else done();
+    };
+    card.raf = raf(step);
+  }
+
+  _destroyCard(card) {
+    if (!card) return;
+    if (card.raf) { try { cancelAnimationFrame(card.raf); } catch (_) {} card.raf = 0; }
+    try { if (card.c.parent) card.c.parent.removeChild(card.c); } catch (_) {}
+    try { card.c.destroy({ children: true }); } catch (_) {}
+  }
+
+  // 전체 문자열을 maxW 안에 맞춰 넣는다(넘치면 ellipsis). _ellipsize 와 달리 **매번 전체 문자열 기준**이라
+  //   확장 애니 중 폭이 커질수록 글자가 순차로 드러난다(잘린 상태에서 연속 시작 → 중간 슬라이스 팝 없음).
+  _fitText(t, full, maxW) {
+    const s = String(full);
+    if (t.text !== s) t.text = s;
+    if (t.width <= maxW) return;
+    let lo = 0, hi = s.length;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; t.text = s.slice(0, mid) + "…"; (t.width <= maxW) ? lo = mid : hi = mid - 1; }
+    t.text = s.slice(0, lo) + "…";
+  }
+
+  // 현재 카드 종료. animate=true 면 원 칩 폭으로 되감아(축소) 제거 — 넓은 카드가 툭 꺼지는 팝 방지.
+  //   축소 진행 카드는 **동시 1장**만 유지한다(새 이탈이 겹치면 이전 것은 즉시 제거 — 누적/겹침 차단).
+  //   반환 = 실제로 정리한 카드가 있었는가(호출부의 불필요 렌더 억제용).
+  _clearLabelHoverVisual(animate) {
+    // 축소 진행 카드 제거도 "정리함"으로 집계해야 한다 — 그러지 않으면 (확장카드 이탈 → 축소 중 → 빈 배경)
+    //   연속에서 false 를 반환해 호출부가 렌더를 생략하고, render-on-demand(autoStart:false) 라 마지막
+    //   프레임버퍼에 유령 카드가 남는다(codex review P1).
+    let cleaned = false;
+    if (this._outCard) { this._destroyCard(this._outCard); this._outCard = null; cleaned = true; }
+    const card = this._hoverCard;
+    this._hoverCard = null;
+    if (!card) return cleaned;
+    if (card.raf) { try { cancelAnimationFrame(card.raf); } catch (_) {} card.raf = 0; }
+    const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+    if (!animate || !raf) { this._destroyCard(card); return true; }
+    this._outCard = card;
+    this._tweenCard(card, card.w, card.g.w0, HOVER_COLLAPSE_MS, () => {
+      if (this._outCard === card) this._outCard = null;
+      this._destroyCard(card); this._render();
+    });
+    return true;
+  }
+  // rebuild/destroy 진입점 — 예약 타이머·hover id 까지 초기화(다음 pointermove 가 재도출). 좌표·라벨이 이미
+  //   바뀐 뒤라 축소 애니는 무의미(옛 위치에서 되감기면 오히려 어색) → 즉시 제거.
+  _clearLabelHover() {
+    if (this._hoverTimer) { try { clearTimeout(this._hoverTimer); } catch (_) {} this._hoverTimer = 0; }
+    this._hoverId = null;
+    this._clearLabelHoverVisual(false);
   }
   // graph-ctxmenu(hit-test 층서 = 시각 z-페인트 순서 정합, WYSIWYG): 구체 요소 > 스키마 클러스터 배경(combo) > 카테고리 밴드 배경(cat-bg).
   //   근본 결함: CAT 밴드 배경은 멤버 클러스터 전체를 덮는 node(z=_METZ.CAT_BG=-1)인데, 예전 _pick 은
@@ -551,6 +862,11 @@ export class PixiGraphAdapter {
   //   는 cat-bg 아님 → tier1 최우선(카테고리 메뉴).
   _isCatBg(n) { return !!(n && n.data && n.data.kind === "cat-bg"); }
   _pick(mx, my) {
+    // tier0(graph-label-hover-expand): 확장 카드가 떠 있으면 그 사각형 안은 **그 노드**다. 카드는
+    //   eventMode="none" 이고 hit-grid 는 원 bbox 만 알아서, 그대로 두면 드러난 영역 클릭·우클릭이 캔버스나
+    //   이웃 노드로 새어 선택이 풀리거나 엉뚱한 메뉴가 뜬다(codex review P2). 보이는 대로 클릭 = WYSIWYG.
+    const cur = this._hoverCard;
+    if (cur && cur.node && PixiAdapterPure.hoverCardHit(mx, my, cur.g, cur.w, cur.c ? cur.c.position.x : null)) return cur.node;
     // tier1: 실 요소(카드·테이블·GB/GH/GX·CATH/CATX 등, cat-bg 제외) — z 최상위
     const n = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => !this._isCatBg(nd)) : null;
     if (n) return n;
@@ -712,6 +1028,7 @@ export class PixiGraphAdapter {
     await this._ready;
     if (!this.world) return;   // 비브라우저/미배선 — no-op
     if (this._hoverLayer) this._hoverLayer.removeChildren();   // detail-hover-fx: rebuild 로 노드 좌표가 바뀌면 stale 강조 제거(hover 는 transient — 재hover 시 재도출).
+    this._clearLabelHover();   // graph-label-hover-expand: rebuild 로 좌표·라벨·폭이 바뀌면 stale 확장 카드 제거
     const built = this._built;
     // 끝점 위치 O(1) 조회 맵(구 O(N·E) find 제거)
     const npos = new Map();
@@ -749,6 +1066,15 @@ export class PixiGraphAdapter {
     this._emit("afterdraw", { data: { stage: "data" } });   // graph-core 는 e.data.stage 를 읽는다(gap #16)
   }
 
+  // 노드 body fill alpha — §18.8 M1 의 running desaturate(G6 running.fillOpacity 0.45) 포함.
+  //   `_drawNode` 와 hover 확장 카드가 **공유**한다: 카드가 항상 불투명이면 running 노드를 hover 하는 순간
+  //   채도가 되살아나, 앰버/주황 역할색 위에서 주황 점선 테두리가 위장되는 원 문제가 재발한다(codex review P2).
+  _nodeFillAlpha(n) {
+    const s = (n && n.style) || {}, states = (n && n.states) || [];
+    const runSc = (states.indexOf("running") >= 0) ? (this._nodeState.running || { fillOpacity: 0.45 }) : null;
+    return runSc ? (runSc.fillOpacity != null ? runSc.fillOpacity : 0.45) : (s.fillOpacity == null ? 1 : s.fillOpacity);
+  }
+
   _drawNode(n) {
     const P = this.P, s = n.style || {}, c = new P.Container();
     c.zIndex = s.zIndex || 4; c.position.set(s.x, s.y);
@@ -756,8 +1082,7 @@ export class PixiGraphAdapter {
     const st = { color: s.stroke || "#ffffff", width: s.lineWidth || 1 };
     // §18.8 M1: running 상태의 fill desaturate(G6 running.fillOpacity 0.45 — 앰버/주황 역할색 위에서 주황 점선 테두리
     //   위장 방지)를 어댑터에 복원. state config 의 fillOpacity 는 node.style 에 bake 안 되므로 states 로 판정해 fill alpha 적용.
-    const runSc = ((n.states || []).indexOf("running") >= 0) ? (this._nodeState.running || { fillOpacity: 0.45 }) : null;
-    const fillAlpha = runSc ? (runSc.fillOpacity != null ? runSc.fillOpacity : 0.45) : (s.fillOpacity == null ? 1 : s.fillOpacity);
+    const fillAlpha = this._nodeFillAlpha(n);
     if (n.type === "circle") { const r = (typeof s.size === "number" ? s.size : 11) / 2; g.circle(0, 0, r).fill({ color: s.fill || "#5c6773", alpha: fillAlpha }); if (s.lineWidth) g.stroke(st); }
     else { const w = Array.isArray(s.size) ? s.size[0] : (s.size || 100), h = Array.isArray(s.size) ? s.size[1] : 24;
       g.roundRect(-w / 2, -h / 2, w, h, s.radius || 0).fill({ color: s.fill || "#0f7d8c", alpha: fillAlpha });
@@ -930,6 +1255,9 @@ export class PixiGraphAdapter {
     const old = this._objs.get(id);
     if (old && this.world) { const idx = this.world.getChildIndex(old); const fresh = this._drawNode(n); try { old.destroy({ children: true }); } catch (_) {} this.world.removeChild(old); this.world.addChildAt(fresh, Math.max(0, Math.min(idx, this.world.children.length)));
       if (this._objSig) this._objSig.delete(id);   // 풀 서명 무효화(증분 갱신 — 다음 full draw 가 재계산)
+      // graph-label-hover-expand: hover 중인 노드의 상태가 바뀌면 확장 카드의 halo 도 즉시 동기화한다
+      //   (카드를 지우면 커서가 멎은 채 확장이 사라져 깜빡임 — 폭 유지 + 재페인트가 정답).
+      if (id === this._hoverId && this._hoverCard) { try { this._hoverCard.paint(this._hoverCard.w); } catch (_) {} }
       this._render(); }
   }
   // z-index: graph-core(roleviz)는 **단일 map 인자** {id:z} 로 부른다(gap #3). (id,z) 2인자도 겸용.
@@ -1002,10 +1330,12 @@ export class PixiGraphAdapter {
     this._render();
   }
   // 무인자(gap #10)=컨테이너 추종, (w,h)=명시. graph-core 는 무인자로 부른다(core:1833,2090).
-  resize(w, h) { if (!this.app) return; if (w == null) this._resizeToContainer(); else { this.app.renderer.resize(w, h); this._positionMinimap(); this._renderMinimapViewport(); } this._render(); }
+  resize(w, h) { if (!this.app) return; if (w == null) this._resizeToContainer(); else { this.app.renderer.resize(w, h); this._positionMinimap(); this._renderMinimapViewport(); this._repaintHoverCard(); } this._render(); }
   destroy() {
     try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); } catch (_) {}
     try { if (this._pendingRaf) cancelAnimationFrame(this._pendingRaf); } catch (_) {}   // graph-edge-drag-perf: 코얼레싱 rAF 정리
+    try { this._cancelHoverProbe(false); } catch (_) {}   // graph-label-hover-expand: 대기 프로브 rAF 정리
+    try { this._clearLabelHover(); } catch (_) {}   // graph-label-hover-expand: 예약 타이머·트윈 rAF·카드 정리
     try { if (this._ro) this._ro.disconnect(); } catch (_) {}   // m1: ResizeObserver 정리
     try { if (this._winListeners) for (const [ev, fn] of this._winListeners) window.removeEventListener(ev, fn); } catch (_) {}   // m1: window 리스너 정리
     try { if (this.app) this.app.destroy(true, { children: true }); } catch (_) {}

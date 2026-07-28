@@ -6549,7 +6549,6 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] `tests/headless/test_detail_colsel.js` ⑤ 를 문구 단정 → 접근 경로 단정으로 갱신 (⚠ 이 하네스 자체는 ITEM-09 ES-module 리팩터 이후 **main 에서도 실행 불가** — pre-existing, 본 cycle 범위 밖)
 - [x] **PB-0008 라이브 시각검증** (docker cp 스테이징 → 실 Windows Chrome) — 상세 패널 `notes:0` · `h4: 컬럼 (2) ⓘ` · 커밋 바 `display:none`(0건) ↔ `flex`(1건 pending) 왕복 · 패널 텍스트 852→512자. 증적 `docs/test-runs.d/20260728T113000-graph-noise-reduction.md` + PNG 2장
 - [x] 한국어 조사 정정 — `함수·프로시저을` → `함수·프로시저를`(라이브 실측에서 포착, 분기별 조사 하드코딩)
-
 ## TASK-20260728T121500-usage-records-hint-tooltip — '사용 기록' 행 두 번째 줄 이동 안내 제거(툴팁 전환) (Minor §12.3, frontend-only)
 
 **요청 (사용자, 2026-07-28)**: 두 줄로 출력되는 항목들("관계도 열기 →" 등)의 설명 문자열은
@@ -6561,3 +6560,21 @@ mouse-hover 툴팁으로 충분하니 제거.
       `path_label` 을 esc 한 값에 다시 esc 하던 경로를 1회 esc 로 정리.
 - [x] dead CSS(`.usage-rec-sub`/`-goto`/`-note`) 삭제.
 - [x] POST-DEPLOY PB-0008 — `docs/test-runs.d/20260728T121500-usage-records-hint-tooltip.md`
+## TASK-20260728T120530-graph-label-hover-expand — 그래프 뷰: 이름이 잘린 테이블 노드 hover 시 부드럽게 확장하며 전체 명칭 노출 (Minor §12.3 — feature-0003 web/UI 프론트 static, frontend-only, /_template:entry arg-given)
+- 요청(사용자, 2026-07-28, `/_template:entry` arg-given): "`그래프 뷰` 에서, 테이블 노드 내 명칭이 너무 길 경우 전체 텍스트가 나타나지 않고 잘리는 이슈가 확인되었습니다. 사용자가 해당 노드의 명칭을 확인하기 위해, 텍스트가 잘리는 노드에 mouse-hover 시, 해당 노드의 크기가 부드럽게 확장되며 나머지 명칭 텍스트도 나타나도록 구성해주세요. 다른 노드의 위치를 뒤틀지 않도록 주의하며 작업하고, z-order 또한 유의해주세요."
+- 현상: 테이블 칩은 폭이 `_METLAY.TW=150` 으로 **고정**(feature-0016 §45 — 가변 폭이 setData 재packing 을 유발해 폐기)이고 `_metaTableStyle` 이 `labelMaxWidth=140` 을 걸어, 렌더러 `_ellipsize` 가 긴 이름을 `cc_user_subscri…` 로 잘랐다. 전체 이름을 보려면 노드를 클릭해 상세 패널까지 가야 했다. 루틴 칩·스키마 카드·용어 칩·카테고리 헤더도 같은 구조.
+- 설계 결정(요구 제약 2건이 설계를 규정):
+  - **D1 「다른 노드 위치 불변」 → scene 모델을 건드리지 않는 오버레이 확장.** `node.style.size` 를 키우면 masonry/shelf-pack 재배치·combo auto-fit bbox·hit-grid·미니맵이 전부 따라 움직여 그래프가 요동친다. 대신 `world` 하위 전용 레이어 `_labelHoverLayer` 에 **같은 중심·같은 높이·같은 색**의 확장 카드를 그린다 → 레이아웃 입력 무변경(reflow 0). 카드는 world 자식이라 팬/줌을 자동 추종한다.
+  - **D2 「z-order 유의」 → `zIndex=99998`.** 전 노드(≤`_METZ.CTL`=6)·엣지·combo 위, detail-hover-fx 강조(`_hoverLayer`=99999) 바로 아래. `world.sortableChildren=true` 라 삽입 순서와 무관. `eventMode="none"` — 어댑터는 raw canvas pointer + 자체 hit-grid 로 picking 하므로 오버레이가 클릭을 가로채지 않는다.
+  - **D3 중심 고정 좌우 대칭 확장** — t=0 에 원 칩과 픽셀 동일해 "칩이 스스로 넓어지는" 연속 애니가 되고(교체 팝 없음), 한쪽으로만 밀려 옆 칩을 덮는 비대칭도 피한다.
+  - **D4 텍스트 가용폭은 박스 폭과 분리 보간**(`inner0`=원 `labelMaxWidth` → `inner1`=종단 안쪽 폭). 루틴 칩은 `labelMaxWidth(176) > 칩 폭(150)` 이라 박스폭-pad 로 계산하면 hover 순간 **원래 보이던 글자가 줄어드는 역-팝**이 난다.
+  - **D5 대상 = `labelPlacement:"center"` rect 칩**(테이블·루틴·스키마 카드·용어·그룹/카테고리 헤더) = 요청 문구의 "노드 **내** 명칭". 컬럼 circle 의 우측 **외부** 라벨(`placement:"right"`)은 노드 밖 텍스트 + hit 영역이 11px 점이라 본 확장 대상에서 제외(§8.1 개선 제안으로만 기록).
+- 구현(`static/graph/graph-renderer-pixi.js`, additive):
+  - `PixiAdapterPure.hoverExpandGeom / hoverCardHit / clampCardCenterX` — 확장 기하·카드 hit·뷰포트 클램프 순수 산술(node vm 테스트 대상).
+  - 어댑터 — `_labelHoverLayer` 신설 / `_probeHover`(rAF 코얼레싱, **tier1 hit-grid 만**) · `_setLabelHover`(hover-intent 90ms·대상 변화 시에만 재구성) · `_labelExpandGeom`·`_measureLabel`(전체 라벨 폭 1회 캐시) · `_showLabelExpand`·`_tweenCard`(easeOutCubic 160ms 확장 / 110ms 축소) · `_fitText`(전체 문자열 기준 재계산 → 글자 순차 노출) · `_clampCardX`(뷰포트 + 미니맵 회피) · `_nodeFillAlpha`(`_drawNode` 와 공유 — running desaturate 보존) · `_pick` **tier0**(카드 위 클릭/우클릭/드래그를 원 노드로 라우팅) · 정리 경로(`draw` rebuild·`destroy`·`pointerleave`·`pointercancel`·미니맵 진입·드래그 개시).
+- 검증: `node --check` PASS · `test_pixi_adapter.js` **180 PASS / 0 FAIL**(baseline 112 회귀 0 + T26 68) · §18.8 codex 적대 리뷰 **9 라운드 수렴**(P1 3·P2 8 수정 → 결함 0) · verify-completion `--pre-commit`.
+- [x] 확장 기하·hover 수명주기 구현(오버레이·트윈·정리 경로)
+- [x] 순수 로직 단위테스트 T26 68-assert 추가 — 180 PASS / 0 FAIL
+- [x] §18.8 적대 검증 — `[CODEX:graph-label-hover-expand]` (subagent 패널은 세션 도구제약으로 `[SKIPPED:tool-restricted:ux,design]`, REVIEW 참조)
+- [x] docs 동반(FUNCTION/MODIFY/REVIEW/test-runs.d)
+- [ ] **POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증** — 확장 애니·이웃 노드 위치 불변·z-order·카드 위 클릭 라우팅 실화면 확인 (`visual_verification_scope: always`)

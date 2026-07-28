@@ -486,6 +486,262 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(gept === 1, "T25 _resolvePos 비-node(_nodeById miss) → getElementPosition 폴백");
 }
 
+// ── T26 graph-label-hover-expand: 잘린 라벨 hover 확장 ──
+{
+  // 기준 칩: TW=150 / labelMaxWidth=140 (_metaTableStyle 실값) — 전체 라벨 210px 로 잘린 상태.
+  const tbl = (over) => ({ id: "t1", type: "rect", style: Object.assign({
+    x: 100, y: 50, size: [150, 24], radius: 6,
+    labelText: "cc_user_subscription", labelMaxWidth: 140, labelPlacement: "center" }, over || {}) });
+
+  const g = Pure.hoverExpandGeom(tbl(), 210, { maxWidth: 460 });
+  ok(!!g, "T26 잘린 라벨 → 확장 기하 산출");
+  ok(g.x === 100 && g.y === 50, "T26 확장 중심 = 원 칩 중심(좌우 대칭 — 이웃 노드 침범 최소)");
+  ok(g.w0 === 150 && g.h === 24 && g.radius === 6, "T26 시작 폭/높이/라운드 = 원 칩(t=0 픽셀 동일 → 팝 없음)");
+  ok(g.pad === 10 && g.w1 === 220, "T26 목표 폭 = 전체 라벨 + 원 칩 좌우 여백(210+10)");
+  ok(g.capped === false, "T26 상한 미도달");
+  ok(g.inner0 === 140 && g.inner1 === 210, "T26 텍스트 가용폭 보간 구간 = [원 한계 140 → 전체 라벨 210]");
+
+  // codex review 3차 P2: 루틴 칩처럼 labelMaxWidth(176) > 칩 폭(150) 인 스타일에서도 t=0 가용폭이 원 한계
+  //   그대로여야 한다 — 박스폭-pad(142)로 잡으면 hover 순간 원래 보이던 글자가 줄어드는 역-팝이 난다.
+  const gr = Pure.hoverExpandGeom(tbl({ size: [150, 24], labelMaxWidth: 176 }), 210, {});
+  ok(gr.inner0 === 176, "T26 labelMaxWidth > 칩 폭(루틴 칩) → t=0 가용폭 = 원 한계(역-팝 없음)");
+  ok(gr.inner1 === 210 && gr.w1 === 218, "T26 그 경우도 종단 가용폭 = 전체 라벨");
+
+  // 상한: 초장문 이름이 화면을 덮지 않게 cap 클램프.
+  const gc = Pure.hoverExpandGeom(tbl(), 1000, { maxWidth: 460 });
+  ok(gc.w1 === 460 && gc.capped === true, "T26 초장문 라벨 → maxWidth 상한 클램프 + capped 플래그");
+
+  // 확장 불필요 케이스 — 전부 null(카드 미생성 = 시각 노이즈 0).
+  ok(Pure.hoverExpandGeom(tbl(), 140, {}) === null, "T26 라벨이 이미 다 보임 → null");
+  ok(Pure.hoverExpandGeom(tbl(), 141, {}) === null, "T26 이득 < minGain(1px) → null");
+  ok(Pure.hoverExpandGeom(tbl({ labelText: "" }), 210, {}) === null, "T26 라벨 없음 → null");
+  ok(Pure.hoverExpandGeom(tbl({ labelMaxWidth: 0 }), 210, {}) === null, "T26 labelMaxWidth 미설정(잘림 없음) → null");
+  ok(Pure.hoverExpandGeom(tbl({ labelPlacement: "right" }), 210, {}) === null, "T26 노드 밖 우측 라벨(컬럼) → 대상 아님");
+  ok(Pure.hoverExpandGeom(tbl({ size: 11 }), 210, {}) === null, "T26 circle 노드 → 대상 아님");
+  ok(Pure.hoverExpandGeom(Object.assign(tbl(), { __combo: true }), 210, {}) === null, "T26 combo(스키마 배경) → 대상 아님");
+  ok(Pure.hoverExpandGeom(tbl(), 0, {}) === null, "T26 폭 측정 실패(0) → null(안전 폴백)");
+
+  // pad 하한: labelMaxWidth 가 칩 폭에 근접해도 최소 8px 여백 확보.
+  const gp = Pure.hoverExpandGeom(tbl({ size: [150, 24], labelMaxWidth: 148 }), 210, {});
+  ok(gp.pad === 8 && gp.w1 === 218, "T26 pad 하한 8px");
+}
+{
+  // _fitText: 폭이 커질수록 글자가 순차로 드러난다(잘린 상태에서 연속 시작 — 중간 슬라이스 팝 없음).
+  const mk = () => ({ _t: "", get text() { return this._t; }, set text(v) { this._t = v; }, get width() { return this._t.length * 10; } });
+  const F = Adapter.prototype._fitText;
+  let t = mk(); F.call({}, t, "abcdefgh", 45);
+  ok(t.text === "abc…", "T26 _fitText 좁은 폭 → 선두 3자 + ellipsis");
+  t = mk(); F.call({}, t, "abcdefgh", 65);
+  ok(t.text === "abcde…", "T26 _fitText 폭 증가 → 드러나는 글자 증가(단조)");
+  t = mk(); F.call({}, t, "abcdefgh", 200);
+  ok(t.text === "abcdefgh", "T26 _fitText 충분한 폭 → 전체 라벨(ellipsis 없음)");
+  t = mk(); t.text = "zz…"; F.call({}, t, "abcdefgh", 200);
+  ok(t.text === "abcdefgh", "T26 _fitText 는 직전 잘린 텍스트가 아닌 **전체 문자열** 기준 재계산");
+}
+{
+  // _setLabelHover: 같은 대상 재-hover 는 재구성 없음(스윕 중 rebuild 폭주 차단) · 이탈은 카드 제거.
+  //   sandbox 에 setTimeout 이 없어 hover-intent 분기는 즉시 fire 경로를 탄다(구현의 폴백).
+  let shown = 0, cleared = 0, rendered = 0;
+  const ctx = { _hoverId: null, _hoverTimer: 0, _hoverRaf: 0,
+    _clearLabelHoverVisual() { cleared++; return this.__had === true; },
+    _labelExpandGeom(n) { return (n && n.style.labelText === "long") ? { w0: 10, w1: 40 } : null; },
+    _showLabelExpand() { shown++; this.__had = true; },
+    _render() { rendered++; } };
+  const S = Adapter.prototype._setLabelHover;
+  const node = { id: "T1", style: { labelText: "long" } };
+  S.call(ctx, node);
+  ok(shown === 1 && ctx._hoverId === "T1", "T26 hover 진입 → 확장 카드 1회 생성");
+  S.call(ctx, node);
+  ok(shown === 1 && cleared === 1, "T26 같은 노드 재-hover → dedupe(재구성 0)");
+  const plain = { id: "T2", style: { labelText: "short" } };
+  S.call(ctx, plain);
+  ok(shown === 1 && ctx._hoverId === "T2" && rendered === 1, "T26 잘리지 않은 노드 → 카드 없음 + 이전 카드만 정리 렌더");
+  ctx.__had = false; rendered = 0;
+  S.call(ctx, null);
+  ok(ctx._hoverId === null && rendered === 0, "T26 빈 배경 이탈(직전 카드 없음) → 불필요 렌더 0(render-on-demand 보존)");
+}
+{
+  // _probeHover: tier1(hit-grid)만 — _pick 의 tier2 hitTestCombo(O(combos×nodes))를 매 pointermove 에 돌리지 않는다.
+  const nodes = [
+    { id: "N1", type: "rect", style: { x: 0, y: 0, size: [100, 24], zIndex: 4 } },
+    { id: "CB", type: "rect", data: { kind: "cat-bg" }, style: { x: 0, y: 0, size: [800, 600], zIndex: -1 } },
+  ];
+  let got = "unset";
+  const ctx = { _built: { nodes, edges: [], combos: [{ id: "C1", style: {} }] },
+    _hitGrid: Pure.buildHitGrid(nodes, 128), _cam: { zoom: 1, x: 0, y: 0 },
+    _inMinimap() { return false; }, _isCatBg: Adapter.prototype._isCatBg,
+    _setLabelHover(n) { got = n; } };
+  const origCombo = Pure.hitTestCombo; let comboCalls = 0;
+  Pure.hitTestCombo = function () { comboCalls++; return origCombo.apply(this, arguments); };
+  Adapter.prototype._probeHover.call(ctx, 0, 0);
+  ok(got && got.id === "N1", "T26 hover 프로브 노드 적중");
+  Adapter.prototype._probeHover.call(ctx, 200, 200);
+  ok(got === null, "T26 cat-bg(밴드 배경)는 hover 확장 대상에서 제외");
+  ok(comboCalls === 0, "T26 hover 프로브는 hitTestCombo 미호출(매 pointermove O(combos×nodes) 회피)");
+  Pure.hitTestCombo = origCombo;
+  ctx._inMinimap = () => true;
+  Adapter.prototype._probeHover.call(ctx, 0, 0);
+  ok(got === null, "T26 미니맵 위 커서 → hover 해제");
+}
+
+{
+  // 카드 수명주기: 확장 카드는 1장 · 축소 진행 카드도 1장 · rAF 부재(node vm/헤드리스)면 종단 상태 즉시 적용.
+  const mkCard = () => { const c = { alpha: 1, parent: {}, destroyed: false,
+      destroy() { this.destroyed = true; }, };
+    c.parent.removeChild = () => { c.parent = null; };
+    const card = { c, g: { w0: 150 }, w: 220, raf: 0, paints: [] };
+    card.paint = (w) => { card.w = w; card.paints.push(w); };
+    return card; };
+
+  const C = Adapter.prototype._clearLabelHoverVisual;
+  const ctxBase = () => ({ _outCard: null, _hoverCard: null, _render() {},
+    _destroyCard: Adapter.prototype._destroyCard, _tweenCard: Adapter.prototype._tweenCard });
+
+  let ctx = ctxBase();
+  ok(C.call(ctx, true) === false, "T26 지울 카드 없음 → false(호출부 렌더 억제)");
+
+  ctx = ctxBase(); const c1 = mkCard(); ctx._hoverCard = c1;
+  ok(C.call(ctx, false) === true && c1.c.destroyed === true && ctx._hoverCard === null,
+    "T26 animate=false(rebuild/destroy) → 즉시 제거");
+
+  // rAF 부재 환경: animate=true 라도 종단(원 칩 폭) 즉시 적용 후 제거 — 잔상 없음.
+  ctx = ctxBase(); const c2 = mkCard(); ctx._hoverCard = c2;
+  ok(C.call(ctx, true) === true && c2.c.destroyed === true && ctx._outCard === null,
+    "T26 rAF 부재 → 축소 트윈 생략하고 즉시 종단 처리");
+
+  // 축소 진행 중 새 이탈 → 이전 축소 카드 즉시 제거(동시 1장 불변식).
+  ctx = ctxBase(); const cOld = mkCard(), cNew = mkCard();
+  ctx._outCard = cOld; ctx._hoverCard = cNew;
+  C.call(ctx, false);
+  ok(cOld.c.destroyed === true && cNew.c.destroyed === true, "T26 축소 진행 카드 누적 없음(동시 1장)");
+
+  // _tweenCard: rAF 부재면 목표 상태 1회 페인트 + onEnd 1회.
+  const c3 = mkCard(); let ended = 0;
+  Adapter.prototype._tweenCard.call({ _render() {} }, c3, 150, 220, 160, () => { ended++; });
+  ok(c3.paints.length === 1 && c3.paints[0] === 220 && ended === 1,
+    "T26 _tweenCard rAF 부재 → 종단 폭 즉시 + onEnd 1회");
+
+  // _clearLabelHover: 예약 타이머·hover id 까지 초기화(다음 pointermove 가 재도출).
+  const ctx2 = Object.assign(ctxBase(), { _hoverId: "T1", _hoverTimer: 0 });
+  ctx2._clearLabelHoverVisual = C;
+  Adapter.prototype._clearLabelHover.call(ctx2);
+  ok(ctx2._hoverId === null, "T26 _clearLabelHover → hover id 초기화");
+}
+{
+  // codex review P1 ①: 확장 카드 위 커서는 현 hover 유지 — 드러난 좌우 영역이 원 노드 bbox 밖이라
+  //   그대로 두면 "이름 뒷부분을 보려고 다가가면 카드가 닫히는" 깜빡임이 난다.
+  const g = { x: 100, y: 50, w0: 150, w1: 220, h: 24 };
+  ok(Pure.hoverCardHit(205, 50, g, 220) === true, "T26 확장 폭(220) 안 = 카드 hit(원 bbox 밖 +105)");
+  ok(Pure.hoverCardHit(205, 50, g, 150) === false, "T26 아직 확장 전(150) 이면 같은 점은 카드 밖");
+  ok(Pure.hoverCardHit(100, 70, g, 220) === false, "T26 세로는 원 칩 높이 그대로(위/아래 유출 없음)");
+  ok(Pure.hoverCardHit(100, 50, null, 220) === false, "T26 카드 없음 → false");
+  ok(Pure.hoverCardHit(305, 50, g, 220, 300) === true, "T26 클램프로 밀린 카드는 그 실제 중심 기준으로 hit");
+
+  // 뷰포트 클램프(codex review P2): 가장자리 칩의 카드가 캔버스 밖으로 잘리지 않게 가로 중심 보정.
+  ok(Pure.clampCardCenterX(400, 220, 1000, 6) === 400, "T26 clamp 여유 있으면 그대로");
+  ok(Pure.clampCardCenterX(20, 220, 1000, 6) === 116, "T26 clamp 좌측 침범 → pad+half 로 밀기");
+  ok(Pure.clampCardCenterX(980, 220, 1000, 6) === 884, "T26 clamp 우측 침범 → vw-pad-half 로 밀기");
+  ok(Pure.clampCardCenterX(500, 1200, 1000, 6) === 606, "T26 카드가 뷰포트보다 넓음 → 좌측 정렬(앞부분 판독 우선)");
+  // 미니맵 회피(codex review P2): 우측 경계를 미니맵 좌변으로 좁혀 카드가 미니맵 밑에 깔리지 않게.
+  ok(Pure.clampCardCenterX(800, 220, 1000, 6, 820) === 704, "T26 미니맵과 세로 겹침 → 그 왼쪽까지만 확장");
+  ok(Pure.clampCardCenterX(300, 220, 1000, 6, 820) === 300, "T26 미니맵과 무관한 위치는 그대로");
+
+  // _clampCardX: 미니맵과 세로로 겹칠 때만 우측 경계가 좁아진다(줌=1·팬=0 기준).
+  const mkCtx = (mmY) => ({ getSize() { return [1000, 600]; }, _cam: { zoom: 1, x: 0, y: 0 },
+    _minimap: { c: { position: { x: 820, y: mmY } }, size: [168, 112] } });
+  ok(Adapter.prototype._clampCardX.call(mkCtx(478), { x: 800, y: 500, h: 24 }, 220) === 704,
+    "T26 _clampCardX 미니맵 y 밴드와 겹침 → 좌측으로 밀림");
+  ok(Adapter.prototype._clampCardX.call(mkCtx(478), { x: 800, y: 100, h: 24 }, 220) === 800,
+    "T26 _clampCardX 미니맵 위쪽(겹침 없음) → 보정 없음");
+  ok(Adapter.prototype._clampCardX.call({ getSize() { return [0, 0]; } }, { x: 42, y: 0, h: 24 }, 220) === 42,
+    "T26 _clampCardX 뷰포트 미확정(0) → 원 좌표 유지(안전 폴백)");
+
+  // _revalidateHover(codex review 5차 P2): 카메라 변화(wheel·focusElement·zoomTo·translateBy)마다 마지막
+  //   커서 좌표로 재판정 — 눌림 중엔 무동작(팬 프레임 비용 0), 좌표 없으면 재페인트만.
+  let probes = 0, repaints = 0;
+  const RV = Adapter.prototype._revalidateHover;
+  RV.call({ _hoverPt: { x: 5, y: 6 }, _ptrDown: false, _probeHover() { probes++; }, _repaintHoverCard() { repaints++; } });
+  ok(probes === 1 && repaints === 1, "T26 카메라 변화 + 커서 좌표 있음 → 재판정 + 재페인트");
+  RV.call({ _hoverPt: { x: 5, y: 6 }, _ptrDown: true, _probeHover() { probes++; }, _repaintHoverCard() { repaints++; } });
+  ok(probes === 1 && repaints === 2, "T26 눌림 중(팬/드래그) → 재판정 생략(프레임 비용 0)");
+  RV.call({ _hoverPt: null, _ptrDown: false, _probeHover() { probes++; }, _repaintHoverCard() { repaints++; } });
+  ok(probes === 1 && repaints === 3, "T26 커서 좌표 없음(캔버스 진입 전) → 재페인트만");
+
+  const nodes = [
+    { id: "N1", type: "rect", style: { x: 100, y: 50, size: [150, 24], zIndex: 4 } },
+    { id: "N2", type: "rect", style: { x: 300, y: 50, size: [150, 24], zIndex: 4 } },
+  ];
+  let calls = 0, got = "unset";
+  const ctx = { _built: { nodes, edges: [], combos: [] }, _hitGrid: Pure.buildHitGrid(nodes, 128),
+    _cam: { zoom: 1, x: 0, y: 0 }, _inMinimap() { return false; }, _isCatBg: Adapter.prototype._isCatBg,
+    _hoverCard: { g, w: 220 }, _setLabelHover(n) { calls++; got = n; } };
+  Adapter.prototype._probeHover.call(ctx, 205, 50);
+  ok(calls === 0, "T26 확장 카드 위 커서 → _setLabelHover 미호출(현 hover 유지)");
+  Adapter.prototype._probeHover.call(ctx, 300, 50);
+  ok(calls === 1 && got && got.id === "N2", "T26 카드 밖 다른 노드 → 정상 전환");
+
+  // codex review 4차 P2: 확장 카드 위 클릭/우클릭/드래그는 **원 노드**로 라우팅(_pick tier0) —
+  //   드러난 영역이 캔버스·이웃으로 새어 선택이 풀리거나 엉뚱한 메뉴가 뜨는 것 차단.
+  const pctx = { _built: { nodes, edges: [], combos: [] }, _hitGrid: Pure.buildHitGrid(nodes, 128),
+    _isCatBg: Adapter.prototype._isCatBg, _hoverCard: { g, w: 220, node: nodes[0] } };
+  const hitCard = Adapter.prototype._pick.call(pctx, 205, 50);
+  ok(hitCard && hitCard.id === "N1", "T26 _pick tier0 — 확장 카드 위(원 bbox 밖)는 원 노드로 라우팅");
+  pctx._hoverCard = null;
+  ok(Adapter.prototype._pick.call(pctx, 205, 50) === null, "T26 카드 없으면 같은 점은 종전대로 미적중(회귀 0)");
+}
+{
+  // codex review P1 ②: pointerleave 시 대기 중인 프로브 rAF 까지 무효화(떠난 뒤 카드 부활 차단).
+  // cancelAnimationFrame 은 vm sandbox 전역에 주입해야 어댑터 코드의 스코프에서 해석된다(host global 아님).
+  let canceled = 0, cleared = 0;
+  sandbox.cancelAnimationFrame = () => { canceled++; };
+  const ctx = { _hoverProbeRaf: 7, _hoverPt: { x: 1, y: 2 }, _setLabelHover() { cleared++; } };
+  Adapter.prototype._cancelHoverProbe.call(ctx, true);
+  ok(canceled === 1 && ctx._hoverProbeRaf === 0 && ctx._hoverPt === null && cleared === 1,
+    "T26 pointerleave → 대기 프로브 취소 + 좌표 무효화 + hover 해제");
+  const ctx2 = { _hoverProbeRaf: 0, _hoverPt: { x: 1, y: 2 }, _setLabelHover() { cleared++; } };
+  Adapter.prototype._cancelHoverProbe.call(ctx2, false);
+  ok(cleared === 1 && ctx2._hoverPt === null, "T26 clear=false(destroy 경로) → hover 해제 없이 프로브만 정리");
+  delete sandbox.cancelAnimationFrame;   // 이후 테스트의 rAF-부재 폴백 경로 보존
+}
+{
+  // codex review P1 ③: 축소 진행 카드만 남은 상태에서의 정리도 "정리함"으로 집계 — 아니면 호출부가
+  //   렌더를 생략해 render-on-demand 프레임버퍼에 유령 카드가 남는다.
+  const stub = { destroyed: false, c: { parent: null, destroy() {} }, raf: 0 };
+  const ctx = { _outCard: stub, _hoverCard: null,
+    _destroyCard() { stub.destroyed = true; }, _tweenCard() {}, _render() {} };
+  const r = Adapter.prototype._clearLabelHoverVisual.call(ctx, true);
+  ok(r === true && stub.destroyed === true && ctx._outCard === null,
+    "T26 축소 카드만 정리해도 true 반환(유령 카드 방지 렌더 유발)");
+}
+{
+  // codex review 2차 P2 ①: 버튼 눌림(클릭/팬/드래그) 중엔 hover 판정 정지 — pointerdown 직전 예약된
+  //   rAF 프로브가 뒤늦게 실행돼 드래그 중 옛 좌표로 유령 카드를 띄우는 경로 차단.
+  let calls = 0;
+  const ctx = { _ptrDown: true, _inMinimap() { return false; }, _setLabelHover() { calls++; } };
+  Adapter.prototype._probeHover.call(ctx, 10, 10);
+  ok(calls === 0, "T26 pointer 눌림 중 → hover 프로브 무동작(드래그 유령 카드 차단)");
+  // 눌림 해제(pointerup/pointercancel) 후에는 정상 복귀 — 플래그가 고착되면 hover 가 영구 정지한다.
+  ctx._ptrDown = false; ctx._hitGrid = null; ctx._cam = { zoom: 1, x: 0, y: 0 }; ctx._built = { nodes: [], edges: [], combos: [] };
+  Adapter.prototype._probeHover.call(ctx, 10, 10);
+  ok(calls === 1, "T26 눌림 해제 후 hover 판정 복귀(플래그 고착 없음)");
+}
+{
+  // codex review 2차 P2 ②: running desaturate(fillOpacity 0.45)를 카드도 공유 — hover 시 채도가 되살아나
+  //   앰버 역할색 위에서 주황 점선 테두리가 위장되던 원 문제(§18.8 M1) 재발 방지.
+  const A = Adapter.prototype._nodeFillAlpha, cfg = { _nodeState: {} };
+  ok(A.call(cfg, { states: ["running"], style: {} }) === 0.45, "T26 running → 0.45 desaturate(기본값)");
+  ok(A.call({ _nodeState: { running: { fillOpacity: 0.3 } } }, { states: ["running"], style: {} }) === 0.3,
+    "T26 running → state config 의 fillOpacity 우선");
+  ok(A.call(cfg, { states: ["selected"], style: {} }) === 1, "T26 비-running + style 미지정 → 1");
+  ok(A.call(cfg, { states: [], style: { fillOpacity: 0.75 } }) === 0.75, "T26 비-running → style.fillOpacity 존중");
+  ok(A.call(cfg, {}) === 1, "T26 states/style 부재 → 1(안전 기본)");
+}
+{
+  // 비브라우저/미배선(P 부재)에서 확장 기하 산출 시도 → null(import 부작용 0 계약 보존).
+  const g = Adapter.prototype._labelExpandGeom.call({ P: null }, { style: { labelText: "x", labelMaxWidth: 10 } });
+  ok(g === null, "T26 Pixi 미배선 → 확장 기하 null");
+}
+
 console.log("──────");
 console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
 process.exit(fail === 0 ? 0 : 1);
