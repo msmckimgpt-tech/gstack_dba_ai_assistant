@@ -19,6 +19,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 import os
+import time as _time  # feature-0028: 카탈로그 TTL 캐시·세션 touch throttle
 from pathlib import Path
 import secrets
 from typing import Any, Iterable
@@ -1065,7 +1066,68 @@ _FOLDER_PERMS_BROADEN_MIGRATION_KEY = "folder-perms-broaden-v1"
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
 # Phase 1B 에서 _resolve_permission_catalog(conn) 가 WebPermissions 의 IsDynamic=1 row 까지 합쳐
 # 동적 catalog 를 반환하도록 확장 예정. 본 refactor 자체는 동작 변경 없음.
-def _resolve_permission_catalog(conn=None) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, Any]]]:
+# ── feature-0028 (P1-B): 인증 경로 오버헤드 완화 ─────────────────────────────────
+# 요청당 MySQL 5 SELECT + 1 UPDATE 중 두 건(동적 권한 카탈로그 조회·세션 LastSeenAt 쓰기)을
+# 짧은 TTL 캐시/throttle 로 흡수한다. 둘 다 정확성이 아니라 신선도만 거래하며 env 로 끌 수 있다.
+_PERM_CATALOG_TTL_SEC = max(0, int((os.getenv("WEB_PERM_CATALOG_TTL_SEC", "30") or "30").strip() or 30))
+_PERM_CATALOG_CACHE: dict = {"at": 0.0, "val": None}
+# 세션 LastSeenAt/RemoteAddr/UserAgent 갱신 최소 간격(초). 0=매 요청(종전 동작).
+_SESSION_TOUCH_MIN_SEC = max(0, int((os.getenv("WEB_SESSION_TOUCH_MIN_SEC", "60") or "60").strip() or 60))
+_SESSION_TOUCH_AT: dict = {}
+_SESSION_TOUCH_MAX_KEYS = 4096  # 메모리 상한(초과 시 전체 비움 — 다음 요청이 재기록)
+
+
+def _perm_catalog_cache_put(defs, codes, code_map):
+    """카탈로그 결과를 캐시에 저장하고 **복사본**을 반환(호출측 변형이 캐시를 오염시키지 않게)."""
+    try:
+        if _PERM_CATALOG_TTL_SEC > 0:
+            _PERM_CATALOG_CACHE["val"] = (list(defs), set(codes), dict(code_map))
+            _PERM_CATALOG_CACHE["at"] = _time.time()
+    except Exception:
+        pass
+    return defs, codes, code_map
+
+
+def invalidate_permission_catalog_cache() -> None:
+    """동적 권한(product.access.*) 변경 직후 캐시 무효화 — product CRUD 경로가 호출."""
+    try:
+        _PERM_CATALOG_CACHE["at"] = 0.0
+        _PERM_CATALOG_CACHE["val"] = None
+    except Exception:
+        pass
+
+
+def _session_touch_due(token_hash: str) -> bool:
+    """세션 활동 기록(UPDATE)을 이번 요청에 수행할지 — 최소 간격 throttle.
+
+    LastSeenAt 은 '최근 활동' 표시·감사 보조용이라 초 단위 정밀도가 필요 없다. 폴링
+    트래픽(초당 0.6~1.8 req/화면)이 매번 세션 행을 UPDATE 하던 것을 기본 60s 로 낮춘다.
+    RemoteAddr/UserAgent 변경은 다음 due 시점에 반영(감사 IP 정확도는 §9.7 계약 유지 —
+    같은 세션의 IP 가 바뀌면 최대 throttle 간격만큼 늦게 기록될 수 있음).
+    """
+    if _SESSION_TOUCH_MIN_SEC <= 0 or not token_hash:
+        return True
+    now = _time.time()
+    prev = _SESSION_TOUCH_AT.get(token_hash)
+    if prev is not None and (now - prev) < _SESSION_TOUCH_MIN_SEC:
+        return False
+    if len(_SESSION_TOUCH_AT) >= _SESSION_TOUCH_MAX_KEYS:
+        _SESSION_TOUCH_AT.clear()
+    return True
+
+
+def _session_touch_done(token_hash: str) -> None:
+    """UPDATE 성공 후 타임스탬프 기록 (§18.8 qa C7) — 실패한 갱신이 throttle 간격 동안
+    재시도되지 않는 것을 막는다(due 판정 시점 기록은 실패를 성공처럼 간주)."""
+    if _SESSION_TOUCH_MIN_SEC <= 0 or not token_hash:
+        return
+    try:
+        _SESSION_TOUCH_AT[token_hash] = _time.time()
+    except Exception:
+        pass
+
+
+def _resolve_permission_catalog(conn=None, *, use_cache: bool = True) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, Any]]]:
     """현재 effective permission catalog 를 (definitions, codes_set, code_map) 형태로 반환.
 
     Phase 1B 부터: conn 이 주어지면 정적 PERMISSION_DEFINITIONS + WebPermissions 의 IsDynamic=1 row 를
@@ -1080,6 +1142,19 @@ def _resolve_permission_catalog(conn=None) -> tuple[list[dict[str, Any]], set[st
     static_map = dict(PERMISSION_DEFINITION_MAP)
     if conn is None:
         return static_defs, static_codes, static_map
+    # feature-0028 (P1-B): 동적 row(product.access.*)는 product CRUD 시에만 바뀌는데 매 요청
+    # SELECT 를 돌았다. 짧은 TTL 프로세스 캐시로 반복 조회를 흡수한다.
+    # **§18.8 B-3/qa B3 정정 — 인가 집행 경로는 캐시 제외(use_cache=False)**: 카탈로그
+    # codes 는 `_apply_permission_overrides` 의 키 우주라 stale 이면 신규 코드가 effective
+    # 맵에서 탈락(fail-closed 지만 replica 별 비결정적 403). 따라서 `_decorate_account_rows`
+    # 같은 집행 경로는 항상 실조회하고, 캐시는 그 외(관리 목록·표시) 호출만 이용한다.
+    # TTL=0 이면 전면 비활성(종전 동작).
+    _now = _time.time()
+    _c = _PERM_CATALOG_CACHE
+    if use_cache and _PERM_CATALOG_TTL_SEC > 0 and _c["at"] and (_now - _c["at"]) < _PERM_CATALOG_TTL_SEC:
+        cached = _c["val"]
+        if cached is not None:
+            return list(cached[0]), set(cached[1]), dict(cached[2])
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
@@ -1096,7 +1171,7 @@ ORDER BY GroupName, Code
         # WebPermissions IsDynamic 컬럼이 아직 없거나 (legacy) DB error 시 정적 결과로 graceful fallback.
         return static_defs, static_codes, static_map
     if not dynamic_rows:
-        return static_defs, static_codes, static_map
+        return _perm_catalog_cache_put(static_defs, static_codes, static_map)
     merged_defs = list(static_defs)
     merged_codes = set(static_codes)
     merged_map = dict(static_map)
@@ -1115,7 +1190,7 @@ ORDER BY GroupName, Code
         merged_defs.append(item)
         merged_codes.add(code)
         merged_map[code] = item
-    return merged_defs, merged_codes, merged_map
+    return _perm_catalog_cache_put(merged_defs, merged_codes, merged_map)
 
 
 # ── ITEM-10 inc4: 권한 오버라이드/계정 행 빌더 (순수 — conn 인자 주입) ──
@@ -1309,7 +1384,7 @@ def _decorate_account_rows(conn, rows: list[dict[str, Any]]) -> list[dict[str, A
     role_permission_map = _load_role_permission_codes(conn, role_ids)
     override_map = _load_account_override_values(conn, account_ids)
     # TASK-0052 Phase 1B: catalog 를 conn 으로 한 번 조회 후 모든 row 에 재사용 (N+1 회피).
-    _catalog_defs, catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
+    _catalog_defs, catalog_codes, _catalog_map = _resolve_permission_catalog(conn, use_cache=False)  # §18.8 B-3: 집행 경로는 캐시 우회(비결정적 403 차단)
     for row in rows:
         account_id = int(row.get("id") or 0)
         role_id = int(row.get("role_id") or 0)
@@ -3363,6 +3438,9 @@ AND a.DeletedAt IS NULL
         rows = _decorate_account_rows(conn, rows)
         row = rows[0] if rows else None
         if row:
+            _th = _hash_session_token(token)
+            if not _session_touch_due(_th):  # feature-0028 (P1-B): 세션 활동 기록 throttle
+                return row
             cur = conn.cursor()
             cur.execute(
                 """
@@ -3379,6 +3457,7 @@ WHERE SessionTokenHash = %s
                 ),
             )
             cur.close()
+            _session_touch_done(_th)  # §18.8 qa C7: 성공 후 기록
             return row
     # feature-0023: 유효 세션 쿠키가 없으면 Bearer API 토큰 fallback(프로그래매틱 접근).
     # 쿠키가 유효하면 위에서 이미 반환됐으므로 사람 세션은 무회귀(토큰 경로 미발동).

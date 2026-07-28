@@ -217,3 +217,4 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 ## [2026-07-28] feature | feature-0026-perf-observability 성능 관측 인프라 신규 (HTTP per-route 타이밍·워커 LLM latency 백필·파이프라인 단계 계측·perf-snapshot CLI·Caddy access log — 측정 전용·동작 변경 0)
 ## [2026-07-28] feature | feature-0027-perf-latency-p0 P0 성능 개선 1차 (post-answer 큐레이션 terminal 후 이동·grounding RO 단일연결·MySQL 버퍼풀 1G·Caddy gzip+immutable — feature-0026 측정 근거)
 ## [2026-07-28] feature | feature-0023 대화 품질 조정 표면 — 외부 AI 가 모델·추론 강도·제품·폴더 커스텀 지침·첨부를 조정 (인증 필수 GET /api/ai/capabilities 로 계정별 허용 값 발견·익명 매니페스트는 포인터만·MCP tool 4→11·토큰 안전 기본 scope 에 folder. 확장) [[feature-0023-conversation-api-access]] · [[feature-0024-conversation-folders]] · [[feature-0003-agent-web-ui]]
+## [2026-07-28] feature | feature-0028-web-perf web 계층 성능 (long-poll 워커 스레드·스냅샷 단일연결 번들·인증 캐시/throttle·MySQL 풀 opt-in)

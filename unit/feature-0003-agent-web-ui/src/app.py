@@ -92,6 +92,7 @@ from web_context import (
     PERMISSION_DEFINITION_MAP,
     _METADATA_MANUAL_IMPLIES,
     _resolve_permission_catalog,
+    invalidate_permission_catalog_cache,  # feature-0028: 동적 권한 캐시 무효화(product CRUD)
     OVERRIDE_ALLOW,
     OVERRIDE_DENY,
     OVERRIDE_INHERIT,
@@ -3470,6 +3471,9 @@ from routers._conv_store import (  # noqa: E402
     _build_worker_agent_result,
     _build_fix_with_ai_message,
     _build_ask_status_snapshot,
+    _ask_snapshot_pg_bundle,          # feature-0028: 스냅샷 단일연결 번들
+    _display_status_from_step_at,     # feature-0028: step 시각 인자형 stale 판정
+    _latest_assistant_from_rows,      # feature-0028: 행→최신 assistant (번들/개별 공유)
     _attach_assistant_attachments,
     _attach_user_feedback,
     _save_account_product_pref,
