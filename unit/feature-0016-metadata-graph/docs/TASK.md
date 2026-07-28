@@ -2757,11 +2757,29 @@ PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`base
   analyzed-halo-fit·hover-flow·routine-colref 등)을 흡수하고 `feature-0003/docs/FUNCTION.md` 의 병렬 append 충돌을
   **union 해소**(양쪽 REQ 블록 전량 보존 — REQ 232건, 이번 cycle 의 label-lod + origin 측 4건 모두 존재 확인)한 뒤
   헤드리스 **전 스위트 21개 875 PASS / 0 FAIL** 재실행. 회귀 0. `node --check` PASS(3 파일). 본 cycle 코드 변경 0줄.
-- [ ] TL.10 **POST-DEPLOY PB-0008 1-probe** (배포 후) — TL.8 의 ②~⑥ 을 격리 주입본이 아닌 **실제 배포 자산**에서
-  재확인 + **TL.9 수정이 새로 만든 두 표면**: ⑦ *배지-단독 억제 구간*(접힌 스키마 카드 씬에서 제목은 남고
-  개수 배지만 사라지는 줌)에 상태줄 '이름표 표시 축약' 마커가 **노출**되는지 ⑧ 반포인트 밴드 경계(컨텐츠
-  그룹 헤더 10.5px 의 z*≈0.305)를 지날 때 rebuild 가 걸려 그 헤더 라벨이 **실제로 사라지는지**(수정 전에는
-  하한 밑에서 잔존). pageerror 0.
+- [x] TL.10 **POST-DEPLOY PB-0008 1-probe PASS** (2026-07-28, 실 Chrome via `bin/win-browser.py` relay,
+  `https://localhost/admin`) — PR #1019 머지 → main `2a843acd` → `make deploy-web`(web-a/b 롤링 + 워커 + soak 통과) →
+  edge `/healthz` `git_commit=2a843acd`·`mysql_ok`·`pg_ok` true. 서빙 자산 스탬프 `?v=c9ce5fe33b65` 정합, 배포된
+  `graph-state.js` 에 `_META_LABEL_FONT_STEP` 2건·`graph-core.js` 에 `badgesDropped || 0` 1건 존재(수정 서빙 확인).
+  대상 `mssql-qa-idc`(스키마 136개, PRE-LANDING 과 동일 대형 스코프), 줌은 툴바 축소/확대·전체 조망 버튼(실 UI 경로).
+  | # | 항목 | 실측(배포본) |
+  |---|---|---|
+  | ② | 극단 줌아웃 | zoom 0.2524 band `20/13` — 본문 80 억제·헤더 6 억제·배지 136 억제, drawMs 84.1 |
+  | ③ | 헤더 우대 | zoom 0.3155/0.3943/0.4929 에서 `headerDropped 0` 인데 본문은 74/68/68 억제 — **실동작** |
+  | ④ | 상태줄 마커 | `· 줌아웃 — 이름표 표시 축약(확대 시 전체 표시)` 노출 |
+  | ⑤ | **확대 복귀** | zoom 0.6161 band `9/9` — `dropped 0`·`badgesDropped 0`·마커 소멸 → **정보 손실 0** |
+  | ⑥ | pageerror | **0** (`error`·`unhandledrejection` 리스너 전 구간 0건) |
+  | ⑦ | **배지-단독 구간 마커**(P2 ① 수정) | 관계선·함수·프로시저를 숨긴 실 사용자 구성에서 zoom **0.3943·0.4929** 가 `dropped 0` + `badgesDropped 136` + **마커 true** — 수정 전 게이트(`dropped` 만)라면 두 줌 모두 마커 false 로 개수 배지 136개가 조용히 사라졌을 구간. 실촬 `postdeploy_badgeonly_marker.png`(카드 제목 `fb_ads`·`cc_bosedragon` 등은 판독 가능, 개수 배지는 소멸, 상태줄 마커 노출) |
+  | ⑧ | **반포인트 밴드**(P2 ② 수정) | 라이브 밴드에 `9.5/9`(zoom 0.55)·`16/10.5`(0.3155)·`10.5/9`(0.4929) 등 **정수 격자로는 표현 불가한 0.5 경계값**이 실제로 나타난다(구 구현이라면 각각 `10/9`·`16/11`·`11/9`). 밴드 문자열이 곧 rebuild 훅(`_lodBand`)의 입력이므로, `10.5` 가 밴드로 관측된다는 것은 그 경계가 라이브에서 rebuild 트리거로 성립함을 뜻한다. 헤더 억제 상태도 밴드 헤더축이 13→10.5 로 이동하는 전이에서 실제로 6→0 으로 바뀌었다 |
+  증적: `artifacts/feature-0016-metadata-graph/20260728-graph-label-lod/postdeploy_badgeonly_marker.png`.
+  **한계(정직 표기)**: ⑧ 은 z*≈0.30476 을 *정확히* 양옆에서 straddle 한 것이 아니다 — 툴바 줌은 ×1.25 스텝이라
+  0.3155/0.2524 사이에 z* 가 들어가고, 캔버스 `wheel` 합성 이벤트는 이 빌드에서 줌을 구동하지 못했다. 경계 자체의
+  1:1 대응은 헤드리스 F5·F6(수정 전 MISS·수정 후 detect 실측)이 고정한다.
+- [ ] TL.12 **후속(별도 항목) — 토글 직후 마커 일시 부재**: 노드 종류 토글(관계선·함수·프로시저 표시/숨김) 직후에는
+  상태줄이 토글 안내문으로 덮여 억제 마커가 **다음 transform 까지 부재**한다(관측: 토글 복원 직후 `dropped 68`·
+  `badgesDropped 136` 인데 `marker false` → 줌 1스텝 후 `marker true` 복귀). 마커는 `aftertransform` 에서 append
+  되는데 토글 경로는 자체 status 를 쓰고 transform 을 유발하지 않기 때문이다. **본 cycle 이 도입한 것이 아닌 기존
+  동작**(§57 마커 전체에 해당)이며, 억제 자체는 정상이므로 Resume≠Re-scope 원칙에 따라 별도 항목으로 남긴다.
 
 ### 결정 기록
 - **왜 라벨을 지우나(축소 품질 개선만으로 부족한가)**: 화면 5px 미만 글자는 어떤 필터링으로도 판독 불가다. mipmap 은 노이즈를

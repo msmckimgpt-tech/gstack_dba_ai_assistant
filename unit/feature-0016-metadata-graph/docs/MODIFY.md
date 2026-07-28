@@ -256,3 +256,8 @@ source_of_truth: true
 - 대상(문서 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260728T160400-graph-label-lod.md`. **실행 코드 변경 0줄** (병합 자체는 직전 merge commit).
 - 변경: `origin/main` 18 커밋(병렬 그래프 세션 다수)을 흡수하고 `feature-0003/docs/FUNCTION.md` 병렬 append 충돌을 union 해소한 뒤, 헤드리스 **전 스위트 21개 875 PASS / 0 FAIL** 을 재실행한 결과를 정본에 기록(TL.11). 수치가 병합 전 728 보다 큰 것은 병렬 세션이 추가한 테스트 합류이며 본 cycle 신규 36 PASS 는 불변임을 함께 명시 — 수치 증가를 '개선' 으로 오독하지 않게 한다.
 - 근거: 등급 Minor(문서 전용). 병렬 초고병렬 feature-0016 그래프 작업에서 main 흡수 후 무회귀는 배포 전 필수 확인이고, 그 실측을 기록하지 않으면 TL.7 의 728 이 병합 전 기준이라는 사실이 문서에서 사라진다.
+
+## CHG-20260728T1750-ai-claude-feature-0016-graph-label-lod-postdeploy — label-lod POST-DEPLOY PB-0008 라이브 실증 기록 (2026-07-28)
+- 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/{TEST.md,test-runs.d/20260728T160400-graph-label-lod.md}` · 증적 `artifacts/.../postdeploy_badgeonly_marker.png`(gitignore 로컬). **실행 코드 변경 0줄**.
+- 변경: PR #1019 머지(main `2a843acd`) → `make deploy-web` 무중단 롤아웃(web-a/b·워커, soak 통과) → edge `/healthz git_commit=2a843acd` 확인 후, 실 Windows Chrome relay 로 TL.10 을 수행하고 결과를 정본에 기록. ②~⑥ 전건 PASS + **codex P2 수정이 만든 두 표면 라이브 실증**: ⑦ 배지-단독 구간(zoom 0.3943·0.4929, `dropped 0` + `badgesDropped 136`)에서 오독-가드 마커가 **켜짐**(수정 전이라면 꺼져 개수 배지 136개 무음 소실) ⑧ 라이브 밴드에 `9.5/9`·`16/10.5`·`10.5/9` 등 정수 격자로 표현 불가한 반포인트 경계값이 실제 출현. pageerror 0.
+- 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영이 필수다. 미재현 한계는 정직 병기 — ⑧ 은 z*≈0.30476 을 정확히 straddle 하지 못했고(툴바 줌 ×1.25 스텝·캔버스 wheel 합성 미구동), 그 1:1 대응은 헤드리스 F5·F6 이 고정한다. 부수 관측(토글 직후 마커 일시 부재)은 본 cycle 도입분이 아니므로 TL.12 별도 항목으로 분리했다.
