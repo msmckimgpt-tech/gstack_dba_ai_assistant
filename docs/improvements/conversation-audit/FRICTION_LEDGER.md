@@ -298,9 +298,15 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **라이브 실측 필요분(§정직)**: 코드/테스트는 "완전한 결과에 완전성 명시·트리거 어휘 부재·절단 시 기존 경고 유지·offset 으로 전량 복원" 을 증명. **"실제 대화에서 assistant 가 없는 도구 한계를 더는 지어내지 않는지" 는 배포 후 라이브 실측분**(미수행) → 배포 후 동일 입력 재현 + 다음 audit corroboration(assistant 의 "도구 한계/프리뷰 한계" 시그니처 distinct_conv, 절단 마커 없는 tool 결과 뒤 불완전 주장) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
 - **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 라이브 재현 + `/_dqa:doc_sync`(STATUS·wiki 정합).
 
-## FR-false-absence-zero-row-catalog-scope — fixed:undeployed (L1↔L4 0행→부재 단정; 루틴 열거 도구 부재 + 카탈로그 스코프 미인지)
+## FR-false-absence-zero-row-catalog-scope — fixed:deployed:verified (L1↔L4 0행→부재 단정; 루틴 열거 도구 부재 + 카탈로그 스코프 미인지)
 
-- **status**: `fixed:undeployed` — 사용자 지시(2026-07-28)로 근본 규명 후 수정. 코드/테스트 + §18.8 적대 3렌즈 패널 완료, PR·배포 전. 사용자 **범위 결정: RC-B 포함**(보안 경계 재검토).
+- **status**: `fixed:deployed:verified` — **라이브 재실측 완료(2026-07-28)**. 사용자 지시로 근본 규명 후 수정, §18.8 적대 3렌즈 **2라운드** 통과, PR #991 merge main `21b67ade` → `make deploy-web` 전체 스코프(4서비스 GIT_COMMIT=21b67ade, soak 통과, `/healthz` ok). 사용자 **범위 결정: RC-B 포함**(보안 경계 재검토).
+- **라이브 재실측(재현 대화 `20260728031510-16927f9b`, product 117 / `claude-haiku-4` — 마찰 대화와 동일 조건, 동일 질문)**:
+  - **수정 전**: "masangsoftweb 에는 저장 프로시저가 **전혀 정의되지 않았습니다** / 전체 프로시저 개수 **0개**" (ground truth 482건).
+  - **수정 후**: "SELECT 키워드를 포함하는 프로시저: **총 421개**" + 원 대화가 찾았던 **`MSP_SELECT_BOARD_CONTENT`** 를 정의 본문까지 제시(원 사용자 목표 달성). **오귀속·부재 단정 시그니처 각 0건.**
+  - **신규 도구 실사용 확인**: `search_routines` 가 루프에서 호출됨(msg 5775~5782) — 빈 결과에는 "이 한 번의 빈 결과로 '루틴이 없다' 고 단정하지 마세요" 부착.
+  - **실패 고지 실전 발동(§18.8 MAJOR 수정의 라이브 실증)**: 실행 중 MSSQL 연결이 끊기자(`Not connected to any MS SQL server`) 도구가 "⚠ 다음 DB 는 **조회하지 못했습니다** … 존재/부재는 **미확인**입니다 — 단정하지 마세요. (허용 DB 전부가 조회 실패라 이 검색은 아무것도 확인하지 못했습니다)" 를 냈다. 구 코드였다면 "검색 결과가 없습니다" 로 위장돼 정확히 이 FR 의 오판을 재생산했을 상황이다. 그 run 의 최종 답변도 부재를 지어내지 않고 "탐색을 충분히 진행하지 못했다" 고 정직 보고(`20260728031608-b7832c89`).
+  - **배포본 런타임 실측**: `search_routines` 노출 True · 프롬프트 `CATALOG VIEWS ARE PER-DATABASE` True · `sys` 경계 SSOT(대체 관용구 포함) True · `sys.objects`/`sys.partitions` ALLOW · `sys.databases`/`master.sys.objects`/**별칭 그림자**(`FROM sys.objects AS sys CROSS APPLY sys.fn_get_sql(...)`) BLOCK · 사용자 UDF `dbo.dm_calc_total()` ALLOW(과차단 없음).
 - **source**: `/_dqa:conversation_audit` FR-false-truncation-belief 사후 라이브 실측(재현 대화 `20260728012534-a56ec98e` turn1).
 - **last_seen**: 2026-07-28 · **seen_count**: 1(실측) · **seen_distinct_conv**: 1 / 배포 전 base rate 5건(31개 대화)
 - **modality**: 1:1 동기 · **symptom_confidence**: high(실측 재현 + ground truth 대조) · **rootcause_confidence**: medium(2부분 명명 가설은 강하나 코드 fix 미검증)

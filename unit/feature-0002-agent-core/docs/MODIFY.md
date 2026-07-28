@@ -535,3 +535,11 @@ source_of_truth: true
 - **위험등급**: Major(§12.3 — 코어 프롬프트 + 도구 표면 + **보안 경계 완화**) → 사용자 범위 결정 후 §18.8 적대 3렌즈 **2라운드** + PR/deploy confirm.
 - **Rollback**: `safe_sys_views()` 를 빈 집합으로 되돌리면 RC-B 만 즉시 원복(나머지 lever 는 독립). 전면 롤백은 신규 도구·프롬프트 3곳·진단 헬퍼·수집기 확장 제거.
 - **Cross-ref**: FRICTION_LEDGER FR-false-absence-zero-row-catalog-scope · 선행 FR-mssql-crossdb-structured-discovery(같은 실패 모드의 구조화-도구 판) · FR-false-truncation-belief(본 축을 실측으로 노출) · REV-20260728T114459-false-absence-catalog-scope.
+
+## CHG-20260728T123229-false-absence-live-verified — 라이브 재실측 결과 기록 + 원장 verified 전이 (doc-only, Minor §12.3)
+> 선행 CHG-20260728T114459-false-absence-catalog-scope 의 배포 후 사실 전사. 코드 변경 0.
+- **무엇을**: `FRICTION_LEDGER.md` FR-false-absence-zero-row-catalog-scope `fixed:undeployed` → **`fixed:deployed:verified`** + 재실측 증거 기록. `TASK.md` 잔여 항목 체크.
+- **근거(측정)**: PR #991 merge main `21b67ade` → `make deploy-web` 전체 스코프(4서비스 GIT_COMMIT=21b67ade, soak 통과, `/healthz` ok). 재현 대화 `20260728031510-16927f9b`(동일 product·모델·질문): 수정 전 "프로시저 0개 / 전혀 정의되지 않았습니다"(실제 482건) → 수정 후 "**총 421개**" + `MSP_SELECT_BOARD_CONTENT` 본문 제시. 오귀속·부재 단정 시그니처 **각 0건**. `search_routines` 루프 실사용 확인. 실행 중 MSSQL 연결 단절 시 **실패 고지가 실전 발동**(구 코드였다면 "검색 결과가 없습니다" 로 위장). 배포본 런타임에서 별칭 그림자·`sys.databases`·`master.sys` BLOCK / `sys.objects`·`sys.partitions`·사용자 UDF `dm_` ALLOW 확인.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`
+- **위험등급**: Minor(문서 전사 — 런타임 무영향, 배포 불필요). **Rollback**: status 문자열 원복.
+- **Cross-ref**: CHG/TASK/REV-20260728T114459-false-absence-catalog-scope · REV-20260728T123229-false-absence-live-verified · PR #991.

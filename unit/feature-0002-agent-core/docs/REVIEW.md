@@ -548,3 +548,10 @@ source_of_truth: true
 - **검증**: 신규 `tests/test_false_absence_catalog_scope.py` **40건**(1R·2R 이 뚫은 경로 전부 회귀 가드 — 별칭 그림자는 `dm_` denylist 에 가려지지 않도록 `fn_` 계열로 작성) + `test_mssql_security_boundary.py` 강화(+21/−1). 컨테이너 `make test` **2,614건 중 2,608 PASS / 4 FAIL / 2 skip** — FAIL 4건은 이전 cycle 과 동일한 **pre-existing 환경 의존**분, 신규 실패 0. ruff PASS. 2R 이 worktree/HEAD 양쪽 전체 스위트를 돌려 실패 집합 **IDENTICAL** 확인.
 - **라이브 실측 미수행(POST-DEPLOY)**: 동일 질문("masangsoftweb 문서 조회 프로시저 탐색")으로 `search_routines` 사용·"0개" 오판 소멸을 재현 확인해야 원장이 닫힌다.
 - Cross-ref: CHG/TASK-20260728T114459-false-absence-catalog-scope · FRICTION_LEDGER FR-false-absence-zero-row-catalog-scope · 선행 FR-mssql-crossdb-structured-discovery(같은 실패 모드의 구조화-도구 판 — 본 변경은 그 **누락된 형제**) · FR-false-truncation-belief(본 축을 라이브 실측으로 노출) · ANCHOR 0002 §1~§3 무충돌.
+
+## REV-20260728T123229-false-absence-live-verified [SKIPPED:live-measurement-record-doc-only] — PASS
+- 대상: FR-false-absence-zero-row-catalog-scope **라이브 재실측 전사** + 원장 `fixed:deployed:verified` 전이. **코드 변경 0**.
+- 리뷰 방식([SKIPPED] 사유): 로직의 적대 검증은 REV-20260728T114459-false-absence-catalog-scope [SUBAGENT ×2 rounds] 에서 완료. 본 cycle 은 배포 후 측정치의 사실 전사라 추가 패널의 판별력이 없다.
+- **측정의 반증 설계**: (a) 마찰을 촉발한 **동일 질문·동일 product·동일 모델**로 재현해 "조건을 만들고도 발동하지 않음" 을 확인 (b) 모델 답변뿐 아니라 **PG 도구 결과 실물**을 대조해 `search_routines` 실사용과 신규 문구 부착을 확인 (c) 우연히 발생한 **MSSQL 연결 단절**을 자연 실험으로 활용해 실패-고지 lever 가 실전에서 작동함을 확인(구 코드 대비 행동 차이가 결정적) (d) 배포본 런타임에서 보안 경계 4축(별칭 그림자·서버 스코프 뷰·시스템 DB·사용자 UDF 과차단)을 직접 실측.
+- **판정**: 주 판정축(허위 부재) **verified**. 잔여는 pre-existing 이연 1건(임의 DB명 별칭 그림자 — HEAD 동일)만.
+- Cross-ref: REV/CHG/TASK-20260728T114459-false-absence-catalog-scope · 재현 대화 `20260728031510-16927f9b` · PR #991.
