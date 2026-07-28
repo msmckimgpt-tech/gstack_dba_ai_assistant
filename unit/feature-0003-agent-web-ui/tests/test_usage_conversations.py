@@ -226,16 +226,26 @@ def test_a1_admin_requires_list_any(monkeypatch):
     assert resp.status_code == 403
 
 
-# ── A2: "(시스템)" 역할 클릭 → 빈 목록 ──────────────────────────────────────
+# ── A2: "(시스템)" 역할 클릭 → **대화** 목록은 빈 채로 유지 ──────────────────
 
 def test_a2_system_role_empty(monkeypatch):
+    """시스템 버킷에는 귀속 대화가 없으므로 `items`(대화)는 항상 비어야 한다.
+
+    usage-records-system(2026-07-28) 이후 이 경로는 종전처럼 조기 반환하지 않고 시스템 사용
+    기록(`system_items`)을 채워 응답한다 — 그래서 PG 연결·시스템 질의를 스텁한다. 본 테스트가
+    지키는 불변식은 그대로 "타 계정 대화가 시스템 버킷에 새어 들어오지 않는다"이고, 시스템
+    기록 자체의 계약은 test_usage_records_system.py 가 담당한다.
+    """
     actor = {"id": 1, "permissions": {"console.usage.read": True, "conversation.list.any": True}}
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
     monkeypatch.setattr(app, "_usage_account_ids_for_role", lambda conn, rk: None)  # 시스템
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _FakePG([], []))
+    monkeypatch.setattr(app, "_query_usage_system_records", lambda *a, **k: ([{"task": "node_analysis"}], False))
     resp = admin_usage.admin_usage_conversations(_Req({"role": "(시스템)"}), account=actor, conn=_Conn())
     body = _body(resp)
     assert body["items"] == [] and body["truncated"] is False
+    assert len(body["system_items"]) == 1  # 대화는 없지만 시스템 사용분은 채워진다(회귀 수정)
 
 
 # ── P1: profile 권한 상승 차단 ───────────────────────────────────────────────

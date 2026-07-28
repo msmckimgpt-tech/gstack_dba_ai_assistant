@@ -1726,3 +1726,13 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 
 ### [cross-ref] 첨부 후처리 web 게이팅 — worker 이전 후속 (2026-07-27)
 primary=feature-0002 CHG-20260727T105326-worker-attachment-postprocess. web 은 후처리를 증거 기반으로만 수행(정상 경로 no-op, 워커 미완 시 self-heal)하고 worker 결과를 응답으로 전달. 정본 REVIEW=feature-0002 REV-20260727T105326-worker-attachment-postprocess.
+
+## 20260728T113819-usage-records-system — LLM 사용량 드릴다운 '사용 기록' — 시스템 사용분 편입 + 화면 이동 (Major §12.3)
+- **계기**: 사용자(`/_template:entry`) — `관리 콘솔 > 감사 > AI 운영 현황 > LLM 사용량` 차트 클릭 목록에 **'시스템' 사용 내역이 없음**. 명칭을 "대화 목록"→"**사용 기록**" 으로 바꾸고, 시스템 내역도 **어떤 작업으로 어떤 객체에서** 썼는지 인지 가능해야 하며 **클릭 시 해당 화면 이동**이 되어야 한다. 추가 요청(같은 turn): 본문 열 과도 줄바꿈 해소 + 팝업 **반응형 확장**.
+- **RC**: 드릴다운이 `_query_usage_conversations`(INNER JOIN `core_conversations` + `owner NOT NULL`) 단일 경로 — 라이브 최근 30일 기준 **14,476 호출 / 36.4M 토큰(전체 토큰의 약 49%)** 이 대화 비귀속이라 목록에서 전량 누락. `(시스템)` 역할은 `_usage_account_ids_for_role → None` + 프론트 early-return 으로 **클릭해도 무동작**. 부수적으로 `redteam`/`enum_suggest`/`cluster_label`/`product_classify` 4 task 가 `TASK_TAXONOMY` 미등록이라 사람이 읽는 작업명 부재.
+- **수정**: (백엔드) `_query_usage_system_records` — 대화 목록의 **정확한 여집합**을 `(task, target, actor)` 로 집계, 응답에 `system_items` **additive**(기존 `items` 무변경 → 소비자 회귀 0). `_resolve_usage_target_scopes` — `table_descriptions`∪`routine_objects`∪`rag_objects` union 으로 target→데이터소스 역해소(객체 우선·스키마 폴백, 모호 시 **추측 금지**). `_usage_system_nav` + `shared/model_catalog.USAGE_TASK_NAV`(task→화면 **SSOT**, 미등록은 AI 운영 현황 폴백). (프론트) 대화+시스템 **통합 표**(구분 배지·토큰 순 병합) + `applyUsageNav` in-page 이동(스코프→탭→서브탭→검색어) + `(시스템)` 막대 클릭 경로 복구 + 반응형 폭·열 배분.
+- **무영향**: 마이그레이션 0 · 스키마 0 · **신규 RBAC 0**(기존 `console.usage.read`+`conversation.list.any` 게이트 불변) · profile(`/api/profile/usage/conversations`) 경로 무변경.
+- **검증**: pytest **2,591 PASS / 2 skipped**(신규 14 케이스) · ruff clean · 라이브 PG 여집합 정합 **897+14,476=15,373=전체**(누락·중복 0, 집계 18ms/해소 14ms) · PB-0008 라이브 **PARTIAL PASS**(요구 4축 확정, 표기 2건 POST-DEPLOY). 정본 TASK-/CHG-/REV-20260728T113819-usage-records-system · test-runs.d/20260728T113819-usage-records-system.md.
+- **라이브에서 잡은 in-cycle 결함 2건**: ① `scope_ambiguous` 를 `nav` 에 누락 → "데이터소스 여럿" 안내가 107행에서 조용히 소실(수정+회귀 가드) ② 비-sentinel actor 무조건 대화 링크 → **삭제된 대화 404** 위험(`bool_or(c.conversation_id IS NOT NULL)` 로 3분기).
+- **후속(미착수)**: `llm_usage` 에 데이터소스 차원이 없어 target 역해소가 8,399 distinct 중 상당수 모호(dev/qa 동명 스키마). 근본 해소는 `llm_usage.target_scope` 추가 cycle 필요 — 현재는 "화면까지만 이동 + 모호 명시" 로 정직 저하.
+- **[POST-DEPLOY 잔여]** 주체 열 3분기 표기 · 열 폭 재배분 실측 2건. pre-deploy 미확정 사유는 제품 결함이 아니라 **검증 환경 아티팩트** — `docker cp` 임시 반영이 `inject_asset_stamp.py` 를 우회해 `graph/*.js` 의 `admin.js?v=dev` 고정 import 와 entry URL 이 갈라지며 admin.js 가 **2 인스턴스**로 로드됨(캐시된 구 인스턴스가 이벤트 처리). 동시에 타 세션 web 롤링 배포와 겹쳐 임시 반영분이 소거됨. 실 배포본은 stamp 가 entry·import 양쪽에 동일 주입되어 재현 없음.

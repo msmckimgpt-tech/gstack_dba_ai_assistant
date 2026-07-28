@@ -7878,7 +7878,12 @@ button.product-dropup-item-ds--test:disabled {
 .profile-usage-donut-row.profile-usage-clickable:hover { background: var(--bg, #f3f4f6); border-radius: var(--r-sm, 4px); }
 
 /* admin 판: 기존 .admin-modal-overlay/.admin-modal 위에 넓은 대화목록 모달 + head/close. */
-.admin-modal.usage-conv-modal { max-width: 720px; }
+/* usage-records-system: '사용 기록' 은 구분 열이 늘어 7열이라 720px 고정폭에선 '최근 사용' 이
+   잘리고 본문 열이 과도하게 줄바꿈됐다(사용자 피드백 + PB-0008 캡처). 넓은 화면을 쓰도록
+   **반응형**으로 바꾼다 — 뷰포트의 96%까지 늘리되 초대형 화면에선 1240px 로 상한(가독 행폭 유지).
+   고정 px 단일값을 쓰지 않는 이유: 노트북(1280)·와이드(2560) 어디서도 잘림/과잉여백이 없어야 한다. */
+.admin-modal.usage-conv-modal { width: min(1240px, 96vw); max-width: min(1240px, 96vw); }
+.usage-conv-modal .usage-conv-body { max-height: min(74vh, 820px); }
 .usage-conv-modal .admin-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .usage-conv-modal .admin-modal-close,
 .usage-conv-dialog .usage-conv-close {
@@ -7907,6 +7912,48 @@ button.product-dropup-item-ds--test:disabled {
 }
 .usage-conv-error { color: var(--danger, #dc2626); }
 .usage-conv-trunc, .usage-conv-hint { margin-top: 8px; }
+
+/* usage-records-system(2026-07-28): '사용 기록' 모달 — 대화 행과 시스템·자율 행을 한 표에
+   섞으므로 구분 배지 + 작업/대상 표기 + 화면 이동 링크 토큰. 색은 기존 admin 토큰만 사용해
+   라이트/다크 양쪽에서 대비를 상속한다(하드코딩 색 신설 금지 — 폴백만 기존 관례대로 병기). */
+/* 열 폭 배분: 고정폭 성격의 부수 열(구분·주체·수치·일시)을 `width:1%`+nowrap 으로 **내용 폭에
+   딱 맞게** 눌러, 남는 가로를 전부 본문 열('대화 / 작업 · 대상')이 흡수하게 한다. 이렇게 하지
+   않으면 브라우저가 7열에 폭을 고르게 나눠 본문만 좁아져 글자마다 줄바꿈된다(사용자 피드백).
+   admin 모달로 스코프 — 작업 화면(profile) 의 독립 모달에는 영향 없음. */
+.usage-conv-modal .usage-rec-kind,
+.usage-conv-modal .usage-conv-owner,
+.usage-conv-modal .usage-conv-when,
+.usage-conv-modal .usage-conv-table th.num,
+.usage-conv-modal .usage-conv-table td.num { white-space: nowrap; width: 1%; }
+/* 본문 열은 상한 없이 잔여 폭 전부 사용(기본 .usage-conv-topic 의 280px 상한 해제 — admin 한정). */
+.usage-conv-modal .usage-conv-topic,
+.usage-conv-modal .usage-rec-what { max-width: none; width: auto; }
+.usage-rec-kind { white-space: nowrap; width: 1%; }
+.usage-rec-badge {
+  display: inline-block; font-size: 10px; line-height: 17px; padding: 0 7px; border-radius: 9px;
+  font-weight: 600; vertical-align: middle;
+}
+.usage-rec-badge--conv { background: var(--primary-soft, #e0e7ff); color: var(--primary, #2563eb); }
+.usage-rec-badge--sys { background: var(--bg, #eef2f6); color: var(--text-2, #475569); }
+/* 본문 셀은 단어 경계 우선 줄바꿈 — 긴 식별자만 어쩔 수 없을 때 끊는다. */
+.usage-rec-what { overflow-wrap: anywhere; word-break: normal; }
+/* 시스템 행의 이동 트리거 — <a href> 가 아니라 콘솔 내 탭 전환이라 button 을 링크처럼 보이게 한다
+   (새 탭/딥링크가 아니므로 href 를 만들면 우클릭·새탭 기대가 깨진다). */
+.usage-rec-link {
+  display: block; width: 100%; text-align: left; padding: 0; border: 0; background: none;
+  font: inherit; color: var(--primary, #2563eb); cursor: pointer;
+}
+.usage-rec-link:hover { text-decoration: underline; }
+.usage-rec-link:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 2px; border-radius: 3px; }
+/* 대상 식별자: break-all 은 'mssql-qa-idc' 를 'm/ssql-qa-idc' 처럼 아무 데서나 끊어 읽기 어렵다
+   (사용자 피드백). anywhere 는 하이픈·점 등 기존 줄바꿈 기회를 먼저 쓰고, 그래도 넘칠 때만 끊는다. */
+.usage-rec-target { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; overflow-wrap: anywhere; word-break: normal; }
+/* 보조행은 --text-2(대비 7.11) 사용 — --text-muted 는 이 배경에서 4.12 로 WCAG AA(4.5) 미달임을
+   headless 아닌 실 Chromium getComputedStyle 실측으로 확인했다(PB-0008). 특히 '데이터소스 여럿'
+   안내는 이동이 화면까지만 된다는 **정직 표기**라 흐리게 두면 안 된다. */
+.usage-rec-sub { margin-top: 2px; font-size: 11px; color: var(--text-2, #475569); }
+.usage-rec-goto { color: var(--text-2, #475569); }
+.usage-rec-note { color: var(--text-2, #475569); }
 
 /* profile 판: 작업 화면(app.js) 독립 모달(admin-modal 클래스 미공유). */
 .usage-conv-overlay {

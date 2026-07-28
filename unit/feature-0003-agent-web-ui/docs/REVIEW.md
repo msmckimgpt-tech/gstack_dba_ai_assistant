@@ -1095,3 +1095,59 @@ source_of_truth: true
 - **검증 방법의 한계(정직 표기)**: 집행 검증은 `일반 사용자` 역할에 소속 계정이 0명이라 **자기 계정 override** 로 대리 수행했다. 역할 경유 집행(계정 → 역할 → 권한)의 라이브 관측은 아니지만, 두 경로는 `_account_permissions` 의 동일 병합 맵으로 수렴하고 역할 쓰기 경로는 ②·④ 에서 DB 로 별도 확정했다.
 - 위험도: **Minor(§12.3)** — 문서 전용, 동작 영향 0. 라이브 상태는 착수 전과 동일하게 원복됨.
 - Cross-ref: MODIFY CHG-20260728T031500-model-access-postverify / test-runs.d/20260728T031500-model-access-pb0008.md / SECURITY §28.6·§28.7 / feature-0007 REPORT §7 (R1·R2 해소).
+
+## REV-20260728T113819-usage-records-system [SKIPPED:session-policy-no-subagent] — PASS
+
+CHG-20260728T113819-usage-records-system. §18.8 dispatch 키워드(UI/화면/API)에 해당하나 본 세션
+정책상 subagent panel 미호출 — 대신 라이브 DB 실측 + PB-0008 로 대체 검증했다. Critical 아님
+(읽기 전용 집계 확장 · 신규 RBAC 0 · 마이그레이션 0).
+
+### D1. 시스템 기록을 "여집합" 으로 정의한 이유
+
+`conversation_id IS NULL OR LIKE '__%'` 같은 **열거식** 정의도 가능했으나, 대화 목록이 실제로
+쓰는 필터는 `INNER JOIN + owner NOT NULL` 이라 열거식과 미묘하게 어긋난다. 실측에서 그 틈이
+드러났다 — 예약 sentinel `__ask_worker__` 가 `core_conversations` 에 **실제 행으로 존재**하고
+(topic 까지 있음, owner NULL), 반대로 삭제된 대화 id 를 참조하는 usage 도 있다. 따라서
+`NOT(joinable AND owner NOT NULL)` 라는 **정확한 여집합**으로 정의해 두 목록의 합이 항상 차트
+막대와 일치하도록 했다. 라이브 검증: 897 + 14,476 = 15,373 = 전체(누락·중복 0).
+
+### D2. 계정/일반 역할 클릭에서 시스템 사용분을 **제외**한 이유
+
+시스템 호출은 계정에 귀속되지 않으므로 특정 계정 몫에 섞어 보이면 그 계정이 쓴 것처럼 오도한다.
+`(시스템)` 역할과 모델/일자(무-귀속 차원) 클릭에서만 노출한다. 이 규칙은 백엔드에 고정하고
+프론트가 재해석하지 않는다.
+
+### D3. target→데이터소스 해소를 "추측하지 않는다"
+
+`llm_usage.target` 에는 데이터소스 차원이 없다(0032 설계). 3 소스 union 으로 역해소하면 실측
+8,399 distinct target 중 유일 해소가 대략 60% 대이고 나머지는 dev/qa 동명 스키마로 **모호**하다.
+모호할 때 임의로 하나를 고르면 사용자를 **엉뚱한 데이터소스로 착지**시키므로, 후보 2+ 는
+`scope_ambiguous` 로 표시하고 화면까지만 이동한다(행에 "(데이터소스 여럿 — 화면까지 이동)" 명시).
+근본 해소는 `llm_usage` 에 데이터소스 컬럼을 추가하는 별도 cycle 이 필요 — 본 cycle 범위 밖으로
+남기고 REPORT §후속에 기록.
+
+### D4. nav 를 백엔드 SSOT 로 둔 이유
+
+`task → 화면` 매핑을 프론트에 두면 신규 AI 작업이 생길 때 두 곳을 동기화해야 하고, 누락 시
+"클릭해도 아무 일이 없는" 조용한 회귀가 된다. `shared/model_catalog.USAGE_TASK_NAV` 한 줄 추가로
+목록·내비게이션에 동시 편입되도록 하고, 미등록 task 는 taxonomy self-surface 와 같은 사상으로
+AI 운영 현황 폴백을 준다.
+
+### D5. 응답을 `items` + `system_items` 로 **분리**(단일 배열 통합 아님)
+
+기존 `items` 스키마를 그대로 두면 profile 모달·기존 소비자 회귀가 0 이고, 프론트 배포 순서와
+무관하게 호환된다(구 프론트는 새 필드 무시, 신 프론트는 필드 부재를 빈 배열로 폴백). 표시 단계의
+통합(한 표·토큰 순 병합)은 프론트에서 수행한다.
+
+### 라이브에서 잡은 결함 2건 (in-cycle 수정)
+
+- **모호 신호 유실**: `scope_ambiguous` 를 record 최상위에만 넣고 `nav` 에 싣지 않아, nav 만 읽는
+  프론트에서 "데이터소스 여럿" 안내가 조용히 사라졌다(107행이 무표기). → nav 에 동반 + 회귀 가드 테스트.
+- **깨진 대화 링크 위험**: 비-sentinel actor 를 무조건 대화로 링크하면 **삭제된 대화**로 404 를
+  보낸다. → `bool_or(c.conversation_id IS NOT NULL)` 로 실재 여부를 판정해 3분기.
+
+### 리스크·한계
+
+- `_USAGE_SYS_LIMIT = 200` 상한 — 초과 시 truncated 안내. 대화 목록 상한(200)과 동일 규모.
+- 해소 질의는 표시분(≤200행)의 스키마 IN 목록으로 제한 — 유계 비용(실측 14ms).
+- 관리자 대비 대비비는 실측 PASS 이나, **다크 테마 대비는 미실측**(본 콘솔은 라이트 기준 운용).

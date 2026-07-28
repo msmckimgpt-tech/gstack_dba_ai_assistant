@@ -6455,3 +6455,54 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] **신규 발견** — TASK-0300 권한상승 가드 × `model.access.*` **자기 잠금 경로** 실측·복구 → `docs/SECURITY.md §28.6` 운영 규칙 명문화 (코드 변경 없음: 가드는 의도된 동작)
 - [x] feature-0007 REPORT §7 R1(root 2순위 체인)·R2(모델별 RBAC) 해소 표기
 - [x] 증적 — `docs/test-runs.d/20260728T031500-model-access-pb0008.md` · `docs/evidence/pb0008-model-access-{grid,deny}-20260728.png`
+
+## TASK-20260728T113819-usage-records-system — LLM 사용량 차트 드릴다운에 '시스템' 사용분 편입 + '사용 기록' 개편 (사용자 요청, Major §12.3)
+
+**요청 (사용자, 2026-07-28)**: `관리 콘솔 > 감사 > AI 운영 현황 > LLM 사용량` 의 차트를 클릭했을 때
+나타나는 목록에 **'시스템' 에 사용한 내역도 포함**해 목록화한다(이를 위해 명칭을 "대화 목록" →
+**"사용 기록"** 으로 수정). 시스템 사용 내역도 **어떤 작업으로 인해 어떤 객체 내부에서 사용됐는지**
+사용자가 명확히 인지할 수 있어야 하고, **클릭 시 해당 화면까지 이동**할 수 있어야 한다.
+
+**후속 요청 (같은 세션)**: '대화 / 작업 · 대상' 열의 과도한 줄바꿈 수정 + 팝업 **반응형 확장**.
+
+### 문제 (라이브 실측, 최근 30일 `agent_runtime.llm_usage`)
+
+| 구분 | 호출 | 토큰 | 종전 목록 노출 |
+|---|---|---|---|
+| 대화 귀속 (owner 있음) | 897 | 37.4M | ✅ |
+| 시스템·자율 (sentinel/NULL/owner 없음) | 14,476 | 36.4M | ❌ 전량 누락 |
+
+드릴다운이 `_query_usage_conversations`(INNER JOIN `core_conversations` + `owner NOT NULL`) 만
+쓰던 탓에 **전체 토큰의 약 49% 가 목록에서 통째로 사라졌고**, `(시스템)` 역할 막대를 클릭하면
+`_usage_account_ids_for_role` 이 `None` 을 반환해 **빈 목록**만 떴다(막대는 36.4M 토큰을 표시).
+또 라이브에 존재하는 `redteam`·`enum_suggest`·`cluster_label`·`product_classify` 4 task 는
+`TASK_TAXONOMY` 미등록이라 사람이 읽는 작업명이 없었다.
+
+### 2.1 Implementation Plan
+
+- `shared/model_catalog.py` — `TASK_TAXONOMY` 4 task 편입 + **`USAGE_TASK_NAV`(task→화면 SSOT)** ·
+  `usage_task_nav()` · `usage_nav_path_label()` 신설.
+- `routers/admin_usage.py` — `_query_usage_system_records()`(여집합 집계) ·
+  `_usage_target_parts()` · `_resolve_usage_target_scopes()`(target→데이터소스) ·
+  `_usage_system_nav()` 신설, 핸들러 응답에 `system_items`/`system_truncated` **additive**.
+- `src/app.py` — 신규 헬퍼 4종 `app.<name>` rebind(핸들러 동적참조·테스트 monkeypatch 규약).
+- `static/admin.js` — 모달 명칭·통합 표(구분 열)·시스템 행 in-page 이동(`applyUsageNav`) ·
+  `(시스템)` 계정 막대 클릭 경로 복구.
+- `static/styles.css` — 사용 기록 토큰 + **반응형 폭**(`min(1240px,96vw)`) + 열 폭 배분.
+- 테스트 `tests/test_usage_records_system.py` 신규(14 케이스) + `test_usage_conversations.py::test_a2` 갱신.
+
+**완료 판정 기준**: ① 대화+시스템 두 목록의 합 = 그 차트 막대 수치(여집합 정합) ② `(시스템)`
+클릭이 비지 않음 ③ 시스템 행에 작업명+대상 표기 ④ 행 클릭이 해당 관리 화면으로 이동
+⑤ 기존 대화 목록·profile 경로 회귀 0 ⑥ 신규 RBAC 0.
+
+**위험도: Major** — 읽기 전용 집계 확장(파괴적 변경·인증 변경 없음)이나 다중 파일 + 관리 콘솔
+표면 변경. 신규 권한 0(기존 `console.usage.read` + `conversation.list.any` 게이트 불변).
+
+### 진행
+
+- [x] 백엔드 여집합 집계 + target→데이터소스 해소 + nav 서술자
+- [x] 프론트 통합 표 + 화면 이동 + 반응형/열 폭
+- [x] 단위 2,591 passed · ruff clean · 라이브 SQL 정합(897+14,476=15,373)
+- [x] PB-0008 라이브 시각검증 (상세: `docs/test-runs.d/20260728T113819-usage-records-system.md`)
+- [ ] **POST-DEPLOY 잔여 2건** — 주체 열 3분기(삭제된 대화/소유자 없는 대화 링크) ·
+      열 폭 재배분 실측. 사유는 test-runs fragment §잔여 참조.
