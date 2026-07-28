@@ -2005,3 +2005,12 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - 권한: 신규 RBAC **없음**. 기존 `console.usage.read` + `conversation.list.any` 2-perm 게이트 불변.
 - 비목표: `llm_usage` 스키마 변경(데이터소스 컬럼 추가)은 본 cycle 범위 밖 — target 역해소가 모호한
   케이스의 근본 해소는 후속 cycle (REPORT §후속).
+
+### 사용 기록 모달 레이아웃 규약 (usage-records-postverify 2026-07-28)
+
+- AC-20260728T115900-usage-records-postverify-1: '사용 기록' 표는 **고정폭이 아니라 반응형**이다 —
+  모달 폭 `min(1240px, 96vw)`, 표는 래퍼를 100% 채운다. 부수 열(구분·주체·호출·토큰·비용·최근 사용)은
+  내용 폭(`width:1%`+nowrap), **본문 열('대화 / 작업 · 대상')이 잔여 폭을 전부 흡수**한다.
+- AC-20260728T115900-usage-records-postverify-2: 공용 `.admin-usage-table` 의 `max-width: 640px`
+  상한은 이 모달에 적용하지 않는다(`max-width: none`). 상한이 남으면 auto table-layout 이 표를
+  min-content 로 수축시켜 본문 열이 붕괴하고 글자마다 줄바꿈된다.

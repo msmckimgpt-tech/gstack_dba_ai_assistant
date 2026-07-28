@@ -1221,3 +1221,20 @@ TASK-20260728T113819-usage-records-system. branch `ai/claude/feature-0003-usage-
 
 검증: 단위 2,591 passed / 2 skipped · ruff clean · 라이브 SQL 여집합 정합(897+14,476=15,373=전체) ·
 PB-0008 라이브(잔여 2건 POST-DEPLOY). 마이그레이션 없음 · 신규 RBAC 없음 · 스키마 변경 없음.
+
+## CHG-20260728T115900-usage-records-postverify ('사용 기록' 본문 열 폭 붕괴 수정 + POST-DEPLOY 완결)
+
+TASK-20260728T115900-usage-records-postverify. branch `ai/claude/feature-0003-usage-records-postverify`.
+
+- `unit/feature-0003-agent-web-ui/src/static/styles.css`
+  - `.usage-conv-modal .usage-conv-table { width: 100%; max-width: none; }` 신설 —
+    공용 `.admin-usage-table` 의 `max-width: 640px` 를 admin 사용 기록 모달에 한해 해제.
+    이 상한 때문에 auto table-layout 이 테이블을 **min-content 로 수축**시켜, 모달을 1240px 로
+    넓혀도 테이블은 763px 에 머물고 본문 열이 239px 로 붕괴했다(사용자 보고 '과도한 줄바꿈'의 진범).
+  - 본문 열 `width: auto` → **`width: 100%`** (auto table-layout 표준 idiom — 부수 열 `width:1%` 와
+    짝을 이뤄 잔여 폭을 본문 열이 흡수).
+- 코드/백엔드/테스트 변경 없음(frontend CSS 2줄). RBAC·스키마·마이그레이션 0.
+
+검증(배포본 `6d7fe391` 라이브 실측): 테이블 763px → **1144px**(래퍼 full), 본문 열 239px →
+**620px**, 단일 행 15/20 → **18/20**(잔여 2행은 시스템 행의 2줄 구조 = 의도), 가로 클리핑 없음.
+주체 열 3분기도 동일 세션에서 확정(삭제된 대화 5행 · 소유자 없는 대화 링크 1건 · raw id 0건).

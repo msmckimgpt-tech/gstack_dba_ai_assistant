@@ -6506,3 +6506,17 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] PB-0008 라이브 시각검증 (상세: `docs/test-runs.d/20260728T113819-usage-records-system.md`)
 - [ ] **POST-DEPLOY 잔여 2건** — 주체 열 3분기(삭제된 대화/소유자 없는 대화 링크) ·
       열 폭 재배분 실측. 사유는 test-runs fragment §잔여 참조.
+
+## TASK-20260728T115900-usage-records-postverify — '사용 기록' POST-DEPLOY 완결 + 본문 열 폭 붕괴 수정 (Minor §12.3, frontend-only)
+
+선행 cycle TASK-20260728T113819-usage-records-system 이 POST-DEPLOY 로 이관한 2건을 배포본
+(`6d7fe391`)에서 확정하고, 그 과정에서 실측된 열 폭 결함을 수정한다.
+
+- [x] **잔여 ①** 주체 열 3분기(실재 대화 링크 / '삭제된 대화' / 워커명) — 배포본 라이브 **PASS**
+      (raw hex id 노출 0건). 선행 cycle 의 미확정 사유가 검증 환경 아티팩트였음이 확증됨 —
+      배포본은 entry·graph import 가 동일 stamp(`7fc11a708399`) 라 admin.js 단일 인스턴스.
+- [x] **잔여 ②** 열 폭 재배분 — **결함 발견 후 수정**. 공용 `.admin-usage-table { max-width: 640px }`
+      이 이 테이블에도 적용돼 래퍼 1144px 안에서 테이블이 min-content(763px)로 눌리고 본문 열이
+      239px 로 붕괴(사용자가 보고한 과도 줄바꿈의 실제 원인). `max-width: none` 해제 + 본문 열
+      `width:100%` idiom 으로 620px 확보.
+- [x] POST-DEPLOY PB-0008 재검증 — `docs/test-runs.d/20260728T115900-usage-records-postverify.md`

@@ -7925,9 +7925,17 @@ button.product-dropup-item-ds--test:disabled {
 .usage-conv-modal .usage-conv-when,
 .usage-conv-modal .usage-conv-table th.num,
 .usage-conv-modal .usage-conv-table td.num { white-space: nowrap; width: 1%; }
-/* 본문 열은 상한 없이 잔여 폭 전부 사용(기본 .usage-conv-topic 의 280px 상한 해제 — admin 한정). */
+/* ⚠ 진범: 공용 `.admin-usage-table` 이 `max-width: 640px` 을 걸어, 이 테이블(두 클래스 동시 보유)이
+   래퍼 1144px 안에서도 **min-content(763px) 로 눌려** 본문 열이 239px 로 붕괴했다(POST-DEPLOY 실측).
+   auto table-layout 에서 max-width 가 작으면 테이블은 최소폭으로 수축하고, 그 결과 잔여 폭을
+   나눠 줄 여지 자체가 사라진다 — `width:100%` 만으로는 풀리지 않는다.
+   `.admin-usage-table-card .admin-usage-table { max-width: none }` 와 같은 기존 해제 선례를 따른다. */
+.usage-conv-modal .usage-conv-table { width: 100%; max-width: none; }
+/* 본문 열은 상한 없이 잔여 폭 전부 사용(기본 .usage-conv-topic 의 280px 상한 해제 — admin 한정).
+   `width:100%` 는 auto table-layout 표준 idiom — 부수 열의 `width:1%`(내용 폭) 와 짝을 이뤄
+   "남는 폭을 이 열이 전부 가져간다" 를 표현한다. */
 .usage-conv-modal .usage-conv-topic,
-.usage-conv-modal .usage-rec-what { max-width: none; width: auto; }
+.usage-conv-modal .usage-rec-what { max-width: none; width: 100%; }
 .usage-rec-kind { white-space: nowrap; width: 1%; }
 .usage-rec-badge {
   display: inline-block; font-size: 10px; line-height: 17px; padding: 0 7px; border-radius: 9px;

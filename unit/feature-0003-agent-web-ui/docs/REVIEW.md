@@ -1151,3 +1151,30 @@ AI 운영 현황 폴백을 준다.
 - `_USAGE_SYS_LIMIT = 200` 상한 — 초과 시 truncated 안내. 대화 목록 상한(200)과 동일 규모.
 - 해소 질의는 표시분(≤200행)의 스키마 IN 목록으로 제한 — 유계 비용(실측 14ms).
 - 관리자 대비 대비비는 실측 PASS 이나, **다크 테마 대비는 미실측**(본 콘솔은 라이트 기준 운용).
+
+## REV-20260728T115900-usage-records-postverify [SKIPPED:post-deploy-live-evidence+frontend-css-only] — PASS
+
+CHG-20260728T115900-usage-records-postverify. frontend CSS 2줄 + POST-DEPLOY 실측 종결이라
+§18.8 panel 미호출(라이브 증거로 대체).
+
+### 왜 `width:100%` 만으로 풀리지 않았는가 (근본 원인)
+
+1차 수정에서 모달을 반응형(`min(1240px,96vw)`)으로 넓히고 부수 열에 `width:1%` 를 줬는데도
+본문 열이 239px 에 머물렀다. 원인은 테이블이 **두 클래스를 동시에 보유**(`admin-usage-table`
+`usage-conv-table`)하고, 공용 쪽에 `max-width: 640px` 이 걸려 있던 것. auto table-layout 에서
+max-width 가 콘텐츠 최소폭보다 작으면 테이블은 **min-content 로 수축**하고, 그 상태에서는
+"남는 폭"이 존재하지 않아 `width:1%`/`width:100%` 배분이 무의미해진다. 즉 폭 배분 규칙이 아니라
+**상한 해제**가 선행돼야 했다.
+
+교훈: 공용 테이블 클래스를 재사용하는 화면에서 열 폭이 이상하면, 배분 규칙보다 **상속된
+`max-width`/`min-width` 상한**을 먼저 의심한다. 실측 없이 배분 규칙만 덧붙이면 원인이 남는다.
+
+### 선행 cycle 미확정 2건의 사유가 실제로 환경 아티팩트였음
+
+배포본은 `inject_asset_stamp.py` 가 HTML entry 와 `graph/*.js` 의 import specifier 에 **동일
+stamp**(`7fc11a708399`)를 주입해 admin.js 가 단일 인스턴스로 로드된다(라이브 확인). 선행 cycle 의
+`docker cp` QA 는 이 주입을 우회해 entry 와 import 가 갈라졌고, 캐시된 구 인스턴스가 이벤트를
+처리해 신코드가 반영된 것처럼 보이지 않았다. 배포본에서 3분기가 즉시 정상 동작한 것이 이를 확증.
+
+교훈(운영): 미머지 static QA 를 `docker cp` 로 할 때 **JS 는 stamp 재주입 없이는 신뢰할 수 없다**.
+CSS 는 단일 파일이라 안전하지만, ES module 은 순환 import 의 고정 `?v=` 때문에 이중 인스턴스가 된다.
