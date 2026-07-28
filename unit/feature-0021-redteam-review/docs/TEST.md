@@ -134,6 +134,22 @@ source_of_truth: true
   변경 0 → check #13 시각검증 hard gate 대상 아님.
 - 미커버는 §4 참조 — 라이브 교정 효과·재서술 발동률(문체 판정은 단위 테스트 범위 밖).
 
+### Run 2026-07-28 — POST-DEPLOY 라이브 실증 (answer-origin-realign 배포 반영 + 설정 행 표출)
+
+- Environment: **Windows-browser** (`bin/win-browser.py` CDP, Chrome/150 relay) + CLI(컨테이너
+  introspection). 배포: PR #1026 머지 → `make deploy-all`(web 롤링 + 90s soak + 워커 롤아웃).
+- 상세 fragment: [`test-runs.d/20260728T0935-answer-origin-realign.md`](./test-runs.d/20260728T0935-answer-origin-realign.md) Run 4
+- 결과 **PASS**
+  - web-a/web-b/ask-worker/insight-worker 전부 `GIT_COMMIT=f0b3d3a5` · 엣지 `/healthz` 200.
+  - ask-worker baked `modules/redteam.py` 에 신규 심볼 9 매치, web baked `runtime_settings.py` 에
+    `REDTEAM_ANSWER_REALIGN` 1 매치 — repo 가 아니라 **이미지에 반영됨**을 확인.
+  - 실 Windows 브라우저로 관리 콘솔 *설정 > AI 자가 리뷰* 신규 행 확인: 라벨 **원 요청 기준 답변
+    정합 교정** · **즉시 반영** 배지 · `0/1` · effective **1**(기본 활성) · 설명문 렌더 ·
+    스펙과 일치하는 배치 순서(미해소 결함 답변 고지 → 본 행 → 리뷰어 호출 타임아웃) ·
+    잘림/겹침/overflow 없음.
+- **미검증(명시)**: 답변 뉘앙스의 실제 교정 효과 — 위 결과는 "코드·설정이 라이브에 올랐다"만
+  보인다. §4 미커버 참조.
+
 ## 4. Integration Coverage
 - 리뷰어 실 LLM 판정·redteam_reviews INSERT·노트 실볼륨 축적은 배포 후 라이브 실증
   (POST-DEPLOY Run 으로 §3 에 append). 콘솔 화면은 PB-0008 Windows-browser 검증.

@@ -143,5 +143,10 @@ CHG-20260728-0002 · REVIEW.md REV-20260728T093528-answer-origin-realign.
 - [x] 오탐 가드 — DBA 답변의 정당 어휘("내용을 수정합니다" DML 설명)를 메타로 오인하지 않도록
       탐지 목적어를 `답변|초안` 으로 한정.
 - [x] 테스트 23건 신규(전체 2814 passed / baseline 2791) · ruff clean · 마이그레이션 없음.
+- [x] TASK-20260728T185500-realign-postverify: PR #1026 머지 → `make deploy-all` 배포(web 롤링
+      + 90s soak + 워커 롤아웃, `deploy_scope: included`) → POST-DEPLOY 실증 — 4 컨테이너
+      `GIT_COMMIT=f0b3d3a5` · 이미지 baked 심볼 확인 · `/healthz` 200 · **PB-0008 실 Windows
+      브라우저**로 신규 설정 행(원 요청 기준 답변 정합 교정 / 즉시 반영 / effective 1) 표출·정렬
+      확인. 답변 뉘앙스의 라이브 교정 효과는 표본 대기(TEST.md §4 미커버).
 - [ ] (후속) realign 관측치의 관리 콘솔 노출 — 현재는 `_rt_meta` + stderr 만. DB 컬럼 신설이
       필요해 별도 cycle 로 분리(본 cycle 은 마이그레이션 없음 원칙 유지).

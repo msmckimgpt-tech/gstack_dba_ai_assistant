@@ -434,3 +434,30 @@ source_of_truth: true
   관측 후 판단. 발동률이 유의하게 높으면 `_ANSWER_CONTRACT` 문구를 강화하고, 0 에 수렴하면
   2차 방어를 기본 OFF 로 낮춰 호출을 아낀다.
 - realign 관측치의 콘솔 노출은 DB 컬럼 신설이 필요해 본 cycle 밖으로 분리(TASK.md §10 잔여).
+
+## REV-20260728T185500-ai-claude-feature-0021-realign-postverify [SKIPPED:docs-only POST-DEPLOY 검증 기록 — 제품 코드 무변경]
+- Related TASK: feature-0021-redteam-review (TASK-20260728T185500-realign-postverify)
+- Related Change: CHG-20260728-0003 (PR #1026 배포분의 POST-DEPLOY 검증)
+- Trigger: changeset 이 `unit/feature-0021-redteam-review/docs/*` 전용 — 제품 코드·프론트 자산·
+  마이그레이션·설정 스펙 무변경(§18.8 dispatch 키워드 비매칭, Minor)
+- Timestamp: 2026-07-28T18:55:00+0900
+- Verdict: PASS
+- Human Approval Needed: no
+
+### 검증 설계에서 의식적으로 택한 것
+- **"repo 에 있다" 로 그치지 않았다**: 코드·설정은 빌드 시 이미지에 baked 되므로 repo 와 라이브가
+  어긋날 수 있다(feature-0021 07-28 stale-checkbox cycle 의 교훈과 동일 축). 그래서 각 컨테이너
+  안의 **baked 파일**에서 신규 심볼을 직접 grep 해 반영을 확정했다.
+- **읽기 전용 실증**: 설정 행의 표출만 확인하고 **값을 저장하지 않았다**. 라이브 런타임 설정을
+  토글하면 다른 사용자의 답변 경로에 즉시 영향(apply_mode=live)하므로, 검증 목적으로 라이브
+  동작을 바꾸는 것은 비용이 검증 가치를 넘는다. 대화 생성·판정 행 주입도 하지 않았다.
+- **과대보고 방지**: 이 Run 은 "코드·설정이 라이브에 올랐다"만 보인다. 사용자 리포트의 본질
+  (답변 뉘앙스)이 실제로 교정됐는지는 **표본이 쌓여야** 관측되며, 단위 테스트도 계약만 고정한다.
+  TEST.md §4 에 미커버로 명시하고 완료 보고에서도 분리 표기한다 — Layer 1(컴포넌트 반영)을
+  Layer 3(사용자 체감)으로 등치하지 않는다(§16.3 완료-altitude).
+
+### 잔여
+- 라이브 표본 누적 후 stderr `[redteam] answer-realign …` 과 `_rt_meta.realign_*` 로
+  ① 2차 재서술 발동률, ② 거절 사유 분포(`still_meta`/`content_loss`)를 관측한다. 발동률이
+  유의하게 높으면 1차 `_ANSWER_CONTRACT` 문구를 강화하고, 0 에 수렴하면 2차를 기본 OFF 로 낮춰
+  호출을 아낀다. 콘솔 노출은 DB 컬럼 신설이 필요해 별도 cycle(TASK.md §10 잔여).

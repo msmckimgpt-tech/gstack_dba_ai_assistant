@@ -397,3 +397,24 @@ source_of_truth: true
   재서술이 이를 지울 경로가 없다.
 - Rollback Notes: `REDTEAM_ANSWER_REALIGN=0` 으로 2차 방어만 즉시 차단(재배포 불요). 1차
   재앵커까지 되돌리려면 커밋 revert — 프롬프트 문자열 변경이라 데이터 마이그레이션 불요.
+
+## CHG-20260728-0003
+- Date: 2026-07-28
+- Related Requirement: TASK-20260728T185500-realign-postverify
+  — **docs-only, 코드 무변경** (CHG-20260728-0002 배포분의 POST-DEPLOY 검증 기록)
+- Summary: answer-origin-realign(PR #1026) 배포 후 라이브 실증 결과를 기록했다.
+  - 배포: `make deploy-all`(deploy-web 스파인) — web 롤링 one-at-a-time + 90s soak 통과 +
+    워커(insight/ask) 롤아웃 + Caddy·gateway 무드리프트.
+  - 반영 확인: web-a/web-b/ask-worker/insight-worker 전부 `GIT_COMMIT=f0b3d3a5`, ask-worker
+    baked `modules/redteam.py` 에 신규 심볼 9 매치, web baked `runtime_settings.py` 에
+    `REDTEAM_ANSWER_REALIGN` 1 매치, 엣지 `/healthz` 200. (repo 존재만으로 그치지 않고 **이미지
+    baked** 까지 확인 — 자산·코드는 빌드 시 baked 되어 repo 와 라이브가 어긋날 수 있다.)
+  - PB-0008 실 Windows 브라우저: 관리 콘솔 *설정 > AI 자가 리뷰* 신규 행이 라벨·즉시 반영 배지·
+    `0/1` 단위·effective 1(기본 활성)·설명문·스펙 순서대로 렌더되고 잘림/겹침 없음을 육안 확인.
+  - **미검증 명시**: 답변 뉘앙스의 실제 교정 효과는 배포 후 표본이 쌓여야 관측된다 — 본 Run 은
+    "코드·설정이 라이브에 올랐다" 까지다. TEST.md §4 에 미커버로 남겼다.
+- Files: `docs/TEST.md`(§3 Run append), `docs/test-runs.d/20260728T0935-answer-origin-realign.md`
+  (Run 4 추가), `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`
+- Impact: 제품 동작 무변경(문서·검증 기록만). 라이브 데이터 변경 없음 — 조회·introspection 만
+  수행했다(설정 값 저장·대화 생성 없음).
+- Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.
