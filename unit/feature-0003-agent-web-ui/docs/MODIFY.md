@@ -11,6 +11,13 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T172000-graph-hover-flow-postverify (TASK 20260728T1628-graph-hover-flow POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- `docs/test-runs.d/20260728T172000-graph-hover-flow-postdeploy.md` 신설 — 배포(main `b36493a9`)·서빙 baked 2중 확인·PB-0008 10 시나리오·evidence 4매(+원본 프레임 전량).
+- TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.
+- 사전 Run(격리 컨테이너, stamp `28b8c65898a7`)과 절대 수치는 캔버스 해상도·줌 차이로 다르나 **구조 전건 동일**(방향 축 비-0 + 화살촉 반전 · 읽기/쓰기 대량 분리 · 흐름 프레임차 비-0 · 잔재 0) — 빌드 파이프라인 통과 산출물에서도 동일 코드 서빙 실증.
+- 드라이버 실측 2건 기록: **"가장 큰 canvas" 휴리스틱이 위장 0-diff 를 만든다**(콘솔 리셋 시 대시보드 차트를 집음 → 첫 1:1 줌 측정 전건 폐기·재측정) → 캡처를 `#metadataGraphCanvas` 하위로 못 박고 그래프 가시성·상태줄 동시 기록 / 공유 Chrome 탭 하이재킹 → 전용 마커 URL(`?pb=hoverflowpost`) 핀 고정.
+- Cross-ref: CHG-20260728T1628-graph-hover-flow · REV-20260728T172000-graph-hover-flow-postverify.
+
 ## CHG-20260728T163800-graph-catcluster-focus-postverify (TASK-20260728T160000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - `docs/test-runs.d/20260728T163800-graph-catcluster-focus-postdeploy.md` 신설 — 배포(main `f25c71bf`)·서빙 baked 2중 확인·PB-0008 5 시나리오·evidence 4매.
 - TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.
