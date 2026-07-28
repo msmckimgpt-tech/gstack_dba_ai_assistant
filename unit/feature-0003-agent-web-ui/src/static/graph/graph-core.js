@@ -852,7 +852,10 @@ function _metaG6Build() {
         const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
         if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 루틴 사용선 제거(colLevel·agg 공통 — LOD 도달 전)
         if (rs === e.source && rt === e.target) {
-          if (lodActive && !keepLod && !xr) { lodDropped += 1; return; }
+          // §85(사용자 요청): 프로시저/함수 사용선의 **줌아웃 LOD 축약 제거**. 축약은 얇은 잔점선이
+          //   줌아웃에서 노이즈로만 남던 시절의 완화책이었는데, 실선 + 화면 고정 굵기 + 밀도 누적으로
+          //   전환된 지금은 줌아웃에서도 사용 관계가 제 몫의 신호를 낸다. 오히려 축약이 "전체보기에서
+          //   루틴 관계가 통째로 사라지는" 더 큰 손실이었다. REFERENCES 쪽 LOD 는 그대로 둔다.
           edges.push({ id: e.id, source: rs, target: rt,
             data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: e.relation_type },
             style: dimIf(_metaRoutineEdgeStyle(e.relation_type, xr), keep) });
@@ -909,7 +912,9 @@ function _metaG6Build() {
     if (e.status === "trusted" || (e.status === "candidate" && agg.status !== "trusted")) agg.status = e.status;   // 최강 상태 채택
   });
   aggMap.forEach((agg) => {
-    if (lodActive && !agg.keepLod && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
+    // §85: ROUTINE_USES 집계는 LOD 축약 대상에서 제외(위 직접 렌더 경로와 동일 근거 — 사용자 요청).
+    if (agg.kind !== "ROUTINE_USES"
+        && lodActive && !agg.keepLod && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
     // graph-edge-flow(요구 ③): 집계 엣지가 대표하는 쌍의 수를 **굵기 대신 다발 가닥 수**로 넘긴다
     //   (_metaEdgeFlow 가 count→strands 로 환산). 굵기 가산(+0.8)은 제거 — 얇은 선이 겹쳐 진해지는
     //   밀도 인코딩과 상충하고, 관계 수가 커져도 굵기 상한에서 포화됐다.

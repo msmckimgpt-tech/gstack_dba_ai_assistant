@@ -11,6 +11,13 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T135111-graph-edge-screenspace (TASK-20260728T135111-graph-edge-screenspace — 굵기 변성 제거 + 프로시저 관계선 실선·LOD 해제, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js`: `edgeWidthBoost`(§84) → **`edgeScreenScale = 1/zoom`** 로 교체 — 굵기·화살촉·다발 간격을 화면 픽셀로 해석. `_syncEdgeZoom()`+`_repaintAllEdges()` 신설(줌 변화 로그 0.22 초과 시 전 엣지 in-place 재페인트, rAF 코얼레싱, `destroy` 정리) + `_applyCam` 배선.
+- `graph-roleviz.js`: 전 관계선 `lineDash` 제거(실선) · 굵기 서열 재편(trusted 1.6 / ROUTINE_USES 1.3 / candidate 1.0 / crossDs 1.0~1.15 / inferred 0.75) · alpha 재조정.
+- `graph-core.js`: ROUTINE_USES LOD 축약 제거(직접 렌더 경로 + 집계 경로 `agg.kind !== "ROUTINE_USES"` 가드).
+- `tests/headless/test_graph_edge_flow.js`: A11(화면 굵기 불변·model 반비례·서열) · A12(줌 재동기화 임계) 신설, B2/C0 실선·신뢰도 계약 추가 — 61 PASS.
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+
 ## CHG-20260728T123000-graph-label-hover-postverify (TASK-20260728T123000 — 잘린 노드 명칭 hover 확장 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-28. 코드·자산 **무변경** — test-runs.d fragment POST-DEPLOY 결과 append + TASK 체크박스 종결 + evidence 3종 추가.
 - 배포: PR #993 → main **d980ebe4** → `make deploy-web-only` 무중단 롤링(web-a·web-b `git_commit=d980ebe4`, Caddyfile 무변경 no-op, 90s soak 통과). 서빙 `/static/graph/graph-renderer-pixi.js?v=1659a75f6c2f`(80,232 B)에 `hoverExpandGeom`·`_labelHoverLayer`·`_probeHover` 존재 확증.
