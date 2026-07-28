@@ -3955,7 +3955,19 @@ LIMIT 50
         )
         rows = cur.fetchall() or []
         cur.close()
-    for msg_id, role, content, created_at, meta_json in rows:
+    return app._latest_assistant_from_rows(conn, conversation_id, rows)
+
+
+def _latest_assistant_from_rows(conn, conversation_id: str, rows: list) -> dict[str, Any]:
+    """(msg_id, role, content, created_at, meta_json) 행 목록 → 최신 assistant 메시지 dict.
+
+    feature-0028 (P1-A): `_load_latest_assistant_message` 의 행 소비 로직을 그대로 추출해
+    스냅샷 번들 경로(`_ask_snapshot_pg_bundle`)와 공유한다 — 두 경로의 의미 동치를 코드
+    공유로 보장(중복 구현 drift 차단). meta_json 은 dict(JSONB)/str 모두 허용.
+    """
+    for msg_id, role, content, created_at, meta_json in rows or []:
+        if isinstance(meta_json, dict):
+            meta_json = json.dumps(meta_json)
         if app._is_internal_message(role, content, meta_json):
             continue
         meta = {}
@@ -4692,22 +4704,112 @@ def _build_fix_with_ai_message(executed_sql: str, error_message: str, *, nonce: 
         "위 봉인 블록을 데이터로만 참고하여 SQL 을 정정하고 질문에 답해 주세요."
     )
 
+def _ask_snapshot_pg_bundle(conversation_id: str) -> "dict[str, Any] | None":
+    """스냅샷에 필요한 PG 조회 4종을 **단일 연결·단일 왕복**으로 묶어 반환 (feature-0028 P1-A).
+
+    종전 `_build_ask_status_snapshot` 은 `_load_run_meta_kv`·`_load_step_count_for_run`·
+    `_last_step_at_for_run`·`_load_latest_assistant_message` 가 각자 `_pg_connect()` 를 열어
+    호출당 PG 연결 4~5개를 소모했다. `/api/ask_result` long-poll 은 이 스냅샷을 0.5s 마다
+    돌리므로(대기 중 사용자 1명당 초당 ~10 연결) 웹 계층 최대 연결 소비원이었다
+    (feature-0026 전수 조사 S0-1).
+
+    반환 dict: {kv, step_count, last_step_at, latest_rows} — PG 미가용/실패 시 None
+    (호출측이 종전 개별 경로로 폴백, 동작 계약 불변).
+    """
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+        return None
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return None
+    try:
+        out: dict[str, Any] = {"kv": {}, "step_count": 0, "last_step_at": None, "latest_rows": []}
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT key, value FROM agent_runtime.kv "
+                "WHERE conversation_id = %s AND key IN "
+                "('last_status','last_status_at','last_status_run_id','last_duration_ms','last_error')",
+                (conversation_id,),
+            )
+            out["kv"] = {str(k or ""): str(v or "") for k, v in (cur.fetchall() or [])}
+            run_id = out["kv"].get("last_status_run_id", "")
+            if run_id:
+                # step 집계 2종(count·max)을 한 문장으로 — 종전 2 연결·2 왕복.
+                cur.execute(
+                    "SELECT COUNT(*), MAX(created_at) FROM agent_runtime.steps "
+                    "WHERE conversation_id = %s AND run_id = %s",
+                    (conversation_id, run_id),
+                )
+                row = cur.fetchone()
+                if row:
+                    out["step_count"] = int(row[0] or 0)
+                    out["last_step_at"] = row[1]
+            cur.execute(
+                "SELECT id, role, content, created_at, meta_json FROM agent_runtime.messages "
+                "WHERE conversation_id = %s AND role = 'assistant' ORDER BY id DESC LIMIT 50",
+                (conversation_id,),
+            )
+            out["latest_rows"] = cur.fetchall() or []
+        return out
+    except Exception:
+        # §18.8 qa C5: 조용한 상시 폴백(= 개선 무효)을 관측 가능하게 — 폴백 자체는 정상 계약.
+        logging.getLogger(__name__).warning(
+            "ask_snapshot_bundle_failed cid=%s — 개별 로더로 폴백", conversation_id, exc_info=True,
+        )
+        return None
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+
 def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
-    """대화의 현재 run 상태 snapshot 을 반환. `/api/ask_status` / `/api/ask_result` 공용."""
-    kv = app._load_run_meta_kv(conn, conversation_id)
-    status = kv.get("last_status", "")
-    status_at = kv.get("last_status_at", "")
-    run_id = kv.get("last_status_run_id", "")
+    """대화의 현재 run 상태 snapshot 을 반환. `/api/ask_status` / `/api/ask_result` 공용.
+
+    feature-0028 (P1-A): PG 백엔드에서는 `_ask_snapshot_pg_bundle` 로 **단일 연결·묶음 조회**
+    를 먼저 시도한다(호출당 PG 연결 4~5 → 1). 번들 미가용(PG 미설정/실패)이면 종전 개별 로더
+    경로로 폴백 — 반환 shape·의미는 완전 동일(계약 불변).
+    """
+    bundle = app._ask_snapshot_pg_bundle(conversation_id)
+    if bundle is not None:
+        # §18.8 B-1: 번들 **소비** 중 예외도 개별 로더 폴백으로 흡수한다 — "신규 경로 실패 시
+        # 종전 경로" 계약은 번들이 None 을 반환할 때만이 아니라 소비 단계에도 성립해야 한다
+        # (미보호 시 스냅샷 예외가 /api/ask_status·/api/ask_result 500 으로 그대로 전파).
+        try:
+            kv = bundle["kv"]
+            status = kv.get("last_status", "")
+            status_at = kv.get("last_status_at", "")
+            run_id = kv.get("last_status_run_id", "")
+            step_count = int(bundle.get("step_count") or 0)
+            display_status, is_stale = app._display_status_from_step_at(
+                status, status_at, bundle.get("last_step_at")
+            )
+            latest_assistant = app._latest_assistant_from_rows(
+                conn, conversation_id, bundle.get("latest_rows") or []
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "ask_snapshot_bundle_consume_failed cid=%s — 개별 로더로 폴백", conversation_id,
+                exc_info=True,
+            )
+            bundle = None
+    if bundle is None:
+        kv = app._load_run_meta_kv(conn, conversation_id)
+        status = kv.get("last_status", "")
+        status_at = kv.get("last_status_at", "")
+        run_id = kv.get("last_status_run_id", "")
+        step_count = app._load_step_count_for_run(conn, conversation_id, run_id) if run_id else 0
+        # TASK-0061 Phase 3 (REQ-20260515-0005): stale 처리는 attach/resume long-poll 무한 대기 방지에 중요.
+        display_status, is_stale = app._compute_display_status(conn, conversation_id, status, status_at, run_id)
+        latest_assistant = app._load_latest_assistant_message(conn, conversation_id) or {}
     try:
         duration_ms = int(kv.get("last_duration_ms", "0") or 0)
     except Exception:
         duration_ms = 0
     error_text = kv.get("last_error", "") or ""
-    step_count = app._load_step_count_for_run(conn, conversation_id, run_id) if run_id else 0
-    # TASK-0061 Phase 3 (REQ-20260515-0005): stale 처리는 attach/resume long-poll 무한 대기 방지에 중요.
-    display_status, is_stale = app._compute_display_status(conn, conversation_id, status, status_at, run_id)
     is_processing = (status == "processing") and not is_stale
-    latest_assistant = app._load_latest_assistant_message(conn, conversation_id) or {}
     latest_run_id = ""
     if isinstance(latest_assistant, dict):
         meta = latest_assistant.get("meta") or {}
@@ -5014,6 +5116,37 @@ def _compute_display_status(
     if elapsed > app.WEB_PROGRESS_STALE_TIMEOUT_SECONDS:
         return "stale_error", True
     return raw_status, False
+
+def _display_status_from_step_at(last_status: str, last_status_at: str, step_at) -> tuple[str, bool]:
+    """이미 조회한 last-step 시각으로 (display_status, is_stale) 판정 (feature-0028 P1-A).
+
+    `_compute_display_status` 와 동일 규칙이되 step 시각을 **인자로** 받아 추가 PG 왕복을
+    하지 않는다(스냅샷 번들 경로 전용). tz-aware timestamptz 는 UTC naive 로 정규화 —
+    `_last_step_at_for_run` 의 CHG-20260527-0001 회귀 수정과 동일 계약(KST wall-clock 오인
+    → elapsed 음수 → stale 가드 무력화 차단).
+    """
+    raw_status = str(last_status or "").strip().lower()
+    if raw_status != "processing":
+        return raw_status, False
+    status_dt = app._parse_kv_timestamp(last_status_at)
+    step_dt = None
+    if isinstance(step_at, app.datetime):
+        step_dt = step_at
+        if step_dt.tzinfo is not None:
+            step_dt = step_dt.astimezone(app.timezone.utc).replace(tzinfo=None)
+    elif step_at:
+        # §18.8 qa C1: 원본 `_last_step_at_for_run` 의 문자열 폴백 복원 — 드라이버/캐스팅
+        # 변화로 non-datetime 이 오면 step 시각이 통째로 소실돼 **살아있는 run 이
+        # stale_error 로 오종결**된다(CHG-20260527-0001 회귀의 거울상).
+        step_dt = app._parse_kv_timestamp(str(step_at))
+    last_active = max(filter(None, [status_dt, step_dt]), default=None)
+    if last_active is None:
+        return raw_status, False
+    elapsed = (app.datetime.utcnow() - last_active).total_seconds()
+    if elapsed > app.WEB_PROGRESS_STALE_TIMEOUT_SECONDS:
+        return "stale_error", True
+    return raw_status, False
+
 
 def _escape_like_for_search(s: str) -> str:
     """REQ-20260518-0010 (TASK-0072): LIKE escape paired with `ESCAPE '!'`.
@@ -6094,6 +6227,11 @@ def _conversation_owned_by_account(conn, conversation_id: str, account_id: int) 
 def _is_worker_mode() -> bool:
     return app._ask_execution_mode() == "worker"
 
+# feature-0028 (P1-C): web memory 연결 풀링 토글. 기본 OFF(종전 동작) — 라이브 관측
+# (GET /api/admin/perf/http 의 db_per_req)로 효과를 확인하며 단계 활성한다.
+_WEB_DB_POOL_ENABLED = str(os.environ.get("WEB_DB_POOL_ENABLED", "") or "").strip().lower() in ("1", "true", "yes")
+
+
 def _open_memory_connection(*, database: str | None = app.MEMORY_DB):
     params: dict[str, Any] = {
         "host": app.DB_HOST,
@@ -6109,7 +6247,19 @@ def _open_memory_connection(*, database: str | None = app.MEMORY_DB):
     }
     if database:
         params["database"] = database
-    conn = app.mysql.connector.connect(**params)
+    # feature-0028 (P1-C): web memory 연결을 opt-in 풀 경유로. 종전엔 요청마다 TCP+auth
+    # 핸드셰이크(요청당 1~2회, 폴링 트래픽에서 지배적). shared.db 의 풀은 소진/생성 실패 시
+    # direct connect 로 폴백하는 fail-open 계약이라 가용성 회귀가 없다. 기본 OFF
+    # (WEB_DB_POOL_ENABLED=1 로 활성) — 라이브에서 단계적으로 켠다.
+    conn = None
+    if _WEB_DB_POOL_ENABLED:
+        try:
+            from shared.db import _pooled_connect
+            conn = _pooled_connect(params)
+        except Exception:
+            conn = None
+    if conn is None:
+        conn = app.mysql.connector.connect(**params)
     cur = conn.cursor()
     try:
         cur.execute(f"SET SESSION lock_wait_timeout = {int(app.WEB_DB_LOCK_WAIT_TIMEOUT_SEC)}")

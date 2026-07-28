@@ -73,6 +73,7 @@ sources:
 | feature-0025-worker-parallelism | in-progress |  | [TASK](../unit/feature-0025-worker-parallelism/docs/TASK.md) |  |
 | feature-0026-perf-observability | in-progress | 2026-07-27 | [TASK](../unit/feature-0026-perf-observability/docs/TASK.md) | 성능 관측 인프라 신규 — HTTP per-route 타이밍·요청당 DB conn 카운터(admin_perf)·워커 LLM latency 백필(13 sites)·답변 파이프라인 단계 계측(redteam/post-answer/grounding)·graph-sync duration·perf-snapshot CLI·Caddy access log (전수 성능 조사 기반, 측정 전용·사용자 가시 동작 변경 0·§18.8 3렌즈 패널 흡수) |
 | feature-0027-perf-latency-p0 | in-progress | 2026-07-28 | [TASK](../unit/feature-0027-perf-latency-p0/docs/TASK.md) | P0 성능 개선 1차 — post-answer 큐레이션(topic/용어/ENUM LLM 3건) terminal 후 이동(체감 -25~35s)·grounding RO 단일연결·MySQL 버퍼풀 128MB→1G·Caddy gzip+immutable static (feature-0026 측정 근거, 품질 무영향 축만) |
+| feature-0028-web-perf | in-progress | 2026-07-28 | [TASK](../unit/feature-0028-web-perf/docs/TASK.md) | web 계층 성능 — ask_result long-poll 워커 스레드 이관(이벤트 루프 stall 제거)·스냅샷 PG 단일연결 번들(호출당 4~5→1)·권한 카탈로그 TTL 캐시+세션 LastSeenAt throttle(인증 5왕복 완화)·web MySQL 풀 opt-in (feature-0026 측정 근거, 응답 shape·인가 불변) |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 > **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).

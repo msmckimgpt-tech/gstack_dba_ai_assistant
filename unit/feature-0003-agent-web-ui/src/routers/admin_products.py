@@ -1308,6 +1308,8 @@ SELECT r.Id, %s FROM WebRoles r
             )
         cur.close()
         conn.commit()
+        # feature-0028 (P1-B): 동적 권한(product.access.*) 변경 — 카탈로그 TTL 캐시 즉시 무효화.
+        app.invalidate_permission_catalog_cache()
     except Exception as exc:
         try:
             conn.rollback()
@@ -1341,6 +1343,8 @@ SELECT r.Id, %s FROM WebRoles r
             },
         )
         conn.commit()
+        # feature-0028 (P1-B): 동적 권한(product.access.*) 변경 — 카탈로그 TTL 캐시 즉시 무효화.
+        app.invalidate_permission_catalog_cache()
     except Exception as audit_exc:
         try:
             conn.rollback()
@@ -1457,6 +1461,8 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
             after=after_for_audit,
         )
         conn.commit()
+        # feature-0028 (P1-B): 동적 권한(product.access.*) 변경 — 카탈로그 TTL 캐시 즉시 무효화.
+        app.invalidate_permission_catalog_cache()
     except Exception as exc:
         try:
             conn.rollback()
@@ -1581,6 +1587,8 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
             target_account_id=None,
         )
         conn.commit()
+        # feature-0028 (P1-B): 동적 권한(product.access.*) 변경 — 카탈로그 TTL 캐시 즉시 무효화.
+        app.invalidate_permission_catalog_cache()
     except Exception as exc:
         try:
             conn.rollback()

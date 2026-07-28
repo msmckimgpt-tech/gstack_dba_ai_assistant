@@ -72,6 +72,7 @@ sources:
 | feature-0025-worker-parallelism | in-progress | 워커 성능·병렬 처리 설정 — 백그라운드 워커(그래프 노드 분석·cluster_label)·사용자 답변·KB 임베딩의 병렬도·처리주기·배치크기를 관리 콘솔 '시스템 > 설정 > 성능·병렬 처리' 서브탭에서 조절(feature-0018 runtime-settings 재사용·신규 동시성 기본 1=현행 직렬 byte-동치 opt-in·LLM만 병렬/DB직렬·admin RBAC(system.runtime.*)·clamp 방어) (2026-07-24 머지 PR #933·단위48+회귀166 PASS·§18.8 SHIP 반영·배포후 PB-0008 잔여·코드 거주 0002/0003/shared/compose) | [[feature-0025-worker-parallelism]] | `unit/feature-0025-worker-parallelism/docs/FUNCTION.md` |
 | feature-0026-perf-observability | in-progress | 성능 관측 인프라 — HTTP per-route 타이밍·요청당 DB conn 카운터(`/api/admin/perf/http`)·워커 LLM latency 백필·답변 파이프라인 단계 계측(redteam/post-answer/grounding)·graph-sync duration·perf-snapshot CLI·Caddy access log (측정 전용·동작 변경 0, 2026-07-27 전수 성능 조사 기반) | [[feature-0026-perf-observability]] | `unit/feature-0026-perf-observability/docs/FUNCTION.md` |
 | feature-0027-perf-latency-p0 | in-progress | P0 성능 개선 1차 — post-answer 큐레이션(topic/용어/ENUM) terminal 후 이동(답변 체감 -25~35s·결과물 불변)·grounding RO 단일연결·MySQL 버퍼풀 128MB→1G·Caddy gzip+immutable static (feature-0026 측정 근거, 품질 영향 축 불변, 2026-07-28) | [[feature-0027-perf-latency-p0]] | `unit/feature-0027-perf-latency-p0/docs/FUNCTION.md` |
+| feature-0028-web-perf | in-progress | web 계층 성능 — ask_result long-poll 워커 스레드 이관(이벤트 루프 stall 제거)·스냅샷 PG 연결 4~5→1(단일 왕복 번들)·권한 카탈로그 TTL 캐시+세션 touch throttle·web MySQL 풀 opt-in (feature-0026 측정 근거·응답/인가 불변, 2026-07-28) | [[feature-0028-web-perf]] | `unit/feature-0028-web-perf/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

@@ -2564,18 +2564,33 @@ async def ask_result(
     deadline = loop.time() + wait_s
     poll_interval = 0.5
     last_snapshot: dict[str, Any] = {}
-    while True:
+    def _poll_once() -> "dict[str, Any] | None":
+        """스냅샷 1회 — **동기 DB 구간 전체**를 워커 스레드에서 실행 (feature-0028 P1-A).
+
+        종전엔 `async def` 본문에서 blocking MySQL/PG 드라이버를 직접 호출해, 답변 대기 중인
+        사용자 1명이 0.5s 마다 이 replica 의 **이벤트 루프를 통째로 정지**시켰다(전수 조사
+        S0-1 — uvicorn 워커가 replica 당 1개라 다른 모든 요청이 함께 stall). 실패는 None
+        반환 → 호출측이 종전과 동일하게 다음 tick 재시도.
+        """
         try:
             poll_conn = app._connect_memory()
         except Exception:
+            return None
+        try:
+            return app._build_ask_status_snapshot(poll_conn, cid)
+        finally:
+            try:
+                poll_conn.close()
+            except Exception:
+                pass
+
+    while True:
+        snapshot = await asyncio.to_thread(_poll_once)
+        if snapshot is None:
             await asyncio.sleep(poll_interval)
             if loop.time() >= deadline:
                 break
             continue
-        try:
-            snapshot = app._build_ask_status_snapshot(poll_conn, cid)
-        finally:
-            poll_conn.close()
         last_snapshot = snapshot
         # TASK-0061 Phase 3: snapshot.status 는 display_status 이므로 raw_status 로 terminal 판정.
         server_status = str(snapshot.get("raw_status") or snapshot.get("status") or "")
