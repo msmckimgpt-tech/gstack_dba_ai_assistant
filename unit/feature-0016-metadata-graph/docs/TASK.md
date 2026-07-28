@@ -3116,6 +3116,7 @@ label-lod(§20260728T1604) 배포를 확인한 뒤의 후속 요청:
 - [x] HB.7 테스트 — 신규 `test_graph_hop_budget.py` **9 PASS**(hop 별 엣지 라벨 계약 · 부모 보강 · 보강 부모의 프론티어 미진입 · cap 우선순위 2종 · 절단 신호 · 관계 없음 시 d1==d2 · 상수 분할 불변식) + `test_detail_dbgroups.js` **95 PASS/0 FAIL**(⑱⑲ 신설 — 경고 귀속·hop 분기·오귀속 정적 회귀·관계없음 힌트·depth 문구).
 - [x] HB.8 PB-0008 실 Windows 브라우저 시각검증 — 아래 검증 절 참조.
 - [x] HB.9 세션 이월 후 완수 — `origin/main` 재-rebase 2회(총 22커밋) · §18.8 적대검증 4라운드 흡수 · 전수 재검증 · 정본 docs 정합.
+- [x] HB.10 **POST-DEPLOY 라이브 검증** (PR #1024 → main `3687c43b` → 배포 `9cb3d4ea`) — 아래 절.
 
 ### 개선 효과 (동일 표본 40개 · 같은 시드 A/B)
 | 지표 | 종전 | 개선 후 |
@@ -3217,3 +3218,32 @@ origin/main`(repo 접근 있는 독립 리뷰어, subagent 아님 — check #9 a
   어댑터 인자를 함께 주면 규약 불일치로 거짓 FAIL 이 나므로(실측: catcluster 2 FAIL·dbgroups 로드 실패)
   각 파일 헤더의 `사용:` 주석을 따른다. main 의 `c7049053`(그래프 시각 노이즈 제거 — 상시 설명문 → ⓘ 툴팁)이
   같은 범례 영역을 만졌으나 `amg-legend-note` 셀렉터는 보존돼 `_metaRoleLegendTips` 의 폴백 문구 교체가 유효하다.
+
+
+---
+
+## 20260728T1908-graph-hop-budget-postdeploy — '이웃 깊이' POST-DEPLOY 라이브 검증 (2026-07-28)
+
+PR #1024 머지(main `3687c43b`) → `deploy-web.sh` 롤링 배포(`9cb3d4ea`, soak PASS, 워커 포함) 후 **배포본**에서
+실제 Windows Chrome 150 으로 검증. cycle 내 PB-0008 은 재-rebase·적대검증 흡수 이전 코드 기준이었고 그 뒤
+힌트 판정 근거가 바뀌었으므로 재확인이 필요했다.
+
+**확증된 것** (건즈 실데이터 `mysql-gz-dev`):
+- 배포본 API 가 신규 필드 4개(`truncated_hop`·`omitted_nodes`·`expanded_hops`·`expanded_hop_edges`) 전부 서빙.
+- **깊이 선택이 실제로 다른 결과를 낸다** — `gunzgame.character` d1 61n/60e → d3 **199n/274e**, 양쪽
+  `truncated=false`, `expanded_hops=[60,40,98]`(hop 마다 증가). `gunzgame.account` d1 22n → d3 130n,
+  `[21,20,88]`. 종전 구조라면 계층 형제로 cap 300 을 소진해 2-hop 이 절단되고 3-hop 이 2-hop 과 동일해졌을 앵커다.
+- **오귀속 해소** — **depth select = 3** 인 상태에서 `gunzgame.character` 상세를 열었을 때 절단 배너
+  (`.amgr-trunc-note`) **0개**, "사용하는 함수·프로시저 (57) · 읽기 39 · 쓰기 18" 이 57건 전 항목 실명 열거
+  (`… 외 N건` 0). 사용자가 보고한 "1-hop 초과 모든 항목에서 경고" 증상이 배포본에서 사라졌다.
+- 단일클릭 상세는 depth 3 선택에도 `이웃 60개`(= d1) — 문구-동작 정합. depth `aria-label`·도움말 모달 새 문구 실렌더.
+
+**이월 1건 (정직 기록)**: '확장할 관계 없음' 힌트의 **실화면 발화**는 확장·중심보기 경로(PixiJS 캔버스
+더블클릭/우클릭)에서만 일어나고, 합성 PointerEvent 로는 컨텍스트 메뉴가 열리지 않았다(중심 + 7×7 격자 49점
+전부 실패 — 알려진 제약). 대신 **힌트 조건이 라이브에서 성립함을 API 로 실측**했다: `gunzlog.gamblelog` d3 →
+`expanded_hops=[2,0]`·`expanded_hop_edges=[2,0]`·`truncated=false`(= 표시 조건), 대조군 `gunzgame.accounthonor`
+d3 → `[5,2,0]`·`[5,3,0]`(= 미표시 조건). 렌더 판정은 헤드리스 ⑳㉑ 9건이 잠근다. 실 마우스 세션에서
+`gunzlog.gamblelog` 를 depth 3 으로 더블클릭해 상태줄을 눈으로 확인하면 종결.
+
+상세 Run: feature-0003 `docs/test-runs.d/20260728T190800-graph-hop-budget-postdeploy.md`. 증적:
+`artifacts/feature-0016-neighbor-depth-budget/pb0008-postdeploy/postdeploy_detail_nobanner.png`.

@@ -288,7 +288,6 @@ source_of_truth: true
 - 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/{TEST.md,test-runs.d/20260728T181000-graph-hdr-label-fit.md}` · 증적 3매(`artifacts/…/20260728-graph-hdr-label-fit/`, gitignore 로컬). **실행 코드 변경 0줄**.
 - 변경: PR #1025 머지(main `4ea1d83b`) → `make deploy-web` 무중단 롤아웃(soak 통과) → edge `/healthz git_commit=4ea1d83b` + 서빙 자산에 `_metaHdrFitFont`·`GH_CHIP_MAX` 존재 확인 후, 실 Windows Chrome relay 로 HF.6 을 수행하고 결과를 정본에 기록. **핵심 실증**: `gunzgame` 펼침(421 객체)·위계 헤더 84개 상태에서 zoom **0.1468**(본문 라벨 534/587 억제로 색 블록만 남은 개요)에도 컨텐츠 카테고리 헤더가 판독 가능하게 유지 — 종전 고정 10.5px 의 억제 임계는 0.3048 이라 이 줌에서 전부 사라졌을 구간이다. 반동 밴드는 줌아웃 h2→h9 단조·줌인 h7→h1 대칭 복귀로 **stale 없음**을 실측. pageerror 0.
 - 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영 필수. 한계 병기 — 칩 침범 0·알약 소프트닝 수용성은 스크린샷 육안 판정(기계적 보장은 헤드리스 K3) · 검증 중 페이지 1회 새 내비게이션 리셋은 직전 pageerror 0 + 재현 정상으로 **본 변경과 인과 미확인**, 원인 미규명으로 남김.
-
 ## CHG-20260728T181100-ai-claude-corp-feature-0016-role-badge — 테이블 역할색을 노드 전면 채움 → 좌측 배지 타일 (2026-07-28)
 - 대상(cross-cut, 코드 거주 feature-0003): `src/static/graph/graph-roleviz.js`(`_metaTableStyle` + 배지 상수 3) ·
   `src/static/graph/graph-core.js`(라벨 조립에서 역할 이모지 제거 · `_metaApplyLabelLod` 배지 아이콘 동반 소거 ·
@@ -311,3 +310,7 @@ source_of_truth: true
 - 대상(문서 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md`. **실행 코드 변경 0줄** (병합 자체는 직전 merge commit `5257d30e`).
 - 변경: `origin/main` 13 커밋(병렬 그래프 세션 다수 — hdr-label-fit·neighbor-depth-budget·시각노이즈 제거 등)을 흡수하고 MODIFY.md 병렬 append 충돌을 양측 블록 병존으로 해소한 뒤, 헤드리스 **22 파일 986 PASS / 0 FAIL** 을 재실행한 결과를 정본에 기록(RB.10). 수치가 병합 전 920 보다 큰 것은 병렬 세션의 테스트 합류(labellod 36→71 · dbgroups 78→107)이며 본 cycle 신규 47 PASS 는 불변임을 함께 명시 — 증가를 '개선' 으로 오독하지 않게 한다. 두 스위트의 호출 규약 차이(어댑터 인자 금지)도 거짓 FAIL 재발 방지용으로 남겼다.
 - 근거: 등급 Minor(문서 전용). 초고병렬 feature-0016 그래프 작업에서 main 흡수 후 무회귀는 배포 전 필수 확인이고, 그 실측을 기록하지 않으면 RB.7 의 920 이 병합 전 기준이라는 사실이 문서에서 사라진다.
+## CHG-20260728T190800-hop-budget-postdeploy — '이웃 깊이' POST-DEPLOY 라이브 검증 기록 (2026-07-28, 문서·증적 전용)
+- 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260728T190800-graph-hop-budget-postdeploy.md`(신규, Environment: Windows-browser). 실행 코드 0줄.
+- 변경: PR #1024 → main `3687c43b` → 배포 `9cb3d4ea`(soak PASS) 후 실제 Windows Chrome 150 으로 배포본 검증. 사용자 요청의 두 본질(깊이 선택이 실제로 다른 결과를 낸다 / 완전한 목록에 절단 경고가 붙지 않는다)을 건즈 실데이터로 확증 — `gunzgame.character` d1 61n → d3 199n(`expanded_hops=[60,40,98]`, 양쪽 truncated=false), depth 3 상태 상세에서 절단 배너 0개 + 직결 루틴 57건 전량 열거. 배포본 API 가 신규 필드 4개 서빙 확인.
+- 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트(PB-0008)를 **배포본에서** 이행한 기록이므로 정본 반영 필수. 미완 1건('확장할 관계 없음' 힌트 실화면 발화 — PixiJS 캔버스 합성 이벤트로 확장 경로 미도달)은 조건 성립을 라이브 API 로, 렌더 판정을 헤드리스 ⑳㉑ 9건으로 각각 확인하고 실 마우스 세션 이월로 정직 기록.

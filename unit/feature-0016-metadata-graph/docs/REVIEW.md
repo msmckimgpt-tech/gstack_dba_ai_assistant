@@ -527,3 +527,10 @@ source_of_truth: true
 ## REV-20260728T190947-ai-claude-corp-feature-0016-role-badge-postmerge [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
 - 본 cycle 의 코드 적대 검증은 `REV-20260728T181100-…-codex [CODEX:frontend-render+legend]` 가 담당했고(P1 1건 + P2 5건 전량 in-cycle 흡수, 최종 pass "No actionable correctness issues"), 그 수정 이후 상태에서 main 13 커밋을 흡수해 전 스위트 986 PASS / 0 FAIL 로 무회귀를 실측했다.
 - 병합 해소 자체의 리스크: MODIFY.md 는 append-only 원장이라 양측 블록 **병존**이 유일한 정답이고(한쪽 선택 = 이력 소실), driver 가 본문 변경으로 위임한 이유는 이번 cycle 이 REV/CHG id 를 초 해상도로 정정(`T1811`→`T181100`, check #9 정규식 요건)해 블록 내부가 바뀌었기 때문이다 — 말미 append 판정을 벗어난 정상 사유.
+
+## REV-20260728T190800-hop-budget-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs/evidence only outside policy-doc list — POST-DEPLOY 라이브 검증 기록(실행 코드 0줄). 검증 대상 코드의 적대검증은 REV-20260728T161300 [CODEX:backend+qa] 4라운드가 담당하며, 그 코드는 이미 main 에 머지·배포된 상태다.
+- Timestamp: 2026-07-28T19:08:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
