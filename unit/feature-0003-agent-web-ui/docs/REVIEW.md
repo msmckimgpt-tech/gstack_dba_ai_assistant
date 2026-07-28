@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T172000-graph-hover-flow-postverify [SKIPPED:non-policy-doc] — 상세 패널 hover 강조(방향·읽기/쓰기 + 흐름 애니) POST-DEPLOY PB-0008 검증 기록 (TASK 20260728T1628-graph-hover-flow, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- **왜 배포본에서 다시 봤는가**: 사전 검증은 §13.2.9 격리 컨테이너(`web-hoverflow-test`:18097)에서 했고 그 이미지는 worktree 자산을 `docker cp` + 재스탬프(`?v=dev` → `?v=28b8c65898a7`)한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니다**. main 기반 이미지가 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).
+- **관측 정합**: 사용자 리포트 두 축이 배포본에서 전건 재현 — 방향(같은 노드쌍 참조함/참조받음 **73px** 차 + 화살촉 상대끝↔self끝 반전) · 읽기/쓰기(**5,346px** 차 + bbox 완전 분리) · 흐름 애니(250ms 간격 4구간 **440/434/440/433px**, 정지 대조군 **0px**) · 잔재 **0px** · `pageerror` **0건**. 절대 수치는 사전 Run(441 / 3,517 / 151px)과 다르나 캔버스 해상도·줌·카메라가 다른 데서 오는 차이이고 **부호·구조는 동일**하다.
+- **적대적 자기검증 3건(수치를 믿기 전에 깬 가정)**: ① *측정 채널이 노이즈를 섞지 않는가* — 무hover 2프레임 diff **0px**, hover 전/후 원복 **0px** 로 노이즈 하한을 실측해 두었기에 이하 모든 비-0 을 실신호로 단정할 수 있다. ② *캔버스를 맞게 집었는가* — "가장 큰 canvas" 휴리스틱은 관리 콘솔이 대시보드로 리셋되면 **대시보드 차트**를 집어 hover 전후 0-diff 를 만든다. 첫 1:1 줌 측정이 전건 0px 로 나온 것이 바로 이 함정이었고(기능 실패로 오판할 형태), 전량 폐기 후 캡처 대상을 `#metadataGraphCanvas` 하위로 못 박고 매 캡처에 그래프 가시성·상태줄을 동시 기록해 무효 캡처를 raise 하도록 고쳐 재측정했다. ③ *두 참조 행이 같은 선을 강조하는 것 아닌가*(= 원 결함 재발 의심) — fit 줌에서 두 행 차가 **17px** 로 작았다. 줌 3단 확대에서 방향 차 **73→312px**, 참조 2행 차 **17→108px** 로 **차분이 줌에 비례 확대**되고(대조군은 0px 유지), 다른 스키마 루틴 대상과의 대조는 **3,948px** 로 분리됨을 확인해 "근접 배치로 인한 작은 차이"임을 확정했다.
+- **미검증으로 남긴 것(정직 표기)**: `prefers-reduced-motion` 정적 폴백은 OS 설정 토글이 공유 Windows 환경에 부작용을 남기므로 라이브 재확인하지 않았다 — 헤드리스 F 섹션(41 PASS)과 사전 Run 이 계약을 잠근다. 또한 #2 의 근-동치가 **컬럼 노드 미렌더 시 승격 대상이 동일 상위로 접힌 결과**인지는 직접 단정하지 않았고, 위 ③ 의 두 대조로 대상 특정 성립만 입증했다.
+- Cross-ref: MODIFY CHG-20260728T172000-graph-hover-flow-postverify / test-runs.d/20260728T172000-graph-hover-flow-postdeploy.md / 선행 REV-20260728T1628-graph-hover-flow.
+
 ## REV-20260728T163800-graph-catcluster-focus-postverify [SKIPPED:non-policy-doc] — 카메라 승격 교정 POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T160000, 비-정책 doc-only)
 - 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
 - **왜 배포본에서 다시 봤는가**: 사전 검증은 §13.2.9 격리 컨테이너에서 했고 그 이미지는 worktree 자산을 `docker cp` + 재스탬프한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니다**. main 기반 이미지가 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).

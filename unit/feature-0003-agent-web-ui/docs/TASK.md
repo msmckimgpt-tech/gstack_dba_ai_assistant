@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T172000-graph-hover-flow-postverify — 상세 패널 hover 강조(방향·읽기/쓰기 관계선 특정 + 데이터 흐름 애니메이션) POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
+- 대상: PR #1016 머지(main `b36493a9`) + `make deploy-web-only` 무중단 롤링(web-a/web-b one-at-a-time + Caddyfile reconcile, soak 90s 통과) 이후 **main 기반 서빙본**에서 재확인. 사전 Run 은 §13.2.9 격리 컨테이너에 자산을 `docker cp` + 재스탬프한 이미지였으므로 빌드 파이프라인 산출물에서의 성립은 별도 사실(§16.3 — 머지 ≠ 배포 완료).
+- 완료 판정(acceptance):
+  - [x] 서빙 baked 2중 확인 — `/healthz git_commit=b36493a9` · `repo-web-a-1`/`repo-web-b-1` `GIT_COMMIT=b36493a9` · `admin.js?v=3772f0cfa0c5` · 서빙 `graph-renderer-pixi.js` 신규 심볼 **18건**(`_edgeMatchBetween`/`_startHoverFlow`/`_stopHoverFlow`/`_clearHoverLayer`/`flowForward`) · `graph-ctxmenu.js` `_metaHoverEdgeSpec` 4 · 런타임 관계 상세 **27/27 행**이 `data-edge-src`/`data-edge-tgt`(+루틴 `data-rel-type`) 적재.
+  - [x] 방향 축 — 같은 노드쌍의 참조함/참조받음이 서로 다른 호를 강조(**73px** 차, 대조군 0px)하고 **화살촉이 상대 끝 ↔ self 끝으로 반전**(4× 크롭 육안).
+  - [x] 읽기/쓰기 축 — 쓰기 `spDelete…` vs 읽기 `spGet…` **5,346px** 차 · bbox 완전 분리(544–722×144–631 vs 679–760×382–631). 다른 스키마 read 대조 **3,948px** 차로 대상별 분기 확정.
+  - [x] 데이터 흐름 애니메이션 — hover 유지·카메라 불변에서 250ms 간격 4구간 **440/434/440/433px**(정지 대조군 **0px**), 루틴선 쓰기 **814px**·읽기 **413px**.
+  - [x] 정리·잔재 — hover 전부 이탈 후 base 대비 **0px** · 전 시나리오 `pageerror` **0건**.
+  - [x] 기하 비례 대조(줌 3단) — 방향 차 **73→312px**, 참조 2행 차 **17→108px**, 대조군 **0px 유지** → 차분이 줌에 비례 = 서로 다른 선(근-동치 우려 해소).
+- 상태: **완결** — 사전 Run 의 두 축(방향·읽기/쓰기) + 흐름 애니가 배포본에서 전건 재현. TASK 20260728T1628-graph-hover-flow 종결.
+- 드라이버 마찰 2건(기록): ① "가장 큰 canvas" 휴리스틱이 콘솔 리셋 시 대시보드 차트를 집어 **위장 0-diff** 를 만들어 첫 1:1 줌 측정 전건을 폐기·재측정 → 캡처를 `#metadataGraphCanvas` 하위로 못 박고 그래프 가시성·상태줄 동시 기록. ② 공유 Chrome 탭 하이재킹(대상이 `gunzlogin` 으로 바뀜) → 전용 마커 URL(`?pb=hoverflowpost`)로 탭 핀 고정.
+- Run: `docs/test-runs.d/20260728T172000-graph-hover-flow-postdeploy.md`
+
 ## TASK-20260728T163800-graph-catcluster-focus-postverify — 접힌 카테고리 클러스터 카메라 승격 POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
 - 대상: PR #1013 머지(main `f25c71bf`) + `make deploy-web` 무중단 전체 롤아웃(soak 90s 통과) 이후 **main 기반 서빙본**에서 재확인.
 - 완료 판정(acceptance):
