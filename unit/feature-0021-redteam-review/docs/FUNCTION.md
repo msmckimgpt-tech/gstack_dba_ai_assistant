@@ -43,6 +43,14 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
   전달되는 경우(사용자 '즉시 답변'·취소·수정 무산출·무진전)는 판정 저장·관리 콘솔·답변 고지의
   3곳에서 **명시적으로 표면화**한다 (결함 잔존의 은폐 금지). 응답 시간 상한은 두지 않으며,
   사용자는 작업 화면의 '즉시 답변'으로 언제든 그 시점 답변을 수령한다.
+- REQ-20260728T093528-answer-origin-realign: 자가 검증을 거쳐 전달되는 최종 답변이 **직전 맥락
+  (내부 리뷰 결함 목록)이 아니라 사용자의 원 요청에 응답**하도록 한다 (사용자 관측: "처음 요청
+  사항의 문맥보다 직전 문맥에 답변하는 듯한 뉘앙스"). 근본 원인은 수정 지시가 초안 생성
+  컨텍스트의 **trailing user turn** 이라, 모델의 생성 지점 최근접 맥락이 리뷰 결함 목록이라는
+  구조에 있다. ① 수정·재추론 지시의 **맨 끝**에 원 요청 재앵커 블록을 두어 recency 를 반대로
+  쓰고, 출력이 "리뷰에 대한 회신"이 아니라 "원 요청에 대한 최종 답변"임을 계약으로 명시한다.
+  ② 그래도 남는 메타 프레이밍은 결정론 탐지기가 잡아 **내용 보존 재서술 1회**로 교정한다.
+  전 경로 fail-open 이며, 다듬기가 답변을 악화시키면(내용 손실·메타 잔존) 원문을 유지한다.
 - REQ-20260727-reviewer-memory: 리뷰어가 **대화 내부 격리 환경에서 자기 리뷰 이력을 기억**한다 —
   자기가 직전에 지적한 항목과 그에 대해 assistant 가 내놓은 수정본을 이어받아, 해소 여부를
   먼저 판정하고 이미 고쳐진 항목을 다시 보고하지 않는다. 기억 범위는 (a) 현재 답변의 라운드
@@ -55,7 +63,9 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
   작동 지침 / 스킬]으로 통합. 통합 탭은 하위 조회 권한 OR 로 노출하고 서브탭은 각자 권한으로 게이팅.
 
 ## 3. In Scope
-- `modules/redteam.py` — 리뷰어 프롬프트·오케스트레이션·판정 저장 (feature-0002).
+- `modules/redteam.py` — 리뷰어 프롬프트·오케스트레이션·판정 저장 + **원 요청 재앵커·메타
+  프레이밍 탐지·내용 보존 재서술**(`build_request_anchor` / `detect_meta_framing` /
+  `build_reanchor_instruction` / `realign_answer`) (feature-0002).
 - `modules/agent_notes.py` — 세션/제품 노트 기록·주입·TTL sweep (feature-0002).
 - `modules/guidance_registry.py` — 지침/스킬 메타 레지스트리 (progressive disclosure).
 - `agent_core.py` choke-point 훅 (답변 확정 직후, 저장 직전) + 노트 프롬프트 주입.
@@ -73,9 +83,11 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 ## 5. Inputs
 - 답변 초안 (`result["answer"]`), 사용자 질문, 도구 실행 digest (SQL·행수·도구 요약),
   modality (그룹 여부), reasoning_level, product_id.
+- **원 요청 재앵커 입력**: 이 답변을 촉발한 사용자 발화(`user_message`) + 대화 목표
+  (`thread_goal`, bounded 발신자에겐 억제 — §7.3).
 - 런타임 설정: `REDTEAM_ENABLED`, `REDTEAM_MAX_REVISIONS`,
   `REDTEAM_REVISE_UNTIL_RESOLVED`, `REDTEAM_VERIFY_MIN_LEVEL`, `REDTEAM_UNRESOLVED_NOTICE`,
-  `REDTEAM_HISTORY_CONV_LIMIT`,
+  `REDTEAM_HISTORY_CONV_LIMIT`, `REDTEAM_ANSWER_REALIGN`,
   `REDTEAM_NOTES_SESSION_TTL_DAYS`, `REDTEAM_NOTES_PRODUCT_TTL_DAYS`,
   `REDTEAM_NOTES_INJECT_MAX_CHARS`.
 - 중단 신호: 사용자 '즉시 답변'(`conversation.finalize.*`) / 요청 취소 — 반복 수정 루프의
@@ -131,6 +143,36 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
   접기를 거친다 (구획 breakout·줄 위조 차단).
 - 라운드 이력이 예산을 선점한다 (최근 3라운드). 대화 이력은 남는 예산만 쓴다 — 수렴에 직결하는
   최신 라운드가 cap 에 밀려 잘리면 안 되기 때문이다.
+
+### 7.3 원 요청 재앵커 (answer-origin-realign)
+
+수정(revise)·재추론(rederive) 지시는 초안 생성 컨텍스트의 **trailing user turn** 이다
+(`_build_self_review_messages` — 이 위치는 prefill 회귀 방지를 위한 기존 불변식이라 바꾸지
+않는다). 따라서 모델의 생성 지점 최근접 맥락이 "내부 리뷰 결함 목록"이고, 산출물이 원 요청이
+아니라 **직전 맥락에 응답하는 레지스터**로 기운다. 같은 recency 지렛대를 반대로 쓴다:
+
+| 층 | 수단 | 추가 LLM 호출 |
+|---|---|---|
+| 1차 (기본) | 지시 **맨 끝**에 원 요청 재앵커 블록 + 출력 계약(메타 표현·직전 맥락 지시어 금지, 구성은 원 요청이 결정) | 0 |
+| 2차 (조건부) | 도입부 메타 프레이밍 결정론 탐지 → **내용 보존 재서술 1회** | 탐지 시에만 1 |
+
+- **전달 후 별도 다듬기 패스를 두지 않는다**: 근거 없이 문장만 다듬는 리라이터는 red-team 이
+  방금 강제한 grounding·불확실성 고지를 매끄럽게 지워내 정직성을 되돌린다(§16.3). 대신 교정을
+  **생성 시점**과 **revise 콜백 내부**에 둔다 — 재서술본도 기존 verify 패스를 그대로 통과하므로
+  수렴 불변식이 깨지지 않는다.
+- **재서술 폐기 조건 (fail-open)**: 무산출 / 호출 실패 / 원문 대비 60% 미만 길이(내용 손실 의심)
+  / 재서술본에도 메타 프레이밍 잔존 → **원문 유지**. 다듬기가 답변을 악화시키는 경로를 결정론적
+  으로 닫는다.
+- **비용 가드**: 탐지가 없으면 호출 0. 반복 수정 루프에서 **연속 거절 2회**면 그 run 의 잔여
+  라운드는 재서술을 시도하지 않는다(성공하면 카운터 리셋).
+- **재추론 경로의 base**: 재서술 프롬프트는 그 라운드의 메시지(`_rd_messages`)를 기반으로 한다 —
+  재도출이 새로 돌린 도구 결과가 outer 컨텍스트에 없어서, 기본 base 로 재서술하면 모델이
+  **낡은 근거** 쪽으로 수치를 되돌릴 수 있다.
+- **누출 경계**: 주 앵커인 `user_message` 는 그 발신자 본인의 입력이라 항상 안전하다. 보조 앵커
+  `thread_goal` 은 대화의 (가려졌을 수 있는) 첫 요청에서 파생된 자유 텍스트라 window 로 자를 수
+  없으므로, bounded 발신자(`_suppress_conversation_context`)에게는 system 프롬프트의
+  CONVERSATION CONTEXT 와 **동일하게 억제**한다(`_realign_thread_goal` 정본). 재앵커 블록은
+  `<<USER_REQUEST>>` sentinel 로 구획되고 내부 sentinel 이 제거되어 구획 breakout 이 차단된다.
 
 ## 8. Edge Cases
 - 리뷰어가 findings 를 과잉 보고 → severity 게이트 (BLOCK 만 수정 유발) + 상한 5건 +
