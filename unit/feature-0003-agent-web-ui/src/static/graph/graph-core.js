@@ -2,7 +2,7 @@
 // 규약: 공개 표면은 graph/graph.js(barrel) 가 re-export — admin.js 는 barrel 만 import.
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
 import { adminState, apiFetch } from "../admin.js?v=dev";
-import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf } from "./graph-state.js?v=dev";
+import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _metaComboName, _metaGraph, _metaHdrFitFont, _metaHdrFitNote, _metaHdrFitReset, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf, _METLAY, _METtype, _METZ } from "./graph-state.js?v=dev";
 import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
@@ -47,6 +47,10 @@ function _metaTopoSig() {
 function _metaG6Build() {
   // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
   //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
+  // hdr-label-fit(codex P2): 확장 여력 있는 위계 헤더 계수기를 **products 디스패치보다 먼저** 리셋한다.
+  //   products 는 여기서 조기 return 하므로 리셋이 뒤에 있으면 직전 roots build 값이 남아 `/h` 밴드가
+  //   계속 붙고, 헤더가 하나도 없는 화면에서 줌 전이마다 헛 rebuild 가 걸린다.
+  _metaHdrFitReset();
   if (_metaGraph.mode === "products") return _metaG6BuildProducts();
   // §57.5(사용자 버그 리포트): 상대 하이라이트 인접 집합은 **빌드 시점 재산출** — 선택 시점 스냅샷은
   //   클릭 직후 ShowDetail/컬럼 펼침의 늦은 ingest(이웃 적재)를 반영 못 해 빈/구식 인접으로 굳고,
@@ -200,6 +204,10 @@ function _metaG6Build() {
   //   무관하게 불변(공간 예약 유지 = band-invariant 좌표). 억제는 방출 단계에서만 일어난다.
   let _colLodZoom = 1;
   try { if (_metaGraph.graph) _colLodZoom = _metaGraph.graph.getZoom() || 1; } catch (_) {}
+  // hdr-label-fit(사용자 요청 2026-07-28): 위계 헤더(GH/CATH) 폰트를 줌에서 파생하려면 emission 시점에
+  //   현재 줌이 필요하다. 아래 `zoomNow`(엣지 LOD용)는 헤더 방출부보다 **뒤에서** 산정되므로 같은 값을
+  //   여기서 별칭으로 잡아 쓴다(동일 getZoom 결과 — 이중 호출 회피 + 이름으로 용도 구분).
+  const _zNow = _colLodZoom;
   // **렌더될** 컬럼만 카운트 — 접힌 스키마(schemaExpanded 아님)의 로드된 컬럼은 방출 안 되므로 게이트에서
   //   제외한다. 전역 합이면 접힌 스키마 컬럼이 임계(_META_COL_LOD_MIN)를 부풀려, 화면의 소량 컬럼을 불필요
   //   억제할 수 있다(리뷰 MINOR). colsByTable 은 펼친 테이블만 담아 순회는 저렴.
@@ -496,12 +504,28 @@ function _metaG6Build() {
       //   테이블 수는 schemaTotals(스키마→전체 테이블 수, 카드 badge 와 동일 소스)를 멤버 합산. 대형은 천단위 구분.
       const _catTbl = cat.members.reduce((s, m) => s + ((_metaGraph.schemaTotals && _metaGraph.schemaTotals.get(m)) || 0), 0);
       const hdText = `🗂 ${cat.label} · ${cat.members.length} DB` + (_catTbl > 0 ? ` · ${_catTbl.toLocaleString()} 테이블` : "");
-      const hdW = Math.min(Math.max(80, Math.round(hdText.length * 8.2) + 22), Math.max(120, bw - 46));
+      // hdr-label-fit(사용자 요청 2026-07-28): GH 와 동일 메커니즘 — 위계 헤더 공통(`_metaHdrFitFont`).
+      //   밴드는 멤버 클러스터 bbox 파생이라 스코프가 클수록 폭이 커지고, 그만큼 폰트가 자란다.
+      const CHF = _metaHdrFitFont(12, Math.max(120, bw - 46), hdText.length, _zNow);
+      _metaHdrFitNote(12, Math.max(120, bw - 46), hdText.length);   // 반동 밴드 게이트(z-독립)
+      const hdW = Math.min(Math.max(80, Math.round(hdText.length * CHF * 0.683) + 22), Math.max(120, bw - 46));
+      //   칩 높이 비례(기존 12→22) + **하단 앵커**(기존 하단 bt+27 고정) → 커진 만큼 밴드 위로 자란다.
+      //   CATHH=36 예약 행 아래 멤버 클러스터를 침범하지 않으므로 reflow 0.
+      //   칩 높이 상한(codex P1 GATE) — GH 와 동일 근거. **밴드는 위쪽에 상수로 보장된 간격이 없다**(간격이
+      //   클러스터 shelf-pack 높이에서 파생돼 데이터 의존: 실측 56 이지만 구조적 하한은 음수) → 자기 예약 행
+      //   (CATHH=36, 칩 하단 `bt+27`)을 **넘지 않게** 묶는다. CATH 도 `_METZ.GROUP_HD`(5) 라 위 밴드 콘텐츠의
+      //   클릭·우클릭을 가로채면 §55 밴드↔클러스터 메뉴 오라우팅(memory 기록 결함)이 재발한다.
+      const CATH_CHIP_MAX = 27;
+      const chHWant = Math.round(CHF * (22 / 12));
+      const chH = Math.max(22, Math.min(chHWant, CATH_CHIP_MAX));
+      const chPillFits = chHWant <= CATH_CHIP_MAX;
+      const chBottom = bt + 16 + 11;
       nodes.push({ id: "CATH:" + cat.key, type: _METtype,
         data: { kind: "cat-hd", cat: cat.key, label: cat.label },
-        style: { x: bl + 12 + hdW / 2, y: bt + 16, size: [hdW, 22], radius: 11,
-          fill: tint.hd, stroke: tint.bd, lineWidth: 1.2, zIndex: _METZ.GROUP_HD, cursor: "move",
-          labelText: hdText, labelFill: "#1d2635", labelFontSize: 12, labelFontWeight: 700,
+        style: { x: bl + 12 + hdW / 2, y: chBottom - chH / 2, size: [hdW, chH], radius: Math.min(11, chH / 2),
+          fill: tint.hd, fillOpacity: chPillFits ? 1 : 0.45,
+          stroke: tint.bd, lineWidth: chPillFits ? 1.2 : 0, zIndex: _METZ.GROUP_HD, cursor: "move",
+          labelText: hdText, labelFill: "#1d2635", labelFontSize: CHF, labelFontWeight: 700,
           // 리뷰 NIT: '· M 테이블' 추가로 라벨이 길어져 좁은 밴드에서 넘칠 수 있어 labelMaxWidth 로 ellipsis 흡수
           //   (한글 실폭 > hdText.length*8.2 추정이라 hdW 캡만으론 부족).
           labelMaxWidth: hdW - 8, labelPlacement: "center" } });
@@ -614,17 +638,43 @@ function _metaG6Build() {
             //   (클러스터 이동은 combo 여백·라벨·접힌 카드 경로 — 범례에 안내).
             fill: gm.tint.bg, fillOpacity: 0.75, stroke: gm.tint.bd, lineWidth: 1.2, zIndex: _METZ.GROUP_BG, cursor: "move" } });
         const hdText = `${gm.label} · ${gm.n}`;
-        const hdW = Math.min(Math.max(46, Math.round(hdText.length * 7.2) + 18), bw - 36);   // GX 컨트롤 자리(우측 ~20px) 확보
+        // hdr-label-fit(사용자 요청 2026-07-28): 폰트를 **클러스터 범위 + 화면 하한**에서 파생한다(고정 10.5 폐지).
+        //   `_metaHdrFitFont` 가 `min(base/zoom, 박스fit)` 를 [base, 26] 로 클램프 → 줌아웃해도 화면 크기가
+        //   유지되고(지도 라벨 관례) 박스를 절대 넘지 않는다(트리맵 fit-to-box). 상세 근거는 graph-state.js.
+        const GHF = _metaHdrFitFont(10.5, bw - 36, hdText.length, _zNow);
+        _metaHdrFitNote(10.5, bw - 36, hdText.length);   // 반동 밴드 게이트(z-독립 — self-lock 회피)
+        const hdW = Math.min(Math.max(46, Math.round(hdText.length * GHF * 0.686) + 18), bw - 36);   // GX 컨트롤 자리(우측 ~20px) 확보
+        //   칩 높이도 폰트에 비례(기존 10.5→18 비율 유지). **하단을 앵커**해 커진 만큼 박스 *위로* 자라게 한다
+        //   (사용자 결정 2026-07-28): 예약 헤더 행(GHH=26) 아래 멤버 영역을 침범하지 않으므로 **reflow 0** —
+        //   좌표·size 가 바뀌는 것은 GH 칩 자신뿐이고 멤버·combo extent 는 불변이다. 지도의 area-label 이
+        //   폴리곤을 넘어 배치되는 것과 같은 어포던스.
+        //   **칩 높이 상한 = hit 영역 안전 한계**(codex P1 GATE, 2026-07-28): 칩을 폰트에 무제한 비례시키면
+        //   폰트 64 에서 높이 ~110 world 가 되고, 하단이 `top+22` 로 고정되므로 **위 그룹 블록 안으로 72 world
+        //   침범**한다(실측: 그룹 행 간격 = GGY 16, 행1 블록 40~168 / 행2 칩 하단 206). GH 는 `_METZ.GROUP_HD`(5)
+        //   = 테이블 칩(4) **위** 드래그 핸들이라, `hitTest` 가 `style.size` bbox + zIndex 로 판정하는 이상 위 그룹
+        //   테이블의 클릭·드래그를 **가로챈다**(§52·sim-group z-order↔hit-test 결함 계열의 재발).
+        //   → 칩(=hit 영역)은 `칩하단 - 블록top + GGY` 로 묶는다: 위로 자라도 **행 간격 안에서 멈춘다**.
+        //   **폰트는 묶지 않는다** — `hitTest`/`buildHitGrid` 는 `nodeBBox(style.size)` 만 보고 **라벨은 hit 대상이
+        //   아니므로**, 텍스트가 칩을 넘어도 상호작용에는 영향이 없다(판독성 이득은 그대로 유지).
+        const GH_CHIP_MAX = 22 + GGY;   // = 38
+        const hdHWant = Math.round(GHF * (18 / 10.5));
+        const hdH = Math.max(18, Math.min(hdHWant, GH_CHIP_MAX));
+        //   텍스트가 칩을 넘는 구간에서는 알약 배경을 옅게 — 텍스트보다 작은 알약이 '깨진 칩'으로 읽히지 않게
+        //   하고(지도 area-label 처럼 '밴드 위 글자'로 읽힌다), 넘지 않는 구간은 종전 그대로.
+        const hdPillFits = hdHWant <= GH_CHIP_MAX;
+        const hdBottom = top + 13 + 9;   // 기존 칩 하단(=top+22) 고정 — 아래로는 자라지 않는다
         // group-interact(§50 hotfix, PB-0008) + graph-zorder(§52): GH 헤더 = GROUP_HD(5) — 칩(4) 위 드래그
         //   핸들. 음수면 combo 배경(z0) 뒤에 렌더돼 @antv/g hit-test 에서 combo 에 가려, 헤더 드래그가
         //   node:dragstart 대신 combo:dragstart(클러스터 이동)로 발화된다(라이브 실측 결함 — 헤드리스는
         //   zIndex hit-test 미모델). 헤더 스트립엔 멤버가 없어 시각 회귀 0, cursor:move 로 핸들임을 표시.
         nodes.push({ id: "GH:" + gm.key, type: _METtype, combo: id,
           data: { kind: "group-hd", group: gm.key, schema: id, label: gm.label },
-          style: { x: left + 8 + hdW / 2, y: top + 13, size: [hdW, 18], radius: 9,
-            fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: _METZ.GROUP_HD, cursor: "move",
-            labelText: hdText, labelFill: "#273449", labelFontSize: 10.5, labelFontWeight: 600,
-            labelPlacement: "center" } });
+          style: { x: left + 8 + hdW / 2, y: hdBottom - hdH / 2, size: [hdW, hdH], radius: Math.min(9, hdH / 2),
+            fill: gm.tint.hd, fillOpacity: hdPillFits ? 1 : 0.45,
+            stroke: gm.tint.bd, lineWidth: hdPillFits ? 1 : 0, zIndex: _METZ.GROUP_HD, cursor: "move",
+            labelText: hdText, labelFill: "#273449", labelFontSize: GHF, labelFontWeight: 600,
+            // 확장 폰트에서 한글 실폭이 추정계수를 넘을 수 있어 ellipsis 안전망을 둔다(CATH 와 동형 — 종전 GH 에는 없었다).
+            labelMaxWidth: hdW - 8, labelPlacement: "center" } });
         // group-interact(§50): 접기/펼치기 토글 컨트롤(그룹 헤더 우측) — 클릭 전용(드래그 불가).
         nodes.push({ id: "GX:" + gm.key, type: _METtype, combo: id,
           data: { label: gm.collapsed ? "+" : "−", kind: "group-ctl", group: gm.key, schema: id },
