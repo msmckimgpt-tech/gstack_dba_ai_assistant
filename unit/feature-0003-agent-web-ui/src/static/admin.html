@@ -872,10 +872,10 @@
                 <span class="amg-detailnav-label" id="metaGraphDetailNavLabel" aria-live="polite"></span>
               </div>
               <div id="metadataGraphDetailBody" aria-live="polite">
-                <div class="admin-detail-empty">
-                  <p>노드를 <strong>한 번 클릭</strong>하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 여기에서 봅니다.</p>
-                  <p class="admin-meta-detail-note"><strong>더블클릭</strong>하면 그 노드 중심의 이웃 그래프로 펼쳐집니다. <strong>우클릭</strong>하면 상세 보기·관계 상세(방향·신뢰도·근거)·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
-                </div>
+                <!-- graph-noise-reduce(2026-07-28): 조작 안내 2문단 → 1줄. 클릭/더블클릭/우클릭·읽기전용 성격은
+                     ❓ 도움말 오버레이(#metadataGraphHelp)가 정본이라 empty-state 에서 중복 설명하지 않는다
+                     (다른 pane 의 .admin-detail-empty 1줄 컨벤션과도 정합). -->
+                <div class="admin-detail-empty">노드를 클릭하면 상세가 여기에 표시됩니다.</div>
               </div>
               <!-- graphux7(#3): 그래프 범례 3-탭 — ①노드 종류 ②관계·AI 상태 ③테이블 역할.
                    상단 flat 범례바 + 기존 '테이블 역할' details 를 상세 패널 하단으로 통합.

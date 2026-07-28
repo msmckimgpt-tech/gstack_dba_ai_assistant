@@ -410,7 +410,17 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .amgr-dbgrp-allctl { list-style: none; display: flex; justify-content: flex-end; margin: 0 0 2px; }
 .amgr-dbgrp-all { margin-left: 0; font-size: 10.5px; font-weight: 600; }
 /* 백엔드 이웃 상한(300)으로 부분만 불러온 경우의 고지 — 조용한 절단 방지 */
-.amgr-trunc-note { color: #9a6a00; background: #fff8e6; border: 1px solid #f3e0b0; border-radius: 5px; padding: 4px 7px; }
+.amgr-trunc-note { color: #9a6a00; background: #fff8e6; border: 1px solid #f3e0b0; border-radius: 5px; padding: 4px 7px; cursor: help; }
+/* graph-noise-reduce(2026-07-28): 섹션 조작 설명을 상시 문단 대신 제목 옆 hover 툴팁(ⓘ)으로 축약한 마커.
+   본문 흐름을 차지하지 않도록 muted·소형·인라인. 키보드 포커스 가능(tabindex=0 + aria-label)이라
+   title 툴팁을 못 보는 경우에도 스크린리더로 동일 내용을 얻는다. */
+.amgr-sec-help {
+  display: inline-block; margin-left: 4px; font-size: 11px; line-height: 1;
+  color: var(--text-muted, #8a94a6); font-weight: 400; cursor: help; vertical-align: baseline;
+  opacity: .55; transition: opacity .12s ease;
+}
+.amgr-sec-help:hover, .amgr-sec-help:focus-visible { opacity: 1; color: var(--text-2, #4a5568); }
+.amgr-sec-help:focus-visible { outline: 2px solid var(--accent, #0f7d8c); outline-offset: 1px; border-radius: 2px; }
 .amgr-dbgrp-body { padding-left: 12px; border-left: 2px solid var(--border, #e2e8f0); margin-left: 4px; }
 .amgr-dbgrp-body[hidden] { display: none; }
 .amgr-dbgrp-body > ul.amgr-list { list-style: none; margin: 0; padding: 0; }
@@ -460,8 +470,9 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
   border-radius: 6px; font-family: inherit;
 }
 .admin-meta-ai-pop textarea:focus { outline: none; border-color: var(--primary); }
-.admin-meta-ai-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
-.admin-meta-ai-pop-foot .admin-meta-graph-muted { font-size: 10.5px; line-height: 1.35; }
+/* graph-noise-reduce: 상시 안내 span 제거로 자식이 버튼 하나 — space-between 이면 좌측으로 붙으므로 우측 정렬 고정. */
+.admin-meta-ai-pop-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+/* (graph-noise-reduce) 안내 span 제거로 `.admin-meta-ai-pop-foot .admin-meta-graph-muted` 는 매칭 대상이 사라져 삭제. */
 .admin-meta-graph-ai-box { margin-top: 8px; line-height: 1.5; }
 .admin-meta-graph-ai-box p { margin: 0 0 7px; }
 .admin-meta-graph-ai-summary { font-weight: 600; }
