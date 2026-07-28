@@ -92,3 +92,21 @@ source_of_truth: true
 - Related Change: CHG-20260711T201156-preflight-sigpipe-rootfix. 승인: 사용자 잔여작업 재개 지시 + 직전 하드닝 사이클(§18.8 2-round SHIP)의 연장선.
 - SKIPPED 사유: 원인이 진단 덤프로 **결정적으로 특정**(bytes=145,878 완전 출력 + rc=0 + 미검출 = SIGPIPE race 외 설명 불가)되고, 수정은 의미-동일 매칭 대체(파이프 제거)뿐. dry-run 양 경로 실증 + 머지 직후 라이브 배포가 최종 검증.
 - Human Approval Needed: 아니오 — 게이트 스크립트 결함 수정(fail-safe 방향 불변).
+
+## REV-20260728T014500-zd-stale-closeout [SKIPPED:docs-only stale 판별 — 코드 무변경]
+- Related Change: CHG-20260728-0001 (무중단 배포 계열 23건 stale 확정·정리)
+- Panel skip 근거: changeset 이 4 feature 의 `docs/TASK.md` + 본 feature 의 MODIFY/REVIEW
+  뿐이고 제품 코드·자산·설정 무변경(§18.8 dispatch 비매칭). 새 판단이 아니라 **이미 랜딩된
+  작업의 증거를 대조해 체크박스를 닫는** 사무적 정리다.
+- 판별 방법 (문서 대조가 아닌 라이브 실측을 택한 이유): TASK.md 항목은 "배포했다"·"검증했다"
+  같은 **행위 서술**이라 문서만 봐서는 참·거짓을 가릴 수 없다. 그래서 각 항목이 주장하는
+  **결과물이 지금 실재하는지**를 직접 확인했다 — 스크립트 파일 존재, HTTP 응답 코드,
+  컨테이너 가동 상태, cron entry 수. `:18080` 폐기처럼 "없어야 정상" 인 항목은 무응답을
+  확인했다.
+- 남긴 것: 각 feature 에 정형 Completion Checklist 1건씩만 남는다. 이는 feature 가
+  `in-progress` 인 한 정상이며, 닫으려면 feature 자체를 done 으로 선언해야 한다 — 그 판단은
+  본 cycle 범위 밖(운영 정책 결정).
+- Open Questions: 같은 집계에서 **방치 판정된 나머지 13건**은 성격이 달라 닫지 않았다 —
+  feature-0012(8건)는 실제 미완 이연 작업(P5b Final·프론트 분할), feature-0011·0010 은 명시적
+  후속/비활성 토대, feature-0001/0004/0005 의 "엄격한 시나리오 확정"(각 1건)은 template
+  skeleton 정형 항목이다. 이들은 실제 작업이거나 정책 판단이 필요해 별도로 다뤄야 한다.

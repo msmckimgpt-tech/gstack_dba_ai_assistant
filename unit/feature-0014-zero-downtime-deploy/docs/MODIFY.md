@@ -54,3 +54,24 @@ source_of_truth: true
 ## CHG-20260711T201156-preflight-sigpipe-rootfix (preflight 검사 파이프 제거 — flake 근본 수정)
 - Date: 2026-07-11. 직전 하드닝(CHG-20260711T113717)의 진단 계측이 원인을 특정: pipefail+grep -q 조기종료 SIGPIPE race. 검사 3곳을 bash `[[ == *...* ]]` 매칭으로 교체(의미 동일 — `\n  web-a:` 부분문자열 = `^  web-a:` 앵커 등가, cfg 는 config 출력이라 첫 줄이 서비스일 수 없음).
 - Files: bin/deploy-web.sh (검사 3곳).
+
+## CHG-20260728-0001
+- Date: 2026-07-28
+- Related Requirement: 무중단 배포 계열 4 feature 의 stale 체크박스 정리
+  — **docs-only, 코드 무변경** (cross-feature 편집)
+- Summary: 3일 이전부터 열려 있던 잔여 작업을 `git blame` 으로 집계하던 중, 무중단 배포
+  계열 **23건이 이미 운영 중인데 체크박스만 남은 stale** 임을 실측으로 확인하고 닫았다.
+  판정은 문서 대조가 아니라 **라이브 실측**으로 했다:
+  - feature-0014 (6건): `bin/migrate-lint.sh` 실재 · `:18080` 무응답(폐기 확인) ·
+    `/readyz`·`/livez` 200 · `bin/deploy-web.sh` 실재 · `repo-web-a-1`/`repo-web-b-1`
+    2 replica + Caddy LB 가동 · asset stamp 파이프라인 실재
+  - feature-0015 (6건): `repo-insight-worker-1` healthy · backup cron 9 entry 설치
+  - feature-0016-zd-pg-pause-caddy (6건): `repo-pgbouncer-1` healthy 13일 연속 가동
+  - feature-0017 (5건): `asset_stamp_verify` 게이트 실재 · `/readyz` 200
+- Files: `unit/feature-0014-zero-downtime-deploy/docs/{TASK,MODIFY,REVIEW}.md`,
+  `unit/feature-0015-zd-hygiene-backup/docs/TASK.md`,
+  `unit/feature-0016-zd-pg-pause-caddy/docs/TASK.md`,
+  `unit/feature-0017-deploy-build-gate/docs/TASK.md`
+  (cross-feature 편집 — docs 홈은 가장 큰 덩어리인 feature-0014)
+- Impact: 제품 동작 무변경. 4 feature 의 TASK.md 잔여가 각 1건(정형 항목)으로 수렴.
+- Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.
