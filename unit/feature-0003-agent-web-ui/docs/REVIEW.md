@@ -10,6 +10,23 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T120530-graph-label-hover-expand [CODEX:graph-label-hover-expand] — 그래프 뷰 잘린 노드 명칭 hover 확장 (TASK-20260728T120530-graph-label-hover-expand, Minor §12.3 frontend-only) — SHIP
+- 대상 diff: `static/graph/graph-renderer-pixi.js`(+`hoverExpandGeom`/`hoverCardHit`/`clampCardCenterX` 순수 3종 · `_labelHoverLayer` 오버레이 · hover 파이프라인 12 메서드 · `_pick` tier0 · `pointercancel`) · `tests/headless/test_pixi_adapter.js`(T26 68-assert).
+- **검증 채널 선택 근거 (§18.8.2 「상위 우선순위 지시 carve-out」)**: §18.8 dispatch 표상 본 변경(UI/화면/레이아웃 키워드)의 required subagent 는 `ux, design`. 그러나 본 세션에는 **하네스 수준의 "Agent tool 미요청 시 호출 금지" 지시**가 걸려 있어 subagent 패널을 호출하지 않았다 — §18.8.2 는 이 경우 상위 지시가 우선하며, 제약 없는 채널로 가능한 검증을 수행한 뒤 미검증 범위를 명시하도록 정한다. 따라서 ①`codex review --uncommitted`(§18.8.1 item 2, check #9 accepted) ②기계적 정적·단위 검증으로 대체하고, 아래 `[SKIPPED:tool-restricted:ux,design]` 로 미검증 도메인을 표기한다. **디자인·UX 렌즈의 실질 보강은 POST-DEPLOY PB-0008 실화면 검증**(`visual_verification_scope: always` hard gate)이 담당한다.
+- **VERDICT: SHIP — 미해소 BLOCKING 0.** codex 적대 리뷰를 **9 라운드** 돌려(적발→수정→재검증) **P1 3건 · P2 8건**을 in-cycle 수정, 최종 라운드 판정 "No discrete correctness issues were identified."
+  - **P1-1 확장 영역 hover 이탈** — 드러난 좌우 영역은 원 노드 bbox 밖이라 hit-grid 가 null 을 돌려 "이름 뒷부분을 보려 다가가면 카드가 닫히는" 깜빡임. → `hoverCardHit` 로 카드 사각형을 hover 유지 영역에 편입.
+  - **P1-2 leave 후 카드 부활** — `pointerleave` 가 대기 중 프로브 rAF 를 취소하지 않아, 캔버스 안 낡은 좌표로 재판정해 커서가 떠난 뒤 카드가 되살아남. → `_cancelHoverProbe(true)`.
+  - **P1-3 유령 카드(프레임버퍼 잔상)** — 축소 진행 카드만 정리한 경로가 `false` 를 반환해 호출부가 렌더를 생략, `autoStart:false` 라 마지막 프레임에 카드가 남음. → 정리 여부 집계에 outgoing 카드 포함.
+  - **P2 (8건, 전부 수정)** — ①드래그 중 뒤늦은 rAF 프로브의 유령 카드(`_ptrDown` 가드) ②running desaturate 소실(`_nodeFillAlpha` 를 `_drawNode` 와 공유 + 불투명 베이스 플레이트로 라벨 비침 차단) ③미니맵 조작 시 카드 잔존 ④`pointercancel` 상태 고착 ⑤dim 노드 alpha 램프 중 이중 라벨(카드 상시 불투명으로 단순화) ⑥가장자리 칩 카드 클리핑(뷰포트 클램프) ⑦루틴 칩(`labelMaxWidth 176 > 칩 폭 150`) 역-팝(텍스트 가용폭을 박스 폭과 분리 보간) ⑧리사이즈·비-wheel 카메라 변경 시 클램프/대상 미재판정(`_revalidateHover`) + 미니맵 아래 가림(우측 경계 축소) + 카드 위 클릭이 캔버스/이웃으로 새는 문제(`_pick` tier0).
+  - **평가 후 반려 1건 (P2, 코드 변경 없음)**: "`HOVER_EXPAND_MAXW`(460)가 화면 px 가 아니라 zoom 4 에서 1,840 CSS px 이 된다". 카드는 world 자식이라 노드와 **같은 배율**로 스케일되므로 상한을 화면 px 로 잡으면 같은 라벨이 줌마다 다르게 잘려(고배율에서 오히려 안 보임) 확장의 목적을 잃는다. 상한의 의도는 "그래프 대비 상대 크기 고정"(테이블 칩 3배)이며, 주석에 단위·근거를 명시하는 것으로 갈음.
+- 요구 제약 2건의 충족 근거(기계적):
+  - **「다른 노드의 위치를 뒤틀지 않도록」** — 확장은 `node.style.size/x/y` 를 포함한 scene 모델을 일절 변경하지 않고 별도 오버레이 레이어에만 그린다. 따라서 masonry/shelf-pack 배치·combo auto-fit bbox·`buildHitGrid`·미니맵 투영의 입력이 종전과 동일(reflow 0). 폭 변경을 모델에 반영하는 대안은 feature-0016 §45 가 이미 폐기한 경로(가변 폭 → setData 재packing).
+  - **「z-order 유의」** — `_labelHoverLayer.zIndex=99998`. 전 노드 밴드(`_METZ` 최댓값 CTL=6)·엣지·combo 위, detail-hover-fx(99999) 아래. `world.sortableChildren=true` 라 삽입 순서 무관. 상태 halo 도 확장 폭에 맞춰 카드 위에 재구성해 원 노드 halo 가 카드 밖으로 삐져나오는 어긋남을 제거.
+- 위험·범위: frontend-only, 서버·데이터·권한 표면 0. 실패 모드는 전부 시각적이며 fail-soft(카드 미생성 = 종전 동작). PixiJS 미배선/비브라우저에서는 no-op(import 부작용 0 계약 유지). G6 폴백 어댑터에는 본 기능이 없다(feature-detect 불필요 — 어댑터 내부 완결).
+- §8.1 개선 제안(기록만, 미실행): 컬럼 circle 노드의 **바깥쪽** 라벨(`labelMaxWidth=168`)도 잘리지만, hit 영역이 11px 점이라 hover 로 열기 어려워 이번 범위에서 제외했다. 필요 시 별도 cycle 에서 "라벨 영역까지 hit 확장 + 우측 성장 pill" 로 다룬다.
+- 미검증 범위: `[SKIPPED:tool-restricted:ux,design]` — 세션 도구제약으로 ux/design subagent 패널 미호출(위 채널 선택 근거). 시각·인터랙션 품질은 POST-DEPLOY PB-0008 실측으로 확정한다(§16.6 픽셀-클래스 변경 = 시각 캡처 필수).
+- 검증: `node --check --input-type=module` PASS · `test_pixi_adapter.js` **180 PASS / 0 FAIL**(baseline 112 회귀 0 + T26 68) · `origin/main`(27 커밋) 리베이스 후 **그래프 headless 15 스위트 621 PASS / 0 FAIL**(같은 시각 landed `graph-edge-flow`(§83)와 동일 파일 auto-merge 정합 확인 — 코드 충돌 0, 문서 append 충돌만 양측 보존) · verify-completion `--pre-commit` PASS. Cross-ref: TASK/CHG-20260728T120530-graph-label-hover-expand · test-runs.d/20260728T120530-graph-label-hover-expand.md.
+
 ## REV-20260728T114015-graph-edge-flow [SKIPPED:session-policy-no-subagent] — 그래프 뷰 관계선 방향성 곡선 + 밀도 누적 + 부모 볼륨 다발 (TASK-20260728T114015-graph-edge-flow, Major §12.3, frontend-only 3모듈)
 - Panel skip 사유(§18.8): 본 세션 사용자 환경 정책상 `Agent` tool 사용이 허용되지 않아 subagent 패널 미수행. 대신 **기계 검증 + 자체 적대 검토**로 대체하고 그 범위를 아래에 정직 기록한다(패널을 돌린 것처럼 기술하지 않는다).
 - 대안 검증: 신규 계약 테스트 48 PASS(곡선 기하·스타일 어휘·빌드 계약 3층) + 그래프 전 스위트 536 PASS/0 FAIL + **적대 프로브**(main 시점 번들 대조 — OLD 는 읽기+쓰기를 1선으로 병합하고 화살표를 둘 다 잃음: `[{start:false,end:false,curve:0}]`, NEW 는 2선·양방향·곡선) + pytest/ruff 전량 PASS + 라이브 PB-0008(곡선·반투명 누적·다발·에러 0).
