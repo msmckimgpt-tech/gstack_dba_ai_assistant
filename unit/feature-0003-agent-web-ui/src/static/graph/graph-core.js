@@ -1018,19 +1018,78 @@ function _metaRenderedIdFor(key) {
   return null;
 }
 
+// graph-catcluster-focus(사용자 보고 2026-07-28): 테이블·루틴 key → 소속 **컨텐츠 카테고리(sim-group)**
+//   블록의 렌더 요소 id("GB:"+groupKey). 접힌 sim-group 은 멤버를 방출하지 않고 헤더 기하의 GB/GH/GX 만
+//   남기지만(_metaG6Build emission 의 `if (b.collapsed) return`), groupOf 역인덱스는 **접힌 그룹의 멤버까지
+//   전량** 채워지므로(§50 REV-wiring fix) 여기서 역참조가 성립한다. 컬럼 key 는 groupOf 에 없어 자연히 null.
+//   renderedIds 로 게이팅하므로 stale groupOf(카드 강등·flat masonry 전환)는 자동으로 걸러진다.
+function _metaGroupElementFor(tableKey) {
+  if (!tableKey || !_metaGraph.groupOf) return null;
+  const gk = _metaGraph.groupOf.get(tableKey);
+  if (!gk) return null;
+  const r = _metaGraph.renderedIds;
+  return (r && r.has("GB:" + gk)) ? ("GB:" + gk) : null;
+}
+// graph-catcluster-focus: 스키마 클러스터 key → 소속 **제품 카테고리 밴드**의 렌더 요소 id("CAT:"+catKey).
+//   접힌 카테고리는 멤버 클러스터를 통째로 미방출(L.catHidden)하고 밴드만 남긴다 — 그 구간에서 스키마
+//   조상이 해소되지 않아 카메라가 아예 이동하지 않던 사각을 밴드로 메운다. catMembers 는 매 build 재구성,
+//   여기서도 renderedIds 로 게이팅(카테고리 비활성 build 의 stale 잔존분 차단). 카테고리 수는 수~수십이라
+//   선형 역탐색으로 충분(hover-pan 경로 포함해도 무시 가능한 비용).
+function _metaCategoryElementFor(schemaKey) {
+  const cm = _metaGraph.catMembers, r = _metaGraph.renderedIds;
+  if (!schemaKey || !cm || !cm.size || !r) return null;
+  let hit = null;
+  cm.forEach((members, ck) => {
+    if (hit || !members) return;
+    if (members.indexOf(schemaKey) >= 0 && r.has("CAT:" + ck)) hit = "CAT:" + ck;
+  });
+  return hit;
+}
 // reltrace-colnav(2026-07-10): 대상 키가 직접 렌더돼 있지 않을 때 **화면에 있는 가장 가까운 조상**의
-//   렌더 id 를 찾는다 — 컬럼(테이블 미펼침) → 소속 테이블 → 접힌 스키마 카드(SC:) 순 승격.
-//   _metaG6Build 의 renderEndpoint 승격 규칙과 동형이되, 여기선 실제 렌더 집합(renderedIds) 기준으로
-//   해소한다. 단일클릭 카메라 팬이 미렌더 컬럼에서 "화면에 없음"으로 죽지 않고 소속 테이블/카드로
-//   시선을 옮기게 하는 것이 목적. 조상도 미렌더(스키마 미로드·§67 뷰포트 컬링 등)면 null.
+//   렌더 id 를 찾는다. _metaG6Build 의 renderEndpoint 승격 규칙과 동형이되, 여기선 실제 렌더 집합
+//   (renderedIds) 기준으로 해소한다. 단일클릭 카메라 팬이 미렌더 컬럼에서 "화면에 없음"으로 죽지 않고
+//   소속 상위 객체로 시선을 옮기게 하는 것이 목적. 전 계층 미렌더면 null.
+// graph-catcluster-focus(사용자 보고 2026-07-28): 승격 사다리에서 **실제 렌더를 게이팅하는 두 클러스터
+//   계층이 빠져 있었다** — 컨텐츠 카테고리(sim-group, groupCollapsed)와 제품 카테고리 밴드(catCollapsed).
+//   특히 `_metaColParent("scope:db.tbl")` 는 (컬럼 키가 아니라 테이블 키를 받으면) **소속 스키마**를 돌려주므로,
+//   컨텐츠 카테고리가 접혀 테이블이 미렌더인 상황에서 사다리가 곧장 스키마 combo 로 뛰어 카메라가 **테이블의
+//   실제 상위 객체(접힌 컨텐츠 카테고리)가 아니라 스키마 클러스터 중앙**으로 이동했다(사용자 보고 증상).
+//   접힘은 지속 의도(groupCollapsed/catCollapsed 주석)이므로 자동 펼침이 아니라 **접힌 상위 객체를 조상으로
+//   승격**해 시선만 옮긴다. 최종 사다리:
+//     컬럼 → 소속 테이블 → 소속 컨텐츠 카테고리(GB:) → 소속 스키마 클러스터(combo | SC: 카드) → 제품 카테고리 밴드(CAT:)
 function _metaRenderedAncestorFor(key) {
   if (!key) return null;
   const gn = _metaGraph.nodes.get(key);
-  const pk = _metaColParent(key, gn && gn.fqn);   // 컬럼 → 소속 테이블 키
-  if (pk) { const r = _metaRenderedIdFor(pk); if (r) return r; }
+  const gb0 = _metaGroupElementFor(key);   // 테이블·루틴 자신이 접힌 컨텐츠 카테고리 소속(컬럼 key 는 null)
+  if (gb0) return gb0;
+  const pk = _metaColParent(key, gn && gn.fqn);   // 컬럼 → 소속 테이블 키(테이블 키면 소속 스키마 키)
+  if (pk) {
+    const r = _metaRenderedIdFor(pk); if (r) return r;
+    const gb1 = _metaGroupElementFor(pk); if (gb1) return gb1;   // 컬럼 → 소속 테이블의 컨텐츠 카테고리
+  }
   const sk = _metaCatParent(key, gn && gn.fqn);    // → 소속 스키마 키(접힘 시 SC: 카드)
-  if (sk) { const r = _metaRenderedIdFor(sk); if (r) return r; }
+  if (sk) {
+    const r = _metaRenderedIdFor(sk); if (r) return r;
+    const cb = _metaCategoryElementFor(sk); if (cb) return cb;   // 접힌 제품 카테고리 밴드
+  }
   return null;
+}
+// graph-catcluster-focus: 승격된 렌더 요소 id → 사용자에게 보일 상위 객체 한글 명칭(상태줄 정확도).
+//   종전 상태줄은 승격 대상과 무관하게 "소속 테이블" 로 단정해, 실제로는 스키마 클러스터·카테고리로
+//   이동했는데도 테이블로 갔다고 안내했다(오안내). 모델 키는 테이블/스키마 두 경우가 있어 라벨로 구분.
+//   ⚠ 반환 문자열은 호출측에서 조사 **"로"** 를 직접 붙인다 — 현재 전 후보가 모음(카테고리·클러스터·
+//   프로시저·객체) 또는 ㄹ 받침(테이블)으로 끝나 모두 "로" 가 맞다. 새 라벨을 추가할 때 이 불변식을
+//   깨면(예: 받침 있는 명사) 조사가 어긋나므로, 테스트 A12 가 어미를 단정한다.
+function _metaAncestorKindKo(elId) {
+  const s = String(elId || "");
+  if (s.startsWith("GB:") || s.startsWith("GH:")) return "컨텐츠 카테고리";
+  if (s.startsWith("CAT:") || s.startsWith("CATH:")) return "제품 카테고리";
+  if (s.startsWith("SC:")) return "스키마 클러스터";
+  const n = _metaGraph.nodes.get(s);
+  if (n && n.label === "Table") return "소속 테이블";
+  if (n && n.label === "Routine") return "소속 함수·프로시저";
+  if (n && n.label === "Schema") return "스키마 클러스터";
+  return "상위 객체";
 }
 
 // 모델 → 화면 반영(전체 재구성 setData + draw). fit=true 면 전체 맞춤.
@@ -1295,7 +1354,7 @@ async function _metaGraphAnimateFocusRun(g, key, seq, opts) {
   const abort = (opts && typeof opts.abort === "function") ? opts.abort : null;
   // API 부재 번들 폴백(getElementRenderBounds/getViewportByCanvas/translateBy 없으면 즉시 focus — 구 동작 보존).
   if (typeof g.getElementRenderBounds !== "function" || typeof g.getViewportByCanvas !== "function" || typeof g.translateBy !== "function") {
-    try { const fel = _metaRenderedIdFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}
+    try { const fel = _metaRenderedIdFor(key) || _metaRenderedAncestorFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}   // graph-catcluster-focus: 폴백 번들도 동일 승격 사다리
     return;
   }
   try {   // 판독 하한 줌 clamp(즉시 — 팬보다 먼저)
@@ -1314,7 +1373,11 @@ async function _metaGraphAnimateFocusRun(g, key, seq, opts) {
     try { const s = g.getSize(); W = s[0]; H = s[1]; } catch (_) { W = H = NaN; }
     let av = null;   // 앵커 현재 뷰포트 위치 재조회 — 재빌드로 이동·재생성돼도 최종 위치로 수렴.
     try {
-      const fel = _metaRenderedIdFor(key);
+      // graph-catcluster-focus: 모델 키가 끝내 미렌더면(접힌 컨텐츠/제품 카테고리 소속) 조상으로 승격한다.
+      //   종전엔 av 가 영영 null 이라 MAXMS(1.2s) 동안 헛돌다 **카메라가 아예 안 움직였다** — 관계 추적
+      //   (더블클릭)처럼 요소 id 가 아닌 모델 키로 들어오는 호출 경로의 사각. 이미 해소된 요소 id 를 받는
+      //   호출부(팬/hover)는 첫 조회에서 걸려 폴백이 발동하지 않는다(동작 불변).
+      const fel = _metaRenderedIdFor(key) || _metaRenderedAncestorFor(key);
       if (fel) {
         const b = g.getElementRenderBounds(fel);
         av = g.getViewportByCanvas([(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2]);
@@ -2429,4 +2492,4 @@ function _metaGraphOnNodeClick(e) {
 }
 
 
-export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
+export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
