@@ -1171,3 +1171,53 @@ source_of_truth: true
 - Verification: 라이브 실측(win-browser PB-0008 + `repo-mysql-1` 직접 질의 + web 컨테이너 액세스 로그). 코드 무변경이라 회귀 표면 0.
 - Rollback: 문서 revert (동작 영향 없음).
 - Cross-ref: REVIEW REV-20260728T031500-model-access-postverify · test-runs.d/20260728T031500-model-access-pb0008.md · 선행 CHG-20260728T024258-model-access-rbac · CHG-20260728T025614-model-access-seed-fix · SECURITY §28 · feature-0007 REPORT §7.
+
+## CHG-20260728T113819-usage-records-system (LLM 사용량 드릴다운 '사용 기록' 개편 — 시스템 사용분 편입 + 화면 이동)
+
+TASK-20260728T113819-usage-records-system. branch `ai/claude/feature-0003-usage-records`.
+
+- `shared/model_catalog.py`
+  - `TASK_TAXONOMY`: 라이브 존재·미등록이던 4 task 편입 — `redteam`(답변 적대 검증) ·
+    `enum_suggest`(ENUM 코드 후보) · `cluster_label`(콘텐츠 그룹 라벨) ·
+    `product_classify`(제품 분류 제안). 부수효과로 ai-ops '미분류 AI 활동' Attention 에서 4건 해소.
+  - 신설 `USAGE_TASK_NAV`(task → `{screen, subtab, target_kind}` SSOT) ·
+    `_USAGE_NAV_DEFAULT`(미등록 task → AI 운영 현황 > 운영 현황) ·
+    `USAGE_NAV_SCREEN_LABELS` · `USAGE_NAV_SUBTAB_LABELS` ·
+    `usage_task_nav()` · `usage_nav_path_label()`.
+- `unit/feature-0003-agent-web-ui/src/routers/admin_usage.py`
+  - 신설 `_query_usage_system_records()` — 대화 목록의 **정확한 여집합**
+    (`c.conversation_id IS NULL OR c.owner_account_id IS NULL`) 을 `(task, target, actor)` 로 집계.
+    모델/일자 필터는 대화 목록과 동일 규칙(canonical family · 차트 버킷) → 두 목록의 합 = 막대 수치.
+    `bool_or(c.conversation_id IS NOT NULL)` 로 실재 대화 여부를 함께 뽑아 **깨진 대화 링크 차단**.
+  - 신설 `_usage_target_parts()` — `schema` / `schema.table` / `schema.table.column` /
+    `schema.routine()` 4형식 파싱.
+  - 신설 `_resolve_usage_target_scopes()` — `table_descriptions`(scope_key) ∪
+    `routine_objects` ∪ `rag_objects`(datasource_key) union 으로 target→데이터소스 해소.
+    객체 단위 우선, 실패 시 스키마 단위. 후보 2+ 는 **추측하지 않고** `scope_ambiguous`.
+    해소 질의 실패는 fail-soft(rollback 후 포기 — 목록 자체는 보존).
+  - 신설 `_usage_system_nav()` — nav 서술자(`screen/subtab/scope_key/scope_ambiguous/scope_hint/
+    search/path_label`). `target_kind` 는 내부 분기 키라 응답에서 제거.
+  - `admin_usage_conversations` — 응답에 `system_items`·`system_truncated` **additive**
+    (기존 `items` 무변경 → 소비자 회귀 0). `(시스템)` 역할은 시스템만, 계정/일반 역할은
+    시스템 제외(귀속 오도 방지). 시스템 질의 실패는 대화 목록을 깨뜨리지 않게 격리.
+  - 상수 `_USAGE_SYS_LIMIT = 200`.
+- `unit/feature-0003-agent-web-ui/src/app.py` — 신규 헬퍼 4종을 `app.<name>` 으로 rebind
+  (`_query_usage_system_records`·`_resolve_usage_target_scopes`·`_usage_system_nav`·`_usage_target_parts`).
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`
+  - 모달 명칭 "대화 목록" → **"사용 기록"**(제목·aria·로딩·빈상태·안내문·차트 hover 문구).
+  - 대화+시스템 **통합 표**(구분 배지 열, 토큰 큰 순 병합 정렬). 시스템 행 = 작업 라벨 + 대상 객체 +
+    이동 경로 안내 + 모호 표기. 주체 3분기(실재 대화 링크 / '삭제된 대화' / 워커명).
+  - 신설 `applyUsageNav()` · `_usageResolveScopeKey()` · `_usageActorLabel()` —
+    데이터소스 스코프 → 탭 전환 → 서브탭 → 검색어 주입. 미지 screen/subtab 은 fail-soft.
+  - `(시스템)` 계정 막대 클릭이 `role="(시스템)"` 으로 모달을 열도록 복구(종전 early-return 무동작).
+- `unit/feature-0003-agent-web-ui/src/static/styles.css` — `.usage-rec-*` 토큰 신설.
+  모달 **반응형** `width: min(1240px, 96vw)` + `body max-height: min(74vh, 820px)`.
+  부수 열 `width:1%`+nowrap 으로 본문 열이 잔여 폭 흡수(과도 줄바꿈 해소).
+  대상 식별자 `word-break: break-all` → `overflow-wrap: anywhere`(단어 중간 절단 해소).
+  보조문구는 `--text-muted`(대비 4.12, AA 미달) → `--text-2`(7.11).
+- 테스트 `unit/feature-0003-agent-web-ui/tests/test_usage_records_system.py` 신규(14 케이스) ·
+  `test_usage_conversations.py::test_a2_system_role_empty` 갱신(의도적 동작 변경 — 대화는 여전히 빈
+  목록이되 `system_items` 가 채워짐).
+
+검증: 단위 2,591 passed / 2 skipped · ruff clean · 라이브 SQL 여집합 정합(897+14,476=15,373=전체) ·
+PB-0008 라이브(잔여 2건 POST-DEPLOY). 마이그레이션 없음 · 신규 RBAC 없음 · 스키마 변경 없음.

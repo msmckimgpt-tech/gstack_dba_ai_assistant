@@ -1639,8 +1639,10 @@ async function loadUsage(opts) {
     });
   };
 
-  // openUsageConversations: 차원 필터로 대화목록 엔드포인트 호출 → 모달 렌더.
+  // openUsageConversations: 차원 필터로 사용 기록 엔드포인트 호출 → 모달 렌더.
   //   scope=admin → /api/admin/usage/conversations, scope=self → /api/profile/usage/conversations.
+  //   usage-records-system: admin 응답은 대화(items) + 시스템·자율(system_items) 두 축이라
+  //   모달 제목도 "대화 목록" → "사용 기록". profile(self) 은 본인 대화 범위 전용이라 무변경.
   const openUsageConversations = async (opts) => {
     const o = opts || {};
     const scope = o.scope === "self" ? "self" : "admin";
@@ -1652,12 +1654,12 @@ async function loadUsage(opts) {
     if (o.day) params.set("day", o.day);
     if (o.account_id != null) params.set("account_id", String(o.account_id));
     if (o.role) params.set("role", o.role);
-    showUsageConvModal({ loading: true, title: o.title || "대화 목록" });
+    showUsageConvModal({ loading: true, title: o.title || "사용 기록" });
     try {
       const data = await apiFetch(`${base}?${params.toString()}`);
-      showUsageConvModal({ data, title: o.title || "대화 목록", scope });
+      showUsageConvModal({ data, title: o.title || "사용 기록", scope });
     } catch (err) {
-      showUsageConvModal({ error: (err && err.message) || "대화목록 조회 실패", title: o.title || "대화 목록" });
+      showUsageConvModal({ error: (err && err.message) || "사용 기록 조회 실패", title: o.title || "사용 기록" });
     }
   };
   // 기간별 토큰 사용량 — 모델별 누적(stacked) 세로 막대 + 막대 총합 라벨 + hover 툴팁.
@@ -1694,7 +1696,7 @@ async function loadUsage(opts) {
         // TASK-0263: hover 에 모델별 비용 + 클릭 시 그 일자·모델 기여 대화 모달(data-usage-* 후크).
         const cst = costMap[d][m] || 0;
         const costTip = cst > 0 ? `<br>추정 ${usd(cst)}` : "";
-        bars += `<rect class='admin-usage-clickable' x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${mcol(m)}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)${costTip}<br><span style="opacity:.8">클릭: 대화 보기</span>' data-usage-day='${esc(d)}' data-usage-model='${esc(m)}'/>`;
+        bars += `<rect class='admin-usage-clickable' x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${mcol(m)}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)${costTip}<br><span style="opacity:.8">클릭: 사용 기록 보기</span>' data-usage-day='${esc(d)}' data-usage-model='${esc(m)}'/>`;
       });
       if (bw >= 20 && (dayTot / maxT) > 0.05) {
         valLabels += `<text x='${(x + bw / 2).toFixed(1)}' y='${(y - 3).toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${num(dayTot)}</text>`;
@@ -1729,7 +1731,7 @@ async function loadUsage(opts) {
       const len = (r.value / total) * C;
       const costTip = r.cost > 0 ? `<br>추정 ${usd(r.cost)}` : "";
       // TASK-0263: 도넛 세그먼트 클릭 → 그 모델 기여 대화 모달(data-usage-model). 라벨=COALESCE(resolved,model)=백엔드 필터 키.
-      segs += `<circle class='admin-usage-clickable' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(r.label)}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}<br><span style="opacity:.8">클릭: 대화 보기</span>' data-usage-model='${esc(r.label)}'/>`;
+      segs += `<circle class='admin-usage-clickable' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(r.label)}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}<br><span style="opacity:.8">클릭: 사용 기록 보기</span>' data-usage-model='${esc(r.label)}'/>`;
       off += len;
     });
     const legend = rows.map((r) => `<div class='admin-usage-clickable' data-usage-model='${esc(r.label)}' style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(r.label)};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
@@ -1813,12 +1815,19 @@ async function loadUsage(opts) {
       label: usageAcctLabelOf(a), total_tokens: a.total_tokens || 0, cost_usd: a.cost_usd || 0, models: a.models || [],
       _account_id: a.account_id,  // TASK-0263: 클릭 시 대화 모달 필터용(라벨에서 파싱하지 않고 직접 보존)
     }));
-    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""} · 계정 클릭 시 대화 보기`;
+    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""} · 계정 클릭 시 사용 기록 보기`;
     if (toolsEl) toolsEl.classList.remove("hidden");
     // TASK-0263: 계정 막대 클릭 → 그 계정의 기여 대화 모달(현재 모델 필터 context 동반).
     const onAcctClick = (label) => {
       const row = pageRows.find((r) => r.label === label);
-      if (!row || row._account_id == null) return;
+      if (!row) return;
+      // usage-records-system: "(시스템)" 버킷(account_id 없음)은 계정 필터가 성립하지 않으므로
+      //   role="(시스템)" 으로 호출해 시스템 사용 기록을 받는다. 종전엔 여기서 early-return 해
+      //   막대를 눌러도 아무 일이 없었다(전체 토큰의 약 절반이 열람 불가였던 지점).
+      if (row._account_id == null) {
+        openUsageConversations({ scope: "admin", role: "(시스템)", title: label });
+        return;
+      }
       openUsageConversations({ scope: "admin", account_id: row._account_id, title: label });
     };
     if (pageRows.length) {
@@ -2017,9 +2026,71 @@ async function loadUsage(opts) {
   }
 }
 
-// TASK-0263: 사용량 차트 클릭 → 집계 기여 대화목록 모달. admin/profile 공용 렌더(scope 로 분기).
-//   각 대화 행은 메인 UI deep-link(/?conversation=<id>)로 이동(새 탭). 대화 제목/일시/소유자/
+// ── usage-records-system(2026-07-28): 시스템 사용 기록 → 관리 콘솔 화면 이동 ────────────
+//
+// 시스템·자율 사용분은 대화가 없어 `/?conversation=` 딥링크가 없다. 대신 백엔드가 실어 준 nav
+// 서술자(shared/model_catalog.USAGE_TASK_NAV 가 SSOT)를 해석해 **콘솔 안에서** 그 작업이 다룬
+// 객체의 화면으로 이동한다. 프론트에 task 별 분기를 두지 않는 이유: 신규 AI 작업이 추가될 때
+// 백엔드 표 한 줄만 고치면 되게 하려는 것(두 곳 동기화 실패로 클릭이 죽는 회귀 차단).
+//
+// scope_hint: target 자체가 데이터소스인 작업(콘텐츠 그룹 라벨·제품 분류)의 원문. 라벨↔scope_key
+//   매핑은 MySQL 레지스트리라 PG 에서 못 풀어, 프론트가 adminState.datasources 의 key(사람이 읽는
+//   라벨)/scope_key(해시) 양쪽과 대조해 해소한다.
+function _usageResolveScopeKey(nav) {
+  if (!nav) return null;
+  if (nav.scope_key) return nav.scope_key;
+  const hint = String(nav.scope_hint || "").trim().toLowerCase();
+  if (!hint) return null;
+  for (const ds of (adminState.datasources || [])) {
+    const key = String((ds && ds.key) || "").trim().toLowerCase();
+    const scope = String((ds && ds.scope_key) || "").trim().toLowerCase();
+    if (hint && (hint === key || hint === scope)) return scope || key;
+  }
+  return null;
+}
+
+// nav 서술자 적용 — 데이터소스 스코프(가능하면) → 탭 전환 → 메타데이터 서브탭 → 검색어 주입.
+// 미지의 screen/subtab 은 조용히 무시(fail-soft) — 백엔드 표가 앞서 나가도 콘솔이 깨지지 않는다.
+function applyUsageNav(nav) {
+  if (!nav || !nav.screen) return false;
+  const tabBtn = document.querySelector('.admin-tab[data-admin-tab="' + nav.screen + '"]');
+  if (!tabBtn || tabBtn.style.display === "none") return false;  // 권한으로 숨겨진 탭엔 착지시키지 않는다.
+  // 1) 데이터소스 스코프 — 메타데이터/관계도 pane 이 공유하는 adminState.metadata.scopeKey.
+  //    switchTab 이 _metaPopulateScopeSelect 로 select 를 이 값에 동기화하고, 관계도는
+  //    loadedScope 와 다르면 그 스코프로 재로드한다(§45 규약) → 별도 select 조작 불필요.
+  const scopeKey = _usageResolveScopeKey(nav);
+  if (scopeKey && (nav.screen === "metadata" || nav.screen === "graph")) {
+    if (!adminState.metadata) adminState.metadata = {};
+    adminState.metadata.scopeKey = scopeKey;
+  }
+  // 2) 탭 전환(기존 진입 훅·lazy load 재사용).
+  switchTab(nav.screen);
+  // 3) 메타데이터 서브탭 / AI 운영 현황 서브탭.
+  if (nav.subtab) {
+    if (nav.screen === "metadata") {
+      const sub = document.querySelector('.admin-meta-subtab[data-meta-subtab="' + nav.subtab + '"]');
+      if (sub && sub.style.display !== "none") sub.click();
+    } else if (nav.screen === "ai-console" && typeof activateAiConsoleSubtab === "function") {
+      activateAiConsoleSubtab(nav.subtab);
+    }
+  }
+  // 4) 검색어 주입 — 목록에서 그 객체를 바로 찾도록. input 이벤트로 기존 필터 핸들러를 그대로 태운다.
+  if (nav.search && nav.screen === "metadata") {
+    const box = document.getElementById("metadataSearch");
+    if (box) {
+      box.value = nav.search;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+  return true;
+}
+
+// TASK-0263: 사용량 차트 클릭 → 집계 기여 '사용 기록' 모달. admin/profile 공용 렌더(scope 로 분기).
+//   대화 행은 메인 UI deep-link(/?conversation=<id>)로 이동(새 탭). 대화 제목/일시/소유자/
 //   기간내 usage(호출·토큰·추정비용)만 표시 — 메시지 본문 미포함.
+//   usage-records-system: admin scope 는 대화(items)와 시스템·자율(system_items)을 **한 표**로
+//   합쳐 토큰 큰 순 정렬한다(구분 배지로 종류 표기). 종전 '대화 목록' 은 대화 귀속분만 보여
+//   라이브 기준 전체 토큰의 약 절반(시스템 사용분)이 목록에서 사라졌다.
 function showUsageConvModal(state) {
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const num = (v) => (Number(v) || 0).toLocaleString();
@@ -2034,46 +2105,96 @@ function showUsageConvModal(state) {
   const overlay = document.createElement("div");
   overlay.id = "usageConvModalOverlay";
   overlay.className = "admin-modal-overlay";
-  const title = esc(state.title || "대화 목록");
+  const title = esc(state.title || "사용 기록");
+  const isAdmin = (state.scope === "admin");
+  // 시스템 행의 클릭 이동에 필요한 nav 서술자 — 인덱스로 참조(HTML 에 JSON 을 심지 않는다).
+  const navByIdx = [];
   let bodyHtml;
   if (state.loading) {
-    bodyHtml = "<p class='admin-modal-note'>대화목록을 불러오는 중…</p>";
+    bodyHtml = "<p class='admin-modal-note'>사용 기록을 불러오는 중…</p>";
   } else if (state.error) {
     bodyHtml = `<p class='admin-modal-note usage-conv-error'>${esc(state.error)}</p>`;
   } else {
     const items = (state.data && state.data.items) || [];
+    // usage-records-system: 구 백엔드(필드 부재)에서도 안전하게 빈 배열로 폴백 — 배포 순서 무관.
+    const sysItems = (isAdmin && state.data && state.data.system_items) || [];
     const truncated = !!(state.data && state.data.truncated);
-    const isAdmin = (state.scope === "admin");
-    if (!items.length) {
-      bodyHtml = "<p class='admin-modal-note'>이 집계에 해당하는 대화가 없습니다. (insight·시스템 호출은 대화에 귀속되지 않습니다.)</p>";
+    const sysTruncated = !!(state.data && state.data.system_truncated);
+    if (!items.length && !sysItems.length) {
+      bodyHtml = "<p class='admin-modal-note'>이 집계에 해당하는 사용 기록이 없습니다.</p>";
     } else {
-      const rows = items.map((it) => {
-        const cid = esc(it.conversation_id);
-        const topic = esc(it.topic || "(제목 없음)");
-        const owner = isAdmin
-          ? `<td class='usage-conv-owner'>${esc(it.owner_username || ("#" + (it.owner_account_id == null ? "?" : it.owner_account_id)))}${it.owner_role ? " · " + esc(it.owner_role) : ""}</td>`
-          : "";
-        const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
-        return `<tr>`
-          + `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='${topic}'>${topic}</a>${blocked}</td>`
-          + owner
+      // 대화·시스템을 한 표로 합쳐 토큰 큰 순 — 어느 쪽이 이 막대를 끌었는지 한눈에 보이게.
+      const merged = items.map((it) => ({ kind: "conv", it }))
+        .concat(sysItems.map((it) => ({ kind: "sys", it })))
+        .sort((a, b) => (Number(b.it.total_tokens) || 0) - (Number(a.it.total_tokens) || 0));
+      const rows = merged.map((row) => {
+        const it = row.it;
+        let kindCell;
+        let whatCell;
+        let whoCell;
+        if (row.kind === "conv") {
+          const topic = esc(it.topic || "(제목 없음)");
+          const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
+          kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--conv'>대화</span></td>`;
+          whatCell = `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='${topic}'>${topic}</a>${blocked}</td>`;
+          whoCell = isAdmin
+            ? `<td class='usage-conv-owner'>${esc(it.owner_username || ("#" + (it.owner_account_id == null ? "?" : it.owner_account_id)))}${it.owner_role ? " · " + esc(it.owner_role) : ""}</td>`
+            : "";
+        } else {
+          // 시스템 행: "무슨 작업"(task_label) + "어떤 객체"(target) 를 한 셀에 명시.
+          const nav = it.nav || null;
+          const idx = navByIdx.push(nav) - 1;
+          const label = esc(it.task_label || it.task || "(미상 작업)");
+          const tgt = it.target ? `<span class='usage-rec-target' title='대상 객체'>${esc(it.target)}</span>` : "";
+          const where = nav && nav.path_label ? esc(nav.path_label) : "";
+          // 데이터소스 특정 실패(모호/미발견)는 숨기지 않는다 — 이동은 화면까지만 된다는 정직 표기.
+          const ambig = (nav && nav.scope_ambiguous) ? " <span class='usage-rec-note'>(데이터소스 여럿 — 화면까지 이동)</span>" : "";
+          const navable = !!(nav && nav.screen);
+          const openHint = navable ? `<span class='usage-rec-goto'>${where || "관리 화면"} 열기 →</span>${ambig}` : "";
+          kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--sys'>시스템</span></td>`;
+          whatCell = `<td class='usage-conv-topic usage-rec-what'>`
+            + (navable
+              ? `<button type="button" class="usage-rec-link" data-usage-nav="${idx}" title="${where ? esc(where) + " 화면으로 이동" : "관리 화면으로 이동"}"><b>${label}</b>${tgt ? " · " + tgt : ""}</button>`
+              : `<span><b>${label}</b>${tgt ? " · " + tgt : ""}</span>`)
+            + (openHint ? `<div class='usage-rec-sub'>${openHint}</div>` : "")
+            + `</td>`;
+          // 주체 3분기(전부 raw hex 노출 회피):
+          //   ① 실재하는 대화(소유 계정만 없음) → 대화 링크
+          //   ② 비-sentinel 인데 실재하지 않음  → '삭제된 대화'(원 id 는 title 로만; 깨진 링크 금지)
+          //   ③ 예약 sentinel                  → 사람이 읽는 워커명
+          const actorRaw = String(it.actor || "");
+          let whoHtml;
+          if (it.conversation_id) {
+            whoHtml = `<a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='소유 계정이 없는 대화 — 새 탭에서 열기'>대화 (소유자 없음)</a>`;
+          } else if (actorRaw && actorRaw.slice(0, 2) !== "__") {
+            whoHtml = `<span title='${esc(actorRaw)}'>삭제된 대화</span>`;
+          } else {
+            whoHtml = esc(_usageActorLabel(actorRaw));
+          }
+          whoCell = isAdmin ? `<td class='usage-conv-owner'>${whoHtml}</td>` : "";
+        }
+        return `<tr>` + kindCell + whatCell + whoCell
           + `<td class='num'>${num(it.calls)}</td>`
           + `<td class='num'>${num(it.total_tokens)}</td>`
           + `<td class='num'>${it.cost_usd > 0 ? usd(it.cost_usd) : "—"}</td>`
           + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
           + `</tr>`;
       }).join("");
-      const ownerHead = isAdmin ? "<th>소유자</th>" : "";
+      const ownerHead = isAdmin ? "<th>주체</th>" : "";
+      const truncNote = (truncated || sysTruncated)
+        ? `<p class='admin-modal-note usage-conv-trunc'>상위 ${num(merged.length)}건만 표시합니다(기간내 토큰 큰 순). 기간을 좁혀 보세요.</p>` : "";
+      const hint = isAdmin
+        ? `<p class='admin-modal-note usage-conv-hint'>대화 행은 새 탭에서 해당 대화로, <b>시스템</b> 행은 그 작업이 다룬 객체의 관리 화면으로 이동합니다.</p>`
+        : `<p class='admin-modal-note usage-conv-hint'>대화 제목을 클릭하면 새 탭에서 해당 대화로 이동합니다.</p>`;
       bodyHtml = `<div class='usage-conv-tablewrap'><table class='admin-usage-table usage-conv-table'>`
-        + `<thead><tr><th>대화</th>${ownerHead}<th class='num'>호출</th><th class='num'>토큰</th><th class='num'>추정 비용</th><th>최근 사용</th></tr></thead>`
+        + `<thead><tr><th>구분</th><th>${isAdmin ? "대화 / 작업 · 대상" : "대화"}</th>${ownerHead}<th class='num'>호출</th><th class='num'>토큰</th><th class='num'>추정 비용</th><th>최근 사용</th></tr></thead>`
         + `<tbody>${rows}</tbody></table></div>`
-        + (truncated ? `<p class='admin-modal-note usage-conv-trunc'>상위 ${num(items.length)}건만 표시합니다(기간내 토큰 큰 순). 기간을 좁혀 보세요.</p>` : "")
-        + `<p class='admin-modal-note usage-conv-hint'>대화 제목을 클릭하면 새 탭에서 해당 대화로 이동합니다.</p>`;
+        + truncNote + hint;
     }
   }
   overlay.innerHTML =
-    '<div class="admin-modal usage-conv-modal" role="dialog" aria-modal="true" aria-label="' + title + ' 대화 목록">'
-    + '  <div class="admin-modal-head"><h3>' + title + ' · 대화 목록</h3>'
+    '<div class="admin-modal usage-conv-modal" role="dialog" aria-modal="true" aria-label="' + title + ' 사용 기록">'
+    + '  <div class="admin-modal-head"><h3>' + title + ' · 사용 기록</h3>'
     + '    <button type="button" class="admin-modal-close" id="usageConvModalClose" aria-label="닫기">×</button></div>'
     + '  <div class="usage-conv-body">' + bodyHtml + '</div>'
     + '</div>';
@@ -2084,6 +2205,27 @@ function showUsageConvModal(state) {
   if (closeBtn) closeBtn.addEventListener("click", close);
   const onEsc = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
   document.addEventListener("keydown", onEsc);
+  // 시스템 행 클릭 → 콘솔 내 화면 이동. 이동에 성공하면 모달을 닫아 목적 화면이 가려지지 않게 한다.
+  overlay.addEventListener("click", (e) => {
+    const btn = e.target.closest ? e.target.closest("[data-usage-nav]") : null;
+    if (!btn) return;
+    const nav = navByIdx[Number(btn.getAttribute("data-usage-nav"))];
+    if (applyUsageNav(nav)) { close(); document.removeEventListener("keydown", onEsc); }
+  });
+}
+
+// 시스템 사용분의 '주체' 라벨 — llm_usage.conversation_id 예약 sentinel(전부 "__" 접두)을
+// 사람이 읽는 실행 주체로 번역한다. 미등록 sentinel 은 원문을 보존해 self-surface.
+const _USAGE_ACTOR_LABELS = {
+  __insight_worker__: "인사이트 워커",
+  __ask_worker__: "요청 처리 워커",
+  __global__: "전역",
+  __kb_manual__: "지식베이스 수동 등록",
+};
+function _usageActorLabel(actor) {
+  const s = String(actor || "").trim();
+  if (!s) return "시스템";
+  return _USAGE_ACTOR_LABELS[s] || s;
 }
 
 // TASK-0288: 관리 콘솔 탭 → 필요 권한 매핑. 값은 "하나라도 보유하면 표시"(OR) 권한 배열.

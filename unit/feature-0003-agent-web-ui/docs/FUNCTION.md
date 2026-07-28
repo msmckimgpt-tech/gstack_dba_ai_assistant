@@ -1981,3 +1981,27 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
   레거시 대화 seed)를 끌고 내려가지 않고, 게이트는 fail-open(미설치)으로 현행 동작을 유지하며
   실패는 stderr 에 loud 하게 남는다. `Label`/`Description` 은 컬럼 길이(128/255)로 방어 클립한다.
 - 권한 grid 배치: **운영 권한 > 모델 사용**(관리 권한 아님). 상세 경계는 `docs/SECURITY.md §28`.
+
+## (usage-records-system, 2026-07-28) LLM 사용량 드릴다운 — '사용 기록'(대화 + 시스템·자율) (web/UI + 집계, Major §12.3)
+
+- REQ-20260728-usage-records-system (사용자 요청, `/_template:entry` arg-given):
+  `관리 콘솔 > 감사 > AI 운영 현황 > LLM 사용량` 차트를 클릭했을 때 나타나는 목록에
+  **'시스템' 사용 내역을 포함**해 목록화한다(명칭 "대화 목록" → **"사용 기록"**).
+  시스템 내역도 **어떤 작업으로 어떤 객체 내부에서 사용됐는지** 사용자가 명확히 인지할 수 있어야
+  하고, **클릭 시 해당 화면까지 이동**할 수 있어야 한다. 같은 세션 추가 요청: 본문 열의 과도한
+  줄바꿈 해소 + 팝업 **반응형 확장**.
+- AC-20260728T113819-usage-records-system-1: `GET /api/admin/usage/conversations` 응답의
+  `items`(대화) + `system_items`(시스템·자율) 가 **정확한 여집합**이라 두 목록의 합이 클릭한 차트
+  막대의 집계와 일치한다(누락·중복 0).
+- AC-20260728T113819-usage-records-system-2: `(시스템)` 역할/계정 막대 클릭이 빈 목록이 아니라
+  시스템 사용 기록을 반환한다. 계정·일반 역할 클릭에는 시스템 사용분을 **섞지 않는다**(귀속 오도 방지).
+- AC-20260728T113819-usage-records-system-3: 시스템 행이 `작업 라벨`(taxonomy 한글) + `대상 객체`
+  (`schema[.table[.column]]` / `routine()` / 데이터소스) + `주체`(워커명)를 표시한다.
+- AC-20260728T113819-usage-records-system-4: 시스템 행 클릭 시 `shared/model_catalog.USAGE_TASK_NAV`
+  가 지정한 관리 화면으로 콘솔 안에서 이동하고, target→데이터소스가 **유일 해소되면** 그 스코프까지
+  선택된다. 해소가 모호하면 화면까지만 이동하고 그 사실을 행에 명시한다(추측 금지).
+- AC-20260728T113819-usage-records-system-5: 대화 링크는 **실재하는 비-sentinel 대화**에만 부여한다
+  (예약 sentinel·삭제된 대화 id 는 링크 없이 라벨만 — 깨진 링크 금지).
+- 권한: 신규 RBAC **없음**. 기존 `console.usage.read` + `conversation.list.any` 2-perm 게이트 불변.
+- 비목표: `llm_usage` 스키마 변경(데이터소스 컬럼 추가)은 본 cycle 범위 밖 — target 역해소가 모호한
+  케이스의 근본 해소는 후속 cycle (REPORT §후속).

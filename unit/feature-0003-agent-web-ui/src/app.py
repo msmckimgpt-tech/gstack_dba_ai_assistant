@@ -3367,6 +3367,15 @@ from routers._conv_store import (  # noqa: E402
 from routers._prompt_context import _prompt_generate_stream_response  # noqa: E402
 from routers.admin_products import _autonomous_generate_product_prompt  # noqa: E402
 from routers.admin_usage import _query_usage_conversations  # noqa: E402
+# usage-records-system(2026-07-28): 시스템 사용 기록 질의·해소 헬퍼도 app.<name> 로 노출 —
+#   핸들러가 app.X 동적 참조 규약(admin_usage 모듈 docstring)을 쓰고, 테스트가 monkeypatch 로
+#   가로챈다. 대화 목록(_query_usage_conversations)과 같은 계층이라 같은 자리에서 rebind.
+from routers.admin_usage import (  # noqa: E402
+    _query_usage_system_records,
+    _resolve_usage_target_scopes,
+    _usage_system_nav,
+    _usage_target_parts,
+)
 # ITEM-10 routers-p9: 테스트·app 내부 호출자(_auto_prompt_sweep_once 등) 참조 보존.
 from routers.admin_products import (  # noqa: E402
     _compute_product_db_insights,

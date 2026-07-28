@@ -18,7 +18,13 @@ from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
 import app
-from shared.model_catalog import canonical_usage_model, canonical_usage_model_sql
+from shared.model_catalog import (
+    canonical_usage_model,
+    canonical_usage_model_sql,
+    taxonomy_for,
+    usage_nav_path_label,
+    usage_task_nav,
+)
 
 INCLUDE_ORDER = 30  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
@@ -124,6 +130,263 @@ def _query_usage_conversations(pg, *, days: int, model: "str | None", account_id
         for m in e["models"]:
             m["cost_usd"] = round(m["cost_usd"], 4)
         e["last_used_at"] = (e.pop("_last_used").isoformat() if e.get("_last_used") else None)
+    return (items, truncated)
+
+
+# ==== usage-records-system(2026-07-28) — 시스템·자율 사용 기록 (대화 비귀속분) ==========
+#
+# 배경: 차트 클릭 드릴다운은 `_query_usage_conversations`(INNER JOIN core_conversations +
+#   owner NOT NULL)만 보여줬다. 라이브 실측(최근 30일) 기준 그 필터를 통과하는 건 883 호출·
+#   37.4M 토큰뿐이고, **14,474 호출·36.4M 토큰(전체의 약 49%)** 은 대화에 귀속되지 않아
+#   목록에서 통째로 사라졌다(insight 워커의 노드/테이블 분석, 콘텐츠 그룹 라벨, ask 워커의
+#   용어/ENUM 후보 등). "(시스템)" 역할 막대를 클릭하면 빈 목록만 떴다.
+#
+# 보완 정의(집합 정합): 시스템 기록 = 대화 기록의 **정확한 여집합**
+#   대화 기록 = joinable(core_conversations) AND owner_account_id IS NOT NULL
+#   시스템 기록 = NOT(joinable AND owner NOT NULL)
+#            = (매칭 대화 없음) OR (매칭되나 owner NULL — 예약 sentinel `__ask_worker__` 행)
+#   → 두 목록의 합 = 그 차트 슬라이스의 전체 usage. 누락도 중복 계상도 없다.
+#
+# 그룹 단위: (task, target, 실행 주체 conversation_id). 대화 기록이 '대화 1건 = 1행'인 것과
+#   대칭으로, 시스템은 '작업 × 대상 = 1행' 이라 사용자가 "어떤 작업이 어떤 객체에서 돌았는지"
+#   를 바로 읽는다. run 단위 원장이 필요하면 'AI 운영 현황 > 운영 현황'의 최근 활동 피드가 정본.
+
+_USAGE_SYS_LIMIT = 200  # 시스템 사용 기록 상한(대화 목록 _USAGE_CONV_LIMIT 과 동일 규모).
+
+# target 해소 소스 — 어느 것도 정본 단독이 아니라 union 한다(각자 커버가 다르다):
+#   table_descriptions(콘솔 테이블 설명 SSOT, scope_key) · routine_objects(프로시저/함수,
+#   datasource_key) · rag_objects(인사이트 적재 객체, datasource_key).
+# 셋 다 소규모(각 ~2.3만 행 이하)라 스키마 IN 제한만으로 충분히 싸다.
+_USAGE_TARGET_SCOPE_SQL = (
+    "SELECT schema_name, table_name, scope_key AS ds FROM public.table_descriptions "
+    "  WHERE scope_key <> 'common' AND schema_name IN ({ph}) "
+    "UNION "
+    "SELECT schema_name, routine_name, datasource_key FROM public.routine_objects "
+    "  WHERE datasource_key <> '' AND schema_name IN ({ph}) "
+    "UNION "
+    "SELECT schema_name, table_name, datasource_key FROM public.rag_objects "
+    "  WHERE datasource_key IS NOT NULL AND datasource_key <> '' AND schema_name IN ({ph})"
+)
+
+
+def _usage_target_parts(target: "str | None") -> "tuple[str | None, str | None]":
+    """llm_usage.target → (schema, object) 파싱.
+
+    관측된 형식(0032 기록 규약):
+      'log_v2'                              → ('log_v2', None)           스키마 분석
+      'gunzgame.account'                    → ('gunzgame', 'account')    테이블 분석
+      'log_v2.tf_log_08.RoomID'             → ('log_v2', 'tf_log_08')    컬럼 노드 분석(테이블까지만 사용)
+      'dbGame.usp_mod_player_currency()'    → ('dbGame', 'usp_mod_player_currency')  루틴 노드 분석
+    데이터소스 라벨(cluster_label/product_classify)은 호출측이 target_kind='datasource' 로
+    분기하므로 여기 오지 않는다. 파싱 불가/빈 값은 (None, None).
+    """
+    s = str(target or "").strip()
+    if not s:
+        return (None, None)
+    if s.endswith("()"):
+        s = s[:-2]
+    parts = [p.strip() for p in s.split(".")]
+    sch = parts[0] or None
+    obj = (parts[1] if len(parts) >= 2 else "") or None
+    return (sch, obj)
+
+
+def _resolve_usage_target_scopes(pg, records: "list[dict]") -> None:
+    """시스템 사용 기록의 target(스키마/객체) → 데이터소스 scope_key 해소 (in-place, best-effort).
+
+    각 record 에 다음을 채운다:
+      scope_key       해소된 데이터소스 scope_key(콘솔 스코프 select 의 option value 와 동일 값) 또는 None
+      scope_ambiguous 후보 데이터소스가 2개 이상이라 특정 불가 (dev/qa 동일 스키마 복제 등)
+
+    해소 실패(0건)·모호(2건 이상)는 **에러가 아니다** — 프론트가 데이터소스 스코프 없이 화면까지만
+    이동하고 검색어를 채운다(정직한 저하). llm_usage.target 에 데이터소스 차원이 없기 때문에
+    생기는 구조적 한계라, 여기서 추측으로 하나를 고르면 엉뚱한 데이터소스로 착지시킨다.
+    """
+    want = [r for r in records if r.get("_resolve_schema")]
+    if not want:
+        return
+    # 스키마 IN 목록 — MSSQL 라벨 정규화(소문자 저장) 이력이 있어 원형·소문자 양쪽을 넣고,
+    # 폴딩은 소문자 키로 통일한다(케이스 변형에 의한 false-miss 차단).
+    schemas: list[str] = []
+    seen: set[str] = set()
+    for r in want:
+        for cand in (r["_resolve_schema"], r["_resolve_schema"].lower()):
+            if cand and cand not in seen:
+                seen.add(cand)
+                schemas.append(cand)
+    if not schemas:
+        return
+    ph = ",".join(["%s"] * len(schemas))
+    sql = _USAGE_TARGET_SCOPE_SQL.format(ph=ph)
+    by_schema: dict[str, set] = {}
+    by_object: dict[tuple, set] = {}
+    try:
+        with pg.cursor() as cur:
+            cur.execute(sql, tuple(schemas) * 3)
+            for row in (cur.fetchall() or []):
+                sch = str(row[0] or "").strip().lower()
+                obj = str(row[1] or "").strip().lower()
+                ds = str(row[2] or "").strip()
+                if not sch or not ds:
+                    continue
+                by_schema.setdefault(sch, set()).add(ds)
+                if obj:
+                    by_object.setdefault((sch, obj), set()).add(ds)
+    except Exception:
+        # 해소 실패는 목록 자체를 깨뜨리지 않는다(표시·이동 보조 정보일 뿐). 트랜잭션 abort 정리 후 포기.
+        logging.getLogger(__name__).warning("usage system records: target scope resolve failed", exc_info=True)
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        return
+    for r in want:
+        sch = str(r.pop("_resolve_schema", "") or "").lower()
+        obj = str(r.pop("_resolve_object", "") or "").lower()
+        cands = by_object.get((sch, obj)) if obj else None
+        if not cands:
+            cands = by_schema.get(sch)
+        if not cands:
+            continue
+        if len(cands) == 1:
+            r["scope_key"] = next(iter(cands))
+        else:
+            r["scope_ambiguous"] = True
+
+
+def _usage_system_nav(record: dict) -> dict:
+    """시스템 사용 기록 1건 → 관리 콘솔 내비게이션 서술자.
+
+    shared/model_catalog.USAGE_TASK_NAV 가 task→화면 SSOT. 여기서는 해소된 데이터소스와
+    검색어(대상 문자열)를 얹어 프론트가 그대로 적용할 수 있는 형태로 만든다.
+      screen/subtab  admin.html 의 data-admin-tab / data-meta-subtab 키
+      scope_key      PG 해소 결과(데이터소스 scope select 값). 없으면 프론트가 스코프 미변경.
+      scope_ambiguous 후보 데이터소스가 여럿이라 특정 불가 — 프론트가 "화면까지만 이동" 을
+                     행에 명시한다. **record 최상위에도 같은 값이 있지만 nav 에 실어야 한다**:
+                     프론트의 이동 UI 는 nav 서술자만 읽으므로, 여기 누락되면 모호 안내가
+                     조용히 사라져 사용자가 '엉뚱한 데이터소스에 착지했다'고 오인한다.
+      scope_hint     target 자체가 데이터소스인 경우(cluster_label/product_classify)의 원문 —
+                     라벨↔scope_key 매핑은 MySQL 레지스트리라 PG 에서 못 푼다. 프론트가
+                     adminState.datasources 의 key/scope_key 양쪽과 대조해 해소한다.
+      search         목록 검색창에 채울 대상 문자열(객체명). 없으면 None.
+      path_label     '메타데이터 > 테이블 설명' 사람이 읽는 경로(hover 안내용).
+    """
+    nav = usage_task_nav(record.get("task"))
+    kind = nav.pop("target_kind", "none")
+    target = str(record.get("target") or "").strip()
+    nav["scope_key"] = record.get("scope_key")
+    nav["scope_ambiguous"] = bool(record.get("scope_ambiguous"))
+    nav["scope_hint"] = target if (kind == "datasource" and target) else None
+    # 검색어: 객체형은 파싱된 객체명(없으면 스키마), 스키마형은 스키마명. 데이터소스형/대상없음은 없음.
+    search = None
+    if kind in ("object", "schema") and target:
+        sch, obj = _usage_target_parts(target)
+        search = obj or sch
+    nav["search"] = search
+    nav["path_label"] = usage_nav_path_label(nav.get("screen"), nav.get("subtab"))
+    return nav
+
+
+def _query_usage_system_records(pg, *, days: int, model: "str | None",
+                                day_label: "str | None", gran: str) -> "tuple[list[dict], bool]":
+    """대화에 귀속되지 않는 시스템·자율 LLM 사용분을 (작업 × 대상 × 실행주체) 로 집계.
+
+    필터는 대화 목록과 동일 규칙(model=canonical family, day_label=차트 버킷)이라 같은 막대를
+    클릭했을 때 두 목록의 합이 그 막대 수치와 정합한다. 계정/역할 필터는 여기 오지 않는다 —
+    시스템 사용분은 계정에 귀속되지 않으므로 호출측이 애초에 이 질의를 건너뛴다.
+
+    반환: (items[{task, task_label, category, target, actor, calls, total_tokens, prompt_tokens,
+                  completion_tokens, cost_usd, models[], last_used_at, scope_key, scope_ambiguous,
+                  nav{...}}], truncated)
+    """
+    win = "now() - %s::interval"
+    where = [
+        # 여집합 정의 — 대화 목록(INNER JOIN + owner NOT NULL)이 포함하지 않는 전부.
+        "(c.conversation_id IS NULL OR c.owner_account_id IS NULL)",
+        "u.created_at >= " + win,
+    ]
+    params: list = [f"{int(days)} days"]
+    _canon_m = canonical_usage_model_sql("COALESCE(u.resolved_model, u.model)")
+    if model:
+        where.append(_canon_m + " = %s")
+        params.append(model)
+    if day_label:
+        bucket_expr, _fmt = app._usage_bucket_match_sql(gran)
+        where.append(f"{bucket_expr} = %s")
+        params.append(day_label)
+    where_sql = " AND ".join(where)
+    # conv_exists: 실행 주체 id 로 실제 core_conversations 행이 있는지. 소유 계정만 없는 대화(링크
+    #   가능)와 아예 삭제·미기록된 대화 id(링크 불가)를 구분하려면 필요하다 — 구분 없이 링크를 걸면
+    #   삭제된 대화로 가는 깨진 링크가 생긴다(ai-ops feed 의 'sentinel 은 링크 안 함' 규약과 동형).
+    sql = (
+        "SELECT u.task, COALESCE(u.target, '') AS tgt, COALESCE(u.conversation_id, '') AS actor, "
+        f"{_canon_m} AS m, count(*) AS calls, "
+        "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
+        "max(u.created_at) AS last_used, "
+        "bool_or(c.conversation_id IS NOT NULL) AS conv_exists "
+        "FROM agent_runtime.llm_usage u "
+        "LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+        f"WHERE {where_sql} "
+        f"GROUP BY u.task, tgt, actor, {_canon_m}"
+    )
+    fold: dict = {}
+    with pg.cursor() as cur:
+        cur.execute(sql, tuple(params))
+        for r in (cur.fetchall() or []):
+            task, tgt, actor = (r[0] or ""), (r[1] or ""), (r[2] or "")
+            key = (task, tgt, actor)
+            e = fold.get(key)
+            if e is None:
+                tx = taxonomy_for(task)
+                e = {
+                    "task": task, "task_label": tx["label"], "category": tx["category"],
+                    "target": tgt or None, "actor": actor or None,
+                    # 대화 링크는 **실재하는 비-sentinel 대화**에만 준다:
+                    #   · sentinel(`__insight_worker__` 등) → 대화가 아님
+                    #   · 삭제·미기록 id(conv_exists=False) → 열면 404 (깨진 링크)
+                    # 둘 다 링크 없이 주체 라벨만 보여준다(ai-ops feed 의 정직 안내 규약과 동형).
+                    "conversation_id": (actor if (actor and not actor.startswith("__") and bool(r[9])) else None),
+                    "calls": 0, "total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                    "cost_usd": 0.0, "_models": {}, "_last_used": r[8],
+                    "scope_key": None, "scope_ambiguous": False,
+                }
+                fold[key] = e
+            mk, calls_r = r[3], int(r[4] or 0)
+            tok_r, pt_r, ct_r = int(r[5] or 0), int(r[6] or 0), int(r[7] or 0)
+            e["calls"] += calls_r
+            e["total_tokens"] += tok_r
+            e["prompt_tokens"] += pt_r
+            e["completion_tokens"] += ct_r
+            mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r)
+            e["cost_usd"] += mc
+            mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
+            mm["total_tokens"] += tok_r
+            mm["cost_usd"] += mc
+            if r[8] and (e["_last_used"] is None or r[8] > e["_last_used"]):
+                e["_last_used"] = r[8]
+    items = list(fold.values())
+    items.sort(key=lambda x: x["total_tokens"], reverse=True)
+    truncated = len(items) > _USAGE_SYS_LIMIT
+    items = items[:_USAGE_SYS_LIMIT]
+    for e in items:
+        e["cost_usd"] = round(e["cost_usd"], 4)
+        e["models"] = sorted(e.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
+        for m in e["models"]:
+            m["cost_usd"] = round(m["cost_usd"], 4)
+        e["last_used_at"] = (e.pop("_last_used").isoformat() if e.get("_last_used") else None)
+        # 데이터소스 해소 대상 표시 — 객체/스키마형 target 만(데이터소스형은 프론트가 hint 로 해소).
+        kind = usage_task_nav(e["task"]).get("target_kind")
+        if kind in ("object", "schema") and e.get("target"):
+            sch, obj = _usage_target_parts(e["target"])
+            if sch:
+                e["_resolve_schema"] = sch
+                e["_resolve_object"] = obj or ""
+    # 상한 적용 **후** 해소 — IN 목록이 표시분으로 제한돼 질의 비용이 유계.
+    _resolve_usage_target_scopes(pg, items)
+    for e in items:
+        e.pop("_resolve_schema", None)
+        e.pop("_resolve_object", None)
+        e["nav"] = _usage_system_nav(e)
     return (items, truncated)
 
 
@@ -301,12 +564,21 @@ def admin_llm_usage(request: Request, account=Depends(app.require_permission("co
 
 @router.get("/api/admin/usage/conversations")
 def admin_usage_conversations(request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
-    """TASK-0263: 사용량 차트 클릭 → 집계 기여 대화목록(admin 콘솔 모달).
+    """TASK-0263: 사용량 차트 클릭 → 집계 기여 '사용 기록'(admin 콘솔 모달).
 
     권한: console.usage.read(사용량 조회) + conversation.list.any(타 계정 대화목록 열람).
     둘 다 필요 — 사용량은 admin 인데 대화목록 열람 권한이 없는 운영자에게 타 계정 대화
     제목을 노출하지 않기 위함(기존 RBAC 재사용, 신규 권한 0). 대화 메타(제목/일시/소유자/
     기간내 usage)만 반환 — 메시지 본문 미포함.
+
+    usage-records-system(2026-07-28): 응답에 `system_items`(대화 비귀속 = 시스템·자율 사용분)를
+    **additive** 로 추가한다. `items`(대화) 는 형태·규칙 무변경이라 기존 소비자 회귀 0.
+      · 모델/일자 클릭      → items + system_items (둘의 합 = 그 막대 수치)
+      · "(시스템)" 역할 클릭 → items=[] + system_items (종전엔 빈 목록만 떴다)
+      · 계정/일반 역할 클릭  → items + system_items=[] (시스템 사용분은 계정 귀속이 아니므로
+                              그 계정 몫으로 섞어 보여주면 귀속 오도 — 의도적 제외)
+    엔드포인트 URL 은 기존 경로를 유지한다(프론트 배포 순서 무관 호환 — 구 프론트는 새 필드를
+    무시하고, 신 프론트는 구 백엔드에서 system_items 부재를 빈 배열로 폴백한다).
     """
     if not app._account_has_permission(account, "console.usage.read"):
         return app._json_error("LLM 사용량 조회 권한이 필요합니다 (운영자 전용).", 403)
@@ -315,25 +587,44 @@ def admin_usage_conversations(request: Request, account=Depends(app.get_current_
     p = app._parse_usage_conv_params(request)
     # 역할 클릭 → 계정 집합 역매핑(MySQL). 모델/일자 클릭은 account 필터 없음.
     account_ids = None
+    system_only = False
     if p["account_id"] is not None:
         account_ids = [p["account_id"]]
     elif p["role"] is not None:
         account_ids = app._usage_account_ids_for_role(conn, p["role"])
         if account_ids is None:
-            # "(시스템)" 역할 — owner 없는 비대화 usage. 대화목록 비어있음.
-            return JSONResponse({"items": [], "truncated": False, "filter": p, "scope": "admin"})
+            # "(시스템)" 역할 — owner 없는 비대화 usage. 대화 목록은 비고, 시스템 기록만 채운다.
+            system_only = True
+    # 계정/역할로 좁힌 클릭은 시스템 기록 비대상(위 docstring 귀속 규칙).
+    want_system = system_only or (account_ids is None)
     try:
         from shared.db import _pg_connect
         pg = _pg_connect()
     except Exception:
         logging.getLogger(__name__).warning("admin_usage_conversations: pg connect failed", exc_info=True)
         return app._json_error("usage 저장소(PG) 연결 실패", 503)
+    items: list = []
+    truncated = False
+    system_items: list = []
+    system_truncated = False
     try:
-        items, truncated = app._query_usage_conversations(
-            pg, days=p["days"], model=p["model"], account_ids=account_ids,
-            day_label=p["day_label"], gran=p["gran"], owner_account_id=None,
-            owner_is_null_ok=False,
-        )
+        if not system_only:
+            items, truncated = app._query_usage_conversations(
+                pg, days=p["days"], model=p["model"], account_ids=account_ids,
+                day_label=p["day_label"], gran=p["gran"], owner_account_id=None,
+                owner_is_null_ok=False,
+            )
+        if want_system:
+            try:
+                system_items, system_truncated = app._query_usage_system_records(
+                    pg, days=p["days"], model=p["model"],
+                    day_label=p["day_label"], gran=p["gran"],
+                )
+            except Exception:
+                # 시스템 기록 질의 실패가 대화 목록(기존 기능)을 깨뜨리지 않게 격리 — 부분 저하로 응답.
+                logging.getLogger(__name__).warning(
+                    "admin_usage_conversations: system records query failed", exc_info=True)
+                system_items, system_truncated = [], False
     finally:
         try:
             pg.close()
@@ -341,7 +632,9 @@ def admin_usage_conversations(request: Request, account=Depends(app.get_current_
             pass
     # 계정 메타(사용자명/역할) enrich — 모달 표시용(cross-DB, MySQL).
     app._enrich_usage_conv_owner_meta(conn, items)
-    return JSONResponse({"items": items, "truncated": truncated, "filter": p, "scope": "admin"})
+    return JSONResponse({"items": items, "truncated": truncated,
+                         "system_items": system_items, "system_truncated": system_truncated,
+                         "filter": p, "scope": "admin"})
 
 
 # ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (4종). app 전역은 app.X 동적 참조. ====

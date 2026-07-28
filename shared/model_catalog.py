@@ -530,13 +530,21 @@ TASK_TAXONOMY: dict[str, dict[str, Any]] = {
     "classify":            {"category": "ai.reasoning.aux",         "label": "주제 이탈 판정"},
     "topic":               {"category": "ai.reasoning.aux",         "label": "대화 주제 추론"},
     "sql_fix":             {"category": "ai.reasoning.aux",         "label": "SQL 오류 수정"},
+    # usage-records-system(2026-07-28): 라이브 llm_usage 에 존재하나 미등록이던 4 task 를 편입.
+    #   '사용 기록' 목록이 시스템 사용분을 사람이 읽는 작업명으로 보여주려면 라벨이 필수인데,
+    #   미등록이면 taxonomy_for 가 raw task 문자열(예: 'cluster_label')을 그대로 노출했다.
+    #   (부수효과: ai-ops '미분류 AI 활동' Attention 에서 이 4건이 정당하게 사라진다.)
+    "redteam":             {"category": "ai.reasoning.aux",         "label": "답변 적대 검증"},
     # 지식베이스 보강
     "glossary_suggest":    {"category": "ai.kb.enrich",             "label": "용어사전 후보"},
+    "enum_suggest":        {"category": "ai.kb.enrich",             "label": "ENUM 코드 후보"},
     # 인사이트 분석
     "schema_insight":      {"category": "ai.insight.analyze",       "label": "스키마 분석"},
     "table_insight":       {"category": "ai.insight.analyze",       "label": "테이블 분석"},
     "account_insight":     {"category": "ai.insight.analyze",       "label": "계정 분석"},
     "node_analysis":       {"category": "ai.insight.analyze",       "label": "그래프 노드 분석"},
+    "cluster_label":       {"category": "ai.insight.analyze",       "label": "콘텐츠 그룹 라벨"},
+    "product_classify":    {"category": "ai.insight.analyze",       "label": "제품 분류 제안"},
     # 프롬프트 자동생성 (신규 계측 — 제품/역할/계정 생성 + 자율 sweep 워커)
     "prompt_gen":          {"category": "ai.prompt.autogen",        "label": "프롬프트 자동생성"},
     # 메타데이터 자동완성 (신규 계측)
@@ -578,6 +586,79 @@ def taxonomy_for(task: str | None) -> dict[str, Any]:
 def ai_categories() -> dict[str, str]:
     """카테고리 코드 → 표시 라벨 (패널 드릴다운 그룹 라벨). 등록 category 의 상위 그룹핑."""
     return dict(AI_CATEGORY_LABELS)
+
+
+# ── 시스템 사용 기록 → 관리 콘솔 화면 내비게이션 (usage-records-system, 2026-07-28) ────
+# '감사 > AI 운영 현황 > LLM 사용량' 차트 클릭 목록('사용 기록')의 **시스템·자율 사용분**은
+# 대화에 귀속되지 않아 `/?conversation=` 딥링크가 없다. 대신 "그 작업이 어느 관리 화면의
+# 객체를 대상으로 돌았는가"를 task 별로 선언해, 행 클릭 시 콘솔 안에서 그 화면으로 이동시킨다.
+#
+# 설계 원칙:
+#   · **SSOT 는 여기 한 곳** — 백엔드(admin_usage)가 이 표로 nav 서술자를 만들어 응답에 싣고,
+#     프론트(admin.js)는 그 서술자만 해석한다(프론트에 task 분기 하드코딩 금지 — 신규 task 는
+#     여기 한 줄 추가로 목록·내비게이션에 동시 편입).
+#   · `screen` = admin.html 의 `data-admin-tab` 키, `subtab` = 메타데이터 pane 의
+#     `data-meta-subtab` 키(없으면 None). 값이 실제 탭 키와 어긋나면 프론트가 무시(fail-soft).
+#   · `target_kind` = llm_usage.target 의 의미 — 'object'(schema[.table[.column]] / routine())
+#     · 'schema' · 'datasource'(데이터소스 라벨 또는 scope_key) · 'none'(대상 미기록).
+#     백엔드가 이 값으로 target→데이터소스 해소 여부를 결정한다.
+#
+# 미등록 task(대화 파이프라인 보조 호출이 sentinel 대화로 기록된 경우 등)는
+# `_USAGE_NAV_DEFAULT` 로 'AI 운영 현황 > 운영 현황'(활동 피드)에 착지시킨다 — 그 화면이
+# 단건 호출의 전체 회계를 보여주는 정본이라 "갈 곳 없음"이 되지 않는다.
+USAGE_TASK_NAV: dict[str, dict[str, Any]] = {
+    "table_insight":       {"screen": "metadata", "subtab": "tables",   "target_kind": "object"},
+    "schema_insight":      {"screen": "metadata", "subtab": "tables",   "target_kind": "schema"},
+    "node_analysis":       {"screen": "graph",    "subtab": None,       "target_kind": "object"},
+    "cluster_label":       {"screen": "graph",    "subtab": None,       "target_kind": "datasource"},
+    "product_classify":    {"screen": "products", "subtab": None,       "target_kind": "datasource"},
+    "account_insight":     {"screen": "accounts", "subtab": None,       "target_kind": "none"},
+    "glossary_suggest":    {"screen": "metadata", "subtab": "glossary", "target_kind": "none"},
+    "enum_suggest":        {"screen": "metadata", "subtab": "enums",    "target_kind": "none"},
+    "metadata_summary":    {"screen": "metadata", "subtab": "tables",   "target_kind": "object"},
+    "metadata_prompt_gen": {"screen": "metadata", "subtab": "tables",   "target_kind": "object"},
+    "prompt_gen":          {"screen": "products", "subtab": None,       "target_kind": "none"},
+}
+
+_USAGE_NAV_DEFAULT: dict[str, Any] = {"screen": "ai-console", "subtab": "ops", "target_kind": "none"}
+
+# 내비게이션 화면 → 사람이 읽는 경로 라벨(행 hover/보조문구용). admin.html 탭 라벨과 정합.
+USAGE_NAV_SCREEN_LABELS: dict[str, str] = {
+    "metadata":   "메타데이터",
+    "graph":      "관계도",
+    "products":   "제품 관리",
+    "accounts":   "계정 관리",
+    "ai-console": "AI 운영 현황",
+}
+
+# 메타데이터 서브탭 → 사람이 읽는 라벨(admin.html data-meta-subtab 과 정합).
+USAGE_NAV_SUBTAB_LABELS: dict[str, str] = {
+    "tables":   "테이블 설명",
+    "columns":  "컬럼 설명",
+    "glossary": "용어사전",
+    "enums":    "ENUM 코드사전",
+    "samples":  "샘플쿼리",
+    "ops":      "운영 현황",
+}
+
+
+def usage_task_nav(task: str | None) -> dict[str, Any]:
+    """llm_usage.task → 관리 콘솔 내비게이션 서술자 {screen, subtab, target_kind}.
+
+    미등록 task 는 `_USAGE_NAV_DEFAULT`(AI 운영 현황 > 운영 현황) 로 폴백한다 — taxonomy 의
+    self-surface 와 같은 사상: 등록 누락이 '클릭해도 아무 일 없음'으로 조용히 사라지지 않게 한다.
+    반환은 방어 복사본(호출측 in-place 변형이 레지스트리를 오염시키지 않도록)."""
+    entry = USAGE_TASK_NAV.get(str(task or "").strip())
+    return dict(entry if entry is not None else _USAGE_NAV_DEFAULT)
+
+
+def usage_nav_path_label(screen: str | None, subtab: str | None) -> str:
+    """nav 서술자 → '메타데이터 > 테이블 설명' 형태의 경로 라벨(미등록 화면은 빈 문자열)."""
+    s = USAGE_NAV_SCREEN_LABELS.get(str(screen or ""))
+    if not s:
+        return ""
+    sub = USAGE_NAV_SUBTAB_LABELS.get(str(subtab or ""))
+    return f"{s} > {sub}" if sub else s
 
 
 # ── 사용량 집계용 canonical model family (admin '감사 > AI 운영 현황 > LLM 사용량') ──
