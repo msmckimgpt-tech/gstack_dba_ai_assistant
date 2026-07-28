@@ -39,4 +39,7 @@ source_of_truth: true
 - [x] 새 경로 이관이 완료되었다
 - [x] 루트 인터페이스가 유지되었다
 - [x] 문서가 현재 구조를 반영한다
-- [ ] 엄격한 브라우저 시나리오가 확정되었다
+- [x] 엄격한 브라우저 시나리오가 확정되었다
+  ↳ 2026-07-28: TEST-0003 을 실 시나리오(health→session→goto→eval→close 왕복 +
+     비허용 scheme 거부 음성 케이스)로 확정 + 라이브 실측 Run 기록 (TEST.md §2·§3).
+     렌더된 DOM 추출·JS 실행·scheme 가드 전수 PASS.
