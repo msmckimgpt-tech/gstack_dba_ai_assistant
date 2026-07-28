@@ -921,19 +921,29 @@ function _metaBindHoverHighlight(row, spec) {
   row.addEventListener("focus", on);
   row.addEventListener("blur", off);
 }
+// detail-hover-flow(사용자 리포트 2026-07-28): 관계 행 DOM → hover 강조 spec.
+//   같은 두 객체 사이에는 관계선이 **여러 개** 존재할 수 있다 — 왕복 참조(참조함/참조받음)는 반대편 호로,
+//   루틴 사용은 읽기/쓰기가 별개 선으로(graph-edge-flow §83). 따라서 "self 끝점 + 상대" 만으로는 어느
+//   선인지 결정되지 않아 종전에는 어느 행을 hover 해도 첫 매칭 한 선만 강조됐다. 행이 모델 엣지의 실제
+//   (source,target) 과 relation_type 을 직접 싣고, 그대로 렌더러에 넘겨 그 선을 특정한다.
+//   구(舊) 마크업(속성 부재)은 레거시 [self, 상대] 쌍으로 폴백한다(방향 미상 — 렌더러가 근사).
+function _metaHoverEdgeSpec(el, selfFallbackKey, otherKey) {
+  const src = el.getAttribute("data-edge-src"), tgt = el.getAttribute("data-edge-tgt");
+  if (src && tgt) return { edgeKeyPairs: [{ from: src, to: tgt, relType: el.getAttribute("data-rel-type") || null }] };
+  return { edgeKeyPairs: [[el.getAttribute("data-edge-self") || selfFallbackKey, otherKey]] };
+}
 // 상세 패널 컨테이너 전체에 hover 강조 바인딩(공용): 컬럼 선택=노드 강조, 참조/사용 행=연결선 강조.
-//   selfKey 는 ROUTINE_USES(data-rtuse) 의 self 끝점 폴백. 참조 행(.amgr-trace)·관계 행(.amgr-row[data-key])은
-//   data-edge-self 를 self 끝점으로(없으면 selfKey) 사용 — 컬럼 단위 FK 도 정확한 연결선을 강조한다.
+//   selfKey 는 data-edge-src/tgt 이 없는 구 마크업의 self 끝점 폴백.
 function _metaGraphBindDetailHover(el, selfKey) {
   if (!el) return;
   el.querySelectorAll(".amgr-col-select[data-col]").forEach((b) => {
     _metaBindHoverHighlight(b, { nodeKeys: [b.getAttribute("data-col")] });
   });
   el.querySelectorAll(".amgr-trace[data-trace]").forEach((r) => {
-    _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || selfKey, r.getAttribute("data-trace")]] });
+    _metaBindHoverHighlight(r, _metaHoverEdgeSpec(r, selfKey, r.getAttribute("data-trace")));
   });
   el.querySelectorAll("[data-rtuse]").forEach((b) => {
-    _metaBindHoverHighlight(b, { edgeKeyPairs: [[b.getAttribute("data-edge-self") || selfKey, b.getAttribute("data-rtuse")]] });
+    _metaBindHoverHighlight(b, _metaHoverEdgeSpec(b, selfKey, b.getAttribute("data-rtuse")));
   });
 }
 
@@ -1914,7 +1924,10 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
     const tip = _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn);
     // detail-hover-fx: self 끝점 키(방향별 e.source/e.target) — hover 연결선 강조가 정확한 컬럼↔상대 엣지를 그린다.
     const selfEndKey = dir === "out" ? e.source : e.target;
-    return `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" data-edge-self="${esc(selfEndKey)}" role="button" tabindex="0" ` +
+    // detail-hover-flow: 모델 엣지의 **실제 방향**(source→target)을 그대로 싣는다 — 참조함/참조받음이
+    //   같은 두 컬럼 사이의 반대편 호이므로, 방향 없이는 어느 호를 강조할지 결정되지 않는다.
+    return `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" data-edge-self="${esc(selfEndKey)}" ` +
+      `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}" role="button" tabindex="0" ` +
       `title="${esc(tip)}">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(otherFqn)}</code>` +
       `${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}` +
@@ -2018,7 +2031,12 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
           + (rcs.length > shown.length ? ` 외 ${rcs.length - shown.length}` : "");
         colsHtml = ` <span class="amgr-rtcols admin-meta-graph-muted" title="이 관계가 참조하는 컬럼 (✎ = 쓰기)">${esc(txt)}</span>`;
       }
-      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button>${colsHtml}</li>`;
+      // detail-hover-flow: 읽기/쓰기는 같은 (루틴, 테이블) 쌍 위의 **별개 관계선 2개**(graph-edge-flow §83 C1)
+      //   라, 행이 모델 엣지의 실제 끝점 + relation_type 을 실어야 hover 가 그 중 맞는 선을 강조한다.
+      const rk = e.relation_type === "write" ? "write" : "read";
+      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" ` +
+        `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}" data-rel-type="${rk}" ` +
+        `title="상세 보기">${esc(disp)}</button>${colsHtml}</li>`;
     };
     // lazy 주입되는 DB 그룹 body 에도 원래의 행 동작(클릭=상세+카메라, hover=연결선 강조)을 그대로 건다.
     const rtBind = (c) => {
@@ -2288,7 +2306,9 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
     const main = arrow === "→"
       ? `${localName ? `<code>${esc(localName)}</code> <span class="amgr-arrow">→</span> ` : ""}${counter}`
       : `${counter}${localName ? ` <span class="amgr-arrow">→</span> <code>${esc(localName)}</code>` : ""}`;
-    return `<li class="amgr-row" data-key="${esc(otherKey)}" data-edge-self="${esc(selfEndKey || key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
+    return `<li class="amgr-row" data-key="${esc(otherKey)}" data-edge-self="${esc(selfEndKey || key)}" ` +
+      `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}"${e.relation_type ? ` data-rel-type="${esc(e.relation_type === "write" ? "write" : "read")}"` : ""} ` +
+      `role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span>${main}` +
       `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}${curateBtns(e)}</div>` +
       `<div class="amgr-sub admin-meta-graph-muted">${esc(typeKo)}${srcKo ? " · 근거: " + esc(srcKo) : ""}${on.description ? " — " + esc(on.description) : ""}</div></li>`;
@@ -2302,8 +2322,8 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
     c.querySelectorAll(".amgr-row[data-key]").forEach((r) => {
       // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
       _metaGraphBindRelRow(r, r.getAttribute("data-key"));
-      // detail-hover-fx: hover 시 연결선(엣지) 강조 — self 끝점(data-edge-self)↔상대(data-key).
-      _metaBindHoverHighlight(r, { edgeKeyPairs: [[r.getAttribute("data-edge-self") || key, r.getAttribute("data-key")]] });
+      // detail-hover-fx: hover 시 연결선(엣지) 강조. detail-hover-flow: 방향(data-edge-src/tgt)·읽기/쓰기까지 특정.
+      _metaBindHoverHighlight(r, _metaHoverEdgeSpec(r, key, r.getAttribute("data-key")));
     });
     // graph-category(§55 B): 큐레이션 버튼 — 행 클릭(카메라 이동)과 분리(stopPropagation).
     c.querySelectorAll("button.amgr-cur").forEach((b) => {
@@ -2350,7 +2370,8 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul class="amgr-list">`);
     // detail-db-groups: 종전 30건 절단 제거 — 용어는 DB 소속이 아니라 그룹 축 없이 전량(안전 가드만).
     terms.slice(0, _META_DBGRP_ROW_CAP).forEach(({ e, node }) => {
-      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" data-edge-self="${esc(key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
+      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" data-edge-self="${esc(key)}" ` +
+        `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
         `<div class="amgr-main"><span class="amgr-arrow">◈</span><strong>${esc(node.name || node.key)}</strong></div>` +
         `<div class="amgr-sub admin-meta-graph-muted">${esc(_META_EDGE_TYPE_KO[e.type] || e.type)}${node.description ? " — " + esc(node.description) : ""}</div></li>`);
     });

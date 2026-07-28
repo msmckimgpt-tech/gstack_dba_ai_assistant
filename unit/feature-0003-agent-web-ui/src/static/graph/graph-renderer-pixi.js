@@ -253,8 +253,21 @@ export const PixiAdapterPure = {
   },
   // 폴리라인 전체를 하나의 연속 길이로 보고 대시 위상을 이어붙인다 — 구간마다 위상을 리셋하면
   //   곡선 샘플 경계마다 대시가 뭉쳐 "점선이 굵어 보이는" 아티팩트가 생긴다. 반환 형식은 dashSegments 와 동일.
-  dashPolyline(pts, dash) {
+  // detail-hover-flow: 선택적 `phase`(호 길이 단위) — 패턴을 그만큼 **미리 소비한 상태**로 시작한다.
+  //   phase 를 프레임마다 키우면 대시가 pts[0] 쪽으로 되감기고, 줄이면(음수) pts[끝] 쪽으로 흐른다.
+  //   호출부(setHoverHighlight)는 데이터 흐름 방향에 맞춰 부호를 정한다. 미지정이면 종전과 동일(위상 0).
+  dashPolyline(pts, dash, phase) {
     const segs = []; let i = 0, on = true, rem = dash[0];
+    if (phase) {
+      // 실주기: 홀수 길이 패턴은 on/off 가 뒤집혀 한 번 더 돌아야 원위상 — 그때만 2배.
+      let sum = 0; for (let k = 0; k < dash.length; k++) sum += dash[k];
+      const T = (dash.length % 2 ? 2 : 1) * sum;
+      let p = T > 0 ? ((phase % T) + T) % T : 0;
+      while (p > 1e-9) {
+        const step = Math.min(rem, p); rem -= step; p -= step;
+        if (rem <= 1e-9) { i++; rem = dash[i % dash.length]; on = !on; }
+      }
+    }
     for (let s = 0; s < pts.length - 1; s++) {
       const p = pts[s], q = pts[s + 1];
       const dx = q[0] - p[0], dy = q[1] - p[1], L = Math.hypot(dx, dy);
@@ -269,6 +282,12 @@ export const PixiAdapterPure = {
     }
     return segs;
   },
+  // detail-hover-flow: 관계선 스타일 → **데이터 흐름이 (source→target) 방향인가**.
+  //   graph-roleviz 의 화살표 어휘가 그대로 흐름 어휘다: 쓰기(루틴→테이블)·REFERENCES 는 endArrow 라
+  //   선언 방향으로 흐르고, 읽기(테이블→루틴)는 startArrow 라 **역류**한다(AGE 모델은 항상 Routine→Table
+  //   로 저장되므로 읽기의 데이터 흐름은 target→source). 화살표가 둘 다거나 없으면(SCHEMA_REF 등)
+  //   선언 방향 폴백.
+  flowForward(style) { const s = style || {}; return !(s.startArrow && !s.endArrow); },
   // 스트랜드(다발) 가닥별 오프셋 배율 — 상위 부모가 품은 관계 수의 '볼륨' 표현. 중앙 대칭 분포.
   strandOffsets(n, spread) {
     const c = Math.max(1, Math.min(6, n | 0)), sp = spread == null ? 3.2 : spread, out = new Array(c);
@@ -1161,7 +1180,8 @@ export class PixiGraphAdapter {
   async draw() {
     await this._ready;
     if (!this.world) return;   // 비브라우저/미배선 — no-op
-    if (this._hoverLayer) this._hoverLayer.removeChildren();   // detail-hover-fx: rebuild 로 노드 좌표가 바뀌면 stale 강조 제거(hover 는 transient — 재hover 시 재도출).
+    this._stopHoverFlow();   // detail-hover-flow: 좌표가 바뀌면 흐름 폴리라인이 stale — rAF 를 먼저 세운다(분리된 Graphics 에 계속 페인트하는 누수 차단).
+    this._clearHoverLayer();   // detail-hover-fx: rebuild 로 노드 좌표가 바뀌면 stale 강조 제거(hover 는 transient — 재hover 시 재도출).
     this._clearLabelHover();   // graph-label-hover-expand: rebuild 로 좌표·라벨·폭이 바뀌면 stale 확장 카드 제거
     const built = this._built;
     // 끝점 위치 O(1) 조회 맵(구 O(N·E) find 제거)
@@ -1439,47 +1459,134 @@ export class PixiGraphAdapter {
   setHoverHighlight(spec) {
     if (!this.world || !this._hoverLayer || !this.P) return;
     const P = this.P, layer = this._hoverLayer, color = (spec && spec.color) || 0x2563eb;
-    layer.removeChildren();
-    for (const pair of ((spec && spec.edges) || [])) {
-      const a = this.getElementPosition(pair[0]), b = this.getElementPosition(pair[1]);
+    this._stopHoverFlow();   // 직전 hover 의 흐름 애니메이션 선점 종료(새 spec 이 소유권을 가져간다)
+    this._clearHoverLayer();
+    // §85 정책 정합: 강조선 굵기·화살촉도 **화면 픽셀** 기준 — model 고정이면 줌인에서 리본처럼 부풀고
+    //   줌아웃에서 사라진다(관계선 본선은 이미 화면 기준). world.scale = zoom 이므로 px/zoom 이 model 폭.
+    const zoom = Math.max(0.05, (this._cam && this._cam.zoom) || 1), k = 1 / zoom;
+    const flows = [];
+    for (const ent of ((spec && spec.edges) || [])) {
+      // 계약: `[idA,idB]`(레거시 · 방향 미상) 또는 `{source,target,relType}`(방향·읽기/쓰기 명시).
+      //   graph-edge-flow(§83 C1) 이후 같은 두 노드 사이에 읽기/쓰기가 **별개 관계선 2개**로 존재하고,
+      //   REFERENCES 도 왕복(A→B / B→A)이 반대편 호로 갈라지므로, 어느 선을 가리키는지는 (방향, 종류)
+      //   두 축이 결정한다. 종전엔 첫 매칭 엣지를 잡아 늘 같은 호만 강조됐다(사용자 리포트).
+      const isPair = Array.isArray(ent);
+      const sid = isPair ? ent[0] : (ent && ent.source), tid = isPair ? ent[1] : (ent && ent.target);
+      const relType = isPair ? null : ((ent && ent.relType) || null);
+      const a = this.getElementPosition(sid), b = this.getElementPosition(tid);
       if (!a || !b) continue;
+      const st = (this._edgeMatchBetween(sid, tid, relType) || {}).style || {};
+      const arc = PixiAdapterPure.edgeArc(a, b, st.curve || 0, st.curveMax, st.curveMin);
+      // 데이터 흐름 방향 = 실제 관계선의 화살촉이 가리키는 쪽(PixiAdapterPure.flowForward 참조).
+      const fwd = PixiAdapterPure.flowForward(st);
+      const head = fwd ? b : a, tail = fwd ? a : b;
       const g = new P.Graphics();
       // graph-edge-flow: 실제 관계선과 **같은 호** 위에 겹쳐 그린다 — 직선으로 그리면 곡선 관계선
       //   옆을 스치는 별개 선이 되어 "어느 선을 가리키는지" 신호가 무너진다.
-      const st = this._edgeStyleBetween(pair[0], pair[1]) || {};
-      const arc = PixiAdapterPure.edgeArc(a, b, st.curve || 0, st.curveMax, st.curveMin);
-      if (arc.off) g.moveTo(a[0], a[1]).quadraticCurveTo(arc.cx, arc.cy, b[0], b[1]);
-      else g.moveTo(a[0], a[1]).lineTo(b[0], b[1]);
-      g.stroke({ color, width: 3.5, alpha: 0.95 });
-      // 방향 화살촉(끝점 b) — 어느 쪽으로 이어지는 연결인지 명확화. 곡선이면 끝 접선을 따른다.
-      const ang = arc.off ? Math.atan2(b[1] - arc.cy, b[0] - arc.cx) : Math.atan2(b[1] - a[1], b[0] - a[0]);
-      this._arrow(g, b[0], b[1], ang, color, 0.95);
+      const path = () => { if (arc.off) g.moveTo(a[0], a[1]).quadraticCurveTo(arc.cx, arc.cy, b[0], b[1]); else g.moveTo(a[0], a[1]).lineTo(b[0], b[1]); };
+      path(); g.stroke({ color, width: 7 * k, alpha: 0.16 });   // 헤일로 — 대시 사이 구간에서도 경로가 끊겨 보이지 않게
+      path(); g.stroke({ color, width: 3.2 * k, alpha: 0.9 });  // 본선
+      // 방향 화살촉은 **흐름이 도착하는 끝**에. 곡선이면 그 끝의 접선을 따른다(직선 각도로 그리면 꺾여 보인다).
+      const ang = arc.off
+        ? (fwd ? Math.atan2(b[1] - arc.cy, b[0] - arc.cx) : Math.atan2(a[1] - arc.cy, a[0] - arc.cx))
+        : Math.atan2(head[1] - tail[1], head[0] - tail[0]);
+      this._arrow(g, head[0], head[1], ang, color, 0.95, 9 * k);
       layer.addChild(g);
+      // 흐름 애니메이션용 샘플 폴리라인 — 흐름 방향으로 정렬해 두면 위상 부호를 한 곳에서만 다룬다.
+      const segs = arc.off ? Math.max(18, Math.min(64, PixiAdapterPure.curveSegs(arc.len, zoom, false) * 3)) : 1;
+      const pts = arc.off ? PixiAdapterPure.quadPoints(a, [arc.cx, arc.cy], b, segs) : [a, b];
+      flows.push({ pts: fwd ? pts : pts.slice().reverse(), g: null });
     }
     for (const id of ((spec && spec.nodes) || [])) {
       const bb = this._boundsOf(id); if (!bb) continue;
       const g = new P.Graphics(), pad = 4;
-      g.roundRect(bb.x - pad, bb.y - pad, bb.width + 2 * pad, bb.height + 2 * pad, 8).stroke({ color, width: 3, alpha: 0.95 });
+      g.roundRect(bb.x - pad, bb.y - pad, bb.width + 2 * pad, bb.height + 2 * pad, 8).stroke({ color, width: 3 * k, alpha: 0.95 });
       layer.addChild(g);
     }
+    if (flows.length) this._startHoverFlow(flows, color, k);
     this._render();
   }
-  // graph-edge-flow: 두 노드 사이 관계선의 곡선 파라미터 조회(hover 강조가 실제 호에 정합하도록).
-  //   인접 인덱스가 있으면 O(incident). 역방향(t→s)으로 등록된 엣지면 곡률 부호를 뒤집어 같은 호를 얻는다
+  // ── detail-hover-flow: 강조 연결선 위 **데이터 흐름** 대시 애니메이션 ────────────────────────
+  //   요청: "하이라이트 처리된 부분은 실제 데이터 흐름을 나타내는 애니메이션". 흐름 방향은 관계선의
+  //   화살표 의미(읽기=테이블→루틴 / 쓰기=루틴→테이블 / 참조=선언 방향)를 그대로 따른다.
+  //   render-on-demand(autoStart:false) 라 자체 rAF 로 프레임을 몰고, hover 해제·재빌드·destroy 에서 정지한다.
+  //   비용 상한: hover 중 강조선(보통 1개)만 · 대시 Graphics 만 재페인트(본선·헤일로·노드 링은 정적).
+  _startHoverFlow(flows, color, k) {
+    const P = this.P;
+    if (!P || !this._hoverLayer) return;
+    for (const f of flows) { f.g = new P.Graphics(); f.g.zIndex = 1; this._hoverLayer.addChild(f.g); }
+    const DASH = 9 * k, GAP = 9 * k, SPEED = 46 * k;   // 화면 기준(px/s) — 줌과 무관하게 같은 속도로 보인다
+    const paint = (phase) => {
+      for (const f of flows) {
+        f.g.clear();
+        // 위상을 **음수**로 밀면 대시가 pts[끝](=흐름 도착점) 쪽으로 흐른다.
+        for (const s of PixiAdapterPure.dashPolyline(f.pts, [DASH, GAP], -phase)) f.g.moveTo(s[0], s[1]).lineTo(s[2], s[3]);
+        f.g.stroke({ color: 0xffffff, width: 2.0 * k, alpha: 0.92 });
+      }
+    };
+    // 접근성: prefers-reduced-motion 이면 흐름을 멈추고 정적 대시만 남긴다(방향은 화살촉이 유지).
+    let reduced = false;
+    try { reduced = !!(typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (_) {}
+    paint(0);
+    if (reduced || typeof requestAnimationFrame !== "function") { this._hoverFlow = { flows, raf: null }; return; }
+    const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    const state = { flows, raf: null };
+    const step = () => {
+      if (this._hoverFlow !== state) return;   // 새 hover/해제가 선점 — 조용히 종료(세대 토큰)
+      const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+      paint(((now - t0) / 1000) * SPEED);
+      this._render();
+      state.raf = requestAnimationFrame(step);
+    };
+    this._hoverFlow = state;
+    state.raf = requestAnimationFrame(step);
+  }
+  _stopHoverFlow() {
+    const st = this._hoverFlow;
+    this._hoverFlow = null;   // 세대 무효화 — 이미 예약된 프레임은 위 가드에서 자진 종료
+    if (st && st.raf != null) { try { cancelAnimationFrame(st.raf); } catch (_) {} }
+  }
+  // graph-edge-flow: 두 노드 사이 관계선 조회(hover 강조가 **실제 그 선**의 호·방향에 정합하도록).
+  //   인접 인덱스가 있으면 O(incident). 순위: ① 방향 일치(더 강한 신호 — 왕복 REFERENCES 를 가른다)
+  //   ② 그 안에서 relation_type 일치(같은 방향에 읽기/쓰기 2선이 공존하는 ROUTINE_USES 를 가른다).
+  //   역방향(t→s)으로 등록된 엣지면 곡률 부호를 뒤집고 화살표 키를 교환해 (sid→tid) 프레임으로 정규화한다
   //   — 곡률은 진행방향 기준 왼쪽 고정이므로 방향을 뒤집으면 반대편 호가 된다.
-  _edgeStyleBetween(sid, tid) {
+  _edgeMatchBetween(sid, tid, relType) {
     const idx = this._edgeIndex;
     const arr = (idx && idx.get(sid)) || this._built.edges || [];
+    const want = relType ? (relType === "write" ? "write" : "read") : null;
+    const kindOf = (e) => (((e.data && e.data.relation_type) === "write") ? "write" : "read");
+    let best = null, bestScore = 0;
     for (const e of arr) {
-      if (e.source === sid && e.target === tid) return e.style || null;
-      if (e.source === tid && e.target === sid) { const st = e.style || {}; return { curve: -(st.curve || 0), curveMax: st.curveMax, curveMin: st.curveMin }; }
+      const fwd = (e.source === sid && e.target === tid), rev = (e.source === tid && e.target === sid);
+      if (!fwd && !rev) continue;
+      const hit = want ? (kindOf(e) === want) : false;
+      const score = (fwd ? 2 : 0) + (hit ? 1 : 0) + 1;   // 방향(2) > 종류(1), 매칭 자체 1
+      if (score <= bestScore) continue;
+      const st = e.style || {};
+      best = fwd
+        ? { style: st, reversed: false, edge: e }
+        : { style: { curve: -(st.curve || 0), curveMax: st.curveMax, curveMin: st.curveMin, startArrow: st.endArrow, endArrow: st.startArrow }, reversed: true, edge: e };
+      bestScore = score;
+      if (score === 4 || (!want && fwd)) break;   // 최상위 매칭 — 더 볼 필요 없음
     }
-    return null;
+    return best;
   }
+  // 호환 유지(A10 계약): 스타일만 필요할 때의 얇은 래퍼.
+  _edgeStyleBetween(sid, tid, relType) { const m = this._edgeMatchBetween(sid, tid, relType); return m ? m.style : null; }
   clearHoverHighlight() {
     if (!this._hoverLayer) return;
-    this._hoverLayer.removeChildren();
+    this._stopHoverFlow();
+    this._clearHoverLayer();
     this._render();
+  }
+  // detail-hover-flow: 오버레이 Graphics 는 **파기까지** 한다. hover 는 행마다 발생(스윕 1회에 수십 번)하고
+  //   흐름 레이어가 매 hover 새 Graphics 를 만들므로, detach 만 하면 GPU 지오메트리가 누적된다
+  //   (_paintEdge 의 자식 정리와 동일 어휘). 호출 전 반드시 _stopHoverFlow() — 파기된 Graphics 에
+  //   프레임이 그려지지 않게.
+  _clearHoverLayer() {
+    if (!this._hoverLayer) return;
+    for (const ch of this._hoverLayer.removeChildren()) { try { ch.destroy({ children: true }); } catch (_) {} }
   }
   // 무인자(gap #10)=컨테이너 추종, (w,h)=명시. graph-core 는 무인자로 부른다(core:1833,2090).
   resize(w, h) { if (!this.app) return; if (w == null) this._resizeToContainer(); else { this.app.renderer.resize(w, h); this._positionMinimap(); this._renderMinimapViewport(); this._repaintHoverCard(); } this._render(); }
@@ -1487,6 +1594,7 @@ export class PixiGraphAdapter {
     try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); } catch (_) {}
     try { if (this._pendingRaf) cancelAnimationFrame(this._pendingRaf); } catch (_) {}   // graph-edge-drag-perf: 코얼레싱 rAF 정리
     try { if (this._edgeZoomRaf) cancelAnimationFrame(this._edgeZoomRaf); } catch (_) {}   // §85: 줌 재페인트 rAF 정리
+    try { this._stopHoverFlow(); } catch (_) {}   // detail-hover-flow: 강조선 흐름 애니메이션 rAF 정리
     try { this._cancelHoverProbe(false); } catch (_) {}   // graph-label-hover-expand: 대기 프로브 rAF 정리
     try { this._clearLabelHover(); } catch (_) {}   // graph-label-hover-expand: 예약 타이머·트윈 rAF·카드 정리
     try { if (this._ro) this._ro.disconnect(); } catch (_) {}   // m1: ResizeObserver 정리

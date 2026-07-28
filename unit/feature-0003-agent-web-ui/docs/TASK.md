@@ -6713,3 +6713,19 @@ mouse-hover 툴팁으로 충분하니 제거.
     ① 애니 전 구간 카드 좌측 x=**249 단일값**(앞글자 이동 0) ② 유의 diff 가 원 카드 우측 끝 이후(캔버스 x 354~449)에만 발생
     ③ `agent_attachment_5f6353c47…` → 전체 명칭 노출 ④ 확장분이 우측 이웃 카드 **위**(이웃 위치는 불변) ⑤ 이탈 픽셀 동치 ⑥ pageerror 0
   - 증적: `docs/evidence/pb0008-graph-hover-anchor-{before,after}-20260728.png`
+
+## 20260728T1628-graph-hover-flow — 상세 패널 hover 강조: (방향·읽기/쓰기) 관계선 특정 + 데이터 흐름 애니메이션 (Minor §12.3 frontend-only)
+- 요청(사용자, 2026-07-28, `/_template:entry` arg-given): "상세 패널 내 참조관계를 개별 확인하려고 mouse-hover 하이라이트를 구성했는데, 연결선 중 [읽기/쓰기]에 따라 곡선의 형태를 구분하고 있지만 **하이라이트는 구분에 관계없이 하나의 관계선만** 나타난다. 실제 [읽기/쓰기]에 따른 곡선이 하이라이트 되도록 수정 필요. 추가로 하이라이트 처리된 부분은 **실제 데이터 흐름을 나타내는 애니메이션** 형태로 연출."
+- 진단(§7.1 Implementation Plan): 같은 두 노드 사이에 관계선이 **여러 개** 존재한다 — ① 왕복 REFERENCES(A→B / B→A)는 곡률이 진행방향 왼쪽 고정이라 반대편 호(§83 A2), ② ROUTINE_USES 는 읽기/쓰기가 별개 선 2개(§83 C1). 그런데 hover spec 이 `[self끝점, 상대]` 라 **방향을 담지 못했고**, `_edgeStyleBetween` 이 정/역·종류 구분 없이 **첫 매칭**을 반환했다. 그래서 참조함/참조받음(및 읽기/쓰기) 어느 행을 hover 해도 같은 호 하나만 강조됐다.
+- 영향 파일·심볼: `graph-ctxmenu.js`(`relRow`/`row`/`rtRow` 마크업 + 신규 `_metaHoverEdgeSpec` + `_metaGraphBindDetailHover`/`bindRelRows`) · `graph-core.js`(`_metaGraphSetHoverHighlight`) · `graph-renderer-pixi.js`(`PixiAdapterPure.dashPolyline` phase 인자 · 신규 `PixiAdapterPure.flowForward` · `setHoverHighlight` · 신규 `_edgeMatchBetween`/`_startHoverFlow`/`_stopHoverFlow`/`_clearHoverLayer` · `_edgeStyleBetween` 래퍼화).
+- 완료 판정: (a) 참조함/참조받음 두 행이 서로 다른(반대편) 호를 강조하고 화살촉 방향이 갈린다 (b) 읽기/쓰기 행이 각자의 선을 강조한다 (c) 강조선 위 대시가 데이터 흐름 방향으로 이동한다 (d) 기존 스위트 회귀 0.
+- [x] 행 마크업에 모델 엣지 실제 `(source,target)` + `relation_type` 적재 (`data-edge-src`/`data-edge-tgt`/`data-rel-type`, 구 마크업 레거시 폴백 유지)
+- [x] `_metaGraphSetHoverHighlight` spec 을 방향 객체 `{from,to,relType}` 로 확장(레거시 배열 병존)
+- [x] `_edgeMatchBetween` — 방향(1순위) > relation_type(2순위) 순위 + 역방향 정규화(곡률 부호 반전 + 화살표 키 교환)
+- [x] 흐름 애니메이션 — `dashPolyline(pts, dash, phase)` + hover 전용 rAF(`_startHoverFlow`), `prefers-reduced-motion` 정적 폴백
+- [x] 정지/정리 경로 4곳(hover 해제·새 hover 선점·`draw()` 재빌드·`destroy()`) + 오버레이 Graphics 파기
+- [x] 강조 기하 screen-space 정규화(§85 정합 — 종전 model 고정 3.5px)
+- [x] 신규 헤드리스 `test_graph_hover_flow.js` 41 PASS / 0 FAIL + 구현 이전 어댑터 적대 대조로 회귀 포착 확인
+- [x] 그래프 전 스위트 733 PASS / 0 FAIL (회귀 0)
+- [x] §18.8 검증 — `[CODEX:graph-hover-flow]` (subagent 패널은 세션 도구제약 — REVIEW 참조)
+- [x] **PB-0008 Windows-browser 라이브 시각검증** (`visual_verification_scope: always`) — §13.2.9 격리 컨테이너(:18097), 라이브 web-a/web-b 무접촉. 방향 2축·읽기/쓰기 2축·흐름 애니 전부 PASS, 페이지 에러 0. Run=`docs/test-runs.d/20260728T162844-graph-hover-flow.md`

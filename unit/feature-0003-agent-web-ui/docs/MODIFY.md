@@ -1391,3 +1391,41 @@ TASK-20260728T121500-usage-records-hint-tooltip. branch `ai/claude/feature-0003-
 
 검증: `node --check`(ESM) PASS · web 테스트 스위트 PASS · 참조 잔재 grep 0 ·
 POST-DEPLOY PB-0008. RBAC·스키마·마이그·백엔드 0.
+
+## CHG-20260728T162844-graph-hover-flow (상세 패널 hover 강조: 방향·읽기/쓰기 관계선 특정 + 데이터 흐름 애니메이션)
+
+TASK-20260728T162844-graph-hover-flow. branch `ai/claude/feature-0003-hover-rw-edgeflow`.
+
+- `unit/feature-0003-agent-web-ui/src/static/graph/graph-ctxmenu.js` — 관계 행 3종
+  (`relRow` 컬럼 참조 · `row` 관계 상세 · `rtRow` 루틴 사용, + 연관 용어 행)이 **모델 엣지의 실제
+  `(source,target)`** 을 `data-edge-src`/`data-edge-tgt` 로, ROUTINE_USES 는 `data-rel-type`(read|write)
+  까지 싣는다. 신규 `_metaHoverEdgeSpec(el, selfFallbackKey, otherKey)` 가 이 속성을 hover spec 으로
+  변환하고, 속성이 없는 구 마크업은 레거시 `[self, 상대]` 쌍으로 폴백한다.
+  `_metaGraphBindDetailHover` 와 관계 상세의 `bindRelRows` 가 이 헬퍼를 공용한다.
+- `unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js` — `_metaGraphSetHoverHighlight` 의
+  `edgeKeyPairs` 항목을 **방향 객체 `{from,to,relType}`** 로 확장(레거시 배열 병존). 렌더 요소 해소
+  (미렌더 시 조상 승격) 후 `{source,target,relType}` 로 렌더러에 전달 — 방향이 보존된다.
+- `unit/feature-0003-agent-web-ui/src/static/graph/graph-renderer-pixi.js`
+  - `PixiAdapterPure.dashPolyline(pts, dash, phase)` — 선택적 위상 인자(호 길이 단위) 추가.
+    미지정 시 종전과 byte-동치. 실주기 계산은 홀수 길이 패턴의 on/off 반전을 고려(2×sum).
+  - `PixiAdapterPure.flowForward(style)` — 화살표 어휘 → 데이터 흐름 방향
+    (쓰기 endArrow=선언 방향 · 읽기 startArrow=역류 · 무향/양방향=선언 방향 폴백).
+  - `_edgeMatchBetween(sid, tid, relType)` — **방향(1순위) > relation_type(2순위)** 순위로 관계선을
+    특정하고, 역방향 등록 엣지는 `(sid→tid)` 프레임으로 정규화(곡률 부호 반전 + `startArrow`/`endArrow`
+    교환). 기존 `_edgeStyleBetween(sid,tid[,relType])` 은 이것의 얇은 래퍼로 남아 §83 A10 계약 유지.
+  - `setHoverHighlight` — 매칭된 **그 선**의 호 위에 헤일로(α0.16)+본선(α0.9)을 겹치고, 화살촉을
+    **흐름이 도착하는 끝**에 접선 각도로 찍는다. 굵기·화살촉 크기·대시 주기/속도는 화면 픽셀 기준
+    (`1/zoom`) — §85 정합(종전 model 고정 3.5px 는 줌인 리본·줌아웃 실종).
+  - `_startHoverFlow`/`_stopHoverFlow` — hover 중에만 도는 rAF 로 흰 대시를 흐름 방향으로 이동
+    (render-on-demand `autoStart:false` 라 자체 프레임 구동). 세대 토큰으로 선점 종료,
+    `prefers-reduced-motion` 이면 rAF 없이 정적 대시.
+  - `_clearHoverLayer` — 오버레이 Graphics 를 detach 가 아니라 **파기**(hover 는 행마다 발생 —
+    GPU 지오메트리 누적 차단). `draw()`·`clearHoverHighlight`·`setHoverHighlight`·`destroy` 4경로 배선.
+- `unit/feature-0003-agent-web-ui/tests/headless/test_graph_hover_flow.js` (신규) — 위상 대시 기하 ·
+  흐름 방향 어휘 · 관계선 특정 순위 · 역방향 정규화 · 패널 행 계약 · graph-core 해소 계약 41건.
+
+검증: 헤드리스 41 PASS(신규) · 그래프 전 스위트 **733 PASS / 0 FAIL** · `node --check`(ESM) 3모듈 PASS ·
+구현 이전 어댑터 적대 대조로 두 축 회귀 재현 확인 · **PB-0008 실 Windows Chrome 150 라이브 PASS**
+(§13.2.9 격리 컨테이너, 라이브 web-a/web-b 무접촉). Python 변경 0 · RBAC·스키마·마이그·백엔드·엔드포인트 0.
+Cross-ref: REVIEW REV-20260728T162844-graph-hover-flow · `docs/test-runs.d/20260728T162844-graph-hover-flow.md` ·
+FUNCTION REQ-20260728T162844-graph-hover-flow(AC-GHF-1~4) · 선행 REQ-20260728T114015-graph-edge-flow(§83).
