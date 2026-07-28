@@ -503,3 +503,13 @@ source_of_truth: true
 - **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`
 - **위험등급**: Minor(문서 전사 — 런타임 무영향). **Rollback**: status 문자열 원복.
 - **Cross-ref**: CHG/TASK/REV-20260727T175800-false-truncation-belief · REV-20260727T185742-false-truncation-belief-deploy-status · PR #963.
+
+## CHG-20260728T104438-false-truncation-belief-live-verified — 라이브 실측 결과 기록 + 원장 verified 전이 (doc-only, Minor §12.3)
+> 선행 CHG-20260727T175800-false-truncation-belief 의 **라이브 실측 전사**. 코드 변경 0.
+- **무엇을**: `FRICTION_LEDGER.md` FR-false-truncation-belief `fixed:deployed:unverified-live` → **`fixed:deployed:verified`** + 실측 7항 증거 기록. 실측 중 관측된 별개 축을 신규 항목 `FR-false-absence-zero-row-catalog-scope`(status `triaged`, **미수정**)로 분리 기록. `TASK.md` 라이브 실측 항목 체크.
+- **실측 설계**: 배포본 `8db72012`(⊃ `ef24448c`)에서 원 대화와 **동일 조건**(product 117 WEB_QA / `mssql-web-qa`, model `claude-haiku-4`) 재현 대화 `20260728012534-a56ec98e` 3 turn + PG `agent_runtime.core_messages` 로 도구 결과 실물 대조.
+- **결과**: ① 오귀속 시그니처 3 turn 전부 **0건**(원 시나리오 동형인 대량 완전 결과 turn 포함) ② 신규 신호 라이브 부착(완전성 4·0행 2·셀절단 3·신규 CSV 안내 9, **구 트리거 어휘 0**) ③ §18.8 BLOCKER 수정 실증(20행 완전 + 셀 13개 절단 → 완전성 **억제** + 마커) ④ 진짜 절단(루틴 482건 목록)엔 기존 경고 유지 — 3축 분기 정확 ⑤ 원 불만 대상 `MSP_SELECT_COMMENT_LIST` 2,386자 전문 수신(`END` 완결) ⑥ corroboration distinct_conv 1→0(**분모 23 assistant msg/4 conv 로 작음** — 결정 근거는 ①③④) ⑦ offset 페이징은 실데이터 미도달(정의 35건 max 7,732자 « 창 99,000, `[정의 구간` 0건) → 동작은 배포본 직접 호출로 검증.
+- **정직 표기**: turn1 에서 모델이 2부분 명명 메타뷰 0행을 근거로 "프로시저 0개"라는 **허위 부재**를 단정(실제 482건). **본 변경이 유발한 것이 아님을 baseline 대조로 확인**(배포 전 0행 89건 중 부재 단정 5건 — 기존 base rate). 신규 0행 신호가 불충분했을 뿐이며, 수정은 별도 friction 으로 분리해 사람 결정에 맡긴다.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`
+- **위험등급**: Minor(문서 전사 — 런타임 무영향, 배포 불필요). **Rollback**: status 문자열 원복 + 실측 절 제거.
+- **Cross-ref**: CHG/TASK/REV-20260727T175800-false-truncation-belief · CHG-20260727T185742-…-deploy-status · REV-20260728T104438-…-live-verified · FR-false-absence-zero-row-catalog-scope · PR #963.

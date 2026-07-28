@@ -1574,6 +1574,6 @@ TASK-0015 (plan-review):
 - [x] §18.8 적대 3렌즈 패널(security/backend/qa) — BLOCKER 2 / MAJOR 8 / MINOR 7 / NIT 3 중 12건 in-cycle 반영, 4건 정직 이연, 1건 by-design 수용 → REV-20260727T175800-false-truncation-belief
 - [x] 컨테이너 `make test` 회귀 **2,428건 중 2,422 PASS / 4 FAIL(전부 pre-existing 환경의존 — `git archive HEAD` 무변경 체크아웃 동일 실패로 확증) / 2 skip** + ruff PASS
 - [x] verify-completion PASS → PR #963 머지(main `ef24448c`) → **배포 완료**(`make deploy-web` 전체 스코프: web-a/web-b 롤링 + ask/insight-worker 재빌드 + gateway reconcile, soak 90s 통과, 4서비스 GIT_COMMIT=ef24448c, `/healthz` ok) → 배포본 런타임 실측 9항 확인(auto 창 99,000 · 초대형 머리말 · offset 안내 캡 생존 · 캡 이하 미분할 · 셀 절단 stats 분리 · 프롬프트 신규 계약 4항)
-- [ ] 라이브 대화 실측(동일 입력 재현으로 "도구 한계" 문구 소멸 · offset 이어읽기 관측) → 원장 `verified` 전이. 현재 `fixed:deployed:unverified-live`.
+- [x] **라이브 대화 실측 완료(2026-07-28)** — 재현 대화 `20260728012534-a56ec98e`(product 117 / `claude-haiku-4`, 원 대화 동일 조건) 3 turn: 오귀속 시그니처 **0건**(대량 완전 결과 291행 카운트 + 200행 렌더 turn 포함) · 셀 절단 시 완전성 억제 + 마커 실증(20행 완전 + 13셀 절단) · 진짜 절단(루틴 482건 목록)엔 기존 경고 유지 · 구 트리거 어휘 0건/신규 안내문 9건 · 원 불만 대상 `MSP_SELECT_COMMENT_LIST` 2,386자 전문 수신(`END` 완결). corroboration distinct_conv 1→0(분모 23 assistant msg/4 conv 로 작음 — 판정 근거는 직접 재현+기전). offset 페이징은 실데이터 미도달(정의 35건 max 7,732자 « 창 99,000) → 배포본 직접 호출로 검증. 원장 `fixed:deployed:verified` 전이.
 - worktree `ai/root/feature-0002-agent-core`(base main cdf4acf1) → 후속 원장 전이 cycle `ai/claude-corp/feature-0002-agent-core`(base main ef24448c).
 정본 rationale=REVIEW REV-20260727T175800-false-truncation-belief, 변경이력=MODIFY CHG-20260727T175800-false-truncation-belief.

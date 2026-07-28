@@ -523,3 +523,10 @@ source_of_truth: true
 - 근거(측정): PR #963 merge main `ef24448c` → `make deploy-web` 전체 스코프 soak 통과, 4서비스 GIT_COMMIT=ef24448c, web `/healthz` ok(mysql_ok·pg_ok), 배포본 ask-worker 런타임에서 신규 계약 9항 실측 확인(열린 절단신호·침묵≠완전·구 닫힌계약 제거·산술 종료조건·auto 창 99000·초대형 머리말·offset 안내 캡 생존·캡 이하 미분할·셀 절단 stats 분리·offset 형식오류 명시).
 - 라이브 대화 실측은 여전히 미수행 → 원장 status 는 `unverified-live` 유지(거짓 done 금지).
 - Cross-ref: REV/CHG/TASK-20260727T175800-false-truncation-belief · PR #963.
+
+## REV-20260728T104438-false-truncation-belief-live-verified [SKIPPED:live-measurement-record-doc-only] — PASS
+- 대상: FR-false-truncation-belief **라이브 실측 결과 전사** + 원장 `fixed:deployed:verified` 전이 + 신규 축 `FR-false-absence-zero-row-catalog-scope` 분리 기록. **코드 변경 0**.
+- 리뷰 방식([SKIPPED] 사유): 로직의 적대 검증은 REV-20260727T175800-false-truncation-belief [SUBAGENT:adversarial-security+backend+qa] 에서 완료. 본 cycle 은 라이브 측정치의 사실 전사이므로 추가 패널의 판별력이 없다. 대신 **측정 자체의 반증 설계**를 적용했다(아래).
+- **측정의 반증 설계(패널 대체)**: (a) 시그니처 부재를 성공으로 읽지 않기 위해 **원 시나리오 동형의 대량 완전 결과**를 강제하는 turn 을 별도 투입(291행 카운트 + 200행 렌더) — "마찰이 발동할 조건을 만들고도 발동하지 않음" 을 확인. (b) 신호가 실제로 붙었는지 **도구 결과 실물**을 PG 에서 대조(모델 답변만 보고 판단하지 않음). (c) 완전성 억제가 우연이 아님을 셀 절단 사례로 역방향 확인. (d) 실측 중 발견한 부재 단정에 대해 **배포 전 base rate 를 별도 측정**해 자기 변경으로의 오귀인을 차단(89건 중 5건 — 기존 실패 모드). (e) 페이징 미관측을 "검증됨"으로 포장하지 않고 **데이터 분포(35건 max 7,732자)로 미도달임을 명시**.
+- **판정**: 주 판정축(허위 절단 오귀속) **verified**. 부가축(offset 페이징) 라이브 미도달 — 배포본 직접 호출로만 검증됨을 원장에 정직 표기. 신규 축(허위 부재)은 미수정 `triaged`.
+- Cross-ref: REV/CHG/TASK-20260727T175800-false-truncation-belief · CHG-20260728T104438-…-live-verified · 재현 대화 `20260728012534-a56ec98e` · PR #963.
