@@ -3098,6 +3098,22 @@ def _build_self_review_messages(base_messages: list[dict], draft_answer: str,
     ]
 
 
+def _realign_thread_goal(thread_goal: str, suppress_conversation_context: bool) -> str:
+    """red-team 재앵커에 실을 대화 목표 (answer-origin-realign) — 누출 게이트.
+
+    `thread_goal`(및 origin_request)은 대화의 (가려졌을 수 있는) 첫 요청에서 파생된 자유
+    텍스트라 message id 에 묶이지 않아 공유창 visibility window 로 자를 수 없다. 따라서
+    bounded 발신자(`_suppress_conversation_context=True`)에게는 system 프롬프트의
+    CONVERSATION CONTEXT 와 **동일하게** 억제한다 — 억제하지 않으면 수정 지시가 가려진
+    구간의 요약을 그 발신자의 답변 생성 컨텍스트로 실어나르는 새 누출 경로가 된다
+    (share-visibility-window REVIEW B1 과 동일 축).
+
+    현재 발화(`user_message`)는 그 발신자 본인의 입력이라 억제 대상이 아니다 — 재앵커의
+    주 앵커는 항상 그것이고, 본 함수가 통제하는 것은 대화 레벨 보조 앵커뿐이다.
+    """
+    return "" if suppress_conversation_context else (str(thread_goal or ""))
+
+
 def _extract_sql_tables(sql_text: str) -> list[str]:
     sql = str(sql_text or "")
     if not sql:
@@ -4868,12 +4884,25 @@ def _run_agent_core(
 
                 if _redteam.review_plan(reasoning_level) is not None:
                     _emit_activity("답변을 자가 검증하는 중 (red-team 리뷰)")
+                    # answer-origin-realign: 수정 지시의 재앵커에 쓸 대화 목표(보조 앵커).
+                    # bounded 발신자 억제 판정은 _realign_thread_goal 정본(누출 게이트).
+                    _rt_goal = _realign_thread_goal(thread_goal, _suppress_conversation_context)
+                    _rt_realign_info: list[dict[str, Any]] = []
+                    # 비용 가드 — realign 은 라운드당 최대 1회지만, 반복 수정 루프는 상한이
+                    # 없다(REDTEAM_REVISE_UNTIL_RESOLVED). 모델이 재서술 요구에 끝내 응하지
+                    # 않으면(still_meta / content_loss 반복) 매 라운드 호출이 순수 낭비이므로,
+                    # **연속 거절 2회**면 이 run 에서 realign 을 더 시도하지 않는다. 성공(applied)은
+                    # 카운터를 되돌린다 — 잘 듣는 대화에서 상한이 조기 소진되지 않게.
+                    _rt_realign_rejects = {"streak": 0}
+                    _RT_REALIGN_REJECT_LIMIT = 2
 
-                    def _rt_revise(instruction: str, draft: str) -> str | None:
-                        # draft = orchestrate 가 넘긴 현재 최선 답변(다회 수정 시 직전 수정본).
+                    def _rt_generate(instruction: str, draft: str,
+                                     base: list[dict[str, Any]] | None = None) -> str | None:
+                        """초안+지시로 답변 전문을 1회 재생성 (도구 없음). 실패 시 None."""
                         # 지시는 trailing user turn 이어야 초안이 prefill 로 처리되지 않고
                         # 모델이 재작성한다 (_build_self_review_messages docstring 참조).
-                        _rev_messages = _build_self_review_messages(messages, draft, instruction)
+                        _rev_messages = _build_self_review_messages(
+                            base if base is not None else messages, draft, instruction)
                         _rev = _call_llm(client, _rev_messages, model,
                                          temperature=temperature,
                                          conversation_id=cid, run_id=run_id,
@@ -4885,6 +4914,39 @@ def _run_agent_core(
                         # 수정 모델이 raw 도구 결과를 보고 대형 인라인 표/```csv 블록을 재방출할 수
                         # 있으므로 초안과 동일하게 CSV 링크로 접는다(초안 대칭 — 회귀 방지).
                         return _collapse_result_blocks(_txt, all_csv) if all_csv else _txt
+
+                    def _rt_realign(text: str, base: list[dict[str, Any]] | None = None) -> str:
+                        """메타 프레이밍 잔재를 내용 보존 재서술 1회로 교정 (bounded, fail-open).
+
+                        red-team 수정 지시는 trailing user turn 이라 모델의 생성 지점 최근접
+                        맥락이 '내부 리뷰 결함 목록'이다 — 산출물이 사용자의 원 요청이 아니라
+                        직전 맥락에 응답하는 레지스터로 기운다(관측 증상). 1차 방어는 지시 말미의
+                        원 요청 재앵커(build_*_instruction)이고, 여기는 그래도 남은 잔재를 잡는
+                        2차 방어다. **콜백 안에서** 수행하므로 재서술본도 orchestrate 의 verify
+                        패스를 그대로 통과한다(red-team 수렴 불변식 무손상).
+
+                        base: 재서술 프롬프트의 기반 메시지. 재추론(rederive) 경로는 **그 라운드의
+                        메시지(`_rd_messages`)** 를 넘겨야 한다 — 재도출이 새로 돌린 도구 결과가
+                        outer `messages` 에는 없어서, 기본 base 로 재서술하면 모델이 컨텍스트에
+                        보이는 **낡은 근거** 쪽으로 수치를 되돌릴 수 있다.
+                        """
+                        if _rt_realign_rejects["streak"] >= _RT_REALIGN_REJECT_LIMIT:
+                            return text  # 연속 거절 — 이 run 에서는 더 시도하지 않는다(비용 가드)
+                        _out, _info = _redteam.realign_answer(
+                            text, question=user_message, thread_goal=_rt_goal,
+                            rewrite_fn=lambda _instr: _rt_generate(_instr, text, base))
+                        if _info is not None:
+                            _rt_realign_info.append(_info)
+                            if _info.get("applied"):
+                                _rt_realign_rejects["streak"] = 0
+                            else:
+                                _rt_realign_rejects["streak"] += 1
+                        return _out
+
+                    def _rt_revise(instruction: str, draft: str) -> str | None:
+                        # draft = orchestrate 가 넘긴 현재 최선 답변(다회 수정 시 직전 수정본).
+                        _txt = _rt_generate(instruction, draft)
+                        return _rt_realign(_txt) if _txt else None
 
                     def _rt_rederive(instruction: str, draft: str) -> dict[str, Any] | None:
                         """도구 허용 재추론 콜백 (feature-0002 축 인지 라우팅).
@@ -4993,6 +5055,13 @@ def _run_agent_core(
                             return None
                         if all_csv:
                             _rd_final = _collapse_result_blocks(_rd_final, all_csv)
+                        # answer-origin-realign: 재추론은 도구 결과 turn 을 더 쌓아 원 요청이
+                        # 생성 지점에서 한층 멀어진다 — 텍스트 재작성 경로와 동일하게 교정한다.
+                        # base=_rd_messages: 이 라운드가 새로 돌린 도구 결과를 포함한 컨텍스트로
+                        # 재서술해야 낡은 근거로의 되돌림이 없다(_rt_realign docstring 참조).
+                        # 이 시점의 _rd_messages 는 tool_call ↔ tool 응답이 모두 짝지어진 상태다
+                        # (중도 취소 경로는 _rd_final 이 없어 위에서 이미 return 된다).
+                        _rd_final = _rt_realign(_rd_final, _rd_messages)
                         # W1(추적성): 재도출 근거는 반환값으로만 넘긴다 — 오케스트레이터가 이
                         # 라운드를 실제로 채택했을 때만 meta["rederive_steps"] 로 되돌려주고,
                         # 그때 caller 가 outer steps·last_sql 에 반영한다. (콜백이 직접 outer 를
@@ -5044,6 +5113,7 @@ def _run_agent_core(
                         answer_model=model,  # 정합: 답변 모델과 같은 tier 로 리뷰어 도출(haiku/sonnet)
                         abort_fn=_rt_abort,
                         progress_fn=_emit_activity,
+                        thread_goal=_rt_goal,  # answer-origin-realign (bounded 발신자엔 빈 값)
                     )
                     if _rt_answer and _rt_answer.strip():
                         answer = _rt_answer
@@ -5060,6 +5130,20 @@ def _run_agent_core(
                         _rt_sql = (_rt_meta or {}).get("rederive_executed_sql")
                         if _rt_sql:
                             last_sql = _rt_sql
+                    # answer-origin-realign 관측 — 몇 번 탐지·교정됐고 무엇이 폐기됐는지.
+                    # 새 DB 컬럼을 만들지 않고 meta + stderr 로만 남긴다(마이그레이션 없음).
+                    # 콘솔 노출은 후속(TASK.md 잔여 항목).
+                    if _rt_realign_info and isinstance(_rt_meta, dict):
+                        _rt_meta["realign_detected"] = len(_rt_realign_info)
+                        _rt_meta["realign_applied"] = sum(
+                            1 for i in _rt_realign_info if i.get("applied"))
+                        _rt_meta["realign_rejects"] = [
+                            i.get("reject_reason") for i in _rt_realign_info
+                            if i.get("reject_reason")]
+                    for _ri in _rt_realign_info:
+                        print(f"[redteam] answer-realign detected={_ri.get('detected')} "
+                              f"applied={_ri.get('applied')} reject={_ri.get('reject_reason')}",
+                              file=sys.stderr)
                 _agent_notes.update_notes_after_answer(
                     conversation_id=cid, product_id=product_id,
                     steps=steps, review_meta=_rt_meta)

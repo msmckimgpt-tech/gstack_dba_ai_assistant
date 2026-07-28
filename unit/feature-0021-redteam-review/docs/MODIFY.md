@@ -343,3 +343,57 @@ source_of_truth: true
 - Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/REPORT.md`
 - Impact: 제품 동작 무변경. TASK.md 의 실제 잔여가 정형 Completion Checklist 만 남는다.
 - Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.
+
+## CHG-20260728-0002
+- Date: 2026-07-28
+- Related Requirement: REQ-20260728T093528-answer-origin-realign,
+  TASK-20260728T093528-answer-origin-realign
+- Summary: 자가 검증을 거쳐 전달되는 답변이 **처음 요청사항이 아니라 직전 문맥(내부 리뷰
+  결함 목록)에 응답하는 뉘앙스**를 띠던 결함을 구조적 원인에서 교정했다.
+  - **근본 원인**: 수정·재추론 지시는 초안 생성 컨텍스트의 **trailing user turn** 이다
+    (`_build_self_review_messages` — 2026-07-24 §9 prefill 회귀 방지 불변식). 따라서 모델의
+    생성 지점 최근접 맥락이 "내부 리뷰 결함 목록"이고, 산출물이 원 요청이 아니라 그 직전
+    맥락에 응답하는 레지스터로 기운다. 사용자는 그 검증을 본 적이 없어 자기 질문과 어긋난
+    답으로 읽는다.
+  - **1차 (추가 호출 0)**: `build_request_anchor` + `_ANSWER_CONTRACT` 를 revise/rederive
+    지시의 **맨 끝**에 배치 — 같은 recency 지렛대를 반대로 쓴다. 출력이 "리뷰에 대한 회신"이
+    아니라 "원 요청에 대한 최종 답변"임을 계약으로 못박고, 메타 표현·직전 맥락 지시어로
+    시작 금지 + 답변 구성은 결함 목록이 아니라 원 요청이 결정함을 명시.
+  - **2차 (조건부 1회)**: `detect_meta_framing`(결정론·도입부 240자 한정) 이 잔재를 잡으면
+    `realign_answer` 가 **내용 보존 재서술 1회**를 요청. 폐기 가드 — 무산출 / 호출 실패 /
+    원문 대비 60% 미만 길이(내용 손실 의심) / 재서술본에도 메타 잔존 → 원문 유지(fail-open).
+  - **배치 결정**: 재서술을 red-team revise **콜백 내부**에 둬 산출물이 기존 verify 패스를
+    그대로 통과하게 했다(수렴 불변식 무손상). 전달 후 별도 다듬기 패스는 채택하지 않았다 —
+    근거 없이 문장만 다듬는 리라이터는 red-team 이 방금 강제한 grounding·불확실성 고지를
+    지워내 정직성을 되돌린다(REVIEW.md 판단 근거 참조).
+  - **누출 게이트**: 보조 앵커 `thread_goal` 은 대화의 (가려졌을 수 있는) 첫 요청에서 파생된
+    자유 텍스트라 window 로 자를 수 없으므로 bounded 발신자에게 억제(`_realign_thread_goal`
+    정본 — system 프롬프트 CONVERSATION CONTEXT 억제와 동일 축). 재앵커 블록은
+    `<<USER_REQUEST>>` sentinel datamark.
+  - **비용 가드**: 탐지 없으면 호출 0. 상한 없는 반복 수정 루프에서 **연속 거절 2회**면 그 run
+    의 잔여 라운드는 재서술을 시도하지 않는다(성공 시 카운터 리셋). 운영 스위치
+    `REDTEAM_ANSWER_REALIGN`(기본 1).
+  - **오탐 가드**: 탐지 목적어를 `답변|초안` 으로 한정 — `내용` 을 넣으면 DBA 답변의 정당한
+    DML 설명("이 쿼리는 orders 테이블의 내용을 수정합니다")을 오탐한다.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/redteam.py` — `build_request_anchor` /
+    `_ANSWER_CONTRACT` / `detect_meta_framing` / `_meta_framing_head` /
+    `build_reanchor_instruction` / `realign_answer` / `answer_realign_enabled` 신설,
+    `build_revision_instruction`·`build_rederive_instruction` 에 `question`/`thread_goal`
+    선택 인자(미지정 시 기존 형태 — 레거시 무회귀), `orchestrate_review(thread_goal=…)`,
+    `_strip_review_sentinels` 에 요청 sentinel 추가
+  - `unit/feature-0002-agent-core/src/agent_core.py` — `_realign_thread_goal` 신설(누출 게이트),
+    `_rt_generate`/`_rt_realign` 분리 + `_rt_revise`·`_rt_rederive` 배선(재추론은
+    `base=_rd_messages` 로 신 근거 컨텍스트 유지), realign 관측치 `_rt_meta` + stderr
+  - `shared/runtime_settings.py` — `REDTEAM_ANSWER_REALIGN` 스펙(0/1, 기본 1, live)
+  - `unit/feature-0002-agent-core/tests/test_redteam.py`(신규 20건),
+    `unit/feature-0002-agent-core/tests/test_self_review_messages.py`(신규 3건)
+  - `unit/feature-0021-redteam-review/docs/{FUNCTION,TASK,REVIEW,MODIFY,REPORT,TEST}.md`,
+    `docs/test-runs.d/20260728T0935-answer-origin-realign.md`
+- Impact: 답변 **문구·서술 대상**이 바뀐다(사실·수치·근거는 불변 — 재서술은 내용 보존 계약이고
+  길이·메타 가드로 폐기된다). 마이그레이션 없음. 프론트 자산 무변경. 리뷰 판정 스키마 무변경.
+  추가 LLM 호출은 메타 프레이밍이 탐지된 라운드에서만 1회이며 `REDTEAM_ANSWER_REALIGN=0` 으로
+  즉시 차단 가능. 미해소 고지(`_UNRESOLVED_NOTICE`)는 orchestrate 루프 **이후** 부착이라
+  재서술이 이를 지울 경로가 없다.
+- Rollback Notes: `REDTEAM_ANSWER_REALIGN=0` 으로 2차 방어만 즉시 차단(재배포 불요). 1차
+  재앵커까지 되돌리려면 커밋 revert — 프롬프트 문자열 변경이라 데이터 마이그레이션 불요.

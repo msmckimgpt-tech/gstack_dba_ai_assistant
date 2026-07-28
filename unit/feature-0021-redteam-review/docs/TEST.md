@@ -27,6 +27,11 @@ source_of_truth: true
   dedupe·TTL sweep·sanitize·비활성.
 - TEST-20260715T140002-api-1..8: `tests/test_admin_reasoning.py` — RBAC 공통·guidance 목록/
   상세/404·redteam degrade·cursor 관대성·notes·runtime redteam 그룹.
+- TEST-20260728T093528-realign-1..23: `tests/test_redteam.py`(20) + `tests/test_self_review_messages.py`(3)
+  — 원 요청 재앵커 순서 계약(findings 뒤), 레거시 인자 미지정 무회귀, `<<USER_REQUEST>>` datamark
+  breakout 차단, 메타 프레이밍 탐지(양성 7·정상 DB 답변 3·DML 오탐 가드·제목 은닉·빈 입력),
+  재서술 계약(탐지 없으면 호출 0·스위치 OFF·적용·내용손실 폐기·메타잔존 폐기·무산출/예외 fail-open·
+  rewrite_fn 부재), orchestrate question/thread_goal 스레딩, bounded 발신자 thread_goal 억제.
 - 기존 회귀: `test_runtime_settings_api.py`(레지스트리 확장 무회귀),
   `test_permission_dependency_map.py`(신규 권한 FE↔카탈로그 정합),
   `test_route_parity_p5b.py`(라우트 추가 정합), `test_call_llm_records_agent_task.py`(계측 무회귀).
@@ -117,6 +122,18 @@ source_of_truth: true
   - 증적: `artifacts/shared/win-browser-shots-pb0008-redteam/step_06_20260727_182026.png`(기본
     렌더) · `step_05_20260727_182219.png`(잔존 분기) · `step_07_20260727_182335.png`(설정 패널).
 
+### Run 2026-07-28 — 원 요청 정합 교정 (answer-origin-realign)
+
+- Environment: **CLI** (agent 이미지 `mysql-ai-agent:current` 격리 컨테이너, worktree 마운트 +
+  `PYTHONDONTWRITEBYTECODE=1`, monkeypatch — DB/LLM 무의존)
+- 상세 fragment: [`test-runs.d/20260728T0935-answer-origin-realign.md`](./test-runs.d/20260728T0935-answer-origin-realign.md)
+- 결과 **PASS** — 신규 23건(redteam 20 + self_review_messages 3) 포함 **2814 passed / 2 skipped /
+  0 failed**. 같은 컨테이너·같은 명령으로 측정한 **main HEAD(44fe939d) baseline 2791 passed** 와
+  대조해 순증 23 = 신규 테스트 수, **회귀 0** 확정. `ruff check unit/ shared/` All checks passed.
+- 마이그레이션 없음(alembic 무변경) → migrate-lint 대상 아님. 웹 자산(static/template/html)
+  변경 0 → check #13 시각검증 hard gate 대상 아님.
+- 미커버는 §4 참조 — 라이브 교정 효과·재서술 발동률(문체 판정은 단위 테스트 범위 밖).
+
 ## 4. Integration Coverage
 - 리뷰어 실 LLM 판정·redteam_reviews INSERT·노트 실볼륨 축적은 배포 후 라이브 실증
   (POST-DEPLOY Run 으로 §3 에 append). 콘솔 화면은 PB-0008 Windows-browser 검증.
@@ -125,3 +142,9 @@ source_of_truth: true
   이후 새 판정이 아직 없어 관측 불가 — 렌더·집계 경로는 §3 Run 2026-07-27 ③ 에서 합성 행으로
   실증했고, **실판정 수렴 동작은 트래픽 누적 후 `agent_runtime.redteam_reviews` 의
   `revision_rounds`·`stop_reason` 분포로 확인**한다.
+- **미커버 (라이브 트래픽 대기, 2026-07-28 answer-origin-realign)**: 1차 재앵커가 실제 답변의
+  뉘앙스를 얼마나 교정하는지, 2차 재서술(`realign_answer`)의 발동률·거절 사유 분포가 어떤지.
+  단위 테스트는 *계약*(지시 내 순서·게이트·폐기 조건)만 고정할 뿐 LLM 산출물의 문체를 판정하지
+  못한다 — "테스트 통과 = 뉘앙스 교정됨" 으로 읽지 않는다. 관측 경로는 stderr
+  `[redteam] answer-realign detected=… applied=… reject=…` 라인과 `_rt_meta.realign_*` 이며,
+  콘솔 노출은 DB 컬럼 신설이 필요해 후속 cycle 로 분리(TASK.md §10 잔여).

@@ -6,6 +6,8 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_updated: 2026-07-15
+feature_status_date: 2026-07-28
+feature_status_note: "답변 자가 적대 red-team 리뷰(초안→적대 리뷰→결함 수정→재검증→전달, 결함 해소까지 반복) + 원 요청 정합 교정(answer-origin-realign, 07-28) — 수정 지시가 trailing user turn 이라 답변이 원 요청 대신 직전 문맥(리뷰 결함 목록)에 응답하던 구조적 결함을 재앵커(지시 맨 끝 원 요청 블록 + 출력 계약, 추가 호출 0) + 메타 프레이밍 결정론 탐지 후 내용 보존 재서술 1회(콜백 내부 → verify 통과)로 교정. 폐기 가드(무산출·60% 미만 길이·메타 잔존)·연속 거절 2회 비용 가드·REDTEAM_ANSWER_REALIGN 스위치·bounded 발신자 thread_goal 억제. 신규 23건 PASS·전체 2814(baseline 2791) 회귀 0·마이그레이션 없음"
 ---
 
 # Task
@@ -69,6 +71,15 @@ feature_status_updated: 2026-07-15
   alembic 0045 실재 · 공유창 window 격리 fail-closed 인과 실증(플래그 토글 대조) ·
   PB-0008 콘솔 표면화(타일·타임라인 ③④⑤·미해소 블록·설정 신규 5항목). 실증용 임시 행은
   삭제·잔존 0 확인. 실판정 수렴 분포는 트래픽 대기(TEST.md §4 미커버 명시).
+- [x] TASK-20260728T093528-answer-origin-realign: 사용자 리포트("추론·자가적대리뷰 완수 후
+  전달되는 답변이 처음 요청사항의 문맥보다 **직전 문맥**에 답변하는 뉘앙스") 진단 → 근본
+  원인은 수정 지시가 초안 컨텍스트의 trailing user turn 이라 **생성 지점 최근접 맥락이 리뷰
+  결함 목록**이라는 구조. ① 수정·재추론 지시 맨 끝에 원 요청 재앵커 블록 + 출력 계약(메타
+  표현·직전 맥락 지시어 금지, 구성은 원 요청이 결정) — 추가 LLM 호출 0. ② 잔재는 결정론
+  탐지기 + 내용 보존 재서술 1회(탐지 시에만 호출, 콜백 내부라 verify 통과). 폐기 가드
+  (무산출·60% 미만 길이·메타 잔존) + 연속 거절 2회 비용 가드 + `REDTEAM_ANSWER_REALIGN`
+  스위치 + bounded 발신자 thread_goal 억제(`_realign_thread_goal`). 신규 23건 PASS ·
+  전체 2814 passed/0 failed · ruff clean · 마이그레이션 없음.
 
 ## 4. In Progress
 - 없음
@@ -114,3 +125,23 @@ BLOCK 검출 후 답변이 미수정 전달되던 근본 원인(수정 지시를
   revision_applied=true) — PR #938 머지(2026-07-24T07:37Z). 2026-07-28 확인: prefill fix
   배포(16:20) 이후 `redteam_reviews` 표본 21건 중 **revision_applied=true 15건** 관측으로
   라이브 재검증 충족(수정 전에는 42건 중 35건이 false 였다). 체크박스만 미갱신이었다.
+
+## 10. 후속 개선 — 원 요청 정합 (answer-origin-realign, 2026-07-28)
+자가 검증을 거쳐 전달된 답변이 **처음 요청사항이 아니라 직전 문맥(내부 리뷰)에 답하는
+뉘앙스**를 띤다는 사용자 리포트를 구조적 원인으로 환원하고 교정. 상세: MODIFY.md
+CHG-20260728-0002 · REVIEW.md REV-20260728T093528-answer-origin-realign.
+- [x] 근본 원인 특정 — 수정 지시가 초안 컨텍스트의 **trailing user turn**(prefill 회귀 방지
+      불변식, 2026-07-24 §9)이라 생성 지점 최근접 맥락이 리뷰 결함 목록. 그 위치는 유지하고
+      **같은 recency 지렛대를 반대로** 쓰는 방향 채택.
+- [x] 1차 방어 — `build_request_anchor` + `_ANSWER_CONTRACT` 를 revise/rederive 지시 **맨 끝**에.
+      추가 LLM 호출 0.
+- [x] 2차 방어 — `detect_meta_framing`(결정론·도입부 한정) + `realign_answer`(내용 보존 재서술
+      1회, 콜백 내부 실행이라 verify 통과) + 폐기 가드(무산출·60% 미만 길이·메타 잔존).
+- [x] 비용 가드 — 탐지 없으면 호출 0 · 반복 루프에서 연속 거절 2회면 잔여 라운드 시도 중단.
+- [x] 누출 게이트 — `_realign_thread_goal` 로 bounded 발신자 `thread_goal` 억제(system 프롬프트
+      CONVERSATION CONTEXT 와 동일 축) + `<<USER_REQUEST>>` datamark.
+- [x] 오탐 가드 — DBA 답변의 정당 어휘("내용을 수정합니다" DML 설명)를 메타로 오인하지 않도록
+      탐지 목적어를 `답변|초안` 으로 한정.
+- [x] 테스트 23건 신규(전체 2814 passed / baseline 2791) · ruff clean · 마이그레이션 없음.
+- [ ] (후속) realign 관측치의 관리 콘솔 노출 — 현재는 `_rt_meta` + stderr 만. DB 컬럼 신설이
+      필요해 별도 cycle 로 분리(본 cycle 은 마이그레이션 없음 원칙 유지).
