@@ -95,10 +95,13 @@ feature_status_note: 외부 AI 용 Conversation API (Bearer 토큰·scope 교집
       + 골든 route 스냅샷 갱신 + T9 필터 호출처 검증 강화 — 전체 2586 passed / 0 failed
 - [x] TASK-0020: 문서 (FUNCTION/TASK/MODIFY/REVIEW/REPORT/TEST/ANCHOR·SECURITY §25.1·ARCHITECTURE·
       ROUTEMAP·STATUS·wiki)
-- [ ] TASK-0021: §18.8 적대 검증 + verify-completion + commit/PR/merge + 배포 + 라이브 e2e
+- [x] TASK-0021: §18.8 적대 검증 + verify-completion + commit/PR #981 merge + 배포(ebedc256) + 라이브 e2e
+- [x] TASK-0022: 라이브 e2e 적발 핫픽스 — capabilities `conversation.model` 이 항상 null
+      (대화 단위 `"model"` 키로 읽음 → 계정별 `model:<account_id>` 정정 + allowlist 검증,
+      CHG-20260728T115000)
 
 ## 4. In Progress
-- TASK-0021 (검증·출하)
+- TASK-0022 후속 배포·재검증
 
 ## 5. Blocked
 - 없음
@@ -109,8 +112,8 @@ feature_status_note: 외부 AI 용 Conversation API (Bearer 토큰·scope 교집
 - TASK-0014~0020 (대화 품질 조정 표면).
 
 ## 7. Next Action
-- 적대 검증 패널 → verify-completion → commit → PR → cycle-final → 배포 → 라이브 e2e
-  (토큰으로 capabilities 조회 → 제품/폴더 지침 조정 → ask 왕복).
+- 핫픽스 배포 후 `conversation.model` 라이브 재확인. 이후 잔여: 저권한 서비스 계정 확보 시
+  **토큰 경로** e2e(현재는 쿠키 인증으로 대체 검증) + MCP tool 실서버 왕복.
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

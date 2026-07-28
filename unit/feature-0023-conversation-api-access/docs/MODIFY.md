@@ -116,3 +116,22 @@ source_of_truth: true
   유지되어 폴더 축이 닫힌 채 무회귀(열려면 재발급). 전체 회귀 2586 passed / 0 failed.
 - Rollback Notes: 라우터·MCP·문서 revert + scope 상수 2곳 원복 + 골든 스냅샷 원복. 완전 가역
   (DB 마이그레이션 없음).
+
+## CHG-20260728T115000-ai-claude-conv-quality-model-kv-fix (Minor §12.3 — capabilities 모델 KV 키 정정)
+- Date: 2026-07-28
+- Related Requirement: REQ-20260722-conversation-api-access
+  (AC-20260728T103500-conversation-quality-controls-1 의 `conversation` 블록 정확성)
+- Summary: **라이브 e2e 에서 적발**. `GET /api/ai/capabilities?conversation_id=` 의 `conversation.model`
+  이 항상 `null` 이었다 — 대화별 '마지막 요청 모델' KV 는 `model:<account_id>` 로 **요청자 계정별
+  분리**(feature-0003 model-persist: 그룹 대화에서 멤버 A 의 선택이 B 의 composer 를 바꾸고 B 의
+  토큰 한도로 청구되는 것을 막는 설계)인데, capabilities 가 대화 단위 `"model"` 로 읽었다.
+  `reasoning_level` 은 대화 단위 키라 정상 동작해 **한쪽만 맞은 상태**였고, 그래서 응답이 그럴듯해
+  보였다(라이브 왕복 없이는 놓치기 쉬운 부류).
+  - `routers.conversations._model_kv_key(account)` 를 지연 import 해 같은 키로 읽는다.
+  - `/api/history` hydration 과 **동형으로** `_is_allowed_api_model` 검증을 얹어, 카탈로그 밖 저장값
+    (구 alias 등)은 비워서 내린다 — 외부 AI 가 stale 모델을 재전송해 400 을 맞지 않게.
+- Files: `unit/feature-0003-agent-web-ui/src/routers/ai_discovery.py`,
+  `unit/feature-0003-agent-web-ui/tests/test_ai_capabilities.py`(기존 케이스 키 정정 + 회귀 2건:
+  대화 단위 키 미사용·stale alias 배제).
+- Impact: 읽기 전용 응답 필드 1개의 정확성 수정. 인가·스키마·다른 축 무변경.
+- Rollback Notes: 해당 블록 revert. 완전 가역.

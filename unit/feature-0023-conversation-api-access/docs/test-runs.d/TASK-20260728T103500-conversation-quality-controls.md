@@ -56,6 +56,30 @@ verdict: PASS
 - scope 우회 없음 확인: capabilities 의 폴더·첨부 게이트가 `_account_has_permission` →
   `_account_permissions`(scope 교집합 + 절대 denylist) 경로를 탄다(코드 경로 추적).
 
+## 라이브 e2e (배포 ebedc256 후, 2026-07-28)
+쿠키 인증(bootstrap_admin)으로 수행 — **전용 저권한 서비스 계정이 현재 0건**이라 토큰 발급 경로는
+미수행(계정 생성은 운영 결정). 토큰 인증 자체는 이전 cycle 라이브 e2e 로 검증됐고, 이번 변경의
+토큰 관련 부분(folder scope)은 단위 테스트로 고정.
+
+| 검증 | 결과 |
+|---|---|
+| `/livez` | 200 |
+| `GET /api/ai/capabilities` **익명** | **401** `로그인이 필요합니다.` (인스턴스 데이터 무노출) |
+| 익명 매니페스트 `quality_controls` | `discover` 포인터 + 5축, **모델 카탈로그 미포함** 확인 |
+| 인증 capabilities | 200 · 5축 전부 · 모든 축 `set_via` 보유 |
+| 모델 목록 | 3건(계정 권한 필터 적용) · `supports_thinking` 동반 · default `claude-haiku-4` |
+| 제품 목록 | 16건 · `default_product_id=109` · modes `[auto, pinned]` |
+| 폴더 축 | `available=true` · `max_depth=4` |
+| 폴더 생성 + 지침 | 200 · capabilities 에 지침 그대로 노출 |
+| 대화 폴더 배정 | 200 |
+| `PATCH …/product` (pinned 7) | 200 · capabilities `conversation` 에 반영 |
+| `POST /api/ask` (model+reasoning_level) | 200 · 17.2s · error 없음 |
+| 접근 불가 `conversation_id` | 설정 미노출(동일 메시지, oracle 차단) |
+
+**적발 → 핫픽스(CHG-20260728T115000)**: `conversation.model` 이 항상 `null`. 모델 KV 는 계정별
+`model:<account_id>` 인데 대화 단위 `"model"` 로 읽었다. 단위 테스트가 같은 오해로 stub 을 주입해
+통과했던 부류(§16.3 proxy≠ground-truth) — 음성 케이스 회귀 테스트로 봉인.
+
 ## Untested (배포 후)
-- 라이브 e2e: 실토큰 → capabilities 조회 → 제품/폴더 지침 조정 → `/api/ask` 반영 확인.
-- MCP tool 왕복(`list_capabilities`·`upload_attachment` multipart)은 실서버 대상 smoke 필요.
+- **토큰 경로** e2e — 저권한 서비스 계정 확보 후(운영 결정) 수행.
+- MCP tool 실서버 왕복(`list_capabilities`·`upload_attachment` multipart).

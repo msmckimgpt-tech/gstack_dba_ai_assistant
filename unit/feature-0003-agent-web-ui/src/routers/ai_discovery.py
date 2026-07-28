@@ -572,8 +572,20 @@ def ai_capabilities(request: Request, conversation_id: str = "") -> JSONResponse
                 conv_model = ""
                 conv_level = ""
                 try:
-                    conv_model = str(app.load_memory_kv(conn, cid, "model") or "").strip()
                     conv_level = str(app.load_memory_kv(conn, cid, "reasoning_level") or "").strip()
+                    # 대화별 '마지막 요청 모델' KV 는 **요청자 계정별로 분리**된 키다
+                    # (`model:<account_id>` — 그룹 대화에서 멤버 A 의 선택이 B 의 composer 를 바꾸고
+                    # B 의 토큰 한도로 청구되는 것을 막는 feature-0003 model-persist 설계).
+                    # 대화 단위 `"model"` 로 읽으면 **항상 빈 값**이라 외부 AI 에게 "모델 미설정" 을
+                    # 잘못 보고한다(라이브 e2e 에서 적발). `/api/history` 의 hydration 과 같은 키·같은
+                    # allowlist 검증을 쓴다 — 저장값이 현재 카탈로그 밖(구 alias 등)이면 비워서
+                    # 내려, 외부 AI 가 stale 모델을 그대로 재전송해 400 을 맞지 않게 한다.
+                    from routers.conversations import _model_kv_key
+                    _mkey = _model_kv_key(account)
+                    if _mkey:
+                        _saved = str(app.load_memory_kv(conn, cid, _mkey) or "").strip()
+                        if _saved and app._is_allowed_api_model(_saved):
+                            conv_model = _saved
                 except Exception:
                     pass
                 conversation = {
