@@ -99,7 +99,17 @@ _FORBIDDEN_FUNCTIONS_TSQL = {
     "file_id", "file_idex", "filegroup_id", "filegroup_name", "file_name",
     "object_definition", "original_db_name", "parsename", "scope_identity",
     "database_principal_id", "loginproperty", "suser_name",
+    # §18.8 패널(3렌즈 독립 적발) 심층 방어: 서버 스코프 TVF — 타 세션 SQL 텍스트·서버 파일 판독.
+    # RC-B 로 `sys` 스키마 일부를 열었으므로, 설령 스키마 판정이 미래에 다시 느슨해져도 이 목록이
+    # 남은 방어선이 되도록 **함수명 자체**를 거부한다(이름은 `sys.` 접두 유무와 무관하게 매칭).
+    "fn_trace_gettable", "fn_get_audit_file", "fn_dblog", "fn_dump_dblog",
+    "fn_virtualfilestats", "fn_my_permissions", "fn_builtin_permissions",
+    "dm_exec_describe_first_result_set", "dm_exec_sql_text", "dm_exec_query_plan",
+    "dm_exec_input_buffer", "dm_exec_query_statistics_xml",
 }
+
+# `sys.dm_*` 계열 전체를 접두로 거부 (개별 열거로는 신규 DMV 를 못 따라간다 — §18.8 security).
+_FORBIDDEN_FUNCTION_PREFIXES_TSQL = ("dm_",)
 
 # re-gate(6차): niladic 정체성 함수(USER/SESSION_USER/SYSTEM_USER/CURRENT_USER)는 sqlglot 버전에 따라
 # 함수 노드가 아니라 **bare Column 식별자**로 파싱된다(v27: SESSION_USER/USER=Column). 무자격(table 없음)·
@@ -252,6 +262,30 @@ def _table_alias_names(node) -> set[str]:
     return names
 
 
+# §18.8 2라운드 BLOCKER: 함수 namespace 의 **alias 면제**(UDT 메서드 `p.geom.STArea()` 과차단 방지)를
+# 보호 네임스페이스에까지 적용하면, `FROM sys.objects sys CROSS APPLY sys.fn_xe_file_target_read_file(...)`
+# 처럼 **보호 스키마명을 테이블 별칭으로 선언**하는 것만으로 게이트가 눈이 먼다(서버는 여전히 진짜
+# `sys` 스키마 함수를 호출한다 — T-SQL 에서 2부분 함수호출의 앞 토큰은 항상 스키마이지 별칭이 아님).
+# 아래 집합은 **별칭으로 가려질 수 없다**.
+_NEVER_ALIAS_SHADOWED = frozenset({
+    "sys", "guest", "information_schema", "agent_memory",
+    "master", "model", "msdb", "tempdb", "mysql", "performance_schema",
+})
+
+
+def _alias_exempt(acc: "list[str]", aliases) -> bool:
+    """함수 namespace 체인을 alias(UDT 메서드)로 보고 면제할지.
+
+    정당한 UDT 메서드 체인은 `alias.column.method()` 로 **2토큰 이상**이다. 1토큰(`x.fn()`)은
+    스키마 자격 함수호출이므로 면제하지 않는다. 보호 네임스페이스는 길이와 무관하게 면제 불가.
+    """
+    if not acc or acc[0] not in aliases:
+        return False
+    if acc[0] in _NEVER_ALIAS_SHADOWED:
+        return False
+    return len(acc) >= 2
+
+
 def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
     """re-gate BLOCKER2: 3-part **함수호출**(`catalog.schema.fn()`)의 (catalog, schema) 추출.
 
@@ -289,7 +323,7 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
             acc: list[str] = []
             _idents(dot.args.get("this"), acc)
             acc = [a for a in acc if a]
-            if acc and acc[0] in aliases:
+            if _alias_exempt(acc, aliases):
                 continue  # 테이블 alias.column.method() — UDT 메서드 호출, catalog 아님
             if len(acc) >= 2:
                 # 마지막 2개 = (catalog, schema) — 예: [forbidden, dbo] → catalog=forbidden, schema=dbo
@@ -298,6 +332,52 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
                 # re-gate(5차) BLOCKER2: 1-part 함수 namespace — MySQL `db.fn()` 의 db(=schema, allowlist 대조
                 # 대상) / MSSQL `dbo.fn()` 의 schema. schema 슬롯으로 반환해 collect 가 schemas 에 합류시킨다.
                 out.append(("", acc[0]))
+    return out
+
+
+def _collect_qualified_func_refs_named(node) -> "list[tuple[str, str]]":
+    """`_collect_qualified_func_refs` 의 **함수명 포함** 판(= `(schema, 함수명)`).
+
+    화이트리스트 판정은 "어떤 schema 인가" 만으로는 부족하고 "그 schema 의 **무엇**인가" 가 필요하다
+    (§18.8 BLOCKER: `sys.dm_exec_sql_text()` 가 schema 로만 잡혀 객체 단위 대조를 빠져나갔다).
+    schema 슬롯은 namespace 체인의 마지막 식별자(=`sys`), 이름 슬롯은 말단 함수명을 쓴다.
+    """
+    if _exp is None:
+        return []
+    out: list[tuple[str, str]] = []
+    aliases = _table_alias_names(node)
+
+    def _idents(n, acc):
+        if n is None:
+            return
+        if isinstance(n, _exp.Dot):
+            _idents(n.args.get("this"), acc)
+            e = n.args.get("expression")
+            if isinstance(e, _exp.Identifier):
+                acc.append((e.name or "").strip().lower())
+        elif isinstance(n, _exp.Identifier):
+            acc.append((n.name or "").strip().lower())
+        elif isinstance(n, _exp.Column):
+            for part in ("catalog", "db", "table"):
+                p = n.args.get(part)
+                if isinstance(p, _exp.Identifier):
+                    acc.append((p.name or "").strip().lower())
+
+    for dot in node.find_all(_exp.Dot):
+        expr = dot.args.get("expression")
+        if isinstance(expr, (_exp.Func, _exp.Anonymous)):
+            acc: list[str] = []
+            _idents(dot.args.get("this"), acc)
+            acc = [a for a in acc if a]
+            if _alias_exempt(acc, aliases):
+                continue
+            if not acc:
+                continue
+            try:
+                fname = str(getattr(expr, "name", "") or "").strip().lower()
+            except Exception:
+                fname = ""
+            out.append((acc[-1], fname))
     return out
 
 
@@ -319,7 +399,7 @@ def _has_overqualified_function(node) -> bool:
             acc: list[str] = []
             _idents_chain(dot.args.get("this"), acc)
             acc = [a for a in acc if a]
-            if acc and acc[0] in aliases:
+            if _alias_exempt(acc, aliases):
                 continue  # UDT 메서드 호출 — 과차단 방지
             if len(acc) >= 3:
                 return True
@@ -404,6 +484,45 @@ def collect_schema_refs(
             if _sdb:
                 schemas.add(_sdb)
     return (schemas, has_unqualified, catalogs)
+
+
+def collect_schema_object_refs(sql: str, *, dialect: str = "mysql") -> "set[tuple[str, str]]":
+    """freeform SQL 의 자격 있는 table-ref 를 `(schema, object)` **쌍**으로 수집 (둘 다 lowercase).
+
+    `collect_schema_refs` 는 schema 토큰만 주므로 "`sys` 스키마 중 이 뷰만 허용" 같은 **객체 단위**
+    판정을 할 수 없다. RC-B(FR-false-absence-zero-row-catalog-scope)에서 `sys` 전면 차단을 DB 스코프
+    카탈로그 뷰 화이트리스트로 좁히기 위해 도입 — caller 가 (schema, object) 로 대조한다.
+
+    파싱 실패 시 빈 집합. **caller 는 빈 집합을 '시스템 참조 없음'으로 해석하면 안 된다** — 반드시
+    `collect_schema_refs` 의 schema 판정을 1차로 두고, 그 안에서 예외 허용에만 본 함수를 쓴다
+    (파싱 실패는 이미 `validate_sql_for_sandbox`/무자격 fail-closed 가 선행 차단).
+
+    **커버리지 불변식(§18.8 패널 BLOCKER — 3렌즈 독립 적발)**: `collect_schema_refs` 가 schema 로
+    인식하는 참조는 **전부** 여기서도 pair 로 나와야 한다. 그렇지 않으면 caller 의 화이트리스트
+    판정이 "본 것만" 대조하게 되어, 수집 누락분이 **조용히 허용**된다. 실제로 초기 구현은
+    `_collect_table_refs` 만 훑어 `sys.dm_exec_sql_text(...)` 같은 **함수/TVF 참조를 놓쳤고**,
+    같은 문장에 화이트리스트 뷰 하나(`sys.objects`)만 끼우면 임의 DMV 가 통과했다. 그래서
+    ① 함수 참조(`_collect_qualified_func_refs`)도 `(schema, 함수명)` 으로 합류시키고
+    ② 이름을 못 뽑은 db-only 참조는 `(db, "")` 센티널로 내보낸다(빈 이름은 어떤 화이트리스트에도
+    없으므로 자동 차단 = fail-closed).
+    """
+    out: set[tuple[str, str]] = set()
+    if not SQLGLOT_AVAILABLE or _exp is None:
+        return out
+    try:
+        parsed = sqlglot.parse(sql or "", dialect=str(dialect or "mysql").lower())
+    except Exception:
+        return out
+    for stmt in parsed:
+        if stmt is None:
+            continue
+        for _catalog, db, name in _collect_table_refs(stmt):
+            if db:
+                out.add((str(db).lower(), str(name or "").lower()))
+        for fschema, fname in _collect_qualified_func_refs_named(stmt):
+            if fschema:
+                out.add((str(fschema).lower(), str(fname or "").lower()))
+    return out
 
 
 def _collect_function_names(node) -> list[str]:
@@ -682,8 +801,19 @@ def validate_sql_for_sandbox(
     _, extra_forbidden_fns = _DIALECT_DENYLIST.get(dialect, (_DENYLIST_PATTERNS, set()))
     forbidden_fns = _FORBIDDEN_FUNCTIONS | set(extra_forbidden_fns)
     func_names = _collect_function_names(root)
+    # 접두 거부(`dm_*`)는 **`sys` 자격 함수에만** 적용한다. DMV 는 SQL Server 에서 항상 `sys.` 자격이
+    # 필요하고, `dm_`(data mart/dimension)은 사용자 UDF/TVF 에도 흔한 접두라 `dbo.dm_calc_total()`·
+    # `dbo.dm_GetSales(2024)` 까지 잠그면 정상 기능 회귀다(§18.8 2R MINOR). 스키마 게이트가 1차,
+    # 이 이름 규칙은 화이트리스트 오설정 대비 2차 방어선이다.
+    _fn_prefixes = _FORBIDDEN_FUNCTION_PREFIXES_TSQL if dialect == "tsql" else ()
+    _sys_qualified_fns = {
+        (nm or "").lower()
+        for sch, nm in _collect_qualified_func_refs_named(root)
+        if str(sch or "").lower() == "sys"
+    }
     for fn in func_names:
-        if fn in forbidden_fns:
+        _prefixed = bool(_fn_prefixes) and fn.startswith(_fn_prefixes) and fn in _sys_qualified_fns
+        if fn in forbidden_fns or _prefixed:
             return SqlGuardResult(
                 False,
                 error_reason=f"forbidden function: {fn}()",

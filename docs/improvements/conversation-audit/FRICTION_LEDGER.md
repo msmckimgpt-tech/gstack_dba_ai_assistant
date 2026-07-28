@@ -298,9 +298,9 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **라이브 실측 필요분(§정직)**: 코드/테스트는 "완전한 결과에 완전성 명시·트리거 어휘 부재·절단 시 기존 경고 유지·offset 으로 전량 복원" 을 증명. **"실제 대화에서 assistant 가 없는 도구 한계를 더는 지어내지 않는지" 는 배포 후 라이브 실측분**(미수행) → 배포 후 동일 입력 재현 + 다음 audit corroboration(assistant 의 "도구 한계/프리뷰 한계" 시그니처 distinct_conv, 절단 마커 없는 tool 결과 뒤 불완전 주장) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
 - **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 라이브 재현 + `/_dqa:doc_sync`(STATUS·wiki 정합).
 
-## FR-false-absence-zero-row-catalog-scope — triaged (L1 0행→부재 단정; SQL Server 카탈로그 스코프 미인지)
+## FR-false-absence-zero-row-catalog-scope — fixed:undeployed (L1↔L4 0행→부재 단정; 루틴 열거 도구 부재 + 카탈로그 스코프 미인지)
 
-- **status**: `triaged` — **미수정**. FR-false-truncation-belief 라이브 실측(2026-07-28) 중 관측된 **별개 축**이라 분리 기록만 하고 이번 cycle 에서 고치지 않는다(scope 확대 금지 — 수정 여부는 사람 판단).
+- **status**: `fixed:undeployed` — 사용자 지시(2026-07-28)로 근본 규명 후 수정. 코드/테스트 + §18.8 적대 3렌즈 패널 완료, PR·배포 전. 사용자 **범위 결정: RC-B 포함**(보안 경계 재검토).
 - **source**: `/_dqa:conversation_audit` FR-false-truncation-belief 사후 라이브 실측(재현 대화 `20260728012534-a56ec98e` turn1).
 - **last_seen**: 2026-07-28 · **seen_count**: 1(실측) · **seen_distinct_conv**: 1 / 배포 전 base rate 5건(31개 대화)
 - **modality**: 1:1 동기 · **symptom_confidence**: high(실측 재현 + ground truth 대조) · **rootcause_confidence**: medium(2부분 명명 가설은 강하나 코드 fix 미검증)
@@ -308,4 +308,9 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **증상(signal)**: `I-FALSE`(허위 부재 단정). SQL Server 에서 `INFORMATION_SCHEMA.ROUTINES` 는 **연결의 현재 DB 한정**인데 모델이 2부분 명명으로 조회 → 0행 → **"masangsoftweb 에는 저장 프로시저가 전혀 정의되지 않았습니다 / 전체 프로시저 개수 0개"** 단정. **ground truth 는 472 PROCEDURE + 10 FUNCTION = 482건**(3부분 명명 `masangsoftweb.INFORMATION_SCHEMA.ROUTINES` 로 확인). 사용자가 되물으니 자기정정.
 - **오귀인 방지(중요)**: 이 실패는 **FR-false-truncation-belief 수정이 만든 것이 아니다**. 배포 전 구간(2026-06-01~07-27) 0행 tool 결과 **89건 중 직후 부재 단정 5건 / 31개 대화**로 이미 존재하던 base rate 이며, 신규 0행 대칭 신호(`'없다/누락됐다' 고 단정하기 전에 …확인하세요`)는 그것을 **없애지 못했을 뿐**이다.
 - **후보 lever(미채택 — 사람 결정 필요)**: (a) 0행 안내문을 "0행 ≠ 데이터 없음" 우선 프레이밍으로 강화(현 문구는 "이 조건에 맞는 행이 없습니다"가 앞서 완전성 신호로 오독될 여지). (b) dialect 인지 힌트 — SQL Server 에서 메타뷰 2부분 명명 0행 시 "`db.INFORMATION_SCHEMA.X` 3부분 명명으로 교차확인" 안내(`describe_routine` 은 이미 허용 DB 목록을 안내하나 `execute_sql` 0행 경로엔 없음). (c) SYSTEM_PROMPT §ABSENCE 에 "메타뷰 0행은 카탈로그 스코프를 먼저 의심" 규칙 추가.
-- **필요한 사람 액션(1줄)**: 수정 착수 여부 결정(Major — 코어 프롬프트/도구 피드백 경로라 §12.3 사람 승인 필요).
+- **suspected_layers 정정(규명 후)**: 표층은 L1 이지만 실체는 **L4(도구 능력 공백)** 이다 — 루틴을 *열거*하는 구조화 도구가 없어 모델이 카탈로그 SQL 을 손으로 써야 했고, MSSQL 정본 경로(`sys.*`)마저 가드가 닫아 **구조적으로 항상 0행인 쿼리**로 몰렸다.
+- **ground truth**: product 117 의 접근 DB 를 `(SortOrder, SchemaName)` 정렬한 첫 항목이 `_INDY_STATISTIC`(SortOrder 10) → 연결은 거기 auto-pin. `masangsoftweb` 은 28개 허용 DB 중 하나라, 그 DB 의 메타뷰 `ROUTINE_CATALOG` 는 절대 `masangsoftweb` 이 될 수 없다. 실제 루틴 수 **472 PROCEDURE + 10 FUNCTION**.
+- **계보(중요)**: 프로젝트가 **이미 봉인한 실패 모드의 누락된 형제**다 — `FR-mssql-crossdb-structured-discovery`(2026-07-14)가 "MSSQL 카탈로그 뷰는 DB별 → pin 된 DB만 보고 없음으로 오판"을 **구조화 도구에 한해** 고쳤는데, 루틴 열거는 도구 자체가 없어 freeform 으로 샜다.
+- **봉인(5 lever)**: (A) `search_routines` 신설 — 허용 DB 전체 sweep + **정의 본문 검색** + CLR/확장 타입 포함 + keyword 선택(열거) + per-DB 실패·상한 포화 **명시 고지**. (B) freeform `sys` 전면차단 → **DB 스코프 카탈로그 뷰 화이트리스트 21종**(서버 스코프·`synonyms`·`guest`/`db_*`·메타데이터 함수는 계속 차단). (C) MSSQL 프롬프트 `CATALOG VIEWS ARE PER-DATABASE`(2-part + 다른 카탈로그 필터 = 절대 0행, 빈 카탈로그 결과는 스코프의 증거이지 존재의 증거 아님) + `sys` 경계 문구를 화이트리스트 SSOT 로 생성. (D) `_catalog_scope_hint` — **행 수 무관·AST 기반**, 3-part 엔 미부착, 진단 시 완전성 단정 억제. (E) 0행 문구 부재-부정 우선 + 프롬프트 규칙을 메타데이터 맥락으로 한정(정당한 업무 0행 과교정 방지).
+- **fix**: CHG-20260728T114459-false-absence-catalog-scope / **코드 거주 `feature-0002-agent-core`**(+ feature-0003 step 서술 1곳) / REV-20260728T114459-false-absence-catalog-scope.
+- **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major + 보안 경계 완화 — override 불가) → 배포 후 동일 질문으로 라이브 재실측.

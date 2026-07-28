@@ -392,13 +392,49 @@ def _freeform_sql_access_error(sql: str) -> str | None:
             return pin_err
         # 스키마(db part)는 allowlist 대조 안 함(DB 단위). 단 시스템 스키마(sys/guest/db_*)는 차단 — M1 보존
         # (master.sys.sql_logins 등 freeform 직접 조회 차단; RO GRANT 가 사용자 스키마 경계).
+        #
+        # RC-B(FR-false-absence-zero-row-catalog-scope): `sys` **전면** 차단은 SQL Server 의 정본 구조
+        # 탐색 경로를 닫아, 모델을 "2-part INFORMATION_SCHEMA + 다른 카탈로그 필터"(구조적 항상 0행)로
+        # 몰았다(라이브 실증). → `sys` 는 **DB 스코프 카탈로그 뷰 화이트리스트**(dialect.safe_sys_views)
+        # 에 한해 허용한다. 안전 근거 3중: ① 화이트리스트 뷰는 **현재 DB 범위만** 기술 ② catalog(DB)
+        # allowlist 검사가 **이 지점보다 앞에서** 이미 수행됨(3-part `otherdb.sys.x` 도 그 게이트를 통과해야
+        # 함) ③ 시스템 DB(master/msdb/…)는 hard_forbidden 으로 영구 차단. 서버 스코프 뷰(`databases`·
+        # `dm_*`·로그인/주체)는 화이트리스트에 없어 계속 차단되고, 메타데이터 **함수**(OBJECT_DEFINITION
+        # /OBJECT_ID/DB_NAME …)도 forbidden function 으로 계속 차단된다(문자열 리터럴 인자라 AST catalog
+        # 게이트가 못 보는 우회 경로).
         sysschemas = _dialects.active().system_schemas() - _dialects.active().metadata_schemas()
-        blocked_sys = sorted(s for s in schemas if s and s in sysschemas)
-        if blocked_sys:
-            return (
-                f"오류: 시스템 스키마 직접 조회가 차단되었습니다: {', '.join(blocked_sys)} "
-                f"(구조 탐색은 list_schemas/describe_table 사용)."
-            )
+        hit_sys = sorted(s for s in schemas if s and s in sysschemas)
+        if hit_sys:
+            safe_views = _dialects.active().safe_sys_views()
+            blocked_sys = list(hit_sys)
+            if safe_views:
+                from . import sql_guard as _sg
+                pairs = _sg.collect_schema_object_refs(sql, dialect=_dialects.active().sqlglot)
+                # 해당 시스템 스키마의 **모든** 객체 참조가 화이트리스트 안일 때만 그 스키마를 허용한다
+                # (참조를 하나도 못 뽑았으면 = 파싱 열화 → 보수적으로 차단 유지).
+                blocked_sys = []
+                for s in hit_sys:
+                    # 예외는 `sys` 에만 — 화이트리스트의 안전 논거("이 뷰들은 현재 DB 범위만 기술")는
+                    # `guest`/`db_*` 에는 성립하지 않는다(§18.8 MINOR: 이름이 겹치면 통과하던 확대).
+                    if s != "sys":
+                        blocked_sys.append(s)
+                        continue
+                    objs = {o for (sch, o) in pairs if sch == s}
+                    # objs 가 비면(수집 열화) 보수적 차단. 빈 이름 센티널·함수명은 화이트리스트에
+                    # 없으므로 자동 차단된다(TVF piggyback 봉인 — §18.8 BLOCKER).
+                    if objs and objs <= safe_views:
+                        continue
+                    blocked_sys.append(s)
+            if blocked_sys:
+                _hint = ""
+                if safe_views:
+                    _hint = (
+                        f" 읽기 허용 카탈로그 뷰: {', '.join('sys.' + v for v in sorted(safe_views))}."
+                    )
+                return (
+                    f"오류: 시스템 스키마 직접 조회가 차단되었습니다: {', '.join(blocked_sys)} "
+                    f"(구조 탐색은 search_tables/search_routines/describe_table/describe_routine 사용).{_hint}"
+                )
         return None
 
     # ── MySQL (또는 datasource 없음): DB-단위(schema==database) ──────────────────
@@ -791,6 +827,39 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["keyword"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_routines",
+            "description": (
+                "키워드로 **저장 프로시저·함수(routine)를 검색·열거**한다. "
+                "'어떤 프로시저가 있나', '문서를 조회하는 프로시저를 찾아줘' 처럼 이름을 모르는 탐색에 쓴다 — "
+                "이름뿐 아니라 **정의 본문**도 검색하므로 참조 테이블명(예: `masangsoft_documents`)으로도 찾을 수 있다. "
+                "루틴 목록을 카탈로그 뷰에서 직접 SELECT 하지 말고 이 도구를 쓴다. "
+                "SQL Server: `database` 미지정 시 이 제품의 **허용된 모든 데이터베이스(catalog)를 한 번에** 검색하고 "
+                "`database.schema.routine` 으로 위치를 반환한다 — 카탈로그 뷰는 DB 별이라 직접 SELECT 하면 "
+                "다른 DB 의 루틴을 놓친다. 찾은 뒤 본문은 `describe_routine` 으로 조회한다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "검색 키워드 (루틴명 또는 정의 본문에 포함된 문자열). **생략하면 전체 열거** — '몇 개나 있나' 류 질문엔 비워서 호출한다.",
+                    },
+                    "database": {
+                        "type": "string",
+                        "description": "(SQL Server, 선택) 이 데이터베이스(catalog)만 검색. 미지정 시 허용된 모든 DB 검색.",
+                    },
+                    "schema_name": {
+                        "type": "string",
+                        "description": "스키마 이름 (선택). SQL Server 에서 값이 허용 DB 명이면 그 DB 로 해석.",
+                    },
+                },
+                "required": [],
             },
         },
     },
@@ -1684,6 +1753,216 @@ def _tool_search_tables(conn, args: dict) -> str:
     return "\n".join(parts)
 
 
+_METADATA_SCHEMAS_FOR_HINT = ("information_schema", "sys")
+
+
+def _catalog_scope_hint(sql: str) -> str:
+    """카탈로그 메타뷰를 **catalog 자격 없이(2-part)** 조회할 때 붙이는 스코프 진단 (RC-D).
+
+    SQL Server 의 `INFORMATION_SCHEMA`/`sys` 카탈로그 뷰는 **현재 DB(catalog) 범위**만 기술한다
+    (MySQL 의 인스턴스-전역 information_schema 와 비대칭). pin 된 DB 의 메타뷰를 2-part 로 조회하며
+    `WHERE ..._CATALOG='다른DB'` 를 걸면 **구조적으로 항상 0행**이다 — 라이브에서 모델이 이 조합으로
+    "프로시저가 전혀 없습니다"(실제 482건)를 단정했다.
+
+    §18.8 패널 반영 3건:
+      - **행 수와 무관**하게 판정한다. 라이브의 실제 첫 쿼리는 `SELECT COUNT(*) …` 로 **0행이 아니라
+        값 0인 1행**이었고, 0행 분기에만 달았던 초기안은 그 형태를 통째로 놓친 채 오히려 완전성
+        문구를 붙였다(부재 단정을 더 쉽게 만듦).
+      - **AST 기반**으로 판정한다. 문자열 토큰 매칭은 `[sys].[objects]`·`sys.indexes` 등을 놓치고
+        문자열 리터럴·주석에는 오발화했다(같은 코드베이스가 regex→AST 로 이미 전환한 교훈).
+      - **3-part 로 이미 대상 DB 를 지정한 쿼리에는 붙이지 않는다**. 초기안은 올바른 3-part 조회에도
+        "현재 DB 범위만 본다"는 거짓 진단을 붙여 정당한 결과를 불신하게 했다.
+    비-MSSQL 이거나 해당 없으면 빈 문자열(잡음 0).
+    """
+    if not _mssql_active():
+        return ""
+    from . import sql_guard as _sg
+    try:
+        pairs = _sg.collect_schema_object_refs(sql, dialect=_dialects.active().sqlglot)
+        _schemas, _unq, catalogs = _sg.collect_schema_refs(sql, dialect=_dialects.active().sqlglot)
+    except Exception:
+        return ""
+    if not any(sch in _METADATA_SCHEMAS_FOR_HINT for (sch, _o) in pairs):
+        return ""
+    if catalogs:
+        return ""      # 이미 3-part 로 카탈로그를 명시 — 스코프 오해 없음
+    pin = _cfg_active_default_db()
+    dbs_disp, _ = _mssql_effective_allow_dbs()
+    others = [d for d in dbs_disp if not pin or d.lower() != pin.lower()]
+    hint = (
+        " ⚠ 이 쿼리는 **카탈로그 메타뷰**를 catalog 자격 없이 조회했습니다. SQL Server 에서 "
+        "`INFORMATION_SCHEMA`/`sys` 는 **현재 DB 범위만** 기술합니다"
+    )
+    if pin:
+        hint += f"(현재 DB: `{pin}`)"
+    hint += (
+        " — 다른 DB 의 객체는 여기서 절대 보이지 않고, `WHERE ..._CATALOG='다른DB'` 를 걸면 구조적으로 "
+        "항상 0행입니다. 다른 DB 를 보려면 3-part `대상DB.INFORMATION_SCHEMA.뷰` 로 조회하거나, "
+        "**루틴은 `search_routines`·테이블은 `search_tables`**(둘 다 허용 DB 전체를 한 번에 검색)를 쓰세요."
+    )
+    if others:
+        _shown = ", ".join(f"`{d}`" for d in others[:12])
+        hint += f" 이 제품의 다른 허용 DB: {_shown}"
+        if len(others) > 12:
+            hint += f" 외 {len(others) - 12}개"
+        hint += "."
+    return hint
+
+
+def _cfg_active_default_db() -> str:
+    """현재 pin 된 DB. §18.8 패널 MAJOR: 초기안이 `get_active_datasource()`(=**키 문자열**)에
+    `.get()` 을 호출해 **항상 AttributeError** 였고, 예외를 삼켜 (a) "현재 DB" 안내가 사라지고
+    (b) pin DB 가 "다른 허용 DB" 로 잘못 열거됐다. `_mssql_pin_gate`/`_mssql_effective_allow_dbs`
+    와 동일 소스(`get_active_default_db`, 제품별 override 반영 정본)를 쓴다."""
+    import shared.config as _cfg
+    try:
+        return str(_cfg.get_active_default_db() or "")
+    except Exception:
+        return ""
+
+
+def _search_routines_mssql(conn, args: dict, keyword: str) -> str:
+    """MSSQL cross-DB 루틴 검색 — `_search_tables_mssql` 의 루틴 판(동일 보안 경계).
+
+    §18.8 패널(3렌즈 합치 MAJOR): per-DB 실패를 **삼키면** 이 도구 자신이 조용한 0행 생성기가 되어,
+    막으려던 허위 부재를 재생산한다(3/3 DB 로그인 실패인데 "검색 결과가 없습니다"). 실패 DB 와
+    상한 포화 DB 를 각각 수집해 **항상 명시**한다.
+    """
+    target_db, sql_schema, err = _mssql_resolve_catalog(args)
+    if err:
+        return err
+    if sql_schema:
+        _serr = _struct_schema_access_error(sql_schema)
+        if _serr:
+            return _serr
+    dbs_disp, _dbs_map = _mssql_effective_allow_dbs()
+    if target_db:
+        targets = [target_db]
+    else:
+        if not dbs_disp:
+            return _mssql_pin_gate() or "검색 가능한 데이터베이스가 없습니다(빈 접근목록)."
+        targets = dbs_disp
+    capped = targets[:_SEARCH_TABLES_DB_CAP]
+    excl = frozenset(_excluded_schemas())   # search_tables 와 동일 SSOT(내부 스키마 포함)
+    rows_out: list[tuple[str, str, str, str]] = []
+    failed: list[tuple[str, str]] = []
+    saturated: list[str] = []
+    for dbi in capped:
+        try:
+            sql = _dialects.active().search_routines(
+                keyword, schema=sql_schema, sys_exclude_schemas=excl, db=dbi)
+            rs, _ = _raw_execute_sql(conn, sql)
+        except Exception as exc:  # per-DB graceful — 단, 삼키지 않고 보고한다.
+            failed.append((dbi, str(exc)[:120]))
+            continue
+        n = 0
+        for kind, _cols, rows in rs:
+            if kind == "rows" and rows:
+                n += len(rows)
+                for row in rows[:_ROUTINE_ROWS_PER_DB]:
+                    rows_out.append((dbi, str(row[0]), str(row[1]), str(row[2])))
+        if n > _ROUTINE_ROWS_PER_DB:      # TOP 51 = 상한 50 + 포화 감지 1건
+            saturated.append(dbi)
+    searched = [d for d in capped if d not in {f for f, _ in failed}]
+    parts = [f"## '{keyword or '(전체)'}' 루틴 검색 결과\n"]
+    if rows_out:
+        parts.append("| database | schema | routine | type |")
+        parts.append("|---|---|---|---|")
+        for dbi, sch, nm, typ in rows_out:
+            parts.append(f"| {dbi} | {sch} | {nm} | {typ} |")
+        scope = f"'{target_db}' DB" if target_db else f"허용 DB {len(searched)}/{len(capped)}개"
+        parts.append(f"\n{len(rows_out)} 루틴 검색됨 ({scope}).")
+        parts.append("\n(본문은 `describe_routine(database=…, schema_name=…, routine_name=…)` 으로 조회하세요.)")
+    elif not failed:
+        parts.append(
+            f"검색 결과가 없습니다 — 검색한 DB {len(searched)}개"
+            f"({', '.join('`' + d + '`' for d in searched[:12])}) 어디에도 매칭 루틴이 없습니다."
+        )
+        parts.append(
+            "(이름과 정의 본문 모두를 검색했습니다. 다른 키워드(참조 테이블명 등)로 재시도하거나 "
+            "keyword 를 비워 전체를 열거해보세요. 이 한 번의 빈 결과로 '루틴이 없다' 고 단정하지 마세요.)"
+        )
+    if saturated:
+        parts.append(
+            f"\n⚠ 상한 {_ROUTINE_ROWS_PER_DB}건에 도달한 DB: "
+            f"{', '.join('`' + d + '`' for d in saturated)} — **더 있습니다**. 이 DB 의 루틴 개수나 "
+            f"부재를 단정하지 말고, 키워드를 좁히거나 `database` 로 지정해 재조회하세요."
+        )
+    if failed:
+        _f = ", ".join(f"`{d}`({r})" for d, r in failed[:6])
+        parts.append(
+            f"\n⚠ 다음 DB 는 **조회하지 못했습니다**(접속/권한): {_f}"
+            + (f" 외 {len(failed) - 6}개" if len(failed) > 6 else "")
+            + f". 이 DB 들의 루틴 존재/부재는 **미확인**입니다 — 단정하지 마세요."
+        )
+        if not searched:
+            parts.append(
+                "\n(허용 DB 전부가 조회 실패라 이 검색은 아무것도 확인하지 못했습니다 — "
+                "'루틴이 없다' 는 결론을 내리면 안 됩니다.)"
+            )
+    if not target_db and len(targets) > _SEARCH_TABLES_DB_CAP:
+        parts.append(
+            f"\n(참고: 허용 DB {len(targets)}개 중 앞 {_SEARCH_TABLES_DB_CAP}개만 검색했습니다 — "
+            f"나머지는 `database` 인자로 지정해 조회하세요. 미검색 DB 의 루틴 부재를 단정하지 마세요.)"
+        )
+    return "\n".join(parts)
+
+
+def _tool_search_routines(conn, args: dict) -> str:
+    """저장 루틴 검색·열거 (FR-false-absence-zero-row-catalog-scope RC-A 봉인).
+
+    이 도구가 없어서 모델이 "어떤 프로시저가 있나"에 답하려면 카탈로그 뷰를 **손으로 SELECT** 해야
+    했고, SQL Server 에서 그 경로가 DB(catalog) 스코프라 2-part 조회가 구조적으로 0행 → "프로시저가
+    없다" 허위 부재로 이어졌다(라이브 실증). `search_tables` 의 cross-DB 패턴을 그대로 따른다.
+
+    `keyword` 는 **선택**이다(§18.8 MAJOR): 원 마찰의 질문이 "몇 개나 있나" 라는 **열거**였는데
+    필수로 두면 모델이 와일드카드로 우회하게 된다. 미지정이면 필터 없이 열거한다.
+    """
+    keyword = _safe_ident(args.get("keyword", ""))
+    if _mssql_active():
+        return _search_routines_mssql(conn, args, keyword)
+    # ── MySQL / 비활성: information_schema 인스턴스-전역 → 단일 쿼리 ──
+    schema_filter = _safe_ident(args.get("schema_name", ""))
+    pin_err = _mssql_pin_gate()
+    if pin_err:
+        return pin_err
+    if schema_filter:
+        err = _struct_schema_access_error(schema_filter)
+        if err:
+            return err
+    sql = _dialects.active().search_routines(
+        keyword, schema=schema_filter, sys_exclude_schemas=frozenset(_excluded_schemas()))
+    try:
+        result_sets, _ = _raw_execute_sql(conn, sql)
+    except Exception as e:
+        return f"루틴 검색 오류: {e}"
+    rows_all: list = []
+    for kind, _cols, rows in result_sets:
+        if kind == "rows" and rows:
+            rows_all.extend(rows)
+    parts = [f"## '{keyword or '(전체)'}' 루틴 검색 결과\n"]
+    if rows_all:
+        shown = rows_all[:_ROUTINE_ROWS_PER_DB]
+        parts.append("| schema | routine | type |")
+        parts.append("|---|---|---|")
+        for row in shown:
+            parts.append(f"| {row[0]} | {row[1]} | {row[2]} |")
+        parts.append(f"\n{len(shown)} 루틴 검색됨.")
+        parts.append("\n(본문은 `describe_routine(schema_name=…, routine_name=…)` 으로 조회하세요.)")
+        if len(rows_all) > _ROUTINE_ROWS_PER_DB:
+            parts.append(
+                f"(⚠ 상한 {_ROUTINE_ROWS_PER_DB}건에 도달했습니다 — **더 있습니다**. 개수·부재를 "
+                f"단정하지 말고 키워드를 좁히세요.)"
+            )
+    else:
+        parts.append("검색 결과가 없습니다 — 이 키워드로 매칭되는 루틴을 찾지 못했습니다.")
+        parts.append(
+            "(이름과 정의 본문 모두를 검색했습니다. 다른 키워드(참조 테이블명 등)로 재시도하거나 "
+            "keyword 를 비워 전체를 열거해보세요. 이 한 번의 빈 결과로 '루틴이 없다' 고 단정하지 마세요.)"
+        )
+    return "\n".join(parts)
+
+
 def _tool_get_sample_rows(conn, args: dict) -> str:
     schema = _safe_ident(args.get("schema_name", ""))
     table = _safe_ident(args.get("table_name", ""))
@@ -1980,16 +2259,27 @@ def _tool_execute_sql(conn, args: dict) -> str:
         # (b) 단정 범위를 "이 쿼리가 반환한 것" 으로 한정해 모집단 완전성(WHERE/LIMIT 밖)으로
         # 승격되지 않게 하고, (c) 0행 결과에도 대칭 신호를 준다("없다" 단정의 최다 진입점).
         _clean = not _pv_stats.get("truncated") and not _pv_stats.get("cell_truncated")
-        if _clean and total_row_count > 0:
+        # RC-D(§18.8 BLOCKER): 스코프 진단은 **행 수와 무관**하게 붙인다. 라이브의 실제 첫 쿼리는
+        # `SELECT COUNT(*) …` 로 값 0인 **1행**이었고, 0행 분기에만 달면 그 형태를 놓친 채 아래
+        # 완전성 문구가 붙어 "0개" 단정을 오히려 강화한다. 진단이 붙는 결과에는 완전성도 단정하지
+        # 않는다 — 결과의 의미 자체가 스코프에 갇혀 있기 때문.
+        _scope = _catalog_scope_hint(sql)
+        if _scope:
+            parts.append("(이 결과의 범위에 주의하세요." + _scope + ")")
+        if _clean and not _scope and total_row_count > 0:
             parts.append(
                 f"(위 표는 이 쿼리가 반환한 {total_row_count}행 **전부**이며 도구는 아무것도 자르지 "
                 f"않았습니다. 이 결과를 두고 '도구 한계/프리뷰 제한 때문에 전체를 볼 수 없다' 고 "
                 f"말하지 마세요 — 단 이 쿼리의 WHERE/LIMIT 범위 밖은 여전히 미확인입니다.)"
             )
         elif _clean and _pv_stats.get("had_rows_set"):
+            # RC-E(FR-false-absence-zero-row-catalog-scope): 앞 문장이 "행이 없습니다" 로 시작하면
+            # 완전성 신호로 오독돼 부재 단정을 돕는다(라이브 실증: 0행 → "프로시저가 전혀 없습니다",
+            # 실제 482건). **0행 ≠ 부재** 를 먼저 못박고, 0행을 만드는 흔한 원인을 열거한다.
             parts.append(
-                "(조회 결과 0행 — 도구가 자른 것이 아니라 이 조건에 맞는 행이 없습니다. "
-                "'없다/누락됐다' 고 단정하기 전에 테이블·컬럼·필터·식별자 대소문자를 먼저 확인하세요.)"
+                "(조회 결과 0행 — 도구가 자른 것은 아닙니다. 다만 **0행은 '데이터가 없다'의 증거가 "
+                "아닙니다**: 잘못된 테이블·컬럼·필터, 식별자 대소문자, 조회 범위(스코프) 밖, 권한으로 "
+                "객체가 안 보이는 경우에도 0행이 나옵니다. 부재를 단정하기 전에 다른 경로로 교차확인하세요.)"
             )
         parts.append(f"(실행 시간: {elapsed:.2f}초)")
         if cost_note:
@@ -2130,6 +2420,7 @@ def _tool_get_foreign_keys(conn, args: dict) -> str:
 
 # 조각 꼬리(이어읽기 안내)가 전역 캡에 잘리지 않도록 창에서 미리 비워두는 여유. 실측 안내문은
 # ~400자이므로 넉넉히 잡는다.
+_ROUTINE_ROWS_PER_DB = 50   # search_routines DB당 표시 상한(쿼리는 +1건 더 받아 포화 감지)
 _ROUTINE_CHUNK_RESERVE = 1_000
 # 명시 설정(env)의 하한 — 너무 작게 잡으면 초대형 정의 전량 도달에 AGENT_MAX_STEPS 를 다 써버린다.
 _ROUTINE_CHUNK_MIN = 4_000
@@ -2607,8 +2898,9 @@ def _tool_scratch_sql(conn, args: dict) -> str:
                 )
             elif columns:
                 parts.append(
-                    "(조회 결과 0행 — 도구가 자른 것이 아니라 이 조건에 맞는 행이 없습니다. "
-                    "'없다/누락됐다' 고 단정하기 전에 테이블·컬럼·필터를 먼저 확인하세요.)"
+                    "(조회 결과 0행 — 도구가 자른 것은 아닙니다. 다만 **0행은 '데이터가 없다'의 증거가 "
+                    "아닙니다**: 잘못된 테이블·컬럼·필터, 반입 범위 밖 등에서도 0행이 나옵니다. "
+                    "부재를 단정하기 전에 교차확인하세요.)"
                 )
         return "\n\n".join(parts)
     return f"실행 완료 (영향 행수: {res.get('rowcount', 0)})."
@@ -2652,6 +2944,7 @@ _TOOL_HANDLERS = {
     "describe_table": _tool_describe_table,
     "describe_routine": _tool_describe_routine,
     "search_tables": _tool_search_tables,
+    "search_routines": _tool_search_routines,
     "get_sample_rows": _tool_get_sample_rows,
     "execute_sql": _tool_execute_sql,
     "explain_query": _tool_explain_query,

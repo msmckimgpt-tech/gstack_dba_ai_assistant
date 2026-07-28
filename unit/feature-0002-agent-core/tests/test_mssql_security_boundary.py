@@ -236,7 +236,26 @@ def test_freeform_system_db_not_queryable_m1():
             err = tools._freeform_sql_access_error(sql)
             assert err is not None, f"시스템 DB 조회가 통과됨: {sql}"
         # sys 스키마 직접 조회(2-part)도 차단
-        assert tools._freeform_sql_access_error("SELECT * FROM sys.objects") is not None
+        # RC-B(FR-false-absence-zero-row-catalog-scope, 2026-07-28): `sys` 전면 차단 →
+        # **DB 스코프 카탈로그 뷰 화이트리스트**로 완화(구조 탐색 정본 경로 복원). M1(시스템 DB
+        # catalog 차단)은 위에서 그대로 검증되고, 서버 스코프 뷰는 아래에서 계속 차단됨을 못박는다.
+        for ok_sql in (
+            "SELECT * FROM sys.objects",
+            "SELECT o.name FROM sys.objects o JOIN sys.sql_modules m ON m.object_id = o.object_id",
+            "SELECT * FROM appdb.sys.columns",
+        ):
+            assert tools._freeform_sql_access_error(ok_sql) is None, f"화이트리스트 뷰가 차단됨: {ok_sql}"
+        for ng_sql in (
+            "SELECT name FROM sys.databases",
+            "SELECT * FROM sys.sql_logins",
+            "SELECT * FROM sys.server_principals",
+            "SELECT * FROM sys.dm_exec_sessions",
+            "SELECT * FROM sys.master_files",
+            "SELECT * FROM master.sys.objects",
+            "SELECT * FROM otherdb.sys.objects",
+            "SELECT o.name FROM sys.objects o JOIN sys.databases d ON 1=1",
+        ):
+            assert tools._freeform_sql_access_error(ng_sql) is not None, f"차단돼야 하는데 통과됨: {ng_sql}"
         # 시스템 정보 함수는 sql_guard denylist 로 차단
         for sql in ("SELECT SERVERPROPERTY('MachineName')", "SELECT SUSER_SNAME()", "SELECT SYSTEM_USER"):
             r = validate_sql_for_sandbox(sql, forbidden_schemas=AGENT_FORBIDDEN, dialect="tsql")
