@@ -58,4 +58,7 @@ source_of_truth: true
 - [x] MODIFY.md에 변경 이력이 기록되었다
 - [x] REVIEW.md에 판단 근거가 기록되었다
 - [x] REPORT.md에 현재 상태가 반영되었다
-- [ ] 엄격한 검증 시나리오가 확정되었다
+- [x] 엄격한 검증 시나리오가 확정되었다
+  ↳ 2026-07-28: TEST-0003 을 실 시나리오(운영 불변식 3축)로 확정 + 라이브 스택
+     실측 Run 기록 (TEST.md §2·§3). 서비스 14개 restart/health · artifacts 경로 · compose
+     feature 참조 전수 PASS.

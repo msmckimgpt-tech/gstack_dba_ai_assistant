@@ -91,3 +91,23 @@ source_of_truth: true
 - Files:
   - `repo/unit/feature-0001-platform-runtime/src/mysql/conf.d/99-mysql-ai-server.cnf` — `[mysqld]` 섹션 하단에 2개 옵션 추가 (dev convenience 주석 동봉).
 - Notes: 개발 편의 목적 설정. 프로덕션 환경 사용 시 security posture 재평가 권고 (log_bin_trust_function_creators 는 SUPER 우회, local_infile 은 클라이언트 인젝션 경로). 본 변경은 컨테이너 재시작 없이 적용되지 않음 — 사용자 요청으로 즉시 restart 는 보류.
+
+## CHG-20260728-0001
+- Date: 2026-07-28
+- Related Requirement: feature-0001/0004/0005 의 "엄격한 X 시나리오가 확정되었다" 잔여 해소
+  (cross-feature — docs 홈은 feature-0001)
+- Summary: 세 feature 에 3~4개월 열려 있던 마지막 미완 항목은 **TEST.md 의
+  `TEST-0003: … 시나리오 정의 필요` placeholder** 였다. placeholder 를 **실 시나리오로
+  확정하고 라이브 실측 Run 을 기록**해 닫았다. 코드 무변경(docs-only).
+  - **feature-0001** — 운영 불변식 3축(서비스 restart/health · artifacts 정본 경로 ·
+    compose↔feature 참조). 라이브 스택 14개 서비스 전수 실측 PASS.
+  - **feature-0004** — 업무 왕복 전 구간(health→session→goto→eval→close) + **음성 케이스**
+    (비허용 scheme 거부). 렌더된 DOM 추출·JS 실행·`data:` 거부 PASS.
+  - **feature-0005** — MCP initialize→tools/list→tools/call 왕복 + **실 DB 메타데이터 반환**.
+    20건(행 수 포함) 수신 PASS.
+- Files: `unit/feature-000{1,4,5}-*/docs/{TEST,TASK}.md`, `docs/STATUS.md`,
+  `unit/feature-0001-platform-runtime/docs/{MODIFY,REVIEW}.md`
+- Impact: 제품 동작 무변경. 세 feature 의 TASK.md 미완 체크박스가 **0건**이 되어
+  Completion Checklist 전건 충족. STATUS.md 비고를 실측 결과로 갱신(상태는 in-progress 유지
+  — feature 를 done 으로 선언하는 것은 별개 운영 판단).
+- Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.

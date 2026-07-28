@@ -46,3 +46,30 @@ source_of_truth: true
 - Decision: 99-mysql-ai-server.cnf 에 `log_bin_trust_function_creators = 1` + `local_infile = 1` 추가. backend/frontend/RBAC/DB schema/endpoint contract 무변경.
 - Reason: 사용자 명시 요청 (개발 편의). config-only Minor 변경 — 외부 패널 리뷰 불필요.
 - Risk: log_bin_trust_function_creators=1 은 binlog 환경에서 SUPER 권한 우회 가능 — 개발 환경 한정 사용 전제. local_infile=1 은 클라이언트 측 파일 인젝션 경로 열림 — 신뢰 클라이언트 환경 전제. 프로덕션 배포 전 재평가 권고.
+
+## REV-20260728T015500-strict-scenarios [SKIPPED:docs-only + 판정 근거가 라이브 실측 — 코드 무변경]
+- Related Change: CHG-20260728-0001
+- Panel skip 근거: changeset 이 `docs/*` 전용(코드·자산·설정 무변경, §18.8 dispatch 비매칭).
+  본 cycle 의 리스크는 "설계가 틀렸는가" 가 아니라 **"실측이 주장을 실제로 뒷받침하는가"**
+  이고, 그것은 아래 증거로 직접 판정된다.
+- 왜 stale 처리하지 않고 실제로 검증했나: 앞선 집계에서 이 3건을 "template skeleton 정형
+  항목" 으로 분류했으나, TEST.md 를 열어보니 **`TEST-0003: 시나리오 정의 필요` 라는 실제
+  placeholder** 였고 §3 Run History 도 구조 검증만 있었다. 즉 **stale 이 아니라 진짜 미완**
+  이었다. 체크박스만 닫는 것은 부정직하므로 시나리오를 정의하고 실측했다.
+- 실측 설계 원칙 (연결 성공 ≠ 동작 확인):
+  - feature-0005 는 "MCP 가 응답한다" 로 만족하지 않고 **응답 payload 에 실 DB 메타데이터가
+    실려 오는지**를 판정 기준으로 삼았다 (테이블 20건 · 컬럼 수 · 행 수).
+  - feature-0004 는 `health: ok` 로 만족하지 않고 **렌더된 DOM 텍스트를 eval 로 추출**해
+    페이지 로드·JS 실행까지 확인했다. 추출된 문자열이 `"Invalid host header"` 였는데, 이는
+    앱의 host 검증 결과일 뿐 **브라우저가 실제로 렌더했다는 증거**다.
+  - 정상 경로만이 아니라 **음성 케이스**를 넣었다 — `data:` scheme 이 `unsupported url
+    scheme` 으로 거부되는 것을 확인해 SSRF·로컬파일 접근 경계가 살아 있음을 함께 검증했다.
+    (처음엔 이 400 을 결함으로 의심했으나 코드상 의도된 가드였다.)
+  - feature-0001 은 "떠 있다" 가 아니라 **restart 정책 보유 + healthcheck 정의 서비스의
+    healthy 여부**를 서비스별로 열거했다 — 재기동 내성이 운영 불변식의 핵심이기 때문이다.
+- 한계 (정직하게): feature-0004 의 인증 필요 사내 사이트 업무 자동화는 자격증명이 있어야
+  하므로 시나리오에서 제외했고 TEST.md 에 미커버로 명시했다. 실제 화면 검증이 필요한 웹/UI
+  완료 게이트는 PB-0008(Windows-browser) 소관이며 본 서비스가 대체하지 않는다.
+- Open Questions: 세 feature 의 Completion Checklist 가 전건 충족됐으나 STATUS.md 상태는
+  `in-progress` 로 두었다. `done` 선언은 "향후 변경 없음" 을 뜻하는 운영 판단이고, 이들은
+  계속 유지보수 대상이라 본 cycle 범위 밖으로 남긴다.
