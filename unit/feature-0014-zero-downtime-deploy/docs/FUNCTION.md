@@ -81,6 +81,41 @@ web 서비스를 **무중단(zero-downtime)** 으로 재배포하는 구조를 �
    last-good 자동 롤백.
 7. flock 해제 + REPORT 기록.
 
+## 정적 자산 캐시 무결성 (asset-stamp-cache-integrity, 2026-07-28)
+
+무중단 롤링 배포의 **부수 효과 하나가 사용자 브라우저에 영구 잔존**할 수 있었다. 본 절이 그
+경로를 봉인한다.
+
+**REQ-20260728-asset-stamp-cache-integrity** (사용자 지시 — 직전 graph-noise-reduction 배포에서
+"서버는 신 코드를 서빙하는데 브라우저만 구버전 렌더" 실측 후 근본 해소 요청, **Major §12.3** —
+엣지 설정 + 전역 캐싱 semantics; 데이터·스키마·API 무변경):
+
+- **불변식(AC-ASCI-1)**: 정적 자산 응답이 `Cache-Control: …immutable` 로 표시되려면
+  **응답한 replica 의 빌드 스탬프 == 요청 URL 의 `?v=`** 여야 한다. 불일치 응답은 `no-store`
+  (+ 관측용 `X-Asset-Stamp: mismatch`). → 버전이 어긋난 응답은 **애초에 캐시에 들어가지 못한다**.
+- **AC-ASCI-2 (빌드 스탬프 출처)**: `scripts/inject_asset_stamp.py` 가 주입한 content-hash 를
+  `<static>/.asset-stamp` 사이드카로 기록한다. 사이드카는 해시 입력·재작성 대상에서 제외되어
+  멱등성을 유지한다(자기 참조 시 롤아웃마다 전 캐시 무효화).
+- **AC-ASCI-3 (판정 주체 = upstream)**: 판정은 `web/static_cache.StaticCacheHeadersMiddleware`
+  (순수 ASGI 래퍼, `/static` mount 를 감쌈)가 수행한다. **엣지(Caddy)는 `/static` 에
+  `Cache-Control` 을 강제하지 않는다** — 엣지는 `?v=` 값이 *응답한 replica 의 빌드*인지 알 수 없고,
+  강제하면 upstream 판정을 덮어써 불변식이 무력화된다.
+- **AC-ASCI-4 (기존 동작 보존)**: `?v=` 없는 자산은 종전 ETag/304 조건부 GET, `vendor/**` 의
+  라이브러리 pin(`?v=5.1.1`)은 종전 `immutable`(빌드 해시와 다른 버전 축 — 비교하면 상시 불일치가
+  되어 vendor 캐시를 통째로 잃는다).
+- **AC-ASCI-5 (fail-safe 방향)**: 사이드카 부재(dev·미주입 빌드)·판정 예외·비-HTTP scope 는
+  헤더 미설정으로 통과한다 — 실패 방향이 "캐싱 상실"(성능)이지 "오염"(correctness)이 아니다.
+
+**배경(왜 필요한가)**: 정적 파일은 각 replica 로컬 FS 에서 **경로만으로** 서빙된다(쿼리스트링은
+파일 조회에 무관). 롤링 창에서 sticky(`lb_policy cookie weblb`)로 고정된 replica 가 recreate 되면
+LB 가 클라이언트를 재배정하고, 그 순간 **구 replica 가 `?v=<신 스탬프>` 요청에 구 바이트로 200
+응답**할 수 있다. 종전 엣지 규칙은 `?v=` 의 존재만 보고 `immutable` 을 부여했으므로 그 응답이
+**1년 고착**됐다(ES module 진입점이 굳으면 import 체인 전체가 구버전).
+
+**한계(정직 표기)**: 롤링 창 자체는 남는다 — 창 안에서 버전이 섞인 페이지를 한 번 볼 수 있고,
+달라진 것은 그 상태가 캐시에 굳지 않는다는 점이다(다음 로드에서 수렴). 창까지 없애려면
+content-addressed 경로(`/static/<hash>/…` + 구버전 retention)가 필요하며 후속 과제다.
+
 ## Pre-approved Changes
 - deploy_scope: included (전역 FIRST_REQUEST.md 상속) — cycle-final 후 자동 배포.
 - reachability_scope: included — 본 기능은 bring-up/도달성이 완료 기준의 핵심이므로,

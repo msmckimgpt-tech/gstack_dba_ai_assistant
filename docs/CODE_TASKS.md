@@ -331,6 +331,44 @@ init/로드/build/LOD/anim=`graph-core.js` · 우클릭/패널=`graph-ctxmenu.js
 
 ---
 
+## TASK 9 — 정적 자산 캐싱 / 캐시버스터(`?v=`) 변경
+
+**Match keywords**: 캐시버스터·`?v=`·asset stamp·`Cache-Control`·immutable·no-store·배포 후 구버전 렌더·하드 리프레시.
+
+**Entry region**: 판정 주체는 **upstream** 이다 — `unit/feature-0003-agent-web-ui/src/static_cache.py`
+(`decide_cache_control` 정책표 + `StaticCacheHeadersMiddleware` ASGI 래퍼). 배선은
+`src/app.py` 의 `app.mount("/static", …)`. 스탬프 생성은
+`unit/feature-0002-agent-core/src/scripts/inject_asset_stamp.py`(→ `<static>/.asset-stamp` 사이드카),
+빌드 훅은 `unit/feature-0002-agent-core/src/Dockerfile` 의 `RUN … inject_asset_stamp.py --root /app/web/static`.
+
+**Reference regions (ordered)**:
+1. 정책표·근거: `src/static_cache.py` 모듈 docstring (롤링 창 오염 시나리오 4단계 + 표).
+2. 엣지 계약: `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` — **`/static` 에 `Cache-Control` 을 강제하는 규칙을 두지 않는다**(제거 사유가 주석으로 고정됨).
+3. 배포 게이트: `bin/deploy-web.sh` 의 `asset_stamp_verify`(baked 이미지에 `?v=dev` 잔존 시 ABORT) + `post_deploy_checklist` [3].
+4. 근거 기록: `unit/feature-0014-zero-downtime-deploy/docs/FUNCTION.md` AC-ASCI-1~5.
+
+**Recurse via (literal grep)**:
+- 정책 소비자: `grep -rn "static_cache\|decide_cache_control\|StaticCacheHeadersMiddleware" unit/feature-0003-agent-web-ui/src/`
+- 스탬프 생산자·소비자: `grep -rn "asset-stamp\|STAMP_SIDECAR\|inject_asset_stamp" unit/ bin/`
+- 엣지 규칙 부활 감시: `grep -n "Cache-Control" unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile`
+
+**Invariants**:
+① **immutable 은 요청 `?v=` 가 이 replica 의 빌드 스탬프와 일치할 때만** — 불일치는 `no-store`
+(롤링 창의 버전 스큐 응답이 캐시에 굳는 것을 구조적으로 차단; 2026-07-28 라이브 사고 근거).
+② 엣지가 `/static` 에 `Cache-Control` 을 강제하지 않는다(강제하면 ①이 무력화 — 테스트가 FAIL).
+③ 사이드카는 content-hash 입력에서 **제외**(자기 참조 시 멱등성이 깨져 롤아웃마다 전 캐시 무효화).
+④ `vendor/**` 의 `?v=` 는 라이브러리 pin(별개 버전 축) — 빌드 스탬프와 비교하지 않는다.
+⑤ 전 구간 fail-open — 스탬프 부재·판정 예외는 헤더 미설정으로 통과(실패 방향 = 캐싱 상실이지 오염 아님).
+⑥ 소스의 `?v=dev` placeholder 수기 bump 금지(빌드 주입 — §13.1 v3.35.1).
+
+**Verify**: `unit/feature-0003-agent-web-ui/tests/test_static_cache_integrity.py` +
+`unit/feature-0002-agent-core/tests/test_inject_asset_stamp_sidecar.py`(격리 + **실 injector→실 static
+트리→실 StaticFiles 통합** — mount path 규약 같은 접합부 결함은 통합 케이스만 잡는다) ·
+`caddy validate --adapter caddyfile` · 배포 후 결정론 헤더 프로브
+(`curl -skI '<host>/static/admin.js?v=<현/구 스탬프>'` → `immutable` / `no-store`+`x-asset-stamp: mismatch`).
+
+---
+
 ## 부록 — grep 쿡북 (durable anchors)
 
 라인 번호는 app.py 재생성마다 drift 하므로 **grep 문자열이 정본 anchor**다.

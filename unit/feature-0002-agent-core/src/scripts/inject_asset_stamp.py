@@ -25,6 +25,13 @@
 
 멱등 — 해시는 '?v= 토큰을 placeholder 로 정규화한 내용' 기준이라 주입 후 재실행도 동일 값.
 
+스탬프 사이드카(`<root>/.asset-stamp`, feature-0014 asset-stamp-cache-integrity 2026-07-28):
+  주입한 스탬프 값을 파일로 남긴다. 런타임(app.py `_static_cache_headers`)이 이 값을 읽어
+  "요청 `?v=` == 내 빌드 스탬프" 일 때만 immutable 캐시를 부여한다. 롤링 배포 창에서 구
+  replica 가 신 스탬프 URL 에 구 바이트로 응답해도 `no-store` 가 되어 브라우저 캐시가
+  1년 오염되지 않는다(불변식: immutable ⇒ 내용이 그 스탬프의 것). 해시 계산은 이 사이드카를
+  제외해 멱등성을 지킨다(자기 참조 회피).
+
 Usage: python3 inject_asset_stamp.py --root /app/web/static [--stamp <값>] [--check]
   --stamp 생략 시 content-hash 자동 계산. --check 는 주입 없이 스탬프 값만 출력.
 Exit: 0 성공 · 2 usage/대상 부재.
@@ -40,6 +47,8 @@ import sys
 STAMP_RE = re.compile(r"\?v=[A-Za-z0-9._-]+")
 REWRITE_EXTS = (".html", ".js")
 VENDOR_SEG = os.sep + "vendor" + os.sep
+# 런타임이 자기 빌드 스탬프를 알기 위한 사이드카. content_stamp 해시 입력에서 제외(자기 참조 회피).
+STAMP_SIDECAR = ".asset-stamp"
 # 매치 직전 최대 120자 안에 vendor/ 경로가 보이면 라이브러리 pin — 보존.
 _URL_CTX = 120
 
@@ -49,8 +58,14 @@ def is_vendor_path(path: str) -> bool:
 
 
 def iter_files(root):
+    # 사이드카는 해시 입력·재작성 대상 모두에서 제외(멱등성 — 자기 참조 회피).
+    # 경로 비교는 정규화 후 — 호출자가 trailing slash 를 붙여도 제외가 유효해야 한다.
+    root_abs = os.path.abspath(root)
     for dirpath, _dirs, files in os.walk(root):
+        at_root = os.path.abspath(dirpath) == root_abs
         for f in sorted(files):
+            if at_root and f == STAMP_SIDECAR:
+                continue
             yield os.path.join(dirpath, f)
 
 
@@ -113,7 +128,12 @@ def main() -> int:
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(out)
             rewritten += 1
-    print(f"inject_asset_stamp: stamp={stamp} files_rewritten={rewritten}")
+    # 런타임 캐시 무결성용 사이드카(feature-0014): app.py 가 읽어 "?v= == 내 빌드" 일 때만
+    # immutable 을 부여한다. 마지막에 써서 위 재작성 루프의 iter_files 스냅샷과 무관하게 최신.
+    sidecar = os.path.join(root, STAMP_SIDECAR)
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        fh.write(stamp + "\n")
+    print(f"inject_asset_stamp: stamp={stamp} files_rewritten={rewritten} sidecar={sidecar}")
     return 0
 
 
