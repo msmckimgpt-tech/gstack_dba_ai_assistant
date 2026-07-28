@@ -458,3 +458,8 @@ source_of_truth: true
 - Timestamp: 2026-07-28T19:00:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260728T190000-graph-hdr-label-fit-postdeploy [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 대상: CHG-20260728T1900-graph-hdr-label-fit-postdeploy (TASK.md HF.6 결과표 + MODIFY + TEST/test-runs.d + 증적 3매). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
+- 본 cycle 의 코드 적대 검증은 REV-20260728T181000 `[CODEX:frontend-render+hittest]`(P1 1건 · P2 1건 in-cycle 흡수)가 담당했고, 그 수정 이후 상태가 **배포본에서 정상 동작**함을 HF.6 으로 실증했다 — 특히 P1 수정(칩 hit 영역 상한 + 폰트 유지)이 판독성 이득을 유지하면서 이웃 침범을 없앴다는 것이 zoom 0.1468 실촬로 확인됐다.
+- 기계적 점검: 배포 SHA 정합(edge `/healthz git_commit=4ea1d83b` = main 머지 커밋) · 서빙 자산에 수정 존재(`_metaHdrFitFont`·`_META_HDR_FIT_ZOOM_FLOOR`·`GH_CHIP_MAX`·`_metaHdrFitReset`) · 자산 스탬프 `?v=723750d86605` 정합 · pageerror 0.

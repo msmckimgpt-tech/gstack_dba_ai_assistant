@@ -283,3 +283,8 @@ source_of_truth: true
 - 대상(문서 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md`. 실행 코드 0줄.
 - 변경: 검증·문서 작업 중 main 이 12커밋 더 전진(#1018~#1022)해 cycle commit 후 `origin/main 44fe939d` 위로 재-rebase 한 사실과, 그 뒤 전수 재검증 수치(pytest **2812 passed / 2 skipped / 0 failed** · 그래프 헤드리스 **904 PASS / 0 FAIL** · ruff clean)를 TASK.md 에 기록. 충돌은 append-only 문서 5건뿐이고 **코드 충돌 0**(`metadata_graph.py` ↔ cyvol scope prefetch fix, `graph-core.js` ↔ label-lod 가 서로 다른 구역).
 - 근거: 등급 Minor(문서 전용). 앞선 절의 2809/865 는 그 직전 라운드 수치이므로, 배포 대상 코드 상태의 실제 재검증 수치를 병기해 정본이 stale 로 남지 않게 한다(§5.6 staleness).
+
+## CHG-20260728T1900-ai-claude-feature-0016-graph-hdr-label-fit-postdeploy — hdr-label-fit POST-DEPLOY PB-0008 라이브 실증 기록 (2026-07-28)
+- 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/{TEST.md,test-runs.d/20260728T181000-graph-hdr-label-fit.md}` · 증적 3매(`artifacts/…/20260728-graph-hdr-label-fit/`, gitignore 로컬). **실행 코드 변경 0줄**.
+- 변경: PR #1025 머지(main `4ea1d83b`) → `make deploy-web` 무중단 롤아웃(soak 통과) → edge `/healthz git_commit=4ea1d83b` + 서빙 자산에 `_metaHdrFitFont`·`GH_CHIP_MAX` 존재 확인 후, 실 Windows Chrome relay 로 HF.6 을 수행하고 결과를 정본에 기록. **핵심 실증**: `gunzgame` 펼침(421 객체)·위계 헤더 84개 상태에서 zoom **0.1468**(본문 라벨 534/587 억제로 색 블록만 남은 개요)에도 컨텐츠 카테고리 헤더가 판독 가능하게 유지 — 종전 고정 10.5px 의 억제 임계는 0.3048 이라 이 줌에서 전부 사라졌을 구간이다. 반동 밴드는 줌아웃 h2→h9 단조·줌인 h7→h1 대칭 복귀로 **stale 없음**을 실측. pageerror 0.
+- 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영 필수. 한계 병기 — 칩 침범 0·알약 소프트닝 수용성은 스크린샷 육안 판정(기계적 보장은 헤드리스 K3) · 검증 중 페이지 1회 새 내비게이션 리셋은 직전 pageerror 0 + 재현 정상으로 **본 변경과 인과 미확인**, 원인 미규명으로 남김.

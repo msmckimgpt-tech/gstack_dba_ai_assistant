@@ -2,7 +2,7 @@
 run_at: 2026-07-28T18:10:00+09:00
 session: ai/claude/feature-0016-graph-hdr-fit
 scope: unit/feature-0003-agent-web-ui/src/static/graph (graph-state·graph-core)
-verdict: PASS  # PRE-COMMIT 자동검증 PASS · PB-0008 라이브는 배포 후 HF.6
+verdict: PASS  # PRE-COMMIT 자동검증 + POST-DEPLOY PB-0008 모두 PASS (2026-07-28)
 ---
 
 ### Run (2026-07-28) — graph-hdr-label-fit: 위계 헤더 라벨을 클러스터 범위만큼 확장 — **Environment: Windows-browser (배포 후 HF.6)**
@@ -177,3 +177,39 @@ CATH 60/30) — 테스트가 결함 자체를 잡는지 검증했다.
   헤드리스가 판정할 수 없다. 알약 소프트닝으로 '밴드 위 글자'(지도 area-label)로 읽히도록 의도했지만, 실제
   수용성은 HF.6 PB-0008 육안 판정 대상이다 — 만약 어색하다면 대안은 (a) 폰트 상한을 칩 상한에 맞춰 낮추기
   (개선폭 축소) 또는 (b) 텍스트 halo/outline 도입(카토그래피 표준)이다.
+
+#### 11. POST-DEPLOY PB-0008 (PASS) — 실제 배포 자산 (HF.6)
+
+**Environment: Windows-browser** — 실 Chrome via `bin/win-browser.py` relay, `https://localhost/admin`.
+PR #1025 머지 → main `4ea1d83b` → `make deploy-web`(web-a/b 롤링 + insight/ask 워커, soak 통과) →
+edge `/healthz` `git_commit=4ea1d83b`. 서빙 자산 스탬프 `?v=723750d86605`, 배포된 `graph-state.js` 에
+`_metaHdrFitFont`·`_META_HDR_FIT_ZOOM_FLOOR` / `graph-core.js` 에 `GH_CHIP_MAX`·`_metaHdrFitReset` 존재를
+**자산 내용으로 확인**(격리 주입본이 아니다). 대상 `mysql-gz-qa-global`, `gunzgame` 스키마 펼침
+(테이블 121 · 함수·프로시저 300 = 421) → 위계 헤더 **84개**(GH + CATH) 방출.
+
+| # | 항목 | 실측 |
+|---|---|---|
+| ① | **컨텐츠 카테고리 헤더 개요 줌 판독** | zoom **0.1468** band `24/22/h9` — 본문 라벨 **534/587 억제**로 색 블록만 남은 개요인데 GH 헤더는 판독 가능(`계정캐릭터기본조회`·`아이템거래로그`·`캐릭터통계데이터`·`서버모니터링`·`IP 필터링 · 8` 등). **종전 고정 10.5px 억제 임계 0.3048 → 이 줌이면 전부 소실**했을 구간 |
+| ② | 제품 카테고리 밴드 헤더 | `🗂 건즈 글로벌 QA · 3 DB · 184 테이블` 동일 줌 유지 |
+| ③ | `headerDropped` 추이 | zoom 0.6078→0.249 전 구간 **0**(84 전량 유지). 0.1992 부터 좁은 박스(1열)만 7→12→19→31 순차 억제 — fit 상한 예상 동작 |
+| ④ | **반동 추종(stale 0)** | 줌아웃 h2→h3→h4→h5→h6→h7→h8→h9 단조, 줌인 h7→h6→h5→h4→h1 **대칭 복귀**. `headerDropped` 3→0, 복귀 시 `dropped 0` |
+| ⑤ | 칩 hit 영역 | 칩이 각 그룹 상단 정렬 — **위 행 블록과 무겹침**(§8 P1 수정 육안 확인) |
+| ⑥ | 텍스트 > 알약 구간 시각 | 알약 소프트닝으로 '밴드 위 글자'로 읽히고 '깨진 칩'으로 보이지 않음 |
+| ⑦ | pageerror | **0** |
+
+증적: `artifacts/feature-0016-metadata-graph/20260728-graph-hdr-label-fit/`
+(`hdrfit_live_1`=zoom 0.76 기준 · **`hdrfit_live_fit`=zoom 0.1468 핵심 증거** · `hdrfit_live_zoomout`).
+
+- **Pass/Fail: PASS**. Runner: AI. **PRE-COMMIT + POST-DEPLOY 모두 PASS** — 사용자 요청("줌 아웃 시에도 상대적으로
+  명확하게")이 배포본 라이브에서 충족됨을 실촬로 확인했다.
+
+##### 한계 (정직 표기 — POST-DEPLOY)
+
+- ⑤⑥ 은 **스크린샷 육안 판정**이며 픽셀 단위 겹침 계측은 하지 않았다. 칩 침범 0 의 기계적 보장은 헤드리스
+  K3(이웃 블록 bbox 침범 0, 상한 제거판에서 FAIL 재현 확인)이 담당한다.
+- 검증 중 페이지가 **1회 새 내비게이션으로 리셋**됐다(canvas 부재 · `__META_GRAPH_PERF`·`__zin` 소실).
+  직전 `pageerror 0` 이었고 재설정 후 동일 경로가 정상 재현되어 **본 변경과의 인과는 확인되지 않았다** —
+  원인 미규명으로 남긴다(재발 시 별도 조사 대상).
+- ③의 좁은 박스 헤더 억제(0.1992 부터 7→31)는 fit 상한에 걸린 **의도된 동작**이지만, 사용자가 그 클러스터의
+  이름을 개요에서 보길 원한다면 남은 수단은 §3 리서치의 '범위를 캔버스로 쓰는 배치'(박스 중앙 워터마크)이며
+  본 cycle 범위 밖이다.

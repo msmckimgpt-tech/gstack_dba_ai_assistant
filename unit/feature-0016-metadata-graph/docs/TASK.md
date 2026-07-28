@@ -2966,9 +2966,29 @@ label-lod(§20260728T1604) 배포를 확인한 뒤의 후속 요청:
     블록 침범 · CATH 60/30) 함을 실측했다 — 테스트가 결함 자체를 잡는지 검증한 것이며 통과만 보고 넘기지 않았다.
   - 신규 테스트 Section K(10건)가 칩 상한·**이웃 블록 bbox 침범 0**·폰트 유지·알약 소프트닝·zoom 1 회귀 0·
     products 게이트·`/h` 부재를 고정. 상세는 REVIEW.md REV-20260728T181000-graph-hdr-label-fit.
-- [ ] HF.6 **PB-0008 실 Windows 브라우저 검증** — 라이브에서 ① 컨텐츠 카테고리 헤더가 개요 줌에서 판독 가능
-  ② 제품 카테고리 밴드 헤더 동일 ③ 칩이 멤버 영역을 침범하지 않음(reflow 0 육안) ④ 줌 왕복 시 폰트 반동이
-  25% 이내로 따라옴(stale 없음) ⑤ pageerror 0. (deploy_scope: included — merge 후 자동 배포)
+- [x] HF.6 **POST-DEPLOY PB-0008 실 Windows 브라우저 검증 PASS** (2026-07-28, 실 Chrome via `bin/win-browser.py`
+  relay, `https://localhost/admin`) — PR #1025 머지 → main `4ea1d83b` → `make deploy-web`(web-a/b 롤링 + 워커,
+  soak 통과) → edge `/healthz` `git_commit=4ea1d83b`. 서빙 자산 스탬프 `?v=723750d86605`, 배포된 `graph-state.js` 에
+  `_metaHdrFitFont`·`_META_HDR_FIT_ZOOM_FLOOR` / `graph-core.js` 에 `GH_CHIP_MAX`·`_metaHdrFitReset` 존재 확인
+  (**수정이 실제 서빙됨을 자산 내용으로 확인** — 격리 주입본이 아니다). 대상 `mysql-gz-qa-global`, `gunzgame`
+  스키마 펼침(테이블 121 · 함수·프로시저 300 = 421) → 위계 헤더 **84개**(GH + CATH) 방출.
+
+  | # | 항목 | 실측(배포본) |
+  |---|---|---|
+  | ① | **컨텐츠 카테고리 헤더 개요 줌 판독** | zoom **0.1468** band `24/22/h9` — 본문 라벨 **534/587 억제**로 색 블록만 남은 개요인데 GH 헤더는 판독 가능하게 유지(`계정캐릭터기본조회`·`아이템거래로그`·`캐릭터통계데이터`·`서버모니터링`·`IP 필터링 · 8` 등). **종전 고정 10.5px 의 억제 임계는 0.3048 이라 이 줌에서 전부 사라져 색 블록만 보였을 구간** |
+  | ② | 제품 카테고리 밴드 헤더 | `🗂 건즈 글로벌 QA · 3 DB · 184 테이블` 동일 줌에서 유지 |
+  | ③ | `headerDropped` 추이 | zoom 0.6078→0.249 전 구간 **0**(84개 전량 유지). 0.1992 부터 좁은 박스(1열) 헤더만 7→12→19→31 순차 억제 — fit 상한에 걸린 예상 동작 |
+  | ④ | **반동 추종(stale 없음)** | 줌아웃 h2→h3→h4→h5→h6→h7→h8→h9 단조 증가, 줌인 h7→h6→h5→h4→h1 **대칭 복귀**. `headerDropped` 3→0, 복귀 시 `dropped 0` — 폰트가 마지막 rebuild 값에 굳지 않고 25% 스텝마다 따라온다 |
+  | ⑤ | 칩 hit 영역 | 헤더 칩이 각 그룹 상단에 정렬돼 **위 행 블록과 겹치지 않음**(HF.7 P1 수정 육안 확인) |
+  | ⑥ | 텍스트 > 알약 구간 시각 | 알약 소프트닝으로 '밴드 위 글자'로 읽히고 '깨진 칩'으로 보이지 않음 |
+  | ⑦ | pageerror | **0** (`error`·`unhandledrejection` 전 구간 0건) |
+
+  증적: `artifacts/feature-0016-metadata-graph/20260728-graph-hdr-label-fit/`
+  (`hdrfit_live_1`=zoom 0.76 기준 · **`hdrfit_live_fit`=zoom 0.1468 핵심 증거** · `hdrfit_live_zoomout`).
+  **한계(정직 표기)**: ⑤⑥ 은 스크린샷 육안 판정이며 픽셀 단위 겹침 계측은 하지 않았다(칩 침범 0 의 기계적
+  보장은 헤드리스 K3 이 담당). 검증 중 페이지가 1회 새 내비게이션으로 리셋됐는데(canvas 부재 ·
+  `__META_GRAPH_PERF` 소실) 직전 `pageerror 0` 이었고 재설정 후 동일 경로가 정상 재현되어 **본 변경과의
+  인과는 확인되지 않았다** — 원인 미규명으로 남긴다.
 
 ### 결정 기록
 - **왜 '범위 비례' 만으로 부족한가(사용자 제안의 정제)**: 폰트를 박스 폭에서만 파생하면 큰 클러스터는 개선되지만
