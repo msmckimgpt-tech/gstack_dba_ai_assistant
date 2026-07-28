@@ -1594,3 +1594,19 @@ FR-false-truncation-belief 라이브 실측 중 관측된 별개 축을 사용�
 - [x] §18.8 **2라운드** security 재검증(1R 봉인 불완전 = 별칭 그림자 재적발 → 재수정 후 실증 CLOSED) → verify-completion PASS → PR #991 머지(main `21b67ade`) → 전체 스코프 배포(soak 통과) → **라이브 재실측 완료**: 동일 질문에 "총 421개" + `MSP_SELECT_BOARD_CONTENT` 본문 제시, 오귀속·부재 단정 0건, `search_routines` 실사용, 연결 장애 시 실패 고지 실전 발동
 - worktree `ai/claude-corp/feature-0002-agent-core`.
 정본 rationale=REVIEW REV-20260728T114459-false-absence-catalog-scope, 변경이력=MODIFY CHG-20260728T114459-false-absence-catalog-scope.
+
+### TASK-20260728T133431-alias-shadowed-function-namespace — 별칭 그림자 함수 우회 봉인 (Major §12.3, 2026-07-28)
+FR-false-absence 패널이 pre-existing 으로 분리 기록한 항목을 사용자 지시로 후속 수정. `X.Y.f()` 의 자격 함수호출 ↔ UDT 메서드 문법 동일성 때문에 DB 명을 테이블 별칭으로 선언하면 catalog allowlist 가 무력화됐다.
+
+#### 완료 체크리스트
+- [x] 근본원인 규명 — 같은 Dot 워커가 두 의미를 겸용해 구조적으로 구별 불가
+- [x] 1차 시도(이름/토큰 목록) 실패 확인 — 공격자 0비용 + 정상 29건 과차단·오보
+- [x] 2차 시도(caller "아는 DB" 대조) 실패 확인 — 논리 반전(`_bad ⊆ allow_set`)으로 미허용 DB 전부 통과
+- [x] 최종: table-source 면제 금지 + 체인 2토큰 상한 + 전 토큰 보호 + 미지 노드 fail-closed + 열거 oracle 차단 + 오보 제거
+- [x] re-gate(7차) UDT 계약 유지(CLR 메서드명은 열거 원리 불가) · re-gate(3차) 4-part 계약 유지
+- [x] §18.8 적대 security 2라운드 — 1R BLOCKER 2 / MAJOR 3 / MINOR 3, 2R 이 1차·2차 시도의 실패를 각각 재적발
+- [x] 회귀 가드를 **유효 T-SQL exploit 형상**으로 교체(종전 2회는 실패 변종을 assert 해 오인증)
+- [x] 컨테이너 `make test` 2,725건 중 2,719 PASS / 4 FAIL(전부 pre-existing 환경 의존) / 2 skip · ruff PASS
+- [ ] verify-completion → PR·머지 → 배포 → 배포본 런타임 경계 실측
+- **잔여(미해결·원장 기록)**: 스칼라 위치 모호성. 데이터 접근은 per-DB USER/GRANT 가 권위적으로 막고(부트스트랩 준수 전제), 정보 채널은 차단함.
+정본 rationale=REVIEW REV-20260728T133431-alias-shadowed-function-namespace, 변경이력=MODIFY CHG-20260728T133431-alias-shadowed-function-namespace.
