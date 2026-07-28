@@ -548,3 +548,100 @@ def test_search_routines_uses_same_exclusion_ssot_as_search_tables(monkeypatch):
     sql = captured["sqls"][0]
     for excl in T._excluded_schemas():
         assert f"!= '{excl}'" in sql, f"제외 누락: {excl}"
+
+
+# ── 후속: 임의 DB명 별칭 그림자 (pre-existing 구멍 봉인) ─────────────────────
+
+def _both_gates(sql: str):
+    """실 경로와 동일하게 접근 게이트 + sandbox 가드를 함께 본다(execute_sql 은 둘 다 통과해야 실행)."""
+    from modules.sql_guard import validate_sql_for_sandbox
+    err = T._freeform_sql_access_error(sql)
+    if err:
+        return err
+    g = validate_sql_for_sandbox(sql, forbidden_schemas=T._INTERNAL_SCHEMAS, dialect="tsql")
+    return None if g.ok else g.error_reason
+
+
+def test_alias_shadow_provable_axes_are_closed(monkeypatch):
+    """별칭 그림자 중 **증명 가능한 축**은 전부 닫힌다.
+
+    §18.8 2R: `alias.col.method()` 와 `db.schema.func()` 는 문법이 같아 스칼라 위치의 모호성은
+    카탈로그 지식 없이 해소 불가하고, 면제를 없애면 re-gate(7차)가 MAJOR 로 못박은 UDT 메서드
+    지원 계약이 깨진다. 그래서 **증명 가능한 것만** 닫는다:
+      - table-source(CROSS/OUTER APPLY): 그 자리에 UDT 인스턴스 메서드는 문법적으로 올 수 없다
+        → 면제는 증명적으로 틀린 해석이고 반환값이 **행 집합**이다.
+      - 체인 3토큰 이상(4/5-part linked server)과 그 경유 M1·내부 DB.
+      - Paren/미지 노드(종전 **무판정 통과**) → fail-closed 센티널.
+    """
+    _mssql_ctx(monkeypatch, allow=("appdb",), pin="appdb")
+    for ng in (
+        # table-source 위치 — 행 집합 유출 primitive
+        "SELECT v.* FROM dbo.Orders hrdb CROSS APPLY hrdb.dbo.stGetRows('x') v",
+        "SELECT v.* FROM dbo.Orders hrdb OUTER APPLY hrdb.dbo.stDump() v",
+        # 4/5-part + 그 경유 영구차단 DB
+        "SELECT lnk.hrdb.dbo.stX() FROM dbo.Orders lnk",
+        "SELECT lnk.master.custom.value('a','int') FROM dbo.Orders lnk",
+        "SELECT lnk.agent_memory.custom.value('a','int') FROM dbo.Orders lnk",
+        "SELECT lnk.a.b.myschema.value() FROM dbo.Orders lnk",
+        # Paren / 미지 노드 — 종전 무판정 통과
+        "SELECT (master.dbo).fnLeak() FROM dbo.Orders o",
+        "SELECT (agent_memory.dbo).fnLeak() FROM dbo.Orders o",
+        # 정적 보호 집합(별칭으로 가려도 불가)
+        "SELECT master.dbo.fn_varbintohexstr(0x00) FROM dbo.Orders master",
+        "SELECT agent_memory.dbo.value('a','int') FROM dbo.Orders agent_memory",
+        "SELECT * FROM sys.objects sys CROSS APPLY sys.fn_get_sql(0x00) g",
+    ):
+        assert _both_gates(ng) is not None, f"별칭 그림자 통과: {ng}"
+
+
+def test_ambiguous_scalar_path_does_not_leak_existence_oracle():
+    """스칼라 모호 경로는 남지만(계약 보존), **서버 오류 원문을 노출하지 않는다**.
+
+    데이터 접근은 per-DB USER/GRANT 가 권위적으로 막는다(bin/datasource-mssql-ro-bootstrap.sql —
+    단일 TARGET_DB 에만 USER 생성·db_datareader 제거·허용 스키마 SELECT-only). 남은 실질 위험은
+    "DB 없음 ↔ 함수 없음" 오류 차이로 allowlist 밖 객체 존재를 열거하는 정보 채널이므로 그것을 닫는다.
+    """
+    msg = T._sql_error_message(
+        "SELECT hrdb.dbo.value('a','int') FROM dbo.Orders hrdb",
+        Exception("Msg 916: The server principal is not able to access the database hrdb"))
+    assert "서버 오류 원문은 제공하지 않습니다" in msg
+    assert "916" not in msg and "not able to access" not in msg, "서버 원문이 새면 안 됨"
+    # 모호 경로가 아닌 정상 쿼리의 오류는 자기교정에 필요하므로 원문 유지.
+    plain = T._sql_error_message("SELECT bad FROM dbo.Orders", Exception("Invalid column name 'bad'"))
+    assert "Invalid column name" in plain
+
+
+def test_udt_method_contract_preserved(monkeypatch):
+    """re-gate(7차) 가 MAJOR 로 못박은 UDT/CLR/spatial 메서드 지원 계약을 깨지 않는다."""
+    _mssql_ctx(monkeypatch, allow=("appdb",), pin="appdb")
+    for ok in (
+        "SELECT p.geom.STArea() FROM appdb.dbo.Parcel AS p",
+        "SELECT p.SpatialLocation.STAsText() FROM appdb.dbo.Person AS p",
+        "SELECT p.geom.STEnvelope() FROM dbo.Places p",
+        "SELECT p.addr.Normalize() FROM dbo.People p",          # CLR 커스텀(열거 불가)
+        "SELECT x.data.value('(/a)[1]','int') FROM dbo.T x",
+        "SELECT appdb.dbo.fnOk() FROM dbo.Orders o",            # 정상 cross-DB(허용 DB)
+        "SELECT dbo.fnOk() FROM dbo.Orders o",
+        "SELECT p.geom.STArea() FROM dbo.Places p",             # UDT 는 별칭 위에서 동작해야 함
+    ):
+        assert _both_gates(ok) is None, f"정상 구문이 차단됨: {ok}"
+
+
+def test_udt_and_xml_method_calls_still_work(monkeypatch):
+    """과차단 회귀 방지 — 별칭 위 UDT/XML 메서드 호출은 계속 허용돼야 한다."""
+    _mssql_ctx(monkeypatch, allow=("appdb", "shopdb"), pin="appdb")
+    for ok in (
+        "SELECT p.geom.STArea() FROM dbo.Places p",
+        "SELECT x.data.value('(/a)[1]', 'int') FROM dbo.T x",
+        "SELECT x.data.exist('/a') FROM dbo.T x",
+        "SELECT h.node.GetLevel() FROM dbo.Tree h",
+        # 열거 목록 **밖**의 정상 호출 — 접두 규칙·큐레이션으로 과차단 0(§18.8 2R MAJOR:
+        # 열거식 목록이 STEnvelope·MakeValid 등 정상 spatial 29건을 막고 있었다).
+        "SELECT p.geom.STEnvelope() FROM dbo.Places p",
+        "SELECT p.geom.STIntersection(q.geom) FROM dbo.Places p, dbo.Places q",
+        "SELECT p.geom.MakeValid() FROM dbo.Places p",
+        "SELECT p.geom.Reduce(1) FROM dbo.Places p",
+        "SELECT shopdb.dbo.fnOk() FROM dbo.Orders o",   # 정상 cross-DB 함수(허용 DB)
+        "SELECT dbo.fnOk() FROM dbo.Orders o",
+    ):
+        assert _both_gates(ok) is None, f"정상 구문이 차단됨: {ok}"

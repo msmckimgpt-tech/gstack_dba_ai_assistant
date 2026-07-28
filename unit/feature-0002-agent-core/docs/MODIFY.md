@@ -543,7 +543,25 @@ source_of_truth: true
 - **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`
 - **위험등급**: Minor(문서 전사 — 런타임 무영향, 배포 불필요). **Rollback**: status 문자열 원복.
 - **Cross-ref**: CHG/TASK/REV-20260728T114459-false-absence-catalog-scope · REV-20260728T123229-false-absence-live-verified · PR #991.
-
+## CHG-20260728T133431-alias-shadowed-function-namespace — 별칭 그림자 함수 우회: 증명 가능한 축 봉인 + 열거 oracle 차단 (Major §12.3, 보안 경계)
+> 계기: FR-false-absence-zero-row-catalog-scope 의 §18.8 패널이 **pre-existing 구멍**으로 분리 기록한 항목(HEAD 동일). 사용자 지시로 후속 수정.
+- **근본원인(구조적)**: T-SQL 에서 `X.Y.f()` 는 **자격 함수호출**(`db.schema.func`)과 **UDT/XML 메서드**(`alias.column.method`)가 문법적으로 동일하다. 종전 수집기 3곳은 UDT 과차단을 피하려고 **leading 토큰이 별칭/테이블/CTE 명이면 무조건 면제**했고, 그래서 DB 명을 별칭으로 선언하는 것만으로 catalog allowlist·4-part 게이트가 무력화됐다. 같은 Dot 워커가 두 의미를 겸용하는 것이 문제의 본질이다.
+- **실패한 두 차례 시도(정직 기록 — 왜 이 설계로 왔는지)**:
+  1. **이름/토큰 목록 하드닝**: 스키마 슬롯 토큰 목록 + UDT 메서드명 목록. 둘 다 공격자에게 0비용이었다 — 스키마를 임의 사용자 스키마로, 함수명을 `value`/`query`/`st*` 로 바꾸면 통과(§18.8 1R BLOCKER, 20건 이상 실증). 동시에 열거식 목록이 정상 spatial/CLR 29건을 과차단하며 **별칭을 DB 로 오보**했다.
+  2. **caller 측 "아는 DB 이름" 대조**: 논리가 뒤집혀 있었다 — `hard_forbidden` 은 애초에 면제 대상이 아니므로 `_bad ⊆ allow_set` 이 되어 **이미 허용된 DB 만 막고 미허용 DB 는 전부 통과**(§18.8 2R BLOCKER). 방어가 약한 쪽으로 기울어 정상 사용자만 막혔다.
+- **무엇을 (최종 설계 — 각 계층이 증명 가능한 것만 판정)**:
+  - **table-source 위치는 절대 면제 금지**(`_in_table_source`): `CROSS/OUTER APPLY db.schema.tvf(...)` 자리에는 UDT 인스턴스 메서드가 **문법적으로 올 수 없다**(서버는 반드시 `database.schema.TVF` 로 해석) → 면제는 모호성 해소가 아니라 **증명적으로 틀린 해석**이었고, 반환값이 **행 집합**이라 유출 규모가 가장 컸다.
+  - **체인 정확히 2토큰만 면제** + **체인 전 토큰**을 보호 네임스페이스와 대조 → 4/5-part linked server 및 그 경유 `master`·`agent_memory`·`msdb` 우회 봉인(종전엔 head 만 검사해 중간 토큰이 무방비).
+  - **미지 AST 노드 fail-closed**(`_UNKNOWN_NS` 센티널 + `Paren` 재귀): `(master.dbo).fnLeak()` 은 종전에 namespace 를 못 뽑아 **무판정 통과**였다. 이제 어떤 allowlist 에도 없는 센티널이 들어가 차단된다.
+  - **존재 열거 oracle 차단**(`tools._sql_error_message`): 모호 경로로 서버까지 도달한 쿼리의 오류는 원문을 노출하지 않는다. `Msg 916`(DB 접근 불가) ↔ `Msg 4121`(함수 없음) 차이로 **allowlist 밖 DB·객체 존재를 무제한 열거**할 수 있었다(적대 검증이 "전제조건 0 즉시 착취" 로 지목). 모호 경로가 **아닌** 정상 쿼리의 오류는 자기교정에 필요하므로 원문 유지.
+  - **오보 제거**: 차단 토큰이 이 문장의 테이블 별칭이면 "허용되지 않은 DB" 대신 별칭 충돌 사실과 해소법을 안내.
+- **의도적으로 깨지 않은 계약**: `test_regate7_udt_method_not_overblocked` 는 re-gate(7차)가 **MAJOR 로 못박은 제품 계약**("UDT/CLR/spatial 인스턴스 메서드를 3-part 함수로 오판·차단하지 않는다")이다. 면제를 통째로 제거하면 이 계약이 깨지고, CLR 사용자 정의 타입의 메서드명은 **임의 사용자 코드라 열거가 원리적으로 불가**해 화이트리스트로도 복구할 수 없다. 따라서 계약을 유지했다.
+- **미해결 잔여(정직 — 원장 기록)**: **스칼라 위치**의 `alias.col.method()` ↔ `db.schema.func()` 모호성은 SQL 텍스트만으로 해소 불가라 남는다(`SELECT hrdb.dbo.value('a','int') FROM dbo.Orders hrdb`). 다만 **데이터 접근의 권위적 경계는 앱 가드가 아니라 per-DB USER/GRANT** 이며, `bin/datasource-mssql-ro-bootstrap.sql` 이 ① **단일 TARGET_DB 에만** USER 생성 ② `db_datareader` 명시적 제거 ③ 허용 스키마에만 `GRANT SELECT`(EXECUTE 미부여) 로 구성되어 **미허용 DB 에는 로그인 principal 자체가 없다**. 즉 잔여의 데이터 유출 경로는 부트스트랩 준수 하에서 닫혀 있고, 정보 채널(열거 oracle)은 위에서 닫았다. **의존성 명시**: 이 결론은 부트스트랩 준수를 전제한다 — datasource 추가 시 해당 스크립트로만 프로비저닝해야 하고, 수동으로 `db_datareader`/전역 USER 를 부여하면 잔여가 실착취로 승격된다.
+- **파일**: `modules/sql_guard.py`(`_in_table_source`·`_alias_exempt` 재설계·`_UNKNOWN_NS`·`Paren` 처리·`collect_alias_shadowed_heads`·`collect_table_alias_names`), `modules/tools.py`(별칭 인지 차단 메시지·`_sql_error_message`), `tests/test_false_absence_catalog_scope.py`(회귀 가드를 **유효 T-SQL exploit 형상**으로 — 종전 2회는 실패 변종(무효 T-SQL)을 assert 해 봉인을 오인증했다).
+- **호환/안전**: MySQL 경로 무영향. M1·DB allowlist·`sys` 화이트리스트·서버 스코프 뷰·메타데이터 함수·TVF piggyback·`sys` 별칭 그림자 전부 불변(적대 검증 17건 전수 재측정). re-gate(3차) 4-part 계약·re-gate(7차) UDT 계약 both PASS. 스키마/마이그레이션 0.
+- **위험등급**: Major(§12.3 — freeform SQL 보안 게이트) → §18.8 적대 security **2라운드** + PR/deploy confirm.
+- **Rollback**: `_alias_exempt` 를 종전 무조건 면제로, `_sql_error_message` 를 원문 반환으로 되돌림(단 우회·oracle 재개통).
+- **Cross-ref**: FRICTION_LEDGER FR-false-absence-zero-row-catalog-scope 후속 triage · CHG-20260728T114459-false-absence-catalog-scope · REV-20260728T133431-alias-shadowed-function-namespace · `bin/datasource-mssql-ro-bootstrap.sql`(권위적 경계).
 ## CHG-20260728T124500-llm-usage-target-scope (llm_usage.target_scope — 사용 기록 데이터소스 귀속 근본 해소)
 
 TASK-20260728T124500-llm-usage-target-scope. branch `ai/claude/feature-0002-llm-usage-target-scope`.

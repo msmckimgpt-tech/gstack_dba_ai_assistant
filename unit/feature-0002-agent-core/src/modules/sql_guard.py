@@ -267,23 +267,73 @@ def _table_alias_names(node) -> set[str]:
 # 처럼 **보호 스키마명을 테이블 별칭으로 선언**하는 것만으로 게이트가 눈이 먼다(서버는 여전히 진짜
 # `sys` 스키마 함수를 호출한다 — T-SQL 에서 2부분 함수호출의 앞 토큰은 항상 스키마이지 별칭이 아님).
 # 아래 집합은 **별칭으로 가려질 수 없다**.
+# 미지 AST 노드에서 namespace 를 못 뽑았을 때 넣는 센티널 — 어떤 allowlist 에도 없으므로 차단된다
+# (§18.8 2R MINOR: 빈 acc 를 반환하면 catalog 게이트가 **무판정**으로 통과했다).
+_UNKNOWN_NS = "\x00unknown"
+
 _NEVER_ALIAS_SHADOWED = frozenset({
     "sys", "guest", "information_schema", "agent_memory",
     "master", "model", "msdb", "tempdb", "mysql", "performance_schema",
 })
 
 
-def _alias_exempt(acc: "list[str]", aliases) -> bool:
-    """함수 namespace 체인을 alias(UDT 메서드)로 보고 면제할지.
+# §18.8 2R(2026-07-28): **별칭 면제 개념을 제거**했다.
+#
+# T-SQL 에서 `X.Y.f()` 는 자격 함수호출(`db.schema.func`)과 UDT/XML 메서드(`alias.column.method`)가
+# 문법적으로 동일하고, 카탈로그 지식 없이는 구분이 **원리적으로 불가능**하다. 종전에는 "leading 토큰이
+# 별칭이면 UDT 메서드로 본다" 로 열어뒀는데, 그러면 DB 명을 별칭으로 선언하는 것만으로 catalog
+# allowlist 가 무력화된다(적대 검증 2라운드에서 미허용 DB 통과·행집합 유출·서버 객체 열거 실증).
+#
+# 이름 기반 완화 시도도 실패했다 — ① CLR 사용자 정의 타입의 메서드명은 임의 사용자 코드라 열거
+# 불가(영구 과차단) ② 반대로 목록/접두(`st*`)를 넓히면 "함수를 그 이름으로 지어라" 가 우회 조건이 된다.
+#
+# 그래서 **소리 나게 고칠 수 있는 축만** 닫는다:
+#   - **table-source 위치(FROM/JOIN/CROSS·OUTER APPLY)는 절대 면제하지 않는다.** 그 자리에는 UDT
+#     인스턴스 메서드가 문법적으로 올 수 없으므로(서버는 반드시 `database.schema.TVF` 로 해석) 면제는
+#     모호성 해소가 아니라 **증명적으로 틀린 해석**이고, 반환값이 **행 집합**이라 유출 규모가 크다.
+#   - 체인은 **정확히 2토큰**만 면제(3토큰 이상이면 head 가 DB/스키마 — 4/5-part linked-server 봉인).
+#   - 체인의 **모든 토큰**을 보호 네임스페이스와 대조(중간 토큰 `master`/`agent_memory` 무방비 해소).
+# **스칼라 위치의 잔여는 닫히지 않았다** — `alias.col.method()` 와 `db.schema.func()` 는 카탈로그
+# 지식 없이 구분 불가이고, 면제를 없애면 re-gate(7차)가 MAJOR 로 못박은 UDT 메서드 지원 계약
+# (`test_regate7_udt_method_not_overblocked`)이 깨진다. 원장에 미해결로 기록한다.
+_NEVER_ALIAS_SHADOWED = frozenset({
+    "sys", "guest", "information_schema", "agent_memory",
+    "master", "model", "msdb", "tempdb", "mysql", "performance_schema",
+})
 
-    정당한 UDT 메서드 체인은 `alias.column.method()` 로 **2토큰 이상**이다. 1토큰(`x.fn()`)은
-    스키마 자격 함수호출이므로 면제하지 않는다. 보호 네임스페이스는 길이와 무관하게 면제 불가.
+
+def _in_table_source(node) -> bool:
+    """이 노드가 table-source(FROM/JOIN/APPLY) 위치에 있는가.
+
+    `CROSS APPLY db.schema.tvf(...) v` 는 sqlglot 에서 `Lateral` 하위로 파싱된다. 그 자리에서
+    `X.Y.f()` 는 **반드시** `database.schema.TVF` 이므로 별칭 면제를 적용해선 안 된다(§18.8 2R BLOCKER).
+    """
+    if _exp is None:
+        return False
+    cur = getattr(node, "parent", None)
+    depth = 0
+    while cur is not None and depth < 40:
+        if isinstance(cur, _exp.Lateral):
+            return True
+        cur = getattr(cur, "parent", None)
+        depth += 1
+    return False
+
+
+def _alias_exempt(acc: "list[str]", aliases, node=None) -> bool:
+    """함수 namespace 체인을 UDT/XML 메서드(`alias.column.method()`)로 보고 면제할지.
+
+    면제 조건(전부 충족): ① leading 토큰이 선언된 별칭/테이블/CTE 명 ② **체인이 정확히 2토큰**
+    ③ 체인의 **모든 토큰**이 보호 네임스페이스가 아님 ④ **table-source 위치가 아님**.
+    re-gate(7차) 의 UDT 메서드 지원 계약을 지키면서, 위 ②③④ 로 증명 가능한 우회를 닫는다.
     """
     if not acc or acc[0] not in aliases:
         return False
-    if acc[0] in _NEVER_ALIAS_SHADOWED:
+    if len(acc) != 2:
         return False
-    return len(acc) >= 2
+    if any(tok in _NEVER_ALIAS_SHADOWED or tok == _UNKNOWN_NS for tok in acc):
+        return False
+    return not _in_table_source(node)
 
 
 def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
@@ -316,6 +366,10 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
                 p = n.args.get(part)
                 if isinstance(p, _exp.Identifier):
                     acc.append((p.name or "").strip().lower())
+        elif isinstance(n, _exp.Paren):
+            _idents(n.args.get("this"), acc)          # `(master.dbo).fn()` 도 판정 대상
+        elif n is not None:
+            acc.append(_UNKNOWN_NS)                    # 미지 노드 = fail-closed 센티널
 
     for dot in node.find_all(_exp.Dot):
         expr = dot.args.get("expression")
@@ -323,8 +377,8 @@ def _collect_qualified_func_refs(node) -> list[tuple[str, str]]:
             acc: list[str] = []
             _idents(dot.args.get("this"), acc)
             acc = [a for a in acc if a]
-            if _alias_exempt(acc, aliases):
-                continue  # 테이블 alias.column.method() — UDT 메서드 호출, catalog 아님
+            if _alias_exempt(acc, aliases, dot):
+                continue  # alias.column.method() — UDT 메서드 호출(스칼라 위치)
             if len(acc) >= 2:
                 # 마지막 2개 = (catalog, schema) — 예: [forbidden, dbo] → catalog=forbidden, schema=dbo
                 out.append((acc[-2], acc[-1]))
@@ -362,6 +416,10 @@ def _collect_qualified_func_refs_named(node) -> "list[tuple[str, str]]":
                 p = n.args.get(part)
                 if isinstance(p, _exp.Identifier):
                     acc.append((p.name or "").strip().lower())
+        elif isinstance(n, _exp.Paren):
+            _idents(n.args.get("this"), acc)          # `(master.dbo).fn()` 도 판정 대상
+        elif n is not None:
+            acc.append(_UNKNOWN_NS)                    # 미지 노드 = fail-closed 센티널
 
     for dot in node.find_all(_exp.Dot):
         expr = dot.args.get("expression")
@@ -369,7 +427,7 @@ def _collect_qualified_func_refs_named(node) -> "list[tuple[str, str]]":
             acc: list[str] = []
             _idents(dot.args.get("this"), acc)
             acc = [a for a in acc if a]
-            if _alias_exempt(acc, aliases):
+            if _alias_exempt(acc, aliases, dot):
                 continue
             if not acc:
                 continue
@@ -399,7 +457,7 @@ def _has_overqualified_function(node) -> bool:
             acc: list[str] = []
             _idents_chain(dot.args.get("this"), acc)
             acc = [a for a in acc if a]
-            if _alias_exempt(acc, aliases):
+            if _alias_exempt(acc, aliases, dot):
                 continue  # UDT 메서드 호출 — 과차단 방지
             if len(acc) >= 3:
                 return True
@@ -484,6 +542,68 @@ def collect_schema_refs(
             if _sdb:
                 schemas.add(_sdb)
     return (schemas, has_unqualified, catalogs)
+
+
+def _idents_named(n, acc) -> None:
+    """Dot 체인의 선행 식별자들을 소문자로 누적 (모듈 공용 — 종전 3곳 중복 정의)."""
+    if n is None or _exp is None:
+        return
+    if isinstance(n, _exp.Dot):
+        _idents_named(n.args.get("this"), acc)
+        e = n.args.get("expression")
+        if isinstance(e, _exp.Identifier):
+            acc.append((e.name or "").strip().lower())
+    elif isinstance(n, _exp.Identifier):
+        acc.append((n.name or "").strip().lower())
+    elif isinstance(n, _exp.Column):
+        for part in ("catalog", "db", "table"):
+            pp = n.args.get(part)
+            if isinstance(pp, _exp.Identifier):
+                acc.append((pp.name or "").strip().lower())
+
+
+def collect_alias_shadowed_heads(sql: str, *, dialect: str = "mysql") -> "set[str]":
+    """별칭 면제로 **판정을 건너뛴** 함수 체인의 head 토큰 (lowercase).
+
+    보안 판정용이 **아니다**(그 시도는 논리가 뒤집혀 실패했다 — 적대 2R). 용도는 하나: 이 문장이
+    "모호해서 통과한" 경로를 탔음을 caller 가 알아, 서버 오류 원문을 그대로 되돌려주지 않도록
+    (존재 열거 oracle 차단) 하는 것이다.
+    """
+    out: "set[str]" = set()
+    if not SQLGLOT_AVAILABLE or _exp is None:
+        return out
+    try:
+        parsed = sqlglot.parse(sql or "", dialect=str(dialect or "mysql").lower())
+    except Exception:
+        return out
+    for stmt in parsed:
+        if stmt is None:
+            continue
+        aliases = _table_alias_names(stmt)
+        for dot in stmt.find_all(_exp.Dot):
+            if not isinstance(dot.args.get("expression"), (_exp.Func, _exp.Anonymous)):
+                continue
+            acc: list[str] = []
+            _idents_named(dot.args.get("this"), acc)
+            acc = [a for a in acc if a]
+            if _alias_exempt(acc, aliases, dot):
+                out.add(acc[0])
+    return out
+
+
+def collect_table_alias_names(sql: str, *, dialect: str = "mysql") -> "set[str]":
+    """문장에 선언된 테이블 별칭/테이블명/CTE 명 (lowercase) — caller 의 오보 방지용."""
+    out: "set[str]" = set()
+    if not SQLGLOT_AVAILABLE or _exp is None:
+        return out
+    try:
+        parsed = sqlglot.parse(sql or "", dialect=str(dialect or "mysql").lower())
+    except Exception:
+        return out
+    for stmt in parsed:
+        if stmt is not None:
+            out |= set(_table_alias_names(stmt))
+    return out
 
 
 def collect_schema_object_refs(sql: str, *, dialect: str = "mysql") -> "set[tuple[str, str]]":
