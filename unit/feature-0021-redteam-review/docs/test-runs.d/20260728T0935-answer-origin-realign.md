@@ -79,5 +79,42 @@ trailing `system` 으로 되돌리면 초안이 Anthropic prefill 이 되어 미
   `[redteam] answer-realign …` 라인과 `_rt_meta.realign_*` 이며, 콘솔 노출은 후속 cycle
   (TASK.md §10 잔여 — DB 컬럼 신설 필요).
 - **웹 자산 무변경**: static/template/html 변경 0 → PB-0008 시각검증 hard gate(check #13) 대상
-  아님. 다만 신규 설정 행(`REDTEAM_ANSWER_REALIGN`)이 관리 콘솔 '설정 > AI 자가 리뷰' 에
-  data-driven 으로 렌더되므로 POST-DEPLOY 에 그 행의 실제 표출을 확인한다(아래 Run 4).
+  아님. 신규 설정 행(`REDTEAM_ANSWER_REALIGN`)의 실제 표출은 Run 4 에서 확인했다.
+
+### Run 4 — POST-DEPLOY 라이브 실증 (Environment: **Windows-browser** + 컨테이너 introspection)
+
+배포: PR #1026 머지 → `sudo -E make deploy-all` (deploy-web 스파인, `deploy_scope: included` 근거).
+web 롤링(one-at-a-time) + 90s soak 통과 + 워커 롤아웃 + gateway/Caddy 무드리프트.
+
+**① 배포 반영 (Environment: CLI — 컨테이너 introspection)**
+
+| 컨테이너 | GIT_COMMIT |
+|---|---|
+| repo-web-a-1 · repo-web-b-1 | `f0b3d3a5` |
+| repo-ask-worker-1 · repo-insight-worker-1 | `f0b3d3a5` |
+
+- ask-worker 의 baked `modules/redteam.py` 에 신규 심볼(`build_request_anchor` /
+  `detect_meta_framing` / `realign_answer`) **9 매치** — 답변 경로 컨테이너에 실제 반영 확인.
+  (repo 에 있다는 것으로 그치지 않는다: 코드는 이미지에 baked 되므로 repo↔라이브가 어긋날 수 있다.)
+- web 의 baked `shared/runtime_settings.py` 에 `REDTEAM_ANSWER_REALIGN` 1 매치.
+- 엣지 `GET https://localhost/healthz` → **200**.
+
+**② 신규 설정 행 실 표출 (Environment: Windows-browser, `bin/win-browser.py` CDP)**
+
+`https://localhost/admin` → 설정 탭 → `AI 자가 리뷰` pane 에서 신규 행을 실 화면으로 확인:
+
+- 라벨 **원 요청 기준 답변 정합 교정** · 배지 **즉시 반영**(apply_mode=live) · 단위 `0/1`
+- 입력 컨트롤 `type=number`, **effective value = 1**, `기본값 1` — 기본 활성이 라이브에 반영됨
+- 설명문 렌더 확인("…사실·수치·근거·고지를 그대로 둔 채 원 요청에 답하는 서술로 1회만 다시…")
+- 배치 순서가 스펙과 일치: `미해소 결함 답변 고지` → **`원 요청 기준 답변 정합 교정`** →
+  `리뷰어 호출 타임아웃` → `리뷰어 토큰 할당량`
+- 스크린샷 육안 확인 — 행 잘림·겹침·overflow 없음, 이웃 행과 정렬 일치.
+
+**③ 정직 표기 — 이 Run 이 검증하지 **않은** 것**
+
+- **답변 뉘앙스의 실제 교정 여부는 이 Run 의 범위가 아니다.** ①②는 "코드·설정이 라이브에
+  올랐다"만 보인다. 1차 재앵커가 문체를 얼마나 바꾸는지, 2차 재서술이 얼마나 발동하는지는
+  배포 후 실제 답변 표본이 쌓여야 관측된다 — §4 미커버 참조. 이를 "PASS" 로 포장하지 않는다.
+- 라이브 SHA(`f0b3d3a5`)는 배포 시점의 origin/main 이며, 직후 다른 세션이 `3687c43b`(feature-0016
+  그래프 코드 포함)을 머지했다. 그 배포는 해당 cycle 의 몫이고, deploy-web 은 origin/main 을
+  coalesce 하므로 그쪽 배포가 본 변경을 함께 실어간다(회귀 없음).
