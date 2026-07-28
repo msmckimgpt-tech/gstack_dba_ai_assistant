@@ -11,6 +11,11 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T170000-graph-catcluster-polish-postverify (TASK-20260728T162000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- `docs/test-runs.d/20260728T170000-graph-catcluster-scroll-polish-postdeploy.md` 신설 — 배포(main 9c434809)·서빙 baked·PB-0008 5 시나리오·evidence 3매. **코드·자산 변경 0**.
+- 드라이버 실측 2건 기록: 공유 Chrome 병렬 점유로 `pages[0]` 하이재킹 → **전용 새 탭** 드라이버로 회피 / 관리 콘솔 탭 전환은 **trusted click + `wait_until='load'` + 부트스트랩 대기** 필요.
+- Cross-ref: CHG-20260728T162000-graph-catcluster-scroll-polish · REV-20260728T170000-graph-catcluster-polish-postverify.
+
 ## CHG-20260728T162000-graph-catcluster-scroll-polish (TASK-20260728T162000 — 스크롤 280ms EaseOutExpo + 헤딩 점멸/멤버 파도, Minor §12.3, frontend-only)
 - `src/static/graph/graph-ctxmenu.js`: `_META_PANEL_SCROLL_MS = 280` + **`_metaEaseOutExpo`** + **`_metaAnimatePanelScroll(box, from, to, seqOf, reduce)`**(rAF 구동, 세대 토큰으로 진행 중 중단) 신설 — `scrollTo({behavior:'smooth'})` 대체. 목표에 `maxTop` 클램프 추가. 파도 연출: `_META_WAVE_MAX/STEP_MS/LEAD_MS/DUR_MS` 상수 + `_metaWaveNodes` 원장 + **`_metaClearPanelWave()`** + **`_metaRunPanelWave(target, reduce)`**(헤딩 `.is-focus`, 멤버 행 `.is-wave` + `animation-delay` + `--amgr-wave-a` 선형 감쇠 주입, 다음 헤딩 경계/접힘 행 제외/상한 24). `_metaGraphFocusPanelGroup` 이 이 둘을 호출하고 총 길이 후 정리 타이머 예약.
 - `src/static/graph/graph.css`: `.amgr-ct-group.is-focus` → `amgrCtGroupFocus` **760ms 2회 점멸**(12~30% 강 / 46% 감쇠 / 62% 재점등). `.amgr-ct-row-li.is-wave` + `@keyframes amgrCtRowWave`(420ms, `rgba(37,99,235, var(--amgr-wave-a))`) 신설. reduced-motion 분기에 파도 정지 추가.
