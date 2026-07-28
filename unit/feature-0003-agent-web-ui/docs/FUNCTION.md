@@ -2008,6 +2008,10 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - **미전송 선택 보존**: 랜딩·pending 컨텍스트의 재로드는 그 컨텍스트에 머무는 동안 반복되므로, 리셋을 hydration 과 동일한 가드로 감싼다 — '+ 새 대화'에서 고른 뒤 아직 안 보낸 모델이 사이드바 일괄삭제·롤백 등으로 사라지지 않는다.
 - **파생 동작(명시)**: 대화 복제(fork)·공유 링크 신규 참여자는 저장값이 없어 기본값에서 시작한다. 그룹 대화의 두 멤버가 같은 대화에 서로 다른 모델을 볼 수 있다(계정별 스코프의 의도된 귀결). 명시 선택과 같은 값으로 배포 기본값이 바뀐 뒤 재전송하면 저장이 해제된다(이탈-인코딩의 알려진 성질).
 - 검증: `tests/test_model_persist.py` 14 PASS(H1·H1b·H2·H2b·H2c·H2d·H2e·H3·H4·A1·A1b·A1c·A2·A2b) · `tests/verify_model_persist.mjs` 32 PASS(G/M/R/D/S 5계열) · `node --check`/`py_compile`/ruff PASS · §18.8 [SUBAGENT] 적대 패널 2라운드(전건 수정). REV/CHG/TASK-20260727T113640-model-persist. POST-DEPLOY PB-0008(Environment: Windows-browser).
+- **조기 cid 전환 시 귀속 승계(`_adoptComposerModelPickToConv`, 2026-07-28 추가)**: 선택 귀속은 선택 시점의 `activeConversationId` 로 잡히므로 새 대화(pending)에서는 빈 문자열이다. **첨부 업로드**가 early-cid 를 발급해 활성 대화를 실 cid 로 바꾸면 이 귀속이 어긋나 `_shouldSendModelField` 가 false 로 떨어지고, `model` 이 빠진 요청이 서버 기본값(haiku)으로 실행된다 — 화면은 고른 모델을 계속 표시하므로 **조용한 강등**이 된다(라이브 실측). pending→실 cid 실체화는 컨텍스트를 *떠나는* 것이 아니라 cid 를 *얻는* 것이므로, 리셋과 반대로 귀속을 승계한다. 승계 대상은 pending 귀속(빈 문자열 또는 그 sentinel)뿐이고 **미선택(`null`)·타 대화 귀속은 비대상** — "'+ 새 대화'는 기본값에서 시작" 계약과 계정 간 누출 차단이 그대로 유지된다. 적용 지점은 활성 대화가 pending 에서 실 cid 로 바뀌는 전환 **전부**(첨부 업로드 경로 = 근본, 전송 경로 = 다음 전송 예방)이며, 첨부 경로는 sentinel 을 비우기 **전에** 승계해야 한다.
+- **표시-집행 정합 감지(`_modelSelectionSilentlyDropped`, 2026-07-28 추가)**: 화면이 명시 선택을 보여주는데 그 값이 전송에 실리지 않는 모순 상태를 감지해 사용자에게 알리고(무음 금지) 진단 흔적을 남긴다. 알려진 전환 경로는 위 승계로 봉인했으므로, 이 경로가 발화하면 **미봉인 신규 전환 경로**가 생겼다는 신호다. 전송 자체는 막지 않는다.
+- AC-MP-6: 새 대화에서 모델을 고른 뒤 첨부를 올려 전송하면 **고른 모델로 실행**된다(요청에 `model` 동봉 + 대화별 저장). 모델을 고르지 않았다면 종전대로 기본값으로 시작한다.
+- 검증(추가분): `tests/verify_model_persist.mjs` **49 PASS**(E 승계·오귀속 차단·미선택 보존 / W 무음 감지·오탐 없음 / S9~S11 구조 계약) · 서버측 모델 관련 pytest 57건 rc=0 · `node --check` PASS · §18.8 인라인 적대검증(backend+security+qa, BLOCKING 0). REV/CHG/TASK-20260728T191126-model-pick-early-cid. 라이브 실측(`llm_usage.model` 정본)은 POST-DEPLOY PB-0008 잔여.
 
 ## (share-bar-layout, 2026-07-27) 공유 대화 뷰 — 액션 하단 바 이동 + 조회수 상단 이동 + hover 확장 (web/UI, Minor §12.3, frontend-only)
 
