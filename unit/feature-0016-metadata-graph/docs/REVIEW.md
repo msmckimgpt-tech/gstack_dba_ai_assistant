@@ -404,3 +404,8 @@ source_of_truth: true
 - 대상: CHG-20260728T1730-graph-label-lod-postmerge (TASK.md TL.11 + MODIFY + test-runs.d 병합 후 재검증 기록). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
 - 본 cycle 의 코드 적대 검증은 REV-20260728T170500-graph-label-lod [CODEX:frontend-render+lod] 가 담당했고(P1/GATE 0 · P2 2건 in-cycle 흡수), 그 수정 이후 상태에서 병합 후 전 스위트 875 PASS / 0 FAIL 로 무회귀를 실측했다.
 - 기계적 점검: FUNCTION.md union 해소가 양쪽 REQ 를 모두 보존하는지 직접 대조(REQ 232건 · label-lod + origin 측 4건 전량 존재) · 충돌 마커 잔재 0(verify-completion CHECK#14).
+
+## REV-20260728T175000-graph-label-lod-postdeploy [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 대상: CHG-20260728T1750-graph-label-lod-postdeploy (TASK.md TL.10 결과표 + TL.12 후속 + MODIFY + TEST/test-runs.d + 증적 1매). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
+- 본 cycle 의 코드 적대 검증은 REV-20260728T170500 `[CODEX:frontend-render+lod]`(P1/GATE 0 · P2 2건 in-cycle 흡수)가 담당했고, 그 두 수정이 **배포본에서 실제로 발화**함을 TL.10 ⑦⑧ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
+- 기계적 점검: 배포 SHA 정합(edge `/healthz git_commit=2a843acd` = main 머지 커밋) · 서빙 자산에 두 수정 존재(`_META_LABEL_FONT_STEP` 2건 · `badgesDropped || 0` 1건) · 자산 스탬프 `?v=c9ce5fe33b65` 정합 · pageerror 0.
