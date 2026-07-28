@@ -6577,4 +6577,15 @@ mouse-hover 툴팁으로 충분하니 제거.
 - [x] 순수 로직 단위테스트 T26 68-assert 추가 — 180 PASS / 0 FAIL
 - [x] §18.8 적대 검증 — `[CODEX:graph-label-hover-expand]` (subagent 패널은 세션 도구제약으로 `[SKIPPED:tool-restricted:ux,design]`, REVIEW 참조)
 - [x] docs 동반(FUNCTION/MODIFY/REVIEW/test-runs.d)
-- [ ] **POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증** — 확장 애니·이웃 노드 위치 불변·z-order·카드 위 클릭 라우팅 실화면 확인 (`visual_verification_scope: always`)
+- [x] **POST-DEPLOY PB-0008 Windows-browser 라이브 시각검증** — 확장 애니·이웃 노드 위치 불변·z-order·카드 위 클릭 라우팅 실화면 확인 (`visual_verification_scope: always`) → 아래 TASK-20260728T123000 에서 8/8 PASS 종결
+
+## TASK-20260728T123000-graph-label-hover-postverify — 잘린 노드 명칭 hover 확장 POST-DEPLOY PB-0008 라이브 검증 (종결)
+- 선행: `TASK-20260728T120530-graph-label-hover-expand` (PR #993 → main `d980ebe4` → `make deploy-web-only` 무중단 롤링·soak PASS).
+- 실 Windows Chrome 150 relay 로 라이브 실측 — 8 항목 전부 PASS, pageerror 0.
+- [x] ① 잘린 명칭 hover → 전체 노출 (`sp_GetCurrentItemUniqueID…` → `sp_GetCurrentItemUniqueID_New`)
+- [x] ② 부드러운 확장 — rAF 프레임별 폭 실측 216 → 297 → 303px 단계 증가(즉시 전환 아님)
+- [x] ③ **다른 노드 위치 불변** — 전/후 유의 픽셀 diff 가 캔버스의 2.75%(306×38px, hover 한 칩 자신)에 국한
+- [x] ④ z-order — 확장분이 클러스터 경계선·관계선 위에 렌더
+- [x] ⑤ 확장 영역 클릭 라우팅 대조 실험(hover 전 = 클러스터 / hover 후 = 원 노드 상세)
+- [x] ⑥ 이탈 원복 픽셀 동치(잔상 0) · ⑦ 미잘림 칩 무반응 · ⑧ pageerror 0
+- [x] 증적 — `docs/test-runs.d/20260728T120530-graph-label-hover-expand.md` · `docs/evidence/pb0008-graph-label-hover-{before,after,leave}-20260728.png`

@@ -2,7 +2,7 @@
 run_at: 2026-07-28T12:05:30+09:00
 session: ai/claude/feature-0003-graph-label-hover-expand
 scope: 그래프 뷰 — 잘린 노드 라벨 hover 확장 카드(graph-label-hover-expand)
-verdict: PASS (PRE-COMMIT 단위·정적) / POST-DEPLOY PB-0008 잔여
+verdict: PASS (PRE-COMMIT 단위·정적 + POST-DEPLOY PB-0008 라이브)
 ---
 
 ### Run — 확장 기하·hover 수명주기 순수 로직 (Environment: node vm)
@@ -43,15 +43,26 @@ verdict: PASS (PRE-COMMIT 단위·정적) / POST-DEPLOY PB-0008 잔여
 - 9 라운드 반복(적발 → 수정 → 재검증). **P1 3건 · P2 8건 수정**, 최종 라운드 "No discrete correctness issues were identified."
 - 상세·판정 근거는 `REVIEW.md` `REV-20260728T120530-graph-label-hover-expand [CODEX:graph-label-hover-expand]`.
 
-### Run — Environment: Windows-browser (PB-0008) — **PRE-COMMIT 미수행 사유 + POST-DEPLOY 잔여**
-- **미수행 사유(PRE-COMMIT)**: 본 변경의 사용자 가시 산출물은 **PixiJS v8 WebGL 캔버스에 rAF 로 그려지는 확장
-  애니메이션**이다. 캔버스 내부 렌더는 DOM 이 아니라 headless/jsdom 으로 픽셀 실측이 불가능하고
-  (§16.6 「렌더-성능/애니메이션 검증」의 헤드리스 rAF 비-정본 조항과 동일 축), 정적 자산은 web 이미지에 baked 라
-  머지·배포 전에는 라이브 화면에 존재하지 않는다. 따라서 PRE-COMMIT 은 정적·단위·적대 리뷰로 de-risk 하고,
-  실화면 검증은 배포 후 PB-0008 로 수행한다(`visual_verification_scope: always`, `deploy_scope: included`).
-- **POST-DEPLOY 검증 계획(잔여)**: `bin/win-browser.py` relay → 실 Windows Chrome `https://localhost/admin` 로그인 →
-  메타데이터 > 그래프 뷰 → 이름이 긴 테이블 칩(예 `cc_user_subscription`) hover.
-  확인 항목: ① 칩이 부드럽게 좌우로 넓어지며 잘린 뒷글자가 드러남 ② **이웃 노드·클러스터 위치 불변**(확장 전/후
-  스크린샷 대조) ③ 확장분이 이웃 칩·클러스터 배경 **위**에 그려짐(z-order) ④ 드러난 영역 클릭 시 그 노드가 선택,
-  우클릭 시 그 노드 메뉴 ⑤ 이탈 시 원 폭으로 축소 후 소멸(잔상 0) ⑥ 잘리지 않은 짧은 이름 칩은 무반응
-  ⑦ pageerror 0. 스크린샷은 `docs/evidence/` 에 첨부.
+### Run — Environment: Windows-browser (PB-0008) — **POST-DEPLOY PASS**
+- **PRE-COMMIT 미수행 사유(기록 보존)**: 사용자 가시 산출물이 PixiJS v8 WebGL 캔버스에 rAF 로 그려지는 확장
+  애니메이션이라 headless/jsdom 픽셀 실측이 불가능하고(§16.6 헤드리스 비-정본 조항과 같은 축), 정적 자산은 web
+  이미지에 baked 라 머지·배포 전에는 라이브 화면에 존재하지 않는다. → 배포 후 실측(아래).
+- **배포**: PR #993 → main `d980ebe4` → `make deploy-web-only` 무중단 롤링(web-a·web-b 모두 `git_commit=d980ebe4`,
+  Caddyfile 무변경 no-op, 90s soak 통과). 서빙 자산 확증: `https://localhost/static/graph/graph-renderer-pixi.js?v=1659a75f6c2f`
+  (80,232 B) 에 `hoverExpandGeom`·`_labelHoverLayer`·`_probeHover` 존재.
+- **방법**: `bin/win-browser.py` relay(실 Windows Chrome **150.0.7871.115**, CDP `172.26.144.1:9223`) →
+  `https://localhost/admin` → 지식베이스 > 그래프 뷰 → 데이터소스 `mysql-local` → 스키마 `cc_bonedragon` 펼침
+  (테이블 257 · 함수·프로시저 300). 캔버스 615×687. 대상 = 잘려 있던 루틴 칩 `sp_GetCurrentItemUniqueID…`.
+
+| # | 확인 항목 | 결과 |
+|---|---|---|
+| ① | **잘린 명칭 hover → 전체 노출** | PASS — `sp_GetCurrentItemUniqueID…`(잘림) → **`sp_GetCurrentItemUniqueID_New`**(전체) 렌더. 증적 `evidence/pb0008-graph-label-hover-{before,after}-20260728.png` |
+| ② | **부드러운 확장(애니)** | PASS — rAF 프레임별 칩 가로폭 실측: `t=44·87ms → 223px`(hover-intent 대기) · `t=176ms → 216px`(카드 생성, 원 폭에서 시작) · `t=251ms → 297px` · `t=326ms 이후 → 303px 안착`. 단계적 증가 = 즉시 전환이 아닌 트윈 |
+| ③ | **다른 노드 위치 불변** | PASS — 동일 상태 전/후 전체 화면 픽셀 diff 의 **유의(>16) 변화 영역이 캔버스의 2.75%(306×38px)** 에 국한, 그 박스 = hover 한 칩 자신. 바로 위 이웃 칩 `sp_GetAuctionMaxIndex`·클러스터 박스·관계선 좌표 전부 동일 |
+| ④ | **z-order** | PASS — 확장분이 클러스터 경계선·점선 관계선 **위**에 그려짐(after 캡처에서 확장 영역이 배경 선을 덮음) |
+| ⑤ | **확장 영역 클릭 라우팅(`_pick` tier0)** | PASS — 대조 실험: 같은 좌표(canvas 330,489) 클릭이 **hover 전** = `클러스터: cc_bonedragon`(combo 폴백) / **hover 확장 후** = `상세: sp_GetCurrentItemUniqueID_New`(원 노드). 드러난 영역이 캔버스·이웃으로 새지 않음 |
+| ⑥ | **이탈 시 원복(잔상 0)** | PASS — 커서 이탈 후 화면이 hover 이전과 **픽셀 동치**(유의 diff `None`, 최대 채널차 1/255 = AA 노이즈) |
+| ⑦ | **잘리지 않은 칩은 무반응** | PASS — 스키마 카드 `cc_bonedragon`(12자, 미잘림) hover 시 화면 변화 0 |
+| ⑧ | **pageerror** | PASS — `error`/`unhandledrejection` 리스너 수집 결과 **0건** |
+
+- 원본 캡처·전수 프레임 로그: `artifacts/feature-0003-graph-label-hover-expand/`.

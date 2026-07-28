@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T123000-graph-label-hover-postverify (TASK-20260728T123000 — 잘린 노드 명칭 hover 확장 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-28. 코드·자산 **무변경** — test-runs.d fragment POST-DEPLOY 결과 append + TASK 체크박스 종결 + evidence 3종 추가.
+- 배포: PR #993 → main **d980ebe4** → `make deploy-web-only` 무중단 롤링(web-a·web-b `git_commit=d980ebe4`, Caddyfile 무변경 no-op, 90s soak 통과). 서빙 `/static/graph/graph-renderer-pixi.js?v=1659a75f6c2f`(80,232 B)에 `hoverExpandGeom`·`_labelHoverLayer`·`_probeHover` 존재 확증.
+- 라이브 실측(win-browser relay 실 Windows Chrome 150.0.7871.115, `mysql-local` > `cc_bonedragon` 펼침 257테이블·300루틴): **8/8 PASS** — ①잘린 명칭 전체 노출(`sp_GetCurrentItemUniqueID…`→`sp_GetCurrentItemUniqueID_New`) ②rAF 프레임 폭 216→297→303px 단계 증가(트윈 실측) ③**다른 노드 위치 불변**(유의 픽셀 diff 가 캔버스의 2.75%=306×38px, hover 한 칩 자신에 국한) ④z-order(확장분이 클러스터 경계·관계선 위) ⑤확장영역 클릭 라우팅 대조(hover 전=클러스터 폴백 / hover 후=원 노드 상세) ⑥이탈 원복 픽셀 동치(최대 채널차 1/255) ⑦미잘림 칩 무반응 ⑧pageerror 0.
+- 증적: `docs/evidence/pb0008-graph-label-hover-{before,after,leave}-20260728.png` · 원본·프레임 로그 `artifacts/feature-0003-graph-label-hover-expand/`. Cross-ref: CHG/REV-20260728T120530-graph-label-hover-expand.
+
 ## CHG-20260728T120530-graph-label-hover-expand (TASK-20260728T120530-graph-label-hover-expand — 그래프 뷰 잘린 노드 명칭 hover 확장, Minor §12.3)
 - Date: 2026-07-28. Files: `static/graph/graph-renderer-pixi.js`(수정) · `tests/headless/test_pixi_adapter.js`(T26 추가). **frontend-only · additive/비파괴** — 데이터·API·RBAC·엔드포인트·스키마·레이아웃 산출 변경 0.
 - 요청(사용자, `/_template:entry`): "그래프 뷰에서 테이블 노드 내 명칭이 너무 길 경우 전체 텍스트가 잘리는 이슈… mouse-hover 시 노드 크기가 부드럽게 확장되며 나머지 명칭이 나타나도록. **다른 노드의 위치를 뒤틀지 않도록** 주의하고 **z-order** 또한 유의."
