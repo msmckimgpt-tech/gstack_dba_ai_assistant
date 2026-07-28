@@ -19,6 +19,7 @@ UI(Cytoscape) 와 AI(knowledge context) 가 같은 그래프를 공유해 정합
 """
 from __future__ import annotations
 
+import hashlib as _hashlib   # feature-0030 (cyvol): routine refs 서명
 import json
 import logging
 import math
@@ -239,7 +240,7 @@ def _rag_effective(ds, object_key, schema_name, table_name):
 
 # ── 고수준 동기화 (관계형 → 그래프) ───────────────────────────────────────
 def sync_table(cur, scope, schema, table, description=None, source="manual",
-               cluster_id=_UNSET, cluster_label=_UNSET) -> None:
+               cluster_id=_UNSET, cluster_label=_UNSET, cache=None) -> None:
     """Schema·Table 노드 + HAS_TABLE 엣지 MERGE.
 
     description=None 이면 description 속성을 **건드리지 않는다**(rag_objects 노드 투영이 큐레이션
@@ -250,8 +251,11 @@ def sync_table(cur, scope, schema, table, description=None, source="manual",
     fqn = f"{schema}.{table}" if schema else table
     skey = _vkey(scope, schema or "(default)")
     tkey = _vkey(scope, fqn)
-    _merge_vertex(cur, "Schema", skey,
-                  {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope})
+    # cyvol: Schema 정점은 테이블마다 재-MERGE 됐다(실측 rag 16,367 + routines 23,053 회 →
+    # 실제 distinct 스키마는 ~370). 속성 동일 시 실행 스코프 1회로 축약.
+    sprops = {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope}
+    if _cache_once(cache, _vmark("Schema", skey, sprops)):
+        _merge_vertex(cur, "Schema", skey, sprops)
     tprops = {"name": table, "fqn": fqn, "scope_key": scope,
               "schema_name": schema or "", "table_name": table, "source": source}
     if description is not None:
@@ -264,7 +268,8 @@ def sync_table(cur, scope, schema, table, description=None, source="manual",
     _merge_edge(cur, "Schema", skey, "HAS_TABLE", "Table", tkey)
 
 
-def sync_column(cur, scope, schema, table, column, description="", source="manual", ordinal=None) -> None:
+def sync_column(cur, scope, schema, table, column, description="", source="manual", ordinal=None,
+                cache=None) -> None:
     """Column 노드 + HAS_COLUMN 엣지 MERGE (Table 선행 가정 또는 동시 MERGE).
 
     feature-0016 graphux5: ordinal(실제 스키마 컬럼 순서, 1-based) 을 Column 정점 속성으로 투영한다.
@@ -273,9 +278,11 @@ def sync_column(cur, scope, schema, table, column, description="", source="manua
     cfqn = f"{tfqn}.{column}"
     tkey = _vkey(scope, tfqn)
     ckey = _vkey(scope, cfqn)
-    _merge_vertex(cur, "Table", tkey,
-                  {"name": table, "fqn": tfqn, "scope_key": scope,
-                   "schema_name": schema or "", "table_name": table})
+    # cyvol: 소속 Table 정점은 컬럼마다 재-MERGE 됐다(3,135 행 → distinct 테이블 389).
+    tprops = {"name": table, "fqn": tfqn, "scope_key": scope,
+              "schema_name": schema or "", "table_name": table}
+    if _cache_once(cache, _vmark("Table", tkey, tprops)):
+        _merge_vertex(cur, "Table", tkey, tprops)
     _merge_vertex(cur, "Column", ckey,
                   {"name": column, "fqn": cfqn, "scope_key": scope,
                    "table_name": table, "column_name": column,
@@ -323,6 +330,68 @@ def anchor_cache_reset(cache) -> None:
         cache["pending"].clear()
 
 
+def _cache_once(cache, mark) -> bool:
+    """이 실행에서 (확정 또는 이번 행에서) 이미 처리한 마크면 False. 캐시 미전달=항상 True.
+
+    feature-0030: `_anchor_relationship_column` 안에만 있던 클로저를 모듈 함수로 승격 —
+    sync_table/sync_column/sync_routine 이 같은 pending/committed 규약을 공유한다.
+    """
+    if not isinstance(cache, dict):
+        return True
+    if mark in cache["committed"] or mark in cache["pending"]:
+        return False
+    cache["pending"].add(mark)
+    return True
+
+
+def _vmark(label: str, key: str, props: dict) -> tuple:
+    """정점 MERGE 중복 제거 마크 — **속성까지** 포함한다 (feature-0030 cyvol).
+
+    같은 Table 정점이라도 단계마다 싣는 속성이 다르다: `_step_rag` 는 semantic_cluster_*,
+    `_step_tables` 는 description, `_step_columns`/routine refs 는 이름 3종만 MERGE 한다.
+    키만으로 dedup 하면 **먼저 실행된 단계가 뒤 단계의 속성 투영을 삼켜** description·클러스터가
+    영구 미반영된다(계층 파괴). 속성을 마크에 넣으면 '같은 정점을 같은 속성으로' 다시 MERGE 하는
+    경우에만 생략되므로 단계 간 캐시 공유가 안전해진다.
+    """
+    return (label, key, tuple(sorted((k, repr(v)) for k, v in (props or {}).items())))
+
+
+def routine_refs_signature(refs) -> str:
+    """routine 참조 목록의 안정 서명 (feature-0030 cyvol).
+
+    `sync_routine` 은 routine 마다 ROUTINE_USES 를 **전량 DELETE 후 재-MERGE** 한다(정의 변경으로
+    사라진 참조의 stale-edge 방지). 전량 sync 실측에서 이 패턴이 DELETE 23,053 + 엣지 MERGE 28,034
+    = cypher 51,087 회(전체 158,544 의 32%)를 차지했는데, 실제로 참조가 바뀌는 routine 은 하루
+    수백 건뿐이다. 서명이 같으면 재작성을 통째로 생략한다.
+
+    정규화는 엣지를 만드는 3요소(fqn·kind·cross)만 담는다. 엣지 생성 루프가 건너뛰는 입력
+    (파싱 후 table 이 빈 fqn)도 서명에는 포함되는데, 이는 '실제로는 동일한데 서명이 달라져
+    재작성' 방향의 보수적 오차라 누락(재작성이 필요한데 생략)은 발생하지 않는다.
+
+    §18.8 패널: 같은 fqn 이 중복되면 엣지 루프는 **입력 순서상 마지막**이 이깁니다(뒤의 MERGE 가
+    relation_type 을 덮어씀). 서명도 같은 규칙으로 접은 뒤 정렬해 **최종 엣지 집합과 1:1** 로 만든다
+    — 그냥 정렬만 하면 중복 fqn 의 순서가 바뀔 때 최종 엣지는 달라지는데 서명은 같아진다.
+    입력이 dict 가 아니거나(JSON 문자열 등) 손상돼도 예외 없이 처리한다 — 이 함수는 정점 MERGE
+    **이전**에 호출되므로, 여기서 raise 하면 종전에는 만들어지던 Routine 정점·HAS_ROUTINE 까지
+    잃는다(패널 지적: 실패 지점 이동).
+    """
+    if isinstance(refs, str):
+        try:
+            refs = json.loads(refs or "[]")
+        except Exception:
+            refs = []
+    last: dict = {}
+    for r in (refs or []):
+        if not isinstance(r, dict):
+            continue
+        fqn = str(r.get("fqn") or "").strip()
+        if not fqn:
+            continue
+        last[fqn] = (str(r.get("kind") or "read"), "1" if r.get("cross") else "")
+    payload = "\x1f".join("\x1e".join((f,) + last[f]) for f in sorted(last))
+    return _hashlib.sha1(payload.encode("utf-8", "replace")).hexdigest()
+
+
 def _anchor_relationship_column(cur, scope, tbl_fqn, col, cache=None) -> str:
     """REFERENCES 끝점 Column 을 소속 Table(·Schema)에 앵커링하고 Column key 반환 (rel-selfheal).
 
@@ -338,12 +407,7 @@ def _anchor_relationship_column(cur, scope, tbl_fqn, col, cache=None) -> str:
     schema = ".".join(parts[:-1]) if len(parts) >= 2 else ""
     def _once(mark) -> bool:
         """이 실행에서 (확정 또는 이번 행에서) 이미 MERGE 했으면 False. 캐시 미전달=항상 True."""
-        if not isinstance(cache, dict):
-            return True
-        if mark in cache["committed"] or mark in cache["pending"]:
-            return False
-        cache["pending"].add(mark)
-        return True
+        return _cache_once(cache, mark)
 
     if _once(("Column", ckey)):
         _merge_vertex(cur, "Column", ckey,
@@ -405,8 +469,50 @@ def delete_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col, tgt_scop
     _cypher(cur, q, 1)
 
 
+def routine_expected_edge_count(refs, scope) -> int:
+    """refs 가 만들어야 할 ROUTINE_USES 엣지 수 (feature-0030 cyvol).
+
+    엣지 루프와 **같은 필터**(빈 fqn·파싱 후 빈 table 스킵)를 적용하고 tkey 로 중복을 접는다 —
+    엣지는 (routine, table) 쌍당 1개라 같은 테이블을 두 번 참조해도 1개다.
+    """
+    keys = set()
+    if isinstance(refs, str):
+        try:
+            refs = json.loads(refs or "[]")
+        except Exception:
+            refs = []
+    for r in (refs or []):
+        if not isinstance(r, dict):
+            continue
+        tfqn = str(r.get("fqn") or "").strip()
+        if not tfqn:
+            continue
+        parts = [p for p in tfqn.split(".") if p]
+        if not parts or not parts[-1]:
+            continue
+        keys.add(_vkey(scope, tfqn))
+    return len(keys)
+
+
+def _routine_edges_intact(rkey, refs, scope, deg_cache) -> bool:
+    """그래프의 실제 ROUTINE_USES 차수가 기대치와 일치하는가 (feature-0030 cyvol, 패널 B3).
+
+    서명이 같아도 **엣지가 실제로 있는지** 확인해야 `--full` 의 재조정 보장이 유지된다.
+    `_merge_edge` 는 끝점 정점이 없으면 오류 없이 0행이라, 서명만 신뢰하면 그런 소실이 영구
+    고착된다. `deg_cache` 미전달(외부 호출자)이면 검사를 건너뛴다 — 종전 동작.
+    """
+    if deg_cache is None:
+        return True
+    try:
+        actual = int(str(deg_cache.get(rkey) or 0))
+    except (TypeError, ValueError):
+        return False   # 판독 불가 → 보수적으로 재작성
+    return actual == routine_expected_edge_count(refs, scope)
+
+
 def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", refs=None,
-                 cluster_id=_UNSET, cluster_label=_UNSET) -> None:
+                 cluster_id=_UNSET, cluster_label=_UNSET, cache=None, sig_cache=None,
+                 deg_cache=None) -> None:
     """Routine 노드 + HAS_ROUTINE(Schema→Routine) + ROUTINE_USES(Routine→Table) MERGE (ADR-016).
 
     key/fqn 은 `schema.name()` — 뒤의 `()` 가 동명 테이블 키(`schema.name`)와의 전역 key 충돌을
@@ -419,8 +525,10 @@ def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", 
     fqn = f"{schema}.{name}()" if schema else f"{name}()"
     skey = _vkey(scope, schema or "(default)")
     rkey = _vkey(scope, fqn)
-    _merge_vertex(cur, "Schema", skey,
-                  {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope})
+    sprops = {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope}
+    if _cache_once(cache, _vmark("Schema", skey, sprops)):
+        _merge_vertex(cur, "Schema", skey, sprops)
+    _refs_sig = routine_refs_signature(refs)
     rprops = {"name": name, "fqn": fqn, "scope_key": scope, "schema_name": schema or "",
               "routine_type": routine_type or "procedure", "params": (params or "")[:500],
               "source": "routine_introspect"}
@@ -430,9 +538,35 @@ def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", 
         rprops["semantic_cluster_label"] = cluster_label
     _merge_vertex(cur, "Routine", rkey, rprops)
     _merge_edge(cur, "Schema", skey, "HAS_ROUTINE", "Routine", rkey)
+    # cyvol: 참조가 직전 sync 와 동일하면 아래 DELETE+재MERGE 전체를 생략한다(전량 sync 실측
+    # 기준 cypher 51,087 회 = 전체의 32%). `sig_cache.get(rkey)` 가 None(신규 routine·배포 직후·
+    # 선조회 실패)이면 hex digest 와 절대 같지 않아 자동으로 miss → 기존 경로.
+    #
+    # §18.8 패널(MAJOR-1): **이 실행에서 같은 rkey 를 처음 보는 경우에만** 스냅샷을 신뢰한다.
+    # 정점 key 는 `scope:schema.name()` 이라 routine_type 이 빠져 있는데 SSOT 유일키는
+    # (scope, schema, name, **type**) 이다 — MySQL 은 동명 FUNCTION/PROCEDURE 공존을 허용하므로
+    # 두 소스 행이 한 정점을 공유할 수 있다. `_sig_by_key` 는 step 진입 시 1회 스냅샷이고 재작성
+    # 후에도 갱신되지 않으므로, 두 번째 행이 stale 항목과 일치해 **재작성을 건너뛰고 첫 행의
+    # 엣지를 최종 상태로 남긴다**(종전은 마지막 행 우선으로 결정적). 게다가 sync 마다 어느 행이
+    # 이기는지 뒤바뀌어 영구 flip-flop 이 된다. 첫 방문 게이트로 종전 semantics(마지막 행 우선)를
+    # 복원한다 — 마크는 cache 의 pending/committed 규약을 그대로 타므로 행 롤백 시 함께 폐기된다.
+    _first_visit = _cache_once(cache, ("ROUTINE_REFS", rkey))
+    if (_first_visit and sig_cache is not None and sig_cache.get(rkey) == _refs_sig
+            and _routine_edges_intact(rkey, refs, scope, deg_cache)):
+        return
     # §18.8 패널(MAJOR): 가산적 MERGE 만으로는 정의 변경으로 사라진 참조가 그래프에 영구 잔존
     # (REFERENCES 의 broken stale-edge 클래스 재도입). refs 가 이 routine 의 **전량**이므로
     # 기존 ROUTINE_USES 를 먼저 회수하고 현재 참조만 재-MERGE 한다(멱등·결정적).
+    #
+    # §18.8 패널(M3): 재작성에 들어가기 전에 서명을 **먼저 지운다**. autocommit(비-owned) 경로엔
+    # SAVEPOINT 가 없어 DELETE 가 이미 커밋된 뒤 엣지 MERGE 가 중간에 실패하면 정점에는 **직전
+    # 서명이 그대로 남는데**, 참조가 바뀌지 않은 재작성이었다면 그 값이 현재 서명과 같아
+    # 이후 모든 sync 가 skip → 부분 엣지가 영구 고착된다. 미리 지우면 실패 시 서명이 없어
+    # 다음 sync 가 전량 재작성한다. owned 모드에선 행 SAVEPOINT 가 전체를 되돌려 무해.
+    try:
+        _cypher(cur, f"MATCH (r:Routine {{key: {_cq(rkey)}}}) REMOVE r.refs_sig RETURN 1", 1)
+    except Exception:
+        pass   # 라벨/속성 부재 — 아래 재작성이 어차피 진행되고 실패는 호출측 errors 로 집계
     try:
         _cypher(cur, f"MATCH (r:Routine {{key: {_cq(rkey)}}})-[u:ROUTINE_USES]->() DELETE u RETURN 1", 1)
     except Exception:
@@ -446,14 +580,27 @@ def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", 
         if not table:
             continue
         tkey = _vkey(scope, tfqn)
-        _merge_vertex(cur, "Table", tkey,
-                      {"name": table, "fqn": tfqn, "scope_key": scope,
-                       "schema_name": ".".join(parts[:-1]), "table_name": table})
+        # cyvol: 참조 Table 앵커는 28,034 회 MERGE 됐으나 distinct 는 7,331 뿐.
+        _tprops = {"name": table, "fqn": tfqn, "scope_key": scope,
+                   "schema_name": ".".join(parts[:-1]), "table_name": table}
+        if _cache_once(cache, _vmark("Table", tkey, _tprops)):
+            _merge_vertex(cur, "Table", tkey, _tprops)
         # §57: SSOT refs 의 cross 플래그(크로스-DB 참조, §56 RC2)를 AGE 엣지 속성으로 투영 —
         #   프론트 크로스 시각 구분(REFERENCES 의 cross_ds='1' 관례와 동일 키, ADR-019 정합).
         _merge_edge(cur, "Routine", rkey, "ROUTINE_USES", "Table", tkey,
                     {"relation_type": (r or {}).get("kind") or "read",
                      **({"cross_ds": "1"} if (r or {}).get("cross") else {})})
+    # cyvol: 서명은 엣지 재작성이 **끝난 뒤** 기록한다(위 REMOVE 와 짝) — 엣지보다 먼저 쓰면
+    # '서명은 최신, 엣지는 불완전'이 고착된다. 비용은 참조가 바뀐 routine 1건당 1회(하루 수백).
+    #
+    # §18.8 패널(MAJOR-2): 이 문은 **삼키지 않는다**. 삼키면 PostgreSQL 이 트랜잭션을 aborted 로
+    # 둔 채 `_sync_row_guard` 가 `RELEASE SAVEPOINT` 실패까지 삼키고 **성공(True)** 을 반환한다
+    # → 카운터는 증가, `errors`/`step_failures` 는 0, 다음 step 의 커밋이 조용히 ROLLBACK 으로
+    # 수렴해 **최대 500행이 소실된 채 ok:true + 워터마크 전진**(이 파일 `_run_step` docstring 이
+    # 관측 사실로 기록한 그 결함면). 전파하면 행 SAVEPOINT 가 롤백되고 errors 로 집계된다.
+    # 이 문이 routine 행의 **마지막** 문이라 뒤에 오류를 드러낼 문이 없다는 점이 핵심이다.
+    _cypher(cur, f"MATCH (r:Routine {{key: {_cq(rkey)}}}) "
+                 f"SET r.refs_sig = {_cq(_refs_sig)} RETURN 1", 1)
 
 
 def project_cluster_props(changes, conn=None) -> int:
@@ -601,6 +748,11 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
         return rep
     _pending = [0]
     _err_samples: list = []   # §56 RC1 관측성: per-row 실패 첫 5건(단계: 예외) — 종료 시 warning 1줄
+    # cyvol: 정점 MERGE 중복 제거 캐시 — rag/tables/columns/routines 4 단계가 **공유**한다.
+    # 마크에 속성을 포함(_vmark)하므로 단계별로 다른 속성을 싣는 Table 정점도 서로를 삼키지
+    # 않는다. 관계 단계(_step_relationships)는 feature-0029 의 키-마크 규약을 그대로 쓰는
+    # 자체 캐시를 유지한다(마크 형태가 달라 섞이지 않음 — 의도적 분리).
+    _vcache = new_anchor_cache()
 
     def _tick(force=False):
         # batched commit — owned(자체 생성) 연결일 때만 트랜잭션 경계를 관리한다.
@@ -623,6 +775,8 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                     c.rollback()
                 except Exception:
                     pass
+                # cyvol: 커밋 실패로 배치가 통째로 사라졌다 — 확정 마크 무효(위 _run_step 동형).
+                anchor_cache_reset(_vcache)
             _pending[0] = 0
 
     def _scope_since_where():
@@ -654,6 +808,10 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                 except Exception:
                     pass
             _pending[0] = 0
+            # cyvol: step 롤백은 직전 커밋 이후의 정점 MERGE 를 되돌린다 — 확정 마크까지 무효화
+            # 하지 않으면 후속 단계가 MERGE 를 건너뛰고 `_merge_edge` 가 정점 부재로 조용히
+            # 0행이 된다(feature-0029 B-4 와 동일 결함면).
+            anchor_cache_reset(_vcache)
 
     try:
         cur = c.cursor()
@@ -690,10 +848,13 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                     eff_sch, eff_tbl = _rag_effective(ds, okey, sch, tbl)
                     sync_table(cur, ds, eff_sch, eff_tbl, description=None, source="insight",
                                cluster_id=(int(ccid) if ccid is not None else None),
-                               cluster_label=(clab if clab else None))
+                               cluster_label=(clab if clab else None), cache=_vcache)
                 if _sync_row_guard(cur, owned, _err_samples, "rag_table", _row, rep):
-                    rep["rag_tables"] += 1; _pending[0] += 1; _tick()
+                    rep["rag_tables"] += 1
+                    anchor_cache_commit_pending(_vcache)   # cyvol: 행 확정 후에만 마크 승격
+                    _pending[0] += 1; _tick()
                 else:
+                    anchor_cache_drop_pending(_vcache)
                     rep["errors"] += 1
         _run_step("rag_objects", _step_rag)
 
@@ -705,10 +866,13 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                         "FROM table_descriptions" + _w, _a)
             for sc, sch, tbl, desc, src in cur.fetchall():
                 def _row(sc=sc, sch=sch, tbl=tbl, desc=desc, src=src):
-                    sync_table(cur, sc, sch or "", tbl, desc or "", src or "manual")
+                    sync_table(cur, sc, sch or "", tbl, desc or "", src or "manual", cache=_vcache)
                 if _sync_row_guard(cur, owned, _err_samples, "table_desc", _row, rep):
-                    rep["tables"] += 1; _pending[0] += 1; _tick()
+                    rep["tables"] += 1
+                    anchor_cache_commit_pending(_vcache)
+                    _pending[0] += 1; _tick()
                 else:
+                    anchor_cache_drop_pending(_vcache)
                     rep["errors"] += 1
         _run_step("table_descriptions", _step_tables)
         # 2) column_descriptions (feature-0016 graphux5: ordinal 투영 — 그래프 컬럼 세로 정렬용)
@@ -719,10 +883,14 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                         "FROM column_descriptions" + _w, _a)
             for sc, sch, tbl, col, desc, src, ordn in cur.fetchall():
                 def _row(sc=sc, sch=sch, tbl=tbl, col=col, desc=desc, src=src, ordn=ordn):
-                    sync_column(cur, sc, sch or "", tbl, col, desc or "", src or "manual", ordinal=ordn)
+                    sync_column(cur, sc, sch or "", tbl, col, desc or "", src or "manual", ordinal=ordn,
+                                cache=_vcache)
                 if _sync_row_guard(cur, owned, _err_samples, "column_desc", _row, rep):
-                    rep["columns"] += 1; _pending[0] += 1; _tick()
+                    rep["columns"] += 1
+                    anchor_cache_commit_pending(_vcache)
+                    _pending[0] += 1; _tick()
                 else:
+                    anchor_cache_drop_pending(_vcache)
                     rep["errors"] += 1
         _run_step("column_descriptions", _step_columns)
         # 3) table_relationships — broken(파단)은 그래프에서 **삭제**(가산적 MERGE 라 stale 방지,
@@ -810,6 +978,48 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                 cur.execute("SELECT scope_key, schema_name, routine_name, routine_type, params, "
                             "referenced_tables FROM routine_objects" + _w, _a)
                 rows = [tuple(r) + (None, None) for r in cur.fetchall()]
+            # cyvol: Routine 정점의 refs 서명 + 실제 ROUTINE_USES 차수를 **cypher 2회**로 일괄
+            # 선조회한다(라이브 실측 23,057 행 / 3.2ms, 차수 19,870 행 / 74ms). routine 마다
+            # 전량 DELETE 하던 23,053 회를 대체한다.
+            #
+            # §18.8 패널(B3/MAJOR-3): 서명만 보면 `--full` 이 문서상 보장하던 **무조건 재조정**이
+            # 사라진다 — refs 변경을 동반하지 않은 엣지 소실(`_merge_edge` 는 끝점 정점 부재 시
+            # 오류 없이 0행)은 영구 고착되고 운영 탈출구가 없다. 그래서 서명이 같아도 **실제 차수가
+            # 기대치와 다르면 재작성**한다. 차수 조회 1회로 그 안전망을 O(1) 에 복원한다(전량
+            # 재작성 51,087 회를 되살리지 않는다). 차수는 fqn 기준 distinct 참조 수와 비교한다 —
+            # 엣지는 (routine, table) 쌍당 1개이므로 중복 fqn 은 1개로 접힌다.
+            _sig_by_key: dict = {}
+            _deg_by_key: dict = {}
+            _scope_pred = (f" WHERE r.scope_key = {_cq(scope_key)}" if scope_key is not None else "")
+            for _q, _sink in (
+                    (f"MATCH (r:Routine){_scope_pred} RETURN r.key, r.refs_sig", _sig_by_key),
+                    (f"MATCH (r:Routine){_scope_pred}-[u:ROUTINE_USES]->() "
+                     f"RETURN r.key, count(u)", _deg_by_key)):
+                try:
+                    # 행 shape 를 인덱스로 방어적으로 읽는다 — 튜플 언패킹(`for a, b in …`)은
+                    # 하네스·드라이버가 1-튜플을 돌려줄 때 ValueError 로 죽어 아래 rollback 을
+                    # 유발했다(feature-0016 test_metadata_graph_load_spread 회귀, 패널 M1).
+                    for _row in _cypher(cur, _q, 2):
+                        if not _row:
+                            continue
+                        _kk = _unwrap(_row[0])
+                        if _kk:
+                            _sink[_kk] = _unwrap(_row[1]) if len(_row) > 1 else None
+                except Exception as _exc:
+                    # 패널 M2: 종전엔 완전 무음이라 선조회가 영구 실패해도 최적화만 조용히
+                    # 무효화됐다. 다른 실패 경로와 동일하게 샘플을 남긴다(비차단 — 빈 dict 는
+                    # 전량 재작성 = 종전 동작이라 정합성 영향 없음).
+                    _sink.clear()
+                    if len(_err_samples) < 5:
+                        _err_samples.append(
+                            f"routine_prefetch: {type(_exc).__name__} {str(_exc)[:160]}")
+                    if owned:
+                        try:
+                            c.rollback()
+                        except Exception:
+                            pass
+                        _pending[0] = 0
+                        anchor_cache_reset(_vcache)
             for sc, sch, name, rtype, params, refs, ccid, clab in rows:
                 def _row(sc=sc, sch=sch, name=name, rtype=rtype, params=params, refs=refs,
                          ccid=ccid, clab=clab):
@@ -820,10 +1030,14 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                         kw = {"cluster_id": (int(ccid) if ccid is not None else None),
                               "cluster_label": (clab if clab else None)}
                     sync_routine(cur, sc, sch or "", name, rtype or "procedure",
-                                 params or "", refs if isinstance(refs, list) else [], **kw)
+                                 params or "", refs if isinstance(refs, list) else [],
+                                 cache=_vcache, sig_cache=_sig_by_key, deg_cache=_deg_by_key, **kw)
                 if _sync_row_guard(cur, owned, _err_samples, "routine", _row, rep):
-                    rep["routines"] += 1; _pending[0] += 1; _tick()
+                    rep["routines"] += 1
+                    anchor_cache_commit_pending(_vcache)
+                    _pending[0] += 1; _tick()
                 else:
+                    anchor_cache_drop_pending(_vcache)
                     rep["errors"] += 1
         _run_step("routine_objects", _step_routines)
 
