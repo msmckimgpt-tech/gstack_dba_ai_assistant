@@ -698,9 +698,14 @@ function _metaG6Build() {
       // col-lod: 억제 시 '▤N' 컬럼수 배지를 라벨 **앞**에 둔다 — _metaTableStyle labelMaxWidth(140) 후미
       //   ellipsis 로 긴 테이블명(예: cc_user_subscription)이 잘려도 배지가 살아남아 '컬럼 억제됨'
       //   affordance 를 보존(리뷰 MINOR — 후미 append 는 배지가 먼저 잘림). realH 예약 gap 도 '펼침' 신호.
+      // graph-role-badge(2026-07-28): PixiJS 경로는 역할 아이콘을 **라벨 인라인에서 좌측 배지 타일로 이관**
+      //   (_metaTableStyle 의 roleBadge). 라벨에서 색 이모지가 빠지면 BitmapText 경로(§80 draw-call 최적화)로
+      //   복귀하는 부수 이득도 있다 — 종전엔 역할 있는 테이블 전부가 hasEmoji 판정으로 PIXI.Text 로 강등됐다.
+      //   **G6 폴백은 배지 스타일을 모르므로 종전대로 라벨 인라인 아이콘을 유지**한다(codex review P1 — 분기가
+      //   없으면 G6 렌더 시 역할 표시가 전무해진다). 렌더러 판정은 `_pixiMode`(본 함수 상단) 단일 소스.
       const tLabel = (_colSuppressed ? "▤" + cols.length + " " : "")
-        + (role ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
-      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role), { labelText: tLabel }) });
+        + ((role && !_pixiMode) ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
+      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role, _pixiMode), { labelText: tLabel }) });
       if (cols && cols.length && !_colSuppressed) {
         const depIds = ["X:" + it.key];   // graph-drag(REQ ②): 종속 UI = 접기 ctl + 컬럼 노드들
         nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key },
@@ -1005,7 +1010,7 @@ function _metaG6Build() {
 //   확대하면 밴드 전이(_lodBand)가 rebuild 를 걸어 그대로 복귀한다. 관측은 window.__META_GRAPH_PERF.label.
 function _metaApplyLabelLod(zoom, nodes, combos, edges) {
   const z = (typeof zoom === "number" && isFinite(zoom) && zoom > 0) ? zoom : 1;
-  const stat = { zoom: z, band: _metaLabelBandOf(z), total: 0, dropped: 0, headerTotal: 0, headerDropped: 0, badgesDropped: 0 };
+  const stat = { zoom: z, band: _metaLabelBandOf(z), total: 0, dropped: 0, headerTotal: 0, headerDropped: 0, badgesDropped: 0, roleIconsDropped: 0 };
   // 라벨 키 일괄 제거 — dimIf(§57.6)의 dim 경로와 동일한 키 집합(라벨 배경까지 남으면 빈 pill 이 뜬다).
   const stripLabel = (st) => { delete st.labelText; delete st.labelBackground; delete st.labelBackgroundFill; delete st.labelBackgroundOpacity; };
   const apply = (el, isHeader, defSize) => {
@@ -1021,6 +1026,14 @@ function _metaApplyLabelLod(zoom, nodes, combos, edges) {
     if (Array.isArray(st.badges) && st.badges.length) {
       const bf = (typeof st.badgeFontSize === "number" && isFinite(st.badgeFontSize)) ? st.badgeFontSize : 10;
       if (bf * z < _META_LABEL_MIN_PX) { st.badges = []; stat.badgesDropped += 1; }
+    }
+    // graph-role-badge(2026-07-28): 역할 배지의 **아이콘만** 본문 임계로 소거하고 **색 타일은 유지**한다.
+    //   판독 불가 크기의 이모지는 라벨과 같은 aliasing 노이즈지만, 색 타일은 작아도 범주 신호로 읽히므로
+    //   (줌아웃 개요에서 역할 분포를 색으로 파악) 남긴다 — 라벨 소거와 달리 "정보가 노이즈가 되는" 구간이 없다.
+    //   roleBadge 는 _metaTableStyle 이 매 빌드 새로 만드는 객체라 여기서의 mutate 가 공유 상수를 오염하지 않는다.
+    if (st.roleBadge && st.roleBadge.icon) {
+      const rf = (typeof st.roleBadge.fontSize === "number" && isFinite(st.roleBadge.fontSize)) ? st.roleBadge.fontSize : 12;
+      if (rf * z < _META_LABEL_MIN_PX) { st.roleBadge = Object.assign({}, st.roleBadge, { icon: "" }); stat.roleIconsDropped += 1; }
     }
   };
   const kindOf = (el) => (el && el.data && el.data.kind) || "";
@@ -2620,4 +2633,4 @@ function _metaGraphOnNodeClick(e) {
 }
 
 
-export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
+export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaRendererKind, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };

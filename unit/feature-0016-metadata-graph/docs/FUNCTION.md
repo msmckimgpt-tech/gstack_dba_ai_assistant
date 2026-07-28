@@ -210,9 +210,21 @@ AI 능동 분석(node_analysis)이 완료된 **Table** 노드는 역할 8종(NOD
 etc 기타)으로 분류되어 `node_analysis_jobs.role`(alembic 0031, 비파괴 ADD)에 저장된다. 분류 = LLM 분석
 계약(NODE_ANALYSIS_PROMPT `role`, 유효값 우선) → 휴리스틱(`classify_role_heuristic` 이름 1-pass·본문
 2-pass) 폴백; 기존 분석분은 insight-worker 가 휴리스틱 백필(`backfill_roles`, LLM 재호출 없음, 멱등).
-그래프 뷰는 분석 완료 테이블 칩을 **역할색(Okabe-Ito 색약 안전 팔레트) + 라벨 앞 역할 아이콘 + 역할 범례
-행 + 상세/진행 패널 역할 칩**으로 표시한다(미분석=teal 유지, 보라 분석완료 테두리 유지). 조회 API
-(run status·scope bulk status·node analysis)가 roles 를 함께 반환한다.
+그래프 뷰는 분석 완료 테이블 칩을 **좌측 역할 배지(역할색 라운드 타일 + 역할 아이콘) + 역할 범례 행 +
+상세/진행 패널 역할 칩**으로 표시한다(보라 분석완료 테두리 유지). 조회 API (run status·scope bulk status·
+node analysis)가 roles 를 함께 반환한다.
+
+**역할색 적용 면적 — 배지 한정 (2026-07-28, graph-role-badge, TASK §20260728T1811)**: 역할색은 칩 **본체를
+채우지 않는다**. 테이블 노드 본체는 역할 유무·종류와 무관하게 항상 `_META_GRAPH_COLOR.Table`(teal) 이고,
+역할색(Okabe-Ito 8색)은 칩 왼쪽 **18×18 배지 타일**(radius 4 + 흰 테두리)에만 얹힌다 — 상세 패널
+`.amgr-role-chip` · 역할 범례 견본과 동일 어휘. 라벨은 배지 몫(22px)을 제외한 잔여 영역 중앙에 놓이고
+(`labelOffsetX=11`, `labelMaxWidth=118`), 역할 아이콘은 라벨 인라인이 아니라 배지 안에 렌더된다.
+근거: 본체 전면 채움은 (a) 테이블만 "종류 = 본체색" 규약에서 이탈시켜 노드 간 색 정합을 깨고 (b) 색 채널이
+범주와 강조를 겸해 상태 테두리·검색 글로우·관계선을 묻는다(사용자 리포트 2026-07-28). dataviz 정론도 동일 —
+큰 고채도 면 회피(Wilke) · 본체 중립 + accent 만(USWDS/Sigma/GitLab) · 색+아이콘 중복 인코딩 유지(WCAG 1.4.1).
+label-lod(§20260728T1604 연동)는 판독 하한 미만에서 배지 **아이콘만** 소거하고 색 타일은 유지한다(줌아웃
+개요의 역할 분포 신호 보존, 통계 `_labelLod.roleIconsDropped`). 부수 효과: 라벨에서 색 이모지가 빠져 분석
+완료 테이블 라벨이 `PIXI.Text` 강등에서 **BitmapText 경로(§80)로 복귀**한다.
 
 ## 15. 전 datasource routine backfill + DB(스키마) 단위 AI 능동 분석 (2026-07-04, TASK §53)
 

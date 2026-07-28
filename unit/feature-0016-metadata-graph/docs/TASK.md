@@ -2865,3 +2865,77 @@ PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`base
   feature-0003 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
   `REV-20260728T173500-routine-column-edges-postdeploy` ·
   증적 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/`(6매).
+
+## 20260728T1811-graph-role-badge — 테이블 역할색을 노드 전면 채움에서 좌측 배지로 이관 (2026-07-28, 사용자 요청 · entry persona dispatch)
+
+### 맥락 (사용자 요청 원문)
+"`그래프 뷰`에서 다른 노드들의 색상은 모두 정합하게 동일하지만, 테이블 노드의 색상은 역할에 따라 노드 전체의
+색상이 덮어씌워져서 시각적으로 noisy 합니다. 역할이 설정된 아이콘(이모지) 영역에만 해당 색상을 설정하여 노드 간
+색상구성이 정합하도록 구성하거나, 웹 리서치를 통해 시각적으로 더 모범적인 구분방법이 있다면 해당 방법으로
+적용해주세요."
+
+### 원인 (코드 실증)
+`node-role-viz`(2026-07-02, §14 / ADR-010)가 역할 인코딩을 **칩 본체 fill 교체**로 구현했다 —
+`graph-roleviz.js:_metaTableStyle` 의 `fill: rd ? rd.color : _META_GRAPH_COLOR.Table`. 결과:
+- 테이블 노드만 "종류 = 본체색" 규약에서 이탈. 용어(#9c6515)·루틴(#7b5cd6)·컬럼(#5c6773)·스키마 카드는 종류색
+  1개인데 테이블은 Okabe-Ito 8색 + 미분석 teal = **9색**이 150×24 칩 전면에 칠해진다.
+- 라벨 대비를 맞추려 `dark` 플래그로 글자색을 흰/검정 이원화(밝은 역할 5종) — 같은 종류 노드의 **라벨색도 갈렸다**.
+- 분석 완료율이 오르면 화면 대부분이 색 패치가 되어 관계선·상태 테두리(selected/analyzed/running)·검색 글로우가
+  묻힌다. 즉 색 채널이 "범주"와 "강조"를 동시에 먹었다.
+
+### 웹 리서치 (사용자 요청 ② — 더 모범적인 구분법 확인)
+- Wilke, *Fundamentals of Data Visualization* — "**큰 면적을 고채도 색으로 채우면** 도형을 자세히 살피기 어렵다".
+  (색 채움 면적 자체가 판독을 해친다는 원칙 — 본 건과 정확히 동형.)
+- USWDS / Sigma / GitLab dataviz 팔레트 지침 공통 — **본체는 중립·통일, 색은 accent 로만**. 강조가 필요한
+  소수 요소에 채도를 몰고 배경 요소는 muted 로 둔다.
+- WCAG 2.1 SC 1.4.1(Use of Color) — 색 단독 인코딩 금지. 색 + **아이콘/텍스트** 중복 인코딩이 요구된다.
+  단 Smashing Magazine(2024)이 지적한 대로 접근성 기법을 무제한 덧붙이면 오히려 noisy 해지므로 **면적을 줄이고
+  중복 인코딩은 유지**하는 조합이 최적점.
+→ 세 근거가 사용자 제안("아이콘 영역에만 색")과 동일 결론. **별도 대안(테두리색·본체 tint) 대신 사용자안을 채택**
+  (테두리는 상태 halo 채널과 충돌, tint 는 여전히 노드마다 색이 달라 "정합하게 동일" 요구를 못 만족).
+
+### 계획 (§7.1 Plan-Review-Execute · 위험도 **Minor** — 비파괴 프론트 시각, 스키마·인가·API shape 무변경)
+| 대상 파일 | 변경 symbol | 완료 판정 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-roleviz.js` | `_META_ROLE_BADGE`·`_META_ROLE_BADGE_FS`·`_META_ROLE_BADGE_BOX`(신규)·`_metaTableStyle` | 본체 fill 이 역할과 무관하게 `_META_GRAPH_COLOR.Table` · `roleBadge{icon,color,size,fontSize}` 산출 · 라벨 폭/오프셋이 배지 몫 반영 |
+| `.../graph/graph-core.js` | `_metaG6Build`(라벨 조립)·`_metaApplyLabelLod` | 라벨 인라인 역할 이모지 제거 · 판독 하한 미만에서 배지 **아이콘만** 소거(색 타일 유지) + `roleIconsDropped` 관측 |
+| `.../graph/graph-renderer-pixi.js` | `PixiAdapterPure.roleBadgeCX`(신규)·`_roleBadge`(신규)·`_drawNode`·`_label`·`_showLabelExpand` | 배지 타일+아이콘 렌더 · center 라벨 offsetX 소비 · hover 확장 카드에서 배지 world 위치 고정 |
+| `.../graph/graph.css` · `.../static/admin.html` | `.admin-meta-graph-rolelegend-list .lg-dot` · 역할 범례 note | 범례 견본이 배지 어휘(라운드 사각)와 일치 · 문구가 "칩 전체 색" 전제를 버림 |
+| `.../tests/headless/test_g6build_rolebadge.js` | 신규 | 본체색 통일·배지 인코딩·라벨 정합·LOD 동반·기하 무겹침·hover 정합 고정 |
+
+### 처리 (본 cycle — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] RB.1 **본체색 통일** — `_metaTableStyle` 이 역할 유무와 무관하게 `fill: _META_GRAPH_COLOR.Table` 을 반환한다.
+  역할이 있으면 `roleBadge = {icon, color, size:18, fontSize:12}` 를 실어 렌더러에 위임. 라벨색 `dark` 이원화는
+  제거(본체가 항상 teal 이라 흰 라벨 대비 고정) — `_META_ROLE.dark` 자체는 범례·상세 칩(`_metaRoleChipHTML`)이
+  계속 쓰므로 보존.
+- [x] RB.2 **라벨 정합** — 역할 노드는 `labelOffsetX = round(22/2) = 11`, `labelMaxWidth = TW-10-22 = 118`.
+  배지가 차지한 좌측 22px 를 제외한 잔여 영역의 **중앙**에 라벨이 놓여, 배지 없는 노드와 시각적 리듬이 같다.
+  역할 아이콘이 라벨 인라인에서 빠진 부수 이득: 색 이모지 때문에 `PIXI.Text` 로 강등됐던 라벨이 **BitmapText
+  경로(§80 draw-call 최적화)로 복귀**한다(역할 배정된 전 테이블 = 분석 완료분 전량).
+- [x] RB.3 **렌더러 배지** — `_roleBadge(s)` 가 역할색 라운드 타일(18×18, radius 4) + 흰 테두리(0.75px, alpha .85)
+  + 색 이모지를 그린다. 좌표는 순수 함수 `PixiAdapterPure.roleBadgeCX(w, size)` 로 분리해 노드 본체와 hover
+  확장 카드가 **같은 식**을 공유(hover 시 배지가 1px 도 안 움직인다 — 라벨 `textLeft` 역산과 동일 원칙).
+- [x] RB.4 **hover 확장 카드** — 카드에 배지를 재렌더하고 `paint(w)` 에서 `badge.position.x = g.x - c.position.x`
+  로 카드 원점 이동분을 상쇄(좌변 고정·우측 성장 계약 유지). `textLeft` 산출에 `labelOffsetX` 를 더해 t=0
+  픽셀 동일을 보존(누락 시 hover 순간 앞글자가 배지 위로 튄다).
+- [x] RB.5 **label-lod 동반** — 배지 아이콘 폰트(12)가 본문 라벨과 같으므로 임계가 자동 정합. 하한 미만에서
+  `icon: ""` 으로 비우고 **색 타일은 유지**한다 — 판독 불가 이모지는 라벨과 같은 aliasing 노이즈지만, 색 타일은
+  작아도 범주 신호로 읽혀(줌아웃 개요의 역할 분포) "정보가 노이즈가 되는" 구간이 없다. 통계는 `roleIconsDropped`.
+- [x] RB.6 **범례·상세 칩 어휘 정합** — 역할 범례 견본을 원형 dot → 라운드 사각(radius 3px)으로 바꿔 노드 배지·
+  상세 패널 `.amgr-role-chip`(radius 4, 18×18)과 한 모양으로 통일. 범례 note 를 "테이블 칩 **왼쪽 배지**에 위
+  색·아이콘 표시 (칩 본체 색은 노드 종류 공통)" 로 갱신 — 종전 문구는 "위 색으로 칩 표시"라 새 표현과 어긋났다.
+- [x] RB.7 **헤드리스 검증** — `test_g6build_rolebadge.js` 신설 **36 PASS / 0 FAIL**(본체색 단일·팔레트가 fill 에
+  미등장·배지 8색 보존·라벨 인라인 아이콘 부재·폭 축소 일관·LOD 아이콘만 소거·band-invariant·기하 무겹침·
+  hover pad/inner0 정합). 회귀 0: `labellod 36` · `category 26` · `collod 20` · `viewportcull 6` · `vpack 19` ·
+  `edge_visibility 73` · `pixi_adapter 205` · `hover_flow 41` PASS.
+- [ ] RB.8 **POST-DEPLOY PB-0008** — 본 변경은 **JS 3파일**을 포함하므로 미머지 `docker cp` 사전 QA 가 불가하다
+  (자산 스탬프 미주입 → admin.js 이중 인스턴스 + Chrome 모듈 캐시로 구버전 실행 — LRN 기록된 함정). 따라서
+  §15.4.1 시각검증은 **머지·배포 후 라이브**에서 수행하고 `feature-0003/docs/test-runs.d/` 에 기록한다.
+- [x] RB.9 **codex 적대 검증 (§18.8, check #9 accepted `[CODEX:*]`)** — `codex review --uncommitted`(codex-cli
+  0.145.0) 를 **수렴까지 반복**: 1차 **P1 1건**(G6 폴백에서 역할 표시 전무 — `roleBadge` 미지원 + 라벨 아이콘
+  제거의 조합) · 2차 **P2**(hover 카드 클램프 시 배지가 world 앵커라 카드 밖 이탈) · 3차 **P2**(running
+  desaturate 가 배지에 미적용) · 4차 **P2 2건**(배지 아이콘 alpha 누락 · hover 카드 배지 alpha stale) ·
+  5차 **P2**(범례 note 가 G6 폴백에서 거짓 안내). **전건 in-cycle 흡수**하고 각각 헤드리스 계약으로 고정
+  (G1~G6 · F7~F9 · H1~H2). 본 세션은 `Agent` 툴 사용이 제한된 환경이라 subagent panel 대신 codex 를 택했다 —
+  이 변경은 렌더러 2경로·상태 채널·범례 문구가 얽혀 **repo 전체 문맥**이 필요하므로 bundle-only reviewer 보다
+  repo 접근 리뷰어가 적합하다.

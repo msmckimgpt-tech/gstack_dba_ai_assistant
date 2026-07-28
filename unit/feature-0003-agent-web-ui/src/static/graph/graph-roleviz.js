@@ -2,7 +2,7 @@
 // 규약: 공개 표면은 graph/graph.js(barrel) 가 re-export — admin.js 는 barrel 만 import.
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
 import { _META_TERMS_COMBO, _METLAY, _METZ, _metaGraph, _metaSchemaComboOf } from "./graph-state.js?v=dev";
-import { _META_GRAPH_COLOR, _metaCatParent } from "./graph-core.js?v=dev";
+import { _META_GRAPH_COLOR, _metaCatParent, _metaRendererKind } from "./graph-core.js?v=dev";
 import { _metaColParent } from "./graph-ctxmenu.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 
@@ -35,6 +35,13 @@ function _metaRoleLegendTips() {
     const rd = _META_ROLE[li.getAttribute("data-role")];
     if (rd) li.title = `${rd.icon} ${rd.ko} — ${rd.desc}`;
   });
+  // graph-role-badge(codex review P2 3차): 범례 설명을 **실제 렌더러**에 맞춘다. 정상 경로(PixiJS)의 문구는
+  //   admin.html 정적 마크업("칩 왼쪽 배지")이 그대로 맞고, G6 폴백(PixiJS 미가용 / __META_RENDERER="g6")은
+  //   종전 렌더(칩 전면 역할색 + 이름 앞 아이콘)라 그 문구가 **거짓 안내**가 된다 — 폴백일 때만 교체한다.
+  if (_metaRendererKind() !== "pixi") {
+    const note = document.querySelector('.amg-legend-panel[data-legend-panel="roles"] .amg-legend-note');
+    if (note) note.textContent = "AI 분석 완료 시 위 색으로 칩 표시 (역할 아이콘은 이름 앞)";
+  }
 }
 // graphux7(#3): 그래프 범례 3-탭(노드 종류·관계·AI 상태·테이블 역할) 전환. 그래프 뷰 진입 시 1회 바인딩(멱등).
 //   탭 버튼 → is-active + 대응 패널 표시(hidden 토글). ←/→ 로 탭 이동(roving tabindex 접근).
@@ -220,15 +227,48 @@ function _metaGraphZAssert() {
   try { Promise.resolve(g.setElementZIndex(m)).catch(() => {}); } catch (_) {}
 }
 
-function _metaTableStyle(x, y, rel, role) {
+// ── graph-role-badge(2026-07-28 사용자 리포트 "역할 색이 노드 전체를 덮어 시각적으로 noisy"): 역할색의
+//    적용 면적을 **노드 전면 채움 → 좌측 배지 타일**로 축소한다. 근거(웹 리서치, TASK 20260728T-graph-role-badge):
+//      · Wilke, *Fundamentals of Data Visualization* — "큰 면적을 고채도 색으로 채우면 도형을 자세히 살피기
+//        어렵다"(color pitfalls). 8색 범주 팔레트를 150×24 칩 전면에 칠하면 화면 전체가 색 패치가 된다.
+//      · 업계 dataviz 가이드 공통 — **본체는 중립·통일, 색은 accent 로만**(USWDS / Sigma / GitLab 팔레트 지침).
+//      · WCAG 2.1(1.4.1) — 색 단독 인코딩 금지. 배지 안 **아이콘**이 색과 함께 남으므로 색약·흑백에서도
+//        역할 판별이 유지된다(기존 3중 인코딩 색+아이콘+범례 그대로).
+//    → 테이블 노드 본체는 역할 유무와 무관하게 항상 teal(_META_GRAPH_COLOR.Table) — 용어·루틴·컬럼·스키마
+//      카드처럼 "종류 = 본체색" 규약으로 복귀해 노드 간 색 구성이 정합해진다.
+const _META_ROLE_BADGE = 18;      // 배지 타일 한 변(model px) — 노드 높이 24 안에서 위아래 3px 여백
+const _META_ROLE_BADGE_FS = 12;   // 배지 아이콘 폰트 크기 — 본문 라벨(12)과 동일 → label-lod 임계와 자동 정합
+const _META_ROLE_BADGE_BOX = _META_ROLE_BADGE + 4;   // 타일 + 좌우 여백(라벨 가용폭에서 차감할 몫)
+
+// `useBadge` — 배지 렌더가 가능한 렌더러인지(= PixiJS 경로). **G6 폴백(`window.__META_RENDERER="g6"` 또는
+//   PixiJS 미가용)은 `style.roleBadge` 를 모른다** — G6 에서 배지 경로를 쓰면 역할 표시가 통째로 사라지고
+//   (라벨 인라인 아이콘도 배지로 옮겨졌으므로) 라벨 폭만 헛되게 줄어든다(codex review P1, 2026-07-28).
+//   따라서 G6 모드에서는 **종전 동작(본체 역할색 + 라벨 인라인 아이콘)을 그대로 보존**한다 — 폴백 경로에
+//   미검증 시각 설계를 넣지 않는 쪽이 방어적이고, 종전 동작은 이미 라이브 검증된 상태다.
+function _metaTableStyle(x, y, rel, role, useBadge) {
   // feature-0016 §45: 검색 매칭 표현을 '너비 증가'에서 'match 상태 soft glow'로 이관 — 노드 폭은 rel 과 무관하게 고정한다
   //   (가변 폭은 setData 재packing 을 유발하고 검색 가시성도 떨어졌다). rel 인자는 호출부 호환 위해 유지(폭 계산엔 미사용).
   const w = _METLAY.TW;
-  // node-role-viz: 분석 완료 + 역할 분류가 있으면 칩 색 = 역할색(미분석은 기존 teal 유지 — 색 자체가 "분석됨+역할" 신호).
   const rd = role ? _META_ROLE[role] : null;
-  return { x, y, size: [w, 24], radius: 6, fill: rd ? rd.color : _META_GRAPH_COLOR.Table, stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.NODE,
+  const badge = !!(rd && useBadge);
+  const s = { x, y, size: [w, 24], radius: 6,
+    // graph-role-badge: 배지 경로면 본체는 종류색(teal) 통일. G6 폴백은 종전대로 본체 = 역할색.
+    fill: (rd && !useBadge) ? rd.color : _META_GRAPH_COLOR.Table,
+    stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.NODE,
     // feature-0016 §45: 폭이 rel 무관 고정(TW=150)이 되며 라벨이 박스를 넘치지 않도록 labelMaxWidth 를 박스 안으로 클램프(예전 176 은 rel 부스트로 최대 190 폭일 때 기준).
-    labelPlacement: "center", labelFill: rd && rd.dark ? "#161b22" : "#ffffff", labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: _METLAY.TW - 10, cursor: "pointer" };
+    labelPlacement: "center",
+    // 배지 경로의 라벨색은 항상 흰색(본체가 항상 teal) — 종전 `rd.dark` 분기(밝은 역할색 위 어두운 글자)는
+    //   본체 역할색을 유지하는 G6 폴백에서만 필요하다. `dark` 자체는 범례·상세 칩(`_metaRoleChipHTML`)도 쓴다.
+    labelFill: (rd && !useBadge && rd.dark) ? "#161b22" : "#ffffff",
+    labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: w - 10, cursor: "pointer" };
+  // graph-role-badge: 역할이 있고 배지 렌더가 가능하면 좌측 배지 타일 + 라벨 우측 시프트. 배지가 없는
+  //   노드(미분석)는 스타일 키 자체가 없어 렌더러 경로도 종전과 동일(무회귀).
+  if (badge) {
+    s.roleBadge = { icon: rd.icon, color: rd.color, size: _META_ROLE_BADGE, fontSize: _META_ROLE_BADGE_FS };
+    s.labelOffsetX = Math.round(_META_ROLE_BADGE_BOX / 2);   // 라벨 중심을 배지 오른쪽 잔여 영역의 중앙으로
+    s.labelMaxWidth = w - 10 - _META_ROLE_BADGE_BOX;
+  }
+  return s;
 }
 function _metaTermStyle(x, y, rel) {
   // feature-0016 §45: 용어 노드 폭도 rel 무관 고정(검색 매칭은 match 상태 soft glow 로 표시). rel 인자는 호환 유지.

@@ -1,5 +1,29 @@
 # Report
 
+## 2026-07-28 · 테이블 역할색을 노드 전면 채움 → 좌측 배지 타일 (20260728T1811-graph-role-badge)
+
+### 요청 (사용자, entry persona dispatch)
+"`그래프 뷰`에서 다른 노드들의 색상은 모두 정합하게 동일하지만, 테이블 노드의 색상은 역할에 따라 노드 전체의 색상이 덮어씌워져서 시각적으로 noisy 합니다. 역할이 설정된 아이콘(이모지) 영역에만 해당 색상을 설정하여 노드 간 색상구성이 정합하도록 구성하거나, 웹 리서치를 통해 시각적으로 더 모범적인 구분방법이 있다면 해당 방법으로 적용해주세요."
+
+### 근본 원인
+`node-role-viz`(§14, 2026-07-02)가 역할을 칩 **본체 fill** 로 인코딩했다(`_metaTableStyle` 의 `fill: rd ? rd.color : Table`). 그 결과 ① 테이블만 "종류 = 본체색" 규약에서 이탈(용어·루틴·컬럼·스키마 카드는 종류색 1개, 테이블은 8색+teal = 9색) ② 색 채널이 범주와 강조를 겸해 상태 테두리·검색 글로우·관계선이 색 패치에 묻힘 ③ 라벨 대비 보정용 `dark` 플래그가 같은 종류 노드의 글자색까지 이원화. 분석 완료율이 오를수록 악화되는 구조다.
+
+### 처리 결과 (Minor §12.3 — 프론트 시각 전용, 스키마·RBAC·API shape·좌표/레이아웃 무변경)
+역할색의 **적용 면적**을 150×24 칩 전면에서 **18×18 좌측 배지 타일**(radius 4 + 흰 테두리)로 축소했다. 본체는 역할 유무와 무관하게 항상 teal — 노드 간 색 구성이 정합해진다. 역할 아이콘은 라벨 인라인에서 배지 안으로 이동하고 라벨은 잔여 영역 중앙(`labelOffsetX=11`·`labelMaxWidth=118`). 색 8종·아이콘 2중 인코딩은 배지에 그대로 보존(범주 정보 손실 0). 범례 견본을 라운드 사각으로 맞춰 **노드 배지 · 상세 패널 칩 · 범례 3곳이 한 어휘**가 됐다. label-lod 는 판독 하한 미만에서 배지 **아이콘만** 소거하고 색 타일은 유지(줌아웃 개요의 역할 분포 신호). 부수 이득: 라벨에서 색 이모지가 빠져 분석 완료 테이블 라벨이 `PIXI.Text` 강등 → **BitmapText 경로(§80)로 복귀**.
+
+웹 리서치가 사용자 제안과 동일 결론을 지지했다 — 큰 고채도 면 회피(Wilke, *Fundamentals of Data Visualization* color pitfalls) · 본체 중립 + accent 만(USWDS/Sigma/GitLab 팔레트 지침) · 색+아이콘 중복 인코딩 유지(WCAG 2.1 SC 1.4.1). 대안 2종(역할색 테두리 = 상태 halo 채널 충돌 / 본체 저채도 tint = "노드 간 동일색" 요구 미충족)은 불채택(REVIEW 참조).
+
+### 검증
+- 신규 `tests/headless/test_g6build_rolebadge.js` **47 PASS / 0 FAIL** — 본체색 단일 · **역할 팔레트 색이 본체 fill 에 미등장**(문제 제거의 직접 증명) · 배지 8색 보존 · 라벨 인라인 아이콘 부재 · 폭 축소 일관 · LOD 아이콘만 소거 + band-invariant · 배지↔라벨 무겹침 · hover 카드 t=0 픽셀 동일 · **G6 폴백 무회귀 6** · **범례 note 렌더러 추종 2**.
+- 회귀 0: 헤드리스 **22 파일 합계 920 PASS / 0 FAIL**(pixi_adapter 205 · detail_dbgroups 78 · edge_visibility 73 · edge_flow 73 · minimap_reuse 65 · catcluster 65 · rolebadge 47 · hover_flow 41 · labellod 36 · ancestor_focus 32 · routine_colref 30 · category 26 · colnav 22 · collod 20 · layoutmemo 19 · vpack 19 · reveal 17 · simgroups_p2 16 · cullrefkeep 15 · detail_colsel 9 · agglod 8 · viewportcull 6) + `node --check` 3파일 OK.
+- **codex 적대 검증(§18.8, `[CODEX:frontend-render+legend]`)**: **P1 1건 + P2 5건 전량 in-cycle 흡수**, 최종 pass P1 0. P1 = **G6 폴백에서 역할 표시 전무**(배지 미지원 + 라벨 아이콘 제거 조합) → 폴백은 종전 동작 보존으로 분기. P2 = hover 클램프 시 배지 카드 이탈 · running desaturate 미적용 · 배지 아이콘 alpha 누락 · hover 중 상태 전이 시 배지 채도 stale · 범례 note 폴백 부정확. 6건 중 4건이 특정 조건(폴백 렌더러·화면 가장자리·분석 진행 중·hover 중 전이)에서만 드러나는 표면이었다.
+
+### 잔여
+- **PB-0008 실 Windows 브라우저 시각검증은 POST-DEPLOY** (TASK RB.8). JS 3파일 변경이라 미머지 `docker cp` 사전 QA 가 자산 스탬프 미주입 → `admin.js` 이중 인스턴스 + Chrome 모듈 캐시 함정에 걸린다(CSS 단독일 때만 안전). 머지·배포 후 라이브에서 7 시나리오 수행 예정.
+
+### 정본
+`unit/feature-0016-metadata-graph/docs/TASK.md` `## 20260728T1811-graph-role-badge` · Run 상세 `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260728T181100-graph-role-badge.md` · `CHG-20260728T181100-…` · `REV-20260728T181100-…`.
+
 ## 2026-07-28 · 함수/프로시저 사용 관계선을 실제 참조 컬럼에 연결 (20260728T161940-routine-column-edges)
 
 ### 요청 (사용자, entry persona dispatch)

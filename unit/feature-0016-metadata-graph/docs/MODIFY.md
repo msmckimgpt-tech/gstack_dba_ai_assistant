@@ -261,3 +261,21 @@ source_of_truth: true
 - 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/{TEST.md,test-runs.d/20260728T160400-graph-label-lod.md}` · 증적 `artifacts/.../postdeploy_badgeonly_marker.png`(gitignore 로컬). **실행 코드 변경 0줄**.
 - 변경: PR #1019 머지(main `2a843acd`) → `make deploy-web` 무중단 롤아웃(web-a/b·워커, soak 통과) → edge `/healthz git_commit=2a843acd` 확인 후, 실 Windows Chrome relay 로 TL.10 을 수행하고 결과를 정본에 기록. ②~⑥ 전건 PASS + **codex P2 수정이 만든 두 표면 라이브 실증**: ⑦ 배지-단독 구간(zoom 0.3943·0.4929, `dropped 0` + `badgesDropped 136`)에서 오독-가드 마커가 **켜짐**(수정 전이라면 꺼져 개수 배지 136개 무음 소실) ⑧ 라이브 밴드에 `9.5/9`·`16/10.5`·`10.5/9` 등 정수 격자로 표현 불가한 반포인트 경계값이 실제 출현. pageerror 0.
 - 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영이 필수다. 미재현 한계는 정직 병기 — ⑧ 은 z*≈0.30476 을 정확히 straddle 하지 못했고(툴바 줌 ×1.25 스텝·캔버스 wheel 합성 미구동), 그 1:1 대응은 헤드리스 F5·F6 이 고정한다. 부수 관측(토글 직후 마커 일시 부재)은 본 cycle 도입분이 아니므로 TL.12 별도 항목으로 분리했다.
+
+## CHG-20260728T181100-ai-claude-corp-feature-0016-role-badge — 테이블 역할색을 노드 전면 채움 → 좌측 배지 타일 (2026-07-28)
+- 대상(cross-cut, 코드 거주 feature-0003): `src/static/graph/graph-roleviz.js`(`_metaTableStyle` + 배지 상수 3) ·
+  `src/static/graph/graph-core.js`(라벨 조립에서 역할 이모지 제거 · `_metaApplyLabelLod` 배지 아이콘 동반 소거 ·
+  `_META_ROLE` 미사용 import 정리) · `src/static/graph/graph-renderer-pixi.js`(`PixiAdapterPure.roleBadgeCX`·
+  `_roleBadge` 신규 · `_drawNode`/`_label`/`_showLabelExpand` 배선) · `src/static/graph/graph.css`(역할 범례 견본
+  사각화) · `src/static/admin.html`(범례 note) · `tests/headless/test_g6build_rolebadge.js`(신규 36 PASS).
+  문서: `feature-0016/docs/{TASK,MODIFY,REVIEW}.md`.
+- 변경: 역할 인코딩의 **색 적용 면적**을 150×24 칩 전면에서 18×18 배지 타일로 축소했다. 테이블 노드 본체는
+  역할 유무와 무관하게 `_META_GRAPH_COLOR.Table`(teal) 단일 — 용어·루틴·컬럼·스키마 카드와 같은 "종류 = 본체색"
+  규약으로 복귀한다. 역할 아이콘은 라벨 인라인에서 배지 안으로 이동하고, 라벨은 배지 몫(22px)을 제외한 잔여
+  영역 중앙에 놓인다(`labelOffsetX=11`, `labelMaxWidth=118`). label-lod 는 판독 하한 미만에서 배지 **아이콘만**
+  비우고 색 타일은 남긴다. 범례·상세 칩·노드 배지가 라운드 사각 18px 한 어휘로 통일됐다.
+- 근거: 등급 Minor(비파괴 프론트 시각 — 스키마·인가·API shape·좌표/레이아웃 무변경, band-invariant 헤드리스 고정).
+  사용자 리포트("노드 전체 색이 덮여 noisy")를 웹 리서치 3근거(Wilke color-pitfalls "큰 고채도 면 회피" ·
+  USWDS/Sigma/GitLab "본체 중립 + accent 만" · WCAG 1.4.1 색+아이콘 중복 인코딩)와 교차해 사용자 제안안을
+  그대로 채택. 대안(역할색 테두리 / 본체 저채도 tint)은 각각 상태 halo 채널 충돌 · "노드 간 동일색" 요구
+  미충족으로 불채택(REVIEW 참조). 색 8종은 배지에 그대로 보존되어 범주 정보 손실 0.
