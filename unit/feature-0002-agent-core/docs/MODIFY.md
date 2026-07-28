@@ -580,3 +580,14 @@ TASK-20260728T124500-llm-usage-target-scope. branch `ai/claude/feature-0002-llm-
 검증: pytest **2,719 PASS / 2 skipped** · ruff clean · `migrate-lint` expand-safe PASS.
 배포 순서 안전(expand-only): 구 코드 INSERT·신 코드 컬럼부재 INSERT·신 웹 컬럼부재 SELECT 모두
 자가치유. RBAC·인증 변경 0.
+
+## CHG-20260728T124500-llm-usage-target-scope-postverify (0047 POST-DEPLOY 라이브 실증 종결 — docs-only)
+
+TASK-20260728T124500-llm-usage-target-scope. branch `ai/claude/feature-0002-llm-usage-target-scope-verify`.
+코드 변경 없음 — 배포본 `754263ab` 실측 결과를 정본에 반영.
+
+- `docs/test-runs.d/20260728T124500-llm-usage-target-scope.md` — verdict PENDING → **PASS** +
+  POST-DEPLOY 절 추가(마이그 적용 · 계측 e2e 양 경로 · API `scope_source`/행 분리 · 원장 위생 ·
+  채움률 한계 정직 표기).
+- `docs/REPORT.md` — 본 cycle 스냅샷 + POST-DEPLOY 결과.
+- `docs/TASK.md` — POST-DEPLOY 체크박스 종결.

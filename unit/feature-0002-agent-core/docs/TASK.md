@@ -1638,4 +1638,7 @@ chokepoint 변경. 파괴적 변경·인증 변경·RBAC 변경 없음.
 - [x] llm_* 5종 pass-through + 병렬 3경로 명시 전달
 - [x] 웹 2단 폴백(기록값 우선 / legacy 역해소) + 컬럼 부재 자가치유
 - [x] 단위 2,719 PASS · ruff clean (테스트 더블 arity 7건·인덱스 단정 4건 정합)
-- [ ] POST-DEPLOY — 마이그 적용 확인 + 신규 행 target_scope 채움 실증 + 콘솔 이동 정확도
+- [x] POST-DEPLOY — 마이그 적용 확인 + 신규 행 target_scope 채움 실증 + 콘솔 이동 정확도
+      (배포본 `754263ab`: alembic head 0047 · 컬럼 생성 · 명시/ContextVar 양 경로 기록 · API
+      `scope_source="recorded"` · 같은 target 의 데이터소스별 행 분리 라이브 확증 —
+      REV/CHG-20260728T124500-llm-usage-target-scope-postverify)
