@@ -294,10 +294,14 @@ function _metaComboStyleFor(isTerms) {
 const _META_EDGE_CURVE = 0.13;       // 곡률 계수(직선 길이 대비 중점 편차 비율)
 const _META_EDGE_CURVE_MAX = 26;     // 편차 상한(model px)
 const _META_EDGE_CURVE_MIN = 5;      // 편차 하한 — 근접 노드 왕복선도 반드시 갈라지게
-const _META_EDGE_W_BASE = 0.6;       // 단일 관계선의 화면 굵기(px) — "기본은 가느다랗게"
-const _META_EDGE_W_GAIN = 0.25;      // 개수 2배당 굵기 증가분(로그 스케일)
-const _META_EDGE_W_CAP = 1.6;        // 개수發 증가분 상한(최대 2.2px) — 대량 집계가 화면을 덮지 않게
-// 관계 개수 → 화면 굵기(px). 1건 0.60 · 4건 1.10 · 16건 1.60 · 64건 2.10 · 그 이상 2.20 포화.
+// §87: 기본 굵기를 1.0px 로 올린다 — 0.6px 는 dpr 1 에서 **전 줌 구간이 서브픽셀**이라 항상 hairline
+//   경로(폭 1물리픽셀 + alpha 감쇠)를 타서, 개수 축이 굵기 대신 alpha 로만 표현되고 신뢰도 채널과
+//   상시 섞였다. 1.0px 부터는 dpr 1 에서도 정상 렌더 구간이라 두 축이 설계대로 분리된다.
+//   "가느다랗게" 는 유지된다 — 1px 실선은 hairline 과 같은 두께이고, 끊김만 사라진다.
+const _META_EDGE_W_BASE = 1.0;       // 단일 관계선의 화면 굵기(px) — "기본은 가느다랗게"(=1물리픽셀)
+const _META_EDGE_W_GAIN = 0.27;      // 개수 2배당 굵기 증가분(로그 스케일)
+const _META_EDGE_W_CAP = 1.6;        // 개수發 증가분 상한(최대 2.6px) — 대량 집계가 화면을 덮지 않게
+// 관계 개수 → 화면 굵기(px). 1건 1.00 · 4건 1.54 · 16건 2.08 · 64건 2.60 · 그 이상 2.60 포화.
 function _metaEdgeWidthFor(count) {
   const n = Math.max(1, Number(count) || 1);
   return _META_EDGE_W_BASE + Math.min(_META_EDGE_W_CAP, Math.log2(n) * _META_EDGE_W_GAIN);

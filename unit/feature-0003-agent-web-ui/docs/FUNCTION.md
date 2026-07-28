@@ -12,6 +12,11 @@ source_of_truth: true
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 2. Goal
+- REQ-20260728T152141-graph-edge-hairline (20260728T1521-graph-edge-hairline, **Minor §12.3** — feature-0003 web/UI 프론트 `static/graph/{graph-renderer-pixi,graph-roleviz}.js`, 렌더 품질 보정·비파괴; 그래프 정본 feature-0016 §87, RBAC/스키마/백엔드/엔드포인트 무변경): 줌아웃 관계선의 **깨짐·계단·끊김** 해소. **검토 결론 — AA 는 이미 켜져 있다**(`antialias: true` + `resolution: devicePixelRatio`)이므로 "AA 적용"은 해법이 아니며, 원인은 **선 폭이 1물리픽셀 미만**(§86 기본 0.6px 는 dpr 1 에서 전 줌 서브픽셀, 줌아웃 시 0.25px)이다. MSAA 는 픽셀당 유한 샘플 커버리지를 **양자화**(0/25/50/75%)할 뿐이라 밝기가 픽셀마다 튀어 끊김·계단으로 읽힌다. **채택: hairline 처리**(Mapbox GL·deck.gl·Skia/Cairo 표준) — `w_screen < 1/dpr` 이면 폭을 1물리픽셀로 올리고 모자란 두께분을 alpha 에 곱한다. 커버리지가 균일해져 증상이 원천 소멸하고, '가늘기'는 alpha 가 연속 표현하며, 비용은 산술 몇 줄(MSAA 증설·resolution 상향 불요). **base 재조정 동반**: 기본 굵기 0.6→1.0px(개수 축 1.00/1.54/2.08/2.60 포화) — 0.6px 는 항상 hairline 경로를 타 개수 축이 상시 alpha 로 흘렀다. REV-20260728T152141-graph-edge-hairline. AC-GEH-1 ~ AC-GEH-4.
+  - AC-GEH-1 (무보정 구간): 폭이 1물리픽셀 이상이면 폭·alpha 가 그대로 유지된다.
+  - AC-GEH-2 (hairline 승격): 서브픽셀이면 폭이 1물리픽셀로 올라가고 alpha 가 부족분만큼 감쇠한다.
+  - AC-GEH-3 (고DPI): 임계가 `1/devicePixelRatio` 로 적용된다(dpr 2 → CSS 0.5px).
+  - AC-GEH-4 (연속성): 동일 줌 대조에서 대각선 관계선이 점선 파편이 아니라 연속 실선으로 렌더된다.
 - REQ-20260728T142745-graph-edge-encoding (20260728T1427-graph-edge-encoding, **Minor §12.3** — feature-0003 web/UI 프론트 `static/graph/` 3모듈, 렌더 인코딩 재배치·비파괴; 그래프 정본 feature-0016 §86, RBAC/스키마/백엔드/엔드포인트 무변경): 사용자 리포트 2건. **① 극단 줌아웃에서 선이 화면을 덮음** — §85 의 전 구간 screen-space 고정이 반대편 실패를 낳았다(노드·간격은 작아지는데 선만 같은 두께) → **줌 두께 정책 구간 분리**: `w_screen = clamp(base·min(1, zoom/ZFULL), MIN, base)` 로 **줌인은 화면 고정**(부풀지 않음)·**줌아웃은 콘텐츠 비례**(얇아짐), MIN=0.25px 로 완전 소실만 방지. **② 인코딩 축 재배치** — **굵기 = 관계 개수**(1건 0.6px → 로그 증가 → 2.2px 포화), **진하기 = 신뢰성**(trusted 0.85 > 루틴 0.72 > candidate 0.5 > inferred 0.38), 색=종류·화살촉=방향·곡률=왕복 분리로 채널 직교화. 기본은 가느다랗게(0.6px). **다발(strands) 제거** — 개수를 굵기가 담게 되어 중복이고 줌아웃 가림을 가중했다(§83 '부모 볼륨=가닥' → §86 '개수=굵기' 로 통합). REV-20260728T142745-graph-edge-encoding. AC-GEE-1 ~ AC-GEE-4.
   - AC-GEE-1 (줌인 고정): zoom 1 이상에서 확대해도 화면 두께가 변하지 않는다.
   - AC-GEE-2 (줌아웃 비례): zoom 1 미만에서 화면 두께가 콘텐츠와 함께 얇아지고(단조), 최소 0.25px 는 남는다.

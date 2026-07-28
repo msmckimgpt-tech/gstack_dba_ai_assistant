@@ -104,25 +104,62 @@ const A = [0, 0], B = [100, 0];
     const rec = [];
     const g = { clear(){}, children: [], removeChildren(){ return []; }, moveTo(){ return g; }, lineTo(){ return g; },
       quadraticCurveTo(){ return g; }, closePath(){ return g; }, addChild(){},
-      stroke(o){ rec.push(o.width); return g; }, fill(){ return g; } };
+      stroke(o){ rec.push(o); return g; }, fill(){ return g; } };
     inst.P = { Graphics: function(){ return g; } };
     // _cam 은 prototype accessor(getter-only)라 대입이 막힌다 — 인스턴스에 직접 정의.
     Object.defineProperty(inst, "_cam", { value: { zoom }, configurable: true, writable: true });
+    inst.app = { renderer: { resolution: 1 } };
     inst._built = { edges: [] };
     inst._paintEdge(g, { style: { lineWidth: styleW, strokeOpacity: 0.5, curve: 0.13, curveMax: 26, curveMin: 5 } }, [0, 0], [100, 0]);
-    return rec[0];
+    return { screenW: rec[0].width * zoom, alpha: rec[0].alpha };
   };
-  const scr = (w, z) => paint(w, z) * z;   // 화면 두께
-  const BASE = 0.6;
+  // §87 이후 줌아웃 구간은 **폭이 아니라 alpha** 로 물러난다(hairline: 폭은 1물리픽셀 고정).
+  //   따라서 계약을 **실효 잉크량 = 화면폭 × alpha** 로 검사한다 — 사용자가 체감하는 "선의 존재감".
+  const ink = (w, z) => { const r = paint(w, z); return r.screenW * r.alpha; };
+  const scr = (w, z) => paint(w, z).screenW;
+  const BASE = 1.0, A = 0.5;
   for (const z of [1, 2, 4, 8]) {
     check(`A11 zoom ${z} 확대해도 굵어지지 않음(화면 고정)`, approx(scr(BASE, z), BASE, 1e-6), { zoom: z, screen: scr(BASE, z) });
   }
-  check("A11 zoom 0.5 는 콘텐츠 비례로 얇아짐", approx(scr(BASE, 0.5), BASE * 0.5, 1e-6), scr(BASE, 0.5));
-  check("A11 극단 줌아웃도 최소 두께는 남김(소실 방지)", scr(BASE, 0.02) >= 0.25 - 1e-9 && scr(BASE, 0.02) < BASE * 0.5,
-    scr(BASE, 0.02));
-  check("A11 줌아웃 화면 두께 단조 증가", scr(BASE, 0.2) < scr(BASE, 0.5) && scr(BASE, 0.5) < scr(BASE, 1),
-    [scr(BASE, 0.2), scr(BASE, 0.5), scr(BASE, 1)]);
-  check("A11 굵기 서열은 개수만 반영", approx(scr(2.2, 1) / scr(BASE, 1), 2.2 / BASE, 1e-6));
+  check("A11 zoom 0.5 는 콘텐츠 비례로 물러남(잉크)", approx(ink(BASE, 0.5), BASE * A * 0.5, 1e-6), ink(BASE, 0.5));
+  check("A11 극단 줌아웃도 잉크 0 은 아님(소실 방지)", ink(BASE, 0.02) > 0 && ink(BASE, 0.02) < BASE * A * 0.5,
+    ink(BASE, 0.02));
+  check("A11 줌아웃 잉크 단조 증가", ink(BASE, 0.2) < ink(BASE, 0.5) && ink(BASE, 0.5) < ink(BASE, 1),
+    [ink(BASE, 0.2), ink(BASE, 0.5), ink(BASE, 1)]);
+  check("A11 굵기 서열은 개수만 반영", approx(scr(2.6, 1) / scr(BASE, 1), 2.6 / BASE, 1e-6));
+}
+{
+  // ── §87 hairline: 서브픽셀 폭 → 1물리픽셀 + alpha 보상 ──
+  // 줌아웃 깨짐·계단·끊김의 원인은 AA 부재가 아니라(이미 antialias:true) **1물리픽셀 미만 폭**이다.
+  // MSAA 는 유한 샘플 커버리지를 양자화할 뿐이라 폭 0.3px 선의 밝기가 픽셀마다 튄다.
+  const H = Pure ? null : null;   // 순수 함수가 아니라 모듈 스코프 헬퍼 → 어댑터 경유로 계약만 잠근다.
+  const inst2 = Object.create(Adapter.prototype);
+  const paint2 = (styleW, zoom, dpr) => {
+    const rec = [];
+    const g = { clear(){}, children: [], removeChildren(){ return []; }, moveTo(){ return g; }, lineTo(){ return g; },
+      quadraticCurveTo(){ return g; }, closePath(){ return g; }, addChild(){},
+      stroke(o){ rec.push(o); return g; }, fill(){ return g; } };
+    inst2.P = { Graphics: function(){ return g; } };
+    Object.defineProperty(inst2, "_cam", { value: { zoom }, configurable: true, writable: true });
+    inst2.app = { renderer: { resolution: dpr } };
+    inst2._built = { edges: [] };
+    inst2._paintEdge(g, { style: { lineWidth: styleW, strokeOpacity: 0.8, curve: 0.13, curveMax: 26, curveMin: 5 } }, [0, 0], [100, 0]);
+    return { screenW: rec[0].width * zoom, alpha: rec[0].alpha };
+  };
+  const normal = paint2(1.0, 1, 1);
+  check("A13 1물리픽셀 이상은 무보정(폭·alpha 그대로)", approx(normal.screenW, 1.0, 1e-6) && approx(normal.alpha, 0.8, 1e-6),
+    normal);
+  const sub = paint2(1.0, 0.4, 1);   // 화면 0.4px → 서브픽셀
+  check("A13 서브픽셀은 폭을 1물리픽셀로 올림", approx(sub.screenW, 1.0, 1e-6), sub.screenW);
+  check("A13 모자란 두께분은 alpha 로 보상", approx(sub.alpha, 0.8 * 0.4, 1e-6), sub.alpha);
+  const deep = paint2(1.0, 0.05, 1);   // 하한 0.25px 구간
+  check("A13 극단 줌아웃도 폭 1물리픽셀 유지(끊김 방지)", approx(deep.screenW, 1.0, 1e-6), deep.screenW);
+  check("A13 극단 구간 alpha 는 더 옅어짐(단조)", deep.alpha < sub.alpha && deep.alpha > 0, { deep: deep.alpha, sub: sub.alpha });
+  // dpr 2 = 물리 1px 이 CSS 0.5px → CSS 0.5px 이상이면 무보정.
+  const hidpi = paint2(1.0, 0.6, 2);
+  check("A13 고DPI 는 임계가 1/dpr(CSS 0.5px)", approx(hidpi.screenW, 0.6, 1e-6) && approx(hidpi.alpha, 0.8, 1e-6), hidpi);
+  const hidpiSub = paint2(1.0, 0.3, 2);   // CSS 0.3px < 0.5px → 보상
+  check("A13 고DPI 서브픽셀도 1물리픽셀로", approx(hidpiSub.screenW, 0.5, 1e-6) && approx(hidpiSub.alpha, 0.8 * 0.6, 1e-6), hidpiSub);
 }
 {
   // §85: 굵기는 페인트 시점 zoom 으로 bake 되므로 줌 변화 시 재페인트가 없으면 화면 두께가 다시 흐른다.
@@ -197,11 +234,11 @@ if (typeof g._metaG6Build !== "function" || !g.__M) {
 {
   // §86: 개수 → 굵기(화면 px). 기본은 가늘고(1건 0.6), 로그로 증가하며 상한에서 포화한다.
   const W = g._metaEdgeWidthFor;
-  check("B1 단건은 가늘게(0.6px)", approx(W(1), 0.6, 1e-9), W(1));
+  check("B1 단건은 1물리픽셀(1.0px)", approx(W(1), 1.0, 1e-9), W(1));
   check("B1 개수 증가 → 굵기 단조 증가", [1, 2, 4, 8, 16, 64].every((n, i, arr) => i === 0 || W(n) > W(arr[i - 1])),
     [1, 2, 4, 8, 16, 64].map((n) => W(n).toFixed(2)));
-  check("B1 로그 스케일(4건 1.10 · 16건 1.60)", approx(W(4), 1.1, 1e-9) && approx(W(16), 1.6, 1e-9), [W(4), W(16)]);
-  check("B1 대량 집계 포화(≤2.2px)", W(100000) <= 2.2 + 1e-9 && approx(W(100000), 2.2, 1e-9), W(100000));
+  check("B1 로그 스케일(4건 1.54 · 16건 2.08)", approx(W(4), 1.54, 1e-9) && approx(W(16), 2.08, 1e-9), [W(4), W(16)]);
+  check("B1 대량 집계 포화(≤2.6px)", W(100000) <= 2.6 + 1e-9 && approx(W(100000), 2.6, 1e-9), W(100000));
 }
 {
   const base = g._metaEdgeStyleFor("", 0), trusted = g._metaEdgeStyleFor("trusted", 0), cand = g._metaEdgeStyleFor("candidate", 0);
@@ -212,7 +249,7 @@ if (typeof g._metaG6Build !== "function" || !g.__M) {
   check("B2 신뢰도 = 진하기 단조(inferred<candidate<trusted)",
     base.strokeOpacity < cand.strokeOpacity && cand.strokeOpacity < trusted.strokeOpacity,
     [base.strokeOpacity, cand.strokeOpacity, trusted.strokeOpacity]);
-  check("B2 기본은 가늘게(0.6px)", approx(base.lineWidth, 0.6, 1e-9), base.lineWidth);
+  check("B2 기본은 1물리픽셀(1.0px)", approx(base.lineWidth, 1.0, 1e-9), base.lineWidth);
   check("B2 개수가 늘면 굵어진다", g._metaEdgeStyleFor("", 0, 16).lineWidth > base.lineWidth,
     g._metaEdgeStyleFor("", 0, 16).lineWidth);
   check("B2 관계선에 대시 없음(실선)", [base, trusted, cross, cand].every((s) => s.lineDash === undefined));
@@ -236,7 +273,7 @@ if (typeof g._metaG6Build !== "function" || !g.__M) {
   check("C0 루틴 진하기 = candidate 초과 · trusted 미만",
     rd.strokeOpacity > g._metaEdgeStyleFor("candidate", 0).strokeOpacity && rd.strokeOpacity < g._metaEdgeStyleFor("trusted", 0).strokeOpacity,
     { routine: rd.strokeOpacity, cand: g._metaEdgeStyleFor("candidate", 0).strokeOpacity, trusted: g._metaEdgeStyleFor("trusted", 0).strokeOpacity });
-  check("C0 루틴 굵기도 개수 축(단건 0.6)", approx(rd.lineWidth, 0.6, 1e-9), rd.lineWidth);
+  check("C0 루틴 굵기도 개수 축(단건 1.0)", approx(rd.lineWidth, 1.0, 1e-9), rd.lineWidth);
 }
 {
   const s1 = g._metaSchemaRefEdgeStyle(1), s12 = g._metaSchemaRefEdgeStyle(12), s500 = g._metaSchemaRefEdgeStyle(500);
@@ -244,7 +281,7 @@ if (typeof g._metaG6Build !== "function" || !g.__M) {
   check("B4 개수↑ → 굵기↑", s1.lineWidth < s12.lineWidth && s12.lineWidth < s500.lineWidth,
     [s1.lineWidth, s12.lineWidth, s500.lineWidth]);
   check("B4 진하기는 중립 고정(신뢰도 혼합)", s1.strokeOpacity === s500.strokeOpacity, s1.strokeOpacity);
-  check("B4 대량 집계도 상한 내(≤2.2px)", s500.lineWidth <= 2.2 + 1e-9, s500.lineWidth);
+  check("B4 대량 집계도 상한 내(≤2.6px)", s500.lineWidth <= 2.6 + 1e-9, s500.lineWidth);
   check("B4 다발 미사용", s500.strands === undefined);
 }
 
