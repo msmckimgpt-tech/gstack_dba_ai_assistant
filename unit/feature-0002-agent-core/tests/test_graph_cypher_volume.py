@@ -306,6 +306,34 @@ def test_signature_property_name_is_not_baked_into_vertex_merge():
 
 
 # ── (3) sync_graph 배선 — 리프 함수가 아니라 **실제 경로** ──────────────────
+_CYPHER_BODY_RE = re.compile(r"ag_catalog\.cypher\('[^']*',\s*\$(\w+)\$(.*?)\$\1\$", re.S)
+
+
+def _assert_cypher_parses(sql: str) -> None:
+    """PG(AGE)가 거부하는 cypher 를 하네스가 **대신 거부**한다 — mock 은 파서가 아니므로.
+
+    scope-prefetch 결함(2026-07-28 라이브): `WHERE` 절 fragment 를 노드 패턴과 관계 패턴
+    **사이에** 보간해 `MATCH (r:Routine) WHERE r.scope_key = 'x'-[u:ROUTINE_USES]->() RETURN …`
+    가 생성됐고, 라이브 PG 는 `syntax error at or near ":"` 로 거부했다. 문자열 매칭 하네스는
+    그 문장을 그냥 삼켜 **선조회 결과가 소비되는 것처럼** 보였다(테스트 초록, 라이브 무효).
+
+    openCypher 에서 `WHERE` 는 그 MATCH 절의 **패턴 전체 뒤**에만 올 수 있다. 따라서 한 절의
+    `WHERE` 이후 `RETURN` 전까지 구간에 관계 패턴(`-[`)이 나타나면 문법 오류로 간주한다.
+    """
+    for _tag, body in _CYPHER_BODY_RE.findall(sql):
+        b = " ".join(body.split())
+        low = b.lower()
+        i = low.find(" where ")
+        if i < 0:
+            continue
+        j = low.find(" return ", i)
+        tail = b[i:] if j < 0 else b[i:j]
+        if "-[" in tail:
+            raise RuntimeError(
+                "syntax error at or near \":\" — WHERE 절 뒤에 관계 패턴이 왔다 "
+                f"(패턴 중간 보간): {b[:160]}")
+
+
 class _SyncCur:
     """`sync_graph` 를 끝까지 구동하는 mock 커서(feature-0016 harness 동형).
 
@@ -324,6 +352,7 @@ class _SyncCur:
         boom = self.store.get("boom")
         if boom and boom in s:
             raise RuntimeError(f"boom: {boom}")
+        _assert_cypher_parses(s)
         if low.startswith("select now()"):
             self.store["rows"] = [["2026-07-28T00:00:00+00:00"]]
         elif "return r.key, r.refs_sig" in low:
@@ -495,3 +524,54 @@ def test_sync_graph_does_not_attach_attributes_to_cursor(sync_store):
     sync_store["routine_rows"] = [("ds1", "sch", "p", "procedure", "", "[]", None, None)]
     G.sync_graph()          # 예외 없이 완주하면 부착이 없다는 뜻
     assert sync_store["commits"] >= 1
+
+# ── (4) scope 지정 sync 의 선조회 문법 (2026-07-28 라이브 결함 회귀 잠금) ────────
+def test_scoped_degree_prefetch_cypher_is_wellformed(sync_store):
+    """**라이브 결함 회귀 잠금**: scope 지정 sync 에서 차수 선조회 cypher 가 문법적으로 유효해야 한다.
+
+    결함(2026-07-28 backfill 리포트 `routine_prefetch: SyntaxError syntax error at or near ":"`):
+    `_scope_pred`(` WHERE r.scope_key = '…'`)를 노드 패턴과 관계 패턴 **사이에** 보간해
+    `MATCH (r:Routine) WHERE r.scope_key = 'ds-x'-[u:ROUTINE_USES]->() RETURN r.key, count(u)`
+    가 생성됐다. `scope_key` 가 None 인 경로만 유효했으므로 **모든 per-datasource sync** 가
+    항상 실패했다(정합성은 fail-safe — 빈 차수 dict → 전량 재작성으로 강등).
+
+    여기서는 구조를 직접 단정한다: 차수 선조회의 `WHERE` 는 관계 패턴 **뒤**에 와야 한다.
+    """
+    G.sync_graph(scope_key="ds-x")
+    deg = [s for s in sync_store["sqls"] if "RETURN r.key, count(u)" in s]
+    assert deg, "차수 선조회 cypher 가 실행되지 않았다(하네스가 결함을 관측할 수 없음)"
+    q = deg[0]
+    assert "r.scope_key = 'ds-x'" in q, "차수 선조회에 scope 필터가 없다(전 라벨 덤프)"
+    assert "'ds-x'-[" not in q, \
+        f"WHERE 값 직후에 관계 패턴이 붙었다(패턴 중간 보간 — PG 가 거부한다): {q}"
+    assert q.index("-[u:ROUTINE_USES]->()") < q.index("WHERE"), \
+        f"WHERE 가 관계 패턴보다 앞에 있다(openCypher 문법 위반): {q}"
+
+
+def test_scoped_prefetch_result_actually_skips_rewrite(sync_store):
+    """**end-to-end**: scope 지정 sync 에서도 선조회 (서명, 차수)가 소비돼 재작성이 생략된다.
+
+    `test_sync_graph_prefetch_result_actually_skips_rewrite` 의 scope 판 — 종전엔 무-scope
+    경로만 잠겨 있어서 per-datasource sync 에서 최적화가 100% 죽어도 스위트가 초록이었다.
+    하네스의 `_assert_cypher_parses` 가 PG 대신 malformed cypher 를 거부하므로, 결함이 살아
+    있으면 차수 dict 가 비어 `DELETE u` 가 나타나고 이 단정이 깨진다.
+    """
+    refs = [{"fqn": "sch.a", "kind": "read"}]
+    rkey = G._vkey("ds-x", "sch.p()")
+    sync_store["routine_rows"] = [("ds-x", "sch", "p", "procedure", "",
+                                   '[{"fqn": "sch.a", "kind": "read"}]', None, None)]
+    sync_store["sig_rows"] = [[f'"{rkey}"', f'"{G.routine_refs_signature(refs)}"']]
+    sync_store["deg_rows"] = [[f'"{rkey}"', "1"]]
+    G.sync_graph(scope_key="ds-x")
+    assert not [s for s in sync_store["sqls"] if "DELETE u" in s], \
+        "scope 지정 경로에서 선조회가 소비되지 않아 재작성이 그대로 일어났다"
+    assert sync_store["rollbacks"] == 0, \
+        "선조회 실패 경로의 rollback 이 매 scope sync 마다 발생한다"
+
+
+def test_unscoped_prefetch_stays_wellformed(sync_store):
+    """무-scope 경로 무회귀 — 결함 수정이 기존 유효 쿼리를 깨지 않는다."""
+    G.sync_graph()
+    deg = [s for s in sync_store["sqls"] if "RETURN r.key, count(u)" in s]
+    assert deg and "WHERE" not in deg[0], f"무-scope 경로에 불필요한 WHERE 가 생겼다: {deg[0]}"
+    assert "-[u:ROUTINE_USES]->()" in deg[0]

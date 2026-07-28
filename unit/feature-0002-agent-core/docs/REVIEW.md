@@ -644,3 +644,47 @@ CHG-20260728T124500-llm-usage-target-scope-postverify. docs-only(코드 diff 0) 
 - **판정**: 잔여 **착취 불가 확정**(별칭 우선 해석) · 열거 oracle **부재 확정**(문구 불변) · 은폐 철회 타당. APPLY·4/5-part·Paren 봉인은 서버 동작과 일치하므로 유지.
 - **한계 명시**: 실측은 QA 인스턴스(SQL Server 2017 Web Edition) 1대 기준이다. 이름 해석 우선순위는 엔진 문서 동작이라 버전 간 변동 가능성은 낮으나, 다른 메이저 버전 datasource 추가 시 동일 프로브 3형태를 재확인하는 것이 안전하다.
 - Cross-ref: CHG-20260728T150510-alias-shadow-server-resolution-verified · REV/CHG-20260728T133431-alias-shadowed-function-namespace · FRICTION_LEDGER.
+
+## REV-20260728T175400-cyvol-scope-prefetch-fix [SKIPPED:session-policy-no-subagent] — PASS
+- Related TASK: feature-0002-agent-core
+- Trigger: schema/query/스키마·쿼리 keyword matched (graph sync cypher 조립) — §18.8 backend·qa 대상
+- Timestamp: 2026-07-28T17:54:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**리뷰 채널 선택 근거(§18.8.2)**: 본 세션에는 "요청 없이 Agent tool 을 호출하지 말라"는 상위
+지시가 걸려 있다. §18.8.2 의 상위 우선순위 carve-out 대로 subagent panel 을 호출하지 않고, 제약
+없는 채널로 덮을 수 있는 만큼을 수행했다 — ① **라이브 PG/AGE ground-truth 대조**(수정 전 형태가
+실제로 거부되는지, 수정 후 형태가 실제로 행을 반환하는지) ② **역검증**(테스트를 수정 전에 먼저
+돌려 FAIL 재현) ③ **기준선 대조 회귀**(main 과 동일 하네스로 실패 집합 차집합 0). backend·qa
+도메인의 subagent 관점은 미수행 — 미검증 범위를 완료로 오인 보고하지 않기 위해 여기에 명시한다.
+
+**왜 이 결함이 "테스트 31건 + 적대 패널 2렌즈 + QA 변이 28종"을 통과했나** — 이번 cycle 의 실제
+교훈이다. 세 층이 동시에 비켜갔다:
+1. **선택 편향**: 기존 `test_sync_graph_prefetch_is_scope_filtered` 는 두 선조회 중 **서명 쿼리만**
+   검사했다. 서명 쿼리는 패턴이 노드 하나뿐이라 같은 fragment 보간이 우연히 유효했다 — 즉
+   "scope 필터가 걸린다"는 명제는 참이면서 "그 쿼리가 실행 가능하다"는 명제는 거짓일 수 있었다.
+2. **하네스 관측 한계**: mock 커서는 파서가 아니라 문자열 매칭기다. malformed cypher 도
+   `"return r.key, count(u)" in low` 에 걸려 정상적으로 행을 돌려줬으므로, end-to-end 테스트조차
+   "선조회가 소비된다"를 초록으로 봤다. **관측 장비가 결함을 물리적으로 볼 수 없었다.**
+3. **fail-safe 가 증상을 가렸다**: 실패 폴백이 정확히 "최적화 이전 동작"이라 그래프 최종 상태가
+   옳았다. 성능·호출량은 라이브 계측 없이는 드러나지 않고, 유일한 신호는 `_err_samples` 경고였다
+   — 그 경고를 남기게 한 것이 도입 cycle 의 패널 M2 였고, **그 M2 덕분에 이번에 발견됐다**.
+
+그래서 수정과 함께 관측 장비 자체를 고쳤다(`_assert_cypher_parses`). 앞으로 같은 형태의 cypher
+조립 오류는 어느 테스트에서든 하네스가 먼저 거부한다.
+
+**등급 판정 — Minor**: 정합성 회귀가 아니다(fail-safe 폴백으로 그래프 최종 상태 동일). 복구 대상은
+최적화·부하와 안전망의 정밀도이며, 스키마·마이그레이션·RBAC·엔드포인트·UI 표면 변경이 0이다.
+다만 라이브 부하에 직접 영향하므로 배포 후 스코프 sync 리포트에서 `routine_prefetch` 오류 소실을
+재확인하는 것을 완료 조건에 포함한다.
+
+**남긴 한계(정직)**: ① 하네스 가드는 "WHERE 뒤 관계 패턴" 한 형태만 잡는다 — 다른 cypher 문법
+오류 클래스는 여전히 라이브 PG 만이 판정한다(가드를 파서로 키우는 것은 과설계로 보고 채택하지
+않았다). ② 도입 이래 스코프 sync 가 전량 재작성으로 돌았으므로 그 기간의 부하 절감은 소급되지
+않는다. ③ 같은 파일의 `rag_table`/`relationship` step 에서 관측된 `Entity failed to be updated: 3`
+와 `DeadlockDetected` 는 **별개 클래스**이며 본 cycle 범위 밖이다(기록만).
+
+Cross-ref: CHG-20260728T175400-cyvol-scope-prefetch-fix ·
+`docs/test-runs.d/20260728T175400-cyvol-scope-prefetch-fix.md` ·
+도입 cycle REV/CHG-20260728T163000-graph-cypher-volume.

@@ -1664,3 +1664,34 @@ FR-false-absence 패널이 pre-existing 으로 분리 기록한 항목을 사용
 - [ ] **cyvol**: 머지 → 배포 → 전량 sync 전후 실측
 - [x] **잔여 확정(2026-07-28 라이브 실증)**: QA SQL Server 2017 프로브로 스칼라 위치 모호성이 **착취 불가**임을 확인(별칭 우선 해석, 오류 문구 DB 존재 불변) → 열거 oracle 부재도 확정되어 오류 원문 은폐를 **철회**. CHG-20260728T150510.
 정본 rationale=REVIEW REV-20260728T133431-alias-shadowed-function-namespace, 변경이력=MODIFY CHG-20260728T133431-alias-shadowed-function-namespace.
+
+## TASK-20260728T175400-cyvol-scope-prefetch-fix — cyvol 차수 선조회 cypher 조립 결함 수정 (Minor §12.3, 최적화 복구 · feature-0030)
+
+### 배경 (라이브 발견)
+routine-column-edges POST-DEPLOY 의 `bin/routine-backfill.sh` 리포트에
+`routine_prefetch: SyntaxError syntax error at or near ":"` 6건. cyvol 선조회가 scope 술어를
+노드 패턴 직후에 고정 보간해, 관계 패턴이 있는 **차수 쿼리**에서 `WHERE` 가 패턴 중간에 들어갔다.
+`scope_key is None` 경로만 유효했으므로 **모든 per-datasource sync** 가 도입 이래 항상 실패.
+
+정합성은 fail-safe(빈 차수 dict → 전량 재작성 = 최적화 이전 동작)였고, 손실은 ① 스코프 sync 의
+cyvol W2 감축(실측 전체의 32%) ② B3 재조정 안전망의 차수 판정 ③ 매 스코프 sync 1회 불필요한
+`rollback()` + `anchor_cache_reset()`.
+
+### 진행
+- [x] 결함 재현 테스트 3건 선작성 → **수정 전 2 FAIL** 확인(기존 32건은 통과 = 기존 스위트 사각 실증)
+- [x] 하네스 보강 `_assert_cypher_parses` — mock 이 PG 대신 malformed cypher 거부(관측 장비 수정)
+- [x] `metadata_graph.py` scope 술어를 쿼리별로 **패턴 뒤**에 조립 + 근거 주석
+- [x] 라이브 PG/AGE ground-truth — 수정 전 형태 `syntax error at or near ":"` 재현 / 수정 후 행 반환
+- [x] 회귀 — 대상 3파일 86 PASS · feature-0002 전체 스위트 main 기준선 대조 실패 차집합 **양방향 0**
+- [x] 문서 — CHG/REV/Run fragment/FUNCTION 갱신
+- [ ] POST-DEPLOY: 워커 이미지 재배포 → 스코프 sync 리포트에서 `routine_prefetch` 오류 소실 재확인
+
+### 범위 외 (기록만, §8.1)
+같은 backfill 리포트의 `rag_table`/`relationship` step `Entity failed to be updated: 3` ·
+`DeadlockDetected` 는 별개 클래스 — 본 cycle 에서 다루지 않는다.
+
+### 정본
+rationale=REVIEW `REV-20260728T175400-cyvol-scope-prefetch-fix` ·
+변경이력=MODIFY `CHG-20260728T175400-cyvol-scope-prefetch-fix` ·
+Run=`docs/test-runs.d/20260728T175400-cyvol-scope-prefetch-fix.md` ·
+도입 cycle=`CHG-20260728T163000-graph-cypher-volume`.

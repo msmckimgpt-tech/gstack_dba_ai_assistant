@@ -1048,10 +1048,18 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
             # 엣지는 (routine, table) 쌍당 1개이므로 중복 fqn 은 1개로 접힌다.
             _sig_by_key: dict = {}
             _deg_by_key: dict = {}
-            _scope_pred = (f" WHERE r.scope_key = {_cq(scope_key)}" if scope_key is not None else "")
+            # scope 술어는 **각 MATCH 절의 패턴 전체 뒤**에 붙는다. openCypher 의 WHERE 는
+            # 패턴 다음에만 올 수 있어서, 종전처럼 노드 패턴 직후에 고정 보간하면 관계 패턴이
+            # 있는 쿼리에서 `… WHERE r.scope_key = 'x'-[u:ROUTINE_USES]->() …` 가 되어 PG(AGE)가
+            # `syntax error at or near ":"` 로 거부한다 — scope_key 가 None 인 경로만 유효했으므로
+            # **모든 per-datasource sync** 의 차수 선조회가 항상 실패했다(2026-07-28 라이브
+            # backfill 리포트에서 발견). 정합성은 fail-safe 였지만(빈 차수 dict → 전량 재작성)
+            # cyvol 최적화가 스코프 경로에서 통째로 무효였고, 예외 경로의 rollback 도 매번 돌았다.
+            # 그래서 술어를 패턴 뒤에 붙이도록 쿼리별로 조립한다.
+            _sp = (f" WHERE r.scope_key = {_cq(scope_key)}" if scope_key is not None else "")
             for _q, _sink in (
-                    (f"MATCH (r:Routine){_scope_pred} RETURN r.key, r.refs_sig", _sig_by_key),
-                    (f"MATCH (r:Routine){_scope_pred}-[u:ROUTINE_USES]->() "
+                    (f"MATCH (r:Routine){_sp} RETURN r.key, r.refs_sig", _sig_by_key),
+                    (f"MATCH (r:Routine)-[u:ROUTINE_USES]->(){_sp} "
                      f"RETURN r.key, count(u)", _deg_by_key)):
                 try:
                     # 행 shape 를 인덱스로 방어적으로 읽는다 — 튜플 언패킹(`for a, b in …`)은
