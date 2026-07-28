@@ -46,7 +46,10 @@ feature_status_updated: 2026-07-15
 - [x] TASK-20260715T140102-deploy-verify: PR #819/#821 병합·배포(23b8faba)·alembic 0042·PB-0008 PASS
 - [x] TASK-20260716-console-ia: 관리 콘솔 IA 재구성 — 감사>AI추론 + 설정>프롬프트 분리 (배포·PB-0008 PASS)
 - [x] TASK-20260716-console-subtabs: 유사 항목 서브탭 통합 (배포·PB-0008 PASS)
-- [ ] TASK-20260716-subtab-sticky: 서브탭 바 화면 상단 sticky 고정 (CSS, 사용자 요청)
+- [x] TASK-20260716-subtab-sticky: 서브탭 바 화면 상단 sticky 고정 (CSS, 사용자 요청) —
+  커밋 `08704f3d` 로 구현·main 반영 완료. 체크박스만 미갱신이었다(2026-07-28 확인:
+  라이브 배포본 `/static/styles.css` 에 `position: sticky; top: 0; z-index: 6` 실재,
+  web 컨테이너 내 파일도 동일). 스크롤 컨테이너별 배경 오버라이드(ai-console=--bg)까지 포함.
 - [x] TASK-20260722-review-token-setting: "리뷰 실패"=리뷰어 LLM 100% 타임아웃 진단(DB 8/8 @25s) +
   리뷰어 토큰 할당량(REDTEAM_MAX_TOKENS) 콘솔 '설정 > AI 자가 리뷰' 노출 (타임아웃은 기존 노출).
   테스트 87건 PASS·ruff clean·프론트 무변경. 배포 대기.
@@ -107,4 +110,7 @@ BLOCK 검출 후 답변이 미수정 전달되던 근본 원인(수정 지시를
 - [x] 적대 리뷰 WARN(다회 수정 stale-draft 앵커링) 반영 — 콜백 (instruction, draft) 계약
 - [x] 회귀 테스트 추가 (test_self_review_messages 3 + test_redteam 다회 draft 앵커링) — 통과
 - [x] verify-completion --pre-commit PASS + 커밋(79f8bda5) + PR #938
-- [ ] main 병합(rebase 후) + 배포 (worker/ask-worker/web) + 라이브 재검증 (신규 revise revision_applied=true)
+- [x] main 병합(rebase 후) + 배포 (worker/ask-worker/web) + 라이브 재검증 (신규 revise
+  revision_applied=true) — PR #938 머지(2026-07-24T07:37Z). 2026-07-28 확인: prefill fix
+  배포(16:20) 이후 `redteam_reviews` 표본 21건 중 **revision_applied=true 15건** 관측으로
+  라이브 재검증 충족(수정 전에는 42건 중 35건이 false 였다). 체크박스만 미갱신이었다.

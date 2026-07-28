@@ -326,3 +326,20 @@ source_of_truth: true
   (`zz-tmp-postverify-f0021-isolation`, `zz-tmp-postverify-f0021-render`)은 검증 직후 삭제하고
   잔존 0건을 확인했다 — 기존 대화 245건·리뷰 원장 무변경.
 - Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.
+
+## CHG-20260728-0001
+- Date: 2026-07-28
+- Related Requirement: TASK-20260716-subtab-sticky, §9 후속(revise/rederive prefill 결함)
+  — **docs-only, 코드 무변경** (stale 체크박스 정리)
+- Summary: TASK.md 에 미완으로 남아 있던 2건이 **실제로는 이미 완료된 작업**임을 확인하고
+  근거와 함께 닫았다. 코드·자산 변경 없음.
+  - **subtab-sticky**: 커밋 `08704f3d` 로 구현·main 반영 완료. 라이브 배포본
+    `/static/styles.css` 와 web 컨테이너 내 파일 양쪽에서 `position: sticky; top: 0;
+    z-index: 6` 실재 확인. 스크롤 컨테이너별 배경 오버라이드(ai-console=`--bg`)도 포함.
+  - **§9 main 병합 + 배포 + 라이브 재검증**: PR #938 머지(2026-07-24T07:37Z).
+    prefill fix 배포(16:20) 이후 `agent_runtime.redteam_reviews` 표본 21건 중
+    `revision_applied=true` **15건** 관측 — 수정 전 42건 중 35건이 false 였던 것과 대비되어
+    라이브 재검증 조건 충족.
+- Files: `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`, `docs/REPORT.md`
+- Impact: 제품 동작 무변경. TASK.md 의 실제 잔여가 정형 Completion Checklist 만 남는다.
+- Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.

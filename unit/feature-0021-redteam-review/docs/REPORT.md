@@ -58,6 +58,9 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   (상한 제거의 안전성이 이 탈출구에 걸려 있음). 상세 REV-20260727T174500.
 - CHG-20260727-0003 — POST-DEPLOY 라이브 검증 기록(docs-only): alembic 0045 실재 · 격리
   fail-closed 인과 실증 · PB-0008 콘솔 표면화. 상세 TEST.md §3 Run 2026-07-27.
+- CHG-20260728-0001 — stale 체크박스 정리(docs-only): subtab-sticky(커밋 08704f3d, 라이브
+  배포본에 `position: sticky` 실재)와 §9 라이브 재검증(PR #938 머지 + `revision_applied=true`
+  15/21 관측)이 이미 완료돼 있었음을 실측 확인하고 닫았다.
 - 총 변경 횟수: 9+ (구현 · anchor 정합 · 콘솔 IA 재구성 · 리뷰어 토큰 설정 · 모델 정합 ·
   revise prefill 수정 · 수렴 반복 검증 · 적대 패널 반영 · POST-DEPLOY 검증)
 
