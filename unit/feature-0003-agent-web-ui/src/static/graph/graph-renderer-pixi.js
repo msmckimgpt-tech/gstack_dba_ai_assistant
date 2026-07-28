@@ -20,20 +20,18 @@
 //   모듈 상수로 고정한다(대다수 엣지가 단일 가닥 = 최다 호출 경로의 GC 압력 제거). 불변 사용.
 const EDGE_NO_STRAND = [0];
 
-// graph-edge-legibility(§84): 관계선 굵기는 **model 좌표**라 world scale(zoom)이 그대로 곱해진다.
-//   전체보기(fit) 는 대형 스코프에서 zoom 0.2~0.3 이므로 0.85px 선이 화면 0.2px 서브픽셀이 되고,
-//   안티앨리어싱이 alpha 까지 깎아 사실상 사라진다 — 라이브 실측(mssql-qa-idc 전체보기)에서 관계선
-//   최대 대비가 배경 대비 16~43/255(카드 테두리 161)로, 저밀도 구간 ink 는 0.12% 였다.
-//   보정: **가장 얇은 관계선이 화면에서 최소 EDGE_MIN_SCREEN_PX 를 갖도록** 배율을 산출해 모든 엣지에
-//   **동일 배율**로 곱한다. 개별 엣지마다 clamp 하면 줌아웃에서 굵기 서열(기본<candidate<trusted)이
-//   뭉개지므로, 기준선(EDGE_THIN_REF) 하나로 배율을 뽑아 서열을 보존한다. zoom ≥ 1 에서는 배율 1(무보정).
-const EDGE_THIN_REF = 0.85;        // 가장 얇은 관계선의 기준 굵기(= _metaEdgeStyleFor 무상태 값)
-const EDGE_MIN_SCREEN_PX = 1.15;   // 그 선이 화면에서 확보해야 할 최소 굵기(라이브 실측으로 결정 — 0.85 는
-                                   //   안티앨리어싱에 먹혀 대비 44/255 에 그쳤다)
-function edgeWidthBoost(zoom) {
-  const z = Math.max(0.02, zoom || 1);
-  return Math.max(1, EDGE_MIN_SCREEN_PX / (EDGE_THIN_REF * z));
-}
+// graph-edge-screenspace(§85): 관계선 굵기·화살촉·다발 간격은 **screen-space** 로 고정한다.
+//   즉 style 의 값을 화면 픽셀로 해석하고, 렌더 시 model 좌표로 되돌린다(`/zoom`).
+//
+//   왜 필요한가 — 굵기를 model 좌표로 두면 world scale 이 그대로 곱해져 **줌·포커스 이동마다 선 굵기가
+//   변한다**(사용자 리포트: "카메라 줌 수준, 포커스 인/아웃에 따라 관계선의 굵기가 변성"). §84 의
+//   `edgeWidthBoost` 는 줌아웃 소실만 막으려고 `max(1, …)` 로 **바닥만** 걸었는데, 그 결과 임계 줌을
+//   경계로 (a) 화면 고정 구간과 (b) model 고정(=줌 비례 확대) 구간이 갈려 굵기 거동이 두 체제로 쪼개졌다.
+//   확대할수록 선이 굵어져 다발·화살촉이 리본처럼 부푸는 것도 같은 원인이다.
+//   screen-space 고정은 두 문제를 한 번에 없앤다 — 어떤 줌에서도 같은 굵기라 굵기가 오직 **의미
+//   (신뢰도·관계 종류)** 만 인코딩한다. 상용 그래프 도구(Neo4j Bloom·Gephi·Cytoscape)의 기본 관례이기도 하다.
+//   곡률·다발 오프셋의 *위치* 는 model 기하(노드 간 상대 관계)이므로 그대로 두고, *두께성* 값만 환산한다.
+function edgeScreenScale(zoom) { return 1 / Math.max(0.02, zoom || 1); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 순수 로직 (엔진 무관) — node vm 테스트 대상
@@ -517,7 +515,33 @@ export class PixiGraphAdapter {
   // graph-label-hover-expand: 카메라가 바뀌면 확장 카드의 뷰포트 클램프도 다시 계산해야 한다(줌 중 카드가
   //   화면 밖으로 밀리는 것 방지). 팬/드래그는 개시 시점에 hover 가 해제되므로 실제 발동은 wheel 줌 경로 한정.
   _applyCam(c) { if (!this.world) return; this.world.scale.set(c.zoom); this.world.position.set(c.x, c.y); this._renderMinimapViewport();
+    this._syncEdgeZoom();   // §85: screen-space 굵기 유지 — 줌이 바뀌면 엣지 기하를 다시 굽는다
     this._revalidateHover(); this._render(); this._emitTransform(); }
+  // §85: 굵기는 페인트 시점의 zoom 으로 model 좌표에 **bake** 되므로, world scale 만 바뀌면 화면 두께가
+  //   다시 줌 비례로 흐른다 — 줌 변화가 유의할 때만 엣지를 재페인트해 화면 두께를 되돌린다.
+  //   임계(로그 0.22 ≈ 25%)를 둔 이유: 휠 한 틱마다 전량 재페인트하면 대형 스코프에서 프레임이 무너진다.
+  //   그 사이 구간의 두께 오차는 최대 ±12% 로 육안 식별이 어렵다. 재페인트는 rAF 로 코얼레싱한다.
+  _syncEdgeZoom() {
+    const z = this._cam.zoom, last = this._edgePaintZoom;
+    if (last && Math.abs(Math.log(z / last)) < 0.22) return;
+    this._edgePaintZoom = z;
+    if (this._edgeZoomRaf) return;
+    const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+    if (!raf) { this._repaintAllEdges(); return; }
+    this._edgeZoomRaf = raf(() => { this._edgeZoomRaf = 0; this._repaintAllEdges(); this._render(); });
+  }
+  // 전 엣지 in-place 재페인트(Graphics 재사용 — destroy/recreate 없음). 좌표는 불변이라 서명도 그대로다.
+  _repaintAllEdges() {
+    if (!this.world) return;
+    for (const e of (this._built.edges || [])) {
+      const eid = PixiAdapterPure.edgeId(e);
+      const g = this._objs.get(eid);
+      if (!g || typeof g.clear !== "function") continue;
+      const a = this._resolvePos(e.source), b = this._resolvePos(e.target);
+      if (!a || !b) continue;
+      this._paintEdge(g, e, a, b);
+    }
+  }
   getSize() { return this.app ? [this.app.renderer.width / this.app.renderer.resolution, this.app.renderer.height / this.app.renderer.resolution] : [0, 0]; }
   getZoom() { return this._cam.zoom; }
   zoomTo(z, opts) { const c = this._cam; c.zoom = PixiAdapterPure.clampZoom(z, this.zoomRange); this._applyCam(c); }
@@ -1225,11 +1249,13 @@ export class PixiGraphAdapter {
     const color = s.stroke || "#cbd2db";
     const lowFi = !!this._lowFi;
     const zoom = (this._cam && this._cam.zoom) || 1;
-    // graph-edge-legibility(§84): 줌아웃 서브픽셀 소실 보정 — 전 엣지 동일 배율이라 굵기 서열은 보존.
-    const lw = (s.lineWidth || 1.4) * edgeWidthBoost(zoom);
+    // §85: style.lineWidth 는 **화면 픽셀** 단위 — model 로 환산해 줌과 무관하게 같은 두께로 그린다.
+    const sc = edgeScreenScale(zoom);
+    const lw = (s.lineWidth || 1.4) * sc;
     const arc = PixiAdapterPure.edgeArc(a, b, s.curve || 0, s.curveMax, s.curveMin);
     const nStrand = lowFi ? 1 : Math.max(1, Math.min(6, (s.strands | 0) || 1));
-    const offs = nStrand > 1 ? PixiAdapterPure.strandOffsets(nStrand, s.strandGap || 3.2) : EDGE_NO_STRAND;
+    // 다발 간격도 화면 기준 — model 로 두면 줌아웃에서 가닥이 겹쳐 볼륨 표현이 사라진다(§85).
+    const offs = nStrand > 1 ? PixiAdapterPure.strandOffsets(nStrand, (s.strandGap || 3.2) * sc) : EDGE_NO_STRAND;
     const segs = (arc.off || nStrand > 1) && s.lineDash ? PixiAdapterPure.curveSegs(arc.len, zoom, lowFi) : 0;
     let tipAng = Math.atan2(b[1] - a[1], b[0] - a[0]), tailAng = tipAng + Math.PI;
     for (let i = 0; i < offs.length; i++) {
@@ -1249,9 +1275,9 @@ export class PixiGraphAdapter {
     }
     // 화살촉은 곡선 **끝 접선**을 따른다(직선 각도로 그리면 호와 어긋나 꺾여 보인다). 선이 얇아진
     //   만큼 촉도 작게(선 굵기 연동), 대신 alpha 는 선보다 올려 방향 가독성을 유지한다.
-    //   상·하한도 굵기와 같은 배율을 태워 줌아웃에서 촉만 서브픽셀로 사라지지 않게 한다(§84).
-    const hb = edgeWidthBoost(zoom);
-    const headA = Math.min(1, alpha * 1.6), headSz = Math.max(4.5 * hb, Math.min(9 * hb, 3.6 * hb + lw * 1.9));
+    //   촉 크기도 화면 기준(§85) — 줌인에서 촉만 거대해지는 리본 현상의 원인이었다.
+    const headA = Math.min(1, alpha * 1.6);
+    const headSz = sc * Math.max(4.5, Math.min(9, 3.6 + (s.lineWidth || 1.4) * 1.9));
     if (s.endArrow) this._arrow(g, b[0], b[1], tipAng, color, headA, headSz);
     if (s.startArrow) this._arrow(g, a[0], a[1], tailAng, color, headA, headSz);
     if (s.labelText) {
@@ -1353,6 +1379,7 @@ export class PixiGraphAdapter {
   destroy() {
     try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); } catch (_) {}
     try { if (this._pendingRaf) cancelAnimationFrame(this._pendingRaf); } catch (_) {}   // graph-edge-drag-perf: 코얼레싱 rAF 정리
+    try { if (this._edgeZoomRaf) cancelAnimationFrame(this._edgeZoomRaf); } catch (_) {}   // §85: 줌 재페인트 rAF 정리
     try { this._cancelHoverProbe(false); } catch (_) {}   // graph-label-hover-expand: 대기 프로브 rAF 정리
     try { this._clearLabelHover(); } catch (_) {}   // graph-label-hover-expand: 예약 타이머·트윈 rAF·카드 정리
     try { if (this._ro) this._ro.disconnect(); } catch (_) {}   // m1: ResizeObserver 정리

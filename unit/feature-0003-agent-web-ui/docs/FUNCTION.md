@@ -12,6 +12,11 @@ source_of_truth: true
 Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 2. Goal
+- REQ-20260728T135111-graph-edge-screenspace (20260728T1351-graph-edge-screenspace, **Minor §12.3** — feature-0003 web/UI 프론트 `static/graph/` 3모듈, 렌더 좌표계 변경·비파괴; 그래프 정본 feature-0016 §85, RBAC/스키마/백엔드/엔드포인트 무변경): 사용자 리포트 3건을 반영한다. **R1 굵기 변성 제거** — 굵기가 model 좌표라 world scale 이 곱해져 줌·포커스마다 두께가 변했고(§84 의 `max(1,…)` 바닥 보정이 화면 고정/model 고정 두 체제를 만들어 악화), 확대 시 선·화살촉·다발이 리본처럼 부풀었다 → **screen-space 고정**(`edgeScreenScale = 1/zoom`)으로 굵기·화살촉·다발 간격을 화면 픽셀로 해석하고, 줌 변화가 ≈25% 를 넘으면 전 엣지 in-place 재페인트(rAF 코얼레싱)해 화면 두께를 유지한다. **R2 프로시저·함수 관계선 LOD 축약 제거**(직접·집계 두 경로, REFERENCES LOD 는 유지). **R3 점선 폐지 → 신뢰도 굵기 단일 축**: ROUTINE_USES·candidate·교차DB 대시를 모두 제거해 실선화하고, 굵기 서열(화면 px)을 trusted 1.6 > ROUTINE_USES 1.3 > candidate 1.0 > 교차DB 1.0~1.15 > inferred 0.75 로 재편(종류=색, 방향=화살촉). ROUTINE_USES 는 AGE 속성이 `relation_type`·`cross_ds` 뿐인 **확정 참조**(루틴 본문 파싱)라 trusted 바로 아래에 둔다. REV-20260728T135111-graph-edge-screenspace. AC-GES-1 ~ AC-GES-4.
+  - AC-GES-1 (굵기 불변): 줌 0.1~4 전 구간에서 관계선의 **화면** 두께가 동일하고, model 굵기는 zoom 에 반비례한다.
+  - AC-GES-2 (줌 재동기화): 줌 변화가 임계(≈25%)를 넘을 때만 재페인트가 예약되고, 미세 줌·동일 줌은 no-op.
+  - AC-GES-3 (실선·신뢰도 축): 관계선에 대시가 없고, 굵기가 신뢰도 순으로 단조 증가한다.
+  - AC-GES-4 (LOD 해제): 줌아웃에서도 프로시저·함수 사용선이 축약되지 않는다.
 - REQ-20260728T123838-graph-edge-legibility (20260728T1238-graph-edge-legibility, **Minor §12.3** — feature-0003 web/UI 프론트 `static/graph/{graph-renderer-pixi,graph-roleviz,graph-core}.js`, §83 후속 시각 보정·비파괴; 그래프 정본 feature-0016 §84, RBAC/스키마/백엔드/엔드포인트 무변경): §83 관계선 재설계를 **AI 능동 분석 완료 규모가 큰 데이터소스**에서 라이브 육안 검증하고, 적발된 디자인 부정합 3건을 보정한다. **F1(MAJOR) 전체보기 관계선 비가시** — 굵기가 model 좌표라 fit(zoom 0.2~0.55)에서 서브픽셀이 되어 사라짐(실측 대비 27~37/255, 대조군 카드 테두리 161) → **화면 기준 최소 굵기 보장**(가장 얇은 선이 화면 1.15px 를 갖도록 전 엣지 동일 배율 — 개별 clamp 는 굵기 서열을 뭉갠다) + alpha 바닥 상향(기본 0.32→0.58 등, 누적 대비는 1겹 0.58→2겹 0.82→3겹 0.93 으로 보존). **F2(MINOR) 곡률 상한이 카드 치수 초과**(44 = `_METLAY.CARDH`) → 26 으로 결속(카드 높이 59%·행 간격 절반). **F3(MINOR) 시각 위계 역전**(분석 완료 halo ≫ 관계선) → halo 는 보존하고 관계선 대비를 1.9배 올려 균형. 바닥값은 **라이브 2회 실측으로 결정**(1차 α0.44/0.85px 는 대비 44 로 불충분). REV-20260728T123838-graph-edge-legibility. AC-GEL-1 ~ AC-GEL-4.
   - AC-GEL-1 (줌아웃 가시성): 전체보기에서 가장 얇은 관계선이 화면 1.15px 이상을 확보하고, 관계선 구간 대비가 개선 전 대비 유의하게 오른다(실측 27→51 · 37→55).
   - AC-GEL-2 (서열 보존): 줌아웃 보정이 굵기 서열(기본<candidate<trusted)을 뭉개지 않고, 충분히 확대하면 보정이 사라진다.

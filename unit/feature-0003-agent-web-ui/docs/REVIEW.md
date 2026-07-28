@@ -10,6 +10,23 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T135111-graph-edge-screenspace [SKIPPED:session-policy-no-subagent] — 굵기 변성 제거 + 프로시저 관계선 실선·LOD 해제 (TASK-20260728T135111, Minor §12.3, frontend-only)
+- Panel skip 사유(§18.8): 세션 정책상 `Agent` tool 미허용 — 라이브 실측 + 기계 검증으로 대체하고 범위를 정직 기록.
+- 판단 근거:
+  - **왜 §84 의 바닥 보정이 문제를 키웠나**: `max(1, MIN/(REF·zoom))` 는 임계 줌 아래에서만 작동해 굵기 거동이 두 체제로 갈렸다. 사용자가 본 "변성" 은 단순 확대가 아니라 **체제 전환 지점의 불연속**까지 포함한다. 바닥이 아니라 **좌표계**를 바꾸는 것이 원인 대응이다.
+  - **왜 재페인트가 필요한가**: 굵기는 페인트 시점 zoom 으로 model 에 bake 된다. world scale 만 갱신하는 팬/줌 경로에서는 화면 두께가 다시 흐르므로, 줌 변화가 유의할 때 엣지 기하를 다시 굽는다. 임계(≈25%)는 프레임 비용과 두께 오차(±12%, 육안 미식별)의 절충.
+  - **왜 대시를 전부 없앴나**: 신뢰도가 굵기·대시 두 채널에 흩어져 "점선 = 추정" 인지 "점선 = 루틴" 인지 "점선 = 교차DB" 인지 중의적이었다. 얇고 반투명해진 선 위의 대시는 줌아웃에서 점의 나열로 흩어져 관계 자체를 지웠다. 굵기=신뢰도, 색=종류/교차, 화살촉=방향으로 채널을 직교화했다.
+  - **ROUTINE_USES 를 trusted 바로 아래 둔 근거**: AGE 속성이 `relation_type`·`cross_ds` 뿐 — 신뢰도 등급이 아예 없는 **확정 참조**(루틴 본문 파싱)다. 다만 컬럼-레벨 FK 보다 입도가 거칠어 최상단은 아니다.
+  - **LOD 제거의 대가**: 줌아웃 엣지 수가 늘어난다. 실선+화면 고정 굵기로 개별 선의 신호가 회복됐고 밀도 누적이 군집을 요약하므로, 축약이 주던 이득보다 "전체보기에서 루틴 관계 소실" 의 손실이 크다고 판단했다.
+- 자체 적대 검토:
+  · **H1 재페인트 비용(완화)**: 임계 25% + rAF 코얼레싱 + in-place 재사용(destroy/recreate 없음). 대형 스코프 실측은 POST-DEPLOY 이월.
+  · **H2 극단 줌인에서 model 굵기 과소(검증)**: zoom 4 → model 0.19 지만 화면은 0.75px 로 일정. A11 로 잠금.
+  · **H3 다발 간격도 화면 기준으로 바꾼 이유(근거)**: model 로 두면 줌아웃에서 가닥이 겹쳐 볼륨 표현이 사라진다.
+  · **H4 대시 제거로 교차DB 구분 약화(근거)**: 색(마젠타) 채널이 남아 있고, 오히려 대시가 사라져 색 판독이 쉬워진다.
+  · **H5 LOD 상태줄 문구(검증)**: `_lodDropped` 는 REFERENCES 축약에서 여전히 증가하므로 안내 문구 정합 유지.
+- 검증: 라이브 3 줌 레벨 두께 실측(중앙값 1.0/1.0/2.0px, 리본 소멸 육안) · `test_graph_edge_flow.js` 61 PASS · 그래프 전 스위트 **632 PASS / 0 FAIL** · `node --check` PASS · 주입 QA 원복(잔재 0 · `/livez` 200).
+- 잔여: 루틴 표시 스코프에서의 사용선 육안(AC-GES-5) — POST-DEPLOY.
+
 ## REV-20260728T123000-graph-label-hover-postverify [SKIPPED:non-policy-doc] — 잘린 노드 명칭 hover 확장 POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260728T123000, 비-정책 doc-only)
 - 대상 diff: `docs/test-runs.d/20260728T120530-graph-label-hover-expand.md`(POST-DEPLOY 결과) · `docs/TASK.md`(체크박스 종결 + 종결 섹션) · `docs/MODIFY.md`(CHG) · `docs/evidence/*.png` 3종. **코드·자산 변경 0** → §18.8 dispatch 표 첫 행(비-정책 doc-only) 적용, panel SKIP.
 - 선행 cycle(`REV-20260728T120530-graph-label-hover-expand`)이 남긴 **유일한 미검증 범위**(ux/design 렌즈 = `[SKIPPED:tool-restricted:ux,design]`)를 라이브 실측으로 종결한다: 확장 애니·이웃 위치 불변·z-order·클릭 라우팅·원복·무반응·에러 8 항목 전부 PASS(상세 수치는 fragment 표).

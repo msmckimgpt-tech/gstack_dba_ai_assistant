@@ -308,15 +308,17 @@ function _metaEdgeStyleFor(status, crossDs, count) {
   // graph-edge-flow: 굵기를 절반 이하로 낮추고 strokeOpacity 로 밀도 누적을 켠다. 기본(무상태) 선은
   //   색을 한 단계 진하게(#cbd2db→#94a3b8) 잡아 alpha 0.32 에서도 단독 가시성이 유지되게 했다 —
   //   옅은 색 × 낮은 alpha 조합은 겹치기 전까지 아예 안 보이는 구간이 생긴다.
-  // §84: alpha 하한 상향(0.32→0.44 등) — 밀도 누적은 유지하되 **단독 관계선의 가시성 바닥**을 올린다.
-  //   0.44 두 선이 겹치면 0.69, 셋이면 0.83 으로 누적 대비는 그대로 살아 있다.
-  if (crossDs) return _metaEdgeFlow({ stroke: "#a855c7", lineWidth: 1.1, strokeOpacity: 0.66, lineDash: [2, 4], endArrow: true, zIndex: _METZ.EDGE + 0.1 }, count);
+  // §85: **점선 폐지 → 신뢰도는 굵기 단일 축**(사용자 요청). 종전에는 신뢰도가 굵기와 대시 두 채널에
+  //   흩어져 있었다 — candidate 는 점선, 교차DB 도 점선이라 "점선 = 무엇" 이 중의적이었고, 얇고 반투명한
+  //   선에 얹힌 대시는 줌아웃에서 점의 나열로 흩어져 관계 자체를 못 읽게 만들었다.
+  //   이제 대시는 쓰지 않고, 확실성은 굵기(+불투명도)로만, 관계 종류·교차 여부는 색으로만 인코딩한다.
+  //   굵기·불투명도는 화면 픽셀 기준(§85) — 줌과 무관하게 일정하다.
+  if (crossDs) return _metaEdgeFlow({ stroke: "#a855c7", lineWidth: 1.0, strokeOpacity: 0.62, endArrow: true, zIndex: _METZ.EDGE + 0.1 }, count);
   const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#7c8b9e"),
-    lineWidth: status === "trusted" ? 1.5 : (status === "candidate" ? 1.05 : 0.85),
-    strokeOpacity: status === "trusted" ? 0.8 : (status === "candidate" ? 0.66 : 0.58),
+    lineWidth: status === "trusted" ? 1.6 : (status === "candidate" ? 1.0 : 0.75),
+    strokeOpacity: status === "trusted" ? 0.8 : (status === "candidate" ? 0.6 : 0.5),
     endArrow: true,
     zIndex: _METZ.EDGE + (status === "trusted" ? 0.2 : (status === "candidate" ? 0.1 : 0)) };
-  if (status === "candidate") s.lineDash = [6, 4];   // 실선은 lineDash 키 생략(false 금지 — G6 크래시, BLUEPRINT §3)
   return _metaEdgeFlow(s, count);
 }
 // graph-funcproc(ADR-016): 함수·프로시저 → 테이블 사용 엣지(ROUTINE_USES) — 보라 잔점선(추정 점선과 구분).
@@ -332,9 +334,14 @@ function _metaRoutineEdgeStyle(relationType, crossDs, count) {
   // graph-edge-flow: 읽기와 쓰기는 이제 **각각 자기 곡선**을 갖는다. 곡률 부호가 진행방향에 매여
   //   있으므로, 데이터 흐름 방향이 반대인 두 관계(테이블→루틴 읽기 / 루틴→테이블 쓰기)는 같은 두
   //   객체를 잇더라도 서로 반대편 호로 갈라진다 — 겹쳐 그려 하나로 보이던 종전 동작의 해소.
+  // §85(사용자 요청): 프로시저/함수 사용선의 **점선 → 실선**. ROUTINE_USES 는 루틴 본문 파싱으로 얻은
+  //   **확정 참조**라 AGE 에 신뢰도 등급 자체가 없다(속성은 relation_type·cross_ds 뿐) — 추정성을 뜻하던
+  //   잔점선은 의미와 어긋났고, 줌아웃에서 점이 흩어져 사용 관계가 사라지는 주된 원인이었다.
+  //   신뢰도 축에서는 FK trusted(1.6) 바로 아래(1.3)에 놓는다 — 코드상 확정이지만 컬럼-레벨 FK 보다
+  //   입도가 거칠다. 종류 구분은 색(보라 = 루틴), 교차 여부는 마젠타, 방향은 화살촉이 담당한다.
   const s = { stroke: crossDs ? "#a855c7" : _META_GRAPH_COLOR.Routine,
-    lineWidth: crossDs ? 1.05 : 0.9, strokeOpacity: crossDs ? 0.66 : 0.62,   // §84 가시성 바닥 상향
-    lineDash: [2, 3], zIndex: _METZ.EDGE };
+    lineWidth: crossDs ? 1.15 : 1.3, strokeOpacity: crossDs ? 0.64 : 0.7,
+    zIndex: _METZ.EDGE };
   if (relationType === "write") s.endArrow = true;    // 데이터: 루틴 → 테이블(쓰기)
   else s.startArrow = true;                            // read·미상: 테이블 → 루틴(상세 패널 kindKo 기본 '읽기'와 정합)
   return _metaEdgeFlow(s, count);
