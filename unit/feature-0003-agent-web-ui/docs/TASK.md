@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T161326-graph-analyzed-halo-fit — AI 분석 완료 컬럼 노드의 상태 테두리가 노드보다 비대 (Minor §12.3 — feature-0003 프론트 `static/graph/graph-renderer-pixi.js`, 정본 feature-0016, /_template:entry arg-given)
+- 요청(사용자, 2026-07-28, 스크린샷 1매 — `masangsoft_modules` 컬럼 목록이 세로 보라색 관으로 이어진 화면): "`그래프 뷰` 에서 AI분석이 완료된 컬럼 노드에서, 노드 크기에 비해 테두리가 너무 비대하게 구성되어 있어 적절하게 재구성이 필요합니다."
+- 진단(코드 확정): 컬럼 노드는 `type:"circle"`(지름 11px)인데 `_applyNodeStates` 는 **모든 노드를 사각형으로 가정**했다. `h` 를 `Array.isArray(s.size) ? s.size[1] : 24` 로 잡아 **원형 노드에 h=24 기본값**이 적용되고, 여기에 여백 3 + 두께 3 이 붙어 **11px 점 주위에 17×30 알약**이 그려졌다. 컬럼 행 간격(~24px)보다 halo 가 높아 이웃 halo 끼리 겹치며 **세로 관** 으로 이어진 것이 사용자가 본 화면이다. 즉 지배 원인은 두께가 아니라 **모양·크기 계약의 부재**다.
+- 완료 판정(acceptance):
+  - [x] [AC-AHF-1] circle 노드는 **원형** halo — 반지름 = 노드 반지름 + 여백, 사각 알약 미생성(T27).
+  - [x] [AC-AHF-2] 두께·여백·동심링 간격이 노드 최소변에 비례(k=clamp(min(w,h)/24, 0.4, 1)) — 11px 컬럼에서 3px → ~1.4px(T27).
+  - [x] [AC-AHF-3] rect 노드(테이블·루틴·스키마 카드)는 **수치 그대로**(k=1) — 회귀 0(T27 좌표·radius·lw 전건 대조).
+  - [x] [AC-AHF-4] 점선 상태(running/busy)도 원형에서 성립 — 호 대시(`dashArcs`)가 직선 대시와 같은 화면 대시 길이(T27).
+  - [x] [AC-AHF-5] 라이브 대조 — 세로 보라 관 소멸, 컬럼마다 얇은 링이 개별 분리(PB-0008 Windows 브라우저 4× 확대 대조).
+- 상태: **완결** — 헤드리스 677 PASS / 0 FAIL · PB-0008 라이브 before/after 확보 · 주입 QA 원복(잔재 0).
+
 ## TASK-20260728T153500-graph-catcluster-scroll-postverify — 캔버스 카테고리 선택 → 목록 스크롤 동기화 POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
 - 대상: PR #1008 머지(main 4a0174e5) + `make deploy-web` 무중단 전체 롤아웃(soak 통과) 이후, **main 기반 서빙본**에서 재확인.
 - 완료 판정(acceptance):
