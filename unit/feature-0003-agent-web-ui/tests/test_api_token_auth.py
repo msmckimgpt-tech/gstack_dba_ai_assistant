@@ -242,5 +242,55 @@ def test_get_account_by_api_token_no_token_row_returns_none(monkeypatch):
     assert called["fetch"] is False  # 토큰 없으면 계정 조회도 안 함
 
 
+# ── 6. folder scope 확장 (conversation-quality-controls, 2026-07-28) ──────────
+# 외부 AI 가 조정하는 품질 축 중 '폴더 커스텀 지침'을 열기 위해 안전 기본 allowlist 에
+# `folder.` 를 추가했다. 확장이 관리/교차계정 표면을 열지 않는다는 것이 핵심 불변식.
+def test_safe_default_scopes_include_folder_own_axis():
+    assert "folder." in wc._API_TOKEN_SAFE_DEFAULT_SCOPES
+    # 기존 두 축은 그대로(회귀 방지).
+    assert "conversation." in wc._API_TOKEN_SAFE_DEFAULT_SCOPES
+    assert "product.access." in wc._API_TOKEN_SAFE_DEFAULT_SCOPES
+
+
+def test_folder_scope_allows_own_axis_only():
+    scopes = list(wc._API_TOKEN_SAFE_DEFAULT_SCOPES)
+    # 실제 존재하는 폴더 권한 2개는 통과.
+    assert wc._permission_in_token_scopes("folder.list.own", scopes)
+    assert wc._permission_in_token_scopes("folder.manage.own", scopes)
+    # ★ `.any` 는 allowlist 를 통과하더라도 절대 denylist 가 죽인다 —
+    #   folder.*.any 는 feature-0024 에서 폐지됐지만, 되살아나도 토큰 경로는 막혀야 한다.
+    assert wc._api_token_permission_denied("folder.list.any")
+    assert wc._api_token_permission_denied("folder.manage.any")
+
+
+def test_folder_scope_does_not_open_admin_surface():
+    scopes = list(wc._API_TOKEN_SAFE_DEFAULT_SCOPES)
+    for code in ("console.access", "account.update", "role.manage", "audit.read.any",
+                 "datasource.manage", "metadata.table.manage", "product.manage"):
+        assert not wc._permission_in_token_scopes(code, scopes) or wc._api_token_permission_denied(code), code
+
+
+def test_account_permissions_folder_axis_intersect():
+    perms = dict(_PERMS)
+    perms.update({"folder.list.own": True, "folder.manage.own": True, "folder.list.any": True})
+    acc = _account(perms, _auth_via="api_token",
+                   _token_scopes=["conversation.", "product.access.", "folder."])
+    eff = wc._account_permissions(acc)
+    assert eff["folder.list.own"] is True
+    assert eff["folder.manage.own"] is True
+    # 교차계정은 계정이 보유해도 무조건 차단(절대 denylist).
+    assert eff["folder.list.any"] is False
+
+
+def test_legacy_token_without_folder_scope_is_unchanged():
+    """이미 발급된 토큰(scope 문자열 저장)은 확장 영향을 받지 않는다 — 무회귀."""
+    perms = dict(_PERMS)
+    perms["folder.manage.own"] = True
+    acc = _account(perms, _auth_via="api_token",
+                   _token_scopes=["conversation.", "product.access."])
+    eff = wc._account_permissions(acc)
+    assert eff["folder.manage.own"] is False  # 구 토큰은 폴더 축이 닫힌 채 유지
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

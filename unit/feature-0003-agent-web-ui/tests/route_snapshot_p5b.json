@@ -1,6 +1,6 @@
 {
- "total_routes": 220,
- "api_routes": 219,
+ "total_routes": 221,
+ "api_routes": 220,
  "ordered": [
   {
    "path": "/static",
@@ -1493,6 +1493,13 @@
   },
   {
    "path": "/api/admin/perf/http",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/ai/capabilities",
    "methods": [
     "GET"
    ],

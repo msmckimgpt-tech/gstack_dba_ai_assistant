@@ -130,9 +130,103 @@ body `{ "conversation_id": "..." }`.
 
 ---
 
+## 4.7 대화 품질 조정 (모델 · 추론 강도 · 제품 · 폴더 지침 · 첨부)
+
+답변 품질은 다섯 축으로 조정한다. **값을 추측하지 말고 먼저 `GET /api/ai/capabilities` 를
+호출한다** — 사용 가능한 모델·제품·폴더는 토큰이 귀속된 서비스 계정의 권한에 따라 다르며,
+목록 밖 값은 400(카탈로그 밖) 또는 403(권한 밖)이다.
+
+```bash
+curl -sk -H "Authorization: Bearer $TOKEN" "$BASE/api/ai/capabilities"
+# 특정 대화의 현재 설정까지 함께 보려면:
+curl -sk -H "Authorization: Bearer $TOKEN" "$BASE/api/ai/capabilities?conversation_id=2026...-abcd"
+```
+
+응답의 `quality_controls.<축>` 은 각각 `{available, set_via, scope, default, values, note}` 를
+담는다. `available:false` 인 축은 이 토큰으로 조정할 수 없으며 `note` 에 사유가 있다.
+
+| 축 | 무엇이 바뀌나 | 거는 곳 | 적용 범위 |
+|---|---|---|---|
+| `model` | 답변을 생성하는 LLM | `POST /api/ask` body `model` | 요청 단위(명시하면 그 대화의 선택으로 기억) |
+| `reasoning_level` | 추론(thinking) 예산 | `POST /api/ask` body `reasoning_level` | 대화별 영구 저장 |
+| `product` | 질의 대상 데이터소스 스코프 | 신규 대화: `/api/ask` body `product_mode`·`product_id` / 기존 대화: `PATCH /api/conversations/{id}/product` | 대화 단위 |
+| `folder_instructions` | 폴더별 커스텀 지침(시스템 프롬프트 주입) | `POST`/`PATCH /api/folders` 의 `instructions` + `PATCH /api/conversations/{id}/folder` | 폴더 단위 |
+| `attachments` | 답변 근거(grounding) 자료 | `POST /api/conversations/{id}/attachments` (multipart, 필드 `file`) | 대화 단위 |
+
+### 4.7.1 모델 · 추론 강도
+
+```bash
+curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X POST "$BASE/api/ask" \
+  -d '{"message":"이 스키마의 이상치를 찾아줘","model":"claude-sonnet-5","reasoning_level":"high"}'
+```
+
+- `reasoning_level` 은 `low`|`normal`|`high`|`max`. **`normal` 은 override 를 주입하지 않고 모델
+  기본 thinking 을 유지**한다(강등이 아니라 무개입).
+- capabilities 의 모델 항목에 `supports_thinking:false` 면 그 모델에서는 이 축이 무효다.
+- 둘 다 대화에 기억되므로, 같은 설정으로 이어갈 때는 후속 요청에서 생략해도 된다.
+
+### 4.7.2 제품(데이터소스 스코프)
+
+질의 대상 DB 범위를 정하는 축이라 **품질 영향이 가장 크다**. 잘못 고르면 근거 없는 답이 된다.
+
+```bash
+# (a) 신규 대화를 특정 제품으로 시작 — ask body 힌트는 '새 대화 생성 시에만' 반영된다
+curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X POST "$BASE/api/ask" \
+  -d '{"message":"주문 테이블 구조 알려줘","product_mode":"pinned","product_id":3}'
+
+# (b) 이미 있는 대화의 제품 변경 — 다음 /api/ask 부터 적용된다
+curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X PATCH "$BASE/api/conversations/2026...-abcd/product" \
+  -d '{"mode":"pinned","product_id":3}'
+```
+
+`mode:"auto"` 는 제품 고정을 풀고 접근 가능한 소스에서 자동 선택하게 한다(이때 `product_id` 는 무시).
+
+### 4.7.3 폴더 커스텀 지침
+
+폴더(프로젝트 워크스페이스)에 지침을 걸어 두고 대화를 그 폴더에 배정하면, 그 대화의 발화 시
+지침이 시스템 프롬프트로 주입된다 — 톤·출력 형식·도메인 규칙을 대화마다 반복 설명하지 않아도 된다.
+
+```bash
+# 1) 지침을 가진 폴더 생성
+curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X POST "$BASE/api/folders" \
+  -d '{"name":"매출 분석","instructions":"답변은 표로 요약하고 사용한 SQL 을 함께 제시한다. 추정치는 반드시 추정임을 밝힌다."}'
+# → {"ok":true,"folder":{"folder_id":12,...}}
+
+# 2) 대화를 그 폴더에 배정
+curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X PATCH "$BASE/api/conversations/2026...-abcd/folder" -d '{"folder_id":12}'
+
+# 3) 지침만 갱신
+curl -sk -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -X PATCH "$BASE/api/folders/12" -d '{"instructions":"MySQL 방언을 쓴다."}'
+```
+
+폴더는 **엄격한 개인(per-user) 오버레이**다 — 토큰 계정 소유 폴더만 보이고 조작된다. 타 계정
+폴더는 어떤 권한으로도 접근할 수 없다(404). `folder_id:null` 로 배정하면 폴더에서 빼낸다.
+
+> 구 토큰은 발급 시점 scope(`conversation.,product.access.`)가 저장돼 있어 폴더 축에서 403 이
+> 날 수 있다. 그 경우 운영자에게 `folder.` 를 포함한 재발급을 요청한다(현재 기본 발급 scope 는
+> `conversation.,product.access.,folder.`).
+
+### 4.7.4 첨부(grounding 자료)
+
+```bash
+curl -sk -H "Authorization: Bearer $TOKEN" \
+  -X POST "$BASE/api/conversations/2026...-abcd/attachments" \
+  -F "file=@/path/to/spec.xlsx"
+```
+
+업로드한 문서는 이후 그 대화의 답변 근거로 쓰인다. 용량 상한(파일/대화/계정)을 넘으면 400.
+
+---
+
 ## 5. 스코프 & 보안 (반드시 이해)
 
-토큰은 **allowlist 스코프**(`conversation.` + `product.access.`)만 갖는다. 그리고 스코프와
+토큰은 **allowlist 스코프**(`conversation.` + `product.access.` + `folder.`)만 갖는다. 그리고 스코프와
 무관하게 **절대 denylist**(`*.any` 교차계정 권한 + `console.`/`audit.`/`account.`/`role.`/
 `system.`/`quota.`/`datasource.`/`metadata.`/`kb.`/`graph.`/`product.manage|read|create|delete`
 관리 네임스페이스)가 항상 차단된다. 따라서 토큰으로는:
@@ -177,15 +271,30 @@ CONVERSATION_API_TOKEN=matk_...
 # 실행: bin/conversation-mcp.sh  (.mcp.json 의 conversation-api 서버로 등록됨)
 ```
 
-MCP tools: `ask(message, conversation_id?, model?, reasoning_level?)`,
-`new_conversation()`, `list_conversations()`, `get_history(conversation_id)`.
+MCP tools:
+
+| tool | 용도 |
+|---|---|
+| `ask(message, conversation_id?, model?, reasoning_level?, product_id?, product_mode?)` | 질문 → 답변(품질 축 동반 지정) |
+| `new_conversation()` | 새 대화 생성 |
+| `list_conversations()` | 내 대화 목록 |
+| `get_history(conversation_id)` | 대화 이력 |
+| `list_capabilities(conversation_id?)` | **조정 가능한 품질 옵션 조회(먼저 호출)** |
+| `set_conversation_product(conversation_id, product_id?, mode?)` | 기존 대화의 제품 변경 |
+| `list_folders()` | 폴더 + 커스텀 지침 목록 |
+| `create_folder(name, instructions?, parent_folder_id?)` | 지침 가진 폴더 생성 |
+| `set_folder_instructions(folder_id, instructions)` | 폴더 지침 갱신 |
+| `move_conversation_to_folder(conversation_id, folder_id?)` | 대화 폴더 배정/해제 |
+| `upload_attachment(conversation_id, file_path)` | grounding 문서 첨부 |
 
 ---
 
 ## 8. 권장 사용 패턴
 
-1. `POST /api/ask` 로 첫 질문 → 응답의 `conversation_id` 저장.
-2. 후속 질문은 같은 `conversation_id` 로 맥락 유지.
-3. 답변의 `error` 가 비어 있는지 확인. 429 면 지수 backoff 재시도.
-4. 필요 데이터소스 접근이 403 이면, 서비스 계정에 해당 `product.access` 부여가 필요(운영자).
-5. 전체 스키마(관리 포함)가 필요한 개발자는 관리자 권한으로 `/api/admin/openapi.json` 조회.
+1. `GET /api/ai/capabilities` 로 이 토큰이 쓸 수 있는 모델·제품·폴더를 먼저 확인(값 추측 금지).
+2. 필요하면 제품을 고정하고(§4.7.2), 반복 규칙은 폴더 지침으로 고정한다(§4.7.3).
+3. `POST /api/ask` 로 첫 질문 → 응답의 `conversation_id` 저장.
+4. 후속 질문은 같은 `conversation_id` 로 맥락 유지(모델·추론 강도는 대화에 기억되므로 생략 가능).
+5. 답변의 `error` 가 비어 있는지 확인. 429 면 지수 backoff 재시도.
+6. 필요 데이터소스 접근이 403 이면, 서비스 계정에 해당 `product.access` 부여가 필요(운영자).
+7. 전체 스키마(관리 포함)가 필요한 개발자는 관리자 권한으로 `/api/admin/openapi.json` 조회.

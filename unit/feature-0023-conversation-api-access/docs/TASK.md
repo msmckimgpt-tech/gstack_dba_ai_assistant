@@ -4,6 +4,9 @@ feature_id: feature-0023-conversation-api-access
 status: active
 edit_policy: append
 source_of_truth: true
+feature_status: in-progress
+feature_status_date: 2026-07-28
+feature_status_note: 외부 AI 용 Conversation API (Bearer 토큰·scope 교집합+절대 denylist·CLI 발급·MCP) + 발견 진입점(llms.txt·매니페스트·큐레이션 OpenAPI·가이드) · (07-28) 대화 품질 조정 — 외부 AI 가 모델·추론 강도·제품·폴더 커스텀 지침·첨부를 조정. 인증 필수 `GET /api/ai/capabilities` 가 계정별 라이브 값 제공(작업화면 선택기와 동일 필터 재사용 = 표시-집행 정합·신규 권한 코드 0), 익명 매니페스트는 포인터만(인스턴스 데이터 0 불변식 보존), 큐레이션 OpenAPI +6 path·가이드 §4.7, MCP tool 4→11, 토큰 안전 기본 scope 에 `folder.` 확장(절대 denylist 무변경·기존 발급 토큰 무회귀). 회귀 2586 passed/0 failed
 ---
 
 # Task
@@ -48,17 +51,66 @@ source_of_truth: true
 - [x] TASK-0012: 외부 AI API 발견 진입점(llms.txt/manifest/guide)+가이드라인+openapi 익명 차단 (CHG-20260724-0003)
 - [x] TASK-0013: 발견 blackbox 검증(URL-only 서브에이전트 성공) + 가이드 정확화(401/403·동기ask·base_url·토큰연락처) + 기계판독 OpenAPI /api/ai/openapi.json (CHG-20260724-0004)
 
+## 20260728T1035-conversation-quality-controls
+
+### 요청
+사용자(2026-07-28): "이전에 서비스 내 api 를 구축하여 외부의 AI작업자가 서비스를 이용하는 환경을
+조성했습니다. 그 중, **대화의 품질 또한 외부 AI작업자가 조정할 수 있도록** 구성해주세요 —
+모델, 추론 강도, 제품, 그 외 추가적인 사항들." 범위는 사용자 선택으로 **최대**(첨부 + 폴더 커스텀
+지침까지, 토큰 scope allowlist 확장 포함).
+
+### 진단
+`model`·`reasoning_level` 은 이미 `/api/ask` body 계약에 있었고 가이드에도 문서화돼 있었다. 실제
+간극은 두 가지였다.
+1. **제품 축이 발견 자료에 전혀 없었다** — 조정 자체는 가능(신규 대화 ask 힌트 / 기존 대화 PATCH,
+   토큰 scope 에 `product.access.` 포함)했지만 매니페스트·OpenAPI·guide 어디에도 없어 외부 AI 가
+   존재를 알 수 없었다.
+2. **"내가 쓸 수 있는 값"을 조회할 경로가 없었다** — 모델은 `model.access.<value>` RBAC
+   (2026-07-28 신설), 제품은 `product.access.<key>` 로 계정마다 다르게 열리는데, 익명 매니페스트는
+   설계상 "인스턴스 데이터 0"(SEC-20260724)이라 목록을 실을 수 없다. 외부 AI 는 값을 추측하다
+   400/403 을 맞는 구조였다.
+
+### 결정 (D1~D4)
+- **D1 — capabilities 를 인증 계층에 신설**: `GET /api/ai/capabilities`(신규 권한 코드 0, 인증만).
+  익명 allowlist 에 넣지 않아 §7 "익명=static contract" 불변식 보존, 익명 매니페스트에는 포인터만.
+- **D2 — 표시-집행 정합**: 목록은 작업 화면 선택기와 **같은 필터 함수**를 재사용
+  (`_filter_models_for_account_access`·`_filter_products_for_account_access`). 새 판정 로직을 만들면
+  capabilities 가 보여준 값을 ask 가 403 하는 불일치가 생긴다.
+- **D3 — ask 의 제품 힌트 계약은 불변**: 기존 대화 per-request override 를 추가하지 않는다
+  (TASK-0047 race 가드 = 제품 변경은 PATCH 단독 진실). 대신 PATCH 를 발견 자료·MCP tool 로 노출.
+- **D4 — 토큰 scope 에 `folder.` 확장**: 폴더 커스텀 지침이 품질 축이므로(사용자 결정).
+  `folder.*` 는 `.own` 2개뿐이고 절대 denylist(`.any`·관리)는 무변경. 기존 토큰은 저장된 scope
+  그대로라 무회귀 — 열려면 재발급.
+
+### Task Queue
+- [x] TASK-0014: capabilities 응답 계약 설계 + scope 확장 안전성 분석
+- [x] TASK-0015: 토큰 안전 기본 scope `folder.` 확장 (`web_context` + `bin/api-token-issue.sh`)
+- [x] TASK-0016: `GET /api/ai/capabilities` 구현 (5축·부분 degrade·대화 접근 게이트)
+- [x] TASK-0017: 발견 자료 4종 확충 (매니페스트 `quality_controls`·큐레이션 OpenAPI 6 path +
+      `Capabilities`/`Folder`/`QualityAxis` 스키마·guide §4.7·llms.txt)
+- [x] TASK-0018: MCP tool 7종 추가 (`list_capabilities`·`set_conversation_product`·`list_folders`·
+      `create_folder`·`set_folder_instructions`·`move_conversation_to_folder`·`upload_attachment`)
+      + `ask` 제품 인자 + multipart 헬퍼
+- [x] TASK-0019: 단위 테스트 (`test_ai_capabilities.py` 10 + `test_api_token_auth.py` folder scope 5)
+      + 골든 route 스냅샷 갱신 + T9 필터 호출처 검증 강화 — 전체 2586 passed / 0 failed
+- [x] TASK-0020: 문서 (FUNCTION/TASK/MODIFY/REVIEW/REPORT/TEST/ANCHOR·SECURITY §25.1·ARCHITECTURE·
+      ROUTEMAP·STATUS·wiki)
+- [ ] TASK-0021: §18.8 적대 검증 + verify-completion + commit/PR/merge + 배포 + 라이브 e2e
+
 ## 4. In Progress
-- TASK-0010 (verify-completion → 배포)
+- TASK-0021 (검증·출하)
 
 ## 5. Blocked
 - 없음
 
 ## 6. Done
 - TASK-0001~0009 (Phase 1 인증·CLI·테스트·보안리뷰 + Phase 2 MCP).
+- TASK-0010~0013 (배포·라이브 e2e·발급 CLI hotfix·발견 진입점·blackbox 검증).
+- TASK-0014~0020 (대화 품질 조정 표면).
 
 ## 7. Next Action
-- verify-completion → commit → cycle-final → 배포 → 라이브 e2e(토큰 발급→/api/ask 왕복).
+- 적대 검증 패널 → verify-completion → commit → PR → cycle-final → 배포 → 라이브 e2e
+  (토큰으로 capabilities 조회 → 제품/폴더 지침 조정 → ask 왕복).
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

@@ -1,14 +1,15 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-07-27
+last_updated: 2026-07-28
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-07-27
+2026-07-28
 
 ## Key Recent Facts
+- 07-28 feature-0023 conversation-quality-controls(Major): 외부 AI 작업자가 **대화 품질 5축**(모델·추론 강도·제품 데이터소스 스코프·폴더 커스텀 지침·첨부)을 직접 조정. 실제 간극은 조정 수단이 아니라 **발견**이었다 — 모델/제품이 계정별 RBAC(`model.access.*`·`product.access.*`)로 다르게 열려 목록 없이는 추측→400/403. 인증 필수 **`GET /api/ai/capabilities`**(신규 권한 코드 0)가 계정별 라이브 값 제공, 목록은 작업화면 선택기와 **동일 필터 함수** 재사용(표시-집행 정합), 익명 매니페스트에는 포인터만 실어 SEC-20260724 "익명=static contract·인스턴스 데이터 0" 불변식 보존. 큐레이션 OpenAPI +6 path/+3 스키마·가이드 §4.7·llms.txt·MCP tool 4→11(품질 7·stdlib multipart). 토큰 안전 기본 scope 에 `folder.` 확장(`.own` 2개만·절대 denylist 무변경·**기존 발급 토큰 무회귀**). `/api/ask` body 계약 불변(제품 힌트=신규 대화 한정, TASK-0047 race 가드 보존). 회귀 2586 passed/0 failed. SECURITY §25.1.
 - 07-24 feature-0025 worker-parallelism(Major 신규·머지 PR #933/01c4ba44): 백그라운드 워커(노드 분석·cluster_label)·답변·KB 임베딩 **병렬도·주기·배치**를 관리 콘솔 '시스템>설정>성능·병렬 처리' 서브탭에서 조절(feature-0018 runtime-settings 재사용·performance 10 knob). **기본 동시성 1=현행 직렬 byte-동치 opt-in**·LLM만 병렬/DB직렬·`system.runtime.*` RBAC 재사용(신규 표면 0)·clamp·pgbouncer 40/200·PG 150. 단위48+회귀166 PASS·§18.8 SHIP·배포후 PB-0008 잔여·ADR-0025-01~04·코드 거주 0002/0003/shared/compose. + 07-24 사용자 UX(0003·0019·0007·0016): SQL 강조·CSV 다운로드·새 폴더 버튼·공유 막대/진입 스크롤·그래프 이모지·검토 큐 ds 필터·재답변 모델 승계·Sonnet 5·타임아웃 동기화.
 - 07-23 feature-0024 conversation-folders(Major/일부 Critical 신규·**2026-07-23 Phase1+2a 라이브 완결**): 좌측 대화 목록에 재귀 **폴더(프로젝트 워크스페이스)** — 대화를 폴더로 조직·이동, 폴더 삭제해도 대화 보관(Trash·undo·부모/root 승격), 런타임 max-depth(기본 4·grandfathering·순환 방지), 폴더별 **커스텀 지침** ask-time 주입(요청자 폴더 기준). **엄격 per-user(owner-scope) 격리** — `folder.list.own`/`folder.manage.own` own-only(크로스-계정 노출 벡터 `folder.*.any` 폐지, Critical §12.3 privacy 수정)·restore IDOR(HIGH) 봉인. conversation.create 보유 7역할 folder.*.own 동적 backfill. 4 슬라이스(conversation-folders·folder-privacy·folder-perms-broaden·folder-ux 6종: 무프롬프트 생성·인라인 rename·설정/이동 모달·DnD). PR #895/#899/#903/#908·POST-DEPLOY PB-0008 각 슬라이스 PASS. Phase 2b(폴더 파일·datasource 자동스코프) 이연. 코드 거주 0002(스키마·alembic 0044·컨텍스트)·0003(라우터·RBAC·사이드바)·0009(그룹멤버 배정)·shared. feature-local REVIEW REV-20260723T060000/T170000.
 - 07-23 feature-0016 analysis-completeness(Major, 사용자 리포트 mysql-local/log_v2): 'DB 전체 AI 능동 분석' 미완결 근본 개선 — ① **컬럼 인벤토리 lazy introspection**(부트스트랩 미수행 datasource 도 Table 잡 처리 시 INFORMATION_SCHEMA→column_descriptions **누락분-only** insert(DO NOTHING, 큐레이션 불변)+Column 정점 MERGE → §55 직계 컬럼 분석·payload 컬럼 컨텍스트 실동작, `AGENT_NODE_ANALYSIS_COLUMN_INTROSPECT_CAP`) ② 분석 완료→**재클러스터 신선도 배선**(임베딩 신선도 due — 6h cadence 비대기·진행 run/임베딩 드레인 유예·라벨 캐시 키에 시그해시 합성·변경분 AGE targeted 투영 `project_cluster_props`) ③ 프론트 stale 클러스터 병합 수정(`"in"` 체크 — 캔버스 밴드↔상세 패널 정합) ④ 전부 완료 시 **'전체 재분석(refine)'** confirm 경로(only_missing:false — "분석 대상 없음" 차단 해소). §18.8 적대 리뷰 FAIL(B1: datasource 해석이 MEMORY_DB 미지정으로 프로덕션 무효)→전량 흡수·타깃 40+전체 스위트 PASS. 코드 거주 0002(modules)·0003(graph-ctxmenu)·shared(config).

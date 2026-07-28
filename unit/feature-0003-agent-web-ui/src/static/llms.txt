@@ -11,9 +11,12 @@
 
 - **인증**: `Authorization: Bearer <token>`. 토큰은 서비스 운영자가 발급한다
   (`bin/api-token-issue.sh`). 관리 콘솔로는 발급하지 않는다.
-- **스코프**: 토큰은 `conversation.*` + `product.access.*` 만 가진다. 관리 콘솔·타 계정
-  데이터에는 접근할 수 없다(scope allowlist + `*.any`/관리 네임스페이스 절대 denylist).
+- **스코프**: 토큰은 `conversation.*` + `product.access.*` + `folder.*`(본인 소유) 만 가진다.
+  관리 콘솔·타 계정 데이터에는 접근할 수 없다(scope allowlist + `*.any`/관리 네임스페이스 절대 denylist).
 - **핵심 엔드포인트**: `POST /api/ask` (메시지→답변). 대화 생성·이력·폴링 엔드포인트 동반.
+- **대화 품질 조정**: 모델·추론 강도·제품(데이터소스 스코프)·폴더 커스텀 지침·첨부를 외부 AI 가
+  직접 조정한다. 사용 가능한 값은 계정마다 다르므로 **`GET /api/ai/capabilities`(인증 필요)를
+  먼저 조회**한다 — 목록 밖 값은 400/403.
 
 ## Discovery (기계판독)
 
@@ -21,7 +24,11 @@
   (인증·엔드포인트 카탈로그·에러·스코프·MCP·토큰 문의처). `/api/ai/manifest` 도 동일.
 - [/api/ai/openapi.json](/api/ai/openapi.json): 기계판독 OpenAPI 3.1 스펙(conversation-only,
   관리 콘솔 제외) — 코드젠·엄밀 검증용.
-- [/api/ai/guide](/api/ai/guide): 상세 학습 가이드라인(엔드포인트별 요청/응답/에러/예제).
+- [/api/ai/guide](/api/ai/guide): 상세 학습 가이드라인(엔드포인트별 요청/응답/에러/예제 +
+  대화 품질 조정 §4.7).
+- `/api/ai/capabilities`: **인증 필요** — 이 토큰이 실제로 조정할 수 있는 품질 옵션의 라이브 값
+  (모델 목록·추론 강도·접근 가능 제품·폴더 지침·첨부 가능 여부). 익명 매니페스트는 계정별
+  인스턴스 데이터를 싣지 않으므로 값은 여기서 얻는다.
 
 ## 사용 방법 (요약)
 

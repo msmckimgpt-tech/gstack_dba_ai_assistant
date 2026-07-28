@@ -5,6 +5,9 @@
 #
 # 이 제품의 "작업 화면 대화"(/api/ask 등)를 MCP tool 로 노출한다. 다른 AI 클라이언트가
 # ask/new_conversation/list_conversations/get_history tool 로 assistant 와 대화한다.
+# 대화 품질 조정 tool(conversation-quality-controls, 2026-07-28): list_capabilities /
+# set_conversation_product / list_folders / create_folder / set_folder_instructions /
+# move_conversation_to_folder / upload_attachment (+ ask 의 model·reasoning_level·product 인자).
 # 인증은 Bearer API 토큰(feature-0023 Phase 1) — gdrive-mcp.sh 와 동형의 gated 런처.
 #
 # 기본 비활성: CONVERSATION_MCP_ENABLED!=1 이면 즉시 no-op(exit 0). 활성 시 필수 env

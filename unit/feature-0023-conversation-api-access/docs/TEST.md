@@ -62,6 +62,27 @@ source_of_truth: true
 - Pass/Fail: PASS (단위·smoke). 라이브 e2e 미수행(배포 후).
 - Notes: web_context.py 는 fastapi 만 의존해 host bare import 가능.
 
+### TEST-20260728T103500-quality-controls-1~6 (대화 품질 조정 표면)
+- Purpose: 외부 AI 가 품질 5축을 **발견·조정**하되, 발견이 새 노출 경로가 되지 않음을 고정.
+- Steps/Expected (상세·근거는 §3 fragment `test-runs.d/TASK-20260728T103500-conversation-quality-controls.md`):
+  1. `GET /api/ai/capabilities` 익명 → **401**, 응답에 모델·제품 문자열 부재.
+  2. 인증 → 5축(model/reasoning_level/product/folder_instructions/attachments) + 각 축 `set_via`,
+     모델·제품 목록이 계정 권한 필터를 반영(표시-집행 정합).
+  3. 권한 없는 축 → `available:false` + 사유(note). 조용한 빈 배열 금지.
+  4. 접근 불가 `conversation_id` → 설정 미노출(타 계정 oracle 차단).
+  5. 익명 매니페스트에 `quality_controls` **포인터만**(값 목록 부재), 큐레이션 OpenAPI 에 조정
+     6 path + `Capabilities`/`Folder`/`QualityAxis` 스키마, admin 경로 부재.
+  6. 토큰 scope `folder.` 확장이 `.own` 2개만 열고 `.any`·관리 네임스페이스는 차단, 기존 발급
+     토큰은 무회귀.
+
+## 3.1 Test Run History (fragment, §5.3)
+신규 Run 기록은 `docs/test-runs.d/<TASK-또는-REV-id>.md` 항목당 1파일로 작성한다(병렬 세션 무충돌).
+- [TASK-20260728T103500-conversation-quality-controls](./test-runs.d/TASK-20260728T103500-conversation-quality-controls.md)
+  — CLI, PASS (신규·관련 39 passed / 전체 회귀 2586 passed·0 failed). UI 표면 무변경이라
+  Windows-browser 미수행 — 사유는 fragment 에 명시(§15.4.1 예외).
+
 ## 4. Untested Areas
 - 라이브 토큰→/api/ask 왕복 및 스코프-밖 admin 403 (배포 후 §3 append 예정).
+- 라이브 품질 조정 e2e: capabilities 조회 → 제품/폴더 지침 변경 → 다음 답변 반영 확인 (배포 후).
+- MCP tool 실서버 왕복(`list_capabilities`·`upload_attachment` multipart) — 런처 gated smoke 만 수행.
 - 다수 동시 토큰 요청 부하(quota 상속으로 커버, 별도 부하테스트 없음).
