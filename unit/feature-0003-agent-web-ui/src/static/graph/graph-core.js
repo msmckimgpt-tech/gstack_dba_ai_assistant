@@ -738,6 +738,27 @@ function _metaG6Build() {
     const sk = _metaCatParent(nodeKey, gn && gn.fqn);
     return (sk && present.has("SC:" + sk)) ? ("SC:" + sk) : null;
   };
+  // routine-column-edges(2026-07-28, 사용자 요청): 함수/프로시저 사용선을 **펼쳐진 테이블의 실제
+  //   참조 컬럼**에 붙이기 위한 컬럼 id 해소. Column 정점 키 규약은 `<테이블 키>.<컬럼명>`
+  //   (백엔드 `_vkey(scope, f"{fqn}.{col}")`)이라 테이블 렌더 id 에 컬럼명을 이어 붙이면 된다.
+  //   케이스 불일치(그래프 Column 정점은 column_descriptions 원천, 참조 컬럼은 데이터소스
+  //   INFORMATION_SCHEMA 원천 — 같은 DB 라도 케이스가 갈릴 수 있음) 는 소문자 인덱스로 1회 보정한다.
+  //   인덱스는 **참조 컬럼을 가진 사용선이 실제로 있을 때만** lazy 구축(무관 빌드 비용 0).
+  let _lowerIdIdx = null;
+  const resolveColId = (tableId, colName) => {
+    const nm = String(colName || "").trim();
+    if (!nm || !tableId || String(tableId).startsWith("SC:")) return null;
+    const exact = tableId + "." + nm;
+    if (present.has(exact)) return exact;
+    if (_lowerIdIdx === null) {
+      _lowerIdIdx = new Map();
+      for (let i = 0; i < nodes.length; i++) {
+        const nid = nodes[i] && nodes[i].id;
+        if (nid) _lowerIdIdx.set(String(nid).toLowerCase(), nid);
+      }
+    }
+    return _lowerIdIdx.get(exact.toLowerCase()) || null;
+  };
   // §57.5(사용자 피드백 "흐림 기준 체감 무작위"): 엣지 흐림(dim)은 단일 규칙 — **양끝이 모두 밝으면
   //   선도 밝다**(밝은 부분그래프 = 선택+1-hop 인접의 폐포). 예전 '선택에 직접 닿는 선만 선명'은
   //   밝은 이웃 노드 사이의 선이 흐려져 사람 눈에 무작위로 읽혔다. 무선택(fa=null)이면 false —
@@ -852,6 +873,46 @@ function _metaG6Build() {
         const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
         if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 루틴 사용선 제거(colLevel·agg 공통 — LOD 도달 전)
         if (rs === e.source && rt === e.target) {
+          // routine-column-edges(2026-07-28, 사용자 요청): 대상 테이블이 **펼쳐져 컬럼이 렌더 중**이면
+          //   사용선을 실제 참조 컬럼별로 분해한다 — 종전에는 컬럼이 드러나 있어도 테이블 헤더 한 곳에만
+          //   모여 붙어 "어느 컬럼을 읽고 쓰는지"가 보이지 않았다(FK 는 엣지 끝점이 컬럼 키라 이미
+          //   컬럼에 붙는다 — 그 정합을 사용 관계에도 맞춘 것). 규칙은 FK 승격과 동일 계열:
+          //     · 렌더 중인 컬럼 → 그 컬럼에 연결 (컬럼별 읽기/쓰기 방향·색 유지)
+          //     · 미렌더 컬럼(접힘·컬럼 컬링) → 테이블로 승격해 relation_type 별 1선으로 묶음
+          //     · ref_columns 부재(파싱 미확정·크로스-DB) → 아래 기존 단일 테이블선 그대로(폴백)
+          //   접힌 테이블의 동작은 완전히 불변이다(컬럼이 렌더될 수 없어 항상 폴백 경로).
+          const rcols = Array.isArray(e.ref_columns) ? e.ref_columns : null;
+          if (rcols && rcols.length) {
+            // 1-pass: 참조 컬럼 중 **실제로 렌더 중인 것**을 먼저 해소한다. 하나도 없으면(=테이블
+            //   접힘·컬럼 LOD 억제) 분해 자체를 포기하고 아래 기존 단일선으로 흐른다 — 접힘 상태에서
+            //   read/write 가 섞였다고 선이 2개로 갈라지면 그것 자체가 "기존대로" 계약 위반이다.
+            const hits = [], missKinds = new Set();
+            for (let ci = 0; ci < rcols.length; ci++) {
+              const rc = rcols[ci] || {};
+              const cn = String(rc.n || "").trim();
+              if (!cn) continue;
+              const rkind = (rc.k === "write") ? "write" : "read";
+              const cid = resolveColId(rt, cn);
+              if (cid) hits.push({ cid: cid, kind: rkind, name: cn });
+              else missKinds.add(rkind);
+            }
+            if (hits.length) {
+              for (let hi = 0; hi < hits.length; hi++) {
+                const h = hits[hi];
+                edges.push({ id: e.id + "::c::" + h.name, source: rs, target: h.cid,
+                  data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0,
+                          relation_type: h.kind, colEdge: true, ref_column: h.name },
+                  style: dimIf(_metaRoutineEdgeStyle(h.kind, xr), keep) });
+              }
+              // 렌더되지 않은 참조 컬럼 몫은 테이블로 승격(FK 승격 규약 동형) — relation_type 별 1선.
+              missKinds.forEach((mk) => {
+                edges.push({ id: e.id + "::t::" + mk, source: rs, target: rt,
+                  data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: mk },
+                  style: dimIf(_metaRoutineEdgeStyle(mk, xr), keep) });
+              });
+              return;
+            }
+          }
           // §85(사용자 요청): 프로시저/함수 사용선의 **줌아웃 LOD 축약 제거**. 축약은 얇은 잔점선이
           //   줌아웃에서 노이즈로만 남던 시절의 완화책이었는데, 실선 + 화면 고정 굵기 + 밀도 누적으로
           //   전환된 지금은 줌아웃에서도 사용 관계가 제 몫의 신호를 낸다. 오히려 축약이 "전체보기에서

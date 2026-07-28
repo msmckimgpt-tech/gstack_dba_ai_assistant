@@ -1363,6 +1363,10 @@ function _metaGraphIngest(nodes, edges) {
       count: (e.count != null && e.count !== "") ? Number(e.count) : "",
       ref_count: (e.ref_count != null && e.ref_count !== "") ? Number(e.ref_count) : "",
       use_count: (e.use_count != null && e.use_count !== "") ? Number(e.use_count) : "",
+      // routine-column-edges(2026-07-28): ROUTINE_USES 가 실제 참조하는 컬럼 목록
+      //   [{n: 컬럼명, k: 'read'|'write'}]. 대상 테이블이 **펼쳐져 컬럼이 렌더 중일 때만** 빌드가
+      //   이 목록으로 사용선을 컬럼별로 분해한다(접힘·부재·미매칭은 기존 테이블 연결 유지).
+      ref_columns: Array.isArray(e.ref_columns) ? e.ref_columns : null,
       weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" });
   });
   return added;
@@ -1567,6 +1571,9 @@ function _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn) {
 const _META_DBGRP_ROW_CAP = 4000;   // 비현실 극단 전용 안전 가드(브라우저 행 폭주 방지). 실사용은 사실상 무제한.
 const _META_DBGRP_FLAT_MAX = 60;    // 총 항목이 이 개수 이하면 전 그룹 기본 펼침(짧은 목록은 절대 숨기지 않는다).
 const _META_DBGRP_BIG = 300;        // 이 개수를 넘는 그룹은 초기 렌더에서 접힘(DOM·리스너 폭주 방지).
+// routine-column-edges(2026-07-28): 사용 관계 행에 병기하는 참조 컬럼 표시 개수(초과분은 "외 N").
+//   행 한 줄이 컬럼 나열로 뒤덮이지 않게 하는 표시 상한일 뿐, 캔버스 관계선은 전량 그려진다.
+const _META_RTCOL_SHOW = 8;
 const _metaDbGrpLazy = new Map();   // gid -> { html, bind } — 접힌 그룹의 지연 렌더 payload(패널 재렌더마다 초기화)
 let _metaDbGrpSeq = 0;
 
@@ -1998,7 +2005,18 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
       const on = byKey[other] || _metaGraph.nodes.get(other) || {};
       const disp = on.label === "Routine"
         ? `${_metaRoutineIcon(on.routine_type)} ${on.name || nm(other)}` : nm(other);
-      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button></li>`;
+      // routine-column-edges(2026-07-28): 이 사용 관계가 **실제로 참조하는 컬럼**을 행에 병기한다
+      //   (캔버스에서 테이블을 펼치면 같은 정보가 컬럼별 관계선으로 드러난다 — 두 표현의 정합).
+      //   쓰기 컬럼은 ✎ 로 표식. 정의 파싱이 컬럼을 확정하지 못한 관계는 표기 없음(테이블 단위 유지).
+      let colsHtml = "";
+      const rcs = Array.isArray(e.ref_columns) ? e.ref_columns : null;
+      if (rcs && rcs.length) {
+        const shown = rcs.slice(0, _META_RTCOL_SHOW);
+        const txt = shown.map((c) => (c && c.k === "write" ? "✎" : "") + String((c && c.n) || "")).join(", ")
+          + (rcs.length > shown.length ? ` 외 ${rcs.length - shown.length}` : "");
+        colsHtml = ` <span class="amgr-rtcols admin-meta-graph-muted" title="이 관계가 참조하는 컬럼 (✎ = 쓰기)">${esc(txt)}</span>`;
+      }
+      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button>${colsHtml}</li>`;
     };
     // lazy 주입되는 DB 그룹 body 에도 원래의 행 동작(클릭=상세+카메라, hover=연결선 강조)을 그대로 건다.
     const rtBind = (c) => {

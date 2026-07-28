@@ -42,7 +42,11 @@ _PROP_KEYS = {"key", "name", "fqn", "scope_key", "description", "source",
               "confidence", "cardinality", "datasource_key", "schema_name",
               "table_name", "column_name", "relation_type", "term",
               "weight", "status", "ordinal", "routine_type", "params",
-              "semantic_cluster_id", "semantic_cluster_label", "cross_ds"}
+              "semantic_cluster_id", "semantic_cluster_label", "cross_ds",
+              # routine-column-edges(2026-07-28): ROUTINE_USES 가 참조하는 **컬럼** 목록(JSON 문자열
+              # `[{"n": 컬럼, "k": "read"|"write"}]`). 프론트가 테이블 펼침 시 이 목록으로 사용선을
+              # 컬럼별 분해한다. 값이 없거나 매칭 실패면 기존 테이블-레벨 연결 유지(폴백).
+              "ref_columns"}
 # 숫자(float) 리터럴로 SET 하는 속성(문자열 인용 금지)
 _NUMERIC_PROP_KEYS = {"confidence", "weight"}
 # 정수 리터럴로 SET 하는 속성. feature-0016 graphux5: 컬럼 실제 순서(ordinal). Phase C: 의미 클러스터 id.
@@ -183,6 +187,30 @@ def _unwrap(agt):
         except Exception:
             return s[1:-1].replace('\\"', '"').replace("\\\\", "\\")
     return s
+
+
+def _ref_columns_of(raw):
+    """ROUTINE_USES 의 `ref_columns` 속성(JSON 문자열) → [{'n': 컬럼, 'k': 'read'|'write'}] (정제).
+
+    routine-column-edges(2026-07-28). 부재·형식 불일치는 **빈 리스트**로 접어 프론트가 기존
+    테이블-레벨 연결로 폴백하게 한다(그래프 응답이 결코 깨지지 않도록 전 구간 방어)."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out = []
+    for it in data:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("n") or "").strip()
+        if not name:
+            continue
+        out.append({"n": name, "k": "write" if it.get("k") == "write" else "read"})
+    return out
 
 
 # ── 그래프 쓰기 (MERGE — 멱등) ────────────────────────────────────────────
@@ -364,9 +392,17 @@ def routine_refs_signature(refs) -> str:
     = cypher 51,087 회(전체 158,544 의 32%)를 차지했는데, 실제로 참조가 바뀌는 routine 은 하루
     수백 건뿐이다. 서명이 같으면 재작성을 통째로 생략한다.
 
-    정규화는 엣지를 만드는 3요소(fqn·kind·cross)만 담는다. 엣지 생성 루프가 건너뛰는 입력
-    (파싱 후 table 이 빈 fqn)도 서명에는 포함되는데, 이는 '실제로는 동일한데 서명이 달라져
+    정규화는 **엣지를 만드는 요소 전부**(fqn·kind·cross·cols)를 담는다. 엣지 생성 루프가 건너뛰는
+    입력(파싱 후 table 이 빈 fqn)도 서명에는 포함되는데, 이는 '실제로는 동일한데 서명이 달라져
     재작성' 방향의 보수적 오차라 누락(재작성이 필요한데 생략)은 발생하지 않는다.
+
+    **routine-column-edges(2026-07-28): `cols` 가 서명에 반드시 포함되어야 한다.** 참조 컬럼은
+    `ROUTINE_USES` 의 `ref_columns` 속성으로 투영되므로 엣지 내용의 일부다. 서명이 fqn·kind·cross
+    만 담으면 "참조 테이블은 그대로인데 컬럼 정보가 새로 생긴" 기존 routine 전량이 재작성 생략에
+    걸려 **`ref_columns` 가 영영 투영되지 않는다**(기능이 조용히 죽는 경로). 이 확장으로 배포 후
+    첫 sync 에서 참조를 가진 routine 이 **1회 재작성**되고(그것이 곧 backfill), 이후에는 서명이
+    안정되어 cyvol 절감 효과가 그대로 유지된다 — §16.3 blast-radius 게이트 대상이며 규모는
+    routine 1회분(실측 계보: DELETE 23,053 + MERGE 28,034)으로 유한하다.
 
     §18.8 패널: 같은 fqn 이 중복되면 엣지 루프는 **입력 순서상 마지막**이 이깁니다(뒤의 MERGE 가
     relation_type 을 덮어씀). 서명도 같은 규칙으로 접은 뒤 정렬해 **최종 엣지 집합과 1:1** 로 만든다
@@ -387,7 +423,20 @@ def routine_refs_signature(refs) -> str:
         fqn = str(r.get("fqn") or "").strip()
         if not fqn:
             continue
-        last[fqn] = (str(r.get("kind") or "read"), "1" if r.get("cross") else "")
+        # routine-column-edges: 참조 컬럼(cols)도 엣지 속성(ref_columns)이 되므로 서명에 담는다.
+        #   손상 입력은 조용히 무시(이 함수는 절대 raise 하지 않는다 — 위 docstring 참조).
+        _cols = r.get("cols")
+        _csig = ""
+        if isinstance(_cols, list) and _cols:
+            _parts = []
+            for c in _cols:
+                if not isinstance(c, dict):
+                    continue
+                _n = str(c.get("n") or "").strip()
+                if _n:
+                    _parts.append(_n + "\x1d" + ("write" if c.get("k") == "write" else "read"))
+            _csig = ",".join(sorted(_parts))
+        last[fqn] = (str(r.get("kind") or "read"), "1" if r.get("cross") else "", _csig)
     payload = "\x1f".join("\x1e".join((f,) + last[f]) for f in sorted(last))
     return _hashlib.sha1(payload.encode("utf-8", "replace")).hexdigest()
 
@@ -587,9 +636,18 @@ def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", 
             _merge_vertex(cur, "Table", tkey, _tprops)
         # §57: SSOT refs 의 cross 플래그(크로스-DB 참조, §56 RC2)를 AGE 엣지 속성으로 투영 —
         #   프론트 크로스 시각 구분(REFERENCES 의 cross_ds='1' 관례와 동일 키, ADR-019 정합).
-        _merge_edge(cur, "Routine", rkey, "ROUTINE_USES", "Table", tkey,
-                    {"relation_type": (r or {}).get("kind") or "read",
-                     **({"cross_ds": "1"} if (r or {}).get("cross") else {})})
+        # routine-column-edges(2026-07-28): 참조 컬럼 목록(SSOT `cols`)을 JSON 문자열로 동봉 —
+        #   프론트가 테이블 펼침 시 사용선을 컬럼별로 분해한다. 값 부재는 곧 "컬럼 미확정" 이라
+        #   프론트가 기존 테이블-레벨 연결로 폴백한다(속성 자체가 없으면 SET 생략 = 무회귀).
+        _eprops = {"relation_type": (r or {}).get("kind") or "read",
+                   **({"cross_ds": "1"} if (r or {}).get("cross") else {})}
+        _cols = (r or {}).get("cols")
+        if isinstance(_cols, list) and _cols:
+            try:
+                _eprops["ref_columns"] = json.dumps(_cols, ensure_ascii=False, separators=(",", ":"))
+            except (TypeError, ValueError):
+                pass
+        _merge_edge(cur, "Routine", rkey, "ROUTINE_USES", "Table", tkey, _eprops)
     # cyvol: 서명은 엣지 재작성이 **끝난 뒤** 기록한다(위 REMOVE 와 짝) — 엣지보다 먼저 쓰면
     # '서명은 최신, 엣지는 불완전'이 고착된다. 비용은 참조가 바뀐 routine 1건당 1회(하루 수백).
     #
@@ -1610,7 +1668,8 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
                 urows = _cypher(cur,
                     f"MATCH (s:Schema)-[:HAS_ROUTINE]->(r:Routine)-[u:ROUTINE_USES]->(t:Table) "
                     f"WHERE s.scope_key = {sc} AND s.key = {sk} "
-                    f"RETURN r.key, t.key, u.relation_type, u.cross_ds LIMIT {limit * 4}", 4)
+                    f"RETURN r.key, t.key, u.relation_type, u.cross_ds, u.ref_columns "
+                    f"LIMIT {limit * 4}", 5)
                 useen = set()
                 for ur in urows:
                     rk = _unwrap(ur[0]); tk = _unwrap(ur[1])
@@ -1619,10 +1678,16 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
                     useen.add((rk, tk))
                     # §57: cross_ds 를 클러스터 펼침 경로에도 노출 — 크로스 루틴 참조는 same-scope 라
                     #   neighborhood 가 아닌 이 경로로 흐른다(미노출 시 펼침 경로에서 플래그 소실).
-                    result["edges"].append({"source": rk, "target": tk, "type": "ROUTINE_USES",
-                                            "cardinality": None, "edge_source": None,
-                                            "relation_type": _unwrap(ur[2]) or "read",
-                                            "cross_ds": _unwrap(ur[3])})
+                    # routine-column-edges: 참조 컬럼 목록(JSON 문자열)을 파싱해 동봉 — 프론트가
+                    #   테이블 펼침 시 사용선을 컬럼별로 분해한다. 부재·파싱 실패는 키 생략(폴백).
+                    _e = {"source": rk, "target": tk, "type": "ROUTINE_USES",
+                          "cardinality": None, "edge_source": None,
+                          "relation_type": _unwrap(ur[2]) or "read",
+                          "cross_ds": _unwrap(ur[3])}
+                    _rc = _ref_columns_of(_unwrap(ur[4]))
+                    if _rc:
+                        _e["ref_columns"] = _rc
+                    result["edges"].append(_e)
         except Exception as exc:
             _log.debug("schema_tables_routines_failed err=%r", exc)
         result["nodes"] = list(nodes.values())
@@ -1819,7 +1884,8 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                 # relation_type: RELATED_TERM(유사어)·ROUTINE_USES(read/write, graph-funcproc) 공용.
                 edge_hits.append((sg, eg, et, ep.get("cardinality"), ep.get("source"),
                                   ep.get("weight"), ep.get("status"), ep.get("relation_type"),
-                                  ep.get("cross_ds")))   # crossds-rel: 교차DB 엣지 표식
+                                  ep.get("cross_ds"),   # crossds-rel: 교차DB 엣지 표식
+                                  ep.get("ref_columns")))   # routine-column-edges: 참조 컬럼 목록
                 if sg not in gid2key:
                     neigh_gids.add(sg)
                 if eg not in gid2key:
@@ -1845,7 +1911,7 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                         seen_nodes[k] = _node_from_props(lbl, props)
                         next_frontier.append(g)
             # (4) 엣지 빌드 — 양 끝점이 해소된 것만, 방향(source=start,target=end) + dedup.
-            for sg, eg, et, card, esrc, ewgt, estatus, erel, exds in edge_hits:
+            for sg, eg, et, card, esrc, ewgt, estatus, erel, exds, erc in edge_hits:
                 sk = gid2key.get(sg); tk = gid2key.get(eg)
                 if not sk or not tk:   # cap 로 미해소된 이웃과의 엣지는 생략
                     continue
@@ -1856,11 +1922,15 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                 if estatus == "broken":
                     continue
                 seen_edges.add(ekey)
-                result["edges"].append({"source": sk, "target": tk, "type": et,
-                                        "cardinality": card, "edge_source": esrc,
-                                        "weight": ewgt, "status": estatus,
-                                        "relation_type": erel,
-                                        "cross_ds": exds})   # crossds-rel: 프론트 교차DB 엣지 스타일/배지
+                _e = {"source": sk, "target": tk, "type": et,
+                      "cardinality": card, "edge_source": esrc,
+                      "weight": ewgt, "status": estatus,
+                      "relation_type": erel,
+                      "cross_ds": exds}   # crossds-rel: 프론트 교차DB 엣지 스타일/배지
+                _rc = _ref_columns_of(erc)   # routine-column-edges: 컬럼 승격 입력(부재=테이블 폴백)
+                if _rc:
+                    _e["ref_columns"] = _rc
+                result["edges"].append(_e)
             # schema_tables REFERENCES emit 도 cross_ds 를 실어야 하나, 그 경로는 단일 스키마(intra-ds)라 cross_ds 부재(생략 안전).
             frontier = next_frontier
         result["nodes"] = list(seen_nodes.values())

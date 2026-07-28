@@ -2650,3 +2650,61 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - `node --check --input-type=module` PASS(graph-ctxmenu.js·graph-state.js). 헤드리스 `test_detail_dbgroups.js` **62 PASS**(적대 리뷰 사각 흡수판).
 - 컨테이너 pytest 전체(0002+0003): 파이썬 스위트가 **비결정적(flaky)** — 같은 main 기준선을 두 번 돌려 실패 집합이 서로 달랐다(main `make test` 8건 실패: attachment_idor/attachment_user_version_context/runtime_settings 계열 / 본 worktree 4건: routine_dbanalysis·item11_batch8·runtime_settings 계열, 교집합은 runtime_settings 2건뿐). 본 cycle 의 파이썬 변경은 `metadata_graph.neighborhood()` 의 `truncated` 플래그 세팅(additive) 뿐이며 위 실패 테스트와 무관하다 — **백엔드 변경 전/후 worktree 실패 집합이 동일 4건으로 불변**(새 실패 0)이라는 실측이 이를 뒷받침한다. 스위트 flake 자체의 원인 규명은 본 cycle 범위 밖(별도 항목).
 - 상세 Run: feature-0003 `docs/TEST.md` §3 Run(2026-07-27) detail-db-groups.
+
+## 20260728T1541-routine-column-edges — 함수/프로시저 사용 관계선을 실제 참조 컬럼에 연결 (2026-07-28, 사용자 요청 · entry persona dispatch)
+
+### 배경 (사용자 원 요청)
+> 그래프 뷰에서 함수 및 프로시저가 테이블[로 부터/을 향해] 관계선을 표현할 때 연관된 컬럼이 아니라
+> 테이블에만 연결되고 있다. 테이블 노드가 **접힌 상태에서는 기존대로**, **펼쳐진 상태**에서 각 컬럼이
+> 드러났을 경우에는 실제 [읽기/쓰기] 참조하는 컬럼에 관계선을 구성하도록 개선.
+
+**근본 원인**: FK 관계(`REFERENCES`)는 AGE 엣지의 양끝이 **Column 키**라 `graph-core.js` 의
+`renderEndpoint` 가 "컬럼 렌더 시 컬럼 / 미렌더 시 테이블 / 스키마 접힘 시 SC: 카드" 3단 승격을 자동
+수행한다. 반면 `ROUTINE_USES` 는 SSOT(`routine_objects.referenced_tables = [{fqn, kind}]`)부터
+**테이블 단위**라 승격할 컬럼 끝점이 아예 존재하지 않는다. 따라서 정의 파싱 단계에 컬럼 추출을 추가하는
+것이 유일한 경로다.
+
+### 사용자 결정 (2026-07-28)
+- **채택 기준 = 보수적**: alias 해석·INSERT 컬럼리스트·UPDATE SET 좌변으로 **테이블이 확정된 컬럼만**
+  연결. 비수식(unqualified) 컬럼 추정은 하지 않는다. 특정 실패분은 **기존 테이블 연결 유지**(폴백).
+  근거: SQL 정의 파싱은 원리상 불완전(동적 SQL·MSSQL 4000자 절단·`SELECT *`)해, 불확실한 참조를
+  컬럼에 그리면 없는 관계를 사실처럼 보여주는 환각이 된다.
+- 3단(파서 → 그래프 투영 → 렌더) 전체를 한 cycle 로 실행.
+
+### 2.1 Implementation Plan (§7.1 · 등급 Major — 다중 파일 + 데이터 파이프라인 + 재sync 필요)
+<!-- PLAN-APPROVED by user on 2026-07-28 -->
+
+**T-RCE.1 파서·SSOT** (`unit/feature-0002-agent-core/src/modules/routines.py`)
+- `_fetch_columns(db_conn, schema, wanted_tables)` 신설 — 참조로 **채택된 테이블에 한해** 
+  `INFORMATION_SCHEMA.COLUMNS` 1회 조회(leaf 매칭, cap). routine 0건 스키마는 미조회.
+- `parse_referenced_columns(definition, refs, columns_map)` 신설 — alias map(`FROM/JOIN/UPDATE/INTO T [AS] a`
+  + 테이블명 자기참조) → ① `alias.col` 수식 참조 = read ② `INSERT INTO T (c1,c2)` = write
+  ③ `UPDATE T SET c1=,c2=` (alias-UPDATE 포함) = write. **실 컬럼 실재 검증 통과분만**, write 우선.
+- `introspect_and_store` 2-pass 화 — pass1 기존 테이블 참조 추출 → 합집합으로 컬럼 인벤토리 로드 →
+  pass2 컬럼 추출. `referenced_tables` entry 에 `cols: [{n, k}]` 추가(**jsonb 라 alembic 마이그 0**,
+  기존 IS DISTINCT FROM 가드가 다음 sync 에서 자동 backfill). 크로스-DB 참조는 컬럼 승격 제외(폴백).
+- 완료 판정: 파서 단위테스트 PASS + 기존 `referenced_tables` 계약(`fqn`/`kind`/`cross`) 무회귀.
+
+**T-RCE.2 그래프 투영·API** (`unit/feature-0002-agent-core/src/modules/metadata_graph.py`)
+- `sync_routine` — `ROUTINE_USES` 엣지 속성에 `ref_columns`(JSON 문자열) 투영. 엣지·정점 구조 불변(additive).
+- `schema_tables`(§55 루틴 경로) + `neighborhood` 가 `ref_columns` 를 엣지 payload 에 동봉.
+- 완료 판정: 투영 cypher 에 속성 포함 + 두 조회 경로 응답에 키 존재(단위테스트).
+
+**T-RCE.3 렌더** (`unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js`)
+- ROUTINE_USES 빌드 분기에서 대상 테이블의 **컬럼 노드가 렌더 중이면** `ref_columns` 의 각 컬럼 키로
+  엣지를 분해(컬럼별 read/write 방향·색 유지). 미렌더 컬럼·`ref_columns` 부재·크로스-DB 는 **기존
+  테이블/카드 승격 경로 그대로**(폴백). 접힘 상태 동작 완전 불변.
+- 완료 판정: 헤드리스 결정론 테스트로 (a) 접힘 시 기존과 동일 (b) 펼침 시 컬럼 분해 (c) 부분 매칭 시
+  혼재 폴백 (d) 읽기/쓰기 분리 유지 검증.
+
+**T-RCE.4 상세 패널** (`graph-ctxmenu.js`) — 사용 관계 행에 참조 컬럼 표기(있을 때만).
+
+**T-RCE.5 검증** — 단위/헤드리스 + 전체 회귀 + `verify-completion --pre-commit` + **PB-0008 Windows
+브라우저 시각검증**(visual_verification_scope: always — 하드 게이트).
+
+### 진행
+- [x] T-RCE.1 파서·SSOT
+- [x] T-RCE.2 그래프 투영·API
+- [x] T-RCE.3 렌더
+- [x] T-RCE.4 상세 패널
+- [x] T-RCE.5 검증 — 헤드리스 30·그래프 전 스위트 722 PASS·pytest 신규 27·전체 2740 passed(15 baseline)·PB-0008 실 Chrome PASS

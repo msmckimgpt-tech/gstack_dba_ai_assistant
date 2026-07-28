@@ -76,6 +76,17 @@ source_of_truth: true
 - 위험도: **Minor(§12.3)** — 프론트 표시·네비게이션 전용. 백엔드·API·RBAC·스키마·데이터 fetch 무변경, 롤백 = static 4파일 + 테스트 1파일 revert.
 - Cross-ref: MODIFY CHG-20260728T152000-graph-catcluster-panel-scroll / FUNCTION REQ-20260728T152000-graph-catcluster-panel-scroll(AC-CPS-1~4) / test-runs.d/20260728T152000-graph-catcluster-panel-scroll.md.
 
+## REV-20260728T161940-routine-column-edges [SKIPPED:session-policy-no-subagent] — 사용 관계선 컬럼 단위 연결 (TASK-20260728T161940, Major §12.3)
+- Panel skip 사유(§18.8): 세션 정책상 `Agent` tool 미허용 — 자체 적대 검토 H1~H6 + 기계 검증(신규 57건·전 스위트 회귀)·실 브라우저 대조로 대체하고 범위를 정직 기록.
+- **자체 적대 검토가 실제 결함 2건을 확증**(둘 다 테스트가 적발, in-cycle 수정):
+  - **H1 — "접힘은 기존대로" 계약 위반**: 초판이 `ref_columns` 의 read/write 별로 테이블 승격선을 만들어, 컬럼 미렌더 상태에서 선이 1→2개로 갈라졌다(사용자 요구의 전제 파괴). → 렌더된 컬럼이 0이면 분해 포기.
+  - **H2 — 부가 기능이 본 경로를 죽임**: `_fetch_columns` 의 `cursor()` 획득이 try 밖이라 컬럼 조회 실패가 상위로 전파돼 그 스키마의 routine upsert 전체가 무산될 수 있었다. → cursor 획득을 try 내부로.
+- 반증 시도(기각): **H3 컬럼 오귀속 환각** — alias 재사용이 흔하므로 `_alias_map` 이 같은 alias 의 다른 테이블 바인딩을 감지해 그 alias 를 통째 폐기, 스키마 qualifier(`dbo.T`)는 alias map 부재로 자동 폐기. **H4 성능** — 참조로 채택된 테이블에만 COLUMNS 1회 질의(2-pass·cap 400), 참조 없으면 질의 자체 없음. 프론트 케이스 인덱스도 lazy. **H5 이행 위험** — jsonb additive(마이그 0)·`sync_routine` 이 ROUTINE_USES 전량 회수 후 재-MERGE 라 stale 없음·값 없으면 속성 미SET(기존 엣지와 동치). **H6 파싱 불완전성(수용)** — 동적 SQL·4000자 절단·`SELECT *` 는 폴백으로 흡수되며, 커버리지를 위해 비수식 컬럼을 추정하면 H3 위험이 되살아나므로 추정하지 않는다(사용자 결정).
+- **H7(rebase 중 확증·수정)**: 병합된 feature-0030 cyvol 의 `routine_refs_signature` 가 `cols` 를 담지 않아 기존 routine 이 재작성 생략에 걸려 `ref_columns` 가 라이브에서만 투영되지 않는 경로 — 서명 확장으로 수정 + 회귀 4건. 배포 후 첫 sync 1회 재작성 비용을 정직 고지.
+- 검증 경로 변경(정직 기록): 라이브 주입 QA 를 시작했으나 병렬 세션 6+ 가 브라우저·라이브 web 을 공유해 `win-browser.py` 의 `pages[0]` 고정이 타 세션 탭을 잡는 것을 실측 → **즉시 원복**(web-a/web-b md5 원본 일치·`/livez` 200) 후 격리 harness + CDP 신규 탭으로 전환. 상세 = test-runs fragment §3.
+- 위험도: **Major(§12.3)** — 다중 계층(파서·그래프 투영·렌더)이나 alembic 마이그 0, RBAC/엔드포인트 계약 무변경, 비파괴 additive. 롤백 = 6파일 revert.
+- Cross-ref: MODIFY CHG-20260728T161940-routine-column-edges / FUNCTION REQ-20260728T161940-routine-column-edges(AC-RCE-1~5) / test-runs.d/20260728T161940-routine-column-edges.md / 정본 feature-0016 REVIEW REV-20260728T161940-ai-claude-feature-0016-routine-column-edges.
+
 ## REV-20260728T152141-graph-edge-hairline [SKIPPED:session-policy-no-subagent] — 줌아웃 관계선 hairline 처리 (TASK-20260728T152141, Minor §12.3, frontend-only)
 - Panel skip 사유(§18.8): 세션 정책상 `Agent` tool 미허용 — 라이브 대조 + 기계 검증으로 대체하고 범위를 정직 기록.
 - 판단 근거:

@@ -40,6 +40,46 @@ _COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 _ALIAS_UPDATE_RE = re.compile(
     r"(?is)\bUPDATE\s+([A-Za-z0-9_]+)\s+SET\b.*?\bFROM\s+([\[\]`\"A-Za-z0-9_$#.]+)\s+(?:AS\s+)?\1\b")
 
+# ── routine-column-edges (2026-07-28): 참조 **컬럼** 추출 ────────────────────────
+# 그래프 뷰에서 테이블을 펼쳤을 때 사용 관계선이 실제 참조 컬럼에 붙도록, 정의 텍스트에서
+# "테이블이 확정된" 컬럼만 보수적으로 뽑는다(사용자 결정 2026-07-28: 보수적 채택).
+#   채택: ① alias/테이블명으로 수식된 참조(`a.col`·`T_User.UserID`) = read
+#         ② `INSERT INTO T (c1, c2)` 컬럼 리스트 = write
+#         ③ `UPDATE T SET c1 = …, c2 = …` 좌변(alias-UPDATE 포함) = write
+#   폐기: 비수식(unqualified) 컬럼 — 다중 테이블 구문에서 오귀속하므로 추정하지 않는다.
+#         동일 alias 가 서로 다른 테이블에 바인딩되면 그 alias 전체 폐기(모호).
+#         크로스-DB 참조(§56 RC2) — 컬럼 인벤토리를 현재 연결로 검증할 수 없어 테이블 유지.
+# 미채택분은 **기존 테이블-레벨 연결 그대로**라 회귀가 아니라 폴백이다.
+_COLS_CAP_PER_TABLE = 24     # routine·테이블당 참조 컬럼 상한
+_COLS_CAP_TOTAL = 80         # routine 당 참조 컬럼 총 상한
+_COLUMNS_TABLE_CAP = 400     # 컬럼 인벤토리 1회 조회 테이블 수 상한(IN 절 폭주 방지)
+
+# `[ident]` · `` `ident` `` · `"ident"` → ident (공백 없는 단순 식별자만 — 공백 포함은 원형 유지).
+_BRACKET_ID_RE = re.compile(r"[\[`\"]\s*([A-Za-z_][A-Za-z0-9_$#]*)\s*[\]`\"]")
+# alias 바인딩: FROM/JOIN/INTO/UPDATE <table> [AS] <alias>
+_ALIAS_BIND_RE = re.compile(
+    r"(?i)\b(?:FROM|JOIN|INSERT\s+INTO|MERGE\s+INTO|DELETE\s+FROM|UPDATE)\s+"
+    r"([A-Za-z_][A-Za-z0-9_$#.]*)(?:\s+(?:AS\s+)?([A-Za-z_][A-Za-z0-9_]*))?")
+# alias 자리에 오는 SQL 키워드(= alias 아님)
+_ALIAS_STOPWORDS = frozenset((
+    "where", "set", "on", "inner", "left", "right", "full", "outer", "join", "cross", "apply",
+    "group", "order", "having", "union", "select", "values", "as", "with", "into", "from",
+    "and", "or", "not", "exec", "execute", "begin", "end", "declare", "if", "else", "while",
+    "using", "when", "then", "output", "top", "distinct", "by", "option", "for", "go", "return",
+    "insert", "update", "delete", "merge", "limit", "offset", "straight_join", "use", "force",
+    "ignore", "natural", "lock", "partition", "window", "except", "intersect"))
+# 수식 컬럼 참조 — `prefix.leaf` (대괄호는 _normalize_idents 가 이미 벗겨낸 상태)
+_QUALCOL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_$#]*)\b")
+# INSERT INTO T (c1, c2, …) — 첫 괄호가 컬럼 리스트일 때만(서브쿼리 괄호는 SELECT 가드로 폐기)
+_INSERT_COLS_RE = re.compile(r"(?i)\bINSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_$#.]*)\s*\(([^()]*)\)")
+# UPDATE <t|alias> SET <assignments> — SET 절은 FROM/WHERE/OUTPUT/; 앞까지
+_UPDATE_SET_RE = re.compile(
+    r"(?is)\bUPDATE\s+(?:TOP\s*\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_$#.]*)\s+SET\s+"
+    r"(.*?)(?=\bFROM\b|\bWHERE\b|\bOUTPUT\b|;|\Z)")
+# SET 절 좌변 — 콤마(또는 절 시작) 직후의 `[alias.]col =`
+_SET_LHS_RE = re.compile(
+    r"(?:\A|,)\s*(?:([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?([A-Za-z_][A-Za-z0-9_$#]*)\s*=(?!=)")
+
 
 def _unquote(ident: str) -> str:
     return str(ident or "").strip().strip("`\"[]").strip()
@@ -127,6 +167,163 @@ def parse_referenced_tables(definition, table_names, self_name="", *,
     out = [{"fqn": canon[low], "kind": kind} for low, kind in sorted(found.items())]
     out += [{"fqn": ext[k][1], "kind": kind, "schema": ext[k][0]}
             for k, kind in sorted(found_x.items())]
+    return out
+
+
+def _normalize_idents(text) -> str:
+    """`[ident]`/`` `ident` ``/`"ident"` 를 벗겨 수식 참조를 단일 표기로 정규화."""
+    return _BRACKET_ID_RE.sub(r"\1", str(text or ""))
+
+
+def _alias_map(text, canon):
+    """FROM/JOIN/UPDATE/INTO 바인딩에서 alias→테이블(lower) 맵 산출.
+
+    - 테이블명 자기참조(`T_User.UserID`)도 항목으로 넣는다.
+    - **같은 alias 가 서로 다른 테이블에 바인딩되면 그 alias 는 폐기**한다 — 한 routine 안 여러
+      구문이 `a` 를 다른 테이블로 쓰는 흔한 패턴에서 컬럼이 엉뚱한 테이블로 붙는 것을 막는 가드.
+    canon: {table_lower: 실 테이블명} (parse_referenced_tables 와 동일 입력).
+    """
+    amap, ambiguous = {}, set()
+    for m in _ALIAS_BIND_RE.finditer(text):
+        raw, alias = m.group(1) or "", m.group(2) or ""
+        leaf = _unquote(str(raw).split(".")[-1]).lower()
+        if not leaf or leaf not in canon:
+            continue
+        amap.setdefault(leaf, leaf)          # 테이블명 자기참조
+        a = alias.strip().lower()
+        if not a or a in _ALIAS_STOPWORDS or a == leaf:
+            continue
+        prev = amap.get(a)
+        if prev is not None and prev != leaf:
+            ambiguous.add(a)                 # 같은 alias, 다른 테이블 → 모호
+            continue
+        amap[a] = leaf
+    for a in ambiguous:
+        amap.pop(a, None)
+    return amap
+
+
+def parse_referenced_columns(definition, refs, columns_map) -> dict:
+    """routine 정의 → {table_lower: [{'n': 컬럼, 'k': 'read'|'write'}]} (실재 검증 통과분만).
+
+    routine-column-edges(2026-07-28): 그래프 뷰에서 테이블 펼침 시 사용 관계선을 실제 참조 컬럼에
+    연결하기 위한 입력. **보수적 채택**(사용자 결정) — 테이블이 확정된 참조만 채택하고, 확정하지
+    못한 참조는 아무것도 내지 않아 호출측이 기존 테이블-레벨 연결을 그대로 유지한다.
+
+    refs: parse_referenced_tables 의 반환(로컬 entry 만 대상 — `schema` 키가 있는 크로스-DB 참조는
+      현재 연결로 컬럼 실재를 검증할 수 없어 제외).
+    columns_map: {table_lower: {col_lower: 실 컬럼명}} — 데이터소스 INFORMATION_SCHEMA.COLUMNS 원천.
+
+    kind 는 **컬럼 자체의 접근 성격**이다(테이블 레벨 kind 와 다를 수 있다 — 예: `DELETE FROM T
+    WHERE T.id = @x` 는 테이블 write / 컬럼 id 는 read). write 가 read 보다 우선한다.
+    """
+    if not definition or not refs or not columns_map:
+        return {}
+    text = _normalize_idents(_COMMENT_RE.sub(" ", str(definition)))
+    # 대상 테이블(로컬 refs ∩ 컬럼 인벤토리 보유)
+    canon = {}
+    for x in (refs or []):
+        if not x or x.get("schema"):
+            continue
+        low = str(x.get("fqn") or "").lower()
+        if low and low in columns_map:
+            canon[low] = str(x.get("fqn"))
+    if not canon:
+        return {}
+    amap = _alias_map(text, canon)
+    out: dict = {}     # table_lower -> {col_lower: kind}
+
+    def _mark_col(tbl_low, col_raw, kind):
+        cols = columns_map.get(tbl_low) or {}
+        real = cols.get(_unquote(col_raw).lower())
+        if not real:
+            return                                   # 실재하지 않는 컬럼 — 폐기(환각 차단)
+        slot = out.setdefault(tbl_low, {})
+        if len(slot) >= _COLS_CAP_PER_TABLE and real.lower() not in slot:
+            return
+        prev = slot.get(real.lower())
+        if prev != "write":
+            slot[real.lower()] = kind if prev is None or kind == "write" else prev
+
+    # ① 수식 컬럼 참조 = read
+    for m in _QUALCOL_RE.finditer(text):
+        pref, leaf = (m.group(1) or "").lower(), m.group(2) or ""
+        tbl = amap.get(pref)
+        if tbl:
+            _mark_col(tbl, leaf, "read")
+    # ② INSERT INTO T (c1, c2, …) = write
+    for m in _INSERT_COLS_RE.finditer(text):
+        raw, body = m.group(1) or "", m.group(2) or ""
+        leaf = _unquote(str(raw).split(".")[-1]).lower()
+        if leaf not in canon or re.search(r"(?i)\bSELECT\b", body):
+            continue                                 # 서브쿼리 괄호는 컬럼 리스트가 아니다
+        for piece in body.split(","):
+            name = _unquote(piece).split(".")[-1].strip()
+            if name:
+                _mark_col(leaf, name, "write")
+    # ③ UPDATE T SET c1 = …, c2 = … 좌변 = write
+    for m in _UPDATE_SET_RE.finditer(text):
+        raw, body = m.group(1) or "", m.group(2) or ""
+        head = _unquote(str(raw).split(".")[-1]).lower()
+        tbl = head if head in canon else amap.get(head)
+        if not tbl:
+            continue
+        for sm in _SET_LHS_RE.finditer(body):
+            lpref, lcol = (sm.group(1) or "").lower(), sm.group(2) or ""
+            target = amap.get(lpref) if lpref else tbl
+            if target:
+                _mark_col(target, lcol, "write")
+
+    # 총량 cap — 테이블·컬럼명 정렬로 결정적 절단(사이클 간 진동 방지)
+    result, total = {}, 0
+    for tbl in sorted(out):
+        cols_real = columns_map.get(tbl) or {}
+        entries = []
+        for low in sorted(out[tbl]):
+            if total >= _COLS_CAP_TOTAL:
+                break
+            entries.append({"n": cols_real.get(low, low), "k": out[tbl][low]})
+            total += 1
+        if entries:
+            result[tbl] = entries
+    return result
+
+
+def _fetch_columns(db_conn, schema, wanted) -> dict:
+    """참조로 채택된 테이블에 한해 INFORMATION_SCHEMA.COLUMNS 1회 조회.
+
+    반환 {table_lower: {col_lower: 실 컬럼명}}. 실패 시 {} — 컬럼 승격만 비활성되고 테이블-레벨
+    연결은 불변(비차단). routine 이 없거나 참조 테이블이 없으면 호출 자체를 하지 않는다.
+    """
+    names = sorted({str(t or "").strip() for t in (wanted or []) if str(t or "").strip()})
+    if not names:
+        return {}
+    names = names[:_COLUMNS_TABLE_CAP]
+    out: dict = {}
+    # cursor 획득 자체도 try 안 — 실패가 introspect_and_store 의 상위 try 로 전파되면 그 스키마의
+    # routine upsert **전체**가 죽는다(컬럼 승격은 부가 기능이라 절대 본 경로를 막지 않는다).
+    cur = None
+    try:
+        cur = db_conn.cursor()
+        ph = ",".join(["%s"] * len(names))
+        cur.execute(
+            "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+            f"WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({ph})",
+            tuple([schema] + names))
+        for row in (cur.fetchall() or []):
+            tbl = str(row[0] or "").strip()
+            col = str(row[1] or "").strip()
+            if tbl and col:
+                out.setdefault(tbl.lower(), {})[col.lower()] = col
+    except Exception as exc:
+        _log.debug("fetch_columns_failed schema=%s err=%r", schema, exc)
+        return {}
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
     return out
 
 
@@ -303,17 +500,48 @@ def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_ke
     try:
         # §56 RC2: 크로스-DB 참조 실재 검증 집합(같은 ds 의 타 effective 스키마 테이블) — 실패 시 {}(로컬 파싱 불변).
         ext_tables = _external_tables_for(kc, (datasource_key or "").strip() or (scope_key or ""))
+        # routine-column-edges(2026-07-28): pass 1 — 참조 **테이블**을 먼저 전량 추출한 뒤, 실제
+        #   참조된 테이블에 한해서만 컬럼 인벤토리를 1회 조회한다(무관 테이블 컬럼 미조회 = 대형
+        #   스키마 비용 통제). 조회 실패는 {} 라 컬럼 승격만 비활성되고 기존 동작은 불변.
+        parsed: dict = {}
+        wanted: set = set()
+        for r in routines:
+            try:
+                _refs = parse_referenced_tables(r["definition"], table_names, self_name=r["name"],
+                                                external_tables=ext_tables, local_label=label)
+            except Exception as exc:
+                _log.debug("routine_parse_failed schema=%s routine=%s err=%r",
+                           schema, r.get("name"), exc)
+                continue
+            parsed[(r["name"], r["rtype"])] = _refs
+            for x in _refs:
+                if not x.get("schema"):
+                    wanted.add(str(x.get("fqn") or ""))
+        cols_map = _fetch_columns(db_conn, schema, wanted) if wanted else {}
         cur = kc.cursor()
         for r in routines:
             try:
-                refs = parse_referenced_tables(r["definition"], table_names, self_name=r["name"],
-                                               external_tables=ext_tables, local_label=label)
+                refs = parsed.get((r["name"], r["rtype"]))
+                if refs is None:
+                    continue   # pass 1 파싱 실패 — 기존 동작(해당 행 skip)과 동일
+                # pass 2 — 테이블이 확정된 참조 컬럼(read/write). 미확정분은 빈 채로 두어 프론트가
+                #   기존 테이블-레벨 연결을 유지한다(보수적 채택, 사용자 결정 2026-07-28).
+                cols_by_table = parse_referenced_columns(r["definition"], refs, cols_map) \
+                    if cols_map else {}
                 # 참조 fqn 은 저장 slot 기준 `label.table`(로컬) / `타스키마.table`(크로스-DB, §56 RC2 —
                 # sync_routine 이 fqn 그대로 <scope>:<fqn> 으로 앵커해 크로스 클러스터 ROUTINE_USES 성립).
-                refs_fqn = [{"fqn": (f"{x['schema']}.{x['fqn']}" if x.get("schema")
-                                     else (f"{label}.{x['fqn']}" if label else x["fqn"])),
-                             "kind": x["kind"], **({"cross": 1} if x.get("schema") else {})}
-                            for x in refs]
+                refs_fqn = []
+                for x in refs:
+                    _e = {"fqn": (f"{x['schema']}.{x['fqn']}" if x.get("schema")
+                                  else (f"{label}.{x['fqn']}" if label else x["fqn"])),
+                          "kind": x["kind"]}
+                    if x.get("schema"):
+                        _e["cross"] = 1
+                    else:
+                        _c = cols_by_table.get(str(x["fqn"]).lower())
+                        if _c:
+                            _e["cols"] = _c
+                    refs_fqn.append(_e)
                 dhash = hashlib.sha256((r["definition"] or "").encode("utf-8", "replace")).hexdigest() \
                     if r["definition"] else ""
                 cur.execute(
