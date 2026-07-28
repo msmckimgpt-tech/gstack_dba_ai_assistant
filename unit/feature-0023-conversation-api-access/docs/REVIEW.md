@@ -219,3 +219,43 @@ subagent panel 대신 **제약 없는 채널**로 검증했다:
 ### 잔여 리스크 (수용)
 - capabilities 는 인증된 토큰에게 그 계정의 제품·폴더 구성을 드러낸다 — 사내 LAN + 인증 전제에서 수용.
 - 신규 MCP tool 의 실서버 왕복(특히 multipart 업로드)은 배포 후 라이브 검증 대상.
+
+## REV-20260728T115000-ai-claude-conv-quality-model-kv-fix (라이브 e2e 적발 — 판단 근거)
+- Related TASK: feature-0023-conversation-api-access
+- Timestamp: 2026-07-28T11:50:00+09:00
+- Trigger: 배포 후 라이브 e2e(§16.3 deploy-backed 완료 기준) 중 `conversation.model` 이 `null` 로 관측.
+
+### 왜 단위 테스트가 못 잡았나 (배운 것)
+초기 테스트가 `kv={"model": "claude-opus-5"}` 로 **내가 읽는 키를 그대로 주입**했다 — 구현과 테스트가
+같은 오해를 공유하면 통과한다(자기충족 stub). 실제 저장 키(`model:<account_id>`)는 프로덕션
+`/api/ask` 쪽에 있어서, 라이브 왕복 전까지 어긋남이 드러나지 않았다. AGENTS.md §16.3
+「proxy ≠ ground-truth」의 사례 — stub 이 구조적 proxy 였고 end-capability(실 저장·조회)가 정본.
+
+**대응**: 회귀 테스트를 "대화 단위 키에만 값을 넣고 **읽히지 않아야** 한다" 는 **음성 케이스**로 세웠다
+(`test_capabilities_conversation_model_uses_per_account_kv_key`). 같은 오해를 다시 하면 실패한다.
+
+### 결정
+- `_model_kv_key` 를 재구현하지 않고 `routers.conversations` 에서 **지연 import** 해 재사용 —
+  키 규약이 한 곳에만 존재해야 다음에 또 어긋나지 않는다(SSOT). 지연 import 는 라우터 간 import
+  순서 의존을 만들지 않기 위함(`_folder_store` 와 동일 관용구).
+- `_is_allowed_api_model` 검증을 함께 얹었다 — `/api/history` 가 이미 하는 일이고(stale alias 복원
+  방지), capabilities 는 그 값을 **외부 AI 가 그대로 재전송**할 소비처라 오히려 더 필요하다.
+- 계정별 분리 의미는 그대로 보존 — capabilities 도 "내가 마지막으로 요청한 모델" 을 보고한다.
+
+## REV-20260728T115500-ai-claude-conv-quality-model-kv-fix [SKIPPED:tool-restricted:panel] — 핫픽스 검증 채널
+- Related TASK: feature-0023-conversation-api-access (TASK-0022 / CHG-20260728T115000)
+- Reason: 세션에 "사용자 요청 없이 Agent tool 호출 금지" 상위 지시가 있어 §18.8.2 carve-out 에 따라
+  subagent panel 대신 **제약 없는 채널**로 검증했다. 변경 범위는 읽기 전용 응답 필드 1개의 KV 키
+  정정 + 테스트라 dispatch 표상 backend/qa 렌즈가 대상이며, 아래로 커버된다.
+- Timestamp: 2026-07-28T11:55:00+09:00
+- 수행한 검증:
+  - diff 정독 — 인가·스키마·다른 축 무변경 확인(읽기 경로 1블록 한정). 신규 SQL·eval·외부 호출 0.
+  - 키 SSOT 확인 — `_model_kv_key` 를 재구현하지 않고 `routers.conversations` 에서 재사용
+    (규약이 두 곳에 갈라지면 같은 어긋남이 재발).
+  - stale alias 배제 — `/api/history` hydration 과 동일하게 `_is_allowed_api_model` 검증.
+  - 음성 케이스 회귀 테스트 2건(대화 단위 키 미사용 / 카탈로그 밖 값 배제) + 전체 회귀 exit 0.
+- 미커버 범위: 없음(security 표면 변경 없음 — 인가 게이트·scope·denylist 무변경).
+
+> **직전 entry 정정**: REV-20260728T111500 에 `[SUBAGENT:security]` 태그를 썼으나 실제 수행은
+> 동일한 도구 제약 하의 **인라인** 검증이었다(본문에 그 사실을 명시했으나 태그가 부정확).
+> 태그 규약상 `[SKIPPED:tool-restricted:*]` 가 정확한 표기다 — 이후 entry 는 본 표기를 따른다.

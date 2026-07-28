@@ -76,6 +76,8 @@ def caps_env(monkeypatch):
                             lambda conn, cid: conv_product, raising=False)
         monkeypatch.setattr(appmod, "load_memory_kv",
                             lambda conn, cid, key: (kv or {}).get(key, ""), raising=False)
+        monkeypatch.setattr(appmod, "_is_allowed_api_model",
+                            lambda m: m in {x["value"] for x in _MODELS}, raising=False)
         if folders is not None:
             from routers import _folder_store as store
             monkeypatch.setattr(store, "list_folders", lambda owner_id: list(folders), raising=False)
@@ -178,13 +180,46 @@ def test_capabilities_conversation_settings_when_accessible(client, caps_env):
         perms={},
         conv_access=True,
         conv_product={"product_id": 3, "product_mode": "pinned", "product_name": "국내"},
-        kv={"model": "claude-opus-5", "reasoning_level": "high"},
+        # ★ 모델 KV 는 대화 단위가 아니라 **요청자 계정별** 키(`model:<account_id>`) 다 —
+        #   feature-0003 model-persist 설계(그룹 대화에서 타인 선택이 내 composer 를 바꾸지 않게).
+        kv={"model:7": "claude-opus-5", "reasoning_level": "high"},
     )
     conv = client.get("/api/ai/capabilities?conversation_id=c-1").json()["conversation"]
     assert conv["conversation_id"] == "c-1"
     assert conv["model"] == "claude-opus-5"
     assert conv["reasoning_level"] == "high"
     assert conv["product_id"] == 3 and conv["product_mode"] == "pinned"
+
+
+def test_capabilities_conversation_model_uses_per_account_kv_key(client, caps_env):
+    """대화 단위 `"model"` 키로 읽으면 **항상 빈 값**이라 '모델 미설정' 으로 오보한다.
+
+    라이브 e2e 에서 적발된 회귀 — reasoning_level 은 대화 단위 키인데 model 만 계정별 키라
+    한쪽만 맞추기 쉽다. 계정별 키에만 값이 있을 때 그것을 읽어야 한다.
+    """
+    caps_env(
+        account=_acct(),
+        perms={},
+        conv_access=True,
+        conv_product=None,
+        kv={"model": "claude-opus-5"},   # 대화 단위 키에만 값 — 계정별 키에는 없음
+    )
+    conv = client.get("/api/ai/capabilities?conversation_id=c-1").json()["conversation"]
+    assert conv["model"] is None, "대화 단위 'model' 키를 읽으면 안 된다(계정별 키가 정본)"
+
+
+def test_capabilities_conversation_model_drops_stale_alias(client, caps_env):
+    """저장값이 현재 카탈로그 밖이면 비워서 내린다 — 외부 AI 가 stale 모델을 재전송해 400 을
+    맞지 않게(`/api/history` hydration 과 동형 검증)."""
+    caps_env(
+        account=_acct(),
+        perms={},
+        conv_access=True,
+        conv_product=None,
+        kv={"model:7": "claude-sonnet-4-6-deprecated"},
+    )
+    conv = client.get("/api/ai/capabilities?conversation_id=c-1").json()["conversation"]
+    assert conv["model"] is None
 
 
 def test_capabilities_conversation_denied_leaks_nothing(client, caps_env):
