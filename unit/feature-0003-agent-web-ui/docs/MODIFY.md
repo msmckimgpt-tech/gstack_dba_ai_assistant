@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T163800-graph-catcluster-focus-postverify (TASK-20260728T160000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- `docs/test-runs.d/20260728T163800-graph-catcluster-focus-postdeploy.md` 신설 — 배포(main `f25c71bf`)·서빙 baked 2중 확인·PB-0008 5 시나리오·evidence 4매.
+- TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.
+- 사전 Run(격리 컨테이너)과 수치·문구 전건 동일 — 빌드 파이프라인 통과 산출물에서도 동일 코드 서빙 실증.
+- Cross-ref: CHG-20260728T160000-graph-catcluster-focus · REV-20260728T163800-graph-catcluster-focus-postverify.
+
 ## CHG-20260728T170000-graph-catcluster-polish-postverify (TASK-20260728T162000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - `docs/test-runs.d/20260728T170000-graph-catcluster-scroll-polish-postdeploy.md` 신설 — 배포(main 9c434809)·서빙 baked·PB-0008 5 시나리오·evidence 3매. **코드·자산 변경 0**.
 - 드라이버 실측 2건 기록: 공유 Chrome 병렬 점유로 `pages[0]` 하이재킹 → **전용 새 탭** 드라이버로 회피 / 관리 콘솔 탭 전환은 **trusted click + `wait_until='load'` + 부트스트랩 대기** 필요.

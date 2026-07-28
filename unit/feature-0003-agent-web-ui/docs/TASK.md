@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T163800-graph-catcluster-focus-postverify — 접힌 카테고리 클러스터 카메라 승격 POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
+- 대상: PR #1013 머지(main `f25c71bf`) + `make deploy-web` 무중단 전체 롤아웃(soak 90s 통과) 이후 **main 기반 서빙본**에서 재확인.
+- 완료 판정(acceptance):
+  - [x] 서빙 baked 확인 — 라이브 `graph-core.js` 신규 심볼 7건 · `graph-ctxmenu.js` 3건 · `admin.js?v=bff996bf90f7` · `repo-web-a-1 GIT_COMMIT=f25c71bf`.
+  - [x] 컨텐츠 카테고리 접힘 → 대상 블록 1189→3px 정착 · 스키마 클러스터 중앙 40→1148px 이탈.
+  - [x] 제품 카테고리 밴드 접힘 → 밴드 2px 정착 · 전부 펼침 회귀 2px · 상태줄 문구 3종 · 콘솔 에러 0.
+- 상태: **완결** — AC-CCF-1~4 전건이 배포본에서 재현. TASK-20260728T160000 종결.
+
 ## TASK-20260728T170000-graph-catcluster-polish-postverify — 스크롤 polish POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
 - 대상: PR #1012 머지(main 9c434809) + `make deploy-web` 무중단 전체 롤아웃(soak 통과) 이후, **main 기반 서빙본**에서 재확인.
 - 완료 판정(acceptance):

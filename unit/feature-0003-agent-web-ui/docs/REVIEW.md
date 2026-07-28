@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T163800-graph-catcluster-focus-postverify [SKIPPED:non-policy-doc] — 카메라 승격 교정 POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T160000, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- **왜 배포본에서 다시 봤는가**: 사전 검증은 §13.2.9 격리 컨테이너에서 했고 그 이미지는 worktree 자산을 `docker cp` + 재스탬프한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니다**. main 기반 이미지가 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).
+- **관측 정합**: 사전 Run 과 POST-DEPLOY Run 의 수치(1189→3 / 40→1148 / 2 / 2)와 상태줄 문구가 **전건 동일**했다. 즉 이번 결함의 수정은 자산 주입 경로가 아니라 정식 빌드 산출물에서도 성립한다.
+- **미검증으로 남긴 것**: 사전 Run 과 동일 — `_metaGraphPanToRelation`·hover-pan 직접 호출, GX 좌표 합성 클릭. 둘 다 동일 `_metaRenderedAncestorFor` 를 공유하며 시나리오 1·3 이 그 해소 결과를 라이브에서 단정한다.
+- Cross-ref: MODIFY CHG-20260728T163800-graph-catcluster-focus-postverify / test-runs.d/20260728T163800-graph-catcluster-focus-postdeploy.md / 선행 REV-20260728T160000-graph-catcluster-focus.
+
 ## REV-20260728T170000-graph-catcluster-polish-postverify [SKIPPED:non-policy-doc] — 스크롤 polish POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T162000, 비-정책 doc-only)
 - 대상 diff: test-runs.d fragment · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
 - **배포본에서 다시 본 이유**: pre-commit 검증은 격리 컨테이너(§13.2.9)에서 `docker cp` + 재스탬프한 이미지였다 — 빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니므로, main 기반 이미지가 같은 코드를 서빙하는지는 별개 사실이다.
