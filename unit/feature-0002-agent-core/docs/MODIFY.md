@@ -647,3 +647,42 @@ TASK-20260728T124500-llm-usage-target-scope. branch `ai/claude/feature-0002-llm-
 - **파일**: `modules/metadata_graph.py`, `tests/test_graph_cypher_volume.py`(신규 31건), `docs/{FUNCTION,TASK}.md`.
 - **위험등급**: Major(그래프 쓰기 경로 · 잘못되면 엣지 조용한 소실). **Rollback**: 커밋 revert — 스키마 변경 없음, `refs_sig` 속성은 잔존해도 무해(다음 sync 가 재작성).
 - **Cross-ref**: feature-0029 churn-e(anchor 캐시 원형 · B-4 규약) · ADR-016(ROUTINE_USES) · feature-0026 계측.
+
+## CHG-20260728T175400-cyvol-scope-prefetch-fix — cyvol 차수 선조회 cypher 조립 결함 수정 (Minor §12.3, 최적화 복구)
+
+`unit/feature-0002-agent-core/src/modules/metadata_graph.py` — cyvol 선조회(feature-0030 W2)의
+scope 술어를 **쿼리별로 패턴 뒤에** 붙이도록 조립 변경.
+
+- 종전: `_scope_pred`(` WHERE r.scope_key = '<scope>'`) 를 두 쿼리 모두 **노드 패턴 직후**에 고정
+  보간 → 차수 쿼리는 그 뒤에 관계 패턴이 이어져
+  `MATCH (r:Routine) WHERE r.scope_key = 'x'-[u:ROUTINE_USES]->() RETURN r.key, count(u)` 가 되고
+  PG(AGE)가 `syntax error at or near ":"` 로 거부. `scope_key is None` 경로만 유효했으므로
+  **모든 per-datasource sync** 의 차수 선조회가 도입 이래 항상 실패했다.
+- 수정: 서명 쿼리는 `MATCH (r:Routine){_sp} RETURN …`, 차수 쿼리는
+  `MATCH (r:Routine)-[u:ROUTINE_USES]->(){_sp} RETURN …` — openCypher 의 `WHERE` 는 패턴 전체 뒤에만
+  올 수 있다는 규칙을 코드 형태로 고정하고, 발견 경로·영향·재발 방지 근거를 주석에 남겼다.
+- **정합성 영향 없음(종전도 fail-safe)**: 실패 시 빈 차수 dict → `_routine_edges_intact` 가 차수
+  0 ≠ 기대치로 판정해 전량 재작성으로 강등됐다. 복구되는 것은 ① 스코프 sync 의 cyvol W2 감축
+  (실측 전체의 32%) ② B3 재조정 안전망의 차수 판정 ③ 매 스코프 sync 1회씩 돌던 불필요한
+  `rollback()` + `anchor_cache_reset()`.
+
+`unit/feature-0002-agent-core/tests/test_graph_cypher_volume.py` — 회귀 잠금 3건 + 하네스 보강:
+- `_assert_cypher_parses` 를 `_SyncCur.execute` 에 배선 — mock 이 **PG 대신** malformed cypher 를
+  거부한다(한 절의 `WHERE` 이후 `RETURN` 전 구간에 `-[` 가 있으면 문법 오류). 이 가드 없이는
+  문자열 단정만 가능해 "그 문장이 라이브에서 죽는다"를 행위로 표현할 수 없었다.
+- `test_scoped_degree_prefetch_cypher_is_wellformed` — 구조 단정(`'ds-x'-[` 부재 + `WHERE` 가
+  관계 패턴보다 뒤).
+- `test_scoped_prefetch_result_actually_skips_rewrite` — end-to-end: 스코프 경로에서도 선조회가
+  소비돼 `DELETE u` 가 없고 rollback 이 0.
+- `test_unscoped_prefetch_stays_wellformed` — 무-scope 경로 무회귀.
+
+검증: 신규 3건을 **수정 전에 먼저 실행해 2 FAIL 재현**(기존 32건은 전부 통과 — 기존 스위트가 이
+결함을 구조적으로 놓쳤음이 실증) → 수정 후 대상 3파일 **86 PASS** · feature-0002 전체 스위트를
+main 기준선과 동일 하네스로 대조해 **실패 집합 차집합 양방향 0**(base 32 / fix 32, 전부 마운트
+레이아웃 artifact) · **라이브 PG/AGE ground-truth** 로 수정 전 형태의 `syntax error at or near ":"`
+재현 + 수정 후 형태의 실제 행 반환 확인. UI 표면 변경 0 · alembic 마이그 0 · RBAC/엔드포인트 무변경.
+
+Cross-ref: REVIEW REV-20260728T175400-cyvol-scope-prefetch-fix ·
+`docs/test-runs.d/20260728T175400-cyvol-scope-prefetch-fix.md` ·
+선행 CHG-20260728T163000-graph-cypher-volume(도입 cycle) ·
+발견 경로 `unit/feature-0016-metadata-graph/docs/REPORT.md` 의 routine-column-edges POST-DEPLOY 절.
