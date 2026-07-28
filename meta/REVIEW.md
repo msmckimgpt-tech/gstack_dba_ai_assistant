@@ -920,3 +920,70 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - 조치: 8건 전부 코드 수정. 테스트를 `sync_graph` end-to-end harness 로 교체(11 → **31건**), 속성명 커플링을 정규식 동일성으로 잠금, 롤백 행의 캐시 오염을 end-to-end 로 검증. **역검증 16종 되돌림 → 생존 0**. feature-0016 회귀 복구 확인(HEAD 동일 1건만 잔존, 기존).
 - 미채택/보류: `_props_set` 화이트리스트 우회(`refs_sig` 는 UI/LLM 비노출 내부 속성 — `_node_from_props` 가 고정 키만 선택함을 패널이 확인) 유지. `_cq` 제어문자 라운드트립 손실은 pre-existing(보수적 방향: 영구 재작성).
 - Timestamp: 2026-07-28T16:30:00Z
+
+## REV-20260728T190300-META-0048-resume-probe-anchored-prime [SKIPPED:라이브 전수 회귀로 대체 — 본 세션 사용자 지시로 subagent 미사용]
+- Related Change: personas submodule gitlink a4c1221→153844e (`/_template:resume` 정본 개정 +
+  `resume-probe.py` 신설) + `.codex/commands/_template/resume.md` 미러 동기화. pure-meta
+  changeset (§18.4).
+- 착수 근거 (사용자 요청): "`/_template:resume` 로 root ↔ claude-corp 계정 간 대화를 이어받는
+  작업을 해 왔는데, 잘 작동하는 것처럼 느껴지지만 확신하지 않는다. 놓친 성능적·문맥적 이슈로
+  잘못 작동하거나 병목이 되는 부분을 검토해 개선해 달라."
+- 진단 방법: 이 프로젝트의 **실제 resume 호출 세션 58건을 전수 계량**(`<command-name>` 이
+  `_template:resume` 인 세션의 호출 이후 구간 — tool 시퀀스·tool_result 바이트·토큰·사용자
+  개입 turn·빈 결과·권한 오류). 스킬 텍스트를 읽고 추론한 것이 아니라 로그 실측이다.
+- 적발 6종 (실측치):
+  - **D1 Phase 2 전량 prime 이 물리적으로 불가능** — AGENTS.md 3,884행/255KB/~64K tok vs Read
+    상한 25K tok (적재 실패 6회). 58 세션 중 **4개만** chunk 로 전량 강행(최대 202KB;
+    cache_read 125M~351M tok), **54개는 조용히 생략**. 전량 요구가 준수되지 않으면서 정책
+    미도달과 컨텍스트 폭발을 동시에 유발 — 같은 스킬이 세션마다 정반대로 동작.
+  - **D2 조기 종료** — 맨 `continue` 37회/17세션(29%, 최다 8회), "제가 의도하지 않은 중단
+    입니다" 2회, 동일 세션 내 resume 재호출 13회(최다 5회, 사용자가 잔여 체인을 손으로 나열).
+  - **D3 arg 실사용 형태가 스펙에 없음** — title-only 44 / **title+snippet 11(19%)** /
+    orig-prompt 2 / empty 1. Step 0 이 통짜 정규화만 하여 스니펫이 제목 토큰에 섞임.
+    orig-prompt 1건은 실제 오식별 → 사용자 정정("다른 세션에서 진행되던 내용이 잘못
+    전달되었습니다").
+  - **D4 기계적 단계 재발명** — inline `python3 -c` heredoc **504회**(세션당 8.7), 세션로그
+    Bash 호출 ~470회/997KB, 첫 사용자 대면 출력까지 최대 47 tool·7.5분.
+  - **D5 조용한 빈 결과 384회**(세션당 6.6) — sudo 누락·grep miss·파싱 실패가 미구분.
+  - **D6 cross-account 소유권 정책 미도달** — §13.2.10 이 존재하나 resume.md 미참조 + D1 로
+    대부분 세션이 도달 못함 → 사용자가 "sudo 와 함께 진행해주세요" 2회 개입.
+- 조치: ① Phase 2 를 **anchored prime** 으로 교체 — 집행 앵커(§16.3·§16.5·§13.2.4/.5/.7/.10·
+  §18.3/.4/.8·§12.2/.3·§15.4.1)만 targeted read (실측 36,872B/~9.2K tok = **6.9배 절감**),
+  Gate 를 "전량 읽었나"에서 "앵커 조문을 본문으로 확보했나"로 재정의. ② Phase 1·3 을
+  `resume-probe.py` 위임(digest 재계산 금지). ③ arg 2-part 분해(title/anchors/directives) +
+  앵커 조각화 + origin tie-break. ④ 6.3 turn 경계 무중단 연속 계약(하드스톱·checkpoint 명시).
+  ⑤ 6.0-A cross-account 절 신설. ⑥ Codex shim 동기화.
+- 검증 (라이브 실측 — subagent 패널 대신 **재현 가능한 전수 회귀**):
+  - **R1 arg 전수 회귀**: 과거 57개 호출 arg 를 probe 에 재투입, ground truth = 그 세션이 조사
+    구간에서 실제로 열어 본 원본 세션 UUID. **정확도 9/10 → 27/28(96.4%)** · `none`(미발견)
+    **4 → 0** · `ambiguous` **42 → 24** · 확정(single) **9 → 28**. 남은 MISMATCH 1건은
+    `feature-0011 P5a Step 4` 처럼 동일 feature 에 세션이 여럿인 본질적 모호 케이스로,
+    `single-probable` 의 교차검증 의무가 잡는 지점.
+  - **R2 과거 실패 사례 3종 재현**: title-only 요약형 → `single-probable` 정답 / title+anchor →
+    `single` 정답(앵커 literal hit) / **과거 오식별(01a5f312)** → `single` 로 정답 `1cd3128f`
+    확정 + 잔여 10건·중단 원인 복원. 오식별의 실제 구조는 "같은 텍스트를 본문에 인용한 세션과
+    그 텍스트로 시작한 세션이 동점" 이었고 `origin` 위치 판정이 이를 가름(3.5 vs 2.0).
+  - **R3 앵커 매칭 취약점 실측·해소**: 사용자가 옮긴 스니펫은 원문 개행이 공백으로 병합되고
+    꼬리가 축약된다 — 143자 통짜 grep MISS / 앞 90자 HIT 로 절단 지점을 특정, 연속공백·문장
+    부호 경계 조각화로 해소.
+  - **R4 성능**: 283 세션 전량 스캔 `--list` **1.35초**, `--resolve` 1.0~14초(앵커 조각 수에
+    비례). tracker 판정을 전량 grep → head 검사로 이동해 파일당 최대 28MB grep 제거.
+  - **R5 스모크**: 3모드 rc 정상(list 0 / resolve 0 / session 0), 미발견 rc=4, AGENTS.md 부재
+    rc=2 fail-loud, `--json` 파싱 OK. **no-arg read-only 부작용 0건**(probe 전후 git status 동일).
+  - **R6 정합성**: `py_compile` PASS, 개정으로 폐기된 개념(`resume_tracker_set`/`self_session`/
+    `Phase 3A Step 3`) 참조 잔재 **0건**.
+- Panel skip 근거 (정직한 경위): 본 세션은 사용자가 "AgentTool 을 요청 없이 호출하지 말라"고
+  명시한 컨텍스트라 §18.8 subagent 패널을 돌리지 않았다. 대신 위 R1~R6 을 실행했는데, 이 변경의
+  주장(=대상 해소 정확도·prime 비용·조기 종료)은 **라이브 로그 재투입으로 직접 반증 가능한
+  종류**이므로 리뷰어 의견보다 강한 근거다. 다만 패널이 볼 수 있었을 축(스킬 텍스트의 지시
+  충돌·타 프로젝트 이식성)은 미검증으로 남는다 — 아래 Open Questions.
+- Open Questions:
+  - `entry.md` 의 Phase 2 Bootstrap Read(15 rows, "본문 전체 누적")는 **동일한 D1 결함을 그대로
+    보유**한다. resume 는 위임 문구를 self-contained anchored prime 으로 바꿔 끊었으나, entry
+    자체는 이번 범위 밖(사용자 요청은 resume). 별도 cycle 필요.
+  - `ambiguous` 24건(42%)은 여전히 택일 질문을 유발한다. 근본 레버는 사용자가 중단 지점 한 줄을
+    함께 주는 것(앵커 동반 시 8/8 정확)이므로 no-arg 목록 출력에 그 안내를 넣었다 — 실사용에서
+    안내가 행동을 바꾸는지는 다음 사용 주기에 관찰.
+  - 소비자 fan-out: 본 커밋은 **이 프로젝트 pointer 만** 갱신한다. 다른 소비자 3개는 각자
+    `git submodule update --remote` 시 흡수(§13.2.4 — F0 외).
+- Timestamp: 2026-07-28T19:03:00+09:00
