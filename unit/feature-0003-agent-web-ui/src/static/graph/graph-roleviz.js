@@ -271,45 +271,87 @@ function _metaComboStyleFor(isTerms) {
     fillOpacity: 0.045, stroke: isTerms ? "#d3b06a" : "#aab3c5", lineWidth: 1, lineDash: [6, 4], collapsedMarker: false,
     zIndex: _METZ.COMBO };   // graph-zorder(§52): 클러스터 배경 = 최하층 — 드래그 frontElement 잔존 승격도 rebuild 재-bake 로 복원
 }
-function _metaEdgeStyleFor(status, crossDs) {
+// ── graph-edge-flow(§83): 관계선 렌더 어휘 ────────────────────────────────────
+// 사용자 요구 3축을 하나의 스타일 어휘로 통합한다.
+//   ① 방향성 곡선 — 곡률은 진행방향 왼쪽 고정이라 A→B 와 B→A 가 반대편 호로 갈라진다. 같은 두
+//      객체 사이의 읽기·쓰기가 각각 자기 호를 가져 "관계선 2개"가 자연히 성립(Cytoscape.js 평행엣지
+//      자동 bezier / Gephi 수직 컨트롤포인트 관례).
+//   ② 가늘고 반투명 — 개별 선은 옅지만 **겹칠수록 alpha 가 누적**돼 허브 노드 주변이 스스로 진해진다
+//      (edge density 를 투명도로 인코딩하는 정보시각화 표준 기법).
+//   ③ 다발 볼륨 — 상위 부모(스키마 카드)나 집계 관계선이 품은 관계 수를 가닥 수로 표현.
+// 곡률은 낮게(0.13~0.16)만 준다 — 강한 edge bundling 은 경로 추적 정확도·속도를 떨어뜨린다는 사용자
+// 연구 결과가 있어, 군집 효과만 취하고 추적성은 보존하는 지점을 택했다.
+const _META_EDGE_CURVE = 0.15;       // 곡률 계수(직선 길이 대비 중점 편차 비율)
+const _META_EDGE_CURVE_MAX = 44;     // 편차 상한(model px) — 장거리 선이 과도하게 부풀지 않게
+const _META_EDGE_CURVE_MIN = 5;      // 편차 하한 — 근접 노드 왕복선도 반드시 갈라지게
+// 관계 수 → 다발 가닥 수(로그 스케일). 1~3=1가닥, 4~7=2, 8~15=3, 16+=4.
+function _metaEdgeStrands(count) {
+  const n = Math.max(1, Number(count) || 1);
+  return Math.max(1, Math.min(4, Math.floor(Math.log2(n))));
+}
+// 곡선·다발 키를 스타일에 주입(공통 축 1곳 — 세 스타일 함수가 값을 어긋나게 들고 가지 않도록).
+function _metaEdgeFlow(s, count) {
+  s.curve = _META_EDGE_CURVE; s.curveMax = _META_EDGE_CURVE_MAX; s.curveMin = _META_EDGE_CURVE_MIN;
+  const n = count == null ? 1 : _metaEdgeStrands(count);
+  if (n > 1) { s.strands = n; s.strandGap = 3.2; }
+  return s;
+}
+function _metaEdgeStyleFor(status, crossDs, count) {
   // crossds-rel(ADR-019): 교차DB 관계는 상태 무관 별도 클래스 — 마젠타 점선(same-ds candidate 골드 점선과 구분).
   //   프로브 검증 불가라 항상 추정성. trusted 승격돼도 교차DB 임을 시각 유지.
   // graph-zorder(§52, 패널 design MINOR): EDGE 층 내부 tie 를 의미로 분해 — 신뢰 강도가 강한 엣지가
   //   교차점에서 위에 그려지게 소수 오프셋(trusted +0.2 > candidate/교차DB +0.1 > 기본 +0). @antv/g 는
   //   수치 정렬이라 유효. 층 상한(COLUMN=3) 미만 유지.
-  if (crossDs) return { stroke: "#a855c7", lineWidth: 1.8, lineDash: [2, 4], endArrow: true, zIndex: _METZ.EDGE + 0.1 };
-  const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#cbd2db"),
-    lineWidth: status === "trusted" ? 3 : (status === "candidate" ? 1.8 : 1.4), endArrow: true,
+  // graph-edge-flow: 굵기를 절반 이하로 낮추고 strokeOpacity 로 밀도 누적을 켠다. 기본(무상태) 선은
+  //   색을 한 단계 진하게(#cbd2db→#94a3b8) 잡아 alpha 0.32 에서도 단독 가시성이 유지되게 했다 —
+  //   옅은 색 × 낮은 alpha 조합은 겹치기 전까지 아예 안 보이는 구간이 생긴다.
+  if (crossDs) return _metaEdgeFlow({ stroke: "#a855c7", lineWidth: 1.1, strokeOpacity: 0.52, lineDash: [2, 4], endArrow: true, zIndex: _METZ.EDGE + 0.1 }, count);
+  const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#94a3b8"),
+    lineWidth: status === "trusted" ? 1.5 : (status === "candidate" ? 1.05 : 0.85),
+    strokeOpacity: status === "trusted" ? 0.62 : (status === "candidate" ? 0.5 : 0.32),
+    endArrow: true,
     zIndex: _METZ.EDGE + (status === "trusted" ? 0.2 : (status === "candidate" ? 0.1 : 0)) };
   if (status === "candidate") s.lineDash = [6, 4];   // 실선은 lineDash 키 생략(false 금지 — G6 크래시, BLUEPRINT §3)
-  return s;
+  return _metaEdgeFlow(s, count);
 }
 // graph-funcproc(ADR-016): 함수·프로시저 → 테이블 사용 엣지(ROUTINE_USES) — 보라 잔점선(추정 점선과 구분).
 //   graph-dataflow: AGE 모델은 항상 Routine(source)→Table(target) 방향이지만, 화살표는 **데이터 흐름**을
 //   따른다 — 쓰기(write)=루틴이 테이블로 데이터를 보냄=루틴→테이블(endArrow), 읽기(read)=테이블에서
 //   데이터를 읽어옴=테이블→루틴(startArrow, 출발점=루틴 쪽에 화살촉). read·relation_type 미상은 startArrow
 //   (테이블→루틴) — 상세 패널 텍스트 라벨 kindKo 기본값 '읽기'와 정합(모순 방지). false 키 미설정(G6 arrow 안전).
-function _metaRoutineEdgeStyle(relationType, crossDs) {
+function _metaRoutineEdgeStyle(relationType, crossDs, count) {
   // §57(사용자 검증 지적 ②): 크로스-DB 루틴 참조는 로컬 사용선과 색으로 구분 — REFERENCES 의
   //   교차DB 마젠타(ADR-019)와 동일 색상 어휘를 쓰되 ROUTINE_USES 고유 잔점선([2,3])·화살표 방향은
   //   유지(관계 종류는 dash·방향, 교차 여부는 색 — 직교 인코딩). zIndex 는 _metaEdgeZFor 의
   //   ROUTINE_USES 분기(_METZ.EDGE 고정)와 1:1 이어야 하므로 변경하지 않는다.
+  // graph-edge-flow: 읽기와 쓰기는 이제 **각각 자기 곡선**을 갖는다. 곡률 부호가 진행방향에 매여
+  //   있으므로, 데이터 흐름 방향이 반대인 두 관계(테이블→루틴 읽기 / 루틴→테이블 쓰기)는 같은 두
+  //   객체를 잇더라도 서로 반대편 호로 갈라진다 — 겹쳐 그려 하나로 보이던 종전 동작의 해소.
   const s = { stroke: crossDs ? "#a855c7" : _META_GRAPH_COLOR.Routine,
-    lineWidth: crossDs ? 1.8 : 1.5, lineDash: [2, 3], zIndex: _METZ.EDGE };
+    lineWidth: crossDs ? 1.05 : 0.9, strokeOpacity: crossDs ? 0.5 : 0.42,
+    lineDash: [2, 3], zIndex: _METZ.EDGE };
   if (relationType === "write") s.endArrow = true;    // 데이터: 루틴 → 테이블(쓰기)
   else s.startArrow = true;                            // read·미상: 테이블 → 루틴(상세 패널 kindKo 기본 '읽기'와 정합)
-  return s;
+  return _metaEdgeFlow(s, count);
 }
 // §57(사용자 요구 ①): 접힌 스키마 카드 간 집계 연결선(SCHEMA_REF) — 관계 의미(신뢰/추정/루틴)와
 //   구분되는 중립 슬레이트 실선. 굵기는 관계 수 로그 스케일, count 라벨로 규모 노출. 무향 집계라
 //   화살표 없음(양 키 생략 — false 금지, BLUEPRINT §3).
 function _metaSchemaRefEdgeStyle(count) {
   const n = Math.max(1, Number(count) || 1);
-  return { stroke: "#8fa3bf", lineWidth: 1 + Math.min(2.4, Math.log2(n + 1) * 0.55),
-    strokeOpacity: 0.75, zIndex: _METZ.EDGE,
+  // graph-edge-flow(요구 ③): 접힌 부모(스키마 카드) 사이 집계선은 **굵은 한 줄이 아니라 얇은 다발**로
+  //   그린다 — 부모 내부 객체들이 상대 부모와 맺은 관계 수가 많을수록 가닥이 늘어 볼륨이 붙고, 가닥끼리
+  //   겹치는 구간(카드 접점 부근)은 alpha 가 누적돼 저절로 진해진다. 굵기 하나로 인코딩하던 종전 방식은
+  //   관계 100개와 1000개가 상한(2.4px)에서 구별되지 않았다.
+  const strands = _metaEdgeStrands(n);
+  const s = { stroke: "#8fa3bf", lineWidth: 0.85 + Math.min(0.7, Math.log2(n + 1) * 0.16),
+    strokeOpacity: 0.3 + Math.min(0.22, Math.log2(n + 1) * 0.05), zIndex: _METZ.EDGE,
     labelText: n > 1 ? String(n) : "", labelFontSize: 9, labelFill: "#64748b",
     labelBackground: true, labelBackgroundFill: "#f6f8fb", labelBackgroundOpacity: 0.85,
     labelPlacement: "center" };
+  _metaEdgeFlow(s, n);
+  if (strands > 1) s.strandGap = 2.6 + Math.min(1.6, Math.log2(n) * 0.25);   // 가닥 수가 늘수록 다발도 살짝 벌어짐
+  return s;
 }
 function _metaNodeStates(key) {
   const st = [];
@@ -408,4 +450,4 @@ function _metaFocusAdjacency(selKey) {
 }
 
 
-export { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaNodeStates, _metaRoleChipHTML, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle };
+export { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeStrands, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaNodeStates, _metaRoleChipHTML, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle };

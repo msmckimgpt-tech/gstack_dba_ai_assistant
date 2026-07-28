@@ -16,6 +16,10 @@
 
 "use strict";
 
+// graph-edge-flow(§83): 단일 가닥 엣지의 오프셋 배열 — 매 페인트마다 [0] 을 새로 할당하지 않도록
+//   모듈 상수로 고정한다(대다수 엣지가 단일 가닥 = 최다 호출 경로의 GC 압력 제거). 불변 사용.
+const EDGE_NO_STRAND = [0];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 순수 로직 (엔진 무관) — node vm 테스트 대상
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,12 +140,80 @@ export const PixiAdapterPure = {
     return best;
   },
 
+  // ── graph-edge-flow(§83): 방향성 곡선 관계선 ──────────────────────────────
+  // 곡률 오프셋은 **진행방향(a→b) 기준 항상 같은 쪽(왼쪽 수직)**. 따라서 A→B 와 B→A 가 자동으로
+  //   반대편 호를 그린다 — 같은 두 객체 사이의 읽기/쓰기가 겹치지 않고 렌즈 모양으로 갈라진다
+  //   (Cytoscape.js 평행엣지 자동 bezier·Gephi "수직 컨트롤포인트" 관례와 동일 어휘).
+  //   반환: len(직선 길이) · c(컨트롤 포인트) · off(중점 편차, 부호=휘는 쪽) · p*(왼쪽 단위 수직).
+  //   quadratic Q(0.5) = (a + 2c + b)/4 이므로 중점 편차를 off 로 만들려면 컨트롤을 2·off 로 민다.
+  edgeArc(a, b, k, maxOff, minOff) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+    const px = dy / len, py = -dx / len;   // 진행방향 왼쪽(화면 y-down 좌표계)
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    if (!k) return { len, cx: mx, cy: my, off: 0, px, py };
+    const sgn = k < 0 ? -1 : 1;
+    const off = sgn * Math.max(minOff == null ? 5 : minOff, Math.min(maxOff == null ? 44 : maxOff, len * Math.abs(k)));
+    return { len, cx: mx + px * off * 2, cy: my + py * off * 2, off, px, py };
+  },
+  // quadratic bezier 샘플 폴리라인 — 대시 분할·히트테스트 근사 전용(실선은 Pixi 네이티브 tessellation).
+  quadPoints(a, c, b, segs) {
+    const n = Math.max(1, segs | 0), pts = new Array(n + 1);
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, u = 1 - t, w0 = u * u, w1 = 2 * u * t, w2 = t * t;
+      pts[i] = [w0 * a[0] + w1 * c[0] + w2 * b[0], w0 * a[1] + w1 * c[1] + w2 * b[1]];
+    }
+    return pts;
+  },
+  // adaptive 세그먼트 수 — **화면 픽셀** 길이 기준이라 줌아웃 시 자동으로 줄어든다(공격적 최적화).
+  //   lowFi=드래그 중(rAF 코얼레싱 프레임) → 상한·해상도 절반. 실선 경로는 애초에 호출하지 않는다.
+  curveSegs(len, zoom, lowFi) {
+    const px = len * (zoom || 1);
+    const n = Math.ceil(px / (lowFi ? 34 : 17));
+    return Math.max(lowFi ? 3 : 5, Math.min(lowFi ? 10 : 22, n));
+  },
+  // 폴리라인 전체를 하나의 연속 길이로 보고 대시 위상을 이어붙인다 — 구간마다 위상을 리셋하면
+  //   곡선 샘플 경계마다 대시가 뭉쳐 "점선이 굵어 보이는" 아티팩트가 생긴다. 반환 형식은 dashSegments 와 동일.
+  dashPolyline(pts, dash) {
+    const segs = []; let i = 0, on = true, rem = dash[0];
+    for (let s = 0; s < pts.length - 1; s++) {
+      const p = pts[s], q = pts[s + 1];
+      const dx = q[0] - p[0], dy = q[1] - p[1], L = Math.hypot(dx, dy);
+      if (!L) continue;
+      const ux = dx / L, uy = dy / L; let t = 0;
+      while (t < L) {
+        const step = Math.min(rem, L - t);
+        if (on) segs.push([p[0] + ux * t, p[1] + uy * t, p[0] + ux * (t + step), p[1] + uy * (t + step)]);
+        t += step; rem -= step;
+        if (rem <= 1e-9) { i++; rem = dash[i % dash.length]; on = !on; }
+      }
+    }
+    return segs;
+  },
+  // 스트랜드(다발) 가닥별 오프셋 배율 — 상위 부모가 품은 관계 수의 '볼륨' 표현. 중앙 대칭 분포.
+  strandOffsets(n, spread) {
+    const c = Math.max(1, Math.min(6, n | 0)), sp = spread == null ? 3.2 : spread, out = new Array(c);
+    for (let i = 0; i < c; i++) out[i] = (i - (c - 1) / 2) * sp;
+    return out;
+  },
+
   // edge 히트: 점-선분 거리 ≤ tol(model px)인 최근접 엣지(우클릭 컨텍스트 메뉴용, gap #12).
-  hitTestEdge(mx, my, edges, posOf, tol) {
+  //   graph-edge-flow: 곡선 엣지는 저해상도(lowFi) 샘플 폴리라인으로 근사한다 — 직선 거리로 판정하면
+  //   호의 배(중앙부 최대 off px)만큼 어긋나 "보이는 선을 눌렀는데 안 잡히는" 괴리가 생긴다.
+  hitTestEdge(mx, my, edges, posOf, tol, zoom) {
     const t = tol || 6; let best = null, bestD = t;
     for (const e of edges) {
       const a = posOf(e.source), b = posOf(e.target); if (!a || !b) continue;
-      const d = this._segDist(mx, my, a[0], a[1], b[0], b[1]);
+      const st = e.style || {}, k = st.curve || 0;
+      let d;
+      if (k) {
+        const arc = this.edgeArc(a, b, k, st.curveMax, st.curveMin);
+        const pts = this.quadPoints(a, [arc.cx, arc.cy], b, this.curveSegs(arc.len, zoom || 1, true));
+        d = Infinity;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const dd = this._segDist(mx, my, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+          if (dd < d) d = dd;
+        }
+      } else d = this._segDist(mx, my, a[0], a[1], b[0], b[1]);
       if (d <= bestD) { bestD = d; best = e; }
     }
     return best;
@@ -489,7 +561,8 @@ export class PixiGraphAdapter {
     const cb = this._hitGrid ? PixiAdapterPure.hitTest(mx, my, this._hitGrid, this._built.nodes, (nd) => this._isCatBg(nd)) : null;
     return cb || null;
   }
-  _pickEdge(mx, my) { const posOf = (id) => { const p = this.getElementPosition(id); return p; }; return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom)); }
+  // graph-edge-flow: zoom 을 넘겨 곡선 근사 해상도를 화면 기준으로 맞춘다(줌아웃 시 샘플 절약).
+  _pickEdge(mx, my) { const posOf = (id) => { const p = this.getElementPosition(id); return p; }; return PixiAdapterPure.hitTestEdge(mx, my, this._built.edges || [], posOf, 6 / Math.max(0.2, this._cam.zoom), this._cam.zoom); }
   _isCombo(id) { return this._built.combos.some(c => c.id === id); }
   // 이슈#3: 미니맵 상호작용 — 스크린(canvas-relative) 점이 미니맵 박스 안인가.
   _inMinimap(sx, sy) {
@@ -585,6 +658,9 @@ export class PixiGraphAdapter {
     if (!raf) { this._refreshIncidentEdges(m instanceof Set ? m : new Set(m)); this._render(); return; }
     if (!this._pendingMoved) this._pendingMoved = new Set();
     for (const id of m) this._pendingMoved.add(id);
+    // graph-edge-flow: 드래그 중 저품질(1가닥·저해상도)로 그린 엣지를 dragend 에서 되돌리기 위해
+    //   대상 id 를 따로 누적한다 — flush 시점의 _pendingMoved 는 마지막 프레임분만이라 불충분.
+    if (this._lowFi) { if (!this._lowFiTouched) this._lowFiTouched = new Set(); for (const id of m) this._lowFiTouched.add(id); }
     if (this._pendingRaf) return;
     this._pendingRaf = raf(() => {
       this._pendingRaf = 0;
@@ -593,10 +669,17 @@ export class PixiGraphAdapter {
       this._render();
     });
   }
+  // graph-edge-flow: lowFi 해제 후 flush — 드래그 동안 저품질로 그린 엣지 전량을 고품질로 되돌린다.
+  //   (_refreshIncidentEdges 가 _objSig 를 갱신하므로 여기서 복원하지 않으면 저품질 도형이 다음 full
+  //   draw 에서 '서명 동일 = 재사용' 으로 그대로 살아남는다.)
   _flushEdgeRefresh() {
     if (this._pendingRaf) { try { cancelAnimationFrame(this._pendingRaf); } catch (_) {} this._pendingRaf = 0; }
     const ids = this._pendingMoved; this._pendingMoved = null;
-    if (ids && ids.size) { this._refreshIncidentEdges(ids); this._render(); }
+    const wasLow = this._lowFi; this._lowFi = false;
+    const touched = this._lowFiTouched; this._lowFiTouched = null;
+    let target = ids;
+    if (wasLow && touched && touched.size) { if (ids) for (const id of ids) touched.add(id); target = touched; }
+    if (target && target.size) { this._refreshIncidentEdges(target); this._render(); }
   }
   // 드래그 이벤트 합성 — payload 에 target.id + buttons/button/targetType(_metaEventButtons·enable predicate 용).
   _emitDrag(phase, hit, e, s, mx, my) {
@@ -607,6 +690,8 @@ export class PixiGraphAdapter {
     this._emit(kind + ":" + phase, pl);
     // m4: 드래그 중엔 미니맵 뷰포트 사각형만 갱신(O(1)) — 콘텐츠 전량 재그림(O(N))은 dragend 로 지연.
     //   graph-edge-drag-perf: dragend 는 rAF 코얼레싱 중이던 엣지 재그림을 즉시 flush(최종 위치 동기 반영).
+    // graph-edge-flow: 드래그 구간만 저품질(1가닥·저해상도 대시) — dragend 의 flush 가 고품질 복원.
+    if (phase === "dragstart") { this._lowFi = true; this._lowFiTouched = null; }
     if (phase === "dragend") { this._flushEdgeRefresh(); this._renderMinimap(); } else if (phase === "drag") this._renderMinimapViewport();
   }
   _payload(hit, s, mx, my, e) {
@@ -782,27 +867,60 @@ export class PixiGraphAdapter {
   // graph-edge-drag-perf: 주어진 Graphics 에 엣지 기하(선/대시/화살표/라벨)를 in-place 페인트. 신규(_drawEdge)와
   //   드래그 재사용(_refreshIncidentEdges) 공용. 재사용 시 g.clear()+라벨 자식 destroy 로 이전 상태를 지운다
   //   (라벨 없는 대다수 엣지는 children 비어 오버헤드 0). 신규 Graphics 는 clear/자식정리가 no-op → 종전 동작 동일.
+  //   graph-edge-flow(§83): 직선 → 방향성 곡선. 세 가지가 동시에 성립한다.
+  //   ① 곡률은 진행방향 왼쪽 고정 → 같은 두 객체의 읽기(테이블→루틴)와 쓰기(루틴→테이블)가 서로
+  //      반대편 호로 갈라져 겹치지 않는다(관계선 2개가 자연히 분리 — 사용자 요구 ①).
+  //   ② 선은 가늘고 반투명(style.strokeOpacity)이라 **겹칠수록 alpha 가 누적**돼 허브 노드 주변이
+  //      점점 진해진다(요구 ②). 가닥마다 stroke() 를 개별 호출하는 이유도 이것 — 한 번에 몰아
+  //      stroke 하면 자기 교차 구간이 균일해져 누적 대비가 사라진다.
+  //   ③ style.strands(가닥 수)로 상위 부모가 품은 관계 수를 '다발 볼륨'으로 표현한다(요구 ③).
+  //   최적화: 실선은 Pixi 네이티브 quadraticCurveTo(내부 tessellation) — 샘플링 0. 대시만 화면
+  //   픽셀 기준 adaptive 샘플. 드래그 중(_lowFi)엔 1가닥·저해상도로 강등하고 dragend 에서 복원한다.
   _paintEdge(g, e, a, b) {
     const P = this.P, s = e.style || {};
     g.clear();
     if (g.children && g.children.length) { for (const ch of g.removeChildren()) { try { ch.destroy(); } catch (_) {} } }
     g.zIndex = (s.zIndex != null ? s.zIndex : 2);
     const alpha = s.strokeOpacity == null ? 1 : s.strokeOpacity;
-    if (s.lineDash) { for (const seg of PixiAdapterPure.dashSegments(a[0], a[1], b[0], b[1], s.lineDash)) g.moveTo(seg[0], seg[1]).lineTo(seg[2], seg[3]);
-      g.stroke({ color: s.stroke || "#cbd2db", width: s.lineWidth || 1.4, alpha }); }
-    else { g.moveTo(a[0], a[1]).lineTo(b[0], b[1]).stroke({ color: s.stroke || "#cbd2db", width: s.lineWidth || 1.4, alpha }); }
-    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
-    if (s.endArrow) this._arrow(g, b[0], b[1], ang, s.stroke, alpha);
-    if (s.startArrow) this._arrow(g, a[0], a[1], ang + Math.PI, s.stroke, alpha);
-    if (s.labelText) { const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    const color = s.stroke || "#cbd2db", lw = s.lineWidth || 1.4;
+    const lowFi = !!this._lowFi;
+    const zoom = (this._cam && this._cam.zoom) || 1;
+    const arc = PixiAdapterPure.edgeArc(a, b, s.curve || 0, s.curveMax, s.curveMin);
+    const nStrand = lowFi ? 1 : Math.max(1, Math.min(6, (s.strands | 0) || 1));
+    const offs = nStrand > 1 ? PixiAdapterPure.strandOffsets(nStrand, s.strandGap || 3.2) : EDGE_NO_STRAND;
+    const segs = (arc.off || nStrand > 1) && s.lineDash ? PixiAdapterPure.curveSegs(arc.len, zoom, lowFi) : 0;
+    let tipAng = Math.atan2(b[1] - a[1], b[0] - a[0]), tailAng = tipAng + Math.PI;
+    for (let i = 0; i < offs.length; i++) {
+      const o = offs[i];
+      // 가닥 편차는 컨트롤 포인트에 크게(다발이 벌어짐), 끝점에는 작게(노드에서 수렴) 준다.
+      const cx = arc.cx + arc.px * o * 2, cy = arc.cy + arc.py * o * 2;
+      const sa = o ? [a[0] + arc.px * o * 0.35, a[1] + arc.py * o * 0.35] : a;
+      const sb = o ? [b[0] + arc.px * o * 0.35, b[1] + arc.py * o * 0.35] : b;
+      const curved = !!(arc.off || o);
+      if (s.lineDash) {
+        const pts = curved ? PixiAdapterPure.quadPoints(sa, [cx, cy], sb, segs) : [sa, sb];
+        for (const seg of PixiAdapterPure.dashPolyline(pts, s.lineDash)) g.moveTo(seg[0], seg[1]).lineTo(seg[2], seg[3]);
+      } else if (curved) g.moveTo(sa[0], sa[1]).quadraticCurveTo(cx, cy, sb[0], sb[1]);
+      else g.moveTo(sa[0], sa[1]).lineTo(sb[0], sb[1]);
+      g.stroke({ color, width: lw, alpha });   // 가닥별 개별 stroke → 겹침 구간 alpha 누적(밀도=명시성)
+      if (i === 0 && curved) { tipAng = Math.atan2(sb[1] - cy, sb[0] - cx); tailAng = Math.atan2(sa[1] - cy, sa[0] - cx); }
+    }
+    // 화살촉은 곡선 **끝 접선**을 따른다(직선 각도로 그리면 호와 어긋나 꺾여 보인다). 선이 얇아진
+    //   만큼 촉도 작게(선 굵기 연동), 대신 alpha 는 선보다 올려 방향 가독성을 유지한다.
+    const headA = Math.min(1, alpha * 1.6), headSz = Math.max(4.5, Math.min(9, 3.6 + lw * 1.9));
+    if (s.endArrow) this._arrow(g, b[0], b[1], tipAng, color, headA, headSz);
+    if (s.startArrow) this._arrow(g, a[0], a[1], tailAng, color, headA, headSz);
+    if (s.labelText) {
+      // 라벨은 곡선 중점 Q(0.5) = (a + 2c + b)/4 — 직선 중점에 두면 호에서 떠 보인다.
+      const mx = (a[0] + 2 * arc.cx + b[0]) / 4, my = (a[1] + 2 * arc.cy + b[1]) / 4;
       if (s.labelBackground) { const bg = new P.Graphics(); const tw = String(s.labelText).length * (s.labelFontSize || 9) * 0.6;
         bg.roundRect(mx - tw / 2 - 3, my - 7, tw + 6, 14, 3).fill({ color: s.labelBackgroundFill || "#f6f8fb", alpha: 0.85 }); g.addChild(bg); }
       const t = this._makeText(s.labelText, { size: s.labelFontSize || 9, fill: s.labelFill || "#64748b", weight: 400 }); t.anchor.set(0.5, 0.5); t.position.set(mx, my); g.addChild(t); }
     return g;
   }
-  _arrow(g, x, y, ang, color, alpha) {
-    const size = 8, a1 = ang + Math.PI - 0.42, a2 = ang + Math.PI + 0.42;
-    g.moveTo(x, y).lineTo(x + Math.cos(a1) * size, y + Math.sin(a1) * size).lineTo(x + Math.cos(a2) * size, y + Math.sin(a2) * size).closePath().fill({ color: color || "#cbd2db", alpha: alpha == null ? 1 : alpha });
+  _arrow(g, x, y, ang, color, alpha, size) {
+    const sz = size || 8, a1 = ang + Math.PI - 0.42, a2 = ang + Math.PI + 0.42;
+    g.moveTo(x, y).lineTo(x + Math.cos(a1) * sz, y + Math.sin(a1) * sz).lineTo(x + Math.cos(a2) * sz, y + Math.sin(a2) * sz).closePath().fill({ color: color || "#cbd2db", alpha: alpha == null ? 1 : alpha });
   }
 
   // 상태 갱신 (G6 호환) — 상태 배열 변이 + 해당 노드 오브젝트만 즉시 재렌더(gap #13, 증분 경로 ctxmenu:2011).
@@ -846,9 +964,15 @@ export class PixiGraphAdapter {
       const a = this.getElementPosition(pair[0]), b = this.getElementPosition(pair[1]);
       if (!a || !b) continue;
       const g = new P.Graphics();
-      g.moveTo(a[0], a[1]).lineTo(b[0], b[1]).stroke({ color, width: 3.5, alpha: 0.95 });
-      // 방향 화살촉(끝점 b) — 어느 쪽으로 이어지는 연결인지 명확화.
-      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      // graph-edge-flow: 실제 관계선과 **같은 호** 위에 겹쳐 그린다 — 직선으로 그리면 곡선 관계선
+      //   옆을 스치는 별개 선이 되어 "어느 선을 가리키는지" 신호가 무너진다.
+      const st = this._edgeStyleBetween(pair[0], pair[1]) || {};
+      const arc = PixiAdapterPure.edgeArc(a, b, st.curve || 0, st.curveMax, st.curveMin);
+      if (arc.off) g.moveTo(a[0], a[1]).quadraticCurveTo(arc.cx, arc.cy, b[0], b[1]);
+      else g.moveTo(a[0], a[1]).lineTo(b[0], b[1]);
+      g.stroke({ color, width: 3.5, alpha: 0.95 });
+      // 방향 화살촉(끝점 b) — 어느 쪽으로 이어지는 연결인지 명확화. 곡선이면 끝 접선을 따른다.
+      const ang = arc.off ? Math.atan2(b[1] - arc.cy, b[0] - arc.cx) : Math.atan2(b[1] - a[1], b[0] - a[0]);
       this._arrow(g, b[0], b[1], ang, color, 0.95);
       layer.addChild(g);
     }
@@ -859,6 +983,18 @@ export class PixiGraphAdapter {
       layer.addChild(g);
     }
     this._render();
+  }
+  // graph-edge-flow: 두 노드 사이 관계선의 곡선 파라미터 조회(hover 강조가 실제 호에 정합하도록).
+  //   인접 인덱스가 있으면 O(incident). 역방향(t→s)으로 등록된 엣지면 곡률 부호를 뒤집어 같은 호를 얻는다
+  //   — 곡률은 진행방향 기준 왼쪽 고정이므로 방향을 뒤집으면 반대편 호가 된다.
+  _edgeStyleBetween(sid, tid) {
+    const idx = this._edgeIndex;
+    const arr = (idx && idx.get(sid)) || this._built.edges || [];
+    for (const e of arr) {
+      if (e.source === sid && e.target === tid) return e.style || null;
+      if (e.source === tid && e.target === sid) { const st = e.style || {}; return { curve: -(st.curve || 0), curveMax: st.curveMax, curveMin: st.curveMin }; }
+    }
+    return null;
   }
   clearHoverHighlight() {
     if (!this._hoverLayer) return;

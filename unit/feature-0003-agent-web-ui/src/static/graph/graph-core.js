@@ -3,7 +3,7 @@
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
 import { adminState, apiFetch } from "../admin.js?v=dev";
 import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaNatSort, _metaSchemaComboOf } from "./graph-state.js?v=dev";
-import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
+import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
@@ -858,9 +858,13 @@ function _metaG6Build() {
             style: dimIf(_metaRoutineEdgeStyle(e.relation_type, xr), keep) });
           return;
         }
-        const ak = rs + "::" + rt + "::RU";
+        // graph-edge-flow(요구 ①): 집계 키에 **relation_type 을 포함**한다 — 같은 (루틴군, 테이블군)
+        //   쌍이라도 읽기와 쓰기는 별도 관계선으로 남는다. 종전에는 한 덩어리로 병합한 뒤 방향
+        //   화살표까지 지워(startArrow delete) "둘 다 있는데 선은 하나, 방향은 없음" 이 됐다.
+        const relKind = (e.relation_type === "write") ? "write" : "read";
+        const ak = rs + "::" + rt + "::RU::" + relKind;
         let agg = aggMap.get(ak);
-        if (!agg) { agg = { id: "agg:" + ak, kind: "ROUTINE_USES", source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false, keepLod: false }; aggMap.set(ak, agg); }
+        if (!agg) { agg = { id: "agg:" + ak, kind: "ROUTINE_USES", relType: relKind, source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false, keepLod: false }; aggMap.set(ak, agg); }
         agg.count += 1;
         agg.crossDs = agg.crossDs || xr;
         agg.keep = agg.keep || keep;
@@ -906,13 +910,15 @@ function _metaG6Build() {
   });
   aggMap.forEach((agg) => {
     if (lodActive && !agg.keepLod && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
-    // 집계 엣지는 여러 컬럼/루틴-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
+    // graph-edge-flow(요구 ③): 집계 엣지가 대표하는 쌍의 수를 **굵기 대신 다발 가닥 수**로 넘긴다
+    //   (_metaEdgeFlow 가 count→strands 로 환산). 굵기 가산(+0.8)은 제거 — 얇은 선이 겹쳐 진해지는
+    //   밀도 인코딩과 상충하고, 관계 수가 커져도 굵기 상한에서 포화됐다.
+    //   ROUTINE_USES 는 relType 을 살려 읽기/쓰기 각각의 화살표 방향과 호를 유지한다.
     const st = (agg.kind === "ROUTINE_USES")
-      ? (() => { const s = _metaRoutineEdgeStyle("", agg.crossDs); delete s.startArrow; return s; })()
-      : _metaEdgeStyleFor(agg.status, agg.crossDs);
-    if (agg.count > 1) st.lineWidth = (st.lineWidth || 1.4) + 0.8;
+      ? _metaRoutineEdgeStyle(agg.relType, agg.crossDs, agg.count)
+      : _metaEdgeStyleFor(agg.status, agg.crossDs, agg.count);
     edges.push({ id: agg.id, source: agg.source, target: agg.target,
-      data: { label: agg.kind, status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
+      data: { label: agg.kind, status: agg.status, relation_type: agg.relType, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
       style: dimIf(st, agg.keep) });
   });
   _metaGraph._lodDropped = lodDropped;   // §57: 상태줄 안내용(축약 규모)
@@ -989,7 +995,9 @@ function _metaG6BuildProducts() {
     if (!e || e.type !== "USES") return;
     if (!present.has(e.source) || !present.has(e.target)) return;
     edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
-      style: { stroke: "#8fbfa3", lineWidth: 1.5, endArrow: true, zIndex: _METZ.EDGE } });   // 실선(lineDash 생략 — G6 크래시 방지)
+      // graph-edge-flow: 제품→데이터소스 사용선도 같은 어휘(얇은 반투명 호)로 통일 — 한 화면에 직선과
+      //   곡선이 섞이면 "왜 이 선만 다르지" 라는 무의미한 시각 신호가 생긴다. 실선(lineDash 생략 — G6 크래시 방지).
+      style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: 1.0, strokeOpacity: 0.5, endArrow: true, zIndex: _METZ.EDGE }) });
   });
   _metaBakeBaseOpacity(nodes);   // §57.9: 제품/데이터소스 뷰도 동일 base opacity 명시(일관성)
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));
