@@ -51,6 +51,17 @@ source_of_truth: true
 - Rollback: static 4파일 + 테스트 1파일 revert (데이터·API·스키마·RBAC 영향 0).
 - Cross-ref: REVIEW REV-20260728T152000-graph-catcluster-panel-scroll · `docs/test-runs.d/20260728T152000-graph-catcluster-panel-scroll.md` · FUNCTION REQ-20260728T152000-graph-catcluster-panel-scroll(AC-CPS-1~4) · 선행 `graph-funcproc(cluster-detail-fulllist)`(그룹당 캡 제거) · `graph-content-category`(3층 우클릭 분리).
 
+## CHG-20260728T161940-routine-column-edges (TASK-20260728T161940 — 사용 관계선 컬럼 단위 연결, Major §12.3, cross-cut 코드 거주)
+- `graph-core.js`: 빌드의 ROUTINE_USES 분기에 **컬럼 분해** 추가 — `resolveColId(tableId, col)`(Column 키 규약 `<테이블 키>.<컬럼명>` + 소문자 인덱스 lazy 케이스 보정)로 렌더 중인 컬럼을 해소해 컬럼별 엣지(`id + "::c::" + 컬럼`)를 방출하고, 미렌더 컬럼 몫은 테이블로 relation_type 별 1선(`::t::<kind>`) 승격. **렌더된 컬럼이 0이면 분해 자체를 포기**해 접힘 상태는 완전 불변.
+- `graph-ctxmenu.js`: 모델 엣지에 `ref_columns` 보존 + 상세 패널 사용 관계 행에 참조 컬럼 병기(`_META_RTCOL_SHOW=8`, `✎`=쓰기, `.amgr-rtcols`).
+- (백엔드 feature-0002) `routines.py`: `parse_referenced_columns`·`_alias_map`·`_fetch_columns` 신설 + `introspect_and_store` 2-pass 화 → `referenced_tables[].cols`. `metadata_graph.py`: `ROUTINE_USES` 속성 `ref_columns` 투영 + `schema_tables`/`neighborhood` 응답 동봉 + `_ref_columns_of` 정제.
+- (백엔드) `metadata_graph.routine_refs_signature`: 서명에 `cols` 포함 — 병합된 feature-0030 cyvol 재작성-생략 최적화가 컬럼 정보를 서명 밖에 두면 기존 routine 의 `ref_columns` 가 영영 투영되지 않는다(배포 후 첫 sync 1회 재작성 = backfill, §16.3 blast-radius 유한).
+- `tests/headless/test_graph_routine_colref.js` 신규 30 PASS · (feature-0002) `tests/test_routine_column_refs.py` 신규 27건.
+- docs: TASK/FUNCTION/REPORT/REVIEW + `test-runs.d/20260728T161940-routine-column-edges.md`.
+- Verification: 그래프 헤드리스 18 스위트 0 FAIL(722 PASS) · 전체 pytest 2740 passed/15 failed(baseline, main 대조 동일) · ruff PASS · **PB-0008 실 Windows Chrome 150**(격리 harness, 라이브 무접촉) 접힘/펼침 대조 PASS · pageerror 0.
+- Rollback: static 2파일 + 백엔드 2파일 + 테스트 2파일 revert (alembic 마이그 0 · RBAC/엔드포인트 계약 무변경 · `cols`/`ref_columns` 는 부재 시 종전 동작과 동치).
+- Cross-ref: REVIEW REV-20260728T161940-routine-column-edges · FUNCTION REQ-20260728T161940-routine-column-edges(AC-RCE-1~5) · 정본 feature-0016 MODIFY CHG-20260728T161940-ai-claude-feature-0016-routine-column-edges.
+
 ## CHG-20260728T152141-graph-edge-hairline (TASK-20260728T152141 — 줌아웃 관계선 hairline 처리, Minor §12.3, frontend-only)
 - `graph-renderer-pixi.js`: `edgeModelWidth` → **`edgeHairline(baseScreen, zoom, dpr)`** — 서브픽셀이면 폭을 `1/dpr` CSS px(=1물리픽셀)로 올리고 `fade = w_screen·dpr` 를 반환. `_paintEdge` 가 `alpha *= hair.fade` 로 합성하고 dpr 은 `app.renderer.resolution` → `window.devicePixelRatio` 순으로 해석.
 - `graph-roleviz.js`: `_META_EDGE_W_BASE` 0.6→**1.0**, `_META_EDGE_W_GAIN` 0.25→0.27, 상한 표기 2.2→2.6px(개수 축 1.00/1.54/2.08/2.60).
