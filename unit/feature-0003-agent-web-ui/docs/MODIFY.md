@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T153500-graph-catcluster-scroll-postverify (TASK-20260728T152000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- `docs/test-runs.d/20260728T153500-graph-catcluster-panel-scroll-postdeploy.md` 신설 — 배포(main 4a0174e5)·서빙 baked 확인·PB-0008 4 시나리오·evidence 3매.
+- TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.
+- 관측 차이 기록: 사전 격리 컨테이너 Run 은 이력 바 표시(navH 47)로 `+53px`, 배포본 Run 은 이력 바 숨김으로 `+6px` — 보정식이 nav 높이를 실측하므로 양쪽 모두 설계대로.
+- Cross-ref: CHG-20260728T152000-graph-catcluster-panel-scroll · REV-20260728T153500-graph-catcluster-scroll-postverify.
+
 ## CHG-20260728T152000-graph-catcluster-panel-scroll (TASK-20260728T152000 — 캔버스 컨텐츠 카테고리 선택 → 스키마 클러스터 목록 스크롤 동기화, Minor §12.3, frontend-only)
 - `src/static/graph/graph-ctxmenu.js`: `_META_GKEY_SEP` 상수 + **`_metaGroupFam(groupKey)`**(구분자 뒤 fam 추출) + **`_metaGraphFocusPanelGroup(fam)`**(`ul.amgr-cluster-tables` 안에서 같은 fam 헤딩 탐색 → aside `scrollTop` 국소 계산(sticky nav 높이 + 6px 보정) → `scrollTo({behavior:smooth|auto})` → `.is-focus` 1.8s 강조 → 매칭 라벨 반환) 신설. `_metaGraphShowClusterDetailById(comboId, focusFam)` / `_metaGraphRenderClusterDetail(…, routines, focusFam)` 에 optional 파라미터 추가 및 전달. 클러스터 상세 상태줄에 `목록을 '<라벨>' 위치로 이동` 접미. 컨텐츠 카테고리 우클릭 메뉴 '소속 스키마 상세' 가 fam 을 함께 전달(hint 문구도 `이 카테고리 위치로 목록 이동` 으로 갱신).
 - `src/static/graph/graph-core.js`: GB/GH 좌클릭 라우팅이 `_metaGraphShowClusterDetailById(sc, gk.slice(sep + 1))` 로 fam 동반 호출.
