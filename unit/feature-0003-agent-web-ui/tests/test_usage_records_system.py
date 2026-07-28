@@ -99,9 +99,10 @@ class _FakePG:
 
 
 def _sys_row(task, target, actor, model, calls, tok, pt, ct, last="2026-07-20T10:00:00Z",
-             conv_exists=False):
-    # 컬럼 순서: task, target, actor(conversation_id), m, calls, tok, pt, ct, last_used, conv_exists
-    return (task, target, actor, model, calls, tok, pt, ct, _FakeDt(last), conv_exists)
+             conv_exists=False, target_scope=""):
+    # 컬럼 순서: task, target, actor(conversation_id), m, calls, tok, pt, ct, last_used, conv_exists,
+    #            target_scope(0047 — 기록된 데이터소스 scope_key, 미기록/legacy 는 "")
+    return (task, target, actor, model, calls, tok, pt, ct, _FakeDt(last), conv_exists, target_scope)
 
 
 # ── S1: 여집합 정의(대화 목록과 상보) ─────────────────────────────────────────
@@ -166,7 +167,7 @@ def test_s2b_no_secret_leak():
                                                day_label=None, gran="day")
     allowed = {"task", "task_label", "category", "target", "actor", "conversation_id", "calls",
                "total_tokens", "prompt_tokens", "completion_tokens", "cost_usd", "models",
-               "last_used_at", "scope_key", "scope_ambiguous", "nav"}
+               "last_used_at", "scope_key", "scope_ambiguous", "scope_source", "nav"}
     assert set(items[0].keys()) == allowed
     for bad in ("host", "password", "user", "dsn"):
         assert bad not in items[0]
@@ -437,3 +438,84 @@ def test_t1_live_tasks_now_labeled():
         tx = taxonomy_for(task)
         assert tx["label"] == label
         assert tx["category"] != "ai.other.unmapped", task
+
+
+# ── R1~R4 (0047): llm_usage.target_scope — 기록된 데이터소스 귀속 ───────────────
+#
+# 배경: target(0032)에는 데이터소스 차원이 없어 역해소가 dev/qa 동명 스키마에서 구조적으로
+# 모호했다. 0047 이 기록 시점의 scope_key 를 저장해 근본 해소한다. 웹은 2단 폴백 —
+# 기록값 우선, 없으면(legacy 행) 종전 역해소.
+
+def test_r1_recorded_scope_wins_over_resolution():
+    """기록된 target_scope 가 있으면 역해소를 **아예 돌리지 않는다**(정확한 값을 추정으로 덮지 않음)."""
+    sink = []
+    rows = [_sys_row("table_insight", "schA.tbl1", "__insight_worker__", "claude-haiku-4",
+                     1, 100, 80, 20, target_scope="mysql-recorded")]
+    # 해소 질의가 다른 답(mysql-guess)을 줘도 기록값이 이겨야 한다.
+    items, _ = app._query_usage_system_records(
+        _FakePG([rows, [("schA", "tbl1", "mysql-guess")]], sink),
+        days=30, model=None, day_label=None, gran="day")
+    assert items[0]["scope_key"] == "mysql-recorded"
+    assert items[0]["scope_ambiguous"] is False
+    assert items[0]["scope_source"] == "recorded"
+    assert items[0]["nav"]["scope_key"] == "mysql-recorded"
+    # 해소 질의 자체가 실행되지 않았다(집계 질의 1건뿐).
+    assert len(sink) == 1
+
+
+def test_r2_legacy_rows_still_reverse_resolve():
+    """target_scope 가 빈 legacy 행은 종전 역해소 경로를 그대로 탄다(하위호환)."""
+    sink = []
+    rows = [_sys_row("table_insight", "schA.tbl1", "__insight_worker__", "claude-haiku-4",
+                     1, 100, 80, 20, target_scope="")]
+    items, _ = app._query_usage_system_records(
+        _FakePG([rows, [("schA", "tbl1", "mysql-legacy")]], sink),
+        days=30, model=None, day_label=None, gran="day")
+    assert items[0]["scope_key"] == "mysql-legacy"
+    assert items[0]["scope_source"] is None      # 추정임을 구분 가능
+    assert len(sink) == 2                        # 집계 + 해소
+
+
+def test_r3_same_target_different_scope_splits_rows():
+    """같은 schema.table 이라도 데이터소스가 다르면 **별 행**(이 컬럼을 만든 이유)."""
+    sink = []
+    rows = [
+        _sys_row("table_insight", "dbGame.PlayerMisc", "__insight_worker__", "claude-haiku-4",
+                 3, 300, 240, 60, target_scope="mysql-qa"),
+        _sys_row("table_insight", "dbGame.PlayerMisc", "__insight_worker__", "claude-haiku-4",
+                 2, 200, 160, 40, target_scope="mysql-dev"),
+    ]
+    items, _ = app._query_usage_system_records(_FakePG([rows, []], sink),
+                                               days=30, model=None, day_label=None, gran="day")
+    assert len(items) == 2
+    by_scope = {i["scope_key"]: i for i in items}
+    assert by_scope["mysql-qa"]["calls"] == 3 and by_scope["mysql-dev"]["calls"] == 2
+    # 종전(0047 이전)에는 이 둘이 한 줄로 합쳐져 5호출로 뭉개졌다 — 회귀 가드.
+    assert {i["target"] for i in items} == {"dbGame.PlayerMisc"}
+
+
+def test_r4_missing_column_falls_back_to_legacy_query():
+    """target_scope 컬럼 부재(마이그 미적용/구 이미지) → rollback 후 컬럼 제외 재조회로 자가치유."""
+    sink = []
+    rows = [_sys_row("table_insight", "schA.tbl1", "__insight_worker__", "claude-haiku-4",
+                     1, 100, 80, 20)]
+
+    class _NoColCursor(_FakeCursor):
+        def execute(self, sql, params=None):
+            # 첫 호출(target_scope 포함)만 실패시키고, 폴백 SQL 은 통과시킨다.
+            if "u.target_scope" in sql:
+                self._sink.append((sql, params))
+                raise RuntimeError('column "target_scope" does not exist')
+            super().execute(sql, params)
+
+    class _NoColPG(_FakePG):
+        def cursor(self, *a, **k):
+            return _NoColCursor(self._rows_seq, self._sink)
+
+    pg = _NoColPG([None, rows, []], sink)   # [0]=실패한 첫 질의 자리, [1]=폴백 집계, [2]=해소
+    items, _ = app._query_usage_system_records(pg, days=30, model=None, day_label=None, gran="day")
+    assert pg.rolled_back is True
+    assert len(items) == 1 and items[0]["task"] == "table_insight"
+    assert items[0]["scope_source"] is None      # 기록값 없음 → legacy 취급
+    # 폴백 SQL 은 target_scope 를 참조하지 않는다.
+    assert "u.target_scope" not in sink[1][0]

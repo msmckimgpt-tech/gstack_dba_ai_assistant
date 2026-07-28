@@ -318,23 +318,47 @@ def _query_usage_system_records(pg, *, days: int, model: "str | None",
     # conv_exists: 실행 주체 id 로 실제 core_conversations 행이 있는지. 소유 계정만 없는 대화(링크
     #   가능)와 아예 삭제·미기록된 대화 id(링크 불가)를 구분하려면 필요하다 — 구분 없이 링크를 걸면
     #   삭제된 대화로 가는 깨진 링크가 생긴다(ai-ops feed 의 'sentinel 은 링크 안 함' 규약과 동형).
-    sql = (
-        "SELECT u.task, COALESCE(u.target, '') AS tgt, COALESCE(u.conversation_id, '') AS actor, "
-        f"{_canon_m} AS m, count(*) AS calls, "
-        "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
-        "max(u.created_at) AS last_used, "
-        "bool_or(c.conversation_id IS NOT NULL) AS conv_exists "
-        "FROM agent_runtime.llm_usage u "
-        "LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-        f"WHERE {where_sql} "
-        f"GROUP BY u.task, tgt, actor, {_canon_m}"
-    )
+    # 0047 target_scope: 기록 시점에 확정된 데이터소스 scope_key. 있으면 역해소보다 **항상 우선**한다
+    #   (역해소는 dev/qa 동명 스키마에서 구조적으로 모호 — CHG-20260728T113819 참조).
+    #   컬럼 부재(마이그 미적용 / 구 이미지)는 SELECT 실패 → rollback 후 컬럼 제외 재조회로 자가치유
+    #   (ai_ops `_query_activity` 의 has_target 폴백과 동형). 그 경우 legacy 경로(역해소)만 작동.
+    #   GROUP BY 에 포함하는 이유: 같은 `schema.table` 이라도 데이터소스가 다르면 **다른 행**이어야
+    #   한다(그게 이 컬럼을 만든 이유). NULL(legacy·비-DS 활동)끼리는 종전처럼 하나로 묶인다.
+    def _build_sql(with_scope: bool) -> str:
+        scope_sel = "COALESCE(u.target_scope, '') AS tscope, " if with_scope else "'' AS tscope, "
+        scope_grp = ", COALESCE(u.target_scope, '')" if with_scope else ""
+        return (
+            "SELECT u.task, COALESCE(u.target, '') AS tgt, COALESCE(u.conversation_id, '') AS actor, "
+            f"{_canon_m} AS m, count(*) AS calls, "
+            "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
+            "max(u.created_at) AS last_used, "
+            "bool_or(c.conversation_id IS NOT NULL) AS conv_exists, "
+            # 폴백 변형도 리터럴 '' 로 같은 자리를 채워 **컬럼 인덱스가 두 경로에서 동일**하다(r[10]).
+            f"{scope_sel[:-2]} "
+            "FROM agent_runtime.llm_usage u "
+            "LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+            f"WHERE {where_sql} "
+            f"GROUP BY u.task, tgt, actor, {_canon_m}{scope_grp}"
+        )
+
     fold: dict = {}
     with pg.cursor() as cur:
-        cur.execute(sql, tuple(params))
+        try:
+            cur.execute(_build_sql(True), tuple(params))
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "usage system records: target_scope 컬럼 부재로 legacy 경로 폴백(0047 미적용?)", exc_info=True)
+            try:
+                pg.rollback()  # 실패 트랜잭션 abort 정리
+            except Exception:
+                pass
+            cur.execute(_build_sql(False), tuple(params))
         for r in (cur.fetchall() or []):
             task, tgt, actor = (r[0] or ""), (r[1] or ""), (r[2] or "")
-            key = (task, tgt, actor)
+            # 0047: 기록된 데이터소스 scope_key(없으면 ""). 같은 target 이라도 데이터소스가 다르면
+            #   별 행 — fold 키에 포함해야 두 데이터소스의 사용량이 한 줄로 뭉개지지 않는다.
+            rec_scope = (r[10] or "") if len(r) > 10 else ""
+            key = (task, tgt, actor, rec_scope)
             e = fold.get(key)
             if e is None:
                 tx = taxonomy_for(task)
@@ -348,7 +372,9 @@ def _query_usage_system_records(pg, *, days: int, model: "str | None",
                     "conversation_id": (actor if (actor and not actor.startswith("__") and bool(r[9])) else None),
                     "calls": 0, "total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
                     "cost_usd": 0.0, "_models": {}, "_last_used": r[8],
-                    "scope_key": None, "scope_ambiguous": False,
+                    # 0047 이 채운 값이 있으면 그대로 확정(역해소 불필요·모호 없음).
+                    "scope_key": (rec_scope or None), "scope_ambiguous": False,
+                    "scope_source": ("recorded" if rec_scope else None),
                 }
                 fold[key] = e
             mk, calls_r = r[3], int(r[4] or 0)
@@ -375,7 +401,10 @@ def _query_usage_system_records(pg, *, days: int, model: "str | None",
             m["cost_usd"] = round(m["cost_usd"], 4)
         e["last_used_at"] = (e.pop("_last_used").isoformat() if e.get("_last_used") else None)
         # 데이터소스 해소 대상 표시 — 객체/스키마형 target 만(데이터소스형은 프론트가 hint 로 해소).
+        #   0047 로 **기록된 scope 가 이미 있으면 역해소를 건너뛴다**(정확한 값을 추정으로 덮지 않음).
         kind = usage_task_nav(e["task"]).get("target_kind")
+        if e.get("scope_key"):
+            continue
         if kind in ("object", "schema") and e.get("target"):
             sch, obj = _usage_target_parts(e["target"])
             if sch:

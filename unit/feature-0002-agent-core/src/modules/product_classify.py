@@ -166,7 +166,8 @@ def run_classify_pass(kb_conn=None, mem_conn=None, *, dry_run: bool = False) -> 
                                   "description": p["description"][:300]} for p in products],
                     "schemas": [_schema_evidence(kb_conn, scope, n) for n in unmapped],
                 }
-                obj = llm_product_classify(payload)
+                # 0047: target 은 표시용 datasource 라벨(dsk), scope 는 콘솔 스코프 선택 키.
+                obj = llm_product_classify(payload, scope_key=scope)
                 if not isinstance(obj, dict):
                     continue
                 valid_pid = {int(p["id"]) for p in products}

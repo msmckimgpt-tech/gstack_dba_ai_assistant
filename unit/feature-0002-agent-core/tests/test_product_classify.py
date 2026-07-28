@@ -68,8 +68,9 @@ def _patch_inputs(monkeypatch, suggestions):
                         lambda scope, nk, conn=None: {"analysis": {"summary": "낚시 게임 캐릭터/아이템 DB"}})
     captured = {}
 
-    def _fake_llm(payload):
+    def _fake_llm(payload, **_kw):   # 0047: scope_key kwarg 수용(사용 기록 데이터소스 귀속)
         captured["payload"] = payload
+        captured["scope_key"] = _kw.get("scope_key")
         return {"suggestions": suggestions}
 
     monkeypatch.setattr(llm_mod, "llm_product_classify", _fake_llm)
@@ -167,7 +168,7 @@ def test_classify_pass_dry_run_no_write(monkeypatch):
 def test_classify_pass_llm_failure_is_soft(monkeypatch):
     from modules import llm as llm_mod
     _patch_inputs(monkeypatch, [])
-    monkeypatch.setattr(llm_mod, "llm_product_classify", lambda payload: None)   # LLM 실패
+    monkeypatch.setattr(llm_mod, "llm_product_classify", lambda payload, **_kw: None)   # LLM 실패
     cur, conn = _mem()
     rep = pc.run_classify_pass(kb_conn=object(), mem_conn=conn)
     assert rep["suggested_total"] == 0 and not rep["errors"]

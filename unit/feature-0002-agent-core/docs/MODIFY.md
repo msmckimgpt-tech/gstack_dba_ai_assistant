@@ -543,3 +543,40 @@ source_of_truth: true
 - **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`
 - **위험등급**: Minor(문서 전사 — 런타임 무영향, 배포 불필요). **Rollback**: status 문자열 원복.
 - **Cross-ref**: CHG/TASK/REV-20260728T114459-false-absence-catalog-scope · REV-20260728T123229-false-absence-live-verified · PR #991.
+
+## CHG-20260728T124500-llm-usage-target-scope (llm_usage.target_scope — 사용 기록 데이터소스 귀속 근본 해소)
+
+TASK-20260728T124500-llm-usage-target-scope. branch `ai/claude/feature-0002-llm-usage-target-scope`.
+
+- `alembic/versions/20260728_0047_llm_usage_target_scope.py` **신규** — `agent_runtime.llm_usage`
+  에 `target_scope VARCHAR(96)` nullable 추가(`ADD COLUMN IF NOT EXISTS`, 멱등).
+  소급 백필 **안 함**(과거 행의 정확한 스코프는 복원 불가 — 추측 백필은 잘못된 귀속 생성).
+  `MAX_MIGRATION.txt` 갱신 · `src/scripts/agent_runtime_schema.sql` parity 반영.
+- `src/modules/llm.py`
+  - `_record_llm_usage(..., target_scope=None)` — 명시 인자 우선, 미전달 시
+    `cfg.get_active_datasource()`(ContextVar) 폴백. 96자 클립.
+  - INSERT 폴백을 **4단 사다리**(target_scope → step_gap → latency+target → latency)로 재구성.
+    종전 3중 중첩 try 를 후보 리스트 루프로 평탄화 — 단계 추가 시 중첩이 늘지 않는다.
+    공통 8컬럼 순서·인덱스는 계측 회귀 테스트 계약대로 보존.
+  - `llm_schema_insight` · `llm_table_insight` · `llm_node_analysis` · `llm_product_classify` ·
+    `llm_cluster_label` 에 keyword-only `scope_key` 추가 → `_record_llm_usage` 로 전달.
+    **프롬프트 payload 는 건드리지 않았다** — 모델 입력·semantic_cluster 캐시 키 무영향(§12.3 2차-효과).
+- `src/modules/node_analysis.py` — 병렬 `_run_llm` 에서 `scope_key=w.get("scope_key")` 전달.
+- `src/modules/semantic_cluster.py` — 직렬·병렬 라벨 호출 모두 `scope_key=datasource_key` 전달.
+- `src/modules/product_classify.py` — `scope_key=scope` 전달(`target` 은 표시용 ds 라벨과 별개).
+  → 이 3곳은 **스레드 경계**라 ContextVar 가 전파되지 않아 명시 전달이 필수다.
+- `unit/feature-0003-agent-web-ui/src/routers/admin_usage.py`
+  - 집계 질의가 `COALESCE(u.target_scope,'')` 를 SELECT·GROUP BY. **컬럼 부재 시** rollback 후
+    리터럴 `''` 로 같은 인덱스를 채우는 폴백 SQL 재조회(ai_ops `_query_activity` 패턴과 동형).
+  - fold 키 `(task, target, actor)` → `(task, target, actor, scope)` — 같은 객체라도 데이터소스가
+    다르면 별 행(이 컬럼의 존재 이유). legacy NULL 끼리는 종전대로 하나로 묶인다.
+  - 기록된 scope 가 있으면 **역해소를 건너뛴다**(정확한 값을 추정으로 덮지 않음).
+    응답에 `scope_source`(`"recorded"` | `None`) 추가 — 기록/추정 구분 관측용.
+- 테스트: `test_usage_records_system.py` R1~R4 신규(기록값 우선·legacy 역해소·데이터소스별 행 분리·
+  컬럼 부재 폴백) · `test_llm_usage_record.py` 0047 3케이스(명시·ContextVar·96 클립) +
+  꼬리 인덱스 계약 갱신 · `test_ai_ops.py` 사다리 단수/인덱스 정합 ·
+  테스트 더블 arity 7건 확장(`lambda payload` → `**_kw` 수용).
+
+검증: pytest **2,719 PASS / 2 skipped** · ruff clean · `migrate-lint` expand-safe PASS.
+배포 순서 안전(expand-only): 구 코드 INSERT·신 코드 컬럼부재 INSERT·신 웹 컬럼부재 SELECT 모두
+자가치유. RBAC·인증 변경 0.
