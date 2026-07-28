@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T170000-graph-catcluster-polish-postverify — 스크롤 polish POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
+- 대상: PR #1012 머지(main 9c434809) + `make deploy-web` 무중단 전체 롤아웃(soak 통과) 이후, **main 기반 서빙본**에서 재확인.
+- 완료 판정(acceptance):
+  - [x] 서빙 baked — 라이브 `graph-ctxmenu.js` `_metaRunPanelWave` 2건 · `graph.css` `amgrCtRowWave` 2건 (entry `admin.js?v=d9e63a464886`).
+  - [x] AC-CPS-5 스크롤 속도 — 샘플 t=213ms 9,457 → t=414ms 2,070 → t=820ms 2,017 정착(EaseOutExpo 초반 급가속 관측).
+  - [x] AC-CPS-6·7 파도 — `is-wave` 24행 · delay 90/116/142ms · alpha 0.500/0.239/0.000(선형).
+  - [x] AC-CPS-8 정리 — 잔여 클래스·인라인 변수 0 · 콘솔 에러 0.
+- 상태: **완결** — TASK-20260728T162000 종결.
+
 ## TASK-20260728T162000-graph-catcluster-scroll-polish — 카테고리 선택 스크롤 polish: 280ms EaseOutExpo + 헤딩 점멸/멤버 파도(알파 선형 감쇠) (Minor §12.3 — feature-0003 프론트 `graph-ctxmenu.js` + `graph.css`, 정본 feature-0016, /_template:entry arg-given)
 - 요청(사용자, 2026-07-28, 직전 cycle 수용 후 개선 2건): "스크롤이 이동하는 속도를 좀 더 신속하게 구성해주세요. (assistant 대화 로그에서, 우측 막대뱃지를 클릭하여 대화 스크롤을 이동시키는 형태와 정합하게)" / "하이라이트 연출을 개선시켜 주세요 : 카테고리 스키마 점멸 + 하위 자식 요소를 파도 형태로 순차적으로 점멸(다만, 점멸 알파는 점점 선형적으로 연하게.)"
 - 진단: ① 직전 구현은 브라우저 native `scrollTo({behavior:'smooth'})` — duration 이 브라우저 임의라 17,000px 목록에서 수 초가 걸렸다(실측: 클릭 800ms 후 측정값이 이동 중간값). 대화 뷰는 이미 같은 문제를 **280ms EaseOutExpo**(REQ-20260629-point-scroll)로 해결해 둔 정본이 있다. ② 도착 강조가 헤딩 1.8s 단일 페이드라 "어느 카테고리인지"는 알려도 "그 카테고리가 무엇을 품는지"는 안 보였다.

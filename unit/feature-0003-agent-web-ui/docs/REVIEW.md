@@ -10,6 +10,15 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T170000-graph-catcluster-polish-postverify [SKIPPED:non-policy-doc] — 스크롤 polish POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T162000, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- **배포본에서 다시 본 이유**: pre-commit 검증은 격리 컨테이너(§13.2.9)에서 `docker cp` + 재스탬프한 이미지였다 — 빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니므로, main 기반 이미지가 같은 코드를 서빙하는지는 별개 사실이다.
+- **스크롤 속도를 숫자로 남긴 이유**: "빨라졌다" 는 체감 주장이라 회귀를 못 잡는다. 샘플(t=213ms 9,457 / t=414ms 2,070 / t=820ms 2,017)은 EaseOutExpo 의 초반 급가속·후반 감속 형태를 그대로 보여 주며, 이후 누군가 native smooth 로 되돌리면 이 곡선이 무너진다.
+- **미검증으로 남긴 것(정직)**: 배포본에서는 좌클릭 1경로만 재현했다(우클릭 '소속 스키마 상세'·reduced-motion 분기는 헤드리스+스테이징에서 확인). 세 경로가 같은 함수로 수렴하고 배포본에서 그 함수가 정상 동작함을 확인했으므로 재현 부담을 줄였다. 파도 **시각 peak** 캡처도 스테이징 Run 이 정본이다 — 배포본 프레임은 tail 이 잡혔다(CSS `animation-delay` 라 프레임 선택이 결정적이지 않음).
+- **드라이버 마찰(정직)**: 공유 Windows Chrome 을 병렬 AI 세션 4곳이 점유해 `bin/win-browser.py` 의 `pages[0]` 고정 선택이 남의 탭을 잡았다. 전용 새 탭을 만들어 그 page 객체만 쓰는 단일-스크립트 드라이버로 회피(타 세션 무접촉, `down` 미사용 — 공유 브라우저를 죽인다). 부수 실측: 탭 전환은 trusted click 필요, `domcontentloaded` 직후 클릭은 부트스트랩 전이라 무효.
+- 검증: 서빙 baked 2파일 · 스크롤 샘플 4점 · 파도 24행/delay/alpha 선형 · 잔여 0 · 콘솔 에러 0 · 스크린샷 3매.
+- Cross-ref: MODIFY CHG-20260728T170000-graph-catcluster-polish-postverify / test-runs.d/20260728T170000-graph-catcluster-scroll-polish-postdeploy.md / 선행 REV-20260728T162000-graph-catcluster-scroll-polish.
+
 ## REV-20260728T162000-graph-catcluster-scroll-polish [SKIPPED:session-policy-no-subagent] — 스크롤 280ms EaseOutExpo + 헤딩 점멸/멤버 파도 (TASK-20260728T162000, Minor §12.3, frontend-only)
 - Panel skip 사유(§18.8 / §18.8.2 상위 우선순위 지시 carve-out): 하네스 수준에서 `Agent` tool 사용이 금지돼 subagent panel(ux/design)을 호출할 수 없다. 제약 없는 채널로 대체 — 기계 검증(헤드리스 65, rAF 프레임 구동 포함) + PB-0008 실 브라우저 실측 + 아래 자체 적대 검토. 미검증 범위는 정직 표기.
 - 판단 근거:
