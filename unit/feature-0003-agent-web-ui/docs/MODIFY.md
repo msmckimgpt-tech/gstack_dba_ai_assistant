@@ -1265,3 +1265,20 @@ TASK-20260728T115900-usage-records-postverify. branch `ai/claude/feature-0003-us
 - Verification: 헤드리스 78 PASS/0 FAIL · `node --check`(ESM) OK · **PB-0008 라이브**(실 Windows Chrome, docker cp 스테이징) — 상세 패널 `p.admin-meta-detail-note` **0건** · `h4 = ["컬럼 (2) ⓘ","사용하는 함수·프로시저 (10) · 읽기 3 · 쓰기 7 ⓘ","AI 능동 분석"]` · ⓘ 툴팁 전문 확인 · 패널 텍스트 **852→512자** · 커밋 바 `display:none`(0건) ↔ `flex`+`has-pending`(1건) **왕복 실측** · 좌하단 `변경 없음` 요약 유지.
 - Rollback: 4개 static 파일 revert (데이터·API·스키마 영향 0).
 - Cross-ref: REVIEW REV-20260728T113000-graph-noise-reduction · `docs/test-runs.d/20260728T113000-graph-noise-reduction.md` · FUNCTION REQ-20260728-graph-noise-reduction(AC-GNR-1~6) · 선행 REQ-20260716T114705 ③(검색 패널 설명문 간결화).
+
+## CHG-20260728T121500-usage-records-hint-tooltip ('사용 기록' 행 2번째 줄 이동 안내 제거 → hover 툴팁)
+
+TASK-20260728T121500-usage-records-hint-tooltip. branch `ai/claude/feature-0003-usage-records-hint`.
+
+- `unit/feature-0003-agent-web-ui/src/static/admin.js` — 시스템 행의
+  `<div class='usage-rec-sub'>…열기 →…</div>` 렌더 제거. 이동 경로·데이터소스 모호 안내는
+  링크 버튼의 `title` 하나로 통합(`"<경로> 화면으로 이동[ (데이터소스 여럿 — 화면까지 이동)]"`).
+  `nav.path_label` 을 미리 esc 해 두고 title 에서 다시 esc 하던 **이중 escape** 를 1회로 정리
+  (툴팁에 `&gt;` 가 그대로 보이던 결함 동반 수정). `.usage-rec-target` 의 중복 `title='대상 객체'` 도 제거.
+- `unit/feature-0003-agent-web-ui/src/static/styles.css` — dead rule
+  `.usage-rec-sub` / `.usage-rec-goto` / `.usage-rec-note` 삭제(참조 0 확인).
+- 근거: 200행 목록에서 매 행 보조문구는 밀도만 낮추고, 이동 가능 여부는 링크 스타일로 이미 드러난다.
+  정직 표기(모호 시 화면까지만 이동)는 툴팁에 보존되어 손실 없음.
+
+검증: `node --check`(ESM) PASS · web 테스트 스위트 PASS · 참조 잔재 grep 0 ·
+POST-DEPLOY PB-0008. RBAC·스키마·마이그·백엔드 0.

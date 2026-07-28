@@ -7966,9 +7966,8 @@ button.product-dropup-item-ds--test:disabled {
 /* 보조행은 --text-2(대비 7.11) 사용 — --text-muted 는 이 배경에서 4.12 로 WCAG AA(4.5) 미달임을
    headless 아닌 실 Chromium getComputedStyle 실측으로 확인했다(PB-0008). 특히 '데이터소스 여럿'
    안내는 이동이 화면까지만 된다는 **정직 표기**라 흐리게 두면 안 된다. */
-.usage-rec-sub { margin-top: 2px; font-size: 11px; color: var(--text-2, #475569); }
-.usage-rec-goto { color: var(--text-2, #475569); }
-.usage-rec-note { color: var(--text-2, #475569); }
+/* usage-rec-sub / -goto / -note (행 두 번째 줄 이동 안내) 는 2026-07-28 사용자 결정으로 제거 —
+   안내는 링크의 hover 툴팁(title)만으로 전달한다. 대응 CSS 도 dead rule 로 남기지 않고 삭제. */
 
 /* profile 판: 작업 화면(app.js) 독립 모달(admin-modal 클래스 미공유). */
 .usage-conv-overlay {

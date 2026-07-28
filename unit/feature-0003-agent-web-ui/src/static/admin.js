@@ -2145,18 +2145,22 @@ function showUsageConvModal(state) {
           const nav = it.nav || null;
           const idx = navByIdx.push(nav) - 1;
           const label = esc(it.task_label || it.task || "(미상 작업)");
-          const tgt = it.target ? `<span class='usage-rec-target' title='대상 객체'>${esc(it.target)}</span>` : "";
-          const where = nav && nav.path_label ? esc(nav.path_label) : "";
-          // 데이터소스 특정 실패(모호/미발견)는 숨기지 않는다 — 이동은 화면까지만 된다는 정직 표기.
-          const ambig = (nav && nav.scope_ambiguous) ? " <span class='usage-rec-note'>(데이터소스 여럿 — 화면까지 이동)</span>" : "";
+          const tgt = it.target ? `<span class='usage-rec-target'>${esc(it.target)}</span>` : "";
           const navable = !!(nav && nav.screen);
-          const openHint = navable ? `<span class='usage-rec-goto'>${where || "관리 화면"} 열기 →</span>${ambig}` : "";
+          // 이동 안내는 **행에 두 번째 줄로 찍지 않고 hover 툴팁으로만** 전달한다(사용자 결정
+          //   2026-07-28) — 200행 목록에서 매 행 보조문구는 밀도만 떨어뜨리고, 이동 가능 여부는
+          //   링크 스타일로 이미 드러난다. 데이터소스 모호(이동이 화면까지만 됨)도 같은 툴팁에
+          //   합쳐 정직 표기를 유지한다.
+          //   `nav.path_label` 은 raw 텍스트이므로 여기서 **한 번만** esc 한다(이전 이중 escape 로
+          //   툴팁에 `&gt;` 가 그대로 보이던 결함 동반 수정).
+          const where = (nav && nav.path_label) || "관리 화면";
+          const ambigTip = (nav && nav.scope_ambiguous) ? " (데이터소스 여럿 — 화면까지 이동)" : "";
+          const navTitle = esc(where + " 화면으로 이동" + ambigTip);
           kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--sys'>시스템</span></td>`;
           whatCell = `<td class='usage-conv-topic usage-rec-what'>`
             + (navable
-              ? `<button type="button" class="usage-rec-link" data-usage-nav="${idx}" title="${where ? esc(where) + " 화면으로 이동" : "관리 화면으로 이동"}"><b>${label}</b>${tgt ? " · " + tgt : ""}</button>`
+              ? `<button type="button" class="usage-rec-link" data-usage-nav="${idx}" title="${navTitle}"><b>${label}</b>${tgt ? " · " + tgt : ""}</button>`
               : `<span><b>${label}</b>${tgt ? " · " + tgt : ""}</span>`)
-            + (openHint ? `<div class='usage-rec-sub'>${openHint}</div>` : "")
             + `</td>`;
           // 주체 3분기(전부 raw hex 노출 회피):
           //   ① 실재하는 대화(소유 계정만 없음) → 대화 링크

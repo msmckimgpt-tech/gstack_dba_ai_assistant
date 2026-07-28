@@ -6549,3 +6549,15 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] `tests/headless/test_detail_colsel.js` ⑤ 를 문구 단정 → 접근 경로 단정으로 갱신 (⚠ 이 하네스 자체는 ITEM-09 ES-module 리팩터 이후 **main 에서도 실행 불가** — pre-existing, 본 cycle 범위 밖)
 - [x] **PB-0008 라이브 시각검증** (docker cp 스테이징 → 실 Windows Chrome) — 상세 패널 `notes:0` · `h4: 컬럼 (2) ⓘ` · 커밋 바 `display:none`(0건) ↔ `flex`(1건 pending) 왕복 · 패널 텍스트 852→512자. 증적 `docs/test-runs.d/20260728T113000-graph-noise-reduction.md` + PNG 2장
 - [x] 한국어 조사 정정 — `함수·프로시저을` → `함수·프로시저를`(라이브 실측에서 포착, 분기별 조사 하드코딩)
+
+## TASK-20260728T121500-usage-records-hint-tooltip — '사용 기록' 행 두 번째 줄 이동 안내 제거(툴팁 전환) (Minor §12.3, frontend-only)
+
+**요청 (사용자, 2026-07-28)**: 두 줄로 출력되는 항목들("관계도 열기 →" 등)의 설명 문자열은
+mouse-hover 툴팁으로 충분하니 제거.
+
+- [x] `.usage-rec-sub` 두 번째 줄(`관계도 열기 →` / `메타데이터 > … 열기 →` /
+      `(데이터소스 여럿 — 화면까지 이동)`) 제거 → 링크 `title` 툴팁 단일 경로로 통합.
+- [x] 동반 수정 — 툴팁 **이중 escape** 결함(`메타데이터 &gt; 테이블 설명 …`) 해소.
+      `path_label` 을 esc 한 값에 다시 esc 하던 경로를 1회 esc 로 정리.
+- [x] dead CSS(`.usage-rec-sub`/`-goto`/`-note`) 삭제.
+- [x] POST-DEPLOY PB-0008 — `docs/test-runs.d/20260728T121500-usage-records-hint-tooltip.md`

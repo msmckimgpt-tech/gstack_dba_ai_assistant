@@ -1220,3 +1220,20 @@ CSS 는 단일 파일이라 안전하지만, ES module 은 순환 import 의 고
 - **회귀 방지 설계**: 새 단정은 문구가 아니라 **접근 경로**를 본다(`.amgr-sec-help` title 존재 + 본문 `admin-meta-detail-note` 부재). 문구만 단정하면 문단으로 되돌려도 통과하고, 경로를 단정하면 회귀가 바로 FAIL 한다. 동시에 "툴팁으로 보존됨" 4종을 함께 단정해 *제거로 정보가 소실되는* 반대 방향 회귀도 막는다.
 - 위험도: **Minor(§12.3)** — 프론트 표시 전용, 백엔드·API·RBAC·스키마·데이터 fetch 무변경, 롤백 = static 4파일 revert.
 - Cross-ref: MODIFY CHG-20260728T113000-graph-noise-reduction / FUNCTION REQ-20260728-graph-noise-reduction(AC-GNR-1~6) / test-runs.d/20260728T113000-graph-noise-reduction.md / 선행 REQ-20260716T114705 ③.
+
+## REV-20260728T121500-usage-records-hint-tooltip [SKIPPED:frontend-cosmetic-only+post-deploy-live-evidence] — PASS
+
+CHG-20260728T121500-usage-records-hint-tooltip. 표시 전용 변경(렌더 1블록 제거 + dead CSS 삭제).
+
+- **정보 손실 없음**: 제거한 두 번째 줄의 두 정보(이동 경로 · 데이터소스 모호)를 모두 `title` 로
+  옮겼다. 특히 "화면까지만 이동" 은 사용자를 엉뚱한 데이터소스로 착지시키지 않기 위한 **정직 표기**라
+  그냥 삭제하면 안 되고 툴팁으로 보존해야 한다.
+- **접근성**: 이동 트리거는 여전히 `<button>` 이라 키보드 포커스·Enter 로 동작하고,
+  `title` 은 포커스 시에도 노출된다. 링크 여부는 색·밑줄(hover)로 시각 전달된다.
+- **이중 escape 동반 수정**: `where = esc(path_label)` 를 title 에서 다시 `esc()` 해
+  `&amp;gt;` → 화면에 `&gt;` 로 보이던 결함. 표시 문자열은 **한 경계에서 한 번만** escape 한다는
+  규칙으로 정리했다.
+- **pre-deploy 라이브 미검증 사유**: `docker cp` 스테이징에서 Chrome 이 동일 URL 의 **컴파일된 ES
+  모듈**을 계속 재사용해(HTTP 캐시 강제 갱신에도) 신 렌더가 관측되지 않았다. 배포는 새 asset
+  stamp = 새 모듈 URL 이라 이 문제가 없다(직전 cycle 에서 POST-DEPLOY 즉시 정상 관측 확인).
+  따라서 본 cycle 도 POST-DEPLOY 검증으로 확정한다.
