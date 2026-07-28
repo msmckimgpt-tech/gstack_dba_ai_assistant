@@ -6620,4 +6620,8 @@ mouse-hover 툴팁으로 충분하니 제거.
 - [x] 앵커 계약 단위테스트(좌변 불변 · t=0/t=1 라벨 좌측 동일 · 루틴 칩 대조) — 190 PASS / 0 FAIL
 - [x] 그래프 headless 전 스위트 639 PASS / 0 FAIL (회귀 0)
 - [x] §18.8 codex 2 라운드 수렴(P2 1건 수정)
-- [ ] **POST-DEPLOY PB-0008** — 좌변 고정·우측만 확장·앞글자 불변 실화면 확인 (`visual_verification_scope: always`)
+- [x] **POST-DEPLOY PB-0008** — 좌변 고정·우측만 확장·앞글자 불변 실화면 확인 (`visual_verification_scope: always`)
+  - 배포 PR #1000 → main `9158551b` → `deploy-web-only` 무중단 롤링(soak PASS). 실 Windows Chrome 150 실측 **6/6 PASS**:
+    ① 애니 전 구간 카드 좌측 x=**249 단일값**(앞글자 이동 0) ② 유의 diff 가 원 카드 우측 끝 이후(캔버스 x 354~449)에만 발생
+    ③ `agent_attachment_5f6353c47…` → 전체 명칭 노출 ④ 확장분이 우측 이웃 카드 **위**(이웃 위치는 불변) ⑤ 이탈 픽셀 동치 ⑥ pageerror 0
+  - 증적: `docs/evidence/pb0008-graph-hover-anchor-{before,after}-20260728.png`

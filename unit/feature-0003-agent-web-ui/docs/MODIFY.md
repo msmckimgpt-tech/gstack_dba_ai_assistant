@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T142000-graph-hover-anchor-postverify (TASK-20260728T135222 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-28. 코드·자산 **무변경** — test-runs.d fragment POST-DEPLOY 결과 + TASK 체크박스 종결 + evidence 2종.
+- 배포: PR #1000 → main **9158551b** → `make deploy-web-only` 무중단 롤링(web-a·web-b `git_commit=9158551b`, asset stamp `6fd0965e5b49`, 90s soak 통과).
+- 라이브 실측(win-browser 실 Windows Chrome 150, `mysql-local` 스키마 카드 `agent_attachment_5f6353c47…`): **6/6 PASS** — ①애니 전 구간(15프레임 t=24~704ms) 카드 좌측 x **249 단일값**(앞글자 이동 0) ②유의 픽셀 diff 가 **캔버스 x 354~449**(원 카드 우측 끝 이후)에만 국한 = 우측 모서리만 확장 ③전체 명칭 `agent_attachment_5f6353c47c315cff1945d6b92f941c09` 노출 ④확장분이 우측 이웃 카드 위(z-order), 이웃 위치 불변 ⑤이탈 픽셀 동치 ⑥pageerror 0.
+- 증적: `docs/evidence/pb0008-graph-hover-anchor-{before,after}-20260728.png`. Cross-ref: CHG/REV-20260728T135222-graph-label-hover-anchor.
+
 ## CHG-20260728T135222-graph-label-hover-anchor (TASK-20260728T135222 — hover 확장 기준점을 중앙 대칭 → 좌변 고정 + 우측 확장으로 변경, Minor §12.3, frontend-only)
 - Date: 2026-07-28. Files: `static/graph/graph-renderer-pixi.js` · `tests/headless/test_pixi_adapter.js`. 사용자 정정 요청("확장되는 기준이 중앙이 아닌, 좌측은 고정 + 우측 모서리부터 확장").
 - 변경 ①(순수): `hoverExpandGeom` 이 앵커 `left = s.x - w0/2` 를 반환. 신규 `hoverCardCenterX(g,w) = g.left + w/2`(폭이 커져도 좌변 불변, `left` 부재 구 geom 은 중앙 고정 폴백) · 신규 `hoverTextOffsetX(g,w,textLeft)`(라벨 world 좌측을 절대 고정하도록 카드 중심 이동분 상쇄).

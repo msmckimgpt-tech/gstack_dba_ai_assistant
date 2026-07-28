@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T142000-graph-hover-anchor-postverify [SKIPPED:non-policy-doc] — 좌변 고정 확장 POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T135222, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 체크박스 · MODIFY CHG · evidence 2종. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- 선행 cycle 의 `[SKIPPED:tool-restricted:ux,design]` 미검증 범위를 라이브 실측으로 종결. **요구 문구("좌측은 고정 + 우측 모서리부터 확장")를 두 개의 반증 가능한 수치로 고정**했다: (a) 애니 전 구간 카드 좌측 x 가 **단일값 249** — 하나라도 다르면 좌변이 움직인 것 (b) 유의 픽셀 diff 의 **좌측 경계가 원 카드 우측 끝 이후(354)** — 중앙 대칭이었다면 카드 좌측(250) 이전부터 diff 가 났을 것. 두 지표 모두 통과.
+- 부수 확인: 확장분이 우측 이웃 카드 위에 그려지는 z-order 가 라이브에서 처음 실증됨(이전 cycle 은 겹침 케이스가 없었다) — 이웃 카드 자체 좌표는 불변.
+
 ## REV-20260728T135222-graph-label-hover-anchor [CODEX:graph-label-hover-anchor] — hover 확장 기준점 좌변 고정 전환 (TASK-20260728T135222, Minor §12.3 frontend-only) — SHIP
 - 대상 diff: `static/graph/graph-renderer-pixi.js`(`hoverExpandGeom.left` · `hoverCardCenterX` · `hoverTextOffsetX` · 카드 위치·라벨 정렬 배선) · `tests/headless/test_pixi_adapter.js`(앵커 계약 assert).
 - 검증 채널: 세션 도구제약(§18.8.2 상위 지시 carve-out)으로 ux/design subagent 미호출 → `[SKIPPED:tool-restricted:ux,design]`, `codex review --uncommitted` + 기계 검증으로 대체. 시각 확정은 POST-DEPLOY PB-0008.
