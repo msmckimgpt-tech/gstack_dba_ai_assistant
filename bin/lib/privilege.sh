@@ -37,9 +37,16 @@
 # 복원돼 named-user ACL 이 살아난다) → ② 그래도 안 되면 chown 현재 실행자. 즉 소유권
 # 이전은 정말 필요할 때만 일어난다.
 #
-# 쓰기 **직후**에는 `priv_share_file` 로 0664 를 되감아 다음 계정이 막히지 않게 한다.
-# 이건 자기가 만든 파일에 대한 chmod 이므로 sudo 가 필요 없다 — 위 mktemp 0600 열화의
-# 직접 해독제다.
+# 쓰기 경로는 `priv_replace_preserving_mode` 로 **원본 inode 를 유지한 write-through** 를
+# 한다. `mktemp` 산출물의 내용만 원본에 반영하므로 mode·uid/gid·ACL·xattr 이 정의상
+# 보존된다 (아무것도 다시 설정하지 않으므로) — mktemp 0600 열화가 애초에 발생하지 않는다.
+#
+# ⚠️ **`chmod` 로 mode 를 되감는 방식은 쓰지 않는다.** file metadata 에 대해 lossy 이기
+# 때문이다 — ACL named entry 는 `chmod` 로 복원되지 않고, `mv` 로 새 inode 가 되면 원본의
+# named entry 자체가 사라진다(부모 디렉터리에 default ACL 이 있으면 마스킹돼 **환경
+# 의존적으로 잠재**한다). template v3.40.0 `lib/common.sh::replace_preserving_mode` 가 hop
+# 계층에서 같은 결론에 도달했고, v3.41.0 §13.2.10 이 이를 cycle 계층 규약으로 명문화했다.
+# 초판(2026-07-27)은 `priv_share_file`(chmod 0664 되감기)을 썼고, 본 cycle 에서 정합화했다.
 #
 # 모든 함수는 **실패해도 호출부를 죽이지 않는다** (cycle 진행 비차단). `sudo` 가 없거나
 # passwordless 가 아니면(`sudo -n` 실패) 경고 후 그대로 진행한다 — hook·cron 처럼
@@ -153,17 +160,38 @@ priv_ensure_writable() {
   return 1
 }
 
-# ── 쓰기 후 모드 되감기 (sudo 불요 — 자기 파일) ──────────────────────────
-# 여러 계정이 번갈아 쓰는 파일을 group-writable 로 되돌린다. mktemp+mv 가 남긴 0600
-# 열화를 그 자리에서 해독하고, ACL 배치에서는 `mask` 도 함께 복원한다.
-priv_share_file() {
-  local f="${1:-}"
-  [ -n "$f" ] && [ -e "$f" ] || return 0
-  [ -L "$f" ] && return 0                      # 링크 추종 금지 (위와 동일 이유)
-  chmod 0664 -- "$f" 2>/dev/null || true
+# ── mode 를 애초에 망가뜨리지 않는 rewrite ────────────────────────────────
+# 사용: priv_replace_preserving_mode <tmp> <target>
+# `mktemp` 산출물의 **내용만** 원본에 반영하고 원본의 identity·metadata 는 건드리지 않는다.
+# 원본 inode 를 유지한 write-through 이므로 mode·uid/gid·ACL·xattr·symlink 정체성이 정의상
+# 보존된다. 대가로 원자성을 포기한다 — 쓰기 중단 시 파일이 잘릴 수 있으나 새 내용은
+# `$tmp` 에 남고 rc 로 전파돼 호출자가 중단할 수 있다. 원본이 없으면(신규 생성) 보존할
+# metadata 가 없으므로 그대로 이동한다.
+# (계약은 template `bin/migrations/lib/common.sh::replace_preserving_mode` 와 동일 — 그
+#  파일은 hop 전용 lib 이라 cycle 계층에서 source 하지 않는다. 통합은 별도 cycle 후보.)
+priv_replace_preserving_mode() {
+  local tmp="${1:-}" target="${2:-}"
+  [ -n "$tmp" ] && [ -n "$target" ] || return 1
+
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    # symlink 면 링크를 따라가 대상 내용을 갱신한다 (링크 정체성 유지 + 다른 참조자가
+    # stale 본문을 읽지 않음).
+    if ! cat "$tmp" > "$target"; then
+      priv_warn "write-through 실패 ($target) — 내용이 잘렸을 수 있습니다. 새 내용은 $tmp 에 보존됨."
+      return 1
+    fi
+    rm -f "$tmp"
+  else
+    mv "$tmp" "$target" || {
+      priv_warn "mv 실패 (신규 $target) — 새 내용은 $tmp 에 보존됨."
+      return 1
+    }
+  fi
   return 0
 }
 
+# ── 신규 공유 디렉터리 생성 시 group 접근 보장 ───────────────────────────
+# **신규 생성 직후에만** 쓴다 (기존 디렉터리의 mode 재설정은 위 lossy 문제가 재발한다).
 priv_share_dir() {
   local d="${1:-}"
   [ -n "$d" ] && [ -d "$d" ] || return 0
