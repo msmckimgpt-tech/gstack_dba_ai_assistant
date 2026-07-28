@@ -17,6 +17,13 @@ interactive_timeout = 28800
 # `artifacts/mysql-data/#innodb_redo` 에 최대 1GiB. 추가 메모리 사용 없음.
 innodb_redo_log_capacity = 1073741824
 
+# feature-0027 (P0-C): InnoDB buffer pool 128MB(8.0 기본값) → 1G.
+# 근거: 소스 데이터 48GB(log_v2 17G 등) 대비 기본 128MB 는 에이전트 분석 쿼리를 사실상
+# 디스크 I/O 100% 로 만든다(2026-07-27 전수 성능 조사 P0-1 — buffer pool 히트율은
+# bin/perf-snapshot.sh §8 로 전/후 실측). 컨테이너 mem_limit 3g 내 안전(실사용 ~1.1G + 0.9G).
+# 동적 변수라 라이브는 SET GLOBAL 로 즉시 적용, 본 설정은 재시작 영속화.
+innodb_buffer_pool_size = 1G
+
 # Do not enable ANSI_QUOTES. Keep backtick (`) as identifier quote style.
 sql_mode = STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
 

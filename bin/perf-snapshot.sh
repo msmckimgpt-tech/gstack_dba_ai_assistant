@@ -103,7 +103,7 @@ WHERE m.role='assistant' AND m.meta_json->'duration_breakdown' ? 'init_detail'
   AND m.created_at > now()-interval '${DAYS} days'
 GROUP BY d.key ORDER BY avg_ms DESC"
 
-section "3c. post-answer 구간 (KV last_post_answer_ms — 저장 duration 과 체감의 격차)"
+section "3c. post-answer 큐레이션 (KV last_post_answer_ms — feature-0027 이후 terminal *후* 실행, 체감 지연 아님)"
 run_to post_answer.txt psql_p -c "
 SELECT count(*) AS convs, round(avg(value::float)::numeric) AS avg_ms,
        round(max(value::float)::numeric) AS max_ms

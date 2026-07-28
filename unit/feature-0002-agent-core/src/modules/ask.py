@@ -481,6 +481,9 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
     # 메시지를 읽으므로, 그 전에 후처리가 끝나야 raw 블록이 노출되지 않는다. run_agent 는
     # defer_terminal_status=True 로 done 을 미뤄 뒀고, 아래 finally 가 반드시 찍는다(무한 '처리중' 방지).
     # (FR-brandnew-script-attachment-delivery-gap 후속 — worker 가 후처리 소유자.)
+    # feature-0027 (P0-A): 큐레이션 패키지는 job terminal 전이 **후** 실행하므로 먼저 분리.
+    # (_slim_result 는 keep-allowlist 라 어차피 미영속이나, pop 으로 명시 위생.)
+    _curation_pkg = result.pop("_post_answer_curation", None) if isinstance(result, dict) else None
     if not raised:
         try:
             _postprocess_attachment_blocks(cid, account_id, result, run_id)
@@ -500,6 +503,18 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
             )
     except Exception as exc:
         log.warning("ask-worker: finish_ask_job 실패 job=%s: %s", job_id, exc)
+
+    # feature-0027 (P0-A): job terminal 전이 **후** 큐레이션(topic/용어/ENUM LLM 3건) — 종전엔
+    # run_agent 내부(terminal 전)에서 직렬 실행돼 사용자 체감 지연 +25~35s. 이 시점엔
+    # ① 사용자가 이미 답변 수신(KV done) ② job 도 terminal 이라 stale-sweep 이 requeue 할 수
+    # 없다(§18.8 backend C2 — heartbeat 사각 무해화). 삭제/취소/오류 종결은 in-core 가 패키지를
+    # 폐기했고(backend B1), 함수 내부 _writes_allowed 재검증이 최종 방어층. 실패는 흡수(fail-open).
+    if not raised and _curation_pkg:
+        try:
+            from agent_core import run_post_answer_curation  # 지연 import(순환 회피, run_agent 동일)
+            run_post_answer_curation(_curation_pkg)
+        except Exception:
+            log.warning("ask-worker: post-answer 큐레이션 실패 job=%s run=%s", job_id, run_id, exc_info=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────

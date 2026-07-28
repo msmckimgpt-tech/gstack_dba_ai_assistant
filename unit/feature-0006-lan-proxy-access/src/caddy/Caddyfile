@@ -60,6 +60,37 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 	#  - active health 는 /livez(DB 무관 liveness)로 — /healthz(DB ping)로 하면 DB 가 잠깐
 	#    느릴 때(예: migrate 중) 양 replica 가 동시에 unhealthy 로 빠져 502 가 날 수 있다.
 	#  - 두 replica 는 동일 leaf(SAN=WEB_PUBLIC_HOST)를 공유하므로 per-transport SNI 하나로 충분.
+	# feature-0027 (P0-E): 텍스트 자산 압축 — 작업/관리 화면 초기 로드 1.1MB+ 비압축(app.js
+	# 639KB·admin.js 700KB·styles.css 309KB, 전수 조사 S2-3)을 zstd/gzip 로 ~1/5 로 축소.
+	# §18.8 backend C4: 압축 대상을 명시 allowlist 로 — `text/event-stream`(SSE 토큰 스트리밍,
+	# X-Accel-Buffering:no 자기선언)이 기본 `text/*` 매칭에 걸려 flush 경계/버전에 따라
+	# 토큰 단위 실시간성이 열화되는 것을 원천 제외한다.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/plain*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type text/javascript*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	# feature-0027 (P0-E): immutable 캐시는 **`?v=` stamp 를 실은 요청에만** 부여한다
+	# (§18.8 qa B1) — /static 전체가 아니라. unstamped 참조(vendor/marked·purify(DOMPurify)·
+	# logo 등 파일명 무버전 자산)가 실재하므로 경로 전체 immutable 은 그 자산들의 갱신
+	# (보안 패치 포함)을 최대 1년 고착시킨다. `?v=` 는 빌드(inject_asset_stamp.py)가
+	# content-hash 로 주입해 URL 이 내용에 결합됨 — 그 경우에만 immutable 이 안전하다.
+	# unstamped 자산은 종전 기본 동작(ETag/304 조건부 GET) 유지.
+	@static_versioned {
+		path /static/*
+		query v=*
+	}
+	header @static_versioned Cache-Control "public, max-age=31536000, immutable"
+
 	handle {
 		reverse_proxy web-a:8000 web-b:8000 {
 			lb_policy cookie weblb
