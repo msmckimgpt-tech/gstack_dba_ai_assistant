@@ -11,6 +11,15 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T162000-graph-catcluster-scroll-polish (TASK-20260728T162000 — 스크롤 280ms EaseOutExpo + 헤딩 점멸/멤버 파도, Minor §12.3, frontend-only)
+- `src/static/graph/graph-ctxmenu.js`: `_META_PANEL_SCROLL_MS = 280` + **`_metaEaseOutExpo`** + **`_metaAnimatePanelScroll(box, from, to, seqOf, reduce)`**(rAF 구동, 세대 토큰으로 진행 중 중단) 신설 — `scrollTo({behavior:'smooth'})` 대체. 목표에 `maxTop` 클램프 추가. 파도 연출: `_META_WAVE_MAX/STEP_MS/LEAD_MS/DUR_MS` 상수 + `_metaWaveNodes` 원장 + **`_metaClearPanelWave()`** + **`_metaRunPanelWave(target, reduce)`**(헤딩 `.is-focus`, 멤버 행 `.is-wave` + `animation-delay` + `--amgr-wave-a` 선형 감쇠 주입, 다음 헤딩 경계/접힘 행 제외/상한 24). `_metaGraphFocusPanelGroup` 이 이 둘을 호출하고 총 길이 후 정리 타이머 예약.
+- `src/static/graph/graph.css`: `.amgr-ct-group.is-focus` → `amgrCtGroupFocus` **760ms 2회 점멸**(12~30% 강 / 46% 감쇠 / 62% 재점등). `.amgr-ct-row-li.is-wave` + `@keyframes amgrCtRowWave`(420ms, `rgba(37,99,235, var(--amgr-wave-a))`) 신설. reduced-motion 분기에 파도 정지 추가.
+- `tests/headless/test_catcluster_panel_scroll.js`: rAF/`performance.now` test double 로 프레임 구동 재작성 + 파도/곡선/클램프/선점 단정 추가 — **36 → 65 PASS**.
+- docs: TASK/FUNCTION/REPORT/REVIEW + `test-runs.d/20260728T162000-graph-catcluster-scroll-polish.md`, `docs/STATUS.md`.
+- Verification: 헤드리스 65 PASS + 회귀 328 PASS · `node --check`(ESM) OK · **PB-0008 실 Windows Chrome**(격리 컨테이너 :18099, §13.2.9) — 스크롤 샘플 t=420ms 2,147 → t=827ms 1,698 정착 · 파도 delay `90/116/142/168ms` · alpha `0.500/0.333/0.167/0.000` · 31-멤버 그룹에서 파도 프레임 캡처 · 잔여 0 · 콘솔 에러 0.
+- Rollback: static 2파일 + 테스트 1파일 revert (데이터·API·스키마·RBAC 영향 0).
+- Cross-ref: REVIEW REV-20260728T162000-graph-catcluster-scroll-polish · `docs/test-runs.d/20260728T162000-graph-catcluster-scroll-polish.md` · FUNCTION REQ-20260728T162000(AC-CPS-5~8) · 선행 CHG-20260728T152000-graph-catcluster-panel-scroll · 정본 곡선 REQ-20260629-point-scroll(`app.js`/`share.js`).
+
 ## CHG-20260728T161326-graph-analyzed-halo-fit (TASK-20260728T161326 — AI 분석 완료 컬럼 노드 상태 테두리 기하 보정, Minor §12.3, frontend-only)
 - `graph-renderer-pixi.js` `PixiAdapterPure`: **`haloGeom(n, i, lineWidth)`** 신설 — 노드 모양(`type==="circle"` → 원형 / 그 외 rect)과 크기 비례 계수 `k = clamp(min(w,h)/24, 0.4, 1)` 로 `{shape, r|x,y,w,h,radius, lw}` 산출. 여백 `max(1.5, 3k)`, 동심링 오프셋 `i·2k`, 두께 `max(1, lineWidth·k)`. rect 는 k=1 이라 종전 하드코딩(`-w/2-3-2i` · `radius+2+i·2` · lw 그대로)과 **수치 동일**.
 - `graph-renderer-pixi.js` `PixiAdapterPure`: **`dashArcs(r, dash)`** 신설 — 호 길이 기준 [on,off] 반복을 라디안 구간 `[[a0,a1],…]` 로 반환(각도 = 호길이/r → 직선 `dashSegments` 와 같은 화면 대시 길이).
