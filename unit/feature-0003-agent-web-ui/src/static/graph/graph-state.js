@@ -181,12 +181,100 @@ const _META_LABEL_HDR_KINDS = new Set(["cat-hd", "schema-card", "group-hd", "sch
 //   (같은 예: 0.3048→10.5, 0.3040→11 로 갈라진다). 런타임 계산 폰트(스키마 카드 `_cardLF`/`_cardBF`)는
 //   `Math.round` 정수라 반포인트 격자가 정수 격자를 포함하므로 함께 커버된다.
 const _META_LABEL_FONT_LO = 9, _META_LABEL_FONT_HI = 24, _META_LABEL_FONT_STEP = 0.5;
+// ─────────────────────────────────────────────────────────────────────────────
+// hdr-label-fit(사용자 요청 2026-07-28): **위계 헤더 라벨을 클러스터 범위만큼 확장**한다.
+//   문제 — 컨텐츠 카테고리 헤더(group-hd)는 폰트가 10.5 **고정**이라 박스 폭이 248px 든 920px 든
+//   똑같이 zoom 3.2/10.5≈0.305 에서 억제됐다. 박스 크기라는 정보가 이미 있는데 폰트가 그걸 쓰지 않았다.
+//   위계 한 단계 위 제품 카테고리 밴드(cat-hd, 12 고정)도 동형.
+//
+//   해법 = **(a) 화면 하한 역보정 + (b) 박스 fit** 의 하한 결합(지도학·트리맵 표준의 합성):
+//     (a) `want = base / z` — 줌아웃해도 **화면상 base 크기를 유지**한다. 지도 라벨(Mapbox·deck.gl)의
+//         screen-space 관례이며, 본 코드베이스에도 §85 `edgeScreenScale = 1/zoom` 선례가 있다.
+//     (b) `fit = 가용폭 / (글자수 × 폭계수)` — 라벨이 **자기 박스를 절대 넘지 않게** 상한을 건다.
+//         트리맵 fit-to-box(`font = min(w/4, h/2)` 류)와 같은 발상. 이 상한이 있어야 극단 줌아웃에서
+//         헤더들이 서로 겹쳐 폭발하지 않는다(지도는 이 문제를 라벨 충돌 컬링으로 푸는데, 박스 상한은
+//         그 복잡도 없이 같은 목적을 달성한다 — 범위를 넘지 않으면 이웃과도 겹치지 않는다).
+//   `min(want, fit)` 를 취하고 **[base, HI] 로 클램프**한다. 결과:
+//     · 줌인(z ≥ 1)은 `base` 그대로 — 부풀지 않는다(§86 "줌인은 화면 고정" 결정과 정합).
+//     · 줌아웃은 박스가 허용하는 한 화면 크기 유지 → 2열(472px) 이상 클러스터는 zoom 하한(0.05)까지
+//       사실상 사라지지 않고, 1열(248px)도 억제 시점이 0.305 → ~0.156 으로 2배 늦어진다.
+//   위계 크기 = 멤버 수라 "면적이 곧 위계"라는 지도학의 통상 경고(넓다고 중요한 게 아니다)는 여기선
+//   해당하지 않는다 — 박스가 큰 클러스터는 실제로 테이블이 많다.
+// world 폰트 상한 — **줌 하한에서 파생**한다. `base/z` 역보정은 이 상한에 닿는 순간부터 화면 크기가
+//   감쇠하기 시작하므로(그 아래는 `MAX × z`), 상한이 곧 "어디까지 base 크기로 보이는가"를 정한다:
+//   화면 크기가 base 로 유지되는 구간 = `z > base / MAX`.
+//   상한을 `헤더 판독 하한 / zoomRange 하한`(graph-initview A2 의 0.05)으로 잡으면 **줌 전 구간에서
+//   위계 헤더가 판독 하한 이상**이고, 실측 "전체 조망" 줌(라이브 136 스키마 = 0.2524)이 감쇠 구간이
+//   아니라 **base 크기 유지 구간**에 들어온다(상한 26 이면 0.2524 에서 이미 6.6px 로 감쇠 — 사용자
+//   요구 "줌 아웃 시에도 상대적으로 명확하게"를 만족하지 못한다).
+//   칩이 커지는 비용은 박스 fit 상한이 흡수한다 — 좁은 박스(1열 248px)는 fit 이 ~22.6 에서 잡으므로
+//   상한을 올려도 그 클러스터의 칩은 커지지 않는다(개선은 범위가 큰 클러스터에만 붙는다 = 사용자 의도).
+const _META_HDR_FIT_ZOOM_FLOOR = 0.05;   // graph-core.js `zoomRange: [0.05, 4]` 와 동기 — 변경 시 함께 조정
+const _META_HDR_FIT_MAX = Math.ceil(_META_LABEL_HEADER_MIN_PX / _META_HDR_FIT_ZOOM_FLOOR);   // = 64
+const _META_HDR_FIT_CHARW = 0.686;   // 글자 1개 폭 / 폰트 크기 — 기존 추정계수(10.5→7.2 · 12→8.2)의 공통값
+const _META_HDR_FIT_PAD = 26;        // 칩 내부 좌우 pad + 컨트롤 자리
+// 헤더 폰트 파생 — 순수 함수(zoom·박스폭·글자수만 의존). 라벨 LOD(_metaApplyLabelLod)는 이 결과를
+//   `st.labelFontSize` 로 그대로 읽으므로 억제 판정이 자동으로 늦어진다(별도 결합 불필요).
+function _metaHdrFitFont(baseFont, boxW, textLen, zoom) {
+  const base = (typeof baseFont === "number" && isFinite(baseFont) && baseFont > 0) ? baseFont : 10.5;
+  const z = (typeof zoom === "number" && isFinite(zoom) && zoom > 0) ? zoom : 1;
+  if (z >= 1) return base;   // 줌인·기본 배율 — 종전 그대로(회귀 0)
+  const avail = Math.max(0, (typeof boxW === "number" && isFinite(boxW) ? boxW : 0) - _META_HDR_FIT_PAD);
+  const n = Math.max(1, (typeof textLen === "number" && isFinite(textLen)) ? textLen : 1);
+  const fit = avail / (n * _META_HDR_FIT_CHARW);
+  return Math.max(base, Math.min(base / z, fit, _META_HDR_FIT_MAX));
+}
+// 헤더 폰트 반동 밴드 — 폰트가 `base/z` 로 **연속** 변하는데 rebuild 는 밴드 전이에서만 걸리므로,
+//   억제 밴드만으로는 폰트가 stale 해져 화면 크기가 드리프트한다(역보정이 무의미해진다). 그래서
+//   역보정 배율을 **25% 승법 스텝**으로 양자화해 밴드에 합류시킨다 — §85 가 엣지 굵기 재페인트에
+//   채택한 것과 같은 허용 오차(줌 변화 ≈25% 초과 시 갱신)라, 화면 크기 드리프트가 ≤25% 로 유계다.
+//   `z >= 1` 구간은 폰트가 base 고정이라 스텝을 0 으로 접어 통상 줌에서 무의미한 rebuild 를 막는다.
+//   **상한 클램프 필수** — `base/z` 가 `_META_HDR_FIT_MAX` 를 넘는 순간부터 폰트는 `min(fit, MAX)` 로
+//   z 와 무관해지므로, 그 뒤로도 스텝이 계속 늘면 **아무 변화 없는 rebuild** 가 극단 줌아웃 휠마다 걸린다
+//   (신규 테스트 없이 넣었을 때 기존 F3·F7 '무의미 rebuild 차단' 이 실제로 깨졌다 — 실측 확인).
+//   상한은 실사용 최소 base(group-hd 10.5)에서 파생해 상수 변경에 자동 추종한다. `MAX` 를 줌 하한에서
+//   파생하도록 올린 결과 스텝 상한도 5 → 9 로 늘었다 — 줌아웃 전 구간에 걸쳐 rebuild 경계가 최대 9개라는
+//   뜻이며, 억제 밴드(_META_LABEL_FONT_STEP 격자)가 이미 그 구간에서 바뀌므로 **증분 경계는 9개보다 적다**.
+//   허용 오차(화면 크기 드리프트 ≤25%)는 §85 가 엣지 재페인트에 채택한 값과 동일하다.
+const _META_HDR_FIT_STEP_RATIO = 1.25;
+const _META_HDR_FIT_BASE_MIN = 10.5;   // 실사용 최소 헤더 base — 이 base 가 가장 늦게 MAX 에 닿는다
+const _META_HDR_FIT_STEP_CAP = Math.ceil(
+  Math.log(_META_HDR_FIT_MAX / _META_HDR_FIT_BASE_MIN) / Math.log(_META_HDR_FIT_STEP_RATIO));
+function _metaHdrFitBandOf(zoom) {
+  const z = (typeof zoom === "number" && isFinite(zoom) && zoom > 0) ? zoom : 1;
+  if (z >= 1) return 0;
+  return Math.min(_META_HDR_FIT_STEP_CAP,
+    Math.round(Math.log(1 / z) / Math.log(_META_HDR_FIT_STEP_RATIO)));
+}
+// **확장 가능한 위계 헤더가 없으면 반동 성분을 밴드에서 뺀다**(codex P2, 2026-07-28): `/h` 를 무조건 붙이면
+//   위계 헤더를 **아예 방출하지 않는 경로**에서도 줌 전이마다 full `setData`/draw rebuild 가 걸린다 —
+//   `products` 모드는 `_metaG6Build()` 가 헤더 방출 전에 `_metaG6BuildProducts()` 로 빠지므로 1→0.89→0.71→0.57
+//   같은 전이가 전부 헛 rebuild 다. 박스가 좁아 `fit ≤ base` 인 헤더만 있는 경우도 폰트가 z-무관이라 같다.
+//   게이트는 **z-독립**이어야 한다 — "지금 확장됐나"로 판정하면 zoom 1(전부 base)에서 게이트가 닫혀 줌아웃
+//   시작 rebuild 가 영구히 안 걸리는 self-lock 이 된다. 그래서 방출 시점에 **"이 박스가 base 보다 큰 폰트를
+//   담을 수 있는가"(fit > base, 줌 무관)** 를 세어 둔다.
+// 방출 시점 계수기 — `fit > base` 인(=확장 여력이 있는) 헤더를 센다. 줌을 인자로 받지 않는 것이 핵심:
+//   게이트가 z-독립이어야 self-lock 이 없다. build 시작 시 0 으로 리셋하고 각 헤더 방출에서 호출한다.
+function _metaHdrFitReset() { _metaGraph._hdrFitScalable = 0; }
+function _metaHdrFitNote(baseFont, boxW, textLen) {
+  const base = (typeof baseFont === "number" && isFinite(baseFont) && baseFont > 0) ? baseFont : 10.5;
+  const avail = Math.max(0, (typeof boxW === "number" && isFinite(boxW) ? boxW : 0) - _META_HDR_FIT_PAD);
+  const n = Math.max(1, (typeof textLen === "number" && isFinite(textLen)) ? textLen : 1);
+  if (avail / (n * _META_HDR_FIT_CHARW) > base) {
+    _metaGraph._hdrFitScalable = (_metaGraph._hdrFitScalable || 0) + 1;
+  }
+}
+function _metaHdrFitScalable() {
+  const n = _metaGraph._hdrFitScalable;
+  return (typeof n === "number" && n > 0);
+}
 function _metaLabelBandOf(zoom) {
   const z = (typeof zoom === "number" && isFinite(zoom) && zoom > 0) ? zoom : 1;
   const S = _META_LABEL_FONT_STEP;
   const q = (minPx) => Math.min(_META_LABEL_FONT_HI,
     Math.max(_META_LABEL_FONT_LO, Math.ceil((minPx / z) / S) * S));
-  return q(_META_LABEL_MIN_PX) + "/" + q(_META_LABEL_HEADER_MIN_PX);
+  const hdr = _metaHdrFitScalable() ? ("/h" + _metaHdrFitBandOf(z)) : "";
+  return q(_META_LABEL_MIN_PX) + "/" + q(_META_LABEL_HEADER_MIN_PX) + hdr;
 }
 // graph-perf(사용자 요청 2026-07-28 "성능 비용을 차후에 관측할 수 있는 구조"): 프론트 그래프 렌더 비용을
 //   브라우저 콘솔·PB-0008 relay·헤드리스에서 동일하게 읽는 단일 관측 지점. 계측 전용(동작 분기 없음)이라
@@ -232,4 +320,4 @@ function _metaComboName(id) {
 const _metaNatSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 
 
-export { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_SEARCH_CAP, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf };
+export { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_HDR_FIT_MAX, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_SEARCH_CAP, _META_TERMS_COMBO, _metaComboName, _metaGraph, _metaHdrFitBandOf, _metaHdrFitFont, _metaHdrFitNote, _metaHdrFitReset, _metaHdrFitScalable, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf, _METLAY, _METtype, _METZ };
