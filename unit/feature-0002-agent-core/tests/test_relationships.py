@@ -594,7 +594,8 @@ def test_probe_missing_object_error_is_negative(monkeypatch):
     assert rep["negative"] == 1 and rep["failed"] == 0
     assert touched == [7]                      # 큐 rotation 전진(head 고착 차단)
     assert signals and signals[0][0][6] is False
-    assert signals[0][1] == {"a_schema": "db1", "b_schema": "db1"}
+    # feature-0029 (churn-c): 프로브 write-back 은 broken 부활 금지(allow_revive=False) 동반.
+    assert signals[0][1] == {"a_schema": "db1", "b_schema": "db1", "allow_revive": False}
 
 
 def test_probe_transient_error_backs_off_and_counts_failed(monkeypatch):

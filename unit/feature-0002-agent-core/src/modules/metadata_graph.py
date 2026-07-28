@@ -283,7 +283,47 @@ def sync_column(cur, scope, schema, table, column, description="", source="manua
     _merge_edge(cur, "Table", tkey, "HAS_COLUMN", "Column", ckey)
 
 
-def _anchor_relationship_column(cur, scope, tbl_fqn, col) -> str:
+def new_anchor_cache() -> dict:
+    """sync 실행 1회용 정점 MERGE 캐시 (feature-0029 churn-e).
+
+    `_anchor_relationship_column` 은 관계마다 Column/Table/Schema 3정점 + 2엣지를 MERGE 해
+    관계 1건 = cypher 11회였다. 수십~수백 관계가 **같은 Table/Schema 정점을 공유**하므로
+    (예: account.AccountId 를 참조하는 200 관계) 실행 스코프 캐시로 중복을 제거한다 —
+    실측상 관계당 cypher 11 → 대개 1~3.
+
+    §18.8 B-1: 종전 구현은 캐시를 **커서 객체 속성**으로 달았는데 `psycopg.Cursor.__slots__`
+    가 비어 있어 라이브에서 항상 AttributeError → 캐시가 한 번도 활성화되지 않았다(테스트는
+    `__dict__` 를 가진 fake 커서라 통과). 명시 파라미터로 전달해 타입 의존을 제거한다.
+
+    §18.8 B-4: 캐시는 **커밋 확정분만** 담아야 한다. per-row SAVEPOINT 롤백으로 정점이
+    사라졌는데 캐시에 남으면 후속 관계가 MERGE 를 건너뛰고, `_merge_edge` 는 정점 부재 시
+    에러 없이 0행이라 **엣지가 조용히 소실**된다. 그래서 pending/committed 2단으로 운용한다:
+    행 성공 시 `commit_pending`, 실패 시 `drop_pending`, 배치 롤백 시 `reset`.
+    """
+    return {"committed": set(), "pending": set()}
+
+
+def anchor_cache_commit_pending(cache) -> None:
+    """행 성공 확정 — pending 마크를 committed 로 승격 (feature-0029 churn-e)."""
+    if isinstance(cache, dict):
+        cache["committed"].update(cache["pending"])
+        cache["pending"].clear()
+
+
+def anchor_cache_drop_pending(cache) -> None:
+    """행 실패(SAVEPOINT 롤백) — 그 행이 만든 마크 폐기 → 후속 행이 다시 MERGE."""
+    if isinstance(cache, dict):
+        cache["pending"].clear()
+
+
+def anchor_cache_reset(cache) -> None:
+    """배치 커밋 실패/step 롤백 — 확정분까지 무효(정점이 실제로 사라졌을 수 있음)."""
+    if isinstance(cache, dict):
+        cache["committed"].clear()
+        cache["pending"].clear()
+
+
+def _anchor_relationship_column(cur, scope, tbl_fqn, col, cache=None) -> str:
     """REFERENCES 끝점 Column 을 소속 Table(·Schema)에 앵커링하고 Column key 반환 (rel-selfheal).
 
     과거에는 Column 정점만 MERGE 해, 미큐레이션 컬럼(HAS_COLUMN 부재)이 **고아 노드**로 떠서
@@ -296,25 +336,39 @@ def _anchor_relationship_column(cur, scope, tbl_fqn, col) -> str:
     parts = [p for p in str(tbl_fqn or "").split(".") if p]
     table = parts[-1] if parts else ""
     schema = ".".join(parts[:-1]) if len(parts) >= 2 else ""
-    _merge_vertex(cur, "Column", ckey,
-                  {"name": col, "fqn": f"{tbl_fqn}.{col}", "scope_key": scope,
-                   "column_name": col})
+    def _once(mark) -> bool:
+        """이 실행에서 (확정 또는 이번 행에서) 이미 MERGE 했으면 False. 캐시 미전달=항상 True."""
+        if not isinstance(cache, dict):
+            return True
+        if mark in cache["committed"] or mark in cache["pending"]:
+            return False
+        cache["pending"].add(mark)
+        return True
+
+    if _once(("Column", ckey)):
+        _merge_vertex(cur, "Column", ckey,
+                      {"name": col, "fqn": f"{tbl_fqn}.{col}", "scope_key": scope,
+                       "column_name": col})
     if table and schema:
         tkey = _vkey(scope, tbl_fqn)
         skey = _vkey(scope, schema)
-        _merge_vertex(cur, "Table", tkey,
-                      {"name": table, "fqn": tbl_fqn, "scope_key": scope,
-                       "schema_name": schema, "table_name": table})
-        _merge_vertex(cur, "Schema", skey,
-                      {"name": schema, "fqn": schema, "scope_key": scope})
-        _merge_edge(cur, "Schema", skey, "HAS_TABLE", "Table", tkey)
-        _merge_edge(cur, "Table", tkey, "HAS_COLUMN", "Column", ckey)
+        if _once(("Table", tkey)):
+            _merge_vertex(cur, "Table", tkey,
+                          {"name": table, "fqn": tbl_fqn, "scope_key": scope,
+                           "schema_name": schema, "table_name": table})
+        if _once(("Schema", skey)):
+            _merge_vertex(cur, "Schema", skey,
+                          {"name": schema, "fqn": schema, "scope_key": scope})
+        if _once(("HAS_TABLE", skey, tkey)):
+            _merge_edge(cur, "Schema", skey, "HAS_TABLE", "Table", tkey)
+        if _once(("HAS_COLUMN", tkey, ckey)):
+            _merge_edge(cur, "Table", tkey, "HAS_COLUMN", "Column", ckey)
     return ckey
 
 
 def sync_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col,
                       cardinality="", source="fk_introspect", confidence=1.0,
-                      weight=None, status="", tgt_scope=None) -> None:
+                      weight=None, status="", tgt_scope=None, cache=None) -> None:
     """REFERENCES 엣지 (Column→Column) MERGE. 양끝 Column 노드 + Table/Schema 앵커링 보장.
 
     weight/status(feature-0016): 동적 신뢰 가중치·상태(candidate/trusted/broken)를 엣지에 투영해
@@ -324,8 +378,8 @@ def sync_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col,
     (프론트 교차DB 표식 + node_analysis 완화). neighborhood BFS 는 scope-무관이라 크로스 엣지가 자동 노출."""
     src_scope = scope
     tscope = tgt_scope if tgt_scope is not None else scope
-    s_ckey = _anchor_relationship_column(cur, src_scope, src_fqn, src_col)
-    t_ckey = _anchor_relationship_column(cur, tscope, tgt_fqn, tgt_col)
+    s_ckey = _anchor_relationship_column(cur, src_scope, src_fqn, src_col, cache=cache)
+    t_ckey = _anchor_relationship_column(cur, tscope, tgt_fqn, tgt_col, cache=cache)
     eprops = {"cardinality": cardinality, "source": source, "confidence": confidence}
     if weight is not None:
         eprops["weight"] = weight
@@ -677,6 +731,9 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
         #   scope 로 앵커(tgt_scope). 컬럼 부재(마이그 0036 미적용)면 SELECT 실패 → except graceful. intra-ds 는
         #   sds==tds → tgt_scope=sc(기존 동작 완전 보존, 스코프!=ds 인 794 레거시 행도 불변).
         def _step_relationships():
+            # churn-e: 이 step 실행 스코프의 정점 MERGE 캐시(§18.8 B-1 — 커서 속성 부착은
+            # psycopg Cursor.__slots__ 때문에 라이브에서 항상 실패했다. 명시 전달로 전환).
+            _anchor_cache = new_anchor_cache()
             _w, _a = _scope_since_where()
             try:
                 cur.execute("SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
@@ -709,11 +766,22 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                     else:
                         sync_relationship(cur, sc, sfqn, scol, tfqn, tcol, card or "",
                                           src or "fk_introspect", conf if conf is not None else 1.0,
-                                          weight=wgt, status=st or "", tgt_scope=tgt_scope)
+                                          weight=wgt, status=st or "", tgt_scope=tgt_scope,
+                                          cache=_anchor_cache)   # churn-e: 공유 정점 중복 MERGE 제거
                 if _sync_row_guard(cur, owned, _err_samples, "relationship", _row, rep):
                     rep["relationships_deleted" if _is_del else "relationships"] += 1
-                    _pending[0] += 1; _tick()
+                    # churn-e(§18.8 B-4): 행이 **커밋 확정**된 뒤에만 캐시에 승격한다 —
+                    # SAVEPOINT 롤백된 행의 정점을 캐시에 남기면 후속 행이 MERGE 를 건너뛰고
+                    # _merge_edge 가 정점 부재로 조용히 0행(엣지 소실)이 된다.
+                    anchor_cache_commit_pending(_anchor_cache)
+                    _pending[0] += 1
+                    _n_before = rep["commits"]
+                    _tick()
+                    if rep["commits"] == _n_before and _pending[0] == 0:
+                        # 커밋 시도가 실패해 롤백된 경우(_tick 이 step_failures 계상) — 확정분 무효.
+                        anchor_cache_reset(_anchor_cache)
                 else:
+                    anchor_cache_drop_pending(_anchor_cache)   # 실패 행의 마크 폐기
                     rep["errors"] += 1
         _run_step("table_relationships", _step_relationships)
         # 3b) routine_objects (함수·프로시저, graph-funcproc ADR-016) — Routine 노드 +

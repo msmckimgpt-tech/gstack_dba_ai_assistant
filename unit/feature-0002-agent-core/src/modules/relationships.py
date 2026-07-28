@@ -47,6 +47,16 @@ _BREAK_FLOOR = 0.15         # weight 이 이 이하이면 broken 파단
 _POS_STEP = 0.15            # 양성: weight += POS_STEP*(1-weight) (1.0 로 점근 상승 — 신뢰는 천천히)
 _NEG_STEP = 0.14            # 음성: weight -= NEG_STEP (고정 감산 — up 최댓값 0.1275 보다 커 항상 더 빠르게 깎임)
 _MIN_POS_FOR_TRUST = 2      # trusted 승격에 필요한 최소 누적 양성 신호 수
+# feature-0029 (churn-b) 히스테리시스: 승격/강등 임계를 분리해 status **왕복(flap)** 을 막는다.
+# 종전엔 승격·강등이 같은 0.85 라, trusted 최저점(w=0.85)에서 음성 1회(-0.14)면 즉시 candidate
+# 로 떨어지고 → 프로브 풀 복귀 → 양성 4회면 재승격을 무한 반복했다(라이브: guildjoin.GuildId
+# → guild.GuildId 가 신호 145회를 받고 w=0.8597 로 임계에 걸터앉음). status 변경은 sync 대상이라
+# 이 왕복이 그대로 그래프 churn 이 된다.
+#   _TRUST_EXIT < _TRUST_CEIL : trusted 유지 하한(음성 1회로는 못 깸 — 0.85-0.70=0.15 > NEG_STEP)
+#   _BREAK_EXIT > _BREAK_FLOOR: broken 부활 하한(양성 1회로 즉시 부활하지 않음)
+# 자기교정 방향성(down>up 비대칭)은 불변 — 임계만 밴드로 넓힌다.
+_TRUST_EXIT = 0.70          # trusted → candidate 강등 하한
+_BREAK_EXIT = 0.30          # broken → candidate 부활 하한
 _PROBE_POS_RATE = 0.5       # 프로브 겹침률 ≥ 이 값이면 양성, == 0 이면 음성, 그 사이는 중립
 _PROBE_MIN_SAMPLE = 5       # 음성 판정에 필요한 최소 샘플 수(빈/희소 컬럼 오판 방지)
 
@@ -145,6 +155,10 @@ def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tg
                 "  negative_signals = CASE WHEN EXCLUDED.source IN ('fk_introspect','manual') THEN 0 "
                 "                          ELSE table_relationships.negative_signals END, "
                 "  source_run_id = COALESCE(EXCLUDED.source_run_id, table_relationships.source_run_id), "
+                # feature-0029 (churn-a): `updated_at` 전진 정책은 **트리거가 단일 정본**이다
+                # (alembic 0046 `set_updated_at_if_changed` — 그래프 비투영 컬럼 5종을 제외한
+                # to_jsonb diff). BEFORE UPDATE 트리거가 항상 최종 승자이므로 여기에 CASE 를
+                # 두면 무효인 데다 "신규 컬럼 추가 시 목록 갱신" 부채만 남는다(§18.8 B-2/B-3).
                 "  updated_at = now()",
                 (_normalize_scope_key(scope_key), str(datasource_key or ""), src_ds, tgt_ds,
                  str(src_schema or ""), str(src_table), str(src_column),
@@ -605,8 +619,17 @@ def next_reinforcement_state(weight, positive_signals, negative_signals, status,
     else:
         w = max(0.0, w - _NEG_STEP)
         neg += 1
+    # feature-0029 (churn-b): 현재 status 를 입력으로 받는 히스테리시스 상태머신.
+    #   trusted  : w > _TRUST_EXIT(0.70) 이면 유지 — 음성 1회(-0.14)로는 안 깨진다.
+    #   broken   : w >= _BREAK_EXIT(0.30) 이어야 candidate 로 부활 — 양성 1회로 즉시 안 돌아온다.
+    #   candidate: 종전 규칙(ceil 승격 / floor 파단).
+    cur_st = str(status or "").strip().lower()
     if w <= _BREAK_FLOOR:
         st = "broken"
+    elif cur_st == "trusted":
+        st = "trusted" if w > _TRUST_EXIT else "candidate"
+    elif cur_st == "broken":
+        st = "candidate" if w >= _BREAK_EXIT else "broken"
     elif w >= _TRUST_CEIL and pos >= _MIN_POS_FOR_TRUST:
         st = "trusted"
     else:
@@ -615,10 +638,17 @@ def next_reinforcement_state(weight, positive_signals, negative_signals, status,
 
 
 def apply_relationship_signal(conn, scope_key, a_table, a_col, b_table, b_col, positive,
-                              *, a_schema=None, b_schema=None) -> int:
+                              *, a_schema=None, b_schema=None, allow_revive=True) -> int:
     """(a_table.a_col ↔ b_table.b_col) 무방향 관계에 강화/감쇠 신호 1건 적용. 반환: 갱신된 row 수.
 
     같은 무방향 관계의 여러 저장 방향(추론 A→B + 대화 B→A)을 모두 갱신. 예외·PG 미가용 시 0(비차단).
+
+    allow_revive (feature-0029 churn-c): False 면 이미 `broken` 인 행은 대상에서 제외한다.
+    매칭이 id 가 아니라 **이름(무방향·양방향)** 기준이라, 같은 무방향 쌍의 정/역 중복 행(라이브
+    1,181 그룹·7,663 행, 그중 176 그룹이 broken+live 혼재)이 있으면 candidate 를 프로브한 결과가
+    broken 행까지 함께 되살려 `broken→candidate→broken` 왕복 churn 을 만든다. 프로브 경로는
+    candidate 만 대상으로 fetch 하므로 broken 을 건드릴 이유가 없다 → False. 반면 대화 JOIN
+    학습(실행 성공 = 강한 증거)은 종전대로 True(부활 허용).
 
     a_schema/b_schema(rel-selfheal 적대 패널 B-F2): 지정 시 스키마-slot 까지 매칭을 한정한다 —
     ''(미해석 레거시) slot 은 wildcard 로 계속 매칭. 미지정(None)이면 기존 leaf-only 매칭.
@@ -664,12 +694,16 @@ def apply_relationship_signal(conn, scope_key, a_table, a_col, b_table, b_col, p
                 "   AND lower(target_table)=lower(%s) AND lower(target_column)=lower(%s) "
                 + _slot_ba +
                 "  )) "
-                "FOR UPDATE",
+                + ("" if allow_revive else " AND status <> 'broken' ")   # churn-c: 부활 차단
+                + "FOR UPDATE",
                 tuple([scopes, a_table, a_col, b_table, b_col] + _slot_params_ab
                       + [b_table, b_col, a_table, a_col] + _slot_params_ba),
             )
             for rid, w, pos, neg, st, src in (cur.fetchall() or []):
                 nw, npos, nneg, nst = next_reinforcement_state(w, pos, neg, st, src, positive)
+                # feature-0029 (churn-a): `updated_at` 은 **트리거**(alembic 0046)가 판정한다 —
+                # 신호 카운터만 바뀐 UPDATE 는 그래프 비투영이라 전진하지 않는다. 파이썬에서
+                # 조건 분기를 두면 BEFORE UPDATE 트리거가 덮어써 무효(§18.8 B-2 실증).
                 cur.execute(
                     "UPDATE table_relationships SET weight=%s, positive_signals=%s, "
                     "negative_signals=%s, status=%s, last_validated_at=now(), updated_at=now() "
@@ -1261,12 +1295,13 @@ def probe_and_reinforce(ds_conn, dialect, scope_key, *, kb_conn=None, raw_execut
                 rep["probed"] += 1
                 verdict = classify_probe(sampled, matched)
                 if verdict == "positive":
+                    # churn-c: 프로브는 candidate 만 fetch 하므로 broken 부활 금지(교차오염 차단).
                     apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, True,
-                                              a_schema=ssch, b_schema=tsch)
+                                              a_schema=ssch, b_schema=tsch, allow_revive=False)
                     rep["positive"] += 1
                 elif verdict == "negative":
                     apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, False,
-                                              a_schema=ssch, b_schema=tsch)
+                                              a_schema=ssch, b_schema=tsch, allow_revive=False)
                     rep["negative"] += 1
                 else:
                     rep["neutral"] += 1
@@ -1290,7 +1325,7 @@ def probe_and_reinforce(ds_conn, dialect, scope_key, *, kb_conn=None, raw_execut
                 )
                 if _slots_resolved and _PROBE_MISSING_OBJECT_RE.search(str(exc)):
                     apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, False,
-                                              a_schema=ssch, b_schema=tsch)
+                                              a_schema=ssch, b_schema=tsch, allow_revive=False)
                     rep["negative"] += 1
                     # 구조 부재(없는 객체·DB)는 negative 감쇠가 곧 파단 → candidate 제외. now() 로 정상 rotation.
                     _touch_validated(kc, rid)
