@@ -6746,3 +6746,29 @@ mouse-hover 툴팁으로 충분하니 제거.
 - [x] 그래프 전 스위트 733 PASS / 0 FAIL (회귀 0)
 - [x] §18.8 검증 — `[CODEX:graph-hover-flow]` (subagent 패널은 세션 도구제약 — REVIEW 참조)
 - [x] **PB-0008 Windows-browser 라이브 시각검증** (`visual_verification_scope: always`) — §13.2.9 격리 컨테이너(:18097), 라이브 web-a/web-b 무접촉. 방향 2축·읽기/쓰기 2축·흐름 애니 전부 PASS, 페이지 에러 0. Run=`docs/test-runs.d/20260728T162844-graph-hover-flow.md`
+
+## 20260728T1735-routine-column-edges-postdeploy — 함수/프로시저 컬럼 관계선 POST-DEPLOY 실데이터 채움 + 라이브 재확인 (종결)
+
+선행 cycle(`20260728T1541-routine-column-edges`, PR #1014 → main `96dfdbdd`)이 남긴 유일한 잔여 항목
+"실데이터 e2e 는 배포 후 routine 재-introspect + graph sync 선행 필요" 를 완결한다. 코드·자산 변경 0.
+
+- 실데이터 채움: `bash bin/routine-backfill.sh` — `referenced_tables[].cols` 보유 routine **19 → 5,807**,
+  AGE `ROUTINE_USES` 의 `ref_columns` 엣지 **29 → 2,725**(전체 28,126).
+- PB-0008 실 Windows Chrome 150, **9 시나리오 PASS** — 접힘 무변경 · 펼침 쓰기/읽기 컬럼별 연결 ·
+  미렌더 참조 컬럼 테이블 승격 혼재 · `ref_columns` 부재 무회귀 · 한 컬럼 읽기·쓰기 공존 ·
+  상세 패널 `✎`(쓰기)/컬럼 병기(읽기) · 콘솔 에러 0.
+- 서빙 baked: web `b36493a9` · 워커 `96dfdbdd` · `graph-core.js?v=3772f0cfa0c5` 신규 심볼 확인.
+- 상세 Run: `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
+  증적 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/`(6매) ·
+  판단 근거 REVIEW `REV-20260728T173500-routine-column-edges-postdeploy`.
+- 잔여: 미도달 datasource(사내 VPN 경로 밖)의 컬럼 채움은 도달 가능 시점 backfill 또는 insight-worker
+  cadence 로 자연 수렴 — 별도 작업 없음.
+
+### 진행
+- [x] 실데이터 채움 — `bin/routine-backfill.sh` 전 datasource 재-introspect + scope 별 sync_graph
+- [x] AGE `ref_columns` 투영 규모 backfill 전/후 대조 (29 → 2,725 / 전체 28,126)
+- [x] PB-0008 라이브 쓰기-컬럼선 + 미렌더 컬럼 테이블 폴백 혼재 확인
+- [x] PB-0008 라이브 읽기-컬럼선 + 읽기/쓰기 한 컬럼 공존 확인
+- [x] 상세 패널 참조 컬럼 표기(쓰기 `✎` / 읽기 무마커) 확인
+- [x] 서빙 baked 심볼·GIT_COMMIT 확인 + 콘솔 에러 0
+- [x] Run 기록 · CHG · REV · 증적 6매 적재

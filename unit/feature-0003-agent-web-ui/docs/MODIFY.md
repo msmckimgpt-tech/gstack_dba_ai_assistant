@@ -1440,3 +1440,23 @@ TASK-20260728T162844-graph-hover-flow. branch `ai/claude/feature-0003-hover-rw-e
 (§13.2.9 격리 컨테이너, 라이브 web-a/web-b 무접촉). Python 변경 0 · RBAC·스키마·마이그·백엔드·엔드포인트 0.
 Cross-ref: REVIEW REV-20260728T162844-graph-hover-flow · `docs/test-runs.d/20260728T162844-graph-hover-flow.md` ·
 FUNCTION REQ-20260728T162844-graph-hover-flow(AC-GHF-1~4) · 선행 REQ-20260728T114015-graph-edge-flow(§83).
+
+## CHG-20260728T173500-routine-column-edges-postdeploy (함수/프로시저 컬럼 관계선 — POST-DEPLOY 실데이터 채움 + 라이브 재확인)
+
+코드·자산 변경 **0**. PR #1014 머지(main `96dfdbdd`) + 무중단 롤아웃 이후의 **main 기반 서빙본**에서
+실 데이터소스 데이터로 재확인하고, 실데이터를 채운 운영 절차와 결과를 기록한다.
+
+- 실데이터 채움: `bash bin/routine-backfill.sh` (전 datasource 재-introspect + scope 별 `sync_graph`).
+  `routine_objects` 의 `referenced_tables[].cols` 보유 **19 → 5,807**,
+  AGE `ROUTINE_USES` 의 `ref_columns` 속성 보유 엣지 **29 → 2,725**(전체 28,126).
+  배포 직후 19건은 insight-worker cadence 자연 전파분 — 워커 경로도 라이브에서 동작함을 확인.
+- 라이브 재확인(PB-0008 실 Windows Chrome 150, 9 시나리오 PASS): 접힘 무변경 · 펼침 시 쓰기/읽기
+  컬럼별 연결 · 미렌더 참조 컬럼의 테이블 승격(`::t::`) 혼재 · `ref_columns` 부재 무회귀 · 한 컬럼에
+  읽기·쓰기 공존 · 상세 패널 `✎` 쓰기 마커 및 읽기 컬럼 병기 · 콘솔 에러 0.
+- 서빙 baked 확인: `graph-core.js?v=3772f0cfa0c5` 신규 심볼(`resolveColId`·`ref_columns`·`colEdge`·
+  `::c::`·`::t::`) · `graph-ctxmenu.js`(`ref_columns`·`✎`) · web `b36493a9` / 워커 `96dfdbdd`.
+
+Cross-ref: REVIEW REV-20260728T173500-routine-column-edges-postdeploy ·
+`docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
+사전 Run `docs/test-runs.d/20260728T161940-routine-column-edges.md` ·
+선행 CHG(코드) `unit/feature-0016-metadata-graph/docs/MODIFY.md` 의 routine-column-edges 항목.

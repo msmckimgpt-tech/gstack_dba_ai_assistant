@@ -1506,3 +1506,37 @@ source 인지** 담지 못했고, `_edgeStyleBetween` 은 `e.source===sid&&e.tar
 **라이브 근거**: PB-0008 실 Windows Chrome 150 — 참조함/참조받음 화살촉 반전 + 강조 픽셀 차 441px,
 읽기/쓰기 대상선 분기 3,517px, 같은 hover 420ms 프레임 차 151px(대시 진행), 페이지 에러 0.
 `docs/test-runs.d/20260728T162844-graph-hover-flow.md` · `docs/evidence/pb0008-graph-hover-*-20260728.png`.
+
+## REV-20260728T173500-routine-column-edges-postdeploy [SKIPPED:post-deploy-live-evidence+no-code-change] — PASS
+- Related TASK: feature-0003-agent-web-ui
+- Trigger: POST-DEPLOY 재확인 cycle — 코드·자산 변경 0(docs/evidence only), 검증 자체가 산출물
+- Timestamp: 2026-07-28T17:35:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**왜 panel 대신 라이브 증거인가**: 본 cycle 은 새 코드를 만들지 않는다. 검증 대상은 "이미 머지·배포된
+코드가 **실 데이터**에서 의도대로 동작하는가" 이며, 그 판정 근거는 정적 리뷰가 아니라 실 데이터소스
+재-introspect 후의 라이브 관측이다. 따라서 §18.8 dispatch 표의 code-change 경로가 아니라 라이브 증거로
+대체하고, 그 사실을 본 entry 에 명시 트레이스로 남긴다(§18.8.2 4번 — 채널 선택 근거 기록).
+
+**본 cycle 이 실제로 닫은 위험**: 선행 cycle 의 자체 적대 검토가 지적한 최대 잠복 결함은
+`metadata_graph.routine_refs_signature` 가 `cols` 를 서명에 담지 않으면 **코드·단위테스트·시각검증이
+전부 통과해도 라이브에서만 기능이 죽는** 경로였다(같은 날 병합된 cyvol 최적화가 서명 동일 시
+`ROUTINE_USES` 재작성을 통째로 생략). 이 경로는 정의상 배포 후 실데이터에서만 반증 가능하다 —
+backfill 후 AGE `ref_columns` 엣지가 29 → 2,725 로 실제 증가했고 화면까지 도달했으므로, 서명 수정이
+의도대로 backfill 경로를 열었음이 라이브로 확인됐다.
+
+**혼재는 결함이 아니다(재확인)**: 라이브에서 `websessionkey` 의 참조 컬럼 5개 중 컬럼 정점이 존재하는
+것은 `SessionKey` 1개뿐이라, 컬럼선 1 + 테이블 폴백선 1 이 같은 테이블에 공존한다. 이는 (a) 컬럼 정점이
+`column_descriptions` SSOT 에서만 오고 (b) 확정하지 못한 참조를 컬럼에 그리지 않는다는 보수적 채택
+기준(사용자 결정)의 **직접적 귀결**이다. "없는 관계를 사실처럼 보여주지 않는다"를 커버리지보다 앞에
+둔 선택을 라이브 화면이 그대로 보여준다.
+
+**한계(미해소, 의도)**: 미도달 datasource(사내 VPN 경로 밖)는 이번 backfill 에서 채워지지 않았고
+per-(ds,DB,schema) 오류로 리포트만 남는다(비차단 설계). 도달 가능 시점의 backfill 또는 worker cadence
+로 자연 수렴하며, 별도 작업으로 다루지 않는다.
+
+**라이브 근거**: PB-0008 실 Windows Chrome 150 — 9 시나리오 PASS(컬럼선 끝점 model (2142,449) vs
+테이블 끝점 (2195,415) 분리 실측 · 읽기/쓰기 한 컬럼 공존 · 상세 패널 `✎` 5건 · 콘솔 에러 0).
+`docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
+`artifacts/shared/win-browser-shots-routine-coledges-postdeploy/` (6매).

@@ -2708,3 +2708,15 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T-RCE.3 렌더
 - [x] T-RCE.4 상세 패널
 - [x] T-RCE.5 검증 — 헤드리스 30·그래프 전 스위트 722 PASS·pytest 신규 27·전체 2740 passed(15 baseline)·PB-0008 실 Chrome PASS
+- [x] **POST-DEPLOY (2026-07-28 17:35, 종결)** — 배포 후 실데이터 채움 + 라이브 재확인 완료.
+  `bin/routine-backfill.sh` 로 전 datasource 재-introspect + scope 별 sync_graph:
+  `referenced_tables[].cols` 보유 routine **19 → 5,807**, AGE `ROUTINE_USES` 의 `ref_columns` 엣지
+  **29 → 2,725**(전체 28,126). PB-0008 실 Windows Chrome 150 **9 시나리오 PASS** — 접힘 무변경 · 펼침 시
+  쓰기(`websessionkey.SessionKey`)·읽기(`serverinfo.si_sid`) 컬럼별 연결 · 미렌더 참조 컬럼의 테이블
+  승격(`::t::`) 혼재 · `ref_columns` 부재 무회귀 · 한 컬럼에 읽기·쓰기 공존
+  (`CharacterSanction.CharacterID`) · 상세 패널 `✎` 쓰기 마커/읽기 컬럼 병기 · 콘솔 에러 0.
+  **`refs_sig` 잠복 결함(서명에 `cols` 미포함 시 라이브에서만 죽는 경로)이 실제로 열렸음을 라이브로
+  확인** — backfill 후 ref_columns 엣지가 실제 증가하고 화면까지 도달. 기록:
+  feature-0003 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
+  `REV-20260728T173500-routine-column-edges-postdeploy` ·
+  증적 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/`(6매).
