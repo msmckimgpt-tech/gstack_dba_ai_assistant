@@ -686,3 +686,31 @@ Cross-ref: REVIEW REV-20260728T175400-cyvol-scope-prefetch-fix ·
 `docs/test-runs.d/20260728T175400-cyvol-scope-prefetch-fix.md` ·
 선행 CHG-20260728T163000-graph-cypher-volume(도입 cycle) ·
 발견 경로 `unit/feature-0016-metadata-graph/docs/REPORT.md` 의 routine-column-edges POST-DEPLOY 절.
+
+## CHG-20260728T182000-cyvol-scope-prefetch-postdeploy (cyvol scope-prefetch 수정 POST-DEPLOY 재확인)
+
+코드·자산 변경 **0**. PR #1022 머지(main `44fe939d`) + 전체 롤아웃(web 롤링 + 워커 + gateway
+reconcile, soak 통과) 이후 라이브 배포본에서 결함 소실을 재확인한 기록.
+
+- 배포: web-a/web-b/ask-worker/insight-worker 전부 `44fe939d`. `metadata_graph.py` 는 워커(sync)와
+  web(그래프 조회 API) 양쪽이 쓰므로 전체 스코프 롤아웃(`--web-only` 아님).
+- 오류 소실: 스코프 지정 backfill(`--scope mysql-ddae8975d793` — 결함이 항상 발동했던 경로)의
+  sync_graph 리포트가 `errors=6`(routine_prefetch SyntaxError 포함) → **`errors: []`**,
+  워커 로그의 `routine_prefetch`/`syntax error` **0회**.
+- 데이터 무손상 + 멱등: mysql-local scope `ROUTINE_USES` 601 엣지 / `ref_columns` 370 ·
+  스코프 backfill 연속 2회 `with_cols` 257 불변.
+- 커버리지(귀속 분리): `cols` 보유 routine 5,807 → **7,377**, AGE `ref_columns` 엣지 2,725 → **9,269**,
+  `cols` 보유 scope 5 → **8**. 같은 창에서 backfill 재실행·워커 cadence·본 수정이 함께 작용했으므로
+  **본 수정 단독 효과로 주장하지 않는다**(기여 분리 미측정).
+
+미해결 관측(§8.1 기록만): 1차 전체 backfill(수정 전 이미지) 이후 mysql-local `with_cols` 가 6 으로
+불변이었는데 수정 후 스코프 실행에서 257 로 수렴했다. 파서(`routines.py`)는 두 이미지 간 바이트
+동일이고, 본 결함의 rollback 은 그래프 커넥션에만 작용해 `routine_objects` 미persist 의 원인일 수
+없다(코드 독해). 유력 후보는 `introspect_and_store` 의 예외 삼킴("0/부분 카운트 반환")으로 고부하
+창에서 컬럼 인벤토리 실패가 **커버리지를 조용히 줄인 채 exit 0** 이 되는 경로다. 1차 리포트가
+유실되어 확정하지 못했다. 개선 후보(미실행): 부분 실패를 반환값·리포트에 구분 신호로 남기고
+per-schema `cols` 채움 수를 리포트에 포함.
+
+Cross-ref: REVIEW REV-20260728T182000-cyvol-scope-prefetch-postdeploy ·
+`docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md` ·
+수정 cycle CHG/REV-20260728T175400-cyvol-scope-prefetch-fix.
