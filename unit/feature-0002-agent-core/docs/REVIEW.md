@@ -688,3 +688,41 @@ CHG-20260728T124500-llm-usage-target-scope-postverify. docs-only(코드 diff 0) 
 Cross-ref: CHG-20260728T175400-cyvol-scope-prefetch-fix ·
 `docs/test-runs.d/20260728T175400-cyvol-scope-prefetch-fix.md` ·
 도입 cycle REV/CHG-20260728T163000-graph-cypher-volume.
+
+## REV-20260728T182000-cyvol-scope-prefetch-postdeploy [SKIPPED:post-deploy-live-evidence+no-code-change] — PASS
+- Related TASK: feature-0002-agent-core
+- Trigger: POST-DEPLOY 재확인 cycle — 코드·자산 변경 0(docs only), 라이브 관측이 산출물
+- Timestamp: 2026-07-28T18:20:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**판정 근거**: 수정 cycle 의 정합성 논거는 코드 독해 + 라이브 PG ground-truth 로 이미 닫혔고, 본
+cycle 이 추가하는 것은 **배포본에서 실제로 오류가 사라졌는가** 하나다. 그 명제는 정적 리뷰로
+검증할 수 없으므로 라이브 증거로 대체한다.
+
+**silence ≠ success 로 판정하지 않았다**: "오류 로그가 없다"만으로 PASS 하지 않고 ① 리포트의
+`errors` 배열이 실제 빈 리스트 ② 워커 로그 문자열 0회 ③ 엣지·`ref_columns` 카운트로 데이터 무손상
+④ 연속 2회 실행 멱등 — 네 축을 각각 확인했다. 결함의 폴백이 fail-safe 였던 만큼 "동작은 정상"이
+수정 여부를 구분해 주지 않기 때문이다.
+
+**커버리지 증가를 자기 공적으로 돌리지 않았다**: 같은 창에서 backfill 재실행·워커 cadence·본
+수정이 함께 작용했다. 기여 분리를 측정하지 않았으므로 수치는 사실로만 남기고 인과는 주장하지
+않는다(§16.3 정직성). 이 절제가 없으면 다음 세션이 "수정만으로 3.4배" 라는 잘못된 기준선을 갖는다.
+
+**본 cycle 이 새로 드러낸 것 — 부분 성공의 무음(미수정, 기록)**: 1차 전체 backfill 이후 mysql-local
+`with_cols` 가 6 불변이었는데 수정 후 스코프 실행에서 257 로 수렴했다. 파서가 두 이미지 간 바이트
+동일이고 본 결함의 rollback 은 그래프 커넥션 한정이므로 **본 결함은 원인이 아니다**. 남는 후보는
+`introspect_and_store` 의 예외 삼킴 규약 — 고부하 창에서 컬럼 인벤토리 조회가 전이적으로 실패하면
+커버리지가 조용히 줄어든 채 `exit 0` 이 되고, 리포트가 "부분 성공"과 "완전 성공"을 구분하지 않는다.
+1차 리포트가 유실되어(백그라운드 stdout 0바이트) 확정하지 못했고, 확정하지 못한 것을 확정한 척
+하지 않는다. 개선 후보만 남긴다: 부분 실패를 반환값·리포트에 구분 신호로 남기고 per-schema `cols`
+채움 수를 리포트에 포함.
+
+**한계**: 스코프 sync 1건으로 확인했다(27 datasource 전수 아님). 결함이 `scope_key is not None` 에서
+항상 발동하는 결정론적 문법 오류이고 라이브 PG 로 두 형태를 직접 대조했으므로 scope 값 의존성은
+없다고 판단했다. `rag_table`/`relationship` step 의 `Entity failed to be updated: 3` ·
+`DeadlockDetected` 는 여전히 남아 있다(별개 클래스, 범위 밖).
+
+Cross-ref: CHG-20260728T182000-cyvol-scope-prefetch-postdeploy ·
+`docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md` ·
+수정 cycle CHG/REV-20260728T175400-cyvol-scope-prefetch-fix.
