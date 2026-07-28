@@ -315,9 +315,6 @@ REG
   # 동일 디렉터리 mktemp → 삽입 성공 검증 → mv (중간 실패 시 원본 무손상 — MAJOR-2).
   local tmp
   tmp="$(mktemp "$REGISTRY_FILE.XXXXXX")" || return 1
-  # §13.2.10: mktemp 는 0600 을 만들고 mv 는 그 모드를 남긴다. mv **전에** 되감아,
-  # rewrite 순간에 다른 계정이 읽지 못하는 창(window)과 중간 실패 시 0600 영구화를 없앤다.
-  priv_share_file "$tmp"
   awk -v br="### $NEW_BRANCH" \
       -v sid="${CLAUDE_SESSION_ID:-claude-session-$PPID}" \
       -v ts="$(date +%Y-%m-%dT%H:%M:%S%z)" \
@@ -340,12 +337,11 @@ REG
     {print}
   ' "$REGISTRY_FILE" >"$tmp" || { rm -f "$tmp"; return 1; }
   grep -qxF "### $NEW_BRANCH" "$tmp" || { rm -f "$tmp"; return 1; }
-  mv "$tmp" "$REGISTRY_FILE" || { rm -f "$tmp"; return 1; }
-  # §13.2.10: mktemp 는 0600 으로 만들고 mv 는 그 모드를 남긴다 — 원자 rewrite 한 번마다
-  # REGISTRY 가 "0600 <직전 실행자>" 로 굳고, ACL 배치에서는 mask 가 `---` 로 눌려
-  # 다른 계정이 통째로 막힌다(2026-07-27 실증). 매 기록 후 공유 모드로 되감는다.
-  priv_share_file "$REGISTRY_FILE"
-  priv_share_file "$REGISTRY_FILE.lock"
+  # §13.2.10: `mv` 는 mktemp 의 0600 을 그대로 가져가 REGISTRY 를 "0600 <직전 실행자>" 로
+  # 굳히고, ACL 배치에서는 mask 가 `---` 로 눌려 다른 계정이 통째로 막힌다(2026-07-27 실증).
+  # 원본 inode 를 유지한 write-through 로 mode·uid/gid·ACL 을 정의상 보존한다 — `chmod`
+  # 되감기는 ACL named entry 를 복원하지 못해 쓰지 않는다.
+  priv_replace_preserving_mode "$tmp" "$REGISTRY_FILE" || { rm -f "$tmp"; return 1; }
   return 0
 }
 

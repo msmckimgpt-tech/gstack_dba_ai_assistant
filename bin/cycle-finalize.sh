@@ -444,7 +444,6 @@ elif grep -qxF '## Active' "$REGISTRY_PATH" && grep -qxF '## Closed' "$REGISTRY_
   REG_TMP=""
   if exec 8>"$REGISTRY_PATH.lock" && flock -w 10 8 \
      && REG_TMP="$(mktemp "$REGISTRY_PATH.XXXXXX")" \
-     && { priv_share_file "$REG_TMP"; true; } \
      && awk -v br="### $SELF_BRANCH" \
             -v closed="- closed_at: $(date +%Y-%m-%dT%H:%M:%S%z) (PR #${PR_NUMBER:-?})" '
           /^## Active$/ {act=1; print; next}
@@ -459,17 +458,14 @@ elif grep -qxF '## Active' "$REGISTRY_PATH" && grep -qxF '## Closed' "$REGISTRY_
           {print}
         ' "$REGISTRY_PATH" >"$REG_TMP" \
      && ! awk '/^## Active$/{a=1;next} /^## Closed$/{a=0} a' "$REG_TMP" | grep -qxF "### $SELF_BRANCH" \
-     && mv "$REG_TMP" "$REGISTRY_PATH"; then
-    # §13.2.10: mktemp(0600) → mv 가 남긴 모드 열화를 되감는다 (cycle-init 과 동일 축).
-    priv_share_file "$REGISTRY_PATH"
-    priv_share_file "$REGISTRY_PATH.lock"
+     && priv_replace_preserving_mode "$REG_TMP" "$REGISTRY_PATH"; then
+    # §13.2.10: `mv` 대신 원본 inode 유지 write-through — mode·uid/gid·ACL 보존
+    # (cycle-init 과 동일 축. `chmod` 되감기는 ACL named entry 를 복원하지 못한다).
     log_info "REGISTRY entry 이동 완료: $SELF_BRANCH → ## Closed"
   else
     rm -f "${REG_TMP:-/nonexistent}" 2>/dev/null || true
-    # 실패 분기에서도 모드를 되감는다 — 실패 전에 mv 가 이미 통과했을 수 있고, 그 경우
-    # 되감지 않으면 0600 이 그대로 굳는다 (성공 분기에만 두면 생기는 구멍).
-    priv_share_file "$REGISTRY_PATH"
-    priv_share_file "$REGISTRY_PATH.lock"
+    # write-through 는 원본 mode 를 건드리지 않으므로 실패 분기에서 되감을 것이 없다
+    # (mv 방식일 때 필요했던 보정 — write-through 전환으로 소멸).
     _reg_reason_post="$(priv_access_reason "$REGISTRY_PATH")"
     if [ "$_reg_reason_post" != "ok" ]; then
       log_warn "REGISTRY entry 자동 이동 실패: 권한($_reg_reason_post) — $REGISTRY_PATH (실행자: $(id -un))"

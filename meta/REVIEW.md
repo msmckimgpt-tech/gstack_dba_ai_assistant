@@ -867,3 +867,31 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
   공유 파일 접근이 필요해지면 §13.2.10 범위 한정을 재검토해야 한다(현재는 필요 없음 — 패널이
   hook 호출 그래프로 확인). template base 전파 시 no-ACL 소비자에서 R5 형태의 복구 경로를
   다시 실측할 것.
+
+## REV-20260728T011500-META-0047-privilege-writethrough [SKIPPED:설계 결정이 상류 적대검증에서 이미 검증됨 — 본 cycle 은 그 결론의 적용]
+- Related Change: 소비자 `bin/lib/privilege.sh` 를 write-through 로 정합화 (§13.2.10),
+  REV-20260727T190500-META-0046 의 후속 항목 이행
+- Panel skip 근거: 본 변경이 채택하는 설계(`replace_preserving_mode`)는 **이미 두 번 독립
+  검증됐다** — ① template v3.40.0 이 hop 계층에서 도입하며 `stat`/`chmod` 왕복이 metadata
+  에 lossy 함을 실측(ACL named entry 소실 · symlink lstat 0777 · uid/gid 미복원)으로
+  확증했고, ② 그 결론이 v3.41.0 §13.2.10 규약으로 명문화됐다. 본 cycle 은 새 설계를
+  제안하는 것이 아니라 소비자 선행 구현(초판 `chmod` 되감기)을 그 규약에 맞추는 적용이며,
+  changeset 은 `bin/lib/privilege.sh` + 두 호출부 + AGENTS.md 문구다.
+- 왜 초판이 `chmod` 였나 (정직한 경위): META-0046 착수 시점에 template v3.40.0 은 아직
+  미커밋 상태(다른 세션 진행 중)여서 `replace_preserving_mode` 의 존재와 그 근거를 알지
+  못했다. 소비자 환경에 default ACL 이 걸려 있어 `chmod 0664` 만으로도 `mask` 가 복원돼
+  **증상이 사라졌고**, 그래서 초판이 통과했다. 즉 이 프로젝트에서는 실害가 없었지만
+  ACL 없는 배치에서는 named entry 를 잃는 잠재 결함이었다.
+- 검증 (라이브 실측):
+  - **W1 metadata 보존** — REGISTRY 를 mode `0640` + named ACL `user:root:rw-` 로 설정한 뒤
+    cycle-init 기록 → **`-rw-rwx---` 와 `user:root:rw-` 가 그대로 유지**. `mv` 방식이었다면
+    mktemp 의 0600 이 남거나(또는 chmod 로 0664 로 넓어지고) named entry 가 부모 default
+    ACL 로 대체됐을 지점이다.
+  - **W2 복구 경로 무회귀** — `root:root 0600` 장애를 재현 → `priv_ensure_writable` 이
+    `chmod 0664` 1단계로 복구, 기록 성공, 호출자 쓰기 가능 확인.
+  - 문법: 3파일 `bash -n` PASS. `priv_share_file` 잔재는 헤더의 역사 서술 1건뿐(코드 0).
+  - 테스트 worktree·REGISTRY entry·권한 전량 원복 확인.
+- Open Questions: `priv_replace_preserving_mode` 와 `migrations/lib/common.sh::replace_preserving_mode`
+  는 계층 분리(후자는 hop 전용 lib 으로 `log_*` 에 의존)로 인한 동일 계약 중복이다. 두 계층이
+  공유할 최소 lib 로 승격하는 것은 template 측 별도 cycle 로 남긴다 — 소비자에서 선행 통합하면
+  다음 template hop 과 충돌한다.

@@ -1276,14 +1276,22 @@ push / PR merge 는 코드 완료이지 배포 완료가 아니다.
 접근 불가일 때 그 접근권을 복구하는 것**.
 
 - 공용 어댑터: **`bin/lib/privilege.sh`**
-  (`priv_ensure_writable` / `priv_share_file` / `priv_share_dir` /
+  (`priv_ensure_writable` / `priv_replace_preserving_mode` / `priv_share_dir` /
   `priv_unreadable` / `priv_unwritable` / `priv_access_reason`).
 - **`priv_ensure_writable <file>`** — 이미 쓸 수 있으면 즉시 반환한다. **정상 상태에서는
   `sudo` 를 한 번도 호출하지 않는다.** 접근 불가일 때만 최소 단계로 올라간다:
   ① `chmod 0664` (ACL 배치에서는 이것만으로 `mask` 가 복원돼 named-user ACL 이 살아난다)
   → ② 그래도 안 되면 `chown` 현재 실행자. 소유권 이전은 정말 필요할 때만 일어난다.
-- **`priv_share_file`** — 쓰기 직후(그리고 `mktemp` 직후, `mv` **전에**) 0664 로 되감아
-  다음 계정이 막히지 않게 한다. 위 열화의 직접 해독제이며 sudo 가 필요 없다.
+- **`priv_replace_preserving_mode <tmp> <target>`** — 애초에 mode 가 망가지지 않게 한다.
+  원본 inode 를 유지한 채 내용만 write-through 하므로 mode·uid/gid·ACL·xattr·symlink
+  정체성이 정의상 보존된다. **공유 운영 파일을 rewrite 하는 모든 경로는 이것을 쓴다**
+  (`mktemp` + `mv` 직접 사용 금지). sudo 불요.
+  > ⚠️ **`chmod` 로 mode 를 되감는 방식은 쓰지 않는다.** file metadata 에 대해 lossy 다 —
+  > ACL named entry 는 `chmod` 로 복원되지 않고, `mv` 로 새 inode 가 되면 원본의 named
+  > entry 자체가 사라진다(부모 디렉터리에 default ACL 이 있으면 마스킹돼 **환경 의존적으로
+  > 잠재**한다). 초판(2026-07-27)은 `priv_share_file`(chmod 0664 되감기)이었고, template
+  > v3.41.0 §13.2.10 과 정합화하며 write-through 로 교체했다 (실측: mode 0640 + named ACL
+  > `user:root:rw-` 가 기록 후에도 그대로 보존).
 - **비차단 degrade** — `sudo -n` 실패(부재·암호 필요)면 경고 후 계속한다. 비대화
   컨텍스트(hook·cron)에서 프롬프트로 멈추는 쪽이 더 나쁘다. 우회: `PRIV_NO_SUDO=1`.
 - **권한 실패 ≠ 부재/스키마 불일치** — `priv_access_reason` 으로 `read-denied` /
