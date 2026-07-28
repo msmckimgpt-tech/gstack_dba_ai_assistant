@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T162000-graph-catcluster-scroll-polish — 카테고리 선택 스크롤 polish: 280ms EaseOutExpo + 헤딩 점멸/멤버 파도(알파 선형 감쇠) (Minor §12.3 — feature-0003 프론트 `graph-ctxmenu.js` + `graph.css`, 정본 feature-0016, /_template:entry arg-given)
+- 요청(사용자, 2026-07-28, 직전 cycle 수용 후 개선 2건): "스크롤이 이동하는 속도를 좀 더 신속하게 구성해주세요. (assistant 대화 로그에서, 우측 막대뱃지를 클릭하여 대화 스크롤을 이동시키는 형태와 정합하게)" / "하이라이트 연출을 개선시켜 주세요 : 카테고리 스키마 점멸 + 하위 자식 요소를 파도 형태로 순차적으로 점멸(다만, 점멸 알파는 점점 선형적으로 연하게.)"
+- 진단: ① 직전 구현은 브라우저 native `scrollTo({behavior:'smooth'})` — duration 이 브라우저 임의라 17,000px 목록에서 수 초가 걸렸다(실측: 클릭 800ms 후 측정값이 이동 중간값). 대화 뷰는 이미 같은 문제를 **280ms EaseOutExpo**(REQ-20260629-point-scroll)로 해결해 둔 정본이 있다. ② 도착 강조가 헤딩 1.8s 단일 페이드라 "어느 카테고리인지"는 알려도 "그 카테고리가 무엇을 품는지"는 안 보였다.
+- 접근: ① `_metaAnimatePanelScroll`(rAF + `1-2^(-10t)`, 280ms) 로 교체 — `app.js`/`share.js` 와 동일 곡선·동일 duration. ② 헤딩은 2회 점멸, 멤버 행은 `animation-delay` 26ms 간격 파도 + `--amgr-wave-a` 알파를 A0=0.5 에서 0 까지 **선형** 감쇠. 상한 24행(패널 뷰포트 분량), 접힌 행 제외.
+- 완료 판정(acceptance):
+  - [x] [AC-CPS-5] 패널 스크롤이 대화 뷰 point-rail 과 동일한 280ms EaseOutExpo 로 구동된다(거리 무관 일정).
+  - [x] [AC-CPS-6] 도착 시 카테고리 헤딩이 점멸하고, 하위 멤버 행이 순차 파도로 점멸한다.
+  - [x] [AC-CPS-7] 파도 알파가 첫 행에서 마지막 행까지 선형으로 감쇠한다(균일 간격·단조 감소).
+  - [x] [AC-CPS-8] 연출 종료 후 클래스·인라인 변수가 전부 제거되고, 연타 시 직전 연출·스크롤이 즉시 선점된다.
+- 검증: 헤드리스 65 PASS(직전 36 → +29) + 회귀 328 PASS · PB-0008 실 Windows Chrome 라이브(격리 컨테이너) 6 시나리오 PASS · 콘솔 에러 0 · 파도 프레임 캡처 확보.
+- 상태: **완결** — 라이브 검증·정리 완료.
+
 ## TASK-20260728T161326-graph-analyzed-halo-fit — AI 분석 완료 컬럼 노드의 상태 테두리가 노드보다 비대 (Minor §12.3 — feature-0003 프론트 `static/graph/graph-renderer-pixi.js`, 정본 feature-0016, /_template:entry arg-given)
 - 요청(사용자, 2026-07-28, 스크린샷 1매 — `masangsoft_modules` 컬럼 목록이 세로 보라색 관으로 이어진 화면): "`그래프 뷰` 에서 AI분석이 완료된 컬럼 노드에서, 노드 크기에 비해 테두리가 너무 비대하게 구성되어 있어 적절하게 재구성이 필요합니다."
 - 진단(코드 확정): 컬럼 노드는 `type:"circle"`(지름 11px)인데 `_applyNodeStates` 는 **모든 노드를 사각형으로 가정**했다. `h` 를 `Array.isArray(s.size) ? s.size[1] : 24` 로 잡아 **원형 노드에 h=24 기본값**이 적용되고, 여기에 여백 3 + 두께 3 이 붙어 **11px 점 주위에 17×30 알약**이 그려졌다. 컬럼 행 간격(~24px)보다 halo 가 높아 이웃 halo 끼리 겹치며 **세로 관** 으로 이어진 것이 사용자가 본 화면이다. 즉 지배 원인은 두께가 아니라 **모양·크기 계약의 부재**다.

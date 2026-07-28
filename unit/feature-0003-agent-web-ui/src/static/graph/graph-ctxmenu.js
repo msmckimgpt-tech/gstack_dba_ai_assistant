@@ -2850,7 +2850,77 @@ function _metaGroupFam(groupKey) {
   const i = s.indexOf(_META_GKEY_SEP);
   return i >= 0 ? s.slice(i + 1) : "";
 }
-// 패널의 해당 컨텐츠 카테고리 헤딩으로 스크롤 + 잠깐 강조. 반환: 매칭 헤딩 라벨(미매칭이면 null — 상태줄 보강용).
+// graph-catcluster-scroll(polish, 사용자 요청 2026-07-28 ②): 패널 스크롤을 브라우저 native smooth
+//   (가변·임의 duration, 장거리에서 수 초)에서 **대화 뷰 point-rail 과 동일한 280ms EaseOutExpo**
+//   (app.js `POINT_SCROLL_DURATION_MS`/`_easeOutExpo`, share.js `SHARE_POINT_SCROLL_DURATION_MS`)로
+//   교체한다 — "빠르게 도달 + 깔끔한 정착". 거리와 무관하게 항상 280ms 라 장거리 목록에서도 즉답감.
+const _META_PANEL_SCROLL_MS = 280;
+function _metaEaseOutExpo(t) { return t >= 1 ? 1 : 1 - Math.pow(2, -10 * t); }   // f(1)=1 정확(부동소수 분기)
+// 패널 aside 의 scrollTop 을 from→to 로 EaseOutExpo 구동. seqOf() 가 현재 세대와 달라지면 즉시 중단
+//   (연타 시 이전 애니메이션이 새 목표를 덮어쓰지 않게 — 세대 토큰은 _metaGraph._panelFocusSeq).
+function _metaAnimatePanelScroll(box, from, to, seqOf, reduce) {
+  const delta = to - from;
+  if (delta === 0) return;
+  if (reduce) { box.scrollTop = to; return; }
+  const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : null;
+  if (t0 == null) { box.scrollTop = to; return; }   // performance.now 부재 폴백
+  const step = (now) => {
+    if (!seqOf()) return;
+    const p = Math.min(1, (now - t0) / _META_PANEL_SCROLL_MS);
+    box.scrollTop = from + delta * _metaEaseOutExpo(p);
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// graph-catcluster-scroll(polish, 사용자 요청 2026-07-28 ②): 도착 연출 = **카테고리 헤딩 점멸 +
+//   하위 멤버 행이 파도(wave)처럼 순차 점멸**, 뒤로 갈수록 점멸 알파가 **선형 감쇠**.
+//   구현은 CSS 애니메이션(`.is-focus` / `.is-wave` + `--amgr-wave-a` 알파 변수 + `animation-delay`)이고
+//   JS 는 대상 선정·변수 주입·정리만 한다(합성 프로퍼티만 애니메이트 — 레이아웃 무비용).
+const _META_WAVE_MAX = 24;        // 파도 대상 상한 — 패널 뷰포트가 담는 행 수 정도(그 아래는 어차피 비가시)
+const _META_WAVE_STEP_MS = 26;    // 행 간 지연(파도 진행 속도)
+const _META_WAVE_LEAD_MS = 90;    // 헤딩 점멸이 시작된 뒤 파도가 따라붙는 offset
+const _META_WAVE_DUR_MS = 420;    // 행 1개의 점멸 길이(CSS keyframes 와 동일)
+let _metaWaveNodes = [];          // 현재 연출 중인 노드 — 새 연출 진입 시 즉시 원복(중첩 방지)
+function _metaClearPanelWave() {
+  _metaWaveNodes.forEach((el) => {
+    try {
+      el.classList.remove("is-focus", "is-wave");
+      el.style.removeProperty("animation-delay");
+      el.style.removeProperty("--amgr-wave-a");
+    } catch (_) { /* detached 노드 — 무해 */ }
+  });
+  _metaWaveNodes = [];
+}
+// target 헤딩 다음부터 다음 헤딩 전까지의 **보이는** 멤버 행(접힌 그룹은 display:none 이라 제외)에
+//   지연·알파를 주입한다. 알파는 A0 에서 0 까지 선형(요청: "점점 선형적으로 연하게").
+function _metaRunPanelWave(target, reduce) {
+  _metaClearPanelWave();
+  try { target.classList.add("is-focus"); } catch (_) { return; }
+  _metaWaveNodes.push(target);
+  // 모션 최소화 선호: 헤딩 정적 강조만(파도는 순차 모션 그 자체라 생략 — CSS 가 .is-focus 를 무애니로 분기).
+  if (reduce) return _META_WAVE_DUR_MS * 3;
+  const rows = [];
+  let n = target.nextElementSibling;
+  while (n && !n.classList.contains("amgr-ct-group") && rows.length < _META_WAVE_MAX) {
+    if (n.classList.contains("amgr-ct-row-li") && !n.classList.contains("amgr-ct-collapsed")) rows.push(n);
+    n = n.nextElementSibling;
+  }
+  const N = rows.length;
+  rows.forEach((li, i) => {
+    // 선형 감쇠: 첫 행 A0, 마지막 행 ~0. N=1 이면 A0 그대로(0으로 나누지 않음).
+    const a = (0.5 * (N > 1 ? (1 - i / (N - 1)) : 1)).toFixed(3);
+    try {
+      li.style.setProperty("--amgr-wave-a", a);
+      li.style.setProperty("animation-delay", (_META_WAVE_LEAD_MS + i * _META_WAVE_STEP_MS) + "ms");
+      li.classList.add("is-wave");
+      _metaWaveNodes.push(li);
+    } catch (_) { /* graceful */ }
+  });
+  return _META_WAVE_LEAD_MS + Math.max(0, N - 1) * _META_WAVE_STEP_MS + _META_WAVE_DUR_MS;
+}
+
+// 패널의 해당 컨텐츠 카테고리 헤딩으로 스크롤 + 도착 연출. 반환: 매칭 헤딩 라벨(미매칭이면 null — 상태줄 보강용).
 //   스크롤 컨테이너는 aside(#metadataGraphDetail, _metaGraphDetailScrollEl) 이므로 scrollIntoView(조상까지
 //   스크롤 — 관리콘솔 본문이 함께 움직임) 대신 aside.scrollTop 을 직접 계산해 국소 스크롤한다.
 function _metaGraphFocusPanelGroup(fam) {
@@ -2868,6 +2938,7 @@ function _metaGraphFocusPanelGroup(fam) {
   }
   if (!target) return null;   // 캔버스/패널 그룹 분할이 어긋난 경우(멤버 집합 차이) — graceful no-op
   const seq = ++_metaGraph._panelFocusSeq;
+  const fresh = () => seq === _metaGraph._panelFocusSeq;   // 더 최근 선택이 선점하면 stale
   // sticky 이력 바(.admin-meta-graph-detailnav, 표시 중일 때만)가 헤딩을 덮지 않도록 그 높이만큼 위 여백 확보.
   const nav = document.getElementById("metadataGraphDetailNav");
   const navH = (nav && !nav.hidden) ? Math.round(nav.getBoundingClientRect().height) : 0;
@@ -2875,16 +2946,16 @@ function _metaGraphFocusPanelGroup(fam) {
   try { reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (_) { reduce = false; }
   // rAF: 방금 교체된 innerHTML 의 레이아웃이 반영된 뒤 위치를 재야 clamp 되지 않는다(이력 스크롤 복원과 동형).
   requestAnimationFrame(() => {
-    if (seq !== _metaGraph._panelFocusSeq) return;   // 더 최근 선택이 선점 — stale 스크롤 금지
+    if (!fresh()) return;   // 더 최근 선택이 선점 — stale 스크롤 금지
     try {
       const top = box.scrollTop + (target.getBoundingClientRect().top - box.getBoundingClientRect().top) - navH - 6;
       const y = Math.max(0, Math.round(top));
-      if (typeof box.scrollTo === "function") box.scrollTo({ top: y, behavior: reduce ? "auto" : "smooth" });
-      else box.scrollTop = y;
-    } catch (_) { /* graceful — 스크롤 실패해도 강조는 남긴다 */ }
-    // 도착 지점 시선 앵커(1.8s 페이드). 재렌더로 노드가 교체돼도 stale 노드의 class 제거는 무해.
-    try { target.classList.add("is-focus"); } catch (_) {}
-    setTimeout(() => { try { target.classList.remove("is-focus"); } catch (_) {} }, 1800);
+      const maxTop = Math.max(0, box.scrollHeight - box.clientHeight);
+      _metaAnimatePanelScroll(box, box.scrollTop, Math.min(maxTop, y), fresh, reduce);
+    } catch (_) { /* graceful — 스크롤 실패해도 연출은 남긴다 */ }
+    // 도착 연출(헤딩 점멸 + 멤버 파도). 재렌더로 노드가 교체돼도 stale 노드의 class 제거는 무해.
+    const total = _metaRunPanelWave(target, reduce) || _META_WAVE_DUR_MS;
+    setTimeout(() => { if (fresh()) _metaClearPanelWave(); }, total + 120);
   });
   const lab = target.querySelector(".amgr-ct-group-label");
   return (lab && lab.textContent) || fam;
