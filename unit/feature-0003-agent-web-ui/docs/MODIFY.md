@@ -17,6 +17,13 @@ source_of_truth: true
 - 라이브 실측(win-browser relay 실 Windows Chrome 150.0.7871.115, `mysql-local` > `cc_bonedragon` 펼침 257테이블·300루틴): **8/8 PASS** — ①잘린 명칭 전체 노출(`sp_GetCurrentItemUniqueID…`→`sp_GetCurrentItemUniqueID_New`) ②rAF 프레임 폭 216→297→303px 단계 증가(트윈 실측) ③**다른 노드 위치 불변**(유의 픽셀 diff 가 캔버스의 2.75%=306×38px, hover 한 칩 자신에 국한) ④z-order(확장분이 클러스터 경계·관계선 위) ⑤확장영역 클릭 라우팅 대조(hover 전=클러스터 폴백 / hover 후=원 노드 상세) ⑥이탈 원복 픽셀 동치(최대 채널차 1/255) ⑦미잘림 칩 무반응 ⑧pageerror 0.
 - 증적: `docs/evidence/pb0008-graph-label-hover-{before,after,leave}-20260728.png` · 원본·프레임 로그 `artifacts/feature-0003-graph-label-hover-expand/`. Cross-ref: CHG/REV-20260728T120530-graph-label-hover-expand.
 
+## CHG-20260728T123838-graph-edge-legibility (TASK-20260728T123838-graph-edge-legibility — 그래프 관계선 육안 검증 후 부정합 3건 보정, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js`: `EDGE_THIN_REF`/`EDGE_MIN_SCREEN_PX`/`edgeWidthBoost()` 신설 — `_paintEdge` 의 굵기·화살촉 상하한에 **전 엣지 동일 배율**을 적용해 줌아웃 서브픽셀 소실을 막고 굵기 서열을 보존.
+- `graph-roleviz.js`: `_META_EDGE_CURVE` 0.15→0.13 · `_META_EDGE_CURVE_MAX` 44→26(카드 치수 결속) · alpha 바닥 상향(기본 0.32→0.58·색 `#94a3b8`→`#7c8b9e`, candidate 0.5→0.66, trusted 0.62→0.8, ROUTINE_USES 0.42→0.62, crossDs 0.52→0.66, SCHEMA_REF 0.3+→0.55+).
+- `graph-core.js`: USES 사용선 α 0.5→0.66.
+- `tests/headless/test_graph_edge_flow.js`: §84 A11 4건 신설(줌 4단계 화면 굵기 바닥·zoom 2 무보정·서열 보존) + B2 가시성 바닥/누적 단조 계약 갱신 + A4 곡률 상한 카드 결속.
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+
 ## CHG-20260728T120530-graph-label-hover-expand (TASK-20260728T120530-graph-label-hover-expand — 그래프 뷰 잘린 노드 명칭 hover 확장, Minor §12.3)
 - Date: 2026-07-28. Files: `static/graph/graph-renderer-pixi.js`(수정) · `tests/headless/test_pixi_adapter.js`(T26 추가). **frontend-only · additive/비파괴** — 데이터·API·RBAC·엔드포인트·스키마·레이아웃 산출 변경 0.
 - 요청(사용자, `/_template:entry`): "그래프 뷰에서 테이블 노드 내 명칭이 너무 길 경우 전체 텍스트가 잘리는 이슈… mouse-hover 시 노드 크기가 부드럽게 확장되며 나머지 명칭이 나타나도록. **다른 노드의 위치를 뒤틀지 않도록** 주의하고 **z-order** 또한 유의."

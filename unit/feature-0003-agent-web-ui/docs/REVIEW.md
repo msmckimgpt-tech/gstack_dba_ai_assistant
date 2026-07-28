@@ -15,6 +15,21 @@ source_of_truth: true
 - 선행 cycle(`REV-20260728T120530-graph-label-hover-expand`)이 남긴 **유일한 미검증 범위**(ux/design 렌즈 = `[SKIPPED:tool-restricted:ux,design]`)를 라이브 실측으로 종결한다: 확장 애니·이웃 위치 불변·z-order·클릭 라우팅·원복·무반응·에러 8 항목 전부 PASS(상세 수치는 fragment 표).
 - 특기 — **③ 위치 불변의 증명 방식**: "확인함" 선언이 아니라 동일 상태 전/후 전체 화면 픽셀 diff 를 임계(>16)로 이진화해 **유의 변화 영역이 캔버스의 2.75%(306×38px)** 이고 그 박스가 hover 한 칩 자신임을 수치로 고정했다(§16.6 픽셀-클래스 변경은 시각 캡처 필수 + 자기-충족 선언 금지). ⑤ 도 hover 전/후 같은 좌표 클릭의 **대조 실험**으로 tier0 라우팅을 분리 입증.
 
+## REV-20260728T123838-graph-edge-legibility [SKIPPED:session-policy-no-subagent] — 그래프 관계선 육안 검증 후 부정합 3건 보정 (TASK-20260728T123838-graph-edge-legibility, Minor §12.3, frontend-only)
+- Panel skip 사유(§18.8): 본 세션 사용자 환경 정책상 `Agent` tool 미허용 — subagent 패널 대신 **라이브 실측 + 기계 검증**으로 대체하고 범위를 정직 기록한다.
+- 판단 근거:
+  - **왜 굵기 보정이 근본인가**: alpha 만 올리면 "가늘게+투명" 요구를 해치면서도 서브픽셀 문제는 남는다(zoom 0.25 에서 0.85px → 화면 0.21px 는 어떤 alpha 로도 복구 불가). 화면 기준 굵기 바닥이 원인 대응이고, alpha 는 보조.
+  - **왜 전 엣지 동일 배율인가**: 엣지마다 `max(lw, MIN/zoom)` 로 clamp 하면 줌아웃에서 기본선과 trusted 가 같은 굵기로 수렴해 **신뢰 강도 서열이 소실**된다. 기준선 하나로 배율을 뽑아 곱하면 서열 비율이 그대로 유지된다(A11 로 잠금).
+  - **왜 바닥값을 실측으로 정했나**: 1차 추정(α0.44/화면 0.85px)이 라이브에서 대비 44/255 에 그쳤다. 안티앨리어싱이 1px 미만 선의 실효 alpha 를 깎기 때문으로, 계산이 아니라 관측으로만 확정 가능한 값이었다.
+  - **분석 완료 halo 를 낮추지 않은 이유**: 사용자가 그 표식을 탐색 기준으로 쓰고 있다("분석 완료된 항목 중심"). 강한 쪽을 낮추는 대신 약한 쪽(관계선)을 올려 위계를 좁혔다.
+- 자체 적대 검토:
+  · **H1 과보정 위험(검증)**: 배율은 `max(1, ...)` 라 확대 구간에서 1 로 수렴 — zoom 2 무보정을 테스트로 잠금. 줌인 시 선이 굵어지는 회귀 없음.
+  · **H2 누적 연출 훼손(검증)**: α0.58 에서도 1→2→3→4겹이 0.58/0.82/0.93/0.97 로 단조 증가·미포화. "겹칠수록 진해짐" 계약 유지(B2).
+  · **H3 곡률 축소로 왕복 분리 약화(검증)**: 하한(5px)은 불변이고 계수만 0.15→0.13 — 근접 노드 왕복선 분리는 A2/A4 로 그대로 통과.
+  · **H4 성능(근거)**: 배율은 페인트당 산술 1회. 굵어진 선의 fill rate 증가는 있으나 줌아웃 구간(엣지가 화면에서 짧음) 한정이라 무시 가능.
+  · **H5 dim 경로(검증)**: `dimIf` 가 `min(existing, 0.12)` 라 상향된 alpha 와도 정상 합성.
+- 검증: 라이브 전후 픽셀 실측(27→51 · 37→55) · 그래프 전 스위트 **627 PASS / 0 FAIL**(edge_flow 56 신규 포함) · `node --check` PASS · 주입 QA 후 이미지 원본 원복(잔재 0, `/livez` 200).
+
 ## REV-20260728T120530-graph-label-hover-expand [CODEX:graph-label-hover-expand] — 그래프 뷰 잘린 노드 명칭 hover 확장 (TASK-20260728T120530-graph-label-hover-expand, Minor §12.3 frontend-only) — SHIP
 - 대상 diff: `static/graph/graph-renderer-pixi.js`(+`hoverExpandGeom`/`hoverCardHit`/`clampCardCenterX` 순수 3종 · `_labelHoverLayer` 오버레이 · hover 파이프라인 12 메서드 · `_pick` tier0 · `pointercancel`) · `tests/headless/test_pixi_adapter.js`(T26 68-assert).
 - **검증 채널 선택 근거 (§18.8.2 「상위 우선순위 지시 carve-out」)**: §18.8 dispatch 표상 본 변경(UI/화면/레이아웃 키워드)의 required subagent 는 `ux, design`. 그러나 본 세션에는 **하네스 수준의 "Agent tool 미요청 시 호출 금지" 지시**가 걸려 있어 subagent 패널을 호출하지 않았다 — §18.8.2 는 이 경우 상위 지시가 우선하며, 제약 없는 채널로 가능한 검증을 수행한 뒤 미검증 범위를 명시하도록 정한다. 따라서 ①`codex review --uncommitted`(§18.8.1 item 2, check #9 accepted) ②기계적 정적·단위 검증으로 대체하고, 아래 `[SKIPPED:tool-restricted:ux,design]` 로 미검증 도메인을 표기한다. **디자인·UX 렌즈의 실질 보강은 POST-DEPLOY PB-0008 실화면 검증**(`visual_verification_scope: always` hard gate)이 담당한다.

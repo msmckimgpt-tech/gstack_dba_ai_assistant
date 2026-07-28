@@ -997,7 +997,7 @@ function _metaG6BuildProducts() {
     edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
       // graph-edge-flow: 제품→데이터소스 사용선도 같은 어휘(얇은 반투명 호)로 통일 — 한 화면에 직선과
       //   곡선이 섞이면 "왜 이 선만 다르지" 라는 무의미한 시각 신호가 생긴다. 실선(lineDash 생략 — G6 크래시 방지).
-      style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: 1.0, strokeOpacity: 0.5, endArrow: true, zIndex: _METZ.EDGE }) });
+      style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: 1.0, strokeOpacity: 0.66, endArrow: true, zIndex: _METZ.EDGE }) });   // §84 가시성 바닥 상향
   });
   _metaBakeBaseOpacity(nodes);   // §57.9: 제품/데이터소스 뷰도 동일 base opacity 명시(일관성)
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));

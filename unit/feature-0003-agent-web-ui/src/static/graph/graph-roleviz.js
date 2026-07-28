@@ -281,8 +281,11 @@ function _metaComboStyleFor(isTerms) {
 //   ③ 다발 볼륨 — 상위 부모(스키마 카드)나 집계 관계선이 품은 관계 수를 가닥 수로 표현.
 // 곡률은 낮게(0.13~0.16)만 준다 — 강한 edge bundling 은 경로 추적 정확도·속도를 떨어뜨린다는 사용자
 // 연구 결과가 있어, 군집 효과만 취하고 추적성은 보존하는 지점을 택했다.
-const _META_EDGE_CURVE = 0.15;       // 곡률 계수(직선 길이 대비 중점 편차 비율)
-const _META_EDGE_CURVE_MAX = 44;     // 편차 상한(model px) — 장거리 선이 과도하게 부풀지 않게
+// (§84 라이브 실측 반영) 곡률 상한을 카드 치수에 결속한다 — 종전 44px 는 접힌 스키마 카드 높이
+// (_METLAY.CARDH=44) 와 같아, 이웃 행(GAPY=52) 카드 위로 호가 부풀어 라벨 영역을 스치는 것이 관측됐다.
+// 26px = 카드 높이의 59% · 행 간격의 절반이라 카드 사이 여백 안에 머문다. 왕복 분리(하한 5)는 불변.
+const _META_EDGE_CURVE = 0.13;       // 곡률 계수(직선 길이 대비 중점 편차 비율)
+const _META_EDGE_CURVE_MAX = 26;     // 편차 상한(model px) — 카드 높이(44)·행 간격(52) 안에 머물게
 const _META_EDGE_CURVE_MIN = 5;      // 편차 하한 — 근접 노드 왕복선도 반드시 갈라지게
 // 관계 수 → 다발 가닥 수(로그 스케일). 1~3=1가닥, 4~7=2, 8~15=3, 16+=4.
 function _metaEdgeStrands(count) {
@@ -305,10 +308,12 @@ function _metaEdgeStyleFor(status, crossDs, count) {
   // graph-edge-flow: 굵기를 절반 이하로 낮추고 strokeOpacity 로 밀도 누적을 켠다. 기본(무상태) 선은
   //   색을 한 단계 진하게(#cbd2db→#94a3b8) 잡아 alpha 0.32 에서도 단독 가시성이 유지되게 했다 —
   //   옅은 색 × 낮은 alpha 조합은 겹치기 전까지 아예 안 보이는 구간이 생긴다.
-  if (crossDs) return _metaEdgeFlow({ stroke: "#a855c7", lineWidth: 1.1, strokeOpacity: 0.52, lineDash: [2, 4], endArrow: true, zIndex: _METZ.EDGE + 0.1 }, count);
-  const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#94a3b8"),
+  // §84: alpha 하한 상향(0.32→0.44 등) — 밀도 누적은 유지하되 **단독 관계선의 가시성 바닥**을 올린다.
+  //   0.44 두 선이 겹치면 0.69, 셋이면 0.83 으로 누적 대비는 그대로 살아 있다.
+  if (crossDs) return _metaEdgeFlow({ stroke: "#a855c7", lineWidth: 1.1, strokeOpacity: 0.66, lineDash: [2, 4], endArrow: true, zIndex: _METZ.EDGE + 0.1 }, count);
+  const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#7c8b9e"),
     lineWidth: status === "trusted" ? 1.5 : (status === "candidate" ? 1.05 : 0.85),
-    strokeOpacity: status === "trusted" ? 0.62 : (status === "candidate" ? 0.5 : 0.32),
+    strokeOpacity: status === "trusted" ? 0.8 : (status === "candidate" ? 0.66 : 0.58),
     endArrow: true,
     zIndex: _METZ.EDGE + (status === "trusted" ? 0.2 : (status === "candidate" ? 0.1 : 0)) };
   if (status === "candidate") s.lineDash = [6, 4];   // 실선은 lineDash 키 생략(false 금지 — G6 크래시, BLUEPRINT §3)
@@ -328,7 +333,7 @@ function _metaRoutineEdgeStyle(relationType, crossDs, count) {
   //   있으므로, 데이터 흐름 방향이 반대인 두 관계(테이블→루틴 읽기 / 루틴→테이블 쓰기)는 같은 두
   //   객체를 잇더라도 서로 반대편 호로 갈라진다 — 겹쳐 그려 하나로 보이던 종전 동작의 해소.
   const s = { stroke: crossDs ? "#a855c7" : _META_GRAPH_COLOR.Routine,
-    lineWidth: crossDs ? 1.05 : 0.9, strokeOpacity: crossDs ? 0.5 : 0.42,
+    lineWidth: crossDs ? 1.05 : 0.9, strokeOpacity: crossDs ? 0.66 : 0.62,   // §84 가시성 바닥 상향
     lineDash: [2, 3], zIndex: _METZ.EDGE };
   if (relationType === "write") s.endArrow = true;    // 데이터: 루틴 → 테이블(쓰기)
   else s.startArrow = true;                            // read·미상: 테이블 → 루틴(상세 패널 kindKo 기본 '읽기'와 정합)
@@ -345,7 +350,7 @@ function _metaSchemaRefEdgeStyle(count) {
   //   관계 100개와 1000개가 상한(2.4px)에서 구별되지 않았다.
   const strands = _metaEdgeStrands(n);
   const s = { stroke: "#8fa3bf", lineWidth: 0.85 + Math.min(0.7, Math.log2(n + 1) * 0.16),
-    strokeOpacity: 0.3 + Math.min(0.22, Math.log2(n + 1) * 0.05), zIndex: _METZ.EDGE,
+    strokeOpacity: 0.55 + Math.min(0.2, Math.log2(n + 1) * 0.045), zIndex: _METZ.EDGE,   // §84 가시성 바닥 상향
     labelText: n > 1 ? String(n) : "", labelFontSize: 9, labelFill: "#64748b",
     labelBackground: true, labelBackgroundFill: "#f6f8fb", labelBackgroundOpacity: 0.85,
     labelPlacement: "center" };
