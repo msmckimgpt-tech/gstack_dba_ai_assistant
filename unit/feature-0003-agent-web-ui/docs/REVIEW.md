@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T153500-graph-catcluster-scroll-postverify [SKIPPED:non-policy-doc] — 카테고리 선택 스크롤 동기화 POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T152000, 비-정책 doc-only)
+- 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
+- **왜 배포본에서 다시 봤는가**: pre-commit 검증은 §13.2.9 격리 컨테이너(라이브 무접촉)에서 했다. 그 이미지는 내 worktree 자산을 `docker cp` + 재스탬프한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 그대로 통과한 산출물이 아니다**. main 기반 이미지가 실제로 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).
+- **정직 표기 — 관측 수치 차이**: 사전 Run 은 대상 헤딩이 뷰포트 `+53px`, 배포본 Run 은 `+6px` 였다. 상수 회귀가 아니라 **상세 패널 이력 바(`.admin-meta-graph-detailnav`) 표시 여부**의 차이다(이력 ≤1 이면 `hidden`). 보정은 `getBoundingClientRect().height` 실측이라 두 경우 모두 "헤딩이 바에 가리지 않는다"는 AC-CPS-1 을 충족한다 — 상수로 굳혔다면 한쪽이 깨졌을 지점이다.
+- **미검증으로 남긴 것**: 배포본에서는 좌클릭 경로 1건만 재현했다(우클릭 '소속 스키마 상세' · 두 번째 카테고리 · 스키마 카드 회귀 경로는 사전 Run 에서 확인). 세 경로가 같은 함수(`_metaGraphFocusPanelGroup`)로 수렴하고 배포본에서 그 함수가 정상 동작함을 확인했으므로 재현 부담을 줄였다 — 다만 배포본 실측 범위는 위 표 그대로다.
+- 검증: 서빙 baked 3파일 present · 좌클릭 정착 1,673(+6px) · 강조 1건 · 상태줄 문구 · 콘솔 에러 0 · 스크린샷 3매.
+- Cross-ref: MODIFY CHG-20260728T153500-graph-catcluster-scroll-postverify / test-runs.d/20260728T153500-graph-catcluster-panel-scroll-postdeploy.md / 선행 REV-20260728T152000-graph-catcluster-panel-scroll.
+
 ## REV-20260728T152000-graph-catcluster-panel-scroll [SKIPPED:session-policy-no-subagent] — 캔버스 컨텐츠 카테고리 선택 → 스키마 클러스터 목록 스크롤 동기화 (TASK-20260728T152000, Minor §12.3, frontend-only)
 - Panel skip 사유(§18.8 / §18.8.2 상위 우선순위 지시 carve-out): 본 세션은 하네스 수준에서 `Agent` tool 사용이 금지돼 subagent panel(ux/design)을 호출할 수 없다. 제약 없는 채널로 대체했다 — 기계 검증(헤드리스 36 신규 + 268 회귀 단정, **호출부 인자 매핑 포함**) + PB-0008 실 브라우저 라이브 실측 + 아래 자체 적대 검토. 미검증 범위는 `[SKIPPED:session-policy-no-subagent]` 로 정직 표기한다.
 - 판단 근거:

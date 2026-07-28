@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T153500-graph-catcluster-scroll-postverify — 캔버스 카테고리 선택 → 목록 스크롤 동기화 POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
+- 대상: PR #1008 머지(main 4a0174e5) + `make deploy-web` 무중단 전체 롤아웃(soak 통과) 이후, **main 기반 서빙본**에서 재확인.
+- 완료 판정(acceptance):
+  - [x] 서빙 baked 확인 — 라이브 `graph-ctxmenu.js`/`graph-core.js`/`graph.css` 에 신규 코드 present, entry `admin.js?v=28b8c65898a7`.
+  - [x] 좌클릭 → 패널 0 → 1,673 정착 · 대상 헤딩 뷰포트 +6px(이력 바 숨김 → navH 0) · 첫 가시 그룹 = 대상.
+  - [x] 도착 강조 1건 · 상태줄 `목록을 '문피아 계정 이전' 위치로 이동` · 콘솔 에러 0.
+- 상태: **완결** — AC-CPS-1~4 전건이 배포본에서 재현. TASK-20260728T152000 종결.
+
 ## TASK-20260728T152000-graph-catcluster-panel-scroll — 캔버스 컨텐츠 카테고리 선택 → '스키마 클러스터' 목록을 그 카테고리 위치로 스크롤 (Minor §12.3 — feature-0003 프론트 `static/graph/` 3모듈 + CSS, 정본 feature-0016, /_template:entry arg-given)
 - 요청(사용자, 2026-07-28, 스크린샷 1매 — 캔버스의 `문피아 계정 이전` 그룹 박스와 우측 패널의 동명 헤딩을 함께 지목): "`그래프 뷰` 에서 카테고리 클러스터를 선택했을 경우, '스키마 클러스터' 항목에서 해당 카테고리 클러스터 위치로 스크롤 되도록 구성해주세요."
 - 진단: 캔버스에서 컨텐츠 카테고리(sim-group) 박스/헤더를 클릭하면 **소속 스키마 클러스터 상세**가 열리지만(GB/GH → `_metaGraphShowClusterDetailById`), 패널은 항상 목록 처음부터 보여 준다. `cluster-detail-fulllist` 로 그룹당 캡을 없앤 뒤 목록이 수백~수천 행(라이브 masangsoftweb = 93 카테고리 / 595행 / 17,277px)이라, 사용자가 방금 캔버스에서 고른 카테고리를 패널에서 **직접 찾아 내려가야** 했다.
