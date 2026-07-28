@@ -314,3 +314,8 @@ source_of_truth: true
 - 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260728T190800-graph-hop-budget-postdeploy.md`(신규, Environment: Windows-browser). 실행 코드 0줄.
 - 변경: PR #1024 → main `3687c43b` → 배포 `9cb3d4ea`(soak PASS) 후 실제 Windows Chrome 150 으로 배포본 검증. 사용자 요청의 두 본질(깊이 선택이 실제로 다른 결과를 낸다 / 완전한 목록에 절단 경고가 붙지 않는다)을 건즈 실데이터로 확증 — `gunzgame.character` d1 61n → d3 199n(`expanded_hops=[60,40,98]`, 양쪽 truncated=false), depth 3 상태 상세에서 절단 배너 0개 + 직결 루틴 57건 전량 열거. 배포본 API 가 신규 필드 4개 서빙 확인.
 - 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트(PB-0008)를 **배포본에서** 이행한 기록이므로 정본 반영 필수. 미완 1건('확장할 관계 없음' 힌트 실화면 발화 — PixiJS 캔버스 합성 이벤트로 확장 경로 미도달)은 조건 성립을 라이브 API 로, 렌더 판정을 헤드리스 ⑳㉑ 9건으로 각각 확인하고 실 마우스 세션 이월로 정직 기록.
+
+## CHG-20260728T192531-ai-claude-corp-feature-0016-role-badge-postdeploy — role-badge POST-DEPLOY PB-0008 라이브 실증 기록 (2026-07-28)
+- 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260728T181100-graph-role-badge.md` · 증적 `artifacts/shared/win-browser-shots-role-badge/`(9매, gitignore). **실행 코드 변경 0줄**.
+- 변경: PR #1029 머지(main `ea3f9a6d`) → `make deploy-web` 무중단 롤아웃 → edge `/healthz git_commit=ea3f9a6d` 확인 후, 실 Windows Chrome 150 relay 로 RB.8 을 수행하고 결과를 정본에 기록. 8 시나리오 전건 PASS + **codex 적발 수정 2종의 라이브 실증**: ④ hover 확장 카드에서 배지가 카드 안 정위치(캔버스 좌변 인접 칩 = `_clampCardX` 경로 — P2 2차 수정이 없으면 배지가 카드 밖에 잔존) ⑤ 줌아웃 임계 교차에서 `roleIconsDropped` 가 0→255 로 발화하고 색 타일만 남음(RB.5 설계 의도).
+- 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영이 필수다. 미재현 한계는 정직 병기 — running 상태 배지 desaturate 는 분석 잡 실행(LLM 외부 비용)이 필요해 미수행이며, dim 상태의 동일 alpha 경로만 부분 실증했다.
