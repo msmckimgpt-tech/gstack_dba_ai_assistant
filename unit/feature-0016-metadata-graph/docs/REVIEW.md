@@ -409,7 +409,6 @@ source_of_truth: true
 - 대상: CHG-20260728T1750-graph-label-lod-postdeploy (TASK.md TL.10 결과표 + TL.12 후속 + MODIFY + TEST/test-runs.d + 증적 1매). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
 - 본 cycle 의 코드 적대 검증은 REV-20260728T170500 `[CODEX:frontend-render+lod]`(P1/GATE 0 · P2 2건 in-cycle 흡수)가 담당했고, 그 두 수정이 **배포본에서 실제로 발화**함을 TL.10 ⑦⑧ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
 - 기계적 점검: 배포 SHA 정합(edge `/healthz git_commit=2a843acd` = main 머지 커밋) · 서빙 자산에 두 수정 존재(`_META_LABEL_FONT_STEP` 2건 · `badgesDropped || 0` 1건) · 자산 스탬프 `?v=c9ce5fe33b65` 정합 · pageerror 0.
-
 ## REV-20260728T181000-graph-hdr-label-fit [CODEX:frontend-render+hittest] — PASS-WITH-FIXES (P1 1건 · P2 1건 전량 in-cycle 흡수)
 - 대상: CHG-20260728T1810-graph-hdr-label-fit (`graph-state.js` 폰트 파생·반동 밴드·게이트 / `graph-core.js` GH·CATH 방출 / `test_g6build_labellod.js` Section I·J·K).
 - 방법: **codex-review(`codex review --uncommitted`, codex-cli 0.145.0)** — §18.8 적대 검증. `[CODEX:*]` 는 §18.4/§18.9 의 check #9 accepted verdict. 본 세션은 `Agent` 툴 사용이 제한된 환경이고, 이 변경은 **레이아웃 상수(GGY·GHH·CATHH)와 hit-test 구현(`nodeBBox`·zIndex)을 함께** 봐야 판정되므로 repo 접근 리뷰어가 적합하다.
@@ -418,3 +417,37 @@ source_of_truth: true
 - **수정 전 재현 확인**: 상한 제거판 번들로 신규 **K2·K3·K7 이 실제로 FAIL**(칩 높이 52/52/42/52/46/46 · 이웃 블록 bbox 침범 · CATH 60/30) 함을 실측 — 테스트가 결함 자체를 잡는지 검증했고 통과만 보고 넘기지 않았다.
 - **회귀 확인**: 수정 후 `test_g6build_labellod.js` **71 PASS**(36 → +35: I 12 · J 11 · K 10 · B5 재진술 2) + 헤드리스 **전 스위트 21개 910 PASS / 0 FAIL** · `node --check` PASS(2 파일).
 - **정직 표기 — 잔여 표면**: 텍스트가 칩을 넘는 구간의 **시각적 수용성**(알약보다 큰 글자가 어떻게 읽히는지)과 확장 폰트의 실제 판독성은 GPU·폰트 렌더 의존이라 헤드리스가 판정할 수 없다 → HF.6 PB-0008 이 담당한다. 칩 상한으로 인해 **개선폭이 폰트가 아니라 알약 크기에서만 제한**되므로 억제 시작 줌 수치(HF.5 표)는 불변이다.
+## REV-20260728T161300-ai-claude-feature-0016-neighbor-depth-budget [CODEX:backend+qa] — PASS (P1 0건, 4라운드 · 지적 13건 중 12건 흡수 / 1건 잔여 명시)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: schema/스키마 · query/쿼리 · UI/화면 keyword matched (`neighborhood()` BFS 예산 재설계 + 상세 패널 절단 배너) → dispatch 표상 backend·qa
+- Timestamp: 2026-07-28T16:13:00+09:00
+- Verdict: PASS (R2·R3·R4 연속 **P1(GATE) 0건**; 지적 13건 중 12건 in-cycle 흡수 + 1건 근거 기록 후 수용)
+- Artifact: [reviews/2026-07-28T16-13-00-codex-hop-budget.md](./reviews/2026-07-28T16-13-00-codex-hop-budget.md) (4라운드 전문)
+- Critical issue (R1 P1, 흡수 완료): cap 도달 시 부모 Table 보강이 `break` 되어 관계로 들어온 Column 만 남고 그 부모가 탈락 → 프론트 `colsByTable` 이 부모 없는 컬럼을 드롭 → "참조로 이어지는 테이블이 화면에 없다"(HB.3 이 없애려던 실패)가 **cap 상황에서만 되살아나는 우선순위 역전**.
+- Human Approval Needed: no (전량 흡수 또는 근거 명시 수용; Minor 등급 유지 — 읽기 전용 투영 범위 조정)
+
+### 채널 선택 근거 (§18.8.2)
+원 세션의 subagent 패널(backend·qa)이 **사용량 한도**로 죽은 뒤 이어받은 세션에는 하네스 수준의 "요청 없는 Agent tool 호출 금지" 상위 지시가 있었다. §18.8.2 item 1(제약 없는 채널 우선) + 상위 우선순위 지시 carve-out 에 따라, subagent 가 아닌 `codex review --base origin/main`(repo 접근 있는 독립 리뷰어, check #9 accepted `[CODEX:*]`)로 수행했다. bundle-only subagent 와 달리 실제 repo·인접 모듈을 읽으므로 이 changeset(백엔드 BFS × 프론트 렌더 계약의 접합부)에는 오히려 적합했다 — 실제로 4라운드 모두 접합부 결함을 지목했다. 4라운드에서 종료한 근거: **P1 3연속 0건** + 남은 지적이 hot path 복잡도를 늘리는 미세 정련으로 수렴.
+
+### 흡수 대조 (라운드별 지적 → 처리)
+| # | 지적 | 처리 |
+|---|---|---|
+| R1-P1 | 부모 보강 예산 역전(cap 에서 참조 테이블 소실) | **흡수** — `_PARENT_BACKFILL_RESERVE`(60) 신설, 관계 Column 후보 수 상한으로 비례 축소, **관계 tier 에도 적용**(1차 수정은 tier 0 면제라 ROUTINE_USES 258건 홍수에서 재발 → 테스트가 적발) |
+| R1-P2 | 엣지 fetch LIMIT 무음 절단(`truncated=false` 인 부분 그래프) | **흡수** — `_EDGE_FETCH_CAP` 상수화 + 포화 시 절단 신고 |
+| R2-a | broken 엣지 끝점이 관계 우선권 획득 → 무효 이웃이 cap 소비 | **흡수** — `is_rel` 에서 `status=="broken"` 배제 |
+| R2-b | LIMIT 에 `ORDER BY` 부재 → 부분집합 비결정적 | **흡수** — UNION 항에 등급 리터럴 + `ORDER BY brk, prio, s, e` |
+| R2-c | 관계없음 힌트가 **1-hop** 관계 엣지에 속아 숨음 | **흡수** — 백엔드 `expanded_hops`(hop별 신규 노드) additive 보고, 프론트가 실적으로 판정 + 구 응답 폴백 |
+| R3-a | 정확히 cap 개일 때 절단 거짓 양성 | **흡수** — `LIMIT cap+1` fetch 후 `> cap` 일 때만 절단 |
+| R3-b | 노드 델타 0 ≠ 관계 없음(엣지만 추가 / 절단으로 미실행) | **흡수** — `expanded_hop_edges` 추가 + **절단 시 힌트 억제** |
+| R3-c | 부모 보강 순서 비결정적(DB 반환 순서 의존) | **흡수** — 두 쿼리 `ORDER BY` graphid |
+| R3-d | broken 행이 cap 적용 *이전* 에 배제되지 않아 fetch 예산을 먹음 | **흡수** — SQL 정렬 키 `brk` 신설(Python `is_rel` 필터는 LIMIT *이후* 라 늦다) |
+| R4-a | broken 관계로 도달한 Column 까지 부모 보강 → 없는 연결 표시 | **흡수** — 보강 대상을 `rel_gids` 소속으로 한정 |
+| R4-b | broken 관계행(prio0,brk1)이 유효 계층행(prio1,brk0)을 앞지름 | **흡수** — 정렬 키를 `brk, prio` 순으로 교체 |
+| R4-c | 예약을 **미해소 부모 수**로 잡아야(부모가 이미 있으면 예약 불필요) | **잔여 수용 (근거 기록)** — 정확 해소는 fill 루프 *이전* 에 부모를 해소하는 hot path 재구성을 요구한다. 손실은 "예산이 정확히 소진된 경계에서 관계 끝점 1개"로 한정되고, 응답이 `truncated`+`omitted_nodes` 로 그 사실을 보고하므로 **은폐가 없다**. 1-노드 경계 이득과 재구성 회귀 위험을 견주어 수용하고 후속 항목으로 남긴다(REPORT §8). |
+| R4-d | 구 응답(`truncated_hop` 부재)을 2-hop 절단으로 오표기 | **흡수** — hop 미상이면 완전성 주장 없이 일반 경고 |
+
+### 설계 판단 기록
+- **broken 배제를 `WHERE` 가 아니라 정렬 키로**: agtype 식이 기대와 다르게 동작하면(NULL 등) `WHERE` 는 **유효 행을 사라지게** 하지만 `ORDER BY` 는 정렬만 열화된다. 컨테이너 테스트로는 실 AGE SQL 을 돌리지 못하므로 fail-safe 방향을 택했다 — POST-DEPLOY 라이브 확인으로 보완.
+- **`expanded_hops`/`expanded_hop_edges` 는 additive**: 구 replica 가 필드를 안 주면 프론트가 종전 판정으로 폴백해 롤링 배포 창에서 회귀하지 않는다(헤드리스 ⑳·㉑ 이 폴백까지 단언).
+- 검증: pytest `test_graph_hop_budget.py` **9 → 21 PASS**(흡수분 회귀 12건 신설) · 전 스위트 **2809 passed / 0 failed** · 헤드리스 그래프 전 스위트 **865 PASS / 0 FAIL**(`test_detail_dbgroups.js` 95 → 107) · ruff clean.
+- **테스트가 수정을 두 번 반증했다**(자가검증 실효성 증거): ① R1-P1 1차 수정(tier 0 면제)이 관계-tier 홍수에서 실패 ② R3-d 흡수 후 fake 하네스가 새 SQL 의 `properties @>` 를 앵커 쿼리로 오인해 스위트 15건 붕괴 → 판별 조건을 `WHERE properties @>` 로 좁혀 해소.

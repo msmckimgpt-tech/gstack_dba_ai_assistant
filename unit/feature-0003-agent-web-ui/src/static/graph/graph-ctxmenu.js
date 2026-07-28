@@ -774,7 +774,7 @@ async function _metaGraphShowDetail(key) {
   }
   _metaGraphSetSelected(key);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
-  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], { truncated: !!data.truncated });
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], _metaNbrMeta(data));
   const nb = Math.max(0, (data.nodes || []).length - 1);
   _metaGraphStatus(`상세: ${self.name || key} · 이웃 ${nb}개 (더블클릭 = 관계 확장 · 우클릭 = 상호작용 메뉴)`);
 }
@@ -1219,8 +1219,50 @@ async function _metaGraphExpand(key, depthOverride) {
   _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };
   _metaGraphHistoryRecord(key, "node");   // §54①: seq 가드 뒤 성공-기반 기록(실패/스테일 확장 미기록).
-  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], { truncated: !!data.truncated });
-  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}${introspectNote}`);
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], _metaNbrMeta(data));
+  // graph-hop-budget: 2-hop 이상을 골랐는데 이 노드에 확장할 **관계**(참조·사용·유사어)가 없으면
+  //   결과가 1-hop 과 같아진다(실측 12%). 종전엔 형제 노드가 쏟아져 달라 보였을 뿐이므로, 이제는
+  //   "선택이 안 먹었다" 는 오해 대신 사실을 알린다.
+  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`
+    + _metaNoRelHint(depth, data) + introspectNote);
+}
+
+// graph-hop-budget: 백엔드 절단 신호(truncated / truncated_hop / omitted_nodes)를 상세 패널 meta 로 옮긴다.
+//   종전엔 truncated 만 넘겨 "무엇이 얼마나 잘렸는지" 를 프론트가 말할 수 없었다.
+function _metaNbrMeta(data) {
+  return {
+    truncated: !!(data && data.truncated),
+    truncated_hop: (data && data.truncated_hop) || null,
+    omitted_nodes: (data && data.omitted_nodes) || 0,
+  };
+}
+
+// graph-hop-budget: 2-hop 이상인데 관계 엣지(참조·사용·유사어)가 하나도 없으면 1-hop 과 동일한 결과다.
+//   백엔드가 2-hop 부터 계층(소속) 엣지를 따라가지 않으므로, 확장할 관계가 없는 노드는 결과가 그대로다.
+const _META_REL_ETYPES = new Set(["REFERENCES", "ROUTINE_USES", "RELATED_TERM", "USES", "DESCRIBES"]);
+function _metaNoRelHint(depth, data) {
+  const d = Number(depth);
+  if (!(d > 1)) return "";
+  // 적대리뷰 R2-c: 종전엔 응답 엣지에 관계 라벨이 하나라도 있으면 힌트를 숨겼는데, **1-hop 의 관계
+  //   엣지**만 있어도 숨어버렸다 — 앵커가 직접 참조 1건을 갖되 그 상대가 leaf 면 2·3-hop 이 아무것도
+  //   더하지 못하는데 사용자는 "선택이 안 먹었다" 로 오해한다. 백엔드의 hop 별 확장 실적
+  //   (`expanded_hops[i]` = i+1 번째 hop 신규 노드 수)으로 판정한다 — 2-hop 이후 실적이 전부 0 이면
+  //   그 깊이는 결과를 바꾸지 못한 것이 사실이다.
+  //   적대리뷰 R3-b: 노드 델타만 보면 두 경우에 틀린다 — ① 이미 발견된 노드 **사이에 엣지만** 추가되는
+  //   경우(자기참조 컬럼 쌍 등)는 노드 0 증가인데 결과는 달라졌다 ② cap 절단으로 뒤 hop 이 아예 실행되지
+  //   않았다면 "확장할 관계가 없다" 가 아니라 "예산이 없어 못 갔다" 다. 노드·엣지 실적이 **모두** 0 이고
+  //   **절단도 없을 때만** 단정한다(그 외에는 절단 배너가 사실을 알린다).
+  const hops = (data && Array.isArray(data.expanded_hops)) ? data.expanded_hops : null;
+  if (hops) {
+    if (data && data.truncated) return "";
+    const eh = (data && Array.isArray(data.expanded_hop_edges)) ? data.expanded_hop_edges : [];
+    const sumAfter = (arr) => arr.slice(1).reduce((a, n) => a + (Number(n) || 0), 0);
+    const gained = sumAfter(hops) + sumAfter(eh);
+    return gained > 0 ? "" : ` · 이 노드에는 확장할 관계(참조·사용)가 없어 1-hop 과 동일합니다`;
+  }
+  // 구 응답(expanded_hops 부재) 폴백 — 종전 판정 유지(롤링 배포 중 구 replica 응답 대비).
+  const has = ((data && data.edges) || []).some((e) => e && _META_REL_ETYPES.has(e.type));
+  return has ? "" : ` · 이 노드에는 확장할 관계(참조·사용)가 없어 1-hop 과 동일합니다`;
 }
 
 // graph-ctxmenu: "이 노드 중심으로 보기" — 모델을 리셋하고 앵커의 N-hop 이웃만 남긴다.
@@ -1257,10 +1299,11 @@ async function _metaGraphFocus(key) {
   _metaGraphSetSelected(key);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
   _metaGraphHistoryRecord(key, "node");   // §54①: seq 가드 뒤 성공-기반 기록(중심보기).
-  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], { truncated: !!data.truncated });
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || [], _metaNbrMeta(data));
   const nm = (_metaGraph.nodes.get(key) || {}).name || key;
   _metaGraphFocusChip(nm);   // review MAJOR-3: 부분 그래프임을 지속 표시 + '전체 보기' 복귀
-  _metaGraphStatus(`${nm} 중심 ${depth}-hop — 노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length} ('전체 보기'로 복귀)`);
+  _metaGraphStatus(`${nm} 중심 ${depth}-hop — 노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`
+    + _metaNoRelHint(depth, data) + ` ('전체 보기'로 복귀)`);
 }
 
 // review MAJOR-3: 중심 보기 지속 표시 칩 — 캔버스 좌상단에 "🎯 중심 보기: <노드>" + "✕ 전체 보기"(roots 복귀).
@@ -1760,6 +1803,33 @@ function _metaDbGrpTruncNotice(meta) {
   return `<p class="admin-meta-detail-note amgr-trunc-note" title="백엔드 이웃 조회 상한에 걸려 일부만 불러왔습니다. 아래 목록은 불러온 범위 안에서는 생략 없이 전부 표시합니다. 더 보려면 '🕸 그래프에 펼치기' 로 이웃을 단계적으로 확장하세요.">⚠ 이웃 조회 상한 — <strong>일부만</strong> 불러옴</p>`;
 }
 
+// graph-hop-budget(2026-07-28): **노드 상세 패널** 전용 절단 고지 — 위 _metaDbGrpTruncNotice 와 분리한다.
+//   종전엔 같은 배너를 "사용하는 함수·프로시저" 섹션 헤더 아래에 붙였는데, 그 목록의 원천(앵커 직결
+//   ROUTINE_USES)은 1-hop 에서 전량 수집되므로 **절단되지 않았음에도 "일부만 불러옴" 이 그 목록에
+//   붙었다**(실측: 직결 155개가 depth 1·2·3 모두 155개인데 d2/d3 는 truncated=true). 사용자가 "함수
+//   목록이 잘렸나?" 로 오해하는 오귀속이라, 경고를 패널 상단(= 이웃 그래프 범위에 대한 고지)으로 옮기고
+//   무엇이 잘렸는지 hop/개수로 명시한다.
+//   meta.truncated_hop: 절단이 일어난 hop(1-based). 1 이면 앵커 직결 이웃부터 부분이라 목록도 불완전.
+//   meta.omitted_nodes: 예산 부족으로 버린 이웃 수(하한).
+function _metaNbrTruncNotice(meta) {
+  if (!meta || !meta.truncated) return "";
+  const hop = Number(meta.truncated_hop) || 0;
+  const omitted = Number(meta.omitted_nodes) || 0;
+  const cnt = omitted > 0 ? `<strong>${omitted}개+</strong> 생략` : "일부 생략";
+  if (hop === 1) {
+    // 1-hop 부터 상한 — 이 노드에 직접 붙은 이웃 자체가 너무 많아(예: 테이블 700개 스키마) 아래 목록도 부분이다.
+    return `<p class="admin-meta-detail-note amgr-trunc-note" title="이 노드에 직접 연결된 이웃이 조회 상한(300)을 넘어, 아래 목록도 일부만 표시됩니다. 스키마 클러스터를 펼치거나 검색으로 대상을 좁혀 보세요.">⚠ 직접 이웃이 조회 상한 초과 — ${cnt}, <strong>아래 목록도 일부만</strong></p>`;
+  }
+  if (!hop) {
+    // 적대리뷰 R4-d: `truncated` 는 true 인데 `truncated_hop` 이 없다 = 구 백엔드 응답(롤링 배포 창).
+    //   종전엔 이 경우를 hop 0 → "2-hop 확장분만 잘림 · 아래 직접 연결 목록은 전량" 으로 흘려, **1-hop
+    //   에서 잘린 응답에도 목록이 완전하다고 주장**할 수 있었다. hop 을 모르면 완전성을 주장하지 않는다.
+    return `<p class="admin-meta-detail-note amgr-trunc-note" title="이웃이 조회 상한(300)에 걸려 일부 생략됐습니다. 어느 단계에서 잘렸는지 정보가 없어(구 응답) 목록의 완전성은 보장할 수 없습니다. 관심 노드를 다시 더블클릭해 그 지점에서 확장해 보세요.">⚠ 이웃 조회 상한 초과 — ${cnt}</p>`;
+  }
+  // 2-hop 이상 확장분만 절단 — 앵커 직결 정보(컬럼·관계·함수·프로시저)는 전량이다.
+  return `<p class="admin-meta-detail-note amgr-trunc-note" title="${hop || 2}-hop 이상으로 펼친 이웃이 조회 상한(300)에 걸려 일부 생략됐습니다. 이 노드에 직접 연결된 관계·컬럼·함수·프로시저 목록은 생략 없이 전부 표시합니다. 더 보려면 관심 노드를 다시 더블클릭해 그 지점에서 확장하세요.">⚠ ${hop || 2}-hop 확장 이웃 ${cnt} <span class="admin-meta-graph-muted">· 아래 직접 연결 목록은 전량</span></p>`;
+}
+
 // '모두 펼치기/접기' 라벨을 현재 그룹 상태로 재동기화(개별 토글 후 라벨-동작 불일치 방지).
 function _metaSyncDbGrpAllLabel(rootEl, setId) {
   if (!rootEl || !setId) return;
@@ -1876,6 +1946,9 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
+  // graph-hop-budget: 이웃 조회 절단 고지는 **패널 상단 1곳** — 개별 섹션(함수·프로시저 등)에 붙이면
+  //   절단되지 않은 목록에 경고가 오귀속된다(앵커 직결 목록은 1-hop 전량 수집).
+  parts.push(_metaNbrTruncNotice(meta));
   // graph-funcproc(ADR-016): 함수·프로시저 상세 — 유형 + introspect 된 파라미터 시그니처.
   //   graph-navfilter(§54⑤): 파라미터를 수평 한 줄 대신 **수직 목록**으로(컬럼 리스트 amgr-collist 관례 재사용).
   if (self.label === "Routine") {
@@ -2068,7 +2141,8 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
     // 조사는 앞 명사 종성에 따라 분기(테이블→'을', 함수·프로시저→'를').
     const rtHelp = `${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시하며 목록을 잘라내지 않습니다. 대상이 여러 DB 에 걸치면 DB 머리글로 묶이며(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄), 접힌 DB 도 머리글의 개수가 실제 총계입니다. 행 클릭 = 대상 상세 + 카메라 이동.`;
     parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length}) <span class="admin-meta-graph-muted">· 읽기 ${rtReads.length} · 쓰기 ${rtWrites.length}</span>${_metaSecHelp(rtHelp)}</h4>`);
-    parts.push(_metaDbGrpTruncNotice(meta));
+    // graph-hop-budget: 종전 이 자리의 절단 배너 제거 — 이 목록은 앵커 직결(1-hop) 이라 depth 와 무관하게
+    //   전량이며, 절단 고지는 패널 상단 _metaNbrTruncNotice 로 통합됐다(오귀속 제거).
     parts.push(rtGroup(rtReads, "읽기"));
     parts.push(rtGroup(rtWrites, "쓰기"));
     parts.push(`</div>`);

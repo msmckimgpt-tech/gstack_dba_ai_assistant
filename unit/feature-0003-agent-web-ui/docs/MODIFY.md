@@ -1467,3 +1467,13 @@ Cross-ref: REVIEW REV-20260728T173500-routine-column-edges-postdeploy ·
 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
 사전 Run `docs/test-runs.d/20260728T161940-routine-column-edges.md` ·
 선행 CHG(코드) `unit/feature-0016-metadata-graph/docs/MODIFY.md` 의 routine-column-edges 항목.
+
+## CHG-20260728T161300-graph-hop-budget ('이웃 깊이' 예산 우선순위 + 절단 경고 오귀속 제거)
+- 대상: `src/static/graph/graph-ctxmenu.js`(`_metaNbrTruncNotice`·`_metaNbrMeta`·`_metaNoRelHint`·`_META_REL_ETYPES` 신설 / 절단 배너를 "사용하는 함수·프로시저" 섹션 → 패널 상단 1곳으로 이동 / 상세 meta 에 `truncated_hop`·`omitted_nodes` 전달 / 확장·중심보기 상태줄에 관계없음 힌트), `src/static/graph/graph-core.js`(depth select 상태 문구를 실제 트리거로 정정), `src/static/admin.html`(depth label `title` + select `aria-label` + ❓ 도움말 항목 갱신), `src/routers/admin_metadata.py`(그래프 응답에 `truncated_hop`·`omitted_nodes` 추가). 테스트: `tests/headless/test_detail_dbgroups.js` ⑱⑲ 확장(95 PASS/0 FAIL — ⑰의 note 개수 단언을 "모든 note 가 절단 경고 클래스 동반" 으로 재표현). 신규 Run 기록 `docs/test-runs.d/20260728T161300-graph-hop-budget.md`(Environment: Windows-browser).
+- 변경: REQ-20260728-graph-hop-budget / AC-HB-4·5·6. 백엔드 BFS 예산 재설계(AC-HB-1~3)는 코드가 feature-0002 `metadata_graph.py` 에 거주하며 feature-0016 MODIFY `CHG-20260728T161300-ai-claude-feature-0016-neighbor-depth-budget` 에 기록.
+- 근거: 등급 Minor(표시·투영 범위 한정). 사용자 보고("1-hop 초과 모든 항목에서 절단 경고")의 정체가 **오귀속**임을 라이브 실측으로 확증 — 앵커 직결 목록은 절단되지 않았는데 그 위에 경고가 붙었다. PB-0008 실 Windows Chrome 150 에서 패널 상단 1개 배너 + 함수·프로시저 섹션 배너 0 + 목록 155건 불변을 실화면 확인(증적 4장 `artifacts/feature-0016-neighbor-depth-budget/pb0008/`).
+
+## CHG-20260728T161300-graph-hop-budget-review (§18.8 적대검증 흡수 — 예산·절단신호·확장실적)
+- 대상: `src/static/graph/graph-ctxmenu.js`(`_metaNoRelHint` 를 `expanded_hops`/`expanded_hop_edges` 실적 기반으로 교체 + 절단 시 억제 + 구 응답 폴백 / `_metaNbrTruncNotice` 에 hop-미상 분기 신설 — 완전성 미주장), `src/routers/admin_metadata.py`(응답에 `expanded_hops`·`expanded_hop_edges` 전달). 테스트: `tests/headless/test_detail_dbgroups.js` ⑳㉑ 신설 + ⑱ hop-미상 3건 = **95 → 107 PASS / 0 FAIL**.
+- 변경: REQ-20260728-graph-hop-budget / **AC-HB-7·8 신설**. 백엔드(예약 예산·broken 정렬·cap+1 포화판정·graphid 정렬·hop 실적)는 코드가 feature-0002 `metadata_graph.py` 에 거주하며 feature-0016 MODIFY 에 기록.
+- 근거: 등급 Minor 유지(읽기 전용 투영 범위·표시 문구). codex 적대검증 4라운드 지적 13건 중 12건 흡수 — 상세 대조표는 feature-0016 `REVIEW.md` REV-20260728T161300. 원 세션의 subagent 패널이 사용량 한도로 죽고 재개 세션에 Agent tool 제약이 있어 §18.8.2 item 1 의 제약 없는 채널(`codex review`)을 채택했다.

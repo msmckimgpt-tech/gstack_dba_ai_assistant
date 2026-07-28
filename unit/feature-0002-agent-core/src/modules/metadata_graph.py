@@ -58,6 +58,25 @@ _NULLABLE_PROP_KEYS = {"semantic_cluster_id", "semantic_cluster_label"}
 _UNSET = object()   # sync_table cluster 인자 "미전달" 센티넬(≠ 명시 None=clear)
 
 _NEIGHBOR_NODE_CAP = 300   # 투영 1회 최대 노드 수 (8K 규모 보호)
+# graph-hop-budget(2026-07-28): cap 절단 시 **무엇을 남길지** 결정하는 우선순위. 종전엔 이웃 해소가
+# vertex 라벨 알파벳 순(`Column, Datasource, GlossaryTerm, Product, Routine, Schema, Table`)이라
+# **Table 이 맨 뒤** → 2-hop 예산 300 이 "같은 스키마의 형제 Routine"(최대 490개)으로 먼저 소진되고
+# 사용자가 2-hop 에서 가장 보고 싶어할 "참조로 이어지는 다른 테이블" 이 우선 탈락했다(실측: 앵커
+# masangsoft_documents_20260414 의 2-hop = Routine +258 / Table +0). 절단 순서를 의미 우선순위로 고정한다.
+_NEIGHBOR_LABEL_PRIORITY = ("Table", "Column", "Routine", "GlossaryTerm", "Schema", "Datasource", "Product")
+# 이웃 엣지 1왕복 fetch 상한. 이 값에 포화하면 우선순위 정렬 *이전* 에 잘린 것이라 절단으로 신고한다
+# (graph-hop-budget 적대리뷰 P2 — 종전엔 노드 cap 만 절단으로 봐서 부분 그래프가 truncated=false 였다).
+_EDGE_FETCH_CAP = _NEIGHBOR_NODE_CAP * 4
+# 관계 이웃 Column 의 **부모 Table 보강 전용 예비 예산**(hop ≥ 2 에서만 차감). 부모가 없으면 프론트가
+# 그 컬럼을 렌더에서 드롭하므로(graph-core.js colsByTable), 형제 계층 이웃이 예산을 다 먹고 부모가
+# 탈락하면 "참조로 이어지는 테이블" 이 화면에서 사라진다 — HB.3 이 없애려던 실패가 cap 상황에서만
+# 되살아나는 우선순위 역전(적대리뷰 P1). 계층 이웃 채우기 전에 이 몫을 떼어 둔다.
+_PARENT_BACKFILL_RESERVE = 60
+# 관계(의미) 엣지 — "이 노드가 무엇과 실제로 연관되는가". 2-hop 이상에서 예산을 먼저 배정한다.
+_REL_ELABELS = frozenset({"REFERENCES", "ROUTINE_USES", "RELATED_TERM", "USES", "DESCRIBES"})
+# 계층(소속) 엣지 — "같은 컨테이너에 들어 있다". 앵커 1-hop 에서는 핵심 정보(컬럼·소속 스키마·직결 루틴)라
+# 그대로 수집하되, 2-hop 이상에서는 형제 폭발의 원인이라 관계 이웃을 채운 뒤 남는 예산으로만 채운다.
+_HIER_ELABELS = frozenset({"HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "HAS_ROUTINE"})
 _SEARCH_CAP = 80           # 검색 결과 반환 최대 노드 수
 # graph-search-content(P2 봉인): Cypher `LIMIT` 절단이 trigram 점수 정렬 **이전**에 일어나므로, 넓힌
 # WHERE(이름/FQN/컨텐츠 카테고리/AI 분석)에서 이름-정확 매칭이 스캔 순서상 뒤로 밀리면 반환 cap 에 탈락한다.
@@ -1837,8 +1856,31 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
     **truncated (detail-db-groups, 2026-07-27)**: 이웃 노드가 `_NEIGHBOR_NODE_CAP` 에 걸려 BFS 가
     끊기면 `result["truncated"] = True` 를 세팅한다. 종전엔 이 경로만 플래그를 세팅하지 않아
     (scope_schemas/schema_tables 는 세팅) 상세 패널이 **부분 이웃을 전체로 오인 표시**했다 — 프론트가
-    상한 절단을 사용자에게 명시하려면 이 신호가 필요하다(무음 절단 제거)."""
-    result = {"nodes": [], "edges": [], "truncated": False}
+    상한 절단을 사용자에게 명시하려면 이 신호가 필요하다(무음 절단 제거).
+
+    **예산 우선순위 (graph-hop-budget, 2026-07-28)**: cap 은 유지하되 *무엇을 남길지* 를 의미로 정한다.
+    2-hop 이상에서는 관계 엣지(`_REL_ELABELS`) 이웃에 예산을 먼저 배정하고 계층 엣지(`_HIER_ELABELS`)
+    이웃은 남는 예산으로만 채운다. 같은 등급 안에서는 `_NEIGHBOR_LABEL_PRIORITY`(Table > Column >
+    Routine > …), tie-break 은 graphid 라 같은 앵커·같은 depth 면 항상 같은 부분집합이 나온다.
+    도입 근거(실측): 종전 절단 순서는 vertex 라벨 알파벳 순이라 Table 이 맨 뒤 → 2-hop 예산이 같은
+    스키마의 형제 Routine 으로 소진되고 정작 참조로 이어지는 테이블이 탈락, 컬럼 투영 테이블 40개
+    표본에서 2-hop 절단 50% · "3-hop 이 2-hop 과 완전 동일" 50% 였다(= 3-hop 선택이 무의미).
+
+    **절단 신호 세분화**: `truncated`(bool, 기존 계약 불변) 외에 `truncated_hop`(몇 번째 hop 에서
+    끊겼는지, 1-based / None) · `omitted_nodes`(예산 부족으로 버린 이웃 수 하한) 를 함께 반환한다.
+    프론트가 "무엇이 잘렸는지" 를 정확히 말할 수 있어야 절단 경고를 엉뚱한 섹션(앵커 직결 목록은
+    1-hop 에서 전량 수집되므로 절단과 무관)에 붙이지 않는다."""
+    result = {"nodes": [], "edges": [], "truncated": False,
+              "truncated_hop": None, "omitted_nodes": 0,
+              # 적대리뷰 R2-c: hop 별로 **새로 들어온 노드 수**. 프론트가 "선택한 깊이가 결과를 바꿨는가" 를
+              #   응답 엣지 존재 여부로 추측하면 틀린다(hop 1 에 관계 엣지가 있으면 2-hop 이 아무것도 더하지
+              #   못해도 힌트가 숨는다). 확장 실적을 백엔드가 직접 보고한다. expanded_hops[i] = i+1 번째
+              #   hop 에서 추가된 노드 수.
+              "expanded_hops": [],
+              # 적대리뷰 R3-b: hop 별 **신규 엣지 수**. 노드가 안 늘어도 이미 발견된 노드 사이에 엣지가
+              #   추가될 수 있으므로(자기참조 컬럼 쌍 등), 노드 델타만으로 "확장할 관계 없음" 을 단정하면
+              #   틀린다. 프론트는 노드·엣지 실적이 **모두** 0 이고 절단도 없을 때만 힌트를 띄운다.
+              "expanded_hop_edges": []}
     if not node_key:
         return result
     depth = max(1, min(int(depth or 1), 3))
@@ -1874,19 +1916,60 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
         for _hop in range(depth):
             if len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
                 result["truncated"] = True   # cap 도달로 남은 hop 미탐색 — 부분 이웃임을 프론트에 알린다
+                if result["truncated_hop"] is None:
+                    result["truncated_hop"] = _hop + 1
                 break
             if not frontier:
                 break
+            _nodes_before_hop = len(seen_nodes)   # 적대리뷰 R2-c: 이번 hop 의 확장 실적 계산 기준점
+            _edges_before_hop = len(result["edges"])   # 적대리뷰 R3-b: 엣지 실적도 함께 본다
             farr = _gid_array(frontier)
             # (2) 프론티어에 걸린 엣지를 엣지 라벨 UNION ALL 로 1왕복 수집(방향=start->end 보존).
-            edge_sql = " UNION ALL ".join(
-                f'SELECT start_id::text AS s, end_id::text AS e, properties::text AS p, \'{et}\' AS et '
+            #   graph-hop-budget(2026-07-28): **1-hop 은 전 라벨, 2-hop 이상은 관계 엣지만** 따라간다.
+            #   계층 엣지(HAS_*)를 2-hop 에서 따라가면 "앵커와 같은 스키마에 있다" 는 이유만으로 형제
+            #   수백 개가 쏟아져(실측: 형제 Routine 258 또는 형제 Table 258) cap 300 을 소진하고, 그 결과
+            #   ① 정작 참조로 이어지는 노드가 탈락 ② 3-hop 이 2-hop 과 동일해져 선택이 무의미해졌다.
+            #   앵커 자신의 컬럼·소속 스키마·직결 루틴은 1-hop 에서 전량 수집되므로 상세 패널 정보는 불변.
+            #   (형제 목록 자체가 필요한 화면은 scope_schemas/schema_tables 경로가 담당한다.)
+            hop_elabels = elabels if _hop == 0 else [et for et in elabels if et in _REL_ELABELS]
+            if not hop_elabels:
+                break
+            # 적대리뷰 R2-b: 종전엔 UNION ALL 에 `LIMIT` 만 붙여, 포화 시 **어떤 부분집합이 오는지 비결정적**
+            #   이었다(ORDER BY 부재 — PG 가 임의 순서 반환 가능). 그러면 "관계 우선 · 결정론적 부분집합"
+            #   이라는 본 cycle 의 계약이 정작 예산이 빠듯한 상황에서 거짓이 된다. 항마다 관계/계층 등급을
+            #   리터럴로 실어 `ORDER BY prio, s, e` 로 자른다 — 포화해도 관계 엣지가 먼저 살아남고, 같은
+            #   입력이면 항상 같은 부분집합이 온다.
+            #   적대리뷰 R3-d: `broken`(파단) 행을 **cap 적용 이전** 에 후순위로 밀어야 한다 — Python 쪽
+            #     `is_rel` 필터는 LIMIT 이 이미 자른 뒤에 돌기 때문에, stale broken 행이 fetch cap 을 채우면
+            #     유효 REFERENCES/ROUTINE_USES 가 아예 고려조차 안 된다. WHERE 로 배제하지 않고 **정렬 키**
+            #     로만 내리는 이유: agtype 식이 예상과 다르게 동작해도(NULL 등) 행이 *사라지지는* 않는
+            #     fail-safe 방향이기 때문(정렬만 열화). 컨테이너 테스트로는 실 SQL 을 못 돌리므로 안전측 선택.
+            #     정렬 키 순서는 `brk` 가 `prio` **앞**이다(R4-b) — 뒤에 두면 broken 관계행(prio 0, brk 1)이
+            #     유효 계층행(prio 1, brk 0)을 앞질러 fetch 예산을 먹고, Python 이 곧 버릴 행이 유효 이웃을 가린다.
+            #   적대리뷰 R3-a: 포화 판정은 **cap+1 fetch** 로 한다 — 정확히 cap 개일 때는 생략된 행이 있다는
+            #     증거가 없는데도 종전 `>= cap` 조건이 절단 경고를 띄웠다(경계에서 거짓 양성).
+            _brk = "CASE WHEN properties @> '{\"status\": \"broken\"}'::ag_catalog.agtype THEN 1 ELSE 0 END"
+            edge_sql = ("SELECT s, e, p, et FROM (" + " UNION ALL ".join(
+                f'SELECT start_id::text AS s, end_id::text AS e, properties::text AS p, \'{et}\' AS et, '
+                f'{0 if et in _REL_ELABELS else 1} AS prio, {_brk} AS brk '
                 f'FROM metadata_kb."{et}" WHERE start_id = ANY({farr}) OR end_id = ANY({farr})'
-                for et in elabels) + f" LIMIT {_NEIGHBOR_NODE_CAP * 4}"
+                for et in hop_elabels)
+                + f") u ORDER BY u.brk, u.prio, u.s, u.e LIMIT {_EDGE_FETCH_CAP + 1}")
             cur.execute(edge_sql)
+            _edge_rows = cur.fetchall()
+            # graph-hop-budget 적대리뷰 P2: 위 UNION 의 전역 LIMIT 은 **우선순위 정렬 이전**에 잘리므로,
+            #   프론티어의 엣지가 LIMIT 을 넘으면 뒤쪽 REFERENCES/ROUTINE_USES 가 조용히 탈락한다. 종전엔
+            #   `truncated` 를 노드 cap 도달에만 세팅해 **부분 그래프를 truncated=false 로 반환**했고, 그러면
+            #   프론트의 "아래 직접 연결 목록은 전량" 고지가 거짓이 된다. LIMIT 포화를 절단으로 신고한다.
+            if len(_edge_rows) > _EDGE_FETCH_CAP:      # cap+1 번째 행이 왔다 = 실제로 더 있다
+                _edge_rows = _edge_rows[:_EDGE_FETCH_CAP]
+                result["truncated"] = True
+                if result["truncated_hop"] is None:
+                    result["truncated_hop"] = _hop + 1
             edge_hits = []   # (start_gid, end_gid, etype, cardinality, edge_source, weight, status)
             neigh_gids = set()
-            for s, e, pr, et in cur.fetchall():
+            rel_gids = set()    # graph-hop-budget: 관계(의미) 엣지로 도달한 미해소 이웃 — 예산 1순위
+            for s, e, pr, et in _edge_rows:
                 sg = int(s); eg = int(e); ep = json.loads(pr) if pr else {}
                 # weight/status(feature-0016): REFERENCES 엣지 강화상태 투영 — UI 신뢰/추정/파단 구분.
                 # relation_type: RELATED_TERM(유사어)·ROUTINE_USES(read/write, graph-funcproc) 공용.
@@ -1894,12 +1977,27 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                                   ep.get("weight"), ep.get("status"), ep.get("relation_type"),
                                   ep.get("cross_ds"),   # crossds-rel: 교차DB 엣지 표식
                                   ep.get("ref_columns")))   # routine-column-edges: 참조 컬럼 목록
+                # 적대리뷰 R2-a: `broken`(파단) 엣지는 (4) 에서 버려지므로 그 끝점에 관계 우선권을 주면
+                #   **무효 이웃이 cap 을 먹고 유효 테이블·컬럼을 밀어낸다**(sync 창 사이에 stale 로 남는다).
+                #   버릴 엣지는 우선순위 풀에서도 빼야 예산 배정이 실제 표시분과 일치한다.
+                is_rel = et in _REL_ELABELS and ep.get("status") != "broken"
                 if sg not in gid2key:
                     neigh_gids.add(sg)
+                    if is_rel:
+                        rel_gids.add(sg)
                 if eg not in gid2key:
                     neigh_gids.add(eg)
-            # (3) 신규 이웃 graphid 해소 — vertex 라벨 UNION ALL 로 1왕복. cap 도달 시 중단.
+                    if is_rel:
+                        rel_gids.add(eg)
+            # (3) 신규 이웃 graphid 해소 — vertex 라벨 UNION ALL 로 1왕복.
+            #   graph-hop-budget(2026-07-28): 종전엔 fetch 순서(라벨 알파벳 순)대로 cap 까지 채워 절단이
+            #   임의였다(Table 이 알파벳 맨 뒤 = 가장 먼저 탈락). 이제 전량 fetch 후 **결정론적 우선순위**
+            #   로 정렬해 cap 까지 채운다:
+            #     ① 관계 엣지 이웃(rel_gids) 우선, 계층 이웃은 남는 예산 — 1-hop 에서도 적용.
+            #     ② 같은 등급 안에서는 _NEIGHBOR_LABEL_PRIORITY (Table > Column > Routine > …).
+            #     ③ tie-break = graphid — 같은 앵커·같은 depth 면 항상 같은 부분집합(재현 가능).
             next_frontier = []
+            new_col_gids = []   # graph-hop-budget: 이번 hop 에 새로 들어온 Column — (3b) 부모 보강 대상
             if neigh_gids:
                 narr = _gid_array(neigh_gids)
                 resolve_sql = " UNION ALL ".join(
@@ -1907,17 +2005,88 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                     f'FROM metadata_kb."{lbl}" WHERE id = ANY({narr})'
                     for lbl in vlabels)
                 cur.execute(resolve_sql)
+                _lbl_rank = {l: i for i, l in enumerate(_NEIGHBOR_LABEL_PRIORITY)}
+                cand = []
                 for idt, pt, lbl in cur.fetchall():
-                    if len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
+                    g = int(idt)
+                    # 관계 이웃 우선 — 1-hop 에서도 적용된다(테이블 719개 스키마처럼 1-hop 부터 cap 에
+                    #   걸리는 앵커에서, 형제 나열보다 실제 참조 관계를 남기는 편이 판독에 유용).
+                    tier = 0 if g in rel_gids else 1
+                    cand.append((tier, _lbl_rank.get(lbl, len(_lbl_rank)), g, pt, lbl))
+                cand.sort(key=lambda x: (x[0], x[1], x[2]))
+                # 적대리뷰 P1: hop ≥ 2 에서 관계로 들어올 Column 이 있으면, 다른 이웃이 예산을 다 먹기 전에
+                #   (3b) 부모 Table 보강 몫을 떼어 둔다. 안 떼면 cap 상황에서 부모가 탈락해 그 컬럼이 프론트
+                #   렌더에서 드롭되고(colsByTable), "참조로 이어지는 테이블" 이 화면에서 사라진다 — HB.3 이
+                #   없애려던 실패가 cap 에서만 되살아나는 우선순위 역전.
+                #   예약은 **관계 이웃(tier 0)에도 적용**한다 — 실측 홍수는 계층 엣지뿐 아니라 관계 엣지에서도
+                #   온다(앵커를 쓰는 Routine 258건이 ROUTINE_USES = 관계 tier). tier 0 을 면제하면 그 홍수가
+                #   그대로 부모 몫을 먹어 P1 이 재발한다. 예약량은 **실제 필요량 상한**(관계 Column 후보 수)로
+                #   비례 축소해, 부모가 몇 개 안 필요한 경우 예산을 낭비하지 않는다.
+                _rel_col_n = sum(1 for c in cand if c[4] == "Column" and c[0] == 0)
+                _reserve = (min(_PARENT_BACKFILL_RESERVE, _rel_col_n)
+                            if (_hop >= 1 and "HAS_COLUMN" in elabels) else 0)
+                _cap = _NEIGHBOR_NODE_CAP - _reserve
+                for _i, (_tier, _rank, g, pt, lbl) in enumerate(cand):
+                    if len(seen_nodes) >= _cap:
                         result["truncated"] = True   # 해소 중 cap 도달 — 나머지 이웃과 그 엣지는 생략된다
+                        if result["truncated_hop"] is None:
+                            result["truncated_hop"] = _hop + 1
+                        # 이번 hop 에서 예산 부족으로 버린 이웃 수(하한) — 프론트가 "몇 개 생략" 을 말할 근거.
+                        result["omitted_nodes"] += len(cand) - _i
                         break
-                    g = int(idt); props = json.loads(pt); k = props.get("key")
+                    props = json.loads(pt); k = props.get("key")
                     if not k:
                         continue
                     gid2key[g] = k
                     if k not in seen_nodes:
                         seen_nodes[k] = _node_from_props(lbl, props)
                         next_frontier.append(g)
+                        # 적대리뷰 R4-a: **관계(비-broken)로 도달한** Column 만 부모 보강 대상이다.
+                        #   broken 엣지로 들어온 컬럼까지 보강하면, 곧 버려질 관계 때문에 무관한 부모
+                        #   Table 과 합성 HAS_COLUMN 엣지가 2-hop 그래프에 등장하고 "관계 없음" 힌트도
+                        #   부당하게 억제된다(sync 창 사이). rel_gids 는 이미 broken 을 배제한 집합이다.
+                        if lbl == "Column" and g in rel_gids:
+                            new_col_gids.append(g)
+            # (3b) graph-hop-budget: 관계로 새로 들어온 **Column 의 소속 Table 보강**.
+            #   REFERENCES 는 Column↔Column 이라, 참조 대상 컬럼만 넣으면 프론트가 그 컬럼을 렌더에서
+            #   드롭한다(graph-core.js 의 colsByTable 은 부모 Table 이 모델에 있을 때만 자식을 담는다) —
+            #   즉 "참조로 이어지는 다른 테이블" 이 화면에 나타나지 않는다. 소속 Table 을 HAS_COLUMN
+            #   역참조로 해소해 채운다(키 문자열 파싱이 아니라 엣지 역참조 — 테이블명에 dot 이 있어도 정확).
+            #   **다음 프론티어에는 넣지 않는다** — 넣으면 그 테이블의 형제 컬럼/루틴이 다시 폭발한다.
+            if _hop >= 1 and new_col_gids and "HAS_COLUMN" in elabels:
+                carr = _gid_array(new_col_gids)
+                # 적대리뷰 R3-c: 예약 예산보다 필요한 부모가 많으면 어느 부모가 살아남는지가 DB 반환 순서에
+                #   좌우돼(ORDER BY 부재) 같은 앵커·같은 depth 가 서로 다른 부분그래프를 낸다 — 문서화한
+                #   graphid tie-break 계약 위반. 두 쿼리 모두 graphid 순으로 고정한다.
+                cur.execute(f'SELECT DISTINCT start_id::text FROM metadata_kb."HAS_COLUMN" '
+                            f'WHERE end_id = ANY({carr}) ORDER BY start_id::text')
+                parent_gids = [int(r[0]) for r in cur.fetchall() if int(r[0]) not in gid2key]
+                if parent_gids:
+                    parr = _gid_array(parent_gids)
+                    cur.execute(f'SELECT id::text, properties::text FROM metadata_kb."Table" '
+                                f'WHERE id = ANY({parr}) ORDER BY id')
+                    _prows = cur.fetchall()
+                    for _pi, (idt, pt) in enumerate(_prows):
+                        if len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
+                            # 예약분(_PARENT_BACKFILL_RESERVE)까지 소진 — 남은 부모는 못 넣는다. 그 부모에
+                            #   달린 컬럼은 프론트에서 보이지 않으므로 생략 수에 반영해 무음 손실을 없앤다.
+                            result["truncated"] = True
+                            if result["truncated_hop"] is None:
+                                result["truncated_hop"] = _hop + 1
+                            result["omitted_nodes"] += len(_prows) - _pi
+                            break
+                        g = int(idt); props = json.loads(pt); k = props.get("key")
+                        if not k:
+                            continue
+                        gid2key[g] = k
+                        if k not in seen_nodes:
+                            seen_nodes[k] = _node_from_props("Table", props)
+                    # 보강된 부모와 자식 컬럼을 잇는 HAS_COLUMN 엣지도 실어야 프론트가 소속을 안다.
+                    cur.execute(f'SELECT start_id::text, end_id::text FROM metadata_kb."HAS_COLUMN" '
+                                f'WHERE end_id = ANY({carr})')
+                    for s, e in cur.fetchall():
+                        edge_hits.append((int(s), int(e), "HAS_COLUMN",
+                                          None, None, None, None, None, None, None))
             # (4) 엣지 빌드 — 양 끝점이 해소된 것만, 방향(source=start,target=end) + dedup.
             for sg, eg, et, card, esrc, ewgt, estatus, erel, exds, erc in edge_hits:
                 sk = gid2key.get(sg); tk = gid2key.get(eg)
@@ -1940,6 +2109,10 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                     _e["ref_columns"] = _rc
                 result["edges"].append(_e)
             # schema_tables REFERENCES emit 도 cross_ds 를 실어야 하나, 그 경로는 단일 스키마(intra-ds)라 cross_ds 부재(생략 안전).
+            # 적대리뷰 R2-c: 이번 hop 이 실제로 노드를 몇 개 늘렸는지 기록 — 0 이면 그 깊이는 결과를 바꾸지
+            #   못했다는 뜻이고, 프론트가 그 사실을 사용자에게 정직하게 알린다.
+            result["expanded_hops"].append(len(seen_nodes) - _nodes_before_hop)
+            result["expanded_hop_edges"].append(len(result["edges"]) - _edges_before_hop)
             frontier = next_frontier
         result["nodes"] = list(seen_nodes.values())
         cur.close()
