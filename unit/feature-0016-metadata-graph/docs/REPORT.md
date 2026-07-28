@@ -27,6 +27,50 @@ FK 관계(`REFERENCES`)는 AGE 엣지의 **양끝이 Column 키**라 `graph-core
 TASK `20260728T1541-routine-column-edges` · CHG/REV `20260728T161940-…` · Run `feature-0003/docs/test-runs.d/20260728T161940-routine-column-edges.md`. §18.8 패널은 세션 정책상 미수행 — REVIEW 에 [SKIPPED:session-policy-no-subagent] + 자체 적대 검토 H1~H6.
 
 
+
+## 2026-07-28 · routine-column-edges POST-DEPLOY 완료
+PR #1014 → main `96dfdbdd` 무중단 배포(web·워커 전부, soak 통과) 이후, 남아 있던 유일한 잔여 항목
+"실데이터 e2e" 를 완결했다. 코드·자산 변경 0.
+
+- **실데이터 채움**: `bash bin/routine-backfill.sh`(전 27 datasource 재-introspect + scope 별
+  `sync_graph`, AGE 락은 `metadata-graph-sync.sh` 와 동일 flock 직렬화). `routine_objects` 의
+  `referenced_tables[].cols` 보유 **19 → 5,807**, AGE `ROUTINE_USES` 의 `ref_columns` 엣지 **29 → 2,725**.
+  배포 직후의 19건은 insight-worker cadence 자연 전파분 — 워커 경로도 라이브에서 동작 중임을 확인.
+- **잠복 결함 해소 실증**: 선행 cycle 최대 위험은 `routine_refs_signature` 에 `cols` 가 빠지면 같은 날
+  병합된 cyvol 최적화가 `ROUTINE_USES` 재작성을 통째로 생략해 **코드·테스트·시각검증 전부 통과인데
+  라이브에서만 기능이 죽는** 경로였다. 정의상 배포 후에만 반증 가능한 이 경로가 실제로 열렸음을
+  backfill 후 엣지 증가 + 화면 도달로 확인했다.
+- **라이브 재확인**(PB-0008 실 Windows Chrome 150, 9 시나리오 PASS): 접힘 무변경 · 펼침 시 쓰기
+  (`gunzlogin.websessionkey.SessionKey`)·읽기(`global_db.serverinfo.si_sid`) 컬럼별 연결 · 미렌더 참조
+  컬럼의 테이블 승격(`::t::`) 혼재 · `ref_columns` 부재 무회귀 · 한 컬럼에 읽기·쓰기 공존
+  (`dk_game_release_231.CharacterSanction.CharacterID`) · 상세 패널 `✎`(쓰기)/컬럼 병기(읽기) ·
+  콘솔 에러 0. 컬럼선 끝점 model (2142,449) vs 테이블 끝점 (2195,415) 분리 실측.
+- **한계(정직 표기)**: 그래프 Column 정점은 `column_descriptions` SSOT 에서만 오므로 참조 컬럼이
+  파싱돼도 미기술 컬럼은 렌더 대상이 아니고 테이블 폴백으로 남는다(라이브: `websessionkey` 참조 5개 중
+  컬럼 정점 1개). SQL 파싱 상한(동적 SQL·MSSQL 4000자 절단·`SELECT *`·비수식 컬럼 미채택)도 불변 —
+  한 테이블 안의 컬럼선/테이블선 혼재는 설계된 정상 동작이다. 미도달 datasource(사내 VPN 경로 밖)는
+  도달 가능 시점 backfill 또는 worker cadence 로 자연 수렴.
+- 기록: feature-0003 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
+  `CHG-20260728T173500-routine-column-edges-postdeploy` ·
+  `REV-20260728T173500-routine-column-edges-postdeploy` ·
+  증적 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/`(6매).
+**routine-column-edges 완결.**
+
+### 범위 외 라이브 발견 (§8.1 기록만 — 본 cycle 미수정)
+backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax error at or near ":"` 가
+남았다. 원인은 `metadata_graph.py` 의 cyvol 선조회(feature-0030) 쿼리 조립이다 —
+`_scope_pred`(` WHERE r.scope_key = '<scope>'`)를 **노드 패턴과 관계 패턴 사이에** 보간해
+`MATCH (r:Routine) WHERE r.scope_key = '…'-[u:ROUTINE_USES]->() RETURN r.key, count(u)` 가 된다
+(로컬 재현 확인: `scope_key` 가 None 이 아닌 **모든 스코프 sync** 에서 항상 실패, None 인 경로만 유효).
+- **정합성 영향 없음(fail-safe)**: 실패 시 `_deg_by_key` 가 빈 dict 로 남고 `_routine_edges_intact`
+  가 차수 0 ≠ 기대치로 판정해 **전량 재작성**(= 최적화 이전 동작)으로 떨어진다. 본 POST-DEPLOY 의
+  `ref_columns` 채움도 서명 경로로 정상 수행됐다(엣지 29 → 2,725).
+- **실질 손실**: ① 스코프 sync 에서 cyvol 최적화(전량 DELETE+MERGE 감축)가 통째로 무효 ②
+  §18.8 패널이 B3 로 요구한 "서명 동일 + 엣지 소실" 안전망이 스코프 경로에선 보수적으로만 동작 ③
+  예외 경로의 `rollback()` + `anchor_cache_reset` 이 매 스코프 sync 마다 1회 발생.
+- 코드 거주는 feature-0002(`metadata_graph.py:1054`), 도입 cycle 은 feature-0030 cyvol —
+  **본 cycle(routine-column-edges) 범위 밖**이라 수정하지 않고 기록한다(§8.1).
+
 ## 2026-07-27 · 상세 패널 관련 노드 목록 DB 단위 접기/펼치기 + 목록 생략 제거 (20260727T1730-detail-db-groups)
 
 ### 요청 (사용자, entry persona dispatch)
