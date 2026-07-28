@@ -34,12 +34,34 @@ const EDGE_NO_STRAND = [0];
 //   즉 model 좌표로는 "줌아웃 구간에서 상수, 줌인 구간에서 1/zoom" 이다.
 const EDGE_ZFULL = 1;            // 이 줌 이상에서 화면 두께를 고정(=기준 배율)
 const EDGE_MIN_SCREEN_W = 0.25;  // 극단 줌아웃에서도 남기는 최소 화면 두께(완전 소실만 방지 — 기본
-                                 //   굵기 0.6 대비 충분히 낮아야 줌아웃 비례 구간이 평탄해지지 않는다)
-// 화면 기준 두께(px)를 현재 줌에서 쓸 model 두께로 환산.
-function edgeModelWidth(baseScreen, zoom) {
+                                 //   굵기 대비 충분히 낮아야 줌아웃 비례 구간이 평탄해지지 않는다)
+
+// graph-edge-hairline(§87): **서브픽셀 폭은 alpha 로 환산**한다(hairline 처리).
+//
+//   증상 — 줌아웃에서 관계선이 깨지고 계단지고 끊겨 보인다(사용자 리포트).
+//   오진하기 쉬운 지점: "anti-aliasing 을 켜자". 그러나 AA 는 **이미 켜져 있다**
+//   (`app.init({ antialias: true, resolution: devicePixelRatio })`). 원인은 AA 부재가 아니라
+//   **선 폭이 1물리픽셀 미만** 이라는 데 있다 — §86 의 기본 굵기 0.6px 는 dpr 1 에서 전 줌 구간이
+//   서브픽셀이고, 줌아웃하면 하한 0.25px 까지 내려간다.
+//   MSAA 는 픽셀당 유한 샘플(보통 4)의 커버리지를 평균할 뿐이라, 폭 0.3px 선의 커버리지는
+//   0/25/50/75% 로 **양자화**된다 → 픽셀마다 밝기가 튀어 끊겨 보이고, 대각선·곡선에서는 그 튐이
+//   계단으로 읽힌다. 샘플을 늘려도 단계만 촘촘해질 뿐 근본은 그대로고 fill rate 만 먹는다.
+//
+//   해법(지도·CAD 렌더러의 표준 hairline 기법 — Mapbox GL·deck.gl·Skia/Cairo 동일 원리):
+//   폭을 **정확히 1물리픽셀**로 올리고, 부족했던 두께분을 alpha 에 곱한다.
+//     - 커버리지가 균일해져 끊김·밝기 계단이 원천 소멸한다.
+//     - 시각적 '가늘기' 는 alpha 가 연속적으로 표현하므로 "가느다랗게" 요구는 그대로 유지된다.
+//     - 비용은 산술 몇 줄. MSAA 증설·resolution 상향 같은 전역 비용이 없다.
+//   트레이드오프: 서브픽셀 구간에서 굵기(개수 축)의 일부가 alpha(신뢰도 축)와 곱해진다. 다만 그
+//   구간은 애초에 굵기 차이를 눈으로 분해할 수 없는 영역이라, alpha 로 옮기는 편이 정보를 **더**
+//   보존한다. 1물리픽셀 이상 구간에서는 두 축이 종전대로 분리된다.
+function edgeHairline(baseScreen, zoom, dpr) {
   const z = Math.max(0.02, zoom || 1);
-  const w = Math.max(EDGE_MIN_SCREEN_W, Math.min(baseScreen, baseScreen * (z / EDGE_ZFULL)));
-  return w / z;
+  const d = Math.max(1, dpr || 1);
+  const wScreen = Math.max(EDGE_MIN_SCREEN_W, Math.min(baseScreen, baseScreen * (z / EDGE_ZFULL)));
+  const minCss = 1 / d;   // 1 물리픽셀에 해당하는 CSS px (Pixi 는 resolution 을 곱해 렌더한다)
+  if (wScreen >= minCss) return { w: wScreen / z, fade: 1 };
+  return { w: minCss / z, fade: wScreen / minCss };   // 폭은 1물리픽셀로, 모자란 두께분은 alpha 로
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1282,12 +1304,16 @@ export class PixiGraphAdapter {
     g.clear();
     if (g.children && g.children.length) { for (const ch of g.removeChildren()) { try { ch.destroy(); } catch (_) {} } }
     g.zIndex = (s.zIndex != null ? s.zIndex : 2);
-    const alpha = s.strokeOpacity == null ? 1 : s.strokeOpacity;
     const color = s.stroke || "#cbd2db";
     const lowFi = !!this._lowFi;
     const zoom = (this._cam && this._cam.zoom) || 1;
     // §86: style.lineWidth 는 **화면 픽셀** 기준값 — 줌 정책(줌인 고정·줌아웃 비례)을 태워 model 로 환산.
-    const lw = edgeModelWidth(s.lineWidth || 1.4, zoom);
+    // §87: 그 결과가 1물리픽셀 미만이면 hairline 처리 — 폭은 1물리픽셀, 부족분은 alpha(fade)로.
+    const dpr = (this.app && this.app.renderer && this.app.renderer.resolution)
+      || (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+    const hair = edgeHairline(s.lineWidth || 1.4, zoom, dpr);
+    const lw = hair.w;
+    const alpha = (s.strokeOpacity == null ? 1 : s.strokeOpacity) * hair.fade;
     const sc = lw / (s.lineWidth || 1.4);   // 화살촉·다발 간격에 같은 정책을 태우기 위한 실효 배율
     const arc = PixiAdapterPure.edgeArc(a, b, s.curve || 0, s.curveMax, s.curveMin);
     const nStrand = lowFi ? 1 : Math.max(1, Math.min(6, (s.strands | 0) || 1));

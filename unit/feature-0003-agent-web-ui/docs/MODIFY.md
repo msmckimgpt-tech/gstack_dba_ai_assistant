@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T152141-graph-edge-hairline (TASK-20260728T152141 — 줌아웃 관계선 hairline 처리, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js`: `edgeModelWidth` → **`edgeHairline(baseScreen, zoom, dpr)`** — 서브픽셀이면 폭을 `1/dpr` CSS px(=1물리픽셀)로 올리고 `fade = w_screen·dpr` 를 반환. `_paintEdge` 가 `alpha *= hair.fade` 로 합성하고 dpr 은 `app.renderer.resolution` → `window.devicePixelRatio` 순으로 해석.
+- `graph-roleviz.js`: `_META_EDGE_W_BASE` 0.6→**1.0**, `_META_EDGE_W_GAIN` 0.25→0.27, 상한 표기 2.2→2.6px(개수 축 1.00/1.54/2.08/2.60).
+- `tests/headless/test_graph_edge_flow.js`: A13 신설 6건(무보정·폭 승격·alpha 보상·극단 줌아웃 폭 유지·alpha 단조·고DPI 임계), A11 을 실효 잉크량(폭×alpha) 기준으로 재작성, B1/B2/B4/C0·edge_visibility T1 기대치 갱신 — 73 PASS.
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+
 ## CHG-20260728T142745-graph-edge-encoding (TASK-20260728T142745 — 줌 두께 정책 구간 분리 + 인코딩 축 재배치, Minor §12.3, frontend-only)
 - `graph-renderer-pixi.js`: `edgeScreenScale`(§85) → **`edgeModelWidth(baseScreen, zoom)`** — `clamp(base·min(1, zoom/EDGE_ZFULL), EDGE_MIN_SCREEN_W, base)/zoom`. 상수 `EDGE_ZFULL=1`·`EDGE_MIN_SCREEN_W=0.25`. 화살촉·다발 간격은 실효 배율(`lw/base`) 공유.
 - `graph-roleviz.js`: `_metaEdgeStrands` 폐지 → **`_metaEdgeWidthFor(count)`**(0.6 + min(1.6, log2(n)·0.25)) 신설·export. `_metaEdgeFlow` 는 곡선 키만 주입(다발 제거). 세 스타일 함수 재작성 — 굵기=개수 축 공통, 진하기=신뢰도(trusted 0.85 / 루틴 0.72 / candidate 0.5 / crossDs 0.5 / inferred 0.38 / SCHEMA_REF 중립 0.55).
