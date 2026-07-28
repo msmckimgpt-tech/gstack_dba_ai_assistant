@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T135222-graph-label-hover-anchor [CODEX:graph-label-hover-anchor] — hover 확장 기준점 좌변 고정 전환 (TASK-20260728T135222, Minor §12.3 frontend-only) — SHIP
+- 대상 diff: `static/graph/graph-renderer-pixi.js`(`hoverExpandGeom.left` · `hoverCardCenterX` · `hoverTextOffsetX` · 카드 위치·라벨 정렬 배선) · `tests/headless/test_pixi_adapter.js`(앵커 계약 assert).
+- 검증 채널: 세션 도구제약(§18.8.2 상위 지시 carve-out)으로 ux/design subagent 미호출 → `[SKIPPED:tool-restricted:ux,design]`, `codex review --uncommitted` + 기계 검증으로 대체. 시각 확정은 POST-DEPLOY PB-0008.
+- **VERDICT: SHIP.** codex 2 라운드 — 1차 **P2 1건**(좌측 기준을 `칩 좌변 + pad/2` 로 잡아 라벨이 칩보다 넓은 루틴 칩에서 hover 시 ~17px 텍스트 점프 = 주장한 "t=0 픽셀 동일" 위반) 적발·수정, 2차 "no discrete regressions found".
+- 설계 판단: 사용자 요구는 "좌측 고정 + 우측 모서리부터 확장". 이를 **박스 앵커(카드 좌변)** 와 **텍스트 앵커(원 렌더 라벨 좌측)** 두 축으로 분리해 고정했다. 둘은 일반 칩(labelMaxWidth = w0 - pad)에서는 pad/2 차이로 사실상 일치하지만, 루틴 칩 같은 outlier 에서 갈린다 — 텍스트 앵커를 pad 로 **추정**하지 않고 실렌더 폭에서 **역산**한 것이 이 cycle 의 핵심 수정이다.
+- 부수 효과(수용): 좌측 고정이라 확장분이 전부 오른쪽으로 가므로, 우측 이웃 칩을 덮을 확률이 중앙 대칭 대비 높아진다. 카드가 최상단(zIndex 99998)이고 transient 이라 판독성 손해는 없으며, 이는 사용자가 명시 요청한 거동이다.
+- 검증: `node --check --input-type=module` PASS · `test_pixi_adapter.js` **190 PASS / 0 FAIL** · 그래프 headless 전 스위트 **639 PASS / 0 FAIL**(회귀 0) · verify-completion `--pre-commit`. Cross-ref: TASK/CHG-20260728T135222-graph-label-hover-anchor · test-runs.d/20260728T135222-graph-label-hover-anchor.md.
+
 ## REV-20260728T135111-graph-edge-screenspace [SKIPPED:session-policy-no-subagent] — 굵기 변성 제거 + 프로시저 관계선 실선·LOD 해제 (TASK-20260728T135111, Minor §12.3, frontend-only)
 - Panel skip 사유(§18.8): 세션 정책상 `Agent` tool 미허용 — 라이브 실측 + 기계 검증으로 대체하고 범위를 정직 기록.
 - 판단 근거:

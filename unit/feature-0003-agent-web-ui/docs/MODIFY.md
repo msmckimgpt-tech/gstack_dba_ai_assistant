@@ -11,6 +11,14 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T135222-graph-label-hover-anchor (TASK-20260728T135222 — hover 확장 기준점을 중앙 대칭 → 좌변 고정 + 우측 확장으로 변경, Minor §12.3, frontend-only)
+- Date: 2026-07-28. Files: `static/graph/graph-renderer-pixi.js` · `tests/headless/test_pixi_adapter.js`. 사용자 정정 요청("확장되는 기준이 중앙이 아닌, 좌측은 고정 + 우측 모서리부터 확장").
+- 변경 ①(순수): `hoverExpandGeom` 이 앵커 `left = s.x - w0/2` 를 반환. 신규 `hoverCardCenterX(g,w) = g.left + w/2`(폭이 커져도 좌변 불변, `left` 부재 구 geom 은 중앙 고정 폴백) · 신규 `hoverTextOffsetX(g,w,textLeft)`(라벨 world 좌측을 절대 고정하도록 카드 중심 이동분 상쇄).
+- 변경 ②(어댑터): 카드 컨테이너 x = `hoverCardCenterX` (그 위에 기존 뷰포트·미니맵 클램프 유지), 라벨 `anchor(0,0.5)` + 매 프레임 `hoverTextOffsetX` 로 배치. `textLeft` 는 pad 추정이 아니라 **원 노드가 실제 렌더하던 잘린 라벨의 좌측을 역산**(`노드중심 - 렌더폭/2`)해 쓴다.
+- 근본 이유(codex review P2 반영): 루틴 칩은 `labelMaxWidth`(176)가 칩 폭(150)보다 커 원 라벨이 이미 칩 밖으로 넘쳐 있다 → 좌측 기준을 `칩 좌변 + pad/2` 로 잡으면 hover 순간 라벨이 ~17px 튄다. 실렌더 폭 역산만이 "t=0 픽셀 동일" 을 보장한다.
+- 불변 유지: 오버레이 전용(scene 모델 무변경 → 다른 노드 위치 불변) · zIndex 99998 · `_pick` tier0 클릭 라우팅 · 정리 경로 · render-on-demand.
+- 검증: `node --check` PASS · `test_pixi_adapter.js` **190 PASS / 0 FAIL** · 그래프 headless 전 스위트 **639 PASS / 0 FAIL** · codex 2 라운드(P2 1건 수정 → 회귀 0). POST-DEPLOY PB-0008 잔여. Cross-ref: REV-20260728T135222-graph-label-hover-anchor · CHG-20260728T120530-graph-label-hover-expand.
+
 ## CHG-20260728T135111-graph-edge-screenspace (TASK-20260728T135111-graph-edge-screenspace — 굵기 변성 제거 + 프로시저 관계선 실선·LOD 해제, Minor §12.3, frontend-only)
 - `graph-renderer-pixi.js`: `edgeWidthBoost`(§84) → **`edgeScreenScale = 1/zoom`** 로 교체 — 굵기·화살촉·다발 간격을 화면 픽셀로 해석. `_syncEdgeZoom()`+`_repaintAllEdges()` 신설(줌 변화 로그 0.22 초과 시 전 엣지 in-place 재페인트, rAF 코얼레싱, `destroy` 정리) + `_applyCam` 배선.
 - `graph-roleviz.js`: 전 관계선 `lineDash` 제거(실선) · 굵기 서열 재편(trusted 1.6 / ROUTINE_USES 1.3 / candidate 1.0 / crossDs 1.0~1.15 / inferred 0.75) · alpha 재조정.

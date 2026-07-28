@@ -6611,3 +6611,13 @@ mouse-hover 툴팁으로 충분하니 제거.
 - [x] ⑤ 확장 영역 클릭 라우팅 대조 실험(hover 전 = 클러스터 / hover 후 = 원 노드 상세)
 - [x] ⑥ 이탈 원복 픽셀 동치(잔상 0) · ⑦ 미잘림 칩 무반응 · ⑧ pageerror 0
 - [x] 증적 — `docs/test-runs.d/20260728T120530-graph-label-hover-expand.md` · `docs/evidence/pb0008-graph-label-hover-{before,after,leave}-20260728.png`
+
+## TASK-20260728T135222-graph-label-hover-anchor — hover 확장 기준점: 중앙 대칭 → 좌변 고정 + 우측 확장 (사용자 정정, Minor §12.3 frontend-only)
+- 요청(사용자, 2026-07-28): "실제 작동을 확인했습니다. 다만, 확장되는 기준이 중앙이 아닌, 좌측은 고정 + 우측 모서리부터 확장되도록 구성해주세요."
+- 변경: 확장 앵커를 **원 칩 좌변**(`geom.left`)으로 두고 카드 중심을 `left + w/2` 로 산출(`hoverCardCenterX`) → 폭이 커져도 좌변 불변. 라벨도 좌측 정렬하되 기준선은 pad 추정이 아니라 **원 노드가 렌더하던 잘린 라벨의 좌측을 역산**(`hoverTextOffsetX`)해, 확장 내내 앞글자가 1px 도 움직이지 않고 뒷글자만 우측에서 드러난다.
+- 함정(codex P2, in-cycle 수정): 루틴 칩은 `labelMaxWidth`(176) > 칩 폭(150) 이라 원 라벨이 칩 밖으로 넘쳐 있다 → `칩 좌변 + pad/2` 기준이면 hover 순간 ~17px 점프.
+- [x] `hoverExpandGeom.left` + `hoverCardCenterX` + `hoverTextOffsetX` 순수 3종 및 어댑터 배선
+- [x] 앵커 계약 단위테스트(좌변 불변 · t=0/t=1 라벨 좌측 동일 · 루틴 칩 대조) — 190 PASS / 0 FAIL
+- [x] 그래프 headless 전 스위트 639 PASS / 0 FAIL (회귀 0)
+- [x] §18.8 codex 2 라운드 수렴(P2 1건 수정)
+- [ ] **POST-DEPLOY PB-0008** — 좌변 고정·우측만 확장·앞글자 불변 실화면 확인 (`visual_verification_scope: always`)
