@@ -20,6 +20,21 @@
 //   모듈 상수로 고정한다(대다수 엣지가 단일 가닥 = 최다 호출 경로의 GC 압력 제거). 불변 사용.
 const EDGE_NO_STRAND = [0];
 
+// graph-edge-legibility(§84): 관계선 굵기는 **model 좌표**라 world scale(zoom)이 그대로 곱해진다.
+//   전체보기(fit) 는 대형 스코프에서 zoom 0.2~0.3 이므로 0.85px 선이 화면 0.2px 서브픽셀이 되고,
+//   안티앨리어싱이 alpha 까지 깎아 사실상 사라진다 — 라이브 실측(mssql-qa-idc 전체보기)에서 관계선
+//   최대 대비가 배경 대비 16~43/255(카드 테두리 161)로, 저밀도 구간 ink 는 0.12% 였다.
+//   보정: **가장 얇은 관계선이 화면에서 최소 EDGE_MIN_SCREEN_PX 를 갖도록** 배율을 산출해 모든 엣지에
+//   **동일 배율**로 곱한다. 개별 엣지마다 clamp 하면 줌아웃에서 굵기 서열(기본<candidate<trusted)이
+//   뭉개지므로, 기준선(EDGE_THIN_REF) 하나로 배율을 뽑아 서열을 보존한다. zoom ≥ 1 에서는 배율 1(무보정).
+const EDGE_THIN_REF = 0.85;        // 가장 얇은 관계선의 기준 굵기(= _metaEdgeStyleFor 무상태 값)
+const EDGE_MIN_SCREEN_PX = 1.15;   // 그 선이 화면에서 확보해야 할 최소 굵기(라이브 실측으로 결정 — 0.85 는
+                                   //   안티앨리어싱에 먹혀 대비 44/255 에 그쳤다)
+function edgeWidthBoost(zoom) {
+  const z = Math.max(0.02, zoom || 1);
+  return Math.max(1, EDGE_MIN_SCREEN_PX / (EDGE_THIN_REF * z));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 순수 로직 (엔진 무관) — node vm 테스트 대상
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1207,9 +1222,11 @@ export class PixiGraphAdapter {
     if (g.children && g.children.length) { for (const ch of g.removeChildren()) { try { ch.destroy(); } catch (_) {} } }
     g.zIndex = (s.zIndex != null ? s.zIndex : 2);
     const alpha = s.strokeOpacity == null ? 1 : s.strokeOpacity;
-    const color = s.stroke || "#cbd2db", lw = s.lineWidth || 1.4;
+    const color = s.stroke || "#cbd2db";
     const lowFi = !!this._lowFi;
     const zoom = (this._cam && this._cam.zoom) || 1;
+    // graph-edge-legibility(§84): 줌아웃 서브픽셀 소실 보정 — 전 엣지 동일 배율이라 굵기 서열은 보존.
+    const lw = (s.lineWidth || 1.4) * edgeWidthBoost(zoom);
     const arc = PixiAdapterPure.edgeArc(a, b, s.curve || 0, s.curveMax, s.curveMin);
     const nStrand = lowFi ? 1 : Math.max(1, Math.min(6, (s.strands | 0) || 1));
     const offs = nStrand > 1 ? PixiAdapterPure.strandOffsets(nStrand, s.strandGap || 3.2) : EDGE_NO_STRAND;
@@ -1232,7 +1249,9 @@ export class PixiGraphAdapter {
     }
     // 화살촉은 곡선 **끝 접선**을 따른다(직선 각도로 그리면 호와 어긋나 꺾여 보인다). 선이 얇아진
     //   만큼 촉도 작게(선 굵기 연동), 대신 alpha 는 선보다 올려 방향 가독성을 유지한다.
-    const headA = Math.min(1, alpha * 1.6), headSz = Math.max(4.5, Math.min(9, 3.6 + lw * 1.9));
+    //   상·하한도 굵기와 같은 배율을 태워 줌아웃에서 촉만 서브픽셀로 사라지지 않게 한다(§84).
+    const hb = edgeWidthBoost(zoom);
+    const headA = Math.min(1, alpha * 1.6), headSz = Math.max(4.5 * hb, Math.min(9 * hb, 3.6 * hb + lw * 1.9));
     if (s.endArrow) this._arrow(g, b[0], b[1], tipAng, color, headA, headSz);
     if (s.startArrow) this._arrow(g, a[0], a[1], tailAng, color, headA, headSz);
     if (s.labelText) {

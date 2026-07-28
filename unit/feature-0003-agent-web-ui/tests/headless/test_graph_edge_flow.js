@@ -45,8 +45,9 @@ const A = [0, 0], B = [100, 0];
   check("A3 곡선 중점 편차 = off", approx(Math.hypot(mid[0] - 50, mid[1] - 0), Math.abs(fwd.off), 1e-9),
     { dev: Math.hypot(mid[0] - 50, mid[1]), off: fwd.off });
 
-  const far = Pure.edgeArc([0, 0], [5000, 0], 0.15, 44);
-  check("A4 장거리 편차 상한 클램프", Math.abs(far.off) === 44, far.off);
+  const far = Pure.edgeArc([0, 0], [5000, 0], 0.15, 26);
+  // §84: 상한은 접힌 카드 높이(_METLAY.CARDH=44)·행 간격(GAPY=52) 안에 머물러야 이웃 카드를 침범하지 않는다.
+  check("A4 장거리 편차 상한 클램프(카드 치수 결속)", Math.abs(far.off) === 26 && 26 < 44, far.off);
   const near = Pure.edgeArc([0, 0], [4, 0], 0.15, 44, 5);
   check("A4 근접 편차 하한 보장(왕복선 분리)", Math.abs(near.off) === 5, near.off);
 }
@@ -93,6 +94,34 @@ const A = [0, 0], B = [100, 0];
   check("A9 직선 중점(호 밖) 미히트", Pure.hitTestEdge(50, 0, edges, posOf, 4, 1) === null, arc.off);
   const straight = [{ id: "e2", source: "a", target: "b", style: {} }];
   check("A9 직선 엣지는 종전대로 중점 히트", Pure.hitTestEdge(50, 0, straight, posOf, 4, 1) !== null);
+}
+{
+  // ── §84 줌아웃 서브픽셀 보정 ──
+  // 굵기는 model 좌표라 zoom 이 그대로 곱해진다. 전체보기(zoom 0.2~0.3)에서 0.85px 선이 화면 0.2px
+  // 서브픽셀이 되어 사라지던 라이브 결함(대비 16/255)의 회귀 방지.
+  const inst = Object.create(Adapter.prototype);
+  const paint = (styleW, zoom) => {
+    const rec = [];
+    const g = { clear(){}, children: [], removeChildren(){ return []; }, moveTo(){ return g; }, lineTo(){ return g; },
+      quadraticCurveTo(){ return g; }, closePath(){ return g; }, addChild(){},
+      stroke(o){ rec.push(o.width); return g; }, fill(){ return g; } };
+    inst.P = { Graphics: function(){ return g; } };
+    // _cam 은 prototype accessor(getter-only)라 대입이 막힌다 — 인스턴스에 직접 정의.
+    Object.defineProperty(inst, "_cam", { value: { zoom }, configurable: true, writable: true });
+    inst._built = { edges: [] };
+    inst._paintEdge(g, { style: { lineWidth: styleW, strokeOpacity: 0.44, curve: 0.13, curveMax: 26, curveMin: 5 } }, [0, 0], [100, 0]);
+    return rec[0];
+  };
+  // 계약 = "가장 얇은 관계선의 **화면** 굵기가 어떤 줌에서도 바닥 아래로 내려가지 않는다".
+  const FLOOR = 1.15;
+  for (const z of [0.1, 0.25, 0.55, 1]) {
+    const screenW = paint(0.85, z) * z;
+    check(`A11 zoom ${z} 화면 굵기 바닥 확보`, screenW >= FLOOR - 1e-6, { zoom: z, screen: screenW });
+  }
+  check("A11 충분히 확대되면 무보정(zoom 2)", approx(paint(0.85, 2), 0.85, 1e-9), paint(0.85, 2));
+  const thinOut = paint(0.85, 0.25), trustOut = paint(1.5, 0.25);
+  check("A11 줌아웃에서도 굵기 서열 보존(기본<trusted)", trustOut > thinOut && approx(trustOut / thinOut, 1.5 / 0.85, 1e-6),
+    { thin: thinOut, trusted: trustOut });
 }
 {
   // 두 노드 사이 관계선 조회 — hover 강조가 실제 호에 겹치기 위한 seam. 역방향 등록이면 곡률 부호 반전.
@@ -156,6 +185,13 @@ if (typeof g._metaG6Build !== "function" || !g.__M) {
   // 요구 ②: 가늘고 반투명 → 겹칠수록 alpha 누적으로 진해진다.
   check("B2 기본 관계선 가늘게(<1.2px)", base.lineWidth < 1.2, base.lineWidth);
   check("B2 반투명 부여(0<α<1)", base.strokeOpacity > 0 && base.strokeOpacity < 1, base.strokeOpacity);
+  // §84: 단독 관계선이 사라지지 않을 가시성 바닥. 동시에 누적 여지도 남아야 한다(2겹 < 0.75).
+  // 바닥값은 라이브 실측으로 정했다 — α0.44/화면0.85px 는 배경 대비 44/255 에 그쳐 여전히 옅었다.
+  check("B2 가시성 바닥 α≥0.55", base.strokeOpacity >= 0.55, base.strokeOpacity);
+  // 누적은 "겹칠수록 진해진다"가 계약 — 2·3·4겹이 단조 증가하고 포화(=1)되지 않으면 된다.
+  const lay = (n) => 1 - Math.pow(1 - base.strokeOpacity, n);
+  check("B2 누적 단조 증가 + 미포화", lay(1) < lay(2) && lay(2) < lay(3) && lay(3) < lay(4) && lay(4) < 1,
+    [lay(1).toFixed(2), lay(2).toFixed(2), lay(3).toFixed(2), lay(4).toFixed(2)]);
   check("B2 신뢰 강도가 높을수록 진함", trusted.strokeOpacity > base.strokeOpacity && trusted.lineWidth > base.lineWidth,
     { t: trusted.strokeOpacity, b: base.strokeOpacity });
   check("B2 곡률·상한·하한 전 분기 주입", [base, trusted, cross].every((s) => s.curve > 0 && s.curveMax > 0 && s.curveMin > 0));
