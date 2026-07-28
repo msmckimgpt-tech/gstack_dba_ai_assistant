@@ -11,6 +11,14 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T114015-graph-edge-flow (TASK-20260728T114015-graph-edge-flow — 그래프 뷰 관계선 방향성 곡선 + 밀도 누적 + 부모 볼륨 다발, Major §12.3, frontend-only 3모듈)
+- `src/static/graph/graph-renderer-pixi.js`: `PixiAdapterPure` 에 `edgeArc`(진행방향 왼쪽 고정 수직 오프셋 — 왕복 관계선 자동 분리)·`quadPoints`·`curveSegs`(화면 픽셀 기준 adaptive)·`dashPolyline`(폴리라인 전체 대시 위상 연속)·`strandOffsets` 신설, `hitTestEdge` 를 곡선 인지(zoom 인자 추가)로 확장. `_paintEdge` 재작성(실선=네이티브 `quadraticCurveTo`, 가닥별 개별 `stroke()` 로 겹침 alpha 누적, 끝 접선 화살촉+굵기 연동 크기, 곡선 중점 라벨), `_arrow` size 인자 추가, `_edgeStyleBetween` 신설 + `setHoverHighlight` 를 같은 호에 정합, `_lowFi`/`_lowFiTouched` 드래그 강등·`_flushEdgeRefresh` 고품질 복원, 모듈 상수 `EDGE_NO_STRAND`.
+- `src/static/graph/graph-roleviz.js`: `_META_EDGE_CURVE/_MAX/_MIN` 상수 + `_metaEdgeStrands`(관계 수→가닥 log2 1~4) + `_metaEdgeFlow`(곡선·다발 키 주입 단일 축) 신설·export. `_metaEdgeStyleFor`(count 인자 추가, 굵기 1.4→0.85·1.8→1.05·3→1.5, `strokeOpacity` 0.32/0.5/0.62 신설, 기본색 `#cbd2db`→`#94a3b8`), `_metaRoutineEdgeStyle`(count 인자, 1.5→0.9/α0.42), `_metaSchemaRefEdgeStyle`(굵기 단독 → 다발 가닥 + 완만한 굵기·불투명도 + 가닥 수 비례 간격).
+- `src/static/graph/graph-core.js`: ROUTINE_USES 집계 키에 `relation_type` 포함(`::RU::read|write`) + `agg.relType` 보존 → 읽기/쓰기 별개 관계선 방출·화살표 방향 유지(종전 `delete s.startArrow` 제거), 집계 굵기 가산(+0.8) 제거 후 `count`→가닥 위임, `data.relation_type` 노출, USES(제품→데이터소스) 사용선도 `_metaEdgeFlow` 로 통일, import 에 `_metaEdgeFlow` 추가.
+- `tests/headless/test_graph_edge_flow.js` 신규(48건 — 곡선 기하 A1~A10 · 스타일 어휘 B1~B4/C0 · 빌드 계약 C1~C4).
+- `tests/headless/test_g6build_edge_visibility.js` T1 계약 갱신(SCHEMA_REF 볼륨 인코딩: 굵기 단독 → 가닥 3 + 굵기·불투명도 동반 상승 + 곡률 부여).
+- docs: TASK/REPORT/REVIEW/test-runs.d fragment.
+
 ## CHG-20260724T073848-conv-menu-order (TASK-20260724T073848-conv-menu-order — 대화 목록 '···' 확장 메뉴 항목 순서 변경, Minor §12.3, frontend-only)
 - Date: 2026-07-24. `unit/feature-0003-agent-web-ui/src/static/app.js` `openConversationItemMenu` 단독 — '이동'(folder.manage.own 조건부) 블록을 '설정' append 앞으로 옮겨 렌더 순서를 `공유 → 설정 → 이동` 에서 `공유 → 이동 → 설정` 으로 변경. 헤더 주석 "최종 순서: 공유 | 설정" → "공유 | 이동 | 설정". 로직·권한·핸들러·action 인자 무변경 — 순수 순서.
 - 영향: 대화 목록 각 항목의 '···' 확장 메뉴 항목 배열 순서만 변경. 백엔드·API·데이터·권한 무관. Cross-ref: TASK/REV-20260724T073848-conv-menu-order.

@@ -90,7 +90,13 @@ function check(name, cond, extra) {
   const e = out.edges.find((x) => x.data && x.data.label === "SCHEMA_REF");
   check("T1 카드간 SCHEMA_REF 방출", !!e && e.source === "SC:" + nk("a") && e.target === "SC:" + nk("b"), e && { s: e.source, t: e.target });
   check("T1 count 라벨", !!e && e.style.labelText === "12", e && e.style.labelText);
-  check("T1 로그 굵기>1", !!e && e.style.lineWidth > 1.5, e && e.style.lineWidth);
+  // graph-edge-flow(§83): 부모 카드 간 집계선의 '볼륨' 인코딩이 **굵기 단독 → 다발 가닥 수** 로 바뀜.
+  //   굵기 하나로는 관계 100개와 1000개가 상한에서 구별되지 않아 count 신호가 포화됐다. 계약도 그에 맞춰
+  //   갱신: count(12) → 가닥 3 + 완만한 굵기·불투명도 상승 + 방향성 곡선.
+  check("T1 볼륨=다발 가닥(count 12→3가닥)", !!e && e.style.strands === 3, e && e.style.strands);
+  check("T1 볼륨: 굵기·불투명도 동반 상승", !!e && e.style.lineWidth > 0.85 && e.style.strokeOpacity > 0.3,
+    e && { w: e.style.lineWidth, o: e.style.strokeOpacity });
+  check("T1 방향성 곡선 부여", !!e && e.style.curve > 0 && e.style.curveMax > 0, e && e.style.curve);
   M.schemaExpanded.add(nk("a"));
   addTable(M, "a.t1");
   const out2 = build();

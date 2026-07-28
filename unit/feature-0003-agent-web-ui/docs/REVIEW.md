@@ -10,6 +10,26 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T114015-graph-edge-flow [SKIPPED:session-policy-no-subagent] — 그래프 뷰 관계선 방향성 곡선 + 밀도 누적 + 부모 볼륨 다발 (TASK-20260728T114015-graph-edge-flow, Major §12.3, frontend-only 3모듈)
+- Panel skip 사유(§18.8): 본 세션 사용자 환경 정책상 `Agent` tool 사용이 허용되지 않아 subagent 패널 미수행. 대신 **기계 검증 + 자체 적대 검토**로 대체하고 그 범위를 아래에 정직 기록한다(패널을 돌린 것처럼 기술하지 않는다).
+- 대안 검증: 신규 계약 테스트 48 PASS(곡선 기하·스타일 어휘·빌드 계약 3층) + 그래프 전 스위트 536 PASS/0 FAIL + **적대 프로브**(main 시점 번들 대조 — OLD 는 읽기+쓰기를 1선으로 병합하고 화살표를 둘 다 잃음: `[{start:false,end:false,curve:0}]`, NEW 는 2선·양방향·곡선) + pytest/ruff 전량 PASS + 라이브 PB-0008(곡선·반투명 누적·다발·에러 0).
+- 판단 근거 / 채택 대안:
+  - **곡률 방향을 "진행방향 왼쪽 고정" 으로 둔 이유**: 읽기/쓰기를 색·대시로만 구분하면 두 선이 **같은 경로에 겹쳐** 하나로 보인다(종전 결함의 본질). 곡률 부호를 방향에 매면 왕복 관계가 기하적으로 갈라져 추가 인코딩 없이 분리된다 — Cytoscape.js 의 평행 엣지 자동 bezier 와 같은 어휘.
+  - **강한 edge bundling 미채택**: 번들링이 clutter 를 줄이는 것은 맞지만, 사용자 연구상 **경로 추적 정확도·시간이 나빠진다**. 관계 추적이 이 화면의 핵심 과업이므로 저곡률(0.15, 상한 44px)만 쓰고 군집감은 alpha 누적으로 얻는다.
+  - **밀도 인코딩을 alpha 누적에 맡긴 이유**: 별도 히트맵 레이어 없이 서로 다른 엣지 Graphics 가 자연 합성되어 허브 주변이 진해진다. 다만 가닥마다 `stroke()` 를 나눠 호출해야 겹침 대비가 생긴다(한 번에 stroke 하면 균일) — 구현상 함정이라 주석에 명시.
+  - **부모 볼륨을 굵기 대신 가닥으로**: 굵기는 상한에서 포화(count 100 vs 1000 구별 불가)되고, 얇은 선 N개가 fill rate 상 유리하며 겹침 누적과도 정합.
+  - **기본선 색을 `#cbd2db`→`#94a3b8` 로 진하게**: 굵기·alpha 를 함께 낮추면 옅은 색에서 "겹치기 전까지 아예 안 보이는" 구간이 생긴다. 색을 한 단계 올려 단독 가시성을 유지하고 누적 여지를 남겼다.
+- 자체 적대 검토(H1~H8, 전부 반영 또는 근거 기록):
+  · **H1 히트테스트 괴리(반영)**: 곡선으로 그리는데 히트 판정이 직선이면 호의 배(최대 44px)만큼 어긋난다 → `hitTestEdge` 를 곡선 인지로 확장, "호 위 점은 히트 / 직선 중점은 미히트" 를 테스트로 잠금(A9).
+  · **H2 hover 강조 불일치(반영)**: 상세 패널 hover 강조선이 직선이면 곡선 관계선 옆을 스치는 별개 선이 된다 → `_edgeStyleBetween` 으로 같은 호 위에 겹치고, 역방향 등록 엣지는 곡률 부호를 뒤집어 동일 호를 얻는다(A10).
+  · **H3 드래그 저품질 잔존(반영)**: `_refreshIncidentEdges` 가 `_objSig` 를 갱신하므로 lowFi 로 그린 도형이 '서명 동일=재사용' 으로 다음 full draw 에 살아남는다 → `_lowFiTouched` 누적 + `dragend` flush 에서 전량 고품질 재그림.
+  · **H4 대시 위상 아티팩트(반영)**: 곡선을 폴리라인으로 쪼개 구간마다 대시를 리셋하면 경계에 대시가 뭉친다 → `dashPolyline` 이 위상을 이어붙이고, 총 on 길이가 직선 `dashSegments` 와 동치임을 테스트(A7).
+  · **H5 화살촉 꺾임(반영)**: 곡선 끝에서 직선 각도로 화살촉을 그리면 선과 촉이 어긋난다 → 끝 접선(`b - c`) 각도 사용. 선이 얇아진 만큼 촉도 축소하되 alpha 는 올려 방향 가독성 보존.
+  · **H6 얇은 선의 가시성 하락(근거 기록)**: 단독 가시성은 색 보정(H위 기본선)으로 보전했고, trusted/candidate 는 굵기·alpha 를 상대적으로 높게 유지해 신뢰 강도 서열이 종전과 동일하게 읽힌다(B2 테스트).
+  · **H7 dim 경로 정합(검증)**: `dimIf` 가 `min(existing, 0.12)` 로 침강시키므로 명시된 `strokeOpacity` 와 정상 합성된다(하이라이트 시 focus 밖은 §67 대로 build 에서 제거되는 경로가 우선).
+  · **H8 성능 회귀(근거 기록)**: 실선은 샘플링 0(네이티브 tessellation), 대시만 adaptive, 가닥은 ≤4 이고 집계·부모선에만 부여, 단일 가닥 경로는 배열 할당 제거. 대형 스코프 실측은 POST-DEPLOY 육안/프레임 관측으로 이월.
+- 잔여 리스크(정직 표기): 가닥 **내부** 자기 겹침의 alpha 누적은 Pixi 배치 합성 방식에 의존해 헤드리스로 확정 불가 — 서로 다른 엣지 간 누적(요구 ② 의 본체)은 라이브에서 확인됐고, 가닥 내부는 벌어져 있어 영향이 작다. 읽기/쓰기 2선 육안·real-mouse 우클릭·드래그 추종은 POST-DEPLOY PB-0008 로 검증한다.
+
 ## REV-20260724T073848-conv-menu-order [SKIPPED:trivial-cosmetic-reorder] — 대화 목록 '···' 확장 메뉴 항목 순서 변경 (TASK-20260724T073848-conv-menu-order, Minor §12.3, frontend-only)
 - Panel skip 사유(§18.8): 순수 렌더 순서 재정렬(`공유 → 이동 → 설정`) — 기존 3항목의 append 순서만 교체. 신규 로직·권한 게이트·onSelect 핸들러·action 인자·데이터 흐름·보안 표면 0. `folder.manage.own` 조건부 게이트·`conversation.share`/`conversation.read` action 불변. 적대 리뷰가 표면화할 correctness/security 리스크 없음 → SKIPPED 정당.
 - 검증: `node --check` PASS · 항목 3종(공유/이동/설정) 전부 유지 · 순서를 assert 하는 테스트 부재 확인(`verify_settings_archive_leave.mjs` 존재검사만 — 재정렬 무영향; 선존 2 FAIL 은 HEAD 부터의 `makeItem` vs `make` 정규식 drift, 본 변경 무관).

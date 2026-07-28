@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T114015-graph-edge-flow — 그래프 뷰 관계선: 방향성 곡선 + 밀도 누적 + 부모 볼륨 다발 (Major §12.3 — feature-0003 web/UI 프론트 3모듈, 정본 feature=feature-0016-metadata-graph §83, /_template:entry arg-given)
+- 요청(사용자, 2026-07-28, `/_template:entry` arg-given): "`그래프 뷰` 에서, 각 관계선을 출력하는 부분을 개선해주세요. ① 직선 형태로 구성된 관계선을 부드러운 곡선으로 — 곡선의 방향은 각 참조가 이루어지는 방향입니다(쓰기, 읽기, 둘 다 있다면 관계선도 2개) ② 관계선을 가늘게 + 약간 투명하게 구성하고, 이러한 구조를 통해 관계가 특정 노드에 많이 겹칠수록 점점 진하고 명시적으로 나타나는 연출 ③ 상위 부모 내부의 객체들이 다른 객체에 관계된 개수에 비례하여, 관계선의 볼륨 또한 풍부하게 ④ 디자인적으로 우아하게, 최적화도 공격적으로." + 같은 turn 추가 요청: "웹 리서치를 통해 세련된 형태로 그래프 뷰를 구성한 다른 상용 서비스의 형태도 참조."
+- 현상: 관계선이 전부 `moveTo→lineTo` 직선. 같은 두 객체 사이의 읽기(테이블→루틴)와 쓰기(루틴→테이블)가 **같은 경로에 겹쳐** 한 선으로 보였고, 집계 경로에서는 아예 한 덩어리로 병합한 뒤 `delete s.startArrow` 로 방향까지 지웠다. 굵기·불투명도는 단일 인코딩이라 관계가 몰리는 허브가 시각적으로 드러나지 않고, 부모(스키마 카드) 간 집계선은 굵기 상한(2.4px)에서 count 신호가 포화됐다.
+- 수정(3모듈, 렌더 어휘 변경·비파괴):
+  - **`graph-renderer-pixi.js`** — `PixiAdapterPure` 에 `edgeArc`/`quadPoints`/`curveSegs`/`dashPolyline`/`strandOffsets` 신설 + `hitTestEdge` 곡선 인지 확장. `_paintEdge` 를 곡선·다발·접선 화살촉·곡선 중점 라벨로 재작성, `_edgeStyleBetween` 으로 hover 강조를 같은 호에 정합, `_lowFi`(드래그) 강등 + `dragend` 고품질 복원.
+  - **`graph-roleviz.js`** — `_META_EDGE_CURVE(0.15)/_MAX(44)/_MIN(5)` + `_metaEdgeStrands`(관계 수→가닥, log2 1~4) + `_metaEdgeFlow`(곡선·다발 키 주입 단일 축). 스타일 3종(REFERENCES/ROUTINE_USES/SCHEMA_REF)을 얇게+반투명으로 재설계.
+  - **`graph-core.js`** — ROUTINE_USES 집계 키에 `relation_type` 포함(읽기/쓰기 분리 방출·방향 보존·`data.relation_type` 노출), 집계 굵기 가산 제거 후 `count`→가닥 위임, USES 사용선도 같은 어휘로 통일.
+- 완료 판정(acceptance):
+  - [x] [AC-GEF-1] 관계선이 곡선으로 렌더되고, 방향이 반대인 관계는 서로 반대편 호로 갈라진다. (테스트 A2/C2 + 라이브 육안)
+  - [x] [AC-GEF-2] 같은 두 객체에 읽기·쓰기가 모두 있으면 **관계선이 2개** 방출되고 각자 화살표 방향을 유지한다. (테스트 C1/C2 + 적대 프로브로 OLD 1선 재현)
+  - [x] [AC-GEF-3] 기본 관계선이 1.2px 미만·반투명이고, 여러 선이 겹치는 구간에서 진해진다. (테스트 B2 + 라이브 육안 — 데이터소스 수렴부)
+  - [x] [AC-GEF-4] 부모(스키마 카드) 간 집계선의 볼륨이 관계 수에 비례해 커진다(가닥 1→4, 단조). (테스트 B1/B4/C4 + 라이브 count 47→4가닥)
+  - [x] [AC-GEF-5] 곡선 엣지의 히트테스트가 실제 호를 따른다(직선 판정 괴리 제거). (테스트 A9)
+  - [x] [AC-GEF-6] 그래프 기존 스위트 회귀 0. (536 PASS / 0 FAIL)
+  - [ ] [AC-GEF-7] **POST-DEPLOY PB-0008** — 읽기/쓰기 2선 육안 · 곡선 우클릭 히트테스트(real-mouse) · 드래그 추종 후 고품질 복원.
+- 상태: 코드·단위·라이브(부분) 완료 → verify → PR → 머지 → 배포 → AC-GEF-7 POST-DEPLOY 검증.
+
 ## TASK-20260727T113640-model-persist — 대화별 "마지막 요청 모델" 보존(새로고침·대화 복귀) + '+ 새 대화'는 haiku 유지 (Minor §12.3 — feature-0003 web/UI, 프론트 `static/app.js` + 백엔드 `routers/conversations.py`, /_template:entry arg-given)
 - 요청(사용자, 2026-07-27, `/_template:entry` arg-given): "대화 중, 서비스 내 assistant에게 마지막으로 요청했던 모델을 기준으로 새로고침이나 다른 대화에서 돌아왔을 때, 기준 모델의 선택을 보존시켜주세요. 다만 '+ 새 대화' 를 통해 선택되는 모델은 haiku 그대로입니다."
 - 현상(3중 결함): composer 모델 선택기 상태 `state.selectedModel` 은 **메모리 전용 전역**이라 (a) 새로고침하면 사라져 세션 기본값(haiku)으로 되돌아가고, (b) 대화를 전환해도 전역값이 그대로 남아 **직전 대화의 모델이 다른 대화로 누출**되며, (c) sonnet 을 고른 뒤 '+ 새 대화' 를 눌러도 sonnet 이 그대로 이어져 "새 대화는 haiku" 계약이 깨졌다. 추론 강도(reasoning-effort-selector)는 이미 대화별 KV 영속 + `/api/history` hydration 이 있으나 모델에는 대응 경로가 없었다.
