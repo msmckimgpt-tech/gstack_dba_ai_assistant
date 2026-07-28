@@ -609,3 +609,17 @@ TASK-20260728T124500-llm-usage-target-scope. branch `ai/claude/feature-0002-llm-
   채움률 한계 정직 표기).
 - `docs/REPORT.md` — 본 cycle 스냅샷 + POST-DEPLOY 결과.
 - `docs/TASK.md` — POST-DEPLOY 체크박스 종결.
+
+## CHG-20260728T150510-alias-shadow-server-resolution-verified — 잔여 착취 불가 확정 + 오류 원문 은폐 철회 (Minor §12.3)
+> 선행 CHG-20260728T133431-alias-shadowed-function-namespace 의 잔여를 **라이브 실증으로 확정**. 사용자 결정: "라이브 해석 확인 우선" → 결과 반영.
+- **실증(QA SQL Server 2017 / 14.0.3238.1 Web Edition, datasource `mssql-web-qa` / `masangsoftweb`)**:
+  - ① 별칭 = **미존재** DB명 → `Msg 207 Invalid column name 'dbo'`
+  - ② 별칭 = **실존** DB명(`Shop`·`Web_SR`) → `Msg 207 Invalid column name 'dbo'` — **①과 완전히 동일**
+  - ③ 별칭 없음(동일 3-part) → `Msg 4121 Cannot find either column … or the user-defined function "zzz_notadb.dbo.whatever"`
+  → SQL Server 는 `alias.col.method()` 를 **별칭 우선(컬럼)** 으로 해석한다. 테이블을 DB 명으로 별칭 지어 cross-DB 함수를 부르는 것이 **불가능**하고(잔여 착취 불가), 오류 문구가 **DB 존재 여부에 불변**이라 열거 oracle 도 성립하지 않는다.
+- **무엇을**: 위 oracle 을 막으려 넣었던 `tools._sql_error_message`(모호 경로 서버 오류 원문 은폐)를 **철회**하고 원문 반환으로 되돌렸다. 근거가 반증된 방어이며, 유지하면 `Invalid column name 'dbo'` 처럼 **모델의 자기교정에 필요한 정보만** 가리는 순손실이다. 철회 근거는 코드 주석에 프로브 결과와 함께 남겨 재도입을 막고, 테스트가 그 주석·헬퍼 부재를 지킨다.
+- **유지**: APPLY(table-source)·4/5-part·`Paren`/미지 노드 봉인은 그대로 — 그 위치들은 컬럼 해석이 **문법적으로 불가**해 서버가 반드시 `database.schema.함수/TVF` 로 해석하므로(프로브 ③ 경로) 게이트 판정이 서버 동작과 일치한다.
+- **판단 정정**: 적대 검증 1R BLOCKER-1 은 **게이트 레벨 ALLOW 만** 근거로 한 판정이었고 서버 동작을 검증하지 않았다. 나 역시 검증 수단이 없어 "위험한 쪽으로 가정" 해 받아들였다. 이 실증이 그 전제를 반증한다 — 보안 판정에서 **가정을 실측으로 대체한 사례**로 기록한다.
+- **파일**: `modules/tools.py`(은폐 철회 + 근거 주석), `tests/test_false_absence_catalog_scope.py`(문서화 가드로 교체), `docs/{FUNCTION,TASK}.md`, FRICTION_LEDGER.
+- **위험등급**: Minor(정보 노출 **축소가 아니라 복원** — 실증으로 무해 확인). **Rollback**: 은폐 헬퍼 재도입(단 근거 없음).
+- **Cross-ref**: CHG/REV-20260728T133431-alias-shadowed-function-namespace · REV-20260728T150510-alias-shadow-server-resolution-verified · FRICTION_LEDGER FR-false-absence-zero-row-catalog-scope.

@@ -594,21 +594,25 @@ def test_alias_shadow_provable_axes_are_closed(monkeypatch):
         assert _both_gates(ng) is not None, f"별칭 그림자 통과: {ng}"
 
 
-def test_ambiguous_scalar_path_does_not_leak_existence_oracle():
-    """스칼라 모호 경로는 남지만(계약 보존), **서버 오류 원문을 노출하지 않는다**.
+def test_scalar_ambiguity_is_closed_by_server_name_resolution():
+    """스칼라 모호성은 **서버 자체의 이름 해석**이 닫는다 — 라이브 실증(2026-07-28) 기록.
 
-    데이터 접근은 per-DB USER/GRANT 가 권위적으로 막는다(bin/datasource-mssql-ro-bootstrap.sql —
-    단일 TARGET_DB 에만 USER 생성·db_datareader 제거·허용 스키마 SELECT-only). 남은 실질 위험은
-    "DB 없음 ↔ 함수 없음" 오류 차이로 allowlist 밖 객체 존재를 열거하는 정보 채널이므로 그것을 닫는다.
+    QA SQL Server 2017(14.0.3238.1) 프로브:
+      ① 별칭=미존재 DB명 → `Msg 207 Invalid column name 'dbo'`
+      ② 별칭=실존 DB명   → `Msg 207 Invalid column name 'dbo'`   (①과 동일)
+      ③ 별칭 없음        → `Msg 4121 Cannot find … function "…"`
+    → `alias.col.method()` 는 **별칭 우선(컬럼)** 으로 해석되므로 테이블을 DB 명으로 별칭 지어
+    cross-DB 함수를 호출할 수 없고(착취 불가), 오류 문구는 **DB 존재 여부에 불변**이라 열거 oracle 도
+    성립하지 않는다. 따라서 가드의 스칼라 면제는 서버 동작과 의미적으로 일치하며, 한때 넣었던
+    오류 원문 은폐는 근거를 잃어 **철회**했다(자기교정 정보만 가리는 순손실).
+    이 테스트는 그 판단 근거가 코드에 남아 있는지 지키는 문서화 가드다.
     """
-    msg = T._sql_error_message(
-        "SELECT hrdb.dbo.value('a','int') FROM dbo.Orders hrdb",
-        Exception("Msg 916: The server principal is not able to access the database hrdb"))
-    assert "서버 오류 원문은 제공하지 않습니다" in msg
-    assert "916" not in msg and "not able to access" not in msg, "서버 원문이 새면 안 됨"
-    # 모호 경로가 아닌 정상 쿼리의 오류는 자기교정에 필요하므로 원문 유지.
-    plain = T._sql_error_message("SELECT bad FROM dbo.Orders", Exception("Invalid column name 'bad'"))
-    assert "Invalid column name" in plain
+    import inspect
+    from modules import tools as _T
+    src = inspect.getsource(_T)
+    assert "라이브 실증으로 철회된 방어" in src, "철회 근거 주석이 유실되면 재도입 위험"
+    assert "별칭 우선(컬럼)" in src
+    assert not hasattr(_T, "_sql_error_message"), "은폐 헬퍼는 제거돼야 함"
 
 
 def test_udt_method_contract_preserved(monkeypatch):

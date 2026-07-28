@@ -636,3 +636,11 @@ CHG-20260728T124500-llm-usage-target-scope-postverify. docs-only(코드 diff 0) 
 - **정직한 한계 표기**: 검증 시점 워커가 스캔 단계여서 organic 신규 행은 0이었다. 소급 백필을
   하지 않는 설계상 채움률은 시간에 따라 오르며, 그 사실을 fragment §⑤ 에 명시했다 —
   "배포했으니 전부 기록됨" 으로 오인되지 않게 한다.
+
+## REV-20260728T150510-alias-shadow-server-resolution-verified [SKIPPED:live-probe-record-plus-revert] — PASS
+- 대상: 별칭 그림자 잔여를 **라이브 서버 프로브로 확정**(착취 불가) + 근거가 반증된 오류 원문 은폐 **철회**. 보안 경계 **완화 아님**(정보 복원).
+- 리뷰 방식([SKIPPED] 사유): 로직의 적대 검증은 REV-20260728T133431 [SUBAGENT:adversarial-security ×2 rounds] 에서 완료. 본 cycle 은 ① 서버 동작 실측 전사 ② 그 실측으로 무효화된 자기 변경의 철회이며, 추가 패널보다 **실측 자체가 더 강한 증거**다.
+- **측정의 반증 설계**: 존재하는 함수 없이도 판별되도록 **오류 코드 대조**를 설계했다 — 컬럼 해석 실패(`Msg 207/4104`) ↔ 함수/네임스페이스 해석 실패(`Msg 4121`). 그리고 핵심은 **실존 DB vs 미존재 DB 를 짝지어** 오류 문구 불변성을 확인한 것(oracle 존재 여부의 결정적 판별). 단일 프로브로는 "함수가 없어서 실패" 와 구분되지 않으므로 3형태 + 2쌍으로 교차 확인했다.
+- **판정**: 잔여 **착취 불가 확정**(별칭 우선 해석) · 열거 oracle **부재 확정**(문구 불변) · 은폐 철회 타당. APPLY·4/5-part·Paren 봉인은 서버 동작과 일치하므로 유지.
+- **한계 명시**: 실측은 QA 인스턴스(SQL Server 2017 Web Edition) 1대 기준이다. 이름 해석 우선순위는 엔진 문서 동작이라 버전 간 변동 가능성은 낮으나, 다른 메이저 버전 datasource 추가 시 동일 프로브 3형태를 재확인하는 것이 안전하다.
+- Cross-ref: CHG-20260728T150510-alias-shadow-server-resolution-verified · REV/CHG-20260728T133431-alias-shadowed-function-namespace · FRICTION_LEDGER.

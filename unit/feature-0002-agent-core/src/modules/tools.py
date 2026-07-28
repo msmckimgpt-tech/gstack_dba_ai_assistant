@@ -2117,39 +2117,20 @@ def _routine_introspection_redirect(sql: str) -> str:
     return ""
 
 
-# 서버 오류 원문이 **존재 여부 oracle** 이 되는 것을 막는다 (§18.8 2R security).
-# `alias.col.method()` 와 `db.schema.func()` 는 문법이 같아 게이트가 구분할 수 없고, 그 모호한 형태는
-# 별칭 면제로 서버까지 도달한다. 이때 서버 오류를 그대로 돌려주면 "DB 없음(Msg 911/916)" ↔
-# "함수 없음(Msg 4121)" 차이로 **allowlist 밖 DB·객체 존재를 무제한 열거**할 수 있다.
-# 데이터 접근 자체는 per-DB USER/GRANT(bin/datasource-mssql-ro-bootstrap.sql — 단일 TARGET_DB 에만
-# USER 생성, db_datareader 제거, 허용 스키마 SELECT-only)가 권위적으로 막으므로, 여기서는 **정보 채널**만
-# 닫는다. 모호 경로가 아닌 정상 쿼리의 오류는 자기교정에 필요하므로 **원문 유지**한다.
-_EXISTENCE_ORACLE_HINTS = (
-    "is not able to access the database", "does not exist or you do not have permission",
-    "invalid object name", "could not find", "cannot find either column",
-    "database 'x'", "login failed for user",
-)
-
-
-def _sql_error_message(sql: str, exc: Exception) -> str:
-    """SQL 실행 오류 문구 — 모호 경로(별칭 그림자)에서는 서버 원문을 노출하지 않는다."""
-    raw = f"SQL 실행 오류: {exc}"
-    try:
-        from . import sql_guard as _sg
-        shadow = _sg.collect_alias_shadowed_heads(sql, dialect=_dialects.active().sqlglot)
-    except Exception:
-        shadow = set()
-    if not shadow:
-        return raw
-    return (
-        f"오류: `{sorted(shadow)[0]}.…` 형태의 호출이 실패했습니다. 이 구문은 `별칭.컬럼.메서드()`"
-        f"(UDT/XML 메서드)와 `데이터베이스.스키마.함수()`(cross-DB 함수호출)가 문법적으로 같아 "
-        f"어느 쪽인지 확정할 수 없어 **서버 오류 원문은 제공하지 않습니다**(다른 데이터베이스·객체의 "
-        f"존재 여부를 추론하는 통로가 되기 때문). UDT/XML 메서드라면 해당 컬럼을 그대로 SELECT 해서 "
-        f"값을 확인하고, 다른 DB 의 함수가 필요하면 이 제품에 허용된 DB 안에서 "
-        f"`데이터베이스.스키마.함수()` 로 호출하세요."
-    )
-
+# §18.8 후속(2026-07-28) — **라이브 실증으로 철회된 방어**.
+#
+# 한때 모호 경로(별칭 그림자)의 서버 오류 원문을 감췄다. 근거는 "`Msg 916`(DB 접근 불가) ↔
+# `Msg 4121`(함수 없음) 차이로 allowlist 밖 DB·객체 존재를 열거할 수 있다" 였는데, QA SQL Server
+# 2017(14.0.3238.1)에서 직접 프로브한 결과 **그 oracle 은 이 경로에 존재하지 않는다**:
+#   ① 별칭 = 미존재 DB명  → `Msg 207 Invalid column name 'dbo'`
+#   ② 별칭 = 실존 DB명    → `Msg 207 Invalid column name 'dbo'`  (①과 **완전히 동일**)
+#   ③ 별칭 없음(동일 3-part) → `Msg 4121 Cannot find … function "…"`
+# 즉 SQL Server 는 `alias.col.method()` 를 **별칭 우선(컬럼)** 으로 해석하므로 오류 문구가 DB 존재
+# 여부에 **불변**이고, 애초에 테이블을 DB 명으로 별칭 지어 cross-DB 함수를 부를 수도 없다(잔여 자체가
+# 착취 불가). 반면 원문을 감추면 `Invalid column name 'dbo'` 처럼 **모델의 자기교정에 필요한 정보만**
+# 가려 손실이 순수하다 → 원문 유지로 되돌린다.
+# 참고: ③의 namespace 해석 경로는 head 가 별칭이 아닐 때만 도달하고, 그 경우 catalog allowlist 가
+# 실행 **전에** 미허용 DB 를 차단하므로 cross-product 열거 경로가 되지 않는다.
 
 def _tool_execute_sql(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
@@ -2336,7 +2317,7 @@ def _tool_execute_sql(conn, args: dict) -> str:
             parts.insert(0, cost_note)
         return "\n\n".join(parts)
     except Exception as e:
-        return _sql_error_message(sql, e)
+        return f"SQL 실행 오류: {e}"
 
 
 def _format_mssql_showplan(result_sets) -> str:

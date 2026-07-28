@@ -1655,5 +1655,5 @@ FR-false-absence 패널이 pre-existing 으로 분리 기록한 항목을 사용
 - [x] 회귀 가드를 **유효 T-SQL exploit 형상**으로 교체(종전 2회는 실패 변종을 assert 해 오인증)
 - [x] 컨테이너 `make test` 2,725건 중 2,719 PASS / 4 FAIL(전부 pre-existing 환경 의존) / 2 skip · ruff PASS
 - [ ] verify-completion → PR·머지 → 배포 → 배포본 런타임 경계 실측
-- **잔여(미해결·원장 기록)**: 스칼라 위치 모호성. 데이터 접근은 per-DB USER/GRANT 가 권위적으로 막고(부트스트랩 준수 전제), 정보 채널은 차단함.
+- [x] **잔여 확정(2026-07-28 라이브 실증)**: QA SQL Server 2017 프로브로 스칼라 위치 모호성이 **착취 불가**임을 확인(별칭 우선 해석, 오류 문구 DB 존재 불변) → 열거 oracle 부재도 확정되어 오류 원문 은폐를 **철회**. CHG-20260728T150510.
 정본 rationale=REVIEW REV-20260728T133431-alias-shadowed-function-namespace, 변경이력=MODIFY CHG-20260728T133431-alias-shadowed-function-namespace.
