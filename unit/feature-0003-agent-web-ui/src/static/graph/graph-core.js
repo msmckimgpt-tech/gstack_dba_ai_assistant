@@ -1482,8 +1482,14 @@ function _metaGraphHoverPanCancel() {
   _metaHoverPanGen++;   // 진행 중 hover-pan 루프(abort 체크) + 대기 타이머를 무효화
   if (_metaHoverPanTimer) { (typeof window !== "undefined" ? window.clearTimeout : clearTimeout)(_metaHoverPanTimer); _metaHoverPanTimer = null; }
 }
-// spec: { nodeKeys?: [key], edgeKeyPairs?: [[keyA,keyB]] }. key→렌더 요소 id 해소(미렌더면 조상=소속 테이블/카드로 승격).
-//   엣지는 양끝 렌더 요소 사이 연결선으로 강조하고 양끝 노드도 함께 링 강조(연결이 명확히 보이게).
+// spec: { nodeKeys?: [key], edgeKeyPairs?: [ [keyA,keyB] | {from,to,relType} ] }.
+//   key→렌더 요소 id 해소(미렌더면 조상=소속 테이블/카드로 승격). 엣지는 양끝 렌더 요소 사이 연결선으로
+//   강조하고 양끝 노드도 함께 링 강조(연결이 명확히 보이게).
+// detail-hover-flow(사용자 리포트 2026-07-28): 항목 형식을 **방향 있는 객체**로 확장한다. `[a,b]` 는
+//   "self 끝점, 상대" 순서라 방향(어느 쪽이 source 인가)을 담지 못했고, 렌더러가 첫 매칭 엣지를 잡아
+//   왕복 참조(참조함/참조받음)·읽기/쓰기 어느 쪽을 hover 해도 **늘 같은 호 하나**만 강조됐다.
+//   `{from,to}` 는 모델 엣지의 실제 (source,target) 이고 `relType` 은 ROUTINE_USES 의 읽기/쓰기다.
+//   레거시 배열 형식도 계속 받는다(방향 미상 → 렌더러가 종전처럼 근사).
 function _metaGraphSetHoverHighlight(spec) {
   const g = _metaGraph.graph;
   if (!g || typeof g.setHoverHighlight !== "function") return;   // G6 폴백 등 미지원 렌더러 → no-op
@@ -1492,9 +1498,12 @@ function _metaGraphSetHoverHighlight(spec) {
   const addNode = (id) => { if (id && nodeIds.indexOf(id) < 0) nodeIds.push(id); };
   ((spec && spec.nodeKeys) || []).forEach((k) => addNode(resolve(k)));
   const edges = [];
-  ((spec && spec.edgeKeyPairs) || []).forEach((pair) => {
-    const a = resolve(pair && pair[0]), b = resolve(pair && pair[1]);
-    if (a && b && a !== b) { edges.push([a, b]); addNode(a); addNode(b); }
+  ((spec && spec.edgeKeyPairs) || []).forEach((ent) => {
+    const isPair = Array.isArray(ent);
+    const fromK = isPair ? ent[0] : (ent && ent.from), toK = isPair ? ent[1] : (ent && ent.to);
+    const relType = isPair ? null : ((ent && ent.relType) || null);
+    const a = resolve(fromK), b = resolve(toK);
+    if (a && b && a !== b) { edges.push({ source: a, target: b, relType }); addNode(a); addNode(b); }
     else if (a) { addNode(a); }   // 상대 미렌더 — self 끝점만이라도 강조(연결선은 생략)
     else if (b) { addNode(b); }   // self 미렌더(컬링)·상대 렌더 — 상대 끝점만이라도 강조(적대리뷰 MINOR#4)
   });
