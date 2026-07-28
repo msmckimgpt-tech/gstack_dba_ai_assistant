@@ -7,7 +7,7 @@ import { _META_ROLE, _metaFocusAdjacency, _metaFocusKeyFor, _metaRoleChipHTML, _
 import { _metaApplyState, _metaCacheSig, _metaSetBusy, _metaSigRole, _metaStateSig, _metaYieldPaint } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency } from "./graph-rellayout.js?v=dev";
 import { _metaSimGroups } from "./graph-simgroups.js?v=dev";
-import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
+import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 
 // ── graph-ctxmenu: 노드 우클릭 상세 상호작용 (REQ-20260702T113000) ──────────────────
@@ -820,7 +820,7 @@ async function _metaGraphTraceRelation(targetKey) {
 function _metaGraphPanToRelation(targetKey) {
   if (!_metaGraph.graph || !targetKey) return;
   const direct = _metaRenderedIdFor(targetKey);            // 렌더 노드, 접힌 스키마면 카드(SC:)
-  const focusEl = direct || _metaRenderedAncestorFor(targetKey);   // 컬럼 미렌더 시 소속 테이블/스키마 카드로 승격
+  const focusEl = direct || _metaRenderedAncestorFor(targetKey);   // 미렌더 시 테이블→컨텐츠 카테고리→스키마→제품 카테고리 순 승격
   if (!focusEl) { _metaGraphStatus("대상이 아직 화면에 로드되지 않았습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
   // 선택은 대상(컬럼/테이블) 키 기준. (a) 자기 자신이 렌더됐거나 (b) 미렌더 컬럼이 소속 테이블/카드로 승격된 경우
   //   대상 키를 선택 — 펼쳐 렌더돼 있으면 노드 하이라이트, 미렌더면 선택 상태만 기록 + 하이라이트는 소속 테이블
@@ -830,9 +830,11 @@ function _metaGraphPanToRelation(targetKey) {
   const seq = _metaGraph._opSeq;
   _metaGraphAnimateFocus(focusEl, seq);   // 승격된 렌더 요소(노드/카드) 내부 해소 후 카메라 팬
   const nm = (_metaGraph.nodes.get(targetKey) || {}).name || _metaKeyDisplayNode(targetKey).name || targetKey;
+  // graph-catcluster-focus: 승격 안내는 **실제 승격 대상**을 명시한다(종전 "소속 테이블" 단정은 컨텐츠
+  //   카테고리·스키마 클러스터·제품 카테고리로 갔을 때 오안내였다).
   _metaGraphStatus(direct
     ? `→ ${nm} 로 카메라 이동 (더블클릭 = 상세 패널 전환).`
-    : `→ ${nm} 소속 테이블로 카메라 이동 · 선택됨 (더블클릭 = 펼쳐 상세 전환).`);
+    : `→ ${nm} 의 ${_metaAncestorKindKo(focusEl)}로 카메라 이동 · 선택됨 (더블클릭 = 펼쳐 상세 전환).`);
 }
 // graph-node-reveal(사용자 요구 2026-07-23): 대상 노드가 화면에 없을 때 **차단하지 않고 부모 체인을
 //   활성화(펼침)** 해 노출한다. 노드 계층은 `scope:schema.table.column` — 렌더 게이트는 두 Set:
@@ -2092,7 +2094,8 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
         const anc = _metaRenderedAncestorFor(key);
         if (anc) {
           _metaGraphAnimateFocus(anc, _metaGraph._opSeq);
-          _metaGraphStatus(`→ '${nm}' 소속 상위 객체로 카메라 이동 (하위 노드는 확대하거나 검색으로 직접 탐색할 수 있습니다).`);
+          // graph-catcluster-focus: 어느 상위 객체로 갔는지 명시 — 접힌 컨텐츠/제품 카테고리면 그 클러스터를 펼치면 된다는 다음 행동이 드러난다.
+          _metaGraphStatus(`→ '${nm}' 의 ${_metaAncestorKindKo(anc)}로 카메라 이동 (그 클러스터를 펼치거나 확대·검색으로 하위 노드를 직접 탐색할 수 있습니다).`);
         } else {
           _metaGraphStatus(`'${nm}' 은(는) 현재 화면에 표시할 수 없습니다 — 확대하거나 검색으로 직접 탐색해 보세요.`);
         }

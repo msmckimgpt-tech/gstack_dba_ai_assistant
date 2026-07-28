@@ -26,6 +26,13 @@ source_of_truth: true
 - `graph-renderer-pixi.js` `PixiGraphAdapter._applyNodeStates`: 하드코딩 rect 기하 제거 → `haloGeom` 소비. circle 은 `g.circle()`, circle+점선은 `moveTo().arc()` 반복, rect 는 종전 `roundRect`/4변 대시 경로 유지. 미사용이 된 지역 `w`/`h`/`s` 정리.
 - `tests/headless/test_pixi_adapter.js`: **T27 신설 15건** — rect 회귀 0(i=0·i=1 좌표·radius·lw 전건), circle 원형/비례 두께/외곽 상한/동심링 간격/size 폴백/type 미지정 rect 경로/두께 하한, dashArcs 총 on 길이·단조·상한·1바퀴. 205 PASS.
 - docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+## CHG-20260728T160000-graph-catcluster-focus (TASK-20260728T160000 — 접힌 카테고리 클러스터 하위 테이블 추적 카메라 승격 교정, Minor §12.3, frontend-only)
+- `src/static/graph/graph-core.js`: **`_metaGroupElementFor(tableKey)`**(테이블·루틴 → 소속 컨텐츠 카테고리 블록 `GB:<groupKey>`, `groupOf` 역참조 + `renderedIds` 게이팅) · **`_metaCategoryElementFor(schemaKey)`**(스키마 클러스터 → 소속 제품 카테고리 밴드 `CAT:<catKey>`, `catMembers` 역탐색 + `renderedIds` 게이팅) · **`_metaAncestorKindKo(elId)`**(승격 대상 → 한글 명칭) 신설. `_metaRenderedAncestorFor` 사다리를 `컬럼 → 소속 테이블 → 컨텐츠 카테고리(GB:) → 스키마 클러스터(combo | SC:) → 제품 카테고리 밴드(CAT:)` 로 확장. `_metaGraphAnimateFocusRun` 의 앵커 해소(본 루프 + API 부재 폴백 번들 경로 양쪽)에 `|| _metaRenderedAncestorFor(key)` 폴백 추가 — 모델 키로 들어오는 호출(관계 추적 등)이 미렌더일 때 1.2s 헛돌다 카메라가 안 움직이던 사각 해소. export 에 `_metaAncestorKindKo` 추가.
+- `src/static/graph/graph-ctxmenu.js`: `_metaAncestorKindKo` import. `_metaGraphPanToRelation` 승격 안내와 `🎯 이 노드로 이동`(`#metaGraphFocusSelBtn`) 폴백 안내가 **실제 승격 대상 종류**를 표기하도록 교체(종전 "소속 테이블" 단정은 컨텐츠/제품 카테고리·스키마 클러스터로 갔을 때 오안내).
+- `tests/headless/test_graph_ancestor_focus.js` 신설 — 소스에서 5개 함수 본문 추출 + vm 격리 실행으로 사다리 5단 전수·두 접힘 계층·stale 역인덱스 게이팅·명칭 매핑·자동펼침 부재를 단정. **31 PASS / 0 FAIL**.
+- docs: TASK/FUNCTION/REPORT/REVIEW + `test-runs.d/20260728T160000-graph-catcluster-focus.md`, `docs/STATUS.md`.
+- **동작 불변 영역**: 접힘이 없는 경로·접힌 스키마 카드(`SC:`) 승격·컬럼→테이블 승격은 종전 그대로. 승격은 시선 이동만 하고 `groupCollapsed`/`catCollapsed`(사용자 지속 의도)를 건드리지 않는다.
+- Cross-ref: REV-20260728T160000-graph-catcluster-focus · 선행 CHG-20260728T152000-graph-catcluster-panel-scroll(같은 카테고리 클러스터 계층의 패널 스크롤 동기화).
 
 ## CHG-20260728T153500-graph-catcluster-scroll-postverify (TASK-20260728T152000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - `docs/test-runs.d/20260728T153500-graph-catcluster-panel-scroll-postdeploy.md` 신설 — 배포(main 4a0174e5)·서빙 baked 확인·PB-0008 4 시나리오·evidence 3매.
