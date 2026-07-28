@@ -110,3 +110,32 @@ source_of_truth: true
   feature-0012(8건)는 실제 미완 이연 작업(P5b Final·프론트 분할), feature-0011·0010 은 명시적
   후속/비활성 토대, feature-0001/0004/0005 의 "엄격한 시나리오 확정"(각 1건)은 template
   skeleton 정형 항목이다. 이들은 실제 작업이거나 정책 판단이 필요해 별도로 다뤄야 한다.
+
+## REV-20260728T123000-asset-stamp-cache-integrity [SKIPPED:session-policy-no-subagent] — 롤링 배포 캐시 오염 근본 해소
+- Date: 2026-07-28 · Session: `ai/claude/feature-0014-asset-stamp-cache-integrity` · CHG-20260728T123000-asset-stamp-cache-integrity
+- 리뷰 방식([SKIPPED] 사유): 본 세션 사용자 환경 정책상 **Agent(subagent) tool 미허용** — §18.8 패널 호출 불가. 대체로 자체 적대 검토 H1~H10 을 실측하고 아래에 남긴다.
+
+### 설계 판단
+- **왜 "창을 없애기" 가 아니라 "창이 굳지 못하게" 인가**: 롤링 배포에서 두 replica 가 서로 다른 빌드를 이고 있는 구간은 **정의상 존재**한다. 그 구간을 없애려면 (a) 정적 자산을 단일 소스(엣지 file_server + 원자 교체)로 옮기거나 (b) 경로 자체를 content-addressed(`/static/<hash>/…`)로 바꿔야 한다. (a)는 HTML(구 replica) ↔ 자산(신 디렉토리) 스큐를 **반대 방향으로** 만들 뿐이고, (b)는 injector·mount·엣지 라우팅·구버전 보존(retention)까지 건드리는 큰 재설계다. 반면 **"불일치 응답은 캐시에 넣지 않는다"** 는 창의 존재를 인정하되 **영구 피해 경로만 잘라낸다** — 4파일·1불변식으로 같은 보장을 얻는다. (b)는 필요해지면 이 위에 얹을 수 있고, 그 때 본 게이트는 그대로 안전망으로 남는다.
+- **왜 엣지가 아니라 upstream 인가**: 엣지는 `?v=` 문자열만 보고 그 값이 *응답한 replica 의 빌드*인지 알 수 없다 — 판정에 필요한 정보(자기 빌드 스탬프)를 가진 주체는 upstream 뿐이다. 엣지에 규칙을 남겨두면 upstream 판정을 덮어써 불변식이 무력화되므로 **제거가 필수**이며, 되살아나면 `test_caddyfile_no_static_cache_override` 가 FAIL 한다(짝 계약을 코드로 고정).
+- **왜 JS 가 아니라 CSS·헤더 레벨인가(직전 cycle 과 대칭)**: 상태 소스를 하나로 유지한다. 여기서는 반대로 **헤더 결정 주체를 하나(upstream)로** 모았다 — 엣지·앱 두 곳이 같은 헤더를 다루면 어느 쪽이 이겼는지가 배포 순서에 의존한다.
+- **vendor 예외는 의도적 비대칭**: `vendor/g6.min.js?v=5.1.1` 은 사람이 관리하는 **라이브러리 pin** 이지 빌드 해시가 아니다. 빌드 스탬프와 비교하면 항상 불일치가 되어 vendor 캐시를 통째로 잃는다(성능 회귀). 잔여 위험은 "pin bump 와 롤아웃이 겹치는 순간" 뿐이며 빈도가 극히 낮다 — **정직 표기**하고 남긴다.
+
+### 자체 적대 검토 (H1~H10, 전부 실측)
+- **H1 사이드카 자기 참조** — 사이드카를 해시 입력에 포함하면 실행마다 스탬프가 바뀌어 롤아웃마다 전 캐시가 깨진다. `iter_files` 에서 제외 + `test_idempotent_stamp_across_reruns` 로 고정(재실행 동일 값 실측).
+- **H2 빌드 값 ≠ 런타임 값** — 이게 어긋나면 **모든 자산이 상시 `no-store`**(캐시 전면 상실)다. 통합 테스트가 실 injector 산출 HTML 의 참조 URL 과 사이드카 값이 같은지까지 단정(`/static/admin.js?v={stamp}` in admin.html).
+- **H3 mount path 규약** — Starlette 최신 `Mount` 는 `scope["path"]` 를 자르지 않는다. 초판 prefix 판정이 vendor 를 놓쳐 상시 `no-store` 가 될 뻔했고 **통합 테스트가 적발**했다. 세그먼트 검사 + 두 규약 파라미터로 고정. (격리 단위테스트만 있었으면 통과했을 결함 — 접합부 테스트의 값을 실증.)
+- **H4 헤더 중복** — StaticFiles 가 이미 `Cache-Control` 을 달았을 때 append 하면 모호한 캐싱이 된다. `_apply_headers` 가 기존 값을 제거 후 삽입, `test_wrapper_replaces_upstream_cache_control_not_appends` 가 단정(다른 헤더 ETag 보존도 함께).
+- **H5 304 경로** — 조건부 GET 의 304 에 정책이 안 실리면 이미 캐시된 항목의 freshness 가 갱신되지 않는다. 200·304 양쪽 적용 + 전용 테스트.
+- **H6 fail-open** — 사이드카 부재(dev·미주입 빌드)·헤더 조작 예외·비-HTTP scope 전부 원본 통과. 실패 방향이 "캐싱을 잃음"(성능)이지 "오염"(correctness)이 아니다 — 의도된 비대칭.
+- **H7 입력 견고성** — `?v=` 중복·깨진 percent-encoding·비-UTF8·5KB 값에서 예외 없음(`test_malformed_query_does_not_raise`). 판정은 allowlist 가 아니라 **"일치할 때만 허용"** 이라 미지 입력은 전부 `no-store` 로 수렴(`test_mismatch_is_the_default_for_unknown_stamps`).
+- **H8 성능 회귀** — 정상 상태(스탬프 일치)에서는 종전과 **동일한** `immutable` 이 나간다. 추가 비용은 요청당 쿼리 파싱 1회(문자열)이며 스탬프는 시작 시 1회 로드. 엣지 `header` 지시자 하나가 사라진 만큼 상쇄.
+- **H9 이미지 경로 정합** — Dockerfile `--root /app/web/static` == 앱 `STATIC_DIR`(실측 `/app/web/static`), `COPY unit/feature-0003-agent-web-ui/src /app/web` 로 `static_cache.py` 동봉, `/app/web` 이 런타임 sys.path 에 존재(`perf_metrics` 와 동일 기전 — 컨테이너에서 직접 확인). 배포 게이트 `asset_stamp_verify` 는 `*.html/*.js` 만 grep 하므로 사이드카에 영향 없음.
+- **H10 엣지 문법** — `caddy validate --adapter caddyfile` 이 `adapted config to JSON` 까지 통과(잔여 에러는 검증 샌드박스의 cert 파일 부재뿐).
+
+### 한계 (정직 표기)
+- **롤링 창 자체는 남는다** — 그 구간에 접속한 사용자는 버전이 섞인 페이지를 한 번 볼 수 있다(종전과 동일). 달라진 것은 **그 상태가 캐시에 굳지 않는다**는 점이며, 다음 로드에서 정상 수렴한다. "창 제거" 를 원하면 content-addressed 경로(위 (b))가 후속 과제다.
+- **이미 오염된 브라우저는 자동 복구되지 않는다** — 본 변경은 *이후* 오염을 막는다. 기존에 굳은 항목은 그 URL 이 다시 요청될 때까지 그대로다(스탬프가 바뀌면 새 URL 이므로 실질 영향은 소멸). 사용자 안내(Ctrl+F5)는 `deploy-web.sh` 체크리스트 [3] 이 이미 담당.
+- **§18.8 패널 미수행** — 세션 정책. 위 H1~H10 이 대체이며, 특히 H3 은 자체 통합 테스트가 잡은 실결함이라 검토가 형식적이지 않았음을 보인다.
+- 위험도: **Major(§12.3)** — 엣지 설정 + 전역 캐싱 semantics. 롤백 = 4파일 revert.
+- Cross-ref: MODIFY CHG-20260728T123000-asset-stamp-cache-integrity · 선행 사고 관측 `feature-0003/docs/test-runs.d/20260728T113000-graph-noise-reduction.md` · feature-0027 P0-E · AGENTS.md §13.1 v3.35.1 · §13.2.9.

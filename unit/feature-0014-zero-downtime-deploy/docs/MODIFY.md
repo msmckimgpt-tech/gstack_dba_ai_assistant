@@ -75,3 +75,23 @@ source_of_truth: true
   (cross-feature 편집 — docs 홈은 가장 큰 덩어리인 feature-0014)
 - Impact: 제품 동작 무변경. 4 feature 의 TASK.md 잔여가 각 1건(정형 항목)으로 수렴.
 - Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.
+
+## CHG-20260728T123000-asset-stamp-cache-integrity — 롤링 배포 창의 브라우저 캐시 오염 근본 해소
+- Date: 2026-07-28 · Session: `ai/claude/feature-0014-asset-stamp-cache-integrity` · REQ-20260728-asset-stamp-cache-integrity
+- 트리거: 사용자 지시 — 직전 graph-noise-reduction cycle 의 POST-DEPLOY 에서 "서버는 신 코드를 서빙하는데 브라우저만 구버전 렌더" 를 실측하고 후속 근본 해소를 요청받음.
+- **근본 원인**: 엣지가 부여하는 `immutable` 의 조건이 "`?v=` 가 있다" 였고, 그 값이 *응답한 replica 의 빌드*인지는 아무도 검사하지 않았다. 정적 파일은 replica 로컬 FS 에서 경로만으로 서빙되므로(쿼리스트링은 파일 조회에 무관) 롤링 창에 **구 replica 가 신 스탬프 URL 에 구 바이트로 200 응답**할 수 있고, 그 응답이 `max-age=31536000, immutable` 로 1년 고착된다.
+- `unit/feature-0002-agent-core/src/scripts/inject_asset_stamp.py`
+  - 주입 스탬프를 **`<root>/.asset-stamp` 사이드카**로 기록(런타임이 자기 빌드를 알기 위한 유일 출처).
+  - `iter_files` 가 사이드카를 해시 입력·재작성 대상 **양쪽에서 제외** — 자기 참조로 멱등성이 깨지면 롤아웃마다 전 캐시가 무효화된다. 경로 비교는 `abspath` 정규화(호출자가 trailing slash 를 붙여도 유효).
+- `unit/feature-0003-agent-web-ui/src/static_cache.py` **(신설)**
+  - `decide_cache_control()` 정책 판정 — `?v=` 없음=미설정(ETag/304 유지) / 일치=`immutable` / 불일치=`no-store`+`X-Asset-Stamp: mismatch` / vendor=`immutable`(별개 버전 축) / 사이드카 부재=미설정(fail-safe).
+  - `StaticCacheHeadersMiddleware` — 순수 ASGI 래퍼(`BaseHTTPMiddleware` 미사용, 스트리밍 무간섭). 200·304 에만 관여, 전 구간 fail-open.
+  - `read_build_stamp()` — 시작 시 1회 로드(이미지 내 정적 파일이라 런타임 불변).
+- `unit/feature-0003-agent-web-ui/src/app.py` — `/static` mount 를 래퍼로 감싼다(`StaticFiles` 자체는 불변) + `import static_cache`.
+- `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` — feature-0027 이 두었던 `@static_versioned` matcher + `header … Cache-Control immutable` **제거**. upstream 헤더가 권위. 엣지가 왜 이 판정을 할 수 없는지(자기 빌드를 모른다)를 주석으로 고정해 규칙 부활을 막는다.
+- 테스트 **32 PASS** — `feature-0003/tests/test_static_cache_integrity.py`(정책표 13 파라미터 · ASGI 래퍼 7 · 사이드카 3 · 엣지 짝 계약 1 · 실 injector→실 static 트리→실 StaticFiles **통합** 1 · 기타) + `feature-0002/tests/test_inject_asset_stamp_sidecar.py`(사이드카 5: 값 정합·멱등·내용변경 반영·--check 무기록·placeholder 잔존 0).
+- **통합 테스트가 적발한 접합부 결함 1건**: Starlette 최신 `Mount` 는 하위 앱에 `scope["path"]` 를 자르지 않고 넘긴다(`/static/vendor/g6.min.js`). prefix 기반 vendor 판정이 빗나가 라이브러리 pin 이 상시 `no-store` 가 될 뻔했다 → 세그먼트 검사(`"/vendor/" in path`)로 교체하고 두 mount 규약을 모두 단정.
+- Verification: 전체 pytest **2719 passed / 2 skipped / 0 failed** · ruff All checks passed · `caddy validate --adapter caddyfile` adapt OK(잔여 에러는 샌드박스의 cert 부재뿐) · 이미지 경로 정합 실측(Dockerfile `--root /app/web/static` == `STATIC_DIR`, `static_cache.py` COPY 포함, `/app/web` 이 런타임 sys.path 에 존재).
+- Impact: 롤링 창의 버전 스큐 응답이 **캐시에 들어가지 못한다** → 창이 끝나면 자연 수렴. sticky LB 는 창을 좁히는 최적화로 유지. 정상 상태(스탬프 일치)의 캐시 동작·성능은 종전과 동일.
+- Rollback: 4파일 revert(엣지 규칙 복원 포함). 데이터·스키마·API 영향 0.
+- Cross-ref: REVIEW REV-20260728T123000-asset-stamp-cache-integrity · 선행 사고 관측 `feature-0003/docs/test-runs.d/20260728T113000-graph-noise-reduction.md` · feature-0027 P0-E(원 immutable 규칙) · AGENTS.md §13.1 v3.35.1(스탬프 자동 주입) · §13.2.9(배포 단계 격리).

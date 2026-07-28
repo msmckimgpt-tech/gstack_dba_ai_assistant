@@ -160,7 +160,7 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 | 공유 헬퍼 (4, `_` 접두) | `src/routers/_audit_infra.py`·`_bootstrap_schema.py`·`_conv_store.py`·`_prompt_context.py` | 라우트 아님 → `register_all` 자동등록 제외(`_` 접두 필터). `_audit_infra`=감사 인프라(단, `record_audit_event` 는 app 잔류)·`_bootstrap_schema`=웹 테이블/시드 부트스트랩·`_conv_store`=대화 저장소(share/conversations 공유)·`_prompt_context`=프롬프트 컨텍스트 조립(admin_roles/admin_products/auth/conversations 4도메인 공유) |
 | 등록기 | `src/routers/__init__.py` | `register_all(app)` — non-`_`·`router` 보유 모듈 자동발견 후 `(INCLUDE_ORDER, name)` 순 include. 신규 라우터 = `router` 심볼 가진 파일 추가만(꼬리 배선 편집 불필요) |
 
-> 파일 수 = 24 route-module + `__init__.py` + 4 `_` 접두 공유헬퍼 = **29 파일** (task 표기 "5 공유모듈" = `__init__` + 4 underscore). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가.
+> 파일 수 = 24 route-module + `__init__.py` + 4 `_` 접두 공유헬퍼 = **29 파일** (task 표기 "5 공유모듈" = `__init__` + 4 underscore). feature-0026 이 `admin_perf.py`(INCLUDE_ORDER=250)와 leaf 계측 모듈 `src/perf_metrics.py`(HTTP 타이밍 집계·미들웨어)를 추가. feature-0014 가 leaf `src/static_cache.py`(정적 자산 캐시 무결성 — 빌드 스탬프 `static/.asset-stamp` 와 요청 `?v=` 가 일치할 때만 `immutable`, 불일치는 `no-store`; `app.py` 의 `/static` mount 를 감싸는 순수 ASGI 래퍼)를 추가.
 
 ### 배선 규약 (7)
 

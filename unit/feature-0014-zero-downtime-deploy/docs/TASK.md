@@ -91,3 +91,18 @@ source_of_truth: true
 - [x] **근본 원인 확정**(하드닝 진단 덤프가 특정): `printf 145KB | grep -q` — grep -q 조기 종료가 printf 에 SIGPIPE → `set -o pipefail` 하에서 파이프라인 rc=141 → **출력이 완전(rc=0·bytes=145,878·서비스 29)해도 "미검출" 오판**. 타이밍 race 라 부하 의존 = 간헐성(6회 중 3회)의 정체.
 - [x] 수정: 검사 3곳(재시도 루프·최종 검사·published)을 파이프 없는 **bash 부분문자열 매칭**으로 교체 — SIGPIPE 표면 원천 제거.
 - [x] 검증: worktree dry-run — 실패 경로(env 부재 시 3회 재시도+정직 die) + **happy path "OK — 두 replica 정의 확인" 도달**(대형 cfg 에서 재현). bash -n. 라이브 실증 = 머지 직후 배포.
+
+## 20260728T1230-asset-stamp-cache-integrity — 롤링 배포 창의 브라우저 캐시 오염 근본 해소
+- [x] **근본 원인 확정(라이브 실측)** — 엣지(`Caddyfile`)의 `@static_versioned` 가 `?v=` 의 **존재**만 보고 `immutable` 부여. 정적 파일은 각 replica 로컬 FS 에서 **경로만으로** 서빙(쿼리 무시)되므로, 롤링 창에 구 replica 가 `?v=<신 스탬프>` 요청에 **구 바이트**로 200 응답 → 그 응답이 그 URL 에 **1년 고착**. ES module 진입점이 굳으면 import 체인 전체가 구버전으로 끌려간다(2026-07-28 graph-noise-reduction 배포 후 실측: 서버는 신 코드 서빙, 브라우저만 구 렌더)
+- [x] sticky(`lb_policy cookie weblb`)로 안 닫히는 이유 규명 — pinned replica 가 recreate 되는 순간 LB 가 재배정 → 한 페이지 로드가 두 버전에 걸친다(창을 *좁힐* 뿐 *닫지* 못함)
+- [x] **불변식 채택** — "응답이 immutable 로 표시되려면 응답한 replica 의 빌드 스탬프 == 요청 `?v=`". 불일치 = `no-store` → 오염이 구조적으로 불가능
+- [x] `inject_asset_stamp.py` — 주입 스탬프를 `<static>/.asset-stamp` 사이드카로 기록(해시 입력에서 자기 제외 = 멱등성 보존, 경로 비교는 abspath 정규화)
+- [x] `web/static_cache.py` 신설 — 순수 ASGI 래퍼(`StaticCacheHeadersMiddleware`) + 정책 판정(`decide_cache_control`). 전 구간 fail-open
+- [x] `app.py` — `/static` mount 를 래퍼로 감쌈(StaticFiles 자체는 불변)
+- [x] `Caddyfile` — 무조건 `header @static_versioned Cache-Control immutable` **제거**(upstream 헤더가 권위). 제거 사유를 주석으로 고정
+- [x] vendor pin(`?v=5.1.1`) 예외 — 빌드 해시와 다른 버전 축이라 비교하면 상시 불일치 → 캐시 전면 상실. 종전 immutable 유지
+- [x] 단위·통합 **32 PASS** (정책표 13 · 사이드카 5 · ASGI 래퍼 7 · 엣지 짝 계약 1 · **실 injector→실 static 트리→실 StaticFiles 통합 1** 외)
+- [x] **통합 테스트가 접합부 결함 1건 적발** — Starlette 최신 `Mount` 는 하위 앱에 `scope["path"]` 를 자르지 않고 넘겨(`/static/vendor/...`) prefix 기반 vendor 판정이 빗나갔다 → 라이브러리 pin 이 상시 `no-store` 가 될 뻔. 세그먼트 검사로 교체 + 양 규약 단정 추가
+- [x] 전체 회귀 **2719 passed / 2 skipped / 0 failed** · ruff All checks passed · `caddy validate` adapt OK
+- [x] 이미지 경로 정합 사전 확인 — Dockerfile `--root /app/web/static` == app `STATIC_DIR`, `COPY unit/feature-0003-agent-web-ui/src /app/web` 로 `static_cache.py` 동봉, `/app/web` 이 런타임 sys.path 에 존재(`perf_metrics` 와 동일 기전, 컨테이너 실측)
+- [ ] POST-DEPLOY 라이브 결정론 검증 — 구 스탬프 → `no-store` / 현 스탬프 → `immutable` / vendor pin → `immutable`

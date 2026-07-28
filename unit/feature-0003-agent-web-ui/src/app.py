@@ -46,6 +46,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import perf_metrics  # feature-0026: HTTP per-route 타이밍 계측 (fail-open, in-process)
+import static_cache  # feature-0014: 정적 자산 캐시 무결성 (빌드 스탬프 일치 시에만 immutable)
 from shared import perf_counters as _perf_counters  # feature-0026: 요청당 DB conn 카운터
 from modules.memory import (
     cleanup_pending_delete_conversations,
@@ -327,7 +328,18 @@ if WEB_ALLOWED_HOSTS:
 # 계측 예외는 요청 처리에 전파되지 않는다. 조회는 GET /api/admin/perf/http (admin_perf 라우터).
 app.add_middleware(perf_metrics.PerfTimingMiddleware)
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# feature-0014 asset-stamp-cache-integrity (2026-07-28): `/static` 은 StaticFiles 를 그대로
+# 쓰되 Cache-Control 만 래퍼가 결정한다 — "immutable 은 요청 `?v=` 가 **이 replica 의 빌드
+# 스탬프**와 일치할 때만". 롤링 배포 창에서 구 replica 가 신 스탬프 URL 에 구 바이트로 응답해도
+# no-store 가 되어 브라우저 캐시가 1년 오염되지 않는다(라이브 실측 근거·정책표는 static_cache.py).
+# 엣지(Caddyfile)의 무조건 immutable 부여는 같은 변경에서 제거 — upstream 헤더가 권위.
+app.mount(
+    "/static",
+    static_cache.StaticCacheHeadersMiddleware(
+        StaticFiles(directory=STATIC_DIR), static_dir=STATIC_DIR
+    ),
+    name="static",
+)
 
 
 @app.on_event("startup")

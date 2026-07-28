@@ -79,17 +79,17 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 		}
 	}
 
-	# feature-0027 (P0-E): immutable 캐시는 **`?v=` stamp 를 실은 요청에만** 부여한다
-	# (§18.8 qa B1) — /static 전체가 아니라. unstamped 참조(vendor/marked·purify(DOMPurify)·
-	# logo 등 파일명 무버전 자산)가 실재하므로 경로 전체 immutable 은 그 자산들의 갱신
-	# (보안 패치 포함)을 최대 1년 고착시킨다. `?v=` 는 빌드(inject_asset_stamp.py)가
-	# content-hash 로 주입해 URL 이 내용에 결합됨 — 그 경우에만 immutable 이 안전하다.
-	# unstamped 자산은 종전 기본 동작(ETag/304 조건부 GET) 유지.
-	@static_versioned {
-		path /static/*
-		query v=*
-	}
-	header @static_versioned Cache-Control "public, max-age=31536000, immutable"
+	# feature-0027 (P0-E) 가 두었던 `header @static_versioned Cache-Control immutable` 은
+	# feature-0014 asset-stamp-cache-integrity (2026-07-28) 에서 **제거**하고 upstream(web) 이
+	# 결정하도록 넘겼다. 정책 의도(“`?v=` stamp 를 실은 요청만 immutable, unstamped 는 ETag/304”)는
+	# 그대로 유지되며 web 의 `static_cache.StaticCacheHeadersMiddleware` 가 이어받는다.
+	#
+	# 왜 엣지에서 못 하는가 — 엣지는 `?v=` 의 **존재**만 볼 수 있고 그 값이 *응답한 replica 의
+	# 빌드*인지 알 수 없다. 정적 파일은 각 replica 로컬 FS 에서 경로만으로 서빙되므로(쿼리 무시),
+	# 롤링 배포 창에 구 replica 가 `?v=<신 스탬프>` 요청에 구 바이트로 200 응답할 수 있고 그것이
+	# immutable 로 1년 고착된다(라이브 실측 2026-07-28: 배포 후에도 구 JS 렌더). upstream 만이
+	# 자기 빌드 스탬프(`static/.asset-stamp`)를 알아 “일치할 때만 immutable / 불일치면 no-store”
+	# 를 판정할 수 있다. 여기서 헤더를 강제하면 그 판정을 덮어써 불변식이 무력화되므로 두지 않는다.
 
 	handle {
 		reverse_proxy web-a:8000 web-b:8000 {
