@@ -259,3 +259,16 @@ subagent panel 대신 **제약 없는 채널**로 검증했다:
 > **직전 entry 정정**: REV-20260728T111500 에 `[SUBAGENT:security]` 태그를 썼으나 실제 수행은
 > 동일한 도구 제약 하의 **인라인** 검증이었다(본문에 그 사실을 명시했으나 태그가 부정확).
 > 태그 규약상 `[SKIPPED:tool-restricted:*]` 가 정확한 표기다 — 이후 entry 는 본 표기를 따른다.
+
+## REV-20260728T120000-ai-claude-token-path-e2e [SKIPPED:non-policy-doc] — 토큰 경로 e2e 기록
+- Related TASK: feature-0023-conversation-api-access (TASK-0023 / CHG-20260728T120000)
+- Reason: 변경이 feature docs(테스트 Run 기록·상태 갱신) 전용이며 코드·정책 doc 변경 0 —
+  §18.8 dispatch 표 첫 행(비정책 doc-only) 에 해당해 panel skip.
+- Timestamp: 2026-07-28T12:00:00+09:00
+- 판단 근거 기록: 사용자가 "bootstrap 계정을 통해 검증까지" 를 명시 지시해, 전용 저권한 서비스 계정
+  부재 상황에서 `bootstrap_admin` 단수명 토큰으로 진행했다. 발급 스크립트의 privileged 경고를
+  무시하지 않고 **그 조건 자체를 검증 자산으로 전환**했다 — 관리 권한 계정의 토큰으로 관리
+  엔드포인트가 403 이면, scope∩권한 위의 절대 denylist 가 계정 권한과 무관하게 작동함을 라이브로
+  증명하는 가장 강한 케이스다(REV-20260722-0002 HIGH-1 수정의 end-to-end 확증).
+  위험 통제: 만료 1일 + 검증 직후 revoke + 재사용 401 실증 + 토큰 원문 shred. 운영 권장(전용 저권한
+  계정)은 문서에 그대로 유지했다 — 이번 예외를 관행으로 승격시키지 않기 위함.
