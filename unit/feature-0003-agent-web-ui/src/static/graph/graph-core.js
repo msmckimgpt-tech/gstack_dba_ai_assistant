@@ -2504,7 +2504,9 @@ function _metaInitGraph() {
     if (depthSel) depthSel.addEventListener("change", () => {
       const key = _metaGraph.selected || _metaGraph.lastDetailKey || null;
       if (key) { _metaGraphExpand(key); }
-      else { _metaGraphStatus(`이웃 깊이 ${depthSel.value}-hop 적용 — 노드를 선택/더블클릭하면 이 깊이로 확장됩니다.`); }
+      // graph-hop-budget: 종전 문구는 "노드를 **선택**/더블클릭하면" 이었으나 단일클릭(선택) 상세 조회는
+      //   depth=1 고정이라 이 select 가 반영되지 않는다 — 실제 반영 경로만 안내한다.
+      else { _metaGraphStatus(`이웃 깊이 ${depthSel.value}-hop 적용 — 노드를 더블클릭(또는 우클릭 → '이 노드 중심으로 보기')하면 이 깊이로 확장됩니다.`); }
     });
     // graphux7(#1): 상세 패널 방문 이력 뒤로/앞으로.
     const dnBack = document.getElementById("metaGraphDetailBack");

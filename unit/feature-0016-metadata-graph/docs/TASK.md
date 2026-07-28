@@ -2986,3 +2986,132 @@ label-lod(§20260728T1604) 배포를 확인한 뒤의 후속 요청:
 - **왜 `MAX` 를 상수 리터럴로 두지 않았나**: 상한이 곧 "base 크기 유지 구간의 하한"이라는 의미를 가지므로,
   판독 하한·줌 하한에서 파생시켜야 그 두 값이 바뀔 때 자동 추종한다. 리터럴 26 은 실측 개요 줌을 커버하지
   못한다는 사실이 파생식으로 표현되지 않는다.
+
+
+---
+
+## 20260728T1613-graph-hop-budget — '보기 옵션 > 이웃 깊이' 실효성 검토 + 예산 우선순위 재설계 + 절단 경고 오귀속 제거 (2026-07-28, 사용자 요청 · entry persona dispatch)
+
+### 맥락 (사용자 요청)
+> `그래프 뷰` 에서, '보기 옵션' 중 '이웃 깊이' 에 대한 작동이 의미가 있는지 검토해주세요.
+> 현재는 '1-hop' 을 초과한 모든 항목에서 "이웃 조회 상한 - 일부만 불러옴" 과 같은 주의문구가 출력됩니다.
+
+검토 요청이었고, 실측 결과 "옵션이 의미를 갖는 범위가 매우 좁다" 로 확인돼 원인 교정까지 함께 수행(사용자 결정: "둘 다 한 사이클로").
+
+### 실측 진단 (라이브 AGE 그래프 — Table 18,116 / Routine 23,057 / Column 13,852 / Schema 340)
+컬럼이 투영된 Table 노드 40개 무작위 표본(seed 고정)으로 `neighborhood()` 를 depth 1/2/3 호출:
+
+| 지표 | 종전 |
+|---|---|
+| 1-hop 절단 | 0% |
+| 2-hop 절단 | **50%** |
+| 3-hop 절단 | **60%** |
+| **3-hop 결과 == 2-hop 결과** | **50%** (= 3-hop 선택이 결과를 전혀 바꾸지 못함) |
+
+- **원인 ①** `_NEIGHBOR_NODE_CAP=300` 이 hop 경계보다 먼저 걸린다. BFS 는 hop 진입 시 `len(seen_nodes) >= CAP` 면 남은 hop 을 **아예 실행하지 않고** break 하므로, 2-hop 에서 cap 에 닿은 앵커의 3-hop 은 정의상 2-hop 과 동일하다. 테이블이 많은 스키마 노드(web_ranking 719개 등)는 **1-hop 부터** 절단돼 1·2·3-hop 이 전부 같은 결과(300n)였다.
+- **원인 ②** 2-hop 이 계층 엣지(`HAS_TABLE`/`HAS_ROUTINE`/`HAS_COLUMN`)를 따라가, "앵커와 같은 스키마에 있다" 는 이유만으로 형제 수백 개가 예산을 소진했다. 실측 앵커 `masangsoftweb.masangsoft_documents_20260414`: 2-hop 300 노드 중 **Routine +258 / Table +0** — 사용자가 2-hop 에서 가장 보고 싶어할 "참조로 이어지는 다른 테이블" 이 0개.
+- **원인 ③** 절단 순서가 vertex 라벨 **알파벳 순**(`Column, Datasource, GlossaryTerm, Product, Routine, Schema, Table`)이라 **Table 이 맨 뒤 = 가장 먼저 탈락**. 절단이 의미가 아니라 문자열 정렬로 결정됐다.
+- **원인 ④ (사용자가 본 문구의 정체)** 경고 배너가 "사용하는 함수·프로시저" 섹션 헤더 아래에 붙지만, 그 목록의 원천인 앵커 직결 `ROUTINE_USES` 는 **1-hop 에서 전량 수집**되므로 절단되지 않는다. 실측: `fhgame1.FH_CHAR` 직결 155건이 depth 1·2·3 **모두 155건**인데 d2/d3 는 `truncated=true` → **완전한 목록 위에 "일부만 불러옴" 이 붙는 오귀속**. 사용자가 "함수 목록이 잘렸나" 로 오해하는 지점.
+- **원인 ⑤** depth select 상태 문구가 "노드를 **선택**/더블클릭하면 이 깊이로 확장됩니다" 였으나 단일클릭(선택) 상세 조회는 4곳 모두 `depth=1` 하드코딩 — 문구와 동작 불일치.
+
+### 처리 (cross-cut: 코드는 feature-0002 modules · feature-0003 static/routers 에 거주)
+- [x] HB.1 **2-hop 이상은 관계 엣지만 따라간다**(`metadata_graph.py neighborhood`) — hop 1 은 전 라벨 유지(앵커의 컬럼·소속 스키마·직결 루틴 = 상세 패널 원천), hop ≥ 2 는 `_REL_ELABELS`(REFERENCES·ROUTINE_USES·RELATED_TERM·USES·DESCRIBES) 만. 계층 엣지(`_HIER_ELABELS`)는 형제 폭발의 원인이라 확장 대상에서 제외. 형제 목록 자체가 필요한 화면은 `scope_schemas`/`schema_tables` 경로가 담당(역할 분리).
+- [x] HB.2 **절단 우선순위를 의미로 고정** — 이웃 해소를 전량 fetch 후 결정론 정렬: ① 관계 이웃(rel_gids) 우선(1-hop 에도 적용 — 1-hop 부터 cap 에 걸리는 대형 스키마에서 형제 나열보다 실제 참조를 남긴다) ② `_NEIGHBOR_LABEL_PRIORITY`(Table > Column > Routine > GlossaryTerm > Schema > Datasource > Product) ③ tie-break = graphid(같은 앵커·같은 depth 면 항상 같은 부분집합).
+- [x] HB.3 **관계 이웃 Column 의 소속 Table 보강** — `REFERENCES` 는 Column↔Column 이라 대상 컬럼만 넣으면 프론트가 그 컬럼을 렌더에서 드롭한다(`graph-core.js` 의 `colsByTable` 은 부모 Table 이 모델에 있을 때만 자식을 담는다). `HAS_COLUMN` **역참조**로 부모를 해소해 채우되(키 문자열 파싱이 아니라 엣지 역참조 — 테이블명에 dot 이 있어도 정확) **다음 프론티어에는 넣지 않는다**(그 테이블의 형제 재폭발 차단).
+- [x] HB.4 **절단 신호 세분화** — `truncated`(기존 계약 불변) + `truncated_hop`(1-based, 절단 hop) + `omitted_nodes`(버린 이웃 수 하한). API(`admin_metadata.py`)가 그대로 전달.
+- [x] HB.5 **절단 경고 귀속 수정**(`graph-ctxmenu.js`) — 노드 상세 전용 `_metaNbrTruncNotice` 신설 + **패널 상단 1곳**으로 이동, "사용하는 함수·프로시저" 섹션의 배너 제거. hop 별 분기: hop 1 = "직접 이웃이 조회 상한 초과 — N개+ 생략, **아래 목록도 일부만**", hop ≥ 2 = "N-hop 확장 이웃 N개+ 생략 · **아래 직접 연결 목록은 전량**". 목록 자체가 절단되는 클러스터/관계 상세의 `_metaDbGrpTruncNotice` 는 그대로 유지(그 경로는 실제 절단).
+- [x] HB.6 **문구 정합 + '확장할 관계 없음' 알림** — depth select 상태 문구를 실제 트리거(더블클릭 / 우클릭 → 중심 보기)로 정정, `label[title]`·`aria-label`·도움말 항목 갱신(단일클릭 상세는 항상 1단계임을 명시). 2-hop 이상인데 관계 엣지가 0이면 `_metaNoRelHint` 로 "이 노드에는 확장할 관계(참조·사용)가 없어 1-hop 과 동일합니다" 를 상태줄에 표기 — 실측 12%(5/40) 케이스를 "선택이 안 먹었다" 로 오해하지 않게.
+- [x] HB.7 테스트 — 신규 `test_graph_hop_budget.py` **9 PASS**(hop 별 엣지 라벨 계약 · 부모 보강 · 보강 부모의 프론티어 미진입 · cap 우선순위 2종 · 절단 신호 · 관계 없음 시 d1==d2 · 상수 분할 불변식) + `test_detail_dbgroups.js` **95 PASS/0 FAIL**(⑱⑲ 신설 — 경고 귀속·hop 분기·오귀속 정적 회귀·관계없음 힌트·depth 문구).
+- [x] HB.8 PB-0008 실 Windows 브라우저 시각검증 — 아래 검증 절 참조.
+- [x] HB.9 세션 이월 후 완수 — `origin/main` 재-rebase 2회(총 22커밋) · §18.8 적대검증 4라운드 흡수 · 전수 재검증 · 정본 docs 정합.
+
+### 개선 효과 (동일 표본 40개 · 같은 시드 A/B)
+| 지표 | 종전 | 개선 후 |
+|---|---|---|
+| 2-hop 절단 | 20/40 (50%) | **0/40 (0%)** |
+| 3-hop 절단 | 24/40 (60%) | **0/40 (0%)** |
+| 3-hop == 2-hop (선택 무의미) | 20/40 (50%) | **8/40 (20%)** |
+| 2-hop REFERENCES 엣지 합계 | 98 | **98 (동일 — 정보 손실 0)** |
+| 2-hop 노드 합계 | 8,652 | 411 (형제 나열 제거) |
+
+앵커 `masangsoft_documents_20260414`: 종전 d2 = 300n(Routine +258 / Table +0, TRUNC) · d3 = d2 와 완전 동일 → 개선 후 d2 = 48n(**Table 7 = 앵커 + 참조로 이어진 6개 테이블**, 절단 없음) · d3 = 48n/62e(관계 +15 — 3-hop 이 실제로 다른 결과).
+
+### 검증
+- 라이브 A/B 실측(web-a 컨테이너에서 구/신 모듈 동시 로드, 동일 시드 표본): 위 표.
+- 신규 pytest `test_graph_hop_budget.py` **9 PASS**(+ 기존 `test_graph_funcproc_uxfix.py` 21 PASS 동반 회귀 0). 헤드리스 `test_detail_dbgroups.js` **95 PASS / 0 FAIL**.
+- `make test`(컨테이너 전체) **15건 실패 — main(`2451a1a7`) 에서 동일 파일·동일 15건이 실패**함을 별도 실행으로 실증(attachment 계열 13 + runtime_settings 2). 본 cycle 과 무관한 환경성 baseline. ruff clean.
+- **PB-0008 실 Windows Chrome 150**(relay `http://172.26.144.1:9223`, `https://localhost/admin`) — 그래프 뷰 진입 → 3-hop 선택 → `fhgame1.FH_CHAR`(직결 루틴 155건) 상세: ① depth select 상태 문구가 새 문구로 렌더 ② 도움말 모달에 갱신 문구 렌더 ③ 1-hop 상세에 배너 0 ④ 3-hop 확장 후 배너는 **패널 상단 1개**("⚠ 3-hop 확장 이웃 135개+ 생략 · 아래 직접 연결 목록은 전량")이고 **"사용하는 함수·프로시저 (155) · 읽기 80 · 쓰기 75" 섹션에는 배너 없음** = 오귀속 해소 실화면 확증. 증적 4장 `artifacts/feature-0016-neighbor-depth-budget/pb0008/`. 상세 Run 은 feature-0003 `docs/test-runs.d/20260728T161300-graph-hop-budget.md`.
+- 검증 방식의 한계(정직 기록): 커밋 전 시각검증이라 배포 이미지 컨테이너(web-a/web-b)에 worktree 자산을 **임시 주입**해 수행했고, 검증 직후 `up -d --force-recreate --no-build` 로 **배포 이미지 상태로 원복**(잔재 grep 0 확인). 검증 중 다른 세션의 배포로 컨테이너가 1회 재생성되어 주입이 무효화된 사건이 있었고(16:00, 이미지 `b6882c7d`), 재주입 후 다시 수행했다.
+
+### 재-rebase (2026-07-28, 세션 이월 후) — `9c434809` → `origin/main 2c9eded1` (10 커밋)
+원 세션이 사용량 한도로 §18.8 패널 도중 끊긴 뒤 이어받는 과정에서, main 이 10 커밋(routine-column-edges
+#1014 · catcluster-focus #1013/#1017 · hover-flow #1016 · catcluster-polish-postverify #1015) 더
+전진해 재-rebase 했다. 충돌 3건 —
+
+- **`metadata_graph.py` (코드, 1건)**: upstream `routine-column-edges`(#1014)가 `edge_hits` 튜플에
+  `ep.get("ref_columns")` **10번째 필드**를 추가했고, 본 cycle 은 같은 자리에 `is_rel` 판정을 추가했다.
+  양쪽을 병존시키는 것만으로는 부족했다 — 본 cycle 의 HB.3 부모 보강이 합성 `HAS_COLUMN` 엣지를
+  **9필드**로 append 하므로 `(4)` 의 10필드 언팩에서 `ValueError` 로 죽는다(`py_compile` 은 통과하는
+  런타임 결함). `None` 을 1개 보강해 arity 를 맞췄다. **rebase 가 만든 결함이므로 원 세션의 검증으로는
+  잡히지 않는 부류** — 재-rebase 후 테스트 재실행이 필수임을 실증한다.
+- **`feature-0016/docs/TASK.md` · `feature-0003/docs/MODIFY.md` (append-only 문서, 2건)**: §16.4
+  "양쪽 신규 항목 추가 → 양쪽 모두 유지". main 에 이미 landed 한 항목을 그대로 두고 본 cycle 항목을
+  뒤에 이어붙였다(landing 순서 — landed 콘텐츠 무변경).
+- **파티션 불변식 재확인**: upstream 이 엣지 라벨을 추가했다면 `_REL_ELABELS ∪ _HIER_ELABELS == _ELABELS`
+  가 깨질 수 있었으나, `_ELABELS` 9종 = 관계 5 + 계층 4 로 여전히 정확히 분할된다(단위 테스트가 게이트).
+
+### §18.8 적대 검증 (codex review, 2026-07-28 · 3라운드) — 지적 5건 전량 in-cycle 흡수
+원 세션의 subagent 패널(backend·qa)이 사용량 한도로 죽었고, 재개 세션에는 **하네스 수준의 "요청 없는
+Agent tool 호출 금지"** 제약이 있었다. §18.8.2 item 1(제약 없는 채널 우선)에 따라 `codex review --base
+origin/main`(repo 접근 있는 독립 리뷰어, subagent 아님 — check #9 accepted `[CODEX:*]`)로 수행했다.
+
+- **R1-P1 (GATE) 부모 보강 예산 역전** — cap 도달 시 `(3b)` 부모 Table 보강이 그대로 `break` 되어,
+  관계로 들어온 Column 은 남는데 그 **부모가 탈락** → 프론트 `colsByTable` 이 부모 없는 컬럼을 렌더에서
+  드롭 → "참조로 이어지는 테이블이 화면에 없다"(HB.3 이 없애려던 실패)가 **cap 상황에서만 되살아나는**
+  우선순위 역전. → `_PARENT_BACKFILL_RESERVE`(60) 신설, 예약량은 **관계 Column 후보 수를 상한으로
+  비례 축소**, **관계 tier 에도 적용**(실측 홍수는 ROUTINE_USES 258건 = 관계 tier 라 tier 0 면제 시 재발 —
+  1차 수정이 이 지점에서 실패해 테스트가 잡아냈다). 남은 부모는 `omitted_nodes` 에 반영(무음 손실 제거).
+- **R1-P2 엣지 fetch LIMIT 무음 절단** — `LIMIT _NEIGHBOR_NODE_CAP*4` 가 우선순위 정렬 *이전* 에 자르는데
+  `truncated` 는 노드 cap 도달에만 세팅돼, **부분 그래프를 `truncated=false` 로 반환**했다. 그러면 본 cycle 이
+  새로 넣은 "아래 직접 연결 목록은 전량" 고지가 거짓이 된다. → `_EDGE_FETCH_CAP` 상수화 + 포화 시 절단 신고.
+- **R2-a broken 엣지가 우선순위 예산 소비** — `broken`(파단) 엣지는 `(4)` 에서 버려지는데 그 끝점이
+  `rel_gids` 에 들어가 tier 0 우선권을 받아, **표시도 안 되는 이웃이 cap 을 먹고 유효 이웃을 밀어냈다**
+  (sync 창 사이 stale). → `is_rel` 판정에서 `status == "broken"` 제외.
+- **R2-b LIMIT 이 비결정적** — `ORDER BY` 없이 자르므로 포화 시 PG 가 임의 부분집합을 반환할 수 있어
+  "관계 우선 · 재현 가능한 부분집합" 계약이 정작 예산이 빠듯할 때 거짓. → UNION 각 항에 관계/계층 등급을
+  리터럴로 실어 `ORDER BY u.prio, u.s, u.e LIMIT` 로 자른다.
+- **R2-c 관계없음 힌트가 hop1 엣지에 속아 숨음** — `_metaNoRelHint` 가 응답 엣지에 관계 라벨이 하나만
+  있어도 힌트를 숨겼는데, 그 관계가 1-hop 것이고 상대가 leaf 면 2·3-hop 이 아무것도 못 더하는데 안내가
+  없어 "선택이 안 먹었다" 오해가 남는다(HB.6 이 잡으려던 바로 그 오해). → 백엔드가 `expanded_hops`
+  (hop 별 신규 노드 수)를 additive 로 보고하고, 프론트는 **2-hop 이후 실적 합이 0** 일 때 힌트를 띄운다.
+  구 replica 응답(필드 부재)은 종전 판정으로 폴백 — 롤링 배포 중 회귀 방지.
+- **R3·R4(3·4라운드)**: 위 흡수 후 재검증 — 다시 P1 0건, P2 8건 추가 지적 중 7건 흡수(경계 절단 거짓양성 ·
+  노드델타만으로 관계없음 단정 · 부모 보강 순서 비결정 · broken 을 cap 이전에 후순위로 · broken 도달 컬럼
+  부모보강 배제 · broken 이 유효 계층행을 앞지르던 정렬 순서 · 구 응답의 완전성 거짓 주장), 1건은 근거 기록 후
+  수용(예약 산정 정밀화 — REPORT §8). 4라운드에서 종료: **P1 3연속 0건** + 남은 지적이 hot path 복잡도를
+  늘리는 미세 정련으로 수렴.
+
+**재-rebase + 적대 흡수 후 재측정** (원 세션 수치와 대조):
+- pytest `test_graph_hop_budget.py` **9 → 21 PASS**(적대 흡수분 회귀 12건 신설: 부모 예약 생존 · 예약
+  비적용 대조군 · 예약 비례축소 · LIMIT 포화 절단신고 · 미포화 대조군 · 경계(정확히 cap) 비절단 · broken
+  우선권 배제 · broken 도달 컬럼 부모보강 배제 · ORDER BY 결정론(brk 선행) · 부모쿼리 graphid 정렬 ·
+  `expanded_hops` 실적 · 엣지-only 실적).
+- 그래프 헤드리스 **전 스위트 865 PASS / 0 FAIL** (`test_detail_dbgroups.js` **95 → 107**, ⑳㉑ 신설 +
+  ⑱ hop-미상 3건 = R2-c/R3-b/R4-d 판정·폴백·형 방어 + upstream 신설 `test_graph_hover_flow.js` 41 · `test_graph_routine_colref.js`
+  30 · `test_graph_ancestor_focus.js` 32 동반 무회귀 — 같은 파일을 만진 세 cycle 의 상호작용이 검증됐다).
+- 컨테이너 pytest **전 스위트 2809 passed / 2 skipped / 0 failed**, ruff clean. 원 세션이 기록한
+  "15건 실패 = main 동일 baseline" 은 이번 실행에서 **0건** — 그 실패들이 환경성 flake 였음을 사후 확증한다
+  (TASK 위 항목의 flaky 관측과 정합).
+- **최종 rebase 후 재검증**: 검증·문서 작업 중 main 이 12커밋 더 전진해(#1018~#1022 — label-lod ·
+  routine-coledges POST-DEPLOY · hover-rw POST-DEPLOY · cyvol scope prefetch fix) 커밋 후 `origin/main`
+  `44fe939d` 위로 다시 rebase 했다. 충돌은 **append-only 문서 5건뿐**(코드 충돌 0 — `metadata_graph.py`
+  는 cyvol 수정과, `graph-core.js` 는 label-lod 와 서로 다른 구역이라 자동 병합). 재-rebase 후 전수 재실행:
+  컨테이너 pytest **2812 passed / 2 skipped / 0 failed** · 그래프 헤드리스 전 스위트 **904 PASS / 0 FAIL**
+  (상승분은 label-lod cycle 이 추가한 스위트) · ruff clean. 위 절의 2809/865 는 그 직전 라운드 수치다.
+- **PB-0008 은 재-rebase·적대흡수 이전 코드에서 수행됐다**(원 세션 16:06~16:13). 프론트 절단 배너 로직은
+  그대로이고 헤드리스 계약 100건이 유지되지만, R2-c 로 힌트 판정이 바뀌었으므로 실화면 재확인은 배포 후
+  POST-DEPLOY 로 수행한다(아래 잔여 항목).
+
+### 잔여 / 후속
+- 3-hop 이 2-hop 과 같아지는 20%(8/40)는 **관계 체인이 2단계에서 끝나는 노드** — 데이터의 성질이며 결함이 아니다(상태줄이 그 사실을 알린다).
+- 대형 스키마 노드(테이블 700개 등)는 여전히 1-hop 부터 cap 300 에 걸린다. 이 경로의 경고는 hop 1 분기로 "아래 목록도 일부만" 을 정직하게 표기하도록 바뀌었을 뿐, 상한 자체를 올리는 것은 별건(페이지네이션 또는 클러스터 경로 유도 검토 — REPORT §8).

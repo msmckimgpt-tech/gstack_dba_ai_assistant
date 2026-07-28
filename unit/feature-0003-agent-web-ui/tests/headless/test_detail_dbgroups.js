@@ -407,8 +407,102 @@ function mkRoot(pairs, allBtn) {   // pairs: [{head, body}]
   ];
   keptAsTip.forEach(([label, needle]) => check(`⑰ 툴팁으로 보존됨: ${label}`, src.includes(needle)));
 
+  // graph-hop-budget(2026-07-28): 절단 경고 함수가 목록용(_metaDbGrpTruncNotice)과 이웃그래프용
+  //   (_metaNbrTruncNotice)으로 분리되어 note 마크업이 여러 개가 됐다 — 계약의 의도("본문 상시 설명은
+  //   절단 경고뿐")를 개수 대신 **모든 note 가 절단 경고 클래스를 동반한다**로 표현한다.
+  const notes = src.match(/class="admin-meta-detail-note[^"]*"/g) || [];
   check("⑰ 상세 패널 렌더에 남은 admin-meta-detail-note 는 절단 경고뿐",
-    (src.match(/class="admin-meta-detail-note/g) || []).length === 1 && src.includes('admin-meta-detail-note amgr-trunc-note'));
+    notes.length >= 1 && notes.every((c) => c.includes("amgr-trunc-note")), notes);
+}
+
+// ── ⑱ graph-hop-budget(2026-07-28): 절단 경고 귀속 + '확장할 관계 없음' 안내 ──────────────
+//   배경(라이브 실측): 앵커 직결 ROUTINE_USES 는 1-hop 에서 전량 수집되어 depth 1·2·3 모두 155개인데,
+//   2-hop 이상에서 truncated=true 가 되면 종전 코드가 그 **완전한** 목록 위에 "일부만 불러옴" 을 붙였다.
+//   여기서는 (a) 경고가 함수·프로시저 섹션에서 분리됐는지 (b) hop 별 문구가 사실과 맞는지 (c) 관계가
+//   없어 2-hop 이 1-hop 과 같아질 때 그 사실을 알리는지를 단언한다.
+{
+  const fnNbrTrunc = grab(/\nfunction _metaNbrTruncNotice\([\s\S]*?\n\}\n/, "_metaNbrTruncNotice");
+  const fnNoRel = grab(/\nfunction _metaNoRelHint\([\s\S]*?\n\}\n/, "_metaNoRelHint");
+  const relSet = grab(/const _META_REL_ETYPES = new Set\(\[[^\]]*\]\);/, "_META_REL_ETYPES");
+  const sandbox = { console };
+  vm.createContext(sandbox);
+  vm.runInContext(fnNbrTrunc + "\n" + relSet + "\n" + fnNoRel, sandbox, { filename: "hopbudget-unit.js" });
+  const nbr = vm.runInContext("_metaNbrTruncNotice", sandbox);
+  const noRel = vm.runInContext("_metaNoRelHint", sandbox);
+
+  check("⑱ truncated=false / null 이면 경고 없음",
+    nbr({ truncated: false }) === "" && nbr(null) === "");
+
+  const h2 = nbr({ truncated: true, truncated_hop: 2, omitted_nodes: 337 });
+  check("⑱ 2-hop 절단: 확장분이 잘렸다고 말한다", /2-hop 확장 이웃/.test(h2), h2);
+  check("⑱ 2-hop 절단: 생략 규모를 숫자로 알린다", /337/.test(h2), h2);
+  check("⑱ 2-hop 절단: 직접 연결 목록은 전량이라고 명시(오귀속 방지)", /직접 연결 목록은 전량/.test(h2), h2);
+  check("⑱ 2-hop 절단: 목록이 잘렸다고 오해시키지 않는다", !/아래 목록도 일부만/.test(h2), h2);
+
+  const h1 = nbr({ truncated: true, truncated_hop: 1, omitted_nodes: 420 });
+  check("⑱ 1-hop 절단: 목록도 부분임을 알린다", /아래 목록도 일부만/.test(h1), h1);
+  check("⑱ 1-hop 절단: '확장 이웃' 으로 오표기하지 않는다", !/확장 이웃/.test(h1), h1);
+
+  check("⑱ hop 미상이어도 예외 없이 문구 생성", typeof nbr({ truncated: true }) === "string");
+  // 적대리뷰 R4-d: 구 백엔드 응답(truncated=true·truncated_hop 부재, 롤링 배포 창)을 "2-hop 확장분만
+  //   잘림 + 직접 목록은 전량" 으로 흘리면, 1-hop 에서 잘린 응답에도 완전성을 주장하는 거짓이 된다.
+  const hLegacy = nbr({ truncated: true, omitted_nodes: 12 });
+  check("⑱ hop 미상: 목록 완전성을 주장하지 않는다", !/직접 연결 목록은 전량/.test(hLegacy), hLegacy);
+  check("⑱ hop 미상: 존재하지 않는 hop 을 날조하지 않는다", !/2-hop/.test(hLegacy), hLegacy);
+  check("⑱ hop 미상: 절단 사실과 규모는 알린다", /상한 초과/.test(hLegacy) && /12/.test(hLegacy), hLegacy);
+
+  // 함수·프로시저 섹션 헤더 직후에 절단 배너를 다시 붙이면 FAIL (오귀속 회귀 방지).
+  check("⑱ 함수·프로시저 섹션이 절단 배너를 직접 붙이지 않는다",
+    !/사용하는 함수·프로시저[\s\S]{0,400}?parts\.push\(_meta(DbGrp|Nbr)TruncNotice/.test(src));
+  // 경고는 패널 상단(설명문 직후, 첫 섹션 이전) 1곳에서만 삽입된다.
+  check("⑱ 절단 경고는 패널 상단 1곳에서 삽입",
+    (src.match(/parts\.push\(_metaNbrTruncNotice\(meta\)\)/g) || []).length === 1);
+
+  check("⑲ depth<=1 이면 관계-없음 안내 미표시",
+    noRel(1, { edges: [] }) === "" && noRel("1", { edges: [] }) === "");
+  check("⑲ depth=2 + 관계 엣지 없음 → 1-hop 과 동일함을 알린다",
+    /1-hop 과 동일/.test(noRel(2, { edges: [{ type: "HAS_COLUMN" }, { type: "HAS_TABLE" }] })));
+  check("⑲ depth=2 + REFERENCES 있으면 안내 없음",
+    noRel(2, { edges: [{ type: "HAS_COLUMN" }, { type: "REFERENCES" }] }) === "");
+  check("⑲ depth=3 + ROUTINE_USES 있으면 안내 없음",
+    noRel(3, { edges: [{ type: "ROUTINE_USES" }] }) === "");
+  check("⑲ edges 부재도 안전", typeof noRel(2, {}) === "string" && typeof noRel(2, null) === "string");
+
+  // ⑳ 적대리뷰 R2-c: 힌트 판정을 **hop 별 확장 실적**(expanded_hops)으로 교체. 종전엔 응답 엣지에 관계
+  //   라벨이 하나만 있어도 힌트를 숨겼는데, 그 관계가 1-hop 것이고 상대가 leaf 면 2·3-hop 이 아무것도
+  //   더하지 못하는데도 사용자에게 아무 안내가 없었다("선택이 안 먹었다" 오해).
+  check("⑳ hop1 에 관계 엣지가 있어도 2-hop 실적 0 이면 동일함을 알린다",
+    /1-hop 과 동일/.test(noRel(2, { edges: [{ type: "REFERENCES" }], expanded_hops: [5, 0] })),
+    noRel(2, { edges: [{ type: "REFERENCES" }], expanded_hops: [5, 0] }));
+  check("⑳ 2-hop 이 실제로 노드를 늘리면 안내 없음",
+    noRel(2, { edges: [{ type: "REFERENCES" }], expanded_hops: [5, 3] }) === "");
+  check("⑳ 3-hop: 2·3 hop 합산 실적으로 판정",
+    noRel(3, { edges: [{ type: "REFERENCES" }], expanded_hops: [5, 0, 2] }) === ""
+    && /1-hop 과 동일/.test(noRel(3, { edges: [{ type: "REFERENCES" }], expanded_hops: [5, 0, 0] })));
+  check("⑳ expanded_hops 부재(구 replica 응답)면 종전 엣지 판정으로 폴백",
+    noRel(2, { edges: [{ type: "REFERENCES" }] }) === ""
+    && /1-hop 과 동일/.test(noRel(2, { edges: [{ type: "HAS_COLUMN" }] })));
+  check("⑳ expanded_hops 가 배열 아니면 폴백(형 방어)",
+    typeof noRel(2, { edges: [], expanded_hops: "nope" }) === "string");
+
+  // ㉑ 적대리뷰 R3-b: 노드 델타 0 만으로 단정하면 두 경우에 틀린다 — ① 이미 발견된 노드 사이에 엣지만
+  //   추가된 경우(결과는 달라졌다) ② cap 절단으로 뒤 hop 이 실행되지 못한 경우("관계 없음" 이 아니라
+  //   "예산 없음"). 절단 시에는 힌트를 억제하고, 엣지 실적도 함께 본다.
+  check("㉑ 절단됐으면 '동일' 로 단정하지 않는다(예산 부족 ≠ 관계 없음)",
+    noRel(2, { edges: [], expanded_hops: [5, 0], expanded_hop_edges: [4, 0], truncated: true }) === "");
+  check("㉑ 노드는 0 이지만 엣지가 늘었으면 안내 없음(결과가 달라졌다)",
+    noRel(2, { edges: [{ type: "REFERENCES" }], expanded_hops: [5, 0], expanded_hop_edges: [4, 2] }) === "");
+  check("㉑ 노드·엣지 모두 0 + 절단 없음 → 동일함을 알린다",
+    /1-hop 과 동일/.test(noRel(2, { edges: [{ type: "REFERENCES" }], expanded_hops: [5, 0], expanded_hop_edges: [4, 0] })));
+  check("㉑ expanded_hop_edges 부재도 안전(노드 실적만으로 판정)",
+    typeof noRel(2, { edges: [], expanded_hops: [5, 0] }) === "string");
+
+  // depth select 문구 정합: 단일클릭(선택) 상세는 depth=1 고정이라 '선택하면 이 깊이로' 는 거짓 안내였다.
+  const core = fs.readFileSync(path.join(path.dirname(CTX), "graph-core.js"), "utf8");
+  check("⑲ depth select 안내가 '선택' 을 확장 트리거로 표기하지 않음",
+    !/노드를 선택\/더블클릭하면 이 깊이로/.test(core));
+  check("⑲ depth select 안내가 실제 트리거(더블클릭·중심 보기)를 명시",
+    /더블클릭\(또는 우클릭 → '이 노드 중심으로 보기'\)하면 이 깊이로/.test(core));
 }
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);

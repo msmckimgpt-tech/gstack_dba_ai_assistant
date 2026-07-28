@@ -1883,6 +1883,14 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         "mode": mode,
         "q": q, "node": node, "scope": scope or "", "depth": depth,
         "truncated": bool(data.get("truncated", False)),
+        # graph-hop-budget(2026-07-28): 절단 위치·규모. 프론트가 "무엇이 잘렸는지" 를 정확히 말해
+        #   앵커 직결 목록(1-hop 전량 수집이라 절단과 무관)에 경고를 오귀속하지 않게 한다.
+        "truncated_hop": data.get("truncated_hop"),
+        "omitted_nodes": int(data.get("omitted_nodes") or 0),
+        # 적대리뷰 R2-c: hop 별 신규 노드 수. 프론트가 "선택한 깊이가 결과를 바꿨는가" 를 엣지 존재로
+        #   추측하지 않고 확장 실적으로 판정한다(hop 1 관계 엣지에 속아 힌트가 숨던 결함).
+        "expanded_hops": list(data.get("expanded_hops") or []),
+        "expanded_hop_edges": list(data.get("expanded_hop_edges") or []),
         "products": scope_products,
         "schema_products": schema_products,
         "node_count": len(data.get("nodes", [])), "edge_count": len(data.get("edges", [])),

@@ -2105,3 +2105,49 @@ label-lod 배포 확인 직후의 후속 요청: "컨텐츠 카테고리 클러�
 ### Git 동기화 결과
 - Task-Cycle: feature-0016-metadata-graph (ai/claude/feature-0016-graph-hdr-fit, worktree).
 - verify-completion / commit / PR / 병합 / 배포: §16.3 Step 4~6 + deploy_scope: included 에 따라 진행 — 결과는 PR·POST-DEPLOY 절에 기록.
+
+## 2026-07-28 · graph-hop-budget — '이웃 깊이' 실효성 검토 + 예산 우선순위 재설계 + 절단 경고 오귀속 제거 (사용자 요청)
+
+**요청**: "'보기 옵션' 중 '이웃 깊이' 에 대한 작동이 의미가 있는지 검토 — 현재는 1-hop 을 초과한 모든 항목에서 '이웃 조회 상한 - 일부만 불러옴' 이 출력됨."
+
+**답**: 배선은 정상이나 **의미를 갖는 범위가 매우 좁았다**. 라이브 실측(컬럼 투영 Table 40개 표본) — 2-hop 절단 50% · 3-hop 절단 60% · **"3-hop 결과가 2-hop 과 완전 동일" 50%**(= 3-hop 선택이 결과를 전혀 바꾸지 못함). 노드 상한 `_NEIGHBOR_NODE_CAP=300` 이 hop 경계보다 먼저 걸리고(cap 도달 시 남은 hop 을 아예 실행하지 않음), 2-hop 이 계층 엣지를 따라가 "같은 스키마 형제" 수백 개가 예산을 소진했으며(앵커 `masangsoft_documents_20260414`: Routine +258 / Table **+0**), 절단 순서가 vertex 라벨 알파벳 순이라 **Table 이 가장 먼저 탈락**했다.
+
+**사용자가 본 경고의 정체 = 오귀속**. 경고가 "사용하는 함수·프로시저" 섹션에 붙지만 그 목록의 원천(앵커 직결 `ROUTINE_USES`)은 1-hop 에서 전량 수집되어 절단되지 않는다 — `fhgame1.FH_CHAR` 직결 155건이 depth 1·2·3 **모두 155건**인데 d2/d3 는 `truncated=true` 라, 완전한 목록 위에 "일부만 불러옴" 이 표시되고 있었다.
+
+### 처리 (사용자 결정: 원인 교정 + 표면 정직화 "둘 다 한 사이클로")
+- hop ≥ 2 는 관계 엣지만 확장(계층 엣지 제외) · cap 절단 순서를 관계 이웃 → 라벨 의미 우선순위 → graphid 로 고정 · `REFERENCES` 대상 Column 의 부모 Table 보강(프론티어 미진입) · `truncated_hop`/`omitted_nodes` 추가.
+- 절단 경고를 앵커 직결 목록에서 분리해 **패널 상단 1곳**으로 이동 + hop 별 문구 분기 · depth select 문구/도움말 정합(단일클릭 상세는 항상 1단계) · "확장할 관계 없음" 상태줄 알림.
+
+### 효과 (동일 시드 표본 40 · A/B)
+2-hop 절단 50% → **0%** · 3-hop 절단 60% → **0%** · "3-hop == 2-hop" 50% → **20%** · 2-hop `REFERENCES` 엣지 합계 98 → **98(정보 손실 0)**. 앵커 `masangsoft_documents_20260414`: d2 300n(Routine 258/Table 0, TRUNC) → **48n(Table 7 = 앵커 + 참조로 이어진 6개, 절단 없음)**, d3 는 관계 +15 로 실제로 다른 결과.
+
+### 검증
+신규 `test_graph_hop_budget.py` **9 PASS** · 헤드리스 `test_detail_dbgroups.js` **95 PASS/0 FAIL** · `make test` 15건 실패는 main 에서 동일 15건 실패 실증(환경성 baseline, 본 변경 무관) · ruff clean · **PB-0008 실 Windows Chrome 150** 에서 패널 상단 1개 배너 + 함수·프로시저 섹션 배너 0 + 목록 155건 불변 실화면 확인(증적 4장). 상세 Run: feature-0003 `docs/test-runs.d/20260728T161300-graph-hop-budget.md`.
+
+### 세션 이월 + 재-rebase (같은 cycle 계속)
+원 세션이 §18.8 적대 리뷰 패널 도중 **사용량 한도**(19:50 리셋)로 서브에이전트와 함께 종료돼, 코드·테스트·PB-0008·문서까지
+완료된 상태의 미커밋 worktree 만 남았다. 이어받아 완수하면서 main 이 10 커밋 더 전진해 재-rebase 했고, 그 과정에서 **rebase
+유발 런타임 결함 1건**을 잡았다 — upstream `routine-column-edges`(#1014)가 `edge_hits` 튜플을 9→10필드로 늘렸는데 본 cycle 의
+부모 보강 경로가 9필드로 append 해 언팩에서 `ValueError` 로 죽는 조합(문법 검사는 통과하는 부류). 재측정: 그래프 헤드리스
+**전 스위트 856 PASS / 0 FAIL**(같은 파일을 만진 hover-flow·routine-colref·ancestor-focus 세 cycle 과의 상호작용 포함),
+컨테이너 pytest **전 스위트 실패 0**(원 세션이 기록한 15건은 환경성 flake 였음이 사후 확증), ruff clean. 상세는 TASK.md
+`### 재-rebase (2026-07-28, 세션 이월 후)`.
+
+### §18.8 적대검증 (codex review 4라운드) — 지적 13건 중 12건 흡수
+원 세션의 subagent 패널이 사용량 한도로 죽고 재개 세션에 Agent tool 제약이 있어, §18.8.2 item 1 의 제약 없는 채널
+`codex review --base origin/main`(repo 접근 있는 독립 리뷰어)로 수행했다. **R2·R3·R4 연속 P1(GATE) 0건**.
+가장 중요한 적발은 R1-P1 — cap 도달 시 관계 컬럼의 **부모 Table 이 탈락**해 프론트가 그 컬럼을 렌더에서 드롭,
+즉 "참조로 이어지는 테이블이 화면에 없다"(이 cycle 이 없애려던 실패)가 **예산이 빠듯할 때만 되살아나는** 우선순위
+역전이었다. 예약 예산으로 교정했고, 1차 수정이 관계-tier 홍수에서 재발한 것을 신설 테스트가 적발해 재교정했다.
+그 외 흡수: broken 엣지의 우선권·부모보강·fetch 예산 침범(3건) · 엣지 LIMIT 의 무음/비결정 절단(3건) · 깊이 선택
+실효 판정을 엣지 존재로 추측하던 결함(2건) · 구 응답에서 목록 완전성을 거짓 주장하던 문구(1건). 대조표는
+`REVIEW.md` REV-20260728T161300.
+
+### §8 개선 제안 (기록만 — 사용자 지시 없이 실행 안 함)
+- **부모 보강 예약을 '미해소 부모 수' 로 산정**(적대검증 R4-c 잔여): 현재 예약은 관계 Column *후보 수* 상한이라,
+  부모가 이미 모델에 있는 경우까지 한 칸을 잡아 예산이 정확히 소진되는 경계에서 관계 끝점 1개를 놓칠 수 있다.
+  정확 해소는 fill 루프 이전에 부모를 해소하는 hot path 재구성을 요구하고, 손실은 1-노드 경계로 한정되며 응답이
+  `truncated`/`omitted_nodes` 로 사실을 보고하므로(은폐 없음) 본 cycle 에서는 수용했다.
+- **대형 스키마 노드의 1-hop 절단**: 테이블 700개 스키마(web_ranking 719 등)는 1-hop 부터 cap 300 에 걸려 1·2·3-hop 결과가 동일하다. 본 cycle 은 그 경우를 정직하게 표기하도록만 바꿨다(문구 hop 1 분기). 근본 해소는 페이지네이션 또는 "스키마 노드는 클러스터 경로로 유도" 중 택일 — 별건 검토 필요.
+- **헤드리스 JS 스위트가 CI 미배선**(pytest 전용) — `test_detail_dbgroups.js` 95건이 회귀 게이트가 아니다. Makefile/CI 배선 제안(detail-db-groups cycle 에서도 동일 잔여로 기록됨).
+- **PB-0008 노드 상세 검증 레시피 보강**: PixiJS 캔버스 합성 PointerEvent 로는 노드 상세를 열지 못했고(24~63점 그리드 실패), 검색 결과 목록 `li.amgr-searchres[data-goto]` DOM 클릭이 안정적 경로였다. 플레이북에 반영 검토.
