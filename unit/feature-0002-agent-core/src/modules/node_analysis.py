@@ -1374,7 +1374,9 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             if w["err"] is not None or w["payload"] is None:
                 return None
             try:
-                return _llm.llm_node_analysis(w["payload"])
+                # 0047: 병렬 스레드라 active-datasource ContextVar 가 전파되지 않는다 →
+                #   사용 기록의 데이터소스 귀속을 위해 work item 의 scope_key 를 명시 전달.
+                return _llm.llm_node_analysis(w["payload"], scope_key=w.get("scope_key"))
             except Exception as exc:
                 return exc
 

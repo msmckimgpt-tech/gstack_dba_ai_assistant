@@ -498,3 +498,11 @@ feature-0003(primary, `_materialize_assistant_attachment_new` 경로)의 활성�
 - **수정**: 후처리를 ask-worker 로 이전 + KV terminal 지연으로 "후처리 완료 후 공개" 순서 보장 + web 은 증거 기반 self-heal 게이트.
 - **검증**: pytest 2384 PASS · §18.8 2라운드 적대 검증(BLOCKER 2건 발견→수정→CLOSED). 라이브 실측=POST-DEPLOY(원 대화 동일 입력 재현).
 - 정본 REVIEW REV-20260727T105326-worker-attachment-postprocess · 원장 FRICTION_LEDGER FR-brandnew-script-attachment-delivery-gap.
+
+## 20260728T124500-llm-usage-target-scope — llm_usage 데이터소스 차원(`target_scope`) 도입 (Major §12.3, alembic 0047)
+- **계기**: 사용자 — 직전 cycle(usage-records-system)이 남긴 후속 과제 "`llm_usage` 에 데이터소스 차원 컬럼 추가를 통한 근본 해소".
+- **RC**: `target`(0032)에 데이터소스 차원이 없어 사용 기록 드릴다운이 `table_descriptions`∪`routine_objects`∪`rag_objects` **역해소**에 의존 → dev/qa 동명 스키마로 라이브 8,399 distinct target 중 상당수가 구조적 모호(107행 "화면까지만 이동" 저하), 게다가 역해소는 조회 시점 메타데이터 적재 상태에 의존해 답이 변한다.
+- **수정**: alembic 0047 `target_scope VARCHAR(96)`(additive nullable, 부트스트랩 DDL parity, 소급 백필 없음) + `_record_llm_usage(target_scope=)` **명시 인자 우선 → active-datasource ContextVar 폴백** + `llm_*` 5종 keyword-only `scope_key` pass-through(프롬프트 payload 무변경) + **스레드 경계 3경로 명시 전달**(ContextVar 미전파) + 웹 **2단 폴백**(기록값 우선/legacy 역해소, fold 키에 scope 포함, 컬럼 부재 자가치유, `scope_source` 노출). INSERT 폴백은 3중 중첩 try → 4단 사다리 루프로 평탄화.
+- **무영향**: RBAC·인증 0 · UI 표면 변경 0(값의 출처만 변경) · 프롬프트/모델 입력 0 · expand-only 라 배포 순서 무관(양방향 자가치유).
+- **검증**: pytest **2,719 PASS / 2 skipped**(신규 R1~R4 + 계측 3케이스) · ruff clean · `migrate-lint` expand-safe PASS · **POST-DEPLOY 라이브 PASS**(alembic head 0047 · 컬럼 생성 · 명시/ContextVar 양 경로 기록 실증 · API `scope_source="recorded"` · **같은 target 이 데이터소스별 2행 분리** · 진단 합성행 원장에서 제거). 정본 TASK-/CHG-/REV-20260728T124500-llm-usage-target-scope · test-runs.d/20260728T124500-llm-usage-target-scope.md.
+- **한계(정직 표기)**: 소급 백필을 하지 않으므로 채움률은 워커가 분석을 수행하는 만큼 시간에 따라 상승한다. 그동안 legacy 행은 종전 역해소로 동작하고, 응답의 `scope_source` 로 기록/추정을 구분할 수 있다.

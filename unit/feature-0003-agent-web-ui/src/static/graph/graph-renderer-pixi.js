@@ -20,19 +20,26 @@
 //   모듈 상수로 고정한다(대다수 엣지가 단일 가닥 = 최다 호출 경로의 GC 압력 제거). 불변 사용.
 const EDGE_NO_STRAND = [0];
 
-// graph-edge-legibility(§84): 관계선 굵기는 **model 좌표**라 world scale(zoom)이 그대로 곱해진다.
-//   전체보기(fit) 는 대형 스코프에서 zoom 0.2~0.3 이므로 0.85px 선이 화면 0.2px 서브픽셀이 되고,
-//   안티앨리어싱이 alpha 까지 깎아 사실상 사라진다 — 라이브 실측(mssql-qa-idc 전체보기)에서 관계선
-//   최대 대비가 배경 대비 16~43/255(카드 테두리 161)로, 저밀도 구간 ink 는 0.12% 였다.
-//   보정: **가장 얇은 관계선이 화면에서 최소 EDGE_MIN_SCREEN_PX 를 갖도록** 배율을 산출해 모든 엣지에
-//   **동일 배율**로 곱한다. 개별 엣지마다 clamp 하면 줌아웃에서 굵기 서열(기본<candidate<trusted)이
-//   뭉개지므로, 기준선(EDGE_THIN_REF) 하나로 배율을 뽑아 서열을 보존한다. zoom ≥ 1 에서는 배율 1(무보정).
-const EDGE_THIN_REF = 0.85;        // 가장 얇은 관계선의 기준 굵기(= _metaEdgeStyleFor 무상태 값)
-const EDGE_MIN_SCREEN_PX = 1.15;   // 그 선이 화면에서 확보해야 할 최소 굵기(라이브 실측으로 결정 — 0.85 는
-                                   //   안티앨리어싱에 먹혀 대비 44/255 에 그쳤다)
-function edgeWidthBoost(zoom) {
+// graph-edge-encoding(§86): 두께의 줌 정책 = **줌인은 화면 고정, 줌아웃은 콘텐츠 비례**.
+//
+//   경위 — §84 는 줌아웃 소실만 막으려 화면 두께에 *바닥* 을 걸었고(줌인 구간은 model 고정 = 확대할수록
+//   굵어짐), §85 는 그 변성을 없애려 전 구간 화면 고정으로 갔다. 그런데 전 구간 고정은 반대편 실패를
+//   낳는다 — 극단 줌아웃에서 노드·간격은 작아지는데 선만 같은 두께로 남아 **선이 화면을 뒤덮는다**
+//   (사용자 리포트 + 스크린샷). 두 실패는 같은 축의 양극이고, 옳은 답은 구간별로 다른 정책이다.
+//
+//   `w_screen = clamp(base · min(1, zoom/ZFULL), MIN, base)` ⟹ `w_model = w_screen / zoom`
+//     - zoom ≥ ZFULL : w_screen = base            → 확대해도 굵어지지 않는다(§85 가 고친 변성).
+//     - zoom < ZFULL : w_screen ∝ zoom            → 축소하면 콘텐츠와 함께 얇아진다(화면을 가리지 않음).
+//     - 하한 MIN     : 완전 소실만 막는다          → 저밀도 단선은 희미해도, 겹치면 alpha 누적으로 드러난다.
+//   즉 model 좌표로는 "줌아웃 구간에서 상수, 줌인 구간에서 1/zoom" 이다.
+const EDGE_ZFULL = 1;            // 이 줌 이상에서 화면 두께를 고정(=기준 배율)
+const EDGE_MIN_SCREEN_W = 0.25;  // 극단 줌아웃에서도 남기는 최소 화면 두께(완전 소실만 방지 — 기본
+                                 //   굵기 0.6 대비 충분히 낮아야 줌아웃 비례 구간이 평탄해지지 않는다)
+// 화면 기준 두께(px)를 현재 줌에서 쓸 model 두께로 환산.
+function edgeModelWidth(baseScreen, zoom) {
   const z = Math.max(0.02, zoom || 1);
-  return Math.max(1, EDGE_MIN_SCREEN_PX / (EDGE_THIN_REF * z));
+  const w = Math.max(EDGE_MIN_SCREEN_W, Math.min(baseScreen, baseScreen * (z / EDGE_ZFULL)));
+  return w / z;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,8 +309,9 @@ export const PixiAdapterPure = {
   //   설계 제약(사용자 요구):
   //     ① **다른 노드 위치 불변** — 확장은 scene 모델(node.style.size)을 건드리지 않고 별도 오버레이 레이어에
   //        그린다. 따라서 masonry/shelf-pack 재배치·combo bbox·hit-grid·미니맵 전부 무영향(reflow 0).
-  //     ② **중심 고정 좌우 대칭 확장** — 원 칩과 중심이 같아 t=0 에서 픽셀 동일(팝 없음) + 한쪽으로만 밀려
-  //        옆 칩을 덮는 비대칭을 피한다.
+  //     ② **좌변 고정 + 우측 확장**(사용자 정정 2026-07-28 — 이전 중앙 대칭에서 변경) — 원 칩의 왼쪽 모서리를
+  //        앵커로 고정하고 오른쪽 모서리만 밀어낸다. t=0 에서 원 칩과 픽셀 동일(팝 없음)인 성질은 그대로이고,
+  //        이미 읽고 있던 앞글자가 제자리에 머문 채 뒷글자만 오른쪽에서 드러나 읽기 방향과 정합한다.
   //     ③ **z-order** — 오버레이 레이어가 최상단이라 확장분이 이웃 칩 아래로 숨지 않는다(어댑터 배선 참조).
   //   반환 null = 확장 불필요(라벨/상한 없음 · 이미 전부 보임 · 이득 < minGain).
   //   대상은 `labelPlacement:"center"` rect 칩(테이블·루틴·스키마 카드·용어·그룹/카테고리 헤더) — 즉 "노드 **안**
@@ -324,9 +332,27 @@ export const PixiAdapterPure = {
     //   inner1 = 확장 종단의 안쪽 폭. 루틴 칩처럼 labelMaxWidth(176)가 칩 폭(150)보다 큰 스타일이 있어(칩 밖으로
     //   라벨이 삐져나오는 기존 동작), 박스폭-pad 로 계산하면 t=0 에 원래 보이던 글자가 오히려 줄어드는 역-팝이
     //   난다(codex review P2). inner0 을 원 한계로 고정하면 t=0 이 항상 픽셀 동일.
-    return { x: s.x, y: s.y, w0, w1, h, pad, radius: s.radius || 0, capped: w1 >= cap,
+    // graph-label-hover-anchor(사용자 정정 2026-07-28): 확장 기준점은 **좌변 고정 + 우측으로만 성장**.
+    //   `left` 가 그 앵커(원 칩의 좌변, world x). 카드 중심은 폭에 따라 우측으로 밀린다(hoverCardCenterX).
+    //   중앙 대칭이던 이전 동작 대비: 이미 읽고 있던 앞부분 글자가 제자리에 머물고 뒷글자만 오른쪽에서
+    //   드러나므로 시선이 따라가기 쉽다(읽기 방향 정합).
+    return { x: s.x, y: s.y, left: s.x - w0 / 2, w0, w1, h, pad, radius: s.radius || 0, capped: w1 >= cap,
       inner0: s.labelMaxWidth, inner1: w1 - pad };
   },
+
+  // 폭 w 인 확장 카드의 중심 world x — 좌변(g.left)을 고정한 결과값. `left` 부재(구 geom)면 중앙 고정 폴백.
+  hoverCardCenterX(g, w) {
+    if (!g) return 0;
+    if (g.left == null) return g.x;
+    return g.left + (w > 0 ? w : g.w0) / 2;
+  },
+
+  // 라벨의 카드-로컬 x (anchor 0 = 좌측 정렬). **원 노드가 렌더하던 라벨의 절대 좌측(textLeft)을 그대로
+  //   유지**하도록 카드 중심 이동분만큼 상쇄한다 → 확장 내내 앞글자가 1px 도 움직이지 않고 뒷글자만 오른쪽에서
+  //   드러난다. textLeft 를 "칩 좌변 + pad/2" 로 계산하지 않는 이유: 루틴 칩은 `labelMaxWidth`(176)가 칩
+  //   폭(150)보다 커서 원 라벨이 이미 칩 밖으로 넘쳐 있다 — 그 경우 pad 기준으로 잡으면 hover 순간 라벨이
+  //   ~17px 튄다(codex review P2). 실제 렌더 폭에서 역산한 textLeft 만이 t=0 픽셀 동일을 보장한다.
+  hoverTextOffsetX(g, w, textLeft) { return textLeft - this.hoverCardCenterX(g, w); },
 
   // graph-label-hover-expand: 현재 폭 w 의 확장 카드 사각형 안에 model 점이 있는가.
   //   **필요한 이유(codex review P1)**: 카드가 넓어지면 드러난 좌우 영역은 원 노드 bbox 밖이라 hit-grid 가
@@ -517,7 +543,33 @@ export class PixiGraphAdapter {
   // graph-label-hover-expand: 카메라가 바뀌면 확장 카드의 뷰포트 클램프도 다시 계산해야 한다(줌 중 카드가
   //   화면 밖으로 밀리는 것 방지). 팬/드래그는 개시 시점에 hover 가 해제되므로 실제 발동은 wheel 줌 경로 한정.
   _applyCam(c) { if (!this.world) return; this.world.scale.set(c.zoom); this.world.position.set(c.x, c.y); this._renderMinimapViewport();
+    this._syncEdgeZoom();   // §85: screen-space 굵기 유지 — 줌이 바뀌면 엣지 기하를 다시 굽는다
     this._revalidateHover(); this._render(); this._emitTransform(); }
+  // §85: 굵기는 페인트 시점의 zoom 으로 model 좌표에 **bake** 되므로, world scale 만 바뀌면 화면 두께가
+  //   다시 줌 비례로 흐른다 — 줌 변화가 유의할 때만 엣지를 재페인트해 화면 두께를 되돌린다.
+  //   임계(로그 0.22 ≈ 25%)를 둔 이유: 휠 한 틱마다 전량 재페인트하면 대형 스코프에서 프레임이 무너진다.
+  //   그 사이 구간의 두께 오차는 최대 ±12% 로 육안 식별이 어렵다. 재페인트는 rAF 로 코얼레싱한다.
+  _syncEdgeZoom() {
+    const z = this._cam.zoom, last = this._edgePaintZoom;
+    if (last && Math.abs(Math.log(z / last)) < 0.22) return;
+    this._edgePaintZoom = z;
+    if (this._edgeZoomRaf) return;
+    const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : null;
+    if (!raf) { this._repaintAllEdges(); return; }
+    this._edgeZoomRaf = raf(() => { this._edgeZoomRaf = 0; this._repaintAllEdges(); this._render(); });
+  }
+  // 전 엣지 in-place 재페인트(Graphics 재사용 — destroy/recreate 없음). 좌표는 불변이라 서명도 그대로다.
+  _repaintAllEdges() {
+    if (!this.world) return;
+    for (const e of (this._built.edges || [])) {
+      const eid = PixiAdapterPure.edgeId(e);
+      const g = this._objs.get(eid);
+      if (!g || typeof g.clear !== "function") continue;
+      const a = this._resolvePos(e.source), b = this._resolvePos(e.target);
+      if (!a || !b) continue;
+      this._paintEdge(g, e, a, b);
+    }
+  }
   getSize() { return this.app ? [this.app.renderer.width / this.app.renderer.resolution, this.app.renderer.height / this.app.renderer.resolution] : [0, 0]; }
   getZoom() { return this._cam.zoom; }
   zoomTo(z, opts) { const c = this._cam; c.zoom = PixiAdapterPure.clampZoom(z, this.zoomRange); this._applyCam(c); }
@@ -754,10 +806,16 @@ export class PixiGraphAdapter {
     // 카드는 **항상 불투명**(alpha 1)이다. dim(§57.9) 된 노드의 alpha(0.38)를 카드에도 램프하면, 램프 도중
     //   아래 원 노드의 잘린 라벨이 비쳐 확장 중인 글자와 이중으로 겹친다(codex review P2). 애초에 사용자가
     //   hover 한 이유가 "이 이름을 읽으려고" 이므로 dim 노드도 즉시 판독 가능한 게 맞다.
-    const c = new P.Container(); c.position.set(g.x, g.y); c.alpha = 1;
+    const c = new P.Container(); c.position.set(PixiAdapterPure.hoverCardCenterX(g, g.w0), g.y); c.alpha = 1;
     const halo = new P.Container(), bg = new P.Graphics();
     const t = this._makeText(full, { size: s.labelFontSize || 12, fill: s.labelFill || "#ffffff", weight: s.labelFontWeight || 400 });
-    t.anchor.set(0.5, 0.5); t.position.set(0, 0);
+    // graph-label-hover-anchor: 텍스트도 **좌측 정렬**. 기준선(textLeft)은 pad 로 추정하지 않고 **원 노드가
+    //   실제로 렌더하던 잘린 라벨의 좌측**을 역산해 쓴다 — 원 라벨은 중앙 정렬이므로 `노드중심 - 렌더폭/2`.
+    //   (루틴 칩처럼 labelMaxWidth 가 칩 폭보다 큰 스타일에서 pad 기준을 쓰면 hover 순간 ~17px 튄다.)
+    t.anchor.set(0, 0.5);
+    this._fitText(t, full, g.inner0);
+    const tw0 = t.width;
+    const textLeft = (tw0 > 0) ? (g.x - tw0 / 2) : (g.left + g.pad / 2);
     c.addChild(halo, bg, t);
     layer.addChild(c);
     const card = { c, g, node: n, w: g.w0, raf: 0, paint: null };   // node = _pick tier0 프록시 대상
@@ -778,6 +836,7 @@ export class PixiGraphAdapter {
       // 텍스트 가용폭은 박스 폭과 분리 보간(inner0=원 한계 → inner1=종단 안쪽 폭) — 위 hoverExpandGeom 주석 참조.
       const span = g.w1 - g.w0, k = span > 0 ? Math.max(0, Math.min(1, (w - g.w0) / span)) : 1;
       this._fitText(t, full, Math.max(0, g.inner0 + (g.inner1 - g.inner0) * k));
+      t.position.set(PixiAdapterPure.hoverTextOffsetX(g, w, textLeft), 0);   // 앞글자 절대 위치 고정
     };
     this._hoverCard = card;
     card.paint(g.w0);
@@ -785,10 +844,12 @@ export class PixiGraphAdapter {
     this._tweenCard(card, g.w0, g.w1, HOVER_EXPAND_MS, null);
   }
 
-  // 확장 카드 중심의 world x — 뷰포트 + 미니맵 회피 클램프 반영. 순수 산술은 PixiAdapterPure.clampCardCenterX.
+  // 확장 카드 중심의 world x — 좌변 고정(hoverCardCenterX) 위에 뷰포트 + 미니맵 회피 클램프를 얹는다.
+  //   순수 산술은 PixiAdapterPure.hoverCardCenterX / clampCardCenterX.
   _clampCardX(g, w) {
+    const base = PixiAdapterPure.hoverCardCenterX(g, w);
     const [vw] = this.getSize();
-    if (!(vw > 0)) return g.x;
+    if (!(vw > 0)) return base;
     const cam = this._cam;
     let rightMax = vw;
     const mm = this._minimap;
@@ -797,7 +858,7 @@ export class PixiGraphAdapter {
       const cy = g.y * cam.zoom + cam.y, ch = Math.abs(g.h * cam.zoom) / 2;
       if (cy + ch > my0 && cy - ch < my1) rightMax = mm.c.position.x;
     }
-    const sx = PixiAdapterPure.clampCardCenterX(g.x * cam.zoom + cam.x, w * cam.zoom, vw, 6, rightMax);
+    const sx = PixiAdapterPure.clampCardCenterX(base * cam.zoom + cam.x, w * cam.zoom, vw, 6, rightMax);
     return (sx - cam.x) / cam.zoom;
   }
 
@@ -1225,11 +1286,13 @@ export class PixiGraphAdapter {
     const color = s.stroke || "#cbd2db";
     const lowFi = !!this._lowFi;
     const zoom = (this._cam && this._cam.zoom) || 1;
-    // graph-edge-legibility(§84): 줌아웃 서브픽셀 소실 보정 — 전 엣지 동일 배율이라 굵기 서열은 보존.
-    const lw = (s.lineWidth || 1.4) * edgeWidthBoost(zoom);
+    // §86: style.lineWidth 는 **화면 픽셀** 기준값 — 줌 정책(줌인 고정·줌아웃 비례)을 태워 model 로 환산.
+    const lw = edgeModelWidth(s.lineWidth || 1.4, zoom);
+    const sc = lw / (s.lineWidth || 1.4);   // 화살촉·다발 간격에 같은 정책을 태우기 위한 실효 배율
     const arc = PixiAdapterPure.edgeArc(a, b, s.curve || 0, s.curveMax, s.curveMin);
     const nStrand = lowFi ? 1 : Math.max(1, Math.min(6, (s.strands | 0) || 1));
-    const offs = nStrand > 1 ? PixiAdapterPure.strandOffsets(nStrand, s.strandGap || 3.2) : EDGE_NO_STRAND;
+    // 다발 간격도 화면 기준 — model 로 두면 줌아웃에서 가닥이 겹쳐 볼륨 표현이 사라진다(§85).
+    const offs = nStrand > 1 ? PixiAdapterPure.strandOffsets(nStrand, (s.strandGap || 3.2) * sc) : EDGE_NO_STRAND;
     const segs = (arc.off || nStrand > 1) && s.lineDash ? PixiAdapterPure.curveSegs(arc.len, zoom, lowFi) : 0;
     let tipAng = Math.atan2(b[1] - a[1], b[0] - a[0]), tailAng = tipAng + Math.PI;
     for (let i = 0; i < offs.length; i++) {
@@ -1249,9 +1312,9 @@ export class PixiGraphAdapter {
     }
     // 화살촉은 곡선 **끝 접선**을 따른다(직선 각도로 그리면 호와 어긋나 꺾여 보인다). 선이 얇아진
     //   만큼 촉도 작게(선 굵기 연동), 대신 alpha 는 선보다 올려 방향 가독성을 유지한다.
-    //   상·하한도 굵기와 같은 배율을 태워 줌아웃에서 촉만 서브픽셀로 사라지지 않게 한다(§84).
-    const hb = edgeWidthBoost(zoom);
-    const headA = Math.min(1, alpha * 1.6), headSz = Math.max(4.5 * hb, Math.min(9 * hb, 3.6 * hb + lw * 1.9));
+    //   촉 크기도 화면 기준(§85) — 줌인에서 촉만 거대해지는 리본 현상의 원인이었다.
+    const headA = Math.min(1, alpha * 1.6);
+    const headSz = sc * Math.max(4.5, Math.min(9, 3.6 + (s.lineWidth || 1.4) * 1.9));
     if (s.endArrow) this._arrow(g, b[0], b[1], tipAng, color, headA, headSz);
     if (s.startArrow) this._arrow(g, a[0], a[1], tailAng, color, headA, headSz);
     if (s.labelText) {
@@ -1353,6 +1416,7 @@ export class PixiGraphAdapter {
   destroy() {
     try { if (this._tweenRaf) cancelAnimationFrame(this._tweenRaf); } catch (_) {}
     try { if (this._pendingRaf) cancelAnimationFrame(this._pendingRaf); } catch (_) {}   // graph-edge-drag-perf: 코얼레싱 rAF 정리
+    try { if (this._edgeZoomRaf) cancelAnimationFrame(this._edgeZoomRaf); } catch (_) {}   // §85: 줌 재페인트 rAF 정리
     try { this._cancelHoverProbe(false); } catch (_) {}   // graph-label-hover-expand: 대기 프로브 rAF 정리
     try { this._clearLabelHover(); } catch (_) {}   // graph-label-hover-expand: 예약 타이머·트윈 rAF·카드 정리
     try { if (this._ro) this._ro.disconnect(); } catch (_) {}   // m1: ResizeObserver 정리

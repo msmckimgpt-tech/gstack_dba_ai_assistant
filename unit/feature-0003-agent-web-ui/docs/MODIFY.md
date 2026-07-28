@@ -11,6 +11,34 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T142745-graph-edge-encoding (TASK-20260728T142745 — 줌 두께 정책 구간 분리 + 인코딩 축 재배치, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js`: `edgeScreenScale`(§85) → **`edgeModelWidth(baseScreen, zoom)`** — `clamp(base·min(1, zoom/EDGE_ZFULL), EDGE_MIN_SCREEN_W, base)/zoom`. 상수 `EDGE_ZFULL=1`·`EDGE_MIN_SCREEN_W=0.25`. 화살촉·다발 간격은 실효 배율(`lw/base`) 공유.
+- `graph-roleviz.js`: `_metaEdgeStrands` 폐지 → **`_metaEdgeWidthFor(count)`**(0.6 + min(1.6, log2(n)·0.25)) 신설·export. `_metaEdgeFlow` 는 곡선 키만 주입(다발 제거). 세 스타일 함수 재작성 — 굵기=개수 축 공통, 진하기=신뢰도(trusted 0.85 / 루틴 0.72 / candidate 0.5 / crossDs 0.5 / inferred 0.38 / SCHEMA_REF 중립 0.55).
+- `graph-core.js`: import 에 `_metaEdgeWidthFor` 추가, USES 사용선 굵기를 개수 축(`_metaEdgeWidthFor(1)`)으로 정합.
+- `tests/headless/test_graph_edge_flow.js`: A11 재작성(줌 구간별 정책 6건) · B1 개수→굵기 · B2 채널 직교화 · B4/C0/C4 갱신 — 66 PASS. `test_g6build_edge_visibility.js` T1 계약 갱신(다발 → 개수 굵기).
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+
+## CHG-20260728T142000-graph-hover-anchor-postverify (TASK-20260728T135222 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-28. 코드·자산 **무변경** — test-runs.d fragment POST-DEPLOY 결과 + TASK 체크박스 종결 + evidence 2종.
+- 배포: PR #1000 → main **9158551b** → `make deploy-web-only` 무중단 롤링(web-a·web-b `git_commit=9158551b`, asset stamp `6fd0965e5b49`, 90s soak 통과).
+- 라이브 실측(win-browser 실 Windows Chrome 150, `mysql-local` 스키마 카드 `agent_attachment_5f6353c47…`): **6/6 PASS** — ①애니 전 구간(15프레임 t=24~704ms) 카드 좌측 x **249 단일값**(앞글자 이동 0) ②유의 픽셀 diff 가 **캔버스 x 354~449**(원 카드 우측 끝 이후)에만 국한 = 우측 모서리만 확장 ③전체 명칭 `agent_attachment_5f6353c47c315cff1945d6b92f941c09` 노출 ④확장분이 우측 이웃 카드 위(z-order), 이웃 위치 불변 ⑤이탈 픽셀 동치 ⑥pageerror 0.
+- 증적: `docs/evidence/pb0008-graph-hover-anchor-{before,after}-20260728.png`. Cross-ref: CHG/REV-20260728T135222-graph-label-hover-anchor.
+
+## CHG-20260728T135222-graph-label-hover-anchor (TASK-20260728T135222 — hover 확장 기준점을 중앙 대칭 → 좌변 고정 + 우측 확장으로 변경, Minor §12.3, frontend-only)
+- Date: 2026-07-28. Files: `static/graph/graph-renderer-pixi.js` · `tests/headless/test_pixi_adapter.js`. 사용자 정정 요청("확장되는 기준이 중앙이 아닌, 좌측은 고정 + 우측 모서리부터 확장").
+- 변경 ①(순수): `hoverExpandGeom` 이 앵커 `left = s.x - w0/2` 를 반환. 신규 `hoverCardCenterX(g,w) = g.left + w/2`(폭이 커져도 좌변 불변, `left` 부재 구 geom 은 중앙 고정 폴백) · 신규 `hoverTextOffsetX(g,w,textLeft)`(라벨 world 좌측을 절대 고정하도록 카드 중심 이동분 상쇄).
+- 변경 ②(어댑터): 카드 컨테이너 x = `hoverCardCenterX` (그 위에 기존 뷰포트·미니맵 클램프 유지), 라벨 `anchor(0,0.5)` + 매 프레임 `hoverTextOffsetX` 로 배치. `textLeft` 는 pad 추정이 아니라 **원 노드가 실제 렌더하던 잘린 라벨의 좌측을 역산**(`노드중심 - 렌더폭/2`)해 쓴다.
+- 근본 이유(codex review P2 반영): 루틴 칩은 `labelMaxWidth`(176)가 칩 폭(150)보다 커 원 라벨이 이미 칩 밖으로 넘쳐 있다 → 좌측 기준을 `칩 좌변 + pad/2` 로 잡으면 hover 순간 라벨이 ~17px 튄다. 실렌더 폭 역산만이 "t=0 픽셀 동일" 을 보장한다.
+- 불변 유지: 오버레이 전용(scene 모델 무변경 → 다른 노드 위치 불변) · zIndex 99998 · `_pick` tier0 클릭 라우팅 · 정리 경로 · render-on-demand.
+- 검증: `node --check` PASS · `test_pixi_adapter.js` **190 PASS / 0 FAIL** · 그래프 headless 전 스위트 **639 PASS / 0 FAIL** · codex 2 라운드(P2 1건 수정 → 회귀 0). POST-DEPLOY PB-0008 잔여. Cross-ref: REV-20260728T135222-graph-label-hover-anchor · CHG-20260728T120530-graph-label-hover-expand.
+
+## CHG-20260728T135111-graph-edge-screenspace (TASK-20260728T135111-graph-edge-screenspace — 굵기 변성 제거 + 프로시저 관계선 실선·LOD 해제, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js`: `edgeWidthBoost`(§84) → **`edgeScreenScale = 1/zoom`** 로 교체 — 굵기·화살촉·다발 간격을 화면 픽셀로 해석. `_syncEdgeZoom()`+`_repaintAllEdges()` 신설(줌 변화 로그 0.22 초과 시 전 엣지 in-place 재페인트, rAF 코얼레싱, `destroy` 정리) + `_applyCam` 배선.
+- `graph-roleviz.js`: 전 관계선 `lineDash` 제거(실선) · 굵기 서열 재편(trusted 1.6 / ROUTINE_USES 1.3 / candidate 1.0 / crossDs 1.0~1.15 / inferred 0.75) · alpha 재조정.
+- `graph-core.js`: ROUTINE_USES LOD 축약 제거(직접 렌더 경로 + 집계 경로 `agg.kind !== "ROUTINE_USES"` 가드).
+- `tests/headless/test_graph_edge_flow.js`: A11(화면 굵기 불변·model 반비례·서열) · A12(줌 재동기화 임계) 신설, B2/C0 실선·신뢰도 계약 추가 — 61 PASS.
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+
 ## CHG-20260728T123000-graph-label-hover-postverify (TASK-20260728T123000 — 잘린 노드 명칭 hover 확장 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - Date: 2026-07-28. 코드·자산 **무변경** — test-runs.d fragment POST-DEPLOY 결과 append + TASK 체크박스 종결 + evidence 3종 추가.
 - 배포: PR #993 → main **d980ebe4** → `make deploy-web-only` 무중단 롤링(web-a·web-b `git_commit=d980ebe4`, Caddyfile 무변경 no-op, 90s soak 통과). 서빙 `/static/graph/graph-renderer-pixi.js?v=1659a75f6c2f`(80,232 B)에 `hoverExpandGeom`·`_labelHoverLayer`·`_probeHover` 존재 확증.

@@ -3,7 +3,7 @@
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
 import { adminState, apiFetch } from "../admin.js?v=dev";
 import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaNatSort, _metaSchemaComboOf } from "./graph-state.js?v=dev";
-import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
+import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
@@ -852,7 +852,10 @@ function _metaG6Build() {
         const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
         if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 루틴 사용선 제거(colLevel·agg 공통 — LOD 도달 전)
         if (rs === e.source && rt === e.target) {
-          if (lodActive && !keepLod && !xr) { lodDropped += 1; return; }
+          // §85(사용자 요청): 프로시저/함수 사용선의 **줌아웃 LOD 축약 제거**. 축약은 얇은 잔점선이
+          //   줌아웃에서 노이즈로만 남던 시절의 완화책이었는데, 실선 + 화면 고정 굵기 + 밀도 누적으로
+          //   전환된 지금은 줌아웃에서도 사용 관계가 제 몫의 신호를 낸다. 오히려 축약이 "전체보기에서
+          //   루틴 관계가 통째로 사라지는" 더 큰 손실이었다. REFERENCES 쪽 LOD 는 그대로 둔다.
           edges.push({ id: e.id, source: rs, target: rt,
             data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: e.relation_type },
             style: dimIf(_metaRoutineEdgeStyle(e.relation_type, xr), keep) });
@@ -909,7 +912,9 @@ function _metaG6Build() {
     if (e.status === "trusted" || (e.status === "candidate" && agg.status !== "trusted")) agg.status = e.status;   // 최강 상태 채택
   });
   aggMap.forEach((agg) => {
-    if (lodActive && !agg.keepLod && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
+    // §85: ROUTINE_USES 집계는 LOD 축약 대상에서 제외(위 직접 렌더 경로와 동일 근거 — 사용자 요청).
+    if (agg.kind !== "ROUTINE_USES"
+        && lodActive && !agg.keepLod && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
     // graph-edge-flow(요구 ③): 집계 엣지가 대표하는 쌍의 수를 **굵기 대신 다발 가닥 수**로 넘긴다
     //   (_metaEdgeFlow 가 count→strands 로 환산). 굵기 가산(+0.8)은 제거 — 얇은 선이 겹쳐 진해지는
     //   밀도 인코딩과 상충하고, 관계 수가 커져도 굵기 상한에서 포화됐다.
@@ -997,7 +1002,7 @@ function _metaG6BuildProducts() {
     edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
       // graph-edge-flow: 제품→데이터소스 사용선도 같은 어휘(얇은 반투명 호)로 통일 — 한 화면에 직선과
       //   곡선이 섞이면 "왜 이 선만 다르지" 라는 무의미한 시각 신호가 생긴다. 실선(lineDash 생략 — G6 크래시 방지).
-      style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: 1.0, strokeOpacity: 0.66, endArrow: true, zIndex: _METZ.EDGE }) });   // §84 가시성 바닥 상향
+      style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: _metaEdgeWidthFor(1), strokeOpacity: 0.6, endArrow: true, zIndex: _METZ.EDGE }) });   // §86 개수=굵기 축 정합
   });
   _metaBakeBaseOpacity(nodes);   // §57.9: 제품/데이터소스 뷰도 동일 base opacity 명시(일관성)
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));

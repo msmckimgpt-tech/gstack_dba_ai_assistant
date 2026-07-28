@@ -137,7 +137,7 @@ def test_llm_labels_cache_hit_skips_llm(monkeypatch):
     from modules import llm as llm_mod
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
     monkeypatch.setattr(llm_mod, "llm_cluster_label",
-                        lambda payload: pytest.fail("cache hit 인데 LLM 호출됨"))
+                        lambda payload, **_kw: pytest.fail("cache hit 인데 LLM 호출됨"))
     cur = FakeCursor(rows={"FROM agent_runtime.kv WHERE": ("몬스터 스폰",)})
     out = sc._llm_content_labels(cur, "ds1", "cc_data_main", _label_clusters())
     assert out == {0: "몬스터 스폰"}
@@ -148,7 +148,7 @@ def test_llm_labels_miss_calls_and_caches(monkeypatch):
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
     calls = []
     monkeypatch.setattr(llm_mod, "llm_cluster_label",
-                        lambda payload: calls.append(payload) or {"labels": [{"idx": 0, "label": "몬스터 스폰"}]})
+                        lambda payload, **_kw: calls.append(payload) or {"labels": [{"idx": 0, "label": "몬스터 스폰"}]})
     cur = FakeCursor()   # kv miss
     out = sc._llm_content_labels(cur, "ds1", "cc_data_main", _label_clusters())
     assert out == {0: "몬스터 스폰"} and len(calls) == 1
@@ -160,7 +160,7 @@ def test_llm_labels_miss_calls_and_caches(monkeypatch):
 def test_llm_labels_fail_soft(monkeypatch):
     from modules import llm as llm_mod
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
-    monkeypatch.setattr(llm_mod, "llm_cluster_label", lambda payload: None)
+    monkeypatch.setattr(llm_mod, "llm_cluster_label", lambda payload, **_kw: None)
     out = sc._llm_content_labels(FakeCursor(), "ds1", "db", _label_clusters())
     assert out == {}   # caller 가 affix 폴백
 
@@ -477,7 +477,7 @@ def test_llm_labels_payload_uses_display_label(monkeypatch):
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
     calls = []
     monkeypatch.setattr(llm_mod, "llm_cluster_label",
-                        lambda payload: calls.append(payload) or {"labels": [{"idx": 0, "label": "몬스터 스폰"}]})
+                        lambda payload, **_kw: calls.append(payload) or {"labels": [{"idx": 0, "label": "몬스터 스폰"}]})
     cur = FakeCursor(rows={"FROM agent_runtime.datasource_health": ("mssql-qa-idc",)})
     out = sc._llm_content_labels(cur, "mssql-06656002eda6", "cc_data_main", _label_clusters())
     assert out == {0: "몬스터 스폰"} and calls[0]["datasource"] == "mssql-qa-idc"
@@ -493,7 +493,7 @@ def test_llm_labels_cache_key_uses_signature_hash(monkeypatch):
     from modules import llm as llm_mod
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", True, raising=False)
     monkeypatch.setattr(llm_mod, "llm_cluster_label",
-                        lambda payload: {"labels": [{"idx": 0, "label": "새 라벨"}]})
+                        lambda payload, **_kw: {"labels": [{"idx": 0, "label": "새 라벨"}]})
     ns = sc._label_ns_hash("ds1", "db")
     base = {"idx": 0, "keys": ["k1", "k2"], "names": ["t1", "t2"], "summaries": []}
     cur1 = FakeCursor()

@@ -90,12 +90,11 @@ function check(name, cond, extra) {
   const e = out.edges.find((x) => x.data && x.data.label === "SCHEMA_REF");
   check("T1 카드간 SCHEMA_REF 방출", !!e && e.source === "SC:" + nk("a") && e.target === "SC:" + nk("b"), e && { s: e.source, t: e.target });
   check("T1 count 라벨", !!e && e.style.labelText === "12", e && e.style.labelText);
-  // graph-edge-flow(§83): 부모 카드 간 집계선의 '볼륨' 인코딩이 **굵기 단독 → 다발 가닥 수** 로 바뀜.
-  //   굵기 하나로는 관계 100개와 1000개가 상한에서 구별되지 않아 count 신호가 포화됐다. 계약도 그에 맞춰
-  //   갱신: count(12) → 가닥 3 + 완만한 굵기·불투명도 상승 + 방향성 곡선.
-  check("T1 볼륨=다발 가닥(count 12→3가닥)", !!e && e.style.strands === 3, e && e.style.strands);
-  check("T1 볼륨: 굵기·불투명도 동반 상승", !!e && e.style.lineWidth > 0.85 && e.style.strokeOpacity > 0.3,
-    e && { w: e.style.lineWidth, o: e.style.strokeOpacity });
+  // §86: 볼륨 인코딩이 다발 가닥 → **개수=굵기** 단일 축으로 재통합(사용자 지정 — "많을수록 굵게").
+  //   다발은 굵기와 중복 인코딩이었고 줌아웃에서 화면을 더 가렸다. 진하기는 신뢰도 축이라 여기선 중립 고정.
+  check("T1 볼륨=개수 비례 굵기(count 12)", !!e && e.style.lineWidth > 0.6 && e.style.lineWidth <= 2.2,
+    e && e.style.lineWidth);
+  check("T1 다발 키 미방출", !!e && e.style.strands === undefined, e && e.style.strands);
   check("T1 방향성 곡선 부여", !!e && e.style.curve > 0 && e.style.curveMax > 0, e && e.style.curve);
   M.schemaExpanded.add(nk("a"));
   addTable(M, "a.t1");

@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260728T142745-graph-edge-encoding — 줌 두께 정책 구간 분리 + 인코딩 축 재배치(굵기=개수 / 진하기=신뢰도) (Minor §12.3 — feature-0003 프론트 3모듈, 정본 feature-0016 §86)
+- 요청(사용자, 2026-07-28, 스크린샷 2매): "극단적으로 줌아웃을 할 경우에는 해당 선의 굵기가 보존되어 화면을 전체적으로 가려버리는 이슈 … 기본적으로 관계선은 가느다랗게 구성하고, 연결 부위의 신뢰성이 높을수록 진하게, 많을수록 굵게 표현되도록"
+- 진단: 두께의 줌 정책을 §84(줌아웃만 고정→줌인 부풂) → §85(전 구간 고정→줌아웃 도포)로 반대 방향으로 밀었다. 같은 축의 양극 실패이며 답은 **구간 분리**.
+- 완료 판정(acceptance):
+  - [x] [AC-GEE-1] zoom 1/2/4/8 화면 두께 불변(A11).
+  - [x] [AC-GEE-2] zoom 0.5 비례·극단 줌아웃 최소 0.25px·단조(A11) + 라이브 육안(도포 소멸).
+  - [x] [AC-GEE-3] 같은 개수면 신뢰도 무관 동일 굵기 · 개수 로그 증가 · 2.2px 포화(B1/B2).
+  - [x] [AC-GEE-4] 진하기 신뢰도 단조 · 다발 키 미방출(B2/B4).
+- 프로세스 사고: 작업 중 셸 cwd 가 main worktree 로 되돌아가 상대경로 편집 3파일이 `repo/` 에 적용(§13.2.7 F0). 자체 적발 후 diff 추출 → main 복원(status 0) → 본 worktree 이관. 커밋 전 단계라 원격 영향 없음.
+- 상태: **완결** — 라이브 검증·원복 완료.
+
+## TASK-20260728T135111-graph-edge-screenspace — 관계선 굵기 변성 제거(screen-space) + 프로시저 관계선 실선·LOD 해제 (Minor §12.3 — feature-0003 프론트 3모듈, 정본 feature-0016 §85)
+- 요청(사용자, 2026-07-28, 스크린샷 2매 동반): "카메라 줌 수준, 포커스 인/아웃에 따라 관계선의 굵기가 변성되는 이슈가 확인되어 수정이 필요합니다. 또한, 줌 아웃으로 인한 [프로시저/함수] 관계선 축약 또한, 이번 작업을 통해 시각적으로 개선될 예정이니 제거 후 디자인을 개선해주세요(점선 -> 실선, 신뢰도에 비례하여 굵기 구성)"
+- 근본원인(R1): 굵기가 model 좌표 → world scale 이 곱해짐. §84 의 바닥 보정이 임계 줌을 경계로 화면 고정/model 고정 두 체제를 만들어 변성을 키웠다.
+- 완료 판정(acceptance):
+  - [x] [AC-GES-1] 줌 0.1~4 화면 두께 불변(A11) + 라이브 실측 중앙값 1.0/1.0/2.0px.
+  - [x] [AC-GES-2] 줌 재동기화 임계 동작(A12 4건).
+  - [x] [AC-GES-3] 대시 0 · 신뢰도 굵기 단조(B2/C0) + 라이브 실선 육안.
+  - [x] [AC-GES-4] ROUTINE_USES LOD 축약 제거(직접·집계 두 경로).
+  - [ ] [AC-GES-5] **POST-DEPLOY** — 루틴 노드 표시 스코프에서 사용선 육안(실선·전체보기 표시·읽기/쓰기 2선).
+- 상태: 코드·단위·라이브(부분) 완료 → verify → PR → 머지 → 배포 → AC-GES-5.
+
 ## TASK-20260728T123838-graph-edge-legibility — 그래프 관계선 육안 검증 → 부정합 3건 보정(줌아웃 가시성·곡률 결속·위계 균형) (Minor §12.3 — feature-0003 web/UI 프론트 3모듈, 정본 feature-0016 §84, /_template:entry arg-given)
 - 요청(사용자, 2026-07-28): "육안검증을 수행하며, 디자인적으로 부정합한 부분을 탐색 후 개선해주세요. 주로 DB단위로 AI 능동 분석이 완료된 항목들을 중심으로 탐색해주세요."
 - 검증 스코프 선정: `node_analysis_runs` 집계로 분석 완료 규모 상위를 특정(masangsoftweb 2,574 · cc_data_main 745 · gunzgame 709 · fhgame1 538) → DB 밴드가 가장 많은 **mssql-qa-idc** 를 주 스코프로 라이브 관측.
@@ -6600,3 +6622,17 @@ mouse-hover 툴팁으로 충분하니 제거.
 - [x] ⑤ 확장 영역 클릭 라우팅 대조 실험(hover 전 = 클러스터 / hover 후 = 원 노드 상세)
 - [x] ⑥ 이탈 원복 픽셀 동치(잔상 0) · ⑦ 미잘림 칩 무반응 · ⑧ pageerror 0
 - [x] 증적 — `docs/test-runs.d/20260728T120530-graph-label-hover-expand.md` · `docs/evidence/pb0008-graph-label-hover-{before,after,leave}-20260728.png`
+
+## TASK-20260728T135222-graph-label-hover-anchor — hover 확장 기준점: 중앙 대칭 → 좌변 고정 + 우측 확장 (사용자 정정, Minor §12.3 frontend-only)
+- 요청(사용자, 2026-07-28): "실제 작동을 확인했습니다. 다만, 확장되는 기준이 중앙이 아닌, 좌측은 고정 + 우측 모서리부터 확장되도록 구성해주세요."
+- 변경: 확장 앵커를 **원 칩 좌변**(`geom.left`)으로 두고 카드 중심을 `left + w/2` 로 산출(`hoverCardCenterX`) → 폭이 커져도 좌변 불변. 라벨도 좌측 정렬하되 기준선은 pad 추정이 아니라 **원 노드가 렌더하던 잘린 라벨의 좌측을 역산**(`hoverTextOffsetX`)해, 확장 내내 앞글자가 1px 도 움직이지 않고 뒷글자만 우측에서 드러난다.
+- 함정(codex P2, in-cycle 수정): 루틴 칩은 `labelMaxWidth`(176) > 칩 폭(150) 이라 원 라벨이 칩 밖으로 넘쳐 있다 → `칩 좌변 + pad/2` 기준이면 hover 순간 ~17px 점프.
+- [x] `hoverExpandGeom.left` + `hoverCardCenterX` + `hoverTextOffsetX` 순수 3종 및 어댑터 배선
+- [x] 앵커 계약 단위테스트(좌변 불변 · t=0/t=1 라벨 좌측 동일 · 루틴 칩 대조) — 190 PASS / 0 FAIL
+- [x] 그래프 headless 전 스위트 639 PASS / 0 FAIL (회귀 0)
+- [x] §18.8 codex 2 라운드 수렴(P2 1건 수정)
+- [x] **POST-DEPLOY PB-0008** — 좌변 고정·우측만 확장·앞글자 불변 실화면 확인 (`visual_verification_scope: always`)
+  - 배포 PR #1000 → main `9158551b` → `deploy-web-only` 무중단 롤링(soak PASS). 실 Windows Chrome 150 실측 **6/6 PASS**:
+    ① 애니 전 구간 카드 좌측 x=**249 단일값**(앞글자 이동 0) ② 유의 diff 가 원 카드 우측 끝 이후(캔버스 x 354~449)에만 발생
+    ③ `agent_attachment_5f6353c47…` → 전체 명칭 노출 ④ 확장분이 우측 이웃 카드 **위**(이웃 위치는 불변) ⑤ 이탈 픽셀 동치 ⑥ pageerror 0
+  - 증적: `docs/evidence/pb0008-graph-hover-anchor-{before,after}-20260728.png`

@@ -495,7 +495,24 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
 
   const g = Pure.hoverExpandGeom(tbl(), 210, { maxWidth: 460 });
   ok(!!g, "T26 잘린 라벨 → 확장 기하 산출");
-  ok(g.x === 100 && g.y === 50, "T26 확장 중심 = 원 칩 중심(좌우 대칭 — 이웃 노드 침범 최소)");
+  ok(g.y === 50 && g.left === 25, "T26 확장 앵커 = 원 칩 **좌변**(x100 - w150/2 = 25), y 는 원 칩 그대로");
+  // graph-label-hover-anchor(사용자 정정): 좌변 고정 + 우측 확장 — 카드 중심은 폭에 비례해 오른쪽으로 밀린다.
+  ok(Pure.hoverCardCenterX(g, g.w0) === 100, "T26 t=0 중심 = 원 칩 중심(픽셀 동일 시작)");
+  ok(Pure.hoverCardCenterX(g, g.w1) === 135, "T26 t=1 중심 = left + w1/2 (좌변 25 고정, 우측만 220 까지 성장)");
+  ok(Pure.hoverCardCenterX(g, g.w1) - g.w1 / 2 === g.left, "T26 어떤 폭에서도 좌변 불변");
+  ok(Pure.hoverCardCenterX(g, 185) === 117.5, "T26 중간 폭도 좌변 기준 선형");
+  ok(Pure.hoverCardCenterX({ x: 100, w0: 150 }, 220) === 100, "T26 left 부재(구 geom) → 중앙 고정 폴백");
+  ok(Pure.hoverCardCenterX(null, 220) === 0, "T26 geom null 안전");
+  // 앞글자 절대 고정: 카드가 넓어져도 라벨의 world 좌측(textLeft)은 불변 → 카드-로컬 오프셋으로 상쇄.
+  const tl = 100 - 138 / 2;   // 원 렌더 폭 138px 인 잘린 라벨의 좌측(중앙 정렬 역산)
+  ok(Pure.hoverCardCenterX(g, g.w0) + Pure.hoverTextOffsetX(g, g.w0, tl) === tl, "T26 t=0 라벨 좌측 = 원 렌더 좌측");
+  ok(Pure.hoverCardCenterX(g, g.w1) + Pure.hoverTextOffsetX(g, g.w1, tl) === tl, "T26 t=1 라벨 좌측 동일(앞글자 이동 0)");
+  // 루틴 칩(labelMaxWidth 176 > 칩 폭 150): pad 기준이면 17px 튄다 — 실렌더 폭 역산이라 튐 0.
+  const gr2 = Pure.hoverExpandGeom(tbl({ size: [150, 24], labelMaxWidth: 176 }), 210, {});
+  const tlr = 100 - 176 / 2;
+  ok(Pure.hoverCardCenterX(gr2, gr2.w0) + Pure.hoverTextOffsetX(gr2, gr2.w0, tlr) === tlr,
+    "T26 라벨이 칩보다 넓은 스타일도 t=0 라벨 좌측 불변(pad 추정 미사용)");
+  ok(gr2.left + gr2.pad / 2 !== tlr, "T26 (대조) pad 기준 좌측은 실렌더 좌측과 다르다 — 그래서 역산이 필요");
   ok(g.w0 === 150 && g.h === 24 && g.radius === 6, "T26 시작 폭/높이/라운드 = 원 칩(t=0 픽셀 동일 → 팝 없음)");
   ok(g.pad === 10 && g.w1 === 220, "T26 목표 폭 = 전체 라벨 + 원 칩 좌우 여백(210+10)");
   ok(g.capped === false, "T26 상한 미도달");
@@ -647,14 +664,16 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(Pure.clampCardCenterX(300, 220, 1000, 6, 820) === 300, "T26 미니맵과 무관한 위치는 그대로");
 
   // _clampCardX: 미니맵과 세로로 겹칠 때만 우측 경계가 좁아진다(줌=1·팬=0 기준).
+  //   좌변 고정 앵커(left) 위에 클램프가 얹힌다 — 기준 중심 = left + w/2.
   const mkCtx = (mmY) => ({ getSize() { return [1000, 600]; }, _cam: { zoom: 1, x: 0, y: 0 },
     _minimap: { c: { position: { x: 820, y: mmY } }, size: [168, 112] } });
-  ok(Adapter.prototype._clampCardX.call(mkCtx(478), { x: 800, y: 500, h: 24 }, 220) === 704,
-    "T26 _clampCardX 미니맵 y 밴드와 겹침 → 좌측으로 밀림");
-  ok(Adapter.prototype._clampCardX.call(mkCtx(478), { x: 800, y: 100, h: 24 }, 220) === 800,
-    "T26 _clampCardX 미니맵 위쪽(겹침 없음) → 보정 없음");
-  ok(Adapter.prototype._clampCardX.call({ getSize() { return [0, 0]; } }, { x: 42, y: 0, h: 24 }, 220) === 42,
-    "T26 _clampCardX 뷰포트 미확정(0) → 원 좌표 유지(안전 폴백)");
+  const gm = (y) => ({ x: 800, left: 725, w0: 150, y, h: 24 });   // 좌변 725 → w=220 이면 기준 중심 835
+  ok(Adapter.prototype._clampCardX.call(mkCtx(478), gm(500), 220) === 704,
+    "T26 _clampCardX 미니맵 y 밴드와 겹침 → 좌변 기준 중심(835)이 704 로 밀림");
+  ok(Adapter.prototype._clampCardX.call(mkCtx(478), gm(100), 220) === 835,
+    "T26 _clampCardX 미니맵 위쪽(겹침 없음) → 좌변 기준 중심 그대로(left+w/2)");
+  ok(Adapter.prototype._clampCardX.call({ getSize() { return [0, 0]; } }, { x: 42, left: 0, w0: 84, y: 0, h: 24 }, 220) === 110,
+    "T26 _clampCardX 뷰포트 미확정(0) → 클램프 없이 좌변 기준 중심(안전 폴백)");
 
   // _revalidateHover(codex review 5차 P2): 카메라 변화(wheel·focusElement·zoomTo·translateBy)마다 마지막
   //   커서 좌표로 재판정 — 눌림 중엔 무동작(팬 프레임 비용 0), 좌표 없으면 재페인트만.

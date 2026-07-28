@@ -614,3 +614,23 @@ red-team 자가검증(feature-0021)이 답변 초안에서 `BLOCK` 결함(verdic
 - `_warm_attachment_postprocess_deps()`: 워커 기동 시 `web.app` 1회 import(첫 job 지연 제거, 실패는 error 로그).
 - `run_agent(..., defer_terminal_status=False)`(agent_core.py): True 면 성공 경로 KV done 을 쓰지 않고 `result["_deferred_terminal"]` 로 위임. error/cancel 은 종전대로 즉시 기록. 기본 False → inproc 무변경.
 - **순서 계약**: run_agent → 후처리(materialize+strip) → KV terminal → ask_jobs terminal. web/프런트는 KV terminal 을 보고 답변을 읽으므로 이 순서가 raw 블록 노출을 막는다.
+
+## (llm-usage-target-scope, 2026-07-28) LLM 사용량 계측 — 데이터소스 차원(`llm_usage.target_scope`)
+
+- REQ-20260728-llm-usage-target-scope (사용자 요청 — usage-records-system 후속 과제):
+  `llm_usage` 에 데이터소스 차원 컬럼을 추가해, 사용 기록의 대상 화면 이동이 **역해소 추정이
+  아니라 기록된 사실**로 데이터소스를 특정하게 한다.
+- AC-20260728T124500-llm-usage-target-scope-1: 데이터소스 맥락이 있는 LLM 활동
+  (스키마/테이블 분석 · 그래프 노드 분석 · 콘텐츠 그룹 라벨 · 제품 분류 제안)의 신규 usage 행은
+  `target_scope` 에 데이터소스 `scope_key`(= `rag_objects.datasource_key` 공간)를 기록한다.
+- AC-20260728T124500-llm-usage-target-scope-2: 스코프는 **명시 인자 우선, 미전달 시
+  active-datasource ContextVar 폴백**으로 결정한다. 스레드 경계를 넘는 호출(병렬 노드 분석·
+  병렬 클러스터 라벨링·제품 분류)은 ContextVar 가 전파되지 않으므로 호출측이 명시 전달한다.
+- AC-20260728T124500-llm-usage-target-scope-3: 계측은 **프롬프트 payload 를 바꾸지 않는다**
+  (모델 입력·파생 캐시 키 무영향).
+- AC-20260728T124500-llm-usage-target-scope-4: 컬럼 부재(마이그 미적용·구 이미지)에서도
+  INSERT 는 컬럼을 줄여가는 사다리로, SELECT 는 리터럴 폴백으로 자가치유한다 — 계측·조회가
+  조용히 끊기지 않는다.
+- AC-20260728T124500-llm-usage-target-scope-5: 소급 백필하지 않는다. 기존 행은 조회 시점
+  역해소(종전 동작)를 유지하고, 응답의 `scope_source` 로 기록/추정을 구분할 수 있다.
+- 비목표: `target_scope` 는 계측·표시 값이며 **인가 결정에 사용하지 않는다**.

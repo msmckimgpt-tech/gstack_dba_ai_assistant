@@ -176,19 +176,21 @@ def test_record_llm_usage_latency_column(monkeypatch):
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: _CaptureConn(sink))
 
     # 미전달 → latency_ms=NULL 및 step_gap_ms=NULL (미측정=NULL). 0033: 컬럼 순서 (…, target,
-    #   latency_ms, step_gap_ms) — latency=params[-2], step_gap=params[-1] (신규 컬럼 맨 끝 additive).
+    #   latency_ms, step_gap_ms, target_scope) — 0047 로 맨 끝이 target_scope 가 되어
+    #   latency=params[-3], step_gap=params[-2], target_scope=params[-1] 로 한 칸씩 밀렸다(의도된 계약 변경).
     llm._record_llm_usage("claude-haiku-4", "agent", _resp())
     assert len(sink) == 1
     sql, params = sink[0]
     assert "latency_ms" in sql and "step_gap_ms" in sql
-    assert params[-2] is None, "latency 미전달 시 NULL"
-    assert params[-1] is None, "step_gap 미전달 시 NULL"
+    assert params[-3] is None, "latency 미전달 시 NULL"
+    assert params[-2] is None, "step_gap 미전달 시 NULL"
+    assert params[-1] is None, "target_scope 미전달·ContextVar 미설정 시 NULL"
 
-    # 명시값 → 그대로 전달 (latency=params[-2], step_gap=params[-1])
+    # 명시값 → 그대로 전달 (latency=params[-3], step_gap=params[-2])
     sink.clear()
     llm._record_llm_usage("claude-haiku-4", "agent", _resp(), latency_ms=123, step_gap_ms=1300)
-    assert sink[0][1][-2] == 123    # latency_ms(전체 왕복)
-    assert sink[0][1][-1] == 1300   # step_gap_ms(단계 간 간격)
+    assert sink[0][1][-3] == 123    # latency_ms(전체 왕복)
+    assert sink[0][1][-2] == 1300   # step_gap_ms(단계 간 간격)
 
 
 def test_record_llm_usage_skips_without_usage(monkeypatch):
@@ -231,7 +233,9 @@ def test_record_llm_usage_step_gap_column_absent_fallback(monkeypatch):
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: conn)
     llm._record_llm_usage("claude-haiku-4", "agent", _resp(),
                           target="public.users", latency_ms=42, step_gap_ms=1300)
-    assert conn.rolled_back == 1              # step_gap 포함 INSERT 1회 실패 → rollback
+    # 0047 로 사다리가 4단(…,target_scope / …,step_gap / …,latency / latency)이 되어,
+    #   step_gap_ms 를 포함하는 앞 2단이 실패한다(종전 1단).
+    assert conn.rolled_back == 2              # step_gap 포함 INSERT 2회 실패 → rollback
     assert len(sink) == 1
     sql, params = sink[0]
     assert "step_gap_ms" not in sql and "target" in sql   # 폴백 = (…, target, latency_ms)
@@ -248,7 +252,8 @@ def test_record_llm_usage_target_column_absent_fallback(monkeypatch):
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: conn)
     llm._record_llm_usage("claude-haiku-4", "table_insight", _resp(),
                           target="public.users", latency_ms=42, step_gap_ms=1300)
-    assert conn.rolled_back == 2              # step_gap-포함 + target-포함 INSERT 2회 실패
+    # 0047: "target" 부분문자열은 target_scope 단계도 매칭 → 앞 3단 실패 후 최소 base 성공(종전 2단).
+    assert conn.rolled_back == 3              # target 포함 INSERT 3회 실패
     assert len(sink) == 1
     sql, params = sink[0]
     assert "target" not in sql and "step_gap_ms" not in sql   # 폴백 = base 컬럼

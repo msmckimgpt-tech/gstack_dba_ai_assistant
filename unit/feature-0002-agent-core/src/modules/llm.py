@@ -671,7 +671,7 @@ def _record_llm_usage(
     model: str, task: str, resp,
     conversation_id: str | None = None, run_id: str | None = None,
     latency_ms: int | None = None, target: str | None = None,
-    step_gap_ms: int | None = None,
+    step_gap_ms: int | None = None, target_scope: str | None = None,
 ) -> None:
     """TASK-0136 (#11): LLM 호출 토큰 사용량을 agent_runtime.llm_usage 에 기록 (best-effort).
     모든 LLM 호출의 단일 chokepoint 에서 포착 → 비용 가시성. 실패해도 LLM 응답에 무영향.
@@ -718,47 +718,51 @@ def _record_llm_usage(
         # AI 운영 현황 '최근 활동' 대상 관측(0032): 인사이트 분석이 '어떤 대상'에 동작했는지
         # (schema / schema.table / 노드 FQN). 표시 전용 — 저카디널리티 task 와 분리해 집계 무영향.
         tgt = (str(target).strip()[:200] or None) if target is not None else None
+        # 사용 기록 데이터소스 귀속(0047): target 이 **어느 데이터소스의** 객체인지.
+        #   명시 인자 우선 → 미전달 시 ContextVar(active datasource) 폴백.
+        #   ContextVar 라 대화 in-process 병렬(WEB_PARALLEL_LIMIT)에서도 스레드/태스크 격리가 되지만,
+        #   **호출을 별 스레드로 넘기는 경로**(node_analysis 병렬 _run_llm, semantic_cluster 병렬
+        #   라벨링)는 ContextVar 가 전파되지 않으므로 호출측이 scope_key 를 명시 전달한다.
+        try:
+            tscope = target_scope if target_scope is not None else getattr(cfg, "get_active_datasource", lambda: None)()
+        except Exception:
+            tscope = None
+        tscope = (str(tscope).strip()[:96] or None) if tscope else None
         from .runtime_backend import _get_pg_runtime_conn
         pg = _get_pg_runtime_conn()
         if not pg:
             return
+        # 컬럼 사다리(자가치유): 마이그 미적용·stale agent image 로 신컬럼이 없어도 usage 행 자체는
+        #   보존한다. 앞에서부터 시도하고 첫 성공에서 멈춘다. 공통 8컬럼
+        #   (conversation_id·run_id·model·resolved_model·task·prompt/completion/total_tokens) 은
+        #   계측 회귀 테스트가 byte-동치로 고정하므로 순서를 바꾸지 않고, 신규 컬럼만 뒤에 붙인다.
+        #   순서: target(0032) → latency_ms(0030) → step_gap_ms(0033) → target_scope(0047).
+        _base_cols = ("conversation_id, run_id, model, resolved_model, task, "
+                      "prompt_tokens, completion_tokens, total_tokens")
+        _base_vals = (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt)
+        _ladder = (
+            ("target, latency_ms, step_gap_ms, target_scope", (tgt, lat, gap, tscope)),  # 0047 적용(정상)
+            ("target, latency_ms, step_gap_ms",               (tgt, lat, gap)),          # 0047 부재
+            ("target, latency_ms",                            (tgt, lat)),               # 0033 부재
+            ("latency_ms",                                    (lat,)),                   # 0032 부재
+        )
         try:
             with pg.cursor() as cur:
-                try:
-                    # 컬럼 순서: pt=5·ct=6·tt=7 는 계측 회귀 테스트(byte-동치) 보존, 신규 컬럼은 맨 끝에
-                    #   additive — target(0032) → latency_ms(0030) → step_gap_ms(0033, 마지막).
-                    cur.execute(
-                        "INSERT INTO agent_runtime.llm_usage "
-                        "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, target, latency_ms, step_gap_ms) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                        (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, tgt, lat, gap),
-                    )
-                except Exception:
-                    # step_gap_ms 컬럼 부재(0033 미적용 / agent image stale — memory: deploy-migration-stale-agent-image)
-                    # → target+latency 로 폴백(0032 적용 상태). 실패 트랜잭션은 abort 라 재쿼리 전 rollback 필수.
+                for _i, (_extra_cols, _extra_vals) in enumerate(_ladder):
+                    _vals = _base_vals + _extra_vals
+                    _sql = (f"INSERT INTO agent_runtime.llm_usage ({_base_cols}, {_extra_cols}) "
+                            f"VALUES ({', '.join(['%s'] * len(_vals))})")
                     try:
-                        pg.rollback()
+                        cur.execute(_sql, _vals)
+                        break
                     except Exception:
-                        pass
-                    try:
-                        cur.execute(
-                            "INSERT INTO agent_runtime.llm_usage "
-                            "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, target, latency_ms) "
-                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                            (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, tgt, lat),
-                        )
-                    except Exception:
-                        # target 컬럼도 부재(0032 미적용) → 최소 컬럼(latency)으로 폴백해 usage 행 자체는 보존.
+                        # 실패 트랜잭션은 abort 상태라 재쿼리 전 rollback 필수.
                         try:
                             pg.rollback()
                         except Exception:
                             pass
-                        cur.execute(
-                            "INSERT INTO agent_runtime.llm_usage "
-                            "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, latency_ms) "
-                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                            (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, lat),
-                        )
+                        if _i == len(_ladder) - 1:
+                            raise  # 최소 컬럼도 실패 = 계측 불가. 바깥 except 가 삼킨다(응답 무영향).
             pg.commit()
         finally:
             try:
@@ -1556,7 +1560,7 @@ def _effective_insight_model(now: "datetime | None" = None) -> str:
     return base if (is_weekday and in_hours) else off
 
 
-def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
+def llm_schema_insight(payload: dict[str, Any], *, scope_key: str | None = None) -> dict[str, Any] | None:
     # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
     # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
     # llm-routing-interactive-split(2026-07-04): 시간 기반 강등 — 평일 주간=claude, 야간·주말=gemma.
@@ -1580,6 +1584,7 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
             _insight_model, "schema_insight", resp,
             latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
             target=(str(payload.get("schema") or "").strip() or None),  # 0032: 대상=스키마
+            target_scope=scope_key,  # 0047: 미전달이면 _record_llm_usage 가 ContextVar 폴백
         )
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
@@ -1599,7 +1604,7 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     return obj
 
 
-def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
+def llm_table_insight(payload: dict[str, Any], *, scope_key: str | None = None) -> dict[str, Any] | None:
     # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
     # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
     _insight_model = _effective_insight_model()  # llm-routing-interactive-split: 평일 주간=claude, 야간·주말=gemma
@@ -1626,6 +1631,7 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
                 str(payload.get("schema") or "").strip(),
                 str(payload.get("table") or "").strip(),
             ) if p) or None),
+            target_scope=scope_key,  # 0047
         )
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
@@ -1685,7 +1691,7 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     return obj
 
 
-def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
+def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None) -> dict[str, Any] | None:
     """feature-0016 graphux5: 그래프 노드 1개 + 이웃을 능동 분석한다(재귀 워커가 노드마다 호출).
 
     schema/table insight 와 동일 max_tokens·예외·JSON 추출 경로를 쓰되, **모델은 전용
@@ -1718,6 +1724,7 @@ def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
             latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
             # 0032: 대상=노드 FQN(없으면 name). _build_payload 계약: {label, name, fqn, ...}.
             target=(str(payload.get("fqn") or payload.get("name") or "").strip() or None),
+            target_scope=scope_key,  # 0047: 병렬 워커 스레드라 ContextVar 미전파 — 호출측 명시 필수
         )
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
@@ -1827,7 +1834,7 @@ PRODUCT_CLASSIFY_PROMPT = (
 )
 
 
-def llm_product_classify(payload: dict[str, Any]) -> dict[str, Any] | None:
+def llm_product_classify(payload: dict[str, Any], *, scope_key: str | None = None) -> dict[str, Any] | None:
     """§59: 미분류 스키마 배치를 제품 후보에 분류 제안한다(승인 대기 적재용 — 직접 기록 금지).
 
     node_analysis 와 동일 모델 라우팅(AGENT_NODE_ANALYSIS_MODEL 폴백 체인)·JSON 추출·예외 경로.
@@ -1850,7 +1857,8 @@ def llm_product_classify(payload: dict[str, Any]) -> dict[str, Any] | None:
         )
         _record_llm_usage(_model, "product_classify", resp,
                           latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
-                          target=str(payload.get("datasource") or "").strip() or None)
+                          target=str(payload.get("datasource") or "").strip() or None,
+                          target_scope=scope_key)  # 0047: target 은 표시 라벨, scope 는 콘솔 선택 키
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_product_classify", "exception", str(exc))
@@ -1887,7 +1895,7 @@ CLUSTER_LABEL_PROMPT = (
 )
 
 
-def llm_cluster_label(payload: dict[str, Any]) -> dict[str, Any] | None:
+def llm_cluster_label(payload: dict[str, Any], *, scope_key: str | None = None) -> dict[str, Any] | None:
     """content-cluster RC5: 클러스터 배치(≤40)에 한국어 컨텐츠 라벨을 붙인다(표시 전용).
 
     node_analysis 와 동일 모델 라우팅(AGENT_NODE_ANALYSIS_MODEL 폴백 체인)·JSON 추출·예외 경로 —
@@ -1910,7 +1918,8 @@ def llm_cluster_label(payload: dict[str, Any]) -> dict[str, Any] | None:
         )
         _record_llm_usage(_model, "cluster_label", resp,
                           latency_ms=(time.perf_counter_ns() - _lat_t0) // 1_000_000,
-                          target=str(payload.get("datasource") or "").strip() or None)
+                          target=str(payload.get("datasource") or "").strip() or None,
+                          target_scope=scope_key)  # 0047: target=사람이 읽는 라벨 / scope=scope_key
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_cluster_label", "exception", str(exc))
