@@ -756,7 +756,8 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
         for batch in batches:
             payload = _payload_for(batch)
             try:
-                res = _llm.llm_cluster_label(payload)
+                # 0047: 사용 기록 데이터소스 귀속(target 은 사람이 읽는 라벨이라 콘솔 선택 키로 못 씀).
+                res = _llm.llm_cluster_label(payload, scope_key=datasource_key)
             except Exception as exc:
                 _log.warning("llm_cluster_label 실패(affix 폴백): %r", exc)
                 return out
@@ -776,7 +777,8 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
         def _call(p):
             """DB 미접근 — 스레드 병렬 안전. 실패 시 None(해당 배치 affix 폴백)."""
             try:
-                return _llm.llm_cluster_label(p)
+                # 0047: 병렬 스레드 — ContextVar 미전파라 명시 전달 필수.
+                return _llm.llm_cluster_label(p, scope_key=datasource_key)
             except Exception as exc:
                 _log.warning("llm_cluster_label 실패(affix 폴백): %r", exc)
                 return None

@@ -1594,3 +1594,48 @@ FR-false-truncation-belief 라이브 실측 중 관측된 별개 축을 사용�
 - [x] §18.8 **2라운드** security 재검증(1R 봉인 불완전 = 별칭 그림자 재적발 → 재수정 후 실증 CLOSED) → verify-completion PASS → PR #991 머지(main `21b67ade`) → 전체 스코프 배포(soak 통과) → **라이브 재실측 완료**: 동일 질문에 "총 421개" + `MSP_SELECT_BOARD_CONTENT` 본문 제시, 오귀속·부재 단정 0건, `search_routines` 실사용, 연결 장애 시 실패 고지 실전 발동
 - worktree `ai/claude-corp/feature-0002-agent-core`.
 정본 rationale=REVIEW REV-20260728T114459-false-absence-catalog-scope, 변경이력=MODIFY CHG-20260728T114459-false-absence-catalog-scope.
+
+## TASK-20260728T124500-llm-usage-target-scope — llm_usage 데이터소스 차원 컬럼 추가 (사용 기록 귀속 근본 해소, Major §12.3)
+
+**요청 (사용자, 2026-07-28)**: 직전 cycle(usage-records-system)이 후속 과제로 남긴
+"`llm_usage` 에 데이터소스 차원 컬럼 추가를 통한 근본 해소" 를 진행한다.
+
+### 문제
+
+0032 의 `target`(schema / schema.table / 노드 FQN)에는 **데이터소스 차원이 없다**. 관리 콘솔
+'사용 기록' 드릴다운이 시스템 사용분의 대상 화면으로 이동할 때 어느 데이터소스인지 알아야 하는데,
+직전 cycle 은 `table_descriptions` ∪ `routine_objects` ∪ `rag_objects` union 으로 **역해소**했다.
+라이브 실측 8,399 distinct target 중 상당수가 dev/qa 동명 스키마 때문에 후보 2+ 로 **구조적 모호**
+(추측 금지 정책상 "화면까지만 이동" 저하), 게다가 역해소는 조회 시점 메타데이터 적재 상태에
+의존해 시간이 지나면 답이 달라진다. **기록 시점에 아는 값을 그때 저장**하는 것이 정본 해법.
+
+### 2.1 Implementation Plan
+
+- alembic `0047_llm_usage_target_scope` — `target_scope VARCHAR(96)` additive nullable
+  (`rag_objects.scope_key` 와 동일 폭·의미 공간). 부트스트랩 DDL parity.
+- `modules/llm.py` — `_record_llm_usage(target_scope=...)` + **명시 인자 → ContextVar 폴백**.
+  INSERT 폴백을 4단 **사다리**로 재정리(중첩 try 3중 → 후보 리스트 루프).
+- `llm_{schema,table}_insight` · `llm_node_analysis` · `llm_product_classify` ·
+  `llm_cluster_label` 에 `scope_key` kwarg 추가(프롬프트 payload 는 **무변경** — 모델 입력·
+  캐시 키에 영향 0).
+- **병렬 스레드 3경로 명시 전달** — `node_analysis._run_llm`(w["scope_key"]) ·
+  `semantic_cluster` 직렬/병렬(`datasource_key`) · `product_classify`(`scope`).
+  ContextVar 는 스레드로 전파되지 않아 여기서만 ambient 가 실패한다.
+- `routers/admin_usage.py` — **2단 폴백**: 기록값 우선, 없으면(legacy) 종전 역해소.
+  fold 키에 scope 포함(같은 target·다른 데이터소스 = 별 행). 컬럼 부재 시 자가치유 재조회.
+
+**완료 판정 기준**: ① 신규 insight/cluster/product 호출이 `target_scope` 를 채운다
+② 같은 `schema.table` 이 데이터소스별로 분리된 행으로 보인다 ③ legacy 행은 종전 동작 유지
+④ 마이그 미적용·구 이미지에서도 계측·조회가 죽지 않는다(양방향 자가치유) ⑤ 회귀 0.
+
+**위험도: Major** — 마이그레이션 동반(단 expand-only additive nullable, 롤백 안전) + 계측
+chokepoint 변경. 파괴적 변경·인증 변경·RBAC 변경 없음.
+
+### 진행
+
+- [x] 마이그 0047 + 부트스트랩 DDL parity + `migrate-lint` expand-safe PASS
+- [x] `_record_llm_usage` target_scope(명시→ContextVar) + 4단 사다리
+- [x] llm_* 5종 pass-through + 병렬 3경로 명시 전달
+- [x] 웹 2단 폴백(기록값 우선 / legacy 역해소) + 컬럼 부재 자가치유
+- [x] 단위 2,719 PASS · ruff clean (테스트 더블 arity 7건·인덱스 단정 4건 정합)
+- [ ] POST-DEPLOY — 마이그 적용 확인 + 신규 행 target_scope 채움 실증 + 콘솔 이동 정확도

@@ -159,7 +159,8 @@ def test_record_swallows_pg_failure(monkeypatch):
 
 # ── TASK-20260703-aiops-ttft-latency (정의 A): step_gap_ms(단계 간 간격) 기록 ────────
 def test_record_includes_step_gap_ms_last(monkeypatch):
-    # step_gap_ms 는 INSERT 맨 끝(… target, latency_ms, step_gap_ms). pt=5·ct=6·tt=7 보존(회귀 0).
+    # 컬럼 꼬리 순서: … target, latency_ms, step_gap_ms, target_scope. pt=5·ct=6·tt=7 보존(회귀 0).
+    # **0047 로 맨 끝이 target_scope 로 바뀜**(의도된 계약 변경) — step_gap_ms 는 뒤에서 둘째.
     fake = FakeConn()
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: fake)
     resp = FakeResp(usage=FakeUsage(10, 5), model="claude-haiku-4")
@@ -167,8 +168,48 @@ def test_record_includes_step_gap_ms_last(monkeypatch):
     sql, params = fake.cursor_obj.executed[0]
     assert "step_gap_ms" in sql
     assert params[5] == 10 and params[6] == 5 and params[7] == 15  # pt/ct/tt 보존
-    assert params[-1] == 1300  # step_gap_ms = 마지막
-    assert params[-2] == 200   # latency_ms = 그 앞
+    assert params[-1] is None  # target_scope = 마지막(미전달·ContextVar 미설정 → NULL)
+    assert params[-2] == 1300  # step_gap_ms
+    assert params[-3] == 200   # latency_ms
+
+
+# ── 0047: target_scope(사용 기록 데이터소스 귀속) ────────────────────────────────
+def test_record_target_scope_explicit_arg(monkeypatch):
+    """명시 인자가 최우선 — 병렬 스레드 경로(ContextVar 미전파)의 정확한 귀속 보장."""
+    fake = FakeConn()
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: fake)
+    resp = FakeResp(usage=FakeUsage(10, 5), model="claude-haiku-4")
+    llm._record_llm_usage("core", "node_analysis", resp, target="log_v2.t1",
+                          target_scope="mysql-abc123")
+    sql, params = fake.cursor_obj.executed[0]
+    assert "target_scope" in sql
+    assert params[-1] == "mysql-abc123"
+
+
+def test_record_target_scope_contextvar_fallback(monkeypatch):
+    """미전달 시 active-datasource ContextVar 폴백(insight 워커 사이클 경로)."""
+    import shared.config as cfg
+    fake = FakeConn()
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: fake)
+    prev = cfg.get_active_datasource()
+    try:
+        cfg.set_active_datasource("mssql-ctxvar")
+        resp = FakeResp(usage=FakeUsage(10, 5), model="claude-haiku-4")
+        llm._record_llm_usage("core", "table_insight", resp, target="dbo.T")
+        _sql, params = fake.cursor_obj.executed[0]
+        assert params[-1] == "mssql-ctxvar"
+    finally:
+        cfg.set_active_datasource(prev)
+
+
+def test_record_target_scope_clipped_to_96(monkeypatch):
+    """VARCHAR(96) 초과는 잘라 INSERT 실패(계측 유실)를 막는다."""
+    fake = FakeConn()
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: fake)
+    resp = FakeResp(usage=FakeUsage(10, 5), model="claude-haiku-4")
+    llm._record_llm_usage("core", "table_insight", resp, target_scope="x" * 200)
+    _sql, params = fake.cursor_obj.executed[0]
+    assert len(params[-1]) == 96
 
 
 def test_record_step_gap_none_when_omitted(monkeypatch):

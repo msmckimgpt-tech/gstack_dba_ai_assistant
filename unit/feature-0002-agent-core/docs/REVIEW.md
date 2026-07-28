@@ -555,3 +555,53 @@ source_of_truth: true
 - **측정의 반증 설계**: (a) 마찰을 촉발한 **동일 질문·동일 product·동일 모델**로 재현해 "조건을 만들고도 발동하지 않음" 을 확인 (b) 모델 답변뿐 아니라 **PG 도구 결과 실물**을 대조해 `search_routines` 실사용과 신규 문구 부착을 확인 (c) 우연히 발생한 **MSSQL 연결 단절**을 자연 실험으로 활용해 실패-고지 lever 가 실전에서 작동함을 확인(구 코드 대비 행동 차이가 결정적) (d) 배포본 런타임에서 보안 경계 4축(별칭 그림자·서버 스코프 뷰·시스템 DB·사용자 UDF 과차단)을 직접 실측.
 - **판정**: 주 판정축(허위 부재) **verified**. 잔여는 pre-existing 이연 1건(임의 DB명 별칭 그림자 — HEAD 동일)만.
 - Cross-ref: REV/CHG/TASK-20260728T114459-false-absence-catalog-scope · 재현 대화 `20260728031510-16927f9b` · PR #991.
+
+## REV-20260728T124500-llm-usage-target-scope [SKIPPED:session-policy-no-subagent] — PASS
+
+CHG-20260728T124500-llm-usage-target-scope.
+
+### D1. 왜 별 컬럼인가 (target 접합·payload 삽입을 모두 배제)
+
+- **target 에 접합**(`ds:schema.table`): `target` 은 표시용 자유 문자열이고 스코프는 **필터·조인 키**다.
+  접합하면 조회마다 파싱이 필요하고 기존 표시가 깨진다(0032 가 task 와 target 을 분리한 것과 동형 논리).
+- **프롬프트 payload 에 datasource 추가 후 거기서 읽기**: payload 는 `json.dumps` 되어 **모델 입력**이
+  된다. 필드를 늘리면 프롬프트가 바뀌어 출력이 달라질 수 있고(§12.3 2차-효과), `semantic_cluster` 의
+  라벨 캐시처럼 payload 파생 상태가 있는 곳에 무효화가 번질 수 있다. 계측 값을 모델 입력에 실어
+  나르지 않는다 — **함수 인자**로 분리했다.
+
+### D2. 명시 인자 + ContextVar 폴백 (둘 중 하나가 아니라 둘 다)
+
+`_ACTIVE_DATASOURCE_KEY` 는 ContextVar 라 대화 in-process 병렬(WEB_PARALLEL_LIMIT)에서도 격리된다 —
+`cfg.MEMORY_CONVERSATION_ID` 전역이 가진 race 문제가 없다. 그래서 insight 워커 사이클
+(`insight.py` 가 datasource 마다 `set_active_datasource`)에서는 ambient 만으로 정확하다.
+**단 ContextVar 는 새 스레드로 전파되지 않는다** — `node_analysis._run_llm`,
+`semantic_cluster` 병렬 라벨링은 별 스레드에서 LLM 을 호출하므로 ambient 가 None 이 된다.
+그 3곳만 명시 전달해 "대부분 자동 + 위험 지점 명시" 로 최소 침습을 유지했다.
+
+### D3. 소급 백필하지 않는다
+
+과거 행의 정확한 데이터소스는 복원 불가다. 역해소로 백필하면 **모호한 추정이 '기록된 사실'로
+승격**되어, `scope_source` 로 기록/추정을 구분하는 의미 자체가 사라진다. legacy 행은 조회 시점
+역해소(종전 동작)로 두고, 시간이 지나며 신규 행이 자연 대체되게 한다.
+
+### D4. 웹 2단 폴백 + 컬럼 부재 자가치유 (배포 순서 무관)
+
+expand-only 라 마이그·이미지·웹의 배포 순서가 어긋나도 죽지 않는다:
+INSERT 는 4단 사다리로 컬럼을 줄여가며 재시도하고, SELECT 는 실패 시 리터럴 `''` 로 같은 인덱스를
+채우는 폴백 SQL 로 재조회한다. 폴백 경로에서도 legacy 역해소가 살아 있어 **기능 저하가 종전 수준**
+(0 이 아님)이다.
+
+### D5. fold 키에 scope 포함 = 의도된 행 분리
+
+`dbGame.PlayerMisc` 가 qa·dev 양쪽에서 분석되면 종전에는 한 줄(합산)로 뭉개졌다. 이제 두 줄로
+분리된다 — 사용량을 데이터소스별로 보는 것이 이 컬럼의 목적이므로 이 변화가 곧 기능이다.
+회귀 가드 테스트(R3)로 고정했다.
+
+### 리스크·한계
+
+- 신규 행만 채워지므로 **전환기에는 기록/추정이 혼재**한다. `scope_source` 로 구분 가능하나 UI 에는
+  노출하지 않았다(운영자에게 의미 있는 구분이 아니고, 이동 정확도는 어느 쪽이든 최선을 다한다).
+- `target_scope` 는 계측 값이라 **인가 결정에 쓰지 않는다** — 콘솔 스코프 select 의 초기값 힌트일 뿐,
+  데이터 접근 자체는 기존 RBAC·product allowlist 가 통제한다.
+- 테스트 더블 arity 7건을 함께 고쳤다(프로덕션 결함 아님). keyword-only 로 추가해 위치 인자
+  호출부는 영향이 없다.
