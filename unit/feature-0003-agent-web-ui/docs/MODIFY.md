@@ -11,6 +11,17 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T152000-graph-catcluster-panel-scroll (TASK-20260728T152000 — 캔버스 컨텐츠 카테고리 선택 → 스키마 클러스터 목록 스크롤 동기화, Minor §12.3, frontend-only)
+- `src/static/graph/graph-ctxmenu.js`: `_META_GKEY_SEP` 상수 + **`_metaGroupFam(groupKey)`**(구분자 뒤 fam 추출) + **`_metaGraphFocusPanelGroup(fam)`**(`ul.amgr-cluster-tables` 안에서 같은 fam 헤딩 탐색 → aside `scrollTop` 국소 계산(sticky nav 높이 + 6px 보정) → `scrollTo({behavior:smooth|auto})` → `.is-focus` 1.8s 강조 → 매칭 라벨 반환) 신설. `_metaGraphShowClusterDetailById(comboId, focusFam)` / `_metaGraphRenderClusterDetail(…, routines, focusFam)` 에 optional 파라미터 추가 및 전달. 클러스터 상세 상태줄에 `목록을 '<라벨>' 위치로 이동` 접미. 컨텐츠 카테고리 우클릭 메뉴 '소속 스키마 상세' 가 fam 을 함께 전달(hint 문구도 `이 카테고리 위치로 목록 이동` 으로 갱신).
+- `src/static/graph/graph-core.js`: GB/GH 좌클릭 라우팅이 `_metaGraphShowClusterDetailById(sc, gk.slice(sep + 1))` 로 fam 동반 호출.
+- `src/static/graph/graph-state.js`: `_panelFocusSeq` 세대 토큰 추가(연타 시 rAF 안의 stale 스크롤 폐기 — `_opSeq` 와 동형, 패널 스크롤 전용).
+- `src/static/graph/graph.css`: `.amgr-ct-group.is-focus` + `@keyframes amgrCtGroupFocus`(배경 `#dbeafe` + 좌측 3px primary 바 → 1.8s 페이드) + `prefers-reduced-motion: reduce` 정적 강조 분기. `:hover` 규칙 뒤에 배치해 배경 경쟁을 피한다.
+- `tests/headless/test_catcluster_panel_scroll.js` 신설 — 소스 추출 + vm 격리 실행으로 fam 대조·목표 좌표·nav 보정·클램프·세대 토큰·graceful no-op·reduced-motion·**호출부 인자 매핑**·CSS 클래스 존재를 단정. **36 PASS / 0 FAIL**.
+- docs: TASK/FUNCTION/REPORT/REVIEW + `test-runs.d/20260728T152000-graph-catcluster-panel-scroll.md`, `docs/STATUS.md`.
+- Verification: 헤드리스 36 PASS(신규) + 78/190 PASS(회귀) · `node --check`(ESM) OK · **PB-0008 실 Windows Chrome**(격리 컨테이너 `web-catcluster-test`:18099, §13.2.9 — 라이브 web-a/web-b 무접촉) 7 시나리오 PASS · 콘솔 에러 0 · 스크린샷 5매.
+- Rollback: static 4파일 + 테스트 1파일 revert (데이터·API·스키마·RBAC 영향 0).
+- Cross-ref: REVIEW REV-20260728T152000-graph-catcluster-panel-scroll · `docs/test-runs.d/20260728T152000-graph-catcluster-panel-scroll.md` · FUNCTION REQ-20260728T152000-graph-catcluster-panel-scroll(AC-CPS-1~4) · 선행 `graph-funcproc(cluster-detail-fulllist)`(그룹당 캡 제거) · `graph-content-category`(3층 우클릭 분리).
+
 ## CHG-20260728T152141-graph-edge-hairline (TASK-20260728T152141 — 줌아웃 관계선 hairline 처리, Minor §12.3, frontend-only)
 - `graph-renderer-pixi.js`: `edgeModelWidth` → **`edgeHairline(baseScreen, zoom, dpr)`** — 서브픽셀이면 폭을 `1/dpr` CSS px(=1물리픽셀)로 올리고 `fade = w_screen·dpr` 를 반환. `_paintEdge` 가 `alpha *= hair.fade` 로 합성하고 dpr 은 `app.renderer.resolution` → `window.devicePixelRatio` 순으로 해석.
 - `graph-roleviz.js`: `_META_EDGE_W_BASE` 0.6→**1.0**, `_META_EDGE_W_GAIN` 0.25→0.27, 상한 표기 2.2→2.6px(개수 축 1.00/1.54/2.08/2.60).

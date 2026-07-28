@@ -311,7 +311,8 @@ function _metaGraphCtxForContentCategory(gk, x, y) {
     { head: true, badge: "컨텐츠 카테고리", badgeColor: "#8a3f7a", label: cnt != null ? `${label} · 테이블 ${cnt}` : label },
   ];
   // 소속 스키마 상세(멤버 테이블 목록) — GB/GH 좌클릭 파리티(_metaGraphShowClusterDetailById). sim-group 은 스키마의 부분집합이라 소속 스키마로 앵커.
-  if (schemaKey) items.push({ icon: "📋", label: "소속 스키마 상세", hint: "테이블 목록", onClick: () => _metaGraphShowClusterDetailById(schemaKey) });
+  //   graph-catcluster-scroll: 좌클릭과 동일하게 **이 컨텐츠 카테고리 위치로 목록 스크롤**(fam = 구분자 뒤).
+  if (schemaKey) items.push({ icon: "📋", label: "소속 스키마 상세", hint: "이 카테고리 위치로 목록 이동", onClick: () => _metaGraphShowClusterDetailById(schemaKey, key.slice(sep + 1)) });
   // 컨텐츠 묶음 접기/펼치기 — GX 컨트롤 좌클릭과 동일 경로(groupCollapsed 토글 + _metaG6Apply). 지속 의도라 검색 시만 build 가 강제 펼침.
   items.push({ icon: collapsed ? "▸" : "▾", label: collapsed ? "펼치기 (묶음)" : "접기 (묶음)", hint: "컨텐츠 묶음 멤버 표시/숨김", onClick: () => {
     if (_metaGraph.groupCollapsed.has(key)) _metaGraph.groupCollapsed.delete(key);
@@ -2836,8 +2837,62 @@ async function _metaGraphSyncAnalysisMarkers(scope) {
   _metaGraphRefreshStates();
 }
 
+// graph-catcluster-scroll(사용자 요청 2026-07-28): 캔버스에서 **컨텐츠 카테고리(sim-group) 클러스터**를 선택하면
+//   그 선택이 여는 '스키마 클러스터' 상세 목록에서 같은 카테고리 헤딩 위치로 패널을 스크롤한다. 캡 해제 이후
+//   (cluster-detail-fulllist) 목록이 수백~수천 행이라, 캔버스에서 고른 카테고리를 패널에서 사용자가 직접
+//   스크롤해 찾아야 했다(요청 마찰).
+//   ⚠ 키 대조는 **fam(구분자 뒤)** 로만 한다 — 그룹 키는 `_metaSimGroups(schemaId, …)` 의 schemaId 로
+//   네임스페이스되는데 캔버스는 comboId("<scope>:<schema>"), 패널은 "panel:<schemaName>" 을 쓴다.
+//   구분자 뒤 fam(= "nm:"/"be:"/"role:" 토큰 또는 "misc")은 멤버 집합에서 파생돼 양쪽이 공유한다.
+const _META_GKEY_SEP = "\u0001";
+function _metaGroupFam(groupKey) {
+  const s = String(groupKey == null ? "" : groupKey);
+  const i = s.indexOf(_META_GKEY_SEP);
+  return i >= 0 ? s.slice(i + 1) : "";
+}
+// 패널의 해당 컨텐츠 카테고리 헤딩으로 스크롤 + 잠깐 강조. 반환: 매칭 헤딩 라벨(미매칭이면 null — 상태줄 보강용).
+//   스크롤 컨테이너는 aside(#metadataGraphDetail, _metaGraphDetailScrollEl) 이므로 scrollIntoView(조상까지
+//   스크롤 — 관리콘솔 본문이 함께 움직임) 대신 aside.scrollTop 을 직접 계산해 국소 스크롤한다.
+function _metaGraphFocusPanelGroup(fam) {
+  if (!fam) return null;
+  const box = _metaGraphDetailScrollEl();
+  if (!box) return null;
+  // 스코프를 클러스터 상세 목록으로 한정 — 검색 결과(.amgr-srch-subhead)·관련 노드 DB 그룹(.amgr-dbgrp)도
+  //   같은 .amgr-ct-group 시각을 재사용하므로 ul.amgr-cluster-tables 안에서만 찾는다.
+  const ul = box.querySelector("ul.amgr-cluster-tables");
+  if (!ul) return null;
+  const heads = ul.querySelectorAll("li.amgr-ct-group[data-group-key]");
+  let target = null;
+  for (let i = 0; i < heads.length; i++) {
+    if (_metaGroupFam(heads[i].getAttribute("data-group-key")) === fam) { target = heads[i]; break; }
+  }
+  if (!target) return null;   // 캔버스/패널 그룹 분할이 어긋난 경우(멤버 집합 차이) — graceful no-op
+  const seq = ++_metaGraph._panelFocusSeq;
+  // sticky 이력 바(.admin-meta-graph-detailnav, 표시 중일 때만)가 헤딩을 덮지 않도록 그 높이만큼 위 여백 확보.
+  const nav = document.getElementById("metadataGraphDetailNav");
+  const navH = (nav && !nav.hidden) ? Math.round(nav.getBoundingClientRect().height) : 0;
+  let reduce = false;
+  try { reduce = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (_) { reduce = false; }
+  // rAF: 방금 교체된 innerHTML 의 레이아웃이 반영된 뒤 위치를 재야 clamp 되지 않는다(이력 스크롤 복원과 동형).
+  requestAnimationFrame(() => {
+    if (seq !== _metaGraph._panelFocusSeq) return;   // 더 최근 선택이 선점 — stale 스크롤 금지
+    try {
+      const top = box.scrollTop + (target.getBoundingClientRect().top - box.getBoundingClientRect().top) - navH - 6;
+      const y = Math.max(0, Math.round(top));
+      if (typeof box.scrollTo === "function") box.scrollTo({ top: y, behavior: reduce ? "auto" : "smooth" });
+      else box.scrollTop = y;
+    } catch (_) { /* graceful — 스크롤 실패해도 강조는 남긴다 */ }
+    // 도착 지점 시선 앵커(1.8s 페이드). 재렌더로 노드가 교체돼도 stale 노드의 class 제거는 무해.
+    try { target.classList.add("is-focus"); } catch (_) {}
+    setTimeout(() => { try { target.classList.remove("is-focus"); } catch (_) {} }, 1800);
+  });
+  const lab = target.querySelector(".amgr-ct-group-label");
+  return (lab && lab.textContent) || fam;
+}
+
 // 스키마 클러스터(combo) 상세 — 스키마명·포함 테이블 목록·개수. combo:click 진입.
-async function _metaGraphShowClusterDetailById(comboId) {
+// focusFam(선택): 캔버스에서 고른 컨텐츠 카테고리의 fam — 렌더 후 그 헤딩으로 패널을 스크롤(graph-catcluster-scroll).
+async function _metaGraphShowClusterDetailById(comboId, focusFam) {
   if (!_metaGraph.graph || !comboId) return;
   if (comboId === _META_TERMS_COMBO) { _metaGraphStatus("용어·기타 클러스터"); return; }
   _metaGraph.lastDetailKey = comboId;
@@ -2868,13 +2923,18 @@ async function _metaGraphShowClusterDetailById(comboId) {
   });
   if (!tables.length) _metaGraph.nodes.forEach((n) => { if (n.label === "Table" && _metaCatParent(n.key, n.fqn) === comboId) tables.push(n); });
   routines.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
-  _metaGraphRenderClusterDetail(schemaName, schemaName, tables, childTables, childCols, null, false, comboId, routines);
+  const _focused = _metaGraphRenderClusterDetail(schemaName, schemaName, tables, childTables, childCols, null, false, comboId, routines, focusFam);
   const _rnote = routines.length ? ` · 함수·프로시저 ${routines.length}개` : "";
-  _metaGraphStatus(`클러스터: ${schemaName} · 테이블 ${tables.length || childTables}개${_rnote}`);
+  // graph-catcluster-scroll: 캔버스 카테고리 선택으로 진입한 경우, 패널이 어디로 이동했는지 상태줄에 명시
+  //   (스크롤이 조용히 일어나면 사용자가 위치 변화를 놓친다). 미매칭이면 기존 문구 그대로.
+  const _fnote = _focused ? ` · 목록을 '${_focused}' 위치로 이동` : "";
+  _metaGraphStatus(`클러스터: ${schemaName} · 테이블 ${tables.length || childTables}개${_rnote}${_fnote}`);
 }
 
 // 항목2: 클러스터 상세 카드 렌더(우측 상세 패널 body). 노드 상세(_metaGraphRenderDetail)와 동일 컨테이너를 교체.
-function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId, routines) {
+// graph-catcluster-scroll: focusFam(선택) 이 주어지면 렌더 직후 그 컨텐츠 카테고리 헤딩으로 패널을 스크롤하고
+//   매칭 라벨을 반환한다(호출자가 상태줄에 표기). 미지정/미매칭이면 null — 기존 동작 그대로.
+function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId, routines, focusFam) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
@@ -3057,6 +3117,8 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
       groups.forEach((g) => { const isCol = g.classList.contains("is-collapsed"); if (anyExpanded ? !isCol : isCol) _toggleCtGroup(g); });
     });
   }
+  // graph-catcluster-scroll: 모든 DOM 조립·바인딩이 끝난 뒤 스크롤(헤딩 위치가 최종 레이아웃 기준이어야 함).
+  return _metaGraphFocusPanelGroup(focusFam);
 }
 
 // 노드의 최신 분석 상태/결과를 조회해 AI box 에 렌더(상세 패널 진입 시 + 폴링 완료 시).

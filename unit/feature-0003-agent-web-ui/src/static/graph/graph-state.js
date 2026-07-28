@@ -110,6 +110,10 @@ const _metaGraph = {
   //   있어 기본-접힘+사용자-펼침 기억을 표현하지 못하므로 Map 을 쓴다. DB key 기준이라 노드 상세↔관계 상세
   //   전환 간에도 사용자의 펼침 의도가 유지된다(세션 한정, 리로드 초기화).
   panelDbGroupState: new Map(),
+  // graph-catcluster-scroll(사용자 요청 2026-07-28): 캔버스에서 컨텐츠 카테고리(sim-group) 클러스터를 선택하면
+  //   그 선택이 여는 '스키마 클러스터' 상세 목록에서 같은 카테고리 헤딩 위치로 패널을 스크롤한다. 연타/빠른
+  //   재선택 시 rAF 안의 stale 스크롤이 최신 선택을 덮지 않게 하는 세대 토큰(_opSeq 와 동형 — 패널 스크롤 전용).
+  _panelFocusSeq: 0,
   panelGroupCollapsed: new Set(),  // graph-funcproc(cluster-detail-collapse): 클러스터 상세 패널에서 접힌 컨텐츠 카테고리 그룹 key(sg.key="panel:"+name+""+fam). 같은 클러스터 재렌더 간 접힘 유지(세션 한정, 리로드 초기화).
 };
 

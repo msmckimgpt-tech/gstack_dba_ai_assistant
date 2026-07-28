@@ -263,6 +263,18 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 .amgr-ct-group-label { font-size: 11px; font-weight: 700; color: #33415c; }
 .amgr-ct-group-n { font-size: 10px; color: #7c8aa5; background: #eef2f8; border-radius: 8px; padding: 0 6px; }
 .amgr-ct-group-trunc { font-size: 10px; color: #9aa4b5; }
+/* graph-catcluster-scroll(사용자 요청 2026-07-28): 캔버스에서 컨텐츠 카테고리를 골라 이 헤딩으로 스크롤해 왔을 때의
+   도착 강조 — 1.8s 페이드 아웃(시선 앵커). 배경만 애니메이트하고 :hover 배경과 경쟁하지 않도록 hover 규칙 뒤에 둔다.
+   JS 가 같은 시간 뒤 클래스를 제거하므로 잔상 없이 원래 시각으로 복귀한다. */
+.amgr-ct-group.is-focus { animation: amgrCtGroupFocus 1.8s ease-out; }
+@keyframes amgrCtGroupFocus {
+  0%, 65% { background: #dbeafe; box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
+  100%    { background: transparent; box-shadow: inset 3px 0 0 transparent; }
+}
+/* 접근성: 모션 최소화 선호 시 애니메이션 없이 정적 강조만(제거 타이머는 동일). */
+@media (prefers-reduced-motion: reduce) {
+  .amgr-ct-group.is-focus { animation: none; background: #dbeafe; box-shadow: inset 3px 0 0 var(--primary, #2563eb); }
+}
 /* 접힌 그룹의 멤버 행 숨김 */
 .admin-meta-graph-sec ul.amgr-cluster-tables li.amgr-ct-row-li.amgr-ct-collapsed { display: none; }
 /* 섹션 헤더의 '모두 접기/펼치기' 컨트롤 */
