@@ -10,6 +10,27 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T152000-graph-catcluster-panel-scroll [SKIPPED:session-policy-no-subagent] — 캔버스 컨텐츠 카테고리 선택 → 스키마 클러스터 목록 스크롤 동기화 (TASK-20260728T152000, Minor §12.3, frontend-only)
+- Panel skip 사유(§18.8 / §18.8.2 상위 우선순위 지시 carve-out): 본 세션은 하네스 수준에서 `Agent` tool 사용이 금지돼 subagent panel(ux/design)을 호출할 수 없다. 제약 없는 채널로 대체했다 — 기계 검증(헤드리스 36 신규 + 268 회귀 단정, **호출부 인자 매핑 포함**) + PB-0008 실 브라우저 라이브 실측 + 아래 자체 적대 검토. 미검증 범위는 `[SKIPPED:session-policy-no-subagent]` 로 정직 표기한다.
+- 판단 근거:
+  - **왜 fam 만 대조하는가**: 그룹 키는 `_metaSimGroups(schemaId, …)` 의 `schemaId` 로 네임스페이스된다. 캔버스는 `comboId`(`<scope>:<schema>`), 패널은 `"panel:" + schemaName` 을 넘긴다 — **전체 키는 절대 같아질 수 없다**. 구분자 뒤 fam(`be:` 백엔드 클러스터 / `nm:` 이름 family / `role:` / `misc`)은 멤버 집합에서 파생돼 양쪽이 공유하므로 유일한 안정 조인 키다. 네임스페이스를 통일하는 대안은 `groupOrder`·`groupTableOrder`·`panelGroupCollapsed` 등 **기존 상태 키의 의미를 전부 옮겨야** 해서 회귀 표면이 훨씬 크다.
+  - **`scrollIntoView` 를 쓰지 않은 이유**: 상세 패널은 `overflow-y:auto` aside 지만 그 조상(관리 콘솔 본문)도 스크롤 가능하다. `scrollIntoView` 는 조상 체인을 함께 움직여 **캔버스가 화면 밖으로 밀리는** 부작용이 있다. aside `scrollTop` 직접 계산은 국소적이고, sticky 이력 바 보정도 자연스럽게 얹힌다.
+  - **sticky nav 보정을 상수로 두지 않은 이유**: `.admin-meta-graph-detailnav` 는 이력 ≤1 이면 `hidden` 이라 높이가 0/47 로 갈린다. 실측(`getBoundingClientRect().height`)이 아니면 이력 유무에 따라 헤딩이 바 뒤로 숨거나 과하게 내려간다 — 라이브에서 두 경우 모두 `+53`/`+6` 으로 확인했다.
+  - **접힘 상태를 자동으로 펼치지 않은 이유**: 요청은 "위치로 스크롤" 이다. `panelGroupCollapsed` 는 사용자가 명시적으로 만든 상태이고, 스크롤의 부수효과로 그것을 뒤집으면 요청하지 않은 변경이 된다. 접힌 그룹도 헤딩은 렌더되므로 스크롤 목표로서 온전하다.
+  - **상태줄 표기를 붙인 이유**: 스크롤이 조용히 일어나면 (특히 smooth 애니메이션 중) 사용자가 "패널이 왜 움직였지" 를 알 수 없다. `목록을 '<라벨>' 위치로 이동` 1줄이 원인을 명시한다. 미매칭이면 문구가 붙지 않아 **거짓 성공 표시가 생기지 않는다**.
+- 자체 적대 검토:
+  - **H1 캔버스/패널 그룹 분할이 어긋나면?** — ById 경로는 테이블을 API 응답에서, 루틴을 모델에서 모으므로 캔버스의 `gatedTables` 와 멤버 집합이 미세하게 다를 수 있다. fam 이 안 맞으면 `_metaGraphFocusPanelGroup` 이 `null` 을 반환하고 **아무 것도 하지 않는다**(스크롤·강조·상태줄 접미 모두 없음). 잘못된 그룹으로 점프하는 실패 모드는 구조적으로 불가능하다 — 정확 일치만 매칭한다.
+  - **H2 이력(뒤로/앞으로) 스크롤 복원과 경합하지 않나** — `_metaGraphHistoryGo` 는 `_metaGraphShowClusterDetailById(ent.k)` 를 **fam 없이** 호출하므로 focus 경로가 아예 발화하지 않고, 그 뒤 `_metaGraphHistoryRestoreScroll` 이 저장된 scrollTop 을 복원한다. 두 rAF 가 같은 프레임에 경쟁하는 조합이 없다.
+  - **H3 연타 시 stale 스크롤** — 렌더는 동기지만 스크롤은 rAF 뒤다. 그 사이 다른 카테고리를 클릭하면 이전 rAF 이 옛 목표로 튄다 → `_panelFocusSeq` 세대 토큰으로 폐기(헤드리스 ⑤ 가 단정).
+  - **H4 강조 클래스 누수** — 재렌더로 `<li>` 가 교체된 뒤 타이머가 발화하면 stale 노드에서 클래스를 지운다(무해). 새 노드는 `is-focus` 없이 생성되므로 잔상이 남지 않는다. `try/catch` 로 detached 노드 접근도 흡수.
+  - **H5 `:hover` 배경과 경쟁** — `.amgr-ct-group:hover` 와 `.amgr-ct-group.is-focus` 는 특이도가 같다. CSS 순서상 `is-focus` 를 뒤에 두어 강조가 이긴다. 1.8s 뒤 클래스가 제거되므로 hover 어포던스가 영구 손상되지 않는다.
+  - **H6 접근성** — 스크롤은 시각 이동일 뿐 포커스를 옮기지 않으므로 키보드 사용자의 포커스 위치를 빼앗지 않는다. 강조는 색 단독이 아니라 **좌측 3px 바**(형태)를 동반한다. `prefers-reduced-motion` 은 `behavior:auto` + 애니메이션 없는 정적 강조로 분기한다.
+  - **H7 장거리 smooth 스크롤 체감** — 17,000px 목록에서 smooth 는 수 초가 걸릴 수 있다. 그럼에도 즉시 점프(auto)보다 **어디서 어디로 갔는지**를 보여 주는 편이 방향 감각에 낫다고 판단했다(라이브 육안). 모션 민감 사용자는 위 분기로 즉시 이동한다. 측정 시 중간 프레임을 실패로 오독하지 않도록 Run 기록에 정착 시점을 명시했다.
+  - **H8 `\u0001` 구분자 하드코딩 중복** — `graph-core`(캔버스 라우팅)·`graph-ctxmenu`(메뉴·패널) 세 곳이 각자 `indexOf` 한다. 본 cycle 은 기존 관례를 따르고 새 상수(`_META_GKEY_SEP`)를 패널 쪽에만 도입했다. 공용화는 모듈 경계(`graph-state`)를 건드려야 해 범위를 넘는다 — 헤드리스 ⑧ 이 세 호출부의 인자 매핑을 단정해 드리프트를 잡는다.
+- 검증: 헤드리스 신규 **36 PASS / 0 FAIL** + 회귀 `test_detail_dbgroups` 78 · `test_pixi_adapter` 190 PASS · `node --check` OK · **PB-0008 라이브**(실 Windows Chrome/150, 격리 컨테이너 §13.2.9) 좌클릭 2건·우클릭 1건·강조 부여/해제·상태줄·회귀경로·콘솔 에러 0 — 정착 위치가 모두 헤딩 상단 **+53px**(navH 47 + 6) 로 재현. 스크린샷 5매.
+- 위험도: **Minor(§12.3)** — 프론트 표시·네비게이션 전용. 백엔드·API·RBAC·스키마·데이터 fetch 무변경, 롤백 = static 4파일 + 테스트 1파일 revert.
+- Cross-ref: MODIFY CHG-20260728T152000-graph-catcluster-panel-scroll / FUNCTION REQ-20260728T152000-graph-catcluster-panel-scroll(AC-CPS-1~4) / test-runs.d/20260728T152000-graph-catcluster-panel-scroll.md.
+
 ## REV-20260728T152141-graph-edge-hairline [SKIPPED:session-policy-no-subagent] — 줌아웃 관계선 hairline 처리 (TASK-20260728T152141, Minor §12.3, frontend-only)
 - Panel skip 사유(§18.8): 세션 정책상 `Agent` tool 미허용 — 라이브 대조 + 기계 검증으로 대체하고 범위를 정직 기록.
 - 판단 근거:

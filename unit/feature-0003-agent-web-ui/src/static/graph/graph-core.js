@@ -2354,9 +2354,13 @@ function _metaGraphOnNodeClick(e) {
   // graph-simgroups(§18.8 패널 MAJOR): 그룹 배경/헤더의 **클릭(무이동)** 은 소속 스키마 클러스터 상세로 위임
   //   (데드존 방지). group-interact(§50): GB/GH 는 이제 드래그 가능 — G6 이동 임계값으로 click/drag 를 구분하므로
   //   무이동 클릭만 여기 도달(드래그는 node:dragstart/end 리지드 경로).
+  // graph-catcluster-scroll(사용자 요청 2026-07-28): 소속 스키마 클러스터 상세를 열되, **그 목록에서 방금 고른
+  //   컨텐츠 카테고리 헤딩 위치로 패널을 스크롤**한다(fam = 구분자 뒤 토큰 — 캔버스/패널 그룹키의 공통부).
+  //   목록이 캡 해제로 수백~수천 행이라(cluster-detail-fulllist) 스크롤 동기화 없이는 캔버스 선택과 패널
+  //   위치가 어긋나 사용자가 직접 찾아 내려가야 했다.
   if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {
     const gk = String(id).slice(3), sep = gk.indexOf("\u0001"), sc = sep >= 0 ? gk.slice(0, sep) : null;
-    if (sc) _metaGraphShowClusterDetailById(sc);
+    if (sc) _metaGraphShowClusterDetailById(sc, gk.slice(sep + 1));
     return;
   }
   if (String(id).startsWith("XS:")) { _metaGraphCollapseSchema(id.slice(3)); return; }   // graph-initview: 스키마 접기
