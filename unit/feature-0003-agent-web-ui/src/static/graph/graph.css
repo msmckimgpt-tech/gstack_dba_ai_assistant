@@ -156,6 +156,11 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 .admin-meta-graph-rolelegend-list .lg-dot {
   width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex: none; border: 1px solid #c4cad3;
 }
+/* graph-role-badge(2026-07-28): 역할색이 노드 **전면 채움**에서 좌측 배지 타일로 바뀌었으므로 범례 견본도
+   같은 어휘(라운드 사각 타일)로 맞춘다 — 노드 배지 · 상세 패널 `.amgr-role-chip`(radius 4) · 범례가 한 모양이
+   되어 "이 색이 화면의 무엇인지" 대응이 즉시 성립한다. (다른 범례 탭의 원형 lg-dot 은 그대로 — 그쪽은
+   노드 종류·상태 표시라 어휘가 다르다.) */
+.admin-meta-graph-rolelegend-list .lg-dot { border-radius: 3px; }
 /* graph-initview(E2)+graph-toolbar-consolidate: 줌 컨트롤 — 상단 바에서 캔버스 좌하단 플로팅 카드로 이동.
    그래프·지도 UI 관습(Figma·Miro·Maps)대로 캔버스 위에 얹고, 미니맵(우하단)과 겹치지 않는다. */
 .admin-meta-graph-zoomctl {
