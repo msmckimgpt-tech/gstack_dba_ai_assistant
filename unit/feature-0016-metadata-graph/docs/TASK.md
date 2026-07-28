@@ -3207,3 +3207,13 @@ origin/main`(repo 접근 있는 독립 리뷰어, subagent 아님 — check #9 a
 ### 잔여 / 후속
 - 3-hop 이 2-hop 과 같아지는 20%(8/40)는 **관계 체인이 2단계에서 끝나는 노드** — 데이터의 성질이며 결함이 아니다(상태줄이 그 사실을 알린다).
 - 대형 스키마 노드(테이블 700개 등)는 여전히 1-hop 부터 cap 300 에 걸린다. 이 경로의 경고는 hop 1 분기로 "아래 목록도 일부만" 을 정직하게 표기하도록 바뀌었을 뿐, 상한 자체를 올리는 것은 별건(페이지네이션 또는 클러스터 경로 유도 검토 — REPORT §8).
+- [x] RB.10 **main 흡수 후 재검증 (postmerge)** — PR #1029 가 `origin/main` 13 커밋과 CONFLICTING(DIRTY) 이라
+  `bin/setup-git-parallel.sh`(merge driver + rerere 등록) 후 `git merge origin/main` 으로 흡수했다. TASK/REVIEW 는
+  append-doc driver 가 말미 블록 병존 병합(ours 1+2 · theirs 2+4), MODIFY 는 본문 변경 감지로 위임돼 수동 해소
+  (양측 CHG 블록 전부 보존 — append-only 원칙). 흡수 후 헤드리스 **22 파일 986 PASS / 0 FAIL** 재실행 완료.
+  수치가 병합 전 920 보다 큰 것은 병렬 세션이 추가한 테스트 합류(`labellod 36→71` hdr-label-fit · `dbgroups
+  78→107`)이며 **본 cycle 신규 47 PASS 는 불변**이다 — 증가를 '개선' 으로 오독하지 않게 명시한다.
+  주의: 이 두 스위트는 호출 규약이 다르다(`labellod`=번들만·`dbgroups`=인자 없음 또는 `graph-ctxmenu.js` 경로).
+  어댑터 인자를 함께 주면 규약 불일치로 거짓 FAIL 이 나므로(실측: catcluster 2 FAIL·dbgroups 로드 실패)
+  각 파일 헤더의 `사용:` 주석을 따른다. main 의 `c7049053`(그래프 시각 노이즈 제거 — 상시 설명문 → ⓘ 툴팁)이
+  같은 범례 영역을 만졌으나 `amg-legend-note` 셀렉터는 보존돼 `_metaRoleLegendTips` 의 폴백 문구 교체가 유효하다.

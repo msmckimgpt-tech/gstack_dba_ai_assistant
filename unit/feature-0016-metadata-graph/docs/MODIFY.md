@@ -306,3 +306,8 @@ source_of_truth: true
   USWDS/Sigma/GitLab "본체 중립 + accent 만" · WCAG 1.4.1 색+아이콘 중복 인코딩)와 교차해 사용자 제안안을
   그대로 채택. 대안(역할색 테두리 / 본체 저채도 tint)은 각각 상태 halo 채널 충돌 · "노드 간 동일색" 요구
   미충족으로 불채택(REVIEW 참조). 색 8종은 배지에 그대로 보존되어 범주 정보 손실 0.
+
+## CHG-20260728T190947-ai-claude-corp-feature-0016-role-badge-postmerge — role-badge 병합 후 회귀 재확인 기록 (2026-07-28)
+- 대상(문서 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md`. **실행 코드 변경 0줄** (병합 자체는 직전 merge commit `5257d30e`).
+- 변경: `origin/main` 13 커밋(병렬 그래프 세션 다수 — hdr-label-fit·neighbor-depth-budget·시각노이즈 제거 등)을 흡수하고 MODIFY.md 병렬 append 충돌을 양측 블록 병존으로 해소한 뒤, 헤드리스 **22 파일 986 PASS / 0 FAIL** 을 재실행한 결과를 정본에 기록(RB.10). 수치가 병합 전 920 보다 큰 것은 병렬 세션의 테스트 합류(labellod 36→71 · dbgroups 78→107)이며 본 cycle 신규 47 PASS 는 불변임을 함께 명시 — 증가를 '개선' 으로 오독하지 않게 한다. 두 스위트의 호출 규약 차이(어댑터 인자 금지)도 거짓 FAIL 재발 방지용으로 남겼다.
+- 근거: 등급 Minor(문서 전용). 초고병렬 feature-0016 그래프 작업에서 main 흡수 후 무회귀는 배포 전 필수 확인이고, 그 실측을 기록하지 않으면 RB.7 의 920 이 병합 전 기준이라는 사실이 문서에서 사라진다.
