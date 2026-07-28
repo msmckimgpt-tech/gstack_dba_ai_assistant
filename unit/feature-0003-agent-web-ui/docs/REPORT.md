@@ -1747,3 +1747,6 @@ primary=feature-0002 CHG-20260727T105326-worker-attachment-postprocess. web 은 
 
 ### [POST-DEPLOY 완결 2026-07-28] usage-records-system — PR #984 머지(`6d7fe391`) → `bin/deploy-web.sh` 무중단 배포(soak 통과) → PB-0008 라이브 **PASS**
 선행 cycle 이 이관한 2건 종결: ① 주체 열 3분기(삭제된 대화 5 · 소유자 없는 대화 링크 1 · **raw id 0**) ② 열 폭 — 실측 중 **결함 발견·수정**(공용 `.admin-usage-table { max-width:640px }` 상속으로 테이블이 min-content 763px 로 수축 → 본문 열 239px 붕괴 = 사용자 보고 '과도 줄바꿈'의 진범. `max-width:none` 해제 후 테이블 1144px / 본문 열 **620px** / 단일행 18/20). 반응형 96vw 확인. 선행 cycle 의 pre-deploy 미확정이 환경 아티팩트였음도 확증(배포본 stamp 정합 `7fc11a708399` → admin.js 단일 인스턴스). 정본 TASK-/CHG-/REV-20260728T115900-usage-records-postverify · test-runs.d/20260728T115900-usage-records-postverify.md.
+
+### [POST-DEPLOY 완결 2026-07-28] usage-records-hint-tooltip — PR #992 머지 → 배포 `0f956416` → PB-0008 **PASS**
+행 2번째 줄 이동 안내 제거 확정: `.usage-rec-sub/-goto/-note` 노드 0 · 행 높이 **25/25 단일 줄** · 툴팁 이중 escape(`&gt;`) **0건** · 모호 정직 표기 툴팁 **107건 보존**(정보 손실 없음) · 이동 동작·대화 행 회귀 없음(시스템 200 / 대화 86). 정본 test-runs.d/20260728T121500-usage-records-hint-tooltip.md §POST-DEPLOY.
