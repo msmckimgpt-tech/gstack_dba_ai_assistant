@@ -534,3 +534,8 @@ source_of_truth: true
 - Timestamp: 2026-07-28T19:08:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260728T192531-ai-claude-corp-feature-0016-role-badge-postdeploy [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 본 cycle 의 코드 적대 검증은 `REV-20260728T181100-…-codex [CODEX:frontend-render+legend]`(P1 1건 + P2 5건 전량 in-cycle 흡수, 최종 pass "No actionable correctness issues")가 담당했고, 그 수정 중 **2종이 배포본에서 실제로 발화**함을 RB.8 ④⑤ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
+- 라이브가 사용자 원 요구를 직접 확인한 지점: 한 화면의 다수 테이블 칩이 **모두 동일 teal 본체**이고 역할색은 좌측 18px 배지에만 존재한다(①). 즉 "노드 간 색상구성 정합" 이 관측으로 성립했다. 색 8종·아이콘은 배지·상세 칩·범례 3곳에서 동일 어휘로 유지돼 범주 정보 손실도 0(②⑦).
+- 미검증 잔여: running 상태 배지 desaturate(외부 비용 필요). 다음 AI 능동 분석 실행 cycle 의 육안 확인 대상으로 이월한다.

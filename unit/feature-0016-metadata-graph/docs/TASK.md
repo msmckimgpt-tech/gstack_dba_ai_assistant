@@ -3247,3 +3247,12 @@ d3 → `[5,2,0]`·`[5,3,0]`(= 미표시 조건). 렌더 판정은 헤드리스 �
 
 상세 Run: feature-0003 `docs/test-runs.d/20260728T190800-graph-hop-budget-postdeploy.md`. 증적:
 `artifacts/feature-0016-neighbor-depth-budget/pb0008-postdeploy/postdeploy_detail_nobanner.png`.
+- [x] RB.8 **POST-DEPLOY PB-0008 완료 (2026-07-28, 종결)** — PR #1029 머지(main `ea3f9a6d`) → `make deploy-web`
+  무중단 롤아웃(web-a/b·워커, soak 통과, gateway 무접촉) → edge `/healthz git_commit=ea3f9a6d` 확인 후 실 Windows
+  **Chrome 150** 라이브 검증 **8 시나리오 전건 PASS**: 본체 teal 통일 · 배지 색·아이콘 범례 1:1 · 라벨 무겹침 ·
+  hover 확장 시 배지 카드 내 정위치(좌변 인접 = 클램프 경로 포함) · 줌아웃 아이콘만 소거(`roleIconsDropped
+  0→255` 임계 교차 실측) 하고 색 타일 잔존 · 선택/분석완료 테두리 공존 · 범례 사각 견본+새 문구 · 리소스 4xx 0.
+  대상은 역할 8종 전부를 보유한 `mssql-qa-idc`(1,132 테이블). **미재현**: running 상태 배지 desaturate(분석 잡
+  실행 = LLM 외부 비용 필요 — dim 상태의 동일 alpha 경로만 부분 실증). 기록: feature-0003
+  `docs/test-runs.d/20260728T181100-graph-role-badge.md` POST-DEPLOY 절 · 증적 9매
+  `artifacts/shared/win-browser-shots-role-badge/`.

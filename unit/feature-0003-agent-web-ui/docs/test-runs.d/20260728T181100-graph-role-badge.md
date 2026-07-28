@@ -78,3 +78,32 @@ node tests/headless/test_g6build_rolebadge.js <graph 7모듈 sed 번들> src/sta
 ① 분석 완료 테이블 칩 본체가 전부 teal 동일 · 좌측 배지에만 역할색 ② 역할 8종 배지 색·아이콘이 범례와 1:1
 ③ 라벨이 배지와 겹치지 않고 잔여 영역 중앙 정렬 ④ hover 확장 시 배지 정지 + 앞글자 무이동 ⑤ 줌아웃 시
 아이콘만 사라지고 색 타일 잔존 ⑥ selected/analyzed/running 테두리가 배지에 가려지지 않음 ⑦ 콘솔 에러 0.
+
+---
+
+### POST-DEPLOY Run (2026-07-28 19:1x~19:3x KST) — **Environment: Windows-browser** (PB-0008) — PASS
+
+배포: PR #1029 머지(main `ea3f9a6d`) → `make deploy-web` 무중단 롤아웃(web-a/b 롤링 + 워커 recreate + gateway
+reconcile 무접촉, soak 통과) → edge `curl -sk https://localhost/healthz` = `{"status":"ok","git_commit":"ea3f9a6d",…}`.
+브리지: `win-browser.py doctor` relay @ 172.26.144.1:9223 · 실 Windows **Chrome/150.0.7871.115** · eval 프로브 `1+1=2`.
+대상: `mssql-qa-idc`(`mssql-06656002eda6` — 역할 배정 **1,132 테이블 · 8종 전부** 보유, PG `node_analysis_jobs` 실측)
+의 `cc_data_main` 스키마 펼침(테이블·함수 555개).
+
+| # | 시나리오 | 결과 | 증적 |
+|---|---|---|---|
+| ① | 분석 완료 테이블 칩 **본체가 전부 동일 teal** · 역할색은 좌측 배지에만 | **PASS** — `dt_Combine`·`dt_CombineMaterial`·`dt_ReinforceResult` 등 다수 칩이 같은 teal 본체, 좌측 배지 색만 상이 | `04-table-cluster.png` |
+| ② | 역할 배지 색·아이콘이 범례와 1:1 | **PASS** — `dt_Combine`=초록 💳(상세 패널 '거래 행위' 칩과 동색) · `dt_CombineMaterial`=파랑 📘 · `TT_CombineGroup`=파랑 📘 · `dt_DungeonSectorTime`=주황 ⚙️(설정) | `03`·`04`·`09` |
+| ③ | 라벨이 배지와 겹치지 않고 잔여 영역 중앙 정렬 | **PASS** — 전 칩에서 배지 우측에 이름이 시작, 겹침·잘림 이상 0 | `03`·`04` |
+| ④ | hover 확장 시 배지가 카드 안 정위치 + 앞글자 무이동 | **PASS** — `t_DungeonSector…`(잘림) hover → `dt_DungeonSectorTime` 전체 노출, 좌변 고정·우측 성장, **주황 배지가 확장 카드 좌측에 그대로** (캔버스 좌변에 인접한 칩이라 `_clampCardX` 경로 포함) | `09-hover-retry.png` |
+| ⑤ | 줌아웃 시 **아이콘만** 사라지고 색 타일 잔존 | **PASS** — zoom 0.440 → `dropped 300 / roleIconsDropped 0`(12×0.44=5.28 ≥ 5 유지), zoom 0.352 → `dropped 666 / **roleIconsDropped 255**`(4.22 < 5 소거)이고 화면에는 teal 바 + 좌측 색 타일만 남음 | `05-zoomout-badge-only.png` |
+| ⑥ | selected/analyzed 테두리가 배지에 가려지지 않음 | **PASS** — `TT_CombineGroup`(선택 노란 테두리 + 분석완료 보라) · `dt_Combine`(선택 검은 테두리)에서 테두리·배지 공존 | `03`·`04` |
+| ⑦ | 범례 '테이블 역할' 탭 정합 | **PASS** — 8종 견본이 **라운드 사각**(`border-radius: 3px` computed) + 아이콘 병기, note = "AI 분석 완료 시 테이블 칩 **왼쪽 배지**에 위 색·아이콘 표시 (칩 본체 색은 노드 종류 공통)" (PixiJS 경로라 정적 문구 유지 = 헤드리스 H1 계약의 라이브 확인) | `06-legend-roles.png` |
+| ⑧ | 리소스 오류 0 | **PASS** — `performance.getEntriesByType('resource')` 중 status ≥ 400 **0건**. 전 상호작용(ds 전환·검색·카드 펼침·줌 ±·노드 이동·범례 탭·hover) 정상 동작 | — |
+
+**미재현(정직 병기)**: **running(AI 분석 중) 상태의 배지 desaturate** — codex P2 3·4·5차 수정분. 재현에는 실제
+분석 잡 실행(LLM 외부 비용)이 필요해 본 검증에서 수행하지 않았다. alpha 전달 경로는 헤드리스가 아니라 **코드
+경로 자체**로만 고정돼 있으므로(컨테이너 alpha 단일 지점 + `paint` 재적용), 다음 분석 실행 cycle 에서 육안
+확인 대상으로 남긴다. 또한 dim(1-hop 밖) 상태에서 배지가 본체와 함께 흐려지는 것은 `04`·`07` 에서 관측됐다
+(같은 alpha 경로의 부분 실증).
+
+증적: `artifacts/shared/win-browser-shots-role-badge/`(01~09, 9매 — git 비추적).
