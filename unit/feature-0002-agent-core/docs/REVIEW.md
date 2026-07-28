@@ -605,3 +605,19 @@ INSERT 는 4단 사다리로 컬럼을 줄여가며 재시도하고, SELECT 는 
   데이터 접근 자체는 기존 RBAC·product allowlist 가 통제한다.
 - 테스트 더블 arity 7건을 함께 고쳤다(프로덕션 결함 아님). keyword-only 로 추가해 위치 인자
   호출부는 영향이 없다.
+
+## REV-20260728T124500-llm-usage-target-scope-postverify [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+
+CHG-20260728T124500-llm-usage-target-scope-postverify. docs-only(코드 diff 0) — 라이브 실측이
+증거이므로 panel 미호출.
+
+- **설계 의도가 라이브에서 그대로 관측됨**: 같은 `diag_schema.diag_table` 이 `target_scope` 별로
+  **2행 분리**되고 `nav.scope_key` 가 기록값으로 확정됐다. 0047 이전 같은 상황은 한 줄 합산 +
+  역해소 모호(=화면까지만 이동)였다.
+- **`scope_source` 가 실효적**: 응답에서 기록/추정을 구분할 수 있어, 전환기 채움률을 API 로
+  관측할 수 있다(운영자용 UI 는 만들지 않았지만 진단 레버로 기능한다).
+- **원장 위생 준수**: 검증이 실 LLM 호출이라 합성 2행이 남았고 즉시 삭제해 비용 집계 오염을 막았다.
+  검증 목적의 합성 데이터는 **원장에 남기지 않는다**는 원칙을 기록해 둔다.
+- **정직한 한계 표기**: 검증 시점 워커가 스캔 단계여서 organic 신규 행은 0이었다. 소급 백필을
+  하지 않는 설계상 채움률은 시간에 따라 오르며, 그 사실을 fragment §⑤ 에 명시했다 —
+  "배포했으니 전부 기록됨" 으로 오인되지 않게 한다.
