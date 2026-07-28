@@ -151,6 +151,52 @@ const _META_CULL_MARGIN = 0.3;    // 뷰포트 밖 여유(뷰포트 크기 배�
 //   graph-layoutmemo(§73): 0.6→0.3 — 고배율 줌인에서 방출 영역이 과대(margin 0.6 이면 방출면적=뷰포트×4.84,
 //   zoom 2.5 에서 337 방출)해 setData+draw 를 키웠다. 메모이즈로 re-emit 의 layout 비용이 사라져 더 tight 한
 //   마진(방출면적 ×2.25)이 감당 가능 — 방출 수↓ = draw↓. 팬 재-emit 은 §65 debounce 로 경계 pop 흡수.
+// label-lod(20260728T1604, 사용자 리포트 2026-07-28 "과도한 줌아웃 시 글자가 깨짐"): 라벨은 화면 실효 크기가
+//   작아질수록 GPU 다운샘플 aliasing 으로 붕괴한다(노이즈·모아레·팬 중 반짝임). PixiJS v8 BitmapText 의
+//   dynamic font 는 글리프를 **항상 100px**(baseRenderedFontSize, overrideSize=true)로 굽고 fontSize/100
+//   으로 축소해 그리므로, fontSize 12 라벨은 zoom 0.1·DPR 2 에서 텍스처 대비 ~1/42 축소 = 사실상 임의 점
+//   샘플링이다(아틀라스는 mipmap 부재 — PixiJS v8.19 dynamic font 에는 이를 켜는 유효한 seam 이 없다.
+//   사후에 autoGenerateMipmaps/mipLevelCount 를 세워도 GL 텍스처·샘플러가 이미 굳어 렌더 결과 픽셀 차이 0
+//   임을 실측했다 — 2026-07-28 PB-0008). Text 폴백도 fontSize×labelRes(≤4)라 ~1/20 로 같은 기전이다.
+//   판독 불가 크기의 라벨은 정보를 주지 않고 노이즈와 draw call 만 남기므로 **방출하지 않는다**
+//   (정보 손실 0 — 어차피 못 읽는다. 확대하면 그대로 복귀).
+//   임계는 화면 CSS px: fontSize(model px) × zoom = 화면 px. dpr 은 곱하지 않는다(판독성은 CSS px 기준).
+const _META_LABEL_MIN_PX = 5;          // 본문 라벨(테이블·컬럼·루틴·파라미터·용어·접기 컨트롤·엣지 count)
+const _META_LABEL_HEADER_MIN_PX = 3.2; // 헤더·카드(카테고리 밴드·스키마 클러스터/카드·컨텐츠 그룹·제품 개요)
+//   — 개요에서 "여기가 어디인가"를 주는 소수의 큰 라벨이라 본문보다 오래 유지한다.
+const _META_LABEL_HDR_KINDS = new Set(["cat-hd", "schema-card", "group-hd", "schema", "product", "datasource"]);
+// 라벨 LOD 밴드 — 임계를 교차할 때만 rebuild 하도록(_lodBand 훅) 줌을 "억제 경계 폰트 크기"로 양자화한다.
+//   MIN/zoom = 이 줌에서 억제되는 폰트 크기의 상한(이 값 미만 폰트가 억제) → 실제 억제 집합이 바뀌는
+//   지점에서만 밴드 문자열이 바뀐다. **양끝을 실사용 라벨 폰트 범위로 클램프**해야 무의미한 rebuild 가 없다:
+//     · 하한 9 (실사용 최소 폰트, graph-roleviz count 라벨) — 경계가 9 이하면 억제 대상이 아예 없으므로
+//       zoom 1.0 과 0.9 는 같은 상태다. 클램프가 없으면 통상 줌 휠 조작마다 밴드가 바뀌어 rebuild 가 걸린다.
+//     · 상한 24 (실사용 최대 폰트 15 + 여유) — 그 위는 전부 "전량 억제" 동일 상태. 클램프가 없으면 극단
+//       줌아웃에서 휠 한 칸마다 rebuild 가 걸린다.
+//   **STEP=0.5 (반포인트) 격자에 올린다 — 정수 ceil 은 소수 폰트의 임계 교차를 놓친다**(codex P2):
+//   라벨 폰트에는 정수뿐 아니라 `10.5`(컨텐츠 그룹 헤더)·`11.5`(제품 개요) 같은 반포인트 값이 있다.
+//   `ceil(MIN/z)` 는 정수 경계에서만 값이 바뀌므로, 예컨대 헤더 하한 3.2 와 10.5px 의 교차점
+//   z*=3.2/10.5≈0.30476 을 지나도 밴드가 그대로다(0.3048→11, 0.3040→11) → rebuild 가 걸리지 않아
+//   **10.5px 헤더가 판독 하한 밑에서 계속 렌더된다**(다른 밴드가 우연히 바뀔 때까지). 반포인트 격자
+//   `ceil(MIN/z / STEP) * STEP` 는 0.5 의 배수인 모든 실사용 폰트에 대해 억제 집합 변화와 1:1 대응한다
+//   (같은 예: 0.3048→10.5, 0.3040→11 로 갈라진다). 런타임 계산 폰트(스키마 카드 `_cardLF`/`_cardBF`)는
+//   `Math.round` 정수라 반포인트 격자가 정수 격자를 포함하므로 함께 커버된다.
+const _META_LABEL_FONT_LO = 9, _META_LABEL_FONT_HI = 24, _META_LABEL_FONT_STEP = 0.5;
+function _metaLabelBandOf(zoom) {
+  const z = (typeof zoom === "number" && isFinite(zoom) && zoom > 0) ? zoom : 1;
+  const S = _META_LABEL_FONT_STEP;
+  const q = (minPx) => Math.min(_META_LABEL_FONT_HI,
+    Math.max(_META_LABEL_FONT_LO, Math.ceil((minPx / z) / S) * S));
+  return q(_META_LABEL_MIN_PX) + "/" + q(_META_LABEL_HEADER_MIN_PX);
+}
+// graph-perf(사용자 요청 2026-07-28 "성능 비용을 차후에 관측할 수 있는 구조"): 프론트 그래프 렌더 비용을
+//   브라우저 콘솔·PB-0008 relay·헤드리스에서 동일하게 읽는 단일 관측 지점. 계측 전용(동작 분기 없음)이라
+//   fail-soft — 전역 접근 실패(비브라우저 vm)면 로컬 객체를 돌려주고 조용히 버린다.
+function _metaPerf() {
+  const w = (typeof window !== "undefined") ? window : null;
+  if (!w) return { label: {}, render: {} };
+  if (!w.__META_GRAPH_PERF) w.__META_GRAPH_PERF = { label: {}, render: {} };
+  return w.__META_GRAPH_PERF;
+}
 // §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
 const _META_DIM_OPACITY = 0.38;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
@@ -186,4 +232,4 @@ function _metaComboName(id) {
 const _metaNatSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 
 
-export { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_MIN_READ_ZOOM, _META_SEARCH_CAP, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaNatSort, _metaSchemaComboOf };
+export { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_SEARCH_CAP, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf };
