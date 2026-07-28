@@ -80,3 +80,39 @@ source_of_truth: true
   `docs/SECURITY.md`(§7 allowlist), `tests/test_ai_discovery.py`(+openapi·contact 계약), route golden.
 - Impact: additive. 신규 익명 엔드포인트는 static contract(수기 OpenAPI, admin 제외, 데이터 0). 문서 정확화.
 - Rollback Notes: 라우터/스펙/문서 revert. 완전 가역.
+
+## CHG-20260728T103500-ai-claude-conversation-quality-controls (Major §12.3 — 외부 AI 대화 품질 조정 표면)
+- Date: 2026-07-28
+- Related Requirement: REQ-20260722-conversation-api-access (품질 조정 확장 —
+  AC-20260728T103500-conversation-quality-controls-1~5)
+- Summary: 외부 AI 가 대화 품질 5축(모델·추론 강도·제품·폴더 커스텀 지침·첨부)을 **발견하고
+  조정**할 수 있게 했다. 모델·추론 강도는 이미 `/api/ask` 계약에 있었고, 실제 간극은 (a) 제품 축이
+  발견 자료에 전무, (b) "내 토큰이 쓸 수 있는 값" 조회 경로 부재였다.
+  - **`GET /api/ai/capabilities` 신설(인증 필수, 신규 권한 코드 0)** — 계정별 라이브 옵션 카탈로그.
+    모델/제품은 작업 화면 선택기와 **같은 필터 함수** 재사용(표시-집행 정합), 폴더는 owner-scope
+    스토어, `conversation_id` 동봉은 `_account_can_access_conversation` 게이트. 축별 독립 try 로
+    부분 degrade. 권한 없는 축은 값 은닉 + `available:false` + 사유.
+  - **익명 발견 자료는 포인터만** — 매니페스트에 `quality_controls{discover, axes[5]}` 추가하되
+    계정별 값 목록은 싣지 않아 §7 "익명=static contract, 인스턴스 데이터 0" 불변식 보존.
+  - **큐레이션 OpenAPI +6 path** (`/api/ai/capabilities`·`PATCH …/product`·`/api/folders`(GET,POST)·
+    `PATCH /api/folders/{id}`·`PATCH …/folder`·`POST …/attachments`) + `Capabilities`/`Folder`/
+    `QualityAxis` 스키마 + `AskRequest` 에 `product_mode`/`product_id`(신규 대화 한정 명시).
+  - **가이드 §4.7 신설**(축별 표·curl 예제 4종·구 토큰 403 안내) + `llms.txt` 품질 조정 항목.
+  - **MCP tool +7** (`list_capabilities`·`set_conversation_product`·`list_folders`·`create_folder`·
+    `set_folder_instructions`·`move_conversation_to_folder`·`upload_attachment`) + `ask` 에
+    `product_id`/`product_mode` 인자(기존 대화에 주면 조용한 무시 대신 명시 오류) + stdlib multipart 헬퍼.
+  - **토큰 안전 기본 scope 에 `folder.` 확장** (`_API_TOKEN_SAFE_DEFAULT_SCOPES`, CLI
+    `_ALLOWED_SCOPE_PREFIXES`/기본 발급값). 절대 denylist 무변경 — `.any`·관리 네임스페이스는 그대로 차단.
+- Files: `unit/feature-0003-agent-web-ui/src/routers/ai_discovery.py`(capabilities +
+  카탈로그/매니페스트/OpenAPI 확장), `unit/feature-0003-agent-web-ui/src/web_context.py`(scope 상수),
+  `unit/feature-0003-agent-web-ui/src/static/{ai-api-guide.md,llms.txt}`,
+  `unit/feature-0023-conversation-api-access/src/conversation_mcp_server.py`,
+  `bin/{api-token-issue.sh,conversation-mcp.sh}`,
+  `unit/feature-0003-agent-web-ui/tests/{test_ai_capabilities.py(신규 10),test_api_token_auth.py(+5),
+  test_product_list_rbac.py(T9 강화),route_snapshot_p5b.json(골든 +1 route)}`,
+  `docs/{SECURITY.md §25.1,ARCHITECTURE.md,ROUTEMAP.md,STATUS.md}`, feature docs.
+- Impact: **additive**. 기존 인증/대화 경로 무회귀 — `/api/ask` body 계약 불변(제품 힌트는 기존
+  신규-대화-한정 동작 그대로), 신규 권한 코드 0, 스키마 변경 0. 기존 발급 토큰은 저장된 scope 가
+  유지되어 폴더 축이 닫힌 채 무회귀(열려면 재발급). 전체 회귀 2586 passed / 0 failed.
+- Rollback Notes: 라우터·MCP·문서 revert + scope 상수 2곳 원복 + 골든 스냅샷 원복. 완전 가역
+  (DB 마이그레이션 없음).

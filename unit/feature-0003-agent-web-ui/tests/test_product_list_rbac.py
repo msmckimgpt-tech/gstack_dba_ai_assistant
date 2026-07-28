@@ -87,14 +87,27 @@ def test_t8_coerce_default_empty_zero():
 
 
 def test_t9_filter_only_on_workspace_paths():
-    """_filter_products_for_account_access 는 작업 화면 2곳에서만 호출되고
-    admin _list_products(include_inactive=True) 경로엔 미적용이어야 한다."""
+    """_filter_products_for_account_access 는 **작업 화면 경로에서만** 호출되고
+    admin _list_products(include_inactive=True) 경로엔 미적용이어야 한다.
+
+    conversation-quality-controls(2026-07-28): 호출처가 2 → 3 으로 늘었다
+    (`ai_discovery.py` = 외부 AI 용 `/api/ai/capabilities` 의 제품 목록 — 작업 화면 대화의
+    제품 선택기와 **같은 표면**이라 같은 필터를 타는 것이 정합이다). 카운트만 세면 admin
+    파일에서 호출해도 통과하므로, **어느 파일에서 호출되는지**를 함께 고정한다 — 이 테스트의
+    본래 의도("workspace paths only")를 카운트보다 직접적으로 검증한다.
+    """
     # feature-0012 P5b: 핸들러 일부가 routers/ 로 추출됨(auth_me 등) → app.py + routers 합산 검색.
     _ROUTERS = APP_PY.parent / "routers"
-    src = APP_PY.read_text(encoding="utf-8") + "".join(
-        p.read_text(encoding="utf-8") for p in sorted(_ROUTERS.glob("*.py"))
-    )
-    call_count = src.count("_filter_products_for_account_access(account, products)")
-    assert call_count == 2, f"작업화면 필터 호출이 정확히 2곳이어야 함 (실제 {call_count})"
+    _NEEDLE = "_filter_products_for_account_access(account, products)"
+
+    sources = {"app.py": APP_PY.read_text(encoding="utf-8")}
+    for p in sorted(_ROUTERS.glob("*.py")):
+        sources[p.name] = p.read_text(encoding="utf-8")
+
+    callers = {name: src.count(_NEEDLE) for name, src in sources.items() if _NEEDLE in src}
+    # 작업 화면(대화) 표면만 — admin_* 라우터에서 호출되면 관리 목록에 필터가 새는 것.
+    assert set(callers) == {"system.py", "auth.py", "ai_discovery.py"}, callers
+    assert sum(callers.values()) == 3, callers
+    assert not any(name.startswith("admin") for name in callers), callers
     # admin 경로는 include_inactive=True — 필터 미적용
-    assert "_list_products(conn, include_inactive=True)" in src
+    assert "_list_products(conn, include_inactive=True)" in "".join(sources.values())

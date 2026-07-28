@@ -117,7 +117,19 @@ _API_TOKEN_HARD_DENY_PREFIXES = (
     "product.manage", "product.read", "product.create", "product.delete",
 )
 # 토큰 Scopes 가 NULL/빈 값일 때 적용할 **안전 기본 allowlist**(fail-closed — 무제한 금지).
-_API_TOKEN_SAFE_DEFAULT_SCOPES = ("conversation.", "product.access.")
+#
+# feature-0023 conversation-quality-controls(2026-07-28): `folder.` 추가 — 외부 AI 가 대화 품질을
+# 조정하는 축 중 하나가 **폴더별 커스텀 지침**(feature-0024, ask 시 `compose_system_prompt` 에
+# 주입되는 시스템 프롬프트)이기 때문이다(사용자 결정 — 조정 범위 최대). 안전성 근거:
+#   - `folder.*` 는 `folder.list.own` / `folder.manage.own` **2개뿐이고 둘 다 `.own`** 이다
+#     (`folder.*.any` 는 feature-0024 privacy 슬라이스에서 폐지 — 크로스-계정 폴더 노출 차단).
+#   - 폴더 스토어가 owner-scope 를 강제하고 `restore_folders` IDOR 도 봉인돼 있어, 이 접두가
+#     여는 표면은 **토큰 계정 자신의 폴더**로 닫혀 있다.
+#   - 아래 `_api_token_permission_denied` 의 `.any` 절대 차단은 그대로 얹히므로, 훗날 누군가
+#     `folder.*.any` 를 되살려도 토큰 경로에서는 여전히 죽는다(방어 이중화).
+# 이 상수는 **Scopes 가 비어 있는 토큰**에만 적용된다 — 이미 발급돼 `conversation.,product.access.`
+# 가 저장된 토큰은 영향받지 않는다(무회귀). 기존 토큰에 폴더 축을 열려면 재발급이 필요하다.
+_API_TOKEN_SAFE_DEFAULT_SCOPES = ("conversation.", "product.access.", "folder.")
 
 
 def _api_token_permission_denied(code: str) -> bool:

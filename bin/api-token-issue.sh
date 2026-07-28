@@ -4,7 +4,7 @@
 #
 # 외부 AI 프로그래매틱 접근용 Bearer API 토큰을 발급/폐기/조회한다. 관리 콘솔이 아닌
 # CLI 부트스트랩(사용자 요구: "관리 콘솔 제외"). 토큰은 저권한 서비스 계정에 귀속되고
-# scope allowlist(기본 `conversation.,product.access.`)로 관리 엔드포인트가 원천 차단된다.
+# scope allowlist(기본 `conversation.,product.access.,folder.`)로 관리 엔드포인트가 원천 차단된다.
 #
 # 보안 설계:
 #  - 토큰 원문은 저장하지 않는다 — SHA-256 해시(WebApiTokens.TokenHash)만 저장.
@@ -35,7 +35,10 @@ set -euo pipefail
 MODE="issue"
 ACCOUNT=""
 LABEL=""
-SCOPES="conversation.,product.access."
+# feature-0023 conversation-quality-controls(2026-07-28): `folder.` 포함 — 외부 AI 가 조정하는
+# 대화 품질 축 중 폴더별 커스텀 지침(feature-0024) 이 여기 걸린다. `folder.*` 는 `.own` 2개뿐이고
+# 런타임 절대 denylist(`.any`·관리 네임스페이스)는 그대로 적용된다(web_context 동기 주석 참조).
+SCOPES="conversation.,product.access.,folder."
 EXPIRES_DAYS=""
 REVOKE_TARGET=""
 
@@ -113,7 +116,7 @@ def _resolve_account(cur, username):
 
 # REV-20260722 MEDIUM-1: 발급 시 방어(런타임 절대 denylist 가 최종 보증이나, 혼동 방지 위해
 # 발급 단계에서도 관리 scope 를 거부하고 privileged 계정 바인딩을 경고한다).
-_ALLOWED_SCOPE_PREFIXES = ("conversation.", "product.access.")
+_ALLOWED_SCOPE_PREFIXES = ("conversation.", "product.access.", "folder.")
 _PRIVILEGED_ROLE_NAMES = ("admin", "operator", "dba")
 
 def _validate_scopes(scopes_csv):

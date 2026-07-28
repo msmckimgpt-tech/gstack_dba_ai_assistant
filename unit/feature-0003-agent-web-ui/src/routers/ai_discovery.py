@@ -12,13 +12,32 @@
 `conversation.*` 엔드포인트만 노출(관리 콘솔 `/api/admin/*` 미포함). SECURITY.md §7 allowlist 등재.
 FastAPI 기본 `/openapi.json`·`/docs`·`/redoc`(admin 포함 전체 스키마 익명 유출)는 app.py 에서
 비활성화했고, 전체 스키마가 필요한 개발자는 admin-gated `GET /api/admin/openapi.json` 로 조회한다.
+
+conversation-quality-controls(2026-07-28) 추가:
+
+- `GET /api/ai/capabilities`                — **인증 필수**. 이 계정/토큰이 실제로 조정할 수 있는
+                                              대화 품질 옵션(모델·추론 강도·제품·폴더 지침·첨부)의
+                                              라이브 값.
+
+⚠️ capabilities 는 위 4개와 **분리된 계층**이다 — 계정별 인스턴스 데이터(모델·제품·폴더 목록)를
+담으므로 익명 노출이 금지된다(SEC-20260724 "익명=static contract" 불변식 보존). 익명 매니페스트는
+"그런 축이 있고 capabilities 로 조회하라"는 **포인터만** 싣는다.
 """
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse
+
+from shared.model_catalog import (
+    API_DEFAULT_MODEL,
+    DEFAULT_REASONING_LEVEL,
+    PUBLIC_API_MODEL_OPTIONS,
+    REASONING_LEVEL_OPTIONS,
+    model_supports_thinking,
+)
 
 import app
 
@@ -48,8 +67,12 @@ _CONVERSATION_ENDPOINTS = [
         "request": {
             "message": "string (필수) — 질문/메시지",
             "conversation_id": "string (선택) — 이어갈 대화 id. 생략 시 새 대화 생성",
-            "model": "string (선택) — 미지정 시 서비스 기본 모델",
+            "model": "string (선택) — 미지정 시 서비스 기본 모델. 사용 가능 목록은 /api/ai/capabilities",
             "reasoning_level": "string (선택) — low|normal|high|max",
+            "product_mode": "string (선택, **신규 대화 생성 시에만**) — auto|pinned. 기존 대화는 "
+                            "PATCH /api/conversations/{id}/product 를 쓴다",
+            "product_id": "number (선택, **신규 대화 생성 시에만**) — pinned 모드의 대상 제품. "
+                          "접근 가능 목록은 /api/ai/capabilities",
         },
         "response": {
             "output": "string — assistant 답변 본문",
@@ -74,6 +97,41 @@ _CONVERSATION_ENDPOINTS = [
      "request": {"conversation_id": "string"}, "response": {"steps": "array"}},
     {"method": "POST", "path": "/api/cancel", "summary": "진행 중 ask 취소.",
      "request": {"conversation_id": "string"}, "response": {"cancelled": "bool"}},
+    # ── 대화 품질 조정 (conversation-quality-controls, 2026-07-28) ──────────────────────
+    {"method": "GET", "path": "/api/ai/capabilities",
+     "summary": "이 토큰/계정이 실제로 조정할 수 있는 품질 옵션(모델·추론 강도·제품·폴더 지침·첨부)의 "
+                "라이브 값. **품질을 바꾸기 전에 먼저 이걸 조회한다** — 허용 밖 값은 400/403 이다.",
+     "request": {"conversation_id": "string (선택) — 주면 그 대화의 현재 설정도 함께 반환"},
+     "response": {"quality_controls": "object — 축별 {available, how, 값 목록, 기본값}",
+                  "conversation": "object|null — conversation_id 를 준 경우 현재 설정"}},
+    {"method": "PATCH", "path": "/api/conversations/{conversation_id}/product",
+     "summary": "**기존 대화**의 제품(데이터소스 스코프) 변경 — 다음 /api/ask 부터 적용된다. "
+                "질문 대상 DB 범위를 바꾸는 축이라 답변 품질에 직접 영향.",
+     "request": {"mode": "string — auto|pinned", "product_id": "number — pinned 일 때 필수"},
+     "response": {"conversation_id": "string", "product_id": "number|null", "product_mode": "string"}},
+    {"method": "GET", "path": "/api/folders",
+     "summary": "내 폴더(프로젝트 워크스페이스) 목록 — 폴더별 커스텀 지침 포함.",
+     "request": {}, "response": {"folders": "array", "max_depth": "number"}},
+    {"method": "POST", "path": "/api/folders",
+     "summary": "폴더 생성(커스텀 지침 동반 가능).",
+     "request": {"name": "string (필수)", "instructions": "string (선택) — 이 폴더 대화에 주입될 지침",
+                 "parent_folder_id": "number (선택)"},
+     "response": {"ok": "bool", "folder": "object"}},
+    {"method": "PATCH", "path": "/api/folders/{folder_id}",
+     "summary": "폴더 수정 — **커스텀 지침(instructions) 갱신**이 품질 조정 축이다. 이 폴더에 속한 "
+                "대화의 발화 시 시스템 프롬프트에 주입된다.",
+     "request": {"name": "string (선택)", "instructions": "string|null (선택)",
+                 "parent_folder_id": "number|null (선택)"},
+     "response": {"ok": "bool", "folder_id": "number"}},
+    {"method": "PATCH", "path": "/api/conversations/{conversation_id}/folder",
+     "summary": "대화를 폴더에 배정/해제 — 배정하면 그 폴더의 커스텀 지침이 이후 답변에 적용된다.",
+     "request": {"folder_id": "number|null — null 이면 폴더에서 빼낸다"},
+     "response": {"ok": "bool", "conversation_id": "string", "folder_id": "number|null"}},
+    {"method": "POST", "path": "/api/conversations/{conversation_id}/attachments",
+     "summary": "대화에 문서 첨부(multipart/form-data, 필드명 `file`) — assistant 가 답변 근거로 "
+                "삼는 grounding 자료를 늘려 품질을 올리는 축.",
+     "request": {"file": "multipart file (필수)"},
+     "response": {"id": "number", "kind": "string", "size": "number", "sha256": "string", "status": "string"}},
 ]
 
 
@@ -102,10 +160,37 @@ def _manifest(request: Request) -> dict:
                                  "--account <저권한 서비스계정> --label \"<용도>\"` 로 발급. "
                                  "관리 콘솔이 아닌 CLI 발급이다. self-serve 발급 엔드포인트는 없다.",
                 "contact": _TOKEN_CONTACT,
-                "scope_model": "토큰은 `conversation.*` + `product.access.*` 스코프만 가진다. "
-                               "관리 콘솔(`/api/admin/*`)·교차계정 데이터는 scope allowlist + 절대 "
+                "scope_model": "토큰은 `conversation.*` + `product.access.*` + `folder.*`(own) 스코프만 "
+                               "가진다. 관리 콘솔(`/api/admin/*`)·교차계정 데이터는 scope allowlist + 절대 "
                                "denylist(`*.any`·관리 네임스페이스)로 **접근 불가**. 타 계정 대화 열람/"
-                               "조작도 owner-or-member 게이트로 차단.",
+                               "조작도 owner-or-member 게이트로 차단. (구 토큰은 발급 시점 scope 가 "
+                               "저장돼 있어 `folder.*` 가 없을 수 있다 — 403 이면 재발급을 요청한다.)",
+            },
+            # ── 대화 품질 조정 축 (conversation-quality-controls, 2026-07-28) ─────────────
+            # 값 목록(모델·제품·폴더)은 계정별 인스턴스 데이터라 **여기 싣지 않는다**(익명 매니페스트
+            # = static contract 불변식, SEC-20260724). 인증 후 capabilities 에서 조회하게 포인터만 둔다.
+            "quality_controls": {
+                "discover": origin + "/api/ai/capabilities",
+                "how": "품질 옵션을 바꾸기 전에 `GET /api/ai/capabilities`(Bearer 필요)를 먼저 호출해 "
+                       "이 토큰이 실제 쓸 수 있는 값을 확인한다. 목록 밖 값은 400(카탈로그 밖) 또는 "
+                       "403(권한 밖)이다 — 추측하지 말 것.",
+                "axes": [
+                    {"axis": "model", "effect": "답변을 생성하는 LLM 자체. 난도 높은 분석일수록 상위 모델.",
+                     "set_via": "POST /api/ask body.model (요청 단위 — 명시하면 그 대화의 선택으로 기억된다)"},
+                    {"axis": "reasoning_level", "effect": "추론(thinking) 예산. low|normal|high|max — "
+                                                          "`normal` 은 모델 기본값 유지(무주입).",
+                     "set_via": "POST /api/ask body.reasoning_level (대화별로 영구 저장)"},
+                    {"axis": "product", "effect": "질의 대상 데이터소스 스코프. 잘못 고르면 근거 없는 답이 "
+                                                  "나오므로 품질 영향이 가장 크다.",
+                     "set_via": "신규 대화는 POST /api/ask body.product_mode|product_id, "
+                                "기존 대화는 PATCH /api/conversations/{id}/product"},
+                    {"axis": "folder_instructions", "effect": "폴더(프로젝트)별 커스텀 지침이 그 폴더 대화의 "
+                                                              "시스템 프롬프트에 주입된다 — 톤·형식·도메인 규칙 고정.",
+                     "set_via": "POST/PATCH /api/folders (instructions) + "
+                                "PATCH /api/conversations/{id}/folder 로 대화 배정"},
+                    {"axis": "attachments", "effect": "문서를 첨부해 답변 근거(grounding)를 늘린다.",
+                     "set_via": "POST /api/conversations/{id}/attachments (multipart, 필드명 `file`)"},
+                ],
             },
             "endpoints": _CONVERSATION_ENDPOINTS,
             "errors": {
@@ -126,7 +211,9 @@ def _manifest(request: Request) -> dict:
             "excluded": "관리 콘솔(`/api/admin/*`)·인증/계정 관리는 의도적으로 미노출이며 토큰으로 접근 불가.",
             "notes": "사내 LAN 전제. `/api/ask` 는 동기(블로킹)라 응답에 답변이 담긴다 — 폴링은 진행 중 "
                      "run 관찰용. 코드젠은 openapi_url(엄밀 스키마) 사용. base_url 은 이 매니페스트를 "
-                     "서빙한 실제 origin 이 정본이다(가이드 예제의 도메인은 예시 — base_url 을 신뢰하라).",
+                     "서빙한 실제 origin 이 정본이다(가이드 예제의 도메인은 예시 — base_url 을 신뢰하라). "
+                     "모델·제품·폴더의 **실제 사용 가능 값은 계정마다 다르므로** 이 익명 매니페스트에 "
+                     "싣지 않는다 — 인증 후 quality_controls.discover(/api/ai/capabilities)에서 조회한다.",
         },
     }
 
@@ -142,8 +229,16 @@ def _openapi_spec(request: Request) -> dict:
         "properties": {
             "message": {"type": "string", "description": "질문/메시지", "example": "최근 7일 신규 가입 수를 알려줘"},
             "conversation_id": {"type": "string", "description": "이어갈 대화 id. 생략 시 새 대화 생성"},
-            "model": {"type": "string", "description": "모델(생략 시 서비스 기본). 허용 목록은 배포별 — 보통 생략 권장"},
-            "reasoning_level": {"type": "string", "enum": ["low", "normal", "high", "max"], "description": "추론 강도(선택)"},
+            "model": {"type": "string", "description": "모델(생략 시 서비스 기본). 사용 가능 목록은 "
+                                                        "GET /api/ai/capabilities 의 quality_controls.model.values"},
+            "reasoning_level": {"type": "string", "enum": ["low", "normal", "high", "max"],
+                                "description": "추론 강도(선택). 대화별로 영구 저장된다. `normal` 은 모델 기본 유지"},
+            "product_mode": {"type": "string", "enum": ["auto", "pinned"],
+                             "description": "**신규 대화 생성 시에만** 반영되는 제품(데이터소스 스코프) 힌트. "
+                                            "기존 대화는 PATCH /api/conversations/{conversation_id}/product 사용"},
+            "product_id": {"type": "integer",
+                           "description": "**신규 대화 생성 시에만** 반영. pinned 모드의 대상 제품 id "
+                                          "(capabilities 의 quality_controls.product.values)"},
         },
     }
     _ask_resp = {
@@ -178,7 +273,9 @@ def _openapi_spec(request: Request) -> dict:
             "title": "mysql_ai Conversation API (AI-facing, curated)",
             "version": "1.0",
             "description": "외부 AI 용 큐레이션 스펙 — `conversation.*` 엔드포인트만. 관리 콘솔(`/api/admin/*`)은 "
-                           "의도적으로 제외된다. 인증=Bearer(matk_). `/api/ask` 는 동기.",
+                           "의도적으로 제외된다. 인증=Bearer(matk_). `/api/ask` 는 동기. "
+                           "대화 품질(모델·추론 강도·제품·폴더 지침·첨부)을 조정하려면 먼저 "
+                           "`GET /api/ai/capabilities` 로 이 토큰이 쓸 수 있는 값을 조회한다.",
         },
         "servers": [{"url": origin}],
         "security": [{"bearerAuth": []}],
@@ -190,6 +287,36 @@ def _openapi_spec(request: Request) -> dict:
                                  "topic": {"type": "string"}, "updated_at": {"type": "string"}}},
                 "Message": {"type": "object", "properties": {"id": {"type": "integer"}, "role": {"type": "string"},
                             "content": {"type": "string"}, "created_at": {"type": "string"}}},
+                "Folder": {"type": "object", "properties": {
+                    "folder_id": {"type": "integer"},
+                    "parent_folder_id": {"type": ["integer", "null"]},
+                    "name": {"type": "string"},
+                    "instructions": {"type": ["string", "null"],
+                                     "description": "이 폴더 대화의 시스템 프롬프트에 주입되는 커스텀 지침"},
+                    "depth": {"type": "integer"}}},
+                "QualityAxis": {"type": "object", "description": "품질 조정 축 1개의 라이브 계약.",
+                                "properties": {
+                                    "available": {"type": "boolean",
+                                                  "description": "이 토큰/계정이 실제로 이 축을 조정할 수 있는지"},
+                                    "set_via": {"type": "string", "description": "어느 엔드포인트/필드로 거는지"},
+                                    "scope": {"type": "string", "description": "요청 단위인지 대화·폴더 단위인지"},
+                                    "default": {},
+                                    "values": {"type": "array", "items": {"type": "object"},
+                                               "description": "허용 값 목록(계정 권한으로 필터됨)"},
+                                    "note": {"type": "string"}}},
+                "Capabilities": {"type": "object", "properties": {
+                    "schema_version": {"type": "string"},
+                    "account": {"type": "object", "properties": {
+                        "username": {"type": "string"},
+                        "auth": {"type": "string", "description": "session | api_token"}}},
+                    "quality_controls": {"type": "object", "properties": {
+                        "model": {"$ref": "#/components/schemas/QualityAxis"},
+                        "reasoning_level": {"$ref": "#/components/schemas/QualityAxis"},
+                        "product": {"$ref": "#/components/schemas/QualityAxis"},
+                        "folder_instructions": {"$ref": "#/components/schemas/QualityAxis"},
+                        "attachments": {"$ref": "#/components/schemas/QualityAxis"}}},
+                    "conversation": {"type": ["object", "null"],
+                                     "description": "conversation_id 를 준 경우 그 대화의 현재 설정"}}},
             },
         },
         "paths": {
@@ -227,8 +354,302 @@ def _openapi_spec(request: Request) -> dict:
                     "type": "object", "required": ["conversation_id"],
                     "properties": {"conversation_id": {"type": "string"}}}}}},
                 "responses": {"200": {"description": "취소"}, **_errs}}},
+            # ── 대화 품질 조정 (conversation-quality-controls, 2026-07-28) ─────────────────
+            "/api/ai/capabilities": {"get": {
+                "summary": "조정 가능한 품질 옵션의 라이브 값(모델·추론 강도·제품·폴더 지침·첨부). "
+                           "품질을 바꾸기 전에 먼저 호출한다.",
+                "operationId": "capabilities",
+                "parameters": [{"name": "conversation_id", "in": "query", "required": False,
+                                "schema": {"type": "string"},
+                                "description": "주면 그 대화의 현재 설정도 함께 반환"}],
+                "responses": {"200": {"description": "옵션 카탈로그", "content": {"application/json": {
+                    "schema": {"$ref": "#/components/schemas/Capabilities"}}}}, **_errs}}},
+            "/api/conversations/{conversation_id}/product": {"patch": {
+                "summary": "기존 대화의 제품(데이터소스 스코프) 변경 — 다음 /api/ask 부터 적용.",
+                "operationId": "setConversationProduct",
+                "parameters": [{"name": "conversation_id", "in": "path", "required": True,
+                                "schema": {"type": "string"}}],
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                    "type": "object", "required": ["mode"],
+                    "properties": {"mode": {"type": "string", "enum": ["auto", "pinned"]},
+                                   "product_id": {"type": "integer",
+                                                  "description": "mode=pinned 일 때 필수"}},
+                    "example": {"mode": "pinned", "product_id": 3}}}}},
+                "responses": {"200": {"description": "변경됨", "content": {"application/json": {"schema": {
+                    "type": "object", "properties": {"conversation_id": {"type": "string"},
+                                                     "product_id": {"type": ["integer", "null"]},
+                                                     "product_mode": {"type": "string"}}}}}},
+                    "400": {"description": "pinned 인데 product_id 누락·비활성 제품"}, **_errs}}},
+            "/api/folders": {
+                "get": {"summary": "내 폴더 목록(커스텀 지침 포함).", "operationId": "listFolders",
+                        "responses": {"200": {"description": "폴더 트리", "content": {"application/json": {
+                            "schema": {"type": "object", "properties": {
+                                "folders": {"type": "array", "items": {"$ref": "#/components/schemas/Folder"}},
+                                "max_depth": {"type": "integer"}}}}}}, **_errs}},
+                "post": {"summary": "폴더 생성(커스텀 지침 동반 가능).", "operationId": "createFolder",
+                         "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                             "type": "object", "required": ["name"],
+                             "properties": {"name": {"type": "string"},
+                                            "instructions": {"type": ["string", "null"]},
+                                            "parent_folder_id": {"type": ["integer", "null"]}},
+                             "example": {"name": "매출 분석", "instructions": "답변은 표로 요약하고 SQL 을 함께 제시한다."}}}}},
+                         "responses": {"200": {"description": "생성됨", "content": {"application/json": {"schema": {
+                             "type": "object", "properties": {"ok": {"type": "boolean"},
+                                                              "folder": {"$ref": "#/components/schemas/Folder"}}}}}},
+                             "400": {"description": "이름 누락·길이 초과·깊이 초과"}, **_errs}}},
+            "/api/folders/{folder_id}": {"patch": {
+                "summary": "폴더 수정 — `instructions` 갱신이 품질 조정 축.", "operationId": "updateFolder",
+                "parameters": [{"name": "folder_id", "in": "path", "required": True,
+                                "schema": {"type": "integer"}}],
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"},
+                                   "instructions": {"type": ["string", "null"]},
+                                   "parent_folder_id": {"type": ["integer", "null"]}},
+                    "example": {"instructions": "MySQL 방언을 쓰고 추정치는 명시한다."}}}}},
+                "responses": {"200": {"description": "수정됨"},
+                              "404": {"description": "본인 소유 폴더가 아니거나 없음"}, **_errs}}},
+            "/api/conversations/{conversation_id}/folder": {"patch": {
+                "summary": "대화를 폴더에 배정/해제 — 배정하면 그 폴더 지침이 이후 답변에 적용.",
+                "operationId": "assignConversationFolder",
+                "parameters": [{"name": "conversation_id", "in": "path", "required": True,
+                                "schema": {"type": "string"}}],
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {"folder_id": {"type": ["integer", "null"],
+                                                 "description": "null 이면 폴더에서 빼낸다"}}}}}},
+                "responses": {"200": {"description": "배정됨"},
+                              "404": {"description": "대화 접근 불가 또는 폴더 없음"}, **_errs}}},
+            "/api/conversations/{conversation_id}/attachments": {"post": {
+                "summary": "대화에 문서 첨부(grounding 자료 추가).", "operationId": "uploadAttachment",
+                "parameters": [{"name": "conversation_id", "in": "path", "required": True,
+                                "schema": {"type": "string"}}],
+                "requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
+                    "type": "object", "required": ["file"],
+                    "properties": {"file": {"type": "string", "format": "binary"}}}}}},
+                "responses": {"200": {"description": "업로드됨", "content": {"application/json": {"schema": {
+                    "type": "object", "properties": {"id": {"type": "integer"}, "kind": {"type": "string"},
+                                                     "size": {"type": "integer"}, "sha256": {"type": "string"},
+                                                     "status": {"type": "string"}}}}}},
+                    "400": {"description": "빈 파일·용량 초과"}, **_errs}}},
         },
     }
+
+
+# ── 대화 품질 조정 capabilities (인증 필수 — 계정별 라이브 값) ─────────────────────────
+
+def _model_rows(account: dict[str, Any], conn) -> list[dict[str, Any]]:
+    """이 계정이 **실제로 고를 수 있는** 모델 목록.
+
+    `/api/session`·`/api/api-vault/options` 의 선택기 필터(`_filter_models_for_account_access`,
+    model-access-rbac 2026-07-28)와 **같은 함수**를 쓴다 — 외부 AI 가 보는 목록과 `/api/ask` 의
+    403 게이트가 어긋나지 않게 한다(표시-집행 정합). `supports_thinking` 을 함께 실어, 추론 강도를
+    올려도 효과가 없는 모델을 외부 AI 가 사전에 구분하게 한다."""
+    models = list(PUBLIC_API_MODEL_OPTIONS)
+    try:
+        models = app._filter_models_for_account_access(account, models, conn=conn)
+    except Exception:
+        # 권한 판정 실패 시 목록을 부풀리지 않는다 — 여기서는 fail-closed 로 빈 목록을 주는 대신
+        # 카탈로그를 그대로 두되(선택기 경로와 동일 fail-soft), 집행은 ask() 게이트가 담당한다.
+        models = list(PUBLIC_API_MODEL_OPTIONS)
+    out: list[dict[str, Any]] = []
+    for m in models:
+        value = str(m.get("value") or "")
+        out.append({
+            "value": value,
+            "label": str(m.get("label") or ""),
+            "group": str(m.get("group") or ""),
+            "description": str(m.get("description") or ""),
+            "supports_vision": bool(m.get("supports_vision", False)),
+            "supports_thinking": bool(model_supports_thinking(value)),
+        })
+    return out
+
+
+def _product_rows(account: dict[str, Any], conn) -> tuple[list[dict[str, Any]], int]:
+    """이 계정이 접근 가능한 제품 목록 + 기본 제품 id.
+
+    `/api/session` 과 동일하게 `product.access.<key>` 로 필터(`_filter_products_for_account_access`)
+    하고 기본값을 접근 가능 범위로 보정한다. 관리 콘솔 전용 필드(default_role_access·icon 등)는
+    싣지 않는다 — 외부 AI 가 제품을 **고르는 데** 필요한 최소 필드만."""
+    try:
+        products = app._list_products(conn, include_inactive=False)
+        products = app._filter_products_for_account_access(account, products)
+        default_pid = app._coerce_default_product_id(app._get_default_product_id(conn), products)
+    except Exception:
+        return [], 0
+    rows = [{
+        "id": int(p.get("id") or 0),
+        "product_key": str(p.get("product_key") or ""),
+        "name": str(p.get("name") or ""),
+        "description": str(p.get("description") or ""),
+        "is_default": bool(p.get("is_default")),
+        "datasource_key": p.get("datasource_key"),
+    } for p in products]
+    return rows, int(default_pid or 0)
+
+
+def _folder_rows(account: dict[str, Any]) -> list[dict[str, Any]]:
+    """이 계정 **소유** 폴더 + 커스텀 지침. 폴더 스토어가 owner-scope 를 강제한다."""
+    from routers import _folder_store as store
+    folders = store.list_folders(int(account.get("id") or 0))
+    return [{
+        "folder_id": int(f.get("folder_id") or 0),
+        "parent_folder_id": f.get("parent_folder_id"),
+        "name": str(f.get("name") or ""),
+        "instructions": f.get("instructions"),
+        "depth": int(f.get("depth") or 0),
+    } for f in folders]
+
+
+@router.get("/api/ai/capabilities")
+def ai_capabilities(request: Request, conversation_id: str = "") -> JSONResponse:
+    """외부 AI 가 **대화 품질을 조정하기 전에** 조회하는 라이브 옵션 카탈로그.
+
+    익명 발견 자료(매니페스트·큐레이션 OpenAPI·guide)는 static contract 전용이라 계정별 값을
+    담을 수 없다(SEC-20260724). 그런데 모델은 `model.access.<value>` RBAC, 제품은
+    `product.access.<key>` 로 **계정마다 다르게** 열려 있어서, 목록 없이는 외부 AI 가 값을
+    추측하다 400/403 을 맞는다. 본 엔드포인트가 그 간극을 닫는다.
+
+    인증: 세션 쿠키 또는 `Authorization: Bearer`(feature-0023). **신규 권한 코드는 없다** —
+    인증만 요구하고, 각 축의 노출 여부는 그 축을 실제로 집행하는 기존 권한
+    (`folder.list.own`·`conversation.attachment.upload.*`)과 동일 판정을 재사용한다. 권한이 없는
+    축은 목록을 숨기고 `available:false` + 사유를 준다(조용한 빈 배열 금지 — 외부 AI 가 "폴더가
+    없다"와 "폴더를 볼 권한이 없다"를 구분해야 한다).
+
+    각 축은 독립 try 로 감싸 **부분 degrade** 한다 — 폴더 스토어(PG) 장애가 모델·제품 조회까지
+    죽이지 않는다.
+    """
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account = app._get_authenticated_account(conn, request)
+        if not account:
+            return app._json_error("로그인이 필요합니다.", 401)
+
+        models = _model_rows(account, conn)
+        products, default_pid = _product_rows(account, conn)
+
+        can_list_folders = bool(app._account_has_permission(account, "folder.list.own"))
+        can_manage_folders = bool(app._account_has_permission(account, "folder.manage.own"))
+        folders: list[dict[str, Any]] = []
+        folder_max_depth = None
+        folder_note = ""
+        if can_list_folders:
+            try:
+                folders = _folder_rows(account)
+                from shared import runtime_settings
+                folder_max_depth = runtime_settings.folder_max_depth()
+            except Exception:
+                folder_note = "폴더 저장소를 일시적으로 조회하지 못했습니다(재시도 가능)."
+        else:
+            folder_note = ("이 토큰/계정에 `folder.list.own` 권한이 없습니다 — 운영자에게 폴더 축 "
+                           "사용을 요청하거나 `folder.` scope 를 포함해 재발급 받으세요.")
+
+        can_attach = bool(
+            app._account_has_permission(account, "conversation.attachment.upload.own")
+            or app._account_has_permission(account, "conversation.attachment.upload.any")
+        )
+
+        conversation: dict[str, Any] | None = None
+        cid = str(conversation_id or "").strip()
+        if cid:
+            # 본인 소유/멤버 대화만 — 남의 대화 설정을 읽는 oracle 이 되지 않게 접근 게이트를 건다.
+            try:
+                allowed = app._account_can_access_conversation(
+                    conn, account, cid, "conversation.read.own", "conversation.read.any",
+                )
+            except Exception:
+                allowed = False
+            if allowed:
+                prod = None
+                try:
+                    prod = app._load_conversation_product(conn, cid)
+                except Exception:
+                    prod = None
+                conv_model = ""
+                conv_level = ""
+                try:
+                    conv_model = str(app.load_memory_kv(conn, cid, "model") or "").strip()
+                    conv_level = str(app.load_memory_kv(conn, cid, "reasoning_level") or "").strip()
+                except Exception:
+                    pass
+                conversation = {
+                    "conversation_id": cid,
+                    "model": conv_model or None,
+                    "reasoning_level": conv_level or None,
+                    "product_id": (prod or {}).get("product_id"),
+                    "product_mode": (prod or {}).get("product_mode"),
+                    "product_name": (prod or {}).get("product_name"),
+                }
+            else:
+                conversation = {"conversation_id": cid, "error": "접근할 수 없는 대화입니다."}
+
+        payload = {
+            "schema_version": "1.0",
+            "account": {
+                "username": str(account.get("username") or ""),
+                "auth": str(account.get("_auth_via") or "session"),
+            },
+            "quality_controls": {
+                "model": {
+                    "available": bool(models),
+                    "set_via": "POST /api/ask body.model",
+                    "scope": "요청 단위. 명시하면 그 대화의 선택 모델로 기억된다(다음 요청에서 생략 가능).",
+                    "default": API_DEFAULT_MODEL,
+                    "values": models,
+                    "note": "목록 밖 값 → 400(카탈로그 밖) 또는 403(계정 권한 밖). 여기 있는 value 만 쓴다.",
+                },
+                "reasoning_level": {
+                    "available": True,
+                    "set_via": "POST /api/ask body.reasoning_level",
+                    "scope": "대화별로 영구 저장된다(다음 요청에서 생략하면 직전 선택 유지).",
+                    "default": DEFAULT_REASONING_LEVEL,
+                    "values": [
+                        {"value": o["value"], "label": o["label"]} for o in REASONING_LEVEL_OPTIONS
+                    ],
+                    "note": "`normal` 은 override 를 주입하지 않고 모델 기본 thinking 을 유지한다. "
+                            "`supports_thinking:false` 모델에서는 이 축이 무효다.",
+                },
+                "product": {
+                    "available": bool(products),
+                    "set_via": "신규 대화: POST /api/ask body.product_mode + body.product_id / "
+                               "기존 대화: PATCH /api/conversations/{conversation_id}/product",
+                    "scope": "대화 단위. 기존 대화 변경은 **다음** /api/ask 부터 적용된다.",
+                    "modes": ["auto", "pinned"],
+                    "default_product_id": default_pid or None,
+                    "values": products,
+                    "note": "질의 대상 데이터소스 범위를 정한다. `auto` 는 접근 가능한 소스에서 자동 선택. "
+                            "목록에 없는 product_id → 403.",
+                },
+                "folder_instructions": {
+                    "available": bool(can_list_folders and can_manage_folders),
+                    "readable": can_list_folders,
+                    "set_via": "POST /api/folders 또는 PATCH /api/folders/{folder_id} 의 `instructions` + "
+                               "PATCH /api/conversations/{conversation_id}/folder 로 대화 배정",
+                    "scope": "폴더 단위. 그 폴더에 속한 대화의 발화 시 시스템 프롬프트에 주입된다.",
+                    "max_depth": folder_max_depth,
+                    "values": folders,
+                    "note": folder_note or "폴더는 엄격한 개인 오버레이 — 본인 소유 폴더만 보이고 조작된다.",
+                },
+                "attachments": {
+                    "available": can_attach,
+                    "set_via": "POST /api/conversations/{conversation_id}/attachments (multipart/form-data, "
+                               "필드명 `file`)",
+                    "scope": "대화 단위. 첨부는 이후 답변의 근거(grounding)로 쓰인다.",
+                    "note": "" if can_attach else "이 토큰/계정에 첨부 업로드 권한이 없습니다.",
+                },
+            },
+            "conversation": conversation,
+        }
+        return JSONResponse(payload)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @router.get("/.well-known/ai-conversation-api.json")

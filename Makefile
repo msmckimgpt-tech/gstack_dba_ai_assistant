@@ -202,7 +202,7 @@ test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리
 	  pip install -q --no-cache-dir pytest ruff >/tmp/pip-dev.log 2>&1 || { cat /tmp/pip-dev.log; exit 1; }; \
 	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0003-agent-web-ui/src:/work; \
 	  echo "=== pytest ==="; \
-	  python -m pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests; rc=$$?; \
+	  python -m pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests unit/feature-0023-conversation-api-access/tests; rc=$$?; \
 	  echo "=== ruff (참고용, 비차단) ==="; \
 	  ruff check unit/feature-0002-agent-core/src unit/feature-0003-agent-web-ui/src || true; \
 	  exit $$rc'
