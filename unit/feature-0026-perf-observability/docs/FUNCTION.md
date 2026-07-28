@@ -28,7 +28,7 @@ additive·비파괴·fail-open 계측으로 메운다. **사용자 가시 동작
     `agent_runtime.llm_usage.latency_ms` 를 기록한다 (기존 NULL → 측정값).
   - AC-20260727T090800-perf-observability-3: 답변 duration_breakdown 에 `redteam_ms` 와
     `init_detail`(grounding 단계별)이 추가되고, post-answer 부가 LLM 구간(`last_post_answer_ms`)
-    이 KV 로 남는다 — 기록된 duration 과 사용자 체감의 격차를 정량화.
+    이 KV 로 남는다 — (feature-0027 이후) 터미널 *후* 큐레이션 소요의 계측으로 의미 갱신.
   - AC-20260727T090800-perf-observability-4: `bin/perf-snapshot.sh` 1회 실행으로
     전 신호(HTTP/LLM/ask E2E/redteam/PG/pgbouncer/MySQL/graph-sync/컨테이너)가
     `artifacts/perf/<ts>/` 스냅샷으로 집계된다.
