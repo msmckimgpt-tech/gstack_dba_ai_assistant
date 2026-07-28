@@ -399,3 +399,8 @@ source_of_truth: true
 - **H6 (수용·잔여) — 파싱 불완전성**: 동적 SQL·MSSQL 4000자 절단·`SELECT *` 는 컬럼 확정 불가. 이는 폴백(테이블 연결)으로 흡수되므로 손실이 아니라 종전 동작이며, 커버리지를 늘리려 비수식 컬럼을 추정하면 H3 의 환각 위험이 되살아난다. 사용자 결정(보수적)에 따라 추정하지 않는다.
 - **H7 (rebase 중 확증·수정) — 캐시 서명이 기능을 조용히 죽임**: 같은 날 병합된 feature-0030 cyvol 최적화가 `routine_refs_signature`(fqn·kind·cross)로 ROUTINE_USES 재작성을 생략한다. `cols` 는 서명 밖이라, **참조 테이블이 변하지 않은 기존 routine 전량**이 생략 경로를 타고 `ref_columns` 가 영영 투영되지 않는다 — 코드·테스트·시각검증이 전부 PASS 인데 라이브에서만 동작하지 않는 유형. rebase 충돌 해소 중 서명 함수를 읽다 발견. 서명에 `cols` 포함으로 수정하고 회귀 4건을 잠갔다. **비용 정직 고지**: 서명 변경이므로 배포 후 첫 sync 에서 참조 보유 routine 이 1회 재작성된다(§12.3 2차-효과 비용 · §16.3 blast-radius). 1회성이고 이것이 곧 backfill 경로이며, 하지 않으면 기능 자체가 성립하지 않는다.
 - **검증 경로 변경 기록(정직)**: 라이브 주입 QA 를 시작했으나 **병렬 세션 6+ 가 브라우저·라이브 web 을 공유**하는 상황에서 `win-browser.py` 의 `pages[0]` 고정이 타 세션 탭을 잡는 것을 실측, 타 세션 오염을 피해 **즉시 원복**(web-a/web-b md5 원본 일치·`/livez` 200)하고 격리 harness + CDP 신규 탭 방식으로 전환했다. 상세는 Run fragment §3.
+
+## REV-20260728T173000-graph-label-lod-postmerge [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 대상: CHG-20260728T1730-graph-label-lod-postmerge (TASK.md TL.11 + MODIFY + test-runs.d 병합 후 재검증 기록). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
+- 본 cycle 의 코드 적대 검증은 REV-20260728T170500-graph-label-lod [CODEX:frontend-render+lod] 가 담당했고(P1/GATE 0 · P2 2건 in-cycle 흡수), 그 수정 이후 상태에서 병합 후 전 스위트 875 PASS / 0 FAIL 로 무회귀를 실측했다.
+- 기계적 점검: FUNCTION.md union 해소가 양쪽 REQ 를 모두 보존하는지 직접 대조(REQ 232건 · label-lod + origin 측 4건 전량 존재) · 충돌 마커 잔재 0(verify-completion CHECK#14).

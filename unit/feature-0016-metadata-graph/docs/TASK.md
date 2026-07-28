@@ -2714,6 +2714,10 @@ PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`base
   E 미니맵서명 1·**F 밴드양자화 7**·G 관측 5·**H 오독-가드 게이트 5**) + **회귀 16 스위트 502 PASS / 0 FAIL** +
   PixiJS 어댑터 **190 PASS / 0 FAIL** (합계 **728 PASS / 0 FAIL**). `node --check --input-type=module` PASS(3 파일).
   (F5~F7·H1~H5 8건은 TL.9 의 codex 적대 검증이 적발한 P2 2건을 고정한 신규 테스트다.)
+  > **병합 후 재확인(2026-07-28)**: `origin/main` 18 커밋(병렬 그래프 세션 다수)을 흡수한 뒤 헤드리스 전 스위트
+  > **21개 875 PASS / 0 FAIL** 재실행 — 회귀 0. (수치가 위 728 보다 큰 것은 병렬 세션이 추가한 테스트가 합류한
+  > 것이며 본 cycle 의 신규 36 PASS 는 불변이다: catcluster_panel_scroll 36→65 · pixi_adapter 190→205 · 신규 파일
+  > ancestor_focus 32 · hover_flow 41 · routine_colref 30.) `node --check` PASS(3 파일).
   기존 `test_g6build_collod.js` T3 은 검증 줌 0.3→0.45 로 이동(근거는 아래).
   회귀 스위트 내역(재검증 실측, 2026-07-28): agglod 8 · category 26 · collod 20 · cullrefkeep 15 · edge_visibility 73 ·
   layoutmemo 19 · minimap_reuse 65 · simgroups_p2 16 · viewportcull 6 · vpack 19 · colnav 22 · reveal 17 ·
@@ -2749,6 +2753,10 @@ PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`base
   → 밴드를 **반포인트(0.5) 격자**로 양자화(수정 후 `16.5/10.5` vs `16.5/11` 로 갈라짐). 구/신 양자화를 직접
   대조해 **구 구현 MISS·신 구현 detect** 를 실측했다(테스트가 결함 자체를 잡는지 검증). PB-0008 이 기록한
   band `9/9`(zoom 0.7713)는 격자 변경 후에도 불변. 상세는 REVIEW.md REV-20260728T170500-graph-label-lod.
+- [x] TL.11 **병합 후 회귀 재확인** — `origin/main` 18 커밋(병렬 그래프 세션 다수: catcluster-scroll-polish·
+  analyzed-halo-fit·hover-flow·routine-colref 등)을 흡수하고 `feature-0003/docs/FUNCTION.md` 의 병렬 append 충돌을
+  **union 해소**(양쪽 REQ 블록 전량 보존 — REQ 232건, 이번 cycle 의 label-lod + origin 측 4건 모두 존재 확인)한 뒤
+  헤드리스 **전 스위트 21개 875 PASS / 0 FAIL** 재실행. 회귀 0. `node --check` PASS(3 파일). 본 cycle 코드 변경 0줄.
 - [ ] TL.10 **POST-DEPLOY PB-0008 1-probe** (배포 후) — TL.8 의 ②~⑥ 을 격리 주입본이 아닌 **실제 배포 자산**에서
   재확인 + **TL.9 수정이 새로 만든 두 표면**: ⑦ *배지-단독 억제 구간*(접힌 스키마 카드 씬에서 제목은 남고
   개수 배지만 사라지는 줌)에 상태줄 '이름표 표시 축약' 마커가 **노출**되는지 ⑧ 반포인트 밴드 경계(컨텐츠
