@@ -451,3 +451,10 @@ source_of_truth: true
 - **`expanded_hops`/`expanded_hop_edges` 는 additive**: 구 replica 가 필드를 안 주면 프론트가 종전 판정으로 폴백해 롤링 배포 창에서 회귀하지 않는다(헤드리스 ⑳·㉑ 이 폴백까지 단언).
 - 검증: pytest `test_graph_hop_budget.py` **9 → 21 PASS**(흡수분 회귀 12건 신설) · 전 스위트 **2809 passed / 0 failed** · 헤드리스 그래프 전 스위트 **865 PASS / 0 FAIL**(`test_detail_dbgroups.js` 95 → 107) · ruff clean.
 - **테스트가 수정을 두 번 반증했다**(자가검증 실효성 증거): ① R1-P1 1차 수정(tier 0 면제)이 관계-tier 홍수에서 실패 ② R3-d 흡수 후 fake 하네스가 새 SQL 의 `properties @>` 를 앵커 쿼리로 오인해 스위트 15건 붕괴 → 판별 조건을 `WHERE properties @>` 로 좁혀 해소.
+
+## REV-20260728T190000-hop-budget-final-rebase-record [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs only outside policy-doc list — 최종 rebase 재검증 수치 기록(실행 코드 0줄). 코드 변경분의 적대검증은 같은 cycle 의 REV-20260728T161300 [CODEX:backend+qa] 4라운드가 담당하며, 그 이후 코드 변경은 없다(rebase 는 upstream 병합이고 충돌은 append-only 문서뿐, 코드 충돌 0).
+- Timestamp: 2026-07-28T19:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no

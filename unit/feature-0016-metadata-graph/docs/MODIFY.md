@@ -278,3 +278,8 @@ source_of_truth: true
 - 대상: `metadata_graph.py neighborhood()` — `_PARENT_BACKFILL_RESERVE`/`_EDGE_FETCH_CAP` 신설 · 부모 보강 예약 예산(관계 Column 후보 수 상한으로 비례 축소, 관계 tier 포함) · `is_rel` 에서 `broken` 배제 + 부모 보강 대상을 `rel_gids` 한정 · 엣지 fetch 를 `ORDER BY brk, prio, s, e LIMIT cap+1` 로 결정론화하고 `cap+1` 행 도착 시에만 절단 신고 · 부모 보강 두 쿼리 graphid 정렬 · `expanded_hops`/`expanded_hop_edges` additive 보고. 소비처 `admin_metadata.py`(두 필드 전달) · `graph-ctxmenu.js`(힌트 판정·hop 미상 문구)는 feature-0003 MODIFY `CHG-20260728T161300-graph-hop-budget-review`.
 - 변경: 적대검증 지적 13건 중 12건 흡수(대조표 = REVIEW.md REV-20260728T161300). 핵심은 **R1-P1(GATE)** — cap 도달 시 부모 Table 이 탈락해 관계로 들어온 Column 이 프론트 렌더에서 드롭되던 우선순위 역전(HB.3 이 cap 상황에서만 무효화). 1차 수정(관계 tier 예약 면제)은 ROUTINE_USES 258건 홍수에서 재발했고 신설 테스트가 그것을 적발해 전 tier 예약으로 교정했다.
 - 근거: 등급 **Minor** 유지 — 읽기 전용 그래프 투영 범위·정렬·additive 응답 필드. 인증/RBAC/스키마/마이그레이션 무변경. 검증: `test_graph_hop_budget.py` **9 → 21 PASS**, 전 스위트 **2809 passed / 0 failed**, 헤드리스 그래프 전 스위트 **865 PASS / 0 FAIL**, ruff clean. 잔여 1건(R4-c 예약을 미해소 부모 수로 산정)은 hot path 재구성 위험 대비 이득이 1-노드 경계로 한정되고 응답이 `truncated`/`omitted_nodes` 로 사실을 보고하므로 근거 기록 후 수용(REPORT §8).
+
+## CHG-20260728T190000-hop-budget-final-rebase-record — 최종 rebase 재검증 수치 기록 (2026-07-28, 문서 전용)
+- 대상(문서 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md`. 실행 코드 0줄.
+- 변경: 검증·문서 작업 중 main 이 12커밋 더 전진(#1018~#1022)해 cycle commit 후 `origin/main 44fe939d` 위로 재-rebase 한 사실과, 그 뒤 전수 재검증 수치(pytest **2812 passed / 2 skipped / 0 failed** · 그래프 헤드리스 **904 PASS / 0 FAIL** · ruff clean)를 TASK.md 에 기록. 충돌은 append-only 문서 5건뿐이고 **코드 충돌 0**(`metadata_graph.py` ↔ cyvol scope prefetch fix, `graph-core.js` ↔ label-lod 가 서로 다른 구역).
+- 근거: 등급 Minor(문서 전용). 앞선 절의 2809/865 는 그 직전 라운드 수치이므로, 배포 대상 코드 상태의 실제 재검증 수치를 병기해 정본이 stale 로 남지 않게 한다(§5.6 staleness).

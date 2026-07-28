@@ -3023,6 +3023,7 @@ label-lod(§20260728T1604) 배포를 확인한 뒤의 후속 요청:
 - [x] HB.6 **문구 정합 + '확장할 관계 없음' 알림** — depth select 상태 문구를 실제 트리거(더블클릭 / 우클릭 → 중심 보기)로 정정, `label[title]`·`aria-label`·도움말 항목 갱신(단일클릭 상세는 항상 1단계임을 명시). 2-hop 이상인데 관계 엣지가 0이면 `_metaNoRelHint` 로 "이 노드에는 확장할 관계(참조·사용)가 없어 1-hop 과 동일합니다" 를 상태줄에 표기 — 실측 12%(5/40) 케이스를 "선택이 안 먹었다" 로 오해하지 않게.
 - [x] HB.7 테스트 — 신규 `test_graph_hop_budget.py` **9 PASS**(hop 별 엣지 라벨 계약 · 부모 보강 · 보강 부모의 프론티어 미진입 · cap 우선순위 2종 · 절단 신호 · 관계 없음 시 d1==d2 · 상수 분할 불변식) + `test_detail_dbgroups.js` **95 PASS/0 FAIL**(⑱⑲ 신설 — 경고 귀속·hop 분기·오귀속 정적 회귀·관계없음 힌트·depth 문구).
 - [x] HB.8 PB-0008 실 Windows 브라우저 시각검증 — 아래 검증 절 참조.
+- [x] HB.9 세션 이월 후 완수 — `origin/main` 재-rebase 2회(총 22커밋) · §18.8 적대검증 4라운드 흡수 · 전수 재검증 · 정본 docs 정합.
 
 ### 개선 효과 (동일 표본 40개 · 같은 시드 A/B)
 | 지표 | 종전 | 개선 후 |
@@ -3101,6 +3102,12 @@ origin/main`(repo 접근 있는 독립 리뷰어, subagent 아님 — check #9 a
 - 컨테이너 pytest **전 스위트 2809 passed / 2 skipped / 0 failed**, ruff clean. 원 세션이 기록한
   "15건 실패 = main 동일 baseline" 은 이번 실행에서 **0건** — 그 실패들이 환경성 flake 였음을 사후 확증한다
   (TASK 위 항목의 flaky 관측과 정합).
+- **최종 rebase 후 재검증**: 검증·문서 작업 중 main 이 12커밋 더 전진해(#1018~#1022 — label-lod ·
+  routine-coledges POST-DEPLOY · hover-rw POST-DEPLOY · cyvol scope prefetch fix) 커밋 후 `origin/main`
+  `44fe939d` 위로 다시 rebase 했다. 충돌은 **append-only 문서 5건뿐**(코드 충돌 0 — `metadata_graph.py`
+  는 cyvol 수정과, `graph-core.js` 는 label-lod 와 서로 다른 구역이라 자동 병합). 재-rebase 후 전수 재실행:
+  컨테이너 pytest **2812 passed / 2 skipped / 0 failed** · 그래프 헤드리스 전 스위트 **904 PASS / 0 FAIL**
+  (상승분은 label-lod cycle 이 추가한 스위트) · ruff clean. 위 절의 2809/865 는 그 직전 라운드 수치다.
 - **PB-0008 은 재-rebase·적대흡수 이전 코드에서 수행됐다**(원 세션 16:06~16:13). 프론트 절단 배너 로직은
   그대로이고 헤드리스 계약 100건이 유지되지만, R2-c 로 힌트 판정이 바뀌었으므로 실화면 재확인은 배포 후
   POST-DEPLOY 로 수행한다(아래 잔여 항목).
