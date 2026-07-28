@@ -1655,5 +1655,12 @@ FR-false-absence 패널이 pre-existing 으로 분리 기록한 항목을 사용
 - [x] 회귀 가드를 **유효 T-SQL exploit 형상**으로 교체(종전 2회는 실패 변종을 assert 해 오인증)
 - [x] 컨테이너 `make test` 2,725건 중 2,719 PASS / 4 FAIL(전부 pre-existing 환경 의존) / 2 skip · ruff PASS
 - [ ] verify-completion → PR·머지 → 배포 → 배포본 런타임 경계 실측
+- [x] **cyvol**: 그래프 sync cypher 호출량 귀속 실측(전량 1회 = 158,544 회 / PG 867초, wall 의 75%)
+- [x] **cyvol W1**: anchor 캐시를 sync_table/column/routine 으로 확장 — 속성 포함 마크로 단계 간 속성 계층 보존
+- [x] **cyvol W2**: ROUTINE_USES 전량 DELETE+재MERGE 를 refs 서명 비교로 조건부화(선조회 cypher 1회/3.2ms)
+- [x] **cyvol**: 회귀 테스트 11건 + 역검증 4축(되돌려 실패 확인)
+- [x] **cyvol**: §18.8 적대 패널 2렌즈 — 결함 8건 흡수(MAJOR-1 flip-flop · MAJOR-2 무음 행소실 · B3 재조정 상실 · M3 부분엣지 고착 · M1 교차 feature 회귀 · M2 무음 · MINOR-1/2)
+- [x] **cyvol**: QA 패널 변이 28중 17 생존 → harness 를 sync_graph end-to-end 로 교체, 최종 31건 · 역검증 16종 생존 0
+- [ ] **cyvol**: 머지 → 배포 → 전량 sync 전후 실측
 - [x] **잔여 확정(2026-07-28 라이브 실증)**: QA SQL Server 2017 프로브로 스칼라 위치 모호성이 **착취 불가**임을 확인(별칭 우선 해석, 오류 문구 DB 존재 불변) → 열거 oracle 부재도 확정되어 오류 원문 은폐를 **철회**. CHG-20260728T150510.
 정본 rationale=REVIEW REV-20260728T133431-alias-shadowed-function-namespace, 변경이력=MODIFY CHG-20260728T133431-alias-shadowed-function-namespace.

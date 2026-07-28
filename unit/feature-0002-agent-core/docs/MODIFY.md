@@ -623,3 +623,27 @@ TASK-20260728T124500-llm-usage-target-scope. branch `ai/claude/feature-0002-llm-
 - **파일**: `modules/tools.py`(은폐 철회 + 근거 주석), `tests/test_false_absence_catalog_scope.py`(문서화 가드로 교체), `docs/{FUNCTION,TASK}.md`, FRICTION_LEDGER.
 - **위험등급**: Minor(정보 노출 **축소가 아니라 복원** — 실증으로 무해 확인). **Rollback**: 은폐 헬퍼 재도입(단 근거 없음).
 - **Cross-ref**: CHG/REV-20260728T133431-alias-shadowed-function-namespace · REV-20260728T150510-alias-shadow-server-resolution-verified · FRICTION_LEDGER FR-false-absence-zero-row-catalog-scope.
+
+## CHG-20260728T163000-graph-cypher-volume — 그래프 sync cypher 호출량 감축 (Major §12.3)
+> feature-0026 계측이 지목한 최상위 PG 비용(`ag_catalog.cypher` 누적 32,072초 / 696만 호출)의 귀속을 실측하고 지배 항목 2개를 제거.
+- **측정(라이브, 2026-07-28)**: 전량 sync 1회 = cypher **158,544 회 / PG 실행 867초**(wall 1,148초의 75%). `pg_stat_activity` 샘플링 프로파일에서 루틴 엣지 연산이 지배(74 샘플 중 62). 전량 sync 는 매일 04:17 cron.
+- **W1 정점 중복 MERGE 제거**: Schema 정점이 테이블·루틴마다 재-MERGE 됐다(rag 16,367 + routines 23,053 → distinct ~370). 소속 Table 정점도 컬럼마다(3,135 → 389), 루틴 참조 앵커도 참조마다(28,034 → 7,331) 재-MERGE. feature-0029 의 anchor 캐시를 `sync_table`/`sync_column`/`sync_routine` 으로 확장하고 4단계가 **공유**한다.
+  - 마크에 **속성을 포함**(`_vmark`) — 단계마다 Table 에 싣는 속성이 달라(rag=클러스터, tables=description, columns/routine=이름) 키만으로 dedup 하면 먼저 실행된 단계가 뒤 단계의 속성 투영을 영구히 삼킨다. 같은 fqn 을 다르게 분해하는 실제 충돌(`a.b.c` → columns 는 table='b.c', routine 앵커는 table='c')을 테스트로 잠갔다.
+  - pending/committed 2단 규약은 feature-0029 그대로. 배치 커밋 실패(`_tick`)·step 롤백(`_run_step`) 양쪽에서 `anchor_cache_reset` — 확정 마크를 남기면 정점이 실제로 사라진 뒤 후속 MERGE 가 생략돼 `_merge_edge` 가 조용히 0행(엣지 소실)이 된다.
+- **W2 ROUTINE_USES 조건부 재작성**: routine 마다 참조 엣지를 전량 DELETE 후 재-MERGE 했다(DELETE 23,053 + 엣지 MERGE 28,034 = **전체의 32%**). 실제로 참조가 바뀌는 routine 은 하루 수백 건. `routine_refs_signature`(fqn·kind·cross 정규화 sha1)를 Routine 정점 `refs_sig` 속성에 두고, step 진입 시 **cypher 1회로 전량 선조회**(라이브 23,057 행 / 3.2ms) → 서명 일치 시 재작성 생략.
+  - 서명 SET 은 엣지 재작성 **뒤**에 별도로 기록한다. 정점 MERGE 에 함께 실으면 autocommit(비-owned) 모드에서 서명이 엣지보다 **먼저 커밋**돼 '서명은 최신, 엣지는 불완전'이 영구 고착된다(다음 sync 가 skip → 자가치유 상실). 비용은 참조가 바뀐 routine 1건당 1회.
+  - 서명 부재(신규·배포 직후)·선조회 실패는 miss → 전량 재작성(종전 동작)으로 graceful.
+- **§18.8 적대 패널 2렌즈가 잡은 결함 8건 흡수** (초안은 **최종 그래프 상태가 종전과 달라지는** 결함을 포함하고 있었다 — 초안 문서의 "불변: 그래프 최종 상태 동일" 주장은 그 시점엔 거짓이었고, 아래 수정으로 비로소 참이 되었다):
+  - **MAJOR-1 (실행 입증)**: 정점 key `scope:schema.name()` 에 routine_type 이 없는데 SSOT 유일키는 (scope, schema, name, **type**) 이다 — MySQL 동명 FUNCTION/PROCEDURE 가 한 정점을 공유한다. `sig_cache` 는 step 진입 1회 스냅샷이라 두 번째 행이 stale 항목과 일치해 **재작성을 건너뛰고 첫 행의 엣지를 최종 상태로 남겼다**(종전은 마지막 행 우선). 게다가 sync 마다 승자가 뒤바뀌는 **영구 flip-flop**. → `_cache_once(cache, ("ROUTINE_REFS", rkey))` 첫 방문 게이트로 종전 semantics 복원.
+  - **MAJOR-2**: 서명 SET 예외를 삼키면 PostgreSQL 이 tx 를 aborted 로 둔 채 `_sync_row_guard` 가 `RELEASE SAVEPOINT` 실패까지 삼키고 **성공(True)** 을 반환 → 다음 step 커밋이 조용히 ROLLBACK 으로 수렴해 **최대 500행 소실 + `ok:true` + 워터마크 전진**. 이 문이 routine 행의 마지막 문이라 오류를 드러낼 후속 문이 없다는 게 핵심. → 삼키지 않고 전파(행 SAVEPOINT 롤백 + errors 집계).
+  - **B3/MAJOR-3**: 서명만 보면 `--full` 이 문서상 보장하던 **무조건 재조정**이 사라져, refs 변경을 동반하지 않은 엣지 소실(`_merge_edge` 는 끝점 정점 부재 시 오류 없이 0행)이 영구 고착되고 운영 탈출구가 없었다. → 선조회에 **실제 ROUTINE_USES 차수**(cypher 1회, 라이브 19,870행/74ms)를 추가해 서명이 같아도 차수가 기대치와 다르면 재작성. 안전망을 O(1) 로 복원하면서 전량 재작성 51,087회는 되살리지 않는다.
+  - **M3**: autocommit(비-owned) 경로에서 DELETE 커밋 후 엣지 MERGE 중간 실패 시 정점에 **직전 서명이 남아** 있고, 참조 미변경 재작성이었다면 그 값이 현재 서명과 같아 이후 모든 sync 가 skip → 부분 엣지 영구 고착. → 재작성 진입 전 `REMOVE r.refs_sig` 선행(순서: REMOVE → DELETE → 엣지 MERGE → SET).
+  - **M1 (교차 feature 회귀)**: 2열 선조회의 튜플 언패킹이 1-튜플을 돌려주는 하네스에서 `ValueError` → rollback → `feature-0016 test_metadata_graph_load_spread` 가 **실제로 깨졌다**(HEAD 1건 → 변경 후 2건). CI 게이트는 feature-0016 을 돌리지 않아 미검출. → 인덱스 기반 방어적 판독으로 수정, 해당 테스트 복구 확인.
+  - **M2**: 선조회 실패가 완전 무음이라 최적화가 영구 0이 돼도 신호가 없었다. → `_err_samples` 기록.
+  - **MINOR-1**: 중복 fqn 에서 엣지 루프는 마지막이 이기는데 서명은 정렬만 해 순서 무관 → 최종 엣지가 다른데 서명이 같아지는 경우 존재. → 서명도 fqn 기준 last-wins 로 접은 뒤 정렬.
+  - **MINOR-2 / 실패지점 이동**: 선조회에 scope 필터 추가(전량 덤프 금지 규약), `routine_refs_signature` 를 JSON 문자열·비-dict 원소에 방어적으로 — 이 함수는 정점 MERGE **이전**에 호출되므로 여기서 raise 하면 종전에는 만들어지던 Routine 정점·HAS_ROUTINE 까지 잃는다.
+- **테스트 강화 (QA 패널: 초안 28 변이 중 17 생존)**: 초안은 리프 함수만 문자열 매칭해 **`sync_graph` 배선이 0% 검증**이었고, fake 커서의 `fetchall` 이 항상 빈 리스트라 **선조회 루프가 한 번도 실행되지 않아** 쓰기/읽기 속성명 커플링이 안 잠겼다(prefix 매칭이라 `refs_sig2` 로 바꿔도 통과 — `psycopg.Cursor.__slots__` 선례와 같은 '라이브에서 100% 무효인데 초록' 결함면). → `sync_graph` 를 끝까지 구동하는 harness(`_SyncCur`/`_SyncConn`, `__slots__` 로 속성 부착 금지) 추가, 속성명은 정규식으로 뽑아 **동일성** 검증, 롤백된 행이 캐시를 오염시키지 않는지 end-to-end 확인. 최종 **31건**.
+- **역검증**: 초안 4축 + 패널 지적 변이 12종을 각각 되돌려 해당 테스트가 실패함을 확인(생존 0). 첫 시도의 layering 테스트는 캐시 미보호 지점을 찔러 회귀를 못 잡았고, 역검증이 그 결함을 드러내 실제 충돌 형상으로 교체했다.
+- **파일**: `modules/metadata_graph.py`, `tests/test_graph_cypher_volume.py`(신규 31건), `docs/{FUNCTION,TASK}.md`.
+- **위험등급**: Major(그래프 쓰기 경로 · 잘못되면 엣지 조용한 소실). **Rollback**: 커밋 revert — 스키마 변경 없음, `refs_sig` 속성은 잔존해도 무해(다음 sync 가 재작성).
+- **Cross-ref**: feature-0029 churn-e(anchor 캐시 원형 · B-4 규약) · ADR-016(ROUTINE_USES) · feature-0026 계측.
