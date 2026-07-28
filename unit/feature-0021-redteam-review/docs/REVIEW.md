@@ -348,3 +348,20 @@ source_of_truth: true
 - Open Questions: 라이브 트래픽 누적 후 `revision_rounds`·`stop_reason` 분포로 ① 무제한 반복이
   실제로 몇 라운드에 수렴하는지, ② `unresolved_block_count>0` 전달 비율이 유의한지 재평가.
   유의하면 답변 말미 고지 문구와 `REDTEAM_WALL_BUDGET_SEC` 기본값을 재검토한다.
+
+## REV-20260728T012000-stale-checkbox-closeout [SKIPPED:docs-only stale 판별 — 코드 무변경]
+- Related Change: CHG-20260728-0001 (TASK.md 미완 2건 stale 확정·정리)
+- Panel skip 근거: changeset 이 `docs/*` 전용이고 제품 코드·자산·설정 무변경(§18.8 dispatch
+  키워드 비매칭). 본 cycle 은 새 판단을 내리는 것이 아니라 **이미 랜딩된 작업의 증거를
+  대조해 체크박스를 닫는** 사무적 정리다.
+- 판별 근거 (추정 아닌 실측):
+  - subtab-sticky — `git log -S "subtab-sticky"` 로 구현 커밋 `08704f3d` 특정 → main 포함
+    확인 → **라이브 배포본**(`curl https://localhost/static/styles.css`)과 web 컨테이너 내
+    파일 양쪽에서 `position: sticky; top: 0; z-index: 6` 실재 확인. "코드에 있다" 로 그치지
+    않고 배포 반영까지 확인한 이유는, 자산은 빌드 시 이미지에 baked 되어 repo 와 라이브가
+    어긋날 수 있기 때문이다.
+  - §9 라이브 재검증 — PR #938 MERGED 확인 + PG 원장 집계로 `revision_applied=true` 15/21
+    관측. 수정 전 표본(42건 중 35건 false)과 대비해 인과가 뒤집혔음을 수치로 확인했다.
+- 남는 것: 이 feature 의 TASK.md 잔여는 이제 정형 Completion Checklist 13건뿐이며, 이는
+  feature 가 `in-progress` 인 한 정상 상태다(닫으려면 feature 자체를 done 으로 선언해야 함 —
+  그 판단은 본 cycle 범위 밖).
