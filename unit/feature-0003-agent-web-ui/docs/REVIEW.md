@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T123000-graph-label-hover-postverify [SKIPPED:non-policy-doc] — 잘린 노드 명칭 hover 확장 POST-DEPLOY PB-0008 라이브 검증 기록 (TASK-20260728T123000, 비-정책 doc-only)
+- 대상 diff: `docs/test-runs.d/20260728T120530-graph-label-hover-expand.md`(POST-DEPLOY 결과) · `docs/TASK.md`(체크박스 종결 + 종결 섹션) · `docs/MODIFY.md`(CHG) · `docs/evidence/*.png` 3종. **코드·자산 변경 0** → §18.8 dispatch 표 첫 행(비-정책 doc-only) 적용, panel SKIP.
+- 선행 cycle(`REV-20260728T120530-graph-label-hover-expand`)이 남긴 **유일한 미검증 범위**(ux/design 렌즈 = `[SKIPPED:tool-restricted:ux,design]`)를 라이브 실측으로 종결한다: 확장 애니·이웃 위치 불변·z-order·클릭 라우팅·원복·무반응·에러 8 항목 전부 PASS(상세 수치는 fragment 표).
+- 특기 — **③ 위치 불변의 증명 방식**: "확인함" 선언이 아니라 동일 상태 전/후 전체 화면 픽셀 diff 를 임계(>16)로 이진화해 **유의 변화 영역이 캔버스의 2.75%(306×38px)** 이고 그 박스가 hover 한 칩 자신임을 수치로 고정했다(§16.6 픽셀-클래스 변경은 시각 캡처 필수 + 자기-충족 선언 금지). ⑤ 도 hover 전/후 같은 좌표 클릭의 **대조 실험**으로 tier0 라우팅을 분리 입증.
+
 ## REV-20260728T120530-graph-label-hover-expand [CODEX:graph-label-hover-expand] — 그래프 뷰 잘린 노드 명칭 hover 확장 (TASK-20260728T120530-graph-label-hover-expand, Minor §12.3 frontend-only) — SHIP
 - 대상 diff: `static/graph/graph-renderer-pixi.js`(+`hoverExpandGeom`/`hoverCardHit`/`clampCardCenterX` 순수 3종 · `_labelHoverLayer` 오버레이 · hover 파이프라인 12 메서드 · `_pick` tier0 · `pointercancel`) · `tests/headless/test_pixi_adapter.js`(T26 68-assert).
 - **검증 채널 선택 근거 (§18.8.2 「상위 우선순위 지시 carve-out」)**: §18.8 dispatch 표상 본 변경(UI/화면/레이아웃 키워드)의 required subagent 는 `ux, design`. 그러나 본 세션에는 **하네스 수준의 "Agent tool 미요청 시 호출 금지" 지시**가 걸려 있어 subagent 패널을 호출하지 않았다 — §18.8.2 는 이 경우 상위 지시가 우선하며, 제약 없는 채널로 가능한 검증을 수행한 뒤 미검증 범위를 명시하도록 정한다. 따라서 ①`codex review --uncommitted`(§18.8.1 item 2, check #9 accepted) ②기계적 정적·단위 검증으로 대체하고, 아래 `[SKIPPED:tool-restricted:ux,design]` 로 미검증 도메인을 표기한다. **디자인·UX 렌즈의 실질 보강은 POST-DEPLOY PB-0008 실화면 검증**(`visual_verification_scope: always` hard gate)이 담당한다.
