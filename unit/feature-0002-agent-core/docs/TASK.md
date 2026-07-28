@@ -1591,6 +1591,6 @@ FR-false-truncation-belief 라이브 실측 중 관측된 별개 축을 사용�
 - [x] E: 0행 문구 부재-부정 우선 + `ZERO ROWS IS NOT ABSENCE` 를 메타데이터 맥락으로 한정(과교정 방지)
 - [x] §18.8 적대 3렌즈 패널 **1라운드**: BLOCKER 3 / MAJOR 9 / MINOR 8 → 전건 반영(TVF piggyback·agent_memory 누출·COUNT 형태 미개입·pin DB AttributeError 등)
 - [x] 신규 `tests/test_false_absence_catalog_scope.py` **34건**(패널이 뚫은 경로 전부 회귀 가드) + 기존 보안 테스트 강화
-- [ ] §18.8 **2라운드** security 재검증 → verify-completion → PR·머지 → 배포 → 라이브 재실측(동일 질문으로 "0개" 오판 소멸 확인)
+- [x] §18.8 **2라운드** security 재검증(1R 봉인 불완전 = 별칭 그림자 재적발 → 재수정 후 실증 CLOSED) → verify-completion PASS → PR #991 머지(main `21b67ade`) → 전체 스코프 배포(soak 통과) → **라이브 재실측 완료**: 동일 질문에 "총 421개" + `MSP_SELECT_BOARD_CONTENT` 본문 제시, 오귀속·부재 단정 0건, `search_routines` 실사용, 연결 장애 시 실패 고지 실전 발동
 - worktree `ai/claude-corp/feature-0002-agent-core`.
 정본 rationale=REVIEW REV-20260728T114459-false-absence-catalog-scope, 변경이력=MODIFY CHG-20260728T114459-false-absence-catalog-scope.
