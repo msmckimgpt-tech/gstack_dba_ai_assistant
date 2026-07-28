@@ -6785,3 +6785,10 @@ mouse-hover 툴팁으로 충분하니 제거.
 - [x] 상세 패널 참조 컬럼 표기(쓰기 `✎` / 읽기 무마커) 확인
 - [x] 서빙 baked 심볼·GIT_COMMIT 확인 + 콘솔 에러 0
 - [x] Run 기록 · CHG · REV · 증적 6매 적재
+
+## 20260729T010301-doc-sync-rn-0729 — 릴리즈노트 2026-07-28 블록에 6항목 append: 관계도 UX·사용 기록·모델 권한·자체 점검 (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` 기존 "2026-07-28" 블록(캐시 오염 fix·그래프 ⓘ 툴팁·'적용'바 숨김 3항목)에 6항목 append(improved/admin 관계도 연결선 가독성 + improved/admin 이름표 hover 확장·역할 좌측 배지 + improved/admin 분류 선택 스크롤 동기화·이웃 표시 범위 재설계 + improved/admin '사용 기록' 드릴다운 정리 + new/admin 계정·역할별 AI 모델 사용 제한 + fixed/work 자체 점검 후 원 요청 응답 정확성) + block summary 아울러-절 증강. 신규 블록 아님(관례: same-deploy-day append·block date=배포일 07-28·델타 커밋 전부 git-date 07-28, 선례 85da43d9). generated "2026-07-28" 불변. 렌더 로직·cache-buster(`?v=dev` 빌드 자동주입) 무변경.
+- [x] 검증: `node --check` PASS · vm 구조검증(releases[0].date=2026-07-28·items 3→9·releases[1] 2026-07-27 7항목 보존·releases[2] 07-24 보존·스키마 type/area/title/detail·enum 유효·누출0[feature-id·model.access·llm_usage·§번호·routers/·.py·claude-opus-5/haiku-4 내부값 0, 사용자 표시 라벨만]). 근거 정본 = 각 항목 owning POST-DEPLOY PB-0008 커밋(역할배지 2b9693c7·이웃깊이 0bff005e·hover확장 43efe182/29ceb823·상세hover fb253fe3·클러스터스크롤 9b16b0c0/a36c16ed/429e8c04·라벨LOD 8008402d·헤더라벨 b2f062cc·함수관계선 5a6110a9·사용기록 f3cfc809·모델권한 fcf22ceb·자체점검 6582c69b) + git log abc3e49f..HEAD.
+- [x] 적대검증: ULTRACODE wf_63a962eb R1 — RN verifier MAJOR 1(item3 '왼쪽 스키마 목록'→실제 우측 상세 패널 aside, admin.html:847 도움말·baedc78b aside scrollTop 근거)·MINOR 1(item5 '즉시 반영'→pending→'적용' 흐름, admin.js:203 동적권한 그룹) 적발 → 오케스트레이터 정본 독립 재검증 후 '오른쪽 상세 패널의 목록'·'적용하면 다음 답변부터 반영' 교정 반영.
+- [x] 제외: 성능 3 feature(0027/0028/0029 측정·내부 최적화·응답/인가/그래프 신선도 불변·사용자 가시 동작 0)·conversation-api 대화품질(0023 외부 AI 개발자향·전용 UI 없음)·agent-core 내부(별칭 그림자·허위 부재·cyvol cypher 내부 정확성/보안)·feature-0001 시나리오(내부 테스트)·governance cycle 스크립트(META). held: AI 분석 halo 기하 비례화(개별 POST-DEPLOY 없음·미세 시각 정련·개념 도입 없이 표현 곤란, 다음 cycle 재평가).
+- [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(jsdom 미설치 render 테스트 불가·데이터 정적검증 대체 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3). META(wiki/docs) 는 별도 commit(pure-meta).
