@@ -1375,12 +1375,23 @@ function _metaGraphColCmp(a, b) {
   return String(a.name || "").localeCompare(String(b.name || ""));
 }
 
+// graph-noise-reduce(사용자 요구 2026-07-28): 상세 패널의 "한 번 읽으면 끝" 조작 설명을 상시 문단 대신
+//   섹션 제목 옆 hover 툴팁(ⓘ)으로 축약하는 공용 마커. 설명문이 실제 데이터(컬럼·관계·루틴 목록)를
+//   아래로 밀어내던 시각 노이즈를 제거하되 정보 자체는 hover 로 보존한다(조작 안내 정본은 ❓ 도움말).
+function _metaSecHelp(tip) {
+  const t = String(tip == null ? "" : tip)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return ` <span class="amgr-sec-help" tabindex="0" role="note" aria-label="${t}" title="${t}">ⓘ</span>`;
+}
+
 function _metaGraphRenderDetailEmpty() {
   // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   _metaDbGrpLazy.clear();   // detail-db-groups(review MINOR-3): 패널 비우기 — 미펼침 payload 도 함께 정리(누수 방지).
-  el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p><p class="admin-meta-detail-note">노드를 <strong>우클릭</strong>하면 상세 보기·관계 상세·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다.</p></div>';
+  // graph-noise-reduce: 다른 pane 의 empty-state(.admin-detail-empty = 1줄) 컨벤션에 맞춤.
+  //   조작 안내(우클릭 메뉴 등)는 ❓ 도움말 오버레이가 정본이라 여기서 중복 설명하지 않는다.
+  el.innerHTML = '<div class="admin-detail-empty">노드를 클릭하면 상세가 여기에 표시됩니다.</div>';
 }
 
 // graph-search-detail: 검색어 갱신 시 상세 패널에 **검색 결과**를 구성한다(트리거 = _metaGraphSearch).
@@ -1725,7 +1736,8 @@ function _metaColBodyReveal(body, selfKey) {
 //   (백엔드가 `truncated: true` 를 세팅하는 경로에서만 뜬다 — 정상 응답에는 노출 없음.)
 function _metaDbGrpTruncNotice(meta) {
   if (!meta || !meta.truncated) return "";
-  return `<p class="admin-meta-detail-note amgr-trunc-note">⚠ 이 노드의 이웃이 조회 상한에 걸려 <strong>일부만</strong> 불러왔습니다 — 아래 목록은 불러온 범위 안에서 생략 없이 전부 표시합니다. 더 보려면 '🕸 그래프에 펼치기' 로 이웃을 단계적으로 확장하세요.</p>`;
+  // graph-noise-reduce: 상시 노출 4줄 → 1줄 경고 + 상세는 hover 툴팁(경고 자체는 무음 절단 방지라 유지).
+  return `<p class="admin-meta-detail-note amgr-trunc-note" title="백엔드 이웃 조회 상한에 걸려 일부만 불러왔습니다. 아래 목록은 불러온 범위 안에서는 생략 없이 전부 표시합니다. 더 보려면 '🕸 그래프에 펼치기' 로 이웃을 단계적으로 확장하세요.">⚠ 이웃 조회 상한 — <strong>일부만</strong> 불러옴</p>`;
 }
 
 // '모두 펼치기/접기' 라벨을 현재 그룹 상태로 재동기화(개별 토글 후 라벨-동작 불일치 방지).
@@ -1924,9 +1936,8 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
     if (selfIsColumn) {
       // 컬럼 상세: 컬럼 자신의 관계를 방향별로 바로 표시(아코디언 불필요).
       const cr = colRel.get(selfKey) || { out: [], in: [] };
-      parts.push(`<div class="admin-meta-graph-sec"><h4>관계${relSummary}</h4>`);
+      parts.push(`<div class="admin-meta-graph-sec"><h4>관계${relSummary}${_metaSecHelp("행 hover = 관계 의미, 클릭 = 대상 추적(상세 + 카메라 이동).")}</h4>`);
       if (cr.out.length || cr.in.length) {
-        parts.push(`<p class="admin-meta-detail-note">행 hover 시 관계 의미, 클릭 시 대상 추적.</p>`);
         parts.push(dirGroup(cr.out, "out"));
         parts.push(dirGroup(cr.in, "in"));
       } else {
@@ -1935,8 +1946,8 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
       parts.push(`</div>`);
     } else {
       // 테이블 상세: 컬럼 목록 — 관계 있는 컬럼은 아코디언(클릭 펼침).
-      parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})${relSummary}</h4>`);
-      parts.push(`<p class="admin-meta-detail-note">컬럼을 클릭하면 선택되어 상세로 전환되고 그래프에서 강조됩니다. 관계가 있는 컬럼(🔗)은 캐럿(▸)으로 참조함/참조받음 관계를 그 자리에서 펼칠 수 있습니다(상대가 여러 DB 면 DB 머리글로 묶임). 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
+      parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})${relSummary}${_metaSecHelp("컬럼 클릭 = 상세로 전환 + 그래프에서 강조. 관계가 있는 컬럼(🔗)은 캐럿(▸)으로 참조함/참조받음을 그 자리에서 펼칩니다(상대가 여러 DB 면 DB 머리글로 묶임). 관계 행 hover = 의미, 클릭 = 대상 추적.")}</h4>`);
+      parts.push(`<ul class="amgr-collist">`);
       // detail-db-groups: 종전 80개 **무음** 절단(헤더 개수와 실제 행 수가 조용히 어긋남) 제거 — 전량 렌더.
       //   컬럼은 선택 노드 자신의 소속이라 DB 그룹 축이 무의미하므로 그룹핑 없이 전량, 안전 가드만 유지.
       columns.slice(0, _META_DBGRP_ROW_CAP).forEach((c) => {
@@ -2015,8 +2026,9 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
     };
     const rtWrites = routineUses.filter((e) => e.relation_type === "write");
     const rtReads = routineUses.filter((e) => e.relation_type !== "write");
-    parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length}) <span class="admin-meta-graph-muted">· 읽기 ${rtReads.length} · 쓰기 ${rtWrites.length}</span></h4>`);
-    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다 — <strong>목록을 잘라내지 않습니다</strong>. 대상이 여러 DB 에 걸치면 DB 머리글로 묶이며(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄), 접힌 DB 도 머리글의 개수가 실제 총계입니다. 행 클릭 = 대상 상세 + 카메라 이동.</p>`);
+    // 조사는 앞 명사 종성에 따라 분기(테이블→'을', 함수·프로시저→'를').
+    const rtHelp = `${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시하며 목록을 잘라내지 않습니다. 대상이 여러 DB 에 걸치면 DB 머리글로 묶이며(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄), 접힌 DB 도 머리글의 개수가 실제 총계입니다. 행 클릭 = 대상 상세 + 카메라 이동.`;
+    parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length}) <span class="admin-meta-graph-muted">· 읽기 ${rtReads.length} · 쓰기 ${rtWrites.length}</span>${_metaSecHelp(rtHelp)}</h4>`);
     parts.push(_metaDbGrpTruncNotice(meta));
     parts.push(rtGroup(rtReads, "읽기"));
     parts.push(rtGroup(rtWrites, "쓰기"));
@@ -2032,15 +2044,17 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
   //   컨트롤만 _canAnalyze 로 게이트한다(요청: 권한 없으면 버튼 UI 미표시). 실 거부는 백엔드 403 이 최종 경계.
   const _canAnalyze = (typeof can === "function") && can("metadata.graph.analyze");
   parts.push(`<div class="admin-meta-graph-sec admin-meta-graph-ai" id="metaGraphAiSec">`);
-  parts.push(`<div class="admin-meta-graph-ai-head"><h4>AI 능동 분석</h4>${_canAnalyze ? `<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn" title="hover: 분석 지침 입력">✨ 능동 분석</button>` : ``}</div>`);
+  // graph-noise-reduce: 상시 안내문(재귀 분석 설명 · 지침 반영 설명)을 컨트롤 hover 툴팁으로 이관.
+  //   결과 box 는 "아직 결과 없음" 이라는 상태만 1줄로 남긴다(설명이 아니라 상태).
+  parts.push(`<div class="admin-meta-graph-ai-head"><h4>AI 능동 분석</h4>${_canAnalyze ? `<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn" title="이 노드에서 시작해 관련 노드를 AI가 재귀적으로 분석합니다(백그라운드). hover 로 분석 지침 입력.">✨ 능동 분석</button>` : ``}</div>`);
   if (_canAnalyze) {
     parts.push(`<div class="admin-meta-ai-pop" id="metaGraphAiPop" hidden>` +
-      `<label for="metaGraphAiPrompt">분석 지침 (선택, ≤400자)</label>` +
-      `<textarea id="metaGraphAiPrompt" rows="2" maxlength="400" placeholder="예: 결제 흐름 관점에서 연관 테이블 위주로 분석"></textarea>` +
-      `<div class="admin-meta-ai-pop-foot"><span class="admin-meta-graph-muted">지침은 AI가 자율 판단해 분석 내용·탐색 방향에 반영합니다.</span>` +
+      `<label for="metaGraphAiPrompt" title="지침은 AI가 자율 판단해 분석 내용·탐색 방향에 반영합니다.">분석 지침 (선택, ≤400자)</label>` +
+      `<textarea id="metaGraphAiPrompt" rows="2" maxlength="400" title="지침은 AI가 자율 판단해 분석 내용·탐색 방향에 반영합니다." placeholder="예: 결제 흐름 관점에서 연관 테이블 위주로 분석"></textarea>` +
+      `<div class="admin-meta-ai-pop-foot">` +
       `<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiPopGo">✨ 분석 시작</button></div></div>`);
   }
-  parts.push(`<div class="admin-meta-graph-ai-box" id="metaGraphAiBox"><span class="admin-meta-graph-muted">${_canAnalyze ? "이 노드에서 시작해 관련 노드를 AI가 재귀적으로 분석합니다(백그라운드)." : "AI 능동 분석 결과가 아직 없습니다. (실행 권한이 있으면 여기서 능동 분석을 시작할 수 있습니다.)"}</span></div>`);
+  parts.push(`<div class="admin-meta-graph-ai-box" id="metaGraphAiBox"><span class="admin-meta-graph-muted">분석 결과 없음</span></div>`);
   parts.push(`</div>`);
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
@@ -2297,7 +2311,8 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
   parts.push(`<div class="admin-meta-graph-card">`);
   parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || key)}</strong> <span class="admin-meta-graph-relbadge">관계 상세</span></div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
-  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 노드가 맺은 관계를 방향별로 봅니다 — 참조함 ${out.length} · 참조받음 ${inn.length} · 연관 용어 ${terms.length}${around.length ? ` · 주변 관계 ${around.length}` : ""}. <strong>목록을 잘라내지 않으며</strong>, 상대가 여러 DB 에 걸치면 DB 머리글로 묶입니다(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄). 행을 클릭하면 상대 노드 상세로 이동합니다.</p>`);
+  // graph-noise-reduce: 설명 문장은 걷어내고 카운트(데이터)만 남김 — 조작 설명은 hover 툴팁으로.
+  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">참조함 ${out.length} · 참조받음 ${inn.length} · 연관 용어 ${terms.length}${around.length ? ` · 주변 관계 ${around.length}` : ""}${_metaSecHelp("이 노드가 맺은 관계를 방향별로 봅니다. 목록을 잘라내지 않으며, 상대가 여러 DB 에 걸치면 DB 머리글로 묶입니다(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄). 행 클릭 = 상대 노드 상세로 이동.")}</p>`);
   parts.push(_metaDbGrpTruncNotice(meta));
   if (out.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>→ ${dirLabel(out, "참조함", "나가는 관계")} (${out.length})</h4><ul class="amgr-list">`);
@@ -2358,10 +2373,12 @@ function _metaGraphShowCategoryDetail(catKey) {
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
   parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:#8a5a1f">카테고리</span><strong>🗂 ${esc(label)}</strong> <span class="admin-meta-graph-relbadge">제품 카테고리</span></div>`);
-  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">${catKey === "PC:__none__"
-    ? "어느 제품의 접근 DB 로도 등록되지 않은 스키마(DB) 묶음입니다. 관리 콘솔 > 제품 > 접근 DB 에 등록하면 해당 제품 카테고리로 배치됩니다."
-    : "이 제품의 접근 DB 로 등록된 스키마(DB) 묶음입니다. 헤더 칩 드래그로 밴드 전체 이동, − / + 로 접기/펼치기."}</p>`);
-  parts.push(`<div class="admin-meta-graph-sec"><h4>스키마(DB) ${members.length}개</h4><ul class="amgr-list">`);
+  // graph-noise-reduce: 일반 카테고리 설명("이 제품의 접근 DB 묶음" + 밴드 조작 안내)은 카드 헤더 배지·
+  //   범례 탭과 중복이라 제거. '미분류' 는 원인·해소 경로를 알려주는 상태 안내라 1줄로 유지(상세는 툴팁).
+  if (catKey === "PC:__none__") {
+    parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">어느 제품의 접근 DB 로도 등록되지 않은 스키마(DB) 묶음${_metaSecHelp("관리 콘솔 > 제품 > 접근 DB 에 등록하면 해당 제품 카테고리로 배치됩니다.")}</p>`);
+  }
+  parts.push(`<div class="admin-meta-graph-sec"><h4>스키마(DB) ${members.length}개${_metaSecHelp("행 클릭 = 그 스키마 클러스터 상세. 캔버스에서는 🗂 헤더 칩 드래그로 밴드 전체 이동, − / + 로 접기/펼치기.")}</h4><ul class="amgr-list">`);
   members.forEach((cid) => {
     const nm = _metaComboName(cid);
     const plist = _metaGraph.schemaProducts.get(String(nm).toLowerCase()) || [];
@@ -2890,7 +2907,8 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
   const _rtnDesc = nRoutines ? ` · 함수·프로시저 ${nRoutines}개` : "";
   const _clickHint = nRoutines ? "컬럼·파라미터·관계·용어" : "컬럼·관계·용어";
-  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${_rtnDesc}${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 항목을 클릭하면 ${_clickHint} 상세를 봅니다.</p>`);
+  // graph-noise-reduce: 카운트(데이터)만 남기고 "항목을 클릭하면 …" 조작 설명은 hover 툴팁으로.
+  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">테이블 ${nTables}개${_rtnDesc}${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}${_metaSecHelp(`이 스키마 클러스터에 속한 항목입니다. 항목을 클릭하면 ${_clickHint} 상세를 봅니다.`)}</p>`);
   if (members.length) {
     // graph-funcproc(cluster-detail-routines): 섹션 제목은 함수·프로시저가 있으면 병합집합을 반영.
     const secTitle = nRoutines ? `테이블·함수·프로시저 (${members.length})` : `테이블 (${tblList.length})`;

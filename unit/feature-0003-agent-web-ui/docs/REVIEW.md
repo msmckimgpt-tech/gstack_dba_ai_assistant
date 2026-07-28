@@ -1115,7 +1115,6 @@ source_of_truth: true
 - **검증 방법의 한계(정직 표기)**: 집행 검증은 `일반 사용자` 역할에 소속 계정이 0명이라 **자기 계정 override** 로 대리 수행했다. 역할 경유 집행(계정 → 역할 → 권한)의 라이브 관측은 아니지만, 두 경로는 `_account_permissions` 의 동일 병합 맵으로 수렴하고 역할 쓰기 경로는 ②·④ 에서 DB 로 별도 확정했다.
 - 위험도: **Minor(§12.3)** — 문서 전용, 동작 영향 0. 라이브 상태는 착수 전과 동일하게 원복됨.
 - Cross-ref: MODIFY CHG-20260728T031500-model-access-postverify / test-runs.d/20260728T031500-model-access-pb0008.md / SECURITY §28.6·§28.7 / feature-0007 REPORT §7 (R1·R2 해소).
-
 ## REV-20260728T113819-usage-records-system [SKIPPED:session-policy-no-subagent] — PASS
 
 CHG-20260728T113819-usage-records-system. §18.8 dispatch 키워드(UI/화면/API)에 해당하나 본 세션
@@ -1198,3 +1197,26 @@ stamp**(`7fc11a708399`)를 주입해 admin.js 가 단일 인스턴스로 로드�
 
 교훈(운영): 미머지 static QA 를 `docker cp` 로 할 때 **JS 는 stamp 재주입 없이는 신뢰할 수 없다**.
 CSS 는 단일 파일이라 안전하지만, ES module 은 순환 import 의 고정 `?v=` 때문에 이중 인스턴스가 된다.
+## REV-20260728T113000-graph-noise-reduction [SKIPPED:session-policy-no-subagent] — PASS
+- Date: 2026-07-28 · Session: `ai/claude/feature-0003-graph-noise-reduction` · CHG-20260728T113000-graph-noise-reduction
+- 리뷰 방식([SKIPPED] 사유): 본 세션 사용자 환경 정책상 **Agent(subagent) tool 미허용** — §18.8 검증 패널을 호출할 수 없다(직전 cycle 들과 동일 제약). 대체로 **자체 적대 검토 H1~H9** 를 수행하고 그 실측 결과를 아래에 남긴다. 대상은 frontend-only·비파괴 표시 변경(Minor §12.3)이며 롤백은 static 4파일 revert.
+- **자체 적대 검토(H1~H9, 전부 실측)**:
+  - **H1 툴팁 문자열 주입** — `_metaSecHelp` 는 `&<>"` 를 이스케이프하고 `title`·`aria-label` 양쪽에 같은 escaped 값을 쓴다. 헤드리스 유닛으로 `a"b<c&d` → `a&quot;b&lt;c&amp;d` 확인(속성 탈출 없음). 주입되는 tip 은 전부 코드 리터럴이라 사용자·DB 입력 경로 없음.
+  - **H2 회귀 단정이 무력한가** — 초판 단정("안내 문구가 존재")은 **문단으로 되돌려도 통과**한다. 접근 경로 단정(툴팁 존재 ∧ `admin-meta-detail-note` 부재)으로 교체 + "툴팁으로 보존됨" 4종을 함께 단정해 *정보 소실* 반대 방향도 막았다.
+  - **H3 커밋 바가 필요한데 숨는 경우** — `.has-pending` 은 `refreshPendingUI()` 가 `total > 0` 로만 붙이므로 pending 존재 시 항상 노출. 라이브 왕복 실측(0건 `none` → 1건 `flex`+`has-pending`+`1건 pending`+apply 활성)으로 확인. 다른 pane 의 독립 저장 컨트롤(`metadataCancelBtn`·감사/보관 `적용`)은 커밋 바와 무관해 영향 없음.
+  - **H4 커밋 바 높이에 의존하는 레이아웃** — `adminCommitBar` 참조는 `classList.toggle` **1곳뿐**(`offsetHeight`·`getBoundingClientRect` 사용 0). `@media print` 에도 관련 규칙 없음. 숨김이 다른 계산을 깨뜨리지 않는다.
+  - **H5 죽은 CSS** — 안내 span 제거로 `.admin-meta-ai-pop-foot .admin-meta-graph-muted` 가 매칭 0 이 됨 → 삭제(주석으로 사유 보존). `.admin-meta-detail-note` 규칙은 메타데이터 pane + 절단 경고가 계속 쓰므로 유지(`verify_metadata_list_detail.mjs [C3]` 가 이 규칙 존재를 단정 — PASS 확인).
+  - **H6 AI box 문구 축약이 정보를 지우는가** — 권한 없는 사용자에게 이전 문구는 "결과 없음 + 권한 있으면 시작 가능"을 알렸다. 축약본은 상태(`분석 결과 없음`)만 남긴다. **권한 없는 사용자에게는 애초에 실행 컨트롤이 미렌더**라(=시작할 수 없음) 안내가 행동으로 이어지지 않는 정보였다고 판단. 실행 가능한 사용자에게는 `✨ 능동 분석` 버튼 `title` 이 같은 내용을 담는다.
+  - **H7 empty-state 축약이 온보딩을 해치는가** — 제거한 클릭/더블클릭/우클릭·읽기전용 설명의 **정본은 ❓ 도움말 오버레이**이며, 그 오버레이는 **첫 진입 시 자동 1회 노출**(localStorage `metaGraphHelpSeen`)된다. 즉 처음 오는 사용자는 이미 전문을 보고, 두 번째부터는 안 봐도 되는 정보였다 — 사용자 요구("한 번 인지한 후 더 확인하지 않아도 되는 설명")의 정확한 대상.
+  - **H8 제거 문구를 단정하는 외부 테스트** — 전 테스트 grep 결과 본 cycle 이 갱신한 2개 하네스 외 참조 0. `verify_metadata_scope_single_ds.mjs` 15 PASS, `verify_metadata_list_detail.mjs` 25 passed/3 failed 는 **main baseline 과 실패 항목·개수가 동일**(B4·B4·B5, pre-existing).
+  - **H9 ES module 이중 인스턴스화** — 라이브 QA 스테이징에서 소스의 `?v=dev` import specifier 를 그대로 넣으면 baked 스탬프와 달라 `admin.js` 가 두 번 평가된다(AGENTS.md §13.1 경고 사례). 전 static 자산의 스탬프를 단일 값(`?v=qa113855`)으로 재기입해 회피했고, 콘솔 에러 0 으로 확인. **소스 자체는 placeholder 를 유지**(빌드 주입 계약 불변).
+- **판단 원칙 — 삭제가 아니라 이동**: 사용자 요구는 "제거 **혹은** hover 툴팁 전환" 이었다. 정보를 실제로 없애면 처음 쓰는 사람이 막히므로, 기본 전략을 *상시 표면 → 요청 시 표면(hover `title`)* 이동으로 잡았다. 실제 삭제는 **다른 곳에 정본이 있는 중복**에만 적용했다 — (a) empty-state 의 클릭/더블클릭/우클릭 안내(정본 = ❓ 도움말 오버레이), (b) 제품 카테고리 일반 케이스 문단(정본 = 카드 헤더 배지 + 범례 탭의 밴드 항목).
+- **어디를 건드리지 않았는가(의도)**: ❓ 도움말 오버레이와 범례 3탭은 **사용자가 능동적으로 여는** 표면이라 "한 번 인지 후 안 봐도 되는데 계속 보인다" 는 마찰이 성립하지 않는다. 축약하면 오히려 이관 대상(툴팁·도움말)의 정본이 약해진다. 절단 경고(`amgr-trunc-note`)도 "무음 절단 금지" 계약(리뷰 MAJOR-1)이라 제거 대신 1줄 압축만 했다.
+- **ⓘ 어포던스를 붙인 이유**: `<h4>` 자체에 `title` 만 걸면 툴팁이 **발견 불가능**하다(hover 유인이 없음). 11px·opacity .55 의 ⓘ 는 문단 4줄보다 압도적으로 적은 시각 비용으로 "여기 더 있다"를 알린다. 접근성은 `tabindex=0` + `aria-label` 로 보완 — native `title` 은 키보드·스크린리더에서 불균일하다.
+- **커밋 바 — 범위가 그래프 뷰보다 넓다(정직 표기)**: 사용자가 지목한 것은 그래프 뷰 하단의 `0건 pending` 바지만, 이 바는 **관리 콘솔 전역** 요소다. 두 선택지를 놓고 비교했다 — ① pane 별 화이트리스트로 그래프 뷰에서만 숨김, ② pending 0 이면 전역 숨김. ②를 골랐다: `0건 pending` + 비활성 버튼 2개는 **어느 pane 에서도** 정보·동작이 0 이고, ①은 "편집 가능한 pane" 목록을 코드에 하드코딩해 pane 추가 때마다 썩는다. ②는 unsaved-changes 액션 바의 보편 관습이며 CSS 1규칙이라 롤백이 자명하다. 상시 상태 표시는 사이드바 `#adminPendingSummary` 가 이미 담당하므로 "지금 저장할 게 있나" 를 잃지 않는다.
+- **JS 를 건드리지 않은 것도 의도**: `refreshPendingUI()` 가 이미 `.has-pending` 을 토글하고 있었다. 여기에 `style.display` 조작을 추가하면 상태 소스가 둘로 갈라진다 — CSS 가 클래스 하나만 읽게 두면 JS 회귀 표면이 0 이다.
+- **라이브에서 잡은 결함 1건**: 툴팁 문자열을 템플릿으로 합치면서 `${...}을` 로 조사를 고정해 `함수·프로시저**을**` 이 됐다(종성 없는 명사 → `를`). 헤드리스 단정은 통과했고 **PB-0008 실화면 판독에서만** 드러나 분기별 조사 하드코딩으로 정정했다. 문자열 조립 시 한국어 조사는 앞 명사 종성에 종속된다는 점을 재확인.
+- **검증 방법의 한계(정직 표기)**: ① native `title` 툴팁은 브라우저 OS 레이어에 그려져 **스크린샷으로 캡처되지 않는다** — 툴팁 *내용*은 DOM 속성 실측(라이브 eval 로 전문 확인)으로, 툴팁 *렌더*는 브라우저 보장에 의존한다. 레이아웃(픽셀 클래스) 변경은 스크린샷으로 확인했다(§16.6 변경-클래스 분기 준수). ② PB-0008 은 라이브 컨테이너에 `docker cp` 로 자산을 스테이징해 수행했고, 검증 중 **다른 세션의 롤링 배포가 3회 발생**해 스테이징이 두 번 덮였다 — 그때마다 재적용 후 재측정했고, 최종 판독은 모두 패치가 서빙되던 시점(`?v=qa113855`)의 것이다. 배포 후 main 기반 재확인은 deploy_scope 사후 확인으로 남긴다.
+- **회귀 방지 설계**: 새 단정은 문구가 아니라 **접근 경로**를 본다(`.amgr-sec-help` title 존재 + 본문 `admin-meta-detail-note` 부재). 문구만 단정하면 문단으로 되돌려도 통과하고, 경로를 단정하면 회귀가 바로 FAIL 한다. 동시에 "툴팁으로 보존됨" 4종을 함께 단정해 *제거로 정보가 소실되는* 반대 방향 회귀도 막는다.
+- 위험도: **Minor(§12.3)** — 프론트 표시 전용, 백엔드·API·RBAC·스키마·데이터 fetch 무변경, 롤백 = static 4파일 revert.
+- Cross-ref: MODIFY CHG-20260728T113000-graph-noise-reduction / FUNCTION REQ-20260728-graph-noise-reduction(AC-GNR-1~6) / test-runs.d/20260728T113000-graph-noise-reduction.md / 선행 REQ-20260716T114705 ③.

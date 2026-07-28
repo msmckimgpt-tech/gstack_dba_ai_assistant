@@ -91,7 +91,10 @@ const checks = [
   ["③ 관계 컬럼 relcount 유지(→1)", /amgr-col-relcount/.test(html) && html.includes("→1")],
   ["③ 관계 컬럼 아코디언 body 유지", html.includes(`data-colbody="${kCust}"`)],
   ["④ 구 amgr-col-toggle/data-colrel 마크업 제거", !html.includes("amgr-col-toggle") && !html.includes("data-colrel")],
-  ["⑤ 안내 문구: '컬럼을 클릭하면 선택'", html.includes("컬럼을 클릭하면 선택")],
+  // graph-noise-reduce(2026-07-28): 상시 안내 문단 → 섹션 제목 옆 hover 툴팁(ⓘ, .amgr-sec-help).
+  //   안내 '문구' 가 아니라 '접근 경로' 를 검증한다 — 본문 문단으로 되돌아가면 FAIL.
+  ["⑤ 컬럼 섹션 안내가 hover 툴팁(.amgr-sec-help)으로 제공", /<span class="amgr-sec-help"[^>]*title="[^"]*컬럼 클릭[^"]*"/.test(html)],
+  ["⑤ 상시 안내 문단(.admin-meta-detail-note) 미노출", !/class="admin-meta-detail-note"/.test(html)],
 ];
 let pass = 0, fail = 0;
 checks.forEach(([name, ok]) => { console.log(`${ok ? "PASS" : "FAIL"}  ${name}`); ok ? pass++ : fail++; });

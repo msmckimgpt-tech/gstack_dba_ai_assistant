@@ -5184,6 +5184,13 @@ button.product-dropup-item-ds--test:disabled {
   border-top-color: #f0c14b;
 }
 
+/* graph-noise-reduce(2026-07-28, 사용자 요구): pending 이 0 건이면 커밋 바를 숨긴다.
+   "0건 pending" + 비활성 취소/모두 적용 버튼은 정보도 동작도 없는 상시 노이즈이고, 특히 편집 개념이
+   없는 pane(그래프 뷰·대시보드·감사 로그 등)에서는 캔버스 세로 공간만 잡아먹었다. 미저장 변경이
+   생기면 admin.js refreshPendingUI() 가 .has-pending 을 붙여 다시 나타난다(= unsaved-changes 액션
+   바 관습). 사이드바 하단 요약(#adminPendingSummary "변경 없음")이 상시 상태 표시를 계속 담당. */
+.admin-commit-bar:not(.has-pending) { display: none; }
+
 .admin-commit-info {
   display: flex;
   gap: 10px;

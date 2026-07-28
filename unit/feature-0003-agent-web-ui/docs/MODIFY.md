@@ -1179,7 +1179,6 @@ source_of_truth: true
 - Verification: 라이브 실측(win-browser PB-0008 + `repo-mysql-1` 직접 질의 + web 컨테이너 액세스 로그). 코드 무변경이라 회귀 표면 0.
 - Rollback: 문서 revert (동작 영향 없음).
 - Cross-ref: REVIEW REV-20260728T031500-model-access-postverify · test-runs.d/20260728T031500-model-access-pb0008.md · 선행 CHG-20260728T024258-model-access-rbac · CHG-20260728T025614-model-access-seed-fix · SECURITY §28 · feature-0007 REPORT §7.
-
 ## CHG-20260728T113819-usage-records-system (LLM 사용량 드릴다운 '사용 기록' 개편 — 시스템 사용분 편입 + 화면 이동)
 
 TASK-20260728T113819-usage-records-system. branch `ai/claude/feature-0003-usage-records`.
@@ -1246,3 +1245,23 @@ TASK-20260728T115900-usage-records-postverify. branch `ai/claude/feature-0003-us
 검증(배포본 `6d7fe391` 라이브 실측): 테이블 763px → **1144px**(래퍼 full), 본문 열 239px →
 **620px**, 단일 행 15/20 → **18/20**(잔여 2행은 시스템 행의 2줄 구조 = 의도), 가로 클리핑 없음.
 주체 열 3분기도 동일 세션에서 확정(삭제된 대화 5행 · 소유자 없는 대화 링크 1건 · raw id 0건).
+## CHG-20260728T113000-graph-noise-reduction — 그래프 뷰 시각 노이즈 제거 (설명문 → hover 툴팁 · 빈 커밋 바 숨김)
+- Date: 2026-07-28 · Session: `ai/claude/feature-0003-graph-noise-reduction` · REQ-20260728-graph-noise-reduction
+- 트리거: 사용자 요청 + 스크린샷 3곳 지목 — "그래프 뷰에서 시각적으로 noisy 한 부분 제거. 한 번 인지하면 더 확인하지 않아도 되거나 쓰면서 자연히 이해하는 설명은 최대한 제거, 혹은 hover 툴팁으로 전환."
+- `src/static/graph/graph-ctxmenu.js`
+  - **신설** `_metaSecHelp(tip)` — 섹션 제목 옆 ⓘ hover 툴팁 마커(`.amgr-sec-help`, `tabindex=0`+`aria-label` 로 키보드·스크린리더 동등 접근, `&<>"` 이스케이프).
+  - 상시 문단 `<p class="admin-meta-detail-note">` **3건 제거** → `<h4>` 의 ⓘ 로 이관: 컬럼 섹션(장문 3문장) · 컬럼 상세의 관계 섹션 · 사용하는 함수·프로시저 섹션(장문 4문장).
+  - `_metaGraphRenderDetailEmpty` — 2문단 → 1줄(`노드를 클릭하면 상세가 여기에 표시됩니다.`).
+  - `_metaDbGrpTruncNotice` — 4줄 경고 → `⚠ 이웃 조회 상한 — 일부만 불러옴` 1줄 + 상세는 `title`.
+  - 관계 상세 서두 `admin-meta-graph-desc` — 설명 3문장 제거, `참조함 N · 참조받음 M · 연관 용어 K` 수치만 + ⓘ.
+  - 클러스터 상세 서두 — `이 스키마 클러스터에 속한 …` / `항목을 클릭하면 …` 제거, `테이블 N개…` 수치만 + ⓘ.
+  - 제품 카테고리 상세 — 일반 케이스 문단 **완전 제거**(카드 배지·범례 탭과 중복), `미분류` 만 1줄 유지 + ⓘ; 밴드 조작 안내는 `스키마(DB) N개` h4 의 ⓘ 로.
+  - AI 능동 분석 — box 는 상태만(`분석 결과 없음`), 재귀 분석 설명은 `✨ 능동 분석` 버튼 `title`, 지침 안내 span 제거 후 label/textarea `title` 로.
+- `src/static/graph/graph.css` — `.amgr-sec-help` 신설(11px·muted·`cursor:help`·opacity .55→1 hover·`:focus-visible` outline), `.amgr-trunc-note` 에 `cursor:help`, `.admin-meta-ai-pop-foot` `space-between`→`flex-end`(자식이 버튼 하나가 되어 좌측으로 붙는 것 방지).
+- `src/static/admin.html` — 그래프 상세 패널 empty-state 2문단 → `.admin-detail-empty` 1줄(다른 pane 컨벤션 정합).
+- `src/static/styles.css` — `.admin-commit-bar:not(.has-pending) { display: none; }` **1규칙**. 관리 콘솔 전역 하단 바를 미저장 변경 0건일 때 숨긴다. `refreshPendingUI()` 가 `.has-pending` 을 붙이므로 변경 발생 시 자동 재노출 — **JS 무변경**.
+- `tests/headless/test_detail_dbgroups.js` — ⑰ 블록 신설(+14 assert): `_metaSecHelp` 유닛(마커·이스케이프·키보드·빈 tip) + 본문에서 제거된 문단 7종 + 툴팁으로 보존된 정보 4종 + `admin-meta-detail-note` 잔존 1건(절단 경고) 단정. **78 PASS / 0 FAIL**.
+- `tests/headless/test_detail_colsel.js` — ⑤ 를 "안내 문구 존재" → "안내가 `.amgr-sec-help` title 로 제공 + 본문 문단 부재" 로 갱신. (이 하네스는 ITEM-09 ES-module 리팩터 이후 `vm` 전체 eval 이 불가해 **main 에서도 실행 실패** — pre-existing, 본 cycle 은 단정만 정합화.)
+- Verification: 헤드리스 78 PASS/0 FAIL · `node --check`(ESM) OK · **PB-0008 라이브**(실 Windows Chrome, docker cp 스테이징) — 상세 패널 `p.admin-meta-detail-note` **0건** · `h4 = ["컬럼 (2) ⓘ","사용하는 함수·프로시저 (10) · 읽기 3 · 쓰기 7 ⓘ","AI 능동 분석"]` · ⓘ 툴팁 전문 확인 · 패널 텍스트 **852→512자** · 커밋 바 `display:none`(0건) ↔ `flex`+`has-pending`(1건) **왕복 실측** · 좌하단 `변경 없음` 요약 유지.
+- Rollback: 4개 static 파일 revert (데이터·API·스키마 영향 0).
+- Cross-ref: REVIEW REV-20260728T113000-graph-noise-reduction · `docs/test-runs.d/20260728T113000-graph-noise-reduction.md` · FUNCTION REQ-20260728-graph-noise-reduction(AC-GNR-1~6) · 선행 REQ-20260716T114705 ③(검색 패널 설명문 간결화).

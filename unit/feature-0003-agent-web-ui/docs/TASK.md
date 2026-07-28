@@ -6472,7 +6472,6 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
 - [x] **신규 발견** — TASK-0300 권한상승 가드 × `model.access.*` **자기 잠금 경로** 실측·복구 → `docs/SECURITY.md §28.6` 운영 규칙 명문화 (코드 변경 없음: 가드는 의도된 동작)
 - [x] feature-0007 REPORT §7 R1(root 2순위 체인)·R2(모델별 RBAC) 해소 표기
 - [x] 증적 — `docs/test-runs.d/20260728T031500-model-access-pb0008.md` · `docs/evidence/pb0008-model-access-{grid,deny}-20260728.png`
-
 ## TASK-20260728T113819-usage-records-system — LLM 사용량 차트 드릴다운에 '시스템' 사용분 편입 + '사용 기록' 개편 (사용자 요청, Major §12.3)
 
 **요청 (사용자, 2026-07-28)**: `관리 콘솔 > 감사 > AI 운영 현황 > LLM 사용량` 의 차트를 클릭했을 때
@@ -6537,3 +6536,16 @@ conv-audit(csv-inline-no-download). Major, cross-cut(feature-0003 프론트 + fe
       239px 로 붕괴(사용자가 보고한 과도 줄바꿈의 실제 원인). `max-width: none` 해제 + 본문 열
       `width:100%` idiom 으로 620px 확보.
 - [x] POST-DEPLOY PB-0008 재검증 — `docs/test-runs.d/20260728T115900-usage-records-postverify.md`
+## 20260728T1130-graph-noise-reduction — 그래프 뷰 시각 노이즈 제거 (설명문 → hover 툴팁 · 빈 커밋 바 숨김)
+- [x] 인벤토리 — 그래프 뷰 상시 표면의 설명성 텍스트 전수 조사(`graph-ctxmenu.js` 상세 렌더 6곳 · `admin.html` empty-state · 하단 커밋 바). 사용자 지목 3곳 + 동류 4곳 확정, 축약 대상 아닌 표면(❓ 도움말 오버레이 · 범례 3탭 = 사용자가 능동적으로 여는 곳) 분리
+- [x] `_metaSecHelp()` 공용 마커 신설 — `<span class="amgr-sec-help" title tabindex=0 aria-label role=note>ⓘ</span>`, `&<>"` 이스케이프(속성 탈출 방어)
+- [x] AC-GNR-1 — 컬럼 / 관계 / 사용하는 함수·프로시저 섹션의 `admin-meta-detail-note` 문단 3건 → `<h4>` 옆 ⓘ 툴팁
+- [x] AC-GNR-2 — 관계 상세·클러스터 상세 서두 문단에서 설명 문장 제거(수치만 잔존), 제품 카테고리 일반 케이스 문단 제거(`미분류` 만 1줄 유지)
+- [x] AC-GNR-3 — 상세 패널 empty-state 2문단 → 1줄(정적 `admin.html` + 동적 `_metaGraphRenderDetailEmpty`)
+- [x] AC-GNR-4 — AI 능동 분석 box = 상태만(`분석 결과 없음`), 설명은 버튼/label/textarea `title` 로 이관 + `.admin-meta-ai-pop-foot` 우측 정렬 고정
+- [x] AC-GNR-5 — 절단 경고 4줄 → 1줄 + 상세는 `title`(무음 절단 방지 계약은 유지)
+- [x] AC-GNR-6 — `.admin-commit-bar:not(.has-pending) { display: none }` (CSS 1규칙, JS 무변경)
+- [x] 회귀 테스트 — `tests/headless/test_detail_dbgroups.js` 에 ⑰ 블록 신설(툴팁 접근 경로·본문 문단 부재·정보 보존·이스케이프·키보드 접근) → **78 PASS / 0 FAIL**
+- [x] `tests/headless/test_detail_colsel.js` ⑤ 를 문구 단정 → 접근 경로 단정으로 갱신 (⚠ 이 하네스 자체는 ITEM-09 ES-module 리팩터 이후 **main 에서도 실행 불가** — pre-existing, 본 cycle 범위 밖)
+- [x] **PB-0008 라이브 시각검증** (docker cp 스테이징 → 실 Windows Chrome) — 상세 패널 `notes:0` · `h4: 컬럼 (2) ⓘ` · 커밋 바 `display:none`(0건) ↔ `flex`(1건 pending) 왕복 · 패널 텍스트 852→512자. 증적 `docs/test-runs.d/20260728T113000-graph-noise-reduction.md` + PNG 2장
+- [x] 한국어 조사 정정 — `함수·프로시저을` → `함수·프로시저를`(라이브 실측에서 포착, 분기별 조사 하드코딩)

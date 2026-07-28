@@ -370,5 +370,46 @@ function mkRoot(pairs, allBtn) {   // pairs: [{head, body}]
   check("⑯ 상세 안내 문구가 '생략 없음' 을 단언하지 않음(백엔드 상한 존재)", !src.includes("(생략 없음)"));
 }
 
+// ── ⑰ graph-noise-reduce(2026-07-28, 사용자 요구): 상시 설명문 → hover 툴팁 전환 회귀 방지 ──
+//   요구: "한 번 인지하면 다시 볼 필요 없는 설명" 을 상세 패널 본문에서 걷어내고 hover 툴팁으로 옮긴다.
+//   문구 자체가 아니라 **접근 경로**(본문 문단 vs .amgr-sec-help title)를 단언해, 설명이 본문으로
+//   되돌아오면 FAIL 하게 한다. 실 렌더 육안은 PB-0008 이 담당(여기는 마크업 계약).
+{
+  const fnSecHelp = grab(/\nfunction _metaSecHelp\([\s\S]*?\n\}\n/, "_metaSecHelp");
+  const sandbox = { console };
+  vm.createContext(sandbox);
+  vm.runInContext(fnSecHelp, sandbox, { filename: "sechelp-unit.js" });
+  const out = sandbox._metaSecHelp(`a"b<c&d`);
+  check("⑰ _metaSecHelp 가 .amgr-sec-help title 마커 생성", /<span class="amgr-sec-help"[^>]*\btitle="/.test(out), out);
+  check("⑰ _metaSecHelp title 속성 이스케이프(속성 탈출 방어)",
+    out.includes("a&quot;b&lt;c&amp;d") && !/title="[^"]*"[^>]*"/.test(out.replace(/aria-label="[^"]*"/, "")), out);
+  check("⑰ _metaSecHelp 키보드 접근(tabindex + aria-label)", out.includes('tabindex="0"') && out.includes('aria-label="'), out);
+  check("⑰ 빈 tip 도 안전(예외 없음)", typeof sandbox._metaSecHelp(null) === "string");
+
+  // 상세 패널 본문에서 제거되어야 할 상시 설명 문단(스크린샷 지목분 + 동류).
+  const removedProse = [
+    ["컬럼 섹션 장문 안내", "컬럼을 클릭하면 선택되어 상세로 전환되고"],
+    ["함수·프로시저 섹션 장문 안내", "읽기/쓰기로 나눠 표시합니다 —"],
+    ["컬럼 관계 행 안내 문단", '<p class="admin-meta-detail-note">행 hover 시'],
+    ["관계 상세 서두 설명", "이 노드가 맺은 관계를 방향별로 봅니다 —"],
+    ["클러스터 상세 클릭 안내", "이 스키마 클러스터에 속한 테이블"],
+    ["AI 분석 box 상시 설명", "이 노드에서 시작해 관련 노드를 AI가 재귀적으로 분석합니다(백그라운드).</span>"],
+    ["빈 상태 우클릭 안내 문단", "노드를 <strong>우클릭</strong>하면 상세 보기·관계 상세·관계 확장"],
+  ];
+  removedProse.forEach(([label, needle]) => check(`⑰ 본문에서 제거됨: ${label}`, !src.includes(needle)));
+
+  // 같은 정보가 툴팁 경로로 남아 있어야 한다(정보 소실이 아니라 이동).
+  const keptAsTip = [
+    ["컬럼 클릭 안내", "컬럼 클릭 = 상세로 전환"],
+    ["함수·프로시저 DB 그룹 안내", "읽기/쓰기로 나눠 표시하며 목록을 잘라내지 않습니다"],
+    ["관계 행 추적 안내", "행 hover = 관계 의미"],
+    ["클러스터 항목 클릭 안내", "항목을 클릭하면 ${_clickHint} 상세를 봅니다."],
+  ];
+  keptAsTip.forEach(([label, needle]) => check(`⑰ 툴팁으로 보존됨: ${label}`, src.includes(needle)));
+
+  check("⑰ 상세 패널 렌더에 남은 admin-meta-detail-note 는 절단 경고뿐",
+    (src.match(/class="admin-meta-detail-note/g) || []).length === 1 && src.includes('admin-meta-detail-note amgr-trunc-note'));
+}
+
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail === 0 ? 0 : 1);
