@@ -2031,3 +2031,8 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - AC-20260728T115900-usage-records-postverify-2: 공용 `.admin-usage-table` 의 `max-width: 640px`
   상한은 이 모달에 적용하지 않는다(`max-width: none`). 상한이 남으면 auto table-layout 이 표를
   min-content 로 수축시켜 본문 열이 붕괴하고 글자마다 줄바꿈된다.
+
+- AC-20260728T121500-usage-records-hint-tooltip: '사용 기록' 시스템 행은 **한 줄**로 렌더한다
+  (작업 라벨 + 대상 객체). 이동 경로와 데이터소스 모호 여부는 행에 두 번째 줄로 찍지 않고
+  링크의 **hover 툴팁(`title`)** 으로만 전달한다 — 정보(특히 "화면까지만 이동" 정직 표기)는
+  툴팁에 보존되어 손실이 없어야 한다.
