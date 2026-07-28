@@ -110,6 +110,42 @@ export const PixiAdapterPure = {
     return segs;
   },
 
+  // 원형 대시: 호 길이 기준 [on,off] 반복 → [[a0,a1],...] 라디안 구간 목록. dashSegments 의 원형 등가.
+  //   반지름 r 위에서 호 길이 L 은 각도 L/r 이므로 직선 대시와 **같은 화면 대시 길이**가 나온다.
+  dashArcs(r, dash) {
+    const rr = Math.max(r, 1e-6), circ = 2 * Math.PI * rr, arcs = [];
+    let t = 0, on = true, i = 0;
+    while (t < circ) {
+      const seg = Math.min(dash[i % dash.length], circ - t);
+      if (on) arcs.push([t / rr, (t + seg) / rr]);
+      t += seg; on = !on; i++;
+    }
+    return arcs;
+  },
+
+  // 상태 테두리(halo) 기하 — 노드의 **모양과 크기에 비례**해 산출한다(graph-analyzed-halo-fit).
+  //   ① circle 노드(컬럼 지름 11 · 루틴 파라미터)는 **원형** halo. 종전엔 rect 경로만 있어 h 가 기본값
+  //      24 로 잡혀 11px 점 주위에 17×30 알약이 그려졌다(사용자 리포트 2026-07-28 "노드 크기에 비해
+  //      테두리가 비대"). 모양 자체가 어긋난 것이 지배 원인이고, 두께는 그 다음이다.
+  //   ② 두께·여백은 노드 최소변에 비례: k = clamp(min(w,h)/24, 0.4, 1). 24 는 테이블/루틴 칩 높이라
+  //      **모든 rect 노드에서 k=1 → 기존 수치 그대로**(회귀 0). 11px 컬럼은 k≈0.458 → 3px 테두리가
+  //      1.4px 링으로 줄어 점을 삼키지 않는다.
+  //   ③ 동심링 간격(다중 상태 동시 표기)도 같은 비율 — 작은 노드에서 링이 밖으로 퍼지지 않는다.
+  //   반환: {shape:"circle", r, lw} | {shape:"rect", x, y, w, h, radius, lw} — r/x/y 는 **stroke 중심선**.
+  haloGeom(n, i, lineWidth) {
+    const s = n.style || {}, isCircle = n.type === "circle";
+    const w = isCircle ? (typeof s.size === "number" ? s.size : 11)
+                       : (Array.isArray(s.size) ? s.size[0] : (s.size || 24));
+    const h = isCircle ? w : (Array.isArray(s.size) ? s.size[1] : 24);
+    const k = Math.max(0.4, Math.min(1, Math.min(w, h) / 24));
+    const lw = Math.max(1, (lineWidth || 1) * k);
+    const gap = Math.max(1.5, 3 * k);        // 노드 표면 ↔ 링 중심선 여백(작은 노드도 흰 테를 남긴다)
+    const off = gap + (i || 0) * 2 * k;      // 동심링: 상태 순서마다 바깥으로 2*k
+    if (isCircle) return { shape: "circle", r: w / 2 + off, lw };
+    return { shape: "rect", x: -w / 2 - off, y: -h / 2 - off, w: w + 2 * off, h: h + 2 * off,
+      radius: (s.radius || 4) + off - 1, lw };
+  },
+
   // 노드 bbox (모델 좌표, 좌상단 기준). rect=[w,h] 중심, circle=지름 중심.
   nodeBBox(n) {
     const s = n.style || {};
@@ -1239,15 +1275,15 @@ export class PixiGraphAdapter {
 
   _applyNodeStates(c, n) {
     const states = n.states || []; if (!states.length) return;
-    const P = this.P, s = n.style || {};
-    const w = Array.isArray(s.size) ? s.size[0] : (s.size || 24), h = Array.isArray(s.size) ? s.size[1] : 24;
+    const P = this.P;
     const conf = this._nodeState;
     // 상태 = **테두리(halo)** — G6 원본 node.state 계약과 동일(analyzed/running 을 뱃지 dot 으로 렌더하던 회귀 수정, 사용자 리포트 2026-07-13).
     //   §18.8 B1 수정: `_metaNodeStates` 는 [match, analyzed, running, selected, dimmed] 순으로 상태를 만들고, G6 는
     //   **나중에 적용된 상태(=selected)의 stroke 가 이긴다**. 겹치는 동일-rect halo 는 나중에 페인트된(=자식 배열
     //   더 뒤) 것이 위에 보이므로, halo 를 states 순서대로 body 아래에 **증가 인덱스**로 삽입한다 → selected(마지막)가
     //   halo 중 최상위(body 직전)로 페인트되어 analyzed/running 위에서 보인다. (앞서 addChildAt(_,0) 은 순서를 뒤집어
-    //   analyzed 가 selected 를 가렸음.) rect 인셋을 상태별로 2px 씩 벌려 동시 표기(concentric)도 가능케 한다.
+    //   analyzed 가 selected 를 가렸음.) 인셋을 상태별로 벌려 동시 표기(concentric)도 가능케 한다 — 인셋 폭·
+    //   두께·모양은 haloGeom 이 노드 크기에 비례해 산출(graph-analyzed-halo-fit).
     let hi = 0, seen = 0;   // hi=halo 삽입 인덱스(body 아래), seen=인셋 단계
     for (const st of states) {
       const sc = conf[st] || {};
@@ -1255,16 +1291,24 @@ export class PixiGraphAdapter {
         const DEF = { selected: { stroke: "#161b22", lineWidth: 3 }, match: { stroke: "#e8a400", lineWidth: 2 },
           busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] }, analyzed: { stroke: "#7b2fbe", lineWidth: 3 },
           running: { stroke: "#e08a1e", lineWidth: 2, lineDash: [4, 3] } };
-        const d = DEF[st], col = sc.stroke || d.stroke, lw = sc.lineWidth || d.lineWidth, dash = sc.lineDash || d.lineDash;
+        const d = DEF[st], col = sc.stroke || d.stroke, dash = sc.lineDash || d.lineDash;
         const halo = new P.Graphics();
-        const inset = seen * 2;   // 다중 상태 동시 표기: 바깥으로 2px 씩 확장(concentric 링, 서로 안 가림)
-        const rx = -w / 2 - 3 - inset, ry = -h / 2 - 3 - inset, rw = w + 6 + 2 * inset, rh = h + 6 + 2 * inset, rr = (s.radius || 4) + 2 + inset;
-        if (Array.isArray(dash)) {   // 점선 테두리(busy/running) — rect 4변 대시
-          const D = PixiAdapterPure.dashSegments;
-          for (const seg of [].concat(D(rx, ry, rx + rw, ry, dash), D(rx + rw, ry, rx + rw, ry + rh, dash), D(rx + rw, ry + rh, rx, ry + rh, dash), D(rx, ry + rh, rx, ry, dash))) halo.moveTo(seg[0], seg[1]).lineTo(seg[2], seg[3]);
+        // graph-analyzed-halo-fit: 기하는 PixiAdapterPure.haloGeom 이 노드 모양(circle/rect)·크기에 비례해
+        //   산출한다(rect 는 k=1 이라 종전 수치 그대로). `seen` = 동심링 단계(다중 상태 동시 표기).
+        const G = PixiAdapterPure.haloGeom(n, seen, sc.lineWidth || d.lineWidth), lw = G.lw;
+        const alpha = st === "match" ? 0.8 : 0.9;
+        if (Array.isArray(dash)) {   // 점선 테두리(busy/running)
+          if (G.shape === "circle") {   // 원형 4변이 없으므로 호 대시(dashArcs)로 등가 처리
+            for (const [a0, a1] of PixiAdapterPure.dashArcs(G.r, dash)) halo.moveTo(Math.cos(a0) * G.r, Math.sin(a0) * G.r).arc(0, 0, G.r, a0, a1);
+          } else {
+            const D = PixiAdapterPure.dashSegments, rx = G.x, ry = G.y, rw = G.w, rh = G.h;
+            for (const seg of [].concat(D(rx, ry, rx + rw, ry, dash), D(rx + rw, ry, rx + rw, ry + rh, dash), D(rx + rw, ry + rh, rx, ry + rh, dash), D(rx, ry + rh, rx, ry, dash))) halo.moveTo(seg[0], seg[1]).lineTo(seg[2], seg[3]);
+          }
           halo.stroke({ color: col, width: lw, alpha: 0.9 });
+        } else if (G.shape === "circle") {
+          halo.circle(0, 0, G.r).stroke({ color: col, width: lw, alpha });
         } else {
-          halo.roundRect(rx, ry, rw, rh, rr).stroke({ color: col, width: lw, alpha: st === "match" ? 0.8 : 0.9 });
+          halo.roundRect(G.x, G.y, G.w, G.h, G.radius).stroke({ color: col, width: lw, alpha });
         }
         c.addChildAt(halo, hi++); seen++;   // body 아래·states 순서 → selected(마지막) 최상위 halo
       }

@@ -11,6 +11,13 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260728T161326-graph-analyzed-halo-fit (TASK-20260728T161326 — AI 분석 완료 컬럼 노드 상태 테두리 기하 보정, Minor §12.3, frontend-only)
+- `graph-renderer-pixi.js` `PixiAdapterPure`: **`haloGeom(n, i, lineWidth)`** 신설 — 노드 모양(`type==="circle"` → 원형 / 그 외 rect)과 크기 비례 계수 `k = clamp(min(w,h)/24, 0.4, 1)` 로 `{shape, r|x,y,w,h,radius, lw}` 산출. 여백 `max(1.5, 3k)`, 동심링 오프셋 `i·2k`, 두께 `max(1, lineWidth·k)`. rect 는 k=1 이라 종전 하드코딩(`-w/2-3-2i` · `radius+2+i·2` · lw 그대로)과 **수치 동일**.
+- `graph-renderer-pixi.js` `PixiAdapterPure`: **`dashArcs(r, dash)`** 신설 — 호 길이 기준 [on,off] 반복을 라디안 구간 `[[a0,a1],…]` 로 반환(각도 = 호길이/r → 직선 `dashSegments` 와 같은 화면 대시 길이).
+- `graph-renderer-pixi.js` `PixiGraphAdapter._applyNodeStates`: 하드코딩 rect 기하 제거 → `haloGeom` 소비. circle 은 `g.circle()`, circle+점선은 `moveTo().arc()` 반복, rect 는 종전 `roundRect`/4변 대시 경로 유지. 미사용이 된 지역 `w`/`h`/`s` 정리.
+- `tests/headless/test_pixi_adapter.js`: **T27 신설 15건** — rect 회귀 0(i=0·i=1 좌표·radius·lw 전건), circle 원형/비례 두께/외곽 상한/동심링 간격/size 폴백/type 미지정 rect 경로/두께 하한, dashArcs 총 on 길이·단조·상한·1바퀴. 205 PASS.
+- docs: TASK/FUNCTION/REPORT/REVIEW + test-runs.d fragment.
+
 ## CHG-20260728T153500-graph-catcluster-scroll-postverify (TASK-20260728T152000 POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - `docs/test-runs.d/20260728T153500-graph-catcluster-panel-scroll-postdeploy.md` 신설 — 배포(main 4a0174e5)·서빙 baked 확인·PB-0008 4 시나리오·evidence 3매.
 - TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.

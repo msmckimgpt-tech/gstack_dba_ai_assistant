@@ -761,6 +761,52 @@ ok(Pure.clampZoom(10, [0.05, 4]) === 4 && Pure.clampZoom(0.01, [0.05, 4]) === 0.
   ok(g === null, "T26 Pixi 미배선 → 확장 기하 null");
 }
 
+// ── T27 haloGeom: 상태 테두리 기하 (graph-analyzed-halo-fit) ──
+{
+  // ① rect 노드는 회귀 0 — 종전 하드코딩(gap 3 / inset 2*i / radius+2+inset / lw 그대로)과 동일해야 한다.
+  const chip = { style: { size: [150, 24], radius: 6 } };
+  const g0 = Pure.haloGeom(chip, 0, 3);
+  ok(g0.shape === "rect" && g0.x === -78 && g0.y === -15 && g0.w === 156 && g0.h === 30 && g0.radius === 8 && g0.lw === 3,
+    "T27 rect halo 종전 수치 유지(i=0)");
+  const g1 = Pure.haloGeom(chip, 1, 3);
+  ok(g1.x === -80 && g1.y === -17 && g1.w === 160 && g1.h === 34 && g1.radius === 10 && g1.lw === 3,
+    "T27 rect 동심링 inset 2px(i=1) 유지");
+  // ② circle 노드(컬럼 지름 11)는 **원형** halo — 종전 rect 경로는 h 기본값 24 를 먹어 17×30 알약이었다.
+  const col = { type: "circle", style: { size: 11 } };
+  const c0 = Pure.haloGeom(col, 0, 3);
+  ok(c0.shape === "circle", "T27 circle 노드 → 원형 halo");
+  ok(approx(c0.lw, 3 * (11 / 24), 1e-9) && c0.lw < 3, "T27 두께가 노드 크기에 비례(3 → ~1.4)");
+  ok(approx(c0.r, 5.5 + 1.5, 1e-9), "T27 반지름 = 노드 반지름 + 여백");
+  // 외곽 지름이 노드 지름의 1.5배 이내 — 종전 30px(2.7배) 세로 알약 대비 축소가 계약.
+  ok(2 * (c0.r + c0.lw / 2) < 11 * 1.5, "T27 halo 외곽 < 노드 지름 1.5배");
+  const c1 = Pure.haloGeom(col, 1, 3);
+  ok(c1.r > c0.r && (c1.r - c0.r) < 2, "T27 circle 동심링도 비례 간격(<2px)");
+  // ③ size 미지정 circle → 기본 지름 11 폴백(_drawNode 와 동일 계약).
+  ok(approx(Pure.haloGeom({ type: "circle", style: {} }, 0, 3).r, c0.r, 1e-9), "T27 circle size 미지정 → 11 폴백");
+  // ④ type 미지정(hover 확장 카드는 {states,style} 만 넘긴다) → rect 경로 유지.
+  ok(Pure.haloGeom({ style: { size: [120, 24] } }, 0, 3).shape === "rect", "T27 type 미지정 → rect 경로");
+  // ⑤ 두께 하한 1px — 비례 축소가 hairline 아래로 사라지지 않게.
+  ok(Pure.haloGeom({ type: "circle", style: { size: 6 } }, 0, 2).lw === 1, "T27 두께 하한 1px");
+}
+
+// ── T27 dashArcs: 원형 대시(running/busy 점선의 circle 등가) ──
+{
+  const r = 8, arcs = Pure.dashArcs(r, [4, 3]);
+  ok(arcs.length > 0, "T27 dashArcs 세그먼트 생성");
+  const onLen = arcs.reduce((a, [a0, a1]) => a + (a1 - a0) * r, 0);
+  const circ = 2 * Math.PI * r;
+  ok(Math.abs(onLen - circ * 4 / 7) < 4, "T27 on 호길이 ≈ 둘레*on/(on+off)");
+  let mono = true, within = true;
+  for (let i = 0; i < arcs.length; i++) {
+    if (arcs[i][1] <= arcs[i][0]) mono = false;
+    if (i && arcs[i][0] < arcs[i - 1][1]) mono = false;
+    if ((arcs[i][1] - arcs[i][0]) * r > 4 + 1e-9) within = false;
+  }
+  ok(mono, "T27 dashArcs 각도 단조증가·비퇴화");
+  ok(within, "T27 각 대시 호길이 ≤ on 길이(직선 대시와 동일 스케일)");
+  ok(arcs[arcs.length - 1][1] <= 2 * Math.PI + 1e-9, "T27 한 바퀴를 넘지 않음");
+}
+
 console.log("──────");
 console.log((fail === 0 ? "ALL PASS" : "FAIL") + " — " + pass + " PASS / " + fail + " FAIL");
 process.exit(fail === 0 ? 0 : 1);

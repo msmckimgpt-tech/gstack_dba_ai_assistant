@@ -10,6 +10,21 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260728T161326-graph-analyzed-halo-fit [SKIPPED:session-policy-no-subagent] — AI 분석 완료 컬럼 노드 상태 테두리 기하 보정 (TASK-20260728T161326, Minor §12.3, frontend-only)
+- Panel skip 사유(§18.8): 본 세션은 하네스 정책상 `Agent` tool 사용이 금지되어 subagent 패널을 띄울 수 없다. 기계 검증(T27 15건 + 그래프 전 스위트 677) + PB-0008 라이브 before/after 대조로 대체하고 범위를 정직 기록.
+- 판단 근거:
+  - **왜 "두께만 줄이기" 가 아니라 모양 계약을 고쳤나**: 사용자는 "테두리가 비대"로 보고했지만, 코드 확인 결과 halo 는 11px 원형 노드에 **17×30 사각 알약**이었다. 폭 초과(17 vs 11)보다 **높이 초과(30 vs 11)** 가 3배로 컸고, 이것이 컬럼 행 간격(~24px)을 넘어 이웃 halo 와 겹치며 "세로 관" 을 만든 지배 원인이다. 두께만 줄였다면 관이 얇아질 뿐 사라지지 않는다.
+  - **왜 비례 계수의 기준이 24 인가**: 테이블·루틴 칩의 높이가 24 다. 24 를 1.0 으로 두면 **모든 rect 노드에서 k=1** 이 되어 기존 수치가 산술적으로 보존된다(T27 이 좌표·radius·lw 를 전건 대조해 잠금). 즉 비례화의 대가로 다른 노드 종류가 흔들리지 않는다.
+  - **왜 기하를 순수 함수로 뺐나**: 렌더 경로(Pixi Graphics)는 헤드리스에서 검증하기 어렵다. 좌표 산술만 `PixiAdapterPure` 로 분리하면 `_applyNodeStates` 를 실제로 호출하지 않고도 회귀 0 을 기계로 증명할 수 있다(기존 §78 Phase B 계약과 동일 패턴).
+  - **왜 원형 대시를 새로 만들었나**: `dashSegments` 는 폴리라인 전용이라 원에 쓸 수 없다. 각도 = 호길이/r 로 변환하면 반지름과 무관하게 **직선 대시와 같은 화면 대시 길이**가 나온다 — running(4,3)·busy(2,2) 의 시각 아이덴티티가 노드 종류를 넘나들어도 유지된다.
+- 자체 적대 검토:
+  · **H1 다중 상태 동심링이 작은 노드에서 겹치지 않나(인정·한정)**: k 비례라 11px 컬럼에서 링 간격이 ~0.9px 로 좁아 analyzed+selected 동시 표기 시 부분 겹침이 남는다. 다만 **종전 rect 경로도 lw 3 / inset 2 라 이미 겹쳤고**(비율 동일), 11px 노드에서 두 링을 완전 분리하려면 halo 를 노드의 2배 밖까지 밀어야 해 원 요구("비대")와 정면으로 충돌한다. 겹침 시 나중 페인트(selected)가 위에 보이는 기존 우선순위 계약은 그대로다.
+  · **H2 두께 하한 1px 이 hairline 정책과 충돌하나(검증)**: 엣지의 §87 hairline 은 dpr 기반 물리픽셀 보정이고, 여기 하한은 **모델 좌표 하한**이라 축이 다르다. 하한이 없으면 6px 이하 노드에서 링이 0.75px 로 내려가 줌아웃 시 소실된다.
+  · **H3 hover 확장 카드 회귀(검증)**: `_showLabelExpand` 는 `{states, style:{size:[w,h]}}` 만 넘겨 `type` 이 없다 → `haloGeom` 이 rect 분기를 타 종전과 동일(T27 "type 미지정 → rect 경로" 로 잠금).
+  · **H4 무한 루프·성능(검증)**: `dashArcs` 는 `t += seg` 로 단조 증가하고 seg = min(dash[i], 남은 길이)라 종료가 보장된다. 실제 드로잉 호출 수를 스텁으로 계수 — circle analyzed 2 ops, running 15, busy 23, 4상태 동시 23, rect busy 189(종전과 동일 경로). 런어웨이 없음.
+  · **H5 라이브 검증 중 관측된 페이지 이탈이 본 변경 탓인가(반증 완료)**: 주입 QA 중 admin 화면이 대시보드로 되돌아가는 현상이 반복됐다. ① 원본 렌더러로 되돌린 대조에서도 재현 조건이 갈렸고, ② 수정본으로 재주입한 대조에서 `errs=[] · canvas 생존 · nav=navigate` 로 **정상**이었으며, ③ 최종적으로 Chrome 이 121테이블·300루틴 스키마 전개 중 **브리지째 죽는** 것을 확인(도구 `no_bridge`). 원인은 대형 스키마 전개의 브라우저 부하 + 내가 넣었던 `?v=haloqa1` 캐시버스터가 서버 측 asset-stamp 재주입으로 원복되며 생긴 import 불일치이지, 본 변경이 아니다. 가벼운 스키마로 옮겨 AFTER 를 정상 확보했다.
+- 검증: 헤드리스 `test_pixi_adapter.js` **205 PASS**(T27 15건 신설) · 그래프 전 스위트 **677 PASS / 0 FAIL** · `make test` pytest 는 attachment/runtime_settings 15건 실패이나 **전부 worktree 격리 네트워크 환경성 baseline**이고 본 변경은 Python 무접촉(ruff PASS) · PB-0008 실 Windows Chrome/150 relay 4× 확대 before/after · 주입 QA **원복 완료**(서빙 `haloGeom` 0건 · `/livez` 200).
+
 ## REV-20260728T153500-graph-catcluster-scroll-postverify [SKIPPED:non-policy-doc] — 카테고리 선택 스크롤 동기화 POST-DEPLOY PB-0008 검증 기록 (TASK-20260728T152000, 비-정책 doc-only)
 - 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
 - **왜 배포본에서 다시 봤는가**: pre-commit 검증은 §13.2.9 격리 컨테이너(라이브 무접촉)에서 했다. 그 이미지는 내 worktree 자산을 `docker cp` + 재스탬프한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 그대로 통과한 산출물이 아니다**. main 기반 이미지가 실제로 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).
