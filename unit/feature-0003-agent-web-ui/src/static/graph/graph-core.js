@@ -2,7 +2,7 @@
 // 규약: 공개 표면은 graph/graph.js(barrel) 가 re-export — admin.js 는 barrel 만 import.
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
 import { adminState, apiFetch } from "../admin.js?v=dev";
-import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaNatSort, _metaSchemaComboOf } from "./graph-state.js?v=dev";
+import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf } from "./graph-state.js?v=dev";
 import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
@@ -927,10 +927,48 @@ function _metaG6Build() {
       style: dimIf(st, agg.keep) });
   });
   _metaGraph._lodDropped = lodDropped;   // §57: 상태줄 안내용(축약 규모)
+  _metaApplyLabelLod(zoomNow, nodes, combos, edges);   // label-lod(20260728T1604): 판독 불가 크기 라벨 미방출
   _metaBakeBaseOpacity(nodes);           // §57.9: dimmed 해제 시 opacity 복원(아래 함수 주석 참조)
   // graph-initview: 렌더된 요소 id 집합(노드+combo) — setElementState/focus 가 미렌더 요소를 건드리지 않게.
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id).concat(combos.map((c) => c.id)));
   return { combos, nodes, edges };
+}
+
+// label-lod(20260728T1604, 사용자 리포트 2026-07-28 "과도한 줌아웃 시 글자가 깨짐"): 화면 실효 크기가 판독 하한
+//   (_META_LABEL_MIN_PX / 헤더는 _META_LABEL_HEADER_MIN_PX, 화면 CSS px)에 못 미치는 라벨을 **방출 단계에서
+//   제거**한다. 근인은 라벨 텍스처의 극단 다운샘플 aliasing(자세한 기전은 graph-state.js 상수 주석) —
+//   판독 불가 크기에서는 글자가 정보가 아니라 노이즈다. 제거는 style 의 라벨 키만 지우므로:
+//     · 좌표·크기(style.x/y/size)는 불변 → **band-invariant**(reflow 0, col-lod §61 과 동일 계약).
+//     · 미니맵 기하 서명(_metaMinimapGeomSig)은 id·좌표·size 만 보므로 라벨 유무에 **불변**(재복제 유발 0).
+//     · hit-test·선택·관계선은 노드 rect 기반이라 상호작용 **무손실**(라벨 없이도 클릭·우클릭 동일).
+//   확대하면 밴드 전이(_lodBand)가 rebuild 를 걸어 그대로 복귀한다. 관측은 window.__META_GRAPH_PERF.label.
+function _metaApplyLabelLod(zoom, nodes, combos, edges) {
+  const z = (typeof zoom === "number" && isFinite(zoom) && zoom > 0) ? zoom : 1;
+  const stat = { zoom: z, band: _metaLabelBandOf(z), total: 0, dropped: 0, headerTotal: 0, headerDropped: 0, badgesDropped: 0 };
+  // 라벨 키 일괄 제거 — dimIf(§57.6)의 dim 경로와 동일한 키 집합(라벨 배경까지 남으면 빈 pill 이 뜬다).
+  const stripLabel = (st) => { delete st.labelText; delete st.labelBackground; delete st.labelBackgroundFill; delete st.labelBackgroundOpacity; };
+  const apply = (el, isHeader, defSize) => {
+    const st = el && el.style;
+    if (!st) return;
+    if (st.labelText !== undefined && st.labelText !== null && st.labelText !== "") {
+      const minPx = isHeader ? _META_LABEL_HEADER_MIN_PX : _META_LABEL_MIN_PX;
+      const fs = (typeof st.labelFontSize === "number" && isFinite(st.labelFontSize)) ? st.labelFontSize : defSize;
+      stat.total += 1; if (isHeader) stat.headerTotal += 1;
+      if (fs * z < minPx) { stripLabel(st); stat.dropped += 1; if (isHeader) stat.headerDropped += 1; }
+    }
+    // 스키마 카드 개수 badge 는 라벨보다 폰트가 작아 먼저 붕괴한다 — 본문 임계로 함께 판정(빈 배열 = 미방출).
+    if (Array.isArray(st.badges) && st.badges.length) {
+      const bf = (typeof st.badgeFontSize === "number" && isFinite(st.badgeFontSize)) ? st.badgeFontSize : 10;
+      if (bf * z < _META_LABEL_MIN_PX) { st.badges = []; stat.badgesDropped += 1; }
+    }
+  };
+  const kindOf = (el) => (el && el.data && el.data.kind) || "";
+  for (const n of (nodes || [])) apply(n, _META_LABEL_HDR_KINDS.has(kindOf(n)), 12);
+  for (const c of (combos || [])) apply(c, true, 13);          // 스키마 클러스터 제목(_metaComboStyleFor: 13)
+  for (const e of (edges || [])) apply(e, false, 10);          // 집계 관계선 count 라벨
+  _metaGraph._labelLod = stat;   // 상태줄 마커 게이트 + 헤드리스 검증 지점
+  try { _metaPerf().label = stat; } catch (_) {}
+  return stat;
 }
 
 // §57.9(사용자 4차 실측 — "재선택 노드가 흐린 상태로 남음"): 모든 노드 base style 에 opacity 를
@@ -1004,6 +1042,11 @@ function _metaG6BuildProducts() {
       //   곡선이 섞이면 "왜 이 선만 다르지" 라는 무의미한 시각 신호가 생긴다. 실선(lineDash 생략 — G6 크래시 방지).
       style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: _metaEdgeWidthFor(1), strokeOpacity: 0.6, endArrow: true, zIndex: _METZ.EDGE }) });   // §86 개수=굵기 축 정합
   });
+  // label-lod(20260728T1604): 제품 개요 뷰도 동일 규칙 — 노드 수가 적어 실제 발동은 드물지만, 스코프 전환
+  //   후 stale `_labelLod`(스키마 뷰가 남긴 억제 통계)로 상태줄 마커가 거짓 표시되는 것을 함께 차단한다.
+  let _prodZoom = 1;
+  try { if (_metaGraph.graph) _prodZoom = _metaGraph.graph.getZoom() || 1; } catch (_) {}
+  _metaApplyLabelLod(_prodZoom, nodes, [], edges);
   _metaBakeBaseOpacity(nodes);   // §57.9: 제품/데이터소스 뷰도 동일 base opacity 명시(일관성)
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));
   return { combos: [], nodes, edges };
@@ -2099,7 +2142,11 @@ function _metaInitGraph() {
     }
     // col-lod(§61)+agg-lod(§63): 4단 밴드 — full(≥0.5) / collod(0.35~0.5: 컬럼억제) / lod(0.15~0.35: 컬럼+엣지억제)
     //   / agg(<0.15: 클러스터 집계). 어느 임계(0.5·0.35·0.15)를 교차해도 밴드가 바뀌어 디바운스 rebuild 로 반영한다.
-    const band = z < _META_AGG_ZOOM ? "agg" : (z < _META_EDGE_LOD_ZOOM ? "lod" : (z < _META_COL_LOD_ZOOM ? "collod" : "full"));
+    // label-lod(20260728T1604): 라벨 억제 경계도 같은 밴드 훅에 실어 rebuild 를 얻는다. 밴드 문자열은
+    //   "억제 경계 폰트 크기"(_metaLabelBandOf)라 실제 억제 집합이 바뀌는 줌에서만 달라진다 — 기존 4단
+    //   임계(0.5/0.35/0.15)와 독립이므로 결합해야 그 사이 구간의 라벨 전이도 반영된다.
+    const band = (z < _META_AGG_ZOOM ? "agg" : (z < _META_EDGE_LOD_ZOOM ? "lod" : (z < _META_COL_LOD_ZOOM ? "collod" : "full")))
+      + "|" + _metaLabelBandOf(z);
     if (band === _metaGraph._lodBand) return;
     const prev = _metaGraph._lodBand;
     _metaGraph._lodBand = band;
@@ -2125,10 +2172,21 @@ function _metaInitGraph() {
           const colCut = !!_metaGraph._colLodActive;           // 컬럼 실제 억제
           // agg-lod(§63): 집계 상태 안내는 제거(사용자 피드백 "그래서 뭐?" — 그래프 사용에 무의미·노이즈).
           //   집계는 카드로 자명하다. col/edge LOD 안내는 §57 오독-가드 목적이라 유지(비-집계 밴드에서만).
-          const marker = aggCut ? ""
-            : (edgeCut && colCut) ? " · 줌아웃 — 컬럼·관계선 일부 축약(확대 시 전체 표시)"
-            : colCut ? " · 줌아웃 — 컬럼 표시 축약(확대 시 전체 표시)"
-            : edgeCut ? " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)" : "";
+          // label-lod(20260728T1604): 라벨 억제도 같은 오독-가드 대상 — 이름표가 사라진 것을 "데이터가
+          //   없다"로 읽지 않게 한 항으로 합류시킨다(별도 마커를 덧붙이면 상태줄이 두 줄로 길어진다).
+          //   **배지 억제도 같은 게이트에 포함한다(codex P2)** — 스키마 카드 개수 배지는 제목 라벨보다
+          //   폰트가 작아(카드 제목 `_cardLF`≈13·배지 `_cardBF`≈10) **제목이 살아 있는 구간에서 배지만
+          //   먼저 소거**된다(zoom 0.45 부근: 12×0.45=5.4 유지 / 10×0.45=4.5 억제). `dropped` 만 보면
+          //   그 구간에서 개수 정보가 **마커 없이 사라져** 바로 이 오독-가드가 뚫린다. 마커 항은 그대로
+          //   '이름표' 하나로 둔다(별도 항을 늘리면 상태줄이 두 줄로 길어진다 — 위 결정 유지).
+          const _lodLab = _metaGraph._labelLod;
+          const labelCut = !!(_lodLab && ((_lodLab.dropped || 0) > 0 || (_lodLab.badgesDropped || 0) > 0));
+          const cuts = [];
+          if (colCut) cuts.push("컬럼");
+          if (edgeCut) cuts.push("관계선");
+          if (labelCut) cuts.push("이름표");
+          const marker = (aggCut || !cuts.length) ? ""
+            : ` · 줌아웃 — ${cuts.join("·")} 표시 축약(확대 시 전체 표시)`;
           const showMarker = !!marker;
           st.innerText = showMarker ? (base + marker) : base;
           // graph-toolbar-consolidate: 이 마커는 _metaGraphStatus 를 거치지 않고 innerText 를 직접 조작하므로,

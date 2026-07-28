@@ -2650,3 +2650,124 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - `node --check --input-type=module` PASS(graph-ctxmenu.js·graph-state.js). 헤드리스 `test_detail_dbgroups.js` **62 PASS**(적대 리뷰 사각 흡수판).
 - 컨테이너 pytest 전체(0002+0003): 파이썬 스위트가 **비결정적(flaky)** — 같은 main 기준선을 두 번 돌려 실패 집합이 서로 달랐다(main `make test` 8건 실패: attachment_idor/attachment_user_version_context/runtime_settings 계열 / 본 worktree 4건: routine_dbanalysis·item11_batch8·runtime_settings 계열, 교집합은 runtime_settings 2건뿐). 본 cycle 의 파이썬 변경은 `metadata_graph.neighborhood()` 의 `truncated` 플래그 세팅(additive) 뿐이며 위 실패 테스트와 무관하다 — **백엔드 변경 전/후 worktree 실패 집합이 동일 4건으로 불변**(새 실패 0)이라는 실측이 이를 뒷받침한다. 스위트 flake 자체의 원인 규명은 본 cycle 범위 밖(별도 항목).
 - 상세 Run: feature-0003 `docs/TEST.md` §3 Run(2026-07-27) detail-db-groups.
+
+## 20260728T1604-graph-label-lod — 과도한 줌아웃 시 라벨(글자) 붕괴 최소화 (2026-07-28, 사용자 요청 · entry persona dispatch)
+
+### 맥락 (사용자 요청)
+"그래프 뷰에서 카메라 줌 아웃을 과도하게 설정할 경우 글자가 깨지는 이슈 — 최소화할 방법이 있을까요?"
+사용자 선택: **A(라벨 LOD) + B(아틀라스 mipmap) 병행**, 추가 요구 **"성능적인 비용을 차후에 관측할 수 있는 구조"**.
+
+### 근본 원인 (코드 실증)
+라벨 텍스처의 **극단 다운샘플 aliasing**. §80 에서 라벨을 `PIXI.Text`→`BitmapText`(dynamic font)로 전환했는데,
+PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`baseRenderedFontSize=100`, `overrideSize=true`,
+`BitmapFontManager.defaultOptions.resolution=1`)로 구워 아틀라스에 넣고 표시할 때 `fontSize/100` 으로 축소한다.
+- 테이블 라벨 `fontSize:12` → 평시에도 1/8 축소, 여기에 zoom 0.1·DPR 2 를 곱하면 화면 물리 2.4px = **텍스처 대비 ~1/42**.
+- 그 아틀라스는 **mipmap 이 없다**(`TextureSource` 기본 `autoGenerateMipmaps=false`·`mipLevelCount=1`) + `scaleMode:"linear"`
+  → GPU 가 2×2 텍셀만 평균 = 사실상 임의 점 샘플링 → 글자가 노이즈로 붕괴하고 팬 중 반짝인다(모아레).
+- Text 폴백 경로도 `fontSize×_labelRes`(≤4)=48px 라 ~1/20 — 덜 심할 뿐 같은 기전.
+- 악화 요인: §67 이후 `aggActive=false`(집계 카드 폐기) + PixiJS 모드는 뷰포트 컬링 비활성 → **극단 줌아웃에서도 전 노드
+  라벨이 전량 방출**되어 깨진 글자가 화면을 덮는다. `zoomRange` 하한 0.05 에서는 ~1/80.
+
+### 계획 (§7.1 Plan-Review-Execute · 위험도 **Minor** — 비파괴 프론트 시각, 스키마·인가·응답 shape 무변경)
+| 대상 파일 | 변경 symbol | 완료 판정 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-state.js` | `_META_LABEL_MIN_PX`·`_META_LABEL_HEADER_MIN_PX`·`_META_LABEL_HDR_KINDS`·`_metaLabelBandOf`·`_metaPerf` | 임계·밴드 양자화·관측 지점이 단일 소스로 존재 |
+| `.../graph/graph-core.js` | `_metaApplyLabelLod`(신규)·`_metaG6Build`·`_metaG6BuildProducts`·밴드 훅·상태줄 마커 | 판독 하한 미만 라벨 미방출 + 좌표 band-invariant + 상태줄 오독-가드 |
+| `.../graph/graph-renderer-pixi.js` | `_makeText`(계측 분리)·`draw` | 라벨 생성·draw 비용이 `__META_GRAPH_PERF.render` 로 관측된다 (mipmap 경로는 TL.5 실측 후 철회) |
+| `.../tests/headless/test_g6build_labellod.js` | 신규 | 임계·헤더우대·band-invariant·미니맵서명·밴드양자화·관측 고정 |
+
+### 처리 (본 cycle — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] TL.1 **A 라벨 LOD** — `_metaApplyLabelLod(zoom, nodes, combos, edges)` 가 방출 말미에 화면 실효 크기
+  (`labelFontSize × zoom`, CSS px)가 하한 미만인 라벨의 style 키(`labelText`+배경 3키)를 제거한다. 하한 2단:
+  본문 `_META_LABEL_MIN_PX=5`(테이블·컬럼·루틴·파라미터·용어·접기 컨트롤·엣지 count) / 헤더 `_META_LABEL_HEADER_MIN_PX=3.2`
+  (카테고리 밴드 헤더·스키마 클러스터 combo·접힌 스키마 카드·컨텐츠 그룹 헤더·제품 개요 — 개요에서 "여기가 어디인가"를
+  주는 소수의 큰 라벨이라 더 오래 유지). 스키마 카드 개수 badge 는 라벨보다 작아 먼저 붕괴하므로 본문 하한으로 동반 소거.
+- [x] TL.2 **band-invariant 보장** — 제거는 style 의 라벨 키만 건드린다: 좌표·size 불변(reflow 0, §61 col-lod 와 동일 계약),
+  노드/combo/엣지 개수·`renderedIds` 불변(hit-test·선택·관계선 무손실), 미니맵 기하 서명(`_metaMinimapGeomSig`=id·좌표·size)
+  불변(§74/§77 재복제 유발 0). 확대 시 밴드 전이 rebuild 로 그대로 복귀.
+- [x] TL.3 **밴드 훅 결합** — `aftertransform` 밴드 문자열에 `_metaLabelBandOf(z)` 를 결합(기존 4단 임계 0.5/0.35/0.15 와
+  독립이라 결합해야 그 사이 라벨 전이가 반영된다). 밴드는 "억제 경계 폰트 크기"(`MIN/z`)를 **반포인트(0.5) 격자**로
+  올린 뒤 **실사용 폰트 범위 [9, 24] 로 클램프** — 하한 클램프가 없으면 zoom 1.0↔0.9 처럼 억제 대상이 없는 구간에서도
+  밴드가 바뀌어 무의미한 rebuild 가 걸린다(신규 테스트 F1 이 실제로 적발해 수정). 격자가 **정수가 아니라 0.5** 여야
+  하는 이유는 TL.9 ② — 실사용 폰트의 소수값(`10.5` 컨텐츠 그룹 헤더·`11.5` 제품 개요)은 정수 `ceil` 로는 임계 교차가
+  보이지 않아 rebuild 가 걸리지 않고, 그 라벨이 판독 하한 밑에서 계속 렌더된다.
+- [x] TL.4 **상태줄 오독-가드** — 기존 §57 마커에 "이름표" 항을 합류(`· 줌아웃 — 컬럼·관계선·이름표 표시 축약(확대 시 전체 표시)`).
+  이름표 소실을 "데이터 없음"으로 읽지 않게 한다. 별도 마커를 덧붙이지 않아 상태줄 길이 불변.
+- [~] TL.5 **B 아틀라스 mipmap — 구현·실측 후 철회(벤더 한계 확정)**: dynamic font 아틀라스 페이지 텍스처에
+  `autoGenerateMipmaps=true` + `mipLevelCount=floor(log2(max(w,h)))+1` + `style.mipmapFilter="linear"` 를 세우고
+  `updateMipmaps()` 를 호출하는 경로를 구현해 **라이브에서 A/B 실측**했다. 결과: **렌더 픽셀 차이 0**
+  (동일 줌 0.263 캔버스 크롭 45,050px 전수 비교 — `ImageChops.difference` bbox=None, 변경 픽셀 0).
+  진단: 속성은 의도대로 반영되나(`mipLevelCount=10`·`autoGenerateMipmaps=true`·`mipmapFilter=linear` 실측 확인)
+  **GL 텍스처 스토리지와 샘플러가 아틀라스 최초 업로드 시점에 mip 없이 굳어** 사후 변경이 렌더에 도달하지 못한다.
+  `TextureStyle` 을 새 인스턴스로 교체해도 값 기반 캐시라 `_resourceId` 가 동일(72→72)해 샘플러가 재생성되지 않고,
+  `resize(w,h)` 강제 재할당도 화면을 바꾸지 못했다. PixiJS v8.19 는 dynamic BitmapFont 생성 옵션에 `textureStyle`
+  만 노출하고 **source 의 mipmap 옵션을 넣을 seam 이 없다** — 아틀라스를 파괴 후 전 글리프 재래스터화하는 길만
+  남는데, 비용·회귀 위험이 얻는 것(판독 하한 *위* 구간의 미세한 품질)에 전혀 비례하지 않는다.
+  → **코드 철회**(죽은 경로를 남기지 않음). 시도·실측·근거는 본 항목과 결정 기록에 보존해 재시도 시 같은 벽을
+  다시 치지 않게 한다. 사용자 증상(과도한 줌아웃 시 글자 깨짐)은 A 만으로 해소됨을 before/after 실촬로 확인했다.
+- [x] TL.6 **관측 구조(사용자 추가 요구)** — `window.__META_GRAPH_PERF` 단일 지점(계측 전용·동작 분기 0):
+  `label{zoom,band,total,dropped,headerTotal,headerDropped,badgesDropped}` ·
+  `render{drawMs,objects,reused,made,labelsCreated,labelsBitmap,labelsText,labelMs}`. 억제가 라벨 생성·draw 비용을 실제로
+  얼마나 줄였는지 한 객체에서 대조할 수 있다(라이브 실측: zoom 0.126 에서 라벨 215/215 억제 → `labelsCreated 0`·
+  `labelMs 0` / zoom 0.77 복귀 시 `labelsCreated 215`). 브라우저 콘솔·PB-0008 relay·헤드리스에서 동일하게 접근하며,
+  TL.5 의 A/B 판정도 이 지점 하나로 수행했다 — **관측 구조가 없었다면 mipmap 무효를 발견하지 못하고 출하했을 것이다.**
+- [x] TL.7 검증 — 신규 `test_g6build_labellod.js` **36 PASS**(A 임계 5·B 헤더우대 5·C col-lod 겹침 3·D band-invariant 5·
+  E 미니맵서명 1·**F 밴드양자화 7**·G 관측 5·**H 오독-가드 게이트 5**) + **회귀 16 스위트 502 PASS / 0 FAIL** +
+  PixiJS 어댑터 **190 PASS / 0 FAIL** (합계 **728 PASS / 0 FAIL**). `node --check --input-type=module` PASS(3 파일).
+  (F5~F7·H1~H5 8건은 TL.9 의 codex 적대 검증이 적발한 P2 2건을 고정한 신규 테스트다.)
+  기존 `test_g6build_collod.js` T3 은 검증 줌 0.3→0.45 로 이동(근거는 아래).
+  회귀 스위트 내역(재검증 실측, 2026-07-28): agglod 8 · category 26 · collod 20 · cullrefkeep 15 · edge_visibility 73 ·
+  layoutmemo 19 · minimap_reuse 65 · simgroups_p2 16 · viewportcull 6 · vpack 19 · colnav 22 · reveal 17 ·
+  detail_colsel 9 · detail_dbgroups 78 · catcluster_panel_scroll 36 · edge_flow 73.
+  > 정정 이력: 최초 기록은 회귀 범위를 12 스위트 298 PASS 로 적었다. 세션 재개 시 **회귀 범위를 16 스위트로 넓혀
+  > 전량 재실행**했고 위 내역이 그 실측값이다(0 FAIL 불변). 수치가 커진 것은 회귀가 줄었다는 뜻이 아니라
+  > *측정 범위가 넓어졌다*는 뜻이다.
+- [x] TL.8 **PRE-LANDING PB-0008 실 Windows 브라우저 검증 PASS** (2026-07-28, 실 Chrome 150 CDP relay) — 라이브 이미지
+  `mysql-ai-web:b6882c7d` 격리 컨테이너에 변경 3파일을 스탬프 정합 주입, `mssql-qa-idc`(스키마 135개·객체 231) 로드.
+  ① **before/after 실촬**: 원본(라이브 서빙)에서는 줌아웃 시 카드마다 깨진 글자 노이즈가 덮였고, 적용 후 동일 줌에서
+  완전 소멸(`compare_before_after_3x.png`) ② zoom 0.126 계측 — 라벨 215/215·헤더 141/141·badge 135 억제,
+  `labelsCreated 0`(라벨 생성 비용 0), drawMs 36.4 ③ zoom 0.325 — 본문 74 억제·헤더 0 억제(**헤더 우대 실동작**)
+  ④ 상태줄 `· 줌아웃 — 이름표 표시 축약(확대 시 전체 표시)` 노출 ⑤ **확대 복귀** zoom 0.771 에서 dropped 0·
+  labelsCreated 215·마커 소멸(정보 손실 0 실증) ⑥ pageerror 0.
+  ⑤ 의 원시 실측값(재개 세션에서 원본 세션 relay 응답으로 재확인):
+  `{"label":{"zoom":0.7713,"band":"9/9","total":215,"dropped":0,"headerTotal":141,"headerDropped":0,"badgesDropped":0},`
+  `"labelsCreated":215,"errs":0,"status":"…를 클릭하면 그 스키마의 테이블을 펼칩니다…"}` — `status` 에 줌아웃 마커가
+  없다는 것이 ④ 마커의 소멸 근거다.
+  증적: `artifacts/feature-0016-metadata-graph/20260728-graph-label-lod/`(repo 루트 기준 — `.gitignore` 대상이라
+  커밋되지 않는 로컬 증적. before/after 3× 크롭 대조 `compare_before_after_3x.png`, mipmap A/B 대조
+  `compare_mipmap_off_on_3x.png`·`compare_mipmap_off_on_z026_4x.png`, 최종본 `final_after_z013.png` 포함 15 파일).
+  POST-DEPLOY 재확인은 배포 후 동일 절차 1-probe. (deploy_scope: included — merge 후 자동 배포)
+  > **범위 한계(정직 표기)**: 위 실촬·계측은 TL.9 의 codex P2 수정 **이전** 코드로 수행했다. 수정은 억제
+  > 판정(`fs * z < minPx`)을 건드리지 않고 밴드(=rebuild 시점)와 마커 게이트(=추가 발화만, 제거 없음)만
+  > 바꾸므로 ②③⑤⑥ 은 계약상 그대로 성립하지만, 수정이 새로 만든 두 표면은 이 probe 가 통과한 줌
+  > (0.126/0.325/0.771)에서 발화하지 않는다 → TL.9 의 POST-DEPLOY 항목으로 넘긴다.
+- [x] TL.9 **§18.8 적대 검증 — codex-review PASS-WITH-FIXES(P1/GATE 0 · P2 2건 전량 in-cycle 흡수)**:
+  ① **오독-가드 배지-단독 구멍** — 스키마 카드는 제목(`_cardLF`≈13)보다 배지(`_cardBF`≈10) 폰트가 작아
+  *제목 유지 + 배지만 억제* 구간이 실재하는데(zoom 0.45 부근) 마커 게이트가 `dropped` 만 봐서 개수 정보가
+  마커 없이 사라졌다 → 게이트를 `dropped > 0 || badgesDropped > 0` 로 확장(마커 항은 '이름표' 하나 유지).
+  ② **소수 폰트 임계 교차 누락** — 정수 `ceil` 양자화는 `10.5`(컨텐츠 그룹 헤더)·`11.5`(제품 개요)의 교차를
+  놓쳐 rebuild 가 걸리지 않고 그 라벨이 판독 하한 밑에서 계속 렌더됐다(z*≈0.30476 양옆이 동일 밴드 `17/11`)
+  → 밴드를 **반포인트(0.5) 격자**로 양자화(수정 후 `16.5/10.5` vs `16.5/11` 로 갈라짐). 구/신 양자화를 직접
+  대조해 **구 구현 MISS·신 구현 detect** 를 실측했다(테스트가 결함 자체를 잡는지 검증). PB-0008 이 기록한
+  band `9/9`(zoom 0.7713)는 격자 변경 후에도 불변. 상세는 REVIEW.md REV-20260728T170500-graph-label-lod.
+- [ ] TL.10 **POST-DEPLOY PB-0008 1-probe** (배포 후) — TL.8 의 ②~⑥ 을 격리 주입본이 아닌 **실제 배포 자산**에서
+  재확인 + **TL.9 수정이 새로 만든 두 표면**: ⑦ *배지-단독 억제 구간*(접힌 스키마 카드 씬에서 제목은 남고
+  개수 배지만 사라지는 줌)에 상태줄 '이름표 표시 축약' 마커가 **노출**되는지 ⑧ 반포인트 밴드 경계(컨텐츠
+  그룹 헤더 10.5px 의 z*≈0.305)를 지날 때 rebuild 가 걸려 그 헤더 라벨이 **실제로 사라지는지**(수정 전에는
+  하한 밑에서 잔존). pageerror 0.
+
+### 결정 기록
+- **왜 라벨을 지우나(축소 품질 개선만으로 부족한가)**: 화면 5px 미만 글자는 어떤 필터링으로도 판독 불가다. mipmap 은 노이즈를
+  흐림으로 바꿀 뿐 정보를 주지 못하며, 그 크기의 라벨은 draw call 과 시각 노이즈만 남긴다. 따라서 **판독 하한 아래는 제거(A),
+  그 위 구간은 품질 개선(B)** 으로 역할을 분리했고, B 가 벤더 한계로 무효 판정된 뒤에도 A 만으로 사용자 증상이 해소됨을
+  실촬로 확인했다. 정보 손실은 0 — 확대하면 그대로 돌아온다(zoom 0.771 dropped 0 실측).
+- **왜 `BitmapFontManager` 굽기 크기를 낮추지 않았나**: dynamic font 는 `overrideSize=true` 라 굽기 크기가 100px 로 고정이고,
+  `resolution` 은 이미 기본 1 이다. 명시적 `BitmapFont.install` 로 작게 굽는 길은 CJK 글리프 집합이 방대해(§79 T79.5 DEFER 근거)
+  비현실적이며 확대 품질을 잃는다.
+- **왜 줌아웃 구간 `labelEngine:'text'` 강등을 택하지 않았나(방안 C, 불채택)**: 축소비가 1/42→1/20 로 완화되는 반쪽 개선인데,
+  줌아웃일수록 라벨 수가 많아 §80 이 해소한 draw call 병목(2505 노드 157ms)이 되살아난다 — 품질을 조금 얻고 성능을 크게 잃는다.
+- **`test_g6build_collod.js` T3 검증 줌 이동(0.3→0.45)**: §61 의 '▤N' 컬럼수 배지는 "컬럼 억제 시 정보 손실 방지" 계약인데,
+  col-lod 밴드(<0.5)와 라벨 LOD 밴드(테이블 12px 기준 <0.4167)가 겹친다. 겹침 아래에서는 배지 자체가 화면 4px 미만이라
+  판독 불가 — 라벨과 함께 제거되는 것이 정합이다. 따라서 배지 계약은 **두 밴드가 동시에 성립하는 구간**(0.45: 컬럼 억제 ON·
+  라벨 5.4px 유지)에서 검증하고, 겹침 구간의 동반 소거는 신규 테스트 Section C 가 별도로 고정한다. 테스트를 통과시키려 계약을
+  약화한 것이 아니라, 두 LOD 계약의 유효 구간을 명시한 것이다.

@@ -426,6 +426,16 @@ const HOVER_EXPAND_MS = 160;
 const HOVER_COLLAPSE_MS = 110;   // 이탈 축소 — 확장보다 짧게(되돌아감은 빠르게 느껴지는 게 자연스럽다)
 const HOVER_EXPAND_MAXW = 460;
 
+// graph-perf: 렌더 비용 관측 지점(graph-state.js `_metaPerf` 와 같은 전역을 공유한다 — 어댑터는
+//   graph-state 를 import 하지 않는 엔진-중립 모듈이라 로컬로 lazy-init 한다). 계측 전용·fail-soft.
+function _pxPerf() {
+  const w = (typeof window !== "undefined") ? window : null;
+  if (!w) return { label: {}, render: {} };
+  if (!w.__META_GRAPH_PERF) w.__META_GRAPH_PERF = { label: {}, render: {} };
+  return w.__META_GRAPH_PERF;
+}
+const _pxNow = () => ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
+
 export class PixiGraphAdapter {
   constructor(cfg) {
     this.cfg = cfg || {};
@@ -446,6 +456,7 @@ export class PixiGraphAdapter {
     this._hoverCard = null;   // 현재 확장 카드 {c, paint, g, a0, w, raf}
     this._outCard = null;     // 축소(이탈) 진행 중 카드 — 동시 1장만
     this._labelWCache = new Map();
+    this._labelStat = { created: 0, bitmap: 0, text: 0, ms: 0 };   // graph-perf: draw 단위 라벨 생성 비용
     this._lastTap = 0;
     this.container = this.cfg.container || null;
     this.app = null;
@@ -1127,6 +1138,8 @@ export class PixiGraphAdapter {
     if (!this.world) return;   // 비브라우저/미배선 — no-op
     if (this._hoverLayer) this._hoverLayer.removeChildren();   // detail-hover-fx: rebuild 로 노드 좌표가 바뀌면 stale 강조 제거(hover 는 transient — 재hover 시 재도출).
     this._clearLabelHover();   // graph-label-hover-expand: rebuild 로 좌표·라벨·폭이 바뀌면 stale 확장 카드 제거
+    const drawT0 = _pxNow();
+    this._labelStat = { created: 0, bitmap: 0, text: 0, ms: 0 };   // graph-perf: draw 단위 라벨 생성 비용
     const built = this._built;
     // 끝점 위치 O(1) 조회 맵(구 O(N·E) find 제거)
     const npos = new Map();
@@ -1161,6 +1174,16 @@ export class PixiGraphAdapter {
     this._hitGrid = PixiAdapterPure.buildHitGrid(built.nodes, 128);
     this._renderMinimap();
     this._render();
+    // graph-perf(사용자 요청 2026-07-28): 라벨·draw 비용을 라이브에서 그대로 읽을 수 있게 남긴다.
+    //   label-lod 의 억제 통계(window.__META_GRAPH_PERF.label)와 같은 객체를 공유 — 억제가 실제로
+    //   draw call·라벨 생성 비용을 얼마나 줄였는지 한 지점에서 대조 가능하다. 계측 전용(동작 분기 0).
+    try {
+      const perf = _pxPerf(), ls = this._labelStat;
+      perf.render = { drawMs: Math.round((_pxNow() - drawT0) * 100) / 100,
+        objects: specs.length, reused, made,
+        labelsCreated: ls.created, labelsBitmap: ls.bitmap, labelsText: ls.text,
+        labelMs: Math.round(ls.ms * 100) / 100 };
+    } catch (_) {}
     this._emit("afterdraw", { data: { stage: "data" } });   // graph-core 는 e.data.stage 를 읽는다(gap #16)
   }
 
@@ -1203,6 +1226,15 @@ export class PixiGraphAdapter {
   // 라벨 팩토리(§80): BitmapText(dynamic font, white-base + tint 로 glyph atlas 색-무관 공유 → 렌더 draw call 17×↓,
   //   render-on-demand 팬 매 프레임 재렌더에 직결) 기본, 실패/미지원 시 PIXI.Text 폴백(품질 동일). fill 은 tint(hex→number).
   _makeText(text, o) {
+    const t0 = _pxNow();
+    const r = this._makeTextInner(text, o);
+    const st = this._labelStat;
+    st.created += 1; st.ms += (_pxNow() - t0);
+    if (r && this.P && this.P.BitmapText && r instanceof this.P.BitmapText) st.bitmap += 1; else st.text += 1;
+    return r;
+  }
+
+  _makeTextInner(text, o) {
     const P = this.P, size = o.size || 12, fill = o.fill || "#ffffff", weight = String(o.weight || 400);
     const engine = this.cfg.labelEngine || "bitmap";
     const col = PixiAdapterPure.hexToTint(fill);

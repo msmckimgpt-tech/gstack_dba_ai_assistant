@@ -2005,3 +2005,17 @@ PR #911 → main 6600a682 무중단 배포(web-a/b·insight/ask 워커, soak PAS
 
 ### Git 동기화 결과
 - 병합: PR #911 → main 6600a682 (rebase 1회 — feature-0003 TEST.md 병렬 append 충돌 union 해소, AI 자율 1건). 배포: make deploy-web(무중단, soak PASS). POST-DEPLOY docs(본 커밋).
+
+## 2026-07-28 · graph-label-lod — 과도한 줌아웃 시 라벨(글자) 붕괴 최소화 (사용자 리포트)
+사용자 리포트 "그래프 뷰에서 카메라 줌 아웃을 과도하게 설정할 경우 글자가 깨짐" + 추가 요구 "성능적인 비용을 차후에 관측할 수 있는 구조".
+- **근본 원인**: 라벨 텍스처의 극단 다운샘플 aliasing. §80 이 라벨을 `BitmapText`(dynamic font)로 전환했는데 PixiJS v8 은 글리프를 항상 100px 로 구워(`overrideSize=true`) 표시 시 `fontSize/100` 으로 축소하고, 그 아틀라스에 mipmap 이 없어(`mipLevelCount=1`+`scaleMode:linear`) GPU 가 2×2 텍셀만 평균 = 사실상 임의 점 샘플링이 된다(테이블 12px·zoom 0.1·DPR 2 → 텍스처 대비 ~1/42, `zoomRange` 하한 0.05 에서 ~1/80). 악화 요인: §67 이후 PixiJS 모드는 뷰포트 컬링이 비활성이라 극단 줌아웃에서도 전 노드 라벨이 전량 방출된다.
+- **A 라벨 LOD (채택)**: 방출 말미 `_metaApplyLabelLod` 가 화면 실효 크기(`labelFontSize × zoom`, CSS px) 하한 미만 라벨의 style 라벨 키만 제거. 하한 2단(본문 5px / 헤더·카드 3.2px — 개요 방향감을 주는 소수의 큰 라벨은 더 오래 유지), 스키마 카드 개수 badge 는 본문 하한으로 동반 소거. **band-invariant** — 좌표·size·노드/combo/엣지 개수·`renderedIds`·미니맵 기하 서명 불변(reflow 0 · hit-test/선택/관계선 무손실 · §74/§77 재복제 유발 0)이라 확대 시 전량 복귀(정보 손실 0).
+- **B 아틀라스 mipmap (구현 후 철회)**: 사용자 선택은 A+B 병행이었으나 라이브 A/B 실측에서 **렌더 픽셀 차이 0**(동일 줌 0.263 크롭 45,050px 전수 대조, 변경 0). 속성은 의도대로 반영되나(mip 10 레벨·`autoGenerateMipmaps=true` 실측) GL 텍스처 스토리지와 샘플러가 아틀라스 최초 업로드 시점에 mip 없이 굳어 사후 변경이 렌더에 도달하지 못하고, v8.19 dynamic BitmapFont 에는 source mipmap 을 넣을 seam 이 없다. **죽은 경로를 남기지 않기 위해 코드 철회** — 시도·실측·근거는 TASK.md TL.5 / 결정 기록에 보존해 재시도 시 같은 벽을 다시 치지 않게 했다. A 만으로 사용자 증상이 해소됨을 before/after 실촬로 확인.
+- **관측 구조(사용자 추가 요구)**: `window.__META_GRAPH_PERF` 단일 지점에 `label{...}` + `render{drawMs,objects,reused,made,labelsCreated,labelsBitmap,labelsText,labelMs}`(계측 전용·동작 분기 0·fail-soft). 억제가 라벨 생성·draw 비용을 실제로 얼마나 줄였는지 한 객체에서 대조된다 — **B 의 무효 판정도 이 지점 하나로 수행했다. 관측 구조가 없었다면 mipmap 무효를 발견하지 못하고 출하했을 것이다.**
+- **§18.8 적대 검증(codex-review) — P1/GATE 0 · P2 2건 in-cycle 흡수**: ① 스키마 카드는 제목보다 배지 폰트가 작아 *제목 유지 + 배지만 억제* 구간이 실재하는데 마커 게이트가 `dropped` 만 봐서 **개수 정보가 마커 없이 사라졌다**(이 cycle 이 '이름표' 항을 추가한 목적 자체가 뚫림) → 게이트에 `badgesDropped` 합류. ② 정수 `ceil` 밴드 양자화가 소수 폰트 `10.5`(컨텐츠 그룹 헤더)·`11.5`(제품 개요)의 임계 교차를 놓쳐 rebuild 가 걸리지 않고 **그 라벨이 판독 하한 밑에서 계속 렌더**됐다 → **반포인트(0.5) 격자**로 양자화. 구/신 양자화 직접 대조로 **구 구현 MISS·신 구현 detect** 실측(테스트가 결함 자체를 잡는지 검증).
+- 검증: 신규 `test_g6build_labellod.js` **36 PASS** + 회귀 16 스위트 **502 PASS** + PixiJS 어댑터 **190 PASS**(합계 **728 PASS / 0 FAIL**) · `node --check` PASS(3 파일) · REV-20260728T170500 · **PRE-LANDING PB-0008 실 Windows Chrome 150 PASS**(TL.8 — before/after 노이즈 완전 소멸 · zoom 0.126 라벨 215/215 억제→`labelsCreated 0` · zoom 0.325 헤더 우대 실동작 · zoom 0.771 복귀 dropped 0·마커 소멸 · pageerror 0). POST-DEPLOY 는 배포 후 동일 절차 1-probe(TL.9).
+
+### Git 동기화 결과
+- Task-Cycle: feature-0016-metadata-graph (ai/claude/feature-0016-graph-label-lod, worktree).
+- 원본 세션이 TL.8 라이브 검증 직후 사용량 한도로 중단 → `/_template:resume` 로 이어받아 회귀 범위를 12→16 스위트로 넓혀 전량 재실행하고, 증적을 문서가 가리키는 경로로 집결한 뒤 정본 docs·§18.8·완료 게이트를 완결했다.
+- verify-completion / commit / PR / 병합 / 배포: §16.3 Step 4~6 + deploy_scope: included 에 따라 진행 — 결과는 PR·POST-DEPLOY 절에 기록.

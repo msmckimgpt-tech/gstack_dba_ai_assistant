@@ -132,9 +132,14 @@ const bigSchemas = () => ([
 }
 
 // T3: 억제 테이블 라벨에 '▤N' 배지(정보 손실 방지)
+//   label-lod(20260728T1604) 이후: 이 계약은 **라벨이 판독 가능한 줌에서만** 성립한다. col-lod 밴드(<0.5)와
+//   라벨 LOD 밴드(테이블 12px 기준 <0.4167 = 화면 5px 미만)가 겹치므로, 겹침 아래 구간에서는 배지를 포함한
+//   라벨 전체가 방출되지 않는다(그 크기에선 배지도 못 읽는다 — 노이즈만 남음). 따라서 검증 줌을 두 밴드가
+//   동시에 성립하는 0.45(컬럼 억제 ON · 라벨 5.4px 유지)로 둔다. 겹침 구간 자체는 test_g6build_labellod.js
+//   Section C 가 별도로 고정한다(배지·라벨 동반 소거).
 {
   seedModel(bigSchemas());
-  const lod = buildAt(0.3);
+  const lod = buildAt(0.45);
   const withCols = tables(lod).filter((n) => /▤\d+/.test(String(n.style && n.style.labelText || "")));
   check("T3 억제 테이블 ▤N 배지 부착(펼친 8×2=16)", withCols.length === 16, withCols.length);
   // 배지 수치가 실제 컬럼 수(30)와 일치 + 라벨 **앞**에 위치(후미 truncation 생존)
