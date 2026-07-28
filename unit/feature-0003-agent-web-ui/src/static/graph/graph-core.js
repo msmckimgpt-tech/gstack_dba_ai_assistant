@@ -3,7 +3,7 @@
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
 import { adminState, apiFetch } from "../admin.js?v=dev";
 import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _METLAY, _METZ, _METtype, _metaComboName, _metaGraph, _metaNatSort, _metaSchemaComboOf } from "./graph-state.js?v=dev";
-import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
+import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
@@ -1002,7 +1002,7 @@ function _metaG6BuildProducts() {
     edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
       // graph-edge-flow: 제품→데이터소스 사용선도 같은 어휘(얇은 반투명 호)로 통일 — 한 화면에 직선과
       //   곡선이 섞이면 "왜 이 선만 다르지" 라는 무의미한 시각 신호가 생긴다. 실선(lineDash 생략 — G6 크래시 방지).
-      style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: 1.0, strokeOpacity: 0.66, endArrow: true, zIndex: _METZ.EDGE }) });   // §84 가시성 바닥 상향
+      style: _metaEdgeFlow({ stroke: "#8fbfa3", lineWidth: _metaEdgeWidthFor(1), strokeOpacity: 0.6, endArrow: true, zIndex: _METZ.EDGE }) });   // §86 개수=굵기 축 정합
   });
   _metaBakeBaseOpacity(nodes);   // §57.9: 제품/데이터소스 뷰도 동일 base opacity 명시(일관성)
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));
