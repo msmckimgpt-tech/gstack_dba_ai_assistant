@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 26 카드 (feature-0001 ~ feature-0026; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
+| Feature 수 | 29 카드 (feature-0001 ~ feature-0029; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
 
 ## 목차
 
@@ -97,6 +97,9 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0024-conversation-folders\|feature-0024-conversation-folders]] | 대화 폴더(프로젝트 워크스페이스) — 재귀 폴더 조직·이동·삭제 후 대화 보관(승격)·폴더별 지침 ask-time 주입·런타임 max-depth·엄격 per-user 격리(`folder.*.own`, `folder.*.any` 폐지) (2026-07-23 라이브 완결·코드 거주 0002/0003) |
 | [[../Features/feature-0025-worker-parallelism\|feature-0025-worker-parallelism]] | 워커 성능·병렬 처리 설정 — 백그라운드 워커(노드 분석·cluster_label)·사용자 답변·KB 임베딩의 병렬도·처리주기·배치크기를 관리 콘솔 '시스템>설정>성능·병렬 처리' 서브탭에서 조절 (feature-0018 runtime-settings 재사용·기본 동시성 1=byte-동치 opt-in·LLM만 병렬/DB직렬·`system.runtime.*` RBAC 재사용·clamp) |
 | [[../Features/feature-0026-perf-observability\|feature-0026-perf-observability]] | 성능 관측 인프라 — web HTTP per-route 타이밍·요청당 DB 커넥션 카운터(`GET /api/admin/perf/http`·`console.aiops.read` 재사용)·워커 LLM latency 백필(13 sites)·답변 파이프라인 단계 계측(redteam/post-answer/grounding)·graph sync `duration_ms`·`bin/perf-snapshot.sh`·Caddy access log (측정 전용·사용자 가시 동작 변경 0·additive/fail-open·DB 스키마 0·in-progress 배포 잔여) |
+| [[../Features/feature-0027-perf-latency-p0\|feature-0027-perf-latency-p0]] | P0 성능 개선 1차 (feature-0026 병목 지도 기반) — post-answer 큐레이션(topic/용어/ENUM LLM 3건) 답변 KV terminal 후 이동(체감 -25~35s·결과물·scope 귀속 불변)·grounding RO 연결 3→1·MySQL 버퍼풀 128MB→1G·Caddy gzip+immutable static (품질 영향 축=레드팀·thinking 불변·비파괴/가역·2026-07-28·코드 거주 0002/0001/0006) |
+| [[../Features/feature-0028-web-perf\|feature-0028-web-perf]] | web 계층 성능 (feature-0026 지목 병목) — `/api/ask_result` long-poll 워커 스레드 이관(이벤트 루프 정지 제거)·스냅샷 PG 연결 4~5→1(단일 왕복 번들)·권한 카탈로그 TTL 캐시+세션 LastSeenAt throttle·web MySQL 풀 opt-in (응답 shape·인가 경계 불변·additive/가역 env 토글·2026-07-28·코드 거주 0003) |
+| [[../Features/feature-0029-graph-churn\|feature-0029-graph-churn]] | 그래프 sync churn 근절 — 메타데이터 그래프 incremental sync 무의미 재투영 3종 제거: 값 무변경 시 `updated_at` 미전진(upsert·신호·트리거 alembic 0046·실측 churn 63%)·status 히스테리시스(trusted/broken 왕복 차단)·프로브 broken 부활 금지·공유 정점 중복 MERGE 제거(관계당 cypher 11→1~3) (그래프 신선도·자기교정 보존·가역·2026-07-28·코드 거주 0002) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -126,6 +129,9 @@ unit/feature-NNNN-<purpose>/
 | feature-0024 | feature-0002, feature-0003, feature-0009 | uses | 폴더 스토어(재귀 CTE)·CRUD/배정/이동/삭제/restore 라우터(`routers/folders.py`)·RBAC(`folder.*.own`)·사이드바 재귀 렌더·DnD/모달 = feature-0003, 폴더 지침 ask-time 주입(`compose_system_prompt`)·신규 테이블 alembic 0044(`agent_runtime`) = feature-0002, 대화 배정 2중 게이트(대화 read + 그룹멤버 + 폴더 소유)가 그룹 멤버십 재사용 = feature-0009; max-depth 런타임 설정 = `shared/runtime_settings`(feature-0018 슬라이스)·`shared/db` 공유 · cross-cut docs-only 코드 거주 0002/0003(feature-0019 선례) |
 | feature-0025 | feature-0002, feature-0003 | uses | 워커 루프 동시성 배선·`performance` 그룹 소비(node_analysis/semantic_cluster/insight/ask)·runtime_settings 소비=feature-0002, admin '성능·병렬 처리' 서브탭(admin.html/admin.js)=feature-0003; runtime-settings 레지스트리/스냅샷/`system.runtime.*` RBAC = `shared/runtime_settings`(feature-0018 슬라이스) 재사용·`shared/db` 공유·인프라 여력(pgbouncer 40/200·PG 150)=docker-compose·병렬 대상 워크로드(그래프 노드 분석·cluster_label)=feature-0016 (cross-cut 코드 거주) |
 | feature-0026 | feature-0002, feature-0003, feature-0006 | uses | 순수 ASGI 타이밍 미들웨어(`perf_metrics.py`)·`routers/admin_perf.py`(읽기전용·`console.aiops.read` 재사용·신규 권한 0)=feature-0003, 워커 LLM latency 백필(`llm.py` 13 sites)·답변 단계 타이머(`agent_core.py` redteam/post-answer/grounding)·graph sync `duration_ms`(`metadata_graph.py`)·insight cycle 카운터(`insight.py`)=feature-0002, edge access log(`Caddyfile`)=feature-0006; 요청-스코프 커넥션 카운터 `shared/perf_counters.py`+`shared/db` 계측·전 신호 집계 CLI `bin/perf-snapshot.sh`=repo-level (측정 전용·additive/fail-open·cross-cut 코드 거주) |
+| feature-0027 | feature-0002, feature-0001, feature-0006, feature-0026 | uses | post-answer 큐레이션 시점 이동(터미널 후·datasource ContextVar 캡처/해제)·grounding 공유 RO 단일연결=feature-0002(`agent_core.py`·`modules/ask.py`), MySQL 버퍼풀 128MB→1G=feature-0001(server `.cnf`), Caddy gzip+immutable static=feature-0006(`Caddyfile`), 병목 지도·before/after 실측 수단(`bin/perf-snapshot.sh`)=feature-0026; 답변 결과물·품질 영향 축(레드팀·thinking) 불변·비파괴/가역 (성능 개선·cross-cut 코드 거주) |
+| feature-0028 | feature-0003, feature-0002, feature-0026 | uses | ask_result long-poll 워커 스레드 이관·스냅샷 PG 단일연결 번들·권한 카탈로그 TTL 캐시+세션 touch throttle·web MySQL 풀 opt-in 전부 feature-0003(`routers/conversations.py`·`routers/_conv_store.py`·`web_context.py`·`routers/admin_products.py`·`app.py`), `ask_result` 폴링 대상 ask-worker 잡 결과 계약=feature-0002, `db_per_req` 병목 근거·전후 수단=feature-0026; 응답 shape·인가 경계 불변·additive/가역(env 토글) |
+| feature-0029 | feature-0002, feature-0016, feature-0026 | uses | churn 감쇠(upsert `updated_at` 조건화·status 히스테리시스·allow_revive·정점 캐시)+alembic 0046 트리거=feature-0002(`modules/relationships.py`·`modules/metadata_graph.py`), 대상 메타데이터 그래프·자기교정 엔진 정본=feature-0016, sync `duration_ms` 계측=feature-0026 전후 측정; 그래프 신선도·자기교정 semantics 보존·가역 (cross-cut 코드 거주) |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 
