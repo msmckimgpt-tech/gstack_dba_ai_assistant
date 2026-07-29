@@ -324,11 +324,26 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **부수 철회**: 위 oracle 을 막으려 넣은 서버 오류 원문 은폐(`_sql_error_message`)는 근거를 잃어 **철회**했다 — 얻는 것 없이 `Invalid column name 'dbo'` 같은 자기교정 정보만 가리는 순손실이었다. APPLY(table-source)·4/5-part·`Paren`/미지 노드 봉인은 그대로 유효(그 위치들은 컬럼 해석이 문법적으로 불가해 서버가 반드시 함수로 해석).
 - **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major + 보안 경계 완화 — override 불가) → 배포 후 동일 질문으로 라이브 재실측.
 
-## FR-model-pick-lost-on-early-cid — fixed:undeployed (L7↔L6 조기 cid 전환이 모델 선택 귀속을 유실 → 서버 기본값 강등)
+## FR-model-pick-lost-on-early-cid — fixed:deployed:verified (L7↔L6 조기 cid 전환이 모델 선택 귀속을 유실 → 서버 기본값 강등)
 
-- **status**: `fixed:undeployed` — FE 귀속 승계(A) + 표시-집행 정합 감지(C) 출하, 배포 전. 배포 후
-  `llm_usage.model` 이 사용자 선택과 일치함을 실측하면 `fixed:deployed:unverified-live` → corroboration
-  재측정으로 `verified`.
+- **status**: `fixed:deployed:verified` (2026-07-29 11:30 전이) — FE 귀속 승계(A) + 표시-집행 정합
+  감지(C) 출하 → PR #1032 머지(main `bc920534`) → 배포(web `StartedAt` 11:08:44 KST, edge
+  `/healthz` `git_commit=36618965`, 서빙 `app.js?v=7529ce4ce347` 에 4 심볼 baked) → **PB-0008 라이브
+  실증 PASS**. 판정은 화면이 아니라 이 항목이 못박은 정본으로 냈다 — `llm_usage` id 69372
+  `model=claude-sonnet-4` / `resolved_model=claude-sonnet-4-chat`(강등 0) + `kv model:<acct>` 행
+  **생성**(값 `claude-sonnet-4`). 사용자 시나리오 [새 대화 → sonnet 선택 → 첨부 업로드 → 전송] 전
+  구간을 3중 계측(요청 본문·경보 채널·상태 스냅샷)으로 재현했고, 결함 전제 상태(`_modelPickedForConvId=""`)
+  까지 실제로 통과한 뒤 승계가 성립함을 관측했다(= 경로를 우회한 통과가 아님).
+  **잔여(이월)**: 관측 표본 corroboration(30일 non-default 선택 대화의 첫 요청 오전송 3/5) 재측정은
+  배포 직후 표본 부재 → 다음 audit. 재증가 시 `regressed` 로 되돌린다.
+  근거: `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260729T1130-model-pick-postdeploy.md` ·
+  REV-20260729T113000-model-pick-postdeploy.
+- **사용자 재보고 귀속(2026-07-29)**: 완료 보고 후 사용자가 "이전과 동일하게 폴백"을 재보고했으나,
+  그 재현 대화(…2211841a)의 첫 전송은 **10:33:48** 로 배포 **11:08:44** 보다 35분 앞섰고 배포 후
+  신규 대화·첨부는 **0건**이었다 → 구자산 세션 경험(수정 실패 아님). 오히려 같은 오전 대조군
+  (…a8b43197 10:30 첨부 5건 = sonnet 정상 / …2211841a 10:33 첨부 1건 = haiku 강등)이 분기점을
+  "첨부 유무"가 아니라 **선택→첨부 순서**로 재확인해 아래 root cause 의 경로 특정을 강화한다.
+  교훈: 재보고는 **배포 시각과 대조한 뒤** 해석한다(`docs/LEARNINGS.md`).
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-07-28) — 지정 대화 2건 + turn 중 추가 관측
   진술("sonnet 모델로 요청한 즉시 haiku 모델로 폴백").
 - **last_seen**: 2026-07-28 · **seen_count**: 1 · **seen_distinct_conv**: 4 (지정 2 + 인접 재시도 1 + 사용자 재현 1)
@@ -369,10 +384,17 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   인라인 적대검증 — S1~S3·C1~C5·Q1~Q2 전건 REFUTED/해소, BLOCKING 0). 서버 무변경.
   테스트 `verify_model_persist.mjs` 32 → **49 PASS**(E/W/S9~S11 신설) · 서버측 pytest 57건 rc=0.
 - **rc_ids**: RC-1 · **batch-id**: B-20260728T191126-model-pick-early-cid
-- **라이브 실측 필요분(§정직)**: 코드/테스트는 "고른 모델이 요청에 실린다 + 미동봉이면 표면화된다"까지만
-  증명한다. "실제 사용자 대화가 고른 모델로 실행됨"은 배포 후 PB-0008 실측분(미수행) — **정본은 화면이
-  아니라 `agent_runtime.llm_usage.model` + `kv model:<acct>` 행 생성**. 다음 audit 에서 corroboration
-  (non-default 선택 확증 대화의 첫 요청 오전송 3/5) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+- **라이브 실측(2026-07-29 이행 완료)**: 코드/테스트는 "고른 모델이 요청에 실린다 + 미동봉이면
+  표면화된다"까지만 증명했고, "실제 대화가 고른 모델로 **실행**됨"은 배포 후에만 반증 가능한 잔여였다.
+  → 배포본에서 PB-0008 이행 **PASS**(`REV-20260729T113000-model-pick-postdeploy`). 정본 판정:
+  `llm_usage` id 69372 `model=claude-sonnet-4`/`resolved_model=claude-sonnet-4-chat` + `kv model:1` 행
+  생성. **잔여는 corroboration 추세 재측정 1건**(30일 오전송 3/5 → 다음 audit; 재증가 시 `regressed`).
+- **kv 지문 판독(3분기 — 오독 방지)**: 위 root cause 의 "행 부재" 서술을 정밀화한다. 서버는
+  `model_explicit` 일 때만 저장하되 **값이 세션 기본값과 같으면 빈 값으로 지운다**(기본값 이탈만 저장,
+  적대 리뷰 C2). 따라서 `kv model:<acct>` 는 — **행 부재 = 미동봉**(이번 결함의 지문) / **빈 값 행 =
+  기본값과 같은 모델의 명시 동봉** / **값 있는 행 = 비-기본 모델 명시 동봉**. 재현 대화 …2211841a 에
+  두 단계가 모두 남아 있다(10:33 첫 전송 시 행 부재 → 10:59:02 빈 값 행 = hydration 이 선택기를 기본값
+  으로 되돌린 뒤 이어 보낸 전송). 빈 값 행을 미동봉으로 읽으면 향후 같은 류를 오진한다.
 - **범위 밖(인지)**: 기본값(`API_DEFAULT_MODEL`) 자체와 "'+ 새 대화'는 haiku 로 시작" 정책은 불변 —
   사용자 명시 선택만 보존한다. 그룹 대화의 계정별 모델 스코프도 무변경.
 

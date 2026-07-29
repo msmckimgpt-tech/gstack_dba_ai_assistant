@@ -1610,3 +1610,45 @@ per-(ds,DB,schema) 오류로 리포트만 남는다(비차단 설계). 도달 �
 - **적대검증**: ULTRACODE wf_63a962eb R1(3-타깃 analyze→타깃-스코프 verify) — RN MAJOR 1(item3 좌우 오귀속 '왼쪽 스키마 목록'→우측 aside, admin.html:847·baedc78b 근거)·MINOR 1(item5 '즉시 반영'→pending→적용) 적발, 오케스트레이터 정본 독립 재검증 후 교정 반영.
 - **cache-buster**: `?v=dev` 고정(빌드 자동주입·index/admin 편집 0·수동 bump 폐지 ITEM-09; wrapper 헤더 수기 bump 지시는 07-12 이전 regime 부적용).
 - **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
+
+## REV-20260729T113000-model-pick-postdeploy [SKIPPED:post-deploy-live-evidence+no-code-change] — PASS
+- Related TASK: feature-0003-agent-web-ui / 20260729T1130-model-pick-postdeploy
+- Trigger: POST-DEPLOY 실측 cycle — 실행 코드·자산 변경 0(docs/evidence only), 검증 자체가 산출물
+- Timestamp: 2026-07-29T11:30:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**왜 panel 대신 라이브 증거인가**: 본 cycle 은 새 코드를 만들지 않는다. 검증 명제가 "이미 배포된 코드가
+실제 사용자 시나리오에서 의도대로 실행되는가"이고, 그 판정 근거는 정적 리뷰가 아니라 라이브 원장
+(`llm_usage.model` + `kv model:<acct>`)이다. §18.8 dispatch 표의 code-change 경로가 아니라 라이브 증거로
+대체하며 그 선택 근거를 여기 남긴다(§18.8.2 4번).
+
+**이 Run 이 닫은 위험**: 선행 cycle 의 증명 범위는 "고른 모델이 요청에 실린다 + 미동봉이면 표면화된다"
+까지였다(코드·단위테스트). "실제 대화가 고른 모델로 **실행**된다"는 정의상 배포본 라이브에서만 반증
+가능하고, 바로 그 미검증분이 사용자 재보고와 겹쳐 있었다. 본 Run 이 그 구간을 닫았다.
+
+**관측 채널을 먼저 고정한 이유**: 이 결함은 "화면은 맞고 실행이 다름"이 정의다. 따라서 화면을 근거로
+쓰면 검증이 성립하지 않는다. `fetch` wrap(요청 본문 원문) · `showToast` wrap(경보 발동 여부) · 전역
+`state` 스냅샷 3중 계측을 깐 뒤 조작을 시작했고, 최종 판정은 브라우저가 아니라 PG 원장에서 냈다.
+
+**결과**: 전 구간 PASS — 모델 선택 직후 `_modelPickedForConvId=""`(결함 전제 재현) → 첨부 업로드가
+early-cid `...2e511059` 를 발급하며 **귀속 승계**(구버전이면 `""` 잔류) → 전송 본문 `model="claude-sonnet-4"`
+동봉 → `llm_usage` id 69372 `model=claude-sonnet-4` / `resolved_model=claude-sonnet-4-chat`(강등 0) +
+`kv model:1=claude-sonnet-4`(행 생성). 무음 강등 경보 미발동(C lever 오탐 0).
+
+**사용자 재보고의 귀속 확정(적대적 자기검증)**: "여전히 폴백된다"를 액면 그대로 받으면 봉인이 실패한
+것이 되므로, 먼저 그 주장을 깨려 시도했다 — 재현 대화 첫 전송 **10:33:48** vs 배포 **11:08:44**,
+배포 후 신규 대화·첨부 **0건**. 재보고는 구자산 세션 경험이었다. 반대로 같은 오전 대조군
+(`...a8b43197` 10:30 첨부 5건 = sonnet 정상 / `...2211841a` 10:33 첨부 1건 = haiku 강등)은 "첨부 유무"가
+아니라 **선택→첨부 순서**가 분기점임을 라이브에서 재확인해, 선행 cycle 의 경로 특정을 강화한다.
+
+**지문 판독 보정**: 선행 기록의 "미동봉 = kv 행 부재"는 3분기로 정밀화한다 — 행 부재=미동봉 /
+빈 값 행=**기본값과 같은 모델의 명시 동봉**(서버가 기본값 이탈만 저장) / 값 행=비-기본 명시 동봉.
+재현 대화에 두 단계(10:33 부재 → 10:59 빈 값)가 모두 남아 원 진단과 정합하며, 향후 빈 값 행을
+미동봉으로 오독하는 오진을 막는다.
+
+**미해소(정직 표기)**: 관측 표본 corroboration(30일 오전송 3/5 재측정)은 배포 직후 표본 부재로
+다음 `/_dqa:conversation_audit` 이월. 계정별 모델 RBAC 조합은 본 Run 대상 아님.
+- Cross-ref: MODIFY CHG-20260729T113000-model-pick-postdeploy ·
+  test-runs.d/20260729T1130-model-pick-postdeploy.md · 선행 REV-20260728T191126-model-pick-early-cid ·
+  마찰 원장 FR-model-pick-lost-on-early-cid.

@@ -1513,3 +1513,26 @@ Cross-ref: REVIEW `REV-20260728T191126-model-pick-early-cid` ·
 - 변경: REQ-20260729-detail-panel-typo / AC-DPT-1~4. 근본 원인은 **부-액션 버튼 스타일(`.amgr-link`)을 목록 행의 주 라벨로 재사용**한 것 — 라이브 실측에서 주 라벨 10.5px vs 부가정보 13px(**1.24배 역전**), 행 높이 19~38px 2종, 우측 경계 18종 톱니, `h4` 색이 본문 항목과 동일, `h4` 내 muted 가 bold 상속. 같은 패널 컬럼 섹션의 검증된 관용구(`.amgr-col-select`)로 시각 언어를 통일해 해소.
 - 근거: 등급 Minor(표시 전용 — 백엔드·RBAC·스키마·엔드포인트 0). 실렌더 정량 대조(playwright chromium, 실제 패널 기하 재현 57행): 행 높이 **2종→1종(25px)** · 행 폭 **가변→295px 균일** · 우측 경계 **18종→1종** · 부가정보/주라벨 비 **1.24배→0.88배** · 말줄임 전문 보존 **이름 11/11·컬럼 11/11**. 헤드리스 그래프 전 스위트 996 PASS/0 FAIL · pytest 전 스위트 2835 passed/0 failed · ruff clean. 1차 수정이 **이름 말줄임 시 전문 보존을 빠뜨린 결함**을 신설 측정 지표(`nameTitleOk`)가 적발해 교정했고, **여백 리셋의 특이도 부수 피해**(넓은 `ul.amgr-list > li` 리셋이 `.amgr-row` 관계 카드 간격을 3px→0px 로 눌러 카드가 붙음)를 §18.8 적대검증(codex)이 적발해 `li.amgr-rtli` 한정으로 흡수했다(⑤-b 회귀 테스트 봉인). PB-0008 은 배포 후 POST-DEPLOY(JS 는 `docker cp` QA 가 stamp/모듈캐시로 오염됨).
 - 흡수(§18.8 codex): 여백 리셋 대상을 `li.amgr-rtli` 로 한정 — 넓은 `ul.amgr-list > li`(특이도 0,2,2)가 `.amgr-row`(0,1,0)·`.amgr-dbgrp-allctl` 을 눌러 관계 상세 카드가 붙던 부수 피해 제거. 실렌더 대조: 기준선 3px → 1차수정 0px → 최종 3px(회귀 0).
+
+## CHG-20260729T113000-model-pick-postdeploy (model-pick-early-cid POST-DEPLOY 라이브 실증 — 실행 코드 0줄)
+- 대상: `docs/test-runs.d/20260729T1130-model-pick-postdeploy.md` 신설(Run 전문) · `docs/{TASK,REVIEW}.md`
+  항목 추가 · 선행 TASK 20260728T1911 의 잔여 체크박스(PB-0008 라이브 실측) 종결 ·
+  `docs/improvements/conversation-audit/FRICTION_LEDGER.md` status 전이 · `docs/LEARNINGS.md` 교훈 2건.
+  **실행 코드·정적 자산 변경 0줄** — 검증 자체가 산출물.
+- 변경: 선행 cycle 이 "배포 후 잔여"로 남긴 PB-0008 실측 이행. 배포본(web `StartedAt` 11:08:44 KST ·
+  edge `/healthz` `git_commit=36618965` · 서빙 `app.js?v=7529ce4ce347` 에 승계·감지 4 심볼 baked)에서
+  실 Windows Chrome 150 으로 [새 대화 → sonnet 선택 → 첨부 업로드 → 전송] 전 구간 계측.
+  결과 **PASS** — 전송 본문 `model="claude-sonnet-4"` 동봉 · `llm_usage` id 69372
+  `model=claude-sonnet-4`/`resolved_model=claude-sonnet-4-chat`(강등 0) · `kv model:1=claude-sonnet-4`
+  (행 생성) · 무음 강등 경보 미발동. TASK-20260729T1130-model-pick-postdeploy.
+- 근거: 등급 **Minor**(문서·증적 only). 사용자가 완료 보고 후 "이전과 동일하게 폴백"을 재보고했으나,
+  라이브 대조 결과 그 재현 대화(`...2211841a`)의 첫 전송은 **10:33:48** 로 배포(**11:08:44**)보다 35분
+  앞섰고 배포 후 신규 대화·첨부는 0건이었다 — 구자산 세션 경험. 같은 오전 대조군(`...a8b43197` 10:30
+  첨부 5건 sonnet 정상 vs `...2211841a` 10:33 첨부 1건 haiku 강등)은 분기점이 "첨부 유무"가 아니라
+  **선택→첨부 순서**임을 라이브에서 재확인해 선행 진단의 경로 특정을 강화한다. 부수 정밀화: kv 지문은
+  3분기(행 부재=미동봉 / 빈 값 행=**기본값과 같은 모델의 명시 동봉** — 서버가 기본값 이탈만 저장 /
+  값 행=비-기본 명시 동봉)로, 선행 기록의 "미동봉=행 부재" 서술을 오독 방지 형태로 보정했다.
+
+Cross-ref: REVIEW `REV-20260729T113000-model-pick-postdeploy` · test-runs.d 동명 fragment ·
+선행 `CHG-20260728T191126-model-pick-early-cid` · 마찰 원장 `FR-model-pick-lost-on-early-cid`
+(`fixed:undeployed` → `fixed:deployed:verified`).
