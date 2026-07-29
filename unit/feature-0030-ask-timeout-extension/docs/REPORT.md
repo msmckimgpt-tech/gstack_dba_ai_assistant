@@ -56,3 +56,25 @@ backfill(P1-4) → `own` 한정, 기능 게이트 fail-open(P2-1) → 503 fail-c
 
 검증: 신규/갱신 36건 + route-parity 1건 PASS. 전체 회귀는 `main` 대조 실행과 동일한
 환경성 실패 15건 외 **회귀 0**. ruff All checks passed.
+
+## 2026-07-29 — 배포 + PB-0008 라이브 검증 (POST-DEPLOY)
+
+배포 `80cc7aeb` (web-a/web-b/insight-worker/ask-worker 롤링 + soak 통과, `deploy_scope: included`).
+
+**라이브 실증(PASS)**: 관리 콘솔 설정 3종 노출 · 권한 카탈로그 2종(description 45/63자) ·
+backfill `own`→7역할/**`any` 미부여**(codex P1-4 실증) · KV 프롬프트 발행(시작+22s, deadline 정확) ·
+prompt 가 이전 승인 리셋(P1-2 실증) · `/api/progress` 의 `timeout_extension` 동봉 ·
+**컴포저 배너 노출** · **승인 시 배너 전환 + 서버 `granted=1` 기록** · terminal 시 KV 정리 ·
+무인증 401 · **승인된 run 에 '중단' → 2초 반영**(P1-3 핵심 계약 실증 — 연장이 탈출구를 막지 않음).
+
+**라이브 미재현(정직 표기)**: (a) "승인이 예산 컷을 넘기게 한다"의 인과 — 승인 시점에 그 run 이
+이미 red-team 단계(예산 체크 밖)라 분리 불가. (b) "미승인 시 타임아웃 종료 메시지" — 대조 시도
+2건이 예산 내/직후 자연 완료(done)라 종료 경로 미진입. 둘 다 단위 테스트로 커버(예산 게이트 4건).
+라이브 재현에는 red-team OFF + 예산 축소가 필요해 라이브 설정을 추가로 흔드는 비용 대비 미수행.
+
+**잔여 위험 라이브 확인(codex P2-3)**: 프롬프트 발행이 루프 재진입에 의존해, 같은 임계(18s)에서
+한 run 은 22s 발행 / 다른 run 은 82s 까지 미발행. 예산 초과 시점 재발행 + 20s 유예가 최후
+방어선이나 임계 시점 발행 자체는 보장되지 않는다.
+
+검증용으로 조정한 라이브 설정(`AGENT_TIMEOUT_SEC` 60, `PROMPT_PCT` 10)은 **원복 완료**(900 / 80).
+상세: `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260729T0330-timeout-extension-banner.md`.

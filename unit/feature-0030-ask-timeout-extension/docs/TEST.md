@@ -59,10 +59,22 @@ COMPOSE_PROJECT_NAME=repo make test
 - **본 변경으로 인한 회귀 0건.**
 - ruff: All checks passed.
 
-### 2026-07-29 — 라이브 시각검증 (PB-0008)
+### 2026-07-29 — 라이브 시각검증 (PB-0008) — **PASS**
 
-- `visual_verification_scope: always` 대상(웹 UI 변경) — 아래 §4 시나리오. 결과는
-  `docs/test-runs.d/` 에 `Environment: Windows-browser` 로 기록.
+배포 `80cc7aeb` 후 실 Windows 브라우저(relay, Chrome/150)로 수행. 상세·증거는
+`unit/feature-0003-agent-web-ui/docs/test-runs.d/20260729T0330-timeout-extension-banner.md`.
+
+- **PASS(라이브 실증)**: 콘솔 설정 3종 노출 · 권한 backfill(`own`→7역할, **`any` 미부여**) ·
+  KV 프롬프트 발행(시작+22s, deadline 정확) · prompt 가 이전 승인 리셋 · `/api/progress`
+  `timeout_extension` 동봉 · **컴포저 배너 노출** · **승인 시 전환 + 서버 `granted=1`** ·
+  terminal KV 정리 · 무인증 401 · **승인된 run 에 '중단' → 2초 반영**(연장이 탈출구를 막지 않음).
+- **라이브 미재현(단위 테스트 커버)**: (a) 승인의 예산-컷-통과 인과 — 승인 시점에 그 run 이 이미
+  red-team 단계(예산 체크 밖)라 분리 불가. (b) 미승인 타임아웃 종료 메시지 — 대조 2건이 자연
+  완료(done)로 끝나 종료 경로 미진입. 재현에는 red-team OFF + 예산 축소가 필요해 미수행.
+- **잔여 위험 라이브 확인(codex P2-3)**: 같은 임계(18s)에서 한 run 은 22s 발행 / 다른 run 은
+  82s 까지 미발행 — 프롬프트 발행이 루프 재진입에 의존. 예산 초과 시 재발행 + 20s 유예가 최후
+  방어선이나 임계 시점 발행은 보장되지 않는다.
+- 검증용 조정 설정(`AGENT_TIMEOUT_SEC` 60 · `PROMPT_PCT` 10)은 **원복 완료**(900 / 80).
 
 ## 4. 라이브 검증 시나리오 (PB-0008)
 
