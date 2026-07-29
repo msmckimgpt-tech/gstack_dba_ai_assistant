@@ -615,3 +615,11 @@ source_of_truth: true
 - Timestamp: 2026-07-29T09:00:00+09:00
 - Verdict: PASS-WITH-FIXES (P1 in-cycle 흡수)
 - Human Approval Needed: no
+
+## REV-20260729T193000-graph-cap-audit-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs/evidence only outside policy-doc list — POST-DEPLOY 라이브 검증 기록(실행 코드 0줄). 검증 대상 코드의 적대검증은 같은 cycle 의 REV-20260729T090000-graph-cap-audit [CODEX:frontend-gate+backend-cap] 가 담당했고(P1 GATE 1건 in-cycle 흡수), 그 코드는 이미 main 머지·배포됐다.
+- Deploy approval: `deploy_scope: included`(FIRST_REQUEST.md 전역, 2026-06-11 사용자 결정) — PR #1068 머지 후 자동 배포. 첫 배포 직전 1줄 표면화 이행.
+- Timestamp: 2026-07-29T19:30:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no

@@ -3593,7 +3593,19 @@ scene diff 풀(§79) · `_META_DBGRP_ROW_CAP`(4000 — 이미 "실사용 무제�
   (스코프 전환 시 초기화). REV-20260729T090000-graph-cap-audit.
 - [x] GCA.6b 테스트 — `test_detail_columns.js` **57 PASS**(⑯⑰ 신규 계약 + ⑱ P1 계약 6건) · 헤드리스 스위트
   **585 PASS** · `test_routine_column_refs.py` cap 계약 전환(가드 성격) + 배치 반복 계약 신설 · pytest 전량 통과
-- [ ] GCA.7 POST-DEPLOY PB-0008 라이브 검증 (배포 후)
+- [x] GCA.7 POST-DEPLOY PB-0008 라이브 검증 — **PASS**(2026-07-29 19:30, main `defcdad9` 배포본, 실
+  Windows Chrome 150). ① **컬럼**: 리포트 노드 `cc_pyron.DT_Character_New` 가 `컬럼 (2)` → **`컬럼 (55)`**
+  (실 데이터소스 컬럼 수와 일치, ordinal 순서·자료형 정상, `사용하는 함수·프로시저 (33)` 불변).
+  ② **노드**: `routine-backfill` 후 `cc_pyron` 루틴 정점 **300 → 597**, 300 초과 스키마 **0 → 38개**,
+  최대 **300 → 896**, 그래프 전체 루틴 정점 **23,507 → 30,632(+7,125)**. ③ **검색 상한 소멸**: `DT_Character_New` 50건 상한
+  → **71건 전량**, `web_ranking` → **724건 전량** 렌더·pageerror 0. ④ **부하**: 종전 300 으로 잘리던 최대
+  스키마(719 테이블)가 `truncated=False` 로 **724 노드·201ms·347KB** — 허용 범위. ⑤ **empty-state**:
+  연결 불가 datasource 에서 "컬럼 조회 실패(권한/연결 확인…)" 사유 표시 — 직전 cycle 이 "라이브 재현 못 함"
+  으로 남겼던 축 + codex P2-1 수정이 여기서 확인됐다.
+  상세: feature-0003 `docs/test-runs.d/20260729T1930-graph-cap-audit-postdeploy.md` · 증적 2매.
+  **미검증(정직)**: 대형 스키마를 **캔버스에 펼친 상태의 실-paint 프레임레이트**(§16.6 은 CDP 실-paint 또는
+  host-side 실관측을 요구) · backfill 전 datasource 수렴(진행 중) · 안전가드 WARN 경로(라이브 최대 896 <
+  20000 이라 미발화). (deploy_scope: included — merge 후 자동 배포)
 
 ### 남긴 항목 (정직)
 - **AI 분석 진행 패널의 완료 12 / 실패 4 표시 상한**(`graph-ctxmenu.js`): 그래프 데이터가 아니라 실시간
