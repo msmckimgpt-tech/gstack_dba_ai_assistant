@@ -2706,6 +2706,75 @@ def _persist_datasource_health(rows: dict, run_id: str) -> None:
                 pass
 
 
+def _self_heal_scope_keys(mem_conn, ds_scope: str) -> "list[str]":
+    """ENUM self-heal 대상 scope 목록 — 이 datasource **에만** 바인딩된 제품들의 제품 스코프.
+
+    metadata-product-scope: 저장 축이 제품이라 sweep 도 제품 스코프여야 회수가 된다. 단 sweep 은
+    `known_schemas` 밖 schema 를 삭제하므로 그 목록이 대상 스코프에 **완전**해야 하고, 이번 tick 의
+    목록은 이 datasource 하나의 것이다 → **단일 DS 제품만** 포함한다(다중 DS 제품은 다른 DS 의 정상
+    enum 을 오삭제할 수 있어 제외 = fail-open). 'common' 은 datasource 귀속이 없어 제외.
+    조회 실패 시 [] (self-heal 생략 — 파괴적 동작이므로 보수적).
+    """
+    sk = str(ds_scope or "").strip().lower()
+    if not sk or sk == "common":
+        return []
+    from shared import config as _cfg
+    from shared import datasources as _dsr
+    try:
+        ds_map = _dsr.all_datasources(mem_conn) or {}
+    except Exception:
+        return []
+    # 이 scope 에 해당하는 datasource 라벨(read 축: scope_key 필드 우선, 없으면 라벨).
+    labels = {str(lbl).strip().lower() for lbl, ds in ds_map.items()
+              if str((ds.get("scope_key") or ds.get("key") or lbl) or "").strip().lower() == sk}
+    if not labels:
+        return []
+    # 제품별 바인딩 목록을 모아 '이 datasource 뿐인 제품'만 남긴다.
+    binds: dict = {}
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute("SELECT p.Id, p.ProductKey, LOWER(d.DatasourceKey) "
+                        "FROM WebProducts p JOIN WebProductDatasources d ON d.ProductId = p.Id "
+                        "WHERE p.IsActive = 1")
+            for row in (cur.fetchall() or []):
+                pid, pkey, dsk = (row[0], row[1], row[2])
+                binds.setdefault((int(pid or 0), str(pkey or "")), set()).add(str(dsk or "").strip().lower())
+        finally:
+            cur.close()
+    except Exception:
+        binds = {}   # join 테이블 부재(레거시) — 아래 단일 바인딩 폴백으로 이어간다
+    # 레거시 단일 바인딩(WebProducts.DatasourceKey) 폴백 — join 행이 없는 제품만 보충한다.
+    # 빠뜨리면 미이전 배치에서 self-heal 이 통째로 죽어 stale/환각 ENUM 이 계속 주입된다.
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute("SELECT Id, ProductKey, LOWER(DatasourceKey) FROM WebProducts "
+                        "WHERE IsActive = 1 AND DatasourceKey IS NOT NULL AND DatasourceKey <> ''")
+            for row in (cur.fetchall() or []):
+                pid, pkey, dsk = (int(row[0] or 0), str(row[1] or ""), str(row[2] or "").strip().lower())
+                if not pkey or not dsk:
+                    continue
+                if (pid, pkey) in binds:
+                    continue   # join 바인딩이 이미 있으면 그쪽이 정본(다중 DS 판정 포함)
+                binds[(pid, pkey)] = {dsk}
+        finally:
+            cur.close()
+    except Exception:
+        if not binds:
+            return []
+    out: list = []
+    for (pid, pkey), bound in binds.items():
+        if not pkey or len(bound) != 1:
+            continue          # 다중 DS 제품 — known_schemas 불완전 → 제외(오삭제 방지)
+        if not (bound & labels):
+            continue          # 이 datasource 제품이 아님
+        scope = _cfg.product_scope_key(pkey)
+        if scope:
+            out.append(scope)
+    return out
+
+
 def _enum_self_heal(swept_scopes: set, *, mem_conn, engine, known_schemas, scanned) -> "dict | None":
     """활성 datasource scope 의 '없는 DB(schema)' ENUM 소급 자가수리 (insight tick else-block, best-effort).
 
@@ -2740,10 +2809,19 @@ def _enum_self_heal(swept_scopes: set, *, mem_conn, engine, known_schemas, scann
             return None  # MySQL(schema==database)만 — MSSQL 등은 오삭제 위험, self-heal 제외(수동 스크립트)
         if not known_schemas:
             return None  # 실제 스키마 목록 미확보 → fail-open(오삭제 방지)
-        scope_key = _cfg.get_active_datasource() or "common"
-        if scope_key in swept_scopes:
+        # metadata-product-scope: ENUM 은 이제 **제품 스코프**(`product.<key>`)에 저장된다 —
+        # datasource scope 로 sweep 하면 자율수집분이 영영 회수되지 않아 환각/stale 값이 주입에 남는다.
+        # 다만 sweep 은 `known_schemas` 밖 schema 를 **삭제**하므로, 그 목록이 그 스코프에 대해
+        # **완전**해야만 안전하다. 이번 tick 의 known_schemas 는 *이 datasource 하나*의 것이므로,
+        # **이 datasource 에만 바인딩된 제품**(단일 DS 제품)의 스코프만 sweep 한다 — 여러 datasource 에
+        # 걸친 제품을 여기서 sweep 하면 다른 DS 의 정상 enum 이 '없는 스키마'로 오삭제된다(fail-open 유지).
+        _ds_scope = _cfg.get_active_datasource() or "common"
+        scope_keys = _self_heal_scope_keys(mem_conn, _ds_scope)
+        scope_keys = [sk for sk in scope_keys if sk not in swept_scopes]
+        if not scope_keys:
             return None
-        swept_scopes.add(scope_key)  # 성공/실패 무관 이번 cycle 재시도 방지(다음 cycle 재시도)
+        swept_scopes.update(scope_keys)  # 성공/실패 무관 이번 cycle 재시도 방지(다음 cycle 재시도)
+        scope_key = scope_keys[0]  # KV 키/로그 대표값(아래 sweep 은 scope_keys 전체 순회)
         from shared.db import _pg_available, _pg_connect
         if not _pg_available():
             return None
@@ -2759,8 +2837,13 @@ def _enum_self_heal(swept_scopes: set, *, mem_conn, engine, known_schemas, scann
         from modules import kb_glossary as _kg
         pg = _pg_connect(autocommit=False)
         try:
-            res = _kg.sweep_unknown_schema_enum(
-                pg, scope_key, known_schemas, dry_run=False, confirm_lower=_prev_unknown)
+            res = {"ungrounded": [], "dict_deleted": 0, "feedback_rejected": 0}
+            for _sk in scope_keys:
+                _r = _kg.sweep_unknown_schema_enum(
+                    pg, _sk, known_schemas, dry_run=False, confirm_lower=_prev_unknown)
+                res["ungrounded"].extend(_r.get("ungrounded", []))
+                res["dict_deleted"] += int(_r.get("dict_deleted") or 0)
+                res["feedback_rejected"] += int(_r.get("feedback_rejected") or 0)
             pg.commit()
         except Exception:
             try:

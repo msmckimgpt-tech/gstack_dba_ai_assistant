@@ -2188,3 +2188,61 @@ Trigger: 코드 변경 0 · 정책 문서 변경 0 — TASK/MODIFY/test-runs.d/e
   폴러를 강제로 죽였을 때 감지기가 15초 내 되살렸다.
 - 정직 표기: OS 레벨 NIC 단절은 재현하지 않았다(`fetch` 레벨 차단으로 대체 — 클라이언트 폴링
   코드가 받는 실패 신호는 동일한 reject). 1차에서 만든 검증용 대화 1건이 라이브에 잔존한다.
+
+## REV-20260729T213000-metadata-product-scope [CODEX:metadata-product-scope] — ACCEPTED (P1 12건 흡수 후 최종 0건)
+
+Trigger: API/endpoint + schema/query + UI/screen keyword matched → §18.8 표상 `backend, security, qa,
+ux, design` 요구. 본 위임 세션에는 **하네스 수준의 "요청 없이 Agent tool 을 호출하지 말라" 지시**가
+있어 §18.8.2 **상위 우선순위 지시 carve-out** 적용 — 제약 없는 채널(`codex review --uncommitted`)로
+수행하고 미커버 도메인을 아래에 명시한다.
+
+**적대 리뷰 10 라운드** — 라운드마다 P1 을 수정하고 재실행해 수렴시켰다(최종 라운드 P1 0건):
+
+| # | 지적 | 처리 |
+|---|---|---|
+| P1-A | 부트스트랩 fetch 가드가 폐기된 `bs.datasource` 를 검사 → 골격 가져오기 상시 실패 | `bs.scopeKey` 로 교체 |
+| P1-B | 접근DB 선언 제품에서 allowlist 밖 schema 가 primary 로 폴백 → 제품 경계 밖 DB introspect | allowlist 밖 거부(404) |
+| P1-C | 호출자 지정 `datasource` override 가 scope 검증을 통째로 건너뜀 | override **제거**(부트스트랩·suggest 양쪽) |
+| P1-D | `WebProductDatabases` 조회 실패를 "접근DB 없음"과 동일시 → transient 오류로 경계 무력화 | `databases_ok` 플래그 + fail-closed(503) |
+| P1-E | 레거시 단일 바인딩 제품의 `datasources` 가 비면 부트스트랩 불가 | `_catalog_datasources()` 폴백 |
+| P2-a | MSSQL 접근DB lower 저장 라벨 ↔ 서버 원본 케이스 불일치로 정상 DB 404 | lower→원본 매핑 + 원본 케이스 연결 |
+| P1-F | 배포↔이관 창에서 기존 메타데이터 전부 비가시 | **expand/contract** — 레거시 ds-scope 꼬리 읽기 + contract 절차 |
+| P1-G | `DatasourceKey` 컬럼 미이전 레거시 스키마에서 전 제품 503 | 폴백 쿼리 후에만 미가용 판정 |
+| P1-H | 제품 해소 실패 시 자율수집이 `common` 으로 폴백 → cross-product 누출 | `unresolved` 신호 + 수집 중단 |
+| P1-I | 다중 DS 중복 등록이 한 제품 scope 로 모이며 UNIQUE 충돌 → 이관 전체 실패 | 행 단위 SAVEPOINT + 중복 병합 |
+| P1-J | 검토 큐(`glossary_feedback`/`enum_feedback`/`sample_feedback`) 미이관 → pending 큐 소실 | 이관 대상에 편입(595+119건) |
+| P1-K | 모든 예외를 중복으로 보고 원본 삭제 → transient 오류에 데이터 영구 소실 | **SQLSTATE 23505 에서만** 병합, 그 외 re-raise |
+| P1-L | contract 미수행 시 레거시 꼬리가 계속 읽혀 혼입 잔존 | `--verify-contract` 모드 + 완료 시 다음 단계 안내 |
+| P2-b | ENUM self-heal 이 datasource scope 로 sweep → 제품 scope 행 미회수(stale/환각 잔존) | 제품 스코프 sweep(**단일 DS 제품 한정** — 다중 DS 는 `known_schemas` 불완전로 오삭제 위험) |
+| P2-c | 레거시 단일 바인딩 배치에서 self-heal 전면 비활성 | `WebProducts.DatasourceKey` 폴백 |
+
+**설계 판단 근거**
+
+- **왜 저장 축을 제품으로 바꾸는가(표시만 바꾸지 않고)**: 라이브 실측상 결함이 표시층이 아니라
+  주입층에 있다. `KR_LIVE` 용어 85건이 7개 DS 중 `auth` 한 곳에만 있어 나머지 6개 DS 질의에서
+  주입되지 않았다. 표시만 제품으로 묶으면 사용자는 "등록됐다"고 더 확신하는데 동작은 그대로다.
+- **왜 datasource 축을 제거하지 않는가**: 질의 실행·dialect·fact/RAG 스코핑은 물리 연결 축이 정본이다.
+  KB 메타데이터만 제품 축으로 옮기고 두 축을 분리했다(그래프 뷰 pane 도 datasource 유지 — 물리 스키마
+  투영이라 그 축이 맞고, 사용자 결정상 이번 범위 밖).
+- **테이블/컬럼 설명의 정체**: 한 제품 안에서 `(schema_name, table_name[, column_name])`. 제품의 두
+  datasource 가 같은 (schema, table) 을 노출하면 설명 1건을 공유한다 — 사용자에게 datasource 가
+  보이지 않는 축이므로 의도된 동작이며, UNIQUE 제약 변경도 불필요하다.
+- **`common` 의 의미 변경**: "모든 데이터소스" → "모든 제품". 행은 그대로 유효하고 캐스케이드 위치도 동일.
+- **제품 경계를 골격/AI grounding 에 강제한 이유**: 콘솔에서 datasource 를 걷어내면 물리 연결 선택이
+  서버로 넘어온다. 이때 요청자가 임의 schema 를 실을 수 있으면 공유 datasource 에서 **남의 제품 DB**
+  를 열람·기술할 수 있다. 그래서 접근DB(`WebProductDatabases`)를 allowlist 로 강제하고, 그 목록을
+  못 읽으면 넓히지 않고 거부한다(fail-closed).
+
+**미커버(정직 표기)**: `ux`·`design` subagent 의 독립 관점 — `[SKIPPED:tool-restricted:ux,design]`.
+대신 ① codex 적대 리뷰 10라운드 ② `make test` 컨테이너 전 스위트 ③ 신규 축·경계·expand/contract·
+self-heal 케이스 ④ `node --check` ⑤ PB-0008 실 Windows 브라우저 시각검증(배포 후)으로 덮는다.
+정보구조 변경(스코프 축 라벨·안내 문구)이 있어 ⑤ 의 육안 확인이 본 변경의 실질 design 게이트다.
+
+Cross-ref: TASK `20260729T2130-metadata-product-scope` · MODIFY `CHG-20260729T213000-metadata-product-scope` ·
+FUNCTION `REQ-20260729T213000-metadata-product-scope`.
+
+## REV-20260729T213000-metadata-product-scope-skipped [SKIPPED:tool-restricted:ux,design] — 세션 도구 제약으로 subagent panel 미수행
+
+Trigger: UI/screen keyword matched → `ux, design` 요구. 하네스 수준 Agent tool 금지 지시로 §18.8.2
+carve-out 적용(그 §를 우회 근거로 쓰지 않음). 제약 없는 채널로 수행한 검증과 미커버 범위는 위
+[CODEX] entry 의 "미커버(정직 표기)" 문단에 명시.

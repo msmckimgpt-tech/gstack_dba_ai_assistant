@@ -46,6 +46,8 @@ __all__ = [
     "_is_internal_message",
     "_is_single_key_fact",
     "_is_system_schema",
+    "_kb_scope_candidates",
+    "_kb_scope_key",
     "_mask_sql_arg",
     "_near_run_deadline",
     "_normalize_category_value",
@@ -344,6 +346,51 @@ def _scope_candidates(scope_key: str | None = None) -> list[str]:
         seen.add(k)
         result.append(k)
     return result
+
+
+def _kb_scope_key(scope_key: str | None = None) -> str:
+    """KB 메타데이터(용어사전·ENUM·테이블/컬럼 설명·샘플쿼리)의 **primary scope** — 제품 축.
+
+    metadata-product-scope: 명시 scope 가 없으면 활성 **제품** 스코프(`product.<key>`)를 쓴다.
+    종전엔 활성 datasource 로 스코프해서 (a) 1제품↔N데이터소스 에서 등록분이 일부 DS 질의에만
+    주입되고 (b) 1데이터소스↔N제품 에서 남의 제품 메타데이터가 섞이는 두 방향 누락/혼입이
+    있었다. 제품 미지정(제품 없는 대화/CLI)이면 'common' — 공용 사전만 적용된다.
+
+    ⚠ fact/RAG 축(`_scope_candidates`, `cfg.CURRENT_FACT_SCOPE_KEY`)과는 **별 축**이다.
+    그쪽은 datasource 스코핑을 그대로 유지한다(교차노출 차단 계약 불변).
+    """
+    if scope_key is None:
+        scope_key = cfg.get_active_product_scope()
+    return _normalize_scope_key(scope_key)
+
+
+def _kb_scope_candidates(scope_key: str | None = None) -> list[str]:
+    """KB 메타데이터 읽기 캐스케이드 — [제품 스코프, (레거시 ds 스코프), 'common', ''].
+
+    빈 문자열('')은 blank-scope 레거시 행 호환(캐스케이드 계약은 `_scope_candidates` 와 동형).
+
+    **expand/contract (배포↔이관 창)**: 코드 배포와 데이터 이관(`scripts/kb_scope_rescope.py`)은
+    원자적일 수 없다. 그 사이 창에서 제품 스코프만 읽으면 **기존 등록 메타데이터가 통째로 안
+    보인다**. 그래서 `AGENT_KB_LEGACY_DS_SCOPE_READ`(기본 on)일 때 활성 datasource 스코프를
+    **제품 스코프 다음 꼬리 후보**로 함께 읽는다(expand). 이 창의 동작은 종전(datasource 축)과
+    동일하므로 새 회귀가 아니다. 이관 완료 후 플래그를 0 으로 내리면(contract) 공유 datasource 의
+    타 제품 혼입이 실제로 사라진다. 명시 scope_key 를 준 호출(admin 경로)은 꼬리를 붙이지 않는다.
+    """
+    primary = _kb_scope_key(scope_key)
+    ordered = [primary]
+    if scope_key is None and getattr(cfg, "AGENT_KB_LEGACY_DS_SCOPE_READ", True):
+        legacy = _normalize_scope_key(cfg.get_active_datasource())
+        if legacy and legacy != primary:
+            ordered.append(legacy)
+    out: list[str] = []
+    seen: set[str] = set()
+    for key in ordered + [FACT_SCOPE_COMMON, ""]:
+        k = str(key)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(k)
+    return out
 
 
 def _set_current_fact_scope(scope_key: str | None) -> None:

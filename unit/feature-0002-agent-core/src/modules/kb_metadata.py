@@ -1,15 +1,20 @@
 """ITEM-11 Phase 2 (ROADMAP dba-ai-nl2sql): 테이블/컬럼 설명 사전 (table_descriptions / column_descriptions).
 
-사람이 작성한 테이블·컬럼 의미 설명을 agent_kb(Postgres)에 ds-scoped(scope_key, fact_entries
+사람이 작성한 테이블·컬럼 의미 설명을 agent_kb(Postgres)에 product-scoped(scope_key, fact_entries
 동일 컨벤션)로 저장하고 두 경로로 주입한다(kb_glossary.py 동형):
   (B) load_table_column_descriptions — _build_knowledge_context 가 질문 매칭 행을 grounding
       섹션에 datamark 주입(주입 펜스는 호출측).
   (A) load_column_descriptions_for_table — describe_table 가 native COLUMN_COMMENT 가 빈
       컬럼을 KB 설명으로 오버레이(MSSQL 빈 comment gap, dialects.describe_columns row[6]='' 해소).
 
-ds-scope: scope_key = **활성 datasource**( cfg.get_active_datasource() ) + 'common' 캐스케이드.
-타 datasource 의 설명은 혼입되지 않는다. (CURRENT_FACT_SCOPE_KEY 는 멀티DS 에서 갱신되지
-않으므로 쓰지 않는다 — kb_glossary.py:209 BLOCKER.) 저장=RW, 읽기=RO. PG 미가용/미매칭이면 ""(무영향).
+product-scope (metadata-product-scope): scope_key = **활성 제품**( cfg.get_active_product_scope() )
++ 'common' 캐스케이드 (kb_glossary.py 동형). 한 제품이 N개 datasource 에 걸쳐도 그 제품의 설명이
+모든 질의에 주입되고, 공유 datasource 에서 타 제품 설명이 혼입되지 않는다. 저장=RW, 읽기=RO.
+PG 미가용/미매칭이면 ""(무영향).
+
+식별 규약: 한 제품 안에서 (schema_name, table_name[, column_name]) 이 설명의 정체다. 제품의 두
+datasource 가 같은 (schema, table) 을 노출하면 설명 1건이 양쪽에 공유된다 — 사용자에게 datasource
+는 보이지 않는 축이므로 의도된 동작이다.
 
 한계(launch 볼륨 전제): read 는 scope 당 table 200 / column 500 row 를 fetch 후 Python 매칭 →
 그 이상 보유 시 LIMIT 밖 항목은 누락 가능(follow-up: SQL-side 매칭/cap 상향).
@@ -18,7 +23,7 @@ from __future__ import annotations
 
 import logging
 
-from modules.utils import _normalize_scope_key, _scope_candidates
+from modules.utils import _normalize_scope_key, _kb_scope_candidates, _kb_scope_key
 
 _log = logging.getLogger("kb_metadata")
 
@@ -245,7 +250,7 @@ def _fetch_column_desc(conn, scopes):
 
 
 def load_table_column_descriptions(user_message, scope_key=None, conn=None) -> str:
-    """질문에 매칭되는 테이블/컬럼 설명을 ds-scoped 로 읽어 프롬프트 본문 조립.
+    """질문에 매칭되는 테이블/컬럼 설명을 product-scoped 로 읽어 프롬프트 본문 조립.
 
     매칭: 테이블명·컬럼명이 질문에 등장(대소문자 무관). 미매칭/미가용 → "".
     datamark·펜스 헤더는 호출측(_build_knowledge_context)이 부여한다(kb_glossary 동형).
@@ -253,18 +258,14 @@ def load_table_column_descriptions(user_message, scope_key=None, conn=None) -> s
     msg = (user_message or "").lower()
     if not msg:
         return ""
-    # ds-scope: 명시 scope 없으면 **활성 datasource** 의 scope_key 사용. CURRENT_FACT_SCOPE_KEY 는
-    # 멀티DS 에서 갱신되지 않아 ds 격리/매칭이 깨진다(kb_glossary BLOCKER) → get_active_datasource().
-    if scope_key is None:
-        from shared import config as _cfg
-        scope_key = _cfg.get_active_datasource()
     c = None
     owned = False
     try:
         c, owned = _ro_conn(conn)
         if c is None:
             return ""
-        scopes = _scope_candidates(scope_key)  # [active_ds_scope, 'common', '']
+        # product-scope: 명시 scope 없으면 **활성 제품** 스코프 사용(_kb_scope_candidates 내부 해소).
+        scopes = _kb_scope_candidates(scope_key)  # [active_product_scope, 'common', '']
         tables = _fetch_table_desc(c, scopes)
         cols = _fetch_column_desc(c, scopes)
     except Exception as exc:
@@ -302,7 +303,7 @@ def load_table_column_descriptions(user_message, scope_key=None, conn=None) -> s
 def load_column_descriptions_for_table(schema_name, table_name, scope_key=None, conn=None) -> dict:
     """describe_table 오버레이용 — (scope, schema, table) 의 컬럼 설명 {column_name: description}.
 
-    같은 (scope_key, schema, table) 의 column_descriptions 를 ds-scoped(active∪common) 로 읽어
+    같은 (scope_key, schema, table) 의 column_descriptions 를 product-scoped(active∪common) 로 읽어
     column_name→description dict 반환. native COLUMN_COMMENT 가 빈 컬럼만 KB 설명으로 채울 때 사용.
     PG 미가용/실패 → {} (graceful — 기존 출력 유지). schema_name 매칭은 대소문자 무관(LOWER) + 빈
     schema('') 허용 — MSSQL 저장 schema_name=DB명(원본 케이스) vs describe_table read 키 소문자
@@ -311,9 +312,6 @@ def load_column_descriptions_for_table(schema_name, table_name, scope_key=None, 
     tb = str(table_name or "").strip()
     if not tb:
         return {}
-    if scope_key is None:
-        from shared import config as _cfg
-        scope_key = _cfg.get_active_datasource()
     sch = str(schema_name or "").strip()
     c = None
     owned = False
@@ -321,7 +319,8 @@ def load_column_descriptions_for_table(schema_name, table_name, scope_key=None, 
         c, owned = _ro_conn(conn)
         if c is None:
             return {}
-        scopes = _scope_candidates(scope_key)
+        # product-scope: 명시 scope 없으면 **활성 제품** 스코프 사용.
+        scopes = _kb_scope_candidates(scope_key)
         cur = c.cursor()
         try:
             # schema 매칭은 대소문자 무관(LOWER) — MSSQL 은 저장 schema_name=DB명(원본 케이스, 예

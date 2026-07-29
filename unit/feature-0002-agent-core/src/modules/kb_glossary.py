@@ -1,23 +1,25 @@
 """ITEM-10 (ROADMAP dba-ai-nl2sql): 용어사전(kb_glossary) + ENUM 코드사전(enum_dictionary).
 
-도메인 용어 정의·컬럼 열거형 코드↔라벨 매핑을 agent_kb(Postgres)에 ds-scoped(scope_key,
+도메인 용어 정의·컬럼 열거형 코드↔라벨 매핑을 agent_kb(Postgres)에 product-scoped(scope_key,
 fact_entries 동일 컨벤션)로 저장하고, 질문/스키마 매칭 시 _build_knowledge_context 가
 프롬프트에 주입(datamark 은 호출측). 저장=RW, 읽기=RO. PG 미가용/미매칭이면 "" (무영향).
 
-ds-scope: scope_key = **활성 datasource**( cfg.get_active_datasource() ) + 'common' 캐스케이드.
-타 datasource 의 용어/ENUM 은 혼입되지 않는다. (CURRENT_FACT_SCOPE_KEY 는 멀티DS 에서 갱신되지
-않으므로 쓰지 않는다 — REV-…-glossary BLOCKER.) 등록(upsert)도 동일 scope_key(=get_active_datasource
-또는 'common' 공용)로 저장해야 read 가 매칭된다.
+product-scope (metadata-product-scope): scope_key = **활성 제품**( cfg.get_active_product_scope()
+= `product.<ProductKey>` ) + 'common' 캐스케이드. 사용자·메타데이터 관리자가 인식하는 작업 범위가
+제품이므로 등록·주입 축을 제품으로 통일한다 — 한 제품이 N개 datasource 에 걸쳐도 그 제품의 모든
+질의에 주입되고, 한 datasource 를 N개 제품이 공유해도 남의 제품 용어가 혼입되지 않는다.
+(종전 ds-scope 는 양쪽 다 깨졌다: 등록분이 1/N DS 에서만 주입 · 공유 DS 에서 타 제품 혼입.)
+등록(upsert)도 동일 scope_key(=제품 스코프 또는 'common' 공용)로 저장해야 read 가 매칭된다.
 
 한계(launch 볼륨 전제): read 는 scope 당 glossary 200 / enum 500 row 를 fetch 후 Python 매칭 →
-datasource 가 그 이상 보유 시 LIMIT 밖 항목은 누락 가능(follow-up: SQL-side 매칭/cap 상향).
+제품이 그 이상 보유 시 LIMIT 밖 항목은 누락 가능(follow-up: SQL-side 매칭/cap 상향).
 """
 from __future__ import annotations
 
 import logging
 from collections import OrderedDict
 
-from modules.utils import _normalize_scope_key, _scope_candidates
+from modules.utils import _normalize_scope_key, _kb_scope_candidates, _kb_scope_key
 
 _log = logging.getLogger("kb_glossary")
 
@@ -244,7 +246,7 @@ def _fetch_enums(conn, scopes):
 
 
 def load_glossary_enum_context(user_message, scope_key=None, conn=None, role_key=None) -> str:
-    """질문에 매칭되는 용어/ENUM 을 ds-scoped(+role-scoped) 로 읽어 프롬프트 본문 조립.
+    """질문에 매칭되는 용어/ENUM 을 product-scoped(+role-scoped) 로 읽어 프롬프트 본문 조립.
 
     매칭: 용어(term)·ENUM 의 column/table 이 질문에 등장(대소문자 무관). 미매칭/미가용 → "".
     role_key 지정 시 용어는 [그 역할, '*'(공용)] 로 추가 격리(역할별 비중복) — 다른 역할 전용
@@ -254,18 +256,14 @@ def load_glossary_enum_context(user_message, scope_key=None, conn=None, role_key
     msg = (user_message or "").lower()
     if not msg:
         return ""
-    # ds-scope: 명시 scope 없으면 **활성 datasource** 의 scope_key 사용. CURRENT_FACT_SCOPE_KEY 는
-    # 멀티DS 에서 갱신되지 않아 ds 격리/매칭이 깨진다(REV BLOCKER) → get_active_datasource().
-    if scope_key is None:
-        from shared import config as _cfg
-        scope_key = _cfg.get_active_datasource()
     c = None
     owned = False
     try:
         c, owned = _ro_conn(conn)  # _pg_connect_ro 예외도 여기서 흡수(docstring 계약)
         if c is None:
             return ""
-        scopes = _scope_candidates(scope_key)  # [active_ds_scope, 'common', '']
+        # product-scope: 명시 scope 없으면 **활성 제품** 스코프 사용(_kb_scope_candidates 내부 해소).
+        scopes = _kb_scope_candidates(scope_key)  # [active_product_scope, 'common', '']
         gloss = _fetch_glossary(c, scopes, role_key=role_key)
         enums = _fetch_enums(c, scopes)
     except Exception as exc:

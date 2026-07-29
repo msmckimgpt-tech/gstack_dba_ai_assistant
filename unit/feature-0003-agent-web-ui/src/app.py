@@ -3301,6 +3301,12 @@ from routers.admin_datasources import _ds_write_common  # noqa: E402
 # ITEM-10 routers-p2: 테스트 app._metadata_* 직접 참조 + app 내부 잔존 호출(_glossary_feedback_iso) 보존.
 from routers.admin_metadata import (  # noqa: E402
     _metadata_resolve_account,
+    # metadata-product-scope: 메타데이터 스코프 축(제품) 해소 헬퍼 — 테스트/타 라우터 app.X 참조 보존.
+    _product_scope_catalog,
+    _product_scope_key,
+    _resolve_scope_product,
+    _scope_database_units,
+    _scope_datasource_for_schema,
     _metadata_valid_scope_keys,
     _metadata_check_scope,
     _metadata_valid_role_keys,

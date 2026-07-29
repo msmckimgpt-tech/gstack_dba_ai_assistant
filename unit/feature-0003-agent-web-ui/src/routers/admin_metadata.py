@@ -41,48 +41,219 @@ def _metadata_resolve_account(request: Request):
     finally:
         conn.close()
 
-def _metadata_valid_scope_keys() -> set[str]:
-    """허용 scope_key 집합 — 등록된 datasource 의 **질의 시점 read 와 동일한 scope 해소값** ∪ {'common'}.
+def _product_scope_catalog(conn=None) -> list[dict]:
+    """활성 제품 → 메타데이터 스코프 카탈로그 (metadata-product-scope 의 단일 해소점).
 
-    scope-key-unify(死data 수정): 메타데이터/샘플 admin write 의 scope_key 축을 **질의 시점 read 와
-    똑같은 식**으로 통일한다. read 는 `agent_core` 가 `cfg.set_active_datasource(_ds.get('scope_key') or
-    _ds.get('key'))` 로 활성 scope 를 잡고(= **scope_key 필드 우선, 없으면 라벨**), tools/insight 도 동일
-    규약(`ds.get('scope_key') or ds.get('key')`)이다. 즉 DB-등록 ds 는 `scope_key` 필드(compute_scope_key
-    해시), .env 레거시 ds 는 그 필드가 없어 **라벨**로 해소된다.
+    관리 콘솔 > 지식베이스 > 메타데이터의 스코프 축은 **제품**이다. 사용자·메타데이터 관리자는
+    데이터소스를 인식하지 않으므로 콘솔 선택기·scope 검증·부트스트랩이 모두 본 카탈로그를 원천으로 쓴다.
 
-    ⚠️ 주의(BLOCKER 회피): write 를 `_dsr.scope_key(ds)` 로 잡으면 안 된다 — 그 헬퍼는 .env ds(host 필수)에서
-    해시를 *계산*하지만 read 는 필드 부재 시 라벨로 떨어지므로, .env ds 에서 write(해시)≠read(라벨) 死data 가
-    역으로 재발한다. 그래서 read 와 **동일한 식** `ds.get('scope_key') or ds.get('key')` 를 그대로 쓴다.
-    과거엔 admin write 가 datasource **라벨**(all_datasources dict 키)만 저장해 DB-등록 ds 에서 라벨 ≠ 해시
-    死data 였다. 'common' 은 항상 허용(공용 사전). 조회 실패 시 'common' 만 허용(보수적).
+    반환 항목:
+      - `scope_key`   : `product.<ProductKey>` — KB row 의 scope_key (shared.config.product_scope_key)
+      - `product_id` / `product_key` / `name` / `sort_order`
+      - `datasources` : 제품에 바인딩된 datasource [{key, is_primary}] — 표시용이 아니라 내부 해소용
+      - `databases`   : 제품의 접근DB [{schema, datasource_key}] (`WebProductDatabases` = 제품별 접근DB SSOT).
+                        부트스트랩 골격 대상 = 이 목록 — 서버 전체 스키마를 나열하지 않아 제품 경계 밖
+                        DB 가 콘솔에 새지 않는다(종전 datasource 축의 부작용).
+
+    조회 실패 시 [] (호출측이 'common' 만 허용하는 보수적 폴백으로 처리).
     """
-    keys = {"common"}
-    conn = None
-    try:
-        from shared import datasources as _dsr
+    owned = False
+    if conn is None:
         try:
             conn = app._connect_memory()
+            owned = True
         except Exception:
-            conn = None
-        for k, ds in (_dsr.all_datasources(conn) or {}).items():
-            # read(agent_core.set_active_datasource)와 동일 해소: scope_key 필드(DB ds=해시) 우선, 없으면 라벨.
-            sk = str((ds.get("scope_key") or ds.get("key") or k) or "").strip().lower()
-            if sk:
-                keys.add(sk)
-    except Exception:
-        pass
+            return []
+    try:
+        try:
+            products = app._list_products(conn) or []
+        except Exception:
+            return []
+        # 접근DB 는 한 번에 읽어 제품별로 접는다(제품 수만큼 쿼리 반복 방지).
+        # `databases_ok=False`(읽기 실패)는 "접근DB 없음"과 **구별**해야 한다 — 동일시하면 경계
+        # 강제가 transient 오류만으로 무력화되고(=접근DB 미선언 제품 취급) 서버 전체 DB 로
+        # 폴백한다(codex review P1). 소비처(_scope_datasource_for_schema·부트스트랩)는 이 플래그가
+        # False 면 fail-closed 로 거부한다.
+        db_rows: dict = {}
+        db_ok = True
+        # DatasourceKey 컬럼 미이전(레거시) 스키마 폴백 — `_list_product_databases` 와 동일 계약.
+        # 폴백 없이 바로 db_ok=False 로 떨어뜨리면 레거시 배치에서 전 제품 부트스트랩이 503 이 된다
+        # (codex review P1). 두 쿼리가 모두 실패할 때만 '카탈로그 미가용'으로 판정한다.
+        for _sql, _has_dsk in (
+            ("SELECT ProductId, DatasourceKey, SchemaName FROM WebProductDatabases "
+             "ORDER BY ProductId, SortOrder, SchemaName", True),
+            ("SELECT ProductId, SchemaName FROM WebProductDatabases "
+             "ORDER BY ProductId, SortOrder, SchemaName", False),
+        ):
+            db_rows = {}
+            try:
+                cur = conn.cursor()
+                try:
+                    cur.execute(_sql)
+                    for row in (cur.fetchall() or []):
+                        if isinstance(row, dict):
+                            pid = row.get("ProductId")
+                            dsk = row.get("DatasourceKey") if _has_dsk else ""
+                            sch = row.get("SchemaName")
+                        elif _has_dsk:
+                            pid, dsk, sch = row[0], row[1], row[2]
+                        else:
+                            pid, dsk, sch = row[0], "", row[1]
+                        sch = str(sch or "").strip()
+                        if not sch:
+                            continue
+                        db_rows.setdefault(int(pid or 0), []).append(
+                            {"schema": sch, "datasource_key": str(dsk or "").strip().lower()})
+                finally:
+                    cur.close()
+                db_ok = True
+                break
+            except Exception:
+                db_rows = {}
+                db_ok = False
+        if not db_ok:
+            logging.getLogger(__name__).warning(
+                "WebProductDatabases 조회 실패(레거시 폴백 포함) — 접근DB 경계 fail-closed 로 degrade",
+                exc_info=True)
+        out: list = []
+        for p in products:
+            pid = int(p.get("id") or 0)
+            pkey = str(p.get("product_key") or "").strip()
+            sk = _product_scope_key(pkey)
+            if pid <= 0 or not sk:
+                continue
+            _sort = p.get("sort_order")
+            out.append({
+                "scope_key": sk,
+                "product_id": pid,
+                "product_key": pkey,
+                "name": p.get("name") or pkey,
+                "sort_order": int(_sort) if isinstance(_sort, (int, float)) else 100,
+                # `_list_product_datasources` 가 이미 레거시 단일 바인딩(WebProducts.DatasourceKey)
+                # 폴백을 수행하지만, 카탈로그가 그 불변식을 **자기 안에서** 보장하도록 마지막 폴백을
+                # 둔다 — 여기서 비면 부트스트랩이 datasource 를 못 잡아 정상 제품이 막힌다.
+                "datasources": _catalog_datasources(p),
+                "databases": db_rows.get(pid, []),
+                "databases_ok": db_ok,
+            })
+        out.sort(key=lambda e: (e["sort_order"], e["name"]))
+        return out
     finally:
-        if conn is not None:
+        if owned and conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
-    # 폴백: 활성 datasource(ContextVar) 도 허용에 포함(요청 컨텍스트 한정).
+
+def _catalog_datasources(product) -> list[dict]:
+    """제품 dict → [{key, is_primary}]. 1:N 바인딩 우선, 비면 레거시 단일 바인딩으로 폴백."""
+    out = [{"key": str(d.get("datasource_key") or "").strip().lower(),
+            "is_primary": bool(d.get("is_primary"))}
+           for d in ((product or {}).get("datasources") or []) if d.get("datasource_key")]
+    if out:
+        return out
+    legacy = str((product or {}).get("datasource_key") or "").strip().lower()
+    return [{"key": legacy, "is_primary": True}] if legacy else []
+
+def _product_scope_key(product_key):
+    """제품 키 → 메타데이터 scope_key. shared.config.product_scope_key 얇은 래퍼(import 지역화)."""
     try:
         from shared import config as _cfg
-        active = str(_cfg.get_active_datasource() or "").strip().lower()
-        if active:
-            keys.add(active)
+        return _cfg.product_scope_key(product_key)
+    except Exception:
+        raw = str(product_key or "").strip().lower()
+        return ("product." + raw) if raw else None
+
+def _resolve_scope_product(scope_key, conn=None):
+    """제품 스코프 키(`product.<key>`) → 카탈로그 엔트리. 미매칭/'common' → None."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk or sk == "common":
+        return None
+    for entry in _product_scope_catalog(conn):
+        if entry["scope_key"] == sk:
+            return entry
+    return None
+
+def _scope_database_units(scope_key, conn=None) -> list[dict]:
+    """제품 스코프 → 부트스트랩/골격 대상 단위 목록 [{schema, datasource_key}].
+
+    제품의 접근DB(`WebProductDatabases`)가 곧 그 제품에서 메타데이터를 기술할 수 있는 범위다.
+    같은 schema 명이 제품의 두 datasource 에 걸치면(라이브: FH_QA 의 `FHWeb` 이 mssql-qa-idc·
+    mssql-web-qa 양쪽) 첫 항목만 남긴다 — 설명의 정체는 (제품, schema, table) 이라 한 건이면 족하다.
+    접근DB 가 한 건도 선언되지 않은 제품은 [] (호출측이 라이브 introspection 폴백을 결정).
+    """
+    entry = _resolve_scope_product(scope_key, conn)
+    if not entry or not entry.get("databases_ok", True):
+        return []   # 카탈로그 미가용 → 골격 대상 없음(fail-closed). 폴백 introspection 도 막힌다.
+    seen: set = set()
+    out: list[dict] = []
+    for d in entry.get("databases") or []:
+        sch = str(d.get("schema") or "").strip()
+        if not sch or sch.lower() in seen:
+            continue
+        seen.add(sch.lower())
+        out.append({"schema": sch, "datasource_key": d.get("datasource_key") or ""})
+    return out
+
+def _scope_datasource_for_schema(scope_key, schema_name, conn=None) -> str:
+    """(제품 스코프, 접근DB명) → datasource 라벨. 해소 불가 시 "" (호출측이 ungrounded/404 처리).
+
+    콘솔에서 데이터소스를 걷어냈으므로, introspection(골격·AI grounding)이 어느 물리 연결을 쓸지는
+    서버가 제품 바인딩에서 해소한다.
+
+    **제품 경계 강제 (codex review P1)**: 제품이 접근DB(`WebProductDatabases`)를 선언했다면 그
+    목록이 곧 그 제품에서 기술 가능한 범위다 — 목록에 없는 schema 는 primary datasource 로
+    폴백하지 않고 "" 를 반환한다. 폴백하면 요청자가 임의 schema 를 실어 그 제품 경계 밖 DB 를
+    introspect·저장할 수 있다(공유 datasource 에서 특히 — 남의 제품 DB 노출).
+    접근DB 미선언 제품만 primary(없으면 첫) datasource 로 폴백한다(라이브 introspection 경로).
+    """
+    entry = _resolve_scope_product(scope_key, conn)
+    if not entry:
+        return ""
+    if not entry.get("databases_ok", True):
+        return ""   # 접근DB 카탈로그 미가용 → 경계 판정 불가 → 거부(fail-closed).
+    declared = entry.get("databases") or []
+    sch = str(schema_name or "").strip().lower()
+    if declared:
+        # 접근DB 선언 제품 — allowlist 매칭만 허용(비매칭 schema 는 거부).
+        if not sch:
+            # schema 미지정(스키마 목록 조회용 폴백 해소)은 primary 로 허용.
+            return _scope_primary_datasource(entry)
+        for d in declared:
+            if str(d.get("schema") or "").strip().lower() != sch:
+                continue
+            # 경계는 **schema 멤버십**이 정한다. DatasourceKey 가 빈 레거시 행
+            # (`_list_product_databases` 의 컬럼-부재 폴백 산출)은 제품의 primary 로 해소한다 —
+            # 여기서 거부하면 목록엔 뜨는데 골격·grounding 만 404/ungrounded 로 죽는다
+            # (codex review P1). allowlist 밖 schema 는 아래 return "" 로 여전히 거부된다.
+            return str(d.get("datasource_key") or "") or _scope_primary_datasource(entry)
+        return ""
+    return _scope_primary_datasource(entry)
+
+def _scope_primary_datasource(entry) -> str:
+    """카탈로그 엔트리의 primary(없으면 첫) datasource 라벨. 없으면 ""."""
+    for d in (entry or {}).get("datasources") or []:
+        if d.get("is_primary") and d.get("key"):
+            return str(d["key"])
+    for d in (entry or {}).get("datasources") or []:
+        if d.get("key"):
+            return str(d["key"])
+    return ""
+
+def _metadata_valid_scope_keys() -> set[str]:
+    """허용 scope_key 집합 — **활성 제품 스코프** ∪ {'common'} (metadata-product-scope).
+
+    종전엔 등록된 datasource 의 read-축 해소값(scope_key 필드 or 라벨)이 허용 집합이었다. 그런데
+    사용자·메타데이터 관리자가 인식하는 작업 범위는 제품이고, 라이브에서 축이 양방향으로 어긋나
+    있었다 — 1제품↔N데이터소스(KR_LIVE·KR_QA 각 7개)에서는 등록분이 그 중 1개 DS 질의에서만
+    주입되고, 1데이터소스↔N제품(mssql-qa-idc 를 5개 제품이 공유)에서는 타 제품 메타데이터가
+    혼입됐다. → write/read 축을 모두 제품(`product.<ProductKey>`)으로 통일한다.
+    'common' 은 항상 허용(공용 사전 — 전 제품 적용). 조회 실패 시 'common' 만 허용(보수적).
+    """
+    keys = {"common"}
+    try:
+        for entry in _product_scope_catalog():
+            keys.add(entry["scope_key"])
     except Exception:
         pass
     return keys
@@ -96,7 +267,7 @@ def _metadata_check_scope(scope_key: str):
         return None, app._json_error("scope_key 가 너무 깁니다.", 400)
     allowed = _metadata_valid_scope_keys()
     if sk not in allowed:
-        return None, app._json_error("허용되지 않은 scope_key 입니다 (등록된 datasource 또는 'common').", 400)
+        return None, app._json_error("허용되지 않은 scope_key 입니다 (등록된 제품 또는 'common' 공용).", 400)
     return sk, None
 
 def _metadata_valid_role_keys() -> set[str]:
@@ -2386,19 +2557,72 @@ def admin_delete_sample(sample_id: int, request: Request, account=Depends(app.re
                         resource_id=int(sample_id), change_json={"scope_key": scope_key})
     return JSONResponse({"ok": True, "id": int(sample_id), "deleted": int(affected)})
 
+@router.get("/api/admin/metadata/scopes")
+def admin_metadata_scopes(request: Request, account=Depends(app.get_current_account)) -> JSONResponse:
+    """메타데이터 콘솔의 스코프 선택 옵션 — **제품 목록** + 공용(common). (metadata-product-scope)
+
+    종전 콘솔은 `/api/admin/datasources` 로 스코프 옵션을 채워 관리자에게 데이터소스를 고르게 했다.
+    사용자·메타데이터 관리자의 작업 범위 인식 단위는 제품이므로 본 엔드포인트가 그 축을 제공한다.
+    응답 항목의 `database_count` 는 그 제품의 접근DB 수(부트스트랩 골격 대상 규모 힌트).
+    RBAC: 세션 계정이면 조회 가능(제품 이름·키는 작업 화면 제품 선택기에도 이미 노출되는 정보).
+    """
+    scopes = [{
+        "scope_key": "common",
+        "product_id": 0,
+        "product_key": "",
+        "name": "공용 (모든 제품)",
+        "database_count": 0,
+        "is_common": True,
+    }]
+    for e in _product_scope_catalog():
+        scopes.append({
+            "scope_key": e["scope_key"],
+            "product_id": e["product_id"],
+            "product_key": e["product_key"],
+            "name": e["name"],
+            "database_count": len(e.get("databases") or []),
+            "is_common": False,
+        })
+    return JSONResponse({"scopes": scopes})
+
 @router.get("/api/admin/metadata/bootstrap/schemas")
 def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
-    """선택 datasource 의 골격 단위(unit) 목록. 권한 kb.ingest.manual. ?datasource=<key>.
+    """선택 **제품**의 골격 단위(unit) 목록. 권한 metadata.table.manage. ?scope_key=product.<key>
 
-    엔진별 unit 차이(metadata-table-desc-fix):
-      - **MySQL**: schema == database. information_schema/mysql/performance_schema/sys 시스템
-        스키마 + __invalid_default_db__ 센티넬을 제외한 schema 목록.
-      - **MSSQL**: server > database > schema 4계층. unit = **database**(list_server_databases,
-        master/model/msdb/tempdb 제외). 과거엔 database 미선택 시 중립 tempdb 에 연결되어 임시테이블
-        (#A0A50030 …)이 골격으로 잡혀 "테이블 명칭이 모두 올바르지 않은 값"으로 보였다.
-    응답: {schemas:[...], datasource, engine, unit_kind:"database"|"schema"} — 프론트가 unit_kind 로 라벨 분기.
+    metadata-product-scope: 단위 목록의 1차 원천은 그 제품의 **접근DB**(`WebProductDatabases`)다 —
+    서버 전체 스키마를 나열하던 종전 datasource 축은 제품 경계 밖 DB 까지 콘솔에 노출했고(공유
+    datasource 에서 특히), 관리자가 어느 DB 가 자기 제품 것인지 알 수 없었다. 접근DB 가 선언되지
+    않은 제품만 라이브 introspection 으로 폴백한다(엔진별 unit 차이는 아래 그대로).
+
+    폴백 시 엔진별 unit(metadata-table-desc-fix):
+      - **MySQL**: schema == database. 시스템 스키마 + __invalid_default_db__ 센티넬 제외.
+      - **MSSQL**: server > database > schema 4계층. unit = **database**(시스템 DB 제외).
+    응답: {schemas:[...], scope_key, datasource, engine, unit_kind:"database"|"schema", source:"product-databases"|"introspect"}
     """
-    ds, scope_key, derr = app._bootstrap_resolve_datasource(request.query_params.get("datasource") or "")
+    scope_raw = str(request.query_params.get("scope_key") or request.query_params.get("scope") or "").strip()
+    if not scope_raw:
+        return app._json_error("scope_key(제품) 는 필수입니다.", 400)
+    _entry = _resolve_scope_product(scope_raw)
+    if _entry is None:
+        # 'common' 또는 미등록/비활성 제품 — 골격 대상이 아니다(축이 제품이므로 404 가 정확한 의미).
+        return app._json_error("해당 제품을 찾을 수 없거나 골격 대상이 아닙니다.", 404)
+    if not _entry.get("databases_ok", True):
+        return app._json_error("제품 접근 DB 목록을 조회할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
+    # 1차: 제품 접근DB — 라이브 연결 없이 즉답(대규모 MSSQL 서버 목록 조회 회피).
+    units_declared = _scope_database_units(scope_raw)
+    if units_declared:
+        return JSONResponse({
+            "schemas": [u["schema"] for u in units_declared],
+            "scope_key": str(scope_raw or "").strip().lower(),
+            "datasource": "",
+            "engine": "",
+            "unit_kind": "database",
+            "source": "product-databases",
+        })
+    # 2차 폴백: 접근DB 미선언 제품 → 제품의 primary datasource 를 introspect.
+    #   호출자 지정 `datasource` override 는 제거(제품 경계 우회 차단, codex review P1).
+    ds_key = _scope_datasource_for_schema(scope_raw, "")
+    ds, scope_key, derr = app._bootstrap_resolve_datasource(ds_key)
     if derr:
         return derr
     from shared import config as _cfg
@@ -2434,21 +2658,41 @@ def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permis
             _cfg.set_active_datasource(None)  # 요청 컨텍스트 dialect 리셋
         except Exception:
             pass
-    return JSONResponse({"schemas": units, "datasource": scope_key, "engine": engine, "unit_kind": unit_kind})
+    return JSONResponse({"schemas": units, "scope_key": str(scope_raw or "").strip().lower(),
+                         "datasource": scope_key, "engine": engine, "unit_kind": unit_kind,
+                         "source": "introspect"})
 
 @router.post("/api/admin/metadata/bootstrap")
 async def admin_bootstrap(request: Request, account=Depends(app.require_permission('metadata.table.create', 'metadata.table.update'))) -> JSONResponse:
-    """선택 datasource+schema 의 테이블/컬럼 골격(미영속). 권한 kb.ingest.manual. body: datasource, schema.
+    """선택 **제품**의 접근DB(schema) 테이블/컬럼 골격(미영속). 권한 metadata.table.*. body: scope_key, schema.
+
+    metadata-product-scope: 물리 datasource 는 body 의 `scope_key`(제품) + `schema` 로 **서버가만**
+    해소한다(`_scope_datasource_for_schema`). 호출자 지정 `datasource` override 는 제거했다 —
+    override 를 남기면 임의 제품 scope 로 아무 datasource/schema 나 introspect 할 수 있어 제품
+    경계가 무력화된다(codex review P1).
 
     골격은 저장하지 않는다 — UI 가 설명 빈칸을 prefill, 사람이 채워 tables/columns POST(source='bootstrap')
     로 저장한다. dialect-aware: MSSQL 은 set_active_datasource(engine=) 로 활성화 후 dialect.describe_columns
     경유(MySQL 백틱 하드코딩 load_schema_metadata 우회). 자동 1행 샘플/list_indexes 호출 안 함(부하/PII).
     """
     data = await _metadata_read_json(request)
-    ds, scope_key, derr = app._bootstrap_resolve_datasource(data.get("datasource") or "")
+    _bs_schema = str(data.get("schema") or "").strip()
+    _bs_scope = str(data.get("scope_key") or "").strip()
+    if not _bs_scope:
+        return app._json_error("scope_key(제품) 는 필수입니다.", 400)
+    _bs_entry = _resolve_scope_product(_bs_scope)
+    if _bs_entry is None:
+        return app._json_error("해당 제품을 찾을 수 없거나 골격 대상이 아닙니다.", 404)
+    if not _bs_entry.get("databases_ok", True):
+        return app._json_error("제품 접근 DB 목록을 조회할 수 없습니다. 잠시 후 다시 시도하세요.", 503)
+    _bs_ds_key = _scope_datasource_for_schema(_bs_scope, _bs_schema)
+    if not _bs_ds_key:
+        # 제품은 실재하는데 해소 실패 = 그 제품의 접근DB allowlist 밖 schema (제품 경계 강제).
+        return app._json_error("해당 제품의 접근 DB 가 아닙니다.", 404)
+    ds, scope_key, derr = app._bootstrap_resolve_datasource(_bs_ds_key)
     if derr:
         return derr
-    schema_name = str(data.get("schema") or "").strip()
+    schema_name = _bs_schema
     if not schema_name:
         return app._json_error("schema 는 필수입니다.", 400)
     if len(schema_name) > app._METADATA_FIELD_CAPS["schema_name"]:
@@ -2472,12 +2716,17 @@ async def admin_bootstrap(request: Request, account=Depends(app.require_permissi
             # SQL 스키마 테이블을 평탄 수집한다(저장 schema_name = database).
             dialect = _dialects.active()
             sys_db = {str(n).strip().lower() for n in dialect.system_databases()}
-            db_units = {str(n) for n in (_db.list_server_databases(ds) or [])
-                        if str(n).strip().lower() not in sys_db}
-            if safe_schema not in db_units:
+            # metadata-product-scope: allowlist 검증은 **대소문자 무관**, 연결은 **서버 원본 케이스**로.
+            #   제품 접근DB(WebProductDatabases.SchemaName)는 §58 lower 계약으로 저장되는데 서버
+            #   catalog 는 원본 케이스(`FHGame1`)를 유지한다 — 케이스-정확 비교면 정상 DB 가 404 로
+            #   거부된다(codex review P2). `_metadata_introspect_table` 의 lower→원본 매핑과 동형.
+            db_map = {str(n).strip().lower(): str(n) for n in (_db.list_server_databases(ds) or [])
+                      if str(n).strip().lower() not in sys_db}
+            real_db = db_map.get(str(safe_schema).strip().lower())
+            if not real_db:
                 return app._json_error("알 수 없는 database 이거나 접근할 수 없습니다.", 404)
-            conn = _db.connect(datasource=ds, database=safe_schema, autocommit=True)
-            tables = app._bootstrap_collect_skeleton_mssql(conn, _dialects, safe_schema)
+            conn = _db.connect(datasource=ds, database=real_db, autocommit=True)
+            tables = app._bootstrap_collect_skeleton_mssql(conn, _dialects, real_db)
         else:
             conn = _db.connect(datasource=ds, autocommit=True)
             known_schemas = set(_schema.load_known_schemas(conn) or [])
@@ -2537,9 +2786,13 @@ async def admin_metadata_suggest(sub: str, request: Request) -> JSONResponse:
             return app._json_error(f"자동완성하려면 먼저 '{req_k}' 를 입력하세요.", 400)
     grounding = None
     if sub in ("tables", "columns"):
-        grounding = _metadata_introspect_table(
-            str(data.get("datasource") or ""), fields.get("schema_name") or "", fields.get("table_name") or ""
-        )
+        # metadata-product-scope: 프론트는 제품 스코프만 보낸다 — 물리 datasource 는 (제품, 접근DB)
+        # 바인딩에서 **서버가만** 해소한다. 호출자 지정 override 는 제거(부트스트랩과 동일 근거 —
+        # 임의 제품 scope 로 아무 datasource 나 introspect 하는 경계 우회 차단, codex review P1).
+        # 해소 실패(경계 밖 schema·카탈로그 미가용)는 ungrounded 로 degrade — 일반 설명으로 진행.
+        _sch = fields.get("schema_name") or ""
+        _ds_key = _scope_datasource_for_schema(data.get("scope_key"), _sch)
+        grounding = _metadata_introspect_table(_ds_key, _sch, fields.get("table_name") or "")
     messages = _metadata_suggest_messages(sub, fields, grounding)
     text, meta, lerr = await app._metadata_llm_complete(messages, task="summary")
     if lerr:

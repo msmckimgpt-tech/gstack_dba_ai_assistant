@@ -2636,7 +2636,14 @@ def _glossary_autopropose(conversation_id: str, user_message: str, answer: str, 
         from shared.db import _pg_available, _pg_connect
         if not _pg_available():
             return
-        scope_key = _cfg.get_active_datasource() or "common"
+        # metadata-product-scope: 자율수집분도 **제품** 스코프에 귀속한다 — 콘솔 검토 큐/등록분이
+        # 같은 축이라야 사람이 제품 단위로 검수하고, 그 제품의 모든 datasource 질의에 주입된다.
+        # 제품 미지정 대화(제품 없는 1:1/CLI)면 'common'(공용 사전). 단 **제품이 있는데 해소 실패면
+        # 중단** — 'common' 으로 쓰면 그 제품 전용 용어가 전 제품에 퍼진다(codex review P1).
+        if _cfg.is_product_scope_unresolved():
+            _log("glossary_autopropose_skip_unresolved_product", {"cid": conversation_id})
+            return
+        scope_key = _cfg.get_active_product_scope() or "common"
         pg = _pg_connect(autocommit=False)
         try:
             for s in suggestions:
@@ -2707,7 +2714,12 @@ def _enum_autopropose(conversation_id: str, user_message: str, answer: str, run_
         from shared.db import _pg_available, _pg_connect
         if not _pg_available():
             return
-        scope_key = _cfg.get_active_datasource() or "common"
+        # metadata-product-scope: 자율수집분도 **제품** 스코프에 귀속(용어 자율등록과 동형).
+        # 제품 해소 실패 시 중단 — 'common' 폴백은 cross-product 누출(codex review P1).
+        if _cfg.is_product_scope_unresolved():
+            _log("enum_autopropose_skip_unresolved_product", {"cid": conversation_id})
+            return
+        scope_key = _cfg.get_active_product_scope() or "common"
         # schema-grounding 게이트: LLM 이 환각한 (schema,table)(예: auth scope 에 없는 dbLog.Currency)
         # 을 활성 datasource 의 실제 카탈로그와 대조해 등록·큐잉 전에 차단. 카탈로그 미가용 → fail-open.
         grounding_on = getattr(_cfg, "AGENT_ENUM_SCHEMA_GROUNDING", True)
@@ -2779,9 +2791,13 @@ def run_post_answer_curation(payload: "dict[str, Any] | None") -> None:
     _prev_ds = None
     _prev_run = None
     _prev_conv = None
+    _prev_product = None
+    _restore_product = False
     try:
         _prev_ds = (cfg.get_active_datasource(), cfg.get_active_datasource_engine(),
                     cfg.get_active_default_db())
+        _prev_product = (cfg.get_active_product_scope(), cfg.is_product_scope_unresolved())
+        _restore_product = True
         _prev_run = getattr(cfg, "CURRENT_RUN_ID", "")
         _prev_conv = getattr(cfg, "MEMORY_CONVERSATION_ID", "")
         run_id = str(payload.get("run_id") or "")
@@ -2790,6 +2806,9 @@ def run_post_answer_curation(payload: "dict[str, Any] | None") -> None:
             engine=payload.get("datasource_engine"),
             default_db=payload.get("datasource_default_db"),
         )
+        # metadata-product-scope: 자율수집 귀속 축 복원(캡처된 제품 스코프 + 미해소 신호).
+        cfg.set_active_product(payload.get("product_scope_key"),
+                               unresolved=bool(payload.get("product_scope_unresolved")))
         cfg.CURRENT_RUN_ID = run_id
         cfg.MEMORY_CONVERSATION_ID = cid
         # 삭제 재검증(qa C2 + backend B1) — conn 인자는 소비처가 무시하므로 None.
@@ -2812,6 +2831,8 @@ def run_post_answer_curation(payload: "dict[str, Any] | None") -> None:
         try:
             if _prev_ds is not None:
                 cfg.set_active_datasource(_prev_ds[0], engine=_prev_ds[1], default_db=_prev_ds[2])
+            if _restore_product:
+                cfg.set_active_product(_prev_product[0], unresolved=_prev_product[1])
             if _prev_run is not None:
                 cfg.CURRENT_RUN_ID = _prev_run
             if _prev_conv is not None:
@@ -3892,6 +3913,37 @@ class DatasourceResolutionError(Exception):
     """product 에 명시 datasource 바인딩이 있으나 해석 불가(미등록 키) — fail-closed 신호."""
 
 
+def _resolve_product_scope_key(mem_conn, product_id):
+    """product_id → (제품 스코프 키 | None, unresolved:bool). metadata-product-scope 의 scope 축.
+
+    ProductKey 는 제품의 안정 식별자(WebProducts.ProductKey)이며 제품 rename(Name) 과 무관하다.
+
+    **두 실패를 구별한다 (codex review P1)**:
+      - `(None, False)` — 제품 미지정(제품 없는 대화/CLI). 정상 상태.
+      - `(None, True)`  — 제품이 있는데 조회 실패/미등록. 읽기(주입)는 fail-open('common' 공용
+        사전만)이지만, **자율수집 쓰기는 이때 중단**해야 한다 — 'common' 으로 폴백하면 특정 제품의
+        용어/ENUM 제안이 전 제품에 퍼진다(cross-product isolation 위반).
+    """
+    if not product_id or int(product_id) <= 0:
+        return None, False
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute("SELECT ProductKey FROM WebProducts WHERE Id=%s LIMIT 1", (int(product_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    except Exception as exc:
+        logger.warning("resolve_product_scope_key_failed product_id=%s err=%r — 주입은 common, "
+                       "자율수집은 중단(unresolved)", product_id, exc)
+        return None, True
+    if not row:
+        return None, True
+    key = row[0] if not isinstance(row, dict) else row.get("ProductKey")
+    scope = cfg.product_scope_key(key)
+    return scope, (scope is None)
+
+
 def _resolve_product_datasource(mem_conn, product_id):
     """product 에 바인딩된 datasource 좌표를 해석한다 (None=기본 단일 MySQL).
 
@@ -4362,6 +4414,7 @@ def run_agent(
         # 다른 request-scoped ContextVar 와 동일 위치(run_agent finally)에서 — _run_agent_core
         # 의 평문 해제는 예외 시 누락돼 ask-worker 스레드 재사용 stale 위험(REV-20260610-P5 M1).
         cfg.set_active_datasource(None)
+        cfg.set_active_product(None)  # metadata-product-scope: KB 메타데이터 제품 스코프 해제
         cfg.set_active_conversation_id(None)  # feature-0022: scratch 대화 컨텍스트 해제
         # feature-0019 branch-chain-race: run-scoped 브랜치 체인 커서를 예외-안전하게 해제
         # (예외 escape 시에도 워커 스레드에 stale 커서가 남아 다음 run/타 대화를 오염시키지 않게 — §18.8 리뷰 [1]).
@@ -4910,6 +4963,12 @@ def _run_agent_core(
         # TASK-0205 B1: effective default_db(제품별 override 반영) 를 cross-DB 가드에 주입.
         default_db=(_ds.get("default_db") if _ds else None),
     )
+    # metadata-product-scope: KB 메타데이터(용어사전·ENUM·테이블/컬럼 설명·샘플쿼리)의 스코프 축은
+    # datasource 가 아니라 **제품**이다. datasource 는 run 중 tool 호출마다 전환되지만(멀티 DS 라우터)
+    # 제품은 run 전체에 고정이므로, 여기서 한 번 set 하면 어느 DS 로 라우팅되든 같은 제품 사전이
+    # 주입된다. 해제는 아래 finally 의 set_active_datasource(None) 와 같은 자리.
+    _prod_scope, _prod_unresolved = _resolve_product_scope_key(mem_conn, product_id)
+    cfg.set_active_product(_prod_scope, unresolved=_prod_unresolved)
     # feature-0022: scratch 도구가 대화별 작업공간 스키마를 고르도록 활성 대화 id 를 ContextVar 에 set.
     # (tool 핸들러 시그니처는 (conn,args) 라 인자로 못 받음 — set_active_datasource 와 동일 패턴.)
     # 해제는 아래 finally 에서 set_active_datasource(None) 와 함께 예외 안전하게 수행.
@@ -5672,6 +5731,11 @@ def _run_agent_core(
                     "datasource_key": cfg.get_active_datasource(),
                     "datasource_engine": cfg.get_active_datasource_engine(),
                     "datasource_default_db": cfg.get_active_default_db(),
+                    # metadata-product-scope: 자율수집(용어/ENUM)의 귀속 축. datasource 와 같은
+                    # 이유로 명시 캡처 — 미캡처 시 deferred 실행에서 'common' 으로 오염돼
+                    # 제품 검토 큐에 안 잡힌다.
+                    "product_scope_key": cfg.get_active_product_scope(),
+                    "product_scope_unresolved": cfg.is_product_scope_unresolved(),
                 }
                 if defer_terminal_status:
                     # worker 경로 — ask-worker 가 finish_ask_job(터미널 전이) 후 실행(§18.8
@@ -6031,6 +6095,7 @@ def _run_agent_core(
         pass
     # 멀티 datasource(P5): run-wide datasource·dialect 컨텍스트 해제 (스레드 재사용 stale 방지).
     cfg.set_active_datasource(None)
+    cfg.set_active_product(None)  # metadata-product-scope: KB 메타데이터 제품 스코프 해제
     cfg.set_active_conversation_id(None)  # feature-0022: scratch 대화 컨텍스트 해제
     cfg.CURRENT_RUN_ID = ""
     # feature-0019 branch-chain-race: run-scoped 브랜치 체인 커서 해제는 예외-안전을 위해 run_agent
