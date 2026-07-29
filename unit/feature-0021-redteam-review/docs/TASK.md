@@ -176,3 +176,32 @@ CHG-20260728-0002 · REVIEW.md REV-20260728T093528-answer-origin-realign.
       확인. 답변 뉘앙스의 라이브 교정 효과는 표본 대기(TEST.md §4 미커버).
 - [ ] (후속) realign 관측치의 관리 콘솔 노출 — 현재는 `_rt_meta` + stderr 만. DB 컬럼 신설이
       필요해 별도 cycle 로 분리(본 cycle 은 마이그레이션 없음 원칙 유지).
+
+## 20260729T1230-review-rounds-ledger — 회차 단계 원장 + 대화 단위 콘솔 (2026-07-29)
+사용자 리포트: "'감사 > AI 운영 현황 > 추론' 에서 자가 적대 리뷰 활동은 **각 대화의 마지막
+리뷰사항만** 기록되는 것으로 확인된다. 자가검증·재검증 **회차 단계를 모두** 기록하고, 스크롤
+폭증을 막게 요소를 **대화 단위로 격리**하고 각 단계를 **접기/펼치기** 가능하게, 대화는 최근
+순(desc)·대화 내 리뷰는 회차 순(asc)으로 정렬하라."
+
+원인 두 겹: (a) `orchestrate_review` 가 루프 종료 시 **요약 1행만** INSERT — `findings` 는
+최초 리뷰, `verify_findings` 는 마지막 재검증이라 중간 회차가 어디에도 남지 않았다.
+(b) 콘솔이 리뷰를 id DESC **flat 목록**으로만 내려 같은 대화의 리뷰가 흩어지고 페이징 경계에서
+쪼개졌다. 상세: FUNCTION.md §7.5 · MODIFY.md CHG-20260729-0004 · REVIEW.md REV-20260729T123000.
+- [x] 회차 원장 테이블 신설 — alembic `0048_redteam_review_rounds`(신규 테이블 + GRANT,
+      expand-safe) + `agent_runtime_schema.sql` 부트스트랩 미러(0045 컬럼 누락도 함께 정합)
+- [x] `redteam.py` — `rounds_ledger` 누적(0회차 자가검증 → N회차 수정 → N회차 재검증) +
+      폐기 라운드(`revise_failed`/`no_progress`/`revise_collapsed`/`verify_error`/`unverified`)
+      도 note 로 보존 + `record_review(..., rounds=)` 요약 커밋 **후** 별도 트랜잭션 배치 INSERT
+- [x] 답변 본문 비저장 — 회차별 길이(`answer_chars`)만 기록 (`/notes` 의 "본문 비반환" 규약 정합)
+- [x] `admin_reasoning.py` — 페이징 단위를 **대화**로 전환(`_query_conversation_page`):
+      대화 keyset = MAX(id) DESC, 대화 내부 id ASC, 대화당 상한 20건(`capped` 표시) +
+      `_attach_rounds` 로 회차 원장 동봉(0048 미적용 이미지는 `rounds_available:false` 폴백)
+- [x] `admin.js` — 대화 격리 컨테이너 → 리뷰(run) → 회차 단계의 **3계층 접이식**(`<details>`),
+      기본 접힘(최근 대화 1개만 펼침) + "대화 더 보기" 는 그룹 append(펼침 상태 보존)
+- [x] `styles.css` — 대화 그룹/회차 단계 스타일(단계별 좌측 색 밴드: 통과/결함/폐기)
+- [x] 단위 테스트 15건 추가(회차 원장 8 · 콘솔 그룹 페이징 7) — 대상 파일 145건 PASS·ruff clean
+- [x] PB-0008 실 Windows 브라우저 시각검증 (visual_verification_scope: always) — 격리 검증
+      컨테이너 + 실 Chrome. 검증 중 대화 라벨 중복(같은 分 대화 구분 불가) 발견·교정
+- [x] codex 적대 리뷰(REV-20260729T134100) — P1 1건(원장 INSERT 원자성: autocommit 커넥션에서
+      executemany 는 행별 커밋 → 단일 multi-VALUES statement) + P2 3건 수정, 1건 근거 기록 후 수용
+- [ ] verify-completion PASS → 커밋 → PR → 배포 → 라이브 회차 기록 확인 (POST-DEPLOY)

@@ -555,3 +555,63 @@ Run 3 의 "과교정 2/3 → 1/4" 는 **배포 전** 컨테이너에 신규 프�
   수정 전 붕괴가 일어나던 정확히 그 지점이다.
 - **안 보임**: 과교정 잔여(1/4)는 이 단발 관측으로 재추정되지 않는다. 분포는 트래픽 누적 후
   `redteam_reviews` 로 본다(§4 미커버).
+
+## REV-20260729T134100-ai-root-feature-0021-review-rounds [CODEX:review]
+- Related TASK: feature-0021-redteam-review (TASK-20260729T123000-review-rounds-ledger)
+- Related Change: CHG-20260729-0004
+- Trigger: 코드 변경 cycle (alembic 신규 테이블 + agent 쓰기 경로 + 콘솔 조회/렌더). §18.8
+  적대 패널 요구 vs 세션 지시("요청 없이 Agent 호출 금지") 상충 → **사용자 결정: codex 리뷰**.
+- Reviewer: OpenAI Codex CLI (`codex exec -s read-only`, `model_reasoning_effort=high`),
+  입력 = `git diff main -- unit/feature-0002-agent-core/{src,alembic} unit/feature-0003-agent-web-ui/src`
+- Timestamp: 2026-07-29T13:41:00+0900
+- Verdict: PASS (P1 1건 · P2 4건 제기 → P1 수정 완료, P2 3건 수정 · 1건 근거 기록 후 수용)
+- Human Approval Needed: no
+
+### [P1] 회차 원장 INSERT 가 원자적이지 않음 — **수정함**
+Codex: "`executemany()+commit()` 을 별도 트랜잭션으로 가정하지만
+`shared/db.py:_pg_connect` 는 **autocommit=True** 연결을 반환한다. 후속 행 실패 시 앞선
+round 만 커밋되어 원장이 부분 저장되고 `rollback()` 도 복구하지 못한다."
+
+**검증 결과 사실**. `_pg_connect(autocommit=True)` 가 기본값이고 `_get_pg_runtime_conn` 이
+그대로 쓴다. 내 코드는 "요약 커밋 → 별도 트랜잭션으로 원장" 을 의도했지만, autocommit 에서
+`executemany` 는 행마다 커밋이라 중간 실패 시 **감사 원장이 조용히 불완전**해진다. 이건 이
+feature 가 반복해서 경계해온 실패 유형(관측 데이터가 사실을 왜곡)과 같은 계열이다.
+
+수정: 다건 회차를 **단일 multi-VALUES statement** 로 보낸다. autocommit 에서도 문 하나는
+all-or-nothing 이라 "전부 남거나 / 요약만 남거나" 두 상태만 존재한다. 회귀 가드로
+`test_insert_review_rounds_is_single_statement`(executemany 호출 시 실패)를 추가했다.
+> `autocommit=False` 로 여는 대안은 택하지 않았다 — 같은 커넥션에서 요약 행까지 트랜잭션에
+> 묶이면, 원장 실패가 **요약 손실로 번진다**(현 폴백 설계의 반대). 문 단위 원자성이면 충분하다.
+
+### [P2] 빈 문자열 conversation_id 누락 — **수정함**
+Q1 은 `COALESCE(conversation_id,'')` 로 NULL 과 `''` 를 한 그룹으로 묶는데, Q2 는 `''` 를
+`IS NULL` 로만 조회해 그 행이 items 에서 빠졌다. 그룹은 나오는데 내용이 비어
+`returned_count`/`capped` 가 사실과 어긋난다. Q2 조건을
+`conversation_id IS NULL OR conversation_id = ''` 로 정합화 +
+`test_conversation_page_covers_blank_conversation_ids` 추가.
+
+### [P2] 회차 노출량/페이로드 상한 부재 — **수정함**
+중간 회차 전부를 내려주면 하드 백스톱(50 라운드 ≈ 101 단계) 리뷰에서 응답이 수백 KB 로
+부푼다. 리뷰당 회차 상한 `_PER_REVIEW_ROUND_CAP=40`(실측 꼬리 14 라운드 ≈ 29 단계를 덮음) +
+초과 시 `rounds_truncated` 표시 + 콘솔 안내 1줄. 무언의 절단은 만들지 않았다.
+> 노출 **성격**은 바뀌지 않는다: findings 는 이미 요약 행(`findings`/`verify_findings`)으로
+> 같은 권한(`console.reasoning.read`)에 노출 중이고, 리뷰어 산출물은
+> `_sanitize_findings` 가 claim 500 / evidence 500 / fix_hint 300 · 최대 5건으로 자른다.
+> 답변 본문은 저장하지 않는다(길이만). 늘어난 것은 **분량**이지 새로운 종류의 데이터가 아니다.
+
+### [P2] 원장 무결성 제약 부족 — **부분 수정**
+`phase` 허용값 + 음수 금지 CHECK 제약을 alembic 0048 과 부트스트랩 스키마 양쪽에 추가했다.
+`(review_id, round_index, phase)` UNIQUE 는 **의도적으로 넣지 않았다** — 한 라운드에 같은
+phase 를 두 번 기록하는 확장(수정 재시도 이력 등)을 스키마가 미리 막게 되기 때문이다. 현
+코드 경로는 라운드당 phase 1회다. `ON DELETE CASCADE` 는 유지한다: 요약 행이 사라진 회차
+원장은 고아 데이터이고, 요약 행을 지우는 경로는 alembic downgrade(테이블 DROP)뿐이다.
+
+### [P2] 페이지마다 전체 집계 비용 — **수용(근거 기록)**
+`GROUP BY + MAX(id)` 는 `ix_redteam_reviews_conversation (conversation_id, id DESC)` 로
+index-only scan 이 가능하나, 대화 수에 선형인 것은 사실이다. 현 규모(7d 71건 / 24h 18건)에서
+측정 가능한 부담이 아니고, 대안(대화 요약 테이블 유지)은 쓰기 경로에 새 정합 부담을 만든다.
+누적 후 재평가한다 — 관측 지표는 `/api/admin/reasoning/redteam` 응답 시간과 PG
+`pg_stat_statements` 의 해당 쿼리 평균이다.
+
+### Codex 가 확인한 것 (인용)
+> "SQL injection 은 확인되지 않았고, 신규 UI 값도 대부분 `esc()` 를 거친다."

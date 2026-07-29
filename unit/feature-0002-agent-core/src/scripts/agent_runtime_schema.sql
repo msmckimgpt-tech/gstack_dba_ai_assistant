@@ -553,10 +553,48 @@ CREATE TABLE IF NOT EXISTS agent_runtime.redteam_reviews (
     rederive_applied     BOOLEAN NOT NULL DEFAULT FALSE,
     rederive_tool_rounds INTEGER NOT NULL DEFAULT 0,
     rederive_axis        VARCHAR(64),
+    -- feature-0021 반복 수정 수렴 관측치 (0045 migration 미러).
+    verify_findings        JSONB,
+    unresolved_block_count INTEGER NOT NULL DEFAULT 0,
+    revision_rounds        INTEGER NOT NULL DEFAULT 0,
+    stop_reason            VARCHAR(32),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_redteam_reviews_conversation
     ON agent_runtime.redteam_reviews (conversation_id, id DESC);
+
+-- 자가검증/재검증 **회차 단계 원장** (0048 migration 미러). 요약 행(redteam_reviews)이
+-- 최초 리뷰 + 마지막 재검증만 담는 것과 달리, 여기에는 라운드마다 무엇을 지적했고 어떤
+-- 방식으로 수정했는지가 전부 append 된다. 콘솔 '감사 > AI 운영 현황 > 추론' 이 회차
+-- 오름차순(round_index, id)으로 표시한다. 답변 본문은 저장하지 않는다(길이만).
+CREATE TABLE IF NOT EXISTS agent_runtime.redteam_review_rounds (
+    id              BIGSERIAL PRIMARY KEY,
+    review_id       BIGINT      NOT NULL
+                    REFERENCES agent_runtime.redteam_reviews (id) ON DELETE CASCADE,
+    conversation_id TEXT,
+    run_id          TEXT,
+    round_index     INTEGER     NOT NULL DEFAULT 0,   -- 0=최초 자가검증, 1..N=N회차
+    phase           VARCHAR(16) NOT NULL,             -- review | revise | verify
+    verdict         VARCHAR(16),
+    findings        JSONB,
+    block_count     INTEGER     NOT NULL DEFAULT 0,
+    warn_count      INTEGER     NOT NULL DEFAULT 0,
+    revise_method   VARCHAR(32),
+    revise_axis     VARCHAR(64),
+    tool_rounds     INTEGER     NOT NULL DEFAULT 0,
+    answer_chars    INTEGER,
+    note            VARCHAR(64),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_redteam_rounds_phase
+        CHECK (phase IN ('review', 'revise', 'verify')),
+    CONSTRAINT ck_redteam_rounds_nonneg
+        CHECK (round_index >= 0 AND block_count >= 0 AND warn_count >= 0
+               AND tool_rounds >= 0 AND (answer_chars IS NULL OR answer_chars >= 0))
+);
+CREATE INDEX IF NOT EXISTS ix_redteam_review_rounds_review
+    ON agent_runtime.redteam_review_rounds (review_id, round_index, id);
+CREATE INDEX IF NOT EXISTS ix_redteam_review_rounds_conversation
+    ON agent_runtime.redteam_review_rounds (conversation_id, id);
 
 -- ============================================================================
 -- 6b. conversation_folders + folder_conversation_map — feature-0024 대화 폴더(프로젝트)

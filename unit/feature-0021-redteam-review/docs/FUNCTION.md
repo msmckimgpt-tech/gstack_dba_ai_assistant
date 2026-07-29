@@ -234,6 +234,33 @@ BLOCK). 리뷰어는 이전 턴을 보지 못하므로 구조적으로 알 수 �
 현재 발화만 보지만 그것은 **기존 동작**이라 회귀가 아니다. fresh-context 불변식과도 충돌하지
 않는다 — 전달되는 것은 assistant 의 추론 과정이 아니라 **사용자 자신의 요청문과 첨부**다.
 
+### 7.5 회차 단계 원장 (`redteam_review_rounds`, 2026-07-29)
+
+요약 행(`redteam_reviews`)은 한 답변(run)당 1행이라 **최초 리뷰**(`findings`)와 **마지막
+재검증**(`verify_findings`)만 담는다. 그 사이 회차 — 2회차 재검증이 무엇을 지적했고 3회차
+수정이 어떤 방식이었는지 — 는 어디에도 남지 않아, 관리 콘솔은 대화의 마지막 리뷰 사항만
+보여줄 수밖에 없었다. 신규 원장 테이블이 그 회차 전부를 보존한다.
+
+| `round_index` | `phase` | 내용 |
+|---|---|---|
+| 0 | `review` | 최초 자가 적대 리뷰 — verdict + findings |
+| N | `revise` | N회차 수정 — `revise_method`(rederive/rewrite) · `revise_axis` · `tool_rounds` · `answer_chars` |
+| N | `verify` | N회차 재검증 — verdict + findings |
+
+- **폐기 라운드도 남는다**: 채택되지 못한 수정(`revise_failed` / `no_progress` /
+  `revise_collapsed`)과 재검증 미수행(`unverified`) · 재검증 실패(`verify_error`)는 `note` 로
+  기록된다 — "왜 이 회차가 마지막인가" 가 요약의 `stop_reason`(§7.1)과 원장 양쪽에서 읽힌다.
+- **답변 본문 비저장**: 회차별로 길이(`answer_chars`)만 남긴다. `/api/admin/reasoning/notes`
+  의 "내용 비반환 · 목록 메타만" 최소 노출 규약과 같은 판단이며, findings 의 claim/evidence
+  는 리뷰어가 생성한 지적문이라 기존 노출 범위와 동일하다.
+- **쓰기 경로**: 라운드마다 PG 왕복을 만들지 않고 메모리에 누적했다가 종료 시 1회 배치
+  INSERT 한다. 요약 행을 **먼저 커밋**한 뒤 그 id 로 append 하므로, 원장 INSERT 가 실패해도
+  (0048 미적용 stale agent 이미지) 요약 기록은 회귀 없이 유지된다.
+- **읽기 경로 (콘솔)**: `/api/admin/reasoning/redteam` 이 페이징 단위를 **대화**로 바꿨다 —
+  대화 keyset = `MAX(id)` DESC(최근 대화 순), 대화 내부는 `id` ASC(진행 순), 대화당 상한
+  20건이며 초과분은 `capped` 로 표시한다. 각 리뷰에 회차 원장이 `rounds`(회차 asc)로 동봉되고,
+  원장이 없는 이전 기록은 `rounds_available:false` 로 기존 요약 타임라인에 폴백한다.
+
 ## 8. Edge Cases
 - 리뷰어가 findings 를 과잉 보고 → severity 게이트 (BLOCK 만 수정 유발) + 상한 5건 +
   over-engineering 경계 프롬프트.
@@ -318,9 +345,13 @@ BLOCK). 리뷰어는 이전 턴을 보지 못하므로 구조적으로 알 수 �
 - `redteam_reviews` 행: verdict/축별 findings 수/latency_ms/모델/수정 적용 여부 +
   `revision_rounds`(반복 라운드 수) · `stop_reason`(§7.1) · `unresolved_block_count`(전달 시점
   미해소 BLOCK) · `verify_findings`(마지막 재검증이 여전히 문제 삼은 항목).
-- 콘솔 "AI 추론" 탭: 최근 활동 + 판정 분포 + **'결함 잔존 전달 (7d)'** 통계 타일. 판정 카드
-  타임라인이 ③에 반복 라운드 수, ④에 미해소 BLOCK 수, ⑤에 "결함 잔존 상태로 전달 (사유)"를
-  표시하고, 미해소 지적 원문을 별도 블록으로 노출한다. reaper 삭제 건수는 stderr 로그.
+- `redteam_review_rounds` 행: 회차별 `(round_index, phase)` 판정·수정 방식·도구 라운드·
+  답변 길이·폐기 사유(§7.5). 회차 asc 정렬이 콘솔 표시 계약이다.
+- 콘솔 "AI 추론" 탭: 최근 활동 + 판정 분포 + **'결함 잔존 전달 (7d)'** 통계 타일. 활동 목록은
+  **대화 단위 컨테이너**(최근 대화 순)로 격리되고, 대화 → 리뷰(run) → 회차 단계의 3계층이
+  각각 접기/펼치기 된다(기본 접힘 — 스크롤 격리). 리뷰 카드의 요약 타임라인이 ③에 반복 라운드
+  수, ④에 미해소 BLOCK 수, ⑤에 "결함 잔존 상태로 전달 (사유)"를 표시하고, 그 아래 회차 목록이
+  자가검증·재검증 각 단계의 지적 원문을 진행 순서대로 노출한다. reaper 삭제 건수는 stderr 로그.
 - 사용자 화면: 반복 라운드가 activity("결함을 수정하는 중 N회차" / "수정본을 재검증하는 중
   N회차")로 실시간 노출되며, 결함이 남은 채 전달되면 답변 말미에 고지가 붙는다.
 

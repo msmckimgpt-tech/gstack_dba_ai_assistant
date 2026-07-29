@@ -1729,3 +1729,228 @@ def test_review_prompt_allows_continuation_after_earlier_turns():
     assert "ALREADY have been answered" in p
     assert "CONTINUATION" in p
     assert "nothing actionable" in p
+
+
+# ── 회차 단계 원장 (0048 redteam_review_rounds, 2026-07-29) ─────────────────
+# 배경: 요약 행은 `findings`(최초 리뷰)와 `verify_findings`(마지막 재검증)만 담아, 중간
+# 회차가 무엇을 지적했고 어떻게 수정됐는지가 어디에도 남지 않았다 — 관리 콘솔이 대화의
+# 마지막 리뷰 사항만 보여줄 수밖에 없던 원인. rounds_ledger 가 그 회차 전부를 보존한다.
+
+def _capture_record(monkeypatch):
+    """record_review 호출 kwargs 를 캡처(DB 미접속)."""
+    seen = {}
+    monkeypatch.setattr(redteam, "record_review", lambda **kw: seen.update(kw))
+    return seen
+
+
+def _round_keys(rounds):
+    return [(r["round_index"], r["phase"]) for r in rounds]
+
+
+def test_rounds_ledger_pass_records_initial_review_only(monkeypatch):
+    _settings(monkeypatch)
+    seen = _capture_record(monkeypatch)
+    monkeypatch.setattr(redteam, "run_review",
+                        lambda *a, **kw: {"verdict": "pass", "findings": []})
+    redteam.orchestrate_review(
+        question="q", draft_answer="draft", steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="normal", is_group=False)
+    rounds = seen["rounds"]
+    assert _round_keys(rounds) == [(0, "review")]
+    assert rounds[0]["verdict"] == "pass" and rounds[0]["answer_chars"] == len("draft")
+
+
+def test_rounds_ledger_records_every_revision_round(monkeypatch):
+    """2회 반복 수정 → 회차 원장에 review/revise/verify 가 진행 순서대로 전부 남는다."""
+    _settings(monkeypatch, REDTEAM_REVISE_UNTIL_RESOLVED=1, REDTEAM_MAX_REVISIONS=1)
+    seen = _capture_record(monkeypatch)
+    calls = {"review": 0, "revise": 0}
+
+    def fake_review(*a, **kw):
+        calls["review"] += 1
+        # find(revise) → verify1(revise) → verify2(pass)
+        return ({"verdict": "revise", "findings": [_block_finding()]}
+                if calls["review"] < 3 else {"verdict": "pass", "findings": []})
+
+    def fake_revise(instruction, draft=None):
+        calls["revise"] += 1
+        return f"revised-{calls['revise']}"
+
+    monkeypatch.setattr(redteam, "run_review", fake_review)
+    redteam.orchestrate_review(
+        question="q", draft_answer="draft", steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
+        revise_fn=fake_revise)
+    rounds = seen["rounds"]
+    assert _round_keys(rounds) == [
+        (0, "review"), (1, "revise"), (1, "verify"), (2, "revise"), (2, "verify")]
+    # 회차 asc 정렬 계약 — 콘솔이 그대로 표시한다.
+    assert [r["round_index"] for r in rounds] == sorted(r["round_index"] for r in rounds)
+    assert rounds[1]["revise_method"] == "rewrite"
+    assert rounds[2]["verdict"] == "revise" and rounds[2]["findings"]
+    assert rounds[4]["verdict"] == "pass"
+    # 요약 행의 revision_rounds 와 원장의 수정 회차 수가 일치한다(감사 정합).
+    assert seen["revision_rounds"] == len([r for r in rounds if r["phase"] == "revise"]) == 2
+
+
+def test_rounds_ledger_marks_discarded_no_progress_round(monkeypatch):
+    """무진전으로 폐기된 회차도 note 와 함께 남아 '왜 여기서 멈췄는지' 가 읽힌다."""
+    _settings(monkeypatch, REDTEAM_REVISE_UNTIL_RESOLVED=1)
+    seen = _capture_record(monkeypatch)
+    monkeypatch.setattr(redteam, "run_review",
+                        lambda *a, **kw: {"verdict": "revise", "findings": [_block_finding()]})
+    redteam.orchestrate_review(
+        question="q", draft_answer="draft", steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
+        revise_fn=lambda i, d=None: "draft")  # 직전과 동일 → no_progress
+    rounds = seen["rounds"]
+    assert _round_keys(rounds) == [(0, "review"), (1, "revise")]
+    assert rounds[1]["note"] == "no_progress"
+    assert seen["stop_reason"] == "no_progress"
+
+
+def test_rounds_ledger_records_rederive_method_and_axis(monkeypatch):
+    """도구 재추론으로 승격된 회차는 방식·축·도구 라운드가 원장에 남는다."""
+    _settings(monkeypatch)
+    seen = _capture_record(monkeypatch)
+    calls = {"review": 0}
+
+    def fake_review(*a, **kw):
+        calls["review"] += 1
+        return ({"verdict": "revise", "findings": [_block_finding("sql")]}
+                if calls["review"] == 1 else {"verdict": "pass", "findings": []})
+
+    monkeypatch.setattr(redteam, "run_review", fake_review)
+    redteam.orchestrate_review(
+        question="q", draft_answer="draft", steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
+        revise_fn=lambda i, d=None: "text-fallback",
+        rederive_fn=lambda i, d=None: {"text": "rederived", "new_steps": [],
+                                       "executed_sql": "", "tool_rounds": 2})
+    rounds = seen["rounds"]
+    revise_round = next(r for r in rounds if r["phase"] == "revise")
+    assert revise_round["revise_method"] == "rederive"
+    assert revise_round["revise_axis"] == "sql"
+    assert revise_round["tool_rounds"] == 2
+
+
+def test_insert_review_rounds_binds_expected_columns(monkeypatch):
+    """원장 INSERT 파라미터 매핑 — JSONB cast·severity 집계·문자열 절단."""
+    captured = {}
+
+    class _Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params):
+            captured["sql"] = sql
+            captured["params"] = params
+
+    class _PG:
+        def cursor(self):
+            return _Cur()
+
+        def commit(self):
+            captured["committed"] = True
+
+    redteam._insert_review_rounds(
+        _PG(), review_id=7, conversation_id="c", run_id="r",
+        rounds=[{"round_index": 1, "phase": "verify", "verdict": "revise",
+                 "findings": [_block_finding(), {"axis": "honesty", "severity": "WARN",
+                                                 "claim": "w", "evidence": "", "fix_hint": ""}],
+                 "answer_chars": 42, "note": "x" * 200}])
+    assert "redteam_review_rounds" in captured["sql"] and "%s::jsonb" in captured["sql"]
+    row = captured["params"]
+    assert row[0] == 7 and row[3] == 1 and row[4] == "verify" and row[5] == "revise"
+    assert row[7] == 1 and row[8] == 1          # block_count / warn_count
+    assert row[12] == 42                         # answer_chars
+    assert len(row[13]) == 64                    # note 절단
+    assert captured["committed"] is True
+
+
+def test_insert_review_rounds_is_single_statement(monkeypatch):
+    """다건 회차는 **단일 multi-VALUES statement** 로 나간다 (codex 리뷰 P1).
+
+    런타임 PG 커넥션은 autocommit=True 라 executemany 는 행마다 커밋된다 — 중간 실패 시
+    감사 원장이 조용히 부분 저장된다. 단일 statement 는 all-or-nothing 이다."""
+    captured = {}
+
+    class _Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params):
+            captured["sql"] = sql
+            captured["params"] = params
+
+        def executemany(self, sql, params):  # 회귀 가드 — 호출되면 실패
+            captured["executemany"] = True
+
+    class _PG:
+        def cursor(self):
+            return _Cur()
+
+        def commit(self):
+            pass
+
+    rounds = [{"round_index": i, "phase": "revise", "answer_chars": 10 + i} for i in range(3)]
+    redteam._insert_review_rounds(_PG(), review_id=9, conversation_id="c", run_id="r",
+                                  rounds=rounds)
+    assert "executemany" not in captured
+    assert captured["sql"].count("::jsonb") == 3       # VALUES 튜플 3개
+    assert len(captured["params"]) == 3 * 14           # 평탄화된 바인딩
+    assert captured["params"][0] == 9 and captured["params"][14] == 9
+
+
+def test_record_review_rounds_failure_keeps_summary(monkeypatch):
+    """원장 INSERT 가 실패해도(0048 미적용 stale 이미지) 요약 행 커밋은 유지된다."""
+    state = {"commits": 0, "rolled_back": False}
+
+    class _Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params=None):
+            state["last_sql"] = sql
+
+        def fetchone(self):
+            return (11,)
+
+    class _PG:
+        def cursor(self):
+            return _Cur()
+
+        def commit(self):
+            state["commits"] += 1
+
+        def rollback(self):
+            state["rolled_back"] = True
+
+        def close(self):
+            state["closed"] = True
+
+    import sys
+    import types
+    mod = types.ModuleType("modules.runtime_backend")
+    mod._get_pg_runtime_conn = lambda: _PG()
+    monkeypatch.setitem(sys.modules, "modules.runtime_backend", mod)
+
+    def _boom(*a, **kw):
+        raise RuntimeError("relation does not exist")
+
+    monkeypatch.setattr(redteam, "_insert_review_rounds", _boom)
+    redteam.record_review(
+        conversation_id="c", run_id="r", verdict="pass", findings=[], verify_verdict=None,
+        revision_applied=False, model="m", latency_ms=1, reasoning_level="normal",
+        is_group=False, rounds=[{"round_index": 0, "phase": "review"}])
+    assert state["commits"] == 1          # 요약 행은 커밋됨
+    assert state["rolled_back"] is True   # 원장만 롤백

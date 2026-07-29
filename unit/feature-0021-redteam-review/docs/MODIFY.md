@@ -496,3 +496,37 @@ source_of_truth: true
 - Impact: 제품 동작 무변경(검증 기록만). 라이브 데이터에는 유도 대화 1건의 턴이 추가됐다
   (검증 목적으로 생성한 전용 대화 — 기존 사용자 대화는 무변경).
 - Rollback Notes: 문서 되돌리기 외 없음.
+
+## CHG-20260729-0004
+- Date: 2026-07-29
+- Related Requirement: TASK-20260729T123000-review-rounds-ledger
+- Summary: 자가 적대 리뷰의 **회차 단계 전부**를 원장으로 보존하고, 관리 콘솔 '감사 > AI 운영
+  현황 > 추론' 을 **대화 단위 격리 + 3계층 접이식**으로 재구성했다.
+  - 이전에는 한 답변(run)당 요약 1행만 남아 `findings`(최초 리뷰)·`verify_findings`(마지막
+    재검증)만 관측 가능했다 — 2회차 재검증이 무엇을 지적했고 3회차 수정이 어떤 방식이었는지는
+    소실. 콘솔이 "각 대화의 마지막 리뷰만" 보여준 1차 원인.
+  - 신규 `agent_runtime.redteam_review_rounds` 에 `(round_index, phase)` = (0,'review') →
+    (N,'revise') → (N,'verify') 순서로 append. 채택되지 못한 폐기 라운드도 `note` 로 남겨
+    "왜 이 회차가 마지막인가" 가 원장에서 읽힌다.
+  - 콘솔 조회를 flat id DESC 에서 **대화 keyset 페이징**으로 전환: 대화는 최근 리뷰 순(desc),
+    대화 내부는 진행 순(asc). 대화당 상한 20건이며 초과분은 `capped` 로 표시(무언의 절단 금지).
+  - 답변 본문은 저장하지 않고 길이만 기록 — `/api/admin/reasoning/notes` 의 "내용 비반환,
+    목록 메타만" 최소 노출 규약과 동일 판단.
+- Files:
+  - feature-0002: `alembic/versions/20260729_0048_redteam_review_rounds.py`(신규),
+    `alembic/versions/MAX_MIGRATION.txt`, `src/scripts/agent_runtime_schema.sql`,
+    `src/modules/redteam.py`(`_insert_review_rounds` 신설 · `record_review(rounds=)` ·
+    `orchestrate_review` rounds_ledger), `tests/test_redteam.py`(+6)
+  - feature-0003: `src/routers/admin_reasoning.py`(`_query_conversation_page`·`_attach_rounds`·
+    `_row_to_item` 분리), `src/static/admin.js`(대화 그룹·회차 렌더), `src/static/styles.css`,
+    `tests/test_admin_reasoning.py`(+6)
+  - feature-0021: `docs/TASK.md`, `docs/FUNCTION.md`, `docs/MODIFY.md`, `docs/REVIEW.md`,
+    `docs/REPORT.md`, `docs/TEST.md`, `docs/test-runs.d/20260729T1230-review-rounds-ledger.md`
+- Impact: **비파괴 additive**. 요약 행(`redteam_reviews`) 스키마·기록 동작 무변경 —
+  기존 통계/타임라인 회귀 0. 회차 원장 INSERT 는 요약 커밋 **후** 별도 트랜잭션이라 실패해도
+  요약은 보존된다(0048 미적용 stale agent 이미지 폴백). 콘솔 응답은 `items` 를 유지한 채
+  `conversations`/`rounds`/`rounds_available`/`per_conversation_cap` 을 추가했고, 회차 원장이
+  없는 이전 기록은 기존 요약 타임라인으로 폴백한다. 답변 지연 영향 없음(라운드마다 PG 왕복을
+  만들지 않고 종료 시 1회 배치).
+- Rollback Notes: alembic `downgrade` = DROP TABLE (파생 관측 데이터 소실 허용, 0042/0043/0045
+  규약 동형). 코드 롤백만으로도 원장 기록이 멈출 뿐 답변 경로·요약 기록에는 영향이 없다.
