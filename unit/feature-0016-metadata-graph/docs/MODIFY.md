@@ -324,3 +324,8 @@ source_of_truth: true
 - 대상(코드 거주 feature-0003): `graph.css` · `graph-ctxmenu.js` · 신규 `tests/headless/test_detail_panel_typo.js` · 신규 Run fragment. 상세는 feature-0003 MODIFY `CHG-20260729T0930-detail-panel-typo`. 백엔드 0.
 - 변경: 근본 원인 = **부-액션 버튼 스타일 `.amgr-link` 를 목록 행의 주 라벨로 재사용**. 라이브 실측 주 라벨 10.5px vs 부가정보 13px(1.24배 역전) · 행 높이 2종 · 우측 경계 18종 톱니 · `h4` 가 본문 항목과 동색 · `h4` 내 muted 가 bold 상속. 컬럼 섹션의 검증된 행 관용구로 시각 언어 통일(`.amgr-rtrow`/`.amgr-rtname`/`.amgr-rtcols`).
 - 근거: 등급 Minor(표시 전용). 실렌더 대조 — 행 높이 2종→1종, 우측 경계 18종→1종, 크기비 1.24→0.88배. 신설 테스트 24 PASS(수정 전 17 FAIL = 반증). 헤드리스 996 PASS/0 FAIL · pytest 2835 passed/0 failed.
+
+## CHG-20260729T111300-detail-panel-typo-postdeploy — 상세 패널 시각 교정 POST-DEPLOY 라이브 검증 (2026-07-29, 문서·증적 전용)
+- 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260729T1113-detail-panel-typo-postdeploy.md`(신규, Environment: Windows-browser) · 증적 3장 `artifacts/feature-0016-detail-panel-typo/pb0008-postdeploy/`. 실행 코드 0줄.
+- 변경: PR #1033 → main `36618965` → 배포(soak PASS) 후 실 Windows Chrome 150 으로 배포본 검증. 신 코드 실행을 DOM 증거로 먼저 확정(`li.amgr-rtli` 57 · 구 칩 0)한 뒤 측정 — 위계 0.88배(역전 해소) · 행 높이 25px 단일 · 우측 경계 1종 · h4/muted 위계 정상 · 절단 배너 0. 적대검증이 잡은 부수 피해(여백 리셋 특이도)도 관계 상세 뷰 카드 57개 간격 3px 균일로 회귀 0 확인.
+- 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트(PB-0008)를 **배포본에서** 이행한 기록 — 직전 커밋에서 "JS 동반 변경은 주입 QA 가 모듈 캐시로 오염" 사유로 이월했던 Run 의 이행. 미확인 1건(`REFERENCES` 보유 노드의 참조함/참조받음 섹션 — 현 라이브 데이터에 해당 엣지 0건)은 같은 CSS 표면을 관계 상세 뷰로 대체 검증하고 정직 기록.
