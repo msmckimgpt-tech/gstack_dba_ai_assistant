@@ -1750,3 +1750,14 @@ catch-up 으로 전환(`/api/session` 호출 제거), 429 는 실패 토스트�
 Cross-ref: FUNCTION `REQ-20260729T152000-ratelimit-scope-paging` · DECISIONS
 `ADR-20260729T152000-ratelimit-scope-paging` · TASK `20260729T1520-ratelimit-scope-paging` ·
 REVIEW `REV-20260729T152000-ratelimit-scope-paging`.
+## CHG-20260729T163000-attach-append-only — 첨부 목록 append-only 전환 (삭제 UI 제거)
+
+`static/app.js`: pill 의 × 를 조건부(`isPendingLocal`)로 전환 — 서버 저장 완료 첨부에는 미렌더 ·
+`_removeAttachmentPill`+`_deleteConversationAttachment` 를 `_discardPendingAttachmentPill`
+(ready 항목 no-op) 로 교체 · `_canDeleteFromAttachList` 와 목록 행 `.attach-list-item-del`
+마크업/핸들러 제거. `static/index.html`: 안내 문구를 append-only 취지로 교체.
+`static/styles.css`: `.attach-list-item-del` 규칙 제거(이름줄 flex 분리·meta 말줄임은 유지).
+백엔드·API·RBAC·스키마 무변경 — `DELETE /api/attachments/{id}` 는 존치하되 프론트 호출 0건.
+
+Cross-ref: DECISIONS `ADR-20260729T163000-attach-append-only` · TASK
+`20260729T1630-attach-append-only` · 철회 대상 `CHG-20260729T152000-attach-list-delete`.

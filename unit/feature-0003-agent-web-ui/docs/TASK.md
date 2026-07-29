@@ -7223,3 +7223,43 @@ Cross-ref: FUNCTION `REQ-20260729T152000-ratelimit-scope-paging` · DECISIONS
 `ADR-20260729T152000-ratelimit-scope-paging` · MODIFY `CHG-20260729T152000-ratelimit-scope-paging`
 · REVIEW `REV-20260729T152000-ratelimit-scope-paging` · Run
 `docs/test-runs.d/20260729T1520-ratelimit-scope-paging.md`
+## 20260729T1630-attach-append-only — 첨부 목록을 append-only 로 (삭제 UI 철회) (Minor §12.3 frontend-only)
+
+사용자 지시(2026-07-29): "삭제 기능은 의도하지 않았습니다. 첨부파일 목록은 대화 내부에서
+append-only 형태로 관리되도록 구성해주세요."
+
+선행 흐름: `attach-full-scope` 로 참조 범위가 대화 전체가 되자 "이번 요청에서 빼기" 의미가
+사라졌고, 적대 리뷰가 "로컬에서만 지우면 서버가 되살린다"는 모순을 지적해 **실삭제**로 해소했다
+(`20260729T1520-attach-list-delete`). 그러나 그 방향 자체가 사용자 의도가 아니었다 — 첨부는
+대화의 근거 기록이므로 **쌓이기만 한다**.
+
+### 진행
+- [x] pill ×를 append-only 계약으로 재정의 — 서버 저장 완료(`ready`) 첨부에는 **버튼 자체를
+      렌더하지 않고**, 업로드 중·실패한 로컬 placeholder 에만 "업로드 취소"/"실패한 항목 치우기"로 부착
+- [x] `_removeAttachmentPill`·`_deleteConversationAttachment` → `_discardPendingAttachmentPill`
+      단일 함수로 교체. 방어적으로 `ready` 항목을 만나면 **no-op**(어떤 경로로 호출돼도 append-only
+      위반 불가). 프론트에서 `DELETE /api/attachments/{id}` 호출 **0건**
+- [x] 목록 뷰의 `.attach-list-item-del` 마크업·핸들러·CSS 및 `_canDeleteFromAttachList` 게이트 제거
+- [x] 안내 문구 교체 — "필요 없는 파일은 × 로 삭제하세요" → "첨부는 대화에 계속 쌓입니다"
+      (화면에 없는 컨트롤을 가리키지 않는다)
+- [x] 이월 이슈 해소 — 선행 cycle 이 사용자 판단으로 남긴 "그룹 첨부 삭제 권한이 업로더가 아님"
+      은 **UI 경로가 사라져 제품 표면에서 무효**(백엔드 엔드포인트는 존치, 정책 자체는 별도 대상)
+- [x] 유지 — 행 레이아웃 개선(`.attach-list-item-name-text` flex 분리, meta 말줄임)은
+      삭제와 무관한 가독성 수정이라 그대로 둔다
+
+Cross-ref: DECISIONS `ADR-20260729T163000-attach-append-only` · FUNCTION
+`REQ-20260729-attach-append-only` · MODIFY `CHG-20260729T163000-attach-append-only` ·
+철회 대상 `20260729T1520-attach-list-delete`
+
+### 적대 패널 후속 조치 (§18.8 ux·design, 2026-07-29 16:45) — 1 BLOCK + 1 CONCERN 해소
+- [x] **ux BLOCK** — `uploading` 항목에 붙인 "업로드 취소" ×가 **실제로 취소하지 않았다**(in-flight
+      fetch abort 미배선 → 파일은 그대로 서버에 저장되고 "업로드 완료" 토스트까지 뜬다). 삭제
+      수단이 없는 append-only 에서 이 거짓 어포던스의 대가는 "회수 불가"라 더 크다. ×의 대상을
+      **서버에 아무것도 만들지 않은 항목**(`staged`·`failed`)으로 좁히고, `uploading` 은 제외.
+      함수 가드도 같은 판정(`status !== "staged" && !== "failed"` → no-op)으로 정렬
+- [x] **ux MINOR** — `aria-label`("업로드 취소")과 `title`("실패한 항목 치우기") 불일치 →
+      상태별 단일 문구(`실패한 항목 치우기` / `첨부 예정 취소`)로 통일
+- [x] **design CONCERN** — 직전 cycle 의 `.attach-list-item-meta` 말줄임을 **되돌림**. 그 근거였던
+      삭제 ×가 이 cycle 에서 제거돼 폭이 회복됐고, 남겨두면 텍스트가 아니라 인라인 "버전 N개 ▾"
+      **버튼을 잘라** 버전 이력 진입점이 사라진다(패널 최소 폭 실측). 이름줄 flex 분리는 배지 보존
+      효과가 있어 유지

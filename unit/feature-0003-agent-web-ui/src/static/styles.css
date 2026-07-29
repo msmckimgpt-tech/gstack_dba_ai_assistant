@@ -3281,12 +3281,11 @@ a { color: inherit; }
   font-size: 10.5px;
   color: var(--text-muted, #9ca3af);
   margin-top: 1px;
-  /* feature-0003 attach-list-delete: 행에 삭제(×)가 붙어 info 가용폭이 줄었다. 메타줄에
-     방어가 없으면 "버전 N개 ▾" 토글이 붙는 행(=AI 수정본)에서 2줄로 터져 행 높이가 흔들린다
-     (적대 리뷰 design). 이름줄과 같은 말줄임 계약을 준다. */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* feature-0003 attach-append-only: 직전 cycle 이 넣었던 메타줄 말줄임(nowrap+ellipsis)을
+     **되돌린다**. 그 규칙의 근거였던 삭제(×) 버튼이 이 cycle 에서 제거돼 행 폭이 회복됐고,
+     남겨두면 텍스트가 아니라 인라인 "버전 N개 ▾" **버튼을 잘라내** 버전 이력의 유일한 진입점이
+     사라진다(적대 리뷰 design — 패널 최소 폭에서 실측). 이름줄의 flex 분리는 배지 보존 효과가
+     있어 그대로 둔다. */
 }
 .attach-list-item-dl {
   flex-shrink: 0;
@@ -3301,22 +3300,9 @@ a { color: inherit; }
 }
 .attach-list-item-dl:hover { background: rgba(37, 99, 235, 0.08); }
 .attach-list-item-dl:disabled { color: var(--text-muted); cursor: default; }
-/* feature-0003 attach-list-delete: 목록 행의 삭제(×) — 다운로드와 같은 크기·리듬을 쓰되
-   파괴적 동작이라 기본은 muted, hover 에서만 danger 로 드러낸다(오클릭 유인 최소화). */
-.attach-list-item-del {
-  flex-shrink: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: var(--r-sm);
-  font-size: 14px;
-  line-height: 1;
-  transition: background 0.12s, color 0.12s;
-}
-.attach-list-item-del:hover { background: rgba(220, 38, 38, 0.08); color: var(--danger, #dc2626); }
-.attach-list-item-del:disabled { color: var(--text-muted); cursor: default; }
+/* feature-0003 attach-append-only (2026-07-29): 목록 행의 삭제(×) 규칙 제거 — 대화의 첨부는
+   append-only 라 목록에서 지우는 컨트롤을 두지 않는다. (이름줄 flex 분리·meta 말줄임 방어는
+   행 레이아웃 개선이므로 유지한다.) */
 .attach-list-empty {
   text-align: center;
   padding: 32px 16px;

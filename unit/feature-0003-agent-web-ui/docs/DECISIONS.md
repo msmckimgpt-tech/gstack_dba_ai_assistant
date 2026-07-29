@@ -76,7 +76,6 @@ source_of_truth: true
 - **Alternatives**: (a) 전량 인라인 — 구현은 단순하나 첨부 많은 대화에서 토큰·컨텍스트 압박이 급증하고 상한 문제가 재발(기각, 사용자 확인). (b) 프론트 bucket 재수화 경로만 보강 — 진입 경로가 늘 때마다 같은 결함이 재발하는 구조를 남김(기각 — 결정 주체를 서버로 옮기는 편이 근본적). (c) 그룹 대화까지 전체 개방 — 타 멤버 첨부가 발신자 권한 실행 맥락에 실려 datasource 를 끌어오는 권한상승 경로(기각, 사용자 결정으로 가드 유지).
 - **Consequences**: 이어지는 대화에서 첨부가 조용히 사라지지 않는다. 프롬프트의 첨부 **메타 목록**이 대화 규모에 비례해 커지지만(파일당 1줄), 매 턴 인라인되는 **본문량은 종전과 동일**하다(상한 불변). 모델이 `read_attachment` 를 호출하는 만큼 도구 왕복이 늘 수 있다 — 자율 판단에 맡기되 첨부 있는 대화에서만 도구를 노출해 헛호출을 줄인다. D16 의 "명시 선택만 노출" 원칙은 대화 경계 안에서는 폐기되고, 경계 자체(대화·그룹·공유창)가 노출 통제를 담당한다.
 - **Cross-ref**: FUNCTION `REQ-20260729-attach-full-scope` · TASK `20260729T1402-attach-full-scope` · BRIEFING-attachment-multi-cycle D16(superseded) · feature-0009 CSO F1 · TASK-0284.
-
 ## ADR-20260729T152000-ratelimit-scope-paging — rate-limit 버킷을 기능별로 격리하고 페이징을 비용 등급에 맞춰 재가격
 
 - **Status**: accepted (사용자 확인 2026-07-29, Major §12.3 — rate-limit 은 DoS 방어선이라 상한 조정은 "보안 저하 가능성" 축)
@@ -85,3 +84,11 @@ source_of_truth: true
 - **Alternatives**: (a) 페이징 상한만 올리고 버킷은 그대로 — 교차오염이 남아 다른 기능 사용 직후 여전히 차단(기각: 증상만 가림). (b) 페이징을 rate-limit 대상에서 제외 — SEC MINOR-C 가 지목한 재귀 CTE 스크립트 연사 방어선이 사라짐(기각). (c) 프론트 캐싱만 하고 백엔드는 무변경 — 캐시 적중 시에도 `branch/switch` 는 매번 나가므로 5/min 버킷은 그대로 터짐(기각: 부분 해소). (d) `branch/switch` 영속을 디바운스해 요청을 더 줄임 — agent-core `memory.py` 가 `active_leaf` 로 새 메시지의 부모 체인과 LLM recall 범위를 정하므로, 지연 중 발화하면 새 메시지가 화면과 다른 가지에 붙는다(기각: 8ms 절약을 위해 데이터 정합성을 거는 거래). (e) 공유 Redis 등 프로세스 간 버킷 — 현 규모에서 불필요한 인프라(보류, 기존 per-worker 한계 유지).
 - **Consequences**: 계정당 **집계** 상한은 올라간다(최악 min(caps) → 각 scope 합). 그러나 각 호출부의 상한 주석이 명시한 의도가 "기능별 예산"이었으므로 이는 선언 의도의 복구이지 완화가 아니다 — 실제로 완화된 것은 페이징 5 → 60 하나뿐이며 비용 실측이 근거다. LLM·외부 비용을 태우는 경로(fix-with-ai / 메시지 편집 / 메타데이터 AI)의 상한은 그대로라 비용 DoS 표면은 넓어지지 않는다. 클라이언트 캐시는 TTL 30s + 단일 choke-point 무효화라 그룹 대화에서 최대 30s 의 stale 열람 가능성이 남는다(읽기 전용 페이징 한정 — 활성 대화 본문은 기존 `_liveSyncTick` 5s 폴러가 계속 갱신). 버킷 키 공간이 계정수 × scope수 로 늘어 메모리 가드를 함께 도입했다.
 - **Cross-ref**: FUNCTION `REQ-20260729T152000-ratelimit-scope-paging` · TASK `20260729T1520-ratelimit-scope-paging` · MODIFY `CHG-20260729T152000-ratelimit-scope-paging` · REQ-20260518-0010(TASK-0072 원 도입) · feature-0019 SEC MINOR-C(재귀 CTE 연사 방어).
+## ADR-20260729T163000-attach-append-only — 대화 첨부 목록은 append-only (attach-list-delete 삭제 UI 철회)
+
+- **Status**: accepted (사용자 지시 2026-07-29, Minor §12.3 — 프론트 전용). `ADR-20260729T140200-attach-full-scope` 의 후속이자, 그 사이 들어간 삭제 UI(`20260729T1520-attach-list-delete`)의 **철회**.
+- **Context**: attach-full-scope 로 참조 스코프가 "대화의 활성 첨부 전량" 이 되자, 종전의 "이번 요청에서 빼기"(로컬 목록 제거) 의미가 사라졌다. 적대 리뷰가 "로컬에서만 지우면 서버가 되살린다"는 모순을 지적했고, 이를 **실삭제 연결**로 해소했다(pill × → `DELETE /api/attachments/{id}`, 이어서 목록 행에도 ×). 그러나 사용자는 **삭제 기능 자체를 의도하지 않았고**, 첨부 목록을 대화 내부의 append-only 기록으로 관리하기를 지시했다.
+- **Decision**: 대화의 첨부 목록은 **append-only** 다. ① UI 에서 서버 저장 완료(`ready`) 첨부를 빼거나 지우는 컨트롤을 제공하지 않는다 — pill 의 ×도, 목록 행의 ×도 없다. ② ×는 **아직 대화에 들어가지 않은 항목**(업로드 중 / 실패한 로컬 placeholder)에만 붙는다(`_discardPendingAttachmentPill`) — append 를 되돌리는 것이 아니라 append 가 성립하지 않은 항목을 치우는 것이라 원칙과 모순되지 않는다. ③ 백엔드 `DELETE /api/attachments/{id}` 는 존치하되 **UI 는 호출하지 않는다**(관리·보존정책 경로의 수단으로 남김). ④ 안내 문구를 "첨부는 대화에 계속 쌓입니다" 로 바꿔 append-only 를 명시한다.
+- **Alternatives**: (a) 삭제 UI 유지 + 그룹 안전판 — 사용자 의도와 어긋나 철회. (b) "이번 요청에서 제외" 토글 부활 — attach-full-scope 가 참조 범위를 대화 단위로 확정했으므로 서버가 되살리는 같은 모순이 재발(기각). (c) 첨부 숨김(soft-hide) 상태 도입 — 새 상태·마이그레이션 비용 대비 요구가 없고, append-only 취지에도 어긋남(기각).
+- **Consequences**: 잘못 올린 파일도 대화에 남고 assistant 참조 스코프에 계속 포함된다 — 사용자가 그 의미를 알 수 있도록 안내 문구가 이를 명시한다. 선행 cycle 이 이월했던 **"그룹 첨부 삭제 권한이 업로더가 아니라 대화 소유자/그룹 멤버"** 이슈는 UI 경로가 사라지면서 **본 제품 표면에서는 무효**가 된다(백엔드 엔드포인트는 남아 있으므로 정책 자체는 별도 판단 대상으로 유지). 첨부 누적에 따른 용량·비용은 기존 size cap(`_check_attachment_size_caps`)과 reconciliation retention 이 계속 담당한다.
+- **Cross-ref**: FUNCTION `REQ-20260729-attach-append-only` · TASK `20260729T1630-attach-append-only` · 철회 대상 `REQ-20260729-attach-list-delete` (AC-1~3 superseded, AC-4 레이아웃은 유효) · `ADR-20260729T140200-attach-full-scope`.
