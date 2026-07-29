@@ -1895,6 +1895,14 @@ _KNOWLEDGE_TIMINGS: contextvars.ContextVar[dict | None] = contextvars.ContextVar
     "knowledge_timings", default=None
 )
 
+# feature-0031 (infdetail): 직전 `_call_llm` 의 **순수 provider 왕복** ms.
+# ContextVar 인 이유는 `_KNOWLEDGE_TIMINGS` 와 동일 — ask-worker 가 답변을 병렬 executor 로
+# 돌려서 전역 변수는 run 간에 섞인다. 값은 매 호출 직전 None 으로 리셋한 뒤 읽어, 예외로
+# 호출이 실패했을 때 **직전 라운드 값을 재사용하지 않도록** 한다.
+_LLM_LAST_PROVIDER_MS: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "llm_last_provider_ms", default=None
+)
+
 
 def _build_knowledge_context(
     mem_conn,
@@ -2294,6 +2302,100 @@ def _compute_duration_breakdown(
         "inference_ms": inference_ms,
         "total_ms": total_ms,
     }
+
+
+_INF_TOOL_KEY_MAX = 40
+# 도구명은 **모델이 정하는 문자열**이고(`tc.function.name`, 환각 이름이 실재한다 — tools.py 가
+# "알 수 없는 도구" 를 처리한다), 이 계측이 그 값을 처음으로 assistant 메시지 `meta_json` 의
+# **JSON 키**로 싣는다. NUL(``) 이 섞이면 PG jsonb 캐스트가 `unsupported Unicode escape
+# sequence` 로 실패하는데 `_mirror_message` 가 예외를 삼켜 **답변 행 자체가 조용히 사라진다**
+# (§18.8 패널 MINOR-3, 라이브 PG 로 재현 확인). 제어문자를 제거해 그 경로를 봉인한다.
+_INF_TOOL_KEY_BAD = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _inf_tool_key(name) -> str:
+    """도구명 → meta_json 에 안전한 JSON 키 (제어문자 제거 + 길이 상한)."""
+    key = _INF_TOOL_KEY_BAD.sub("", str(name or ""))[:_INF_TOOL_KEY_MAX]
+    return key or "?"
+
+
+def new_inference_acc() -> dict[str, Any]:
+    """inference_detail 누산기 (feature-0031 infdetail)."""
+    return {"llm_ms": 0.0, "llm_calls": 0, "tool_ms": 0.0, "tool_calls": 0}
+
+
+def inference_acc_llm(acc: dict, ms) -> None:
+    """성공한 LLM 라운드의 **순수 provider 왕복** 누산.
+
+    `ms` 가 None(=provider 창을 못 읽음)이면 호출 수만 올리고 시간은 더하지 않는다 —
+    없는 값을 0 으로 더하면 llm_ms 가 조용히 과소평가되고 잔차가 그만큼 부풀려진다.
+    `llm_calls` 는 올려야 `llm_usage` 건수와 대조해 누락을 식별할 수 있다.
+    """
+    acc["llm_calls"] = int(acc.get("llm_calls") or 0) + 1
+    if ms is None:
+        return
+    try:
+        acc["llm_ms"] = round(float(acc.get("llm_ms") or 0.0) + float(ms), 1)
+    except (TypeError, ValueError):
+        pass
+
+
+def inference_acc_tool(acc: dict, tool_ms: dict, tool_n: dict, name, ms) -> None:
+    """도구 1회 실행 누산 (실패 포함 — 실패한 SQL 도 시간을 쓴다)."""
+    try:
+        val = float(ms)
+    except (TypeError, ValueError):
+        return
+    acc["tool_ms"] = round(float(acc.get("tool_ms") or 0.0) + val, 1)
+    acc["tool_calls"] = int(acc.get("tool_calls") or 0) + 1
+    key = _inf_tool_key(name)
+    tool_ms[key] = round(tool_ms.get(key, 0.0) + val, 1)
+    tool_n[key] = tool_n.get(key, 0) + 1
+
+
+def _build_inference_detail(inference_ms, redteam_ms, acc, tool_ms, tool_n) -> dict[str, Any]:
+    """inference_ms 내부 분해 (feature-0031 infdetail).
+
+    반환 키:
+      - llm_ms / llm_calls   : 메인 루프의 성공한 LLM 왕복 합계
+      - tool_ms / tool_calls : `execute_tool` 실행 합계(실패 포함 — 실패한 SQL 도 시간을 쓴다)
+      - tool_top             : 도구명 → {ms, n} (상위 6개, ms 내림차순)
+      - other_ms             : **잔차** = inference_ms − redteam_ms − llm_ms − tool_ms
+
+    `other_ms` 가 이 계측의 핵심이다. inference 는 지금까지 통짜였고, llm_usage 로 귀속되는
+    LLM 시간을 빼도 7일 평균 33.0초(23%)가 설명되지 않았다. 잔차를 명시적으로 노출해야
+    '메시지 조립·결과 캡·관계 학습 훅·활동 emit·DB 쓰기' 중 무엇을 볼지 정할 수 있다.
+
+    redteam_ms 를 빼는 이유: red-team 자가 리뷰는 inference 구간 **안에서** 돌아
+    inference_ms 에 포함돼 있다(feature-0026 M3 주석과 동일 전제). 빼지 않으면 red-team
+    LLM 시간이 통째로 잔차로 잡혀 other_ms 가 오도된다.
+
+    음수 방어: 계측 오차·중첩으로 잔차가 음수면 0 으로 클램프하고 `residual_clamped=True` 를
+    남긴다 — 조용히 0 을 쓰면 '설명 완료'로 오독된다.
+    """
+    if not isinstance(acc, dict) or not acc:
+        return {}
+    out: dict[str, Any] = {
+        "llm_ms": round(float(acc.get("llm_ms") or 0.0), 1),
+        "llm_calls": int(acc.get("llm_calls") or 0),
+        "tool_ms": round(float(acc.get("tool_ms") or 0.0), 1),
+        "tool_calls": int(acc.get("tool_calls") or 0),
+    }
+    if isinstance(tool_ms, dict) and tool_ms:
+        top = sorted(tool_ms.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        out["tool_top"] = {k: {"ms": round(v, 1), "n": int((tool_n or {}).get(k, 0))}
+                           for k, v in top}
+    try:
+        resid = (float(inference_ms or 0.0) - float(redteam_ms or 0.0)
+                 - out["llm_ms"] - out["tool_ms"])
+    except (TypeError, ValueError):
+        return out
+    if resid < 0:
+        out["other_ms"] = 0.0
+        out["residual_clamped"] = True
+    else:
+        out["other_ms"] = round(resid, 1)
+    return out
 
 
 # 멀티턴 맥락 보존: 윈도우(max_messages) 밖으로 밀려나는 'standalone user 메시지'를
@@ -3891,6 +3993,15 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     kwargs["extra_body"] = _extra_body
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)
+    # feature-0031 (infdetail, §18.8 패널 MAJOR-3): 호출측이 **순수 왕복**만 llm_ms 로 집계할 수
+    # 있도록 이 창의 소요를 넘긴다. 호출측이 `_call_llm` 전체를 재면 그 안의 오케스트레이션
+    # (첨부 인라인 로드·messages_for_provider 재조립·runtime_settings DB 읽기(TTL 10s 라 라운드마다
+    # 대개 miss)·llm_usage INSERT)이 llm_ms 로 청구돼, **잔차가 찾으려던 바로 그 시간이 사라진다**
+    # (그리고 llm_usage.latency_ms 기준선 109.9초와도 비교 불가가 된다).
+    try:
+        _LLM_LAST_PROVIDER_MS.set((time.perf_counter_ns() - _aiops_t0) / 1_000_000.0)
+    except Exception:
+        pass
     # TASK-0163: 메인 agentic loop 의 LLM 호출을 토큰 회계에 기록(best-effort).
     # 이전엔 _record_llm_usage chokepoint 를 우회해 사용자 대화 메인 추론이 한 건도
     # llm_usage 에 잡히지 않았다(계정별/역할별 집계가 비던 근본 원인 RC1).
@@ -5222,6 +5333,24 @@ def _run_agent_core(
 
     # ── 에이전트 루프 ──
     run_start = time.perf_counter()
+    # feature-0031 (infdetail): inference_ms 내부 분해 (duration_breakdown.inference_detail).
+    #   계측 동기 — feature-0026 이 init_ms 를 init_detail 로 쪼갠 뒤에도 **가장 큰 단계인
+    #   inference_ms 만 블랙박스**로 남아 있었다. 7일 실측(2026-07-29): inference 평균 142.9초 중
+    #   llm_usage 로 귀속되는 LLM 시간이 109.9초(4.3 호출)이고 **33.0초(23%)가 미귀속**이다.
+    #   그 33초가 도구 실행인지 오케스트레이션(메시지 조립·결과 캡·학습 훅·DB 쓰기)인지 알 수
+    #   없어 개선 대상을 고를 수 없었다. 여기서 LLM/도구를 각각 누산하고 나머지를 other_ms 로
+    #   드러내 다음 개선의 근거를 만든다.
+    #   범위: **메인 에이전트 루프만**. red-team 재추론(_rt_rederive)의 도구는 redteam_ms 소관이라
+    #   섞지 않는다(실측상 red-team 은 wall 의 95~98%가 LLM 이라 추가 분해 실익이 없다).
+    _inf_detail: dict[str, Any] = new_inference_acc()
+    _inf_tool_ms: dict[str, float] = {}   # 도구명 → 누적 ms
+    _inf_tool_n: dict[str, int] = {}      # 도구명 → 호출 수
+
+    def _inf_add_llm(ms) -> None:
+        inference_acc_llm(_inf_detail, ms)
+
+    def _inf_add_tool(name, ms) -> None:
+        inference_acc_tool(_inf_detail, _inf_tool_ms, _inf_tool_n, name, ms)
     # feature-0007 timeout-console-sync: 에이전트 루프 전체(run) 예산도 콘솔 live 값 기반으로 산출한다
     # (per-request 타임아웃의 3배 = 다단계 루프 여유). 정적 AGENT_TIMEOUT_SEC 를 쓰면 콘솔 변경과 어긋난다.
     run_timeout_sec = max(
@@ -5358,6 +5487,7 @@ def _run_agent_core(
             int((time.perf_counter_ns() - _prev_llm_end_ns) // 1_000_000)
             if _prev_llm_end_ns is not None else None
         )
+        _LLM_LAST_PROVIDER_MS.set(None)   # infdetail: 직전 라운드 값 재사용 방지
         try:
             response_message = _call_llm(
                 client, messages, model,
@@ -5392,6 +5522,14 @@ def _run_agent_core(
                 console.print(Panel.fit(error_msg, title="오류"))
             break
         else:
+            # infdetail(§18.8 패널 MINOR-1): 누산은 **성공 분기(else)** 에서 한다. try 본문 안에
+            # 두면 여기서 난 예외가 위 `except` 로 잡혀 성공한 라운드가 provider 오류로 둔갑하고
+            # run 이 중단된다(계측이 답변을 깨는 것은 금지). 값은 provider 왕복만 — 래퍼 오버헤드는
+            # 의도적으로 other_ms(오케스트레이션)에 남긴다.
+            try:
+                _inf_add_llm(_LLM_LAST_PROVIDER_MS.get())
+            except Exception:
+                pass
             # TASK-20260619T014034: LLM 호출 성공 → provider 제한 해소(ok) 기록(run 당 1회).
             if not _provider_ok_recorded:
                 _provider_ok_recorded = True
@@ -5739,6 +5877,11 @@ def _run_agent_core(
                 _ans_breakdown["redteam_ms"] = _rt_ms
                 if _init_detail:
                     _ans_breakdown["init_detail"] = _init_detail
+                _inf_d = _build_inference_detail(
+                    _ans_breakdown.get("inference_ms"), _rt_ms,
+                    _inf_detail, _inf_tool_ms, _inf_tool_n)
+                if _inf_d:
+                    _ans_breakdown["inference_detail"] = _inf_d
             except Exception:
                 pass
             answer_duration_ms = _ans_breakdown["total_ms"]
@@ -5889,7 +6032,16 @@ def _run_agent_core(
                 last_sql = tool_args.get("sql", "")
 
             # 도구 실행
-            tool_result = execute_tool(db_conn, tool_name, tool_args)
+            _inf_tool_t0 = time.perf_counter_ns()
+            try:
+                tool_result = execute_tool(db_conn, tool_name, tool_args)
+            finally:
+                # infdetail: 예외로 빠져나가도 소요를 잃지 않는다(실패한 SQL 도 시간을 쓴다).
+                # §18.8 패널 MINOR-2: finally 안에서 raise 하면 **원래 예외를 대체**하므로 감싼다.
+                try:
+                    _inf_add_tool(tool_name, (time.perf_counter_ns() - _inf_tool_t0) / 1_000_000.0)
+                except Exception:
+                    pass
 
             if _cancel_requested_for_run(mem_conn, cid, run_id):
                 canceled_by_user = True
@@ -6019,6 +6171,14 @@ def _run_agent_core(
     # TASK-0289: 종료 상태(KV last_duration_ms)도 진짜 end-to-end(total)로 기록.
     _final_breakdown = _compute_duration_breakdown(_queued_ms, agent_entry_perf, run_start)
     duration_ms = _final_breakdown["total_ms"]
+    # infdetail(§18.8 패널 MAJOR-1/2): 여기에는 **분해를 싣지 않는다**. 초안은 "취소·max_steps
+    # 종료 경로도 봐야 한다"며 붙였는데 패널이 두 가지를 실증했다. ① `_slim_result` 가
+    # `duration_breakdown` 을 allowlist 밖으로 떨어뜨리고 비정상 경로의 mirror 는 meta 를 싣지
+    # 않아 **어디에도 영속되지 않는 죽은 코드**였다(perf-snapshot 은 messages.meta_json 을 본다).
+    # ② `break` 로 빠져나온 **정상 경로도** 이 줄을 지나는데, 여기의 now_perf 는 메시지 저장·
+    # in-process 큐레이션(실측 25~35초) 뒤라 잔차가 red-team+쓰기+큐레이션 범벅이 된다 —
+    # 이 계측이 피하려던 바로 그 오도(誤導). 비정상 경로 가시성은 mirror meta 를 손대야 하는
+    # 별개 변경이므로 여기서 틀린 값을 흘리는 대신 **미커버로 남긴다**(TASK.md 에 기록).
     result["duration_breakdown"] = _final_breakdown
     pending_delete = _delete_requested(mem_conn, cid)
 

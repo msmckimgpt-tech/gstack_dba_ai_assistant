@@ -723,6 +723,31 @@ Cross-ref: REVIEW REV-20260728T182000-cyvol-scope-prefetch-postdeploy ·
 `docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md` ·
 수정 cycle CHG/REV-20260728T175400-cyvol-scope-prefetch-fix.
 
+## CHG-20260729T120000-inference-detail-metrics — inference_ms 내부 분해 계측 (Minor §12.3)
+> 답변 지연의 최대 구간이자 **유일하게 남은 블랙박스**인 `inference_ms` 를 쪼갠다. 개선이 아니라 **다음 개선 대상을 고르기 위한 계측**이다.
+- **측정 근거(2026-07-29, 7일 창)**: `inference_ms` 평균 **142.9초** 중 `llm_usage`(task='agent') 로 귀속되는 LLM 시간이 109.9초(4.3 호출), **33.0초(23%)가 미귀속**. feature-0026 이 `init_ms` 를 `init_detail` 로 쪼갠 뒤에도 가장 큰 단계만 통짜로 남아 있었다(`duration_breakdown` 키 실측: `init_detail` 20건 / `inference_detail` 0건).
+- **배제된 후보(측정으로)**: ① red-team — wall 의 **95~98%가 실제 LLM 시간**(시간창 조인 귀속: 비-rederive 49.2s 중 48.4s, rederive 304.4s 중 290.5s)이라 제거할 오버헤드가 없다. ② 큐 대기 — p50 0.3s / p90 0.5s / max 876s 로 고정 지연이 아니라 꼬리이며, 최장 4건은 `claimed_by` 컨테이너가 매번 달라 **배포 실패로 워커가 부재**했던 창이었다(정상 롤아웃은 25초 실측). ③ PG — 40분 델타로 총 exec **8.0초**(0.3% 점유), cypher 는 0.37초. 정상 상태에서 PG 는 병목이 아니다.
+- **구현**: `duration_breakdown.inference_detail` = `llm_ms`/`llm_calls`(메인 루프 성공 왕복), `tool_ms`/`tool_calls`(`execute_tool`, 실패 포함 — 실패한 SQL 도 시간을 쓴다), `tool_top`(도구명 → {ms, n}, ms 내림차순 상위 6), `other_ms`(**잔차**).
+  - `other_ms = inference_ms − redteam_ms − llm_ms − tool_ms`. **redteam 을 빼는 것이 핵심** — red-team 은 inference 구간 안에서 돌아 `inference_ms` 에 포함돼 있고(feature-0026 M3 와 동일 전제), 빼지 않으면 그 LLM 시간이 통째로 잔차로 잡혀 "오케스트레이션이 느리다"는 **정반대 결론**이 나온다.
+  - 음수 잔차는 0 클램프 + `residual_clamped=True` 플래그. 조용히 0 을 쓰면 '전부 설명됨'으로 오독된다.
+  - 실패한 LLM 호출은 누산하지 않는다(llm_usage 에도 안 남아 대조가 어긋난다) — 그 시간은 `other_ms` 에 남지만 `llm_calls` vs `llm_usage` 건수 대조로 식별 가능.
+  - 범위는 **메인 에이전트 루프만**. red-team 재추론(`_rt_rederive`)의 도구는 `redteam_ms` 소관이라 섞지 않는다.
+- **관측 경로**: `bin/perf-snapshot.sh` §3b-2(분해 + `other_pct` + clamped 건수) · §3b-3(도구별 총소요·호출당 평균).
+- **불변**: 기존 4키(queued/init/inference/total)와 `redteam_ms`·`init_detail` 무변경 — additive. 답변 동작·저장 스키마 무변경(meta_json 내 키 추가), alembic 무변경.
+- **파일**: `src/agent_core.py`, `tests/test_inference_detail.py`(신규 16건), `bin/perf-snapshot.sh`, `docs/{FUNCTION,TASK}.md`.
+- **§18.8 적대 패널이 잡은 결함 9건 흡수** (초안은 **문서가 주장한 기능이 존재하지 않았고**, 잔차가 체계적으로 과소평가되고 있었다):
+  - **MAJOR-1(초안 주장 반증)**: "비정상 종료 경로에도 분해를 싣는다"는 **거짓**이었다 — `_slim_result` allowlist 가 `duration_breakdown` 을 떨어뜨리고 비정상 경로 mirror 는 meta 를 안 실어 **어디에도 영속되지 않는 죽은 코드**였다(perf-snapshot 은 `messages.meta_json` 을 본다). 주장을 철회하고 해당 부착을 제거했다.
+  - **MAJOR-2**: 같은 자리는 `break` 로 나온 **정상 경로도** 지나는데, 그 시점 `now_perf` 는 메시지 저장·in-process 큐레이션(실측 25~35초) 뒤라 잔차가 red-team+쓰기+큐레이션 범벅이 된다 — 이 계측이 피하려던 바로 그 오도. 제거로 함께 해소(비정상 경로 가시성은 mirror meta 를 손대야 하는 별개 변경 — **미커버로 명시**).
+  - **MAJOR-3(설계 결함)**: `llm_ms` 가 `_call_llm` **래퍼 전체**를 재고 있었다. 그 창 안에는 첨부 인라인 로드·`messages_for_provider` 재조립·`runtime_settings` DB 읽기(TTL 10초라 라운드마다 대개 miss)·`llm_usage` INSERT 가 들어 있어, **잔차가 찾으려던 오케스트레이션 시간이 llm_ms 로 청구**되고 기준선 109.9초(`llm_usage.latency_ms`)와도 비교 불가가 된다. → `_LLM_LAST_PROVIDER_MS` ContextVar 로 **순수 provider 왕복만** 집계하고 래퍼 오버헤드는 의도적으로 `other_ms` 에 남긴다(그게 오케스트레이션의 정의).
+  - **MAJOR-4(산술 오류)**: perf-snapshot §3b-3 `avg_ms_per_call` 이 `avg(ms/n)`(답변별 평균의 평균)이라 느린 1건짜리 답변이 빠른 100건짜리를 압도 — 패널이 라이브 합성 데이터로 228ms 를 **9,025ms(40배)** 로 과대보고함을 실증. → `sum(ms)/sum(n)`.
+  - **MAJOR-5(테스트 무력)**: 초안 테스트는 순수 빌더만 호출해 **누산 배선이 0% 검증**이었고 5개 변이(누산 호출 삭제·도구 계측 제거·키 상한 제거·redteam 미차감·영속 차단)가 전부 생존했다. 누산기를 모듈 함수로 승격해 직접 잠그고, 배선은 소스 계약 테스트로 고정(16건).
+  - **MINOR-1**: 누산이 LLM 오류 `try` 본문 안에 있어, 거기서 난 예외가 `except` 로 잡혀 **성공한 라운드가 provider 오류로 둔갑하고 run 이 중단**될 수 있었다 → 성공 분기(`else`)로 이동 + 가드.
+  - **MINOR-2**: `finally` 안 누산이 무가드라 raise 시 **원래 예외를 대체** → try/except 로 감쌈.
+  - **MINOR-3(데이터 소실 경로)**: 도구명은 모델이 정하는 값이고 이 계측이 그것을 처음으로 `meta_json` 의 **JSON 키**로 싣는다. NUL 이 섞이면 PG jsonb 캐스트가 실패하는데 `_mirror_message` 가 예외를 삼켜 **답변 행 자체가 조용히 사라진다**(패널이 라이브 PG 로 재현) → 제어문자 제거 + 빈 키 placeholder.
+  - **MINOR-5**: "llm_calls vs llm_usage 대조로 식별 가능" 이라 써놓고 그 쿼리를 안 넣었다 → §3b-4 교차검증 섹션 추가.
+- **역검증**: 패널이 생존시킨 변이 6종(LLM 누산 삭제 · 도구 try/finally 해체 · 키 상한 제거 · redteam 미차감 · provider 창 확대 · 라운드 리셋 제거)을 각각 되돌려 해당 테스트 실패 확인 — **생존 0**.
+- **위험등급**: Minor(계측 additive · fail-open try/except). **Rollback**: 커밋 revert — 소비처가 키 부재를 이미 견딘다.
+- **Cross-ref**: feature-0026(init_detail 원형·perf 계측 인프라) · ADR-20260728T120000-redteam-gating-not-adopted(red-team 은 품질 우선으로 불채택 — 이번에도 대상 아님을 실측 재확인).
 ## CHG-20260729T110000-dataplane-conn-liveness (데이터플레인 연결 liveness + 같은 좌표 재연결)
 
 **무엇을**: run-scoped 데이터플레인 연결을 tool 에 넘기기 직전 liveness 를 확인하고, 죽었으면

@@ -103,6 +103,58 @@ WHERE m.role='assistant' AND m.meta_json->'duration_breakdown' ? 'init_detail'
   AND m.created_at > now()-interval '${DAYS} days'
 GROUP BY d.key ORDER BY avg_ms DESC"
 
+section "3b-2. inference_detail — inference_ms 내부 분해 (feature-0031, ${DAYS}d)"
+# other_ms 가 핵심: inference 는 답변 지연의 최대 구간인데 LLM/도구를 빼고도 설명 안 되는
+# 잔차가 7일 평균 33.0초(23%)였다. 그 잔차가 어디로 가는지가 다음 개선 대상을 정한다.
+run_to inference_detail.txt psql_p -c "
+SELECT count(*) AS answers,
+       round(avg((d->>'llm_ms')::float)::numeric)   AS llm_ms,
+       round(avg((d->>'llm_calls')::float)::numeric,1) AS llm_calls,
+       round(avg((d->>'tool_ms')::float)::numeric)  AS tool_ms,
+       round(avg((d->>'tool_calls')::float)::numeric,1) AS tool_calls,
+       round(avg((d->>'other_ms')::float)::numeric) AS other_ms,
+       round(100.0*avg((d->>'other_ms')::float)::numeric
+             / NULLIF(avg((m.meta_json->'duration_breakdown'->>'inference_ms')::float)::numeric,0)) AS other_pct,
+       count(*) FILTER (WHERE (d->>'residual_clamped')::boolean) AS clamped
+FROM agent_runtime.messages m,
+     LATERAL (SELECT m.meta_json->'duration_breakdown'->'inference_detail') AS x(d)
+WHERE m.role='assistant' AND m.meta_json->'duration_breakdown' ? 'inference_detail'
+  AND m.created_at > now()-interval '${DAYS} days'"
+
+section "3b-3. inference 도구별 소요 (답변당 상위 6 도구만 집계 — §3b-2 의 tool_ms 합계와 일치하지 않을 수 있음, ${DAYS}d)"
+# avg_ms_per_call 은 반드시 sum(ms)/sum(n) — avg(ms/n) 은 '답변별 평균의 평균'이라
+# 느린 호출 1건짜리 답변이 빠른 100건짜리 답변을 압도한다(§18.8 패널 MAJOR-4: 라이브
+# 합성 데이터로 228ms 를 9,025ms 로 40배 과대보고). 이 컬럼이 다음 최적화 대상을 고르는 값이다.
+run_to inference_tools.txt psql_p -c "
+SELECT t.key AS tool, sum((t.value->>'n')::int) AS calls,
+       round(sum((t.value->>'ms')::float)::numeric) AS total_ms,
+       round(sum((t.value->>'ms')::float)::numeric
+             / NULLIF(sum((t.value->>'n')::int),0)) AS avg_ms_per_call
+FROM agent_runtime.messages m,
+     jsonb_each(m.meta_json->'duration_breakdown'->'inference_detail'->'tool_top') t
+WHERE m.role='assistant' AND m.meta_json->'duration_breakdown'->'inference_detail' ? 'tool_top'
+  AND m.created_at > now()-interval '${DAYS} days'
+GROUP BY t.key ORDER BY total_ms DESC"
+
+section "3b-4. inference llm_ms 교차검증 (llm_usage 대조 — 실패 호출·누락 식별, ${DAYS}d)"
+# llm_ms 는 성공한 provider 왕복만 담는다. 실패한 LLM 호출의 시간은 other_ms 로 흘러가
+# '오케스트레이션이 느리다'로 오독될 수 있다 — llm_calls 와 llm_usage 건수를 대조해 구분한다.
+run_to inference_llm_xcheck.txt psql_p -c "
+WITH a AS (
+  SELECT m.meta_json->>'run_id' AS rid,
+         (m.meta_json->'duration_breakdown'->'inference_detail'->>'llm_ms')::float AS acc_ms,
+         (m.meta_json->'duration_breakdown'->'inference_detail'->>'llm_calls')::int AS acc_n
+  FROM agent_runtime.messages m
+  WHERE m.role='assistant' AND m.meta_json->'duration_breakdown' ? 'inference_detail'
+    AND m.created_at > now()-interval '${DAYS} days'),
+u AS (SELECT run_id, count(*) n, sum(latency_ms) ms FROM agent_runtime.llm_usage
+      WHERE task='agent' AND created_at > now()-interval '${DAYS} days' GROUP BY 1)
+SELECT count(*) AS answers,
+       round(avg(a.acc_ms)::numeric) AS acc_llm_ms, round(avg(a.acc_n)::numeric,1) AS acc_calls,
+       round(avg(COALESCE(u.ms,0))::numeric) AS usage_llm_ms, round(avg(COALESCE(u.n,0))::numeric,1) AS usage_calls,
+       count(*) FILTER (WHERE a.acc_n <> COALESCE(u.n,0)) AS call_count_mismatch
+FROM a LEFT JOIN u ON u.run_id = a.rid"
+
 section "3c. post-answer 큐레이션 (KV last_post_answer_ms — feature-0027 이후 terminal *후* 실행, 체감 지연 아님)"
 run_to post_answer.txt psql_p -c "
 SELECT count(*) AS convs, round(avg(value::float)::numeric) AS avg_ms,
