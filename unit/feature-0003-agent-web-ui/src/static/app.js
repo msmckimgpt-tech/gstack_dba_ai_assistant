@@ -74,6 +74,11 @@ const PROGRESS_POLL_ACTIVE_MS = 1200;
 const PROGRESS_POLL_IDLE_MS = 3000;
 const PROGRESS_POLL_HIDDEN_MS = 10000;
 const PROGRESS_POLL_ERROR_MS = 8000;
+// progress-poll-resilience: 연속 실패 시 재시도 간격 상한. 종전에는 3연속 실패에서 폴링을
+// **영구 포기**했고(재무장 경로 없음), 그 순간 pending 말풍선이 '처리 중' 으로 박제돼 사용자가
+// 대화를 전환-복귀해야만(loadHistory) 현황이 되살아났다. 이제는 포기하지 않고 지수 백오프
+// (8s→16s→32s→상한)로 계속 재시도한다 — 롤링 배포 창·네트워크 순단이 끝나면 스스로 회복.
+const PROGRESS_POLL_ERROR_MAX_MS = 60000;
 
 // feature-0003 realtime-progress-propagation: 대화를 열어둔 채 유휴 상태(활성 run 추적 없음)
 // 일 때, 다른 사용자(그룹 멤버 · 모니터링 대상 계정 소유자) 또는 다른 탭/기기의 나 자신이
@@ -154,6 +159,11 @@ const state = {
   runDetectPoller: null,
   runDetectInFlight: false,
   runDetectSeq: 0,
+  // progress-poll-resilience (codex 적대 리뷰 P2): 감지 fetch 의 AbortController. 종전엔
+  // detectNewRun 의 지역 변수라 stopRunDetectPolling 이 끊을 수 없었고, 재가시/online 훅이
+  // in-flight 요청을 남긴 채 새 감지를 띄웠다(결과는 seq 로 버려져도 HTTP 요청은 나간다).
+  // pollProgress 의 progressAbortController 와 동형으로 state 에 걸어 재무장을 멱등하게 만든다.
+  runDetectAbortController: null,
   // 감지기가 "이미 반영한" run_id(baseline). loadHistory 재무장 시 null 로 리셋되고 첫 감지
   // 폴링이 서버의 현재 run_id 로 확정한다. 이후 서버 run_id 가 이 값과 달라지면 새 run(진행
   // 중 또는 방금 완료)으로 보고 loadHistory 로 전체 동기화한다.
@@ -7055,6 +7065,10 @@ function scheduleProgressPolling(delayMs = PROGRESS_POLL_IDLE_MS, seq = state.pr
     ? Math.max(delayMs, PROGRESS_POLL_HIDDEN_MS)
     : Math.max(delayMs, 0);
   state.progressPoller = window.setTimeout(() => {
+    // progress-poll-resilience: 이 tick 은 소진됐으므로 참조를 즉시 비운다 — `state.progressPoller`
+    // 가 "예약된 다음 폴이 실제로 있다" 는 뜻이어야 감지기(watchdog)의 dormant 판정이 정확해진다.
+    // (pollProgress 는 동기 구간에서 progressPollInFlight=true 를 세워 판정 공백을 만들지 않는다.)
+    state.progressPoller = null;
     pollProgress(seq).catch(() => {});
   }, nextDelay);
 }
@@ -7182,8 +7196,17 @@ async function pollProgress(seq = state.progressPollSeq) {
       return;
     }
     state.progressErrorCount += 1;
-    shouldSchedule = Boolean(state.activeConversationId) && state.progressErrorCount < 3;
-    nextDelay = document.hidden ? PROGRESS_POLL_HIDDEN_MS : PROGRESS_POLL_ERROR_MS;
+    // progress-poll-resilience: 실패가 반복돼도 폴링을 **포기하지 않는다**. 종전 `errorCount < 3`
+    // 게이트는 3연속 실패(롤링 배포 창의 502·4s fetch 타임아웃·네트워크 순단 등 흔한 조건)에서
+    // 이 대화의 유일한 갱신 채널을 영구히 끊었고, pending 말풍선이 '처리 중' 으로 고착됐다
+    // (감지기도 pendingBubble/progressRunId 때문에 dormant → 회복 타이머 0개). 대신 지수
+    // 백오프로 간격만 늘려 서버 부하를 억제한다. 성공하면 progressErrorCount 는 0 으로 리셋된다.
+    shouldSchedule = Boolean(state.activeConversationId);
+    const backoff = Math.min(
+      PROGRESS_POLL_ERROR_MS * 2 ** Math.min(state.progressErrorCount - 1, 10),
+      PROGRESS_POLL_ERROR_MAX_MS,
+    );
+    nextDelay = document.hidden ? Math.max(backoff, PROGRESS_POLL_HIDDEN_MS) : backoff;
   } finally {
     window.clearTimeout(timeoutId);
     if (state.progressAbortController === controller) {
@@ -7239,6 +7262,16 @@ function clearRunDetectTimer() {
 function stopRunDetectPolling() {
   state.runDetectSeq += 1;
   clearRunDetectTimer();
+  // progress-poll-resilience (codex P2): in-flight 감지 fetch 도 끊는다 — 재무장(재가시·online)
+  // 이 기존 요청을 남긴 채 새 요청을 띄우지 않도록(stopProgressPolling 의 abort 와 동형).
+  if (state.runDetectAbortController) {
+    try {
+      state.runDetectAbortController.abort();
+    } catch (_error) {
+      // no-op
+    }
+  }
+  state.runDetectAbortController = null;
   state.runDetectInFlight = false;
 }
 
@@ -7249,6 +7282,7 @@ function scheduleRunDetectPolling(delayMs = RUN_DETECT_POLL_MS, seq = state.runD
     ? Math.max(delayMs, RUN_DETECT_POLL_HIDDEN_MS)
     : Math.max(delayMs, 0);
   state.runDetectPoller = window.setTimeout(() => {
+    state.runDetectPoller = null;  // 소진된 tick 참조 정리(위 progressPoller 와 동형).
     detectNewRun(seq).catch(() => {});
   }, nextDelay);
 }
@@ -7276,13 +7310,16 @@ async function _detectHandoffReload(seq) {
 
 async function detectNewRun(seq = state.runDetectSeq) {
   if (!state.activeConversationId || seq !== state.runDetectSeq) return;
-  // 활성 run 을 이미 추적 중(pollProgress 동작 중 또는 pending 말풍선 존재)이거나 이미 감지
-  // fetch 가 in-flight 이면 감지기는 dormant — 재스케줄만 하고 fetch 하지 않는다(중복
-  // /api/progress 호출·재진입 방지). 활성 폴링이 끝나면 refreshWorkspace→loadHistory 재무장이
-  // 감지기를 다시 켠다.
+  // 활성 폴러(pollProgress)가 **실제로 살아 있거나**(다음 tick 타이머 예약됨 / fetch in-flight)
+  // 이미 감지 fetch 가 in-flight 이면 감지기는 dormant — 재스케줄만 하고 fetch 하지 않는다
+  // (중복 /api/progress 호출·재진입 방지).
+  //
+  // progress-poll-resilience: 종전에는 `state.progressRunId || state.pendingBubble` 도 dormant
+  // 근거였다. 그러나 이 둘은 **폴러가 죽어도 남는 값**이라, 폴링이 실패로 끊긴 순간 감지기까지
+  // 영구 dormant 가 되어 회복 타이머가 하나도 남지 않았다(= '처리 중' 말풍선 고착, 대화
+  // 전환-복귀만이 유일한 복구). 이제 dormant 판정은 "폴러 생존" 이라는 사실만 본다 —
+  // 감지기가 죽은 폴러의 watchdog 으로 승격된다.
   if (
-    state.progressRunId ||
-    state.pendingBubble ||
     state.progressPoller ||
     state.progressPollInFlight ||
     state.runDetectInFlight
@@ -7290,8 +7327,23 @@ async function detectNewRun(seq = state.runDetectSeq) {
     scheduleRunDetectPolling(RUN_DETECT_POLL_MS, seq);
     return;
   }
+  // progress-poll-resilience (codex 적대 리뷰 P1): 추적 중이던 run 이 있는데 폴러만 죽은
+  // 경우는 **그 폴러를 되살리는 것**이 회복이지, `/api/progress` 로 "현재 슬롯 run" 을 물어
+  // loadHistory 로 넘기는 것이 아니다. 감지 fetch 는 `client_run_id` 를 싣지 않으므로 그룹
+  // 대화에서 다른 멤버의 run 이 슬롯을 점유 중이면 그 foreign run 을 받게 되고, loadHistory
+  // 가 `last_run_id`(=남의 run)로 폴링을 재시작하면 이후 폴링이 남의 run 을 추적해 **내 run 의
+  // terminal marker(서버 per-run 해소 경로)를 영영 못 받는다** — 원래 고치려던 고착이 그대로
+  // 재현된다. 내 run 추적을 유지한 채 폴러만 재기동하면 서버가 내 run 의 종료를 해소해 준다.
+  // (fetch 없이 타이머만 세우므로 네트워크 비용도 0.)
+  if (state.progressRunId) {
+    startProgressPolling({ reset: false, runId: state.progressRunId });
+    scheduleRunDetectPolling(RUN_DETECT_POLL_MS, seq);
+    return;
+  }
   state.runDetectInFlight = true;
   const controller = new AbortController();
+  // progress-poll-resilience (codex P2): stopRunDetectPolling 이 끊을 수 있도록 state 에 건다.
+  state.runDetectAbortController = controller;
   const timeoutId = window.setTimeout(() => controller.abort(), PROGRESS_FETCH_TIMEOUT_MS);
   let reschedule = true;
   try {
@@ -7305,15 +7357,23 @@ async function detectNewRun(seq = state.runDetectSeq) {
       reschedule = false;
       return;
     }
-    // fetch await 사이 활성 추적이 시작됐으면(sendPrompt 등) 감지기는 물러난다.
-    if (state.progressRunId || state.pendingBubble) return;
+    // fetch await 사이 활성 폴러가 (재)기동했으면(sendPrompt·loadHistory 등) 감지기는 물러난다.
+    // progress-poll-resilience: dormant 판정과 동일하게 "폴러 생존" 만 본다(progressRunId /
+    // pendingBubble 은 죽은 폴러의 잔여값이라 근거로 쓰지 않는다).
+    if (state.progressPoller || state.progressPollInFlight) return;
     const runId = String(payload.run_id || "").trim();
     const rawStatus = String(payload.raw_status || payload.status || "").trim().toLowerCase();
     if (state.detectBaselineRunId === null) {
       // 무장 후 첫 폴링: 현재 서버 run 을 baseline 으로 확정.
       state.detectBaselineRunId = runId;
-      // loadHistory 가 유휴로 판단한 직후 새 run 이 막 시작된 race — processing 이면 즉시 동기화.
-      if (rawStatus === "processing" && runId && runId !== state.progressRunId) {
+      // 서버가 처리 중인데 여기까지 왔다 = 활성 폴러가 없다(위 두 가드 통과). 두 경우 모두
+      // 즉시 동기화해야 한다 —
+      //   ① loadHistory 가 유휴로 판단한 직후 새 run 이 막 시작된 race(종전 커버 범위),
+      //   ② watchdog: 이 run 을 추적하던 폴러가 실패로 끊겨 화면이 '처리 중' 에 멈춘 상태.
+      // 종전의 `runId !== state.progressRunId` 조건은 ②를 배제했다(죽은 폴러의 progressRunId 가
+      // 같은 run 이므로) — 그래서 회복이 일어나지 못했다. 폴러 생존 가드가 중복 진입을 이미
+      // 막으므로 이 비교는 불필요하다.
+      if (rawStatus === "processing" && runId) {
         reschedule = false;
         await _detectHandoffReload(seq);
       }
@@ -7328,6 +7388,10 @@ async function detectNewRun(seq = state.runDetectSeq) {
     // 네트워크 blip / abort: 다음 주기에 재시도(감지는 비긴급이라 error backoff 불필요).
   } finally {
     window.clearTimeout(timeoutId);
+    // 이 fetch 의 controller 만 정리한다(그 사이 재무장이 새 controller 를 걸었으면 보존).
+    if (state.runDetectAbortController === controller) {
+      state.runDetectAbortController = null;
+    }
     state.runDetectInFlight = false;
     if (reschedule && seq === state.runDetectSeq) {
       scheduleRunDetectPolling(RUN_DETECT_POLL_MS, seq);
@@ -7499,9 +7563,12 @@ async function loadHistory({ append = false, branchView = null, preserveScroll =
       reset: payload.last_run_id !== state.progressRunId,
       runId: payload.last_run_id || "",
     });
-    // 활성 폴링이 이 run 을 담당하므로 유휴 감지기는 물러난다(dormant). 완료 후 refreshWorkspace
-    // →loadHistory 유휴 분기가 감지기를 재무장한다.
-    if (!append) stopRunDetectPolling();
+    // progress-poll-resilience: 처리 중에도 감지기를 **끄지 않고 watchdog 으로 무장**한다.
+    // 활성 폴러가 살아 있는 동안 감지기는 dormant(타이머만 돌고 fetch 0회)이며, 폴러가 실패로
+    // 끊긴 순간에만 깨어나 loadHistory 로 화면을 되살린다. 종전에는 여기서 감지기를 정지시켜
+    // (stopRunDetectPolling) 폴러가 죽으면 회복 타이머가 하나도 남지 않았다 — 사용자가 대화를
+    // 전환-복귀해야만 '처리 중' 고착이 풀리던 근본 원인.
+    if (!append) startRunDetectPolling();
     renderProgress({ status: payload.last_status, steps: state.progressSteps.slice() });
   } else {
     stopProgressPolling({ reset: true });
@@ -12187,13 +12254,34 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   const active = currentConversation();
-  const isProcessing = String(active?.status || "").toLowerCase() === "processing";
-  if (state.activeConversationId && (isProcessing || state.progressRunId || isCurrentConvBusy())) {
+  // progress-poll-resilience: 상태 판정에 display_status 를 함께 본다(_updateConversationStatusDot
+  // 는 display_status 만 갱신하므로 status 만 보면 stale 할 수 있다) + pending 말풍선이 떠 있으면
+  // 그 자체가 "이 대화는 추적 중" 신호다.
+  const isProcessing = ["processing", "starting"].includes(
+    String(active?.display_status || active?.status || "").trim().toLowerCase(),
+  );
+  if (
+    state.activeConversationId
+    && (isProcessing || state.progressRunId || state.pendingBubble || isCurrentConvBusy())
+  ) {
     startProgressPolling({ reset: false, runId: state.progressRunId });
-  } else if (state.activeConversationId) {
-    // 유휴 대화: 재가시 시 배경 감지기 재개(새 run 실시간 전파).
+  }
+  if (state.activeConversationId) {
+    // 배경 감지기 재개 — 유휴 대화에서는 새 run 실시간 전파, 처리 중 대화에서는 폴러 watchdog
+    // (폴러가 살아 있으면 dormant 라 중복 fetch 는 없다).
     startRunDetectPolling();
   }
+});
+
+// progress-poll-resilience: 네트워크가 복구되면 백오프 대기를 기다리지 않고 즉시 재시도한다.
+// 순단 구간에서 폴링 간격이 최대치까지 늘어난 뒤 회선이 돌아오면, 이 훅이 없을 때 사용자는
+// 최대 1분간 멈춘 화면을 본다.
+window.addEventListener("online", () => {
+  if (document.hidden || !state.activeConversationId) return;
+  if (state.progressRunId || state.pendingBubble || isCurrentConvBusy()) {
+    startProgressPolling({ reset: false, runId: state.progressRunId });
+  }
+  startRunDetectPolling();
 });
 
 // ====================================================================

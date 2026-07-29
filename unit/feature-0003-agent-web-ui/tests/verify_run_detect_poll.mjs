@@ -63,17 +63,21 @@ for (const n of NAMES) {
 // ── 2. 정적 배선 확인 (loadHistory / visibilitychange) ─────────────────────────
 ok("loadHistory 유휴 분기가 !append 시 감지기 재무장",
   /if \(!append\) startRunDetectPolling\(\);/.test(appJs));
-ok("loadHistory processing 분기가 !append 시 감지기 정지",
-  /if \(!append\) stopRunDetectPolling\(\);/.test(appJs));
+// progress-poll-resilience(2026-07-29): processing 분기는 더 이상 감지기를 정지시키지 않는다.
+// 감지기가 활성 폴러의 watchdog 으로 승격됐다 — 폴러가 살아 있으면 dormant(fetch 0회)이고,
+// 폴러가 실패로 끊긴 순간에만 깨어나 loadHistory 로 화면을 되살린다. 종전처럼 여기서 정지하면
+// 폴러 사망 시 회복 타이머가 하나도 남지 않아 '처리 중' 말풍선이 고착됐다.
+ok("loadHistory processing 분기가 !append 시 감지기 watchdog 무장",
+  /if \(!append\) startRunDetectPolling\(\);/.test(appJs));
 ok("loadHistory no-conv 분기가 감지기 정지",
   /stopProgressPolling\(\{ reset: true \}\);\s*\n\s*stopRunDetectPolling\(\);/.test(appJs));
-ok("visibilitychange 숨김 시 감지기 정지 + 재가시 유휴 시 재개",
-  /stopRunDetectPolling\(\);[\s\S]{0,400}else if \(state\.activeConversationId\) \{[\s\S]{0,200}startRunDetectPolling\(\);/.test(appJs));
+ok("visibilitychange 숨김 시 감지기 정지 + 재가시 시 재개",
+  /stopRunDetectPolling\(\);[\s\S]{0,700}if \(state\.activeConversationId\) \{[\s\S]{0,300}startRunDetectPolling\(\);/.test(appJs));
 
 // ── 3. detectNewRun 결정 로직 구동 검증 ────────────────────────────────────────
 // 감지기 함수들을 하나의 factory scope 에 eval 해 상호 참조(function 선언 hoisting)를 살린다.
 const factory = new Function(
-  "state", "apiFetch", "loadHistory", "window", "document",
+  "state", "apiFetch", "loadHistory", "startProgressPolling", "window", "document",
   "AbortController", "URLSearchParams",
   "PROGRESS_FETCH_TIMEOUT_MS", "RUN_DETECT_POLL_MS", "RUN_DETECT_POLL_HIDDEN_MS",
   `${srcs.clearRunDetectTimer}\n${srcs.stopRunDetectPolling}\n${srcs.scheduleRunDetectPolling}\n` +
@@ -100,12 +104,15 @@ function makeState(over = {}) {
 // scheduleRunDetectPolling 이 state.runDetectPoller 에 이 id 를 저장 → "재스케줄됨" 신호.
 function makeHarness(payload, over = {}, opts = {}) {
   const state = makeState(over);
-  const calls = { apiFetch: 0, loadHistory: 0 };
+  const calls = { apiFetch: 0, loadHistory: 0, repoll: 0 };
+  const repollArgs = [];
   const apiFetch = async (_url, _opts) => { calls.apiFetch++; return payload; };
   const loadHistory = async () => {
     calls.loadHistory++;
     if (opts.loadHistoryThrows) throw new Error("simulated /api/history network blip");
   };
+  // progress-poll-resilience: watchdog 이 추적 중이던 run 의 폴러를 되살리는 경로(codex P1).
+  const startProgressPolling = (o) => { calls.repoll++; repollArgs.push(o); state.progressPoller = 99; };
   let idSeq = 1;
   const win = {
     setTimeout: () => idSeq++,        // 콜백 미실행 (truthy id)
@@ -113,11 +120,11 @@ function makeHarness(payload, over = {}, opts = {}) {
   };
   const doc = { hidden: false };
   const api = factory(
-    state, apiFetch, loadHistory, win, doc,
+    state, apiFetch, loadHistory, startProgressPolling, win, doc,
     globalThis.AbortController, globalThis.URLSearchParams,
     4000, 4000, 15000,
   );
-  return { state, calls, api };
+  return { state, calls, api, repollArgs };
 }
 
 // Scenario 1: 유휴, baseline null, 서버 processing 새 run → loadHistory 위임 + baseline 확정, 재스케줄 안 함.
@@ -145,13 +152,49 @@ function makeHarness(payload, over = {}, opts = {}) {
   ok("S3 동일 run → 감지기 재스케줄", h.state.runDetectPoller !== null);
 }
 
-// Scenario 4: 활성 추적 중(progressRunId set) → dormant(apiFetch 안 함), 재스케줄.
+// Scenario 4: 활성 폴러 생존(다음 tick 예약됨) → dormant(apiFetch 안 함), 재스케줄.
+// progress-poll-resilience: dormant 근거는 "폴러가 실제로 살아 있다" 는 사실뿐이다
+// (progressRunId/pendingBubble 은 폴러가 죽어도 남는 잔여값이라 근거로 쓰지 않는다).
 {
-  const h = makeHarness({ run_id: "R9", raw_status: "processing" }, { progressRunId: "RX" });
+  const h = makeHarness(
+    { run_id: "R9", raw_status: "processing" },
+    { progressRunId: "RX", progressPoller: 7 },
+  );
   await h.api.detectNewRun(0);
-  ok("S4 활성 추적 중 → /api/progress fetch 안 함(dormant)", h.calls.apiFetch === 0);
-  ok("S4 활성 추적 중 → loadHistory 미호출", h.calls.loadHistory === 0);
-  ok("S4 활성 추적 중 → 감지기 재스케줄(완료 후 재무장 대기)", h.state.runDetectPoller !== null);
+  ok("S4 폴러 생존 → /api/progress fetch 안 함(dormant)", h.calls.apiFetch === 0);
+  ok("S4 폴러 생존 → loadHistory 미호출", h.calls.loadHistory === 0);
+  ok("S4 폴러 생존 → 감지기 재스케줄(watchdog 대기)", h.state.runDetectPoller !== null);
+}
+
+// Scenario 4b (progress-poll-resilience 핵심 회귀 가드): 폴러가 실패로 끊겨 progressRunId 만
+// 남은 상태 → 감지기가 **그 run 의 폴러를 되살린다**(codex 적대 리뷰 P1). 여기서 loadHistory 로
+// 넘기면 감지 fetch 가 client_run_id 를 싣지 않아 그룹 대화에서 남의 run(슬롯 점유)을 받고,
+// loadHistory 가 그 run 으로 폴링을 재시작해 내 run 의 terminal 을 영영 못 받는다.
+// 수정 전에는 progressRunId 가 dormant 근거라 회복 자체가 없었고, 사용자가 대화를 전환-복귀하기
+// 전까지 '처리 중' 말풍선이 영구 고착됐다.
+{
+  const h = makeHarness(
+    { run_id: "R-FOREIGN", raw_status: "processing" },   // 남의 run 이 슬롯 점유 중
+    { progressRunId: "RX", progressPoller: null, pendingBubble: { runId: "RX" } },
+  );
+  await h.api.detectNewRun(0);
+  ok("S4b 폴러 사망 → 내 run 의 폴러 재기동", h.calls.repoll === 1);
+  ok("S4b 재기동은 내 run_id 로(foreign run 갈아타기 금지)", h.repollArgs[0]?.runId === "RX");
+  ok("S4b foreign run 을 받는 감지 fetch 자체를 하지 않음", h.calls.apiFetch === 0);
+  ok("S4b loadHistory 로 넘기지 않음", h.calls.loadHistory === 0);
+  ok("S4b 감지기 재스케줄 유지", h.state.runDetectPoller !== null);
+}
+
+// Scenario 4c: 추적 run 이 없는데(progressRunId 비어 있음) pending 말풍선만 남고 서버가
+// processing 이면, 그때는 loadHistory 로 전체 동기화가 맞다.
+{
+  const h = makeHarness(
+    { run_id: "R1", raw_status: "processing" },
+    { progressRunId: "", progressPoller: null, pendingBubble: { runId: "R1" } },
+  );
+  await h.api.detectNewRun(0);
+  ok("S4c 추적 run 부재 → loadHistory 로 회복", h.calls.loadHistory === 1);
+  ok("S4c 폴링 재기동은 하지 않음", h.calls.repoll === 0);
 }
 
 // Scenario 5: 유휴, baseline null, 서버 idle(done) R0 → baseline 확정만, 재로드 없음.
@@ -163,11 +206,15 @@ function makeHarness(payload, over = {}, opts = {}) {
   ok("S5 첫 폴링 idle → 감지기 재스케줄", h.state.runDetectPoller !== null);
 }
 
-// Scenario 6: pendingBubble 존재(활성) → dormant.
+// Scenario 6: pending 말풍선이 떠 있어도 폴러가 in-flight 면 dormant(중복 fetch 방지).
+// progress-poll-resilience: 판정 근거는 pendingBubble 이 아니라 progressPollInFlight 다.
 {
-  const h = makeHarness({ run_id: "R9", raw_status: "processing" }, { pendingBubble: { runId: "RX" } });
+  const h = makeHarness(
+    { run_id: "R9", raw_status: "processing" },
+    { pendingBubble: { runId: "RX" }, progressPollInFlight: true },
+  );
   await h.api.detectNewRun(0);
-  ok("S6 pending 말풍선 존재 → dormant(fetch 안 함)", h.calls.apiFetch === 0);
+  ok("S6 폴러 in-flight → dormant(fetch 안 함)", h.calls.apiFetch === 0);
 }
 
 // Scenario 7 (D1 회귀 방지): 새 run 감지 → loadHistory 위임이 throw(네트워크 blip)해도 감지기가

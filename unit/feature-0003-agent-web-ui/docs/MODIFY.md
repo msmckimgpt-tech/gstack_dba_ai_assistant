@@ -11,6 +11,37 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260729T175000-progress-poll-resilience (진행 폴링 영구 정지 → 자가 회복, Major)
+- `unit/feature-0003-agent-web-ui/src/static/app.js`
+  - `PROGRESS_POLL_ERROR_MAX_MS = 60000` 신설(오류 백오프 상한).
+  - `pollProgress` catch: `shouldSchedule = … && state.progressErrorCount < 3` → **연속 실패에도
+    항상 재스케줄**(활성 대화가 있는 한). 간격은 `PROGRESS_POLL_ERROR_MS * 2^(n-1)` 를 상한으로
+    clamp(지수 백오프). 숨김 탭은 종전대로 `PROGRESS_POLL_HIDDEN_MS` 하한 적용.
+  - `detectNewRun` dormant 판정: `progressRunId || pendingBubble || progressPoller ||
+    progressPollInFlight || runDetectInFlight` → **`progressPoller || progressPollInFlight ||
+    runDetectInFlight`**(폴러 생존 사실만). fetch 후 재확인 가드도 동형으로 교정.
+  - `detectNewRun` baseline 첫 폴 분기: `rawStatus === "processing" && runId && runId !==
+    state.progressRunId` → `rawStatus === "processing" && runId` (죽은 폴러가 추적하던 같은 run
+    도 회복 대상에 포함).
+  - `loadHistory` processing 분기: `if (!append) stopRunDetectPolling();` →
+    `if (!append) startRunDetectPolling();` (감지기를 watchdog 으로 무장).
+  - `scheduleProgressPolling` / `scheduleRunDetectPolling` 의 `setTimeout` 콜백이 진입 즉시
+    `state.progressPoller = null` / `state.runDetectPoller = null` 로 소진된 tick 참조를 정리.
+  - `visibilitychange` 재가시 분기: 판정에 `display_status`·`pendingBubble` 포함, 감지기 재무장을
+    `else if` → 독립 `if` 로 분리(처리 중 대화에서도 watchdog 유지).
+  - `online` 이벤트 리스너 신설 — 회선 복구 시 백오프 대기 없이 폴링·감지기 즉시 재무장.
+  - (codex P1) `detectNewRun` dormant 가드 직후 분기 신설 — `state.progressRunId` 가 있으면
+    **fetch 없이** `startProgressPolling({reset:false, runId})` 재기동 + 감지기 재스케줄 후 return.
+    감지 fetch 는 `client_run_id` 미포함이라 그룹 대화에서 foreign run 을 받아 `loadHistory` 가
+    폴링을 남의 run 으로 갈아태우는 경로를 원천 차단(내 run 의 per-run terminal marker 보존).
+  - (codex P2) `state.runDetectAbortController` 신설 — `detectNewRun` 이 controller 를 state 에
+    걸고, `stopRunDetectPolling` 이 abort + 참조 해제, `finally` 는 자기 controller 만 정리.
+- `unit/feature-0003-agent-web-ui/tests/verify_progress_poll_resilience.mjs` **신설**(34 단언) —
+  실패 지속·백오프 곡선·성공 리셋·watchdog 회복·정적 배선 계약.
+- `unit/feature-0003-agent-web-ui/tests/verify_run_detect_poll.mjs` — 옛 계약 단언 6건을 새 계약으로
+  갱신(S4 폴러 생존 기준 · S4b watchdog 회복 신설 · S6 in-flight 기준 · 정적 배선 3건).
+- 백엔드·RBAC·스키마·엔드포인트·alembic 변경 **0**.
+
 ## CHG-20260729T141200-test-live-db-isolation (`make test` 의 라이브 컨트롤플레인 쓰기 차단, Major)
 - `unit/feature-0003-agent-web-ui/tests/conftest.py`: autouse fixture `_no_live_memory_conn` 신설 —
   `app._connect_memory` 를 monkeypatch 로 차단(raise). memory DB 커넥션 단일 진입점이라 `get_conn`

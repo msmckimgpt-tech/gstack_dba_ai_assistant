@@ -8,6 +8,78 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260729T1750-progress-poll-resilience — assistant 말풍선이 '처리 중' 에서 갱신되지 않고 대화 전환-복귀로만 되살아나던 결함 (Major §12.3 — feature-0003 프론트 `static/app.js` 단독, 백엔드/RBAC/스키마/엔드포인트 무변경, `/_template:entry` arg-given)
+
+- **증상(사용자 보고, 재발)**: "서비스 내 사용자가 assistant 에게 요청을 전송한 후, assistant 의
+  말풍선에는 '요청 중' 에서 갱신되지 않는 것으로 확인되며, 다른 대화로 전환했다가 다시 기존
+  대화로 돌아왔을 때 현황이 갱신되는 이슈가 재발."
+- **근본 원인 (3중 — 회복 타이머가 전부 사라진다)**:
+  1. `pollProgress` 의 `shouldSchedule = … && state.progressErrorCount < 3` — **연속 3회 실패하면
+     재스케줄을 영구 포기**한다. 이 대화의 유일한 갱신 채널(`/api/progress`)이 그 순간 소멸한다.
+     3연속은 드문 조건이 아니다: 롤링 배포 창(라이브 엣지 로그에 5.0s dial-timeout·`/api/ask`
+     502 관측), 4초 fetch 타임아웃 초과, 노트북 절전·WiFi 전환 등 20~30초 순단(오류 백오프가
+     8초라 3회를 금방 채운다).
+  2. 유휴 run-감지기 `detectNewRun` 의 dormant 판정이 `state.progressRunId || state.pendingBubble`
+     을 근거로 삼았다. **이 둘은 폴러가 죽어도 남는 잔여값**이라, 폴링이 끊긴 뒤에도 감지기가
+     "활성 폴러가 담당 중" 으로 오판하고 영구 dormant 가 된다.
+  3. `loadHistory` 의 processing 분기가 감지기를 아예 정지(`stopRunDetectPolling`)시켰다.
+  → ①로 폴러가 죽고 ②③으로 감지기도 안 도니 **살아 있는 타이머가 0개**. 서버는 정상적으로
+    답변을 끝냈는데 화면만 '처리 중' 에 박제되고, 사용자가 대화를 전환-복귀해 `loadHistory` 를
+    다시 태우는 것이 **유일한 복구 경로**였다 — 사용자가 보고한 그 동작 그대로다.
+- **조치 (프론트 5건, 전부 비파괴·가역)**:
+  - [x] **F1 — 폴링을 포기하지 않는다**: `errorCount < 3` 게이트 제거. 대신 지수 백오프
+    (8s→16s→32s→상한 `PROGRESS_POLL_ERROR_MAX_MS` 60s)로 간격만 늘려 서버 부하를 억제하고,
+    성공 시 `progressErrorCount` 0 리셋 + ACTIVE 주기 복귀. 순단이 끝나면 스스로 회복한다.
+  - [x] **F2 — 감지기 dormant 판정을 "폴러 생존" 사실로 교정**: `progressPoller ||
+    progressPollInFlight || runDetectInFlight` 만 본다(잔여값 `progressRunId`/`pendingBubble` 제외).
+    fetch 후 재확인 가드도 동형. baseline 첫 폴 분기의 `runId !== state.progressRunId` 비교도
+    제거 — 이 비교가 "죽은 폴러가 추적하던 바로 그 run" 을 회복 대상에서 배제하던 마지막 자물쇠였다
+    (중복 진입은 폴러 생존 가드가 이미 막는다).
+  - [x] **F3 — 감지기를 watchdog 으로 승격**: `loadHistory` processing 분기가 감지기를 정지하는
+    대신 무장한다. 폴러가 살아 있는 동안은 dormant(타이머만 돌고 fetch 0회, 네트워크 비용 없음),
+    폴러가 끊긴 순간에만 깨어나 `loadHistory` 로 화면을 되살린다(= 사용자가 수동으로 하던 복구를
+    자동화).
+  - [x] **F4 — 탭 재가시 재개 견고화**: 판정에 `display_status`(dot 갱신이 이 필드만 쓰므로
+    `status` 는 stale 할 수 있다)와 `pendingBubble` 을 포함하고, 재가시 시 감지기도 항상 재무장.
+  - [x] **F5 — `online` 이벤트 훅**: 회선 복구 시 백오프 잔여 대기(최대 60초)를 기다리지 않고
+    즉시 재무장.
+  - [x] 소진된 `setTimeout` tick 이 `state.progressPoller`/`runDetectPoller` 에 stale id 로 남지
+    않도록 콜백 진입 시 참조를 비운다 — 이 참조가 F2 dormant 판정의 진실 소스이기 때문.
+  - [x] **F6 (codex 적대 리뷰 P1 — 내 변경이 새로 연 회귀)**: watchdog 이 깨어났을 때
+    `state.progressRunId` 가 있으면 **fetch 없이 그 run 의 폴러만 재기동**하고 `loadHistory` 로
+    넘기지 않는다. 감지 fetch 는 `client_run_id` 를 싣지 않아 그룹 대화에서 다른 멤버의 run(슬롯
+    점유)을 받고, `loadHistory` 가 그 run 으로 폴링을 재시작하면 **내 run 의 per-run terminal
+    marker 를 영영 못 받아** 원래 고치려던 고착이 다른 경로로 재현된다. 죽은 폴러의 회복은
+    *그 폴러를 되살리는 것*이지 서버에 "현재 슬롯 run" 을 묻는 것이 아니다.
+  - [x] **F7 (codex P2)**: 감지 fetch 의 `AbortController` 를 `state.runDetectAbortController` 로
+    올려 `stopRunDetectPolling` 이 끊게 한다(재무장 멱등성 — 종전엔 지역 변수라 재가시/`online`
+    훅이 in-flight 요청을 남긴 채 새 감지를 띄웠다). `finally` 는 자기 controller 만 해제.
+- **검증**:
+  - [x] **§18.8 패널**: 세션의 "요청 없이 Agent tool 호출 금지" 지시와 정책이 충돌 → 자체 SKIP
+    하지 않고 사용자 확인 후 **`/codex review` 대체**(§18.8.1 경로 2). 결과 **P1 1건·P2 2건**,
+    P1(그룹 foreign-run 갈아타기)·P2(감지 fetch abort) **수정 반영**, P2(저빈도 zombie polling)는
+    근거와 함께 수용. 상세 = REVIEW.md `[CODEX:progress-poll-resilience]`.
+  - [x] 신규 `tests/verify_progress_poll_resilience.mjs` **45 PASS / 0 FAIL** — pollProgress·
+    detectNewRun 을 가짜 state/fetch/timer 로 실제 구동. **수정 전 코드에 되돌려 실행하면 12건
+    FAIL**(핵심 `[F1-persist]`·`[F2-watchdog]` 포함)로 회귀 가드 유효성 실증. codex P1/P2 반영분
+    (foreign-run 보존 6건 · abort 계약 4건) 포함.
+  - [x] 기존 `tests/verify_run_detect_poll.mjs` 를 **새 계약으로 갱신**(28→35 PASS / 0 FAIL).
+    갱신 대상 6건은 옛 결함(pendingBubble/progressRunId 만으로 dormant, processing 분기 감지기
+    정지)을 고정하던 단언이라 그대로 두면 회귀가 아니라 결함을 지키는 테스트가 된다. dormant 의
+    본래 의도(중복 fetch 방지)는 폴러 생존 기준으로 보존하고, "폴러 사망 → watchdog 회복"
+    시나리오(S4b)를 추가했다.
+  - [x] feature-0003 mjs 스위트 전량 main 대조 — 신규 실패 0(잔여 FAIL 은 jsdom 미설치·모듈
+    부재·타 세션 cache-buster 등 main 과 동일한 baseline).
+  - [ ] `make test` 컨테이너 회귀 (Python 무접촉 — baseline 대조)
+  - [ ] **PB-0008 실 Windows 브라우저 라이브 검증** (`visual_verification_scope: always`) —
+    배포 후 수행. 시나리오: 요청 전송 → 폴링 구간에 네트워크 오프라인 유도(3회 이상 실패) →
+    온라인 복귀 시 **대화 전환 없이** 말풍선이 스스로 갱신되는지.
+- **범위 밖(정직)**: 서버측 `/api/ask` 동기 응답이 200~300초까지 걸려 클라이언트/프록시가 연결을
+  끊는 문제(라이브 로그 `status=0` 다수)는 별개 축이다. 본 cycle 은 그 상황에서도 **화면이 죽지
+  않게** 하는 복원력만 다룬다(`attachAndWaitForResult` 재연결 경로는 무변경).
+
+---
+
 ## TASK-20260729T1412-test-live-db-isolation — `make test` 가 라이브 런타임 설정을 덮어쓰던 근본 원인 차단 (Major)
 
 - **증상(사용자 보고)**: 관리 콘솔 `시스템 > 설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃`
