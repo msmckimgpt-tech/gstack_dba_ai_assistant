@@ -1812,3 +1812,19 @@ POST-DEPLOY Run 절 append(명제 5건 PASS + 미실증 1건), `docs/TASK.md` �
 `docs/REVIEW.md` `[SKIPPED:non-policy-doc]`.
 
 Cross-ref: TASK `20260729T1720-append-only-postdeploy`.
+
+## CHG-20260729T180000-conv-search-postdeploy — 대화 검색 첨부 파일명 축 POST-DEPLOY 실증 기록 (doc-only)
+
+코드 변경 0. 직전 두 cycle(`20260729T1455-conv-search-attach-name` 축 추가 · `20260729T1700-search-collation-nameerror`
+검색 500 hotfix)의 배포 후 라이브 실측 결과를 정본에 반영한다.
+
+- `TASK.md` — 양 cycle 의 POST-DEPLOY 체크박스 완료 처리 + 실증 섹션 `20260729T1800-conv-search-postdeploy` append.
+- `test-runs.d/20260729T145500-conv-search-attach-name.md` — `verdict` 를 "라이브 PB-0008 완료" 로 갱신,
+  예정 항목 5개를 실측 결과(PASS/근거)로 대체, 성능 실측 Run 추가.
+- `REPORT.md` — "잔여: POST-DEPLOY …" 문장을 실측 결과 요약으로 대체.
+
+**실측 요지**: PB-0008 5항목 전건 PASS(첨부 파일명 매칭·📎 칩 강조·본문 매칭 행 칩 없음·구버전/삭제
+전용 파일명 matched 0·에러 0) · 성능 EXPLAIN ANALYZE 에서 첨부 EXISTS 0.3ms / 전체 65.1ms(0.5% 미만)로
+codex P2 이월분 해소 · hotfix 전 500 → 후 200 으로 라이브 본문 검색이 2026-07-11 이후 처음 복구.
+
+Cross-ref: TASK `20260729T1800-conv-search-postdeploy` · REVIEW `REV-20260729T180000-conv-search-postdeploy`.

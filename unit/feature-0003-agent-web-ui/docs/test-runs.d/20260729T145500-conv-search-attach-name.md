@@ -2,7 +2,7 @@
 run_at: 2026-07-29T14:55:00+09:00
 session: ai/claude/feature-0003-conv-search-attach-name
 scope: 대화 검색 첨부 파일명 축 (검색 SQL·매칭 근거 API·검색 모달 칩)
-verdict: PASS (라이브 PB-0008 = 배포 후 후속)
+verdict: PASS (라이브 PB-0008 완료 — 2026-07-29 18:00)
 ---
 
 ### Run — 단위/계약 검증 (Environment: container agent image, `make test` harness)
@@ -44,13 +44,32 @@ verdict: PASS (라이브 PB-0008 = 배포 후 후속)
 - 최종: 신규 테스트 **30건 PASS**(P4~P6·F5 추가) · 전체 회귀 **신규 실패 0**(baseline 부분집합) ·
   `ruff check` PASS.
 
-### Run — 라이브 admin/작업화면 PB-0008 (Environment: Windows-browser) — 배포 후 후속
+### Run — 라이브 작업화면 PB-0008 (Environment: Windows-browser) — **완료 (2026-07-29 18:00)**
 
-`visual_verification_scope: always` 하드 게이트. 배포 후 `bin/win-browser.py` relay 로 확인할 항목:
+배포 `495da758`(축) → `db04ce0a`(검색 500 hotfix) 후, 실 Windows Chrome 150(win-browser relay)로 실측.
+접속은 WSL2 localhost 포워딩(`https://localhost/`) — Windows Chrome 이 WSL `/etc/hosts` 를 보지 않고,
+WSL IP 직접 접속은 앱 `WEB_ALLOWED_HOSTS` 미등록으로 400 이라 호스트 파일 무수정 경로를 택했다.
 
-1. 검색 모달(Cmd/Ctrl+K) placeholder 가 "제목 · 본문 · 첨부 파일명 (2자 이상)" 로 렌더된다.
-2. 첨부 파일명에만 존재하는 토큰으로 검색 → 해당 대화가 결과에 뜨고, 결과 행에 📎 파일명 칩이
-   검색어 강조와 함께 표시된다(본인 대화 = opt-in chip 없이 표시).
-3. 제목/본문 매칭 대화의 기존 동작(본문 스니펫·강조·클릭 점프) 무회귀.
-4. 삭제한 첨부의 파일명으로는 검색되지 않는다.
-5. pageerror 0.
+1. **PASS** — 검색 입력 placeholder 가 `제목 · 본문 · 첨부 파일명 (2자 이상)` 로 라이브 렌더.
+2. **PASS** — `attach-scope-probe` 검색 → 2건. 제목이 `새 대화`(제목·본문에 검색어 없음)인 대화가
+   첨부 파일명으로 매칭되고, 그 행에 📎 `attach-scope-probe.sql` 칩이 `<mark class="search-snippet-hl">`
+   강조와 함께 표시(칩 innerHTML 실측). 본인 대화라 opt-in chip 없이 노출.
+3. **PASS** — 본문 매칭 행(`파일의 특정 줄에서 probe token 추출`)은 칩 없이 기존 렌더 유지 —
+   근거 표시가 실제 매칭 축을 정확히 반영한다.
+4. **PASS** — 구버전/삭제분에만 존재하는 파일명(`GunZ_Init_Query.sql`)으로 검색 → matched 0 ·
+   matched_attachments 0. 목록 비가시 첨부가 검색 근거로만 드러나지 않음(AC-2) 라이브 확인.
+5. **PASS** — 페이지 정상 렌더, 콘솔 에러 없음. 스크린샷
+   `artifacts/shared/win-browser-shots-conv-search-attach/search-attach-chip.png`.
+
+**hotfix 전후 대조**: `db04ce0a` 배포 전 동일 조작은 **500**(`NameError: _COLLATION_AUDIT_DONE`,
+2026-07-11 ITEM-10 p7 선행 결함) → 배포 후 200. 라이브 본문 검색이 7월 11일 이후 처음 복구됐다.
+
+### Run — 첨부 EXISTS 성능 실측 (Environment: live PG, EXPLAIN ANALYZE) — codex P2 이월분 해소
+
+규모: `core_attachments` 634행 / `core_conversations` 271행.
+- 전체 검색 쿼리 **Execution Time 65.1ms**(planning 2.5ms) — `statement_timeout` 3s 대비 여유.
+- 첨부 EXISTS = `Seq Scan on core_attachments` **actual 0.301..0.304ms · loops=1**, 전체의 **0.5% 미만**.
+  지배 비용은 기존 메시지 본문 ILIKE 축.
+- 판정: `ILIKE '%q%'` 인덱스 미사용은 사실이나 현 규모에서 첨부 축 기여는 무시할 수준. 첨부가
+  10만 행대가 되면 §8.7 FULLTEXT/trigram trigger 와 함께 재평가(트리거 = rate limit 빈발 또는
+  statement_timeout 히트).
