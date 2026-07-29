@@ -563,3 +563,10 @@ source_of_truth: true
 - **행 관용구 통일 vs 카드 유지**: 관계 섹션의 `.amgr-row` 테두리 카드는 방향 화살표·신뢰 배지·추적 힌트를 담는 **복합 다중요소 행**이라 카드가 적절하다. "복합=카드 / 단일 항목=평행 행" 규칙으로 일관되므로 통일 대상에서 의도적으로 제외했다(누락 아님).
 - **자가검증이 자기 수정을 2회 반증**: ① 1차 수정이 이름 말줄임 시 전문 보존을 빠뜨린 것을 신설 측정 지표 `nameTitleOk` 가 `false` 로 적발 ② 여백 리셋 부수 피해를 codex R1 이 적발. 두 건 모두 실렌더 정량 대조로 확증 후 교정.
 - 검증: 신설 `test_detail_panel_typo.js` **24 PASS**(수정 전 CSS 로 **17 FAIL** = 반증 확인) · 그래프 헤드리스 전 스위트 **996 PASS / 0 FAIL** · pytest 전 스위트 **2835 passed / 0 failed** · ruff clean. PB-0008 은 배포 후 POST-DEPLOY(JS 는 `docker cp` QA 가 asset stamp/모듈 캐시로 오염됨).
+
+## REV-20260729T111300-detail-panel-typo-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs/evidence only outside policy-doc list — POST-DEPLOY 라이브 검증 기록(실행 코드 0줄). 검증 대상 코드의 적대검증은 같은 cycle 의 REV-20260729T093000 [CODEX:ux+design] 2라운드가 담당하며, 그 코드는 이미 main 머지·배포됐다.
+- Timestamp: 2026-07-29T11:13:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
