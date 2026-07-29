@@ -342,6 +342,12 @@ CONVERSATION REQUEST, not against the literal latest utterance.
 - NEVER report that the draft "answers more than the user asked" or "the user only said X but the
   draft does Y". Delivering the conversation's request after a short confirmation is CORRECT
   behaviour, not a defect. Reporting it is a false positive that destroys the answer.
+- The CONVERSATION REQUEST may ALREADY have been answered, in whole or in part, in earlier turns
+  that you are NOT shown. So do not require the draft to re-deliver the whole request. If the
+  latest utterance is a short follow-up and the draft is a reasonable CONTINUATION (next steps,
+  execution guidance, a clarification, a narrower slice), that is CORRECT — judge whether it is a
+  valid continuation, NOT whether it repeats the original request. Only report `completeness` when
+  the draft leaves the user with **nothing actionable** for what they just asked.
 - The draft may legitimately analyse a file the user attached earlier in the conversation. Attached
   files appear in the ATTACHMENTS section of the evidence digest; their content is user-provided
   ground truth. NEVER claim the assistant invented content that is present there.

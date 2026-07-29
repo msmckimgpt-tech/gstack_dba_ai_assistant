@@ -142,6 +142,11 @@ BLOCK 검출 후 답변이 미수정 전달되던 근본 원인(수정 지시를
 - [x] 누출 게이트 — `_review_conversation_request`/`_review_attachments` 가 bounded 발신자에
       대해 fail-closed(테스트 고정).
 - [x] 테스트 22건 신규(라이브 붕괴 재현 케이스 포함)·전체 2857(baseline 2835) 회귀 0·ruff clean.
+- [x] TASK-20260729T120000-review-continuation: **라이브 유도 측정 후속** — 배포 후 동일 구조
+      대화를 실제로 태워(2턴: 상세 리뷰 요청 → "네 맞습니다.") 회귀 소멸 확인(rounds=0·BLOCK 0·
+      797자 실질 continuation). 같은 초안 A/B 에서 grounding 오판 2→0 확인, 대신 반대 방향
+      과교정(이미 전달한 리뷰 재요구) 2/3 관측 → continuation 규칙 추가로 1/4 로 감소.
+      잔여는 답변을 늘리는 방향이라 붕괴 가드와 무충돌(REVIEW 비대칭 논거).
 
 ## 10. 후속 개선 — 원 요청 정합 (answer-origin-realign, 2026-07-28)
 자가 검증을 거쳐 전달된 답변이 **처음 요청사항이 아니라 직전 문맥(내부 리뷰)에 답하는

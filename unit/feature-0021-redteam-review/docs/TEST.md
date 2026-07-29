@@ -166,6 +166,15 @@ source_of_truth: true
   원문이 리뷰어 false positive 2종(현재 턴만 봄 / 첨부가 digest 에 없음)을 직접 보여줬다.
 - 붕괴 재현 테스트는 **수정 전 코드에서 실패**하도록 작성했다(가드가 결함 자체를 검증).
 
+### Run 2026-07-29 (2) — 라이브 유도 측정 + 과교정 가드 (review-continuation)
+
+- Environment: **라이브 서비스**(`POST /api/ask` 2턴, 추론 매우높음) + 배포 컨테이너 내 A/B
+- 상세 fragment: [`test-runs.d/20260729T1200-live-induction-measurement.md`](./test-runs.d/20260729T1200-live-induction-measurement.md)
+- 결과 **PASS** — 유도한 회귀가 재현되지 않음: 수정 전 `rounds=14`/152자 비-답변 →
+  수정 후 **`rounds=0`·BLOCK 0·797자 실행 가능한 continuation**. A/B 로 grounding 오판 2→0 확인,
+  반대 방향 과교정(2/3) 발견 → continuation 규칙으로 **1/4** 로 감소. 전체 2883 passed·ruff clean.
+- 잔여·한계는 §4 및 fragment 의 "미커버" 참조 (N 작음·단일 대화·첨부 end-to-end 미수행).
+
 ## 4. Integration Coverage
 - 리뷰어 실 LLM 판정·redteam_reviews INSERT·노트 실볼륨 축적은 배포 후 라이브 실증
   (POST-DEPLOY Run 으로 §3 에 append). 콘솔 화면은 PB-0008 Windows-browser 검증.
@@ -184,3 +193,7 @@ source_of_truth: true
   BLOCK 을 더 이상 내지 않는지, `revision_rounds` 의 긴 꼬리(14 라운드)가 사라지는지,
   `stop_reason='revise_collapsed'` 빈도가 유의한지. 단위 테스트는 붕괴 *경로*(가드·앵커·리뷰어
   입력)를 고정할 뿐 리뷰어 판정 자체를 재현하지 못한다 — 배포 후 `redteam_reviews` 분포로 확인.
+  **2026-07-29 배포 후 라이브 유도로 1차 확인 완료**(§3 Run 2026-07-29(2)) — 다만 N 이 작고 단일
+  대화라 장기 분포(`revision_rounds` 꼬리·`revise_collapsed` 빈도)는 여전히 트래픽 대기.
+- **미커버 (첨부 end-to-end)**: 유도 대화는 SQL 을 본문 붙여넣기로 태웠다(첨부 업로드 자동화
+  미구현). 첨부가 리뷰어에 도달하는 것은 A/B 로 간접 확인(가짜 첨부 주입 시 불일치 BLOCK 발생).
