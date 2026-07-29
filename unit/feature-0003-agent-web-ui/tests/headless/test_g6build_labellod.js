@@ -256,162 +256,145 @@ const check = (name, cond, extra) => { if (cond) { pass++; console.log("PASS", n
   check("G5 통상 줌 재빌드가 통계를 갱신(stale 0)", g.__metaGraphRef._labelLod.dropped === 0 && g.__metaGraphRef._labelLod.zoom === 1, g.__metaGraphRef._labelLod);
 }
 
-// ── Section I: 위계 헤더 라벨 범위-파생 폰트 (hdr-label-fit, 사용자 요청 2026-07-28) ──
-//   `_metaHdrFitFont(base, boxW, textLen, zoom)` = clamp(base, min(base/zoom, 박스fit), MAX).
-//   (a) `base/zoom` = 화면상 base 크기 유지(역보정) (b) 박스fit = 라벨이 자기 범위를 넘지 않게 하는 상한.
+// ── Section I: 위계 헤더 레벨 폰트 (hdr-label-typo 재설계, 사용자 피드백 2026-07-29) ──
+//   계약 (A) 폰트는 **줌만의 함수** — 박스를 인자로 받지 않는다 → 같은 레벨 형제는 전원 동일 크기.
+//            (B) 상한은 예약 헤더 행 기하 파생 → 팔출 0.  (C) 부모 상한 > 자식 상한 → 위계 역전 차단.
 {
-  const fitFont = vm.runInContext("typeof _metaHdrFitFont !== 'undefined' ? _metaHdrFitFont : null", sandbox);
+  const lvlFont = vm.runInContext("typeof _metaHdrLevelFont !== 'undefined' ? _metaHdrLevelFont : null", sandbox);
   const fitBand = vm.runInContext("typeof _metaHdrFitBandOf !== 'undefined' ? _metaHdrFitBandOf : null", sandbox);
-  const FMAX = vm.runInContext("typeof _META_HDR_FIT_MAX !== 'undefined' ? _META_HDR_FIT_MAX : null", sandbox);
-  check("I0 심볼 노출(_metaHdrFitFont·_metaHdrFitBandOf·_META_HDR_FIT_MAX)", !!fitFont && !!fitBand && FMAX > 0, [!!fitFont, !!fitBand, FMAX]);
-  if (fitFont && fitBand) {
-    // 줌인 구간은 종전 그대로 — 부풀지 않는다(§86 "줌인은 화면 고정" 결정과 정합)
-    check("I1 zoom ≥ 1 은 base 그대로(회귀 0)", fitFont(10.5, 900, 12, 1) === 10.5 && fitFont(12, 4000, 20, 2.5) === 12,
-      [fitFont(10.5, 900, 12, 1), fitFont(12, 4000, 20, 2.5)]);
-    // 넓은 박스 → 역보정이 살아 화면 크기 유지(MAX 상한 안에서)
-    check("I2 넓은 박스·줌아웃 → 폰트 확장", fitFont(10.5, 4000, 12, 0.25) > 10.5, fitFont(10.5, 4000, 12, 0.25));
-    check("I3 확장은 MAX 를 넘지 않음", fitFont(10.5, 100000, 4, 0.01) === FMAX, fitFont(10.5, 100000, 4, 0.01));
-    // 좁은 박스 → fit 상한이 걸려 **자라지 않는다**(base 하한 유지 = 기존 동작 보존)
-    check("I4 좁은 박스·긴 라벨은 base 유지(넘치게 키우지 않음)", fitFont(12, 120, 40, 0.2) === 12, fitFont(12, 120, 40, 0.2));
-    // 라벨이 박스를 넘지 않는다 — fit 상한의 본질(충돌 폭발 방지)
-    check("I5 산출 폰트의 라벨 폭이 박스를 넘지 않음", (() => {
-      for (const [bw, n, z] of [[248, 12, 0.2], [472, 18, 0.1], [920, 24, 0.05], [150, 30, 0.3]]) {
-        const f = fitFont(10.5, bw, n, z);
-        if (f > 10.5 && n * f * 0.686 > bw) return false;   // 확장했다면 반드시 박스 안
+  const CHARW = vm.runInContext("typeof _META_HDR_TYPO_CHARW !== 'undefined' ? _META_HDR_TYPO_CHARW : null", sandbox);
+  check("I0 심볼 노출(_metaHdrLevelFont·_metaHdrFitBandOf·_META_HDR_TYPO_CHARW)", !!lvlFont && !!fitBand && CHARW > 0, [!!lvlFont, !!fitBand, CHARW]);
+  // **1차 구현의 박스 의존 API 는 폐기**됐다 — 남아 있으면 형제 크기 불일치가 되살아난다.
+  const oldFn = vm.runInContext("typeof _metaHdrFitFont", sandbox);
+  check("I1 폐기된 박스-의존 API(_metaHdrFitFont) 잔재 0", oldFn === "undefined", oldFn);
+  if (lvlFont && fitBand) {
+    check("I2 zoom ≥ 1 은 base 그대로(회귀 0)", lvlFont(10.5, 20, 1) === 10.5 && lvlFont(12, 24, 2.5) === 12,
+      [lvlFont(10.5, 20, 1), lvlFont(12, 24, 2.5)]);
+    check("I3 줌아웃에서 확장", lvlFont(10.5, 20, 0.3) > 10.5, lvlFont(10.5, 20, 0.3));
+    check("I4 레벨 상한을 넘지 않음", lvlFont(10.5, 20, 0.01) === 20 && lvlFont(12, 24, 0.01) === 24,
+      [lvlFont(10.5, 20, 0.01), lvlFont(12, 24, 0.01)]);
+    // 계약 A — **박스 무관**. 인자에 박스가 없으므로 구조적으로 보장되지만, 회귀 감지를 위해
+    //   "같은 (base, cap, zoom) 이면 항상 같은 값" 을 명시 단정한다(형제 동일 크기의 근거).
+    check("I5 같은 레벨·같은 줌이면 항상 동일 폰트(형제 크기 일치)",
+      lvlFont(10.5, 20, 0.25) === lvlFont(10.5, 20, 0.25) && lvlFont(10.5, 20, 0.25) === lvlFont(10.5, 20, 0.250),
+      lvlFont(10.5, 20, 0.25));
+    check("I6 인자 arity 가 3(박스·글자수 미수용 — 계약 A 구조 보장)", lvlFont.length === 3, lvlFont.length);
+    // 계약 C — 부모(cat-hd base 12 / cap 24) > 자식(group-hd base 10.5 / cap 20) 전 줌 구간
+    check("I7 전 줌 구간에서 부모 폰트 > 자식 폰트(위계 역전 0)", (() => {
+      for (let z = 1.0; z > 0.02; z *= 0.9) {
+        if (!(lvlFont(12, 24, z) > lvlFont(10.5, 20, z))) return false;
       }
       return true;
     })());
-    // 박스가 클수록 (또는 같음) — 단조. 지도학 "면적 비례" 계약.
-    check("I6 박스 폭에 대해 단조 비감소", (() => {
+    check("I8 줌아웃 단조 비감소", (() => {
       let prev = 0;
-      for (const bw of [120, 248, 472, 696, 920, 1400, 4000]) {
-        const f = fitFont(10.5, bw, 14, 0.2); if (f < prev) return false; prev = f;
-      }
+      for (const z of [1, 0.8, 0.6, 0.45, 0.3, 0.2, 0.1, 0.05]) { const f = lvlFont(10.5, 20, z); if (f < prev) return false; prev = f; }
       return true;
     })());
-    // 사용자 증상 축: 종전 고정 폰트가 억제되던 줌에서 넓은 클러스터는 판독 크기를 확보한다
-    check("I7 종전 억제 줌(0.25)에서 넓은 박스는 판독 하한 확보", fitFont(10.5, 920, 14, 0.25) * 0.25 >= HDR_PX,
-      +(fitFont(10.5, 920, 14, 0.25) * 0.25).toFixed(3));
-    // 반동 밴드 — stale 폰트 방지용 rebuild 트리거. 통상 줌은 0, 극단은 상한 클램프(무의미 rebuild 차단).
-    check("I8 zoom ≥ 1 밴드는 0(통상 줌 rebuild 0)", fitBand(1) === 0 && fitBand(2) === 0, [fitBand(1), fitBand(2)]);
-    check("I9 줌아웃에서 밴드 단조 증가", fitBand(0.8) <= fitBand(0.5) && fitBand(0.5) <= fitBand(0.3), [fitBand(0.8), fitBand(0.5), fitBand(0.3)]);
-    check("I10 폰트가 MAX 로 굳는 구간부터 밴드 상한 클램프(무의미 rebuild 차단)",
-      fitBand(0.05) === fitBand(0.02) && fitBand(0.02) === fitBand(0.001), [fitBand(0.05), fitBand(0.02), fitBand(0.001)]);
-    check("I11 비정상 zoom 은 base·0 으로 폴백", fitFont(10.5, 900, 12, 0) === 10.5 && fitFont(10.5, 900, 12, NaN) === 10.5
-      && fitBand(0) === 0 && fitBand(-2) === 0);
+    check("I9 비정상 zoom·cap 은 base 폴백", lvlFont(10.5, 20, 0) === 10.5 && lvlFont(10.5, 20, NaN) === 10.5
+      && lvlFont(10.5, 5, 0.2) === 10.5 && lvlFont(10.5, undefined, 0.2) === 10.5);
+    // 밴드는 **레벨 스펙(_hdrLevels)** 에서 상한을 파생하므로, 스펙이 등록된 build 이후에 평가한다.
+    seedModel(grouped()); buildAt(0.3);
+    check("I10 zoom ≥ 1 밴드는 0(통상 줌 rebuild 0)", fitBand(1) === 0 && fitBand(2) === 0, [fitBand(1), fitBand(2)]);
+    check("I11 줌아웃 밴드 단조 비감소", fitBand(0.9) <= fitBand(0.7) && fitBand(0.7) <= fitBand(0.55),
+      [fitBand(0.9), fitBand(0.7), fitBand(0.55)]);
+    // **codex P2(2026-07-29) 흡수**: 모든 레벨 폰트가 상한에 굳은 뒤에는 밴드가 더 바뀌면 안 된다
+    //   (바뀌면 렌더 동일한데 full setData/draw 가 걸리는 헛 rebuild). 레벨 폰트는
+    //   z ≤ base/(cap − STEP/2) 에서 굳고(GH 0.5316 · CATH 0.5053) 전 레벨이 굳는 지점은 0.5053 이다.
+    //   구 구현은 상한을 4 로 잡아 **z≈0.458 에서 3→4 전이**가 걸렸다 — 그 지점 이하가 전부 동일해야 한다.
+    //   검증점은 **클램프 지점을 스펙에서 파생**해 잡는다 — 하드코딩하면 전이 지점을 지나쳐버려
+    //   결함을 놓친다(초안이 실제로 그랬다: 0.45 부터 잡아 3→4 전이가 검증 범위 밖이었다).
+    const zClampAll = Math.min(10.5 / (20 - 0.25), 12 / (24 - 0.25));   // = 0.5053
+    const zs = [zClampAll * 0.99, zClampAll * 0.9, 0.4, 0.3, 0.2, 0.1, 0.05, 0.001];
+    const bands = zs.map(fitBand);
+    check("I12 전 레벨 폰트가 상한에 굳은 뒤 밴드 불변(헛 rebuild 0)",
+      bands.every((b) => b === bands[0]), { zClampAll: +zClampAll.toFixed(4), zs: zs.map((z) => +z.toFixed(4)), bands });
+    check("I12b 그 구간 전체에서 폰트가 실제 상한값(밴드 고정의 정당성)",
+      zs.every((z) => lvlFont(10.5, 20, z) === 20 && lvlFont(12, 24, z) === 24), zs.map((z) => [lvlFont(10.5, 20, z), lvlFont(12, 24, z)]));
+    check("I13 폰트가 아직 변할 수 있는 구간에서는 밴드가 반응(stale 방지 유지)",
+      fitBand(0.9) !== fitBand(0.55), [fitBand(0.9), fitBand(0.55)]);
+    // 실효 상한이 폰트 상한과 정합 — 밴드가 멈추는 줌 이하에서 두 레벨 폰트가 실제로 상한값이다
+    check("I14 밴드가 멈추는 구간의 폰트가 실제 상한값(정합)",
+      lvlFont(10.5, 20, 0.45) === 20 && lvlFont(12, 24, 0.45) === 24,
+      [lvlFont(10.5, 20, 0.45), lvlFont(12, 24, 0.45)]);
   }
 }
 
-// ── Section J: 위계 헤더 실 방출 결합 (GH·CATH) ────────────────────────────────
-//   유닛(Section I)만 보면 **호출부가 안 물렸어도 전건 PASS** 한다 — 실제 build 방출에서 확인한다.
+// ── Section J: 실 방출 결합 — 형제 일치 · 예약 행 수용 · 위계 · reflow 0 ──────────
 {
   seedModel(grouped());
-  const zOld = (HDR_PX / 10.5) * 0.8;   // 종전 고정 10.5px 라면 억제되던 줌
-  const out = buildAt(zOld);
+  const zOut = 0.22;   // 1차 구현이 시각 결함을 보였던 개요 줌대
+  const out = buildAt(zOut);
   const gh = byKind(out, "group-hd");
-  check("J1 컨텐츠 카테고리 헤더(GH)가 방출된다(시드 전제)", gh.length >= 2, gh.length);
-  check("J2 GH 라벨이 종전 억제 줌에서 유지", gh.length > 0 && withLabel(gh).length === gh.length,
-    [withLabel(gh).length, gh.length]);
-  check("J3 GH 폰트가 base(10.5) 보다 확장", gh.length > 0 && gh.every((e) => e.style.labelFontSize > 10.5),
-    gh.map((e) => e.style.labelFontSize));
-  check("J4 GH 가 판독 크기 확보(fontSize×zoom ≥ 하한)", gh.length > 0 && gh.every((e) => e.style.labelFontSize * zOld >= HDR_PX),
-    gh.map((e) => +(e.style.labelFontSize * zOld).toFixed(2)));
-  check("J5 GH 라벨 폭이 자기 박스를 넘지 않음(labelMaxWidth 안전망 포함)",
-    gh.length > 0 && gh.every((e) => e.style.labelMaxWidth > 0 && e.style.labelMaxWidth <= e.style.size[0]),
-    gh.map((e) => [e.style.labelMaxWidth, e.style.size[0]]));
-  // **하단 앵커 = reflow 0**(사용자 결정): 칩이 커져도 아래로 자라지 않아 멤버 영역을 침범하지 않는다.
-  const ghBase = buildAt(1);
-  const bottomOf = (e) => e.style.y + e.style.size[1] / 2;
-  const byId = (arr) => new Map(arr.map((e) => [e.id, e]));
-  const gA = byId(byKind(ghBase, "group-hd")), gB = byId(gh);
-  check("J6 GH 칩 하단이 줌과 무관하게 고정(상방 팔출 — 멤버 영역 무침범)",
-    gA.size > 0 && [...gA.keys()].every((k) => gB.has(k) && Math.abs(bottomOf(gA.get(k)) - bottomOf(gB.get(k))) < 0.001),
-    [...gA.keys()].map((k) => [bottomOf(gA.get(k)), gB.has(k) ? bottomOf(gB.get(k)) : null]));
-  check("J7 GH 칩 높이가 폰트에 비례해 커짐", [...gA.keys()].every((k) => gB.get(k).style.size[1] >= gA.get(k).style.size[1]),
-    [...gA.keys()].map((k) => [gA.get(k).style.size[1], gB.get(k).style.size[1]]));
-  // band-invariant — 헤더 확장이 멤버 좌표·개수를 건드리지 않는다(§61/label-lod 와 동일 계약)
-  const memA = byKind(ghBase, "table"), memB = byKind(out, "table");
-  check("J8 멤버(테이블) 좌표·개수 불변(reflow 0)", memA.length === memB.length
-    && memA.every((e, i) => Math.abs(e.style.x - memB[i].style.x) < 0.001 && Math.abs(e.style.y - memB[i].style.y) < 0.001),
-    [memA.length, memB.length]);
-  // CATH 동일 메커니즘 — 밴드 헤더도 같은 함수를 쓴다
-  seedModel(simple(), { sales: [{ id: 1, name: "P1", sort: 1 }], audit: [{ id: 1, name: "P1", sort: 1 }] });
-  const zc = (HDR_PX / 12) * 0.8;
-  const co = buildAt(zc), ch2 = byKind(co, "cat-hd");
-  check("J9 제품 카테고리 밴드 헤더(CATH)도 확장 적용", ch2.length > 0
-    && ch2.every((e) => e.style.labelFontSize > 12 && e.style.labelFontSize * zc >= HDR_PX),
-    ch2.map((e) => [e.style.labelFontSize, +(e.style.labelFontSize * zc).toFixed(2)]));
-  const cBase = byId(byKind(buildAt(1), "cat-hd")), cNow = byId(ch2);
-  check("J10 CATH 칩 하단도 고정(상방 팔출)", cBase.size > 0
-    && [...cBase.keys()].every((k) => cNow.has(k) && Math.abs(bottomOf(cBase.get(k)) - bottomOf(cNow.get(k))) < 0.001),
-    [...cBase.keys()].map((k) => [bottomOf(cBase.get(k)), cNow.has(k) ? bottomOf(cNow.get(k)) : null]));
-  // 밴드 문자열에 헤더 폰트 반동이 합류했는가 — 안 물리면 폰트가 stale 해져 역보정이 무의미해진다
-  check("J11 라벨 밴드에 헤더 폰트 반동 성분 합류(stale 폰트 방지)",
+  const topOf = (e) => e.style.y - e.style.size[1] / 2;
+  const botOf = (e) => e.style.y + e.style.size[1] / 2;
+  check("J1 컨텐츠 카테고리 헤더(GH) 방출 전제", gh.length >= 2, gh.length);
+  // ① 형제 크기 불일치 해소 — **모든 GH 폰트가 동일**
+  check("J2 같은 위계 형제 GH 의 폰트가 전원 동일(① 해소)",
+    new Set(gh.map((e) => e.style.labelFontSize)).size === 1, gh.map((e) => e.style.labelFontSize));
+  check("J3 GH 폰트가 base(10.5) 초과 — 개선은 유지", gh.every((e) => e.style.labelFontSize > 10.5),
+    gh[0] && gh[0].style.labelFontSize);
+  // ② 알약 유무 불일치 해소 — 소프트닝 분기 폐기, 전원 동일 스타일
+  check("J4 GH 알약이 전원 동일 스타일(fillOpacity 미분기 · lineWidth 1) (② 해소)",
+    gh.every((e) => e.style.fillOpacity === undefined && e.style.lineWidth === 1),
+    gh.map((e) => [e.style.fillOpacity, e.style.lineWidth]));
+  // ⑤⑥ 팔출 0 — 칩이 예약 행(GHH=26) 안에 완전히 들어간다: 칩 상단이 박스 상단보다 아래
+  const gbTop = new Map(byKind(out, "group-bg").map((e) => [e.id.slice(3), topOf(e)]));
+  check("J5 GH 칩이 박스 상단 위로 삐져나가지 않음(팔출 0 → ⑤⑥ 해소)",
+    gh.every((e) => topOf(e) >= gbTop.get(e.id.slice(3)) - 0.001),
+    gh.map((e) => [topOf(e), gbTop.get(e.id.slice(3))]));
+  check("J6 GH 칩이 멤버 영역(예약 행 아래)을 침범하지 않음",
+    gh.every((e) => botOf(e) <= gbTop.get(e.id.slice(3)) + 26 + 0.001),
+    gh.map((e) => [botOf(e), gbTop.get(e.id.slice(3)) + 26]));
+  // 알약이 텍스트를 감싼다 — 칩 높이 ≥ 폰트
+  check("J7 칩 높이가 폰트를 감싼다(알약 밖으로 글자가 새지 않음)",
+    gh.every((e) => e.style.size[1] >= e.style.labelFontSize), gh.map((e) => [e.style.size[1], e.style.labelFontSize]));
+  // ④ 잘림 완화 — 라벨 폭이 가용폭 안
+  check("J8 라벨 폭이 칩 가용폭 안(잘림 완화 — ④)",
+    gh.every((e) => (e.style.labelText || "").length * e.style.labelFontSize * 0.686 <= e.style.labelMaxWidth + 0.5),
+    gh.map((e) => [Math.round((e.style.labelText || "").length * e.style.labelFontSize * 0.686), e.style.labelMaxWidth]));
+  // reflow 0 — 멤버 좌표·개수 불변
+  const base1 = buildAt(1);
+  const memA = byKind(base1, "table"), memB = byKind(out, "table");
+  check("J9 멤버(테이블) 좌표·개수 불변(reflow 0)", memA.length === memB.length
+    && memA.every((e, i) => Math.abs(e.style.x - memB[i].style.x) < 0.001 && Math.abs(e.style.y - memB[i].style.y) < 0.001));
+  // zoom=1 회귀 0 — 칩 18 · 폰트 10.5
+  const ghBase = byKind(base1, "group-hd");
+  check("J10 zoom=1 은 종전 그대로(칩 18 · 폰트 10.5)",
+    ghBase.every((e) => e.style.size[1] === 18 && e.style.labelFontSize === 10.5),
+    ghBase.map((e) => [e.style.size[1], e.style.labelFontSize]));
+  // ③ 위계 역전 차단 — CATH 폰트 > GH 폰트 (실 방출)
+  seedModel(simple(), { sales: [{ id: 1, name: "P1", sort: 1 }], audit: [{ id: 2, name: "P2", sort: 2 }] });
+  const co = buildAt(zOut);
+  const ch = byKind(co, "cat-hd");
+  check("J11 제품 카테고리 밴드 헤더(CATH) 형제 폰트도 전원 동일",
+    ch.length > 0 && new Set(ch.map((e) => e.style.labelFontSize)).size === 1, ch.map((e) => e.style.labelFontSize));
+  check("J12 CATH 칩도 예약 행 안(밴드 상단 위로 삐져나가지 않음)", (() => {
+    const cbTop = new Map(byKind(co, "cat-bg").map((e) => [e.id.slice(4), topOf(e)]));
+    return ch.every((e) => topOf(e) >= cbTop.get(e.id.slice(5)) - 0.001);
+  })(), ch.map((e) => topOf(e)));
+  // 두 레벨을 같은 줌에서 대조 — 부모가 자식보다 크다
+  const ghF = gh[0].style.labelFontSize, chF = ch[0].style.labelFontSize;
+  check("J13 부모(CATH) 폰트 > 자식(GH) 폰트 — 위계 역전 0(③ 해소)", chF > ghF, [chF, ghF]);
+  check("J14 라벨 밴드에 헤더 반동 성분 합류(stale 폰트 방지)",
     /\/h\d+$/.test(labelBandOf(0.3)) && labelBandOf(0.3) !== labelBandOf(0.6),
     [labelBandOf(0.3), labelBandOf(0.6)]);
 }
 
-// ── Section K: codex 적대 검증 P1·P2 흡수 고정 (hdr-label-fit) ────────────────
+// ── Section K: products 게이트(codex P2 유지) ─────────────────────────────────
 {
-  // K1~K4 — **P1(GATE) hit 영역 상한**: 칩을 폰트에 무제한 비례시키면 위 그룹 블록을 침범해 GH(z=5,
-  //   드래그 핸들)가 위 그룹 테이블(z=4)의 클릭을 가로챈다. 실측: 그룹 행 간격 GGY=16, 행1 블록 40~168,
-  //   행2 칩 하단 206 → 폰트 64 면 칩 높이 ~110 으로 위 블록 안 72 world 침범.
-  //   `hitTest`/`buildHitGrid` 는 `nodeBBox(style.size)` 만 보므로 **칩만 묶고 폰트는 유지**한다.
-  seedModel([{ name: "sales", nTables: 12,
-    names: ["order_a", "order_b", "user_a", "user_b", "pay_a", "pay_b", "log_a", "log_b", "stat_a", "stat_b", "cfg_a", "cfg_b"] }]);
-  const deep = buildAt(0.06);   // 폰트가 MAX 로 굳는 극단 줌아웃
-  const gbs = byKind(deep, "group-bg"), ghs = byKind(deep, "group-hd");
-  const topOf = (e) => e.style.y - e.style.size[1] / 2;
-  const botOf = (e) => e.style.y + e.style.size[1] / 2;
-  check("K1 다행 그룹 시드(행 2개 이상) 전제", (() => {
-    const tops = [...new Set(gbs.map((e) => Math.round(topOf(e))))]; return tops.length >= 2;
-  })(), [...new Set(gbs.map((e) => Math.round(topOf(e))))]);
-  check("K2 GH 칩 높이가 상한(22+GGY=38) 이하", ghs.length > 0 && ghs.every((e) => e.style.size[1] <= 38),
-    ghs.map((e) => e.style.size[1]));
-  // 핵심 단정 — 어떤 GH 칩도 **다른 그룹 블록 안으로 들어가지 않는다**(hit 영역 침범 0)
-  check("K3 GH 칩이 다른 그룹 블록 bbox 를 침범하지 않음(hit 가로채기 0)", (() => {
-    for (const gh of ghs) {
-      const own = "GB:" + gh.id.slice(3);
-      for (const gb of gbs) {
-        if (gb.id === own) continue;
-        const gt = topOf(gb), gbm = botOf(gb);
-        if (topOf(gh) < gbm && botOf(gh) > gt) {   // 세로 구간 겹침
-          const l = gh.style.x - gh.style.size[0] / 2, r = gh.style.x + gh.style.size[0] / 2;
-          const gl = gb.style.x - gb.style.size[0] / 2, gr = gb.style.x + gb.style.size[0] / 2;
-          if (l < gr && r > gl) return false;      // 가로도 겹침 = 침범
-        }
-      }
-    }
-    return true;
-  })());
-  check("K4 칩 상한에 걸려도 폰트는 유지(판독성 이득 보존)", ghs.length > 0 && ghs.every((e) => e.style.labelFontSize > 10.5),
-    ghs.map((e) => e.style.labelFontSize));
-  check("K5 텍스트가 칩을 넘는 구간은 알약을 옅게(깨진 칩으로 읽히지 않게)",
-    ghs.length > 0 && ghs.every((e) => e.style.fillOpacity < 1 && e.style.lineWidth === 0),
-    ghs.map((e) => [e.style.fillOpacity, e.style.lineWidth]));
-  // 통상 줌에서는 알약이 종전 그대로(회귀 0)
-  const norm = byKind(buildAt(1), "group-hd");
-  check("K6 zoom=1 은 알약·칩이 종전 그대로(회귀 0)",
-    norm.length > 0 && norm.every((e) => e.style.size[1] === 18 && e.style.fillOpacity === 1 && e.style.lineWidth === 1),
-    norm.map((e) => [e.style.size[1], e.style.fillOpacity, e.style.lineWidth]));
-  // CATH 동일 상한
-  seedModel(simple(), { sales: [{ id: 1, name: "P1", sort: 1 }], audit: [{ id: 2, name: "P2", sort: 2 }] });
-  const cdeep = byKind(buildAt(0.06), "cat-hd");
-  check("K7 CATH 칩 높이가 상한(27) 이하 — 밴드는 상수 보장 간격 없음",
-    cdeep.length > 0 && cdeep.every((e) => e.style.size[1] <= 27), cdeep.map((e) => e.style.size[1]));
-
-  // K8~K10 — **P2 무의미 rebuild 차단**: 확장 여력 있는 위계 헤더가 없으면 `/h` 성분을 밴드에서 뺀다.
   const scalable = vm.runInContext("typeof _metaHdrFitScalable !== 'undefined' ? _metaHdrFitScalable : null", sandbox);
   const M = g.__metaGraphRef;
-  check("K8 헤더 방출 build 뒤에는 게이트가 열린다", !!scalable && scalable() === true, M._hdrFitScalable);
-  // products 모드는 헤더 방출 전에 조기 return → 계수기 0 → `/h` 없음
-  M.mode = "products";
-  buildAt(0.5);
-  check("K9 products 모드 build 는 게이트가 닫힌다(계수기 0)", scalable() === false, M._hdrFitScalable);
-  check("K10 게이트가 닫히면 밴드에 `/h` 성분이 없다(줌 전이 헛 rebuild 0)",
+  seedModel(grouped()); buildAt(0.3);
+  check("K1 헤더 방출 build 뒤에는 게이트가 열린다", !!scalable && scalable() === true, M._hdrLevels);
+  M.mode = "products"; buildAt(0.5);
+  check("K2 products 모드 build 는 게이트가 닫힌다(레벨 스펙 0)", scalable() === false, M._hdrLevels);
+  check("K3 게이트가 닫히면 밴드에 `/h` 성분이 없다(줌 전이 헛 rebuild 0)",
     !/\/h\d+/.test(labelBandOf(0.89)) && labelBandOf(0.89) === labelBandOf(0.71),
     [labelBandOf(0.89), labelBandOf(0.71)]);
-  M.mode = "roots";
+  // 레벨 스펙은 레벨당 1회만 등록된다(중복 방출 접기) — 스펙이 불어나면 상한 파생이 흔들린다
+  M.mode = "roots"; buildAt(0.3);
+  check("K4 레벨 스펙이 레벨당 1개(중복 접기)", Array.isArray(M._hdrLevels) && M._hdrLevels.length <= 2, M._hdrLevels);
 }
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);

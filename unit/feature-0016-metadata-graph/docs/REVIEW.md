@@ -539,7 +539,6 @@ source_of_truth: true
 - 본 cycle 의 코드 적대 검증은 `REV-20260728T181100-…-codex [CODEX:frontend-render+legend]`(P1 1건 + P2 5건 전량 in-cycle 흡수, 최종 pass "No actionable correctness issues")가 담당했고, 그 수정 중 **2종이 배포본에서 실제로 발화**함을 RB.8 ④⑤ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
 - 라이브가 사용자 원 요구를 직접 확인한 지점: 한 화면의 다수 테이블 칩이 **모두 동일 teal 본체**이고 역할색은 좌측 18px 배지에만 존재한다(①). 즉 "노드 간 색상구성 정합" 이 관측으로 성립했다. 색 8종·아이콘은 배지·상세 칩·범례 3곳에서 동일 어휘로 유지돼 범주 정보 손실도 0(②⑦).
 - 미검증 잔여: running 상태 배지 desaturate(외부 비용 필요). 다음 AI 능동 분석 실행 cycle 의 육안 확인 대상으로 이월한다.
-
 ## REV-20260729T093000-ai-claude-corp-feature-0016-detail-panel-typo [CODEX:ux+design] — PASS (P1 0건 · P2 1건 흡수 후 재검증 지적 0건)
 - Related TASK: feature-0016-metadata-graph
 - Trigger: UI/화면 · layout/레이아웃 keyword matched (상세 패널 목록 행 타이포·정렬·리듬) → dispatch 표상 ux·design
@@ -570,3 +569,11 @@ source_of_truth: true
 - Timestamp: 2026-07-29T11:13:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+## REV-20260729T093000-graph-hdr-label-typo [CODEX:frontend-typography+rebuild-band] — PASS-WITH-FIXES (P1/GATE 0 · P2 1건 in-cycle 흡수)
+- 대상: CHG-20260729T0930-graph-hdr-label-typo (`graph-state.js` 레벨 폰트·반동 밴드·레벨 스펙 게이트 / `graph-core.js` GH·CATH 방출 / `test_g6build_labellod.js` Section I·J·K 전면 재작성).
+- 방법: **codex-review(`codex review --uncommitted`, codex-cli 0.145.0)** — §18.8 적대 검증. `[CODEX:*]` 는 §18.4/§18.9 의 check #9 accepted verdict. 본 세션은 `Agent` 툴 사용이 제한된 환경이고, 이 변경은 **레이아웃 상수(GHH·CATHH)·rebuild 밴드·폰트 클램프의 상호작용**을 함께 봐야 판정되므로 repo 접근 리뷰어가 적합하다.
+- **P1(GATE) 0건** — 1차 구현에서 P1 이었던 *칩 hit 영역 이웃 침범* 축은 재설계로 **구조적으로 소멸**했다(칩이 자기 예약 행을 벗어날 수 없다). 형제 동일 크기·위계 비역전·알약 수용·reflow 0·zoom 1 회귀 0 에는 반박이 성립하지 않았다.
+- **CONFIRMED(P2, 수정)** — *모든 레벨 폰트가 상한에 굳은 뒤에도 밴드가 한 번 더 바뀌어 헛 rebuild 를 낸다.* 초안은 스텝 상한을 `CAP_MAX/BASE_MIN` 비에서 뽑아 **4** 였는데, 실효 상한은 **3** 이다: 레벨 폰트는 `z ≤ base/(cap − STEP/2)` 에서 굳고(GH 0.5316 · CATH 0.5053) 전 레벨이 굳는 지점은 **0.5053** 인데, 밴드는 **z≈0.4579 에서 3→4** 로 전이해 그 아래에서 렌더가 완전히 동일한데도 full `setData`/draw 가 걸렸다. **수정**: 상한을 **레벨 스펙(`_metaGraph._hdrLevels`)에서 파생** — 방출부가 예약 행 기하에서 계산한 `(base, cap)` 쌍을 등록하고, 밴드는 그 스펙으로 "전 레벨이 굳는 줌"을 구해 그 지점의 스텝을 상한으로 쓴다. z-독립이라 stale 이 없고 레이아웃 상수 변경에 자동 추종하며, 폐기 상수 3개(`BASE_MIN`·`CAP_MAX`·`STEP_CAP`)가 사라져 단순해졌다. 같은 스펙이 P2(2026-07-28) products 게이트도 대체한다(`cap > base` 존재 여부).
+- **수정 전 재현 확인 + 테스트 자체의 결함**: 상한 4 재현판으로 신규 I12 를 돌려 `bands: [3,4,4,4,4,4,4,4]` **FAIL** 을 실측했다. ⚠️ **첫 초안의 I12 는 이 결함을 놓쳤다** — 검증점을 0.45 부터 하드코딩해 3→4 전이(0.4579)를 *지나쳐* 있었고 재현판에서도 PASS 했다. 클램프 지점을 **스펙에서 파생**(`min(base/(cap−0.25))` = 0.5053)해 그 바로 아래부터 잡도록 고친 뒤에야 FAIL 이 재현됐다. 통과를 곧 검증으로 오인하지 않기 위해 이 과정을 그대로 기록한다.
+- **회귀 확인**: 수정 후 `test_g6build_labellod.js` **72 PASS**(신 계약 35건: I 14 · J 14 · K 4 · B5 재진술 3) + 헤드리스 **전 스위트 21개 940 PASS / 0 FAIL** · `node --check` PASS(2 파일).
+- **정직 표기 — 잔여 표면**: 재설계의 목적이 **시각 품질**이므로 최종 판정은 실 브라우저 육안이다(HT.9 PB-0008). 배포 전에는 구/신 방출 기하를 렌더해 대조했고(증적 `geom_old_vs_new_z022.png`), 그것으로 확인한 것은 *기하*(크기 일치·팔출 0·알약 수용·위계)이지 *렌더 품질*(글자 판독성·색 대비)이 아니다.
