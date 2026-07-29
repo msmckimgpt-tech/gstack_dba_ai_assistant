@@ -6826,12 +6826,48 @@ corroboration(30일): non-default 선택이 KV 로 확증된 대화 5건 중 3�
       `test_message_editing_reanswer_model.py` 57건 rc=0 / `node --check` PASS
 - [x] 인접 JS 스위트 baseline 대조 — 실패 6건이 main 과 **동일**(pre-existing, 본 변경 무관)
 - [x] §18.8 검증 — `contract` 키워드 매칭(backend+security+qa) 인라인 적대검증(세션 Agent 도구 제약)
-- [ ] **PB-0008 Windows-browser 라이브 실측 — 배포 후 잔여**(`visual_verification_scope: always`,
-      정적 자산이 web 이미지 baked): [새 대화 → 모델 sonnet 선택 → 첨부파일 업로드 → 전송] 이
-      실제로 sonnet 으로 실행되는지(`llm_usage.model`) + 선택기가 sonnet 을 유지하는지 확인
+- [x] **PB-0008 Windows-browser 라이브 실측 — 종결**(2026-07-29 11:30, 후속 cycle
+      `20260729T1130-model-pick-postdeploy`): 배포본에서 [새 대화 → sonnet 선택 → 첨부 업로드 → 전송]
+      전 구간 PASS — 전송 본문 `model="claude-sonnet-4"` 동봉 · `llm_usage` id 69372
+      `model=claude-sonnet-4`/`resolved_model=claude-sonnet-4-chat`(강등 0) · `kv model:1` 행 생성 ·
+      무음 강등 경보 미발동
 ## 20260729T010301-doc-sync-rn-0729 — 릴리즈노트 2026-07-28 블록에 6항목 append: 관계도 UX·사용 기록·모델 권한·자체 점검 (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
 - [x] `static/release-notes-data.js` 기존 "2026-07-28" 블록(캐시 오염 fix·그래프 ⓘ 툴팁·'적용'바 숨김 3항목)에 6항목 append(improved/admin 관계도 연결선 가독성 + improved/admin 이름표 hover 확장·역할 좌측 배지 + improved/admin 분류 선택 스크롤 동기화·이웃 표시 범위 재설계 + improved/admin '사용 기록' 드릴다운 정리 + new/admin 계정·역할별 AI 모델 사용 제한 + fixed/work 자체 점검 후 원 요청 응답 정확성) + block summary 아울러-절 증강. 신규 블록 아님(관례: same-deploy-day append·block date=배포일 07-28·델타 커밋 전부 git-date 07-28, 선례 85da43d9). generated "2026-07-28" 불변. 렌더 로직·cache-buster(`?v=dev` 빌드 자동주입) 무변경.
 - [x] 검증: `node --check` PASS · vm 구조검증(releases[0].date=2026-07-28·items 3→9·releases[1] 2026-07-27 7항목 보존·releases[2] 07-24 보존·스키마 type/area/title/detail·enum 유효·누출0[feature-id·model.access·llm_usage·§번호·routers/·.py·claude-opus-5/haiku-4 내부값 0, 사용자 표시 라벨만]). 근거 정본 = 각 항목 owning POST-DEPLOY PB-0008 커밋(역할배지 2b9693c7·이웃깊이 0bff005e·hover확장 43efe182/29ceb823·상세hover fb253fe3·클러스터스크롤 9b16b0c0/a36c16ed/429e8c04·라벨LOD 8008402d·헤더라벨 b2f062cc·함수관계선 5a6110a9·사용기록 f3cfc809·모델권한 fcf22ceb·자체점검 6582c69b) + git log abc3e49f..HEAD.
 - [x] 적대검증: ULTRACODE wf_63a962eb R1 — RN verifier MAJOR 1(item3 '왼쪽 스키마 목록'→실제 우측 상세 패널 aside, admin.html:847 도움말·baedc78b aside scrollTop 근거)·MINOR 1(item5 '즉시 반영'→pending→'적용' 흐름, admin.js:203 동적권한 그룹) 적발 → 오케스트레이터 정본 독립 재검증 후 '오른쪽 상세 패널의 목록'·'적용하면 다음 답변부터 반영' 교정 반영.
 - [x] 제외: 성능 3 feature(0027/0028/0029 측정·내부 최적화·응답/인가/그래프 신선도 불변·사용자 가시 동작 0)·conversation-api 대화품질(0023 외부 AI 개발자향·전용 UI 없음)·agent-core 내부(별칭 그림자·허위 부재·cyvol cypher 내부 정확성/보안)·feature-0001 시나리오(내부 테스트)·governance cycle 스크립트(META). held: AI 분석 halo 기하 비례화(개별 POST-DEPLOY 없음·미세 시각 정련·개념 도입 없이 표현 곤란, 다음 cycle 재평가).
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(jsdom 미설치 render 테스트 불가·데이터 정적검증 대체 사유). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3). META(wiki/docs) 는 별도 commit(pure-meta).
+
+## 20260729T1130-model-pick-postdeploy — 모델 선택 유실 수정 POST-DEPLOY 라이브 실증 + 마찰 원장 종결 (종결)
+
+선행 `20260728T1911-model-pick-early-cid` 가 배포 후 잔여로 남긴 PB-0008 실측을 이행하고, 마찰
+`FR-model-pick-lost-on-early-cid` 를 측정 근거로 닫는다. 실행 코드·정적 자산 변경 **0줄**.
+
+직접 계기: 사용자가 완료 보고 후 "이전과 동일하게 폴백된다"고 재보고. 이 주장을 액면 그대로 받으면
+봉인 실패가 되므로, 먼저 라이브 데이터로 귀속을 확정한 뒤 배포본에서 직접 재현했다.
+
+### 진행
+- [x] 재보고 귀속 확정 — 재현 대화 `...2211841a` 첫 전송 **10:33:48** vs 배포 **11:08:44**(web 컨테이너
+      `StartedAt`) → **구자산 세션**. 배포 후 신규 대화·첨부 **0건**(11:05~11:29) 로 교차 확인
+- [x] 대조군 재확인 — 같은 오전 같은 구버전에서 `...a8b43197`(10:30, 첨부 5) sonnet 정상 vs
+      `...2211841a`(10:33, 첨부 1) haiku 강등 → 분기점은 첨부 유무가 아니라 **선택→첨부 순서**
+      (선행 진단의 경로 특정 강화)
+- [x] 배포본 자산 확인 — edge `/healthz` `git_commit=36618965` · 서빙 `app.js?v=7529ce4ce347` 에
+      `_adoptComposerModelPickToConv`·`_modelSelectionSilentlyDropped` **4 심볼 baked**
+- [x] 회귀 재확인 — `verify_model_persist.mjs` **49 PASS / 0 FAIL**
+- [x] PB-0008 라이브 실증(실 Windows Chrome 150, relay) — 3중 계측(`fetch` wrap 요청 본문 ·
+      `showToast` wrap 경보 · 전역 `state` 스냅샷) 후 전 구간 조작:
+      선택 직후 `_modelPickedForConvId=""`(결함 전제 재현) → 첨부 업로드가 early-cid `...2e511059`
+      발급하며 **귀속 승계** → 전송 본문 `model="claude-sonnet-4"` 동봉 → 경보 미발동
+- [x] 정본 판정(PG 원장) — `llm_usage` id 69372 `model=claude-sonnet-4` /
+      `resolved_model=claude-sonnet-4-chat`(강등 0) · redteam 69373 도 sonnet-chat ·
+      `kv(...2e511059, model:1)=claude-sonnet-4`(행 생성) · `core_attachments` 624 uploaded
+- [x] 지문 판독 보정 — kv 3분기(행 부재=미동봉 / 빈 값 행=**기본값과 같은 모델의 명시 동봉** /
+      값 행=비-기본 명시 동봉) 를 REVIEW·원장에 고정. 선행 기록의 "미동봉=행 부재" 서술 오독 방지
+- [x] 마찰 원장 `FR-model-pick-lost-on-early-cid` → **`fixed:deployed:verified`** 전이(근거 명시)
+- [x] `docs/LEARNINGS.md` 교훈 2건 — 재보고 시각 귀속 확인 절차 · AI 자율 라이브 검증 레시피
+- [ ] (이월) 관측 표본 corroboration 재측정(30일 non-default 선택 대화의 첫 요청 오전송 3/5) —
+      배포 직후 표본 부재. 다음 `/_dqa:conversation_audit` 에서 수행
+
+Cross-ref: REVIEW `REV-20260729T113000-model-pick-postdeploy` · MODIFY
+`CHG-20260729T113000-model-pick-postdeploy` · test-runs.d/20260729T1130-model-pick-postdeploy.md

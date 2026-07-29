@@ -349,6 +349,21 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - 주의(cross-DB 함수 스코프 함정): `OBJECT_DEFINITION(id)` 은 db_id 인자가 없어 **current(pin) DB 컨텍스트**로 평가된다 — 3-part `OBJECT_ID('[db].[s].[n]')` 로 id 를 얻어도 정의는 pin DB 에서 해소돼 NULL/오답. cross-DB 루틴 정의는 `[db].sys.sql_modules WHERE object_id = OBJECT_ID('[db].[s].[n]')`(양쪽 다 [db] id 공간)로 조회한다. 시스템 스키마(sys/guest/db_*) 차단은 cross-DB 경로에서도 명시 재적용해야 한다(primary 경로 게이트를 우회하지 않게).
 - Applies to: 멀티-DB datasource 를 지원하는 모든 dialect-aware 스키마 탐색/발견/insight 코드. 신규 엔진 추가 시 "카탈로그 뷰가 인스턴스-전역인가 DB별인가" 를 먼저 확인.
 
+### LRN-20260729-0001 — "고쳤는데 여전히 재현된다"는 재보고는 **배포 시각과 대조한 뒤** 해석한다
+- Source: REV-20260729T113000-model-pick-postdeploy (feature-0003-agent-web-ui), conversation_audit FR-model-pick-lost-on-early-cid
+- Pattern: 수정·배포 완료를 보고하면 사용자는 **직전에 겪은 경험**을 근거로 답하는 것이 자연스럽다 — 그 경험이 배포 이전이어도 사용자에게는 "방금 일"이다. 실제 사례: 완료 보고 직후 "이전과 동일하게 폴백된다"는 재보고를 받았으나, 재현 대화의 첫 전송은 **10:33:48** 로 배포(web 컨테이너 `StartedAt` **11:08:44**)보다 35분 앞섰고 배포 후 신규 대화·첨부는 **0건**이었다. 재보고를 액면 그대로 받았다면 멀쩡한 봉인을 뜯어 "2차 수정"을 시작했을 것이다.
+- 판정 절차(순서 고정): ① 배포 시각을 **컨테이너 `StartedAt` + edge `/healthz` git_commit** 으로 확정 → ② 재현 사건의 시각을 **사용자 진술이 아니라 원장**(첫 user 메시지·첨부·job 행)에서 뽑음 → ③ 배포 이후 구간에 **사용자 조작 흔적이 존재하는지** 확인(신규 대화·첨부 0건이면 신버전 시도 자체가 없었다는 뜻) → ④ 그래도 남으면 그때 코드 재진단.
+- 반대 방향도 같이 본다: 같은 구버전 구간의 **성공 사례**를 찾으면 결함 경로가 좁혀진다. 위 사례에서 10:30 대화(첨부 5건)는 정상, 10:33 대화(첨부 1건)만 강등 → "첨부 유무"가 아니라 **선택→첨부 순서**가 분기점임이 라이브에서 재확인됐다(원 진단 강화).
+- 안티패턴: 배포 시각 대조 없이 "브라우저 캐시겠지 / 하드 리프레시 하세요"로 넘기는 것 — 사용자에게 재시도 부담만 전가하고 사실은 확정되지 않는다.
+- Applies to: 배포 후 사용자 재보고를 받는 모든 cycle(특히 프론트 정적 자산 변경 — 자산이 이미지에 baked 되어 배포 경계가 뚜렷함).
+
+### LRN-20260729-0002 — 라이브 검증을 사용자에게 되던지기 전에, AI 가 배포본에서 직접 끝낼 수 있다(로그인 벽 포함)
+- Source: REV-20260729T113000-model-pick-postdeploy / test-runs.d/20260729T1130-model-pick-postdeploy.md
+- Pattern: "실제로 그렇게 실행되는지는 사용자가 한 번 해주셔야 안다"는 결론은 대개 **로그인 벽 + 파일 업로드 UI** 때문에 나온다. 둘 다 우회 아닌 정공법으로 넘을 수 있어, 왕복(사용자 재시도 → 보고 → 판정)을 세션 안에서 닫을 수 있다.
+- 레시피: ① 접속 — Windows hosts 에 내부 도메인이 없으면 `mysql-ai.company.local` 은 브라우저에서 DNS 미해소이고 WSL IP 직결은 Caddy 가 `Invalid host header` 로 막는다. 사용자가 실제로 쓰는 주소(공인 IP 등)를 확인해 그걸로 간다. ② 로그인 — `.env` 의 `WEB_BOOTSTRAP_ADMIN_USERNAME`/`_PASSWORD` 로 **검증 전용 세션**(사용자 계정 가장 금지). 입력은 native value setter + `input`/`change` dispatch 후 `form.requestSubmit()`. ③ 첨부 — 파일 다이얼로그 없이 페이지 컨텍스트에서 `new File([...])` + `DataTransfer` 로 `input[type=file].files` 를 채우고 `change` dispatch → 실사용 업로드 경로를 그대로 밟는다. ④ 계측 — 화면이 신뢰 못 할 결함(무음 강등류)이면 `window.fetch` wrap 으로 **요청 본문 원문**을, `showToast` wrap 으로 경보 발동 여부를, 전역 `state` 스냅샷으로 단계별 상태를 잡는다. ⑤ 판정 — 최종 근거는 브라우저가 아니라 **DB 원장**(여기선 `llm_usage` + `kv`).
+- 핵심 원칙: **결함 전제 상태를 실제로 통과시킨 뒤** 성립을 확인한다. 위 Run 은 모델 선택 직후 `_modelPickedForConvId=""`(결함 전제)를 관측하고 나서 첨부 업로드의 승계를 봤다 — 전제를 우회한 통과는 검증이 아니다.
+- Applies to: PB-0008 라이브 검증 전반. 특히 "표시는 맞는데 실행이 다르다" 류(모델·권한·스코프 무음 강등)에서 화면 기반 검증은 원리적으로 무효하므로 요청 본문/원장 채널을 먼저 깐다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

@@ -1785,3 +1785,19 @@ primary=feature-0002 CHG-20260727T105326-worker-attachment-postprocess. web 은 
 
 ### [POST-DEPLOY 완결 2026-07-28] usage-records-hint-tooltip — PR #992 머지 → 배포 `0f956416` → PB-0008 **PASS**
 행 2번째 줄 이동 안내 제거 확정: `.usage-rec-sub/-goto/-note` 노드 0 · 행 높이 **25/25 단일 줄** · 툴팁 이중 escape(`&gt;`) **0건** · 모호 정직 표기 툴팁 **107건 보존**(정보 손실 없음) · 이동 동작·대화 행 회귀 없음(시스템 200 / 대화 86). 정본 test-runs.d/20260728T121500-usage-records-hint-tooltip.md §POST-DEPLOY.
+
+### [POST-DEPLOY 완결 2026-07-29] model-pick-early-cid — PR #1032 머지(`bc920534`) → 배포(11:08:44 KST, edge `36618965`) → PB-0008 라이브 **PASS**
+선행 cycle 이 배포 후 잔여로 남긴 실측 종결. 배포본 실 Windows Chrome 150 에서 사용자 시나리오
+[새 대화 → sonnet 선택 → 첨부 업로드 → 전송] 전 구간 계측: 선택 직후 `_modelPickedForConvId=""`
+(결함 전제 재현) → 첨부 업로드가 early-cid `…2e511059` 발급하며 **귀속 승계** → 전송 본문
+`model="claude-sonnet-4"` 동봉 → 무음 강등 경보 미발동. 정본 판정은 화면이 아니라 원장에서 —
+`llm_usage` id 69372 `model=claude-sonnet-4`/`resolved_model=claude-sonnet-4-chat`(강등 0) ·
+`kv(…2e511059, model:1)=claude-sonnet-4`(행 생성, 구버전 결함의 지문이 이 행의 부재였음).
+
+**사용자 재보고는 배포 전 세션이었다**: 완료 보고 후 "이전과 동일하게 폴백"을 재보고받았으나 재현
+대화(`…2211841a`) 첫 전송 **10:33:48** < 배포 **11:08:44**, 배포 후 신규 대화·첨부 **0건**. 같은 오전
+대조군(`…a8b43197` 10:30 첨부 5건 sonnet 정상 vs 10:33 첨부 1건 haiku 강등)이 분기점을 **선택→첨부
+순서**로 재확인해 선행 진단을 강화했다. 마찰 원장 `FR-model-pick-lost-on-early-cid` →
+**`fixed:deployed:verified`**(잔여: corroboration 추세 재측정 1건, 다음 audit).
+정본 TASK-/CHG-/REV-20260729T113000-model-pick-postdeploy · test-runs.d/20260729T1130-model-pick-postdeploy.md ·
+교훈 `docs/LEARNINGS.md` LRN-20260729-0001/0002.
