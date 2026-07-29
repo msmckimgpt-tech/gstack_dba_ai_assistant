@@ -19,6 +19,15 @@ const _metaGraph = {
   activeRunId: null,
   _analyzePending: new Set(),  // graphux7(#4): AI 능동 분석 POST in-flight 중인 node key 집합 — 연타 동시 POST(중복 큐잉) 차단(노드별 독립).
   introspected: null,     // Set: information_schema 즉석조회한 테이블 key
+  // graph-detail-cols(2026-07-29): **상세 패널 전용** 컬럼 보강 캐시. 캔버스 펼침(_metaGraphToggleColumns)·
+  //   더블클릭 확장(_metaGraphExpand)은 introspect 결과를 모델(nodes)에 ingest 해 캔버스에 컬럼을 그리지만,
+  //   단일클릭 상세(_metaGraphShowDetail)는 캔버스 구조를 바꾸지 않는 것이 계약이라 같은 결과를 모델에
+  //   넣을 수 없다(넣으면 다음 rebuild 에서 펼치지 않은 테이블의 컬럼이 캔버스에 튀어나온다). 그래서
+  //   상세 렌더가 읽는 별도 저장소를 둔다 — 모델 무오염 + 패널만 캔버스와 정합.
+  detailCols: new Map(),      // Table key -> [Column 노드] (introspect 산출, 상세 패널 전용)
+  detailColsMiss: new Map(),  // Table key -> reason(문자열) — introspect 불가/빈 결과. 세션 내 재시도 차단(무한 재조회 방지).
+  detailColsInflight: new Set(),  // in-flight backfill 중인 Table key(연타 중복 fetch 차단)
+  _detailSeq: 0,              // 상세 패널 렌더 세대 — 늦게 도착한 컬럼 보강이 "내가 띄운 그 화면"인지 판정(같은 키 재선택 race).
   mode: "roots",          // "roots"|"search"|"neighbor" (현재는 전부 결정론 grid)
   nodes: new Map(),       // key -> {key,label,name,fqn,description,source,ordinal,score,rel,cardinality,edge_source}
   edges: new Map(),       // id  -> {id,source,target,type,status,edge_source,weight}

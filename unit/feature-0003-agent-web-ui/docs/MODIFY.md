@@ -1761,3 +1761,26 @@ REVIEW `REV-20260729T152000-ratelimit-scope-paging`.
 
 Cross-ref: DECISIONS `ADR-20260729T163000-attach-append-only` · TASK
 `20260729T1630-attach-append-only` · 철회 대상 `CHG-20260729T152000-attach-list-delete`.
+## CHG-20260729T0659-ai-claude-feature-0016-graph-detail-columns — 그래프 상세 패널 컬럼 3-소스 병합 + introspect 보강 (2026-07-29)
+
+정본 cycle 은 feature-0016 (`docs/TASK.md ## 20260729T0659-graph-detail-columns`). 본 feature 는 코드 거주처.
+
+- `src/static/graph/graph-ctxmenu.js` — `_metaDetailMergeColumns`(fetch 이웃 + 모델 self 소속 Column +
+  상세 전용 introspect 캐시 union, 소문자 정규화 dedupe·ordinal 정렬) · `_metaDetailColsBackfillNeeded`
+  (컬럼 0 또는 `truncated` 일 때만, 세션 1회) · `_metaGraphDetailColsBackfill`(논블로킹, `/graph/columns`
+  재사용, **모델 미오염**, 렌더 세대 `_detailSeq` + 모델 세대 `_opSeq` 이중 가드) 신설.
+  `_metaGraphRenderDetail` 이 병합을 호출하고, Table 은 컬럼 0 이어도 섹션을 렌더해 "조회 중"/실패
+  사유를 표시.
+- `src/static/graph/graph-state.js` — `detailCols`·`detailColsMiss`·`detailColsInflight`·`_detailSeq` 신설.
+- `src/static/graph/graph-core.js` — `_metaGraphResetModel` 이 상세 캐시 3종을 함께 clear(스코프 전환
+  누출·miss 고착 차단).
+- `tests/headless/test_detail_columns.js` 신규 39건 PASS.
+
+사용자 리포트: 캔버스엔 컬럼 40여 개가 펼쳐져 있는데 상세 패널엔 '컬럼' 섹션 자체가 없음. 라이브 실측
+`cc_pyron.DT_ItemEnchantInfo` = 그래프 `HAS_COLUMN` **0** vs 실 데이터소스 컬럼 **35**. 단일클릭 상세에만
+introspect 폴백이 없던 비대칭이 원인. §18.8 codex 적대 검증 P2 2건(실패 시 empty-state 고착 · 같은 키
+재선택 race) in-cycle 흡수. 백엔드·마이그레이션 0 · 인가 경계 불변.
+
+Cross-ref: FUNCTION `REQ-20260729-graph-detail-columns` (AC-GDC-1~3) · feature-0016 TASK
+`20260729T0659-graph-detail-columns` · REVIEW `REV-20260729T065900-graph-detail-columns` ·
+Run `docs/test-runs.d/20260729T0659-graph-detail-columns.md`.

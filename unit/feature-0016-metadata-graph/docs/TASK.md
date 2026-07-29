@@ -3433,3 +3433,75 @@ zoom 0.22~0.30 에서 방출 기하를 구/신 대조 덤프한 결과:
   규약)가 필요해 **별도 항목**으로 남긴다.
 - **왜 상한을 리터럴이 아니라 예약 행에서 파생했나**: 상한의 의미가 "칩이 예약 행을 벗어나지 않는 최대"이므로
   `GHH`/칩 중심 오프셋이 바뀌면 자동 추종해야 한다. 리터럴이면 레이아웃 변경 시 팔출이 조용히 되살아난다.
+
+## 20260729T0659-graph-detail-columns — 상세 패널 컬럼 미출력·일부 누락 근본 수정 (2026-07-29, 사용자 리포트 · entry persona dispatch)
+
+### 맥락 (사용자)
+> `그래프 뷰` 에서, 테이블 내 포함된 컬럼이 '상세 패널' 에서는 출력되지 않거나 일부 누락되는 이슈가
+> 확인되어 수정이 필요합니다.
+
+첨부 스크린샷: `cc_pyron.DT_ItemEnchantInfo` 선택 상태. **캔버스에는 컬럼 40여 개**(UniqueID·SocketNum·
+EnchantType·FirstModuleID1~8·FirstRate1~8·SecondModuleID1~8·SecondRate1~8 …)가 펼쳐져 있는데, 우측 상세
+패널에는 헤더·FQN·"(설명 없음)"·"AI 능동 분석" 뿐 — **'컬럼' 섹션 자체가 없다**.
+
+### 진단 (라이브 실측)
+컬럼 **소스의 비대칭**이 근본 원인이다. 그래프 `Column` 정점의 SSOT 는 `column_descriptions`
+(큐레이션·분석된 컬럼만)이라 미큐레이션 테이블은 `HAS_COLUMN` 이 0 이다.
+
+| 항목 | 라이브 값 (agent_kb / metadata_kb, 2026-07-29) |
+|---|---|
+| `Table` 정점 | 18,257 |
+| `Column` 정점 | 13,874 |
+| `HAS_COLUMN` 엣지 | 13,873 |
+| **컬럼 정점을 하나라도 가진 테이블** | **7,320 (40%)** — 테이블당 평균 1.9 |
+| 리포트 대상 `cc_pyron.DT_ItemEnchantInfo` | **HAS_COLUMN 0** (ROUTINE_USES 0 · REFERENCES 0 · HAS_TABLE 1) |
+
+그 공백을 메우는 `/api/admin/metadata/graph/columns` **즉석 introspect** 폴백은 **일부 경로에만** 있었다:
+
+| 경로 | 진입 | introspect 폴백 | 결과 |
+|---|---|---|---|
+| `_metaGraphToggleColumns` | 컬럼 펼치기 | **있음** | 캔버스에 컬럼 40개 ✔ |
+| `_metaGraphExpand` | 더블클릭(관계 확장) | **있음** | 패널에 컬럼 표시 ✔ |
+| `_metaGraphShowDetail` | **단일클릭(상세)** | **없음** | **패널 컬럼 0 ✘** |
+
+`_metaGraphRenderDetail` 은 fetch 응답의 `HAS_COLUMN` 이웃만 컬럼으로 삼고, 캔버스가 이미 모델에 넣어둔
+컬럼조차 보지 않았다(같은 함수의 **관계** 섹션은 모델 병합 폴백을 이미 쓰고 있었는데 컬럼에는 없었다).
+게다가 `columns.length === 0` 이면 섹션 자체가 렌더되지 않아, 결함인지 "이 테이블은 원래 컬럼이 없음"
+인지 구분할 단서가 화면에 남지 않았다.
+
+**'일부 누락' 축**: 백엔드 이웃 조회는 `_NEIGHBOR_NODE_CAP=300` 이며 관계 이웃(tier 0)이 계층 이웃
+(tier 1 = 컬럼)보다 먼저 예산을 먹는다(graph-hop-budget, 2026-07-28). 관계가 많은 테이블에서는 컬럼이
+부분만 남거나 전부 밀려날 수 있고, 그 때 백엔드는 `truncated` 를 신고한다.
+
+### 처리
+- [x] GDC.1 **컬럼 3-소스 병합** — `_metaDetailMergeColumns(self, fetched)` 신설(순수 함수):
+  ① fetch 응답 `HAS_COLUMN` 이웃(그래프 SSOT — 큐레이션 설명 보유, 최우선) ② 모델(`_metaGraph.nodes`)의
+  self 소속 `Column`(캔버스에서 이미 펼친 컬럼 = introspect 산출 포함) ③ 상세 전용 introspect 캐시.
+  dedupe 는 **소문자 정규화 key**(그래프=큐레이션 입력 / introspect=information_schema 원천이라 식별자
+  case drift 실재), 앞선 소스 레코드 유지, 정렬은 공용 `_metaGraphColCmp`(ordinal → 이름).
+- [x] GDC.2 **상세 전용 introspect 보강** — `_metaGraphDetailColsBackfill`(논블로킹). 캔버스 펼침이 쓰는
+  `/graph/columns` 엔드포인트·TTL 캐시를 그대로 재사용하되 결과를 **모델에 ingest 하지 않고**
+  `_metaGraph.detailCols` 에만 적재한다. 단일클릭 상세는 캔버스 구조를 바꾸지 않는 것이 계약이라,
+  모델에 넣으면 펼치지 않은 테이블의 컬럼이 다음 rebuild 에서 캔버스에 튀어나온다.
+- [x] GDC.3 **보강 게이팅** — `_metaDetailColsBackfillNeeded`(순수): 컬럼 0(주 증상) **또는**
+  `meta.truncated`(백엔드가 부분임을 명시 — '일부 누락' 축)일 때만. 캐시·실패기록·in-flight 중 하나라도
+  있으면 재조회 안 함(보강이 재렌더를 부르므로 이 가드가 없으면 렌더↔보강 루프).
+- [x] GDC.4 **empty-state 정직화** — Table 상세는 컬럼 0 이어도 섹션을 렌더하고, "컬럼 조회 중…" 또는
+  실패 사유(`detailColsMiss`)를 말한다. 무언의 빈 섹션은 결함과 사실을 구분할 수 없었다.
+- [x] GDC.5 **스코프 전환 정합** — `_metaGraphResetModel` 이 `detailCols`/`detailColsMiss`/
+  `detailColsInflight` 를 함께 비운다(이전 스코프 컬럼 누출 + miss 영구 고착 차단).
+- [x] GDC.6 테스트 — 신설 `test_detail_columns.js` **29 PASS**(병합 규칙 6축 · 게이팅 4축 · 호출부 계약
+  7축 · empty-state · reset 정합). 헤드리스 스위트 회귀 0(baseline 528 → 557 = +29, 실패 집합 동일).
+- [ ] GDC.7 POST-DEPLOY PB-0008 라이브 시각검증 (배포 후)
+
+### 결정 기록
+- **왜 모델에 ingest 하지 않고 별도 캐시인가**: 단일클릭 상세의 계약은 "그래프 구조는 그대로 두고 상세
+  카드만 갱신"(코드 주석·기존 동작)이다. introspect 결과를 모델에 넣으면 `colsByTable` 이 올라 다음
+  rebuild 에서 **펼치지 않은 테이블의 컬럼이 캔버스에 나타난다** — 사용자가 요청하지 않은 화면 변경이다.
+  테스트 ⑪ 가 `_metaGraphIngest` 부재를 계약으로 고정한다.
+- **왜 항상 introspect 하지 않는가**: 컬럼이 이미 온전한 테이블까지 매번 라이브 DB 를 왕복시키면 상세
+  패널이 클릭마다 무거워진다. 캔버스 펼침과 **동일 정책**(공백일 때만)을 쓰되, 백엔드가 절단을 신고한
+  경우를 추가해 '일부 누락' 축을 덮었다 — 부분임을 아는 유일한 신호가 그것이다.
+- **왜 백엔드 cap 을 올리지 않았나**: `_NEIGHBOR_NODE_CAP=300` 은 8K 규모 보호값이고, 컬럼 정점 자체가
+  없는 테이블(리포트 케이스)은 cap 을 아무리 올려도 나오지 않는다. 근본은 투영 공백이라 프론트 보강이
+  맞고, cap 축은 `truncated` 신호를 트리거로 삼아 덮었다.
