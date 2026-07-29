@@ -1862,3 +1862,14 @@ Cross-ref: TASK `20260729T1800-conv-search-postdeploy` · REVIEW `REV-20260729T1
 Cross-ref: FUNCTION `REQ-20260729T174200-product-picker-keynav`(AC-PPKN-1~4) · TASK
 `20260729T1742-product-picker-keynav` · REVIEW `REV-20260729T174200-product-picker-keynav` ·
 Run `docs/test-runs.d/20260729T1742-product-picker-keynav.md`.
+## CHG-20260729T180000-picker-keynav-postdeploy — product-picker-keynav POST-DEPLOY 라이브 실증 기록 (2026-07-29)
+
+문서·검증 산출물만(코드 0). 배포본 `17251df8` 을 실 Windows 브라우저로 검증한 결과를 기록한다.
+
+- `docs/test-runs.d/20260729T1742-product-picker-keynav.md` — POST-DEPLOY Run 절 추가
+  (Environment: Windows-browser · AC-PPKN-1~4 + 리스너 누수 수정 실측 PASS).
+- `docs/TASK.md` — `## 20260729T1800-picker-keynav-postdeploy` 종결 섹션.
+- `tests/win-browser-product-picker-keynav.scenario.json` — 재현 시나리오(실 키 이벤트 press 배열).
+- `docs/evidence/pb0008-product-picker-keynav-{focus,selected}-20260729.png` — 포커스 링·선택 결과 증거.
+
+Cross-ref: TASK `20260729T1800-picker-keynav-postdeploy` · 선행 `20260729T1742-product-picker-keynav`.

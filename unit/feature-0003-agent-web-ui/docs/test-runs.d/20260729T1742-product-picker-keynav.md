@@ -54,3 +54,30 @@ MODIFY `CHG-20260729T174200-product-picker-keynav`.
   3. `Enter` → 해당 제품 선택 + 드롭업 닫힘 + chip 라벨 갱신(AC-PPKN-3).
   4. 선택 후 `Escape` 를 눌러도 포커스가 chip 으로 튀지 않음(리스너 누수 수정 실측).
   5. 마우스 클릭 선택·검색 필터·중앙 스크롤 무회귀(AC-PPKN-4).
+
+### POST-DEPLOY Run (2026-07-29 18:0x) — **Environment: Windows-browser · Runner: AI · Bridge: relay(http://172.26.144.1:9223) · PASS**
+
+배포본 `17251df8`(`make deploy-web-only` — web-a/web-b 롤링 + soak 90s 통과, Caddyfile 무변경)을 **실
+Windows Chrome/150.0.7871.115** 로 검증(`bin/win-browser.py run` — Playwright `page.press` = 실 키 이벤트,
+https://localhost/ · bootstrap_admin · 제품 16개 계정).
+
+- **서빙 반영 확인**: `typeof productDropupNavItems === "function"` · `typeof moveProductDropupFocus === "function"` ·
+  asset stamp `app.js?v=5f23cff16522`(빌드 content-hash 자동주입 — 구 캐시 아님).
+- **AC-PPKN-1 (검색 → ↓ 진입) PASS**: 검색칸에 `mv` 입력 → 결과 3건(`(MV) 마이크로볼츠 - 로컬` ·
+  `(MV_QA) 마이크로볼츠 - QA` · `(MV_DEV) 마이크로볼츠 - 개발`)으로 필터. `↓` 1회 → 포커스가 **검색된 첫
+  항목** `(MV) 마이크로볼츠 - 로컬` 로 이동(`document.activeElement.className === "product-dropup-item"`).
+  필터로 숨겨진 `Product · 제품`(auto)·나머지 13개 제품은 건너뜀.
+- **AC-PPKN-2 (순회 + 최상단 ↑ 복귀) PASS**: `↓`→`(MV_QA)`, `↓`→`(MV_DEV)`, 마지막에서 `↓` 한 번 더 →
+  `(MV_DEV)` **제자리 유지**(wrap 없음). `↑`→`(MV_QA)`, `↑`→`(MV)`, 최상단에서 `↑` → **검색 입력칸 복귀**
+  (`activeElement.className === "product-dropup-search"`, `menu.scrollTop === 0`).
+- **AC-PPKN-3 (Enter 선택 + 포커스 가시성) PASS**: `↓`·`↓` 로 `(MV_QA)` 도달 → `Enter` → chip 라벨
+  `DK_DEV` → **`MV_QA`**, 메뉴 `hidden` + `aria-expanded="false"`. 증거
+  `docs/evidence/pb0008-product-picker-keynav-focus-20260729.png`(파란 outline 포커스 링이 `(MV_DEV)` 행에
+  육안 확인 — `:focus-visible`) · `pb0008-product-picker-keynav-selected-20260729.png`(선택 후 chip=MV_QA·닫힘).
+- **리스너 누수 수정 실측 PASS**: Enter 선택으로 닫은 뒤 프롬프트 입력창(`#promptInput`)을 클릭하고 `Escape`
+  → 포커스가 `promptInput` 에 유지(`chipFocused === false`). 수정 전이라면 문서에 남은 죽은 Escape 리스너가
+  포커스를 제품 chip 으로 튕겼을 지점이다.
+- **AC-PPKN-4 (마우스 클릭 무회귀) PASS**: 재오픈 → 검색 `dk_dev` → 항목 **클릭** 선택 → chip `DK_DEV` +
+  메뉴 닫힘(클릭 경로 불변). 검색칸 자동 포커스·필터·"검색 결과가 없습니다" 안내도 종전대로. 콘솔/페이지 에러 0.
+- **정리**: 검증 중 바꾼 제품 선택은 원래 값(`DK_DEV`, product_id 109)으로 복원하고 `win-browser.py down`
+  으로 드라이버 인스턴스 종료. 재현 시나리오 = `tests/win-browser-product-picker-keynav.scenario.json`.

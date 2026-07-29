@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {"action": "fill", "selector": ".product-dropup-search", "text": "mv"},
+    {"action": "eval", "script": "JSON.stringify({visible: Array.from(document.querySelectorAll('.product-dropup-item:not(.hidden)')).map(i=>(i.querySelector('.product-dropup-item-label')||{}).textContent), active: document.activeElement.className})"},
+    {"action": "press", "key": "ArrowDown"},
+    {"action": "eval", "script": "JSON.stringify({step:'down1', active: document.activeElement.className, label: (document.activeElement.querySelector ? (document.activeElement.querySelector('.product-dropup-item-label')||{}).textContent : null)})"},
+    {"action": "press", "key": "ArrowDown"},
+    {"action": "eval", "script": "JSON.stringify({step:'down2', label: (document.activeElement.querySelector ? (document.activeElement.querySelector('.product-dropup-item-label')||{}).textContent : null)})"},
+    {"action": "press", "key": "ArrowDown"},
+    {"action": "eval", "script": "JSON.stringify({step:'down3', label: (document.activeElement.querySelector ? (document.activeElement.querySelector('.product-dropup-item-label')||{}).textContent : null)})"},
+    {"action": "press", "key": "ArrowDown"},
+    {"action": "eval", "script": "JSON.stringify({step:'down4-끝', label: (document.activeElement.querySelector ? (document.activeElement.querySelector('.product-dropup-item-label')||{}).textContent : null)})"},
+    {"action": "screenshot", "path": "pb0008-keynav-live-focus.png"},
+    {"action": "press", "key": "ArrowUp"},
+    {"action": "eval", "script": "JSON.stringify({step:'up1', label: (document.activeElement.querySelector ? (document.activeElement.querySelector('.product-dropup-item-label')||{}).textContent : null)})"},
+    {"action": "press", "key": "ArrowUp"},
+    {"action": "press", "key": "ArrowUp"},
+    {"action": "eval", "script": "JSON.stringify({step:'up3-최상단', cls: document.activeElement.className, label: (document.activeElement.querySelector ? (document.activeElement.querySelector('.product-dropup-item-label')||{}).textContent : null)})"},
+    {"action": "press", "key": "ArrowUp"},
+    {"action": "eval", "script": "JSON.stringify({step:'up4-검색칸복귀', cls: document.activeElement.className, isSearch: document.activeElement.classList.contains('product-dropup-search'), menuScroll: document.getElementById('productDropupMenu').scrollTop})"}
+  ]
+}

@@ -7394,3 +7394,22 @@ Cross-ref: FUNCTION `REQ-20260729T174200-product-picker-keynav` (AC-PPKN-1~4) ·
 `REV-20260729T174200-product-picker-keynav` · MODIFY `CHG-20260729T174200-product-picker-keynav` ·
 Run `docs/test-runs.d/20260729T1742-product-picker-keynav.md` · 선행 `20260727T1607-product-picker-scroll`
 (중앙 스크롤) · `TASK-20260618T024517-ai-claude-product-picker-search`(검색 필터)
+
+## 20260729T1800-picker-keynav-postdeploy — product-picker-keynav POST-DEPLOY 라이브 실증 (종결)
+
+`20260729T1742-product-picker-keynav` 의 배포 후 검증. 배포본 `17251df8`(`make deploy-web-only`,
+web-a/web-b 롤링 + soak 90s 통과)을 **실 Windows Chrome/150.0.7871.115** 로 확인했다
+(`bin/win-browser.py run` — Playwright `page.press` = 실 키 이벤트, PB-0008).
+
+### 진행
+- [x] 서빙 반영 — 신규 함수 2종 정의 + asset stamp `app.js?v=5f23cff16522`
+- [x] AC-PPKN-1 — 검색 `mv` → 3건 필터 → `↓` → 검색된 첫 항목 `(MV) 마이크로볼츠 - 로컬` 진입
+- [x] AC-PPKN-2 — `↓`/`↑` 순회, 마지막에서 `↓` 제자리(wrap 없음), 최상단 `↑` → 검색칸 복귀(`scrollTop=0`)
+- [x] AC-PPKN-3 — `Enter` → chip `DK_DEV`→`MV_QA` + 메뉴 닫힘, 포커스 링 육안(evidence 2장)
+- [x] 리스너 누수 수정 실측 — 선택 후 `Escape` 에 포커스가 chip 으로 튀지 않음
+- [x] AC-PPKN-4 — 마우스 클릭 선택·검색 필터·자동 포커스 무회귀
+- [x] 검증 후 제품 선택 원복(DK_DEV) + 드라이버 종료
+
+Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/20260729T1742-product-picker-keynav.md`
+(POST-DEPLOY 절) · 재현 시나리오 `tests/win-browser-product-picker-keynav.scenario.json` · evidence
+`docs/evidence/pb0008-product-picker-keynav-{focus,selected}-20260729.png`
