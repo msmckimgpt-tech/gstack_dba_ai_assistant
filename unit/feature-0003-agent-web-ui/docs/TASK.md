@@ -7599,3 +7599,10 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/2
 - 제품 접근DB allowlist 경계 → 안쪽(`cc_data_main`) 200 / 바깥(`FHGame1`) 404 (라이브 양측).
 - `databases_ok`(카탈로그 가용성) → true: 정상 200 / false: 503 fail-closed(단위 테스트,
   라이브 introspection 미도달까지 단언).
+
+## 20260730T010301-doc-sync-rn-0730 — 릴리즈노트 신규 2026-07-29 블록 13항목 prepend (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` 최상단에 신규 "2026-07-29" 블록 prepend(13항목: 대화 검색 500 복구·첨부 파일명 검색 축·'처리 중' 말풍선 자가회복·응답 한도 '계속 추론' 승인·이어지는 질문 첨부 자율 참조·답변 모델 유실 봉인·짧은 후속 답변 축약 교정·제품 선택 방향키 순회·DB 연결 자동 재연결·지식베이스 제품 스코프·관계도 개수 상한 제거·관계도 이름표/상세 목록 가독성·자체 점검 회차 열람) + `generated` 07-28→07-29. 기존 블록 append 아님(파일에 07-29 블록 부재 → prepend, 함정 #20). 렌더 로직·cache-buster(`?v=dev` 빌드 자동주입) 무변경.
+- [x] 검증: `node --check` PASS · 구조검증(releases[0].date=2026-07-29 신규 13 items·releases[1] 2026-07-28 9항목 보존·releases[2] 07-27 보존·스키마 type/area/title/detail·enum 유효·내부용어 누출 0). 13항목 전부 owning POST-DEPLOY 라이브 실증 커밋 보유(274174e5·8775f9a0·2f10b550·d605874e·7038f5a6·63d5e83f·a5594383·24f52a84·637152f4·7d0997f7·26f263f0·3ce453cf·712a847f·f768e774·e86f4c6b). 릴리즈노트 render 테스트(`tests/verify_release_notes.mjs`)는 jsdom 미설치(env 제약)로 미실행 — render 로직 미변경이라 대상 아님(함정 #3c).
+- [x] 적대검증: ULTRACODE wf_0663e5aa R1(3-타깃 analyze→타깃-스코프 verify, cross-fault 회피 함정 #12·9 에이전트) — RN MAJOR 1(item8 제품 선택기 위치 '입력창 아래' 오안내 → 2-렌즈 독립 합치, 위치 중립 '입력창의 제품 선택 드롭다운' 으로 교정)·MINOR 3(summary 가 13항목 중 11만 서술 → item8/item9 절 보강·item13 '기본 접힘' → '가장 최근 대화만 펼쳐짐'·item13 07-27 블록과 중복 → '중간 회차' delta 명시) 적발, 오케스트레이터 정본 독립 재검증 후 전건 교정.
+- [x] 배포됐으나 자체 POST-DEPLOY 실증 커밋 부재 3건(대화 페이징 429 블로킹 해소 48a9f1f6·추론 회차 표시 교정 10c84d81·추론 탭 안내문구 축약 45dfe362)은 함정 #18c 보수 default 로 HOLD. 제외: 내부 테스트 격리(770c436b·97be4cda·7749a04a)·UI 카피 예산 게이트(394b987d governance)·LEARNINGS 기록.
+- [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(Windows-browser 미수행 사유 기록). 무인 cron — 로컬 commit 까지만, push/merge/deploy=wrapper(v3). META(wiki/docs) 는 별도 commit(pure-meta).

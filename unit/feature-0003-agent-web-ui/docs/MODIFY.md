@@ -2021,3 +2021,14 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   ask-worker/insight-worker 재기동. 전 컨테이너 SHA 핀 이미지 + `LEGACY=0` 실측.
 - PB-0008: 제품 선택기 17건 · `KR_LIVE` 85건 회복 · 공유 datasource 3제품 경계 분리 + 교차 404 ·
   이관 귀속 정확도 · 부트스트랩 제품 접근DB 한정. 증거 스크린샷 2건(`artifacts/pb0008/`).
+
+## CHG-20260730T010301-doc-sync-rn-0730 (TASK-20260730T010301-doc-sync-rn-0730 — 07-29 사용자향 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경: `static/release-notes-data.js` 최상단에 신규 "2026-07-29" 블록 prepend(13항목) + `generated` 07-28→07-29. 렌더 로직·백엔드·스키마·RBAC·엔드포인트 0.
+- cache-buster `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py`(Dockerfile:39) + deploy-web.sh `asset_stamp_verify` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시(index/admin `?v=<new>`)는 07-12 이전 regime → 부적용(현행 코드로 재검증, 484623fb·abcb7d68 동일 판정).
+- 날짜 관례: 07-29 배포분(block date=배포일=델타 커밋 git-date, 파일에 07-29 블록 부재)이라 기존 블록 append 아닌 **신규 07-29 블록 prepend**(함정 #20 분기: 그 배포일 블록이 없으면 prepend). `generated`=top-block date=2026-07-29.
+- 근거 정본: 각 항목 owning POST-DEPLOY 라이브 실증 커밋 + `git log 8b0c7ea3..HEAD`(43 non-merge 커밋).
+- 배포됐으나 자체 POST-DEPLOY 실증 커밋 부재 3건(대화 페이징 429 블로킹 해소 48a9f1f6·추론 회차 표시 교정 10c84d81·추론 탭 안내문구 축약 45dfe362)은 함정 #18c 보수 default 로 HOLD. 제외: 내부 테스트 격리(770c436b·97be4cda·7749a04a)·UI 카피 예산 게이트(394b987d governance)·LEARNINGS 기록.
+- Verification: `node --check` PASS · 구조검증(releases[0].date=2026-07-29 신규 13 items·releases[1] 2026-07-28 9항목 보존·releases[2] 07-27 보존·스키마 type/area/title/detail·enum 유효·내부용어 누출 0). 13항목 전부 owning POST-DEPLOY 라이브 실증 커밋 보유(274174e5·8775f9a0·2f10b550·d605874e·7038f5a6·63d5e83f·a5594383·24f52a84·637152f4·7d0997f7·26f263f0·3ce453cf·712a847f·f768e774·e86f4c6b). 릴리즈노트 render 테스트(`tests/verify_release_notes.mjs`)는 jsdom 미설치(env 제약)로 미실행 — render 로직 미변경이라 대상 아님(함정 #3c).
+- 적대검증: ULTRACODE wf_0663e5aa R1(3-타깃 analyze→타깃-스코프 verify, cross-fault 회피 함정 #12·9 에이전트) — RN MAJOR 1(item8 제품 선택기 위치 '입력창 아래' 오안내 → 2-렌즈 독립 합치, 위치 중립 '입력창의 제품 선택 드롭다운' 으로 교정)·MINOR 3(summary 가 13항목 중 11만 서술 → item8/item9 절 보강·item13 '기본 접힘' → '가장 최근 대화만 펼쳐짐'·item13 07-27 블록과 중복 → '중간 회차' delta 명시) 적발, 오케스트레이터 정본 독립 재검증 후 전건 교정.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).

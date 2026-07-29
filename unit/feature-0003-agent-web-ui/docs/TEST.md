@@ -2302,3 +2302,6 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
   WEB_G_QA 879) · 부트스트랩 안내·단위 라벨 갱신.
 - 증거: `artifacts/pb0008/pb0008-meta-krlive.png` · `artifacts/pb0008/pb0008-meta-bootstrap-ccqa.png`.
 - **Pass/Fail: PASS**. 상세 Run: `docs/test-runs.d/20260729T2130-metadata-product-scope.md` POST-DEPLOY 절.
+
+## TASK-20260730T010301-doc-sync-rn-0730 — 릴리즈노트 신규 2026-07-29 블록 13항목 prepend (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·제품 코드·캐시버스터(`?v=dev` 빌드 자동주입, 수기 편집 0) 무변경. 무인 cron doc_sync 라 인터랙티브 win-browser 브리지 미가동·배포=wrapper(post-merge). 릴리즈노트 전용 render 테스트(`tests/verify_release_notes.mjs`)는 **jsdom 미설치**(env 제약, 함정 #3c)로 미실행 — render 로직 미변경이라 대상 아님. pre-commit 정적 검증 = `node --check`(문법) PASS + 구조검증(releases[0].date=2026-07-29·13 items·releases[1] 2026-07-28 9항목 보존·스키마·enum·누출0). 각 항목의 실제 UI 동작은 owning feature 의 POST-DEPLOY(Windows-browser PB-0008)에서 이미 라이브 검증됨. CHECK#13 충족(웹 자산 변경=릴리즈노트 데이터, Windows-browser 미수행 사유 기록).

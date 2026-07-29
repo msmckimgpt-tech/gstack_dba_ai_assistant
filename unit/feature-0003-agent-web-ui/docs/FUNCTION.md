@@ -2280,3 +2280,7 @@ docker exec <agent> python -m scripts.kb_scope_rescope --migrate --purge-ambiguo
 docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 이어야 함
 # 2. AGENT_KB_LEGACY_DS_SCOPE_READ=0 설정 + web/워커 재기동(contract)
 ```
+
+## (doc-sync-rn-0730, 2026-07-29) 릴리즈노트 콘텐츠 — 2026-07-29 블록 신규 prepend 13항목(대화 검색 복구·첨부 파일명 축·진행 폴링 자가회복·타임아웃 연장 승인·첨부 자율 참조·모델 선택 유실·후속 축약·제품 선택 방향키·DB 자동 재연결·제품 스코프·관계도 상한 제거·이름표/목록 가독성·자체 점검 회차)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-07-29" 블록 prepend(13 items: fixed/work 5 · new/work 2 · improved/work 2 · fixed/common 1 · improved/admin 4 중 area 분포는 work 8·common 1·admin 4) + `generated` "2026-07-28"→"2026-07-29". 기존 07-28 이하 전 블록 무접촉. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py`(Dockerfile:39) + deploy-web.sh `asset_stamp_verify` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시(index/admin `?v=<new>`)는 07-12 이전 regime → 부적용(현행 코드로 재검증, 484623fb·abcb7d68 동일 판정).
+- 평이화/비노출: feature-id·§번호·PR#·함수명·테이블명·엔드포인트·내부 권한키(`conversation.extend.*`)·내부 설정키(AGENT_TIMEOUT_EXTENSION_*)·내부 모델값 비노출(사용자 언어·실제 화면 라벨만). 삭 제품 선택기 위치는 오안내 회피를 위해 위치 중립 서술. 제외/HOLD: 배포됐으나 자체 POST-DEPLOY 실증 커밋 부재 3건(대화 페이징 429 블로킹 해소 48a9f1f6·추론 회차 표시 교정 10c84d81·추론 탭 안내문구 축약 45dfe362)은 함정 #18c 보수 default 로 HOLD. 제외: 내부 테스트 격리(770c436b·97be4cda·7749a04a)·UI 카피 예산 게이트(394b987d governance)·LEARNINGS 기록.
