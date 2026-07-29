@@ -68,3 +68,46 @@ def test_realign_thread_goal_passthrough_for_unbounded_sender():
 def test_realign_thread_goal_normalizes_empty():
     assert agent_core._realign_thread_goal(None, False) == ""
     assert agent_core._realign_thread_goal("", False) == ""
+
+
+# ── 2026-07-29 회귀 교정: 리뷰어·수정 지시에 줄 '대화 실질 요청' 과 첨부 근거 ──
+# 다중 턴에서 현재 발화("네 맞습니다.")만 넘기면 리뷰어가 실질 답변을 "묻지도 않은 걸 답했다"
+# 로 오판하고, 그 오판이 수정 루프를 통해 답변을 붕괴시킨다(라이브 run #132).
+
+def test_conversation_request_prefers_origin_over_latest_utterance():
+    got = agent_core._review_conversation_request(
+        "쿼리 리뷰를 진행해주세요.", "쿼리 리뷰", "네 맞습니다.", False)
+    assert got == "쿼리 리뷰를 진행해주세요."
+
+
+def test_conversation_request_falls_back_to_goal_then_utterance():
+    assert agent_core._review_conversation_request("", "쿼리 리뷰", "네", False) == "쿼리 리뷰"
+    assert agent_core._review_conversation_request("", "", "월별 매출", False) == "월별 매출"
+    assert agent_core._review_conversation_request("", "", "", False) == ""
+
+
+def test_conversation_request_suppressed_for_bounded_sender():
+    """origin/thread_goal 은 가려진 첫 요청 파생 — bounded 발신자에겐 주지 않는다(누출 게이트)."""
+    assert agent_core._review_conversation_request("첫 요청", "목표", "네", True) == ""
+
+
+def test_review_attachments_suppressed_for_bounded_sender(monkeypatch):
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_texts",
+                        lambda: {1: {"filename": "a.sql", "content": "SELECT 1"}})
+    assert agent_core._review_attachments(True) == []
+
+
+def test_review_attachments_maps_inline_texts(monkeypatch):
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_texts",
+                        lambda: {1: {"filename": "a.sql", "content": "SELECT 1", "truncated": True},
+                                 2: {"filename": "empty.sql", "content": "   "}})
+    got = agent_core._review_attachments(False)
+    assert got == [{"filename": "a.sql", "content": "SELECT 1", "truncated": True}]
+
+
+def test_review_attachments_fail_open_on_loader_error(monkeypatch):
+    def boom():
+        raise RuntimeError("no inline path")
+
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_texts", boom)
+    assert agent_core._review_attachments(False) == []

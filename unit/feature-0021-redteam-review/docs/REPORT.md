@@ -74,6 +74,15 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   `REDTEAM_ANSWER_REALIGN` 스위치·bounded 발신자 `thread_goal` 억제. 마이그레이션 없음.
   상세 MODIFY.md · REV-20260728T093528.
 
+- CHG-20260729-0001 — **다중 턴 요청 맥락 회귀 교정** (사용자 리포트). CHG-20260728-0002 의
+  재앵커가 다중 턴에서 역효과 — 리뷰어와 재앵커가 **현재 턴 발화만** 보고(리뷰어는 fresh-context,
+  첨부는 digest 밖) 실질 답변을 "과답변"·"근거 없는 창작" 으로 오판, 모델이 그에 응해 내용을
+  지우자 반박할 claim 이 사라져 리뷰어가 통과 — **축소가 곧 수렴이 되는 퇴행 경로**. 라이브
+  실측(run #132): 14 라운드 만에 3,170자 리뷰가 152자 비-답변으로 붕괴, 사용자가 같은 요청을
+  세 번째 턴에 다시 눌러야 했다. 4축 교정(리뷰어 CONVERSATION REQUEST+첨부 근거·과답변 오판
+  금지 / 앵커 2층·계약 addressing 전용 / 붕괴 가드 `revise_collapsed`). 마이그레이션 없음.
+  상세 MODIFY.md · FUNCTION.md §7.4 · REV-20260729T110000.
+
 ## 4. Open Issues
 - make test 중 pre-existing 환경 의존 실패 4건 (본 feature 무관 — TEST.md §3 Run 기록 참조):
   runtime_settings 2건은 `.env` 의 AGENT_TIMEOUT_SEC=300 이 기본값 60 단정과 충돌 (main 동일
@@ -102,6 +111,10 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   ruff clean · 마이그레이션 없음 · 프론트 자산 무변경. 인라인 자기검증에서 MAJOR2(재추론
   재서술의 낡은 근거 되돌림 / 상한 없는 루프의 호출 증폭)+MINOR1(DBA 어휘 오탐) 적발·전건
   커밋 전 반영. 상세 TEST.md §3 · test-runs.d/20260728T0935.
+- (2026-07-29 CHG-20260729-0001) 회귀 교정 후 **전체 2857 passed / 0 failed** (main baseline
+  2835 대비 순증 22 = 신규 테스트 수, 회귀 0) · ruff clean · 마이그레이션 없음. 붕괴 재현 테스트는
+  수정 전 코드에서 실패하도록 작성(가드가 결함 자체를 검증). 상세 TEST.md §3 ·
+  test-runs.d/20260729T1100.
 - 미검증 항목: 리뷰어 실판정 품질 (라이브 축적 관찰), effort=low 로 sonnet 리뷰 타임아웃
   소멸(라이브 관찰), **실제 답변에서의 수렴 분포**(`revision_rounds>1` · `stop_reason`) —
   배포 이후 새 판정 표본 미발생, 렌더 경로만 합성 행으로 실증 (TEST.md §4),

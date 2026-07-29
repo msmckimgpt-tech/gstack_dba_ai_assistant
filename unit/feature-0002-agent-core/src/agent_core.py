@@ -3098,6 +3098,66 @@ def _build_self_review_messages(base_messages: list[dict], draft_answer: str,
     ]
 
 
+def _review_conversation_request(origin_request: str, thread_goal: str, user_message: str,
+                                 suppress_conversation_context: bool) -> str:
+    """red-team 리뷰어·수정 지시에 줄 **답변이 수행해야 할 일** (2026-07-29 회귀 교정).
+
+    문제: 리뷰어와 수정 지시는 현재 턴 발화(`user_message`)만 받았다. 다중 턴 대화에서 그
+    발화가 "네 맞습니다." 같은 짧은 동의면 — 리뷰어는 실질 답변을 "묻지도 않은 걸 답했다"
+    (completeness BLOCK)로 오판하고, 수정 지시의 재앵커는 답변을 그 발화 크기로 축소시킨다.
+    실측(대화 20260729013313, run #132): 쿼리 리뷰 초안이 14 라운드에 걸쳐 152자 비-답변으로
+    붕괴했고, 내용이 사라지자 지적할 것이 없어 리뷰어가 `resolved` 로 통과시켰다.
+
+    해결: 대화의 실질 요청(`origin_request`, 없으면 `thread_goal`)을 함께 준다. 현재 발화가
+    그 자체로 실질 요청이면(단일 턴·주제 전환 직후) origin 과 같으므로 중복 렌더는 아래
+    `build_request_anchor` 가 정규화 비교로 흡수한다.
+
+    누출 게이트: origin/thread_goal 은 대화의 (가려졌을 수 있는) 첫 요청 파생이라 공유창
+    visibility window 로 자를 수 없다 — bounded 발신자에게는 빈 문자열을 반환한다
+    (`_realign_thread_goal` 과 동일 축, system 프롬프트 CONVERSATION CONTEXT 억제와 정합).
+    이 경우 리뷰어는 종전대로 현재 발화만 보지만, 그것은 **기존 동작**이라 회귀가 아니다.
+    """
+    if suppress_conversation_context:
+        return ""
+    for cand in (origin_request, thread_goal, user_message):
+        text = str(cand or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _review_attachments(suppress_conversation_context: bool) -> list[dict[str, Any]]:
+    """red-team 리뷰어 evidence digest 에 실을 사용자 첨부 파일 (2026-07-29 회귀 교정).
+
+    첨부 본문은 knowledge context(시스템 프롬프트)로 주입되고 **도구 결과가 아니다**. 리뷰어의
+    evidence digest 는 도구 실행만 담았으므로, 첨부 파일을 리뷰하는 답변은 리뷰어에게 근거 없는
+    창작으로 보였다 — 첨부 리뷰마다 구조적으로 재발하는 honesty/grounding false positive
+    (실측 run #132: "사용자 제출 증거가 없는 SQL 코드에 대해 마치 검증된 분석인 것처럼 제시").
+
+    누출 게이트: bounded 발신자에게는 빈 목록. 이 목록은 '이 대화에서 선택된 첨부' 라 가려진
+    구간에서 첨부된 파일이 섞일 수 있고, 첨부 본문은 message id 로 clip 되지 않는다.
+    """
+    if suppress_conversation_context:
+        return []
+    try:
+        inline = _load_attachment_inline_texts() or {}
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for meta in inline.values():
+        if not isinstance(meta, dict):
+            continue
+        content = str(meta.get("content") or "")
+        if not content.strip():
+            continue
+        out.append({
+            "filename": str(meta.get("filename") or ""),
+            "content": content,
+            "truncated": bool(meta.get("truncated")),
+        })
+    return out
+
+
 def _realign_thread_goal(thread_goal: str, suppress_conversation_context: bool) -> str:
     """red-team 재앵커에 실을 대화 목표 (answer-origin-realign) — 누출 게이트.
 
@@ -4887,6 +4947,11 @@ def _run_agent_core(
                     # answer-origin-realign: 수정 지시의 재앵커에 쓸 대화 목표(보조 앵커).
                     # bounded 발신자 억제 판정은 _realign_thread_goal 정본(누출 게이트).
                     _rt_goal = _realign_thread_goal(thread_goal, _suppress_conversation_context)
+                    # 답변이 수행해야 할 일(대화 실질 요청) + 사용자 첨부 근거. 둘 다 bounded
+                    # 발신자에겐 비워진다(누출 게이트) — 헬퍼 docstring 이 정본.
+                    _rt_conv_req = _review_conversation_request(
+                        prev_origin, thread_goal, user_message, _suppress_conversation_context)
+                    _rt_attachments = _review_attachments(_suppress_conversation_context)
                     _rt_realign_info: list[dict[str, Any]] = []
                     # 비용 가드 — realign 은 라운드당 최대 1회지만, 반복 수정 루프는 상한이
                     # 없다(REDTEAM_REVISE_UNTIL_RESOLVED). 모델이 재서술 요구에 끝내 응하지
@@ -4934,6 +4999,7 @@ def _run_agent_core(
                             return text  # 연속 거절 — 이 run 에서는 더 시도하지 않는다(비용 가드)
                         _out, _info = _redteam.realign_answer(
                             text, question=user_message, thread_goal=_rt_goal,
+                            conversation_request=_rt_conv_req,
                             rewrite_fn=lambda _instr: _rt_generate(_instr, text, base))
                         if _info is not None:
                             _rt_realign_info.append(_info)
@@ -5114,6 +5180,8 @@ def _run_agent_core(
                         abort_fn=_rt_abort,
                         progress_fn=_emit_activity,
                         thread_goal=_rt_goal,  # answer-origin-realign (bounded 발신자엔 빈 값)
+                        conversation_request=_rt_conv_req,  # 답변이 수행해야 할 일(다중 턴 교정)
+                        attachments=_rt_attachments,        # 첨부 = 리뷰어의 정당한 ground truth
                     )
                     if _rt_answer and _rt_answer.strip():
                         answer = _rt_answer

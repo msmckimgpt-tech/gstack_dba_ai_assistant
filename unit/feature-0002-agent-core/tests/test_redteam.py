@@ -1507,3 +1507,216 @@ def test_detect_meta_framing_allows_dml_description_opening():
     """오탐 가드: DBA 답변의 일상 어휘('내용을 수정합니다' = DML 설명)는 메타가 아니다."""
     assert redteam.detect_meta_framing(
         "이 쿼리는 orders 테이블의 내용을 수정합니다. 영향 행수는 12건입니다.") is None
+
+
+# ── 2026-07-29 회귀 교정: 다중 턴 요청 맥락 · 첨부 근거 · 붕괴 가드 ──────────
+# 라이브 결함(대화 20260729013313, run #132): 턴1 "쿼리 리뷰를 진행해주세요"(+첨부 SQL) →
+# 턴2 "네 맞습니다." 에서 리뷰어가 (a) 현재 발화만 보고 "묻지도 않은 걸 답했다"(completeness
+# BLOCK), (b) 첨부가 digest 에 없어 "근거 없는 창작"(honesty BLOCK) 을 냈고, 재앵커가 답변을
+# 그 발화 크기로 축소시켜 14 라운드 만에 3,000자+ 리뷰가 152자 비-답변으로 붕괴했다.
+# 내용이 사라지자 반박할 claim 도 사라져 리뷰어가 `resolved` 로 통과 — 축소가 곧 수렴이 되는
+# 퇴행 경로. 아래 테스트가 그 4개 경로를 각각 고정한다.
+
+_LIVE_CONV_REQUEST = "쿼리 리뷰를 진행해주세요. [DK] Delete_NotExists_AccountCharacter"
+_LIVE_FOLLOWUP = "네 맞습니다."
+
+
+def test_anchor_two_layer_separates_request_from_latest_utterance():
+    block = redteam.build_request_anchor(_LIVE_FOLLOWUP, "", _LIVE_CONV_REQUEST)
+    assert "이 대화의 요청" in block and _LIVE_CONV_REQUEST in block
+    assert "직전 사용자 발화" in block and _LIVE_FOLLOWUP in block
+    # 직전 발화가 답변 범위가 아님을 블록 자체가 명시해야 한다(축소 유인 제거).
+    assert "답변 범위가 아니다" in block
+    # 수행할 일이 대화 요청 쪽에 붙어야 한다.
+    assert block.index("답변이 수행해야 할 일") < block.index("직전 사용자 발화")
+
+
+def test_anchor_single_layer_when_request_equals_question():
+    block = redteam.build_request_anchor("월별 매출 합계", "", "월별 매출 합계")
+    assert block.count("월별 매출 합계") == 1
+    assert "직전 사용자 발화" not in block
+
+
+def test_anchor_single_layer_without_conversation_request():
+    block = redteam.build_request_anchor("월별 매출 합계")
+    assert "월별 매출 합계" in block and "직전 사용자 발화" not in block
+
+
+def test_answer_contract_forbids_scope_shrink():
+    """계약은 addressing 전용 — 범위 축소 권한을 주면 안 된다(회귀 가드)."""
+    instr = redteam.build_revision_instruction(
+        [{"severity": "BLOCK", "axis": "completeness", "claim": "c", "evidence": "e", "fix_hint": "f"}],
+        _LIVE_FOLLOWUP, "", _LIVE_CONV_REQUEST)
+    assert "다룰 내용을 좁히지" in instr
+    assert "삭제하거나 요약해 줄이지 말 것" in instr
+    assert "길이나 범위에 맞춰 답변을 축소하지 말 것" in instr
+    # 초판의 축소 유발 문구는 남아 있으면 안 된다.
+    assert "묻지 않은 것을 결함 수정을 빌미로" not in instr
+
+
+def test_rederive_instruction_also_carries_conversation_request():
+    instr = redteam.build_rederive_instruction(
+        [{"severity": "BLOCK", "axis": "sql", "claim": "c", "evidence": "e", "fix_hint": "f"}],
+        _LIVE_FOLLOWUP, "", _LIVE_CONV_REQUEST)
+    assert _LIVE_CONV_REQUEST in instr and "직전 사용자 발화" in instr
+
+
+# ── 리뷰어 입력(D1) ─────────────────────────────────────────────────────────
+
+def test_review_prompt_forbids_scope_false_positive():
+    p = redteam.REDTEAM_REVIEW_PROMPT
+    assert "CONVERSATION REQUEST" in p
+    assert "answers more than the user asked" in p
+    assert "네 맞습니다" in p          # 짧은 후속 발화 예시가 프롬프트에 실려야 한다
+    # 삭제로 결함을 '해소'하는 퇴행을 리뷰어가 잡도록 명시.
+    assert "shorter answer is NOT a better answer" in p
+    assert "REGRESSION" in p
+
+
+def test_run_review_injects_conversation_request(monkeypatch):
+    captured = {}
+
+    class _Msg:
+        content = '{"verdict":"pass","findings":[]}'
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    def fake_call(client, model, messages, **kw):
+        captured["user"] = messages[-1]["content"]
+        return _Resp()
+
+    import modules.llm as _llm
+    monkeypatch.setattr(_llm, "_openai_chat_completion_with_deadline", fake_call)
+    redteam.run_review(_LIVE_FOLLOWUP, "draft", "EVIDENCE",
+                       conversation_request=_LIVE_CONV_REQUEST)
+    assert "CONVERSATION REQUEST" in captured["user"]
+    assert _LIVE_CONV_REQUEST in captured["user"]
+    assert "LATEST USER UTTERANCE" in captured["user"]
+    # 대화 요청이 발화보다 앞서야 리뷰어가 그것을 기준으로 판정한다.
+    assert captured["user"].index("CONVERSATION REQUEST") < captured["user"].index("LATEST USER")
+
+
+def test_run_review_omits_conversation_block_when_absent(monkeypatch):
+    captured = {}
+
+    class _Msg:
+        content = '{"verdict":"pass","findings":[]}'
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    import modules.llm as _llm
+    monkeypatch.setattr(_llm, "_openai_chat_completion_with_deadline",
+                        lambda c, m, msgs, **kw: (captured.__setitem__("user", msgs[-1]["content"]), _Resp())[1])
+    redteam.run_review("q", "draft", "EVIDENCE")
+    assert "CONVERSATION REQUEST" not in captured["user"]
+
+
+# ── 첨부 근거(D3) ───────────────────────────────────────────────────────────
+
+def test_attachment_digest_lists_files_and_excerpt():
+    d = redteam.build_attachment_digest([
+        {"filename": "DK_KR_Delete_NotExists_AccountCharacter.sql",
+         "content": "DELETE FROM T_AccountCharacter\nWHERE NOT EXISTS (SELECT 1)\n",
+         "truncated": False}])
+    assert "USER-ATTACHED FILES" in d
+    assert "DK_KR_Delete_NotExists_AccountCharacter.sql" in d
+    assert "DELETE FROM T_AccountCharacter" in d
+    assert "ground truth" in d
+
+
+def test_attachment_digest_empty_without_attachments():
+    assert redteam.build_attachment_digest(None) == ""
+    assert redteam.build_attachment_digest([]) == ""
+
+
+def test_attachment_digest_marks_truncation():
+    d = redteam.build_attachment_digest([
+        {"filename": "big.sql", "content": "x" * 5000, "truncated": False}])
+    assert "[TRUNCATED]" in d
+
+
+def test_evidence_digest_includes_attachments_even_when_tools_are_huge():
+    """첨부 섹션이 자기 예산을 선점해야 한다 — 잘리면 첨부 리뷰가 다시 '창작'으로 오판된다."""
+    steps = [{"tool_name": "execute_sql", "args": {"sql": "SELECT " + "a" * 400},
+              "result_preview": "P" * 300, "result_length": 9} for _ in range(40)]
+    d = redteam.build_evidence_digest(
+        steps, "SELECT 1",
+        attachments=[{"filename": "review-me.sql", "content": "SELECT 1 FROM T", "truncated": False}])
+    assert "review-me.sql" in d
+    assert "USER-ATTACHED FILES" in d
+
+
+def test_evidence_digest_without_attachments_unchanged_shape():
+    d = redteam.build_evidence_digest([], "")
+    assert "EVIDENCE DIGEST" in d and "USER-ATTACHED FILES" not in d
+
+
+def test_orchestrate_passes_attachments_and_request_to_reviewer(monkeypatch):
+    _settings(monkeypatch)
+    _no_record(monkeypatch)
+    seen = {}
+
+    def fake_review(question, draft, evidence, **kw):
+        seen["evidence"] = evidence
+        seen["conv"] = kw.get("conversation_request")
+        return {"verdict": "pass", "findings": []}
+
+    monkeypatch.setattr(redteam, "run_review", fake_review)
+    redteam.orchestrate_review(
+        question=_LIVE_FOLLOWUP, draft_answer="draft", steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
+        conversation_request=_LIVE_CONV_REQUEST,
+        attachments=[{"filename": "a.sql", "content": "SELECT 1", "truncated": False}])
+    assert seen["conv"] == _LIVE_CONV_REQUEST
+    assert "a.sql" in seen["evidence"]
+
+
+# ── 붕괴 가드(D4) ───────────────────────────────────────────────────────────
+
+def test_collapse_guard_rejects_non_answer_revision(monkeypatch):
+    """축소가 곧 수렴이 되는 퇴행 경로 차단 — 붕괴한 수정본은 채택하지 않는다."""
+    _settings(monkeypatch, REDTEAM_REVISE_UNTIL_RESOLVED=1)
+    _no_record(monkeypatch)
+    draft = "쿼리 리뷰 결과입니다. " + ("상세 분석 항목. " * 120)   # 긴 실질 답변
+    collapsed = "감사합니다. 상세 분석이 필요하시면 언제든 말씀해주세요."  # 라이브 붕괴 재현
+    monkeypatch.setattr(redteam, "run_review",
+                        lambda *a, **kw: {"verdict": "revise", "findings": [_block_finding("completeness")]})
+    answer, meta = redteam.orchestrate_review(
+        question=_LIVE_FOLLOWUP, draft_answer=draft, steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="max", is_group=False,
+        conversation_request=_LIVE_CONV_REQUEST,
+        revise_fn=lambda i, d=None: collapsed)
+    assert answer.startswith("쿼리 리뷰 결과입니다.")      # 초안 유지 — 붕괴본 미채택
+    assert collapsed not in answer
+    assert meta["stop_reason"] == "revise_collapsed"
+    assert meta["revision_applied"] is False
+
+
+def test_collapse_guard_allows_legitimate_shrink(monkeypatch):
+    """근거 없는 단락을 덜어내는 정당한 축소(30% 이상 잔존)는 통과해야 한다."""
+    _settings(monkeypatch)
+    _no_record(monkeypatch)
+    draft = "A" * 1000
+    trimmed = "B" * 500      # 50% — 붕괴 아님
+    calls = {"n": 0}
+
+    def fake_review(*a, **kw):
+        calls["n"] += 1
+        return ({"verdict": "revise", "findings": [_block_finding("grounding")]}
+                if calls["n"] == 1 else {"verdict": "pass", "findings": []})
+
+    monkeypatch.setattr(redteam, "run_review", fake_review)
+    answer, meta = redteam.orchestrate_review(
+        question="q", draft_answer=draft, steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
+        revise_fn=lambda i, d=None: trimmed)
+    assert answer == trimmed and meta["stop_reason"] == "resolved"
+    assert meta["revision_applied"] is True

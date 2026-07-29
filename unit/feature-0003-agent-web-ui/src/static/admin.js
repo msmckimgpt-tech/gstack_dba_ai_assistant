@@ -2611,6 +2611,7 @@ const _REASONING_STOP_REASONS = {
   downgraded: "지적이 경고로 강등되어 종료",
   aborted: "사용자 '즉시 답변'/취소",
   no_progress: "수정본이 직전과 동일 — 반복 중단",
+  revise_collapsed: "수정본이 초안 대비 과도하게 축소 — 붕괴 방지로 중단",
   revise_failed: "수정 산출 실패",
   verify_error: "재검증 호출 실패",
   unverified: "재검증 미수행 설정",

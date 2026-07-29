@@ -32,6 +32,11 @@ source_of_truth: true
   breakout 차단, 메타 프레이밍 탐지(양성 7·정상 DB 답변 3·DML 오탐 가드·제목 은닉·빈 입력),
   재서술 계약(탐지 없으면 호출 0·스위치 OFF·적용·내용손실 폐기·메타잔존 폐기·무산출/예외 fail-open·
   rewrite_fn 부재), orchestrate question/thread_goal 스레딩, bounded 발신자 thread_goal 억제.
+- TEST-20260729T110000-reqctx-1..22: `tests/test_redteam.py`(16) + `tests/test_self_review_messages.py`(6)
+  — 앵커 2층(대화 요청/직전 발화 분리·단일 턴 1층), 계약의 범위-축소 금지(초판 축소 유발 문구
+  부재 포함), 리뷰어 `CONVERSATION REQUEST` 주입·미지정 무주입·프롬프트 규칙(과답변 오판 금지·
+  삭제=REGRESSION), 첨부 digest(매니페스트·발췌·절단·예산 선점), 붕괴 가드(라이브 붕괴 재현 →
+  미채택 `revise_collapsed` / 정상 축소는 통과), 누출 게이트(bounded 발신자 대화요청·첨부 억제).
 - 기존 회귀: `test_runtime_settings_api.py`(레지스트리 확장 무회귀),
   `test_permission_dependency_map.py`(신규 권한 FE↔카탈로그 정합),
   `test_route_parity_p5b.py`(라우트 추가 정합), `test_call_llm_records_agent_task.py`(계측 무회귀).
@@ -150,6 +155,17 @@ source_of_truth: true
 - **미검증(명시)**: 답변 뉘앙스의 실제 교정 효과 — 위 결과는 "코드·설정이 라이브에 올랐다"만
   보인다. §4 미커버 참조.
 
+### Run 2026-07-29 — 다중 턴 요청 맥락 회귀 교정 (review-request-context)
+
+- Environment: **CLI** (agent 이미지 격리 컨테이너 + `agent_runtime` 라이브 원장 조회)
+- 상세 fragment: [`test-runs.d/20260729T1100-review-request-context.md`](./test-runs.d/20260729T1100-review-request-context.md)
+- 결과 **PASS** — 신규 22건 포함 **2857 passed / 2 skipped / 0 failed**. 같은 컨테이너·같은
+  명령의 **main baseline 2835** 대비 순증 22 = 신규 수, **회귀 0**. ruff clean. 마이그레이션 없음.
+- 근본원인은 추정이 아니라 판정 원장 실측 — run #132(`rounds=14`·`stop=resolved`·최종 152자)의
+  **원장↔산출물 모순**이 "축소가 수렴으로 기록되는" 퇴행 경로를 특정했고, 같은 행의 findings
+  원문이 리뷰어 false positive 2종(현재 턴만 봄 / 첨부가 digest 에 없음)을 직접 보여줬다.
+- 붕괴 재현 테스트는 **수정 전 코드에서 실패**하도록 작성했다(가드가 결함 자체를 검증).
+
 ## 4. Integration Coverage
 - 리뷰어 실 LLM 판정·redteam_reviews INSERT·노트 실볼륨 축적은 배포 후 라이브 실증
   (POST-DEPLOY Run 으로 §3 에 append). 콘솔 화면은 PB-0008 Windows-browser 검증.
@@ -164,3 +180,7 @@ source_of_truth: true
   못한다 — "테스트 통과 = 뉘앙스 교정됨" 으로 읽지 않는다. 관측 경로는 stderr
   `[redteam] answer-realign detected=… applied=… reject=…` 라인과 `_rt_meta.realign_*` 이며,
   콘솔 노출은 DB 컬럼 신설이 필요해 후속 cycle 로 분리(TASK.md §10 잔여).
+- **미커버 (라이브 트래픽 대기, 2026-07-29 review-request-context)**: 리뷰어 LLM 이 실제로 과답변
+  BLOCK 을 더 이상 내지 않는지, `revision_rounds` 의 긴 꼬리(14 라운드)가 사라지는지,
+  `stop_reason='revise_collapsed'` 빈도가 유의한지. 단위 테스트는 붕괴 *경로*(가드·앵커·리뷰어
+  입력)를 고정할 뿐 리뷰어 판정 자체를 재현하지 못한다 — 배포 후 `redteam_reviews` 분포로 확인.
