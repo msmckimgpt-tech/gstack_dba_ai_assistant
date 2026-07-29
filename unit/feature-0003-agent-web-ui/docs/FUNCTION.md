@@ -2160,3 +2160,26 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - AC-DPT-3 (행 높이·경계 균일 + 말줄임 무음손실 0): 주 라벨과 부가정보 **양쪽 모두** `overflow:hidden`+`text-overflow:ellipsis`+`white-space:nowrap`+`min-width:0` 을 갖고, 부가정보는 우측 정렬(`margin-left:auto`) + 폭 상한(≤50%, 현행 38%)으로 주 라벨 공간을 보장한다. 결과로 행 높이와 우측 경계가 균일해진다(실측: 높이 19~38px 2종 → 25px 1종, 우측 경계 18종 → 1종). **잘리는 두 요소는 `title` 에 전문을 싣는다** — 표시 절단이 정보 손실이 되지 않게.
 - AC-DPT-4 (수직 리듬): 섹션 간 여백이 행 padding 의 3배 이상이어서 덩어리 경계가 보이고, 목록 `li` 의 generic margin 을 제거해 **행 리듬을 행 버튼 padding 하나로만** 만든다(이중 여백 제거).
 - 불변식: 표시 전용 변경 — 백엔드 응답·엔드포인트·RBAC(`metadata.graph.read`)·스키마·AGE 라벨 무변경. `.amgr-link` 는 부-액션(모두 펼치기·관계 상세·이 노드로 이동·DB 전체 AI 능동 분석·접기)에만 남는다. 관계 섹션의 `.amgr-row` 테두리 카드는 **복합 다중요소 행**(방향·신뢰 배지·추적 힌트)이라 의도적으로 유지 — "복합=카드 / 단일 항목=평행 행" 규칙.
+
+## (test-live-db-isolation, 2026-07-29) 단위 테스트 격리 계약 — 테스트는 라이브 컨트롤플레인을 변경하지 않는다 (테스트 인프라, Major §12.3, 제품 코드 변경 0)
+
+**계약**: `make test` 로 도는 단위 테스트는 운영 상태(라이브 `agent_memory` DB · `/shared` 공유
+스냅샷)를 **읽지도 쓰지도 않는다**. 실 커넥션 왕복 검증은 라이브 통합 QA 의 몫이다.
+
+- **강제 지점 (2겹)**
+  - 애플리케이션: `tests/conftest.py` autouse `_no_live_memory_conn` — memory DB 커넥션 단일
+    진입점 `app._connect_memory` 를 차단(raise). `get_conn` DI 경로와 핸들러 내부 직접 호출을
+    함께 덮는다. monkeypatch 라 테스트가 같은 심볼을 재setattr 하거나
+    `dependency_overrides[get_conn]` 를 심으면 그 값이 이긴다(기존 fake-conn 패턴 보존).
+  - 컨테이너: `Makefile` `TEST_ISOLATION_ENV` — `DB_PORT=1`(닫힌 포트) +
+    `RUNTIME_SETTINGS_SNAPSHOT_PATH=/tmp/...`. `DB_HOST` 는 **바꾸지 않는다** — app 이 이를
+    datasource SSRF allowlist 에 implicit 등록하므로(TASK-0214) 호스트 변경은 SSRF 가드 테스트를
+    오염시킨다.
+- **회귀 가드**: `tests/test_live_db_isolation.py` 3건이 진입점 차단 · 저장 경로 500 · 스냅샷
+  경로 비-`/shared` 를 계약으로 고정. 런타임 설정 저장 경로 assert 는 `== 500` 결정적이며,
+  **200 은 통과가 아니라 격리 실패**로 판정한다.
+- **배경**: `--no-deps` 는 이미 떠 있는 운영 컨테이너와의 연결을 막지 않아, 2026-07-13~29 사이
+  테스트가 라이브 런타임 설정을 150회 덮어썼다(관리 콘솔 '에이전트/쿼리 실행 타임아웃' 900→90
+  롤백). 상세: TASK-20260729T1412-test-live-db-isolation · `docs/LEARNINGS.md` LRN-20260729-0001.
+- **범위 밖(현행 한계, 명시)**: PG(`AGENT_KB_PG_*`) 는 아직 격리하지 않는다 — 일부 agent-core
+  테스트가 라이브 PG 읽기에 의존해 통과 중이라 함께 끊으면 회귀가 난다. 후속 작업 항목.

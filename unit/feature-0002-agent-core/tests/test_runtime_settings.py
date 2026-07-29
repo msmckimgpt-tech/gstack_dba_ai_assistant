@@ -200,6 +200,11 @@ def test_write_snapshot_roundtrip(snap, tmp_path):
 
 def test_missing_snapshot_is_fail_open(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNTIME_SETTINGS_SNAPSHOT_PATH", str(tmp_path / "nope.json"))
+    # override 부재 시 baseline 은 **배포 env 우선**이 설계된 동작이다(_baseline_int docstring —
+    # 운영 .env 의 AGENT_TIMEOUT_SEC=300 을 존중해야 config.py 와 byte-동치). 여기서 검증할 것은
+    # "스냅샷 부재 → 폴백" 이므로 env 를 걷어내 스펙 리터럴 기준으로 본다. (종전엔 env 를 그대로
+    # 둔 채 60 을 요구해, .env 를 상속하는 컨테이너 테스트 환경에서 상시 FAIL 이었다.)
+    monkeypatch.delenv("AGENT_TIMEOUT_SEC", raising=False)
     rs.invalidate_cache()
     rs._cache["frozen"] = None
     assert rs.get_int("AGENT_TIMEOUT_SEC") == 60  # 부재 → 기본값

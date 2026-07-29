@@ -10,6 +10,44 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260729T141200-test-live-db-isolation [SKIPPED:user-directive] — `make test` 의 라이브 컨트롤플레인 쓰기 차단 (TASK-20260729T1412)
+- 대상 diff: `tests/conftest.py`(autouse 차단 fixture) · `tests/test_live_db_isolation.py`(신설) ·
+  `tests/test_runtime_settings_api.py`(assert 강화) · `Makefile`(`TEST_ISOLATION_ENV`) ·
+  (cross-unit) `feature-0002-agent-core/tests/test_runtime_settings.py`. **제품 코드 변경 0**.
+- **panel SKIP 근거**: §18.8 표상 code change + dispatch 키워드 매칭 0건 → 정책 기본값은 full panel.
+  그러나 본 세션에는 "사용자 요청 없이 Agent tool 호출 금지" 세션 지시가 걸려 있어 정책과 충돌한다.
+  자체 판단으로 SKIP 하지 않고 **사용자에게 1회 확인**했고(2026-07-29), 사용자가 "패널 생략하고
+  진행" 을 선택했다. 변경 표면이 테스트 인프라·빌드 진입점에 한정되고 검증이 라이브 실측으로
+  닫혔다는 점이 그 결정의 근거였다.
+- **왜 이 수정이 옳은 지점인가**: 오염의 인과 사슬은 `PUT → _save_runtime_setting →
+  _reconcile_runtime_settings_snapshot` 이고, 그 앞단의 유일한 게이트가 `get_conn → _connect_memory`
+  다. 그래서 차단을 endpoint 나 assert 가 아니라 **커넥션 진입점**에 놓았다 — 저장 경로를 타는
+  미래의 다른 테스트도 자동으로 덮인다. assert 강화는 그 위의 2차 방어이지 1차가 아니다.
+- **대안 검토와 폐기 사유**:
+  - `dependency_overrides[get_conn]` 로 덮기: 실측 결과 기존 검증 패턴 2종을 무력화했다 —
+    `_connect_memory` 를 fake 로 monkeypatch 하는 테스트(`test_history_calendar_pg_routing`)와 자체
+    fake conn 을 심는 테스트(`test_item11_batch8_update_conv_product`)가 FAIL. monkeypatch 방식은
+    "나중 setattr 이 이긴다" 는 성질 덕에 두 패턴을 모두 보존한다 → 채택.
+  - `DB_HOST` 를 도달 불가 호스트로: app 이 DB_HOST 를 datasource SSRF allowlist 에 implicit
+    등록하므로(TASK-0214) `test_disabled_still_blocks_loopback_linklocal[127.0.0.1]` 가 FAIL 했다.
+    포트만 닫는 `DB_PORT=1` 로 대체 — 연결 차단은 직접 실증(`2003 Can't connect to 'mysql:1'`).
+  - PG(`AGENT_KB_PG_*`) 동시 차단: 일부 agent-core 테스트가 **라이브 PG 읽기에 의존해 통과** 중이라
+    `psycopg.OperationalError` 로 무너진다. 같은 계열의 문제지만 이번 cycle scope 를 넘으므로
+    의도적으로 남기고 TASK 잔존 항목에 명시했다(숨기지 않음).
+- **검증의 정직성**: "테스트가 라이브를 안 건드린다" 는 코드 리딩으로 단정할 수 없어 **라이브
+  네트워크 동등 조건**(`COMPOSE_PROJECT_NAME=repo`)에서 실행 전후 `WebRuntimeSettings` 해시와
+  `testclient` audit 카운트를 대조했다(불변 / 0건). 회귀 판정도 인상이 아니라 **main + 동일 격리
+  env 로 baseline 전량을 따로 측정**해 FAILED 집합을 diff 했다(15 → 13, 신규 0).
+- **작업 중 자기 오염 1건(기록)**: 검증 도중 cwd 가 main worktree 인 상태로 격리 없는 `make test`
+  를 1회 실행해 라이브 설정을 다시 90 으로 덮어썼다(audit `512107~512109`). 사용자가 즉시 900 으로
+  복구. 이 사건 자체가 "수정 전 코드로는 1회 실행만으로 즉시 오염된다" 는 대조 실증이 됐다.
+- **미해결로 남긴 것**: 오염된 라이브 값 2건(`agent_max_output:claude-sonnet-4` 100000 — 사용자
+  의도값은 audit 상 128000 / `model_thinking_budget:claude-haiku-4` 30000 — 사람 설정 이력 없음,
+  스펙 기본 5000)은 **사용자 결정으로 복구하지 않는다**(2026-07-29 확인). `WebAuditEvents` 의
+  testclient 이벤트 150건도 해시 체인(EventHash/PrevHash) 무결성 때문에 삭제하지 않는다.
+- Cross-ref: TASK-20260729T1412-test-live-db-isolation / MODIFY CHG-20260729T141200-test-live-db-isolation /
+  test-runs.d/20260729T1412-test-live-db-isolation.md
+
 ## REV-20260728T172000-graph-hover-flow-postverify [SKIPPED:non-policy-doc] — 상세 패널 hover 강조(방향·읽기/쓰기 + 흐름 애니) POST-DEPLOY PB-0008 검증 기록 (TASK 20260728T1628-graph-hover-flow, 비-정책 doc-only)
 - 대상 diff: test-runs.d fragment(POST-DEPLOY 결과) · TASK 항목 · MODIFY CHG. 코드·자산 변경 0 → §18.8 표 첫 행(비-정책 doc-only), panel SKIP.
 - **왜 배포본에서 다시 봤는가**: 사전 검증은 §13.2.9 격리 컨테이너(`web-hoverflow-test`:18097)에서 했고 그 이미지는 worktree 자산을 `docker cp` + 재스탬프(`?v=dev` → `?v=28b8c65898a7`)한 것이라 **빌드 파이프라인(Dockerfile COPY → inject_asset_stamp)을 통과한 산출물이 아니다**. main 기반 이미지가 같은 코드를 서빙하는지는 별도 사실이므로 배포 후 1회 재확인했다(§16.3 deploy-backed 완료 기준 — 머지 ≠ 배포 완료).

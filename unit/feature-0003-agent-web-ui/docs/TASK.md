@@ -8,6 +8,58 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260729T1412-test-live-db-isolation — `make test` 가 라이브 런타임 설정을 덮어쓰던 근본 원인 차단 (Major)
+
+- **증상(사용자 보고)**: 관리 콘솔 `시스템 > 설정 > 실행 타임아웃 > 에이전트/쿼리 실행 타임아웃`
+  을 900초로 저장해도 반복적으로 90초로 되돌아감. "외부 요인" 으로 보였으나 실제 주체는
+  **이 저장소의 `make test`** 였다.
+- **근본 원인 (3중 전제 붕괴)**:
+  1. `Makefile:test` 의 `docker compose run --rm --no-deps agent` — `--no-deps` 는 의존 서비스를
+     *기동*하지 않을 뿐, **이미 떠 있는 운영 컨테이너와의 연결을 막지 않는다**. agent 서비스는
+     `networks: [dbnet, ...]` + `env_file: .env/.env.mysql` + `volumes: ../artifacts/shared:/shared`
+     를 상속하므로 라이브 MySQL(`agent_memory`)·라이브 스냅샷 파일에 직결됐다.
+  2. `tests/conftest.py` 가 "TestClient 를 context manager 없이 만들면 lifespan 미발화 → DB 미접속"
+     을 전제했으나, `get_conn` 은 lifespan 이 아니라 **요청 스코프 Depends** 라 매 요청 실행된다.
+  3. `test_runtime_settings_api.py` 의 PUT 테스트가 `assert status in (200, 500)` 로 **성공 저장까지
+     허용** → 오염이 테스트 통과로 위장됐다.
+  → PUT 이 `_save_runtime_setting` + `_reconcile_runtime_settings_snapshot` 을 태워, DB override 와
+  `/shared/runtime_settings.json`(apply_mode=live 전파 채널)이 함께 테스트 리터럴로 덮어써졌다.
+- **라이브 증거**: `WebAuditEvents` 에 `RemoteAddr=UserAgent=testclient`, `ActorAccountId=1`(conftest
+  기본 계정), `ActionCode=system.runtime.update` 가 **150건**(2026-07-13 ~ 07-29). 대표 왕복 —
+  `13:39:04` 사용자 900 → `13:41:43` testclient 90 → `13:47:28` 사용자 900. 피해는 타임아웃만이
+  아니다: `07-27 17:30:25` 사용자가 `agent_max_output:claude-sonnet-4` 를 **128000** 으로 올렸으나
+  42초 뒤 테스트가 **100000** 으로 롤백(지금까지 잔존), `model_thinking_budget:claude-haiku-4` 는
+  사람이 설정한 이력이 없는데 **30000**(스펙 기본 5000) 으로 심겨 있었다.
+- **수정 (2겹 방어)**:
+  - 애플리케이션: `tests/conftest.py` 에 autouse `_no_live_memory_conn` — memory DB 커넥션 단일
+    진입점 `app._connect_memory` 를 monkeypatch 로 차단(raise). `get_conn` DI 경로와 핸들러 내부
+    직접 호출을 함께 덮는다. monkeypatch 라 기존 fake-conn 검증 패턴(같은 심볼 재setattr /
+    `dependency_overrides[get_conn]`)은 그대로 이긴다 — 회귀 0.
+  - 컨테이너: `Makefile` `TEST_ISOLATION_ENV` — `DB_PORT=1`(닫힌 포트 → 즉시 refused, 지연 없음) +
+    `RUNTIME_SETTINGS_SNAPSHOT_PATH=/tmp/...`(`/shared` 오염 차단). `DB_HOST` 는 건드리지 않는다 —
+    app 이 DB_HOST 를 datasource SSRF allowlist 에 implicit 추가하므로(TASK-0214) 호스트를 바꾸면
+    SSRF 가드 테스트가 오염된다(실측: `test_disabled_still_blocks_loopback_linklocal[127.0.0.1]` FAIL).
+  - 회귀 가드: 저장 경로 assert 를 `in (200,500)` → **`== 500` 결정적** 으로 좁히고, 실패 메시지가
+    "라이브 DB 오염" 을 직접 지목. 신규 `tests/test_live_db_isolation.py` 3건이 진입점 차단·저장
+    경로·스냅샷 경로를 계약으로 고정.
+- **부수 수정(같은 축 — 테스트가 운영 env 에 오염되는 반대 방향)**: `default`(=env 반영 baseline)에
+  스펙 리터럴 60 을 요구하던 어서션 2건이 `.env`(AGENT_TIMEOUT_SEC=300)를 상속하는 컨테이너에서
+  **상시 FAIL** 이었다 → `code_default` 사용 / `monkeypatch.delenv` 로 env-agnostic 화.
+- **완료 판정(acceptance)**:
+  - [x] 라이브 네트워크 동등 조건(`COMPOSE_PROJECT_NAME=repo`)에서 `make test` 전량 실행 후
+        `WebRuntimeSettings` 해시 **불변**(`c682beda…`) · `testclient` audit 신규 **0건**.
+  - [x] 수정본으로 `test_runtime_settings_api.py` + `test_live_db_isolation.py` 재실행 — **21 passed**,
+        audit 신규 0건(별도 확인).
+  - [x] baseline(main + 동일 격리 env) 15 FAILED ↔ 변경 후 13 FAILED — **회귀 0**, 해소 2.
+  - [x] `DB_PORT=1` backstop 실효 직접 확인 — `_connect_memory()` → `2003 Can't connect to 'mysql:1'`.
+- **잔존(본 cycle scope 밖, 후속)**: attachment 계열 13 FAILED 는 **변경 전부터 동일하게 실패**하는
+  기존 baseline(격리 env 유무와 무관하게 재현). 별개로 일부 agent-core 테스트가 **라이브 PG 읽기**에
+  의존해 통과 중이라(`AGENT_KB_PG_HOST` 차단 시 `psycopg.OperationalError`) PG 격리는 이번에 넣지
+  않았다 — 같은 계열의 다음 작업 항목.
+- 상태: **코드+단위검증 완료** — 웹 자산(HTML/CSS/JS) 변경 0 이라 PB-0008 시각검증 비대상.
+- Run: `docs/test-runs.d/20260729T1412-test-live-db-isolation.md`
+
+
 ## TASK-20260728T172000-graph-hover-flow-postverify — 상세 패널 hover 강조(방향·읽기/쓰기 관계선 특정 + 데이터 흐름 애니메이션) POST-DEPLOY 라이브 검증 기록 (비-정책 doc-only)
 - 대상: PR #1016 머지(main `b36493a9`) + `make deploy-web-only` 무중단 롤링(web-a/web-b one-at-a-time + Caddyfile reconcile, soak 90s 통과) 이후 **main 기반 서빙본**에서 재확인. 사전 Run 은 §13.2.9 격리 컨테이너에 자산을 `docker cp` + 재스탬프한 이미지였으므로 빌드 파이프라인 산출물에서의 성립은 별도 사실(§16.3 — 머지 ≠ 배포 완료).
 - 완료 판정(acceptance):
