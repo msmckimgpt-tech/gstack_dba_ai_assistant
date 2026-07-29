@@ -173,6 +173,223 @@ _ACTIVE_DS_ROUTER: contextvars.ContextVar["_DatasourceRouter | None"] = contextv
 )
 
 
+# ── 데이터플레인 연결 liveness (FR-dataplane-conn-stale-no-reconnect) ─────────────
+# 데이터플레인 연결은 run 시작에 1회 수립되어 그 run 의 **모든** tool 호출에 재사용된다. 그런데
+# 연결은 두 경로로 죽는다:
+#   (a) 유휴 사망 — run 시작 후 첫 tool 까지 LLM 추론이 수 분 걸리면(첨부 큰 요청), 그 사이
+#       서버/중계장비가 유휴 연결을 끊는다. 실측: 한 MSSQL datasource 는 60~120초 유휴에 절단.
+#   (b) in-run 사망 — 쿼리 타임아웃이 DBPROCESS 를 죽인다(FreeTDS 20003→20047).
+# 죽은 뒤엔 그 연결 객체가 영구 불능이라, **남은 tool 호출 전부**가 드라이버 문구
+# (`Not connected to any MS SQL server` / `MySQL server has gone away`)로 실패하고 run 이
+# 통째로 무너진다. 사용자에겐 "DB 에 연결 못 함" 으로 보이지만 서버는 멀쩡하다(같은 시각 새 연결은 정상).
+#
+# 봉인: **사용 직전 liveness ping + 같은 좌표 재연결**. 실패한 문장 자체는 재시도하지 않는다
+# ((b) 는 서버에 도달했을 수 있어 재실행이 부하 2배 — 그 tool 만 정직히 실패하고 다음 tool 부터 복구).
+#
+# **보안 불변식**: 재연결은 반드시 *같은 datasource dict* 로만 한다(다른 ds/DB 폴백 금지). 재연결
+# 함수는 agent_core 가 주입한 connect_fn = connect_with_retry(database=None, datasource=ds) 라
+# 회로차단기·database=None(schema-prefixed 강제, M-1)·allowlist 게이트가 그대로 유지된다.
+_CONN_PING_IDLE_SEC_DEFAULT = 30.0
+
+
+def _conn_ping_idle_sec() -> float:
+    """ping 생략 임계(초). 이 시간 안에 성공 사용한 연결은 ping 없이 그대로 쓴다(왕복 0)."""
+    import shared.config as _cfg
+    try:
+        v = float(getattr(_cfg, "AGENT_DS_CONN_PING_IDLE_SEC", _CONN_PING_IDLE_SEC_DEFAULT))
+    except (TypeError, ValueError):
+        return _CONN_PING_IDLE_SEC_DEFAULT
+    return v if v >= 0 else _CONN_PING_IDLE_SEC_DEFAULT
+
+
+def _ping_conn(conn) -> bool:
+    """살아있으면 True. 엔진 무관(`SELECT 1`) — pymssql/mysql.connector 양쪽에서 죽은 연결은 예외."""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT 1")
+            cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        return True
+    except Exception as exc:
+        _log.info("dataplane_conn_ping_failed err=%r — 재연결 시도", exc)
+        return False
+
+
+def _mark_conn_used(conn) -> None:
+    """tool 실행 성공/시도 시각 기록 — 다음 호출의 ping 생략 판정 기준."""
+    try:
+        setattr(conn, "_agent_last_used_at", time.monotonic())
+    except Exception:
+        pass  # 속성 설정 불가한 conn(테스트 double 등) — ping 은 항상 수행(보수적)
+
+
+def _mark_conn_suspect(conn) -> None:
+    """이 연결로 '끊김' 계열 오류가 났음 — 다음 사용 전에 임계와 무관하게 반드시 ping.
+
+    이게 없으면 유휴 임계(기본 30초)가 사고 (b)를 그대로 통과시킨다: 실측 사례에서 쿼리
+    타임아웃이 연결을 죽인 뒤 **4초** 만에 다음 도구가 호출됐고, 임계 안이라 ping 을 건너뛰면
+    죽은 연결이 그대로 다시 쓰여 종전과 같이 run 이 무너진다.
+    """
+    try:
+        setattr(conn, "_agent_last_used_at", None)
+    except Exception:
+        pass
+
+
+def _conn_needs_ping(conn) -> bool:
+    last = getattr(conn, "_agent_last_used_at", None)
+    if last is None:
+        return True  # 최초 사용 또는 끊김 의심 — 확인 없이 쓰지 않는다
+    return (time.monotonic() - float(last)) >= _conn_ping_idle_sec()
+
+
+def _ensure_live_conn(conn, reconnect_fn, *, label: str = ""):
+    """죽은 데이터플레인 연결을 **같은 좌표로** 재연결. 반환 (conn, reconnected).
+
+    - `reconnect_fn` 은 **인자 없는** 재연결 콜백이다. 호출측이 원래 연결을 만든 것과 *동일한*
+      좌표(datasource dict + database)를 클로저로 붙잡아 넘긴다 — 여기서 좌표를 재해석하지
+      않으므로 다른 datasource/DB 로 새는 경로가 구조적으로 없다.
+    - reconnect_fn 미주입(레거시 호출·테스트)이면 ping 도 재연결도 하지 않는다(동작 0 변경).
+    - 재연결 실패는 **삼키지 않고 전파**한다 — 폴백 없는 fail-closed 가 유일한 안전 선택.
+      호출측이 사용자 오류로 표면화한다.
+    """
+    if conn is None or reconnect_fn is None:
+        return conn, False
+    if not _conn_needs_ping(conn):
+        return conn, False
+    if _ping_conn(conn):
+        _mark_conn_used(conn)
+        return conn, False
+    try:
+        conn.close()
+    except Exception:
+        pass
+    new_conn = reconnect_fn()   # connect_with_retry — 회로차단기·database 인자 그대로 유지
+    # 세션 스코프 상태 복구(§18.8 backend MAJOR): `SET SESSION max_execution_time` 은 conn 에
+    # sticky 라, execute_sql 이 한 번 걸어두면 이후 탐색 도구까지 보호받는 구조였다. 재연결로
+    # 세션이 새로 열리면 그 보호가 사라지므로(다음 execute_sql 까지 무방비) 여기서 즉시 재적용한다.
+    # 자체 fail-open(비활성/실패 시 no-op)이라 재연결을 깨지 않는다.
+    _apply_query_cap(new_conn)
+    _mark_conn_used(new_conn)
+    _log.warning(
+        "dataplane_conn_reconnected label=%s — 유휴/타임아웃으로 끊긴 연결을 같은 좌표로 재수립",
+        label or "?",
+    )
+    return new_conn, True
+
+
+# 단일 datasource(레거시) run 의 데이터플레인 연결 소유자 — 라우터의 1-label 대응물.
+# 라우터 경로는 _DatasourceRouter 가 이미 label→conn 캐시를 소유하므로 그쪽에서 갱신하고,
+# 단일 경로는 agent_core 가 conn 을 직접 들고 있어 tools 가 재연결해도 다음 tool 호출에 반영되지
+# 않는다(매 호출 churn). 그래서 소유권을 이 holder 로 옮긴다 — agent_core 는 holder 를 등록하고
+# 종료 시 close() 만 호출한다.
+class _DataplaneConn:
+    def __init__(self, conn, reconnect_fn, *, label: str = ""):
+        self._conn = conn
+        self._reconnect_fn = reconnect_fn   # 인자 없는 콜백 — 원 연결과 동일 좌표를 클로저로 보유
+        self._label = label
+        # §18.8 security MAJOR: execute_tool 은 전달받은 conn 보다 holder 를 우선하므로, run 중간
+        # 예외로 ContextVar 가 정리되지 않은 채 남으면 다음 run 의 tool 이 **이전 datasource** 연결로
+        # 실행될 여지가 생긴다(격리 파괴). 그래서 holder 는 자신이 관리하는 연결 계보를 기억하고,
+        # 소비 시점에 "전달받은 conn 이 내 것인가" 로 대조한다 — run_id 전역(스레드 공유)에 기대지
+        # 않으므로 동시 run 경합에도 오판이 없다.
+        self._lineage: list = [conn] if conn is not None else []
+        if conn is not None:
+            _mark_conn_used(conn)
+
+    def tracks(self, conn) -> bool:
+        """전달받은 conn 이 이 holder 가 발급했거나 위임받은 연결인가(객체 동일성)."""
+        return conn is not None and any(conn is c for c in self._lineage)
+
+    def conn(self):
+        """살아있는 연결(필요 시 같은 좌표로 재연결)."""
+        if self._conn is None:
+            self._conn = self._reconnect_fn()
+            self._lineage.append(self._conn)
+            _mark_conn_used(self._conn)
+            return self._conn
+        new_conn, reconnected = _ensure_live_conn(
+            self._conn, self._reconnect_fn, label=self._label)
+        if reconnected:
+            self._lineage.append(new_conn)
+        self._conn = new_conn
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+
+_ACTIVE_DATAPLANE_CONN: contextvars.ContextVar["_DataplaneConn | None"] = contextvars.ContextVar(
+    "agent_active_dataplane_conn", default=None
+)
+
+
+# 드라이버가 "연결이 끊겼다" 를 말하는 문구들(엔진별). 이 문구가 그대로 LLM/사용자에게 가면
+# "DB 접속 자체가 안 된다" 로 오독돼, 모델이 쿼리를 좁히거나 존재/부재를 단정하는 등 엉뚱한
+# 자기교정을 한다(실측: 리뷰 대화가 정적 분석으로 강등). 원인과 다음 행동을 명시로 바꾼다.
+_DEAD_CONN_SIGNATURES = (
+    "not connected to any ms sql server",   # pymssql — 죽은 뒤 모든 후속 사용
+    "dbprocess is dead",                    # FreeTDS 20047 — 죽는 순간
+    "adaptive server connection timed out",  # FreeTDS 20003 — 타임아웃이 연결을 죽인 원인
+    "server has gone away",                 # MySQL 2006
+    "lost connection to mysql server",      # MySQL 2013
+    "mysql connection not available",       # mysql.connector — 닫힌 연결 사용
+)
+
+
+def is_dead_conn_error(exc_or_text) -> bool:
+    """예외/문구가 '연결이 끊겨서 실패' 계열인가(엔진 무관)."""
+    return any(s in str(exc_or_text).lower() for s in _DEAD_CONN_SIGNATURES)
+
+
+def _note_conn_outcome(conn, outcome) -> None:
+    """tool 결과(반환 문구 또는 예외)로 연결 상태를 갱신 — 끊김이면 suspect, 아니면 정상 사용.
+
+    예외뿐 아니라 **반환 문구**도 본다 — 핸들러가 예외를 삼키고 오류 텍스트로 돌려주는 경로가
+    있어서다. 다만 정상 결과(수천 자 루틴 정의 등) 전체를 훑을 필요는 없으므로 앞부분만 본다
+    (오류 문구는 앞에 온다). 오탐의 비용은 다음 호출의 ping 1회뿐이라 보수적으로 잡는다.
+    """
+    probe = outcome if isinstance(outcome, BaseException) else str(outcome or "")[:400]
+    if is_dead_conn_error(probe):
+        _mark_conn_suspect(conn)
+    else:
+        _mark_conn_used(conn)
+
+
+def _dataplane_error_text(exc) -> str:
+    """죽은 연결 오류를 원인·다음 행동이 담긴 문구로. 그 외 오류는 원문 유지(진단 정보 보존)."""
+    if not is_dead_conn_error(exc):
+        return str(exc)
+    return (
+        "데이터베이스 연결이 끊겨 이 조회를 완료하지 못했습니다 "
+        "(유휴 시간 초과 또는 직전 쿼리 타임아웃으로 세션이 종료됨). 서버가 내려간 것도, 권한 문제도 "
+        "아닙니다 — 다음 도구 호출에서 자동으로 재연결되므로 **같은 조회를 그대로 다시 시도**하세요. "
+        "쿼리를 좁히거나 대상을 바꿀 필요 없습니다. 이 실패로 객체의 존재/부재를 단정하지 마세요."
+    )
+
+
+def set_active_dataplane_conn(holder: "_DataplaneConn | None"):
+    """단일 datasource run 시작 시 데이터플레인 연결 소유자 등록(반환 token 으로 reset)."""
+    return _ACTIVE_DATAPLANE_CONN.set(holder)
+
+
+def reset_active_dataplane_conn(token) -> None:
+    try:
+        _ACTIVE_DATAPLANE_CONN.reset(token)
+    except Exception:
+        _ACTIVE_DATAPLANE_CONN.set(None)
+
+
 class _DatasourceRouter:
     """run-scoped: 라벨 → {ds dict, lazy connection} 매핑 + datasource 별 allowlist/engine 활성화.
 
@@ -218,13 +435,23 @@ class _DatasourceRouter:
         return r if r in self._by_label else self._default_label
 
     def conn_for(self, label: str):
-        """그 datasource 의 연결(lazy). database=None 강제(M-1: schema-prefixed only)."""
+        """그 datasource 의 연결(lazy). database=None 강제(M-1: schema-prefixed only).
+
+        FR-dataplane-conn-stale-no-reconnect: 캐시된 연결은 유휴/타임아웃으로 죽을 수 있으므로
+        넘겨주기 전에 liveness 를 확인하고, 죽었으면 **같은 좌표로** 재연결해 캐시를 갱신한다.
+        """
         ds = self._by_label.get(label)
         if ds is None:
             return None
-        if label not in self._conns:
-            self._conns[label] = self._connect_fn(ds)
-        return self._conns[label]
+        cached = self._conns.get(label)
+        if cached is None:
+            conn = self._connect_fn(ds)
+            _mark_conn_used(conn)
+            self._conns[label] = conn
+            return conn
+        conn, _ = _ensure_live_conn(cached, lambda: self._connect_fn(ds), label=label)
+        self._conns[label] = conn
+        return conn
 
     def activate(self, label: str) -> None:
         """선택된 datasource 의 allowlist·engine·default_db ContextVar 를 활성화(보안 게이트 기준)."""
@@ -1676,31 +1903,54 @@ def _search_tables_mssql(conn, args: dict, keyword: str) -> str:
         targets = dbs_disp
     capped = targets[:_SEARCH_TABLES_DB_CAP]
     rows_out: list[tuple[str, str, str]] = []
+    # FR-dataplane-conn-stale-no-reconnect: per-DB 실패를 **삼키면** 이 도구가 조용한 0행 생성기가
+    # 되어, 아무것도 확인하지 못한 상황을 "검색 결과가 없습니다" 로 위장한다(실측: 연결이 죽은 채
+    # 전 DB 가 실패했는데 그렇게 보고돼, 모델이 테이블 부재를 전제로 리뷰를 진행). 형제 함수
+    # `_search_routines_mssql` 이 §18.8 패널로 이미 받은 하드닝을 여기에도 대칭 적용한다.
+    failed: list[tuple[str, str]] = []
     for dbi in capped:
         try:
             sql = _dialects.active().search_tables(keyword, sys_exclude, where_schema, db=dbi)
             rs, _ = _raw_execute_sql(conn, sql)
-        except Exception:
-            continue  # per-DB graceful — 접속불가/권한없는 DB 는 건너뛰고 나머지 검색 지속.
+        except Exception as exc:  # per-DB graceful — 단, 삼키지 않고 보고한다.
+            if is_dead_conn_error(exc):
+                _mark_conn_suspect(conn)   # 다음 도구 호출이 임계 무관 ping→재연결
+                failed.append((dbi, "연결 끊김 — 재시도 시 자동 재연결"))
+            else:
+                failed.append((dbi, str(exc)[:120]))
+            continue
         for kind, _cols, rows in rs:
             if kind == "rows" and rows:
                 for row in rows:
                     rows_out.append((dbi, str(row[0]), str(row[1])))
+    searched = [d for d in capped if d not in {f for f, _ in failed}]
     parts = [f"## '{keyword}' 검색 결과\n"]
     if rows_out:
         parts.append("| database | schema | table |")
         parts.append("|---|---|---|")
         for dbi, sch, tbl in rows_out:
             parts.append(f"| {dbi} | {sch} | {tbl} |")
-        scope = f"'{target_db}' DB" if target_db else f"허용 DB {len(capped)}개"
+        scope = f"'{target_db}' DB" if target_db else f"허용 DB {len(searched)}/{len(capped)}개"
         parts.append(f"\n{len(rows_out)} 테이블 검색됨 ({scope}).")
         parts.append(
             "\n(조회는 3-part `database.schema.table`(execute_sql) 또는 `database` 인자"
             "(describe_table 등)로 대상 DB 를 지정하세요. 대부분 사용자 테이블 스키마는 `dbo`.)"
         )
-    else:
+    elif not failed:
         parts.append("검색 결과가 없습니다.")
         parts.append(_mssql_crossdb_hint(exclude_db=target_db))
+    if failed:
+        _f = ", ".join(f"`{d}`({r})" for d, r in failed[:6])
+        parts.append(
+            f"\n⚠ 다음 DB 는 **조회하지 못했습니다**(접속/권한): {_f}"
+            + (f" 외 {len(failed) - 6}개" if len(failed) > 6 else "")
+            + ". 이 DB 들의 테이블 존재/부재는 **미확인**입니다 — 단정하지 마세요."
+        )
+        if not searched:
+            parts.append(
+                "\n(허용 DB 전부가 조회 실패라 이 검색은 아무것도 확인하지 못했습니다 — "
+                "'테이블이 없다' 는 결론을 내리면 안 됩니다.)"
+            )
     if not target_db and len(targets) > _SEARCH_TABLES_DB_CAP:
         parts.append(
             f"\n(참고: 허용 DB {len(targets)}개 중 상위 {_SEARCH_TABLES_DB_CAP}개만 검색했습니다 — "
@@ -1869,7 +2119,14 @@ def _search_routines_mssql(conn, args: dict, keyword: str) -> str:
                 keyword, schema=sql_schema, sys_exclude_schemas=excl, db=dbi)
             rs, _ = _raw_execute_sql(conn, sql)
         except Exception as exc:  # per-DB graceful — 단, 삼키지 않고 보고한다.
-            failed.append((dbi, str(exc)[:120]))
+            # FR-dataplane-conn-stale-no-reconnect: 루프 도중 연결이 죽으면 남은 DB 가 전부 드라이버
+            # 문구로 채워져 "권한/접속 설정 문제" 로 오독된다. 원인을 짧게 정확히 적고(목록형이라 단문),
+            # 연결을 suspect 로 표시해 **다음 도구 호출이 임계와 무관하게 ping→재연결** 하게 한다.
+            if is_dead_conn_error(exc):
+                _mark_conn_suspect(conn)
+                failed.append((dbi, "연결 끊김 — 재시도 시 자동 재연결"))
+            else:
+                failed.append((dbi, str(exc)[:120]))
             continue
         n = 0
         for kind, _cols, rows in rs:
@@ -2209,6 +2466,18 @@ def _tool_execute_sql(conn, args: dict) -> str:
                 # MSSQL gate=fail-closed(M-4 — SHOWPLAN 미권한/연결 실패 시 무거운 쿼리 무방어 방지).
                 # confirm_heavy 로도 우회 불가(must_estimate 가 confirm 시에도 True 라 이 분기 진입).
                 if guard_mode == "gate" and _dialect.gate_fail_closed_on_estimate_error:
+                    # FR-dataplane-conn-stale-no-reconnect: 추정 실패 원인이 **끊긴 연결**이면
+                    # "쿼리를 좁혀라" 는 오도다(쿼리는 무겁지 않다 — 계획을 못 받아온 것). 실측 사례에서
+                    # 모델이 이 문구를 믿고 ping 쿼리까지 축소하다 결국 실 DB 대조를 포기했다.
+                    # dialect 는 예외를 삼키고 None 만 주므로 여기서 liveness 로 원인을 구분한다.
+                    # conn 이 없으면(스텁·미연결) 원인을 단정할 수 없다 → 기존 문구 유지.
+                    if conn is not None and not _ping_conn(conn):
+                        _mark_conn_suspect(conn)
+                        return (
+                            "⚠ 데이터베이스 연결이 끊겨 실행계획을 취득하지 못했습니다 — 안전을 위해 실행하지 "
+                            "않았습니다. 쿼리가 무거워서가 아닙니다(유휴 시간 초과 또는 직전 쿼리 타임아웃). "
+                            "다음 도구 호출에서 자동으로 재연결되므로 **같은 쿼리를 그대로 다시 실행**하세요."
+                        )
                     return (
                         "⚠ 사전 부하추정에 실패했습니다 (실행계획 미취득 — SHOWPLAN 권한·연결 확인). "
                         "부하게이트(gate) 모드에서 안전을 위해 차단합니다. WHERE 조건·기간·집계 범위를 좁히거나 "
@@ -3036,14 +3305,35 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
         if tool_name == "execute_sql":
             _snapshot_sql_exec_ctx()  # R-2: primary 복원 전 실행 컨텍스트 캡처
         try:
-            return handler(ds_conn, arguments)
+            out = handler(ds_conn, arguments)
+            # 핸들러가 예외를 삼키고 오류 **문구**로 돌려주는 경로도 있다(per-DB graceful 등) —
+            # 문구까지 봐야 끊김을 놓치지 않는다.
+            _note_conn_outcome(ds_conn, out)
+            return out
         except Exception as e:
-            return f"도구 실행 오류 ({tool_name} @ {label}): {e}"
+            _note_conn_outcome(ds_conn, e)
+            return f"도구 실행 오류 ({tool_name} @ {label}): {_dataplane_error_text(e)}"
         finally:
             # 다음 tool 호출의 기본값이 흔들리지 않도록 primary 컨텍스트로 복원.
             router.activate(router.resolve_label(None))
     # 단일(레거시) datasource 경로 — MySQL 기본. schema_name 서버 실제 case 정규화(라우터 경로와 동형,
     # FR-schema-name-case-drift). 활성 dialect 가 MSSQL(비-MySQL)이면 no-op.
+    #
+    # FR-dataplane-conn-stale-no-reconnect: 단일 경로의 conn 은 agent_core 가 run 시작에 수립해
+    # 계속 넘겨주므로, 유휴/타임아웃으로 죽으면 남은 tool 이 전부 무너진다. holder 가 등록돼 있으면
+    # 살아있는 연결을 그쪽에서 받는다(재연결 시 소유자가 갱신 → 다음 호출도 새 연결).
+    _holder = _ACTIVE_DATAPLANE_CONN.get()
+    if _holder is not None and not _holder.tracks(conn):
+        # 이 연결의 holder 가 아니다(이전 run 잔류) → 무시하고 전달받은 conn 을 그대로 쓴다.
+        _log.warning("dataplane_holder_conn_mismatch — stale holder 무시(전달 conn 사용)")
+        _holder = None
+    if _holder is not None:
+        try:
+            conn = _holder.conn()
+        except DatasourceCircuitOpen as e:
+            return e.user_message()
+        except Exception as e:
+            return f"데이터 소스 연결 실패: {e}"
     try:
         if str(_dialects.active().name).lower() != "mssql":
             _canonicalize_schema_args_mysql(conn, arguments)
@@ -3052,6 +3342,9 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
     if tool_name == "execute_sql":
         _snapshot_sql_exec_ctx()  # R-2: 비라우팅 경로도 동일 캡처(학습이 단일 소스만 읽게)
     try:
-        return handler(conn, arguments)
+        out = handler(conn, arguments)
+        _note_conn_outcome(conn, out)
+        return out
     except Exception as e:
-        return f"도구 실행 오류 ({tool_name}): {e}"
+        _note_conn_outcome(conn, e)
+        return f"도구 실행 오류 ({tool_name}): {_dataplane_error_text(e)}"

@@ -4307,20 +4307,31 @@ def _run_agent_core(
         _multi_ds_list = []
     _ds_router = None
     _ds = None
+    # FR-dataplane-conn-stale-no-reconnect: 단일 datasource 경로의 데이터플레인 연결 소유자.
+    # run 시작에 수립한 연결을 run 내내 재사용하는데, 첫 tool 까지 LLM 추론이 수 분 걸리거나
+    # (실측 232초) 쿼리 타임아웃이 세션을 죽이면 그 뒤 **모든** tool 이 드라이버 문구로 실패했다.
+    # holder 가 연결 소유권을 가지면 tools.execute_tool 이 사용 직전 liveness 를 확인하고 같은
+    # 좌표로 재연결한 뒤, 다음 호출도 그 새 연결을 받는다(매 호출 재연결 churn 없음).
+    # 라우터 경로는 _DatasourceRouter 가 이미 소유자라 holder 를 쓰지 않는다.
+    _dp_holder = None
     if eval_datasource is not None:
         # ITEM-01 eval harness 전용 시드(None-gated). product/registry 라우팅을 우회하고
         # 주어진 datasource 좌표를 data-plane 연결로 직접 쓴다. 운영 경로는 항상 None →
         # 동작 0 변경(tests/eval/runner 만 채움). db.connect 의 좌표 라우팅은
         # AGENT_MULTI_DATASOURCE_ENABLED 게이트를 따른다(make eval 가 설정).
         _ds = eval_datasource
+        def _reconnect_dataplane():   # noqa: E306 — 원 연결과 동일 좌표 클로저(폴백 없음)
+            return connect_with_retry(database=None, autocommit=True, datasource=_ds)
         try:
-            db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
+            db_conn = _reconnect_dataplane()
         except Exception as e:
             cfg.CURRENT_RUN_ID = ""
             result["error"] = f"DB 연결 실패(eval datasource): {e}"
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             return result
+        import modules.tools as _tools_mod
+        _dp_holder = _tools_mod._DataplaneConn(db_conn, _reconnect_dataplane, label="eval")
     elif _multi_ds_list:
         # 멀티 datasource: 라우터가 tool 별 연결·allowlist·engine 을 관리. primary 를 db_conn 기본값으로 연결.
         import modules.tools as _tools_mod
@@ -4359,13 +4370,18 @@ def _run_agent_core(
                 console.print(Panel.fit(result["error"], title="오류"))
             return result
         _data_db = None if _ds else DB_CONNECT_DB  # ds 경로는 database=None(schema-prefixed 강제, M-1)
+        def _reconnect_dataplane():   # noqa: E306 — 원 연결과 동일 좌표 클로저(폴백 없음)
+            return connect_with_retry(database=_data_db, autocommit=True, datasource=_ds)
         try:
-            db_conn = connect_with_retry(database=_data_db, autocommit=True, datasource=_ds)
+            db_conn = _reconnect_dataplane()
         except Exception as e:
             # DB 연결 실패 시 연결 없이 진행 (도구에서 개별 처리)
             db_conn = None
             try:
                 db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
+                # 폴백이 성사되면 재연결도 그 좌표(database=None)를 따라가야 한다 — 원 좌표로
+                # 되돌아가면 재연결마다 같은 실패를 반복한다.
+                _data_db = None
             except Exception:
                 cfg.CURRENT_RUN_ID = ""
                 # 회로차단(연결 격리)은 일시 지연·자동복구라 "실패/차단" 프레이밍을 쓰지 않는다 —
@@ -4377,6 +4393,11 @@ def _run_agent_core(
                 if output_mode == "console":
                     console.print(Panel.fit(result["error"], title="오류"))
                 return result
+        import modules.tools as _tools_mod
+        _dp_holder = _tools_mod._DataplaneConn(
+            db_conn, _reconnect_dataplane,
+            label=str((_ds or {}).get("key") or "default"),
+        )
 
     # ── TASK-0289: 내부 동작 투명화 ──
     # 비-tool 내부 단계(연결/맥락 파악/추론/정리)도 step 으로 노출해 "단계별 DB동작 외"
@@ -4546,6 +4567,11 @@ def _run_agent_core(
     # TASK-0228 (1:N): 멀티 datasource 라우터 등록. tool 호출마다 datasource 선택 + 그 컨텍스트 활성화.
     # 등록 token 은 finally 에서 reset(예외 안전). 라우터는 primary 를 기본 활성 컨텍스트로 둔다.
     _ds_router_token = None
+    # FR-dataplane-conn-stale-no-reconnect: 단일 경로 데이터플레인 연결 소유자 등록(라우터와 배타).
+    _dp_holder_token = None
+    if _dp_holder is not None:
+        import modules.tools as _tools_dp
+        _dp_holder_token = _tools_dp.set_active_dataplane_conn(_dp_holder)
     _run_tool_defs = TOOL_DEFINITIONS
     if _ds_router is not None:
         import modules.tools as _tools_reg
@@ -5533,11 +5559,21 @@ def _run_agent_core(
             except Exception:
                 pass
     else:
+        # FR-dataplane-conn-stale-no-reconnect: 재연결이 일어났으면 살아있는 연결은 holder 가 들고
+        # 있고 db_conn 은 이미 닫힌 옛 객체다 → holder 를 통해 닫아야 실제 연결이 회수된다.
         try:
-            if db_conn:
+            if _dp_holder is not None:
+                _dp_holder.close()
+            elif db_conn:
                 db_conn.close()
         except Exception:
             pass
+        if _dp_holder_token is not None:
+            try:
+                import modules.tools as _tools_cl
+                _tools_cl.reset_active_dataplane_conn(_dp_holder_token)
+            except Exception:
+                pass
     try:
         mem_conn.close()
     except Exception:

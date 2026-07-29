@@ -375,3 +375,62 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   (non-default 선택 확증 대화의 첫 요청 오전송 3/5) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
 - **범위 밖(인지)**: 기본값(`API_DEFAULT_MODEL`) 자체와 "'+ 새 대화'는 haiku 로 시작" 정책은 불변 —
   사용자 명시 선택만 보존한다. 그룹 대화의 계정별 모델 스코프도 무변경.
+
+## FR-dataplane-conn-stale-no-reconnect — fixed:undeployed (L4↔L8 데이터플레인 연결 재사용에 liveness·재연결 부재)
+
+- **status**: `fixed:undeployed` — 사용 직전 liveness ping + 같은 좌표 재연결 봉인 출하, 배포 전.
+  배포 후 동일 재현(대형 첨부 리뷰로 수 분 추론 → 첫 도구 성공) 확인 시 `fixed:deployed:unverified-live`.
+- **source**: 사용자 명시 호출 — "쿼리 리뷰 : WEB_QA / DB와 연결하지 못하는 이슈".
+- **last_seen**: 2026-07-29 · **seen_count**: 3 · **seen_distinct_conv**: 3 (60일)
+- **symptom_confidence**: high (사용자 직접 보고 + 전사에 오류 문자열 명시)
+  · **rootcause_confidence**: high (코드 + 라이브 재현 실험 + 전사 삼각측량, 대조군 확보)
+- **suspected_layers**: **L4↔L8** — 데이터플레인 연결 수명주기(로드 경로)와 datasource/중계장비
+  절단 정책(엔진 설정)의 경계. L2 2차 증상(오도하는 거부 피드백) 동반.
+- **증상(signal)**: `E-SYS` 도구 실행 오류 반복(허용 DB 28개 전부 `Not connected to any MS SQL
+  server`) → `I-FALSE` 답변이 실 DB 대조 없는 정적 분석으로 강등(assistant 가 스스로 "🔴 라이브
+  검증 필요" 로 정직 표기). 2차: 부하게이트가 "쿼리를 좁히라" 로 오도해 모델이 ping 쿼리까지 축소.
+- **confirmed_root_cause(요지)**: 데이터플레인 연결은 run 시작에 1회 수립되어 그 run 의 모든 도구
+  호출에 재사용되는데(`agent_core.run_agent` 단일 경로 / `tools._DatasourceRouter.conn_for` 라우터
+  경로), 사용 직전 liveness 검사도 재연결도 없다. 연결이 죽는 두 경로:
+  (a) **유휴 사망** — 첫 도구까지 LLM 추론이 수 분(실측 232초. `agent_runtime.steps` 로 run 시작
+      10:30:10.7 → 첫 도구 10:34:03.8). 라이브 실험: 대상 datasource 는 60~120초 유휴에 절단
+      (t=60 ALIVE → t=120 `DBPROCESS is dead` → t=180 `Not connected…`), 대조 datasource 는 생존.
+  (b) **in-run 사망** — 쿼리 타임아웃이 세션을 죽인 뒤(FreeTDS 20003→20047) 4초 만에 온 다음
+      도구부터 전부 실패(2026-07-28 관측). 같은 대화의 **다음 run**(새 연결)은 완전 정상.
+  죽은 뒤엔 남은 도구 전부가 드라이버 문구로 실패해 사용자 요청이 통째로 무너진다.
+- **거짓양성 기각(`refuted`)**: ① `agent_runtime.datasource_health` 는 해당 datasource 를
+  **healthy** 로 표시 — 백그라운드 probe 가 매번 **새 연결**을 열기 때문(운영 신호와 실사용 괴리).
+  ② 같은 분에 타 제품 대화는 정상 동작(추론 지연 12초) → 전면 장애 반증. ③ TCP 도달·현재 연결
+  모두 정상 → 인프라 다운·자격증명 문제 아님. ④ 제품 접근목록은 사고 시각 전후 불변(2026-06-18
+  생성) → 설정 변경 기인 아님.
+- **corroboration**: structural — 60일 3 대화·3일에 오류 문자열 관측(적은 절대수). 메커니즘 축은
+  30일 146 run 중 첫 도구까지 120초 초과 3건(2.1%)이며, 첨부가 큰 쿼리 리뷰 워크로드에 집중된다.
+  빈도는 낮으나 Phase 7.4 "명백한 구조결함" 분기 충족(삼각측량 confirmed + 재발경로 infra drift
+  + 코드 정본 확정) → 국소-봉인 fix-now.
+- **재발경로**: `infra capacity`(중계장비/서버 유휴 절단) + 모델 지연 drift — 둘 다 우리가 통제
+  불가 → **코드가 권위선**(재사용 choke-point 의 liveness 계약).
+- **fix**: TASK-20260729T110000-dataplane-conn-liveness / `feature-0002-agent-core`
+  `CHG-20260729T110000-dataplane-conn-liveness`. Major(코어 데이터플레인 경로) — 사람 승인 완료.
+  적대 리뷰 §18.8 3렌즈(codex) CONCERN → 지적 3건 반영(연결 객체 동일성 격리·재연결 후 쿼리 상한
+  재적용·end-to-end 테스트), 1건 이월(아래). 테스트 25건 신규.
+- **동반 수정**: `_search_tables_mssql` 의 per-DB 실패 삼킴 제거 — 사고 당시 **아무것도 조회하지
+  못한 상태를 "검색 결과가 없습니다" 로 위장**해 모델이 테이블 부재를 전제로 리뷰를 진행했다.
+  형제 `_search_routines_mssql` 이 이미 받은 하드닝의 대칭 적용(`FR-false-absence-zero-row-catalog-scope`
+  와 같은 류가 자매 함수에 남아 있던 것).
+- **필요한 사람 액션(1줄)**: 배포 confirm(Major — override 불가) 후, 대형 첨부 쿼리 리뷰 1건으로
+  라이브 재현 확인.
+
+## FR-insight-worker-conn-stale — deferred (같은 근본의 배경 스캔 판, 별 cycle)
+
+- **status**: `deferred` — `FR-dataplane-conn-stale-no-reconnect` 의 적대 리뷰(§18.8 QA MAJOR)가
+  드러낸 자매 노출면. 사실로 확인했고 **미검증을 완료로 보고하지 않기 위해** 원장에 남긴다.
+- **last_seen**: 2026-07-29(코드 독해 기준) · **seen_count**: 0 (라이브 마찰 미관측)
+- **rootcause_confidence**: med — 코드 경로는 확정(`modules/insight.py` 가 `connect_with_retry` 로
+  만든 `_ds_conn` 을 스캔 내내 직접 재사용, `execute_tool` liveness choke-point 미경유),
+  실제 발생 빈도·영향은 미측정.
+- **suspected_layers**: L4↔L8 (동일)
+- **왜 이번 batch 에 넣지 않았나**: 소비자·실패면·복구정책이 다르다(배경 스캔은 실패를 degraded 로
+  기록하고 다음 cadence 에 재시도 — 사용자 요청이 즉시 무너지는 대화 경로와 심각도가 다르다).
+  Major 변경의 blast radius 를 한 cycle 에 겹치지 않는다(Phase 7.3 응집 한계).
+- **필요한 사람 액션(1줄)**: 별도 cycle 로 insight 스캔 루프에 동일 liveness 계약 적용 여부 판단
+  (선행 측정: 스캔 중 `db_failed`/degraded 중 끊김 시그니처 비율).

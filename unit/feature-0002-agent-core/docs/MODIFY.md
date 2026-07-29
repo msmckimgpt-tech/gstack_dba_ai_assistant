@@ -714,3 +714,53 @@ per-schema `cols` 채움 수를 리포트에 포함.
 Cross-ref: REVIEW REV-20260728T182000-cyvol-scope-prefetch-postdeploy ·
 `docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md` ·
 수정 cycle CHG/REV-20260728T175400-cyvol-scope-prefetch-fix.
+
+## CHG-20260729T110000-dataplane-conn-liveness (데이터플레인 연결 liveness + 같은 좌표 재연결)
+
+**무엇을**: run-scoped 데이터플레인 연결을 tool 에 넘기기 직전 liveness 를 확인하고, 죽었으면
+**같은 좌표로만** 재연결한다. 라우터 경로(`_DatasourceRouter.conn_for`)는 label 캐시를 갱신하고,
+단일 datasource 경로는 새 소유자 `_DataplaneConn`(agent_core 가 등록)이 갱신을 보유한다.
+
+**왜**: run 시작에 1회 수립한 연결이 그 run 의 모든 tool 호출에 재사용되는데 liveness 검사·재연결이
+없어, 연결이 죽는 두 경로 어느 쪽이든 **남은 tool 전부**가 드라이버 문구로 실패했다.
+- (a) 유휴 사망 — 첫 tool 까지 LLM 추론이 수 분(실측 232초). 라이브 실험에서 대상 datasource 는
+  60~120초 유휴에 절단됐고(대조 datasource 는 생존), 사망 순간 `DBPROCESS is dead`,
+  그 이후 모든 사용이 `Not connected to any MS SQL server` — 사고 전사와 같은 순서.
+- (b) in-run 사망 — 쿼리 타임아웃이 세션을 죽인 뒤 4초 만에 온 다음 tool 부터 전부 실패.
+
+**어느 RC**: `FR-dataplane-conn-stale-no-reconnect` (L4↔L8). 원장 정본은
+`docs/improvements/conversation-audit/FRICTION_LEDGER.md`.
+
+**재발 봉인 방식**: 재발 경로가 *infra idle-timeout drift* + *모델 지연 drift* 라 우리가 통제할 수
+없다 → **코드가 권위선**. 데이터 row·설정 조정이 아니라 재사용 choke-point 에 liveness 계약을 둔다.
+
+### 변경
+- `shared/config.py` — `AGENT_DS_CONN_PING_IDLE_SEC`(기본 30초, ping 생략 임계. 0=항상 ping).
+- `unit/feature-0002-agent-core/src/modules/tools.py`
+  - `_ping_conn` / `_mark_conn_used` / `_mark_conn_suspect` / `_conn_needs_ping` / `_ensure_live_conn`
+  - `_DataplaneConn` + `set/reset_active_dataplane_conn`(단일 경로 소유자, ContextVar)
+  - `_DatasourceRouter.conn_for` — 캐시된 죽은 연결 교체
+  - `execute_tool` 양 경로 — 사용 직전 확보 + 결과/예외로 연결 상태 갱신(`_note_conn_outcome`)
+  - `is_dead_conn_error` / `_dataplane_error_text` — 끊김 문구 정직화
+  - `_tool_execute_sql` 부하게이트 — 추정 실패 원인을 liveness 로 구분(연결 문제면 "쿼리를 좁혀라" 금지)
+  - `_search_tables_mssql` — per-DB 실패 삼킴 제거(형제 `_search_routines_mssql` 과 대칭)
+  - `_search_routines_mssql` — 끊김 시 suspect 표시 + 짧은 원인 문구
+- `unit/feature-0002-agent-core/src/agent_core.py` — 단일/eval 경로에 재연결 클로저 + holder 등록·해제,
+  종료 시 holder 를 통한 close(재연결됐으면 살아있는 쪽을 회수).
+
+### 보안 불변식 (변경 없음)
+- 재연결은 **호출측이 준 인자 없는 콜백 하나**로만 — 좌표를 여기서 재해석하지 않아 다른
+  datasource/DB 로 새는 경로가 구조적으로 없다. 콜백은 `connect_with_retry(database=…, datasource=…)`
+  라 회로차단기·`database=None`(schema-prefixed 강제, M-1)·allowlist 게이트가 그대로 유지된다.
+- 재연결 실패는 삼키지 않고 전파(fail-closed) — 폴백 연결 없음.
+- 부하게이트는 두 분기 모두 **실행하지 않고 차단**한다(fail-closed 강도 불변).
+- 세션 스코프 상태(`SET SESSION max_execution_time`)는 `_apply_query_cap` 이 매 호출 재-SET 이라
+  재연결 후에도 재적용된다.
+
+### 실패한 문장은 재시도하지 않는다
+(b) 는 서버에 도달했을 수 있어 자동 재실행이 부하를 2배로 만든다. 그 tool 만 정직히 실패시키고
+**다음 tool 부터** 자동 복구한다 — 유휴 사망 (a) 는 애초에 문장이 서버에 닿지 않아 완전 봉인된다.
+
+Cross-ref: TASK-20260729T110000-dataplane-conn-liveness ·
+REVIEW REV-20260729T110000-dataplane-conn-liveness ·
+원장 `FR-dataplane-conn-stale-no-reconnect`.

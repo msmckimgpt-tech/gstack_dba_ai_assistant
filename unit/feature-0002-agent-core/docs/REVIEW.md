@@ -726,3 +726,54 @@ cycle 이 추가하는 것은 **배포본에서 실제로 오류가 사라졌는
 Cross-ref: CHG-20260728T182000-cyvol-scope-prefetch-postdeploy ·
 `docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md` ·
 수정 cycle CHG/REV-20260728T175400-cyvol-scope-prefetch-fix.
+
+## REV-20260729T110000-dataplane-conn-liveness [CODEX:backend+security+qa] — CONCERN (수정 반영 후 잔여 1건 범위 밖 기록)
+
+- Related TASK: `TASK-20260729T110000-dataplane-conn-liveness`
+- Source: codex exec (codex-cli 0.145.0, read-only sandbox, uncommitted diff + 신규 테스트)
+- Trigger: §18.8 dispatch — `query`(execute_sql 부하게이트) + `schema`(search_tables/routines) 매칭
+  → backend+qa. 데이터소스 좌표·격리를 건드리므로 security 렌즈 추가. 채널 선택 근거: 세션에
+  "요청 없이 Agent tool 금지" 상위 지시가 있어 §18.8 "상위 우선순위 지시 carve-out" 에 따라
+  subagent panel 대신 §18.8.1 경량 경로(codex, subagent 아님)로 3렌즈를 모두 덮었다.
+- Timestamp: 2026-07-29T02:00:00Z
+- Verdict: CONCERN — 지적 4건 중 3건 수정 반영, 1건은 범위 밖으로 명시 이월(아래).
+- Human Approval Needed: no (구현 계획 자체는 PLAN-APPROVED 완료)
+
+### 반영한 지적
+
+1. **[SECURITY MAJOR] stale holder 잔류 → 교차 datasource 실행** — run 중간 예외로 holder
+   ContextVar 가 정리되지 않으면, `execute_tool` 이 전달받은 conn 보다 holder 를 우선하므로
+   다음 run 의 도구가 이전 datasource 연결로 실행될 수 있다는 지적. **수용**.
+   1차 수정으로 `run_id` 대조를 넣었다가 **자체 기각**했다 — `cfg.CURRENT_RUN_ID` 는 ContextVar 가
+   아니라 스레드 공유 전역이라, 동시 run 이 값을 바꾸면 정상 holder 를 stale 로 오판해 **닫힌
+   연결을 돌려주는** 더 나쁜 실패를 만든다. 최종 채택은 **연결 객체 동일성**(`_DataplaneConn.tracks`,
+   발급 계보 보유): 전역 상태에 의존하지 않아 경합에 무관하고, 재연결 후 agent_core 가 옛 conn 을
+   넘겨도 계보에 있어 정상 매칭된다. 테스트 `test_execute_tool_ignores_stale_holder_from_other_run`.
+2. **[BACKEND MAJOR] 재연결 후 세션 쿼리 시간 상한 유실** — `SET SESSION max_execution_time` 은
+   conn sticky 라 execute_sql 이 한 번 걸면 이후 탐색 도구까지 보호받았는데, 재연결로 새 세션이
+   열리면 다음 execute_sql 까지 무방비. **수용** — `_ensure_live_conn` 재연결 직후 `_apply_query_cap`
+   재적용(자체 fail-open 이라 재연결을 깨지 않음). 테스트 `test_reconnect_reapplies_session_query_cap`.
+3. **[QA MAJOR] 테스트가 헬퍼 직접 호출뿐 — 실제 배선 계약 미검증** — 정당한 지적. `execute_tool`
+   을 그대로 타는 end-to-end 4건 추가: 핸들러가 끊김 **문구**를 반환 → 다음 도구가 임계(30초)
+   안이어도 재연결로 복구되는 사슬(사고 (b) 전체), stale holder 무시, holder 미등록 시 동작 0 변경.
+
+### 반영하지 않은 지적 (범위 밖 — 정직 이월)
+
+4. **[QA MAJOR] insight-worker 경로는 미봉인** — `modules/insight.py` 는 자체 `_ds_conn` 을
+   `connect_with_retry` 로 만들어 스캔 내내 직접 재사용하며 `execute_tool` choke-point 를 거치지
+   않는다. 같은 유휴 사망에 노출된다는 지적은 **사실이며 반박하지 않는다**. 다만 (a) 본 cycle 의
+   마찰은 사용자 대화 경로이고, (b) 소비자·실패면·복구정책이 달라(배경 스캔은 degraded 기록 후
+   다음 cadence 재시도) 같은 batch 에 넣으면 Major 변경의 blast radius 가 커진다. 원장에
+   `deferred` 로 남기고 별 cycle 로 처리한다 — 미검증을 완료로 보고하지 않는다.
+
+### 잔여 한계 (MINOR, 기록)
+
+- 기본 임계 30초는 계약이 아니라 비용 절충이다. 잔여 창 = "마지막 성공 사용 후 30초 안에 조용히
+  죽고, 그 죽음이 알려진 시그니처로 드러나지도 않는" 경우. 다만 본 수정 이후 그 경우의 피해는
+  **run 전체 붕괴 → 도구 1회 실패**로 줄어든다(다음 호출이 ping→재연결). 더 공격적인 중계장비가
+  확인되면 `AGENT_DS_CONN_PING_IDLE_SEC=0`(항상 ping)으로 무중단 대응 가능.
+- 재연결이 연속 실패하면 도구마다 재시도가 반복된다 — 억제는 `connect_with_retry` 의 회로차단기가
+  담당(본 변경이 우회하지 않음).
+
+Cross-ref: CHG-20260729T110000-dataplane-conn-liveness · TASK-20260729T110000-dataplane-conn-liveness ·
+원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` (`FR-dataplane-conn-stale-no-reconnect`).
