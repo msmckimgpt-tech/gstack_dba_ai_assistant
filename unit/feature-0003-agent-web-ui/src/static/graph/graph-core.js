@@ -1735,6 +1735,11 @@ function _metaGraphResetModel() {
   _metaGraph._cullActive = false; _metaGraph._cullVp = null; _metaGraph._cullPartial = false; _metaGraph._miniSeedRun = false; _metaGraph._cullSuspendOnce = false; _metaGraph._miniFullSig = null; if (_metaGraph._miniSeedTimer) { try { clearTimeout(_metaGraph._miniSeedTimer); } catch (_) {} _metaGraph._miniSeedTimer = null; }   // viewport-cull(§65)+§77: 스코프/뷰 전환 시 초기화(시딩 가드·전체서명·타이머 포함).
   if (_metaGraph._cullRaf) { try { (typeof window !== "undefined" && window.cancelAnimationFrame ? window.cancelAnimationFrame : clearTimeout)(_metaGraph._cullRaf); } catch (_) {} _metaGraph._cullRaf = null; }   // §76 실시간 컬링 rAF 정리(스코프 전환 stale 방지)
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
+  // graph-detail-cols: 상세 패널 전용 컬럼 보강 캐시도 모델과 함께 비운다 — 스코프 전환 후 남으면 이전
+  //   스코프의 컬럼이 새 화면 상세에 뜨고(같은 fqn 다른 ds), miss 기록이 남아 재조회가 영구 차단된다.
+  _metaGraph.detailCols.clear();
+  _metaGraph.detailColsMiss.clear();
+  _metaGraph.detailColsInflight.clear();
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
   if (_metaGraph._busyTs) _metaGraph._busyTs.clear();   // §57.8: TTL 타임스탬프도 동반 정리

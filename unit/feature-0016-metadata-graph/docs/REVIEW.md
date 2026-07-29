@@ -585,3 +585,15 @@ source_of_truth: true
 - Timestamp: 2026-07-29T11:40:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260729T065900-graph-detail-columns [CODEX:frontend-async+empty-state] — PASS-WITH-FIXES (P1/GATE 0 · P2 2건 in-cycle 흡수)
+- 대상: CHG-20260729T0659-graph-detail-columns (`graph-ctxmenu.js` 컬럼 3-소스 병합·보강 게이팅·논블로킹 backfill / `graph-state.js` 상세 전용 저장소 3종 / `graph-core.js` reset 정합 / `test_detail_columns.js` 신규).
+- 방법: **codex-review(`codex review --uncommitted`, codex-cli 0.145.0)** — §18.8 적대 검증. `[CODEX:*]` 는 §18.4/§18.9 의 check #9 accepted verdict. 본 세션은 `Agent` 툴 사용이 세션 지시로 제한된 환경이고, 이 변경은 **비동기 보강과 렌더 세대·모델 세대의 상호작용**을 diff 밖 코드(`_opSeq` 규약·`resetModel`)와 함께 봐야 판정되므로 repo 접근 리뷰어가 적합하다.
+- **P1(GATE) 0건** — 컬럼 병합 규칙(3-소스 union·case-insensitive dedupe·우선순위·정렬), 모델 무오염 계약, 보강 1회 제한에는 반박이 성립하지 않았다("The main column-merging behavior is covered by the new tests").
+- **CONFIRMED(P2-1, 수정) — 실패 시 empty-state 고착**: introspect 가 실패하거나 0건을 반환하면 `detailColsMiss` 만 기록하고 **재렌더 없이 빠져나갔다**. 그러면 패널은 그 상세 뷰가 닫힐 때까지 "컬럼 조회 중…" 에 머문다 — 사유를 말하겠다는 AC-GDC-3 계약이 정작 실패했을 때 깨진다(내 초안 주석은 "표시가 달라질 것 없어 깜빡임만 생긴다" 고 잘못 판단했는데, 실제로는 *조회 중 → 사유* 로 **바뀌어야** 하는 상태였다). **수정**: 성공·실패가 같은 재렌더 경로로 합류.
+- **CONFIRMED(P2-2, 수정) — 같은 키 재선택 race**: 도착 가드가 `lastDetailKey` 뿐이라, 사용자가 **같은 테이블을 다시 눌러** 새 상세가 그려진 뒤 이전 요청이 늦게 도착하면 그 요청이 캡처해 둔 낡은 `nodes/edges/meta` 로 새 패널을 덮어쓴다(키가 같아 가드를 통과). 모델 리셋 후 같은 키를 다시 여는 경우도 동형. **수정**: 렌더 세대 `_detailSeq`(매 렌더 증가, 보강에 인자로 전달) + 모델 세대 `_opSeq`(fetch 이전 캡처, `resetModel` 이 증가) **양쪽**을 대조해 "내가 띄운 그 화면이 아직 그대로일 때만" 재렌더한다. 기존 `_opSeq` 규약(graph-perf-bg)과 같은 계열이라 새 개념을 도입하지 않는다.
+- **회귀 확인**: 수정 후 `test_detail_columns.js` **39 PASS**(P2 계약 축 9건 신설 — 실패→재렌더 합류의 *무조건 return 부재* 를 구조로 단언 · 세대 2종 대조 · 캡처 시점) · 헤드리스 스위트 **567 PASS**(baseline 528 + 39, 실패 집합 동일) · `node --check` PASS(3 파일) · pytest 신규 실패 0.
+- **정직 표기 — 잔여 표면**: 최종 판정은 실 브라우저 육안이다(GDC.7 PB-0008, 배포 후). 커밋 전 검증은 유닛 계약 + 라이브 AGE 실측(투영 공백 규모)이며, **패널 렌더 자체는 아직 실 화면에서 보지 않았다**.
+- Timestamp: 2026-07-29T15:59:00+09:00
+- Verdict: PASS-WITH-FIXES (전건 in-cycle 흡수)
+- Human Approval Needed: no

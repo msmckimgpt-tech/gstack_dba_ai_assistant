@@ -1887,10 +1887,61 @@ function _metaToggleDbGroup(h, rootEl, syncSiblings) {
   _metaSyncDbGrpAllLabel(rootEl, h.getAttribute("data-dbgrp-set"));
 }
 
+// graph-detail-cols(사용자 리포트 2026-07-29): **컬럼이 상세 패널에만 안 뜨거나 일부만 뜨던** 결함 해소.
+//   원인은 컬럼 소스의 비대칭이었다 — 그래프 Column 정점의 SSOT 는 `column_descriptions`(큐레이션·분석된
+//   컬럼만)이라 미큐레이션 테이블은 HAS_COLUMN 이 0 이다(실측: Table 18,257 중 컬럼 정점을 가진 테이블
+//   7,320 · HAS_COLUMN 총 13,873 = 테이블당 평균 1.9). 캔버스 펼침(_metaGraphToggleColumns)과 더블클릭
+//   확장(_metaGraphExpand)은 그 공백을 `/graph/columns` **즉석 introspect** 로 메우지만 단일클릭 상세
+//   (_metaGraphShowDetail)에는 그 폴백이 없어, 같은 화면에서 캔버스엔 컬럼 40개가 펼쳐져 있는데 상세
+//   패널엔 '컬럼' 섹션 자체가 없었다(사용자 스크린샷 cc_pyron.DT_ItemEnchantInfo = HAS_COLUMN 0 실측).
+//   세 소스를 합쳐 **패널을 캔버스와 정합**시킨다(fetched 를 제자리 확장):
+//     ① fetch 응답의 HAS_COLUMN 이웃 — 그래프 SSOT(큐레이션 설명 보유, 최우선)
+//     ② 모델(_metaGraph.nodes) 의 self 소속 Column — 캔버스에서 이미 펼친 컬럼(introspect 산출 포함).
+//        관계(REFERENCES) 섹션이 이미 쓰는 모델-병합 폴백과 동형이다.
+//     ③ 상세 전용 introspect 캐시(detailCols) — _metaGraphDetailColsBackfill 이 채운다(모델 무오염).
+//   dedupe 는 **소문자 정규화 key** 기준이며(그래프는 큐레이션 입력·introspect 는 information_schema
+//   원천이라 같은 컬럼이 케이스만 달리 올 수 있다 — 본 저장소에서 반복 관측된 식별자 case drift), 앞선
+//   소스의 레코드를 유지한다(①의 큐레이션 description 이 ③의 자료형 문자열에 덮이지 않게).
+function _metaDetailMergeColumns(self, fetched) {
+  if (!self || self.label !== "Table" || !Array.isArray(fetched)) return fetched;
+  const selfKey = self.key;
+  const ck = (c) => String((c && c.key) || "").toLowerCase();
+  const seen = new Set(fetched.map(ck).filter(Boolean));
+  const add = (c) => {
+    const k = ck(c);
+    if (!k || seen.has(k)) return;
+    seen.add(k); fetched.push(c);
+  };
+  _metaGraph.nodes.forEach((n) => {
+    if (n && n.label === "Column" && _metaColParent(n.key, n.fqn) === selfKey) add(n);
+  });
+  ((_metaGraph.detailCols && _metaGraph.detailCols.get(selfKey)) || []).forEach(add);
+  if (fetched.length > 1) fetched.sort(_metaGraphColCmp);
+  return fetched;
+}
+
+// graph-detail-cols: 상세 패널이 즉석 introspect 로 컬럼을 보강해야 하는지 판정(순수 게이팅).
+//   ① 컬럼 0 — 그래프 미투영(사용자 리포트의 주 증상) ② 백엔드 이웃 절단 신고(`truncated`) — 이 목록이
+//   부분임을 백엔드가 명시했으므로 '일부 누락' 축을 여기서 메운다. 그 외에는 이미 온전하다고 본다.
+//   세션 내 1회로 제한(캐시 적중·실패 기록·in-flight 중 어느 하나라도 있으면 재조회하지 않는다) —
+//   보강 결과가 재렌더를 부르므로, 이 가드가 없으면 렌더↔보강이 서로를 부르는 루프가 된다.
+function _metaDetailColsBackfillNeeded(self, meta, colCount) {
+  if (!self || self.label !== "Table" || !self.key) return false;
+  if (colCount > 0 && !(meta && meta.truncated)) return false;
+  const key = self.key;
+  if (_metaGraph.detailCols.has(key) || _metaGraph.detailColsMiss.has(key)
+      || _metaGraph.detailColsInflight.has(key)) return false;
+  return true;
+}
+
 function _metaGraphRenderDetail(self, nodes, edges, meta) {
   // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
+  // graph-detail-cols(codex 적대리뷰 P2-2): **렌더 세대** — 이 패널이 그려진 회차. 비동기 컬럼 보강이
+  //   늦게 도착했을 때 "내가 띄운 그 화면이 아직 그대로인가" 를 판정하는 토큰이다. key 만 보면 같은
+  //   테이블을 다시 선택한 경우를 구분하지 못해 낡은 nodes/edges 로 새 패널을 덮어쓴다.
+  const _detailGen = (_metaGraph._detailSeq = (_metaGraph._detailSeq || 0) + 1);
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여(예약 팬·강조) 정리(mouseleave 미발화 경로 대비).
   _metaDbGrpLazy.clear();   // detail-db-groups: 직전 패널의 미펼침 payload 폐기(재렌더로 gid 가 무효화되므로 누수 방지).
   // 항목1: 이 노드가 검색 결과라 그래프에 rel(유사도)이 실려 있으면 상세 헤더에 % 명시.
@@ -1922,6 +1973,7 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
     if (e.type === "ROUTINE_USES" && (e.source === selfKey || e.target === selfKey)) routineUses.push(e);
   });
   (nodes || []).forEach((n) => { if (n && n.label === "GlossaryTerm" && n.key !== selfKey && !terms.includes(n)) terms.push(n); });
+  _metaDetailMergeColumns(self, columns);   // graph-detail-cols: fetch 이웃 + 모델 + introspect 캐시 병합
   // graph-reltrace(tabledetail): 테이블 단일클릭 상세는 depth=1 이라 컬럼의 REFERENCES(테이블 기준
   //   2-hop)가 fetch 에 없어 "관계" 섹션이 비었다. 관계는 스키마 펼침 시 이미 모델(_metaGraph.edges)에
   //   로드돼 있으므로, self(테이블이면 자기 컬럼 포함)에 닿는 REFERENCES 를 모델에서 병합한다(dedup).
@@ -2024,7 +2076,10 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
       `<ul class="amgr-list">${rows}</ul></div>`;
   };
 
-  if (columns.length || selfIsColumn) {
+  // graph-detail-cols: **Table 은 컬럼이 0 이어도 섹션을 렌더**한다. 종전엔 섹션 자체가 사라져
+  //   (사용자 스크린샷의 증상) 캔버스엔 컬럼이 펼쳐져 있는데 패널엔 흔적조차 없었고, 그것이 결함인지
+  //   "이 테이블은 원래 컬럼이 없음" 인지 구분할 단서가 화면에 없었다. 비어 있으면 그 사유를 말한다.
+  if (columns.length || selfIsColumn || self.label === "Table") {
     // 전체 관계 요약(방향별 개수).
     const relSummary = (totOut + totIn) > 0
       ? ` <span class="admin-meta-graph-relbadge" title="이 노드의 관계 방향별 개수">관계 ${totOut + totIn} · 참조함 ${totOut} · 참조받음 ${totIn}</span>`
@@ -2066,6 +2121,13 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
         );
       });
       if (columns.length > _META_DBGRP_ROW_CAP) parts.push(`<li class="amgr-col amgr-col-plain admin-meta-graph-muted">… 외 ${columns.length - _META_DBGRP_ROW_CAP}개 (표시 상한)</li>`);
+      // graph-detail-cols: 빈 목록의 empty-state — 조회 중인지, 조회했지만 못 얻었는지(사유), 정말
+      //   컬럼이 없는지를 구분해 말한다. 무언의 빈 섹션은 결함과 사실을 구분할 수 없다.
+      if (!columns.length) {
+        const miss = _metaGraph.detailColsMiss.get(selfKey);
+        parts.push(`<li class="amgr-col amgr-col-plain admin-meta-graph-muted">`
+          + (miss ? esc(miss) : "컬럼 조회 중…") + `</li>`);
+      }
       parts.push(`</ul></div>`);
     }
   }
@@ -2277,6 +2339,44 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
   //   적용되므로, 나중에 펼쳐지는 그룹은 각 payload 의 bind 콜백이 그 컨테이너에 한정해 처리한다.
   _metaBindDbGroups(el);
   _metaGraphLoadNodeAnalysis(self.key);
+  // graph-detail-cols: 세 소스를 합쳐도 컬럼이 비었거나(그래프 미투영) 백엔드가 이웃 절단을 신고했으면
+  //   (부분 목록) 즉석 introspect 로 보강한다 — 캔버스 펼침이 이미 쓰는 경로·캐시를 그대로 재사용.
+  _metaGraphDetailColsBackfill(self, nodes, edges, meta, columns.length, _detailGen);
+}
+
+// graph-detail-cols: 상세 패널 컬럼 보강(비동기, 논블로킹). 패널은 이미 그려졌고 결과가 도착하면 같은
+//   노드를 보고 있을 때만 재렌더한다 — 사용자가 그 사이 다른 노드를 눌렀으면 조용히 버린다(stale 방지).
+//   **모델(_metaGraph.nodes)에 ingest 하지 않는다**: 단일클릭 상세는 캔버스 구조를 바꾸지 않는 것이
+//   계약이라, 모델에 넣으면 다음 rebuild 에서 펼치지 않은 테이블의 컬럼이 캔버스에 튀어나온다.
+async function _metaGraphDetailColsBackfill(self, nodes, edges, meta, colCount, gen) {
+  if (!_metaDetailColsBackfillNeeded(self, meta, colCount)) return;
+  const key = self.key;
+  const opSeq = _metaGraph._opSeq;   // 모델 교체(스코프 전환·검색·리셋) 감지용 — resetModel 이 증가시킨다
+  _metaGraph.detailColsInflight.add(key);
+  try {
+    const col = await apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`);
+    if (col && col.introspected && (col.nodes || []).length) {
+      _metaGraph.detailCols.set(key, col.nodes);
+    } else {
+      // introspected=false(연결/권한 실패) 또는 컬럼 0건 — 사유를 남겨 재조회를 막는다.
+      _metaGraph.detailColsMiss.set(key, (col && col.reason) || "컬럼을 조회하지 못했습니다.");
+    }
+  } catch (_) {
+    _metaGraph.detailColsMiss.set(key, "컬럼 조회 요청 실패");
+  } finally {
+    _metaGraph.detailColsInflight.delete(key);
+  }
+  // codex 적대리뷰 P2-1: **성공·실패 모두** 재렌더한다. 실패에서 빠져나가면 패널이 "컬럼 조회 중…" 에
+  //   영구 고착돼(그 상세 뷰가 닫힐 때까지) 사유를 말하겠다는 empty-state 계약이 깨진다.
+  // codex 적대리뷰 P2-2: `lastDetailKey` 만으로는 **같은 키 재선택 race** 를 못 막는다 — 사용자가 같은
+  //   테이블을 다시 눌러 새 상세가 그려진 뒤 이전 요청이 늦게 도착하면, 그 요청이 캡처해 둔 낡은
+  //   nodes/edges/meta 로 새 패널을 덮어쓴다. 렌더 세대(_detailSeq)와 모델 세대(_opSeq)를 함께 대조해
+  //   내가 띄운 그 화면이 아직 그대로일 때만 재렌더한다.
+  if (_metaGraph._detailSeq !== gen || _metaGraph._opSeq !== opSeq) return;
+  if (_metaGraph.lastDetailKey !== key) return;
+  const bodyEl = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
+  if (!bodyEl) return;
+  _metaGraphRenderDetail(self, nodes, edges, meta);
 }
 
 // graph-ctxmenu: 관계 근거(edge_source)·타입 한글 라벨 — 스키마 미숙지 사용자용 신뢰 판단 보조.

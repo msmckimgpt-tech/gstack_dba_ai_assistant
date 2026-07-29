@@ -2242,3 +2242,21 @@ POST-DEPLOY 와 동일 조건)에서 판정: **형제 헤더 전원 동일 크�
 교체됨). 잘림 자체를 없애려면 별도 수단(헤더 2줄 수용 또는 박스 중앙 워터마크 area-label)이 필요하다.
 상세: feature-0003 `docs/test-runs.d/20260729T1140-graph-hdr-typo-postdeploy.md` · 증적 9매
 `artifacts/feature-0016-metadata-graph/20260729-graph-hdr-typo-postdeploy/`.
+
+## 2026-07-29 · graph-detail-columns — 상세 패널에만 컬럼이 없던 이유 (사용자 리포트)
+사용자: "테이블 내 포함된 컬럼이 **'상세 패널' 에서는 출력되지 않거나 일부 누락**되는 이슈가 확인되어 수정이 필요합니다." (첨부: `cc_pyron.DT_ItemEnchantInfo` — 캔버스엔 컬럼 40여 개가 펼쳐져 있는데 우측 패널엔 '컬럼' 섹션 자체가 없음)
+- **진단(라이브 AGE 실측)** — 근본 원인은 **컬럼 소스의 비대칭**이다. 그래프 `Column` 정점의 SSOT 는 `column_descriptions`(큐레이션·분석분만)이라 미큐레이션 테이블은 `HAS_COLUMN` 이 0 이다: `Table` **18,257** / `Column` **13,874** / `HAS_COLUMN` **13,873** / **컬럼 정점을 하나라도 가진 테이블 7,320(40%)** = 테이블당 평균 1.9. 리포트 대상 노드는 `HAS_COLUMN 0`(ROUTINE_USES 0 · REFERENCES 0 · HAS_TABLE 1).
+- **왜 캔버스만 멀쩡했나**: 그 공백을 메우는 `/api/admin/metadata/graph/columns` **즉석 introspect** 폴백이 컬럼 펼치기(`_metaGraphToggleColumns`)·더블클릭 확장(`_metaGraphExpand`)에는 있고 **단일클릭 상세(`_metaGraphShowDetail`)에는 없었다**. 게다가 상세 렌더는 캔버스가 이미 모델에 넣어둔 컬럼조차 보지 않았다 — 같은 함수의 **관계** 섹션은 모델 병합 폴백을 쓰고 있었는데 컬럼에만 없던 누락이다.
+- **왜 '일부 누락' 도 났나**: 백엔드 이웃 조회 cap(`_NEIGHBOR_NODE_CAP=300`)에서 관계 이웃(tier 0)이 계층 이웃(tier 1 = 컬럼)보다 먼저 예산을 먹는다(graph-hop-budget). 관계가 많은 테이블은 컬럼이 부분만 남을 수 있고, 그 때 백엔드는 `truncated` 를 신고한다.
+- **수정**: 컬럼 수집을 **3-소스 union**(fetch 이웃 → 모델의 self 소속 Column → 상세 전용 introspect 캐시)으로 바꾸고, 공백 **또는** `truncated` 일 때만 introspect 보강을 논블로킹으로 돌린다. 보강 결과는 **모델에 넣지 않는다** — 넣으면 `colsByTable` 이 올라 펼치지 않은 테이블의 컬럼이 다음 rebuild 에서 캔버스에 튀어나온다(요청하지 않은 화면 변경). dedupe 는 소문자 정규화(큐레이션 입력 vs information_schema 원천의 case drift), 정렬은 ordinal → 이름.
+- **부수 정직화**: Table 상세는 컬럼 0 이어도 섹션을 렌더하고 "조회 중"/실패 사유를 말한다. 종전의 무언의 빈 섹션은 **결함과 사실을 구분할 수 없었다**.
+- 검증: 신설 `test_detail_columns.js` **29 PASS**(병합 6축 · 게이팅 4축 · 호출부 계약 7축 — `_metaGraphIngest` 부재를 모델 무오염 계약으로 고정 · empty-state · reset 정합) · 헤드리스 스위트 회귀 0(baseline 528 → 557 = +29, 실패 집합 동일) · `node --check` PASS(3 파일) · pytest 신규 실패 0.
+- **정직 표기 — 스위트 상태**: 헤드리스 25개 중 **15개는 pre-existing 실패**다(`test_g6build_*`·`test_detail_colsel.js`·`test_graph_colnav.js`·`test_graph_routine_colref.js`). ITEM-09 의 ES 모듈 분리 이후 구형 하네스(파일 전체 vm-eval)가 `import` 문에서 막힌 것이며 **baseline(main)에서 동일**하다 — 이번 변경과 무관하고, 하네스 재작성은 본 cycle scope 밖으로 남긴다.
+
+### Git 동기화 결과
+- Task-Cycle: feature-0016-metadata-graph (ai/claude/feature-0016-graph-detail-columns, worktree).
+- verify-completion / commit / PR / 병합 / 배포: §16.3 Step 4~6 + deploy_scope: included 에 따라 진행.
+
+### §8 개선 제안 (기록만 — 사용자 지시 없이 실행 안 함)
+- **그래프 컬럼 투영 공백 자체의 해소**: 본 수정은 프론트 보강이라 매 세션 introspect 왕복이 남는다. `feature-0016 analysis-completeness`(2026-07-23)의 lazy introspection 이 Table 잡 처리 시 누락 컬럼을 `column_descriptions` 에 채우므로, 노드 분석 커버리지가 오르면 이 보강 호출은 자연 감소한다. 커버리지 40% 를 어디까지 올릴지는 별도 판단 항목.
+- **헤드리스 구형 하네스 15개 재작성**: ITEM-09 ES 모듈 분리 이후 방치된 부채. 신형(유닛 격리 추출) 패턴으로 옮기면 그래프 렌더 계층의 회귀 감지가 되살아난다.
