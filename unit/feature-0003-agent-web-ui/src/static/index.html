@@ -237,6 +237,15 @@
             <button type="button" class="llm-restriction-banner-retry hidden" id="llmRestrictionBannerRetry"
                     title="제공자 상태를 다시 확인합니다">다시 확인</button>
           </div>
+          <!-- feature-0030: 실행시간 한도 임박 — "이번 요청만 끝까지" 승인 배너. 진행 폴링이
+               timeout_extension.prompted 를 보면 노출, 승인/종료 시 걷힌다. 화면을 차단하지
+               않는다(2026-07-09 ask-timeout-nonblocking 결정과 동형). -->
+          <div class="timeout-extend-banner hidden" id="timeoutExtendBanner" role="status" aria-live="polite">
+            <span class="timeout-extend-banner-icon" aria-hidden="true">⏱</span>
+            <span class="timeout-extend-banner-text" id="timeoutExtendBannerText">응답 시간 한도에 근접했습니다.</span>
+            <button type="button" class="timeout-extend-banner-btn" id="timeoutExtendBannerBtn"
+                    title="이번 요청에 한해 시간 제한 없이 끝까지 추론합니다">계속 추론</button>
+          </div>
           <div class="composer-box">
             <!-- feature-0008 (composer-model-selector): textarea 좌측의 multi-action `+`
                  dropdown. ChatGPT 패턴 — primary popup 에 [파일 첨부, 모델 선택] 2 항목.

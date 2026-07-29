@@ -4842,8 +4842,26 @@ def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
         # TASK-20260619T014034: 이 run 시점의 LLM provider 외부요인 제한 상태.
         # 프론트가 status=='error' && llm_provider_status.state=='restricted' 이면 전용 인라인 제한 안내 렌더.
         "llm_provider_status": app._read_llm_provider_status(),
+        # feature-0030: 실행시간 연장 확인/승인 상태. prompted=True 이고 아직 미승인이면
+        # 프론트가 컴포저 인라인 배너를 띄운다. run_id 를 함께 실어 프론트가 현재 run 과
+        # 대조하게 한다(이전 run 의 잔재 신호로 배너가 뜨는 것을 차단).
+        "timeout_extension": _timeout_extension_snapshot(conn, conversation_id, is_processing),
         "_latest_assistant": latest_assistant,  # 내부용 (ask_result 가 소비)
     }
+
+
+def _timeout_extension_snapshot(conn, conversation_id: str, is_processing: bool) -> dict[str, Any]:
+    """연장 확인 상태 — 처리 중이 아니면 조회 자체를 건너뛴다(스냅샷 경로 KV 왕복 절약).
+
+    terminal 상태에서 빈 값을 주면 프론트가 자연히 배너를 걷는다.
+    """
+    empty = {"prompted": False, "granted": False, "deadline_at": "", "run_id": ""}
+    if not is_processing:
+        return empty
+    try:
+        return app.timeout_extension_state(conn, conversation_id)
+    except Exception:
+        return empty
 
 def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: dict[tuple, list[dict[str, Any]]]) -> None:
     """③ TASK-0285: history message 리스트의 assistant 메시지에 `_attachments` 를 주입.

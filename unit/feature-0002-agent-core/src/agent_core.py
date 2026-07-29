@@ -16,7 +16,7 @@ import re
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # TASK-0127 (#1): ux-compact-redesign 병합으로 들어온 _save_message/_ensure_conversation/
@@ -44,6 +44,9 @@ from modules.memory import (
     _clear_cancel_request,
     _finalize_requested,
     _clear_finalize_request,
+    _clear_timeout_extension,
+    _timeout_extension_granted,
+    mark_timeout_extension_prompted,
     cleanup_pending_delete_conversations,
     delete_all_conversations,
     delete_conversation as delete_conversation_records,
@@ -3358,6 +3361,31 @@ def _cancel_requested_for_run(conn, conversation_id: str, run_id: str) -> bool:
         return False
 
 
+# feature-0030: 연장이 푸는 것은 **run 전체 예산**이지 개별 LLM 호출이 아니다.
+# 단일 호출을 몇 시간 열어두면 그동안 루프가 한 바퀴도 돌지 않아 '중단'·'즉시 답변'·
+# lease fencing·max_steps 가 전부 무응답이 된다 — 승인의 대가로 탈출구를 잃는 셈
+# (codex 적대 리뷰 P1-3). 호출이 끝나야 루프가 돌아와 탈출구를 다시 검사하므로,
+# 이 값이 곧 "사용자가 중단을 눌렀을 때 실제로 멈추기까지의 최대 지연"이다.
+# 연장 중에도 이 상한은 유지하고, 무제한은 run 예산 쪽에서만 성립시킨다.
+_EXTENSION_PER_CALL_TIMEOUT_SEC = 900  # 15분
+# 임계 프롬프트가 예산 종료 직전에야 발행됐다면(직전 LLM 호출이 길어 루프가 늦게 돌아온 경우)
+# 사용자에게 승인할 시간이 없다. 그 경우에 한해 아래 유예만큼 승인을 더 기다린다
+# (어차피 종료될 run 이므로 손해가 없고, 대기 중에도 취소는 계속 검사한다).
+_EXTENSION_GRACE_SEC = 20
+
+
+def _timeout_extension_settings() -> tuple[bool, int, int]:
+    """(연장 기능 사용, 확인 임계 %, 승인 후 추가 허용 초). 조회 실패는 기능 OFF 로 흡수."""
+    try:
+        return (
+            int(_rts.get_int("AGENT_TIMEOUT_EXTENSION_ENABLED")) == 1,
+            int(_rts.get_int("AGENT_TIMEOUT_EXTENSION_PROMPT_PCT")),
+            int(_rts.get_int("AGENT_TIMEOUT_EXTENSION_MAX_SEC")),
+        )
+    except Exception:
+        return (False, 80, 0)
+
+
 def _mirror_step(
     conn,
     conversation_id: str,
@@ -3449,7 +3477,8 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
               conversation_id: str | None = None,
               run_id: str | None = None,
               step_gap_ms: int | None = None,
-              reasoning_level: str | None = None) -> Any:
+              reasoning_level: str | None = None,
+              timeout_override: int | None = None) -> Any:
     """OpenAI API를 호출한다.
 
     TASK-0094 Sprint 2 (D13): vision 가능 모델 + env ATTACHMENT_IMAGE_INLINE_PATH
@@ -3526,7 +3555,14 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # 에서 총-대기(client)와 per-attempt(body)가 일치한다. (콘솔 값이 run 도중 상향되면 client 는 ask()
     # 진입 시점 값에서 컷 → 실효 per-attempt=min(client,body); 다음 ask() 에서 자동 정합.)
     # min 5s 는 runtime_settings 스펙 하한과 일치.
-    _extra_body: dict[str, Any] = {"timeout": max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC")))}
+    # feature-0030: 사용자가 이 run 의 타임아웃 연장을 승인했으면 호출측이 확장값을 넘긴다.
+    # per-attempt(body) 층만 콘솔 값에 묶여 있으면 run 예산을 풀어도 개별 LLM 호출이 잘려
+    # 연장이 무효가 된다 — 총-대기(client) 층과 함께 3층을 같이 풀어야 실효가 있다.
+    _timeout_sec = (
+        int(timeout_override) if timeout_override and int(timeout_override) > 0
+        else max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC")))
+    )
+    _extra_body: dict[str, Any] = {"timeout": _timeout_sec}
     _think_style = model_thinking_style(model)
     if _think_style == "budget":
         _think_budget = thinking_budget_for_level(reasoning_level)
@@ -4819,6 +4855,50 @@ def _run_agent_core(
         max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC"))) * 3,
         max(1, int(cfg.AGENT_EARLY_FINALIZE_MS / 1000)),
     )
+    # feature-0030 timeout-extension: 예산의 일정 비율을 소진하면 "이번 요청만 끝까지 추론할까요?"
+    # 를 사용자에게 묻는다. 루프는 여기서 **대기하지 않는다** — 플래그만 올리고 계속 추론하다가
+    # 100% 도달 순간에 승인 여부를 읽어 통과/종료를 가른다(2026-07-09 non-blocking 원칙).
+    _ext_enabled, _ext_pct, _ext_max_sec = _timeout_extension_settings()
+    _ext_prompt_at = run_timeout_sec * (max(1, min(99, _ext_pct)) / 100.0) if _ext_enabled else None
+    _ext_prompted = False
+    _ext_prompted_at = 0.0  # perf_counter 기준 발행 시각(유예 판정용)
+    _ext_granted = False
+    _ext_llm_timeout: int | None = None
+
+    def _ext_raise_prompt(elapsed_now: float) -> None:
+        """임계 도달 신호를 run 당 1회 올린다(추론은 그대로 계속 — 대기 없음)."""
+        nonlocal _ext_prompted, _ext_prompted_at
+        _ext_prompted = True
+        _ext_prompted_at = elapsed_now
+        try:
+            _deadline = datetime.now(timezone.utc) + timedelta(
+                seconds=max(0.0, run_timeout_sec - elapsed_now)
+            )
+            mark_timeout_extension_prompted(
+                mem_conn, cid, run_id, _deadline.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            _emit_activity("응답 시간 한도에 근접 — 계속 추론할지 확인 중")
+        except Exception:
+            pass  # 확인 신호 실패가 본 추론을 깨지 않는다(fail-safe = 연장 없음).
+
+    def _ext_apply_grant() -> None:
+        """승인 확인됨 — run 예산 컷을 넘기고 LLM 호출 상한을 연장값으로 올린다.
+
+        **per-call 상한은 유지한다**(`_EXTENSION_PER_CALL_TIMEOUT_SEC`) — 단일 호출을 무한정
+        열어두면 그 사이 취소·즉시답변·lease fencing 이 전부 무응답이 되기 때문.
+        """
+        nonlocal _ext_granted, _ext_llm_timeout, client
+        _ext_granted = True
+        _ext_llm_timeout = max(
+            max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC"))), _EXTENSION_PER_CALL_TIMEOUT_SEC,
+        )
+        try:
+            client = client.with_options(timeout=_ext_llm_timeout)
+        except Exception:
+            # SDK 가 with_options 를 지원하지 않으면 body timeout 층만으로 진행한다
+            # (총-대기가 여전히 콘솔 값이라 부분 실효 — 무연장보다는 낫다).
+            pass
+        _emit_activity("연장이 승인되어 한도 없이 끝까지 추론하는 중")
     last_sql = ""
     steps: list[dict[str, Any]] = []
     step_count = 0
@@ -4839,11 +4919,38 @@ def _run_agent_core(
             canceled_by_user = True
             break
         elapsed = time.perf_counter() - run_start
+        # feature-0030: 임계 도달 — 연장 확인 신호를 run 당 1회만 올린다(추론은 그대로 계속).
+        if _ext_prompt_at is not None and not _ext_prompted and elapsed >= _ext_prompt_at:
+            _ext_raise_prompt(elapsed)
         if elapsed > run_timeout_sec:  # 실행 예산을 넘기면 루프를 중단한다.
-            result["error"] = "타임아웃으로 종료되었습니다."
-            if output_mode == "console":
-                console.print(f"[yellow]{result['error']}[/yellow]")
-            break
+            # 사용자가 '타임아웃과 무관하게 끝까지'를 승인했으면 이 run 에 한해 예산 컷을 넘긴다.
+            if _ext_prompt_at is not None and not _ext_prompted:
+                # 직전 LLM 호출이 예산의 남은 구간보다 길어 임계 통과를 루프가 못 봤다 —
+                # 여기서라도 물어야 사용자가 답할 기회를 갖는다(codex 적대 리뷰 P2-3).
+                _ext_raise_prompt(elapsed)
+            if _ext_prompted and not _ext_granted and _timeout_extension_granted(mem_conn, cid, run_id):
+                _ext_apply_grant()
+            # 확인이 방금 떴다면(긴 호출로 늦게 발행) 사용자가 누를 시간을 유예만큼만 준다.
+            # 어차피 종료될 run 이라 손해가 없고, 대기 중에도 취소는 매 초 검사한다.
+            if not _ext_granted and _ext_prompted and (elapsed - _ext_prompted_at) < _EXTENSION_GRACE_SEC:
+                _grace_deadline = _ext_prompted_at + _EXTENSION_GRACE_SEC
+                while (time.perf_counter() - run_start) < _grace_deadline:
+                    if _cancel_requested_for_run(mem_conn, cid, run_id):
+                        canceled_by_user = True
+                        break
+                    if _timeout_extension_granted(mem_conn, cid, run_id):
+                        _ext_apply_grant()
+                        break
+                    time.sleep(1.0)
+                if canceled_by_user:
+                    break
+                elapsed = time.perf_counter() - run_start
+            _ext_exhausted = _ext_max_sec > 0 and elapsed > run_timeout_sec + _ext_max_sec
+            if (not _ext_granted) or _ext_exhausted:
+                result["error"] = "타임아웃으로 종료되었습니다."
+                if output_mode == "console":
+                    console.print(f"[yellow]{result['error']}[/yellow]")
+                break
 
         # ── 즉시 답변 요청 감지 ──
         finalize_now = _finalize_requested(mem_conn, cid, run_id)
@@ -4887,6 +4994,7 @@ def _run_agent_core(
                 run_id=run_id,
                 step_gap_ms=_step_gap_ms,
                 reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
+                timeout_override=_ext_llm_timeout,  # feature-0030: 연장 승인 시 per-attempt 확장
             )
             _prev_llm_end_ns = time.perf_counter_ns()  # 이 라운드 LLM 종료 시각 → 다음 라운드 gap 기산점
         except Exception as e:
@@ -4997,7 +5105,8 @@ def _run_agent_core(
                         _rev = _call_llm(client, _rev_messages, model,
                                          temperature=temperature,
                                          conversation_id=cid, run_id=run_id,
-                                         reasoning_level=reasoning_level)
+                                         reasoning_level=reasoning_level,
+                                         timeout_override=_ext_llm_timeout)
                         _txt = _strip_leaked_tool_notes(getattr(_rev, "content", "") or "")
                         _txt = _txt.strip()
                         if not _txt:
@@ -5088,7 +5197,8 @@ def _run_agent_core(
                                 _rd_resp = _call_llm(client, _rd_messages, model,
                                                      temperature=temperature, tools=_rd_tools,
                                                      conversation_id=cid, run_id=run_id,
-                                                     reasoning_level=reasoning_level)
+                                                     reasoning_level=reasoning_level,
+                                                     timeout_override=_ext_llm_timeout)
                             except Exception:
                                 break
                             _rd_tcs = getattr(_rd_resp, "tool_calls", None)
@@ -5611,6 +5721,12 @@ def _run_agent_core(
             _clear_cancel_request(mem_conn, cid, run_id=run_id)
         except Exception:
             pass
+    # feature-0030: 연장 신호는 run 단위 수명 — terminal 에서 정리해 다음 요청이 이전 승인을
+    # 물려받지 않게 한다(취소/삭제 종결에서도 정리해야 잔재가 남지 않는다).
+    try:
+        _clear_timeout_extension(mem_conn, cid, run_id=run_id)
+    except Exception:
+        pass
 
     # DB 연결 정리
     # TASK-0228 (1:N): 라우터가 활성이면 db_conn 은 라우터 소유(primary) 연결이므로, 라우터가 모든

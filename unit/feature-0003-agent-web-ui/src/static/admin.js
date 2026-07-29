@@ -326,6 +326,8 @@ const PERMISSION_DEPENDENCIES = {
   "conversation.delete.own": "conversation.list.own",
   "conversation.cancel.own": "conversation.list.own",
   "conversation.finalize.own": "conversation.list.own",
+  // feature-0030: 실행시간 연장 승인(내 대화) — 즉시답변과 같은 층(list.own 하위).
+  "conversation.extend.own": "conversation.list.own",
   "conversation.duplicate.own": "conversation.list.own",
   "conversation.share.create": "conversation.list.own",
   "conversation.member.manage": "conversation.list.own",
@@ -343,6 +345,7 @@ const PERMISSION_DEPENDENCIES = {
   //   (위 감사 블록 — console.audit.access 하위). 여기(전체 대화)에는 더 이상 두지 않는다.
   "conversation.cancel.any": "conversation.list.any",
   "conversation.finalize.any": "conversation.list.any",
+  "conversation.extend.any": "conversation.list.any",
   "conversation.duplicate.any": "conversation.list.any",
   "conversation.attachment.upload.any": "conversation.list.any",
   "conversation.attachment.read.any": "conversation.list.any",

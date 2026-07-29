@@ -492,6 +492,111 @@ def _clear_finalize_request(conn, conversation_id: str) -> None:
     save_memory_kv(conn, conversation_id, "finalize_run_id", "")
 
 
+# ── feature-0030 실행 타임아웃 연장 시그널 ────────────────────────────────────
+# cancel/finalize 와 동일한 memory KV 왕복 패턴. 방향이 둘이라는 점만 다르다:
+#   prompted : 워커 → 사용자 ("예산 80% 소진 — 계속 추론할까요?")
+#   granted  : 사용자 → 워커 ("이 run 은 타임아웃과 무관하게 끝까지")
+# 두 플래그 모두 run_id 짝 검증으로 이전 run 을 겨냥한 stale 신호를 격리한다
+# (검증 없으면 직전 요청의 승인이 다음 요청을 무기한 연장시킨다).
+
+def mark_timeout_extension_prompted(
+    conn, conversation_id: str, run_id: str = "", deadline_at: str = "",
+) -> None:
+    """실행 예산 임계 도달 — 사용자에게 연장 여부를 물었음을 기록(run 당 1회)."""
+    if not conversation_id:
+        return
+    effective_run_id = str(run_id or "").strip() or load_memory_kv(conn, conversation_id, "last_status_run_id")
+    # KV 는 conversation 당 단일 슬롯이다. 새 run 의 prompt 가 run_id 만 덮어쓰면 이전 run 의
+    # granted=1 이 그대로 남아 **새 run 이 남의 승인을 상속**한다(codex 적대 리뷰 P1-2).
+    # prompt 는 그 run 상태의 시작점이므로 승인 흔적을 함께 리셋한다.
+    save_memory_kv(conn, conversation_id, "timeout_ext_granted", "")
+    save_memory_kv(conn, conversation_id, "timeout_ext_granted_at", "")
+    save_memory_kv(conn, conversation_id, "timeout_ext_prompted", "1")
+    save_memory_kv(conn, conversation_id, "timeout_ext_run_id", str(effective_run_id or "").strip())
+    save_memory_kv(conn, conversation_id, "timeout_ext_prompted_at", utc_now_iso())
+    # deadline_at = 승인이 없을 때 실제로 타임아웃될 예상 시각(ISO). 프론트가 남은 시간을 표시.
+    save_memory_kv(conn, conversation_id, "timeout_ext_deadline_at", str(deadline_at or "").strip())
+
+
+def mark_timeout_extension_granted(conn, conversation_id: str, run_id: str) -> bool:
+    """사용자가 '타임아웃과 무관하게 끝까지' 를 승인 — 워커 루프가 폴링해 소비한다.
+
+    `run_id` 는 **필수**다. 빈 값을 허용하면 아래 짝 검증이 wildcard 로 퇴화해 사용자가 보지도
+    않은 run 이 연장된다(codex 적대 리뷰 P1-1). 승인은 **사용자가 배너에서 본 그 run** 에만
+    붙어야 하므로, 현재 prompt 가 걸린 run 과 다르면 기록하지 않고 False 를 돌려준다.
+    """
+    rid = str(run_id or "").strip()
+    if not conversation_id or not rid:
+        return False
+    prompted_run = str(load_memory_kv(conn, conversation_id, "timeout_ext_run_id") or "").strip()
+    if prompted_run and prompted_run != rid:
+        return False  # 배너가 가리키던 run 이 이미 교체됨 — 승인 대상 불일치.
+    save_memory_kv(conn, conversation_id, "timeout_ext_granted", "1")
+    save_memory_kv(conn, conversation_id, "timeout_ext_run_id", rid)
+    save_memory_kv(conn, conversation_id, "timeout_ext_granted_at", utc_now_iso())
+    return True
+
+
+def _timeout_extension_granted(conn, conversation_id: str, run_id: str) -> bool:
+    """이 run 에 대한 연장 승인이 있는지. 실패는 fail-safe(승인 없음)로 흡수."""
+    rid = str(run_id or "").strip()
+    if not conversation_id or not rid:
+        return False
+    try:
+        flag = load_memory_kv(conn, conversation_id, "timeout_ext_granted")
+        if str(flag or "").strip() not in ("1", "true", "yes"):
+            return False
+        ext_run = str(load_memory_kv(conn, conversation_id, "timeout_ext_run_id") or "").strip()
+        # 빈 ext_run 을 '일치'로 보면 정리 중이거나 유실된 상태가 wildcard 승인이 된다 —
+        # 정확히 같은 run 일 때만 승인으로 인정한다(엄격 비교).
+        return ext_run == rid
+    except Exception:
+        return False
+
+
+def timeout_extension_state(conn, conversation_id: str) -> dict:
+    """`/api/ask_status`·`/api/ask_result` 스냅샷용 연장 상태.
+
+    run_id 는 그대로 실어 보내고 **짝 검증은 소비측(프론트)이 현재 run 과 대조**한다 —
+    스냅샷 빌더는 자기가 어느 run 을 그리는지 이미 알고 있으므로 여기서 거르지 않는다.
+    """
+    empty = {"prompted": False, "granted": False, "deadline_at": "", "run_id": ""}
+    if not conversation_id:
+        return empty
+    try:
+        prompted = str(load_memory_kv(conn, conversation_id, "timeout_ext_prompted") or "").strip()
+        granted = str(load_memory_kv(conn, conversation_id, "timeout_ext_granted") or "").strip()
+        return {
+            "prompted": prompted in ("1", "true", "yes"),
+            "granted": granted in ("1", "true", "yes"),
+            "deadline_at": str(load_memory_kv(conn, conversation_id, "timeout_ext_deadline_at") or "").strip(),
+            "run_id": str(load_memory_kv(conn, conversation_id, "timeout_ext_run_id") or "").strip(),
+        }
+    except Exception:
+        return empty
+
+
+def _clear_timeout_extension(conn, conversation_id: str, run_id: str = "") -> None:
+    """run terminal 시 정리. run_id 지정 시 *다른* run 을 겨냥한 신호는 남긴다
+    (_clear_cancel_request 와 동일 사유 — 늦게 끝난 run 이 새 run 의 승인을 지우지 않게)."""
+    if not conversation_id:
+        return
+    rid = str(run_id or "").strip()
+    if rid:
+        try:
+            ext_run = str(load_memory_kv(conn, conversation_id, "timeout_ext_run_id") or "").strip()
+        except Exception:
+            ext_run = ""
+        if ext_run and ext_run != rid:
+            return
+    save_memory_kv(conn, conversation_id, "timeout_ext_prompted", "")
+    save_memory_kv(conn, conversation_id, "timeout_ext_granted", "")
+    save_memory_kv(conn, conversation_id, "timeout_ext_run_id", "")
+    save_memory_kv(conn, conversation_id, "timeout_ext_prompted_at", "")
+    save_memory_kv(conn, conversation_id, "timeout_ext_granted_at", "")
+    save_memory_kv(conn, conversation_id, "timeout_ext_deadline_at", "")
+
+
 def _clear_delete_request(conn, conversation_id: str) -> None:
     save_memory_kv(conn, conversation_id, "delete_requested", "")
     save_memory_kv(conn, conversation_id, "delete_run_id", "")

@@ -1,6 +1,6 @@
 {
- "total_routes": 221,
- "api_routes": 220,
+ "total_routes": 222,
+ "api_routes": 221,
  "ordered": [
   {
    "path": "/static",
@@ -289,6 +289,13 @@
   },
   {
    "path": "/api/finalize",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/extend",
    "methods": [
     "POST"
    ],
