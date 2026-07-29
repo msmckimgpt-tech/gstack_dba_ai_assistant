@@ -1790,3 +1790,25 @@ honesty false positive)의 표면이 함께 넓어진다. 매니페스트를 예
 - Critical issue: 구분선 소실 우려는 **반증**(헤더가 자체 `border-bottom` 보유). 그러나 참조 범위를 대화 전량으로 넓히면서 그 사실을 알리던 유일한 UI(토글+토스트)를 함께 제거해 사용자가 노출 범위를 알 길이 없어졌고, 디자인 정본 `DESIGN-entry-points.md` §4.3 이 삭제된 컨트롤을 규정한 채 남았다.
 - 조치: `.attach-side-panel-note` 안내 1줄 신설(첨부 존재 시 노출) · DESIGN-entry-points.md §4.3 을 제거·대체·× 실삭제 계약으로 재작성.
 - Human Approval Needed: no
+
+## REV-20260729T152000-attach-list-delete [SUBAGENT:ux] — BLOCK → 해소 (권한 1건 사용자 판단 이월)
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1520-attach-list-delete
+- Trigger: UI·button 추가 / 삭제 어포던스
+- Timestamp: 2026-07-29T15:35:00+09:00
+- Verdict: BLOCK (조치 후 해소 — 권한 축은 안전판 + 이월)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T062000Z-ux.md
+- Critical issue: ① 목록 × 가 반환값을 버려 composer bucket 미갱신 → 삭제 후 추가 업로드 시 지운 파일이 pill 로 부활. ② 백엔드 삭제 권한이 업로더가 아니라 "대화 소유 OR 그룹 멤버" 라, 목록 × 상시 노출이 그룹에서 타인 파일 삭제를 한 클릭 거리로 만든다(업로더 신호·restore UI 부재). ③ 권한 거부가 404 라 403 분기는 죽은 코드.
+- 조치: ① bucket 정리를 공통 삭제 경로에 편입 ② **1:1 대화에서만 목록 × 노출**(fail-closed) — 근본 해소는 인가 정책 결정이라 사용자 판단으로 이월 ③ 404/403 동시 처리.
+- Human Approval Needed: **yes** — 그룹 대화의 첨부 삭제 권한을 업로더 기준으로 좁힐지 여부(현행: 멤버 전원 가능, feature-0009 열람/공유 경계 재사용).
+
+## REV-20260729T152000-attach-list-delete [SUBAGENT:design] — CONCERN → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1520-attach-list-delete
+- Trigger: layout·visual / 행 구성·위계
+- Timestamp: 2026-07-29T15:35:00+09:00
+- Verdict: CONCERN (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T062000Z-design.md
+- Critical issue: 삭제 버튼이 `.attach-list-item-info` 폭을 28px(패널 최소폭에선 -21%) 빼앗는데 `.attach-list-item-meta` 에 말줄임 방어가 없어 `version_count>1` 행의 메타줄이 2줄로 터지고, 이름줄 배지(`v2 · AI 수정`)는 말줄임에 먹혀 사라진다. 시각 위계·테마는 PASS(`.pill-remove` 관용구 정합, 콘솔 LIGHT-ONLY).
+- 조치: meta 에 `overflow/text-overflow/white-space` 3종 추가 · 이름줄을 flex 로 분리해 텍스트만 말줄임하고 배지는 `flex-shrink:0` 로 보존.
+- Human Approval Needed: no

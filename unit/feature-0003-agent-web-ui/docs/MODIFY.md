@@ -1586,3 +1586,13 @@ Cross-ref: REVIEW `REV-20260729T113000-model-pick-postdeploy` · test-runs.d 동
 
 Cross-ref: DECISIONS `ADR-20260729T140200-attach-full-scope` (D16 supersede) ·
 REVIEW `REV-20260729T140200-attach-full-scope` · TASK `20260729T1402-attach-full-scope`.
+
+## CHG-20260729T152000-attach-list-delete — 첨부 목록 행 삭제(×) 추가
+
+`static/app.js`: `_removeAttachmentPill` 의 삭제 경로를 `_deleteConversationAttachment(id,
+filename)` 로 추출(성공 여부 반환) · `_loadConversationAttachmentList` 의 각 행에
+`.attach-list-item-del`(×) 버튼 + 핸들러 추가. `static/styles.css`: `.attach-list-item-del`
+규칙(기본 muted / hover danger / disabled) 추가. 백엔드·API·RBAC 무변경 — 기존
+`DELETE /api/attachments/{id}` 재사용.
+
+Cross-ref: TASK `20260729T1520-attach-list-delete` · REVIEW `REV-20260729T152000-attach-list-delete`.

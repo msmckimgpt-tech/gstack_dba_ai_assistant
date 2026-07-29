@@ -9646,26 +9646,47 @@ async function _removeAttachmentPill(attachmentId) {
     return;
   }
 
-  if (!window.confirm(
-    `"${item.name}" 을(를) 이 대화에서 삭제할까요?\n` +
-    `삭제하면 AI 가 더 이상 이 파일을 참조하지 않습니다.`
-  )) return;
-
-  try {
-    await apiFetch(`/api/attachments/${encodeURIComponent(item.id)}`, { method: "DELETE" });
-  } catch (e) {
-    // 업로더 본인만 삭제할 수 있다(conversation.attachment.upload.{own,any}).
-    showToast(e && e.status === 403 ? "이 첨부를 삭제할 권한이 없습니다." : "첨부를 삭제하지 못했습니다.", true);
-    return;
-  }
+  if (!(await _deleteConversationAttachment(item.id, item.name))) return;
   const cur = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
   if (cur >= 0) bucket.items.splice(cur, 1);
   _renderAttachmentPills();
+}
+
+// 첨부 실삭제 공통 경로 — composer pill 의 × 와 첨부 목록 행의 × 가 같은 계약을 쓴다.
+// (feature-0003 attach-list-delete: 목록 뷰에는 삭제 수단이 없어, "필요 없는 파일은 × 로
+// 삭제하세요" 안내가 가리키는 컨트롤이 화면에 없던 불일치를 라이브 검증에서 발견했다.)
+// Returns: 삭제 성공 여부 (취소·실패는 false — caller 가 로컬 상태를 건드리지 않게).
+async function _deleteConversationAttachment(attachmentId, filename) {
+  if (!window.confirm(
+    `"${filename || "이 파일"}" 을(를) 이 대화에서 삭제할까요?\n` +
+    `삭제하면 AI 가 더 이상 이 파일을 참조하지 않습니다.`
+  )) return false;
+  try {
+    await apiFetch(`/api/attachments/${encodeURIComponent(attachmentId)}`, { method: "DELETE" });
+  } catch (e) {
+    // 접근 불가는 404 로 온다(존재 은폐, attachments.py) — 403 도 함께 받아 문구를 맞춘다.
+    const st = e && e.status;
+    showToast(
+      st === 403 || st === 404 ? "이 첨부를 삭제할 수 없습니다(권한 또는 이미 삭제됨)." : "첨부를 삭제하지 못했습니다.",
+      true,
+    );
+    return false;
+  }
+  // 로컬 composer bucket 에서도 뺀다 — 여기서 빠뜨리면 삭제 후 새 파일을 하나 더 올리는
+  // 순간(_renderAttachmentPills 재렌더) 방금 지운 파일이 pill 로 되살아난다(적대 리뷰 ux BLOCK).
+  try {
+    const bucket = state.composerAttachments.byConv[_composerAttachmentKey(state.activeConversationId)];
+    if (bucket) {
+      const i = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
+      if (i >= 0) bucket.items.splice(i, 1);
+    }
+  } catch (_e) { /* 로컬 정리는 best-effort — 서버 삭제는 이미 성공 */ }
   showToast("첨부를 삭제했습니다.");
   // 사이드패널 목록도 서버 ground truth 로 다시 맞춘다(버전 배지·개수 정합).
   if (state.activeConversationId) {
     _loadConversationAttachmentList(state.activeConversationId).catch(() => {});
   }
+  return true;
 }
 
 async function _uploadComposerAttachment(file) {
@@ -10053,6 +10074,21 @@ function _renderAttachmentVersionsBox(box, versions) {
   });
 }
 
+// feature-0003 attach-list-delete (적대 리뷰 ux/design BLOCK — 안전판): 첨부 목록 뷰의 삭제(×)는
+// **1:1·이어받기 대화에서만** 노출한다. 백엔드 삭제 권한은 업로더가 아니라 "대화 소유자 또는 그룹
+// 멤버"(`_account_can_access_attachment` — feature-0009 가 *열람/공유* 경계로 설계한 함수)라, 그룹
+// 대화에서 목록에 ×를 상시 노출하면 아무 멤버나 남이 올린 파일을 한 번의 클릭으로 지울 수 있고
+// 목록·confirm 어디에도 업로더 신호가 없다(restore UI 도 없음). 그룹에서는 방금 자기가 올린 파일의
+// pill × 경로만 남긴다. 근본 해소(삭제 권한을 업로더 기준으로 좁힐지)는 인가 정책 결정이라
+// 사용자 판단 대상으로 표면화한다.
+function _canDeleteFromAttachList() {
+  try {
+    return !currentConversation()?.is_group;
+  } catch (_e) {
+    return false;  // 판별 불가 시 노출하지 않는다(파괴적 동작 fail-closed)
+  }
+}
+
 async function _loadConversationAttachmentList(convId) {
   const listEl = document.getElementById("attachSidePanelList");
   if (!listEl || !convId) return;
@@ -10096,13 +10132,28 @@ async function _loadConversationAttachmentList(convId) {
       item.innerHTML = `
         <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
         <div class="attach-list-item-info">
-          <div class="attach-list-item-name" title="${escapeHtml(a.original_filename || "")}">${escapeHtml(a.original_filename || "알 수 없음")}${verBadge}</div>
+          <div class="attach-list-item-name" title="${escapeHtml(a.original_filename || "")}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}</div>
           <div class="attach-list-item-meta">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}${verToggle}</div>
         </div>
         <button class="attach-list-item-dl" title="다운로드" data-id="${a.id}">⬇</button>
+        ${_canDeleteFromAttachList() ? `<button class="attach-list-item-del" title="이 대화에서 삭제" aria-label="첨부 삭제" data-id="${a.id}">×</button>` : ""}
       `;
       const dlBtn = item.querySelector(".attach-list-item-dl");
       dlBtn.addEventListener("click", () => _downloadAttachmentById(a.id, a.original_filename, dlBtn));
+      // feature-0003 attach-list-delete: 참조 범위 안내("필요 없는 파일은 × 로 삭제하세요")가
+      // 가리키는 컨트롤. pill 의 × 와 동일한 실삭제 경로를 쓴다.
+      const delBtn = item.querySelector(".attach-list-item-del");
+      if (delBtn) {
+        delBtn.addEventListener("click", async () => {
+          delBtn.disabled = true;
+          try {
+            await _deleteConversationAttachment(a.id, a.original_filename);
+          } finally {
+            // 성공 시 목록이 재로드돼 이 노드는 detached 다 — 그 경우 setter 는 무해한 no-op.
+            delBtn.disabled = false;
+          }
+        });
+      }
       entry.appendChild(item);
 
       // 버전 체인이 2개 이상이면 펼침 토글 — lazy 로 /versions 를 불러 이력 박스를 토글한다.

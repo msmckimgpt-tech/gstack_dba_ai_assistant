@@ -6989,3 +6989,42 @@ Cross-ref: FUNCTION `REQ-20260729-attach-full-scope` · DECISIONS
       테스트가 라이브 미실행 분기(MySQL 폴백)만 검사 / 리뷰어 지시문 테스트 tautology /
       inline-honesty 의 `"re-attach"` 가 새 금지문에 걸려 의미 반전. 전부 교정 + PG 경로 테스트
       3건·대규모 예산 테스트 2건 신설 (신설·수정 테스트 50건 PASS)
+
+## 20260729T1520-attach-list-delete — 첨부 목록 행에 삭제(×) 추가 — 안내 문구와 화면의 불일치 해소 (Minor §12.3 frontend-only)
+
+선행 `20260729T1402-attach-full-scope` 의 **POST-DEPLOY 라이브 검증에서 발견**한 결함. 배포본
+화면(PB-0008, 실 Windows Chrome)에서 첨부 사이드패널을 열면 안내는 "필요 없는 파일은 × 로
+삭제하세요" 라고 하는데, 그 뷰(`_loadConversationAttachmentList` 가 그리는 `.attach-list-item`)
+에는 **다운로드(⬇) 버튼만 있고 ×가 없다**. ×를 가진 pill 뷰(`_renderAttachmentPills`)는 같은
+컨테이너를 공유하며 방금 첨부한 직후에만 그려진다 — 즉 안내가 가리키는 컨트롤이 화면에 없는
+구간이 존재했다.
+
+### 진행
+- [x] 삭제 로직을 `_deleteConversationAttachment(id, filename)` 공통 함수로 추출 —
+      confirm → `DELETE /api/attachments/{id}` → 토스트 → 목록 재동기화. pill 의 ×와 목록의 ×가
+      같은 계약을 쓴다(성공 여부를 반환해 caller 가 로컬 상태를 조건부로 갱신)
+- [x] `.attach-list-item` 행에 `.attach-list-item-del`(×) 추가 — 다운로드와 같은 크기·리듬,
+      기본 muted / hover 시에만 danger 노출(파괴적 동작의 오클릭 유인 최소화), 클릭 중 disabled
+- [x] 라이브 재검증 (PB-0008)
+
+Cross-ref: 선행 TASK `20260729T1402-attach-full-scope` · REVIEW `REV-20260729T152000-attach-list-delete`
+· MODIFY `CHG-20260729T152000-attach-list-delete`
+
+### 적대 패널 후속 조치 (§18.8 ux·design, 2026-07-29 15:35) — 1 BLOCK + 1 CONCERN 해소, 1건 사용자 판단 표면화
+- [x] **ux BLOCK** — 목록 ×가 서버 삭제만 하고 composer bucket 을 갱신하지 않아, 삭제 후 파일을
+      하나 더 올리면(`_renderAttachmentPills` 재렌더) 지운 파일이 pill 로 되살아났다.
+      `_deleteConversationAttachment` 안에서 bucket 정리(best-effort, 서버 삭제는 이미 성공)
+- [x] **ux MINOR** — 권한 거부가 403 이 아니라 **404**(존재 은폐)로 와 403 분기가 죽은 코드였다.
+      404 도 같은 문구로 처리
+- [x] **design CONCERN** — 행에 버튼이 하나 늘어 info 가용폭이 줄었는데 `.attach-list-item-meta`
+      에 말줄임 방어가 없어 "버전 N개 ▾" 행이 2줄로 터지고, 이름줄의 `v2 · AI 수정` 배지는
+      말줄임에 먹혀 사라졌다. meta 에 nowrap+ellipsis, 이름줄을 flex 로 분리
+      (`.attach-list-item-name-text` 만 잘리고 배지는 `flex-shrink:0`)
+- [x] **ux BLOCK(권한) — 안전판 적용 + 사용자 판단 표면화**: 백엔드 삭제 권한은 업로더가 아니라
+      **"대화 소유자 또는 그룹 멤버"** (`_account_can_access_attachment` — feature-0009 가 *열람/공유*
+      경계로 설계한 함수를 삭제에도 재사용). 목록에 ×를 상시 노출하면 그룹 대화에서 아무 멤버나
+      남의 파일을 한 클릭으로 지울 수 있고, 목록·confirm 어디에도 업로더 신호가 없으며 restore UI 도
+      없다. **이번 cycle 안전판**: 목록 ×를 **1:1·이어받기 대화에서만** 노출(`_canDeleteFromAttachList`,
+      판별 불가 시 미노출=fail-closed). 그룹에서는 방금 자기가 올린 파일의 pill × 경로만 남는다.
+      **근본 해소(삭제 권한을 업로더 기준으로 좁힐지)는 인가 정책 결정이라 사용자 판단 대상** —
+      본 cycle 범위 밖으로 남긴다(REVIEW 에 명시)
