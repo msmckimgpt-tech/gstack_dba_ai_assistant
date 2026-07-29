@@ -544,3 +544,22 @@ source_of_truth: true
 - Impact: 제품 동작 무변경(검증 기록만). 라이브 데이터에는 검증용 질문 1건의 턴과 그에 따른
   리뷰 판정 1건(`id=142`)이 추가됐다.
 - Rollback Notes: 문서 되돌리기 외 없음.
+
+## CHG-20260729-0006
+- Date: 2026-07-29
+- Related Requirement: TASK-20260729T142000-rounds-visual-fixes
+- Summary: 라이브 다회차 표본(10단계) 육안 검증에서 드러난 회차 표시 결함 2건 교정.
+  - **폐기 사유가 접힌 요약에 없음**: `note`(revise_failed 등)를 본문에만 넣어, 회차가 10개로
+    늘면 목록을 훑는 것만으로는 종료 원인을 알 수 없었다. 요약 라인에도 표기.
+  - **회차 시각이 전부 동일**: 원장은 루프 종료 후 배치 기록이라 컬럼 DEFAULT `now()` 를 쓰면
+    10개 회차가 같은 시각이 된다 — 콘솔이 회차별 시각을 보여주는데 값이 전부 같아 "회차별
+    소요를 알 수 있다" 고 오도한다. 회차 append 시점의 실제 UTC 시각을 담아
+    `COALESCE(%s, now())` 로 기록하고(미지정 호출부는 DEFAULT 폴백), **기존 배치 기록**은
+    시각을 숨기되 숨긴 사실을 1줄 안내한다(조용한 제거 금지 — codex 리뷰 P2).
+- Files: feature-0002 `src/modules/redteam.py`(`_now_utc` 신설 · rounds_ledger 8개 append 에
+  `at` · `_insert_review_rounds` created_at 바인딩), `tests/test_redteam.py`(+2);
+  feature-0003 `src/static/admin.js`(요약 사유 표기 · 시각 표시 게이팅 · 안내);
+  feature-0021 `docs/{TASK,MODIFY,REVIEW,TEST}.md`
+- Impact: 마이그레이션 없음(기존 `created_at` 컬럼에 값을 명시할 뿐). 기존 행은 소급되지
+  않으며(배치 시각 그대로), 새 회차부터 실제 시각이 남는다. 응답 스키마 무변경.
+- Rollback Notes: 코드 롤백만으로 충분 — 되돌리면 새 회차도 DEFAULT `now()`(배치 시각)로 남는다.

@@ -1904,8 +1904,8 @@ def test_insert_review_rounds_is_single_statement(monkeypatch):
                                   rounds=rounds)
     assert "executemany" not in captured
     assert captured["sql"].count("::jsonb") == 3       # VALUES 튜플 3개
-    assert len(captured["params"]) == 3 * 14           # 평탄화된 바인딩
-    assert captured["params"][0] == 9 and captured["params"][14] == 9
+    assert len(captured["params"]) == 3 * 15           # 평탄화된 바인딩(created_at 포함)
+    assert captured["params"][0] == 9 and captured["params"][15] == 9
 
 
 def test_record_review_rounds_failure_keeps_summary(monkeypatch):
@@ -1954,3 +1954,59 @@ def test_record_review_rounds_failure_keeps_summary(monkeypatch):
         is_group=False, rounds=[{"round_index": 0, "phase": "review"}])
     assert state["commits"] == 1          # 요약 행은 커밋됨
     assert state["rolled_back"] is True   # 원장만 롤백
+
+
+def test_rounds_ledger_stamps_each_round_time(monkeypatch):
+    """회차마다 실제 종료 시각(`at`)이 붙는다 — 원장은 배치 기록이라 컬럼 DEFAULT 를 쓰면
+    모든 회차가 같은 시각이 되어, 콘솔이 회차별 시각을 보여주는데 값이 전부 동일해진다."""
+    _settings(monkeypatch)
+    seen = _capture_record(monkeypatch)
+    calls = {"n": 0}
+
+    def fake_review(*a, **kw):
+        calls["n"] += 1
+        return ({"verdict": "revise", "findings": [_block_finding()]}
+                if calls["n"] == 1 else {"verdict": "pass", "findings": []})
+
+    monkeypatch.setattr(redteam, "run_review", fake_review)
+    redteam.orchestrate_review(
+        question="q", draft_answer="draft", steps=[], executed_sql="",
+        conversation_id="c", run_id="r", reasoning_level="high", is_group=False,
+        revise_fn=lambda i, d=None: "revised answer")
+    rounds = seen["rounds"]
+    assert all(r.get("at") is not None for r in rounds)
+    # 진행 순서대로 단조 증가(같은 초여도 역행하지 않는다).
+    stamps = [r["at"] for r in rounds]
+    assert stamps == sorted(stamps)
+
+
+def test_insert_review_rounds_binds_created_at_with_default_fallback():
+    """`at` 이 있으면 그 시각을, 없으면 COALESCE 로 컬럼 DEFAULT(now())로 폴백."""
+    captured = {}
+
+    class _Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params):
+            captured["sql"] = sql
+            captured["params"] = params
+
+    class _PG:
+        def cursor(self):
+            return _Cur()
+
+        def commit(self):
+            pass
+
+    stamp = redteam._now_utc()
+    redteam._insert_review_rounds(
+        _PG(), review_id=3, conversation_id="c", run_id="r",
+        rounds=[{"round_index": 0, "phase": "review", "at": stamp},
+                {"round_index": 1, "phase": "revise"}])
+    assert "created_at" in captured["sql"] and "COALESCE(%s, now())" in captured["sql"]
+    assert captured["params"][14] == stamp     # 1행: 명시 시각
+    assert captured["params"][29] is None      # 2행: NULL → DEFAULT 폴백

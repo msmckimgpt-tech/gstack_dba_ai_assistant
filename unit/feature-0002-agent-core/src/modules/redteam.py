@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 import shared.runtime_settings as _rts
@@ -1035,6 +1036,12 @@ def realign_answer(text: str, *, question: str, thread_goal: str = "",
     return candidate, info
 
 
+def _now_utc() -> datetime:
+    """회차 원장의 `created_at` 용 현재 UTC 시각 (원장은 종료 시 배치 기록이라 컬럼
+    DEFAULT now() 를 쓰면 모든 회차가 같은 시각이 된다 — `_insert_review_rounds` 참조)."""
+    return datetime.now(timezone.utc)
+
+
 def _insert_review_rounds(pg, *, review_id: int, conversation_id: str | None,
                           run_id: str | None, rounds: list[dict[str, Any]]) -> None:
     """회차 단계 원장(agent_runtime.redteam_review_rounds) 배치 INSERT — 0048 migration.
@@ -1047,7 +1054,13 @@ def _insert_review_rounds(pg, *, review_id: int, conversation_id: str | None,
     커넥션은 `shared.db._pg_connect(autocommit=True)` 라 문(statement) 하나가 곧 트랜잭션
     하나다. executemany 는 행마다 개별 커밋이라 중간 실패 시 회차가 **부분 저장**되고
     (감사 원장이 조용히 불완전해진다) rollback 도 그것을 되돌리지 못한다. 단일 statement
-    는 all-or-nothing 이라 "전부 남거나, 요약만 남거나" 두 상태만 존재한다."""
+    는 all-or-nothing 이라 "전부 남거나, 요약만 남거나" 두 상태만 존재한다.
+
+    **`created_at` 은 각 회차가 끝난 실제 시각을 명시로 넣는다** (컬럼 DEFAULT now() 미사용):
+    원장은 루프 종료 후 한 번에 기록되므로 DEFAULT 를 쓰면 10개 회차가 전부 **배치 시각**으로
+    같아진다 — 콘솔이 회차마다 시각을 보여주는데 값이 모두 동일해, 회차별 소요를 알 수 있는
+    것처럼 오도한다(라이브 10단계 표본에서 실측). 회차 append 시점의 UTC 시각(`at`)이 있으면
+    그것을, 없으면 NULL 을 넘겨 컬럼 DEFAULT 로 폴백한다."""
     params = []
     for r in rounds:
         fl = r.get("findings") or []
@@ -1063,17 +1076,21 @@ def _insert_review_rounds(pg, *, review_id: int, conversation_id: str | None,
             int(r.get("tool_rounds") or 0),
             (int(r["answer_chars"]) if r.get("answer_chars") is not None else None),
             (str(r["note"])[:64] if r.get("note") else None),
+            r.get("at"),
         ))
     if not params:
         return
-    row_tpl = "(%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)"
+    # created_at 은 NULL 이면 컬럼 DEFAULT(now())로 폴백 — `at` 미지정 호출부 하위호환.
+    row_tpl = ("(%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, "
+               "COALESCE(%s, now()))")
     flat: list[Any] = [v for row in params for v in row]
     with pg.cursor() as cur:
         # findings 는 JSONB — 요약 INSERT 와 동일한 명시 `::jsonb` cast 규약.
         cur.execute(
             "INSERT INTO agent_runtime.redteam_review_rounds "
             "(review_id, conversation_id, run_id, round_index, phase, verdict, findings, "
-            " block_count, warn_count, revise_method, revise_axis, tool_rounds, answer_chars, note) "
+            " block_count, warn_count, revise_method, revise_axis, tool_rounds, answer_chars, note, "
+            " created_at) "
             "VALUES " + ", ".join([row_tpl] * len(params)),
             flat,
         )
@@ -1270,6 +1287,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
         rounds_ledger: list[dict[str, Any]] = [{
             "round_index": 0, "phase": "review", "verdict": review["verdict"],
             "findings": review["findings"], "answer_chars": len(draft_answer),
+            "at": _now_utc(),
         }]
 
         final_answer = draft_answer
@@ -1384,6 +1402,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                     "round_index": _round_no, "phase": "revise",
                     "revise_method": _round_method, "revise_axis": _round_axis,
                     "tool_rounds": rd_round_tool_rounds, "note": "revise_failed",
+                    "at": _now_utc(),
                 })
                 break  # 수정 실패 → 직전 답변 유지(fail-open)
             revised = revised.strip()
@@ -1396,7 +1415,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                     "round_index": _round_no, "phase": "revise",
                     "revise_method": _round_method, "revise_axis": _round_axis,
                     "tool_rounds": rd_round_tool_rounds, "answer_chars": len(revised),
-                    "note": "no_progress",
+                    "note": "no_progress", "at": _now_utc(),
                 })
                 break
             # 붕괴 가드 — 수정본이 **최초 초안**의 일정 비율 미만으로 쪼그라들면 채택하지 않는다.
@@ -1413,7 +1432,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                     "round_index": _round_no, "phase": "revise",
                     "revise_method": _round_method, "revise_axis": _round_axis,
                     "tool_rounds": rd_round_tool_rounds, "answer_chars": len(revised),
-                    "note": "revise_collapsed",
+                    "note": "revise_collapsed", "at": _now_utc(),
                 })
                 break
             # ── 여기서부터 이 라운드의 산출물이 채택된다 ──
@@ -1446,7 +1465,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 "round_index": _round_no, "phase": "revise",
                 "revise_method": ("rederive" if rd_round_applied else "rewrite"),
                 "revise_axis": _round_axis, "tool_rounds": rd_round_tool_rounds,
-                "answer_chars": len(revised),
+                "answer_chars": len(revised), "at": _now_utc(),
             })
             final_answer = revised
             revision_applied = True
@@ -1457,6 +1476,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 stop_reason = "unverified"
                 rounds_ledger.append({
                     "round_index": revisions_done, "phase": "verify", "note": "unverified",
+                    "at": _now_utc(),
                 })
                 break
             if progress_fn is not None:
@@ -1475,13 +1495,14 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 stop_reason = "verify_error"
                 rounds_ledger.append({
                     "round_index": revisions_done, "phase": "verify", "note": "verify_error",
+                    "at": _now_utc(),
                 })
                 break  # 재검증 실패(fail-open) → 마지막 수정본 채택
             verify_verdict = verify["verdict"]
             rounds_ledger.append({
                 "round_index": revisions_done, "phase": "verify",
                 "verdict": verify["verdict"], "findings": verify["findings"],
-                "answer_chars": len(final_answer),
+                "answer_chars": len(final_answer), "at": _now_utc(),
             })
             current_review = verify  # 다음 루프 판정 갱신(pass 면 종료, revise 면 재수정)
 

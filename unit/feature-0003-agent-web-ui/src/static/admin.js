@@ -2771,7 +2771,9 @@ function _reasoningRoundLabel(r) {
 }
 
 // 회차 1단계 — summary(회차·단계·판정 요약) + 본문(지적 목록 또는 수정 방식).
-function _reasoningRoundHtml(esc, r) {
+// showAt=false 면 회차 시각을 렌더하지 않는다 — 원장 도입 초기 기록은 루프 종료 시
+// 배치 INSERT 라 회차 시각이 전부 같다(같은 값 반복은 정보가 있는 것처럼 오도한다).
+function _reasoningRoundHtml(esc, r, showAt) {
   const findings = Array.isArray(r.findings) ? r.findings : [];
   const nBlock = findings.length
     ? findings.filter((f) => f && f.severity === "BLOCK").length : Number(r.block_count || 0);
@@ -2811,8 +2813,11 @@ function _reasoningRoundHtml(esc, r) {
       ? findings.map((f) => _reasoningFindingHtml(esc, f)).join("")
       : '<div class="reasoning-round-empty">이 단계에 기록된 지적이 없습니다.</div>';
   }
-  if (note && r.phase !== "revise") bits.push(note);
-  const at = r.created_at ? String(r.created_at).replace("T", " ").slice(11, 19) : "";
+  // 폐기 사유는 **접힌 요약에도** 붙인다 — 회차가 10단계까지 늘면 목록을 훑는 것만으로
+  // "왜 여기서 멈췄나" 가 보여야 한다(라이브 다회차 표본에서 실측된 가독성 결함: 사유가
+  // 본문에만 있어 그 회차를 펼쳐야 알 수 있었다).
+  if (note) bits.push(note);
+  const at = (showAt && r.created_at) ? String(r.created_at).replace("T", " ").slice(11, 19) : "";
   return `<details class="reasoning-round reasoning-round--${state}">
     <summary class="reasoning-round-summary">
       <span class="reasoning-round-label">${esc(_reasoningRoundLabel(r))}</span>
@@ -2832,10 +2837,18 @@ function _reasoningRoundsHtml(esc, it) {
   const truncated = it.rounds_truncated
     ? '<div class="reasoning-rounds-empty">회차가 많아 앞부분만 표시합니다 (원장에는 전부 기록되어 있습니다).</div>'
     : "";
+  // 회차 시각이 전부 동일하면(배치 기록된 초기 데이터) 시각을 숨긴다 — 서로 다른 값이
+  // 하나라도 있으면 회차별 실제 종료 시각이므로 표시한다.
+  const stamps = new Set(rounds.map((r) => r.created_at || ""));
+  const showAt = rounds.length === 1 || stamps.size > 1;
+  // 숨겼다는 사실은 **알린다** — 조용히 지우면 "시각이 원래 없다" 와 구분되지 않는다
+  // (codex 리뷰 P2, 프로젝트의 '무언의 절단 금지' 규약과 동일 계열).
+  const stampNote = showAt ? ""
+    : '<div class="reasoning-rounds-empty">회차 시각은 이 기록이 일괄 저장돼 전부 동일합니다 — 오해를 막기 위해 표시하지 않습니다(이후 기록부터 회차별 실제 시각).</div>';
   return `<div class="reasoning-rounds">
     <div class="reasoning-rounds-title">자가검증 · 재검증 회차 (${rounds.length}단계 · 진행 순서)</div>
-    ${rounds.map((r) => _reasoningRoundHtml(esc, r)).join("")}
-    ${truncated}
+    ${rounds.map((r) => _reasoningRoundHtml(esc, r, showAt)).join("")}
+    ${stampNote}${truncated}
   </div>`;
 }
 
