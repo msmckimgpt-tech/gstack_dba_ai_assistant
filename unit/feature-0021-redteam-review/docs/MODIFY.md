@@ -463,3 +463,21 @@ source_of_truth: true
   (`stop_reason` 은 기존 text 컬럼, 신규 값만 추가). 프론트는 라벨 1줄.
 - Rollback Notes: 커밋 revert. `REDTEAM_ANSWER_REALIGN=0` 은 realign(2차)만 끄므로 본 회귀와는
   무관하다 — 본 교정은 리뷰어 입력·앵커·가드 층이라 설정으로 우회되지 않는다.
+
+## CHG-20260729-0002
+- Date: 2026-07-29
+- Related Requirement: REQ-20260729T110000-review-request-context (라이브 측정 후속),
+  TASK-20260729T120000-review-continuation
+- Summary: CHG-20260729-0001 배포 후 **라이브 유도 측정**에서 드러난 반대 방향 과교정을 닫았다.
+  대화 요청을 받은 리뷰어가 "이전 턴에서 이미 전달한 리뷰를 이 답변이 다시 주지 않았다" 를
+  `completeness` BLOCK 으로 내는 현상(리뷰어는 이전 턴을 보지 못하므로 구조적으로 알 수 없다).
+  프롬프트에 continuation 규칙 추가 — "CONVERSATION REQUEST 는 이전 턴에서 이미(부분) 답변됐을
+  수 있다 / 짧은 후속 발화에 대한 타당한 continuation 은 정상 / `completeness` 는 답변이 아무
+  actionable 도 남기지 않을 때만".
+- 측정(동일 초안·모델·evidence, 리뷰어 판정만 반복): 과교정 **2/3 → 1/4**.
+- Files: `unit/feature-0002-agent-core/src/modules/redteam.py`(REDTEAM_REVIEW_PROMPT),
+  `unit/feature-0002-agent-core/tests/test_redteam.py`(+1),
+  `unit/feature-0021-redteam-review/docs/*`
+- Impact: 불필요한 수정 라운드 감소. 이 방향의 잔여 오판은 답변을 **늘리는** 쪽이라 붕괴 가드와
+  충돌하지 않는다(최악이라도 리뷰 재수록, 파괴 아님). 마이그레이션·프론트 변경 없음.
+- Rollback Notes: 프롬프트 문자열 revert.

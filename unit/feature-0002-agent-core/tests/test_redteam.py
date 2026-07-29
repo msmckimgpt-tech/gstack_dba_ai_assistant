@@ -1720,3 +1720,12 @@ def test_collapse_guard_allows_legitimate_shrink(monkeypatch):
         revise_fn=lambda i, d=None: trimmed)
     assert answer == trimmed and meta["stop_reason"] == "resolved"
     assert meta["revision_applied"] is True
+
+
+def test_review_prompt_allows_continuation_after_earlier_turns():
+    """과교정 가드(2026-07-29 라이브 A/B): 대화 요청을 준 뒤 리뷰어가 '이전 턴에서 이미 준
+    리뷰를 다시 내놓으라' 고 요구하던 반대 방향 오판(completeness BLOCK ×2/3)을 막는다."""
+    p = redteam.REDTEAM_REVIEW_PROMPT
+    assert "ALREADY have been answered" in p
+    assert "CONTINUATION" in p
+    assert "nothing actionable" in p
