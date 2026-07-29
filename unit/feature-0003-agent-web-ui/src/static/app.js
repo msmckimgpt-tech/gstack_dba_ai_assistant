@@ -9696,20 +9696,31 @@ function _renderAttachmentPills() {
       pill.appendChild(verBadge);
     }
 
-    const removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "pill-remove";
-    // feature-0003 attach-full-scope: 이 버튼은 이제 실제 삭제다(로컬 목록에서만 빼면 서버가
-    // 되살려 AI 가 계속 읽는다 — _removeAttachmentPill 주석 참조).
-    removeBtn.setAttribute("aria-label", "첨부 삭제");
-    removeBtn.title = "이 대화에서 삭제";
-    removeBtn.textContent = "×";
-    removeBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      _removeAttachmentPill(String(it.id));
-    });
-
-    pill.appendChild(removeBtn);
+    // feature-0003 attach-append-only (2026-07-29 사용자 결정): 대화의 첨부 목록은 **append-only**
+    // 다 — 한 번 올라간 파일은 대화에 남고 UI 에서 빼거나 지우지 않는다.
+    //
+    // ×를 붙이는 대상은 **서버에 아직 아무것도 만들지 않은 항목**뿐이다:
+    //   - `staged` : 첫 메시지 전송과 함께 올릴 예정 (아직 요청조차 안 함)
+    //   - `failed` : 업로드가 실패해 서버에 남은 것이 없음 (목록에서 치우기)
+    // `uploading` 은 **제외**한다 — 전송 중 요청을 실제로 중단시킬 수단이 없어(abort 미배선),
+    // ×를 달면 "취소"라 해놓고 파일은 그대로 저장되는 거짓 어포던스가 된다(적대 리뷰 ux BLOCK).
+    // 삭제 수단이 없는 append-only 에서 그 거짓말의 대가는 "회수 불가"라 더 크다.
+    // `ready` 는 이미 대화에 append 된 첨부 — 어떤 경우에도 제거하지 않는다.
+    const isDiscardable = it.status === "staged" || it.status === "failed";
+    if (isDiscardable) {
+      const discardBtn = document.createElement("button");
+      discardBtn.type = "button";
+      discardBtn.className = "pill-remove";
+      const _label = it.status === "failed" ? "실패한 항목 치우기" : "첨부 예정 취소";
+      discardBtn.setAttribute("aria-label", _label);
+      discardBtn.title = _label;
+      discardBtn.textContent = "×";
+      discardBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        _discardPendingAttachmentPill(String(it.id));
+      });
+      pill.appendChild(discardBtn);
+    }
     return pill;
   };
 
@@ -9730,68 +9741,24 @@ function _renderAttachmentPills() {
   }
 }
 
-async function _removeAttachmentPill(attachmentId) {
-  // UX-COMPACT: x 버튼 → 목록에서 제거.
-  //
-  // feature-0003 attach-full-scope (적대 리뷰 ux/design BLOCK): 참조 스코프가 서버에서 대화 전체로
-  // 해소되면서, **로컬 목록에서만 지우는 것은 거짓말이 됐다** — 다음 전송에서 서버가 DB 로부터
-  // 그 첨부를 그대로 되살려 assistant 가 계속 읽는다. 그래서 서버에 실재하는 첨부의 ×는 실제
-  // 삭제(soft-delete)로 연결한다. 파괴적 행동이므로 확인을 받는다.
+// feature-0003 attach-append-only (2026-07-29 사용자 결정): 대화의 첨부 목록은 **append-only** 다.
+// 한 번 대화에 올라간 파일은 UI 에서 빼지도 지우지도 않는다 — 첨부는 그 대화의 근거 기록이고,
+// assistant 는 항상 그 전체를 참조 스코프로 본다(attach-full-scope). 따라서 본 함수가 다루는 것은
+// **아직 대화에 들어가지 않은 항목**뿐이다: 업로드 중이거나 실패한 로컬 placeholder.
+// (선행 cycle 에서 잠시 실삭제로 연결했던 경로는 사용자 의도가 아니어서 되돌렸다 —
+//  `DELETE /api/attachments/{id}` 엔드포인트 자체는 백엔드에 남아 있으나 UI 는 호출하지 않는다.)
+function _discardPendingAttachmentPill(attachmentId) {
   const key = _composerAttachmentKey(state.activeConversationId);
   const bucket = state.composerAttachments.byConv[key];
   if (!bucket) return;
   const idx = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
   if (idx < 0) return;
   const item = bucket.items[idx];
-
-  // 업로드 중·실패한 로컬 항목(음수 id 또는 미완료)은 서버에 없으므로 목록에서만 뺀다.
-  if (!(Number(item.id) > 0) || item.status !== "ready") {
-    bucket.items.splice(idx, 1);
-    _renderAttachmentPills();
-    return;
-  }
-
-  if (!(await _deleteConversationAttachment(item.id, item.name))) return;
-  const cur = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
-  if (cur >= 0) bucket.items.splice(cur, 1);
+  // 렌더 게이트(isDiscardable)와 **같은 판정**을 함수에서도 강제한다 — 어떤 경로로 호출돼도
+  // 서버에 실물이 생긴 항목(ready, 그리고 중단시킬 수 없는 uploading)은 목록에서 빼지 않는다.
+  if (item.status !== "staged" && item.status !== "failed") return;
+  bucket.items.splice(idx, 1);
   _renderAttachmentPills();
-}
-
-// 첨부 실삭제 공통 경로 — composer pill 의 × 와 첨부 목록 행의 × 가 같은 계약을 쓴다.
-// (feature-0003 attach-list-delete: 목록 뷰에는 삭제 수단이 없어, "필요 없는 파일은 × 로
-// 삭제하세요" 안내가 가리키는 컨트롤이 화면에 없던 불일치를 라이브 검증에서 발견했다.)
-// Returns: 삭제 성공 여부 (취소·실패는 false — caller 가 로컬 상태를 건드리지 않게).
-async function _deleteConversationAttachment(attachmentId, filename) {
-  if (!window.confirm(
-    `"${filename || "이 파일"}" 을(를) 이 대화에서 삭제할까요?\n` +
-    `삭제하면 AI 가 더 이상 이 파일을 참조하지 않습니다.`
-  )) return false;
-  try {
-    await apiFetch(`/api/attachments/${encodeURIComponent(attachmentId)}`, { method: "DELETE" });
-  } catch (e) {
-    // 접근 불가는 404 로 온다(존재 은폐, attachments.py) — 403 도 함께 받아 문구를 맞춘다.
-    const st = e && e.status;
-    showToast(
-      st === 403 || st === 404 ? "이 첨부를 삭제할 수 없습니다(권한 또는 이미 삭제됨)." : "첨부를 삭제하지 못했습니다.",
-      true,
-    );
-    return false;
-  }
-  // 로컬 composer bucket 에서도 뺀다 — 여기서 빠뜨리면 삭제 후 새 파일을 하나 더 올리는
-  // 순간(_renderAttachmentPills 재렌더) 방금 지운 파일이 pill 로 되살아난다(적대 리뷰 ux BLOCK).
-  try {
-    const bucket = state.composerAttachments.byConv[_composerAttachmentKey(state.activeConversationId)];
-    if (bucket) {
-      const i = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
-      if (i >= 0) bucket.items.splice(i, 1);
-    }
-  } catch (_e) { /* 로컬 정리는 best-effort — 서버 삭제는 이미 성공 */ }
-  showToast("첨부를 삭제했습니다.");
-  // 사이드패널 목록도 서버 ground truth 로 다시 맞춘다(버전 배지·개수 정합).
-  if (state.activeConversationId) {
-    _loadConversationAttachmentList(state.activeConversationId).catch(() => {});
-  }
-  return true;
 }
 
 async function _uploadComposerAttachment(file) {
@@ -10028,7 +9995,8 @@ function _guessKindFromFile(file) {
 }
 
 // TASK-0161: _toggleAttachmentPill 제거 — 유일 호출처(죽은 #composerAttachmentsPills 핸들러)
-// 제거로 고아화. 실제 제거 로직 _removeAttachmentPill 은 #attachSidePanel 경로가 사용.
+// 제거로 고아화. feature-0003 attach-append-only: 남은 정리 로직은
+// `_discardPendingAttachmentPill`(업로드 중·실패한 로컬 항목 한정)이며 #attachSidePanel 경로가 쓴다.
 
 // TASK-0106: lazy-create 시 staged 첨부 (status="staged", _localFile=File) 를 새로
 // 발급된 cid 로 일괄 업로드. 모두 성공해야 sendPrompt 가 첨부와 함께 진행. 일부
@@ -10179,21 +10147,6 @@ function _renderAttachmentVersionsBox(box, versions) {
   });
 }
 
-// feature-0003 attach-list-delete (적대 리뷰 ux/design BLOCK — 안전판): 첨부 목록 뷰의 삭제(×)는
-// **1:1·이어받기 대화에서만** 노출한다. 백엔드 삭제 권한은 업로더가 아니라 "대화 소유자 또는 그룹
-// 멤버"(`_account_can_access_attachment` — feature-0009 가 *열람/공유* 경계로 설계한 함수)라, 그룹
-// 대화에서 목록에 ×를 상시 노출하면 아무 멤버나 남이 올린 파일을 한 번의 클릭으로 지울 수 있고
-// 목록·confirm 어디에도 업로더 신호가 없다(restore UI 도 없음). 그룹에서는 방금 자기가 올린 파일의
-// pill × 경로만 남긴다. 근본 해소(삭제 권한을 업로더 기준으로 좁힐지)는 인가 정책 결정이라
-// 사용자 판단 대상으로 표면화한다.
-function _canDeleteFromAttachList() {
-  try {
-    return !currentConversation()?.is_group;
-  } catch (_e) {
-    return false;  // 판별 불가 시 노출하지 않는다(파괴적 동작 fail-closed)
-  }
-}
-
 async function _loadConversationAttachmentList(convId) {
   const listEl = document.getElementById("attachSidePanelList");
   if (!listEl || !convId) return;
@@ -10241,24 +10194,9 @@ async function _loadConversationAttachmentList(convId) {
           <div class="attach-list-item-meta">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}${verToggle}</div>
         </div>
         <button class="attach-list-item-dl" title="다운로드" data-id="${a.id}">⬇</button>
-        ${_canDeleteFromAttachList() ? `<button class="attach-list-item-del" title="이 대화에서 삭제" aria-label="첨부 삭제" data-id="${a.id}">×</button>` : ""}
       `;
       const dlBtn = item.querySelector(".attach-list-item-dl");
       dlBtn.addEventListener("click", () => _downloadAttachmentById(a.id, a.original_filename, dlBtn));
-      // feature-0003 attach-list-delete: 참조 범위 안내("필요 없는 파일은 × 로 삭제하세요")가
-      // 가리키는 컨트롤. pill 의 × 와 동일한 실삭제 경로를 쓴다.
-      const delBtn = item.querySelector(".attach-list-item-del");
-      if (delBtn) {
-        delBtn.addEventListener("click", async () => {
-          delBtn.disabled = true;
-          try {
-            await _deleteConversationAttachment(a.id, a.original_filename);
-          } finally {
-            // 성공 시 목록이 재로드돼 이 노드는 detached 다 — 그 경우 setter 는 무해한 no-op.
-            delBtn.disabled = false;
-          }
-        });
-      }
       entry.appendChild(item);
 
       // 버전 체인이 2개 이상이면 펼침 토글 — lazy 로 /versions 를 불러 이력 박스를 토글한다.

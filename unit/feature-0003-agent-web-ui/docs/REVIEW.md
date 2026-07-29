@@ -1959,3 +1959,24 @@ EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS
 - 조치: `handleLogout` 에서 `_branchViewCacheClear()` + 지연 사이드바 타이머 취소 · `initializeWorkspace` 진입 시에도 `_branchViewCacheClear()`(세션 만료 후 리로드 없이 재로그인하는 `handleLogin → initializeWorkspace` 경로는 logout 미경유 — 2중 방어).
 - 반증된 후보 4건: `scope` 파라미터 신뢰경계(호출부 7곳 전부 모듈 상수) · `Retry-After` 헤더 주입(`str(int)` + 1~60 clamp) · SQL 주입(파라미터 바인딩 + 기존 table allowlist 유효, 442 조합 전수 대조 동등) · 인가 경로 축소(`renderAccessNotice`/`applyProductHydration` 은 표시 계층, 접근 판정은 서버 전담).
 - Human Approval Needed: no
+## REV-20260729T163000-attach-append-only [SUBAGENT:ux] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1630-attach-append-only
+- Trigger: UI·삭제 UI 철회 / append-only 계약
+- Timestamp: 2026-07-29T16:45:00+09:00
+- Verdict: BLOCK (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T073000Z-ux.md
+- Critical issue: append-only 계약 자체는 성립(렌더 게이트 ⇔ 함수 가드 정확한 여집합, 프론트 DELETE 호출·잔재 0건)하나, 새로 붙인 "업로드 취소" ×가 in-flight fetch 를 abort 하지 않아 **파일이 그대로 저장되고 "업로드 완료" 토스트까지 뜬다** — 삭제 UI 가 사라진 상태라 사용자에게 회수 수단이 0개로 영구히 AI 참조 스코프에 남는다.
+- 조치: ×의 대상을 `staged`(요청 전)·`failed`(서버에 실물 없음)로 좁히고 `uploading` 제외. 함수 가드를 같은 판정으로 정렬(어떤 경로로 호출돼도 append-only 위반 불가). aria-label/title 문구 통일.
+- Human Approval Needed: no
+
+## REV-20260729T163000-attach-append-only [SUBAGENT:design] — CONCERN → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1630-attach-append-only
+- Trigger: layout·visual / 삭제 UI 철회
+- Timestamp: 2026-07-29T16:45:00+09:00
+- Verdict: CONCERN (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T073000Z-design.md
+- Critical issue: `.attach-list-item-meta` 의 nowrap+ellipsis 가 텍스트가 아니라 인라인 **"버전 N개 ▾" 버튼을 잘라내** 버전 이력의 유일한 진입점을 없앤다(패널 최소 폭 240px 에서 약 13px 초과). 그 규칙을 정당화하던 근거(삭제 ×의 폭 점유)는 바로 이 diff 가 제거했는데 규칙과 주석만 남았다. 나머지 4개 축(우측 정렬 비대칭·죽은 스타일·안내 문구 줄바꿈·danger hover 무게)은 실측 PASS.
+- 조치: 해당 말줄임 3종을 되돌림(원상복구). 이름줄 flex 분리는 배지 보존 효과가 있어 유지.
+- Human Approval Needed: no
