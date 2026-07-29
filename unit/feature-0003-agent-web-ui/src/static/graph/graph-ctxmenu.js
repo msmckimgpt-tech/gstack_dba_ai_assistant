@@ -2102,14 +2102,25 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
         const shown = rcs.slice(0, _META_RTCOL_SHOW);
         const txt = shown.map((c) => (c && c.k === "write" ? "✎" : "") + String((c && c.n) || "")).join(", ")
           + (rcs.length > shown.length ? ` 외 ${rcs.length - shown.length}` : "");
-        colsHtml = ` <span class="amgr-rtcols admin-meta-graph-muted" title="이 관계가 참조하는 컬럼 (✎ = 쓰기)">${esc(txt)}</span>`;
+        // detail-panel-typo: 표시는 CSS 말줄임(행 높이 균일)으로 잘리므로 **툴팁이 전문을 보존**해야
+        //   무음 손실이 없다 — 종전 title 은 설명문뿐이라 잘린 컬럼명이 어디에도 남지 않았다.
+        colsHtml = `<span class="amgr-rtcols admin-meta-graph-muted" title="이 관계가 참조하는 컬럼 (✎ = 쓰기): ${esc(txt)}">${esc(txt)}</span>`;
       }
       // detail-hover-flow: 읽기/쓰기는 같은 (루틴, 테이블) 쌍 위의 **별개 관계선 2개**(graph-edge-flow §83 C1)
       //   라, 행이 모델 엣지의 실제 끝점 + relation_type 을 실어야 hover 가 그 중 맞는 선을 강조한다.
       const rk = e.relation_type === "write" ? "write" : "read";
-      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" ` +
+      // detail-panel-typo: 행 = **하나의 전폭 flex 버튼**(주 라벨 + 우측 부가정보). 종전엔 버튼 뒤에
+      //   형제 <span> 을 두어 (a) 클릭·hover 대상이 이름 칩에만 걸려 행의 나머지가 죽은 영역이었고
+      //   (b) 두 요소가 인라인으로 흘러 줄바꿈 시 다음 항목과 시각적으로 섞였다. 부가정보를 버튼 안으로
+      //   넣어 행 전체가 하나의 타깃이 되고(컬럼 섹션 `.amgr-col-select` 와 동일 관용구), hover 관계선
+      //   강조도 행 어디서나 발화한다. data-* 계약은 그대로(hover-flow §83 · 클릭 추적).
+      //   title 에 **이름 전문**을 싣는다 — 이름도 CSS 말줄임 대상이라(긴 루틴명) 종전의 "상세 보기"
+      //   만으로는 잘린 이름을 되찾을 길이 없었다(표시 절단의 무음 손실).
+      //   li 에 `amgr-rtli` 를 붙여 여백 리셋 대상을 **이 행만으로 한정**한다(적대검증 지적: 넓은
+      //   `ul.amgr-list > li` 리셋이 관계 상세 카드 `.amgr-row` 의 간격을 특이도로 눌러 카드가 붙었다).
+      return `<li class="amgr-rtli"><button type="button" class="amgr-rtrow" data-rtuse="${esc(other)}" ` +
         `data-edge-src="${esc(e.source)}" data-edge-tgt="${esc(e.target)}" data-rel-type="${rk}" ` +
-        `title="상세 보기">${esc(disp)}</button>${colsHtml}</li>`;
+        `title="${esc(disp)} — 상세 보기"><span class="amgr-rtname">${esc(disp)}</span>${colsHtml}</button></li>`;
     };
     // lazy 주입되는 DB 그룹 body 에도 원래의 행 동작(클릭=상세+카메라, hover=연결선 강조)을 그대로 건다.
     const rtBind = (c) => {

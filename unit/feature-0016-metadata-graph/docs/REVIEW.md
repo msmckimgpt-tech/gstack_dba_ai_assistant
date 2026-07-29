@@ -539,3 +539,27 @@ source_of_truth: true
 - 본 cycle 의 코드 적대 검증은 `REV-20260728T181100-…-codex [CODEX:frontend-render+legend]`(P1 1건 + P2 5건 전량 in-cycle 흡수, 최종 pass "No actionable correctness issues")가 담당했고, 그 수정 중 **2종이 배포본에서 실제로 발화**함을 RB.8 ④⑤ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
 - 라이브가 사용자 원 요구를 직접 확인한 지점: 한 화면의 다수 테이블 칩이 **모두 동일 teal 본체**이고 역할색은 좌측 18px 배지에만 존재한다(①). 즉 "노드 간 색상구성 정합" 이 관측으로 성립했다. 색 8종·아이콘은 배지·상세 칩·범례 3곳에서 동일 어휘로 유지돼 범주 정보 손실도 0(②⑦).
 - 미검증 잔여: running 상태 배지 desaturate(외부 비용 필요). 다음 AI 능동 분석 실행 cycle 의 육안 확인 대상으로 이월한다.
+
+## REV-20260729T093000-ai-claude-corp-feature-0016-detail-panel-typo [CODEX:ux+design] — PASS (P1 0건 · P2 1건 흡수 후 재검증 지적 0건)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: UI/화면 · layout/레이아웃 keyword matched (상세 패널 목록 행 타이포·정렬·리듬) → dispatch 표상 ux·design
+- Timestamp: 2026-07-29T09:30:00+09:00
+- Verdict: PASS (R1 P2 1건 → in-cycle 흡수 → **R2 지적 0건**)
+- Artifact: [reviews/2026-07-29T09-30-00-codex-detail-panel-typo.md](./reviews/2026-07-29T09-30-00-codex-detail-panel-typo.md) (2라운드 전문)
+- Critical issue (R1 P2, 흡수 완료): 1차 수정의 `.admin-meta-graph-sec ul.amgr-list > li { margin: 0 }` 가 특이도 **(0,2,2)** 로 `.amgr-row { margin: 4px 0 }` **(0,1,0)** 를 눌러, 같은 `ul.amgr-list` 안에 사는 **관계 상세 카드가 서로 붙는** 회귀(실렌더 실측 간격 3px → **0px**). `.amgr-dbgrp-allctl` 하단 여백도 동일 원인으로 소실.
+- Human Approval Needed: no (Minor — 표시 전용, 백엔드·RBAC·스키마 무변경)
+
+### 채널 선택 근거 (§18.8.2)
+재개/후속 세션에 하네스 수준의 "요청 없는 Agent tool 호출 금지" 상위 지시가 있어, §18.8.2 item 1(제약 없는 채널 우선) + 상위 지시 carve-out 에 따라 subagent 가 아닌 `codex review --base origin/main`(repo 접근 있는 독립 리뷰어, check #9 accepted `[CODEX:*]`)로 수행했다. 본 changeset 은 **CSS cascade 특이도**가 핵심 위험 표면이라, 인접 규칙 전체를 읽을 수 있는 repo-접근 리뷰어가 bundle-only subagent 보다 적합했다 — 실제로 R1 이 특이도 부수 피해를 정확히 지목했다.
+
+### 흡수 대조
+| # | 지적 | 처리 |
+|---|---|---|
+| R1-P2 | 여백 리셋의 특이도가 관계 상세 카드 간격을 눌러 카드가 붙는다 | **흡수** — 리셋 대상을 마크업 명시 클래스 `li.amgr-rtli`(루틴 사용 행)로 한정. `:has(> .amgr-rtrow)` 대신 명시 클래스를 택한 이유는 셀렉터 지원 여부와 무관하게 대상이 확정되기 때문. 실렌더 대조로 기준선 3px 복원 확증(기준선 3px → 1차수정 0px → 최종 3px, 회귀 0). ⑤-b 회귀 테스트 신설(넓은 리셋 부활 차단 + 클래스 부여 확인, 반증 확인 완료). |
+| R2 | 지적 0건 — "의도된 상세 패널 마크업·스타일에 한정, 상호작용 data 계약 보존, 추가 검증 통과" | — |
+
+### 설계 판단 기록
+- **넓은 셀렉터 리셋의 위험**: `ul > li` 류 구조 셀렉터로 여백을 리셋하면 같은 컨테이너를 공유하는 **다른 행 종류**를 특이도로 눌러버린다. 이 패널은 하나의 `ul.amgr-list` 안에 (a) 루틴 사용 행 (b) 관계 상세 카드(`.amgr-row`) (c) DB 그룹 머리글(`.amgr-ct-group.amgr-dbgrp`) (d) '모두 접기' 컨트롤(`.amgr-dbgrp-allctl`) 이 공존한다. 리셋은 항상 **의도한 행 종류의 명시 클래스**로 한정한다.
+- **행 관용구 통일 vs 카드 유지**: 관계 섹션의 `.amgr-row` 테두리 카드는 방향 화살표·신뢰 배지·추적 힌트를 담는 **복합 다중요소 행**이라 카드가 적절하다. "복합=카드 / 단일 항목=평행 행" 규칙으로 일관되므로 통일 대상에서 의도적으로 제외했다(누락 아님).
+- **자가검증이 자기 수정을 2회 반증**: ① 1차 수정이 이름 말줄임 시 전문 보존을 빠뜨린 것을 신설 측정 지표 `nameTitleOk` 가 `false` 로 적발 ② 여백 리셋 부수 피해를 codex R1 이 적발. 두 건 모두 실렌더 정량 대조로 확증 후 교정.
+- 검증: 신설 `test_detail_panel_typo.js` **24 PASS**(수정 전 CSS 로 **17 FAIL** = 반증 확인) · 그래프 헤드리스 전 스위트 **996 PASS / 0 FAIL** · pytest 전 스위트 **2835 passed / 0 failed** · ruff clean. PB-0008 은 배포 후 POST-DEPLOY(JS 는 `docker cp` QA 가 asset stamp/모듈 캐시로 오염됨).

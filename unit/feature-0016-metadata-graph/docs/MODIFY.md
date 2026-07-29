@@ -319,3 +319,8 @@ source_of_truth: true
 - 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260728T181100-graph-role-badge.md` · 증적 `artifacts/shared/win-browser-shots-role-badge/`(9매, gitignore). **실행 코드 변경 0줄**.
 - 변경: PR #1029 머지(main `ea3f9a6d`) → `make deploy-web` 무중단 롤아웃 → edge `/healthz git_commit=ea3f9a6d` 확인 후, 실 Windows Chrome 150 relay 로 RB.8 을 수행하고 결과를 정본에 기록. 8 시나리오 전건 PASS + **codex 적발 수정 2종의 라이브 실증**: ④ hover 확장 카드에서 배지가 카드 안 정위치(캔버스 좌변 인접 칩 = `_clampCardX` 경로 — P2 2차 수정이 없으면 배지가 카드 밖에 잔존) ⑤ 줌아웃 임계 교차에서 `roleIconsDropped` 가 0→255 로 발화하고 색 타일만 남음(RB.5 설계 의도).
 - 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영이 필수다. 미재현 한계는 정직 병기 — running 상태 배지 desaturate 는 분석 잡 실행(LLM 외부 비용)이 필요해 미수행이며, dim 상태의 동일 alpha 경로만 부분 실증했다.
+
+## CHG-20260729T0930-detail-panel-typo — 상세 패널 목록 행 시각 위계 교정 (2026-07-29, 사용자 리포트)
+- 대상(코드 거주 feature-0003): `graph.css` · `graph-ctxmenu.js` · 신규 `tests/headless/test_detail_panel_typo.js` · 신규 Run fragment. 상세는 feature-0003 MODIFY `CHG-20260729T0930-detail-panel-typo`. 백엔드 0.
+- 변경: 근본 원인 = **부-액션 버튼 스타일 `.amgr-link` 를 목록 행의 주 라벨로 재사용**. 라이브 실측 주 라벨 10.5px vs 부가정보 13px(1.24배 역전) · 행 높이 2종 · 우측 경계 18종 톱니 · `h4` 가 본문 항목과 동색 · `h4` 내 muted 가 bold 상속. 컬럼 섹션의 검증된 행 관용구로 시각 언어 통일(`.amgr-rtrow`/`.amgr-rtname`/`.amgr-rtcols`).
+- 근거: 등급 Minor(표시 전용). 실렌더 대조 — 행 높이 2종→1종, 우측 경계 18종→1종, 크기비 1.24→0.88배. 신설 테스트 24 PASS(수정 전 17 FAIL = 반증). 헤드리스 996 PASS/0 FAIL · pytest 2835 passed/0 failed.
