@@ -2088,3 +2088,9 @@ Trigger: UI/screen keyword matched → §18.8 표상 `ux, design` 요구. 본 �
 
 Cross-ref: TASK `20260729T1742-product-picker-keynav` · FUNCTION `REQ-20260729T174200-product-picker-keynav`
 · MODIFY `CHG-20260729T174200-product-picker-keynav`.
+
+## REV-20260729T180000-picker-keynav-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실증 기록(문서·증거만)
+
+Trigger: 코드 변경 0 · 정책 문서 변경 0 — TASK/MODIFY/test-runs.d/evidence/재현 시나리오만 추가. §18.8 표의
+"비정책 doc-only" 행에 해당해 패널 SKIP. 검증 자체는 본문에 기록된 **실 Windows 브라우저(PB-0008) 라이브
+실측**이며, 선행 cycle 의 적대 리뷰는 `REV-20260729T174200-product-picker-keynav`([CODEX] · P1 0건).
