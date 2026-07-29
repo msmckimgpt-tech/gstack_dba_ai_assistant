@@ -577,3 +577,11 @@ source_of_truth: true
 - **수정 전 재현 확인 + 테스트 자체의 결함**: 상한 4 재현판으로 신규 I12 를 돌려 `bands: [3,4,4,4,4,4,4,4]` **FAIL** 을 실측했다. ⚠️ **첫 초안의 I12 는 이 결함을 놓쳤다** — 검증점을 0.45 부터 하드코딩해 3→4 전이(0.4579)를 *지나쳐* 있었고 재현판에서도 PASS 했다. 클램프 지점을 **스펙에서 파생**(`min(base/(cap−0.25))` = 0.5053)해 그 바로 아래부터 잡도록 고친 뒤에야 FAIL 이 재현됐다. 통과를 곧 검증으로 오인하지 않기 위해 이 과정을 그대로 기록한다.
 - **회귀 확인**: 수정 후 `test_g6build_labellod.js` **72 PASS**(신 계약 35건: I 14 · J 14 · K 4 · B5 재진술 3) + 헤드리스 **전 스위트 21개 940 PASS / 0 FAIL** · `node --check` PASS(2 파일).
 - **정직 표기 — 잔여 표면**: 재설계의 목적이 **시각 품질**이므로 최종 판정은 실 브라우저 육안이다(HT.9 PB-0008). 배포 전에는 구/신 방출 기하를 렌더해 대조했고(증적 `geom_old_vs_new_z022.png`), 그것으로 확인한 것은 *기하*(크기 일치·팔출 0·알약 수용·위계)이지 *렌더 품질*(글자 판독성·색 대비)이 아니다.
+
+## REV-20260729T114000-graph-hdr-typo-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs/evidence only outside policy-doc list — POST-DEPLOY 라이브 검증 기록(실행 코드 0줄). 검증 대상 코드의 적대검증은 같은 cycle 의 REV-20260729T093000 [CODEX:frontend-typography+rebuild-band] 가 담당했고, 그 코드는 이미 main 머지·배포됐다.
+- Deploy approval: `deploy_scope: included`(FIRST_REQUEST.md 전역, 2026-06-11 사용자 결정) — PR #1037 머지 후 자동 배포. 첫 배포 직전 1줄 표면화 이행.
+- Timestamp: 2026-07-29T11:40:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no

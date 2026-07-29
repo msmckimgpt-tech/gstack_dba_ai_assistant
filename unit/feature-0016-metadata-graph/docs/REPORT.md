@@ -2222,3 +2222,23 @@ hdr-label-fit 배포 후 사용자: "디자인적으로 모범적이진 않은 �
 ### Git 동기화 결과
 - Task-Cycle: feature-0016-metadata-graph (ai/claude/feature-0016-graph-hdr-typo, worktree).
 - verify-completion / commit / PR / 병합 / 배포: §16.3 Step 4~6 + deploy_scope: included 에 따라 진행.
+
+### POST-DEPLOY 확인 (2026-07-29, graph-hdr-label-typo)
+PR #1037 → main `50c5a854` → `make deploy-web`(web-a/web-b `mysql-ai-web:50c5a854`, healthy) 후 실 Windows
+Chrome 150 실측(HT.9). 신 코드 서빙을 배포 이미지 자산으로 선확정(`_hdrLevels` 7회 · 폐기 `_metaHdrFitFont`·
+`STEP_CAP` 0회)한 뒤 `mysql-gz-qa-global`/`gunzgame` 펼침(421 객체 · 위계 헤더 **84개** — hdr-label-fit
+POST-DEPLOY 와 동일 조건)에서 판정: **형제 헤더 전원 동일 크기**(구 24.6/27.1/30.1 편차 소멸) · **알약이 전
+헤더에서 텍스트를 감쌈**(좁은/넓은 박스 구분 없이 동일 스타일) · **밴드 헤더 > 컨텐츠 카테고리**(부모 상한
+24 > 자식 20) · **84개 칩 전량이 예약 행 안쪽, 테두리 물림 0** · **pageerror 0**. HT.9 판정 6항목 중
+①②③④⑥ 이 PASS, ⑤ 는 부분 확인(아래)이다.
+
+**codex P2 수정의 라이브 확증**: 밴드가 `h2`→`h3` 전이 후 줌아웃 하한(0.1119)까지 `h3` 고정 — 구 구현(상한 4)
+이라면 z≈0.4579 에서 한 번 더 전이해 **렌더가 동일한 구간에 full `setData`/draw** 가 걸렸을 지점이다. 억제
+시작 줌도 헤드리스 예측과 정합(0.1749 까지 81/84 유지 → 0.1399 에서 83 → 0.1119 전량)하고, 줌인 복귀도
+대칭(0.1526 → 0.1907, `headerDropped` 83→3)이라 정보 손실 0.
+
+**정직 표기** — ⑤ *잘림 감소*는 **부분 확인**이다. 폰트 상한 64→20/24 로 폭 여유가 구조적으로 커진 것은
+성립하지만, 라이브 긴 한글 헤더에서는 여전히 ellipsis 가 남고 구 배포본과의 직접 대조는 불가능하다(이미지
+교체됨). 잘림 자체를 없애려면 별도 수단(헤더 2줄 수용 또는 박스 중앙 워터마크 area-label)이 필요하다.
+상세: feature-0003 `docs/test-runs.d/20260729T1140-graph-hdr-typo-postdeploy.md` · 증적 9매
+`artifacts/feature-0016-metadata-graph/20260729-graph-hdr-typo-postdeploy/`.
