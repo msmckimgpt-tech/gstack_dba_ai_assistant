@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 29 카드 (feature-0001 ~ feature-0029; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
+| Feature 수 | 30 카드 (feature-0001 ~ feature-0030; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주) |
 
 ## 목차
 
@@ -100,6 +100,7 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0027-perf-latency-p0\|feature-0027-perf-latency-p0]] | P0 성능 개선 1차 (feature-0026 병목 지도 기반) — post-answer 큐레이션(topic/용어/ENUM LLM 3건) 답변 KV terminal 후 이동(체감 -25~35s·결과물·scope 귀속 불변)·grounding RO 연결 3→1·MySQL 버퍼풀 128MB→1G·Caddy gzip+immutable static (품질 영향 축=레드팀·thinking 불변·비파괴/가역·2026-07-28·코드 거주 0002/0001/0006) |
 | [[../Features/feature-0028-web-perf\|feature-0028-web-perf]] | web 계층 성능 (feature-0026 지목 병목) — `/api/ask_result` long-poll 워커 스레드 이관(이벤트 루프 정지 제거)·스냅샷 PG 연결 4~5→1(단일 왕복 번들)·권한 카탈로그 TTL 캐시+세션 LastSeenAt throttle·web MySQL 풀 opt-in (응답 shape·인가 경계 불변·additive/가역 env 토글·2026-07-28·코드 거주 0003) |
 | [[../Features/feature-0029-graph-churn\|feature-0029-graph-churn]] | 그래프 sync churn 근절 — 메타데이터 그래프 incremental sync 무의미 재투영 3종 제거: 값 무변경 시 `updated_at` 미전진(upsert·신호·트리거 alembic 0046·실측 churn 63%)·status 히스테리시스(trusted/broken 왕복 차단)·프로브 broken 부활 금지·공유 정점 중복 MERGE 제거(관계당 cypher 11→1~3) (그래프 신선도·자기교정 보존·가역·2026-07-28·코드 거주 0002) |
+| [[../Features/feature-0030-ask-timeout-extension\|feature-0030-ask-timeout-extension]] | 실행 타임아웃 임박 시 사용자 확인 후 연장 — run 실행 예산의 80%(설정 가능) 도달 시 컴포저 비차단 배너(+백그라운드 브라우저 알림)로 확인하고, 승인한 그 run 한정으로 run 예산 컷 해제(개별 LLM 호출 상한 15분은 유지 — 중단·즉시답변·lease fencing 응답성 보존)·미승인 시 종전 타임아웃 동작·KV 시그널 5종은 cancel/finalize 패턴 미러링(run_id 짝 검증)·신규 권한 `conversation.extend.{own,any}`(own 만 finalize 보유 역할 1회 backfill)·콘솔 설정 3종(기본 ON·임계 80%·추가 허용 0=무제한) (위험도 Major·in-progress·2026-07-29 머지·배포 80cc7aeb + PB-0008 라이브 PASS·코드 거주 0002/0003/shared) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -132,6 +133,7 @@ unit/feature-NNNN-<purpose>/
 | feature-0027 | feature-0002, feature-0001, feature-0006, feature-0026 | uses | post-answer 큐레이션 시점 이동(터미널 후·datasource ContextVar 캡처/해제)·grounding 공유 RO 단일연결=feature-0002(`agent_core.py`·`modules/ask.py`), MySQL 버퍼풀 128MB→1G=feature-0001(server `.cnf`), Caddy gzip+immutable static=feature-0006(`Caddyfile`), 병목 지도·before/after 실측 수단(`bin/perf-snapshot.sh`)=feature-0026; 답변 결과물·품질 영향 축(레드팀·thinking) 불변·비파괴/가역 (성능 개선·cross-cut 코드 거주) |
 | feature-0028 | feature-0003, feature-0002, feature-0026 | uses | ask_result long-poll 워커 스레드 이관·스냅샷 PG 단일연결 번들·권한 카탈로그 TTL 캐시+세션 touch throttle·web MySQL 풀 opt-in 전부 feature-0003(`routers/conversations.py`·`routers/_conv_store.py`·`web_context.py`·`routers/admin_products.py`·`app.py`), `ask_result` 폴링 대상 ask-worker 잡 결과 계약=feature-0002, `db_per_req` 병목 근거·전후 수단=feature-0026; 응답 shape·인가 경계 불변·additive/가역(env 토글) |
 | feature-0029 | feature-0002, feature-0016, feature-0026 | uses | churn 감쇠(upsert `updated_at` 조건화·status 히스테리시스·allow_revive·정점 캐시)+alembic 0046 트리거=feature-0002(`modules/relationships.py`·`modules/metadata_graph.py`), 대상 메타데이터 그래프·자기교정 엔진 정본=feature-0016, sync `duration_ms` 계측=feature-0026 전후 측정; 그래프 신선도·자기교정 semantics 보존·가역 (cross-cut 코드 거주) |
+| feature-0030 | feature-0002, feature-0003 | uses | 연장 KV 시그널 5종(`modules/memory.py` — cancel/finalize 패턴 미러링·run_id 엄격 짝 검증)·run 루프 임계 프롬프트 1회 발행 + 예산 초과 시점 grant 게이트·`_call_llm(timeout_override=)` 배선=feature-0002(`agent_core.py`), `POST /api/extend`(클라이언트 run_id 대조·fail-closed 409/403)·`/api/progress`·ask_status 스냅샷 `timeout_extension` 필드·`conversation.extend.{own,any}` 권한(own 한정 1회 backfill)·컴포저 인라인 배너+백그라운드 브라우저 알림=feature-0003(`routers/conversations.py`·`routers/_conv_store.py`·`app.py`·`static/app.js`); 콘솔 설정 3종은 `shared/runtime_settings.py`(feature-0018 런타임설정 슬라이스) 재사용. 연장은 run 시간 예산만 해제 — per-call 상한(15분)·`max_steps`·취소/즉시답변·lease fencing 불변, 외부 Conversation API(feature-0023) 경로는 확인 주체 부재로 종전 정책 (cross-cut 코드 거주) |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 

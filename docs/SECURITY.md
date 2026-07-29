@@ -986,3 +986,31 @@ re-grant 금지**(★ 관리자 해제 보존)·프론트 그룹 키 parity·see
 20260728T031500-model-access-pb0008.md`: 기본 3/3 부여 렌더 → 역할 해제(`7/8`) → 선택기에서 opus 소멸
 + `/api/ask` opus **403** / sonnet **200**(모델 단위 스코프 대조) → 재부여(`8/8`)·선택기 복귀.
 §28.6 자기 잠금 경로도 이 검증에서 실측·복구됐다.
+
+## 29. 실행 타임아웃 연장 승인 — `conversation.extend.*` 신규 권한·비용 유발 승인 표면 (feature-0030-ask-timeout-extension, 2026-07-29)
+
+> 색인 항목 — 전체 위협모델·적대 검증 정본은 `unit/feature-0030-ask-timeout-extension/docs/{REVIEW.md, FUNCTION.md}`
+> (신규 권한 인가·backfill / 비용·DoS 유사 리스크 / KV run_id 경합 / 미승인 경로 무회귀 / 프론트 배너 stale 5축 —
+> `/codex review` P1 4건·P2 3건 전건 in-cycle 수정, REV-20260729-0001; 채널 선택 = 사용자 결정 2026-07-29(§18.8 패널 요구 ↔ 세션 Agent-tool 제약 상충, feature-local REVIEW.md 정본)).
+> 본 절은 신규 authz 표면의 boundary 색인 (§22.4 원자 권한 분리·§26 동적 backfill 패턴과 동형 — 정책 본문 신규 서술 아님).
+
+- **신규 표면(사용자가 비용을 승인하는 경로)**: `POST /api/extend`(`routers/conversations.py`) — 처리 중 run 이 실행 예산 임계(기본 80%·콘솔 조절)에 도달했을 때 사용자가 **그 run 한정**으로 예산 컷 해제를 승인한다. 승인은 memory KV 플래그만 세팅하고 즉시 반환(finalize 와 동일 계약)하며, 워커가 예산 100% 도달 시점에 읽어 통과/종료를 가른다 — run 단위 수명(다음 요청에 전이 없음)·이미 종료된 run 에는 무효·terminal 도달 시 KV 정리.
+- **신규 권한 2코드**: `conversation.extend.own`(group=`conversation_own`) / `conversation.extend.any`(group=`conversation_any`). 접근 판정은 기존 대화 choke-point 재사용(`_account_can_access_conversation`, own = 본인 소유·멤버 대화). **'즉시 답변'(`conversation.finalize.*`)과 한 코드로 묶지 않은 이유 = 비용 축이 반대**다 — finalize 는 "지금 멈춰라"(비용 절감), extend 는 "상한을 넘겨 계속해라"(비용 유발). 감사·역할 설계에서 두 행위가 분리 관측돼야 한다.
+- **backfill 은 `own` 만(권한 확대 최소화)**: 도입 시점 기존 배포에서 `conversation.finalize.{own,any}` 를 보유한 역할에 대응 코드를 1회 부여(`_backfill_extend_perms_v1`, `WebSchemaMigrations` 마커 `conversation-extend-perms-v1` — 시드 밖 배포 전용 역할까지 역할명 하드코딩 없이 커버). 초안은 `any` 까지 자동 부여했고 적대 리뷰가 P1-4 로 적발 — **`conversation.extend.any` 는 자동 부여 없이 관리자 콘솔 명시 부여만**. 1회 guard 는 admin 이 의도적으로 회수한 권한이 재기동마다 되살아나 통제를 무력화하는 것을 막는다(folder/graph backfill 과 동일 규약). 라이브 실증: `own` → 7역할 · `any` → 0역할.
+- **탈출구 보존(가용성 — 이 기능의 핵심 계약)**: 승인이 푸는 것은 **run 전체 예산뿐**이고 per-call LLM 상한은 `_EXTENSION_PER_CALL_TIMEOUT_SEC = 900`(15분)으로 유지한다. 초안은 per-call 을 86400s 로 올려, 단일 LLM 호출이 도는 동안 루프가 한 바퀴도 돌지 않아 '중단'·'즉시 답변'·`max_steps`·워커 lease fencing 이 전부 무응답이 됐다(P1-3 — 승인의 대가로 탈출구를 잃는 구조). 이 15분이 곧 '중단' 의 최대 응답 지연이며, 라이브에서 **승인된 run 에 '중단' 2초 반영**으로 실증됐다.
+- **stale 승인·교차 run 오염 봉인**: API 는 클라이언트가 보낸 배너 `run_id` 를 현재 run(`last_status_run_id`)과 대조해 불일치 시 409, 진행 중 run 부재 시 409 로 거절한다(빈 값 wildcard 퇴화 제거). `mark_timeout_extension_granted` 는 `run_id` 필수 + 현재 prompt 대상과 불일치 시 거부하고, prompt 발행이 이전 run 의 승인 흔적(`granted`/`granted_at`)을 함께 리셋한다(P1-1·P1-2). 프론트도 양쪽 `run_id` 존재 + 완전 일치일 때만 배너·브라우저 알림을 노출한다(P2-2).
+- **fail-closed 대칭**: 기능 게이트(`AGENT_TIMEOUT_EXTENSION_ENABLED`) 조회가 실패하면 API 는 **503** 으로 거절한다 — 워커의 `_timeout_extension_settings()` 는 이미 fail-closed 인데 API 만 예외를 삼키면 설정 장애 중 남은 stale 승인이 기능 재활성 시 되살아난다(P2-1). 그 외: 기능 OFF **409**(승인 미기록)·권한 미보유 **403**·무인증 **401**(라이브 실증).
+- **범위 밖·잔여 위험(정직)**: 외부 Conversation API(feature-0023 Bearer 토큰) 경로는 대화형 확인 주체가 없어 프롬프트를 발행하지 않는다 — 종전 타임아웃 정책 유지, §25 절대 denylist·토큰 안전 기본 scope 무변경. 승인된 run 은 `max_steps` 소진까지 돌 수 있어 LLM 외부 비용이 증가하며, 이는 기능의 목적이자 run 마다 사용자가 명시로 눌러야 하는 opt-in 이다(상한이 필요하면 콘솔 '연장 승인 시 추가 허용 시간' 을 0 이외로 설정 — AGENTS.md §12.3 Major '외부 비용' 축). 프롬프트 발행 지연은 예산 초과 시점 재발행 + 20초 유예로 완화됐을 뿐 제거되지 않았다(단일 LLM 호출이 유예보다 훨씬 길면 여전히 늦다 — 라이브에서 같은 임계 22s 발행 vs 82s 미발행 관측, codex P2-3 의도적 잔여).
+
+## 30. 지식베이스 메타데이터 제품 스코프 경계 — 접근DB allowlist 강제·cross-product 주입 격리 (metadata-product-scope, 2026-07-29)
+
+> 색인 항목 — 전체 설계·적대 검증 정본은 `unit/feature-0003-agent-web-ui/docs/{REVIEW.md, FUNCTION.md, MODIFY.md}`
+> (REV-20260729T213000-metadata-product-scope — `codex review --uncommitted` 10 라운드, P1 12건·P2 3건 흡수 후 최종 0건,
+> 채널 선택 근거 = AGENTS.md §18.8.2 carve-out). **신규 권한 코드 0 · 스키마/마이그레이션 0** — §19 의 메타데이터 권한
+> 경계 위에 얹히는 **데이터 분할(scope) 경계** 의 boundary 색인이며 정책 본문 신규 서술이 아니다.
+
+- **경계 축 전환**: KB 메타데이터(용어사전·ENUM·테이블/컬럼 설명·샘플·검토 큐)의 저장·읽기·콘솔 스코프 축을 `datasource` 에서 `product.<ProductKey>` 로 통일했다(활성 제품 ContextVar = `shared/config`). 질의 실행·dialect·fact/RAG 스코핑은 물리 연결 축(datasource)이 정본으로 남고, 그래프 뷰 pane 도 datasource 축을 유지한다(물리 스키마 투영 — §19 질의 표면 무변경). `common` 의 의미는 "모든 데이터소스" → "모든 제품".
+- **cross-product 혼입 봉인(누출면)**: 하나의 datasource 를 여러 제품이 공유하는 라이브 배치(`mssql-qa-idc` ↔ 5제품)에서 타 제품 메타데이터가 답변 grounding 컨텍스트에 섞였고, 반대로 1제품↔7DS 배치에서는 등록분이 1개 DS 질의에만 주입됐다(`KR_LIVE` 용어 85건이 `auth` 한 곳에 갇힘). 자율수집 쓰기도 제품 귀속을 강제하고 **제품 해소 실패 시 `common` 폴백 대신 수집을 중단**한다(P1-H — `common` 폴백 = 전 제품 노출과 동의어). 라이브 실증: 공유 datasource 3제품 경계 분리(17/35/8건) + 교차 접근 404.
+- **부트스트랩/AI grounding = 접근DB allowlist 강제(fail-closed)**: 콘솔에서 datasource 선택을 걷어내면 물리 연결 선택이 서버로 넘어오므로, 요청자가 임의 schema 를 실어 공유 datasource 의 **남의 제품 DB** 를 introspect·기술하는 경로가 생긴다. 대상을 `WebProductDatabases` 접근DB allowlist 로 강제해 **밖은 404**, allowlist 밖 schema 의 primary 폴백도 거부(P1-B), 카탈로그 조회 실패는 **503**(transient 오류를 "접근DB 없음" 과 동일시하면 경계가 무력화 — P1-D), 그리고 **호출자 지정 `datasource` override 를 제거**했다(override 가 scope 검증을 통째로 건너뜀 — P1-C, 부트스트랩·suggest 양쪽).
+- **신규 엔드포인트 1(권한 코드 0)**: `GET /api/admin/metadata/scopes`(`routers/admin_metadata.py` `admin_metadata_scopes`) — 콘솔 스코프 선택 옵션(제품 목록 + `common` + 제품별 접근DB 수). 게이트는 **세션 계정 인증만** — 노출 값(제품 이름·키)은 작업 화면 제품 선택기가 이미 동일 등급으로 노출한다는 판단(핸들러 docstring). 목록·검토 큐·골격 조회 등 실 데이터 경로는 종전 `metadata.*` 권한 게이트를 그대로 유지한다(§19).
+- **이관(expand/contract)·데이터 안전**: 배포↔이관 창에서는 레거시 ds-scope 꼬리를 함께 읽고(`AGENT_KB_LEGACY_DS_SCOPE_READ`), 이관 후 contract 로 닫는다 — 미수행 시 혼입이 잔존하므로 `--verify-contract` 로 잔여를 확인한다(P1-L). 이관 스크립트 `unit/feature-0002-agent-core/src/scripts/kb_scope_rescope.py` 는 **백업 강제** + 행 단위 SAVEPOINT + **SQLSTATE 23505 에서만** 중복 병합(그 외 re-raise — transient 오류에 원본을 영구 삭제하던 P1-K 봉인). 라이브(POST-DEPLOY `e86f4c6b`): update 5,130 · delete 257(모호분, 사용자 승인) · 백업 5,387행 · `--verify-contract` 잔여 0 · contract(`=0` + 4서비스 재기동) 후 PB-0008 PASS.
