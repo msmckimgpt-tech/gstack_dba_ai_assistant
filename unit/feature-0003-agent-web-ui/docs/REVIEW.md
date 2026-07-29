@@ -1812,3 +1812,9 @@ honesty false positive)의 표면이 함께 넓어진다. 매니페스트를 예
 - Critical issue: 삭제 버튼이 `.attach-list-item-info` 폭을 28px(패널 최소폭에선 -21%) 빼앗는데 `.attach-list-item-meta` 에 말줄임 방어가 없어 `version_count>1` 행의 메타줄이 2줄로 터지고, 이름줄 배지(`v2 · AI 수정`)는 말줄임에 먹혀 사라진다. 시각 위계·테마는 PASS(`.pill-remove` 관용구 정합, 콘솔 LIGHT-ONLY).
 - 조치: meta 에 `overflow/text-overflow/white-space` 3종 추가 · 이름줄을 flex 로 분리해 텍스트만 말줄임하고 배지는 `flex-shrink:0` 로 보존.
 - Human Approval Needed: no
+
+## REV-20260729T160000-attach-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1600-attach-postdeploy
+- Reason: changed paths are docs only (test-runs.d fragment + TASK/REVIEW 기록) — 실행 코드·정적 자산 변경 0줄. 검증 대상 코드는 선행 두 cycle 에서 이미 §18.8 패널(security/backend/qa/ux/design 5명 + ux/design 2명)을 거쳤고, 본 cycle 은 그 배포본의 라이브 실측 결과를 기록할 뿐이다.
+- Timestamp: 2026-07-29T16:00:00+09:00
