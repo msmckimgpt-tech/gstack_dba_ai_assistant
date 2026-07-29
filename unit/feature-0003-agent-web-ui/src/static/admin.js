@@ -2746,9 +2746,102 @@ function _reasoningAxisSummary(esc, reviews) {
   return `<div class="reasoning-axis-summary"><span class="reasoning-axis-summary-label">검출 축 분포 (현재 목록 ${total}건):</span>${badges}</div>`;
 }
 
+/* ── 회차 단계 원장 (0048 redteam_review_rounds) ──────────────────────────────
+ * 요약 행은 '최초 리뷰 + 마지막 재검증'만 담아 중간 회차가 보이지 않았다. 원장이 있으면
+ * 자가검증(0회차) → N회차 수정 → N회차 재검증 을 **진행 순서 그대로(asc)** 펼쳐 보여준다.
+ * 각 회차는 <details> 라 개별 접기/펼치기 되며 기본은 접힘(스크롤 격리). */
+const _REASONING_PHASE_LABELS = { review: "자가검증", revise: "결함 수정", verify: "재검증" };
+const _REASONING_METHOD_LABELS = { rederive: "도구 재추론", rewrite: "텍스트 재작성" };
+// 라운드-로컬 메모(redteam.py rounds_ledger note) — 그 회차가 왜 마지막인지.
+const _REASONING_ROUND_NOTES = {
+  revise_failed: "수정 산출 실패 — 직전 답변 유지",
+  no_progress: "수정본이 직전과 동일 — 반복 중단",
+  revise_collapsed: "수정본이 초안 대비 과도 축소 — 채택 취소",
+  verify_error: "재검증 호출 실패 — 마지막 수정본 채택",
+  unverified: "재검증 미수행 설정",
+};
+
+function _reasoningRoundLabel(r) {
+  const idx = Number(r.round_index || 0);
+  const phase = _REASONING_PHASE_LABELS[r.phase] || r.phase || "단계";
+  return idx === 0 ? `최초 ${phase}` : `${idx}회차 ${phase}`;
+}
+
+// 회차 1단계 — summary(회차·단계·판정 요약) + 본문(지적 목록 또는 수정 방식).
+function _reasoningRoundHtml(esc, r) {
+  const findings = Array.isArray(r.findings) ? r.findings : [];
+  const nBlock = findings.length
+    ? findings.filter((f) => f && f.severity === "BLOCK").length : Number(r.block_count || 0);
+  const nWarn = findings.length
+    ? findings.filter((f) => f && f.severity === "WARN").length : Number(r.warn_count || 0);
+  const note = r.note ? (_REASONING_ROUND_NOTES[r.note] || String(r.note)) : "";
+  const bits = [];
+  let state = "done";
+  let body;
+  if (r.phase === "revise") {
+    const method = _REASONING_METHOD_LABELS[r.revise_method] || r.revise_method || "";
+    const axis = r.revise_axis
+      ? String(r.revise_axis).split(",").map((a) => _reasoningAxisLabel(a.trim())).filter(Boolean).join("·") : "";
+    if (method) bits.push(method + (axis ? ` (${axis})` : ""));
+    if (Number(r.tool_rounds || 0) > 0) bits.push(`도구 ${r.tool_rounds}라운드`);
+    if (r.answer_chars != null) bits.push(`${r.answer_chars}자`);
+    if (r.note) state = "skip";
+    const rows = [
+      method ? `<li>수정 방식: ${esc(method)}${axis ? " · 축 " + esc(axis) : ""}</li>` : "",
+      Number(r.tool_rounds || 0) > 0 ? `<li>도구 재추론 라운드: ${esc(r.tool_rounds)}</li>` : "",
+      r.answer_chars != null ? `<li>수정본 길이: ${esc(r.answer_chars)}자 (본문은 감사 목적상 미저장)</li>` : "",
+      note ? `<li>결과: ${esc(note)}</li>` : "<li>결과: 채택 — 재검증으로 진행</li>",
+    ].filter(Boolean).join("");
+    body = `<ul class="reasoning-round-facts">${rows}</ul>`;
+  } else {
+    if (r.verdict === "revise") {
+      state = "warn";
+      bits.push(`결함 검출 — BLOCK ${nBlock}${nWarn ? " · WARN " + nWarn : ""}`);
+    } else if (r.verdict === "pass") {
+      bits.push(nWarn ? `통과 — 경고(자문) ${nWarn}건` : "통과 — 결함 없음");
+    } else if (r.note) {
+      state = "skip";
+    } else {
+      bits.push("판정 기록 없음");
+    }
+    body = findings.length
+      ? findings.map((f) => _reasoningFindingHtml(esc, f)).join("")
+      : '<div class="reasoning-round-empty">이 단계에 기록된 지적이 없습니다.</div>';
+  }
+  if (note && r.phase !== "revise") bits.push(note);
+  const at = r.created_at ? String(r.created_at).replace("T", " ").slice(11, 19) : "";
+  return `<details class="reasoning-round reasoning-round--${state}">
+    <summary class="reasoning-round-summary">
+      <span class="reasoning-round-label">${esc(_reasoningRoundLabel(r))}</span>
+      <span class="reasoning-round-detail">${esc(bits.filter(Boolean).join(" · "))}</span>
+      ${at ? `<span class="reasoning-round-at">${esc(at)}</span>` : ""}
+    </summary>
+    <div class="reasoning-round-body">${body}</div>
+  </details>`;
+}
+
+// 한 리뷰(run)의 회차 목록. 원장이 없는 이전 기록은 요약 타임라인만으로 폴백한다.
+function _reasoningRoundsHtml(esc, it) {
+  const rounds = Array.isArray(it.rounds) ? it.rounds : [];
+  if (!rounds.length) {
+    return '<div class="reasoning-rounds-empty">회차 원장이 없는 기록입니다 (원장 도입 이전) — 위 진행 단계 요약만 표시합니다.</div>';
+  }
+  const truncated = it.rounds_truncated
+    ? '<div class="reasoning-rounds-empty">회차가 많아 앞부분만 표시합니다 (원장에는 전부 기록되어 있습니다).</div>'
+    : "";
+  return `<div class="reasoning-rounds">
+    <div class="reasoning-rounds-title">자가검증 · 재검증 회차 (${rounds.length}단계 · 진행 순서)</div>
+    ${rounds.map((r) => _reasoningRoundHtml(esc, r)).join("")}
+    ${truncated}
+  </div>`;
+}
+
 function _reasoningReviewRowHtml(esc, it) {
   const findings = Array.isArray(it.findings) ? it.findings : [];
-  const findingHtml = findings.length ? findings.map((f) => _reasoningFindingHtml(esc, f)).join("") : "";
+  const rounds = Array.isArray(it.rounds) ? it.rounds : [];
+  // 회차 원장이 있으면 최초 리뷰 findings 는 0회차 안에 그대로 들어 있으므로 중복 표시하지 않는다.
+  const findingHtml = (!rounds.length && findings.length)
+    ? findings.map((f) => _reasoningFindingHtml(esc, f)).join("") : "";
   // 재검증에서 끝내 해소되지 않은 BLOCK — 결함 잔존 답변이 무엇 때문에 잔존인지 그대로 보인다.
   // (verify_findings 는 0045 컬럼. 구 이미지/구 행에서는 비어 있으므로 최초 리뷰 findings 로
   // 폴백한다 — 폴백이 없으면 ⑤가 "BLOCK N건 미해소"라 말하면서 내용은 못 보여 준다.)
@@ -2769,16 +2862,93 @@ function _reasoningReviewRowHtml(esc, it) {
     it.latency_ms != null ? `${esc(it.latency_ms)}ms` : "",
     it.model ? esc(it.model) : "",
   ].filter(Boolean).join(" · ");
-  return `<div class="reasoning-review-row">
-    <div class="reasoning-review-head">
+  const unresolvedN = Number(it.unresolved_block_count || 0);
+  const roundsBadge = rounds.length
+    ? `<span class="reasoning-review-rounds-badge">회차 ${rounds.length}단계</span>` : "";
+  const unresolvedBadge = unresolvedN > 0
+    ? `<span class="reasoning-review-flag">결함 잔존 ${unresolvedN}</span>` : "";
+  // 리뷰(run) 단위도 접이식 — 대화 안에서 회차 묶음이 한꺼번에 펼쳐져 스크롤을 삼키지 않도록.
+  return `<details class="reasoning-review-row">
+    <summary class="reasoning-review-head">
       ${_reasoningVerdictBadge(esc, it.verdict)}
-      ${_reasoningConvLink(esc, it.conversation_id)}
       <span class="reasoning-review-meta">${metaBits}</span>
+      ${roundsBadge}${unresolvedBadge}
+    </summary>
+    <div class="reasoning-review-body">
+      ${_reasoningStageTimeline(esc, it)}
+      ${_reasoningRoundsHtml(esc, it)}
+      ${findingHtml ? `<div class="reasoning-findings">${findingHtml}</div>` : ""}
+      ${unresolvedHtml}
     </div>
-    ${_reasoningStageTimeline(esc, it)}
-    ${findingHtml ? `<div class="reasoning-findings">${findingHtml}</div>` : ""}
-    ${unresolvedHtml}
-  </div>`;
+  </details>`;
+}
+
+/* ── 대화 단위 격리 컨테이너 ────────────────────────────────────────────────
+ * 정렬 계약(백엔드 _query_conversation_page 와 동일): 대화는 **최근 리뷰 순 desc**,
+ * 대화 안의 리뷰는 **진행 순서 asc**. 서버가 이미 그 순서로 내려주므로 여기서는
+ * conversation_id 로 묶기만 한다(재정렬 금지 — 계약 단일화). */
+function _reasoningConvTitle(esc, cid) {
+  if (!cid) return "대화 미지정 (시스템 활동)";
+  const s = String(cid);
+  if (s.startsWith("__")) return "시스템 · " + esc(s.slice(0, 24));
+  // 대화 id 는 `YYYYMMDDHHMMSS-<hash>` — 앞 N자만 자르면 같은 분에 시작된 대화가 같은
+  // 라벨로 보인다(실측). 생성 시각 + 해시 접두로 사람이 구분 가능하게 표기한다.
+  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})\d{2}-([0-9a-f]+)$/i.exec(s);
+  if (m) return `대화 ${esc(m[2])}-${esc(m[3])} ${esc(m[4])}:${esc(m[5])} · ${esc(m[6].slice(0, 8))}`;
+  return "대화 " + esc(s.slice(0, 16));
+}
+
+function _reasoningConvGroupHtml(esc, conv, items, open) {
+  const cid = conv.conversation_id;
+  const unresolvedTotal = items.reduce((a, it) => a + Number(it.unresolved_block_count || 0), 0);
+  const roundTotal = items.reduce((a, it) => a + (Array.isArray(it.rounds) ? it.rounds.length : 0), 0);
+  const lastAt = conv.last_at ? String(conv.last_at).replace("T", " ").slice(0, 19) : "";
+  const capped = conv.capped
+    ? `<div class="reasoning-conv-capped">이 대화의 리뷰 ${esc(conv.review_count)}건 중 최근 ${esc(items.length)}건만 표시합니다.</div>`
+    : "";
+  const metaBits = [
+    `리뷰 ${items.length}건`,
+    roundTotal ? `회차 ${roundTotal}단계` : "",
+    lastAt ? `최근 ${esc(lastAt)}` : "",
+  ].filter(Boolean).join(" · ");
+  return `<details class="reasoning-conv-group"${open ? " open" : ""}>
+    <summary class="reasoning-conv-head">
+      <span class="reasoning-conv-title">${_reasoningConvTitle(esc, cid)}</span>
+      <span class="reasoning-conv-meta">${metaBits}</span>
+      ${unresolvedTotal ? `<span class="reasoning-conv-flag">결함 잔존 ${unresolvedTotal}</span>` : ""}
+    </summary>
+    <div class="reasoning-conv-body">
+      <div class="reasoning-conv-actions">${_reasoningConvLink(esc, cid)}</div>
+      ${capped}
+      ${items.map((it) => _reasoningReviewRowHtml(esc, it)).join("")}
+    </div>
+  </details>`;
+}
+
+// conversations 메타 + flat items → 대화 그룹 HTML. conversations 가 없는 응답(구 서버)
+// 에서도 items 의 등장 순서로 그룹을 유도해 동작한다.
+function _reasoningConvGroupsHtml(esc, conversations, items, firstOpen) {
+  const byConv = new Map();
+  items.forEach((it) => {
+    const k = it.conversation_id || "";
+    if (!byConv.has(k)) byConv.set(k, []);
+    byConv.get(k).push(it);
+  });
+  let convs = Array.isArray(conversations) ? conversations : [];
+  if (!convs.length) {
+    convs = Array.from(byConv.keys()).map((k) => {
+      const g = byConv.get(k);
+      return {
+        conversation_id: k || null, review_count: g.length, returned_count: g.length,
+        capped: false, last_at: g.length ? g[g.length - 1].created_at : null,
+      };
+    });
+  }
+  return convs.map((c, i) => {
+    const g = byConv.get(c.conversation_id || "") || [];
+    if (!g.length) return "";
+    return _reasoningConvGroupHtml(esc, c, g, firstOpen && i === 0);
+  }).join("");
 }
 
 function renderReasoning(redteam, notes) {
@@ -2807,11 +2977,12 @@ function renderReasoning(redteam, notes) {
     : (redteam && redteam.table_available === false)
       ? "자가 리뷰 저장소가 아직 준비되지 않았습니다 (마이그레이션/배포 대기)."
       : "기록된 리뷰가 없습니다.";
+  const conversations = Array.isArray(redteam && redteam.conversations) ? redteam.conversations : [];
   const reviewListHtml = reviews.length
-    ? reviews.map((it) => _reasoningReviewRowHtml(esc, it)).join("")
+    ? _reasoningConvGroupsHtml(esc, conversations, reviews, true)
     : '<div class="admin-detail-empty">' + _reviewEmptyMsg + "</div>";
   const moreBtnHtml = adminState.reasoning && adminState.reasoning.redteamCursor
-    ? '<button type="button" class="btn-secondary" id="reasoningMoreBtn">더 보기</button>' : "";
+    ? '<button type="button" class="btn-secondary" id="reasoningMoreBtn">대화 더 보기</button>' : "";
 
   // ── 2. 메모리 노트 현황 ──
   const nItems = Array.isArray(notes && notes.items) ? notes.items : [];
@@ -2829,7 +3000,7 @@ function renderReasoning(redteam, notes) {
   body.innerHTML = `
     <div class="reasoning-section">
       <h3 class="reasoning-section-title">자가 적대 리뷰 활동</h3>
-      <p class="reasoning-section-hint">답변 전달 전 별도 모델(red-team)이 <strong>초안 → 적대 리뷰 → 결함 수정 → 재검증 → 최종 전달</strong> 과정으로 답변을 검증·개선한 기록입니다. 각 판정 카드에 진행 단계와 결함별 수정 전/후가 함께 표시되며, "대화 열기"로 해당 답변이 개선된 실제 대화를 확인할 수 있습니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong>, assistant 작동 지침·스킬은 <strong>설정 &gt; 프롬프트</strong>에서 확인합니다.</p>
+      <p class="reasoning-section-hint">답변 전달 전 별도 모델(red-team)이 <strong>초안 → 적대 리뷰 → 결함 수정 → 재검증 → 최종 전달</strong> 과정으로 답변을 검증·개선한 기록입니다. <strong>대화 단위</strong>로 묶여 있고(최근 대화 순), 대화를 펼치면 그 안의 리뷰가 진행 순서대로, 리뷰를 펼치면 <strong>자가검증·재검증 회차 단계 전부</strong>가 순서대로 나타납니다 — 각 항목은 접기/펼치기 됩니다. "대화 열기"로 해당 답변이 개선된 실제 대화를 확인할 수 있습니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong>, assistant 작동 지침·스킬은 <strong>설정 &gt; 프롬프트</strong>에서 확인합니다.</p>
       ${statHtml}
       <div id="reasoningAxisSummaryWrap">${axisSummaryHtml}</div>
       <div class="reasoning-review-list" id="reasoningReviewList">${reviewListHtml}</div>
@@ -2855,9 +3026,12 @@ async function loadReasoningMoreReviews() {
     const data = await apiFetch(`/api/admin/reasoning/redteam?cursor=${encodeURIComponent(cursor)}`);
     const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const newItems = data.items || [];
-    newItems.forEach((it) => {
-      if (listEl) listEl.insertAdjacentHTML("beforeend", _reasoningReviewRowHtml(esc, it));
-    });
+    // 대화 그룹 단위 append — 기존 그룹의 펼침 상태를 건드리지 않는다(innerHTML 재생성 금지).
+    // 서버가 대화를 keyset 으로 페이징하므로 이미 표시된 대화가 다시 오지 않는다.
+    if (listEl && newItems.length) {
+      listEl.insertAdjacentHTML(
+        "beforeend", _reasoningConvGroupsHtml(esc, data.conversations, newItems, false));
+    }
     // 축 집계는 누적 목록 기준 재계산 — "현재 목록 N건" 라벨과 표시 행을 정합(W2).
     if (adminState.reasoning) {
       const all = (adminState.reasoning.reviewsAll || []).concat(newItems);

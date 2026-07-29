@@ -200,3 +200,45 @@ source_of_truth: true
   대화라 장기 분포(`revision_rounds` 꼬리·`revise_collapsed` 빈도)는 여전히 트래픽 대기.
 - **미커버 (첨부 end-to-end)**: 유도 대화는 SQL 을 본문 붙여넣기로 태웠다(첨부 업로드 자동화
   미구현). 첨부가 리뷰어에 도달하는 것은 A/B 로 간접 확인(가짜 첨부 주입 시 불일치 BLOCK 발생).
+
+### Run 2026-07-29 (3) — 회차 원장 + 대화 단위 콘솔 (review-rounds-ledger)
+- Environment: **Windows-browser** (PB-0008) + 격리 검증 컨테이너 `rr-verify-web`
+  (라이브 web 이미지 `mysql-ai-web:44d70215` + 본 branch `unit/feature-0003-agent-web-ui/src`
+  를 `/app/web` 로 마운트, `http://localhost:18099`, 라이브 PG/MySQL 읽기) — **라이브 web
+  컨테이너 무영향**(별도 컨테이너·별도 포트, 배포 아님).
+- Runner: AI
+- Bridge: relay @ `http://172.26.144.1:9223` (Chrome/150.0.7871.115), `doctor` ok=true
+- 단위: `unit/feature-0002-agent-core/tests/test_redteam.py` +
+  `unit/feature-0003-agent-web-ui/tests/test_admin_reasoning.py` → **142 passed, 0 failed**
+  (신규 12건). 전체 `make test` 실패 15건은 main 에서도 동일 재현되는 환경성 baseline
+  (attachment 13 · runtime_settings 2) — 상세: `test-runs.d/20260729T1230-review-rounds-ledger.md`.
+- **① 대화 단위 격리 + 정렬** — `/api/admin/reasoning/redteam?limit=3` 실측:
+  `conversations` = last_id `141 > 140 > 139` (**최근 대화 desc**), `items` =
+  `141 | 137,138,140 | 131,139` (**대화 내 id asc**), `next_cursor=139`. **PASS**
+- **② 콘솔 렌더** — 추론 서브탭에서 대화 그룹 **12개**, 리뷰 **18건** 렌더. 대화 그룹은 기본
+  접힘(최신 1개만 펼침) → 스크롤 격리 확인. Evidence: `rr-02-conv-groups.png`,
+  `rr-03-conv-expanded.png`, `rr-04-review-expanded.png`. **PASS**
+- **③ 회차 원장 폴백** — 라이브 PG 에 0048 미적용(배포 전) 이라 `rounds_available:false`.
+  리뷰 카드가 기존 5단계 요약 타임라인 + "회차 원장이 없는 기록입니다 (원장 도입 이전)" 안내로
+  **회귀 없이** 표시됨. **PASS** (0048 미적용 stale 이미지 폴백 경로의 실측 확인)
+- **④ 회차 렌더** — 회차 원장이 채워진 화면을 배포 전에 확인하기 위해, **브라우저 안에서만**
+  `fetch` 를 감싸 응답의 `rounds` 를 채워 렌더했다(서버·DB 무변경, 검증 후 reload 로 해제 —
+  `window.__rrStub === false` 확인). 회차 **48개** 렌더, 한 리뷰에서
+  `최초 자가검증 → 1회차 결함 수정(도구 재추론·SQL·2라운드·1990자) → 1회차 재검증(BLOCK 1) →
+  2회차 결함 수정(텍스트 재작성·2140자) → 2회차 재검증(통과)` 이 **진행 순서(asc)** 로 표시되고
+  각 단계가 개별 접기/펼치기 됨. Evidence: `rr-05-rounds-collapsed.png`,
+  `rr-06-rounds-expanded.png`. **PASS**
+  > 한계 표기: ④는 **클라이언트 렌더 경로**의 검증이다. 서버가 실제 원장 행을 채워 내려주는
+  > 경로는 배포 후 POST-DEPLOY Run 에서 확인한다(아래 미커버).
+- **⑤ 시각검증 중 발견·수정** — 대화 라벨이 `conversation_id` 앞 12자였던 탓에 **같은 분(分)에
+  시작된 서로 다른 대화가 동일 라벨**로 보였다(실측: `대화 202607290244` 2개). 라벨을
+  `대화 MM-DD HH:MM · <해시8>` 로 교정 후 재확인 — `대화 07-29 02:44 · 3a608d3b` /
+  `대화 07-29 02:44 · eff48cf6` 로 구분됨. **PASS**
+- Pass/Fail: **PASS**
+- 미커버 (POST-DEPLOY 대상): 라이브 원장 적재(`redteam_review_rounds` 실제 행) 및 그 행을
+  서버가 내려주는 경로. 배포 후 실제 답변 1건으로 확인한다.
+- **⑥ codex 리뷰 반영 후 재검증** (REV-20260729T134100) — P1(원장 INSERT 원자성: executemany →
+  단일 multi-VALUES statement) + P2 3건(빈 문자열 conversation_id 조회 누락 · 리뷰당 회차 상한
+  40 + 절단 표시 · 원장 CHECK 제약) 수정 후: 단위 **145 passed, 0 failed**(신규 3건 추가)·ruff
+  clean, 콘솔 재렌더 정상(대화 그룹 12 · 리뷰 18 · 라벨 구분 유지).
+  Evidence: `rr-07-postfix.png`. **PASS**

@@ -9085,9 +9085,51 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .reasoning-unresolved { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--warn-border, #d9a441); border-radius: 8px; background: var(--warn-surface, rgba(217, 164, 65, 0.08)); }
 .reasoning-unresolved-title { font-size: 12px; font-weight: 700; margin-bottom: 6px; color: var(--warn-text, #b8860b); }
 .reasoning-review-list { display: flex; flex-direction: column; gap: 8px; }
-.reasoning-review-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
-.reasoning-review-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.reasoning-review-row { padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.reasoning-review-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.reasoning-review-head::-webkit-details-marker { display: none; }
+.reasoning-review-head::before { content: "▸"; font-size: 10px; color: var(--text-muted); }
+.reasoning-review-row[open] > .reasoning-review-head::before { content: "▾"; }
+.reasoning-review-row[open] > .reasoning-review-head { margin-bottom: 8px; }
 .reasoning-review-meta { font-size: 11px; color: var(--text-muted); }
+
+/* ── feature-0021 회차 원장: 대화 격리 컨테이너 → 리뷰 → 회차 단계 (3계층 접이식) ── */
+.reasoning-conv-group { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2, var(--surface)); }
+.reasoning-conv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 12px; cursor: pointer; list-style: none; border-radius: 12px; }
+.reasoning-conv-head::-webkit-details-marker { display: none; }
+.reasoning-conv-head::before { content: "▸"; font-size: 11px; color: var(--text-muted); }
+.reasoning-conv-group[open] > .reasoning-conv-head::before { content: "▾"; }
+.reasoning-conv-head:hover { background: rgba(127,127,127,.06); }
+.reasoning-conv-title { font-size: 13px; font-weight: 700; }
+.reasoning-conv-meta { font-size: 11px; color: var(--text-muted); }
+.reasoning-conv-flag, .reasoning-review-flag { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px;
+  color: #b26a00; border: 1px solid rgba(178,106,0,.4); background: rgba(178,106,0,.08); }
+.reasoning-conv-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.reasoning-conv-actions { display: flex; gap: 8px; }
+.reasoning-conv-capped { font-size: 11px; color: var(--text-muted); }
+.reasoning-review-rounds-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-muted); }
+
+.reasoning-rounds { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.reasoning-rounds-title { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.reasoning-rounds-empty { margin-top: 8px; font-size: 11px; color: var(--text-muted); }
+.reasoning-round { border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; background: var(--surface); }
+.reasoning-round-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  padding: 6px 10px; cursor: pointer; list-style: none; }
+.reasoning-round-summary::-webkit-details-marker { display: none; }
+.reasoning-round-summary::before { content: "▸"; font-size: 10px; color: var(--text-muted); }
+.reasoning-round[open] > .reasoning-round-summary::before { content: "▾"; }
+.reasoning-round-summary:hover { background: rgba(127,127,127,.05); }
+.reasoning-round-label { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.reasoning-round-detail { font-size: 11px; color: var(--text-muted); word-break: break-word; }
+.reasoning-round-at { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+.reasoning-round-body { padding: 0 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+.reasoning-round-empty { font-size: 11px; color: var(--text-muted); }
+.reasoning-round-facts { margin: 0; padding-left: 18px; font-size: 11px; color: var(--text-muted); }
+.reasoning-round--done { border-left-color: rgba(46,125,50,.55); }
+.reasoning-round--warn { border-left-color: rgba(178,106,0,.55); }
+.reasoning-round--skip { border-left-color: var(--border); border-left-style: dashed; }
 .reasoning-verdict { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
 .reasoning-verdict--ok { color: #2e7d32; border-color: rgba(46,125,50,.4); background: rgba(46,125,50,.08); }
 .reasoning-verdict--warn { color: #b26a00; border-color: rgba(178,106,0,.4); background: rgba(178,106,0,.08); }

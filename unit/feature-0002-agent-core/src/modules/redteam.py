@@ -1035,6 +1035,51 @@ def realign_answer(text: str, *, question: str, thread_goal: str = "",
     return candidate, info
 
 
+def _insert_review_rounds(pg, *, review_id: int, conversation_id: str | None,
+                          run_id: str | None, rounds: list[dict[str, Any]]) -> None:
+    """회차 단계 원장(agent_runtime.redteam_review_rounds) 배치 INSERT — 0048 migration.
+
+    호출자(record_review)가 요약 행을 **먼저 기록한 뒤** 부른다. 0048 미적용 stale agent
+    이미지에서는 여기서 UndefinedTable 이 나는데, 요약 행은 이미 저장됐으므로 기존 동작
+    (요약 1행 기록)은 회귀 없이 유지된다 (0043/0045 의 stale-image 폴백과 동형).
+
+    **단일 multi-VALUES statement 로 보낸다** (executemany 아님, codex 리뷰 P1): 런타임
+    커넥션은 `shared.db._pg_connect(autocommit=True)` 라 문(statement) 하나가 곧 트랜잭션
+    하나다. executemany 는 행마다 개별 커밋이라 중간 실패 시 회차가 **부분 저장**되고
+    (감사 원장이 조용히 불완전해진다) rollback 도 그것을 되돌리지 못한다. 단일 statement
+    는 all-or-nothing 이라 "전부 남거나, 요약만 남거나" 두 상태만 존재한다."""
+    params = []
+    for r in rounds:
+        fl = r.get("findings") or []
+        params.append((
+            int(review_id), conversation_id, run_id,
+            int(r.get("round_index") or 0), str(r.get("phase") or "")[:16],
+            (str(r["verdict"])[:16] if r.get("verdict") else None),
+            (json.dumps(fl, ensure_ascii=False) if fl else None),
+            sum(1 for f in fl if f.get("severity") == "BLOCK"),
+            sum(1 for f in fl if f.get("severity") == "WARN"),
+            (str(r["revise_method"])[:32] if r.get("revise_method") else None),
+            (str(r["revise_axis"])[:64] if r.get("revise_axis") else None),
+            int(r.get("tool_rounds") or 0),
+            (int(r["answer_chars"]) if r.get("answer_chars") is not None else None),
+            (str(r["note"])[:64] if r.get("note") else None),
+        ))
+    if not params:
+        return
+    row_tpl = "(%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)"
+    flat: list[Any] = [v for row in params for v in row]
+    with pg.cursor() as cur:
+        # findings 는 JSONB — 요약 INSERT 와 동일한 명시 `::jsonb` cast 규약.
+        cur.execute(
+            "INSERT INTO agent_runtime.redteam_review_rounds "
+            "(review_id, conversation_id, run_id, round_index, phase, verdict, findings, "
+            " block_count, warn_count, revise_method, revise_axis, tool_rounds, answer_chars, note) "
+            "VALUES " + ", ".join([row_tpl] * len(params)),
+            flat,
+        )
+    pg.commit()  # autocommit 커넥션에서는 no-op — 비-autocommit 호출자 대비 명시 유지.
+
+
 def record_review(*, conversation_id: str | None, run_id: str | None, verdict: str,
                   findings: list[dict[str, str]] | None, verify_verdict: str | None,
                   revision_applied: bool, model: str, latency_ms: int | None,
@@ -1043,7 +1088,8 @@ def record_review(*, conversation_id: str | None, run_id: str | None, verdict: s
                   rederive_axis: str | None = None,
                   verify_findings: list[dict[str, str]] | None = None,
                   unresolved_block_count: int = 0, revision_rounds: int = 0,
-                  stop_reason: str | None = None) -> None:
+                  stop_reason: str | None = None,
+                  rounds: list[dict[str, Any]] | None = None) -> None:
     """판정을 agent_runtime.redteam_reviews 에 기록 (best-effort — 실패 무시).
 
     rederive_* 는 feature-0002 축 인지 재도출(도구 재추론) 관측치 (0043 migration 컬럼) —
@@ -1054,7 +1100,12 @@ def record_review(*, conversation_id: str | None, run_id: str | None, verdict: s
     반복 수정 관측치 (0045 migration 컬럼) — **마지막 재검증이 무엇을 여전히 문제 삼았는지**
     와 몇 라운드를 돌고 왜 멈췄는지. 이전에는 `verify_verdict` 문자열만 남아, 재검증이
     'revise'(결함 잔존) 여도 무엇이 남았는지 알 수 없었고 콘솔은 그 답변을 '개선된 답변
-    전달'로만 표시했다 (결함 잔존의 사실상 은폐)."""
+    전달'로만 표시했다 (결함 잔존의 사실상 은폐).
+
+    rounds 는 **자가검증/재검증 회차 단계 전부** (0048 migration 테이블) — 위 두 컬럼군이
+    최초 리뷰와 마지막 재검증만 담아 중간 회차가 소실되던 것을 원장으로 보존한다. 요약 행을
+    먼저 기록한 뒤 그 id 로 append 하므로, 회차 INSERT 가 실패해도 요약 기록은 남는다
+    (원장은 단일 statement 라 전부 남거나 하나도 안 남는다 — `_insert_review_rounds` 참조)."""
     try:
         from modules.runtime_backend import _get_pg_runtime_conn
         pg = _get_pg_runtime_conn()
@@ -1063,6 +1114,7 @@ def record_review(*, conversation_id: str | None, run_id: str | None, verdict: s
         try:
             fl = findings or []
             vfl = verify_findings or []
+            review_id = None
             with pg.cursor() as cur:
                 # findings 는 JSONB 컬럼 — psycopg3 는 str 파라미터를 text 로 바인딩하므로
                 # 명시 `::jsonb` cast 없이는 text→jsonb 할당이 42804 로 거부된다(코드베이스
@@ -1075,7 +1127,7 @@ def record_review(*, conversation_id: str | None, run_id: str | None, verdict: s
                     " rederive_applied, rederive_tool_rounds, rederive_axis, "
                     " verify_findings, unresolved_block_count, revision_rounds, stop_reason) "
                     "VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                    " %s::jsonb, %s, %s, %s)",
+                    " %s::jsonb, %s, %s, %s) RETURNING id",
                     (
                         conversation_id, run_id, str(verdict or "")[:16],
                         json.dumps(fl, ensure_ascii=False),
@@ -1093,7 +1145,20 @@ def record_review(*, conversation_id: str | None, run_id: str | None, verdict: s
                         (str(stop_reason)[:32] if stop_reason else None),
                     ),
                 )
+                _row = cur.fetchone()
+                review_id = int(_row[0]) if _row else None
             pg.commit()
+            # 회차 원장 — 요약 커밋 **후** 별도 트랜잭션(0048 미적용 이미지 폴백).
+            if review_id is not None and rounds:
+                try:
+                    _insert_review_rounds(pg, review_id=review_id,
+                                          conversation_id=conversation_id, run_id=run_id,
+                                          rounds=rounds)
+                except Exception:
+                    try:
+                        pg.rollback()
+                    except Exception:
+                        pass
         finally:
             try:
                 pg.close()
@@ -1198,6 +1263,15 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 stop_reason="review_error")
             return draft_answer, None
 
+        # 회차 단계 원장 (0048) — 최초 자가검증(0회차) → N회차 수정 → N회차 재검증 을
+        # 진행 순서대로 누적한다. 요약 행은 최초 리뷰 + 마지막 재검증만 담으므로, 중간
+        # 회차가 무엇을 지적했고 어떻게 수정됐는지는 여기에만 남는다 (콘솔 회차 타임라인).
+        # 메모리에 모아 종료 시 한 번에 기록한다 — 라운드마다 PG 왕복을 만들지 않는다.
+        rounds_ledger: list[dict[str, Any]] = [{
+            "round_index": 0, "phase": "review", "verdict": review["verdict"],
+            "findings": review["findings"], "answer_chars": len(draft_answer),
+        }]
+
         final_answer = draft_answer
         revision_applied = False
         verify_verdict: str | None = None
@@ -1297,8 +1371,20 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 except Exception:
                     revised = None
                 rd_round_applied = False  # 텍스트 폴백이 채택되면 이 라운드는 재추론이 아니다.
+            # 폐기 라운드도 원장에 남긴다 — "왜 이 회차가 마지막인가" 가 회차 타임라인에서
+            # 읽히도록(요약의 stop_reason 과 정합). 채택되지 않았으므로 revision_applied 와는
+            # 무관하며, note 가 폐기 사유를 담는다.
+            _round_no = revisions_done + 1
+            _round_method = ("rederive" if rd_round_applied else
+                             ("rewrite" if revise_fn is not None else None))
+            _round_axis = (",".join(rd_axes) if (rd_round_applied and rd_axes) else None)
             if not (revised and revised.strip()):
                 stop_reason = "revise_failed"
+                rounds_ledger.append({
+                    "round_index": _round_no, "phase": "revise",
+                    "revise_method": _round_method, "revise_axis": _round_axis,
+                    "tool_rounds": rd_round_tool_rounds, "note": "revise_failed",
+                })
                 break  # 수정 실패 → 직전 답변 유지(fail-open)
             revised = revised.strip()
             # 무진전 가드 — 수정본이 직전 답변과 실질 동일하면 반복해도 결함이 해소되지 않는다
@@ -1306,6 +1392,12 @@ def orchestrate_review(*, question: str, draft_answer: str,
             # 반복에서 런어웨이를 막는 결정론 종료 조건.
             if _normalize_for_progress(revised) == _normalize_for_progress(final_answer):
                 stop_reason = "no_progress"
+                rounds_ledger.append({
+                    "round_index": _round_no, "phase": "revise",
+                    "revise_method": _round_method, "revise_axis": _round_axis,
+                    "tool_rounds": rd_round_tool_rounds, "answer_chars": len(revised),
+                    "note": "no_progress",
+                })
                 break
             # 붕괴 가드 — 수정본이 **최초 초안**의 일정 비율 미만으로 쪼그라들면 채택하지 않는다.
             # 배경(실측 run #132): 리뷰어의 scope 오판(BLOCK completeness)에 응해 모델이 내용을
@@ -1317,6 +1409,12 @@ def orchestrate_review(*, question: str, draft_answer: str,
             # 결함이 은폐되지는 않는다(§16.3 정직성). 붕괴한 비-답변보다 낫다고 판단했다.
             if len(revised) < len(draft_answer.strip()) * _COLLAPSE_MIN_RATIO:
                 stop_reason = "revise_collapsed"
+                rounds_ledger.append({
+                    "round_index": _round_no, "phase": "revise",
+                    "revise_method": _round_method, "revise_axis": _round_axis,
+                    "tool_rounds": rd_round_tool_rounds, "answer_chars": len(revised),
+                    "note": "revise_collapsed",
+                })
                 break
             # ── 여기서부터 이 라운드의 산출물이 채택된다 ──
             if rd_round_applied:
@@ -1344,6 +1442,12 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 "how": ("도구 재추론(" + ",".join(rd_axes) + ")") if rd_round_applied else "텍스트 재작성",
                 "answer_excerpt": revised[:_HISTORY_ANSWER_EXCERPT_CHARS],
             })
+            rounds_ledger.append({
+                "round_index": _round_no, "phase": "revise",
+                "revise_method": ("rederive" if rd_round_applied else "rewrite"),
+                "revise_axis": _round_axis, "tool_rounds": rd_round_tool_rounds,
+                "answer_chars": len(revised),
+            })
             final_answer = revised
             revision_applied = True
             revisions_done += 1
@@ -1351,6 +1455,9 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 # 재검증 미수행 강도 — 수정이 결함을 실제로 고쳤는지 확인되지 않은 채 종료.
                 # (기본 설정에서는 도달하지 않는다: REDTEAM_VERIFY_MIN_LEVEL=0.)
                 stop_reason = "unverified"
+                rounds_ledger.append({
+                    "round_index": revisions_done, "phase": "verify", "note": "unverified",
+                })
                 break
             if progress_fn is not None:
                 try:
@@ -1366,8 +1473,16 @@ def orchestrate_review(*, question: str, draft_answer: str,
             )
             if verify is None:
                 stop_reason = "verify_error"
+                rounds_ledger.append({
+                    "round_index": revisions_done, "phase": "verify", "note": "verify_error",
+                })
                 break  # 재검증 실패(fail-open) → 마지막 수정본 채택
             verify_verdict = verify["verdict"]
+            rounds_ledger.append({
+                "round_index": revisions_done, "phase": "verify",
+                "verdict": verify["verdict"], "findings": verify["findings"],
+                "answer_chars": len(final_answer),
+            })
             current_review = verify  # 다음 루프 판정 갱신(pass 면 종료, revise 면 재수정)
 
         # 최종 미해소 결함 — 루프를 빠져나올 때 current_review 가 여전히 revise 면 결함 잔존.
@@ -1427,7 +1542,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
             rederive_axis=rederive_axis,
             verify_findings=(verify_findings or None),
             unresolved_block_count=len(unresolved), revision_rounds=revisions_done,
-            stop_reason=stop_reason)
+            stop_reason=stop_reason, rounds=rounds_ledger)
         return final_answer, meta
     except Exception:
         return draft_answer, None

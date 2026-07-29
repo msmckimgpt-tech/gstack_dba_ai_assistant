@@ -15,8 +15,8 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 탭까지 구현. cross-cut 코드 거주: feature-0002/0003/shared.
 
 ## 2. Progress
-- Planned: PB-0008 콘솔 시각검증 (배포 후), 라이브 리뷰 판정 1건 실증
-- In Progress: cycle-final (verify-completion → PR → 배포)
+- Planned: 배포 후 라이브 회차 원장 적재 실증 (`redteam_review_rounds` 실제 행 + 콘솔 표시)
+- In Progress: cycle-final (verify-completion → PR → 배포) — 회차 원장 cycle(CHG-20260729-0004)
 - Done: 리서치(공식문서+실동작), 코어 3모듈(redteam/agent_notes/guidance_registry),
   choke-point 훅, alembic 0042, REDTEAM_* 런타임 설정, 권한+admin_reasoning 라우터,
   콘솔 탭/설정 패널, 단위 테스트 34건, ROUTEMAP 재생성, route-parity golden 갱신
@@ -28,6 +28,11 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
 - 전역 프롬프트 비교·검토: 기본 시스템 프롬프트 fallback 은 편집 정본(전역 프롬프트)과 중복이라 작동 지침 목록에서 제외
 
 ## 3. Recent Changes
+- CHG-20260729-0004 — **자가검증·재검증 회차 단계 원장**(`redteam_review_rounds`, alembic 0048)
+  신설 + 관리 콘솔 '감사 > AI 운영 현황 > 추론' 을 **대화 단위 격리 + 3계층 접이식**으로 재구성
+  (사용자 요청: "각 대화의 마지막 리뷰사항만 기록된다"). 이전에는 한 답변당 요약 1행이라 최초
+  리뷰·마지막 재검증만 남았고 중간 회차가 소실됐다. 콘솔 정렬은 대화 최근순(desc) / 대화 내
+  진행순(asc). 상세 MODIFY.md.
 - CHG-20260715-0001 — 최초 구현 (상세 MODIFY.md)
 - CHG-20260722-0001 — "리뷰 실패" 진단(=리뷰어 100% 타임아웃, DB 실측 8/8 @25s) + 리뷰어 토큰
   할당량(REDTEAM_MAX_TOKENS) 콘솔 설정 신설 (타임아웃은 기존 노출). 표시/fail-open 은 의도된
@@ -90,6 +95,10 @@ find→verify, effort scaling, auto-memory, progressive disclosure) 이식 완�
   통과하던 것이 격리 worktree 네트워크에서 정직하게 실패 (PG 부재). 후속 개선 후보: §8.
 
 ## 5. Test Status
+- (2026-07-29 CHG-20260729-0004) 회차 원장 + 대화 단위 콘솔 — 신규 12건(원장 6 · 콘솔 그룹 6)
+  포함 대상 파일 **142건 PASS**·ruff clean. PB-0008 실 Windows 브라우저 시각검증 PASS
+  (대화 그룹 12·리뷰 18 렌더, 회차 48단계 렌더, 대화 라벨 중복 결함 1건 발견·교정 —
+  TEST.md §3 Run 2026-07-29 (3)). `make test` 실패 15건은 main 에서도 동일한 환경성 baseline.
 - 자동 테스트: 신규 34건 PASS (redteam 18 · agent_notes 8 · admin_reasoning 8) + 기존 스위트
   회귀 0 (환경 의존 4건 제외 — 상세 TEST.md §3). 적대 패널(REV-0002) BLOCK2+MAJOR1+MINOR3 반영·재검증 완료.
 - (2026-07-22 CHG-0001) 리뷰어 토큰 설정 추가 후 test_redteam 36건(신규 5) + runtime_settings +

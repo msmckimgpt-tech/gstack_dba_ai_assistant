@@ -38,8 +38,16 @@ router = APIRouter()
 
 _log = logging.getLogger(__name__)
 
-_REVIEW_LIMIT_DEFAULT = 30
-_REVIEW_LIMIT_MAX = 100
+# 페이징 단위 = **대화**(feature-0021 회차 원장 재구성). 리뷰 flat 목록이 아니라 대화
+# 그룹을 한 페이지로 내려, 콘솔이 대화 단위 컨테이너로 스크롤을 격리할 수 있게 한다.
+_REVIEW_LIMIT_DEFAULT = 12
+_REVIEW_LIMIT_MAX = 50
+# 대화당 반환 리뷰 상한 — 장기 대화 하나가 페이지를 독점하지 않도록. 상한 초과분은
+# conversations[].capped=True 로 표시(무언의 절단 금지).
+_PER_CONV_REVIEW_CAP = 20
+# 리뷰당 반환 회차 상한 — 반복 수정은 하드 백스톱(50 라운드 ≈ 101 단계)까지 갈 수 있다.
+# 실측 꼬리는 14 라운드(≈29 단계)라 40 이면 전량을 담는다. 초과분은 rounds_truncated 표시.
+_PER_REVIEW_ROUND_CAP = 40
 # console-ia(2026-07-16): 리뷰 활동/노트(감사) = console.reasoning.read, 지침/스킬(설정>프롬프트)
 # 조회 = system_prompt.global.read 재사용(프롬프트 조회 성격 일치, 신규 권한 최소화).
 _PERM_MSG = "AI 추론 활동 조회 권한이 필요합니다 (운영자 전용)."
@@ -79,82 +87,192 @@ def admin_reasoning_guidance(
     return JSONResponse({"items": items, "registry_available": True})
 
 
-def _query_reviews(cur, *, cursor: int | None, limit: int,
-                   include_rederive: bool = False,
-                   include_convergence: bool = False) -> tuple[list[dict], int | None]:
-    """redteam_reviews 를 id DESC keyset 으로 페이징 (ai-ops _query_activity 규약).
+def _as_json_list(value) -> list:
+    """JSONB 컬럼값 → list. 드라이버가 str 로 돌려주는 경우(구 psycopg 경로)까지 흡수."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return []
+    return value if isinstance(value, list) else []
 
-    include_convergence=True 면 0045 마이그 컬럼(verify_findings/unresolved_block_count/
-    revision_rounds/stop_reason)까지 SELECT 해, 반복 수정이 몇 라운드 돌았고 **결함이 남은
-    채 전달됐는지**를 콘솔 타임라인이 정직하게 표시할 수 있게 한다. include_rederive 와
-    동일한 stale-image 폴백 규약(부재 시 False).
 
-    include_rederive=True 면 0043 마이그 컬럼(rederive_applied/rederive_tool_rounds/
-    rederive_axis)까지 SELECT 해 콘솔의 '결함 수정' 진행 단계에서 도구 재추론(rederive)
-    발동 여부·라운드·축을 노출한다. stale agent 이미지(0043 미적용)에서는 호출부가
-    information_schema 로 컬럼 부재를 감지해 include_rederive=False 로 폴백하므로 기존
-    동작(리뷰 목록 노출)이 회귀 없이 유지된다.
+def _row_to_item(r, *, include_rederive: bool, include_convergence: bool) -> dict:
+    """redteam_reviews row → 콘솔 item dict (SELECT 컬럼 순서와 1:1 대응)."""
+    item = {
+        "id": int(r[0]), "conversation_id": r[1], "run_id": r[2], "verdict": r[3],
+        "findings": _as_json_list(r[4]), "block_count": int(r[5] or 0), "warn_count": int(r[6] or 0),
+        "verify_verdict": r[7], "revision_applied": bool(r[8]), "model": r[9],
+        "latency_ms": (int(r[10]) if r[10] is not None else None),
+        "reasoning_level": r[11], "is_group": bool(r[12]),
+        "created_at": (r[13].isoformat() if r[13] else None),
+        # rederive_*/수렴 관측 기본값 — 컬럼 부재 폴백/error 경로 호환
+        # (프론트 stage 렌더가 항상 참조).
+        "rederive_applied": False, "rederive_tool_rounds": 0, "rederive_axis": None,
+        "verify_findings": [], "unresolved_block_count": 0, "revision_rounds": 0,
+        "stop_reason": None,
+        # 0048 회차 원장 — 아래 _attach_rounds 가 채운다(테이블 부재 시 빈 목록 유지).
+        "rounds": [], "rounds_truncated": False,
+    }
+    _off = 14
+    if include_rederive:
+        item["rederive_applied"] = bool(r[_off])
+        item["rederive_tool_rounds"] = int(r[_off + 1] or 0)
+        item["rederive_axis"] = r[_off + 2]
+        _off += 3
+    if include_convergence:
+        item["verify_findings"] = _as_json_list(r[_off])
+        item["unresolved_block_count"] = int(r[_off + 1] or 0)
+        item["revision_rounds"] = int(r[_off + 2] or 0)
+        item["stop_reason"] = r[_off + 3]
+    return item
 
-    기본값은 fail-safe 로 False — 컬럼 존재를 확인한 호출자만 명시적으로 True 를 전달한다
-    (kwarg 생략 시 base-only SELECT 라 stale 이미지에서도 UndefinedColumn 이 나지 않는다)."""
+
+def _select_cols(include_rederive: bool, include_convergence: bool) -> str:
     base_cols = ("id, conversation_id, run_id, verdict, findings, block_count, warn_count, "
                  "verify_verdict, revision_applied, model, latency_ms, reasoning_level, is_group, created_at")
     cols = base_cols + (", rederive_applied, rederive_tool_rounds, rederive_axis" if include_rederive else "")
     cols += (", verify_findings, unresolved_block_count, revision_rounds, stop_reason"
              if include_convergence else "")
+    return cols
+
+
+def _query_conversation_page(cur, *, cursor: int | None, conv_limit: int, per_conv_cap: int,
+                             include_rederive: bool = False,
+                             include_convergence: bool = False,
+                             ) -> tuple[list[dict], list[dict], int | None]:
+    """리뷰를 **대화 단위로 묶어** 페이징한다 (feature-0021 회차 원장 재구성).
+
+    정렬 계약 (사용자 요구):
+      - 대화 그룹: **가장 최근 리뷰가 있었던 대화 순서 desc** (그룹 keyset = MAX(id)).
+      - 대화 내부: **진행 순서 asc** (id ASC = 시각 오름차순 — 회차 단계 그대로).
+
+    이전 구현은 전체 리뷰를 id DESC flat 목록으로만 내려, 같은 대화의 리뷰가 목록 곳곳에
+    흩어지고 페이징 경계에서 쪼개졌다. 대화를 페이징 단위로 삼으면 콘솔이 대화 단위 컨테이너
+    를 만들 수 있고(스크롤 격리), "더 보기" 가 그룹을 쪼개지 않는다.
+
+    per_conv_cap: 대화당 반환 리뷰 상한 (오래된 것부터 잘린다 — 최신 N건 유지). 상한에
+    걸린 대화는 conversations[].capped=True 로 표시해, 잘렸다는 사실을 은폐하지 않는다.
+
+    반환: (items, conversations, next_cursor)
+      - items: 위 정렬 계약대로 정렬된 리뷰 목록 (대화 그룹 순 → 대화 내 asc).
+      - conversations: [{conversation_id, review_count, returned_count, capped, last_id, last_at}]
+      - next_cursor: 다음 페이지의 대화 keyset (이 값보다 오래된 last_id 를 가진 대화들).
+    """
+    # ── Q1. 대화 그룹 keyset (MAX(id) DESC) ──
     if cursor is not None:
         cur.execute(
-            "SELECT " + cols + " FROM agent_runtime.redteam_reviews WHERE id < %s ORDER BY id DESC LIMIT %s",
-            (int(cursor), int(limit) + 1),
+            "SELECT COALESCE(conversation_id, '') AS ck, MAX(id) AS last_id, "
+            "       MAX(created_at) AS last_at, COUNT(*) AS n "
+            "  FROM agent_runtime.redteam_reviews "
+            " GROUP BY 1 HAVING MAX(id) < %s "
+            " ORDER BY last_id DESC LIMIT %s",
+            (int(cursor), int(conv_limit) + 1),
         )
     else:
         cur.execute(
-            "SELECT " + cols + " FROM agent_runtime.redteam_reviews ORDER BY id DESC LIMIT %s",
-            (int(limit) + 1,),
+            "SELECT COALESCE(conversation_id, '') AS ck, MAX(id) AS last_id, "
+            "       MAX(created_at) AS last_at, COUNT(*) AS n "
+            "  FROM agent_runtime.redteam_reviews "
+            " GROUP BY 1 "
+            " ORDER BY last_id DESC LIMIT %s",
+            (int(conv_limit) + 1,),
         )
+    grows = cur.fetchall() or []
+    has_more = len(grows) > conv_limit
+    grows = grows[:conv_limit]
+    if not grows:
+        return [], [], None
+
+    keys = [g[0] for g in grows]
+    non_null_keys = [k for k in keys if k]
+    # Q1 이 COALESCE(conversation_id,'') 로 묶으므로 NULL 과 빈 문자열은 **같은 그룹**이다.
+    # Q2 도 그 정의를 그대로 따라야 한다 — 빈 문자열 행을 `IS NULL` 로만 조회하면 그 행이
+    # items 에서 빠져 conversations[].returned_count/capped 가 어긋난다 (codex 리뷰 P2).
+    want_blank = any(not k for k in keys)
+
+    # ── Q2. 그 대화들의 리뷰 (대화당 최신 per_conv_cap 건) ──
+    cols = _select_cols(include_rederive, include_convergence)
+    cur.execute(
+        "SELECT " + cols + " FROM ("
+        "  SELECT " + cols + ", "
+        "         ROW_NUMBER() OVER (PARTITION BY COALESCE(conversation_id, '') "
+        "                            ORDER BY id DESC) AS rn "
+        "    FROM agent_runtime.redteam_reviews "
+        "   WHERE (conversation_id = ANY(%s) "
+        "          OR (%s AND (conversation_id IS NULL OR conversation_id = '')))"
+        ") t WHERE rn <= %s ORDER BY id",
+        (non_null_keys, bool(want_blank), int(per_conv_cap)),
+    )
     rows = cur.fetchall() or []
-    has_more = len(rows) > limit
+    by_conv: dict[str, list[dict]] = {}
+    for r in rows:
+        it = _row_to_item(r, include_rederive=include_rederive,
+                          include_convergence=include_convergence)
+        by_conv.setdefault(it["conversation_id"] or "", []).append(it)
+
     items: list[dict] = []
-    for r in rows[:limit]:
-        findings = r[4]
-        if isinstance(findings, str):
-            try:
-                findings = json.loads(findings)
-            except Exception:
-                findings = []
-        item = {
-            "id": int(r[0]), "conversation_id": r[1], "run_id": r[2], "verdict": r[3],
-            "findings": findings or [], "block_count": int(r[5] or 0), "warn_count": int(r[6] or 0),
-            "verify_verdict": r[7], "revision_applied": bool(r[8]), "model": r[9],
-            "latency_ms": (int(r[10]) if r[10] is not None else None),
-            "reasoning_level": r[11], "is_group": bool(r[12]),
-            "created_at": (r[13].isoformat() if r[13] else None),
-            # rederive_*/수렴 관측 기본값 — 컬럼 부재 폴백/error 경로 호환
-            # (프론트 stage 렌더가 항상 참조).
-            "rederive_applied": False, "rederive_tool_rounds": 0, "rederive_axis": None,
-            "verify_findings": [], "unresolved_block_count": 0, "revision_rounds": 0,
-            "stop_reason": None,
-        }
-        _off = 14
-        if include_rederive:
-            item["rederive_applied"] = bool(r[_off])
-            item["rederive_tool_rounds"] = int(r[_off + 1] or 0)
-            item["rederive_axis"] = r[_off + 2]
-            _off += 3
-        if include_convergence:
-            _vf = r[_off]
-            if isinstance(_vf, str):
-                try:
-                    _vf = json.loads(_vf)
-                except Exception:
-                    _vf = []
-            item["verify_findings"] = _vf or []
-            item["unresolved_block_count"] = int(r[_off + 1] or 0)
-            item["revision_rounds"] = int(r[_off + 2] or 0)
-            item["stop_reason"] = r[_off + 3]
-        items.append(item)
-    next_cursor = items[-1]["id"] if (has_more and items) else None
-    return items, next_cursor
+    conversations: list[dict] = []
+    for g in grows:
+        ck, last_id, last_at, total = g[0], int(g[1]), g[2], int(g[3] or 0)
+        group = by_conv.get(ck, [])  # Q2 가 ORDER BY id 라 이미 대화 내 asc
+        conversations.append({
+            "conversation_id": (ck or None),
+            "review_count": total,
+            "returned_count": len(group),
+            "capped": total > len(group),
+            "last_id": last_id,
+            "last_at": (last_at.isoformat() if last_at else None),
+        })
+        items.extend(group)
+
+    next_cursor = int(grows[-1][1]) if has_more else None
+    return items, conversations, next_cursor
+
+
+def _attach_rounds(cur, items: list[dict]) -> bool:
+    """items 에 회차 단계 원장(0048 redteam_review_rounds)을 붙인다 — 회차 asc.
+
+    반환값은 원장 가용 여부. 0048 미적용(마이그/배포 대기) 이면 False 를 돌려주고 items 의
+    `rounds` 는 빈 목록으로 남는다 — 콘솔은 그 경우 기존 요약 기반 타임라인으로 폴백해
+    회귀 없이 동작한다 (구 데이터도 같은 경로).
+
+    리뷰당 회차는 `_PER_REVIEW_ROUND_CAP` 로 상한을 둔다 — 반복 수정은 하드 백스톱(50
+    라운드 ≈ 101 단계)까지 갈 수 있어, 상한이 없으면 한 페이지 응답이 수백 KB 로 부푼다
+    (codex 리뷰 P2). 잘린 리뷰는 `rounds_truncated:true` 로 표시한다(무언의 절단 금지)."""
+    ids = [it["id"] for it in items]
+    if not ids:
+        return True
+    cur.execute(
+        "SELECT review_id, round_index, phase, verdict, findings, block_count, warn_count, "
+        "       revise_method, revise_axis, tool_rounds, answer_chars, note, created_at "
+        "  FROM agent_runtime.redteam_review_rounds "
+        " WHERE review_id = ANY(%s) "
+        " ORDER BY review_id, round_index, id",
+        (ids,),
+    )
+    by_review: dict[int, list[dict]] = {}
+    truncated: set[int] = set()
+    for r in cur.fetchall() or []:
+        _rid = int(r[0])
+        _bucket = by_review.setdefault(_rid, [])
+        if len(_bucket) >= _PER_REVIEW_ROUND_CAP:
+            truncated.add(_rid)
+            continue
+        _bucket.append({
+            "round_index": int(r[1] or 0), "phase": r[2], "verdict": r[3],
+            "findings": _as_json_list(r[4]),
+            "block_count": int(r[5] or 0), "warn_count": int(r[6] or 0),
+            "revise_method": r[7], "revise_axis": r[8],
+            "tool_rounds": int(r[9] or 0),
+            "answer_chars": (int(r[10]) if r[10] is not None else None),
+            "note": r[11],
+            "created_at": (r[12].isoformat() if r[12] else None),
+        })
+    for it in items:
+        it["rounds"] = by_review.get(it["id"], [])
+        it["rounds_truncated"] = it["id"] in truncated
+    return True
 
 
 @router.get("/api/admin/reasoning/redteam")
@@ -162,8 +280,13 @@ def admin_reasoning_redteam(
     request: Request,
     account=Depends(app.require_permission("console.reasoning.read", message=_PERM_MSG)),
 ) -> JSONResponse:
-    """자가 적대 리뷰 활동 — 24h/7d 요약 통계 + 최근 판정 keyset 페이징.
-    Query: cursor(id, 이 값보다 오래된 것), limit(기본 30, 1~100). PG 미가용 시 부분 degrade."""
+    """자가 적대 리뷰 활동 — 24h/7d 요약 통계 + **대화 단위** keyset 페이징.
+
+    Query: cursor(대화 그룹 keyset — 이 값보다 오래된 last_id 를 가진 대화부터),
+           limit(반환할 **대화 수**, 기본 12, 1~50).
+    정렬: 대화는 최근 리뷰 순 desc, 대화 내 리뷰는 진행 순서 asc (회차 단계 그대로).
+    각 리뷰에는 자가검증/재검증 회차 원장(`rounds`, 회차 asc)이 동봉된다.
+    PG 미가용 시 부분 degrade."""
     try:
         limit = int(request.query_params.get("limit", str(_REVIEW_LIMIT_DEFAULT)))
     except Exception:
@@ -178,9 +301,12 @@ def admin_reasoning_redteam(
             cursor = None
 
     items: list[dict] = []
+    conversations: list[dict] = []
     next_cursor = None
     stats: dict[str, Any] = {}
     pg_available = True
+    # 회차 원장(0048) 가용 여부 — 부재 시 콘솔이 요약 기반 타임라인으로 폴백.
+    rounds_available = False
     # table_available: PG 는 붙었으나 redteam_reviews 가 아직 없는 경우(마이그 전 / stale agent
     # 이미지 배포 함정)를 "리뷰 없음"(빈 목록)과 구분한다. 부재면 콘솔이 "아직 준비 안 됨" 안내.
     table_available = True
@@ -263,8 +389,10 @@ def admin_reasoning_redteam(
                 except Exception:
                     _has_convergence = False
                 try:
-                    items, next_cursor = _query_reviews(
-                        cur, cursor=cursor, limit=limit, include_rederive=_has_rederive,
+                    items, conversations, next_cursor = _query_conversation_page(
+                        cur, cursor=cursor, conv_limit=limit,
+                        per_conv_cap=_PER_CONV_REVIEW_CAP,
+                        include_rederive=_has_rederive,
                         include_convergence=_has_convergence)
                 except Exception:
                     # 테이블 부재/스키마 불일치 — 빈 목록과 구분해 table_available=False.
@@ -273,6 +401,17 @@ def admin_reasoning_redteam(
                     except Exception:
                         pass
                     table_available = False
+                # 회차 원장(0048) — 별도 try(테이블 부재 stale 이미지에서 목록 조회를
+                # 오염시키지 않는다. 부재면 rounds=[] 로 남고 콘솔이 요약 폴백).
+                if items:
+                    try:
+                        rounds_available = _attach_rounds(cur, items)
+                    except Exception:
+                        try:
+                            pg.rollback()
+                        except Exception:
+                            pass
+                        rounds_available = False
         except Exception:
             _log.debug("redteam reviews query failed", exc_info=True)
         finally:
@@ -282,8 +421,10 @@ def admin_reasoning_redteam(
                 pass
 
     return JSONResponse({
-        "stats": stats, "items": items, "next_cursor": next_cursor,
-        "pg_available": pg_available, "table_available": table_available,
+        "stats": stats, "items": items, "conversations": conversations,
+        "next_cursor": next_cursor, "pg_available": pg_available,
+        "table_available": table_available, "rounds_available": rounds_available,
+        "per_conversation_cap": _PER_CONV_REVIEW_CAP,
     })
 
 
