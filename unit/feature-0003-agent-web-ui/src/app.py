@@ -59,6 +59,8 @@ from modules.memory import (
     mark_cancel_requested,
     mark_delete_requested,
     mark_finalize_requested,
+    mark_timeout_extension_granted,  # feature-0030: 실행시간 연장 승인
+    timeout_extension_state,
     save_memory_kv,
     set_run_status,
 )

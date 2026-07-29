@@ -679,6 +679,20 @@ PERMISSION_DEFINITIONS = (
         "group": "conversation_any",
     },
     {
+        # feature-0030: '즉시 답변'(멈추고 답해라)과 정반대 조작이라 같은 코드로 묶지 않는다 —
+        # 감사·역할 설계에서 두 행위를 분리해 봐야 한다(비용 축이 다르다).
+        "code": "conversation.extend.own",
+        "label": "내 대화 실행시간 연장",
+        "description": "자신의 처리 중 대화가 실행 상한에 근접했을 때, 그 요청에 한해 상한을 넘겨 끝까지 추론하도록 승인할 수 있다.",
+        "group": "conversation_own",
+    },
+    {
+        "code": "conversation.extend.any",
+        "label": "전체 대화 실행시간 연장",
+        "description": "모든 계정의 처리 중 대화에 대해 실행 상한을 넘긴 추론 연장을 승인할 수 있다.",
+        "group": "conversation_any",
+    },
+    {
         "code": "conversation.share.create",
         "label": "대화 공유 링크 생성",
         "description": "자신의 대화를 anonymous 접근 가능한 공유 링크로 발급하거나 취소할 수 있다.",
@@ -1061,6 +1075,10 @@ _ATOMIC_PERM_SPLIT_MIGRATION_KEY = "atomic-perm-split-v1"
 # 쓰는 일반 기능이다(사용자 결정 2026-07-23). 도입 시 기존 배포의 conversation.create 보유
 # 역할에 folder.list.own/folder.manage.own 을 1회 backfill 로 부여한다.
 _FOLDER_PERMS_BROADEN_MIGRATION_KEY = "folder-perms-broaden-v1"
+# feature-0030: 실행시간 연장 승인은 '즉시 답변'과 같은 자리(처리 중 대화 조작)의 권한이다.
+# 도입 시점의 기존 배포에서 conversation.finalize.{own,any} 를 보유한 역할에 대응하는
+# conversation.extend.{own,any} 를 1회 backfill 한다(시드 밖 배포 전용 역할까지 커버).
+_EXTEND_PERMS_MIGRATION_KEY = "conversation-extend-perms-v1"
 
 
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
@@ -1440,6 +1458,8 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.delete.own",
             "conversation.cancel.own",
             "conversation.finalize.own",
+            # feature-0030: 타임아웃 임박 시 "이번 요청만 끝까지" 승인 — 대화를 보내는 역할의 기본 조작.
+            "conversation.extend.own",
             "conversation.share.create",
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
@@ -1468,6 +1488,8 @@ SEED_ROLE_DEFINITIONS = (
             "conversation.delete.own",
             "conversation.cancel.own",
             "conversation.finalize.own",
+            # feature-0030: 타임아웃 임박 시 "이번 요청만 끝까지" 승인 — 대화를 보내는 역할의 기본 조작.
+            "conversation.extend.own",
             "conversation.share.create",
             "conversation.duplicate.own",
             # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
@@ -2401,6 +2423,9 @@ VALUES (%s, %s)
     # feature-0024-conversation-folders(사용자 결정 2026-07-23): conversation.create 보유 역할 전체에
     #   folder.list.own/folder.manage.own 을 1회 backfill 로 부여(폴더=대화 만드는 모두의 개인 기능).
     _backfill_folder_perms_v1(conn)
+    # feature-0030: 실행시간 연장 승인(conversation.extend.{own,any})을 도입 시점의
+    #   conversation.finalize.{own,any} 보유 역할에 1회 backfill(같은 자리의 처리 중 대화 조작).
+    _backfill_extend_perms_v1(conn)
 
 
 def _backfill_folder_perms_v1(conn) -> None:
@@ -2466,6 +2491,75 @@ WHERE rp.PermissionId = %s
             cur.close()
         except Exception:
             pass
+
+
+def _backfill_extend_perms_v1(conn) -> None:
+    """feature-0030 — 실행시간 연장 승인 권한을 기존 배포의 '즉시 답변' 보유 역할에 1회 부여.
+
+    **`own` 만 backfill 한다.** 자기 요청을 끝까지 돌리는 것은 '즉시 답변'과 같은 자리의
+    본인 대화 조작이라 자동 부여가 정합하지만, `any`(타인 run 을 무제한 연장 + 비용 유발)는
+    '중단'과 위험 방향이 반대라 자동 확대하지 않는다 — 관리자가 콘솔에서 명시 부여한다
+    (codex 적대 리뷰 P1-4).
+
+    새 권한 코드를 도입하면 기존 배포의 역할(시드 밖 dba/dev_server/… 포함)은 아무도 못 눌러
+    기능이 사실상 죽으므로, own 한정으로 도입 시점에 한 번 대응 권한을 부여한다.
+
+    **1회 guard**: folder/graph backfill 과 동일 규약 — 매 startup 재실행하면 admin 이 특정
+    역할에서 연장 권한을 의도적으로 회수해도 재기동마다 되살아나 통제를 무력화한다.
+    best-effort — 마커 미기록 시 다음 startup 재시도(INSERT IGNORE 라 무해).
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+CREATE TABLE IF NOT EXISTS WebSchemaMigrations (
+    MigrationKey VARCHAR(191) NOT NULL PRIMARY KEY,
+    AppliedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cur.execute(
+            "SELECT 1 FROM WebSchemaMigrations WHERE MigrationKey = %s LIMIT 1",
+            (_EXTEND_PERMS_MIGRATION_KEY,),
+        )
+        already = cur.fetchone()
+        cur.close()
+    except Exception:
+        return
+    if already:
+        return
+    permission_map = _permission_id_map(conn)
+    # own 만 — any 는 관리자 명시 부여 대상(위 docstring 참조).
+    pairs = (
+        (int(permission_map.get("conversation.finalize.own") or 0),
+         int(permission_map.get("conversation.extend.own") or 0)),
+    )
+    if not all(src > 0 and dst > 0 for src, dst in pairs):
+        return  # 카탈로그 미해석 — 마커 미기록으로 다음 startup 재시도.
+    try:
+        cur = conn.cursor()
+        for src_pid, dst_pid in pairs:
+            cur.execute(
+                """
+INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
+SELECT DISTINCT rp.RoleId, %s
+FROM WebRolePermissions rp
+WHERE rp.PermissionId = %s
+                """,
+                (dst_pid, src_pid),
+            )
+        cur.close()
+    except Exception:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT IGNORE INTO WebSchemaMigrations (MigrationKey) VALUES (%s)",
+            (_EXTEND_PERMS_MIGRATION_KEY,),
+        )
+        cur.close()
+    except Exception:
+        pass
 
 
 def _backfill_graph_perm_split_v1(conn) -> None:

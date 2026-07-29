@@ -74,6 +74,7 @@ sources:
 | feature-0027-perf-latency-p0 | in-progress | P0 성능 개선 1차 — post-answer 큐레이션(topic/용어/ENUM) terminal 후 이동(답변 체감 -25~35s·결과물 불변)·grounding RO 단일연결·MySQL 버퍼풀 128MB→1G·Caddy gzip+immutable static (feature-0026 측정 근거, 품질 영향 축 불변, 2026-07-28) | [[feature-0027-perf-latency-p0]] | `unit/feature-0027-perf-latency-p0/docs/FUNCTION.md` |
 | feature-0028-web-perf | in-progress | web 계층 성능 — ask_result long-poll 워커 스레드 이관(이벤트 루프 stall 제거)·스냅샷 PG 연결 4~5→1(단일 왕복 번들)·권한 카탈로그 TTL 캐시+세션 touch throttle·web MySQL 풀 opt-in (feature-0026 측정 근거·응답/인가 불변, 2026-07-28) | [[feature-0028-web-perf]] | `unit/feature-0028-web-perf/docs/FUNCTION.md` |
 | feature-0029-graph-churn | in-progress | 그래프 sync churn 근절 — 값 무변경 시 updated_at 미전진(upsert·신호·트리거 alembic 0046)·status 히스테리시스(trusted/broken 왕복 차단)·프로브 broken 부활 금지·공유 정점 중복 MERGE 제거(관계당 cypher 11→1~3). 라이브 실측 근거(2h 갱신의 63%가 값 무변경, sync duration 은 churn 행 수에 선형) (2026-07-28) | [[feature-0029-graph-churn]] | `unit/feature-0029-graph-churn/docs/FUNCTION.md` |
+| feature-0030-ask-timeout-extension | in-progress | 실행 타임아웃 임박 시 사용자 확인 후 연장 — 예산 80%(설정 가능) 도달 시 작업 화면에 비차단 배너 + 백그라운드 브라우저 알림, 승인한 그 요청에 한해 run 예산 컷 해제(개별 LLM 호출 상한 15분은 유지 — 중단·즉시답변 응답성 보존). 미승인 시 종전 타임아웃 동작 (2026-07-29) | [[feature-0030-ask-timeout-extension]] | `unit/feature-0030-ask-timeout-extension/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

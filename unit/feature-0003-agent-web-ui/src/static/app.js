@@ -583,6 +583,8 @@ const PERMISSION_LABELS = {
   "conversation.cancel.any": "전체 대화 중단",
   "conversation.finalize.own": "내 대화 즉시답변",
   "conversation.finalize.any": "전체 대화 즉시답변",
+  "conversation.extend.own": "내 대화 실행시간 연장",
+  "conversation.extend.any": "전체 대화 실행시간 연장",
   "conversation.share.create": "대화 공유 링크 생성",
   "conversation.duplicate.own": "내 대화 복사",
   "conversation.duplicate.any": "전체 대화 복사",
@@ -632,6 +634,8 @@ const PERMISSION_DESCRIPTIONS = {
   "conversation.cancel.any": "타 사용자 소유 대화의 진행 중 요청까지 중단시킬 수 있는 권한입니다.",
   "conversation.finalize.own": "자신이 소유한 대화에서 추가 탐색을 멈추고 현재까지의 정보로 즉시 답변을 만들게 할 수 있는 권한입니다.",
   "conversation.finalize.any": "타 사용자 소유 대화까지 포함해 즉시 답변을 강제할 수 있는 권한입니다.",
+  "conversation.extend.own": "자신이 소유한 대화가 실행 시간 한도에 근접했을 때, 그 요청에 한해 한도를 넘겨 끝까지 추론하도록 승인할 수 있는 권한입니다. 승인한 요청은 더 오래 실행되어 LLM 사용량이 늘 수 있습니다.",
+  "conversation.extend.any": "타 사용자 소유 대화까지 포함해 실행 시간 한도를 넘긴 추론 연장을 승인할 수 있는 권한입니다.",
   "conversation.share.create": "자신의 대화를 anonymous 접근 가능한 공유 링크로 발급하거나 취소할 수 있는 권한입니다. 사내 협업용이며 외부 IP 노출 시 보안 영향이 있을 수 있습니다.",
   "conversation.duplicate.own": "자신이 소유한 대화의 메시지/첨부/SQL 결과 전체를 본 계정 소유의 새 대화로 복제할 수 있는 권한입니다. 원본은 유지됩니다.",
   "conversation.duplicate.any": "타 사용자가 소유한 대화까지 본 계정 소유의 새 대화로 복제할 수 있는 권한입니다. 원본은 유지됩니다.",
@@ -670,6 +674,8 @@ function requiredPermissionsFor(action, conversation = currentConversation()) {
       return { label: "대화 중단", codes: own ? ["conversation.cancel.any", "conversation.cancel.own"] : ["conversation.cancel.any"] };
     case "conversation.finalize":
       return { label: "즉시 답변", codes: own ? ["conversation.finalize.any", "conversation.finalize.own"] : ["conversation.finalize.any"] };
+    case "conversation.extend":
+      return { label: "실행시간 연장", codes: own ? ["conversation.extend.any", "conversation.extend.own"] : ["conversation.extend.any"] };
     case "conversation.duplicate":
       return { label: "대화 복사", codes: own ? ["conversation.duplicate.any", "conversation.duplicate.own"] : ["conversation.duplicate.any"] };
     case "conversation.share":
@@ -1243,6 +1249,12 @@ function canCancelConversation(conversation = currentConversation()) {
 function canFinalizeConversation(conversation = currentConversation()) {
   if (!conversation) return false;
   return can("conversation.finalize.any") || (isOwnConversation(conversation) && can("conversation.finalize.own"));
+}
+
+// feature-0030: 실행시간 연장 승인 가능 여부 (즉시 답변과 동형 게이트, 코드만 다름).
+function canExtendConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return can("conversation.extend.any") || (isOwnConversation(conversation) && can("conversation.extend.own"));
 }
 
 function currentConversation() {
@@ -6847,6 +6859,9 @@ function stopProgressPolling({ reset = false, abort = true } = {}) {
   }
   state.progressAbortController = null;
   state.progressPollInFlight = false;
+  // feature-0030: 폴링이 멈추면 배너를 갱신할 채널도 사라진다 — 남겨두면 종료된 run 의
+  // 확인 요청이 화면에 박제되므로 여기서 걷는다(대화 전환·terminal 공통 경로).
+  applyTimeoutExtensionState(null, "", "");
   if (reset) {
     resetProgressTracking();
     // TASK-0061 Phase 1: 대화 전환 / 로그아웃 등 reset 경로에서 pending bubble 도 정리.
@@ -6933,6 +6948,8 @@ function applyProgressPayload(payload = {}) {
   if (state.activeConversationId) {
     _updateConversationStatusDot(state.activeConversationId, displayStatus || rawStatus || "processing");
   }
+  // feature-0030: 실행시간 한도 임박 배너 — 이 run 이 실제로 처리 중일 때만.
+  applyTimeoutExtensionState(payload.timeout_extension, runId, rawStatus);
   if (isStale && state.activeConversationId && !state.staleToastShownFor.has(state.activeConversationId)) {
     state.staleToastShownFor.add(state.activeConversationId);
     showToast("작업이 중단된 것으로 보입니다. 사이드바에서 취소 또는 삭제 액션을 사용해 주세요.", true);
@@ -9105,6 +9122,115 @@ async function finalizeCurrentRun() {
     body: JSON.stringify({ conversation_id: state.activeConversationId }),
   });
   showToast("즉시 답변 요청을 전달했습니다.");
+}
+
+// ── feature-0030: 실행시간 한도 임박 → 사용자 확인 후 연장 ────────────────────
+// 서버(agent 루프)가 예산의 임계(기본 80%)를 넘기면 KV 로 prompted 를 올리고, 그 상태가
+// /api/progress 폴링에 실려 온다. 여기서는 배너를 그리고 승인만 전달한다 — 추론은 승인
+// 여부와 무관하게 계속 돌고 있고, 승인이 없으면 서버가 종전대로 타임아웃 처리한다.
+const _extBannerState = { runId: "", notified: false };
+
+function applyTimeoutExtensionState(extension, runId, rawStatus) {
+  const banner = document.getElementById("timeoutExtendBanner");
+  if (!banner) return;
+  const btn = document.getElementById("timeoutExtendBannerBtn");
+  const text = document.getElementById("timeoutExtendBannerText");
+  const ext = extension && typeof extension === "object" ? extension : null;
+  const processing = String(rawStatus || "").trim().toLowerCase() === "processing";
+  // 서버가 실은 run_id 와 우리가 추적 중인 run 이 정확히 같을 때만 이 run 의 신호로 인정한다.
+  // 빈 값을 '일치'로 보면 torn snapshot·id 누락 시 이전 run 의 배너·알림이 현재 화면에
+  // 뜬다(codex 적대 리뷰 P2-2) — 양쪽 다 존재 + 완전 일치만 통과.
+  const sameRun = Boolean(ext && ext.run_id && runId && String(ext.run_id) === String(runId));
+  if (!ext || !ext.prompted || !processing || !sameRun) {
+    banner.classList.add("hidden");
+    banner.classList.remove("is-granted");
+    if (_extBannerState.runId && _extBannerState.runId !== runId) {
+      _extBannerState.notified = false;
+    }
+    _extBannerState.runId = runId || "";
+    return;
+  }
+  if (_extBannerState.runId !== runId) {
+    _extBannerState.runId = runId || "";
+    _extBannerState.notified = false;
+  }
+  banner.classList.remove("hidden");
+  if (ext.granted) {
+    banner.classList.add("is-granted");
+    if (text) text.textContent = "시간 제한 없이 끝까지 추론하는 중입니다.";
+    if (btn) btn.classList.add("hidden");
+    return;
+  }
+  banner.classList.remove("is-granted");
+  if (btn) {
+    btn.classList.remove("hidden");
+    markAccessBlocked(btn, "conversation.extend", currentConversation());
+  }
+  if (text) {
+    const remain = _extendRemainSeconds(ext.deadline_at);
+    text.textContent = remain > 0
+      ? `응답 시간 한도까지 약 ${remain}초 남았습니다. 계속 추론할까요?`
+      : "응답 시간 한도에 근접했습니다. 계속 추론할까요?";
+  }
+  // 탭이 백그라운드면 사용자가 배너를 못 본다 — run 당 1회 브라우저 알림으로 끌어온다.
+  if (!_extBannerState.notified) {
+    _extBannerState.notified = true;
+    _notifyTimeoutExtension();
+  }
+}
+
+function _extendRemainSeconds(deadlineAt) {
+  if (!deadlineAt) return 0;
+  const ts = Date.parse(String(deadlineAt));
+  if (!Number.isFinite(ts)) return 0;
+  return Math.max(0, Math.round((ts - Date.now()) / 1000));
+}
+
+function _notifyTimeoutExtension() {
+  // 권한을 여기서 처음 요청하면 사용자 제스처 없는 prompt 라 브라우저가 무시하거나 거부한다.
+  // 발화 시점의 `_maybeRequestNotifyPermission()` 이 이미 요청했으므로 granted 일 때만 띄우고,
+  // 아니면 조용히 넘어간다(배너가 정본 경로 — 알림은 백그라운드 탭 보조).
+  try {
+    if (!document.hidden) return;
+    // gc-settings-notif: OS 알림 환경설정·대화 음소거를 그대로 존중(멘션 알림과 동일 게이트).
+    if (!getNotifyPrefs().desktop) return;
+    if (isConversationMuted(state.activeConversationId)) return;
+    if (!window.Notification || Notification.permission !== "granted") return;
+    const _conv = currentConversation();
+    const _convName = (_conv && _conv.topic) ? String(_conv.topic).trim() : "";
+    const n = new Notification(_convName ? `DQA : ${_convName}` : "DQA", {
+      body: "응답 시간 한도에 근접했습니다. 탭으로 돌아가 '계속 추론'을 눌러 주세요.",
+      tag: `timeout-extend-${state.activeConversationId || ""}`,
+    });
+    n.onclick = () => { try { window.focus(); n.close(); } catch (_e) { /* noop */ } };
+  } catch (_e) {
+    /* 알림 실패는 무시 — 배너가 정본 경로 */
+  }
+}
+
+async function grantTimeoutExtension() {
+  if (!state.activeConversationId) return;
+  if (!canExtendConversation()) {
+    showPermissionDeniedToast("conversation.extend");
+    return;
+  }
+  // 배너가 가리키던 run 을 함께 보낸다 — 그 사이 새 요청이 시작됐거나 lease reclaim 으로
+  // run 이 교체됐으면 서버가 409 로 거절해, 사용자가 보지도 않은 run 이 연장되지 않는다.
+  await apiFetch("/api/extend", {
+    method: "POST",
+    body: JSON.stringify({
+      conversation_id: state.activeConversationId,
+      run_id: _extBannerState.runId || state.progressRunId || "",
+    }),
+  });
+  // 폴링 도착 전에도 즉시 반영(optimistic) — 서버 상태는 다음 폴링이 확정한다.
+  const banner = document.getElementById("timeoutExtendBanner");
+  const btn = document.getElementById("timeoutExtendBannerBtn");
+  const text = document.getElementById("timeoutExtendBannerText");
+  if (banner) banner.classList.add("is-granted");
+  if (btn) btn.classList.add("hidden");
+  if (text) text.textContent = "시간 제한 없이 끝까지 추론하는 중입니다.";
+  showToast("이번 요청은 시간 제한 없이 끝까지 추론합니다.");
 }
 
 // TASK-0041: 서버에 해당 대화의 현재 실행 상태(is_processing 등)를 질의한다.
@@ -11766,6 +11892,17 @@ async function initialize() {
       event.stopPropagation();
       finalizeCurrentRun().catch((error) => {
         showToast(error.message || "즉시 답변 요청에 실패했습니다.", true);
+      });
+    });
+  }
+  // feature-0030: 실행시간 연장 승인 — 컴포저 위 인라인 배너 버튼.
+  const _extBannerBtn = document.getElementById("timeoutExtendBannerBtn");
+  if (_extBannerBtn) {
+    _extBannerBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      grantTimeoutExtension().catch((error) => {
+        showToast(error.message || "연장 요청에 실패했습니다.", true);
       });
     });
   }

@@ -604,6 +604,66 @@ async def finalize_request(request: Request, account=Depends(app.get_current_acc
     return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})
 
 
+@router.post("/api/extend")
+async def extend_request(request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """feature-0030 — 사용자가 '타임아웃과 무관하게 끝까지 추론'을 승인.
+
+    KV 플래그만 세팅하고 즉시 반환한다(finalize 와 동일 계약). 워커의 agent 루프가 실행
+    예산 100% 도달 시점에 이 플래그를 읽어 그 run 에 한해 컷을 넘긴다 — 승인이 늦게 도착해
+    이미 종료된 run 에는 효과가 없고, 다음 요청에도 전이되지 않는다(run 단위 수명).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return app._json_error("invalid json", 400)
+    conversation_id = app._resolve_conversation_for_account(
+        conn,
+        account,
+        str(data.get("conversation_id", "")).strip(),
+    )
+    if not conversation_id:
+        return app._json_error("empty conversation_id", 400)
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.extend.own",
+        "conversation.extend.any",
+    ):
+        return app._json_error("권한이 없습니다.", 403)
+    # 기능 게이트(관리 콘솔). OFF 인데 stale 프론트가 호출하면 승인을 남기지 않는다 —
+    # 남기면 다음 ON 전환 때 의도 없는 연장으로 되살아난다. 조회 자체가 실패하면 워커의
+    # `_timeout_extension_settings()` 와 동일하게 **fail-closed** 로 거절한다(양쪽 대칭).
+    try:
+        if int(app._runtime_settings.get_int("AGENT_TIMEOUT_EXTENSION_ENABLED")) != 1:
+            return app._json_error("실행시간 연장 기능이 꺼져 있습니다.", 409)
+    except Exception:
+        return app._json_error("실행시간 연장 설정을 확인할 수 없습니다.", 503)
+    # 승인은 **사용자가 배너에서 본 그 run** 에만 붙어야 한다. 클라이언트가 보낸 run_id 가
+    # 현재 run 과 다르면(그 사이 새 요청이 시작됐거나 lease reclaim 으로 run 이 교체됨)
+    # 승인을 기록하지 않는다 — 기록하면 사용자가 보지도 않은 run 이 연장된다.
+    try:
+        current_run_id = str(app.load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+    except Exception:
+        return app._json_error("extend failed", 500)
+    if not current_run_id:
+        return app._json_error("진행 중인 요청이 없습니다.", 409)
+    client_run_id = str(data.get("run_id", "") or "").strip()
+    if client_run_id and client_run_id != current_run_id:
+        return app._json_error("확인 대상 요청이 이미 종료되었습니다.", 409)
+    try:
+        granted = app.mark_timeout_extension_granted(conn, conversation_id, run_id=current_run_id)
+    except Exception:
+        return app._json_error("extend failed", 500)
+    if not granted:
+        return app._json_error("확인 대상 요청이 이미 종료되었습니다.", 409)
+    return JSONResponse({
+        "conversation_id": conversation_id,
+        "run_id": current_run_id,
+        "output": "이번 요청은 시간 제한 없이 끝까지 추론합니다.",
+    })
+
+
 @router.get("/api/ask_status")
 def ask_status(request: Request, conversation_id: str = "", account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
     """현재 대화의 agent 실행 상태 snapshot.
@@ -2500,6 +2560,14 @@ def progress(
             display_status, is_stale = fallback_status, False
         else:
             display_status, is_stale = app._compute_display_status(conn, cid, status, status_at, run_id)
+        # feature-0030: 연장 확인 상태를 진행 폴링에 실어 보낸다 — 프론트가 이미 처리 중
+        # 내내 도는 채널이라 새 폴링 경로를 만들지 않는다. 처리 중이 아니면 조회 생략.
+        timeout_extension = {"prompted": False, "granted": False, "deadline_at": "", "run_id": ""}
+        if display_status == "processing" and not is_stale:
+            try:
+                timeout_extension = app.timeout_extension_state(conn, cid)
+            except Exception:
+                pass
         conn.close()
     except Exception:
         try:
@@ -2517,6 +2585,7 @@ def progress(
         "step_count": step_count,
         "run_id": run_id,
         "conversation_id": cid,
+        "timeout_extension": timeout_extension,
     })
 
 @router.get("/api/ask_result")

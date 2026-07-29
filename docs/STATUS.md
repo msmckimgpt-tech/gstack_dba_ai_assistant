@@ -75,6 +75,7 @@ sources:
 | feature-0027-perf-latency-p0 | in-progress | 2026-07-28 | [TASK](../unit/feature-0027-perf-latency-p0/docs/TASK.md) | P0 성능 개선 1차 — post-answer 큐레이션(topic/용어/ENUM LLM 3건) terminal 후 이동(체감 -25~35s)·grounding RO 단일연결·MySQL 버퍼풀 128MB→1G·Caddy gzip+immutable static (feature-0026 측정 근거, 품질 무영향 축만) |
 | feature-0028-web-perf | in-progress | 2026-07-28 | [TASK](../unit/feature-0028-web-perf/docs/TASK.md) | web 계층 성능 — ask_result long-poll 워커 스레드 이관(이벤트 루프 stall 제거)·스냅샷 PG 단일연결 번들(호출당 4~5→1)·권한 카탈로그 TTL 캐시+세션 LastSeenAt throttle(인증 5왕복 완화)·web MySQL 풀 opt-in (feature-0026 측정 근거, 응답 shape·인가 불변) |
 | feature-0029-graph-churn | in-progress | 2026-07-28 | [TASK](../unit/feature-0029-graph-churn/docs/TASK.md) | 그래프 sync churn 근절 — 값 무변경 시 updated_at 미전진(upsert·신호·트리거 alembic 0046)·status 히스테리시스(trusted/broken 왕복 차단)·프로브 broken 부활 금지·공유 정점 중복 MERGE 제거(관계당 cypher 11→1~3). 라이브 실측 근거(2h 갱신의 63%가 값 무변경) |
+| feature-0030-ask-timeout-extension | in-progress | 2026-07-29 | [TASK](../unit/feature-0030-ask-timeout-extension/docs/TASK.md) | 실행 타임아웃 80% 도달 시 사용자 확인 후 그 run 한정 무제한 연장 — KV 시그널(cancel/finalize 미러링)·run 예산+LLM 타임아웃 2층 해제·컴포저 인라인 배너+백그라운드 브라우저 알림·conversation.extend.* 권한 신설 |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 > **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
