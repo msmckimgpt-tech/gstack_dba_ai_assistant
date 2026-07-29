@@ -51,6 +51,12 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
   쓰고, 출력이 "리뷰에 대한 회신"이 아니라 "원 요청에 대한 최종 답변"임을 계약으로 명시한다.
   ② 그래도 남는 메타 프레이밍은 결정론 탐지기가 잡아 **내용 보존 재서술 1회**로 교정한다.
   전 경로 fail-open 이며, 다듬기가 답변을 악화시키면(내용 손실·메타 잔존) 원문을 유지한다.
+- REQ-20260729T110000-review-request-context: 리뷰어와 수정 지시가 **현재 턴 발화가 아니라 이
+  대화의 실질 요청**을 기준으로 판단하게 한다. ① 리뷰어에 `CONVERSATION REQUEST` 와 **사용자
+  첨부 파일 근거**를 제공하고 "짧은 후속 발화 대비 과답변" 을 결함으로 보고하지 못하게 한다.
+  ② 재앵커를 [대화 요청 / 직전 발화] 2층으로 나누고, 계약을 **addressing 전용**(다룰 내용을
+  좁히지 않음)으로 한정한다. ③ 수정본이 초안 대비 붕괴하면 채택하지 않는다
+  (`stop_reason=revise_collapsed`). 근거: 라이브 회귀(§7.4).
 - REQ-20260727-reviewer-memory: 리뷰어가 **대화 내부 격리 환경에서 자기 리뷰 이력을 기억**한다 —
   자기가 직전에 지적한 항목과 그에 대해 assistant 가 내놓은 수정본을 이어받아, 해소 여부를
   먼저 판정하고 이미 고쳐진 항목을 다시 보고하지 않는다. 기억 범위는 (a) 현재 답변의 라운드
@@ -83,8 +89,10 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 ## 5. Inputs
 - 답변 초안 (`result["answer"]`), 사용자 질문, 도구 실행 digest (SQL·행수·도구 요약),
   modality (그룹 여부), reasoning_level, product_id.
-- **원 요청 재앵커 입력**: 이 답변을 촉발한 사용자 발화(`user_message`) + 대화 목표
-  (`thread_goal`, bounded 발신자에겐 억제 — §7.3).
+- **요청 재앵커 입력**: 대화 실질 요청(`origin_request`→`thread_goal` 폴백) + 이 답변을 촉발한
+  사용자 발화(`user_message`) + 대화 목표. 대화 레벨 값은 bounded 발신자에겐 억제 (§7.3·§7.4).
+- **리뷰어 근거 입력**: 도구 실행 digest + **사용자 첨부 파일**(매니페스트+발췌, bounded 발신자
+  에겐 억제 — §7.4).
 - 런타임 설정: `REDTEAM_ENABLED`, `REDTEAM_MAX_REVISIONS`,
   `REDTEAM_REVISE_UNTIL_RESOLVED`, `REDTEAM_VERIFY_MIN_LEVEL`, `REDTEAM_UNRESOLVED_NOTICE`,
   `REDTEAM_HISTORY_CONV_LIMIT`, `REDTEAM_ANSWER_REALIGN`,
@@ -119,6 +127,7 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
 | `resolved` | 재검증 통과 — 지적 해소 | 아니오 |
 | `aborted` | 사용자 '즉시 답변'/취소 | 가능 |
 | `no_progress` | 수정본이 직전과 실질 동일 (반복 무의미) | 가능 |
+| `revise_collapsed` | 수정본이 최초 초안의 30% 미만으로 축소 — 붕괴 방지로 미채택 (§7.4) | 가능 |
 | `revise_failed` | 수정 산출 실패 (fail-open) | 가능 |
 | `verify_error` | 재검증 호출 실패 (fail-open) | 미상 |
 | `unverified` | `REDTEAM_VERIFY_MIN_LEVEL` 로 재검증을 끈 강도 | 미상 |
@@ -173,6 +182,48 @@ feature-0002 (코어·워커), feature-0003 (관리 콘솔), shared (설정 레�
   없으므로, bounded 발신자(`_suppress_conversation_context`)에게는 system 프롬프트의
   CONVERSATION CONTEXT 와 **동일하게 억제**한다(`_realign_thread_goal` 정본). 재앵커 블록은
   `<<USER_REQUEST>>` sentinel 로 구획되고 내부 sentinel 이 제거되어 구획 breakout 이 차단된다.
+
+### 7.4 다중 턴 요청 맥락 · 첨부 근거 · 붕괴 가드 (2026-07-29 회귀 교정)
+
+§7.3 초판은 **단일 턴**을 암묵 가정했다 — 재앵커의 "원 요청" 자리에 *현재 턴 발화*를 싣고,
+계약이 "답변의 구성·범위·상세도는 원 요청이 결정한다" 고 선언했다. 다중 턴에서 이 가정이
+깨지면서 답변이 붕괴했다.
+
+**라이브 근거** (대화 `20260729013313-2211841a`, run #132 — 실측):
+
+| 턴 | 사용자 | 답변 |
+|---|---|---|
+| 1 | "쿼리 리뷰를 진행해주세요" + 첨부 `*.sql` | 488자 |
+| 2 | **"네 맞습니다."** | **152자** ("상세 분석이 필요하시면 말씀해주세요") — 14 라운드 수정 후 `stop=resolved` |
+| 3 | "리뷰 진행 및 답변해주세요." | 3,170자 (정상 리뷰) |
+
+리뷰어가 낸 BLOCK 2건이 원인이었다 — 둘 다 **구조적 false positive**:
+- `completeness`: "USER QUESTION 에 '네 맞습니다'만 있고 코드 제공 없음. DRAFT 는 긴 리뷰 제공."
+  → 리뷰어는 fresh-context 라 대화를 못 보고 **현재 턴 발화만** 받는다.
+- `honesty`: "사용자 제출 증거가 없는 SQL 을 검증된 분석인 것처럼 제시."
+  → 첨부 본문은 **시스템 프롬프트**로 주입되고 evidence digest 는 **도구 결과만** 담는다.
+
+그리고 이 오판이 **자기 강화**됐다: 모델이 내용을 지울수록 반박할 claim 이 사라져 리뷰어가
+통과시킨다 — **축소가 곧 수렴이 되는 퇴행 경로**(14 라운드가 그 gradient descent 의 흔적).
+
+**교정 4축**:
+
+| 축 | 내용 |
+|---|---|
+| **요청 맥락 (D1)** | `run_review` 가 `CONVERSATION REQUEST`(origin_request→thread_goal→현재 발화 폴백)를 받고, 발화는 `LATEST USER UTTERANCE` 로 라벨된다. 프롬프트가 "짧은 후속 발화 대비 과답변" 보고를 **금지**하고, "삭제로 결함을 해소한 수정본은 REGRESSION 이므로 BLOCK" 을 명시한다. |
+| **첨부 근거 (D3)** | evidence digest 에 `USER-ATTACHED FILES` 매니페스트 + 파일당 발췌(1,200자 캡, 절단 표기). 첨부 섹션이 **자기 예산을 선점**해 도구 digest 가 길어도 잘리지 않는다 — 잘리면 그 첨부를 리뷰하는 답변이 다시 '창작'으로 오판된다. |
+| **앵커 2층 (D2)** | `[이 대화의 요청 — 답변이 수행해야 할 일]` + `[직전 사용자 발화 — 방금 한 말일 뿐, 답변 범위가 아니다]`. 둘이 실질 동일하면 1층으로 렌더(단일 턴). 계약은 **addressing 전용** — "다룰 내용을 좁히지 않는다 / 초안이 다루던 분석·표·근거를 삭제하지 말 것 / 짧은 확인·동의에 길이를 맞추지 말 것". |
+| **붕괴 가드 (D4)** | 수정본이 **최초 초안의 30% 미만**이면 채택하지 않고 `stop_reason=revise_collapsed` 로 종료(직전 답변 유지). 프롬프트 교정이 1차 방어이고 이 가드는 퇴행 경로를 구조적으로 닫는 backstop 이다. |
+
+**붕괴 가드의 의도적 트레이드오프**: 긴 초안이 통째로 근거 없어 "짧고 정직한 답"으로 줄어드는
+것이 정당한 경우에도 채택을 막는다. 그 경우 직전 답변이 **미해소 고지와 함께** 전달되므로 결함이
+은폐되지는 않는다(§16.3 정직성). 붕괴한 비-답변보다 낫다고 판단했다. 임계 0.30 은 realign 가드
+(0.6)보다 훨씬 관대하다 — 막으려는 것은 '축소' 가 아니라 **답변이 답변이기를 그만두는 붕괴**다.
+
+**누출 경계**: `conversation_request`·첨부 목록 모두 bounded 발신자(공유창 window 격리)에게는
+빈 값이다(`_review_conversation_request` / `_review_attachments` 정본). 그 경우 리뷰어는 종전대로
+현재 발화만 보지만 그것은 **기존 동작**이라 회귀가 아니다. fresh-context 불변식과도 충돌하지
+않는다 — 전달되는 것은 assistant 의 추론 과정이 아니라 **사용자 자신의 요청문과 첨부**다.
 
 ## 8. Edge Cases
 - 리뷰어가 findings 를 과잉 보고 → severity 게이트 (BLOCK 만 수정 유발) + 상한 5건 +

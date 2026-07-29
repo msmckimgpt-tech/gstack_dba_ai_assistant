@@ -418,3 +418,48 @@ source_of_truth: true
 - Impact: 제품 동작 무변경(문서·검증 기록만). 라이브 데이터 변경 없음 — 조회·introspection 만
   수행했다(설정 값 저장·대화 생성 없음).
 - Rollback Notes: 문서 되돌리기 외 롤백 대상 없음.
+
+## CHG-20260729-0001
+- Date: 2026-07-29
+- Related Requirement: REQ-20260729T110000-review-request-context,
+  TASK-20260729T110000-review-request-context
+- Summary: CHG-20260728-0002(answer-origin-realign)의 재앵커가 **다중 턴에서 답변을 붕괴**시키던
+  회귀를 라이브 판정 데이터로 진단해 교정했다. 사용자 리포트: "처음 요청했던 '쿼리 리뷰'에 대한
+  답변은 수행하지 않고 두 번째 대화의 '네 맞습니다.' 라는 텍스트에만 정합하게 답변".
+  - **라이브 기전** (대화 `20260729013313-2211841a`, run #132): 턴1 "쿼리 리뷰를 진행해주세요"
+    (+첨부 SQL) → 턴2 "네 맞습니다." 에서 **14 라운드** 수정 후 `stop=resolved`, 최종 **152자**
+    ("상세 분석이 필요하시면 말씀해주세요"). 턴3 에서 사용자가 "리뷰 진행 및 답변해주세요" 를
+    다시 눌러야 3,170자 정상 리뷰가 나왔다.
+  - **원인 ① (기존 결함, CHG-0002 가 증폭)**: 리뷰어는 fresh-context 라 대화를 못 보고 `question`
+    으로 **현재 턴 발화만** 받는다 → "USER QUESTION 에 '네 맞습니다'만 있는데 DRAFT 는 긴 리뷰"
+    를 `completeness` BLOCK 으로 냈다.
+  - **원인 ② (기존 결함)**: 첨부 파일 본문은 knowledge context(**시스템 프롬프트**)로 주입되고
+    evidence digest 는 **도구 실행만** 담는다 → "사용자 제출 증거가 없는 SQL 을 검증된 분석인
+    것처럼 제시" 를 `honesty` BLOCK 으로 냈다. 첨부 리뷰마다 구조적으로 재발한다.
+  - **원인 ③ (CHG-0002 도입)**: 재앵커가 현재 턴 발화를 "원 요청" 으로 싣고 계약이 "답변의
+    구성·범위·상세도는 원 요청이 결정한다" + "원 요청이 묻지 않은 것을 늘어놓지 말 것" 이라
+    선언 → 모델에게 **답변을 그 발화 크기로 축소할 권한**을 줬다.
+  - **원인 ④ (퇴행 경로)**: 내용을 지울수록 반박할 claim 이 사라져 리뷰어가 통과시킨다 —
+    **축소가 곧 수렴이 되는 gradient**. 14 라운드가 그 흔적이다.
+  - **교정**: (D1) `run_review` 에 `CONVERSATION REQUEST` 주입 + 프롬프트가 "짧은 후속 발화 대비
+    과답변" 보고를 금지하고 "삭제로 결함을 해소한 수정본은 REGRESSION → BLOCK" 을 명시.
+    (D3) evidence digest 에 `USER-ATTACHED FILES` 매니페스트+발췌, 첨부 섹션이 자기 예산 선점.
+    (D2) 재앵커 2층([이 대화의 요청 — 답변이 수행해야 할 일] / [직전 사용자 발화 — 답변 범위가
+    아니다]) + 계약을 **addressing 전용**으로 한정. (D4) 붕괴 가드 — 수정본이 초안의 30% 미만이면
+    미채택 + `stop_reason=revise_collapsed`.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/redteam.py` — `REDTEAM_REVIEW_PROMPT` 다중 턴/삭제-
+    회귀 규칙, `run_review(conversation_request=…)`, `build_attachment_digest` 신설 +
+    `build_evidence_digest(attachments=…)`, `build_request_anchor` 2층 + `_ANSWER_CONTRACT` 재작성,
+    `build_revision/rederive/reanchor_instruction(conversation_request=…)`,
+    `orchestrate_review(conversation_request=…, attachments=…)`, `_COLLAPSE_MIN_RATIO` 가드
+  - `unit/feature-0002-agent-core/src/agent_core.py` — `_review_conversation_request` /
+    `_review_attachments` 신설(누출 게이트 포함) + 호출부 배선
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` — `revise_collapsed` 한글 라벨
+  - `unit/feature-0002-agent-core/tests/{test_redteam,test_self_review_messages}.py` — 신규 22건
+  - `unit/feature-0021-redteam-review/docs/*`
+- Impact: 다중 턴 답변이 더 이상 직전 발화 크기로 축소되지 않는다. 리뷰어의 구조적 false
+  positive 2종(과답변·첨부 창작)이 제거되어 불필요한 수정 라운드도 줄어든다. 마이그레이션 없음
+  (`stop_reason` 은 기존 text 컬럼, 신규 값만 추가). 프론트는 라벨 1줄.
+- Rollback Notes: 커밋 revert. `REDTEAM_ANSWER_REALIGN=0` 은 realign(2차)만 끄므로 본 회귀와는
+  무관하다 — 본 교정은 리뷰어 입력·앵커·가드 층이라 설정으로 우회되지 않는다.

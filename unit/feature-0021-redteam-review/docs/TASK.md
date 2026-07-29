@@ -6,8 +6,8 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_updated: 2026-07-15
-feature_status_date: 2026-07-28
-feature_status_note: "답변 자가 적대 red-team 리뷰(초안→적대 리뷰→결함 수정→재검증→전달, 결함 해소까지 반복) + 원 요청 정합 교정(answer-origin-realign, 07-28) — 수정 지시가 trailing user turn 이라 답변이 원 요청 대신 직전 문맥(리뷰 결함 목록)에 응답하던 구조적 결함을 재앵커(지시 맨 끝 원 요청 블록 + 출력 계약, 추가 호출 0) + 메타 프레이밍 결정론 탐지 후 내용 보존 재서술 1회(콜백 내부 → verify 통과)로 교정. 폐기 가드(무산출·60% 미만 길이·메타 잔존)·연속 거절 2회 비용 가드·REDTEAM_ANSWER_REALIGN 스위치·bounded 발신자 thread_goal 억제. 신규 23건 PASS·전체 2814(baseline 2791) 회귀 0·마이그레이션 없음"
+feature_status_date: 2026-07-29
+feature_status_note: "답변 자가 적대 red-team 리뷰(초안→적대 리뷰→결함 수정→재검증→전달, 결함 해소까지 반복) + 원 요청 정합 교정(answer-origin-realign, 07-28) — 수정 지시가 trailing user turn 이라 답변이 원 요청 대신 직전 문맥(리뷰 결함 목록)에 응답하던 구조적 결함을 재앵커(지시 맨 끝 원 요청 블록 + 출력 계약, 추가 호출 0) + 메타 프레이밍 결정론 탐지 후 내용 보존 재서술 1회(콜백 내부 → verify 통과)로 교정. 폐기 가드(무산출·60% 미만 길이·메타 잔존)·연속 거절 2회 비용 가드·REDTEAM_ANSWER_REALIGN 스위치·bounded 발신자 thread_goal 억제. 신규 23건 PASS·전체 2814(baseline 2791) 회귀 0·마이그레이션 없음. (07-29) 그 재앵커가 다중 턴에서 역효과 — 리뷰어·재앵커가 현재 턴 발화('네 맞습니다')만 보고 실질 답변을 과답변/창작으로 오판, 14 라운드에 3,170자 리뷰가 152자 비-답변으로 붕괴(라이브 run #132). 4축 교정: 리뷰어에 CONVERSATION REQUEST+첨부 근거 제공·과답변 오판 금지, 앵커 2층(대화 요청/직전 발화)·계약을 addressing 전용, 붕괴 가드(초안 30% 미만 미채택, revise_collapsed). 신규 22건·전체 2857(baseline 2835) 회귀 0"
 ---
 
 # Task
@@ -125,6 +125,23 @@ BLOCK 검출 후 답변이 미수정 전달되던 근본 원인(수정 지시를
   revision_applied=true) — PR #938 머지(2026-07-24T07:37Z). 2026-07-28 확인: prefill fix
   배포(16:20) 이후 `redteam_reviews` 표본 21건 중 **revision_applied=true 15건** 관측으로
   라이브 재검증 충족(수정 전에는 42건 중 35건이 false 였다). 체크박스만 미갱신이었다.
+
+## 11. 회귀 교정 — 다중 턴 요청 맥락 (review-request-context, 2026-07-29)
+§10 재앵커가 **다중 턴에서 역효과**를 냈다는 사용자 리포트("처음 요청했던 '쿼리 리뷰'는 수행하지
+않고 두 번째 대화의 '네 맞습니다.' 에만 정합하게 답변")를 라이브 판정 데이터로 진단·교정.
+상세: FUNCTION.md §7.4 · MODIFY.md CHG-20260729-0001 · REVIEW.md REV-20260729T110000.
+- [x] 라이브 기전 확정 — 대화 `20260729013313-2211841a` run #132: **14 라운드** 수정 후
+      `stop=resolved`, 최종 152자. 리뷰어 BLOCK 2건이 원인이며 **둘 다 구조적 false positive**
+      (리뷰어가 현재 턴 발화만 봄 / 첨부 본문이 evidence digest 에 없음).
+- [x] D1 — `run_review` 에 `CONVERSATION REQUEST` 주입 + 프롬프트에 "짧은 후속 발화 대비 과답변
+      보고 금지" · "삭제로 결함 해소 = REGRESSION, BLOCK" 규칙 추가.
+- [x] D3 — evidence digest 에 `USER-ATTACHED FILES` 매니페스트+발췌(자기 예산 선점).
+- [x] D2 — 재앵커 2층([대화 요청]/[직전 발화]) + 계약을 addressing 전용으로 한정(범위 축소 금지
+      문구 명시, 초판의 축소 유발 문구 제거).
+- [x] D4 — 붕괴 가드(초안 30% 미만 미채택, `stop_reason=revise_collapsed`) + 콘솔 라벨.
+- [x] 누출 게이트 — `_review_conversation_request`/`_review_attachments` 가 bounded 발신자에
+      대해 fail-closed(테스트 고정).
+- [x] 테스트 22건 신규(라이브 붕괴 재현 케이스 포함)·전체 2857(baseline 2835) 회귀 0·ruff clean.
 
 ## 10. 후속 개선 — 원 요청 정합 (answer-origin-realign, 2026-07-28)
 자가 검증을 거쳐 전달된 답변이 **처음 요청사항이 아니라 직전 문맥(내부 리뷰)에 답하는
