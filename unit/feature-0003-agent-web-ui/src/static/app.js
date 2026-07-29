@@ -9590,6 +9590,10 @@ async function _uploadComposerAttachment(file) {
       // lazy-create → real conversation 전환
       state.activeConversationId = earlyCid;
       state.pendingNewConversation = false;
+      // model-persist(conversation_audit 2026-07-28): 이 전환은 sendPrompt **이전**에 일어나므로,
+      // pending 에서 고른 모델의 귀속을 승계하지 않으면 첫 전송에서 askBody.model 이 빠져 서버
+      // 기본값(haiku)으로 조용히 강등된다. pendingSentinel 을 비우기 **전에** 승계한다.
+      _adoptComposerModelPickToConv(state, earlyCid, pendingKey || state.pendingSentinel);
       state.pendingSentinel = null;
       // minimal sidebar entry (refreshWorkspace 가 확정 데이터로 교체)
       // new-conv-dedup: buildCompactItem 은 item.topic 을 읽는다(title 아님) — title 키로 넣으면
@@ -10142,6 +10146,36 @@ function _resetComposerModelSelection(state) {
   state._modelPickedAt = 0;
   state._modelPickedForConvId = null;
   if (typeof _updateComposerModelLabel === "function") _updateComposerModelLabel();
+}
+
+// feature-0003 model-persist (conversation_audit 2026-07-28, FR-model-pick-lost-on-early-cid):
+// pending → early-cid 실체화는 대화 컨텍스트를 **떠나는** 것이 아니라, 같은 컴포저 컨텍스트가
+// 비로소 cid 를 얻는 것이다. 따라서 _resetComposerModelSelection(리셋)과 정반대로 pending 에서
+// 고른 모델 선택의 **귀속을 새 cid 로 승계**해야 한다. 승계하지 않으면 _modelPickedForConvId 가
+// ""(pending) 로 남아 _shouldSendModelField 가 false → askBody.model 이 빠지고, 서버가
+// API_DEFAULT_MODEL(haiku) 로 채워 **사용자가 화면에서 고른 상위 모델이 조용히 강등**된다
+// (첨부 업로드 경로에서 라이브 실측: 선택기는 sonnet 표시, 실제 실행은 haiku).
+// 호출 지점 — activeConversationId 가 pending 에서 실 cid 로 바뀌는 모든 곳:
+//   - 첨부 업로드의 early-cid 발급(전송 *전* 전환 → 이번 결함의 근본 경로)
+//   - sendPrompt 의 early-cid 발급(전송 후 전환 → 다음 전송의 mismatch 예방)
+// 선택하지 않은 상태(null)는 승계 대상이 아니다 — 리셋 semantics 를 그대로 보존한다.
+// (state 를 인자로 받는 순수 함수 — verify_model_persist.mjs 가 직접 검증한다.)
+function _adoptComposerModelPickToConv(state, newConvId, pendingKey) {
+  if (!newConvId) return false;
+  const prev = state._modelPickedForConvId;
+  if (prev !== "" && !(pendingKey && prev === String(pendingKey))) return false;
+  state._modelPickedForConvId = newConvId;
+  return true;
+}
+
+// feature-0003 model-persist (conversation_audit 2026-07-28): 표시-집행 정합 최후 방어선.
+// 화면이 사용자의 명시 선택(selectedModel)을 보여주는데 그 값이 이 전송에 동봉되지 않으면,
+// 사용자는 "선택한 모델"을 보면서 서버가 채우는 다른 모델로 실행되는 **조용한 강등**을 겪는다.
+// 위 승계로 알려진 경로는 봉인했지만, activeConversationId 를 바꾸는 새 경로가 추가되면 같은
+// 결함이 재발한다 — 그때 조용히 넘어가지 않도록 여기서 감지해 표면화한다(진단 신호도 남긴다).
+function _modelSelectionSilentlyDropped(state, targetConvId, isLazyCreate) {
+  if (_shouldSendModelField(state, targetConvId, isLazyCreate)) return false;
+  return Boolean(state.selectedModel);
 }
 
 // feature-0003 model-persist (2R 적대 리뷰 C-A): 이 전송에 `model` 필드를 실을지 판정한다.
@@ -10733,6 +10767,15 @@ async function sendPrompt() {
   // hydration 되지 않은 대화로는 싣지 않는다(그 경우 서버가 기존 저장값을 보존).
   if (_shouldSendModelField(state, targetConvId, isLazyCreate)) {
     askBody.model = _composerCurrentModel();
+  } else if (_modelSelectionSilentlyDropped(state, targetConvId, isLazyCreate)) {
+    // model-persist(conversation_audit 2026-07-28): 화면은 사용자 선택 모델을 보여주는데 그 값이
+    // 이 전송에 실리지 않는 모순 상태 — 조용한 강등의 지문이다. 알려진 경로(early-cid 전환)는
+    // _adoptComposerModelPickToConv 로 봉인했으므로 여기 도달하면 **미봉인 신규 경로**를 뜻한다.
+    // 사용자에게 알리고(무음 금지) 콘솔에 진단 흔적을 남긴다 — 전송 자체는 막지 않는다.
+    const _shownModel = _composerModelLabelFor(_composerCurrentModel());
+    showToast(`선택한 모델(${_shownModel})이 이 대화에 적용되지 않을 수 있습니다. 모델을 다시 선택해 주세요.`);
+    console.warn("[model-persist] 선택 모델이 전송에 동봉되지 않음 — 귀속 불일치",
+      { targetConvId, pickedFor: state._modelPickedForConvId, hydratedFor: state._modelHydratedForConvId });
   }
   if (isLazyCreate) {
     // TASK-0059: backend `/api/ask` 가 빈 conversation_id 를 "session 초기화 후 직전 대화 이어받기"
@@ -10828,6 +10871,10 @@ async function sendPrompt() {
         if (state.pendingSentinel === busyKey) {
           state.pendingNewConversation = false;
           state.activeConversationId = earlyCid;
+          // model-persist(conversation_audit 2026-07-28): 이 전환은 askBody 확정 **후**라 본 전송엔
+          // 영향이 없지만, 승계하지 않으면 hydration 전에 보내는 다음 전송이 같은 mismatch 로
+          // 강등된다(첨부 경로 승계와 동일 진입점).
+          _adoptComposerModelPickToConv(state, earlyCid, busyKey);
           state.pendingSentinel = null;
           // composer-nonblock-interrupt (ask-timeout-nonblocking §18.8 H1): in-flight 추적 키
           // (myAskInFlight/busyConversations)도 sentinel→earlyCid 로 이관한다 — 아래 askKey 의

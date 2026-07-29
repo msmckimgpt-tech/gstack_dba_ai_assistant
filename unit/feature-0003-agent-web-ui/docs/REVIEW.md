@@ -1548,7 +1548,61 @@ per-(ds,DB,schema) 오류로 리포트만 남는다(비차단 설계). 도달 �
 테이블 끝점 (2195,415) 분리 실측 · 읽기/쓰기 한 컬럼 공존 · 상세 패널 `✎` 5건 · 콘솔 에러 0).
 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/` (6매).
+## REV-20260728T191126-model-pick-early-cid [SUBAGENT:inline-adversarial] — SHIP
 
+- **Trigger**: `contract` keyword matched / 계약(요청 body `model` 필드 동봉 여부) 변경 → backend + security + qa.
+  UI 표면화(토스트) 동반이나 레이아웃 변경 0 이라 ux/design N/A.
+- **채널**: 인라인 자기 적대검증. 본 세션은 Agent(subagent) tool 사용이 제한돼 §18.8 subagent 패널을
+  띄우지 못했다 — §18.8.2 판정 1(사용자 지시 우선)에 따라 제약 없는 채널로 대체하고, 아래 각 지적을
+  **코드·라이브 데이터로 직접 반증**했다(추정 기각 금지). 선례: `FR-readonly-query-shapes-overblock`
+  (세션 한도로 패널 조기종료 → 인라인 자기검증 완료).
+- **대상**: CHG-20260728T191126-model-pick-early-cid (`src/static/app.js` +47행, 테스트 +108행).
+
+### security 렌즈
+
+- **S1 승계가 타 대화·타 계정 선택을 누출하나 → REFUTED.** 승계 조건은 `prev === ""`(pending, 즉 아직
+  어느 대화에도 귀속되지 않은 현재 사용자 선택) 또는 `prev === pendingKey`(현 세션 sentinel) 뿐이다.
+  다른 실 cid 귀속은 거부하며 회귀 테스트 E5 가 이를 고정한다. 계정 경계는 기존
+  `_resetComposerModelSelection`(로그아웃 호출)이 계속 담당한다.
+- **S2 승계로 권한 없는 모델이 전송돼 403 회귀가 나나 → REFUTED.** 선택기 표시 목록은 `/api/session`
+  이 `_filter_models_for_account_access`(web_context.py:3307)로 이미 계정 인가 범위로 필터한다 →
+  고를 수 있는 값은 인가된 값뿐. RBAC 이 런타임에 축소된 경우의 403 은 의도된 fail-closed 이며,
+  종전(조용한 haiku 실행)보다 정직하다. 서버 게이트(conversations.py:2761) 무변경.
+- **S3 토스트 문자열 XSS → REFUTED.** `showToast`(app.js:752-754)는 `textContent` 대입이며 모델 라벨은
+  서버 카탈로그 값이다. 마크업 경로 없음.
+
+### backend/correctness 렌즈
+
+- **C1 승계가 "'+ 새 대화'는 haiku" 계약을 깨나 → REFUTED.** 미선택 상태의 귀속은 `null` 이고 승계
+  대상이 아니다(E3/E3b 고정). 사용자가 **명시로 고른** 경우만 그 선택이 살아난다 — 기본값 정책은 불변.
+- **C2 pendingSentinel 초기화와의 순서 위험 → 실재, 구현에서 해소.** 첨부 경로는 `state.pendingSentinel
+  = null` **이전에** 승계해야 sentinel 키 매칭이 유효하다. 구조 계약 S10 이 소스 오프셋으로 이 순서를
+  고정한다(향후 리팩터가 순서를 뒤집으면 테스트 실패).
+- **C3 hydration 과의 상호작용 → 정합 확인.** 승계 후 `_modelHydrationShouldSkip` 이 (a) pick 이 더
+  최근이면 사용자 선택 유지, (b) hydration 이 더 최근이면 이 대화 KV(승계로 저장된 sonnet)를 복원 —
+  **두 분기 모두 sonnet** 이라 결과가 일치한다. 수정 전에는 KV 가 비어 `selectedModel=null` 로
+  화면까지 haiku 가 되던 경로였다(증상 "즉시 폴백"의 화면 측 기전).
+- **C4 sendPrompt 경로 승계가 본 전송을 바꾸나 → 아니다(의도).** 그 지점은 `askBody` 확정 후라 본
+  전송에 무영향이며, hydration 전 연속 전송의 mismatch 예방이 목적이다. 주석에 명시.
+- **C5 중복/경합 진입 → REFUTED.** 첨부 경로는 `lazyConvCreating` 가드로 중복 생성이 차단되고, 승계는
+  `activeConversationId` 대입과 같은 동기 블록에 있어 await 경계를 넘지 않는다.
+
+### qa 렌즈
+
+- **Q1 E1("결함 재현")이 승계 삭제를 잡지 못한다 → 인정, 설계상 분업.** E1 은 `_shouldSendModelField`
+  전제를 고정할 뿐이고, 승계 호출 자체의 존재는 구조 계약 **S9**(전환 지점 수 == 승계 호출 수)가
+  강제한다. 새 전환 지점이 승계 없이 추가되면 S9 가 불일치로 실패한다 — 회귀 가드의 정본은 S9.
+- **Q2 `console.warn` 상주 → 의도.** C 가드는 "미봉인 신규 경로" 진단용이며 사용자 표면화(토스트)와
+  분리된 흔적이다. 무음이 이 결함을 6주간 숨긴 원인이라 로그를 남기는 편이 낫다.
+- **NIT 인접 JS 스위트 실패 6건**은 main baseline 과 문자열까지 동일함을 대조 실행으로 확인(pre-existing,
+  jsdom 미설치 등 환경 제약). 본 변경 무관.
+
+### 판정
+
+**SHIP** — BLOCKING 0. 변경면이 좁고(FE 상태 이관 + 감지 가드) 서버 계약·보안 경계·기본값 정책 모두
+불변이며, 근본이 라이브 데이터로 확정됐다. **잔여 리스크는 하나**: 코드/유닛은 "선택이 전송에 실린다"
+까지만 증명하고 "실제 사용자 대화에서 sonnet 으로 실행됨"은 배포 후 실측분이다(TEST.md DEFERRED,
+정본 = `llm_usage.model` + `kv model:<acct>`).
 ## REV-20260729T010301-doc-sync-rn-0729 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-07-28 블록에 6항목 append(관계도 UX·사용 기록·모델 권한·자체 점검) doc_sync 정합
 - **changeset (operational, feature-0003)**: `src/static/release-notes-data.js`(기존 2026-07-28 블록 3→9 items append·summary 증강·generated 불변) + companion `docs/{TASK,MODIFY,FUNCTION,TEST}.md`. 비-정책 doc-only(렌더 로직·제품 코드·스키마·RBAC 0).
 - **[SKIPPED:non-policy-doc] 사유**: 사용자향 릴리즈노트 콘텐츠 데이터만(제품 코드·정책 무변경). §18.8 패널 불요(abcb7d68·351ed406 선례 동일 토큰).

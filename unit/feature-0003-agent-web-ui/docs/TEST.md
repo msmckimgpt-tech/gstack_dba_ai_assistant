@@ -116,6 +116,15 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260728T1911-model-pick-early-cid 조기 cid 전환 시 모델 선택 유실(sonnet→haiku 조용한 강등) 수정 (Major §12.3, 2026-07-28, feature-0003 web/UI 단독) — **Environment: Windows-browser ([새 대화 → 모델 선택기에서 sonnet → 파일 첨부 업로드 → 전송] 은 실 브라우저 파일선택+업로드 왕복과 선택기 DOM 이 필요해 headless 대체 불가 — de-risk=`node --check` PASS + `verify_model_persist.mjs` 49/49(승계·오귀속 차단·미선택 보존·무음 감지·구조 계약) + 서버측 pytest 57건 rc=0 + 인접 JS 스위트 baseline 동일, 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
+- 증상(사용자 보고 2026-07-28): "sonnet 모델로 요청한 **즉시** haiku 모델로 폴백" — 모델 선택기에서 sonnet 을 골라 요청했는데 나머지 작업이 haiku 로 진행됨. 대상 대화 `쿼리 리뷰 : 게시글 기능` · `쿼리 리뷰 : 홈페이지 공지 기능 추가`(product 117).
+- 근본원인: LLM 라우팅 폴백이 **아니다**. 모델 선택은 `state.activeConversationId` 로 귀속되어 새 대화(pending)에서는 `_modelPickedForConvId=""` 인데, **첨부 업로드가 early-cid 를 발급**해 `activeConversationId` 를 실 cid 로 바꾸면서 귀속을 승계하지 않아 `_shouldSendModelField()` 가 false → `askBody.model` 누락 → 서버가 `API_DEFAULT_MODEL`(haiku) 로 채움(`model_explicit=False` 라 KV 저장도 skip). 화면은 sonnet 을 계속 표시 → 조용한 강등. 첫 전송 후 hydration 이 저장값 부재로 `selectedModel=null` 을 넣어 선택기까지 haiku 로 되돌아간다("즉시 폴백"이 화면에서 보인 기전).
+- 수정: `_adoptComposerModelPickToConv()`(early-cid 전환 2곳에서 귀속 승계, 미선택 `null`·타 대화 귀속은 비대상) + `_modelSelectionSilentlyDropped()`(표시-집행 불일치 감지 → `showToast` 표면화 + 진단 로그).
+- 기대: [새 대화 → sonnet 선택 → 첨부 업로드 → 전송] 이 **sonnet 으로 실행**되고(`llm_usage.model=claude-sonnet-4`), 선택기 표시도 sonnet 을 유지한다. 대조 — 모델을 고르지 않으면 여전히 haiku 로 시작한다("'+ 새 대화'는 haiku" 계약 불변).
+- **유닛 검증 — PASS**: `node tests/verify_model_persist.mjs` **49/49**(신규 E1~E6 승계·오귀속 차단·미선택 보존 / W1~W4 무음 강등 감지·오탐 없음 / S9 전환 지점 수 == 승계 호출 수 · S10 승계가 sentinel 초기화보다 앞 · S11 미동봉 시 표면화). 서버측 `test_model_persist.py`·`test_ai_capabilities.py`·`test_model_access_rbac.py`·`test_message_editing_reanswer_model.py` 57건 rc=0. `node --check app.js` PASS. 인접 JS 스위트 실패 6건은 main baseline 과 동일(pre-existing).
+- **PB-0008 Windows-browser 라이브 실측 — DEFERRED(배포 후)**: 정적 자산(app.js)이 web 이미지에 baked 되므로 배포 후 실 Windows Chrome via `bin/win-browser.py` relay + 로그인 세션에서 위 '기대' 를 실측하고 본 케이스에 Run 기록 append. **확인 정본은 화면이 아니라 `agent_runtime.llm_usage.model` + `kv model:<acct>`** (미동봉이면 KV 행이 생기지 않는 것이 지문).
+- Pass/Fail: **PASS(코드/유닛 범위)** — 라이브 실측은 배포 후 잔여. Runner: AI.
+
 ### 20260721T1758-realtime-progress-propagation assistant 진행상황/답변 실시간 전파 — 유휴 관찰자 run-감지 폴러 (Major §12.3, 2026-07-21, feature-0003 web/UI 단독) — **Environment: Windows-browser (유휴 대화에서 다른 액터가 시작한 run 을 재로드 없이 실시간 표시하는지는 실 브라우저 폴링 타이밍+DOM 렌더가 필요 — jsdom 은 폴링/타이머 정본 아님; de-risk=`node --check` PASS + 유닛 `verify_run_detect_poll.mjs` 23/23 + feature-0003 pytest RC=0, visual_verification_scope: always)**
 - 증상: 타 계정 대화 모니터링(또는 그룹 대화) 중, 대화를 열어둔 관찰자에게 다른 사용자가 시작한 run 의 assistant 말풍선이 실시간으로 안 뜸(다른 대화 갔다 와야 표시).
 - 근본원인/수정: 유휴 대화에 배경 폴링 부재 → app.js 에 유휴 run-감지 폴러 추가(활성 run 추적 없을 때 `/api/progress` ~4s/숨김 15s 폴링 → 서버 run_id 변화 시 `loadHistory` 위임). 상세 REPORT/TASK 참조.

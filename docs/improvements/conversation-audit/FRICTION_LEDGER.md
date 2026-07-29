@@ -323,3 +323,55 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **잔여 확정 — 서버 이름 해석으로 닫힘(라이브 실증 2026-07-28)**: 스칼라 위치 모호성을 "미해결 잔여" 로 남겼으나, QA SQL Server **2017(14.0.3238.1) Web Edition** 에 직접 프로브해 **착취 불가**로 확정했다. ① 별칭=미존재 DB명 → `Msg 207 Invalid column name 'dbo'` ② 별칭=**실존** DB명(`Shop`/`Web_SR`) → `Msg 207` **①과 완전히 동일** ③ 별칭 없음(동일 3-part) → `Msg 4121 Cannot find … function`. 즉 SQL Server 는 `alias.col.method()` 를 **별칭 우선(컬럼)** 으로 해석하므로 테이블을 DB 명으로 별칭 지어 cross-DB 함수를 부를 수 없고, 오류 문구가 **DB 존재 여부에 불변**이라 열거 oracle 도 성립하지 않는다. → 가드의 스칼라 면제는 서버 동작과 **의미적으로 일치**하며, per-DB GRANT 는 유일 방어선이 아니라 defense-in-depth 로 내려간다. **적대 검증 1R BLOCKER-1 은 게이트 레벨 ALLOW 만 근거로 한 판정이었고(서버 미검증), 이 실증이 그 전제를 반증한다.**
 - **부수 철회**: 위 oracle 을 막으려 넣은 서버 오류 원문 은폐(`_sql_error_message`)는 근거를 잃어 **철회**했다 — 얻는 것 없이 `Invalid column name 'dbo'` 같은 자기교정 정보만 가리는 순손실이었다. APPLY(table-source)·4/5-part·`Paren`/미지 노드 봉인은 그대로 유효(그 위치들은 컬럼 해석이 문법적으로 불가해 서버가 반드시 함수로 해석).
 - **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major + 보안 경계 완화 — override 불가) → 배포 후 동일 질문으로 라이브 재실측.
+
+## FR-model-pick-lost-on-early-cid — fixed:undeployed (L7↔L6 조기 cid 전환이 모델 선택 귀속을 유실 → 서버 기본값 강등)
+
+- **status**: `fixed:undeployed` — FE 귀속 승계(A) + 표시-집행 정합 감지(C) 출하, 배포 전. 배포 후
+  `llm_usage.model` 이 사용자 선택과 일치함을 실측하면 `fixed:deployed:unverified-live` → corroboration
+  재측정으로 `verified`.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-07-28) — 지정 대화 2건 + turn 중 추가 관측
+  진술("sonnet 모델로 요청한 즉시 haiku 모델로 폴백").
+- **last_seen**: 2026-07-28 · **seen_count**: 1 · **seen_distinct_conv**: 4 (지정 2 + 인접 재시도 1 + 사용자 재현 1)
+- **modality**: 1:1 동기 · **product_id(마스킹)**: P-117 · **account(마스킹)**: A-10 ·
+  **conv(마스킹)**: …f70af5fc(`쿼리 리뷰 : 게시글 기능`) · …d887c4c9(`쿼리 리뷰 : 홈페이지 공지 기능 추가`) ·
+  …f434dc11(인접 재시도·대조군) · …18be31a2(사용자 재현)
+- **symptom_confidence**: high (사용자 명시 보고 + 라이브 데이터 재현) · **rootcause_confidence**: high
+  (코드 file:line + PG 3테이블 + 전사 삼각측량, 대조군으로 경로 분리 확정)
+- **suspected_layers**: **L7↔L6** — L7(FE 상태 전환에서 선택 귀속 미이관)이 근본, L6(모델 결정)에서 발현.
+  **L6 라우팅 폴백은 아니다**(초기 가설 `refuted` — 아래).
+- **증상(signal)**: `E-USR` 명시 불만 + `I-SIL` 재시작 이탈 — 같은 요청을 4개 대화에서 반복 재시도
+  (18:32 / 18:37 / 18:39 / 18:55), 중간 sonnet run 은 사용자 취소로 종료. 사용자 표현 "조용히 haiku 로
+  변경되며 나머지 작업을 진행".
+- **거짓양성 기각(`refuted`)**: ① **LLM 라우팅 폴백 가설 기각** — `llm_usage.model`(요청 alias)이 이미
+  `claude-haiku-4` 였다. 폴백이면 `model=sonnet` / `resolved_model=haiku` 로 갈라졌을 것이며, 실제
+  `resolved_model` 은 `claude-haiku-4-chat`(정상 해소)이다. 선행 `FR-edge-fallback-conversation-context-loss`
+  의 재발이 아니다. ② **sonnet run 취소(`ask_jobs.status=error`, "요청이 취소되었습니다")는 별개 결함이
+  아님** — `cancel_requested` KV 가 찍힌 사용자 중단이며, haiku 로 가는 것을 보고 끊은 **결과**다.
+- **confirmed_root_cause**: 모델 선택 귀속(`_modelPickedForConvId`)은 선택 시점의 `activeConversationId`
+  로 잡혀 새 대화(pending)에서는 빈 문자열이다. **첨부 업로드**가 early-cid 를 발급해 활성 대화를 실 cid
+  로 전환(`app.js` lazy→real)하면서 이 귀속을 승계하지 않아, 전송 시 `_shouldSendModelField()` 가 false
+  → `askBody.model` 누락 → 서버(`conversations.py` ask)가 `API_DEFAULT_MODEL`(haiku)로 채우고
+  `model_explicit=False` 라 KV 저장도 skip. 화면 선택기는 고른 모델을 계속 표시 → **완전한 무음 강등**.
+  덧붙여 첫 전송 후 hydration 이 저장값 부재로 선택을 비워 **선택기까지 기본값으로 되돌아간다**(사용자가
+  "즉시 폴백"을 화면에서 본 기전). 재발 메커니즘 = **ux contract**(상태 전환 시 귀속 이관 누락).
+  결정적 지문: 재현 대화에 `kv model:<acct>` 행 **부재**(미동봉) vs `reasoning_level` 정상 저장(항상
+  전송되는 비대칭). 대조군 …f434dc11 — 대화 확정 후 재선택한 2차 요청은 정상 sonnet 전송 + KV 저장.
+- **corroboration**: 최근 30일, non-default 모델 선택이 KV 로 확증된 대화 5건 중 **3건이 첫 요청을 사용자
+  선택과 다른 모델로 전송**(선택 저장이 첫 job 이후 = 유실 후 재선택 패턴) → **structural**. 초기에 쓴
+  거친 프록시("대화 생성↔첫 메시지 gap" 별 model KV 부재율 93% vs 86%)는 **판별력 없음으로 폐기** —
+  기본값 실행도 KV 행이 남지 않아 미동봉과 구분되지 않는다(측정 함정 기록).
+- **disposition 근거**: Major(§12.3 — 모델 라우팅 입력 + haiku→sonnet 실행 증가라는 외부 비용 방향) →
+  attended human-decision. 사용자가 AskUserQuestion 으로 봉인 범위 **A+C** 명시 선택(2026-07-28) →
+  PLAN-APPROVED 후 구현·검증.
+- **fix**: `CHG-20260728T191126-model-pick-early-cid` / **코드 거주 `feature-0003-agent-web-ui`**
+  (`src/static/app.js` — `_adoptComposerModelPickToConv` 승계 2지점 + `_modelSelectionSilentlyDropped`
+  표면화) / `REV-20260728T191126-model-pick-early-cid` (§18.8 `contract` 매칭 backend+security+qa
+  인라인 적대검증 — S1~S3·C1~C5·Q1~Q2 전건 REFUTED/해소, BLOCKING 0). 서버 무변경.
+  테스트 `verify_model_persist.mjs` 32 → **49 PASS**(E/W/S9~S11 신설) · 서버측 pytest 57건 rc=0.
+- **rc_ids**: RC-1 · **batch-id**: B-20260728T191126-model-pick-early-cid
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "고른 모델이 요청에 실린다 + 미동봉이면 표면화된다"까지만
+  증명한다. "실제 사용자 대화가 고른 모델로 실행됨"은 배포 후 PB-0008 실측분(미수행) — **정본은 화면이
+  아니라 `agent_runtime.llm_usage.model` + `kv model:<acct>` 행 생성**. 다음 audit 에서 corroboration
+  (non-default 선택 확증 대화의 첫 요청 오전송 3/5) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+- **범위 밖(인지)**: 기본값(`API_DEFAULT_MODEL`) 자체와 "'+ 새 대화'는 haiku 로 시작" 정책은 불변 —
+  사용자 명시 선택만 보존한다. 그룹 대화의 계정별 모델 스코프도 무변경.

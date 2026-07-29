@@ -6785,7 +6785,50 @@ mouse-hover 툴팁으로 충분하니 제거.
 - [x] 상세 패널 참조 컬럼 표기(쓰기 `✎` / 읽기 무마커) 확인
 - [x] 서빙 baked 심볼·GIT_COMMIT 확인 + 콘솔 에러 0
 - [x] Run 기록 · CHG · REV · 증적 6매 적재
+## 20260728T1911-model-pick-early-cid — 조기 cid 전환 시 모델 선택 유실(sonnet→haiku 조용한 강등) 수정 (종결)
 
+<!-- PLAN-APPROVED by mckim on 2026-07-28 -->
+
+`/_dqa:conversation_audit` 가 사용자 지정 대화(`쿼리 리뷰 : 게시글 기능` / `쿼리 리뷰 : 홈페이지 공지
+기능 추가`, product 117, 2026-07-28)에서 진단한 마찰 `FR-model-pick-lost-on-early-cid` 의 근본 수정.
+사용자 증상은 "sonnet 으로 요청한 **즉시** haiku 로 폴백" — 그러나 LLM 라우팅 폴백이 아니라
+**요청에 model 이 실리지 않아 서버 기본값(`API_DEFAULT_MODEL`=haiku)이 채워진** 것이었다.
+
+근본 경로: 모델 선택은 `state.activeConversationId` 로 귀속되므로 새 대화(pending)에서 고르면
+`_modelPickedForConvId=""` 다. 그런데 **첨부파일 업로드**가 early-cid 를 발급해
+`activeConversationId` 를 실 cid 로 바꾸면서(`app.js` lazy→real 전환) 이 귀속을 승계하지 않아,
+전송 시 `_shouldSendModelField()` 가 false → `askBody.model` 누락 → 서버가 haiku 로 채우고
+`model_explicit=False` 라 KV 저장도 skip. 화면 선택기는 sonnet 을 계속 표시해 **완전히 조용한 강등**.
+게다가 첫 전송 후 `loadHistory` hydration 이 저장값 부재(`_pm=""`)로 `selectedModel=null` 을 넣어
+선택기까지 haiku 로 되돌아간다 — 사용자가 말한 "즉시 폴백"이 화면에서도 보인 이유.
+
+라이브 증거: 재현 대화(18:55)의 `ask_jobs.payload.model=claude-haiku-4` + `kv model:<acct>` 행 부재
+(= 미동봉 확증), 반면 `reasoning_level=max` 는 정상 저장(항상 전송되는 비대칭이 곧 지문).
+대조군: 같은 요청을 **대화가 확정된 뒤** sonnet 재선택한 요청은 정상 sonnet 전송 + KV 저장.
+corroboration(30일): non-default 선택이 KV 로 확증된 대화 5건 중 3건이 첫 요청을 다른 모델로 전송.
+
+봉인(사용자 승인 = A+C):
+- **A** `_adoptComposerModelPickToConv()` 신설 — pending→early-cid 실체화는 컨텍스트를 *떠나는* 것이
+  아니라 cid 를 *얻는* 것이므로, 리셋(`_resetComposerModelSelection`)과 반대로 귀속을 **승계**한다.
+  전환 지점 2곳(첨부 업로드 경로 = 근본, sendPrompt 경로 = 다음 전송 예방) 모두에 적용.
+- **C** `_modelSelectionSilentlyDropped()` 신설 — 화면이 명시 선택을 보여주는데 미동봉인 모순 상태를
+  감지해 사용자에게 표면화(무음 금지) + 콘솔 진단. 미봉인 신규 전환 경로가 생기면 여기서 잡힌다.
+- "'+ 새 대화'는 haiku 로 시작" 계약은 불변(미선택 `null` 은 승계 대상 아님 — E3 로 고정).
+
+### 진행
+- [x] 근본 진단 — 라이브 PG(`llm_usage`·`ask_jobs`·`kv`·`core_messages`) + 코드 정적 추적 삼각측량
+- [x] `_adoptComposerModelPickToConv` 신설 + early-cid 전환 2곳 승계 연결(pendingSentinel 초기화 이전)
+- [x] `_modelSelectionSilentlyDropped` 신설 + 미동봉 분기 표면화(showToast) + 진단 로그
+- [x] 회귀 테스트 — `verify_model_persist.mjs` E1~E6(승계·오귀속 차단·미선택 보존)·W1~W4(무음 감지)
+      + 구조 계약 S9(전환 지점 수 == 승계 호출 수)·S10(승계가 sentinel 초기화보다 앞)·S11(표면화)
+      → **49 PASS / 0 FAIL**(기존 24 + 신규 25)
+- [x] 서버측 무회귀 — `test_model_persist.py`·`test_ai_capabilities.py`·`test_model_access_rbac.py`·
+      `test_message_editing_reanswer_model.py` 57건 rc=0 / `node --check` PASS
+- [x] 인접 JS 스위트 baseline 대조 — 실패 6건이 main 과 **동일**(pre-existing, 본 변경 무관)
+- [x] §18.8 검증 — `contract` 키워드 매칭(backend+security+qa) 인라인 적대검증(세션 Agent 도구 제약)
+- [ ] **PB-0008 Windows-browser 라이브 실측 — 배포 후 잔여**(`visual_verification_scope: always`,
+      정적 자산이 web 이미지 baked): [새 대화 → 모델 sonnet 선택 → 첨부파일 업로드 → 전송] 이
+      실제로 sonnet 으로 실행되는지(`llm_usage.model`) + 선택기가 sonnet 을 유지하는지 확인
 ## 20260729T010301-doc-sync-rn-0729 — 릴리즈노트 2026-07-28 블록에 6항목 append: 관계도 UX·사용 기록·모델 권한·자체 점검 (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
 - [x] `static/release-notes-data.js` 기존 "2026-07-28" 블록(캐시 오염 fix·그래프 ⓘ 툴팁·'적용'바 숨김 3항목)에 6항목 append(improved/admin 관계도 연결선 가독성 + improved/admin 이름표 hover 확장·역할 좌측 배지 + improved/admin 분류 선택 스크롤 동기화·이웃 표시 범위 재설계 + improved/admin '사용 기록' 드릴다운 정리 + new/admin 계정·역할별 AI 모델 사용 제한 + fixed/work 자체 점검 후 원 요청 응답 정확성) + block summary 아울러-절 증강. 신규 블록 아님(관례: same-deploy-day append·block date=배포일 07-28·델타 커밋 전부 git-date 07-28, 선례 85da43d9). generated "2026-07-28" 불변. 렌더 로직·cache-buster(`?v=dev` 빌드 자동주입) 무변경.
 - [x] 검증: `node --check` PASS · vm 구조검증(releases[0].date=2026-07-28·items 3→9·releases[1] 2026-07-27 7항목 보존·releases[2] 07-24 보존·스키마 type/area/title/detail·enum 유효·누출0[feature-id·model.access·llm_usage·§번호·routers/·.py·claude-opus-5/haiku-4 내부값 0, 사용자 표시 라벨만]). 근거 정본 = 각 항목 owning POST-DEPLOY PB-0008 커밋(역할배지 2b9693c7·이웃깊이 0bff005e·hover확장 43efe182/29ceb823·상세hover fb253fe3·클러스터스크롤 9b16b0c0/a36c16ed/429e8c04·라벨LOD 8008402d·헤더라벨 b2f062cc·함수관계선 5a6110a9·사용기록 f3cfc809·모델권한 fcf22ceb·자체점검 6582c69b) + git log abc3e49f..HEAD.

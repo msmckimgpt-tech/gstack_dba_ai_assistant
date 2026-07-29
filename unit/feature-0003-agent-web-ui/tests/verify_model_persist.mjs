@@ -48,14 +48,17 @@ const srcSkip = extractFn(appJs, "_modelHydrationShouldSkip");
 const srcCurrent = extractFn(appJs, "_composerCurrentModel");
 const srcReset = extractFn(appJs, "_resetComposerModelSelection");
 const srcShouldSend = extractFn(appJs, "_shouldSendModelField");
-ok("[추출] 순수 함수 4종(_modelHydrationShouldSkip·_composerCurrentModel·_resetComposerModelSelection·_shouldSendModelField)",
-  Boolean(srcSkip && srcCurrent && srcReset && srcShouldSend));
+// conversation_audit 2026-07-28 (FR-model-pick-lost-on-early-cid): pending→early-cid 승계 + 무음 강등 감지.
+const srcAdopt = extractFn(appJs, "_adoptComposerModelPickToConv");
+const srcDropped = extractFn(appJs, "_modelSelectionSilentlyDropped");
+ok("[추출] 순수 함수 6종(hydrationSkip·currentModel·reset·shouldSend·adoptPick·silentlyDropped)",
+  Boolean(srcSkip && srcCurrent && srcReset && srcShouldSend && srcAdopt && srcDropped));
 
 // `state` 를 주입 가능한 형태로 함수들을 재구성한다(_composerCurrentModel 은 전역 state 참조).
 const factory = new Function("state",
-  `${srcSkip}\n${srcCurrent}\n${srcReset}\n${srcShouldSend}\n`
+  `${srcSkip}\n${srcCurrent}\n${srcReset}\n${srcShouldSend}\n${srcAdopt}\n${srcDropped}\n`
   + "return { _modelHydrationShouldSkip, _composerCurrentModel, _resetComposerModelSelection,"
-  + " _shouldSendModelField };");
+  + " _shouldSendModelField, _adoptComposerModelPickToConv, _modelSelectionSilentlyDropped };");
 
 function newState(patch = {}) {
   return {
@@ -202,6 +205,74 @@ function newState(patch = {}) {
     sendD(stDesync, "conv-A", false) === false);
 }
 
+// ── E: pending → early-cid 귀속 승계 ──────────────────────────────────────────
+// conversation_audit 2026-07-28 FR-model-pick-lost-on-early-cid 회귀 가드.
+// 라이브 실측 결함: 사용자가 새 대화(pending)에서 sonnet 을 고른 뒤 **첨부파일을 올리면**
+// early-cid 가 발급되며 activeConversationId 가 실 cid 로 바뀐다. 그때 선택 귀속
+// (_modelPickedForConvId="")을 승계하지 않아 _shouldSendModelField 가 false → askBody.model
+// 누락 → 서버가 API_DEFAULT_MODEL(haiku)로 채움 → 화면은 sonnet, 실행은 haiku(조용한 강등).
+{
+  // E1: 결함 재현 — 승계 전에는 미동봉(이 단정이 깨지면 결함 전제가 바뀐 것).
+  const stBefore = newState({ selectedModel: "claude-sonnet-4", _modelPickedForConvId: "", _modelPickedAt: 900 });
+  const { _shouldSendModelField: sendBefore } = factory(stBefore);
+  ok("E1 [결함 재현] pending 선택을 승계하지 않으면 실 cid 전송에 model 미동봉",
+    sendBefore(stBefore, "conv-early", false) === false);
+
+  // E2: 승계 후에는 동봉 — 사용자가 고른 모델이 그대로 전송된다(수정의 핵심 단정).
+  const stAfter = newState({ selectedModel: "claude-sonnet-4", _modelPickedForConvId: "", _modelPickedAt: 900 });
+  const { _adoptComposerModelPickToConv: adopt, _shouldSendModelField: sendAfter } = factory(stAfter);
+  ok("E2 pending(빈 귀속) 선택은 early-cid 로 승계된다", adopt(stAfter, "conv-early", null) === true);
+  ok("E2b 승계 후 실 cid 전송에 model 동봉(선택 모델이 강등되지 않음)",
+    sendAfter(stAfter, "conv-early", false) === true);
+  ok("E2c 승계는 귀속만 바꾸고 선택값 자체는 보존", stAfter.selectedModel === "claude-sonnet-4");
+
+  // E3: 선택하지 않은 상태(null)는 승계 대상이 아니다 — 리셋 semantics 보존
+  //     ('+ 새 대화'는 haiku 로 시작한다는 계약을 승계가 우회하지 않는다).
+  const stNull = newState({ _modelPickedForConvId: null });
+  const { _adoptComposerModelPickToConv: adoptNull, _shouldSendModelField: sendNull } = factory(stNull);
+  ok("E3 미선택(null)은 승계하지 않음(새 대화 기본값 계약 보존)",
+    adoptNull(stNull, "conv-early", null) === false && stNull._modelPickedForConvId === null);
+  ok("E3b 미선택이면 실 cid 전송은 여전히 미동봉", sendNull(stNull, "conv-early", false) === false);
+
+  // E4: pendingSentinel 키에 귀속된 선택도 승계(sendPrompt 경로는 busyKey=sentinel 을 넘긴다).
+  const stSentinel = newState({ selectedModel: "claude-opus-5", _modelPickedForConvId: "pending-42" });
+  const { _adoptComposerModelPickToConv: adoptSent } = factory(stSentinel);
+  ok("E4 pendingSentinel 귀속 선택도 승계", adoptSent(stSentinel, "conv-early", "pending-42") === true);
+  ok("E4b 승계 결과가 새 cid", stSentinel._modelPickedForConvId === "conv-early");
+
+  // E5: 다른 **실 대화**에서 고른 값은 승계 금지 — 오귀속(직전 대화 선택 누출) 차단.
+  const stOther = newState({ selectedModel: "claude-sonnet-4", _modelPickedForConvId: "conv-B" });
+  const { _adoptComposerModelPickToConv: adoptOther } = factory(stOther);
+  ok("E5 다른 대화 귀속 선택은 승계하지 않음(오귀속 차단)",
+    adoptOther(stOther, "conv-early", "pending-9") === false && stOther._modelPickedForConvId === "conv-B");
+
+  // E6: cid 미발급이면 no-op(빈 문자열로 귀속을 덮지 않는다).
+  const stNoCid = newState({ _modelPickedForConvId: "" });
+  const { _adoptComposerModelPickToConv: adoptNoCid } = factory(stNoCid);
+  ok("E6 새 cid 가 없으면 no-op", adoptNoCid(stNoCid, "", null) === false && stNoCid._modelPickedForConvId === "");
+}
+
+// ── W: 표시-집행 불일치(조용한 강등) 감지 ─────────────────────────────────────
+{
+  const stDrop = newState({ selectedModel: "claude-sonnet-4", _modelPickedForConvId: "" });
+  const { _modelSelectionSilentlyDropped: dropA } = factory(stDrop);
+  ok("W1 명시 선택이 있는데 미동봉이면 무음 강등으로 감지",
+    dropA(stDrop, "conv-early", false) === true);
+
+  const stNoPick = newState({ selectedModel: null, _modelPickedForConvId: "" });
+  const { _modelSelectionSilentlyDropped: dropB } = factory(stNoPick);
+  ok("W2 선택이 없으면(기본값 사용) 강등이 아님 — 오탐 없음",
+    dropB(stNoPick, "conv-early", false) === false);
+
+  const stSent = newState({ selectedModel: "claude-sonnet-4", _modelPickedForConvId: "conv-A" });
+  const { _modelSelectionSilentlyDropped: dropC } = factory(stSent);
+  ok("W3 동봉되는 경우는 강등이 아님", dropC(stSent, "conv-A", false) === false);
+
+  const stLazy = newState({ selectedModel: "claude-sonnet-4", _modelPickedForConvId: "" });
+  const { _modelSelectionSilentlyDropped: dropD } = factory(stLazy);
+  ok("W4 lazy-create 는 항상 동봉이라 강등이 아님", dropD(stLazy, "", true) === false);
+}
+
 // ── S: 구조 계약 ───────────────────────────────────────────────────────────────
 
 // S1: loadHistory 가 payload.model 로 selectedModel 을 hydration + hydration 시각 전진.
@@ -269,6 +340,35 @@ function newState(patch = {}) {
   const fn = extractFn(appJs, "moveConversationToFolder");
   ok("S8 폴더 이동이 activeConversationId 재지정 후 loadHistory 로 정합",
     Boolean(fn) && /await loadConversations\(/.test(fn) && /await loadHistory\(\)/.test(fn));
+}
+
+// S9: early-cid 전환 지점이 **모두** 귀속 승계를 호출한다(conversation_audit 2026-07-28).
+//     activeConversationId 를 pending 에서 실 cid 로 바꾸는 지점이 승계 없이 추가되면 같은
+//     조용한 강등이 재발하므로, 전환 라인 수와 승계 호출 수를 함께 고정한다.
+{
+  const transitions = appJs.split("\n").filter(
+    (ln) => /state\.activeConversationId\s*=\s*earlyCid\s*;/.test(ln)).length;
+  const adoptions = appJs.split("\n").filter(
+    (ln) => /_adoptComposerModelPickToConv\(state,\s*earlyCid/.test(ln)).length;
+  ok(`S9 early-cid 전환(${transitions}곳) 마다 귀속 승계 호출(${adoptions}곳)`,
+    transitions > 0 && adoptions === transitions);
+}
+
+// S10: 첨부 업로드 경로는 pendingSentinel 을 비우기 **전에** 승계해야 한다(키 유실 방지).
+{
+  const idxAdopt = appJs.indexOf("_adoptComposerModelPickToConv(state, earlyCid, pendingKey");
+  const idxClear = appJs.indexOf("state.pendingSentinel = null;", idxAdopt);
+  ok("S10 첨부 경로 승계가 pendingSentinel 초기화보다 앞",
+    idxAdopt > 0 && idxClear > idxAdopt);
+}
+
+// S11: 미동봉 분기가 무음으로 끝나지 않는다 — 감지 + 사용자 표면화(showToast).
+{
+  const sp = extractFn(appJs, "sendPrompt");
+  ok("S11 미동봉 시 무음 강등 감지 + 사용자 표면화",
+    Boolean(sp)
+    && /_modelSelectionSilentlyDropped\(state,\s*targetConvId,\s*isLazyCreate\)/.test(sp)
+    && /showToast\(/.test(sp.slice(sp.indexOf("_modelSelectionSilentlyDropped"))));
 }
 
 console.log(`\n${failed === 0 ? "ALL PASS" : "FAILED"}  passed=${passed} failed=${failed}`);
