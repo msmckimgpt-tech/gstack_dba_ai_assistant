@@ -444,7 +444,9 @@ def pg_select_vision_images(conversation_id, account_id, ids, cap: int) -> list[
                 "size_bucket AS \"SizeBucket\" "
                 f"FROM agent_runtime.core_attachments WHERE id IN ({placeholders}) "
                 f"AND {scope_sql} AND kind = 'image' AND deleted_at IS NULL AND delete_pending = 0 "
-                "ORDER BY id ASC LIMIT %s",
+                # feature-0003 attach-full-scope: 최신 우선(MySQL 판과 동형) — 대화 전량 스코프에서
+                # ASC 는 방금 올린 이미지를 상한 밖으로 밀어낸다.
+                "ORDER BY id DESC LIMIT %s",
                 tuple(id_list) + (scope_val, int(cap)),
             )
             return [dict(r) for r in (cur.fetchall() or [])]

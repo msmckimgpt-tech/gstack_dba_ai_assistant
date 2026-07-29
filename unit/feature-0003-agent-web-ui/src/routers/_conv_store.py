@@ -2762,7 +2762,10 @@ def _prepare_vision_inline_images(
                       AND Kind = 'image'
                       AND DeletedAt IS NULL
                       AND DeletePending = 0
-                    ORDER BY Id ASC
+                    -- feature-0003 attach-full-scope: 스코프가 대화 전량으로 넓어져 ASC(가장 오래된
+                    -- 5개) 는 "방금 올린 이미지" 를 매 턴 탈락시킨다(적대 리뷰 backend BLOCK).
+                    -- 텍스트 인라인(_prepare_text_inline_attachments)과 동일하게 최신 우선.
+                    ORDER BY Id DESC
                     LIMIT %s
                     """,
                     params,
@@ -2976,6 +2979,122 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         await asyncio.sleep(0.5)
 
     return await asyncio.to_thread(app._build_worker_agent_result, job_id, conv_id)
+
+
+# ── feature-0003 attach-full-scope: 대화 전체 첨부 스코프 해소 ──────────────────
+# 한 대화의 활성 첨부 전량을 참조 스코프로 잡을 때의 개수 상한. 메타 1줄/파일이라
+# 본문 인라인(_TEXT_INLINE_COUNT_CAP=20)·vision(_VISION_IMAGE_COUNT_CAP=5) 상한보다
+# 훨씬 크게 잡아도 프롬프트 압박이 작다. 상한 초과분은 read_attachment 로 조회 가능.
+_ATTACHMENT_SCOPE_COUNT_CAP = 200
+
+
+def _resolve_conversation_attachment_scope(
+    conn,
+    conversation_id: str | None,
+    account_id: int,
+    *,
+    client_ids: "list[int] | None" = None,
+    sender_scope: bool = False,
+) -> list[int]:
+    """assistant·자가 적대 리뷰어가 이 턴에 참조할 수 있는 첨부 id 전량을 해소한다.
+
+    D16(minimum exposure — "프론트가 선택 전송한 id 만") supersede, 2026-07-29 사용자 결정:
+    첨부가 걸린 대화를 이어서 진행하면 이전 턴 첨부에 접근하지 못하는 마찰이 관측됐다.
+    프론트 selection bucket 이 비는 진입 경로(새로고침·랜딩 복귀·pending 컨텍스트)에서
+    attachment_ids 가 통째로 빠졌기 때문이다. 참조 가능 범위 결정을 **프론트 selection 이
+    아니라 대화 자체**에 두어, 어떤 진입 경로로 들어와도 같은 첨부 집합이 보이게 한다.
+    무엇을 실제로 볼지는 assistant 가 자율 판단한다(메타는 전량 노출, 본문은 인라인 상한
+    안에서 주입되고 초과분은 read_attachment 도구로 조회).
+
+    보안 스코프는 종전 가드를 그대로 유지한다:
+      - ConversationId 스코프 — 타 대화 첨부 유입 차단(TASK-0284 IDOR 안전망).
+      - sender_scope=True(그룹 대화, feature-0009 CSO F1) — 발신자 본인 첨부만. 타 멤버
+        첨부가 발신자 권한의 실행 맥락에 실려 datasource 를 끌어오는 권한상승을 차단한다.
+        (2026-07-29 사용자 결정으로 그룹 가드는 유지.)
+      - SupersededAt IS NULL — 버전 체인의 최신본만(구버전 중복 주입 방지).
+
+    **client_ids 는 대화가 확정된 경우 스코프에 합치지 않는다** (적대 리뷰 security/qa BLOCK):
+    클라이언트가 보낸 id 를 무검증으로 합치면 그룹 대화에서 타 멤버 첨부가 발신자의 실행 맥락에
+    유입돼 위 sender_scope 가드가 통째로 무력화된다(스톡 UI 도 대화 첨부 전량을 selected 로
+    보내므로 악의 없이도 도달). 대화가 확정된 경로에서는 **DB 조회 결과만이 진실**이며,
+    업로드는 ask 이전에 커밋되므로 신규 첨부도 그 결과에 이미 들어 있다.
+    client_ids 는 conversation_id 미확정(lazy-create) 경로에서만 폴백으로 쓴다.
+    """
+    client: list[int] = []
+    for v in (client_ids or []):
+        try:
+            iv = int(v)
+        except Exception:
+            continue
+        if iv > 0 and iv not in client:
+            client.append(iv)
+    if not conversation_id:
+        return client[:_ATTACHMENT_SCOPE_COUNT_CAP]
+
+    scoped: list[int] = []
+    rows = None
+    # PG cutover 정합 — 읽기 백엔드가 PG 면 mirror 에서(동일 최신본·미삭제 필터), 실패 시 MySQL 폴백.
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_list_conversation_attachments(str(conversation_id))
+    except Exception:
+        rows = None
+        logging.getLogger(__name__).warning(
+            "_resolve_conversation_attachment_scope: PG read failed → MySQL fallback (cid=%s)",
+            conversation_id, exc_info=True,
+        )
+    if rows is not None:
+        for r in rows:
+            try:
+                if sender_scope and int(r.get("account_id") or r.get("AccountId") or 0) != int(account_id):
+                    continue
+                _status = str(r.get("upload_status") or r.get("UploadStatus") or "")
+                if _status not in ("uploaded", "ingested"):
+                    continue
+                aid = int(r.get("id") or r.get("Id") or 0)
+            except Exception:
+                continue
+            if aid > 0 and aid not in scoped:
+                scoped.append(aid)
+        scoped.sort(reverse=True)  # 최신 우선 — 상한 초과 시 최근 첨부를 보존.
+    else:
+        try:
+            cur = conn.cursor()
+            _sender_sql = " AND AccountId = %s" if sender_scope else ""
+            _params: tuple = (str(conversation_id),)
+            if sender_scope:
+                _params = _params + (int(account_id),)
+            cur.execute(
+                f"SELECT Id FROM WebConversationAttachments "
+                f"WHERE ConversationId = %s{_sender_sql} "
+                f"AND UploadStatus IN ('uploaded','ingested') "
+                f"AND SupersededAt IS NULL AND DeletedAt IS NULL AND DeletePending = 0 "
+                f"ORDER BY Id DESC LIMIT %s",
+                _params + (int(_ATTACHMENT_SCOPE_COUNT_CAP),),
+            )
+            for row in (cur.fetchall() or []):
+                aid = int(row[0] or 0)
+                if aid > 0 and aid not in scoped:
+                    scoped.append(aid)
+            cur.close()
+        except Exception:
+            # 해소 실패 시 폴백 정책은 그룹 여부로 갈린다.
+            #  - 그룹(sender_scope): **fail-closed** — 클라이언트 선택분으로 폴백하면 발신자 가드를
+            #    거치지 않은 id 가 그대로 실행 맥락에 들어가 CSO F1 이 무력화된다. 첨부 없이 답변한다.
+            #  - 1:1·이어받기: client 선택분 폴백(종전 D16 동작). 하위 소비자가 ConversationId 를
+            #    다시 스코프하므로 타 대화 유입은 차단되고, 첨부가 줄어들 뿐이다.
+            logging.getLogger(__name__).warning(
+                "_resolve_conversation_attachment_scope: 대화 스코프 해소 실패 (cid=%s, sender_scope=%s)",
+                conversation_id, sender_scope, exc_info=True,
+            )
+            if sender_scope:
+                return []
+            return client[:_ATTACHMENT_SCOPE_COUNT_CAP]
+
+    # 대화가 확정된 경로 — DB 스코프 결과만이 진실(client_ids 미합침, 위 docstring 참조).
+    return scoped[:_ATTACHMENT_SCOPE_COUNT_CAP]
+
 
 def _prepare_text_inline_attachments(
     conn,

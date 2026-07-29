@@ -349,6 +349,9 @@ def build_audit_change_json(
             },
             ["attachment.raw_sql"],
         )
+    # DEPRECATED (feature-0003 attach-full-scope, 2026-07-29): "이 대화의 모든 첨부 사용" 토글이
+    # 제거되어 이 action 을 새로 dispatch 하는 경로는 없다. 과거 감사 기록의 렌더링 정합을 위해
+    # case 자체는 남긴다(ActionCode 카탈로그 하위호환).
     if action == "attachment.scope.all":
         return (
             {

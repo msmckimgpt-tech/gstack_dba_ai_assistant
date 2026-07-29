@@ -3377,6 +3377,9 @@ from routers.integrations import (  # noqa: E402
 from routers._conv_store import (  # noqa: E402
     _dispatch_ask_run_worker,
     _prepare_text_inline_attachments,
+    # feature-0003 attach-full-scope: 대화 전체 첨부 스코프 해소(ask 핸들러·테스트 참조).
+    _resolve_conversation_attachment_scope,
+    _ATTACHMENT_SCOPE_COUNT_CAP,
 )
 from routers._prompt_context import _prompt_generate_stream_response  # noqa: E402
 from routers.admin_products import _autonomous_generate_product_prompt  # noqa: E402

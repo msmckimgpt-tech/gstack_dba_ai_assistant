@@ -2778,17 +2778,17 @@ a { color: inherit; }
 .profile-motion-select { flex-shrink: 0; align-self: center; min-width: 128px; }
 .profile-notify-perm .btn-secondary { font-size: 12px; padding: 5px 10px; }
 
-/* TASK-0158: 첨부 scopeAll 토글 (attach 사이드패널) */
-.attach-scope-all {
-  display: flex; align-items: flex-start; gap: 8px;
-  padding: 10px 14px; margin: 0;
+/* feature-0003 attach-full-scope (2026-07-29): 첨부 scopeAll 토글(.attach-scope-all*) 제거 —
+   이 대화의 첨부는 항상 전량이 assistant 참조 스코프라 선택 구분이 사라졌다.
+   대신 참조 범위를 알리는 안내 1줄(.attach-side-panel-note). */
+.attach-side-panel-note {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
   border-bottom: 1px solid var(--border-subtle);
-  cursor: pointer;
 }
-.attach-scope-all input { margin-top: 2px; flex-shrink: 0; accent-color: var(--primary); }
-.attach-scope-all-text { display: flex; flex-direction: column; gap: 2px; }
-.attach-scope-all-label { font-size: 13px; color: var(--text); }
-.attach-scope-all-hint { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
 
 /* TASK-0158: 내 활동 기록 (프로필 감사 탭) */
 .profile-audit-list { display: flex; flex-direction: column; }

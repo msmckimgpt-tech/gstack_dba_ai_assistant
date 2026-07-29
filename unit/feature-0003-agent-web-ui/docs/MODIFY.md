@@ -1558,3 +1558,31 @@ Cross-ref: REVIEW `REV-20260728T191126-model-pick-early-cid` ·
 Cross-ref: REVIEW `REV-20260729T113000-model-pick-postdeploy` · test-runs.d 동명 fragment ·
 선행 `CHG-20260728T191126-model-pick-early-cid` · 마찰 원장 `FR-model-pick-lost-on-early-cid`
 (`fixed:undeployed` → `fixed:deployed:verified`).
+
+## CHG-20260729T140200-attach-full-scope — 대화 전체 첨부 자율 참조 + scopeAll 토글 제거
+
+**web(feature-0003)**: `routers/_conv_store.py` 에 `_resolve_conversation_attachment_scope`
++ `_ATTACHMENT_SCOPE_COUNT_CAP=200` 신설(PG mirror 우선·MySQL 폴백, 그룹 `sender_scope` 필터,
+최신본·활성 행만), `app.py` 꼬리 rebind 노출. `routers/conversations.py` ask 핸들러가 클라이언트
+`attachment_ids` 를 `client_attachment_ids` 로 받고 실제 스코프는 위 헬퍼로 해소 —
+동기 ingest 대기는 `_sync_ingest_ids`(이번 턴 첨부)로 한정. `static/index.html`·`app.js`·
+`styles.css` 에서 scopeAll 마크업·핸들러·상태·전송 필드·CSS 제거. `routers/_audit_infra.py` 의
+`attachment.scope.all` case 는 deprecated 주석 후 존치(과거 감사 기록 렌더링 정합).
+
+**agent-core(feature-0002)**: `agent_core.py` 에 `_attachment_scope_ids` ·
+`_load_scoped_attachment_rows` · `_load_attachment_bytes` · `read_attachment_content` 신설.
+첨부 섹션 제목을 대화 전체 스코프로 바꾸고 "목록의 어떤 파일이든 read_attachment 로 읽을 수
+있다 / 접근 불가 단정·재첨부 요구 금지" 지시 추가, 미인라인 안내를 도구 호출 안내로 교체.
+`_review_attachments` 가 미인라인 첨부를 매니페스트(content_available=False)로 함께 반환.
+`modules/tools.py` 에 `read_attachment` 정의·핸들러·`with_attachment_tools`·
+`_DATASOURCE_FREE_TOOLS` 추가(라우팅 우회). `modules/redteam.py` 의 `build_attachment_digest`
+가 본문/매니페스트를 분리하고 매니페스트가 예산을 선점, 리뷰어 지시문에 오판 금지 2줄 추가.
+`_derive_step_work`/`_derive_step_reason` 에 read_attachment 라벨.
+
+**테스트**: `test_attach_full_scope.py`(7) · `test_read_attachment_tool.py`(15) ·
+`test_redteam_attachment_manifest.py`(7) 신설, `test_self_review_messages.py` 계약 갱신 + 1건 추가.
+컨테이너 스위트 실패 15건은 main 과 동일한 환경성 baseline(attachment 13 · runtime_settings 2) —
+신규 실패 0.
+
+Cross-ref: DECISIONS `ADR-20260729T140200-attach-full-scope` (D16 supersede) ·
+REVIEW `REV-20260729T140200-attach-full-scope` · TASK `20260729T1402-attach-full-scope`.

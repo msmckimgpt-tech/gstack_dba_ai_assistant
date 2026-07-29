@@ -352,6 +352,11 @@ CONVERSATION REQUEST, not against the literal latest utterance.
 - The draft may legitimately analyse a file the user attached earlier in the conversation. Attached
   files appear in the ATTACHMENTS section of the evidence digest; their content is user-provided
   ground truth. NEVER claim the assistant invented content that is present there.
+- Every file the user attached in this conversation is available to the assistant, not only the ones
+  attached to the latest message, and it can read any of them on demand (`read_attachment`). Files
+  listed under "ALSO ATTACHED" are real attachments whose body simply was not included in this
+  digest. Do NOT report `grounding`/`honesty` merely because a file's excerpt is absent here, and do
+  NOT demand that the assistant ask the user to re-attach a file that is already listed.
 
 Review axes:
 - grounding: every factual claim in the draft must be supported by the evidence digest (tool runs
@@ -501,6 +506,9 @@ def _block_rederive_axes(findings: list[dict[str, str]] | None, ordinal: int) ->
 # false positive 이므로 digest 에 첨부 매니페스트+발췌를 싣는다.
 _ATTACH_TOTAL_CAP_CHARS = 2500
 _ATTACH_PER_FILE_CAP_CHARS = 1200
+# 본문 없는 매니페스트(ALSO ATTACHED)가 digest 예산에서 선점할 수 있는 최대 비율.
+# 대화 전체 첨부(최대 200건)가 실릴 수 있으므로 상한 없이 두면 도구 근거·발췌를 통째로 밀어낸다.
+_ATTACH_MANIFEST_BUDGET_RATIO = 0.35
 
 
 def build_attachment_digest(attachments: list[dict[str, Any]] | None,
@@ -514,12 +522,17 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
     items = [a for a in (attachments or []) if isinstance(a, dict)]
     if not items:
         return ""
+    # feature-0003 attach-full-scope: 본문이 실린 파일과 매니페스트만 있는 파일을 나눈다.
+    # 후자는 인라인 상한 밖이거나 비텍스트라 발췌가 없을 뿐, **대화에 실재하는 첨부**다 —
+    # 목록에서 감추면 그 파일을 논한 답변이 다시 '창작'으로 오판된다(honesty false positive).
+    with_body = [a for a in items if str(a.get("content") or "").strip()]
+    manifest_only = [a for a in items if not str(a.get("content") or "").strip()]
     lines = [
         "USER-ATTACHED FILES (the user attached these in this conversation; their content IS",
         "legitimate ground truth for the review. Excerpts are TRUNCATED — absence here is not",
         "proof the assistant invented it):",
     ]
-    for a in items:
+    for a in with_body:
         fname = _flatten_untrusted(str(a.get("filename") or "(unnamed)"), 120)
         body = str(a.get("content") or "")
         nlines = body.count("\n") + 1 if body else 0
@@ -528,7 +541,29 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
         lines.append(f"- {fname} ({nlines} lines, {len(body)} chars){mark}")
         if excerpt:
             lines.append(f"  excerpt: {excerpt}")
-    return "\n".join(lines)[:cap_chars]
+    manifest_lines: list[str] = []
+    if manifest_only:
+        manifest_lines.append(
+            "ALSO ATTACHED (present in this conversation, content NOT included in this digest — the "
+            "assistant can read these on demand with read_attachment. Do NOT treat statements about "
+            "these files as fabricated just because no excerpt appears here):"
+        )
+        for a in manifest_only:
+            fname = _flatten_untrusted(str(a.get("filename") or "(unnamed)"), 120)
+            kind = _flatten_untrusted(str(a.get("kind") or ""), 24)
+            manifest_lines.append(f"- {fname}{f' ({kind})' if kind else ''}")
+    # 매니페스트는 예산을 **일부** 선점한다 — 발췌가 길어 잘리더라도 "이 파일이 실재한다" 는 사실은
+    # 남아야 하기 때문이다(그 사실이 사라지는 것이 false positive 의 직접 원인). 다만 선점은 상한
+    # 안에서만 한다: 참조 스코프가 대화 전량(최대 200건)으로 넓어졌으므로 무제한 선점을 허용하면
+    # 매니페스트가 digest 예산을 통째로 밀어내 **도구 실행 근거와 첨부 발췌가 동시에 소실**된다
+    # (적대 리뷰 backend/qa BLOCK — 실측 cap 2500 대비 7,329~20,641자). 최종 절단도 반드시 건다.
+    manifest_txt = "\n".join(manifest_lines)[:max(0, int(cap_chars * _ATTACH_MANIFEST_BUDGET_RATIO))]
+    if manifest_txt and manifest_txt != "\n".join(manifest_lines):
+        manifest_txt += "\n- … (이하 생략 — 첨부가 더 있음)"
+    body_budget = max(0, cap_chars - (len(manifest_txt) + 1 if manifest_txt else 0))
+    body_txt = "\n".join(lines)[:body_budget]
+    out = f"{body_txt}\n{manifest_txt}" if manifest_txt else body_txt
+    return out[:cap_chars]
 
 
 def build_evidence_digest(steps: list[dict[str, Any]] | None, executed_sql: str = "",
