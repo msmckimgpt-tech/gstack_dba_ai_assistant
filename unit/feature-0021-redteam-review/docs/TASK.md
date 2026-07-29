@@ -207,3 +207,18 @@ CHG-20260728-0002 · REVIEW.md REV-20260728T093528-answer-origin-realign.
 - [x] verify-completion PASS → 커밋(ba365d5e) → PR #1044 머지(f87bf1da) → 배포(scope=all)
 - [x] POST-DEPLOY 라이브 실증 — alembic 0048 적용·GRANT 확인, 검증 질문 1건으로 회차 원장
       2단계 적재(0 review BLOCK1 → 1 revise note=revise_failed) 및 콘솔 표시 확인 (TEST.md Run (4))
+
+## 20260729T1420-rounds-visual-fixes — 다회차 육안 검증 후 표시 교정 (2026-07-29)
+사용자 요청("다회차 표본이 확보되었습니다. 정상 작동 육안 검증")으로 라이브 10단계 표본
+(review `id=145`: 수정 4회 · 도구 재추론 3회 · BLOCK 3건 미해소)을 PB-0008 로 확인한 결과,
+회차 목록 자체는 원장과 정확히 일치했으나 **다회차에서만 드러나는 표시 결함 2건**을 발견했다.
+상세: MODIFY.md CHG-20260729-0006 · REVIEW.md REV-20260729T142000.
+- [x] 라이브 다회차 표본 원장 대조 — 10단계(0 review → 4×(revise/verify) → 5 revise 폐기)가
+      화면 라벨·수정 방식·도구 라운드·길이까지 DB 와 1:1 일치 확인
+- [x] 결함 ①: 폐기 회차(`revise_failed`)의 사유가 **접힌 요약에 없어** 그 회차를 펼쳐야만
+      "왜 여기서 멈췄나" 를 알 수 있었다 → 요약 라인에 사유 표기
+- [x] 결함 ②: 회차 시각이 10개 전부 동일(원장은 루프 종료 후 배치 기록 → 컬럼 DEFAULT now())
+      → (a) 회차마다 실제 종료 시각 기록(`_now_utc()` + `COALESCE(%s, now())`),
+      (b) 기존 배치 기록은 시각을 숨기되 **숨긴 사실을 1줄 안내**(조용한 제거 금지)
+- [x] 단위 테스트 2건 추가(147 passed·ruff clean) + codex 리뷰(P1 0건, P2 2건 중 1건 반영)
+- [x] PB-0008 재검증 — 10단계 표본에서 사유 표기·시각 숨김·안내 문구 확인
