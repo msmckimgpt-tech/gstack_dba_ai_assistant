@@ -11,6 +11,28 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260729T141200-test-live-db-isolation (`make test` 의 라이브 컨트롤플레인 쓰기 차단, Major)
+- `unit/feature-0003-agent-web-ui/tests/conftest.py`: autouse fixture `_no_live_memory_conn` 신설 —
+  `app._connect_memory` 를 monkeypatch 로 차단(raise). memory DB 커넥션 단일 진입점이라 `get_conn`
+  DI 경로 + 핸들러 내부 직접 호출을 한 번에 덮는다. 모듈 docstring 의 "lifespan 미발화 → DB 미접속"
+  전제도 정정(요청 스코프 Depends 라 성립 안 함).
+- `unit/feature-0003-agent-web-ui/tests/test_live_db_isolation.py` **신설** — 진입점 차단·저장 경로
+  500·스냅샷 경로 비-`/shared` 3계약을 회귀 가드로 고정(사고 경위를 파일 docstring 에 보존).
+- `unit/feature-0003-agent-web-ui/tests/test_runtime_settings_api.py`: 저장 경로 assert 를
+  `in (200,500)` → **`== 500`** 으로 좁힘(3곳) + 실패 메시지가 라이브 오염을 직접 지목. `default`
+  (env 반영 baseline)에 60 을 요구하던 환경 의존 assert 를 `code_default` 로 이관.
+- `Makefile`: `TEST_ISOLATION_ENV` 신설(`DB_PORT=1` + `RUNTIME_SETTINGS_SNAPSHOT_PATH=/tmp/...`)을
+  `test` 타깃에 주입. `DB_HOST` 는 의도적 비변경(SSRF allowlist implicit 등록 — TASK-0214 간섭).
+- (cross-unit) `unit/feature-0002-agent-core/tests/test_runtime_settings.py`: `monkeypatch.delenv`
+  로 스냅샷 부재 폴백 테스트를 env-agnostic 화.
+- (후속 정정) 스냅샷 경로 가드의 강제 조건을 `isdir("/shared")` → **`exists("/shared/runtime_settings.json")`**
+  으로 교체 — CI 러너가 `SESSION_DIR.mkdir()` 용으로 빈 `/shared` 를 만들어(ci.yml) 오염 표면이
+  없는데도 가드가 발동해 PR #1048 이 거짓 red 였다. "덮어쓸 대상 실재" 가 정확한 판별이며,
+  Makefile env 누락 회귀는 그대로 잡힌다(양방향 실증 — Run fragment §E).
+- **코드(제품) 변경 0** — 테스트 인프라·빌드 진입점만. 라이브 검증: `COMPOSE_PROJECT_NAME=repo`
+  전량 실행 후 `WebRuntimeSettings` 해시 불변 + `testclient` audit 신규 0건.
+- Cross-ref: TASK-20260729T1412-test-live-db-isolation · REV-20260729T141200-test-live-db-isolation.
+
 ## CHG-20260728T172000-graph-hover-flow-postverify (TASK 20260728T1628-graph-hover-flow POST-DEPLOY 라이브 검증 기록, 비-정책 doc-only)
 - `docs/test-runs.d/20260728T172000-graph-hover-flow-postdeploy.md` 신설 — 배포(main `b36493a9`)·서빙 baked 2중 확인·PB-0008 10 시나리오·evidence 4매(+원본 프레임 전량).
 - TASK/REVIEW 에 POST-DEPLOY 항목 추가. **코드·자산 변경 0**.

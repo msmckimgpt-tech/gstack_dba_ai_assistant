@@ -196,9 +196,32 @@ restart: down up  ## lifecycle: down 후 up
 build:  ## lifecycle: 모든 서비스 이미지를 --no-cache 로 재빌드
 	@$(DC_QUIET) build --no-cache
 
-test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리 컨테이너에서 실행 (psycopg 등 런타임 의존 포함, --no-deps 로 DB 미기동)
+# 단위 테스트 컨테이너의 라이브 자원 차단 backstop (test-live-db-isolation, 2026-07-29).
+#
+# `--no-deps` 는 의존 서비스를 *기동*하지 않을 뿐, **이미 떠 있는 운영 컨테이너와의 연결을
+# 막지 않는다**. agent 서비스는 `networks: [dbnet, ...]` + `env_file: .env/.env.mysql` +
+# `volumes: ../artifacts/shared:/shared` 를 상속하므로, 운영 스택이 떠 있는 개발 머신에서
+# pytest 가 라이브 MySQL(agent_memory)·라이브 스냅샷 파일에 그대로 도달한다.
+# 실측 사고: 관리 콘솔 런타임 설정(에이전트/쿼리 실행 타임아웃 등)이 테스트 리터럴 값으로
+# 150회 덮어써짐(audit RemoteAddr=testclient, 2026-07-13~29).
+#
+# 아래 override 로 테스트 프로세스에서 라이브 오염 표면을 끊는다.
+#   DB_PORT=1     — memory/data MySQL 을 도달 불가로. 닫힌 포트라 즉시 connection refused
+#                   (타임아웃 대기 없음 → 테스트가 느려지지 않는다). DB_HOST 는 건드리지 않는다:
+#                   app 이 DB_HOST 를 datasource SSRF allowlist 에 implicit 추가하므로(TASK-0214)
+#                   호스트를 바꾸면 SSRF 가드 테스트가 오염된다.
+#   RUNTIME_SETTINGS_SNAPSHOT_PATH — `/shared` 공유 볼륨 대신 컨테이너 임시 파일. 스냅샷은
+#                   web·워커가 TTL 로 읽는 live 전파 채널이라, DB 를 막아도 여기 쓰면 오염된다.
+# PG(AGENT_KB_PG_*) 는 의도적으로 두지 않는다 — 현재 일부 테스트가 라이브 PG 읽기에 의존해
+# 통과하고 있어, 함께 끊으면 본 cycle 의 scope 를 넘는 회귀가 난다(REPORT 후속 항목).
+# 애플리케이션 레벨 차단(_connect_memory)은 web-ui `tests/conftest.py` 참조 — 2중 방어.
+TEST_ISOLATION_ENV := \
+  -e DB_PORT=1 \
+  -e RUNTIME_SETTINGS_SNAPSHOT_PATH=/tmp/runtime_settings.test.json
+
+test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리 컨테이너에서 실행 (psycopg 등 런타임 의존 포함, --no-deps + 라이브 DB/스냅샷 차단 env)
 	@$(MAKE) -s dc-build SERVICE=agent
-	@$(DC_QUIET) run --rm --no-deps -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
+	@$(DC_QUIET) run --rm --no-deps $(TEST_ISOLATION_ENV) -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
 	  pip install -q --no-cache-dir pytest ruff >/tmp/pip-dev.log 2>&1 || { cat /tmp/pip-dev.log; exit 1; }; \
 	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0003-agent-web-ui/src:/work; \
 	  echo "=== pytest ==="; \

@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260729T141200-runtime-settings-test-env-agnostic (cross-unit — 정본 feature-0003 TASK-20260729T1412)
+- `tests/test_runtime_settings.py::test_missing_snapshot_is_fail_open`: `monkeypatch.delenv("AGENT_TIMEOUT_SEC")`
+  추가. override 부재 시 baseline 이 **배포 env 우선**인 것은 `_baseline_int` 의 설계된 동작인데
+  (운영 `.env` 의 300 을 존중해야 config.py 와 byte-동치), 테스트는 env 를 둔 채 스펙 리터럴 60 을
+  요구해 `.env` 를 상속하는 컨테이너 테스트 환경에서 상시 FAIL 이었다. 검증 의도("스냅샷 부재 →
+  폴백")를 보존하면서 env 의존만 제거.
+- 코드(제품) 변경 0. 상세 근거·라이브 검증은 feature-0003 REVIEW REV-20260729T141200-test-live-db-isolation.
+
 ## CHG-20260722-dqa-data-grounding-and-scratch-csv (데이터 의미 grounding 지침 신설 + scratch_sql 결과 CSV export — DQA 마찰 B-1/D-1/D-2/F-5)
 - Date: 2026-07-22. worktree `ai/claude/dqa-grounding-scratch-csv`(base main 66a48870). 사용자 요청(/_template:entry): `DQA_assistant_마찰개선사항_20260722_v2.md` 마찰 검토·개선. 스코프 승인(AskUserQuestion) = B-1 타임존 + D-1 ENUM + F-5 scratch CSV(E-5 대화누출은 병렬 세션 `feature-0019-xconv-leak` 담당이라 중복 회피).
 - **무엇을(1) 데이터 의미 grounding 지침**: `agent_core._DATA_GROUNDING_GUIDANCE` 신설 — `_run_agent_core` compose 에서 `_ACTIVE_INTERPRETATION_GUIDANCE` 직후 **무조건(그룹 if-블록 밖) 주입**(1:1·그룹 공통). 3블록: (a) **타임존(B-1)** — 서버 TZ 설정(`@@time_zone` 등)은 저장 datetime 값의 기준 TZ 를 알려주지 않음(MySQL DATETIME 은 TZ 미저장); 서버 TZ 만 보고 "저장값=로컬시각" 단정 금지, 불확실 시 알려진 기준점 데이터 교차검증 + 변환 가정 답변 명시, 미확정 시 임의 offset 금지. (b) **ENUM/코드(D-1)** — 코드 의미 지어내기 금지, GLOSSARY & ENUM VALUES·`get_sample_rows`/`GROUP BY` 분포 grounding 또는 미보유 고백. (c) **분리저장(D-2)** — "전체 X" 요청 시 여러 컬럼/테이블 분리저장 커버리지 명시. `guidance_registry.py` 에 `data-grounding` 항목 등록(관리 콘솔 작동지침 목록 노출).

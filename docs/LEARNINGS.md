@@ -375,6 +375,19 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: quirk
 
+### LRN-20260729-0001 — `docker compose run --no-deps` 는 **이미 떠 있는** 운영 스택으로부터 테스트를 격리하지 않는다 (라이브 설정이 테스트 값으로 롤백된 근본 원인)
+- Source: TASK-20260729T1412-test-live-db-isolation (사용자 보고: 관리 콘솔 '에이전트/쿼리 실행 타임아웃' 900초가 반복적으로 90초로 롤백)
+- Quirk: `--no-deps` 는 의존 서비스를 **기동하지 않을 뿐**, 이미 실행 중인 컨테이너와의 네트워크 연결을 막지 않는다. `make test` 의 agent 서비스는 `networks: [dbnet, ...]` + `env_file: .env/.env.mysql` + `volumes: ../artifacts/shared:/shared` 를 상속하므로, 운영 스택이 상시 떠 있는 개발 머신에서 pytest 가 **라이브 MySQL(`agent_memory`)과 라이브 공유 스냅샷에 그대로 도달**한다. 그 결과 관리 콘솔 런타임 설정 PUT 테스트가 라이브 `WebRuntimeSettings` 를 실제로 덮어썼다(2026-07-13~29, audit `RemoteAddr=testclient` 150건). CI 는 `.env` 도 운영 스택도 없어 통과하므로 **개발 머신에서만 발현**한다.
+- 함께 무너진 전제 2가지:
+  - "TestClient 를 context manager 없이 만들면 lifespan 미발화 → DB 미접속" — `get_conn` 은 lifespan 이 아니라 **요청 스코프 Depends** 라 매 요청 실행된다. lifespan 회피로는 커넥션이 막히지 않는다.
+  - `assert status_code in (200, 500)` 같은 **양쪽 허용 어서션** — "DB 없으면 500, 있으면 200" 의도였지만, 200(실제 저장) 을 통과로 인정하는 순간 오염이 테스트 성공으로 위장된다.
+- Mitigation:
+  - 차단은 **커넥션 진입점**에 놓는다. `app._connect_memory` 를 autouse fixture 에서 monkeypatch(raise) 하면 `get_conn` DI 경로와 핸들러 내부 직접 호출을 함께 덮고, monkeypatch 특성상 기존 fake-conn 테스트는 그대로 이긴다. `dependency_overrides[get_conn]` 로 덮으면 fake-conn 검증 패턴들이 깨진다(실측).
+  - 컨테이너 backstop 은 **포트만 닫는다**(`-e DB_PORT=1`). `DB_HOST` 를 바꾸면 app 이 그것을 datasource SSRF allowlist 에 implicit 등록하므로(TASK-0214) SSRF 가드 테스트가 오염된다. 공유 볼륨 오염은 `RUNTIME_SETTINGS_SNAPSHOT_PATH` 를 컨테이너 임시 경로로 돌려 끊는다.
+  - 부작용이 라이브에 남는 테스트는 **상태 diff 로 검증**한다 — 실행 전후 대상 테이블 md5 + audit 신규 건수. 코드 리딩으로는 "안 건드린다" 를 단정할 수 없다.
+- 진단 시그니처(재발 시 즉시 판별): `WebAuditEvents` 에서 `RemoteAddr='testclient'` / `UserAgent='testclient'` / `ActorAccountId=1`(conftest 기본 계정). 사람 변경은 실제 IP + 브라우저 UA 로 남으므로 한 눈에 갈린다.
+
+
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
 - Source: ADR-0014
 - Quirk: 본 저장소는 `mysql_ai` 원본의 **템플릿 이관 사본**이다. `.env`의 포트·모델·DB 자격증명은 원본과 같아야 하며, 동시 기동은 하지 않는다.
