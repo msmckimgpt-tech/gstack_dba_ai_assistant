@@ -530,3 +530,17 @@ source_of_truth: true
   만들지 않고 종료 시 1회 배치).
 - Rollback Notes: alembic `downgrade` = DROP TABLE (파생 관측 데이터 소실 허용, 0042/0043/0045
   규약 동형). 코드 롤백만으로도 원장 기록이 멈출 뿐 답변 경로·요약 기록에는 영향이 없다.
+
+## CHG-20260729-0005
+- Date: 2026-07-29
+- Related Requirement: TASK-20260729T123000-review-rounds-ledger
+  — **docs-only, 코드 무변경** (CHG-20260729-0004 배포분의 POST-DEPLOY 확정)
+- Summary: 회차 원장(0048) 배포본 `f87bf1da` 에서 라이브 실증. 마이그레이션·GRANT 확인 후
+  검증 질문 1건을 실제로 태워 `redteam_review_rounds` 에 회차 2단계가 적재되는 것과, 콘솔
+  '추론' 탭이 그 회차를 진행 순서로 표시하는 것을 확인했다. 배포 전 검증은 격리 컨테이너 +
+  클라이언트 스텁이었으므로, **서버가 실제 원장 행을 내려주는 경로**는 이 Run 이 처음 확인한다
+  (repo 에 있음 ≠ 라이브에서 동작함 — 이 프로젝트가 반복해 경계해온 등치 오류).
+- Files: `docs/TEST.md`, `docs/TASK.md`, `docs/MODIFY.md`, `docs/REVIEW.md`
+- Impact: 제품 동작 무변경(검증 기록만). 라이브 데이터에는 검증용 질문 1건의 턴과 그에 따른
+  리뷰 판정 1건(`id=142`)이 추가됐다.
+- Rollback Notes: 문서 되돌리기 외 없음.

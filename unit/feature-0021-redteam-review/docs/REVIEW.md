@@ -615,3 +615,24 @@ index-only scan 이 가능하나, 대화 수에 선형인 것은 사실이다. �
 
 ### Codex 가 확인한 것 (인용)
 > "SQL injection 은 확인되지 않았고, 신규 UI 값도 대부분 `esc()` 를 거친다."
+
+## REV-20260729T140500-ai-root-feature-0021-rounds-postdeploy [SKIPPED:docs-only POST-DEPLOY 검증 기록 — 제품 코드 무변경]
+- Related TASK: feature-0021-redteam-review (TASK-20260729T123000-review-rounds-ledger)
+- Related Change: CHG-20260729-0005
+- Trigger: changeset 이 `unit/feature-0021-redteam-review/docs/*` 전용 (§18.8 키워드 비매칭)
+- Timestamp: 2026-07-29T14:05:00+0900
+- Verdict: PASS
+- Human Approval Needed: no
+
+### 왜 별도 Run 으로 남기나
+배포 전 시각검증(Run (3))의 회차 렌더는 **브라우저 안에서 fetch 응답에 rounds 를 주입한**
+클라이언트 경로였다. 그것을 "회차 기능 검증 완료" 로 부르면 서버 적재·조회 경로를 검증하지
+않은 채 완료로 선언하는 것이 된다. 이번 Run 은 라이브에서 실제 답변을 태워 원장 행이
+쌓이고(`id=142` → 2단계) 콘솔이 그것을 표시하는 것까지 확인했다.
+
+### 이 Run 이 보이는 것과 보이지 않는 것
+- **보임**: 원장 적재(쓰기) → 조회(`rounds_available:true` + `rounds` 동봉) → 콘솔 렌더의
+  end-to-end. 폐기 회차(`revise_failed`)가 원장에 남아 "왜 멈췄나"가 회차 단위로 읽힌다.
+- **안 보임**: 다회차(2회 이상 수정→재검증) 라이브 표본. 이번 유도 질문은 1회차에서 수정
+  산출이 실패해 종료됐다. 다회차 렌더는 Run (3) ④의 스텁 검증으로만 확인됐고, 라이브 표본은
+  트래픽 누적으로 확보된다.

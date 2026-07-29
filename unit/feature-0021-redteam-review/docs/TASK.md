@@ -204,4 +204,6 @@ CHG-20260728-0002 · REVIEW.md REV-20260728T093528-answer-origin-realign.
       컨테이너 + 실 Chrome. 검증 중 대화 라벨 중복(같은 分 대화 구분 불가) 발견·교정
 - [x] codex 적대 리뷰(REV-20260729T134100) — P1 1건(원장 INSERT 원자성: autocommit 커넥션에서
       executemany 는 행별 커밋 → 단일 multi-VALUES statement) + P2 3건 수정, 1건 근거 기록 후 수용
-- [ ] verify-completion PASS → 커밋 → PR → 배포 → 라이브 회차 기록 확인 (POST-DEPLOY)
+- [x] verify-completion PASS → 커밋(ba365d5e) → PR #1044 머지(f87bf1da) → 배포(scope=all)
+- [x] POST-DEPLOY 라이브 실증 — alembic 0048 적용·GRANT 확인, 검증 질문 1건으로 회차 원장
+      2단계 적재(0 review BLOCK1 → 1 revise note=revise_failed) 및 콘솔 표시 확인 (TEST.md Run (4))

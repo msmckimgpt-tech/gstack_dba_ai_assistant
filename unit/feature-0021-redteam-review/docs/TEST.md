@@ -242,3 +242,31 @@ source_of_truth: true
   40 + 절단 표시 · 원장 CHECK 제약) 수정 후: 단위 **145 passed, 0 failed**(신규 3건 추가)·ruff
   clean, 콘솔 재렌더 정상(대화 그룹 12 · 리뷰 18 · 라벨 구분 유지).
   Evidence: `rr-07-postfix.png`. **PASS**
+
+### Run 2026-07-29 (4) — POST-DEPLOY 라이브 실증 (회차 원장 적재 + 콘솔 표시)
+- Environment: **Windows-browser** (PB-0008, `https://localhost/admin` — Caddy 경유 라이브)
+  + 라이브 PG(`repo-postgres-1`) + 라이브 web/워커
+- 대상 배포: PR #1044 머지분(`f87bf1da`) — web-a/web-b·insight-worker·ask-worker 반영 확인
+  (`make deploy-web` scope=all, soak 통과).
+- **① 마이그레이션** — `public.alembic_version` = `0048_redteam_review_rounds`,
+  `agent_runtime.redteam_review_rounds` 실재. GRANT 실측: `agent_kb_rw:INSERT/SELECT` ·
+  `agent_kb_ro:SELECT` (0008 DEPLOY TRAP 규약 충족). **PASS**
+- **② 라이브 회차 적재** — 검증용 질문 1건("접속 가능한 데이터소스 개수")을 높음 강도로 태워
+  실제 red-team 루프를 돌렸다. 요약 행 `id=142`(verdict=revise · revision_rounds=0 ·
+  unresolved=1 · stop_reason=revise_failed) 에 대해 원장이 **2단계** 적재:
+  | round_index | phase | verdict | block | revise_method | note |
+  |---|---|---|---|---|---|
+  | 0 | review | revise | 1 | | |
+  | 1 | revise | | 0 | rewrite | revise_failed |
+  → **폐기된 수정 회차가 원장에 남는다**. 이전 구조에서는 요약 1행의 `stop_reason` 문자열만
+  남아 "몇 회차에서 무엇이 실패했는지" 를 알 수 없었다. **PASS**
+- **③ 콘솔 표시** — 라이브 배포본 '감사 > AI 운영 현황 > 추론' 에서 해당 대화 그룹이
+  `리뷰 4건 · 회차 2단계` 로 표시되고, 리뷰를 펼치면 요약 타임라인 아래 **"자가검증 · 재검증
+  회차 (2단계 · 진행 순서)"** 가 나온다. 각 회차를 펼치면 `최초 자가검증`은 BLOCK 지적 원문을,
+  `1회차 결함 수정`은 `수정 방식: 텍스트 재작성 / 결과: 수정 산출 실패 — 직전 답변 유지` 를
+  보여준다. Evidence: `artifacts/win-browser-shots/20260729-review-rounds/rr-08-live-postdeploy.png`.
+  **PASS**
+- Pass/Fail: **PASS**
+- 미커버: 다회차(2회 이상 수정→재검증) 리뷰의 라이브 표본은 아직 없다 — 이번 유도 질문은
+  1회차에서 수정 산출이 실패해 종료됐다. 다회차 렌더는 배포 전 클라이언트 스텁으로 검증했고
+  (Run 2026-07-29 (3) ④), 라이브 표본은 트래픽 누적으로 자연 확보된다.
