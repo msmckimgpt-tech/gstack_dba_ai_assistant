@@ -10,6 +10,85 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260729T175000-progress-poll-resilience [CODEX:progress-poll-resilience] — 진행 폴링 영구 정지 → 자가 회복 (TASK-20260729T1750)
+- 대상 diff: `src/static/app.js`(폴링·감지기·이벤트 훅) · `tests/verify_progress_poll_resilience.mjs`(신설) ·
+  `tests/verify_run_detect_poll.mjs`(계약 갱신) · 문서 3. **백엔드·RBAC·스키마·엔드포인트 변경 0**.
+- **§18.8 패널 처리**: 정책상 UI 변경은 ux/design 패널 대상이나 본 세션에 "요청 없이 Agent tool
+  호출 금지" 지시가 걸려 있어 충돌한다. 자체 SKIP 하지 않고 **사용자에게 확인 → `/codex review`
+  대체 선택**(§18.8.1 경로 2). `[CODEX:progress-poll-resilience]` 결과를 아래 기록.
+- **판단 근거 — 왜 "재시도 상한 상향" 이 아니라 "포기 제거" 인가**: 상한을 5회·10회로 올려도
+  같은 결함이 남는다(순단이 길면 여전히 죽고, 죽으면 회복 경로가 없다). 결함의 본질은 재시도
+  횟수가 아니라 **"폴링이 죽을 수 있는데 아무도 그것을 감시하지 않는다"** 는 구조다. 그래서
+  (a) 폴링은 포기하지 않고 백오프만 늘리고, (b) 그럼에도 죽는 경로가 남을 때를 대비해 감지기를
+  watchdog 으로 세웠다. 두 겹이라 한쪽이 실패해도 화면이 박제되지 않는다.
+- **대안 검토·기각**: ① *서버 SSE/WebSocket 푸시* — 근본적이나 Caddy·2-replica·SSE pre-drain
+  (feature-0014)까지 건드리는 별개 cycle. 본 결함은 클라이언트 복원력만으로 해소된다. ② *폴링
+  실패 시 사용자에게 토스트로 알리고 수동 재시도 버튼* — 사용자가 이미 겪은 마찰을 UI 로 떠넘기는
+  것이라 기각(ask-timeout-nonblocking 의 "모달 제거" 결정과 같은 방향). ③ *`errorCount` 상한만
+  상향* — 위 근거대로 결함이 남아 기각.
+- **자체 적대 검토 (H1~H7)**:
+  - H1 *무한 재시도가 서버를 때리지 않나* — 백오프 상한 60s, 대상은 활성 대화 1건뿐. 정상 폴링이
+    1.2s 주기이므로 실패 구간의 부하는 **정상 대비 1/50 수준**. 부하 증가 없음.
+  - H2 *watchdog 이 `loadHistory` 를 폭주시키지 않나* — 감지기는 폴러 생존 시 fetch 0회. handoff
+    시 `reschedule=false` 로 중복 타이머를 만들지 않고, 재무장은 `loadHistory` 가 단독 관장.
+    F1 이후 폴러는 활성 대화가 있는 한 항상 재스케줄되므로 watchdog 이 깨어나는 빈도 자체가 낮다.
+  - H3 *dormant 근거를 줄여 정상 경로에 중복 fetch 공백이 생기지 않나* — `pollProgress` 는 첫
+    await 이전 동기 구간에서 `progressPollInFlight = true` 를 세우고, `finally` 의
+    `scheduleProgressPolling` 이 같은 동기 구간에서 `progressPoller` 를 세운다. 단일 스레드라
+    두 신호 사이에 공백이 없다. tick 콜백의 `progressPoller = null` 직후 호출되는 `pollProgress`
+    도 동기 구간에서 in-flight 를 세운다. 유일한 공백은 `pollProgress` 초입 early-return
+    (활성 대화 없음·seq 무효·이미 in-flight)인데, 이는 폴링이 실제로 무효인 상황이라 감지기가
+    깨어나는 것이 **의도된 동작**이다.
+  - H4 *baseline 비교 제거가 `sendPrompt` 직후 중복 재로드를 만들지 않나* — `sendPrompt` 는
+    `startProgressPolling` 을 먼저 호출해 폴러를 세우므로 감지기는 dormant. 감지기가 fetch 하는
+    시점은 폴러 부재 시뿐이라 이 경로는 성립하지 않는다.
+  - H5 *그룹 대화 foreign-run 불변식(내 run 갈아타기 금지)을 깨나* — 그 불변식은
+    `applyProgressPayload` 의 early-return 가드가 담당하며 **무변경**. 감지기의 handoff 는 종전과
+    동일하게 검증된 `loadHistory` 경로 위임이다.
+  - H6 *`online` 훅이 중복 폴링을 만드나* — `startProgressPolling` 이 내부에서
+    `stopProgressPolling` 을 먼저 호출하고 `progressPollSeq` 를 증가시켜 이전 타이머·in-flight 를
+    무효화한다. 멱등.
+  - H7 *숨김 탭에서 무한 재시도로 배터리를 먹나* — `visibilitychange` hidden 분기가 폴링을 완전히
+    정지시키는 동작은 **무변경**. 숨김 백오프 하한은 그 경계 직전 tick 에만 적용된다.
+- **`/codex review` 결과 — P1 1건 · P2 2건, 전건 처리**:
+  - **[P1] 그룹 대화 foreign-run 갈아타기 (수정 완료 — 내 변경이 새로 연 경로)**. 내 run `R1` 을
+    추적 중 폴러가 죽고 다른 멤버의 `R2` 가 대화 슬롯을 점유하면, watchdog 의 감지 fetch 는
+    `client_run_id` 를 싣지 않으므로 `R2` 를 받고 → `loadHistory` 가 `last_run_id=R2` 로 폴링을
+    재시작 → 이후 폴링이 남의 run 을 추적해 **내 `R1` 의 per-run terminal marker
+    (`_load_run_terminal_marker`, `routers/conversations.py`)를 영영 못 받는다**. 즉 원래 고치려던
+    고착이 다른 경로로 재현된다. 수정 전에는 `pendingBubble` dormant 가드가 이 경로를 막고 있었고,
+    내가 그 가드를 제거하며 열렸다 — **유효한 지적**.
+    **수정 방향은 codex 제안(“`runId !== progressRunId` 면 handoff 금지”)보다 한 걸음 앞에서 끊었다**:
+    *죽은 폴러의 회복은 그 폴러를 되살리는 것*이지 서버에 "현재 슬롯 run" 을 묻는 것이 아니다.
+    `detectNewRun` 의 dormant 가드 직후에 `state.progressRunId` 가 있으면 **fetch 없이**
+    `startProgressPolling({reset:false, runId})` 로 재기동하고 감지기를 재스케줄한다 →
+    (a) foreign run 을 받을 기회 자체가 사라지고 (b) 네트워크 비용 0 (c) `client_run_id=R1` 로
+    폴링이 재개돼 서버가 내 run 의 종료를 해소한다. 회귀 가드 신설 — 신규 스크립트 Case 6(6건,
+    payload 를 `r2-foreign` 으로 두고 handoff·fetch 0 을 단언) + 기존 스위트 S4b/S4c.
+  - **[P2] 감지 fetch 가 abort 되지 않아 재무장이 완전 멱등이 아님 (수정 완료)**.
+    `stopRunDetectPolling` 이 타이머·플래그만 정리하고 `detectNewRun` 의 `AbortController` 는
+    지역 변수라 끊지 못했다 → 재가시/`online` 훅이 in-flight 요청을 남긴 채 새 감지를 띄운다
+    (결과는 seq 로 버려져도 HTTP 요청은 나간다). `state.runDetectAbortController` 를 도입해
+    `pollProgress`/`stopProgressPolling` 과 동형으로 맞추고, `finally` 는 **자기 controller 일
+    때만** 해제해 그 사이 재무장이 건 새 controller 를 보존한다. 정적 계약 4건으로 고정.
+  - **[P2] 저빈도 zombie polling (수용 — 의도된 트레이드오프)**. 서버 오류가 지속되면 활성 탭에서
+    60초당 1회 요청이 무기한 이어진다. 이를 막으려 다시 "N회 후 포기" 로 돌아가면 **본 cycle 이
+    고친 결함이 그대로 복원된다**. 상한을 두려면 "포기" 가 아니라 "사용자에게 표면화 후 수동 재시도"
+    가 맞는데, 그건 ask-timeout-nonblocking(2026-07-09)이 모달 제거로 이미 기각한 방향이다.
+    또한 서버측 `_compute_display_status` 가 stale 판정으로 `stale_error` 를 돌려주므로 `processing`
+    영구 잔존은 성립하지 않고, 숨김 탭에서는 폴링이 완전히 정지한다(무변경). 활성 탭 + 활성 대화
+    한정 분당 1요청은 종전 정상 폴링(1.2초 주기)의 1/50 이라 수용한다.
+- **기존 테스트 계약을 바꾼 것에 대한 정직 기록**: `verify_run_detect_poll.mjs` 6건이 수정 직후
+  FAIL 했다. 그 단언들은 "pendingBubble 존재 → dormant", "processing 분기에서 감지기 정지" 를
+  고정하고 있었는데, **이것이 곧 결함의 직접 원인**이다. 테스트를 살리려 코드를 되돌리면 결함이
+  남으므로 계약을 갱신했다. dormant 의 본래 의도(중복 fetch 방지)는 폴러 생존 기준으로 보존하고,
+  반대 방향 시나리오(S4b: 폴러 사망 → watchdog 회복)를 추가해 새 계약을 고정했다.
+- **잔여 리스크(정직)**: 서버측 `/api/ask` 가 200~300초 동기 응답으로 클라이언트/프록시 연결이
+  끊기는 문제(라이브 엣지 로그 `status=0` 다수)는 **본 cycle 범위 밖**이다. 본 변경은 그 상황에서
+  화면이 죽지 않게 하는 복원력만 제공하며, 근본 지연은 feature-0026~0028 성능 축의 과제다.
+- **라이브 검증 미완**: PB-0008 실 Windows 브라우저 검증은 배포 직후 수행(`visual_verification_scope:
+  always`). 그전까지 "코드·단위검증 완료" 로만 표기한다.
+
 ## REV-20260729T141200-test-live-db-isolation [SKIPPED:user-directive] — `make test` 의 라이브 컨트롤플레인 쓰기 차단 (TASK-20260729T1412)
 - 대상 diff: `tests/conftest.py`(autouse 차단 fixture) · `tests/test_live_db_isolation.py`(신설) ·
   `tests/test_runtime_settings_api.py`(assert 강화) · `Makefile`(`TEST_ISOLATION_ENV`) ·
