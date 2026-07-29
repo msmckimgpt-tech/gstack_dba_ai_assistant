@@ -3262,6 +3262,17 @@ a { color: inherit; }
 .attach-list-item-name {
   font-weight: 500;
   color: var(--text);
+  /* feature-0003 attach-list-delete: 종전엔 이름 텍스트와 버전 배지가 한 인라인 흐름이라,
+     행 폭이 줄면(삭제 × 추가) 말줄임이 **배지부터 먹어** "v2 · AI 수정" 이 조용히 사라졌다
+     (적대 리뷰 design). 텍스트만 잘리고 배지는 남도록 분리한다. */
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.attach-list-item-name-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3270,6 +3281,12 @@ a { color: inherit; }
   font-size: 10.5px;
   color: var(--text-muted, #9ca3af);
   margin-top: 1px;
+  /* feature-0003 attach-list-delete: 행에 삭제(×)가 붙어 info 가용폭이 줄었다. 메타줄에
+     방어가 없으면 "버전 N개 ▾" 토글이 붙는 행(=AI 수정본)에서 2줄로 터져 행 높이가 흔들린다
+     (적대 리뷰 design). 이름줄과 같은 말줄임 계약을 준다. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .attach-list-item-dl {
   flex-shrink: 0;
@@ -3284,6 +3301,22 @@ a { color: inherit; }
 }
 .attach-list-item-dl:hover { background: rgba(37, 99, 235, 0.08); }
 .attach-list-item-dl:disabled { color: var(--text-muted); cursor: default; }
+/* feature-0003 attach-list-delete: 목록 행의 삭제(×) — 다운로드와 같은 크기·리듬을 쓰되
+   파괴적 동작이라 기본은 muted, hover 에서만 danger 로 드러낸다(오클릭 유인 최소화). */
+.attach-list-item-del {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s;
+}
+.attach-list-item-del:hover { background: rgba(220, 38, 38, 0.08); color: var(--danger, #dc2626); }
+.attach-list-item-del:disabled { color: var(--text-muted); cursor: default; }
 .attach-list-empty {
   text-align: center;
   padding: 32px 16px;
@@ -3298,6 +3331,7 @@ a { color: inherit; }
 }
 .attach-list-item-ver {
   display: inline-block;
+  flex-shrink: 0;  /* 이름 말줄임에 배지가 먹히지 않게 (attach-list-delete) */
   font-size: 9.5px;
   font-weight: 600;
   padding: 1px 5px;
