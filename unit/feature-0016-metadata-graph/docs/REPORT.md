@@ -2313,3 +2313,24 @@ HAS_COLUMN **75**)은 개수 75 불변 + 큐레이션 설명(`Grade — 아이�
   자체를 없애지 않는다. `analysis-completeness`(2026-07-23)의 lazy introspection 이 `column_descriptions`
   를 채우면 보강 호출이 자연 감소한다 — 컬럼 정점 보유 테이블 40%(7,320/18,257)를 어디까지 올릴지는
   별도 판단 항목.
+
+### POST-DEPLOY 확인 (2026-07-29, graph-cap-audit)
+배포본(main `defcdad9`, web-a/web-b + insight-worker `mysql-ai-agent:defcdad9`)에서 실 Windows Chrome 150
+으로 GCA.7 판정 — **전 항목 PASS**.
+- **컬럼**: 리포트 노드 `cc_pyron.DT_Character_New` 가 `컬럼 (2)` → **`컬럼 (55)`**(실 데이터소스 컬럼 수와
+  일치 · ordinal 순서 `CharacterID→OwnerUniqueID→Removed→Name…` · 자료형 표기 · `사용하는 함수·프로시저
+  (33)` 불변 · pageerror 0).
+- **노드**: `routine-backfill` 후 `cc_pyron` 루틴 정점 **300 → 597**, **300 초과 스키마 0 → 38개**, 최대
+  **300 → 896**, 전체 루틴 정점 **23,507 → 30,632(+7,125)** — 종전 cap 이라면 최대 스키마에서
+  **596개 노드가 사라져 있었다**.
+- **검색 상한 소멸**: `DT_Character_New` "50건 · 상한(검색어를 좁혀보세요)" → **71건 전량** ·
+  `web_ranking` → **724건 전량** 렌더 + pageerror 0.
+- **부하(본 변경의 실질 위험)**: 종전 300 으로 잘리던 최대 스키마(719 테이블)가 `truncated=False` 로
+  **724 노드 · 201ms · 347KB** — 허용 범위.
+- **empty-state**: 연결 불가 datasource(`2003 Can't connect`)에서 패널이 "컬럼 조회 중…" 에 고착되지 않고
+  **"데이터소스 컬럼 조회 실패(권한/연결 확인…)"** 사유를 표시 — 직전 cycle 이 "예외 경로라 라이브 재현
+  못 함" 으로 남겼던 축과 codex **P2-1** 수정이 여기서 함께 확인됐다.
+**미검증(정직)**: ① 대형 스키마를 **캔버스에 펼친 상태의 실-paint 프레임레이트** — §16.6 은 렌더-성능
+주장에 CDP 실-paint 또는 host-side 실관측을 요구하므로 미검증으로 남긴다(상한 해제의 렌더 측 영향은 후속
+관측 대상) ② backfill 전 datasource 수렴(진행 중) ③ 안전가드 WARN 경로(라이브 최대 896 < 20000 미발화).
+상세: feature-0003 `docs/test-runs.d/20260729T1930-graph-cap-audit-postdeploy.md`.
