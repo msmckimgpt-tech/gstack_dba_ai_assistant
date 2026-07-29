@@ -3492,7 +3492,17 @@ EnchantType·FirstModuleID1~8·FirstRate1~8·SecondModuleID1~8·SecondRate1~8 �
   `detailColsInflight` 를 함께 비운다(이전 스코프 컬럼 누출 + miss 영구 고착 차단).
 - [x] GDC.6 테스트 — 신설 `test_detail_columns.js` **29 PASS**(병합 규칙 6축 · 게이팅 4축 · 호출부 계약
   7축 · empty-state · reset 정합). 헤드리스 스위트 회귀 0(baseline 528 → 557 = +29, 실패 집합 동일).
-- [ ] GDC.7 POST-DEPLOY PB-0008 라이브 시각검증 (배포 후)
+- [x] GDC.7 POST-DEPLOY PB-0008 라이브 시각검증 — **PASS**(2026-07-29 17:20, main `2dd84737` 배포본,
+  실 Windows Chrome 150). 신 코드 서빙 2중확인(`_metaDetailMergeColumns` 배포 전 0회 → 후 web-a/web-b 각
+  2회). **리포트 케이스** `cc_pyron.DT_ItemEnchantInfo`(그래프 HAS_COLUMN 0 · 실 컬럼 35): 종전에 없던
+  `컬럼 (35)` 섹션이 렌더되고 개수·순서(`UniqueID`…`SecondRate8`)·자료형이 데이터소스와 일치, 캔버스는
+  불변. **회귀 축** `dk_data_release.Item`(그래프 HAS_COLUMN 75): 개수 75 불변 + 큐레이션 설명
+  (`Grade — 아이템의 등급` 등) 이 introspect 자료형에 덮이지 않음 = 병합 우선순위 라이브 확증.
+  **codex P2-2 확증**: 같은 키 80ms 간격 재선택에도 패널 정합 유지(낡은 스냅샷 미덮어씀) · pageerror 0.
+  상세: feature-0003 `docs/test-runs.d/20260729T1720-graph-detail-columns-postdeploy.md` · 증적 3매
+  `artifacts/feature-0016-metadata-graph/20260729-graph-detail-columns/`.
+  **미확인(정직)**: empty-state 실패 문구·`truncated` 보강 트리거는 예외 경로라 이번 표본에서 발생하지
+  않아 라이브 재현 못 함 — 헤드리스 계약(⑧·⑫·⑭)으로만 고정. (deploy_scope: included — merge 후 자동 배포)
 
 ### 결정 기록
 - **왜 모델에 ingest 하지 않고 별도 캐시인가**: 단일클릭 상세의 계약은 "그래프 구조는 그대로 두고 상세
