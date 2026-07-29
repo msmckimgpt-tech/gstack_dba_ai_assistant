@@ -243,8 +243,16 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 .admin-meta-graph-trust { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-left: 4px; letter-spacing: .02em; }
 .admin-meta-graph-trust-candidate { color: #7a4f10; background: rgba(176,135,47,.16); border: 1px dashed #b0872f; }
 .admin-meta-graph-trust-trusted { color: #1f6b3a; background: rgba(46,125,82,.14); }
-.admin-meta-graph-sec { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
-.admin-meta-graph-sec h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--text-2, var(--text)); }
+/* detail-panel-typo(사용자 리포트 2026-07-29 "디자인적으로 모범적이지 않고 시각적으로 불편"):
+   섹션 리듬 — 종전 padding/margin 이 10px/10px 이라 **섹션 간 여백과 항목 간 여백의 대비가 없어**
+   덩어리 경계가 눈에 잡히지 않았다. 섹션 사이를 항목 사이보다 확실히 넓혀 스캔 단위를 만든다. */
+.admin-meta-graph-sec { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 16px; }
+/* 위계: 종전 h4 색이 --text-2(#5a5852) 로 **본문 항목과 같은 색**이었고 크기 차이도 12.5 vs 10.5px
+   (1.19배) 뿐이라 "제목/항목" 구분 신호가 사실상 없었다. 색을 본문 ink(--text)로 올려 대비를 만든다. */
+.admin-meta-graph-sec h4 { margin: 0 0 8px; font-size: 12.5px; line-height: 1.35; color: var(--text); }
+/* h4 안의 muted 는 `· 읽기 39 · 쓰기 18` 같은 부가 카운트다. h4 의 font-weight:700 을 상속해
+   **"약하게" 의도한 요소가 굵게** 렌더되던 모순을 끊는다(의도-렌더 역전). */
+.admin-meta-graph-sec h4 .admin-meta-graph-muted { font-weight: 500; }
 .admin-meta-graph-sec ul { margin: 0; padding-left: 16px; }
 .admin-meta-graph-sec li { margin: 3px 0; line-height: 1.45; word-break: break-word; }
 /* role-cluster-prefix: 스키마 클러스터 상세의 테이블 목록 — 각 행에 역할 칩 접두사(분석 완료) 또는 동일 폭 빈 슬롯(미분석),
@@ -350,6 +358,14 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 }
 /* graph-ctxmenu: 관계 상세 패널 — 방향별 관계 행(클릭=상대 노드 이동) */
 .admin-meta-graph-sec ul.amgr-list { list-style: none; margin: 0; padding: 0; }
+/* detail-panel-typo: 행 리듬은 **행 버튼의 padding 하나로만** 만든다. 종전엔 li 의 generic
+   `margin: 3px 0`(위 .admin-meta-graph-sec li)이 버튼 padding 과 이중으로 쌓여, 57행 목록에서
+   ~340px 의 순수 여백이 스크롤을 늘리면서도 행 간 리듬은 오히려 흐릿했다.
+   ⚠️ 리셋 대상은 **루틴 사용 행(.amgr-rtli)뿐**이다 — 적대검증(codex) 지적: 넓은 `ul.amgr-list > li`
+   리셋은 특이도 (0,2,2) 로 `.amgr-row`(0,1,0)·`.amgr-dbgrp-allctl`(0,1,0) 을 눌러 **관계 상세 카드가
+   서로 붙고** '모두 펼치기' 하단 여백이 사라지는 부수 피해를 만든다. `:has()` 대신 마크업의 명시
+   클래스로 좁혀, 셀렉터 지원 여부와 무관하게 대상이 확정되게 한다. */
+.admin-meta-graph-sec ul.amgr-list > li.amgr-rtli { margin: 0; }
 .amgr-row { padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 8px; margin: 4px 0; }
 /* detail-hover-fx: 카테고리 상세의 스키마 클러스터 행(data-cid)도 다른 클릭 행과 동일한 커서/hover 어포던스 —
    hover 시 캔버스 카메라가 해당 클러스터로 이동하므로 행 자체도 상호작용 대상임을 시각적으로 알린다. */
@@ -427,8 +443,31 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .amgr-caret { flex: none; font-size: 10px; color: var(--text-2); width: 10px; }
 .amgr-col-relcount { flex: none; margin-left: auto; font-size: 10.5px; color: var(--primary); font-weight: 600; white-space: nowrap; }
 .amgr-col-body { padding: 2px 0 4px 18px; }
-.amgr-dir { margin: 4px 0; }
-.amgr-dir-head { font-size: 11px; font-weight: 600; color: var(--text-2); margin: 3px 0 2px; display: flex; align-items: center; gap: 4px; }
+/* detail-panel-typo: 읽기/쓰기 방향 그룹 — 그룹 간 여백(8px)이 그룹 내 행 간격보다 넓어야 경계가 보인다. */
+.amgr-dir { margin: 10px 0 6px; }
+.amgr-dir:first-child { margin-top: 2px; }
+.amgr-dir-head { font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: .02em; margin: 0 0 4px; display: flex; align-items: center; gap: 4px; }
+/* detail-panel-typo: **루틴 사용 목록의 행** — 종전엔 `.amgr-link`(부-액션 버튼: 테두리 있는 10.5px
+   칩, '모두 펼치기'·'관계 상세'·'이 노드로 이동' 과 같은 스타일)를 행의 **주 라벨**로 재사용했다.
+   그래서 (a) 목록의 주인공(루틴 이름)이 패널에서 가장 작은 10.5px 이 되고 (b) 부가정보인 참조 컬럼이
+   base 13px 를 상속해 **주 라벨보다 24% 커지는 위계 역전**이 생겼으며 (c) 테두리 칩 폭이 내용 길이대로
+   102~295px 로 들쭉날쭉해 우측 경계가 톱니가 되고 (d) 컬럼 목록이 줄바꿈되면 행 높이가 17px↔37px 로
+   튀어 수직 리듬이 깨졌다. 같은 패널의 컬럼 섹션이 쓰는 검증된 행 관용구(`.amgr-col-select`: 전폭
+   무테두리 + hover 채움 + 12px)를 그대로 채택해 시각 언어를 통일한다. */
+.amgr-rtrow {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; padding: 4px 6px; border-radius: 7px; cursor: pointer;
+  font: inherit; font-size: 12px; line-height: 1.4; color: inherit;
+}
+.amgr-rtrow:hover, .amgr-rtrow:focus-visible { background: var(--primary-soft); outline: none; }
+/* 주 라벨 — 이름이 길면 말줄임(행 높이 불변). 굵기 500 으로 부가정보와 구분. */
+.amgr-rtname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+/* 부가정보(참조 컬럼) — 종전 무규칙(=base 13px 상속)에서 10.5px 로 내려 위계 역전을 해소하고,
+   우측 정렬 + 폭 상한 + 말줄임으로 행 높이를 균일하게 고정한다. 전문은 title 툴팁이 보존한다. */
+.amgr-rtcols {
+  flex: 0 1 auto; min-width: 0; max-width: 38%; margin-left: auto;
+  font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* detail-db-groups(사용자 요구 2026-07-27): 상세 패널 관련 노드 목록의 DB(스키마) 단위 그룹 머리글 + 본문.
    머리글 시각은 클러스터 상세의 컨텐츠 카테고리 헤딩(.amgr-ct-group)을 그대로 재사용하고, 여기선 목록
    맥락(amgr-list 안의 <li>)에 맞는 여백·본문 들여쓰기만 덧댄다. 본문은 접힘 시 hidden 속성으로 감춘다
