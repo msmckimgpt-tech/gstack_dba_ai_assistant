@@ -2173,3 +2173,18 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · FUNCTION `REQ-20260729T
 Trigger: 코드 변경 0 · 정책 문서 변경 0 — TASK/MODIFY/test-runs.d/evidence/재현 시나리오만 추가. §18.8 표의
 "비정책 doc-only" 행에 해당해 패널 SKIP. 검증 자체는 본문에 기록된 **실 Windows 브라우저(PB-0008) 라이브
 실측**이며, 선행 cycle 의 적대 리뷰는 `REV-20260729T174200-product-picker-keynav`([CODEX] · P1 0건).
+
+## REV-20260729T183000-progress-poll-resilience-postdeploy [SKIPPED:doc-only-postverify] — POST-DEPLOY 라이브 검증 기록 (TASK-20260729T1750 후속)
+- 대상 diff: `docs/{TASK,REPORT}.md` + `docs/test-runs.d/20260729T175000-progress-poll-resilience.md`
+  (POST-DEPLOY Run append). **코드 변경 0** — 검증 결과 기록만.
+- panel SKIP 근거: §18.8 dispatch 는 code change 를 전제한다. 본 cycle 은 이미 머지·배포된 변경의
+  라이브 실측 결과를 문서에 append 하는 doc-only 이며, 원 cycle 의 리뷰는
+  `REV-20260729T175000-progress-poll-resilience [CODEX:progress-poll-resilience]` 가 담당했다.
+- 검증 설계 판단: 1차(실 사용자 경로)는 답변이 20초 내 완료돼 '처리 중 순단' 창이 닫혔다. 그대로
+  "검증 불가" 로 남기지 않고 **폴링 채널을 직접 겨냥하는 2차**로 전환했다 — `/api/progress` 응답을
+  클라이언트에서 `processing` 으로 합성해 폴러가 도는 상태를 만들고 그 위에 순단을 주입하는 방식이라
+  **서버 상태·라이브 대화 데이터 변경 0**. 이 설계가 오히려 결정적이다: 수정 전 코드였다면 B 단계
+  (3연속 실패) 이후 호출이 0 이 되어야 하는데 실제로는 8→16→32s 백오프로 이어졌고, E 단계에서
+  폴러를 강제로 죽였을 때 감지기가 15초 내 되살렸다.
+- 정직 표기: OS 레벨 NIC 단절은 재현하지 않았다(`fetch` 레벨 차단으로 대체 — 클라이언트 폴링
+  코드가 받는 실패 신호는 동일한 reject). 1차에서 만든 검증용 대화 1건이 라이브에 잔존한다.

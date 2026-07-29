@@ -11,6 +11,14 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260729T183000-progress-poll-resilience-postdeploy (POST-DEPLOY 라이브 검증 기록, doc-only)
+- `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260729T175000-progress-poll-resilience.md`:
+  POST-DEPLOY Run append — 1차(실 사용자 경로 무회귀) · 2차(순단 3연속 실패에도 폴링 생존 + 백오프
+  8→16→32s 실측 · 폴러 강제 사망 → 감지기 15초 내 복구 · run_id 유지) · 3차(`online` 훅 4초 내 재개).
+- `docs/TASK.md`: 잔여 체크박스 2건(`make test` 회귀 · PB-0008 라이브) 완료 표시 + 실측 요지.
+- `docs/REPORT.md`: "잔여: POST-DEPLOY PB-0008" → 실측 PASS 결과 + 미실증 항목 명시로 교체.
+- **코드 변경 0**.
+
 ## CHG-20260729T175000-progress-poll-resilience (진행 폴링 영구 정지 → 자가 회복, Major)
 - `unit/feature-0003-agent-web-ui/src/static/app.js`
   - `PROGRESS_POLL_ERROR_MAX_MS = 60000` 신설(오류 백오프 상한).

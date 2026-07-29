@@ -70,10 +70,13 @@ source_of_truth: true
     시나리오(S4b)를 추가했다.
   - [x] feature-0003 mjs 스위트 전량 main 대조 — 신규 실패 0(잔여 FAIL 은 jsdom 미설치·모듈
     부재·타 세션 cache-buster 등 main 과 동일한 baseline).
-  - [ ] `make test` 컨테이너 회귀 (Python 무접촉 — baseline 대조)
-  - [ ] **PB-0008 실 Windows 브라우저 라이브 검증** (`visual_verification_scope: always`) —
-    배포 후 수행. 시나리오: 요청 전송 → 폴링 구간에 네트워크 오프라인 유도(3회 이상 실패) →
-    온라인 복귀 시 **대화 전환 없이** 말풍선이 스스로 갱신되는지.
+  - [x] `make test` 컨테이너 회귀 — 13 FAILED = main baseline 동일(worktree 격리 네트워크의 attachment PG 의존, Python 무접촉)·ruff PASS
+  - [x] **PB-0008 실 Windows 브라우저 POST-DEPLOY 검증 PASS** (`visual_verification_scope: always`,
+    배포본 `8df5edb9`, 실 Chrome/150 전용 탭·타 세션 탭 무접촉) — ① 실 사용자 경로(전송→pending→
+    답변 "확인" 도착) 무회귀 ② **순단 3연속 실패에도 폴링 생존**(수정 전이면 여기서 영구 정지) +
+    백오프 **8→16→32s** 실측 ③ 폴러 강제 사망 → **감지기가 15초 내 되살림**(내 run_id 유지 =
+    codex P1 수정분 F6 실증) ④ `online` 이벤트 → **4초 내 재개 + errorCount 리셋** ⑤ 콘솔 에러 0.
+    상세·증적 = `docs/test-runs.d/20260729T175000-progress-poll-resilience.md` POST-DEPLOY 절.
 - **범위 밖(정직)**: 서버측 `/api/ask` 동기 응답이 200~300초까지 걸려 클라이언트/프록시가 연결을
   끊는 문제(라이브 로그 `status=0` 다수)는 별개 축이다. 본 cycle 은 그 상황에서도 **화면이 죽지
   않게** 하는 복원력만 다룬다(`attachAndWaitForResult` 재연결 경로는 무변경).
