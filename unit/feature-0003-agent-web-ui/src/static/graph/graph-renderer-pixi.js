@@ -379,6 +379,11 @@ export const PixiAdapterPure = {
     return /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/u.test(String(text));
   },
 
+  // graph-role-badge(2026-07-28): 테이블 노드 좌측 역할 배지 타일의 **노드-로컬 중심 x**. 노드 좌변에서
+  //   BADGE_PAD 만큼 띄운 뒤 타일 반폭. 노드 본체(`_drawNode`)와 hover 확장 카드(`_showLabelExpand`)가
+  //   **같은 함수를 공유**해야 hover 순간 배지가 1px 도 움직이지 않는다(라벨 앵커 textLeft 와 동일 원칙).
+  roleBadgeCX(w, size) { return -w / 2 + 2 + (size > 0 ? size : 0) / 2; },
+
   // graph-label-hover-expand: 라벨이 ellipsis 로 잘린 칩의 **hover 확장 카드** 기하(순수 — node vm 테스트 대상).
   //   문제: 테이블/루틴/카드 칩은 폭 고정(TW=150 등)이라 긴 이름이 `labelMaxWidth` 에서 잘리고(_ellipsize),
   //   사용자가 전체 이름을 알려면 상세 패널까지 가야 했다. hover 시 그 칩만 부드럽게 넓어지며 나머지 글자를
@@ -430,6 +435,14 @@ export const PixiAdapterPure = {
   //   폭(150)보다 커서 원 라벨이 이미 칩 밖으로 넘쳐 있다 — 그 경우 pad 기준으로 잡으면 hover 순간 라벨이
   //   ~17px 튄다(codex review P2). 실제 렌더 폭에서 역산한 textLeft 만이 t=0 픽셀 동일을 보장한다.
   hoverTextOffsetX(g, w, textLeft) { return textLeft - this.hoverCardCenterX(g, w); },
+
+  // graph-role-badge(2026-07-28, codex review P2): 확장 카드 안 역할 배지의 **카드-로컬 x 오프셋**.
+  //   `hoverTextOffsetX` 와 **동형**이어야 한다 — 둘 다 unclamped 중심(hoverCardCenterX) 기준으로 계산하고
+  //   카드 컨테이너의 실제 위치(`_clampCardX`)에 얹힌다. 이유: 좌측 가장자리 칩이 확장될 때 카드가 뷰포트
+  //   안으로 밀리는데(클램프), world 좌표에 배지를 고정하면 카드 배경만 이동해 배지가 카드 밖으로 삐져
+  //   나가거나 잘린다. 카드-로컬로 잡으면 라벨과 같이 카드에 실려 이동하고, 클램프가 없는 통상 경로에서는
+  //   world 가 원 노드 위치와 정확히 일치해 t=0 픽셀 동일이 그대로 보존된다.
+  hoverBadgeOffsetX(g, w) { return (g ? g.x : 0) - this.hoverCardCenterX(g, w); },
 
   // graph-label-hover-expand: 현재 폭 w 의 확장 카드 사각형 안에 model 점이 있는가.
   //   **필요한 이유(codex review P1)**: 카드가 넓어지면 드러난 좌우 영역은 원 노드 bbox 밖이라 hit-grid 가
@@ -903,8 +916,17 @@ export class PixiGraphAdapter {
     t.anchor.set(0, 0.5);
     this._fitText(t, full, g.inner0);
     const tw0 = t.width;
-    const textLeft = (tw0 > 0) ? (g.x - tw0 / 2) : (g.left + g.pad / 2);
-    c.addChild(halo, bg, t);
+    // graph-role-badge(2026-07-28): 원 노드의 center 라벨은 `labelOffsetX`(배지 몫)만큼 밀려 있다 — 역산하는
+    //   textLeft 도 같은 몫을 더해야 hover 순간 앞글자가 배지 위로 튀지 않는다(t=0 픽셀 동일 보존).
+    const lox = s.labelOffsetX || 0;
+    const textLeft = (tw0 > 0) ? (g.x + lox - tw0 / 2) : (g.left + g.pad / 2);
+    // 배지는 원 노드와 **같은 world 위치**에 고정한다(카드는 좌변 고정·우측 성장이므로 배지는 움직이지 않는
+    //   영역). 카드 로컬 좌표계는 폭에 따라 원점이 이동하므로 paint 에서 노드 원점 오프셋으로 상쇄한다.
+    // 카드 배지도 body 와 같은 alpha(running desaturate) — 카드는 아래 `fa` 로 body 를 그린다(codex P2).
+    const badge = s.roleBadge ? this._roleBadge(Object.assign({}, s, { size: [g.w0, g.h] }), this._nodeFillAlpha(n)) : null;
+    c.addChild(halo, bg);
+    if (badge) c.addChild(badge);
+    c.addChild(t);
     layer.addChild(c);
     const card = { c, g, node: n, w: g.w0, raf: 0, paint: null };   // node = _pick tier0 프록시 대상
     card.paint = (w) => {
@@ -925,6 +947,11 @@ export class PixiGraphAdapter {
       const span = g.w1 - g.w0, k = span > 0 ? Math.max(0, Math.min(1, (w - g.w0) / span)) : 1;
       this._fitText(t, full, Math.max(0, g.inner0 + (g.inner1 - g.inner0) * k));
       t.position.set(PixiAdapterPure.hoverTextOffsetX(g, w, textLeft), 0);   // 앞글자 절대 위치 고정
+      // graph-role-badge: 배지도 라벨과 **같은 규약**(unclamped 중심 기준 카드-로컬) — 클램프로 카드가 밀릴 때
+      //   함께 실려 이동하므로 카드 밖으로 삐져나가지 않고, 클램프 없는 통상 경로에선 원 노드 위치와 일치.
+      //   alpha 는 매 paint 에서 재적용한다 — hover 중 running 전이(setElementState → paint)에도 배지 채도가
+      //   body(위 `fa`)·halo 와 함께 갱신된다(codex review P2 2차: 생성 시 1회면 stale 채도가 hover 종료까지 남음).
+      if (badge) { badge.position.x = PixiAdapterPure.hoverBadgeOffsetX(g, w); badge.alpha = fa; }
     };
     this._hoverCard = card;
     card.paint(g.w0);
@@ -1271,6 +1298,7 @@ export class PixiGraphAdapter {
         } else g.stroke(st);
       } }
     c.addChild(g);
+    if (s.roleBadge) c.addChild(this._roleBadge(s, fillAlpha));   // graph-role-badge: 좌측 역할색 타일(+아이콘) — body 와 같은 alpha
     if (s.labelText) c.addChild(this._label(s.labelText, s));
     // 상태 오버레이 (selected 테두리·match glow·analyzed/running 마커) — base 는 이미 style 에 bake(dim=opacity)
     this._applyNodeStates(c, n);
@@ -1320,8 +1348,44 @@ export class PixiGraphAdapter {
     if (s.labelMaxWidth && t.width > s.labelMaxWidth) this._ellipsize(t, s.labelMaxWidth);
     if (place === "right") { t.anchor.set(0, 0.5); t.position.set((typeof s.size === "number" ? s.size / 2 : 6) + (s.labelOffsetX || 4), 0); }
     else if (place === "top") { t.anchor.set(0, 1); t.position.set((Array.isArray(s.size) ? -s.size[0] / 2 : 0) + 4, (Array.isArray(s.size) ? -s.size[1] / 2 : 0) - 4); }
-    else t.anchor.set(0.5, 0.5);
+    // graph-role-badge(2026-07-28): center 라벨도 labelOffsetX 를 소비한다 — 좌측 역할 배지가 차지한 몫만큼
+    //   라벨 중심을 오른쪽으로 밀어 잔여 영역의 중앙에 놓는다(배지 없는 노드는 키 부재 = 종전과 동일).
+    else { t.anchor.set(0.5, 0.5); if (s.labelOffsetX) t.position.set(s.labelOffsetX, 0); }
     return t;
+  }
+
+  // graph-role-badge(2026-07-28 사용자 리포트): 테이블 노드 좌측 역할 배지 = 역할색 라운드 타일 + 역할 아이콘.
+  //   역할색의 적용 면적을 노드 전면(150×24)에서 이 타일(18×18)로 줄여 노드 간 본체색 정합을 회복한다
+  //   (설계 근거는 graph-roleviz.js `_META_ROLE_BADGE` 주석). 아이콘은 label-lod 가 판독 하한 미만에서
+  //   `icon: ""` 로 비우므로 그 구간엔 색 타일만 남는다.
+  //   타일에 흰 테두리를 두르는 이유: teal 본체 위에서 진한 역할색(#0072B2 등)의 경계가 묻히지 않게 —
+  //   노드 stroke(#ffffff)와 같은 어휘라 시각적으로 "본체 안에 얹힌 칩" 으로 읽힌다.
+  //   `fillAlpha` — 노드 body 와 **같은** alpha(`_nodeFillAlpha`). running(AI 분석 중) 상태는 body fill 을
+  //   0.45 로 desaturate 하는데(§18.8 M1), 배지를 불투명으로 두면 역할 타일만 채도가 살아 "분석 중" 구분이
+  //   약해지고, 주황 계열 역할색(log #E69F00 · config #D55E00)이 주황 running 점선 테두리와 섞인다
+  //   (codex review P2, 2026-07-28 — 종전 본체 역할색 시절의 U2 위장 문제가 배지로 옮겨온 형태).
+  _roleBadge(s, fillAlpha) {
+    const P = this.P, rb = s.roleBadge || {};
+    const w = Array.isArray(s.size) ? s.size[0] : (s.size || 100);
+    const side = rb.size > 0 ? rb.size : 18;
+    const cx = PixiAdapterPure.roleBadgeCX(w, side);
+    const c = new P.Container();
+    // alpha 는 **컨테이너 단위**로 적용한다 — 타일 fill·흰 테두리·아이콘(PIXI.Text)이 한 번에 같은 비율로
+    //   흐려져야 running desaturate 가 배지 전체에 성립한다(개별 fill alpha 로 주면 이모지만 선명하게 남는다,
+    //   codex review P2 2차). 컨테이너 alpha 라 hover 카드가 `paint` 에서 값만 갱신할 수도 있다(재생성 불요).
+    c.alpha = (fillAlpha == null) ? 1 : fillAlpha;
+    const g = new P.Graphics();
+    g.roundRect(cx - side / 2, -side / 2, side, side, 4).fill({ color: rb.color || "#6e7681" });
+    g.stroke({ color: "#ffffff", width: 0.75, alpha: 0.85 });
+    c.addChild(g);
+    if (rb.icon) {
+      // 아이콘은 색 이모지 — `_makeText` 가 hasEmoji 판정으로 PIXI.Text 경로를 타 고유 색으로 렌더된다
+      //   (BitmapText 는 alpha 마스크라 단색 실루엣이 됨 — graph-emoji-color 주석 참조).
+      const t = this._makeText(rb.icon, { size: rb.fontSize || 12, fill: "#ffffff", weight: 400 });
+      t.anchor.set(0.5, 0.5); t.position.set(cx, 0);
+      c.addChild(t);
+    }
+    return c;
   }
   _ellipsize(t, maxW) { const s = String(t.text); let lo = 1, hi = s.length; while (lo < hi) { const mid = (lo + hi + 1) >> 1; t.text = s.slice(0, mid) + "…"; (t.width <= maxW) ? lo = mid : hi = mid - 1; } t.text = s.slice(0, lo) + "…"; }
 

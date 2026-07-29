@@ -288,3 +288,34 @@ source_of_truth: true
 - 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/{TEST.md,test-runs.d/20260728T181000-graph-hdr-label-fit.md}` · 증적 3매(`artifacts/…/20260728-graph-hdr-label-fit/`, gitignore 로컬). **실행 코드 변경 0줄**.
 - 변경: PR #1025 머지(main `4ea1d83b`) → `make deploy-web` 무중단 롤아웃(soak 통과) → edge `/healthz git_commit=4ea1d83b` + 서빙 자산에 `_metaHdrFitFont`·`GH_CHIP_MAX` 존재 확인 후, 실 Windows Chrome relay 로 HF.6 을 수행하고 결과를 정본에 기록. **핵심 실증**: `gunzgame` 펼침(421 객체)·위계 헤더 84개 상태에서 zoom **0.1468**(본문 라벨 534/587 억제로 색 블록만 남은 개요)에도 컨텐츠 카테고리 헤더가 판독 가능하게 유지 — 종전 고정 10.5px 의 억제 임계는 0.3048 이라 이 줌에서 전부 사라졌을 구간이다. 반동 밴드는 줌아웃 h2→h9 단조·줌인 h7→h1 대칭 복귀로 **stale 없음**을 실측. pageerror 0.
 - 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영 필수. 한계 병기 — 칩 침범 0·알약 소프트닝 수용성은 스크린샷 육안 판정(기계적 보장은 헤드리스 K3) · 검증 중 페이지 1회 새 내비게이션 리셋은 직전 pageerror 0 + 재현 정상으로 **본 변경과 인과 미확인**, 원인 미규명으로 남김.
+## CHG-20260728T181100-ai-claude-corp-feature-0016-role-badge — 테이블 역할색을 노드 전면 채움 → 좌측 배지 타일 (2026-07-28)
+- 대상(cross-cut, 코드 거주 feature-0003): `src/static/graph/graph-roleviz.js`(`_metaTableStyle` + 배지 상수 3) ·
+  `src/static/graph/graph-core.js`(라벨 조립에서 역할 이모지 제거 · `_metaApplyLabelLod` 배지 아이콘 동반 소거 ·
+  `_META_ROLE` 미사용 import 정리) · `src/static/graph/graph-renderer-pixi.js`(`PixiAdapterPure.roleBadgeCX`·
+  `_roleBadge` 신규 · `_drawNode`/`_label`/`_showLabelExpand` 배선) · `src/static/graph/graph.css`(역할 범례 견본
+  사각화) · `src/static/admin.html`(범례 note) · `tests/headless/test_g6build_rolebadge.js`(신규 47 PASS — codex 적발 6건의 계약 G/F/H 포함).
+  문서: `feature-0016/docs/{TASK,MODIFY,REVIEW}.md`.
+- 변경: 역할 인코딩의 **색 적용 면적**을 150×24 칩 전면에서 18×18 배지 타일로 축소했다. 테이블 노드 본체는
+  역할 유무와 무관하게 `_META_GRAPH_COLOR.Table`(teal) 단일 — 용어·루틴·컬럼·스키마 카드와 같은 "종류 = 본체색"
+  규약으로 복귀한다. 역할 아이콘은 라벨 인라인에서 배지 안으로 이동하고, 라벨은 배지 몫(22px)을 제외한 잔여
+  영역 중앙에 놓인다(`labelOffsetX=11`, `labelMaxWidth=118`). label-lod 는 판독 하한 미만에서 배지 **아이콘만**
+  비우고 색 타일은 남긴다. 범례·상세 칩·노드 배지가 라운드 사각 18px 한 어휘로 통일됐다.
+- 근거: 등급 Minor(비파괴 프론트 시각 — 스키마·인가·API shape·좌표/레이아웃 무변경, band-invariant 헤드리스 고정).
+  사용자 리포트("노드 전체 색이 덮여 noisy")를 웹 리서치 3근거(Wilke color-pitfalls "큰 고채도 면 회피" ·
+  USWDS/Sigma/GitLab "본체 중립 + accent 만" · WCAG 1.4.1 색+아이콘 중복 인코딩)와 교차해 사용자 제안안을
+  그대로 채택. 대안(역할색 테두리 / 본체 저채도 tint)은 각각 상태 halo 채널 충돌 · "노드 간 동일색" 요구
+  미충족으로 불채택(REVIEW 참조). 색 8종은 배지에 그대로 보존되어 범주 정보 손실 0.
+
+## CHG-20260728T190947-ai-claude-corp-feature-0016-role-badge-postmerge — role-badge 병합 후 회귀 재확인 기록 (2026-07-28)
+- 대상(문서 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md`. **실행 코드 변경 0줄** (병합 자체는 직전 merge commit `5257d30e`).
+- 변경: `origin/main` 13 커밋(병렬 그래프 세션 다수 — hdr-label-fit·neighbor-depth-budget·시각노이즈 제거 등)을 흡수하고 MODIFY.md 병렬 append 충돌을 양측 블록 병존으로 해소한 뒤, 헤드리스 **22 파일 986 PASS / 0 FAIL** 을 재실행한 결과를 정본에 기록(RB.10). 수치가 병합 전 920 보다 큰 것은 병렬 세션의 테스트 합류(labellod 36→71 · dbgroups 78→107)이며 본 cycle 신규 47 PASS 는 불변임을 함께 명시 — 증가를 '개선' 으로 오독하지 않게 한다. 두 스위트의 호출 규약 차이(어댑터 인자 금지)도 거짓 FAIL 재발 방지용으로 남겼다.
+- 근거: 등급 Minor(문서 전용). 초고병렬 feature-0016 그래프 작업에서 main 흡수 후 무회귀는 배포 전 필수 확인이고, 그 실측을 기록하지 않으면 RB.7 의 920 이 병합 전 기준이라는 사실이 문서에서 사라진다.
+## CHG-20260728T190800-hop-budget-postdeploy — '이웃 깊이' POST-DEPLOY 라이브 검증 기록 (2026-07-28, 문서·증적 전용)
+- 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260728T190800-graph-hop-budget-postdeploy.md`(신규, Environment: Windows-browser). 실행 코드 0줄.
+- 변경: PR #1024 → main `3687c43b` → 배포 `9cb3d4ea`(soak PASS) 후 실제 Windows Chrome 150 으로 배포본 검증. 사용자 요청의 두 본질(깊이 선택이 실제로 다른 결과를 낸다 / 완전한 목록에 절단 경고가 붙지 않는다)을 건즈 실데이터로 확증 — `gunzgame.character` d1 61n → d3 199n(`expanded_hops=[60,40,98]`, 양쪽 truncated=false), depth 3 상태 상세에서 절단 배너 0개 + 직결 루틴 57건 전량 열거. 배포본 API 가 신규 필드 4개 서빙 확인.
+- 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트(PB-0008)를 **배포본에서** 이행한 기록이므로 정본 반영 필수. 미완 1건('확장할 관계 없음' 힌트 실화면 발화 — PixiJS 캔버스 합성 이벤트로 확장 경로 미도달)은 조건 성립을 라이브 API 로, 렌더 판정을 헤드리스 ⑳㉑ 9건으로 각각 확인하고 실 마우스 세션 이월로 정직 기록.
+
+## CHG-20260728T192531-ai-claude-corp-feature-0016-role-badge-postdeploy — role-badge POST-DEPLOY PB-0008 라이브 실증 기록 (2026-07-28)
+- 대상(문서·증적 전용): `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` · cross-cut 파일소유 feature-0003 `docs/test-runs.d/20260728T181100-graph-role-badge.md` · 증적 `artifacts/shared/win-browser-shots-role-badge/`(9매, gitignore). **실행 코드 변경 0줄**.
+- 변경: PR #1029 머지(main `ea3f9a6d`) → `make deploy-web` 무중단 롤아웃 → edge `/healthz git_commit=ea3f9a6d` 확인 후, 실 Windows Chrome 150 relay 로 RB.8 을 수행하고 결과를 정본에 기록. 8 시나리오 전건 PASS + **codex 적발 수정 2종의 라이브 실증**: ④ hover 확장 카드에서 배지가 카드 안 정위치(캔버스 좌변 인접 칩 = `_clampCardX` 경로 — P2 2차 수정이 없으면 배지가 카드 밖에 잔존) ⑤ 줌아웃 임계 교차에서 `roleIconsDropped` 가 0→255 로 발화하고 색 타일만 남음(RB.5 설계 의도).
+- 근거: 등급 Minor(문서·증적 전용). §15.4.1 웹/UI 완료 게이트인 PB-0008 을 **배포본**에서 이행한 기록이라 정본 반영이 필수다. 미재현 한계는 정직 병기 — running 상태 배지 desaturate 는 분석 잡 실행(LLM 외부 비용)이 필요해 미수행이며, dim 상태의 동일 alpha 경로만 부분 실증했다.

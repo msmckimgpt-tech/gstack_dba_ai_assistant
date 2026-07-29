@@ -1548,7 +1548,6 @@ per-(ds,DB,schema) 오류로 리포트만 남는다(비차단 설계). 도달 �
 테이블 끝점 (2195,415) 분리 실측 · 읽기/쓰기 한 컬럼 공존 · 상세 패널 `✎` 5건 · 콘솔 에러 0).
 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/` (6매).
-
 ## REV-20260728T191126-model-pick-early-cid [SUBAGENT:inline-adversarial] — SHIP
 
 - **Trigger**: `contract` keyword matched / 계약(요청 body `model` 필드 동봉 여부) 변경 → backend + security + qa.
@@ -1604,3 +1603,10 @@ per-(ds,DB,schema) 오류로 리포트만 남는다(비차단 설계). 도달 �
 불변이며, 근본이 라이브 데이터로 확정됐다. **잔여 리스크는 하나**: 코드/유닛은 "선택이 전송에 실린다"
 까지만 증명하고 "실제 사용자 대화에서 sonnet 으로 실행됨"은 배포 후 실측분이다(TEST.md DEFERRED,
 정본 = `llm_usage.model` + `kv model:<acct>`).
+## REV-20260729T010301-doc-sync-rn-0729 [SKIPPED:non-policy-doc] — 릴리즈노트 2026-07-28 블록에 6항목 append(관계도 UX·사용 기록·모델 권한·자체 점검) doc_sync 정합
+- **changeset (operational, feature-0003)**: `src/static/release-notes-data.js`(기존 2026-07-28 블록 3→9 items append·summary 증강·generated 불변) + companion `docs/{TASK,MODIFY,FUNCTION,TEST}.md`. 비-정책 doc-only(렌더 로직·제품 코드·스키마·RBAC 0).
+- **[SKIPPED:non-policy-doc] 사유**: 사용자향 릴리즈노트 콘텐츠 데이터만(제품 코드·정책 무변경). §18.8 패널 불요(abcb7d68·351ed406 선례 동일 토큰).
+- **검증**: `node --check` PASS · vm 구조검증(releases[0] 2026-07-28 items 3→9·releases[1] 2026-07-27 7항목 보존·releases[2] 07-24 보존·스키마·enum·내부용어 누출 0). 6항목 전부 owning POST-DEPLOY PB-0008 라이브검증(역할배지 2b9693c7·이웃깊이 0bff005e·hover 43efe182/29ceb823·상세hover fb253fe3·클러스터스크롤 9b16b0c0/a36c16ed/429e8c04·라벨LOD 8008402d·헤더라벨 b2f062cc·함수관계선 5a6110a9·사용기록 f3cfc809·모델권한 fcf22ceb·자체점검 6582c69b). 릴리즈노트 render 테스트 jsdom 미설치로 미실행(render 로직 미변경).
+- **적대검증**: ULTRACODE wf_63a962eb R1(3-타깃 analyze→타깃-스코프 verify) — RN MAJOR 1(item3 좌우 오귀속 '왼쪽 스키마 목록'→우측 aside, admin.html:847·baedc78b 근거)·MINOR 1(item5 '즉시 반영'→pending→적용) 적발, 오케스트레이터 정본 독립 재검증 후 교정 반영.
+- **cache-buster**: `?v=dev` 고정(빌드 자동주입·index/admin 편집 0·수동 bump 폐지 ITEM-09; wrapper 헤더 수기 bump 지시는 07-12 이전 regime 부적용).
+- **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).

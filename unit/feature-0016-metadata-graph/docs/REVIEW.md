@@ -409,6 +409,66 @@ source_of_truth: true
 - 대상: CHG-20260728T1750-graph-label-lod-postdeploy (TASK.md TL.10 결과표 + TL.12 후속 + MODIFY + TEST/test-runs.d + 증적 1매). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
 - 본 cycle 의 코드 적대 검증은 REV-20260728T170500 `[CODEX:frontend-render+lod]`(P1/GATE 0 · P2 2건 in-cycle 흡수)가 담당했고, 그 두 수정이 **배포본에서 실제로 발화**함을 TL.10 ⑦⑧ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
 - 기계적 점검: 배포 SHA 정합(edge `/healthz git_commit=2a843acd` = main 머지 커밋) · 서빙 자산에 두 수정 존재(`_META_LABEL_FONT_STEP` 2건 · `badgesDropped || 0` 1건) · 자산 스탬프 `?v=c9ce5fe33b65` 정합 · pageerror 0.
+## REV-20260728T181100-ai-claude-corp-feature-0016-role-badge — 역할 인코딩 채널 재배치 판단 근거 (2026-07-28)
+- **문제 정의**: `node-role-viz`(§14)는 역할을 칩 **본체 fill** 로 인코딩했다. 이는 (a) 테이블만 "종류 = 본체색"
+  규약에서 이탈해 노드 간 색 정합이 깨지고, (b) 색 채널이 범주와 강조를 동시에 담아 상태 테두리·검색 글로우·
+  관계선이 색 패치에 묻히고, (c) 라벨색을 `dark` 플래그로 이원화해 같은 종류 노드의 글자색까지 갈랐다.
+  분석 완료율이 오를수록 악화되는 구조 — 사용자 리포트가 정확히 그 지점을 지적했다.
+- **채택안**: 색 적용 면적을 배지 타일(18×18 = 노드 면적의 9%)로 축소. 색·아이콘 2중 인코딩과 8색 팔레트는
+  그대로 유지(정보 손실 0)하고, 본체는 종류색 단일로 복귀.
+- **대안 검토**:
+  1. *역할색 테두리(stroke)* — 렌더러 변경 0 으로 가장 저렴하지만 **불채택**. `_applyNodeStates` 가 selected/
+     analyzed/running/match 를 **테두리 halo** 로 표현한다(G6 node.state 계약). 테두리에 범주를 얹으면 상태
+     채널과 정면 충돌해 "무엇이 선택됐는지"가 흐려진다 — 지금 fill 에서 벌어진 문제를 stroke 로 옮기는 것에 불과.
+  2. *본체 저채도 tint(역할색 15%)* — 면적 문제는 완화하지만 노드마다 색이 여전히 다르다. 사용자 요구는
+     "노드 간 색상구성이 정합"(=동일) 이므로 **불채택**. 8색 tint 는 서로 구별도 어려워 범주 판독까지 손실.
+  3. *좌측 accent 스트라이프(3px) + 이모지는 본체 위* — dataviz 관례상 가장 절제된 형태이고 이모지 대비 문제도
+     없다. 다만 사용자가 "아이콘(이모지) 영역에만 색"을 **명시**했고(§3.1 우선순위 1), 배지 방식이 상세 패널
+     `.amgr-role-chip`(radius 4 · 18×18)·범례와 **이미 같은 어휘**여서 화면 3곳의 대응이 즉시 성립한다.
+     스트라이프는 그 어휘와 어긋나 별도 학습을 요구 — 채택안이 정합상 우위.
+- **리스크와 처리**:
+  · 배지 위 색 이모지 판독성 — 종전에도 역할색 배경 위에 같은 이모지가 놓였으므로 **조건 동일(회귀 아님)**.
+    타일에 흰 테두리(노드 stroke 와 같은 어휘)를 둘러 teal 본체와 경계를 분리했다. 실제 글리프 렌더는 폰트·GPU
+    의존이라 PB-0008 라이브가 최종 판정(RB.8).
+  · hover 확장 카드 t=0 픽셀 동일 — 배지·라벨 두 요소가 모두 좌변 앵커에 걸린다. `roleBadgeCX` 순수 함수를
+    노드·카드가 공유하고 `textLeft` 에 `labelOffsetX` 를 더해 보존했다. 헤드리스 F2~F6 이 이 계약을 고정.
+  · 줌아웃 배지 아이콘 — 라벨과 같은 aliasing 대상이라 동반 소거하되 **색 타일은 유지**. 판단 근거: 색은 저해상도
+    에서도 범주 신호로 살아남고(개요에서 역할 분포 파악), 소거 대상이 늘면 "분석됨" 신호까지 사라져 정보가 준다.
+  · 미니맵은 `style.fill` 만 쓰므로 전 테이블 teal 로 보인다 — 개요 축약 목적에 부합(오히려 종류 구분이 선명).
+- **미검증 잔여**: 실 Windows 브라우저 시각 확인(RB.8). JS 변경 포함 cycle 이라 미머지 `docker cp` QA 가
+  자산 스탬프 미주입 → 이중 인스턴스 함정에 걸리므로 배포 후 라이브에서 수행한다.
+
+## REV-20260728T181100-ai-claude-corp-feature-0016-role-badge-codex [CODEX:frontend-render+legend] — 역할 배지 적대 검증 (2026-07-28)
+- 방법: **codex-review(`codex review --uncommitted`, codex-cli 0.145.0)** — §18.8 적대 검증. `[CODEX:*]` 는
+  §18.4/§18.9 의 check #9 accepted verdict. 본 세션은 `Agent` 툴 사용이 제한된 환경이라 subagent panel 대신
+  codex 를 택했고, 이 변경은 **렌더러 2경로(PixiJS/G6 폴백) × 상태 채널(running/selected halo) × 범례 문구**가
+  얽혀 repo 전체 문맥 없이는 판정되지 않으므로 repo 접근 리뷰어가 적합하다. 반박 대상으로 본체색 통일·배지
+  인코딩 무손실·hover t=0 픽셀 동일·label-lod 동반 소거·기하 무겹침 5계약을 명시 제시했다.
+- **적발·흡수 (P1 1건 + P2 5건, 전량 in-cycle 수정 + 헤드리스 계약화)**:
+  1. **[P1] G6 폴백 역할 표시 전무** — `_metaRendererKind()` 가 g6 를 반환하는 경로(PixiJS 미가용 또는
+     `window.__META_RENDERER="g6"`)에서 G6 는 `style.roleBadge` 를 모르는데 라벨 인라인 아이콘까지 제거돼
+     **역할 인코딩이 통째로 소실**되고 라벨 폭만 헛되게 줄어든다. → `_metaTableStyle(…, useBadge)` 5번째 인자로
+     렌더러를 받아 **G6 는 종전 동작(본체 역할색 + 이름 앞 아이콘 + dark 라벨색)을 그대로 보존**. 폴백 경로에
+     미검증 시각 설계를 넣지 않는 쪽이 방어적이고, 종전 동작은 이미 라이브 검증된 상태다. 고정: G1~G6.
+  2. **[P2] hover 카드 클램프 시 배지 이탈** — 좌측 가장자리 칩이 확장되면 `_clampCardX` 가 카드를 우측으로
+     밀지만 배지는 world(`g.x`) 앵커라 카드 배경만 이동해 배지가 삐져나간다. → `hoverBadgeOffsetX` 를
+     `hoverTextOffsetX` 와 **동형**(unclamped 중심 기준 카드-로컬)으로 정의해 라벨과 같이 카드에 실리게 했다.
+     고정: F7(t=0 동일) · F8(라벨과 동형) · F9(전 확장 구간 카드 배경 내포).
+  3. **[P2] running desaturate 미적용** — body 는 `_nodeFillAlpha` 로 0.45 로 흐려지는데 배지는 불투명이라
+     "분석 중" 구분이 약해지고 주황 역할색(log/config)이 주황 running 점선과 섞인다(종전 본체 역할색 시절의
+     U2 위장 문제가 배지로 이전된 형태). → 배지에 body 와 같은 alpha 전달.
+  4. **[P2] 배지 아이콘 alpha 누락** — 3 의 수정이 타일 fill·stroke 에만 적용돼 이모지만 선명하게 남았다.
+     → alpha 를 **컨테이너 단위**로 이동(타일·테두리·아이콘 일괄). 부수 이득: hover 카드가 값만 갱신 가능.
+  5. **[P2] hover 카드 배지 alpha stale** — hover 중 running 전이(`setElementState` → `card.paint`)에서 배지는
+     위치만 갱신돼 채도가 hover 종료까지 낡은 값으로 남는다. → `paint` 에서 `badge.alpha = fa` 재적용.
+  6. **[P2] 범례 note 가 폴백에서 거짓 안내** — 정적 문구("칩 왼쪽 배지")는 배지 경로 기준이라 G6 폴백에서
+     사실과 어긋난다. → `_metaRoleLegendTips()` 가 **폴백일 때만** 문구를 교체(정상 경로는 정적 마크업 유지).
+     고정: H1·H2.
+- **판정**: 최종 pass **P1/GATE 0건**. 적발 6건 중 4건(1·2·3·5)이 "정상 경로에서는 보이지 않고 특정 조건
+  (폴백 렌더러·화면 가장자리·분석 진행 중·hover 중 상태 전이)에서만 드러나는" 부류였다 — 헤드리스 계약만으로는
+  발견하지 못했을 표면이고, 적대 검증의 가치가 실제로 발화한 지점이다.
+- **미검증 잔여**: running 상태의 실제 채도·주황 점선 판독성과 색 이모지 글리프 렌더는 GPU·폰트 의존이라
+  PB-0008 라이브(RB.8)가 담당한다. 헤드리스는 alpha 전달 경로까지만 고정한다(렌더 결과 자체는 비관측).
 ## REV-20260728T181000-graph-hdr-label-fit [CODEX:frontend-render+hittest] — PASS-WITH-FIXES (P1 1건 · P2 1건 전량 in-cycle 흡수)
 - 대상: CHG-20260728T1810-graph-hdr-label-fit (`graph-state.js` 폰트 파생·반동 밴드·게이트 / `graph-core.js` GH·CATH 방출 / `test_g6build_labellod.js` Section I·J·K).
 - 방법: **codex-review(`codex review --uncommitted`, codex-cli 0.145.0)** — §18.8 적대 검증. `[CODEX:*]` 는 §18.4/§18.9 의 check #9 accepted verdict. 본 세션은 `Agent` 툴 사용이 제한된 환경이고, 이 변경은 **레이아웃 상수(GGY·GHH·CATHH)와 hit-test 구현(`nodeBBox`·zIndex)을 함께** 봐야 판정되므로 repo 접근 리뷰어가 적합하다.
@@ -463,3 +523,19 @@ source_of_truth: true
 - 대상: CHG-20260728T1900-graph-hdr-label-fit-postdeploy (TASK.md HF.6 결과표 + MODIFY + TEST/test-runs.d + 증적 3매). 실행 코드 변경 0줄이라 적대 패널 대상이 없다.
 - 본 cycle 의 코드 적대 검증은 REV-20260728T181000 `[CODEX:frontend-render+hittest]`(P1 1건 · P2 1건 in-cycle 흡수)가 담당했고, 그 수정 이후 상태가 **배포본에서 정상 동작**함을 HF.6 으로 실증했다 — 특히 P1 수정(칩 hit 영역 상한 + 폰트 유지)이 판독성 이득을 유지하면서 이웃 침범을 없앴다는 것이 zoom 0.1468 실촬로 확인됐다.
 - 기계적 점검: 배포 SHA 정합(edge `/healthz git_commit=4ea1d83b` = main 머지 커밋) · 서빙 자산에 수정 존재(`_metaHdrFitFont`·`_META_HDR_FIT_ZOOM_FLOOR`·`GH_CHIP_MAX`·`_metaHdrFitReset`) · 자산 스탬프 `?v=723750d86605` 정합 · pageerror 0.
+
+## REV-20260728T190947-ai-claude-corp-feature-0016-role-badge-postmerge [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 본 cycle 의 코드 적대 검증은 `REV-20260728T181100-…-codex [CODEX:frontend-render+legend]` 가 담당했고(P1 1건 + P2 5건 전량 in-cycle 흡수, 최종 pass "No actionable correctness issues"), 그 수정 이후 상태에서 main 13 커밋을 흡수해 전 스위트 986 PASS / 0 FAIL 로 무회귀를 실측했다.
+- 병합 해소 자체의 리스크: MODIFY.md 는 append-only 원장이라 양측 블록 **병존**이 유일한 정답이고(한쪽 선택 = 이력 소실), driver 가 본문 변경으로 위임한 이유는 이번 cycle 이 REV/CHG id 를 초 해상도로 정정(`T1811`→`T181100`, check #9 정규식 요건)해 블록 내부가 바뀌었기 때문이다 — 말미 append 판정을 벗어난 정상 사유.
+
+## REV-20260728T190800-hop-budget-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs/evidence only outside policy-doc list — POST-DEPLOY 라이브 검증 기록(실행 코드 0줄). 검증 대상 코드의 적대검증은 REV-20260728T161300 [CODEX:backend+qa] 4라운드가 담당하며, 그 코드는 이미 main 에 머지·배포된 상태다.
+- Timestamp: 2026-07-28T19:08:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+## REV-20260728T192531-ai-claude-corp-feature-0016-role-badge-postdeploy [SKIPPED: 문서·증적 전용 changeset — 실행 코드 0줄]
+- 본 cycle 의 코드 적대 검증은 `REV-20260728T181100-…-codex [CODEX:frontend-render+legend]`(P1 1건 + P2 5건 전량 in-cycle 흡수, 최종 pass "No actionable correctness issues")가 담당했고, 그 수정 중 **2종이 배포본에서 실제로 발화**함을 RB.8 ④⑤ 로 실증했다 — 리뷰 지적이 문서상 '수정했다' 로 끝나지 않고 라이브 관측으로 닫혔다.
+- 라이브가 사용자 원 요구를 직접 확인한 지점: 한 화면의 다수 테이블 칩이 **모두 동일 teal 본체**이고 역할색은 좌측 18px 배지에만 존재한다(①). 즉 "노드 간 색상구성 정합" 이 관측으로 성립했다. 색 8종·아이콘은 배지·상세 칩·범례 3곳에서 동일 어휘로 유지돼 범주 정보 손실도 0(②⑦).
+- 미검증 잔여: running 상태 배지 desaturate(외부 비용 필요). 다음 AI 능동 분석 실행 cycle 의 육안 확인 대상으로 이월한다.

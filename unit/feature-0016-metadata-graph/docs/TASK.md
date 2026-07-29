@@ -2865,7 +2865,79 @@ PixiJS v8(vendor 8.19.0)의 dynamic font 는 글리프를 **항상 100px**(`base
   feature-0003 `docs/test-runs.d/20260728T173500-routine-column-edges-postdeploy.md` ·
   `REV-20260728T173500-routine-column-edges-postdeploy` ·
   증적 `artifacts/shared/win-browser-shots-routine-coledges-postdeploy/`(6매).
+## 20260728T1811-graph-role-badge — 테이블 역할색을 노드 전면 채움에서 좌측 배지로 이관 (2026-07-28, 사용자 요청 · entry persona dispatch)
 
+### 맥락 (사용자 요청 원문)
+"`그래프 뷰`에서 다른 노드들의 색상은 모두 정합하게 동일하지만, 테이블 노드의 색상은 역할에 따라 노드 전체의
+색상이 덮어씌워져서 시각적으로 noisy 합니다. 역할이 설정된 아이콘(이모지) 영역에만 해당 색상을 설정하여 노드 간
+색상구성이 정합하도록 구성하거나, 웹 리서치를 통해 시각적으로 더 모범적인 구분방법이 있다면 해당 방법으로
+적용해주세요."
+
+### 원인 (코드 실증)
+`node-role-viz`(2026-07-02, §14 / ADR-010)가 역할 인코딩을 **칩 본체 fill 교체**로 구현했다 —
+`graph-roleviz.js:_metaTableStyle` 의 `fill: rd ? rd.color : _META_GRAPH_COLOR.Table`. 결과:
+- 테이블 노드만 "종류 = 본체색" 규약에서 이탈. 용어(#9c6515)·루틴(#7b5cd6)·컬럼(#5c6773)·스키마 카드는 종류색
+  1개인데 테이블은 Okabe-Ito 8색 + 미분석 teal = **9색**이 150×24 칩 전면에 칠해진다.
+- 라벨 대비를 맞추려 `dark` 플래그로 글자색을 흰/검정 이원화(밝은 역할 5종) — 같은 종류 노드의 **라벨색도 갈렸다**.
+- 분석 완료율이 오르면 화면 대부분이 색 패치가 되어 관계선·상태 테두리(selected/analyzed/running)·검색 글로우가
+  묻힌다. 즉 색 채널이 "범주"와 "강조"를 동시에 먹었다.
+
+### 웹 리서치 (사용자 요청 ② — 더 모범적인 구분법 확인)
+- Wilke, *Fundamentals of Data Visualization* — "**큰 면적을 고채도 색으로 채우면** 도형을 자세히 살피기 어렵다".
+  (색 채움 면적 자체가 판독을 해친다는 원칙 — 본 건과 정확히 동형.)
+- USWDS / Sigma / GitLab dataviz 팔레트 지침 공통 — **본체는 중립·통일, 색은 accent 로만**. 강조가 필요한
+  소수 요소에 채도를 몰고 배경 요소는 muted 로 둔다.
+- WCAG 2.1 SC 1.4.1(Use of Color) — 색 단독 인코딩 금지. 색 + **아이콘/텍스트** 중복 인코딩이 요구된다.
+  단 Smashing Magazine(2024)이 지적한 대로 접근성 기법을 무제한 덧붙이면 오히려 noisy 해지므로 **면적을 줄이고
+  중복 인코딩은 유지**하는 조합이 최적점.
+→ 세 근거가 사용자 제안("아이콘 영역에만 색")과 동일 결론. **별도 대안(테두리색·본체 tint) 대신 사용자안을 채택**
+  (테두리는 상태 halo 채널과 충돌, tint 는 여전히 노드마다 색이 달라 "정합하게 동일" 요구를 못 만족).
+
+### 계획 (§7.1 Plan-Review-Execute · 위험도 **Minor** — 비파괴 프론트 시각, 스키마·인가·API shape 무변경)
+| 대상 파일 | 변경 symbol | 완료 판정 |
+|---|---|---|
+| `unit/feature-0003-agent-web-ui/src/static/graph/graph-roleviz.js` | `_META_ROLE_BADGE`·`_META_ROLE_BADGE_FS`·`_META_ROLE_BADGE_BOX`(신규)·`_metaTableStyle` | 본체 fill 이 역할과 무관하게 `_META_GRAPH_COLOR.Table` · `roleBadge{icon,color,size,fontSize}` 산출 · 라벨 폭/오프셋이 배지 몫 반영 |
+| `.../graph/graph-core.js` | `_metaG6Build`(라벨 조립)·`_metaApplyLabelLod` | 라벨 인라인 역할 이모지 제거 · 판독 하한 미만에서 배지 **아이콘만** 소거(색 타일 유지) + `roleIconsDropped` 관측 |
+| `.../graph/graph-renderer-pixi.js` | `PixiAdapterPure.roleBadgeCX`(신규)·`_roleBadge`(신규)·`_drawNode`·`_label`·`_showLabelExpand` | 배지 타일+아이콘 렌더 · center 라벨 offsetX 소비 · hover 확장 카드에서 배지 world 위치 고정 |
+| `.../graph/graph.css` · `.../static/admin.html` | `.admin-meta-graph-rolelegend-list .lg-dot` · 역할 범례 note | 범례 견본이 배지 어휘(라운드 사각)와 일치 · 문구가 "칩 전체 색" 전제를 버림 |
+| `.../tests/headless/test_g6build_rolebadge.js` | 신규 | 본체색 통일·배지 인코딩·라벨 정합·LOD 동반·기하 무겹침·hover 정합 고정 |
+
+### 처리 (본 cycle — cross-cut 코드 거주 feature-0003 static/graph)
+- [x] RB.1 **본체색 통일** — `_metaTableStyle` 이 역할 유무와 무관하게 `fill: _META_GRAPH_COLOR.Table` 을 반환한다.
+  역할이 있으면 `roleBadge = {icon, color, size:18, fontSize:12}` 를 실어 렌더러에 위임. 라벨색 `dark` 이원화는
+  제거(본체가 항상 teal 이라 흰 라벨 대비 고정) — `_META_ROLE.dark` 자체는 범례·상세 칩(`_metaRoleChipHTML`)이
+  계속 쓰므로 보존.
+- [x] RB.2 **라벨 정합** — 역할 노드는 `labelOffsetX = round(22/2) = 11`, `labelMaxWidth = TW-10-22 = 118`.
+  배지가 차지한 좌측 22px 를 제외한 잔여 영역의 **중앙**에 라벨이 놓여, 배지 없는 노드와 시각적 리듬이 같다.
+  역할 아이콘이 라벨 인라인에서 빠진 부수 이득: 색 이모지 때문에 `PIXI.Text` 로 강등됐던 라벨이 **BitmapText
+  경로(§80 draw-call 최적화)로 복귀**한다(역할 배정된 전 테이블 = 분석 완료분 전량).
+- [x] RB.3 **렌더러 배지** — `_roleBadge(s)` 가 역할색 라운드 타일(18×18, radius 4) + 흰 테두리(0.75px, alpha .85)
+  + 색 이모지를 그린다. 좌표는 순수 함수 `PixiAdapterPure.roleBadgeCX(w, size)` 로 분리해 노드 본체와 hover
+  확장 카드가 **같은 식**을 공유(hover 시 배지가 1px 도 안 움직인다 — 라벨 `textLeft` 역산과 동일 원칙).
+- [x] RB.4 **hover 확장 카드** — 카드에 배지를 재렌더하고 `paint(w)` 에서 `badge.position.x = g.x - c.position.x`
+  로 카드 원점 이동분을 상쇄(좌변 고정·우측 성장 계약 유지). `textLeft` 산출에 `labelOffsetX` 를 더해 t=0
+  픽셀 동일을 보존(누락 시 hover 순간 앞글자가 배지 위로 튄다).
+- [x] RB.5 **label-lod 동반** — 배지 아이콘 폰트(12)가 본문 라벨과 같으므로 임계가 자동 정합. 하한 미만에서
+  `icon: ""` 으로 비우고 **색 타일은 유지**한다 — 판독 불가 이모지는 라벨과 같은 aliasing 노이즈지만, 색 타일은
+  작아도 범주 신호로 읽혀(줌아웃 개요의 역할 분포) "정보가 노이즈가 되는" 구간이 없다. 통계는 `roleIconsDropped`.
+- [x] RB.6 **범례·상세 칩 어휘 정합** — 역할 범례 견본을 원형 dot → 라운드 사각(radius 3px)으로 바꿔 노드 배지·
+  상세 패널 `.amgr-role-chip`(radius 4, 18×18)과 한 모양으로 통일. 범례 note 를 "테이블 칩 **왼쪽 배지**에 위
+  색·아이콘 표시 (칩 본체 색은 노드 종류 공통)" 로 갱신 — 종전 문구는 "위 색으로 칩 표시"라 새 표현과 어긋났다.
+- [x] RB.7 **헤드리스 검증** — `test_g6build_rolebadge.js` 신설 **36 PASS / 0 FAIL**(본체색 단일·팔레트가 fill 에
+  미등장·배지 8색 보존·라벨 인라인 아이콘 부재·폭 축소 일관·LOD 아이콘만 소거·band-invariant·기하 무겹침·
+  hover pad/inner0 정합). 회귀 0: `labellod 36` · `category 26` · `collod 20` · `viewportcull 6` · `vpack 19` ·
+  `edge_visibility 73` · `pixi_adapter 205` · `hover_flow 41` PASS.
+- [ ] RB.8 **POST-DEPLOY PB-0008** — 본 변경은 **JS 3파일**을 포함하므로 미머지 `docker cp` 사전 QA 가 불가하다
+  (자산 스탬프 미주입 → admin.js 이중 인스턴스 + Chrome 모듈 캐시로 구버전 실행 — LRN 기록된 함정). 따라서
+  §15.4.1 시각검증은 **머지·배포 후 라이브**에서 수행하고 `feature-0003/docs/test-runs.d/` 에 기록한다.
+- [x] RB.9 **codex 적대 검증 (§18.8, check #9 accepted `[CODEX:*]`)** — `codex review --uncommitted`(codex-cli
+  0.145.0) 를 **수렴까지 반복**: 1차 **P1 1건**(G6 폴백에서 역할 표시 전무 — `roleBadge` 미지원 + 라벨 아이콘
+  제거의 조합) · 2차 **P2**(hover 카드 클램프 시 배지가 world 앵커라 카드 밖 이탈) · 3차 **P2**(running
+  desaturate 가 배지에 미적용) · 4차 **P2 2건**(배지 아이콘 alpha 누락 · hover 카드 배지 alpha stale) ·
+  5차 **P2**(범례 note 가 G6 폴백에서 거짓 안내). **전건 in-cycle 흡수**하고 각각 헤드리스 계약으로 고정
+  (G1~G6 · F7~F9 · H1~H2). 본 세션은 `Agent` 툴 사용이 제한된 환경이라 subagent panel 대신 codex 를 택했다 —
+  이 변경은 렌더러 2경로·상태 채널·범례 문구가 얽혀 **repo 전체 문맥**이 필요하므로 bundle-only reviewer 보다
+  repo 접근 리뷰어가 적합하다.
 ## 20260728T1810-graph-hdr-label-fit — 위계 헤더 라벨을 클러스터 범위만큼 확장 (2026-07-28, 사용자 요청 · 웹 리서치 동반 검토)
 
 ### 맥락 (사용자 요청)
@@ -3044,6 +3116,7 @@ label-lod(§20260728T1604) 배포를 확인한 뒤의 후속 요청:
 - [x] HB.7 테스트 — 신규 `test_graph_hop_budget.py` **9 PASS**(hop 별 엣지 라벨 계약 · 부모 보강 · 보강 부모의 프론티어 미진입 · cap 우선순위 2종 · 절단 신호 · 관계 없음 시 d1==d2 · 상수 분할 불변식) + `test_detail_dbgroups.js` **95 PASS/0 FAIL**(⑱⑲ 신설 — 경고 귀속·hop 분기·오귀속 정적 회귀·관계없음 힌트·depth 문구).
 - [x] HB.8 PB-0008 실 Windows 브라우저 시각검증 — 아래 검증 절 참조.
 - [x] HB.9 세션 이월 후 완수 — `origin/main` 재-rebase 2회(총 22커밋) · §18.8 적대검증 4라운드 흡수 · 전수 재검증 · 정본 docs 정합.
+- [x] HB.10 **POST-DEPLOY 라이브 검증** (PR #1024 → main `3687c43b` → 배포 `9cb3d4ea`) — 아래 절.
 
 ### 개선 효과 (동일 표본 40개 · 같은 시드 A/B)
 | 지표 | 종전 | 개선 후 |
@@ -3135,3 +3208,51 @@ origin/main`(repo 접근 있는 독립 리뷰어, subagent 아님 — check #9 a
 ### 잔여 / 후속
 - 3-hop 이 2-hop 과 같아지는 20%(8/40)는 **관계 체인이 2단계에서 끝나는 노드** — 데이터의 성질이며 결함이 아니다(상태줄이 그 사실을 알린다).
 - 대형 스키마 노드(테이블 700개 등)는 여전히 1-hop 부터 cap 300 에 걸린다. 이 경로의 경고는 hop 1 분기로 "아래 목록도 일부만" 을 정직하게 표기하도록 바뀌었을 뿐, 상한 자체를 올리는 것은 별건(페이지네이션 또는 클러스터 경로 유도 검토 — REPORT §8).
+- [x] RB.10 **main 흡수 후 재검증 (postmerge)** — PR #1029 가 `origin/main` 13 커밋과 CONFLICTING(DIRTY) 이라
+  `bin/setup-git-parallel.sh`(merge driver + rerere 등록) 후 `git merge origin/main` 으로 흡수했다. TASK/REVIEW 는
+  append-doc driver 가 말미 블록 병존 병합(ours 1+2 · theirs 2+4), MODIFY 는 본문 변경 감지로 위임돼 수동 해소
+  (양측 CHG 블록 전부 보존 — append-only 원칙). 흡수 후 헤드리스 **22 파일 986 PASS / 0 FAIL** 재실행 완료.
+  수치가 병합 전 920 보다 큰 것은 병렬 세션이 추가한 테스트 합류(`labellod 36→71` hdr-label-fit · `dbgroups
+  78→107`)이며 **본 cycle 신규 47 PASS 는 불변**이다 — 증가를 '개선' 으로 오독하지 않게 명시한다.
+  주의: 이 두 스위트는 호출 규약이 다르다(`labellod`=번들만·`dbgroups`=인자 없음 또는 `graph-ctxmenu.js` 경로).
+  어댑터 인자를 함께 주면 규약 불일치로 거짓 FAIL 이 나므로(실측: catcluster 2 FAIL·dbgroups 로드 실패)
+  각 파일 헤더의 `사용:` 주석을 따른다. main 의 `c7049053`(그래프 시각 노이즈 제거 — 상시 설명문 → ⓘ 툴팁)이
+  같은 범례 영역을 만졌으나 `amg-legend-note` 셀렉터는 보존돼 `_metaRoleLegendTips` 의 폴백 문구 교체가 유효하다.
+
+
+---
+
+## 20260728T1908-graph-hop-budget-postdeploy — '이웃 깊이' POST-DEPLOY 라이브 검증 (2026-07-28)
+
+PR #1024 머지(main `3687c43b`) → `deploy-web.sh` 롤링 배포(`9cb3d4ea`, soak PASS, 워커 포함) 후 **배포본**에서
+실제 Windows Chrome 150 으로 검증. cycle 내 PB-0008 은 재-rebase·적대검증 흡수 이전 코드 기준이었고 그 뒤
+힌트 판정 근거가 바뀌었으므로 재확인이 필요했다.
+
+**확증된 것** (건즈 실데이터 `mysql-gz-dev`):
+- 배포본 API 가 신규 필드 4개(`truncated_hop`·`omitted_nodes`·`expanded_hops`·`expanded_hop_edges`) 전부 서빙.
+- **깊이 선택이 실제로 다른 결과를 낸다** — `gunzgame.character` d1 61n/60e → d3 **199n/274e**, 양쪽
+  `truncated=false`, `expanded_hops=[60,40,98]`(hop 마다 증가). `gunzgame.account` d1 22n → d3 130n,
+  `[21,20,88]`. 종전 구조라면 계층 형제로 cap 300 을 소진해 2-hop 이 절단되고 3-hop 이 2-hop 과 동일해졌을 앵커다.
+- **오귀속 해소** — **depth select = 3** 인 상태에서 `gunzgame.character` 상세를 열었을 때 절단 배너
+  (`.amgr-trunc-note`) **0개**, "사용하는 함수·프로시저 (57) · 읽기 39 · 쓰기 18" 이 57건 전 항목 실명 열거
+  (`… 외 N건` 0). 사용자가 보고한 "1-hop 초과 모든 항목에서 경고" 증상이 배포본에서 사라졌다.
+- 단일클릭 상세는 depth 3 선택에도 `이웃 60개`(= d1) — 문구-동작 정합. depth `aria-label`·도움말 모달 새 문구 실렌더.
+
+**이월 1건 (정직 기록)**: '확장할 관계 없음' 힌트의 **실화면 발화**는 확장·중심보기 경로(PixiJS 캔버스
+더블클릭/우클릭)에서만 일어나고, 합성 PointerEvent 로는 컨텍스트 메뉴가 열리지 않았다(중심 + 7×7 격자 49점
+전부 실패 — 알려진 제약). 대신 **힌트 조건이 라이브에서 성립함을 API 로 실측**했다: `gunzlog.gamblelog` d3 →
+`expanded_hops=[2,0]`·`expanded_hop_edges=[2,0]`·`truncated=false`(= 표시 조건), 대조군 `gunzgame.accounthonor`
+d3 → `[5,2,0]`·`[5,3,0]`(= 미표시 조건). 렌더 판정은 헤드리스 ⑳㉑ 9건이 잠근다. 실 마우스 세션에서
+`gunzlog.gamblelog` 를 depth 3 으로 더블클릭해 상태줄을 눈으로 확인하면 종결.
+
+상세 Run: feature-0003 `docs/test-runs.d/20260728T190800-graph-hop-budget-postdeploy.md`. 증적:
+`artifacts/feature-0016-neighbor-depth-budget/pb0008-postdeploy/postdeploy_detail_nobanner.png`.
+- [x] RB.8 **POST-DEPLOY PB-0008 완료 (2026-07-28, 종결)** — PR #1029 머지(main `ea3f9a6d`) → `make deploy-web`
+  무중단 롤아웃(web-a/b·워커, soak 통과, gateway 무접촉) → edge `/healthz git_commit=ea3f9a6d` 확인 후 실 Windows
+  **Chrome 150** 라이브 검증 **8 시나리오 전건 PASS**: 본체 teal 통일 · 배지 색·아이콘 범례 1:1 · 라벨 무겹침 ·
+  hover 확장 시 배지 카드 내 정위치(좌변 인접 = 클램프 경로 포함) · 줌아웃 아이콘만 소거(`roleIconsDropped
+  0→255` 임계 교차 실측) 하고 색 타일 잔존 · 선택/분석완료 테두리 공존 · 범례 사각 견본+새 문구 · 리소스 4xx 0.
+  대상은 역할 8종 전부를 보유한 `mssql-qa-idc`(1,132 테이블). **미재현**: running 상태 배지 desaturate(분석 잡
+  실행 = LLM 외부 비용 필요 — dim 상태의 동일 alpha 경로만 부분 실증). 기록: feature-0003
+  `docs/test-runs.d/20260728T181100-graph-role-badge.md` POST-DEPLOY 절 · 증적 9매
+  `artifacts/shared/win-browser-shots-role-badge/`.

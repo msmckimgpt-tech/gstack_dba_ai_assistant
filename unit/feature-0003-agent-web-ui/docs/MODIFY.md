@@ -1477,7 +1477,6 @@ Cross-ref: REVIEW REV-20260728T173500-routine-column-edges-postdeploy ·
 - 대상: `src/static/graph/graph-ctxmenu.js`(`_metaNoRelHint` 를 `expanded_hops`/`expanded_hop_edges` 실적 기반으로 교체 + 절단 시 억제 + 구 응답 폴백 / `_metaNbrTruncNotice` 에 hop-미상 분기 신설 — 완전성 미주장), `src/routers/admin_metadata.py`(응답에 `expanded_hops`·`expanded_hop_edges` 전달). 테스트: `tests/headless/test_detail_dbgroups.js` ⑳㉑ 신설 + ⑱ hop-미상 3건 = **95 → 107 PASS / 0 FAIL**.
 - 변경: REQ-20260728-graph-hop-budget / **AC-HB-7·8 신설**. 백엔드(예약 예산·broken 정렬·cap+1 포화판정·graphid 정렬·hop 실적)는 코드가 feature-0002 `metadata_graph.py` 에 거주하며 feature-0016 MODIFY 에 기록.
 - 근거: 등급 Minor 유지(읽기 전용 투영 범위·표시 문구). codex 적대검증 4라운드 지적 13건 중 12건 흡수 — 상세 대조표는 feature-0016 `REVIEW.md` REV-20260728T161300. 원 세션의 subagent 패널이 사용량 한도로 죽고 재개 세션에 Agent tool 제약이 있어 §18.8.2 item 1 의 제약 없는 채널(`codex review`)을 채택했다.
-
 ## CHG-20260728T191126-model-pick-early-cid (조기 cid 전환 시 모델 선택 귀속 승계 + 무음 강등 감지)
 - 대상: `src/static/app.js` — `_adoptComposerModelPickToConv()` 신설(pending→early-cid 귀속 승계,
   미선택 `null` 은 비대상 / 다른 실 cid 귀속은 거부) · `_modelSelectionSilentlyDropped()` 신설(표시-집행
@@ -1499,3 +1498,12 @@ Cross-ref: REVIEW REV-20260728T173500-routine-column-edges-postdeploy ·
 Cross-ref: REVIEW `REV-20260728T191126-model-pick-early-cid` ·
 마찰 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md`
 (`FR-model-pick-lost-on-early-cid`) · TEST.md 동명 케이스(PB-0008 배포 후 잔여).
+## CHG-20260729T010301-doc-sync-rn-0729 (TASK-20260729T010301-doc-sync-rn-0729 — 07-28 사용자향 머지분 릴리즈노트 정합, 비-정책 doc-only)
+- 변경: `static/release-notes-data.js` 기존 "2026-07-28" 블록에 6항목 append(관계도 연결선 가독성·이름표 hover·역할 배지·분류 스크롤 동기화·이웃 표시 범위·'사용 기록' 드릴다운·계정/역할별 모델 사용 제한·자체 점검 후 응답 정확성) + block summary 아울러-절 증강. generated 2026-07-28 불변. 렌더 로직·백엔드·스키마·RBAC·엔드포인트 0.
+- cache-buster: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py`(Dockerfile:39) + deploy-web.sh `asset_stamp_verify`(:791) 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시(index/admin `?v=<new>`)는 07-12 이전 regime → 부적용(현행 코드로 재검증, abcb7d68 동일 판정).
+- 날짜 관례: 07-28 배포분(block date=배포일·델타 커밋 전부 git-date 07-28, 기존 07-28 블록은 feature 커밋 70851411 self-add)이라 신규 07-29 블록 아닌 기존 07-28 블록 append(same-deploy-day append 선례 85da43d9). generated=top-block date=07-28 불변.
+- 근거 정본: owning POST-DEPLOY PB-0008 커밋(역할배지 2b9693c7·이웃깊이 0bff005e·hover확장 43efe182/29ceb823·상세hover fb253fe3·클러스터스크롤 9b16b0c0/a36c16ed/429e8c04·라벨LOD 8008402d·헤더라벨 b2f062cc·함수관계선 5a6110a9·사용기록 f3cfc809·모델권한 fcf22ceb·자체점검 6582c69b) + git log abc3e49f..HEAD.
+- 제외: 성능 3 feature(0027/0028/0029 측정·내부)·conversation-api(0023 개발자향)·agent-core 내부 보안·feature-0001 시나리오·governance. held: halo 기하 비례화(개별 POST-DEPLOY 없음).
+- Verification: `node --check` PASS · vm 구조검증(releases[0] 2026-07-28 items 3→9·releases[1] 07-27 7항목 보존·스키마·enum·누출0). 릴리즈노트 render 테스트(verify_release_notes.mjs)는 jsdom 미설치로 미실행(render 로직 미변경·데이터 정적검증 대체).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
