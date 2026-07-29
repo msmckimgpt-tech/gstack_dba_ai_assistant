@@ -7535,3 +7535,67 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/2
 - [x] BLOCKED 항목이 없다
 - [x] STATUS.md에 기능 상태가 갱신되었다
 - [x] ANCHOR.md §1~§3이 채워져 있다
+
+
+## 20260729T2200-metadata-product-scope-postdeploy — 제품 스코프 전환 POST-DEPLOY 라이브 실증 (종결)
+
+배포본 `5060c9f3`(PR #1072) 위에서 승인받은 라이브 이관 + contract + PB-0008 을 완수했다.
+
+### Task Queue
+- [x] 라이브 이관 — update 5,130 · delete 257(모호) · 백업 5,387행(`/shared/kb-scope-backup-20260729.jsonl`)
+- [x] contract — `--verify-contract` 잔여 0 → `AGENT_KB_LEGACY_DS_SCOPE_READ=0` + 4서비스 재기동
+- [x] PB-0008 실 Windows 브라우저 — 제품 선택기·85건 회복·공유 DS 경계 404·귀속 정확도·부트스트랩 UI
+- [x] test-runs.d POST-DEPLOY 절 + TEST.md Run append
+
+### 7. Completion Checklist
+- [x] 모든 REQ의 AC가 구현되었다
+- [x] 자동 테스트가 통과한다
+- [x] 웹/UI 변경 시 실제 Windows 브라우저 검증(PB-0008) 완료
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다
+- [x] REVIEW.md에 판단 근거가 기록되었다
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md에 테스트 결과가 기록되었다
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md에 기능 상태가 갱신되었다
+
+### 9. Requested Scope (요청 범위 자기-열거)
+
+원 요청: "관리 콘솔 > 지식베이스 > 메타데이터 에서 사용하는 정보들이 '데이터 소스' 단위로
+구성되어 있지만, 실제 사용자들은 제품(Product) 단위로 작업 범위를 인식합니다. 실제 사용자들이
+인식하는 범위와 모든 메타데이터의 구성이 정합하도록 전면적으로 재구성해주세요."
++ 확인 답변 ① 메타데이터가 제품에 종속 작동(데이터소스는 중요하지 않음) ② 기존 데이터는
+귀속 가능분 이관 + 모호분 삭제 ③ 범위 = 메타데이터 탭 5개 서브뷰 + 검토·검수 큐 + 스키마 골격.
+
+- [x] `메타데이터 탭 5개 서브뷰(용어사전·ENUM·테이블 설명·컬럼 설명·샘플쿼리) 제품 축` —
+  산출물: `admin.js` `adminState.metadata.productScope` + 목록/등록/수정/삭제 경로 ·
+  `admin_metadata.py` `_metadata_valid_scope_keys`(제품 ∪ common) ·
+  배선 확인: 라이브 `KR_LIVE` 용어 85건 렌더(PB-0008) · `GET /metadata/{tables,columns}?scope_key=product.dk_qa`
+  → 153 / 1,046 건(PG 집계 일치).
+- [x] `검토·검수 큐 제품 축` — 산출물: `_metaReviewScopeParam()` 제품 스코프 ·
+  이관 대상에 `glossary_feedback`/`enum_feedback`/`sample_feedback` 편입 ·
+  배선 확인: 라이브 화면 '용어 검토 큐 16' 배지가 선택 제품 스코프로 산출됨(PB-0008 스크린샷).
+- [x] `스키마 골격 가져오기 제품 축` — 산출물: `GET /bootstrap/schemas?scope_key=` +
+  `POST /bootstrap {scope_key,schema}` + 제품 접근DB allowlist ·
+  배선 확인: CC_QA 17 / DK_QA 35 / FH_QA 8 (공유 datasource, `source=product-databases`),
+  교차 접근(`product.cc_qa` + `FHGame1`) **404**, 자기 DB 200/255 테이블.
+- [x] `주입(답변 반영) 축 정합` — 산출물: `_kb_scope_candidates()` + 4개 로더 + `set_active_product` ·
+  배선 확인: 단위 테스트(같은 제품이면 활성 DS 무관 동일 scope) + 라이브 이관으로 85건이
+  7개 DS 전체에 적용되는 상태로 전환.
+- [x] `기존 데이터 이관 + 모호분 삭제(사용자 승인)` — 산출물: `scripts/kb_scope_rescope.py` ·
+  배선 확인: 라이브 apply update 5,130 / delete 257 / 백업 5,387행, `--verify-contract` 잔여 0.
+- [x] `그래프 뷰 제외(사용자 선택)` — 산출물: `_metaPopulateScopeSelect()` 를 `graphScopeSelect`
+  전용으로 축소, `adminState.metadata.scopeKey`(datasource 축) 보존 ·
+  배선 확인: 그래프 pane 스코프 선택기 종전 동작 유지(축 분리).
+
+**주장 affordance 실측 (G3)**: 콘솔이 "가능하다"고 제시하는 경로 —
+- `스키마 골격 가져오기` → CC_QA 에서 `cc_data_main` 실제 구동 200 / 255 테이블 수집 확인.
+- `제품 스코프 선택` → 17개 옵션 전환 및 목록 재로드 실동작 확인(PB-0008).
+- 이관 스크립트 `--apply` → 라이브 실행 완료(위 수치).
+
+**경계변수 양측 검증 (G4)**:
+- `AGENT_KB_LEGACY_DS_SCOPE_READ`(expand/contract 스위치) → on: 레거시 ds 꼬리 포함(단위 테스트) /
+  off: 꼬리 소멸(단위 테스트 + 라이브 contract 후 잔여 0).
+- 제품 접근DB allowlist 경계 → 안쪽(`cc_data_main`) 200 / 바깥(`FHGame1`) 404 (라이브 양측).
+- `databases_ok`(카탈로그 가용성) → true: 정상 200 / false: 503 fail-closed(단위 테스트,
+  라이브 introspection 미도달까지 단언).
