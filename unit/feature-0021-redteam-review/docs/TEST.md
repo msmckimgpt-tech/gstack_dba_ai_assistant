@@ -173,6 +173,9 @@ source_of_truth: true
 - 결과 **PASS** — 유도한 회귀가 재현되지 않음: 수정 전 `rounds=14`/152자 비-답변 →
   수정 후 **`rounds=0`·BLOCK 0·797자 실행 가능한 continuation**. A/B 로 grounding 오판 2→0 확인,
   반대 방향 과교정(2/3) 발견 → continuation 규칙으로 **1/4** 로 감소. 전체 2883 passed·ruff clean.
+- **POST-DEPLOY 확정(Run 4)**: 배포본 `44d70215` 에서 같은 대화에 짧은 후속 발화를 **연속 2회째**
+  태워 `id=140` **pass · rounds=0 · BLOCK 0 · WARN 0** · 566자 실행 체크리스트 확인. Run 3 은
+  배포 전 프롬프트 주입 측정이었으므로 배포본에서 재확인한 것이다.
 - 잔여·한계는 §4 및 fragment 의 "미커버" 참조 (N 작음·단일 대화·첨부 end-to-end 미수행).
 
 ## 4. Integration Coverage

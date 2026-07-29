@@ -534,3 +534,24 @@ CHG-20260728-0002 가 범한 실수다). 이번에는 **판정 원장을 먼저 
 - 단일 대화·단일 초안에서 측정했다. 다른 도메인 질문에서 같은 비율이 나온다는 보장은 없다.
 - 라이브 end-to-end(대화 20260729024453) 에서는 이 초안이 `rounds=0`·BLOCK 0 으로 통과했다 —
   A/B 의 harsh 조건(evidence 완전 비움)보다 실제 경로가 관대하다는 뜻이다.
+
+## REV-20260729T125000-ai-claude-feature-0021-continuation-postverify [SKIPPED:docs-only POST-DEPLOY 검증 기록 — 제품 코드 무변경]
+- Related TASK: feature-0021-redteam-review (TASK-20260729T120000-review-continuation)
+- Related Change: CHG-20260729-0003
+- Trigger: changeset 이 `unit/feature-0021-redteam-review/docs/*` 전용 (§18.8 키워드 비매칭)
+- Timestamp: 2026-07-29T12:50:00+0900
+- Verdict: PASS
+- Human Approval Needed: no
+
+### 왜 이 기록을 별도로 남기나
+Run 3 의 "과교정 2/3 → 1/4" 는 **배포 전** 컨테이너에 신규 프롬프트를 주입(`importlib` 로
+`REDTEAM_REVIEW_PROMPT` 만 교체)해 측정한 값이다. 그것을 그대로 "배포 검증" 으로 부르면
+주입 측정과 배포본 동작을 등치하는 것이 된다 — 이 프로젝트가 반복해서 경계해온 오류
+(repo 에 있음 ≠ 이미지에 baked 됨)와 같은 계열이다. 그래서 배포본 `44d70215` 에서 같은 대화에
+**연속 2회째** 짧은 후속 발화를 태워 재확인했다(`id=140` pass·rounds=0·BLOCK 0·WARN 0).
+
+### 이 Run 이 보이는 것과 보이지 않는 것
+- **보임**: 짧은 확인 발화가 연달아 와도 답변이 축소되지 않고 실행 가능한 continuation 을 유지.
+  수정 전 붕괴가 일어나던 정확히 그 지점이다.
+- **안 보임**: 과교정 잔여(1/4)는 이 단발 관측으로 재추정되지 않는다. 분포는 트래픽 누적 후
+  `redteam_reviews` 로 본다(§4 미커버).
