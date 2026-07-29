@@ -1980,7 +1980,6 @@ EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS
 - Critical issue: `.attach-list-item-meta` 의 nowrap+ellipsis 가 텍스트가 아니라 인라인 **"버전 N개 ▾" 버튼을 잘라내** 버전 이력의 유일한 진입점을 없앤다(패널 최소 폭 240px 에서 약 13px 초과). 그 규칙을 정당화하던 근거(삭제 ×의 폭 점유)는 바로 이 diff 가 제거했는데 규칙과 주석만 남았다. 나머지 4개 축(우측 정렬 비대칭·죽은 스타일·안내 문구 줄바꿈·danger hover 무게)은 실측 PASS.
 - 조치: 해당 말줄임 3종을 되돌림(원상복구). 이름줄 flex 분리는 배지 보존 효과가 있어 유지.
 - Human Approval Needed: no
-
 ## REV-20260729T170000-search-collation-nameerror [SKIPPED:hotfix-single-symbol] 본문 검색 500 근본 수정
 
 - Related TASK: feature-0003-agent-web-ui / 20260729T1700-search-collation-nameerror
@@ -2013,3 +2012,8 @@ EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS
 패치 없이 실제로 타는 테스트를 둔다.
 
 - Human Approval Needed: no
+## REV-20260729T172000-append-only-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1720-append-only-postdeploy
+- Reason: changed paths are docs only (test-runs.d fragment append + TASK/MODIFY/REVIEW 기록) — 실행 코드·정적 자산 변경 0줄. 검증 대상 코드는 선행 cycle 에서 §18.8 패널(ux·design)을 거쳤고, 본 cycle 은 그 배포본의 라이브 실측 결과를 기록할 뿐이다.
+- Timestamp: 2026-07-29T17:20:00+09:00

@@ -7263,7 +7263,6 @@ Cross-ref: DECISIONS `ADR-20260729T163000-attach-append-only` · FUNCTION
       삭제 ×가 이 cycle 에서 제거돼 폭이 회복됐고, 남겨두면 텍스트가 아니라 인라인 "버전 N개 ▾"
       **버튼을 잘라** 버전 이력 진입점이 사라진다(패널 최소 폭 실측). 이름줄 flex 분리는 배지 보존
       효과가 있어 유지
-
 ## 20260729T1700-search-collation-nameerror — 본문 검색 500 근본 수정: collation audit NameError (Major, 선행 결함)
 
 **발견 경위**: 직전 cycle(`20260729T1455-conv-search-attach-name`)의 POST-DEPLOY PB-0008 라이브
@@ -7302,3 +7301,17 @@ Cross-ref: DECISIONS `ADR-20260729T163000-attach-append-only` · FUNCTION
 
 Cross-ref: MODIFY `CHG-20260729T170000-search-collation-nameerror` · REVIEW
 `REV-20260729T170000-search-collation-nameerror` · 원인 커밋 CHG-20260711T161858(ITEM-10 p7)
+## 20260729T1720-append-only-postdeploy — append-only 전환 POST-DEPLOY 라이브 실증 (종결)
+
+`20260729T1630-attach-append-only`(PR #1055)의 배포 후 실측. 실행 코드·정적 자산 변경 **0줄**.
+
+### 진행
+- [x] 배포본 `cb06a4e3` 확인 (web 롤링 + 워커 롤아웃 + soak 통과)
+- [x] 저장 완료 첨부의 삭제 컨트롤 **0건** 실측 (목록·pill 양쪽)
+- [x] append 동작 실증 — 기존 1건 + 신규 업로드 → 목록 2행·서버 2건 누적
+- [x] 안내 문구 append-only 취지로 노출 확인
+- [x] design 회귀 가드 — 메타줄 `white-space: normal` 원복, 행 높이 49px 단일
+- [x] 미실증 명시 — `staged`/`failed` × 동작은 라이브 재현 불가(정적 확인으로 대체)
+
+Cross-ref: test-runs.d/20260729T1630-attach-append-only.md (POST-DEPLOY 절 append) ·
+DECISIONS `ADR-20260729T163000-attach-append-only`
