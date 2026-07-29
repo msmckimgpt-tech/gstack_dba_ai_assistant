@@ -1800,3 +1800,14 @@ Run 기록=`docs/test-runs.d/20260729T160000-test-live-pg-isolation.md`.
 - [x] **루트 conftest 단독 효력 실증** — Makefile 격리를 뺀 컨테이너(`AGENT_KB_PG_PORT=5432` ·
       라우팅 `postgres` 확인)에서 문제 5파일 49 passed → 2중 방어 실효 확인
 - [x] 재검증 — `make test` exit 0 · 신규 실패 0
+
+### POST-DEPLOY 라이브 실증 (TASK-20260729T183000-test-live-pg-isolation-postdeploy)
+배포 `c16e3a84` (web-a·web-b·insight-worker·ask-worker 전량, soak 통과) 후 `repo-web-a-1` 에서 실측:
+- [x] 헬퍼 배포 확인 — `_pg_conn_pair_{ro,rw}` 존재 · `_pg_available()=True`
+- [x] 정상 경로 — RO 연결 성공(`owned=True`) · `SELECT 1` 응답 · 그래프 읽기 3건 반환
+- [x] **RO 저하 계약** — `AGENT_KB_PG_PORT{,_RO}=1` 프로세스로 재현 시 `(None, False)` 반환 +
+      `pg ro connect failed — 저하(None) 로 계속: …Connection refused` warning 1줄 (silent 아님)
+- [x] **RW 전파 계약** — 같은 조건에서 `OperationalError` 전파 확인(저하 안 함) → `sync_graph` 가
+      실패를 `ok=True`/exit 0 으로 위장하는 경로 없음
+- 검증 방법 주의: `os.environ` 변경 + `importlib.reload` 는 무효(`shared.config` 가 import 시점
+      상수를 굳힘) — **프로세스 env**(`docker exec -e`)로 재현해야 한다. 첫 시도가 이 함정에 걸렸다.

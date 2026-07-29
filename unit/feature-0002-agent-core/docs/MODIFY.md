@@ -813,3 +813,19 @@ exit 0 으로 받아 그래프가 stale 해져도 아무도 모르게 된다.** 
 
 Cross-ref: TASK-20260729T160000-test-live-pg-isolation ·
 REVIEW REV-20260729T160000-test-live-pg-isolation.
+
+## CHG-20260729T183000-test-live-pg-isolation-postdeploy — 배포 후 라이브 실증 기록 (문서만)
+
+**실행 코드·정적 자산 변경 0줄.** 선행 CHG-20260729T160000-test-live-pg-isolation 이 바꾼 PG 연결
+계약(RO 저하 / RW 전파)이 배포본 `c16e3a84` 에서 설계대로 동작함을 확인하고 기록한다.
+
+### 변경
+- `unit/feature-0002-agent-core/docs/TASK.md` — POST-DEPLOY 실증 섹션(실측 항목 + 검증 방법 함정).
+- `unit/feature-0002-agent-core/docs/REVIEW.md` — REV-20260729T183000 항목.
+
+### 실증 요지 (repo-web-a-1)
+정상 경로 RO 연결·`SELECT 1`·그래프 읽기 3건 정상 / PG 도달 불가 시 RO 는 `(None, False)` + warning
+1줄, RW 는 `OperationalError` 전파. 후자가 `sync_graph` 실패의 exit 0 위장을 막는 지점이다.
+
+Cross-ref: TASK-20260729T183000-test-live-pg-isolation-postdeploy ·
+REVIEW REV-20260729T183000-test-live-pg-isolation-postdeploy.

@@ -906,3 +906,16 @@ env 도 함께 주므로 conftest 단독 효력이 미검증이었다. Makefile 
 `AGENT_KB_PG_PORT=5432` · `AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=postgres` 인 상태 확인) 문제
 테스트 5파일을 실행해 **49 passed** 를 확인했다 — conftest 가 `os.environ` 을 실제로 덮는다.
 2중 방어는 허구가 아니다.
+
+## REV-20260729T183000-test-live-pg-isolation-postdeploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+
+배포 `c16e3a84` 후 라이브 실증 기록. **실행 코드 변경 0줄**(문서만)이라 패널 대상 아님.
+
+RO 저하 / RW 전파 비대칭이 배포본에서 설계대로 동작함을 `repo-web-a-1` 에서 직접 확인했다(상세 =
+TASK 동명 섹션). 특기할 점은 **검증 방법의 함정**이다: 첫 시도에서 `os.environ` 을 바꾸고
+`importlib.reload(shared.db)` 로 PG 도달 불가를 흉내 냈는데, `shared.config` 가 import 시점에 상수를
+굳히므로 포트가 바뀌지 않아 "저하 안 됨(기대와 다름)" 이라는 **거짓 음성**이 나왔다. 코드 결함으로
+오인할 뻔했고, `docker exec -e` 로 프로세스 env 를 바꿔 재현하니 정상 동작이 확인됐다. 같은 계열의
+런타임 상수(`AGENT_*`)를 라이브에서 흔들어 볼 때 동일 함정이 재발할 수 있어 기록한다.
+
+Cross-ref: REV-20260729T160000-test-live-pg-isolation (본 cycle 의 선행).
