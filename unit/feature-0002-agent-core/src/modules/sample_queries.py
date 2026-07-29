@@ -23,12 +23,8 @@ _INJECT_SQL_CAP = 800   # 주입 시 샘플 SQL 길이 cap(프롬프트 비대 �
 
 
 def _ro_conn(conn):
-    if conn is not None:
-        return conn, False
-    from shared.db import _pg_available, _pg_connect_ro
-    if not _pg_available():
-        return None, False
-    return _pg_connect_ro(), True
+    from shared.db import _pg_conn_pair_ro
+    return _pg_conn_pair_ro(conn)
 
 
 def _embed(text, timeout_sec=None):

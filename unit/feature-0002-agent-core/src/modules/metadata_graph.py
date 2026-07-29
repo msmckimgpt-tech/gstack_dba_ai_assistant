@@ -88,23 +88,19 @@ _SYNC_BATCH_LOG = 500      # 동기화 진행 로그 간격
 _SYNC_MERGE_BATCH = max(1, int(os.getenv("AGENT_METADATA_GRAPH_SYNC_BATCH", "500") or "500"))
 
 
-# ── 연결 헬퍼 (relationships.py 동형) ─────────────────────────────────────
+# ── 연결 헬퍼 — 정본은 `shared/db.py` 의 `_pg_conn_pair_{ro,rw}` ──────────
+# 본 모듈을 포함해 8개 KB/그래프 모듈이 같은 구현을 복제하고 있었고, 그 구현은 접속 실패를
+# 저하(None) 가 아니라 예외로 전파해 아래 모든 호출부의 `if c is None: return <빈 결과>`
+# 계약을 깨뜨렸다(PG 순단 시 500). 얇은 위임만 남겨 정본 1곳에서 계약을 보장한다.
+# 위임 형태를 유지하는 이유: 테스트가 모듈 속성(`mg._ro_conn`)을 monkeypatch 한다.
 def _rw_conn(conn):
-    if conn is not None:
-        return conn, False
-    from shared.db import _pg_available, _pg_connect
-    if not _pg_available():
-        return None, False
-    return _pg_connect(autocommit=True), True
+    from shared.db import _pg_conn_pair_rw
+    return _pg_conn_pair_rw(conn)
 
 
 def _ro_conn(conn):
-    if conn is not None:
-        return conn, False
-    from shared.db import _pg_available, _pg_connect_ro
-    if not _pg_available():
-        return None, False
-    return _pg_connect_ro(), True
+    from shared.db import _pg_conn_pair_ro
+    return _pg_conn_pair_ro(conn)
 
 
 def _set_age_path(cur) -> None:

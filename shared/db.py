@@ -940,6 +940,60 @@ def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# KB/그래프 모듈 공용 `(conn, owned)` 연결 페어 헬퍼.
+#
+# `modules/{metadata_graph,node_analysis,relationships,routines,semantic_cluster,
+# kb_metadata,kb_glossary,sample_queries}.py` 가 각자 복제해 쓰던 `_ro_conn`/`_rw_conn`
+# (11개 동일 구현) 의 단일 정본. 각 모듈 헬퍼는 본 함수로 위임한다.
+#
+# **읽기와 쓰기의 비대칭 (의도적)**:
+#
+# - **RO(읽기)는 접속 실패도 `(None, False)` 로 저하한다.** 호출부는 전부 `c, owned = _ro_conn(conn)`
+#   직후 `if c is None: return <빈 결과>` 로 저하하며, docstring 도 "실패 시 [] 로 저하 — 비차단"
+#   을 약속한다. 그런데 기존 구현은 `_pg_available()` false(=설정 미비) 만 None 으로 저하하고
+#   **접속 자체의 실패(OperationalError)는 전파**했다 — PG 순단·pgbouncer 재시작·포트 변경 시
+#   그래프 검색/이웃조회/스키마 시드가 자기 계약과 달리 500 이 된다(실측: `schema_routine_keys`
+#   가 PG 미도달 시 스키마 분석 enqueue 전체를 중단시킴). 읽기는 실패해도 데이터 정합성을
+#   훼손하지 않으므로 "연결을 못 얻었다" 를 한 가지로 통일하는 편이 옳다.
+#
+# - **RW(쓰기)는 접속 실패를 전파한다 — 저하하지 않는다.** 쓰기 실패를 조용히 no-op 으로
+#   바꾸면 "동기화가 안 됐는데 성공으로 보고" 된다. 구체적으로 `sync_graph` 는 접속 실패 시
+#   초기 리포트(`errors=0, step_failures=0`)를 그대로 돌려주고, `scripts/metadata_graph_sync.py`
+#   가 그것을 `ok=True` → **exit 0** 으로 해석해 cron 이 PG 순단을 놓친다. 설정 미비
+#   (`_pg_available()` false = cutover 전)만 기존대로 graceful no-op 으로 남긴다.
+#
+# silent 저하 방지: RO 저하는 warning 1줄로 남긴다(traceback 없이 사유만 — 순단 시 로그 폭주 방지).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _pg_conn_pair_ro(conn):
+    """`(conn, owned)` — conn 미지정이면 KB RO 연결을 연다(owned=True → 호출측 close 책임).
+
+    연결 불가(설정 미비 **또는 접속 실패**)는 `(None, False)` 로 저하한다 — 호출부의
+    `if c is None: return <빈 결과>` 계약과 정합."""
+    if conn is not None:
+        return conn, False
+    if not _pg_available():
+        return None, False
+    try:
+        return _pg_connect_ro(), True
+    except Exception as exc:
+        _db_logger.warning("pg ro connect failed — 저하(None) 로 계속: %s", exc)
+        return None, False
+
+
+def _pg_conn_pair_rw(conn):
+    """`(conn, owned)` — conn 미지정이면 KB RW 연결(autocommit)을 연다.
+
+    설정 미비(`_pg_available()` false)는 `(None, False)` 로 저하하지만, **접속 실패는 전파한다**
+    — 쓰기 실패를 no-op 으로 삼키면 sync 실패가 성공(exit 0)으로 보고되기 때문(위 주석 참조)."""
+    if conn is not None:
+        return conn, False
+    if not _pg_available():
+        return None, False
+    return _pg_connect(autocommit=True), True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # feature-0022: agent PG scratch workspace connection.
 #
 # assistant 전용 낙서장 DB(`agent_scratch`)에 `agent_scratch_rw` role 로 접속한다. 이 role 은

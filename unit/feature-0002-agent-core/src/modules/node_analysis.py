@@ -337,12 +337,8 @@ def _relevance(node: dict, meta: dict, anchor: dict) -> float:
 
 # ── 연결 헬퍼 ────────────────────────────────────────────────────────────────
 def _rw_conn(conn):
-    if conn is not None:
-        return conn, False
-    from shared.db import _pg_available, _pg_connect
-    if not _pg_available():
-        return None, False
-    return _pg_connect(autocommit=True), True
+    from shared.db import _pg_conn_pair_rw
+    return _pg_conn_pair_rw(conn)
 
 
 def _clamp(v, lo, hi, default):

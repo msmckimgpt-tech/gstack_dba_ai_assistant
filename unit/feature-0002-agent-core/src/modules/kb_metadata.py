@@ -30,12 +30,8 @@ _INJECT_COLUMN_CAP = 200
 
 def _ro_conn(conn):
     """(conn, owned). conn 미지정이면 agent_kb RO 연결을 연다(owned=True → 호출측 close)."""
-    if conn is not None:
-        return conn, False
-    from shared.db import _pg_available, _pg_connect_ro
-    if not _pg_available():
-        return None, False
-    return _pg_connect_ro(), True
+    from shared.db import _pg_conn_pair_ro
+    return _pg_conn_pair_ro(conn)
 
 
 # ── 관리(RW) — 메타데이터 거버넌스 콘솔 CRUD (ITEM-11 Phase 2) ──────────────────

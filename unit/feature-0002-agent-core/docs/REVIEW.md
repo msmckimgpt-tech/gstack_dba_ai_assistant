@@ -777,3 +777,132 @@ Cross-ref: CHG-20260728T182000-cyvol-scope-prefetch-postdeploy ·
 
 Cross-ref: CHG-20260729T110000-dataplane-conn-liveness · TASK-20260729T110000-dataplane-conn-liveness ·
 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` (`FR-dataplane-conn-stale-no-reconnect`).
+
+## REV-20260729T160000-test-live-pg-isolation [SKIPPED:panel-launched-but-session-limit-terminated] — PASS (self-review 대체, 한계 명시)
+
+테스트 라이브 PG 격리 + 연결 저하 계약
+
+**위험도**: Major (§12.3) — 테스트 하네스 변경 + 프로덕션 저하 경로 동작 변경. 인증/인가·개인정보·
+파괴적 데이터 변경 없음. 사용자 명시 요청("근본 원인을 수정해주세요") 범위 내.
+
+### 판단 근거 — 왜 "환경성 baseline" 이 아니라 결함이었나
+
+여러 cycle 이 이 실패들을 "라이브 환경 의존 flake" 로 분류하고 main 기준선 대조로 우회해 왔다.
+그 분류는 절반만 맞았다. 실패가 환경에 의존한 것은 사실이나, **의존 자체가 하네스 결함**이었다:
+단위 테스트가 라이브 데이터플레인에 도달할 수 있다는 것이 원인이고, 실패는 그 증상이다.
+증거 — 세 파일은 **단독 실행에서도 동일하게 실패**했다(순서-의존 flake 배제). traceback 이
+`_pg_connect_ro` 까지 내려가 fake conn 이 아니라 라이브 PG 를 조회한 사실이 직접 드러난다.
+
+### 고려한 대안
+
+1. **테스트를 기준선에 맞춰 xfail/deselect** — 기각. 증상 은폐이며, 실패 집합이 인프라 상태에
+   따라 계속 바뀌므로 기준선 자체가 안정되지 않는다(4·8·13·15 관측).
+2. **라우팅 스위치만 mysql 로 중립화** — 부분해. attachment 13건은 없어지지만 PG 에 직접 붙는
+   경로(graph/KB 모듈)는 그대로 남아 같은 함정이 재발한다.
+3. **PG 포트 차단만** — 13건은 없어지나 라이브 PG 생존에 의존해 통과하던 2건이 노출된다. 그중
+   1건은 실제 코드 결함이라 함께 고쳐야 완결된다.
+4. **채택: 2+3 동시 + 드러난 코드 결함 수정 + 하네스 밖(root conftest) 2중 방어.**
+
+### 적대적 자문 — 스스로 반박한 지점
+
+1. **"PG 차단이 라이브 PG 검증 테스트를 죽이지 않나"** — 실측으로 확인. 라우팅 스위치를 보는
+   테스트들은 `os.environ` 이 아니라 **모듈 속성을 monkeypatch** 한다(`test_runtime_read_backend`,
+   `test_insight_degraded_backoff` 등) → 본 변경에 무관. 그래도 필요할 경우를 위해
+   `AGENT_TEST_ALLOW_LIVE_BACKENDS=1` escape 를 남겼다.
+2. **"연결 실패를 None 저하로 바꾸면 진짜 장애가 조용히 묻히지 않나"** — **일부 타당했고, 실제로
+   회귀를 만들었다(아래 별도 섹션에서 시정).** 읽기(RO)에 대해서는 반박이 성립한다: 읽기 호출부
+   40곳이 **이미 전부** `if c is None: return <빈 결과>` 로 작성되어 있었고, 설정 미비에만 저하가
+   적용되고 접속 실패에는 적용되지 않던 비대칭이 결함이었으므로 대칭 회복이 맞다(warning 로그로
+   관측). 그러나 쓰기(RW)까지 같이 저하시킨 것은 잘못이었다 — 쓰기 실패의 은폐는 정합성이 아니라
+   **관측성**을 깨뜨린다.
+3. **"8개 모듈 일괄 위임은 scope 확대 아닌가"** — 11개 구현이 docstring 을 뺀 본문이 완전히
+   동일했다. 하나만 고치면 나머지 7개에 같은 버그가 남고, 다음 세션이 또 밟는다. 위임 형태를
+   유지해 기존 monkeypatch 계약은 보존했다(동작 변경 없이 정본만 이동).
+
+### 잔여 한계 (정직 기록)
+
+- 본 수정은 **KB/그래프 페어 헬퍼 11곳**을 덮는다. `kb_retrieval` · `account_recall` ·
+  `runtime_backend` · `insight` 등은 `_pg_available` + `_pg_connect` 를 직접 쓰는 다른 형태라
+  이번 범위 밖이다 — 각자 try/except 를 가진 경우도 있어 일괄 전환은 별 cycle 이 맞다.
+  미검증을 완료로 보고하지 않는다.
+- 격리는 "테스트가 라이브에 못 붙게" 하지, 라이브를 겨냥한 통합 검증을 제공하지 않는다. PG 경로
+  자체의 실동작 검증은 여전히 배포 후 라이브 실증의 몫이다.
+- `.env` 상속 구조 자체(테스트가 운영 env_file 을 물려받음)는 그대로다. 본 수정은 알려진 도달면
+  (MySQL·PG·스냅샷·라우팅)을 막는 backstop 이며, 새 라이브 자원이 추가되면 같은 방식으로
+  `TEST_ISOLATION_ENV` + 루트 `conftest.py` 에 등재해야 한다. 근본적으로는 테스트 전용 compose
+  서비스(env_file 미상속)가 더 강한 해법이나 blast radius 가 커 별 cycle 후보로 남긴다.
+
+### 검증
+`make test` 신규 실패 0 · 전체 **2976 passed / 2 skipped / 0 failed**(2회 연속 동일 — 이전 13건
+고정 실패가 0으로). Run 기록 = `docs/test-runs.d/20260729T160000-test-live-pg-isolation.md`.
+
+Cross-ref: CHG-20260729T160000-test-live-pg-isolation · TASK-20260729T160000-test-live-pg-isolation.
+
+### [SKIPPED: subagent panel — 세션 사용량 한도로 조기 종료] 검증 패널 (§18.8)
+
+사용자 승인(1회 확인) 하에 backend·qa 두 관점의 적대 리뷰 subagent 를 실제로 기동했으나, 두
+에이전트 모두 **세션 사용량 한도**로 결론 전 조기 종료됐다(`session limit · resets 5:20pm`).
+결과물이 없으므로 패널 통과로 위장하지 않고 SKIPPED 로 기록한다. 대신 두 패널이 마지막으로
+착수했던 검증 항목을 본 세션이 직접 수행했고, 근거는 아래와 같다.
+
+**1. 저하 계약이 모든 호출부에서 성립하는가 (전수 확인)** — 위임으로 바꾼 8개 모듈의 `_ro_conn`/
+`_rw_conn` 호출부 **40곳 전부**가 직후에 `if <c> is None: return <빈 결과>` 분기를 갖는다:
+`metadata_graph` 13 · `node_analysis` 9 · `relationships` 8 · `semantic_cluster` 4 · `routines` 2
+(변수명 `kc`) · `kb_metadata` 2 · `sample_queries` 1 · `kb_glossary` 1. 예외 0.
+`kb_glossary.py:265` 에는 이미 `# _pg_connect_ro 예외도 여기서 흡수(docstring 계약)` 주석이
+달려 있어, 본 변경이 새 정책이 아니라 **일부 호출부만 개별 방어하던 것을 정본으로 끌어올린
+것**임을 그 자체로 증언한다.
+
+**2. `owned` 계약 보존** — 저하는 항상 `(None, False)` 다. 호출부의 `if owned: c.close()` 는
+`owned=False` 이므로 close 를 시도하지 않는다. 이중 close·close 누락 경로 없음.
+
+**3. monkeypatch 계약 보존** — 모듈 헬퍼 함수 자체를 남기고 본문만 위임으로 바꿨으므로
+`monkeypatch.setattr(mod, "_ro_conn", ...)` 는 그대로 유효하다. `shared.db._pg_connect_ro` 를
+패치하는 방식도 정본이 모듈 전역 이름으로 조회하므로 동일하게 유효. 실증 = 전체 스위트
+2976 passed(신규 실패 0).
+
+**4. false green 검사 (라이브 PG 로 새던 2건이 "검증 없이 통과" 로 바뀌지 않았는가)**
+- `test_routine_dbanalysis::test_schema_analysis_fail_loud_on_status_aggregation_failure` —
+  검증 의도(상태 집계 실패 시 전량 재시드 금지·fail-loud)는 그대로 실행된다. 이제
+  `schema_routine_keys` 가 PG 미도달 시 자기 계약대로 `[]` 로 저하하고, monkeypatch 된
+  `schema_table_keys`(5건) + `get_scope_analysis_status → None` 조합이 fail-loud 분기에
+  정확히 도달한다. 이전엔 그 분기에 닿기 전에 OperationalError 로 죽었다 — **검증이 회복된
+  것이지 우회된 것이 아니다.**
+- `test_item11_batch8_update_conv_product::test_auto_happy_200` — 이 테스트의 대상은 MySQL
+  경로 happy path 이고 fixture 도 MySQL fake conn(`override_conn`)을 주입한다. 라우팅이
+  `postgres` 로 새면서 라이브 PG 에 UPDATE 를 쏘던 것이 비정상이었고, 중립화로 fixture 가
+  의도대로 사용된다. 역시 검증 회복.
+
+**5. 놓친 중복** — `kb_retrieval` · `account_recall` · `runtime_backend` · `insight` ·
+`kb_backend` · `llm_provider_health` 은 `_pg_available` + `_pg_connect*` 를 직접 쓰는 **다른
+형태**(페어 헬퍼 아님, 일부는 자체 try/except 보유)라 이번 위임 대상이 아니다. 위 "잔여 한계"
+에 이미 기록했으며, 미검증을 완료로 보고하지 않는다.
+
+**한계 (정직)**: 위 5개 항목은 self-review 이며, 독립 관점의 적대 검증을 대체하지 못한다.
+사용량 한도 해제 후 동일 diff 에 패널을 재실행할 가치가 있다.
+
+### 커밋 전 자체 재검토에서 잡은 회귀 (초안 → 시정)
+
+사용자 요청으로 커밋 직전 재검토를 수행해, **초안이 만든 회귀 1건**과 **미검증 가정 1건**을 찾았다.
+
+**[MAJOR·시정됨] 쓰기 경로 저하가 sync 실패를 exit 0(성공)으로 위장** — 초안은 `_pg_conn_pair_rw`
+도 접속 실패를 `(None, False)` 로 저하시켰다. 그런데 `metadata_graph.sync_graph` 는 `c is None`
+이면 **초기 리포트를 그대로 반환**하고(`metadata_graph.py:815-821` — `errors=0, step_failures=0,
+synced_at=None`), `scripts/metadata_graph_sync.py:55` 가 `rep["ok"] = errors==0 and
+step_failures==0` 로 판정한 뒤 `:64` 에서 `return 0 if rep["ok"] else 1` 한다. 즉 **PG 순단 시
+cron(`bin/metadata-graph-sync.sh`)이 exit 0 을 받아 정상으로 인지**하고, 그래프는 stale 해지는데
+아무 신호도 남지 않는다. 이전 동작(예외 전파 → 비정상 종료)보다 명백히 나쁘다.
+
+시정: **RW 는 설정 미비만 저하하고 접속 실패는 전파**하도록 되돌렸다(기존 동작 = 회귀 0). RO 만
+저하한다. 읽기 실패는 데이터 정합성을 훼손하지 않고 호출부 계약도 이미 저하를 전제하지만, 쓰기
+실패 은폐는 관측성 손실이므로 **비대칭을 의도적으로 남긴다**(근거는 `shared/db.py` 주석에 기록).
+`sync_graph`·`store_*`·`purge_*` 등 쓰기 함수의 동작은 본 cycle 에서 **변경 없음**.
+
+원 문제(`test_routine_dbanalysis`)는 `schema_routine_keys` → `_ro_conn` 즉 **읽기** 경로였으므로,
+RW 원복 후에도 목표는 그대로 달성된다 — 재검증 `make test` exit 0 · 신규 실패 0.
+
+**[검증됨] 루트 `conftest.py` 가 실제로 로드되는가** — 2중 방어를 주장했으나 `make test` 는 Makefile
+env 도 함께 주므로 conftest 단독 효력이 미검증이었다. Makefile 격리를 **빼고**(컨테이너 env 가
+`AGENT_KB_PG_PORT=5432` · `AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=postgres` 인 상태 확인) 문제
+테스트 5파일을 실행해 **49 passed** 를 확인했다 — conftest 가 `os.environ` 을 실제로 덮는다.
+2중 방어는 허구가 아니다.

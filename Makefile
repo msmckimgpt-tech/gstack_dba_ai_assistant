@@ -212,12 +212,29 @@ build:  ## lifecycle: 모든 서비스 이미지를 --no-cache 로 재빌드
 #                   호스트를 바꾸면 SSRF 가드 테스트가 오염된다.
 #   RUNTIME_SETTINGS_SNAPSHOT_PATH — `/shared` 공유 볼륨 대신 컨테이너 임시 파일. 스냅샷은
 #                   web·워커가 TTL 로 읽는 live 전파 채널이라, DB 를 막아도 여기 쓰면 오염된다.
-# PG(AGENT_KB_PG_*) 는 의도적으로 두지 않는다 — 현재 일부 테스트가 라이브 PG 읽기에 의존해
-# 통과하고 있어, 함께 끊으면 본 cycle 의 scope 를 넘는 회귀가 난다(REPORT 후속 항목).
+#   AGENT_KB_PG_PORT / _RO — KB Postgres(pgbouncer·replica) 를 도달 불가로 (2026-07-29 완결).
+#                   MySQL 만 막고 PG 를 열어두던 상태가 "main 기준선 N건 실패" 의 근본 원인이었다:
+#                   테스트가 주입한 fake conn 을 무시하고 라이브 PG 를 실제 조회해 attachment
+#                   계열 13건이 실패하고(0행 → 빈 섹션), 반대로 라이브 PG 가 살아 있을 때만
+#                   통과하는 테스트도 생겨 실패 집합이 인프라 기동 상태에 따라 요동쳤다
+#                   (여러 세션이 4·8·13·15건으로 서로 다르게 관측). PG 쓰기까지 실행되던
+#                   경로도 있었다(product PATCH). 이전 주석의 "PG 는 의도적으로 두지 않는다
+#                   — 일부 테스트가 라이브 PG 읽기에 의존" 상태는 그 의존 2건을 함께 고쳐
+#                   해소했다(`shared/db.py` 저하 계약 + 라우팅 중립화).
+#   AGENT_RUNTIME_*_READ_BACKEND / AGENT_KB_READ_BACKEND — 운영 `.env` 의 cutover 스위치가
+#                   테스트에 새어들지 않도록 mysql 로 중립화. PG 경로를 겨냥한 테스트는 자기
+#                   안에서 monkeypatch 로 명시 전환한다.
 # 애플리케이션 레벨 차단(_connect_memory)은 web-ui `tests/conftest.py` 참조 — 2중 방어.
+# 하네스 밖(로컬 `pytest`)에서도 같은 격리가 서도록 저장소 루트 `conftest.py` 가 동일 값을
+# 강제한다(정본 설명도 그 파일에 있음). 라이브 백엔드 통합 점검은 AGENT_TEST_ALLOW_LIVE_BACKENDS=1.
 TEST_ISOLATION_ENV := \
   -e DB_PORT=1 \
-  -e RUNTIME_SETTINGS_SNAPSHOT_PATH=/tmp/runtime_settings.test.json
+  -e RUNTIME_SETTINGS_SNAPSHOT_PATH=/tmp/runtime_settings.test.json \
+  -e AGENT_KB_PG_PORT=1 \
+  -e AGENT_KB_PG_PORT_RO=1 \
+  -e AGENT_RUNTIME_READ_BACKEND=mysql \
+  -e AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=mysql \
+  -e AGENT_KB_READ_BACKEND=mysql
 
 test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리 컨테이너에서 실행 (psycopg 등 런타임 의존 포함, --no-deps + 라이브 DB/스냅샷 차단 env)
 	@$(MAKE) -s dc-build SERVICE=agent
