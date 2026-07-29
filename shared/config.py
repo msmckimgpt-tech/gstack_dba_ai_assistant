@@ -260,6 +260,14 @@ __all__ = [
     "get_active_datasource",
     "get_active_datasource_engine",
     "get_active_default_db",
+    # metadata-product-scope: KB 메타데이터 거버넌스 축(제품)
+    "PRODUCT_SCOPE_PREFIX",
+    "product_scope_key",
+    "is_product_scope",
+    "set_active_product",
+    "get_active_product_scope",
+    "is_product_scope_unresolved",
+    "AGENT_KB_LEGACY_DS_SCOPE_READ",
     "ds_fact_key",
     "ds_object_suffix",
     "ds_fact_like",
@@ -544,6 +552,78 @@ def get_active_default_db():
 
 def get_active_datasource():
     return _ACTIVE_DATASOURCE_KEY.get()
+
+
+# ── 제품(Product) 스코프 — 지식베이스 메타데이터 거버넌스 축 (metadata-product-scope) ──
+# 사용자·메타데이터 관리자는 '데이터소스' 가 아니라 **제품** 단위로 작업 범위를 인식한다.
+# 그런데 종전 KB 메타데이터(용어사전/ENUM/테이블·컬럼 설명/샘플쿼리)는 활성 datasource 로
+# 스코프돼, 제품 하나가 N개 datasource 에 걸치면(라이브: KR_LIVE·KR_QA 각 7개) 등록분이
+# 그 중 1개 DS 질의에서만 주입되고, 반대로 1개 datasource 를 N개 제품이 공유하면(라이브:
+# mssql-qa-idc 를 5개 제품이 공유) 남의 제품 메타데이터가 섞여 들어왔다.
+# → KB 메타데이터의 scope 축을 **제품**으로 통일한다. datasource 축(_ACTIVE_DATASOURCE_KEY)은
+#    질의 실행·dialect·fact/RAG 스코핑 용도로 그대로 유지된다(별 축, 무간섭).
+PRODUCT_SCOPE_PREFIX = "product."
+
+# ── expand/contract: 이관 전 레거시 datasource-scope 행 호환 읽기 ───────────────
+# 코드 배포와 데이터 이관(`scripts/kb_scope_rescope.py`)은 원자적일 수 없다. 그 사이 창에서
+# 제품 스코프만 읽으면 **기존 등록 메타데이터가 통째로 안 보인다**(용어·ENUM·설명·샘플).
+# 그래서 배포 시점엔 활성 datasource 스코프를 **꼬리 후보**로 함께 읽고(expand — 이 창의 동작은
+# 종전과 동일하며 새 회귀가 아니다), 이관 완료 후 본 플래그를 0 으로 내려 contract 한다
+# (그래야 공유 datasource 의 타 제품 혼입이 실제로 사라진다).
+# 기본 1(=호환 유지) — 이관을 마친 배치는 `AGENT_KB_LEGACY_DS_SCOPE_READ=0` 을 설정한다.
+AGENT_KB_LEGACY_DS_SCOPE_READ = os.environ.get("AGENT_KB_LEGACY_DS_SCOPE_READ", "1").strip().lower() not in ("0", "false", "no", "off")
+
+_ACTIVE_PRODUCT_SCOPE: "_contextvars.ContextVar[str | None]" = _contextvars.ContextVar(
+    "active_product_scope", default=None
+)
+# "제품 없음"(정상 — 제품 미선택 대화/CLI)과 "제품이 있는데 해소 실패"(transient DB 오류)를 구별한다.
+# 읽기(주입)는 둘 다 fail-open('common' 공용 사전만)이지만, **쓰기(자율수집)는 후자에서 반드시
+# 중단**해야 한다 — 'common' 으로 폴백하면 특정 제품의 용어/ENUM 제안이 전 제품에 퍼진다
+# (cross-product isolation 위반). 기본 False.
+_PRODUCT_SCOPE_UNRESOLVED: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
+    "product_scope_unresolved", default=False
+)
+
+
+def product_scope_key(product_key) -> "str | None":
+    """제품 식별자(ProductKey) → KB 메타데이터 scope_key (`product.<key>`). 빈값이면 None.
+
+    `_sanitize_key_part` 허용 문자([A-Za-z0-9_.-])만 남기므로 `:` 대신 `.` 를 구분자로 쓴다.
+    datasource scope_key 는 `mysql-<hash>`/`mssql-<hash>` 또는 .env 라벨이라 접두사가 겹치지 않는다.
+    """
+    raw = str(product_key or "").strip().lower()
+    if not raw:
+        return None
+    if raw.startswith(PRODUCT_SCOPE_PREFIX):
+        return raw
+    return PRODUCT_SCOPE_PREFIX + raw
+
+
+def is_product_scope(scope_key) -> bool:
+    """scope_key 가 제품 스코프인지."""
+    return str(scope_key or "").strip().lower().startswith(PRODUCT_SCOPE_PREFIX)
+
+
+def set_active_product(product_key, *, unresolved: bool = False) -> None:
+    """현재 컨텍스트의 활성 제품 스코프 설정. None=미지정(제품 없는 대화/CLI).
+
+    `set_active_datasource` 와 동일한 ContextVar 패턴 — run 시작 시 agent_core 가 설정하고
+    KB 메타데이터 로더가 읽는다(로더 시그니처에 product 를 실어 나르지 않기 위함).
+
+    unresolved=True: 대화에 제품이 있으나 스코프 해소에 실패했다는 신호(자율수집 차단용).
+    """
+    _ACTIVE_PRODUCT_SCOPE.set(product_scope_key(product_key))
+    _PRODUCT_SCOPE_UNRESOLVED.set(bool(unresolved))
+
+
+def get_active_product_scope():
+    """활성 제품 스코프 키(`product.<key>`). None=미지정 → 공용(common)만 적용."""
+    return _ACTIVE_PRODUCT_SCOPE.get()
+
+
+def is_product_scope_unresolved() -> bool:
+    """대화에 제품이 있는데 스코프를 해소하지 못한 상태인지(자율수집은 이때 중단)."""
+    return bool(_PRODUCT_SCOPE_UNRESOLVED.get())
 
 
 # feature-0022: 현재 컨텍스트의 활성 대화 id. scratch 도구(scratch_import/scratch_sql/

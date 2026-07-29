@@ -2239,3 +2239,44 @@ FR-brandnew-script-attachment-delivery-gap. assistant 가 **새로 생성한** �
 - AC-20260729T170000-search-collation-nameerror-1 (동작 복원): 검색어(`q`)가 있는 `/api/conversations` 요청이 200 을 반환한다. 원인은 `_audit_message_table_collations`(ITEM-10 p7 로 `routers/_audit_infra.py` 이동)가 `global _COLLATION_AUDIT_DONE` 을 선언하면서 그 모듈에 정의가 없어 첫 읽기에서 `NameError` 를 던진 것 — 본문 검색 게이트가 이 함수를 부르므로 검색 전체가 500 이었다.
 - AC-20260729T170000-search-collation-nameerror-2 (상태 단일점): once-per-process 플래그는 **app 모듈 전역**(`app._COLLATION_AUDIT_DONE`)에 유지한다. 라우터 모듈에 동명 정의를 신설하지 않는다 — app.py 의 것과 갈리면 audit 이 영영 skip 되거나 매 요청 재실행되는 상태 이중화가 생긴다(패치-단일점 규약).
 - AC-20260729T170000-search-collation-nameerror-3 (회귀 가드): 회귀 테스트가 **패치 없이** `_list_conversations` 의 본문 검색 경로를 타서 audit 호출을 실제로 통과시킨다. 게이트 뒤 부수 호출을 monkeypatch 로 지우면 런타임 예외를 통과시킨다는 것이 이 결함의 실증이다.
+
+
+## (metadata-product-scope, 2026-07-29) 지식베이스 메타데이터 — **제품(Product) 단위 스코프** (web/UI + API + 주입 경로, Major §12.3, 신규 권한·마이그레이션 0)
+
+`REQ-20260729T213000-metadata-product-scope` — 관리 콘솔 > 지식베이스 > 메타데이터의 모든 정보 구성을 **사용자가 인식하는
+작업 범위(제품)** 와 정합화한다. 종전 축은 데이터소스였다.
+
+### 스코프 축 규약
+
+- KB 메타데이터의 scope_key = **`product.<ProductKey>`**(소문자) 또는 **`common`**(전 제품 공용).
+  `shared/config.product_scope_key()` 가 단일 생성점. 데이터소스 scope_key(`mysql-<hash>` 등)는
+  더 이상 KB 메타데이터 축이 아니다 — 질의 실행·dialect·fact/RAG 스코핑에만 쓰인다(별 축).
+- 대상: 용어사전(`kb_glossary`) · ENUM 코드사전(`enum_dictionary`) · 테이블 설명
+  (`table_descriptions`) · 컬럼 설명(`column_descriptions`) · 샘플쿼리(`sample_queries`) +
+  검토·검수 큐(`glossary_feedback` · `enum_feedback` · `sample_feedback`).
+- 설명의 정체는 한 제품 안에서 `(schema_name, table_name[, column_name])`. 제품의 두 datasource 가
+  같은 (schema, table) 을 노출하면 설명 1건을 공유한다(사용자에게 datasource 는 비가시 축).
+
+### AC
+
+- `AC-20260729T213000-metadata-product-scope-1` — 메타데이터 탭 스코프 선택기가 **제품 목록 + 공용**을 노출한다
+  (`GET /api/admin/metadata/scopes`). 데이터소스는 이 화면에 나타나지 않는다.
+- `AC-20260729T213000-metadata-product-scope-2` — 제품 스코프로 등록한 항목은 그 제품의 **모든 datasource 질의**에 주입된다
+  (활성 datasource 와 무관). 공유 datasource 를 쓰는 **다른 제품에는 주입되지 않는다**.
+- `AC-20260729T213000-metadata-product-scope-3` — 스키마 골격 가져오기의 후보는 그 제품의 **접근DB**(`WebProductDatabases`)로
+  한정된다. allowlist 밖 schema 는 404, 접근DB 카탈로그를 못 읽으면 503(fail-closed) — 넓히지 않는다.
+- `AC-20260729T213000-metadata-product-scope-4` — 자율수집(용어/ENUM 제안)도 제품 스코프에 귀속된다. 대화에 제품이 있는데
+  스코프 해소에 실패하면 **수집을 중단**한다(`common` 폴백 금지 — cross-product 누출 차단).
+- `AC-20260729T213000-metadata-product-scope-5` — 배포↔이관 창에서는 레거시 datasource 스코프를 꼬리로 함께 읽어 기존
+  메타데이터가 사라지지 않는다(`AGENT_KB_LEGACY_DS_SCOPE_READ`, 기본 on). 이관 완료 후 0 으로 contract.
+
+### 운영 절차 (expand → migrate → verify → contract)
+
+```bash
+# 1. expand 배포(기본 플래그 on) 후
+docker exec <agent> python -m scripts.kb_scope_rescope --assess
+docker exec <agent> python -m scripts.kb_scope_rescope --migrate --purge-ambiguous \
+    --backup /shared/kb-scope-backup.jsonl --apply
+docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 이어야 함
+# 2. AGENT_KB_LEGACY_DS_SCOPE_READ=0 설정 + web/워커 재기동(contract)
+```

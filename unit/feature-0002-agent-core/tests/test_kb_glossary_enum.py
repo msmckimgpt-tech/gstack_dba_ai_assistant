@@ -123,20 +123,51 @@ def test_scope_excludes_other_datasource():
     assert _normalize_scope_key("ds:fin") not in scopes      # 타 ds 미요청(격리)
 
 
-def test_default_scope_derives_from_active_datasource():
-    # 운영 경로: scope_key 미지정 → cfg.get_active_datasource() 로 도출(CURRENT_FACT_SCOPE_KEY 아님).
+def test_default_scope_derives_from_active_product():
+    # metadata-product-scope: 운영 경로에서 scope_key 미지정 → cfg.get_active_product_scope() 로 도출.
+    # (종전엔 활성 datasource 였다 — 제품이 N개 DS 에 걸치면 등록분이 1/N 질의에서만 주입되던 결함.)
     from shared import config as cfg
     from modules.utils import _normalize_scope_key
-    cfg.set_active_datasource("ds_sales")
+    _prev_legacy = getattr(cfg, "AGENT_KB_LEGACY_DS_SCOPE_READ", True)
+    cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = False   # contract 상태(이관 완료 후) 계약을 고정
+    cfg.set_active_product("KR_LIVE")
+    cfg.set_active_datasource("mysql-an1-auth")   # 활성 DS 는 달라도 제품 축이 우선
     try:
         conn = _FakeConn(glossary=[("status", "x")], enums=[])
         G.load_glossary_enum_context("status", conn=conn)  # scope 미지정 = 운영 호출 형태
         reads = [p for (sql, p) in conn.captured if sql.strip().upper().startswith("SELECT")]
         scopes = reads[0][0]
-        assert _normalize_scope_key("ds_sales") in scopes   # 활성 ds 가 scope 에 반영
-        assert scopes != ["common", ""]                      # 'common' 만으로 폴백되지 않음(B1 회귀)
+        assert _normalize_scope_key("product.kr_live") in scopes   # 활성 제품이 scope 에 반영
+        assert "mysql-an1-auth" not in scopes                      # datasource 축은 더 이상 쓰지 않는다
+        assert scopes != ["common", ""]                            # 'common' 만으로 폴백되지 않음
     finally:
+        cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = _prev_legacy
+        cfg.set_active_product(None)
         cfg.set_active_datasource(None)
+
+
+def test_product_scope_spans_all_datasources_of_product():
+    """1제품↔N데이터소스 회귀 가드 — 같은 제품이면 활성 datasource 가 무엇이든 같은 scope 를 읽는다.
+    (라이브 실측: KR_LIVE 용어 85건이 7개 DS 중 auth 에만 등록돼 나머지 6개 질의에서 미주입이었다.)"""
+    from shared import config as cfg
+    from modules.utils import _normalize_scope_key
+    _prev_legacy = getattr(cfg, "AGENT_KB_LEGACY_DS_SCOPE_READ", True)
+    cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = False   # contract 상태 계약(expand 꼬리는 별 테스트가 검증)
+    seen = []
+    for ds in ("mysql-an1-auth", "mysql-an1-player", "mysql-an1-logdb"):
+        cfg.set_active_product("KR_LIVE")
+        cfg.set_active_datasource(ds)
+        try:
+            conn = _FakeConn(glossary=[("status", "x")], enums=[])
+            G.load_glossary_enum_context("status", conn=conn)
+            reads = [p for (sql, p) in conn.captured if sql.strip().upper().startswith("SELECT")]
+            seen.append(tuple(reads[0][0]))
+        finally:
+            cfg.set_active_product(None)
+            cfg.set_active_datasource(None)
+    cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = _prev_legacy
+    assert len(set(seen)) == 1, f"제품이 같으면 DS 와 무관하게 동일 scope 여야 한다: {seen}"
+    assert _normalize_scope_key("product.kr_live") in seen[0]
 
 
 # ── 0021: 역할 차원 read 격리 ─────────────────────────────────────────────────
@@ -287,3 +318,108 @@ def test_add_glossary_relation_sql():
     assert "INSERT INTO glossary_relations" in sql
     assert "ON CONFLICT (from_id, to_id, relation_type) DO NOTHING" in sql
     assert params[0] == 1 and params[1] == 2 and params[2] == "synonym"
+
+
+# ── metadata-product-scope: 제품 스코프 키 규약 ──────────────────────────────
+def test_product_scope_key_normalization():
+    """`product.<ProductKey>` 규약 — 소문자 정규화 + 중복 접두 방지 + 빈값 None.
+
+    `:` 대신 `.` 를 구분자로 쓰는 이유: `_sanitize_key_part` 가 허용하는 문자는 [A-Za-z0-9_.-] 라
+    `product:kr_live` 는 `product_kr_live` 로 뭉개진다(스코프 키가 조용히 어긋남)."""
+    from shared import config as cfg
+    from modules.utils import _normalize_scope_key
+    assert cfg.product_scope_key("KR_LIVE") == "product.kr_live"
+    assert cfg.product_scope_key("product.kr_live") == "product.kr_live"   # 재적용 무해(멱등)
+    assert cfg.product_scope_key("") is None and cfg.product_scope_key(None) is None
+    assert cfg.is_product_scope("product.kr_live") is True
+    assert cfg.is_product_scope("mysql-06656002eda6") is False
+    # 정규화를 통과해도 형태가 보존돼야 한다(sanitize 로 뭉개지면 read/write 축이 어긋난다).
+    assert _normalize_scope_key("product.kr_live") == "product.kr_live"
+
+
+def test_active_product_context_isolated_from_datasource():
+    """제품 컨텍스트는 datasource 컨텍스트와 별 축 — 한쪽 해제가 다른 쪽을 건드리지 않는다."""
+    from shared import config as cfg
+    cfg.set_active_product("MV_QA")
+    cfg.set_active_datasource("mysql-a4f572f222a2")
+    try:
+        assert cfg.get_active_product_scope() == "product.mv_qa"
+        cfg.set_active_datasource(None)
+        assert cfg.get_active_product_scope() == "product.mv_qa", "DS 해제가 제품 축을 지우면 안 된다"
+    finally:
+        cfg.set_active_product(None)
+        cfg.set_active_datasource(None)
+    assert cfg.get_active_product_scope() is None
+
+
+def test_kb_scope_candidates_falls_back_to_common_without_product():
+    """제품 미지정(제품 없는 1:1/CLI) → 공용 사전만. datasource 로 새지 않는다."""
+    from shared import config as cfg
+    from modules.utils import _kb_scope_candidates
+    _prev_legacy = getattr(cfg, "AGENT_KB_LEGACY_DS_SCOPE_READ", True)
+    cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = False   # contract 상태 계약
+    cfg.set_active_product(None)
+    cfg.set_active_datasource("mysql-deadbeef")
+    try:
+        scopes = _kb_scope_candidates()
+        assert scopes[0] == "common"
+        assert "mysql-deadbeef" not in scopes
+    finally:
+        cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = _prev_legacy
+        cfg.set_active_datasource(None)
+
+
+def test_legacy_ds_scope_read_tail_during_migration_window():
+    """expand/contract — 배포↔이관 창에서 레거시 datasource-scope 행이 계속 읽혀야 한다.
+
+    제품 스코프만 읽으면 이관 전까지 기존 등록 메타데이터가 통째로 사라진다(codex review P1).
+    이관 완료 후 AGENT_KB_LEGACY_DS_SCOPE_READ=0 으로 contract 하면 꼬리가 사라진다."""
+    from shared import config as cfg
+    from modules.utils import _kb_scope_candidates, _normalize_scope_key
+    prev = getattr(cfg, "AGENT_KB_LEGACY_DS_SCOPE_READ", True)
+    cfg.set_active_product("KR_LIVE")
+    cfg.set_active_datasource("mysql-an1-auth")
+    try:
+        cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = True
+        scopes = _kb_scope_candidates()
+        assert scopes[0] == _normalize_scope_key("product.kr_live")   # 제품이 1순위
+        assert "mysql-an1-auth" in scopes                              # 레거시 꼬리(expand)
+        assert "common" in scopes
+
+        cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = False                      # contract
+        scopes2 = _kb_scope_candidates()
+        assert "mysql-an1-auth" not in scopes2, "contract 후 datasource 축은 사라져야 한다"
+        assert scopes2[0] == _normalize_scope_key("product.kr_live")
+    finally:
+        cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = prev
+        cfg.set_active_product(None)
+        cfg.set_active_datasource(None)
+
+
+def test_explicit_scope_key_has_no_legacy_tail():
+    """admin 경로(명시 scope_key)는 레거시 꼬리를 붙이지 않는다 — 편집/삭제가 정확히 그 scope 만."""
+    from shared import config as cfg
+    from modules.utils import _kb_scope_candidates
+    prev = getattr(cfg, "AGENT_KB_LEGACY_DS_SCOPE_READ", True)
+    cfg.set_active_datasource("mysql-an1-auth")
+    try:
+        cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = True
+        scopes = _kb_scope_candidates("product.mv_qa")
+        assert "mysql-an1-auth" not in scopes
+    finally:
+        cfg.AGENT_KB_LEGACY_DS_SCOPE_READ = prev
+        cfg.set_active_datasource(None)
+
+
+def test_product_scope_unresolved_signal_distinct_from_absent():
+    """'제품 없음'과 '제품 있는데 해소 실패'는 구별돼야 한다(자율수집 fail-closed 근거)."""
+    from shared import config as cfg
+    cfg.set_active_product(None)
+    try:
+        assert cfg.is_product_scope_unresolved() is False
+        cfg.set_active_product(None, unresolved=True)
+        assert cfg.is_product_scope_unresolved() is True
+        assert cfg.get_active_product_scope() is None
+    finally:
+        cfg.set_active_product(None)
+    assert cfg.is_product_scope_unresolved() is False

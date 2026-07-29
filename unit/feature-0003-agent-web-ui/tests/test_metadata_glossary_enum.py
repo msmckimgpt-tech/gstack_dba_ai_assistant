@@ -121,15 +121,17 @@ def _audit_capture(monkeypatch):
 
 
 def _allow_scopes(monkeypatch, scopes=("common", "default")):
-    """_metadata_valid_scope_keys 가 부르는 datasources.all_datasources 를 fake — 허용 scope 집합 고정.
+    """허용 scope 집합 고정 — metadata-product-scope: 원천은 제품 카탈로그(_product_scope_catalog).
 
-    scope-key-unify: valid scope 는 dict 키(라벨)가 아니라 _dsr.scope_key(ds)(해시 축)다. fake ds 의
-    scope_key 필드를 scope 이름으로 채워 그 scope 가 허용되게 한다(real _dsr.scope_key 는 scope_key 우선).
+    scope 축이 datasource → **제품**으로 바뀌었으므로 all_datasources 대신 카탈로그를 fake 한다.
+    'common' 은 검증기가 항상 허용하므로 카탈로그에 넣지 않는다.
     """
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    import shared.datasources as _dsr
-    ds_map = {k: {"key": k, "engine": "mysql", "scope_key": k} for k in scopes if k != "common"}
-    monkeypatch.setattr(_dsr, "all_datasources", lambda conn: ds_map)
+    from routers import admin_metadata as _am
+    catalog = [{"scope_key": k, "product_id": i + 1, "product_key": k, "name": k,
+                "sort_order": 100, "datasources": [], "databases": []}
+               for i, k in enumerate(s for s in scopes if s != "common")]
+    monkeypatch.setattr(_am, "_product_scope_catalog", lambda conn=None: catalog)
 
 
 def _admin(monkeypatch):

@@ -641,11 +641,13 @@
         <!-- 2차 보기 strip(secondary nav, 필형) — admin.js(_metaSyncViews)가 review 서브탭(용어사전/ENUM/샘플쿼리)에서만
              동적으로 [목록 | 검토·검수 큐] 버튼을 생성한다. 권한별 게이트 + review 버튼 pending 배지. -->
         <div class="admin-meta-views" id="metadataViews" role="tablist" aria-label="보기 전환" style="display:none"></div>
-        <!-- B8: 필터 바(데이터소스 스코프 + 용어사전 역할) — 서브탭/보기 strip 과 시각적으로 분리된 목록 필터 행.
-             역할 필터는 glossary 목록 보기에서만 admin.js 가 노출. metadataScopeSelect 는 그래프 pane 과 옵션·선택 동기화. -->
+        <!-- B8: 필터 바(제품 스코프 + 용어사전 역할) — 서브탭/보기 strip 과 시각적으로 분리된 목록 필터 행.
+             역할 필터는 glossary 목록 보기에서만 admin.js 가 노출.
+             metadata-product-scope: 스코프 축 = **제품**(GET /api/admin/metadata/scopes). 데이터소스 축은
+             그래프 pane(graphScopeSelect) 전용으로 분리됐다 — 사용자·관리자는 제품 단위로 범위를 인식한다. -->
         <div class="admin-meta-filter-bar">
-          <label class="admin-meta-scope-label" for="metadataScopeSelect">데이터소스</label>
-          <select id="metadataScopeSelect" class="admin-meta-scope-select" aria-label="메타데이터 스코프(데이터소스)"></select>
+          <label class="admin-meta-scope-label" for="metadataScopeSelect">제품</label>
+          <select id="metadataScopeSelect" class="admin-meta-scope-select" aria-label="메타데이터 스코프(제품)"></select>
           <!-- 용어사전 역할 컨텍스트(0021, role-single-ui) — glossary 서브뷰에서만 admin.js 가 노출.
                역할 선택 UI 는 이것 하나뿐: 목록을 역할별로 좁히는 동시에 신규 용어의 등록 대상 역할을 결정한다(폼 select 폐기). -->
           <label class="admin-meta-scope-label" for="metadataRoleFilter" id="metadataRoleFilterLabel" style="display:none" title="목록 필터 + 신규 용어 등록 대상 역할">역할</label>
@@ -672,25 +674,27 @@
             <!-- 미선택 안내 — 다른 카테고리 list-detail empty-state(.admin-detail-empty) 컨벤션 + 거버넌스 안내문 통합. -->
             <div class="admin-detail-empty" id="metadataDetailEmpty">
               <p>왼쪽 목록에서 항목을 선택해 수정하거나, 우측 상단 <strong>＋ 새 항목</strong>으로 추가하세요.</p>
-              <p class="admin-meta-detail-note">용어사전(도메인 용어↔정의)·ENUM 코드사전(컬럼 코드↔라벨)·테이블/컬럼 설명·샘플쿼리를 데이터소스별로 관리합니다. 등록 내용은 질문/스키마 매칭 시 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다. <strong>공용(common)</strong> 스코프는 모든 데이터소스에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
+              <p class="admin-meta-detail-note">용어사전(도메인 용어↔정의)·ENUM 코드사전(컬럼 코드↔라벨)·테이블/컬럼 설명·샘플쿼리를 <strong>제품별</strong>로 관리합니다. 등록 내용은 그 제품의 질문/스키마 매칭 시 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다(제품이 여러 DB에 걸쳐 있어도 동일하게 적용). <strong>공용</strong> 스코프는 모든 제품에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
             </div>
         <!-- 부트스트랩 패널 — 우측 상세 모드(metadata-list-detail). '스키마 골격 가져오기' 버튼으로 진입.
-             scope-single-ds-ui: 데이터소스는 상단 스코프 선택(metadataScopeSelect)을 그대로 상속한다(부트스트랩
-             전용 DS selector 폐기 — 중복 + 스코프↔소스 불일치 footgun 제거). 공용(common) 스코프는 실제 스키마가
-             없어 골격 불가 → admin.js 가 #metadataBootstrapEmpty empty-state 로 안내한다. -->
+             metadata-product-scope: 대상은 상단 **제품** 스코프를 상속하고, 후보 DB 는 그 제품의 접근DB
+             (WebProductDatabases)로 한정된다 — 서버 전체 스키마를 나열하던 종전 데이터소스 축과 달리
+             제품 경계 밖 DB 가 노출되지 않는다. 공용 스코프는 특정 제품이 아니라 골격 불가 →
+             admin.js 가 #metadataBootstrapEmpty empty-state 로 안내한다. -->
         <section class="admin-meta-bootstrap" id="metadataBootstrap" style="display:none" aria-label="스키마 골격 부트스트랩">
           <!-- 공용(common) 스코프 안내 — 관리 콘솔 list-detail empty-state(.admin-detail-empty) 컨벤션 정합. -->
-          <div class="admin-detail-empty admin-meta-bootstrap-empty" id="metadataBootstrapEmpty" style="display:none">상단에서 특정 데이터소스 스코프를 선택하면 해당 스키마 골격을 가져올 수 있습니다. <strong>공용(common)</strong> 스코프는 실제 스키마가 없어 골격을 가져올 수 없습니다.</div>
+          <div class="admin-detail-empty admin-meta-bootstrap-empty" id="metadataBootstrapEmpty" style="display:none">상단에서 특정 <strong>제품</strong>을 선택하면 그 제품의 접근 DB 골격을 가져올 수 있습니다. <strong>공용</strong> 스코프는 특정 제품에 매이지 않아 골격을 가져올 수 없습니다.</div>
           <header class="admin-meta-bootstrap-head" id="metadataBootstrapHead">
             <button type="button" class="admin-meta-bootstrap-toggle" id="metadataBootstrapToggle" aria-expanded="false">스키마 골격 가져오기 ▾</button>
           </header>
           <div class="admin-meta-bootstrap-body" id="metadataBootstrapBody" style="display:none">
-            <p class="admin-meta-bootstrap-note">현재 스코프 데이터소스(<strong id="metadataBootstrapDsName">—</strong>)의 실제 스키마에서 테이블/컬럼 골격을 가져와 설명만 채워 일괄 저장합니다. 골격은 저장 전까지 영속되지 않습니다(미영속). 큰 스키마는 가져오는 데 시간이 걸릴 수 있습니다.</p>
+            <p class="admin-meta-bootstrap-note">현재 선택한 제품(<strong id="metadataBootstrapDsName">—</strong>)의 접근 DB 에서 테이블/컬럼 골격을 가져와 설명만 채워 일괄 저장합니다. 골격은 저장 전까지 영속되지 않습니다(미영속). 큰 DB 는 가져오는 데 시간이 걸릴 수 있습니다.</p>
             <div class="admin-meta-bootstrap-controls">
               <label class="admin-meta-field">
-                <!-- 라벨은 엔진별로 admin.js 가 갱신: MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층) -->
-                <span class="admin-meta-field-label" id="metadataBootstrapSchemaLabel">스키마 *</span>
-                <select id="metadataBootstrapSchema" class="admin-meta-input" aria-label="부트스트랩 스키마" disabled></select>
+                <!-- 라벨은 엔진별로 admin.js 가 갱신: MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층).
+                     metadata-product-scope: 후보는 그 제품의 접근DB 로 한정된다. -->
+                <span class="admin-meta-field-label" id="metadataBootstrapSchemaLabel">데이터베이스 *</span>
+                <select id="metadataBootstrapSchema" class="admin-meta-input" aria-label="부트스트랩 대상 DB" disabled></select>
               </label>
               <button type="button" class="btn-primary admin-meta-bootstrap-fetch" id="metadataBootstrapFetchBtn" disabled>골격 가져오기</button>
             </div>

@@ -27,10 +27,15 @@ class _FakePg:
 
 
 def _wire(monkeypatch, *, grounding=True, self_heal=True, scope="mysql-kr-an1-auth",
-          sweep_result=None, sweep_raises=False, prev_unknown=None):
+          sweep_result=None, sweep_raises=False, prev_unknown=None,
+          product_scopes=("product.kr_live",)):
     monkeypatch.setattr(_cfg, "AGENT_ENUM_SCHEMA_GROUNDING", grounding, raising=False)
     monkeypatch.setattr(_cfg, "AGENT_ENUM_SELF_HEAL", self_heal, raising=False)
     monkeypatch.setattr(_cfg, "get_active_datasource", lambda: scope)
+    # metadata-product-scope: ENUM 저장 축이 제품이라 sweep 대상도 제품 스코프다.
+    # 대상 산출(_self_heal_scope_keys)은 별 테스트에서 검증하고, 여기선 고정 주입한다.
+    monkeypatch.setattr(insight, "_self_heal_scope_keys",
+                        lambda mem_conn, ds_scope: list(product_scopes))
     monkeypatch.setattr(_cfg, "ds_scope_name", lambda name: f"{name}:ds:{scope}")
     monkeypatch.setattr(_db, "_pg_available", lambda: True)
     pg = _FakePg()
@@ -71,12 +76,12 @@ def test_self_heal_happy_path_executes(monkeypatch):
         "dict_deleted": 4, "feedback_rejected": 1, "dry_run": False})
     swept: set = set()
     res = _call(swept=swept, known_schemas=["dbAuth"])
-    assert calls["args"][0] == "mysql-kr-an1-auth"
+    assert calls["args"][0] == "product.kr_live"   # 제품 스코프로 sweep
     assert calls["args"][1] == ["dbAuth"]              # 실제 스키마 목록 전달
     assert calls["args"][2] is False                   # execute
     assert res["dict_deleted"] == 4
     assert pg.committed is True
-    assert "mysql-kr-an1-auth" in swept                # dedup 마킹
+    assert "product.kr_live" in swept                  # dedup 마킹(제품 스코프 단위)
 
 
 def test_self_heal_grounding_off_noop(monkeypatch):
@@ -117,7 +122,7 @@ def test_self_heal_empty_schema_list_failopen(monkeypatch):
 
 def test_self_heal_dedup_same_scope(monkeypatch):
     calls, _pg, _saved = _wire(monkeypatch)
-    assert _call(swept={"mysql-kr-an1-auth"}) is None
+    assert _call(swept={"product.kr_live"}) is None
     assert "args" not in calls
 
 
@@ -138,10 +143,10 @@ def test_self_heal_no_change_returns_none(monkeypatch):
 
 
 def test_self_heal_engine_none_treated_mysql(monkeypatch):
-    # engine 미지정(기본 단일 MySQL, ds=None)은 MySQL 로 간주 — self-heal 동작(scope='common')
-    calls, _pg, _saved = _wire(monkeypatch, scope="common")
+    # engine 미지정(기본 단일 MySQL)은 MySQL 로 간주 — self-heal 동작(sweep 대상은 제품 스코프).
+    calls, _pg, _saved = _wire(monkeypatch, scope="common", product_scopes=("product.solo",))
     _call(engine=None)
-    assert calls["args"][0] == "common"
+    assert calls["args"][0] == "product.solo"
 
 
 def test_self_heal_engine_other_excluded(monkeypatch):
@@ -172,3 +177,60 @@ def test_self_heal_first_observation_empty_confirm(monkeypatch):
         "dict_deleted": 0, "feedback_rejected": 0, "dry_run": False})
     _call(known_schemas=["dbAuth"])
     assert calls["confirm_lower"] == set()
+
+
+# ── metadata-product-scope: sweep 대상 스코프 산출 ────────────────────────────
+class _FakeMem:
+    """WebProducts / WebProductDatasources 조회만 흉내내는 최소 커서."""
+
+    def __init__(self, join_rows, legacy_rows, join_raises=False):
+        self.join_rows, self.legacy_rows, self.join_raises = join_rows, legacy_rows, join_raises
+        self._pending = []
+
+    def cursor(self):
+        return self
+
+    def execute(self, sql, params=None):
+        if "WebProductDatasources" in sql:
+            if self.join_raises:
+                raise RuntimeError("no such table")
+            self._pending = self.join_rows
+        else:
+            self._pending = self.legacy_rows
+
+    def fetchall(self):
+        return self._pending
+
+    def close(self):
+        pass
+
+
+def _wire_ds(monkeypatch, labels=("ds-a",)):
+    import shared.datasources as _dsr
+    monkeypatch.setattr(_dsr, "all_datasources",
+                        lambda conn: {lbl: {"key": lbl, "scope_key": "scope-a"} for lbl in labels})
+
+
+def test_self_heal_scope_keys_single_ds_product_only(monkeypatch):
+    """단일 DS 제품만 sweep 대상 — 다중 DS 제품은 known_schemas 가 불완전해 오삭제 위험(제외)."""
+    _wire_ds(monkeypatch)
+    mem = _FakeMem(join_rows=[(1, "SOLO", "ds-a"), (2, "MULTI", "ds-a"), (2, "MULTI", "ds-b")],
+                   legacy_rows=[])
+    assert insight._self_heal_scope_keys(mem, "scope-a") == ["product.solo"]
+
+
+def test_self_heal_scope_keys_legacy_single_binding(monkeypatch):
+    """join 테이블이 없는 레거시 배치(WebProducts.DatasourceKey 만)에서도 대상이 잡혀야 한다.
+
+    빠뜨리면 그 배치에서 self-heal 이 통째로 죽어 stale/환각 ENUM 이 계속 주입된다."""
+    _wire_ds(monkeypatch)
+    mem = _FakeMem(join_rows=[], legacy_rows=[(7, "LEGACY", "ds-a")], join_raises=True)
+    assert insight._self_heal_scope_keys(mem, "scope-a") == ["product.legacy"]
+
+
+def test_self_heal_scope_keys_common_and_unknown_scope(monkeypatch):
+    """'common' 과 미매칭 scope 는 datasource 귀속이 없어 대상 없음(파괴적 동작이라 보수적)."""
+    _wire_ds(monkeypatch)
+    mem = _FakeMem(join_rows=[(1, "SOLO", "ds-a")], legacy_rows=[])
+    assert insight._self_heal_scope_keys(mem, "common") == []
+    assert insight._self_heal_scope_keys(mem, "scope-zzz") == []

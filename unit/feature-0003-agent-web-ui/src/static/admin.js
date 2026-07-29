@@ -2061,8 +2061,10 @@ function applyUsageNav(nav) {
   // 1) 데이터소스 스코프 — 메타데이터/관계도 pane 이 공유하는 adminState.metadata.scopeKey.
   //    switchTab 이 _metaPopulateScopeSelect 로 select 를 이 값에 동기화하고, 관계도는
   //    loadedScope 와 다르면 그 스코프로 재로드한다(§45 규약) → 별도 select 조작 불필요.
+  // metadata-product-scope: scope_hint 는 datasource 축이라 그래프 pane 에만 적용한다.
+  //   메타데이터 pane 의 축은 제품이므로 datasource 해시를 넣으면 목록이 영구히 비게 된다.
   const scopeKey = _usageResolveScopeKey(nav);
-  if (scopeKey && (nav.screen === "metadata" || nav.screen === "graph")) {
+  if (scopeKey && nav.screen === "graph") {
     if (!adminState.metadata) adminState.metadata = {};
     adminState.metadata.scopeKey = scopeKey;
   }
@@ -3233,10 +3235,10 @@ function switchTab(tabName) {
       adminState.metadataInitialized = true;
       initMetadataTab();
     } else {
-      // 재진입(REV MINOR-2): 첫 진입이 datasources 로드 전이었을 수 있으니 scope/부트스트랩 DS 드롭다운 재채움(선택 보존).
-      _metaPopulateScopeSelect();
-      // feature-0016 §45(적대리뷰 D1 대칭): 그래프 탭에서 데이터소스를 바꿨으면 메타데이터 목록도 그 스코프로 재로드(값↔목록 불일치 방지).
-      if ((adminState.metadata.loadedScope || "common") !== (adminState.metadata.scopeKey || "common")) loadMetadata();
+      // 재진입: 제품 카탈로그가 비어 있었을 수 있으니 스코프 드롭다운 재채움(선택 보존).
+      _metaPopulateProductScopeSelect();
+      // 로드된 스코프와 현재 선택이 갈리면 목록 재로드(값↔목록 불일치 방지).
+      if ((adminState.metadata.loadedScope || "common") !== (adminState.metadata.productScope || "common")) loadMetadata();
       _metaApplySubtabPermissions();
       _metaSyncViews();        // 재진입 시 용어사전 2차 보기 strip 가시성·active 재동기화(권한 변동 방어).
       _metaRenderDetail();             // metadata-list-detail: 우측 상세(현재 모드)·목록 툴바·부트스트랩 가시성 재동기화.
@@ -3579,6 +3581,11 @@ adminState.metadata = {
   // 2차 보기(IA: 메타데이터 > {용어사전|ENUM|샘플쿼리} > {목록 | 검토·검수 큐}) — 서브탭별 보기 상태(list | review).
   viewBySub: { glossary: "list", enums: "list", samples: "list" },
   reviewPending: { glossary: 0, enums: 0, samples: 0 },   // 검토 큐 pending 건수(보기 strip 배지 소스).
+  // metadata-product-scope: 메타데이터 pane 의 스코프 축 = **제품**(`product.<ProductKey>`) 또는 'common'.
+  //   사용자·메타데이터 관리자는 데이터소스를 인식하지 않는다(그 축은 그래프 pane 전용으로 남는다).
+  productScope: "common",
+  productScopes: [],    // GET /api/admin/metadata/scopes 캐시 [{scope_key,name,product_key,database_count,is_common}]
+  // 그래프 pane(지식베이스 형제 탭) 전용 datasource 스코프 — 본 재구성 범위 밖(축 분리 유지).
   scopeKey: "common",
   roleFilter: "",       // 용어사전 역할 필터(0021) — "" = 전체 역할, "*" = 공용만, "<role_key>" = 그 역할
   items: [],
@@ -3596,7 +3603,8 @@ adminState.metadata = {
   // Phase 2 부트스트랩 상태(테이블/컬럼 서브뷰 전용).
   bootstrap: {
     open: false,
-    datasource: "",
+    // metadata-product-scope: 부트스트랩 대상은 제품 스코프에서 상속(물리 datasource 는 서버가 해소).
+    scopeKey: "",
     schema: "",
     schemas: [],
     tables: [],         // {schema_name, table_name, columns:[{column_name, data_type}]}
@@ -4007,12 +4015,14 @@ function _metaClearFieldErrors() {
   wrap.querySelectorAll(".admin-meta-field-error").forEach((e) => e.remove());
 }
 
-// 탭 첫 진입 — scope 드롭다운 채우기 + 서브탭 권한 게이트 + 폼 바인딩 + 최초 목록 로드.
-function initMetadataTab() {
-  _metaPopulateScopeSelect();
+// 탭 첫 진입 — 제품 스코프 드롭다운 채우기 + 서브탭 권한 게이트 + 폼 바인딩 + 최초 목록 로드.
+// metadata-product-scope: 목록/부트스트랩이 제품 축이므로 카탈로그 로드를 선행하고, 그 뒤 목록을 읽는다
+// (카탈로그보다 목록이 먼저 나가면 첫 화면이 잘못된 스코프로 로드된다).
+async function initMetadataTab() {
   _metaApplySubtabPermissions();
   _metaBindControls();
   _metaBindBootstrap();
+  await _metaLoadProductScopes();
   _metaRenderDetail();   // metadata-list-detail: 초기 우측 상세 = empty-state + 목록 툴바 가시성.
   _metaPrimeReviewBadge();
   loadMetadata();
@@ -4133,39 +4143,76 @@ function _metaSyncViews() {
   }
 }
 
-// scope 드롭다운: '공용(common)' + 등록된 datasource key 목록(기존 adminState.datasources 재사용).
+// 그래프 pane 스코프 드롭다운: '공용(common)' + 등록된 datasource key 목록(adminState.datasources 재사용).
+// metadata-product-scope: 메타데이터 pane 은 더 이상 이 축을 쓰지 않는다 — 제품 축(_metaPopulateProductScopeSelect).
+// 그래프 뷰(지식베이스 형제 탭)는 물리 스키마 투영이라 datasource 축을 그대로 유지한다.
 function _metaPopulateScopeSelect() {
-  // feature-0016 §45: 메타데이터 pane 스코프 select 와 그래프 pane 자체 스코프 select 를 같은 옵션·선택으로 동기화한다
-  //   (그래프가 최상위 pane 으로 분리되며 metadataScopeSelect 를 더 이상 공유하지 못하므로 graphScopeSelect 신설).
-  const selMeta = document.getElementById("metadataScopeSelect");
   const selGraph = document.getElementById("graphScopeSelect");
-  if (!selMeta && !selGraph) return;
+  if (!selGraph) return;
   const opts = [{ value: "common", label: "공용 (common)" }];
   for (const ds of (adminState.datasources || [])) {
     const label = String((ds && ds.key) || "").trim().toLowerCase();
     if (!label) continue;
-    // scope-key-unify(死data 수정): option value = 백엔드가 준 scope_key(= 질의 시점 read 와 동일 해소값:
-    // DB-등록 ds=엔드포인트 해시, .env 레거시=라벨). 이 값으로 저장해야 ds-scoped 설명/샘플이 읽힌다.
-    // 표시는 사람이 읽는 라벨(key). scope_key 가 비면(구버전 백엔드) 라벨로 폴백.
+    // scope-key-unify: option value = 백엔드가 준 scope_key(질의 시점 read 와 동일 해소값:
+    // DB-등록 ds=엔드포인트 해시, .env 레거시=라벨). 표시는 사람이 읽는 라벨(key).
     const scope = String((ds && ds.scope_key) || label).trim().toLowerCase();
     opts.push({ value: scope, label: label });
   }
-  // 현재 선택 보존(없으면 common) — 두 select 공통 해소값.
   const cur = adminState.metadata.scopeKey || "common";
   const resolved = opts.some((o) => o.value === cur) ? cur : "common";
-  // textContent 기반 option 생성(XSS 안전). 존재하는 select 각각에 동일 옵션/선택 반영.
-  for (const sel of [selMeta, selGraph]) {
-    if (!sel) continue;
-    sel.replaceChildren();
-    for (const o of opts) {
-      const el = document.createElement("option");
-      el.value = o.value;
-      el.textContent = o.label;
-      sel.appendChild(el);
-    }
-    sel.value = resolved;
+  selGraph.replaceChildren();
+  for (const o of opts) {
+    const el = document.createElement("option");
+    el.value = o.value;
+    el.textContent = o.label;
+    selGraph.appendChild(el);
   }
+  selGraph.value = resolved;
   adminState.metadata.scopeKey = resolved;
+}
+
+// metadata-product-scope: 메타데이터 pane 스코프 드롭다운 = **제품** 목록 + 공용.
+// 옵션 원천은 GET /api/admin/metadata/scopes (제품 SSOT). 실패 시 '공용' 단독으로 degrade —
+// 데이터소스 목록으로 폴백하지 않는다(축이 섞이면 사용자가 다시 데이터소스를 마주하게 된다).
+function _metaPopulateProductScopeSelect() {
+  const sel = document.getElementById("metadataScopeSelect");
+  if (!sel) return;
+  const scopes = adminState.metadata.productScopes || [];
+  const opts = scopes.length
+    ? scopes.map((s) => ({ value: String(s.scope_key || ""), label: String(s.name || s.product_key || s.scope_key || "") }))
+    : [{ value: "common", label: "공용 (모든 제품)" }];
+  const cur = adminState.metadata.productScope || "common";
+  const resolved = opts.some((o) => o.value === cur) ? cur : (opts[0] ? opts[0].value : "common");
+  sel.replaceChildren();
+  for (const o of opts) {
+    const el = document.createElement("option");
+    el.value = o.value;
+    el.textContent = o.label;   // textContent 기반(XSS 안전)
+    sel.appendChild(el);
+  }
+  sel.value = resolved;
+  adminState.metadata.productScope = resolved;
+}
+
+// 제품 스코프 카탈로그 로드(1회 캐시). 목록/등록/부트스트랩이 모두 이 축을 쓰므로 탭 진입 시 선행한다.
+async function _metaLoadProductScopes() {
+  try {
+    const data = await apiFetch("/api/admin/metadata/scopes");
+    adminState.metadata.productScopes = (data && Array.isArray(data.scopes)) ? data.scopes : [];
+  } catch (_) {
+    adminState.metadata.productScopes = [];
+  }
+  _metaPopulateProductScopeSelect();
+}
+
+// 현재 선택된 제품 스코프의 카탈로그 엔트리(없으면 null — 'common' 포함).
+function _metaCurrentProductEntry() {
+  const cur = adminState.metadata.productScope || "common";
+  if (cur === "common") return null;
+  for (const s of (adminState.metadata.productScopes || [])) {
+    if (String(s.scope_key || "") === cur) return s;
+  }
+  return null;
 }
 
 function _metaBindControls() {
@@ -4173,7 +4220,7 @@ function _metaBindControls() {
   if (sel && !sel.dataset.bound) {
     sel.dataset.bound = "1";
     sel.addEventListener("change", () => {
-      adminState.metadata.scopeKey = sel.value || "common";
+      adminState.metadata.productScope = sel.value || "common";   // metadata-product-scope: 제품 축
       adminState.metadata.editing = null;
       adminState.metadata.selectedId = null;
       adminState.metadata.reviewSelected = null;   // ux2 #2: 스코프 변경(큐 재조회) 시 검토 상세 선택 해제.
@@ -4182,7 +4229,7 @@ function _metaBindControls() {
       if (adminState.metadata.detailMode !== "bootstrap") adminState.metadata.detailMode = "empty";
       _metaRenderDetail();
       loadMetadata();
-      _metaPrimeReviewBadge();   // Finding 2: datasource 변경 시 검토 배지도 새 scope 로 재산정(전 review 서브탭·list 보기 포함).
+      _metaPrimeReviewBadge();   // Finding 2: 제품 변경 시 검토 배지도 새 scope 로 재산정(전 review 서브탭·list 보기 포함).
     });
   }
   document.querySelectorAll(".admin-meta-subtab").forEach((btn) => {
@@ -4286,33 +4333,25 @@ function _metaBindControls() {
   }
 }
 
-// 현재 메타데이터 scope(scope_key)에 대응하는 datasource 사람-라벨(key) 반환 — tables/columns
-// grounding 시 백엔드 introspection 대상 식별용. 'common' 또는 미매칭이면 빈 문자열(=ungrounded).
-function _metaScopeDatasourceKey() {
-  const scope = adminState.metadata.scopeKey || "common";
-  if (scope === "common") return "";
-  for (const ds of (adminState.datasources || [])) {
-    const label = String((ds && ds.key) || "").trim().toLowerCase();
-    const sk = String((ds && ds.scope_key) || label).trim().toLowerCase();
-    if (sk === scope || label === scope) return label;
-  }
-  return "";
+// metadata-product-scope: 프론트는 물리 datasource 를 다루지 않는다. tables/columns 골격·AI grounding
+// 대상 연결은 서버가 (제품 스코프, 접근DB) 바인딩으로 해소한다(_scope_datasource_for_schema).
+// 본 헬퍼는 "골격을 가져올 수 있는 스코프인가"(= 공용이 아닌 제품)만 판정한다.
+function _metaScopeIsProduct() {
+  const scope = adminState.metadata.productScope || "common";
+  return scope !== "common";
 }
 
-// scope_key → 사람이 지정한 datasource 라벨(key) 역매핑(표시 전용). scope_key 는 질의축 식별자로,
-// DB-등록 datasource 는 엔드포인트 해시(예: mssql-06656002eda6)라 UI 에 raw 노출되면 사람이 못 읽는다.
-// adminState.datasources(= GET /api/admin/datasources)의 {key=라벨, scope_key=해시} 로 해시→라벨을 되돌린다.
+// scope_key → 사람이 읽는 스코프 라벨(표시 전용). metadata-product-scope 이후 KB row 의 scope_key 는
+// `product.<ProductKey>` 이므로 제품명으로 되돌린다.
 //   - 빈 값/'common' → '공용'
-//   - 미매칭(구버전 백엔드·삭제된 ds·datasources 미로드) → 원문 유지(정보 손실보다 raw 표시가 안전).
+//   - 제품 스코프 → 제품명(카탈로그 매칭)
+//   - 미매칭(레거시 datasource 스코프 잔여 행·카탈로그 미로드) → 원문 유지(정보 손실보다 raw 표시가 안전).
 function _metaDatasourceLabelOf(scopeKey) {
   const s = String(scopeKey == null ? "" : scopeKey).trim();
   if (!s || s.toLowerCase() === "common") return "공용";
   const low = s.toLowerCase();
-  for (const ds of (adminState.datasources || [])) {
-    const label = String((ds && ds.key) || "").trim();
-    if (!label) continue;
-    const sk = String((ds && ds.scope_key) || label).trim().toLowerCase();
-    if (sk === low || label.toLowerCase() === low) return label;
+  for (const sc of (adminState.metadata.productScopes || [])) {
+    if (String(sc.scope_key || "").toLowerCase() === low) return String(sc.name || sc.product_key || s);
   }
   return s;
 }
@@ -4339,13 +4378,11 @@ async function _metaSuggestFill(btn) {
     }
     return;
   }
-  const payload = { scope_key: adminState.metadata.scopeKey || "common" };
+  // metadata-product-scope: scope_key = 제품 스코프. tables/columns grounding 의 물리 datasource 는
+  // 서버가 scope_key + schema_name 으로 해소하므로 프론트가 datasource 를 실어보내지 않는다.
+  const payload = { scope_key: adminState.metadata.productScope || "common" };
   for (const k of ["term", "schema_name", "table_name", "column_name", "code", "sql", "nl_question"]) {
     if (vals[k] != null && String(vals[k]).trim()) payload[k] = String(vals[k]).trim();
-  }
-  if (sub === "tables" || sub === "columns") {
-    const dsKey = _metaScopeDatasourceKey();
-    if (dsKey) payload.datasource = dsKey;
   }
   const origLabel = btn.textContent;
   btn.disabled = true;
@@ -4570,8 +4607,8 @@ async function loadMetadata() {
     else if (sub === "samples") await loadSampleReview();
     return;
   }
-  const scope = adminState.metadata.scopeKey || "common";
-  adminState.metadata.loadedScope = scope;   // feature-0016 §45 D1: 메타데이터 목록이 로드된 스코프 기록(탭 재진입 diverge 재로드 판정).
+  const scope = adminState.metadata.productScope || "common";
+  adminState.metadata.loadedScope = scope;   // 메타데이터 목록이 로드된 제품 스코프 기록(탭 재진입 diverge 재로드 판정).
   adminState.metadata.loading = true;
   listEl.replaceChildren();
   listEl.appendChild(_metaLoadingSkeleton());   // B2: 스켈레톤(회색 3바) 로딩 상태.
@@ -4915,7 +4952,7 @@ function _metaStartCreatePrefilled(prefill) {
 export async function _metaSubmitForm(e) {
   if (e && e.preventDefault) e.preventDefault();
   const sub = adminState.metadata.subTab;
-  const scope = adminState.metadata.scopeKey || "common";
+  const scope = adminState.metadata.productScope || "common";
   const fields = _METADATA_FIELDS[sub] || [];
   const vals = _metaFormValues();
   const editing = adminState.metadata.editing;
@@ -5015,7 +5052,7 @@ function _metaDeleteLabel(sub, it) {
 
 async function _metaDelete(it) {
   const sub = adminState.metadata.subTab;
-  const scope = adminState.metadata.scopeKey || "common";
+  const scope = adminState.metadata.productScope || "common";
   const label = _metaDeleteLabel(sub, it);
   if (!window.confirm(`삭제하시겠습니까?\n\n${label}\n\n등록 내용이 답변 프롬프트에서 제외됩니다.`)) return;
   try {
@@ -5130,12 +5167,12 @@ function _metaReviewCfgOf(kind) {
   return { sub, cfg: _METADATA_REVIEW[sub] };
 }
 
-// 검토·검수 큐 datasource 필터(Issue 1) — 상단 데이터소스 셀렉터(scopeKey)를 목록과 동일 축으로 적용.
-//   특정 datasource 선택 시 그 scope_key 로 후보를 한정한다. '공용(common)' 은 전체(전 datasource) triage 로
-//   표시한다(자동수집 후보는 항상 ds-scoped 라 common 을 문자 그대로 필터하면 큐가 영구히 비고 pending 배지와
-//   불일치 — Option A). 반환: URL-encoded scope_key 또는 ""(전체).
+// 검토·검수 큐 제품 필터(Issue 1 / metadata-product-scope) — 상단 제품 셀렉터를 목록과 동일 축으로 적용.
+//   특정 제품 선택 시 그 제품 스코프로 후보를 한정한다. '공용' 은 전체 제품 triage 로 표시한다
+//   (자율수집 후보는 대화의 제품에 귀속되므로 common 을 문자 그대로 필터하면 큐가 영구히 비고 pending
+//   배지와 불일치 — Option A 유지). 반환: URL-encoded scope_key 또는 ""(전체).
 function _metaReviewScopeParam() {
-  const scope = String(adminState.metadata.scopeKey || "common");
+  const scope = String(adminState.metadata.productScope || "common");
   return (scope && scope !== "common") ? encodeURIComponent(scope) : "";
 }
 
@@ -5691,9 +5728,9 @@ async function _metaRemoveRelation(relationId, termId, listWrap) {
 const META_BS_PAGE_SIZE = 30;
 
 // 현재 서브탭(tables/columns) + metadata.table.manage 일 때만 부트스트랩 패널을 노출한다(graph-panel-perms task4).
-// scope-single-ds-ui: 부트스트랩 데이터소스는 상단 스코프(metadataScopeSelect)를 상속한다.
-//   - 공용(common)/미매칭 스코프 → 실제 스키마 없음 → empty-state(#metadataBootstrapEmpty)만 노출.
-//   - 구체 데이터소스 스코프 → 골격 컨트롤(토글+본문) 노출 + 스코프 DS 상속·스키마 목록 로드.
+// metadata-product-scope: 부트스트랩 대상은 상단 **제품** 스코프를 상속한다.
+//   - 공용(common) → 특정 제품의 접근DB 가 없음 → empty-state(#metadataBootstrapEmpty)만 노출.
+//   - 구체 제품 스코프 → 골격 컨트롤(토글+본문) 노출 + 그 제품의 접근DB 목록 로드.
 function _metaSyncBootstrapVisibility() {
   const panel = document.getElementById("metadataBootstrap");
   if (!panel) return;
@@ -5701,18 +5738,18 @@ function _metaSyncBootstrapVisibility() {
   const applicable = (sub === "tables" || sub === "columns") && can("metadata.table.create") && can("metadata.table.update");
   panel.style.display = applicable ? "" : "none";
   if (!applicable) return;
-  const scopeDs = _metaScopeDatasourceKey();  // 공용/미매칭이면 빈 문자열.
+  const isProduct = _metaScopeIsProduct();  // 공용이면 false.
   const head = document.getElementById("metadataBootstrapHead");
   const body = document.getElementById("metadataBootstrapBody");
   const empty = document.getElementById("metadataBootstrapEmpty");
-  if (!scopeDs) {
+  if (!isProduct) {
     // 공용(common) 스코프 — 골격 불가. empty-state 만 노출(토글/본문 숨김).
     if (empty) empty.style.display = "";
     if (head) head.style.display = "none";
     if (body) body.style.display = "none";
     return;
   }
-  // 구체 데이터소스 스코프 — 골격 컨트롤 노출. 본문은 접힘 상태(bootstrap.open)를 따른다.
+  // 구체 제품 스코프 — 골격 컨트롤 노출. 본문은 접힘 상태(bootstrap.open)를 따른다.
   if (empty) empty.style.display = "none";
   if (head) head.style.display = "";
   if (body) body.style.display = adminState.metadata.bootstrap.open ? "" : "none";
@@ -5723,7 +5760,7 @@ function _metaSyncBootstrapVisibility() {
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
     toggle.textContent = open ? "스키마 골격 가져오기 ▴" : "스키마 골격 가져오기 ▾";
   }
-  _metaBootstrapSyncToScopeDs(scopeDs);
+  _metaBootstrapSyncToScope(adminState.metadata.productScope || "common");
   // metadata-bs-inline-desc: tables↔columns 서브탭 전환 시 골격 결과를 현재 mode 로 재렌더한다.
   // 서브탭 전환 핸들러는 이 함수만 부르고 _metaBootstrapRenderResult 를 호출하지 않으므로, 이미
   // 가져온 골격(bs.tables)이 있으면 여기서 새 mode 입력 UI 로 교체해야 한다 — 안 그러면 두 mode 의
@@ -5746,7 +5783,7 @@ function _metaBindBootstrap() {
     });
   }
   // scope-single-ds-ui: 부트스트랩 전용 데이터소스 selector 폐기 — 데이터소스는 상단 스코프를
-  // 상속한다(_metaBootstrapSyncToScopeDs). 스코프 변경 핸들러(_metaBindControls)와 서브탭/패널
+  // 상속한다(_metaBootstrapSyncToScope). 스코프 변경 핸들러(_metaBindControls)와 서브탭/패널
   // 가시성 동기화(_metaSyncBootstrapVisibility)가 DS 상속·스키마 로드를 담당한다.
   const schemaSel = document.getElementById("metadataBootstrapSchema");
   if (schemaSel && !schemaSel.dataset.bound) {
@@ -5802,17 +5839,18 @@ function _metaBindBootstrap() {
   }
 }
 
-// scope-single-ds-ui: 부트스트랩 데이터소스를 상단 스코프(metadataScopeSelect)에서 상속한다.
-// 별도 DS selector 가 없으므로, 노트의 데이터소스명(읽기 전용 컨텍스트)을 갱신하고, 스코프 DS 가
-// 바뀐 경우에만 이전 골격/스키마 선택을 리셋한 뒤 새 DS 의 스키마 목록을 로드한다.
-// (구체 데이터소스 스코프에서만 호출됨 — 공용/미매칭은 _metaSyncBootstrapVisibility 가 먼저 차단.)
-function _metaBootstrapSyncToScopeDs(scopeDs) {
-  const ds = String(scopeDs || "").trim().toLowerCase();
+// metadata-product-scope: 부트스트랩 대상을 상단 **제품** 스코프에서 상속한다.
+// 노트의 제품명(읽기 전용 컨텍스트)을 갱신하고, 제품이 바뀐 경우에만 이전 골격/DB 선택을 리셋한 뒤
+// 새 제품의 접근DB 목록을 로드한다.
+// (구체 제품 스코프에서만 호출됨 — 공용은 _metaSyncBootstrapVisibility 가 먼저 차단.)
+function _metaBootstrapSyncToScope(scopeKey) {
+  const sk = String(scopeKey || "").trim().toLowerCase();
+  const entry = _metaCurrentProductEntry();
   const dsName = document.getElementById("metadataBootstrapDsName");
-  if (dsName) dsName.textContent = ds || "—";
-  if (ds === (adminState.metadata.bootstrap.datasource || "")) return;  // 변동 없음 — 기존 골격 보존.
-  // 스코프 DS 변경 — 이전 DS 의 골격/스키마는 무효(다른 데이터소스 스키마).
-  adminState.metadata.bootstrap.datasource = ds;
+  if (dsName) dsName.textContent = (entry && (entry.name || entry.product_key)) || "—";
+  if (sk === (adminState.metadata.bootstrap.scopeKey || "")) return;  // 변동 없음 — 기존 골격 보존.
+  // 제품 변경 — 이전 제품의 골격/접근DB 선택은 무효.
+  adminState.metadata.bootstrap.scopeKey = sk;
   adminState.metadata.bootstrap.schema = "";
   adminState.metadata.bootstrap.tables = [];
   const schemaSel = document.getElementById("metadataBootstrapSchema");
@@ -5845,18 +5883,18 @@ function _metaBootstrapSetUnitLabel() {
 
 // 선택 DS 의 unit(MySQL=schema / MSSQL=database) 목록 로드 → 드롭다운 채움.
 async function _metaBootstrapLoadSchemas() {
-  const ds = adminState.metadata.bootstrap.datasource;
+  const sk = adminState.metadata.bootstrap.scopeKey;
   const schemaSel = document.getElementById("metadataBootstrapSchema");
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
   if (schemaSel) { schemaSel.replaceChildren(); schemaSel.disabled = true; }
   if (fetchBtn) fetchBtn.disabled = true;
-  if (!ds) { adminState.metadata.bootstrap.unitKind = ""; _metaBootstrapSetUnitLabel(); _metaBootstrapStatus(""); return; }
+  if (!sk || sk === "common") { adminState.metadata.bootstrap.unitKind = ""; _metaBootstrapSetUnitLabel(); _metaBootstrapStatus(""); return; }
   _metaBootstrapStatus("목록 로딩 중…");
   try {
-    const data = await apiFetch(`/api/admin/metadata/bootstrap/schemas?datasource=${encodeURIComponent(ds)}`);
-    // scope-single-ds-ui: 스코프가 부트스트랩 DS 를 결정하므로 스코프 빠른 전환 시 본 함수가 연속 발화한다.
-    // await 사이에 DS 가 바뀌었으면 이 응답은 stale — 폐기해 늦게 온 응답이 다른 DS 드롭다운을 덮지 않게 한다.
-    if (adminState.metadata.bootstrap.datasource !== ds) return;
+    const data = await apiFetch(`/api/admin/metadata/bootstrap/schemas?scope_key=${encodeURIComponent(sk)}`);
+    // 제품 스코프가 부트스트랩 대상을 결정하므로 제품 빠른 전환 시 본 함수가 연속 발화한다.
+    // await 사이에 제품이 바뀌었으면 이 응답은 stale — 폐기해 늦게 온 응답이 다른 제품 목록을 덮지 않게 한다.
+    if (adminState.metadata.bootstrap.scopeKey !== sk) return;
     const schemas = (data && Array.isArray(data.schemas)) ? data.schemas : [];
     // engine/unit_kind 로 라벨 분기(MSSQL=database). 구버전 백엔드 응답(필드 없음)은 'schema' 로 폴백.
     adminState.metadata.bootstrap.unitKind = (data && data.unit_kind) || "schema";
@@ -5883,11 +5921,13 @@ async function _metaBootstrapLoadSchemas() {
   }
 }
 
-// 골격 가져오기 — POST /bootstrap {datasource,schema}. 응답 tables 를 입력 트리로 렌더.
+// 골격 가져오기 — POST /bootstrap {scope_key,schema}. 응답 tables 를 입력 트리로 렌더.
+// metadata-product-scope: 가드는 제품 스코프(bs.scopeKey)를 본다 — 폐기된 bs.datasource 를 계속
+// 검사하면 항상 검증 실패로 떨어져 골격 가져오기가 통째로 죽는다(codex review P1).
 async function _metaBootstrapFetch() {
   const bs = adminState.metadata.bootstrap;
-  if (!bs.datasource || !bs.schema) {
-    _metaBootstrapStatus(`데이터소스와 ${_metaBootstrapUnitWord()}를 선택하세요.`, true);
+  if (!bs.scopeKey || bs.scopeKey === "common" || !bs.schema) {
+    _metaBootstrapStatus(`제품과 ${_metaBootstrapUnitWord()}를 선택하세요.`, true);
     return;
   }
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
@@ -5899,7 +5939,7 @@ async function _metaBootstrapFetch() {
   try {
     const data = await apiFetch("/api/admin/metadata/bootstrap", {
       method: "POST",
-      body: JSON.stringify({ datasource: bs.datasource, schema: bs.schema }),
+      body: JSON.stringify({ scope_key: bs.scopeKey, schema: bs.schema }),
     });
     bs.tables = (data && Array.isArray(data.tables)) ? data.tables : [];
     const tcount = bs.tables.length;
@@ -6259,7 +6299,7 @@ async function _metaBootstrapSave() {
   if (!wrap) return;
   const sub = adminState.metadata.subTab;
   const mode = sub === "columns" ? "columns" : "tables";
-  const scope = adminState.metadata.scopeKey || "common";
+  const scope = adminState.metadata.productScope || "common";
   // 입력된 행 수집(DOM 순회 — 입력값은 value, 식별자는 dataset).
   const rows = [];
   wrap.querySelectorAll(".admin-meta-bs-table").forEach((block) => {

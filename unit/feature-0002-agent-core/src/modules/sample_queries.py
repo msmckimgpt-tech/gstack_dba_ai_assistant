@@ -1,10 +1,10 @@
 """ITEM-02 (ROADMAP dba-ai-nl2sql): 샘플쿼리 few-shot 저장소 — 등록·검색·주입·신선도.
 
-NL↔SQL 샘플을 agent_kb(PG)에 ds-scoped(scope_key) + 임베딩(titan-embed, vector(1024))으로
+NL↔SQL 샘플을 agent_kb(PG)에 product-scoped(scope_key) + 임베딩(titan-embed, vector(1024))으로
 저장하고, 사용자 질문 임베딩으로 **approved∧active** 샘플을 cosine top-K(weight 가중) 검색해
 _build_knowledge_context 가 `## EXAMPLE QUERIES` 로 주입한다.
 
-가드: ① ds-scope(scope_key=활성 datasource + 'common') ② approved∧active 만 검색
+가드: ① product-scope(scope_key=활성 제품 + 'common' — metadata-product-scope) ② approved∧active 만 검색
 ③ **injection-only**(샘플 sql 은 프롬프트 예시일 뿐 직접 실행 절대 금지 — 호출측 datamark+펜스)
 ④ 신선도: validate_sample_sql 가 깨진 샘플(스키마 drift)을 stale 표기.
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from modules.utils import _normalize_scope_key, _scope_candidates
+from modules.utils import _normalize_scope_key, _kb_scope_candidates, _kb_scope_key
 
 _log = logging.getLogger("sample_queries")
 
@@ -169,12 +169,12 @@ def delete_sample(conn, sample_id, scope_key) -> int:
         cur.close()
 
 
-# ── 검색(RO) — approved∧active, ds-scoped, weight 가중 cosine top-K ──────────
+# ── 검색(RO) — approved∧active, product-scoped, weight 가중 cosine top-K ────
 def search_samples(conn, query_vector, scope_key, top_k=_DEFAULT_TOP_K):
-    """approved∧active∧ds-scoped 샘플을 (유사도 × weight/100) 내림차순 top-K. 임베딩 없으면 []."""
+    """approved∧active∧product-scoped 샘플을 (유사도 × weight/100) 내림차순 top-K. 임베딩 없으면 []."""
     if not query_vector:
         return []
-    scopes = _scope_candidates(scope_key)
+    scopes = _kb_scope_candidates(scope_key)
     cur = conn.cursor()
     try:
         cur.execute(
@@ -197,17 +197,15 @@ _QVEC_UNSET = object()  # "벡터 미제공 → 직접 임베딩" 과 "None 전�
 
 def load_example_queries_context(user_message, scope_key=None, conn=None, top_k=_DEFAULT_TOP_K,
                                  query_vector=_QVEC_UNSET) -> str:
-    """질문 임베딩 → approved∧active∧ds-scoped 유사 샘플 top-K → 프롬프트 본문 조립.
-    미매칭/미가용/임베딩실패 → "". scope 미지정 시 활성 datasource(get_active_datasource).
+    """질문 임베딩 → approved∧active∧product-scoped 유사 샘플 top-K → 프롬프트 본문 조립.
+    미매칭/미가용/임베딩실패 → "". scope 미지정 시 활성 제품(get_active_product_scope).
 
     CHG-20260625: query_vector 를 넘기면 그 벡터를 재사용한다(_build_knowledge_context 가
     질의 임베딩을 1회만 계산해 few-shot·account recall 이 공유 → 준비 단계 중복 임베딩
     제거). 미지정(sentinel) 시에만 직접 임베딩하되, 상호작용 fast-fail timeout 을 쓴다."""
     if not str(user_message or "").strip():
         return ""
-    if scope_key is None:
-        from shared import config as _cfg
-        scope_key = _cfg.get_active_datasource()
+    # product-scope: 명시 scope 없으면 **활성 제품** 스코프(search_samples 내부 해소와 동일 계약).
     if query_vector is _QVEC_UNSET:
         from shared.config import AGENT_KB_QUERY_EMBED_TIMEOUT_SEC
         qvec = _embed(user_message, timeout_sec=AGENT_KB_QUERY_EMBED_TIMEOUT_SEC)

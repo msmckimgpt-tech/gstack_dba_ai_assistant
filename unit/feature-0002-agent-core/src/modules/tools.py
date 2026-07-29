@@ -1868,8 +1868,10 @@ def _tool_describe_table(conn, args: dict) -> str:
             # 부트스트랩은 schema_name=database(DB명)로 저장 → cross-DB catalog 경로는 target_db,
             # primary 경로는 연결 default_db 로 조회(축 정합).
             overlay_schema = (target_db or _cfg.get_active_default_db() or schema)
+        # metadata-product-scope: 오버레이 scope 축은 datasource 가 아니라 **제품**이다
+        # (kb_metadata 모듈 계약). scope_key=None 이면 모듈이 활성 제품으로 해소한다.
         kb_col_desc = load_column_descriptions_for_table(
-            overlay_schema, table, scope_key=_cfg.get_active_datasource()
+            overlay_schema, table, scope_key=_cfg.get_active_product_scope()
         )
     except Exception:
         kb_col_desc = {}

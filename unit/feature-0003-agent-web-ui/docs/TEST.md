@@ -2272,3 +2272,22 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **POST-DEPLOY 잔여(HT.9)**: ① 형제 헤더 크기 일치 ② 알약이 텍스트를 감쌈 ③ 밴드 헤더 > 컨텐츠 카테고리 ④ 라벨이 박스 안(테두리 물림 0) ⑤ 잘림 감소 ⑥ pageerror 0. deploy_scope: included.
 - **POST-DEPLOY PB-0008 — PASS**(HT.9, 2026-07-29): PR #1037 → main `50c5a854` → `make deploy-web` → edge `/healthz git_commit=50c5a854` + web-a/web-b `mysql-ai-web:50c5a854`, 서빙 자산(`?v=6133a5e9907a`)에 신설 `_hdrLevels` 7회 / 폐기 `_metaHdrFitFont`·`STEP_CAP` **0회** 확인 후 실 Chrome relay 로 `mysql-gz-qa-global`/`gunzgame`(421 객체·위계 헤더 84개 — HF.6 과 동일 조건) 검증 — **① 형제 헤더 전원 동일 크기**(구 24.6/27.1/30.1 편차 소멸) · **② 알약이 전 헤더에서 텍스트를 감쌈**(소프트닝 분기 없이 동일 스타일) · **③ 밴드 헤더 > 컨텐츠 카테고리**(부모 상한 24 > 자식 20) · **④ 84개 칩 전량이 예약 행 안쪽, 테두리 물림 0**(팔출 소멸) · **⑥ pageerror 0**. **밴드 불변 라이브 확증**: `h2`→`h3` 전이 후 줌아웃 하한(0.1119)까지 `h3` 고정 — 구 구현(상한 4)이라면 z≈0.4579 에서 걸렸을 헛 rebuild 가 없다(codex P2 수정). 억제 시작 줌도 예측 정합(0.1749 까지 81/84 유지 → 0.1399 에서 83 → 0.1119 전량) · 줌인 복귀 대칭(0.1526 → 0.1907, hdrDropped 83→3). **⑤ 잘림 감소는 "부분"**: 폰트 상한 64→20/24 로 폭 여유는 구조적으로 커졌으나 라이브 긴 한글 헤더에서 ellipsis 는 여전히 관측되고, 구 배포본과의 직접 대조는 불가(이미지 교체됨) — test-runs.d §6 에 정직 병기.
 - **Pass/Fail: PASS**(PRE-COMMIT + POST-DEPLOY). CHECK#13 충족. 상세 Run: `docs/test-runs.d/20260729T1140-graph-hdr-typo-postdeploy.md`. 정본: `unit/feature-0016-metadata-graph/docs/TASK.md` `## 20260729T0930-graph-hdr-label-typo`.
+
+
+### Run (2026-07-29) — metadata-product-scope (지식베이스 메타데이터 스코프 축 datasource → 제품) — **Environment: container(make test)**
+
+- **PRE-COMMIT — PASS**: `make test` 전 스위트(agent 격리 컨테이너, `--no-deps` + 라이브 DB 차단
+  env) PASS · ruff clean. route-parity 골든은 신규 `GET /api/admin/metadata/scopes` 1건 증분(222→223).
+- **신규 커버리지**: 제품 축 전환(활성 제품 기반 scope 도출 · 같은 제품이면 활성 DS 무관 동일 scope) ·
+  공유 datasource 의 제품별 scope 분리 · 골격 후보 제품 접근DB 한정 + allowlist 밖 404(introspection
+  미도달) · 카탈로그 미가용 fail-closed(503) · 호출자 `datasource` override 무시 · 레거시 접근DB
+  행/단일 바인딩 폴백 · MSSQL DB allowlist 대소문자 무관 + 원본 케이스 연결 · expand/contract 꼬리
+  읽기 on/off · "제품 없음" vs "해소 실패" 신호 구별 · ENUM self-heal 제품 스코프 sweep(단일 DS 한정).
+- **이관 dry-run(라이브 대조)**: 판정 5,405건 = single 2,004 · schema 3,126 · ambiguous 257 ·
+  common 18. `--migrate --purge-ambiguous` 계획 update 5,130 / delete 257. `--verify-contract` 잔여
+  5,387(이관 전이므로 정상).
+- **적대 검증**: codex 적대 리뷰 10라운드 — P1 12건 + P2 3건 흡수 후 최종 P1 0건(REVIEW 표 참조).
+- **POST-DEPLOY**: 라이브 이관 → contract → PB-0008 실 Windows 브라우저 시각검증 예정
+  (`visual_verification_scope: always`). 결과는 `docs/test-runs.d/20260729T2130-metadata-product-scope.md` 에 append.
+- **Pass/Fail: PASS**(PRE-COMMIT). 상세 Run: `docs/test-runs.d/20260729T2130-metadata-product-scope.md`.
+  정본: TASK `20260729T2130-metadata-product-scope`.

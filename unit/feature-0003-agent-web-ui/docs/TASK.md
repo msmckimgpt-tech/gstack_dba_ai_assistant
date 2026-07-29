@@ -7488,3 +7488,50 @@ web-a/web-b 롤링 + soak 90s 통과)을 **실 Windows Chrome/150.0.7871.115** �
 Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/20260729T1742-product-picker-keynav.md`
 (POST-DEPLOY 절) · 재현 시나리오 `tests/win-browser-product-picker-keynav.scenario.json` · evidence
 `docs/evidence/pb0008-product-picker-keynav-{focus,selected}-20260729.png`
+
+## 20260729T2130-metadata-product-scope — 지식베이스 메타데이터 스코프 축을 '데이터소스' → '제품' 으로 전면 재구성 (Major §12.3)
+
+- **사용자 요청**: "관리 콘솔 > 지식베이스 > 메타데이터 에서 사용하는 정보들이 '데이터 소스' 단위로
+  구성되어 있지만, 실제 사용자들은 제품(Product) 단위로 작업 범위를 인식합니다. 실제 사용자들이
+  인식하는 범위와 모든 메타데이터의 구성이 정합하도록 전면적으로 재구성해주세요."
+- **진단 (라이브 실측)**: 축이 **양방향으로** 어긋나 있었다.
+  - 1제품 ↔ N데이터소스: `KR_LIVE`·`KR_QA` 각 **7개 DS**, `MV_QA` 3개 → 한 제품의 메타데이터가 조각남.
+  - 1데이터소스 ↔ N제품: `mssql-qa-idc` 하나를 **FH_QA·CC_QA·DK_QA·SR_QA·AO_QA 5개 제품**이 공유
+    → 테이블설명 153·컬럼설명 1,046건이 5개 제품 것으로 뒤섞임.
+  - **화면 문제로 끝나지 않음**: 질의 시점 주입 스코프가 `[활성 datasource, common]` 이라
+    `KR_LIVE` 용어 85건이 `mysql-kr-an1-auth` 에만 등록돼 **나머지 6개 DS 질의에서는 미주입**.
+    사용자는 "제품에 등록했다" 고 인식하지만 실제로는 7분의 1에서만 작동했다.
+- **결정 (사용자 확인)**: ① 메타데이터가 **제품에 종속**되어 작동 — 사용자·메타데이터 관리자에게
+  데이터소스는 중요하지 않다. ② 기존 datasource-scope 데이터는 귀속 가능분 이관 + 모호분 삭제.
+  ③ 적용 범위 = 메타데이터 탭 5개 서브뷰 + 검토·검수 큐 + 스키마 골격 가져오기(그래프 뷰 제외).
+- **구조**: 스코프 키 `product.<ProductKey>` 신설(`shared/config.product_scope_key`). 읽기·쓰기·콘솔
+  3면을 모두 이 축으로 통일. 데이터소스 축은 **질의 실행·dialect·fact/RAG 스코핑**에 그대로 남고
+  (별 축, 무간섭) 그래프 뷰 pane 도 종전 datasource 선택기를 유지한다.
+
+### Task Queue
+
+- [x] 제품 스코프 키 규약 + 활성 제품 ContextVar(`set_active_product`/`get_active_product_scope`)
+- [x] KB 읽기(주입) seam 전환 — 용어사전·ENUM·테이블/컬럼 설명·샘플쿼리 + describe_table 오버레이
+- [x] 자율수집(용어/ENUM 제안) 쓰기 스코프 전환 + deferred(worker) 경로 캡처·복원
+- [x] admin API — scope 검증·`GET /api/admin/metadata/scopes` 신설·부트스트랩 제품 접근DB 한정
+- [x] 관리 콘솔 UI — 스코프 선택기(제품)·목록·검토큐·스키마 골격 + 안내 문구
+- [x] expand/contract — 배포↔이관 창의 레거시 ds-scope 호환 읽기(`AGENT_KB_LEGACY_DS_SCOPE_READ`)
+- [x] ENUM self-heal(insight worker) sweep 대상을 제품 스코프로(단일 DS 제품 한정 — 오삭제 방지)
+- [x] 이관 스크립트 `scripts/kb_scope_rescope.py`(assess/migrate/purge/verify-contract, 백업 강제)
+- [x] 테스트 — 전 스위트 PASS + 신규 축·경계·expand/contract·self-heal 케이스
+- [x] codex 적대 리뷰 수렴(P1 12건 흡수 → 최종 0건)
+- [ ] POST-DEPLOY — 라이브 이관 실행 + contract + PB-0008 시각검증
+
+### 7. Completion Checklist
+
+- [x] 모든 REQ의 AC가 구현되었다
+- [x] 자동 테스트가 통과한다
+- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증(PB-0008) — 배포 후 수행
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다
+- [x] REVIEW.md에 판단 근거가 기록되었다
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md에 테스트 결과가 기록되었다
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md에 기능 상태가 갱신되었다
+- [x] ANCHOR.md §1~§3이 채워져 있다

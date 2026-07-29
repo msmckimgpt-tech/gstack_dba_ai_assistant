@@ -1,6 +1,6 @@
 {
- "total_routes": 222,
- "api_routes": 221,
+ "total_routes": 223,
+ "api_routes": 222,
  "ordered": [
   {
    "path": "/static",
@@ -830,6 +830,13 @@
    "path": "/api/admin/metadata/samples/{sample_id}",
    "methods": [
     "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/scopes",
+   "methods": [
+    "GET"
    ],
    "type": "APIRoute"
   },

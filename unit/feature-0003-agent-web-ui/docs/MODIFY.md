@@ -1928,3 +1928,82 @@ Cross-ref: TASK `20260729T1800-picker-keynav-postdeploy` · 선행 `20260729T174
 
 사용자 리포트: `DT_Character_New` 상세가 `컬럼 (2)` 뿐(실제 55). 방향 지시 "개수를 줄여 출력하는
 최적화는 다른 방향으로" 에 따라 표시·조회 절단을 제거하고 축약은 렌더 계층에 위임.
+
+
+## CHG-20260729T213000-metadata-product-scope — 지식베이스 메타데이터 스코프 축 datasource → 제품 전면 전환
+
+Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2130-metadata-product-scope` (cross-cut 코드 거주:
+feature-0002-agent-core 읽기/쓰기 seam · shared/config 축 정의)
+
+**축 정의 (`shared/config.py`)**
+- `PRODUCT_SCOPE_PREFIX="product."` · `product_scope_key()` · `is_product_scope()` — KB scope 키 규약.
+  구분자를 `:` 가 아닌 `.` 로 둔 이유: `_sanitize_key_part` 허용 문자가 `[A-Za-z0-9_.-]` 라
+  `product:kr_live` 는 `product_kr_live` 로 뭉개져 read/write 축이 조용히 어긋난다.
+- `set_active_product(key, *, unresolved=False)` / `get_active_product_scope()` /
+  `is_product_scope_unresolved()` — `set_active_datasource` 와 같은 ContextVar 패턴.
+  **"제품 없음"과 "제품이 있는데 해소 실패"를 구별**한다(자율수집 fail-closed 근거).
+- `AGENT_KB_LEGACY_DS_SCOPE_READ`(기본 1) — expand/contract 스위치.
+
+**읽기(주입) 경로 (feature-0002)**
+- `modules/utils.py` — `_kb_scope_key()` / `_kb_scope_candidates()` 신설. 캐스케이드
+  `[제품 스코프, (레거시 ds 스코프), 'common', '']`. fact/RAG 축(`_scope_candidates`,
+  `CURRENT_FACT_SCOPE_KEY`)은 **무변경**(datasource 스코핑 계약 그대로).
+- `modules/kb_glossary.py`·`kb_metadata.py`·`sample_queries.py` — 4개 로더의 scope 해소를
+  `get_active_datasource()` → 활성 제품으로 교체. `modules/tools.py` describe_table 오버레이 동일.
+- `agent_core.py` — `_resolve_product_scope_key(mem_conn, product_id)` 신설(→ `(scope, unresolved)`),
+  run 시작에 `cfg.set_active_product(...)`, finally 2곳에서 해제. 제품은 run 전체에 고정이므로
+  멀티-DS 라우팅으로 활성 datasource 가 바뀌어도 같은 제품 사전이 주입된다.
+
+**쓰기(자율수집) 경로**
+- `_glossary_autopropose` / `_enum_autopropose` — 귀속 축을 제품으로. **`is_product_scope_unresolved()`
+  면 중단**(‘common’ 폴백 금지 — 제품 전용 용어가 전 제품에 퍼지는 cross-product 누출).
+- deferred(worker) 경로 — `_cur_pkg` 에 `product_scope_key`/`product_scope_unresolved` 캡처,
+  `run_post_answer_curation` 이 복원·원복.
+- `modules/insight.py` — `_self_heal_scope_keys()` 신설. ENUM self-heal sweep 대상을 제품 스코프로
+  하되 **이 datasource 에만 바인딩된 제품**만(다중 DS 제품은 `known_schemas` 가 불완전해 다른 DS 의
+  정상 enum 을 오삭제하므로 제외 = fail-open). 레거시 단일 바인딩(`WebProducts.DatasourceKey`) 폴백 포함.
+
+**admin API (feature-0003)**
+- `routers/admin_metadata.py`
+  - `_product_scope_catalog()` 신설 — 제품 SSOT 단일 해소점(scope_key/제품/바인딩 datasource/접근DB).
+    `WebProductDatabases` 는 `DatasourceKey` 컬럼 부재(레거시) 폴백 쿼리를 거친 뒤에만 미가용 판정하고,
+    미가용은 `databases_ok=False` 로 **"접근DB 없음"과 구별**해 소비처가 fail-closed 하게 한다.
+  - `_metadata_valid_scope_keys()` — 허용 축을 datasource → **제품 스코프 ∪ common** 으로 교체.
+  - `_scope_database_units()` / `_scope_datasource_for_schema()` / `_scope_primary_datasource()` /
+    `_catalog_datasources()` 신설 — 물리 연결 해소는 **서버 전용**. 접근DB 선언 제품은 그 allowlist
+    밖 schema 를 거부(제품 경계 강제), 미선언 제품만 primary 로 폴백.
+  - `GET /api/admin/metadata/scopes` **신설** — 콘솔 스코프 옵션(제품 목록 + 공용).
+  - `GET /bootstrap/schemas` — `?scope_key=` 기반. 1차 원천은 제품 접근DB(라이브 연결 없이 즉답),
+    미선언 제품만 introspection 폴백. `POST /bootstrap` — body `{scope_key, schema}`.
+    **호출자 지정 `datasource` override 제거**(임의 제품 scope 로 아무 DS 나 introspect 하던 경계 우회).
+    MSSQL DB allowlist 매칭을 **대소문자 무관**으로(저장 라벨 lower 계약 §58 ↔ 서버 원본 케이스).
+  - `{sub}/suggest` grounding 도 동일하게 서버 해소 전용.
+- `app.py` — 신규 헬퍼 5종 re-export(테스트/타 라우터 `app.X` 참조 보존).
+
+**관리 콘솔 (feature-0003 `static/`)**
+- `admin.html` — 필터 바 라벨 `데이터소스` → `제품`, 부트스트랩 안내·empty-state·기본 단위 라벨 문구,
+  거버넌스 안내문("제품별로 관리 · 제품이 여러 DB에 걸쳐 있어도 동일 적용").
+- `admin.js` — `adminState.metadata.productScope`/`productScopes` 신설(그래프 pane 의 `scopeKey`
+  datasource 축과 **분리**). `_metaPopulateProductScopeSelect()`/`_metaLoadProductScopes()`/
+  `_metaCurrentProductEntry()`/`_metaScopeIsProduct()` 신설, `_metaPopulateScopeSelect()` 는 그래프
+  전용으로 축소. 목록·등록·수정·삭제·검토큐·부트스트랩·AI 자동완성이 모두 제품 축. 부트스트랩
+  상태 필드 `datasource` → `scopeKey`. `_metaDatasourceLabelOf()` 는 제품명 역매핑으로 전환.
+  usage-nav 의 datasource `scope_hint` 는 그래프 화면에만 적용(메타데이터에 넣으면 목록이 영구히 빔).
+
+**이관 스크립트 (feature-0002 `src/scripts/kb_scope_rescope.py` 신규)**
+- 대상 7테이블(등록분 5 + 검토 큐 3 중 `glossary_feedback`·`enum_feedback`·`sample_feedback`).
+- 귀속 규칙: ① 단일 제품 DS → 그 제품 ② 공유 DS + `schema_name` → `WebProductDatabases` 로 소유
+  제품 1개 확정 ③ 그 외 모호. 모드 `--assess`/`--migrate`/`--purge-ambiguous`/`--purge-all`/
+  `--verify-contract`, mutate 는 **JSONL 전 컬럼 백업 강제** + `--apply` 없으면 dry-run.
+- UNIQUE 충돌은 행 단위 SAVEPOINT 로 흡수하되 **SQLSTATE 23505 에서만** 중복 병합(그 외 예외는
+  re-raise → 트랜잭션 롤백. transient 오류로 원본이 지워지는 것을 막는다).
+
+**expand/contract**: 코드 배포와 데이터 이관은 원자적일 수 없다. 배포 시점엔 레거시 ds-scope 를
+꼬리 후보로 함께 읽어(이 창의 동작 = 종전과 동일, 새 회귀 아님) 메타데이터가 사라지지 않게 하고,
+이관 완료(`--verify-contract` 0건) 후 `AGENT_KB_LEGACY_DS_SCOPE_READ=0` 으로 contract 한다.
+
+**마이그레이션 0 · 신규 권한 0 · RBAC 표면 불변**(기존 `metadata.*`/`kb.*` 그대로). 스키마 변경 없음
+(scope_key 는 문자열 축 재해석).
+
+Cross-ref: FUNCTION `REQ-20260729T213000-metadata-product-scope` · TASK `20260729T2130-metadata-product-scope` ·
+REVIEW `REV-20260729T213000-metadata-product-scope` · Run `docs/test-runs.d/20260729T2130-metadata-product-scope.md`.
