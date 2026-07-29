@@ -2017,3 +2017,23 @@ EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS
 - Related TASK: feature-0003-agent-web-ui / 20260729T1720-append-only-postdeploy
 - Reason: changed paths are docs only (test-runs.d fragment append + TASK/MODIFY/REVIEW 기록) — 실행 코드·정적 자산 변경 0줄. 검증 대상 코드는 선행 cycle 에서 §18.8 패널(ux·design)을 거쳤고, 본 cycle 은 그 배포본의 라이브 실측 결과를 기록할 뿐이다.
 - Timestamp: 2026-07-29T17:20:00+09:00
+
+## REV-20260729T180000-conv-search-postdeploy [SKIPPED:non-policy-doc] POST-DEPLOY 실증 기록 (doc-only)
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1800-conv-search-postdeploy
+- Timestamp: 2026-07-29T18:00:00+09:00
+- Verdict: SHIP
+
+코드·정책 문서 변경 0(§18.8 표 첫 행 "비정책 doc-only" → panel SKIP). 기록의 정확성만이 리뷰 대상이라
+아래 자체 확인을 남긴다.
+
+- 기록된 라이브 결과는 전부 이 세션에서 실제로 실행한 관측이다 — 검색 응답 JSON(`matched_count`,
+  `matched_attachments`), 칩 `innerHTML`(강조 태그 포함), 스크린샷, `EXPLAIN (ANALYZE, BUFFERS)` 출력.
+  추정으로 채운 항목 없음.
+- **한계 명시**: 성능 실측은 현 규모(첨부 634행/대화 271행) 단일 측정이다. 부하 상태·대규모 데이터의
+  worst-case 는 측정하지 않았으며, 그 재평가 트리거(§8.7 FULLTEXT — rate limit 빈발 또는
+  statement_timeout 히트)를 TASK 에 명시했다. "성능 문제 없음" 이 아니라 "현 규모에서 첨부 축의 기여가
+  0.5% 미만" 이 측정된 사실이다.
+- **한계 명시 2**: PB-0008 은 `bootstrap_admin`(admin, `attachment.read.any` 보유) 단일 계정으로 수행했다.
+  `.own`-only 계정의 스코프 축소 동작은 단위 테스트(P2/P4/P5)로만 검증됐고 라이브 계정 실측은 아니다.
+- Human Approval Needed: no

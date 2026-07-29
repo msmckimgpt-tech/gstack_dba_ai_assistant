@@ -7155,8 +7155,8 @@ Cross-ref: test-runs.d/20260729T1600-attach-postdeploy.md · 선행 TASK 2건 ·
 
 - 재검증 후 신규 테스트 **30건 PASS**(P4~P6·F5 추가) · 전체 회귀 **신규 실패 0** · ruff PASS
 
-- [ ] POST-DEPLOY PB-0008 라이브 시각검증 (`visual_verification_scope: always`)
-- [ ] POST-DEPLOY 첨부 EXISTS `EXPLAIN ANALYZE` 실측 (위 P2 성능 항목)
+- [x] POST-DEPLOY PB-0008 라이브 시각검증 (`visual_verification_scope: always`) — 아래 실증 섹션
+- [x] POST-DEPLOY 첨부 EXISTS `EXPLAIN ANALYZE` 실측 (위 P2 성능 항목) — 아래 실증 섹션
 
 Cross-ref: FUNCTION `REQ-20260729-conv-search-attach-name` · MODIFY
 `CHG-20260729T145500-conv-search-attach-name` · REVIEW `REV-20260729T145500-conv-search-attach-name`
@@ -7297,7 +7297,7 @@ Cross-ref: DECISIONS `ADR-20260729T163000-attach-append-only` · FUNCTION
       audit 실패 fail-soft. **역검증**: 수정을 되돌리면 N1/N3/N4 가 `NameError` 로 실패함을 확인
       (테스트가 실제 가드임을 증명).
 - [x] 전체 회귀 신규 실패 0 · ruff PASS
-- [ ] POST-DEPLOY 라이브 재검증 (배포 후 검색 200 + 첨부 파일명 매칭 — 직전 cycle 의 PB-0008 항목과 합류)
+- [x] POST-DEPLOY 라이브 재검증 (배포 후 검색 200 + 첨부 파일명 매칭 — 아래 실증 섹션)
 
 Cross-ref: MODIFY `CHG-20260729T170000-search-collation-nameerror` · REVIEW
 `REV-20260729T170000-search-collation-nameerror` · 원인 커밋 CHG-20260711T161858(ITEM-10 p7)
@@ -7315,3 +7315,38 @@ Cross-ref: MODIFY `CHG-20260729T170000-search-collation-nameerror` · REVIEW
 
 Cross-ref: test-runs.d/20260729T1630-attach-append-only.md (POST-DEPLOY 절 append) ·
 DECISIONS `ADR-20260729T163000-attach-append-only`
+
+## 20260729T1800-conv-search-postdeploy — 대화 검색 첨부 파일명 축 POST-DEPLOY 라이브 실증 (종결)
+
+배포: `495da758`(축 추가) → `db04ce0a`(검색 500 hotfix). web-a/web-b soak 통과·워커 롤아웃 완료.
+
+### PB-0008 실 Windows 브라우저 검증 (Chrome 150, win-browser relay)
+- **검색 카피**: 입력 placeholder 가 `제목 · 본문 · 첨부 파일명 (2자 이상)` 으로 라이브 렌더.
+- **AC-1 첨부 축 실동작**: `attach-scope-probe` 검색 → **2건**. 그중 제목이 `새 대화`(제목·본문 어디에도
+  검색어 없음)인 대화가 **첨부 파일명으로 매칭**돼 결과에 올랐다.
+- **AC-4 매칭 근거**: 그 행에 📎 `attach-scope-probe.sql` 칩이 렌더되고, 파일명 안의 검색어가
+  `<mark class="search-snippet-hl">` 로 강조(칩 innerHTML 실측). 본문 매칭 행(`파일의 특정 줄에서
+  probe token 추출`)에는 칩이 없어 근거 표시가 정확히 매칭 축을 반영한다.
+- **AC-2 가시성 한정**: 구버전/삭제분에만 존재하는 파일명(`GunZ_Init_Query.sql` — 가시 첨부에 동명
+  없음)으로 검색 → **matched 0 · matched_attachments 0**. 목록에 안 보이는 첨부가 검색 근거로만
+  드러나지 않음을 라이브 데이터로 확인.
+- 스크린샷: `artifacts/shared/win-browser-shots-conv-search-attach/search-attach-chip.png`.
+- 접근 경로 주기: Windows Chrome 은 WSL `/etc/hosts` 를 안 보므로 `mysql-ai.company.local` 미해석,
+  WSL IP 직접 접속은 앱 `WEB_ALLOWED_HOSTS` 미등록으로 400 → **WSL2 localhost 포워딩(`https://localhost/`)**
+  으로 접속(호스트 파일 무수정).
+
+### 첨부 EXISTS 성능 실측 (codex P2 이월분 — 해소)
+라이브 PG `EXPLAIN (ANALYZE, BUFFERS)` — 현 규모 `core_attachments` **634행** / `core_conversations` **271행**:
+- 전체 검색 쿼리 **Execution Time 65.1ms** (planning 2.5ms). `statement_timeout` 3s 대비 충분한 여유.
+- 첨부 EXISTS 는 `Seq Scan on core_attachments` **actual 0.301..0.304ms · loops=1** — 전체의 **0.5% 미만**.
+  지배 비용은 기존 메시지 본문 ILIKE 축이다.
+- **판정**: `ILIKE '%q%'` 인덱스 미사용은 사실이나 현 규모에서 첨부 축의 실측 기여는 무시할 수준.
+  첨부가 10만 행대로 커지면 §8.7 이 예약한 FULLTEXT/trigram trigger 와 함께 재평가한다(임계 재확인
+  시점 = 검색 rate limit 빈발 또는 `statement_timeout` 히트).
+
+### 함께 확인된 것
+- hotfix(`db04ce0a`) 전에는 같은 조작이 **500**(`NameError: _COLLATION_AUDIT_DONE`)이었고, 배포 후
+  200 + 정상 결과. 즉 라이브 본문 검색 자체가 2026-07-11 이후 처음으로 복구됐다.
+
+Cross-ref: TASK `20260729T1455-conv-search-attach-name` · `20260729T1700-search-collation-nameerror` ·
+Run=test-runs.d/20260729T145500-conv-search-attach-name.md
