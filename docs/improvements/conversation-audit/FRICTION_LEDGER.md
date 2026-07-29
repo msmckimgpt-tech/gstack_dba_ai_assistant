@@ -376,10 +376,17 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **범위 밖(인지)**: 기본값(`API_DEFAULT_MODEL`) 자체와 "'+ 새 대화'는 haiku 로 시작" 정책은 불변 —
   사용자 명시 선택만 보존한다. 그룹 대화의 계정별 모델 스코프도 무변경.
 
-## FR-dataplane-conn-stale-no-reconnect — fixed:undeployed (L4↔L8 데이터플레인 연결 재사용에 liveness·재연결 부재)
+## FR-dataplane-conn-stale-no-reconnect — fixed:deployed:unverified-live (L4↔L8 데이터플레인 연결 재사용에 liveness·재연결 부재)
 
-- **status**: `fixed:undeployed` — 사용 직전 liveness ping + 같은 좌표 재연결 봉인 출하, 배포 전.
-  배포 후 동일 재현(대형 첨부 리뷰로 수 분 추론 → 첫 도구 성공) 확인 시 `fixed:deployed:unverified-live`.
+- **status**: `fixed:deployed:unverified-live` — PR #1036 → main `d2b0e317`, 전체 롤아웃 `50c5a854`
+  (web-a/web-b 롤링 + insight-worker/ask-worker + gateway reconcile, soak 통과). 4개 서빙 컨테이너
+  전부에서 봉인 심볼·설정 적재 확인.
+  **메커니즘은 배포본에서 라이브 실증됨** — 사고와 같은 datasource(`mssql-web-qa`)로 같은 유휴
+  (232초)를 재현: 대조(봉인 미경유 원 conn 직접 사용) `DBPROCESS is dead or not enabled` 로 사망,
+  봉인 경로는 `dataplane_conn_reconnected` 로그와 함께 자동 재연결되어 쿼리 성공(`재연결됨=True`).
+  `verified` 로 닫지 않는 이유(§C5): 배포 후 **실사용자 대화**에 대한 corroboration 재측정
+  (끊김 시그니처 distinct_conv 감소)이 아직 남았다 — 다음 audit 이 재측정해 전이시킨다.
+  **재진단 금지**: 근본은 확정·봉인됐다. 다음 호출은 corroboration 수치만 갱신할 것.
 - **source**: 사용자 명시 호출 — "쿼리 리뷰 : WEB_QA / DB와 연결하지 못하는 이슈".
 - **last_seen**: 2026-07-29 · **seen_count**: 3 · **seen_distinct_conv**: 3 (60일)
 - **symptom_confidence**: high (사용자 직접 보고 + 전사에 오류 문자열 명시)
@@ -417,8 +424,8 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   못한 상태를 "검색 결과가 없습니다" 로 위장**해 모델이 테이블 부재를 전제로 리뷰를 진행했다.
   형제 `_search_routines_mssql` 이 이미 받은 하드닝의 대칭 적용(`FR-false-absence-zero-row-catalog-scope`
   와 같은 류가 자매 함수에 남아 있던 것).
-- **필요한 사람 액션(1줄)**: 배포 confirm(Major — override 불가) 후, 대형 첨부 쿼리 리뷰 1건으로
-  라이브 재현 확인.
+- **필요한 사람 액션(1줄)**: 없음 — 배포·라이브 실증 완료. (선택) 대형 첨부 쿼리 리뷰를 실제
+  대화에서 1건 돌려 사용자 표면에서도 확인.
 
 ## FR-insight-worker-conn-stale — deferred (같은 근본의 배경 스캔 판, 별 cycle)
 
