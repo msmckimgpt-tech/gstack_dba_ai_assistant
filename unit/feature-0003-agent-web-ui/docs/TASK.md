@@ -7263,3 +7263,42 @@ Cross-ref: DECISIONS `ADR-20260729T163000-attach-append-only` · FUNCTION
       삭제 ×가 이 cycle 에서 제거돼 폭이 회복됐고, 남겨두면 텍스트가 아니라 인라인 "버전 N개 ▾"
       **버튼을 잘라** 버전 이력 진입점이 사라진다(패널 최소 폭 실측). 이름줄 flex 분리는 배지 보존
       효과가 있어 유지
+
+## 20260729T1700-search-collation-nameerror — 본문 검색 500 근본 수정: collation audit NameError (Major, 선행 결함)
+
+**발견 경위**: 직전 cycle(`20260729T1455-conv-search-attach-name`)의 POST-DEPLOY PB-0008 라이브
+검증 중, 배포된 화면에서 첨부 파일명으로 검색하자 `GET /api/conversations?q=…` 가 **500**.
+검색 placeholder·서빙 자산은 정상 반영됐으나 검색 자체가 동작하지 않았다.
+
+**근본 원인 (직전 cycle 과 무관한 선행 결함)**
+- `_audit_message_table_collations` 는 ITEM-10 p7(2026-07-11, CHG-20260711T161858)에서 app.py →
+  `routers/_audit_infra.py` 로 이동했다. 이때 함수 본문의 `global _COLLATION_AUDIT_DONE` 선언은
+  따라갔으나 **module-level 정의(`_COLLATION_AUDIT_DONE = False`)는 app.py 에 남았다**.
+- `global` 은 *그 모듈의* 전역을 가리키므로, `_audit_infra` 네임스페이스에 그 이름이 없어
+  첫 읽기(`if _COLLATION_AUDIT_DONE:`)에서 즉시 `NameError`.
+- `_list_conversations` 의 본문 검색 게이트(`if normalized_q: app._audit_message_table_collations(conn)`)
+  가 이 함수를 부르므로 **`q` 가 있는 모든 검색 요청이 500**. 검색어 없는 목록 조회는 무영향이라
+  2026-07-11~07-29 동안 조용히 깨져 있었다.
+
+**왜 지금까지 안 잡혔나 (정직)**
+- 검색 관련 단위 테스트가 이 함수를 monkeypatch 로 no-op 처리하거나(`_run_list_mysql`),
+  `_list_conversations_pg` 를 직접 호출해 `_list_conversations` 의 게이트를 건너뛰었다.
+  직전 cycle 의 신규 테스트 30건도 같은 사각에 있었다 — **테스트가 실제 진입 경로를 타지 않으면
+  라이브 500 을 통과시킨다**는 것을 이 결함이 실증한다.
+
+**진행**
+- [x] `_audit_infra._audit_message_table_collations` 가 플래그를 **app 전역**으로 읽고 쓰도록 수정
+      (`getattr(app, "_COLLATION_AUDIT_DONE", False)` / `app._COLLATION_AUDIT_DONE = True`).
+      모듈 로컬 정의를 새로 만들지 않는다 — app.py 의 것과 상태가 갈려 once-per-process 가
+      이중화되기 때문(패치-단일점 규약 = `app.X` 동적 참조).
+- [x] **동일 유형 전수 검사** — `src/**/*.py` 를 AST 로 훑어 `global X` 선언 대비 module-level
+      바인딩 부재를 검출. 수정 후 **0건**(이 결함이 유일했다).
+- [x] 회귀 테스트 5건 신설 `test_search_collation_audit.py` — NameError 부재·once-per-process·
+      플래그 위치(모듈 로컬 정의 금지)·**패치 없이 `_list_conversations` 본문 검색 경로 통과**·
+      audit 실패 fail-soft. **역검증**: 수정을 되돌리면 N1/N3/N4 가 `NameError` 로 실패함을 확인
+      (테스트가 실제 가드임을 증명).
+- [x] 전체 회귀 신규 실패 0 · ruff PASS
+- [ ] POST-DEPLOY 라이브 재검증 (배포 후 검색 200 + 첨부 파일명 매칭 — 직전 cycle 의 PB-0008 항목과 합류)
+
+Cross-ref: MODIFY `CHG-20260729T170000-search-collation-nameerror` · REVIEW
+`REV-20260729T170000-search-collation-nameerror` · 원인 커밋 CHG-20260711T161858(ITEM-10 p7)

@@ -1784,3 +1784,24 @@ introspect 폴백이 없던 비대칭이 원인. §18.8 codex 적대 검증 P2 2
 Cross-ref: FUNCTION `REQ-20260729-graph-detail-columns` (AC-GDC-1~3) · feature-0016 TASK
 `20260729T0659-graph-detail-columns` · REVIEW `REV-20260729T065900-graph-detail-columns` ·
 Run `docs/test-runs.d/20260729T0659-graph-detail-columns.md`.
+## CHG-20260729T170000-search-collation-nameerror — 본문 검색 500 근본 수정 (Major, 선행 결함)
+
+**증상**: `GET /api/conversations?q=…` 500 (`NameError: name '_COLLATION_AUDIT_DONE' is not defined`,
+`routers/_audit_infra.py:93`). 검색어 없는 목록 조회는 정상. 2026-07-11~07-29.
+
+**원인**: ITEM-10 p7(CHG-20260711T161858)이 `_audit_message_table_collations` 를 app.py →
+`routers/_audit_infra.py` 로 이동할 때 `global _COLLATION_AUDIT_DONE` 만 옮기고 module-level
+정의는 app.py 에 남겼다. `global` 은 그 모듈 전역을 가리키므로 첫 읽기에서 NameError.
+
+**변경**: `unit/feature-0003-agent-web-ui/src/routers/_audit_infra.py` —
+플래그를 `getattr(app, "_COLLATION_AUDIT_DONE", False)` 로 읽고 `app._COLLATION_AUDIT_DONE = True`
+로 쓴다(패치-단일점 규약). 모듈 로컬 정의는 신설하지 않는다(상태 이중화 방지).
+
+**동일 유형 전수 검사**: `src/**/*.py` AST 스캔으로 `global X` 대비 module-level 바인딩 부재
+검출 → 수정 후 0건.
+
+**테스트**: `test_search_collation_audit.py` 5건 신설(N1~N5). **역검증** — 수정을 되돌리면
+N1/N3/N4 가 NameError 로 실패. 전체 회귀 신규 실패 0 · ruff PASS.
+
+Cross-ref: TASK `20260729T1700-search-collation-nameerror` · REVIEW
+`REV-20260729T170000-search-collation-nameerror`.
