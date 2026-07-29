@@ -2260,3 +2260,17 @@ POST-DEPLOY 와 동일 조건)에서 판정: **형제 헤더 전원 동일 크�
 ### §8 개선 제안 (기록만 — 사용자 지시 없이 실행 안 함)
 - **그래프 컬럼 투영 공백 자체의 해소**: 본 수정은 프론트 보강이라 매 세션 introspect 왕복이 남는다. `feature-0016 analysis-completeness`(2026-07-23)의 lazy introspection 이 Table 잡 처리 시 누락 컬럼을 `column_descriptions` 에 채우므로, 노드 분석 커버리지가 오르면 이 보강 호출은 자연 감소한다. 커버리지 40% 를 어디까지 올릴지는 별도 판단 항목.
 - **헤드리스 구형 하네스 15개 재작성**: ITEM-09 ES 모듈 분리 이후 방치된 부채. 신형(유닛 격리 추출) 패턴으로 옮기면 그래프 렌더 계층의 회귀 감지가 되살아난다.
+
+### POST-DEPLOY 확인 (2026-07-29, graph-detail-columns)
+배포본(main `2dd84737`, web-a/web-b 둘 다)에서 실 Windows Chrome 150 으로 GDC.7 판정 — **전 항목 PASS**.
+신 코드 서빙 2중확인 후(`_metaDetailMergeColumns` 배포 전 0회 → 후 각 2회) ① **리포트 케이스**
+`cc_pyron.DT_ItemEnchantInfo`(그래프 HAS_COLUMN **0** · 실 데이터소스 컬럼 **35**)에서 종전엔 **없던**
+`컬럼 (35)` 섹션이 렌더되고, 개수·ordinal 순서(`UniqueID`…`SecondRate8`)·자료형이 데이터소스와 일치했으며
+상세를 여는 것만으로 캔버스가 바뀌지 않았다(모델 무오염) ② **회귀 축** `dk_data_release.Item`(그래프
+HAS_COLUMN **75**)은 개수 75 불변 + 큐레이션 설명(`Grade — 아이템의 등급` 등)이 introspect 자료형에
+덮이지 않아 **병합 우선순위**를 라이브에서 확증 ③ **codex P2-2 확증** — 같은 키를 80ms 간격으로 재선택해도
+패널이 낡은 스냅샷으로 덮이지 않았고 pageerror 0.
+**미확인 축(정직)**: empty-state 실패 문구(introspect 불가 datasource)와 `truncated` 보강 트리거는 예외
+경로라 이번 표본에서 발생하지 않아 라이브 재현하지 못했다 — 헤드리스 계약(⑧·⑫·⑭)으로만 고정된다.
+상세: feature-0003 `docs/test-runs.d/20260729T1720-graph-detail-columns-postdeploy.md` · 증적 3매
+`artifacts/feature-0016-metadata-graph/20260729-graph-detail-columns/`.
