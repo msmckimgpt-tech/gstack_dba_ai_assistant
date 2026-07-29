@@ -73,3 +73,46 @@ QA 는 병렬 세션 다수가 같은 라이브를 공유하는 현 상황에서
    스스로 갱신(F1 백오프 재시도 또는 F5 online 훅)
 3. 폴러 강제 사망(오프라인 유지 후 온라인) 상태에서 watchdog 이 `loadHistory` 로 화면 회복
 4. 정상 경로 무회귀 — 처리 중 `/api/progress` 중복 호출 없음(감지기 dormant), 완료 시 답변 표시
+
+---
+
+### POST-DEPLOY Run (2026-07-29 18:30) — **Environment: Windows-browser** — verdict: **PASS**
+
+배포본 `8df5edb9`(이후 `defcdad9` 로 전진, 본 변경 포함) · web-a/web-b 양 replica 서빙 `app.js` 에
+수정 반영 실측(`PROGRESS_POLL_ERROR_MAX_MS` 2건 · `runDetectAbortController` 7건 · 엣지 경유 9건) ·
+실 Windows Chrome/150 relay(`bin/win-browser.py` 브리지, `https://localhost/`) · **전용 새 탭만 사용,
+타 세션이 쓰던 `/admin` 탭 무접촉**(탭 보존 확인 True).
+
+#### 1차 — 실 사용자 경로 (전송 → pending → 답변)
+
+새 대화에서 UI 로 전송("폴링 복원력 배포 검증용입니다. '확인' 두 글자만 답해 주세요.") →
+pending 말풍선 '시작 중' 진입(`runId=enqpre-…`, 폴러 생존, 폴 간격 1.2s) → **답변 "확인" 정상 도착**
+(대기 0.5s·준비 0.9s·추론 7.6s, 5단계). 정상 경로 무회귀 확인. 단 답변이 20초 내 끝나 '처리 중
+순단' 창이 닫혀, 폴링 채널을 직접 겨냥하는 2차로 전환했다.
+
+#### 2차 — 폴링 채널 순단·회복 (라이브 데이터 변경 0 — 응답을 클라이언트에서 합성)
+
+`/api/progress` 만 후킹해 (a) `processing` 응답 합성으로 폴러가 도는 상태를 만들고 (b) 순단을
+주입/해제한다. 서버 상태·대화 데이터는 건드리지 않는다.
+
+| 단계 | 관측 | 판정 |
+|---|---|---|
+| A 폴링 가동 | calls 5 · 간격 **1.2s**(ACTIVE) · pollerAlive **true** · errorCount 0 | 정상 |
+| B 순단 30s | blocked **3** · 간격 **8→16s** · pollerAlive **true** · errorCount 3 | **PASS** — 수정 전이라면 3회째에서 재스케줄 포기(이후 호출 0). 3연속 실패에도 폴링이 살아 있다 (AC-PPR-1) |
+| C 순단 75s | blocked **4** · 간격 **8→16→32s** · pollerAlive true · errorCount 4 | **PASS** — 지수 백오프 곡선 실측(AC-PPR-1) |
+| D 순단 해제 | pollerAlive true · 말풍선·경과시간 유지(1분 41초) | 백오프 잔여 대기 중(상한 60s) — 예상 동작 |
+| E1 폴러 강제 사망 | pollerAlive **false** · detectPoller **true** | watchdog 무장(AC-PPR-3) |
+| E2 +15s | calls **12** · 간격 1.2s · pollerAlive **true** · errorCount **0** · runId **불변**(`pb0008-probe-run`) | **PASS** — 감지기가 죽은 폴러를 되살렸고, **내 run 을 유지**했다(AC-PPR-2/3 + codex P1 수정분 F6) |
+
+#### 3차 — `online` 훅 (F5 / AC-PPR-4)
+
+순단 60초로 백오프를 32s 이상까지 벌린 상태(errorCount 4)에서 `online` 이벤트 발생 →
+**4초 안에 호출 4건 재개 + errorCount 0 리셋**. 백오프 잔여 대기(최대 60초)를 건너뛰고 즉시 회복.
+
+#### 공통
+
+- 콘솔 `pageerror` **0건** (3회 실행 전부).
+- 증적: `artifacts/shared/pb0008-progress-poll-resilience-{1-processing,2-blocked,A-processing,B-outage,C-recovered,D-watchdog,E-online}.png`.
+- **미실증(정직)**: 실제 OS 네트워크 단절(NIC off)로 인한 순단은 재현하지 않았다 — `fetch` 레벨
+  차단으로 대체했고, 클라이언트 폴링 코드 관점에서는 동일한 실패 신호(reject)다. 또 1차에서
+  생성한 검증용 대화 1건이 라이브에 남아 있다(제목 "폴링 복원력 배포 검증용입니다…").
