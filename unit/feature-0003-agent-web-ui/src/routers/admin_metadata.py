@@ -1809,10 +1809,15 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
     except (TypeError, ValueError):
         depth = 1
     depth = max(1, min(depth, 3))
+    # graph-cap-audit(사용자 결정 2026-07-29): 종전 기본 50 이 검색 결과를 잘라 "50건 · 상한(검색어를
+    #   좁혀보세요)" 를 띄우던 원인이다 — 찾아 놓고 안 보여주는 절단은 최적화가 아니라 오류이며, 목록
+    #   렌더 부담은 프론트의 그룹 접기·가상 스크롤이 담당한다. 쿼리 파라미터가 없으면 **모듈 기본값**
+    #   (`metadata_graph._SEARCH_CAP` 안전 가드)에 위임한다 — 여기서 숫자를 복제하면 두 곳이 어긋난다.
+    _lim_raw = (request.query_params.get("limit") or "").strip()
     try:
-        limit = int(request.query_params.get("limit") or "50")
+        limit = int(_lim_raw) if _lim_raw else None
     except (TypeError, ValueError):
-        limit = 50
+        limit = None
 
     # graph-product-cat (§43): 제품 카테고리 개요 — MySQL SSOT 합성(PG 불필요, early-return).
     #   product 는 숫자일 때만 단일 제품 트리거(비숫자는 통과 → 일반 dispatch; 리뷰 NIT 방어).
@@ -1841,7 +1846,10 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
             data = _mg.neighborhood(node, depth=depth, conn=pg)
             mode = "neighborhood"
         elif q:
-            data = {"nodes": _mg.search_nodes(q, limit=limit, scope=scope, conn=pg), "edges": []}
+            _sn_kw = {"scope": scope, "conn": pg}
+            if limit is not None:
+                _sn_kw["limit"] = limit   # 명시 요청만 override — 미지정은 모듈 안전 가드
+            data = {"nodes": _mg.search_nodes(q, **_sn_kw), "edges": []}
             mode = "search"
         elif scope and schema:
             data = _mg.schema_tables(scope, schema, conn=pg)
@@ -2210,7 +2218,10 @@ def admin_metadata_graph_columns(request: Request, account=Depends(app.require_p
             pass
     nodes, edges = [], []
     ord_i = 0
-    for r in rows[:500]:
+    # graph-cap-audit(사용자 결정 2026-07-29): 종전 `rows[:500]` 은 컬럼이 500 을 넘는 와이드 테이블에서
+    #   나머지를 조용히 버렸다 — 컬럼 목록은 데이터 자체라 잘라내면 오류다(렌더 부담은 프론트 컬럼
+    #   LOD §61·뷰포트 컬링 §65 가 담당). 전량 반환한다.
+    for r in rows:
         cname = str(r[0]) if r and r[0] is not None else ""
         if not cname:
             continue

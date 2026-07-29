@@ -125,15 +125,31 @@ def test_cross_db_refs_excluded_from_column_promotion():
     assert rt.parse_referenced_columns(body, refs, COLS) == {}
 
 
-def test_column_cap_per_table_and_total():
+def test_column_cap_is_guard_not_truncation():
+    """graph-cap-audit(사용자 결정 2026-07-29): 참조 컬럼 상한은 **비현실 극단 전용 안전 가드**다.
+
+    종전 계약은 `len == _COLS_CAP_PER_TABLE`(24) 로 **실사용 규모에서 잘리는 것**을 고정하고 있었다.
+    개수를 줄여 출력하는 것은 최적화가 아니라 데이터 누락(오류)이므로, 실사용 규모(200 컬럼)는 전량
+    통과해야 하고 가드는 그보다 훨씬 위에서만 작동해야 한다.
+    """
     many = {f"c{i:03d}": f"C{i:03d}" for i in range(200)}
     cols_map = {"t_user": many}
     body = "SELECT " + ", ".join(f"u.C{i:03d}" for i in range(200)) + " FROM T_User u"
     _, cols = _parse(body, cols=cols_map)
-    assert len(cols["t_user"]) == rt._COLS_CAP_PER_TABLE
-    # 결정적 절단(정렬 기반) — 같은 입력이면 같은 결과
+    assert len(cols["t_user"]) == 200, "실사용 규모(200)는 잘리지 않아야 한다"
+    assert rt._COLS_CAP_PER_TABLE >= 2000, "가드는 실사용 최대치보다 충분히 커야 한다"
+    # 결정적 — 같은 입력이면 같은 결과
     _, again = _parse(body, cols=cols_map)
     assert cols == again
+
+
+def test_column_guard_still_bounds_pathological_input():
+    """가드 자체는 살아 있다 — 손상 메타데이터·무한 생성 방어(전량 원칙의 backstop)."""
+    n = rt._COLS_CAP_PER_TABLE + 50
+    many = {f"c{i:05d}": f"C{i:05d}" for i in range(n)}
+    body = "SELECT " + ", ".join(f"u.C{i:05d}" for i in range(n)) + " FROM T_User u"
+    _, cols = _parse(body, cols={"t_user": many})
+    assert len(cols["t_user"]) == rt._COLS_CAP_PER_TABLE
 
 
 def test_empty_inputs_are_noop():
@@ -175,6 +191,43 @@ def test_fetch_columns_only_queries_wanted_tables():
     sql, params = conn.executed[0]
     assert "information_schema.COLUMNS" in sql and "TABLE_NAME IN (" in sql
     assert params[0] == "dbo" and set(params[1:]) == {"T_User", "T_Order"}
+
+
+def test_fetch_columns_batches_repeat_to_cover_all_tables():
+    """graph-cap-audit: `IN` 절 크기는 **배치 크기**이지 상한이 아니다 — 배치를 반복해 전량 조회한다.
+
+    종전에는 `names[:_COLUMNS_TABLE_CAP]` 로 목록을 잘라, 400개를 넘는 참조 테이블의 컬럼 승격이
+    조용히 누락됐다(사용 관계선이 테이블-레벨로 폴백). 배치 수와 파라미터 합집합으로 전량 커버를 잠근다.
+    """
+    n = rt._COLUMNS_TABLE_BATCH * 2 + 7
+    wanted = {f"T{i:05d}" for i in range(n)}
+    conn = _FakeConn([])
+    rt._fetch_columns(conn, "dbo", wanted)
+    assert len(conn.executed) == 3, f"배치 3회여야 한다(실제 {len(conn.executed)})"
+    seen = set()
+    for sql, params in conn.executed:
+        assert params[0] == "dbo"
+        seen.update(params[1:])
+    assert seen == wanted, "모든 테이블이 어느 배치엔가 포함돼야 한다(절단 0)"
+
+
+def test_fetch_columns_batch_failure_is_isolated():
+    """한 배치가 실패해도 나머지 배치는 계속한다 — 부분 결과가 전무보다 낫다."""
+    class _FlakyCur(_FakeCur):
+        def execute(self, sql, params=None):
+            self._sink.append((sql, params))
+            if len(self._sink) == 1:
+                raise RuntimeError("boom")
+
+    class _FlakyConn(_FakeConn):
+        def cursor(self):
+            return _FlakyCur(self.rows, self.executed)
+
+    n = rt._COLUMNS_TABLE_BATCH + 1
+    conn = _FlakyConn([("T_User", "UserID")])
+    out = rt._fetch_columns(conn, "dbo", {f"T{i:05d}" for i in range(n)})
+    assert len(conn.executed) == 2, "첫 배치 실패가 두 번째 배치를 막지 않아야 한다"
+    assert out == {"t_user": {"userid": "UserID"}}
 
 
 def test_fetch_columns_empty_wanted_is_noop():

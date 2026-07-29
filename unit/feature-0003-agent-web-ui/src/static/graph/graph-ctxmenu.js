@@ -957,7 +957,18 @@ async function _metaGraphToggleColumns(key) {
   if (!_metaGraph.graph || !key) return;
   const node = _metaGraph.nodes.get(key);
   if (!node || node.label !== "Table") return;
-  if (_metaTableHasCols(key)) return;   // 이미 펼침 — 클릭으로 접지 않음(접기는 "−" 컨트롤). O(1) 인덱스.
+  // 이미 펼침 — 클릭으로 접지 않는다(접기는 "−" 컨트롤). O(1) 인덱스.
+  //   graph-cap-audit(codex 적대리뷰 P1): 조건이 `_metaTableHasCols` **단독**이면 **부분 펼침**에서도
+  //   여기서 빠져나가 아래 introspect 보강에 도달하지 못한다 — 그래프에 컬럼 2개만 있는 테이블은
+  //   그 2개가 렌더되는 순간 `colsByTable > 0` 이 되어, 다시 눌러도 나머지 53개가 영원히 오지 않는다
+  //   (사용자 스크린샷 `DT_Character_New` 가 정확히 이 상태였다). "펼쳐졌다" 를 **완전히** 펼쳐졌다는
+  //   뜻으로 좁힌다 — 컬럼이 있고 **introspect 보강까지 마쳤을 때만** 재펼침을 no-op 으로 본다.
+  //   보강이 **실패**한 테이블도 no-op 대상이다 — 아니면 부분 펼침 상태에서 누를 때마다 실패 왕복을
+  //   반복한다(상세 패널의 `detailColsMiss` 와 같은 역할).
+  if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
+  if (!_metaGraph.introspectMiss) _metaGraph.introspectMiss = new Set();
+  if (_metaTableHasCols(key)
+      && (_metaGraph.introspected.has(key) || _metaGraph.introspectMiss.has(key))) return;
   // graph-perf-bg: 논블로킹 — busy 상태를 먼저 페인트(과거 dead-frozen 구간 제거)한 뒤 무거운 fetch·재구성.
   //   seq 토큰을 await(fetch·yield) 경계마다 대조해 그 사이 다른 조작이 시작됐으면 폐기(stale 렌더 방지).
   const seq = ++_metaGraph._opSeq;
@@ -971,10 +982,15 @@ async function _metaGraphToggleColumns(key) {
     try { data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`); }
     catch (_) { data = { nodes: [], edges: [] }; }
     if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }
-    const respHasCols = (data.edges || []).some((e) => e && e.type === "HAS_COLUMN" && e.source === key);
     if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
     let note = "";
-    if (!respHasCols && !_metaGraph.introspected.has(key)) {
+    // graph-cols-partial(사용자 리포트 2026-07-29 2차): 종전 조건은 `!respHasCols`(그래프에 컬럼이
+    //   **하나도 없을 때만** introspect) 였는데, 그래프 Column 정점은 `column_descriptions`(설명이 달린
+    //   컬럼만) 원천이라 **부분 투영**이 흔하다 — 설명 2개만 달린 55컬럼 테이블은 응답에 컬럼 2개가
+    //   실려 조건을 빠져나가고, 캔버스에도 그 2개만 펼쳐졌다(사용자 스크린샷 `DT_Character_New`).
+    //   상세 패널과 동일하게 **항상 한 번** 보강한다(테이블당 세션 1회 = `introspected` 가드 + 백엔드
+    //   TTL 캐시). 이미 온전한 테이블은 아래 dedupe 에서 no-op 이라 표시가 바뀌지 않는다.
+    if (!_metaGraph.introspected.has(key)) {
       try {
         const col = await apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`);
         if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }
@@ -984,11 +1000,27 @@ async function _metaGraphToggleColumns(key) {
           data.edges = (data.edges || []).concat(col.edges || []);
         } else if (col && !col.introspected && col.reason) {
           note = ` (${col.reason})`;
+          _metaGraph.introspectMiss.add(key);   // 세션 내 재시도 억제(실패 왕복 반복 방지)
         }
-      } catch (_) { /* graceful */ }
+      } catch (_) { _metaGraph.introspectMiss.add(key); }
     }
     // 이 테이블 소속 컬럼만(이웃 테이블 컬럼 제외).
-    const colNodes = (data.nodes || []).filter((x) => x && x.label === "Column" && _metaColParent(x.key, x.fqn) === key);
+    //   graph-cols-partial: 이제 그래프 컬럼과 introspect 컬럼이 **함께** 실려 오므로 union dedupe 가
+    //   필요하다. 키는 소문자 정규화 — 그래프는 큐레이션 입력(`column_descriptions`), introspect 는
+    //   `information_schema` 원천이라 같은 컬럼이 케이스만 달리 올 수 있고, 그대로 ingest 하면 캔버스에
+    //   같은 컬럼이 두 줄로 그려진다. 앞선 레코드(그래프 = 큐레이션 설명 보유)를 유지하되, **ordinal 은
+    //   introspect 쪽에서 보완**한다 — 그래프 Column 정점에는 ordinal 이 없을 수 있고, 없으면 ERD 정렬
+    //   (_metaGraphColCmp)에서 후미로 밀려 실제 스키마 순서와 어긋난다.
+    const _colSeen = new Map();
+    (data.nodes || []).forEach((x) => {
+      if (!x || x.label !== "Column" || _metaColParent(x.key, x.fqn) !== key) return;
+      const k = String(x.key || "").toLowerCase();
+      if (!k) return;
+      const prev = _colSeen.get(k);
+      if (!prev) { _colSeen.set(k, x); return; }
+      if (prev.ordinal == null && x.ordinal != null) prev.ordinal = x.ordinal;   // 순서만 보완
+    });
+    const colNodes = [..._colSeen.values()];
     _metaGraphIngest(colNodes, []);
     if (colNodes.length > 0) {
       _metaGraph.expanded.add(key);
@@ -1164,12 +1196,14 @@ async function _metaGraphExpand(key, depthOverride) {
   }
   if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }
   // 미분석 테이블은 그래프에 컬럼(HAS_COLUMN)이 없어 즉석조회(introspect) 병합.
+  //   graph-cols-partial(사용자 리포트 2026-07-29 2차): 종전 조건 `!respHasCols && !anchorHasCols`
+  //   (그래프·모델 어디에도 컬럼이 없을 때만)는 **부분 투영**을 통과시켰다 — 설명이 달린 컬럼만
+  //   그래프에 오르므로 55컬럼 테이블이 2컬럼으로 보이고, 그 2개 때문에 보강이 skip 됐다.
+  //   컬럼 펼치기·상세 패널과 동일하게 **앵커 Table 이면 항상 한 번** 보강한다(세션 1회 가드 유지).
   let introspectNote = "";
   const selfNode = (data.nodes || []).find((x) => x.key === key);
-  const respHasCols = (data.edges || []).some((e) => e && e.type === "HAS_COLUMN" && e.source === key);
   if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
-  const anchorHasCols = _metaTableHasCols(key);
-  if (selfNode && selfNode.label === "Table" && !respHasCols && !anchorHasCols && !_metaGraph.introspected.has(key)) {
+  if (selfNode && selfNode.label === "Table" && !_metaGraph.introspected.has(key)) {
     try {
       const col = await apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`);
       if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }
@@ -1626,9 +1660,12 @@ function _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn) {
 const _META_DBGRP_ROW_CAP = 4000;   // 비현실 극단 전용 안전 가드(브라우저 행 폭주 방지). 실사용은 사실상 무제한.
 const _META_DBGRP_FLAT_MAX = 60;    // 총 항목이 이 개수 이하면 전 그룹 기본 펼침(짧은 목록은 절대 숨기지 않는다).
 const _META_DBGRP_BIG = 300;        // 이 개수를 넘는 그룹은 초기 렌더에서 접힘(DOM·리스너 폭주 방지).
-// routine-column-edges(2026-07-28): 사용 관계 행에 병기하는 참조 컬럼 표시 개수(초과분은 "외 N").
-//   행 한 줄이 컬럼 나열로 뒤덮이지 않게 하는 표시 상한일 뿐, 캔버스 관계선은 전량 그려진다.
-const _META_RTCOL_SHOW = 8;
+// routine-column-edges(2026-07-28): 사용 관계 행에 병기하는 참조 컬럼.
+//   graph-cap-audit(사용자 결정 2026-07-29): 종전 `slice(0, 8)` + "외 N" 은 **표시도 툴팁도** 8개로
+//   잘라, 나머지 컬럼명을 화면 어디서도 되찾을 수 없었다(무음 손실). 개수를 줄여 출력하는 것은
+//   최적화가 아니라 오류이므로 **전량을 싣고**, 한 줄을 넘지 않게 하는 축약은 CSS(`text-overflow:
+//   ellipsis` + `nowrap`)가 담당한다 — 렌더 비용은 한 줄로 동일하고 전문은 title 에 온전히 남는다.
+const _META_RTCOL_GUARD = 5000;   // 비현실 극단 전용 안전 가드(DOM 텍스트 폭주 방어)
 const _metaDbGrpLazy = new Map();   // gid -> { html, bind } — 접힌 그룹의 지연 렌더 payload(패널 재렌더마다 초기화)
 let _metaDbGrpSeq = 0;
 
@@ -1906,11 +1943,20 @@ function _metaDetailMergeColumns(self, fetched) {
   if (!self || self.label !== "Table" || !Array.isArray(fetched)) return fetched;
   const selfKey = self.key;
   const ck = (c) => String((c && c.key) || "").toLowerCase();
-  const seen = new Set(fetched.map(ck).filter(Boolean));
+  const seen = new Map();
+  fetched.forEach((c) => { const k = ck(c); if (k && !seen.has(k)) seen.set(k, c); });
   const add = (c) => {
     const k = ck(c);
-    if (!k || seen.has(k)) return;
-    seen.add(k); fetched.push(c);
+    if (!k) return;
+    const prev = seen.get(k);
+    if (prev) {
+      // graph-cols-partial: 중복은 앞선 소스 레코드를 유지하되 **ordinal 만 보완**한다 — 그래프
+      //   Column 정점에는 ordinal 이 없을 수 있고(큐레이션 입력 원천), 없으면 아래 정렬에서 후미로
+      //   밀려 실제 스키마 컬럼 순서와 어긋난다. 설명은 덮지 않는다(큐레이션 우선 규칙 유지).
+      if (prev.ordinal == null && c && c.ordinal != null) prev.ordinal = c.ordinal;
+      return;
+    }
+    seen.set(k, c); fetched.push(c);
   };
   _metaGraph.nodes.forEach((n) => {
     if (n && n.label === "Column" && _metaColParent(n.key, n.fqn) === selfKey) add(n);
@@ -1927,7 +1973,14 @@ function _metaDetailMergeColumns(self, fetched) {
 //   보강 결과가 재렌더를 부르므로, 이 가드가 없으면 렌더↔보강이 서로를 부르는 루프가 된다.
 function _metaDetailColsBackfillNeeded(self, meta, colCount) {
   if (!self || self.label !== "Table" || !self.key) return false;
-  if (colCount > 0 && !(meta && meta.truncated)) return false;
+  // graph-cols-partial(사용자 리포트 2026-07-29 2차): 종전 게이트는 **컬럼 0 또는 truncated** 였는데,
+  //   그것으로는 **부분 투영**을 못 잡는다 — 그래프 Column 정점은 `column_descriptions`(설명이 달린
+  //   컬럼만) 원천이라 "설명 2개만 달린 55컬럼 테이블" 은 `HAS_COLUMN` 이 **2** 로 오고 백엔드는
+  //   절단하지 않았으므로 `truncated` 도 false 다(있는 걸 다 준 것이 맞다). 즉 콘텐츠가 부분이라는
+  //   사실을 응답 어디에서도 알 수 없다(실측: `cc_pyron.DT_Character_New` = 그래프 2 vs 실 55).
+  //   그래서 **Table 상세는 항상 한 번 보강한다** — 테이블당 세션 1회 + 백엔드 TTL 캐시라 반복 비용이
+  //   없고, 컬럼 펼치기가 이미 같은 엔드포인트를 같은 빈도로 호출한다. 이미 온전한 테이블에서는
+  //   union 이 no-op 이므로 표시도 불변이다(dedupe 가 흡수).
   const key = self.key;
   if (_metaGraph.detailCols.has(key) || _metaGraph.detailColsMiss.has(key)
       || _metaGraph.detailColsInflight.has(key)) return false;
@@ -2161,7 +2214,7 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
       let colsHtml = "";
       const rcs = Array.isArray(e.ref_columns) ? e.ref_columns : null;
       if (rcs && rcs.length) {
-        const shown = rcs.slice(0, _META_RTCOL_SHOW);
+        const shown = rcs.slice(0, _META_RTCOL_GUARD);
         const txt = shown.map((c) => (c && c.k === "write" ? "✎" : "") + String((c && c.n) || "")).join(", ")
           + (rcs.length > shown.length ? ` 외 ${rcs.length - shown.length}` : "");
         // detail-panel-typo: 표시는 CSS 말줄임(행 높이 균일)으로 잘리므로 **툴팁이 전문을 보존**해야

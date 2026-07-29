@@ -136,21 +136,28 @@ const names = (arr) => arr.map((c) => c.name);
   check("⑥ Routine 상세도 no-op", s._metaDetailMergeColumns(routineSelf, []).length === 0);
 }
 
-// ── ⑦ 보강 게이팅 — 컬럼 0 이면 introspect 보강이 필요하다(주 증상) ──────────────────────────
+// ── ⑦⑧ 보강 게이팅 — **부분 투영을 응답에서 알 수 없으므로 Table 은 항상 한 번 보강** ──────────
+//   (graph-cols-partial, 사용자 리포트 2026-07-29 2차) 초판 게이트는 "컬럼 0 또는 truncated" 였는데
+//   그것으로는 부분 투영을 못 잡았다 — 그래프 Column 정점은 `column_descriptions`(설명이 달린 컬럼만)
+//   원천이라 55컬럼 테이블이 `HAS_COLUMN` 2 로 오고, 백엔드는 있는 걸 다 준 것이므로 `truncated` 도
+//   false 다. 즉 "부분"이라는 사실이 응답 어디에도 없다(실측: cc_pyron.DT_Character_New = 2 vs 55).
 {
   const s = newCtx();
   check("⑦ 컬럼 0 → 보강 필요", s._metaDetailColsBackfillNeeded(TABLE, { truncated: false }, 0) === true);
-  check("⑦ 컬럼 있음 + 절단 없음 → 보강 불필요(이미 온전)",
-    s._metaDetailColsBackfillNeeded(TABLE, { truncated: false }, 12) === false);
+  check("⑦ 컬럼이 이미 있어도 보강한다(부분 투영은 응답으로 판별 불가)",
+    s._metaDetailColsBackfillNeeded(TABLE, { truncated: false }, 2) === true);
+  check("⑦ 컬럼 다수여도 동일 — 온전 여부를 프론트가 단정하지 않는다",
+    s._metaDetailColsBackfillNeeded(TABLE, { truncated: false }, 75) === true);
+  check("⑧ truncated 여도 물론 보강", s._metaDetailColsBackfillNeeded(TABLE, { truncated: true }, 12) === true);
+  check("⑧ meta 부재도 보강(판별 신호 부재 = 보강)", s._metaDetailColsBackfillNeeded(TABLE, null, 12) === true);
 }
 
-// ── ⑧ 보강 게이팅 — 백엔드 이웃 절단 신고면 컬럼이 있어도 부분이므로 보강('일부 누락' 축) ────────
+// ── ⑦-b 반복 비용 억제는 **세션 1회 가드**가 담당한다(항상-보강의 전제) ──────────────────────
 {
   const s = newCtx();
-  check("⑧ truncated → 컬럼이 있어도 보강",
-    s._metaDetailColsBackfillNeeded(TABLE, { truncated: true }, 12) === true);
-  check("⑧ meta 부재는 절단 아님으로 본다",
-    s._metaDetailColsBackfillNeeded(TABLE, null, 12) === false);
+  check("⑦-b 첫 호출은 보강", s._metaDetailColsBackfillNeeded(TABLE, null, 2) === true);
+  s._metaGraph.detailCols.set(TK, [col("A")]);
+  check("⑦-b 캐시 적재 후에는 재조회 안 함", s._metaDetailColsBackfillNeeded(TABLE, null, 2) === false);
 }
 
 // ── ⑨ 보강 게이팅 — 세션 내 1회 제한(렌더↔보강 무한 루프 차단) ────────────────────────────────
@@ -238,6 +245,66 @@ const names = (arr) => arr.map((c) => c.name);
     /_metaGraphDetailColsBackfill\(self, nodes, edges, meta, columns\.length, _detailGen\)/.test(src));
   const state = fs.readFileSync(path.join(path.dirname(CTX), "graph-state.js"), "utf8");
   check("⑮ _detailSeq 가 상태에 선언돼 있다", /_detailSeq: 0/.test(state));
+}
+
+// ── ⑯ graph-cols-partial — 부분 투영 union + ordinal 보완(설명은 큐레이션 유지) ────────────────
+{
+  const s = newCtx();
+  // 그래프에서 온 2개(설명 보유, ordinal 없음) + introspect 55개(ordinal 보유) 중 겹치는 2개.
+  const fetched = [
+    col("RespawnZoneID", { description: "부활 존 식별자(큐레이션)" }),
+    col("LastPolymorphID", { description: "마지막 폴리모프(큐레이션)" }),
+  ];
+  s._metaGraph.detailCols.set(TK, [
+    col("CharacterID", { ordinal: 1, description: "int" }),
+    col("LastPolymorphID", { ordinal: 2, description: "int" }),
+    col("RespawnZoneID", { ordinal: 3, description: "int" }),
+    col("Level", { ordinal: 4, description: "tinyint" }),
+  ]);
+  const out = s._metaDetailMergeColumns(TABLE, fetched);
+  check("⑯ 부분 투영이 introspect 전량으로 채워진다", out.length === 4, out.map((c) => c.name));
+  check("⑯ 정렬이 실제 스키마 ordinal 순 — 그래프 컬럼도 ordinal 을 보완받는다",
+    names(out).join(",") === "CharacterID,LastPolymorphID,RespawnZoneID,Level", names(out));
+  const lp = out.find((c) => c.name === "LastPolymorphID");
+  check("⑯ 큐레이션 설명은 자료형에 덮이지 않는다", lp.description === "마지막 폴리모프(큐레이션)", lp);
+  check("⑯ 보완된 ordinal 이 실제로 실렸다", lp.ordinal === 2, lp);
+}
+
+// ── ⑰ 캔버스 펼침도 같은 정책 — 부분 투영에서 introspect 를 건너뛰지 않는다 ────────────────────
+{
+  // 주석에는 "종전 조건은 !respHasCols 였다" 는 서술이 남으므로, **코드 라인만** 보고 판정한다
+  //   (주석까지 매칭하면 설명을 남긴 것만으로 FAIL 하는 오탐이 된다).
+  const codeOnly = (s) => s.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  const tog = codeOnly(grab(/\nasync function _metaGraphToggleColumns\([\s\S]*?\n\}\n/, "_metaGraphToggleColumns"));
+  check("⑰ 캔버스 펼침이 respHasCols 로 introspect 를 건너뛰지 않는다", !/respHasCols/.test(tog));
+  check("⑰ 캔버스 펼침의 재조회 억제는 세션 1회 가드", /!_metaGraph\.introspected\.has\(key\)/.test(tog));
+  check("⑰ 캔버스 union 은 소문자 dedupe", /String\(x\.key \|\| ""\)\.toLowerCase\(\)/.test(tog));
+  check("⑰ 캔버스 union 도 ordinal 을 보완", /prev\.ordinal == null && x\.ordinal != null/.test(tog));
+  const exp = codeOnly(grab(/\nasync function _metaGraphExpand\([\s\S]*?\n\}\n/, "_metaGraphExpand"));
+  check("⑰ 더블클릭 확장도 respHasCols/anchorHasCols 게이트를 쓰지 않는다",
+    !/respHasCols/.test(exp) && !/anchorHasCols/.test(exp));
+}
+
+// ── ⑱ codex 적대리뷰 P1 — 부분 펼침에서 조기 return 이 보강을 가로막지 않는다 ──────────────────
+//   그래프에 컬럼 2개만 있는 테이블은 그 2개가 렌더되는 순간 `colsByTable > 0` 이 되어, 종전
+//   `if (_metaTableHasCols(key)) return;` 이 **함수 초입에서** 빠져나갔다 — 아래 introspect 보강 코드가
+//   추가돼도 도달하지 못해 나머지 53개가 영영 오지 않는다(사용자 스크린샷이 정확히 이 상태).
+{
+  const codeOnly = (str) => str.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  const tog = codeOnly(grab(/\nasync function _metaGraphToggleColumns\([\s\S]*?\n\}\n/, "_metaGraphToggleColumns"));
+  check("⑱ 조기 return 이 hasCols 단독이 아니다(부분 펼침 통과)",
+    !/if \(_metaTableHasCols\(key\)\) return;/.test(tog), tog.slice(0, 300));
+  check("⑱ '완전히 펼쳐짐' = 컬럼 있음 AND introspect 보강 완료",
+    /_metaTableHasCols\(key\)[\s\S]{0,120}introspected\.has\(key\)/.test(tog));
+  check("⑱ 보강 실패 테이블도 no-op 대상(실패 왕복 반복 차단)",
+    /introspectMiss\.has\(key\)/.test(tog));
+  check("⑱ 실패 시 miss 를 기록한다", /introspectMiss\.add\(key\)/.test(tog));
+  const state = fs.readFileSync(path.join(path.dirname(CTX), "graph-state.js"), "utf8");
+  check("⑱ introspectMiss 가 상태에 선언돼 있다", /introspectMiss:/.test(state));
+  const core = fs.readFileSync(path.join(path.dirname(CTX), "graph-core.js"), "utf8");
+  const reset = core.match(/function _metaGraphResetModel\(\)[\s\S]*?\n\}/);
+  check("⑱ 스코프 전환 시 miss 기록도 초기화(재시도 가능)",
+    !!reset && /introspectMiss\.clear\(\)/.test(reset[0]));
 }
 
 // ── ⑬ 모델 교체(스코프 전환) 시 상세 캐시도 함께 비운다 ──────────────────────────────────────
