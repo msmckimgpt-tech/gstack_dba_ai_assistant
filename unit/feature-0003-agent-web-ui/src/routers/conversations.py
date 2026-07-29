@@ -2386,6 +2386,9 @@ def conversations(
 
     # REQ-20260519-0005 (TASK-0077): body-search 시 각 conv 의 매칭 message excerpt 첨부.
     matched_excerpts: dict[str, str] = {}
+    # 첨부 파일명 축(SECURITY §8.2): 제목·본문에 검색어가 없어도 첨부 파일명 매칭으로 결과에
+    # 뜰 수 있으므로, 그 매칭 근거(파일명)를 함께 실어 "왜 이 대화가 나왔나"를 설명한다.
+    matched_attachments: dict[str, list[str]] = {}
     if body_search_active and items:
         normalized_q = app._normalize_search_query(q)
         if normalized_q:
@@ -2394,6 +2397,25 @@ def conversations(
                 matched_excerpts = app._collect_matched_excerpts(conn, conv_ids, normalized_q)
             except Exception:
                 matched_excerpts = {}
+            # 첨부 근거는 **첨부 조회 권한 스코프 안에서만** 싣는다(SECURITY §8.2.1). 대화 목록
+            # 권한과 첨부 조회 권한은 독립이라, 목록에 떴다는 사실만으로 파일명을 돌려주면
+            # `conversation.attachment.read.*` 게이트가 우회된다. `.own` 이면 본인 소유·멤버
+            # 대화로 좁히되, 그 판정은 **SQL 안에서**(scope_account_id) 수행한다 — items 의
+            # owner_account_id/is_member 로 거르면 그 필드를 채우지 않는 백엔드(MySQL 폴백)에서
+            # 멤버 대화의 근거가 조용히 비기 때문(PG/MySQL 동작 불일치).
+            att_axis = app._search_attachment_axis(account)
+            if att_axis in ("any", "own"):
+                att_scope_id = None
+                if att_axis == "own":
+                    att_scope_id = int(account["id"]) if account.get("id") else None
+                    if att_scope_id is None:
+                        att_scope_id = -1  # 스코프 확정 불가 → 아무 대화도 매칭 안 됨(fail-closed)
+                try:
+                    matched_attachments = app._collect_matched_attachment_names(
+                        conn, conv_ids, normalized_q, scope_account_id=att_scope_id
+                    )
+                except Exception:
+                    matched_attachments = {}
 
     payload = {
         "items": items,
@@ -2403,6 +2425,7 @@ def conversations(
         "search_mode": True,
         "has_any": bool(has_any),
         "matched_excerpts": matched_excerpts,
+        "matched_attachments": matched_attachments,
     }
     return JSONResponse(payload)
 

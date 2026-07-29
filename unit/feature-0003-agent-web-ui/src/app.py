@@ -1259,6 +1259,29 @@ _ARCHIVED_CONVERSATION_REASON = "이 대화는 보관되어 더 이상 진행할
 
 
 
+def _search_attachment_axis(account: dict[str, Any] | None) -> str | None:
+    """대화 검색의 **첨부 파일명 축** 권한 스코프를 판정한다 (SECURITY §8.2).
+
+    반환값:
+      - `"any"`  — `conversation.attachment.read.any` 보유. 결과에 오른 모든 대화의 첨부를 매칭.
+      - `"own"`  — `conversation.attachment.read.own` 만 보유. 본인 소유·멤버 대화로 한정.
+      - `None`   — 첨부 조회 권한 없음. 첨부 축 자체를 끈다(fail-closed).
+
+    대화 *목록* 권한(`conversation.list.{own,any}`)과 첨부 *조회* 권한은 카탈로그상 독립
+    코드다(`conversation.list.any` = 관리자, `conversation.attachment.read.any` = "운영자 한정").
+    목록 권한만으로 첨부 축을 켜면 검색 매칭 여부 자체가 "그 대화에 이 파일명이 존재하는가"를
+    답해 주는 oracle 이 되어, 첨부 조회 권한 게이트(`list_conversation_attachments`)를 우회한다.
+    본 헬퍼가 검색 SQL 조립과 매칭 근거 수집 양쪽의 단일 판정점이다.
+    """
+    if not account:
+        return None
+    if _account_has_permission(account, "conversation.attachment.read.any"):
+        return "any"
+    if _account_has_permission(account, "conversation.attachment.read.own"):
+        return "own"
+    return None
+
+
 def _account_can_access_conversation(
     conn,
     account: dict[str, Any] | None,
@@ -3248,6 +3271,7 @@ from routers.admin_metadata import (  # noqa: E402
 # ITEM-10 routers-p3: 테스트 직접참조/setattr + app 내부 잔존 호출(_autonomous_generate_product_prompt) 보존.
 from routers._prompt_context import (  # noqa: E402
     _collect_matched_excerpts,
+    _collect_matched_attachment_names,
     _collect_conversation_signals_pg,
     _collect_account_prompt_context,
     _collect_role_prompt_context,

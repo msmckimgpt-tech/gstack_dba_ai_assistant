@@ -515,11 +515,18 @@ def _list_conversations_pg(
     date_to: str | None,
     parsed_cursor: tuple | None,
     mysql_conn,
+    attachment_axis: str | None = None,
 ) -> list[dict[str, Any]]:
     """AR-M4-T4 (TASK-0118): AGENT_RUNTIME_READ_BACKEND=postgres 활성 시 PG read path.
 
     agent_runtime.core_conversations + agent_runtime.kv 를 PG 에서 읽고,
     owner_username 조회만 MySQL WebAccounts 에서 수행 (Phase 3 web* 이관 전까지).
+
+    `attachment_axis` — 첨부 파일명 검색 축의 권한 스코프(SECURITY §8.2).
+    `"any"`(=`conversation.attachment.read.any`) / `"own"`(=`.own`, 본인 소유·멤버 대화로
+    EXISTS 를 좁힘) / `None`(권한 없음 → 축 자체를 SQL 에서 제외). 대화 *목록* 권한
+    (`conversation.list.*`)과 첨부 *조회* 권한은 독립 코드라, 목록 권한만으로 첨부 축을
+    켜면 파일명 존재 여부가 매칭 oracle 로 새어나간다.
     """
     from shared.db import _pg_connect
     try:
@@ -568,19 +575,50 @@ LEFT JOIN agent_runtime.kv kv_topic
             params.append(list(str(h) for h in hidden_ids))
 
         if normalized_q:
-            pattern = f"%{normalized_q}%"
-            where_clauses.append("""(
-                c.topic ILIKE %s OR kv_topic.value ILIKE %s
-                OR EXISTS (
-                    SELECT 1 FROM agent_runtime.messages m
-                    WHERE m.conversation_id = c.conversation_id AND m.content ILIKE %s
-                )
-                OR EXISTS (
-                    SELECT 1 FROM agent_runtime.core_messages cm
-                    WHERE cm.conversation_id = c.conversation_id AND cm.content ILIKE %s
-                )
-            )""")
-            params.extend([pattern, pattern, pattern, pattern])
+            # SECURITY §8.3 "모든 LIKE 는 ESCAPE '!' + `!`/`%`/`_` 3-char escape" — PG 경로는
+            # AR-M4 포팅 때 이 escape 가 유실돼 `%`/`_` 가 wildcard 로 새던 상태였다. MySQL
+            # 경로(`_list_conversations`)·발췌 수집(`_collect_matched_excerpts`)과 동일 semantics 로
+            # 복원한다(검색어의 `%`/`_` 는 리터럴).
+            pattern = f"%{app._escape_like_for_search(normalized_q)}%"
+            search_subclauses = [
+                "c.topic ILIKE %s ESCAPE '!'",
+                "kv_topic.value ILIKE %s ESCAPE '!'",
+                "EXISTS (SELECT 1 FROM agent_runtime.messages m "
+                "WHERE m.conversation_id = c.conversation_id AND m.content ILIKE %s ESCAPE '!')",
+                "EXISTS (SELECT 1 FROM agent_runtime.core_messages cm "
+                "WHERE cm.conversation_id = c.conversation_id AND cm.content ILIKE %s ESCAPE '!')",
+            ]
+            sp_params: list[Any] = [pattern, pattern, pattern, pattern]
+            # 첨부 파일명 축(SECURITY §8.2) — **첨부 조회 권한 보유자에게만** 켠다.
+            # `conversation.list.any`(목록)와 `conversation.attachment.read.any`(첨부)는 독립
+            # 권한이라, 목록 권한만으로 축을 켜면 "그 대화에 이 파일명이 있는가"가 매칭 여부로
+            # 새어나간다(파일명 추측 oracle). `.own` 만 있으면 EXISTS 를 본인 소유·멤버 대화로
+            # 좁힌다 — `_account_can_access_conversation` 의 own 판정(owner OR 멤버)과 동형.
+            # 가시성은 첨부 목록과 동일(미삭제 + 버전 체인 최신).
+            if attachment_axis in ("any", "own"):
+                att_scope_sql = ""
+                att_scope_params: list[Any] = []
+                if attachment_axis == "own":
+                    if self_id is None:
+                        att_scope_sql = None  # 스코프 확정 불가 → 축 제외(fail-closed)
+                    else:
+                        att_scope_sql = (
+                            " AND (c.owner_account_id = %s OR c.conversation_id IN ("
+                            "SELECT conversation_id FROM agent_runtime.conversation_members "
+                            "WHERE account_id = %s))"
+                        )
+                        att_scope_params = [int(self_id), int(self_id)]
+                if att_scope_sql is not None:
+                    search_subclauses.append(
+                        "EXISTS (SELECT 1 FROM agent_runtime.core_attachments att "
+                        "WHERE att.conversation_id = c.conversation_id "
+                        "AND att.deleted_at IS NULL AND att.superseded_at IS NULL "
+                        "AND att.original_filename ILIKE %s ESCAPE '!'" + att_scope_sql + ")"
+                    )
+                    sp_params.append(pattern)
+                    sp_params.extend(att_scope_params)
+            where_clauses.append("(" + " OR ".join(search_subclauses) + ")")
+            params.extend(sp_params)
 
         if date_from:
             where_clauses.append("c.updated_at >= %s")
@@ -602,6 +640,13 @@ LEFT JOIN agent_runtime.kv kv_topic
         params.append(int(limit))
 
         with pg.cursor() as pgcur:
+            if normalized_q:
+                # 검색 경로 runaway 방어(§8.4) — 엔드포인트의 `SET SESSION max_execution_time`
+                # 은 MySQL 연결에만 걸린다. PG 목록 검색에도 동등한 상한을 세운다.
+                try:
+                    pgcur.execute("SET statement_timeout = 3000")
+                except Exception:
+                    pass
             pgcur.execute(query, params)
             rows = pgcur.fetchall() or []
 
@@ -853,6 +898,12 @@ def _list_conversations(
         has_any = bool(account and app._account_has_permission(account, "conversation.list.any"))
         self_id = int(account["id"]) if account and account.get("id") else None
 
+        # 첨부 파일명 검색 축의 권한 스코프(SECURITY §8.2). 목록 권한(`conversation.list.*`)과
+        # 첨부 조회 권한(`conversation.attachment.read.*`)은 독립 코드다 — 목록만 가진 계정에
+        # 첨부 축을 켜면 "그 대화에 이 파일명이 있는가"가 매칭 여부로 새어나간다. 여기서 한 번
+        # 판정해 SQL 조립 전체(및 매칭 근거 수집 스코프)의 단일 진실로 쓴다.
+        attachment_axis = app._search_attachment_axis(account)
+
         # REQ-20260518-0010 sub-spec 2: hidden_ids SQL push.
         hidden_ids = list(app.list_delete_requested_conversation_ids(conn) or [])
 
@@ -877,6 +928,7 @@ def _list_conversations(
                 date_to=date_to,
                 parsed_cursor=app._parse_search_cursor(cursor),
                 mysql_conn=conn,
+                attachment_axis=attachment_axis,
             )
 
         cur = conn.cursor(dictionary=True)
@@ -959,6 +1011,31 @@ LEFT JOIN WebAccounts owner
                 "AND cm.content LIKE %s ESCAPE '!')"
             )
             sp_params.append(pattern)
+            # 첨부 파일명 축 — PG 경로(_list_conversations_pg)와 동형. 첨부 조회 권한
+            # 보유자에게만 켜고(`.own` 이면 본인 소유·멤버 대화로 EXISTS 를 좁힘),
+            # 가시성은 첨부 목록과 동일(DeletedAt/SupersededAt IS NULL). SECURITY §8.2.
+            if attachment_axis in ("any", "own"):
+                att_scope_sql: str | None = ""
+                att_scope_params: list[Any] = []
+                if attachment_axis == "own":
+                    if self_id is None:
+                        att_scope_sql = None  # 스코프 확정 불가 → 축 제외(fail-closed)
+                    else:
+                        att_scope_sql = (
+                            " AND (c.owner_account_id = %s OR c.conversation_id IN ("
+                            "SELECT conversation_id COLLATE utf8mb4_unicode_ci "
+                            "FROM AgentCoreConversationMembers WHERE account_id = %s))"
+                        )
+                        att_scope_params = [int(self_id), int(self_id)]
+                if att_scope_sql is not None:
+                    search_subclauses.append(
+                        "EXISTS (SELECT 1 FROM WebConversationAttachments att "
+                        "WHERE att.ConversationId COLLATE utf8mb4_unicode_ci = c.conversation_id COLLATE utf8mb4_unicode_ci "
+                        "AND att.DeletedAt IS NULL AND att.SupersededAt IS NULL "
+                        "AND att.OriginalFilename LIKE %s ESCAPE '!'" + att_scope_sql + ")"
+                    )
+                    sp_params.append(pattern)
+                    sp_params.extend(att_scope_params)
             where_clauses.append("(" + " OR ".join(search_subclauses) + ")")
             params.extend(sp_params)
 

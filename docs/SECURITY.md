@@ -146,8 +146,26 @@ ai_read_priority: 4
 
 ### 8.2 검색 표면 한정
 
-- 검색 대상 필드 = `c.topic` + `topic_kv.Value` (제목) + `owner.Username` (계정명, `.any` 한정) + `AgentMemoryMessages.Content` + `AgentCoreMessages.content` (메시지 본문).
-- 검색 대상 *비포함* = SQL 텍스트 / 실행 결과셋 / 디버그 로그 — list 단계 표면 최소화.
+- 검색 대상 필드 = `c.topic` + `topic_kv.Value` (제목) + `owner.Username` (계정명, `.any` 한정) + `AgentMemoryMessages.Content` + `AgentCoreMessages.content` (메시지 본문) + **`core_attachments.original_filename` / `WebConversationAttachments.OriginalFilename` (첨부 원본 파일명, 2026-07-29 추가 — `conversation.attachment.read.*` 스코프 한정, 아래 참조)**.
+- 검색 대상 *비포함* = SQL 텍스트 / 실행 결과셋 / 디버그 로그 / **첨부 파일 내용(본문·추출 텍스트)** — list 단계 표면 최소화.
+
+#### 8.2.1 첨부 파일명 축 — 권한 스코프 (2026-07-29)
+
+사용자 요청("대화 검색에 첨부 파일명 포함"). **검색 축은 첨부 조회 권한을 그대로 따른다**:
+
+| 계정 권한 | 첨부 축 스코프 | 동작 |
+|---|---|---|
+| `conversation.attachment.read.any` | `"any"` | 결과에 오른 모든 대화의 첨부 파일명 매칭 + 근거 반환 |
+| `conversation.attachment.read.own` 만 | `"own"` | EXISTS 를 **본인 소유·멤버 대화**로 좁힘 (`_account_can_access_conversation` own 판정과 동형) |
+| 둘 다 없음 | `None` | **축 자체를 SQL 에서 제외** — 매칭도 근거 반환도 없음 (fail-closed) |
+
+판정 단일점 = `app._search_attachment_axis(account)`. 검색 SQL 조립(`_list_conversations{,_pg}`)과 매칭 근거 수집(엔드포인트) 양쪽이 같은 값을 쓴다.
+
+- **왜 목록 권한으로 대신할 수 없나 (설계 근거)**: `conversation.list.any`(관리자)와 `conversation.attachment.read.any`("운영자 한정")는 카탈로그상 **독립 코드**다. 목록 권한만으로 축을 켜면, 검색어를 파일명으로 넣었을 때의 **매칭 여부 자체가 "그 대화에 이 파일명이 존재하는가"를 답해 주는 oracle** 이 되어 첨부 조회 게이트(`list_conversation_attachments`)를 우회한다. 근거 반환(`matched_attachments`)은 파일명을 직접 노출하므로 더 명백하다. 초안은 이 두 권한을 동일시했고 codex 적대 리뷰가 P1 으로 적발했다 (REVIEW `REV-20260729T145500-conv-search-attach-name`).
+- **인가 경계 불변**: 결과에 포함될 수 있는 *대화 집합* 은 첨부 축 도입 전과 동일하다 — owner / 그룹 멤버십 / `.any` WHERE 가 여전히 유일한 게이트이고, 첨부 EXISTS 는 그 게이트를 통과한 대화 안에서 **다시 첨부 권한으로 좁혀져** 평가된다. 신규 권한 코드 0(기존 첨부 권한 재사용).
+- **가시성 조건 정합**: 검색 대상은 첨부 목록과 같은 조건 (`deleted_at IS NULL AND superseded_at IS NULL` = 미삭제 + 버전 체인 최신) 으로 한정한다. 목록에 안 보이는 첨부(삭제분·구버전)가 검색 근거로만 드러나는 비대칭을 만들지 않는다.
+- **매칭 근거 표면화**: 제목·본문 어디에도 검색어가 없이 파일명으로만 매칭된 대화가 결과에 뜨면 사용자가 이유를 알 수 없으므로, 응답 `matched_attachments` (대화당 최신 3건) 로 매칭 파일명을 함께 반환한다. 반환 스코프는 위 표와 동일하며, 표시 게이트는 §8.6 참조.
+- **잔여 리스크**: 파일명 자체가 PII 를 담을 수 있다(예: `홍길동_급여명세.xlsx`). `.any` 보유자에게는 제목(`c.topic`)이 이미 갖는 것과 동급의 노출이며, cross-account 검색은 §8.5 audit 대상이라 추적된다. 첨부 *내용* 검색은 본 cycle 범위 밖 — 필요해지면 별 cycle 에서 별도 게이트와 함께 검토한다.
 
 ### 8.3 SQL safety
 
@@ -178,6 +196,7 @@ ai_read_priority: 4
 - Spotlight modal pattern (Cmd/Ctrl+K). 사이드바 conv-list 잠식 0.
 - snippet opt-in chip 기본 OFF + `.any` 한정 노출. opt-in 토글 자체가 명시적 user action.
 - owner facet chip 도 `.any` 한정. `.own` 사용자는 chip 보지 않음.
+- **첨부 파일명 매칭 칩 (2026-07-29)**: 매칭된 첨부 파일명을 결과 행에 pill 로 표시한다. 표시 게이트 = **본인 대화는 항상**(자기 첨부 목록은 이미 자유 열람) + **타 계정 대화는 snippet opt-in chip 활성 시에만**(본문 미리보기와 동일 게이트). 이는 **UI 정책일 뿐 보안 경계가 아니다** — 응답에 실리는 파일명의 범위는 §8.2.1 의 서버측 권한 스코프가 결정하고, 프론트 게이트는 그 안에서의 노출 절제다(프론트 게이트만으로는 DevTools·직접 API 호출을 막지 못한다).
 
 ### 8.7 외부 배포 전 보완 (TODO)
 
