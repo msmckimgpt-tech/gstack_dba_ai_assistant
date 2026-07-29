@@ -68,15 +68,18 @@ def test_runtime_settings_snapshot_path_is_not_shared_volume():
     막아도 라이브 런타임 값이 오염된다. Makefile `TEST_ISOLATION_ENV` 가 경로를 컨테이너 임시
     파일로 돌린다 — 그 env 가 빠지면 여기서 잡는다.
 
-    로컬 pytest(컨테이너 밖)는 `/shared` 자체가 없어 write 가 조용히 실패(fail-open)하므로,
-    본 계약은 `/shared` 가 실제 존재하는 실행 환경에서만 강제한다.
+    강제 조건은 "`/shared` 디렉토리 존재" 가 아니라 **운영 스냅샷 파일의 실재** 다. CI 러너는
+    `app.py` 의 `SESSION_DIR.mkdir()` 를 위해 빈 `/shared` 를 만들지만(ci.yml) 그 안에 운영
+    스냅샷은 없어 오염 표면이 없다 — 디렉토리 존재로 판정하면 CI 가 거짓 FAIL 한다(실측).
+    반대로 운영 스택이 마운트된 컨테이너에는 이 파일이 실재하므로, Makefile 의 격리 env 가
+    빠지면 여기서 잡힌다.
     """
     import os
 
     from shared import runtime_settings
 
-    if not os.path.isdir("/shared"):
-        return  # 공유 볼륨 미마운트 환경 — 오염 표면 자체가 없다.
+    if not os.path.exists("/shared/runtime_settings.json"):
+        return  # 운영 스냅샷 부재 — 덮어쓸 대상이 없다.
     path = runtime_settings.snapshot_path()
     assert not path.startswith("/shared/"), (
         f"스냅샷 경로가 라이브 공유 볼륨({path}) 이다 — 테스트 저장이 운영 프로세스로 전파된다. "

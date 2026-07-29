@@ -65,6 +65,22 @@ app._connect_memory() → DatabaseError 2003 (HY000): Can't connect to MySQL ser
 사용자가 `14:08:53` 에 900 으로 복구. 의도한 실험은 아니었으나, "수정 전에는 단 1회 실행으로
 운영값이 롤백된다" 는 대조군을 그대로 남긴다.
 
+#### E. CI 거짓 FAIL 1건과 가드 조건 정정 (PR #1048 1차 red)
+
+스냅샷 경로 가드의 강제 조건을 처음엔 `os.path.isdir("/shared")` 로 뒀는데, CI 러너는
+`app.py` 의 `SESSION_DIR.mkdir()` 를 위해 `sudo mkdir -p /shared` 로 **빈 디렉토리를 만든다**
+(`.github/workflows/ci.yml`). 그래서 오염 표면이 없는 CI 에서 가드가 발동해 거짓 FAIL 했다.
+
+조건을 **운영 스냅샷 파일의 실재**(`os.path.exists("/shared/runtime_settings.json")`)로 정정.
+"덮어쓸 대상이 실재하는가" 가 오염 표면의 정확한 판별이다. 양방향 실증:
+
+| 조건 | 기대 | 결과 |
+|---|---|---|
+| 격리 env 有(= `make test` 경로) | PASS | 3 passed |
+| 격리 env 완전 부재 + 운영 스냅샷 실재 | **FAIL(가드 발동)** | FAILED — `snapshot_path = /shared/runtime_settings.json` 지목 |
+
+즉 Makefile 에서 `TEST_ISOLATION_ENV` 가 빠지는 회귀는 여전히 잡히고, CI 는 통과한다.
+
 #### 판정
 
 PASS — 오염 차단(A) · 회귀 0(B) · backstop 실효(C) 가 모두 라이브 실측으로 닫혔다.

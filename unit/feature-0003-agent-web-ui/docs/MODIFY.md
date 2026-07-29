@@ -25,6 +25,10 @@ source_of_truth: true
   `test` 타깃에 주입. `DB_HOST` 는 의도적 비변경(SSRF allowlist implicit 등록 — TASK-0214 간섭).
 - (cross-unit) `unit/feature-0002-agent-core/tests/test_runtime_settings.py`: `monkeypatch.delenv`
   로 스냅샷 부재 폴백 테스트를 env-agnostic 화.
+- (후속 정정) 스냅샷 경로 가드의 강제 조건을 `isdir("/shared")` → **`exists("/shared/runtime_settings.json")`**
+  으로 교체 — CI 러너가 `SESSION_DIR.mkdir()` 용으로 빈 `/shared` 를 만들어(ci.yml) 오염 표면이
+  없는데도 가드가 발동해 PR #1048 이 거짓 red 였다. "덮어쓸 대상 실재" 가 정확한 판별이며,
+  Makefile env 누락 회귀는 그대로 잡힌다(양방향 실증 — Run fragment §E).
 - **코드(제품) 변경 0** — 테스트 인프라·빌드 진입점만. 라이브 검증: `COMPOSE_PROJECT_NAME=repo`
   전량 실행 후 `WebRuntimeSettings` 해시 불변 + `testclient` audit 신규 0건.
 - Cross-ref: TASK-20260729T1412-test-live-db-isolation · REV-20260729T141200-test-live-db-isolation.
