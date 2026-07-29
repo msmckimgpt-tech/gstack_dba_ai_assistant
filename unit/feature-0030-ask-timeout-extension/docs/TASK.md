@@ -70,7 +70,7 @@ feature_status_note: 실행 타임아웃 80% 도달 시 사용자 확인 후 그
 - [x] TASK-20260729T032307-ext-e 진행 폴링 + ask_status 스냅샷 timeout_extension 필드
 - [x] TASK-20260729T032307-ext-f app.js 인라인 배너 + 브라우저 알림 + 승인 호출
 - [x] TASK-20260729T032307-ext-g 테스트 26건 PASS(신규 25 + route-parity 골든 갱신)
-- [ ] TASK-20260729T032307-ext-h §18.8 패널 + verify-completion + 배포 + PB-0008 라이브 시각검증
+- [x] TASK-20260729T032307-ext-h codex 리뷰 + verify-completion + 배포(80cc7aeb) + PB-0008 라이브 PASS
 
 ## 4. Blocked
 - 없음
@@ -88,8 +88,10 @@ feature_status_note: 실행 타임아웃 80% 도달 시 사용자 확인 후 그
 
 ## 7. Completion Checklist
 
-- [ ] AC-1~6 충족
-- [ ] make test 회귀 0
-- [ ] §18.8 패널 (backend + security + qa) — 신규 권한 코드·비용 영향
-- [ ] verify-completion --pre-commit PASS
-- [ ] PB-0008 라이브 시각검증 (웹 UI 변경 — `visual_verification_scope: always` hard gate)
+- [x] AC-1·AC-4·AC-5·AC-6 라이브 실증 / AC-2·AC-3 은 단위 테스트 커버(라이브 미재현 사유는
+      TEST.md §3·test-runs.d fragment §3 에 정직 표기)
+- [x] make test 회귀 0 (환경성 baseline 15건은 main 대조 실행과 동일) + ruff PASS + CI SUCCESS
+- [x] 독립 적대 검증 — codex review (사용자 결정: 세션 Agent-tool 제한 ↔ §18.8 상충 시 codex 경로).
+      P1×4·P2×3 전건 반영 → REVIEW.md REV-20260729-0001
+- [x] verify-completion --pre-commit PASS
+- [x] PB-0008 라이브 시각검증 PASS (배포 80cc7aeb 후 — 배너 노출·승인 전환·중단 2초 반영)

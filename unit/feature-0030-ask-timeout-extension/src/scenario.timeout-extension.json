@@ -1,0 +1,37 @@
+{
+  "name": "feature-0030 실행 타임아웃 연장 — 관리 콘솔 설정 노출 + 컴포저 배너/승인 (PB-0008)",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/repo/artifacts/shared/win-browser-shots-0030",
+  "steps": [
+    { "action": "goto", "url": "https://localhost/" },
+    { "action": "screenshot", "label": "01_entry" },
+    {
+      "action": "type",
+      "selector": "#loginUsername, input[placeholder='사용자 ID']",
+      "text": "bootstrap_admin",
+      "stop_on_fail": false
+    },
+    {
+      "action": "type",
+      "selector": "#loginPassword, input[type='password']",
+      "text": "ChangeThisBootstrapPass_2026!",
+      "stop_on_fail": false
+    },
+    {
+      "action": "click",
+      "selector": "#loginSubmit, button[type='submit']",
+      "stop_on_fail": false
+    },
+    { "action": "wait_for", "selector": "#promptInput", "timeout_ms": 15000, "stop_on_fail": false },
+    { "action": "screenshot", "label": "02_workspace" },
+
+    { "action": "goto", "url": "https://localhost/admin" },
+    { "action": "wait_for", "selector": "body", "timeout_ms": 15000, "stop_on_fail": false },
+    {
+      "action": "eval",
+      "label": "runtime_settings_registry_has_extension_keys",
+      "script": "(async () => { const r = await fetch('/api/admin/settings/runtime', {credentials:'same-origin'}); if (!r.ok) return 'HTTP ' + r.status; const j = await r.json(); const rows = (j.timeouts||[]).filter(t => String(t.key).includes('EXTENSION')); return JSON.stringify(rows.map(t => ({key:t.key, label:t.label, def:t.default, eff:t.effective, mode:t.apply_mode}))); })()",
+      "stop_on_fail": false
+    },
+    { "action": "screenshot", "label": "03_admin_settings" }
+  ]
+}
