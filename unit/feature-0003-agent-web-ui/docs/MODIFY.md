@@ -1712,3 +1712,41 @@ SECURITY §8.2·§8.6.
 
 테스트 30건(P4 SQL 스코프 이관·P5 수집 SQL 스코프·P6 statement_timeout·F5 경합 가드 추가) PASS ·
 전체 회귀 신규 실패 0 · ruff PASS.
+## CHG-20260729T152000-ratelimit-scope-paging — 대화 페이징 429 블로킹 해소 + 부하의 클라이언트 분산 (Major §12.3, 2026-07-29)
+
+**web(feature-0003) — rate limit**: `app.py` 에 `RATE_SCOPE_*` 상수 6종
+(`conversation_search`/`sample_feedback`/`fix_with_ai`/`message_edit`/`branch_nav`/`metadata_ai`)
++ `_BRANCH_NAV_RATE_PER_MIN=60` + `_RATE_LIMIT_BUCKETS_MAX_KEYS=4096` + `_json_rate_limited`
+(429 + `Retry-After` + 본문 `retry_after`) 신설, `_RATE_LIMIT_BUCKETS` 타입을
+`dict[int, list[float]]` → `dict[tuple[int, str], list[float]]` 로 변경.
+`routers/conversations.py` `_search_rate_limit_check` 에 `scope` 파라미터 추가(버킷 키 =
+`(account_id, scope)`) + 만료 버킷 sweep, `_rate_limit_retry_after` 신설(`app.py` 재수출).
+호출부 7곳(`conversations.py` 5 + `admin_metadata.py` 2, scope 6종 — 메타데이터 AI 가 suggest·bootstrap 2곳)이 각자 scope 를 명시하고 429 를
+`_json_rate_limited` 로 교체 — **버전 페이징만 상한 5 → 60**, LLM 점유 경로는 무변경.
+
+**web(feature-0003) — 쿼리**: `routers/_conv_store.py` `_branch_leaf_of` 의 재귀 서브쿼리에
+`c.conversation_id = %s` 술어 추가(파라미터 3 → 4). `ix_{table}_parent =
+(conversation_id, parent_message_id)` 의 선두 컬럼이 빠져 매 재귀 단계가 인덱스 전체를 훑던
+것을 정상 인덱스 스캔으로 교정 — 비용이 전체 테이블 크기 비례에서 **대화 크기 비례**로.
+
+**web(feature-0003) — 프론트 부하 분산**: `static/app.js` 에 `_branchViewCache`
+(Map, 상한 8 · TTL 30s · LRU) + `_branchViewCacheKey/Get/Set/Clear` + `_fetchHistoryPayload`
++ `_scheduleSidebarCatchup`(1.2s 디바운스) + `_branchPageInFlight` 가드 신설.
+`loadHistory` 에 `versionCacheKey` 옵션 추가 — 있으면 캐시 우선, 없고 비-append 면
+**캐시 무효화 단일 choke-point**(대화 전환·전송 후·편집 후·유휴 run 동기화가 모두 통과).
+`_pageBranch` 가 `refreshWorkspace` → `loadHistory({versionCacheKey})` + 지연 사이드바
+catch-up 으로 전환(`/api/session` 호출 제거), 429 는 실패 토스트가 아니라 대기 초를 담은
+중립 토스트로 표시.
+
+**테스트**: `tests/test_ratelimit_scope.py` 17건 신설 (스코프 격리 S1/S1b/S2/S3, window
+만료 S4, 메모리 가드 S5, retry-after R1/R2, 429 형태 J1/J2(5 파라미터), 페이징 endpoint
+배선 B1/B2, **교차오염 end-to-end 회귀 B3**). 컨테이너 전체 스위트 실패 13건은 main 과
+동일한 환경성 baseline — **신규 실패 0**(같은 3파일 격리 실행 시 양쪽 모두 PASS).
+
+**검증**: 실제 Windows 브라우저(PB-0008) — 캐시 적중 클릭은 `/api/history` 0회, 12연타에도
+429 미발생. `_branch_leaf_of` 는 브랜치 대화 12건 × 두 store 전 메시지 442 조합 전수 대조
+불일치 0. 벤치마크로 변경된 라이브 `active_leaf` 는 원값으로 복원 확인.
+
+Cross-ref: FUNCTION `REQ-20260729T152000-ratelimit-scope-paging` · DECISIONS
+`ADR-20260729T152000-ratelimit-scope-paging` · TASK `20260729T1520-ratelimit-scope-paging` ·
+REVIEW `REV-20260729T152000-ratelimit-scope-paging`.

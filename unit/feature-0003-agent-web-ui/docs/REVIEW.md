@@ -1947,3 +1947,15 @@ EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS
 
 - 재검증 후 30건 PASS · 전체 회귀 신규 실패 0 · ruff PASS.
 - Verdict: **SHIP** (POST-DEPLOY = PB-0008 시각검증 + 첨부 EXISTS EXPLAIN 실측)
+## REV-20260729T152000-ratelimit-scope-paging [SKIPPED:tool-restricted:backend,qa,ux,design] — security 축은 built-in 채널로 수행, BLOCK → 흡수 후 PASS
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1520-ratelimit-scope-paging
+- Trigger: API/endpoint·performance/throttle keyword matched (API·엔드포인트 / 성능·캐싱·쓰로틀) — rate-limit 상한 조정 + 대화 본문 클라이언트 캐시 신설
+- Channel: built-in `/security-review` (제약 없는 채널). 스킬이 요구하는 subagent fan-out 은 본 세션의 상위 우선순위 도구 제약과 충돌 → AGENTS.md §18.8.2 "상위 우선순위 지시 carve-out" 에 따라 직접 코드 리뷰 + 기계적 점검으로 수행, 미검증 도메인은 `[SKIPPED:tool-restricted:backend,qa,ux,design]` 로 명시(대체 증거 병기).
+- Timestamp: 2026-07-29T15:45:00+09:00
+- Verdict: BLOCK (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T064500Z-security.md
+- Critical issue: 신설한 `_branchViewCache`(대화 **본문** payload 보관)가 세션 경계에서 비워지지 않았다. 이 앱의 `handleLogout` 은 **페이지를 새로 고치지 않으며**(그래서 `state.messages`·모델 선택을 손으로 비운다 — 기존 주석 "공용 단말 계정 간 누출"), 캐시가 살아남으면 공용 단말에서 다음 로그인 계정이 같은 `(cid, versionId)` 로 페이징할 때 **직전 계정 기준으로 필터된 본문**을 렌더한다. 공유창 window 가 계정마다 다른 그룹 대화에서 `_resolve_display_window` 의 fail-closed 가시성 게이트가 클라이언트 캐시로 우회되는 누출 경로.
+- 조치: `handleLogout` 에서 `_branchViewCacheClear()` + 지연 사이드바 타이머 취소 · `initializeWorkspace` 진입 시에도 `_branchViewCacheClear()`(세션 만료 후 리로드 없이 재로그인하는 `handleLogin → initializeWorkspace` 경로는 logout 미경유 — 2중 방어).
+- 반증된 후보 4건: `scope` 파라미터 신뢰경계(호출부 7곳 전부 모듈 상수) · `Retry-After` 헤더 주입(`str(int)` + 1~60 clamp) · SQL 주입(파라미터 바인딩 + 기존 table allowlist 유효, 442 조합 전수 대조 동등) · 인가 경로 축소(`renderAccessNotice`/`applyProductHydration` 은 표시 계층, 접근 판정은 서버 전담).
+- Human Approval Needed: no

@@ -7161,3 +7161,65 @@ Cross-ref: test-runs.d/20260729T1600-attach-postdeploy.md · 선행 TASK 2건 ·
 Cross-ref: FUNCTION `REQ-20260729-conv-search-attach-name` · MODIFY
 `CHG-20260729T145500-conv-search-attach-name` · REVIEW `REV-20260729T145500-conv-search-attach-name`
 · SECURITY §8.2·§8.6
+## 20260729T1520-ratelimit-scope-paging — 대화 페이징 "요청이 너무 잦습니다" 블로킹 해소 (Major §12.3)
+
+사용자 리포트: "서비스 이용 중, 대화를 페이징 하는 기능을 사용할 때 '요청이 너무 잦습니다'
+라는 블로킹이 빈번하게 나타나 사용자의 불편함이 나타나고 있습니다. 해당 부분을 개선해주세요."
+
+### 진단 (코드 + 라이브 실측)
+
+- **직접 원인 — 버킷 교차오염**: `_search_rate_limit_check` 의 토큰 버킷 키가 `account_id`
+  하나뿐(`_RATE_LIMIT_BUCKETS[account_id]`)이라, 이 함수를 쓰는 6개 기능이 **계정당 단일
+  버킷을 공유**했다. 호출부마다 `max_per_min` 이 달라도 소비 기록은 한 리스트에 쌓이므로,
+  메타데이터 자동완성(상한 20)을 20회 쓴 직후 버전 페이징(상한 5)은 `len(bucket)=20 >= 5`
+  로 **자기 첫 호출에서 즉시 429**. 각 호출부의 선언 상한이 사실상 무의미했다.
+- **부차 원인 — 비용 등급 오분류**: 사용자가 말한 "대화 페이징" = 메시지 버전 페이저
+  `‹ n/m ›` → `POST /api/conversations/{cid}/branch/switch`(코드 주석 "브랜치 전환(페이징)").
+  이 endpoint 가 full LLM run 을 점유하는 fix-with-ai 와 같은 5/min 을 썼다.
+- **실측 (2026-07-29, repo-web-a-1 / repo-postgres-1)**:
+
+  | 작업 | 서버 비용 | 개선 전 분당 상한 |
+  |---|---|---|
+  | `_branch_switch` (페이징) | p50 **8.0ms** / p95 10.0ms (n=30) | **5** |
+  | LLM run (`agent_runtime.llm_usage`, 최근 7일) | p50 **12,344ms** (n=6,975) | 5 |
+  | `_get_history` (전환 직후 프론트가 부르던 것) | p50 **50.3ms** (n=20) | 제한 없음 |
+
+  페이징은 같은 버킷을 쓰던 LLM 경로보다 3자릿수 싸고, 자기가 유발하는 무제한 endpoint
+  보다도 싸다 — 제한이 둘 중 싼 쪽에만 걸려 있었다.
+- **프론트 낭비**: 페이저 1클릭이 요청 4건(`branch/switch` + `/api/conversations` +
+  `/api/history` + `/api/session`)을 냈고, **이미 본 버전으로 되돌아가도 매번 히스토리 전량**
+  (실측 83KB, 최대 168KB)을 다시 받았다.
+
+### 결정 (사용자 확인 2026-07-29)
+
+- "부하가 크지 않다면 페이징만 별도 상한" → 실측으로 부하 무시 수준 확인 → 전용 상한 채택.
+- "프론트 비용도 크지 않다면 되도록 사용자 단위에서 부하를 감당(분산)하도록" → 버전 내용
+  클라이언트 캐시 + 사이드바 지연 갱신 채택. **단 `active_leaf` 영속은 지연하지 않는다**
+  (agent-core `memory.py` 가 새 메시지 부모 체인·LLM recall 을 이 값으로 결정 — 지연 시
+  새 메시지가 화면과 다른 가지에 붙는 정합성 결함).
+
+### 진행
+
+- [x] 버킷 키를 `(account_id, scope)` 로 분리 + `RATE_SCOPE_*` 상수 6종 + 키 수 메모리 가드
+      (`_RATE_LIMIT_BUCKETS_MAX_KEYS=4096`, 만료 버킷만 sweep — 활성 보존)
+- [x] 호출부 7곳(scope 6종)에 scope 명시 (대화 검색 / 샘플 피드백 / fix-with-ai / 메시지 편집 /
+      버전 페이징 / 메타데이터 AI) — LLM 경로 상한은 무변경
+- [x] 페이징 전용 상한 `_BRANCH_NAV_RATE_PER_MIN = 60` 신설 (실측 근거를 코드 주석에 고정)
+- [x] `_json_rate_limited` 신설 — 429 + `Retry-After` 헤더 + 본문 `retry_after` + 대기 초 문구
+- [x] `_branch_leaf_of` 내부 서브쿼리에 `conversation_id` 술어 추가 — 인덱스 정상 사용
+      (buffers 552 → 177, 1.17ms → 0.23ms). 브랜치 대화 12건 × 두 store 전 메시지
+      **442 조합 전수 대조, 불일치 0**
+- [x] 프론트 부하 분산 — `_branchViewCache`(상한 8 · TTL 30s · LRU)로 버전 내용 캐시,
+      `refreshWorkspace` 제거(`/api/session` 0회), 사이드바 지연 catch-up(1.2s 후 1회),
+      무효화는 `loadHistory` 단일 choke-point
+- [x] 페이저 in-flight 가드 + 429 중립 토스트(대기 초 표시)
+- [x] 테스트 17건 신설 (`tests/test_ratelimit_scope.py`) — 스코프 격리 / 상한 유지 /
+      window 만료 / 메모리 가드 / retry-after 계산 / 429 형태 / 페이징 endpoint 배선 /
+      **교차오염 end-to-end 회귀**
+- [x] 실제 Windows 브라우저 검증(PB-0008) — 캐시 적중 시 `/api/history` 0회,
+      **12연타에도 429 미발생**(개선 전 6번째에서 차단)
+
+Cross-ref: FUNCTION `REQ-20260729T152000-ratelimit-scope-paging` · DECISIONS
+`ADR-20260729T152000-ratelimit-scope-paging` · MODIFY `CHG-20260729T152000-ratelimit-scope-paging`
+· REVIEW `REV-20260729T152000-ratelimit-scope-paging` · Run
+`docs/test-runs.d/20260729T1520-ratelimit-scope-paging.md`

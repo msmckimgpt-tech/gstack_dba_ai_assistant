@@ -1185,9 +1185,29 @@ def _connect_memory():
 # adversarial review: ESCAPE '!' clause + min 3 char + length cap 200 + per-account
 # rate limit + collation audit + cursor parsing. SQL composition order strict.
 
-_RATE_LIMIT_BUCKETS: dict[int, list[float]] = {}
+# TASK-20260729T152000-ratelimit-scope: 버킷 키 = (account_id, scope).
+# 이전에는 키가 account_id 하나뿐이라 `_search_rate_limit_check` 를 호출하는 6개 기능
+# (본문검색·샘플피드백·fix-with-ai·메시지편집·버전페이징·메타데이터 자동완성)이 **계정당
+# 단일 버킷을 공유**했다. 각 호출부가 서로 다른 `max_per_min` 을 넘겨도 소비 기록은 한
+# 리스트에 쌓이므로, 상한이 큰 기능(메타데이터 20)의 사용이 상한이 작은 기능(페이징 5)의
+# 예산을 통째로 태워 **자기 첫 호출에서 바로 429** 가 나왔다 — 각 호출부의 선언된 상한이
+# 사실상 무의미했다. scope 를 키에 포함해 기능별 독립 버킷으로 교정한다.
+_RATE_LIMIT_BUCKETS: dict[tuple[int, str], list[float]] = {}
 _RATE_LIMIT_LOCK = threading.Lock()
+# 메모리 가드(_LOGIN_IP_BUCKETS_MAX_KEYS 와 동형): 키 공간 = 계정수 × scope수 로 유한하지만
+# 장기 구동 프로세스에서 비활성 계정 버킷이 누적되므로 상한 초과 시 만료 버킷을 sweep 한다.
+_RATE_LIMIT_BUCKETS_MAX_KEYS = 4096
 _COLLATION_AUDIT_DONE = False
+
+# ── rate-limit scope 이름 (버킷 격리 단위) ─────────────────────────────────────
+# 비용 등급이 다른 작업을 같은 버킷에 묶지 않는다. 값 자체는 문자열 상수일 뿐이지만,
+# 오타로 인한 조용한 버킷 병합을 막기 위해 상수로 고정한다.
+RATE_SCOPE_CONVERSATION_SEARCH = "conversation_search"  # 대화 본문 검색(무거운 LIKE 스캔)
+RATE_SCOPE_SAMPLE_FEEDBACK = "sample_feedback"          # 👍/👎 샘플 피드백
+RATE_SCOPE_FIX_WITH_AI = "fix_with_ai"                  # 실패 SQL 정정 — LLM run 1회 점유
+RATE_SCOPE_MESSAGE_EDIT = "message_edit"                # 메시지 편집(reanswer 는 LLM run)
+RATE_SCOPE_BRANCH_NAV = "branch_nav"                    # 버전 페이징 — DB 읽기 전용
+RATE_SCOPE_METADATA_AI = "metadata_ai"                  # 메타데이터 AI 자동완성 — LLM
 
 
 
@@ -1478,6 +1498,25 @@ _ASK_SUCCESS_STATUSES = frozenset({"done", "canceled"})
 
 def _json_error(message: str, status_code: int = 400) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status_code)
+
+
+def _json_rate_limited(message: str, retry_after: int = 1) -> JSONResponse:
+    """429 응답 — 대기 시간을 본문·헤더 양쪽에 실어 회복 어포던스를 준다.
+
+    TASK-20260729T152000-ratelimit-scope: 기존 429 는 "잠시 후 다시 시도하세요" 뿐이라
+    사용자가 얼마나 기다려야 하는지 알 수 없었고(재시도 연타 → 재차단 루프), 클라이언트가
+    자동 재시도 시점을 계산할 근거도 없었다. `Retry-After`(RFC 9110) + 본문 `retry_after`
+    (초, 정수)를 함께 제공한다. 프론트는 본문 값을 토스트 문구에 그대로 쓴다.
+    """
+    try:
+        wait = max(1, min(60, int(retry_after or 1)))
+    except Exception:
+        wait = 1
+    return JSONResponse(
+        {"error": f"{message} (약 {wait}초 후 다시 시도할 수 있습니다.)", "retry_after": wait},
+        status_code=429,
+        headers={"Retry-After": str(wait)},
+    )
 
 
 def _require_account(request: Request, conn) -> tuple[dict[str, Any] | None, JSONResponse | None]:
@@ -2069,6 +2108,20 @@ _FIX_WITH_AI_ERR_CAP = 4000
 # 분당 호출 상한(대화당이 아닌 per-account — sample-feedback 와 동형). 1회 dispatch 가 full LLM run
 # 을 점유하므로 sample-feedback(10) 보다 보수적으로 5.
 _FIX_WITH_AI_RATE_PER_MIN = 5
+
+# 버전 페이징(`‹ n/m ›` → POST /api/conversations/{cid}/branch/switch) 전용 상한.
+# TASK-20260729T152000-ratelimit-scope — 실측(2026-07-29, repo-web-a-1 / repo-postgres-1):
+#   _branch_switch      p50 8.0ms  p95 10.0ms (n=30)   ← 본 엔드포인트가 하는 일 전부
+#   LLM run (llm_usage) p50 12,344ms           (n=6,975, 최근 7일)  ← 같은 5/min 버킷을 쓰던 이웃
+#   _get_history        p50 50.3ms             (n=20)   ← 전환 직후 프론트가 부르는 무제한 엔드포인트
+# 페이징은 DB 읽기 4쿼리 + UPDATE 1회로 끝나는 네비게이션 op 라 LLM 경로보다 3자릿수 싸고,
+# 자기가 유발하는 /api/history 보다도 싸다. LLM 비용 기준의 5/min 은 비용 등급 오분류였고,
+# 사용자가 `‹ ›` 를 5번만 눌러도 차단되는 마찰의 직접 원인이었다.
+# 60/min = 계정당 초당 1회 지속 — 사람의 페이징 연타(수 초에 3~5회)는 절대 걸리지 않으면서,
+# SEC MINOR-C 가 우려한 재귀 CTE 무제한 유발(스크립트 연사)은 계속 차단한다. 재귀 CTE 는
+# 같은 cycle 에서 conversation_id 술어를 보정해 대화 크기 비례 비용으로 낮췄다
+# (_branch_leaf_of: buffers 552 → 177, 1.17ms → 0.23ms) — 상한 상향의 안전 마진.
+_BRANCH_NAV_RATE_PER_MIN = 60
 
 
 
@@ -3784,6 +3837,7 @@ from routers.admin_usage import (  # noqa: E402
 )
 from routers.conversations import (  # noqa: E402
     _search_rate_limit_check,
+    _rate_limit_retry_after,
     _clear_accounts_current_conversation,
 )
 from routers.system import (  # noqa: E402

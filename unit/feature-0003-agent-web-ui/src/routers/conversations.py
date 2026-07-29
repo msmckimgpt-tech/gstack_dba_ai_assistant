@@ -1424,8 +1424,13 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
                     return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
         # REV-…-item03-security MAJOR-1: 적재 endpoint per-account rate-limit — 미적용 시
         # 열람자가 suggested 피드백을 spam 해 검수 큐를 채워 curator DoS. body-search 와 동형.
-        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=10):
-            return app._json_error("피드백 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        if not app._search_rate_limit_check(
+            int(account.get("id") or 0), max_per_min=10, scope=app.RATE_SCOPE_SAMPLE_FEEDBACK,
+        ):
+            return app._json_rate_limited(
+                "피드백 요청이 너무 잦습니다.",
+                app._rate_limit_retry_after(int(account.get("id") or 0), app.RATE_SCOPE_SAMPLE_FEEDBACK),
+            )
         scope_key = app._conversation_scope_key(conn, cid)
     finally:
         conn.close()
@@ -1525,8 +1530,15 @@ async def post_fix_with_ai(cid: str, request: Request) -> JSONResponse:
         ):
             return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
         # per-account rate-limit(429) — 1회 dispatch 가 full LLM run 을 점유하므로 보수적 상한.
-        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._FIX_WITH_AI_RATE_PER_MIN):
-            return app._json_error("재수정 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        if not app._search_rate_limit_check(
+            int(account.get("id") or 0),
+            max_per_min=app._FIX_WITH_AI_RATE_PER_MIN,
+            scope=app.RATE_SCOPE_FIX_WITH_AI,
+        ):
+            return app._json_rate_limited(
+                "재수정 요청이 너무 잦습니다.",
+                app._rate_limit_retry_after(int(account.get("id") or 0), app.RATE_SCOPE_FIX_WITH_AI),
+            )
         # scope: 발화(질의) 권한이 있어야 정정 dispatch 가능(열람자는 불가) — ask 의 actor RBAC 와 정합.
         if not app._account_has_permission(account, "conversation.ask"):
             return app._json_error("이 대화에 발화(질의) 권한이 없습니다.", 403)
@@ -1603,8 +1615,18 @@ async def post_edit_message(cid: str, mid: int, request: Request) -> JSONRespons
             return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
         if not app._account_has_permission(account, "conversation.ask"):
             return app._json_error("이 대화에 발화(질의) 권한이 없습니다.", 403)
-        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._FIX_WITH_AI_RATE_PER_MIN):
-            return app._json_error("요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        # reanswer 모드는 /api/ask 를 재dispatch 해 full LLM run 을 점유하므로 fix-with-ai 와
+        # 동일한 보수적 상한(5)을 유지한다. 단 버킷은 자기 scope 로 격리 — 버전 페이징·피드백
+        # 같은 이웃 기능의 소비가 편집 예산을 태우던 결함 제거(TASK-20260729T152000-ratelimit-scope).
+        if not app._search_rate_limit_check(
+            int(account.get("id") or 0),
+            max_per_min=app._FIX_WITH_AI_RATE_PER_MIN,
+            scope=app.RATE_SCOPE_MESSAGE_EDIT,
+        ):
+            return app._json_rate_limited(
+                "메시지 수정 요청이 너무 잦습니다.",
+                app._rate_limit_retry_after(int(account.get("id") or 0), app.RATE_SCOPE_MESSAGE_EDIT),
+            )
         # 편집 대상 로드(그룹/1:1 공통) — sender·내용 검증에 선행 필요.
         from shared.db import _pg_connect
         _pg = _pg_connect()
@@ -1750,9 +1772,20 @@ async def post_branch_switch(cid: str, request: Request) -> JSONResponse:
             return app._json_error("그룹 대화는 브랜치 전환을 지원하지 않습니다.", 400)
         if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
             return app._json_error("본인 대화만 전환할 수 있습니다.", 403)
-        # SEC MINOR-C: 재귀 CTE(_branch_leaf_of/_branch_active_display_ids) 무제한 유발 방지(edit 과 동일 버킷).
-        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._FIX_WITH_AI_RATE_PER_MIN):
-            return app._json_error("요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        # SEC MINOR-C: 재귀 CTE(_branch_leaf_of/_branch_active_display_ids) 무제한 유발 방지.
+        # TASK-20260729T152000-ratelimit-scope: edit(LLM run 가능)과 같은 버킷·같은 상한(5)을
+        # 쓰던 것을 페이징 전용 scope + 상한으로 분리한다. 본 endpoint 는 DB 읽기 4쿼리 +
+        # UPDATE 1회(실측 p50 8ms)로 끝나는 네비게이션 op 라 LLM 비용 등급이 아니다.
+        # 스크립트 연사 차단이라는 SEC MINOR-C 의 목적은 60/min 으로도 그대로 유지된다.
+        if not app._search_rate_limit_check(
+            int(account.get("id") or 0),
+            max_per_min=app._BRANCH_NAV_RATE_PER_MIN,
+            scope=app.RATE_SCOPE_BRANCH_NAV,
+        ):
+            return app._json_rate_limited(
+                "버전 전환 요청이 너무 잦습니다.",
+                app._rate_limit_retry_after(int(account.get("id") or 0), app.RATE_SCOPE_BRANCH_NAV),
+            )
     finally:
         conn.close()
 
@@ -2333,8 +2366,13 @@ def conversations(
     # Body-search rate limit (per-account, 10 req/min in-process token bucket).
     body_search_active = bool(q and app._normalize_search_query(q))
     if body_search_active:
-        if not app._search_rate_limit_check(int(account["id"]), max_per_min=10):
-            return app._json_error("rate limit exceeded — try again in a minute", 429)
+        if not app._search_rate_limit_check(
+            int(account["id"]), max_per_min=10, scope=app.RATE_SCOPE_CONVERSATION_SEARCH,
+        ):
+            return app._json_rate_limited(
+                "대화 검색 요청이 너무 잦습니다.",
+                app._rate_limit_retry_after(int(account["id"]), app.RATE_SCOPE_CONVERSATION_SEARCH),
+            )
         # SET SESSION max_execution_time=3s for runaway query protection.
         try:
             cur_set = conn.cursor()
@@ -4311,21 +4349,56 @@ def _archive_conversation(conn, conversation_id: str, account_id: int) -> bool:
 
 # ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
 
-def _search_rate_limit_check(account_id: int, max_per_min: int = 10) -> bool:
-    """REQ-20260518-0010 (TASK-0072): in-process token bucket per account.
+def _search_rate_limit_check(
+    account_id: int,
+    max_per_min: int = 10,
+    scope: str = "conversation_search",
+) -> bool:
+    """REQ-20260518-0010 (TASK-0072): in-process token bucket per (account, scope).
     True if allowed, False if quota exhausted (60s window). Single-process
-    only; multi-worker deployment will allow `max_per_min` per worker."""
+    only; multi-worker deployment will allow `max_per_min` per worker.
+
+    TASK-20260729T152000-ratelimit-scope: `scope` 가 버킷 격리 단위다. 이전에는 키가
+    account_id 뿐이라 호출부 6곳이 계정당 단일 버킷을 공유했고(app.py `_RATE_LIMIT_BUCKETS`
+    주석 참조), 상한이 큰 기능의 소비가 상한이 작은 기능을 즉시 차단했다. 호출부는 반드시
+    자기 scope 를 명시한다 — 기본값은 본 함수의 최초 도입 호출부(본문 검색)와 동일하게 둬
+    하위호환을 유지하되, 신규 호출부에서 기본값에 기대는 것은 금지(조용한 버킷 병합).
+    """
     import time as _time
     now = _time.time()
     window_start = now - 60.0
+    key = (int(account_id), str(scope))
     with app._RATE_LIMIT_LOCK:
-        bucket = app._RATE_LIMIT_BUCKETS.setdefault(int(account_id), [])
+        buckets = app._RATE_LIMIT_BUCKETS
+        # 메모리 가드: 키 공간이 상한을 넘으면 만료(전량 window 밖) 버킷을 먼저 회수한다.
+        if len(buckets) > app._RATE_LIMIT_BUCKETS_MAX_KEYS:
+            for _k in [k for k, v in buckets.items() if not v or v[-1] < window_start]:
+                if _k != key:
+                    buckets.pop(_k, None)
+        bucket = buckets.setdefault(key, [])
         while bucket and bucket[0] < window_start:
             bucket.pop(0)
         if len(bucket) >= max_per_min:
             return False
         bucket.append(now)
         return True
+
+
+def _rate_limit_retry_after(account_id: int, scope: str = "conversation_search") -> int:
+    """해당 (account, scope) 버킷에서 슬롯 1개가 회복될 때까지 남은 초(1~60).
+
+    가장 오래된 소비 기록이 60s window 를 벗어나는 시점까지의 잔여 시간. 버킷이 비었으면
+    (= 다른 이유로 차단됐거나 이미 회복) 1 을 반환한다. 사용자에게 "얼마나 기다리면 되는지"
+    를 알려주고 `Retry-After` 헤더를 채우는 용도 — 판정 자체는 하지 않는다(읽기 전용).
+    """
+    import time as _time
+    now = _time.time()
+    with app._RATE_LIMIT_LOCK:
+        bucket = app._RATE_LIMIT_BUCKETS.get((int(account_id), str(scope))) or []
+        oldest = bucket[0] if bucket else None
+    if oldest is None:
+        return 1
+    return max(1, min(60, int(60.0 - (now - oldest)) + 1))
 
 def _clear_accounts_current_conversation(conn, conversation_id: str) -> None:
     cur = conn.cursor()
