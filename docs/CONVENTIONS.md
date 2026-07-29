@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.40.0
+template_version: v3.43.0
 domain: [workflow, context]
 ai_read_priority: 3
 ---
@@ -531,3 +531,24 @@ MySQL agent_memory 는 **단일 인스턴스(replica 없음)**다. `ALTER TABLE`
   쪼개면 lint 가 첫 라인을 false-positive 로 잡는다(단일 라인 검사).
 - 적용 제외(자동): `agent_runtime.`/`agent_kb` 수식(PG — §12 alembic 게이트 담당), alembic/, 사용자
   업로드 SQL 실행(sandbox).
+
+## 12. 사용자 대면 텍스트 (UI copy, v3.43.0+)
+
+정본은 `AGENTS.md §16.8`. 본 섹션은 프로젝트가 채택할 **예산 값과 대상 패턴**만 정한다.
+
+**원칙**: 안내는 *이 화면이 무엇인가* 까지다. 조작법(펼치기/정렬/클릭)·다른 화면 경로
+(`설정 > …`)·내부 계약(정렬 키·상한·폴백)·설계 정당화는 넣지 않는다 — 앞의 둘은 화면과
+메뉴가 이미 말하고, 뒤의 둘은 `FUNCTION.md`·`REVIEW.md` 가 정본이다.
+
+**판정 질문**: "이 문장이 없으면 사용자가 무엇을 못 하는가?" 답이 "없음"이면 지운다.
+
+| 대상 | 예산 | 비고 |
+|---|---|---|
+| 섹션/화면 안내 | 1문장 · 약 60자 | <!-- 프로젝트 실측에 맞게 조정 --> |
+| 설정 항목 hint | 2문장 | 오설정 비용이 큰 항목만 |
+| 빈 상태·에러 | 1~2문장 | 무슨 일이 있었나 + 다음 행동 |
+
+**기계 게이트 (opt-in)**: `.template/ui-copy-budget.conf` 를 두면 `verify-completion`
+check #17 가 이번 cycle 에 **추가·수정된 라인**의 텍스트를 검사한다. 시작 템플릿은
+`.template/ui-copy-budget.conf.example`. 기존 잔여는 막지 않으므로(추가 라인만 검사) 도입
+시점에 정리 부채를 한 번에 갚을 필요가 없다.

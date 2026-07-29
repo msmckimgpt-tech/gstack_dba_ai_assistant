@@ -233,3 +233,29 @@ CHG-20260728-0002 · REVIEW.md REV-20260728T093528-answer-origin-realign.
 - [x] **이전 cycle 미커버 항목 확정** — 배포 후 다회차 표본(review `id=159`, 5단계)에서
       회차마다 **서로 다른 실제 시각**(17:25:01 → 17:25:44 → 17:26:11 → 17:27:03 → 17:27:33,
       `distinct_ts=5/5`)이 기록되고 화면에도 그대로 표시됨을 확인
+
+## 20260729T1820-ui-copy-budget-adopt — UI 카피 예산 게이트 채택 (2026-07-29)
+사용자 지시: "한계를 확인했습니다. 근본적인 원인 해소를 위해 확인된 작업을 진행해주세요.
+또한, template-base 에도 반영 후 소비자 프로젝트까지 전파시켜주세요."
+상세: MODIFY.md CHG-20260729-0008 · REVIEW.md REV-20260729T182000 · template META-CYCLE-055.
+- [x] template base v3.43.0 — AGENTS.md §16.8(넣지 않는 4종/넣는 2종/분량 기준/게이트/판정
+      질문) + `bin/ui-copy-budget.py` + verify-completion **check #17**(opt-in, FAIL) +
+      conf.example + CONVENTIONS §12 + hop `v3.42.0-to-v3.43.0.sh`
+- [x] template codex 리뷰 P1 4·P2 5 → P1 4 + P2 3 반영 (post-commit diff 대상 오류 · git
+      실패 fail-open · 반쪽 적용 후 bump · idempotency marker 범위)
+- [x] hop 멱등성 3회 연속 실행 + 반쪽 적용(dispatch 제거) 복구 검증
+- [x] 소비자 3곳 전파 — migrator · mysqlsh · xtrabackup (각 1 hop, 커밋·push 완료)
+- [x] 본 프로젝트 3 hop 흡수 + `.template/ui-copy-budget.conf` 선언(게이트 활성화)
+- [x] 잔여 설정 hint 4건 정리(335→97 · 224→80 · 168→57 · 141→40자) — 오설정 비용 경고 유지
+- [x] check 표시 번호 충돌 정리(template #13 requested scope → 표시 #18)
+- [x] PB-0008 실화면 확인 — 표시 hint 길이 전수 예산 이내
+
+## Requested Scope (요청 범위 자기-열거)
+
+- [x] 근본 원인 해소 — UI 카피 규약 + 상시 기계 게이트 — 산출물: AGENTS.md §16.8 · `bin/ui-copy-budget.py` · verify-completion check #17 · `.template/ui-copy-budget.conf`
+- [x] 잔여 UI 문장 정리 — 산출물: `admin.html` 설정 패널 hint 4건(335→97 · 224→80 · 168→57 · 141→40자)
+- [x] template-base 반영 — 산출물: template v3.43.0 (META-CYCLE-055, hop `v3.42.0-to-v3.43.0.sh`, codex 리뷰 P1 4건 반영)
+- [x] 소비자 프로젝트 전파 — 산출물: migrator · mysqlsh · xtrabackup 각 1 hop 적용 + 커밋·push, 본 프로젝트 3 hop 흡수
+
+- 주장 affordance 실측: 게이트가 실제로 FAIL 하는지 — 교정 전 문장(97~126자)을 80자 규칙으로 검출, 교정본 통과, conf 부재 시 skip 확인.
+- 경계 검증: hop 멱등성(3회 연속 실행 → 함수 1·dispatch 1 유지) + 반쪽 적용(dispatch 제거) 재실행 시 정확히 1개 복구.

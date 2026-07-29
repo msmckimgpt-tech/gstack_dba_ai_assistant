@@ -333,3 +333,26 @@ source_of_truth: true
   그대로 표시된다(숨김 안내 미표시). 배포 전 기록(`id=145`)은 여전히 `distinct_ts=1` 이라
   시각이 숨겨지고 안내가 붙는다 — 설계대로. **PASS**
 - Pass/Fail: **PASS**
+
+### Run 2026-07-29 (7) — UI 카피 예산 게이트 채택 + 잔여 정리 (ui-copy-budget-adopt)
+- Environment: **Windows-browser** (PB-0008) + 격리 검증 컨테이너(`http://localhost:18099`,
+  라이브 web 이미지 + 본 branch src 마운트)
+- Runner: AI · Bridge: relay @ `http://172.26.144.1:9223` (Chrome/150.0.7871.115)
+- **① template v3.43.0 흡수** — 3 hop(v3.40.0 → v3.41.0 → v3.42.0 → v3.43.0) 적용.
+  `bin/ui-copy-budget.py` · verify-completion **check #17** 배선 · AGENTS.md §16.8 ·
+  CONVENTIONS §12 · POLICY_DOCS frontmatter v3.43.0. **PASS**
+- **② 게이트 활성화** — `.template/ui-copy-budget.conf` 선언(섹션 안내 80자 / 설정 패널
+  hint 180자). 활성 상태에서 이번 staged diff 검사 **PASS**.
+- **③ 잔여 4건 정리** — `admin.html` 설정 패널 hint: 335→97 · 224→80 · 168→57 · 141→40자.
+  버린 것은 §16.8 A 기준 그대로다 — 모델 상한(128K/64K, 입력 필드가 표시) · 슬라이더 동작
+  (슬라이더가 표시) · 적용 시점 배지(각 행이 표시) · 타 서브탭 경로 · fail-open 같은 내부 계약.
+  **남긴 것은 오설정 비용 경고**(§16.8 B): "크게 잡으면 라운드가 느려져 실행 타임아웃을 넘길
+  수 있습니다" · "동시 처리 수를 올리면 DB 커넥션 풀·LLM 한도·메모리를 더 씁니다".
+- **④ 실화면 확인** — 설정 화면의 표시 중인 hint 길이 전수 `[49,40,77,78,97,57,80]` 로 전부
+  예산 이내. 렌더·탭 전환 정상. Evidence: `rr-15-settings-trimmed.png`. **PASS**
+- **⑤ 게이트 실효 확인** — 교정 전 문장(97~126자)을 80자 규칙으로 검출, 교정본 통과,
+  conf 부재 시 skip. `--files` 전수 스캔으로 잔여 0건 확인.
+- Pass/Fail: **PASS**
+- 미커버: 게이트는 **추가·수정된 라인**만 본다. 손대지 않은 다른 화면(작업 화면 `index.html`
+  등)의 기존 문장은 검사 대상이 아니다 — 의도된 설계(누적 부채를 한 번에 강제하지 않음)이며,
+  그 화면을 손대는 cycle 에서 자연히 걸린다.

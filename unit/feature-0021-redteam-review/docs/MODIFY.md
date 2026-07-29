@@ -578,3 +578,26 @@ source_of_truth: true
 - Impact: 표시 문구만 변경. 데이터·API·렌더 구조 무변경, 회귀 0. 안내가 3줄 → 1줄이 되어
   첫 화면에서 리뷰 목록이 3줄 위로 올라온다.
 - Rollback Notes: 문구 되돌리기 외 없음.
+
+## CHG-20260729-0008
+- Date: 2026-07-29
+- Related Requirement: TASK-20260729T182000-ui-copy-budget-adopt
+- Summary: UI 설명문 비대화의 **근본 해소** — 기록(LRN-20260729T091700)만으로는 재발이 막히지
+  않는다는 사용자 판단에 따라 상시 게이트로 격상했다.
+  - template base 에 정책 §16.8 + opt-in 기계 게이트(check #17)를 신설(v3.43.0, META-CYCLE-055)
+    하고 본 프로젝트가 3 hop 으로 흡수했다.
+  - `.template/ui-copy-budget.conf` 선언으로 게이트를 켰다 — 이제 예산 초과 UI 문장이 추가되면
+    `verify-completion` 이 **FAIL** 한다(기존 게이트는 전부 정확성 축이라 통과시켰다).
+  - 잔여 설정 패널 hint 4건 정리(335→97 · 224→80 · 168→57 · 141→40자). 오설정 비용 경고는
+    유지하고 조작법·타 화면 경로·내부 계약을 걷어냈다.
+  - template v3.42.0 이 넣은 `check_13_requested_scope` 가 본 프로젝트 고유 check #13(시각검증)
+    과 표시 번호가 겹쳐 로그가 섞이던 것을 **표시 번호만** #18 로 분리했다(함수명은 hop marker
+    앵커라 유지 — 바꾸면 다음 hop 이 중복 삽입한다).
+- Files: `AGENTS.md`(§16.7·§16.8 외 hop 산출), `bin/verify-completion.sh`, `bin/ui-copy-budget.py`(신규),
+  `.template/ui-copy-budget.conf`(신규)·`.conf.example`, `docs/CONVENTIONS.md`,
+  `unit/feature-0003-agent-web-ui/src/static/admin.html`, `unit/_template/docs/TASK.md`,
+  POLICY_DOCS frontmatter, feature-0021 `docs/{TASK,MODIFY,REVIEW,TEST}.md`
+- Impact: 제품 동작 무변경(설정 화면 안내 문구만 짧아짐). 게이트는 **추가·수정된 라인**만
+  검사하므로 기존 문장은 통과한다 — 도입이 누적 부채를 한 번에 강제하지 않는다.
+- Rollback Notes: `.template/ui-copy-budget.conf` 를 지우면 게이트가 즉시 skip 된다(opt-in).
+  문구는 git revert.
