@@ -2291,3 +2291,14 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
   (`visual_verification_scope: always`). 결과는 `docs/test-runs.d/20260729T2130-metadata-product-scope.md` 에 append.
 - **Pass/Fail: PASS**(PRE-COMMIT). 상세 Run: `docs/test-runs.d/20260729T2130-metadata-product-scope.md`.
   정본: TASK `20260729T2130-metadata-product-scope`.
+
+### Run (2026-07-29) — metadata-product-scope POST-DEPLOY — **Environment: Windows-browser (PB-0008)**
+
+- 배포본 `5060c9f3` 위에서 **라이브 이관(update 5,130 · delete 257 · 백업 5,387행) + contract
+  (`AGENT_KB_LEGACY_DS_SCOPE_READ=0`, 잔여 레거시 0 확인)** 완료.
+- PB-0008 실 Windows Chrome 검증 **PASS** — 스코프 선택기 = 제품(17건) · `KR_LIVE` 용어 85건
+  렌더(7개 DS 중 1곳에 갇혀 있던 자산 회복 실증) · 공유 datasource 3제품이 각자 접근DB만
+  노출(CC 17/DK 35/FH 8) + **교차 접근 404** · 이관 귀속 정확도(DK_QA 153/1,046 · WEB_QA 1,926 ·
+  WEB_G_QA 879) · 부트스트랩 안내·단위 라벨 갱신.
+- 증거: `artifacts/pb0008/pb0008-meta-krlive.png` · `artifacts/pb0008/pb0008-meta-bootstrap-ccqa.png`.
+- **Pass/Fail: PASS**. 상세 Run: `docs/test-runs.d/20260729T2130-metadata-product-scope.md` POST-DEPLOY 절.

@@ -2246,3 +2246,9 @@ FUNCTION `REQ-20260729T213000-metadata-product-scope`.
 Trigger: UI/screen keyword matched → `ux, design` 요구. 하네스 수준 Agent tool 금지 지시로 §18.8.2
 carve-out 적용(그 §를 우회 근거로 쓰지 않음). 제약 없는 채널로 수행한 검증과 미커버 범위는 위
 [CODEX] entry 의 "미커버(정직 표기)" 문단에 명시.
+
+
+## REV-20260729T220000-metadata-product-scope-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실증 기록(문서 전용, 코드 변경 0)
+
+Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d append) → §18.8 표 첫 행 SKIP.
+본 cycle 이 기록하는 실증 자체가 선행 cycle(`REV-20260729T213000-metadata-product-scope`)의 검증 산출물이다.

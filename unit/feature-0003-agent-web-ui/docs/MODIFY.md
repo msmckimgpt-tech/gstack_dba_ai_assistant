@@ -2007,3 +2007,17 @@ feature-0002-agent-core 읽기/쓰기 seam · shared/config 축 정의)
 
 Cross-ref: FUNCTION `REQ-20260729T213000-metadata-product-scope` · TASK `20260729T2130-metadata-product-scope` ·
 REVIEW `REV-20260729T213000-metadata-product-scope` · Run `docs/test-runs.d/20260729T2130-metadata-product-scope.md`.
+
+
+## CHG-20260729T220000-metadata-product-scope-postdeploy — 제품 스코프 전환 POST-DEPLOY 실증 (문서 전용)
+
+Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-scope-postdeploy`
+
+코드 변경 0 — 라이브 이관·contract·PB-0008 결과 기록만. 상세는
+`docs/test-runs.d/20260729T2130-metadata-product-scope.md` POST-DEPLOY 절 · TEST.md Run.
+
+- 이관: update 5,130 · delete 257 · 백업 5,387행. `--verify-contract` 잔여 0.
+- contract: `.env` 에 `AGENT_KB_LEGACY_DS_SCOPE_READ=0`(gitignored 운영 파일) + web-a/web-b/
+  ask-worker/insight-worker 재기동. 전 컨테이너 SHA 핀 이미지 + `LEGACY=0` 실측.
+- PB-0008: 제품 선택기 17건 · `KR_LIVE` 85건 회복 · 공유 datasource 3제품 경계 분리 + 교차 404 ·
+  이관 귀속 정확도 · 부트스트랩 제품 접근DB 한정. 증거 스크린샷 2건(`artifacts/pb0008/`).
