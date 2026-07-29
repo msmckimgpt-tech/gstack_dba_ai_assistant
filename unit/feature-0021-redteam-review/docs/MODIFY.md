@@ -481,3 +481,18 @@ source_of_truth: true
 - Impact: 불필요한 수정 라운드 감소. 이 방향의 잔여 오판은 답변을 **늘리는** 쪽이라 붕괴 가드와
   충돌하지 않는다(최악이라도 리뷰 재수록, 파괴 아님). 마이그레이션·프론트 변경 없음.
 - Rollback Notes: 프롬프트 문자열 revert.
+
+## CHG-20260729-0003
+- Date: 2026-07-29
+- Related Requirement: TASK-20260729T120000-review-continuation
+  — **docs-only, 코드 무변경** (CHG-20260729-0002 배포분의 POST-DEPLOY 확정)
+- Summary: continuation 가드 배포본(`44d70215`)에서 라이브 재확인. 같은 대화에 짧은 후속 발화를
+  **연속 2회째**("네, 그렇게 진행하겠습니다.") 태워 판정 `id=140` **pass · rounds=0 · BLOCK 0 ·
+  WARN 0** · 답변 566자 실행 체크리스트를 확인했다. Run 3(2/3→1/4 측정)은 배포 **전** 컨테이너에
+  프롬프트를 주입해 얻은 값이라 배포본 재확인이 필요했다 — 주입 측정을 배포 검증으로 등치하지
+  않는다.
+- Files: `docs/TEST.md`, `docs/test-runs.d/20260729T1200-live-induction-measurement.md`(Run 4),
+  `docs/MODIFY.md`, `docs/REVIEW.md`
+- Impact: 제품 동작 무변경(검증 기록만). 라이브 데이터에는 유도 대화 1건의 턴이 추가됐다
+  (검증 목적으로 생성한 전용 대화 — 기존 사용자 대화는 무변경).
+- Rollback Notes: 문서 되돌리기 외 없음.
