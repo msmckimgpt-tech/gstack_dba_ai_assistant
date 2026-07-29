@@ -605,3 +605,13 @@ source_of_truth: true
 - Timestamp: 2026-07-29T17:20:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260729T090000-graph-cap-audit [CODEX:frontend-gate+backend-cap] — PASS-WITH-FIXES (P1 1건 in-cycle 흡수)
+- 대상: CHG-20260729T0900-graph-cap-audit (상한 19건 성격 전환 · 컬럼 보강 3경로 전량화 · 컬럼 인벤토리 배치 반복 · 표시 절단 제거).
+- 방법: **codex-review(`codex review --uncommitted`, codex-cli 0.145.0)** — §18.8 적대 검증. `[CODEX:*]` 는 §18.4/§18.9 의 check #9 accepted verdict. 본 세션은 `Agent` 툴 사용이 세션 지시로 제한된 환경이고, 이 변경은 **함수 초입 가드와 뒤쪽 보강 로직의 도달성**을 diff 밖 흐름과 함께 봐야 판정되므로 repo 접근 리뷰어가 적합하다.
+- **CONFIRMED(P1, GATE — 수정)**: *부분 펼침에서 조기 return 이 보강을 가로막는다.* `_metaGraphToggleColumns` 초입의 `if (_metaTableHasCols(key)) return;` 이 **내가 추가한 introspect 보강보다 앞**에 있어, 그래프에 컬럼 2개만 있는 테이블은 그 2개가 렌더되는 순간 `colsByTable > 0` → 함수 초입에서 반환 → 나머지 53개가 영영 오지 않는다. **사용자 스크린샷 `DT_Character_New` 가 정확히 이 상태**였으므로, 이 지적이 없었다면 "고쳤다" 고 보고하고도 증상이 그대로 남았을 것이다(리뷰가 실제로 결함을 잡은 사례). **수정**: "펼쳐졌다" 를 *완전히* 펼쳐졌다는 뜻으로 좁힌다 — 컬럼이 있고 **introspect 보강까지 마쳤을 때만**(`introspected.has(key)`) 재펼침을 no-op 으로 본다. 보강 **실패** 테이블도 no-op 대상에 포함(`introspectMiss`) — 아니면 부분 펼침 상태에서 누를 때마다 실패 왕복을 반복한다(상세 패널의 `detailColsMiss` 와 같은 역할). `resetModel` 이 miss 도 초기화해 스코프 전환 후 재시도 가능.
+- **회귀 확인**: 수정 후 `test_detail_columns.js` **57 PASS**(P1 계약 축 ⑱ 6건 신설 — 조기 return 이 hasCols 단독이 아님·완전 펼침 정의·miss 가드·reset 정합) · 헤드리스 스위트 **585 PASS** · pytest **전량 통과**(FAILED 0) · ruff PASS · `node --check` PASS(3 파일).
+- **정직 표기 — 잔여 표면**: 최종 판정은 실 브라우저 육안이다(GCA.7 PB-0008, 배포 후). 커밋 전 검증은 유닛 계약 + 라이브 AGE/데이터소스 실측(투영 공백·cap 포화 규모) + 상한 상수 런타임 실측이며, **패널·캔버스 렌더 자체는 아직 실 화면에서 보지 않았다**. 또한 상한 상향의 실제 부하(sync 처리량·조회 응답 크기)는 배포 후 관측 대상이다.
+- Timestamp: 2026-07-29T09:00:00+09:00
+- Verdict: PASS-WITH-FIXES (P1 in-cycle 흡수)
+- Human Approval Needed: no

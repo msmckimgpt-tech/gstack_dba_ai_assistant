@@ -1904,3 +1904,19 @@ Run `docs/test-runs.d/20260729T1742-product-picker-keynav.md`.
 - `docs/evidence/pb0008-product-picker-keynav-{focus,selected}-20260729.png` — 포커스 링·선택 결과 증거.
 
 Cross-ref: TASK `20260729T1800-picker-keynav-postdeploy` · 선행 `20260729T1742-product-picker-keynav`.
+## CHG-20260729T0900-ai-claude-feature-0016-graph-cap-audit — 그래프 상한 전수 감사(프론트·라우터 몫) (2026-07-29)
+
+정본 cycle 은 feature-0016 (`docs/TASK.md ## 20260729T0900-graph-cap-audit`). 본 feature 는 코드 거주처.
+
+- `src/routers/admin_metadata.py` — 그래프 검색 `limit` 기본값 50 을 **모듈 안전 가드에 위임**(미지정 시
+  `metadata_graph._SEARCH_CAP`; 숫자 복제 제거) · `/graph/columns` 의 `rows[:500]` 절단 제거(전량 반환).
+- `src/static/graph/graph-ctxmenu.js` — 컬럼 보강 게이트를 **3경로 모두 전량화**(상세
+  `_metaDetailColsBackfillNeeded` · 캔버스 `_metaGraphToggleColumns` · 더블클릭 `_metaGraphExpand`),
+  union 시 **ordinal 보완**(그래프 Column 정점엔 ordinal 이 없어 ERD 정렬이 어긋났다), 캔버스 union
+  소문자 dedupe, 참조 컬럼 표시 `_META_RTCOL_SHOW`(8 + "외 N") → **전량**(축약은 CSS ellipsis, 전문은
+  title 보존) + `_META_RTCOL_GUARD` 안전 가드.
+- `src/static/graph/graph-state.js` — `_META_SEARCH_CAP` 미러 50 → 5000(백엔드 정합, 부분값 표기 신호는 유지).
+- `tests/headless/test_detail_columns.js` — 51 PASS(부분 투영 union·ordinal 보완·3경로 계약 신설).
+
+사용자 리포트: `DT_Character_New` 상세가 `컬럼 (2)` 뿐(실제 55). 방향 지시 "개수를 줄여 출력하는
+최적화는 다른 방향으로" 에 따라 표시·조회 절단을 제거하고 축약은 렌더 계층에 위임.

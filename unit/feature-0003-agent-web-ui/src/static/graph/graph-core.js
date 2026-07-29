@@ -1740,6 +1740,7 @@ function _metaGraphResetModel() {
   _metaGraph.detailCols.clear();
   _metaGraph.detailColsMiss.clear();
   _metaGraph.detailColsInflight.clear();
+  if (_metaGraph.introspectMiss) _metaGraph.introspectMiss.clear();   // 스코프 전환 시 실패 기록도 초기화(재시도 가능)
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
   if (_metaGraph._busyTs) _metaGraph._busyTs.clear();   // §57.8: TTL 타임스탬프도 동반 정리

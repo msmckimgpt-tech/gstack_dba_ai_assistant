@@ -22,9 +22,19 @@ import re
 
 _log = logging.getLogger("routines")
 
-_ROUTINE_CAP_DEFAULT = 300   # 스키마당 1회 introspect 최대 routine 수(폭주 방지)
-_PARAMS_MAXLEN = 500
-_REFS_CAP = 40               # routine 당 참조 테이블 상한
+# graph-cap-audit(사용자 결정 2026-07-29): **개수를 줄여 출력하는 것은 최적화가 아니라 데이터 누락(오류)**
+#   이다. 성능은 렌더 계층(뷰포트 컬링 §65 · 노드 LOD §67 · 컬럼 LOD §61 · 레이아웃 메모이즈 §73)에서
+#   해결하고, 수집·투영 계층은 **전량**을 원칙으로 한다. 아래 상한들은 폐기하지 않고 **비현실 극단 전용
+#   안전 가드**(무한 루프·손상 메타데이터 방어)로 성격을 바꿨다 — 실사용 최대치의 수십 배로 잡아
+#   실질 무제한이며, 그럼에도 걸리면 **조용히 자르지 않고 WARN 으로 표면화**한다.
+#   근거(라이브 실측 2026-07-29): 종전 300 상한에서 루틴 보유 스키마 232개 중 **47개(20%)가 포화**,
+#   `cc_pyron` 은 실제 597개 중 300개만 그래프에 투영돼 297개 노드가 사라져 있었다(사용자 리포트
+#   "노드 또한 누락된 대상이 확인되었습니다"의 근본 원인).
+_ROUTINE_CAP_DEFAULT = 20000   # 스키마당 introspect routine 안전 가드(실측 최대 597 — 실질 무제한)
+# graph-cap-audit: 파라미터 시그니처는 상세 패널이 그대로 나열하는 **데이터**다 — 500자에서 끊기면
+#   파라미터 수가 많은 프로시저의 뒷부분이 화면에서 사라진다. 안전 가드로만 남긴다(종전 500).
+_PARAMS_MAXLEN = 20000
+_REFS_CAP = 2000             # routine 당 참조 테이블 안전 가드(종전 40 — 대형 프로시저에서 관계 누락)
 
 # 정의 텍스트에서 테이블 참조 후보를 뽑는 보수적 토큰 스캔.
 #   write 동사(INTO/UPDATE/DELETE FROM/MERGE INTO)를 FROM/JOIN 보다 먼저 배치 — 같은 위치에서
@@ -50,9 +60,14 @@ _ALIAS_UPDATE_RE = re.compile(
 #         동일 alias 가 서로 다른 테이블에 바인딩되면 그 alias 전체 폐기(모호).
 #         크로스-DB 참조(§56 RC2) — 컬럼 인벤토리를 현재 연결로 검증할 수 없어 테이블 유지.
 # 미채택분은 **기존 테이블-레벨 연결 그대로**라 회귀가 아니라 폴백이다.
-_COLS_CAP_PER_TABLE = 24     # routine·테이블당 참조 컬럼 상한
-_COLS_CAP_TOTAL = 80         # routine 당 참조 컬럼 총 상한
-_COLUMNS_TABLE_CAP = 400     # 컬럼 인벤토리 1회 조회 테이블 수 상한(IN 절 폭주 방지)
+# graph-cap-audit: 위 §안전 가드 원칙과 동일 — 참조 컬럼도 잘라내지 않는다(잘리면 사용 관계선이
+#   실제보다 적게 그려져 "이 루틴이 어느 컬럼을 쓰는지" 가 부분만 보인다).
+_COLS_CAP_PER_TABLE = 2000   # routine·테이블당 참조 컬럼 안전 가드(종전 24)
+_COLS_CAP_TOTAL = 20000      # routine 당 참조 컬럼 총 안전 가드(종전 80)
+# _COLUMNS_TABLE_CAP 은 성격이 다르다 — SQL `IN` 절 파라미터 한계에서 오는 **배치 크기**이지 상한이
+#   아니다. 종전에는 이 크기로 목록을 **잘라** 나머지 테이블의 컬럼 승격이 조용히 누락됐다. 이제
+#   배치를 **반복**해 전량을 조회한다(아래 `_fetch_columns`).
+_COLUMNS_TABLE_BATCH = 400   # 컬럼 인벤토리 1회 질의 테이블 수(배치 크기 — 반복해 전량 처리)
 
 # `[ident]` · `` `ident` `` · `"ident"` → ident (공백 없는 단순 식별자만 — 공백 포함은 원형 유지).
 _BRACKET_ID_RE = re.compile(r"[\[`\"]\s*([A-Za-z_][A-Za-z0-9_$#]*)\s*[\]`\"]")
@@ -290,31 +305,43 @@ def parse_referenced_columns(definition, refs, columns_map) -> dict:
 
 
 def _fetch_columns(db_conn, schema, wanted) -> dict:
-    """참조로 채택된 테이블에 한해 INFORMATION_SCHEMA.COLUMNS 1회 조회.
+    """참조로 채택된 테이블의 INFORMATION_SCHEMA.COLUMNS 조회 — **배치 반복으로 전량**.
 
     반환 {table_lower: {col_lower: 실 컬럼명}}. 실패 시 {} — 컬럼 승격만 비활성되고 테이블-레벨
     연결은 불변(비차단). routine 이 없거나 참조 테이블이 없으면 호출 자체를 하지 않는다.
+
+    graph-cap-audit(사용자 결정 2026-07-29): 종전에는 `names[:_COLUMNS_TABLE_CAP]` 로 목록을 **잘라**
+    400개 초과분의 컬럼 승격이 조용히 누락됐다(사용 관계선이 테이블-레벨로 폴백). `IN` 절 크기 제한은
+    **배치 크기**이지 데이터 상한이 아니므로, 배치를 반복해 전량을 조회한다. 배치 하나가 실패해도
+    나머지 배치는 계속한다 — 부분 결과가 전무보다 낫고, 실패분은 테이블-레벨 폴백으로 안전하다.
     """
     names = sorted({str(t or "").strip() for t in (wanted or []) if str(t or "").strip()})
     if not names:
         return {}
-    names = names[:_COLUMNS_TABLE_CAP]
     out: dict = {}
     # cursor 획득 자체도 try 안 — 실패가 introspect_and_store 의 상위 try 로 전파되면 그 스키마의
     # routine upsert **전체**가 죽는다(컬럼 승격은 부가 기능이라 절대 본 경로를 막지 않는다).
     cur = None
     try:
         cur = db_conn.cursor()
-        ph = ",".join(["%s"] * len(names))
-        cur.execute(
-            "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
-            f"WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({ph})",
-            tuple([schema] + names))
-        for row in (cur.fetchall() or []):
-            tbl = str(row[0] or "").strip()
-            col = str(row[1] or "").strip()
-            if tbl and col:
-                out.setdefault(tbl.lower(), {})[col.lower()] = col
+        for _i in range(0, len(names), _COLUMNS_TABLE_BATCH):
+            chunk = names[_i:_i + _COLUMNS_TABLE_BATCH]
+            if not chunk:
+                continue
+            try:
+                ph = ",".join(["%s"] * len(chunk))
+                cur.execute(
+                    "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+                    f"WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({ph})",
+                    tuple([schema] + chunk))
+                for row in (cur.fetchall() or []):
+                    tbl = str(row[0] or "").strip()
+                    col = str(row[1] or "").strip()
+                    if tbl and col:
+                        out.setdefault(tbl.lower(), {})[col.lower()] = col
+            except Exception as exc:   # 배치 단위 격리 — 한 배치 실패가 전량을 버리지 않는다
+                _log.warning("fetch_columns_batch_failed schema=%s offset=%d n=%d err=%r",
+                             schema, _i, len(chunk), exc)
     except Exception as exc:
         _log.debug("fetch_columns_failed schema=%s err=%r", schema, exc)
         return {}
@@ -478,6 +505,13 @@ def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_ke
         _log.debug("fetch_routines_failed schema=%s err=%r", schema, exc)
         return 0
     truncated = len(fetched) > max(1, cap)
+    if truncated:
+        # graph-cap-audit: 안전 가드에 걸렸다 = **비현실 극단**이거나 가드가 낮게 잡혔다는 뜻이다.
+        #   종전에는 조용히 잘라 그래프에서 노드가 사라진 사실이 어디에도 남지 않았다(사용자 리포트
+        #   "노드 또한 누락된 대상이 확인되었습니다"). 이제 운영자가 알아챌 수 있게 WARN 으로 남긴다.
+        _log.warning("routine_cap_truncated schema=%s fetched=%d cap=%d dropped=%d "
+                     "(AGENT_ROUTINE_INTROSPECT_CAP 상향 필요 — 그래프에서 루틴 노드가 누락된다)",
+                     schema, len(fetched), cap, len(fetched) - max(1, cap))
     routines = fetched[:max(1, cap)]
     if inventory_sink is not None and not truncated:
         # change-reanalysis: 완전 스캔일 때만 전량 인벤토리를 노출(부분집합 = 진동 원인).

@@ -57,7 +57,14 @@ _INT_PROP_KEYS = {"ordinal", "semantic_cluster_id"}
 _NULLABLE_PROP_KEYS = {"semantic_cluster_id", "semantic_cluster_label"}
 _UNSET = object()   # sync_table cluster 인자 "미전달" 센티넬(≠ 명시 None=clear)
 
-_NEIGHBOR_NODE_CAP = 300   # 투영 1회 최대 노드 수 (8K 규모 보호)
+# graph-cap-audit(사용자 결정 2026-07-29): **개수를 줄여 출력하는 것은 최적화가 아니라 데이터 누락
+#   (오류)** 이다. 화면 성능은 이미 렌더 계층이 담당한다 — 뷰포트 컬링(§65)·노드 LOD(§67)·컬럼
+#   LOD(§61)·레이아웃 위상서명 메모이즈(§73)·라벨 BitmapText(§80)·scene diff 풀(§79). 따라서 조회
+#   계층의 cap 은 **비현실 극단 전용 안전 가드**로 성격을 바꾸고(실사용 최대치의 수십 배), 상세 패널
+#   목록·그래프 노드가 조용히 부분만 나오지 않게 한다.
+#   실측 근거(2026-07-29): 종전 300 에서 `cc_pyron.DT_Character_New` 의 이웃(컬럼 55 + 루틴 33 + …)이
+#   절단됐고, 스키마 펼침에서도 719 테이블 스키마가 300 으로 잘렸다.
+_NEIGHBOR_NODE_CAP = 20000   # 투영 1회 노드 안전 가드(종전 300 — 실사용 최대 수천, 렌더는 컬링이 담당)
 # graph-hop-budget(2026-07-28): cap 절단 시 **무엇을 남길지** 결정하는 우선순위. 종전엔 이웃 해소가
 # vertex 라벨 알파벳 순(`Column, Datasource, GlossaryTerm, Product, Routine, Schema, Table`)이라
 # **Table 이 맨 뒤** → 2-hop 예산 300 이 "같은 스키마의 형제 Routine"(최대 490개)으로 먼저 소진되고
@@ -71,17 +78,22 @@ _EDGE_FETCH_CAP = _NEIGHBOR_NODE_CAP * 4
 # 그 컬럼을 렌더에서 드롭하므로(graph-core.js colsByTable), 형제 계층 이웃이 예산을 다 먹고 부모가
 # 탈락하면 "참조로 이어지는 테이블" 이 화면에서 사라진다 — HB.3 이 없애려던 실패가 cap 상황에서만
 # 되살아나는 우선순위 역전(적대리뷰 P1). 계층 이웃 채우기 전에 이 몫을 떼어 둔다.
-_PARENT_BACKFILL_RESERVE = 60
+_PARENT_BACKFILL_RESERVE = 2000   # graph-cap-audit: 가드 상향에 맞춰 비례 확대(종전 60)
 # 관계(의미) 엣지 — "이 노드가 무엇과 실제로 연관되는가". 2-hop 이상에서 예산을 먼저 배정한다.
 _REL_ELABELS = frozenset({"REFERENCES", "ROUTINE_USES", "RELATED_TERM", "USES", "DESCRIBES"})
 # 계층(소속) 엣지 — "같은 컨테이너에 들어 있다". 앵커 1-hop 에서는 핵심 정보(컬럼·소속 스키마·직결 루틴)라
 # 그대로 수집하되, 2-hop 이상에서는 형제 폭발의 원인이라 관계 이웃을 채운 뒤 남는 예산으로만 채운다.
 _HIER_ELABELS = frozenset({"HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "HAS_ROUTINE"})
-_SEARCH_CAP = 80           # 검색 결과 반환 최대 노드 수
+# graph-cap-audit: 검색 결과도 "찾았는데 안 보여주는" 절단은 오류다 — 사용자가 실제로 마주친 화면이
+#   `'dk_data_release.Item' — 50건 · 상한(검색어를 좁혀보세요)` 였다(검색어를 좁히라는 요구 자체가
+#   도구가 할 일을 사용자에게 미룬 것). 반환은 전량으로 두고, 목록 렌더는 프론트가 그룹 접기·
+#   가상 스크롤로 감당한다.
+_SEARCH_CAP = 5000         # 검색 결과 반환 안전 가드(종전 80)
 # graph-search-content(P2 봉인): Cypher `LIMIT` 절단이 trigram 점수 정렬 **이전**에 일어나므로, 넓힌
 # WHERE(이름/FQN/컨텐츠 카테고리/AI 분석)에서 이름-정확 매칭이 스캔 순서상 뒤로 밀리면 반환 cap 에 탈락한다.
 # 후보 풀을 반환 limit 보다 넓게(≤ ceiling) 떠서 점수 정렬 후 limit 로 재절단 → 고점수(이름-정확) 매칭 보존.
-_SEARCH_FETCH_CEIL = 240   # 내부 후보 풀 상한(반환 개수 계약은 limit 로 불변)
+_SEARCH_FETCH_CEIL = 20000  # graph-cap-audit: 내부 후보 풀 안전 가드(종전 240 — 점수 정렬 전 절단이
+                            #   고점수 매칭을 탈락시키던 문제를 풀에서도 제거)
 _SYNC_BATCH_LOG = 500      # 동기화 진행 로그 간격
 # insight-load-spread: sync_graph 의 batched commit 크기. 이 개수의 MERGE 마다 1회 커밋으로 묶어
 # 개별-커밋(autocommit) 시 8K 규모 5.7만 WAL fsync 폭주(30분 cron 스파이크)를 ~100 회로 줄인다.
@@ -1324,7 +1336,7 @@ def _analysis_match_keys(cur, query: str, scope: str | None, limit: int, autocom
     return keys
 
 
-def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=None) -> list:
+def search_nodes(query: str, limit: int = _SEARCH_CAP, scope: str | None = None, conn=None) -> list:
     """노드 부분일치 검색(대소문자 무관). scope 지정 시 해당 datasource 노드만. 8K 규모 보호 cap.
 
     매칭 대상(graph-search-content, 사용자 요청 — 기존 이름·FQN 에 컨텐츠 카테고리·AI 분석 추가):
@@ -1413,7 +1425,7 @@ def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=Non
     return out
 
 
-def scope_roots(scope: str, limit: int = 200, conn=None) -> dict:
+def scope_roots(scope: str, limit: int = 20000, conn=None) -> dict:
     """데이터소스(scope) 진입 그래프 — Schema -[:HAS_TABLE]-> Table 서브그래프(cap 적용).
 
     그래프뷰에서 datasource 선택 시 검색 없이 '이 데이터소스의 그래프'를 즉시 보여준다.
@@ -1471,7 +1483,7 @@ def scope_roots(scope: str, limit: int = 200, conn=None) -> dict:
     return result
 
 
-def scope_schemas(scope: str, limit: int = 500, conn=None) -> dict:
+def scope_schemas(scope: str, limit: int = 20000, conn=None) -> dict:
     """데이터소스(scope) 진입 그래프 **경량판** — Schema 노드 + per-schema 테이블 수(graph-initview).
 
     초기 진입 뷰가 테이블 낱개 대신 스키마 카드만 그리도록 한다(8K 규모에서 전체-fit 줌아웃 방지).
@@ -1591,7 +1603,7 @@ def scope_schemas(scope: str, limit: int = 500, conn=None) -> dict:
     return result
 
 
-def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> dict:
+def schema_tables(scope: str, schema_key: str, limit: int = _NEIGHBOR_NODE_CAP, conn=None) -> dict:
     """지정 스키마의 Table 서브그래프(per-schema lazy 로드, graph-initview).
 
     스키마 카드 클릭 시 그 스키마의 테이블만 로드해 초기 뷰 노드 폭증을 막는다.
@@ -1726,7 +1738,7 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
     return result
 
 
-def schema_table_keys(scope: str, schema_key: str, limit: int = 2000, conn=None) -> list:
+def schema_table_keys(scope: str, schema_key: str, limit: int = 20000, conn=None) -> list:
     """스키마 소속 Table 의 {key,name,fqn} 경량 열거 — DB(스키마) 단위 능동 분석 시드용(§53).
 
     schema_tables() 와 달리 엣지/설명 없이 키만 뽑아 cap 을 크게 잡는다(전 테이블 집계·시드 상한은
@@ -1764,7 +1776,7 @@ def schema_table_keys(scope: str, schema_key: str, limit: int = 2000, conn=None)
     return out
 
 
-def schema_routine_keys(scope: str, schema_key: str, limit: int = 2000, conn=None) -> list:
+def schema_routine_keys(scope: str, schema_key: str, limit: int = 20000, conn=None) -> list:
     """스키마 소속 Routine(함수·프로시저)의 {key,name,fqn} 경량 열거 — DB(스키마) 단위 능동 분석
     시드용(§54). schema_table_keys 의 Routine 판. 실패/HAS_ROUTINE 라벨 부재(0034 미적용) 시
     [] 로 저하(비차단 — 스키마 분석이 테이블-only 로 자연 저하)."""

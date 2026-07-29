@@ -19,6 +19,7 @@ const _metaGraph = {
   activeRunId: null,
   _analyzePending: new Set(),  // graphux7(#4): AI 능동 분석 POST in-flight 중인 node key 집합 — 연타 동시 POST(중복 큐잉) 차단(노드별 독립).
   introspected: null,     // Set: information_schema 즉석조회한 테이블 key
+  introspectMiss: null,   // Set: 즉석조회 실패/빈 결과 테이블 key — 부분 펼침 재클릭 시 실패 왕복 반복 차단(codex P1 후속)
   // graph-detail-cols(2026-07-29): **상세 패널 전용** 컬럼 보강 캐시. 캔버스 펼침(_metaGraphToggleColumns)·
   //   더블클릭 확장(_metaGraphExpand)은 introspect 결과를 모델(nodes)에 ingest 해 캔버스에 컬럼을 그리지만,
   //   단일클릭 상세(_metaGraphShowDetail)는 캔버스 구조를 바꾸지 않는 것이 계약이라 같은 결과를 모델에
@@ -314,7 +315,10 @@ const _META_DIM_OPACITY = 0.38;
 // graph-category(§55 A): CAT_BG(-1) = 제품 카테고리 밴드 배경 — 클러스터 배경(COMBO 0) **아래**.
 //   combo 내부 hit-test 는 combo 가 갖고, 밴드 여백·헤더(CATH, GROUP_HD 밴드)가 카테고리 상호작용 표면.
 const _METZ = { CAT_BG: -1, COMBO: 0, GROUP_BG: 1, EDGE: 2, COLUMN: 3, NODE: 4, GROUP_HD: 5, CTL: 6, DRAG_BOOST: 1000 };
-const _META_SEARCH_CAP = 50;        // search-badge: 백엔드 search_nodes 기본 limit(50) 미러 — 도달 시 매칭 카운트 부분값(badge '+')
+// search-badge: 백엔드 `metadata_graph._SEARCH_CAP` 미러 — 도달 시 매칭 카운트가 부분값임을 badge '+' 로 알린다.
+//   graph-cap-audit(사용자 결정 2026-07-29): 백엔드 기본 반환이 50 → 5000(안전 가드)로 바뀌어 실사용에서는
+//   사실상 도달하지 않는다. 상수는 **부분값 표기 신호**로 남긴다(도달하면 여전히 정직하게 알린다).
+const _META_SEARCH_CAP = 5000;
 const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 클러스터
 
 // node key(`scope:fqn`) → 소속 스키마 클러스터 combo id. Table/Column 은 스키마, 그 외는 terms 클러스터.
