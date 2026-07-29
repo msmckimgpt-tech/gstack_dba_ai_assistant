@@ -7028,3 +7028,24 @@ Cross-ref: 선행 TASK `20260729T1402-attach-full-scope` · REVIEW `REV-20260729
       판별 불가 시 미노출=fail-closed). 그룹에서는 방금 자기가 올린 파일의 pill × 경로만 남는다.
       **근본 해소(삭제 권한을 업로더 기준으로 좁힐지)는 인가 정책 결정이라 사용자 판단 대상** —
       본 cycle 범위 밖으로 남긴다(REVIEW 에 명시)
+
+## 20260729T1600-attach-postdeploy — attach-full-scope / attach-list-delete POST-DEPLOY 라이브 실증 (종결)
+
+선행 두 cycle(`20260729T1402-attach-full-scope` PR #1050 · `20260729T1520-attach-list-delete`
+PR #1051)이 배포 후로 이월한 PB-0008 실측을 이행한다. 실행 코드·정적 자산 변경 **0줄**.
+
+### 진행
+- [x] 배포본 확인 — `/healthz` `git_commit=8867fd8f`→`38d1bcae` · 서빙 `app.js` 에
+      `attachSidePanelNote` baked / `composerAttachmentsScopeAll` 0건
+- [x] **핵심 명제 1** — `/api/ask` 에 `attachment_ids: []` 로 질의했는데 답변이 `ZQX17`(파일 17번째
+      줄 토큰). 프론트가 첨부를 지정하지 않아도 대화의 첨부가 참조된다 = 사용자 보고 마찰의 해소 실증
+- [x] **핵심 명제 2** — `read_attachment` 실호출 확인(step `args: {filename, start_line:33,
+      max_lines:3}`) → `ZQX33`/`ZQX34`/`ZQX35`
+- [x] UI — 체크박스 부재 · 안내 1줄 노출 · 목록 행 `×` 노출(2차 배포본) · 클릭 시 실제 삭제
+      (행 1→0, 서버 0건)
+- [x] 회귀 가드 2건 — 삭제 후 신규 업로드에도 지운 파일 **부활 없음**(ux BLOCK) · 행 높이 49px
+      단일 + meta `nowrap`(design CONCERN)
+- [x] 미실증 명시 — 그룹 대화 목록 × 미노출은 코드 경로만 확인(라이브 그룹 대화 미실증,
+      fail-closed 라 노출 방향 위험 낮음)
+
+Cross-ref: test-runs.d/20260729T1600-attach-postdeploy.md · 선행 TASK 2건 · PR #1050/#1051

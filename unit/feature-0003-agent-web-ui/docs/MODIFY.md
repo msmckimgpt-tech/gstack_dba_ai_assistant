@@ -1596,3 +1596,16 @@ filename)` 로 추출(성공 여부 반환) · `_loadConversationAttachmentList`
 `DELETE /api/attachments/{id}` 재사용.
 
 Cross-ref: TASK `20260729T1520-attach-list-delete` · REVIEW `REV-20260729T152000-attach-list-delete`.
+
+## CHG-20260729T160000-attach-postdeploy — POST-DEPLOY 라이브 실증 기록 (doc-only)
+
+실행 코드·정적 자산 변경 **0줄**. `docs/test-runs.d/20260729T1600-attach-postdeploy.md` 신규
+(PB-0008 Windows-browser Run — 명제 8건 PASS + 미실증 2건 명시), `docs/TASK.md` 종결 섹션,
+`docs/REVIEW.md` `[SKIPPED:non-policy-doc]` 1줄.
+
+핵심 실측: `/api/ask` 에 `attachment_ids: []` 로 보낸 질의가 첨부 17번째 줄 토큰 `ZQX17` 을
+정확히 답했고(참조 스코프 전환 실증), `read_attachment` 가 `{filename, start_line:33,
+max_lines:3}` 로 실호출됐다(도구 실증). 목록 `×` 는 2차 배포본에서 노출·실삭제 확인.
+
+Cross-ref: TASK `20260729T1600-attach-postdeploy` · 선행 `CHG-20260729T140200-attach-full-scope`
+· `CHG-20260729T152000-attach-list-delete`.
