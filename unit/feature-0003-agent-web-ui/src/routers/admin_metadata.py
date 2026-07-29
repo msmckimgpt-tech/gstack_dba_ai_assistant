@@ -2504,8 +2504,15 @@ async def admin_metadata_suggest(sub: str, request: Request) -> JSONResponse:
     if error:
         return error
     # per-account rate-limit(429) — LLM dispatch 비용 DoS 방어(fix-with-ai 와 동일 패턴). RBAC 통과 후 검사.
-    if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._METADATA_AI_RATE_PER_MIN):
-        return app._json_error("자동완성 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+    if not app._search_rate_limit_check(
+        int(account.get("id") or 0),
+        max_per_min=app._METADATA_AI_RATE_PER_MIN,
+        scope=app.RATE_SCOPE_METADATA_AI,
+    ):
+        return app._json_rate_limited(
+            "자동완성 요청이 너무 잦습니다.",
+            app._rate_limit_retry_after(int(account.get("id") or 0), app.RATE_SCOPE_METADATA_AI),
+        )
     data = await _metadata_read_json(request)
     fields: dict = {}
     for k in ("term", "schema_name", "table_name", "column_name", "code", "sql", "nl_question"):
@@ -2545,8 +2552,15 @@ async def admin_metadata_bootstrap_describe(request: Request, account=Depends(ap
     반환 results 는 {schema_name, table_name[, column_name], description} 리스트 — 프론트가 입력란에 채움.
     """
     # per-account rate-limit(429) — 청크 일괄 LLM dispatch 비용 DoS 방어. RBAC 통과 후 검사.
-    if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._METADATA_AI_RATE_PER_MIN):
-        return app._json_error("일괄 자동완성 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+    if not app._search_rate_limit_check(
+        int(account.get("id") or 0),
+        max_per_min=app._METADATA_AI_RATE_PER_MIN,
+        scope=app.RATE_SCOPE_METADATA_AI,
+    ):
+        return app._json_rate_limited(
+            "일괄 자동완성 요청이 너무 잦습니다.",
+            app._rate_limit_retry_after(int(account.get("id") or 0), app.RATE_SCOPE_METADATA_AI),
+        )
     data = await _metadata_read_json(request)
     mode = str(data.get("mode") or "tables").strip().lower()
     if mode not in ("tables", "columns"):

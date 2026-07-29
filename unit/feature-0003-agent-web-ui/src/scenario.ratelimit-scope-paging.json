@@ -1,0 +1,86 @@
+{
+  "name": "TASK-20260729T152000-ratelimit-scope 버전 페이징 — 클라이언트 캐시로 서버 요청 감소 + 429 미발생 검증",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0003-ratelimit-scope-paging/artifacts/win-browser-shots-ratelimit-scope",
+  "steps": [
+    { "action": "screenshot", "label": "01_login_page" },
+    {
+      "action": "type",
+      "selector": "#loginUsername, input[placeholder='사용자 ID']",
+      "text": "bootstrap_admin",
+      "stop_on_fail": false
+    },
+    {
+      "action": "type",
+      "selector": "#loginPassword, input[type='password']",
+      "text": "ChangeThisBootstrapPass_2026!",
+      "stop_on_fail": false
+    },
+    {
+      "action": "click",
+      "selector": "#loginForm button[type='submit'], #loginForm button, button[type='submit']",
+      "stop_on_fail": false
+    },
+    {
+      "action": "wait_for",
+      "selector": "#messageLog, #conversationList, #composer",
+      "timeout": 15000,
+      "stop_on_fail": false
+    },
+    { "action": "screenshot", "label": "02_after_login" },
+    {
+      "action": "goto",
+      "url": "http://localhost:18093/?conversation=20260713060414-12275bfa",
+      "label": "deeplink_branched_conversation"
+    },
+    { "action": "wait_for", "selector": "#messageLog", "timeout": 15000 },
+    {
+      "action": "eval",
+      "script": "(function(){return new Promise(function(res){setTimeout(function(){var p=document.querySelector('.message-branch-pager');res({pagerFound:!!p,label:p?p.querySelector('.branch-pager-label').textContent.trim():null,appJsHasCache:(typeof _branchViewCache!=='undefined')});},2500);});})()",
+      "label": "pager_present_check"
+    },
+    { "action": "screenshot", "label": "03_conversation_with_pager" },
+    {
+      "action": "eval",
+      "script": "(function(){window.__probe={hist:0,conv:0,sess:0,sw:0,all:[]};if(!window.__origFetch){window.__origFetch=window.fetch;}window.fetch=function(u,o){var s=(typeof u==='string')?u:(u&&u.url)||'';window.__probe.all.push(s);if(s.indexOf('/api/history')>=0)window.__probe.hist++;else if(s.indexOf('/api/conversations')>=0&&s.indexOf('branch/switch')<0)window.__probe.conv++;else if(s.indexOf('/api/session')>=0)window.__probe.sess++;if(s.indexOf('branch/switch')>=0)window.__probe.sw++;return window.__origFetch.apply(this,arguments);};return {installed:true};})()",
+      "label": "install_fetch_probe"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){return new Promise(function(res){var b=document.querySelector('.branch-pager-next');if(!b){res({err:'no next btn'});return;}b.click();setTimeout(function(){res({after:'click1_next_MISS',probe:JSON.parse(JSON.stringify(window.__probe)),label:(document.querySelector('.branch-pager-label')||{}).textContent});},3000);});})()",
+      "label": "click1_next_cache_miss"
+    },
+    { "action": "screenshot", "label": "04_after_click1_v2" },
+    {
+      "action": "eval",
+      "script": "(function(){return new Promise(function(res){var b=document.querySelector('.branch-pager-prev');if(!b){res({err:'no prev btn'});return;}b.click();setTimeout(function(){res({after:'click2_prev_MISS',probe:JSON.parse(JSON.stringify(window.__probe)),label:(document.querySelector('.branch-pager-label')||{}).textContent});},3000);});})()",
+      "label": "click2_prev_cache_miss"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){window.__probe.hist=0;window.__probe.conv=0;window.__probe.sess=0;window.__probe.sw=0;window.__probe.all=[];return {reset:true};})()",
+      "label": "reset_probe_before_cached_clicks"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){return new Promise(function(res){var b=document.querySelector('.branch-pager-next');if(!b){res({err:'no next btn'});return;}b.click();setTimeout(function(){res({after:'click3_next_CACHED',probe:JSON.parse(JSON.stringify(window.__probe)),label:(document.querySelector('.branch-pager-label')||{}).textContent});},3000);});})()",
+      "label": "click3_next_cache_hit"
+    },
+    {
+      "action": "eval",
+      "script": "(function(){return new Promise(function(res){var b=document.querySelector('.branch-pager-prev');if(!b){res({err:'no prev btn'});return;}b.click();setTimeout(function(){res({after:'click4_prev_CACHED',probe:JSON.parse(JSON.stringify(window.__probe)),label:(document.querySelector('.branch-pager-label')||{}).textContent});},3000);});})()",
+      "label": "click4_prev_cache_hit"
+    },
+    { "action": "screenshot", "label": "05_after_cached_clicks" },
+    {
+      "action": "eval",
+      "script": "(function(){return new Promise(function(res){window.__probe.hist=0;window.__probe.conv=0;window.__probe.sess=0;window.__probe.sw=0;window.__probe.all=[];window.__toasts=[];var n=document.querySelector('.branch-pager-next'),p=document.querySelector('.branch-pager-prev');var i=0;var t=setInterval(function(){var b=(i%2===0)?document.querySelector('.branch-pager-next'):document.querySelector('.branch-pager-prev');if(b)b.click();i++;if(i>=12){clearInterval(t);setTimeout(function(){res({after:'burst_12_clicks',probe:JSON.parse(JSON.stringify(window.__probe)),label:(document.querySelector('.branch-pager-label')||{}).textContent,bodyHasRateLimitToast:document.body.innerText.indexOf('너무 잦')>=0});},4000);}},250);});})()",
+      "label": "burst_12_clicks_no_429"
+    },
+    { "action": "screenshot", "label": "06_after_burst" },
+    {
+      "action": "eval",
+      "script": "(function(){return {finalLabel:(document.querySelector('.branch-pager-label')||{}).textContent,messagesRendered:document.querySelectorAll('article.message').length};})()",
+      "label": "final_state"
+    }
+  ]
+}

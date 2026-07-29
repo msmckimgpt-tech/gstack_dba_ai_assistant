@@ -6724,6 +6724,12 @@ def _branch_leaf_of(pg, table: str, conversation_id: str, start_id: int):
     # SEC 관찰: table 은 f-string 삽입이므로 allowlist 로 고정(외부 입력 유입 방어).
     if table not in ("messages", "core_messages"):
         raise ValueError(f"invalid branch table: {table!r}")
+    # 최심 후손 탐색의 내부 서브쿼리에도 conversation_id 술어를 건다. 인덱스가
+    # ix_{table}_parent = (conversation_id, parent_message_id) 라 선두 컬럼이 빠지면
+    # 매 재귀 단계가 인덱스 전체를 훑어 **비용이 대화 크기가 아니라 테이블 전체 크기에
+    # 비례**했다. 술어 추가로 인덱스가 정상 사용된다 — 실측(core_messages 5,491행,
+    # 2026-07-29): buffers 552 → 177, 실행 1.17ms → 0.23ms. 자식은 정의상 같은 대화에
+    # 속하므로(FK + 동일 conversation 삽입) 결과 집합은 불변이다.
     with pg.cursor() as cur:
         cur.execute(
             f"WITH RECURSIVE down AS ("
@@ -6731,10 +6737,11 @@ def _branch_leaf_of(pg, table: str, conversation_id: str, start_id: int):
             f"  UNION ALL "
             f"  SELECT m.id FROM agent_runtime.{table} m JOIN down d ON m.parent_message_id = d.id "
             f"  WHERE m.conversation_id = %s AND m.id = ("
-            f"    SELECT max(c.id) FROM agent_runtime.{table} c WHERE c.parent_message_id = d.id"
+            f"    SELECT max(c.id) FROM agent_runtime.{table} c "
+            f"    WHERE c.conversation_id = %s AND c.parent_message_id = d.id"
             f"  )"
             f") SELECT max(id) FROM down",
-            (int(start_id), conversation_id, conversation_id),
+            (int(start_id), conversation_id, conversation_id, conversation_id),
         )
         r = cur.fetchone()
     return int(r[0]) if r and r[0] is not None else int(start_id)

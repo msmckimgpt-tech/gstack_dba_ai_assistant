@@ -5038,6 +5038,80 @@ function _startInlineEdit(message, bubbleEl) {
   try { ta.focus(); } catch (_e) {}
 }
 
+// ── 버전 페이징 클라이언트 캐시 (부하 분산) ─────────────────────────────────────
+// 페이저 1클릭은 원래 서버 요청 4건(branch/switch + /api/conversations + /api/history +
+// /api/session)을 냈고, **이미 본 버전으로 되돌아가도 매번 히스토리 전량을 다시 받았다**
+// (실측 83KB, 최대 168KB). 버전 스레드의 내용은 그 대화에 새 메시지·편집이 들어오기 전까지
+// 불변이므로 브라우저가 들고 있는 편이 맞다 — 서버 왕복 대신 사용자 단(브라우저 메모리)이
+// 비용을 감당하게 해 백엔드 부하를 분산한다.
+//   상한 8개 × 최대 168KB ≈ 1.3MB — 브라우저 탭 예산에서 무시할 수준.
+// 무효화는 `loadHistory` 단일 choke-point 에서 처리한다(아래 주석 참조) — 개별 호출부에
+// 무효화를 흩뿌리면 빠뜨린 경로가 stale 을 만든다.
+const BRANCH_VIEW_CACHE_MAX = 8;
+const BRANCH_VIEW_CACHE_TTL_MS = 30_000;   // 그룹 대화에 타 멤버가 쓰는 경우의 backstop
+const _branchViewCache = new Map();        // key -> {payload, at} (삽입 순서 = LRU)
+
+function _branchViewCacheKey(cid, versionId) {
+  return `${cid}::${versionId}`;
+}
+
+function _branchViewCacheGet(key) {
+  const hit = _branchViewCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > BRANCH_VIEW_CACHE_TTL_MS) {
+    _branchViewCache.delete(key);
+    return null;
+  }
+  // messages 배열은 복사해서 준다 — 호출부가 배열을 갈아끼워도 캐시본이 오염되지 않게.
+  return { ...hit.payload, messages: (hit.payload.messages || []).slice() };
+}
+
+function _branchViewCacheSet(key, payload) {
+  _branchViewCache.delete(key);   // 재삽입으로 LRU 최신화
+  _branchViewCache.set(key, { payload, at: Date.now() });
+  while (_branchViewCache.size > BRANCH_VIEW_CACHE_MAX) {
+    _branchViewCache.delete(_branchViewCache.keys().next().value);
+  }
+}
+
+function _branchViewCacheClear() {
+  _branchViewCache.clear();
+}
+
+// 히스토리 payload 획득 — cacheKey 가 있으면 캐시 우선(0 요청). 진행 중 run 상태는 시간에
+// 따라 변하므로 캐시에 넣지 않는다(stale "작업 중" 말풍선 부활 방지).
+async function _fetchHistoryPayload(query, cacheKey) {
+  if (cacheKey) {
+    const hit = _branchViewCacheGet(cacheKey);
+    if (hit) return hit;
+  }
+  const payload = await apiFetch(`/api/history?${query}`);
+  if (cacheKey && payload && payload.last_status !== "processing") {
+    _branchViewCacheSet(cacheKey, payload);
+  }
+  return payload;
+}
+
+// 사이드바(대화 목록 프리뷰) 지연 갱신 — 페이징은 활성 버전에 따라 목록 프리뷰가 달라질 수
+// 있지만, 클릭마다 /api/conversations 를 부를 필요는 없다. 사용자가 한 버전에 안착한 뒤
+// 1회만 따라잡는다.
+let _sidebarCatchupTimer = null;
+function _scheduleSidebarCatchup(cid) {
+  if (_sidebarCatchupTimer) clearTimeout(_sidebarCatchupTimer);
+  _sidebarCatchupTimer = setTimeout(() => {
+    _sidebarCatchupTimer = null;
+    loadConversations(cid)
+      .then(() => { try { renderConversationHeader(); } catch (_e) {} })
+      .catch(() => { /* network blip: 다음 갱신이 따라잡는다 */ });
+  }, 1200);
+}
+
+// 버전 페이징 in-flight 가드 — 전환 1건이 끝나기 전 추가 클릭을 삼킨다. 캐시 적중이면 거의
+// 즉시 풀리지만, 미적중(서버 왕복) 구간에서 연타하면 응답 순서가 뒤바뀌어 화면이 마지막
+// 클릭과 다른 버전에 안착할 수 있다. 버튼 disabled 만으로는 재렌더 중 새 버튼이 생겨 막지
+// 못하므로 모듈 레벨 플래그로 잠근다.
+let _branchPageInFlight = false;
+
 // ChatGPT식 버전 페이징 — 편집된 메시지의 다른 버전(형제 브랜치)으로 전환.
 async function _pageBranch(message, direction) {
   const cid = state.activeConversationId;
@@ -5045,22 +5119,42 @@ async function _pageBranch(message, direction) {
   const cur = Number(message.version_number || 1);
   const nextIdx = (cur - 1) + direction;
   if (!cid || nextIdx < 0 || nextIdx >= sibs.length) return;
+  if (_branchPageInFlight) return;
+  _branchPageInFlight = true;
   const targetId = sibs[nextIdx];
-  showToast("버전 전환 중…");
+  const cacheKey = _branchViewCacheKey(cid, targetId);
+  const _cached = Boolean(_branchViewCacheGet(cacheKey));
+  // 캐시 적중이면 서버를 안 기다리므로 "전환 중" 토스트가 깜빡이기만 한다 — 생략.
+  if (!_cached) showToast("버전 전환 중…");
   try {
     if (isGroupConversation(currentConversation())) {
       // 공유/그룹 대화: 읽기전용 페이징 — active_leaf(공유 근거)를 바꾸지 않고 해당 버전만 로컬
       // 열람한다(전원 화면을 바꾸지 않음). 새 재답변/전환 영속은 계속 잠금(INV-4).
+      // 영속이 없으므로 캐시 적중 시 **서버 요청 0건**으로 끝난다.
       // preserveScroll: 페이징 시 스크롤이 맨 아래로 튀지 않게 위치 보존(연속 페이징 UX).
-      await loadHistory({ branchView: targetId, preserveScroll: true });
+      await loadHistory({ branchView: targetId, preserveScroll: true, versionCacheKey: cacheKey });
     } else {
-      // 1:1: 브랜치 전환 영속 후 refreshWorkspace(사이드바 프리뷰 등 갱신 유지). preserveScroll 을
-      // 그 히스토리 재로드에 전달해 스크롤 위치 보존(기존 맨-아래 튐 해소).
+      // 1:1: 브랜치 전환은 반드시 서버에 영속한다 — active_leaf 는 다음 발화의 부모 체인과
+      // LLM recall 범위를 결정하므로(agent-core memory.py) 지연·생략하면 새 메시지가 화면과
+      // 다른 가지에 붙는다. 대신 **내용 재조회는 캐시로 대체**해 요청 4건 → 1건(실측 8ms)으로
+      // 줄이고, 사이드바 프리뷰는 안착 후 1회만 따라잡는다.
       await _switchBranch(cid, targetId);
-      await refreshWorkspace(cid, { preserveScroll: true });
+      await loadHistory({ preserveScroll: true, versionCacheKey: cacheKey });
+      _scheduleSidebarCatchup(cid);
     }
   } catch (e) {
-    showToast((e && e.message) || "버전 전환에 실패했습니다.", true);
+    // 429 는 실패가 아니라 재시도 간격 제한 — 서버가 준 retry_after(초)를 그대로 안내해
+    // "언제 다시 눌러야 하나" 를 알 수 있게 한다(안내 없는 재시도 연타 → 재차단 루프 방지).
+    if (e && e.status === 429) {
+      const wait = Number((e.payload && e.payload.retry_after) || 0);
+      showToast(wait > 0
+        ? `버전 전환이 잠시 제한되었습니다. ${wait}초 후 다시 시도해 주세요.`
+        : ((e && e.message) || "버전 전환이 잠시 제한되었습니다."), false);
+    } else {
+      showToast((e && e.message) || "버전 전환에 실패했습니다.", true);
+    }
+  } finally {
+    _branchPageInFlight = false;
   }
 }
 
@@ -7162,7 +7256,12 @@ async function detectNewRun(seq = state.runDetectSeq) {
   }
 }
 
-async function loadHistory({ append = false, branchView = null, preserveScroll = false } = {}) {
+async function loadHistory({ append = false, branchView = null, preserveScroll = false, versionCacheKey = null } = {}) {
+  // 버전 페이징 캐시 무효화 단일 choke-point: `versionCacheKey` 없는 비-append 히스토리 로드
+  // (대화 전환·전송 후 갱신·편집 후 갱신·유휴 run 감지 동기화)는 곧 "내용이 바뀌었을 수 있는
+  // 순간"이다. 여기서 한 번만 비우면 개별 호출부에 무효화를 흩뿌릴 때 생기는 누락이 없다.
+  // 페이징 자신은 항상 key 를 들고 오므로 자기 캐시를 지우지 않는다.
+  if (!append && !versionCacheKey) _branchViewCacheClear();
   if (!state.activeConversationId) {
     stopProgressPolling({ reset: true });
     stopRunDetectPolling();
@@ -7212,7 +7311,8 @@ async function loadHistory({ append = false, branchView = null, preserveScroll =
   // 열림마다 append 를 in-flight 로 만드므로, apiFetch 도중 사용자가 다른 대화로 전환하면
   // stale 응답을 현재 대화에 반영하지 않는다(cross-conversation state.messages 오염 차단, R1).
   const _loadGenConvId = state.activeConversationId;
-  const payload = await apiFetch(`/api/history?${params.toString()}`);
+  // versionCacheKey 가 있으면 클라이언트 캐시 우선 — 이미 본 버전 재방문은 서버 요청 0건.
+  const payload = await _fetchHistoryPayload(params.toString(), versionCacheKey);
   if (state.activeConversationId !== _loadGenConvId) return;
   state.messages = append
     ? [...payload.messages, ...state.messages]
@@ -11588,6 +11688,14 @@ async function handleLogout() {
   // 없으면 직전 계정이 보던 대화의 모델 선택이 다음 로그인 계정의 첫 요청에 그대로 실린다
   // (공용 단말 계정 간 누출). 세션 경계에서 선택을 비운다.
   _resetComposerModelSelection(state);
+  // TASK-20260729T152000-ratelimit-scope (보안 리뷰 자체 적발): 버전 페이징 캐시는 대화 **본문**
+  // 을 들고 있으므로 같은 세션 경계에서 반드시 비운다. 로그아웃이 페이지를 새로 고치지 않는 이
+  // 앱에서 캐시가 살아남으면, 공용 단말에서 다음 로그인 계정이 같은 (cid, versionId) 로 페이징할
+  // 때 **직전 계정 기준으로 필터된 payload** 가 렌더된다 — 특히 공유창 window([from,to]) 가 계정
+  // 마다 다른 그룹 대화에서, 좁은 window 를 가진 계정이 넓은 window 의 본문을 보게 되는 누출
+  // (share-visibility-window fail-closed 게이트 우회). 지연 사이드바 타이머도 함께 취소한다.
+  _branchViewCacheClear();
+  if (_sidebarCatchupTimer) { clearTimeout(_sidebarCatchupTimer); _sidebarCatchupTimer = null; }
   // TASK-0048: 로그아웃 시 pending 새 대화 placeholder 도 정리.
   state.pendingNewConversation = false;
   renderConversationList();
@@ -11603,6 +11711,10 @@ async function handleLogout() {
 }
 
 async function initializeWorkspace() {
+  // TASK-20260729T152000-ratelimit-scope: 계정 경계 2중 방어 — handleLogout 이 캐시를 비우지만,
+  // 세션 만료 후 페이지 새로고침 없이 다시 로그인하는 경로(handleLogin → 여기)는 logout 을 거치지
+  // 않는다. 워크스페이스 초기화 시점에도 대화 본문 캐시를 비워 계정 간 잔류를 차단한다.
+  _branchViewCacheClear();
   state.session = await apiFetch("/api/session");
   // TASK-20260619T014034: LLM provider 제한 상태 초기 적용 + hybrid 폴링 시작 + 선제 probe(로드 직후 1회).
   try {
