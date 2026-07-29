@@ -1805,3 +1805,10 @@ N1/N3/N4 가 NameError 로 실패. 전체 회귀 신규 실패 0 · ruff PASS.
 
 Cross-ref: TASK `20260729T1700-search-collation-nameerror` · REVIEW
 `REV-20260729T170000-search-collation-nameerror`.
+## CHG-20260729T172000-append-only-postdeploy — append-only POST-DEPLOY 실증 기록 (doc-only)
+
+실행 코드·정적 자산 변경 **0줄**. `docs/test-runs.d/20260729T1630-attach-append-only.md` 에
+POST-DEPLOY Run 절 append(명제 5건 PASS + 미실증 1건), `docs/TASK.md` 종결 섹션,
+`docs/REVIEW.md` `[SKIPPED:non-policy-doc]`.
+
+Cross-ref: TASK `20260729T1720-append-only-postdeploy`.
