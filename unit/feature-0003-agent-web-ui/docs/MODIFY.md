@@ -1828,3 +1828,37 @@ Cross-ref: TASK `20260729T1720-append-only-postdeploy`.
 codex P2 이월분 해소 · hotfix 전 500 → 후 200 으로 라이브 본문 검색이 2026-07-11 이후 처음 복구.
 
 Cross-ref: TASK `20260729T1800-conv-search-postdeploy` · REVIEW `REV-20260729T180000-conv-search-postdeploy`.
+## CHG-20260729T174200-product-picker-keynav — 제품 선택 드롭업 검색 후 방향키 순회 + Enter 선택 (2026-07-29)
+
+작업 화면 컴포저 제품 선택 드롭업(`#productDropupMenu`)의 키보드 경로를 닫았다. 검색칸까지는
+있었으나(REQ-20260618-0317) 좁힌 결과를 고르려면 마우스로 되돌아가야 했다.
+
+- `src/static/app.js`
+  - `productDropupNavItems(menu)` 신설 — 순회 대상 = `.product-dropup-item` − `.hidden`(검색 필터 탈락)
+    − `.is-view-only`(선택 경로가 막힌 열람 전용 행).
+  - `focusProductDropupItem(item, menu)` 신설 — `focus({preventScroll:true})` + 메뉴 자신의 `scrollTop`
+    최소 보정(위로 이동 시 sticky 검색칸 높이 차감). `scrollIntoView` 미사용(조상 스크롤 오염 회피).
+  - `moveProductDropupFocus(item, key)` 신설 — ↑/↓ 이동, 최상단 ↑ → 검색칸 복귀(+`scrollTop=0`),
+    wrap-around 없음.
+  - `buildProductDropupSearch()` — `keydown` 추가: `ArrowDown`(IME 가드 `isComposing` + 레거시
+    `keyCode===229`) → 결과 첫 항목 진입.
+  - `buildProductDropupItem()` — 기존 `keydown` 확장: Enter/Space 는 종전 `_select` 그대로, ↑/↓ 는
+    `moveProductDropupFocus` 위임(자식 '연결 테스트' 버튼에서 버블된 키는 종전대로 무시).
+  - `openProductDropup()`/`closeProductDropup()` — 문서 리스너(바깥클릭·Escape) 해제 책임을
+    `closeProductDropup` 단일 지점으로 이동(`_productDropupDetach`). 종전엔 항목 선택으로 닫으면
+    리스너가 문서에 남아, 닫힌 뒤 Escape 가 죽은 클로저를 태워 chip 으로 포커스를 튕겼다
+    (기존 결함 — 클릭 선택 경로에도 존재. codex 적대 리뷰 P2 로 표면화되어 in-cycle 흡수).
+- `src/static/styles.css` — `.product-dropup-item:focus-visible`(파란 outline + 옅은 배경, offset −2px)
+  로 키보드 커서 위치 가시화(마우스 클릭에는 링이 남지 않음).
+- `tests/headless/verify_product_dropup_keynav.py` 신규 — 실 chromium 레이아웃 위에서 **실
+  `renderProductDropupMenu`/`openProductDropup`/`closeProductDropup` 원문**(외부 의존만 스텁) + 실
+  `styles.css` 로 27건 PASS(진입·필터·순회·경계·열람전용 제외·Enter 선택·스크롤 추종·sticky 미가림·
+  0건·IME 2형태·검색칸 없는 경로·리스너 누수·Escape 무회귀·재렌더 후 배선·페이지 에러 0).
+
+백엔드·RBAC·스키마·엔드포인트·마이그레이션 0. 제품 목록은 이미 `product.access.<key>` 로 게이트된
+`state.products` 위에서만 순회하므로 접근 제어 표면 불변. 기존 `verify_product_dropup_scroll.py`
+11/11 PASS(회귀 0).
+
+Cross-ref: FUNCTION `REQ-20260729T174200-product-picker-keynav`(AC-PPKN-1~4) · TASK
+`20260729T1742-product-picker-keynav` · REVIEW `REV-20260729T174200-product-picker-keynav` ·
+Run `docs/test-runs.d/20260729T1742-product-picker-keynav.md`.

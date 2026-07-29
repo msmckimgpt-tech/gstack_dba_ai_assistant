@@ -1625,8 +1625,72 @@ function buildProductDropupSearch() {
   input.spellcheck = false;
   // 한글 IME 조합 중에도 매 입력마다 필터(input 이벤트는 조합 확정/중간 모두 발화).
   input.addEventListener("input", () => filterProductDropupItems(input.value));
+  // product-picker-keynav: 검색 후 '↓' 로 결과 목록에 진입(사용자 요청).
+  //  IME 조합 중의 방향키는 후보 선택/캐럿 이동이라 가로채지 않는다 — `isComposing` 을
+  //  기본으로 보되, 일부 브라우저·IME 가 조합 중 keydown 에 `isComposing=false` + 레거시
+  //  `keyCode=229` 만 주는 경우가 있어 둘 다 확인한다(한글 조합 흐름 보존, codex P2).
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key !== "ArrowDown" || ev.isComposing || ev.keyCode === 229) return;
+    const menu = document.getElementById("productDropupMenu");
+    const items = productDropupNavItems(menu);
+    if (!items.length) return;   // 검색 결과 0건이면 기존 동작(입력칸 유지)
+    ev.preventDefault();         // 페이지/메뉴 기본 스크롤 억제
+    focusProductDropupItem(items[0], menu);
+  });
   wrap.appendChild(input);
   return wrap;
+}
+
+// product-picker-keynav: 방향키 순회 대상 = 지금 보이는(검색 필터 통과) + 선택 가능한 항목.
+//  열람 전용(is-view-only)은 선택 경로 자체가 막혀 있어(tabindex 미부여·핸들러 미부착) 순회에서도 제외한다
+//  — 포커스가 갈 수 없는 행에 커서가 멈추면 '↓ 를 눌렀는데 아무 일도 안 일어나는' 마찰이 된다.
+function productDropupNavItems(menu) {
+  if (!menu) return [];
+  return Array.from(menu.querySelectorAll(".product-dropup-item"))
+    .filter((it) => !it.classList.contains("hidden") && !it.classList.contains("is-view-only"));
+}
+
+// 항목에 포커스를 주고, 메뉴 자신의 scrollTop 만 최소로 보정한다.
+//  scrollIntoView 는 조상 스크롤 컨테이너(페이지)까지 움직일 수 있어 쓰지 않는다
+//  (scrollProductDropupToSelected 와 동일 규칙 — 항목의 offsetParent 가 메뉴라 offsetTop 기준이 일치).
+//  검색 입력칸은 sticky(top:0)라 위로 올라갈 때 그 높이만큼 더 스크롤해야 항목이 가려지지 않는다.
+function focusProductDropupItem(item, menu) {
+  if (!item) return;
+  try { item.focus({ preventScroll: true }); } catch (e) { try { item.focus(); } catch (e2) {} }
+  if (!menu) return;
+  const stickyEl = menu.querySelector(".product-dropup-search-wrap");
+  const stickyH = stickyEl ? stickyEl.offsetHeight : 0;
+  const top = item.offsetTop;
+  const bottom = top + item.offsetHeight;
+  if (top - stickyH < menu.scrollTop) {
+    menu.scrollTop = Math.max(0, top - stickyH);
+  } else if (bottom > menu.scrollTop + menu.clientHeight) {
+    menu.scrollTop = bottom - menu.clientHeight;
+  }
+}
+
+// 포커스된 항목 기준 방향키 이동. 반환값은 '이 키를 소비했는지'(preventDefault 여부 판단용).
+//  ↓ = 다음 항목 / ↑ = 이전 항목, 최상단에서 ↑ 는 검색 입력칸으로 복귀(사용자 요청).
+//  wrap-around 는 하지 않는다 — 목록 끝에서 반대편으로 튀면 현재 위치 감각을 잃는다.
+function moveProductDropupFocus(item, key) {
+  const menu = item.closest ? item.closest(".product-dropup-menu") : null;
+  const items = productDropupNavItems(menu);
+  const idx = items.indexOf(item);
+  if (idx === -1) return false;
+  if (key === "ArrowDown") {
+    if (idx + 1 < items.length) focusProductDropupItem(items[idx + 1], menu);
+    return true;   // 마지막 항목이어도 페이지 스크롤은 막는다(메뉴 안에 머무름)
+  }
+  if (idx > 0) {
+    focusProductDropupItem(items[idx - 1], menu);
+    return true;
+  }
+  // 최상단에서 ↑ — 검색 입력칸이 있으면 그리로 복귀(없으면 제자리 유지).
+  const search = menu ? menu.querySelector(".product-dropup-search") : null;
+  if (!search) return true;
+  try { search.focus({ preventScroll: true }); } catch (e) { try { search.focus(); } catch (e2) {} }
+  if (menu) menu.scrollTop = 0;   // sticky 검색칸이 항상 온전히 보이도록 최상단으로
+  return true;
 }
 
 // 검색어로 드롭업 항목을 실시간 필터링한다(재렌더 없이 DOM 표시/숨김만 토글 → 포커스·IME 유지).
@@ -1869,7 +1933,11 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
     item.addEventListener("keydown", (ev) => {
       // 자식 컨트롤('연결 테스트' 버튼)에서 버블된 키 이벤트는 무시 — 행 자신이 포커스일 때만 선택.
       if (ev.target !== item) return;
-      if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") _select(ev);
+      if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") { _select(ev); return; }
+      // product-picker-keynav: ↑/↓ 로 (검색된) 목록을 순회한다. 선택은 위 Enter 경로 그대로.
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        if (moveProductDropupFocus(item, ev.key)) ev.preventDefault();
+      }
     });
   }
   return item;
@@ -1891,11 +1959,19 @@ function scrollProductDropupToSelected(menu) {
   menu.scrollTop = Math.max(0, Math.min(target, max));
 }
 
+// 열린 드롭업이 문서에 건 바깥클릭/Escape 리스너의 해제 함수(닫힘 경로 단일화용).
+//  기존엔 그 두 리스너 자신만이 스스로를 해제해서, 항목 선택(click/Enter)으로 닫으면
+//  리스너가 문서에 남았다 — 닫힌 뒤 Escape 를 누르면 죽은 클로저가 chip 으로 포커스를
+//  튕기고, 열고-선택을 반복할수록 누적됐다(codex 적대 리뷰 P2). closeProductDropup 이
+//  단일 해제 지점이 된다.
+let _productDropupDetach = null;
+
 function openProductDropup() {
   const chip = document.getElementById("productChip");
   const menu = document.getElementById("productDropupMenu");
   if (!chip || !menu) return;
   if (chip.disabled) return;
+  if (_productDropupDetach) { _productDropupDetach(); _productDropupDetach = null; }   // 중복 open 방어
   renderProductDropupMenu();
   menu.classList.remove("hidden");
   chip.setAttribute("aria-expanded", "true");
@@ -1912,18 +1988,19 @@ function openProductDropup() {
   const onDocClick = (ev) => {
     if (menu.contains(ev.target)) return;
     if (chip.contains(ev.target)) return;
-    closeProductDropup();
-    detach();
+    closeProductDropup();   // 리스너 해제는 closeProductDropup 이 단일 책임
   };
   const onKey = (ev) => {
     if (ev.key === "Escape") {
       ev.preventDefault();
       closeProductDropup();
-      detach();
       try { chip.focus(); } catch (e) {}
     }
   };
+  _productDropupDetach = detach;
   window.setTimeout(() => {
+    // 닫힌 뒤 도착한 지연 등록이면(선택이 즉시 일어난 경우) 배선하지 않는다.
+    if (_productDropupDetach !== detach) return;
     document.addEventListener("mousedown", onDocClick, true);
     document.addEventListener("keydown", onKey, true);
   }, 0);
@@ -1934,6 +2011,8 @@ function closeProductDropup() {
   const menu = document.getElementById("productDropupMenu");
   if (menu) menu.classList.add("hidden");
   if (chip) chip.setAttribute("aria-expanded", "false");
+  // 닫힘 경로(바깥클릭·Escape·항목 선택 click/Enter) 어디로 왔든 문서 리스너를 해제한다.
+  if (_productDropupDetach) { _productDropupDetach(); _productDropupDetach = null; }
 }
 
 function readProductPrefFromLocal() {

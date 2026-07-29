@@ -223,3 +223,4 @@ Append-only 이력. AI 가 wiki 의 페이지를 추가/수정할 때마다 한 
 ## [2026-07-29] feature | feature-0030-ask-timeout-extension 실행 타임아웃 임박 시 사용자 확인 후 연장 (예산 80% 비차단 배너+브라우저 알림·승인 run 한정 예산 해제·per-call 상한 유지로 중단/즉시답변 보존)
 ## [2026-07-29] feature | feature-0003 attach-full-scope 이어지는 대화의 기존 첨부 자율 참조 (참조 스코프를 프론트 selection→대화 전체로·read_attachment 도구 신설·자가 적대 리뷰어 매니페스트 전달·'모든 첨부 사용' 토글 제거·pill × 실삭제)
 ## [2026-07-29] fix | feature-0003 attach-append-only 첨부 목록 append-only 전환 (삭제 UI 철회·× 는 staged/failed 만·프론트 DELETE 호출 0·POST-DEPLOY 실증 cb06a4e3)
+## [2026-07-29] feature | feature-0003 product-picker-keynav 제품 선택 드롭업 검색 후 방향키 순회 (검색칸 ↓ 로 결과 진입·↑/↓ 순회·최상단 ↑ 검색칸 복귀·Enter 선택·열람전용/필터탈락 항목 제외·focus-visible 커서·문서 리스너 해제 단일화)

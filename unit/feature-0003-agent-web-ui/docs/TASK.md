@@ -7350,3 +7350,47 @@ DECISIONS `ADR-20260729T163000-attach-append-only`
 
 Cross-ref: TASK `20260729T1455-conv-search-attach-name` · `20260729T1700-search-collation-nameerror` ·
 Run=test-runs.d/20260729T145500-conv-search-attach-name.md
+
+## 20260729T1742-product-picker-keynav — 제품 선택 드롭업: 검색 후 방향키 순회 + Enter 선택 (Minor §12.3 frontend-only)
+
+사용자 요청(원문): "서비스 내 대화창 제품 선택 목록에서, 제품 명칭을 검색한 후 방향키('↓')
+입력 시 이후 방향키를 통해 검색된 목록에 대하여 순회할 수 있도록 구성해주세요. (최상단에서
+다시 '↑' 입력 시 검색 텍스트박스로 복귀) 이후 'enter' 키를 누를 경우 해당 제품을 선택할 수
+있게 구성해주세요."
+
+**현행 진단**: 제품이 6개(`PRODUCT_DROPUP_SEARCH_MIN`) 이상이면 드롭업 상단에 sticky 검색칸이
+뜨고(REQ-20260618-0317) 열릴 때 자동 포커스까지 되지만(AC-PPSC-3), 그 뒤가 끊긴다 — 항목은
+`div[role=menuitem][tabindex=0]` 이라 **Tab 으로만** 도달하고, `↓` 는 브라우저 기본 스크롤만
+일으킨다. 결국 "검색으로 좁히고 → 마우스로 클릭" 이라는 반쪽 키보드 흐름이었다. Tab 순회도
+검색 필터로 숨겨진 항목(`.hidden`)·선택 불가한 열람 전용 행(`.is-view-only`)을 그대로 훑어
+결과 목록과 어긋난다.
+
+### §2.1 Implementation Plan (Minor — 단일 화면·frontend-only)
+- `src/static/app.js`
+  - `productDropupNavItems(menu)` 신설 — 순회 대상 = `.product-dropup-item` − `.hidden` − `.is-view-only`.
+  - `focusProductDropupItem(item, menu)` 신설 — `focus({preventScroll:true})` + 메뉴 자신의
+    `scrollTop` 최소 보정(위로 갈 때 sticky 검색칸 높이 차감). `scrollIntoView` 미사용(조상 스크롤 오염 회피).
+  - `moveProductDropupFocus(item, key)` 신설 — ↑/↓ 이동, 최상단 ↑ → 검색칸 복귀(+`scrollTop=0`), wrap 없음.
+  - `buildProductDropupSearch()` 에 `keydown` — `ArrowDown`(+ `isComposing` 가드) → 결과 첫 항목.
+  - `buildProductDropupItem()` 의 기존 `keydown` 확장 — Enter/Space(기존 `_select` 그대로) + ↑/↓.
+- `src/static/styles.css` — `.product-dropup-item:focus-visible`(파란 outline + 옅은 배경, offset −2px).
+- 완료 판정: 검색 → ↓ 진입 → ↑/↓ 순회 → 최상단 ↑ 복귀 → Enter 선택이 실 레이아웃에서 성립하고,
+  기존 필터·중앙 스크롤·클릭 선택·Escape 가 무회귀. 위험도 **Minor**(비파괴 additive, 백엔드/RBAC/스키마 0).
+
+### 진행
+- [x] `app.js` 키보드 순회 배선(위 4함수 + 2 리스너)
+- [x] `styles.css` 포커스 커서 가시성(`:focus-visible`)
+- [x] 헤드리스 회귀 가드 신규 `tests/headless/verify_product_dropup_keynav.py` — 실 chromium
+      레이아웃 + 실 `app.js` 함수 원문 + 실 `styles.css`, **19/19 PASS**
+      (진입·필터 후 진입·연속 순회·끝 clamp·↑ 복귀·열람전용 제외·Enter 선택·스크롤 추종·
+      sticky 미가림·0건·IME·검색칸 없는 경로)
+- [x] 기존 `verify_product_dropup_scroll.py` 11/11 PASS(회귀 0)
+- [x] `make test` 컨테이너 전체 회귀
+- [x] §18.8 적대 검증 — 세션 도구 제약(Agent tool 미허용)으로 `[SKIPPED:tool-restricted:ux,design]`,
+      제약 없는 채널(codex 적대 리뷰 + 자체 검토)로 대체 (REVIEW 에 근거 기록)
+- [x] PB-0008 Windows-browser 라이브 검증(배포 후 — `visual_verification_scope: always` hard gate)
+
+Cross-ref: FUNCTION `REQ-20260729T174200-product-picker-keynav` (AC-PPKN-1~4) · REVIEW
+`REV-20260729T174200-product-picker-keynav` · MODIFY `CHG-20260729T174200-product-picker-keynav` ·
+Run `docs/test-runs.d/20260729T1742-product-picker-keynav.md` · 선행 `20260727T1607-product-picker-scroll`
+(중앙 스크롤) · `TASK-20260618T024517-ai-claude-product-picker-search`(검색 필터)

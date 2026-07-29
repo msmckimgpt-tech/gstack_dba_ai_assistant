@@ -2418,6 +2418,14 @@ a { color: inherit; }
   width: 100%;
 }
 .product-dropup-item:hover { background: rgba(37,99,235,.08); }
+/* product-picker-keynav: 검색 후 ↑/↓ 순회 시 '지금 어느 항목에 있는지' 를 보여주는 커서.
+   focus-visible 이라 마우스 클릭 선택에는 링이 남지 않는다(키보드 조작에서만 노출).
+   outline-offset 음수 = 항목이 메뉴 패딩 안이라 링이 잘리지 않게 안쪽으로. */
+.product-dropup-item:focus-visible {
+  background: rgba(37,99,235,.10);
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: -2px;
+}
 .product-dropup-item.is-selected {
   background: var(--primary-soft);
   color: var(--primary);

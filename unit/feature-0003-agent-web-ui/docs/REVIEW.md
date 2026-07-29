@@ -2037,3 +2037,54 @@ EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS
 - **한계 명시 2**: PB-0008 은 `bootstrap_admin`(admin, `attachment.read.any` 보유) 단일 계정으로 수행했다.
   `.own`-only 계정의 스코프 축소 동작은 단위 테스트(P2/P4/P5)로만 검증됐고 라이브 계정 실측은 아니다.
 - Human Approval Needed: no
+## REV-20260729T174200-product-picker-keynav [CODEX:product-picker-keynav] 적대 리뷰 — P1 0건 · P2 3건 + P3 1건 in-cycle 흡수
+
+Trigger: UI/키보드 상호작용 keyword matched (UI/화면/버튼 — §18.8 표 `ux, design` 행). 채널 선택은
+아래 [SKIPPED:tool-restricted] entry 참조. 대상: `static/app.js`·`static/styles.css`·
+`tests/headless/verify_product_dropup_keynav.py` uncommitted diff (codex-cli 0.145.0, `--sandbox read-only`).
+
+**Verdict: PASS (P1 0건)**. 지적 4건 전부 이번 cycle 에서 처리했다.
+
+- **P2-1 문서 리스너 누수 (수정)** — `_select()` 가 `closeProductDropup()` 만 호출하고
+  `openProductDropup()` 이 문서에 건 `mousedown`/`keydown` capture 리스너를 해제하지 않았다. 새 Enter
+  경로가 같은 `_select` 를 재사용하므로 "열고 → 선택" 을 반복할수록 죽은 클로저가 쌓이고, **닫힌 뒤
+  Escape 를 누르면 포커스가 제품 chip 으로 튄다**. 이는 클릭 선택에도 있던 **기존 결함**이지만 내
+  변경이 그 경로를 확장하므로 in-cycle 로 흡수했다 — 해제 함수를 모듈 스코프
+  `_productDropupDetach` 에 보관하고 `closeProductDropup()` 이 단일 해제 지점이 되게 했다(중복 open
+  방어 + `setTimeout` 지연 등록이 이미 닫힌 뒤 도착하면 배선하지 않는 가드 포함). 회귀 가드 T14/T15/T15b.
+- **P2-2 테스트가 실 렌더 경로를 안 탄다 (수정)** — 초판 하네스는 항목 DOM 을 자체 `buildMenu()` 로
+  흉내내 `renderProductDropupMenu` 의 `innerHTML=""` 재렌더·검색칸 자동 포커스·문서 리스너 배선을
+  검증하지 못했다. 하네스를 **실 `renderProductDropupMenu`/`openProductDropup`/`closeProductDropup`
+  원문 + state 스텁** 으로 재작성해 실 경로를 그대로 돌린다(T1c 자동 포커스·T16 재렌더 후 배선 유지·
+  T15 Escape capture 가 새로 검증 범위에 들어옴). 케이스 19 → 27건.
+- **P2-3 IME 판정 취약 (수정)** — `ev.isComposing` 만 보면 일부 브라우저/IME 가 조합 중 keydown 에
+  `isComposing=false` + 레거시 `keyCode=229` 만 주는 경우를 놓쳐 한글 조합 중 `↓` 를 가로챌 수 있다.
+  두 신호를 모두 확인하도록 가드 확장(T12/T12b).
+- **P3 `extract_fn` 취약 (완화)** — 문자열·주석 내부 중괄호를 해석하지 않는 단순 매칭이라, 소스 문구가
+  바뀌면 잘못된 조각을 추출할 수 있다. 파서를 정교화하는 대신 **추출이 어긋나면 조용히 통과하지 못하게**
+  T0(모든 추출 함수의 `typeof === "function"` 확인) + T17(페이지 에러 0) 을 세웠다 — 실패가 침묵하지
+  않는 것이 본 스크립트의 핵심 요구이고, JS 파서 재구현은 검증 도구의 적정 비용을 넘는다.
+
+**자체 검토(적대 축) — 추가 확인 사항**: (a) `role=menu`/`menuitem` 에 대한 ↑/↓ 순회는 WAI-ARIA menu
+패턴과 정합하며 Tab 도달 경로(`tabindex=0`)는 종전 그대로 남는다. (b) 순회 대상 필터가
+`.is-view-only` 를 제외하므로 **본인 권한 밖 제품에 커서가 멈추지 않는다**(ANCHOR §1 — 권한 밖 제품
+발화 불가와 정합, 선택 시도 자체가 불가능). (c) 제품 목록은 `product.access.<key>` 로 이미 게이트된
+`state.products` 위에서만 순회 — 키보드 경로가 접근 제어를 우회할 표면이 없다(백엔드 0). (d) 자식
+'연결 테스트' 버튼에서 버블된 키 이벤트는 종전 `ev.target !== item` 가드로 계속 무시된다.
+
+## REV-20260729T174201-product-picker-keynav [SKIPPED:tool-restricted:ux,design] — 세션 도구 제약으로 subagent panel 미수행, 제약 없는 채널로 대체
+
+Trigger: UI/screen keyword matched → §18.8 표상 `ux, design` 요구. 본 위임 세션에는 **하네스 수준의
+"요청 없이 Agent tool 을 호출하지 말라" 지시**가 걸려 있어 §18.8.2 의 **상위 우선순위 지시 carve-out**
+이 적용된다(그 §를 우회 근거로 쓰지 않는다). 따라서 제약 없는 채널로 가능한 검증을 수행하고 미커버
+도메인을 명시한다:
+
+- **수행(제약 없는 채널)**: ① codex 적대 리뷰 1회(위 [CODEX] entry — P1 0, P2 3 + P3 1 흡수)
+  ② 실 chromium 레이아웃 헤드리스 27건(실 렌더/열기/닫기 경로 + 실 CSS) ③ 기존 회귀 11건
+  ④ `node --check` ⑤ `make test` 컨테이너 전체 ⑥ PB-0008 실 Windows 브라우저 시각검증(배포 후).
+- **미커버**: `ux`·`design` subagent 의 독립 관점. 다만 본 변경은 **신규 시각 요소가 사실상 없고**
+  (추가된 것은 `:focus-visible` 커서 1개), 상호작용 정합성은 위 ②의 실 레이아웃 케이스와 ⑥ 라이브
+  육안 검증이 덮는다. 디자인 언어·정보구조 변경 0.
+
+Cross-ref: TASK `20260729T1742-product-picker-keynav` · FUNCTION `REQ-20260729T174200-product-picker-keynav`
+· MODIFY `CHG-20260729T174200-product-picker-keynav`.
