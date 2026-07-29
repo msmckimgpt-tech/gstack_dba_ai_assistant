@@ -88,11 +88,18 @@ def _audit_compute_hash(prev_hash: str, canonical: str) -> str:
 
 def _audit_message_table_collations(conn) -> None:
     """REQ-20260518-0010 (TASK-0072) adversarial risk 2: warn on stderr if
-    message body columns are not utf8mb4_unicode_ci. Runs once per process."""
-    global _COLLATION_AUDIT_DONE
-    if _COLLATION_AUDIT_DONE:
+    message body columns are not utf8mb4_unicode_ci. Runs once per process.
+
+    "once per process" 플래그는 **app 모듈 전역**(`app._COLLATION_AUDIT_DONE`)에 둔다.
+    ITEM-10 p7 이 본 함수를 app.py 에서 이 모듈로 옮길 때 `global _COLLATION_AUDIT_DONE`
+    선언만 따라와 이 모듈 네임스페이스에는 그 이름이 없었고, 첫 읽기에서 곧바로
+    `NameError` 가 나 **본문 검색(`q`) 경로 전체가 500** 이었다(2026-07-11~2026-07-29).
+    정의를 이 모듈에 새로 만들면 app.py 의 것과 상태가 갈리므로, 패치-단일점 규약대로
+    `app.X` 동적 참조로 원래 전역을 그대로 쓴다(테스트의 app-패치도 관통).
+    """
+    if getattr(app, "_COLLATION_AUDIT_DONE", False):
         return
-    _COLLATION_AUDIT_DONE = True
+    app._COLLATION_AUDIT_DONE = True
     cur = conn.cursor()
     rows: list[Any] = []
     try:

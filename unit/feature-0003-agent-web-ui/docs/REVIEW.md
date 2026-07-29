@@ -1980,3 +1980,36 @@ EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS
 - Critical issue: `.attach-list-item-meta` 의 nowrap+ellipsis 가 텍스트가 아니라 인라인 **"버전 N개 ▾" 버튼을 잘라내** 버전 이력의 유일한 진입점을 없앤다(패널 최소 폭 240px 에서 약 13px 초과). 그 규칙을 정당화하던 근거(삭제 ×의 폭 점유)는 바로 이 diff 가 제거했는데 규칙과 주석만 남았다. 나머지 4개 축(우측 정렬 비대칭·죽은 스타일·안내 문구 줄바꿈·danger hover 무게)은 실측 PASS.
 - 조치: 해당 말줄임 3종을 되돌림(원상복구). 이름줄 flex 분리는 배지 보존 효과가 있어 유지.
 - Human Approval Needed: no
+
+## REV-20260729T170000-search-collation-nameerror [SKIPPED:hotfix-single-symbol] 본문 검색 500 근본 수정
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1700-search-collation-nameerror
+- Timestamp: 2026-07-29T17:00:00+09:00
+- Verdict: SHIP (배포 후 라이브 재검증 잔여)
+
+**패널 판정**: 변경이 단일 심볼 참조 교정(3줄) + 테스트 신설이고, 신규 표면·인가 경계·스키마
+변경이 0이다. §18.8 표의 dispatch 신호에 해당하는 새 설계 결정이 없어 `[SKIPPED:hotfix-single-symbol]`
+로 기록하되, 아래 자체 적대 검토를 남긴다. (세션 상위지시로 subagent 패널은 불가 — 직전 cycle 에서
+사용자 확인 후 codex 대체 경로를 썼고, 본 hotfix 는 그 검증 중 파생된 3줄 수정이다.)
+
+**자체 적대 검토**
+- H1 *"모듈 로컬에 `_COLLATION_AUDIT_DONE = False` 를 두면 더 간단하지 않나"* — 그러면 app.py 의
+  동명 전역과 상태가 갈려 once-per-process 보장이 이중화된다. 테스트가 `app._COLLATION_AUDIT_DONE`
+  을 리셋해도 라우터 모듈 플래그는 남아 audit 이 영영 skip 될 수 있다. 이 repo 의 패치-단일점
+  규약(`app.X` 동적 참조)이 정확히 이 문제를 위한 것이라 그쪽을 택했다. N3 이 이 결정을 고정한다.
+- H2 *"같은 유형이 더 있나"* — AST 로 `src/**/*.py` 의 `global X` 선언 대비 module-level 바인딩
+  부재를 전수 검사. 수정 후 0건. ITEM-10 계열 이동이 여러 차례 있었으므로 이 검사는 필요했다.
+- H3 *"fail-soft 인가"* — audit 은 경고 목적이며 내부 예외를 삼킨다(N5). 다만 **NameError 는
+  함수 진입 직후 플래그 읽기에서 나 try 밖이었다** — 그래서 fail-soft 가 작동하지 못하고 500 이
+  됐다. 수정 후에는 그 지점 자체가 사라진다.
+- H4 *"직전 cycle 이 이 결함을 유발했나"* — 아니다. `git log` 상 원인은 2026-07-11 ITEM-10 p7 이고,
+  직전 cycle 은 같은 함수·같은 게이트를 건드리지 않았다. 다만 직전 cycle 의 신규 테스트 30건도
+  이 경로를 우회(monkeypatch·직접 호출)해 **잡지 못했다** — 이 점은 정직하게 기록한다.
+- H5 *"테스트가 진짜 가드인가"* — 수정을 stash 로 되돌려 재실행, N1/N3/N4 가 NameError 로 실패함을
+  확인했다. tautology 아님.
+
+**교훈(LEARNINGS 후보)**: 단위 테스트가 진입 경로의 중간 호출을 monkeypatch 로 지우면, 그 호출이
+런타임에 터져도 통과한다. 검색·업로드처럼 **게이트 뒤에서만 실행되는 부수 호출**은 최소 1건은
+패치 없이 실제로 타는 테스트를 둔다.
+
+- Human Approval Needed: no
