@@ -995,3 +995,31 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - **검증(타깃별 실질 + ULTRACODE 2-round 적대)**: wiki feature-count sweep stale-26=0(ground-truth 29=ls unit/feature-*·wiki/Features/feature-*.md=29 cards·6 token-edit=8참조 중 stale 6[Index.md 2참조는 feature 커밋이 이미 29])·신규 wikilink([[feature-0027/0028/0029]] 카드 실재)·pipe 무결(§4 2열|=3·§6 4열|=5·overview §2.1|=5·Architecture §2.3|=4/§2.4|=5)·각 타깃 표 1행씩(중복 0). §-qualify(ARCH 신규행 bare § 0·DECISIONS.md ADR·TASK.md §2.1 doc-qualify). gen-status --check rc=0·ssot-lint rc=0(4 WARN=pre-existing baseline). 정본 독립 재검증(함정 #11): model.access RBAC=feature-0003(1b9ee97a Task-Cycle·커밋본문 'feature-0007 R2'는 동기 리뷰 참조일 뿐 코드 귀속 아님)·사용기록 백엔드=feature-0002(e5860932)·self-check=feature-0021(3e2aae93). **ULTRACODE 적대 2-round**: R1 wf_63a962eb(3-타깃 analyze→타깃-스코프 verify, cross-fault 회피 함정 #12) — RN item3 좌우 오귀속·item5 즉시반영·wiki timeline/hot feature-0007 오귀속·ARCH thinking ADR 과귀속 4건 적발·전건 정본 재검증 후 교정. R2 wf_b705e7ba(3 diverse-lens on applied diff) — 3렌즈 clean·minor 2 교정(wiki §2.4 feature-0028 에 feature-0002 dep 정본 §6 미러 정합·hot.md trailing newline)·STATUS §5 defer 정당 재확인.
 - **인용 무결성 확인**: 본 entry(META-0049) staged 실재. 동반 operational commit(feature-0003 release-notes-data.js + companion TASK/MODIFY/FUNCTION/TEST/REVIEW) 별도 — 서빙 static(릴리즈노트) 배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만).
 - **Human Approval Needed**: 아니오 (색인/미러 additive·구조/보안 경계 불변·제품 런타임 동작 0·pure-meta). 무인 스케줄 run — landing(push/merge)·배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만·감지·보고만).
+
+## REV-20260729T091700-ai-root-ui-copy-bloat [SKIPPED:프로젝트 학습 기록 1건 append — 제품 코드 무변경]
+- Related TASK: (project-level) docs/LEARNINGS.md — LRN-20260729T091700-ai-root-ui-copy-bloat
+- Trigger: changeset 이 `docs/LEARNINGS.md` append 전용 (§18.8 키워드 비매칭, 제품 코드·정책 계약 무변경)
+- Timestamp: 2026-07-29T18:17:00+0900
+- Verdict: PASS
+- Human Approval Needed: no
+
+### 기록 근거
+사용자가 **반복 관측된 현상**으로 지목했다 — "장황하고 현학적이며 지루한 설명문이 UI 에
+추가되는 현상이 프로젝트 개발 중 지속적으로 확인되고 있습니다". 직전 사례(feature-0021 추론
+탭 안내 260자 → 57자, CHG-20260729-0007)를 단발 교정으로 끝내면 다음 기능 cycle 에서 같은
+방식으로 재발한다. §11.2 학습 기록 정책에 따라 `mistake` 로 남기고, 사용자 피드백으로 확인된
+학습이므로 `verified: true` 를 붙였다.
+
+### 기록에 담은 것 — "다시 하지 않으려면 무엇을 알아야 하나"
+- **근본 3축**: (a) 설명 대상이 사용자의 필요가 아니라 *구현자의 지식*, (b) FUNCTION.md·PR
+  문장이 그대로 UI 로 복사되며 문서 톤이 따라옴, (c) 정확성 게이트만 있고 **분량 게이트가 없어**
+  "틀린 말이 아니면" 전부 통과.
+- **판별 규칙**: UI 안내에 넣지 않는 4종(조작법·타 화면 경로·내부 계약·설계 정당화)과 넣는
+  2종(무엇인지 1문장 · 비가역/비용 경고).
+- **실측 기준선**: 교정본 57자 · 현행 잔여 4건(335/224/168/141자)을 §8.1 제안으로 함께 기록해,
+  다음에 정리할 때 대상이 이미 특정돼 있게 했다.
+
+### 한계 (정직 표기)
+`docs/LEARNINGS.md` 는 §10.2 **참조 읽기**(최근 10건 권장)라 매 세션 자동 로드가 아니다. 기록만
+으로 재발이 막힌다고 보지 않는다 — 상시 게이트로 올리려면 `docs/CONVENTIONS.md` 에 UI 카피
+규약 한 줄이 필요하고, 그것은 프로젝트 수준 rewrite 문서(§13.1)라 사용자 결정 사항으로 남긴다.
