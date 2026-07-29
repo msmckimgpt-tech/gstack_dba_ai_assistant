@@ -1089,6 +1089,76 @@ check_11_repo_immutability() {
 #   - non-git working tree
 #   - META mode (별도 호출 안 함, 본 check 는 feature mode 전용)
 
+# Check #13 (v3.42.0): TASK.md §9 Requested Scope — §16.7 G1 요청 범위 자기-열거.
+# WARN-only. "요청된 범위가 전부 완결됐는가" 는 기계적으로 판정할 수 없으므로 본 check 는
+# 열거 자체의 누락만 nudge 한다 (실효 게이트는 AGENTS.md §16.7 G1~G6 + §16.2 체크리스트).
+# FAIL 로 만들면 §9 섹션이 없는 기존 TASK.md 를 가진 소비자가 즉시 breaking 이 된다.
+check_13_requested_scope() {
+  # 표시 번호는 #18 — 본 프로젝트는 #13 을 시각검증(PB-0008)으로 이미 점유했다.
+  # 함수명은 template hop 의 marker 앵커라 바꾸지 않는다(바꾸면 다음 hop 이 중복 삽입).
+  local fdir="$1"
+  local task_md="${fdir}/docs/TASK.md"
+
+  if [ ! -f "$task_md" ]; then
+    # check #2 가 이미 FAIL 로 보고한 상태 — 중복 노이즈 방지.
+    log_check 18 WARN "requested scope" "SKIP (TASK.md not found)"
+    return 0
+  fi
+
+  # 헤딩 번호는 소비자가 재배치할 수 있으므로 제목 토큰으로 찾는다 (영/한 병기 허용).
+  # 단일 awk 로 (a) 코드펜스 추적 (b) 섹션 탐색 (c) 항목 계수를 한 번에 한다:
+  #   - **코드펜스(```) 내부는 무시** — 문서의 예시 블록에 `## Requested Scope` + `- [ ] …`
+  #     가 있으면 실제 섹션이 없어도 거짓 PASS 가 된다.
+  #   - **미치환 placeholder 행은 세지 않는다** — skeleton 을 그대로 복사한 상태
+  #     (`<요청 항목 1>`, `<TBD: …>`)의 PASS 는 G1 충족을 거짓 신호한다. 판정 규칙: `<…>`
+  #     span 을 포함한 행 = 미치환 템플릿 행. (실 항목이 `<div>` 같은 꺾쇠를 담으면 함께
+  #     제외되지만, WARN-only nudge 에서는 거짓 PASS 보다 거짓 WARN 이 안전하다.)
+  # `|| true` 필수 — awk/grep 의 비-0 rc 가 `set -o pipefail` + `set -e` 와 만나면 **WARN
+  # 분기 전에** 스크립트가 죽어 WARN-only 계약이 깨진다 (legacy TASK.md 소비자 hard fail).
+  # 호출부의 `|| true` 가 errexit 를 가려주는 것에 의존하지 않는다 — 호출 방식이 바뀌면 사라진다.
+  local counts found_section filled_count placeholder_count
+  counts=$(awk '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    /^#{2,3} / {
+      if (insec) { insec = 0 }
+      if ($0 ~ /(Requested Scope|요청 범위)/) { insec = 1; found = 1 }
+      next
+    }
+    # **체크박스 행만** G1 항목으로 센다 — 섹션의 G3(주장 affordance)·G4(경계 검증) 블록은
+    # 평문 `- ` bullet(`- 해당 없음` 등)이므로, 모든 bullet 을 세면 G1 요청항목이 비었는데도
+    # G3·G4 만 채워 PASS 가 난다(게이트의 핵심 신호가 무력화).
+    insec && /^[[:space:]]*-[[:space:]]+\[[ xX]\][[:space:]]*[^[:space:]]/ {
+      if ($0 ~ /<[^>]*>/) ph++; else filled++
+    }
+    END { printf "%d %d %d", found + 0, filled + 0, ph + 0 }
+  ' "$task_md" || true)
+  found_section=$(printf '%s' "$counts" | awk '{print $1}')
+  filled_count=$(printf '%s' "$counts" | awk '{print $2}')
+  placeholder_count=$(printf '%s' "$counts" | awk '{print $3}')
+
+  if [ "${found_section:-0}" -eq 0 ]; then
+    log_check 18 WARN "requested scope" \
+      "AGENTS.md §16.7 G1: TASK.md 에 'Requested Scope (요청 범위)' 섹션이 없습니다 (코드펜스 안의 예시는 인정하지 않습니다). 완료 선언 전 요청 항목/범위를 항목당 1행으로 열거하세요. baseline: unit/_template/docs/TASK.md §9."
+    return 0
+  fi
+
+  if [ "${filled_count:-0}" -eq 0 ]; then
+    if [ "${placeholder_count:-0}" -gt 0 ]; then
+      log_check 18 WARN "requested scope" \
+        "AGENTS.md §16.7 G1: Requested Scope 섹션에 미치환 placeholder 만 ${placeholder_count}행 있습니다 (<…> 유지). skeleton 문구를 실제 요청 항목으로 교체해야 G2·G3 의 대조 기준이 생깁니다."
+    else
+      log_check 18 WARN "requested scope" \
+        "AGENTS.md §16.7 G1: Requested Scope 섹션에 요청 항목이 없습니다. 항목은 체크박스 행(\`- [ ] <요청 항목> — 산출물: …\`)으로 적습니다 — G3·G4 블록의 평문 bullet 은 요청 항목으로 세지 않습니다."
+    fi
+    return 0
+  fi
+
+  local hint="(${filled_count} item(s) enumerated — §16.7 G1)"
+  [ "${placeholder_count:-0}" -gt 0 ] && hint="${hint} · placeholder ${placeholder_count}행 잔존"
+  log_check 18 PASS "requested scope" "$hint"
+  return 0
+}
 check_12_wiki_feature_card() {
   local mode="${1:-pre-commit}"
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -1320,6 +1390,52 @@ check_13_visual_verification() {
 # Main dispatch
 # -----------------------------------------------------------------------------
 
+check_17_ui_copy_budget() {
+  # $1 = mode (pre-commit|post-commit|shared-pre-commit). post-commit 은 staged 가 비어
+  # 있으므로 HEAD 커밋의 추가 라인을 본다 — staged 고정이면 커밋 후 항상 PASS 가 된다(codex P1).
+  local mode="${1:-pre-commit}"
+  local scope_flag="--staged"
+  [ "$mode" = "post-commit" ] && scope_flag="--commit"
+  local conf=".template/ui-copy-budget.conf"
+  local helper="${REPO_ROOT:-.}/bin/ui-copy-budget.py"
+
+  if [ "${GSTACK_SKIP_UI_COPY_BUDGET:-0}" = "1" ]; then
+    log_check 17 WARN "ui copy budget" "SKIP (escape hatch: GSTACK_SKIP_UI_COPY_BUDGET=1)"
+    return 0
+  fi
+  if [ ! -f "$conf" ]; then
+    log_check 17 PASS "ui copy budget" "(opt-in — ${conf} 없음, skip)"
+    return 0
+  fi
+  if [ ! -f "$helper" ]; then
+    log_check 17 WARN "ui copy budget" "SKIP (bin/ui-copy-budget.py 없음 — template hop 미적용?)"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    log_check 17 WARN "ui copy budget" "SKIP (python3 미설치)"
+    return 0
+  fi
+
+  local out rc
+  out=$(python3 "$helper" --conf "$conf" "$scope_flag" 2>&1) || rc=$?
+  rc=${rc:-0}
+  case "$rc" in
+    0)
+      log_check 17 PASS "ui copy budget" "$(printf '%s' "$out" | tail -1)"
+      return 0
+      ;;
+    2)
+      log_check 17 WARN "ui copy budget" "검사 불능(미검증) — $(printf '%s' "$out" | head -1)"
+      return 0
+      ;;
+    *)
+      log_check 17 FAIL "ui copy budget" \
+        "사용자 대면 텍스트가 예산을 초과했습니다 (AGENTS.md §16.8). $(printf '%s' "$out" | sed -n '2,6p' | tr '\n' ' ') 긴급: GSTACK_SKIP_UI_COPY_BUDGET=1"
+      return 1
+      ;;
+  esac
+}
+
 main() {
   [ $# -ge 1 ] || usage
 
@@ -1359,6 +1475,12 @@ main() {
   local check11_status=0
   if ! check_11_repo_immutability "$@"; then
     check11_status=1
+  fi
+
+  # Check #17 (§16.8, v3.43.0) — unconditional, opt-in(conf 부재 시 즉시 PASS).
+  local check17_status=0
+  if ! check_17_ui_copy_budget "$mode"; then
+    check17_status=1
   fi
 
   # Check #13 (PB-0008 visual verification) — unconditional, META/shared 모드보다 먼저 실행 (M3).
@@ -1411,7 +1533,7 @@ main() {
 
   if [ "$meta_mode" = "1" ]; then
     printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). checks #10, #11, #13, #14 always run.\n' >&2
-    local failed=$((check10_status + check11_status + check13_status + check14_status))
+    local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status))
     case "$mode" in
       post-commit) check_9_review_entry post-commit "" || failed=$((failed + 1)) ;;
       *) check_9_review_entry pre-commit "" || failed=$((failed + 1)) ;;
@@ -1427,7 +1549,7 @@ main() {
 
   # Shared mode uses its own minimal check set + check #9 + check #10 + check #11 + check #13.
   if [ "$mode" = "shared-pre-commit" ]; then
-    local failed=$((check10_status + check11_status + check13_status + check14_status))
+    local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status))
     check_shared_modify pre-commit || failed=$((failed + 1))
     check_8_unstaged_residual pre-commit || failed=$((failed + 1))
     check_9_review_entry shared-pre-commit "" || failed=$((failed + 1))
@@ -1439,7 +1561,7 @@ main() {
   fdir=$(feature_dir "$feature_id")
 
   # check13/14_status: #13(visual)·#14(conflict-marker) 는 META short-circuit 앞에서 이미 실행됨.
-  local failed=$((check10_status + check11_status + check13_status + check14_status))
+  local failed=$((check10_status + check11_status + check13_status + check14_status + check17_status))
   local effective_mode
   effective_mode="${mode}"
 
@@ -1452,6 +1574,8 @@ main() {
   check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
   # Check #12 (v3.12.0+): wiki feature card companion — WARN-only, failed 영향 X.
   check_12_wiki_feature_card "$effective_mode" || true
+  # Check #13 (v3.42.0): §16.7 G1 요청 범위 자기-열거 — WARN-only, failed 영향 X.
+  check_13_requested_scope "$fdir" || true
   check_15_routemap_freshness "$effective_mode" || true
   check_16_codenav_lint "$effective_mode" || true
 

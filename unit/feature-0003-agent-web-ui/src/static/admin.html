@@ -1077,7 +1077,7 @@
               <div class="admin-subpane" data-prompt-subpane="guidance" hidden>
                 <header class="admin-settings-panel-head">
                   <h3>작동 지침</h3>
-                  <p class="admin-settings-panel-hint">assistant 프롬프트에 주입되는 코드 내장 지침입니다(방언·능동 해석·다이어그램·인젝션 방어·자가 리뷰 등). <strong>조회 전용</strong> — 편집 가능한 기본 프롬프트는 <strong>전역 시스템 프롬프트</strong> 서브탭에서 관리합니다. 항목을 클릭하면 전체 본문을 확인할 수 있습니다.</p>
+                  <p class="admin-settings-panel-hint">assistant 프롬프트에 주입되는 코드 내장 지침입니다(조회 전용).</p>
                 </header>
                 <div class="admin-settings-panel-body" id="guidancePanelMount">
                   <!-- mountGuidanceRegistryPanel('guidancePanelMount','guidance') 가 마운트 -->
@@ -1107,7 +1107,7 @@
             <article class="admin-settings-panel" data-settings-panel="model-thinking-budgets">
               <header class="admin-settings-panel-head">
                 <h3>모델별 추론 예산</h3>
-                <p class="admin-settings-panel-hint">모델별로 추론 <strong>라운드(단계)당</strong> 출력(max_tokens, Opus·Sonnet 128K / Haiku 64K 까지)과 추론 강도별 예산을 구성합니다. 어시스턴트는 한 요청을 다회차로 처리하므로 실제 총량은 대략 라운드당 값 × 회차입니다. 라운드당 출력 안에서 추론(thinking)과 본문(content)이 나뉘며, 슬라이더로 비중을 조절합니다. native 근처로 크게 잡으면 라운드마다 느려져 '에이전트/쿼리 실행 타임아웃'을 넘거나 처리 회차가 줄 수 있으니, 보수적으로 시작하고 필요 시 타임아웃도 함께 올리세요. 저장 즉시 반영되며, 카탈로그에 모델이 추가되면 자동으로 목록에 나타납니다.</p>
+                <p class="admin-settings-panel-hint">모델별 <strong>라운드(단계)당</strong> 출력 예산입니다. 한 요청이 여러 라운드를 돌아 총량은 대략 라운드당 값 × 회차이며, 크게 잡으면 라운드가 느려져 실행 타임아웃을 넘길 수 있습니다.</p>
               </header>
               <div class="admin-settings-panel-body" id="modelThinkingBudgetsMount">
                 <!-- mountModelThinkingBudgetsPanel() 가 마운트 -->
@@ -1117,7 +1117,7 @@
             <article class="admin-settings-panel" data-settings-panel="redteam-review">
               <header class="admin-settings-panel-head">
                 <h3>AI 자가 리뷰</h3>
-                <p class="admin-settings-panel-hint">답변 전달 전 별도 저비용 모델이 grounding·SQL·권한·완전성·정직성 5축으로 적대 검증(red-team)하고, 검증 결과·핵심 사실을 세션/제품 메모리 노트로 축적합니다. 낮음 추론 강도는 기본 건너뜀, 검증 실패는 답변을 막지 않습니다(fail-open). 전 항목 저장 즉시 반영됩니다.</p>
+                <p class="admin-settings-panel-hint">답변 전달 전 별도 모델이 5축(근거·SQL·권한·완전성·정직성)으로 적대 검증하는 동작을 조정합니다.</p>
               </header>
               <div class="admin-settings-panel-body" id="redteamReviewMount">
                 <!-- mountRedteamReviewPanel() 가 마운트 -->
@@ -1127,7 +1127,7 @@
             <article class="admin-settings-panel" data-settings-panel="performance-parallelism">
               <header class="admin-settings-panel-head">
                 <h3>성능·병렬 처리</h3>
-                <p class="admin-settings-panel-hint">백그라운드 워커(그래프 <strong>노드 분석</strong>·<strong>cluster_label</strong>)와 <strong>사용자 답변</strong> 처리의 병렬도·처리 주기·배치 크기를 조절합니다. <strong>동시 처리 수</strong>를 올리면 더 공격적으로 처리되지만 DB 커넥션 풀(pgbouncer)·LLM 한도·메모리를 더 씁니다 — 보수적으로 시작해 '운영 현황'의 처리량을 보며 올리세요. <strong>즉시 반영</strong>은 저장 즉시, <strong>재배포 반영</strong>('답변 동시 처리 수')은 다음 배포/재시작 시 적용됩니다.</p>
+                <p class="admin-settings-panel-hint">워커와 답변 처리의 병렬도·주기·배치 크기입니다. <strong>동시 처리 수</strong>를 올리면 DB 커넥션 풀·LLM 한도·메모리를 더 쓰므로 보수적으로 시작하세요.</p>
               </header>
               <div class="admin-settings-panel-body" id="performanceParallelismMount">
                 <!-- mountPerformanceParallelismPanel() 가 마운트 -->

@@ -694,3 +694,39 @@ CHG-20260729-0006 이 "회차별 실제 시각이 라이브 원장에 남는지�
 남겼던 항목을, 배포 후 생성된 review `id=159`(5단계)로 확정했다 — `distinct_ts=5/5`,
 화면 표시도 `17:25:01 → 17:25:44 → 17:26:11 → 17:27:03 → 17:27:33`. 배포 전 기록(`id=145`)은
 여전히 `distinct_ts=1` 이라 안내 문구와 함께 시각이 숨겨진다(설계대로).
+
+## REV-20260729T182000-ai-root-ui-copy-budget-adopt [CODEX:review] — template v3.43.0 흡수
+- Related TASK: feature-0021-redteam-review (TASK-20260729T182000-ui-copy-budget-adopt)
+- Related Change: CHG-20260729-0008
+- Trigger: template 게이트 신설(codex 리뷰는 template base cycle 에서 수행 — 아래) + 본
+  프로젝트 흡수·잔여 정리.
+- Reviewer: OpenAI Codex CLI — template base META-CYCLE-055 에서 수행
+  (`_template_maintainer/REVIEW_INDEX.md` REV-20260729T183000-main)
+- Timestamp: 2026-07-29T18:20:00+0900
+- Verdict: PASS (template 리뷰 P1 4·P2 5 → P1 4 + P2 3 반영 후)
+- Human Approval Needed: no
+
+### 왜 기록이 아니라 게이트여야 했나
+직전 cycle 에서 교훈을 `docs/LEARNINGS.md` 에 남기며 **"이것만으로는 재발이 안 막힌다"** 를
+한계로 명시했다 — §10.2 상 LEARNINGS 는 참조 읽기(최근 10건 권장)라 매 세션 자동 로드가
+아니다. 사용자가 그 한계를 확인하고 근본 해소를 지시했다. 진짜 원인은 **게이트의 축**이었다:
+테스트는 동작을, 적대 검증은 결함을, verify-completion 은 문서 정합을 본다 — 전부 정확성이다.
+안내 문단은 틀린 말이 아니고 diff 도 작아 그 전부를 통과한다. 분량을 보는 축을 새로 만들었다.
+
+### 설계에서 의도적으로 택한 것
+- **opt-in**: conf 가 없으면 즉시 PASS. UI 가 없는 소비자(migrator·mysqlsh·xtrabackup)에는
+  정책과 도구만 전달되고 게이트는 잠들어 있다 — 전파가 breaking 이 되지 않는다.
+- **추가·수정된 라인만 검사**: 기존 잔여를 막지 않는다. 도입이 누적 부채를 한 번에 갚으라고
+  요구하면 채택 자체가 좌초한다. 본 프로젝트는 그 부채를 같은 cycle 에서 자발적으로 갚았다.
+- **FAIL(WARN 아님)**: WARN 은 이 현상을 못 막는다. 지금까지 모든 게이트가 통과시켜 왔고
+  사용자가 유일 backstop 이었다. escape(`GSTACK_SKIP_UI_COPY_BUDGET=1`)로 긴급 우회는 남겼다.
+
+### 실측으로 잡은 결함 (template cycle)
+codex P1 4건 외에, **hop 의 dispatch 삽입 문자열과 idempotency 가드가 어긋나** 재실행마다
+dispatch 가 중복 누적되는 결함을 3회 연속 실행 검증에서 잡았다. 삽입 텍스트와 가드는 같은
+문자열이어야 한다 — 코드 리뷰로는 놓치고 반복 실행 실측만이 드러낸다.
+
+### 한계 (정직 표기)
+게이트는 conf 정규식이 특정한 패턴만 본다. 다른 화면(작업 화면 `index.html` 등)의 문장은
+현재 규칙 밖이며, 그 화면을 손대는 cycle 에서 규칙을 넓히면 된다. 정규식 백트래킹 시간 제한은
+파이썬 `re` 로 걸 수 없어 conf 작성자 책임으로 남겼다(예시는 non-greedy 한정).
