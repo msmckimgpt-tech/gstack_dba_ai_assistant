@@ -635,3 +635,32 @@ red-team 자가검증(feature-0021)이 답변 초안에서 `BLOCK` 결함(verdic
 - AC-20260728T124500-llm-usage-target-scope-5: 소급 백필하지 않는다. 기존 행은 조회 시점
   역해소(종전 동작)를 유지하고, 응답의 `scope_source` 로 기록/추정을 구분할 수 있다.
 - 비목표: `target_scope` 는 계측·표시 값이며 **인가 결정에 사용하지 않는다**.
+
+## (dataplane-conn-liveness, 2026-07-29) 데이터플레인 연결 liveness + 같은 좌표 재연결 (Major §12.3, PLAN-APPROVED, TASK-20260729T110000-dataplane-conn-liveness)
+
+**거동 변경**: run-scoped 데이터플레인 연결을 도구에 넘기기 직전 **살아있는지 확인하고, 죽었으면
+같은 좌표로 재연결**한다. 종전에는 run 시작에 수립한 연결을 그 run 내내 무검사 재사용해, 연결이
+한 번 죽으면 남은 도구 호출이 전부 드라이버 문구(`Not connected to any MS SQL server` 등)로
+실패하고 사용자 요청이 통째로 무너졌다.
+
+- **ping 생략 임계** `AGENT_DS_CONN_PING_IDLE_SEC`(기본 30초): 마지막 성공 사용 후 이 시간 안이면
+  ping 없이 사용(정상 경로 왕복 0). 0 = 항상 ping.
+- **끊김 관측 시 임계 무시**: 도구 결과/예외가 끊김 시그니처면 그 연결을 suspect 로 표시해, 다음
+  호출은 임계와 무관하게 ping 한다(타임아웃 사망 직후 수 초 내 재호출을 놓치지 않기 위함).
+- **실패한 문장은 재시도하지 않는다**: 타임아웃으로 죽은 무거운 쿼리의 자동 재실행은 부하를 2배로
+  만든다. 그 도구만 실패시키고 **다음 도구부터** 자동 복구한다.
+- **오류 문구**: 끊김은 "쿼리를 좁히라" 가 아니라 "연결이 끊겼다 — 그대로 다시 시도하라, 존재/부재를
+  단정하지 말라" 로 나간다. 부하게이트의 추정 실패도 원인을 liveness 로 구분해 안내한다.
+- **`search_tables`(MSSQL cross-DB)**: per-DB 조회 실패를 더 이상 삼키지 않는다 — 실패 DB 를 명시하고
+  전부 실패면 "아무것도 확인하지 못했다" 를 말한다(형제 `search_routines` 와 대칭). 종전에는 연결이
+  죽어 한 DB 도 못 봤는데 "검색 결과가 없습니다" 로 나가 부재 오판을 유발했다.
+
+**불변 유지**: 재연결은 호출측이 준 인자 없는 콜백 하나로만 이뤄지며(좌표 재해석 없음) 그 콜백은
+`connect_with_retry(database=…, datasource=…)` 라 회로차단기·`database=None`(schema-prefixed 강제,
+M-1)·스키마 allowlist 게이트가 그대로다. 재연결 실패는 폴백 없이 전파(fail-closed). 부하게이트는 두
+분기 모두 실행 없이 차단. 세션 스코프 쿼리 시간 상한은 재연결 직후 재적용. 단일 경로 소유자
+(`_DataplaneConn`)는 자신이 발급한 연결 계보만 인정해, ContextVar 잔류가 있어도 다른 run 의 연결을
+가로채지 않는다.
+
+**미봉인(명시)**: insight-worker 의 배경 스캔 연결(`modules/insight.py` `_ds_conn`)은 이 choke-point 를
+거치지 않아 동일 노출이 남는다 — 원장 `FR-insight-worker-conn-stale` 로 이월(별 cycle).

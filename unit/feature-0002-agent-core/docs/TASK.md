@@ -1714,3 +1714,35 @@ Run=`docs/test-runs.d/20260728T175400-cyvol-scope-prefetch-fix.md` ·
 rationale=REVIEW `REV-20260728T182000-cyvol-scope-prefetch-postdeploy` ·
 변경이력=MODIFY `CHG-20260728T182000-cyvol-scope-prefetch-postdeploy` ·
 Run=`docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md`.
+
+## TASK-20260729T110000-dataplane-conn-liveness — 데이터플레인 연결 유휴/타임아웃 사망 재연결 봉인
+
+`/_dqa:conversation_audit` 진단(friction-id `FR-dataplane-conn-stale-no-reconnect`). 사용자 보고:
+"쿼리 리뷰 : WEB_QA — DB와 연결하지 못하는 이슈". 대화 `20260729013000-a8b43197`(제품 117) ·
+선행 관측 `20260728031510-16927f9b`. 코드 거주 = 본 feature.
+
+run 시작에 수립한 데이터플레인 연결이 그 run 의 모든 tool 호출에 재사용되는데 liveness 검사도
+재연결도 없어, (a) 첫 tool 까지 LLM 추론 유휴(실측 232초) 또는 (b) 쿼리 타임아웃으로 세션이
+죽으면 남은 tool 전부가 드라이버 문구로 실패하고 요청이 통째로 무너졌다.
+
+### 진행
+- [x] 근본 확정 — 코드(run 1회 수립·재사용) + 라이브 실험(대상 datasource 는 60~120초 유휴에
+      절단, 대조 datasource 는 생존; 사망 순간 `DBPROCESS is dead` → 이후 `Not connected…`) +
+      전사(두 대화의 오류 문자열이 그 순서 그대로) 삼각측량
+- [x] 거짓양성 기각 — datasource_health 는 healthy(백그라운드 probe 는 매번 새 연결) · 동시각
+      타 제품 대화 정상 동작 · TCP 도달 정상 → 인프라 장애·권한 문제 아님
+- [x] 봉인 — 사용 직전 liveness ping + **같은 좌표** 재연결(`_ensure_live_conn`), 라우터 캐시
+      갱신, 단일 경로 소유권 holder(`_DataplaneConn`), 끊김 관측 시 임계 무시 ping(`_mark_conn_suspect`)
+- [x] 실패 문장 자체는 재시도 안 함 — 타임아웃으로 죽은 무거운 쿼리 재실행 방지(부하 2배 회피)
+- [x] 정직 문구 — 끊김 오류를 "쿼리를 좁혀라" 가 아니라 "연결이 끊겼다·그대로 재시도" 로.
+      부하게이트 추정 실패도 원인을 liveness 로 구분
+- [x] `search_tables` MSSQL cross-DB per-DB 실패 삼킴 제거(형제 `search_routines` 와 대칭) —
+      사고 당시 아무것도 조회 못 한 상태를 "검색 결과가 없습니다" 로 위장하던 경로
+- [x] 테스트 21건 신규(`test_dataplane_conn_liveness.py`) · 컨테이너 전체 스위트 신규 실패 0
+      (잔여 15건은 main 과 동일한 환경성 baseline)
+- [ ] 배포 후 라이브 실측 — 동일 재현(대형 첨부 리뷰로 수 분 추론 → 첫 도구 성공) + 원장 재측정
+
+### 정본
+rationale=REVIEW `REV-20260729T110000-dataplane-conn-liveness` ·
+변경이력=MODIFY `CHG-20260729T110000-dataplane-conn-liveness` ·
+원장=`docs/improvements/conversation-audit/FRICTION_LEDGER.md`.

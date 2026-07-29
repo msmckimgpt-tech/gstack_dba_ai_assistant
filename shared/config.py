@@ -37,6 +37,7 @@ __all__ = [
     "AGENT_DB_POOL_RESET_SESSION",
     "AGENT_DB_POOL_SIZE",
     "AGENT_DISABLE_AUTO_RETRY",
+    "AGENT_DS_CONN_PING_IDLE_SEC",
     "AGENT_DOMAIN_DRIFT_GUARD",
     "AGENT_EARLY_FINALIZE_MS",
     "AGENT_ERROR_AUTO_RECOVERY",
@@ -1300,6 +1301,13 @@ AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_CR
 AGENT_NODE_ANALYSIS_EXPAND_SCHEMA = os.getenv("AGENT_NODE_ANALYSIS_EXPAND_SCHEMA", "0").strip().lower() in ("1", "true", "yes")
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
+# ── 데이터플레인 연결 liveness (FR-dataplane-conn-stale-no-reconnect) ──────────
+# run 시작에 수립한 데이터플레인 연결은 그 run 의 모든 tool 호출에 재사용되는데, 유휴
+# (첫 tool 까지 LLM 추론이 수 분) 또는 쿼리 타임아웃으로 죽으면 남은 tool 이 전부 드라이버
+# 문구로 실패한다. tools.execute_tool 이 사용 직전 liveness 를 확인하고 같은 좌표로
+# 재연결한다. 이 값은 **ping 생략 임계** — 마지막 성공 사용 후 이 시간 안이면 ping 없이
+# 그대로 쓴다(왕복 0). 실측 사망 하한이 60초대라 그보다 넉넉히 작게 잡는다. 0 = 항상 ping.
+AGENT_DS_CONN_PING_IDLE_SEC = float(os.getenv("AGENT_DS_CONN_PING_IDLE_SEC", "30"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────
 # 문제: 데이터플레인 연결의 connection_timeout/login_timeout 이 쿼리 예산
 # AGENT_TIMEOUT_SEC(운영 300s)를 그대로 재사용해, 불안정/다운 datasource 연결 1회
