@@ -7470,6 +7470,38 @@ button.product-dropup-item-ds--test:disabled {
   font-weight: 600;
 }
 
+/* 첨부 파일명 매칭 근거 칩 — 제목·본문이 아니라 첨부명으로 매칭된 결과의 근거 표시.
+   본문 스니펫보다 약한 시각 무게(테두리 pill)로 두어 결과 행의 주 정보(제목)를 가리지 않는다. */
+.search-attach-matches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.search-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.search-attach-chip-icon {
+  font-size: 10px;
+  opacity: 0.8;
+  flex: 0 0 auto;
+}
+.search-attach-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .search-modal-footer {
   display: flex;
   align-items: center;

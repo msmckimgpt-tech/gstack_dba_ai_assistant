@@ -159,6 +159,154 @@ WHERE t.rn = 1
         result[str(cid)] = excerpt
     return result
 
+def _collect_matched_attachment_names(
+    conn,
+    conv_ids: list[str],
+    q: str,
+    *,
+    per_conv_cap: int = 3,
+    scope_account_id: int | None = None,
+) -> dict[str, list[str]]:
+    """검색어와 일치한 첨부 **원본 파일명**을 대화별로 수집한다 (매칭 근거 표면화).
+
+    `_list_conversations{,_pg}` 의 검색 WHERE 가 첨부 파일명 축을 포함하므로(SECURITY §8.2),
+    제목·본문 어디에도 검색어가 없는 대화가 결과에 뜰 수 있다. 그때 "왜 이 대화가 나왔나"를
+    사용자가 알 수 있도록 매칭된 파일명을 함께 돌려준다 — `_collect_matched_excerpts` 의
+    본문 발췌와 동일 역할·동일 계약(fail-soft: 실패는 빈 dict, 검색 응답 자체를 막지 않음).
+
+    가시성 조건은 첨부 목록(`list_conversation_attachments`)과 동일하게 미삭제 + 버전 체인
+    최신(`deleted_at IS NULL AND superseded_at IS NULL`)으로 한정한다 — 목록에 안 보이는
+    첨부가 검색 근거로만 노출되는 비대칭을 만들지 않는다.
+
+    `scope_account_id` — `conversation.attachment.read.own` 만 보유한 호출자의 스코프.
+    주어지면 **SQL 안에서** 본인 소유 또는 멤버인 대화로 좁힌다(`.any` 보유자는 None).
+    스코프를 호출자 쪽 item 필드(`owner_account_id`/`is_member`)로 판정하면 그 필드를
+    채우지 않는 백엔드(MySQL 폴백 경로)에서 조용히 근거가 비므로, 판정을 SQL 로 내린다.
+
+    conv 당 `per_conv_cap` 건(최신 첨부 우선)까지만 반환 — 파일명이 많은 대화가 응답을
+    부풀리지 않게 한다.
+    """
+    if not conv_ids or not q:
+        return {}
+    # fail-soft 계약은 헬퍼 경계 전체에 적용된다 — 패턴 조립·백엔드 판정·커서 생성까지
+    # 보호해야 직접 호출자(엔드포인트 밖)에서도 "실패 = 빈 dict" 가 성립한다.
+    try:
+        escaped = app._escape_like_for_search(q)
+        pattern = f"%{escaped}%"
+        placeholders = ",".join(["%s"] * len(conv_ids))
+        scope_id = int(scope_account_id) if scope_account_id is not None else None
+        backend_is_pg = app._runtime_backend_is_pg()
+    except Exception:
+        return {}
+    rows: list[Any] = []
+    if backend_is_pg:
+        pg_scope_sql = ""
+        pg_scope_params: list[Any] = []
+        if scope_id is not None:
+            pg_scope_sql = (
+                "    AND (c.owner_account_id = %s OR att.conversation_id IN ("
+                "SELECT conversation_id FROM agent_runtime.conversation_members "
+                "WHERE account_id = %s))\n"
+            )
+            pg_scope_params = [scope_id, scope_id]
+        params = (
+            *[str(c) for c in conv_ids], pattern, *pg_scope_params, int(per_conv_cap)
+        )
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    # 검색 경로 runaway 방어 — MySQL 경로의 `SET SESSION max_execution_time`
+                    # (§8.4)은 MySQL 연결에만 걸리므로 PG 연결에도 동등한 상한을 세운다.
+                    try:
+                        pgcur.execute("SET statement_timeout = 3000")
+                    except Exception:
+                        pass
+                    pgcur.execute(
+                        f"""
+SELECT t.cid, t.fname
+FROM (
+  SELECT att.conversation_id AS cid,
+         att.original_filename AS fname,
+         ROW_NUMBER() OVER (
+           PARTITION BY att.conversation_id ORDER BY att.created_at DESC, att.id DESC
+         ) AS rn
+  FROM agent_runtime.core_attachments att
+  JOIN agent_runtime.core_conversations c ON c.conversation_id = att.conversation_id
+  WHERE att.conversation_id IN ({placeholders})
+    AND att.deleted_at IS NULL AND att.superseded_at IS NULL
+    AND att.original_filename ILIKE %s ESCAPE '!'
+{pg_scope_sql}) AS t
+WHERE t.rn <= %s
+ORDER BY t.cid, t.rn
+                        """,
+                        params,
+                    )
+                    rows = pgcur.fetchall() or []
+            finally:
+                pg.close()
+        except Exception:
+            return {}
+    else:
+        my_scope_sql = ""
+        my_scope_params: list[Any] = []
+        if scope_id is not None:
+            my_scope_sql = (
+                "    AND (c.owner_account_id = %s OR att.ConversationId COLLATE utf8mb4_unicode_ci IN ("
+                "SELECT conversation_id COLLATE utf8mb4_unicode_ci "
+                "FROM AgentCoreConversationMembers WHERE account_id = %s))\n"
+            )
+            my_scope_params = [scope_id, scope_id]
+        params = (
+            *[str(c) for c in conv_ids], pattern, *my_scope_params, int(per_conv_cap)
+        )
+        try:
+            cur = conn.cursor()
+        except Exception:
+            return {}
+        try:
+            cur.execute(
+                f"""
+SELECT t.cid, t.fname
+FROM (
+  SELECT att.ConversationId COLLATE utf8mb4_unicode_ci AS cid,
+         att.OriginalFilename AS fname,
+         ROW_NUMBER() OVER (
+           PARTITION BY att.ConversationId ORDER BY att.CreatedAt DESC, att.Id DESC
+         ) AS rn
+  FROM WebConversationAttachments att
+  JOIN AgentCoreConversations c
+    ON c.conversation_id COLLATE utf8mb4_unicode_ci = att.ConversationId COLLATE utf8mb4_unicode_ci
+  WHERE att.ConversationId IN ({placeholders})
+    AND att.DeletedAt IS NULL AND att.SupersededAt IS NULL
+    AND att.OriginalFilename LIKE %s ESCAPE '!'
+{my_scope_sql}) AS t
+WHERE t.rn <= %s
+ORDER BY t.cid, t.rn
+                """,
+                params,
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            return {}
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+    try:
+        result: dict[str, list[str]] = {}
+        for cid, fname in rows:
+            name = str(fname or "").strip()
+            if not name:
+                continue
+            result.setdefault(str(cid), []).append(name)
+        return result
+    except Exception:
+        return {}
+
 def _assemble_product_prompt_llm_request(product_id: int):
     """TASK-0309: 제품 프롬프트 LLM 요청 조립 (request-less, 인증 비포함).
 

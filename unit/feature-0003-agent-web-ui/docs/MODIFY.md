@@ -1586,7 +1586,6 @@ Cross-ref: REVIEW `REV-20260729T113000-model-pick-postdeploy` · test-runs.d 동
 
 Cross-ref: DECISIONS `ADR-20260729T140200-attach-full-scope` (D16 supersede) ·
 REVIEW `REV-20260729T140200-attach-full-scope` · TASK `20260729T1402-attach-full-scope`.
-
 ## CHG-20260729T152000-attach-list-delete — 첨부 목록 행 삭제(×) 추가
 
 `static/app.js`: `_removeAttachmentPill` 의 삭제 경로를 `_deleteConversationAttachment(id,
@@ -1609,3 +1608,107 @@ max_lines:3}` 로 실호출됐다(도구 실증). 목록 `×` 는 2차 배포본
 
 Cross-ref: TASK `20260729T1600-attach-postdeploy` · 선행 `CHG-20260729T140200-attach-full-scope`
 · `CHG-20260729T152000-attach-list-delete`.
+## CHG-20260729T145500-conv-search-attach-name — 대화 검색에 첨부 파일명 축 추가 (Major §12.3)
+
+**요청**: "서비스 내 대화를 검색하는 기능에서, 대화 내 첨부된 파일의 명칭도 검색 대상에 포함할 수
+있도록 개선" (사용자, 2026-07-29).
+
+**검색 SQL** — `routers/_conv_store.py`
+- `_list_conversations_pg`(PG 라이브): 검색 WHERE 의 OR 체인에 `agent_runtime.core_attachments`
+  EXISTS 추가 (`att.original_filename ILIKE %s`, `deleted_at IS NULL AND superseded_at IS NULL`).
+- `_list_conversations`(MySQL 폴백): 동형으로 `WebConversationAttachments` EXISTS 추가
+  (`OriginalFilename LIKE %s ESCAPE '!'`, `DeletedAt/SupersededAt IS NULL`, ConversationId COLLATE 통일).
+- 두 경로 모두 `if normalized_q:` 블록 안에만 존재 — 검색어 없는 목록 조회의 쿼리 형태 무변경.
+
+**매칭 근거 수집** — `routers/_prompt_context.py`
+- `_collect_matched_attachment_names(conn, conv_ids, q, *, per_conv_cap=3)` 신설. `_collect_matched_excerpts`
+  와 같은 계약(백엔드 분기·escape·fail-soft). `ROW_NUMBER() OVER (PARTITION BY conversation_id
+  ORDER BY created_at DESC, id DESC)` 로 conv 당 최신 N 건. 예외 시 빈 dict.
+- `app.py` 의 `routers._prompt_context` re-export 목록에 추가(패치-단일점 규약 보존).
+
+**응답 계약** — `routers/conversations.py`
+- `conversations` 검색 payload 에 `matched_attachments` 추가. body-search 활성 + items 존재 시에만
+  수집(excerpt 와 동일 게이트), 개별 try/except 로 excerpt 수집과 서로 영향 없음.
+
+**프론트** — `static/app.js` · `static/index.html` · `static/styles.css`
+- `state.searchModal.matched_attachments` 캐시 추가 + 리셋 3지점(모달 닫기·초기화 버튼·빈 쿼리)
+  및 더 보기 append 병합을 excerpt 와 동일하게 정합.
+- `renderSearchModalResults` 에 `.search-attach-matches` / `.search-attach-chip` 렌더 —
+  표시 게이트 `mine || sm.snippet_opt_in`(SECURITY §8.6), 파일명은 `_searchHighlight` 경유
+  (escapeHtml → `<mark>` 강조)라 XSS 방어 유지. 전체 파일명은 `title` 속성으로 보존.
+- 검색 입력 placeholder "제목 · 본문 (2자 이상)" → "제목 · 본문 · 첨부 파일명 (2자 이상)",
+  빈 상태 안내 동일 취지 갱신. cache-buster 는 `?v=dev` 고정(빌드 시 content-hash 자동 주입)이라 무변경.
+
+**정책 문서** — `docs/SECURITY.md`
+- §8.2 검색 대상 필드에 첨부 원본 파일명 추가 + *비포함* 에 첨부 파일 내용 명시. 노출면 확대 0
+  판정 근거(인가 경계 불변 · 이미 열람 가능 · 가시성 정합 · 매칭 근거 표면화 · 잔여 리스크) 기재.
+- §8.6 에 첨부 파일명 칩의 표시 게이트 명문화.
+
+**테스트**: `test_conv_search_attachment_name.py` 12건 신설(검색 SQL 축 S1~S4 · 수집 헬퍼 C1~C5 ·
+응답 계약 E1 · 프론트 렌더 F1~F2) 전건 PASS. 컨테이너 전체 스위트 실패는 main baseline 과
+대조해 **신규 실패 0**(잔여는 동일 환경성 — attachment/runtime_settings/share_redaction 축).
+
+**스키마·마이그레이션·권한**: 없음. 신규 엔드포인트 없음.
+
+Cross-ref: FUNCTION `REQ-20260729-conv-search-attach-name` · REVIEW
+`REV-20260729T145500-conv-search-attach-name` · TASK `20260729T1455-conv-search-attach-name` ·
+SECURITY §8.2·§8.6.
+
+### CHG-20260729T145500 후속 — codex 적대 리뷰 반영 (P1 1건 + P2 4건)
+
+세션 상위지시로 §18.8 subagent 패널 대신 `/codex review`(§18.8.1 경로 2, 사용자 확인) 수행.
+
+**P1 인가 경계 — 첨부 축·근거를 첨부 조회 권한으로 게이팅**
+- `app._search_attachment_axis(account)` 신설(app.py) — `"any"`/`"own"`/`None` 단일 판정점.
+- `_conv_store._list_conversations` 가 이 값을 계산해 PG·MySQL 양 경로 검색 조립에 전달.
+  `_list_conversations_pg` 는 `attachment_axis` 파라미터 신설. `"own"` 이면 첨부 EXISTS 에
+  `c.owner_account_id = %s OR conversation_id IN (멤버 서브쿼리)` AND, self_id 부재면 축 제외(fail-closed).
+  `None` 이면 EXISTS 자체를 붙이지 않는다(매칭 oracle 제거).
+- `routers/conversations.py` 가 같은 판정으로 `matched_attachments` 수집 대상 conv_ids 를 좁힌다
+  (`any`=전체 / `own`=items 의 owner_account_id==self OR is_member / `None`=수집 미호출).
+- 근거: `conversation.list.any`(관리자)와 `conversation.attachment.read.any`("운영자 한정")는
+  독립 권한 코드다. 목록 권한만으로 축을 켜면 첨부 조회 게이트가 우회된다.
+
+**P2 LIKE escape — PG 경로 §8.3 복원**
+- `_list_conversations_pg` 검색 절 전 축(제목·kv_topic·messages·core_messages·첨부)을
+  `_escape_like_for_search` + `ILIKE %s ESCAPE '!'` 로 전환. AR-M4 PG 포팅 때 유실됐던
+  SECURITY §8.3 계약 복원이며, MySQL 경로·`_collect_matched_*` 수집 헬퍼와 semantics 정합.
+
+**P2 fail-soft 범위** — `_collect_matched_attachment_names` 의 패턴 조립·백엔드 판정·커서 생성·
+결과 변환을 모두 try 로 감싸고 cursor close 를 안전화(헬퍼 경계 전체가 "실패=빈 dict").
+
+**P2 프론트 캐시 정합** — `runSearchQuery` 의 **검색 실패 폴백**에서 `matched_attachments` 리셋이
+빠져 이전 검색의 파일명 칩이 잔존할 수 있었다(보강 테스트가 적발). 리셋 4지점 전부 정합.
+
+**P2 테스트 재작성** — 초안 12건(소스 문자열 검사)을 fake 커넥션으로 **실제 SQL·params 를 캡처**하는
+실행 기반 26건으로 교체: 권한 게이트 A1~A6 · 가시성 V1~V2 · 비용 회귀 G1 · escape 리터럴화 E1~E3 ·
+수집 헬퍼 C1~C6 · 엔드포인트 스코프 P1~P3 · 프론트 F1~F4 + 구조 가드.
+
+**미해소(정직 표기)** — P2 성능(`ILIKE '%q%'` 인덱스 미사용, `max_execution_time` 은 CPU 상한 아님).
+라이브 `EXPLAIN ANALYZE` 는 POST-DEPLOY. 기존 메시지 본문 축이 이미 동일 성질이라 본 변경이 새로
+만든 리스크는 아니며, §8.7 FULLTEXT trigger 와 함께 재평가한다.
+
+**정책 문서 정정** — `docs/SECURITY.md` §8.2.1 신설(권한 스코프 표 + 왜 목록 권한으로 대신할 수
+없는지) · §8.6 의 프론트 칩 게이트를 "UI 정책이지 보안 경계 아님" 으로 명시.
+
+### CHG-20260729T145500 후속 2 — codex 재검증 지적 3건 (2026-07-29 15:40)
+
+수정본 재검토에서 P1·escape·fail-soft·캐시 리셋은 "해결됨" 확인. 신규 P2 3건 전건 수정:
+
+- **`own` 스코프 판정을 SQL 로 이관** — `_collect_matched_attachment_names(scope_account_id=...)`
+  신설. PG 는 `JOIN agent_runtime.core_conversations c` + `c.owner_account_id = %s OR
+  conversation_id IN (멤버)`, MySQL 은 `JOIN AgentCoreConversations c` 동형. 엔드포인트는 items 의
+  `owner_account_id`/`is_member` 로 conv_ids 를 거르던 것을 폐기(그 필드는 **PG 경로만** 채워
+  MySQL 폴백에서 멤버 대화 근거가 조용히 비었다 — AC-4 위반). self_id 부재 시 `-1` 전달로 fail-closed.
+- **프론트 응답 경합 가드** — `state.searchModal.requestGen` 세대 토큰. `runSearchQuery` 가 요청 전
+  세대를 발급하고 성공·실패 양 경로에서 대조해, 늦게 도착한 이전 응답이 새 결과·근거 칩을
+  덮어쓰지 못하게 한다.
+- **PG runaway 상한** — `SET SESSION max_execution_time`(§8.4)은 MySQL 연결 전용이라 라이브(PG)
+  검색에 상한이 없었다. `_list_conversations_pg`(검색어 있을 때만)와 수집 쿼리에
+  `SET statement_timeout = 3000` 추가.
+
+**미해소(정직)**: `ILIKE '%q%'` 인덱스 미사용은 그대로 — 위 timeout 은 상한이지 비용 개선이 아니다.
+라이브 `EXPLAIN ANALYZE` 는 POST-DEPLOY.
+
+테스트 30건(P4 SQL 스코프 이관·P5 수집 SQL 스코프·P6 statement_timeout·F5 경합 가드 추가) PASS ·
+전체 회귀 신규 실패 0 · ruff PASS.

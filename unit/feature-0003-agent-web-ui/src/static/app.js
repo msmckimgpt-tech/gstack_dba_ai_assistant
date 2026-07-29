@@ -236,6 +236,11 @@ const state = {
     pendingJumpConvId: "",
     // REQ-20260519-0005 (TASK-0077): backend `/api/conversations` 응답의 matched_excerpts (conv_id → 본문 excerpt) 캐시.
     matched_excerpts: {},
+    // 첨부 파일명 검색: backend matched_attachments (conv_id → 매칭 파일명 배열) 캐시.
+    // 제목·본문에 검색어가 없어도 첨부 파일명으로 결과에 뜰 수 있어 매칭 근거를 칩으로 보여준다.
+    matched_attachments: {},
+    // 검색 요청 세대 — 늦게 도착한 이전 응답이 새 결과를 덮어쓰지 않게 하는 경합 가드.
+    requestGen: 0,
     // REQ-20260519-0005 (TASK-0077) + REQ-20260519-0006 (TASK-0078): mouseup race fix.
     // mousedown / mouseup / click target 3 개 모두 overlay 일 때만 close.
     mousedownOnOverlay: false,
@@ -12110,6 +12115,7 @@ function openSearchModal() {
   state.searchModal.date_from = null;
   state.searchModal.date_to = null;
   state.searchModal.matched_excerpts = {};
+  state.searchModal.matched_attachments = {};
   state.searchModal.mousedownOnOverlay = false;
   state.searchModal.mouseupOnOverlay = false;
   if (snippetChip) snippetChip.setAttribute("aria-pressed", "false");
@@ -12240,6 +12246,7 @@ async function runSearchQuery({ append = false } = {}) {
     sm.cursor = null;
     sm.activeResultIdx = -1;
     sm.matched_excerpts = {};
+    sm.matched_attachments = {};
     renderSearchModalResults();
     if (statusEl) statusEl.textContent = "";
     return;
@@ -12252,8 +12259,13 @@ async function runSearchQuery({ append = false } = {}) {
   if (append && sm.cursor) params.set("cursor", sm.cursor);
 
   if (statusEl) statusEl.textContent = "검색 중…";
+  // 응답 경합 가드 — 느린 이전 요청의 응답이 뒤늦게 도착해 새 검색 결과(와 그 근거 칩)를
+  // 덮어쓰는 것을 막는다. 모달을 닫았다 다시 열거나 검색어를 바꾼 뒤에도 이전 파일명 칩이
+  // 되살아나던 경로. 세대 토큰이 어긋나면 그 응답은 통째로 버린다.
+  const gen = (sm.requestGen = (sm.requestGen || 0) + 1);
   try {
     const resp = await apiFetch(`/api/conversations?${params.toString()}`);
+    if (gen !== sm.requestGen) return;
     const items = Array.isArray(resp.items) ? resp.items : [];
     sm.has_any = Boolean(resp.has_any);
     sm.cursor = resp.next_cursor || null;
@@ -12262,16 +12274,22 @@ async function runSearchQuery({ append = false } = {}) {
     // REQ-20260519-0005 (TASK-0077): backend matched_excerpts 응답 캐시 (append 모드는 merge).
     const newExcerpts = (resp && typeof resp.matched_excerpts === "object" && resp.matched_excerpts) || {};
     sm.matched_excerpts = append ? { ...sm.matched_excerpts, ...newExcerpts } : newExcerpts;
+    // 첨부 파일명 매칭 근거 (conv_id → 파일명 배열). 구버전 백엔드 응답이면 빈 객체로 폴백.
+    const newAttachments = (resp && typeof resp.matched_attachments === "object" && resp.matched_attachments) || {};
+    sm.matched_attachments = append ? { ...sm.matched_attachments, ...newAttachments } : newAttachments;
     if (statusEl) {
       statusEl.textContent = `${sm.results.length}건${sm.cursor ? " (더 있음)" : ""}`;
     }
   } catch (error) {
+    // 늦게 실패한 이전 요청이 새 검색의 결과를 지우지 않도록 성공 경로와 같은 세대 가드.
+    if (gen !== sm.requestGen) return;
     if (statusEl) statusEl.textContent = String(error.message || "검색 실패");
     if (!append) {
       sm.results = [];
       sm.cursor = null;
       sm.activeResultIdx = -1;
       sm.matched_excerpts = {};
+      sm.matched_attachments = {};
     }
   }
   renderSearchModalResults();
@@ -12288,7 +12306,7 @@ function renderSearchModalResults() {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     if (trimmed && trimmed.length < 2) {
-      empty.innerHTML = "<strong>2자 이상 입력</strong><span>제목 · 본문 검색</span>";
+      empty.innerHTML = "<strong>2자 이상 입력</strong><span>제목 · 본문 · 첨부 파일명 검색</span>";
     } else if (trimmed) {
       empty.innerHTML = `<strong>결과 없음</strong><span>"${escapeHtml(trimmed)}" 와 일치하는 대화가 없습니다.</span>`;
     } else {
@@ -12341,6 +12359,25 @@ function renderSearchModalResults() {
         snip.className = "search-snippet";
         snip.innerHTML = _searchHighlight(excerpt, sm.q);
         row.appendChild(snip);
+      }
+    }
+
+    // 첨부 파일명 매칭 근거 — 제목·본문 어디에도 검색어가 없이 첨부명으로만 매칭된 대화가
+    // "왜 떴는지" 알 수 없는 것을 막는다. 본인 대화는 항상 노출(자기 첨부 목록은 이미 열람
+    // 가능), 타 계정 대화는 본문 미리보기와 같은 opt-in chip 게이트를 따른다(SECURITY §8.6).
+    if (sm.q && String(sm.q).trim().length >= 2 && (mine || sm.snippet_opt_in)) {
+      const files = (sm.matched_attachments && sm.matched_attachments[String(item.id)]) || [];
+      if (Array.isArray(files) && files.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "search-attach-matches";
+        files.forEach((fname) => {
+          const chip = document.createElement("span");
+          chip.className = "search-attach-chip";
+          chip.title = String(fname);
+          chip.innerHTML = `<span class="search-attach-chip-icon" aria-hidden="true">📎</span><span class="search-attach-chip-name">${_searchHighlight(String(fname), sm.q)}</span>`;
+          wrap.appendChild(chip);
+        });
+        row.appendChild(wrap);
       }
     }
 
@@ -12455,6 +12492,7 @@ function _bindSearchModalListeners() {
       sm.results = [];
       sm.activeResultIdx = -1;
       sm.matched_excerpts = {};
+      sm.matched_attachments = {};
       renderSearchModalResults();
       const statusEl = _searchModalEl("searchModalStatus");
       if (statusEl) statusEl.textContent = "";

@@ -6989,7 +6989,6 @@ Cross-ref: FUNCTION `REQ-20260729-attach-full-scope` · DECISIONS
       테스트가 라이브 미실행 분기(MySQL 폴백)만 검사 / 리뷰어 지시문 테스트 tautology /
       inline-honesty 의 `"re-attach"` 가 새 금지문에 걸려 의미 반전. 전부 교정 + PG 경로 테스트
       3건·대규모 예산 테스트 2건 신설 (신설·수정 테스트 50건 PASS)
-
 ## 20260729T1520-attach-list-delete — 첨부 목록 행에 삭제(×) 추가 — 안내 문구와 화면의 불일치 해소 (Minor §12.3 frontend-only)
 
 선행 `20260729T1402-attach-full-scope` 의 **POST-DEPLOY 라이브 검증에서 발견**한 결함. 배포본
@@ -7049,3 +7048,116 @@ PR #1051)이 배포 후로 이월한 PB-0008 실측을 이행한다. 실행 코�
       fail-closed 라 노출 방향 위험 낮음)
 
 Cross-ref: test-runs.d/20260729T1600-attach-postdeploy.md · 선행 TASK 2건 · PR #1050/#1051
+## 20260729T1455-conv-search-attach-name — 대화 검색에 첨부 파일명 축 추가 (Major)
+
+사용자 요청(2026-07-29): "서비스 내 대화를 검색하는 기능에서, 대화 내 첨부된 파일의 명칭도
+검색 대상에 포함할 수 있도록 개선."
+
+### 진단 (코드 근거)
+- 검색(`/api/conversations` search mode) 의 매칭 축은 제목(`c.topic`/`kv topic`) + 메시지 본문
+  (`agent_runtime.messages` · `core_messages`) 뿐이었다(`_list_conversations_pg` 검색 WHERE).
+  첨부는 어느 축에도 없어 "그 엑셀 올렸던 대화" 를 파일명으로 되찾을 수 없었다.
+- 정책 정본 `SECURITY.md §8.2` 가 검색 대상 필드를 명시 열거하므로, 축 추가는 코드만이 아니라
+  그 정책의 갱신을 함께 요구한다(정책-구현 drift 방지).
+- 매칭 근거 표면화 부재 위험: 제목·본문에 검색어가 없는 대화가 결과에 뜨면 사용자가 이유를
+  알 수 없다(기존 `matched_excerpts` 는 메시지 본문 전용이라 파일명 매칭 시 항상 빈칸).
+
+### 결정
+- **검색 대상 = 첨부 원본 파일명만**. 첨부 *내용*(추출 텍스트)은 범위 밖 — 별 게이트가 필요한
+  별개 표면이라 필요해지면 별 cycle.
+- **가시성 = 첨부 목록과 동일**(`deleted_at IS NULL AND superseded_at IS NULL`). 목록에 안 보이는
+  삭제분·구버전이 검색 근거로만 드러나는 비대칭을 만들지 않는다.
+- **매칭 근거를 함께 반환**(`matched_attachments`, 대화당 최신 3건) + 결과 행에 파일명 칩.
+- **칩 표시 게이트** = 본인 대화 항상 / 타 계정 대화는 기존 snippet opt-in chip 게이트(SECURITY §8.6).
+
+### §2.1 Implementation Plan (Major — 위험도·AC)
+- 위험도 **Major**: 다중 파일 + 보안 정책 문서(SECURITY §8) 갱신 동반. **Critical 아님** — 인증/인가
+  구조 변경 0, 파괴적 데이터 변경 0, 신규 권한 코드 0, 마이그레이션 0.
+- 영향 파일·심볼:
+  - `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py` — `_list_conversations_pg`(PG 라이브 경로)
+    · `_list_conversations`(MySQL 폴백) 검색 WHERE 에 첨부 EXISTS
+  - `unit/feature-0003-agent-web-ui/src/routers/_prompt_context.py` — `_collect_matched_attachment_names` 신설
+  - `unit/feature-0003-agent-web-ui/src/routers/conversations.py` — `conversations` 응답 `matched_attachments`
+  - `unit/feature-0003-agent-web-ui/src/app.py` — 신규 헬퍼 re-export(패치-단일점 규약)
+  - `src/static/app.js`(state·`runSearchQuery`·`renderSearchModalResults`) · `index.html`(placeholder) · `styles.css`(칩)
+  - `docs/SECURITY.md` §8.2·§8.6
+- 완료 판정 기준(AC):
+  - AC-1 첨부 파일명만 일치하는 대화가 검색 결과에 포함된다(제목·본문 불일치여도).
+  - AC-2 삭제된 첨부·구버전 첨부는 검색 대상이 아니다.
+  - AC-3 검색어 없는 일반 목록 조회는 첨부 테이블을 조회하지 않는다(비용 회귀 0).
+  - AC-4 파일명으로 매칭된 결과 행에 매칭 파일명이 표시된다.
+  - AC-5 인가 경계 불변 — 반환 대화 집합의 결정자는 여전히 owner/멤버십/`.any` WHERE.
+  - AC-6 첨부 조회 실패는 검색 응답을 막지 않는다(fail-soft).
+
+### 진행
+- [x] PG 경로 검색 WHERE 에 `agent_runtime.core_attachments` EXISTS(`original_filename ILIKE`) 추가 —
+      `deleted_at IS NULL AND superseded_at IS NULL` 로 목록과 가시성 정합 (AC-1·AC-2)
+- [x] MySQL 폴백 경로에 동형 EXISTS(`WebConversationAttachments.OriginalFilename LIKE … ESCAPE '!'`) 추가
+- [x] 첨부 EXISTS 를 `if normalized_q:` 검색 게이트 안에만 배치 — 일반 목록 조회 비용 0 (AC-3)
+- [x] `_collect_matched_attachment_names` 신설 — PG/MySQL 분기, `ROW_NUMBER()` 로 conv 당 최신
+      `per_conv_cap`(기본 3)건, 예외 시 빈 dict fail-soft (AC-6)
+- [x] 검색 응답에 `matched_attachments` 추가 — body-search 활성 시에만 수집(excerpt 와 동일 게이트)
+- [x] 프론트 — `state.searchModal.matched_attachments` 캐시(더 보기 append 병합·3개 리셋 지점 정합),
+      결과 행 파일명 칩 렌더(`_searchHighlight` 경유 = HTML escape 보존), 표시 게이트
+      `mine || snippet_opt_in` (AC-4)
+- [x] 카피 — 검색 입력 placeholder / 빈 상태 안내에 "첨부 파일명" 반영
+- [x] `docs/SECURITY.md` §8.2 검색 표면 목록 + 노출면 판정 근거 5항 · §8.6 칩 표시 게이트 기재 (AC-5)
+- [x] 테스트 26건 신설 `test_conv_search_attachment_name.py` — **실행 기반**(fake 커넥션으로 실제
+      SQL·params 캡처): 권한 게이트 A1~A6 · 가시성 V1~V2 · 비용 회귀 G1 · escape E1~E3 ·
+      수집 헬퍼 C1~C6 · 엔드포인트 스코프 P1~P3 · 프론트 F1~F4 + 구조 가드. 전건 PASS
+- [x] 회귀 — 전체 스위트 대비 baseline diff 결과 **신규 실패 0**(잔여 실패는 main 에서도 동일한 환경성)·ruff PASS
+
+### codex 적대 리뷰 후속 조치 (§18.8 대체 경로, 2026-07-29 15:20) — P1 1건 + P2 4건
+세션 상위지시(하네스 `Agent` tool 금지)로 subagent 패널 대신 `/codex review` 를 사용(§18.8.1 경로 2,
+사용자 확인). **초안의 인가 판단이 틀렸고 리뷰가 그것을 잡았다** — 아래는 전건 수정 결과.
+
+- [x] **P1 (인가 경계·수정 필수)** — 첨부 파일명 축과 `matched_attachments` 가 대화 *목록* 권한만
+      통과하면 작동해, `conversation.list.any` 는 있고 `conversation.attachment.read.any` 는 없는
+      계정(카탈로그상 독립 코드 — 후자는 "운영자 한정")이 타 계정 첨부 파일명을 얻을 수 있었다.
+      프론트 `mine || snippet_opt_in` 은 UI 정책이라 방어가 아니다(DevTools·직접 API 호출).
+      → `app._search_attachment_axis(account)` 단일 판정점 신설(any/own/None) + **검색 EXISTS 자체를
+      권한으로 게이팅**(축을 끄면 매칭 oracle 도 사라짐) + `own` 은 EXISTS 를 본인 소유·멤버 대화로
+      좁힘(`_account_can_access_conversation` own 판정과 동형) + 엔드포인트 수집 스코프도 같은 판정
+      사용. self_id 부재 시 fail-closed. SECURITY §8.2.1 신설로 정책 정정
+- [x] **P2 (escape 불일치)** — PG 검색 절이 `ESCAPE '!'` 없이 raw 패턴을 ILIKE 에 넣어 `%`/`_` 가
+      wildcard 로 샜다(SECURITY §8.3 "모든 LIKE 는 ESCAPE '!'" 위반 — AR-M4 PG 포팅 때 유실).
+      수집 헬퍼는 escape 를 써서 semantics 도 어긋났다(대화는 매칭되는데 근거 칩만 비는 조합).
+      → PG 경로 전 축(제목·kv·messages·core_messages·첨부)에 `_escape_like_for_search` + `ESCAPE '!'`
+      적용해 MySQL 경로·수집 헬퍼와 정합화
+- [x] **P2 (fail-soft 범위)** — 헬퍼의 `conn.cursor()`·백엔드 판정·결과 변환이 try 밖이라 직접
+      호출 시 "실패=빈 dict" 계약이 깨졌다. → 경계 전체를 보호 + cursor close 안전화
+- [x] **P2 (프론트 캐시 정합)** — 보강 테스트가 실제 누락을 적발: 검색 **실패 폴백** 경로에서
+      `matched_excerpts` 만 비우고 첨부 캐시를 남겨 이전 검색의 파일명 칩이 잔존할 수 있었다.
+      → 리셋 4지점 전부 정합(테스트가 excerpt 와 1:1 대응을 정적 고정)
+- [x] **P2 (테스트 tautology)** — 초안 12건이 대부분 소스 문자열 검사라 실제 동작을 검증하지 못했다.
+      → fake 커넥션으로 **실제 SQL·params 를 캡처**하는 실행 기반 26건으로 재작성, 권한 조합·escape
+      리터럴화·엔드포인트 스코프·XSS escape 경유를 실제로 검증
+### codex 재검증 (2차) — P1·주요 P2 해결 확인 + 신규 P2 3건 (2026-07-29 15:40)
+
+수정본을 같은 방식으로 재검토시켰다. **P1(권한 우회)·escape·fail-soft·캐시 리셋은 "해결됨" 확인**.
+새로 지적된 3건도 실체가 있어 전건 수정:
+
+- [x] **P2 (PG/MySQL 동작 불일치)** — `own` 스코프 판정을 엔드포인트가 items 의
+      `owner_account_id`/`is_member` 로 했는데, **MySQL 폴백 경로 item 에는 `is_member` 가 없다**
+      (PG 경로만 채운다). `attachment.read.own` 사용자가 **멤버인** 타인 소유 대화는 SQL 검색에는
+      매칭되는데 근거만 조용히 비어 AC-4 위반. → 스코프 판정을 **SQL 로 내려보냈다**
+      (`_collect_matched_attachment_names(scope_account_id=...)` — 대화 조인 + owner/멤버 조건).
+      호출자 item 필드 의존 제거로 백엔드 무관 정합. 엔드포인트는 conv_ids 를 미리 거르지 않는다
+- [x] **P2 (프론트 응답 경합)** — `runSearchQuery` 가 세대 토큰 없이 `await` 후 결과를 덮어써,
+      느린 이전 요청의 응답이 뒤늦게 도착하면 새 검색(또는 모달 재진입) 후에도 이전 파일명 칩이
+      되살아날 수 있었다. → `sm.requestGen` 세대 토큰 + 성공·실패 양 경로 가드
+- [x] **P2 (PG runaway 방어 부재)** — 엔드포인트의 `SET SESSION max_execution_time = 3000`(§8.4)은
+      **MySQL 연결에만** 걸린다. 라이브 검색은 PG 경로(`_pg_connect()`)라 상한이 없었다.
+      → PG 목록 검색(검색어 있을 때만)·수집 쿼리에 `SET statement_timeout = 3000` 추가
+- [ ] **P2 (성능 실측, 미해소·정직 표기)** — `ILIKE '%q%'` 는 여전히 인덱스 미사용이다. 위 timeout
+      은 상한일 뿐 비용 개선이 아니다. 라이브 `EXPLAIN ANALYZE` + worst-case 검색어 벤치는
+      POST-DEPLOY (기존 메시지 본문 축이 이미 같은 성질 — §8.7 FULLTEXT trigger 와 함께 재평가)
+
+- 재검증 후 신규 테스트 **30건 PASS**(P4~P6·F5 추가) · 전체 회귀 **신규 실패 0** · ruff PASS
+
+- [ ] POST-DEPLOY PB-0008 라이브 시각검증 (`visual_verification_scope: always`)
+- [ ] POST-DEPLOY 첨부 EXISTS `EXPLAIN ANALYZE` 실측 (위 P2 성능 항목)
+
+Cross-ref: FUNCTION `REQ-20260729-conv-search-attach-name` · MODIFY
+`CHG-20260729T145500-conv-search-attach-name` · REVIEW `REV-20260729T145500-conv-search-attach-name`
+· SECURITY §8.2·§8.6

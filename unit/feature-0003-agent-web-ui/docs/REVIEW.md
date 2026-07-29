@@ -1790,7 +1790,6 @@ honesty false positive)의 표면이 함께 넓어진다. 매니페스트를 예
 - Critical issue: 구분선 소실 우려는 **반증**(헤더가 자체 `border-bottom` 보유). 그러나 참조 범위를 대화 전량으로 넓히면서 그 사실을 알리던 유일한 UI(토글+토스트)를 함께 제거해 사용자가 노출 범위를 알 길이 없어졌고, 디자인 정본 `DESIGN-entry-points.md` §4.3 이 삭제된 컨트롤을 규정한 채 남았다.
 - 조치: `.attach-side-panel-note` 안내 1줄 신설(첨부 존재 시 노출) · DESIGN-entry-points.md §4.3 을 제거·대체·× 실삭제 계약으로 재작성.
 - Human Approval Needed: no
-
 ## REV-20260729T152000-attach-list-delete [SUBAGENT:ux] — BLOCK → 해소 (권한 1건 사용자 판단 이월)
 
 - Related TASK: feature-0003-agent-web-ui / 20260729T1520-attach-list-delete
@@ -1818,3 +1817,133 @@ honesty false positive)의 표면이 함께 넓어진다. 매니페스트를 예
 - Related TASK: feature-0003-agent-web-ui / 20260729T1600-attach-postdeploy
 - Reason: changed paths are docs only (test-runs.d fragment + TASK/REVIEW 기록) — 실행 코드·정적 자산 변경 0줄. 검증 대상 코드는 선행 두 cycle 에서 이미 §18.8 패널(security/backend/qa/ux/design 5명 + ux/design 2명)을 거쳤고, 본 cycle 은 그 배포본의 라이브 실측 결과를 기록할 뿐이다.
 - Timestamp: 2026-07-29T16:00:00+09:00
+## REV-20260729T145500-conv-search-attach-name — 대화 검색 첨부 파일명 축 (Major §12.3)
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1455-conv-search-attach-name
+- Timestamp: 2026-07-29T14:55:00+09:00
+- Verdict: SHIP (POST-DEPLOY PB-0008 잔여)
+
+### 왜 Major 인가 (그리고 왜 Critical 은 아닌가)
+검색 대상 필드는 `docs/SECURITY.md §8.2` 가 **열거로 고정한 정책 표면**이라, 축 추가는 코드 변경이
+아니라 정책 변경이다(§12.3 "보안 수준 저하 가능성"에 대한 사전 검토 대상). 반면 Critical 조건인
+인증·인가 구조 변경, 파괴적 데이터 변경, 개인정보 *처리 목적/주체* 변경은 어디에도 해당하지 않는다 —
+신규 권한 코드 0 · 엔드포인트 0 · 스키마/마이그레이션 0 · 반환 대화 집합의 결정 로직 무변경.
+
+### 노출면 판정 (핵심 근거)
+1. **인가 경계가 유일한 게이트로 남는다.** 첨부 EXISTS 는 owner / 그룹 멤버십 / `.any` WHERE 를
+   통과한 대화 *안에서* 평가된다. 즉 "볼 수 없던 대화가 보이게 되는" 경로가 없다.
+2. **새 데이터를 노출하지 않는다.** 결과에 오른 대화의 첨부 파일명은 이미
+   `GET /api/conversations/{cid}/attachments`(`conversation.attachment.read.{own,any}`) 로 전량
+   조회 가능하다. 검색은 기존 데이터에 인덱스를 하나 더 놓는 것이지 새 창을 내는 게 아니다.
+3. **가시성 비대칭을 만들지 않는다.** 검색 대상을 첨부 목록과 같은 조건(미삭제 + 버전 최신)으로
+   묶었다. 삭제한 파일명이 검색으로만 되살아나면 "삭제했다"는 사용자 기대를 깬다.
+4. **공유 window 와의 관계.** feature-0009 `[from,to]` window 는 **메시지** 가시성 장치이고 첨부
+   목록은 애초에 window 로 클립되지 않는다(conversation 단위 스토어). 따라서 첨부 축은 window
+   격리를 새로 깨지 않는다 — 다만 첨부에 window 를 도입하려면 목록·검색·recall 을 한 번에 다뤄야
+   하므로 별 cycle 로 남긴다(현행 한계의 명시적 기록).
+5. **잔여 리스크(정직)**: 파일명 자체가 PII 를 담을 수 있다(`홍길동_급여명세.xlsx`). 이는 대화
+   제목이 이미 갖는 것과 동급이며, cross-account 검색은 `conversation.search.body` audit 로
+   추적된다. 첨부 *내용* 검색은 질적으로 다른 표면이라 범위에서 명시 제외했다.
+
+### 설계 판단
+- **매칭 근거를 반환하기로 한 이유**: 파일명으로만 매칭되면 제목·본문 어디에도 검색어가 없어
+  기존 `matched_excerpts` 가 항상 빈칸이 된다. 근거 없는 결과 행은 "왜 떴는지 모르는 결과" 라
+  검색 품질을 오히려 떨어뜨린다. 그래서 축 추가와 표면화를 한 cycle 로 묶었다.
+- **칩 표시 게이트를 `mine || snippet_opt_in` 으로 둔 이유**: 본인 대화는 자기 첨부 목록을 이미
+  자유 열람하므로 게이트가 의미 없고, 타 계정 대화는 본문 미리보기와 같은 명시적 opt-in 을
+  거치게 해 §8.6 의 기존 정책선을 그대로 잇는다. `.own` only 사용자는 타 계정 대화가 결과에
+  없으므로 항상 표시 경로만 탄다(추가 마찰 0).
+- **conv 당 3건 cap**: 파일이 많은 대화가 응답과 결과 행을 부풀리지 않게. 최신 우선이라 방금 올린
+  파일이 먼저 보인다.
+- **fail-soft**: 첨부 수집 실패가 검색 자체를 막지 않게 excerpt 와 동일하게 개별 try/except.
+  검색은 조회 기능이라 부분 degrade 가 전면 실패보다 낫다.
+- **채택하지 않은 대안**: (a) 첨부 내용(추출 텍스트) 검색 — 노출면이 질적으로 다르고 별 게이트가
+  필요. (b) FULLTEXT/trigram 인덱스 — 현행 LIKE/ILIKE 안전망(§8.4 rate limit + 3s 실행 상한)이
+  아직 임계에 닿지 않았고, 인덱스 도입은 §8.7 이 이미 trigger 조건과 함께 예약해 둔 후속 항목.
+  (c) 백엔드에서 타 계정 파일명 자체를 반환 차단 — 기존 excerpt 가 이미 "백엔드 반환 + 프론트
+  게이트" 패턴이라 여기만 다르게 하면 정합이 깨진다(두 축을 함께 바꾸려면 별 cycle).
+
+### 위험·후속
+- POST-DEPLOY PB-0008 라이브 시각검증 잔여(`visual_verification_scope: always`) — 칩 렌더·게이트·
+  파일명 매칭 결과를 실 Windows 브라우저에서 확인해야 완료.
+- 성능: 첨부 EXISTS 는 `ix_core_attachments_conv (conversation_id, deleted_at)` 로 conv 별 소수 행만
+  본다. 다만 ILIKE 는 인덱스 미사용이므로 첨부가 극단적으로 많아지면 §8.7 FULLTEXT trigger 와 함께
+  재평가한다.
+- Human Approval Needed: no (Major — 정책 갱신 근거를 본 REVIEW 와 SECURITY §8.2 에 기록)
+
+## REV-20260729T152000-conv-search-attach-name-codex [CODEX:conv-search-attach-name] 적대 리뷰 — P1 1건 + P2 4건
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1455-conv-search-attach-name
+- Trigger: query/index + API/response shape + UI/screen + 정책 doc(SECURITY.md) — 표상 full panel
+- 경로: 세션 상위지시(하네스 `Agent` tool 금지)와 §18.8 패널 요구가 상충 → **사용자에게 1회 확인**
+  후 `/codex review`(§18.8.1 경로 2, check #9 accepted `[CODEX:*]`) 채택. subagent 패널만
+  `[SKIPPED:tool-restricted:security,backend,qa,ux,design-subagent]`.
+- Verdict: **FIX-THEN-SHIP** — P1 포함 4건 in-cycle 수정, 1건(성능) POST-DEPLOY 이월.
+
+**P1 — 첨부 파일명 축이 `conversation.attachment.read.*` 를 우회 (수정 완료)**
+
+초안은 "결과에 오른 대화의 첨부 파일명은 첨부 목록 API 로 이미 열람 가능하다" 를 노출면 판정의
+축으로 삼았다. **이 전제가 틀렸다.** `conversation.list.any`(관리자 grant)와
+`conversation.attachment.read.any`(설명 그대로 "운영자 한정")는 카탈로그상 독립 코드이고, 전자만
+가진 계정이 실재할 수 있다. 그 계정에게 초안은:
+
+1. 첨부 파일명으로 타 계정 대화를 **매칭**시켜 주고(= "그 대화에 이 파일명이 있는가" oracle),
+2. `matched_attachments` 로 **파일명 자체를 반환**했다.
+
+프론트의 `mine || snippet_opt_in` 게이트는 UI 절제일 뿐 방어가 아니다(DevTools·직접 API 호출).
+→ `app._search_attachment_axis(account)` 단일 판정점을 두고 **검색 EXISTS 자체를 권한으로 게이팅**
+했다. 축을 끄면 근거뿐 아니라 매칭 oracle 도 함께 사라진다는 점이 핵심 — 근거만 막고 축을 남기면
+파일명 추측 공격이 그대로 성립한다. `own` 스코프는 EXISTS 를 본인 소유·멤버 대화로 좁혀
+`_account_can_access_conversation` 의 own 판정과 동형으로 맞췄고, self_id 부재는 fail-closed.
+
+**교훈(정직)**: "이미 열람 가능한 데이터" 라는 논증은 *어떤 권한 조합에서* 열람 가능한지 확인하지
+않으면 성립하지 않는다. 초안의 SECURITY §8.2 서술은 그 확인 없이 쓰였고, 리뷰가 그것을 잡았다.
+§8.2.1 을 권한 스코프 표로 재작성해 정정했다.
+
+**P2 — PG 경로 LIKE escape 유실 (수정 완료)**: `_list_conversations_pg` 가 `ESCAPE '!'` 없이 raw
+패턴을 ILIKE 에 넣어 `%`/`_` 가 wildcard 로 샜다. 이는 SECURITY §8.3("모든 LIKE 는 ESCAPE '!' + 3-char
+escape") 위반이며 AR-M4 PG 포팅 때 유실된 것으로 보인다(본 cycle 이 만든 결함은 아니나 같은 함수를
+건드리므로 함께 고침). 수집 헬퍼는 escape 를 쓰고 있어 semantics 도 어긋나 있었다 — 대화는 매칭되는데
+근거 칩만 조용히 비는 조합. PG 전 축을 escape 적용으로 정합화했다.
+
+**P2 — fail-soft 범위 (수정 완료)**: 헬퍼의 커서 생성·백엔드 판정·결과 변환이 try 밖이라 직접
+호출 시 계약이 깨졌다. 경계 전체를 보호.
+
+**P2 — 프론트 캐시 정합 (수정 완료, 테스트가 적발)**: 보강 테스트(excerpt 리셋 지점과 1:1 대응
+고정)가 검색 **실패 폴백** 경로의 `matched_attachments` 리셋 누락을 잡았다. 이전 검색의 파일명 칩이
+새 검색 실패 후에도 잔존할 수 있었다.
+
+**P2 — 테스트가 tautology (수정 완료)**: 초안 12건이 대부분 `inspect.getsource` 문자열 검사라 실제
+동작을 검증하지 못했다. fake 커넥션으로 **실제 SQL·params 를 캡처**하는 실행 기반 26건으로 재작성
+했고, 그 결과 위 캐시 누락이 실제로 적발됐다(테스트 품질 개선이 결함 1건을 직접 회수).
+
+**P2 — 성능 (미해소·POST-DEPLOY 이월)**: `ILIKE '%q%'` 는 파일명 인덱스를 못 쓰고
+`max_execution_time 3s` 는 응답 상한이지 DB CPU 상한이 아니다. 라이브 `EXPLAIN ANALYZE` 와
+worst-case 검색어 벤치를 배포 후 수행한다. 기존 메시지 본문 축이 이미 동일 성질이라 본 변경이
+새로 만든 리스크는 아니며, §8.7 이 예약해 둔 FULLTEXT/trigram trigger 와 함께 재평가한다.
+
+- 검증: 신규 26건 PASS · 전체 스위트 baseline diff **신규 실패 0** · ruff PASS.
+- Human Approval Needed: no (P1 은 in-cycle 수정 완료 — 노출 상태로 출하되지 않았다)
+
+## REV-20260729T154000-conv-search-attach-name-codex2 [CODEX:conv-search-attach-name] 재검증 (2차)
+
+- Timestamp: 2026-07-29T15:40:00+09:00
+
+
+수정본을 같은 프롬프트 형식으로 재검토. **P1(첨부 권한 우회) "해결됨" — 권한 판정이 SQL 첨부
+EXISTS 와 `matched_attachments` 양쪽에 적용되고, 권한 없음은 EXISTS 자체를 제거해 oracle 도 차단**
+으로 확인. escape 3경로 정합·fail-soft 경계·캐시 리셋 4지점도 해결 확인. 신규 P2 3건:
+
+1. **PG/MySQL 동작 불일치 (수정)** — `own` 스코프를 엔드포인트가 items 필드로 판정했는데
+   `is_member` 는 **PG 경로만** 싣는다. MySQL 폴백에서는 멤버 대화의 근거가 조용히 비어 AC-4 를
+   깬다(누출은 아님). 판정을 SQL 로 내려 백엔드 무관하게 만들었다. *교훈: 인가 스코프를 응답
+   payload 필드로 판정하면 그 필드를 채우는 경로에 암묵 의존이 생긴다 — 스코프는 데이터가 나오는
+   곳(SQL)에서 거는 게 옳다.*
+2. **프론트 응답 경합 (수정)** — 세대 토큰 부재로 늦은 이전 응답이 새 결과를 덮어쓸 수 있었다.
+   기존 `matched_excerpts` 도 같은 위험을 안고 있었으므로 가드가 양쪽을 함께 보호한다.
+3. **PG runaway 상한 부재 (수정)** — §8.4 의 `max_execution_time` 은 MySQL 연결 전용인데 라이브
+   검색은 PG 경로다. `SET statement_timeout = 3000` 을 목록 검색·수집 양쪽에 걸었다. 이는 상한이지
+   비용 개선이 아니므로 성능 실측(P2)은 여전히 POST-DEPLOY 로 남는다.
+
+- 재검증 후 30건 PASS · 전체 회귀 신규 실패 0 · ruff PASS.
+- Verdict: **SHIP** (POST-DEPLOY = PB-0008 시각검증 + 첨부 EXISTS EXPLAIN 실측)
