@@ -1746,3 +1746,57 @@ run 시작에 수립한 데이터플레인 연결이 그 run 의 모든 tool 호
 rationale=REVIEW `REV-20260729T110000-dataplane-conn-liveness` ·
 변경이력=MODIFY `CHG-20260729T110000-dataplane-conn-liveness` ·
 원장=`docs/improvements/conversation-audit/FRICTION_LEDGER.md`.
+
+## TASK-20260729T160000-test-live-pg-isolation — `make test` 가 라이브 Postgres 를 실제로 읽던 근본 원인 차단 (기준선 13건 실패 해소)
+
+사용자 보고: "다른 AI 작업자가 『make test 결과 — main 기준선과 동일한 13건 실패』 같은 이슈를
+지속적으로 확인하고 있다. 근본 원인을 수정하라." 실제로 여러 cycle 의 TASK/REVIEW/MODIFY 가
+"잔여 N건은 main 과 동일한 환경성 baseline" 을 서로 다른 N(4·8·13·15)으로 반복 기록해 왔고,
+그 대조 작업 자체가 매 cycle 의 고정 비용이었다.
+
+### 근본 원인 (한 줄)
+
+테스트 컨테이너가 **운영 `.env` 를 통째로 상속**해 라우팅 스위치가 `postgres` 인 채 돌았고,
+`--no-deps` 는 의존 서비스를 기동만 안 할 뿐 compose 네트워크를 끊지 않아 **이미 떠 있는
+pgbouncer/replica 에 그대로 도달**했다. MySQL 은 `DB_PORT=1` 로 막혀 있었으나 PG 는 열려 있었다.
+
+그 결과 세 가지가 동시에 일어났다:
+1. 테스트가 주입한 fake connection 이 **무시되고** 코드가 라이브 PG 를 실제 조회 → 라이브에는
+   테스트가 꾸민 행이 없어 0행 → 빈 섹션 → attachment 계열 **13건 실패**.
+2. 반대로 *라이브 PG 가 살아 있을 때만* 통과하던 테스트 2건이 존재 → 실패 집합이 인프라 기동
+   상태·cutover 설정에 따라 요동 → 세션마다 다른 N.
+3. `PATCH /api/conversations/{cid}/product` 테스트가 **라이브 Postgres 에 UPDATE 를 실행**.
+
+### 진행
+- [x] 재현·확정 — main 에서 13건 재현(3파일: `test_attach_inline_honesty` 4 ·
+      `test_attachment_idor` 4 · `test_attachment_user_version_context` 5). 단독 실행에서도
+      동일 실패 → 순서-의존 flake 가 아님을 먼저 배제. traceback 이 `_pg_connect_ro` 까지
+      내려가 라이브 PG 실접속을 직접 확인
+- [x] 대조 실험 — 라우팅만 mysql 로 돌리면 13건 소멸 / PG 포트만 막으면 13건 소멸 + 라이브 PG
+      의존 2건 노출(`test_routine_dbanalysis` · `test_item11_batch8_update_conv_product`).
+      두 실험이 같은 원인을 양방향으로 지목
+- [x] 하네스 격리 완결 — `Makefile` `TEST_ISOLATION_ENV` 에 PG 포트 차단 + 라우팅 중립화 추가.
+      이전 주석의 "PG 는 의도적으로 두지 않는다(일부 테스트가 라이브 PG 읽기에 의존)" 유보를
+      그 의존 2건과 함께 해소
+- [x] 하네스 밖에서도 성립 — 저장소 루트 `conftest.py` 신설(2중 방어). 로컬 `pytest` 직접 실행도
+      결정적. 라이브 통합 점검은 `AGENT_TEST_ALLOW_LIVE_BACKENDS=1` 로 opt-in
+- [x] **프로덕션 결함 동반 수정** — 위 2건 중 `test_routine_dbanalysis` 실패는 테스트 문제가
+      아니라 코드 결함이었다: `_ro_conn`/`_rw_conn` 이 접속 실패를 저하(None)가 아니라 예외로
+      전파해, 호출부 20여 곳의 `if c is None: return <빈 결과>` 계약과 자기 docstring("실패 시
+      [] 로 저하")을 동시에 위반. PG 순단 시 그래프 검색·이웃조회·스키마 시드가 500 이 된다.
+      `shared/db.py` 에 정본 헬퍼를 두고 8개 모듈의 동일 복제 11곳을 위임으로 단일화
+- [x] 검증 — `make test` 신규 실패 0. 전체 **2976 passed · 2 skipped · 0 failed** (2회 연속 동일).
+      이전 기준선 13건이 0건으로
+
+### 정본
+rationale=REVIEW `REV-20260729T160000-test-live-pg-isolation` ·
+변경이력=MODIFY `CHG-20260729T160000-test-live-pg-isolation` ·
+Run 기록=`docs/test-runs.d/20260729T160000-test-live-pg-isolation.md`.
+
+### 커밋 전 재검토 (사용자 요청)
+- [x] **초안 회귀 1건 시정** — 쓰기 경로(`_rw_conn`)까지 저하시킨 것이 `sync_graph` 실패를
+      cron exit 0(성공)으로 위장. RW 는 접속 실패 전파(기존 동작)로 원복, RO 만 저하.
+      상세 = REVIEW `커밋 전 자체 재검토에서 잡은 회귀`
+- [x] **루트 conftest 단독 효력 실증** — Makefile 격리를 뺀 컨테이너(`AGENT_KB_PG_PORT=5432` ·
+      라우팅 `postgres` 확인)에서 문제 5파일 49 passed → 2중 방어 실효 확인
+- [x] 재검증 — `make test` exit 0 · 신규 실패 0

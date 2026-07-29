@@ -772,3 +772,44 @@ Cross-ref: REVIEW REV-20260728T182000-cyvol-scope-prefetch-postdeploy ·
 Cross-ref: TASK-20260729T110000-dataplane-conn-liveness ·
 REVIEW REV-20260729T110000-dataplane-conn-liveness ·
 원장 `FR-dataplane-conn-stale-no-reconnect`.
+
+## CHG-20260729T160000-test-live-pg-isolation — 테스트 라이브 PG 격리 완결 + PG 연결 저하 계약 단일화
+
+**동기**: `make test` 가 라이브 Postgres 를 실제로 읽어(운영 `.env` 상속 + compose 네트워크 도달)
+attachment 계열 13건이 고정 실패하고, 반대로 라이브 PG 생존에 의존해 통과하던 테스트도 생겨
+"main 기준선과 동일한 N건 실패" 가 세션마다 다른 N 으로 반복 관측됐다. 상세 = TASK 동명 섹션.
+
+### 변경
+- `Makefile` — `TEST_ISOLATION_ENV` 에 `AGENT_KB_PG_PORT=1` · `AGENT_KB_PG_PORT_RO=1`(PG 도달
+  차단) + `AGENT_RUNTIME_READ_BACKEND` · `AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND` ·
+  `AGENT_KB_READ_BACKEND` = `mysql`(운영 cutover 스위치 중립화). 유보 주석 갱신.
+- `conftest.py` (신규, 저장소 루트) — 같은 격리를 하네스 밖에서도 강제하는 2중 방어. module-level
+  적용(모듈이 import 시점에 `os.environ` 을 굳히므로 fixture 로는 늦다).
+  escape = `AGENT_TEST_ALLOW_LIVE_BACKENDS=1`.
+- `shared/db.py` — `_pg_conn_pair_ro` / `_pg_conn_pair_rw` 신설. `(conn, owned)` 페어의 정본.
+  **RO 는 접속 실패도 `(None, False)` 로 저하**(warning 1줄, traceback 없이 사유만),
+  **RW 는 설정 미비만 저하하고 접속 실패는 전파**(비대칭은 의도 — 아래 "동작 변경" 참조).
+- `unit/feature-0002-agent-core/src/modules/{metadata_graph,node_analysis,relationships,routines,
+  semantic_cluster,kb_metadata,kb_glossary,sample_queries}.py` — 각자 복제하던 `_ro_conn`/`_rw_conn`
+  11곳을 위 정본으로 위임. 함수 자체는 남긴다(테스트가 모듈 속성을 monkeypatch 한다).
+
+### 동작 변경 (프로덕션) — 읽기만, 쓰기는 불변
+**RO(읽기)**: PG 접속 실패 시 예외 전파 → **빈 결과 저하**로 바뀐다. 읽기 호출부는 전부 이미
+`if c is None:` 저하 분기를 갖고 있었으므로 코드 경로는 새로 생기지 않고, 그 분기가 비로소
+의도대로 도달된다. docstring("실패/라벨 부재 시 [] 로 저하 — 비차단")과 실제 동작이 처음으로 일치.
+
+**RW(쓰기)**: **동작 변경 없음**(설정 미비만 저하, 접속 실패는 전파 — 기존과 동일). 초안에서는
+쓰기도 저하시켰으나 커밋 전 자체 검토에서 회귀를 발견해 되돌렸다: `sync_graph` 는 접속 실패 시
+초기 리포트(`errors=0, step_failures=0`)를 그대로 반환하고 `scripts/metadata_graph_sync.py:55,64`
+가 이를 `ok=True` → `return 0` 으로 해석하므로, **cron(`bin/metadata-graph-sync.sh`)이 PG 순단을
+exit 0 으로 받아 그래프가 stale 해져도 아무도 모르게 된다.** 읽기 저하는 데이터 정합성을 훼손하지
+않지만 쓰기 실패 은폐는 관측성 손실이라, 비대칭을 의도적으로 남겼다.
+
+### 안전성
+- 자격증명·SSRF allowlist·회로차단기 경로 불변 (`_pg_connect{,_ro}` 본문 무수정, 호출만 감쌈).
+- RO 저하는 silent 아님 — `agent_core.db` 로거에 warning. 순단 시 로그 폭주 방지로 traceback 생략.
+- 쓰기 경로(`_rw_conn`) 는 접속 실패를 계속 전파 — sync 실패가 성공으로 보고되는 경로 없음.
+- 테스트가 운영 DB 에 쓰기를 시도하던 경로(product PATCH)가 구조적으로 차단됨.
+
+Cross-ref: TASK-20260729T160000-test-live-pg-isolation ·
+REVIEW REV-20260729T160000-test-live-pg-isolation.

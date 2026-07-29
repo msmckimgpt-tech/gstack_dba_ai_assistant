@@ -402,12 +402,8 @@ def _fetch_params(db_conn, schema):
 
 
 def _rw_conn(conn):
-    if conn is not None:
-        return conn, False
-    from shared.db import _pg_available, _pg_connect
-    if not _pg_available():
-        return None, False
-    return _pg_connect(autocommit=True), True
+    from shared.db import _pg_conn_pair_rw
+    return _pg_conn_pair_rw(conn)
 
 
 # §56 RC2: 크로스-DB 참조 실재 검증용 — datasource 의 effective 스키마(DB) 테이블 집합 TTL 캐시.

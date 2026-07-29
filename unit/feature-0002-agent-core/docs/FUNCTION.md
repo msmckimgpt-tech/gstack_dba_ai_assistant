@@ -101,6 +101,15 @@ source_of_truth: true
 ## 9. Error Handling
 - 코어 모듈은 자동 복구와 재시도 경로를 사용한다.
 - 실패 원인은 로그와 실행 결과에 남긴다.
+- **KB/그래프 PG 연결 계약 — 읽기는 저하, 쓰기는 전파** (CHG-20260729T160000-test-live-pg-isolation):
+  `modules/*` 의 `_ro_conn`/`_rw_conn` 은 `shared.db._pg_conn_pair_{ro,rw}` 로 위임한다.
+  - **RO(읽기)**: 설정 미비뿐 아니라 **접속 실패(PG 순단·pgbouncer 재시작 등)도 `(None, False)`
+    로 저하**한다. 읽기 호출부는 모두 `if c is None: return <빈 결과>` 로 처리하므로, PG 도달
+    불가가 그래프 검색·이웃조회·스키마 시드를 500 으로 무너뜨리지 않는다. 저하는 silent 가
+    아니라 `agent_core.db` 로거의 warning 1줄로 관측된다.
+  - **RW(쓰기)**: 설정 미비만 저하하고 **접속 실패는 전파**한다. 쓰기 실패를 no-op 으로 삼키면
+    `sync_graph` 가 `errors=0/step_failures=0` 리포트를 돌려주고 `metadata_graph_sync.py` 가
+    이를 `ok=True`(exit 0)로 해석해 **cron 이 PG 순단을 놓친다**.
 - Insight 워커 사이클 결과는 `agent_memory.agentmemorykv` 의 `insight_worker_last_status / _error / _duration_ms / _run_id` 키로 관측된다.
 
 ## 10. Dependencies
