@@ -369,14 +369,13 @@
       <span class="attach-side-panel-title">첨부 파일</span>
       <button type="button" class="attach-side-panel-close" id="attachSidePanelClose" aria-label="패널 닫기">×</button>
     </div>
-    <!-- TASK-0158: scopeAll 진입점 — 핸들러(app.js)·백엔드(attachment_scope_all)는 이미 존재했고 마크업만 부재였음. -->
-    <label class="attach-scope-all hidden" id="attachScopeAllRow">
-      <input type="checkbox" id="composerAttachmentsScopeAll" />
-      <span class="attach-scope-all-text">
-        <span class="attach-scope-all-label">이 대화의 모든 첨부 사용</span>
-        <span class="attach-scope-all-hint">현재 선택뿐 아니라 이 대화에 올린 전체 첨부를 컨텍스트로 사용합니다.</span>
-      </span>
-    </label>
+    <!-- feature-0003 attach-full-scope (2026-07-29): "이 대화의 모든 첨부 사용" 토글 제거.
+         이 대화의 첨부는 항상 assistant 가 자율 참조하므로 선택 구분이 무의미해졌다.
+         대신 그 동작을 알리는 안내 1줄을 둔다 — 토글과 함께 사라지면 사용자가 노출 범위를
+         알 길이 없어진다(적대 리뷰 ux/design). -->
+    <p class="attach-side-panel-note hidden" id="attachSidePanelNote">
+      AI 는 이 대화에 올린 파일 전체를 참고합니다. 필요 없는 파일은 × 로 삭제하세요.
+    </p>
     <div class="attach-side-panel-list" id="attachSidePanelList" aria-live="polite"></div>
   </aside>
 

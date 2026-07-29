@@ -56,10 +56,18 @@ title: DESIGN.md — 진입점 복구 컴포넌트 (TASK-0158)
 - 빈 상태: "발급된 공유 링크가 없습니다." (`--text-muted`, 중앙).
 - revoke: 행 단위 `window.confirm` 후 `DELETE /api/share/{id}` → 행을 "취소됨"으로 갱신(낙관적). 실패 시 토스트.
 
-### 4.3 scopeAll 체크박스
-- 위치: `#attachSidePanel` 헤더, 첨부 목록 위.
-- 형태: 체크박스 + 라벨 "이 대화의 모든 첨부 사용" + 보조 hint "현재 첨부뿐 아니라 이 대화에 올린 전체 첨부를 컨텍스트로 사용". 12px `--text-muted`.
-- 상태: 첨부 0개면 비활성/숨김. 대화 전환 시 `bucket.scopeAll` 반영(체크 동기화).
+### 4.3 첨부 참조 범위 안내 (구 scopeAll 체크박스 — 2026-07-29 제거)
+- **제거됨**: "이 대화의 모든 첨부 사용" 체크박스(`#composerAttachmentsScopeAll`)는
+  `ADR-20260729T140200-attach-full-scope` 로 삭제됐다. 참조 범위가 서버에서 대화 전체로
+  해소되어(D16 supersede) 켜고 끌 구분이 사라졌고, 전송하던 `attachment_scope_all` 필드는
+  애초에 백엔드에서 읽힌 적이 없어 실질 no-op 이었다.
+- **대체**: 같은 자리(`#attachSidePanel` 헤더 아래)에 안내 1줄 `.attach-side-panel-note`
+  ("AI 는 이 대화에 올린 파일 전체를 참고합니다. 필요 없는 파일은 × 로 삭제하세요.")
+  — 11px `--text-muted` + `border-bottom`. 첨부 0건이면 숨김.
+- **첨부 pill 의 ×**: 이제 로컬 목록 제거가 아니라 **실제 삭제**(`window.confirm` →
+  `DELETE /api/attachments/{id}`)다. 로컬에서만 빼면 서버가 다음 전송에서 그 첨부를
+  되살려 assistant 가 계속 읽으므로, 사용자 의도와 실제 노출이 어긋난다. 업로드 중·실패한
+  로컬 항목(음수 id 또는 미완료)만 목록에서 바로 뺀다.
 
 ### 4.4 audit.purge 버튼 + 위험 모달 (admin)
 - 위치: Audits pane `.admin-pane-actions`, CSV 버튼 옆. `audit.purge` 권한자만 노출.

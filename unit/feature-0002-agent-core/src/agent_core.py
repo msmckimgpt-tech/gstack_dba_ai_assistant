@@ -520,6 +520,215 @@ def _load_attachment_inline_texts() -> dict[int, dict]:
     return result
 
 
+# ── feature-0003 attach-full-scope: 첨부 본문 on-demand 조회 (read_attachment 도구) ──
+# 인라인 상한(_TEXT_INLINE_COUNT_CAP=20) 밖 첨부도 모델이 자율 판단으로 읽을 수 있게 한다.
+# 종전에는 상한 밖 파일에 대해 "사용자에게 재첨부를 요청" 하는 것이 유일한 회복 경로였다.
+_ATTACHMENT_READ_CHAR_CAP = 60000      # 1회 응답 최대 문자수 (프롬프트 폭주 방지)
+_ATTACHMENT_READ_DEFAULT_LINES = 600   # max_lines 미지정 시 기본 줄 수
+
+
+def _attachment_scope_ids() -> list[int]:
+    """이번 run 에서 참조가 허용된 첨부 id.
+
+    web ask 핸들러(`_resolve_conversation_attachment_scope`)가 대화 스코프 + 그룹 발신자
+    스코프(feature-0009 CSO F1)를 이미 적용해 넘긴 집합이라, 이 목록 자체가 권한 경계다 —
+    read_attachment 는 이 밖의 id 를 절대 읽지 않는다.
+    """
+    raw = _ctx_or_env(_ATTACHMENT_IDS_CTX, "ATTACHMENT_IDS").strip()
+    if not raw:
+        return []
+    out: list[int] = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok.lstrip("-").isdigit():
+            continue
+        try:
+            iv = int(tok)
+        except ValueError:
+            continue
+        if iv > 0 and iv not in out:
+            out.append(iv)
+    return out
+
+
+def _load_scoped_attachment_rows() -> list[dict]:
+    """스코프 안 첨부의 메타(id/filename/kind/object_key/status/meta) 목록.
+
+    조회는 agent memory DB(MySQL) — 첨부 dual-write 로 MySQL 이 정본을 유지한다.
+    ConversationId 를 함께 걸어 스코프 id 가 오염돼도 타 대화 첨부가 새지 않게 한다(다층 방어).
+
+    **대화 컨텍스트가 없으면 fail-closed** (적대 리뷰 security BLOCK): 종전엔 conversation_id 부재
+    시 스코프 술어를 통째로 빼고 id 만으로 조회해, ATTACHMENT_IDS 가 오염되는 순간 경계가 사라졌다.
+    형제 소비자들이 모두 AccountId 로 폴백하는 것과도 어긋난다 — 여기서는 읽지 않는 쪽을 택한다.
+    """
+    ids = _attachment_scope_ids()
+    if not ids:
+        return []
+    try:
+        import shared.config as _cfg
+        conversation_id = str(_cfg.get_active_conversation_id() or "")
+    except Exception:
+        conversation_id = ""
+    if not conversation_id:
+        return []
+    try:
+        mem_conn = _connect_memory()
+    except Exception:
+        return []
+    rows: list[dict] = []
+    try:
+        cur = mem_conn.cursor()
+        placeholders = ", ".join(["%s"] * len(ids))
+        params: tuple = tuple(int(i) for i in ids) + (conversation_id,)
+        cur.execute(
+            f"SELECT Id, OriginalFilename, Kind, ObjectKey, UploadStatus, MetaJson "
+            f"FROM WebConversationAttachments "
+            f"WHERE Id IN ({placeholders}) AND ConversationId = %s "
+            f"AND DeletedAt IS NULL AND DeletePending = 0 ORDER BY Id DESC",
+            params,
+        )
+        for row in (cur.fetchall() or []):
+            rows.append({
+                "id": int(row[0] or 0),
+                "filename": str(row[1] or ""),
+                "kind": str(row[2] or ""),
+                "object_key": str(row[3] or ""),
+                "status": str(row[4] or ""),
+                "meta_json": row[5],
+            })
+        cur.close()
+    except Exception:
+        return []
+    finally:
+        try:
+            mem_conn.close()
+        except Exception:
+            pass
+    return rows
+
+
+def _load_attachment_bytes(object_key: str) -> bytes | None:
+    """MinIO 원본 bytes. web 코드가 동봉된 런타임(web 컨테이너·ask 워커) 양쪽에서 동작."""
+    if not object_key:
+        return None
+    storage = None
+    for _mod in ("web.modules.storage_minio", "modules.storage_minio"):
+        try:
+            import importlib
+            storage = importlib.import_module(_mod)
+            if hasattr(storage, "get_object_bytes"):
+                break
+            storage = None
+        except Exception:
+            storage = None
+    if storage is None:
+        return None
+    try:
+        return storage.get_object_bytes(object_key)
+    except Exception:
+        return None
+
+
+def read_attachment_content(
+    *,
+    filename: str | None = None,
+    attachment_id: int | None = None,
+    start_line: int = 1,
+    max_lines: int | None = None,
+) -> dict:
+    """스코프 안 첨부 1건의 텍스트 본문을 줄 범위로 반환한다.
+
+    Returns: {"ok": bool, "error"?: str, "filename": str, "attachment_id": int,
+              "kind": str, "text": str, "start_line": int, "end_line": int,
+              "total_lines": int, "truncated": bool}
+    """
+    rows = _load_scoped_attachment_rows()
+    if not rows:
+        return {"ok": False, "error": "이 대화에서 참조할 수 있는 첨부가 없습니다."}
+
+    target: dict | None = None
+    if attachment_id:
+        for r in rows:
+            if r["id"] == int(attachment_id):
+                target = r
+                break
+        if target is None:
+            return {"ok": False, "error": (
+                f"attachment_id={attachment_id} 는 이 대화에서 참조할 수 있는 첨부가 아닙니다. "
+                f"사용 가능: {', '.join(repr(r['filename']) for r in rows[:20])}"
+            )}
+    elif filename:
+        want = str(filename).strip().lower()
+        # 정확 일치 우선, 없으면 부분 일치(모델이 경로·확장자를 다르게 적는 경우 흡수).
+        exact = [r for r in rows if r["filename"].lower() == want]
+        partial = [r for r in rows if want and want in r["filename"].lower()]
+        cands = exact or partial
+        if not cands:
+            return {"ok": False, "error": (
+                f'"{filename}" 이라는 첨부를 이 대화에서 찾지 못했습니다. '
+                f"사용 가능: {', '.join(repr(r['filename']) for r in rows[:20])}"
+            )}
+        target = cands[0]  # rows 가 Id DESC — 동명 파일은 최신본
+    else:
+        return {"ok": False, "error": "filename 또는 attachment_id 중 하나를 지정하세요."}
+
+    kind = target["kind"]
+    if kind == "image":
+        return {"ok": False, "error": (
+            f'"{target["filename"]}" 은 이미지 파일이라 텍스트로 읽을 수 없습니다. '
+            "이미지는 지원 모델에서 화면으로 함께 전달됩니다."
+        )}
+
+    # 이번 턴에 이미 인라인된 파일은 재다운로드 없이 그 본문을 쓴다(동일 내용·왕복 절약).
+    text: str | None = None
+    inline = _load_attachment_inline_texts().get(target["id"])
+    if inline and not inline.get("truncated"):
+        text = str(inline.get("content") or "")
+    if text is None:
+        data = _load_attachment_bytes(target["object_key"])
+        if data is None:
+            return {"ok": False, "error": (
+                f'"{target["filename"]}" 의 원본을 읽지 못했습니다(일시적 저장소 오류일 수 있습니다). '
+                "원인을 단정하지 말고, 필요하면 잠시 후 다시 시도하세요."
+            )}
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                text = data.decode("cp949")
+            except UnicodeDecodeError:
+                _hint = (
+                    " xlsx/pdf 등은 sandbox 테이블(execute_sql) 또는 요약 메타로 확인하세요."
+                    if kind in ("xlsx", "pdf") else ""
+                )
+                return {"ok": False, "error": (
+                    f'"{target["filename"]}" 은 텍스트로 해석할 수 없는 이진 파일입니다.{_hint}'
+                )}
+
+    all_lines = text.splitlines()
+    total = len(all_lines)
+    start = max(1, int(start_line or 1))
+    limit = int(max_lines) if max_lines else _ATTACHMENT_READ_DEFAULT_LINES
+    limit = max(1, min(limit, 5000))
+    chunk = all_lines[start - 1: start - 1 + limit]
+    body = "\n".join(chunk)
+    truncated = (start - 1 + len(chunk)) < total
+    if len(body) > _ATTACHMENT_READ_CHAR_CAP:
+        body = body[:_ATTACHMENT_READ_CHAR_CAP]
+        truncated = True
+    return {
+        "ok": True,
+        "filename": target["filename"],
+        "attachment_id": target["id"],
+        "kind": kind,
+        "text": body,
+        "start_line": start,
+        "end_line": start - 1 + len(chunk),
+        "total_lines": total,
+        "truncated": truncated,
+    }
+
+
 def _load_new_attachment_ids() -> set[int]:
     """env NEW_ATTACHMENT_IDS (comma-separated) 를 읽어 이번 요청에 새로 첨부된 파일 ID set 반환.
 
@@ -853,7 +1062,9 @@ def _build_attachment_context_section(
     # NEW_ATTACHMENT_IDS: 이번 요청에 새로 첨부된 파일 ID set (신규 vs 세션 라벨링용).
     new_ids_set = _load_new_attachment_ids()
 
-    lines = ["", "## ATTACHED FILES (User-selected)"]
+    # feature-0003 attach-full-scope: 이 목록은 (프론트에서 고른 일부가 아니라) 이 대화에서
+    # 참조 가능한 첨부 전량이다 — 무엇을 실제로 볼지는 모델이 자율 판단한다.
+    lines = ["", "## ATTACHED FILES (all files available in this conversation)"]
     if new_ids_set:
         lines.append("<!-- ★ = 이번 요청에 새로 첨부 | ◆ = 이전 세션에서 첨부 (LLM 컨텍스트 유지) -->")
     # TASK-0284: 첨부 지칭 규칙 — LLM 이 답변에서 첨부를 일련번호(attachment_id)가 아닌 파일명으로
@@ -863,6 +1074,18 @@ def _build_attachment_context_section(
         "in your answer, always refer to it by its filename (the quoted name shown below, e.g. "
         '`"sales.csv"`). NEVER refer to a file by its `attachment_id` number — that is an internal '
         "identifier and confuses the user. If multiple files share a name, add a short distinguishing detail."
+    )
+    # feature-0003 attach-full-scope: 목록은 전량, 본문은 상한 안에서만 인라인된다. 상한 밖 파일도
+    # 도구로 언제든 읽을 수 있음을 명시해, 모델이 "접근할 수 없다" 고 단정하거나 사용자에게 재첨부를
+    # 요구하지 않게 한다 — 무엇을 읽을지는 모델의 자율 판단.
+    lines.append(
+        "**YOU CAN READ ANY FILE LISTED HERE**: this list covers every file available in this "
+        "conversation, not just the ones attached to the latest message. File contents shown below are "
+        "only those inlined this turn (recent-first, capped). For any listed file whose content is not "
+        "inlined — including files attached in earlier turns — call "
+        "`read_attachment(filename=\"<name>\")` to read it on demand. Decide yourself which files are "
+        "relevant to the question; never tell the user you cannot access an attached file, and never ask "
+        "them to re-attach a file that appears in this list."
     )
     sandbox_table_specs: list[tuple[str, str, str]] = []  # (schema, table, source_label)
     text_content_entries: list[tuple[int, str, str, bool]] = []  # (attachment_id, filename, content, is_new)
@@ -935,21 +1158,23 @@ def _build_attachment_context_section(
                 # "N most recent" 도 아님(판독실패로 top-20 에 구멍) → 사실 단정 회피. (c) 회복은 "파일명 지정"
                 # 이 아니라 **재첨부**(높은 Id → 최신 → 인라인) — 선택은 ORDER BY Id DESC LIMIT 이라 파일명
                 # 우선순위 메커니즘 부재. (d) len==0 은 인프라 실패 가능성 最高 → cap 귀속·downplay 금지.
+                # feature-0003 attach-full-scope: 인라인되지 않은 파일도 이제 `read_attachment`
+                # 도구로 직접 읽을 수 있다 — "재첨부해 달라" 는 회복 안내를 도구 호출로 대체한다
+                # (사용자에게 같은 파일 재업로드를 요구하던 마찰 제거).
                 _inlined_n = len(text_inline_map)
                 if _inlined_n == 0:
                     meta_text += (
                         " (content not inlined this turn — no text file content was loaded. This may be a "
                         "transient read issue, or the file may be empty; the cause is not confirmed. Do NOT "
-                        "assert a specific cause. If you need this file's content, ask the user to re-attach "
-                        "it or try again.)"
+                        "assert a specific cause. If you need this file's content, call "
+                        f'`read_attachment(filename="{filename}")` to read it directly.)'
                     )
                 else:
                     meta_text += (
                         f" (content not inlined — only the most recent text files are inlined per turn "
-                        f"(currently {_inlined_n} loaded); this file may be beyond that recent set, or a "
-                        "transient read issue. Do NOT claim a specific MinIO/system failure. If you need "
-                        "this file's content, ask the user to re-attach it so it becomes the most recent "
-                        "and is inlined.)"
+                        f"(currently {_inlined_n} loaded); this file is beyond that recent set. Do NOT claim "
+                        "a specific MinIO/system failure and do NOT ask the user to re-attach it: call "
+                        f'`read_attachment(filename="{filename}")` to read this file on demand.)'
                     )
 
         if meta_obj.get("degraded_reason"):
@@ -1355,8 +1580,9 @@ def compose_system_prompt(
         pass
 
     # TASK-0094 Sprint 1 Phase 11: ATTACHED FILES section — env 의 ATTACHMENT_IDS
-    # (comma separated) 로 caller 가 selected attachment_ids 전달. D16 정합:
-    # 미지정/빈 list 면 본 section 미주입.
+    # (comma separated) 로 caller 가 attachment_ids 전달. feature-0003 attach-full-scope
+    # (2026-07-29): caller(web ask)가 넘기는 값은 이제 "프론트가 고른 일부" 가 아니라
+    # **이 대화의 활성 첨부 전량**이다(D16 supersede). 미지정/빈 list 면 본 section 미주입.
     try:
         attachment_ids_raw = _ctx_or_env(_ATTACHMENT_IDS_CTX, "ATTACHMENT_IDS").strip()
         if attachment_ids_raw:
@@ -3145,7 +3371,7 @@ def _review_attachments(suppress_conversation_context: bool) -> list[dict[str, A
     try:
         inline = _load_attachment_inline_texts() or {}
     except Exception:
-        return []
+        inline = {}
     out: list[dict[str, Any]] = []
     for meta in inline.values():
         if not isinstance(meta, dict):
@@ -3157,7 +3383,30 @@ def _review_attachments(suppress_conversation_context: bool) -> list[dict[str, A
             "filename": str(meta.get("filename") or ""),
             "content": content,
             "truncated": bool(meta.get("truncated")),
+            "content_available": True,
         })
+    # feature-0003 attach-full-scope: 본문이 인라인되지 않은 첨부(상한 밖·비텍스트)도 **매니페스트로**
+    # 리뷰어에게 알린다. 리뷰어의 실패 모드는 "digest 에 없는 파일 = 답변이 지어낸 것" 이라는 오판이라,
+    # 목록에서 파일의 존재 자체를 감추면 첨부 리뷰마다 honesty false positive 가 재발한다.
+    # 본문은 싣지 않는다(예산·누출 경계) — 존재와 종류만.
+    try:
+        _seen_names = {str(a.get("filename") or "") for a in out}
+        for row in _load_scoped_attachment_rows():
+            if int(row.get("id") or 0) in inline:
+                continue
+            fname = str(row.get("filename") or "")
+            if not fname or fname in _seen_names:
+                continue
+            _seen_names.add(fname)
+            out.append({
+                "filename": fname,
+                "content": "",
+                "truncated": False,
+                "content_available": False,
+                "kind": str(row.get("kind") or ""),
+            })
+    except Exception:
+        pass
     return out
 
 
@@ -3195,6 +3444,9 @@ def _extract_sql_tables(sql_text: str) -> list[str]:
 def _derive_step_work(tool_name: str, args: dict[str, Any] | None = None, tool_result: str = "") -> str:
     payload = args if isinstance(args, dict) else {}
     tool = str(tool_name or "").strip().lower()
+    if tool == "read_attachment":
+        _fn = str(payload.get("filename") or "").strip()
+        return f'첨부 파일 "{_fn}" 의 내용을 읽는다' if _fn else "첨부 파일의 내용을 읽는다"
     if tool == "list_schemas":
         return "사용자 스키마 목록을 확인한다"
     if tool == "describe_schema":
@@ -3285,6 +3537,8 @@ def _derive_step_reason(tool_name: str, args: dict[str, Any] | None = None) -> s
     참값(LLM tool_notes.reason)이 있으면 호출되지 않는다(호출부에서 가드)."""
     payload = args if isinstance(args, dict) else {}
     tool = str(tool_name or "").strip().lower()
+    if tool == "read_attachment":
+        return "이 대화에 올라온 첨부 파일의 실제 내용을 확인하기 위해"
     if tool == "list_schemas":
         return "접근 가능한 데이터베이스(스키마)를 파악하기 위해"
     if tool == "describe_schema":
@@ -4692,6 +4946,19 @@ def _run_agent_core(
         import modules.tools as _tools_reg2
         _run_tool_defs = _tools_reg2.with_scratch_tools(
             _run_tool_defs, _ds_router.labels() if _ds_router is not None else None
+        )
+    except Exception:
+        pass
+    # feature-0003 attach-full-scope: read_attachment 는 이 대화에 참조 가능한 첨부가 있을 때만
+    # 노출한다(첨부 없는 대화에 헛 도구를 띄우지 않음). 상한 밖·이전 턴 첨부를 모델이 자율로 읽는 경로.
+    # **공유창 bounded 발신자에게는 노출하지 않는다**(적대 리뷰 security): 첨부 본문은 message id 로
+    # clip 되지 않아 window 밖 구간의 파일이 섞일 수 있다. 그 발신자에게는 종전 노출 수준(인라인
+    # 상한 안)을 유지하고, 상한 밖으로의 **확대만** 막는다 — _review_attachments 억제와 같은 축.
+    try:
+        import modules.tools as _tools_reg3
+        _run_tool_defs = _tools_reg3.with_attachment_tools(
+            _run_tool_defs,
+            bool(_attachment_scope_ids()) and not _suppress_conversation_context,
         )
     except Exception:
         pass

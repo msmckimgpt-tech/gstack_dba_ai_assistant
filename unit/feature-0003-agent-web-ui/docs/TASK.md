@@ -6923,3 +6923,69 @@ corroboration(30일): non-default 선택이 KV 로 확증된 대화 5건 중 3�
 
 Cross-ref: REVIEW `REV-20260729T113000-model-pick-postdeploy` · MODIFY
 `CHG-20260729T113000-model-pick-postdeploy` · test-runs.d/20260729T1130-model-pick-postdeploy.md
+
+## 20260729T1402-attach-full-scope — 이어지는 대화의 기존 첨부 자율 참조 + "모든 첨부 사용" 토글 제거 (Major §12.3)
+
+사용자 보고(2026-07-29): 첨부가 걸린 요청을 수행한 뒤 **이어서 요청하면 assistant 가 기존 첨부에
+접근하지 못하는 경향**. 함께, 그 구조 하에서는 "이 대화의 모든 첨부 사용" 체크박스가 구분할 의미가
+없으니 제거 요청.
+
+### 진단 (코드 근거)
+- 참조 범위가 프론트 selection(`askBody.attachment_ids`)에만 의존 — D16 minimum exposure.
+  `_composerAttachmentSnapshot` 이 비는 진입 경로(새로고침·랜딩 복귀·pending 컨텍스트)에서
+  이전 턴 첨부가 **통째로 누락**된다. `_loadConversationAttachments` 는 `switchConversation`
+  경로에만 걸려 있어 bucket 재수화가 보장되지 않았다.
+- `attachment_scope_all` 은 프론트만 전송하고 **백엔드 어디에서도 읽지 않았다**(Python 전역 0건) —
+  체크박스는 이미 실질 no-op. 사용자가 "구분할 의미가 없다"고 느낀 것과 정확히 일치.
+- 텍스트 본문은 턴당 최신 20개만 인라인되고(`_TEXT_INLINE_COUNT_CAP`), 상한 밖 파일의 유일한
+  회복 안내가 "사용자에게 재첨부 요청" 이었다 — 첨부 본문을 자율 조회할 도구가 없었다.
+
+### 결정 (사용자 확인 2026-07-29)
+- 그룹 대화는 **발신자 본인 첨부만** 유지(feature-0009 CSO F1 권한상승 가드 불변).
+- 인라인 상한 초과분은 전량 인라인이 아니라 **조회 도구 신설** — 목록은 전량 노출, 본문은 자율 조회.
+
+### 진행
+- [x] 참조 스코프 전환 — `_resolve_conversation_attachment_scope`(routers/_conv_store.py) 신설.
+      대화의 활성 첨부(최신본·미삭제·uploaded/ingested) 전량 + client 선택분 합집합, 상한 200.
+      ask 핸들러가 이 결과를 `attachment_ids` 로 사용 → 하위 소비자(프롬프트 섹션·text inline·
+      vision·sandbox allowlist)가 자동으로 대화 스코프로 정렬
+- [x] 보안 경계 보존 — ConversationId 스코프(IDOR), 그룹 `sender_scope`(CSO F1), `SupersededAt IS NULL`
+- [x] 지연 회귀 차단 — 동기 ingest 대기(최대 25s)는 **이번 턴 첨부**로 한정(`_sync_ingest_ids`).
+      과거 failed 첨부를 매 턴 재시도하지 않는다
+- [x] `read_attachment` 도구 신설(modules/tools.py + agent_core.read_attachment_content) —
+      filename/attachment_id + start_line/max_lines 분할 조회. 권한 경계는 ATTACHMENT_IDS 스코프,
+      datasource-free 실행(회로차단이 첨부 읽기를 막지 않음), 본문은 datamark 로 비신뢰 구획.
+      첨부가 있는 대화에서만 노출(`with_attachment_tools`)
+- [x] 프롬프트 지시 갱신 — 섹션 제목을 대화 전체 스코프로, "목록의 어떤 파일이든 read_attachment 로
+      읽을 수 있다 / 접근 불가라 말하거나 재첨부를 요구하지 말라" 명시. 미인라인 안내도 도구 호출로 대체
+- [x] 자가 적대 리뷰어 확대 — `_review_attachments` 가 미인라인 첨부를 **매니페스트**로 함께 전달,
+      `build_attachment_digest` 가 ALSO ATTACHED 섹션으로 분리(예산 선점 — 발췌가 잘려도 존재는 보존).
+      리뷰어 지시문에 "발췌 부재 ≠ 창작", "재첨부 요구 금지" 추가. bounded 발신자 누출 게이트 유지
+- [x] 프론트 정리 — `#attachScopeAllRow`/`#composerAttachmentsScopeAll` 마크업·핸들러·bucket
+      `scopeAll` 상태·`askBody.attachment_scope_all`·`.attach-scope-all*` CSS 제거.
+      `attachment.scope.all` audit case 는 과거 기록 렌더링 정합을 위해 deprecated 주석 후 존치
+- [x] 테스트 3종 신설 — `test_attach_full_scope.py`(스코프 SQL 불변식·그룹 가드·폴백·상한),
+      `test_read_attachment_tool.py`(권한 경계·줄 범위·인라인 재사용·바이너리/이미지 거부·도구 노출),
+      `test_redteam_attachment_manifest.py`(매니페스트 분리·예산 선점·누출 게이트)
+
+Cross-ref: FUNCTION `REQ-20260729-attach-full-scope` · DECISIONS
+`ADR-20260729T140200-attach-full-scope` (D16 supersede) · MODIFY
+`CHG-20260729T140200-attach-full-scope` · REVIEW `REV-20260729T140200-attach-full-scope`
+
+### 적대 패널 후속 조치 (§18.8, 2026-07-29 14:45) — 4 BLOCK + 1 CONCERN 전부 해소
+- [x] **security/qa BLOCK** — `client_ids` 무검증 합집합이 그룹 발신자 가드(CSO F1)를 우회.
+      대화 확정 경로에서 합집합 제거(DB 조회만이 진실), 그룹 해소 실패는 fail-closed,
+      `_load_scoped_attachment_rows` 를 ConversationId 필수로(cid 부재 시 읽지 않음),
+      공유창 bounded 발신자에게는 read_attachment 미노출
+- [x] **backend/qa BLOCK** — red-team digest 매니페스트가 상한 없이 예산을 선점하고 최종 절단이
+      빠져 도구 근거·발췌가 동시 소실(실측 최대 20,641자). 선점 비율 상한 0.35 + 최종 절단 복원
+- [x] **backend BLOCK** — vision 인라인이 MySQL·PG 양쪽 `ORDER BY id ASC LIMIT 5` 라 스코프
+      확대와 함께 방금 올린 이미지가 매 턴 탈락. 양쪽 `DESC` 로 교정(텍스트 인라인과 동형)
+- [x] **ux BLOCK** — 첨부 pill 의 ×가 로컬 bucket 만 비워 서버가 되살리던 거짓 어포던스.
+      실삭제(`DELETE /api/attachments/{id}` + confirm)로 연결, 라벨을 "첨부 삭제"로
+- [x] **design CONCERN** — 참조 범위를 알리던 UI 가 함께 사라진 문제. `.attach-side-panel-note`
+      안내 1줄 신설 + `DESIGN-entry-points.md` §4.3 재작성
+- [x] **qa BLOCK(테스트 품질)** — 예산 테스트가 매니페스트 1건만 써서 폭주를 비켜감 / 스코프
+      테스트가 라이브 미실행 분기(MySQL 폴백)만 검사 / 리뷰어 지시문 테스트 tautology /
+      inline-honesty 의 `"re-attach"` 가 새 금지문에 걸려 의미 반전. 전부 교정 + PG 경로 테스트
+      3건·대규모 예산 테스트 2건 신설 (신설·수정 테스트 50건 PASS)

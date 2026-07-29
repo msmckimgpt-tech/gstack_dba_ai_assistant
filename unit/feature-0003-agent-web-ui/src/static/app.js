@@ -243,7 +243,7 @@ const state = {
   },
   // TASK-0094 Sprint 1 Phase 6 (D16 + R-F5): composer 의 첨부 selection state.
   // - byConv: 대화 ID 또는 pending sentinel 별 첨부 목록.
-  //   { [convOrSentinel]: { items: [{id, kind, name, size, status, selected, error?}], scopeAll: bool } }
+  //   { [convOrSentinel]: { items: [{id, kind, name, size, status, selected, error?}] } }
   //   items 의 id 는 backend 의 WebConversationAttachments.Id (음수 일 때 = client-side 로컬 placeholder).
   //   status: "uploading" | "ready" | "failed"
   // - uploadingCount: in-flight upload 카운트 (paperclip / send 비활성화 게이트).
@@ -9441,7 +9441,7 @@ async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
 // TASK-0094 Sprint 1 Phase 6 — Composer attachment helper (D16 + R-F5).
 // ============================================================================
 // 첨부 selection state 의 key 는 현재 대화 ID 또는 pending sentinel.
-// sendPrompt 시점에 snapshot 후 askBody.attachment_ids / scope_all 에 기록.
+// sendPrompt 시점에 snapshot 후 askBody.attachment_ids 에 기록.
 
 function _composerAttachmentKey(convId, sentinel = null) {
   // 우선순위: explicit sentinel > activeConversationId > pending sentinel > ""
@@ -9454,7 +9454,7 @@ function _composerAttachmentKey(convId, sentinel = null) {
 function _ensureComposerBucket(key) {
   if (!key) return null;
   if (!state.composerAttachments.byConv[key]) {
-    state.composerAttachments.byConv[key] = { items: [], scopeAll: false };
+    state.composerAttachments.byConv[key] = { items: [] };
   }
   return state.composerAttachments.byConv[key];
 }
@@ -9462,17 +9462,21 @@ function _ensureComposerBucket(key) {
 function _composerAttachmentSnapshot(targetConvId, isLazyCreate) {
   // R-F5 lazy-create snapshot: 현재 sendPrompt 시점의 selection 을 추출.
   // isLazyCreate 면 pendingSentinel bucket, 그 외엔 targetConvId bucket.
+  //
+  // feature-0003 attach-full-scope (2026-07-29): 이 목록은 더 이상 "assistant 가 볼 수 있는
+  // 첨부의 전부"가 아니다 — 서버가 이 대화의 활성 첨부 전량을 스코프로 잡고(이전 턴 첨부 포함),
+  // 여기서 보내는 id 는 "이번 턴에 올라온 첨부" 신호로 쓰인다. scopeAll 토글은 제거됐다.
   const key = isLazyCreate
     ? (state.pendingSentinel ? String(state.pendingSentinel) : "")
     : String(targetConvId || "");
   const bucket = state.composerAttachments.byConv[key];
   if (!bucket) {
-    return { selectedIds: [], scopeAll: false };
+    return { selectedIds: [] };
   }
   const selectedIds = bucket.items
     .filter((it) => it.selected && it.status === "ready" && Number(it.id) > 0)
     .map((it) => Number(it.id));
-  return { selectedIds, scopeAll: Boolean(bucket.scopeAll) };
+  return { selectedIds };
 }
 
 // 전송 완료 후 대화의 ingested 첨부 목록을 composer bucket 에 동기화.
@@ -9590,7 +9594,10 @@ function _renderAttachmentPills() {
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "pill-remove";
-    removeBtn.setAttribute("aria-label", "첨부 제거");
+    // feature-0003 attach-full-scope: 이 버튼은 이제 실제 삭제다(로컬 목록에서만 빼면 서버가
+    // 되살려 AI 가 계속 읽는다 — _removeAttachmentPill 주석 참조).
+    removeBtn.setAttribute("aria-label", "첨부 삭제");
+    removeBtn.title = "이 대화에서 삭제";
     removeBtn.textContent = "×";
     removeBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -9618,14 +9625,47 @@ function _renderAttachmentPills() {
   }
 }
 
-function _removeAttachmentPill(attachmentId) {
-  // UX-COMPACT: x 버튼 → 목록에서 즉시 제거 (기존 toggle 동작 대체)
+async function _removeAttachmentPill(attachmentId) {
+  // UX-COMPACT: x 버튼 → 목록에서 제거.
+  //
+  // feature-0003 attach-full-scope (적대 리뷰 ux/design BLOCK): 참조 스코프가 서버에서 대화 전체로
+  // 해소되면서, **로컬 목록에서만 지우는 것은 거짓말이 됐다** — 다음 전송에서 서버가 DB 로부터
+  // 그 첨부를 그대로 되살려 assistant 가 계속 읽는다. 그래서 서버에 실재하는 첨부의 ×는 실제
+  // 삭제(soft-delete)로 연결한다. 파괴적 행동이므로 확인을 받는다.
   const key = _composerAttachmentKey(state.activeConversationId);
   const bucket = state.composerAttachments.byConv[key];
   if (!bucket) return;
   const idx = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
-  if (idx >= 0) bucket.items.splice(idx, 1);
+  if (idx < 0) return;
+  const item = bucket.items[idx];
+
+  // 업로드 중·실패한 로컬 항목(음수 id 또는 미완료)은 서버에 없으므로 목록에서만 뺀다.
+  if (!(Number(item.id) > 0) || item.status !== "ready") {
+    bucket.items.splice(idx, 1);
+    _renderAttachmentPills();
+    return;
+  }
+
+  if (!window.confirm(
+    `"${item.name}" 을(를) 이 대화에서 삭제할까요?\n` +
+    `삭제하면 AI 가 더 이상 이 파일을 참조하지 않습니다.`
+  )) return;
+
+  try {
+    await apiFetch(`/api/attachments/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+  } catch (e) {
+    // 업로더 본인만 삭제할 수 있다(conversation.attachment.upload.{own,any}).
+    showToast(e && e.status === 403 ? "이 첨부를 삭제할 권한이 없습니다." : "첨부를 삭제하지 못했습니다.", true);
+    return;
+  }
+  const cur = bucket.items.findIndex((it) => String(it.id) === String(attachmentId));
+  if (cur >= 0) bucket.items.splice(cur, 1);
   _renderAttachmentPills();
+  showToast("첨부를 삭제했습니다.");
+  // 사이드패널 목록도 서버 ground truth 로 다시 맞춘다(버전 배지·개수 정합).
+  if (state.activeConversationId) {
+    _loadConversationAttachmentList(state.activeConversationId).catch(() => {});
+  }
 }
 
 async function _uploadComposerAttachment(file) {
@@ -10016,14 +10056,11 @@ function _renderAttachmentVersionsBox(box, versions) {
 async function _loadConversationAttachmentList(convId) {
   const listEl = document.getElementById("attachSidePanelList");
   if (!listEl || !convId) return;
-  // TASK-0158: scopeAll 체크박스 상태 동기화 (대화별 bucket 반영, 첨부 0개면 숨김).
-  const scopeAllRow = document.getElementById("attachScopeAllRow");
-  const scopeAllBox = document.getElementById("composerAttachmentsScopeAll");
-  if (scopeAllBox) {
-    const bucket = _ensureComposerBucket(_composerAttachmentKey(convId));
-    scopeAllBox.checked = Boolean(bucket && bucket.scopeAll);
-  }
-  if (scopeAllRow) scopeAllRow.classList.add("hidden");
+  // feature-0003 attach-full-scope: scopeAll 체크박스 제거 — 이 대화의 첨부는 항상 전량이
+  // assistant 참조 스코프이므로 동기화할 토글이 없다. 대신 그 범위를 알리는 안내를 첨부가
+  // 있을 때만 노출한다(첨부 0건 대화에서는 의미 없는 문구).
+  const noteEl = document.getElementById("attachSidePanelNote");
+  if (noteEl) noteEl.classList.add("hidden");
   listEl.innerHTML = `<div class="attach-list-empty">불러오는 중...</div>`;
   try {
     const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
@@ -10033,7 +10070,7 @@ async function _loadConversationAttachmentList(convId) {
       return;
     }
     listEl.innerHTML = "";
-    if (scopeAllRow) scopeAllRow.classList.remove("hidden"); // TASK-0158: 첨부 존재 시 scopeAll 노출
+    if (noteEl) noteEl.classList.remove("hidden");  // 첨부 존재 시 참조 범위 안내 노출
     const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
     const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
     for (const a of arr) {
@@ -10106,7 +10143,6 @@ function _bindComposerAttachmentEvents() {
   // (+ icon) 의 dropdown 안 "파일 첨부" 항목 (`#composerActionsAttachItem`) 으로
   // 통합. fileInput 의 change 핸들러는 그대로 유지.
   const fileInput = document.getElementById("attachFileInput");
-  const scopeAllEl = document.getElementById("composerAttachmentsScopeAll");
   // TASK-0161: #composerAttachmentsPills 제거됨 (죽은 DOM) — pill 토글은 #attachSidePanel 경로 사용.
   const composerWrap = document.querySelector(".composer-wrap");
 
@@ -10118,21 +10154,6 @@ function _bindComposerAttachmentEvents() {
       }
       // reset value so same file selectable again.
       ev.target.value = "";
-    });
-  }
-  if (scopeAllEl) {
-    scopeAllEl.addEventListener("change", (ev) => {
-      const key = _composerAttachmentKey(state.activeConversationId);
-      const bucket = _ensureComposerBucket(key);
-      if (bucket) {
-        bucket.scopeAll = Boolean(ev.target.checked);
-        if (bucket.scopeAll) {
-          showToast(
-            "이 대화의 모든 ingested 첨부를 사용합니다. 별도 audit 이 기록됩니다.",
-            false,
-          );
-        }
-      }
     });
   }
   if (composerWrap) {
@@ -10924,13 +10945,14 @@ async function sendPrompt() {
         ? Number(state.pinnedProductId)
         : null;
   }
-  // TASK-0094 Sprint 1 Phase 6 (D16, R-F5): attachment selection snapshot.
-  // sendPrompt 시작 시점의 selected attachment_ids 와 scope_all 토글을 askBody 에
-  // 명시 전송 — 사용자가 다른 대화로 전환해 pill 을 바꿔도 in-flight 요청에는 영향 0.
-  // attachment_ids 가 명시되지 않으면 backend 가 빈 list 처리 (D16 minimum exposure).
+  // TASK-0094 Sprint 1 Phase 6 (R-F5): attachment selection snapshot.
+  // sendPrompt 시작 시점의 attachment_ids 를 askBody 에 명시 전송 — 사용자가 다른 대화로
+  // 전환해 pill 을 바꿔도 in-flight 요청에는 영향 0.
+  // feature-0003 attach-full-scope (2026-07-29): 서버가 이 대화의 활성 첨부 전량을 참조
+  // 스코프로 해소하므로, 이 목록이 비어도 이전 턴 첨부는 그대로 assistant 에게 보인다
+  // (D16 minimum exposure supersede). scope_all 토글은 제거됐다.
   const attachmentSnapshot = _composerAttachmentSnapshot(targetConvId, isLazyCreate);
   askBody.attachment_ids = attachmentSnapshot.selectedIds;
-  askBody.attachment_scope_all = attachmentSnapshot.scopeAll;
   // new_attachment_ids: 이번 요청에 새로 첨부된 파일만 (LLM 컨텍스트에서 신규/세션 구분용).
   askBody.new_attachment_ids = (() => {
     const _bKey = isLazyCreate

@@ -1690,3 +1690,103 @@ early-cid `...2e511059` 를 발급하며 **귀속 승계**(구버전이면 `""` 
 - Cross-ref: MODIFY CHG-20260729T113000-model-pick-postdeploy ·
   test-runs.d/20260729T1130-model-pick-postdeploy.md · 선행 REV-20260728T191126-model-pick-early-cid ·
   마찰 원장 FR-model-pick-lost-on-early-cid.
+
+## REV-20260729T140200-attach-full-scope — 첨부 참조 스코프 전환의 판단 근거와 남긴 위험
+
+**진단의 확실성**: 사용자 보고("이어서 요청하면 기존 첨부 접근 불가")를 코드에서 두 갈래로 귀속했다.
+① 참조 범위가 프론트 selection 에만 의존(D16) — `_composerAttachmentSnapshot` 이 bucket 부재 시
+빈 목록을 반환하고, bucket 재수화(`_loadConversationAttachments`)는 `switchConversation` 경로에만
+걸려 있다. `loadHistory` 주석이 "이 경로는 switchConversation(→_loadConversationAttachments)을
+거치지 않는다"고 스스로 기록하고 있어, 재수화 없는 진입 경로의 실재는 코드가 증언한다.
+② 보완재였던 `attachment_scope_all` 은 **백엔드 어디에서도 읽히지 않았다**(Python 전역 grep 0건) —
+켜도 동작이 바뀌지 않았다. 사용자가 "구분할 의미가 없다"고 느낀 것과 정확히 일치하며, 이것이
+토글 제거 요청의 근거이기도 하다. ①·② 는 정적 증거로 확정했고, 개별 사용자 대화의 재현 로그로는
+확증하지 않았다(라이브 실증은 배포 후 PB-0008 Run 에서 수행).
+
+**설계 선택**: 결정 주체를 프론트에서 서버로 옮겼다. 프론트 재수화 경로만 보강하는 대안은 진입
+경로가 늘 때마다 같은 결함이 재발하는 구조를 남긴다. 서버가 대화를 스코프로 삼으면 진입 경로의
+수와 무관하게 불변식이 성립한다.
+
+**보안 판단**: 스코프 확대가 **경계를 넘지 않도록** 세 가드를 그대로 통과시켰다 — 그룹 발신자
+스코프(feature-0009 CSO F1: 타 멤버 첨부를 통한 권한상승 차단), ConversationId 스코프(TASK-0284
+IDOR), 공유창 bounded 발신자 억제. 그룹 개방 여부는 CSO 가 명시 결정한 사안이라 임의로 뒤집지
+않고 사용자 확인을 받아 **유지**로 확정했다. `read_attachment` 의 권한 경계는 별도 검증이 아니라
+**같은 스코프 집합의 재사용**이다 — 경계를 한 곳에서만 계산해 두 경로가 갈라지지 않게 했다.
+
+**비용 판단**: 전량 인라인 대신 도구 조회를 택했다. 프롬프트에 늘어나는 것은 파일당 1줄 메타이고,
+매 턴 인라인되는 본문량(텍스트 20개·이미지 5개 상한)은 종전과 동일하다. 대신 모델이 필요하다고
+판단할 때만 왕복이 생긴다 — LLM 호출 비용이 예측 가능한 방향으로 늘어난다(Major 로 등급한 이유).
+
+**지연 회귀 차단**: 스코프가 넓어지면 ask 진입 시 동기 ingest 대기(최대 25s)가 과거 failed 첨부를
+매 턴 재시도할 수 있었다. 대기 대상을 이번 턴 첨부로 한정해 이 경로를 봉인했다 — 스코프 확대가
+응답 지연으로 새는 것을 막는 지점.
+
+**리뷰어 오판 대응**: 인라인 밖 첨부가 늘면 "digest 에 없는 파일 = 창작" 오판(기존에 관측된
+honesty false positive)의 표면이 함께 넓어진다. 매니페스트를 예산 선점으로 항상 남기고 리뷰어
+지시문에 오판·재첨부 요구 금지를 명시해 상쇄했다.
+
+**미해소(정직 표기)**: ① 라이브 실증(실제 대화에서 이전 턴 첨부 참조 + read_attachment 호출)은
+배포 후 PB-0008 Run 으로 수행한다 — 본 cycle 의 검증은 컨테이너 스위트와 정적 계약까지다.
+② PG 전용 컷오버 환경에서 `_load_scoped_attachment_rows` 는 MySQL(dual-write 정본)만 조회한다 —
+현행 dual-write 전제에서 정합하나, MySQL 미러가 걷히면 PG 경로 추가가 필요하다. ③ 상한 200 은
+관측 없이 정한 값이다(현실 대화의 첨부 수를 크게 상회하도록 잡음) — 초과 사례가 관측되면
+재평가한다. ④ pdf 본문 조회는 텍스트 추출 경로가 없어 이진 거부로 안내한다(종전과 동일 한계).
+
+- Cross-ref: MODIFY `CHG-20260729T140200-attach-full-scope` · DECISIONS
+  `ADR-20260729T140200-attach-full-scope` · FUNCTION `REQ-20260729-attach-full-scope` ·
+  TASK `20260729T1402-attach-full-scope`.
+
+## REV-20260729T144500-attach-full-scope-panel [SUBAGENT:security] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1402-attach-full-scope
+- Trigger: credential·permission boundary / 권한 경계·노출 범위
+- Timestamp: 2026-07-29T14:45:00+09:00
+- Verdict: BLOCK (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T052000Z-security.md
+- Critical issue: `client_ids` 무검증 합집합으로 그룹 대화에서 타 멤버 첨부가 발신자 실행 맥락에 유입(CSO F1 우회) — 스톡 UI 가 대화 첨부 전량을 selected 로 보내므로 악의 없이도 도달. 부수: `_load_scoped_attachment_rows` 가 cid 부재 시 스코프 술어 소실(fail-open), 공유창 bounded 발신자에게 도구가 열림.
+- 조치: 대화 확정 경로에서 client_ids 합집합 제거(DB 조회만이 진실) · 그룹 해소 실패는 fail-closed · `_load_scoped_attachment_rows` 를 ConversationId 필수(fail-closed)로 · `_suppress_conversation_context` 면 read_attachment 미노출.
+- Human Approval Needed: no
+
+## REV-20260729T144500-attach-full-scope-panel [SUBAGENT:backend] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1402-attach-full-scope
+- Trigger: query·schema·API contract / 쿼리·응답 계약
+- Timestamp: 2026-07-29T14:45:00+09:00
+- Verdict: BLOCK (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T052000Z-backend.md
+- Critical issue: ① `build_attachment_digest` 매니페스트가 상한 없이 예산 선점 + 최종 절단 부재 → digest 가 cap 대비 최대 20,641자로 부풀어 도구 근거·첨부 발췌가 동시 소실. ② vision 인라인이 양쪽 백엔드 모두 `ORDER BY id ASC LIMIT 5` 라, 스코프 확대와 함께 "방금 올린 이미지"가 매 턴 탈락(프롬프트는 전달된다고 단정).
+- 조치: 매니페스트 선점 비율 상한(`_ATTACH_MANIFEST_BUDGET_RATIO=0.35`) + 최종 `[:cap_chars]` 복원 · vision 정렬을 MySQL·PG 양쪽 `ORDER BY id DESC` 로(텍스트 인라인과 동형). 커넥션 누수·mixed-version 계약·contextvar 패리티는 리뷰에서 정합 확인됨.
+- Human Approval Needed: no
+
+## REV-20260729T144500-attach-full-scope-panel [SUBAGENT:qa] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1402-attach-full-scope
+- Trigger: test coverage·regression / 테스트 커버리지·회귀
+- Timestamp: 2026-07-29T14:45:00+09:00
+- Verdict: BLOCK (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T052000Z-qa.md
+- Critical issue: 신설 테스트가 통과하는데도 실질 검증이 얕음 — digest 예산 테스트가 매니페스트 1건만 써서 폭주를 비켜감, 스코프 테스트 7건이 라이브에서 실행되지 않는 MySQL 폴백 분기만 검사(PG 경로 그룹 가드 커버리지 0), 리뷰어 지시문 테스트가 `inspect.getsource` 폴백으로 항상 성립하는 tautology, `test_attach_inline_honesty` 의 `"re-attach" in out` 이 새 **금지문**의 부분문자열로 통과(의미 반전).
+- 조치: 매니페스트 200건 규모 예산 테스트 2건 추가 · PG 경로 테스트 3건 신설(상태 필터·그룹 가드·상한) · 리뷰어 프롬프트 상수(`REDTEAM_REVIEW_PROMPT`) 직접 검사 · inline-honesty 계약을 `read_attachment(` + `do NOT ask the user to re-attach` 로 교정.
+- Human Approval Needed: no
+
+## REV-20260729T144500-attach-full-scope-panel [SUBAGENT:ux] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1402-attach-full-scope
+- Trigger: UI·checkbox 제거 / 사용자 모델
+- Timestamp: 2026-07-29T14:45:00+09:00
+- Verdict: BLOCK (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T052000Z-ux.md
+- Critical issue: 첨부 pill 의 × ("첨부 제거")가 클라이언트 bucket 만 splice 하므로, 서버가 다음 전송에서 그 첨부를 DB 에서 되살려 assistant 가 그대로 읽는다 — 사용자가 "제거"한 파일이 계속 참조되는 거짓 어포던스. 실삭제 API 는 존재하나 프론트 호출 0건.
+- 조치: ×를 실제 삭제(`window.confirm` → `DELETE /api/attachments/{id}`)로 연결 + aria-label/`title` 을 "첨부 삭제"로 · 업로드 중·실패 로컬 항목만 목록 제거 유지 · 삭제 후 사이드패널 재동기화.
+- Human Approval Needed: no
+
+## REV-20260729T144500-attach-full-scope-panel [SUBAGENT:design] — CONCERN → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260729T1402-attach-full-scope
+- Trigger: layout·visual / 레이아웃·시각 위계
+- Timestamp: 2026-07-29T14:45:00+09:00
+- Verdict: CONCERN (조치 후 해소)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260729T052000Z-design.md
+- Critical issue: 구분선 소실 우려는 **반증**(헤더가 자체 `border-bottom` 보유). 그러나 참조 범위를 대화 전량으로 넓히면서 그 사실을 알리던 유일한 UI(토글+토스트)를 함께 제거해 사용자가 노출 범위를 알 길이 없어졌고, 디자인 정본 `DESIGN-entry-points.md` §4.3 이 삭제된 컨트롤을 규정한 채 남았다.
+- 조치: `.attach-side-panel-note` 안내 1줄 신설(첨부 존재 시 노출) · DESIGN-entry-points.md §4.3 을 제거·대체·× 실삭제 계약으로 재작성.
+- Human Approval Needed: no

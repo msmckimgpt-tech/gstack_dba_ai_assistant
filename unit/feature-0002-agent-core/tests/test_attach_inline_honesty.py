@@ -88,7 +88,10 @@ def test_absent_inline_note_len0_does_not_falsely_blame_minio(monkeypatch):
     # 원인 미단정 + **진짜 회복 경로(재첨부)** — 존재하지 않는 "파일명 지정 우선순위" 아님(적대 패널 정정).
     assert "the cause is not confirmed" in out
     assert "Do NOT assert a specific cause" in out
-    assert "re-attach" in out
+    # feature-0003 attach-full-scope: 회복 경로가 "사용자에게 재첨부 요청" → **도구 직접 조회**로
+    # 바뀌었다. 부분문자열 `re-attach` 는 새 금지문("do NOT ask the user to re-attach")에도 걸려
+    # 의미가 반전된 채 통과하므로(적대 리뷰 qa), 도구 호출 안내를 직접 확인한다.
+    assert "read_attachment(" in out, "on-demand 조회 회복 경로 누락"
 
 
 def test_absent_inline_note_len_positive_honest_no_size_cap_no_minio(monkeypatch):
@@ -101,7 +104,9 @@ def test_absent_inline_note_len_positive_honest_no_size_cap_no_minio(monkeypatch
         _CaptureConn([_row(att_id=101, fname="third.sql")]), [101], conversation_id="conv-x")
     assert "currently 2 loaded" in out            # 인라인된 수 정직 보고(cap·recency 단정 아님)
     assert "Do NOT claim a specific MinIO/system failure" in out
-    assert "re-attach" in out                     # 진짜 회복 경로
+    # 회복 경로 = 도구 직접 조회(feature-0003 attach-full-scope). 사용자에게 재첨부를 요구하지 않는다.
+    assert "read_attachment(" in out
+    assert "do NOT ask the user to re-attach" in out
     assert "check MinIO connectivity" not in out
     # 부재 원인으로 "size cap" 을 단정하지 않는다(크기초과는 truncate 되어 인라인됨 — 부재 원인 아님).
     assert "size cap" not in out

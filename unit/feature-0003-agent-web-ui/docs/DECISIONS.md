@@ -67,3 +67,12 @@ source_of_truth: true
 - **Alternatives**: 묶음 grid 표시 유지(통합 항목 잔존이라 기각 — 사용자 결정), 검수 승급/거부 분리(반쪽 검수자 모호성 — 기각), choke-point(_account_has_permission) 묶음 fallback(원자 DENY 무력화 — 기각).
 - **Consequences**: grid 에는 원자 단위만 보인다(조회→추가/수정/삭제/검수 트리). 역할 저장은 preservedHidden(TASK-0300)이 숨긴 묶음 grant 를 보존. 신규 역할은 원자 단위로만 구성.
 - **Cross-ref**: SECURITY §22.4 · CONVENTIONS §10.6 · CHG-20260715T103406.
+
+## ADR-20260729T140200-attach-full-scope — 첨부 참조 스코프를 대화 전체로 (D16 minimum exposure supersede)
+
+- **Status**: accepted (사용자 승인 2026-07-29, Major §12.3)
+- **Context**: D16(BRIEFING-attachment-multi-cycle §68)은 `attachment_ids` 기본값을 "현재 composer 의 selected/ready 첨부만"으로 좁혀 minimum exposure 를 달성했다. 그러나 참조 범위의 결정 주체가 프론트 selection bucket 이라, bucket 이 비는 진입 경로(새로고침·랜딩 복귀·pending 컨텍스트, `_loadConversationAttachments` 는 `switchConversation` 경로에만 존재)에서 이전 턴 첨부가 통째로 누락됐다 — 사용자 보고 "첨부된 요청 수행 후 이어서 요청하면 기존 첨부에 접근 불가". 보완재로 둔 `attachment_scope_all` 토글은 **백엔드에서 읽힌 적이 없어**(Python 전역 0건) 실질 no-op 이었다. 또한 인라인 상한 밖 파일의 유일한 회복 안내가 "사용자에게 재첨부 요청" 이었다.
+- **Decision**: ① 참조 스코프를 `_resolve_conversation_attachment_scope` 로 **대화의 활성 첨부 전량**(최신본·미삭제·업로드 완료, 상한 200)으로 해소하고 client 선택분을 합집합으로 보존한다. ② 그룹 대화의 발신자 스코프(CSO F1)·ConversationId 스코프(IDOR)·공유창 누출 게이트는 **그대로 유지**한다. ③ 상한 밖 본문은 전량 인라인이 아니라 `read_attachment` 도구로 모델이 자율 조회한다(목록은 전량 노출, 본문은 on-demand). ④ 자가 적대 리뷰어에게는 미인라인 첨부를 매니페스트로 전달한다. ⑤ 의미를 잃은 "이 대화의 모든 첨부 사용" 토글을 제거한다.
+- **Alternatives**: (a) 전량 인라인 — 구현은 단순하나 첨부 많은 대화에서 토큰·컨텍스트 압박이 급증하고 상한 문제가 재발(기각, 사용자 확인). (b) 프론트 bucket 재수화 경로만 보강 — 진입 경로가 늘 때마다 같은 결함이 재발하는 구조를 남김(기각 — 결정 주체를 서버로 옮기는 편이 근본적). (c) 그룹 대화까지 전체 개방 — 타 멤버 첨부가 발신자 권한 실행 맥락에 실려 datasource 를 끌어오는 권한상승 경로(기각, 사용자 결정으로 가드 유지).
+- **Consequences**: 이어지는 대화에서 첨부가 조용히 사라지지 않는다. 프롬프트의 첨부 **메타 목록**이 대화 규모에 비례해 커지지만(파일당 1줄), 매 턴 인라인되는 **본문량은 종전과 동일**하다(상한 불변). 모델이 `read_attachment` 를 호출하는 만큼 도구 왕복이 늘 수 있다 — 자율 판단에 맡기되 첨부 있는 대화에서만 도구를 노출해 헛호출을 줄인다. D16 의 "명시 선택만 노출" 원칙은 대화 경계 안에서는 폐기되고, 경계 자체(대화·그룹·공유창)가 노출 통제를 담당한다.
+- **Cross-ref**: FUNCTION `REQ-20260729-attach-full-scope` · TASK `20260729T1402-attach-full-scope` · BRIEFING-attachment-multi-cycle D16(superseded) · feature-0009 CSO F1 · TASK-0284.

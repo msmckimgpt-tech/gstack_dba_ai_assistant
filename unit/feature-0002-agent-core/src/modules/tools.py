@@ -1392,6 +1392,60 @@ def scratch_tool_defs() -> list[dict[str, Any]]:
     return copy.deepcopy(_SCRATCH_TOOL_DEFS)
 
 
+# ── feature-0003 attach-full-scope: 첨부 본문 on-demand 조회 도구 ──────────────
+# 한 턴에 인라인되는 텍스트 첨부는 상한(최근 20개)이 있어, 이전 턴에 올린 파일이나 상한 밖
+# 파일은 프롬프트에 본문이 실리지 않는다. 종전에는 그 경우 사용자에게 재첨부를 요청하는 것이
+# 유일한 회복 경로였다 — 이 도구가 그 자리를 대신해 모델이 자율 판단으로 직접 읽게 한다.
+_ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_attachment",
+            "description": (
+                "이 대화에 올라온 첨부 파일의 내용을 직접 읽는다. 시스템 프롬프트의 ATTACHED FILES "
+                "목록에 있는 파일이면 이전 턴에 첨부된 것도 포함해 무엇이든 읽을 수 있다. 본문이 "
+                "이미 프롬프트에 실려 있지 않은 파일(인라인 상한 밖·이전 턴 첨부)을 확인해야 할 때 "
+                "쓴다. 사용자에게 '파일에 접근할 수 없다'고 말하거나 재첨부를 요청하기 전에 반드시 "
+                "이 도구를 먼저 호출한다. 큰 파일은 start_line/max_lines 로 나눠 읽는다. "
+                "csv/xlsx 의 데이터 분석은 sandbox 테이블을 execute_sql 로 조회하는 편이 낫고, "
+                "이 도구는 원본 텍스트(헤더·서식 확인 등) 용도다. 이미지 파일은 읽을 수 없다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "읽을 파일 이름(ATTACHED FILES 목록에 표시된 이름). 예: 'sales.csv'.",
+                    },
+                    "attachment_id": {
+                        "type": "integer",
+                        "description": "파일 이름 대신 쓸 첨부 내부 id(목록의 attachment_id). 동명 파일 구분이 필요할 때만.",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "읽기 시작할 줄 번호(1부터). 기본 1. 긴 파일을 이어 읽을 때 지정.",
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": "한 번에 읽을 최대 줄 수(기본 600, 최대 5000).",
+                    },
+                },
+            },
+        },
+    },
+]
+
+_inject_step_narration_params(_ATTACHMENT_TOOL_DEFS)
+
+
+def with_attachment_tools(base_defs: list[dict[str, Any]], has_attachments: bool) -> list[dict[str, Any]]:
+    """이 대화에 참조 가능한 첨부가 있으면 read_attachment 를 도구 목록에 덧붙인다."""
+    if not has_attachments:
+        return base_defs
+    import copy
+    return list(base_defs) + copy.deepcopy(_ATTACHMENT_TOOL_DEFS)
+
+
 def with_scratch_tools(base_defs: list[dict[str, Any]], labels: "list[str] | None" = None) -> list[dict[str, Any]]:
     """base 도구 정의에 scratch 도구를 (활성 시) 덧붙인다. 멀티 datasource 면 scratch_import 에도
     datasource 선택 인자를 주입(어느 소스에서 반입할지 LLM 이 지정)."""
@@ -3237,7 +3291,62 @@ def _tool_scratch_reset(conn, args: dict) -> str:
     return "작업공간을 비웠습니다. 새로 scratch_import 로 데이터를 가져올 수 있습니다."
 
 
+def _tool_read_attachment(conn, args: dict) -> str:
+    """feature-0003 attach-full-scope: 스코프 안 첨부 1건의 본문을 줄 범위로 반환.
+
+    권한 경계는 agent_core 가 소유한다 — web ask 가 대화·그룹 스코프로 해소한 id 집합
+    (ATTACHMENT_IDS) 밖의 파일은 read_attachment_content 가 거부한다.
+    """
+    import agent_core as _ac  # 지연 import (순환 회피 — ask.py 의 run_agent 참조와 동형)
+
+    filename = str(args.get("filename") or "").strip() or None
+    try:
+        attachment_id = int(args.get("attachment_id") or 0) or None
+    except (TypeError, ValueError):
+        attachment_id = None
+    try:
+        start_line = int(args.get("start_line") or 1)
+    except (TypeError, ValueError):
+        start_line = 1
+    try:
+        max_lines = int(args.get("max_lines") or 0) or None
+    except (TypeError, ValueError):
+        max_lines = None
+
+    try:
+        res = _ac.read_attachment_content(
+            filename=filename,
+            attachment_id=attachment_id,
+            start_line=start_line,
+            max_lines=max_lines,
+        )
+    except Exception as e:
+        return f"첨부를 읽는 중 오류가 발생했습니다: {e}"
+
+    if not res.get("ok"):
+        return f"오류: {res.get('error') or '첨부를 읽지 못했습니다.'}"
+
+    header = (
+        f'파일 "{res["filename"]}" (attachment_id={res["attachment_id"]}, kind={res["kind"]}) '
+        f'— {res["start_line"]}~{res["end_line"]}번째 줄 / 전체 {res["total_lines"]}줄'
+    )
+    if res.get("truncated"):
+        header += (
+            f' (여기까지만 반환 — 이어 읽으려면 start_line={res["end_line"] + 1} 로 다시 호출)'
+        )
+    # 파일 본문은 비신뢰 입력 — 프롬프트 인젝션 방어를 위해 agent_core 와 동일한 datamark 구획.
+    try:
+        body = _ac._datamark_untrusted(res["text"], f'첨부 파일 {res["filename"]}')
+    except Exception:
+        body = res["text"]
+    return f"{header}\n\n{body}"
+
+
+# 데이터소스 연결이 필요 없는 도구 — execute_tool 이 라우팅·연결 획득을 건너뛴다.
+_DATASOURCE_FREE_TOOLS = frozenset({"read_attachment"})
+
 _TOOL_HANDLERS = {
+    "read_attachment": _tool_read_attachment,
     "list_schemas": _tool_list_schemas,
     "describe_schema": _tool_describe_schema,
     "check_table_coverage": _tool_check_table_coverage,
@@ -3268,6 +3377,13 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
     handler = _TOOL_HANDLERS.get(tool_name)
     if handler is None:
         return f"알 수 없는 도구: {tool_name}"
+    # feature-0003 attach-full-scope: 첨부 조회는 데이터소스와 무관하다 — 라우터가 활성이어도
+    # DS 연결을 잡지 않고 곧바로 실행한다(회로차단·연결실패가 첨부 읽기를 막지 않게).
+    if tool_name in _DATASOURCE_FREE_TOOLS:
+        try:
+            return handler(None, arguments)
+        except Exception as e:
+            return f"도구 실행 오류 ({tool_name}): {e}"
     router = _ACTIVE_DS_ROUTER.get()
     if router is not None:
         # 라우터 활성 — datasource 선택 + 그 컨텍스트 활성화. 작업 후 primary 로 복원(다음 tool 기본값 안정).

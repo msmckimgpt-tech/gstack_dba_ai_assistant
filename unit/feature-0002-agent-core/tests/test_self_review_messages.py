@@ -98,11 +98,15 @@ def test_review_attachments_suppressed_for_bounded_sender(monkeypatch):
 
 
 def test_review_attachments_maps_inline_texts(monkeypatch):
+    # feature-0003 attach-full-scope: 인라인 본문 항목에 content_available=True 가 붙는다
+    # (본문 없는 매니페스트 항목과 구분 — build_attachment_digest 가 두 섹션으로 나눈다).
     monkeypatch.setattr(agent_core, "_load_attachment_inline_texts",
                         lambda: {1: {"filename": "a.sql", "content": "SELECT 1", "truncated": True},
                                  2: {"filename": "empty.sql", "content": "   "}})
+    monkeypatch.setattr(agent_core, "_load_scoped_attachment_rows", lambda: [])
     got = agent_core._review_attachments(False)
-    assert got == [{"filename": "a.sql", "content": "SELECT 1", "truncated": True}]
+    assert got == [{"filename": "a.sql", "content": "SELECT 1", "truncated": True,
+                    "content_available": True}]
 
 
 def test_review_attachments_fail_open_on_loader_error(monkeypatch):
@@ -110,4 +114,23 @@ def test_review_attachments_fail_open_on_loader_error(monkeypatch):
         raise RuntimeError("no inline path")
 
     monkeypatch.setattr(agent_core, "_load_attachment_inline_texts", boom)
+    monkeypatch.setattr(agent_core, "_load_scoped_attachment_rows", lambda: [])
     assert agent_core._review_attachments(False) == []
+
+
+def test_review_attachments_still_lists_files_when_inline_loader_fails(monkeypatch):
+    """인라인 로더가 죽어도 첨부의 **존재**는 리뷰어에게 전달된다 (feature-0003 attach-full-scope).
+
+    본문이 없다고 파일을 목록에서 지우면, 그 파일을 논한 답변이 다시 '창작'으로 오판된다.
+    """
+    def boom():
+        raise RuntimeError("no inline path")
+
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_texts", boom)
+    monkeypatch.setattr(agent_core, "_load_scoped_attachment_rows", lambda: [
+        {"id": 9, "filename": "late.csv", "kind": "csv", "object_key": "k/9",
+         "status": "ingested", "meta_json": None},
+    ])
+    got = agent_core._review_attachments(False)
+    assert got == [{"filename": "late.csv", "content": "", "truncated": False,
+                    "content_available": False, "kind": "csv"}]

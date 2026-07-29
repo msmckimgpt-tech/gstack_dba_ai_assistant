@@ -3140,18 +3140,20 @@ async def ask(request: Request) -> JSONResponse:
 
         # feature-0007: api_key 인자 제거. agent_core 가 env 단일 소스로 자격증명
         # 결정 (LLM_API_KEY → BEDROCK_GATEWAY_API_KEY chain).
-        # TASK-0094 Sprint 1 Phase 11: attachment_ids 를 env 로 전달 (D16 정합).
+        # TASK-0094 Sprint 1 Phase 11: attachment_ids 를 env 로 전달.
         # compose_system_prompt 가 ATTACHMENT_IDS env 를 읽어 prompt 에 section 주입.
-        # 명시 안 되면 빈 list — 본 cycle 의 attachment 미주입 (minimum exposure).
+        # feature-0003 attach-full-scope (2026-07-29): 클라이언트가 보낸 목록은 **이번 턴 신규
+        # 첨부 신호**로만 쓰고, 실제 참조 스코프는 아래에서 대화 전체로 해소한다(D16 supersede).
+        client_attachment_ids: list[int] = []
         attachment_ids_raw = data.get("attachment_ids") if isinstance(data.get("attachment_ids"), list) else []
-        attachment_ids_clean: list[int] = []
         for v in attachment_ids_raw[:50]:  # cap 50 per request
             try:
                 iv = int(v)
                 if iv > 0:
-                    attachment_ids_clean.append(iv)
+                    client_attachment_ids.append(iv)
             except Exception:
                 continue
+        attachment_ids_clean: list[int] = list(client_attachment_ids)
         # TASK-0137: 첨부 메타는 os.environ 전역 대신 run_agent 의 contextvar kwarg 로 전달
         # (동시 요청 격리). attachment_ids_clean 은 아래 to_thread 호출에서 kwarg 로 넘긴다.
 
@@ -3168,13 +3170,33 @@ async def ask(request: Request) -> JSONResponse:
                 continue
         # TASK-0137: new_attachment_ids 도 contextvar kwarg 로 전달 (아래 to_thread 참조).
 
+        # feature-0003 attach-full-scope (2026-07-29 사용자 결정): 참조 스코프를 프론트 selection
+        # 에서 **이 대화의 활성 첨부 전량**으로 옮긴다. 첨부가 걸린 대화를 이어서 진행할 때 이전
+        # 턴 첨부가 통째로 빠지던 마찰(프론트 bucket 이 비는 진입 경로)을 구조적으로 제거한다.
+        # 그룹 대화는 발신자 본인 첨부만(feature-0009 CSO F1 유지) — 아래 헬퍼가 게이트한다.
+        # 실패해도 client 선택분으로 폴백해 답변을 막지 않는다.
+        attachment_ids_clean = app._resolve_conversation_attachment_scope(
+            conn,
+            conv_id,
+            int(account["id"]),
+            client_ids=client_attachment_ids + new_attachment_ids_clean,
+            sender_scope=app._conversation_is_group(conv_id or ""),
+        )
+
         # TASK-0107 hotfix: UploadStatus 가 'uploaded' (ingest 미완) 또는 'failed' 인
         # csv/xlsx attachment 를 /api/ask 진입 시점에 동기 ingest 해 LLM 호출 전에
         # sandbox table 이 준비되도록 한다. timeout (최대 30s) 이내 완료 못 하면
         # background 로 fallback — 이번 turn 은 metadata 만, 다음 turn 부터 full context.
-        if attachment_ids_clean:
+        # feature-0003 attach-full-scope: 동기 ingest 대기는 **이번 턴에 올라온 첨부**로 한정한다.
+        # 스코프가 대화 전량으로 넓어진 뒤에도 이전 턴의 failed 첨부를 매 턴 재시도하며 최대 25s
+        # 를 기다리는 지연 회귀가 생기지 않게 한다(과거 실패분은 아래 background ingest 대상).
+        _sync_ingest_ids: list[int] = []
+        for _v in (client_attachment_ids + new_attachment_ids_clean):
+            if _v not in _sync_ingest_ids:
+                _sync_ingest_ids.append(_v)
+        if _sync_ingest_ids:
             try:
-                _placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                _placeholders = ", ".join(["%s"] * len(_sync_ingest_ids))
                 # TASK-0284: ConversationId 스코프(대화에 속한 csv/xlsx 만 ingest), 미결정 시 AccountId 폴백.
                 if conv_id:
                     _pi_col, _pi_val = "ConversationId", str(conv_id)
@@ -3185,7 +3207,7 @@ async def ask(request: Request) -> JSONResponse:
                     f"SELECT Id, ConversationId, ObjectKey, Kind FROM WebConversationAttachments "
                     f"WHERE Id IN ({_placeholders}) AND {_pi_col} = %s AND UploadStatus IN ('uploaded','failed') "
                     f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL AND DeletePending = 0 LIMIT 10",
-                    tuple(attachment_ids_clean) + (_pi_val,),
+                    tuple(_sync_ingest_ids) + (_pi_val,),
                 )
                 _pending_rows = _pending_cur.fetchall() or []
                 _pending_cur.close()
