@@ -3016,7 +3016,10 @@ function renderReasoning(redteam, notes) {
   body.innerHTML = `
     <div class="reasoning-section">
       <h3 class="reasoning-section-title">자가 적대 리뷰 활동</h3>
-      <p class="reasoning-section-hint">답변 전달 전 별도 모델(red-team)이 <strong>초안 → 적대 리뷰 → 결함 수정 → 재검증 → 최종 전달</strong> 과정으로 답변을 검증·개선한 기록입니다. <strong>대화 단위</strong>로 묶여 있고(최근 대화 순), 대화를 펼치면 그 안의 리뷰가 진행 순서대로, 리뷰를 펼치면 <strong>자가검증·재검증 회차 단계 전부</strong>가 순서대로 나타납니다 — 각 항목은 접기/펼치기 됩니다. "대화 열기"로 해당 답변이 개선된 실제 대화를 확인할 수 있습니다. 운영 값은 <strong>설정 &gt; AI 자가 리뷰</strong>, assistant 작동 지침·스킬은 <strong>설정 &gt; 프롬프트</strong>에서 확인합니다.</p>
+      <!-- 안내는 "이 화면이 무엇인가" 한 줄로 끝낸다. 접기/펼치기·정렬 같은 조작법과 다른
+           화면 경로(설정 > …)를 여기 나열하면, 화면을 보면 아는 것을 매번 읽히는 벽이 된다
+           (사용자 지적 2026-07-29). 상세 계약은 FUNCTION.md §7.5 가 정본. -->
+      <p class="reasoning-section-hint">답변을 전달하기 전에 별도 모델(red-team)이 초안을 적대적으로 검증하고 결함을 고친 기록입니다.</p>
       ${statHtml}
       <div id="reasoningAxisSummaryWrap">${axisSummaryHtml}</div>
       <div class="reasoning-review-list" id="reasoningReviewList">${reviewListHtml}</div>

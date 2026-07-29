@@ -309,3 +309,27 @@ source_of_truth: true
 - 미커버: 회차별 **실제** 시각이 라이브 원장에 남는 것은 배포 후 새 리뷰가 필요하다(기존 행은
   소급되지 않음). 배포 후 첫 다회차 답변에서 `redteam_review_rounds.created_at` 이 회차마다
   다른지로 확인한다.
+
+### Run 2026-07-29 (6) — 안내 문구 축약 + 회차별 시각 라이브 확정 (reasoning-hint-trim)
+- Environment: **Windows-browser** (PB-0008) + 격리 검증 컨테이너 `rr-verify-web`
+  (`http://localhost:18099`, 라이브 web 이미지 + 본 branch src 마운트, 라이브 DB 조회)
+- Runner: AI · Bridge: relay @ `http://172.26.144.1:9223` (Chrome/150.0.7871.115)
+- **① 안내 축약** — `.reasoning-section-hint` 가 3줄(약 260자) → **1문장 57자**
+  ("답변을 전달하기 전에 별도 모델(red-team)이 초안을 적대적으로 검증하고 결함을 고친
+  기록입니다."). 통계 타일·축 분포·대화 목록이 3줄 위로 올라와 첫 화면에서 대화 그룹이 더
+  많이 보인다. Evidence: `rr-14-hint.png`. **PASS**
+- **② 회차별 실제 시각 — 이전 cycle 미커버 확정** — 배포(`d1b832bc`) 후 생성된 review
+  `id=159`(대화 `…b5f40d99`, 회차 5단계, `revision_rounds=2` · `stop_reason=resolved`):
+
+  | 회차 | 화면 | 원장 시각 |
+  |---|---|---|
+  | 최초 자가검증 | 결함 검출 — BLOCK 1 · WARN 3 | 17:25:01 |
+  | 1회차 결함 수정 | 도구 재추론 (SQL) · 도구 2라운드 · 6180자 | 17:25:44 |
+  | 1회차 재검증 | 결함 검출 — BLOCK 1 · WARN 2 | 17:26:11 |
+  | 2회차 결함 수정 | 도구 재추론 (SQL) · 도구 3라운드 · 6751자 | 17:27:03 |
+  | 2회차 재검증 | 통과 — 결함 없음 | 17:27:33 |
+
+  `count(DISTINCT created_at)=5/5` — 회차마다 **서로 다른 실제 종료 시각**이 남고 화면에도
+  그대로 표시된다(숨김 안내 미표시). 배포 전 기록(`id=145`)은 여전히 `distinct_ts=1` 이라
+  시각이 숨겨지고 안내가 붙는다 — 설계대로. **PASS**
+- Pass/Fail: **PASS**
