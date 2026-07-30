@@ -460,3 +460,25 @@ source_of_truth: true
 - **역검증(테스트가 실제로 잠그는지)**: 의도적 위반 주입 시 FAIL 하는지 확인 — `AGENT_INSIGHT_OFFHOURS_MODEL=edge` → FAIL(skip 없음), `=ollama/mistral` → FAIL(allowlist `startswith("claude")` 작동). 통과만 보고 "잠겼다" 고 결론내지 않았다.
 - **운영 `.env` 반영**: `repo/.env` 의 `AGENT_INSIGHT_OFFHOURS_MODEL` 을 빈 값으로 변경(백업 `.env.bak-llm-edge-free-20260730-193044`). `docker compose config` 로 `AGENT_INSIGHT_OFFHOURS_MODEL: ""` 파싱 실측 — 인라인 주석이 값으로 새지 않도록 주석은 별 줄로 분리했다.
 - fallback 정적 검증: 폴백 6개 전부 (a) `model_list` 실재, (b) `anthropic/` provider, (c) `api_base` 없음, (d) `edge-fallback` 참조 0건.
+
+### Run 2026-07-30-llm-edge-free-routing-POSTDEPLOY
+- Date: 2026-07-30 19:59 KST · Environment: `CLI` (라이브 배포본 실측) · 배포 SHA **9c4e9935** (PR #1097 머지 → `bin/deploy-web.sh` scope=all)
+- 배포 경로: web 롤링(a→b, soak 통과) → 워커 핀 이미지 롤아웃(`mysql-ai-agent:9c4e9935`) → **bedrock-gateway 드리프트 감지(litellm config `3166d1b9a8a5` ≠ `be14d75dd402`) → surge replica 무중단 교체**.
+- **검증 1 — 게이트웨이 실 config (컨테이너 내부 `/app/config.yaml` 파싱)**: fallback 6개 전부 2계정 종단이고 `edge`/`local` 참조 **NONE**.
+  ```
+  claude-haiku-4             -> ['claude-haiku-4-root']
+  claude-haiku-4-interactive -> ['claude-haiku-4-interactive-root']
+  claude-haiku-4-meta        -> ['claude-haiku-4-meta-root']
+  claude-haiku-4-chat        -> ['claude-haiku-4-chat-root']
+  claude-sonnet-4-chat       -> ['claude-sonnet-4-chat-root']
+  claude-opus-5-chat         -> ['claude-opus-5-chat-root']
+  ```
+- **검증 2 — 라이브 프로브(서빙 모델 실측)**: web-a 컨테이너에서 게이트웨이 경유, `max_tokens=5600`(thinking budget 5000 초과 필수 — 작게 주면 400 을 라우팅 고장으로 오진).
+  | alias | HTTP | served | edge? |
+  |---|---|---|---|
+  | `claude-haiku-4-interactive` | 200 | `claude-haiku-4-interactive` | no |
+  | `claude-haiku-4` | 200 | `claude-haiku-4` | no |
+  | `claude-haiku-4-chat` | 200 | `claude-haiku-4-chat` | no |
+- **검증 3 — 앱 층 off-hours 강등 (경계 밖 시각에 실측)**: 목요일 **19:59 KST** = 근무시간 `[10,19)` 밖 = 종전이라면 강등 구간. insight-worker 컨테이너에서 `llm._effective_insight_model()` → **`claude-haiku-4`**, `AGENT_INSIGHT_OFFHOURS_MODEL` → `''`. 즉 강등이 실제로 꺼졌다(단위 테스트의 시각 4지점 검증을 라이브가 확인).
+- **검증 4 — 사건 재발 없음**: 배포 후 게이트웨이 로그의 `name resolution` 실패 0건, 최근 10분 `/v1/chat/completions` 응답 전부 200.
+- 결론: 사용자 보고("모든 LLM 요청이 edge")의 경로가 게이트웨이·앱 양 층에서 제거됐고 라이브에서 확인됐다. UI 표면 변경 없음 → PB-0008 비해당(§15.4.1 예외).

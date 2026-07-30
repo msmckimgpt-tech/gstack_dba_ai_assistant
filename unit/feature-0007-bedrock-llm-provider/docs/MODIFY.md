@@ -625,3 +625,15 @@ source_of_truth: true
 - Rollback: 본 CHG revert(`fallbacks` 4줄 + config 기본값 1줄) → 종전 강등 거동 복귀. deployment 정의를 남겨 두었으므로 config 한 줄로도 부분 복구 가능.
 - ANCHOR 정합: §1(운영자 자격 일원화)·§2(Alt-A gateway 경유) 무충돌 — 라우팅 폴백 정책 변경이며 인증/인가 경계 변경 아님.
 - Cross-ref: REVIEW REV-20260730T191535-llm-edge-free-routing · TASK `## TASK-20260730T191535-llm-edge-free-routing` · DECISIONS ADR-003 · TEST Run 2026-07-30-llm-edge-free-routing · shared/docs/MODIFY.md 동일 CHG · 선행 ADR-002(2026-07-04, 부분 superseded) · feature-0002 `test_meta_llm_edge_free.py`(2026-07-30 오전).
+
+## CHG-20260730T200500-llm-edge-free-routing-postdeploy (edge-free 라우팅 배포 후 라이브 확정 기록)
+- Date: 2026-07-30. 선행 CHG-20260730T191535-llm-edge-free-routing 의 배포 후 확정. **코드 변경 0 — 문서 전용**(TEST Run 추가 · TASK 체크박스 완료 · LEARNINGS 2건).
+- 배포: PR #1097 머지(main **9c4e9935**) → `sudo -E bin/deploy-web.sh`(scope=all). web 롤링 + soak 통과 → 워커 핀 이미지(`mysql-ai-agent:9c4e9935`) 롤아웃 → **bedrock-gateway 드리프트 감지(litellm config `3166d1b9a8a5`≠`be14d75dd402`) → surge replica 무중단 교체**(config 변경이 실제로 반영된 경로).
+- 라이브 확정(상세 TEST Run 2026-07-30-llm-edge-free-routing-POSTDEPLOY):
+  - 게이트웨이 컨테이너 내부 `/app/config.yaml` 파싱 → fallback 6개 전부 2계정 종단, `edge`/`local` 참조 **NONE**.
+  - 프로브 3종(`-interactive`/`claude-haiku-4`/`-chat`) 전부 **200 + served=claude-\***(edge 아님). `max_tokens=5600`(thinking budget 5000 초과)로 호출 — 작게 주면 400 이 나 라우팅 고장으로 오진한다.
+  - **경계 밖 시각 실측**: 목 19:59 KST(근무시간 `[10,19)` 밖 = 종전이라면 강등 구간)에 insight-worker 의 `_effective_insight_model()` → `claude-haiku-4`, OFFHOURS env `''`. 단위 테스트의 시각 4지점 검증을 라이브가 확인.
+  - 사건 재발 없음: 배포 후 게이트웨이 `name resolution` 실패 0건, 최근 10분 응답 전부 200.
+- LEARNINGS: `docs/LEARNINGS.md` LRN-20260730-0001(폴백 안전망이 도달성 장애를 조용한 품질 저하로 번역 — 같은 사건 안의 대조군) · LRN-20260730-0002(env override 시 skip 하는 테스트의 vacuous pass — 실효 설정 검사 + allowlist + 역검증).
+- 잔여: REPORT §8 의 후속 3건(게이트웨이 DNS 안정화 **우선** · bare alias 단일계정 · provider-선택 층 로컬 fallback). 전부 별 cycle.
+- Cross-ref: 선행 CHG-20260730T191535-llm-edge-free-routing · DECISIONS ADR-003 · REVIEW REV-20260730T200500-postdeploy · TEST Run POSTDEPLOY.

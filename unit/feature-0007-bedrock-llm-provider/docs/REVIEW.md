@@ -589,3 +589,13 @@ source_of_truth: true
 - Critical issue: bare `claude-sonnet-4`/`claude-opus-5` 는 fallback 미등록 단일 계정 — 빈 `.env` 기동 환경에서 claude-corp 429 시 즉시 실패(운영 `.env` 는 `-interactive` 지정이라 현재 라이브 영향 없음).
 - Human Approval Needed: no (사용자 결정은 이미 수령 — 로컬 LLM 전면 미사용)
 - Cross-ref: MODIFY CHG-20260730T191535-llm-edge-free-routing · DECISIONS ADR-003 · TEST Run 2026-07-30-llm-edge-free-routing · REPORT §8(후속 3건).
+
+## REV-20260730T200500-ai-claude-feature-0007-edge-free-postdeploy [SKIPPED:post-deploy-live-evidence] — PASS
+- Related TASK: feature-0007-bedrock-llm-provider (TASK-20260730T191535-llm-edge-free-routing 의 배포 후 기록)
+- Reason: 본 cycle 은 **코드 변경 0 · 문서 전용**이다 — 배포 후 관측한 사실의 기록(TEST Run)·선행 cycle 체크박스 완료·LEARNINGS 2건. 판단이 필요한 설계 변경이 없으므로 별도 적대 패널을 돌리지 않는다. 정본 적대 리뷰는 선행 REV-20260730T191535-ai-claude-feature-0007-llm-edge-free-routing(codex 2회, P1 3건 중 2건 해소·1건 이월).
+- 본 cycle 이 확정한 것: 선행 리뷰가 "배포 후 실측 잔여" 로 남겼던 항목이 해소됐다 — 게이트웨이 실 config 의 edge 참조 0, 프로브 3종 served=claude, **경계 밖 시각(19:59 KST)** 에 insight 강등 없음. 즉 단위 테스트가 잠근 계약이 라이브에서도 성립함을 확인.
+- 미해소로 남긴 것(정직 표기): REPORT §8 후속 3건 — ① 게이트웨이 DNS 안정화(edge 제거로 우선순위 상승: 같은 단절이 재발하면 전면 중단) ② bare `claude-sonnet-4`/`claude-opus-5` 단일계정(codex P1 이월, 의도적 격리 설계라 별 결정 필요) ③ `_select_llm_provider()` 의 provider-선택 층 로컬 fallback(다른 층, 운영 미발동).
+- Timestamp: 2026-07-30T20:05:00+09:00
+- 위험도: Minor(§12.3) — 문서 기록, 동작 영향 0.
+- Human Approval Needed: no
+- Cross-ref: MODIFY CHG-20260730T200500-llm-edge-free-routing-postdeploy / TEST Run 2026-07-30-llm-edge-free-routing-POSTDEPLOY / 선행 REV-20260730T191535.
