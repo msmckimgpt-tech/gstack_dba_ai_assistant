@@ -185,6 +185,45 @@ function seedTwoBands() {
   check("B4 스키마 접힘 시 GB: 노드 없음", !out.nodes.some((n) => String(n.id).startsWith("GB:")));
 }
 
+// ── B5: gb-highlight-lit — 하이라이트 상태에서도 밴드 집계선이 살아남는다 ─────
+{
+  // 라이브 실측(2026-07-30): `lit`/`litSelf` 가 `SC:` 만 해소하고 `GB:` 를 몰라, 노드가 선택되면
+  //   `hlHide` 가 밴드 집계선을 **항상** 제거했다(접힘 1건인데 방출 GB: 엣지 0). 그래프는 보통 노드
+  //   클릭으로 진입하므로 사실상 기본 상태에서 안 보였다. 밴드=멤버 집합으로 판정하도록 고친 계약.
+  seedTwoBands();
+  build();                                   // groupOf 는 build 중 채워진다 — 먼저 1회 빌드
+  const gk = [...M.groupOf.values()].find((k) => /be:1$/.test(k));
+  M.groupCollapsed.add(gk);
+  // 선택 없음(하이라이트 비활성) → 집계선 존재(기준선)
+  M.selected = null; M.focusAdj = null;
+  let out = build();
+  const base = out.edges.filter((e) => e.source === "GB:" + gk || e.target === "GB:" + gk);
+  check("B5 무선택 시 밴드 집계선 존재(기준선)", base.length >= 1, base.length);
+
+  // 접힌 밴드의 **상대편** 테이블을 선택 → 하이라이트 상태에서도 집계선이 남아야 한다
+  M.selected = nk("a.m1");
+  out = build();
+  const lit = out.edges.filter((e) => e.source === "GB:" + gk || e.target === "GB:" + gk);
+  check("B5 하이라이트 상태에서도 밴드 집계선 보존", lit.length >= 1,
+    { total: out.edges.length, gb: lit.length });
+  check("B5 보존된 선은 여전히 집계", lit.length >= 1 && lit.every((e) => e.data && e.data.aggregated === true));
+
+  // 무관한 노드를 선택하면 그 밴드 집계선은 정상적으로 제거된다(과잉 보존 아님)
+  //   ⚠ 선택 노드에 **이웃이 없으면 하이라이트 자체가 성립하지 않는다**(fa=null → hlHide 무발동).
+  //     따라서 "무관" 대조군은 관계는 있되 접힌 밴드와 무관한 노드여야 한다.
+  seedTwoBands();
+  ["a.z8", "a.z9"].forEach((f) => addTable(f, 2, "무관"));
+  addEdge(nk("a.z8.c1"), nk("a.z9.c1"), "REFERENCES", { status: "trusted" });
+  M.selected = null; M.focusAdj = null;
+  build();
+  const gk2 = [...M.groupOf.values()].find((k) => /be:1$/.test(k));
+  M.groupCollapsed.add(gk2);
+  M.selected = nk("a.z9");
+  out = build();
+  const unrel = out.edges.filter((e) => e.source === "GB:" + gk2 || e.target === "GB:" + gk2);
+  check("B5 무관 노드 선택 시엔 제거(§67 하이라이트 의미 유지)", unrel.length === 0, unrel.length);
+}
+
 // ── C. 패널↔캔버스 SSOT 소스 계약 ───────────────────────────────────────────
 {
   const ctxPath = path.resolve(__dirname, "../../src/static/graph/graph-ctxmenu.js");
