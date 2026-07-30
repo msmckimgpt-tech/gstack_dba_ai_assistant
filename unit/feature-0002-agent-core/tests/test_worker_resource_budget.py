@@ -54,19 +54,32 @@ def test_specs_registered_with_live_apply_mode(snap):
         assert spec["apply_mode"] == "live", f"{key} 는 live 여야 한다"
 
 
-def test_no_knob_without_an_enforced_gate(snap):
-    """게이트 없는 상한 knob 을 노출하지 않는다 — **거짓 컨트롤 금지**(codex P1).
+def test_registered_resources_all_have_wired_gates(snap):
+    """등재된 자원은 **전부 실제 게이트 지점을 가진다** — 거짓 컨트롤 금지(ADR-0025-06).
 
-    커넥션 총량(pg/ds)은 게이트가 T0b 로 이연됐으므로 knob 도 없어야 한다. 이 단정은 "상한을
-    설정했는데 아무것도 강제되지 않는" 상태로 되돌아가는 것을 막는다(이 repo 가 같은 이유로
-    `attachment.execute_sql_on.*` 를 제거한 선례).
+    T0b 에서 `ds`(소스 DB 동시 연결)·`task`(동시 진행 작업)가 게이트와 함께 추가됐다. `pg`
+    (PG 동시 점유)는 커넥션 수명·예산 수명 결합이 필요해 여전히 미등재이며 `task` 가 근사한다.
     """
-    for key in ("AGENT_WORKER_PG_BUDGET", "AGENT_WORKER_DS_BUDGET"):
-        assert rs.spec_for(key) is None, f"{key} 는 게이트가 배선될 때(T0b) 함께 추가해야 한다"
-    assert rb.RESOURCES == ("llm",), "게이트가 배선된 자원만 RESOURCES 에 등재한다"
-    # 미등재 자원은 fail-open(게이트 없음) — 오타·미배선이 작업을 조용히 막지 않는다.
+    import inspect
+    assert rb.RESOURCES == ("llm", "ds", "task")
+    for key in ("AGENT_WORKER_LLM_BUDGET", "AGENT_WORKER_DS_BUDGET", "AGENT_WORKER_TASK_BUDGET"):
+        spec = rs.spec_for(key)
+        assert spec is not None, f"{key} 스펙 미등록"
+        assert spec["apply_mode"] == "live", f"{key} 는 live 여야 한다"
+    # `pg` 는 게이트가 없으므로 knob 도 없어야 한다(있으면 거짓 컨트롤).
+    assert rs.spec_for("AGENT_WORKER_PG_BUDGET") is None
     with rb.acquire("pg") as ok:
-        assert ok is True
+        assert ok is True          # 미등재 → fail-open(게이트 없음)
+
+    # 게이트 지점 실재 단정 — 배선을 지우고 knob 만 남기는 회귀를 잡는다.
+    from modules import node_analysis as na
+    from modules import routine_backfill as rbk
+    from modules import semantic_cluster as sc
+    from modules import product_classify as pc
+    assert 'acquire("ds")' in inspect.getsource(na._introspect_table_columns)
+    assert 'acquire("ds")' in inspect.getsource(rbk._rb_acquire_ds)
+    for fn in (na.process_pending, sc.run_cluster_maintenance, pc.run_classify_pass):
+        assert 'acquire("task")' in inspect.getsource(fn), f"{fn.__name__} task 게이트 누락"
 
 
 def test_default_limits_exceed_current_max_concurrency(snap):
@@ -302,3 +315,115 @@ def test_process_pending_skips_tick_when_llm_budget_exhausted(snap, monkeypatch)
         assert ok
         rep = na.process_pending(max_nodes=5)
     assert rep["claimed"] == 0
+
+# ── T0b: ds · task 게이트 ────────────────────────────────────────────────────
+
+def test_introspect_skips_when_ds_budget_exhausted(snap, monkeypatch):
+    """소스 DB 예산 여유 0 이면 **연결을 열지 않고** 빈 목록을 돌려준다(fail-soft)."""
+    from modules import node_analysis as na
+    from shared import db as _db
+
+    snap({"AGENT_WORKER_DS_BUDGET": 1})
+
+    def _no_connect(*a, **kw):
+        raise AssertionError("ds 예산 여유 0 인데 소스 DB 연결을 시도했다")
+
+    monkeypatch.setattr(_db, "connect", _no_connect)
+    with rb.acquire("ds") as ok:            # 상한 1 을 테스트가 점유 → 여유 0
+        assert ok
+        out = na._introspect_table_columns({"engine": "mysql"}, "sch", "tbl", 100)
+    assert out == []
+
+
+def test_introspect_releases_ds_budget_after_use(snap, monkeypatch):
+    """연결 close 와 같은 finally 에서 예산을 반납한다 — 점유가 누수되지 않는다."""
+    from modules import node_analysis as na
+    from shared import db as _db
+
+    snap({"AGENT_WORKER_DS_BUDGET": 2})
+
+    class _Cur:
+        def execute(self, *a, **kw): pass
+        def fetchall(self): return []
+        def close(self): pass
+
+    class _Conn:
+        def cursor(self): return _Cur()
+        def close(self): pass
+
+    monkeypatch.setattr(_db, "connect", lambda *a, **kw: _Conn())
+    before = rb.available("ds")
+    na._introspect_table_columns({"engine": "mysql"}, "sch", "tbl", 100)
+    assert rb.available("ds") == before, "ds 예산이 반납되지 않았다(누수)"
+
+
+def test_process_pending_skips_tick_when_task_budget_exhausted(snap, monkeypatch):
+    """동시 작업 예산 여유 0 이면 tick 전체를 건너뛴다(claim 도 하지 않는다)."""
+    from modules import node_analysis as na
+
+    snap({"AGENT_WORKER_TASK_BUDGET": 1})
+    monkeypatch.setattr(na, "_cfg_enabled", lambda: True)
+
+    def _no_conn(_conn):
+        raise AssertionError("task 예산 여유 0 인데 claim 을 시도했다")
+
+    monkeypatch.setattr(na, "_rw_conn", _no_conn)
+    with rb.acquire("task") as ok:
+        assert ok
+        rep = na.process_pending(max_nodes=5)
+    assert rep["claimed"] == 0
+    assert rep["done"] == 0
+
+
+def test_task_budget_released_after_tick(snap, monkeypatch):
+    """tick 종료 후 task 예산이 반납된다 — 래퍼가 with 로 감싸므로 early return 에도 누수 없음."""
+    from modules import node_analysis as na
+
+    snap({"AGENT_WORKER_TASK_BUDGET": 2})
+    monkeypatch.setattr(na, "_cfg_enabled", lambda: True)
+    monkeypatch.setattr(na, "_rw_conn", lambda _c: (None, False))   # PG 미가용 경로 → early return
+    before = rb.available("task")
+    na.process_pending(max_nodes=1)
+    assert rb.available("task") == before, "task 예산이 반납되지 않았다(누수)"
+
+def test_ds_budget_released_when_connect_raises(snap, monkeypatch):
+    """★회귀: 예산 획득 후 **연결 수립이 예외** 를 내도 반납된다.
+
+    초판은 `connect()` 를 `try` **밖**에서 호출해 이 경로에서 슬롯이 영구 누수됐고(다음 introspect
+    전부 거절), codex 적대 리뷰가 P1 으로 적발했다(REV-20260730T1430). connect 를 try 안으로 옮겨
+    finally 가 항상 반납하게 고쳤다.
+    """
+    from modules import node_analysis as na
+    from shared import db as _db
+
+    snap({"AGENT_WORKER_DS_BUDGET": 2})
+
+    def _boom(*a, **kw):
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(_db, "connect", _boom)
+    before = rb.available("ds")
+    out = na._introspect_table_columns({"engine": "mysql"}, "sch", "tbl", 100)
+    assert out == []                                  # fail-soft (호출측 계약 유지)
+    assert rb.available("ds") == before, "connect 예외 경로에서 ds 예산이 누수됐다"
+
+
+def test_ds_budget_released_when_query_raises(snap, monkeypatch):
+    """쿼리 단계 예외도 동일하게 반납 + fail-soft."""
+    from modules import node_analysis as na
+    from shared import db as _db
+
+    snap({"AGENT_WORKER_DS_BUDGET": 2})
+
+    class _Cur:
+        def execute(self, *a, **kw): raise RuntimeError("query failed")
+        def close(self): pass
+
+    class _Conn:
+        def cursor(self): return _Cur()
+        def close(self): pass
+
+    monkeypatch.setattr(_db, "connect", lambda *a, **kw: _Conn())
+    before = rb.available("ds")
+    assert na._introspect_table_columns({"engine": "mysql"}, "sch", "tbl", 100) == []
+    assert rb.available("ds") == before

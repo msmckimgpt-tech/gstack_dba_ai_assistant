@@ -111,15 +111,27 @@ def run_classify_pass(kb_conn=None, mem_conn=None, *, dry_run: bool = False) -> 
     멱등: Pending UNIQUE(Product, Ds, Schema) + INSERT IGNORE + taken(매핑·대기) 선제 제외.
     실패는 datasource 단위 격리(errors 에 loud) — 데몬 루프를 죽이지 않는다.
     """
-    # T0 전역 kill-switch (worker-resource-isolation): 백그라운드 분석 정지 시 제안 pass 를
-    #   건너뛴다. 설정 조회 실패는 활성 취급(fail-open) — 설정 장애가 데몬을 멈추지 않게.
+    # T0 전역 kill-switch + T0b 동시 작업 예산. 설정 조회 실패는 활성 취급(fail-open) — 설정
+    #   장애가 데몬을 멈추지 않게. 예산은 pass 전체를 감싸므로 본체를 별 함수로 분리한다.
     try:
         from shared import resource_budget as _rb_pc
+    except Exception:
+        _rb_pc = None
+    if _rb_pc is not None:
         if not _rb_pc.background_enabled():
             return {"datasources": {}, "suggested_total": 0, "errors": [],
                     "skipped": "background_disabled"}
-    except Exception:
-        pass
+        with _rb_pc.acquire("task") as _ok_pc:
+            if not _ok_pc:
+                _log.info("product_classify pass 보류 — 동시 진행 백그라운드 작업 예산 여유 없음")
+                return {"datasources": {}, "suggested_total": 0, "errors": [],
+                        "skipped": "task_budget"}
+            return _run_classify_pass_inner(kb_conn=kb_conn, mem_conn=mem_conn, dry_run=dry_run)
+    return _run_classify_pass_inner(kb_conn=kb_conn, mem_conn=mem_conn, dry_run=dry_run)
+
+
+def _run_classify_pass_inner(kb_conn=None, mem_conn=None, *, dry_run: bool = False) -> dict:
+    """분류 제안 pass 본체 (게이트 통과 후)."""
     from shared.db import connect_with_retry
     from shared import datasources as _dsr
     from modules import metadata_graph as _mg

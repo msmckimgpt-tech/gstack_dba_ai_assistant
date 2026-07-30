@@ -610,8 +610,24 @@ def _introspect_table_columns(ds: dict, schema: str, table: str, cap: int) -> li
     (기본 dbo 외 사용자 스키마도 포섭 — dialects.describe_columns 의 빈-스키마 관례와 동형)."""
     from shared import db as _db
     engine = str((ds or {}).get("engine") or "mysql").strip().lower()
-    conn = _db.connect(database=(schema if engine == "mssql" else None), datasource=ds)
+    # T0b: 소스 DB 동시 연결 예산. 거절되면 이번엔 introspect 를 건너뛴다(컬럼 인벤토리는
+    #   fail-soft — 다음 tick 에 재시도하며 payload 는 기존 컬럼만으로 구성된다).
     try:
+        from shared import resource_budget as _rb_ds
+    except Exception:
+        _rb_ds = None
+    _ds_cm = _rb_ds.acquire("ds") if _rb_ds is not None else None
+    if _ds_cm is not None:
+        _ds_ok = _ds_cm.__enter__()
+        if not _ds_ok:
+            _ds_cm.__exit__(None, None, None)
+            _log.info("컬럼 introspect 보류 — 소스 DB 연결 예산 여유 없음(다음 tick 재시도)")
+            return []
+    # ⚠ connect() 는 **try 안**에서 호출한다 — 예산 획득 후 연결 수립이 예외를 내면 try/finally
+    #   진입 전이라 반납이 보장되지 않아 슬롯이 영구 누수된다(codex P1, REV-20260730T1430).
+    conn = None
+    try:
+        conn = _db.connect(database=(schema if engine == "mssql" else None), datasource=ds)
         cur = conn.cursor()
         try:
             if engine == "mssql":
@@ -641,11 +657,23 @@ def _introspect_table_columns(ds: dict, schema: str, table: str, cap: int) -> li
                 ordn = None
             out.append((name, ordn, str(r[2] or "").strip()[:400]))
         return out
+    except Exception:
+        # 연결 수립·조회 실패는 fail-soft(컬럼 인벤토리는 다음 tick 재시도) — 호출측 계약 유지.
+        _log.debug("introspect_table_columns_failed schema=%s table=%s", schema, table)
+        return []
     finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        # T0b: 소스 DB 연결 예산 반납 — 연결 close 와 같은 finally 에서 해제해 점유 수명이
+        #   연결 수명과 정확히 일치한다(누수 없음). connect 실패 경로도 여기를 지난다.
+        if _ds_cm is not None:
+            try:
+                _ds_cm.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def _ensure_table_columns(c, node_key: str) -> int:
@@ -1316,7 +1344,31 @@ def _cfg_enabled() -> bool:
 
 
 # ── worker step (insight-worker 틱) ──────────────────────────────────────────
+def _empty_rep() -> dict:
+    """처리 0건 telemetry (진입 게이트에서 조기 반환할 때 사용 — 키 집합을 한 곳에 고정)."""
+    return {"claimed": 0, "done": 0, "failed": 0, "retry_pending": 0, "enqueued": 0,
+            "links": 0, "refined": 0, "budget_deferred": 0}
+
+
 def process_pending(max_nodes=None, conn=None) -> dict:
+    """pending 잡 처리 — **동시 작업 예산 게이트 래퍼**. 본체는 `_process_pending_inner`.
+
+    T0b: 진입 게이트를 `with` 로 감싸기 위해 본체를 분리했다. 본체에는 중간 early return 이
+    여러 개 있어(예산 여유 0·PG 미가용) 수동 enter/exit 로는 반납 누락 경로가 생긴다.
+    예산 모듈 부재(배포 skew)면 게이트 없이 본체를 그대로 실행한다.
+    """
+    try:
+        from shared import resource_budget as _rb0
+    except Exception:
+        return _process_pending_inner(max_nodes=max_nodes, conn=conn)
+    with _rb0.acquire("task") as _ok:
+        if not _ok:
+            _log.info("node_analysis tick 보류 — 동시 진행 백그라운드 작업 예산 여유 없음")
+            return _empty_rep()
+        return _process_pending_inner(max_nodes=max_nodes, conn=conn)
+
+
+def _process_pending_inner(max_nodes=None, conn=None) -> dict:
     """pending 잡을 FIFO 로 최대 max_nodes 개 처리(claim→분석→저장→이웃 재큐). 반환 telemetry.
 
     각 잡은 독립 try/except — 1개 실패가 배치를 중단하지 않는다. run 의 pending/running 이 모두
@@ -1327,8 +1379,7 @@ def process_pending(max_nodes=None, conn=None) -> dict:
     # budget_deferred(worker-resource-isolation T0): 공유 LLM 예산이 없어 **이번 tick 에 미룬**
     #   잡 수. failed(terminal)·retry_pending(일시 실패 backoff) 와 별개 축 — "실패가 늘었다"와
     #   "자원이 조여 뒤로 밀렸다"를 운영이 구분해야 상한을 올릴지 판단할 수 있다.
-    rep = {"claimed": 0, "done": 0, "failed": 0, "retry_pending": 0, "enqueued": 0, "links": 0,
-           "refined": 0, "budget_deferred": 0}
+    rep = _empty_rep()
     if not _cfg_enabled():
         return rep
     # T0 전역 kill-switch — **claim 단계에서도** 게이트한다. 신규 트리거만 막고 이미 적재된

@@ -68,3 +68,34 @@ source_of_truth: true
   있다(TODOS Tier 3). 운영자가 조여도 아무 일이 없는 컨트롤은 관측·감사 신뢰를 직접 훼손한다.
 - **Consequences:** 사용자가 요구한 "적응형 부하 제어"의 커넥션 축은 T0b 까지 미구현이다 — 이번
   cycle 은 LLM 축 + 계측 + 전역 정지까지다(정직 표기, TASK 잔여 항목).
+
+## ADR-0025-07 — 진입 게이트는 래퍼/본체 분리로 감싼다 (수동 enter/exit 금지)
+
+- **Date:** 2026-07-30 · **Status:** accepted · **Scope:** T0b
+- **Context:** `task` 예산은 작업 *전체* 를 감싸야 한다. 그런데 `process_pending`·
+  `run_cluster_maintenance`·`run_classify_pass` 는 본체에 early return 이 여러 개다(예산 여유 0,
+  PG 미가용, kill-switch, 대상 없음). 수동 `__enter__`/`__exit__` 로 감싸면 그 경로마다 반납을
+  넣어야 하고 하나만 빠져도 슬롯이 영구 누수된다(다음 tick 전체가 막힌다).
+- **Decision:** 진입 함수를 얇은 래퍼로 두고 본체를 `_*_inner` 로 분리한다. 래퍼가 `with` 로 예산을
+  잡으므로 본체의 어떤 return·예외에도 반납이 보장된다.
+- **Rationale:** 반납 누수는 "다음부터 아무 작업도 안 됨" 이라는 조용한 전역 고장이 되고, 원인이
+  누수 지점과 멀어 진단이 어렵다. 구조로 불가능하게 만드는 편이 낫다.
+- **Consequences:** 호출자·monkeypatch 지점이 래퍼 이름을 그대로 쓰므로 기존 테스트·소비처는 무변경.
+  단 본체를 직접 호출하면 게이트를 우회하므로 `_*_inner` 는 내부 전용이다(밑줄 접두 관례).
+- **예외:** `ds` 게이트(`_introspect_table_columns`·`routine_backfill`)는 **연결 수명과 정확히
+  일치**시켜야 해서 수동 enter/exit 를 쓴다 — 대신 반납을 `conn.close()` 와 **같은 finally** 에 두고
+  획득·반납 헬퍼를 한 쌍(`_rb_acquire_ds`/`_rb_release`)으로 모아 누수 지점을 좁혔다.
+
+## ADR-0025-08 — 워커 자원 콘솔 노출은 공유 볼륨 파일 경유 (PG 테이블 신설 안 함)
+
+- **Date:** 2026-07-30 · **Status:** accepted · **Scope:** T0b
+- **Context:** 자원 카운터는 **워커 프로세스 메모리**에 있고 콘솔은 web 프로세스다. 초기 설계는
+  PG 테이블(`worker_resource_stats`) + 주기 flush + 조회를 가정했다(마이그레이션 필요).
+- **Decision:** 워커가 `/shared/perf/worker-resources-<role>.json` 으로 원자 flush 하고 web 이 **같은
+  볼륨을 읽는다**(web 컨테이너의 `/shared` 마운트 실측 확인). PG 테이블·마이그레이션·신규 라우트 0.
+- **Rationale:** 관측 목적은 "상한을 조여도 되는가 / 이미 병목인가" 판정이고 그건 현재 상태 스냅샷으로
+  충분하다. 시계열이 필요하면 `bin/perf-snapshot.sh` 가 타임스탬프 디렉토리로 복사한다. 마이그레이션은
+  라이브=운영 환경에서 비용·위험이 있고, 그 비용을 지불할 이유가 아직 없다.
+- **Consequences:** 워커·web 이 같은 볼륨을 공유하지 않는 배치(분리 호스트)로 가면 이 경로가 깨진다 —
+  그때 PG 또는 HTTP 수집으로 승격한다. 파일이 stale 해도 값이 최신처럼 보이지 않게 `stale`·`age_sec`
+  를 함께 노출한다.

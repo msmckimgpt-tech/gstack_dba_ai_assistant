@@ -64,6 +64,42 @@ def _base_tables(conn, schema=None) -> list:
             pass
 
 
+def _rb_acquire_ds():
+    """T0b 소스 DB 연결 예산 획득. 반환: 반납용 컨텍스트(획득 성공) 또는 None(거절/모듈 부재).
+
+    `resource_budget.acquire` 는 컨텍스트 매니저지만 이 모듈의 연결 패턴이 `try/finally _close`
+    라서 수동 enter/exit 로 감싼다 — 획득·반납 헬퍼를 한 쌍으로 모아 누수 지점을 좁힌다.
+    모듈 부재(배포 skew)면 게이트 없이 통과시키기 위해 **sentinel 객체**를 돌려준다(None 은 거절).
+    """
+    try:
+        from shared import resource_budget as _rb
+    except Exception:
+        return _RB_BYPASS
+    cm = _rb.acquire("ds")
+    if cm.__enter__():
+        return cm
+    try:
+        cm.__exit__(None, None, None)
+    except Exception:
+        pass
+    _log.info("routine backfill 보류 — 소스 DB 연결 예산 여유 없음(다음 pass 재시도)")
+    return None
+
+
+#: 예산 모듈 부재 시 "게이트 없이 통과" 를 나타내는 sentinel (None=거절 과 구분).
+_RB_BYPASS = object()
+
+
+def _rb_release(cm) -> None:
+    """`_rb_acquire_ds` 가 돌려준 컨텍스트를 반납. sentinel/None 은 무해 no-op."""
+    if cm is None or cm is _RB_BYPASS:
+        return
+    try:
+        cm.__exit__(None, None, None)
+    except Exception:
+        pass
+
+
 def _close(conn) -> None:
     try:
         if conn is not None:
@@ -140,6 +176,10 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                     label_counts[_l] = label_counts.get(_l, 0) + 1
                 for dbname in dbs:
                     conn = None
+                    # T0b: 소스 DB 동시 연결 예산 — 거절되면 이 DB 는 다음 pass 로 미룬다(멱등).
+                    _ds_cm = _rb_acquire_ds()
+                    if _ds_cm is None:
+                        continue
                     try:
                         conn = connect(database=dbname, datasource=ds)
                         schemas = _routine_schemas(conn)
@@ -175,8 +215,12 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                         report["errors"].append(f"{key}/{dbname}: {exc!r}")
                     finally:
                         _close(conn)
+                        _rb_release(_ds_cm)
             else:   # mysql 계열
                 conn = None
+                _ds_cm = _rb_acquire_ds()
+                if _ds_cm is None:
+                    continue
                 try:
                     conn = connect(datasource=ds)
                     schemas = [s for s in _routine_schemas(conn)
@@ -195,6 +239,7 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                     report["errors"].append(f"{key}: {exc!r}")
                 finally:
                     _close(conn)
+                    _rb_release(_ds_cm)
             report["stored_total"] += entry["stored"]
             # scope 별 그래프 투영 — 변경분 upsert(멱등). dry-run 은 skip.
             if not dry_run and entry["stored"] > 0:

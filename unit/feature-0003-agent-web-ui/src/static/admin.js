@@ -2546,6 +2546,47 @@ function renderAiOps(data) {
           : "")
       + `</div>`;
   }
+  // T0b(worker-ds-budget): 워커 공유 자원 예산·계측. 데이터는 워커가 공유 볼륨에 flush 한 스냅샷을
+  //   백엔드가 읽어 실어 준다(worker_resources). 거절이 0 이면 게이트 미발동(정상)이므로 조용히
+  //   현황만 보이고, 거절이 있으면 위 attention 에 병목 신호가 함께 뜬다.
+  const wres = data.worker_resources || {};
+  h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">워커 공유 자원</div>`;
+  const wlist = wres.workers || [];
+  if (!wres.available || !wlist.length) {
+    h += `<div style="color:#57606a;font-size:13px">${esc(wres.reason || "워커 자원 스냅샷을 조회할 수 없습니다.")}</div>`;
+  } else {
+    h += `<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:#57606a;border-bottom:1px solid #d0d7de">`
+      + `<th style="padding:4px 6px">워커</th><th style="padding:4px 6px">자원</th><th style="padding:4px 6px">최대 점유 / 상한</th>`
+      + `<th style="padding:4px 6px">거절</th><th style="padding:4px 6px">커넥션(누적 생성)</th></tr></thead><tbody>`;
+    wlist.forEach((w) => {
+      const keys = Object.keys(w.resources || {});
+      const stale = w.stale ? ` <span style="color:#9a6700;font-size:11px">(스냅샷 ${fmtNum(w.age_sec)}초 전 — 갱신 지연)</span>` : "";
+      const off = (w.background_enabled === false) ? ` <span style="color:#cf222e;font-size:11px">· 분석 정지</span>` : "";
+      const conns = Object.keys(w.conns || {}).filter((k) => w.conns[k]).map((k) => `${esc(k)}=${fmtNum(w.conns[k])}`).join(" · ") || "—";
+      if (!keys.length) {
+        h += `<tr style="border-bottom:1px solid #eaeef2"><td style="padding:4px 6px"><b>${esc(w.role)}</b>${stale}${off}</td>`
+          + `<td colspan="3" style="padding:4px 6px;color:#57606a">기록된 자원 사용이 없습니다.</td>`
+          + `<td style="padding:4px 6px">${conns}</td></tr>`;
+        return;
+      }
+      keys.forEach((rk, i) => {
+        const rv = w.resources[rk] || {};
+        const rejected = Number(rv.rejected || 0);
+        const rejCell = rejected > 0
+          ? `<span style="color:#cf222e">${fmtNum(rejected)}회 (${esc(String(rv.reject_ratio))})</span>`
+          : `<span style="color:#57606a">0</span>`;
+        h += `<tr style="border-bottom:1px solid #eaeef2">`
+          + `<td style="padding:4px 6px">${i === 0 ? `<b>${esc(w.role)}</b>${stale}${off}` : ""}</td>`
+          + `<td style="padding:4px 6px">${esc(rk)}</td>`
+          + `<td style="padding:4px 6px">${fmtNum(rv.peak)} / ${fmtNum(rv.limit)}</td>`
+          + `<td style="padding:4px 6px">${rejCell}</td>`
+          + `<td style="padding:4px 6px">${i === 0 ? conns : ""}</td></tr>`;
+      });
+    });
+    h += `</tbody></table>`
+      + `<div style="margin-top:4px;font-size:11px;color:#57606a">거절 0 = 상한이 병목이 아님(정상). 커넥션은 누적 생성 횟수이며 동시 점유가 아닙니다.</div>`;
+  }
+  h += `</div>`;
   // 계측 커버리지 (정직 노출)
   const cov = data.coverage || {};
   h += `<div style="border-top:1px solid #d0d7de;padding-top:10px;font-size:12px;color:#57606a">`

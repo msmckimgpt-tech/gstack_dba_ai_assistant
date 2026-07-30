@@ -41,12 +41,17 @@
 
 ## 자원 키
 
-| 키 | 대상 | 상한 knob |
-|---|---|---|
-| `llm` | 백그라운드 LLM 동시 호출 (노드 분석·클러스터 라벨·분류 제안) | `AGENT_WORKER_LLM_BUDGET` |
+| 키 | 대상 | 상한 knob | 게이트 지점 |
+|---|---|---|---|
+| `llm` | 백그라운드 LLM 동시 호출 | `AGENT_WORKER_LLM_BUDGET` | 노드 분석·클러스터 라벨(직렬·병렬)·분류 제안 |
+| `ds` | 소스 DB(운영 데이터소스) **동시 연결** | `AGENT_WORKER_DS_BUDGET` | 컬럼 introspect · 루틴 backfill(MSSQL/MySQL) |
+| `task` | **동시 진행 백그라운드 작업 수** | `AGENT_WORKER_TASK_BUDGET` | 노드 분석 tick · 클러스터 pass · 분류 pass |
 
-커넥션 총량(`pg`·`ds`)은 **T0b** 다 — 게이트 없이 knob 만 노출하면 거짓 컨트롤이 되므로 등재하지
-않았다(아래 `RESOURCES` 주석). 지금은 `incr_conn` 이 **누적 생성 횟수**만 계측한다.
+> ⚠ `task` 는 PG 커넥션 총량의 **근사**다. 정확한 PG 동시 점유를 강제하려면 커넥션 수명과 예산
+> 수명을 묶어야 하는데, 워커 모듈은 `conn=None 이면 열고 주어지면 재사용` 패턴을 쓰고 close 는
+> 호출측 `finally` 에 있어 광범위 리팩터가 필요하다. 대신 **작업 단위**로 상한을 둔다 — 작업 하나가
+> 여는 PG 연결은 1~2개이므로 `task` 상한이 곧 PG 점유의 상한 근사다. 이름·설명을 그 의미로
+> 정직하게 유지한다(`AGENT_WORKER_PG_BUDGET` 이라는 이름을 쓰지 않는 이유).
 
 상한 변경은 live 반영된다 — 다음 `acquire()`/`available()` 이 새 상한으로 판정한다. 상한을
 내리는 순간 이미 점유 중인 분은 그대로 유지되고(강제 회수 없음) 신규 획득만 막힌다.
@@ -61,25 +66,24 @@ from typing import Any, Iterator
 
 _log = logging.getLogger("resource_budget")
 
-#: 예산 대상 자원 키 — **실제 게이트가 배선된 자원만** 등재한다.
+#: 예산 대상 자원 키 — **실제 게이트가 배선된 자원만** 등재한다(ADR-0025-06: 게이트 없는 상한
+#: knob 은 거짓 컨트롤이다 — 이 repo 가 `attachment.execute_sql_on.*` 를 같은 이유로 제거한 선례).
 #:
-#: ⚠ `pg`(PG 커넥션)·`ds`(소스 DB 커넥션)는 **의도적으로 빠져 있다**. 그 총량을 실제로 강제하려면
-#: 커넥션 수립 지점을 게이트해야 하는데, 그 지점은 web 요청 경로와 공유하는 헬퍼(`shared/db`)이고
-#: 호출측 명시 배선이 워커 전역에 흩어져 있다 → **T0b 로 분리**. knob 만 먼저 노출하면
-#: "상한을 설정했는데 아무것도 강제되지 않는" **거짓 컨트롤**이 된다(이 repo 가 이전에 제거한
-#: 안티패턴 — `attachment.execute_sql_on.*`: enforce 0 이라 제거, TODOS Tier 3). 커넥션은 지금은
-#: `incr_conn` 으로 **누적 생성 횟수만 계측**한다(동시 점유가 아님 — 문구를 정직하게 유지).
-#: 근거: codex 적대 코드 리뷰 P1 (REV-20260730T1235).
-RESOURCES = ("llm",)
+#: `pg`(PG 커넥션 동시 점유)는 **여전히 등재하지 않는다** — 정확한 강제에 커넥션 수명·예산 수명
+#: 결합이 필요해(위 `task` 주석) 근사 자원 `task` 로 대체했다. `incr_conn` 은 커넥션 **누적 생성
+#: 횟수**만 센다(동시 점유가 아님).
+RESOURCES = ("llm", "ds", "task")
 
 #: 자원 키 → 상한 런타임 설정 키
 _BUDGET_KNOB = {
     "llm": "AGENT_WORKER_LLM_BUDGET",
+    "ds": "AGENT_WORKER_DS_BUDGET",
+    "task": "AGENT_WORKER_TASK_BUDGET",
 }
 
 #: 런타임 설정 미가용(부트스트랩 창·PG 미가용) 시 폴백 상한 — 현행 최대 동시성 이상이라
 #: 게이트가 발동하지 않는다(설정 조회 실패가 작업을 조이지 않게 — fail-open 방향).
-_FALLBACK_LIMIT = {"llm": 16}
+_FALLBACK_LIMIT = {"llm": 16, "ds": 8, "task": 8}
 
 _LOCK = threading.Lock()
 _COND = threading.Condition(_LOCK)

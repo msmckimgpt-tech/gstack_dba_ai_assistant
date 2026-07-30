@@ -49,3 +49,27 @@ source_of_truth: true
 - Artifact: unit/feature-0025-worker-parallelism/docs/reviews/2026-07-30T12-50-00-codex.md
 - Human Approval Needed: no (PLAN-APPROVED 2026-07-30 범위 내 · 배포는 별도 confirm)
 - 판단 근거 요약: ① 게이트 없는 knob 을 노출하지 않는다는 규약을 ADR-0025-06 으로 승격(이 repo 가 `attachment.execute_sql_on.*` 를 같은 이유로 제거한 선례) ② 게이트는 호출측 명시 — 커넥션 헬퍼에 넣으면 web 요청 경로가 백그라운드 예산에 걸린다(ADR-0025-05) ③ 예산 거절은 실패가 아니라 순번 대기이나 **연속** 거절은 terminal 로 표면화해야 한다(무기한 pending 이 run 을 영구 running 으로 만들어 사용자 재트리거를 막는다)
+
+## REV-20260730T143000-ai-claude-feature-0025-worker-ds-budget [CODEX:worker-ds-budget] — PASS
+- Related TASK: feature-0025-worker-parallelism (T0b 커넥션 축 게이트 + 콘솔 노출)
+- Source: codex exec 0.146.0 (`-s read-only`, `model_reasoning_effort=high`, 대상 `git diff --cached`)
+- Trigger: performance/성능 + UI/화면 keyword matched (backend·qa·ux 렌즈). 채널 근거 = AGENTS.md §18.8.2 경량 경로.
+- Timestamp: 2026-07-30T14:45:00+09:00
+- Verdict: PASS (P1 3·P2 1 **전건 in-cycle 수정**, 각 수정에 회귀 단정 추가)
+- Critical issue (해소됨):
+  ① **`ds` 슬롯 누수** — `_ds_cm.__enter__()` 후 `connect()` 를 `try` **밖**에서 호출해, 연결 수립이
+     예외를 내면 반납이 보장되지 않아 슬롯이 영구 누수(이후 introspect 전부 거절). → connect 를 try
+     안으로 이동 + `except` fail-soft. 회귀 2건(connect 예외·쿼리 예외) 추가.
+  ② **NaN/Infinity 가 500 유발** — 비표준 JSON 이라 `JSONResponse` 직렬화가 `ValueError`. 관측 조회가
+     콘솔을 깨는 fail-open 위반. → `_safe_int`/`_safe_float`(`math.isfinite`) 경계 변환 + `allow_nan=False`
+     직렬화 단정.
+  ③ **콘솔 노출이 실제로 안 됨** — `worker_resources` 를 응답에만 추가하고 `admin.js` 렌더가 없었다.
+     §16.7 G3(주장한 affordance 의 배선 실측) 위반이며, 내가 "콘솔 노출 완료" 로 보고한 것도 오보였다.
+     → `admin.js` AI 운영 현황 pane 에 '워커 공유 자원' 표 렌더 추가(거절 0 회색 / 거절 적색+거절률 /
+     stale·분석정지 표식). 웹 자산 변경이 생겼으므로 PB-0008 을 POST-DEPLOY 항목으로 등재.
+  ④ (P2) **symlink 추종** — 공유 볼륨은 다른 컨테이너도 쓴다. → `islink` 스킵 + `realpath` 의 부모가
+     스냅샷 디렉토리인지 재확인(디렉토리 이탈 차단) + 회귀 단정.
+- Clean 판정(codex): task 게이트의 concurrency==1 동작·monkeypatch 해석·kill-switch 보존 / 재진입·
+  self-deadlock 없음 / 기본값 byte-equivalence.
+- Artifact: (본 index entry 가 findings 전문을 담는다 — codex 출력 4항목이 위 ①~④ 와 1:1)
+- Human Approval Needed: no (PLAN-APPROVED 범위 · 배포는 deploy_scope: included)

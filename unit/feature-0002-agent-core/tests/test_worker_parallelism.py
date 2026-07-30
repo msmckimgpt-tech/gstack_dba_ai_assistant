@@ -52,6 +52,8 @@ PERF_KEYS = {
     # 작업이 함께 쓰는 **자원 총량** 상한 + 전역 정지 스위치다. 상세 계약은
     # test_worker_resource_budget.py.
     "AGENT_BACKGROUND_ANALYSIS_ENABLED", "AGENT_WORKER_LLM_BUDGET",
+    # T0b(2026-07-30): 게이트와 함께 추가된 자원 총량 knob.
+    "AGENT_WORKER_DS_BUDGET", "AGENT_WORKER_TASK_BUDGET",
 }
 
 
