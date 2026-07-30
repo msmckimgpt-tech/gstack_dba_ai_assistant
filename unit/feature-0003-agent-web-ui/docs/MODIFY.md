@@ -11,6 +11,14 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260730T160500-progress-enqpre-handoff-postdeploy (POST-DEPLOY 라이브 AFTER 대조 기록, doc-only)
+- `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260729T201000-progress-enqpre-handoff.md`:
+  POST-DEPLOY Run append — BEFORE/AFTER 동일 시나리오 대조표(추적 id·프론트 steps·화면 단계),
+  실 화면 스크린샷 대조, 큐 대기 구간 상태 라벨 변화 부기, P1-1 라이브 미재현 사유.
+- `docs/TASK.md`: 잔여 체크박스 2건(`make test`·PB-0008) 완료 표시 + 실측 요지.
+- `docs/REPORT.md`: "잔여: POST-DEPLOY PB-0008" → 실측 PASS 결과 + 후속 과제(서버 `run_is_mine`) 명시.
+- **코드 변경 0**.
+
 ## CHG-20260729T201000-progress-enqpre-handoff (enqueue sentinel → 실제 run 승계, Major)
 - `unit/feature-0003-agent-web-ui/src/static/app.js`
   - `ENQUEUE_SENTINEL_RUN_PREFIX = "enqpre-"` + `_isEnqueueSentinelRunId()` / `_adoptRunId()` 신설
