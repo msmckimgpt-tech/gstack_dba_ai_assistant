@@ -11,6 +11,29 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260729T201000-progress-enqpre-handoff (enqueue sentinel → 실제 run 승계, Major)
+- `unit/feature-0003-agent-web-ui/src/static/app.js`
+  - `ENQUEUE_SENTINEL_RUN_PREFIX = "enqpre-"` + `_isEnqueueSentinelRunId()` / `_adoptRunId()` 신설
+    (서버 `routers/_conv_store.py` 의 `"enqpre-" + uuid4().hex` 계약과 짝).
+  - `resetProgressTracking`: `state.progressRunId = _adoptRunId(...)` — **추적 id 채택의 단일
+    choke-point**. 전송 직후·`loadHistory` `last_run_id`·`ask_status` attach 전 경로 커버.
+  - `applyProgressPayload`: run 채택 `_adoptRunId(runId)` · `pendingBubble.runId` 동일 필터 ·
+    foreign-run 가드에 `!_isEnqueueSentinelRunId(state.progressRunId)` 2중 방어 추가.
+  - `startProgressPolling`: 전환 판정을 채택값(`_wantedRunId`) 기준으로 — sentinel 이 reset 을
+    유발해 진행 중 steps 를 비우지 않는다.
+  - `loadHistory` processing 분기: `pendingBubble.runId = _adoptRunId(payload.last_run_id)` +
+    `reset: _adoptRunId(payload.last_run_id) !== state.progressRunId`.
+- `unit/feature-0003-agent-web-ui/tests/verify_enqpre_run_handoff.mjs` **신설**(27 단언) —
+  sentinel 미채택 · **sentinel→실제 run 승계 + steps 반영** · 그룹 foreign 무시 보존 · terminal
+  통과 보존 · 2중 방어 · 채택 규약 · 정적 계약.
+- (codex P1-2) `attachAndWaitForResult`: 진입 `currentRunId = _adoptRunId(runId)` + timeout 응답의
+  실제 run 승계(`_served`) — sentinel 을 실으면 `/api/ask_result` 가 영원히 timeout 돼 attach 가
+  1800s 상한까지 유지되고 busy/myAskInFlight 가 잔류했다. 호출부 3곳(복구·resume·새로고침 복원
+  `pendingBubble.runId`)도 정제 경유.
+- (codex P2) `loadHistory` reset 판정: `Boolean(_adoptRunId(last_run_id)) && …` — sentinel 이
+  정상 추적 중인 실제 run 의 steps·after_step 을 리셋하던 것 차단.
+- 백엔드·RBAC·스키마·엔드포인트·alembic 변경 **0**. 그룹 foreign-run 불변식 무손상.
+
 ## CHG-20260729T183000-progress-poll-resilience-postdeploy (POST-DEPLOY 라이브 검증 기록, doc-only)
 - `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260729T175000-progress-poll-resilience.md`:
   POST-DEPLOY Run append — 1차(실 사용자 경로 무회귀) · 2차(순단 3연속 실패에도 폴링 생존 + 백오프

@@ -10,6 +10,72 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260729T201000-progress-enqpre-handoff [CODEX:progress-enqpre-handoff] — enqueue sentinel → 실제 run 승계 (TASK-20260729T2010)
+- 대상 diff: `src/static/app.js`(sentinel 채택 규약) · `tests/verify_enqpre_run_handoff.mjs`(신설) ·
+  문서 4. **백엔드·RBAC·스키마·엔드포인트 변경 0**.
+- **진단 누락에 대한 정직 기록**: 선행 cycle(progress-poll-resilience)의 PB-0008 1차 관측 로그에
+  이미 `runId: "enqpre-ae58dc20…"` 와 `stepText: "시작 중…"` 이 함께 찍혀 있었다. 당시 이를 "아직
+  단계가 생기지 않았다" 로 읽고 넘겼는데, 실제로는 **이 결함의 직접 증거**였다. 사용자 재보고
+  스크린샷(상태 '처리 중' + 단계 '시작 중…' + 경과 1분 50초)이 "폴링은 살아 있는데 steps 만 안
+  온다" 를 특정해 준 뒤에야 가드를 다시 읽었다. 교훈: **관측 로그의 이상값(정체불명 prefix 를 가진
+  id)을 그 자리에서 추적하지 않으면 같은 증상을 두 번 고치게 된다.**
+- **선행 cycle 과의 관계**: 두 결함은 같은 증상("말풍선이 갱신되지 않고 전환-복귀로만 풀림")을
+  공유하지만 **원인이 독립**이다. 선행은 *폴링 채널이 죽는* 축(3연속 실패 후 영구 포기 + 감지기
+  dormant), 본 cycle 은 *폴링이 살아 있는데 응답이 버려지는* 축(sentinel 승계 오인). 선행 수정은
+  유효하며(라이브 실증 완료) 철회 대상이 아니다 — 순단·배포 창에서는 여전히 그 축이 발현한다.
+- **수정 방향 선택 근거**: 후보 3안 중 (A) 가드에 sentinel 예외만 추가 — 최소 변경이지만
+  `progressRunId` 에 "어떤 run 도 가리키지 않는 값" 이 남아 `client_run_id` 로 서버에 전송되고
+  per-run terminal marker 조회가 헛돌게 된다. (C) enqueue 시점에 실제 run_id 를 미리 발급 —
+  가장 근본적이나 `ask_jobs`·`agent_core`·TASK-0241 clobber 가드의 전제를 모두 건드려 blast
+  radius 가 크다. → **(B) sentinel 을 추적 id 로 채택하지 않는다** 를 채택. `progressRunId` 의
+  의미가 "실제 run" 으로 유지되고, sentinel 구간에는 `client_run_id` 를 안 보내 서버가 현재 run 을
+  그대로 돌려주는 자연스러운 흐름이 된다. (A)는 2중 방어로 함께 넣어 구 상태·다른 진입 경로를 덮는다.
+- **그룹 foreign-run 불변식 영향 분석**: 가드의 보호 대상(다른 멤버의 실제 run 으로 내 버블이
+  갈아타지 않기)은 그대로다 — 판정이 "실제 run vs 실제 run" 으로 좁아졌을 뿐이다. sentinel 구간
+  (통상 1~2초)에 다른 멤버가 동시 전송하면 그 run 을 채택할 수 있으나, ① 창이 1~2초로 짧고
+  ② 채택 후에도 내 run 이 KV 슬롯을 차지하면 다음 폴에서 되돌아오며 ③ terminal·`loadHistory` 가
+  정리한다. 반면 수정 전 결함은 **매 요청 발생**했다 — 우선순위가 명확하다.
+- **§18.8**: 세션 지시(Agent tool 금지)와 정책 충돌은 선행 cycle 에서 사용자가 `/codex review`
+  대체를 선택했다. 본 cycle 은 그 결정을 승계하되, 변경이 선행 cycle 과 **같은 함수·같은 가드**
+  범위이고 신규 표면(권한·엔드포인트·스키마)이 0 이라 자체 적대 검토로 갈음한다:
+  - H1 *sentinel 을 안 채택하면 `client_run_id` 부재로 서버가 남의 run 을 줄 수 있다* — 위 불변식
+    분석대로 창이 1~2초이고 자기 복구 경로가 3중이다.
+  - H2 *`pendingBubble.runId` 를 비우면 "단계 보기"·타임아웃 배너가 깨지나* — 단계 패널은 `steps`
+    배열을 쓰고, 배너는 `_extBannerState.runId`/`state.progressRunId` 를 쓴다(`pendingBubble.runId`
+    미참조). sentinel 구간엔 서버가 `timeout_extension` 을 비워 보내므로 배너 대조도 무영향.
+  - H3 *`_adoptRunId` 가 실제 run 을 빈 문자열로 만들 수 있나* — prefix 매칭만 하므로 `run-…`·
+    UUID 형태는 그대로 통과한다(C6 이 양방향 고정).
+  - H4 *서버가 prefix 를 바꾸면 조용히 깨진다* — 정적 단언으로 `ENQUEUE_SENTINEL_RUN_PREFIX` 선언을
+    고정하고, 서버 계약 위치를 코드 주석에 명시했다. 서버측 상수화는 후속 과제로 남긴다(범위 밖).
+- **`/codex review` 결과 — P1 2건 · P2 1건**:
+  - **[P1-2 수정 완료] `ask_status` attach 경로가 sentinel 을 `run_id` 로 실었다** — 명확한 버그.
+    `/api/ask_result` 는 **정확히 일치하는 run 의 terminal** 만 반환하므로 sentinel 을 실으면 영원히
+    timeout 되고, attach 가 상한(`ASK_ATTACH_MAX_TOTAL_SEC`=1800s)까지 유지돼 `busy`/`myAskInFlight`
+    가 오래 잔류한다(전송 버튼·중단 라우팅 오상태). `attachAndWaitForResult` 진입 시 `_adoptRunId`
+    정제 + timeout 응답의 실제 run 으로 승계(`_served`) + 호출부 3곳(복구·resume·새로고침 복원
+    `pendingBubble.runId`) 전부 정제 경유. C9 4단언으로 고정.
+  - **[P2 수정 완료] `loadHistory` 의 sentinel 전환 판정이 정상 추적을 리셋했다** — `"" !== "run-A"`
+    가 참이 되어 진행 중 실제 run 의 `progressSteps`·`after_step` 을 헛되게 비웠다. 채택값이
+    **있을 때만** 비교하도록 수정(`Boolean(_adoptRunId(...)) && …`). C10 으로 고정.
+  - **[P1-1 범위 결정 — 프론트 단독 해결 불가, 순개선으로 수용 + 후속 과제]**: sentinel 을 채택하지
+    않으면 그 구간에 `client_run_id` 를 보내지 않으므로, 그룹 대화에서 다른 멤버 run 이 1~2초 창에
+    KV 슬롯을 점유하면 그 run 을 채택할 수 있다(내 run 은 이후 가드에 막힌다). **구분 신호가 없다**:
+    실제 run_id 는 양쪽 다 timestamp 형식이고, `status_at` 도 남의 claim 이 내 enqueue 뒤면 같은
+    방향이라 시각으로도 가릴 수 없다. 근본 해결은 **서버가 "이 run 이 요청자 것인가"를 응답에 실어
+    주는 것**(`ask_jobs.account_id` 기반 `run_is_mine`) — 응답 shape 변경 + 폴링당 쿼리 1 증가라
+    성능 축(feature-0026~0028)과 함께 판단해야 하므로 **후속 cycle 과제**로 남긴다.
+    수용 근거 3: ① **순개선** — 수정 전에는 그룹뿐 아니라 **단일 대화에서도 100% 고착**이었다
+    (라이브 재현으로 확증). ② **발현 창이 좁다** — enqueue~claim 1~2초 + 그룹 동시 전송.
+    ③ **자기 복구된다** — 오귀속된 run 이 terminal 되면 `pollProgress` 가 폴링을 종료하고
+    `refreshWorkspace`→`loadHistory` 가 KV 의 내 run(processing)으로 추적을 되돌린다. 영향은
+    "그 run 이 끝날 때까지 남의 단계가 내 말풍선에 잠시 표시" 로 한정된다. C7·C8 이 이 동작(오귀속
+    발생 + terminal 전이)을 **명시적으로 고정**해, 후속 cycle 이 계약을 바꿀 때 눈에 띄게 만든다.
+  - codex 가 지적한 누락 테스트 3건(progressRunId="" 구간 foreign 수신 · sentinel attach ·
+    실제 run 추적 중 history sentinel) 전부 추가 — 신규 스크립트 27→**35 PASS**.
+- **잔여**: POST-DEPLOY PB-0008 라이브(`visual_verification_scope: always`) — BEFORE 는 이미 라이브
+  재현으로 확보했고(§1), 배포 후 같은 시나리오 AFTER 대조로 `tracked` 가 실제 run 으로 전환되고
+  `frontSteps` 가 서버 `steps` 를 따라가는지 확인.
+
 ## REV-20260729T175000-progress-poll-resilience [CODEX:progress-poll-resilience] — 진행 폴링 영구 정지 → 자가 회복 (TASK-20260729T1750)
 - 대상 diff: `src/static/app.js`(폴링·감지기·이벤트 훅) · `tests/verify_progress_poll_resilience.mjs`(신설) ·
   `tests/verify_run_detect_poll.mjs`(계약 갱신) · 문서 3. **백엔드·RBAC·스키마·엔드포인트 변경 0**.

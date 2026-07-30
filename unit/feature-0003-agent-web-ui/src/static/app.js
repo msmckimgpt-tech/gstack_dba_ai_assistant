@@ -88,6 +88,20 @@ const PROGRESS_POLL_ERROR_MAX_MS = 60000;
 const RUN_DETECT_POLL_MS = 4000;
 const RUN_DETECT_POLL_HIDDEN_MS = 15000;
 
+// progress-enqpre-handoff: 워커 모드 `/api/ask` 가 enqueue~claim 갭 동안만 KV run_id 로 박는
+// **가교 sentinel** 의 접두어. 서버 계약(`routers/_conv_store.py` 의 `"enqpre-" + uuid4().hex`)과
+// 짝을 이룬다 — 이 값은 어떤 run 도 가리키지 않으므로 steps·terminal marker 를 조회할 수 없고,
+// 클라이언트가 이것을 "추적 중인 run" 으로 채택하면 이후 실제 run 으로의 정상 승계가 그룹
+// foreign-run 가드에 걸려 화면이 '시작 중…' 에 박제된다.
+const ENQUEUE_SENTINEL_RUN_PREFIX = "enqpre-";
+function _isEnqueueSentinelRunId(runId) {
+  return String(runId || "").startsWith(ENQUEUE_SENTINEL_RUN_PREFIX);
+}
+/** 서버가 준 run_id 중 **추적 대상으로 채택할 값**만 돌려준다(sentinel 은 빈 문자열). */
+function _adoptRunId(runId) {
+  return _isEnqueueSentinelRunId(runId) ? "" : String(runId || "");
+}
+
 // TASK-0041: 클라이언트 타임아웃 시 attach/resume 파라미터
 const ASK_ATTACH_POLL_WAIT_SEC = 45;
 const ASK_ATTACH_MAX_TOTAL_SEC = 1800;
@@ -7027,7 +7041,10 @@ function maxProgressStepIndex(steps = []) {
 }
 
 function resetProgressTracking(runId = "") {
-  state.progressRunId = String(runId || "").trim();
+  // progress-enqpre-handoff: 추적 id 채택의 단일 choke-point — 어느 진입 경로(전송 직후 ·
+  // loadHistory 의 last_run_id · ask_status attach)로 들어와도 enqueue 갭 sentinel 은 채택하지
+  // 않는다. 채택하면 실제 run 으로의 승계가 foreign-run 가드에 걸려 화면이 박제된다.
+  state.progressRunId = _adoptRunId(String(runId || "").trim());
   state.progressAfterStep = 0;
   state.progressErrorCount = 0;
   state.progressSteps = [];
@@ -7083,18 +7100,36 @@ function applyProgressPayload(payload = {}) {
   // 않는다. 갈아타면 우리 버블이 남의 run 을 추적해 자기 run 의 완료(서버가 per-run 으로
   // run_id=우리run+terminal 로 해소)를 영영 못 보고 '처리 중' 에 갇힌다. 우리 run 추적을 유지한 채
   // 계속 폴링하면, 자기 run 이 종료되는 즉시 서버가 우리 run_id 로 terminal 을 돌려준다.
+  //
+  // **단, enqueue 갭 sentinel(`enqpre-…`)은 foreign run 이 아니다** (progress-enqpre-handoff):
+  // 워커 모드의 `/api/ask` 는 enqueue 시점에 `enqpre-<uuid>` 를 KV run_id 로 선기록하고
+  // (`routers/_conv_store.py` — enqueue~claim 갭에도 프런트가 '처리중' 을 보게 하는 가교),
+  // ask-worker 가 job 을 claim 하면 **claim 별 실제 run_id** 로 덮어쓴다(`modules/ask.py`
+  // `_new_run_id()` → `agent_core` `set_run_status(processing, run_id=…)`). 즉 sentinel→실제 run
+  // 전환은 *내 요청의 정상 승계*다. 그런데 첫 폴이 sentinel 을 받아 progressRunId 로 고정하면
+  // 위 가드가 그 승계를 남의 run 으로 오인해 **이후 모든 응답을 버렸다** — 상태는 첫 응답 1회만
+  // 반영되어 '처리 중' 에 멈추고 steps 는 영원히 비어 "시작 중…" 이 박제됐다(사용자 재발 보고:
+  // "요청 직후 말풍선이 갱신되지 않고, 다른 대화로 갔다 오면 정상" — 복귀 시 loadHistory 가
+  // `last_run_id`=실제 run 으로 폴링을 재시작하므로 그때만 풀렸다).
+  //
+  // 해소: sentinel 은 **추적 id 로 채택하지 않는다**(아래 `_adoptRunId`). progressRunId 가 빈
+  // 상태로 남아 다음 폴에서 client_run_id 를 싣지 않고, 서버가 돌려주는 실제 run 을 그때 채택한다.
+  // 이 방식은 그룹 foreign-run 불변식을 **건드리지 않는다** — 가드는 "실제 run vs 실제 run" 에만
+  // 적용되고, sentinel 구간(통상 1~2초)에는 애초에 특정할 내 run 이 없다.
   const _rawStatusEarly = String(payload.raw_status || payload.status || "").trim().toLowerCase();
   if (
     runId &&
     state.progressRunId &&
     runId !== state.progressRunId &&
-    _rawStatusEarly === "processing"
+    _rawStatusEarly === "processing" &&
+    // 2중 방어: 이미 sentinel 을 추적 중인 상태(구 버전 잔여 상태·다른 진입 경로)여도 승계를 막지 않는다.
+    !_isEnqueueSentinelRunId(state.progressRunId)
   ) {
     return;
   }
 
   if (!runId || runId !== state.progressRunId) {
-    state.progressRunId = runId;
+    state.progressRunId = _adoptRunId(runId);
     state.progressSteps = incomingSteps.slice();
     // run 이 바뀌면 이전 run 의 결과셋 펼침 상태도 정리(다른 run 의 동일 step 키 혼동 방지).
     state.stepResultExpanded.clear();
@@ -7120,7 +7155,8 @@ function applyProgressPayload(payload = {}) {
   const rawStatus = String(payload.raw_status || payload.status || "").trim();
   const isStale = Boolean(payload.is_stale) || displayStatus === "stale_error";
   if (state.pendingBubble) {
-    state.pendingBubble.runId = runId;
+    // progress-enqpre-handoff: 말풍선 추적 id 도 sentinel 을 채택하지 않는다(progressRunId 와 동일 규약).
+    state.pendingBubble.runId = _adoptRunId(runId);
     state.pendingBubble.steps = state.progressSteps.slice();
     state.pendingBubble.status = rawStatus;
     state.pendingBubble.displayStatus = displayStatus || rawStatus;
@@ -7235,9 +7271,12 @@ function _updateConversationStatusDot(convId, status) {
 function startProgressPolling({ reset = false, runId = "" } = {}) {
   stopProgressPolling({ reset: false, abort: true });
   state.progressPollSeq += 1;
+  // progress-enqpre-handoff: 전환 판정도 **채택값** 기준. sentinel 이 들어오면 채택값이 빈
+  // 문자열이라 "run 이 바뀌었다" 로 오판하지 않는다(진행 중 steps 를 헛되게 비우지 않음).
+  const _wantedRunId = _adoptRunId(runId);
   if (reset) {
     resetProgressTracking(runId);
-  } else if (runId && runId !== state.progressRunId) {
+  } else if (_wantedRunId && _wantedRunId !== state.progressRunId) {
     resetProgressTracking(runId);
   } else {
     state.progressErrorCount = 0;
@@ -7547,7 +7586,8 @@ async function loadHistory({ append = false, branchView = null, preserveScroll =
         : NaN;
       state.pendingBubble = {
         startedAt: Number.isFinite(_serverStartedMs) ? _serverStartedMs : Date.now(),
-        runId: payload.last_run_id || "",
+        // progress-enqpre-handoff: 복원 경로도 sentinel 을 추적 id 로 채택하지 않는다.
+        runId: _adoptRunId(payload.last_run_id),
         steps: state.progressSteps.slice(),
         status: "processing",
         displayStatus: "processing",
@@ -7560,7 +7600,11 @@ async function loadHistory({ append = false, branchView = null, preserveScroll =
       renderMessages();
     }
     startProgressPolling({
-      reset: payload.last_run_id !== state.progressRunId,
+      // progress-enqpre-handoff (codex P2): 채택값이 **있을 때만** 비교한다. sentinel 이면 채택값이
+      // 빈 문자열이라 `"" !== "run-A"` 로 참이 되어, 정상 추적 중인 실제 run 의 steps·after_step 을
+      // 헛되게 초기화했다(그룹 동시 실행에서는 그 리셋이 foreign 오귀속 창을 넓힌다).
+      reset: Boolean(_adoptRunId(payload.last_run_id))
+        && _adoptRunId(payload.last_run_id) !== state.progressRunId,
       runId: payload.last_run_id || "",
     });
     // progress-poll-resilience: 처리 중에도 감지기를 **끄지 않고 watchdog 으로 무장**한다.
@@ -9639,7 +9683,11 @@ function startLlmHealthPolling() {
 async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
   if (!conversationId) return false;
   const startedAt = Date.now();
-  let currentRunId = runId || "";
+  // progress-enqpre-handoff (codex P1): enqueue 갭 sentinel 을 `run_id` 로 실으면 `/api/ask_result`
+  // 가 **정확히 일치하는 run 의 terminal** 만 반환하므로 영원히 timeout 되고, attach 가 상한
+  // (ASK_ATTACH_MAX_TOTAL_SEC=1800s)까지 유지돼 busy/myAskInFlight 가 오래 잔류한다. sentinel 은
+  // 싣지 않고(빈 값 = "현재 run 의 terminal 을 기다린다"), 아래 timeout 응답에서 실제 run 으로 승계한다.
+  let currentRunId = _adoptRunId(runId);
   while (true) {
     if ((Date.now() - startedAt) / 1000 > ASK_ATTACH_MAX_TOTAL_SEC) {
       showToast("서버 응답이 너무 오래 걸립니다. 잠시 후 새로고침으로 다시 확인하세요.", true);
@@ -9661,8 +9709,11 @@ async function attachAndWaitForResult(conversationId, { runId = "" } = {}) {
       continue;
     }
     if (payload && payload.timeout) {
-      if (payload.run_id && !currentRunId) {
-        currentRunId = String(payload.run_id);
+      // progress-enqpre-handoff: 아직 실제 run 을 못 잡았으면 timeout 응답의 run 으로 승계한다
+      // (sentinel 은 `_adoptRunId` 가 빈 값으로 돌리므로 여기서 자연히 교체된다).
+      const _served = _adoptRunId(payload.run_id);
+      if (_served && !currentRunId) {
+        currentRunId = _served;
       }
       continue;
     }
@@ -11522,7 +11573,7 @@ async function sendPrompt() {
         // 답변이 준비되면 자연히 표시되게 한다. 취소·즉시 답변은 처리 중 내내 컴포저에 상시
         // 노출되는 인라인 버튼(전송→"중단" 모핑 TASK-0157 / "즉시 답변" TASK-0158)으로 사용자가
         // 언제든 직접 수행할 수 있어, 화면을 가리는 별도 모달이 불필요하다.
-        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
+        await attachAndWaitForResult(askCid, { runId: _adoptRunId(status.run_id) });
         // composer-clear-input-on-send: 입력창은 낙관적 시점에 이미 비워짐(재클리어 안 함).
       } else {
         showToast(`요청에 실패했습니다: ${error.message || error}`, true);
@@ -11876,7 +11927,7 @@ async function initializeWorkspace() {
           : NaN;
         state.pendingBubble = {
           startedAt: Number.isFinite(_resumeStartedMs) ? _resumeStartedMs : Date.now(),
-          runId: status.run_id || "",
+          runId: _adoptRunId(status.run_id),   // progress-enqpre-handoff: sentinel 미채택
           steps: [],
           status: "processing",
           displayStatus: "processing",
@@ -11891,7 +11942,7 @@ async function initializeWorkspace() {
       renderComposer();
       startProgressPolling({ reset: true, runId: status.run_id || "" });
       showToast("이전에 남아있던 응답 요청을 이어받습니다.");
-      attachAndWaitForResult(resumeCid, { runId: status.run_id || "" })
+      attachAndWaitForResult(resumeCid, { runId: _adoptRunId(status.run_id) })
         .catch(() => {})
         .finally(() => {
           state.busyConversations.delete(resumeCid);
