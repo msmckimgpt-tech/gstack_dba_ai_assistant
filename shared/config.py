@@ -325,6 +325,8 @@ __all__ = [
     "AGENT_METADATA_CLUSTER_MAX_SIZE",
     "AGENT_METADATA_CLUSTER_ATTACH_SIM",
     "AGENT_METADATA_CLUSTER_MERGE_SIM",
+    "AGENT_METADATA_CLUSTER_MERGE_MARGIN",
+    "AGENT_METADATA_CLUSTER_BRIDGE_MIN_FRAC",
     "AGENT_METADATA_CLUSTER_MERGE_MAX_SIZE",
     "AGENT_METADATA_CLUSTER_GRID_ORDER",
     "AGENT_XDS_RELATIONSHIP_INFER_AUTO",
@@ -861,6 +863,18 @@ AGENT_METADATA_CLUSTER_ATTACH_SIM = float(os.getenv("AGENT_METADATA_CLUSTER_ATTA
 #     0 이면 기존 1-D greedy 최근접 체인(_seriate_by_centroid). 프론트 밴드가 shelf-pack 으로 행 랩되므로
 #     1-D 체인은 세로 인접이 무의미했다 — 2-D 투영 후 행 단위로 훑으면 가로·세로 인접 모두 의미를 갖는다.
 AGENT_METADATA_CLUSTER_MERGE_SIM = float(os.getenv("AGENT_METADATA_CLUSTER_MERGE_SIM", "0.90") or "0.90")
+# cluster-signal-repair(2026-07-30): MERGE_SIM 은 **단독으로 쓰면 위험하다** — 스키마마다 시그니처
+#   boilerplate 가 만드는 유사도 바닥값이 달라 절대 임계는 이식 불가하다(라이브 실측: 무관한 테이블
+#   클러스터 쌍이 0.915 로 이미 0.90 초과). 실제 병합 하한은
+#     floor = max(MERGE_SIM, median(스키마 내 클러스터간 유사도) + MERGE_MARGIN)
+#   으로, "분포에서 뚜렷하게 튀는 쌍" 만 통과시킨다. 전 쌍이 고르게 높은(=신호 없는) 분포에서는
+#   median 이 함께 올라가 병합이 자연 억제된다. 0 이면 종전(절대 임계 단독) 동작.
+AGENT_METADATA_CLUSTER_MERGE_MARGIN = float(os.getenv("AGENT_METADATA_CLUSTER_MERGE_MARGIN", "0.04") or "0.04")
+# cluster-signal-repair(2026-07-30): **양식 교차 브릿지** 임계 — 루틴 우세 클러스터의 참조 테이블 중
+#   한 테이블 클러스터가 이 비율 이상을 차지하면(그리고 서로 다른 테이블 2개 이상 매칭) 두 클러스터를
+#   병합한다. 임베딩 유사도가 양식에 지배되어(실측: 같은양식-다른컨텐츠 0.80 > 같은컨텐츠-다른양식 0.75)
+#   임베딩 단독으로는 만들 수 없는 병합을 **구조**로 만든다. 0 이면 브릿지 비활성(종전 동작).
+AGENT_METADATA_CLUSTER_BRIDGE_MIN_FRAC = float(os.getenv("AGENT_METADATA_CLUSTER_BRIDGE_MIN_FRAC", "0.5") or "0.5")
 AGENT_METADATA_CLUSTER_MERGE_MAX_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MERGE_MAX_SIZE", "80") or "80")
 AGENT_METADATA_CLUSTER_GRID_ORDER = os.getenv("AGENT_METADATA_CLUSTER_GRID_ORDER", "1").strip().lower() in ("1", "true", "yes")
 # feature-0016 Phase B (ADR-019, crossds-rel): 크로스-데이터소스 관계 추론(Phase C 시그니처 임베딩 구동).

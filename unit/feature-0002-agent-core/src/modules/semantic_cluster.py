@@ -82,23 +82,62 @@ def _effective_schema(datasource_key, object_key, schema_name):
 _ANALYSIS_SIG_MAX = 400   # 시그니처에 넣는 분석문(summary+usage) 상한 — 임베딩 토큰 보호
 
 
-def build_table_signature_text(eff_schema, table_name, description, columns, entity_type, domain,
-                               analysis="") -> str:
-    """테이블 시그니처 = 이름 + 설명 + 역할/도메인 + 정렬 컬럼명 (+ 능동 분석문). 결정론(해시 안정) — DB-distinct.
+_USED_BY_SIG_MAX = 24        # 시그니처에 넣는 "이 테이블을 만지는 루틴" 이름 상한(토큰 보호)
+_RELATED_SIG_MAX = 12        # 시그니처에 넣는 FK/추정 관계 상대 테이블 이름 상한
 
-    analysis(content-cluster RC4): node_analysis 최신 done 의 summary+usage. **비어있지 않을 때만**
-    줄을 추가한다 — 미분석 테이블의 시그니처·해시는 종전과 byte-동일(재임베딩 무발생, 무회귀)."""
-    cols = ", ".join(columns or [])
-    sig = (
-        f"table: {eff_schema}.{table_name}\n"
-        f"description: {str(description or '').strip()}\n"
-        f"role: {str(entity_type or '').strip()} domain: {str(domain or '').strip()}\n"
-        f"columns: {cols}"
-    )
+
+def _sig_name_tokens(fqn_or_name) -> str:
+    """FQN → 마지막 세그먼트(객체명). 시그니처는 **객체명 어휘**만 필요하고 스키마 접두는 전 멤버가
+    공유하는 boilerplate 라 신호를 희석한다(cluster-signal-repair)."""
+    s = str(fqn_or_name or "").strip()
+    if not s:
+        return ""
+    s = s.rstrip("()")
+    return s.split(".")[-1]
+
+
+def build_table_signature_text(eff_schema, table_name, description, columns, entity_type, domain,
+                               analysis="", used_by=None, related=None) -> str:
+    """테이블 시그니처 — **컨텐츠 전면(content-forward)·양식 중립(modality-neutral)**.
+
+    cluster-signal-repair(2026-07-30, 사용자 리포트 "동일 의미 다른 이름 / 관계 대비 거리가 멂"):
+    종전 시그니처는 `table: <fqn>` / `description:` / `role:` / `columns:` 4줄 고정 틀이었고, 라이브에서
+    **description·role·columns 가 거의 항상 공백**이었다(`columns` 원천 `column_descriptions` 는 17,191
+    테이블 중 528개=3% 만 커버). 결과적으로 임베딩이 본 것은 *테이블명 + 필드 이름표 boilerplate* 뿐이라:
+      · 무관한 테이블 클러스터끼리 centroid 코사인 **0.915**(= boilerplate 바닥값, 신호 아님)
+      · 같은 컨텐츠의 테이블↔루틴은 **0.69**(틀이 달라서) → 한 컨텐츠가 두 클러스터로 갈리고 각각
+        독립 LLM 라벨을 받아 유의어가 생김(라이브: 메일 시스템 ↔ 우편 시스템 · 경매 시스템 ↔ 경매 기록)
+    즉 **거리 지표가 컨텐츠 기준으로 역전**돼 있었다. 두 가지로 고친다:
+
+    1. **양식 boilerplate 제거** — `table:`/`routine:` 종류 접두와 빈 필드 이름표를 싣지 않는다. 값이 있는
+       항목만 줄로 나가므로 테이블·루틴 시그니처가 **같은 어휘 공간**에 놓인다.
+    2. **구조적 컨텐츠 주입** — `used_by`(이 테이블을 참조하는 루틴 이름, `routine_objects.referenced_tables`
+       역인덱스)와 `related`(FK/추정 관계 상대 테이블명, `table_relationships`)를 싣는다. 라이브에 실재하는
+       (각 27,087·14,066건) 유일한 대량 컨텐츠 신호이고, **루틴 시그니처의 `touches` 와 같은 어휘**라
+       같은 컨텐츠의 테이블·루틴이 임베딩 공간에서 자연히 수렴한다(= 양식 교차 브릿지를 지표 자체에 심는다).
+
+    이름은 **마지막 세그먼트만** 싣는다(스키마 접두는 전 멤버 공유 boilerplate). 결정론(해시 안정):
+    caller 가 정렬·상한을 고정해 넘긴다. `analysis`(RC4)는 비어있지 않을 때만 append."""
+    parts = [f"{eff_schema}.{table_name}"]
+    d = str(description or "").strip()
+    if d:
+        parts.append(d)
+    rd = " ".join(x for x in (str(entity_type or "").strip(), str(domain or "").strip()) if x)
+    if rd:
+        parts.append(rd)
+    cols = ", ".join(c for c in (columns or []) if str(c).strip())
+    if cols:
+        parts.append(f"columns: {cols}")
+    ub = ", ".join(_sig_name_tokens(x) for x in (used_by or [])[:_USED_BY_SIG_MAX] if _sig_name_tokens(x))
+    if ub:
+        parts.append(f"used by: {ub}")
+    rel = ", ".join(_sig_name_tokens(x) for x in (related or [])[:_RELATED_SIG_MAX] if _sig_name_tokens(x))
+    if rel:
+        parts.append(f"related: {rel}")
     a = str(analysis or "").strip()
     if a:
-        sig += f"\nanalysis: {a[:_ANALYSIS_SIG_MAX]}"
-    return sig
+        parts.append(f"analysis: {a[:_ANALYSIS_SIG_MAX]}")
+    return "\n".join(parts)
 
 
 def build_routine_signature_text(eff_schema, name, routine_type, params, returns, touches,
@@ -107,24 +146,31 @@ def build_routine_signature_text(eff_schema, name, routine_type, params, returns
 
     touches = routine_objects.referenced_tables ([{fqn, kind}]) — introspect 순서 그대로(결정론:
     routines.py 가 정의 파싱 순으로 저장·IS DISTINCT FROM 가드로 불변). 컨텐츠 신호의 핵심은
-    참조 테이블(같은 컨텐츠의 테이블과 어휘 공유)과 분석문이다(RC3·RC4)."""
+    참조 테이블(같은 컨텐츠의 테이블과 어휘 공유)과 분석문이다(RC3·RC4).
+
+    cluster-signal-repair(2026-07-30): 테이블 시그니처와 **같은 규약**으로 정렬한다 — 종류 접두
+    (`routine:`/`type:`)와 빈 필드 이름표를 싣지 않고, `touches` 는 **테이블명(마지막 세그먼트)** 만
+    싣는다. 테이블 쪽 `used by:`(이 테이블을 만지는 루틴명)와 대칭이 되어 같은 컨텐츠의 테이블·루틴이
+    임베딩 공간에서 수렴한다. 상세 근거는 `build_table_signature_text` docstring."""
     tparts = []
     for t in (touches or []):
-        fqn = str((t or {}).get("fqn") or "").strip()
-        if not fqn:
+        nm = _sig_name_tokens((t or {}).get("fqn"))
+        if not nm:
             continue
-        tparts.append(f"{str((t or {}).get('kind') or 'read').strip()} {fqn}")
-    sig = (
-        f"routine: {eff_schema}.{name}()\n"
-        f"type: {str(routine_type or 'procedure').strip()}\n"
-        f"params: {str(params or '').strip()}\n"
-        f"returns: {str(returns or '').strip()}\n"
-        f"touches: {', '.join(tparts)}"
-    )
+        tparts.append(f"{str((t or {}).get('kind') or 'read').strip()} {nm}")
+    parts = [f"{eff_schema}.{name}"]
+    p = str(params or "").strip()
+    if p:
+        parts.append(f"params: {p}")
+    r = str(returns or "").strip()
+    if r:
+        parts.append(f"returns: {r}")
+    if tparts:
+        parts.append(f"touches: {', '.join(tparts)}")
     a = str(analysis or "").strip()
     if a:
-        sig += f"\nanalysis: {a[:_ANALYSIS_SIG_MAX]}"
-    return sig
+        parts.append(f"analysis: {a[:_ANALYSIS_SIG_MAX]}")
+    return "\n".join(parts)
 
 
 def _fetch_columns(cur, scope_key, schema_name, table_name) -> list:
@@ -138,6 +184,112 @@ def _fetch_columns(cur, scope_key, schema_name, table_name) -> list:
         )
         return [str(r[0]) for r in cur.fetchall() if r and r[0]]
     except Exception:
+        return []
+
+
+def build_used_by_index(cur, datasource_key, eff_schema) -> dict:
+    """(datasource, effective schema) 의 **테이블명(lower) → 참조 루틴명 목록** 역인덱스를 **1회**로 구축.
+
+    §18.8 codex P1: 종전 설계는 테이블마다 `jsonb_array_elements` + 계산식 predicate
+    (`lower(split_part(fqn,…))`) 로 SQL 을 쏘았다 — 인덱스가 서 줄 수 없는 조건이라 **테이블당 루틴
+    전량 스캔**이 되고, 백필이 pass 당 500행을 처리하므로 500 × (스키마 루틴 수) 스캔이 된다(라이브
+    31,035 루틴 규모에서 PG 를 두드린다). 스키마당 **한 번** 훑어 파이썬 dict 로 뒤집으면 같은 정보가
+    1 스캔으로 나오고, 백필 루프가 (ds, eff) 캐시로 재사용한다.
+
+    fqn 은 `<schema>.<table>`(routines.py 규약). **스키마 세그먼트가 있으면 함께 대조**해 크로스-DB
+    동명 테이블 오염을 막는다(codex P2: 다른 DB 의 `T_Order` 가 현 스키마 `T_Order` 로 붙는 경로).
+    값은 이름 정렬 + `_USED_BY_SIG_MAX` 상한(결정론). 실패 → {}(시그니처 축소, fail-soft)."""
+    idx: dict = {}
+    try:
+        cur.execute("SAVEPOINT sc_usedby")
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            "SELECT routine_name, referenced_tables FROM routine_objects "
+            "WHERE datasource_key = %s AND schema_name = %s AND referenced_tables IS NOT NULL "
+            "ORDER BY routine_name",
+            (datasource_key, eff_schema),
+        )
+        rows = cur.fetchall()
+        try:
+            cur.execute("RELEASE SAVEPOINT sc_usedby")
+        except Exception:
+            pass
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sc_usedby")
+            cur.execute("RELEASE SAVEPOINT sc_usedby")
+        except Exception:
+            pass
+        return {}
+    eff_l = str(eff_schema or "").strip().lower()
+    for (rname, refs) in rows:
+        if isinstance(refs, (str, bytes)):
+            try:
+                refs = json.loads(refs or "[]")
+            except Exception:
+                continue
+        if not isinstance(refs, list):
+            continue
+        for t in refs:
+            fqn = str((t or {}).get("fqn") or "").strip()
+            if not fqn:
+                continue
+            segs = [x for x in fqn.split(".") if x]
+            if not segs:
+                continue
+            # 스키마 세그먼트가 있고 현 스키마와 다르면 **다른 DB 의 동명 테이블** — 배제(codex P2).
+            if len(segs) >= 2 and segs[-2].strip().lower() != eff_l:
+                continue
+            bucket = idx.setdefault(segs[-1].strip().lower(), [])
+            if rname and str(rname) not in bucket and len(bucket) < _USED_BY_SIG_MAX:
+                bucket.append(str(rname))
+    return idx
+
+
+def _fetch_related_tables(cur, scope_key, datasource_key, schema_name, table_name) -> list:
+    """FK/추정 관계 상대 **테이블명** 목록(정렬·상한) — 구조적 컨텐츠 보조 신호.
+
+    `table_relationships` 는 source/target 양방향이라 self 가 어느 쪽이어도 상대를 취한다(schema 는
+    MSSQL 에서 DB명 차원이 소실될 수 있어 **필터에 쓰지 않고** 테이블명만 대조 — 동명 테이블의 상대가
+    섞일 수 있으나 시그니처는 어휘 신호이므로 허용 가능하고, scope_key 로 이미 격리된다).
+    스키마 구성이 소비자마다 다를 수 있어 **실패는 fail-soft**(빈 목록 → 시그니처만 축소)."""
+    tn = str(table_name or "").strip()
+    if not tn:
+        return []
+    try:
+        cur.execute("SAVEPOINT sc_related")
+    except Exception:
+        pass
+    try:
+        cur.execute(
+            # §18.8 codex P1/P2: datasource + schema 를 **함께** 좁힌다. scope_key 단독 필터는
+            #   크로스-DB 동명 테이블의 관계를 끌어와 시그니처를 오염시킨다. schema 는 MSSQL 에서
+            #   DB명/'dbo' 로 갈리므로 **빈 값이거나 일치** 를 허용(관측된 두 표기 모두 커버).
+            "SELECT other FROM ("
+            "  SELECT target_table AS other FROM table_relationships "
+            "   WHERE scope_key = %s AND datasource_key = %s AND source_table = %s "
+            "     AND (source_schema = '' OR source_schema = %s) "
+            "  UNION SELECT source_table FROM table_relationships "
+            "   WHERE scope_key = %s AND datasource_key = %s AND target_table = %s "
+            "     AND (target_schema = '' OR target_schema = %s)"
+            ") u WHERE other IS NOT NULL AND other <> %s ORDER BY other LIMIT %s",
+            (scope_key, datasource_key, tn, schema_name or "",
+             scope_key, datasource_key, tn, schema_name or "", tn, _RELATED_SIG_MAX),
+        )
+        out = [str(r[0]) for r in cur.fetchall() if r and r[0]]
+        try:
+            cur.execute("RELEASE SAVEPOINT sc_related")
+        except Exception:
+            pass
+        return out
+    except Exception:
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sc_related")
+            cur.execute("RELEASE SAVEPOINT sc_related")
+        except Exception:
+            pass
         return []
 
 
@@ -257,6 +409,9 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
                 cur.execute("RELEASE SAVEPOINT sc_fresh_tbl")
             except Exception:
                 pass
+        # cluster-signal-repair(§18.8 codex P1): used_by 역인덱스는 (ds, eff) 당 1회만 구축해
+        #   재사용한다 — 테이블마다 SQL 을 쏘면 pass 당 500 × 루틴 전량 스캔이 된다.
+        _usedby_cache: dict = {}
         for (rid, scope, dsk, sch, tbl, okey, cur_hash, etype, domain) in rows:
             rep["processed"] += 1
             try:
@@ -269,7 +424,20 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
                 desc = _fetch_table_desc(cur, scope, sch, tbl)
                 # content-cluster RC4: 그래프 노드 키(`<ds>:<eff>.<table>`)로 최신 done 분석문 소싱.
                 ana = _fetch_analysis_text(cur, scope, dsk, f"{dsk}:{eff}.{tbl}") if dsk else ""
-                sig = build_table_signature_text(eff, tbl, desc, cols, etype, domain, analysis=ana)
+                # cluster-signal-repair: 구조적 컨텐츠 주입 — 이 테이블을 만지는 루틴명 + FK 관계 상대명.
+                #   라이브에서 description·role·columns 가 거의 항상 공백이라(columns 원천은 3% 커버)
+                #   이 두 신호가 테이블 임베딩의 **유일한 실질 컨텐츠**다. 루틴 쪽 `touches:` 와 같은
+                #   어휘라 같은 컨텐츠의 테이블·루틴이 임베딩 공간에서 수렴한다(양식 교차 브릿지).
+                if dsk:
+                    _ik = (dsk, eff)
+                    if _ik not in _usedby_cache:
+                        _usedby_cache[_ik] = build_used_by_index(cur, dsk, eff)
+                    ub = _usedby_cache[_ik].get(str(tbl or "").strip().lower(), [])
+                else:
+                    ub = []
+                rel = _fetch_related_tables(cur, scope, dsk, sch, tbl)
+                sig = build_table_signature_text(eff, tbl, desc, cols, etype, domain, analysis=ana,
+                                                 used_by=ub, related=rel)
                 # 리뷰 MAJOR-1: _text_store_insert 가 내부에서 sig.strip() 후 해시하므로 write-key 도 반드시
                 #   strip 후 해시해야 texts join-key 와 일치한다(컬럼 없는 테이블의 trailing space 로 divergence → 영구 미클러스터 방지).
                 h = _text_hash(sig.strip())
@@ -546,6 +714,21 @@ def _merge_components_by_centroid(embs, comps, sim, max_size, key_of=None) -> tu
     F = np.asarray(frag_cents, dtype=np.float32)
     FS = F @ F.T                       # 조각-쌍 코사인(불변) — complete linkage 판정 재료
     frags = [[i] for i in range(len(cur))]   # 현재 클러스터 → 소속 원본 조각 인덱스
+    # ── cluster-signal-repair: **적응형 하한**(절대 임계 단독 사용 금지) ──────────────────────────
+    #   절대 임계는 원리적으로 이식 불가하다 — 스키마마다 시그니처 boilerplate 가 만드는 **유사도 바닥값**이
+    #   다르기 때문이다. 라이브 실측(cc_pyron): 무관한 테이블 클러스터 쌍이 0.915 로 이미 MERGE_SIM(0.90)을
+    #   넘어, 어제 출하한 병합이 **무관한 컨텐츠를 합칠 수 있었다**(잠복 결함). 그래서 절대 임계에 더해
+    #   "이 스키마의 클러스터간 유사도 분포에서 **뚜렷한 상위 이상치**인가" 를 함께 요구한다:
+    #     floor = max(sim, median(pairwise) + MERGE_MARGIN)
+    #   전 쌍이 고르게 높은(=신호 없는) 분포에서는 median 이 함께 올라가 병합이 자연 억제되고, 진짜 이웃
+    #   한 쌍만 튀는 분포에서는 종전처럼 병합된다. 결정론(median 은 입력의 순수 함수).
+    floor = float(sim)
+    if len(cur) >= 3:
+        offs = [float(FS[i][j]) for i in range(len(cur)) for j in range(i + 1, len(cur))]
+        if offs:
+            med = float(np.median(np.asarray(offs, dtype=np.float64)))
+            margin = float(getattr(_cfg, "AGENT_METADATA_CLUSTER_MERGE_MARGIN", 0.04))
+            floor = max(floor, med + margin)
     merged = 0
     # 상한: 병합은 매 라운드 클러스터 수를 1 줄이므로 라운드 수 < 초기 클러스터 수.
     for _round in range(len(cur)):
@@ -558,7 +741,7 @@ def _merge_components_by_centroid(embs, comps, sim, max_size, key_of=None) -> tu
                 if len(cur[i]) + len(cur[j]) > max_size:
                     continue
                 link = min(float(FS[a][b]) for a in frags[i] for b in frags[j])
-                if link < sim:
+                if link < floor:          # 절대 임계 + 적응형 하한(분포 상위 이상치)
                     continue
                 lo, hi = (keys[i], keys[j]) if keys[i] <= keys[j] else (keys[j], keys[i])
                 cand = (-link, lo, hi, i, j)
@@ -573,6 +756,100 @@ def _merge_components_by_centroid(embs, comps, sim, max_size, key_of=None) -> tu
         del frags[j]
         merged += 1
     return cur, merged
+
+
+def _bridge_routine_clusters(items, comps, max_size, min_frac=0.5) -> tuple:
+    """**양식 교차 브릿지** — 루틴 우세 클러스터를 그 멤버가 실제로 만지는 테이블 클러스터에 병합.
+
+    cluster-signal-repair(2026-07-30, 사용자 리포트 "동일 의미가 다른 이름 / 관계 대비 거리가 멂"):
+    설계(RC3)는 "루틴이 자기가 만지는 테이블과 같은 컨텐츠 그룹으로 묶인다" 였으나 라이브에서 깨져 있었다 —
+    같은 컨텐츠가 **루틴 클러스터 / 테이블 클러스터 2개**로 갈리고 각각 독립 LLM 라벨을 받아 유의어가 생겼다
+    (`메일 시스템`(루틴 16) ↔ `우편 시스템`(테이블 6) · `경매 시스템`(루틴 18) ↔ `경매 기록`(테이블 2)).
+    원인은 임베딩 유사도가 **양식**(테이블/루틴 시그니처 형태)에 지배된 것이고, 시그니처 보강 후에도
+    같은양식-다른컨텐츠(0.80~0.82)가 같은컨텐츠-다른양식(0.74~0.75)보다 높게 남는다(실측) — 즉 **임베딩
+    단독으로는 이 병합을 만들 수 없다.** 그래서 임베딩이 아니라 **구조**(`referenced_tables`)로 잇는다.
+
+    판정: 루틴 우세 클러스터의 멤버들이 참조하는 테이블을 클러스터별로 집계해, 한 테이블 클러스터가
+    매칭된 참조의 `min_frac` 이상을 차지하고 **서로 다른 테이블 2개 이상**이 매칭되면 병합한다(단일
+    우발 참조로 병합되지 않게). 병합 결과가 `max_size` 초과면 보류. 결정론: 후보를 (−frac, 대표키) 로
+    정렬해 순차 병합. 반환 (comps, bridged_count)."""
+    if len(comps) < 2:
+        return [list(m) for m in comps], 0
+    cur_c = [list(m) for m in comps]
+
+    def kind_of(comp):
+        r = sum(1 for i in comp if items[i].get("kind") == "routine")
+        return "routine" if r * 2 > len(comp) else "table"
+
+    # 테이블명(lower) → 소속 comp 인덱스. 같은 이름이 여러 comp 에 있으면 첫 comp(결정론: comp 순).
+    tbl_of = {}
+    for ci, comp in enumerate(cur_c):
+        for i in comp:
+            if items[i].get("kind") == "table":
+                nm = str(items[i].get("name") or "").strip().lower()
+                if nm and nm not in tbl_of:
+                    tbl_of[nm] = ci
+    if not tbl_of:
+        return cur_c, 0
+    # 이 comps 는 **한 effective schema** 안이므로(caller 가 by_schema 로 분할) 참조 fqn 의 스키마
+    #   세그먼트가 다르면 크로스-DB 동명 테이블이다 — 배제(§18.8 codex P2).
+    eff_l = ""
+    for i in range(len(items)):
+        if items[i].get("kind") == "table" and items[i].get("schema"):
+            eff_l = str(items[i]["schema"]).strip().lower()
+            break
+    cands = []
+    for ci, comp in enumerate(cur_c):
+        if kind_of(comp) != "routine":
+            continue
+        hits, names = {}, {}
+        for i in comp:
+            for t in (items[i].get("refs") or []):
+                segs = [x for x in str((t or {}).get("fqn") or "").strip().split(".") if x]
+                if not segs:
+                    continue
+                if len(segs) >= 2 and eff_l and segs[-2].strip().lower() != eff_l:
+                    continue
+                nm = segs[-1].strip().lower()
+                tc = tbl_of.get(nm)
+                if tc is None or tc == ci:
+                    continue
+                hits[tc] = hits.get(tc, 0) + 1
+                names.setdefault(tc, set()).add(nm)
+        tot = sum(hits.values())
+        if not tot:
+            continue
+        best = sorted(hits.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+        tc, cnt = best
+        if cnt / float(tot) < min_frac or len(names.get(tc, ())) < 2:
+            continue
+        cands.append((-(cnt / float(tot)), min(str(items[i].get("key") or "") for i in comp), ci, tc))
+    if not cands:
+        return cur_c, 0
+    cands.sort()
+    # §18.8 codex P2: 대상 테이블 comp 가 **이미 다른 comp 로 병합됐다면 skip 이 아니라 그 대표로
+    #   redirect** 한다(종전엔 `tc in dropped` 로 조용히 누락 → 과반 조건을 만족한 브릿지가 사라졌다).
+    #   union-find find() 로 체인을 해소한다.
+    parent = list(range(len(cur_c)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    n = 0
+    for _negf, _key, ci, tc in cands:
+        a, b = find(ci), find(tc)
+        if a == b or not cur_c[a] or not cur_c[b]:
+            continue
+        if len(cur_c[b]) + len(cur_c[a]) > max_size:
+            continue
+        cur_c[b] = cur_c[b] + cur_c[a]
+        cur_c[a] = []
+        parent[a] = b
+        n += 1
+    return [c for c in cur_c if c], n
 
 
 def _merge_clusters_by_label(valid, labels, max_size, key_of) -> tuple:
@@ -909,6 +1186,7 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
         return out
     ns = _label_ns_hash(datasource_key, eff_schema)
     misses = []
+    cached_labels: list = []      # 캐시 적중 라벨(= 이 스키마의 확정 어휘) — payload 결정론 소스
     for cl in clusters:
         # analysis-freshness: cache_keys(멤버키#시그니처해시) 우선 — 시그니처(분석문 포함) 변경 시
         # 캐시 미스로 재라벨. 미전달 caller(하위호환)는 종전 멤버셋 키 유지.
@@ -916,6 +1194,8 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
         cached = _valid_label(_kv_get(cur, kv_key))
         if cached:
             out[cl["idx"]] = cached
+            if cached not in cached_labels:
+                cached_labels.append(cached)
         else:
             misses.append((cl, kv_key))
     if not misses:
@@ -936,10 +1216,20 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
                     cl["summaries"] = list(fetch_summaries(cl)) if fetch_summaries else []
                 except Exception:
                     cl["summaries"] = []
+        # cluster-signal-repair: **라벨 어휘 일관성** — 이미 확정된 형제 라벨(캐시 적중분 + 앞선 배치
+        #   산출분)을 `existing_labels` 로 함께 넘긴다. 라이브에서 같은 개념이 DB·배치마다 다른 이름을
+        #   받아 유의어가 생겼다(`메일 시스템` ↔ `우편 시스템`). 기존 어휘를 보여주면 LLM 이 새 동의어를
+        #   발명하는 대신 그 어휘를 재사용하거나 **명확히 구별되는** 이름을 고른다. prompt 계약은
+        #   llm.llm_cluster_label 이 소유(이 필드는 additive — 미인식 모델도 무해).
+        cached_labels.sort()
         return {
             "task": "cluster_label",
             "datasource": ds_label,
             "schema": eff_schema,
+            # §18.8 codex P2: `out` 은 직렬 경로에서 앞 배치 산출이 누적되고 병렬 경로에서는 누적되지
+            #   않아 concurrency 설정에 따라 payload 가 달라졌다(비결정). **캐시 적중분(`cached_labels`)
+            #   만** 넘겨 두 경로가 동일해지고, 그 집합은 pass 시작 시점의 kv 상태라 결정론이다.
+            "existing_labels": cached_labels,
             "clusters": [
                 {"idx": cl["idx"],
                  "members": [str(n)[:80] for n in cl["names"][:_LABEL_MEMBERS_CAP]],
@@ -1058,7 +1348,7 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
     #   0 이 지속되면 MERGE_SIM 이 라이브 임베딩 분포에 비해 높다는 신호(재보정 근거).
     rep = {"scope": scope_key, "objects": 0, "clusters": 0, "updated": 0,
            "schemas": 0, "skipped_schemas": 0, "attached": 0,
-           "merged_centroid": 0, "merged_label": 0, "error": None}
+           "merged_centroid": 0, "merged_label": 0, "bridged_modality": 0, "error": None}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -1095,20 +1385,26 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             # datasource_key 등가가 실질 파티션이므로 scope 필터를 제거한다(백필 쿼리와 동형).
             cur.execute(
                 "SELECT r.id, r.schema_name, r.routine_name, t.embedding, r.semantic_cluster_id, "
-                "r.semantic_cluster_label, r.signature_text_hash "
+                "r.semantic_cluster_label, r.signature_text_hash, r.referenced_tables "
                 "FROM routine_objects r JOIN texts t ON r.signature_text_hash = t.text_hash "
                 "WHERE r.datasource_key = %s "
                 "AND r.signature_text_hash IS NOT NULL AND t.embedding IS NOT NULL",
                 (datasource_key,),
             )
-            for (rid, sch, name, emb, ccid, clab, sig) in cur.fetchall():
+            for (rid, sch, name, emb, ccid, clab, sig, refs) in cur.fetchall():
                 vec = _parse_embedding(emb)
                 if vec is None:
                     continue
+                # cluster-signal-repair: 참조 테이블은 **양식 교차 브릿지**의 재료(아래 _bridge_* 참조).
+                if isinstance(refs, (str, bytes)):
+                    try:
+                        refs = json.loads(refs or "[]")
+                    except Exception:
+                        refs = []
                 items.append({"kind": "routine", "id": rid,
                               "key": f"{datasource_key}:{sch}.{name}()", "name": f"{name}()",
                               "emb": vec, "cur_cid": ccid, "cur_lab": clab, "schema": sch or "",
-                              "sig": str(sig or "")})
+                              "sig": str(sig or ""), "refs": refs if isinstance(refs, list) else []})
             try:
                 cur.execute("RELEASE SAVEPOINT sc_routine_fetch")
             except Exception:
@@ -1166,6 +1462,13 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             comps, _n_mc = _merge_components_by_centroid(
                 embs_all, comps, merge_sim, merge_cap, key_of=_key_of)
             rep["merged_centroid"] += _n_mc
+            # cluster-signal-repair: **양식 교차 브릿지** — 임베딩이 못 잇는 루틴↔테이블 동일 컨텐츠를
+            #   구조(referenced_tables)로 병합한다. centroid 병합 다음·라벨 이전에 두어 병합 결과가
+            #   **하나의 라벨**을 받게 한다(유의어 발생 자체를 차단).
+            _bfrac = float(getattr(_cfg, "AGENT_METADATA_CLUSTER_BRIDGE_MIN_FRAC", 0.5))
+            if _bfrac > 0:
+                comps, _n_br = _bridge_routine_clusters(items, comps, merge_cap, min_frac=_bfrac)
+                rep["bridged_modality"] += _n_br
             valid = [(_key_of(members), members)
                      for members in comps if len(members) >= min_size]
             valid.sort(key=lambda x: x[0])
@@ -1330,6 +1633,33 @@ def _cadence_due(cur, key, sec) -> bool:
         return True
 
 
+def _embedding_drain_pending(cur, scope_key, datasource_key) -> bool:
+    """이 scope 에 **미임베딩 시그니처**가 남아 있는가 — True 면 재클러스터를 유예해야 한다.
+
+    §18.8 codex P1(cluster-signal-repair): 시그니처 전면 개정은 전 객체의 해시를 바꾸므로 재임베딩이
+    장시간(라이브 48,226건 · 실측 처리량 기준 수십 시간) 드레인된다. 그 동안 한 스키마에는 **신 시그니처
+    임베딩과 구 시그니처 임베딩이 섞여** 있고, 섞인 공간에서 클러스터링하면 의미 없는 밴드와 라벨이
+    나온다(그리고 매 pass 라벨 캐시 전패 → LLM 재호출 반복 = flap). 종전 코드는 이 가드를
+    `_fresh_embeddings_since_mark` 안에만 두어 **데이터 기반 트리거만** 막았고, 6h **시간 cadence 는
+    그대로 통과**했다 — 드레인 중 6시간마다 부분 공간으로 재클러스터되는 경로가 열려 있었다.
+    이제 두 트리거 **양쪽을** veto 한다(드레인 완료 후 임베딩 착지가 자연 재트리거 = 자가치유).
+    예외/테이블 부재 → False(가드 없이 진행 — 기존 동작 보존, fail-soft)."""
+    try:
+        cur.execute(
+            "SELECT 1 WHERE EXISTS ("
+            " SELECT 1 FROM rag_objects o JOIN texts t ON o.signature_text_hash = t.text_hash"
+            " WHERE o.object_type = 'table' AND o.scope_key = %s AND o.datasource_key = %s"
+            " AND t.embedding IS NULL)"
+            " OR EXISTS ("
+            " SELECT 1 FROM routine_objects r JOIN texts t2 ON r.signature_text_hash = t2.text_hash"
+            " WHERE r.datasource_key = %s AND t2.embedding IS NULL)",
+            (scope_key, datasource_key, datasource_key),
+        )
+        return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
 def _fresh_embeddings_since_mark(cur, scope_key, datasource_key, key) -> bool:
     """마지막 재클러스터 mark 이후 이 scope 에 **새 시그니처 임베딩**이 생겼는지 — 데이터 기반 due.
 
@@ -1431,6 +1761,11 @@ def run_cluster_maintenance(conn=None) -> dict:
             for (scope, dsk) in scopes:
                 key = f"cluster_at:{scope}:{dsk}"
                 # 시간 cadence(RECOMPUTE_SEC) 또는 데이터 기반 due(mark 이후 새 임베딩) — analysis-freshness.
+                # cluster-signal-repair(§18.8 codex P1): 드레인 중이면 **어떤 트리거로도** 재클러스터하지
+                #   않는다 — 신/구 시그니처가 섞인 임베딩 공간의 부분-재클러스터는 밴드·라벨 flap 을 만든다.
+                if _embedding_drain_pending(cur, scope, dsk):
+                    rep["drain_deferred"] = rep.get("drain_deferred", 0) + 1
+                    continue
                 if not _cadence_due(cur, key, rsec) and not _fresh_embeddings_since_mark(cur, scope, dsk, key):
                     continue
                 r = run_semantic_cluster_pass(scope, dsk, conn=c)

@@ -71,15 +71,19 @@ def _updates(cur, table):
 
 
 # ── RC4: 시그니처 빌더 ────────────────────────────────────────────────────────
-def test_table_signature_no_analysis_is_legacy_stable():
-    # analysis 미보유 객체의 시그니처는 종전 포맷과 byte-동일 → 해시 불변(재임베딩 무발생).
-    legacy = ("table: gamedb.t_user\n"
-              "description: 유저\n"
-              "role: account domain: game\n"
-              "columns: id, name")
+def test_table_signature_content_forward_format():
+    """cluster-signal-repair(2026-07-30): **"종전 포맷 byte-동일" 계약은 의도적으로 폐기**됐다.
+
+    종전 4줄 고정 틀(`table:`/`description:`/`role:`/`columns:`)은 라이브에서 값이 거의 다 공백이라
+    임베딩이 boilerplate 를 유사도로 착각했다(무관 클러스터 0.915 = 바닥값). 값이 있는 항목만 싣는
+    컨텐츠 전면 포맷으로 교체 — 전 시그니처 해시가 바뀌어 **전수 재임베딩이 발생한다**(사용자 승인
+    2026-07-30, 48,226건). 상세: build_table_signature_text docstring · TASK cluster-signal-repair."""
     got = sc.build_table_signature_text("gamedb", "t_user", "유저", ["id", "name"],
                                         "account", "game", analysis="")
-    assert got == legacy
+    assert got == ("gamedb.t_user\n"
+                   "유저\n"
+                   "account game\n"
+                   "columns: id, name")
 
 
 def test_table_signature_analysis_appended_and_capped():
@@ -94,9 +98,12 @@ def test_routine_signature_shape_and_analysis():
                {"fqn": "cc_data_main.log_spawn", "kind": "write"}, {"fqn": ""}]
     got = sc.build_routine_signature_text("cc_data_main", "sp_GetMonsterSpawn", "procedure",
                                           "IN idx int", "int", touches, analysis="몬스터 스폰 조회")
-    assert got.splitlines()[0] == "routine: cc_data_main.sp_GetMonsterSpawn()"
-    assert "type: procedure" in got and "params: IN idx int" in got and "returns: int" in got
-    assert "touches: read cc_data_main.dt_MonsterSpawn, write cc_data_main.log_spawn" in got
+    # cluster-signal-repair: 종류 접두(`routine:`/`type:`) 제거 + touches 는 테이블명만(테이블 쪽
+    #   `used by:` 와 같은 어휘 공간). 빈 필드는 줄 자체를 내지 않는다.
+    assert got.splitlines()[0] == "cc_data_main.sp_GetMonsterSpawn"
+    assert "routine:" not in got and "type:" not in got
+    assert "params: IN idx int" in got and "returns: int" in got
+    assert "touches: read dt_MonsterSpawn, write log_spawn" in got
     assert got.endswith("analysis: 몬스터 스폰 조회")
     # analysis 부재 → 줄 자체가 없음(해시 안정)
     assert "analysis:" not in sc.build_routine_signature_text("g", "r", "function", "", "", [])
@@ -196,7 +203,10 @@ def _pass_env(monkeypatch, rag_rows, routine_rows, routine_exc=None):
     # analysis-freshness(2026-07-23): 두 SELECT 가 signature_text_hash 를 추가 반환(라벨 캐시 키
     # 신선도 합성) — 기존 fixture 튜플(rag 7·routine 6)은 sig 자리를 자동 패딩(테스트 표기 최소화).
     rag_rows = [tuple(r) + (f"sig{r[0]}",) if len(r) == 7 else tuple(r) for r in (rag_rows or [])]
-    routine_rows = [tuple(r) + (f"sig{r[0]}",) if len(r) == 6 else tuple(r) for r in (routine_rows or [])]
+    # cluster-signal-repair(2026-07-30): 클러스터 pass 의 routine SELECT 가 `referenced_tables`(브릿지
+    #   재료)를 추가로 반환한다 — 기존 fixture 튜플(6열)은 sig + refs 자리를 자동 패딩한다.
+    routine_rows = [tuple(r) + (f"sig{r[0]}", []) if len(r) == 6 else
+                    (tuple(r) + ([],) if len(r) == 7 else tuple(r)) for r in (routine_rows or [])]
     cur = FakeCursor(rows={
         "FROM rag_objects o JOIN texts": rag_rows,
         "FROM routine_objects r JOIN texts": routine_rows,
@@ -304,7 +314,8 @@ def test_routine_backfill_upserts_and_idempotent(monkeypatch):
     cur, stored = _backfill_env(monkeypatch, rows)
     rep = sc.run_signature_backfill_pass(max_rows=10)
     assert rep["routine_processed"] == 1 and rep["routine_changed"] == 1 and rep["routine_failed"] == 0
-    assert len(stored) == 1 and "touches: read aaa.t1" in stored[0]
+    # cluster-signal-repair: touches 는 **테이블명만**(스키마 접두 제거 — 전 멤버 공유 boilerplate).
+    assert len(stored) == 1 and "touches: read t1" in stored[0]
     ups = [q for (q, p) in cur.executed if q.startswith("UPDATE routine_objects SET signature_text_hash")]
     assert len(ups) == 1
     # 멱등: 저장된 해시와 동일하면 no-op

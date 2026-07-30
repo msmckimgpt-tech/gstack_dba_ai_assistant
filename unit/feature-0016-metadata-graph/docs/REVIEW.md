@@ -676,3 +676,31 @@ source_of_truth: true
 - **라이브 재클러스터 결과는 배포 후 관측 대상**(CC.16) — 커밋 전 검증은 유닛/헤드리스 계약과 결정론이며,
   실제 밴드 수 감소·중복 라벨 소멸은 다음 재클러스터 pass 를 거쳐야 관측된다.
 - Human Approval Needed: no
+
+## REV-20260730T124000-cluster-signal-repair [CODEX:cluster-signature+bridge] — PASS-WITH-FIXES
+- Related TASK: feature-0016-metadata-graph
+- Source: codex exec (read-only sandbox, staged diff 직접 판독 — §18.8.1 경량 경로)
+- Trigger: schema/스키마 · performance/성능 keyword matched (클러스터 산정 규칙 + 대량 백필 쿼리)
+- 채널 근거: 세션 상위 지시가 Agent tool 사용을 금지 → §18.8.2 carve-out 에 따라 제약 없는 채널(codex)로 수행.
+  미커버 도메인은 아래 「미커버」 명시.
+- Timestamp: 2026-07-30T12:40:00+09:00
+- Verdict: PASS-WITH-FIXES (P1 3건·P2 3건 **전건 in-cycle 흡수**)
+
+| # | 등급 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1 | `_fetch_used_by_routines` 가 **테이블마다** `jsonb_array_elements` + 계산식 predicate 로 SQL → 인덱스 불가·루틴 전량 스캔. 백필 pass 당 500행 × 스키마 루틴 수(라이브 31,035) | **흡수** — `build_used_by_index` 로 **(ds, eff) 당 1회** 스캔 후 파이썬 dict 역인덱스, 백필 루프가 `_usedby_cache` 로 재사용. 테스트 `test_used_by_index_single_scan_and_cross_schema_excluded` |
+| 2 | P1 | `_fetch_related_tables` 가 schema 필터를 빼 **크로스-DB 동명 테이블** 관계가 시그니처를 오염 | **흡수** — `datasource_key` 추가 + schema 는 "빈 값이거나 일치"(MSSQL 의 DB명/'dbo' 양 표기 커버) |
+| 3 | P1 | **재임베딩 드레인 중 flap** — 종전 드레인 가드는 `_fresh_embeddings_since_mark` 안에만 있어 **데이터 트리거만** 막았고 6h **시간 cadence 는 통과**했다. 신/구 시그니처가 섞인 부분 공간으로 6시간마다 재클러스터 + 라벨 캐시 전패(LLM 재호출 반복) | **흡수(중대)** — `_embedding_drain_pending` 를 분리 신설해 **두 트리거 모두** veto. 48,226건 드레인을 승인한 상황에서 이 지적이 없었다면 수십 시간 동안 밴드·라벨이 요동쳤을 것이다. `rep["drain_deferred"]` 로 관측. 테스트 `test_embedding_drain_pending_vetoes_both_triggers` |
+| 4 | P2 | 브릿지의 `tc in dropped` 가 **이미 병합된 대상 테이블 comp** 를 skip 처리 → 과반 조건을 만족한 브릿지가 조용히 누락 | **흡수** — union-find `find()` 로 체인 redirect. 테스트 `test_bridge_redirects_through_merged_chain`(둘째 루틴 comp 도 병합됨을 단정) |
+| 5 | P2 | 브릿지도 ref 를 leaf 만 비교해 크로스-DB 동명 테이블로 강제 병합될 수 있다 | **흡수** — 스키마 세그먼트 대조 추가. 테스트 `test_bridge_excludes_cross_schema_refs` |
+| 6 | P2 | `existing_labels` 를 `out.values()` 에서 만들어 **직렬/병렬 경로가 달라짐**(concurrency 설정 의존 = 비결정) | **흡수** — **캐시 적중분(`cached_labels`)만** 사용. 두 경로 동일 + pass 시작 시점 kv 상태라 결정론 |
+
+### 미커버 (정직 표기)
+- `[SKIPPED:tool-restricted:ux+design]` — 본 cycle 은 백엔드 산정 로직 전용(프론트 자산 무변경)이라 UI 도메인
+  해당 없음. 화면 영향은 재클러스터 후 밴드 구성 변화로 나타나며 CS.8 에서 관측한다.
+- **라이브 효과 미관측**: 커밋 전 검증은 유닛 21건 + **표본 임베딩 사전 실증**(지표 복구 수치)까지다.
+  실제 밴드 수·유의어 소멸은 **48,226건 재임베딩 드레인 완료 후** 재측정해야 한다(CS.8). 드레인 중에는
+  가드가 재클러스터를 유예하므로 화면은 종전 상태로 남는다 — 이를 "미개선" 으로 오독하지 않도록 명시.
+- **브릿지 min_frac 0.5 는 라이브 튜닝 미완**: 과반 + 서로 다른 테이블 2개 이상으로 보수적으로 잡았으나,
+  실제 분포에서의 적정값은 드레인 후 관측 대상이다.
+- Human Approval Needed: no
