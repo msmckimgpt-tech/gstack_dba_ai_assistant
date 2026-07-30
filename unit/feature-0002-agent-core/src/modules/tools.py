@@ -1084,7 +1084,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "루틴 목록을 카탈로그 뷰에서 직접 SELECT 하지 말고 이 도구를 쓴다. "
                 "SQL Server: `database` 미지정 시 이 제품의 **허용된 모든 데이터베이스(catalog)를 한 번에** 검색하고 "
                 "`database.schema.routine` 으로 위치를 반환한다 — 카탈로그 뷰는 DB 별이라 직접 SELECT 하면 "
-                "다른 DB 의 루틴을 놓친다. 찾은 뒤 본문은 `describe_routine` 으로 조회한다."
+                "다른 DB 의 루틴을 놓친다. 본문이 매칭된 행에는 **매칭 지점의 앞뒤 문맥 조각**이 함께 "
+                "표시되므로, 어느 루틴을 실제로 열어볼지 먼저 추린 뒤 본문 전문을 `describe_routine` "
+                "으로 조회한다."
             ),
             "parameters": {
                 "type": "object",
@@ -1930,6 +1932,10 @@ def _tool_describe_table(conn, args: dict) -> str:
     _found_cols = any(kind == "rows" and rows for kind, _c, rows in col_results)
     if not _found_cols and _mssql_active():
         parts.append(_mssql_crossdb_hint(exclude_db=target_db))
+    if not _found_cols:
+        # FR-review-frames-live-db-as-spec: 첨부가 생성할 테이블을 조회한 경우가 흔하다 — 미발견을
+        # 결함으로 승격시키지 않게 분류를 교정한다(엔진 무관).
+        parts.append(_PROPOSED_CHANGE_HINT)
 
     return "\n".join(parts)
 
@@ -2078,6 +2084,35 @@ def _tool_search_tables(conn, args: dict) -> str:
 _METADATA_SCHEMAS_FOR_HINT = ("information_schema", "sys")
 
 
+# FR-review-frames-live-db-as-spec (conversation_audit 2026-07-30): 첨부 쿼리 리뷰 중 "아직 적용
+# 안 된 변경 대상"을 조회하면 엔진은 당연히 미발견 오류를 낸다. 그 원문만 보면 모델은 이를 결함
+# 신호로 읽어 "테이블이 존재하지 않습니다 🔴" 로 승격했다(라이브 실증: 미적용 마이그레이션을 두고
+# "동적 ALTER 로직이 실행되지 않았거나 실패한 상태" 라는 허위 결함 단정). 도구가 **분류를 교정**한다
+# — 사실을 지어내지 않고("~라면" 조건부), 첨부 세트가 그 객체를 만드는 경우와 진짜 선행 누락을
+# 구분하도록만 유도한다. L1 프롬프트 계약(_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE)의 L2 짝.
+_MISSING_OBJECT_ERROR_PAT = re.compile(
+    r"(doesn't exist|does not exist|Unknown column|Unknown database|Unknown table"
+    r"|Invalid object name|Invalid column name|Could not find stored procedure"
+    r"|\b1146\b|\b1054\b|\b1049\b|\b1051\b)",
+    re.IGNORECASE,
+)
+
+_PROPOSED_CHANGE_HINT = (
+    "(이 미발견을 분류하세요 — **한쪽으로 단정하지 말 것**. ① 이 객체가 지금 리뷰 중인 "
+    "**첨부 스크립트에서 생성/변경되는 대상**이면 아직 적용되지 않은 상태일 뿐 결함이 아닙니다 "
+    "→ '적용 전제'로 분류하고 결함 목록·심각도 배지에 넣지 마세요. ② 첨부 어느 파일도 이 객체를 "
+    "만들지 않으면 실제 선행 누락(결함)입니다. ③ 미발견은 권한·조회 스코프·이름 대소문자/오타로도 "
+    "납니다 — 위 부재 규칙대로 교차확인 전에는 ①② 어느 쪽으로도 단정하지 마세요.)"
+)
+
+
+def _proposed_change_hint(error_text: str) -> str:
+    """미발견 오류에만 붙는 '적용 전제 vs 결함' 분류 교정 힌트. 해당 없으면 빈 문자열(잡음 0)."""
+    if not error_text or not _MISSING_OBJECT_ERROR_PAT.search(str(error_text)):
+        return ""
+    return "\n\n" + _PROPOSED_CHANGE_HINT
+
+
 def _catalog_scope_hint(sql: str) -> str:
     """카탈로그 메타뷰를 **catalog 자격 없이(2-part)** 조회할 때 붙이는 스코프 진단 (RC-D).
 
@@ -2143,6 +2178,39 @@ def _cfg_active_default_db() -> str:
         return ""
 
 
+_ROUTINE_SNIPPET_MAX = 120
+
+# 스니펫이 빈 행의 라벨. 종전 안('(이름 매칭)')은 **틀린 단정**이었다(codex 적대 리뷰 P2):
+# 행 선택 WHERE 는 이름 OR 본문 OR 주석을 LIKE 로 보는데 스니펫은 본문만 LOCATE 로 찾으므로,
+# 주석만 매칭된 행이나 keyword 에 LIKE 와일드카드(`%`/`_`)가 섞인 행도 빈 스니펫이 된다.
+# 도구가 확실히 아는 것은 "본문에서 그 문자열을 그대로 찾지 못했다" 뿐이라 그대로 표기한다.
+_NO_BODY_MATCH_CELL = "(본문 외 매칭)"
+_NO_BODY_MATCH_NOTE = (
+    "\n('본문 외 매칭' = 루틴 이름 또는 주석으로 매칭됐거나, keyword 에 LIKE 와일드카드"
+    "(`%`/`_`)가 있어 본문에서 그대로는 찾지 못한 경우입니다 — 본문에 없다는 뜻이 아닙니다.)"
+)
+
+
+def _routine_snippet_cell(row) -> str:
+    """search_routines 행의 MATCH_SNIPPET 을 마크다운 표 셀로 정규화.
+
+    conversation_audit 2026-07-30: 목록만 돌려주면 "왜 이 루틴이 걸렸는지" 를 알려고 후보마다
+    `describe_routine` 을 다시 불러야 했다. 본문 매칭 문맥을 그 자리에서 보여준다.
+    dialect 가 4번째 컬럼을 주지 않거나(구 dialect·fake row) 이름만 매칭이면 빈 문자열.
+    표를 깨뜨리는 개행·파이프는 치환하고, 셀 폭을 상한으로 자른다.
+    """
+    try:
+        raw = row[3] if len(row) > 3 else ""
+    except TypeError:                       # 인덱싱 불가한 행 형태 — 조용히 비운다.
+        return ""
+    text = " ".join(str(raw or "").split())
+    if not text:
+        return ""
+    if len(text) > _ROUTINE_SNIPPET_MAX:
+        text = text[:_ROUTINE_SNIPPET_MAX] + "…"
+    return "`" + text.replace("|", "\\|").replace("`", "'") + "`"
+
+
 def _search_routines_mssql(conn, args: dict, keyword: str) -> str:
     """MSSQL cross-DB 루틴 검색 — `_search_tables_mssql` 의 루틴 판(동일 보안 경계).
 
@@ -2166,7 +2234,7 @@ def _search_routines_mssql(conn, args: dict, keyword: str) -> str:
         targets = dbs_disp
     capped = targets[:_SEARCH_TABLES_DB_CAP]
     excl = frozenset(_excluded_schemas())   # search_tables 와 동일 SSOT(내부 스키마 포함)
-    rows_out: list[tuple[str, str, str, str]] = []
+    rows_out: list[tuple[str, str, str, str, str]] = []
     failed: list[tuple[str, str]] = []
     saturated: list[str] = []
     for dbi in capped:
@@ -2189,16 +2257,24 @@ def _search_routines_mssql(conn, args: dict, keyword: str) -> str:
             if kind == "rows" and rows:
                 n += len(rows)
                 for row in rows[:_ROUTINE_ROWS_PER_DB]:
-                    rows_out.append((dbi, str(row[0]), str(row[1]), str(row[2])))
+                    rows_out.append(
+                        (dbi, str(row[0]), str(row[1]), str(row[2]), _routine_snippet_cell(row)))
         if n > _ROUTINE_ROWS_PER_DB:      # TOP 51 = 상한 50 + 포화 감지 1건
             saturated.append(dbi)
     searched = [d for d in capped if d not in {f for f, _ in failed}]
     parts = [f"## '{keyword or '(전체)'}' 루틴 검색 결과\n"]
     if rows_out:
-        parts.append("| database | schema | routine | type |")
-        parts.append("|---|---|---|---|")
-        for dbi, sch, nm, typ in rows_out:
-            parts.append(f"| {dbi} | {sch} | {nm} | {typ} |")
+        if any(snip for *_r, snip in rows_out):
+            parts.append("| database | schema | routine | type | 본문 매칭 위치 |")
+            parts.append("|---|---|---|---|---|")
+            for dbi, sch, nm, typ, snip in rows_out:
+                parts.append(f"| {dbi} | {sch} | {nm} | {typ} | {snip or _NO_BODY_MATCH_CELL} |")
+            parts.append(_NO_BODY_MATCH_NOTE)
+        else:
+            parts.append("| database | schema | routine | type |")
+            parts.append("|---|---|---|---|")
+            for dbi, sch, nm, typ, _snip in rows_out:
+                parts.append(f"| {dbi} | {sch} | {nm} | {typ} |")
         scope = f"'{target_db}' DB" if target_db else f"허용 DB {len(searched)}/{len(capped)}개"
         parts.append(f"\n{len(rows_out)} 루틴 검색됨 ({scope}).")
         parts.append("\n(본문은 `describe_routine(database=…, schema_name=…, routine_name=…)` 으로 조회하세요.)")
@@ -2272,10 +2348,20 @@ def _tool_search_routines(conn, args: dict) -> str:
     parts = [f"## '{keyword or '(전체)'}' 루틴 검색 결과\n"]
     if rows_all:
         shown = rows_all[:_ROUTINE_ROWS_PER_DB]
-        parts.append("| schema | routine | type |")
-        parts.append("|---|---|---|")
-        for row in shown:
-            parts.append(f"| {row[0]} | {row[1]} | {row[2]} |")
+        _has_snip = any(_routine_snippet_cell(r) for r in shown)
+        if _has_snip:
+            parts.append("| schema | routine | type | 본문 매칭 위치 |")
+            parts.append("|---|---|---|---|")
+            for row in shown:
+                parts.append(
+                    f"| {row[0]} | {row[1]} | {row[2]} | "
+                    f"{_routine_snippet_cell(row) or _NO_BODY_MATCH_CELL} |")
+            parts.append(_NO_BODY_MATCH_NOTE)
+        else:
+            parts.append("| schema | routine | type |")
+            parts.append("|---|---|---|")
+            for row in shown:
+                parts.append(f"| {row[0]} | {row[1]} | {row[2]} |")
         parts.append(f"\n{len(shown)} 루틴 검색됨.")
         parts.append("\n(본문은 `describe_routine(schema_name=…, routine_name=…)` 으로 조회하세요.)")
         if len(rows_all) > _ROUTINE_ROWS_PER_DB:
@@ -2642,7 +2728,7 @@ def _tool_execute_sql(conn, args: dict) -> str:
             parts.insert(0, cost_note)
         return "\n\n".join(parts)
     except Exception as e:
-        return f"SQL 실행 오류: {e}"
+        return f"SQL 실행 오류: {e}" + _proposed_change_hint(str(e))
 
 
 def _format_mssql_showplan(result_sets) -> str:
@@ -2943,6 +3029,8 @@ def _tool_describe_routine(conn, args: dict) -> str:
         msg = f"{_loc or '현재 DB'}에 `{name}` 저장 루틴(프로시저/함수)이 없습니다. 이름을 확인하세요."
         if _mssql_active():
             msg += _mssql_crossdb_hint(exclude_db=target_db)
+        # FR-review-frames-live-db-as-spec: 신규 프로시저 리뷰에서 가장 흔한 미발견 경로.
+        msg += "\n\n" + _PROPOSED_CHANGE_HINT
         return msg
 
     # 파라미터 조회 (1회 — 동일 스키마·이름). 실패는 graceful(정의만 표시).

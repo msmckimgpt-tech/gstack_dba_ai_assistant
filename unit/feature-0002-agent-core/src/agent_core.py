@@ -121,6 +121,7 @@ If an "ATTACHED FILE CONTENTS" or "ATTACHED FILES" section is present and the us
 - Treat the attached content as the PRIMARY subject of your answer.
 - Reviewing the file's INTERNAL quality (logic, syntax, style, bugs of the code as written) does not by itself require execute_sql — reason from the attached content. KNOWN SCHEMAS are background, not the answer source for a pure review task.
 - But do NOT assert how the file relates to the ACTUAL / live database (whether a table or procedure exists, matches, or differs) from memory: any such claim MUST be verified against the live DB first, following the "COMPARING an attachment against the live DB" rule above. Focusing on the attached files does NOT override that grounding rule.
+- A PROPOSED CHANGE IS THE FUTURE STATE — REVIEW THE "AFTER", NOT THE "BEFORE". When the attachment is a change meant to be applied (DDL, migration script, a new or updated stored routine, ALTER/CREATE), the live DB is the **BEFORE** state and the attached set defines the **AFTER** state. A difference the change itself introduces — the table/column/index/routine is not there yet, a routine's parameters or body differ from the deployed one, a key/constraint the script adds is currently missing — is a PRECONDITION OF APPLYING IT, **not a defect**: never call it 결함/문제/위험, never give it a 🔴/🟡 severity badge, and never conclude a script "실행되지 않았다/실패했다" just because its effect is not visible yet. Gather every such item into ONE short "적용 전제 / 배포 순서" section stated as fact, and write the review body — 논리 정확성, 성능, 키·인덱스 설계, 트랜잭션·동시성, 보안, 운영 — about the code as it will run AFTER the whole set is applied. Live-DB verification still applies in full; its purpose here is (a) whether the change CAN be applied (existing data or objects that would make it fail — duplicate rows vs a new PK, type/collation conflict, name collision), (b) impact on what the change does NOT touch (existing callers, dependent routines/views), and (c) a prerequisite that is genuinely missing — needed by the script, absent from the live DB **and** not created by any attached file. Only (c) is a defect; before claiming it, check the OTHER attached files first.
 
 ## SQL CONVENTIONS
 - Always use `schema`.`table` format. This assistant has read-only access — SELECT statements only.
@@ -848,6 +849,46 @@ _ATTACHMENT_NEW_DELIVERY_DIRECTIVE = (
     "the user attached, use `attachment-edit` with its `source_attachment_id` instead.\n"
 )
 
+# FR-review-frames-live-db-as-spec (conversation_audit 2026-07-30): 첨부 쿼리 리뷰에서 모델의
+# 기본 프레임이 "라이브 DB = 정본 스펙 / 첨부 = 그에 미달하는 후보" 로 굳어, **변경이 스스로
+# 만들어내는 차이**(아직 없는 테이블·컬럼·루틴, 바뀐 시그니처, 스크립트가 추가할 PK)를 전부
+# 결함·경고로 보고했다. 라이브 실증: 동일 5개 파일(sha256 일치)·동일 요청문의 A/B 대조쌍에서
+# 한쪽은 코드 리뷰, 다른 쪽은 "배포 순서 의존성(가장 중요)" + "아직 존재하지 않습니다" 로 갈렸고,
+# 다른 대화에서는 미적용 마이그레이션을 두고 "동적 ALTER 로직이 실행되지 않았거나 실패한 상태"
+# 라는 **허위 결함 단정**까지 나왔다. 프롬프트가 "실 DB 대조는 필수"만 정하고 그 **차이의 해석**
+# (시간 방향)을 정하지 않아 프레임이 모델 재량으로 갈린 것 — 코드가 권위선이 되어 계약을 못박는다.
+#
+# 회귀 방지(중요): 이 지침은 라이브 대조를 **약화하지 않는다**. FR-mssql-crossdb-structured-discovery
+# ·FR-false-absence-zero-row-catalog-scope 계열이 봉인한 "실 DB 미확인 단정 금지"는 그대로 두고,
+# 확인한 차이를 **어떻게 분류·배치할지**만 규정한다(결함 vs 적용 전제).
+_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE = (
+    "\n\n## REVIEWING A PROPOSED CHANGE — TIME DIRECTION (authoritative)\n"
+    "When the attached files are a change meant to be APPLIED (DDL, migration script, a new or "
+    "updated stored routine, ALTER/CREATE), the live database is the **BEFORE** state and the "
+    "attached set defines the **AFTER** state. Review the AFTER state.\n"
+    "- A difference the attached change ITSELF introduces — the table/column/index/routine does not "
+    "exist yet, a routine's parameters or body differ from the deployed version, a key/constraint "
+    "the script adds is currently absent — is a PRECONDITION of applying the change, **not a "
+    "defect**. Never label it 결함/문제/위험, never give it a 🔴/🟡 severity badge, and never "
+    "conclude that a script \"실행되지 않았다/실패했다\" merely because its effect is not visible in "
+    "the live DB yet.\n"
+    "- Put every such item into ONE short section (e.g. \"적용 전제 / 배포 순서\") stated as fact, "
+    "not as warnings. Severity badges and the defect list belong ONLY to problems that would STILL "
+    "exist after the whole attached set has been applied.\n"
+    "- Write the body of the review — 논리 정확성, 성능, 키·인덱스 설계, 트랜잭션·동시성, 보안, "
+    "운영 — about the code as it will run AFTER the change is applied. That is what the user asked "
+    "you to review.\n"
+    "- You still MUST verify against the live DB (the grounding rules stand — never narrate the "
+    "current-DB side from memory). Its purpose HERE is: (a) whether the change can actually be "
+    "applied — existing data or objects that would make it fail (rows that violate a new PK/UNIQUE, "
+    "type/collation conflict, name collision); (b) impact on what the change does NOT touch — "
+    "existing callers, dependent routines/views/jobs; (c) whether a prerequisite is genuinely "
+    "MISSING — required by the script, absent from the live DB **and** not created by any attached "
+    "file. Only (c) is a defect — say so plainly when it is one.\n"
+    "- Before calling anything a missing prerequisite, check the OTHER attached files first: an "
+    "object created by a sibling attachment is provided, not missing.\n"
+)
+
 
 def _datamark_untrusted(content: str, label: str = "데이터") -> str:
     """비신뢰 텍스트를 sentinel 마커로 구획(spotlighting). 콘텐츠·label 내 sentinel 은 제거해
@@ -1239,6 +1280,10 @@ def _build_attachment_context_section(
             "matches, or differs) from memory: when your answer makes such a claim you MUST verify it "
             "against the live DB first, following the 'COMPARING an attachment against the live DB' rule "
             "stated earlier in this system prompt. "
+            "If these files are a change to be APPLIED (DDL / migration / new or updated routine), the "
+            "live DB is the BEFORE state and this set is the AFTER state — follow the 'REVIEWING A "
+            "PROPOSED CHANGE — TIME DIRECTION' rule: differences this change itself introduces are 적용 "
+            "전제, not 결함, and the review body is about the code as it will run after the set is applied. "
             "Files marked '★ 이번 요청 신규 첨부' were just attached in this message. "
             "Files marked '◆ 이전 세션 첨부' are from earlier in this conversation and remain available. "
             "Do NOT ask the user to paste the file contents — they are already provided above."
@@ -1451,7 +1496,8 @@ def compose_system_prompt(
     # global row(운영자 커스터마이즈) 내용과 무관하게 항상 상위에 존재 → 비신뢰 콘텐츠
     # spotlighting 규칙이 effective. (datamarking 은 콘텐츠 측에서 sentinel 로 구획.)
     parts: list[str] = [base_prompt, _INJECTION_GUARD_NOTICE, _ATTACHMENT_DELIVERY_DIRECTIVE,
-                        _ATTACHMENT_NEW_DELIVERY_DIRECTIVE]
+                        _ATTACHMENT_NEW_DELIVERY_DIRECTIVE,
+                        _ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE]
     if is_auto:
         parts.append(
             "\n\n[AUTO MODE] No product is pinned to this conversation. "

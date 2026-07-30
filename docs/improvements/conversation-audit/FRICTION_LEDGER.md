@@ -6,6 +6,36 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-review-frames-live-db-as-spec — fixed:undeployed (L1 시간 방향 계약 부재; 리뷰가 '적용 후'가 아닌 '현재 DB' 기준으로 불평)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 27 PASS · feature-0002 전체 2114 passed/30 skipped · `make test` RC=0 4회 연속) + §18.8 codex 3렌즈 적대 리뷰([P1] 0 · [P2] 4 중 2 흡수·2 근거 수용) 완료. **배포 전**. 배포 후 동일 5파일 재리뷰에서 '적용 전제' 절 분리 + 미배포 상태에 🔴 배지 부재 관측 시 `fixed:deployed:unverified-live`.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` (2026-07-30) — "곧 적용될 쿼리 구조를 기준으로 답변하는게 아니라 항상 현재DB를 기준으로 불평하듯 주의사항을 전달".
+- **last_seen**: 2026-07-30 · **seen_count**: 1 · **seen_distinct_conv**: 12 (60일 서명 노출)
+- **modality**: 1:1 동기(대상) + 그룹 비동기(`…b5f40d99`) · **product_id(마스킹)**: P-119 외(117/114/109) · **conv(마스킹)**: `…a2efa955`(topic "SQL 쿼리 코드 리뷰") · 대조군 `…4348bc34` · `…b5f40d99` · `…7af6ae1c` · `…5cef7aa2` · `…eb3f79c0` · `…a48a40c8` · `…a8b43197`
+- **symptom_confidence**: high (사용자 명시 보고 + 라이브 A/B 대조쌍 재현) · **rootcause_confidence**: high (프롬프트 file:line + PG core_messages/core_attachments 삼각측량 + 통제된 A/B 대조)
+- **suspected_layers**: **L1**(프롬프트 합성 — 첨부↔실 DB **차이의 해석 계약**이 없어 프레임이 모델 재량) · L2 동반(미발견 도구 오류가 결함 신호로 읽힘)
+- **증상(signal)**: `E-USR` 명시 보고 + `I-FALSE` 허위 결함 단정 + `I-SIL`(대상 대화 최종답 이후 무응답 종료). 대상 답변은 최상단을 "0. 배포 순서 의존성 (가장 중요)" 로 열고 "`gunzlog.steampaymenthistory` 테이블은 **아직 존재하지 않습니다**", "`concurrentusers5rocks_gunz` 는 현재 `ServerID` 컬럼도, PK도 **전혀 없습니다**" 를 핵심 지적으로 배치했다 — **둘 다 사용자가 같이 첨부한 `T_*.sql` 이 만들어내는 것**이다. `…b5f40d99` 는 미적용 마이그레이션을 두고 "스크립트의 **동적 ALTER 로직이 실제로 실행되지 않았거나 실패한 상태**입니다" 라고 단정(허위 결함)했고, 답변 4건이 "예상 구조 vs 실제 구조" 표로 미배포 상태를 🔴 **결함**·"데이터 무결성 위험" 으로 채점했다.
+- **결정적 증거(A/B 대조쌍)**: 동일 5개 파일(sha256 **일치**, attachment 647~651 ↔ 652~656)·동일 요청문("첨부파일의 쿼리 리뷰를 진행해주세요.")이 **3분 간격** 두 대화로 갈렸다 — `…4348bc34`(16:43, **도구 0회**)는 논리·성능·보안·운영 축의 코드 리뷰(사용자가 원한 형태), `…a2efa955`(16:46, 도구 12회)는 현재-DB 부재 지적 중심. 입력이 같고 출력 프레임만 갈렸다는 것은 **결함이 모델 능력이 아니라 계약 부재**라는 직접 증거다.
+- **confirmed_root_cause**: `agent_core.py` SYSTEM_PROMPT §ATTACHED FILES(:119-124)와 첨부 주입 INSTRUCTION(`_build_attachment_context_section`, :~1272)이 "첨부 vs 실 DB 주장은 반드시 라이브 검증"(FR-partial-evidence 계보)만 규정하고 **그 차이가 무엇을 의미하는지(시간 방향)** 는 규정하지 않는다. 여기에 누적된 부재·완전성 grounding(:104-111 — FR-partial-evidence·FR-false-absence·FR-false-truncation 봉인)이 "존재 여부" 를 극도로 부각시켜, 모델의 기본 프레임이 **라이브 DB=정본 스펙 / 첨부=그에 미달하는 후보** 로 굳었다. 재발경로 = `model limit`(계약 없는 자리를 기본 프레임이 채움) + `data/config drift`(코드 상수가 운영자 global row 로 대체 가능) → **코드가 권위선**.
+- **선행 봉인의 2차효과(계보)**: FR-false-truncation-belief 가 FR-partial-evidence 의 역방향 과발동이었던 것과 **같은 축**이다 — grounding 을 강화할수록 "존재/부재" 판정이 답변의 중심으로 올라오고, 그 판정에 **시간 방향**이 없으면 미적용 상태가 결함으로 읽힌다.
+- **corroboration**: **structural** — 60일 `.sql` 첨부 대화 **96건 중 12 distinct_conv(≈12.5%)** 의 장문 답변이 현재-DB 부재 프레이밍을 담는다. 도구측 미발견 오류(`doesn't exist`/`Unknown column`/1146 등)는 같은 기간 7 distinct_conv.
+- **거짓양성 기각(`refuted`)**: ① **red-team 자가검증 증폭 아님** — 대상 두 대화의 `redteam_reviews`(171·173) 모두 `verdict=pass`·`revision_applied=false`·`block_count=0`. ② **라이브 대조 자체는 결함 아님(F4)** — 같은 답변의 "기존 1,710행에 (ReportTime, PublisherID) 중복 0건 → PK 추가 충돌 없이 성공" 은 라이브 대조의 **정확한 용법**이며, 선행 FR-mssql-crossdb 계열이 고친 것은 정반대(대조 없이 리뷰). 따라서 수정은 대조를 줄이는 방향이 아니라 **차이의 분류**를 정하는 방향이어야 한다(보안·정확성 회귀 방지의 축).
+- **봉인(A+B+C, 사용자 승인)**: (A) `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 를 `compose_system_prompt` `parts` 에 always-append — 라이브 DB=BEFORE / 첨부 세트=AFTER, 변경이 도입하는 차이는 적용 전제이지 결함 아님(결함 어휘·심각도 배지·"실행 실패" 단정 금지). 운영자 global row drift 무관(AUTH-1a). (B) 출력 구조 계약 — 전제는 "적용 전제 / 배포 순서" 한 절, 배지·결함 목록은 적용 후에도 남는 문제에만, 본문은 적용 후 상태 기준. (C) L2 `_proposed_change_hint()` — 미발견 시그니처에만 **3분기** 분류 교정(적용 전제 ↔ 진짜 선행 누락 ↔ 권한·스코프·오타, 교차확인 전 단정 금지). **라이브 대조 강제·0행≠부재 규칙 불변**(회귀 테스트로 고정). 가드/allowlist/RBAC 무변경.
+- **disposition 근거**: Major(§12.3 — 코어 시스템 프롬프트, 모든 첨부 리뷰 답변에 영향) → attended human-decision. structural corroboration + 코드 file:line confirmed(high) + A/B 대조쌍으로 계약 부재 직접 실증 → fix-now. 사용자가 AskUserQuestion 으로 범위 **A+B+C 전부** 명시 선택(2026-07-30) → PLAN-APPROVED 후 구현.
+- **fix**: `CHG-20260730T190000-review-proposed-change-framing` / **코드 거주 `feature-0002-agent-core`** / `REV-20260730T190000-review-proposed-change-framing`(§18.8.2 제약-없는-채널 우선 → codex 3렌즈 security+backend+regression, **[P1] 0건**, [P2] 4건 중 스니펫 라벨 오단정·힌트 일방면책 2건 흡수 수정, 컬럼 가변·본문 노출 2건 근거 기록 수용).
+- **rc_ids**: RC-1 · **batch-id**: B-20260730T190000-review-proposed-change-framing
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "계약이 항상 주입되고, 운영자 global row 대체를 견디며, 선행 grounding 을 약화하지 않고, 미발견 힌트가 3분기로 붙는다" 까지만 증명한다. **"실제 리뷰가 적용 후 기준으로 쓰이는지"** 는 배포 후 실측분(미수행) → 배포 후 동일 5파일 재리뷰 + 다음 audit 이 corroboration(SQL 첨부 대화의 현재-DB 부재 프레이밍 distinct_conv) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+- **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 동일 첨부로 라이브 재리뷰 + `/_dqa:doc_sync`.
+
+## FR-routine-content-scan-missing — rejected (F3 이미 구현·배포·라이브 사용중; 체감 갭만 개선)
+
+- **status**: `rejected` — **도구 부재가 아니다**. `search_routines`(FR-false-absence-zero-row-catalog-scope lever A, 2026-07-28 배포 PR #991 main `21b67ade`)가 이미 **이름 + 정의 본문(`ROUTINE_DEFINITION`) + 주석**을 검색한다(`dialects.py` MySQL:337-/MSSQL:678- · `tools._tool_search_routines`). 신설 대신 표현 갭만 개선.
+- **source**: 위 audit 과 동일 호출 — "assistant가 단일 함수 및 프로시저를 확인하는 도구는 있지만 특정 내용을 포함하는 함수 및 프로시저를 탐색하는 도구가 없어 추가가 필요합니다 (scan)".
+- **last_seen**: 2026-07-30 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **기각 근거(데이터)**: ① 사용자가 지목한 바로 그 대화(`…a2efa955`)에서 **실제로 동작**했다 — msg 6317 이 keyword `Log_AccountUpdateCash` 로 **이름에 그 문자열이 없는 호출자 4개**(`Game_BuyCashItem_Steam`·`Game_ConvertCash`·`Game_GiftCashItem_Steam`·`Steam_AccountChargeCash`)를 반환했다. 이름 검색만으로는 구조적으로 불가능한 결과이므로 본문 검색이 살아 있음을 증명한다. ② 같은 대화 msg 6331/6332 도 `search_routines` 호출. ③ 30일 사용량 **23회 / 7 distinct_conv**. ④ 도구 정의(`TOOL_DEFINITIONS`)에 "이름뿐 아니라 **정의 본문**도 검색" 명시.
+- **실재한 갭(개선 출하)**: 결과가 `schema | routine | type` 목록뿐이라 **어느 부분이 매칭됐는지** 알려면 후보마다 `describe_routine` 을 다시 불러야 했다 — 후보가 여러 개면 그 왕복이 탐색을 접게 만든다. 사용자 선택(AskUserQuestion 2026-07-30)에 따라 **매칭 스니펫 컬럼** 출하: `REQ-20260730-routine-match-snippet`(같은 CHG). 빈 스니펫은 `(본문 외 매칭)` + 원인 주석(이름·주석 매칭 또는 LIKE 와일드카드)으로 표기 — `(이름 매칭)` 단정은 §18.8 codex P2 로 기각됨.
+- **교훈(원장 기록)**: 사용자가 "도구가 없다" 고 보고해도 **도구 부재 ≠ 도구 미인지**다. 이 건의 실체는 결과 표현이 근거를 안 보여줘 도구가 한 일이 사용자·모델 양쪽에 안 보였던 것이다. 부재 보고는 라이브 호출 로그(`core_messages.name`)로 먼저 반증한다.
+
 ## FR-datetime-tz-server-vs-stored — fixed:undeployed (L1 grounding 지침 lever)
 
 - **status**: `fixed:undeployed` — L1 프롬프트 lever(`_DATA_GROUNDING_GUIDANCE` 신설·항상 주입) 출하, 배포 전. 배포 후 시각-필터 질의에서 저장값 TZ 추측 대신 확인·가정 명시 관측 시 `fixed:deployed:unverified-live` 로 전이.

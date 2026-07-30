@@ -10,6 +10,17 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260730T190000-review-proposed-change-framing (쿼리 리뷰 시간 방향 계약 + 미발견 분류 교정 힌트 + 루틴 본문 매칭 스니펫 — conversation_audit FR-review-frames-live-db-as-spec)
+- Date: 2026-07-30. worktree `ai/root/feature-0002-agent-core`(base main bb4be6e4). 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` 사용자 명시 호출. 범위 승인(AskUserQuestion 2026-07-30) = **A+B+C 전부 + search_routines 매칭 스니펫**.
+- **무엇을(A 시간 방향 계약)**: `agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 신설 — 첨부가 **적용될 변경**(DDL/마이그레이션/신규·수정 루틴)이면 라이브 DB=**BEFORE**, 첨부 세트=**AFTER**. 변경이 스스로 도입하는 차이(아직 없는 객체, 바뀐 시그니처, 스크립트가 추가할 키/제약)는 **적용 전제이지 결함이 아니다** — 결함/문제/위험 어휘 금지, 🔴/🟡 배지 금지, "실행되지 않았다/실패했다" 단정 금지. `compose_system_prompt` 의 `parts` 에 always-append 해 **운영자 `WebSystemPrompts` global row 가 base 를 통째로 대체해도 살아남는다**(AUTH-1a 코드 권위선, `_ATTACHMENT_DELIVERY_DIRECTIVE` 와 대칭). SYSTEM_PROMPT §ATTACHED FILES 에 압축 미러 1줄 + 첨부 주입 INSTRUCTION 에 포인터.
+- **무엇을(B 출력 구조 계약)**: 같은 상수 안에서 — 전제 항목은 "적용 전제 / 배포 순서" **한 절**에 사실로 기재, 심각도 배지·결함 목록은 **적용 후에도 남는** 문제에만. 리뷰 본문(논리·성능·키/인덱스·트랜잭션·보안·운영)은 적용 후 상태 기준으로 작성.
+- **무엇을(C 도구 L2 짝)**: `tools._proposed_change_hint()` — 미발견 시그니처(`doesn't exist`/`Unknown column`/`Invalid object name`/1146·1054·1049 …)에만 붙는 **분류 교정** 3분기 힌트. ① 첨부가 만드는 객체면 적용 전제 ② 어느 첨부도 안 만들면 실제 선행 누락(결함) ③ 권한·스코프·대소문자/오타로도 미발견이 나므로 **교차확인 전에는 ①②로 단정 금지**(선행 0행≠부재 봉인 유지). 부착 3지점: `_tool_execute_sql` 오류 · `_tool_describe_table` 컬럼 0행 · `_tool_describe_routine` 정의 0행.
+- **무엇을(scan 스니펫)**: `search_routines` 결과에 `MATCH_SNIPPET` 4번째 컬럼 — 본문 매칭 지점의 앞뒤 문맥(앞 40자~총 140자, 표 셀 120자 상한). MySQL `LOCATE/SUBSTRING/GREATEST`, MSSQL `CHARINDEX/SUBSTRING`. keyword 미지정(전체 열거)은 상수 `''`(LOCATE('')=1 무의미 머리말 회피). 종전에는 목록만 줘서 "왜 이 루틴이 걸렸는지" 알려면 후보마다 `describe_routine` 왕복이 필요했다.
+- **파일**: `src/agent_core.py`(상수 1 + compose 주입 1줄 + SYSTEM_PROMPT 1줄 + 첨부 INSTRUCTION 1문장); `src/modules/tools.py`(힌트 3종 상수·`_proposed_change_hint`·`_routine_snippet_cell`·표 렌더 2경로·도구 설명); `src/modules/dialects.py`(MySQL/MSSQL search_routines + base docstring 계약); `tests/test_review_proposed_change_framing.py`(신규 27건).
+- **왜**: 라이브 A/B 대조쌍 — 동일 5파일(sha256 일치)·동일 요청문이 3분 간격에 한쪽은 코드 리뷰(`…4348bc34`), 다른 쪽은 현재-DB 부재 지적 중심(`…a2efa955`)으로 갈렸다. 계약 부재로 프레임이 모델 재량이었다. `…b5f40d99` 는 미적용 마이그레이션을 "동적 ALTER 로직이 실행되지 않았거나 실패한 상태" 로 **허위 결함 단정**. corroboration structural(60일 SQL 첨부 96대화 중 12 distinct_conv).
+- **호환/안전**: 프롬프트는 보간 없는 **정적 상수**(인젝션 표면 0), `_INJECTION_GUARD_NOTICE` 순서 불변. **라이브 대조 강제·부재 단정 금지 규칙은 그대로**(약화 0 — 회귀 테스트로 고정). 가드/allowlist/RBAC 경계 **무변경**: 스니펫은 `describe_routine` 이 이미 같은 채널로 반환하는 정의 본문의 **진부분집합**이고 같은 `_struct_schema_access_error` allowlist·RO GRANT 뒤에 있다. keyword 는 기존과 동일하게 `_safe_ident` 통과(codex 실측: 따옴표·백슬래시·대괄호 breakout 불성립). 표 컬럼은 스니펫이 전부 비면 종전 3컬럼 유지(열거 잡음 0·하위호환).
+- **Rollback**: `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 상수·주입 1줄·미러 2곳 제거 + `tools.py` 힌트/스니펫 헬퍼·호출 3+2지점 제거 + `dialects.py` MATCH_SNIPPET 2곳 revert + 테스트 제거. 스키마/마이그레이션 변경 없음.
+
 ## CHG-20260729T141200-runtime-settings-test-env-agnostic (cross-unit — 정본 feature-0003 TASK-20260729T1412)
 - `tests/test_runtime_settings.py::test_missing_snapshot_is_fail_open`: `monkeypatch.delenv("AGENT_TIMEOUT_SEC")`
   추가. override 부재 시 baseline 이 **배포 env 우선**인 것은 `_baseline_int` 의 설계된 동작인데

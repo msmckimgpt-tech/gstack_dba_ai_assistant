@@ -8,7 +8,28 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260722-dqa-data-grounding (current cycle) — 데이터 의미 grounding 지침: 저장값 타임존·ENUM 코드·분리저장 추측 금지 (Major §12.3 — core 시스템 프롬프트·정확성; DQA 마찰 B-1/D-1/D-2)
+## TASK-20260730T190000-review-proposed-change-framing (current cycle) — 쿼리 리뷰가 '곧 적용될 구조'가 아니라 '현재 DB'를 기준으로 불평하던 프레임 봉인 + 루틴 본문 매칭 스니펫 (Major §12.3 — core 시스템 프롬프트·도구 피드백)
+- 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` (2026-07-30, 사용자 명시 호출). 마찰 2건 제기 — ① 리뷰가 항상 현재 DB 기준으로 "불평하듯" 주의사항을 전달 ② 특정 내용을 포함하는 함수/프로시저 탐색(scan) 도구 부재.
+- **마찰 ② 는 정직 기각(F3)**: `search_routines`(FR-false-absence-zero-row-catalog-scope, 2026-07-28 배포 PR #991)가 이미 **이름 + 정의 본문 + 주석**을 검색한다. 제기된 그 대화(`…a2efa955`)에서 실제로 동작했다 — msg 6317 이 keyword `Log_AccountUpdateCash` 로 **이름에 그 문자열이 없는 호출자 4개**(`Game_BuyCashItem_Steam`·`Game_ConvertCash`·`Game_GiftCashItem_Steam`·`Steam_AccountChargeCash`)를 찾아냈다(본문 검색이 아니면 불가). 30일 사용량 23회 / 7 대화. → 도구 신설 대신 **체감 갭(매칭 위치 미표시)** 만 개선(사용자 결정, AskUserQuestion 2026-07-30).
+- **근본원인(L1 프롬프트 합성, 마찰 ①)**: SYSTEM_PROMPT §ATTACHED FILES(agent_core.py:119-124)와 첨부 주입 INSTRUCTION(agent_core.py:~1272)이 "첨부 vs 실 DB 주장은 반드시 라이브 검증" 만 정하고 **그 차이의 해석(시간 방향)** 은 정하지 않는다. 여기에 누적된 부재·완전성 grounding(FR-partial-evidence·FR-false-absence·FR-false-truncation)이 "존재 여부" 를 극도로 부각시켜, 모델의 기본 프레임이 **라이브 DB=정본 스펙 / 첨부=그에 미달하는 후보** 로 굳었다. 변경이 스스로 만들어내는 차이(아직 없는 테이블·컬럼·루틴, 스크립트가 추가할 PK, 바뀐 시그니처)가 전부 결함·경고로 보고된다.
+- **라이브 증거(A/B 대조쌍)**: 동일 5개 파일(sha256 일치)·동일 요청문("첨부파일의 쿼리 리뷰를 진행해주세요.")이 3분 간격 두 대화로 갈렸다 — `…4348bc34`(16:43, 도구 0회)는 논리·성능·보안·운영 축의 코드 리뷰, `…a2efa955`(16:46, 도구 12회)는 "배포 순서 의존성(가장 중요)" + "테이블은 **아직 존재하지 않습니다**" + "ServerID 컬럼도 PK도 **전혀 없습니다**". 즉 프레임이 계약 부재로 **모델 재량**에 맡겨져 있었다. 다른 대화 `…b5f40d99` 는 미적용 마이그레이션을 두고 "동적 ALTER 로직이 **실제로 실행되지 않았거나 실패한 상태**입니다" 라는 허위 결함 단정(`I-FALSE`)까지 냈다.
+- **corroboration(structural)**: 60일 SQL 첨부 대화 96건 중 **12 distinct_conv** 의 장문 답변이 현재-DB 부재 프레이밍을 담는다(≈12.5%). `…b5f40d99` 는 답변 4건이 "예상 구조 vs 실제 구조" 표로 미배포 상태를 🔴 결함·"데이터 무결성 위험"으로 채점.
+- **해결(A+B+C, 사용자 승인)**: (A) 시간 방향 계약을 **코드 권위선**으로 항상 주입 — 라이브 DB=BEFORE / 첨부 세트=AFTER, 변경이 도입하는 차이는 '적용 전제'이지 결함 아님. (B) 출력 구조 계약 — 전제는 별도 1개 절, 심각도 배지(🔴/🟡)는 **적용 후에도 남는** 결함에만. (C) 도구 L2 짝 — 미발견 오류/빈 결과에 분류 교정 힌트(적용 전제 ↔ 진짜 선행 누락 ↔ 권한·스코프·오타 **3분기**). 라이브 대조 강제는 **약화하지 않는다**(선행 봉인 보존, 회귀 테스트로 고정).
+
+### §1.1 Implementation
+- `src/agent_core.py`: `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 상수 신설 + `compose_system_prompt` `parts` 에 always-append(base=운영자 global row 대체 뒤 — AUTH-1a 코드 권위선); SYSTEM_PROMPT §ATTACHED FILES 미러 1줄; `_build_attachment_context_section` INSTRUCTION 에 시간 방향 포인터.
+- `src/modules/tools.py`: `_MISSING_OBJECT_ERROR_PAT`/`_PROPOSED_CHANGE_HINT`/`_proposed_change_hint()` 신설 → `_tool_execute_sql` 오류 경로 · `_tool_describe_table` 컬럼 0행 · `_tool_describe_routine` 정의 0행 3지점 부착; `_routine_snippet_cell()` + `_NO_BODY_MATCH_CELL`/`_NO_BODY_MATCH_NOTE` 로 search_routines 표에 '본문 매칭 위치' 컬럼(MySQL·MSSQL 양 경로) + 도구 설명 갱신.
+- `src/modules/dialects.py`: MySQL `search_routines` 에 `MATCH_SNIPPET`(LOCATE/SUBSTRING/GREATEST) · MSSQL 에 `MATCH_SNIPPET`(CHARINDEX/SUBSTRING) 4번째 컬럼; keyword 미지정(전체 열거)은 상수 `''`; base 컬럼 계약 docstring 갱신(caller 는 `len(row) > 3` 방어적 판독 — 3컬럼 하위호환).
+- `tests/test_review_proposed_change_framing.py`: 신규 27건(계약 본문·코드 권위선 실증·회귀 방지·힌트 3분기·잡음 0·스니펫 정규화/하위호환/양 dialect).
+
+### §1.2 Completion Checklist
+- [x] L1 시간 방향 계약(A) + 출력 구조 계약(B) + L2 도구 힌트(C) 구현
+- [x] search_routines 매칭 스니펫(MySQL+MSSQL) — 사용자 승인 항목
+- [x] 신규 테스트 27 PASS · feature-0002 로컬 2114 passed/30 skipped · `make test`(3 feature + ruff) **RC=0 4회 연속**
+- [x] §18.8 적대 리뷰 — §18.8.2 제약-없는-채널 우선 → codex 3렌즈(security/backend/regression) **[P1] 0건**, [P2] 4건 중 2건 흡수·2건 근거 기록 → REV-20260730T190000-review-proposed-change-framing
+- [ ] 배포(web + ask-worker/insight-worker 재빌드) 후 라이브: 동일 5개 파일 재리뷰에서 '적용 전제' 절 분리 + 미배포 상태에 🔴 배지 부재 관측
+
+## TASK-20260722-dqa-data-grounding — 데이터 의미 grounding 지침: 저장값 타임존·ENUM 코드·분리저장 추측 금지 (Major §12.3 — core 시스템 프롬프트·정확성; DQA 마찰 B-1/D-1/D-2)
 - 출처: `/_template:entry` DQA_assistant_마찰개선사항_20260722_v2.md 검토·개선 (2026-07-22, 사용자 명시). FGT 통계 집계를 DQA 로 수행하며 관측된 **정확성 결함**을 서비스 grounding 지침으로 해소.
 - **근본원인(관측)**: LLM 이 데이터의 "표기"와 "의미"를 혼동해 조용히 틀린 집계를 냄.
   - **B-1(★최우선)**: DB 서버 TZ 설정(`@@time_zone`=Asia/Tokyo)만 보고 "저장값은 JST → -9h=UTC" 라고 확신 오판. 실제 저장 DATETIME 값은 UTC(MySQL DATETIME 은 TZ 미저장) → 집계 기간 전체가 9시간 어긋나 전 시트 오염 위험(본건은 사용자 경고·데이터 교차검증으로 겨우 정정).
