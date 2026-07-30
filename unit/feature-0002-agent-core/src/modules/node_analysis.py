@@ -164,6 +164,10 @@ _RETRY_COLS = {"ok": None, "warned": False, "checked_at": 0.0}
 #   그래서 부재 판정은 아래 간격 뒤 재-probe 한다(성공 True 는 영구 — 컬럼이 사라지는 일은 없다).
 _RETRY_COLS_RECHECK_SEC = 600
 
+#: T0 공유 LLM 예산 거절 시 재예약 간격(초). transient backoff(60s 지수)보다 짧다 — 예산 거절은
+#: 장애가 아니라 순번 대기이므로 다음 여유가 생기면 곧 처리되어야 한다.
+_BUDGET_DEFER_SEC = 30
+
 
 def _retry_cols_ok(cur) -> bool:
     if _RETRY_COLS["ok"] is False:
@@ -1320,8 +1324,21 @@ def process_pending(max_nodes=None, conn=None) -> dict:
     # retry_pending(analysis-retry-resilience): 이번 틱에서 **terminal 로 종결하지 않고** backoff 재시도로
     #   되돌린 잡 수. failed(terminal) 와 분리해 세어야 "단절 창에 실패가 몰렸다"와 "영구 실패가 늘었다"를
     #   운영이 구분할 수 있다(insight cycle summary 의 node_analysis_* 계열).
-    rep = {"claimed": 0, "done": 0, "failed": 0, "retry_pending": 0, "enqueued": 0, "links": 0, "refined": 0}
+    # budget_deferred(worker-resource-isolation T0): 공유 LLM 예산이 없어 **이번 tick 에 미룬**
+    #   잡 수. failed(terminal)·retry_pending(일시 실패 backoff) 와 별개 축 — "실패가 늘었다"와
+    #   "자원이 조여 뒤로 밀렸다"를 운영이 구분해야 상한을 올릴지 판단할 수 있다.
+    rep = {"claimed": 0, "done": 0, "failed": 0, "retry_pending": 0, "enqueued": 0, "links": 0,
+           "refined": 0, "budget_deferred": 0}
     if not _cfg_enabled():
+        return rep
+    # T0 전역 kill-switch — **claim 단계에서도** 게이트한다. 신규 트리거만 막고 이미 적재된
+    #   잡을 계속 처리하면 "즉시 정지" 라는 운영 기대와 어긋난다(change-reanalysis cap==0 이
+    #   적재분을 계속 소진했던 결함 C2 의 반복 금지). 설정 조회 실패는 활성 취급(fail-open).
+    try:
+        from shared import resource_budget as _rb
+    except Exception:
+        _rb = None            # 부트스트랩 창(모듈 부재) — 게이트 없이 종전 동작
+    if _rb is not None and not _rb.background_enabled():
         return rep
     if max_nodes is None:
         # feature-0025: tick 당 처리량을 관리 콘솔에서 live 조절(override 없으면 config 기본 10 = byte-동치).
@@ -1331,6 +1348,20 @@ def process_pending(max_nodes=None, conn=None) -> dict:
         except Exception:
             max_nodes = _cfg.AGENT_NODE_ANALYSIS_BATCH_PER_TICK
     max_nodes = _clamp(max_nodes, 1, 64, 4)
+    # T0: 공유 LLM 예산 여유만큼만 claim — 잡을 집어온 뒤 예산에서 거절하면 그 잡이 실패·재시도
+    #   상태를 오가므로(attempts 소모), **집어오는 수를 미리 조인다**. 여유 0 이면 이번 tick 은
+    #   claim 하지 않고 종료(다음 tick 재시도). 경합으로 실제 획득 시점 여유가 달라질 수 있어
+    #   _run_llm 의 acquire 가 최종 게이트다. 기본 상한(16) 은 현행 최대 동시성 이상이라
+    #   이 clamp 는 발동하지 않는다(byte-동치).
+    if _rb is not None:
+        try:
+            _llm_room = int(_rb.available("llm"))
+        except Exception:
+            _llm_room = max_nodes
+        if _llm_room <= 0:
+            _log.info("node_analysis LLM 예산 여유 없음 — 이번 tick claim 생략(다음 tick 재시도)")
+            return rep
+        max_nodes = min(max_nodes, _llm_room)
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -1483,6 +1514,22 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             만** 쓰므로(공유 dict 아님) 병렬에서도 안전하다."""
             if w["err"] is not None or w["payload"] is None:
                 return None
+            # T0: 공유 LLM 예산 최종 게이트. claim 단계에서 여유만큼만 집어왔지만 다른 워커
+            #   (cluster_label·분류 제안)와 예산을 공유하므로 실행 시점에 여유가 사라질 수 있다.
+            #   비차단 — 거절되면 kind='budget' 으로 표시해 **attempts 를 소모하지 않고** 짧게
+            #   재예약한다(_record_failure 의 budget 분기).
+            # retry_ok=False(0049 미적용 창)에서는 예산 게이트를 걸지 않는다 — budget 분기가
+            #   attempts 컬럼에 의존하므로, 그 창에서 거절되면 terminal failed 로 굳어 버린다.
+            if _rb is None or not retry_ok:
+                return _run_llm_inner(w)
+            with _rb.acquire("llm") as _ok:
+                if not _ok:
+                    w["fail"] = {"kind": "budget", "tag": "llm_budget"}
+                    return None
+                return _run_llm_inner(w)
+
+        def _run_llm_inner(w):
+            """예산 획득 후의 실제 LLM 호출 본체 (분리 이유: 예산 게이트와 호출 로직 분리)."""
             sink: dict = {}
             try:
                 # 0047: 병렬 스레드라 active-datasource ContextVar 가 전파되지 않는다 →
@@ -1507,6 +1554,39 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             """
             kind = str((fail_info or {}).get("kind") or "")
             tag = str((fail_info or {}).get("tag") or "")
+            # T0 예산 거절: **실패가 아니다** — 자원이 조여 뒤로 밀린 것이다. attempts 를 소모하지
+            #   않고(영구 실패로 굳지 않게) 짧게 재예약한다. 예산 상한 최소값이 1 이라 여유가
+            #   영구 0 일 수 없고, 전역 정지는 kill-switch 가 담당하므로 무한 루프가 되지 않는다.
+            if retry_ok and kind == "budget":
+                # **연속** budget 거절이면 attempts 를 증가시킨다(codex P2): 첫 거절은 무료(일시
+                #   경합)지만, 지속 contention 에서 attempts 를 영원히 올리지 않으면 그 잡이 무기한
+                #   pending 으로 남아 run 이 영구 running → enqueue dedup 이 사용자 재트리거를 막는다.
+                #   상한 도달 시 terminal 종결해 표면화한다(운영자가 상한을 올리고 재트리거).
+                cur.execute(
+                    "UPDATE node_analysis_jobs SET "
+                    "  attempts = attempts + CASE WHEN error_kind = 'budget' THEN 1 ELSE 0 END, "
+                    "  status = CASE WHEN error_kind = 'budget' AND attempts + 1 >= %s "
+                    "                THEN 'failed' ELSE 'pending' END, "
+                    "  next_attempt_at = CASE WHEN error_kind = 'budget' AND attempts + 1 >= %s "
+                    "                THEN NULL ELSE now() + make_interval(secs => %s) END, "
+                    "  error_kind = CASE WHEN error_kind = 'budget' AND attempts + 1 >= %s "
+                    "                THEN 'budget_exhausted' ELSE 'budget' END, "
+                    "  error = %s "
+                    "WHERE id=%s RETURNING status",
+                    (rcfg["max_attempts"], rcfg["max_attempts"], _BUDGET_DEFER_SEC,
+                     rcfg["max_attempts"], "공유 LLM 예산 여유 없음 — 자동 재시도 대기", jid))
+                _brow = cur.fetchone() or (None,)
+                if str(_brow[0] or "") == "pending":
+                    rep["budget_deferred"] += 1
+                    return            # terminal 아님 · runs.failed 미증가
+                # 상한 도달 = terminal. **여기서 완결하고 반환한다** — 아래 generic 실패 분기로
+                #   흐르면 attempts 가 두 번 증가하고 error_kind='budget_exhausted' 가 'budget' 로
+                #   덮어써진다(codex 재검증 P2-b). 종결 카운터는 이 분기가 직접 올린다.
+                _log.warning("node_analysis job=%s 공유 LLM 예산 대기 상한(%d회) 도달 — terminal 종결",
+                             jid, rcfg["max_attempts"])
+                cur.execute("UPDATE node_analysis_runs SET failed = failed + 1 WHERE run_id=%s", (run_id,))
+                rep["failed"] += 1
+                return
             if retry_ok and kind == _llm.FAILURE_TRANSIENT:
                 # 단일 statement 로 attempts 증가 + 상한 판정 + backoff 예약을 원자 처리(autocommit 안전).
                 #   backoff = BASE × 2^attempts(증가 전 값 = 0-based) → 60s, 120s, 240s … MAX 캡.

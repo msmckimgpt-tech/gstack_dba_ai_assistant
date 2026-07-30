@@ -1070,6 +1070,39 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "maximum": 3600,
         "apply_mode": "live",
     },
+    # ── 자원 격리·관측 (worker-resource-isolation T0) ──────────────────────────
+    #   위 CONCURRENCY 계열은 **작업별** 병렬도다. 아래는 여러 작업이 함께 쓰는 **자원 총량**의
+    #   상한이다 — 작업별 상한만으로는 "노드 분석 8 + 라벨 4 + 프로브 N" 이 동시에 같은 풀을
+    #   먹는 상황을 막지 못한다(§82 사건의 구조). 기본값은 현행 최대 동시성 이상이라 게이트가
+    #   발동하지 않는다(배포 시점 byte-동치). 값을 내리면 그 순간부터 격리가 작동한다.
+    {
+        "key": "AGENT_BACKGROUND_ANALYSIS_ENABLED",
+        "category": "자원 격리·관측",
+        "label": "백그라운드 분석 전역 사용",
+        "description": "0 으로 내리면 노드 분석·클러스터 라벨·분류 제안이 즉시 멈춥니다(대기 중인 작업까지 보류 — 값을 되돌리면 그대로 재개). 부하 급증 시 재배포 없이 쓰는 정지 스위치입니다.",
+        "unit": "",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_WORKER_LLM_BUDGET",
+        "category": "자원 격리·관측",
+        "label": "백그라운드 LLM 동시 호출 총량",
+        "description": "여러 백그라운드 작업이 합쳐서 동시에 낼 수 있는 LLM 호출 수의 상한입니다. 작업별 병렬도의 합보다 낮게 내리면 그 순간부터 초과분이 다음 주기로 밀립니다(대기 없이 건너뜀).",
+        "unit": "개",
+        "default": 16,
+        "minimum": 1,
+        "maximum": 32,
+        "apply_mode": "live",
+    },
+    # ⚠ 커넥션 총량 knob(`AGENT_WORKER_PG_BUDGET`·`AGENT_WORKER_DS_BUDGET`)은 **의도적으로 없다**.
+    #   그 총량을 실제로 강제하려면 커넥션 수립 지점(web 요청 경로와 공유하는 `shared/db` 헬퍼)을
+    #   게이트해야 하고 호출측 명시 배선이 워커 전역에 흩어져 있다 → T0b. knob 만 먼저 노출하면
+    #   "설정했는데 아무것도 강제되지 않는" 거짓 컨트롤이 된다(codex 적대 리뷰 P1, REV-20260730T1235;
+    #   이 repo 가 같은 이유로 `attachment.execute_sql_on.*` 를 제거한 선례 — TODOS Tier 3).
+    #   커넥션은 지금 `resource_budget.incr_conn` 이 누적 생성 횟수만 계측한다.
 )
 
 

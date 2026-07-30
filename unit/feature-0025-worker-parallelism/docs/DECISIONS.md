@@ -41,3 +41,30 @@ source_of_truth: true
 - **이유:** 사용자 "인프라 여력" 선택 반영 — 병렬도 knob(ask≤8×2conn 등)의 실효 상한을 풀이 수용하도록
   선반영. replicas 자동스케일은 무중단 배포 스파인(feature-0014/0020) 재설계라 별도 initiative.
 - **안전:** DEFAULT_POOL_SIZE(40) < PG max_connections(150) 유지, clamp 상한이 풀을 넘지 않음(§82 재발 방지).
+
+## ADR-0025-05 — 자원 예산은 "작업별"이 아니라 "자원 종류 단위", 게이트는 호출측 명시
+
+- **Date:** 2026-07-30 · **Status:** accepted · **Scope:** T0 worker-resource-isolation
+- **Context:** feature-0025 는 작업별 병렬도 knob 을 만들었지만 그 합이 공유 풀(pgbouncer·LLM 한도)을
+  잠식하는 것을 막지 못한다. §82 사건이 그 형태이고, 그때 해법이 한 cron 의 flock 이었던 것은
+  "작업별 가드는 그 작업만 막는다"는 구조적 한계를 보여준다.
+- **Decision:** 자원을 종류(`llm`)로 예산화하고, **게이트는 호출측이 명시**한다. 커넥션 헬퍼
+  (`shared/db._pg_connect`)에는 게이트를 넣지 않는다.
+- **Rationale:** 커넥션 헬퍼는 web 요청 경로와 공유한다 — 거기에 백그라운드 예산을 걸면 사용자
+  요청이 워커 상한에 막힌다. 호출측 명시는 배선 지점을 찾는 비용이 있지만 경계가 코드로 자명하다.
+- **Consequences:** 새 백그라운드 LLM 호출 지점을 추가할 때 `acquire("llm")` 배선을 잊으면 예산을
+  우회한다. 실제로 초판이 semantic_cluster 직렬 경로·product_classify 를 빠뜨렸고 codex 적대 리뷰가
+  P1 으로 적발했다(REV-20260730T125000) — 신규 배선 시 리뷰 체크 항목이다.
+
+## ADR-0025-06 — 게이트 없는 상한 knob 을 노출하지 않는다 (거짓 컨트롤 금지)
+
+- **Date:** 2026-07-30 · **Status:** accepted · **Scope:** T0
+- **Context:** 초판은 `AGENT_WORKER_PG_BUDGET`/`DS_BUDGET` 을 등록하고 description 에 "동시 커넥션
+  상한"을 약속했으나 그 자원을 획득하는 지점이 없었다. 계측도 누적 생성 횟수라 동시 점유를
+  표현하지 못했다.
+- **Decision:** 게이트가 배선된 자원만 `RESOURCES`·knob 에 등재한다. PG/DS 총량은 T0b 로 이연하고,
+  그때 게이트와 knob 을 **함께** 추가한다. 회귀 단정(`test_no_knob_without_an_enforced_gate`)으로 고정.
+- **Rationale:** 이 repo 는 같은 이유로 `attachment.execute_sql_on.*`(enforce 0)을 제거한 선례가
+  있다(TODOS Tier 3). 운영자가 조여도 아무 일이 없는 컨트롤은 관측·감사 신뢰를 직접 훼손한다.
+- **Consequences:** 사용자가 요구한 "적응형 부하 제어"의 커넥션 축은 T0b 까지 미구현이다 — 이번
+  cycle 은 LLM 축 + 계측 + 전역 정지까지다(정직 표기, TASK 잔여 항목).

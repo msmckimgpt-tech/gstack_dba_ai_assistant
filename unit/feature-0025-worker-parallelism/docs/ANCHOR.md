@@ -42,4 +42,4 @@ DBA 관리자가 대량의 데이터소스를 새로 등록한 뒤 "AI 운영 �
 
 ## §4. 외부 검증 로그 (append-only, human 만)
 <!-- release/milestone 또는 방향 전환 시 human 이 추가. AI 는 writer 가 아님. -->
-(없음)
+(엔트리 없음)

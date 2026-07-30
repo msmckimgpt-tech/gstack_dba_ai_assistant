@@ -48,6 +48,10 @@ PERF_KEYS = {
     # feature-0016 change-reanalysis(2026-07-27): 사람 confirm 없는 자동 LLM 지출 경로의
     # 라이브 정지 스위치(CAP=0) — env-only 면 폭주 시 재배포해야 멈춘다.
     "AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP", "AGENT_NODE_ANALYSIS_AUTO_CHANGE_COOLDOWN_SEC",
+    # worker-resource-isolation T0(2026-07-30): 위 knob 은 **작업별** 병렬도이고 아래는 여러
+    # 작업이 함께 쓰는 **자원 총량** 상한 + 전역 정지 스위치다. 상세 계약은
+    # test_worker_resource_budget.py.
+    "AGENT_BACKGROUND_ANALYSIS_ENABLED", "AGENT_WORKER_LLM_BUDGET",
 }
 
 
@@ -67,7 +71,8 @@ def test_performance_group_registered():
 def test_performance_categories():
     reg = rs.serialize_registry({})
     cats = {row["category"] for row in reg["performance"]}
-    assert cats == {"그래프 노드 분석", "cluster_label(클러스터 라벨)", "사용자 답변 처리", "지식베이스 임베딩"}
+    assert cats == {"그래프 노드 분석", "cluster_label(클러스터 라벨)", "사용자 답변 처리",
+                    "지식베이스 임베딩", "자원 격리·관측"}
 
 
 def test_exposed_knob_defaults_track_config():

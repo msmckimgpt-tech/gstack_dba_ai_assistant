@@ -57,3 +57,48 @@ source_of_truth: true
   deploy-web.sh 롤아웃 대응이 별도 작업.
 - run_agent 내부 tool_call 병렬 실행(단일 dataplane 커넥션 공유 — per-tool 커넥션 재설계 필요, 이연).
 - 전역 LLM 동시 호출 세마포어(ANCHOR §2 Alt-C — clamp+문서로 대체).
+
+---
+
+## 공유 자원 예산·격리 (T0 worker-resource-isolation, 2026-07-30)
+
+위 `performance` knob 은 **작업별 병렬도**다. 그 값들의 *합*이 공유 자원을 잠식하는 것은 아무도
+막지 않았다 — 2026-07-14 §82 사건(graph-sync cron 누적 실행이 pgbouncer 풀 소진 → 서비스 전역
+장애)의 구조가 그것이고, 그때 해법이 그 cron 한 곳의 flock 이었던 이유다. 본 절은 자원을
+**작업이 아니라 자원 종류 단위**로 예산화한다.
+
+### 조절 항목 (`performance` 그룹 · 카테고리 `자원 격리·관측`)
+
+| key | 의미 | 기본 | 범위 | 적용 |
+|---|---|---|---|---|
+| `AGENT_BACKGROUND_ANALYSIS_ENABLED` | 백그라운드 분석 전역 사용. **0 = 즉시 정지**(대기 중 작업까지 보류, 되돌리면 재개) | 1 | 0~1 | live |
+| `AGENT_WORKER_LLM_BUDGET` | 백그라운드 LLM **동시 호출 총량**(노드 분석 + 클러스터 라벨 + 분류 제안 합산) | 16 | 1~32 | live |
+
+기본 16 > 현행 최대 동시성(노드 8 + 라벨 4 = 12) → 배포 시점 게이트 미발동(`reject_ratio == 0`).
+
+> **커넥션 총량(PG·소스 DB) knob 은 의도적으로 없다.** 그 총량을 강제하려면 커넥션 수립 지점을
+> 게이트해야 하는데 그 지점은 web 요청 경로와 공유하는 헬퍼(`shared/db`)이고 호출측 배선이 워커
+> 전역에 흩어져 있다 → **T0b**. 게이트 없이 knob 만 노출하면 "설정했는데 아무것도 강제되지 않는"
+> 거짓 컨트롤이 된다(같은 이유로 제거된 `attachment.execute_sql_on.*` 선례). 지금은 커넥션을
+> **누적 생성 횟수**로만 계측한다.
+
+### 동작
+
+- **게이트 지점(호출측 명시)**: `node_analysis.process_pending`(kill-switch claim 게이트 + LLM 여유
+  clamp + `_run_llm` 최종 게이트) · `semantic_cluster.run_cluster_maintenance`(kill-switch) 와
+  `_llm_content_labels`(직렬·병렬 **양 경로**) · `product_classify.run_classify_pass`(kill-switch +
+  LLM 게이트). `shared/db` 커넥션 헬퍼는 **계측만** — 게이트를 넣으면 web 요청 경로가 백그라운드
+  예산에 걸린다.
+- **거절 시 동작(fail-soft)**: 대기하지 않고 스킵한다. 노드 분석은 `error_kind='budget'` 으로 30초
+  재예약하며 **첫 거절은 attempts 를 소모하지 않는다**(일시 경합). **연속** 거절은 attempts 를
+  증가시켜 `max_attempts` 에서 `budget_exhausted` terminal — 무기한 pending 이 run 을 영구
+  `running` 으로 만들어 사용자 재트리거를 막는 것을 방지한다. 클러스터 라벨은 affix 폴백, 분류
+  제안은 해당 datasource skip(둘 다 다음 pass 재시도).
+- **관측**: insight cycle 로그에 `budget_llm=<peak>/<limit> rej=<n>` · `worker_conns=...` ·
+  `node_analysis_budget_deferred`. 매 cycle `/shared/perf/worker-resources-<role>.json` 원자 flush →
+  `bin/perf-snapshot.sh` §12 가 수집·요약(콘솔 노출은 T0b).
+- **fail-open 경계**: 설정 조회 실패 시 kill-switch 는 **활성**(설정 장애가 워커를 멈추면 복구가
+  재배포뿐), 미등록 자원 키는 게이트 없이 통과(오타가 작업을 조용히 막지 않게), 계측·flush 예외는
+  전부 삼킨다.
+- **프로세스 경계**: 프로세스 **내** 조율이다(한 컨테이너의 스레드). 프로세스 간 총량은 T0 범위 밖 —
+  pgbouncer 풀 상한이 backstop.

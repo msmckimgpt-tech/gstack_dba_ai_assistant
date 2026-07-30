@@ -3358,12 +3358,40 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             # analysis-retry-resilience: terminal 실패와 **backoff 재시도로 되돌린 수**를 분리해 남긴다 —
             #   단절 창(retry_pending 급증, failed 0)과 영구 실패 증가를 로그만으로 구분하기 위함.
             "node_analysis_retry_pending": int(_na.get("retry_pending", 0) or 0),
+            # T0(worker-resource-isolation): 공유 LLM 예산이 없어 뒤로 밀린 잡 수 — 실패(failed)·
+            #   장애 재시도(retry_pending)와 별 축. 이 값이 지속되면 상한을 올릴 근거가 된다.
+            "node_analysis_budget_deferred": int(_na.get("budget_deferred", 0) or 0),
         })
     for _pk in ("relationships_probe_probed", "relationships_probe_positive",
                 "relationships_probe_negative", "relationships_probe_neutral",
                 "relationships_probe_failed"):
         if scan_report.get(_pk):
             payload[_pk] = int(scan_report.get(_pk, 0) or 0)
+    # T0(worker-resource-isolation): 공유 자원 예산 관측 — 상한·관측된 최대 동시 점유·거절률을
+    #   tick 로그에 싣는다. 이 세 값이 "상한을 조여도 되는가 / 이미 병목인가" 의 1차 근거다.
+    #   peak < limit 이고 rejected 0 이면 게이트는 미발동(= 현행 동등)이라는 실증이기도 하다.
+    #   fail-open: 스냅샷 실패는 무시(계측이 cycle 을 죽이지 않는다).
+    try:
+        from shared import resource_budget as _rb_ins
+        _rbs = _rb_ins.snapshot()
+        if not _rbs.get("background_enabled", True):
+            payload["background_analysis_disabled"] = True
+        for _rk, _rv in (_rbs.get("resources") or {}).items():
+            if int(_rv.get("acquired", 0) or 0) or int(_rv.get("rejected", 0) or 0):
+                payload[f"budget_{_rk}"] = (
+                    f"{_rv.get('peak', 0)}/{_rv.get('limit', 0)}"
+                    f" rej={_rv.get('rejected', 0)}"
+                )
+        _conns = _rbs.get("conns") or {}
+        if any(_conns.values()):
+            payload["worker_conns"] = ",".join(
+                f"{k}={v}" for k, v in _conns.items() if v)
+        # 파일 flush — 카운터는 이 프로세스 메모리에 있고 조회자(호스트 CLI)는 다른 프로세스다.
+        #   `bin/perf-snapshot.sh` 가 다른 성능 신호와 함께 수집한다(사용자 결정 2026-07-30:
+        #   "로그 + perf-snapshot CLI"). fail-open — flush 실패는 cycle 에 영향 없음.
+        _rb_ins.flush_snapshot()
+    except Exception:
+        pass
     _base_log = status != "ok" or bool(scan_report.get("scan_started"))
     # feature-0026: 노드 분석만 돈 tick 도 로그 라인은 남긴다(처리량 추적) — 단 timing 파일은
     # 기존 조건에서만 생성(§18.8 C-4: 드레인 기간 tick 마다 무회전 파일 누적 방지).

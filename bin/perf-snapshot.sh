@@ -204,6 +204,33 @@ run_to queue_depth.txt psql_p -c "
 SELECT status, count(*) FROM agent_runtime.ask_jobs
 WHERE created_at > now()-interval '1 day' GROUP BY status ORDER BY 2 DESC"
 
+section "12. 워커 공유 자원 예산 (worker-resource-isolation T0 — 워커가 주기 flush 한 파일)"
+# 카운터는 워커 프로세스 메모리에 있어 이 CLI 가 직접 읽을 수 없다 — insight cycle 이
+# `/shared/perf/worker-resources-<role>.json`(호스트 artifacts/shared/perf)로 원자 flush 한 것을
+# 수집한다. peak/limit 과 rejected 가 "상한을 조여도 되는가 / 이미 병목인가" 의 1차 근거다.
+# rejected 0 = 게이트 미발동(현행 동등). 파일 부재 = 아직 flush 전(워커 미기동·구 이미지).
+_WR_DIR="${REPO_DIR}/../artifacts/shared/perf"
+if compgen -G "${_WR_DIR}/worker-resources-*.json" > /dev/null 2>&1; then
+  for _f in "${_WR_DIR}"/worker-resources-*.json; do
+    echo "-- $(basename "$_f")"
+    cp -p "$_f" "$RAW/" 2>/dev/null || true
+    python3 - "$_f" <<'PY' 2>/dev/null || cat "$_f"
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+print(f"  flushed_at={d.get('flushed_at','?')} background_enabled={d.get('background_enabled')}")
+for k, v in (d.get("resources") or {}).items():
+    print(f"  {k:4s} peak={v.get('peak')}/{v.get('limit')} in_use={v.get('in_use')} "
+          f"acquired={v.get('acquired')} rejected={v.get('rejected')} "
+          f"reject_ratio={v.get('reject_ratio')} held_ms={v.get('held_ms_total')}")
+c = d.get("conns") or {}
+if any(c.values()):
+    print("  conns " + " ".join(f"{k}={v}" for k, v in c.items() if v))
+PY
+  done
+else
+  echo "(no worker-resources-*.json — 워커 flush 전 또는 구 이미지)"
+fi
+
 echo ""
 echo "# 저장: ${OUT_DIR}"
 } | tee "${OUT_DIR}/snapshot.md"
