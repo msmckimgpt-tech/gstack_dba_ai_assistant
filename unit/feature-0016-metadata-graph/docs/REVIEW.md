@@ -762,3 +762,18 @@ source_of_truth: true
 - Timestamp: 2026-07-30T17:50:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260730T190000-drain-observed [SKIPPED:non-policy-doc] — 라이브 실측 기록(문서 전용)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 실행 코드 0줄 — 배포 후 관측값(E.4)과 오프라인 재현 결과(E.5)를 feature 문서에 고정하는 기록.
+  §18.8 code-change 행 비해당(§18.8.1 표 첫 행 non-policy doc).
+- 기록 요지: ① 임베딩 스로틀 상향의 실효 = 5,400→~16,800건/h(3.1배)이나 용량 42,657/h 미달, 원인은
+  pass 당 고정 오버헤드(1000행 pass 실측 ~154s = 선형 외삽의 2.2배). 추가 튜닝은 비용>이익으로 불채택하고
+  근본안(`count_pending` 빈도 완화)을 별 cycle 후보로 명시. ② `cc_pyron` 테이블 257건 오프라인 재현으로
+  지표 복구 선행 확인(median 0.915→0.764 · 밴드 45→27 · MDS 적격 · complete-linkage 실데이터 증거).
+- **정직 표기**: E.5 는 **오프라인 재현**(읽기 전용, DB 미기록)이며 라이브 재클러스터 산출물이 아니다.
+  루틴 축은 임베딩 미완(597 중 24)이라 사용자 리포트의 유의어 쌍(메일/우편·경매)은 **아직 검증되지 않았다**
+  — 최종 판정은 E.6(재클러스터 후 실측 + PB-0008)이다.
+- Timestamp: 2026-07-30T19:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
