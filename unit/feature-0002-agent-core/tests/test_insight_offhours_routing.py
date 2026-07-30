@@ -7,6 +7,11 @@ insight 만 off-hours 에 gemma 로 내려가야 하기 때문(사람 호출은 
 
 이 계약이 깨지면 (a) 주말/야간에 insight 가 claude 를 써 비용/사용량 초과, 또는 (b) 평일 근무시간에
 gemma 로 품질 저하 → 회귀 방어. 경계 [START, END) 시(로컬=KST)와 주말(토·일) 전일 off-hours 확인.
+
+⚠ 현재 이 강등은 **기본 비활성**이다(llm-edge-free-routing, 2026-07-30 사용자 결정 "로컬 LLM 미사용"
+→ `AGENT_INSIGHT_OFFHOURS_MODEL` 기본값이 빈 값). 아래 케이스들은 monkeypatch 로 off 모델을 명시
+주입하므로 **로직 자체의 계약**을 계속 검증한다(운영자가 값을 채워 재활성했을 때의 동작 보증).
+기본 배포에서 강등이 꺼져 있다는 사실은 test_llm_edge_free_routing.py 가 잠근다.
 """
 from __future__ import annotations
 
