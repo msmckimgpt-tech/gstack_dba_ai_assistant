@@ -1396,6 +1396,15 @@ AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_S
 #  마스터 테이블이다.") 40 자 하한도 여전히 정상 분석을 걸러낸다. 20 자는 "테이블입니다" 류의
 #  한 문장도 못 되는 응답만 잡는 하한이고, 실질 판정은 충족도가 맡는다.
 AGENT_NODE_ANALYSIS_THIN_CHARS = int(os.getenv("AGENT_NODE_ANALYSIS_THIN_CHARS", "20"))
+
+# ── 백그라운드 LLM 토큰 예산 (feature-0032-llm-token-budget) ────────────────
+#  사람 confirm 없이 나가는 자동 LLM 지출의 rolling 24시간 상한(토큰). 0 = 무제한(비활성).
+#  실측(2026-07-30, 7일): Anthropic 8,654콜/55,567,176 토큰 · edge 25콜 → 과금 lane 99.7%.
+#  그중 백그라운드 소비가 약 2,600만/7일(일 평균 ≈371만)이라 기본 2,000만은 정상 운영에 무영향이고
+#  폭주(5배 이상)만 잡는다. 사용자 요청 경로(대화 답변·자가검증·제목·분류)는 세지도 막지도 않는다 —
+#  예산으로 사용자를 막으면 비용 통제가 아니라 서비스 장애다(shared/llm_budget.py).
+AGENT_BACKGROUND_LLM_TOKEN_CAP_24H = int(
+    os.getenv("AGENT_BACKGROUND_LLM_TOKEN_CAP_24H", "20000000"))
 AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
 # LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
 # candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,

@@ -2546,6 +2546,27 @@ function renderAiOps(data) {
           : "")
       + `</div>`;
   }
+  // feature-0032: 백그라운드 LLM 토큰 예산(rolling 24h). "왜 자동 분석이 안 도나" 의 1차 답이라
+  //   워커 자원 표 바로 앞에 둔다. 사용자 요청 경로(대화 답변)는 이 상한과 무관하다는 점을 명시.
+  const ltb = data.llm_token_budget || {};
+  h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">백그라운드 LLM 토큰 예산 <span style="font-weight:400;color:#57606a;font-size:12px">(최근 24시간)</span></div>`;
+  if (!ltb.enabled) {
+    h += `<div style="color:#57606a;font-size:13px">상한 없음 — 자동 분석의 토큰 지출에 제한을 두지 않습니다.</div>`;
+  } else if (!ltb.measurable) {
+    h += `<div style="color:#9a6700;font-size:13px">사용량을 조회할 수 없어 상한을 적용하지 않습니다(제한 없이 진행).</div>`;
+  } else {
+    const ratio = Number(ltb.used_ratio || 0);
+    const pct = Math.min(100, Math.round(ratio * 100));
+    const barColor = ltb.exhausted ? "#cf222e" : (ratio >= 0.8 ? "#9a6700" : "#1a7f37");
+    h += `<div style="font-size:13px;margin-bottom:4px">${fmtNum(ltb.spent)} / ${fmtNum(ltb.cap)} 토큰 `
+      + `<span style="color:#57606a">(${pct}% · 남은 여유 ${fmtNum(ltb.remaining)})</span></div>`
+      + `<div style="height:8px;background:#eaeef2;border-radius:4px;overflow:hidden;max-width:420px">`
+      + `<div style="height:100%;width:${pct}%;background:${barColor}"></div></div>`;
+    if (ltb.exhausted) {
+      h += `<div style="color:#cf222e;font-size:12px;margin-top:4px">상한 도달 — 새 자동 분석이 다음 주기로 밀립니다(대화 답변은 정상 동작).</div>`;
+    }
+  }
+  h += `<div style="color:#57606a;font-size:12px;margin-top:4px">대화 답변·자가검증·제목 생성처럼 사용자가 기다리는 호출은 이 예산에서 제외되며 상한과 무관하게 항상 나갑니다.</div></div>`;
   // T0b(worker-ds-budget): 워커 공유 자원 예산·계측. 데이터는 워커가 공유 볼륨에 flush 한 스냅샷을
   //   백엔드가 읽어 실어 준다(worker_resources). 거절이 0 이면 게이트 미발동(정상)이므로 조용히
   //   현황만 보이고, 거절이 있으면 위 attention 에 병목 신호가 함께 뜬다.

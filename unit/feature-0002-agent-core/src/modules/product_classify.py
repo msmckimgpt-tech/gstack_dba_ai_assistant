@@ -121,6 +121,16 @@ def run_classify_pass(kb_conn=None, mem_conn=None, *, dry_run: bool = False) -> 
         if not _rb_pc.background_enabled():
             return {"datasources": {}, "suggested_total": 0, "errors": [],
                     "skipped": "background_disabled"}
+        # feature-0032: 백그라운드 LLM 토큰 예산(rolling 24h).
+        try:
+            from shared import llm_budget as _lb_pc
+            if not _lb_pc.allowed():
+                _log.info("product_classify pass 보류 — 백그라운드 LLM 토큰 예산 소진(%s/%s, 24h)",
+                          _lb_pc.spent(), _lb_pc.cap())
+                return {"datasources": {}, "suggested_total": 0, "errors": [],
+                        "skipped": "llm_token_budget"}
+        except Exception:
+            pass   # 예산 모듈 부재·조회 실패는 종전 동작(fail-open)
         with _rb_pc.acquire("task") as _ok_pc:
             if not _ok_pc:
                 _log.info("product_classify pass 보류 — 동시 진행 백그라운드 작업 예산 여유 없음")

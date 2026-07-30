@@ -609,6 +609,27 @@ def admin_ai_ops(
                                "상한을 올리거나 처리량을 낮추세요."),
                 })
 
+    # feature-0032: 백그라운드 LLM 토큰 예산(rolling 24h). 소진되면 자동 분석이 다음 주기로
+    #   밀리므로 "왜 분석이 안 도나" 의 1차 답이 된다 — attention 으로 부상시킨다.
+    try:
+        from shared import llm_budget as _lb
+        llm_token_budget = _lb.snapshot()
+    except Exception:
+        llm_token_budget = {"enabled": False, "measurable": False, "exhausted": False}
+    if llm_token_budget.get("exhausted"):
+        attention.append({
+            "level": "degraded", "label": "백그라운드 LLM 토큰 상한 도달",
+            "detail": (f"최근 24시간 {llm_token_budget.get('spent')}/{llm_token_budget.get('cap')} 토큰. "
+                       "새 자동 분석·요약·분류가 다음 주기로 밀립니다(대화 답변은 정상). "
+                       "상한을 올리거나 처리량을 낮추세요."),
+        })
+    elif llm_token_budget.get("enabled") and (llm_token_budget.get("used_ratio") or 0) >= 0.8:
+        attention.append({
+            "level": "watch", "label": "백그라운드 LLM 토큰 상한 임박",
+            "detail": (f"최근 24시간 {llm_token_budget.get('spent')}/{llm_token_budget.get('cap')} 토큰 "
+                       f"({int((llm_token_budget.get('used_ratio') or 0) * 100)}%) 사용."),
+        })
+
     return JSONResponse({
         "window_days": days,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -629,6 +650,8 @@ def admin_ai_ops(
         "pg_available": pg_available,
         # T0b: 워커 공유 자원 예산·계측(파일 스냅샷). 라우트 추가 없음 — 기존 응답 확장.
         "worker_resources": worker_resources,
+        # feature-0032: 백그라운드 LLM 토큰 예산 현황(rolling 24h) — 라우트 추가 없이 응답 확장.
+        "llm_token_budget": llm_token_budget,
         # 위젯 deep-link 계약: 대시보드 타일 → 이 탭. data-admin-tab 값(hyphen)과 정확히 일치.
         "tab": "ai-ops",
     })
