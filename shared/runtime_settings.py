@@ -1054,7 +1054,7 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "label": "임베딩 백필 pass 당 행수",
         "description": "insight-worker 임베딩 백필 데몬이 한 pass 에서 처리하는 최대 행수. 높이면 임베딩이 빨리 따라잡지만 embedding gateway 부하가 커집니다.",
         "unit": "행",
-        "default": 1000,
+        "default": 600,
         "minimum": 10,
         "maximum": 20000,
         "apply_mode": "live",
