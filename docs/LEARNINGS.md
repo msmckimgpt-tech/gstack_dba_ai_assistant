@@ -390,6 +390,18 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: quirk
 
+### LRN-20260730-0001 — 방어를 **저장소 파일**에 두면 이미 분기된 worktree 사본에는 소급되지 않는다 (격리 머지 10분 뒤 재발한 이유)
+- Source: TASK-20260730T1620-test-isolation-hardening (LRN-20260729-0001 의 후속 — 같은 사고의 남은 층)
+- Quirk: 테스트→라이브 오염 격리를 `Makefile`·`tests/conftest.py` 에 넣고 main 에 머지했는데, **머지 10분 뒤 같은 오염이 재발**했다. 원인은 수정의 내용이 아니라 **수정이 사는 장소**였다 — 파일 방어는 머지 시점에 존재하는 사본에만 적용되고, 이미 분기된 worktree(그리고 그 안의 `.env` 복사본)에는 소급되지 않는다. 병렬 세션이 많은 저장소에서는 "main 을 고쳤다" 가 "모든 실행 경로를 고쳤다" 를 의미하지 않는다.
+- 오염 성립의 정확한 조건(3개 모두 필요): ① worktree 에 `.env`(라이브 자격증명) 복사됨 ② `COMPOSE_PROJECT_NAME=repo` 로 **라이브 compose 네트워크에 참여** ③ 그 사본에 격리 없음. `dbnet` 은 external 이 아니라 프로젝트 스코프(`<project>_dbnet`)라, worktree 에서 그냥 `make test` 하면 자기 네트워크로 떠서 오염이 성립하지 않는다 — ②가 핵심 스위치다.
+- Mitigation (층을 값이 아니라 **도달성**과 **상태 검사**로 내린다):
+  - `make test` 를 **전용 compose 프로젝트**(`-p repo-unittest`)로 실행 → 라이브 서비스명이 DNS 로 해석되지 않는다. `-p` 는 CLI 플래그라 외부 `COMPOSE_PROJECT_NAME` 을 이기므로 ②를 원천 무효화.
+  - 루트 `conftest.py` 가 "라이브 스택 네트워크 안인가" 를 검사해 참이면 **collection 단계에서 중단**. 특정 경로 차단이 아니라 상태 검사라, 예측하지 못한 우회 경로도 같은 지점에 걸린다.
+  - 오래 사는 worktree 는 **테스트 인프라 파일만이라도 main 과 동기화**한다(작업 내용 무손실). rebase 를 기다리면 그 사이 오염이 계속된다.
+- DB 레벨 차단은 **불가**로 확인: 운영·테스트 커넥션이 `program_name=NULL`·`_client_name=libmysql`·`_pid=1` 로 동일하고 IP 도 동적이라, MySQL 트리거가 둘을 구분할 신호가 없다(`performance_schema.session_connect_attrs` 직접 조회). 저장소 밖 층으로 가려면 계정 분리 또는 자격증명 회전뿐이며, 후자는 **오래된 `.env` 사본을 즉시 무력화하는 유일한 수단**이다(필요 시 선택지로 기억).
+- 탐지: 오염은 에러를 남기지 않아 조용하다 — 실제 피해는 오염 자체보다 **하루의 탐지 지연**이었다(07-29 14:33 발생 → 07-30 15:57 발견). `bash bin/check-test-contamination.sh` 로 언제든 "현재 값 vs 테스트가 쓴 값 vs 사람 최종 설정값" 을 대조할 수 있다(잔존 시 exit 1).
+
+
 ### LRN-20260729-0001 — `docker compose run --no-deps` 는 **이미 떠 있는** 운영 스택으로부터 테스트를 격리하지 않는다 (라이브 설정이 테스트 값으로 롤백된 근본 원인)
 - Source: TASK-20260729T1412-test-live-db-isolation (사용자 보고: 관리 콘솔 '에이전트/쿼리 실행 타임아웃' 900초가 반복적으로 90초로 롤백)
 - Quirk: `--no-deps` 는 의존 서비스를 **기동하지 않을 뿐**, 이미 실행 중인 컨테이너와의 네트워크 연결을 막지 않는다. `make test` 의 agent 서비스는 `networks: [dbnet, ...]` + `env_file: .env/.env.mysql` + `volumes: ../artifacts/shared:/shared` 를 상속하므로, 운영 스택이 상시 떠 있는 개발 머신에서 pytest 가 **라이브 MySQL(`agent_memory`)과 라이브 공유 스냅샷에 그대로 도달**한다. 그 결과 관리 콘솔 런타임 설정 PUT 테스트가 라이브 `WebRuntimeSettings` 를 실제로 덮어썼다(2026-07-13~29, audit `RemoteAddr=testclient` 150건). CI 는 `.env` 도 운영 스택도 없어 통과하므로 **개발 머신에서만 발현**한다.

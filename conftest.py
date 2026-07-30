@@ -55,8 +55,55 @@ if os.environ.get("AGENT_TEST_ALLOW_LIVE_BACKENDS", "").strip() not in ("1", "tr
     os.environ["AGENT_KB_PG_PORT"] = "1"
     os.environ["AGENT_KB_PG_PORT_RO"] = "1"
 
+    # memory/data MySQL(컨트롤플레인) — 종전엔 Makefile 의 `-e DB_PORT=1` 만 담당했다.
+    # 그래서 하네스를 거치지 않는 실행(로컬 `pytest`, IDE 러너, 다른 Make 타깃)에서는 라이브
+    # MySQL 이 열려 있었고, 실제로 관리 콘솔 런타임 설정이 테스트 값으로 덮어써지는 사고가
+    # 났다(2026-07-13~29, audit RemoteAddr=testclient). 격리를 파일 쪽으로 끌어와 하네스
+    # 유무와 무관하게 성립시킨다(Makefile 은 동일 값을 유지 — 컨테이너 레벨 1차 방어).
+    os.environ["DB_PORT"] = "1"
+
     # 런타임 read 라우팅 — 단위 테스트의 기본 전제는 MySQL 경로다. PG 경로를 검증하는
     # 테스트는 자기 안에서 monkeypatch 로 명시 전환한다(현재 그렇게 작성되어 있다).
     os.environ["AGENT_RUNTIME_READ_BACKEND"] = "mysql"
     os.environ["AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND"] = "mysql"
     os.environ["AGENT_KB_READ_BACKEND"] = "mysql"
+
+    # ── 격리 실효 검증 (fail-loud) ────────────────────────────────────────────
+    # 위 값 방어는 "라이브 자원에 닿아도 값으로 막는다" 는 층이다. 그 아래에 도달성 층이
+    # 있어야 한다 — `make test` 는 전용 compose 프로젝트(`repo-unittest`)로 떠서 라이브
+    # `mysql` 서비스명이 DNS 로 해석조차 되지 않는다(Makefile `DC_TEST` 참조).
+    #
+    # 여기서는 그 도달성 층이 실제로 서 있는지 **운영 기본 포트로 직접 확인**한다. env 를
+    # 읽지 않고 3306 리터럴을 쓰는 이유: 위에서 DB_PORT 를 1 로 덮었으므로 env 기반 probe 는
+    # 자기 자신을 검사하는 동어반복이 된다. 확인하려는 것은 "이 프로세스가 라이브 스택
+    # 네트워크 안에 있는가" 이고, 그 답이 예이면 값 방어 하나가 뚫릴 때 곧바로 운영 오염으로
+    # 이어진다(실측 사고 경로). 그래서 조용히 통과시키지 않고 collection 단계에서 중단한다.
+    #
+    # 정상 경로는 모두 통과한다 — `make test`(전용 프로젝트: DNS 미해석) · CI 러너(mysql 호스트
+    # 부재) · 호스트 로컬 pytest(`mysql` 은 컨테이너 내부 DNS 이름). 라이브 백엔드를 겨냥한
+    # 통합 점검은 위 AGENT_TEST_ALLOW_LIVE_BACKENDS=1 로 본 블록 전체를 건너뛴다.
+    def _assert_live_stack_unreachable() -> None:
+        import socket
+
+        host = (os.environ.get("DB_HOST") or "mysql").strip()
+        if not host:
+            return
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.3)  # 닫힌 포트/미해석 호스트는 즉시 실패 — 테스트 지연 없음
+        try:
+            reachable = sock.connect_ex((host, 3306)) == 0
+        except OSError:
+            reachable = False  # DNS 미해석 등 = 격리 성립
+        finally:
+            sock.close()
+        if reachable:
+            raise RuntimeError(
+                f"단위 테스트가 라이브 스택 네트워크 안에서 실행되고 있다 ({host}:3306 도달 가능). "
+                "이 상태에서는 값 격리가 한 겹만 뚫려도 운영 DB(agent_memory)가 테스트 값으로 "
+                "덮어써진다 — 실제로 관리 콘솔 런타임 설정이 그렇게 오염됐다. "
+                "`make test` 로 실행하면 전용 compose 프로젝트가 도달성을 끊는다. "
+                "COMPOSE_PROJECT_NAME 으로 라이브 프로젝트를 지정하지 말 것. "
+                "라이브 백엔드를 의도적으로 겨냥한 통합 점검이면 AGENT_TEST_ALLOW_LIVE_BACKENDS=1."
+            )
+
+    _assert_live_stack_unreachable()

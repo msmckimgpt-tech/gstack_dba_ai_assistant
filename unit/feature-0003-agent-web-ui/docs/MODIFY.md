@@ -11,6 +11,25 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260730T162000-test-isolation-hardening (테스트→라이브 오염 재발 차단: 도달성 층 + fail-loud + 감지, Major)
+- `Makefile`: `TEST_COMPOSE_PROJECT`/`DC_TEST` 신설 — `test` 타깃을 **전용 compose 프로젝트**
+  (`-p repo-unittest`)로 실행. 테스트 컨테이너가 자기 네트워크로 떠서 라이브 `mysql`/`pgbouncer`
+  가 DNS 로 해석되지 않는다. `-p` 가 외부 `COMPOSE_PROJECT_NAME` 을 이기므로 재발 벡터
+  (`COMPOSE_PROJECT_NAME=repo make test`)가 무효화된다. `dc-build` 도 같은 프로젝트로 호출
+  (`DC_QUIET="$(DC_TEST)"` 전달).
+- `conftest.py`(루트): ① `DB_PORT=1` 격리를 파일 쪽으로 이관 — 하네스 밖(로컬 `pytest`)에서도
+  memory MySQL 이 막힌다(종전엔 Makefile 만 담당). ② `_assert_live_stack_unreachable()` 추가 —
+  라이브 스택 네트워크 안에서 실행 중이면 **collection 단계에서 RuntimeError 로 중단**. probe 는
+  env 가 아니라 3306 리터럴을 쓴다(위에서 DB_PORT 를 덮으므로 env 기반은 동어반복).
+  `AGENT_TEST_ALLOW_LIVE_BACKENDS=1` 예외는 기존 계약 그대로.
+- `bin/check-test-contamination.sh` **신설** — audit 의 `RemoteAddr=testclient` 유입을 조회해
+  키별로 현재 라이브 값 / 테스트가 쓴 값 / 사람 최종 설정값을 대조, 오염 잔존 시 exit 1.
+  하루 방치된 탐지 지연(재발 사건의 실제 피해)을 겨냥한 층.
+- **코드(제품) 변경 0**. 라이브 검증: `COMPOSE_PROJECT_NAME=repo` 를 일부러 준 채 전량 실행 —
+  `WebRuntimeSettings` 해시 불변 · `testclient` audit 신규 0건 · 전량 통과(FAILED 0).
+- Cross-ref: TASK-20260730T1620-test-isolation-hardening · REV-20260730T162000-test-isolation-hardening ·
+  선행 CHG-20260729T141200-test-live-db-isolation(값 방어 층).
+
 ## CHG-20260730T160500-progress-enqpre-handoff-postdeploy (POST-DEPLOY 라이브 AFTER 대조 기록, doc-only)
 - `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260729T201000-progress-enqpre-handoff.md`:
   POST-DEPLOY Run append — BEFORE/AFTER 동일 시나리오 대조표(추적 id·프론트 steps·화면 단계),

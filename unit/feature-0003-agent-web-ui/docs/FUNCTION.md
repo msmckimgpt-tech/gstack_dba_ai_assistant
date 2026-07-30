@@ -2289,3 +2289,24 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 ## (doc-sync-rn-0730, 2026-07-29) 릴리즈노트 콘텐츠 — 2026-07-29 블록 신규 prepend 13항목(대화 검색 복구·첨부 파일명 축·진행 폴링 자가회복·타임아웃 연장 승인·첨부 자율 참조·모델 선택 유실·후속 축약·제품 선택 방향키·DB 자동 재연결·제품 스코프·관계도 상한 제거·이름표/목록 가독성·자체 점검 회차)
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-07-29" 블록 prepend(13 items: fixed/work 5 · new/work 2 · improved/work 2 · fixed/common 1 · improved/admin 4 중 area 분포는 work 8·common 1·admin 4) + `generated` "2026-07-28"→"2026-07-29". 기존 07-28 이하 전 블록 무접촉. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. cache-buster `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py`(Dockerfile:39) + deploy-web.sh `asset_stamp_verify` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시(index/admin `?v=<new>`)는 07-12 이전 regime → 부적용(현행 코드로 재검증, 484623fb·abcb7d68 동일 판정).
 - 평이화/비노출: feature-id·§번호·PR#·함수명·테이블명·엔드포인트·내부 권한키(`conversation.extend.*`)·내부 설정키(AGENT_TIMEOUT_EXTENSION_*)·내부 모델값 비노출(사용자 언어·실제 화면 라벨만). 삭 제품 선택기 위치는 오안내 회피를 위해 위치 중립 서술. 제외/HOLD: 배포됐으나 자체 POST-DEPLOY 실증 커밋 부재 3건(대화 페이징 429 블로킹 해소 48a9f1f6·추론 회차 표시 교정 10c84d81·추론 탭 안내문구 축약 45dfe362)은 함정 #18c 보수 default 로 HOLD. 제외: 내부 테스트 격리(770c436b·97be4cda·7749a04a)·UI 카피 예산 게이트(394b987d governance)·LEARNINGS 기록.
+
+## (test-isolation-hardening, 2026-07-30) 테스트 격리 계약 — 3층으로 확장 (테스트 인프라, Major §12.3, 제품 코드 변경 0)
+
+`test-live-db-isolation`(07-29)의 값 방어에 **도달성 층**과 **fail-loud**, **감지**를 더한다.
+값 방어만으로는 부족했다 — 방어가 저장소 파일에 살아, 이미 분기된 worktree 사본에는 소급되지
+않았고 머지 10분 뒤 오염이 재발했다.
+
+- **층 1 · 도달성 (`Makefile`)**: `test` 타깃은 **전용 compose 프로젝트**(`-p repo-unittest`)로
+  실행한다. `dbnet` 이 프로젝트 스코프라 테스트 컨테이너는 전용 네트워크로 뜨고, 라이브
+  `mysql`/`pgbouncer` 는 **DNS 로 해석되지 않는다**. `-p` 는 CLI 플래그라 외부
+  `COMPOSE_PROJECT_NAME` 을 이긴다 — `COMPOSE_PROJECT_NAME=repo make test` 도 격리된다.
+- **층 2 · 값 + fail-loud (루트 `conftest.py`)**: MySQL(`DB_PORT`)·KB PG 포트 무효화와 라우팅
+  중립화를 파일 쪽에서 강제해 하네스 밖(로컬 `pytest`)에서도 성립시킨다. 추가로 **라이브 스택
+  네트워크 안에서 실행 중이면 collection 단계에서 중단**한다(테스트 0건 실행 = 오염 0).
+  라이브 백엔드를 겨냥한 통합 점검은 `AGENT_TEST_ALLOW_LIVE_BACKENDS=1`.
+- **층 3 · 감지 (`bin/check-test-contamination.sh`)**: audit 의 `RemoteAddr=testclient` 유입을
+  키별로 "현재 라이브 값 / 테스트가 쓴 값 / 사람 최종 설정값" 으로 대조. **오염 잔존 시 exit 1**
+  (과거 이력만으로는 red 가 되지 않는다).
+- **알려진 한계**: 위 3층은 모두 저장소 파일이므로 **이미 분기된 worktree 사본에는 소급되지
+  않는다**. 오래 사는 worktree 는 테스트 인프라 파일을 main 과 동기화해야 한다. DB 레벨 차단은
+  운영/테스트 커넥션을 구분할 신호가 없어 불가(상세: REVIEW REV-20260730T162000).

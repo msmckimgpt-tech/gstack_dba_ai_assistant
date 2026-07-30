@@ -236,9 +236,28 @@ TEST_ISOLATION_ENV := \
   -e AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=mysql \
   -e AGENT_KB_READ_BACKEND=mysql
 
-test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리 컨테이너에서 실행 (psycopg 등 런타임 의존 포함, --no-deps + 라이브 DB/스냅샷 차단 env)
-	@$(MAKE) -s dc-build SERVICE=agent
-	@$(DC_QUIET) run --rm --no-deps $(TEST_ISOLATION_ENV) -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
+# 테스트 전용 compose 프로젝트 — **라이브 스택 네트워크 참여 자체를 차단**한다
+# (test-isolation-hardening, 2026-07-30).
+#
+# 위 TEST_ISOLATION_ENV 는 "라이브 자원에 닿아도 값으로 막는" 방어다. 그것만으로는 부족했다:
+# 방어가 저장소 파일에 있으니 **이미 분기된 worktree 사본에는 없다**. 실측 — 격리를 main 에
+# 머지한 10분 뒤(2026-07-29 14:33) 오염이 재발했고, 원인은 격리 이전 base 에서 분기된 worktree
+# 에서 `COMPOSE_PROJECT_NAME=repo make test` 로 라이브 네트워크에 참여한 실행이었다.
+#
+# `dbnet` 은 external 이 아니라 **프로젝트 스코프**(`<project>_dbnet`)다. 따라서 compose
+# 프로젝트를 고정하면 테스트 컨테이너는 전용 네트워크로 뜨고, 라이브 `mysql`/`pgbouncer`
+# 서비스명은 **DNS 로 해석조차 되지 않는다** — 값 방어보다 한 층 아래에서 도달성을 끊는다.
+# `-p` 는 CLI 플래그라 외부 `COMPOSE_PROJECT_NAME` 환경변수를 **이긴다**: 누가
+# `COMPOSE_PROJECT_NAME=repo make test` 로 라이브 네트워크에 붙이려 해도 무효화된다.
+#
+# 비용: agent 이미지가 `$(TEST_COMPOSE_PROJECT)-agent` 로 따로 태깅된다(레이어 캐시는 공유되어
+# 빌드는 증분). 라이브 스택의 이미지·컨테이너·네트워크에는 손대지 않는다.
+TEST_COMPOSE_PROJECT := repo-unittest
+DC_TEST := COMPOSE_BAKE=false docker compose -p $(TEST_COMPOSE_PROJECT) --ansi=never
+
+test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — 전용 compose 프로젝트(라이브 네트워크 미참여) + 라이브 DB/스냅샷 차단 env
+	@$(MAKE) -s dc-build SERVICE=agent DC_QUIET="$(DC_TEST)"
+	@$(DC_TEST) run --rm --no-deps $(TEST_ISOLATION_ENV) -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
 	  pip install -q --no-cache-dir pytest ruff >/tmp/pip-dev.log 2>&1 || { cat /tmp/pip-dev.log; exit 1; }; \
 	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0003-agent-web-ui/src:/work; \
 	  echo "=== pytest ==="; \
