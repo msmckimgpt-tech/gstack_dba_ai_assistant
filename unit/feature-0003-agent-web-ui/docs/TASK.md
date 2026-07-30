@@ -8,6 +8,57 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260729T2010-progress-enqpre-handoff — 요청 직후 말풍선이 '시작 중…' 에 박제되던 결함: enqueue sentinel → 실제 run 승계 (Major §12.3 — feature-0003 프론트 `static/app.js` 단독, 백엔드/RBAC/스키마/엔드포인트 무변경, `/_template:entry` arg-given)
+
+- **증상(사용자 재보고, 스크린샷)**: "여전히 요청을 보낸 직후에는 다음 말풍선에서 변동사항이 없다.
+  (다른 대화로 전환 후 복귀하면 문제없이 나타남)" — 화면은 **상태 '처리 중' · 단계 '시작 중…' ·
+  경과시간 1분 50초**. 즉 폴링은 살아 있고 응답도 받는데 **steps 만 영원히 반영되지 않는** 상태.
+  선행 cycle(TASK-20260729T1750 progress-poll-resilience)이 고친 "폴러 사망" 과는 **다른 축**이다.
+- **근본 원인 — enqueue sentinel 을 추적 id 로 채택한 뒤의 정상 승계가 그룹 가드에 걸린다**:
+  1. 워커 모드 `/api/ask` 는 enqueue 시점에 `enqpre-<uuid>` **sentinel** 을 KV run_id 로 선기록한다
+     (`routers/_conv_store.py` — enqueue~claim 갭에도 프런트가 '처리중' 을 보게 하는 가교이자,
+     TASK-0241 의 orphan terminal clobber 가드가 정확히 skip 하도록 만든 값).
+  2. ask-worker 가 job 을 claim 하면 **claim 별 실제 run_id**(`modules/ask.py` `_new_run_id()` →
+     `agent_core` `set_run_status(processing, run_id=…)`)로 KV 를 덮어쓴다. 즉 sentinel→실제 run
+     전환은 *내 요청의 정상 승계*다.
+  3. 그런데 전송 직후 첫 폴(`scheduleProgressPolling(0)`)이 그 sentinel 을 받아
+     `state.progressRunId = "enqpre-…"` 로 고정한다. 이후 서버가 실제 run 을 돌려주면
+     `applyProgressPayload` 의 feature-0009 **foreign-run 가드**가 "다른 사용자의 동시 run" 으로
+     오인해 **매 응답을 early-return 으로 버린다**.
+  → 상태는 첫 응답 1회만 반영돼 '처리 중' 에 멈추고, `progressSteps` 는 영원히 비어 "시작 중…"
+    이 박제된다. 경과시간은 별도 타이머라 계속 흐른다(= 사용자 스크린샷). 대화 전환-복귀 시
+    `loadHistory` 가 `last_run_id`(실제 run)로 폴링을 재시작하므로 **그때만** 풀린다.
+- **왜 늘 발생하는가**: 첫 폴이 enqueue 직후(0ms)에 나가고 워커 claim 은 tick 1~2초 뒤라, 첫 응답이
+  sentinel 인 것이 **정상 타이밍**이다. 워커 모드가 활성인 환경에서 사실상 매 요청 재현된다.
+  선행 cycle 의 PB-0008 1차 관측에 이미 `runId: "enqpre-ae58dc20…"` + `stepText: "시작 중…"` 이
+  찍혀 있었는데, 그것을 "아직 단계가 없음" 으로 읽은 것이 진단 누락이었다(정직 기록).
+- **조치 (프론트 단독·비파괴)**:
+  - [x] `ENQUEUE_SENTINEL_RUN_PREFIX = "enqpre-"` + `_isEnqueueSentinelRunId()` / `_adoptRunId()`
+    신설 — 서버 계약(`"enqpre-" + uuid4().hex`)과 짝을 이루는 클라이언트측 규약.
+  - [x] **채택 choke-point = `resetProgressTracking`**: 어느 진입 경로(전송 직후 · `loadHistory` 의
+    `last_run_id` · `ask_status` attach)로 들어와도 sentinel 은 추적 id 로 채택하지 않는다.
+    `progressRunId` 가 빈 상태로 남아 다음 폴에서 `client_run_id` 를 싣지 않고, 서버가 돌려주는
+    **실제 run 을 그때 채택**한다.
+  - [x] `applyProgressPayload` 의 run 채택·`pendingBubble.runId` 도 동일 필터 경유 +
+    foreign-run 가드에 **2중 방어**(`!_isEnqueueSentinelRunId(state.progressRunId)`) — 구 버전
+    잔여 상태나 다른 진입 경로로 sentinel 을 추적 중이어도 승계를 막지 않는다.
+  - [x] `startProgressPolling` / `loadHistory` 의 전환 판정도 **채택값 기준** — sentinel 이
+    "run 이 바뀌었다" 로 오판돼 진행 중 steps 를 헛되게 비우지 않는다.
+  - [x] **그룹 foreign-run 불변식은 무손상**: 가드는 여전히 "실제 run vs 실제 run" 에만 적용된다.
+    sentinel 구간(통상 1~2초)에는 애초에 특정할 내 run 이 없다는 사실을 코드가 인정하는 형태.
+- **검증**:
+  - [x] 신규 `tests/verify_enqpre_run_handoff.mjs` **27 PASS / 0 FAIL** — `applyProgressPayload`·
+    `resetProgressTracking`·`startProgressPolling` 을 실제 구동(C1 sentinel 미채택 · **C2 sentinel→
+    실제 run 승계 + steps 반영** · C3 그룹 foreign 무시 보존 · C4 terminal 통과 보존 · C5 2중 방어 ·
+    C6 채택 규약 · 정적 계약 5). **수정 전 코드에 되돌려 실행하면 18건 FAIL**(C2 포함).
+  - [x] 기존 `verify_progress_poll_resilience.mjs` 45 PASS · `verify_run_detect_poll.mjs` 35 PASS ·
+    `verify_model_persist.mjs` 49 PASS 등 회귀 0(잔여 FAIL 은 main 과 동일 baseline).
+  - [ ] `make test` 컨테이너 회귀 (Python 무접촉 — baseline 대조)
+  - [ ] **POST-DEPLOY PB-0008 라이브** — 실제 전송 직후 `run_id` 가 sentinel→실제 run 으로
+    전환되는 창을 관측하고, **대화 전환 없이** 단계가 "시작 중…" → 실제 step 으로 넘어가는지.
+
+---
+
 ## TASK-20260729T1750-progress-poll-resilience — assistant 말풍선이 '처리 중' 에서 갱신되지 않고 대화 전환-복귀로만 되살아나던 결함 (Major §12.3 — feature-0003 프론트 `static/app.js` 단독, 백엔드/RBAC/스키마/엔드포인트 무변경, `/_template:entry` arg-given)
 
 - **증상(사용자 보고, 재발)**: "서비스 내 사용자가 assistant 에게 요청을 전송한 후, assistant 의
