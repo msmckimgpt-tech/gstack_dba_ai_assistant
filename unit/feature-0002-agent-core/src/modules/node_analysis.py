@@ -752,6 +752,51 @@ def _ensure_table_columns(c, node_key: str) -> int:
         return 0
 
 
+# ── 통계 증거 접지 (feature-0031-analysis-grounding, L0/L1) ──────────────────
+def _split_table_key(node_key: str):
+    """`scope:schema.table` → (scope, schema, table). 형식이 아니면 (None, None, None)."""
+    if not node_key or ":" not in node_key:
+        return None, None, None
+    scope, _, rest = node_key.partition(":")
+    schema, _, table = rest.rpartition(".")
+    if not scope or not schema or not table:
+        return None, None, None
+    return scope, schema, table
+
+
+def _ensure_table_stats(c, node_key: str) -> None:
+    """Table 잡 처리 직전 통계 증거 보강 — 필요하고 허용될 때만 수집한다(fail-soft, 반환 없음).
+
+    수집 깊이·주기·시간창은 `metadata_stats` 가 판정하고, 운영 DB 연결은 `ds` 자원 예산 게이트
+    위에서만 열린다. 어떤 실패도 분석 흐름을 막지 않는다 — 증거 없이 분석하던 종전 동작으로 진행."""
+    if not bool(getattr(_cfg, "AGENT_MULTI_DATASOURCE_ENABLED", False)):
+        return   # 멀티 datasource 비활성 환경은 전체 skip(_ensure_table_columns 와 동형)
+    scope, schema, table = _split_table_key(node_key)
+    if not scope:
+        return
+    try:
+        from modules import metadata_stats as _ms
+        ds = _resolve_datasource_by_scope(scope)
+        if ds:
+            _ms.ensure_stats(ds, c, scope, schema, table)
+    except Exception as exc:
+        _log.debug("ensure_table_stats_failed node=%s err=%r", node_key, exc)
+
+
+def _table_evidence(c, node_key: str):
+    """payload 에 실을 `evidence` 블록(없으면 None). 수집 여부와 무관하게 안전하다."""
+    scope, schema, table = _split_table_key(node_key)
+    if not scope:
+        return None
+    try:
+        from modules import metadata_stats as _ms
+        cap = int(getattr(_cfg, "AGENT_NODE_ANALYSIS_EVIDENCE_COLUMN_CAP", 40) or 40)
+        return _ms.load_evidence(c, scope, schema, table, column_cap=cap)
+    except Exception as exc:
+        _log.debug("table_evidence_failed node=%s err=%r", node_key, exc)
+        return None
+
+
 def _build_payload(node: dict, ctx: dict) -> dict:
     """LLM 입력 payload (NODE_ANALYSIS_PROMPT 계약). 이웃 리스트는 cap 으로 토큰 보호."""
     def _names(items, n):
@@ -1530,6 +1575,9 @@ def _process_pending_inner(max_nodes=None, conn=None) -> dict:
                 #   (b) §55 직계 컬럼 게이트 면제 편입이 함께 살아난다. fail-soft(0 = 종전 동작).
                 if (node_label or "") == "Table":
                     _ensure_table_columns(c, node_key)
+                    # feature-0031 접지(L0): 같은 자리에서 통계 증거도 보강한다 — 분석되는
+                    #   테이블만 보므로 쓰이지 않을 통계를 미리 모으는 낭비가 없다. fail-soft.
+                    _ensure_table_stats(c, node_key)
                 ctx = _fetch_context(node_key, c)
                 root = ctx.get("root") or {"label": node_label, "name": node_name,
                                            "fqn": node_fqn, "key": node_key}
@@ -1537,6 +1585,13 @@ def _process_pending_inner(max_nodes=None, conn=None) -> dict:
                 anchor = _load_anchor(c, cur, run_id, anchors, anchor_key,
                                       self_node=(ctx.get("root") if (anchor_key and anchor_key == node_key) else None))
                 payload = _build_payload(root, ctx)
+                # feature-0031 접지(L1): 수집된 통계를 payload 의 `evidence` 로 주입한다. 증거가
+                #   없으면 키 자체를 넣지 않아 종전 payload 와 동형이다(LLM 콜 수는 불변 — 같은
+                #   호출에 더 나은 입력을 준다).
+                if (node_label or "") == "Table":
+                    ev = _table_evidence(c, node_key)
+                    if ev:
+                        payload["evidence"] = ev
                 # ADR-017: hover 프롬프트 지침을 run 전 노드 분석에 주입 — LLM 이 자율 판단해 반영.
                 if anchor and anchor.get("prompt"):
                     payload["user_intent"] = anchor["prompt"]
@@ -2154,8 +2209,39 @@ def _parse_analysis(text):
             for k in ("summary", "relationships", "usage", "caveats") if obj.get(k)}
 
 
-def _analysis_is_thin(text, thin_chars: int) -> bool:
-    """빈약(thin) 분석 판정 — summary 가 임계 미만이거나 relationships·usage 모두 공란.
+#: 실질 내용이 아닌 상투 무응답 — 채워져 있어도 "충족"으로 세지 않는다.
+#  ⚠ 정확 일치만 보면 안 된다: 기존 1만여 건의 분석문에는 "연결 정보 없음." · "연결 정보가 없습니다"
+#  같은 변형이 섞여 있어, 정확 일치 판정은 그것들을 "충족"으로 세고 thin 판정을 통과시킨다
+#  (= 보충돼야 할 분석이 보충되지 않는다). 어미·구두점 변형을 함께 흡수한다.
+_EMPTY_RE = re.compile(
+    r"^(?:n/?a"
+    r"|연결\s*정보(?:가)?\s*(?:없음|없습니다|없다|없어요)"
+    r"|(?:관련|참조)?\s*정보(?:가)?\s*(?:없음|없습니다|없다)"
+    r"|해당\s*(?:사항)?(?:이)?\s*없(?:음|습니다|다)"
+    r"|없(?:음|습니다|다)"
+    r"|[-–—.])[\s.!]*$",
+    re.IGNORECASE)
+
+#: 충족으로 인정할 최소 항목 수(summary·relationships·usage·role 중).
+_THIN_MIN_FILLED = 2
+
+
+def _is_filled(value) -> bool:
+    """분석 항목이 실질 내용인지 — 공란·상투 무응답은 미충족."""
+    s = str(value or "").strip()
+    if len(s) < 4:
+        return False
+    return not _EMPTY_RE.match(s)
+
+
+def _analysis_is_thin(text, thin_chars: int, label: str = "") -> bool:
+    """빈약(thin) 분석 판정 — **항목 충족도** 기준(feature-0031 재정의).
+
+    종전에는 summary 길이(기본 120자) 단독 판정이었는데, 프롬프트 계약이 "한국어 1~2문장"
+    (≈50~100자)이라 **정상 분석 대부분이 thin 으로 잡혔다** — `REFINE_MAX` 캡이 폭주를 막고
+    있었을 뿐, 캡을 올리면 대량 재분석이 터지는 구조였다. 이제 "무엇이 채워졌는가"로 본다:
+    summary·relationships·usage(Table 노드는 role 도) 중 실질 항목이 `_THIN_MIN_FILLED` 개
+    미만이면 thin. summary 하한(`thin_chars`)은 한 문장도 안 되는 응답을 거르는 역할로 남는다.
 
     파싱 불가 텍스트는 판단 불가 → thin 아님(보수 — 무한 재분석 방지). 빈 분석문은 thin."""
     if not text:
@@ -2167,13 +2253,14 @@ def _analysis_is_thin(text, thin_chars: int) -> bool:
     if not isinstance(obj, dict):
         return False
     summary = str(obj.get("summary") or "").strip()
-    rel = str(obj.get("relationships") or "").strip()
-    usage = str(obj.get("usage") or "").strip()
     # §56 RC3: LLM 계약의 무관계 문구("연결 정보 없음")는 공란과 동치 — 관계 substrate(루틴/크로스-DB)가
     # 뒤늦게 채워지는 환경(fhgame1 류)에서 이런 노드가 back-refine 대상으로 잡혀 보충되게 한다.
-    if rel in ("연결 정보 없음", "-"):
-        rel = ""
-    return (len(summary) < max(1, thin_chars)) or (not rel and not usage)
+    filled = sum(1 for k in ("summary", "relationships", "usage") if _is_filled(obj.get(k)))
+    if (label or "") == "Table" and _role_valid(obj.get("role")):
+        filled += 1
+    if len(summary) < max(1, thin_chars):
+        return True
+    return filled < _THIN_MIN_FILLED
 
 
 def _latest_done_analysis(cur, scope_key, node_key, exclude_id=None):
@@ -2233,14 +2320,15 @@ def _backrefine_neighbors(c, cur, run_id: str, cur_jid, ctx: dict) -> int:
         room = refine_max - int((cur.fetchone() or [0])[0])
         if room <= 0:
             return 0
-        cur.execute("SELECT id, analysis FROM node_analysis_jobs "
+        cur.execute("SELECT id, analysis, node_label FROM node_analysis_jobs "
                     "WHERE run_id=%s AND status='done' AND pass_no=0 AND id <> %s AND node_key = ANY(%s) "
                     "ORDER BY id LIMIT 20", (run_id, cur_jid, keys))
         rows = cur.fetchall()
-        for rid, atext in rows:
+        for rid, atext, nlabel in rows:
             if updated >= room:
                 break
-            if not _analysis_is_thin(atext, thin_chars):
+            # label 은 thin 판정의 항목 충족도에 쓰인다 — Table 노드는 role 도 충족 항목이다.
+            if not _analysis_is_thin(atext, thin_chars, str(nlabel or "")):
                 continue
             cur.execute("UPDATE node_analysis_jobs SET status='pending', pass_no = pass_no + 1, error=NULL "
                         "WHERE id=%s AND status='done' AND pass_no=0", (rid,))
