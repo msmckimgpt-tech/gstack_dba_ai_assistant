@@ -1048,3 +1048,13 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - 조치: 9건 전부 수정. 테스트 7 → **16건**(빌더 + 누산기 계약 + 소스 배선 계약), 패널 생존 변이 6종 되돌림 **생존 0**. feature-0002 전체 스위트 회귀 0.
 - 패널이 clean 판정한 축: red-team 의 `inference_ms` 포함 관계(영속 경로 기준 정확) · 누산기에 red-team LLM/도구 미유입 · 스코프/클로저(모든 early return 이 도달 불가) · try/finally 제어흐름 · 라운드당 1회 누산(empty_retries 포함 정확) · 쓰기 경로 상한(40자·top-6, 최악 ~550B) · 신규 SQL 문법·빈 입력 동작.
 - Timestamp: 2026-07-29T12:00:00Z
+
+## REV-20260730T193000-ai-root-init-prologue-metrics [SUBAGENT:backend] — init_ms 프롤로그 계측 + 잔차 노출
+- Related TASK: CHG-20260730T190000-init-prologue-metrics (feature-0002-agent-core, Minor §12.3)
+- 패널: fresh-context 적대 1렌즈(계측 정합성 · 라이브 SQL 실행 · 변이 실측). BLOCKER 0 / MAJOR 5 / MINOR 3.
+- **판정: 초안 REJECT — 8건 흡수 후 재검증.** 초안의 "기존 `init_detail` 키 무변경" 주장이 라이브에서 반증됐다.
+- MAJOR: ① bool 플래그가 기존 §3b(`jsonb_each_text` 전 키 `::float`)를 죽임(라이브 재현) → 수치 키. ② §3b-0 이 구/신 행 혼합 모집단을 평균해 other_pct 를 과소보고(9구+1신에서 "2%") → 신규 키 필터. ③ 롤업은 무조건·leaf 는 예외 시 누락 → `max(Σleaf, 롤업)` 아니면 knowledge 전체(최대 6,924ms)가 거짓 미귀속. ④ `ds_resolve_ms` 가 지배 경로에서 엉뚱한 함수 측정(복수 vs 단수) → 누산. ⑤ 12 변이 중 7 생존(소스 문자열 검색의 한계).
+- MINOR: eval 경로 미기록(§3b-0 왜곡) · 멀티 span 이 단일보다 좁음 · 빌더 비멱등.
+- 조치: 8건 전부 수정. 테스트 10 → 17건, 역검증 12종(초안 5 + 패널 생존 7) 생존 0. feature-0002 전체 스위트 회귀 0. §3b-0 라이브 실행 확인.
+- 패널 clean: 선언 이동(early-return 9곳 무해·재진입 없음) · 롤업 전제(63행 오차 ≤0.3ms) · span 상호배타 · 영속 경로(직전 cycle dead-code 미재발) · 프론트 무영향.
+- Timestamp: 2026-07-30T19:30:00Z

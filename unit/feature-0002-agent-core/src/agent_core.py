@@ -2373,6 +2373,68 @@ def inference_acc_tool(acc: dict, tool_ms: dict, tool_n: dict, name, ms) -> None
     tool_n[key] = tool_n.get(key, 0) + 1
 
 
+# `knowledge_total_ms` 는 아래 leaf 들의 **롤업**이다(실측 63행: 롤업 − Σleaf 가 -0.2~+0.3ms).
+# 잔차에서 롤업과 leaf 를 모두 빼면 이중 계상돼 잔차가 꺼진다.
+_INIT_KNOWLEDGE_ROLLUP = "knowledge_total_ms"
+_INIT_KNOWLEDGE_LEAVES = frozenset({
+    "query_embed_ms", "table_insights_ms", "relationships_ms", "glossary_ms",
+    "example_queries_ms", "table_col_desc_ms", "schema_list_ms", "account_recall_ms",
+})
+# 빌더가 스스로 만든 키 — 재적용 시 leaf 로 세면 잔차가 0 으로 붕괴한다(§18.8 패널 MINOR-3).
+_INIT_DERIVED_KEYS = frozenset({"init_other_ms", "init_residual_neg_ms"})
+
+
+def _build_init_detail(init_ms, detail: dict) -> dict[str, Any]:
+    """init_ms 내부 분해 + **잔차 노출** (feature-0034 initpro).
+
+    feature-0026 의 init_detail 은 history_load 이후만 담아, 7일 실측에서 init_ms 평균
+    4,921ms 중 750ms 만 설명하고 **4,171ms(85%)가 어디로 가는지 알 수 없었다**. 프롤로그
+    (메모리 DB 준비·datasource resolve·데이터플레인 연결) 3구간을 추가하고, 그래도 남는 몫을
+    `init_other_ms` 로 **명시**한다. 잔차 노출이 핵심 설계다(feature-0031 교훈) — 노출하지
+    않으면 다음 블라인드스팟이 또 조용히 숨는다.
+
+    §18.8 패널 MAJOR-3 — knowledge 는 `max(Σleaf, 롤업)` 으로 센다. 롤업은 **무조건** 기록되지만
+    leaf 는 `_build_knowledge_context` 가 예외로 죽으면 하나도 안 들어온다. 그때 롤업만 제외하면
+    knowledge 구간 전체(실측 최대 6,924ms — 평균 init_ms 보다 크다)가 통째로 잔차로 흘러
+    '미귀속이 크다'는 **거짓 신호**가 된다. max 를 쓰면 leaf 정상 시엔 동일값(오차 ≤0.3ms),
+    leaf 부재 시엔 롤업이 대신 잡힌다.
+
+    §18.8 패널 MAJOR-1 — 값은 **전부 수치**여야 한다. `bin/perf-snapshot.sh` §3b 는
+    `jsonb_each_text(init_detail)` 로 **모든** 키를 `::float` 캐스트하므로 bool 을 하나라도
+    넣으면 `invalid input syntax for type double precision: "true"` 로 그 섹션이 통째로 죽는다
+    (라이브 재현). 그래서 클램프 신호도 수치 키(`init_residual_neg_ms`)로 낸다.
+    """
+    if not isinstance(detail, dict) or not detail:
+        return {}
+    out = dict(detail)
+    base = 0.0
+    know_leaf = 0.0
+    rollup = 0.0
+    for k, v in detail.items():
+        if k in _INIT_DERIVED_KEYS:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if k == _INIT_KNOWLEDGE_ROLLUP:
+            rollup = fv
+        elif k in _INIT_KNOWLEDGE_LEAVES:
+            know_leaf += fv
+        else:
+            base += fv
+    try:
+        resid = float(init_ms) - (base + max(know_leaf, rollup))
+    except (TypeError, ValueError):
+        return out
+    if resid < 0:
+        out["init_other_ms"] = 0.0
+        out["init_residual_neg_ms"] = round(-resid, 1)
+    else:
+        out["init_other_ms"] = round(resid, 1)
+    return out
+
+
 def _build_inference_detail(inference_ms, redteam_ms, acc, tool_ms, tool_n) -> dict[str, Any]:
     """inference_ms 내부 분해 (feature-0031 infdetail).
 
@@ -4761,6 +4823,15 @@ def _run_agent_core(
     # init_ms 가 포함되고, queued_ms_seed 로 큐 대기까지 더해 total 을 정직하게 낸다.
     agent_entry_perf = time.perf_counter()
     _queued_ms = max(0.0, float(queued_ms_seed or 0.0))
+    # feature-0034 (initpro): init_ms **프롤로그** 계측 (duration_breakdown.init_detail 에 병합).
+    #   계측 동기 — feature-0026 의 init_detail 은 history_load 이후만 담았고, 진입부터 그때까지의
+    #   266 줄(메모리 DB 연결·대화 보장·datasource resolve·**데이터플레인 연결**)은 통짜였다.
+    #   7일 실측(2026-07-30): init_ms 평균 4,921ms 중 init_detail 설명분은 750ms 뿐 —
+    #   **4,171ms(85%)가 미귀속**. 워커에서 직접 재보니 데이터플레인 `connect_with_retry` 만
+    #   1,447ms 였다. feature-0031 이 inference 를 닫자 여기가 최대 블라인드스팟이 됐다.
+    #   설계 교훈(feature-0031): **잔차 키를 반드시 노출**한다 — 그래야 다음 블라인드스팟이
+    #   숨지 못한다. 아래 `_build_init_detail` 이 `init_other_ms` 로 계산한다.
+    _init_detail: dict[str, Any] = {}
 
     result: dict[str, Any] = {
         "answer": "",
@@ -4836,6 +4907,7 @@ def _run_agent_core(
     canceled_by_user = False
 
     # ── DB 연결 ──
+    _mem_t0 = time.perf_counter()   # initpro: 메모리 DB 준비(스키마 보장·연결·대화 레코드)
     try:
         ensure_memory_schema()
         mem_conn = _connect_memory()
@@ -4843,6 +4915,7 @@ def _run_agent_core(
         cleanup_pending_delete_conversations(mem_conn)
         _ensure_conversation(mem_conn, cid)
         _ensure_web_conversation_metadata(mem_conn, cid)
+        _init_detail["mem_setup_ms"] = round((time.perf_counter() - _mem_t0) * 1000.0, 1)
         if _delete_requested(mem_conn, cid):
             delete_conversation_records(mem_conn, cid)
             cfg.CURRENT_RUN_ID = ""
@@ -4866,6 +4939,7 @@ def _run_agent_core(
     # 개별 skip 처리되므로 여기 도달하는 예외는 transient(연결 등)이며, [] 면 단일 경로가 받되 그
     # 경로 자체가 fail-closed(_resolve_product_datasource).
     _multi_ds_list: list[dict] = []
+    _dsres_t0 = time.perf_counter()   # initpro: product → datasource 좌표 해석(메모리 DB 조회)
     try:
         _multi_ds_list = _resolve_product_datasources(mem_conn, product_id)
     except Exception as exc:
@@ -4873,6 +4947,7 @@ def _run_agent_core(
             "resolve_product_datasources_failed product_id=%s err=%r — 단일 경로 폴백", product_id, exc,
         )
         _multi_ds_list = []
+    _init_detail["ds_resolve_ms"] = round((time.perf_counter() - _dsres_t0) * 1000.0, 1)
     _ds_router = None
     _ds = None
     # FR-dataplane-conn-stale-no-reconnect: 단일 datasource 경로의 데이터플레인 연결 소유자.
@@ -4890,6 +4965,10 @@ def _run_agent_core(
         _ds = eval_datasource
         def _reconnect_dataplane():   # noqa: E306 — 원 연결과 동일 좌표 클로저(폴백 없음)
             return connect_with_retry(database=None, autocommit=True, datasource=_ds)
+        # initpro(§18.8 패널 MINOR-1): eval 경로도 같은 키로 잰다. eval runner 는 답변을 같은
+        # `agent_runtime.messages` 에 남기므로, 여기만 비우면 §3b-0 평균이 '연결 0ms 인 행'과
+        # 섞여 왜곡된다.
+        _dp_t0 = time.perf_counter()
         try:
             db_conn = _reconnect_dataplane()
         except Exception as e:
@@ -4898,6 +4977,7 @@ def _run_agent_core(
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             return result
+        _init_detail["dataplane_connect_ms"] = round((time.perf_counter() - _dp_t0) * 1000.0, 1)
         import modules.tools as _tools_mod
         _dp_holder = _tools_mod._DataplaneConn(db_conn, _reconnect_dataplane, label="eval")
     elif _multi_ds_list:
@@ -4905,6 +4985,10 @@ def _run_agent_core(
         import modules.tools as _tools_mod
         def _connect_ds(ds_dict):
             return connect_with_retry(database=None, autocommit=True, datasource=ds_dict)
+        # initpro(§18.8 패널 MINOR-2): span 은 **라우터 생성 전**부터 잡는다 — 단일 경로 span 과
+        # 같은 키를 쓰는데 범위가 좁으면 두 경로 수치를 비교할 수 없다. 종료는 아래
+        # refresh_case(라이브 질의) 뒤.
+        _dp_t0 = time.perf_counter()
         _ds_router = _tools_mod._DatasourceRouter(_multi_ds_list, _connect_ds)
         try:
             db_conn = _ds_router.conn_for(_ds_router.resolve_label(None))  # primary lazy 연결
@@ -4927,10 +5011,19 @@ def _run_agent_core(
             _ds_router.refresh_case(_ds_router.resolve_label(None), db_conn)
         except Exception:
             pass
+        _init_detail["dataplane_connect_ms"] = round((time.perf_counter() - _dp_t0) * 1000.0, 1)
     else:
         # 단일 datasource (또는 미바인딩/flag OFF): 기존 경로 — 동작 0 변경.
+        # initpro(§18.8 패널 MAJOR-4): **이 경로의 실제 resolve 는 여기**다. 위에서 잰
+        # `_resolve_product_datasources`(복수)는 바인딩 0~1 개면 곧바로 [] 를 돌려주고 끝나,
+        # 그 값만 `ds_resolve_ms` 로 보고하면 '작고 그럴듯한 숫자'가 나와 실제 비용
+        # (WebProducts 조회 + 자격증명 복호 + allowlist 산출, 실측 46ms)이 잔차로 샌다.
+        # 같은 키에 **누산**해 "datasource 해석에 쓴 총 시간" 의미를 유지한다.
+        _dsres1_t0 = time.perf_counter()
         try:
             _ds = _resolve_product_datasource(mem_conn, product_id)
+            _init_detail["ds_resolve_ms"] = round(
+                _init_detail.get("ds_resolve_ms", 0.0) + (time.perf_counter() - _dsres1_t0) * 1000.0, 1)
         except DatasourceResolutionError as e:
             cfg.CURRENT_RUN_ID = ""
             result["error"] = f"데이터 소스 설정 오류: {e}"
@@ -4940,6 +5033,7 @@ def _run_agent_core(
         _data_db = None if _ds else DB_CONNECT_DB  # ds 경로는 database=None(schema-prefixed 강제, M-1)
         def _reconnect_dataplane():   # noqa: E306 — 원 연결과 동일 좌표 클로저(폴백 없음)
             return connect_with_retry(database=_data_db, autocommit=True, datasource=_ds)
+        _dp_t0 = time.perf_counter()   # initpro: 데이터플레인 연결(단일 경로 — 실측 1,447ms)
         try:
             db_conn = _reconnect_dataplane()
         except Exception as e:
@@ -4961,6 +5055,9 @@ def _run_agent_core(
                 if output_mode == "console":
                     console.print(Panel.fit(result["error"], title="오류"))
                 return result
+        # initpro: 성공·폴백 어느 쪽이든 여기 도달 — 연결 확립에 쓴 총 시간을 기록한다.
+        # (실패해서 return 하는 경로는 답변이 없어 breakdown 자체가 안 남는다.)
+        _init_detail["dataplane_connect_ms"] = round((time.perf_counter() - _dp_t0) * 1000.0, 1)
         import modules.tools as _tools_mod
         _dp_holder = _tools_mod._DataplaneConn(
             db_conn, _reconnect_dataplane,
@@ -5025,7 +5122,8 @@ def _run_agent_core(
     # 주입을 억제한다 — origin 은 message id 에 묶이지 않은 자유 텍스트라 window 로 자를 수 없어(가려진
     # 대화 첫 요청이 그대로 남음) self-service 인젝션으로 추출 가능하기 때문. None(비제약)만 주입 허용.
     _suppress_conversation_context = _recall_visibility is not None
-    _init_detail: dict[str, Any] = {}  # feature-0026 (M3): init_ms 내부 분해 (duration_breakdown.init_detail)
+    # feature-0034: 선언은 함수 진입부(agent_entry_perf 직후)로 올렸다 — 여기서 재선언하면
+    # 프롤로그 계측치가 통째로 사라진다(빈 dict 로 덮임).
     _hist_t0 = time.perf_counter()
     history = _load_conversation_messages(
         mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels,
@@ -5896,7 +5994,8 @@ def _run_agent_core(
             try:
                 _ans_breakdown["redteam_ms"] = _rt_ms
                 if _init_detail:
-                    _ans_breakdown["init_detail"] = _init_detail
+                    _ans_breakdown["init_detail"] = _build_init_detail(
+                        _ans_breakdown.get("init_ms"), _init_detail)
                 _inf_d = _build_inference_detail(
                     _ans_breakdown.get("inference_ms"), _rt_ms,
                     _inf_detail, _inf_tool_ms, _inf_tool_n)

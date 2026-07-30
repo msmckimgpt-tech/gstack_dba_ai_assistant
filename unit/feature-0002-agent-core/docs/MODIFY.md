@@ -932,3 +932,30 @@ NULL hit **5케이스 전부 계약대로**. 전체 회귀 `make test` EXIT=0 ·
 
 Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-dedup-param-cast ·
 선행 CHG-20260730T160000-ask-redeploy-handoff.
+
+## CHG-20260730T190000-init-prologue-metrics — init_ms 프롤로그 계측 + 잔차 노출 (Minor §12.3)
+> feature-0031 이 inference 블라인드스팟을 닫자 **init 이 최대 미귀속 구간**으로 드러났다. 같은 패턴(계측 → 데이터가 대상을 정함)을 반복한다.
+- **선행 cycle 의 결론 정정**: feature-0031 계측이 "inference 미귀속 33초(23%)" 가설을 **반증**했다. 실측 `other_ms` = 235ms(**1.6%**). 그 33초는 숨은 오케스트레이션이 아니라 **red-team** 이었다 — 이전 분석이 `inference_ms` 를 `task='agent'` LLM 시간과만 대조했는데, red-team 은 inference 구간 안에서 돌면서 LLM 을 `task='redteam'` 으로 기록한다. 사용자가 품질 우선으로 유지하기로 결정한 부분이라 개선 대상이 아니다. **계측이 자기 가설을 깬 사례**로 기록한다.
+- **측정(2026-07-30, 7일 63건)**: `init_ms` 평균 **4,921ms** 중 `init_detail` 설명분 **750ms** — **4,171ms(85%) 미귀속**. 원인은 feature-0026 의 `init_detail` 이 `history_load` **이후**만 담았고 함수 진입~그 지점 266 줄이 통짜였던 것. 워커 직접 계측: `_connect_memory` 12ms / `_resolve_product_datasource` 46ms / **데이터플레인 `connect_with_retry` 1,447ms**.
+- **구현**: `_init_detail` 선언을 함수 진입부(`agent_entry_perf` 직후)로 올리고 프롤로그 3구간(`mem_setup_ms`·`ds_resolve_ms`·`dataplane_connect_ms`)을 추가. 신규 `_build_init_detail(init_ms, detail)` 이 **잔차 `init_other_ms`** 를 계산해 붙인다.
+  - **잔차 노출이 설계 핵심**(feature-0031 교훈) — 노출하지 않으면 다음 블라인드스팟이 또 조용히 숨는다. 직전 cycle 에서 33초의 정체를 판정할 수 있었던 이유가 잔차를 명시했기 때문이다.
+  - `knowledge_total_ms` 는 knowledge 하위 항목의 **롤업**이라 잔차 계산에서 제외한다(포함 시 이중 계상 → 잔차 음수). 표시용으로는 보존.
+  - 음수 잔차는 0 클램프 + **수치** 키 `init_residual_neg_ms`(bool 금지 — §3b 가 모든 키를 `::float` 캐스트한다).
+  - 데이터플레인 계측 종료점은 **폴백(`database=None` 재시도) 뒤**에 둔다 — try 안에 두면 폴백 시간이 잔차로 샌다. 멀티(라우터) 경로도 같은 키로 기록.
+  - 기존 선언부(`history_load` 직전)는 **제거**했다 — 남겨두면 프롤로그 계측치가 빈 dict 로 덮여 통째로 사라진다.
+- **관측**: `bin/perf-snapshot.sh` §3b-0(프롤로그 3구간 + `init_other_ms` + `other_pct` + clamped).
+- **불변**: 기존 `init_detail` 키·`inference_detail`·나머지 breakdown 무변경(additive). 답변 동작·스키마·alembic 무변경, 조립은 fail-open.
+- **파일**: `src/agent_core.py`, `tests/test_init_prologue_detail.py`(신규 17건), `bin/perf-snapshot.sh`, `docs/{FUNCTION,TASK}.md`.
+- **§18.8 적대 패널 결함 8건 흡수** (초안은 "기존 `init_detail` 키 무변경" 을 주장했으나 **라이브에서 반증**됐다):
+  - **MAJOR-1(라이브 재현)** 초안이 `init_detail` 에 넣은 bool `init_residual_clamped` 가 **기존 §3b 쿼리를 깬다** — §3b 는 `jsonb_each_text(init_detail)` 로 **모든** 키를 `::float` 캐스트하므로 `invalid input syntax for type double precision: "true"` 로 섹션 전체가 죽는다. 클램프가 뭔가 알리려는 순간에 관측이 꺼지는 최악의 실패. → 수치 키 `init_residual_neg_ms` 로 전환하고, 테스트가 **모든 값의 수치성**을 잠근다.
+  - **MAJOR-2(라이브 실증)** §3b-0 이 `? 'init_detail'` 로 필터해 feature-0026 **구 행이 분모**에 들어가고 분자(신규 키)는 NULL → other_pct 가 실제보다 훨씬 좋게 나온다(패널 실증: 9구+1신 혼합에서 실제 100% 미귀속 행이 9개인데 "2%" 로 보고). → `init_detail ? 'init_other_ms'` 로 신규 행만.
+  - **MAJOR-3** `knowledge_total_ms`(롤업)는 **무조건** 기록되지만 leaf 는 `_build_knowledge_context` 예외 시 하나도 안 온다. 롤업만 제외하면 knowledge 구간 전체(실측 최대 6,924ms — 평균 init_ms 보다 크다)가 잔차로 흘러 **'미귀속이 크다'는 거짓 신호**. → `max(Σleaf, 롤업)` 으로 계산.
+  - **MAJOR-4** `ds_resolve_ms` 가 지배 경로(단일)에서 **엉뚱한 함수**를 쟀다 — 초안은 `_resolve_product_datasources`(복수)만 감쌌는데 바인딩 0~1 개면 즉시 `[]` 를 돌려주고 끝난다. 실제 resolve 인 `_resolve_product_datasource`(단수, WebProducts 조회+자격증명 복호, 실측 46ms)는 미계측이라 잔차로 샜다. **작고 그럴듯한 숫자가 나와 0 보다 나쁘다.** → 단수 호출에 누산.
+  - **MAJOR-5(변이 실측)** 12 변이 중 **7 생존** — 배선 테스트가 전부 소스 문자열 검색이라 present-but-wrong 을 못 본다. 생존: 옛 자리 `_init_detail = {}` / `.clear()` 재추가(철자만 달라도 통과), `_dp_t0` 를 connect 뒤로(헤드라인 1,447ms 가 ~0 이 되고 폴백 경로는 UnboundLocalError 로 run 사망), 멀티 경로 기록 삭제, 부착 조건 `and False`, mem_setup 을 try 밖으로, 롤업 집합 오염. → 계약을 재바인딩 정규식·3분기 카운트·타이머 순서·들여쓰기·집합 동일성으로 강화, **7종 전부 재현해 실패 확인**.
+  - **MINOR-1** eval 경로가 `dataplane_connect_ms` 미기록 — eval runner 도 같은 `messages` 에 답변을 남겨 §3b-0 평균을 '연결 0ms 행' 으로 왜곡. → 기록 추가(3분기 전부).
+  - **MINOR-2** 멀티 경로 span 이 라우터 생성·`refresh_case` 를 제외해 단일 경로보다 좁았다(같은 키인데 범위 불일치). → span 확장.
+  - **MINOR-3** 빌더가 멱등하지 않아 재적용 시 잔차 붕괴. → 파생 키를 leaf 집계에서 제외.
+- **역검증**: 초안 5종 + 패널 생존 7종 = **12종 되돌림, 생존 0**. 테스트 10 → **17건**.
+- **패널이 clean 판정한 축**: 선언 이동(9개 early-return 모두 `_compute_duration_breakdown` 이전이라 무해, 재진입 없음) · 롤업 전제(라이브 63행에서 롤업−Σleaf 가 -0.2~+0.3ms) · 6개 span 상호 배타·순차 · 영속 경로(직전 cycle 의 dead-code 결함 **미재발**, 63행이 이미 같은 경로로 저장됨) · 프론트 무영향.
+- **위험등급**: Minor(계측 additive). **Rollback**: 커밋 revert — 소비처가 키 부재를 견딘다.
+- **Cross-ref**: feature-0026(init_detail 원형) · feature-0031(inference_detail — 잔차 노출 패턴의 출처, 그 가설을 반증한 계측) · ADR-20260728T120000-redteam-gating-not-adopted.
