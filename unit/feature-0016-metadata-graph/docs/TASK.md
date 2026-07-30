@@ -3713,3 +3713,8 @@ scene diff 풀(§79) · `_META_DBGRP_ROW_CAP`(4000 — 이미 "실사용 무제�
 - [ ] R.6 §18.8 적대 리뷰(경량 경로) + REVIEW.md
 - [ ] R.7 verify-completion --pre-commit → commit/push/PR
 - [ ] R.8 배포(deploy_scope: included) + POST-DEPLOY PB-0008 라이브 시각검증 + 라이브 130건 회수
+
+### POST-DEPLOY (2026-07-30, TARR.3)
+- [x] R.8 배포(main `d435d3a0`·`make deploy-all` web+워커) · alembic 0049 적용 검증 · 라이브 잔여 **130건 회수**
+  (run 9개 `running` 복원) · 워커 1틱 실측 `claimed 5/done 5/failed 0` · 진행률 재상승 확인 · PB-0008 그래프 뷰
+  육안(신 자산 서빙·분석 마커) — 상세·미검증 축은 feature-0003 `docs/test-runs.d/20260730T110500-analysis-retry-resilience.md`.
