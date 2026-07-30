@@ -502,6 +502,7 @@ source_of_truth: true
 - **B. role 고아 회수(backstop)**: SIGKILL/OOM 으로 A 가 못 돈 경우, 부팅 직후 + 주기 유지보수(sweep 주기)에 `reclaim_role_orphan_jobs` 가 **같은 role 의 다른 인스턴스**가 claim 한 채 `AGENT_ASK_WORKER_ROLE_STALE_SEC`(기본 60s) 이상 heartbeat 가 끊긴 행을 회수한다. heartbeat 는 시간 기반(10s 주기·step 무관)이라 이 창을 넘겼으면 프로세스 death 다. 자기 자신·자기 슬롯은 제외. **전역 `AGENT_ASK_WORKER_STALE_SEC` 은 불변**(cross-role false-positive 방지 보수 창).
 - **C. 재시도 중복 저장 억제**: requeue 재실행(`attempts>1`)은 `run_agent(dedup_user_message_since=job.created_at)` 으로 호출되어, job 수명 이후 동일 사용자 메시지가 core/display 에 이미 있으면 저장을 건너뛴다(종전엔 재시도마다 화면에 같은 말이 한 줄 더 — 60일 9대화). 무조건 skip 이 아닌 **존재 확인 기반**이며, 조회 불가/PG 정본 아님이면 저장 쪽으로 fail-open(중복 1행 < 요청문 유실).
 - 큐 상태기계는 기존 전이(`pending` + `lease_epoch++` fencing)만 사용하고 `attempts` 는 claim 시점 증가분을 그대로 둔다(cap 이중 소모 방지). 보안 경계·RBAC·가드 무변경.
+- **C 판정 SQL 의 파라미터 캐스트는 계약의 일부**(TASK-20260730T172000, POST-DEPLOY 실측): `%(mirror_sender)s::text` · `%(sender_account_id)s::bigint`. 캐스트가 없으면 PostgreSQL 이 타입을 추론하지 못해 **쿼리 자체를 거부**하고, `_read_runtime_pg` 가 그 예외를 흡수해 호출부가 fail-open 으로 저장 → 중복 억제가 조용히 전면 무력화된다(라이브 재현). fail-open 정책 자체는 유지(중복 1행 < 요청문 유실)하되, 그것이 무력화를 은폐하지 않도록 캐스트를 회귀로 고정한다.
 
 ## (TASK-20260617T095122) 계정 스코프 cross-conversation 인사이트 회상 (B′, INJECT enable-ready)
 새 대화 시작 시 같은 계정의 과거 대화에서 쌓은 인사이트가 사라지는 문제를 완화한다 — 특정 명칭이 아니라 문맥/인사이트를 어렴풋이 이월. 설계 정본 `docs/DESIGN-account-insight-recall.md` §10. outside-voice 2-lens 검증(REV-20260617T095122). **모든 flag default OFF → 라이브 동작 0 변경**; 활성=canary(EXTRACT→RECALL→INJECT).

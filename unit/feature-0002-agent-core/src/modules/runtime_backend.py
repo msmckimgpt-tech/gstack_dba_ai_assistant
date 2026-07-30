@@ -334,7 +334,7 @@ WHERE conversation_id = %(conversation_id)s
   AND role = 'user'
   AND content = %(content)s
   AND created_at >= %(since)s
-  AND sender_account_id IS NOT DISTINCT FROM %(sender_account_id)s
+  AND sender_account_id IS NOT DISTINCT FROM %(sender_account_id)s::bigint
 LIMIT 1
 """
 
@@ -343,6 +343,12 @@ LIMIT 1
 # 문장을 보낸 행을 "이미 저장됨" 으로 오인해 진짜 미러를 빠뜨리지 않도록, 미러가 발신자를
 # 싣는 경우(그룹)엔 그 값까지 일치해야 한다(적대 리뷰 security H3). 1:1 미러는 발신자를 싣지
 # 않고 발신자도 한 명뿐이라 %(mirror_sender)s=NULL 로 들어와 종전 판정 그대로다.
+#
+# `::text` 캐스트 필수(POST-DEPLOY 실측): `%(mirror_sender)s IS NULL` 은 파라미터에 타입
+# 컨텍스트가 없어 PostgreSQL 이 `could not determine data type of parameter` 로 **쿼리 자체를
+# 거부**한다. 그러면 `_read_runtime_pg` 가 예외를 흡수해 None → 호출부가 fail-open 으로 저장해
+# 중복 억제가 통째로 무력화된다(라이브 job 485 재시도에서 실제 발생). FakeConn 단위테스트는 실
+# SQL 을 실행하지 않아 이 계열을 못 잡는다 — 아래 테스트가 캐스트 존재를 문자열로 고정한다.
 _PG_USER_MESSAGE_EXISTS_DISPLAY = """
 SELECT 1
 FROM agent_runtime.messages
@@ -350,8 +356,8 @@ WHERE conversation_id = %(conversation_id)s
   AND role = 'user'
   AND content = %(content)s
   AND created_at >= %(since)s
-  AND (%(mirror_sender)s IS NULL
-       OR (meta_json ->> 'sender_account_id') = %(mirror_sender)s)
+  AND (%(mirror_sender)s::text IS NULL
+       OR (meta_json ->> 'sender_account_id') = %(mirror_sender)s::text)
 LIMIT 1
 """
 

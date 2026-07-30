@@ -411,6 +411,24 @@ def test_display_dedup_is_scoped_to_sender_in_group(monkeypatch):
     assert conn2.executed[1][1]["mirror_sender"] is None
 
 
+def test_dedup_sql_casts_bare_parameters():
+    """POST-DEPLOY 실측 회귀: 타입 컨텍스트 없는 파라미터는 PG 가 쿼리 자체를 거부한다.
+
+    `%(mirror_sender)s IS NULL` 은 `could not determine data type of parameter` 로 실패하고,
+    `_read_runtime_pg` 가 그 예외를 흡수해 호출부가 fail-open 저장 → 중복 억제가 **통째로
+    무력화**된다(라이브 job 485 재시도에서 실제 발생). 캐스트 존재를 회귀로 고정한다.
+    FakeConn 은 실 SQL 을 실행하지 않으므로 이 문자열 고정이 유일한 자동 방어선이다.
+    """
+    import modules.runtime_backend as rb
+    disp = rb._PG_USER_MESSAGE_EXISTS_DISPLAY
+    core = rb._PG_USER_MESSAGE_EXISTS_CORE
+    assert "%(mirror_sender)s::text IS NULL" in disp
+    assert "= %(mirror_sender)s::text" in disp
+    assert "%(sender_account_id)s::bigint" in core
+    # 캐스트 없는 bare 파라미터가 IS NULL 과 붙어 있으면 안 된다.
+    assert "%(mirror_sender)s IS NULL" not in disp
+
+
 def test_user_message_persisted_since_returns_false_without_since():
     import modules.runtime_backend as rb
     backend = rb.PgRuntimeBackend()
