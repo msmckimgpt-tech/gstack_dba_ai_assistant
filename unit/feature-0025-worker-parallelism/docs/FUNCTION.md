@@ -69,34 +69,44 @@ source_of_truth: true
 
 ### 조절 항목 (`performance` 그룹 · 카테고리 `자원 격리·관측`)
 
-| key | 의미 | 기본 | 범위 | 적용 |
-|---|---|---|---|---|
-| `AGENT_BACKGROUND_ANALYSIS_ENABLED` | 백그라운드 분석 전역 사용. **0 = 즉시 정지**(대기 중 작업까지 보류, 되돌리면 재개) | 1 | 0~1 | live |
-| `AGENT_WORKER_LLM_BUDGET` | 백그라운드 LLM **동시 호출 총량**(노드 분석 + 클러스터 라벨 + 분류 제안 합산) | 16 | 1~32 | live |
+| key | 의미 | 기본 | 범위 | 적용 | 게이트 지점 |
+|---|---|---|---|---|---|
+| `AGENT_BACKGROUND_ANALYSIS_ENABLED` | 백그라운드 분석 전역 사용. **0 = 즉시 정지**(대기 중 작업까지 보류, 되돌리면 재개) | 1 | 0~1 | live | 노드 분석 claim · 클러스터 pass · 분류 pass |
+| `AGENT_WORKER_LLM_BUDGET` | 백그라운드 LLM **동시 호출 총량** | 16 | 1~32 | live | 노드 분석 · 클러스터 라벨(직렬·병렬) · 분류 제안 |
+| `AGENT_WORKER_DS_BUDGET` | 소스 DB(운영 데이터소스) **동시 연결 총량** | 8 | 1~32 | live | 컬럼 introspect · 루틴 backfill(MSSQL/MySQL) |
+| `AGENT_WORKER_TASK_BUDGET` | **동시 진행 백그라운드 작업 수** | 8 | 1~16 | live | 노드 분석 tick · 클러스터 pass · 분류 pass |
 
-기본 16 > 현행 최대 동시성(노드 8 + 라벨 4 = 12) → 배포 시점 게이트 미발동(`reject_ratio == 0`).
+기본값 > 현행 사용량(LLM 최대 12 · 소스 DB 순차 1 · 백그라운드 작업 3) → 배포 시점 게이트
+미발동(`reject_ratio == 0`).
 
-> **커넥션 총량(PG·소스 DB) knob 은 의도적으로 없다.** 그 총량을 강제하려면 커넥션 수립 지점을
-> 게이트해야 하는데 그 지점은 web 요청 경로와 공유하는 헬퍼(`shared/db`)이고 호출측 배선이 워커
-> 전역에 흩어져 있다 → **T0b**. 게이트 없이 knob 만 노출하면 "설정했는데 아무것도 강제되지 않는"
-> 거짓 컨트롤이 된다(같은 이유로 제거된 `attachment.execute_sql_on.*` 선례). 지금은 커넥션을
-> **누적 생성 횟수**로만 계측한다.
+> **`AGENT_WORKER_PG_BUDGET` 은 없다.** PG 동시 점유를 정확히 강제하려면 커넥션 수명과 예산 수명을
+> 묶어야 하는데, 워커는 `conn=None 이면 열고 주어지면 재사용` 패턴이고 close 가 호출측 `finally` 에
+> 있어 광범위 리팩터가 된다. `task`(작업 하나가 PG 1~2개 사용)로 근사하며 이름·설명을 그 의미로
+> 유지한다 — 게이트 없는 이름을 쓰지 않는다(ADR-0025-06). 커넥션은 `incr_conn` 이 **누적 생성
+> 횟수**로 계측한다(동시 점유가 아님).
 
 ### 동작
 
-- **게이트 지점(호출측 명시)**: `node_analysis.process_pending`(kill-switch claim 게이트 + LLM 여유
-  clamp + `_run_llm` 최종 게이트) · `semantic_cluster.run_cluster_maintenance`(kill-switch) 와
-  `_llm_content_labels`(직렬·병렬 **양 경로**) · `product_classify.run_classify_pass`(kill-switch +
-  LLM 게이트). `shared/db` 커넥션 헬퍼는 **계측만** — 게이트를 넣으면 web 요청 경로가 백그라운드
-  예산에 걸린다.
+- **게이트 지점(호출측 명시)**: `node_analysis.process_pending`(kill-switch claim 게이트 + `task`
+  진입 + LLM 여유 clamp + `_run_llm` 최종 게이트 + `_introspect_table_columns` 의 `ds`) ·
+  `semantic_cluster.run_cluster_maintenance`(kill-switch + `task`) 와 `_llm_content_labels`(직렬·병렬
+  **양 경로** LLM) · `product_classify.run_classify_pass`(kill-switch + `task` + LLM) ·
+  `routine_backfill`(MSSQL/MySQL 연결 `ds`). `shared/db` 커넥션 헬퍼는 **계측만** — 게이트를 넣으면
+  web 요청 경로가 백그라운드 예산에 걸린다.
+- **진입 게이트 구조**: 진입 함수는 얇은 래퍼이고 본체는 `_*_inner` 다. 래퍼가 `with` 로 예산을 잡아
+  본체의 어떤 early return·예외에도 반납이 보장된다(ADR-0025-07). `ds` 는 연결 수명과 정확히 맞춰야
+  해서 수동 enter/exit 를 쓰되 반납을 `conn.close()` 와 같은 finally 에 둔다.
 - **거절 시 동작(fail-soft)**: 대기하지 않고 스킵한다. 노드 분석은 `error_kind='budget'` 으로 30초
   재예약하며 **첫 거절은 attempts 를 소모하지 않는다**(일시 경합). **연속** 거절은 attempts 를
   증가시켜 `max_attempts` 에서 `budget_exhausted` terminal — 무기한 pending 이 run 을 영구
   `running` 으로 만들어 사용자 재트리거를 막는 것을 방지한다. 클러스터 라벨은 affix 폴백, 분류
   제안은 해당 datasource skip(둘 다 다음 pass 재시도).
-- **관측**: insight cycle 로그에 `budget_llm=<peak>/<limit> rej=<n>` · `worker_conns=...` ·
+- **관측**: insight cycle 로그에 `budget_<자원>=<peak>/<limit> rej=<n>` · `worker_conns=...` ·
   `node_analysis_budget_deferred`. 매 cycle `/shared/perf/worker-resources-<role>.json` 원자 flush →
-  `bin/perf-snapshot.sh` §12 가 수집·요약(콘솔 노출은 T0b).
+  ① `bin/perf-snapshot.sh` §12 수집·요약 ② **관리 콘솔 `감사 > AI 운영 현황`** 의 `worker_resources`
+  (web 이 같은 공유 볼륨을 읽는다 — PG 테이블·신규 라우트 0, ADR-0025-08). **거절이 발생하면
+  `attention` 에 병목 신호가 부상**한다(상한을 올릴지 판단하는 신호). 파일 부재·손상·거대·stale 은
+  전부 degrade 로 강등돼 콘솔 응답을 깨지 않는다.
 - **fail-open 경계**: 설정 조회 실패 시 kill-switch 는 **활성**(설정 장애가 워커를 멈추면 복구가
   재배포뿐), 미등록 자원 키는 게이트 없이 통과(오타가 작업을 조용히 막지 않게), 계측·flush 예외는
   전부 삼킨다.

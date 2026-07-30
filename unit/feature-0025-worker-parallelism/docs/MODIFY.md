@@ -69,3 +69,35 @@ source_of_truth: true
   관련 스위트 합산 125 passed / 0 failed.
 - **무회귀:** 기본 상한이 현행 최대 동시성 이상이라 `reject_ratio == 0`(게이트 미발동, 테스트로 단정).
   게이트는 fail-soft(대기 없이 스킵), 계측·flush 는 fail-open. 신규 권한·스키마·마이그레이션 0.
+
+## CHG-20260730T1430-ai-claude-feature-0025-worker-ds-budget (T0b 커넥션 축 게이트 + 콘솔 노출)
+- Date: 2026-07-30. T0 에서 이연한 두 항목(커넥션 축 게이트 · 콘솔 노출)을 닫는다. **T1 접지의 전제** —
+  T1 은 L0 증거 수집(운영 DB read)이고 그 부하를 강제할 `ds` 게이트가 없으면 "적응형 부하 제어"가
+  강제 수단 없는 선언이 된다. worktree `ai/claude/feature-0025-worker-ds-budget`.
+- `shared/resource_budget.py`: `RESOURCES` 에 **`ds`**(소스 DB 동시 연결)·**`task`**(동시 진행
+  백그라운드 작업) 등재 + 폴백 상한. `pg`(PG 동시 점유)는 **여전히 미등재** — 정확한 강제에 커넥션
+  수명·예산 수명 결합이 필요해(워커의 `conn=None 이면 열고 주어지면 재사용` + 호출측 finally close)
+  `task` 로 근사하고 그 사실을 자원 표에 명시했다.
+- `shared/runtime_settings.py`: `AGENT_WORKER_DS_BUDGET`(8) · `AGENT_WORKER_TASK_BUDGET`(8) —
+  **게이트와 함께** 추가(ADR-0025-06). `AGENT_WORKER_PG_BUDGET` 은 만들지 않았다.
+- `.../modules/node_analysis.py`: ① `_introspect_table_columns` 에 `ds` 게이트 — 거절 시 **연결을
+  열지 않고** `[]` 반환(fail-soft), 반납은 `conn.close()` 와 **같은 finally** 에서 수행해 점유 수명이
+  연결 수명과 정확히 일치 ② `process_pending` 을 래퍼/`_process_pending_inner` 로 분리하고 래퍼가
+  `task` 예산을 `with` 로 감싼다 — 본체에 early return 이 여러 개라(예산 여유 0·PG 미가용) 수동
+  enter/exit 는 반납 누락 경로를 만든다 ③ `_empty_rep()` 로 telemetry 키 집합 단일 정의.
+- `.../modules/routine_backfill.py`: `_rb_acquire_ds`/`_rb_release` 헬퍼 + `_RB_BYPASS` sentinel
+  (모듈 부재=통과 vs 거절=None 구분). MSSQL(DB별)·MySQL 두 연결 지점에 배선, 반납은 `_close(conn)` 과
+  같은 finally.
+- `.../modules/semantic_cluster.py`·`product_classify.py`: 진입 함수를 래퍼/`_*_inner` 로 분리하고
+  kill-switch + `task` 예산을 래퍼에서 처리. 거절 시 `skipped: "task_budget"` 를 리포트에 남긴다.
+- `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`: `_worker_resources()` 신설 —
+  **web 이 공유 볼륨(`/shared/perf`)의 워커 flush 파일을 읽는다**(web 도 같은 볼륨 마운트 실측).
+  PG 테이블·마이그레이션·**신규 라우트 0**(기존 `GET /api/admin/ai-ops` 응답에 `worker_resources`
+  추가). 파일 부재·손상·거대(64KB 초과)·비-dict·stale(30분) 전부 degrade 로 강등(예외 전파 0,
+  §20 부분 degrade 규약). **거절 발생 시 `attention` 에 병목 신호 부상** — 상한을 올릴지 판단하는 신호.
+- **검증:** 신규 15건(예산 6 + 콘솔 9) + 기존 계약 확장 반영. 관련 스위트 합산 **168 PASS / 0 failed**.
+  등재 자원 전부가 실제 게이트 지점을 가진다는 **소스 단정**을 추가해(배선만 지우고 knob 을 남기는
+  회귀 차단) ADR-0025-06 을 기계적으로 고정했다.
+- **무회귀:** 기본 상한(ds 8 · task 8) > 현행 동시 사용량(소스 DB 순차 1 · 백그라운드 작업 3) →
+  게이트 미발동. 래퍼/본체 분리는 concurrency==1 경로 불변(기존 호출자·monkeypatch 지점 보존).
+  신규 권한·스키마·마이그레이션·라우트 0.

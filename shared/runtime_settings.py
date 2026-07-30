@@ -1097,12 +1097,35 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "maximum": 32,
         "apply_mode": "live",
     },
-    # ⚠ 커넥션 총량 knob(`AGENT_WORKER_PG_BUDGET`·`AGENT_WORKER_DS_BUDGET`)은 **의도적으로 없다**.
-    #   그 총량을 실제로 강제하려면 커넥션 수립 지점(web 요청 경로와 공유하는 `shared/db` 헬퍼)을
-    #   게이트해야 하고 호출측 명시 배선이 워커 전역에 흩어져 있다 → T0b. knob 만 먼저 노출하면
-    #   "설정했는데 아무것도 강제되지 않는" 거짓 컨트롤이 된다(codex 적대 리뷰 P1, REV-20260730T1235;
-    #   이 repo 가 같은 이유로 `attachment.execute_sql_on.*` 를 제거한 선례 — TODOS Tier 3).
-    #   커넥션은 지금 `resource_budget.incr_conn` 이 누적 생성 횟수만 계측한다.
+    # T0b: 게이트가 배선된 자원만 knob 을 둔다(ADR-0025-06). 아래 2개는 실제 게이트 지점이 있다 —
+    #   DS = 소스 DB 연결 3지점(컬럼 introspect·루틴 backfill MSSQL/MySQL), TASK = 백그라운드 작업
+    #   진입 3지점(노드 분석 tick·클러스터 pass·분류 pass).
+    #   ⚠ `AGENT_WORKER_PG_BUDGET` 은 **여전히 없다** — PG 동시 점유를 정확히 강제하려면 커넥션
+    #   수명과 예산 수명을 묶어야 하고(워커는 `conn=None 이면 열고 주어지면 재사용` + 호출측 finally
+    #   close 패턴) 광범위 리팩터가 된다. 대신 TASK(작업 단위)로 근사한다 — 작업 하나가 여는 PG
+    #   연결이 1~2개라 TASK 상한이 PG 점유 상한의 근사다. 이름을 PG_BUDGET 으로 쓰지 않는 이유다.
+    {
+        "key": "AGENT_WORKER_DS_BUDGET",
+        "category": "자원 격리·관측",
+        "label": "소스 DB 동시 연결 총량",
+        "description": "백그라운드 작업이 운영 데이터소스에 동시에 여는 연결 수의 상한입니다. 낮추면 운영 DB 부하가 줄고, 대신 메타데이터 수집·루틴 backfill 이 여러 주기에 나눠 진행됩니다.",
+        "unit": "개",
+        "default": 8,
+        "minimum": 1,
+        "maximum": 32,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_WORKER_TASK_BUDGET",
+        "category": "자원 격리·관측",
+        "label": "동시 진행 백그라운드 작업 수",
+        "description": "노드 분석·클러스터링·분류 제안이 동시에 진행되는 개수의 상한입니다. 작업 하나가 지식베이스 PG 커넥션 1~2개를 쓰므로, 이 값을 낮추면 워커가 pgbouncer 풀을 잠식해 서비스 전역이 느려지는 상황을 억제합니다.",
+        "unit": "개",
+        "default": 8,
+        "minimum": 1,
+        "maximum": 16,
+        "apply_mode": "live",
+    },
 )
 
 

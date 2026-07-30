@@ -109,3 +109,65 @@ feature_status: in-progress
 - [ ] 트랙 1 접지 (L0 통계 전용 증거층 — 원시 샘플값 배제 확정) — 별 cycle
 - [ ] 트랙 2 합성·소비 (L2 클러스터 요약 신규 저장 계약 + L3 lazy + grounding 배선) — 별 cycle
 - [ ] 트랙 3 신뢰·계획 (검증층 신규 + 결정적 플래너) — 별 cycle
+
+---
+
+## 20260730T1430-worker-ds-budget
+
+T0b — T0(자원 격리 LLM 축)의 커넥션 축 완성 + 콘솔 노출. **T1 접지의 실질 전제**다: T1 은 L0 증거
+수집(운영 DB read)이고, 그 부하를 강제할 `ds` 게이트가 T0 에서 이연됐기 때문이다.
+
+### 2.1 Plan
+
+- **영향받는 파일:** `shared/resource_budget.py`(자원 등재) · `shared/runtime_settings.py`(knob 2) ·
+  `unit/feature-0002-agent-core/src/modules/{node_analysis,routine_backfill,semantic_cluster,product_classify}.py` ·
+  `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`(섹션·attention) ·
+  `unit/feature-0002-agent-core/tests/test_worker_resource_budget.py` ·
+  `unit/feature-0003-agent-web-ui/tests/test_worker_resources_pane.py`(신규)
+- **변경 symbol:** `resource_budget.RESOURCES`(+ds,+task) · `runtime_settings._PERF_SPECS`(+2) ·
+  `node_analysis.{_introspect_table_columns,process_pending,_process_pending_inner,_empty_rep}` ·
+  `routine_backfill.{_rb_acquire_ds,_rb_release,_RB_BYPASS}` ·
+  `semantic_cluster.{run_cluster_maintenance,_run_cluster_maintenance_inner}` ·
+  `product_classify.{run_classify_pass,_run_classify_pass_inner}` ·
+  `ai_ops.{_worker_resources,_WORKER_RES_*}`
+- **접근 방법:** ① `ds`(소스 DB 동시 연결) = 연결 3지점에 **정확한** 게이트(점유 수명 = 연결 수명,
+  같은 finally 에서 반납) ② `task`(동시 진행 백그라운드 작업) = 진입 3지점. 진입 게이트는 본체를
+  `_*_inner` 로 분리하고 래퍼가 `with` 로 감싼다 — 본체에 early return 이 많아 수동 enter/exit 는
+  반납 누락 경로를 만든다 ③ 콘솔은 web 이 **공유 볼륨의 flush 파일**을 읽는다(web 도 `/shared`
+  마운트 확인) → PG 테이블·마이그레이션·신규 라우트 **0**, 기존 `/api/admin/ai-ops` 응답 확장.
+- **`AGENT_WORKER_PG_BUDGET` 을 만들지 않은 이유:** PG 동시 점유를 정확히 강제하려면 커넥션 수명과
+  예산 수명을 묶어야 하는데, 워커는 `conn=None 이면 열고 주어지면 재사용` 패턴이고 close 가 호출측
+  `finally` 에 있어 광범위 리팩터가 된다. `task`(작업 하나가 PG 1~2개 사용)로 근사하고 이름·설명을
+  그 의미로 정직하게 유지한다.
+- **완료 판정 기준:**
+  - `ds` 예산 여유 0 이면 introspect 가 **연결을 열지 않고** `[]` 반환(테스트로 단정)
+  - `ds`·`task` 예산이 사용 후 반납된다(누수 0 — 테스트로 단정)
+  - 등재된 자원 전부가 실제 게이트 지점을 가진다(소스 단정 — 배선만 지우고 knob 을 남기는 회귀 차단)
+  - 콘솔 섹션이 파일 부재·손상·거대·stale 을 전부 degrade 로 강등(예외 전파 0)
+  - 거절 발생 시 `attention` 에 병목 신호가 부상
+- **위험도:** Major (워커 진입 함수 3개를 래퍼/본체로 분리 — 회귀 표면. 다만 기본 상한이 현행
+  최대 동시성 이상이라 게이트 미발동, 신규 권한·스키마·마이그레이션·라우트 0)
+
+<!-- PLAN-APPROVED by mckim on 2026-07-30 ("트랙을 이어서 진행해주세요" — T0b 는 T1 전제) -->
+
+### 3. Task Queue (이번 슬라이스)
+
+- [x] TASK-20260730T1430-01 `ds`·`task` 자원 등재 + 폴백 상한 (pg 미등재 사유 문서화)
+- [x] TASK-20260730T1430-02 runtime_settings DS·TASK knob (게이트와 **함께** 추가 — ADR-0025-06)
+- [x] TASK-20260730T1430-03 `ds` 정확 게이트 3지점 (introspect + 루틴 backfill MSSQL/MySQL)
+- [x] TASK-20260730T1430-04 `task` 진입 게이트 3지점 (래퍼/본체 분리로 반납 누수 차단)
+- [x] TASK-20260730T1430-05 콘솔 노출 — web 이 공유 볼륨 flush 파일 읽기 + attention 연동(라우트 0)
+- [x] TASK-20260730T1430-06 테스트 — 예산 6건 + 콘솔 9건 신규, 기존 계약 확장 반영
+- [ ] TASK-20260730T1430-07 codex 적대 리뷰 반영 + verify-completion PASS + commit/PR
+- [ ] TASK-20260730T1430-08 배포 후 라이브 실증 — 콘솔 `worker_resources` 섹션 노출 + `ds_conns` 증분 관측
+
+### 9. Requested Scope (요청 범위)
+
+원 요청(2026-07-30 후속): "트랙을 이어서 진행해주세요."
+
+- [x] 다음 트랙 판정 — T0b 가 T1 의 실질 전제임을 근거와 함께 제시(T1 = 운영 DB read, `ds` 게이트 필요)
+- [x] `ds` 커넥션 축 게이트 (T0 에서 이연된 절반)
+- [x] `task` 축 게이트 (PG 총량의 정직한 근사)
+- [x] 콘솔 노출 (T0 에서 이연 — 사용자 "관측 구조" 요구의 완성)
+- [ ] 배포 + 라이브 실증
+- [ ] T1 접지 (L0 통계 전용 증거층) — 다음 트랙

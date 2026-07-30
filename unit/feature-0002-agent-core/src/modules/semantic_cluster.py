@@ -1778,19 +1778,30 @@ def _cadence_mark(cur, key) -> None:
 
 
 def run_cluster_maintenance(conn=None) -> dict:
-    """Phase C 유지보수 1회: (1) 시그니처 백필 + (2) scope 별 cadence-gated 클러스터링. 단일 RW conn 재사용.
+    """Phase C 유지보수 1회 — **kill-switch + 동시 작업 예산 게이트 래퍼**. 본체는 `_run_cluster_maintenance_inner`.
 
-    embedding 은 별도 embedding 데몬이 처리(여기 없음). fail-soft. insight-worker 데몬 스레드가 주기 호출."""
-    rep = {"signature": None, "scopes": 0, "clustered": 0, "updated": 0}
-    # T0 전역 kill-switch (worker-resource-isolation): 백그라운드 분석 정지 시 시그니처 백필·
-    #   클러스터링·라벨 LLM 을 모두 멈춘다. 설정 조회 실패는 활성 취급(fail-open).
+    T0b: 진입 게이트를 `with` 로 감싸기 위해 본체를 분리했다(본체에 early return 다수 —
+    수동 enter/exit 는 반납 누락 경로를 만든다). 예산 모듈 부재 시 게이트 없이 본체 실행."""
     try:
         from shared import resource_budget as _rb_cm
-        if not _rb_cm.background_enabled():
-            rep["skipped"] = "background_disabled"
-            return rep
     except Exception:
-        pass
+        return _run_cluster_maintenance_inner(conn=conn)
+    # T0 전역 kill-switch: 백그라운드 분석 정지 시 시그니처 백필·클러스터링·라벨 LLM 을 모두 멈춘다.
+    #   설정 조회 실패는 활성 취급(fail-open) — `background_enabled` 내부에서 처리.
+    if not _rb_cm.background_enabled():
+        return {"signature": None, "scopes": 0, "clustered": 0, "updated": 0,
+                "skipped": "background_disabled"}
+    with _rb_cm.acquire("task") as _ok:
+        if not _ok:
+            _log.info("semantic_cluster pass 보류 — 동시 진행 백그라운드 작업 예산 여유 없음")
+            return {"signature": None, "scopes": 0, "clustered": 0, "updated": 0,
+                    "skipped": "task_budget"}
+        return _run_cluster_maintenance_inner(conn=conn)
+
+
+def _run_cluster_maintenance_inner(conn=None) -> dict:
+    """유지보수 본체 (게이트 통과 후). 단일 RW conn 재사용. fail-soft."""
+    rep = {"signature": None, "scopes": 0, "clustered": 0, "updated": 0}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep

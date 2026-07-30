@@ -114,3 +114,11 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - 설계 경계: 프로세스 **내** 조율이다(한 컨테이너의 스레드). 프로세스 간 총량(insight-worker ↔ ask-worker ↔ web-a/b)은 본 슬라이스 범위 밖이며 pgbouncer 풀 상한이 backstop — 필요해지면 PG advisory lock 또는 토큰 테이블로 승격.
 - Affected Features: feature-0025-worker-parallelism(정본 — 자원 총량 축), feature-0016-metadata-graph(게이트 대상 워크로드), feature-0026-perf-observability(`perf_counters` 요청-스코프와 직교하는 워커 계측 축).
 - Cross-ref: unit/feature-0025-worker-parallelism/docs/MODIFY.md CHG-20260730T1235-ai-claude-feature-0025-worker-resource-isolation(정본) · 동 TASK.md `## 20260730T1235-worker-resource-isolation` · 동 REVIEW.md.
+
+## CHG-20260730T1430-worker-ds-task-budget (shared: ds·task 자원 등재 + knob 2, cross-unit: 정본 feature-0025)
+- Date: 2026-07-30. T0b — T0 에서 이연한 커넥션 축을 닫는다(T1 접지의 전제). 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0025-worker-ds-budget`.
+- `shared/resource_budget.py`: `RESOURCES = ("llm", "ds", "task")` — `ds`(소스 DB 동시 연결, 게이트 3지점) · `task`(동시 진행 백그라운드 작업, 진입 3지점). 자원 표에 게이트 지점을 명기해 "등재 = 배선됨" 을 문서로도 고정.
+- `shared/runtime_settings.py` (additive): `AGENT_WORKER_DS_BUDGET`(8) · `AGENT_WORKER_TASK_BUDGET`(8), 둘 다 `apply_mode: live`.
+- **`AGENT_WORKER_PG_BUDGET` 은 만들지 않았다** — PG 동시 점유를 정확히 강제하려면 커넥션 수명과 예산 수명을 묶어야 하고, 워커는 `conn=None 이면 열고 주어지면 재사용` 패턴에 close 가 호출측 `finally` 라 광범위 리팩터가 된다. `task`(작업당 PG 1~2개)로 근사하며 이름·설명을 그 의미로 유지한다(ADR-0025-06 의 연장 — 게이트 없는 이름을 쓰지 않는다).
+- Affected Features: feature-0025-worker-parallelism(정본), feature-0016-metadata-graph(게이트 대상 워크로드), feature-0003-agent-web-ui(콘솔 섹션 — 공유 볼륨 파일 읽기), feature-0026-perf-observability(계측 축 직교).
+- Cross-ref: unit/feature-0025-worker-parallelism/docs/MODIFY.md CHG-20260730T1430-ai-claude-feature-0025-worker-ds-budget(정본) · 동 TASK.md `## 20260730T1430-worker-ds-budget` · 동 DECISIONS ADR-0025-07.

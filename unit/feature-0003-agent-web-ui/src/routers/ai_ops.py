@@ -223,6 +223,127 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
     return items, next_cursor
 
 
+# ── 워커 공유 자원 예산 (T0b worker-ds-budget) ────────────────────────────────
+#: 워커가 flush 한 스냅샷 디렉토리(컨테이너 `/shared` = 호스트 artifacts/shared). web 도 같은
+#: 볼륨을 마운트하므로 **PG 테이블·마이그레이션 없이** 파일로 읽는다 — 카운터는 워커 프로세스
+#: 메모리에 있고 이 프로세스는 그것을 직접 볼 수 없다.
+_WORKER_RES_DIR = "/shared/perf"
+#: 파일당 상한(바이트) — 신뢰 경계 안(우리 워커가 쓴 파일)이지만 손상·거대 파일에 대한 방어.
+_WORKER_RES_MAX_BYTES = 64 * 1024
+#: 표시 상한 — 워커 컨테이너 수는 소수(insight/ask)라 넉넉하다.
+_WORKER_RES_MAX_FILES = 8
+#: stale 판정(초) — flush 는 insight cycle 마다 일어난다. 초과 시 값 대신 stale 표식을 준다.
+_WORKER_RES_STALE_SEC = 1800
+
+
+def _safe_int(v) -> int:
+    """JSON 직렬화 안전 정수 변환. NaN/Infinity/비수치는 0.
+
+    ⚠ `float("NaN")`·`float("Infinity")` 는 파이썬에서 정상 float 이지만 **표준 JSON 이 아니어서**
+    `JSONResponse` 직렬화가 `ValueError` 를 내 500 이 된다 — 관측 조회가 콘솔을 깨는 fail-open 위반
+    (codex P1, REV-20260730T1430). 손상된 스냅샷 파일이 그 값을 담을 수 있으므로 경계에서 막는다.
+    """
+    import math
+    try:
+        if isinstance(v, bool) or v is None:
+            return 0
+        f = float(v)
+        if not math.isfinite(f):
+            return 0
+        return int(f)
+    except Exception:
+        return 0
+
+
+def _safe_float(v) -> float:
+    """JSON 직렬화 안전 실수 변환. NaN/Infinity/비수치는 0.0 (`_safe_int` 와 동일 사유)."""
+    import math
+    try:
+        if isinstance(v, bool) or v is None:
+            return 0.0
+        f = float(v)
+        if not math.isfinite(f):
+            return 0.0
+        return round(f, 4)
+    except Exception:
+        return 0.0
+
+
+def _worker_resources() -> dict:
+    """워커 자원 예산·계측 스냅샷 수집 (read-only, fail-open).
+
+    반환 `{"available": bool, "workers": [...], "reason": str?}`. 파일 부재·손상·권한 오류는
+    전부 `available: false` + reason 으로 강등한다 — 관측 조회가 콘솔 응답을 깨면 본말전도다
+    (§20 ai-ops 의 부분 degrade 규약 답습).
+    """
+    import glob
+    import json
+    import os
+    import time
+    out: dict = {"available": False, "workers": []}
+    try:
+        paths = sorted(glob.glob(os.path.join(_WORKER_RES_DIR, "worker-resources-*.json")))
+    except Exception as exc:
+        out["reason"] = f"디렉토리 조회 실패: {exc.__class__.__name__}"
+        return out
+    if not paths:
+        out["reason"] = "워커 스냅샷 없음 — 워커가 아직 flush 하지 않았거나 구 이미지"
+        return out
+    now = time.time()
+    for path in paths[:_WORKER_RES_MAX_FILES]:
+        try:
+            # P2 방어: 공유 볼륨은 다른 컨테이너도 쓴다. symlink 를 따라가면 그 컨테이너가 임의
+            #   JSON 파일을 읽히게 만들 수 있으므로 **링크는 건너뛰고**, realpath 가 스냅샷
+            #   디렉토리 하위인지 재확인한다(디렉토리 이탈 차단). 지표 위조 자체는 볼륨 쓰기
+            #   권한을 가진 주체(우리 워커)의 신뢰 문제라 여기서 막지 않는다 — 읽기 표면만 좁힌다.
+            if os.path.islink(path):
+                continue
+            real = os.path.realpath(path)
+            base_real = os.path.realpath(_WORKER_RES_DIR)
+            if os.path.dirname(real) != base_real:
+                continue
+            st = os.stat(real)
+            if not os.path.isfile(real) or st.st_size > _WORKER_RES_MAX_BYTES:
+                continue
+            path = real
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                continue
+            age = max(0.0, now - st.st_mtime)
+            entry = {
+                "role": str(data.get("role") or os.path.basename(path))[:64],
+                "flushed_at": str(data.get("flushed_at") or "")[:32],
+                "age_sec": int(age),
+                "stale": age > _WORKER_RES_STALE_SEC,
+                "background_enabled": bool(data.get("background_enabled", True)),
+                "resources": {},
+                "conns": {},
+            }
+            for key, val in (data.get("resources") or {}).items():
+                if not isinstance(val, dict):
+                    continue
+                entry["resources"][str(key)[:16]] = {
+                    "limit": _safe_int(val.get("limit")),
+                    "peak": _safe_int(val.get("peak")),
+                    "in_use": _safe_int(val.get("in_use")),
+                    "acquired": _safe_int(val.get("acquired")),
+                    "rejected": _safe_int(val.get("rejected")),
+                    "reject_ratio": _safe_float(val.get("reject_ratio")),
+                }
+            for key, val in (data.get("conns") or {}).items():
+                if not isinstance(val, (int, float)) or isinstance(val, bool):
+                    continue          # 문자열·None 등 손상 값은 제외(계약: 정수 카운터)
+                entry["conns"][str(key)[:16]] = _safe_int(val)
+            out["workers"].append(entry)
+        except Exception:
+            continue          # 파일 하나가 손상돼도 나머지는 보여준다
+    out["available"] = bool(out["workers"])
+    if not out["available"]:
+        out["reason"] = "스냅샷 파싱 실패 — 파일 손상 또는 권한"
+    return out
+
+
 @router.get("/api/admin/ai-ops/activity")
 def admin_ai_ops_activity(
     request: Request,
@@ -459,6 +580,23 @@ def admin_ai_ops(
             "level": "unknown", "label": "계측 저장소(PG) 미가용",
             "detail": "AI 활동·비용·지연 지표를 일시적으로 조회할 수 없습니다.",
         })
+    # T0b: 워커 자원 예산이 실제로 병목이면(거절 발생) attention 으로 부상시킨다 — 상한을 올릴지
+    #   판단해야 하는 신호다. 거절 0 이면 게이트 미발동(정상)이라 조용히 둔다.
+    worker_resources = _worker_resources()
+    for w in worker_resources.get("workers") or []:
+        if not w.get("background_enabled", True):
+            attention.append({
+                "level": "degraded", "label": "백그라운드 분석 정지",
+                "detail": f"{w.get('role')}: 전역 사용 스위치가 꺼져 있습니다(분석·클러스터링·분류 중단).",
+            })
+        for rk, rv in (w.get("resources") or {}).items():
+            if int(rv.get("rejected") or 0) > 0:
+                attention.append({
+                    "level": "degraded", "label": f"자원 예산 병목({rk})",
+                    "detail": (f"{w.get('role')}: 상한 {rv.get('limit')} · 최대 점유 {rv.get('peak')} · "
+                               f"거절 {rv.get('rejected')}회(거절률 {rv.get('reject_ratio')}). "
+                               "상한을 올리거나 처리량을 낮추세요."),
+                })
 
     return JSONResponse({
         "window_days": days,
@@ -478,6 +616,8 @@ def admin_ai_ops(
         "activity_next_cursor": activity_next_cursor,
         "coverage": _COVERAGE,
         "pg_available": pg_available,
+        # T0b: 워커 공유 자원 예산·계측(파일 스냅샷). 라우트 추가 없음 — 기존 응답 확장.
+        "worker_resources": worker_resources,
         # 위젯 deep-link 계약: 대시보드 타일 → 이 탭. data-admin-tab 값(hyphen)과 정확히 일치.
         "tab": "ai-ops",
     })
