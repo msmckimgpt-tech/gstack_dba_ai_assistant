@@ -517,6 +517,238 @@ def _seriate_by_centroid(centroids, sizes, keys) -> list:
     return order
 
 
+def _merge_components_by_centroid(embs, comps, sim, max_size, key_of=None) -> tuple:
+    """과세분화 해소 — centroid 코사인 ≥ sim 인 컴포넌트 쌍을 반복 **응집 병합**. (comps, merged_count).
+
+    `_adaptive_components` 의 τ-상승 재분할은 divisive 단방향이라 "한 컨텐츠가 여러 조각" 을 되돌릴
+    수단이 없었다(라이브 증상: 같은 LLM 라벨의 형제 밴드). 반대 방향 압력을 넣어 균형점을 만든다 —
+    BERTopic 의 유사도-임계 반복 병합(cosine ≥ 0.9)·HDBSCAN cluster_selection_epsilon 과 동일 계열.
+
+    **complete linkage(§18.8 codex P2-4)**: 병합 가능 판정은 병합-누적 centroid 가 아니라 **원본 조각들의
+    모든 교차 쌍**이 sim 이상일 때만 참이다. 누적 centroid 만 보면 A~B·B~C 는 가깝고 A~C 는 먼 bridge
+    구조에서 서로 다른 의미군이 cap 까지 연쇄 병합된다(단일연결 chaining — `_cluster_edges` 의 mutual-kNN
+    이 막는 것과 같은 실패 양식을 병합 쪽에서 재현). 조각 centroid 는 불변이라 1회만 계산한다.
+
+    결정론: 매 라운드 complete-linkage 유사도 최대 쌍 1개만 병합하고, 동률은 (대표키 오름차순) 로 깬다.
+    max_size 초과 병합은 금지 — MAX_SIZE 재분할과 왕복(flap)하지 않도록 caller 가 MERGE_MAX_SIZE
+    (> MAX_SIZE)를 넘긴다. numpy 부재 → 무병합 no-op(폴백 안전)."""
+    cur = [list(m) for m in comps]
+    if len(cur) < 2 or sim > 1.0:
+        return cur, 0
+    try:
+        import numpy as np
+    except Exception:
+        return cur, 0
+    kf = key_of or (lambda members: min(members))
+    frag_cents = _cluster_centroids(embs, cur)
+    if not frag_cents or len(frag_cents) != len(cur):
+        return cur, 0
+    F = np.asarray(frag_cents, dtype=np.float32)
+    FS = F @ F.T                       # 조각-쌍 코사인(불변) — complete linkage 판정 재료
+    frags = [[i] for i in range(len(cur))]   # 현재 클러스터 → 소속 원본 조각 인덱스
+    merged = 0
+    # 상한: 병합은 매 라운드 클러스터 수를 1 줄이므로 라운드 수 < 초기 클러스터 수.
+    for _round in range(len(cur)):
+        if len(cur) < 2:
+            break
+        keys = [kf(m) for m in cur]
+        best = None   # (-linkage, key_lo, key_hi, i, j) — 튜플 비교가 곧 결정론 tie-break
+        for i in range(len(cur)):
+            for j in range(i + 1, len(cur)):
+                if len(cur[i]) + len(cur[j]) > max_size:
+                    continue
+                link = min(float(FS[a][b]) for a in frags[i] for b in frags[j])
+                if link < sim:
+                    continue
+                lo, hi = (keys[i], keys[j]) if keys[i] <= keys[j] else (keys[j], keys[i])
+                cand = (-link, lo, hi, i, j)
+                if best is None or cand < best:
+                    best = cand
+        if best is None:
+            break
+        _s, _lo, _hi, i, j = best
+        cur[i] = cur[i] + cur[j]
+        frags[i] = frags[i] + frags[j]
+        del cur[j]
+        del frags[j]
+        merged += 1
+    return cur, merged
+
+
+def _merge_clusters_by_label(valid, labels, max_size, key_of) -> tuple:
+    """동일 라벨 클러스터 병합 — (valid, labels, merged_count).
+
+    두 형제 클러스터가 **같은 라벨**을 받았다는 것은 그 분할이 의미적으로 무의미하다는 직접 증거다
+    (라이브: "길드 게시판" ×2 · "몬스터 스폰" ×2). centroid 병합(_merge_components_by_centroid)이
+    임계에서 놓친 잔여를 라벨 관측으로 잡는 2차 그물. 라벨은 표시 전용이라 병합 후에도 그대로 쓴다
+    (LLM 재호출 0 — caller 가 병합된 멤버셋 키로 kv 를 pin 해 다음 pass 도 캐시 적중).
+
+    valid: [(대표키, members)] · labels: [str] (같은 인덱스). 결정론: 라벨 정규화 사전순 → 대표키 순.
+    cap 초과로 병합 못한 잔여는 그대로 남기고 caller 가 `_disambiguate_labels` 로 구별한다."""
+    if len(valid) < 2:
+        return list(valid), list(labels), 0
+    by_label = {}
+    for i, lab in enumerate(labels):
+        k = " ".join(str(lab or "").split()).strip().lower()
+        if not k:
+            continue
+        by_label.setdefault(k, []).append(i)
+    drop, merged_members, count = set(), {}, 0
+    for k in sorted(by_label.keys()):
+        grp = sorted(by_label[k], key=lambda i: (valid[i][0], i))
+        if len(grp) < 2:
+            continue
+        head = grp[0]
+        acc = list(valid[head][1])
+        took = False
+        for other in grp[1:]:
+            if len(acc) + len(valid[other][1]) > max_size:
+                continue   # cap 초과 — 분리 유지(라벨 구별 접미로 표기)
+            acc.extend(valid[other][1])
+            drop.add(other)
+            count += 1
+            took = True
+        if took:
+            merged_members[head] = acc
+    if not drop:
+        return list(valid), list(labels), 0
+    out_valid, out_labels = [], []
+    for i, (_k, members) in enumerate(valid):
+        if i in drop:
+            continue
+        mem = merged_members.get(i, members)
+        out_valid.append((key_of(mem), mem))
+        out_labels.append(labels[i])
+    return out_valid, out_labels, count
+
+
+def _disambiguate_labels(labels, name_lists) -> list:
+    """병합 후에도 남은 동일 라벨을 구별 — 라벨 + ' · ' + 멤버 affix 스템(없으면 순번).
+
+    cap 초과로 병합이 막힌 경우에만 발동. 같은 라벨 밴드가 둘 이상 보이면 사용자는 "왜 나뉘었나" 를
+    알 수 없으므로, 실제 구별 근거(이름 스템)를 라벨에 노출한다. 결정론(입력 순서 고정)."""
+    seen = {}
+    for lab in labels:
+        k = " ".join(str(lab or "").split()).strip().lower()
+        seen[k] = seen.get(k, 0) + 1
+    out, nth = [], {}
+    for idx, lab in enumerate(labels):
+        k = " ".join(str(lab or "").split()).strip().lower()
+        if not k or seen.get(k, 0) < 2:
+            out.append(lab)
+            continue
+        nth[k] = nth.get(k, 0) + 1
+        affix = _label_cluster((name_lists[idx] if idx < len(name_lists) else []) or [])
+        suffix = affix.strip("… ") if affix else ""
+        out.append(f"{lab} · {suffix}"[:128] if suffix else f"{lab} · {nth[k]}"[:128])
+    return out
+
+
+def _mds_2d(centroids) -> list:
+    """centroid 코사인 거리 → 2-D 좌표(classical MDS/PCoA). [(x, y)] · 실패/부적격 → [].
+
+    L2-정규화 centroid 이므로 |a−b|² = 2(1−cos) → 거리제곱 행렬을 코사인에서 직접 얻는다. double-centering
+    후 상위 2 고유벡터가 pairwise 거리를 최대 보존하는 2-D 좌표다(MDS centroid projection — 연구 표준:
+    클러스터 간 의미 거리를 화면 거리로 옮기는 정본 기법). 부호는 |값| 최대 성분이 양수가 되도록 정규화해
+    플랫폼·LAPACK 구현차에도 결정론을 보장한다."""
+    n = len(centroids)
+    if n < 3:
+        return []
+    try:
+        import numpy as np
+    except Exception:
+        return []
+    try:
+        C = np.asarray(centroids, dtype=np.float64)
+        S = np.clip(C @ C.T, -1.0, 1.0)
+        D2 = 2.0 * (1.0 - S)
+        J = np.eye(n) - (np.ones((n, n)) / float(n))
+        B = -0.5 * (J @ D2 @ J)
+        w, V = np.linalg.eigh(B)
+    except Exception:
+        return []
+    order = list(np.argsort(w))[::-1][:2]
+    if len(order) < 2:
+        return []
+    lam1, lam2 = float(w[order[0]]), float(w[order[1]])
+    # §18.8 codex P1-1/P2-5 — **2-D 적격성 게이트**. 아래 둘 중 하나면 2-D 좌표를 내지 않고 [] 를 반환해
+    #   caller 가 결정론적 1-D 체인으로 폴백한다:
+    #     (a) 상위 고유값이 양수 2개가 아니다 — 유효 축이 2개 미만(비유클리드/축퇴 거리행렬)이면 한 축이
+    #         전부 0 이 되어 행 분할이 좌표 대신 key 순서에 의존한다(의미 배치 소실).
+    #     (b) 상위 두 고유값이 사실상 동률이다 — 그 eigenspace 안에서 고유벡터 회전이 **미결정**이라
+    #         LAPACK/BLAS 구현이 다르면 좌표가 달라지고, cluster_id 가 pass 마다 churn 해 대량 UPDATE +
+    #         AGE 재투영을 유발한다(feature-0029 가 없애려는 그 churn). 부호 정규화는 회전 자유도를
+    #         제거하지 못하므로 게이트가 필요하다.
+    if lam1 <= 0 or lam2 <= 0:
+        return []
+    if (lam1 - lam2) <= 1e-8 * lam1:
+        return []
+    axes = []
+    for k in order:
+        lam = float(w[k])
+        vec = np.asarray(V[:, k], dtype=np.float64)
+        piv = int(np.argmax(np.abs(vec)))
+        if vec[piv] < 0:
+            vec = -vec        # 부호 정규화 — 축이 분리된 경우의 결정론(위 게이트가 회전 축퇴를 배제)
+        axes.append(vec * (lam ** 0.5))
+    return [(float(axes[0][r]), float(axes[1][r])) for r in range(n)]
+
+
+def _grid_serpentine_order(coords, sizes, keys) -> list:
+    """2-D 좌표 → **행-균형 boustrophedon** 순서(로컬 인덱스 permutation).
+
+    프론트는 밴드를 목표 폭까지 좌→우로 채우고 넘치면 다음 행으로 랩한다(shelf-pack). 따라서 1-D 체인
+    순서는 세로 인접이 무의미했다 — 2-D 로 투영한 뒤 y 로 행을 나누고 행 안에서 x 로 훑되 홀수 행은
+    역방향(serpentine)으로 가면, 순서상 인접 = 화면상 인접이 **가로·세로 양쪽에서** 성립한다.
+    행 수 = round(√n), 행 경계는 **멤버 수 누적**으로 균형(밴드 폭 ∝ 멤버 수 → 프론트 행 랩과 정합).
+    결정론(동률은 x → keys 순). 좌표 부재/소규모 → 항등."""
+    n = len(sizes)
+    if n <= 2 or len(coords) != n or len(keys) != n:
+        return list(range(n))
+    rows = max(1, int(round(n ** 0.5)))
+    if rows <= 1:
+        return sorted(range(n), key=lambda j: (coords[j][0], coords[j][1], keys[j]))
+    by_y = sorted(range(n), key=lambda j: (coords[j][1], coords[j][0], keys[j]))
+    w_of = [max(1, int(s)) for s in sizes]
+    # §18.8 codex P2-6 — 목표치를 **남은 무게 / 남은 행 수**로 매 band 마다 재계산한다. 고정 target
+    #   (total/rows)은 거대 밴드가 첫 행을 열면 잔여 무게가 target 에 영원히 못 미쳐 나머지가 한 행에
+    #   몰리고 **실제 행 수가 rows 보다 적어진다**(예: sizes [100,1×8], rows 3 → 2행). 재계산하면
+    #   잔여 안에서 균형이 잡혀 의도한 행 수가 유지된다.
+    bands, cur, acc = [], [], 0.0
+    remaining = float(sum(w_of))
+    for pos, j in enumerate(by_y):
+        cur.append(j)
+        acc += w_of[j]
+        bands_left = rows - len(bands) - 1     # 이 band 를 닫으면 남는 band 수
+        items_left = n - pos - 1
+        if bands_left <= 0 or items_left < bands_left:
+            continue
+        target = (remaining / float(bands_left + 1)) if bands_left + 1 > 0 else remaining
+        # 잔여 항목 수가 잔여 행 수와 같아지면 **강제 분할**(한 행에 몰리는 것 방지).
+        if acc >= target or items_left == bands_left:
+            bands.append(cur)
+            remaining -= acc
+            cur, acc = [], 0.0
+    if cur:
+        bands.append(cur)
+    out = []
+    for bi, band in enumerate(bands):
+        band.sort(key=lambda j: (coords[j][0], coords[j][1], keys[j]))
+        if bi % 2 == 1:
+            band.reverse()                     # serpentine — 행 끝과 다음 행 시작이 인접
+        out.extend(band)
+    return out
+
+
+def _cluster_order(centroids, sizes, keys, grid=True) -> list:
+    """클러스터 id 배정 순서 — 2-D MDS serpentine(기본) 또는 1-D greedy 체인(폴백/게이트 OFF)."""
+    if grid:
+        coords = _mds_2d(centroids)
+        if coords:
+            return _grid_serpentine_order(coords, sizes, keys)
+    return _seriate_by_centroid(centroids, sizes, keys)
+
+
 def _nearest_centroid(emb, centroids):
     """emb 와 최대 코사인 centroid 의 (인덱스, 코사인) — 동률은 낮은 idx(strict >). 실패 → (None, -1.0).
     임계 판정은 caller 소관(§18.8 p2 패널 MAJOR-1 cap 가드가 유사도 내림차순 배정에 sim 을 소비)."""
@@ -822,8 +1054,11 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
     cluster_id(스키마-로컬 순번 — 사전순 스키마 → 멤버 min(key) 순 결정 배정; 프론트 그룹 키가 스키마 네임스페이스라 전역 유일성 불필요) + 라벨(LLM 컨텐츠
     라벨 → affix 폴백, RC5). 싱글턴/미충족 → NULL. (4) 변경분만 UPDATE(멱등). skip 스키마의 기존
     배정은 보존. fail-soft."""
+    # content-cluster-cohesion: merged_centroid/merged_label 은 과세분화 완화 규모의 관측 지점 —
+    #   0 이 지속되면 MERGE_SIM 이 라이브 임베딩 분포에 비해 높다는 신호(재보정 근거).
     rep = {"scope": scope_key, "objects": 0, "clusters": 0, "updated": 0,
-           "schemas": 0, "skipped_schemas": 0, "attached": 0, "error": None}
+           "schemas": 0, "skipped_schemas": 0, "attached": 0,
+           "merged_centroid": 0, "merged_label": 0, "error": None}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -922,15 +1157,26 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
             base_tau = float(_cfg.AGENT_METADATA_CLUSTER_SIM_THRESHOLD)
             embs_all = [it["emb"] for it in items]
             comps = _adaptive_components(embs_all, idxs, base_tau, cap)
-            valid = [(min(items[i]["key"] for i in members), members)
+            # content-cluster-cohesion(2026-07-30, 사용자 리포트 "너무 세분화"): 위 divisive 재분할이
+            #   남긴 인접 조각을 centroid 응집 병합으로 되돌린다(양방향 압력 → 균형점). 상세 근거는
+            #   `_merge_components_by_centroid` · shared/config MERGE_SIM 주석.
+            _key_of = lambda members: min(items[i]["key"] for i in members)   # noqa: E731
+            merge_sim = float(getattr(_cfg, "AGENT_METADATA_CLUSTER_MERGE_SIM", 0.90))
+            merge_cap = max(cap, int(getattr(_cfg, "AGENT_METADATA_CLUSTER_MERGE_MAX_SIZE", 80)))
+            comps, _n_mc = _merge_components_by_centroid(
+                embs_all, comps, merge_sim, merge_cap, key_of=_key_of)
+            rep["merged_centroid"] += _n_mc
+            valid = [(_key_of(members), members)
                      for members in comps if len(members) >= min_size]
             valid.sort(key=lambda x: x[0])
-            # p2 RC-B(연관 밴드 인접 배치): 클러스터 id 를 **centroid 최근접-이웃 체인 seriation 순서**로
-            # 배정 — 프론트가 be: 밴드를 id 순으로 배치하면 의미 연관 밴드가 물리적으로 이웃한다.
-            # 결정론: 시작=최대 크기(동률 min-key), greedy 다음=현재 centroid 와 최대 코사인(동률 min-key).
+            # 배치 순서(= 클러스터 id): content-cluster-cohesion — centroid **MDS 2-D serpentine**.
+            #   프론트는 밴드를 shelf-pack 으로 행 랩하므로 종전 1-D greedy 체인(p2 RC-B)은 세로 인접이
+            #   무의미했고, 체인 한 번의 오점프가 뒷부분 전체를 흩뜨렸다. 2-D 투영 후 행-균형 boustrophedon
+            #   으로 훑으면 가로·세로 인접이 모두 의미를 갖는다(`_grid_serpentine_order`).
+            _grid = bool(getattr(_cfg, "AGENT_METADATA_CLUSTER_GRID_ORDER", True))
             centroids = _cluster_centroids(embs_all, [m for (_k, m) in valid])
-            order = _seriate_by_centroid(centroids, [len(m) for (_k, m) in valid],
-                                         [k for (k, _m) in valid])
+            order = _cluster_order(centroids, [len(m) for (_k, m) in valid],
+                                   [k for (k, _m) in valid], grid=_grid)
             valid = [valid[j] for j in order]
             centroids = [centroids[j] for j in order]
             # 라벨: affix 기본 + LLM 컨텐츠 라벨(캐시·fail-soft) override — 분석 요약은 캐시-미스
@@ -959,13 +1205,39 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                 return summaries
             llm_labels = _llm_content_labels(cur, datasource_key, eff, label_inputs,
                                              fetch_summaries=_summaries_for)
+            labels = [llm_labels.get(li) or _label_cluster([items[i]["name"] for i in members])
+                      for li, (_key, members) in enumerate(valid)]
+            # content-cluster-cohesion 2차 그물: **같은 라벨** 형제 클러스터 병합. 라벨 충돌은 그 분할이
+            #   의미적으로 무의미하다는 직접 증거다(라이브: "길드 게시판" ×2 · "몬스터 스폰" ×2 — centroid
+            #   임계가 놓친 잔여). 병합 후 라벨은 그대로 재사용하고 병합된 멤버셋 키로 kv 를 pin 해
+            #   다음 pass 도 캐시 적중(LLM 재호출 0). cap 초과로 병합 못한 잔여는 라벨을 구별 표기한다.
+            _n_ml = 0
+            if len(valid) >= 2:
+                valid2, labels2, _n_ml = _merge_clusters_by_label(valid, labels, merge_cap, _key_of)
+                if _n_ml:
+                    valid, labels = valid2, labels2
+                    rep["merged_label"] += _n_ml
+                    centroids = _cluster_centroids(embs_all, [m for (_k, m) in valid])
+                    order2 = _cluster_order(centroids, [len(m) for (_k, m) in valid],
+                                            [k for (k, _m) in valid], grid=_grid)
+                    valid = [valid[j] for j in order2]
+                    labels = [labels[j] for j in order2]
+                    centroids = [centroids[j] for j in order2]
+                    # 병합 멤버셋의 라벨 캐시 pin — 다음 pass 가 같은 병합 결과에 도달해도 LLM 재호출 0.
+                    _ns = _label_ns_hash(datasource_key, eff)
+                    for (_k, members), lab in zip(valid, labels):
+                        if not lab:
+                            continue
+                        _ck = [f"{items[i]['key']}#{(items[i].get('sig') or '')[:12]}" for i in members]
+                        _kv_put(cur, f"label:{_ns}:{_member_set_hash(_ck)}", lab)
+            labels = _disambiguate_labels(labels, [[items[i]["name"] for i in m] for (_k, m) in valid])
             labels_by_cid = {}
             in_core = set()
             for local_idx, (_key, members) in enumerate(valid):
-                label = llm_labels.get(local_idx) or _label_cluster([items[i]["name"] for i in members])
+                label = labels[local_idx]
                 labels_by_cid[local_idx] = label
                 for i in members:
-                    assign[i] = (local_idx, label)   # 스키마-로컬 id(m5) — seriation 순
+                    assign[i] = (local_idx, label)   # 스키마-로컬 id(m5) — 배치 순서(MDS serpentine)
                     in_core.add(i)
             # p2 RC-A(soft-attach 2차 패스): 코어 미배정 잔여를 centroid 코사인 ≥ ATTACH_SIM 이면 최근접
             # 클러스터에 편입(라벨 상속) — 잔여가 프론트 affix 폴백("dt_c" 류 가짜 가족)으로 흐르는 것을

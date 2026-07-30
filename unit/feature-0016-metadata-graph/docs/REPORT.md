@@ -1,5 +1,71 @@
 # Report
 
+## 2026-07-30 · 컨텐츠 클러스터 과세분화·배치·상세패널 부정합 근본 개선 (20260730T1130-content-cluster-cohesion)
+
+### 요청 (사용자, entry persona dispatch + 웹 리서치 동반)
+> 컨텐츠 클러스터가 너무 세분화 · 세분화에 따른 노드 위치 후처리가 빈약하여 클러스터 간 관계를 시각화로
+> 유추하기 힘들다 · 배치가 실제 관계보다 **라벨 이름 순 나열** · 상세 패널에 갱신되지 않아 **부정합** ·
+> 웹 리서치를 바탕으로 **공격적으로** 개선.
+
+첨부 2장: 패널에 같은 라벨 형제 밴드 중복(`길드 게시판`×2·`몬스터 스폰`×2) · 캔버스 `업적 및 인챈트 12` ↔
+패널 `업적 2` 로 구성 자체가 다름.
+
+### 근본 원인 (4+1개)
+1. **과세분화** — `_adaptive_components` 의 τ-상승 재분할은 divisive **단방향**(0.98까지 단조 상승)이라
+   되돌릴 힘이 없어 한 컨텐츠가 조각으로 굳었다. 같은 라벨 형제 밴드가 그 직접 증거. `MIN_SIZE=2` 가 가중.
+2. **배치** — 백엔드가 centroid **1-D greedy 체인**으로 id 를 배정하는데 프론트는 그 순서를 shelf-pack 으로
+   **행 랩** 한다 → 세로 인접이 무의미, 체인 오점프가 뒤 전체를 흩뜨림.
+3. **"라벨 이름 순 나열"** — be: 밴드가 `serIds` 선두에 **고정 prepend** 되어 관계 seriation 을 통째로
+   우회(관계가 배치에 반영될 경로 자체가 없음). 비-be 는 `크기 desc → 라벨 natural sort`.
+4. **패널 부정합** — 패널이 `"panel:"+표시명` 전용 네임스페이스 + **API 응답** 멤버로 sim-group 을 따로
+   계산 → 키(안정화 맵)와 멤버 집합이 갈리며 그룹 구성 자체가 달라짐. 기존 코드가 이미
+   `graceful no-op` 주석으로 divergence 를 인정하고 있었다.
+5. **부수 발견** — 접힌 컨텐츠 카테고리는 멤버 미방출이라 그 관계선이 통째로 소실(접기 = 요약이 아니라
+   정보 소실) → "클러스터 간 관계를 유추하기 힘들다" 의 구조적 원인.
+
+### 처리 결과 (Major §12.3 — 클러스터 membership 산정 규칙 변경, alembic 마이그 0, cross-cut 코드 거주 feature-0002/0003)
+- 백엔드 `semantic_cluster.py`: centroid **complete-linkage 응집 병합**(`MERGE_SIM` 0.90 · `MERGE_MAX_SIZE` 80
+  > `MAX_SIZE` 40 로 flap 차단) + **라벨 충돌 병합** + 잔여 **라벨 구별 접미** + `MIN_SIZE` 3 +
+  배치 순서를 **classical MDS 2-D → 행-균형 boustrophedon**(2-D 적격성 게이트 → 부적격이면 1-D 체인 폴백).
+- 프론트: be: 밴드를 **관계 seriation 입력에 편입**(관계 0 이면 의미 seed 폴백) · 패널이 캔버스
+  `_simCache[comboId]` 를 **멤버 집합 동일 조건부**로 소비(SSOT) · `renderEndpoint` 승격 사다리에
+  **GB: 단계**(접힌 밴드 집계 관계선 — `SCHEMA_REF` 동형) · `hiddenKinds` 를 위상 서명에 포함(선재 stale 봉인).
+- 설계 근거는 웹 리서치: MDS centroid 투영(arXiv 1908.07792 등) · 마이크로 클러스터 병합(HDBSCAN
+  `cluster_selection_epsilon`) · 코사인 ≥0.9 반복 병합(BERTopic) · semantic zoom 엣지 집계(arXiv 2510.00003) ·
+  ERD subject area(red-gate). 표는 TASK.md §리서치.
+- **롤백 env 3개**: `MERGE_SIM=1.01` · `GRID_ORDER=0` · `MIN_SIZE=2` → 종전 동작 완전 복원.
+
+### 검증
+- 백엔드 신규 24 + 기존 31 PASS · 프론트 신규 24 PASS · 그래프 헤드리스 전 스위트 **1061 PASS / 0 FAIL** ·
+  `make test` **3075 passed / 3 skipped / 0 failed**(MAKE_EXIT=0, 파이프 미개입) · ruff clean.
+- §18.8 codex 적대 리뷰: P1 3건 중 **2건 in-cycle 흡수**(MDS 축퇴 게이트 · 패널 행 누락) · **1건 반증**
+  (라벨 캐시 pin — 원본 키는 이미 pin 됨) · P2 3건 흡수(complete linkage · 음수 고유값 · 행 수 보존) ·
+  P2 1건 근거 있는 불채택(`MIN_SIZE`). REV-20260730T113000-content-cluster-cohesion.
+- **PB-0008 라이브(§13.2.9 격리 경로, 실 Windows Chrome 150)**: 패널 네임스페이스가 comboId 로 통일 ·
+  캔버스 `몬스터 데이터 · 18` == 패널 `몬스터 데이터 18` · catcluster-scroll fam 매칭 성공(상태줄
+  "목록을 '몬스터 데이터' 위치로 이동") · 총계 854 == 그룹합 854 == 렌더행 854 · pageerror·서버 500 **0**.
+  Run 기록: `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260730T1200-content-cluster-cohesion.md`.
+
+### 잔여 (POST-DEPLOY — 완료로 오인 보고하지 않음)
+- **과세분화 감소·MDS 배치 효과 미관측**: 라이브 관측은 밴드 147개/854 · 중복 라벨 13종으로 **수정 전
+  기준선**이다. 병합·MIN_SIZE·MDS 는 `run_semantic_cluster_pass` 재실행 시 재산정되며 DB 에는 아직 종전
+  배정이 있다(cadence 6h 또는 임베딩 신선도 트리거). 배포 후 같은 지표 재측정 필요 → TASK CC.16.
+- **접힌 밴드 집계 관계선 육안 미확증**: 선이 접힌 밴드 헤더에 종단하는 장면을 판독 가능 크기로 포착
+  실패(§16.6 다운그레이드 금지 → PASS 선언 안 함). 근거는 헤드리스 기능 계약 4건.
+- **be: 관계 seriation 실동작 미관측**: `cc_pyron` 밴드 간 FK 희소 → 의미 seed 지배(설계된 폴백).
+
+### 후속 개선 후보 (§8.1 기록만)
+- **PB-0008 공용 자동화 프로필 충돌**: `win-browser.py` 는 `ctx.pages[0]` 만 쓰는데 기본 포트(9222/9223)
+  프로필은 세션 간 공용이다 — 본 검증 중 **타 세션 탭**(`https://localhost/admin`)이 `pages[0]` 이어서
+  그 탭을 조작하는 사고가 1회 발생했다(전용 `WIN_BROWSER_CDP_PORT`/`WIN_BROWSER_PROFILE` 로 격리해 재수행).
+  PB-0008 에 "세션 전용 포트·프로필 필수" 를 명문화하거나 드라이버에 target 선택 옵션 추가를 제안.
+
+### 정본
+TASK.md `## 20260730T1130-content-cluster-cohesion` · MODIFY
+`CHG-20260730T113000-...-content-cluster-cohesion` · DECISIONS `ADR-20260730T113000-content-cluster-cohesion` ·
+REVIEW `REV-20260730T113000-content-cluster-cohesion`.
+
+
 ## 2026-07-28 · 테이블 역할색을 노드 전면 채움 → 좌측 배지 타일 (20260728T1811-graph-role-badge)
 
 ### 요청 (사용자, entry persona dispatch)

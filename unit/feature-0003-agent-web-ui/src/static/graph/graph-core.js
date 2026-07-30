@@ -40,8 +40,13 @@ function _metaTopoSig() {
     if (e.type !== "REFERENCES") return;   // relAdj 는 REFERENCES 만 소비 — 서명도 동일 범위(다른 엣지 변화는 정렬 무영향)
     en++; eh = hs((e.source || "") + ">" + (e.target || "") + ":" + (e.status || ""), eh);
   });
+  // content-cluster-cohesion(§18.8 codex P1-3 부수 적발, 선재 결함): **hiddenKinds 도 서명에 든다.**
+  //   `groups` 조립(위 L74~80)이 kind 필터를 적용하므로 필터 토글은 simGroups/relOrder 의 입력(멤버 집합)을
+  //   바꾼다. 종전 서명은 모델(nodes)만 봐서 필터 변경 후 _simCache 가 stale 로 남았고(숨긴 루틴이 그룹에
+  //   계속 계수), 패널이 그 캐시를 SSOT 로 소비하면서 표면화됐다. 서명에 포함하면 토글이 캐시를 무효화한다.
   return _metaGraph.nodes.size + "|" + en + "|" + rn + "|" + nh + "|" + eh + "|" + rh + "|"
-    + [..._metaGraph.schemaExpanded].sort().join(",") + "|" + _metaGraph.mode;
+    + [..._metaGraph.schemaExpanded].sort().join(",") + "|" + _metaGraph.mode + "|"
+    + [...(_metaGraph.hiddenKinds || [])].sort().join(",");
 }
 
 function _metaG6Build() {
@@ -769,6 +774,15 @@ function _metaG6Build() {
     const gn = _metaGraph.nodes.get(nodeKey);
     const pk = _metaColParent(nodeKey, gn && gn.fqn);
     if (pk && present.has(pk)) return pk;
+    // content-cluster-cohesion(사용자 리포트 2026-07-30 "각 클러스터 간 관계를 시각화로 유추하기 힘들다"):
+    //   **접힌 컨텐츠 카테고리(sim-group)의 멤버 → 그 밴드(GB:)로 승격.** 종전에는 접힌 카테고리의 멤버가
+    //   방출되지 않아(`if (b.collapsed) return`) 그 관계선이 통째로 사라졌다 — 접기가 "요약" 이 아니라
+    //   "정보 소실" 이었고, 그래서 카테고리 단위로 관계를 볼 수단이 아예 없었다. 접힌 스키마 카드의
+    //   SCHEMA_REF 와 **동형**으로 승격하면 아래 `aggMap` 이 밴드 쌍 관계를 자동 집계해(count → 다발
+    //   가닥) 카테고리 간 관계 구조가 드러난다. 승격 대상 키는 테이블/루틴 키 양쪽(groupOf 는 접힘 포함
+    //   전량 멤버를 담는다 — §50 REV-wiring fix). 양끝이 같은 밴드면 caller 가 `rs === rt` 로 드롭한다.
+    const gk = _metaGraph.groupOf && (_metaGraph.groupOf.get(nodeKey) || (pk ? _metaGraph.groupOf.get(pk) : null));
+    if (gk && present.has("GB:" + gk)) return "GB:" + gk;
     // §57(사용자 요구 ①): 테이블도 미렌더(소속 스키마 접힘) → 스키마 카드로 승격 — 혼합 상태
     //   (한쪽 펼침·한쪽 카드)에서도 관계선이 카드까지 이어진다. 카드 자체 미렌더면 기존대로 드롭.
     //   스키마 세그먼트는 **원본 키**에서 도출(2-세그먼트 테이블 키는 colParent 가 dot 를 잃음).

@@ -934,7 +934,6 @@ source_of_truth: true
 - 트레이드오프: id 재-seriation 으로 1회성 대량 UPDATE·재투영 churn(멱등 수렴, 프로브 23,324). attach 는 cap(40) 미적용 — 코어가 cap 이하로 유지되고 attach 는 잔여 유계라 거대 blob 재생성 없음. 접두 strip 으로 dt_x/ct_x 가 같은 스템 가족에 합쳐질 수 있음 — 동일 컨텐츠의 타입 변형이라 수용.
 - 검증: BE 24 + FE 13 + 헤드리스 전 스위트 + 전체 pytest EXIT=0 + 라이브 프로브(attached 5,249·cc_data_main 잔여 114→26·리포트 3종 분리). §18.8 패널(REVIEW.md). POST-DEPLOY PB-0008.
 - Supersedes: — / Superseded By: —
-
 ## ADR-20260730T1105-analysis-retry-resilience — 노드 분석 일시 실패를 terminal 로 굳히지 않는다 (재시도 계정 + 회로차단)
 - 상태: 채택 (2026-07-30)
 - 맥락: 사용자 리포트 — "AI 능동 분석이 (주기적인 네트워크 단절) 중단될 경우 … 네트워크가 다시 연결되더라도 아무런 작업이 이루어지지 않습니다." 라이브 확증(agent_kb): jobs `done` 10,215 / `failed` 710(그중 LLM 사유 130) · `pending` 0 · `running` 갇힘 0 · run 전량 `done`. 실패가 07-27(49건)·07-29(43건) 두 장애 창에 뭉쳐 있어 "단절 창에 claim 돼 있던 잡이 통째로 종결됐다"는 형태가 확인됐다. 구조적으로는 (a) `llm_node_analysis` 가 모든 실패를 `None` 으로 평탄화 (b) 호출측이 그 `None` 을 즉시 terminal `failed` 로 기록 (c) lease 회수가 `running` 만 대상 — 세 층이 겹쳐 복구 후 되살아날 행이 없었다.
@@ -943,3 +942,38 @@ source_of_truth: true
 - 트레이드오프: 재시도가 LLM 호출을 최대 4배까지 늘릴 수 있다 — `MAX_ATTEMPTS` 상한·backoff·permanent 즉시 종결·canary 축소 4중으로 경계한다. `RETRY_MAX_SEC`(600) < `LEASE_SEC`(900) 불변식을 깨면 backoff 대기 run 이 stale 로 오판돼 중복 run 이 생긴다(config 주석·테스트로 고정). heartbeat 는 "워커가 살아 있는 동안 run 은 stale 이 되지 않음"을 뜻하므로 dedup 이 더 오래 기존 run 을 재사용한다 — 의도된 동작(진행 중 중복 트리거 방지)이며 워커가 죽으면 갱신도 멈춰 stale 판정은 유효하다. 회로차단 카운터는 프로세스 로컬이라 워커 재시작 시 리셋되지만, 안전 방향(과도 차단 없음)으로만 틀린다.
 - 검증: pytest 신규 35(feature-0002 26 + feature-0003 라우터 9) · 헤드리스 24(폴 백오프·무포기·패널 노출) · `make test` 전 스위트. 마이그레이션 창(0049 미적용)은 claim SQL·실패 경로가 종전과 byte-동치임을 별도 테스트로 고정. POST-DEPLOY: PB-0008 라이브 + 라이브 잔여 130건 회수.
 - Supersedes: — / Superseded By: —
+## ADR-20260730T113000-content-cluster-cohesion — 컨텐츠 클러스터: divisive 단방향에 응집 병합을 더하고 배치 순서를 2-D 로 (사용자 리포트 + 웹 리서치)
+
+- 상태: accepted (2026-07-30)
+- 맥락: ADR-20260713T105932-content-cluster 가 "DB 전체가 한 blob" 을 해소하려 `_adaptive_components`(τ 상승
+  재분할)를 도입하고, ADR-20260713T163000-content-cluster-p2 가 잔여 흡수·1-D centroid seriation 을 더했다.
+  라이브에서 그 조합이 **반대 극단**으로 굳었다 — 같은 라벨의 형제 밴드가 중복 노출되고(`길드 게시판` ×2),
+  854 항목 스키마가 수십 개 미세 밴드로 쪼개졌다. 사용자 리포트: "너무 세분화 · 위치 후처리가 빈약 ·
+  라벨링된 이름 순서대로 나열 · 상세 패널 부정합".
+- 결정:
+  1. **응집 병합을 1급 단계로 추가한다.** 재분할(divisive)만으로는 균형점이 없다 — τ 는 0.98 까지 단조
+     상승할 뿐 되돌아오지 않는다. centroid 코사인 ≥ `MERGE_SIM`(0.90) 쌍을 반복 병합하고, `MERGE_MAX_SIZE`
+     (80) > `MAX_SIZE`(40) 로 둬 재분할↔병합 왕복을 구조적으로 막는다.
+  2. **라벨 충돌은 분할 오류의 증거로 취급한다.** 같은 라벨을 받은 형제는 병합하고, cap 이 막으면 라벨에
+     구별 스템을 붙여 "왜 나뉘었는지" 를 화면에 노출한다. 라벨을 표시 문제로만 보지 않는다.
+  3. **클러스터 id = 2-D 배치 순서.** 프론트가 밴드를 shelf-pack 으로 행 랩하는 이상, 1-D 체인 순서는
+     세로 인접에 의미를 줄 수 없다. classical MDS 로 centroid 를 2-D 투영한 뒤 행-균형 boustrophedon 으로
+     훑어 id 를 배정한다 — 저장 스키마·API 계약을 **하나도 바꾸지 않고** 2-D 인접성을 얻는다.
+  4. **be: 밴드도 관계 seriation 에 참여한다.** 고정 prepend 는 "관계가 배치에 반영될 경로 없음" 이었다.
+     관계 0 이면 입력 순서를 반환하는 `_metaRelSchemaOrder` 의 성질이 의미 seed 폴백을 보장한다.
+  5. **패널은 캔버스 산출물을 소비한다(SSOT).** 같은 개념을 두 곳에서 각자 계산하면 입력(네임스페이스·
+     멤버 집합)이 갈리는 순간 부정합이 필연이다. 계산은 캔버스가 하고 패널은 읽는다.
+  6. **접기는 요약이어야 한다.** 접힌 밴드 멤버의 관계를 밴드로 승격해 집계한다(SCHEMA_REF 동형).
+- 대안(불채택):
+  - **τ·MAX_SIZE 재보정만** — 임계 하나로 전 DB 의 입도를 맞추려는 시도이며, Louvain/Leiden 의 단일
+    resolution 이 "interlaced small clusters" 를 만드는 것과 같은 실패 양식이다. 병합 단계 없이는 재발한다.
+  - **클러스터 2-D 좌표를 신설 컬럼/테이블에 저장** — 정확도는 더 높지만 alembic + AGE 투영 + API + 프론트
+    소비까지 4계층 배선이 필요하다. 순서(id)에 2-D 를 인코딩하면 기존 계약으로 대부분의 이득을 얻는다.
+    좌표 채널은 이 cycle 의 실측 후 필요하면 별 ADR 로.
+  - **패널에서 캔버스 그룹을 fam 문자열로 계속 대조** — 이미 `_metaGraphFocusPanelGroup` 이 `graceful
+    no-op` 으로 divergence 를 인정하고 있었다. 증상 완화가 아니라 원인(이중 계산) 제거를 택했다.
+  - **밴드 간 aggregate 엣지를 백엔드 신규 집계로** — SCHEMA_REF 처럼 서버 집계를 두는 방안. 모델에 이미
+    필요한 관계가 전부 있고 `groupOf` 역인덱스도 있어 클라이언트 승격만으로 충분하다(백엔드 변경 0).
+- 결과: 마이그레이션 0 · env 3개(`MERGE_SIM=1.01`·`GRID_ORDER=0`·`MIN_SIZE=2`)로 완전 롤백. 관측은
+  `run_semantic_cluster_pass` rep 의 `merged_centroid`/`merged_label` — 0 이 지속되면 `MERGE_SIM` 이 라이브
+  임베딩 분포 대비 높다는 신호(재보정 근거).

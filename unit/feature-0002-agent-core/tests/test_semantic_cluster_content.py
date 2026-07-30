@@ -203,6 +203,11 @@ def _pass_env(monkeypatch, rag_rows, routine_rows, routine_exc=None):
     }, raise_on=raise_on)
     monkeypatch.setattr(sc, "_rw_conn", lambda conn: (FakeConn(cur), False))
     monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_LABEL_LLM", False, raising=False)
+    # content-cluster-cohesion(2026-07-30): MIN_SIZE 기본값이 2→3 으로 올랐다(2멤버 밴드 = 노이즈).
+    #   본 fixture 의 기존 테스트들은 **스키마 분할·N 가드·soft-attach** 를 보는 것이고 granularity 와
+    #   직교하므로, 그 테스트들이 쓰던 값(2)을 명시 고정해 의도를 그대로 보존한다(tunable 기본값
+    #   변화에 테스트가 흔들리지 않게). 기본값 자체는 `test_min_size_default_is_three` 가 잠근다.
+    monkeypatch.setattr(_cfgattr(), "AGENT_METADATA_CLUSTER_MIN_SIZE", 2, raising=False)
     monkeypatch.setattr(sc, "_ROUTINE_COLS_WARNED", {"done": False})
     # analysis-freshness: 변경분 AGE targeted 투영 캡처(실 cypher 미실행) — cur.projected 로 검증.
     from modules import metadata_graph as _mg
