@@ -30,6 +30,7 @@ sources:
 ## 2. 상태
 
 - **active** (2026-07-24 구현·단위/회귀 검증·§18.8 리뷰 완료, 배포 후 PB-0008 잔여).
+- **(2026-07-30) T0/T0b/T0c 확장** — 백그라운드 워커 **공유 자원 예산·격리·계측**: `shared/resource_budget.py`(자원 종류 단위 예산 게이트 + 프로세스-전역 워커 계측 + 전역 kill-switch + JSON flush)·`llm`/`ds`/`task` 3축 게이트(`pg` 는 커넥션↔예산 수명 결합 미해결로 미등재)·콘솔 'AI 운영 현황 > 워커 공유 자원' 표(PG 테이블·마이그레이션·신규 라우트 0)·스냅샷 identity 를 재배포 불변 role 기반으로. 기본 상한(16) > 현행 최대 동시성(12) → 배포 시점 게이트 미발동(byte-동치). 정본 MODIFY CHG-20260730T1235/T1430/T1520 · DECISIONS ADR-0025-05~08.
 - 코드 거주: feature-0002(워커 루프·runtime_settings 소비)·feature-0003(admin UI)·shared(레지스트리)·docker-compose(인프라).
 
 ## 3. 책임 경계
@@ -41,7 +42,7 @@ sources:
 ## 4. 관련 정본
 
 - 기능 계약: [[../../unit/feature-0025-worker-parallelism/docs/FUNCTION|FUNCTION.md]] (knob 매핑 표·설계 원칙)
-- 결정: [[../../unit/feature-0025-worker-parallelism/docs/DECISIONS|DECISIONS.md]] (ADR-0025-01~04)
+- 결정: [[../../unit/feature-0025-worker-parallelism/docs/DECISIONS|DECISIONS.md]] (ADR-0025-01~08 — 05~08 은 2026-07-30 자원 예산 계약)
 - 방향 앵커: [[../../unit/feature-0025-worker-parallelism/docs/ANCHOR|ANCHOR.md]]
 - 리뷰: [[../../unit/feature-0025-worker-parallelism/docs/REVIEW|REVIEW.md]] (§18.8 2-렌즈 패널)
 
@@ -59,3 +60,4 @@ sources:
 ## 7. 변경 이력 (이 카드)
 
 - 2026-07-24: 신규 생성 (feature-0025 구현 동반).
+- 2026-07-31 (doc_sync): 07-30 T0/T0b/T0c 델타 반영 — 워커 공유 자원 예산·격리·계측(`shared/resource_budget.py`·전역 kill-switch·claim 단계 게이트·예산 거절은 attempts 미소모 재예약), `ds`/`task` 축 게이트 + 콘솔 '워커 공유 자원' 표(공유 볼륨 flush 파일 경유·PG 테이블 0), 스냅샷 identity 재배포 불변화(HOSTNAME→`AGENT_WORKER_ROLE`>`AGENT_SESSION`>HOSTNAME 우선순위, 24h 초과 stale 스냅샷 회수(자기 파일·symlink 제외)·표시 정렬 mtime DESC 로 현행 워커 보존). 요지+정본 포인터만 — 재서술 금지(SSOT). 정본 MODIFY CHG-20260730T1235/T1430/T1520 · DECISIONS ADR-0025-05~08 · 머지 #1078·#1079·#1082.

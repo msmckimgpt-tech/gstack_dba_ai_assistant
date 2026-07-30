@@ -58,12 +58,12 @@ sources:
 
 Seoul region 의 ACTIVE Sonnet region-pinned ID 부재 → `global.*` inference profile 채택 (사용자 reanchor 2026-05-21).
 
-> **참고**: 실 운영 배치는 OAuth 계정 기반(claude-corp/root) + 로컬 gemma 폴백을 포함해 위 Bedrock alias 표보다 넓다 — 아래 §2.4·정본(FUNCTION/REPORT) 참조.
+> **참고**: 실 운영 배치는 OAuth 계정 기반(claude-corp/root) 2계정 체인으로 위 Bedrock alias 표보다 넓다 — 아래 §2.4·정본(FUNCTION/REPORT) 참조. **2026-07-30 이후 자동으로 로컬 gemma(edge)가 서빙되는 경로는 없다**(ADR-003).
 
-### 2.4 요청-레벨 fallback + 용도별 라우팅 (2026-07-03~04, 정본 REPORT §3·ADR-002 feature-local)
+### 2.4 요청-레벨 fallback + 용도별 라우팅 (2026-07-03~04 · 07-30 edge 제거, 정본 REPORT §3·ADR-002/ADR-003 feature-local)
 
-- **요청-레벨 fallback 체인(insight-llm-fallback, 2026-07-03)**: insight-worker LLM(`claude-haiku-4`)의 burst rate-limit(429) 대응 — `claude-haiku-4`(claude-corp) → `claude-haiku-4-root`(root Max) → `edge-fallback`(로컬 gemma `openai/gemma4:e2b` via local-llm-gateway) 3-deployment + `litellm_settings.fallbacks` + `num_retries:1`. `bin/refresh-claude-oauth-token.sh` 가 두 토큰(ANTHROPIC_API_KEY·ANTHROPIC_API_KEY_ROOT)을 **병행 주입**해야 요청-레벨 fallback 성립. 비밀정보는 `.env.bedrock`(gitignored)에만.
-- **용도별 라우팅 분리(llm-routing-interactive-split, 2026-07-04, ADR-002 feature-local)**: insight-worker 가 주말/야간 gemma 로 고착(refresh-oauth cron 평일한정 → 토큰 만료 → 401 → edge 강등)하던 현상 해소. litellm alias 를 **사람 실시간(대화·AI 능동 분석)=`claude-haiku-4-interactive`(+`-root`)로 항상 claude** / **백그라운드 insight 배치=시각 기반(`_effective_insight_model`, 평일 근무 claude·야간/주말 edge)** 로 분리 + fallback 체인 결함(root/interactive-root 미등록 → gemma 미도달) 수정 + refresh/keepalive cron 24/7 확장(토큰 상시 유효). 회귀 `test_insight_offhours_routing.py`(13)·`test_llm_env_naming.py`.
+- **요청-레벨 fallback 체인(insight-llm-fallback, 2026-07-03)**: insight-worker LLM(`claude-haiku-4`)의 burst rate-limit(429) 대응 — `claude-haiku-4`(claude-corp) → `claude-haiku-4-root`(root Max) → `edge-fallback`(로컬 gemma `openai/gemma4:e2b` via local-llm-gateway) 3-deployment + `litellm_settings.fallbacks` + `num_retries:1`. `bin/refresh-claude-oauth-token.sh` 가 두 토큰(ANTHROPIC_API_KEY·ANTHROPIC_API_KEY_ROOT)을 **병행 주입**해야 요청-레벨 fallback 성립. 비밀정보는 `.env.bedrock`(gitignored)에만. **(2026-07-30 supersede — ADR-003)** `fallbacks` 의 `edge-fallback` 참조가 **전량 제거**돼 체인은 `claude-haiku-4` → `claude-haiku-4-root` **2계정에서 종단**한다 — 둘 다 실패하면 429/401/도달불가를 그대로 올려 정직하게 실패한다(`edge-fallback` deployment 정의만 되돌리기용으로 보존·참조 0).
+- **용도별 라우팅 분리(llm-routing-interactive-split, 2026-07-04, ADR-002 feature-local)**: insight-worker 가 주말/야간 gemma 로 고착(refresh-oauth cron 평일한정 → 토큰 만료 → 401 → edge 강등)하던 현상 해소. litellm alias 를 **사람 실시간(대화·AI 능동 분석)=`claude-haiku-4-interactive`(+`-root`)로 항상 claude** / **백그라운드 insight 배치=시각 기반(`_effective_insight_model`, 평일 근무 claude·야간/주말 edge)** 로 분리 + fallback 체인 결함(root/interactive-root 미등록 → gemma 미도달) 수정 + refresh/keepalive cron 24/7 확장(토큰 상시 유효). 회귀 `test_insight_offhours_routing.py`(13)·`test_llm_env_naming.py`. **(2026-07-30 supersede — ADR-003 결정 2)** 앱 층의 시각 기반 강등도 **기본 비활성** — `AGENT_INSIGHT_OFFHOURS_MODEL` 기본값이 `"edge"` → 빈 값이 되어 ADR-002 결정 2(배경 insight 배치의 야간·주말 gemma)는 폐지됐다(강등 로직 자체는 보존·되돌림은 사용자 결정 override).
 
 ## 3. 특징
 
