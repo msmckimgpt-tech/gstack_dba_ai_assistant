@@ -3936,7 +3936,7 @@ routine: cc_pyron.sp_GetMailList() | params: @CharacterID… | touches: read cc_
 
 | 계층 | 실측 | 판정 |
 |---|---|---|
-| 임베딩 API(bedrock-gateway titan-embed) | 100건 배치 **7.06초** → **≈51,000건/h** 용량 | 병목 아님 |
+| 임베딩 API(`titan-embed` alias → **로컬 Ollama bge-m3**) | 100건 배치 **7.06초** → **≈51,000건/h**(500건 연속 지속 42,657건/h) | 병목 아님 |
 | 임베딩 대기 큐 | 909 → **67** (최근 15분 임베딩 **0**) | **유휴** — 소비가 공급을 앞지름 |
 | 시그니처 백필 | 배포 후 35분간 신포맷 1,008 → 1,500. **루틴 507 → 545(+38 = 정지)** | **진짜 제한 지점** |
 
@@ -3954,8 +3954,19 @@ routine: cc_pyron.sp_GetMailList() | params: @CharacterID… | touches: read cc_
   `rag_objects`·`routine_objects`·`column_descriptions`·`table_relationships`·`node_analysis_jobs`·`texts`.
   데이터소스 커넥션을 새로 열지 않는다(코드 경로에 datasource 접속이 없다).
 - 부하가 가는 곳은 ① **PG**(백필 SELECT/UPDATE + `build_used_by_index` 스캔 — (ds,eff) 당 1회로 유계)
-  ② **bedrock-gateway → AWS Bedrock**(임베딩). ②는 **사용자 답변 LLM 트래픽과 게이트웨이를 공유**하므로
-  경합 가능성이 있으나, 100건 7초 규모라 8,000건/h 에서도 게이트웨이 점유는 짧다.
+  ② **로컬 임베딩 컨테이너 `embed-ollama`(bge-m3 F16, 1024-dim)**.
+  **⚠ 귀속 정정 (2026-07-30, 사용자 지적)**: 초판은 ②를 "bedrock-gateway → AWS Bedrock" 이라고 적었다 —
+  컨테이너명(`bedrock-gateway`)과 모델 별칭(`titan-embed`)만 보고 외부 AWS 로 단정하고 **라우팅을 확인하지
+  않은** 오류다. 실제 구성은 `litellm_config.yaml` 에서
+  `titan-embed → model: ollama/bge-m3 · api_base: http://embed-ollama:11434` 이며, `bedrock/…` provider
+  정의 3건은 **전부 주석**(AWS 자격 확보 시 토글용)이고 컨테이너의 `AWS_BEARER_TOKEN_BEDROCK`·
+  `AWS_ACCESS_KEY_ID`·`AWS_PROFILE` 은 **모두 빈 값**이다. `bedrock-gateway` 의 실체는 LiteLLM 라우터
+  (`ghcr.io/berriai/litellm`)이고 이름만 과거 잔존이다(2026-06-23 주석: Anthropic 이 임베딩 미제공 →
+  AWS 키 제거 후 401 → 로컬 bge-m3 로 대체).
+  → 따라서 **외부 API 비용 0 · 외부 의존 0**. 부하는 이 호스트 자원이며 실측은 **단일 코어 점유**
+  (지속 부하 중 `embed-ollama` CPU 100.75% = 20코어 중 1, 메모리 446MiB/2GiB, 호스트 load 2.14/20).
+  현재 공급 8,000~16,000건/h 는 지속 용량 42,657건/h 의 19~37% 라 여유가 크다. 같은 호스트의
+  `local-llm-edge`(off-hours insight 모델)와는 코어 경합 여지가 있으나 측정 시점 그쪽은 유휴(0.00%)였다.
 - 참고: insight-worker 로그의 `insight_datasource_scan_failed ds=mssql-qa-idc` 는 **기존 스캔 본업**이며
   본 작업과 무관하다(오귀속 주의).
 
@@ -3967,4 +3978,10 @@ routine: cc_pyron.sp_GetMailList() | params: @CharacterID… | touches: read cc_
   48,226건 전수 ≈ **6시간**.
 - [x] W.3 회귀 잠금 — `test_backfill_order_is_ascending_for_full_sweep`(DESC 패턴 잔존 금지) +
   캡 상향 계약 + 기존 정렬 계약 테스트 갱신. `make test` **3178 passed / 3 skipped / 0 failed** · ruff clean.
-- [ ] W.4 배포 후 sweep 단조 진행 실측(신포맷 카운트가 pass 마다 증가하는지) → 완료 후 밴드·유의어 재측정.
+- [x] W.4 배포 후 sweep 단조 진행 실측 — **PASS**: 15:05 T=1796/R=609 → 15:08 T=2955/**R=2609(+2000, 종전 총 +38)**
+  → 신포맷 5,564/48,226(11.5%). pass 당 최대 4,000건 단조 진행 확인. PG 활성세션 2/150 · pgbouncer 대기 0 ·
+  Caddy 200(캡 4배 상향 리스크 미발현).
+- [x] W.5 **부하 귀속 정정**(2026-07-30 사용자 지적) — 임베딩을 "AWS Bedrock" 으로 잘못 귀속한 것을
+  **로컬 `embed-ollama`(bge-m3)** 로 바로잡음. 외부 API 비용·의존 0 확정, 부하는 호스트 단일 코어.
+  상세·근거·재발 방지는 위 「부하 경로」 + REV-20260730T160000-embed-attribution-fix.
+- [ ] W.6 sweep 완료 후 밴드 수·중복 라벨(기준선 전역 177쌍)·유의어 소멸 재측정.
