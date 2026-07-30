@@ -2856,6 +2856,32 @@ def _ensure_web_conversation_metadata(conn, conversation_id: str, topic: str = P
         pass
 
 
+def _user_message_already_persisted(conversation_id: str, content: str,
+                                    sender_account_id, since,
+                                    mirror_sender_account_id=None) -> dict:
+    """ask job 재시도에서 사용자 메시지가 이미 저장됐는지(core/display 각각).
+
+    conv-audit FR-ask-orphan-redeploy-dead-air(RC-2). `since=None`(일반 첫 실행·web
+    inprocess)이면 확인 없이 {} → 호출부가 종전대로 저장한다(회귀 0).
+    PG 정본이 아니거나 조회 실패면 **저장 쪽으로 fail-open** — 중복 1행이 요청문 유실보다 안전.
+    """
+    if since is None:
+        return {}
+    try:
+        from modules.runtime_backend import _read_runtime_pg
+        res = _read_runtime_pg(
+            "user_message_persisted_since",
+            conversation_id=conversation_id,
+            content=content,
+            sender_account_id=sender_account_id,
+            since=since,
+            mirror_sender_account_id=mirror_sender_account_id,
+        )
+        return res if isinstance(res, dict) else {}
+    except Exception:
+        return {}
+
+
 def _mirror_message(
     conn,
     conversation_id: str,
@@ -4349,6 +4375,7 @@ def run_agent(
     eval_datasource: "dict | None" = None,
     reasoning_level: str | None = None,
     defer_terminal_status: bool = False,
+    dedup_user_message_since=None,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
 
@@ -4378,6 +4405,11 @@ def run_agent(
     web long-poll(`/api/ask`·`/api/ask_result`)과 프런트 재조회는 이 KV terminal 을 보고
     저장 메시지를 읽으므로, 이 지연이 없으면 후처리 전 **raw 블록이 노출**된다(§18.8 BLOCKER).
     기본 False → in-process(web inproc) 경로 동작 무변경.
+
+    dedup_user_message_since (conv-audit FR-ask-orphan-redeploy-dead-air RC-2, ask-worker 재시도
+    전용): ask job 이 requeue 돼 **재실행**될 때 job.created_at 을 주면, 그 시각 이후에 동일
+    사용자 메시지가 이미 저장돼 있는지 확인해 중복 저장을 건너뛴다(종전엔 재시도마다 사용자
+    메시지가 화면에 한 줄 더 늘었다). None(첫 실행·web inproc) → 확인 없이 종전대로 저장.
     """
     set_active_schema_allowlist(allowed_schemas)
     # TASK-0137: 첨부 메타를 os.environ 대신 contextvar 로 — 동시 요청 격리.
@@ -4407,6 +4439,7 @@ def run_agent(
             eval_datasource=eval_datasource,
             reasoning_level=reasoning_level,
             defer_terminal_status=defer_terminal_status,
+            dedup_user_message_since=dedup_user_message_since,
         )
     finally:
         clear_active_schema_allowlist()
@@ -4561,6 +4594,7 @@ def _run_agent_core(
     eval_datasource: "dict | None" = None,
     reasoning_level: str | None = None,
     defer_terminal_status: bool = False,
+    dedup_user_message_since=None,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -4903,7 +4937,11 @@ def _run_agent_core(
     # (None=1:1 또는 비그룹)이면 meta=None → 기존 동작(미러 meta 없음) 무변경. account_id 만으로
     # 게이트하면 1:1 에도 group_chat meta 가 붙어 회귀하므로 sender_username AND 가드가 필수.
     if _writes_allowed(mem_conn, cid):
-        _save_message(mem_conn, cid, "user", content=user_message, sender_account_id=account_id)
+        # conv-audit FR-ask-orphan-redeploy-dead-air(RC-2): ask job 이 requeue 되면 재실행이
+        # 이 저장을 다시 돌아 **사용자 메시지가 화면에 두 번** 보였다(실측 60일 9대화).
+        # 재시도(dedup_user_message_since 주입)일 때만 "이 job 수명 안에 이미 저장됐는지" 를
+        # 확인해 건너뛴다 — 무조건 skip 하면 1차 시도가 저장 前에 죽은 경우 요청문이 통째로
+        # 유실되므로, 근거(존재 확인) 기반으로만 억제한다. core/display 를 각각 판정.
         _user_mirror_meta = (
             {
                 "sender_account_id": int(account_id),
@@ -4912,7 +4950,16 @@ def _run_agent_core(
             }
             if (sender_username and account_id) else None
         )
-        _mirror_message(mem_conn, cid, "user", user_message, run_id, meta=_user_mirror_meta)
+        _dup = _user_message_already_persisted(
+            cid, user_message, account_id, dedup_user_message_since,
+            # 그룹 미러는 발신자를 meta 에 싣는다 — 그 경우엔 발신자까지 일치해야 "이미 저장됨"
+            # 으로 본다(같은 문장을 보낸 다른 멤버의 행을 오인해 미러를 빠뜨리지 않도록).
+            mirror_sender_account_id=(_user_mirror_meta or {}).get("sender_account_id"),
+        )
+        if not _dup.get("core"):
+            _save_message(mem_conn, cid, "user", content=user_message, sender_account_id=account_id)
+        if not _dup.get("display"):
+            _mirror_message(mem_conn, cid, "user", user_message, run_id, meta=_user_mirror_meta)
     try:
         save_memory_kv(mem_conn, cid, "last_run_id", run_id)
         set_run_status(mem_conn, cid, "processing", run_id=run_id)

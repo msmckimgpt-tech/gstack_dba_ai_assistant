@@ -480,3 +480,129 @@ def reclaim_worker_jobs_on_boot(conn, worker_id: str) -> int:
             {"worker": worker_id},
         )
         return len(cur.fetchall())
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 재배포 인계 (conv-audit FR-ask-orphan-redeploy-dead-air)
+#
+# 배포는 ask-worker 컨테이너를 --force-recreate 한다(bin/deploy-web.sh). 그러면
+#   (1) 실행 중이던 run 이 죽고,
+#   (2) 새 컨테이너의 hostname 이 바뀌어 위 `reclaim_worker_jobs_on_boot` 의
+#       `claimed_by = worker_id` 정확일치가 **항상 0행**이 되며,
+#   (3) 고아 job 은 전역 stale sweeper 의 STALE_SEC(수백초) 창을 통째로 기다린다.
+# 실측 dead-air 142~1649s(60일 8대화). 아래 두 함수가 그 창을 봉인한다:
+#   - release_worker_jobs_on_shutdown: 죽기 **전에** 자기 소유 lease 를 명시 반납(정상 종료 경로)
+#   - reclaim_role_orphan_jobs:        SIGKILL 로 반납을 못 한 경우의 backstop(같은 role 의 죽은 이전 인스턴스)
+# 둘 다 기존 requeue 와 동일한 상태 전이(pending + lease_epoch++ fencing)를 쓴다 — 새 전이 없음.
+# ──────────────────────────────────────────────────────────────────────────
+def release_worker_jobs_on_shutdown(
+    conn, worker_id_prefix: str, *, attempts_cap: int
+) -> list[dict[str, Any]]:
+    """graceful shutdown 시 자기 소유 running job 의 lease 를 즉시 반납(requeue).
+
+    `worker_id_prefix` 는 `_worker_id()` 값. 병렬 모드의 executor 는 `<worker_id>#<k>`
+    로 claim 하므로 **prefix 매칭**(자기 자신 + 자기 슬롯 전부)이다. 다른 인스턴스/role 의
+    행은 prefix 가 달라 매칭되지 않는다(오회수 불가).
+
+    attempts 는 건드리지 않는다 — claim 시점에 증가하므로 여기서 더하면 cap 을 이중 소모한다.
+    대신 **`attempts < cap` 인 행만 반납**한다(claim SQL 에 cap 게이트가 없어, cap 초과 행을
+    pending 으로 돌리면 무한 재실행이 된다 — 적대 리뷰 backend H2). cap 도달 행은 running 인
+    채 남겨 전역 sweeper 의 terminal-error 분기가 KV 정리까지 맡는다(기존 계약).
+
+    lease_epoch++ 는 아직 살아 있는 자기 executor 스레드를 fencing 한다. 호출부
+    (`_release_own_leases`)가 반납 직후 cancel 도 마킹해 겹침 창을 heartbeat 주기가 아니라
+    cancel 폴링 주기로 좁힌다.
+
+    Returns: 반납된 행 [{id, conversation_id, run_id}].
+    """
+    if not str(worker_id_prefix or "").strip():
+        return []
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE agent_runtime.ask_jobs "
+            "SET status = 'pending', claimed_by = NULL, claimed_at = NULL, "
+            "    started_at = NULL, heartbeat_at = NULL, lease_epoch = lease_epoch + 1 "
+            "WHERE status = 'running' "
+            "  AND (claimed_by = %(worker)s OR claimed_by LIKE %(worker_like)s) "
+            "  AND attempts < %(cap)s "
+            "RETURNING id, conversation_id, run_id",
+            {"worker": worker_id_prefix,
+             "worker_like": _like_prefix(worker_id_prefix) + "#%",
+             "cap": int(attempts_cap)},
+        )
+        return [{"id": int(r[0]), "conversation_id": r[1], "run_id": r[2]}
+                for r in cur.fetchall()]
+
+
+def reclaim_role_orphan_jobs(
+    conn, *, role_prefix: str, self_prefix: str, stale_seconds: int, attempts_cap: int
+) -> dict[str, list[dict[str, Any]]]:
+    """같은 worker role 의 **죽은 이전 인스턴스**가 남긴 running job 을 회수.
+
+    전역 `sweep_stale_jobs` 의 STALE_SEC 은 정상 장기 run 오회수를 막으려 매우 크게 잡혀
+    있다. 그러나 heartbeat 는 시간 기반(HEARTBEAT_SEC=10s, step 무관)이라 그보다 훨씬 짧은
+    창으로도 "프로세스가 죽었다" 를 안전하게 판정할 수 있다. 그 짧은 창을 **자기 role 의
+    다른 인스턴스** 로만 좁혀 적용한다(cross-role 오판 없음).
+
+    `self_prefix` 소유 행은 제외한다 — 자기 executor 는 살아 있고, 자기 잔재는 boot
+    self-reclaim(`reclaim_worker_jobs_on_boot`)이 이미 처리한다. `self_prefix` 가 비면
+    제외 술어가 무력해져 자기 행까지 회수하므로 **호출 자체를 거부**한다.
+
+    cap 회계는 `sweep_stale_jobs` 와 동일 — `attempts >= cap` 은 requeue 가 아니라 terminal
+    error(무한 재실행 차단, 적대 리뷰 backend H2). 두 분기 모두 `lease_epoch++` 로 fencing.
+
+    Returns: {"requeued": [...], "errored": [...]} (각 {id, conversation_id, run_id}).
+    """
+    role_prefix = str(role_prefix or "").strip()
+    self_prefix = str(self_prefix or "").strip()
+    if not role_prefix or not self_prefix:
+        return {"requeued": [], "errored": []}
+    params = {
+        "role_like": _like_prefix(role_prefix) + "%",
+        "self": self_prefix,
+        "self_like": _like_prefix(self_prefix) + "#%",
+        "stale": int(stale_seconds),
+        "cap": int(attempts_cap),
+    }
+    _scope = (
+        "WHERE status = 'running' "
+        "  AND claimed_by LIKE %(role_like)s "
+        "  AND NOT (claimed_by = %(self)s OR claimed_by LIKE %(self_like)s) "
+        "  AND heartbeat_at IS NOT NULL "
+        "  AND heartbeat_at < now() - make_interval(secs => %(stale)s) "
+    )
+    errored: list[dict[str, Any]] = []
+    requeued: list[dict[str, Any]] = []
+    with conn.cursor() as cur:
+        # 1) cap 도달 → terminal error (전역 sweeper 와 동일 회계)
+        cur.execute(
+            "UPDATE agent_runtime.ask_jobs "
+            "SET status = 'error', finished_at = now(), lease_epoch = lease_epoch + 1 "
+            + _scope + "  AND attempts >= %(cap)s "
+            "RETURNING id, conversation_id, run_id",
+            params,
+        )
+        for r in cur.fetchall():
+            errored.append({"id": int(r[0]), "conversation_id": r[1], "run_id": r[2]})
+        # 2) cap 미만 → requeue
+        cur.execute(
+            "UPDATE agent_runtime.ask_jobs "
+            "SET status = 'pending', claimed_by = NULL, claimed_at = NULL, "
+            "    started_at = NULL, heartbeat_at = NULL, lease_epoch = lease_epoch + 1 "
+            + _scope + "  AND attempts < %(cap)s "
+            "RETURNING id, conversation_id, run_id",
+            params,
+        )
+        for r in cur.fetchall():
+            requeued.append({"id": int(r[0]), "conversation_id": r[1], "run_id": r[2]})
+    return {"requeued": requeued, "errored": errored}
+
+
+def _like_prefix(s: str) -> str:
+    """LIKE 패턴에서 리터럴로 다뤄야 할 와일드카드(`%`/`_`)와 escape 문자를 이스케이프.
+
+    worker id 는 hostname/role 파생이라 통상 와일드카드가 없지만, 오염된 값이 들어와도
+    매칭 범위가 넓어지지 않도록 봉인한다(기본 escape 문자 `\\`).
+    """
+    return (str(s or "").replace("\\", "\\\\")
+            .replace("%", "\\%").replace("_", "\\_"))

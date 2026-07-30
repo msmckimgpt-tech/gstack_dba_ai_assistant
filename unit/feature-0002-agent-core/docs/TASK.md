@@ -1811,3 +1811,70 @@ Run 기록=`docs/test-runs.d/20260729T160000-test-live-pg-isolation.md`.
       실패를 `ok=True`/exit 0 으로 위장하는 경로 없음
 - 검증 방법 주의: `os.environ` 변경 + `importlib.reload` 는 무효(`shared.config` 가 import 시점
       상수를 굳힘) — **프로세스 env**(`docker exec -e`)로 재현해야 한다. 첫 시도가 이 함정에 걸렸다.
+
+## TASK-20260730T160000-ask-redeploy-handoff — 재배포가 진행 중 답변을 삼키던 dead-air 봉인
+
+출처: `/_dqa:conversation_audit` (사용자 명시 호출) — 그룹 대화 "레거시 호환성을 고려한 실제 DB
+기반 쿼리 리뷰"(`20260729074446-b5f40d99`)에서 "요청이 도중에 중단"된 원인 진단.
+마찰 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-ask-orphan-redeploy-dead-air`.
+
+- [x] 진단 — 4중 삼각측량(`ask_jobs` + `steps` + `core_messages`/`messages` + 컨테이너
+      타임스탬프). job 483 은 15:38 에 답변 초안까지 만들고 red-team 자가검증 중이던 15:41:32 에
+      배포(`--force-recreate ask-worker`)로 죽었고, 회수가 **15:49:18** 에야 일어났다(dead-air
+      약 8분). 재실행은 사용자 메시지를 한 번 더 저장한 뒤 LLM timeout 으로 최종 error —
+      사용자는 14분을 기다려 중복 메시지와 오류만 받았다.
+- [x] 근본 확정 — `_worker_id()` 가 `gethostname()`(=컨테이너 id) 기반이라 **재생성 후
+      `reclaim_worker_jobs_on_boot` 의 자기-이름 일치가 항상 0행**. 배포는 언제나 재생성이므로
+      "배포로 죽은 job 은 자가회수 대상이 될 수 없는" 구조. 고아는 전역 stale 창(런타임 실측
+      450s)을 통째로 대기.
+- [x] corroboration(60일, PG 정본) — 고아 재큐 **8건 / 8대화**(전체 482 job·209 대화), 생성→
+      재시작 dead-air **142~1,649초**, 3건 최종 error. 중복 사용자 메시지 **9건 / 9대화**.
+      → structural.
+- [x] 거짓양성 기각 — 같은 대화 07-29 17:38~17:39 사용자 3건 무응답은 **그룹 @assistant 멘션
+      게이트**(의도된 동작, `conversations.py` `group_requires_mention`) → 결함 아님.
+      `FR-dataplane-conn-stale-no-reconnect` 재발도 아님(연결 절단 시그니처 부재).
+- [x] 봉인 A — 종료 시 lease 명시 반납(`release_worker_jobs_on_shutdown` + drain 종료 경로 +
+      SIGTERM 타이머). 새 인스턴스가 ~idle_poll(0.5s) 안에 재claim.
+- [x] 봉인 B — worker identity 를 재생성 불변 role(`AGENT_WORKER_ROLE` > `AGENT_SESSION` >
+      hostname, feature-0025 T0c 선례)로 분리 + 같은 role 의 죽은 이전 인스턴스를 짧은 창
+      (`AGENT_ASK_WORKER_ROLE_STALE_SEC`, 기본 60s)으로 회수. SIGKILL/OOM backstop.
+- [x] 봉인 C — 재시도(attempts>1)에서만 job 수명(`created_at`) 이후 동일 사용자 메시지 존재를
+      확인해 중복 저장 억제. 무조건 skip 이 아니라 **근거 기반** — 1차 시도가 저장 전에 죽었으면
+      요청문이 유실되므로.
+- [x] 검증 — 신규 `tests/test_ask_redeploy_handoff.py` **17 PASS**, 전체 회귀 `make test`
+      **EXIT=0 · 신규 실패 0**, ruff clean.
+- [ ] 라이브 실측(배포 후) — 다음 audit 에서 corroboration 재측정: `attempts>1` 재큐의
+      dead-air 중앙값 감소 + 연속 동일 user 메시지 distinct_conv 감소.
+
+### 범위 밖(인지)
+- 전역 `AGENT_ASK_WORKER_STALE_SEC`(450s)는 **불변** — cross-role false-positive 회수 방지용
+  보수 창. role-scoped 짧은 창이 그 역할을 대체하지 않고 보완한다.
+- 재시도가 1차 시도의 답변 초안·red-team 라운드를 재사용하지는 않는다(전량 재실행). 부분 산출
+  이월은 별 cycle 판단 대상.
+- `insight-worker` 도 같은 `gethostname()` 기반 식별을 쓰나 소비자·복구 정책이 다르다(배경
+  스캔은 다음 cadence 재시도) — 이번 batch 응집 범위 밖.
+
+### 정본
+rationale=REVIEW `REV-20260730T160000-ask-redeploy-handoff` ·
+변경이력=MODIFY `CHG-20260730T160000-ask-redeploy-handoff`.
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260730T160000-ask-redeploy-handoff
+
+원 요청: `/_dqa:conversation_audit "레거시 호환성을 고려한 실제 DB 기반 쿼리 리뷰" — 요청이
+도중에 중단된 것으로 추측. 원인 파악 + 해소 방안 + 예방작업까지`.
+
+- [x] `원인 파악` — 산출물: 본 TASK 진단 섹션 + 원장 `FR-ask-orphan-redeploy-dead-air` ·
+      배선 확인: 라이브 PG(RO replica) 4중 삼각측량 — `ask_jobs`(job 483 attempts=2/lease_epoch=3),
+      `steps`(attempt-1 run `…b733e9fe` 15:36:42~15:41:32), `core_messages`/`messages`(중복 user
+      행 6290/6299 · 미러 1737/1740), 컨테이너 타임스탬프(ask-worker 재생성 15:40:29).
+- [x] `해소 방안` — 산출물: `CHG-20260730T160000-ask-redeploy-handoff` 봉인 A/B/C ·
+      배선 확인: 신규 23 PASS + 전체 회귀 `make test` EXIT=0(2회) + codex 적대 리뷰 2라운드 P1 0건.
+- [x] `예방작업(재발 봉인)` — 산출물: 코드 권위 계약 3종(종료 시 lease 반납 · role 기반 회수 ·
+      재시도 중복 저장 억제) + 회귀 테스트로 고정 + `FUNCTION.md` 계약 문서화 ·
+      배선 확인: `AGENT_ASK_WORKER_DRAIN_SEC`/`ROLE_STALE_SEC` knob 및 cap 회계 불변식 테스트.
+- [ ] `라이브 실측(배포 후)` — 산출물: 다음 audit 의 corroboration 재측정 ·
+      배선 확인: **미수행**(배포 후에만 가능). 코드/테스트는 "인계 계약이 동작함" 까지만 증명하고,
+      "실제 대화에서 dead-air 소멸" 은 배포 후 실측분으로 분리 표기한다.
+
+**주장 affordance 실측 (G3)**: 본 변경은 사용자 표면에 새 affordance 를 주장하지 않는다
+(워커 내부 회수 계약 + 중복 저장 억제). → `해당 없음`.
