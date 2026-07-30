@@ -2378,3 +2378,8 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - **적대검증**: ULTRACODE wf_0663e5aa R1(3-타깃 analyze→타깃-스코프 verify, cross-fault 회피 함정 #12·9 에이전트) — RN MAJOR 1(item8 제품 선택기 위치 '입력창 아래' 오안내 → 2-렌즈 독립 합치, 위치 중립 '입력창의 제품 선택 드롭다운' 으로 교정)·MINOR 3(summary 가 13항목 중 11만 서술 → item8/item9 절 보강·item13 '기본 접힘' → '가장 최근 대화만 펼쳐짐'·item13 07-27 블록과 중복 → '중간 회차' delta 명시) 적발, 오케스트레이터 정본 독립 재검증 후 전건 교정.
 - **cache-buster**: cache-buster `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py`(Dockerfile:39) + deploy-web.sh `asset_stamp_verify` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시(index/admin `?v=<new>`)는 07-12 이전 regime → 부적용(현행 코드로 재검증, 484623fb·abcb7d68 동일 판정).
 - **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
+
+## REV-20260731T010301-doc-sync-rn-0731 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 2026-07-30 블록 8항목 prepend doc_sync 정합
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check` PASS · vm 구조검증(generated=2026-07-30 · releases[0]=2026-07-30 8항목 · releases[1]=07-29 13항목 보존 · blocks 39 · type/area enum 위반 0 · title 누락 0 · 내부용어 누출 0 정규식 검증). `verify_release_notes.mjs` 는 jsdom 미설치(env 제약)로 미실행 — render 로직 미변경이라 대상 아님.
+- 적대검증(ULTRACODE wf_b0e71477, 분면-스코프 refute): MAJOR 1(심야·주말 답변 강등 오서술 — 정본은 insight 배치 전용)·MINOR 3('모두 재분석' 과대·'전체 40% 이상' 수치 오류·상태전이 오서술)·MISSED 1(캔버스↔상세 부정합 항목 누락) 전건 반영.
+- 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
