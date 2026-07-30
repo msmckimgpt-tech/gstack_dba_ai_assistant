@@ -623,7 +623,6 @@ source_of_truth: true
 - Timestamp: 2026-07-29T19:30:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
-
 ## REV-20260730T110500-analysis-retry-resilience [CODEX:worker-state-machine+frontend-poll] — PASS-WITH-FIXES
 - Related TASK: feature-0016-metadata-graph (`## 20260730T1105-analysis-retry-resilience`)
 - Source: codex review (codex-cli 0.146.0, `codex exec --sandbox read-only` + codex 가 직접 `git diff --cached`)
@@ -646,4 +645,34 @@ source_of_truth: true
 - Deploy approval: `deploy_scope: included`(FIRST_REQUEST.md 전역, 2026-06-11 사용자 결정) — 본 문서 cycle 은 코드 변경 0 이라 재배포 불요.
 - Timestamp: 2026-07-30T12:05:00+09:00
 - Verdict: PASS
+- Human Approval Needed: no
+## REV-20260730T113000-content-cluster-cohesion [CODEX:cluster-cohesion+graph-frontend] — PASS-WITH-FIXES
+- Related TASK: feature-0016-metadata-graph
+- Source: codex exec (read-only sandbox, staged diff 직접 판독 — §18.8.1 경량 경로)
+- Trigger: schema/스키마 · UI·layout/레이아웃 keyword matched (클러스터 membership 산정 + 그래프 뷰 배치·상세 패널)
+- **채널 선택 근거 (§18.8.2 상위 우선순위 지시 carve-out)**: 본 세션에는 "요청 없이 Agent tool 을 호출하지
+  말라" 는 상위(하네스) 지시가 걸려 있다. §18.8.2 는 이 경우 **제약 없는 채널을 먼저** 쓰고 미커버 도메인만
+  명시하라고 규정한다 — 그래서 subagent panel 대신 codex 적대 리뷰 + 기계적 소스 계약 검사(헤드리스 정적
+  계약 6건)로 수행했다. 미커버 도메인은 아래 「미커버」에 명시한다.
+- Timestamp: 2026-07-30T11:30:00+09:00
+- Verdict: PASS-WITH-FIXES (P1 3건 중 2건 in-cycle 흡수 · 1건 반증 · P2 3건 흡수 · P2 1건 근거 있는 불채택)
+
+### 지적 및 처리
+| # | 등급 | 지적 | 처리 |
+|---|---|---|---|
+| 1 | P1 | `_mds_2d` 의 부호 정규화만으로는 **고유값 축퇴 시 eigenspace 회전**을 고정하지 못해 LAPACK 구현차로 좌표가 달라지고 `cluster_id` 가 pass 마다 churn | **흡수** — 2-D 적격성 게이트 추가: 상위 두 고유값이 양수 2개가 아니거나 사실상 동률(≤1e-8 상대)이면 `[]` 반환 → caller 가 결정론적 1-D 체인 폴백. 회귀 잠금 `test_mds_2d_rejects_degenerate_eigenspace` + `test_cluster_order_falls_back_when_mds_ineligible` |
+| 2 | P1 | 라벨 병합 후 pin 한 캐시 키가 다음 pass 조회 키와 불일치 → 매 pass LLM 재호출 | **반증(false positive)** — 원본(병합 전) 멤버셋 키는 이미 `_llm_content_labels` 가 LLM 응답 시점에 `_kv_put` 한다(`semantic_cluster.py` 직렬·병렬 양 경로). 다음 pass 는 각 조각 키로 **캐시 적중** → 같은 라벨 → 다시 병합, LLM 호출 0. 내가 추가한 병합-멤버셋 pin 은 이후 centroid 병합이 실제로 일어난 경우를 위한 **추가** 커버리지다. 문서 문구를 그 기전대로 정밀화 |
+| 3 | P1 | 패널이 캔버스 `_simCache`(더 작은 `gatedTables` 기반)를 그대로 쓰면 **패널 목록에서 항목이 조용히 사라지고** 섹션 총계와 행 수가 불일치 | **흡수(중대)** — 지적이 정확하다. 캐시 재사용을 **멤버 집합 완전 일치 조건부**로 좁히고, 다르면 같은 `comboId` 네임스페이스로 패널 전체 멤버 기준 재계산(키 정합 유지·행 누락 0). 부수로 `hiddenKinds` 가 `_metaTopoSig` 에 없어 필터 토글 후 `_simCache` 가 stale 로 남던 **선재 결함**도 함께 봉인. 계약 `C1b`·`C1c` |
+| 4 | P2 | centroid 누적 병합이 **bridge chaining** 을 막지 못함(A~B·B~C 가깝고 A~C 먼 구조에서 cap 까지 연쇄) | **흡수** — 판정을 누적 centroid 에서 **complete linkage**(원본 조각 전 교차쌍 ≥ sim)로 교체. `_cluster_edges` 의 mutual-kNN 이 클러스터링 쪽에서 막는 것과 같은 실패 양식을 병합 쪽에서도 차단. 회귀 잠금 `test_merge_blocks_bridge_chaining_complete_linkage` |
+| 5 | P2 | 음수 고유값을 0 으로 치환해 축이 소실되면 배치가 key 순서로 퇴화 | **흡수** — #1 의 적격성 게이트가 같은 원인을 덮는다(양수 2개 미만이면 `[]`) |
+| 6 | P2 | 고정 target(total/rows) 이 거대 밴드 뒤에서 **행 수를 잃는다**(sizes [100,1×8]·rows 3 → 2행) | **흡수** — 행마다 `남은 무게/남은 행` 재계산 + `items_left == bands_left` 강제 분할. 회귀 잠금 `test_grid_serpentine_preserves_row_count_with_huge_first_band` |
+| 7 | P2 | `MIN_SIZE` 2→3 이 **정확히 2개인 진성 의미군**을 탈락시킨다 | **불채택(근거 명시)** — ① 사용자 리포트의 1차 통증이 과세분화이고 2멤버 밴드는 그 극단(헤더가 내용보다 큼)이다. ② 탈락분은 사라지지 않고 프론트 `nm:` affix 가족으로 흐르며, 코드예 `player_inventory`/`player_inventory_history` 는 공통 스템이 있어 **같은 가족으로 묶인다**(회귀 아님). ③ env 1개(`MIN_SIZE=2`)로 즉시 되돌릴 수 있다. adaptive/low-confidence 밴드는 새 개념 도입이라 실측 후 별 cycle 이 옳다 |
+
+### 미커버 (정직 표기)
+- `[SKIPPED:tool-restricted:ux+design]` — §18.8 dispatch 표는 UI·layout 신호에 ux·design subagent 를 요구하나
+  상위 지시로 Agent tool 을 쓰지 않았다. 그 도메인은 **PB-0008 실 브라우저 육안 검증**(CC.15)이 대체 커버하며,
+  구조적 계약(밴드 순서·집계선 존재·패널 정합)은 헤드리스 24건이 잠근다. 시각 품질(밴드 밀도·집계선 가독성)의
+  최종 판정은 육안이다.
+- **라이브 재클러스터 결과는 배포 후 관측 대상**(CC.16) — 커밋 전 검증은 유닛/헤드리스 계약과 결정론이며,
+  실제 밴드 수 감소·중복 라벨 소멸은 다음 재클러스터 pass 를 거쳐야 관측된다.
 - Human Approval Needed: no

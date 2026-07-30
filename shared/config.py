@@ -324,6 +324,9 @@ __all__ = [
     "AGENT_METADATA_CLUSTER_LABEL_LLM",
     "AGENT_METADATA_CLUSTER_MAX_SIZE",
     "AGENT_METADATA_CLUSTER_ATTACH_SIM",
+    "AGENT_METADATA_CLUSTER_MERGE_SIM",
+    "AGENT_METADATA_CLUSTER_MERGE_MAX_SIZE",
+    "AGENT_METADATA_CLUSTER_GRID_ORDER",
     "AGENT_XDS_RELATIONSHIP_INFER_AUTO",
     "AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC",
     "AGENT_XDS_RELATIONSHIP_MIN_SIM",
@@ -828,7 +831,10 @@ AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTE
 AGENT_METADATA_CLUSTER_RECOMPUTE_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_RECOMPUTE_SEC", "21600") or "21600")
 AGENT_METADATA_CLUSTER_SIM_THRESHOLD = float(os.getenv("AGENT_METADATA_CLUSTER_SIM_THRESHOLD", "0.82") or "0.82")
 AGENT_METADATA_CLUSTER_KNN_K = int(os.getenv("AGENT_METADATA_CLUSTER_KNN_K", "15") or "15")
-AGENT_METADATA_CLUSTER_MIN_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MIN_SIZE", "2") or "2")
+# content-cluster-cohesion(2026-07-30): 2→3 상향. 2멤버 "클러스터" 는 밴드로서 신호가 없고(헤더 1줄이
+#   멤버 2줄보다 큼), 세분화 체감의 주 원인이었다. 미달 잔여는 soft-attach(ATTACH_SIM)가 최근접 클러스터로
+#   흡수하고, 그래도 남으면 NULL → 프론트 affix 폴백(종전과 동일 경로).
+AGENT_METADATA_CLUSTER_MIN_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MIN_SIZE", "3") or "3")
 AGENT_METADATA_CLUSTER_MAX_DEGREE = int(os.getenv("AGENT_METADATA_CLUSTER_MAX_DEGREE", "8") or "8")
 AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N = int(os.getenv("AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N", "2000") or "2000")
 # content-cluster RC5 (TASK 20260713T1059): 클러스터 라벨을 LLM 한국어 컨텐츠 명으로(멤버셋-해시 kv 캐시,
@@ -842,6 +848,21 @@ AGENT_METADATA_CLUSTER_MAX_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MAX_SIZE
 #   최근접 클러스터에 편입(라벨 상속). base τ(0.82)보다 완화하되 무리한 편입은 금지. 0 이면 사실상 전부 편입,
 #   1 이면 비활성에 수렴.
 AGENT_METADATA_CLUSTER_ATTACH_SIM = float(os.getenv("AGENT_METADATA_CLUSTER_ATTACH_SIM", "0.78") or "0.78")
+# ── content-cluster-cohesion(2026-07-30, 사용자 리포트 "컨텐츠 클러스터가 너무 세분화") ──────────────
+#   MERGE_SIM: 응집 병합 임계. MAX_SIZE 초과 컴포넌트를 τ 상승으로 재분할(_adaptive_components)한 뒤,
+#     centroid 코사인 ≥ 이 값인 조각 쌍을 다시 **응집 병합**한다. 재분할은 "blob 방지" 라는 한 방향
+#     압력만 갖고 되돌릴 힘이 없어(τ→0.98 까지 단조 상승) 의미상 한 컨텐츠가 여러 조각으로 남았다
+#     — 라이브 증상: 같은 라벨의 형제 밴드("길드 게시판" ×2, "몬스터 스폰" ×2). 반대 방향 압력을
+#     추가해 균형점을 만든다. 근거: BERTopic 의 유사도-임계 반복 병합(cosine ≥ 0.9)·HDBSCAN
+#     cluster_selection_epsilon(마이크로 클러스터 병합) 과 동일 계열.
+#   MERGE_MAX_SIZE: 병합 결과 멤버 상한. MAX_SIZE(재분할 목표)보다 크게 둬 재분할↔병합 왕복(flap)을
+#     막는다 — 병합이 MAX_SIZE 를 넘어야 다음 pass 의 재분할이 같은 조각을 다시 만들지 않는다.
+#   GRID_ORDER: 클러스터 id 배정 순서를 centroid **MDS 2-D serpentine**(행-균형 boustrophedon)으로.
+#     0 이면 기존 1-D greedy 최근접 체인(_seriate_by_centroid). 프론트 밴드가 shelf-pack 으로 행 랩되므로
+#     1-D 체인은 세로 인접이 무의미했다 — 2-D 투영 후 행 단위로 훑으면 가로·세로 인접 모두 의미를 갖는다.
+AGENT_METADATA_CLUSTER_MERGE_SIM = float(os.getenv("AGENT_METADATA_CLUSTER_MERGE_SIM", "0.90") or "0.90")
+AGENT_METADATA_CLUSTER_MERGE_MAX_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MERGE_MAX_SIZE", "80") or "80")
+AGENT_METADATA_CLUSTER_GRID_ORDER = os.getenv("AGENT_METADATA_CLUSTER_GRID_ORDER", "1").strip().lower() in ("1", "true", "yes")
 # feature-0016 Phase B (ADR-019, crossds-rel): 크로스-데이터소스 관계 추론(Phase C 시그니처 임베딩 구동).
 #   AUTO=0(기본 OFF) → 스키마·UI·scope 완화만 배포되고 추론 inert. Phase C 임베딩 populate 후 1 로 flip.
 #   MIN_SIM 높게(0.90) — 프로브 검증 불가라 보수적. 프로브 skip·manual/대화JOIN 승격은 relationships.py.

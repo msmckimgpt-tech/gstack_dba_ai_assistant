@@ -396,8 +396,18 @@ function newCtx(opts) {
   // 헤딩 li 가 data-group-key 를, 멤버 행이 amgr-ct-row-li 를 계속 방출하는지(매칭·파도 앵커 소실 방지)
   check("⑩ 패널 헤딩이 data-group-key 방출", /class="amgr-ct-group\$\{collapsed \? " is-collapsed" : ""\}" role="button" tabindex="0" aria-expanded="\$\{!collapsed\}" data-group-key="\$\{esc\(sg\.key\)\}"/.test(src));
   check("⑩ 멤버 행이 amgr-ct-row-li(+접힘 시 amgr-ct-collapsed) 방출", /<li class="amgr-ct-row-li\$\{collapsed \? " amgr-ct-collapsed" : ""\}">/.test(src));
-  // 패널 그룹 키 네임스페이스가 "panel:" 접두라는 전제(fam-only 대조의 근거)
-  check("⑩ 패널 sim-group 은 'panel:' 네임스페이스", /_metaSimGroups\("panel:" \+ String\(name\), members,/.test(src));
+  // content-cluster-cohesion(2026-07-30): 패널 sim-group 은 **캔버스 캐시가 1순위**(SSOT).
+  //   종전 `"panel:"+표시명` 전용 네임스페이스는 (a) 키가 캔버스와 달라 순서 안정화 맵이 분리되고
+  //   (b) 멤버 집합(API 응답 vs 모델 gated)이 달라 **그룹 구성 자체가 갈리는** 부정합의 근인이었다.
+  //   폴백(캐시 부재 = 접힌 스키마 등)에서도 comboId 네임스페이스를 우선해 키 정합을 지킨다.
+  check("⑩ 패널 sim-group 1순위 = 캔버스 캐시(_simCache[comboId])",
+    /_cached = \(_cache && _cache\.has\(comboId\)\) \? _cache\.get\(comboId\) : null;/.test(src)
+    && /if \(_sameSet\) \{\s*sgs = _cached;/.test(src));
+  // codex P1-3: 캐시는 **멤버 집합 동일**일 때만 — 다르면 패널 전체 멤버로 재계산(행 누락 금지).
+  check("⑩ 캐시 사용은 멤버 집합 동일 조건부",
+    /_sameSet = inCache\.size === members\.length && members\.every\(\(t\) => inCache\.has\(t\.key\)\)/.test(src));
+  check("⑩ 패널 폴백도 comboId 네임스페이스 우선",
+    /_metaSimGroups\(comboId \|\| \("panel:" \+ String\(name\)\), members,/.test(src));
 }
 
 // ── ⑪ CSS 연출 규칙 존재(JS 가 붙이는 클래스에 스타일이 없으면 무음 실패) ────

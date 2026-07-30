@@ -3718,3 +3718,133 @@ scene diff 풀(§79) · `_META_DBGRP_ROW_CAP`(4000 — 이미 "실사용 무제�
 - [x] R.8 배포(main `d435d3a0`·`make deploy-all` web+워커) · alembic 0049 적용 검증 · 라이브 잔여 **130건 회수**
   (run 9개 `running` 복원) · 워커 1틱 실측 `claimed 5/done 5/failed 0` · 진행률 재상승 확인 · PB-0008 그래프 뷰
   육안(신 자산 서빙·분석 마커) — 상세·미검증 축은 feature-0003 `docs/test-runs.d/20260730T110500-analysis-retry-resilience.md`.
+## 20260730T1130-content-cluster-cohesion — 컨텐츠 클러스터 과세분화·배치·패널 부정합 근본 개선 (2026-07-30, 사용자 리포트 + 웹 리서치 동반)
+
+### 맥락 (사용자)
+> `그래프 뷰` 에서, 컨텐츠 클러스터가 너무 세분화 되어있고, 세분화에 따른 노드의 위치 후처리가 빈약하여
+> 각 클러스터 간 관계를 시각화를 통해 유추하기 힘들며, 배치되는 위치 또한 실제 관계에 따른 적절한 배치보다는
+> 라벨링된 이름 순서대로 나열되고 있는 것 뿐인것으로 확인되었습니다.
+> 또한 그래프 뷰에서는 컨텐츠 클러스터가 구성되었지만, 상세 패널에는 해당 내용이 갱신되지 않아 전달될 내용
+> 또한 부정합한 상태인 이슈도 확인되었습니다.
+> 웹 리서치를 통해 … 상세히 파악하고 해당 리서치를 바탕으로 컨텐츠 클러스터 구조를 공격적으로 개선해주세요.
+
+첨부 2장: ① 상세 패널 `cc_pyron` — `테이블·함수·프로시저 (854)` 아래 `길드 멤버 관리 37`·`길드 삭제 7`·
+`길드 게시판 6`·**`길드 게시판 5`**·`길드 아이템 3`·… `몬스터 스폰 2`·**`몬스터 스폰 5`** — **같은 라벨의
+형제 밴드가 중복**. ② 캔버스 — `업적 및 인챈트 · 12`·`제조 시스템 · 5`·`상태이상 시스템 · 14`… 인데 같은
+클러스터의 패널 목록은 `업적 2`·`캐릭터 스탯 갱신 26`… 로 **구성 자체가 다름**(화살표 + `?` 로 지적).
+
+### 요청 범위 (Requested Scope, §16.7 G1)
+- [x] R1 컨텐츠 클러스터 과세분화 해소 — 산출물: `semantic_cluster.py` 응집 병합 2겹 + `MIN_SIZE` 3
+- [x] R2 세분화 후 노드/클러스터 **위치 후처리** 보강 — 산출물: centroid MDS 2-D serpentine 배치 순서
+- [x] R3 클러스터 **간 관계를 시각으로 유추** 가능하게 — 산출물: 접힌 컨텐츠 카테고리 GB: 집계 관계선
+- [x] R4 배치가 "라벨 이름 순 나열" 이 아니게 — 산출물: be: 밴드의 관계 seriation 편입(고정 prepend 제거)
+- [x] R5 상세 패널↔캔버스 컨텐츠 클러스터 **부정합** 해소 — 산출물: 패널이 캔버스 `_simCache` 소비(SSOT)
+- [x] R6 웹 리서치로 통상 다차원 그래프의 정렬·구조·라벨링 기준 파악 후 그 근거로 설계 — 산출물: 아래 §리서치
+
+### 리서치 (통상적 다차원 정보 그래프의 정렬·구조·라벨링)
+| 축 | 표준 관행 | 출처 | 본 cycle 적용 |
+|---|---|---|---|
+| 클러스터 **간** 배치 | centroid 를 MDS 로 2-D 투영해 **군집 간 의미 거리를 화면 거리로** 옮긴다. 원형 arc 배치도 같은 목적 | *A Quality Metric for Visualization of Clusters in Graphs* (arXiv 1908.07792) · *Graph-based exploration and clustering analysis of semantic spaces* (Applied Network Science) · *Neighborhood-Preserving Voronoi Treemaps* (arXiv 2508.03445) | `_mds_2d` + `_grid_serpentine_order` (R2) |
+| **입도(granularity)** | 마이크로 클러스터는 임계 기반으로 **병합**한다 (HDBSCAN `cluster_selection_epsilon`, `min_cluster_size`) · Louvain/Leiden 은 단일 resolution 으로 튜닝하면 "interlaced small clusters" 가 대량 발생 | [hdbscan parameter selection](https://hdbscan.readthedocs.io/en/latest/parameter_selection.html) · [scikit-learn HDBSCAN](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html) · [iMVP-utils](https://imvp.readthedocs.io/en/latest/HDBSCAN.html) | `_merge_components_by_centroid` + `MIN_SIZE` 3 (R1) |
+| 토픽 **병합 임계** | 토픽 표현 벡터의 **코사인 유사도 ≥ 0.9** 를 넘는 쌍을 반복 병합(agglomerative). `nr_topics="auto"` 는 표현 벡터를 다시 클러스터링해 병합 | [BERTopic Topic Reduction](https://maartengr.github.io/BERTopic/getting_started/topicreduction/topicreduction.html) | `MERGE_SIM=0.90` (R1) |
+| **라벨링** | 일관·표준화된 라벨 컨벤션 · 계층적 라벨 · LLM 자동 라벨 제안 + 사람 검토 | [Communalytic Topic Analyzer](https://communalytic.org/docs/topic-analyzer/) · [BERTopic 가이드](https://www.pinecone.io/learn/bertopic/) | 라벨 충돌 병합 + 구별 접미(R1) |
+| **다층 표현** | semantic zoom — 레벨별 LOD, 엣지 **집계**, 라벨 숨김. 클러스터는 줌인 시 분해·줌아웃 시 재집계 | *Semantic Zoom and Mini-Maps for Software Cities* (arXiv 2510.00003) · [ArcGIS 고밀도 데이터 관행](https://enterprise.arcgis.com/en/portal/11.0/use/best-practices-high-density-data.htm) · [Cluster Map](https://mapular.com/glossary/cluster-map) | 접힌 밴드 GB: 집계 관계선(R3) |
+| **compound 레이아웃** | spectral 초안 → 제약 충족 → force 폴리시. 품질 지표 = 엣지 교차·노드 겹침·면적 | [fCoSE (TVCG 2021)](https://yoksis.bilkent.edu.tr/pdf/files/15807.pdf) | 기존 shelf-pack 유지 + 순서를 2-D 파생으로(R2) |
+| **스키마 도메인** | 큰 ERD 는 **subject area** 로 쪼개고 관련 테이블을 인접 배치, 교차 최소화, 영역별 색 | [7 Tips for a Good ER Diagram Layout](https://www.red-gate.com/blog/vertabelo-tips-good-er-diagram-layout/) · [Database Schema Design Best Practices](https://erflow.io/en/blog/database-schema-design-best-practices) | 컨텐츠 카테고리 = subject area 로 취급(R3·R4) |
+
+### 진단 (코드 실측 — 4개 근인)
+
+**① 과세분화 — divisive 단방향 압력 (`semantic_cluster.py`)**
+`_adaptive_components` 는 컴포넌트가 `MAX_SIZE`(40)를 넘으면 τ 를 0.02 씩 **0.98 까지 단조 상승**시켜
+재분할한다. 되돌릴 힘(병합)이 **없어서**, 의미상 한 컨텐츠가 여러 조각으로 굳는다. 사용자 첨부의
+**같은 라벨 형제 밴드**(`길드 게시판` ×2, `몬스터 스폰` ×2)가 그 직접 증거다 — 분할선이 의미를 따르지
+않았다는 뜻. 여기에 `MIN_SIZE=2` 가 2멤버 밴드(헤더가 내용보다 큼)를 허용해 체감 세분화를 더했다.
+
+**② 배치 — 1-D 체인을 행 랩** (`semantic_cluster.py` + `graph-simgroups.js`)
+백엔드 `_seriate_by_centroid` 는 centroid **1-D greedy 최근접 체인**이고, 프론트는 그 순서(cluster id)대로
+밴드를 `TRW_ADAPT` 폭까지 좌→우로 채우고 넘치면 다음 행으로 **랩**한다(shelf-pack). 결과: 세로 인접이
+의미를 못 갖고, 체인 한 번의 오점프가 뒤 전체를 흩뜨린다.
+
+**③ 배치 — be: 밴드가 관계 seriation 을 통째로 우회** (`graph-simgroups.js`)
+```js
+let serIds = _metaRelSchemaOrder(nsIds.filter(…), adj, groupOf);   // 비-be 만
+serIds = [...beOrder.map(nsKey), ...serIds];                      // be: 는 고정 prepend
+```
+비-be 는 `크기 desc → **라벨 natural sort**` 였고 be: 는 seriation 밖 — **컨텐츠 클러스터끼리 관계가
+있어도 배치에 반영될 경로가 아예 없었다.** 사용자의 "라벨링된 이름 순서대로 나열" 이 정확히 이 상태.
+
+**④ 패널 부정합 — 네임스페이스·멤버집합 2겹 divergence** (`graph-ctxmenu.js`)
+```js
+sgs = _metaSimGroups("panel:" + String(name), members, _metaRelAdjacency(tbk));
+```
+- (a) 그룹 키를 `"panel:"+표시명` 으로 **따로** 네임스페이스 → 순서 안정화 맵(`groupOrder`/
+  `groupTableOrder`)이 캔버스와 분리돼 두 뷰가 독립 표류.
+- (b) 멤버 집합이 다름 — 캔버스는 모델의 gated `g.tables`, 패널은 **API 응답**(`?node=<combo>&depth=1`)
+  + 모델 Routine. affix family 지지도(≥2)·be: 싱글턴 판정이 멤버 집합의 함수라 **그룹 구성 자체가 갈렸다**
+  (캔버스 `업적 및 인챈트 12` ↔ 패널 `업적 2`).
+- 기존 코드가 이 divergence 를 이미 알고 있었다: `_metaGraphFocusPanelGroup` 의
+  `if (!target) return null;   // 캔버스/패널 그룹 분할이 어긋난 경우(멤버 집합 차이) — graceful no-op`.
+
+**⑤ 부수 발견 — 접기가 정보 소실** (`graph-core.js`)
+접힌 컨텐츠 카테고리는 멤버를 방출하지 않으므로(`if (b.collapsed) return`) `renderEndpoint` 가 끝점을
+해소하지 못해 **그 관계선이 통째로 사라졌다**. 접기가 "요약" 이 아니라 "소실" 이라, 카테고리 단위로
+관계를 보는 수단이 아예 없었다 — 사용자의 "클러스터 간 관계를 유추하기 힘들다" 의 구조적 원인.
+
+### 처리
+
+**A. 백엔드 — 과세분화 해소 (R1)**
+- [x] CC.1 `_merge_components_by_centroid` — 재분할 후 centroid 코사인 ≥ `MERGE_SIM`(0.90) 쌍을 반복
+  **응집 병합**. divisive 단방향 구조에 반대 압력을 넣어 균형점을 만든다(BERTopic 반복 병합 동형).
+  `MERGE_MAX_SIZE`(80) > `MAX_SIZE`(40) 로 둬 재분할↔병합 왕복(flap) 차단. 결정론(라운드당 최대 유사도
+  쌍 1개, 동률은 대표키). numpy 부재 → no-op.
+- [x] CC.2 `_merge_clusters_by_label` — **같은 라벨** 형제 병합(2차 그물). 라벨은 재사용하고 병합
+  멤버셋 키로 kv 를 pin → 다음 pass 도 캐시 적중(LLM 재호출 0).
+- [x] CC.3 `_disambiguate_labels` — cap 이 병합을 막은 잔여는 라벨에 **구별 근거**(이름 스템) 노출.
+  같은 라벨 밴드 2개가 그대로 보이는 상태를 원천 차단.
+- [x] CC.4 `AGENT_METADATA_CLUSTER_MIN_SIZE` 2 → **3**(2멤버 밴드 = 노이즈). 잔여는 기존 soft-attach 가 흡수.
+
+**B. 백엔드 — 배치 순서 2차원화 (R2)**
+- [x] CC.5 `_mds_2d` — centroid 코사인 거리행렬 double-centering + 상위 2 고유벡터(classical MDS/PCoA).
+  부호 정규화로 LAPACK 구현차에도 결정론.
+- [x] CC.6 `_grid_serpentine_order` — y 로 행 분할(행 경계는 **멤버 수 누적** 균형 = 밴드 폭 ∝ 멤버 수라
+  프론트 행 랩과 정합), 행 안에서 x, 홀수 행 역방향(boustrophedon). 순서상 인접 = 화면상 인접이
+  **가로·세로 양쪽**에서 성립.
+- [x] CC.7 `_cluster_order` 게이트(`GRID_ORDER`, 기본 1) — OFF 면 기존 1-D 체인으로 완전 폴백.
+
+**C. 프론트 — 관계 기반 배치 (R4)**
+- [x] CC.8 be: 밴드를 `_metaRelSchemaOrder` **입력에 편입**(고정 prepend 제거). 그 함수는 그룹 간 관계가
+  0 이면 입력 순서를 그대로 반환하므로 FK 희소 게임 DB 에선 의미 seed(MDS 순서)가 폴백으로 보존되고,
+  관계가 쌓이면 관계 기준으로 수렴한다. `misc` 는 여전히 후미 고정.
+
+**D. 프론트 — 클러스터 간 관계 시각화 (R3)**
+- [x] CC.9 `renderEndpoint` 승격 사다리에 **GB: 단계 삽입**(컬럼 → 테이블 → **접힌 밴드(GB:)** → SC: 카드).
+  기존 `aggMap` 이 밴드 쌍 관계를 자동 집계(count → 굵기)하므로 접힌 카테고리 사이 관계 구조가 드러난다.
+  스키마 카드 `SCHEMA_REF` 와 동형. 양끝 같은 밴드는 `rs === rt` 로 드롭(기존 규약).
+
+**E. 프론트 — 패널 SSOT (R5)**
+- [x] CC.10 패널이 **캔버스 캐시(`_simCache[comboId]`)를 1순위**로 소비. 캐시 부재(접힌 스키마 등)
+  폴백도 `comboId` 네임스페이스를 우선해 키 정합 유지. `"panel:"+name` 단독 경로 제거.
+
+**F. 검증**
+- [x] CC.11 신규 백엔드 테스트 `test_semantic_cluster_cohesion.py` **20건** + 기존
+  `test_semantic_cluster_content.py` 31건 무회귀(공유 fixture 에 `MIN_SIZE=2` 명시 고정 — 기존 테스트는
+  스키마 분할·N 가드·soft-attach 를 보는 것이라 granularity 기본값과 직교)
+- [x] CC.12 신규 프론트 테스트 `test_graph_content_cluster_cohesion.js` **22건**(A 밴드 관계 seriation ·
+  B GB: 집계 승격 4단계 · C 소스 계약) + `test_catcluster_panel_scroll.js` ⑩ 계약을 SSOT 로 갱신(66 PASS)
+- [x] CC.13 그래프 헤드리스 전 스위트 **1058 PASS / 0 FAIL** · `make test` **3071 passed / 3 skipped /
+  0 failed** · ruff clean (MAKE_EXIT=0, 파이프 미개입)
+- [x] CC.14 §18.8 적대 검증 — codex review(제약 없는 채널, §18.8.2 carve-out) → `meta`/feature REVIEW.md
+- [x] CC.15 PB-0008 라이브 시각검증(`visual_verification_scope: always` hard gate) — §13.2.9 격리 경로,
+  실 Windows Chrome 150. **PASS 축**: 패널 그룹 키 네임스페이스 comboId 통일(종전 `panel:` 소멸) · 캔버스
+  `몬스터 데이터 · 18` == 패널 `몬스터 데이터 18`(라벨·개수) · catcluster-scroll fam 매칭 성공(상태줄 "목록을
+  '몬스터 데이터' 위치로 이동" — 미매칭 시 무음이라 두 뷰 그룹 동일성의 직접 증거) · 총계 854 = 그룹합 854 =
+  렌더행 854(codex P1-3 수정 확증) · pageerror·서버 500 **0건**. Run: `unit/feature-0003-agent-web-ui/docs/
+  test-runs.d/20260730T1200-content-cluster-cohesion.md` · 증적 4매.
+  **미관측 축은 그 Run §5 에 사유와 함께 명시**(과세분화 감소·MDS 배치 효과는 재클러스터 전이라 관측 불가 =
+  수정 전 기준선 147밴드/중복라벨 13 · 접힌 밴드 집계선 육안 · be: 관계 seriation 실동작) — PASS 로 선언 안 함
+- [ ] CC.16 POST-DEPLOY 관측 — 재클러스터 후 밴드 수·중복 라벨 소멸·`merged_centroid`/`merged_label` 카운터
+
+### 마이그레이션
+없음. 스키마 무변경 — `semantic_cluster_id`/`semantic_cluster_label` 의 **값 산정 규칙만** 바뀌며 다음
+재클러스터 pass(6h cadence 또는 임베딩 신선도 트리거)가 자연 반영한다. 롤백 = `MERGE_SIM=1.01`(병합 무효화)
++ `GRID_ORDER=0`(1-D 체인 복귀) + `MIN_SIZE=2` env 3개로 종전 동작 완전 복원.

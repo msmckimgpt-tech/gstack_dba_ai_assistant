@@ -158,24 +158,25 @@ function _metaSimGroups(schemaId, tables, adj) {
     return tok;
   };
   const nsKey = (f) => schemaId + "\u0001" + f;   // 그룹 키 네임스페이스(스키마별 유일, 제어문자 구분자)
-  // p2 RC-B(연관 밴드 인접): be: 밴드는 **cluster id 오름차순 선두 배치** — 백엔드가 id 를 centroid
-  //   최근접-이웃 체인(semantic seriation) 순서로 배정하므로 id 순 = 의미 연관 밴드 인접. FK 희소
-  //   게임 DB 에선 관계 seriation 이 무신호라 임베딩 순서가 유일한 연관성 데이터 소스다.
-  //   nm:/role:/misc 는 기존 크기 desc·관계 seriation·misc 후미 유지.
+  // ── 밴드 배치 순서 ────────────────────────────────────────────────────────────────────────
+  // seed(의미 순서): be: 밴드는 cluster id 오름차순 — 백엔드가 id 를 **centroid MDS 2-D serpentine**
+  //   (content-cluster-cohesion 2026-07-30; 종전 1-D greedy 체인) 으로 배정하므로 id 순으로 깔면
+  //   프론트 shelf-pack 의 행 랩과 맞물려 가로·세로 인접이 모두 의미를 갖는다. 비-be 는 크기 desc →
+  //   라벨(대표성 우선).
+  // content-cluster-cohesion(사용자 리포트: "배치가 실제 관계보다 라벨 이름 순 나열"): 종전엔 be: 밴드가
+  //   `serIds` 선두에 **고정 prepend** 되어 관계 seriation 을 통째로 우회했다 — 컨텐츠 클러스터끼리
+  //   관계가 있어도 배치에 반영될 경로가 없었다. 이제 be: 도 비-be 와 함께 `_metaRelSchemaOrder` 에
+  //   투입한다. 그 함수는 **그룹 간 관계가 0 이면 입력 순서를 그대로 반환**하므로(FK 희소 게임 DB)
+  //   의미 seed 가 폴백으로 보존되고, 관계가 쌓이면 관계 기준으로 수렴한다(§graph-rel-layout 계약).
   const beOrder = [...groupsBy.keys()].filter((f) => f.startsWith("be:"))
     .sort((a, b) => (parseInt(a.slice(3), 10) - parseInt(b.slice(3), 10)) || _metaNatSort(a, b));
-  const baseOrder = [...groupsBy.keys()].filter((f) => !f.startsWith("be:"))
+  const baseOrder = [...groupsBy.keys()].filter((f) => !f.startsWith("be:") && f !== "misc")
     .sort((a, b) => (groupsBy.get(b).length - groupsBy.get(a).length) || _metaNatSort(labelOf(a, groupsBy.get(a)), labelOf(b, groupsBy.get(b))));
-  // misc 는 항상 마지막(잡동사니가 seriation 으로 가운데 끼는 것 방지)
-  const miscIdx = baseOrder.indexOf("misc");
-  if (miscIdx >= 0) { baseOrder.splice(miscIdx, 1); baseOrder.push("misc"); }
-  const nsIds = baseOrder.map(nsKey);
   const groupOfT = new Map();
   groupsBy.forEach((arr, f) => arr.forEach((t) => groupOfT.set(t.key, nsKey(f))));
   const groupOf = (tk) => groupOfT.get(tk) || null;
-  // 비-be 그룹만 관계 seriation — be: 는 id 순 고정 선두, misc 재부착(항상 마지막 유지)
-  let serIds = _metaRelSchemaOrder(nsIds.filter((k) => k !== nsKey("misc")), adj, groupOf);
-  serIds = [...beOrder.map(nsKey), ...serIds];
+  // 관계 seriation(be: + 비-be 공통) → misc 는 항상 마지막(잡동사니가 가운데 끼는 것 방지).
+  let serIds = _metaRelSchemaOrder([...beOrder, ...baseOrder].map(nsKey), adj, groupOf);
   if (groupsBy.has("misc")) serIds.push(nsKey("misc"));
   // feature-0016 §49(요구②, 적대리뷰 R1): 그룹 순서 안정화 — 이웃확장 rebuild 시 그룹이 재-seriate 되어 형제가 점프하지
   //   않도록 직전 순서(groupOrder[schemaId])를 보존하고 신규 그룹만 append. (misc 는 위에서 이미 마지막.)

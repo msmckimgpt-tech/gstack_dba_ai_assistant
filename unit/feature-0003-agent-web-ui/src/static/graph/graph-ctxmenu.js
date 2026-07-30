@@ -3194,9 +3194,10 @@ async function _metaGraphSyncAnalysisMarkers(scope) {
 //   그 선택이 여는 '스키마 클러스터' 상세 목록에서 같은 카테고리 헤딩 위치로 패널을 스크롤한다. 캡 해제 이후
 //   (cluster-detail-fulllist) 목록이 수백~수천 행이라, 캔버스에서 고른 카테고리를 패널에서 사용자가 직접
 //   스크롤해 찾아야 했다(요청 마찰).
-//   ⚠ 키 대조는 **fam(구분자 뒤)** 로만 한다 — 그룹 키는 `_metaSimGroups(schemaId, …)` 의 schemaId 로
-//   네임스페이스되는데 캔버스는 comboId("<scope>:<schema>"), 패널은 "panel:<schemaName>" 을 쓴다.
-//   구분자 뒤 fam(= "nm:"/"be:"/"role:" 토큰 또는 "misc")은 멤버 집합에서 파생돼 양쪽이 공유한다.
+//   키 대조는 **fam(구분자 뒤)** 로 한다. content-cluster-cohesion(2026-07-30) 이후 패널은 캔버스 캐시
+//   (`_simCache[comboId]`)를 그대로 쓰므로 전체 키까지 동일한 것이 정상 경로지만, 캐시 부재(접힌 스키마 등)
+//   폴백에서는 여전히 comboId 네임스페이스로 즉석 계산하므로 fam 대조가 양 경로를 모두 커버한다.
+//   fam(= "nm:"/"be:"/"role:" 토큰 또는 "misc")은 멤버 집합에서 파생돼 양쪽이 공유한다.
 const _META_GKEY_SEP = "\u0001";
 function _metaGroupFam(groupKey) {
   const s = String(groupKey == null ? "" : groupKey);
@@ -3414,10 +3415,38 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
     // graph-simgroups: 캔버스와 동일한 유사 속성 그룹으로 목록도 구획(헤딩 행) — 2그룹 이상일 때만. 실패 시 평면 폴백.
     //   graph-funcproc: 구획 입력을 members(테이블+루틴)로 확장 — Routine-only 컨텐츠 카테고리도 그룹 헤딩으로 나타난다.
     //   (collapse 컨트롤 조건 판정을 위해 h4 방출 전에 계산.)
+    // content-cluster-cohesion(사용자 리포트 2026-07-30 "그래프 뷰엔 컨텐츠 클러스터가 구성됐는데
+    //   상세 패널엔 갱신되지 않아 전달될 내용이 부정합"): 패널이 캔버스와 **같은 산출물**을 쓴다(SSOT).
+    //   종전 결함 2겹 —
+    //     (a) schemaId 를 `"panel:"+표시명` 으로 따로 네임스페이스해 그룹 키가 캔버스와 달랐다 →
+    //         순서 안정화 맵(groupOrder/groupTableOrder)이 분리돼 두 뷰의 정렬이 독립 표류하고,
+    //         `_metaGraphFocusPanelGroup` 의 fam 대조도 어긋날 수 있었다.
+    //     (b) 멤버 집합이 달랐다 — 캔버스는 모델의 gated `g.tables`, 패널은 **API 응답**(`?node=combo`)
+    //         + 모델 Routine. affix family 지지도(≥2)와 be: 싱글턴 판정이 멤버 집합의 함수이므로
+    //         **그룹 구성 자체가 갈렸다**(캔버스 "업적 및 인챈트 12" ↔ 패널 "업적 2").
+    //   해소: 1순위 캔버스 캐시(_simCache[comboId]) = 화면과 동일 객체. 2순위(접힌 스키마 등 캐시 부재)
+    //   는 최소한 **같은 네임스페이스(comboId)** 로 계산해 키 정합을 지킨다.
+    //   ⚠ 캐시는 **멤버 집합이 정확히 같을 때만** 쓴다(§18.8 codex P1-3). 캔버스 캐시는 그 시점
+    //   `gatedTables` 로 만들어지고 패널 members 는 API 응답 + 모델 Routine 이라 부분 로딩·검색·kind
+    //   필터 상태에서 어긋날 수 있다. 그대로 쓰면 캔버스에 없는 항목이 **패널 목록에서 조용히 사라져**
+    //   섹션 총계(members.length)와 행 수가 불일치한다 — 고치려던 부정합을 반대 방향으로 재생산하는 것.
+    //   집합이 다르면 같은 comboId 네임스페이스로 **패널 전체 멤버** 기준 재계산(키 정합은 유지).
     let sgs = null;
     try {
-      const tbk = new Map(members.map((t) => [t.key, t]));
-      sgs = _metaSimGroups("panel:" + String(name), members, _metaRelAdjacency(tbk));
+      const _cache = comboId && _metaGraph._simCache;
+      const _cached = (_cache && _cache.has(comboId)) ? _cache.get(comboId) : null;
+      let _sameSet = false;
+      if (_cached) {
+        const inCache = new Set();
+        _cached.forEach((sg) => (sg.tables || []).forEach((t) => { if (t && t.key) inCache.add(t.key); }));
+        _sameSet = inCache.size === members.length && members.every((t) => inCache.has(t.key));
+      }
+      if (_sameSet) {
+        sgs = _cached;
+      } else {
+        const tbk = new Map(members.map((t) => [t.key, t]));
+        sgs = _metaSimGroups(comboId || ("panel:" + String(name)), members, _metaRelAdjacency(tbk));
+      }
     } catch (_) { sgs = null; }
     const _grouped = !!(sgs && sgs.length >= 2);
     // graph-funcproc(cluster-detail-collapse): 컨텐츠 카테고리별 접기/펼치기(사용자 요청). 그룹 헤딩을 클릭/키보드 토글(캐럿 ▾/▸)로
