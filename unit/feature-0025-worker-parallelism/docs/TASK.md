@@ -171,3 +171,47 @@ T0b — T0(자원 격리 LLM 축)의 커넥션 축 완성 + 콘솔 노출. **T1 
 - [x] 콘솔 노출 (T0 에서 이연 — 사용자 "관측 구조" 요구의 완성)
 - [ ] 배포 + 라이브 실증
 - [ ] T1 접지 (L0 통계 전용 증거층) — 다음 트랙
+
+---
+
+## 20260730T1520-worker-snapshot-identity
+
+T0c — **T0b 가 만든 결함의 수정**. 관측 신뢰를 복구한다(T1 의 부하 판단 근거이므로 선행).
+
+### 2.1 Plan
+
+- **결함:** `flush_snapshot` 의 `role` 기본값이 컨테이너 HOSTNAME 이라 **재배포마다 스냅샷 파일이
+  누적**된다. 라이브에서 3개가 쌓여 유령 워커가 콘솔에 stale 로 표시됐고, 표시 상한
+  (`_WORKER_RES_MAX_FILES=8`)에 도달하면 **현행 워커가 목록에서 밀려난다**(정렬이 파일명 사전순이라
+  어느 것이 잘릴지 예측 불가).
+- **영향받는 파일:** `shared/resource_budget.py` · `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py` ·
+  두 테스트 파일
+- **변경 symbol:** `resource_budget.{_worker_role_default,_reap_stale_snapshots,_SNAPSHOT_REAP_SEC,flush_snapshot}` ·
+  `ai_ops._worker_resources`(정렬)
+- **접근 방법:** ① role 기본값을 `AGENT_WORKER_ROLE > AGENT_SESSION > HOSTNAME` 순으로 —
+  **compose 가 이미 주입하는 `AGENT_SESSION`**(`insight_worker`/`ask_worker`)이 컨테이너 재생성에
+  불변이라 **compose 변경 없이** 파일명이 고정된다 ② flush 시 24h 넘게 갱신 안 된 남의 스냅샷 회수
+  (자기 파일·symlink 는 제외) ③ 콘솔 정렬을 **mtime DESC** 로 — 상한에 밀려도 최신이 남는다.
+- **완료 판정 기준:** HOSTNAME 이 바뀌어도 같은 파일에 쓴다 · 죽은 워커 스냅샷은 회수되고 살아 있는
+  것은 보존 · 자기 파일·symlink 는 절대 삭제 안 함 · 표시 상한 초과 시 최신 워커가 남는다.
+- **위험도:** Minor~Major (파일 삭제 경로 신설 — 대상·조건을 좁히고 회귀 5건으로 고정. compose·
+  스키마·권한·라우트 변경 0)
+
+<!-- PLAN-APPROVED by mckim on 2026-07-30 ("자율적으로 판단하여, 모든 트랙 완주까지 진행") -->
+
+### 3. Task Queue (이번 슬라이스)
+
+- [x] TASK-20260730T1520-01 role 안정화 (`AGENT_SESSION` 우선 — compose 무변경)
+- [x] TASK-20260730T1520-02 죽은 워커 스냅샷 회수(24h, 자기 파일·symlink 제외)
+- [x] TASK-20260730T1520-03 콘솔 정렬 mtime DESC (상한 초과 시 최신 보존)
+- [x] TASK-20260730T1520-04 회귀 테스트 6건 (재배포 시뮬레이션·env 우선순위·reap 3종·정렬)
+- [ ] TASK-20260730T1520-05 codex 리뷰 반영 + verify + commit/PR + 배포
+
+### 9. Requested Scope (요청 범위)
+
+원 요청: "자율적으로 판단하여, 모든 트랙 완주까지 작업을 진행해주세요."
+
+- [x] T0c — 관측 신뢰 복구 (본 슬라이스)
+- [ ] T1 접지 (L0 통계 전용 증거층)
+- [ ] T2 합성·소비 (L2 클러스터 요약 + L3 lazy + grounding 배선)
+- [ ] T3 신뢰·계획 (검증층 + 결정적 플래너)

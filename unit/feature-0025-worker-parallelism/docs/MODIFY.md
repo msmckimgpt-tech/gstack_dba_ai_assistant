@@ -101,3 +101,19 @@ source_of_truth: true
 - **무회귀:** 기본 상한(ds 8 · task 8) > 현행 동시 사용량(소스 DB 순차 1 · 백그라운드 작업 3) →
   게이트 미발동. 래퍼/본체 분리는 concurrency==1 경로 불변(기존 호출자·monkeypatch 지점 보존).
   신규 권한·스키마·마이그레이션·라우트 0.
+
+## CHG-20260730T1520-ai-claude-feature-0025-worker-snapshot-identity (T0c 스냅샷 identity 안정화)
+- Date: 2026-07-30. **T0b 가 만든 결함의 수정** — 관측 신뢰 복구(T1 부하 판단의 근거라 선행).
+  worktree `ai/claude/feature-0025-worker-snapshot-identity`.
+- **결함**: `flush_snapshot` role 기본값 = 컨테이너 HOSTNAME → 재배포마다 파일 누적(라이브 3개 실측).
+  유령 워커 stale 표시 + 표시 상한 도달 시 현행 워커가 밀려남(파일명 사전순 정렬이라 예측 불가).
+- `shared/resource_budget.py`: `_worker_role_default()` — `AGENT_WORKER_ROLE > AGENT_SESSION >
+  HOSTNAME`. compose 가 이미 `AGENT_SESSION`(`insight_worker`/`ask_worker`)을 주입하므로 **compose
+  변경 0** 으로 파일명이 재생성에 불변이 된다. `_reap_stale_snapshots()` — 24h 넘게 갱신 안 된 남의
+  스냅샷 회수(자기 파일 `keep` 제외 · symlink 미추종 · 실패 무시).
+- `.../routers/ai_ops.py`: 스냅샷 정렬을 **mtime DESC** 로 — 표시 상한에 도달해도 현행 워커가 남는다.
+- **검증**: 회귀 6건 — 재배포(HOSTNAME 변경) 후 동일 파일 · env 우선순위 3단 · 죽은 워커만 회수 ·
+  자기 파일 불가침 · symlink 미추종 · 상한 초과 시 최신 보존. 관련 스위트 46 PASS.
+- **무회귀**: 기존 스냅샷 파일명(HOSTNAME 기반)은 24h 후 자동 회수되거나 최신 우선 정렬에 밀린다 —
+  수동 개입 불요. 파일 삭제 경로가 신설됐으나 대상이 `worker-resources-*.json` + 24h 초과 + 비-symlink
+  + 자기 것 아님 4중 조건이다.

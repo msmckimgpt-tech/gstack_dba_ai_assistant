@@ -427,3 +427,85 @@ def test_ds_budget_released_when_query_raises(snap, monkeypatch):
     before = rb.available("ds")
     assert na._introspect_table_columns({"engine": "mysql"}, "sch", "tbl", 100) == []
     assert rb.available("ds") == before
+
+# ── T0c: 스냅샷 identity 안정화 + 죽은 워커 회수 ──────────────────────────────
+
+def test_role_default_prefers_stable_identifier(snap, monkeypatch, tmp_path):
+    """★회귀: role 기본값이 HOSTNAME 이면 **재배포마다 파일이 누적**된다(라이브 실측 3개).
+
+    compose 가 주입하는 `AGENT_SESSION`(insight_worker/ask_worker)은 컨테이너 재생성에 불변이라
+    이것을 1순위로 쓴다 → 파일명 고정. HOSTNAME 은 최후 폴백.
+    """
+    monkeypatch.setenv("HOSTNAME", "container-abc123")
+    monkeypatch.delenv("AGENT_WORKER_ROLE", raising=False)
+    monkeypatch.setenv("AGENT_SESSION", "insight_worker")
+    assert rb._worker_role_default() == "insight_worker"
+    t1 = rb.flush_snapshot(directory=str(tmp_path))
+    monkeypatch.setenv("HOSTNAME", "container-xyz789")     # 재배포 시뮬레이션
+    t2 = rb.flush_snapshot(directory=str(tmp_path))
+    assert t1 == t2, "재배포(HOSTNAME 변경) 후에도 같은 파일에 써야 한다"
+    assert len(list(tmp_path.glob("worker-resources-*.json"))) == 1
+
+
+def test_role_default_env_precedence(snap, monkeypatch):
+    monkeypatch.setenv("HOSTNAME", "h")
+    monkeypatch.setenv("AGENT_SESSION", "s")
+    monkeypatch.setenv("AGENT_WORKER_ROLE", "explicit")
+    assert rb._worker_role_default() == "explicit"        # 명시 override 최우선
+    monkeypatch.delenv("AGENT_WORKER_ROLE")
+    assert rb._worker_role_default() == "s"
+    monkeypatch.delenv("AGENT_SESSION")
+    assert rb._worker_role_default() == "h"               # 최후 폴백
+
+
+def test_flush_reaps_dead_worker_snapshots(snap, monkeypatch, tmp_path):
+    """오래 갱신되지 않은 남의 스냅샷은 회수한다 — 유령 워커가 표시 상한을 잠식하지 않게."""
+    import os
+    import time
+    monkeypatch.setenv("AGENT_SESSION", "insight_worker")
+    dead = tmp_path / "worker-resources-dead-container.json"
+    dead.write_text("{}", encoding="utf-8")
+    old = time.time() - (rb._SNAPSHOT_REAP_SEC + 60)
+    os.utime(dead, (old, old))
+    fresh = tmp_path / "worker-resources-ask_worker.json"
+    fresh.write_text("{}", encoding="utf-8")              # 최근 갱신 — 살아 있는 워커
+    rb.flush_snapshot(directory=str(tmp_path))
+    assert not dead.exists(), "죽은 워커 스냅샷이 회수되지 않았다"
+    assert fresh.exists(), "살아 있는 워커 스냅샷을 지웠다"
+    assert (tmp_path / "worker-resources-insight_worker.json").exists()
+
+
+def test_reap_never_removes_own_snapshot(snap, monkeypatch, tmp_path):
+    """자기 파일은 mtime 이 오래돼도 지우지 않는다(방금 쓴 것이라 논리적으로 불가하지만 방어)."""
+    import os
+    import time
+    monkeypatch.setenv("AGENT_SESSION", "solo_worker")
+    target = rb.flush_snapshot(directory=str(tmp_path))
+    old = time.time() - (rb._SNAPSHOT_REAP_SEC + 60)
+    os.utime(target, (old, old))
+    assert rb._reap_stale_snapshots(str(tmp_path), target) == 0
+    assert os.path.exists(target)
+
+
+def test_reap_skips_symlinks(snap, monkeypatch, tmp_path):
+    """공유 볼륨의 symlink 는 따라가지 않는다 — 타 주체가 만든 링크로 임의 파일을 지우지 않게."""
+    import os
+    import time
+    outside = tmp_path.parent / "t0c-outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    link = tmp_path / "worker-resources-link.json"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink 미지원 환경")
+    old = time.time() - (rb._SNAPSHOT_REAP_SEC + 60)
+    os.utime(outside, (old, old))
+    rb._reap_stale_snapshots(str(tmp_path), str(tmp_path / "keep.json"))
+    assert outside.exists(), "symlink 를 따라 바깥 파일을 지웠다"
+
+def test_reap_threshold_is_conservative(snap):
+    """회수 임계는 정당한 장기 pause 를 오판하지 않을 만큼 보수적이어야 한다(codex P2).
+
+    오판 삭제는 살아 있는 워커를 콘솔에서 지우고, 회수 지연은 유령 1줄이 더 남을 뿐이라 비대칭이다.
+    """
+    assert rb._SNAPSHOT_REAP_SEC >= 7 * 24 * 3600

@@ -73,3 +73,26 @@ source_of_truth: true
   self-deadlock 없음 / 기본값 byte-equivalence.
 - Artifact: (본 index entry 가 findings 전문을 담는다 — codex 출력 4항목이 위 ①~④ 와 1:1)
 - Human Approval Needed: no (PLAN-APPROVED 범위 · 배포는 deploy_scope: included)
+
+## REV-20260730T152000-ai-claude-feature-0025-worker-snapshot-identity [CODEX:worker-snapshot-identity] — PASS
+- Related TASK: feature-0025-worker-parallelism (T0c 스냅샷 identity 안정화 — T0b 결함 수정)
+- Source: codex exec 0.146.0 (`-s read-only`, `model_reasoning_effort=high`, 대상 `git diff --cached`)
+- Trigger: performance/성능 keyword + 파일 삭제 경로 신설(qa 렌즈). 채널 근거 = AGENTS.md §18.8.2.
+- Timestamp: 2026-07-30T15:35:00+09:00
+- Verdict: PASS (P1 0 · P2 2 전건 in-cycle 수정)
+- Findings:
+  ① **P2 reaper TOCTOU/mtime 오판** — 24h 임계가 정당한 장기 pause 워커를 죽은 것으로 오판할 수
+     있고, `stat` 후 그 워커가 되살아나 `os.replace` 하면 최신 파일을 지우는 race 가 있다.
+     → 임계를 **7일**로 상향(오판 삭제 vs 회수 지연의 **비대칭** — 전자는 살아 있는 워커를 콘솔에서
+     지우고 후자는 유령 1줄이 더 남을 뿐) + **unlink 직전 mtime 재확인**으로 TOCTOU 창 축소.
+     완전 제거는 불가하지만(원자 조건부 삭제 없음) 삭제돼도 다음 flush 가 재생성해 **자기복구**
+     되므로 최악이 "한 주기 표시 누락" 이다. clock skew 는 이 배치에선 무효 — 모든 워커가 같은
+     호스트 볼륨에 쓰므로 mtime 이 단일 파일시스템 시계다(주석 명시).
+  ② **P2 mtime 동률 시 비결정적** — tie-break 가 없어 `glob` 순서에 따라 상한 밖 파일이 달라진다.
+     → `key=(-mtime, path)` 결정적 정렬 + 동률 3파일 반복 호출 단정.
+- Clean 판정(codex): **identity OK** — compose 실측으로 `insight_worker`(`docker-compose.yml:366`)·
+  `ask_worker`(`:414`) 가 서로 다름을 확인(같은 값이면 서로의 스냅샷을 덮어썼을 것). **fail-open OK** —
+  flush·reaper·worker tick·콘솔 파일 처리 전 경로에서 예외 흡수.
+- 잔여(수용): 외부에서 같은 서비스를 `scale` 하면 복제본이 같은 `AGENT_SESSION` 을 공유해 스냅샷을
+  덮어쓴다. 현 배치는 워커를 scale 하지 않으며, 필요해지면 `AGENT_WORKER_ROLE` 명시 주입으로 해소한다.
+- Human Approval Needed: no

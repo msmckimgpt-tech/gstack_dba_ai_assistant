@@ -175,3 +175,38 @@ def test_bool_values_are_not_counted_as_numbers(res_dir):
     assert w["resources"]["llm"]["peak"] == 0      # bool → 0
     assert "pg_conns" not in w["conns"]            # bool 은 카운터 아님
     assert w["conns"]["ds_conns"] == 4
+
+def test_newest_snapshots_win_when_capped(res_dir):
+    """★회귀: 표시 상한에 도달해도 **최신 워커가 남는다**(mtime DESC).
+
+    파일명 사전순이면 어느 것이 잘릴지 예측 불가라, 유령 스냅샷이 살아 있는 워커를 밀어낼 수 있다
+    (T0c — 라이브에서 스냅샷이 실제로 누적됐다).
+    """
+    import os
+    import time
+    now = time.time()
+    # 사전순으로는 앞서지만 오래된 파일들 + 사전순 뒤이지만 최신인 파일 1개
+    for i in range(ai_ops._WORKER_RES_MAX_FILES + 2):
+        p = res_dir / f"worker-resources-aa{i:02d}.json"
+        _write(p, role=f"old{i}")
+        os.utime(p, (now - 9000 - i, now - 9000 - i))
+    newest = res_dir / "worker-resources-zz-current.json"
+    _write(newest, role="current")
+    os.utime(newest, (now, now))
+    out = ai_ops._worker_resources()
+    roles = [w["role"] for w in out["workers"]]
+    assert "current" in roles, "최신 스냅샷이 상한에 밀려 잘렸다"
+    assert len(roles) == ai_ops._WORKER_RES_MAX_FILES
+
+def test_equal_mtime_ordering_is_deterministic(res_dir):
+    """mtime 동률이면 경로 오름차순 — tie-break 가 없으면 상한 밖 파일이 실행마다 달라진다(codex P2)."""
+    import os
+    import time
+    now = time.time()
+    for name in ("cc", "aa", "bb"):
+        p = res_dir / f"worker-resources-{name}.json"
+        _write(p, role=name)
+        os.utime(p, (now, now))
+    first = [w["role"] for w in ai_ops._worker_resources()["workers"]]
+    second = [w["role"] for w in ai_ops._worker_resources()["workers"]]
+    assert first == second == ["aa", "bb", "cc"], "동률 정렬이 비결정적이다"
