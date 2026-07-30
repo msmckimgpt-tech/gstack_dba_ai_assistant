@@ -751,3 +751,14 @@ source_of_truth: true
 - Timestamp: 2026-07-30T16:00:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260730T175000-embed-throughput [SKIPPED:non-policy-doc] — 튜너블 상향(Minor)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 변경은 config 기본값 1개 + knob 미러 1개. 스키마·엔드포인트·인가·응답 shape 불변이며 판단 여지가
+  없다. 회귀 방어는 "시간당 상한 ≥ 실측 용량" 계약 테스트로 직접 잠금(주기 상쇄까지 커버).
+- **미커버 정직 표기**: 상향 후 실처리량이 실제로 용량에 수렴하는지는 **배포 후 관측**(E.4)이다. 또한
+  1000행 pass 가 ~70s 라는 추정은 100건 배치 7.06s 의 선형 외삽이며, 배치 크기에 따른 비선형(메모리·
+  컨텍스트) 효과는 측정하지 않았다 — 수렴하지 않으면 E.4 에서 재조정한다.
+- Timestamp: 2026-07-30T17:50:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no

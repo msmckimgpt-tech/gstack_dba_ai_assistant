@@ -4041,3 +4041,38 @@ routine: cc_pyron.sp_GetMailList() | params: @CharacterID… | touches: read cc_
       `make test` **3191 passed / 3 skipped / 0 failed** · ruff clean.
 - [ ] M.6 배포 후 라이브 확인 — 게이트웨이가 `claude-haiku-4-meta` 를 서빙하고 이후 `llm_usage` 의
       `cluster_label`·`node_analysis` model 이 그 별칭으로 기록되는지.
+
+## 20260730T1750-embed-throughput — 병목이 백필→임베딩 워커 스로틀로 이동, 마저 해소 (2026-07-30)
+
+### 맥락
+`sig-backfill-sweep`(정렬 ASC + 캡 2000)으로 시그니처 재작성이 살아나자 **병목이 다음 계층으로 이동**했다.
+사용자 질문("처리 속도의 병목을 해소할 수 있을까요")의 잔여분이다.
+
+### 요청 범위 (Requested Scope, §16.7 G1)
+- [x] E1 이동한 병목 식별 — 산출물: 임베딩 워커 스로틀 실측
+- [x] E2 해소 — 산출물: pass 당 행수 100→1000 (+ knob 미러·상한)
+
+### 진단 (라이브 실측)
+| 항목 | 값 |
+|---|---|
+| 임베딩 지속 용량(로컬 bge-m3, 단일 코어) | **42,657건/h** |
+| 워커 설정 상한(100행 × 60초) | **6,000건/h** |
+| 실처리 | **900건/10분 = 5,400건/h** → **86% 유휴** |
+| 잔여 큐 | 25,196건 → 이 상태로 **약 4.2시간** |
+
+`AGENT_KB_EMBEDDING_BATCH_MAX_ROWS=100` 이 용량의 1/7 로 묶고 있었다. 평시(백로그 0)에는 `fetch 0건
+cheap no-op` 이라 이 캡이 드러나지 않았고, **전수 재계산이라는 대량 유입에서만** 병목으로 노출됐다.
+
+### 처리
+- [x] E.1 `AGENT_KB_EMBEDDING_BATCH_MAX_ROWS` 100 → **1000**(+ 관리 콘솔 knob 기본값·상한 2000→20000).
+      1000행이면 pass 가 ~70s(10 서브배치 × 7.06s)로 interval(60s)을 넘겨 **사실상 연속 처리 = 용량 수렴**.
+      백로그 0 이면 no-op 이므로 **평시 부하 증가 0**.
+- [x] E.2 회귀 잠금 — `test_embedding_backfill_cap_matches_measured_capacity`: 단순 캡 값이 아니라
+      **시간당 상한(캡 ÷ 주기)이 실측 용량 이상**인지 단정(주기를 함께 늘려 상향이 상쇄되는 것도 잡는다).
+- [x] E.3 `make test` **3287 passed / 3 skipped / 0 failed** · ruff clean.
+- [ ] E.4 배포 후 실처리량이 용량에 수렴하는지 실측 + 드레인 완료 시각 확인.
+
+### 부하 판단
+증가분은 **호스트 단일 코어의 점유율**뿐이다(로컬 bge-m3, 외부 API·과금 없음 — 귀속 정정 참조).
+20코어 중 1개를 백로그 소진 동안 더 쓰는 것이고, 소진 후 자동으로 유휴 복귀한다. PG 는 배치 fetch/UPDATE
+가 커지지만 pass 빈도는 동일하다(활성세션 2/150 관측).

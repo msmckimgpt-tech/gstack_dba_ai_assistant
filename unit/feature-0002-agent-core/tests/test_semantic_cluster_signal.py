@@ -306,3 +306,16 @@ def test_sig_batch_cap_raised_for_full_sweep():
     """임베딩 용량(실측 51,000건/h)이 남는데 백필 캡이 제한 지점이었다 — 캡 상향을 잠근다."""
     from shared import config as _c
     assert _c.AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS >= 2000
+
+
+def test_embedding_backfill_cap_matches_measured_capacity():
+    """embed-throughput(2026-07-30): 워커 스로틀이 임베딩 용량을 묶지 않아야 한다.
+
+    라이브 실측: 지속 용량 42,657건/h(로컬 bge-m3 단일 코어)인데 100행/60초 = 6,000건/h 로 묶여
+    86% 유휴였고, 시그니처 전수 재계산에서 백필이 임베딩을 앞지르자 즉시 병목이 됐다(잔여 25,196건
+    → 4.2h). pass 당 행수를 올려 용량에 수렴시킨다. 백로그 0 이면 fetch 0건 no-op 이라 평시 부하 증가 없음."""
+    from shared import config as _c
+    assert _c.AGENT_KB_EMBEDDING_BATCH_MAX_ROWS >= 1000
+    # 주기를 함께 늘리면 상향 효과가 상쇄된다 — 시간당 상한이 용량 이상인지로 검증.
+    per_hour = _c.AGENT_KB_EMBEDDING_BATCH_MAX_ROWS * (3600.0 / max(1, _c.AGENT_KB_EMBEDDING_INTERVAL_SEC))
+    assert per_hour >= 42000, f"시간당 상한 {per_hour:.0f} < 실측 용량 42,657 — 스로틀이 여전히 병목"

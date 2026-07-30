@@ -818,7 +818,12 @@ AGENT_KB_HYBRID_TRIGRAM_FLOOR = float(os.getenv("AGENT_KB_HYBRID_TRIGRAM_FLOOR",
 #   AUTO=0 → 비활성(수동 백필만). BATCH_MAX_ROWS → pass 당 행수(≈ embedding 호출 1~2배치).
 #   INTERVAL_SEC → pass 사이 sleep. 백로그 없으면 fetch 0건 cheap no-op.
 AGENT_KB_EMBEDDING_AUTO = os.getenv("AGENT_KB_EMBEDDING_AUTO", "1").strip().lower() in ("1", "true", "yes")
-AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "100") or "100")
+# embed-throughput(2026-07-30): 100→1000. 라이브 실측으로 **워커 스로틀이 유일한 제한 지점**임을 확인 —
+#   임베딩 지속 용량 42,657건/h(100건 배치 7.06s, 로컬 bge-m3 단일 코어)인데 100행/60초 설정이
+#   6,000건/h 로 묶어 **86% 유휴**였다(실측 900건/10분). 시그니처 전수 재계산(48,226건)에서 백필이
+#   임베딩을 앞지르자 이 캡이 곧바로 병목이 됐다. 1000행이면 pass 가 ~70s(10 서브배치)로 interval 을
+#   넘겨 사실상 연속 처리 = 용량에 수렴한다. 백로그가 없으면 fetch 0건 cheap no-op 이므로 평시 부하 증가 0.
+AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "1000") or "1000")
 AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC", "60") or "60")
 # feature-0016 Phase C (ADR-013 후속, semantic-embed): 메타데이터 객체(테이블) 시그니처 임베딩 → scope 별
 # 의미 클러스터링. embedding 자체는 기존 embedding 데몬(위 AGENT_KB_EMBEDDING_*)이 texts 를 임베딩하므로
