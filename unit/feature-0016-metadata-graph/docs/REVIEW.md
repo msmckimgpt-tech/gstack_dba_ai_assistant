@@ -817,3 +817,16 @@ source_of_truth: true
 바꾸고 계약을 "요청당 작업량 × 4 ≤ 타임아웃" 으로 재정의했다. 리뷰가 확인한 3개 질문(무한 정체 없음·
 계약 정합·버스트 축소의 유효성)의 결론은 변경 후에도 유지된다: max_attempts=3 유계 · 새 계약도
 config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 총 처리량 손실 없이(선형) 여유만 늘린다.
+
+## REV-20260730T220000-cluster-outcome [SKIPPED:docs-evidence-only] — PASS
+
+- Reason: 변경 경로가 **문서·테스트 Run 기록 전용**(실행 코드 0줄, 정책 문서 미포함). 이번 cycle 이
+  기록하는 대상 코드의 적대 검증은 이미 완료됐다 — 클러스터링 로직은
+  `REV-20260730T124000-cluster-signal-repair [CODEX:cluster-signature+bridge]`,
+  프론트 하이라이트/집계선은 `REV-20260730T113000-content-cluster-cohesion [CODEX:...]`,
+  임베딩 파이프라인은 `REV-20260730T211000-embed-congestion-fix [CODEX:embedding-timeout+burst]`
+  가 담당했고 모두 main 머지·배포됐다.
+- 본 cycle 이 새로 주장하는 것은 **라이브 관측 사실**이며, 그 근거는 재현 가능한 형태로 남겼다:
+  씬 객체 수 변화(1478↔1466) · 스크린샷 픽셀 diff bbox · SQL 집계 쿼리 전문.
+- 자가 적대 점검에서 잡아 정정한 것 2건: ① 검색 모드 강제 펼침을 결함으로 오판할 뻔한 것(코드 확인으로
+  반증) ② 밴드 집계 키 오류(기존 기준선 177쌍과 자릿수 불일치가 단서).
