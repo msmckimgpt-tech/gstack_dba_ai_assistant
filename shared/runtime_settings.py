@@ -1132,6 +1132,17 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
     #   부하는 위 `AGENT_WORKER_DS_BUDGET` 게이트 위에서 나며, 첫 접촉은 카탈로그만 읽어
     #   사용자 테이블 read 가 0 이다. 아래 두 상한이 "얼마나 깊이 파는가"를 정한다.
     {
+        "key": "AGENT_CLUSTER_SUMMARY_GROUNDING",
+        "category": "자원 격리·관측",
+        "label": "묶음 요약을 답변에 참고시키기",
+        "description": "질문에 나온 테이블이 속한 묶음의 요약을 답변 근거에 함께 넣습니다. 개별 테이블 설명만으로는 알기 어려운 도메인 맥락(어떤 묶음의 일부인지, 조인 상대가 무엇인지)을 AI가 참고하게 됩니다. 미리 만들어 둔 요약만 쓰므로 답변이 느려지지 않습니다. 0 으로 내리면 주입이 멈춥니다.",
+        "unit": "",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
         "key": "AGENT_METADATA_CLUSTER_SUMMARY",
         "category": "자원 격리·관측",
         "label": "클러스터 요약 생성 사용",

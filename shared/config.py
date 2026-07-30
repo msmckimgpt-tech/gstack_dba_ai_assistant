@@ -1418,6 +1418,12 @@ AGENT_BACKGROUND_LLM_TOKEN_CAP_24H = int(
 #  한다. 이 스위치가 그 층의 생성 여부를 정한다(0=정지). 비용은 pass 당 상한(_SUMMARY_MAX_PER_PASS)
 #  과 백그라운드 토큰 예산(feature-0032) 아래에 있다.
 AGENT_METADATA_CLUSTER_SUMMARY = int(os.getenv("AGENT_METADATA_CLUSTER_SUMMARY", "1"))
+
+# ── L2 요약의 대화 grounding 주입 (feature-0034-analysis-consumption, ITEM-09) ──
+#  분석 산출물이 관리 콘솔 열람에만 갇혀 있던 공백(RI-5)을 메운다. 질문이 언급한 테이블이 속한
+#  묶음의 요약 1~2건을 답변 컨텍스트에 붙인다. **사전 계산분만** 쓰며(런타임 합성 금지),
+#  0 으로 내리면 주입이 멈추고 답변은 종전 grounding 으로 진행한다.
+AGENT_CLUSTER_SUMMARY_GROUNDING = int(os.getenv("AGENT_CLUSTER_SUMMARY_GROUNDING", "1"))
 AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
 # LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
 # candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,
