@@ -278,3 +278,31 @@ def test_embedding_drain_pending_vetoes_both_triggers():
         def fetchone(self):
             return None
     assert sc._embedding_drain_pending(Boom(), "c", "d") is False, "예외 → 가드 없이 진행(fail-soft)"
+
+
+# ── S6: sig-backfill-sweep — 전수 재계산 정체 결함 회귀 잠금 ──────────────────
+def _order_clause(src, marker):
+    """소스에서 백필 ORDER BY 절을 추출(계약 검사 — 라이브 정체의 유일한 기계적 방어선)."""
+    i = src.index(marker)
+    return src[i:i + 400]
+
+
+def test_backfill_order_is_ascending_for_full_sweep():
+    """라이브 정체 회귀 잠금: `updated_at DESC` 는 **포맷 전수 재계산에서 영구 정체**를 만든다.
+
+    그 상황에선 hash NULL 행이 없어 1순위가 무력하고, 변환이 `updated_at=now()` 를 전진시키므로
+    DESC 는 방금 변환한 행을 다시 맨 앞에 놓아 같은 500행을 무한 재선택한다(실측 2026-07-30:
+    루틴 507→545 = +38 정지, 잔여 30,490 도달 불가). ASC 면 변환분이 큐 뒤로 가 단조 sweep 된다."""
+    import inspect
+    src = inspect.getsource(sc)
+    for marker in ("FROM rag_objects WHERE object_type = %s", "FROM routine_objects WHERE routine_name <> ''"):
+        assert marker in src
+    # 두 백필 경로 모두 ASC
+    assert src.count("updated_at ASC NULLS FIRST LIMIT %s") == 2, "테이블·루틴 양 경로 ASC"
+    assert "updated_at DESC NULLS LAST LIMIT %s" not in src, "DESC 정체 패턴 잔존 금지"
+
+
+def test_sig_batch_cap_raised_for_full_sweep():
+    """임베딩 용량(실측 51,000건/h)이 남는데 백필 캡이 제한 지점이었다 — 캡 상향을 잠근다."""
+    from shared import config as _c
+    assert _c.AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS >= 2000

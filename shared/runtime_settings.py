@@ -1019,7 +1019,7 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "label": "시그니처 백필 배치 크기",
         "description": "클러스터링 전 단계인 메타데이터 시그니처 임베딩 백필의 pass 당 최대 행수. 높이면 백필이 빨리 따라잡지만 임베딩 호출 부하가 커집니다.",
         "unit": "행",
-        "default": 500,
+        "default": 2000,
         "minimum": 50,
         "maximum": 5000,
         "apply_mode": "live",
