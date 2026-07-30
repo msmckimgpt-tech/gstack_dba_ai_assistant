@@ -1436,6 +1436,19 @@ def _process_pending_inner(max_nodes=None, conn=None) -> dict:
         _rb = None            # 부트스트랩 창(모듈 부재) — 게이트 없이 종전 동작
     if _rb is not None and not _rb.background_enabled():
         return rep
+    # feature-0032: 백그라운드 LLM 토큰 예산(rolling 24h). kill-switch 와 같은 자리에서 본다 —
+    #   신규 claim 을 막아야 "상한 도달 = 지출 정지" 가 성립한다. 조회 불가는 허용(fail-open).
+    try:
+        from shared import llm_budget as _lb
+    except Exception:
+        _lb = None
+    #   ⚠ PG 연결(`c`)은 아직 열리기 전이라 여기서 참조하면 NameError 다 — 호출측이 준 `conn`
+    #     을 넘기고, 없으면 `llm_budget` 이 자체 RO 연결로 조회한다(60초 캐시라 tick 당 부담 없음).
+    if _lb is not None and not _lb.allowed(conn):
+        _log.info("노드 분석 보류 — 백그라운드 LLM 토큰 예산 소진(%s/%s, 24h)",
+                  _lb.spent(conn), _lb.cap())
+        rep["skipped"] = "llm_token_budget"
+        return rep
     if max_nodes is None:
         # feature-0025: tick 당 처리량을 관리 콘솔에서 live 조절(override 없으면 config 기본 10 = byte-동치).
         try:

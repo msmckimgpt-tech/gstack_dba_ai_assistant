@@ -1132,6 +1132,17 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
     #   부하는 위 `AGENT_WORKER_DS_BUDGET` 게이트 위에서 나며, 첫 접촉은 카탈로그만 읽어
     #   사용자 테이블 read 가 0 이다. 아래 두 상한이 "얼마나 깊이 파는가"를 정한다.
     {
+        "key": "AGENT_BACKGROUND_LLM_TOKEN_CAP_24H",
+        "category": "자원 격리·관측",
+        "label": "백그라운드 LLM 토큰 상한(24시간)",
+        "description": "사람이 요청하지 않은 자동 분석·요약·분류가 최근 24시간 동안 쓸 수 있는 토큰 총량입니다. 넘어서면 새 백그라운드 작업이 다음 주기로 밀립니다(진행 중 작업은 끝까지 갑니다). 대화 답변처럼 사용자가 기다리는 호출은 이 상한과 무관하게 항상 나갑니다. 0 으로 두면 상한 없음.",
+        "unit": "토큰",
+        "default": 20000000,
+        "minimum": 0,
+        "maximum": 500000000,
+        "apply_mode": "live",
+    },
+    {
         "key": "AGENT_METADATA_STATS_ENABLED",
         "category": "자원 격리·관측",
         "label": "분석 증거 수집 사용",

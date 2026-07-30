@@ -56,7 +56,8 @@ ITEM-03 ─┘  (T0 자원)     (L0 증거)   (L1 주입)   (thin 재정의)
 |---|---|---|---|
 | T0 | ITEM-01·02·03 | 순차 | (없음) |
 | T1 | ITEM-04·05·06 | 순차(한 cycle) | T0 done |
-| T2 | ITEM-07·08·09 | 07→08 순차, 09 병렬 | ITEM-05 done + 일일 토큰 cap 재평가(§4) |
+| T1.5 | ITEM-12 | — | (없음) — T2 게이트 |
+| T2 | ITEM-07·08·09 | 07→08 순차, 09 병렬 | ITEM-05 done + ITEM-12 done |
 | T3 | ITEM-10·11 | 병렬 | ITEM-05 done |
 
 Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이 충족되면 후행 Phase 항목도 ready 다.
@@ -115,7 +116,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **notes**: PR #1082 머지·`make deploy-all` 완료(2026-07-30).
 
 ### ITEM-04 · L0 증거 수집층 (통계 전용, 원시 샘플값 배제)
-- **status**: in-progress
+- **status**: done
 - **feature_id**: feature-0031-analysis-grounding
 - **dimension**: structural
 - **risk_grade**: Major
@@ -149,7 +150,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
   "모든 트랙 완주까지 진행"). 배포 scope: 워커.
 
 ### ITEM-05 · L1 payload 증거 주입 + 프롬프트 완화
-- **status**: in-progress
+- **status**: done
 - **feature_id**: feature-0031-analysis-grounding
 - **dimension**: functional
 - **risk_grade**: Minor
@@ -170,7 +171,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **notes**: 프롬프트 계약 변경이므로 `docs/` LLM 계약 문서 동반 갱신.
 
 ### ITEM-06 · thin 판정 재정의 (길이 → 항목 충족도)
-- **status**: in-progress
+- **status**: done
 - **feature_id**: feature-0031-analysis-grounding
 - **dimension**: functional
 - **risk_grade**: Minor
@@ -279,6 +280,32 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **acceptance**: 상위 우선순위 노드가 실제 대화에서 참조되는 테이블과 상관 ≥ 현행
 - **effort**: 中
 
+### ITEM-12 · 백그라운드 LLM 토큰 예산
+- **status**: in-progress
+- **feature_id**: feature-0032-llm-token-budget
+- **dimension**: operational
+- **risk_grade**: Major
+- **depends_on**: []
+- **enables**: [ITEM-07, ITEM-08]
+- **why**: §4 의 "T2 진입 전 필수" 항목을 실측으로 확정했다. `TODOS.md` P3 의 종결 근거
+  ("100% edge → 과금 없음")가 반전됐다 — 7일 Anthropic 8,654콜/55,567,176 토큰 vs edge 25콜
+  (과금 lane 99.7%). 그중 사람 confirm 없는 백그라운드가 약 2,600만 토큰/7일인데 상한이 없었다.
+  T2 는 여기에 L2 요약을 더 얹는 트랙이라 상한 없는 자동 지출을 늘리는 방향이다.
+- **fit_verdict**: adopt-with-guard (guard: 사용자 요청 경로 완전 제외 · fail-open 3중)
+- **what**: `shared/llm_budget.py` — `agent_runtime.llm_usage` 기반 rolling 24h 백그라운드 토큰
+  집계 + 백그라운드 진입점 3곳 게이트 + 콘솔 현황·attention. circuit-breaker 는 신규 구현하지
+  않는다(`llm_provider_health` 가 429/401 축을 이미 담당).
+- **entry_points**: `shared/llm_budget.py` · `node_analysis._process_pending_inner`(claim 전) ·
+  `semantic_cluster.run_cluster_maintenance` · `product_classify.run_classify_pass` ·
+  `routers/ai_ops.py` · `static/admin.js`
+- **acceptance**: (a) 사용자 요청 경로가 집계·차단 양쪽에서 제외됨을 **집계 SQL 파라미터 검사**로
+  단정, (b) fail-open 3중(상한 0·조회 실패·모듈 부재), (c) 소진 시 본체 미실행 + 정직한 skip 사유,
+  (d) 콘솔이 실제로 렌더(응답 필드 존재 ≠ 노출), (e) 라이브에서 상한을 낮춰 게이트 실동작 관측
+  하되 같은 창에서 대화 답변이 정상일 것
+- **guards**: 기본 상한 2,000만 = 24h 실측(685만)의 약 3배 → 배포 시 정상 운영 무영향
+- **effort**: 中
+- **notes**: 게이트 커버리지 96%(진입점 3곳). 나머지는 계량되지만 차단되지 않음 — ADR-0032-05.
+
 ## 4. 보류·기각 (재논의 방지)
 
 | finding | verdict | 사유 |
@@ -289,13 +316,13 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 | 워커 자원 PG 테이블 | **보류** | 공유 볼륨 파일로 충분(마이그레이션·라우트 0). 워커·web 이 분리 배치되면 재검토 |
 | L2 를 `_llm_content_labels` 확장으로 | **기각** | 32자 라벨 계약이라 요약기가 아니다 — 신규 저장 계약 필요(codex P1) |
 | L1 전량 확대(+15,000콜) | **보류** | 중요도 상위 + lazy 로 두고 전역 이해는 L2/L3 가 담당(LazyGraphRAG 교훈) |
-| **일일 토큰 cap 재평가** | **T2 진입 전 필수** | `TODOS.md:39-41` 의 "라이브 100% edge(로컬 Ollama) → per-token 과금 없음 → cap 가치 0" 전제가 무너졌다(실측: node_analysis 10,620콜/월이 haiku). 과금 전제가 바뀐 상태에서 LLM 콜을 늘리므로 cap 또는 circuit-breaker 를 먼저 판단 |
+| **일일 토큰 cap 재평가** | **완료 → ITEM-12 신설** | 실측으로 전제 반전 확정(7일 Anthropic 8,654콜/55,567,176 토큰 vs edge 25콜 = 과금 lane 99.7%). cap 은 ITEM-12 로 구현, circuit-breaker 는 `llm_provider_health` 가 이미 담당하므로 신규 구현 안 함 |
 | 원시 샘플값 수집 | **기각** | 사용자 확정(2026-07-30) — PII 표면 제거. 문자열 극단값(min/max)도 실질 원시값이라 함께 배제, 길이 분포 + 패턴 클래스로 대체 |
 
 ## 5. 진행 현황 (improve_cycle 갱신)
 
-- 총 11 · done 3 · in-progress 3 · pending 5 · blocked 0
-- 다음 ready: ITEM-04 (feature-0031-analysis-grounding, 진행 중)
+- 총 12 · done 6 · in-progress 1 · pending 5 · blocked 0
+- 다음 ready: ITEM-07 (ITEM-12 머지 후)
 
 ## 6. 이 initiative 에서 확립된 운영 규약
 

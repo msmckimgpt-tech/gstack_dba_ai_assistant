@@ -1801,6 +1801,16 @@ def run_cluster_maintenance(conn=None) -> dict:
     if not _rb_cm.background_enabled():
         return {"signature": None, "scopes": 0, "clustered": 0, "updated": 0,
                 "skipped": "background_disabled"}
+    # feature-0032: 백그라운드 LLM 토큰 예산(rolling 24h) — 라벨 LLM 이 이 pass 의 지출원이다.
+    try:
+        from shared import llm_budget as _lb_cm
+        if not _lb_cm.allowed():
+            _log.info("semantic_cluster pass 보류 — 백그라운드 LLM 토큰 예산 소진(%s/%s, 24h)",
+                      _lb_cm.spent(), _lb_cm.cap())
+            return {"signature": None, "scopes": 0, "clustered": 0, "updated": 0,
+                    "skipped": "llm_token_budget"}
+    except Exception:
+        pass   # 예산 모듈 부재·조회 실패는 종전 동작(fail-open)
     with _rb_cm.acquire("task") as _ok:
         if not _ok:
             _log.info("semantic_cluster pass 보류 — 동시 진행 백그라운드 작업 예산 여유 없음")
