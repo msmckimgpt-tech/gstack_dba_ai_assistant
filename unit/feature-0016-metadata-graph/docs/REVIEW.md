@@ -704,3 +704,18 @@ source_of_truth: true
 - **브릿지 min_frac 0.5 는 라이브 튜닝 미완**: 과반 + 서로 다른 테이블 2개 이상으로 보수적으로 잡았으나,
   실제 분포에서의 적정값은 드레인 후 관측 대상이다.
 - Human Approval Needed: no
+
+## REV-20260730T150000-sig-backfill-sweep [SKIPPED:non-policy-doc] — 정렬·캡 조정(Minor)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 변경은 백필 SELECT 정렬 2곳 + 튜너블 기본값 2곳(config·knob 미러)이며 스키마·엔드포인트·인가·응답
+  shape 불변. §18.8 dispatch 표의 code-change 행에 해당하나 **결함의 성격이 "SQL 정렬 한 줄"** 이고 회귀
+  방어는 기계적 계약 테스트(DESC 패턴 잔존 금지)로 직접 잠금 가능해, 같은 cycle 의 상위 변경에 대한
+  codex 적대 검증(REV-20260730T124000)이 이미 백필 경로를 판독한 상태에서 중복 패널을 열지 않았다.
+- 근거 실측: 임베딩 100건 7.06s(51,000건/h) · 큐 909→67 유휴 · 루틴 신포맷 +38 정지 → 병목이 정렬임을 확정.
+- **미커버 정직 표기**: 캡 4배 상향(500→2000)의 PG·gateway 실부하는 **배포 후 관측 대상**(W.4)이다.
+  8,000건/h 는 임베딩 용량(51,000/h)의 16% 이나, PG 백필 SELECT/UPDATE 와 (ds,eff) 역인덱스 스캔이
+  4배가 되므로 pgbouncer 풀 압박을 배포 후 확인해야 한다(선례: §82 graph-sync 겹침이 풀 소진으로 전역
+  장애를 낸 적 있음 — 그때는 무가드 중복 실행이 원인이고 본 변경은 단일 스레드 순차 pass 다).
+- Timestamp: 2026-07-30T15:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no

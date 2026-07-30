@@ -358,12 +358,20 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
         limit = ""
         args = ["table"]
         if max_rows and int(max_rows) > 0:
-            # §55 D(REQ-20260706 ④) 정체 근본수정: 기존 `updated_at DESC LIMIT N` 은 **미처리
-            # (hash NULL) 행을 우선하지 않아**, 이미 처리된 최신 N 행을 매 pass 재스캔·no-op 하며
-            # 백로그가 영구 미소진됐다(라이브 실측 2026-07-06: 16,023 중 497=3% 에서 정체).
-            # 미처리 행 우선 + 그 다음 최근 변경분(설명·분석 갱신 시 updated_at 전진 → 변경감지 재계산) 순.
+            # §55 D(REQ-20260706 ④) 정체 근본수정 1차: 미처리(hash NULL) 행을 우선한다.
+            # sig-backfill-sweep(2026-07-30, 라이브 실측) 2차: 2순위를 **`updated_at ASC`** 로 뒤집는다.
+            #   `DESC` 는 **시그니처 포맷 자체가 바뀐 전수 재계산**에서 영구 정체를 만든다 — 그 상황에서는
+            #   hash NULL 행이 하나도 없어(전 행이 구포맷 hash 보유) 1순위가 무력하고, 2순위 `DESC` 가
+            #   "가장 최근 갱신" 을 고른다. 그런데 행을 변환하면 `updated_at = now()` 로 전진하므로
+            #   **방금 변환한 행이 다시 맨 앞**이 되고, 다음 pass 는 같은 행을 재선택해 no-op 한다.
+            #   실측(2026-07-30 배포 후 35분): 신포맷 테이블 501→955 · **루틴 507→545(+38 = 사실상 정지)**,
+            #   잔여 46,726 건은 어떤 pass 로도 도달 불가였다.
+            #   `ASC` 면 변환된 행이 큐 **맨 뒤**로 가므로 매 pass 가 반드시 미변환 행을 집어 전수 sweep 이
+            #   단조 진행한다(현행 스캔 = 오래된 것부터, 자연스러운 백필 의미론과도 정합).
+            #   ⚠ 분석·설명 갱신분 재계산은 이 정렬이 아니라 아래 `fresh_ids` 표적 선별(M1)이 담당한다 —
+            #   그 경로는 `j.updated_at > o.updated_at` 비교라 정렬과 무관하게 성립한다.
             limit = (" ORDER BY (signature_text_hash IS NULL OR signature_text_hash = '') DESC, "
-                     "updated_at DESC NULLS LAST LIMIT %s")
+                     "updated_at ASC NULLS FIRST LIMIT %s")
             args.append(int(max_rows))
         cur.execute(
             "SELECT id, scope_key, datasource_key, schema_name, table_name, object_key, "
@@ -495,8 +503,10 @@ def _routine_signature_backfill(cur, rep, max_rows) -> None:
         limit = ""
         args = []
         if max_rows and int(max_rows) > 0:
+            # sig-backfill-sweep: 테이블 패스와 동형 — `ASC` 로 뒤집어 전수 sweep 단조 진행
+            #   (상세 근거는 테이블 패스 주석). 루틴이 +38 로 정지한 실측이 이 경로였다.
             limit = (" ORDER BY (signature_text_hash IS NULL OR signature_text_hash = '') DESC, "
-                     "updated_at DESC NULLS LAST LIMIT %s")
+                     "updated_at ASC NULLS FIRST LIMIT %s")
             args.append(int(max_rows))
         cur.execute(
             "SELECT id, scope_key, datasource_key, schema_name, routine_name, routine_type, "

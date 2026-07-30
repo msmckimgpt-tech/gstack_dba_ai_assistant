@@ -3921,3 +3921,50 @@ routine: cc_pyron.sp_GetMailList() | params: @CharacterID… | touches: read cc_
 `_embedding_drain_pending` 가 재클러스터를 **두 트리거 모두** veto 해 부분 공간 flap 이 없다.
 롤백: `MERGE_MARGIN=0`(적응형 해제) + `BRIDGE_MIN_FRAC=0`(브릿지 해제)로 판정 로직은 즉시 되돌릴 수
 있으나, **시그니처 포맷 자체는 되돌리면 또 한 번의 전수 재임베딩**이 필요하다(포맷은 코드 revert 로만).
+
+## 20260730T1500-sig-backfill-sweep — 시그니처 전수 재계산이 영구 정체하던 선택-순서 결함 (2026-07-30, 사용자 질문 발단)
+
+### 맥락 (사용자)
+> 처리 속도의 병목을 해소할 수 있을까요? 아니면, 해당 작업이 다른 연결된 데이터소스에 부하를 주는 작업인가요?
+
+### 요청 범위 (Requested Scope, §16.7 G1)
+- [x] W1 처리 속도 병목의 실제 위치 규명 — 산출물: 3계층 실측(임베딩 용량·큐·백필 정렬)
+- [x] W2 병목 해소 — 산출물: 백필 정렬 ASC 전환 + 배치 캡 상향
+- [x] W3 연결된 데이터소스 부하 여부 답변 — 산출물: 아래 「부하 경로」 실측 결론
+
+### 진단 — 병목은 임베딩도 데이터소스도 아니었다
+
+| 계층 | 실측 | 판정 |
+|---|---|---|
+| 임베딩 API(bedrock-gateway titan-embed) | 100건 배치 **7.06초** → **≈51,000건/h** 용량 | 병목 아님 |
+| 임베딩 대기 큐 | 909 → **67** (최근 15분 임베딩 **0**) | **유휴** — 소비가 공급을 앞지름 |
+| 시그니처 백필 | 배포 후 35분간 신포맷 1,008 → 1,500. **루틴 507 → 545(+38 = 정지)** | **진짜 제한 지점** |
+
+**근인 — `ORDER BY … updated_at DESC` 의 자기-역행**: 백필은 `(hash NULL 우선, updated_at DESC)` 로
+행을 고른다. **시그니처 포맷 자체가 바뀐 전수 재계산**에서는 hash NULL 행이 **하나도 없어**(전 행이
+구포맷 hash 보유) 1순위가 무력하고, 2순위 `DESC` 가 "가장 최근 갱신" 을 고른다. 그런데 행을 변환하면
+`updated_at = now()` 로 전진하므로 **방금 변환한 행이 다시 맨 앞**이 되고 다음 pass 는 같은 행을
+재선택해 no-op 한다 → 잔여 46,726건에 **어떤 pass 로도 도달할 수 없었다**(118시간이 아니라 미완료).
+
+§55 D 가 같은 계열의 정체를 고쳤지만 그 처방(미처리-우선)은 "hash NULL 이 존재" 를 전제했고, 포맷
+전수 변경에는 그 전제가 성립하지 않는다 — 이번이 그 사각이다.
+
+### 부하 경로 (W3 — 사용자 질문 직답)
+- **연결된 데이터소스(고객 MySQL/MSSQL)에는 부하 0.** 본 작업의 모든 읽기는 PG(`agent_kb`)다 —
+  `rag_objects`·`routine_objects`·`column_descriptions`·`table_relationships`·`node_analysis_jobs`·`texts`.
+  데이터소스 커넥션을 새로 열지 않는다(코드 경로에 datasource 접속이 없다).
+- 부하가 가는 곳은 ① **PG**(백필 SELECT/UPDATE + `build_used_by_index` 스캔 — (ds,eff) 당 1회로 유계)
+  ② **bedrock-gateway → AWS Bedrock**(임베딩). ②는 **사용자 답변 LLM 트래픽과 게이트웨이를 공유**하므로
+  경합 가능성이 있으나, 100건 7초 규모라 8,000건/h 에서도 게이트웨이 점유는 짧다.
+- 참고: insight-worker 로그의 `insight_datasource_scan_failed ds=mssql-qa-idc` 는 **기존 스캔 본업**이며
+  본 작업과 무관하다(오귀속 주의).
+
+### 처리
+- [x] W.1 백필 정렬 **`updated_at ASC NULLS FIRST`** 로 전환(테이블·루틴 양 경로) — 변환분이 큐 맨 뒤로
+  가므로 매 pass 가 반드시 미변환 행을 집어 전수 sweep 이 **단조 진행**한다.
+- [x] W.2 `SIG_BATCH_MAX_ROWS` 500 → **2000**(+ 관리 콘솔 knob 기본값 미러 갱신). 임베딩 용량이
+  51,000건/h 인데 백필이 제한 지점이었으므로 캡을 올린다 → 15분 주기 × 2000 = **8,000건/h**,
+  48,226건 전수 ≈ **6시간**.
+- [x] W.3 회귀 잠금 — `test_backfill_order_is_ascending_for_full_sweep`(DESC 패턴 잔존 금지) +
+  캡 상향 계약 + 기존 정렬 계약 테스트 갱신. `make test` **3178 passed / 3 skipped / 0 failed** · ruff clean.
+- [ ] W.4 배포 후 sweep 단조 진행 실측(신포맷 카운트가 pass 마다 증가하는지) → 완료 후 밴드·유의어 재측정.

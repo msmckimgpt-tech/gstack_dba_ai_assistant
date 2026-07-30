@@ -829,7 +829,11 @@ AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC
 AGENT_METADATA_CLUSTER_AUTO = os.getenv("AGENT_METADATA_CLUSTER_AUTO", "1").strip().lower() in ("1", "true", "yes")
 AGENT_METADATA_CLUSTER_INTERVAL_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_INTERVAL_SEC", "900") or "900")
 # §55 D: 200→500 상향 — 16k 백로그를 15분 pass 당 500 행이면 ~8h 에 소진(미처리-우선 정렬과 세트).
-AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "500") or "500")
+# sig-backfill-sweep(2026-07-30): 500→2000. 임베딩 용량 실측이 **51,000건/h**(100건 배치 7.06s,
+#   bedrock-gateway titan-embed)이고 임베딩 큐는 대부분 비어 유휴였다 — 즉 전수 재계산의 제한 지점은
+#   임베딩이 아니라 이 백필 캡이었다. 15분 주기 × 2000 = 8,000건/h 로 48,226 건 전수를 ~6h 에 sweep 한다
+#   (종전 캡이면 ~24h + 정체 결함). PG 부하는 (ds,eff) 당 1회 역인덱스 재사용으로 유계.
+AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "2000") or "2000")
 AGENT_METADATA_CLUSTER_RECOMPUTE_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_RECOMPUTE_SEC", "21600") or "21600")
 AGENT_METADATA_CLUSTER_SIM_THRESHOLD = float(os.getenv("AGENT_METADATA_CLUSTER_SIM_THRESHOLD", "0.82") or "0.82")
 AGENT_METADATA_CLUSTER_KNN_K = int(os.getenv("AGENT_METADATA_CLUSTER_KNN_K", "15") or "15")

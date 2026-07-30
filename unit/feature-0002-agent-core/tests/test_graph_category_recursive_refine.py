@@ -376,7 +376,10 @@ def test_signature_backfill_orders_null_first(monkeypatch):
     SC.run_signature_backfill_pass(max_rows=100)
     sel = [e for e in cur.executed if "SELECT id, scope_key" in e[0]][0][0]
     assert "signature_text_hash IS NULL OR signature_text_hash = ''" in sel
-    assert "DESC, updated_at DESC" in sel.replace("NULLS LAST", "").replace("  ", " ")
+    # sig-backfill-sweep(2026-07-30): 1순위 "미처리 우선"은 유지, 2순위는 **ASC** 로 뒤집혔다.
+    #   `DESC` 는 시그니처 포맷 전수 재계산에서 방금 변환한 행을 다시 맨 앞에 놓아 영구 정체를
+    #   만들었다(라이브 실측: 루틴 +38 정지). 상세는 semantic_cluster 백필 주석 · TASK sig-backfill-sweep.
+    assert "DESC, updated_at ASC" in sel.replace("NULLS FIRST", "").replace("  ", " ")
 
 
 # ── §18.8 패널 반영 수정분 회귀 잠금 ──────────────────────────────────────────
