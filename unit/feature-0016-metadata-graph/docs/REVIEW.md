@@ -719,3 +719,19 @@ source_of_truth: true
 - Timestamp: 2026-07-30T15:00:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260730T160000-embed-attribution-fix [SKIPPED:non-policy-doc] — 부하 귀속 오류 정정(문서 전용)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 실행 코드 0줄 — feature 문서(TASK/MODIFY) 의 사실 정정만. §18.8 code-change 행 비해당.
+- 정정 내용: 재임베딩 부하를 "bedrock-gateway → AWS Bedrock(외부 API·과금)" 으로 기술한 것을
+  **로컬 `embed-ollama`(bge-m3)** 로 바로잡았다. 근거: `litellm_config.yaml` 의 `titan-embed →
+  ollama/bge-m3 @ embed-ollama:11434`, `bedrock/…` 3건 전부 주석, 컨테이너 AWS 자격 3종 전부 빈 값,
+  `bedrock-gateway` 이미지 = `ghcr.io/berriai/litellm`(이름만 잔존).
+- **오류의 성격(재발 방지 기록)**: 컨테이너명·모델 별칭이라는 **명명만 보고 실 라우팅을 확인하지 않은**
+  추론이었다. 이 저장소는 과거 provider 전환 이력(feature-0007 Bedrock→Anthropic-direct→로컬)이 있어
+  **이름이 실체를 따라오지 않는다** — 부하·비용·외부의존을 서술할 때는 config 의 실 provider 와
+  자격증명 존재를 확인해야 한다(사용자 지적으로 발견).
+- 실측 보강: 지속 처리량 42,657건/h · `embed-ollama` CPU 100.75%(20코어 중 1) · 446MiB/2GiB · load 2.14.
+- Timestamp: 2026-07-30T16:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
