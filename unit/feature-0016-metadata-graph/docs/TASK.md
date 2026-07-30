@@ -3985,3 +3985,59 @@ routine: cc_pyron.sp_GetMailList() | params: @CharacterID… | touches: read cc_
   **로컬 `embed-ollama`(bge-m3)** 로 바로잡음. 외부 API 비용·의존 0 확정, 부하는 호스트 단일 코어.
   상세·근거·재발 방지는 위 「부하 경로」 + REV-20260730T160000-embed-attribution-fix.
 - [ ] W.6 sweep 완료 후 밴드 수·중복 라벨(기준선 전역 177쌍)·유의어 소멸 재측정.
+
+## 20260730T1600-meta-llm-edge-free — 개발용 메타데이터 LLM 이 로컬 gemma 로 강등될 수 있던 경로 봉인 (2026-07-30, 사용자 결정 재확인)
+
+### 맥락 (사용자)
+> 이전 결정사항에서 로컬LLM은 특수목적으로만 사용하고(야간, 업무 외 탐색) 실제 개발용 작업은 계정으로
+> 연결된 claude-code를 사용하도록 구성했습니다. 해당 구성과 정합하게 동작하도록 수정한 후 나머지 작업을 이어가주세요.
+
+### 요청 범위 (Requested Scope, §16.7 G1)
+- [x] M1 개발용 작업이 로컬 LLM 을 타는 경로 식별 — 산출물: fallback 체인 감사
+- [x] M2 그 경로를 결정과 정합하게 수정 — 산출물: edge-free `-meta` alias 이관
+- [x] M3 "특수목적(야간·업무 외)" 은 유지 — 산출물: insight 배치 off-hours 강등 불변 확인
+- [x] M4 기존 산출물 오염 여부 확인 — 산출물: llm_usage 실측(오염 없음)
+
+### 진단
+`llm_cluster_label`·`node_analysis` 는 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4-interactive` 를 쓰고
+**애플리케이션 레벨 off-hours 강등은 타지 않는다**(`_effective_insight_model` 미사용 — 2026-07-04 설계대로).
+그런데 **litellm fallback 체인**이 열려 있었다:
+
+```yaml
+- {"claude-haiku-4-interactive": ["claude-haiku-4-interactive-root", "edge-fallback"]}
+- {"claude-haiku-4-interactive-root": ["edge-fallback"]}
+```
+
+두 claude 계정(claude-corp/root)이 모두 401/429 면 **로컬 gemma 로 강등**된다. 이 산출물은 일회성이
+아니라 **영구히 남는다** — 라벨은 멤버셋-해시 kv 캐시로 재사용되고, 능동 분석문은 시그니처에 섞여
+(cluster-signal-repair) **클러스터 구조 자체를 오염**시킨다. 사용자 결정과 정면으로 어긋나는 경로다.
+
+**오염 여부 실측 (M4)** — 아직 오염은 없다:
+
+| task | model | 횟수 | 최근 |
+|---|---|---|---|
+| cluster_label | claude-haiku-4-interactive | **1,810** | 07-30 15:27 |
+| node_analysis | claude-haiku-4-interactive | 10,293 | 07-30 14:31 |
+| node_analysis | **edge** | 519 | **07-02** (라우팅 분리 결정 07-04 **이전**) |
+| node_analysis | claude-haiku-4 | 94 | 07-04 15:27 |
+
+즉 구조적 경로만 열려 있었고, 진행 중인 sweep(수천 클러스터 재라벨)이 야간 429 를 만나면 그때 실현된다.
+
+### 처리 — 대화 답변(`*-chat`)과 **동일 규약** 적용
+2026-07-07 결정("assistant 답변에 edge/gemma 는 전혀 고려 대상이 아니며 fallback 도 구성돼선 안 된다.
+명백한 실패처리로")이 이미 선례다. 그 패턴을 개발용 메타데이터 작업에 확장한다.
+- [x] M.1 `litellm_config.yaml` — edge-free `claude-haiku-4-meta` / `-meta-root` 별칭 신설
+      (둘 다 `anthropic/…` 직결·서로 다른 계정 키), fallback `{"claude-haiku-4-meta":
+      ["claude-haiku-4-meta-root"]}` — **edge 없음**, root 이후 폴백 없음(실패는 실패로).
+- [x] M.2 `shared/config.py` — `AGENT_NODE_ANALYSIS_MODEL` 기본값 `claude-haiku-4-interactive` →
+      **`claude-haiku-4-meta`**. `.env` override(라이브)도 정합화.
+- [x] M.3 **과잉 차단 금지** — 배경 insight 배치(`claude-haiku-4` → root → edge-fallback)의 야간·주말
+      gemma 강등은 **그대로 유지**. 그것이 사용자가 말한 "특수목적(야간, 업무 외 탐색)" 이며 2026-07-04
+      결정 그대로다. 대화 답변 `*-chat` 체인도 무변경.
+- [x] M.4 fail-soft 확인 — 두 계정 실패 시 `llm_cluster_label` 은 affix 라벨로 폴백하고(`_label_cluster`),
+      `node_analysis` 는 미분석 유지 후 재시도한다. 즉 edge 제거가 기능 정지를 만들지 않는다.
+- [x] M.5 테스트 — 신규 `test_meta_llm_edge_free.py` **5건**(별칭 2계정 등록 · meta 체인에 edge 없음 ·
+      라우팅 기본값 · **insight off-hours 강등 유지** · 대화 체인 불변) + 기존 naming 계약 2건 갱신.
+      `make test` **3191 passed / 3 skipped / 0 failed** · ruff clean.
+- [ ] M.6 배포 후 라이브 확인 — 게이트웨이가 `claude-haiku-4-meta` 를 서빙하고 이후 `llm_usage` 의
+      `cluster_label`·`node_analysis` model 이 그 별칭으로 기록되는지.

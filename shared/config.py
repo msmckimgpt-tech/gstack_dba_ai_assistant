@@ -1018,10 +1018,17 @@ AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS = int(
 # feature-0016 node-analysis-haiku + llm-routing-interactive-split(2026-07-04): 관리콘솔 그래프뷰
 # "AI 능동 분석"(각 관계 분석, llm_node_analysis)의 전용 모델. schema/table/account insight 와
 # 공유하던 AGENT_INSIGHT_MODEL 에서 분리 + **사람 능동 호출**이므로 항상 claude 로 유지한다.
-# **기본값 = claude-haiku-4-interactive** (2026-07-04: 대화/분석은 주말·야간에도 claude — insight
-# 배치의 off-hours gemma 강등과 분리된 interactive alias 로 라우팅). 다른 모델은 .env override.
+# **기본값 = claude-haiku-4-meta** (meta-llm-edge-free, 2026-07-30 사용자 결정 재확인).
+# 2026-07-04 에는 `claude-haiku-4-interactive` 로 두어 insight 배치의 off-hours gemma 강등과 분리했으나,
+# `-interactive` 의 litellm fallback 체인은 끝이 **`edge-fallback`(로컬 gemma)** 이었다 — 두 claude 계정이
+# 모두 401/429 면 능동 분석·클러스터 라벨이 조용히 gemma 로 강등된다. 사용자 결정("로컬LLM은 특수목적
+# =야간·업무 외 탐색 전용, 실제 개발용 작업은 계정 연결 claude-code")과 어긋나고, 이 산출물은 **영구히
+# 남는다**(라벨은 kv 캐시로 재사용, 분석문은 시그니처에 섞여 클러스터 구조까지 오염). 그래서 대화 답변의
+# `*-chat` 규약과 동일하게 **edge 를 배제한 `-meta` alias**(claude-corp → root 2계정)로 라우팅한다.
+# 두 계정 모두 실패 시 gemma 강등 대신 실패 → 호출측 fail-soft(라벨=affix 폴백 / 분석=미분석 유지·재시도).
+# ⚠ 배경 insight 배치(AGENT_INSIGHT_MODEL)의 야간·주말 gemma 강등은 **그대로 유지**(그것이 "특수목적").
 AGENT_NODE_ANALYSIS_MODEL = (
-    os.getenv("AGENT_NODE_ANALYSIS_MODEL", "").strip() or "claude-haiku-4-interactive"
+    os.getenv("AGENT_NODE_ANALYSIS_MODEL", "").strip() or "claude-haiku-4-meta"
 )
 # ── 용어사전 대화 자율등록(0021) ──────────────────────────────────────────────
 # 대화 답변 직후 도메인 용어 후보를 LLM 으로 추론해 용어사전(kb_glossary)에 자율 등록한다.

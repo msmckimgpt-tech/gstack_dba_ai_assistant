@@ -124,6 +124,31 @@ model_list:
         type: "enabled"
         budget_tokens: 5000
 
+  # ── meta-llm-edge-free(2026-07-30, 사용자 결정 재확인): **개발용 메타데이터 작업 전용 edge-free alias** ──
+  #    사용자 결정: "로컬LLM은 특수목적으로만 사용하고(야간, 업무 외 탐색) 실제 개발용 작업은 계정으로
+  #    연결된 claude-code 를 사용한다." AI 능동 분석(node_analysis)·컨텐츠 클러스터 라벨(cluster_label)은
+  #    제품 메타데이터를 만드는 **개발용 산출물**이라 gemma 로 강등되면 그 산출물이 영구히 남는다
+  #    (라벨은 kv 캐시로 재사용되고, 분석문은 시그니처에 섞여 클러스터 구조까지 오염한다).
+  #    그래서 대화 답변(`*-chat`, 2026-07-07 FR-edge-fallback)과 **동일 규약**으로 edge 폴백을 배제한다:
+  #    두 claude 계정(claude-corp/root)이 모두 401/429 면 gemma 로 내려가지 않고 **실패**시키고,
+  #    호출측이 fail-soft 로 처리한다(cluster_label → affix 라벨 폴백 / node_analysis → 미분석 유지 후 재시도).
+  #    ⚠ 배경 insight 배치(`claude-haiku-4`)의 야간·주말 gemma 강등은 **그대로 유지** — 그것이 사용자가
+  #    말한 "특수목적(야간, 업무 외 탐색)" 이며 2026-07-04 결정 그대로다.
+  - model_name: claude-haiku-4-meta
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      thinking:
+        type: "enabled"
+        budget_tokens: 5000
+  - model_name: claude-haiku-4-meta-root
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+      thinking:
+        type: "enabled"
+        budget_tokens: 5000
+
   # ── conversation-answer(2026-07-07, FR-edge-fallback-conversation-context-loss): 사용자 대면 assistant
   #    답변(task='agent') 전용 alias. edge(gemma) 폴백을 **의도적으로 배제** — 사용자 결정 2026-07-07:
   #    "assistant 답변에 edge/gemma 는 전혀 고려 대상이 아니며 fallback 도 구성돼선 안 된다. 명백한 실패처리로."
@@ -285,6 +310,8 @@ litellm_settings:
     - {"claude-haiku-4-root": ["edge-fallback"]}
     - {"claude-haiku-4-interactive": ["claude-haiku-4-interactive-root", "edge-fallback"]}
     - {"claude-haiku-4-interactive-root": ["edge-fallback"]}
+    # meta-llm-edge-free(2026-07-30): 개발용 메타데이터 작업은 2계정까지만 — **edge 없음**(대화와 동일 규약).
+    - {"claude-haiku-4-meta": ["claude-haiku-4-meta-root"]}
     - {"claude-haiku-4-chat": ["claude-haiku-4-chat-root"]}
     - {"claude-sonnet-4-chat": ["claude-sonnet-4-chat-root"]}
     - {"claude-opus-5-chat": ["claude-opus-5-chat-root"]}
