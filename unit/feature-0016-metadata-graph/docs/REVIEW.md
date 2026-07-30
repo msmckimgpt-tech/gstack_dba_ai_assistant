@@ -777,3 +777,15 @@ source_of_truth: true
 - Timestamp: 2026-07-30T19:00:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260730T193000-gb-highlight-lit [SKIPPED:non-policy-doc] — 프론트 하이라이트 판정 보정(Minor)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 변경은 `lit`/`litSelf` 의 접두 해소 한 갈래(+헬퍼). 좌표·기하·인가·API·응답 shape 불변이며,
+  회귀 방어는 기능 계약 4건(기준선/보존/집계속성/**과잉보존 대조군**)이 실 `_metaG6Build` 산출로 직접 잠근다.
+- 발견 경위: R3(집계 관계선) **라이브 육안 검증을 시도하다가** 발견했다 — 헤드리스는 선택 없는 상태로
+  빌드해 통과했고, 라이브는 노드 선택이 기본이라 드러났다. "테스트가 통과했는데 화면엔 없다" 의 전형.
+- **미커버 정직 표기**: 수정 후의 **육안 확증은 아직 없다** — 배포 후 PB-0008 로 접힌 밴드에 종단하는
+  선을 판독 가능 크기로 캡처해야 R3 가 완결된다(§16.6 다운그레이드 금지). 현재 근거는 기능 계약 4건.
+- Timestamp: 2026-07-30T19:30:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
