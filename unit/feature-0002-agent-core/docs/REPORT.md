@@ -506,3 +506,14 @@ feature-0003(primary, `_materialize_assistant_attachment_new` 경로)의 활성�
 - **무영향**: RBAC·인증 0 · UI 표면 변경 0(값의 출처만 변경) · 프롬프트/모델 입력 0 · expand-only 라 배포 순서 무관(양방향 자가치유).
 - **검증**: pytest **2,719 PASS / 2 skipped**(신규 R1~R4 + 계측 3케이스) · ruff clean · `migrate-lint` expand-safe PASS · **POST-DEPLOY 라이브 PASS**(alembic head 0047 · 컬럼 생성 · 명시/ContextVar 양 경로 기록 실증 · API `scope_source="recorded"` · **같은 target 이 데이터소스별 2행 분리** · 진단 합성행 원장에서 제거). 정본 TASK-/CHG-/REV-20260728T124500-llm-usage-target-scope · test-runs.d/20260728T124500-llm-usage-target-scope.md.
 - **한계(정직 표기)**: 소급 백필을 하지 않으므로 채움률은 워커가 분석을 수행하는 만큼 시간에 따라 상승한다. 그동안 legacy 행은 종전 역해소로 동작하고, 응답의 `scope_source` 로 기록/추정을 구분할 수 있다.
+
+## TASK-20260730T160000-ask-redeploy-handoff — 재배포 인계 dead-air 봉인 (conv-audit)
+
+- **cross-ref**: 대화 마찰 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md`
+  `FR-ask-orphan-redeploy-dead-air`(진단 정본) → 본 feature 코드 수정
+  `CHG-20260730T160000-ask-redeploy-handoff`. 진단 대상은 그룹 대화 마찰,
+  코드 거주는 `feature-0002-agent-core`(+ `shared/config.py` knob 2종).
+- **요지**: 배포가 ask-worker 를 재생성하면 hostname 기반 소유자 id 때문에 부팅 자가회수가
+  항상 0행이 되어, 진행 중이던 답변이 통째로 사라지고 회수까지 전역 stale 창(실측 450s)이
+  비었다(60일 8대화·dead-air 142~1,649초·3건 최종 error). 종료 시 lease 반납 + role 기반
+  회수 + 재시도 중복 저장 억제로 봉인. 상세 = TASK/MODIFY/REVIEW 동명 섹션.
