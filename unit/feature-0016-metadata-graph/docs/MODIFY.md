@@ -429,3 +429,11 @@ source_of_truth: true
   (`semantic_cluster_id` 는 전역 고유가 아님 → `(datasource, schema, cluster_id)`), 기준선 수치,
   **문제의 소재가 루틴 축**임을 실측으로 확정.
 - `docs/TASK.md` — E.9 추가, E.6 진행 상태 갱신.
+
+## CHG-20260731T000000-ai-claude-feature-0016-cluster-result — 재클러스터 결과 측정(E.6) (2026-07-31, 문서 전용)
+
+실행 코드 0줄. 드레인 완료 후 재클러스터 결과를 기준선과 동일 쿼리로 측정해 기록.
+
+- `docs/REPORT.md` `20260731T0000-cluster-outcome-measured` — 전역 지표 전/후, 배치 품질 정량 비교
+  (MDS vs 라벨이름순 vs 루틴명순 vs 전체평균, 4개 스키마), 사용자가 든 두 사례의 판정과 근거 수치.
+- `docs/TASK.md` — E.6 완료.
