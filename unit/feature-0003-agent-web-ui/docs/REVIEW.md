@@ -10,6 +10,21 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260730T160500-progress-enqpre-handoff-postdeploy [SKIPPED:doc-only-postverify] — POST-DEPLOY 라이브 AFTER 대조 (TASK-20260729T2010 후속)
+- 대상 diff: `docs/{TASK,REPORT}.md` + `docs/test-runs.d/20260729T201000-progress-enqpre-handoff.md`.
+  **코드 변경 0** — 배포본 실측 결과 기록만.
+- panel SKIP 근거: §18.8 dispatch 는 code change 를 전제한다. 원 cycle 의 리뷰는
+  `REV-20260729T201000-progress-enqpre-handoff [CODEX:progress-enqpre-handoff]` 가 담당했다.
+- **검증 설계가 이번엔 결정적이었던 이유**: 배포 **전에** 같은 브리지·같은 시나리오로 BEFORE 를
+  먼저 확보했다(서버 steps 3→6→7 vs 프론트 0). 그래서 AFTER 는 "고쳐진 것 같다" 가 아니라
+  **동일 조건 수치 대조**로 판정된다. 선행 cycle 에서 BEFORE 없이 AFTER 만 봤다가 `enqpre-…` 신호를
+  놓친 것과 대비되는 개선이며, 이후 타이밍 의존 결함에는 이 순서(BEFORE 선확보)를 기본으로 한다.
+- **정직 기록**: ① 큐 대기 구간(t+3s~t+10s) 상태 라벨이 '처리 중'→'시작 중' 으로 바뀌었다 —
+  sentinel 을 채택하지 않으니 그 구간엔 실제 실행이 없다는 사실이 그대로 표시된다. 기능·정직성 모두
+  개선이나 **사용자 가시 변화이므로 명시**한다. ② codex P1-1(그룹 동시 전송 창 foreign 오귀속)은
+  라이브에서 재현하지 않았다(두 계정을 1~2초 창에 맞춰야 함) — 단위 C7·C8 이 현재 동작을 고정하고,
+  근본 해결은 서버 `run_is_mine` correlation 후속 과제다.
+
 ## REV-20260729T201000-progress-enqpre-handoff [CODEX:progress-enqpre-handoff] — enqueue sentinel → 실제 run 승계 (TASK-20260729T2010)
 - 대상 diff: `src/static/app.js`(sentinel 채택 규약) · `tests/verify_enqpre_run_handoff.mjs`(신설) ·
   문서 4. **백엔드·RBAC·스키마·엔드포인트 변경 0**.

@@ -53,9 +53,14 @@ source_of_truth: true
     C6 채택 규약 · 정적 계약 5). **수정 전 코드에 되돌려 실행하면 18건 FAIL**(C2 포함).
   - [x] 기존 `verify_progress_poll_resilience.mjs` 45 PASS · `verify_run_detect_poll.mjs` 35 PASS ·
     `verify_model_persist.mjs` 49 PASS 등 회귀 0(잔여 FAIL 은 main 과 동일 baseline).
-  - [ ] `make test` 컨테이너 회귀 (Python 무접촉 — baseline 대조)
-  - [ ] **POST-DEPLOY PB-0008 라이브** — 실제 전송 직후 `run_id` 가 sentinel→실제 run 으로
-    전환되는 창을 관측하고, **대화 전환 없이** 단계가 "시작 중…" → 실제 step 으로 넘어가는지.
+  - [x] `make test` 컨테이너 회귀 — **FAILED 0**·ruff PASS(Python 무접촉)
+  - [x] **POST-DEPLOY PB-0008 라이브 PASS**(배포본 `6a8f7f5a`, 실 Windows Chrome/150 전용 탭) —
+    BEFORE/AFTER 동일 시나리오 대조: 추적 id 가 t+3s·t+10s 에 빈 값 유지(sentinel 미채택) → t+20s 에
+    실제 run `20260730070324-ffbd546c` 채택 → **프론트 steps 가 서버 step_count 를 그대로 추종
+    (3→6)**, 화면 단계가 "AI 가 질문을 분석하고 답변을 추론하는 중" → "답변을 자가 검증하는 중
+    (red-team 리뷰)" 로 갱신되고 '6단계 보기' 버튼 노출. **대화 전환·새로고침 없이** 갱신.
+    BEFORE 는 같은 시점 서버가 steps 3→6→7 을 보내는데 프론트는 끝까지 0·'시작 중…' 박제였다.
+    상세·증적 = `docs/test-runs.d/20260729T201000-progress-enqpre-handoff.md`.
 
 ---
 
