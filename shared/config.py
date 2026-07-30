@@ -1002,16 +1002,18 @@ AGENT_STEP_GRADE_MODEL = (
 AGENT_INSIGHT_MODEL = (
     os.getenv("AGENT_INSIGHT_MODEL", "").strip() or OPENAI_MODEL
 )
-# ── insight 백그라운드 배치 시간 기반 강등(2026-07-04 llm-routing-interactive-split) ──
-# insight 워커(schema/table/account)는 **평일 근무시간엔 claude, 야간·주말엔 gemma(edge)** 로
-# 작동한다(사용자 결정 2026-07-04: 사람 호출은 항상 claude, 백그라운드 배치는 비용 절감 위해
-# off-hours gemma). 사람 호출(대화·node_analysis)은 이 강등을 쓰지 않고 항상 interactive alias.
-# 강등은 litellm fallback 이 아니라 애플리케이션(llm._effective_insight_model)이 결정한다 —
-# 토큰이 24/7 유효해도 insight 만 off-hours 에 gemma 로 내려가도록. OFFHOURS_MODEL 을 빈 값 또는
-# AGENT_INSIGHT_MODEL 과 동일 값으로 두면 강등 비활성(항상 AGENT_INSIGHT_MODEL). 근무시간 경계는
-# [START, END) 시(로컬=KST 가정, TZ_OFFSET 로 UTC 보정), 주말(토·일)은 하루종일 off-hours.
+# ── insight 백그라운드 배치 시간 기반 강등 — **기본 비활성**(2026-07-30 llm-edge-free-routing) ──
+# 2026-07-04(llm-routing-interactive-split)에는 insight 워커(schema/table/account)를 **평일 근무시간엔
+# claude, 야간·주말엔 gemma(edge)** 로 강등해 비용을 절감했다. 2026-07-30 사용자 결정으로 **로컬 LLM
+# 사용을 전면 중단**하면서 이 강등도 폐지한다 — 기본값을 `edge` 에서 **빈 값**으로 바꿔 강등 비활성
+# (항상 AGENT_INSIGHT_MODEL = claude)이 기본이 된다. litellm fallback 체인에서도 edge-fallback 참조를
+# 모두 걷어냈다(unit/feature-0007-.../litellm_config.yaml) — 자동 gemma 강등 경로가 앱·게이트웨이 양쪽
+# 모두에서 사라진 상태다.
+# 강등 로직 자체는 보존한다(운영자가 값을 채우면 재활성): OFFHOURS_MODEL 이 빈 값이거나
+# AGENT_INSIGHT_MODEL 과 동일하면 비활성. 근무시간 경계는 [START, END) 시(로컬=KST 가정, TZ_OFFSET 로
+# UTC 보정), 주말(토·일)은 하루종일 off-hours. 값을 채우는 것은 사용자 결정 override 임에 유의.
 AGENT_INSIGHT_OFFHOURS_MODEL = (
-    os.getenv("AGENT_INSIGHT_OFFHOURS_MODEL", "edge").strip()
+    os.getenv("AGENT_INSIGHT_OFFHOURS_MODEL", "").strip()
 )
 AGENT_INSIGHT_BUSINESS_START_HOUR = int(
     os.getenv("AGENT_INSIGHT_BUSINESS_START_HOUR", "10").strip() or "10"
@@ -1033,7 +1035,8 @@ AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS = int(
 # 남는다**(라벨은 kv 캐시로 재사용, 분석문은 시그니처에 섞여 클러스터 구조까지 오염). 그래서 대화 답변의
 # `*-chat` 규약과 동일하게 **edge 를 배제한 `-meta` alias**(claude-corp → root 2계정)로 라우팅한다.
 # 두 계정 모두 실패 시 gemma 강등 대신 실패 → 호출측 fail-soft(라벨=affix 폴백 / 분석=미분석 유지·재시도).
-# ⚠ 배경 insight 배치(AGENT_INSIGHT_MODEL)의 야간·주말 gemma 강등은 **그대로 유지**(그것이 "특수목적").
+# ⚠ (superseded 2026-07-30 저녁, llm-edge-free-routing) 위 "배경 insight 배치의 야간·주말 gemma 강등은
+# 그대로 유지" 예외는 같은 날 사용자 결정으로 폐지됐다 — 아래 AGENT_INSIGHT_OFFHOURS_MODEL 기본값 참조.
 AGENT_NODE_ANALYSIS_MODEL = (
     os.getenv("AGENT_NODE_ANALYSIS_MODEL", "").strip() or "claude-haiku-4-meta"
 )

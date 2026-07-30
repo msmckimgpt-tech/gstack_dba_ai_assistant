@@ -122,3 +122,17 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - **`AGENT_WORKER_PG_BUDGET` 은 만들지 않았다** — PG 동시 점유를 정확히 강제하려면 커넥션 수명과 예산 수명을 묶어야 하고, 워커는 `conn=None 이면 열고 주어지면 재사용` 패턴에 close 가 호출측 `finally` 라 광범위 리팩터가 된다. `task`(작업당 PG 1~2개)로 근사하며 이름·설명을 그 의미로 유지한다(ADR-0025-06 의 연장 — 게이트 없는 이름을 쓰지 않는다).
 - Affected Features: feature-0025-worker-parallelism(정본), feature-0016-metadata-graph(게이트 대상 워크로드), feature-0003-agent-web-ui(콘솔 섹션 — 공유 볼륨 파일 읽기), feature-0026-perf-observability(계측 축 직교).
 - Cross-ref: unit/feature-0025-worker-parallelism/docs/MODIFY.md CHG-20260730T1430-ai-claude-feature-0025-worker-ds-budget(정본) · 동 TASK.md `## 20260730T1430-worker-ds-budget` · 동 DECISIONS ADR-0025-07.
+
+## CHG-20260730T191535-llm-edge-free-routing (shared/config.py — off-hours 강등 기본 비활성)
+- Date: 2026-07-30. 정본: `unit/feature-0007-bedrock-llm-provider/docs/MODIFY.md` 동일 CHG · ADR-003.
+- 변경: `shared/config.py` 의 `AGENT_INSIGHT_OFFHOURS_MODEL` 기본값 `"edge"` → `""`(빈 값). 빈 값이면
+  `llm._effective_insight_model()` 이 시각과 무관하게 base(`AGENT_INSIGHT_MODEL`=claude)를 반환하므로
+  **배경 insight 배치의 야간·주말 gemma 강등이 기본 비활성**이 된다. 사용자 결정 2026-07-30("더 이상
+  로컬 LLM 을 사용하지 않는다") — 2026-07-04 ADR-002 결정 2의 override.
+- 강등 로직·환경변수는 보존한다(운영자가 값을 채우면 재활성 = 결정 override). 게이트웨이 층에서도
+  litellm `fallbacks` 의 `edge-fallback` 참조를 전량 제거해, 앱·게이트웨이 양쪽에서 자동 강등 경로가 없다.
+- Affected Features: feature-0007-bedrock-llm-provider(정본 — litellm_config), feature-0002-agent-core
+  (`_effective_insight_model` docstring · 회귀 테스트 `test_llm_edge_free_routing.py` 5건 신규),
+  feature-0016-metadata-graph(node_analysis 는 이미 `-meta` edge-free — 무영향).
+- Cross-ref: feature-0007 DECISIONS ADR-003 · TASK `## TASK-20260730T191535-llm-edge-free-routing` ·
+  TEST Run 2026-07-30-llm-edge-free-routing.

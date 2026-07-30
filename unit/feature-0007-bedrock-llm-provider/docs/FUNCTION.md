@@ -124,14 +124,18 @@ source_of_truth: true
   로 graceful degrade (catalog 갱신 + ADR 보강).
 
 ## 9. Error Handling
-- **LLM 계정 rate-limit 요청-레벨 fallback** (insight-llm-fallback, 2026-07-03): `claude-haiku-4` 호출이
-  429(RateLimitError) 또는 실패 시 litellm `fallbacks` 가 **순서 폴백** — `claude-haiku-4-root`(root Max
-  계정) → `edge-fallback`(로컬 gemma, rate-limit 없음). `num_retries:1`(동일 deployment 1회 재시도 후
-  폴백). insight 의 burst 호출이 claude-corp RPM/TPM 을 넘겨 429 가 나도 다음 계정/로컬로 즉시 우회해 생성
-  무중단. deployment 별 자격: `claude-haiku-4`=ANTHROPIC_API_KEY(claude-corp), `claude-haiku-4-root`=
+- **LLM 계정 rate-limit 요청-레벨 fallback** (insight-llm-fallback 2026-07-03 → **edge 제거
+  2026-07-30 llm-edge-free-routing/ADR-003**): `claude-haiku-4` 호출이 429(RateLimitError) 또는 실패 시
+  litellm `fallbacks` 가 `claude-haiku-4-root`(root Max 계정)로 폴백하고 **거기서 끝난다**.
+  `num_retries:1`(동일 deployment 1회 재시도 후 폴백). 두 계정 모두 실패하면 그 에러(429/401/도달불가)를
+  그대로 올려 **정직하게 실패**한다 — 로컬 gemma 로 강등하지 않는다(사용자 결정 2026-07-30 "더 이상
+  로컬 LLM 을 사용하지 않는다"). 이 규약은 대화 답변(`*-chat`, 2026-07-07)·개발용 메타데이터
+  (`*-meta`, 2026-07-30 오전)와 동일하며, `claude-haiku-4-interactive` 체인도 같다.
+  deployment 별 자격: `claude-haiku-4`=ANTHROPIC_API_KEY(claude-corp), `claude-haiku-4-root`=
   ANTHROPIC_API_KEY_ROOT(root). 두 토큰은 `bin/refresh-claude-oauth-token.sh` 가 병행 주입(각 slot 독립
-  static+probe 검사, 사용가능 시만 갱신, 만료/401/429 는 litellm 이 다음 fallback 으로 흡수). edge 는
-  thinking 미지원이나 `drop_params:true` 가 미지원 파라미터 제거.
+  static 검사, 사용가능 시만 갱신, 만료/401/429 는 litellm 이 다음 fallback 으로 흡수).
+  (이전 동작: 3순위로 `edge-fallback`(로컬 gemma)까지 폴백 — **superseded**. deployment 정의는
+  되돌리기용으로 남아 있으나 어떤 체인에서도 참조되지 않는다.)
 - **대화 답변(task='agent') 전용 edge-free 2계정 체인** (no-edge 2026-07-07 + sonnet-chat-fallback 2026-07-24):
   사용자 대면 assistant 답변은 `agent_core._call_llm` 이 `conversation_answer_model()` 로 outbound alias 를
   edge-free `-chat` 계열로 치환한다 — `claude-haiku-4`→`claude-haiku-4-chat`(→`-chat-root`),

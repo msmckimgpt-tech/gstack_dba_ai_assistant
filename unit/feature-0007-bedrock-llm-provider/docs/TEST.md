@@ -436,3 +436,27 @@ source_of_truth: true
   managed 자격증명이지만, web auth 미통과 anonymous 가 `/api/ask` 호출 시
   기존 `_require_account` 로 401 차단 — 본 cycle 의 회귀 영역 아님 (인증 모델
   변경 X).
+
+### Run 2026-07-30-llm-edge-free-routing
+- Date: 2026-07-30 · Environment: `CLI` (pytest, 컨테이너 `repo-unittest`) + 라이브 게이트웨이 프로브
+- Scope: 자동 gemma(edge) 강등 경로 제거 (CHG-20260730T191535-llm-edge-free-routing / ADR-003)
+- **원인 확정 (라이브 관측, 수정 전)**
+  - `sudo docker inspect repo-bedrock-gateway-1 --format '{{.State.StartedAt}}'` → `2026-07-30T09:00:27Z`(=18:00:27 KST) 재생성.
+  - `docker logs --timestamps` grep `name resolution` → 첫 실패 `09:00:38`(기동 시 cost-map fetch), 마지막 `09:34:04`. 10분 윈도우당 **308건**.
+  - 실패 메시지: `AnthropicException - Cannot connect to host api.anthropic.com:443 ... [Temporary failure in name resolution]` — 계정 오류(401/429) 아님. 같은 창에서 `claude-haiku-4-meta-root`(edge 없음)는 `500 Internal Server Error` 로 종단 실패.
+  - 자격증명 대조: root `expiresAt=2026-07-30 23:30:08`, claude-corp `2026-07-31 01:58:46` — 둘 다 유효. 게이트웨이 주입 토큰(`ANTHROPIC_API_KEY`/`_ROOT`) 존재 확인.
+  - 복구 확인(수정 전, 18:47): 컨테이너에서 `getaddrinfo("api.anthropic.com", 443, AF_UNSPEC)` → `['160.79.104.10', '2607:6bc0::10']` 정상. 게이트웨이 프로브 `claude-haiku-4-interactive`(max_tokens=5600 — thinking budget 5000 초과 필수) → **HTTP 200, served=claude-haiku-4-interactive**, `claude-haiku-4-chat` → **200**. 즉 DNS 는 자연 복구됐고 결함은 "그 창에서 edge 로 흐른 구조" 다.
+- **단위 검증 (수정 후)**
+  - `make test` (컨테이너 `repo-unittest`, 라이브 네트워크 미참여): pytest rc=0 · ruff `All checks passed!`.
+  - 대상 3파일(`test_llm_edge_free_routing.py` 신규 · `test_meta_llm_edge_free.py` · `test_insight_offhours_routing.py`) 22건 통과(운영 `.env` 복사 환경이라 env override 로 2건 skip).
+  - env override 제거 조건(`AGENT_INSIGHT_OFFHOURS_MODEL=`, `AGENT_NODE_ANALYSIS_MODEL=`)에서 신규·갱신 **10건 PASS, skip 0** — 기본값 계약(강등 기본 비활성)이 실제로 검증됨을 확인.
+  - 경계 양측(§16.7 G4): `_effective_insight_model` 을 근무시간 내(화 14:00 KST) · 경계 직후(화 19:00 KST) · 심야(수 03:00 KST) · 주말(토 14:00 KST) 4지점에서 확인 → 전부 `claude-haiku-4`.
+- **미수행 / 이월**
+  - 배포 후 라이브 재확인(gateway config reconcile + `.env` OFFHOURS 비움 후 서빙 모델 실측)은 배포 단계에서 수행 → 결과는 본 Run 하단 또는 POSTDEPLOY Run 에 추가.
+  - UI 표면 변경 없음(설정·라우팅 전용) → PB-0008 Windows-browser 검증 **비해당**(§15.4.1 예외: 변경에 UI 표면 없음).
+
+#### Run 2026-07-30-llm-edge-free-routing — 적대검증 반영 후 재검증 (역검증 포함)
+- codex review(2회) 지적 반영 후 재실행. `test_llm_edge_free_routing.py` 5건 PASS.
+- **역검증(테스트가 실제로 잠그는지)**: 의도적 위반 주입 시 FAIL 하는지 확인 — `AGENT_INSIGHT_OFFHOURS_MODEL=edge` → FAIL(skip 없음), `=ollama/mistral` → FAIL(allowlist `startswith("claude")` 작동). 통과만 보고 "잠겼다" 고 결론내지 않았다.
+- **운영 `.env` 반영**: `repo/.env` 의 `AGENT_INSIGHT_OFFHOURS_MODEL` 을 빈 값으로 변경(백업 `.env.bak-llm-edge-free-20260730-193044`). `docker compose config` 로 `AGENT_INSIGHT_OFFHOURS_MODEL: ""` 파싱 실측 — 인라인 주석이 값으로 새지 않도록 주석은 별 줄로 분리했다.
+- fallback 정적 검증: 폴백 6개 전부 (a) `model_list` 실재, (b) `anthropic/` provider, (c) `api_base` 없음, (d) `edge-fallback` 참조 0건.

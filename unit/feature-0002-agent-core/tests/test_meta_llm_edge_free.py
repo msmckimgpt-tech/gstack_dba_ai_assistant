@@ -11,7 +11,10 @@
 2026-07-04 이전인 07-02), 구조적 경로가 열려 있었다.
 
 규약: 대화 답변의 `*-chat`(2026-07-07 FR-edge-fallback)과 **동일** — 2계정까지만, edge 배제, 실패는 실패로.
-배경 insight 배치의 야간·주말 gemma 강등은 **유지**(그것이 사용자가 말한 "특수목적").
+
+⚠ 후속(2026-07-30 저녁, llm-edge-free-routing): 같은 날 사용자가 "더 이상 로컬 LLM 을 사용하지 않는다"
+로 범위를 넓혀, 배경 insight 배치의 야간·주말 gemma 강등까지 폐지됐다(위 "유지" 는 superseded).
+전 체인 edge-free 잠금은 test_llm_edge_free_routing.py 참조.
 """
 import pathlib
 
@@ -80,13 +83,17 @@ def test_node_analysis_and_cluster_label_route_to_meta_alias():
     assert "AGENT_NODE_ANALYSIS_MODEL" in src
 
 
-def test_background_insight_keeps_offhours_edge_downgrade():
-    """사용자가 말한 '특수목적(야간·업무 외 탐색)' 은 그대로 유지 — 과잉 차단 금지."""
+def test_background_insight_no_longer_downgrades_to_edge():
+    """SUPERSEDED(2026-07-30 llm-edge-free-routing): 배경 insight 배치의 off-hours gemma 강등 폐지.
+
+    본 테스트는 같은 날 오전에 "배경 배치의 야간·주말 gemma 강등은 유지" 를 잠갔던
+    test_background_insight_keeps_offhours_edge_downgrade 를 대체한다 — 같은 날 저녁 사용자가
+    "더 이상 로컬 LLM 을 사용하지 않는다" 로 범위를 넓혔다(2026-07-04 결정 override).
+    상세 잠금은 test_llm_edge_free_routing.py 가 담당하고, 여기서는 방향 반전만 기록한다.
+    """
     fb = _fallbacks(_cfg())
-    assert "edge-fallback" in (fb.get("claude-haiku-4") or []), \
-        "배경 insight 배치의 off-hours gemma 강등은 2026-07-04 결정대로 유지된다"
-    from shared import config as _c
-    assert (_c.AGENT_INSIGHT_OFFHOURS_MODEL or "").strip(), "off-hours 모델 선언 유지"
+    assert "edge-fallback" not in (fb.get("claude-haiku-4") or []), \
+        "배경 insight 배치도 edge 로 강등되지 않는다(2026-07-30 사용자 결정)"
 
 
 def test_conversation_answer_chain_unchanged():

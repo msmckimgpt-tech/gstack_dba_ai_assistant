@@ -368,6 +368,20 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
 
+## 9. Requested Scope
+
+§16.7 G1 — 현재 cycle 에서 사용자가 요청한 범위의 명시 열거(cycle 마다 rewrite).
+
+**cycle: TASK-20260730T191535-llm-edge-free-routing** (원 요청: "18시 기준으로 모든 LLM 요청이
+edge 로 호출되는 이슈가 확인되었습니다. 더 이상 local llm 은 사용하지 않는 것으로 구성되었지만
+해당 이슈가 나타나는 상황이라 수정이 필요합니다.")
+
+- [x] 18시부터 모든 LLM 요청이 edge(로컬 gemma)로 서빙된 원인 규명 — 산출물: TEST.md Run 2026-07-30-llm-edge-free-routing 「원인 확정」(게이트웨이 DNS 34분 단절 로그·타임스탬프·자격증명 대조)
+- [x] "로컬 LLM 미사용" 구성이 관철되지 않은 지점 수정 — 산출물: `litellm_config.yaml` fallbacks 에서 edge 참조 전량 제거(2계정 종단)
+- [x] 배경 insight 배치의 야간·주말 gemma 강등 폐지(사용자 결정 2026-07-30) — 산출물: `shared/config.py` 기본값 빈 값 + 운영 `.env` 반영(백업 동반)
+- [x] 회귀 잠금 — 산출물: `test_llm_edge_free_routing.py` 5건(+역검증: edge/ollama 주입 시 FAIL 확인)
+- [ ] 배포 후 라이브 확인 — 산출물: 게이트웨이 프로브 `served=claude-*`(edge 아님) 실측 기록(POSTDEPLOY Run)
+
 ## TASK-20260724T054326-timeout-console-sync — request_timeout ↔ 콘솔 AGENT_TIMEOUT_SEC(live) 동기화 (config 주석; 정본 feature-0002)
 - [x] litellm_config.yaml request_timeout 주석 갱신(값 무변경 300, body timeout 미전달 fallback 명문화)
 - [x] FUNCTION.md §콘솔 live 동기화 항목 추가
@@ -389,3 +403,13 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [x] 배포 후 발견 카피 정정: '모델별 추론 예산' pane 헤더 `Sonnet 128K / Haiku 64K` → `Opus·Sonnet 128K / Haiku 64K`(admin.html)
 - [ ] **R1 재확인**: root 계정 한도 윈도우 리셋 후 `claude-opus-5-chat-root` 실 200 (2순위 체인)
 - [ ] **R2 이월 결정**: 모델별 RBAC 부재 — 전 사용자가 Opus 선택 가능(비용 노출). 사용자 결정 필요 (REPORT §8)
+
+## TASK-20260730T191535-llm-edge-free-routing — 자동 gemma(edge) 강등 경로 전면 제거 (사용자 결정, Major §12.3 외부비용)
+- [x] 라이브 원인 규명 — 18:00:27 gateway 재생성 → 18:00:38~18:34:04 컨테이너 외부 DNS 해석 실패(`api.anthropic.com`·`raw.githubusercontent.com` 모두 `Temporary failure in name resolution`, 308+건). 계정 quota/토큰 무관(자격증명 만료 정상·게이트웨이 주입 토큰 정상)
+- [x] blast radius 확정 — `.env` 의 11개 변수(OPENAI_MODEL + AGENT_*_MODEL 10종)가 `claude-haiku-4-interactive` 를 가리키고, 그 체인 끝이 `edge-fallback` 이라 대화 보조 단계 전체가 gemma 서빙. edge 없는 `*-chat`·`*-meta` 는 500 으로 정직 실패(대조군)
+- [x] litellm_config.yaml — `claude-haiku-4`/`-root`/`-interactive`/`-interactive-root` 4개 체인에서 edge-fallback 참조 제거(2계정 종단). deployment 정의는 되돌리기용으로 보존(참조 0)
+- [x] shared/config.py — `AGENT_INSIGHT_OFFHOURS_MODEL` 기본값 `edge` → 빈 값(시각 기반 강등 기본 비활성). 강등 로직 자체는 보존(운영자 명시 설정 시 재활성)
+- [x] llm.py `_effective_insight_model` docstring + .env.example 정합 갱신
+- [x] 회귀 잠금 — `test_llm_edge_free_routing.py` 신규 5건(전 체인 edge 부재 · 2계정 종단 · deployment 미참조 · 기본 비활성 · 시각 무관 base). `test_meta_llm_edge_free.py` 의 "off-hours 강등 유지" 단정은 방향 반전(같은 날 오전 결정의 사용자 override)
+- [ ] 배포(gateway config reconcile + `.env` OFFHOURS 비움 → 워커 재시작) 후 라이브: gateway 경유 `claude-haiku-4-interactive` 200 + `served=claude-haiku-4-interactive`(edge 아님) 실측
+- [ ] **후속 제안(별 cycle)**: 게이트웨이 컨테이너 DNS 안정화 — 현재 embedded DNS 의 ExtServers 가 WSL NAT gateway 단일이라 그 경로가 죽으면 컨테이너 전체가 외부 해석 불가. edge 를 걷어낸 지금은 그 창이 곧 **전면 중단**이므로 완화가 필요(compose `dns:` 다중 지정 등). REPORT §8 참조
