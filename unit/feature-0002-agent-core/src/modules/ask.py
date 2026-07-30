@@ -19,9 +19,11 @@ web 재배포/SIGTERM 이 in-flight run 을 죽이지 않는다(orphan 구조 �
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import random
 import signal
 import socket
@@ -38,6 +40,8 @@ from shared.config import (
     AGENT_ASK_WORKER_SWEEP_EVERY_SEC,
     AGENT_ASK_WORKER_ATTEMPTS_CAP,
     AGENT_ASK_WORKER_JITTER_SEC,
+    AGENT_ASK_WORKER_DRAIN_SEC,
+    AGENT_ASK_WORKER_ROLE_STALE_SEC,
     AGENT_ASK_WORKER_HEARTBEAT_KEY,
     GLOBAL_CONVERSATION_ID,
 )
@@ -57,8 +61,66 @@ _SHARED_INLINE_DIR = os.getenv("ASK_SHARED_INLINE_DIR", "/shared/ask-inline").rs
 _INLINE_REAP_AGE_SEC = int((os.getenv("ASK_INLINE_REAP_AGE_SEC", "3600") or "3600").strip())
 
 
+# role 로 그대로 쓸 수 있는 문자셋. 대괄호는 **의도적으로 제외** — id 의 role 구분자다.
+_SAFE_ROLE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _sanitize_role(value: str) -> str:
+    """role 을 대괄호가 없는 안전한 토큰으로. 벗어나면 결정적 해시로 치환(단사 보존)."""
+    v = str(value or "").strip()
+    if not v:
+        return "unknown"
+    if _SAFE_ROLE_RE.match(v):
+        return v
+    return "h" + hashlib.sha1(v.encode("utf-8", "replace")).hexdigest()[:12]
+
+
+def _worker_role() -> str:
+    """재배포(컨테이너 재생성)에 **불변**인 worker role 식별자.
+
+    conv-audit FR-ask-orphan-redeploy-dead-air: 종전 worker id 는 `gethostname()`(=컨테이너
+    id) 기반이라 배포마다 값이 바뀌었고, 그래서 `reclaim_worker_jobs_on_boot` 의 자기-이름
+    일치가 **배포 경로에서 항상 0행**이었다. role 을 분리해 "같은 역할의 이전 인스턴스"를
+    식별할 수 있게 한다.
+
+    우선순위는 feature-0025 T0c(워커 스냅샷 identity) 선례와 동일 —
+    `AGENT_WORKER_ROLE` > `AGENT_SESSION`(compose 가 이미 주입, 재생성 불변) > hostname.
+
+    id 가 role 을 대괄호로 감싸므로(아래) role 안에 `[`/`]` 가 있으면 경계가 모호해진다
+    (적대 리뷰 security H2). 단순 제거는 **비단사**라 `x-y` 와 `x]-y` 가 같은 값이 되므로
+    (재리뷰 P2), 안전 문자셋을 벗어나면 role 전체를 결정적 해시로 치환한다 — 대괄호가
+    role 안에 들어올 수 없고 서로 다른 role 이 같은 prefix 를 갖지 않는다.
+    """
+    for _key in ("AGENT_WORKER_ROLE", "AGENT_SESSION"):
+        _v = (os.environ.get(_key) or "").strip()
+        if _v:
+            return _sanitize_role(_v)
+    # env 미주입 배포 — hostname 으로 폴백하면 재생성마다 값이 바뀌어 본 봉인의 전제가 깨진다.
+    # 조용히 회귀하지 않도록 경고를 남긴다(적대 리뷰 qa H2).
+    log.warning(
+        "ask-worker: AGENT_WORKER_ROLE/AGENT_SESSION 미주입 — role 을 hostname 으로 폴백. "
+        "컨테이너 재생성 시 이전 인스턴스 고아 회수가 전역 stale 창까지 지연될 수 있다."
+    )
+    return _sanitize_role(socket.gethostname())
+
+
+def _worker_role_prefix() -> str:
+    """같은 role 의 모든 인스턴스가 공유하는 claimed_by prefix.
+
+    role 을 대괄호로 감싸 경계를 못박는다 — `ask-worker[a]-` 는 `ask-worker[ab]-…` 의
+    prefix 가 될 수 없고, `_sanitize_role` 이 role 안에 `]` 가 들어오지 못하게 한다.
+    종전 `ask-worker-<role>-` 형식은 role `x` 의 prefix 가 role `x-y` 의 id 에도 걸렸다.
+    """
+    return f"ask-worker[{_worker_role()}]-"
+
+
 def _worker_id() -> str:
-    return f"ask-worker-{socket.gethostname()}-{os.getpid()}"
+    """이 프로세스 인스턴스의 claim 소유자 id.
+
+    형식: `ask-worker[<role>]-<instance>-<pid>` — role 은 재생성 불변, instance(hostname)+pid
+    가 인스턴스 유일성을 준다. 병렬 executor 는 여기에 `#<slot>` 을 덧붙여 claim 한다.
+    """
+    return f"{_worker_role_prefix()}{socket.gethostname()}-{os.getpid()}"
 
 
 def _pg():
@@ -67,10 +129,80 @@ def _pg():
     return _pg_connect()
 
 
-def _install_signal_handlers() -> None:
+# lease 반납이 이미 끝났음을 알리는 신호(shutdown 타이머 ↔ 메인 종료 경로 중복 작업 억제).
+_LEASE_RELEASED = threading.Event()
+
+
+def _release_own_leases(worker_id: str, *, reason: str) -> Optional[int]:
+    """자기 소유(running) job 의 lease 를 즉시 반납해 다음 worker 가 바로 집게 한다.
+
+    반납이 없으면 고아 job 은 전역 stale sweeper 의 STALE_SEC(수백초) 창을 통째로 기다린다
+    (conv-audit 실측 dead-air 142~1649s). 전용 단발 연결을 쓴다 — 호출 시점이 종료 경로/타이머
+    스레드라 루프 conn 을 공유하면 안 된다.
+
+    반납 직후 그 run 들을 **즉시 cancel 마킹**한다. lease_epoch++ 만으로는 heartbeat 주기
+    (기본 10s)가 지나야 구 executor 가 박탈을 눈치채는데, 새 인스턴스는 ~0.5s 안에 재claim
+    하므로 그 사이 두 run 이 같은 대화에 동시 기록할 수 있다(적대 리뷰 backend H1 — 종전
+    수백초 지연 회수에는 없던 새 겹침 창). heartbeat 가 쓰는 것과 같은 fencing 경로다.
+
+    Returns: 반납 건수. **실패 시 None** — 호출자가 "0건 반납" 과 구분해 재시도/폴백을
+    판단한다(적대 리뷰 backend H3: 실패를 성공으로 오인해 메인 종료 경로가 반납을 건너뛰던 결함).
+    """
+    conn = None
+    try:
+        conn = _pg()
+        rows = ask_jobs.release_worker_jobs_on_shutdown(
+            conn, worker_id, attempts_cap=int(AGENT_ASK_WORKER_ATTEMPTS_CAP))
+        if rows:
+            log.info("ask-worker: lease 반납(%s) — job %s requeue",
+                     reason, [r["id"] for r in rows])
+        for r in rows:
+            try:
+                mark_cancel_requested(None, r["conversation_id"], run_id=r.get("run_id") or "")
+            except Exception as exc:
+                log.warning("ask-worker: 반납 후 fencing cancel 마킹 실패 job=%s: %s",
+                            r.get("id"), exc)
+        return len(rows)
+    except Exception as exc:
+        log.warning("ask-worker: lease 반납 실패(%s): %s — stale sweeper 폴백", reason, exc)
+        return None
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
+def _arm_shutdown_lease_release(worker_id: str, drain_sec: int) -> None:
+    """SIGTERM 후 drain 예산이 지나면 남은 자기 lease 를 반납하는 1회성 타이머.
+
+    직렬 모드는 메인 스레드가 `_execute_job` 안에서 블록되므로 이 타이머가 **유일한** 반납
+    창이다. 병렬 모드는 drain join 종료 후 메인 경로도 반납을 시도하며, 둘 다 같은 단일문
+    UPDATE 라 중복 호출이 무해하다(두 번째는 0행).
+    """
+    if _LEASE_RELEASED.is_set():
+        return
+
+    def _wait_then_release() -> None:
+        # 반납이 메인 경로에서 먼저 끝나면(_LEASE_RELEASED) 조용히 빠진다.
+        if _LEASE_RELEASED.wait(max(1, int(drain_sec))):
+            return
+        # 실패(None)면 신호를 세우지 않는다 — 메인 종료 경로가 한 번 더 시도한다.
+        if _release_own_leases(worker_id, reason=f"drain {drain_sec}s 초과") is not None:
+            _LEASE_RELEASED.set()
+
+    threading.Thread(target=_wait_then_release,
+                     name="ask-lease-release", daemon=True).start()
+
+
+def _install_signal_handlers(worker_id: str = "", drain_sec: int = 0) -> None:
     def _handler(signum, _frame):
         log.info("ask-worker: signal %s 수신 — graceful shutdown 예약", signum)
         _SHUTDOWN.set()
+        # drain 예산이 끝나도 프로세스가 살아 있으면(=아직 SIGKILL 전) 남은 lease 를 반납한다.
+        if worker_id and int(drain_sec) > 0:
+            _arm_shutdown_lease_release(worker_id, int(drain_sec))
     try:
         signal.signal(signal.SIGTERM, _handler)
         signal.signal(signal.SIGINT, _handler)
@@ -456,6 +588,11 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
     try:
         kwargs = _payload_to_kwargs(payload, account_id, run_id)
         kwargs["queued_ms_seed"] = queued_ms
+        # 재시도(requeue 후 재claim)면 이전 attempt 가 이미 사용자 메시지를 저장했을 수 있다.
+        # job.created_at 이후 구간만 대조해 중복 저장을 막는다(conv-audit RC-2). 첫 attempt 는
+        # None → 종전 동작 그대로.
+        if int(job.get("attempts") or 1) > 1 and _created_at is not None:
+            kwargs["dedup_user_message_since"] = _created_at
         result = run_agent(**kwargs)
     except Exception as exc:
         raised = True
@@ -551,6 +688,44 @@ def _do_sweep(conn) -> None:
                  len(swept.get("requeued", [])), len(swept.get("errored", [])))
 
 
+def _do_role_reclaim(conn, worker_id: str) -> None:
+    """같은 role 의 **죽은 이전 인스턴스**가 남긴 running job 을 짧은 창으로 회수.
+
+    A(종료 시 lease 반납)가 못 도는 경로 — SIGKILL/OOM/노드 crash — 의 backstop.
+    전역 sweep 의 STALE_SEC(수백초)을 기다리지 않고 ROLE_STALE_SEC(기본 60s)만에 회수한다.
+    heartbeat 는 시간 기반(10s 주기, step 무관)이라 이 창을 넘겼으면 그 프로세스는 죽은 것이다.
+    자기 자신(및 자기 슬롯) 소유 행은 대상에서 제외된다.
+    """
+    try:
+        out = ask_jobs.reclaim_role_orphan_jobs(
+            conn,
+            role_prefix=_worker_role_prefix(),
+            self_prefix=worker_id,
+            stale_seconds=int(AGENT_ASK_WORKER_ROLE_STALE_SEC),
+            attempts_cap=int(AGENT_ASK_WORKER_ATTEMPTS_CAP),
+        )
+    except Exception as exc:
+        log.warning("ask-worker: role 고아 회수 실패: %s — 전역 sweep 폴백", exc)
+        return
+    for row in out.get("errored", []):
+        # cap 도달 → KV 도 error 로 정리(전역 sweep 과 동일 문구·경로, 프런트 '처리중' 해제).
+        try:
+            set_run_status(None, row["conversation_id"], "error",
+                           run_id=row.get("run_id") or "",
+                           error="요청 처리가 반복 실패하여 중단되었습니다. 다시 질의해 주세요.")
+        except Exception:
+            pass
+    for row in out.get("requeued", []):
+        # 구 인스턴스가 만약 아직 살아 있다면(=heartbeat 만 지연) fencing cancel 로 겹침 차단.
+        try:
+            mark_cancel_requested(None, row["conversation_id"], run_id=row.get("run_id") or "")
+        except Exception:
+            pass
+    if out.get("requeued") or out.get("errored"):
+        log.info("ask-worker: role 고아 회수 requeued=%d errored=%d (이전 인스턴스 잔재)",
+                 len(out.get("requeued", [])), len(out.get("errored", [])))
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # 메인 루프
 # ──────────────────────────────────────────────────────────────────────────
@@ -559,7 +734,10 @@ def run_ask_worker_loop() -> None:
         log.info("ask worker disabled: AGENT_ASK_WORKER_ENABLED=0")
         return
     worker_id = _worker_id()
-    _install_signal_handlers()
+    # drain 예산 — compose stop_grace_period(70s) 보다 작아야 반납이 SIGKILL 前에 끝난다.
+    drain_sec = max(1, int(AGENT_ASK_WORKER_DRAIN_SEC))
+    _LEASE_RELEASED.clear()
+    _install_signal_handlers(worker_id, drain_sec)
     _warm_attachment_postprocess_deps()
     tick_sec = max(1, int(AGENT_ASK_WORKER_TICK_SEC))
     # TASK-0289: 유휴(claim 대기) 폴링 주기를 reconnect backoff(tick_sec)와 분리. 단일 직렬
@@ -595,9 +773,13 @@ def run_ask_worker_loop() -> None:
             log.info("ask-worker: boot self-reclaim — running job %d건 requeue", n)
     except Exception as exc:
         log.warning("ask-worker: boot self-reclaim 실패: %s", exc)
+    # 재배포(컨테이너 재생성)로 hostname 이 바뀌면 위 자기-이름 회수는 0행이다 — 같은 role 의
+    # 죽은 이전 인스턴스 잔재를 부팅 즉시 한 번 더 훑는다(주기 회수는 _run_maintenance).
+    _do_role_reclaim(conn, worker_id)
 
-    log.info("ask-worker 시작: %s (tick=%ds stale=%ds heartbeat=%ds)",
-             worker_id, tick_sec, AGENT_ASK_WORKER_STALE_SEC, AGENT_ASK_WORKER_HEARTBEAT_SEC)
+    log.info("ask-worker 시작: %s (tick=%ds stale=%ds role_stale=%ds drain=%ds heartbeat=%ds)",
+             worker_id, tick_sec, AGENT_ASK_WORKER_STALE_SEC,
+             AGENT_ASK_WORKER_ROLE_STALE_SEC, drain_sec, AGENT_ASK_WORKER_HEARTBEAT_SEC)
 
     # conn-health-monitor: 직렬 ask-worker 가 1차 수혜 — 불안정 datasource 를 백그라운드로
     # 미리 판정해 agent 연결이 fast-fail 하게 한다(정상 datasource job 무지연). 종료 시 stop.
@@ -643,6 +825,8 @@ def run_ask_worker_loop() -> None:
         now = time.monotonic()
         if now - mstate["sweep"] >= sweep_every:
             _do_sweep(mconn)
+            # 같은 role 의 죽은 이전 인스턴스 잔재를 짧은 창으로 회수(재배포 dead-air 봉인 backstop).
+            _do_role_reclaim(mconn, worker_id)
             mstate["sweep"] = now
         if now - mstate["reap"] >= max(sweep_every, 300):
             _reap_orphan_inline_files(mconn)
@@ -742,13 +926,23 @@ def run_ask_worker_loop() -> None:
         # graceful drain(리뷰 MAJOR-1): SIGTERM 후 executor 들이 **현재 job 을 마칠 시간**을 compose
         #   stop_grace_period(ask-worker: 70s) 예산 안에서 준다 — 직렬 경로가 현재 job 을 grace 창 안에
         #   완주하는 것과 동치화(2초 만에 유기 → orphan → ~18분 재큐 회귀 방지). **공유 deadline** 이라
-        #   스레드 합산이 예산을 넘지 않고, 예산 초과분만 daemon+SIGKILL 후 lease heartbeat 중단→sweeper requeue.
-        _drain_deadline = time.monotonic() + 65.0
+        #   스레드 합산이 예산을 넘지 않는다. 예산을 넘긴 job 은 아래에서 **lease 를 명시 반납**해
+        #   다음 인스턴스가 즉시 집게 한다(종전엔 sweeper 의 STALE_SEC 창을 통째로 대기 —
+        #   conv-audit FR-ask-orphan-redeploy-dead-air 실측 dead-air 142~1649s).
+        _drain_deadline = time.monotonic() + float(drain_sec)
         for t in threads:
             _rem = _drain_deadline - time.monotonic()
             if _rem <= 0:
                 break
             t.join(timeout=max(0.0, _rem))
+
+    # ── 재배포 인계(A): 아직 자기 소유로 남은 running job 의 lease 를 명시 반납 ──
+    # drain 을 넘겨 죽게 될 job 을 sweeper 의 STALE_SEC 창에 맡기지 않는다. 새 인스턴스가
+    # ~idle_poll(0.5s) 안에 재claim → 사용자 dead-air 가 수백초에서 수초로 줄어든다.
+    # 이미 타이머가 반납했으면(직렬 모드 등) 이 호출은 0행 no-op.
+    if not _LEASE_RELEASED.is_set():
+        if _release_own_leases(worker_id, reason="graceful shutdown") is not None:
+            _LEASE_RELEASED.set()
 
     log.info("ask-worker 종료: %s", worker_id)
     try:

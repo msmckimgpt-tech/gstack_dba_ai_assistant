@@ -324,6 +324,37 @@ FROM ord
 WHERE c.id = ord.id AND ord.prev_id IS NOT NULL AND c.parent_message_id IS NULL
 """
 
+# conv-audit FR-ask-orphan-redeploy-dead-air(RC-2): ask job requeue 재실행이 사용자 메시지를
+# 중복 저장하는지 판정. `since`(job.created_at) 이후 구간만 본다 — 그 전의 동일 문구는 사용자가
+# 실제로 반복한 과거 turn 이므로 억제 대상이 아니다. sender_account_id 는 NULL 도 동일 취급.
+_PG_USER_MESSAGE_EXISTS_CORE = """
+SELECT 1
+FROM agent_runtime.core_messages
+WHERE conversation_id = %(conversation_id)s
+  AND role = 'user'
+  AND content = %(content)s
+  AND created_at >= %(since)s
+  AND sender_account_id IS NOT DISTINCT FROM %(sender_account_id)s
+LIMIT 1
+"""
+
+# 표시 store 미러(agent_runtime.messages)는 sender **컬럼**이 없고 content 가 strip 되어 저장된다.
+# 그룹 대화 미러는 발신자를 meta_json 에 싣는다(`sender_account_id`) — 그룹에서 다른 멤버가 같은
+# 문장을 보낸 행을 "이미 저장됨" 으로 오인해 진짜 미러를 빠뜨리지 않도록, 미러가 발신자를
+# 싣는 경우(그룹)엔 그 값까지 일치해야 한다(적대 리뷰 security H3). 1:1 미러는 발신자를 싣지
+# 않고 발신자도 한 명뿐이라 %(mirror_sender)s=NULL 로 들어와 종전 판정 그대로다.
+_PG_USER_MESSAGE_EXISTS_DISPLAY = """
+SELECT 1
+FROM agent_runtime.messages
+WHERE conversation_id = %(conversation_id)s
+  AND role = 'user'
+  AND content = %(content)s
+  AND created_at >= %(since)s
+  AND (%(mirror_sender)s IS NULL
+       OR (meta_json ->> 'sender_account_id') = %(mirror_sender)s)
+LIMIT 1
+"""
+
 # feature-0019 message-editing: 대화 tail(현재 활성 leaf 초기값) = MAX(core_messages.id).
 _PG_MAX_CORE_MESSAGE_ID = """
 SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conversation_id)s
@@ -786,6 +817,43 @@ class PgRuntimeBackend:
             cur.execute(_PG_BACKFILL_CORE_PARENTS, {"conversation_id": conversation_id})
             cur.execute(_PG_BACKFILL_MSG_PARENTS, {"conversation_id": conversation_id})
             cur.execute(_PG_ENABLE_BRANCHES, {"conversation_id": conversation_id, "leaf_id": int(leaf_id)})
+
+    def user_message_persisted_since(
+        self, conn: Any, *, conversation_id: str, content: str,
+        sender_account_id: Any = None, since: Any = None,
+        mirror_sender_account_id: Any = None,
+    ) -> dict:
+        """이 job 수명(since 이후) 안에 동일 user 메시지가 이미 저장됐는지.
+
+        conv-audit FR-ask-orphan-redeploy-dead-air(RC-2): ask job 이 requeue 되면 재실행이
+        `_save_message(user)` 를 다시 돌아 **사용자 메시지가 화면에 두 번 보인다**(실측 60일
+        9대화). 재시도에서만 이 확인을 거쳐 중복 저장을 건너뛴다. `since` 는 job.created_at —
+        그 이전의 동일 문구(사용자가 진짜로 같은 말을 반복한 과거 turn)는 대상이 아니다.
+
+        `mirror_sender_account_id`: 표시 미러가 발신자를 meta 에 싣는 경우(그룹)의 그 값.
+        None(1:1) 이면 미러에 발신자 정보가 없으므로 content+시각만으로 판정한다.
+
+        반환: {"core": bool, "display": bool} — 두 store 를 각각 판정한다(한쪽만 저장된
+        부분 실패에서 나머지 한쪽을 잃지 않도록).
+        """
+        out = {"core": False, "display": False}
+        if since is None:
+            return out
+        text = str(content or "")
+        _mirror_sender = (None if mirror_sender_account_id is None
+                          else str(int(mirror_sender_account_id)))
+        with conn.cursor() as cur:
+            cur.execute(_PG_USER_MESSAGE_EXISTS_CORE, {
+                "conversation_id": conversation_id, "content": text,
+                "sender_account_id": sender_account_id, "since": since,
+            })
+            out["core"] = cur.fetchone() is not None
+            cur.execute(_PG_USER_MESSAGE_EXISTS_DISPLAY, {
+                "conversation_id": conversation_id, "content": text.strip(),
+                "since": since, "mirror_sender": _mirror_sender,
+            })
+            out["display"] = cur.fetchone() is not None
+        return out
 
     def max_core_message_id(self, conn: Any, *, conversation_id: str):
         """feature-0019: 대화의 현재 tail(활성 leaf 초기값). 없으면 None."""

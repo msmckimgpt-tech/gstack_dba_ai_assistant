@@ -919,3 +919,56 @@ TASK 동명 섹션). 특기할 점은 **검증 방법의 함정**이다: 첫 시
 런타임 상수(`AGENT_*`)를 라이브에서 흔들어 볼 때 동일 함정이 재발할 수 있어 기록한다.
 
 Cross-ref: REV-20260729T160000-test-live-pg-isolation (본 cycle 의 선행).
+
+## REV-20260730T160000-ask-redeploy-handoff [CODEX:backend+security+qa] — PASS (P1 0건, 잔여 P2 1건 근거 기록)
+
+Trigger: §18.8 dispatch 표 키워드 0건 + code change(코어 워커 lifecycle·큐 상태기계). 세션에
+"요청 없이 Agent tool 호출 금지" 제약이 있어 §18.8.2 해소 순서대로 **제약 없는 채널 우선** —
+`codex exec` 적대 리뷰 2라운드(subagent 아님)로 backend/correctness · security · qa/regression
+3개 도메인을 모두 덮었다. coverage 부족분 없음 → panel 미호출.
+
+대상: `CHG-20260730T160000-ask-redeploy-handoff` (재배포 인계 — 고아 ask job dead-air 봉인).
+
+### 1라운드 — P1 GATE 5건, 전건 코드로 재현 확인 후 수정
+
+- **P1 backend H1 — 반납 후 구 executor 이중 쓰기**: `lease_epoch++` 는 heartbeat/finish 만
+  무효화하고, 구 run 은 heartbeat 주기(10s)가 지나야 cancel 을 인지한다. 새 인스턴스는 ~0.5s 에
+  재claim 하므로 **종전 수백초 지연 회수에는 없던 겹침 창**이 새로 생긴다. → 반납 직후
+  `mark_cancel_requested` 를 즉시 호출(heartbeat 가 쓰는 것과 같은 fencing 경로)해 창을 cancel
+  폴링 주기로 축소. 재검증에서 **해소** 판정.
+- **P1 backend H2 — attempts cap 우회**: `_CLAIM_SQL` 에 cap 게이트가 없음을 코드로 확인
+  (`ask_jobs.py` claim SQL). 따라서 신규 회수 경로가 cap 도달 행을 pending 으로 돌리면 무한
+  재실행이 된다. → 반납은 `attempts < cap` 만, role 회수는 전역 sweep 과 **동일 회계**
+  (cap 도달=terminal error + KV 정리 / 미만=requeue). 재검증 **해소**.
+- **P1 backend H3 — 반납 실패를 성공으로 오인**: 타이머가 실패에도 `_LEASE_RELEASED` 를 세워
+  메인 종료 경로의 재시도가 죽었다. → `_release_own_leases` 가 실패 시 `None` 반환, 신호는
+  성공에만. 재검증 **해소**.
+- **P1 security H2 — role prefix collision**: `ask-worker-<role>-` 형식에서 role `x` 의 prefix 가
+  role `x-y` 의 id 에도 걸려 "같은 role 만 회수" 경계가 실제로는 보장되지 않았다. →
+  `ask-worker[<role>]-` 로 경계 명시. 재검증에서 **요청 케이스는 분리 확인**, 다만 아래 P2.
+- **P1 security H3 — 그룹에서 타 발신자 메시지 삼킴**: 표시 미러는 sender 컬럼이 없어
+  content+시각만 비교했다. → 미러가 발신자를 meta 에 싣는 그룹 경로에서는
+  `meta_json->>'sender_account_id'` 까지 일치를 요구. 1:1 은 미러에 발신자가 없고 발신자도
+  한 명이라 종전 판정 유지(회귀 0). 재검증 **해소**.
+
+### 2라운드 재검증 — P1 0건. 잔여 P2 2건 처리
+
+- **P2(수정함) — role 위생이 비단사**: `[`/`]` 를 단순 제거하면 `x-y` 와 `x]-y` 가 같은 prefix 가
+  된다. → `_sanitize_role` 이 안전 문자셋(`[A-Za-z0-9_.-]`) 밖이면 role 전체를 결정적 해시로
+  치환(단사 보존·대괄호 유입 불가). 회귀 테스트 추가.
+- **P2(수용·근거 기록) — 반납 후 cancel 마킹 실패 시 재시도 없음**: KV 장애로 cancel 마킹이
+  실패하면 fencing 이 기존 heartbeat 경로(≤10s)로 되돌아간다. 이는 **본 변경 이전의 동작과
+  동일한 수준**이며, 여기서 반납 자체를 실패로 되돌리면 dead-air 가 수백초로 회귀해 더 나쁘다.
+  fail-open 을 의도로 유지하고 warning 을 남긴다.
+- **P2(수용·정직 표기) — 테스트가 실 PG 를 쓰지 않음**: `make test` 는 `--no-deps` 격리라 실 PG
+  가 없고, 형제 `test_ask_jobs.py` 와 동일하게 FakeConn 으로 SQL 계약을 고정한다. 실 LIKE 매칭·
+  동시성·cap 초과 재claim 은 **배포 후 라이브 실측분**으로 분리 표기한다(허위 커버리지 주장 금지).
+
+### 검증
+- 신규 `tests/test_ask_redeploy_handoff.py` **23 PASS**(1라운드 17 → P1/P2 수정 반영 후 확장).
+- 전체 회귀 `make test` **EXIT=0 · 신규 실패 0** (2회: P1 수정 전/후), ruff clean.
+- 보안 경계 불변 실증: RBAC·sql_guard·allowlist·PII 경로 무변경, 큐 상태기계는 기존 전이
+  (`pending` + `lease_epoch++`)만 사용, `attempts` 회계 불변.
+
+Cross-ref: TASK-20260730T160000-ask-redeploy-handoff · CHG-20260730T160000-ask-redeploy-handoff ·
+원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-ask-orphan-redeploy-dead-air`.

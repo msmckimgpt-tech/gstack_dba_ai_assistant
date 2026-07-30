@@ -495,6 +495,14 @@ source_of_truth: true
 - **내부 동작 투명화(activity step)**: `_run_agent_core` 의 nested `_emit_activity(label, detail="")` 가 비-tool 단계(맥락 로드/분석 준비/추론 라운드/결과 정리)를 `action='activity'`, `tool=''` step 으로 `save_memory_step` 한다. tool step 과 단조 증가 `emit_index`(step_index 공유)로 시간순 정합 — progress API `after_step` 증분 폴링·정렬 자연 호환. activity step 은 in-memory `steps`(rationale/csv 도출용)에는 넣지 않아 기존 헬퍼에 무영향. `_writes_allowed` 미충족(공유/읽기전용)·예외는 조용히 skip(투명화 보조가 본 추론을 깨지 않게).
 - **큐 대기 단축(P4)**: `AGENT_ASK_WORKER_IDLE_POLL_SEC`(float, 기본 0.5)로 단일 직렬 worker 의 유휴 claim 폴링을 sub-second 화(기존 tick 1~2s) — 새 job 발견 지연=사용자 큐 대기. `tick_sec`(reconnect backoff)·sweep 타이밍 불변.
 
+## (TASK-20260730T160000) 재배포 인계 — 고아 ask job 회수 계약
+배포는 ask-worker 를 `--force-recreate` 하므로 진행 중 run 이 죽는다. 종전엔 그 job 이 전역 stale 창(`AGENT_ASK_WORKER_STALE_SEC`)을 통째로 기다려 사용자 dead-air 가 수백 초였다(60일 실측 8대화, 142~1,649초, 3건 최종 error). 소유권 인계를 코드 계약으로 못박는다.
+- **worker identity 분리**: `_worker_id()` = `ask-worker-<role>-<instance>-<pid>`. `role` 은 `AGENT_WORKER_ROLE` > `AGENT_SESSION`(compose 주입, **컨테이너 재생성에 불변**) > hostname 순(feature-0025 T0c 선례). 병렬 executor 는 `#<slot>` 을 덧붙여 claim. 종전 hostname-only id 는 재생성마다 값이 바뀌어 `reclaim_worker_jobs_on_boot` 자기-이름 일치가 배포 경로에서 항상 0행이었다.
+- **A. 종료 시 lease 반납**: SIGTERM 후 `AGENT_ASK_WORKER_DRAIN_SEC`(기본 60, compose `stop_grace_period` 70s 보다 작아야 SIGKILL 前 완료) 동안 현재 job 완주를 기다리고, 남은 자기 소유 running job 을 `release_worker_jobs_on_shutdown` 으로 즉시 requeue. 직렬 모드는 메인 스레드가 블록되므로 SIGTERM 타이머가 반납한다. 새 인스턴스가 ~`IDLE_POLL_SEC`(0.5s) 안에 재claim.
+- **B. role 고아 회수(backstop)**: SIGKILL/OOM 으로 A 가 못 돈 경우, 부팅 직후 + 주기 유지보수(sweep 주기)에 `reclaim_role_orphan_jobs` 가 **같은 role 의 다른 인스턴스**가 claim 한 채 `AGENT_ASK_WORKER_ROLE_STALE_SEC`(기본 60s) 이상 heartbeat 가 끊긴 행을 회수한다. heartbeat 는 시간 기반(10s 주기·step 무관)이라 이 창을 넘겼으면 프로세스 death 다. 자기 자신·자기 슬롯은 제외. **전역 `AGENT_ASK_WORKER_STALE_SEC` 은 불변**(cross-role false-positive 방지 보수 창).
+- **C. 재시도 중복 저장 억제**: requeue 재실행(`attempts>1`)은 `run_agent(dedup_user_message_since=job.created_at)` 으로 호출되어, job 수명 이후 동일 사용자 메시지가 core/display 에 이미 있으면 저장을 건너뛴다(종전엔 재시도마다 화면에 같은 말이 한 줄 더 — 60일 9대화). 무조건 skip 이 아닌 **존재 확인 기반**이며, 조회 불가/PG 정본 아님이면 저장 쪽으로 fail-open(중복 1행 < 요청문 유실).
+- 큐 상태기계는 기존 전이(`pending` + `lease_epoch++` fencing)만 사용하고 `attempts` 는 claim 시점 증가분을 그대로 둔다(cap 이중 소모 방지). 보안 경계·RBAC·가드 무변경.
+
 ## (TASK-20260617T095122) 계정 스코프 cross-conversation 인사이트 회상 (B′, INJECT enable-ready)
 새 대화 시작 시 같은 계정의 과거 대화에서 쌓은 인사이트가 사라지는 문제를 완화한다 — 특정 명칭이 아니라 문맥/인사이트를 어렴풋이 이월. 설계 정본 `docs/DESIGN-account-insight-recall.md` §10. outside-voice 2-lens 검증(REV-20260617T095122). **모든 flag default OFF → 라이브 동작 0 변경**; 활성=canary(EXTRACT→RECALL→INJECT).
 - **소스 입력(kv 보강, TASK-20260617T100524)**: 추출 입력은 `summary`(선택) + **kv 신호(origin_request/thread_goal/topic)**. summary 쓰기가 비어도(cutover 결함) kv 로 동작. 후보 쿼리 LEFT JOIN, summary+kv 합산 신호 게이트·fingerprint.

@@ -829,3 +829,54 @@ REVIEW REV-20260729T160000-test-live-pg-isolation.
 
 Cross-ref: TASK-20260729T183000-test-live-pg-isolation-postdeploy ·
 REVIEW REV-20260729T183000-test-live-pg-isolation-postdeploy.
+
+## CHG-20260730T160000-ask-redeploy-handoff — 재배포 인계: 고아 ask job dead-air 봉인
+
+**무엇을**: 배포가 ask-worker 를 재생성할 때 진행 중이던 답변이 통째로 사라지고, 회수까지
+수백 초가 비던 경로를 봉인한다. 사용자 체감으로는 "요청이 도중에 중단"으로 나타났다.
+
+**왜**: `bin/deploy-web.sh` 는 워커를 `--force-recreate` 한다. 그런데 worker 소유자 id 가
+`gethostname()`(=컨테이너 id) 기반이라 재생성 후 `reclaim_worker_jobs_on_boot` 의
+`claimed_by = worker_id` 정확일치가 **항상 0행**이었다. 즉 "배포로 죽은 job" 은 자가회수가
+구조적으로 불가능했고, 전역 stale sweeper 의 `AGENT_ASK_WORKER_STALE_SEC`(런타임 실측 450s)
+창을 통째로 기다렸다. 60일 실측 8건/8대화, 생성→재시작 dead-air 142~1,649초, 3건 최종 error.
+재실행은 사용자 메시지를 한 번 더 저장해 화면에 같은 말이 두 줄 보였다(9대화).
+
+**어느 RC**: conv-audit `FR-ask-orphan-redeploy-dead-air` RC-1(회수 지연)·RC-2(중복 저장).
+
+**재발 봉인 방식**: 재발경로는 `infra`(배포마다 재생성)이고 우리 통제 안이므로 **코드를
+권위선**으로 둔다 — 죽기 전에 반납하고(A), 못 반납했으면 다음 인스턴스가 짧은 창으로
+회수한다(B). 임계 추측이 아니라 소유권 인계 계약이다.
+
+### 변경
+- `shared/config.py` — `AGENT_ASK_WORKER_DRAIN_SEC`(기본 60, compose `stop_grace_period` 70s
+  보다 작아야 반납이 SIGKILL 前에 끝난다) · `AGENT_ASK_WORKER_ROLE_STALE_SEC`(기본 60)
+  신설, `__all__` 등록.
+- `modules/ask_jobs.py` — `release_worker_jobs_on_shutdown()`(자기 소유 + `#slot` prefix
+  매칭 requeue) · `reclaim_role_orphan_jobs()`(같은 role 의 **다른** 인스턴스 + 짧은 heartbeat
+  창) · `_like_prefix()`(LIKE 와일드카드 이스케이프). 둘 다 기존 requeue 와 **동일한 상태
+  전이**(pending + `lease_epoch++` fencing)를 쓴다 — 새 status 없음. `attempts` 미변경.
+- `modules/ask.py` — `_worker_role()`/`_worker_role_prefix()`/`_worker_id()` 를 재생성 불변
+  role 기반으로 분리(우선순위 `AGENT_WORKER_ROLE` > `AGENT_SESSION` > hostname —
+  feature-0025 T0c 선례) · `_release_own_leases()` · SIGTERM 타이머
+  `_arm_shutdown_lease_release()`(직렬 모드는 메인 스레드가 블록되므로 이것이 유일한 반납 창) ·
+  drain deadline 을 하드코딩 65s → knob · 종료 경로/부팅/주기 유지보수에 회수 배선 ·
+  재시도면 `dedup_user_message_since` 주입.
+- `modules/runtime_backend.py` — `PgRuntimeBackend.user_message_persisted_since()` +
+  core/display 2쿼리(`created_at >= since` 로 **job 수명 이후만** 판정).
+- `agent_core.py` — `run_agent`/`_run_agent_core` 에 `dedup_user_message_since` 추가(기본
+  None = 종전 동작) · `_user_message_already_persisted()` helper · 사용자 메시지 저장부가
+  core/display 각각 판정 후 저장.
+- `unit/feature-0002-agent-core/tests/test_ask_redeploy_handoff.py` — 신규 17건.
+
+### 안전 경계
+- 보안 경계 **불변** — RBAC·가드·allowlist·PII 경로 무변경. 큐 상태기계도 기존 전이만 쓴다.
+- 오회수 방지: role 창은 자기 자신/자기 슬롯을 제외하고 `heartbeat_at` 이 `ROLE_STALE_SEC`
+  이상 끊긴 행만 본다. heartbeat 는 시간 기반(10s 주기, step 무관)이라 이 창을 넘겼으면 그
+  프로세스는 죽은 것이다. 전역 `STALE_SEC` 은 그대로 보수적으로 유지.
+- 중복 억제는 **근거 기반 fail-open** — 조회 불가/PG 정본 아님이면 종전대로 저장한다(중복 1행이
+  요청문 유실보다 안전).
+
+Cross-ref: TASK-20260730T160000-ask-redeploy-handoff ·
+REVIEW REV-20260730T160000-ask-redeploy-handoff ·
+원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-ask-orphan-redeploy-dead-air`.

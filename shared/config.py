@@ -127,6 +127,8 @@ __all__ = [
     "AGENT_ASK_WORKER_SWEEP_EVERY_SEC",
     "AGENT_ASK_WORKER_ATTEMPTS_CAP",
     "AGENT_ASK_WORKER_JITTER_SEC",
+    "AGENT_ASK_WORKER_DRAIN_SEC",
+    "AGENT_ASK_WORKER_ROLE_STALE_SEC",
     "AGENT_ASK_WORKER_CONVERSATION_ID",
     "AGENT_ASK_WORKER_HEARTBEAT_KEY",
     "AGENT_KB_ALLOWED_SOURCE_TYPES",
@@ -1769,6 +1771,22 @@ AGENT_ASK_WORKER_ATTEMPTS_CAP = int(
 )
 AGENT_ASK_WORKER_JITTER_SEC = int(
     (os.getenv("AGENT_ASK_WORKER_JITTER_SEC", "0") or "0").strip()
+)
+# ── 재배포 인계(conv-audit FR-ask-orphan-redeploy-dead-air) ──────────────────
+# drain 예산(sec) — SIGTERM 수신 후 실행 중 job 이 스스로 끝날 시간을 이만큼 준 뒤,
+# 남은 자기 소유 running job 을 **명시적으로 lease 반납**(requeue)하고 종료한다.
+# compose stop_grace_period(ask-worker 70s)보다 작아야 반납이 SIGKILL 前에 끝난다 —
+# 반납 없이 죽으면 stale sweeper 의 STALE_SEC(수백초) 창을 통째로 기다린다(실측 dead-air 142~1649s).
+AGENT_ASK_WORKER_DRAIN_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_DRAIN_SEC", "60") or "60").strip()
+)
+# role-scoped 고아 회수 임계(sec) — **같은 worker role 의 이전 인스턴스**가 claim 한 채
+# heartbeat 가 이만큼 끊긴 running job 을 회수한다. heartbeat 는 시간 기반(HEARTBEAT_SEC=10s,
+# step 무관)이라 이 배수(기본 6배)를 넘겼다면 그 프로세스는 죽은 것이다. 전역 STALE_SEC 은
+# cross-role false-positive 를 막으려 보수적으로 크게 유지하고, 이 좁은 창은 SIGKILL(=drain
+# 반납 미실행) 경로의 backstop 이다. 자기 자신이 claim 한 행은 대상에서 제외된다.
+AGENT_ASK_WORKER_ROLE_STALE_SEC = int(
+    (os.getenv("AGENT_ASK_WORKER_ROLE_STALE_SEC", "60") or "60").strip()
 )
 AGENT_ASK_WORKER_CONVERSATION_ID = "__ask_worker__"
 # worker 생존 heartbeat KV 키(healthcheck + /api/ask readiness gate 가 신선도 검사).

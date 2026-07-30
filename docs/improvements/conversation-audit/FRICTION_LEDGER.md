@@ -463,3 +463,58 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   Major 변경의 blast radius 를 한 cycle 에 겹치지 않는다(Phase 7.3 응집 한계).
 - **필요한 사람 액션(1줄)**: 별도 cycle 로 insight 스캔 루프에 동일 liveness 계약 적용 여부 판단
   (선행 측정: 스캔 중 `db_failed`/degraded 중 끊김 시그니처 비율).
+
+## FR-ask-orphan-redeploy-dead-air — fixed:undeployed (L4↔인프라 경계; 재배포가 진행 중 답변을 삼키고 회수가 수백초 지연)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 23 PASS · 전체 회귀 `make test` EXIT=0 ·
+  verify-completion 전건 PASS · codex 적대 2라운드 P1 0건) 완료, **PR #1088**. 배포 전.
+  배포 후 `fixed:deployed:unverified-live` → 다음 audit corroboration 재측정으로 `verified` 전이.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-07-30) — 지정 대화 "레거시 호환성을
+  고려한 실제 DB 기반 쿼리 리뷰", "요청이 도중에 중단된 것으로 추측".
+- **last_seen**: 2026-07-30 · **seen_count**: 1 · **seen_distinct_conv**: 8 (60일 고아 재큐 기준)
+- **modality**: 그룹 비동기(`is_group=t`) · **product_id(마스킹)**: P-119 · **account(마스킹)**: A-10 ·
+  **conv(마스킹)**: …b5f40d99
+- **symptom_confidence**: high (사용자 명시 보고 + 라이브 데이터 완전 재현)
+  · **rootcause_confidence**: high (코드 file:line + `ask_jobs`/`steps`/`core_messages`/`messages`
+  + 컨테이너 타임스탬프 4중 삼각측량)
+- **suspected_layers**: **L4↔인프라 경계** — 큐/워커 lifecycle(코드)과 배포 재생성(인프라)의 경계.
+  L7 에서 표면화(스피너 8분 고착·사용자 메시지 중복 표시).
+- **증상(signal)**: `E-USR` 명시 보고 + `I-INT` 중복 메시지 + `I-FALSE` — job 483 이 15:38 에 답변
+  초안까지 만들고 red-team 자가검증 중 15:41:32 에 배포로 죽었고, 회수가 15:49:18 에야 일어났다.
+  재실행은 사용자 메시지를 한 번 더 저장한 뒤 LLM timeout 으로 최종 error. **사용자는 14분을
+  기다려 중복 메시지와 오류만 받았다.**
+- **confirmed_root_cause**: `modules/ask.py` `_worker_id()` 가 `socket.gethostname()`(=컨테이너 id)
+  기반이라 컨테이너 **재생성**마다 값이 바뀐다 → `ask_jobs.reclaim_worker_jobs_on_boot` 의
+  `claimed_by = worker_id` 정확일치가 **항상 0행**. `bin/deploy-web.sh` 는 워커를
+  `--force-recreate` 하므로 **"배포로 죽은 job" 은 자가회수가 구조적으로 불가능**했고, 전역 stale
+  sweeper 의 `AGENT_ASK_WORKER_STALE_SEC`(런타임 실측 450s) 창을 통째로 기다렸다. 부수 결함:
+  재실행이 `agent_core._save_message(user)` 를 다시 돌아 사용자 메시지를 중복 저장.
+  재발경로 = **infra(배포마다 재생성) — 단 우리 통제 안** → 코드가 권위선.
+- **corroboration**: **structural** — 60일 고아 재큐 **8건 / 8 distinct_conv**(전체 482 job ·
+  209 대화 ≈ 3.8%), 생성→재시작 dead-air **142~1,649초**(중앙값 ~700s), **3건 최종 error**.
+  중복 사용자 메시지(연속 동일 user 행) **9건 / 9 distinct_conv**.
+- **거짓양성 기각(`refuted`)**: ① 같은 대화 07-29 17:38~17:39 사용자 3건 무응답은 **그룹
+  `@assistant` 멘션 게이트**(`conversations.py` `group_requires_mention`, 의도된 동작 F4) — 결함
+  아님. ② `FR-dataplane-conn-stale-no-reconnect` 재발 아님(연결 절단 시그니처 부재, 워커 프로세스
+  소실이 원인). ③ 진행 중 병렬 cycle(FE 말풍선 `enqpre-run-handoff`, 이미 머지된 llm-timeout)과
+  파일 중첩 없음 — F3 중복 기각.
+- **봉인**: (A) 종료 시 lease 명시 반납 + 반납 직후 cancel 마킹(겹침 창을 heartbeat 주기 → cancel
+  폴링 주기로 축소) (B) worker identity 를 재생성 불변 role 로 분리(`AGENT_WORKER_ROLE` >
+  `AGENT_SESSION` > hostname) + `ask-worker[<role>]-` 경계 + 같은 role 의 죽은 이전 인스턴스를
+  `ROLE_STALE_SEC`(60s)로 회수(SIGKILL backstop) (C) 재시도에서만 근거 기반 중복 저장 억제.
+  **전역 `STALE_SEC` 불변**, cap 회계는 전역 sweep 과 동일, 보안 경계 무변경.
+- **disposition 근거**: Major(§12.3 — 코어 워커 lifecycle·동시성) → attended human-decision.
+  사용자가 AskUserQuestion 으로 봉인 범위 **A+B+C** 명시 선택(2026-07-30) → PLAN-APPROVED 후 구현.
+  structural corroboration + 코드 file:line confirmed(high) → fix-now.
+- **fix**: `CHG-20260730T160000-ask-redeploy-handoff` / **코드 거주 `feature-0002-agent-core`**
+  (+ `shared/config.py` knob 2종) / `REV-20260730T160000-ask-redeploy-handoff`
+  (§18.8.2 제약-없는-채널 우선 → codex 적대 2라운드 backend+security+qa, P1 5건 전건 수정 → P1 0건).
+- **rc_ids**: RC-1(회수 지연) · RC-2(중복 저장) · **batch-id**: B-20260730T160000-ask-redeploy-handoff
+- **범위 밖(deferred/인지)**: ① 재시도가 1차 시도의 답변 초안·red-team 라운드를 재사용하지 않는다
+  (전량 재실행) — 부분 산출 이월은 별 cycle. ② `insight-worker` 도 같은 hostname 기반 식별을 쓰나
+  소비자·복구 정책이 다르다(배경 스캔은 다음 cadence 재시도) — 응집 범위 밖. ③ 반납 후 cancel
+  마킹이 KV 장애로 실패하면 fencing 이 기존 heartbeat 경로(≤10s)로 복귀(수용, REVIEW 근거 기록).
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "인계 계약이 동작함" 까지만 증명한다. **"실제 대화의
+  dead-air 소멸"** 은 배포 후 실측분(미수행) → 다음 audit 이 corroboration(`attempts>1` 재큐의
+  생성→재시작 중앙값 · 연속 동일 user 메시지 distinct_conv) 재측정 → 감소 시 `verified`, 재증가 시
+  `regressed`.
