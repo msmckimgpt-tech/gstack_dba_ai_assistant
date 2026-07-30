@@ -1662,6 +1662,10 @@ FR-false-absence 패널이 pre-existing 으로 분리 기록한 항목을 사용
 - [x] **cyvol**: §18.8 적대 패널 2렌즈 — 결함 8건 흡수(MAJOR-1 flip-flop · MAJOR-2 무음 행소실 · B3 재조정 상실 · M3 부분엣지 고착 · M1 교차 feature 회귀 · M2 무음 · MINOR-1/2)
 - [x] **cyvol**: QA 패널 변이 28중 17 생존 → harness 를 sync_graph end-to-end 로 교체, 최종 31건 · 역검증 16종 생존 0
 - [ ] **cyvol**: 머지 → 배포 → 전량 sync 전후 실측
+- [x] **infdetail**: 다음 병목 후보 3종 측정 — red-team(95~98% LLM=대상아님) · 큐대기(배포실패 창) · PG(40분 8.0초=병목아님)
+- [x] **infdetail**: inference 142.9s 중 LLM 109.9s / **33.0s(23%) 미귀속** 확인 → 하위 분해 부재가 원인
+- [x] **infdetail**: `duration_breakdown.inference_detail`(llm/tool/tool_top/other_ms) + perf-snapshot §3b-2·§3b-3 + 테스트 7건·역검증 5종
+- [ ] **infdetail**: 패널 → 머지 → 배포 → 수집된 other_ms 로 33초 정체 규명 후 개선 착수
 - [x] **잔여 확정(2026-07-28 라이브 실증)**: QA SQL Server 2017 프로브로 스칼라 위치 모호성이 **착취 불가**임을 확인(별칭 우선 해석, 오류 문구 DB 존재 불변) → 열거 oracle 부재도 확정되어 오류 원문 은폐를 **철회**. CHG-20260728T150510.
 정본 rationale=REVIEW REV-20260728T133431-alias-shadowed-function-namespace, 변경이력=MODIFY CHG-20260728T133431-alias-shadowed-function-namespace.
 

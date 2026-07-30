@@ -995,7 +995,6 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - **검증(타깃별 실질 + ULTRACODE 2-round 적대)**: wiki feature-count sweep stale-26=0(ground-truth 29=ls unit/feature-*·wiki/Features/feature-*.md=29 cards·6 token-edit=8참조 중 stale 6[Index.md 2참조는 feature 커밋이 이미 29])·신규 wikilink([[feature-0027/0028/0029]] 카드 실재)·pipe 무결(§4 2열|=3·§6 4열|=5·overview §2.1|=5·Architecture §2.3|=4/§2.4|=5)·각 타깃 표 1행씩(중복 0). §-qualify(ARCH 신규행 bare § 0·DECISIONS.md ADR·TASK.md §2.1 doc-qualify). gen-status --check rc=0·ssot-lint rc=0(4 WARN=pre-existing baseline). 정본 독립 재검증(함정 #11): model.access RBAC=feature-0003(1b9ee97a Task-Cycle·커밋본문 'feature-0007 R2'는 동기 리뷰 참조일 뿐 코드 귀속 아님)·사용기록 백엔드=feature-0002(e5860932)·self-check=feature-0021(3e2aae93). **ULTRACODE 적대 2-round**: R1 wf_63a962eb(3-타깃 analyze→타깃-스코프 verify, cross-fault 회피 함정 #12) — RN item3 좌우 오귀속·item5 즉시반영·wiki timeline/hot feature-0007 오귀속·ARCH thinking ADR 과귀속 4건 적발·전건 정본 재검증 후 교정. R2 wf_b705e7ba(3 diverse-lens on applied diff) — 3렌즈 clean·minor 2 교정(wiki §2.4 feature-0028 에 feature-0002 dep 정본 §6 미러 정합·hot.md trailing newline)·STATUS §5 defer 정당 재확인.
 - **인용 무결성 확인**: 본 entry(META-0049) staged 실재. 동반 operational commit(feature-0003 release-notes-data.js + companion TASK/MODIFY/FUNCTION/TEST/REVIEW) 별도 — 서빙 static(릴리즈노트) 배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만).
 - **Human Approval Needed**: 아니오 (색인/미러 additive·구조/보안 경계 불변·제품 런타임 동작 0·pure-meta). 무인 스케줄 run — landing(push/merge)·배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만·감지·보고만).
-
 ## REV-20260729T091700-ai-root-ui-copy-bloat [SKIPPED:프로젝트 학습 기록 1건 append — 제품 코드 무변경]
 - Related TASK: (project-level) docs/LEARNINGS.md — LRN-20260729T091700-ai-root-ui-copy-bloat
 - Trigger: changeset 이 `docs/LEARNINGS.md` append 전용 (§18.8 키워드 비매칭, 제품 코드·정책 계약 무변경)
@@ -1035,3 +1034,17 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - **reconcile-first(자가수리 ①)**: doc delta 계산 *전* 서빙 static surface 파리티 확인 — 라이브 서빙 `release-notes-data.js` md5 `1fa39008…` == `origin/main` 동일 파일 md5 **일치** + `/healthz` 200(자가서명 TLS, `curl -k --resolve`) → **배포 갭 없음**. 배포 이미지 커밋 라벨 vs 브랜치 HEAD 같은 coarse 비교는 고병렬 머지로 상시 오탐하므로 갭 근거로 쓰지 않음.
 - **landing/배포 소유권(자가수리 ④)**: 실행환경 헤더가 LANDING/DEPLOY OWNERSHIP v3 를 명시 위임 → doc_sync 는 현재 `ai/claude/doc-sync-20260730-010301` 브랜치에 **로컬 commit 까지만**. push·main ff-머지·docker 배포는 wrapper 소유(이중 landing/배포 racing 방지). 서빙 static(릴리즈노트) 변경 있음 → wrapper 배포 시 `inject_asset_stamp.py` content-hash 재주입으로 새 콘텐츠 서빙. `committed` != `serving` — end-state 는 wrapper 배포 후 확정.
 - Timestamp: 2026-07-30T01:03:01+09:00
+## REV-20260729T120000-ai-root-inference-detail-metrics [SUBAGENT:backend] — inference_ms 내부 분해 계측
+- Related TASK: CHG-20260729T120000-inference-detail-metrics (feature-0002-agent-core, Minor §12.3)
+- 패널: fresh-context 적대 리뷰 1렌즈(계측 정합성 + 테스트 강도 + 라이브 SQL 실행 검증). BLOCKER 0.
+- **판정: 초안 REJECT — 결함 9건 흡수 후 재검증.** 문서가 주장한 기능(비정상 경로 커버)이 **실재하지 않았고**, 잔차가 체계적으로 과소평가되고 있었다.
+- MAJOR:
+  - **M-1** "비정상 종료 경로에도 분해를 싣는다"는 거짓 — `_slim_result` allowlist + meta 없는 mirror 로 **영속 경로 없음**(죽은 코드). 주장 철회 + 제거, 미커버로 명시.
+  - **M-2** 같은 자리를 `break` 정상 경로도 지나는데 now_perf 가 메시지 저장·큐레이션(25~35초) 뒤 → 잔차 범벅(이 계측이 피하려던 오도).
+  - **M-3(설계)** `llm_ms` 가 `_call_llm` 래퍼 전체를 측정 → 첨부 로드·messages 재조립·settings DB 읽기·usage INSERT 가 llm_ms 로 청구돼 **찾으려던 잔차가 사라지고** 기준선과 비교 불가 → ContextVar 로 provider 왕복만 집계.
+  - **M-4(산술)** §3b-3 `avg(ms/n)` → 라이브 실증 228ms 를 9,025ms(40배) 과대보고 → `sum(ms)/sum(n)`.
+  - **M-5(테스트)** 순수 빌더만 검증해 누산 배선 0% — 변이 5종 전부 생존.
+- MINOR: 누산이 LLM 오류 try 본문 안(성공 라운드가 provider 오류로 둔갑) · finally 무가드(원 예외 대체) · **모델 제어 도구명이 meta_json JSON 키로 유입 → NUL 시 jsonb 실패를 mirror 가 삼켜 답변 행 소실**(라이브 재현) · 문서만 있고 쿼리 없던 llm_usage 교차검증 · 도달 불가 상태를 검증하던 테스트.
+- 조치: 9건 전부 수정. 테스트 7 → **16건**(빌더 + 누산기 계약 + 소스 배선 계약), 패널 생존 변이 6종 되돌림 **생존 0**. feature-0002 전체 스위트 회귀 0.
+- 패널이 clean 판정한 축: red-team 의 `inference_ms` 포함 관계(영속 경로 기준 정확) · 누산기에 red-team LLM/도구 미유입 · 스코프/클로저(모든 early return 이 도달 불가) · try/finally 제어흐름 · 라운드당 1회 누산(empty_retries 포함 정확) · 쓰기 경로 상한(40자·top-6, 최악 ~550B) · 신규 SQL 문법·빈 입력 동작.
+- Timestamp: 2026-07-29T12:00:00Z
