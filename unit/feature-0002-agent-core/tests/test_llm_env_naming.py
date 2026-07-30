@@ -73,17 +73,20 @@ def test_openai_api_base_removed(monkeypatch):
 
 
 # ── feature-0016 node-analysis-haiku: 그래프 관계 분석 전용 모델 ────────────────
-def test_node_analysis_model_defaults_to_interactive(monkeypatch):
-    """AGENT_NODE_ANALYSIS_MODEL 미설정 시 claude-haiku-4-interactive 기본값 — AI 능동 분석은
-    **사람 능동 호출**이므로 주말·야간에도 항상 claude(interactive alias, gemma 강등 없음).
-    (llm-routing-interactive-split 2026-07-04: 기존 claude-haiku-4 → interactive 로 갱신 —
-    insight 배치의 off-hours gemma 강등과 분리된 전용 alias.)
-    AGENT_INSIGHT_MODEL=edge 여도 node analysis 는 이 값에 영향받지 않는다."""
+def test_node_analysis_model_defaults_to_meta_edge_free(monkeypatch):
+    """AGENT_NODE_ANALYSIS_MODEL 미설정 시 **claude-haiku-4-meta** 기본값.
+
+    meta-llm-edge-free(2026-07-30, 사용자 결정 재확인 "로컬LLM은 특수목적 전용, 실제 개발용 작업은
+    계정 연결 claude-code"): 종전 기본값 `claude-haiku-4-interactive` 는 litellm fallback 체인이
+    **`edge-fallback`(로컬 gemma)로 끝나** 두 claude 계정이 401/429 면 능동 분석·클러스터 라벨이
+    조용히 gemma 산출로 바뀌었다(그 산출물은 kv 캐시·시그니처를 통해 **영구히 남는다**).
+    대화 답변의 `*-chat` 규약과 동일하게 edge 를 배제한 `-meta` alias(claude-corp → root 2계정)로 이관.
+    AGENT_INSIGHT_MODEL=edge 여도 node analysis 는 이 값에 영향받지 않는다(분리 유지)."""
     monkeypatch.delenv("AGENT_NODE_ANALYSIS_MODEL", raising=False)
     monkeypatch.setenv("AGENT_INSIGHT_MODEL", "edge")  # insight 는 gemma 라도
     c = _reload_config()
-    assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-haiku-4-interactive"  # 능동 분석은 interactive
-    assert c.AGENT_INSIGHT_MODEL == "edge"                              # 공유 안 함(분리 확인)
+    assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-haiku-4-meta"   # 능동 분석·라벨은 edge-free meta
+    assert c.AGENT_INSIGHT_MODEL == "edge"                        # 공유 안 함(분리 확인)
 
 
 def test_node_analysis_model_env_override(monkeypatch):
@@ -93,11 +96,11 @@ def test_node_analysis_model_env_override(monkeypatch):
     assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-sonnet-4"
 
 
-def test_node_analysis_model_blank_env_falls_back_to_interactive(monkeypatch):
+def test_node_analysis_model_blank_env_falls_back_to_meta(monkeypatch):
     """빈 문자열/공백 override 는 기본값으로 폴백(빈 모델명 라우팅 방지)."""
     monkeypatch.setenv("AGENT_NODE_ANALYSIS_MODEL", "   ")
     c = _reload_config()
-    assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-haiku-4-interactive"
+    assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-haiku-4-meta"
 
 
 def test_node_analysis_model_exported(monkeypatch):

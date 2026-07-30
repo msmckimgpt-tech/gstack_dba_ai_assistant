@@ -735,3 +735,19 @@ source_of_truth: true
 - Timestamp: 2026-07-30T16:00:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260730T160000-meta-llm-edge-free [SKIPPED:non-policy-doc] — 라우팅 별칭 추가(Minor)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 변경은 litellm 별칭 정의 + fallback 한 줄 + config 기본값이며 스키마·엔드포인트·인가·응답 shape
+  불변. 회귀 방어는 기계적 계약 테스트 5건(특히 "meta 체인에 edge 없음" 과 "insight off-hours 강등 유지"
+  양방향)으로 직접 잠금했다 — 별칭 오타·체인 누락은 테스트가 잡고, 그 외 판단 여지가 없다.
+- 설계 근거: **선례 준용**이 핵심이다. 2026-07-07 사용자 결정이 대화 답변에 대해 이미 같은 판단을 내렸고
+  (`*-chat` edge-free), 본 변경은 그 규약을 개발용 메타데이터 산출물로 확장한 것이다 — 새 정책이 아니라
+  기존 정책의 적용 범위 정정.
+- **미커버 정직 표기**: ① 두 claude 계정이 동시에 429 인 상황의 실제 fail-soft 거동(affix 라벨 폴백 ·
+  미분석 유지)은 **라이브에서 재현하지 못했다** — 계정을 의도적으로 소진시켜야 하므로 코드 경로 검토와
+  기존 fail-soft 계약에 의존한다. ② 게이트웨이가 새 별칭을 실제 서빙하는지는 **배포 후 확인**(M.6) —
+  본 검증 시점의 게이트웨이는 구 config 를 로드한 상태다.
+- Timestamp: 2026-07-30T16:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
