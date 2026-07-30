@@ -314,20 +314,84 @@ _SNAPSHOT_DIR_ENV = "AGENT_WORKER_RESOURCE_SNAPSHOT_DIR"
 _SNAPSHOT_DIR_DEFAULT = "/shared/perf"
 
 
+#: 죽은 워커의 스냅샷 회수 임계(초). 이 시간 넘게 갱신되지 않은 파일은 그 워커가 사라진 것으로
+#: 보고 flush 시 정리한다 — 안 하면 목록이 유령 워커로 채워지고 표시 상한을 잠식한다.
+#:
+#: **7일**을 쓰는 이유(codex P2): 워커가 정당하게 오래 멈출 수 있다(장기 유지보수·비활성 배치).
+#: 24h 는 그런 워커를 죽은 것으로 오판하기 쉽다. 회수가 늦어도 손해는 목록에 유령 1줄이 더 남는
+#: 것뿐이고, 반대로 오판 삭제는 살아 있는 워커를 콘솔에서 지운다 — 비대칭이라 보수적으로 잡는다.
+#: 삭제되더라도 그 워커의 다음 flush 가 파일을 **재생성**하므로 자기복구된다(데이터 손실 없음).
+#:
+#: mtime 시계: 모든 워커가 **같은 호스트 볼륨**(`artifacts/shared` bind mount)에 쓰므로 mtime 은
+#: 단일 호스트 파일시스템 시계다 — 컨테이너 간 clock skew 가 판정에 끼어들지 않는다.
+_SNAPSHOT_REAP_SEC = 7 * 24 * 3600
+
+
+def _worker_role_default() -> str:
+    """스냅샷 파일명에 쓸 **안정 role**.
+
+    ⚠ HOSTNAME 을 쓰면 컨테이너를 재생성할 때마다 파일명이 바뀌어 **재배포마다 스냅샷이 누적**된다
+    (라이브 실측: 3개 누적 — 유령 워커가 콘솔에 stale 로 표시되고, 표시 상한에 도달하면 현행 워커가
+    밀려난다). compose 가 이미 주입하는 `AGENT_SESSION`(`insight_worker`/`ask_worker`)이 재생성에
+    불변인 안정 식별자라 그것을 1순위로 쓴다 — compose 변경 없이 파일명이 고정된다.
+    """
+    import os
+    for env in ("AGENT_WORKER_ROLE", "AGENT_SESSION", "HOSTNAME"):
+        v = str(os.getenv(env) or "").strip()
+        if v:
+            return v
+    return "worker"
+
+
+def _reap_stale_snapshots(base: str, keep: str) -> int:
+    """`_SNAPSHOT_REAP_SEC` 넘게 갱신되지 않은 스냅샷 파일 정리. 반환: 지운 수(fail-open).
+
+    자기 파일(`keep`)은 절대 지우지 않는다. 대상은 우리 워커가 쓴 `worker-resources-*.json` 뿐이며
+    symlink 는 건드리지 않는다(공유 볼륨이라 타 주체가 만든 링크를 따라가지 않는다).
+    """
+    import glob
+    import os
+    import time
+    removed = 0
+    try:
+        now = time.time()
+        for path in glob.glob(os.path.join(base, "worker-resources-*.json")):
+            try:
+                if os.path.abspath(path) == os.path.abspath(keep) or os.path.islink(path):
+                    continue
+                if (now - os.stat(path).st_mtime) <= _SNAPSHOT_REAP_SEC:
+                    continue
+                # TOCTOU 완화(codex P2): stat 과 unlink 사이에 그 워커가 되살아나 `os.replace` 로
+                #   최신 파일을 놓을 수 있다. 삭제 직전 mtime 을 **다시 확인**해 창을 좁힌다.
+                #   완전 제거는 불가하지만(파일시스템 원자 조건부 삭제 없음) 삭제되더라도 다음
+                #   flush 가 재생성하므로 최악이 "한 주기 표시 누락" 이다.
+                if (time.time() - os.stat(path).st_mtime) <= _SNAPSHOT_REAP_SEC:
+                    continue
+                os.unlink(path)
+                removed += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return removed
+
+
 def flush_snapshot(role: str = "", *, directory: str = "") -> str:
     """자원 스냅샷을 JSON 파일로 원자 write. 반환: 기록한 경로(실패 시 빈 문자열).
 
-    파일명 = `worker-resources-<role>.json` (role 미지정 시 HOSTNAME → 컨테이너별 구분).
+    파일명 = `worker-resources-<role>.json`. role 미지정 시 `_worker_role_default()` —
+    **안정 식별자**(`AGENT_SESSION`)를 우선 써서 재배포에도 파일명이 불변이다.
     **fail-open**: 디렉토리 부재·권한 오류 등 어떤 예외도 삼킨다(계측 flush 가 워커 tick 을
     죽이면 본말전도). 같은 파일을 매 주기 덮어쓴다 — 누적 이력이 아니라 *현재 상태* 관측용이며,
     시계열이 필요하면 호출측(perf-snapshot)이 타임스탬프 디렉토리에 복사한다.
+    쓰기 후 오래 갱신되지 않은 남의 스냅샷(죽은 워커)을 정리한다.
     """
     import json
     import os
     import tempfile
     try:
         base = str(directory or os.getenv(_SNAPSHOT_DIR_ENV) or _SNAPSHOT_DIR_DEFAULT)
-        name = str(role or os.getenv("HOSTNAME") or "worker").strip() or "worker"
+        name = str(role or _worker_role_default()).strip() or "worker"
         # 경로 조립 안전: role 은 컨테이너 이름 유래라 구분자가 섞이면 디렉토리를 벗어날 수 있다.
         name = "".join(ch if (ch.isalnum() or ch in "._-") else "-" for ch in name)[:64]
         os.makedirs(base, exist_ok=True)
@@ -346,6 +410,7 @@ def flush_snapshot(role: str = "", *, directory: str = "") -> str:
             except Exception:
                 pass
             raise
+        _reap_stale_snapshots(base, target)   # 죽은 워커 스냅샷 회수(자기 것은 보존)
         return target
     except Exception as exc:
         _log.debug("resource_budget flush_snapshot 실패(무시) err=%r", exc)

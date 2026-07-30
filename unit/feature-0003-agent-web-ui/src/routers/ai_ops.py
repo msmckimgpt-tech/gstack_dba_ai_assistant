@@ -282,7 +282,18 @@ def _worker_resources() -> dict:
     import time
     out: dict = {"available": False, "workers": []}
     try:
-        paths = sorted(glob.glob(os.path.join(_WORKER_RES_DIR, "worker-resources-*.json")))
+        # **최신 우선 정렬(mtime DESC)** — 표시 상한(_WORKER_RES_MAX_FILES)에 도달해도 현행 워커가
+        #   남는다. 파일명 사전순이면 어느 것이 잘릴지 예측할 수 없어 살아 있는 워커가 유령
+        #   스냅샷에 밀릴 수 있다(라이브에서 실제로 스냅샷이 누적됐다 — role 안정화와 한 쌍의 방어).
+        cands = glob.glob(os.path.join(_WORKER_RES_DIR, "worker-resources-*.json"))
+        def _mtime(p):
+            try:
+                return os.stat(p).st_mtime
+            except Exception:
+                return 0.0
+        # mtime 동률이면 경로 오름차순으로 **결정적** 정렬(codex P2) — tie-break 가 없으면
+        #   glob 반환 순서에 따라 상한 밖으로 밀리는 파일이 실행마다 달라진다.
+        paths = sorted(cands, key=lambda p: (-_mtime(p), p))
     except Exception as exc:
         out["reason"] = f"디렉토리 조회 실패: {exc.__class__.__name__}"
         return out
