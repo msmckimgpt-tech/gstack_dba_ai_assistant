@@ -1407,6 +1407,12 @@ AGENT_NODE_ANALYSIS_THIN_CHARS = int(os.getenv("AGENT_NODE_ANALYSIS_THIN_CHARS",
 #  예산으로 사용자를 막으면 비용 통제가 아니라 서비스 장애다(shared/llm_budget.py).
 AGENT_BACKGROUND_LLM_TOKEN_CAP_24H = int(
     os.getenv("AGENT_BACKGROUND_LLM_TOKEN_CAP_24H", "20000000"))
+
+# ── L2 클러스터 합성 요약 (feature-0033-analysis-synthesis) ─────────────────
+#  클러스터(라이브 818개)에 라벨(평균 9자)만 있고 요약이 없어 전역 질의가 개별 분석문을 훑어야
+#  한다. 이 스위치가 그 층의 생성 여부를 정한다(0=정지). 비용은 pass 당 상한(_SUMMARY_MAX_PER_PASS)
+#  과 백그라운드 토큰 예산(feature-0032) 아래에 있다.
+AGENT_METADATA_CLUSTER_SUMMARY = int(os.getenv("AGENT_METADATA_CLUSTER_SUMMARY", "1"))
 AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
 # LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
 # candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,

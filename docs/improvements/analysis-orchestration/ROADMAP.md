@@ -281,7 +281,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **effort**: 中
 
 ### ITEM-12 · 백그라운드 LLM 토큰 예산
-- **status**: in-progress
+- **status**: done
 - **feature_id**: feature-0032-llm-token-budget
 - **dimension**: operational
 - **risk_grade**: Major
@@ -304,7 +304,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
   하되 같은 창에서 대화 답변이 정상일 것
 - **guards**: 기본 상한 2,000만 = 24h 실측(685만)의 약 3배 → 배포 시 정상 운영 무영향
 - **effort**: 中
-- **notes**: 게이트 커버리지 96%(진입점 3곳). 나머지는 계량되지만 차단되지 않음 — ADR-0032-05.
+- **notes**: PR #1089 머지·배포(eee1f4fb)·PB-0008 PASS. 게이트 커버리지 96%(진입점 3곳) — 나머지는 계량되지만 차단되지 않음(ADR-0032-05). 라이브 실증: 상한을 낮춘 별도 프로세스에서 3개 게이트 모두 `claimed=0` 으로 차단, 사용자 경로 365만 토큰(24h)은 예산에서 제외 확인.
 
 ## 4. 보류·기각 (재논의 방지)
 
@@ -321,8 +321,8 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 
 ## 5. 진행 현황 (improve_cycle 갱신)
 
-- 총 12 · done 6 · in-progress 1 · pending 5 · blocked 0
-- 다음 ready: ITEM-07 (ITEM-12 머지 후)
+- 총 12 · done 7 · in-progress 0 · pending 5 · blocked 0
+- 다음 ready: ITEM-07 (L2 클러스터 요약)
 
 ## 6. 이 initiative 에서 확립된 운영 규약
 

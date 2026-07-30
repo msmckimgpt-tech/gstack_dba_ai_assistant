@@ -2,10 +2,27 @@
 run_at: 2026-07-30T14:50:00+09:00
 session: ai/claude/feature-0025-worker-ds-budget
 scope: admin.js — AI 운영 현황 pane '워커 공유 자원' 섹션 렌더 (T0b worker-ds-budget)
-verdict: DEFERRED (POST-DEPLOY)
+verdict: PASS
 ---
 
-# Run 2026-07-30 — Environment: Windows-browser (PB-0008) — **미수행 사유 + 배포 후 수행 예정**
+# Run 2026-07-30 — Environment: Windows-browser (PB-0008) — **PASS**
+
+## 수행 결과 (2026-07-30 17:08 KST, 배포 SHA eee1f4fb)
+
+feature-0032 검증과 같은 세션에서 함께 확인했다(같은 pane 하단에 렌더된다).
+
+- ✅ **'워커 공유 자원' 섹션 노출**
+- ✅ 워커 6개(`insight_worker` + hostname 기반 role 5개) × 자원 3종(`llm`/`ds`/`task`) 표기
+- ✅ `최대 점유 / 상한` 형식 정상: `llm 0/16` · `ds 0/8` · `task 1~2/8`
+- ✅ 거절 컬럼 전부 0 — 게이트 미발동(정상 운영, 상한이 현행 동시성보다 높음)
+- ✅ 커넥션 누적 계측: `pg_conns=2,528 · pg_ro_conns=942 · ds_conns=75`
+- ✅ stale 표식 동작: 한 워커에 `(스냅샷 2,181초 전 — 갱신 지연)` 주황 표기
+
+증거: `evidence/20260730-llm-budget-pane.png` (같은 스크린샷 하단)
+
+---
+
+## (아래는 배포 전 작성된 미수행 사유 — 이력 보존)
 
 ## 미수행 사유
 
