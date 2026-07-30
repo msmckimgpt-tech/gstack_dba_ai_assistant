@@ -623,3 +623,19 @@ source_of_truth: true
 - Timestamp: 2026-07-29T19:30:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260730T110500-analysis-retry-resilience [CODEX:worker-state-machine+frontend-poll] — PASS-WITH-FIXES
+- Related TASK: feature-0016-metadata-graph (`## 20260730T1105-analysis-retry-resilience`)
+- Source: codex review (codex-cli 0.146.0, `codex exec --sandbox read-only` + codex 가 직접 `git diff --cached`)
+- Trigger: schema/migration + performance/throttle + backend/API keyword matched (§18.8 dispatch 표) — 세션-레벨 도구 제약(subagent 미호출)이 걸려 있어 §18.8.2 해소 순서 1번(제약 없는 채널 = codex review)으로 수행. 덮은 도메인: backend(상태머신·SQL·비용)·qa(마이그레이션 창·회귀)·security(권한 승격). **미덮음(정직)**: ux/design 렌즈 — 진행 패널 문구·버튼은 PB-0008 라이브 육안(TARR.3)이 담당.
+- 결과: **P1 0건 · P2 4건** — 4건 모두 실질 결함으로 판단해 in-cycle 흡수.
+  - **P2-1(마이그레이션 창 회귀)**: `_retry_cols_ok` 가 컬럼 부재를 **영구 캐시** → 워커가 0049 적용 전에 기동된 롤링 배포 창에서 마이그레이션 완료 후에도 재시도가 silent 비활성(= 이 cycle 이 고친 결함의 재발). 수정: 부재 판정만 `_RETRY_COLS_RECHECK_SEC`(600s) 후 재-probe, 성공 True 는 영구 캐시 유지. 테스트 2건 신설(간격 이내 미-probe / 경과 후 회복).
+  - **P2-2(비용 오판)**: `dry_run` 집계에 `limit` 미적용 → CLI·UI 가 전체 대상 수를 "이번 실행량"처럼 보여 LLM 비용 규모를 과대 판단. 수정: `retried`=이번 실행량(limit 적용) · `eligible`=전체 · `capped` 분리 반환, CLI·라우터 응답 동반. 테스트 2건 신설.
+  - **P2-3(예산 오염 관측 불가)**: 빈 응답과 JSON 파싱 실패가 같은 태그(`empty_response`)라 결정적 포맷 오류가 재시도 예산을 태우는지 판별 불가. 수정: `parse_failed` 분기 + `json_extract_failed` 태그 분리. 판정은 transient 유지(LLM 비결정성으로 재호출 성공 사례 존재 + `MAX_ATTEMPTS` 상한이 유계) — 분포가 이 태그로 쏠리면 프롬프트 축을 고치라는 신호로 삼는다. 테스트 1건 신설.
+  - **P2-4(프론트 응답 경쟁)**: `await apiFetch()` **이후** 최신 `activeRunId` 재확인이 없어 지연된 이전 run 응답이 새 run 의 패널·마커·상태줄을 덮어쓸 수 있었다(요청 전 검사만으로는 in-flight 창이 남음). 수정: await 직후 재확인 후 폐기. 헤드리스 테스트 1건 신설(gate 로 in-flight 재현).
+- 검증(수정 후): pytest 신규 **31 PASS**(feature-0002 26+5) · 라우터 **9 PASS** · 헤드리스 **25 PASS** · `make test` 전 스위트 EXIT=0 · ruff PASS.
+- **정직 표기 — 잔여 표면**: ① 라이브 네트워크 단절을 인위로 재현하지 않았다(운영 영향) — 자동 재시도의 라이브 증거는 배포 후 `node_analysis_retry_pending` 카운터와 회수 경로 실증으로 갈음한다 ② 진행 패널 실 픽셀·버튼 왕복은 PB-0008(TARR.3) ③ 기존 `_refine_cols_ok` 도 같은 영구-캐시 성질을 갖지만 이 cycle 범위 밖이라 손대지 않았다(별도 항목).
+- Deploy approval: `deploy_scope: included`(FIRST_REQUEST.md 전역, 2026-06-11 사용자 결정) — PR 머지 후 자동 배포. 첫 배포 직전 1줄 표면화 이행.
+- Timestamp: 2026-07-30T11:05:00+09:00
+- Verdict: PASS-WITH-FIXES (P1 0 · P2 4건 in-cycle 흡수)
+- Human Approval Needed: no

@@ -2309,6 +2309,21 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 
 <!-- PLAN-APPROVED by ms.mckim on 2026-07-13 (AskUserQuestion: "승인 — Phase A 착수") -->
 
+### Requested Scope (요청 범위)
+
+- [x] 네트워크 단절 중단의 **원인 진단 + 대응 방안 제시**(사용자 원 질문) — 산출물: 라이브 근본원인
+      확증(TEST.md TARR.0) + 방안 A~D 제시·범위 승인.
+- [x] **A. 단절 복구 후 자동 재개** — 산출물: alembic 0049 + 실패 분류(`classify_node_analysis_failure`)
+      + 재시도 상태머신(`_record_failure`) + claim due 게이트 + run liveness heartbeat.
+- [x] **B. 단절 중 큐 소모 차단** — 산출물: 연속 실패 회로차단(`_circuit_open`) + canary 1건 축소.
+- [x] **C. 이미 굳은 실패의 회수 수단** — 산출물: `retry_failed_jobs`(단일 CTE) +
+      `scripts/node_analysis_retry_failed.py`(기본 dry-run).
+- [ ] **D. 중단·재시도 상태의 화면 노출과 수동 진입점** — 산출물: `get_run_status` 확장 + 진행 패널
+      표기·회수 버튼 + retry 엔드포인트 + 폴링 무포기 백오프. **코드 완료 · PB-0008 라이브 검증 잔여(TARR.3)**.
+- [ ] **라이브 잔여 실패 회수 실행** — 산출물: 배포 후 `--execute` 로 회수 + 진행 재개 실증(TARR.3).
+- 범위 밖(명시): 라이브 네트워크를 인위로 끊는 재현 · `_refine_cols_ok` 의 동일 영구-캐시 성질(별도 항목) ·
+  워커 병렬도/배치 크기 재설계.
+
 ### §2.1 Implementation Plan (§7.1)
 - **정본 상세 계획**: `../pixi-migration/BLUEPRINT.md` (디자인 보존 계약 D1~D6 hard gate + Phase A POC / B 어댑터 통합 / C 검증·배포 + 리스크 R1~R7).
 - **영향 파일**:
@@ -3613,3 +3628,88 @@ scene diff 풀(§79) · `_META_DBGRP_ROW_CAP`(4000 — 이미 "실사용 무제�
   본 cycle 은 "데이터 누락" 축에 집중했으므로 별도 항목으로 남긴다.
 - **비용 성격**: 위 상한 상향은 LLM 호출을 늘리지 않는다(루틴 introspect·파싱·AGE MERGE 는 LLM-free).
   다만 sync 1회 처리량과 조회 응답 크기가 커진다 — 그래서 상한을 *제거* 하지 않고 안전 가드로 남겼다.
+
+## 20260730T1105-analysis-retry-resilience — AI 능동 분석이 네트워크 단절로 중단되면 복구 후 스스로 이어가지 못하는 결함 (2026-07-30, 사용자 리포트 · entry persona dispatch)
+
+- 사용자 리포트: "그래프 뷰에서 AI 능동 분석이 (주기적인 네트워크 단절) 중단될 경우의 대응 방안이 있을까요?
+  현재는 중단된 그대로 작업이 정지하여 네트워크가 다시 연결되더라도 아무런 작업이 이루어지지 않습니다."
+- 등급: **Major** (백그라운드 워커 상태머신 + additive 마이그레이션 + LLM 재호출 비용). 인증·인가·파괴적
+  데이터 변경 없음.
+- 사용자 범위 승인: **A+B+C+D 전체** (2026-07-30 대화 선택).
+  <!-- PLAN-APPROVED by 사용자 on 2026-07-30 -->
+
+### §2.1 Implementation Plan
+
+**근본 원인 (라이브 확증, agent_kb 2026-07-30)**: 잡 `done` 10,215 · `failed` 710(그중 LLM 사유 130) ·
+`pending` 0 · `running` 갇힘 0 · run 전량 `done`. 실패가 날짜·스코프에 뭉쳐 있다(07-29 mysql-…92bc 43건,
+07-27 mssql-…d884 49건) = 단발 장애 창에 claim 돼 있던 잡이 통째로 종결된 형태.
+
+1. `llm.py:llm_node_analysis` 가 네트워크 오류·타임아웃·429·빈 응답을 **전부 `return None`** 으로 평탄화 →
+   호출측이 일시/영구를 구분할 수 없다.
+2. `node_analysis.py:process_pending._persist` 가 `None` 을 **즉시 terminal `failed`** 로 기록(+`runs.failed+1`).
+   재시도 카운터가 없고, stale 회수는 `running`(lease 900s)만 대상이라 `failed` 는 영구히 굳는다. 남은 잡이
+   없어지면 run 이 `done`/`failed` 로 마감돼 화면상 "완료"로 보인다.
+3. LLM 도달 불가가 확정된 동안에도 매 틱 `AGENT_NODE_ANALYSIS_BATCH_PER_TICK`(10)건씩 claim → 즉시 실패시켜
+   **단절이 길수록 큐를 태운다**(`node_analysis` 는 `llm_provider_health` 를 참조하지 않음).
+4. 프론트 폴링은 2.5s × 240 = **10분 cap** 후 포기(`graph-ctxmenu.js:_metaGraphPollRun`).
+
+**A. 실패 분류 + 유한 재시도 (자동 회복의 핵심)**
+- `unit/feature-0002-agent-core/alembic/versions/20260730_0049_node_analysis_retry.py` (신규, additive):
+  `node_analysis_jobs` + `attempts smallint NOT NULL DEFAULT 0` · `next_attempt_at timestamptz` ·
+  `error_kind varchar(32)`; 부분 인덱스 `ix_node_analysis_jobs_retry_due (next_attempt_at) WHERE status='pending'`.
+  GRANT 는 기존 테이블이라 불필요(0028 에서 부여됨). downgrade=DROP COLUMN.
+- `modules/llm.py:llm_node_analysis(payload, *, scope_key=None, error_sink=None)` — 실패 시 `error_sink`
+  dict 에 `{kind:'transient'|'permanent', tag, detail}` 을 채운다. 반환값 계약(None)·기존 호출자 무회귀.
+  분류는 신설 `modules/llm.py:classify_node_analysis_failure(exc=None, *, empty=False)` — `bad_model`/
+  `context_length`(요청-레벨 확정)만 permanent, 그 외(네트워크·타임아웃·429·5xx·빈 응답·JSON 파싱)는 transient.
+- `modules/node_analysis.py`:
+  - `_retry_cols_ok(cur)` — `_refine_cols_ok` 와 동형 probe(영구=UndefinedColumn 캐시, transient=미캐시).
+  - claim SQL 에 `AND (next_attempt_at IS NULL OR next_attempt_at <= now())` 게이트(legacy 폴백 보존).
+  - `_persist` transient 분기: `status='pending', attempts=attempts+1, next_attempt_at=now()+backoff,
+    error_kind='transient'` (**`runs.failed` 미증가**) — `attempts+1 >= AGENT_NODE_ANALYSIS_MAX_ATTEMPTS`
+    이면 종전대로 terminal `failed`(`error_kind='transient_exhausted'`).
+  - `_touch_active_runs(cur)` — 처리 대기 잡을 가진 `running` run 의 `updated_at` 갱신. **없으면 backoff
+    대기 중 run 이 lease(900s) 를 넘겨 stale 로 오판돼 enqueue dedup 이 깨진다**(재트리거 시 중복 run).
+- `shared/config.py`: `AGENT_NODE_ANALYSIS_MAX_ATTEMPTS`(4) · `AGENT_NODE_ANALYSIS_RETRY_BASE_SEC`(60) ·
+  `AGENT_NODE_ANALYSIS_RETRY_MAX_SEC`(600, lease 미만 유지) · `AGENT_NODE_ANALYSIS_CIRCUIT_FAILS`(3).
+- 완료 기준: run 이 재시도 대기 중에는 `running` 을 유지하고, 단절 해소 후 **사람 개입 없이** 대기 잡이
+  claim 돼 `done` 으로 수렴한다(단위 테스트로 단절 창 시뮬레이션 — transient 3회 후 성공).
+
+**B. 연속 실패 회로차단 게이트 (큐 소모 차단)**
+- `modules/node_analysis.py:_circuit` (프로세스 로컬 dict) — 연속 transient 실패 ≥ `CIRCUIT_FAILS` 면 그
+  틱의 claim 을 **canary 1건**으로 축소하고, 성공 시 카운터 리셋. `llm_provider_health.read_provider_health()`
+  가 `restricted` 를 보고하면 보조 신호로 함께 반영(있을 때만 — 없으면 자체 카운터만).
+- 완료 기준: 단절 창에서 틱당 LLM 호출이 10 → 1 로 줄고, 복구 후 첫 canary 성공 다음 틱에 정상 배치 복귀.
+
+**C. 이미 굳은 transient failed 회수**
+- `modules/node_analysis.py:retry_failed_jobs(run_id=None, scope_key=None, limit=500, conn=None)` —
+  `attempts < MAX` 인 `failed` 잡을 `pending`(attempts+1, next_attempt_at=now()) 으로 되돌리고, 종결된
+  run 은 `status='running'`·`failed = failed - <회수분>` 으로 정합 복원. 반환 `{retried, runs}`.
+- `scripts/node_analysis_retry_failed.py` — 1회성 CLI(`--scope`/`--run-id`/`--dry-run`). 라이브 잔여
+  LLM 사유 130건 회수용. `verification-cleanup(취소)` 580건은 검증 잔재라 **대상 제외**(error 패턴 필터).
+- 완료 기준: dry-run 이 대상 수를 정확히 보고하고, 실행 후 그 run 들이 다시 진행돼 `done` 이 증가한다.
+
+**D. 관측 + 수동 진입점**
+- `modules/node_analysis.py:get_run_status` 에 `retry_waiting`(재시도 대기 수) · `next_attempt_at`(가장 이른)
+  · `retryable_failed`(회수 가능 failed 수) 추가.
+- `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`:
+  `POST /api/admin/metadata/graph/analyze/retry` (권한 `metadata.graph.analyze` 재사용 — 신규 권한 0) →
+  `retry_failed_jobs` + `_metadata_audit(action='node_analysis.retry_failed')`.
+- `unit/feature-0003-agent-web-ui/src/static/graph/graph-ctxmenu.js`:
+  `_metaGraphRenderProgress` 에 "재시도 대기 N (hh:mm)" 표기 + `retryable_failed > 0` 이면 "실패 N건 재시도"
+  버튼; `_metaGraphPollRun` 의 240-tick cap 을 **지수 백오프**(2.5s→최대 30s, `activeRunId` 로만 종료)로 교체.
+- `unit/feature-0003-agent-web-ui/src/templates/admin.html` cache-buster bump(미bump 시 stale JS 로 미반영).
+- `python3 bin/gen-routemap.py` 재생성(신규 route → `docs/ROUTEMAP.md` STALE 이면 CI Code-Navigation gate 적색).
+- 완료 기준: 패널이 재시도 대기·회수 가능 실패를 표기하고 버튼이 왕복하며, 10분 초과 단절에서도 폴링이
+  살아남아 복구 후 진행률이 다시 오른다(PB-0008 라이브 시각검증).
+
+### 진행
+- [x] R.0 라이브 근본 원인 확증(잡·run 상태 분포, 실패 사유·시점 분포)
+- [ ] R.1 A — alembic 0049 + 실패 분류 + 재시도 상태머신 + run heartbeat
+- [ ] R.2 B — 연속 실패 회로차단 canary 게이트
+- [ ] R.3 C — `retry_failed_jobs` + 1회성 회수 CLI
+- [ ] R.4 D — get_run_status 확장 · retry 엔드포인트 · 진행 패널 · 폴링 백오프 · ROUTEMAP
+- [ ] R.5 단위 테스트(신규) + `make test` 전 스위트
+- [ ] R.6 §18.8 적대 리뷰(경량 경로) + REVIEW.md
+- [ ] R.7 verify-completion --pre-commit → commit/push/PR
+- [ ] R.8 배포(deploy_scope: included) + POST-DEPLOY PB-0008 라이브 시각검증 + 라이브 130건 회수

@@ -2158,6 +2158,46 @@ async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(
                         status_code=200 if dry_run or res.get("status") == "noop" else 202)
 
 
+@router.post("/api/admin/metadata/graph/analyze/retry")
+async def admin_metadata_graph_analyze_retry(request: Request, account=Depends(app.require_permission('metadata.graph.analyze'))) -> JSONResponse:
+    """일시 실패로 굳은 노드 분석 잡을 다시 큐에 올린다(analysis-retry-resilience, 2026-07-30).
+
+    권한은 실행 권한 `metadata.graph.analyze` 재사용 — LLM 재호출을 유발하므로 조회 권한으로는 부족하고,
+    신규 권한 코드는 만들지 않는다(기존 트리거와 같은 특권 동작).
+
+    body: {run_id?, scope_key?, dry_run?=false, limit?} — `run_id` 또는 `scope_key` 중 최소 하나 필수
+    (무제한 전역 회수는 LLM 비용이 예측 불가라 허용하지 않는다). 회수 대상은 일시 실패(transient·상한
+    소진)와 0049 이전 레거시 LLM 실패뿐이며, 'verification-cleanup(취소)' 같은 인위적 실패와 영구 실패
+    (bad_model/context_length)는 제외된다. dry_run=true 는 대상 수만 반환(프론트 confirm 용).
+    """
+    data = await _metadata_read_json(request)
+    run_id = str(data.get("run_id") or "").strip() or None
+    scope_key = str(data.get("scope_key") or "").strip().lower() or None
+    if not run_id and not scope_key:
+        return app._json_error("run_id 또는 scope_key 중 하나는 필수입니다.", 400)
+    dry_run = bool(data.get("dry_run", False))
+    try:
+        limit = int(data.get("limit") or 500)
+    except Exception:
+        limit = 500
+    from modules import node_analysis as _na
+    res = _na.retry_failed_jobs(run_id=run_id, scope_key=scope_key, limit=limit, dry_run=dry_run)
+    if not res.get("ok"):
+        reason = res.get("reason") or "재시도 실패"
+        return app._json_error(f"실패 잡 재시도 실패: {reason}", 503)
+    if not dry_run and res.get("retried"):
+        _metadata_audit(request, account, action="node_analysis.retry_failed",
+                        resource_id=(run_id or scope_key or ""),
+                        change_json={"run_id": run_id, "scope_key": scope_key,
+                                     "retried": res.get("retried"), "runs": res.get("runs"),
+                                     "limit": limit})
+    return JSONResponse({"ok": True, "dry_run": bool(res.get("dry_run")),
+                         # retried = 이번 실행량(limit 적용) · eligible = 전체 대상(dry_run 만)
+                         "retried": res.get("retried", 0), "eligible": res.get("eligible"),
+                         "capped": bool(res.get("capped", False)), "runs": res.get("runs", 0),
+                         "run_ids": res.get("run_ids") or []})
+
+
 def _parse_graph_column_key(raw) -> dict | None:
     """그래프 Column 노드 key `<scope>:<schema>.<table>.<column>` 파싱(§55 B curate). 실패 None."""
     k = str(raw or "").strip()

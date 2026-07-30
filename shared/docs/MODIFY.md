@@ -97,3 +97,11 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - `model_permission_code("")` 는 빈 문자열 — 호출측이 `permissions.get("")` 로 조용히 True 를 얻는 경로를 만들지 않는 방어.
 - Affected Features: feature-0003-agent-web-ui(정본 — 부트스트랩 seed·판정 함수·집행 게이트·표시 필터·권한 grid), feature-0007-bedrock-llm-provider(카탈로그 소유 — 모델 추가 시 권한 row 자동 확장), feature-0023-conversation-api-access(API 토큰 scope 면제 규약).
 - Cross-ref: unit/feature-0003-agent-web-ui/docs/MODIFY.md CHG-20260728T024258-model-access-rbac(정본) · 동 REVIEW · docs/SECURITY.md §28 · docs/CONVENTIONS.md §10.6.
+
+## CHG-20260730T1105-node-analysis-retry-knobs (config: 노드 분석 일시 실패 재시도·회로차단 knob, cross-unit: 정본 feature-0016)
+- Date: 2026-07-30. 사용자 리포트("AI 능동 분석이 주기적인 네트워크 단절로 중단되면 복구 후에도 아무 작업이 없다"). 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0016-analysis-retry-resilience`.
+- `shared/config.py` (순수 additive): `AGENT_NODE_ANALYSIS_MAX_ATTEMPTS`(4) · `AGENT_NODE_ANALYSIS_RETRY_BASE_SEC`(60) · `AGENT_NODE_ANALYSIS_RETRY_MAX_SEC`(600) · `AGENT_NODE_ANALYSIS_CIRCUIT_FAILS`(3) + **`__all__` 등록**. 기존 심볼·동작 무변경.
+- 배치 근거: 기존 `AGENT_NODE_ANALYSIS_*` 계열(LEASE_SEC·BATCH_PER_TICK 등)과 같은 워커 예산 축이라 같은 블록에 둔다. `RETRY_MAX_SEC` 는 **`LEASE_SEC` 미만** 이어야 한다 — backoff 대기가 lease 를 넘기면 enqueue dedup 이 run 을 stale 로 보고 중복 run 을 만든다(주석에 불변식 명시).
+- `__all__` 등록은 rel-selfheal(ADR-007) 교훈의 직접 적용 — `AGENT_RELATIONSHIP_*` 누락이 `from shared.config import *` 소비처에서 NameError 를 내 자기교정 파이프라인을 3일 조용히 정지시킨 전례가 있다.
+- Affected Features: feature-0016-metadata-graph(정본 — 재시도 상태머신·회로차단), feature-0002-agent-core(코드 거주 `node_analysis.py`·`llm.py`·`insight.py`).
+- Cross-ref: unit/feature-0016-metadata-graph/docs/MODIFY.md CHG-20260730T1105-ai-claude-feature-0016-analysis-retry-resilience(정본) · 동 DECISIONS ADR-20260730T1105-analysis-retry-resilience · 동 TEST.md.

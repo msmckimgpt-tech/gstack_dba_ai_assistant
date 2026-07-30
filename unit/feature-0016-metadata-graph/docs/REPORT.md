@@ -13,6 +13,15 @@
 
 웹 리서치가 사용자 제안과 동일 결론을 지지했다 — 큰 고채도 면 회피(Wilke, *Fundamentals of Data Visualization* color pitfalls) · 본체 중립 + accent 만(USWDS/Sigma/GitLab 팔레트 지침) · 색+아이콘 중복 인코딩 유지(WCAG 2.1 SC 1.4.1). 대안 2종(역할색 테두리 = 상태 halo 채널 충돌 / 본체 저채도 tint = "노드 간 동일색" 요구 미충족)은 불채택(REVIEW 참조).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 신규 `tests/headless/test_g6build_rolebadge.js` **47 PASS / 0 FAIL** — 본체색 단일 · **역할 팔레트 색이 본체 fill 에 미등장**(문제 제거의 직접 증명) · 배지 8색 보존 · 라벨 인라인 아이콘 부재 · 폭 축소 일관 · LOD 아이콘만 소거 + band-invariant · 배지↔라벨 무겹침 · hover 카드 t=0 픽셀 동일 · **G6 폴백 무회귀 6** · **범례 note 렌더러 추종 2**.
 - 회귀 0: 헤드리스 **22 파일 합계 920 PASS / 0 FAIL**(pixi_adapter 205 · detail_dbgroups 78 · edge_visibility 73 · edge_flow 73 · minimap_reuse 65 · catcluster 65 · rolebadge 47 · hover_flow 41 · labellod 36 · ancestor_focus 32 · routine_colref 30 · category 26 · colnav 22 · collod 20 · layoutmemo 19 · vpack 19 · reveal 17 · simgroups_p2 16 · cullrefkeep 15 · detail_colsel 9 · agglod 8 · viewportcull 6) + `node --check` 3파일 OK.
@@ -37,6 +46,15 @@ FK 관계(`REFERENCES`)는 AGE 엣지의 **양끝이 Column 키**라 `graph-core
 - **그래프 투영·API**(`metadata_graph.py`) — `ROUTINE_USES` 엣지 속성 `ref_columns`(JSON 문자열) 투영 + `schema_tables`·`neighborhood` 응답 동봉(`_ref_columns_of` 가 정제·garbage 방어). 값이 없으면 속성을 SET 하지 않아 기존 엣지와 동치.
 - **렌더**(`graph-core.js`) — 대상 테이블의 **컬럼이 렌더 중일 때만** 사용선을 컬럼별로 분해(컬럼별 read/write 방향·색 유지). 미렌더 컬럼은 테이블로 relation_type 별 1선 승격(FK 승격 규약 동형), **렌더된 컬럼이 0이면 분해 자체를 포기**해 접힘 상태는 완전 불변. 케이스 불일치(그래프 Column 정점 ↔ INFORMATION_SCHEMA 원천)는 소문자 인덱스로 1회 보정(lazy).
 - **상세 패널**(`graph-ctxmenu.js`) — 사용 관계 행에 참조 컬럼 병기(`✎` = 쓰기, 표시 상한 8). 캔버스의 컬럼선과 같은 정보를 목록으로도 확인.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - **PB-0008 실 Windows Chrome 150 PASS** — 격리 harness(라이브 무영향)에서 **접힘 vs 펼침 대조 실증**: 접힘은 사용선 3개 전부 테이블 연결(기존 동작·원본 id), 펼침은 `sp_UpdateUser` → `T_User` 의 UserID(읽기)/Point(쓰기)/Name(쓰기) **컬럼 3개에 개별 연결** + 미렌더 컬럼 몫 테이블 승격 + `ref_columns` 없는 대조군 무회귀. 상세 패널 `UserID, ✎Point, ✎Name` 병기. pageerror 0.
@@ -110,6 +128,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - **상태 유지** — 사용자가 조작한 그룹은 `panelDbGroupState`(Map)에 기록돼 기본 규칙보다 우선(단 대형 그룹은 성능 가드가 우선). 단일 DB + 짧은 목록(≤60)은 머리글 없이 평면(기존 UX).
 - **적대 리뷰 흡수(§18.8, 2렌즈)** — 총량이 적으면 전 그룹 펼침 / self 그룹 부재 시 첫 그룹 펼침(다중 DB 소량 목록이 종전보다 덜 보이던 퇴행 차단) · ROW_CAP 예산은 펼친 그룹만 소비(접힘이 예산을 먹어 펼치면 빈 목록이 되던 무음 실패 제거) · **백엔드 이웃 상한(300) 도달 시 `truncated` 전파 + 고지 배너**(프론트 상한만 없애면 남던 무음 절단) · 컬럼 아코디언 본문 lazy 화 · **'모두 펼치기/접기'** 컨트롤 · 형제 머리글 동기화 · 문구를 "잘라내지 않습니다"로 정정.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check --input-type=module` PASS. 신규 헤드리스 `tests/headless/test_detail_dbgroups.js` **62 PASS**(절단 부재·구획·기본 펼침 규칙·ROW_CAP 예산·lazy·토글 왕복·형제 동기화·컬럼 lazy·**호출부 인자 매핑**·배너·정적 회귀).
 - 컨테이너 pytest: 파이썬 스위트가 **flaky** — 같은 main 기준선 2회 실행에서 실패 집합이 상이(교집합 `runtime_settings` 2건). 본 cycle 의 파이썬 변경은 `neighborhood()` additive 플래그뿐이며 해당 실패들과 무관.
@@ -137,6 +164,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - 버튼 핸들러 async 재작성: 미렌더 → reveal 노출 → 성공 시 선택 강조+팬 / 실패 시 조상 승격 폴백. 이미 렌더된 노드는 구조 불변·팬만(기존 계약 보존). 차단 메시지 제거·tooltip 갱신.
 - 신규 헤드리스 `tests/headless/test_graph_reveal.js` 17 PASS(실 소스 함수 추출 + 확장 double 주입 — 확장 순서·scope 가드·fast-path·폴백 결정론 검증).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check --input-type=module` PASS(graph-ctxmenu/core/state). 헤드리스 17 PASS. PixiJS 컬링 비활성 → 부모 펼침 후 노드 방출 보장.
 - §18.8 general-purpose 적대 리뷰(REV-20260723T083434-graph-node-reveal). PB-0008 라이브 육안은 배포 후(deploy_scope: included) TX.5.
@@ -158,6 +194,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 ### 처리 결과 (Minor, CSS-only, cross-cut 코드 거주 feature-0003 static/graph)
 - `graph.css` 1파일(+8/-4): `:hover, :focus-within { opacity:1 }` → `:hover { opacity:1 }` + `:has(:focus-visible) { opacity:1 }` 분리. `:focus-visible` 은 키보드 포커스에만 매칭 → 마우스 클릭 후 포인터가 떠나면 정상 페이드, 키보드 포커스는 불투명 유지(접근성). `:has` 미지원 브라우저는 hover 규칙 분리로 graceful degradation.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 라이브(실 Windows Chrome 150) **before/after 직접 확증**: 재현(실 마우스 [뒤로] 클릭 → `nav:focus-within=true`, opacity 1 고착) → 수정(포인터 바 밖 + 버튼 포커스 유지 상태 `opacity=0.3` 페이드 / 키보드 포커스 `opacity=1` 유지). `nav:has(:focus-visible)` = 마우스 false·키보드 true 로 모달리티 정확. CSS brace balance OK·`:focus-within` 잔존 0.
 - §18.8 `[SKIPPED:minor-single-file]` — 근본 원인 재현 + 수정 직접 검증 + 적대 self-review(:focus-visible 모달리티·:has 지원·키보드 회귀·기존 동작 보존). (REVIEW.md REV-20260716T024014-graph-detail-nav-focus-fade-fix).
@@ -173,6 +218,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 
 ### 처리 결과 (Minor, CSS-only, cross-cut 코드 거주 feature-0003 static/graph)
 - `graph.css` 1파일(+9/-1): sticky 이력 바(`.admin-meta-graph-detailnav`)에 기본 `opacity:.3` + `transition:opacity .18s ease` 추가 → hover 가 아닐 땐 부드럽게 반투명. `:hover, :focus-within { opacity:1 }` 로 마우스 hover·키보드 포커스 시 불투명 복원. `@media(prefers-reduced-motion:reduce){transition:none}` 접근성 가드. 레이아웃/포인터 타겟 불변(흐린 상태에서도 상단 hover 로 즉시 복원).
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 라이브(서빙 사본, 실 Windows 브라우저) **PASS**: 기본(비-hover) `opacity 0.3`·`transition opacity 0.18s`; 포인터를 바에 올림 → `opacity 1`(`:hover` 매칭); 키보드 포커스 → `opacity 1`(`:focus-within`, 포인터 멀어도). 스크린샷 대비(fade-idle 흐림 ↔ fade-hover 실선)로 육안 확인.
@@ -194,6 +248,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - `graph.css` 1파일(+16/-2): ① `.admin-meta-graph-detailnav` → `position:sticky; top:0; z-index:5` + 불투명 배경 + 하단 구분선 + 좌우 음수마진 bleed(배경/구분선 full-width) + 자체 padding(상단 여백 제공). ② `.admin-meta-graph-detail`(aside) 상단 padding 제거(`14px`→`0 14px 14px`) — 스크롤포트 최상단=바 위치가 되게 해 바 위로 콘텐츠가 비치는 틈 제거. ③ `.admin-meta-graph-detailnav[hidden] + [id=metadataGraphDetailBody]{padding-top:14px}` — 바 숨을 때(이력 ≤1) body 상단 여백 보전.
 - JS/데이터/인증 무변경(순수 CSS 레이아웃).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 라이브(서빙 사본, 실 Windows 브라우저) **PASS**: nav 강제 표시 + 40줄 더미 주입 + scrollTop 500 상태에서 `position:sticky`·navTop **180px 불변**·불투명 배경·**바 위 노출 콘텐츠 0**(`contentAboveBar:[]`) 측정 + 스크린샷 육안(바 상단 고정, 콘텐츠 그 아래로 스크롤). 초기 음수마진-only 버전은 바 위 14px 콘텐츠 누출이 관측돼 aside 상단 padding 제거로 수정.
 - §18.8 CSS 엣지케이스 적대 리뷰: **PASS(BLOCK/MAJOR 0, NIT 3 전부 의도/라이브 확인)** — 6축(상단여백 등가·인접형제 셀렉터·z-index 스태킹·반응형·가로 bleed·기타) 전부 통과, 코드 수정 불필요. NIT-3(좁은 패널 가로 스크롤바)은 라이브로 hOverflow=false(폭 420/300/220px) 확인. (REVIEW.md REV-20260716T021733-graph-detail-nav-sticky).
@@ -213,6 +276,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 ### 처리 결과 (Minor, additive UI, cross-cut 코드 거주 feature-0003 static/graph)
 - `graph-ctxmenu.js`·`graph-state.js` 2파일: ① 헬퍼 신설 — `_metaGraphDetailScrollEl`(스크롤 aside), `_metaGraphHistoryCaptureScroll`(현 이력 항목에 scrollTop 스냅샷), `_metaGraphHistoryRestoreScroll`(대상 항목 scrollTop 을 `requestAnimationFrame` 으로 복원, 미저장=0), `_metaGraphReapplyPendingScroll`(노드 상세 AI 박스 async 로드 후 1회 재적용). ② leave-point 배선 — `_metaGraphHistoryRecord`(새 방문 push 직전 현 화면 스냅샷)·`_metaGraphHistoryGo`(idx 변경 직전 떠나는 화면 스냅샷). ③ `_metaGraphHistoryGo` sync→async — async show 함수를 await 해 렌더 완료 후 대상 scrollTop 복원.
 - 이력 항목 shape `{v,k}` → `{v,k,scroll?}`(하위호환). 상태 필드 `_histNavBusy`(캡처 게이트)·`_pendingDetailScroll`(재적용 목표) 추가. 인증/스키마/데이터/API 무변경. cache-buster 무편집(소스 `?v=dev` placeholder — 빌드 주입, §13.1).
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 정적: `graph-ctxmenu.js`·`graph-state.js` `node --check`(ES module) PASS.
@@ -237,6 +309,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - **§18.8 적대 리뷰 반영(PASS-WITH-FIXES → 수정 완료)**: 리뷰어가 실제 grep 으로 `sync_graph()` 의 또 다른 호출자 `bin/routine-backfill.sh`(사용자 수동 실행)를 찾아내 "cron 자기-겹침만 막으면 수동 backfill 과의 동시 실행으로 동일 lock 경합이 재발한다"(MAJOR-1)를 지적 — `routine-backfill.sh` 에도 **같은 lock 파일을 공유**하는 가드를 추가해 두 진입점을 자원(AGE 그래프) 단위로 직렬화했다. 또한 lock 파일이 world-writable `/tmp` 고정 경로라 symlink 사전배치 TOCTOU 위험(MAJOR-2)을 지적받아, root 전용 `/root/.locks/mysql-ai-delegated-dev/`(자기-provision `mkdir -p -m 700`)로 이동 + 대상이 심볼릭 링크면 fail-loud 거부하는 검사를 추가했다. 최종 diff: 2개 파일(`bin/metadata-graph-sync.sh`·`bin/routine-backfill.sh`), 인증/스키마/데이터 무변경.
 - **정책 준수 메모**: 최초 조치 중 main worktree(`repo/`)에서 직접 스크립트를 수정했으나(§13.2 위반), 사용자 정정을 받아 즉시 되돌리고 `bin/cycle-init.sh` 로 전용 worktree(`ai/claude-corp/graphsync-flock-guard`)를 생성해 그 안에서 재작업했다.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 두 스크립트 `bash -n` 문법 PASS.
 - flock 동시성 단위 검증(합성) — 동일 lock file 대상 두 인스턴스 동시 기동 시 1st 는 lock 보유·2nd 는 즉시 "correctly skipped" 종료.
@@ -259,6 +340,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - **graph-core 래퍼**: `_metaGraphHoverPan`(hover-intent 200ms + 세대토큰 선점 종료 + leave 취소, 기존 부드러운 팬 재사용) · `_metaGraphSetHoverHighlight`(key→렌더 id 해소·미렌더는 조상 승격). G6 폴백은 feature-detect no-op(카메라는 양쪽 동작).
 - **상세 패널**: 5개 뷰(노드/관계/카테고리/클러스터 상세)에 mouseenter/leave + focus/blur(키보드 파리티) 바인딩. 참조/관계 행에 `data-edge-self` 로 정확한 컬럼↔상대 연결선 강조.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 정적 `node --check` 3모듈 PASS · §18.8 적대 검증 PASS-WITH-FIXES(MAJOR 연속 팬 충돌=세대토큰 수정, MINOR 3건 수정) · verify-completion 16/16 PASS.
 - **PB-0008 라이브 완료**(mysql-gz-dev/gunzgame 409 객체): 클러스터 테이블 행 hover→카메라 부드러운 팬 · 함수·프로시저 행 hover→연결선+노드 링 · mouseleave→즉시 해제 · pageerror 0. PR #764 → main 84f66608 무중단 배포.
@@ -276,6 +366,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - **BE soft-attach 2차 패스**: 코어 미배정 잔여를 centroid 코사인 ≥ ATTACH_SIM(0.78) 최근접 클러스터에 편입(라벨 상속·코어 라벨/캐시 비오염). 프로브: attached **5,249**, cc_data_main 잔여 **114→26**, 리포트 3종 각기 다른 컨텐츠 클러스터로 분리.
 - **BE cluster id = centroid 최근접-이웃 체인 seriation**(스키마-로컬) + **FE be: 밴드 id 오름차순 선두 배치** — 의미 연관 밴드 인접(FK 무신호 DB 의 유일한 연관성 데이터 소스=임베딩).
 - **FE affix 일반 접두 strip**: 스키마 15%·≥4 공유 선행 접두(dt_/ct_ 류) 데이터 기반 검출·제거 — "dt_c" 가짜 가족 소멸, "monster…" 실스템 보존(과절단 방지 잔여 ≥3자).
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - BE 24 + FE 헤드리스 13(신규 test_g6build_simgroups_p2.js) + 그래프 헤드리스 전 스위트 무회귀 + 전체 pytest EXIT=0 + 라이브 프로브(롤백). §18.8 패널 → REVIEW.md. POST-DEPLOY: 배포→클러스터 pass 재가동→PB-0008(dt_c 소멸·인접 배치 육안).
@@ -296,6 +395,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - `setCamera` 동일 게이트 래핑: 컬링 중 부분 bounds 재적합 차단(두 번째 기전) — 전체 bounds 카메라 유지, 마스크는 요소 bounds 비의존이라 전체 이미지 위 현 뷰포트 위치를 계속 정확 표시.
 - **컬링-유예 시딩 build**(`_metaMinimapSeedKick`): fit 이 판독 하한(0.55)으로 클램프되는 대형 모델은 무컬링 build 가 자연 미발생(라이브 적발 ① — 1,249 노드 fit 방출 153)이라 전체 이미지를 1회 전량-방출 build 로 시딩(비용 = pre-§65 빌드 1프레임)·stale 시 재시딩. 시딩-마킹 debounce 경합(라이브 적발 ③ — latch 고착)은 래퍼 stale-skip 분기의 force 재-kick 으로 상호작용 소강 시점 수렴.
 - 트레이드오프: 줌인(컬링) 중의 구조 변경은 미니맵에 즉시가 아니라 **~0.5s 내 시딩 build** 로 반영(전량 방출 1프레임 비용) — 전역 개요 정합(사용자 요구) 우선.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 `test_g6build_minimap_reuse.js` **65 PASS**(Section E 서명 의미론 + F1~F9 시딩·stale 재시딩·경합 수렴 — 라이브 적발 3건 headless 재현·잠금) + 그래프 headless 11 스위트 **279 PASS / 0 FAIL** + `node --check` PASS. graph-split(ITEM-09) 후 headless 번들 실행 레시피 확립. **PRE-LANDING PB-0008 win-browser 라이브 PASS**: qa-idc 1,249 노드 시딩 수렴 → **줌 2.0 컬링 rebuild(방출 1,573→153)에 미니맵 toDataURL 해시 완전 불변** → 팬 불변 → 스코프 전환 재렌더(동결 없음) → pageerror 0 (test-runs.d fragment·스크린샷 2매). POST-DEPLOY 재확인 T77.5 잔여.
@@ -319,6 +427,15 @@ backfill 의 `sync_graph` 리포트에 `routine_prefetch: SyntaxError syntax err
 - **LLM 컨텐츠 라벨**: `llm_cluster_label`(product_classify 동형·JSON-only·untrusted-data 가드) — 멤버 이름+분석 요약로 클러스터당 한국어 명(≤32자), kv 멤버셋-해시 캐시(불변 시 재호출 0)·fail-soft affix 폴백·`AGENT_METADATA_CLUSTER_LABEL_LLM` 게이트(기본 ON).
 - 그래프 투영: `sync_routine` cluster props(_UNSET 보존) + `_step_routines` 확장 SELECT(0040 미적용 창 폴백) + `schema_tables` Routine RETURN 에 cluster 필드 — 프론트 ingest(generic)·`_metaSimGroups`(be: 판정이 g.tables=테이블+루틴 전체) 가 무변경으로 소비.
 - **chaining 방어(라이브 프로브 적발·수정)**: base τ 단일연결이 DB 전체를 단일 blob(254/255)으로 만들던 것을 mutual-kNN + cap(40) 초과 τ-상승 재분할로 해소 — 재프로브(롤백) cc_data_main **37 클러스터**('buff' 24·'monsterclass' 11·'monsterspawnpoint' 7 등 컨텐츠 응집·총 199/255), ds 전체 1,016 클러스터/74 스키마/skip 0. + non-autocommit conn SAVEPOINT 격리, migrate-lint MAX_MIGRATION.txt 오탐 수정.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 신규 `test_semantic_cluster_content.py` 16 PASS + 전체 스위트 컨테이너 pytest **EXIT=0**(전건 PASS). 상세: `test-runs.d/TASK-20260713T105932-content-cluster.md`.
@@ -349,6 +466,15 @@ G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)의 이벤트 바�
 - **효과**: 상태-only rebuild(선택/역할도착/busy)는 미니맵 재복제 skip → 이미 그려둔 전체 이미지 재사용. 구성 변경(펼침/접기/드래그/LOD/스코프전환/검색)은 서명 변경 → 정상 재복제. 팬/줌은 원래대로 마스크만 갱신.
 - cache-buster (머지 후) `admin.js?v=20260710-mmreuse-layoutmemo`(graph-colnav·layoutmemo 병렬 머지와 결합).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 기하 서명 11 + B 실 build 4 + C 패치 10 + **D 드래그 무효화 10**).
 - 회귀 **150 PASS**(collod 20·agglod 8·category 26·edge 71·viewportcull 6·vpack 19) · `node --check admin.js` PASS.
@@ -377,6 +503,15 @@ G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)의 이벤트 바�
 `… 외 N건` 명시(기존 combined 30 **무음 절단** 개선). 행 `data-rtuse` 클릭→대상 상세 바인딩 무손상.
 cache-buster `admin.js?v=20260710-graph-rw-group`.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check admin.js` PASS · 재사용 CSS 클래스(`amgr-dir`/`amgr-dir-head`/`amgr-row amgr-plain`/
   `amgr-list`/`admin-meta-detail-note`) 전부 styles.css 존재 확인 · `[data-rtuse]` 클릭 바인딩(L7983) 유지.
@@ -400,6 +535,15 @@ cache-buster `admin.js?v=20260710-graph-rw-group`.
 안내만. **"상세"는 이 UI에서 유일하게 `상세 ⇆` 토글 + 상세 패널로 명명된 표면**이라 요청("상세에서 선택 노드로")에
 가장 정합. UI 안전: `.amgr-link`(margin-left:auto)가 2개 될 때의 auto-마진 분할을 신규 버튼 `margin-left:0`로 회피
 (기존 관계 상세 버튼만 우측 정렬, 신규는 gap:8px로 그 옆 그룹화). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 `node --check admin.js` PASS · diff 적대 리뷰(REV-20260710T063659) · **PB-0008 win-browser 는 POST-DEPLOY**
@@ -440,6 +584,15 @@ dim(0.38, `_metaBakeBaseOpacity`)은 유지 → focus 부분그래프 강조 효
 미증가('줌아웃 축약' 오안내 방지). dimIf 의 dim 분기는 방어적 안전망으로 잔존(향후 push site 누락 시 fail-soft).
 cache-buster `admin.js?v=20260710-hl-edge-hide`.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - headless `test_g6build_edge_visibility.js` **71 PASS**(T4/T10/T13 을 '제거' 단언으로 전환 + §66 불변식:
   focus 밖 엣지 전제거·lit 부분그래프 방출·무선택 전량 방출 대조군·하이라이트-hide lodDropped 미증가 + T13B
@@ -479,6 +632,15 @@ cache-buster `admin.js?v=20260710-hl-edge-hide`.
   형제를 덜 받아 넓고 낮게. 대가로 펼침 시 형제 재배치(약간의 churn) 수용 — 사용자 우선순위 정합.
 - **비겹침 불변식 보존**: 열 COLW(224) 간격 + realH push-down + 클러스터 (w,h)=실 bbox → shelf-packer 소비.
   세 규칙 유지로 노드·클러스터 pairwise 비겹침 성립.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - §60 headless `test_g6build_vpack.js` **16 PASS**(열>4·1열 보존·컬럼펼침 재분배·적응형 폭 W>2400·노드
@@ -524,6 +686,15 @@ cache-buster `admin.js?v=20260710-hl-edge-hide`.
   3중 환각 가드 통과 시 candidate 적재(기존 프로브·자기교정이 후속 판정). 0038 미적용 창 전 지점 legacy 폴백.
 - **D Phase C 정합**: 시그니처 백필 정체(3% = 497/16,023, `updated_at DESC LIMIT` 미처리-비우선) 근본수정 —
   미처리 우선 정렬+remaining 로그+배치 500(~8h 소진). 클러스터 채워지면 sim-group `be:`·경계 추론이 실동작 전환.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 단위: 신규 §55 테스트 29 + curate 4 + 계약 갱신 2 + 헤드리스 카테고리 26/26(하네스 repo 영속화) —
@@ -580,6 +751,15 @@ cache-buster `admin.js?v=20260710-hl-edge-hide`.
   정합하며, combo/카드 드래그는 G6 v5.1.1 네이티브 drag-element 가 처리(앱에 커스텀 좌표 계산 없음). **앱 코드에 좌표 결함 없음** —
   최근 graph-drag/graph-freeplace 개편으로 해소된 것으로 판단. 근거 없는 `÷zoom` 추가는 정상 계산을 깨뜨리므로 코드 변경하지 않음.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - node --check(admin.js) PASS · py_compile(node_analysis.py·admin_metadata.py) PASS. 최신 main(7facb804: funcproc+Phase B/C+Esc-fix)
   rebase — admin.js/node_analysis.py 자동 병합(제 상태 필드·#4 변경과 main 의 Esc 핸들러·Phase B/C 필드 공존 확인), admin.html cache-buster 충돌만 해소.
@@ -604,6 +784,15 @@ cache-buster `admin.js?v=20260710-hl-edge-hide`.
 - **신뢰 게이팅**: 프로브 skip(cross-ds 는 검증 불가·오분류 파단 방지) + AI 컨텍스트 trusted-only 주입 + 승격은 manual만.
 - **그래프·완화**: 각 끝점 자기 scope 앵커(cross_ds edge) + neighborhood 자동 노출 + node_analysis cross_ds 완화. UI 마젠타 점선.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - node --check·py ast·migrate-lint ACK·pytest **67 PASS**(head-aware ON-CONFLICT 불변식). §18.8 2단계 적대검증:
   설계 워크플로우 + 구현 리뷰 **SHIP(inert deploy)**. flip-전 블로커(**MSSQL effective schema MAJOR**·negative-decay
@@ -625,6 +814,15 @@ ADR-013 이 이연한 "컬럼 시그니처·설명 임베딩 기반 백엔드 �
   kNN(τ)+union-find(degree-cap chaining 억제, N>MAX skip OOM 가드), 6h cadence. **투영·프론트**: AGE Table 정점 →
   scope_roots/schema_tables RETURN → `_metaSimGroups` be: 우선(affix 폴백). un-cluster=명시 null clear(phantom 방지).
 - kill switch(AGENT_METADATA_CLUSTER_AUTO=0)·fail-soft·affix 폴백. 클러스터 값은 eventual(데몬 cadence).
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS.
@@ -668,6 +866,15 @@ ADR-013 이 이연한 "컬럼 시그니처·설명 임베딩 기반 백엔드 �
   payload `user_intent`(LLM "자율 반영·출력 계약 불변" 가드). 진행 중 run 재사용 시 새 지침 무시.
 - cache-buster `admin.js?v=20260703-graph-funcproc` / `styles.css?v=20260703-graph-funcproc`.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - **§18.8 적대 패널 (ULTRACODE workflow, 3렌즈 + MAJOR+ 교차검증 9 agents)**: BLOCKING 1 + MAJOR 5 +
   MINOR 6 + NIT 3 적발 — 교차검증 전건 real 판정 → **전량 수정**(핵심: Column-루트 parent 승격
@@ -699,6 +906,15 @@ ADR-013 이 이연한 "컬럼 시그니처·설명 임베딩 기반 백엔드 �
   스코프전환·초기화 리셋, 펼침/접기 rebuild 유지. combo:dragstart/dragend + node:dragend 훅.
 - cache-buster `20260703-graph-freeplace`.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check` PASS · §18.8 적대 리뷰(REV-20260703T101622): 6축 → **MAJOR 1**(nodePos 절대좌표가 clusterOffset override →
   클러스터 이동 시 소속 nodePos 동반 가산으로 fix)·NIT 1(컬럼 dead 엔트리 제외) 반영 → PASS-WITH-FIXES.
@@ -720,6 +936,15 @@ Datasource SSOT 는 MySQL(`WebProducts`·`WebProductDatasources`)에 완비, 그
   (combo 미사용, 기존 masonry 무간섭) + `_metaGraphLoadProducts` + 랜딩/노드클릭 라우팅 + datasource 뷰 제품 배너.
   툴바 "🗂 제품 카테고리" 버튼(admin.html) + cache-buster `20260703-graph-product-cat`.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check` PASS · Python ast PASS · 격리 pytest **28 PASS**(DI 권한 맵·metadata_graph 단위 무회귀).
 - §18.8 적대 리뷰(general-purpose): **read-axis MAJOR** (.env datasource drill 빈 그래프) + 비숫자 product NIT 반영
@@ -738,6 +963,15 @@ Datasource SSOT 는 MySQL(`WebProducts`·`WebProductDatasources`)에 완비, 그
 - (①) G6 `behaviors` 문자열→object-form + `enable` 오버라이드: `_metaCanvasDragEnable`(중간버튼이면 노드 위에서도 팬)·`_metaElementDragEnable`(중간버튼이면 노드 이동 거부→팬 양보). `_metaEventButtons`/`_metaIsMiddleDrag` 로 buttons 비트마스크(4=중간) 판정. 컨테이너 `mousedown`(button===1) `preventDefault` 로 브라우저 autoscroll 억제(pointer 흐름 유지).
 - (②) `_metaGraph.tableDeps`(Table key→종속 id[], `_metaG6Build` 리셋·재채움) + `node:dragstart/drag/dragend`. dragstart 에서 각 종속의 테이블 대비 오프셋(월드) 고정 기록 → drag/dragend `translateElementTo(테이블 현재위치+오프셋)` 절대이동 + dragend 재정합(핸들러 순서 무관, 1-frame lag 제거).
 - cache-buster `admin.js?v=20260703-graph-drag`.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - `node --check` PASS. §18.8 적대 리뷰 [SUBAGENT: PASS] (G6 v5.1.1 번들 역어셈블 실측 — 4축 BLOCKING 0, NIT 6건 중 N1 주석 정정·나머지 수용) — REVIEW REV-20260703T021144-graph-drag.
@@ -770,6 +1004,15 @@ Datasource SSOT 는 MySQL(`WebProducts`·`WebProductDatasources`)에 완비, 그
 - 신규 `_metaRoleLegendTips()`: 정적 범례 `<li data-role>` 에 `desc` 로 hover title 주입(그래프 진입 시). admin.html `<li>` data-role 추가.
 - cache-buster `?v=20260703-cluster-role-prefix`(admin.js·styles.css).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check` PASS. headless playwright 렌더 격리 실증: 분석/미분석 5행 → 전 라벨 left=45px 정렬(`allCodesAligned`), 칩 18px 균일, 전 행 button. 스크린샷 확인.
 - §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-cluster-role-prefix.
@@ -787,6 +1030,15 @@ role-legend-panel(§36) 배포 후: ① 범례를 상세 패널 **하단**에 �
 - admin.html: 범례 `<details>` 를 aside **첫 자식 → 마지막 자식**(detailBody 뒤)으로 이동.
 - styles.css: aside `display:flex; flex-direction:column` + `.admin-meta-graph-detail > * {flex-shrink:0}`(자식 압축 금지→컨테이너 스크롤) + 범례 `margin-top:auto`(바닥 고정).
 - cache-buster `styles.css?v=20260703-role-legend-bottom`.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - headless playwright 렌더 격리 실증: 빈 상세=범례 바닥 고정(위 여백 262px), 긴 상세 30행=노드 상세 온전(firstNodeH 32·미압축)·잘림 없음(dbH==dbScrollH)·패널 스크롤 → 밀림/뒤틀림 없음. 스크린샷 확인.
@@ -808,6 +1060,15 @@ AskUserQuestion 으로 3안(캔버스 좌하단 오버레이 / 우측 상세 패
 - styles.css: 가로 legend-roles 규칙 → 세로·접힘 `.admin-meta-graph-rolelegend` 카드 규칙(커스텀 카펫, marker 제거, 세로 flex, 밝은 dot border).
 - cache-buster `styles.css?v=20260703-reldetail-colexpand-role-legend-panel`.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 구조 정합: legend-roles 잔여 참조 0. aside 는 폭 조회로만 참조(innerHTML 교체 없음) → 노드 선택·능동분석 렌더에 범례 wipe 없음.
 - §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-role-legend-panel.
@@ -827,6 +1088,15 @@ graph-dblclick-cam2(manual tween) 배포 후 사용자 관찰: 팬은 부드러�
 ### 수정 (FE admin.js)
 - **fetch 전 즉시 시작**: `_metaGraphExpand` 가 팬을 busy 직후 fetch 를 await 하기 전에 fire-and-forget(await 없이) 호출 → 클릭 즉시 반응. 파이프라인 끝 await 팬 호출 제거.
 - **적응형 follow tween**: 고정-duration(delta 1회 캡처) → 매 프레임 앵커 **현재** 뷰포트 위치 재조회 → 잔여 delta K=0.24 translateBy(ease-out). fetch·rebuild 로 앵커가 이동/재생성돼도 최종 위치로 수렴. 종료=수렴(<1.2px)/seq/MAXMS(1200ms) 단일 시간상한. W/H 매 프레임 재조회(리사이즈 대응), API 부재 시 focusElement 폴백.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 헤드리스 실증: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**. `node --check` PASS. cache-buster `?v=20260703-graph-dblclick-latency`.
@@ -860,6 +1130,15 @@ graph-dblclick-cam2(manual tween) 배포 후 사용자 관찰: 팬은 부드러�
 - FE: 분석완료 테이블 칩 fill=역할색 + 라벨 앞 아이콘 + 역할 범례 행 + 상세/진행 패널 역할 칩(미분석 teal·
   보라 테두리 유지). 역할은 bake 스타일이라 캐시 서명 `#R=` suffix 로 refreshStates 가 **rebuild 승격**
   (ADR-006 rAF coalesce·~80–200ms). cache-buster `20260703-node-role-viz`.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 단위 13건(test_node_analysis_role.py — 분류 계약·휴리스틱 우선순위·LLM 우선/폴백·Table 한정) + 기존
@@ -896,6 +1175,15 @@ graph-dblclick-cam2(manual tween) 배포 후 사용자 관찰: 팬은 부드러�
   + 대상 컬럼 강조·카메라 focus. 상세 패널 "관계(N)" 행 + "관계 상세" 행 공통 추적.
 - **프론트 ③** `_metaGraphLoadNodeAnalysis`: AI 능동 분석 결과에 구조화된 관계를 추적 가능 행으로 노출.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 프론트 엣지 집계 격리 Node 11/11 PASS + 추적 행 산출 검증 + node --check + py_compile + 라이브 Cypher.
 - 완료 하드 게이트 = 배포 후 PB-0008 실 Windows(3항목 육안).
@@ -913,6 +1201,15 @@ graph-dblclick-cam(ADR-008) 배포 후 사용자 재보고: 더블클릭 시 **�
 
 ### 수정 (FE admin.js)
 전역 animation ON=셔플 재발, setOptions 토글=tween 창 동시 rebuild 셔플 위험 → **G6 애니 우회 manual rAF tween**. 신규 `_metaGraphAnimateFocus(key, seq)`: 앵커 `getElementRenderBounds` 중심(canvas) → `getViewportByCanvas` → 뷰포트 중앙(`getSize()`/2) delta(client px) 를 requestAnimationFrame 이징 누적 `translateBy`(420ms). setData 미사용·전역상태 무변경. seq 로 연타 중단, 미렌더/API 실패는 즉시 focus 폴백. `_metaGraphExpand` 가 no-op focusElement 대신 이 헬퍼 호출.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS. cache-buster `?v=20260702-graph-dblclick-cam2`.
@@ -935,6 +1232,15 @@ graph-dblclick-cam(ADR-008) 배포 후 사용자 재보고: 더블클릭 시 **�
 
 ### 수정 (FE admin.js)
 - `_metaGraphExpand` 카메라 블록: `focusElement(fel, false)` → `focusElement(fel, {duration:420, easing:'ease-in-out'})`. 판독 하한 clamp(zoomTo)는 즉시 유지(팬 애니 중첩 회피), seq 가드로 연타 stale 애니 방지.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - `node --check` PASS · cache-buster `?v=20260702-graph-dblclick-cam`.
@@ -989,6 +1295,15 @@ graph-dblclick-cam(ADR-008) 배포 후 사용자 재보고: 더블클릭 시 **�
 - **회귀 가드 신설** `test_config_star_export.py` — star-import bare 이름의 런타임 해석을 AST 로 전수
   검사(이 결함 클래스 봉인; domain/kb_scope 의 주입-공급 4건은 정당 케이스로 실측 반영).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 단위 43건 PASS(test_relationships — Achievement 실측 스키마의 name_fk 추론 케이스 포함) + 신규 가드
   3건(합산 46) + insight 인접 PASS + py_compile. 웹 자산 무변경(check #13 비대상).
@@ -1026,6 +1341,15 @@ graph-perf-bg 배포 후 사용자 후속 보고: `mssql-qa-idc.dk_data_release.
 - `_metaGraphRefreshStates`: 변화분만 적용 + 변화 노드>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake, ~80–200ms 상수, 카메라 유지).
 - 폴 tick 이중 refresh(markAnalyzed+markRunning) 를 **rAF coalescing** 으로 1회 병합 — 이중 rebuild + in-flight setData/draw 재진입 방지.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 헤드리스 harness 실측: **post-rebuild refresh(마커 무변화)=0ms · bulk 55마커=rebuild 82ms · 구 per-node 200노드=8,890ms** → ~9s→~0–80ms.
 - §18.8 적대 2렌즈: 정확성/상태유실 BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음), 프리즈재발 렌즈의 폴 이중 refresh 지적 → coalescing 반영. NIT(combo/schema 캐시·THRESHOLD 200ms 경계)는 수용. (REV-20260702T133000 [AGENT-TEAM])
@@ -1061,6 +1385,15 @@ shelf-packing 폐기(g6b masonry 채택), 세대 가드는 perf-bg `_opSeq` 에 
 - **동시성**: ExpandSchema 를 perf-bg `_opSeq` 세대에 편입 — 사용자 클릭=새 세대(++), LoadRoots silent
   자동펼침=부모 세대 상속, await 후 세대 불일치 시 ingest 없이 폐기(**교차 스코프 오염 원천 차단**) +
   진입 scope 가드(이전 scope 카드 stale 클릭 차단) + 연타 in-flight 가드.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 1차 §18.8 적대 리뷰: BLOCKER 0·MAJOR 2(dead-card·roots race)·MINOR 7·NIT 3 — 전건 반영.
@@ -1113,6 +1446,15 @@ shelf-packing 폐기(g6b masonry 채택), 세대 가드는 perf-bg `_opSeq` 에 
 - **`llm.py` `llm_node_analysis`**: 모델 = `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL`. max_tokens/temperature/timeout 경로는 기존과 동일(모델 catalog 가 `claude-*` cap·temperature 처리). insight 3함수는 손대지 않음(격리).
 - **`node_analysis.py` `process_pending`**: 저장·표시용 `model` 라벨을 라우팅과 동일 순서(`AGENT_NODE_ANALYSIS_MODEL` 우선)로 해석 — 상세 패널이 실제 사용 모델(claude-haiku)을 표시. 이 순서가 어긋나면 UI 에 gemma 오표시.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 회귀 테스트 4건(`test_llm_env_naming.py`): 기본값=`claude-haiku-4`(그리고 `AGENT_INSIGHT_MODEL=edge` 여도 node analysis 불영향=분리 확인)·env override·공백/whitespace 폴백·`__all__` 노출. **pytest 38 pass**(env-naming + node_analysis_relevance), ruff clean, config/llm/node_analysis compile·import OK.
 - 모델 정합: `claude-haiku-4` 는 model_catalog 카탈로그 기본값(`API_DEFAULT_MODEL`)이자 litellm_config.yaml 의 유효 alias(`anthropic/claude-haiku-4-5`).
@@ -1149,6 +1491,15 @@ resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)
 - **중심 보기**: 모델 리셋 후 앵커 N-hop 만 로드 — 누적된 화면 없이 관심 노드 집중.
 - mutation 0(읽기성 탐색 + 기존 AI 분석 트리거 재사용) — RBAC(`metadata.graph.read`)·데이터
   API·백엔드 불변. CONVENTIONS §10.7 pending 대상 아님.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - `node --check` PASS · WSL-headless-harness **28/28 PASS**(네이티브 우클릭 이벤트 경로 실증
@@ -1217,6 +1568,15 @@ G6 v5 전 요소를 Playwright headless POC 로 실증. **G6 v5 함정 확정**:
 ### de-risk (실 Windows 브라우저)
 17컬럼 + 6이웃 ERD 렌더 → **컬럼 x-spread 0.0px(완벽 세로스택·blob 소멸)** + **박스겹침 2→0**(PITCH18/nodeSep220). 스크린샷 확인.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - node --check PASS. 적대 리뷰 BLOCKING 0(REV-20260701T220000). **실 FPS·대규모 겹침·줌 체감은 사용자 실 하드웨어 재확인이 최종.**
 
@@ -1246,6 +1606,15 @@ compound 박스·라벨·bezier 엣지 전부 정상(스크린샷). 전체 구�
 - vendor cytoscape 3.30.2→**3.34.0**(unpkg 정품, fcose 2.2.0 호환 유지). `renderer:{name:"canvas",webgl:_webglOk}`
   + feature-detect 폴백. 엣지 재설계(bezier·색/투명도 구분). 애니 중 라벨/엣지 숨김 전면 제거(항상 표시). pixelRatio 제거.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - node --check PASS. 적대 리뷰 패널(§18.8) → REVIEW.md. PB-0008 실 Windows 브라우저(WebGL 활성·compound·라벨·엣지·
   부드러움·대규모 이웃). **실 FPS 효과는 사용자 실 하드웨어 재측정이 유일 검증**.
@@ -1272,6 +1641,15 @@ compound 박스·라벨·bezier 엣지 전부 정상(스크린샷). 전체 구�
     (depth≥2 는 _DEEP 상향) 관련도순 재큐.
   - `node_analysis_jobs.relevance`(alembic 0029) 영속 + claim `depth ASC, relevance DESC` 우선순위.
 - 튜닝 노브(env): RELEVANCE_MIN(0.18)/_DEEP(0.34)/CROSS_SCOPE_FACTOR(0.25)/EXPAND_SCHEMA(off).
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - 단위: `test_node_analysis_relevance.py` **28건 PASS**(pytest, 초기 12 + 2라운드 적대 패널 16). 핵심 — hub 컬럼
@@ -1308,6 +1686,15 @@ compound 박스·라벨·bezier 엣지 전부 정상(스크린샷). 전체 구�
 - `_metaGraphLayout` layoutstop: 숨김 해제를 카메라 fit 애니 `complete` 후로 지연(`restoreMotion`, guard `!_layoutRunning`,
   setTimeout 650ms fallback). 즉시맞춤/예외 경로는 동기 복원. 이미 레이아웃 애니에 검증된 패턴의 카메라 애니 확장 —
   예전 hideEdgesOnViewport 전역옵션 버그와 무관. 등급 Minor(프론트·비파괴). 캐시버스터 graphux-camfps.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - node --check PASS. 적대 리뷰 패널(§18.8) → REVIEW.md. verify-completion → commit/PR/merge → web 재배포.
@@ -1387,6 +1774,15 @@ curated schema_name 과 일치하는 Table 노드 확장 시 — 근본 정규�
 - `shared/config.py`(플래그 5).
 - `feature-0003-agent-web-ui`: `static/admin.js`(엣지 status/weight 데이터·신뢰 배지), `static/admin.html`
   (범례·캐시버스터), `static/styles.css`(신뢰 스타일).
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - **단위 테스트 PASS** (`test_relationships.py`, 총 38건): 강화 전이(점근 상승·**비대칭 전 구간**·broken
@@ -1686,6 +2082,15 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
   여백·라벨·접힌 카드 경로로 유지.
 - **엣지 EDGE(2)**: 이웃 확장/추적으로 나중에 추가된 관계선이 칩 위를 지나던 것 해소(배경 위·칩 아래 고정).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check` PASS · zIndex bake 16개소(빌드 산출 전 요소) · §18.8 적대 패널(ux·design·frontend
   correctness 3-렌즈) — 결과는 REVIEW.md 참조.
@@ -1715,6 +2120,15 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
   BLOCKING 1(backfill 레지스트리 조회 DB 미지정 → DB 등록 ds silent 누락)·MAJOR 2(worker prune 회귀 /
   진행 패널 dismissed)·MINOR 5·NIT 4 전건 반영 또는 근거 수용 — 상세 MODIFY CHG·REVIEW.md.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - pytest 신규 16 PASS(§18.8 회귀 잠금 6종 포함) + 관련 회귀 57 PASS · node --check/py_compile/bash -n PASS.
 - POST-DEPLOY 완료(2026-07-06): PR #593→d1951b7e(deploy-web 롤링 soak+insight/ask-worker 재빌드) →
@@ -1742,6 +2156,15 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
   (products 랜딩 검색→클리어 미복원 / ingest Schema added 미반환 = pristine 회수 dead code / 중심보기
   부분그래프 '전체' 위장) 전건 수정 + MINOR·NIT 10건 반영(수용 1: 필터 재표시 시 열 말미 append —
   AC-2 명세) — 상세 REVIEW.md.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - pytest test_routine_dbanalysis **21 PASS**(§54④ 신규 5 포함) + 관련 회귀 57 PASS · node --check ·
@@ -1772,6 +2195,15 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
 - 억제 테이블 라벨 `▤N` 컬럼수 배지(labelMaxWidth overflow 차단). 컬럼 끝점 엣지는 `renderEndpoint` 로
   테이블 승격(dangling 0). `_lodBand` 3단(full/collod/lod)·300ms 디바운스·상태줄 밴드별 안내.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - headless `test_g6build_collod.js` **신설 18 PASS** — 억제 0방출·**좌표 이동 0(band-invariant)**·▤N 배지·
   엣지 re-anchor·줌/컬럼 게이트·루틴 파라미터. 기존 headless **105 PASS 회귀 0**·`node --check` PASS.
@@ -1794,6 +2226,15 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
 집계 카드(SC:)로 강등** — 기존 접힌-카드 경로 재사용. `layouts` 미변경 → 집계 카드를 슬롯 좌상단에 배치해
 **reflow 0**. SC:id↔combo id 다른 네임스페이스로 setData add/remove(타입전환 회피). 4단 밴드·상태줄 집계 안내.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - headless `test_g6build_agglod.js` **10 PASS**(카드방출·draw급감>10x·reflow-free 위치·비-agg 유지·소형 게이트)
   + 회귀 125 = **134 PASS** · `node --check` PASS.
@@ -1813,6 +2254,15 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
   유지 = combo-safe). 병목=draw 방출 수라 보이지 않는 컬럼 미방출로 줌인 클릭/팬 경량화. col-LOD 와 동일 억제
   메커니즘(realH 예약·배지·테이블 유지)을 뷰포트 축으로 확장·OR 결합. renderEndpoint 승격(dangling 0). 팬 재-emit 디바운스.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - headless `test_g6build_viewportcull.js` **6 PASS**(컬럼 컬링·combo-safe·band-invariant·게이트) + 회귀 134 = **140 PASS**·node --check.
 - diff 2렌즈 적대 리뷰. **win-browser 실 Windows Chrome 육안 검증**(TEST §65).
@@ -1828,6 +2278,15 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 - (A2) 제품 카테고리 밴드 헤더에 규모 명시: "N DB" → "N DB · M 테이블"(멤버 schemaTotals 합).
 - (B) 테이블/클러스터 뷰포트 컬링(§65 컬럼→테이블 확장): 화면 밖 테이블 칩·전체 화면 밖 클러스터(combo) 미방출로
   줌인 draw 급감. 부분 가시 클러스터는 combo 가시분 auto-fit. 카테고리 밴드 bbox 는 선산정 유지. 팬 재-emit.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - headless viewport-cull 6·agglod 8(집계비활성 잠금)·회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 육안(TEST §67).
@@ -1847,6 +2306,15 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 - orphan `_metaGraphRelTraceRowsHTML` 함수 삭제, no-op `_metaGraphBindTraceRows(box)` 제거, dead CSS `.admin-meta-graph-ai-rels` 제거, stale 주석 정정.
 - 병합 방향 사용자 승인(AskUserQuestion 2026-07-10).
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - `node --check` PASS. diff 13삽입/40삭제·3파일(admin.js/admin.html/styles.css). 캐시버스터 `admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup`.
 - 손실 없음: 테이블/컬럼 상세엔 #1 항상 렌더, Routine 노드는 REFERENCES 없어 #2 원래 미표시. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69).
@@ -1862,6 +2330,15 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 ### 변경 (frontend-only, 마이그레이션 0)
 - admin.js `_metaGraphRenderDetail` 의 `[data-rtuse]` 클릭 핸들러: `_metaGraphPanToRelation(k)`(동기 카메라 팬 + 대상 선택) 먼저 → `_metaGraphShowDetail(k)`(async 상세 전환). 기존 shipped 팬 래퍼(graphux7#2) 재사용, 신규 기계장치 0.
 - 미렌더 대상(접힌 스키마·컬링)은 pan 이 `_metaRenderedIdFor` null 가드로 안내만·팬 skip, 상세 전환은 정상(graceful). 섹션 안내문 "행 클릭 = 대상 상세." → "+ 카메라 이동".
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - `node --check admin.js` PASS. inline 적대 diff 리뷰 REV-20260710T163512(순서/race·미렌더 가드·selection idempotent·캐시버스터 PASS, BLOCKING/MAJOR 0, NIT1 비가시 stale 힌트 수용). frontend-only·마이그 0·Minor(§12.3).
@@ -1893,6 +2370,15 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
 정합: 화면 밖 테이블은 카드/안내로 degrade). (MINOR#3) 미렌더 컬럼 선택이 하이라이트를 소실시키는 문제 → **하이브리드
 (_metaFocusKeyFor 폴딩)** 로 해소. (테스트) 선택 게이트·하이라이트 폴딩 단언을 headless 에 추가.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 - 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5·키파싱 2·선택게이트 G1~G4 8·하이라이트폴딩 F1 4·직접렌더).
 - 회귀 0: edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = **150 PASS**·`node --check` PASS.
@@ -1919,6 +2405,15 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
 - **P2** [`node_analysis.py`]: Routine `touches:[{table,access}]`(ROUTINE_USES relation_type) + `returns`
   (routine_objects SSOT) payload 투영. 신규 `_fetch_routine_returns` 헬퍼(비차단).
 - **P3** [`shared/config.py`]: SCHEMA_CAP 200→1000·SCHEMA_MAX 500→2000·RUN_BUDGET_MAX 2500→4000·BATCH_PER_TICK 4→10.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 
 ### 검증
 - `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체, 회귀 0)·py_compile 3파일 PASS.
@@ -2145,6 +2640,15 @@ label-lod 배포 확인 직후의 후속 요청: "컨텐츠 카테고리 클러�
 ### 효과 (동일 시드 표본 40 · A/B)
 2-hop 절단 50% → **0%** · 3-hop 절단 60% → **0%** · "3-hop == 2-hop" 50% → **20%** · 2-hop `REFERENCES` 엣지 합계 98 → **98(정보 손실 0)**. 앵커 `masangsoft_documents_20260414`: d2 300n(Routine 258/Table 0, TRUNC) → **48n(Table 7 = 앵커 + 참조로 이어진 6개, 절단 없음)**, d3 는 관계 +15 로 실제로 다른 결과.
 
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
 ### 검증
 신규 `test_graph_hop_budget.py` **9 PASS** · 헤드리스 `test_detail_dbgroups.js` **95 PASS/0 FAIL** · `make test` 15건 실패는 main 에서 동일 15건 실패 실증(환경성 baseline, 본 변경 무관) · ruff clean · **PB-0008 실 Windows Chrome 150** 에서 패널 상단 1개 배너 + 함수·프로시저 섹션 배너 0 + 목록 155건 불변 실화면 확인(증적 4장). 상세 Run: feature-0003 `docs/test-runs.d/20260728T161300-graph-hop-budget.md`.
 
@@ -2334,3 +2838,81 @@ HAS_COLUMN **75**)은 개수 75 불변 + 큐레이션 설명(`Grade — 아이�
 주장에 CDP 실-paint 또는 host-side 실관측을 요구하므로 미검증으로 남긴다(상한 해제의 렌더 측 영향은 후속
 관측 대상) ② backfill 전 datasource 수렴(진행 중) ③ 안전가드 WARN 경로(라이브 최대 896 < 20000 미발화).
 상세: feature-0003 `docs/test-runs.d/20260729T1930-graph-cap-audit-postdeploy.md`.
+
+## 2026-07-30 analysis-retry-resilience — AI 능동 분석이 네트워크 단절 후 스스로 이어가지 못한 결함 (사용자 리포트 · entry persona dispatch)
+
+**사용자 리포트**: "그래프 뷰에서 AI 능동 분석이 (주기적인 네트워크 단절) 중단될 경우의 대응 방안이
+있을까요? 현재는 중단된 그대로 작업이 정지하여 네트워크가 다시 연결되더라도 아무런 작업이 이루어지지
+않습니다."
+
+### 진단 — 라이브가 가리킨 것
+
+라이브 `agent_kb` 조회 결과가 증상과 정확히 일치했다: 잡 `done` 10,215 / `failed` 710(LLM 사유 130) /
+`pending` **0** / `running` 갇힘 **0**, run 은 전량 `done`. 즉 **큐가 비어 있어서** 워커가 정상인데도 할
+일이 없는 상태다. 그리고 LLM 사유 실패 130건은 07-27(mssql-…d884 49건)·07-29(mysql-…92bc 43건) 두 날에
+뭉쳐 있다 — 상시 산발이 아니라 **단발 장애 창에 claim 돼 있던 잡이 통째로 종결된** 형태.
+
+코드에서는 세 층이 겹쳐 있었다.
+
+1. `llm.py:llm_node_analysis` — 네트워크 오류·타임아웃·429·5xx·빈 응답·JSON 파싱 실패를 **전부 `return
+   None`** 으로 평탄화. 호출측이 일시/영구를 구분할 방법이 없다.
+2. `node_analysis.py:process_pending._persist` — 그 `None` 을 즉시 `status='failed'` + `runs.failed+1` 로
+   기록. 재시도 카운터가 없고, stale 회수(`lease` 900s)는 `running` 만 대상이라 `failed` 는 영구히 굳는다.
+   남은 잡이 없어지면 run 이 `done`/`failed` 로 마감돼 **화면상 완료로 보인다**(실패 수만 작게 표시).
+3. 같은 함수의 claim — LLM 도달 불가가 확정된 동안에도 매 틱 `BATCH_PER_TICK`(10)건을 집어 즉시 실패시켜
+   **단절이 길수록 큐를 태운다**. `node_analysis` 는 `llm_provider_health` 를 참조하지 않았다.
+
+부차적으로 프론트 진행 폴링이 2.5s × 240 = **10분 cap** 후 포기해(`_metaGraphPollRun`), 10분보다 긴
+단절뿐 아니라 정상적으로 10분을 넘는 대형 run 에서도 화면이 멈춘 것처럼 보였다.
+
+### 조치 (사용자 범위 승인 A+B+C+D)
+
+- **A. 실패 분류 + 유한 재시도** — `classify_node_analysis_failure` 가 `bad_model`/`context_length` 만
+  permanent 로, 나머지를 transient 로 판정하고 `llm_node_analysis(error_sink=)` 로 호출측에 전달한다
+  (반환 계약 불변 = 기존 호출자 무회귀). 일시 실패는 단일 statement 로 `attempts+1` + 상한 판정 +
+  `next_attempt_at = now() + LEAST(BASE×2^attempts, MAX)` 를 원자 처리하며 **`runs.failed` 를 올리지
+  않는다** — run 이 `running` 을 유지하므로 finalize 되지 않고, 단절이 풀리면 그 잡이 다시 claim 돼
+  **사람 개입 없이 완주**한다. 상한(`MAX_ATTEMPTS` 4) 도달분은 종전과 동일하게 terminal.
+  alembic **0049**(`attempts`/`next_attempt_at`/`error_kind` + 부분 인덱스)는 순수 additive.
+- **A-보강(load-bearing). run liveness heartbeat** — 대기 잡을 가진 `running` run 의 `updated_at` 을 매
+  틱 갱신한다. 이게 없으면 backoff 대기 중 카운터 UPDATE 가 멈춰 run 이 `lease` 를 넘기고, enqueue dedup 이
+  그것을 stale 로 보아 사용자 재트리거가 **중복 run** 을 만든다. 워커가 죽으면 갱신도 멈추므로 stale
+  판정 자체는 그대로 유효하다.
+- **B. 회로차단** — 연속 일시 실패가 임계(3)에 도달하면 그 틱의 claim 을 **canary 1건**으로 줄이고,
+  성공 1건으로 즉시 정상 배치로 복귀한다. `llm_provider_health` 의 `restricted` 는 보조 신호로 존중하되
+  1차 신호는 프로세스 로컬 카운터다 — 그 모듈은 네트워크 타임아웃을 의도적으로 분류하지 않아(None)
+  정작 이 결함의 주 경로에서 신호가 없기 때문.
+- **C. 굳은 실패 회수** — `retry_failed_jobs` 가 단일 CTE 로 잡 회수(`attempts=0` 리셋)와 run 카운터 복원
+  (`failed` 차감 + `status='running'`)을 함께 처리한다. 대상은 일시 실패(`error_kind LIKE 'transient%'`)와
+  0049 이전 레거시 LLM 실패(`error LIKE 'LLM %'`)뿐 — 'verification-cleanup(취소)' 580건과 영구 실패는
+  배제된다. 운영 진입점은 `scripts/node_analysis_retry_failed.py`(기본 dry-run).
+- **D. 관측 + 수동 진입점** — `get_run_status` 가 `retry_waiting`·`next_attempt_at`·`retryable_failed` 를
+  싣고, 진행 패널이 "재시도 대기 N (hh:mm)" 과 회수 버튼(`POST …/graph/analyze/retry`, 실행 권한 재사용,
+  신규 권한 코드 0)을 노출한다. 프론트 폴은 240회 cap 을 없애고 적응 백오프(진전 2.5s / 무진전 10→30s /
+  실패 2.5→30s)와 총 지속 시간 상한(6h)으로 전환했다. insight cycle summary 에
+  `node_analysis_retry_pending` 를 추가해 "단절 창(retry_pending 급증, failed 0)" 과 "영구 실패 증가" 를
+  로그만으로 구분할 수 있게 했다.
+
+### 비용 경계
+
+재시도는 최악의 경우 잡당 LLM 호출을 4배로 만들 수 있다. `MAX_ATTEMPTS`(4) · backoff(60→600s 상한) ·
+permanent 즉시 종결 · 회로차단 canary 축소 · 회수는 사람 명시 경로만, 5중으로 경계했다. `RETRY_MAX_SEC`
+(600) < `LEASE_SEC`(900) 불변식은 config 주석과 테스트로 고정했다.
+
+### 적대 리뷰 (codex, §18.8.2 제약 없는 채널)
+
+P1 0건 · P2 4건 — 4건 전부 in-cycle 흡수했다: ① 컬럼 부재 판정의 영구 캐시가 롤링 배포 창에서 재시도를
+silent 비활성으로 남기던 회귀(→ 600s 재-probe) ② `dry_run` 이 `limit` 을 무시해 LLM 비용 규모를 과대
+표시한 것(→ `retried`/`eligible`/`capped` 분리) ③ 빈 응답과 파싱 실패가 같은 태그라 결정적 포맷 오류가
+예산을 태우는지 판별 불가했던 것(→ `json_extract_failed` 태그 분리) ④ 프론트가 `await` 이후 최신 run 을
+재확인하지 않아 지연된 이전 응답이 새 run 화면을 덮어쓸 수 있던 경쟁(→ await 직후 재확인). 상세는
+REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
+
+### 검증
+
+- 단위: 신규 **40 PASS**(feature-0002 31 + feature-0003 라우터 9) · 헤드리스 **25 PASS** · ruff PASS ·
+  `make test` 전 스위트(결과는 아래 "Git 동기화 결과" 참조).
+- 마이그레이션 창(0049 미적용)에서 claim SQL·실패 경로가 종전과 동일함을 별도 테스트로 고정했다.
+- **미검증(정직)**: ① 라이브 네트워크를 인위로 끊는 재현은 하지 않는다(운영 영향) — 자동 재시도는 단위
+  테스트 + 배포 후 `node_analysis_retry_pending` 카운터로 확인한다 ② PB-0008 라이브 시각검증과 라이브
+  잔여 130건 회수는 배포 후(TARR.3).

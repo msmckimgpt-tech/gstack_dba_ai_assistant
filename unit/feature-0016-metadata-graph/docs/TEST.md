@@ -1099,3 +1099,48 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   schema=… status=…`)로 확인. 진행 중 run 에 시드가 **append 되지 않는지**(`enqueued` 불변) 함께 확인.
 - 라이브 정지 스위치 실증: 관리 콘솔에서 `AGENT_NODE_ANALYSIS_AUTO_CHANGE_CAP=0` 저장 → 재배포 없이
   다음 사이클에 `status=disabled` 로 무발동 전환되는지 확인.
+
+## analysis-retry-resilience — 네트워크 단절 중단 후 자동 재개 (2026-07-30, 사용자 리포트)
+
+### Run — 라이브 근본 원인 확증 (Environment: 라이브 agent_kb PG 조회, read-only) — TARR.0
+- `node_analysis_jobs` 상태 분포: `done` **10,215** · `failed` **710** · `pending` **0** · `running` **0**.
+- `failed` 사유 분포: `LLM 분석 실패(빈 응답/파싱)` **130** · `verification-cleanup(취소)` **580**(검증 잔재).
+- LLM 사유 실패의 시점·스코프 분포: 2026-07-29 `mysql-42371f8d92bc` **43** · 07-27 `mssql-ee7d238cd884` **49** ·
+  07-16 `mysql-5fcc7d27c894` 9 · 07-15 `mysql-82941a26ab6c` 7 · 07-14 `mysql-3d6eaf56ad40` 7 · 07-10 `mssql-06656002eda6` 11 …
+  → **단발 장애 창에 몰림** = "그 창에 claim 돼 있던 잡이 통째로 종결됐다"는 형태. `node_analysis_runs` 는
+  전량 `status='done'` 이라 화면상 완료로 보이고, `pending` 0 이라 워커는 정상인데 할 일이 없다.
+- 판정: 재시도 계정 부재(코드 3층 — `llm.py` 평탄화 → 즉시 terminal → lease 는 `running` 만)가 근본 원인.
+
+### Run — 단위 테스트 (Environment: docker mysql-ai-agent, pytest) — TARR.1
+- 신규 `unit/feature-0002-agent-core/tests/test_node_analysis_retry.py` **31 PASS**(초안 26 + codex P2
+  반영 5: 컬럼 부재 판정의 **재-probe**(간격 이내 미-probe / 경과 후 회복)·성공 캐시 영구성·dry_run
+  limit 적용(`retried`/`eligible`/`capped`)·파싱 실패 태그 분리) — 실패 분류 6축(네트워크·
+  타임아웃·빈 응답·클라이언트 미구성·요청-레벨 permanent·throttle transient) · 일시 실패 pending 되돌림 +
+  backoff 예약 + **`runs.failed` 미증가** · 상한 도달 terminal 전환 · permanent 무재시도 · claim due 게이트 ·
+  **0049 미적용 창 종전 동작 폴백** · stale reclaim 의 backoff 클리어 · run liveness heartbeat · 회로차단
+  canary 축소/성공 리셋 · 회수 CTE(attempts=0·`failed` 차감·`status='running'`) · **LIKE 파라미터 바인딩**
+  (SQL 리터럴 `%` 가 psycopg 포맷과 충돌하는 회귀 가드) · 마이그레이션 미적용 시 ok=False ·
+  `get_run_status` 재시도 필드 노출 + 집계 실패 시 0/None 저하(폴링 404 회귀 없음).
+- 신규 `unit/feature-0003-agent-web-ui/tests/test_graph_analysis_retry_route.py` **9 PASS** — 대상 미지정 400
+  (전역 회수 차단) · run_id/scope/limit 전달 · scope 소문자화 · 잘못된 limit 폴백 · dry_run 무감사 ·
+  실제 회수 감사 · 0건 무감사 · 모듈 실패 503 · **실행 권한(`metadata.graph.analyze`) 사용 가드**.
+- `route_snapshot_p5b.json` 골든 갱신(223→224 routes, 신규 `POST /api/admin/metadata/graph/analyze/retry` 1건만).
+- 전체 스위트(`make test`) 실행 — 결과는 REPORT.md 해당 항목 참조.
+- 정적: `python3 -m py_compile` 5파일 PASS · `node --check`(ES module) graph-ctxmenu.js PASS · ruff PASS.
+
+### Run — headless 격리검증 (Environment: node vm) — TARR.2
+- 신규 `unit/feature-0003-agent-web-ui/tests/headless/test_graph_analysis_retry.js` **25 PASS**(초안 24 + codex P2-4: in-flight 지연 응답이 새 run 화면을 덮어쓰지 않음) —
+  ① 실패 250회 이후에도 폴 생존(**240회 cap 소멸** 회귀 가드) ② 실패 백오프 2.5→5→10→20→30s 상한
+  ③ 성공 1회로 2.5s 복귀 ④ 무진전 완화(10s→30s)와 진전 시 즉시 복귀 ⑤ run 종료·타 run 시작 시 루프 종료
+  ⑥ 총 지속 시간 상한(6h) 초과 시 마커 정리 + 백그라운드 안내 ⑦ 진행 패널의 재시도 대기 수·다음 시각
+  (HH:MM)·회수 버튼 조건부 렌더·클릭이 run_id 로 회수 호출 · 상태줄의 "재시도 대기" 구분 표기 ·
+  ⑧ **in-flight 응답 경쟁**(gate 로 지연 재현 — await 이후 activeRunId 재확인).
+- 실행: `node unit/feature-0003-agent-web-ui/tests/headless/test_graph_analysis_retry.js` → `25 passed, 0 failed`.
+
+### Run (예정) — POST-DEPLOY 라이브 (Environment: Windows-browser, PB-0008) — TARR.3
+- 배포본에서 그래프 뷰 진행 패널을 열고 ① 라이브 잔여 130건을 `scripts/node_analysis_retry_failed.py
+  --scope <ds> --dry-run` → `--execute` 로 회수 ② 진행 패널이 회수분 진행률을 다시 올리는지 ③ 재시도 대기가
+  발생하는 경우 "재시도 대기 N (hh:mm)" 표기 ④ 회수 버튼 왕복 ⑤ pageerror 0 을 실 Windows Chrome 으로 확인.
+- 단절 재현은 **관측 기반**으로 한다 — 라이브 네트워크를 인위로 끊지 않는다(운영 영향). 대신 회수 경로와
+  진행 패널 표기를 실증하고, 자동 재시도 자체는 단위 테스트 + 배포 후 `node_analysis_retry_pending` 로그
+  카운터로 확인한다.

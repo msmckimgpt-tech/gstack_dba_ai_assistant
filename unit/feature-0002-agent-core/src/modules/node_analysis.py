@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import uuid
 
 from shared import config as _cfg
@@ -150,6 +151,78 @@ def _warn_uprompt_column_once(where: str, exc) -> None:
         _UPROMPT_COL_WARNED["done"] = True
         _log.warning("node_analysis user_prompt 컬럼 접근 실패(%s) — alembic 0034 미적용 창으로 보고 legacy 폴백. err=%r",
                      where, exc)
+
+
+# ── 일시 실패 재시도 (analysis-retry-resilience, 사용자 리포트 2026-07-30) ─────
+# attempts/next_attempt_at/error_kind(alembic 0049) 가용성을 프로세스당 1회 probe 해 캐시한다.
+# _refine_cols_ok 와 동형 — **컬럼 부재(0049 미적용 창)일 때만 False 를 캐시**하고 transient 오류는
+# 캐시하지 않는다(캐시하면 프로세스 수명 내내 재시도 기능이 silent 비활성으로 남는다).
+_RETRY_COLS = {"ok": None, "warned": False, "checked_at": 0.0}
+# codex P2-1: **False 를 영구 캐시하지 않는다.** 배포 스파인에서 워커가 0049 적용 *전에* 기동되면
+#   여기서 False 가 잡히는데, 영구 캐시면 마이그레이션이 끝난 뒤에도 프로세스 수명 내내 재시도가
+#   silent 비활성으로 남아(= 이 cycle 이 고친 결함이 그대로 재발) 다음 재배포까지 회복되지 않는다.
+#   그래서 부재 판정은 아래 간격 뒤 재-probe 한다(성공 True 는 영구 — 컬럼이 사라지는 일은 없다).
+_RETRY_COLS_RECHECK_SEC = 600
+
+
+def _retry_cols_ok(cur) -> bool:
+    if _RETRY_COLS["ok"] is False:
+        if (time.time() - float(_RETRY_COLS.get("checked_at") or 0.0)) < _RETRY_COLS_RECHECK_SEC:
+            return False
+        _RETRY_COLS["ok"] = None       # 재-probe 대상으로 되돌림(마이그레이션 완료 흡수)
+    if _RETRY_COLS["ok"] is None:
+        _RETRY_COLS["checked_at"] = time.time()
+        try:
+            cur.execute("SELECT attempts, next_attempt_at, error_kind FROM node_analysis_jobs LIMIT 0")
+            cur.fetchall()
+            _RETRY_COLS["ok"] = True
+        except Exception as exc:
+            msg = f"{exc.__class__.__name__} {exc}".lower()
+            permanent = ("undefinedcolumn" in msg) or ("column" in msg and (
+                "does not exist" in msg or "존재하지 않" in msg))
+            if not _RETRY_COLS["warned"]:
+                _RETRY_COLS["warned"] = True
+                _log.warning("node_analysis attempts/next_attempt_at probe 실패(%s) — %s. err=%r",
+                             "영구: 0049 미적용 창" if permanent else "일시: 다음 tick 재시도",
+                             "legacy 동작(일시 실패도 즉시 terminal) 폴백", exc)
+            if permanent:
+                _RETRY_COLS["ok"] = False
+            else:
+                return False   # 미캐시 — 다음 호출 재-probe
+    return bool(_RETRY_COLS["ok"])
+
+
+def _retry_cfg() -> dict:
+    """재시도·회로차단 knob 해석(런타임 설정 override 없음 — env/config 정본)."""
+    return {
+        "max_attempts": max(1, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_MAX_ATTEMPTS", 4) or 1)),
+        "base_sec": max(1, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_RETRY_BASE_SEC", 60) or 1)),
+        "max_sec": max(1, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_RETRY_MAX_SEC", 600) or 1)),
+        "circuit_fails": max(0, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_CIRCUIT_FAILS", 3) or 0)),
+    }
+
+
+# 회로차단(B): 연속 일시 실패 카운터. **프로세스 로컬** — 워커 재시작 시 리셋되지만, 그때는 다음
+# 실패가 즉시 다시 채우므로 안전 방향으로만 틀린다(과도 차단 없음). PG 영속을 피한 이유는 이
+# 신호가 "지금 이 워커에서 LLM 왕복이 되는가" 라는 프로세스-국소 사실이기 때문.
+_CIRCUIT = {"fails": 0}
+
+
+def _circuit_open(cfg: dict) -> bool:
+    """연속 일시 실패가 임계에 도달했거나 provider health 가 restricted 면 True(=canary 로 축소)."""
+    th = int(cfg.get("circuit_fails") or 0)
+    if th and int(_CIRCUIT["fails"]) >= th:
+        return True
+    # 보조 신호: 다른 경로(대화 답변 등)가 이미 provider 제한을 관측했으면 그것도 존중한다.
+    #   health 모듈/PG 미가용은 무시(자체 카운터만으로 동작 — 신호 부재가 차단을 만들지 않음).
+    try:
+        from modules import llm_provider_health as _health
+        st = _health.read_provider_health() or {}
+        if str(st.get("state") or "") == _health.STATE_RESTRICTED:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # ── 앵커-상대 관련도 (feature-0016 node-analysis-anchor) ──────────────────────
@@ -1244,7 +1317,10 @@ def process_pending(max_nodes=None, conn=None) -> dict:
 
     각 잡은 독립 try/except — 1개 실패가 배치를 중단하지 않는다. run 의 pending/running 이 모두
     소진되면 run.status 를 done(1개 이상 성공) 또는 failed(전부 실패) 로 마감."""
-    rep = {"claimed": 0, "done": 0, "failed": 0, "enqueued": 0, "links": 0, "refined": 0}
+    # retry_pending(analysis-retry-resilience): 이번 틱에서 **terminal 로 종결하지 않고** backoff 재시도로
+    #   되돌린 잡 수. failed(terminal) 와 분리해 세어야 "단절 창에 실패가 몰렸다"와 "영구 실패가 늘었다"를
+    #   운영이 구분할 수 있다(insight cycle summary 의 node_analysis_* 계열).
+    rep = {"claimed": 0, "done": 0, "failed": 0, "retry_pending": 0, "enqueued": 0, "links": 0, "refined": 0}
     if not _cfg_enabled():
         return rep
     if max_nodes is None:
@@ -1265,12 +1341,40 @@ def process_pending(max_nodes=None, conn=None) -> dict:
         #   pending 으로 되돌린다. 없으면 run 이 finalize(SELECT COUNT status IN pending/running = 0) 되지
         #   못해 영구 'running' + enqueue dedup 이 그 run 을 계속 재사용 → 재트리거 영구 불가.
         lease = max(60, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_LEASE_SEC", 900)))
+        retry_ok = _retry_cols_ok(cur)
+        rcfg = _retry_cfg()
         try:
-            cur.execute("UPDATE node_analysis_jobs SET status='pending' "
-                        "WHERE status='running' AND updated_at < now() - make_interval(secs => %s)",
-                        (lease,))
+            # analysis-retry-resilience: reclaim 은 즉시 재처리 의도이므로 backoff 예약(next_attempt_at)을
+            #   함께 비운다 — 남겨두면 되살린 잡이 due 게이트에 다시 막혀 lease 회수가 무력해진다.
+            if retry_ok:
+                cur.execute("UPDATE node_analysis_jobs SET status='pending', next_attempt_at=NULL "
+                            "WHERE status='running' AND updated_at < now() - make_interval(secs => %s)",
+                            (lease,))
+            else:
+                cur.execute("UPDATE node_analysis_jobs SET status='pending' "
+                            "WHERE status='running' AND updated_at < now() - make_interval(secs => %s)",
+                            (lease,))
         except Exception:
             pass
+        # analysis-retry-resilience(load-bearing): 처리 대기 잡을 가진 running run 의 liveness 를 갱신한다.
+        #   enqueue_analysis/enqueue_schema_analysis 의 dedup 은 "updated_at 이 lease 이내인 running run"
+        #   만 재사용하는데, 재시도 backoff 대기나 회로차단 대기 중에는 카운터 UPDATE 가 없어 그 run 의
+        #   updated_at 이 정지한다 → lease 초과 시 stale 로 오판돼 사용자 재트리거가 **중복 run** 을 만든다.
+        #   워커가 죽으면 이 갱신도 멈추므로 stale 판정 자체는 그대로 유효하다.
+        try:
+            cur.execute("UPDATE node_analysis_runs r SET updated_at = now() "
+                        "WHERE r.status='running' AND EXISTS ("
+                        "  SELECT 1 FROM node_analysis_jobs j WHERE j.run_id = r.run_id "
+                        "    AND j.status IN ('pending','running'))")
+        except Exception:
+            pass
+        # 회로차단(B): LLM 도달 불가가 확정된 동안에는 배치를 canary 1건으로 줄인다 — 종전에는 틱마다
+        #   BATCH_PER_TICK(10)건을 claim 해 즉시 실패시키며 큐를 태웠다(단절이 길수록 소실 확대).
+        #   canary 가 성공하면 _CIRCUIT 이 리셋돼 다음 틱부터 정상 배치로 복귀한다.
+        if retry_ok and max_nodes > 1 and _circuit_open(rcfg):
+            _log.info("node_analysis 회로차단 — 연속 일시 실패 %d회, 이번 틱 canary 1건만 처리",
+                      int(_CIRCUIT["fails"]))
+            max_nodes = 1
         # claim (원자적 단일 statement — autocommit 안전).
         #   fairness fix: **depth ASC 우선** 정렬 — 모든 run 의 root(depth 0)/얕은 노드를 먼저 처리한다.
         #   과거 created_at-only FIFO 는 대형 run(예: 124노드)의 깊은 recursion 잡이 앞줄을 독점해, 이후
@@ -1292,6 +1396,10 @@ def process_pending(max_nodes=None, conn=None) -> dict:
         pause_sql = ("  AND run_id NOT IN (SELECT run_id FROM node_analysis_runs "
                      "                     WHERE root_label = '" + _AUTO_ROOT_LABEL + "') "
                      if auto_paused else "")
+        # analysis-retry-resilience: backoff 예약이 아직 도달하지 않은 잡은 이번 틱에서 건너뛴다.
+        #   (0049 미적용 창에서는 조건절이 붙지 않아 기존 claim 과 byte-동치.)
+        due_sql = "  AND (next_attempt_at IS NULL OR next_attempt_at <= now()) " if retry_ok else ""
+        pause_sql = pause_sql + due_sql
         if refine_ok:
             # §55: anchor_key(per-seed 앵커)·pass_no(refine 세대)·analysis(재-pending 행의 직전 분석문 =
             # refine payload 의 previous_analysis) 를 함께 claim.
@@ -1330,7 +1438,10 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             w = {"jid": jid, "run_id": run_id, "scope_key": scope_key, "node_key": node_key,
                  "node_label": node_label, "node_name": node_name, "node_fqn": node_fqn,
                  "depth": depth, "anchor_key": anchor_key, "pass_no": pass_no,
-                 "ctx": None, "root": None, "anchor": None, "payload": None, "err": None}
+                 "ctx": None, "root": None, "anchor": None, "payload": None, "err": None,
+                 # analysis-retry-resilience: LLM 실패 분류({kind,tag,detail}) — _run_llm 이 채우고
+                 #   _persist 가 읽어 backoff 재시도 / terminal 종결을 가른다.
+                 "fail": None}
             try:
                 # node-analysis-completeness: Table 은 컨텍스트 수집 전에 컬럼 인벤토리 보강 —
                 #   같은 틱의 _fetch_context 가 HAS_COLUMN 자식을 보고 (a) payload 컬럼 컨텍스트
@@ -1366,15 +1477,68 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             return w
 
         def _run_llm(w):
-            """LLM 노드 분석 1회. **DB 미접근 — 스레드 병렬 안전**. 예외는 Exception 객체로 반환(직렬 persist 가 처리)."""
+            """LLM 노드 분석 1회. **DB 미접근 — 스레드 병렬 안전**. 예외는 Exception 객체로 반환(직렬 persist 가 처리).
+
+            analysis-retry-resilience: 실패 분류를 `w["fail"]` 에 싣는다. 각 스레드는 **자기 work item
+            만** 쓰므로(공유 dict 아님) 병렬에서도 안전하다."""
             if w["err"] is not None or w["payload"] is None:
                 return None
+            sink: dict = {}
             try:
                 # 0047: 병렬 스레드라 active-datasource ContextVar 가 전파되지 않는다 →
                 #   사용 기록의 데이터소스 귀속을 위해 work item 의 scope_key 를 명시 전달.
-                return _llm.llm_node_analysis(w["payload"], scope_key=w.get("scope_key"))
+                obj = _llm.llm_node_analysis(w["payload"], scope_key=w.get("scope_key"), error_sink=sink)
             except Exception as exc:
+                w["fail"] = _llm.classify_node_analysis_failure(exc)
                 return exc
+            if obj is None:
+                # sink 가 비어 있으면(계약 밖 경로) 보수적으로 transient — 재시도 상한이 비용을 막는다.
+                w["fail"] = dict(sink) if sink else _llm.classify_node_analysis_failure(empty=True)
+            return obj
+
+        def _record_failure(jid, run_id, message, fail_info) -> None:
+            """실패 1건 기록 (analysis-retry-resilience). **단일 스레드에서만 호출**(cur/rep/_CIRCUIT).
+
+            일시 실패(network·timeout·429·5xx·빈 응답)는 terminal 로 굳히지 않고 `attempts+1` 과 함께
+            pending 으로 되돌려 지수 backoff 후 재시도한다 — 네트워크가 복구되면 **사람 개입 없이** 그
+            잡이 다시 claim 된다(본 cycle 의 핵심). `MAX_ATTEMPTS` 도달 또는 영구 실패(bad_model 등)는
+            종전과 동일하게 terminal `failed` + `runs.failed+1`. 0049 미적용 창(retry_ok=False)은
+            전부 종전 경로.
+            """
+            kind = str((fail_info or {}).get("kind") or "")
+            tag = str((fail_info or {}).get("tag") or "")
+            if retry_ok and kind == _llm.FAILURE_TRANSIENT:
+                # 단일 statement 로 attempts 증가 + 상한 판정 + backoff 예약을 원자 처리(autocommit 안전).
+                #   backoff = BASE × 2^attempts(증가 전 값 = 0-based) → 60s, 120s, 240s … MAX 캡.
+                cur.execute(
+                    "UPDATE node_analysis_jobs SET attempts = attempts + 1, "
+                    "  status = CASE WHEN attempts + 1 >= %s THEN 'failed' ELSE 'pending' END, "
+                    "  next_attempt_at = CASE WHEN attempts + 1 >= %s THEN NULL "
+                    "    ELSE now() + make_interval(secs => LEAST((%s * power(2, attempts))::int, %s)) END, "
+                    "  error_kind = CASE WHEN attempts + 1 >= %s THEN 'transient_exhausted' ELSE 'transient' END, "
+                    "  error = %s "
+                    "WHERE id=%s RETURNING status, attempts, next_attempt_at",
+                    (rcfg["max_attempts"], rcfg["max_attempts"], rcfg["base_sec"], rcfg["max_sec"],
+                     rcfg["max_attempts"], str(message)[:500], jid))
+                row = cur.fetchone() or (None, None, None)
+                # 회로차단 신호: 연속 일시 실패를 센다(성공 시 0 으로 리셋).
+                _CIRCUIT["fails"] = int(_CIRCUIT["fails"]) + 1
+                if str(row[0] or "") == "pending":
+                    rep["retry_pending"] += 1
+                    _log.info("node_analysis job=%s 일시 실패(%s) — 시도 %s회, %s 이후 자동 재시도",
+                              jid, tag or "transient", row[1], row[2])
+                    return   # terminal 아님 — runs.failed 를 올리지 않는다(run 은 running 유지).
+                _log.warning("node_analysis job=%s 일시 실패 상한(%d회) 도달 — terminal 종결(%s)",
+                             jid, rcfg["max_attempts"], tag or "transient")
+            elif retry_ok:
+                cur.execute("UPDATE node_analysis_jobs SET attempts = attempts + 1, status='failed', "
+                            "next_attempt_at=NULL, error_kind=%s, error=%s WHERE id=%s",
+                            ((kind or "permanent")[:32], str(message)[:500], jid))
+            else:
+                cur.execute("UPDATE node_analysis_jobs SET status='failed', error=%s WHERE id=%s",
+                            (str(message)[:500], jid))
+            cur.execute("UPDATE node_analysis_runs SET failed = failed + 1 WHERE run_id=%s", (run_id,))
+            rep["failed"] += 1
 
         def _persist(w, obj):
             """LLM 결과 반영(UPDATE·suggested_links·backrefine·enqueue). **단일 스레드에서만 호출**(cur/c/rep)."""
@@ -1416,6 +1580,15 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                                     (analysis_text, (str(model)[:128] if model else None), jid))
                     cur.execute("UPDATE node_analysis_runs SET done = done + 1 WHERE run_id=%s", (run_id,))
                     rep["done"] += 1
+                    # analysis-retry-resilience: 성공했으므로 재시도 흔적을 정리하고(과거 backoff 예약·분류가
+                    #   남아 진행 패널의 '재시도 대기' 집계를 흐리지 않게) 회로차단 카운터를 닫는다.
+                    if retry_ok:
+                        try:
+                            cur.execute("UPDATE node_analysis_jobs SET error_kind=NULL, next_attempt_at=NULL "
+                                        "WHERE id=%s", (jid,))
+                        except Exception:
+                            pass
+                    _CIRCUIT["fails"] = 0
                     # §55: LLM 이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소에
                     # candidate 로 적재 — 끝점 실재 검증 통과분만. 이후 프로브·자기교정이 판정한다.
                     try:
@@ -1437,10 +1610,9 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                     cur.execute("UPDATE node_analysis_jobs SET status='done', error=%s WHERE id=%s",
                                 ("refine 실패(빈 응답) — 원 분석 유지", jid))
                 else:
-                    cur.execute("UPDATE node_analysis_jobs SET status='failed', error=%s WHERE id=%s",
-                                ("LLM 분석 실패(빈 응답/파싱)", jid))
-                    cur.execute("UPDATE node_analysis_runs SET failed = failed + 1 WHERE run_id=%s", (run_id,))
-                    rep["failed"] += 1
+                    # analysis-retry-resilience: 종전엔 여기서 곧바로 terminal 'failed' 였다 — 네트워크
+                    #   단절 창의 잡이 통째로 굳어 복구 후에도 되살아나지 않은 근본 지점.
+                    _record_failure(jid, run_id, "LLM 분석 실패(빈 응답/파싱)", w.get("fail"))
                 # 이웃 재큐 (예산 내) — 성공/실패 무관(그래프 구조는 분석 성공과 독립).
                 #   anchor(잡의 앵커 — 단일 노드 run 은 루트, 스키마 run 은 시드) 관련도로 게이트·우선순위화.
                 rep["enqueued"] += _enqueue_neighbors(c, cur, run_id, scope_key, ctx, depth, anchor,
@@ -1453,10 +1625,11 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                         cur.execute("UPDATE node_analysis_jobs SET status='done', error=%s WHERE id=%s",
                                     (("refine 실패: " + str(exc))[:500], jid))
                     else:
-                        cur.execute("UPDATE node_analysis_jobs SET status='failed', error=%s WHERE id=%s",
-                                    (str(exc)[:500], jid))
-                        cur.execute("UPDATE node_analysis_runs SET failed = failed + 1 WHERE run_id=%s", (run_id,))
-                        rep["failed"] += 1
+                        # analysis-retry-resilience: 예외도 분류해 일시 실패면 backoff 재시도로 되돌린다.
+                        #   (gather 단계 예외 — PG/그래프 조회 실패 — 도 여기로 오며, 그 경로는 LLM 을
+                        #    호출하지 않으므로 재시도가 외부 비용을 만들지 않는다. 상한은 동일 적용.)
+                        _record_failure(jid, run_id, str(exc),
+                                        w.get("fail") or _llm.classify_node_analysis_failure(exc))
                 except Exception:
                     pass
 
@@ -1503,6 +1676,95 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             except Exception:
                 pass
     return rep
+
+
+# ── 굳은 일시 실패 회수 (analysis-retry-resilience, 2026-07-30) ────────────────
+# 0049 이전에 terminal 로 굳은 실패(라이브 실측: 'LLM 분석 실패(빈 응답/파싱)' 130건이 07-27·07-29
+# 두 장애 창에 뭉쳐 있음)와, 상한을 소진한 transient_exhausted 를 다시 큐에 올린다.
+#
+# **회수 대상 판정** — 사람이 만든 인위적 실패는 건드리지 않는다:
+#   · `error_kind LIKE 'transient%'`  = 본 cycle 이후의 일시 실패(상한 소진분 포함)
+#   · `error_kind IS NULL AND error LIKE 'LLM %'` = 0049 이전 레거시 LLM 실패
+#   → 'verification-cleanup(취소)'(라이브 580건, 검증 잔재)·permanent 는 **제외**된다.
+# LIKE 패턴은 **반드시 파라미터로** 넘긴다 — SQL 리터럴 'transient%' 를 params 와 함께 execute 하면
+# psycopg 가 그 `%` 를 포맷 지시자로 읽어 "not enough arguments for format string" 으로 죽는다.
+_RETRYABLE_FAILED_SQL = "(error_kind LIKE %s OR (error_kind IS NULL AND error LIKE %s))"
+_RETRYABLE_FAILED_ARGS = ("transient%", "LLM %")
+
+
+def retry_failed_jobs(run_id: str | None = None, scope_key: str | None = None, *,
+                      limit: int = 500, dry_run: bool = False, conn=None) -> dict:
+    """굳은 일시 실패 잡을 pending 으로 회수한다. 반환 {ok, retried, runs, dry_run, reason?}.
+
+    사람이 명시적으로 요청하는 경로(진행 패널 '재시도' 버튼 · 1회성 CLI)라 **attempts 를 0 으로
+    리셋**해 새 예산을 준다(자동 backoff 재시도와 구분 — 자동 경로는 attempts 를 누적해 상한에서 멈춘다).
+
+    run 카운터 정합도 함께 복원한다: 되살린 수만큼 `runs.failed` 를 차감하고 `status='running'` 으로
+    되돌린다(이미 done/failed 로 마감된 run 도 다시 진행 상태가 된다). 이 복원이 없으면 진행 패널의
+    완료율이 영구히 어긋나고, finalize 판정이 그 run 을 두 번 마감한다.
+    """
+    if not _cfg_enabled():
+        return {"ok": False, "reason": "disabled"}
+    lim = _clamp(limit, 1, 5000, 500)
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return {"ok": False, "reason": "PG 미가용"}
+    try:
+        cur = c.cursor()
+        if not _retry_cols_ok(cur):
+            cur.close()
+            return {"ok": False, "reason": "재시도 계정(alembic 0049) 미적용 — 배포 후 다시 시도"}
+        where = ["status='failed'", _RETRYABLE_FAILED_SQL]
+        params: list = list(_RETRYABLE_FAILED_ARGS)
+        if run_id:
+            where.append("run_id=%s")
+            params.append(str(run_id))
+        if scope_key:
+            where.append("scope_key=%s")
+            params.append(str(scope_key)[:96])
+        pred = " AND ".join(where)
+        if dry_run:
+            cur.execute(f"SELECT count(*), count(DISTINCT run_id) FROM node_analysis_jobs WHERE {pred}",
+                        tuple(params))
+            row = cur.fetchone() or (0, 0)
+            cur.close()
+            # codex P2-2: 실제 실행은 LIMIT 으로 잘리므로 dry-run 도 **이번 실행량**을 보고해야 한다 —
+            #   전체 대상 수만 보여주면 운영자가 1회 LLM 비용 규모를 과대 판단한다(eligible 은 별도 표기).
+            eligible = int(row[0] or 0)
+            return {"ok": True, "dry_run": True, "retried": min(eligible, lim), "eligible": eligible,
+                    "capped": eligible > lim, "runs": int(row[1] or 0)}
+        # 단일 statement(CTE) — 잡 회수와 run 카운터 복원을 한 번에 처리해 중간 상태를 노출하지 않는다.
+        cur.execute(
+            "WITH tgt AS ("
+            f"  SELECT id FROM node_analysis_jobs WHERE {pred} ORDER BY id LIMIT %s"
+            "), upd AS ("
+            "  UPDATE node_analysis_jobs j SET status='pending', attempts=0, next_attempt_at=NULL, "
+            "         error=NULL, error_kind=NULL "
+            "    FROM tgt WHERE j.id = tgt.id "
+            "  RETURNING j.run_id"
+            "), agg AS (SELECT run_id, count(*) AS n FROM upd GROUP BY run_id) "
+            "UPDATE node_analysis_runs r "
+            "   SET failed = GREATEST(0, r.failed - agg.n), status='running', updated_at=now() "
+            "  FROM agg WHERE r.run_id = agg.run_id "
+            "RETURNING r.run_id, agg.n",
+            tuple(params) + (lim,))
+        rows = cur.fetchall() or []
+        cur.close()
+        retried = sum(int(r[1] or 0) for r in rows)
+        if retried:
+            _log.info("node_analysis 일시 실패 회수: %d건 / run %d개 (run_id=%s scope=%s)",
+                      retried, len(rows), run_id or "*", scope_key or "*")
+        return {"ok": True, "dry_run": False, "retried": retried, "runs": len(rows),
+                "run_ids": [r[0] for r in rows][:50]}
+    except Exception as exc:
+        _log.warning("retry_failed_jobs_failed err=%r", exc)
+        return {"ok": False, "reason": "회수 실패"}
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
 
 
 def backfill_roles(limit=200, conn=None) -> int:
@@ -2013,11 +2275,30 @@ def get_run_status(run_id: str, conn=None) -> dict | None:
                  "relevance": round(float(row[6]), 4) if row[6] is not None else None,
                  "role": row[7]}
                 for row in job_rows]
+        # analysis-retry-resilience: 진행 패널이 "멈춘 것"과 "재시도를 기다리는 것"을 구분해 보여줄 수
+        #   있도록 재시도 대기 수·가장 이른 재시도 시각·회수 가능한 실패 수를 함께 싣는다.
+        #   0049 미적용 창에서는 조회가 실패하므로 0/None(프론트가 해당 표기를 생략) — 폴링 404 회귀 없음.
+        retry_waiting, next_attempt_at, retryable_failed = 0, None, 0
+        try:
+            cur.execute(
+                "SELECT count(*) FILTER (WHERE status='pending' AND next_attempt_at > now()), "
+                "       min(next_attempt_at) FILTER (WHERE status='pending' AND next_attempt_at > now()), "
+                "       count(*) FILTER (WHERE status='failed' AND " + _RETRYABLE_FAILED_SQL + ") "
+                "  FROM node_analysis_jobs WHERE run_id=%s",
+                _RETRYABLE_FAILED_ARGS + (run_id,))
+            rr = cur.fetchone() or (0, None, 0)
+            retry_waiting = int(rr[0] or 0)
+            next_attempt_at = rr[1].isoformat() if rr[1] else None
+            retryable_failed = int(rr[2] or 0)
+        except Exception as retry_exc:
+            _log.debug("get_run_status retry 집계 생략(0049 미적용?) err=%r", retry_exc)
         cur.close()
         return {"run_id": r[0], "scope_key": r[1], "root_key": r[2], "root_name": r[3],
                 "depth_budget": r[4], "node_budget": r[5], "status": r[6],
                 "enqueued": r[7], "done": r[8], "failed": r[9], "root_label": r[10] or "",
-                "done_keys": done_keys, "running_keys": running_keys, "roles": roles, "jobs": jobs}
+                "done_keys": done_keys, "running_keys": running_keys, "roles": roles, "jobs": jobs,
+                "retry_waiting": retry_waiting, "next_attempt_at": next_attempt_at,
+                "retryable_failed": retryable_failed}
     except Exception as exc:
         _log.debug("get_run_status_failed err=%r", exc)
         return None

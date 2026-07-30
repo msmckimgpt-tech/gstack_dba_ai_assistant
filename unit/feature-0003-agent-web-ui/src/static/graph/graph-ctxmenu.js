@@ -2943,49 +2943,100 @@ async function _metaGraphAnalyzeSchema(schemaKey) {
 }
 
 // run 진행률을 폴링하며 완료 노드에 그래프 마커 표시 + 초점 노드 분석 완료 시 결과 로드.
+//
+// analysis-retry-resilience(2026-07-30, 사용자 리포트 — 주기적 네트워크 단절): 종전 루프는 tick 을
+//   2.5s 고정 간격으로 최대 240회(=10분)만 돌렸다. 그래서 (a) 10분보다 긴 단절에서는 폴이 **영구 포기**
+//   하고, (b) 수백 노드 run 처럼 정상적으로 10분을 넘는 작업에서도 화면이 멈춘 것처럼 보였다. 이제
+//   **적응 간격 + 무포기** 로 바꾼다:
+//     · 진전(done/failed/enqueued 변화)이 있으면 2.5s — 종전과 동일한 반응성.
+//     · 진전 없이 오래 지속되면 10s → 30s 로 늘려 유휴 부하를 줄인다(진전 즉시 2.5s 복귀).
+//     · 요청 실패(네트워크·5xx)는 포기하지 않고 2.5s→30s 지수 백오프로 계속 재시도한다.
+//   무한 루프 방지는 회차 cap 이 아니라 **총 지속 시간 상한**(POLL_MAX_MS)과 activeRunId 로 한다.
+const _META_POLL_MAX_MS = 6 * 60 * 60 * 1000;   // 6시간 — 대형 DB 전체 분석의 현실적 상한
+
 function _metaGraphPollRun(runId, focusKey) {
   if (!runId) return;
   _metaGraph.activeRunId = runId;   // fix(low): 최신 run 만 유효 — 재분석 시 이전 폴 루프 무효화(중복 방지)
-  let tries = 0;
+  const startedAt = Date.now();
+  let tries = 0, errStreak = 0, idleTicks = 0, lastSig = "";
+  // errStreak: 연속 요청 실패(백오프용) · idleTicks: 진전 없이 흐른 tick 수(유휴 간격 완화용)
+  const delayFor = () => {
+    if (errStreak > 0) return Math.min(30000, 2500 * Math.pow(2, Math.min(errStreak - 1, 4)));
+    if (idleTicks >= 24) return 30000;   // 1분 넘게 무진전
+    if (idleTicks >= 8) return 10000;    // 20초 넘게 무진전
+    return 2500;
+  };
+  const again = () => {
+    if (_metaGraph.activeRunId !== runId) return;
+    if (Date.now() - startedAt > _META_POLL_MAX_MS) {
+      _metaGraphMarkRunning([], []);
+      _metaGraphStatus("AI 능동 분석: 진행 폴링을 종료했습니다(백그라운드는 계속). 노드 재클릭으로 최신 확인.");
+      _metaGraph.activeRunId = null;
+      return;
+    }
+    setTimeout(tick, delayFor());
+  };
   const tick = async () => {
     if (_metaGraph.activeRunId !== runId) return;   // 다른 run 이 시작됨 → 이 루프 종료
     tries += 1;
     let st;
     try { st = await apiFetch(`/api/admin/metadata/graph/analyze?run_id=${encodeURIComponent(runId)}`); }
     catch (_) {
-      // fix(medium): 일시 오류/네트워크/일시 5xx 로 폴이 영구 중단되지 않게 재시도(bounded).
-      if (tries < 240 && _metaGraph.activeRunId === runId) setTimeout(tick, 2500);
-      else _metaGraphMarkRunning([], []);   // review fix: 재시도 소진 시 주황 마커 정리(무한 '분석중' 방지)
+      // 네트워크 단절·일시 5xx — **포기하지 않는다**(종전 240회 cap 이 이 지점의 결함이었다).
+      errStreak += 1;
+      again();
       return;
     }
-    if (!st) {
-      if (tries < 240 && _metaGraph.activeRunId === runId) setTimeout(tick, 2500);
-      else _metaGraphMarkRunning([], []);
-      return;
-    }
+    if (!st) { errStreak += 1; again(); return; }
+    // codex P2-4: **await 이후** 최신 run 을 재확인한다 — 응답이 지연되는 동안 새 run 이 시작되면
+    //   늦게 도착한 이전 run 의 응답이 새 run 의 진행 패널·마커·상태줄을 덮어쓴다(요청 *전* 검사만으로는
+    //   in-flight 경쟁이 남는다). 여기서 버리면 새 run 의 자기 루프가 정상 갱신한다.
+    if (_metaGraph.activeRunId !== runId) return;
+    errStreak = 0;
     // graphux5-progress: 그래프 마커(완료/분석중) + 진행 패널은 노드 선택과 무관하게 항상 갱신(화면 라이브).
     _metaGraphMarkAnalyzed(st.done_keys || [], st.roles || null);   // node-role-viz: 완료 즉시 역할 칩 색 라이브 반영
     _metaGraphMarkRunning(st.running_keys || [], st.done_keys || []);
     _metaGraphRenderProgress(st);
     const done = st.done || 0, total = st.enqueued || 0, failed = st.failed || 0;
+    const waiting = st.retry_waiting || 0;
+    const sig = `${done}/${failed}/${total}/${(st.running_keys || []).length}`;
+    idleTicks = (sig === lastSig) ? idleTicks + 1 : 0;
+    lastSig = sig;
     const onFocus = (_metaGraph.lastDetailKey === focusKey);
     // 초점 노드가 완료되면 상세 패널의 분석문도 로드(노드 상세는 여전히 개별 표시).
     if (onFocus && (st.done_keys || []).indexOf(focusKey) >= 0) _metaGraphLoadNodeAnalysis(focusKey);
-    _metaGraphStatus(`AI 능동 분석: ${done}/${total} 완료${failed ? " · 실패 " + failed : ""} (${st.status})`);
+    // 재시도 대기는 "멈춤"이 아니라 "예약된 진행"이라 상태줄에서도 구분해 알린다.
+    _metaGraphStatus(`AI 능동 분석: ${done}/${total} 완료${failed ? " · 실패 " + failed : ""}`
+      + `${waiting ? " · 재시도 대기 " + waiting : ""} (${st.status})`);
     if (st.status === "running") {
-      if (tries < 240) { setTimeout(tick, 2500); }
-      else {
-        // review fix: 캡 도달(여전히 running) — 폴 중단 시 주황 마커 잔존 방지 + 안내(백그라운드는 계속).
-        _metaGraphMarkRunning([], st.done_keys || []);
-        _metaGraphStatus(`AI 능동 분석: ${done}/${total} — 폴링 시간초과(백그라운드 계속). 노드 재클릭으로 최신 확인.`);
-        _metaGraph.activeRunId = null;
-      }
+      again();
     } else {
       _metaGraphMarkRunning([], st.done_keys || []);   // 종료(done/failed) 시 주황 '분석중' 마커 정리
       if (onFocus) _metaGraphLoadNodeAnalysis(focusKey);
     }
   };
   setTimeout(tick, 1500);
+}
+
+// 일시 실패로 굳은 잡을 다시 큐에 올린다(진행 패널 '재시도' 버튼). 회수 후 폴을 재개해 진행률이 다시 오른다.
+async function _metaGraphRetryFailed(runId, count) {
+  if (!runId) return;
+  if (!window.confirm(`일시 오류로 실패한 ${count || ""}개 항목을 다시 분석할까요?\n\n`
+    + "· 대상은 네트워크·타임아웃·빈 응답 같은 일시 실패와 재시도 상한을 소진한 항목입니다.\n"
+    + "· 항목마다 LLM 분석이 다시 수행됩니다(백그라운드).")) return;
+  let res;
+  try {
+    res = await apiFetch(`/api/admin/metadata/graph/analyze/retry`, {
+      method: "POST", body: JSON.stringify({ run_id: runId }),
+    });
+  } catch (err) {
+    _metaGraphStatus(`실패 항목 재시도 실패 — ${(err && err.message) || "오류"}`);
+    return;
+  }
+  const n = (res && res.retried) || 0;
+  if (!n) { _metaGraphStatus("재시도할 일시 실패 항목이 없습니다."); return; }
+  _metaGraphStatus(`실패 항목 ${n}개를 다시 큐에 올렸습니다 — 진행 패널에서 갱신됩니다.`);
+  _metaGraphPollRun(runId, null);   // activeRunId 재설정 = 기존 루프 무효화 후 즉시 재개
 }
 
 // 현재 렌더된 노드에 마커/선택 state 재적용(전체 rebuild 없이 — 위치 불변).
@@ -3080,11 +3131,33 @@ function _metaGraphRenderProgress(st) {
   const parts = [];
   parts.push(`<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">${esc(st.root_name || st.root_key || "")}</span> <span class="ampg-status ${stCls}">${statusKo}</span><button type="button" class="ampg-close" id="metaGraphProgClose" title="닫기" aria-label="진행 패널 닫기">✕</button></div>`);
   parts.push(`<div class="ampg-bar" title="${done}/${enq}"><div class="ampg-bar-fill" style="width:${pct}%"></div></div>`);
-  parts.push(`<div class="ampg-counts">완료 <b>${done}</b> · 분석중 <b>${running.length}</b> · 대기 <b>${pending}</b>${failed ? ` · 실패 <b>${failed}</b>` : ""} <span class="admin-meta-graph-muted">/ 예약 ${enq}${st.node_budget ? ` (상한 ${st.node_budget})` : ""}</span></div>`);
+  // analysis-retry-resilience: 재시도 대기는 "멈춤"이 아니라 예약된 진행이므로 대기와 분리해 보여준다.
+  //   (0049 미적용 창에서는 서버가 0/None 을 주므로 이 표기가 자동 생략된다.)
+  const retryWaiting = st.retry_waiting || 0;
+  const retryableFailed = st.retryable_failed || 0;
+  const hhmm = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  if (retryWaiting > 0) {
+    const at = hhmm(st.next_attempt_at);
+    rows.push(`<li class="ampg-item admin-meta-graph-muted">↻ 재시도 대기 ${retryWaiting}개`
+      + `${at ? ` (${at} 이후 자동 재시도)` : " (일시 오류 — 자동 재시도 예약)"}</li>`);
+  }
+  parts.push(`<div class="ampg-counts">완료 <b>${done}</b> · 분석중 <b>${running.length}</b> · 대기 <b>${pending}</b>${failed ? ` · 실패 <b>${failed}</b>` : ""}${retryWaiting ? ` · 재시도 대기 <b>${retryWaiting}</b>` : ""} <span class="admin-meta-graph-muted">/ 예약 ${enq}${st.node_budget ? ` (상한 ${st.node_budget})` : ""}</span></div>`);
   parts.push(`<ul class="ampg-list">${rows.join("") || '<li class="admin-meta-graph-muted">준비 중…</li>'}</ul>`);
+  if (retryableFailed > 0) {
+    // 네트워크 단절로 굳은 항목을 사람이 즉시 회수할 수 있는 유일한 화면 경로(자동 재시도 상한 소진분 포함).
+    parts.push(`<div class="ampg-actions"><button type="button" class="ampg-retry" id="metaGraphProgRetry" `
+      + `data-count="${retryableFailed}">↻ 실패 ${retryableFailed}건 다시 분석</button>`
+      + `<span class="admin-meta-graph-muted">일시 오류(네트워크·타임아웃·빈 응답)만 대상</span></div>`);
+  }
   panel.innerHTML = parts.join("");
   const cb = document.getElementById("metaGraphProgClose");
   if (cb) cb.addEventListener("click", () => { panel.style.display = "none"; panel.dataset.dismissed = st.run_id || "1"; });
+  const rb = document.getElementById("metaGraphProgRetry");
+  if (rb) rb.addEventListener("click", () => _metaGraphRetryFailed(st.run_id, retryableFailed));
 }
 
 // 완료 노드 키에 분석 마커(보라). 세션 set 에 기억(rebuild 시 유지).

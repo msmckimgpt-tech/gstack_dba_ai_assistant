@@ -1,6 +1,6 @@
 {
- "total_routes": 223,
- "api_routes": 222,
+ "total_routes": 224,
+ "api_routes": 223,
  "ordered": [
   {
    "path": "/static",
@@ -772,6 +772,13 @@
   },
   {
    "path": "/api/admin/metadata/graph/analyze-schema",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze/retry",
    "methods": [
     "POST"
    ],
