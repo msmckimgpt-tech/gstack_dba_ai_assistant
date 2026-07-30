@@ -308,6 +308,24 @@ def test_sig_batch_cap_raised_for_full_sweep():
     assert _c.AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS >= 2000
 
 
+def test_embedding_request_work_fits_well_inside_timeout():
+    """embed-congestion-fix(2026-07-30) 회귀 잠금: **요청 1건의 작업량**이 타임아웃 안쪽에 충분히 들어가야 한다.
+
+    라이브 사고: 시그니처를 content-forward 로 보강해 텍스트가 길어지자(평균 210자·p95 464자)
+    100건 배치가 60~120s 로 불어나 타임아웃 60s 를 넘겼다. 배치는 매번 **완료 직전에 버려졌고**,
+    버려진 요청도 백엔드에서 계속 연산 중이라 재시도가 큐를 늘렸다 → 처리량 0, 25분 정지.
+
+    불변식은 "pass 당 버스트 횟수" 가 아니라 요청당 작업량이다. 무경합 실측 상한 1.2s/건(1022자)을
+    기준으로, 요청 1건이 타임아웃의 1/4 안에 끝나야 길이 분포의 꼬리에도 여유가 남는다."""
+    from shared import config as _c
+    worst_per_text_sec = 1.2  # 무경합 실측: 1022자 텍스트 100건 119.83s
+    req_sec = _c.AGENT_KB_EMBEDDING_BATCH_SIZE * worst_per_text_sec
+    assert req_sec * 4 <= _c.AGENT_KB_EMBEDDING_TIMEOUT_SEC, (
+        f"요청당 최악 작업량 {req_sec:.0f}s 가 타임아웃 {_c.AGENT_KB_EMBEDDING_TIMEOUT_SEC}s 의 1/4 을 넘는다 — "
+        "백엔드가 조금만 느려져도 완료 직전 배치를 버리고 재시도하는 cliff 가 된다")
+    assert _c.AGENT_KB_EMBEDDING_TIMEOUT_SEC >= 240
+
+
 def test_embedding_backfill_cap_matches_measured_capacity():
     """embed-throughput(2026-07-30): 워커 스로틀이 임베딩 용량을 묶지 않아야 한다.
 
@@ -315,7 +333,10 @@ def test_embedding_backfill_cap_matches_measured_capacity():
     86% 유휴였고, 시그니처 전수 재계산에서 백필이 임베딩을 앞지르자 즉시 병목이 됐다(잔여 25,196건
     → 4.2h). pass 당 행수를 올려 용량에 수렴시킨다. 백로그 0 이면 fetch 0건 no-op 이라 평시 부하 증가 없음."""
     from shared import config as _c
-    assert _c.AGENT_KB_EMBEDDING_BATCH_MAX_ROWS >= 1000
+    assert _c.AGENT_KB_EMBEDDING_BATCH_MAX_ROWS >= 600
     # 주기를 함께 늘리면 상향 효과가 상쇄된다 — 시간당 상한이 용량 이상인지로 검증.
     per_hour = _c.AGENT_KB_EMBEDDING_BATCH_MAX_ROWS * (3600.0 / max(1, _c.AGENT_KB_EMBEDDING_INTERVAL_SEC))
-    assert per_hour >= 42000, f"시간당 상한 {per_hour:.0f} < 실측 용량 42,657 — 스로틀이 여전히 병목"
+    # embed-congestion-fix: 상한은 **백엔드 실측 상한을 굶기지 않을 만큼**이면 된다. 신포맷
+    #   시그니처(평균 210자) 기준 백엔드 상한은 ~8,600/h 이므로, pass 상한이 그보다 낮으면
+    #   스로틀이 병목이 된다. 600행/60초 = 36,000/h 로 충분한 여유를 둔다.
+    assert per_hour >= 15000, f"시간당 상한 {per_hour:.0f} 이 백엔드 실측 상한(~8,600/h) 대비 여유 부족"

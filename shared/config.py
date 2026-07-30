@@ -777,8 +777,19 @@ AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1024") or "102
 # ITEM-02: 샘플쿼리 few-shot 주입 토글(기본 ON). OFF 면 _build_knowledge_context 가 EXAMPLE
 # QUERIES 섹션을 주입 안 함 — ITEM-01 harness A/B(샘플 off/on) 측정 + 안전 롤백 스위치.
 AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
-AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
-AGENT_KB_EMBEDDING_TIMEOUT_SEC = _startup_int("AGENT_KB_EMBEDDING_TIMEOUT_SEC", int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60"))
+# embed-congestion-fix(2026-07-30): 100→25. **요청 1건의 작업량**을 묶는 진짜 레버다.
+#   bge-m3 비용은 텍스트 길이에 비례한다(무경합 실측: 16자 0.22s/건, 1022자 1.20s/건). 시그니처를
+#   content-forward 로 보강한 뒤 대기 텍스트가 평균 210자·p95 464자가 되면서 100건 배치가 60~120s 로
+#   불어나 옛 타임아웃 60s 를 넘겼고, 배치가 매번 완료 직전에 버려져 처리량이 0 이 됐다.
+#   총 처리량은 건수에 선형이라(100건 119.83s ≈ 25건 30.02s×4) **배치를 줄여도 손해가 없고**,
+#   요청당 지연만 1/4 로 줄어 타임아웃 여유가 생긴다.
+AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "25") or "25")
+# embed-congestion-fix(2026-07-30): 60→300. 클라이언트 타임아웃은 **큐 대기까지 포함**해 재는데,
+#   로컬 ollama 직렬 처리에서 앞선 요청 뒤에 서면 실제 연산(100건 ~7s)보다 훨씬 오래 걸린다. 60s 는
+#   그 대기를 "실패" 로 오판해 **아직 처리 중인 요청을 버리고 재시도**했고, 버려진 요청도 계속 연산을
+#   점유해 부하가 눈덩이처럼 불었다. 타임아웃은 "이 요청이 영영 안 온다" 를 판정하는 값이어야지
+#   "느리다" 를 판정하는 값이 아니다 — 실지연의 수 배로 잡는다.
+AGENT_KB_EMBEDDING_TIMEOUT_SEC = _startup_int("AGENT_KB_EMBEDDING_TIMEOUT_SEC", int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "300") or "300"))
 AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
 # CHG-20260625: 상호작용(준비 단계) 질의 임베딩 전용 fast-fail timeout. 위
 # AGENT_KB_EMBEDDING_TIMEOUT_SEC(60s)/AGENT_TIMEOUT_SEC(300s) 는 오프라인 배치
@@ -823,7 +834,11 @@ AGENT_KB_EMBEDDING_AUTO = os.getenv("AGENT_KB_EMBEDDING_AUTO", "1").strip().lowe
 #   6,000건/h 로 묶어 **86% 유휴**였다(실측 900건/10분). 시그니처 전수 재계산(48,226건)에서 백필이
 #   임베딩을 앞지르자 이 캡이 곧바로 병목이 됐다. 1000행이면 pass 가 ~70s(10 서브배치)로 interval 을
 #   넘겨 사실상 연속 처리 = 용량에 수렴한다. 백로그가 없으면 fetch 0건 cheap no-op 이므로 평시 부하 증가 0.
-AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "1000") or "1000")
+# embed-congestion-fix(2026-07-30): 1000→600. pass 당 행수는 **혼잡의 원인이 아니라 노출량**이다
+#   (원인은 요청당 작업량 = BATCH_SIZE × 텍스트길이). 서브배치를 25건으로 줄여 요청당 지연이 짧아졌으므로
+#   pass 를 너무 잘게 끊으면 INTERVAL(60s) 유휴만 늘어난다. 600행 ≈ 24 서브배치 ≈ 실측 평균길이 기준
+#   250s/pass 로, 60s 유휴를 포함해도 백엔드 상한(~8,600/h)의 80% 를 낸다.
+AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "600") or "600")
 AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC", "60") or "60")
 # feature-0016 Phase C (ADR-013 후속, semantic-embed): 메타데이터 객체(테이블) 시그니처 임베딩 → scope 별
 # 의미 클러스터링. embedding 자체는 기존 embedding 데몬(위 AGENT_KB_EMBEDDING_*)이 texts 를 임베딩하므로

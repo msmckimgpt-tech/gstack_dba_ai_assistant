@@ -393,3 +393,26 @@ source_of_truth: true
 - 대상: `unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js`(`gbMembersLit` 헬퍼 + `lit`/`litSelf` 에 `GB:` 해소). 테스트 `tests/headless/test_graph_content_cluster_cohesion.js`(B5 4건).
 - 변경(R3 라이브 검증 중 발견): `lit`/`litSelf` 는 `SC:`(스키마 카드) 접두만 모델 키로 접었고 **`GB:`(컨텐츠 밴드)는 몰랐다**. 그래서 노드가 선택된 하이라이트 상태에서 `hlHide`(§67 focus 밖 관계선 제거)가 밴드 집계선을 **항상** 제거했다 — 사용자는 보통 노드를 클릭해 그래프를 탐색하므로 선택이 곧 기본 상태이고, 결과적으로 직전 cycle(#1076)이 넣은 접힌-밴드 집계 관계선이 **사실상 화면에 나타나지 않았다**(라이브 실측: 밴드 접힘 1건인데 방출된 GB: 엣지 0, 전체 엣지 11). 밴드는 **멤버의 집합**이므로 "멤버 중 하나라도 밝으면 밴드도 밝다" 로 판정한다(`SC:` 가 스키마 키로 접히는 것과 같은 계열의 축약). `groupMembers` 는 접힘 포함 전량 멤버를 담으므로(§50 REV-wiring fix) 접힌 밴드에서도 성립한다.
 - 근거: 등급 **Minor**(프론트 하이라이트 판정 한 곳, 좌표·기하·인가·API 불변). **과잉 보존을 경계**했다 — 무관 노드를 선택하면 그 밴드 집계선은 정상적으로 제거되어야 §67 하이라이트의 의미가 유지되며, 회귀 잠금 B5 가 그 대조군까지 포함한다(⚠ 대조군은 **이웃이 있는** 무관 노드여야 한다 — 고립 노드는 `focusAdj=null` 이라 하이라이트 자체가 미성립해 대조가 성립하지 않는다, 테스트 작성 중 실측). 검증: 헤드리스 **1090 PASS / 0 FAIL** · `make test` 무회귀 · ruff clean.
+
+
+## 20260730T2055-embed-congestion-fix
+
+| 파일 | 변경 |
+|---|---|
+| `shared/config.py` | `AGENT_KB_EMBEDDING_TIMEOUT_SEC` 60→300 (T-EC1) · `AGENT_KB_EMBEDDING_BATCH_MAX_ROWS` 1000→300 (T-EC2) |
+| `shared/runtime_settings.py` | knob 미러 default 1000→300 |
+| `unit/feature-0002-agent-core/tests/test_semantic_cluster_signal.py` | `test_embedding_timeout_exceeds_worst_case_batch_latency` 신설 (T-EC3) · 용량 계약을 이론치(42,657/h)에서 지속 처리량(≥15,000/h)으로 조정 |
+
+## CHG-20260730T205500-ai-claude-feature-0016-embed-congestion-fix — 임베딩 처리량 튜닝이 유발한 congestion collapse 수습 (2026-07-30)
+
+시그니처를 content-forward 로 보강해 임베딩 텍스트가 길어지자(평균 210자·p95 464자) 100건 배치가
+60~120s 로 불어나 클라이언트 타임아웃 60s 를 넘겼다. 배치가 매번 **완료 직전에 버려지고** 재시도가
+큐를 늘려 처리량이 *느려지는* 대신 **0** 이 됐다(25분 정지, 큐 8,371 고착).
+진짜 레버는 버스트 횟수가 아니라 **요청 1건의 작업량**(배치 건수 × 텍스트 길이)이다.
+⚠ 원인을 두 번 오귀속(① 직전 버스트 상향 ② 외부 GPU 경합)했다가 결정적 실험으로 정정 — REPORT 참조.
+
+- `shared/config.py` — `AGENT_KB_EMBEDDING_BATCH_SIZE` 100→**25** (T-EC1, 진짜 레버) · `AGENT_KB_EMBEDDING_TIMEOUT_SEC` 60→**300** (T-EC1) · `AGENT_KB_EMBEDDING_BATCH_MAX_ROWS` 1000→**600** (T-EC2)
+- `shared/runtime_settings.py` — knob 미러 default 1000→600
+- `unit/feature-0002-agent-core/tests/test_semantic_cluster_signal.py` — `test_embedding_request_work_fits_well_inside_timeout` (요청당 작업량 × 4 ≤ 타임아웃). "서브배치 ≤ N회" 계약은 틀린 불변식이라 폐기 (T-EC3)
+
+근거·사후분석은 REPORT.md `20260730T2055-embed-congestion-fix` 참조.
