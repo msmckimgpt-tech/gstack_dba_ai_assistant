@@ -68,6 +68,12 @@ __all__ = [
     "AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS",
     "AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX",
     "AGENT_NODE_ANALYSIS_MODEL",
+    # analysis-retry-resilience: 일시 실패 재시도·회로차단 knob. rel-selfheal(아래 주석) 교훈대로
+    #   `from shared.config import *` 소비처에서 NameError 가 나지 않게 __all__ 에 함께 등록한다.
+    "AGENT_NODE_ANALYSIS_MAX_ATTEMPTS",
+    "AGENT_NODE_ANALYSIS_RETRY_BASE_SEC",
+    "AGENT_NODE_ANALYSIS_RETRY_MAX_SEC",
+    "AGENT_NODE_ANALYSIS_CIRCUIT_FAILS",
     "AGENT_NODE_ANALYSIS_SCHEMA_CAP",
     "AGENT_NODE_ANALYSIS_SCHEMA_MAX",
     "AGENT_NODE_ANALYSIS_SCHEMA_DEPTH",
@@ -1297,6 +1303,22 @@ AGENT_NODE_ANALYSIS_BATCH_PER_TICK = int(os.getenv("AGENT_NODE_ANALYSIS_BATCH_PE
 # stale 'running' 잡 lease(초). 워커 크래시/SIGTERM 로 running 에 갇힌 잡을 이 시간 초과 시 pending 으로
 # 되돌려 run 영구 미완료·재트리거 불가를 방지(reaper). LLM 타임아웃보다 넉넉히 크게(기본 15분).
 AGENT_NODE_ANALYSIS_LEASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_LEASE_SEC", "900"))
+# ── 일시 실패 재시도 (analysis-retry-resilience, 사용자 리포트 2026-07-30) ─────
+#  문제: LLM 호출이 네트워크 단절·타임아웃·429·빈 응답으로 실패하면 잡이 즉시 terminal 'failed' 로
+#  굳고, lease reclaim 은 'running' 만 보므로 단절이 해소돼도 되살아나지 않았다("네트워크가 다시
+#  연결되더라도 아무런 작업이 이루어지지 않습니다"). 이제 일시 실패는 pending 으로 되돌려 지수
+#  backoff 후 자동 재시도하고, 아래 상한을 넘으면 종전처럼 terminal 로 종결한다(비용 상한 유지).
+#  MAX_ATTEMPTS: 잡당 총 LLM 시도 횟수 상한(첫 시도 포함). 1 이면 재시도 없음 = 종전 동작.
+AGENT_NODE_ANALYSIS_MAX_ATTEMPTS = int(os.getenv("AGENT_NODE_ANALYSIS_MAX_ATTEMPTS", "4"))
+#  backoff = BASE × 2^(attempts-1), MAX 로 캡. **MAX 는 LEASE_SEC 미만으로 유지해야 한다** —
+#  재시도 대기가 lease 를 넘기면 enqueue dedup 이 그 run 을 stale 로 보고 재트리거 시 중복 run 을
+#  만든다(워커는 대기 잡을 가진 run 의 updated_at 을 갱신하지만, 여유를 둔다).
+AGENT_NODE_ANALYSIS_RETRY_BASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_RETRY_BASE_SEC", "60"))
+AGENT_NODE_ANALYSIS_RETRY_MAX_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_RETRY_MAX_SEC", "600"))
+#  회로차단: 연속 일시 실패가 이 횟수에 도달하면 다음 틱의 claim 을 canary 1건으로 축소한다 —
+#  LLM 도달 불가가 확정된 동안 틱당 BATCH_PER_TICK(10)건을 태우던 큐 소모를 끊고, canary 성공
+#  즉시 정상 배치로 복귀한다. 0 = 회로차단 비활성(종전 동작).
+AGENT_NODE_ANALYSIS_CIRCUIT_FAILS = int(os.getenv("AGENT_NODE_ANALYSIS_CIRCUIT_FAILS", "3"))
 # feature-0016 routine-dbanalysis: DB(스키마) 단위 능동 분석 1회 시드 상한(LLM 비용 가드).
 #   node-analysis-coverage(2026-07-10): 기본 200 은 수백 객체 스키마(예: cc_data_main = 테이블 255 +
 #   루틴 300 = 555)에서 시드가 200 으로 잘리고, 나머지는 depth-2 재귀 도달성에 의존해 tail 이 조용히

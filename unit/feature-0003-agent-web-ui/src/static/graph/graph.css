@@ -569,6 +569,15 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .admin-meta-graph-progress .ampg-counts { margin-bottom: 6px; }
 .admin-meta-graph-progress .ampg-counts b { color: var(--text); }
 .admin-meta-graph-progress .ampg-list { list-style: none; margin: 0; padding: 0; max-height: 150px; overflow-y: auto; }
+/* analysis-retry-resilience: 일시 실패 회수 버튼 줄(회수 가능한 실패가 있을 때만 렌더). */
+.admin-meta-graph-progress .ampg-actions {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px;
+}
+.admin-meta-graph-progress .ampg-retry {
+  border: 1px solid var(--border); background: var(--surface, transparent); color: var(--text);
+  border-radius: 6px; padding: 3px 8px; font-size: 11.5px; cursor: pointer;
+}
+.admin-meta-graph-progress .ampg-retry:hover { border-color: var(--accent, var(--text-muted)); }
 .admin-meta-graph-progress .ampg-item { padding: 2px 0; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .admin-meta-graph-progress .ampg-item .ampg-lbl {
   font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 4px;

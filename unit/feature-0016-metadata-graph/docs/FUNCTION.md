@@ -36,6 +36,16 @@ source_of_truth: true
   (e) 'AI 능동 분석' hover 시 프롬프트 입력 툴팁을 제공하고, 입력 지침을 LLM 이 자율 판단 하
   분석 내용에 반영한다. (TASK §45 / ADR-016·017)
 
+- REQ-20260730T1105-analysis-retry-resilience: AI 능동 분석이 **네트워크 단절로 중단되면 복구 후
+  스스로 이어가야 한다**. 사용자 리포트: "현재는 중단된 그대로 작업이 정지하여 네트워크가 다시
+  연결되더라도 아무런 작업이 이루어지지 않습니다." (a) LLM 실패를 일시(network·timeout·429·5xx·빈
+  응답)와 영구(bad_model·context_length)로 분류하고, 일시 실패는 terminal 로 굳히지 않고 `attempts`
+  상한 안에서 지수 backoff 재시도한다. (b) LLM 도달 불가가 확정된 동안에는 claim 을 canary 1건으로
+  줄여 큐를 태우지 않는다. (c) 이미 굳은 일시 실패를 회수하는 수단(진행 패널 버튼 · 1회성 CLI)을
+  제공한다. (d) 진행 패널·상태줄이 "재시도 대기"를 실패와 구분해 표시하고, 진행 폴링이 10분
+  cap 으로 포기하지 않는다. 비용 경계: `AGENT_NODE_ANALYSIS_MAX_ATTEMPTS`(4) + backoff 상한
+  (`RETRY_MAX_SEC` 600 < lease 900) + 영구 실패 즉시 종결. (TASK `## 20260730T1105-analysis-retry-resilience`)
+
 ### 사용자 결정 (2026-06-30, entry persona dispatch)
 - **A3 — AGE 즉시 도입**: 게임 서비스 특성상 컨텐츠·기능 용어 기반 LLM 질의가 잦고, AI 컨텍스트
   초과(8,122 테이블·91 스키마)를 그래프 네비게이션으로 자연 해소하는 효과가 기대됨. UI 투영과

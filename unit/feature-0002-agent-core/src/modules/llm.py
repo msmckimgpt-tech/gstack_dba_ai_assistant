@@ -1691,7 +1691,73 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     return obj
 
 
-def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None) -> dict[str, Any] | None:
+# ── 노드 분석 실패 분류 (feature-0016 analysis-retry-resilience, 2026-07-30) ──
+# 종전엔 llm_node_analysis 가 네트워크 오류·타임아웃·429·5xx·빈 응답·JSON 파싱 실패를 **전부 `None`
+# 하나로** 평탄화했고, 호출측(node_analysis.process_pending)은 그 None 을 즉시 terminal 'failed' 로
+# 기록했다 — 단절이 해소돼도 되살아날 행이 없어 "네트워크가 다시 연결되더라도 아무런 작업이 이루어지지
+# 않습니다"(사용자 리포트)가 됐다. 재시도 가치가 있는 실패(transient)와 그대로 재호출하면 같은 결과인
+# 실패(permanent)를 나눠, 호출측이 pending 되돌림(backoff)과 terminal 종결을 구분하게 한다.
+FAILURE_TRANSIENT = "transient"
+FAILURE_PERMANENT = "permanent"
+
+# 재시도가 무의미한 요청-레벨 오류 — payload·모델 자체가 원인이라 재호출해도 동일하게 실패한다.
+#   (llm_provider_health 의 kind 어휘. auth/throttle/unavailable/credential_expired 는 외부요인
+#    이라 시간이 지나면 회복 가능 → transient 로 남긴다. 무한 재시도는 MAX_ATTEMPTS 가 막는다.)
+_NODE_ANALYSIS_PERMANENT_KINDS = frozenset({"bad_model", "context_length"})
+
+
+def classify_node_analysis_failure(exc: "Exception | None" = None, *, empty: bool = False,
+                                   parse_failed: bool = False,
+                                   no_client: bool = False) -> dict[str, Any]:
+    """노드 분석 1회 실패를 `{kind, tag, detail}` 로 분류한다(호출측 재시도 판정용).
+
+    kind = FAILURE_TRANSIENT(재시도 가치 있음) | FAILURE_PERMANENT(재호출 무의미).
+    tag 는 짧은 사유 코드(운영이 `node_analysis_jobs.error_kind`·로그로 분포를 볼 수 있게).
+    """
+    if no_client:
+        # 자격증명 미설정·모델 미해석 — 사람이 설정을 고쳐야 하므로 재시도로 예산을 태우지 않는다.
+        return {"kind": FAILURE_PERMANENT, "tag": "no_client",
+                "detail": "LLM 클라이언트 미구성(자격증명/모델 설정)"}
+    if exc is not None:
+        restriction = None
+        try:
+            from modules import llm_provider_health as _health
+            restriction = _health.classify_llm_provider_error(exc)
+        except Exception:
+            restriction = None
+        if restriction:
+            kind = str(restriction.get("kind") or "")
+            tag = str(restriction.get("error_tag") or kind or type(exc).__name__)
+            if kind in _NODE_ANALYSIS_PERMANENT_KINDS:
+                return {"kind": FAILURE_PERMANENT, "tag": kind, "detail": tag}
+            return {"kind": FAILURE_TRANSIENT, "tag": kind, "detail": tag}
+        # 분류 불가 = 네트워크 단절·타임아웃·드라이버 예외 등. classify_llm_provider_error 는 이
+        # 영역을 의도적으로 None 으로 남기지만(provider health 배너 대상이 아님), 재시도 가치는
+        # 오히려 가장 높다 — 본 cycle 이 겨냥하는 바로 그 실패다.
+        return {"kind": FAILURE_TRANSIENT, "tag": type(exc).__name__, "detail": str(exc)[:200]}
+    if parse_failed:
+        # codex P2-3: 파싱 실패(응답은 왔으나 계약 밖 JSON)를 빈 응답과 **태그로 분리**한다 — 결정적
+        #   포맷 오류가 재시도 예산을 태우는지 운영이 `error_kind`·로그 분포로 판별할 수 있게. 판정은
+        #   여전히 transient 다: LLM 은 비결정적이라 재호출로 정상 JSON 이 오는 경우가 실제로 있고,
+        #   비용은 MAX_ATTEMPTS 상한이 유계로 만든다. 분포가 이 태그로 쏠리면 프롬프트 축을 고쳐야 한다.
+        return {"kind": FAILURE_TRANSIENT, "tag": "json_extract_failed",
+                "detail": "응답 JSON 파싱 실패(계약 밖 형식)"}
+    if empty:
+        # 빈 응답은 transient: 게이트웨이가 5xx·연결 종료를 빈 본문으로 뭉개는 경로가 실측된다
+        # (라이브 'LLM 분석 실패(빈 응답/파싱)' 130건이 특정 장애 창 2일에 뭉쳐 있었다).
+        return {"kind": FAILURE_TRANSIENT, "tag": "empty_response",
+                "detail": "빈 응답(게이트웨이 순단 포함)"}
+    return {"kind": FAILURE_TRANSIENT, "tag": "unknown", "detail": ""}
+
+
+def _sink_failure(sink, info: dict[str, Any]) -> None:
+    """error_sink(호출측이 넘긴 dict)에 분류 결과를 채운다. sink 미전달이면 no-op(기존 호출자 무영향)."""
+    if isinstance(sink, dict):
+        sink.update(info)
+
+
+def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None,
+                      error_sink: "dict[str, Any] | None" = None) -> dict[str, Any] | None:
     """feature-0016 graphux5: 그래프 노드 1개 + 이웃을 능동 분석한다(재귀 워커가 노드마다 호출).
 
     schema/table insight 와 동일 max_tokens·예외·JSON 추출 경로를 쓰되, **모델은 전용
@@ -1700,12 +1766,16 @@ def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None) 
     (2026-07-02, feature-0016 node-analysis-haiku). schema/table/account insight 는 여전히
     공유 AGENT_INSIGHT_MODEL 을 쓴다. 반환 dict `{"summary","relationships","usage","caveats","role"}`
     (role 은 Table 노드 역할 분류 — node-role-viz, 무효값은 호출측 휴리스틱 폴백) 또는 None(실패).
-    호출측(node_analysis.py)이 None 을 status='failed' 로 기록하고 재귀는
-    계속한다(1개 실패가 run 전체를 막지 않음)."""
+    호출측(node_analysis.py)이 None 을 실패로 기록하고 재귀는 계속한다(1개 실패가 run 전체를 막지 않음).
+
+    error_sink(analysis-retry-resilience, 선택): dict 를 넘기면 실패 시
+    `classify_node_analysis_failure` 결과(`{kind, tag, detail}`)로 채운다 — 호출측이 일시 실패는
+    backoff 재시도로, 영구 실패는 terminal 로 갈라 처리하기 위한 유일한 신호다(반환 계약은 불변)."""
     # 전용 모델(insight 공유값과 분리). 빈 문자열 방어 위해 or-체인으로 폴백 유지.
     _insight_model = AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL
     client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
+        _sink_failure(error_sink, classify_node_analysis_failure(no_client=True))
         return None
     try:
         _lat_t0 = time.perf_counter_ns()  # feature-0026 M2: LLM 왕복 측정 (latency_ms 백필)
@@ -1729,9 +1799,11 @@ def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None) 
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_node_analysis", "exception", str(exc))
+        _sink_failure(error_sink, classify_node_analysis_failure(exc))
         return None
     if not text:
         _log_llm_warn("llm_node_analysis", "empty_response", f"model={_insight_model}")
+        _sink_failure(error_sink, classify_node_analysis_failure(empty=True))
         return None
     obj = _extract_json_object(text)
     if not isinstance(obj, dict):
@@ -1740,6 +1812,7 @@ def llm_node_analysis(payload: dict[str, Any], *, scope_key: str | None = None) 
             "json_extract_failed",
             f"model={_insight_model} len={len(text)} head={text[:200]}",
         )
+        _sink_failure(error_sink, classify_node_analysis_failure(parse_failed=True))
         return None
     return obj
 

@@ -3355,6 +3355,9 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "node_analysis_claimed": int(_na.get("claimed", 0) or 0),
             "node_analysis_done": int(_na.get("done", 0) or 0),
             "node_analysis_failed": int(_na.get("failed", 0) or 0),
+            # analysis-retry-resilience: terminal 실패와 **backoff 재시도로 되돌린 수**를 분리해 남긴다 —
+            #   단절 창(retry_pending 급증, failed 0)과 영구 실패 증가를 로그만으로 구분하기 위함.
+            "node_analysis_retry_pending": int(_na.get("retry_pending", 0) or 0),
         })
     for _pk in ("relationships_probe_probed", "relationships_probe_positive",
                 "relationships_probe_negative", "relationships_probe_neutral",
