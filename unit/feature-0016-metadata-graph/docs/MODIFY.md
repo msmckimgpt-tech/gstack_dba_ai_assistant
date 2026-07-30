@@ -416,3 +416,16 @@ source_of_truth: true
 - `unit/feature-0002-agent-core/tests/test_semantic_cluster_signal.py` — `test_embedding_request_work_fits_well_inside_timeout` (요청당 작업량 × 4 ≤ 타임아웃). "서브배치 ≤ N회" 계약은 틀린 불변식이라 폐기 (T-EC3)
 
 근거·사후분석은 REPORT.md `20260730T2055-embed-congestion-fix` 참조.
+
+## CHG-20260730T220000-ai-claude-feature-0016-cluster-outcome — R3 픽셀 검증 + 재클러스터 측정 기준선 (2026-07-30, 문서·증거 전용)
+
+실행 코드 0줄. 라이브 관측 결과를 정본에 고정한다.
+
+- `docs/test-runs.d/20260730T2150-r3-band-aggregate-edges.md` — **R3 PASS**(접힘 시 멤버 미방출 +
+  관계선이 밴드 단일 엔드포인트로 수렴). 첫 시도는 검색 모드 강제 펼침(설계)에 걸린 무효 검증이었고,
+  그 사실과 재사용 가능한 검증 제약을 함께 기록.
+- `unit/feature-0003-agent-web-ui/docs/test-runs.d/…-pointer.md` — 그래프 static 자산 거주 feature 포인터.
+- `docs/REPORT.md` `20260730T2200-cluster-outcome-baseline` — 밴드 집계 키 정정
+  (`semantic_cluster_id` 는 전역 고유가 아님 → `(datasource, schema, cluster_id)`), 기준선 수치,
+  **문제의 소재가 루틴 축**임을 실측으로 확정.
+- `docs/TASK.md` — E.9 추가, E.6 진행 상태 갱신.
