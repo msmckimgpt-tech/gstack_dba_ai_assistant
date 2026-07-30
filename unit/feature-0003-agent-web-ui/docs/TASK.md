@@ -8,6 +8,49 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260730T1620-test-isolation-hardening — 테스트→라이브 설정 오염 **재발** 근본 차단: 도달성 층 + fail-loud + 감지 (Major)
+
+- **재발 경위**: 어제(07-29) 격리를 main 에 머지(`14:23`)한 **10분 뒤 `14:33:22`** 에 같은 오염이
+  다시 발생했고(audit `RemoteAddr=testclient`, AGENT_TIMEOUT_SEC 900→90), 그 상태가 **하루 방치**
+  되다 사용자가 07-30 `15:57` 에 900 으로 복구하며 재보고했다. 이후 새 유입은 없다.
+- **왜 어제 수정으로 막히지 않았나 (근본 원인의 남은 층)**: 어제 방어는 전부 **저장소 파일**
+  (`Makefile` env · `tests/conftest.py`)에 있었다. 그런데 방어가 파일에 있으면 **이미 분기된
+  worktree 사본에는 없다** — main 에 머지해도 소급되지 않는다. 실측 확인:
+  - `dbnet` 은 external 이 아니라 **프로젝트 스코프**(`<project>_dbnet`)라, worktree 에서 그냥
+    `make test` 하면 자기 네트워크로 떠서 라이브에 못 닿는다. 즉 오염 성립 조건은
+    **`COMPOSE_PROJECT_NAME=repo` 로 라이브 네트워크에 참여**하는 실행이다.
+  - 당시 그 조건을 만족할 수 있는 사본(=`.env` 복사됨 + 격리 없는 Makefile/conftest)이 실재했고,
+    현재도 `feature-0012-web-router-modularization`·`inference-detail-metrics` 2개가 해당한다.
+  - DB 로 구분하는 길은 막혀 있다 — 운영/테스트 커넥션이 `program_name=NULL`·`_client_name=libmysql`
+    ·`_pid=1` 로 동일해 트리거 기반 차단이 성립하지 않는다(직접 조회 확인).
+- **수정 — 값 방어 아래에 도달성 층을 깔고, 뚫리면 시끄럽게 실패시키고, 남으면 즉시 찾는다**:
+  1. **도달성 차단(`Makefile`)**: `test` 타깃을 **전용 compose 프로젝트**(`-p repo-unittest`)로
+     실행. 테스트 컨테이너가 `repo-unittest_dbnet` 으로 떠서 라이브 `mysql`/`pgbouncer` 는
+     **DNS 해석조차 되지 않는다**. `-p` 는 CLI 플래그라 외부 `COMPOSE_PROJECT_NAME` 환경변수를
+     **이긴다** — 재발 벡터 자체를 무효화한다.
+  2. **fail-loud(루트 `conftest.py`)**: `DB_PORT` 격리를 파일 쪽으로 끌어와 하네스 밖(로컬
+     `pytest`·IDE 러너)에서도 성립시키고, **라이브 스택 네트워크 안에서 실행 중이면 collection
+     단계에서 중단**한다. 오염이 조용히 일어나는 대신 테스트가 한 줄도 안 돌고 실패한다.
+  3. **감지(`bin/check-test-contamination.sh`)**: audit 의 `RemoteAddr=testclient` 유입을 조회해
+     키별로 "현재 라이브 값 vs 테스트가 쓴 값 vs 사람이 마지막에 쓴 값" 을 대조. 오염이 **잔존**
+     하면 exit 1. 하루 방치된 탐지 지연을 겨냥한 층이다.
+- **완료 판정(acceptance)**:
+  - [x] `COMPOSE_PROJECT_NAME=repo` 를 **일부러 준 채** `make test` 전량 실행 → 컨테이너가
+        `repo-unittest-agent-run-…` 로 뜨고(`-p` 승리), `WebRuntimeSettings` 해시 **불변**
+        (`2a9d7a4c…`) · `testclient` audit 신규 **0건** · **전량 통과(FAILED 0)**.
+  - [x] 도달성 실측 — 전용 프로젝트 컨테이너에서 `mysql:3306`·`pgbouncer:6432` **도달 불가**.
+  - [x] fail-loud 실측 — 라이브 프로젝트(`-p repo`)로 pytest 실행 시
+        `RuntimeError: 단위 테스트가 라이브 스택 네트워크 안에서 실행되고 있다` 로 **collection 중단**
+        (테스트 0건 실행 = 오염 0).
+  - [x] 감지 스크립트 실측 — 최근 3일 유입 150건 감지, `AGENT_TIMEOUT_SEC` 은 `[복구됨]`,
+        `agent_max_output:claude-sonnet-4`·`model_thinking_budget:claude-haiku-4` 는 `[오염 잔존]`
+        으로 정확히 분류(exit 1).
+- **사용자 결정(2026-07-30)**: 현존 취약 worktree 2개는 **테스트 인프라 3파일만 main 값으로
+  동기화**한다(작업 내용 무손실). 오염 잔존 2건은 어제 결정대로 복구하지 않는다.
+- 상태: **코드+라이브 실증 완료** — 제품 코드 변경 0, 웹 자산 변경 0(PB-0008 비대상).
+- Run: `docs/test-runs.d/20260730T1620-test-isolation-hardening.md`
+
+
 ## TASK-20260729T2010-progress-enqpre-handoff — 요청 직후 말풍선이 '시작 중…' 에 박제되던 결함: enqueue sentinel → 실제 run 승계 (Major §12.3 — feature-0003 프론트 `static/app.js` 단독, 백엔드/RBAC/스키마/엔드포인트 무변경, `/_template:entry` arg-given)
 
 - **증상(사용자 재보고, 스크린샷)**: "여전히 요청을 보낸 직후에는 다음 말풍선에서 변동사항이 없다.
