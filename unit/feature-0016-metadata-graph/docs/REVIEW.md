@@ -639,3 +639,11 @@ source_of_truth: true
 - Timestamp: 2026-07-30T11:05:00+09:00
 - Verdict: PASS-WITH-FIXES (P1 0 · P2 4건 in-cycle 흡수)
 - Human Approval Needed: no
+
+## REV-20260730T120500-analysis-retry-postdeploy [SKIPPED:non-policy-doc]
+- Related TASK: feature-0016-metadata-graph
+- Reason: changed paths are docs/evidence only outside policy-doc list — POST-DEPLOY 라이브 검증 기록(실행 코드 0줄). 검증 대상 코드의 적대검증은 같은 cycle 의 REV-20260730T110500-analysis-retry-resilience [CODEX:worker-state-machine+frontend-poll] 가 담당했고(P1 0·P2 4건 in-cycle 흡수), 그 코드는 이미 main 머지·배포됐다.
+- Deploy approval: `deploy_scope: included`(FIRST_REQUEST.md 전역, 2026-06-11 사용자 결정) — 본 문서 cycle 은 코드 변경 0 이라 재배포 불요.
+- Timestamp: 2026-07-30T12:05:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no

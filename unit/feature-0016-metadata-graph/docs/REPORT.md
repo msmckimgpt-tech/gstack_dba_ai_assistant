@@ -2916,3 +2916,25 @@ REVIEW.md `REV-20260730T110500-analysis-retry-resilience`.
 - **미검증(정직)**: ① 라이브 네트워크를 인위로 끊는 재현은 하지 않는다(운영 영향) — 자동 재시도는 단위
   테스트 + 배포 후 `node_analysis_retry_pending` 카운터로 확인한다 ② PB-0008 라이브 시각검증과 라이브
   잔여 130건 회수는 배포 후(TARR.3).
+
+### POST-DEPLOY 라이브 검증 (2026-07-30, main `d435d3a0`)
+
+배포(`make deploy-all` — web 롤링 + soak + insight/ask 워커) 후 실 Windows Chrome 으로 배포본을 검증했다.
+
+- **서빙 자산 = 신 코드**: stamp `3cb3a58b07bf` · `_metaGraphRetryFailed`·`_META_POLL_MAX_MS` 존재 ·
+  `tries < 240` 부재(회차 cap 제거 확증).
+- **스키마**: `alembic_version = 0049_node_analysis_retry` + 컬럼 3 + 부분 인덱스.
+- **라이브 API**: 진행 조회에 `retry_waiting`/`retryable_failed`/`next_attempt_at` 노출 · retry `dry_run`
+  200(`retried`/`eligible`/`capped` 분리 = codex P2-2 수정 확증) · 대상 미지정 **400**(전역 회수 차단).
+- **회수와 자동 처리(요청의 핵심)**: dry-run 이 **130건 / run 9개** 를 보고(라이브 진단과 일치,
+  `verification-cleanup` 580건 제외 = 판정식 실증) → `--execute` 로 회수 → `failed` 710→**580** ·
+  run 9개가 **`running` 으로 복원**(종전엔 `done` 으로 마감돼 재개 경로가 없었다) → 워커 1틱에서
+  `claimed 5 · done 5 · failed 0` · jobs `done` 10,215→**10,225** · 진행률 재상승(576/645 · 640/647 ·
+  104/111). **"중단된 채 정지 → 다시 진행" 이 라이브에서 성립함을 확인.**
+- **그래프 뷰 육안**: mssql-qa-idc 스키마 137개·제품 카테고리 밴드·분석됨 보라 마커 정상(증적 2매).
+
+**미검증(정직)**: 진행 패널의 "재시도 대기 N (hh:mm)"·회수 버튼은 회수 직후라 라이브 조건
+(`retry_waiting`/`retryable_failed` > 0)이 성립하지 않아 보지 못했다 — 헤드리스 25건이 계약을 고정한다.
+패널 열림 자체는 트리거 경로가 필요해 새 run 을 만들지 않기 위해 미수행. 폴 백오프 간격은 시간 축이라
+육안 불가. 라이브 네트워크 인위 단절은 하지 않았고(운영 영향) 앞으로의 발현은 insight 로그의
+`node_analysis_retry_pending` 카운터로 관측한다. pageerror 수집 훅은 걸지 않았다.
