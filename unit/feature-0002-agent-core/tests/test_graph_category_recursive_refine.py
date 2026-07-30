@@ -58,7 +58,10 @@ class TxConn:
         pass
 
 
-def _mk_analysis(summary="s" * 200, rel="r", usage="u", caveats=""):
+#: feature-0031 thin 재정의 이후 rel/usage 는 "채워졌나"가 아니라 "실질 내용인가"로 센다 —
+#  한 글자 더미("r"/"u")는 실질이 아니므로 fixture 를 실제 계약("1~2문장")에 맞춘다.
+def _mk_analysis(summary="s" * 200, rel="상위 스키마와 연결된다", usage="운영 조회에 사용한다",
+                 caveats=""):
     return json.dumps({"summary": summary, "relationships": rel, "usage": usage, "caveats": caveats},
                       ensure_ascii=False)
 
@@ -74,7 +77,7 @@ def test_analysis_is_thin_cases():
 
 def test_parse_analysis_trims_fields():
     obj = na._parse_analysis(_mk_analysis(summary="x" * 900))
-    assert obj and len(obj["summary"]) == 700 and obj["relationships"] == "r"
+    assert obj and len(obj["summary"]) == 700 and obj["relationships"] == "상위 스키마와 연결된다"
     assert na._parse_analysis("broken{") is None and na._parse_analysis("") is None
 
 
@@ -106,7 +109,7 @@ class BackrefineCursor(FakeCursor):
         self.executed.append((" ".join(sql.split()), params))
         if "COUNT(*)" in sql and "pass_no > 0" in sql:
             self._last = (self._used,)
-        elif "SELECT id, analysis" in sql:
+        elif "SELECT id, analysis, node_label" in sql:
             self._last = self._done
         elif "SET status='pending', pass_no = pass_no + 1" in sql:
             self.updates.append(params)
@@ -116,7 +119,8 @@ class BackrefineCursor(FakeCursor):
 
 
 def test_backrefine_repends_thin_only_and_counts():
-    done = [(11, _mk_analysis(summary="짧")), (12, _mk_analysis()), (13, None)]
+    done = [(11, _mk_analysis(summary="짧"), "Table"), (12, _mk_analysis(), "Table"),
+            (13, None, "Column")]
     cur = BackrefineCursor(done)
     ctx = {"neighbor_meta": {"k1": {}, "k2": {}, "k3": {}}}
     n = na._backrefine_neighbors(TxConn(cur), cur, "run1", 99, ctx)
@@ -128,7 +132,7 @@ def test_backrefine_repends_thin_only_and_counts():
 
 def test_backrefine_respects_refine_max_cap(monkeypatch):
     monkeypatch.setattr(na._cfg, "AGENT_NODE_ANALYSIS_REFINE_MAX", 1, raising=False)
-    done = [(11, _mk_analysis(summary="짧")), (13, _mk_analysis(summary="더짧"))]
+    done = [(11, _mk_analysis(summary="짧"), "Table"), (13, _mk_analysis(summary="더짧"), "Table")]
     cur = BackrefineCursor(done)
     n = na._backrefine_neighbors(TxConn(cur), cur, "run1", 99, {"neighbor_meta": {"k1": {}, "k2": {}}})
     assert n == 1 and len(cur.updates) == 1
@@ -136,7 +140,7 @@ def test_backrefine_respects_refine_max_cap(monkeypatch):
 
 def test_backrefine_zero_when_cap_used(monkeypatch):
     monkeypatch.setattr(na._cfg, "AGENT_NODE_ANALYSIS_REFINE_MAX", 5, raising=False)
-    cur = BackrefineCursor([(11, _mk_analysis(summary="짧"))], used=5)
+    cur = BackrefineCursor([(11, _mk_analysis(summary="짧"), "Table")], used=5)
     n = na._backrefine_neighbors(TxConn(cur), cur, "run1", 99, {"neighbor_meta": {"k1": {}}})
     assert n == 0 and not cur.updates
 

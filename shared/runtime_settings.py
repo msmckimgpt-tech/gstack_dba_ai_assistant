@@ -1126,6 +1126,55 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "maximum": 16,
         "apply_mode": "live",
     },
+    # ── 분석 증거 수집 (feature-0031 analysis-grounding L0) ─────────────────────
+    #   노드 분석의 LLM 입력에 데이터 실측을 붙이기 위한 통계 수집. **원시 값은 저장하지도
+    #   주입하지도 않는다** — 집계값과 문자열 형태 분류만 남는다(DB CHECK 제약이 강제).
+    #   부하는 위 `AGENT_WORKER_DS_BUDGET` 게이트 위에서 나며, 첫 접촉은 카탈로그만 읽어
+    #   사용자 테이블 read 가 0 이다. 아래 두 상한이 "얼마나 깊이 파는가"를 정한다.
+    {
+        "key": "AGENT_METADATA_STATS_ENABLED",
+        "category": "자원 격리·관측",
+        "label": "분석 증거 수집 사용",
+        "description": "노드 분석 직전에 대상 테이블의 통계(행 수 추정·컬럼 타입·NULL 비율·값 분포)를 수집해 분석 입력에 붙입니다. 0 으로 내리면 수집이 멈추고 분석은 종전처럼 이름·관계만 보고 진행합니다. 컬럼 값 자체는 어떤 경우에도 저장하지 않습니다.",
+        "unit": "",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_METADATA_STATS_MAX_STAGE",
+        "category": "자원 격리·관측",
+        "label": "증거 수집 깊이 상한",
+        "description": "0=구조 정보만(운영 테이블 조회 없음) · 1=100행 표본 · 2=1,000행 표본 · 3=정밀. 테이블마다 0 에서 시작해 하루 한 단계씩만 올라가며 이 값에서 멈춥니다. 3 은 대형 테이블 전수 집계라 운영자가 부하를 감안해 직접 올릴 때만 쓰세요.",
+        "unit": "단계",
+        "default": 2,
+        "minimum": 0,
+        "maximum": 3,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_METADATA_STATS_DAY_MAX_STAGE",
+        "category": "자원 격리·관측",
+        "label": "주간 증거 수집 깊이 상한",
+        "description": "업무시간(08~22시)에 허용하는 수집 깊이입니다. 야간에는 위의 상한까지 올라가고 주간에는 이 값에서 멈춥니다 — 사용자가 붐비는 시간대에 표본 조회가 커지지 않게 합니다.",
+        "unit": "단계",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 3,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_METADATA_STATS_REFRESH_HOURS",
+        "category": "자원 격리·관측",
+        "label": "증거 재수집 간격",
+        "description": "같은 테이블을 다시 살펴보기까지 기다리는 시간입니다. 이 간격이 지나야 깊이가 한 단계 올라가므로, 값을 늘리면 승격이 그만큼 느려지고 운영 DB 조회도 드물어집니다.",
+        "unit": "시간",
+        "default": 24,
+        "minimum": 1,
+        "maximum": 720,
+        "apply_mode": "live",
+    },
 )
 
 

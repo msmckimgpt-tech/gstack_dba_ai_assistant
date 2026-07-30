@@ -1385,9 +1385,17 @@ AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_
 AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX", "4000"))
 # ── refine-not-override + back-refine (feature-0016 §55, REQ-20260706 ③) ────
 #  모든 재분석은 이전 분석문을 payload.previous_analysis 로 받아 비교·융합(refine)한다. 빈약(thin) 분석
-#  — summary 가 THIN_CHARS 미만이거나 relationships·usage 모두 공란 — 노드는 같은 run 의 후속 재귀가
-#  인접 노드를 분석 완료할 때 재-pending(pass_no+1)되어 새 맥락으로 보충된다. run 당 REFINE_MAX 캡.
-AGENT_NODE_ANALYSIS_THIN_CHARS = int(os.getenv("AGENT_NODE_ANALYSIS_THIN_CHARS", "120"))
+#  노드는 같은 run 의 후속 재귀가 인접 노드를 분석 완료할 때 재-pending(pass_no+1)되어 새 맥락으로
+#  보충된다. run 당 REFINE_MAX 캡.
+#
+#  thin 판정(feature-0031 재정의): **항목 충족도**(summary·relationships·usage, Table 은 role)가
+#  2개 미만이거나 summary 가 THIN_CHARS 미만이면 thin. 종전에는 길이 단독 판정이었고 기본값이
+#  120 자였는데, 프롬프트 계약이 "한국어 1~2문장"이라 **정상 분석 대부분이 thin 으로 잡혔다** —
+#  REFINE_MAX 캡이 폭주를 막고 있었을 뿐 캡을 올리면 대량 재분석이 터지는 구조였다.
+#  기본 하한은 20 자다: 계약대로 쓴 한국어 한 문장이 ~28자라(예 "아이템 드롭 정의를 담는 컨텐츠
+#  마스터 테이블이다.") 40 자 하한도 여전히 정상 분석을 걸러낸다. 20 자는 "테이블입니다" 류의
+#  한 문장도 못 되는 응답만 잡는 하한이고, 실질 판정은 충족도가 맡는다.
+AGENT_NODE_ANALYSIS_THIN_CHARS = int(os.getenv("AGENT_NODE_ANALYSIS_THIN_CHARS", "20"))
 AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
 # LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
 # candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,
