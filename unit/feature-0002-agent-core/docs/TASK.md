@@ -1916,3 +1916,9 @@ rationale=REVIEW `REV-20260730T160000-ask-redeploy-handoff` ·
 ### 정본
 rationale=REVIEW `REV-20260730T172000-dedup-param-cast` ·
 변경이력=MODIFY `CHG-20260730T172000-dedup-param-cast`.
+- [x] **initpro**: feature-0031 계측이 "inference 미귀속 33초" 가설을 **반증**(other_ms=235ms/1.6%, 33초는 red-team)
+- [x] **initpro**: 새 블라인드스팟 실측 — init_ms 4,921ms 중 설명분 750ms, **4,171ms(85%) 미귀속**
+- [x] **initpro**: 프롤로그 3구간(mem_setup·ds_resolve·dataplane_connect) + 잔차 `init_other_ms` + perf-snapshot §3b-0
+- [x] **initpro**: 테스트 10건 + 역검증 5종(롤업 이중계상·클램프 플래그·빌더 우회·재선언·폴백 계측) 생존 0
+- [ ] **initpro**: 적대 패널 → 머지 → 배포 → 수집된 init_other_ms 로 개선 대상 확정
+

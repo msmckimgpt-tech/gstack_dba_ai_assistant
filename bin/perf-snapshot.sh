@@ -93,6 +93,29 @@ SELECT count(*) AS answers,
        round(avg(redteam_ms)::numeric)   AS redteam_avg
 FROM b"
 
+section "3b-0. init_ms 잔차 (feature-0034 — 미귀속이 다시 숨지 못하게, ${DAYS}d)"
+# 직전 실측: init_ms 4,921ms 중 설명분 750ms(15%) — 나머지 85%가 프롤로그(메모리 DB 준비·
+# datasource resolve·데이터플레인 연결)였다. init_other_ms 가 계속 크면 아직 못 본 구간이 있다.
+#
+# §18.8 패널 MAJOR-2: 필터는 반드시 `init_detail ? 'init_other_ms'`(신규 키 보유 행) — 종전처럼
+# `? 'init_detail'` 로 잡으면 feature-0026 구 행이 분모에 들어가고 분자(신규 키)는 NULL 이라
+# other_pct 가 실제보다 훨씬 좋게 나온다(패널 실증: 9구+1신 혼합에서 실제 100% 미귀속인
+# 행이 9개인데 "2%" 로 보고).
+run_to init_residual.txt psql_p -c "
+SELECT count(*) AS answers,
+       round(avg((m.meta_json->'duration_breakdown'->>'init_ms')::float)::numeric) AS init_ms,
+       round(avg((d->>'mem_setup_ms')::float)::numeric)          AS mem_setup_ms,
+       round(avg((d->>'ds_resolve_ms')::float)::numeric)         AS ds_resolve_ms,
+       round(avg((d->>'dataplane_connect_ms')::float)::numeric)  AS dataplane_ms,
+       round(avg((d->>'init_other_ms')::float)::numeric)         AS init_other_ms,
+       round(100.0*avg((d->>'init_other_ms')::float)::numeric
+             / NULLIF(avg((m.meta_json->'duration_breakdown'->>'init_ms')::float)::numeric,0)) AS other_pct,
+       count(*) FILTER (WHERE (d->>'init_residual_clamped')::boolean) AS clamped
+FROM agent_runtime.messages m,
+     LATERAL (SELECT m.meta_json->'duration_breakdown'->'init_detail') AS x(d)
+WHERE m.role='assistant' AND m.meta_json->'duration_breakdown'->'init_detail' ? 'init_other_ms'
+  AND m.created_at > now()-interval '${DAYS} days'"
+
 section "3b. init_detail 단계별 평균 (신규 계측, ${DAYS}d)"
 run_to init_detail.txt psql_p -c "
 SELECT d.key AS stage, count(*) AS n, round(avg(d.value::float)::numeric,1) AS avg_ms,
