@@ -1184,6 +1184,251 @@ def _label_ns_hash(datasource_key, eff_schema) -> str:
     return hashlib.sha256(f"{datasource_key}\x1f{eff_schema}".encode("utf-8")).hexdigest()[:12]
 
 
+# ── L2 클러스터 합성 요약 (feature-0033 analysis-synthesis) ──────────────────
+#   라벨(32자)이 "무엇으로 부를까"에 답한다면 요약은 "이 묶음이 함께 무엇을 하는가"에 답한다.
+#   저장소가 다르다(kv → cluster_summaries 테이블), 계약이 다르다(2~4문장), 캐시 키가 다르다
+#   (멤버셋 + L1/L0 2중 버전). 그래서 `_llm_content_labels` 확장이 아니라 별 경로다.
+_SUMMARY_MEMBERS_CAP = 24        # payload 멤버명 상한
+_SUMMARY_ANALYSES_CAP = 8        # payload 분석문 상한(라벨용 5보다 넉넉 — 요약은 근거가 더 필요)
+_SUMMARY_CLUSTERS_PER_CALL = 6   # 배치 크기(라벨용 40 은 요약엔 과다 — 응답이 길다)
+_SUMMARY_MAX_PER_PASS = 40       # pass 당 신규 생성 상한(818개를 한 번에 만들지 않는다)
+_SUMMARY_MAX_CHARS = 1200
+
+
+def _summary_enabled() -> bool:
+    """요약 생성 스위치 — 콘솔 live override 우선, 조회 실패는 config 기본값."""
+    try:
+        from shared import runtime_settings as _rts_su
+        return bool(int(_rts_su.get_int("AGENT_METADATA_CLUSTER_SUMMARY")))
+    except Exception:
+        return bool(int(getattr(_cfg, "AGENT_METADATA_CLUSTER_SUMMARY", 1) or 0))
+
+
+def _version_hash(parts) -> str:
+    """정렬된 문자열 목록의 지문. **정렬**이 load-bearing — 입력 순서가 달라도 같은 버전이어야
+    캐시가 오적중하지 않는다(현행 라벨 payload 가 ORDER BY 없이 조립돼 겪던 문제)."""
+    items = sorted(str(x) for x in parts if x)
+    if not items:
+        return ""
+    # 구분자 충돌 방지(codex P2): 개행 결합은 ["a\nb","c"] 와 ["a","b\nc"] 를 같은 지문으로 만든다.
+    #   길이 프리픽스를 붙이면 어떤 내용이 와도 인코딩이 단사(injective)다.
+    joined = "".join(f"{len(i)}:{i}" for i in items)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:32]
+
+
+def _summary_savepoint(cur):
+    """조회·적재 실패가 **호출측 트랜잭션을 오염시키지 않게** 하는 savepoint.
+
+    ⚠ load-bearing(codex P2, feature-0031 과 같은 계열): 이 모듈은 클러스터링 pass 와 같은
+    커넥션·커서를 쓴다. 신규 테이블이 아직 없는 배포 창에서 SELECT 가 실패하면 non-autocommit
+    커넥션은 트랜잭션 전체가 aborted 가 되고, 뒤따르는 라벨 역기록 UPDATE 가 전부 깨진다 —
+    "요약 실패가 클러스터링을 막지 않는다"는 계약이 무너진다. autocommit 이면 no-op 이다."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _sp():
+        name = "sp_cluster_summary"
+        opened = False
+        try:
+            cur.execute(f"SAVEPOINT {name}")
+            opened = True
+        except Exception:
+            opened = False
+        try:
+            yield
+        except Exception:
+            if opened:
+                try:
+                    cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+                except Exception:
+                    pass
+            raise
+        else:
+            if opened:
+                try:
+                    cur.execute(f"RELEASE SAVEPOINT {name}")
+                except Exception:
+                    pass
+
+    return _sp()
+
+
+def _evidence_versions(cur, scope_key, schema_name) -> dict:
+    """스키마의 테이블별 증거(L0) 수집 시각 맵. 증거층이 아직 없으면 빈 맵(fail-soft).
+
+    pass 당 1회만 조회한다 — 클러스터마다 묻으면 818회 왕복이 된다.
+    `scope_key` 는 관례상 `datasource_key` 값이다(routine_objects.scope_key 와 동형 —
+    node_analysis 의 node_key `<datasource>:<schema>.<table>` 앞부분이 그대로 들어간다)."""
+    try:
+        with _summary_savepoint(cur):
+            cur.execute("SELECT table_name, collected_at FROM metadata_table_stats "
+                        "WHERE scope_key = %s AND schema_name = %s", (scope_key, schema_name))
+            rows = cur.fetchall() or ()
+        # 키를 casefold 로 정규화한다(codex P1): 증거 테이블명과 클러스터 멤버명의 대소문자가
+        #   어긋나면 매칭이 늘 실패해 evidence_version 이 영구히 "" 가 되고, L0 변경이 요약에
+        #   전파되는 유일한 경로가 조용히 죽는다.
+        return {str(r[0]).casefold(): (r[1].isoformat() if r[1] else "") for r in rows}
+    except Exception as exc:
+        _log.debug("evidence_versions_unavailable schema=%s err=%r", schema_name, exc)
+        return {}
+
+
+def _summary_cache(cur, scope_key, schema_name, hashes) -> dict:
+    """저장된 요약을 {member_set_hash: row} 로. 조회 실패는 빈 맵(전량 미스 → 재생성)."""
+    if not hashes:
+        return {}
+    try:
+        with _summary_savepoint(cur):
+            cur.execute("SELECT member_set_hash, summary, l1_version, evidence_version "
+                        "FROM cluster_summaries WHERE scope_key = %s AND schema_name = %s "
+                        "AND member_set_hash = ANY(%s)",
+                        (scope_key, schema_name, list(hashes)))
+            rows = cur.fetchall() or ()
+        return {str(r[0]): {"summary": r[1], "l1_version": r[2] or "", "evidence_version": r[3] or ""}
+                for r in rows}
+    except Exception as exc:
+        _log.debug("summary_cache_unavailable schema=%s err=%r", schema_name, exc)
+        return {}
+
+
+def _summary_put(cur, scope_key, schema_name, cl, summary, model) -> bool:
+    """요약 upsert. 반환 True=실제 저장됨.
+
+    - **저장 성공만 True** (codex P2): 실패를 성공으로 세면 캐시는 계속 미스인데 보고는 성공이라
+      다음 pass 마다 같은 요약을 다시 만든다(조용한 반복 비용).
+    - **stale-writer 방지** (codex P2): 동시 실행에서 오래된 L1/L0 입력을 가진 호출이 나중에
+      커밋해 최신 요약을 덮지 않게, 같은 버전이면 갱신하지 않는다(`IS DISTINCT FROM`).
+    - savepoint 로 감싸 실패가 호출측 트랜잭션을 오염시키지 않게 한다.
+    """
+    try:
+        with _summary_savepoint(cur):
+            cur.execute(
+                "INSERT INTO cluster_summaries "
+                "(scope_key, schema_name, member_set_hash, cluster_id, label, summary, "
+                " member_count, analyzed_count, l1_version, evidence_version, model, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now()) "
+                "ON CONFLICT (scope_key, schema_name, member_set_hash) DO UPDATE SET "
+                " cluster_id=EXCLUDED.cluster_id, label=EXCLUDED.label, summary=EXCLUDED.summary, "
+                " member_count=EXCLUDED.member_count, analyzed_count=EXCLUDED.analyzed_count, "
+                " l1_version=EXCLUDED.l1_version, evidence_version=EXCLUDED.evidence_version, "
+                " model=EXCLUDED.model, created_at=EXCLUDED.created_at "
+                "WHERE cluster_summaries.l1_version IS DISTINCT FROM EXCLUDED.l1_version "
+                "   OR cluster_summaries.evidence_version IS DISTINCT FROM EXCLUDED.evidence_version",
+                (scope_key, schema_name, cl["mhash"], cl.get("cluster_id"),
+                 (cl.get("label") or "")[:128], str(summary)[:_SUMMARY_MAX_CHARS],
+                 cl["member_count"], cl["analyzed_count"],
+                 cl["l1_version"], cl["evidence_version"], str(model or "")[:64]))
+        return True
+    except Exception as exc:
+        _log.debug("summary_put_failed hash=%s err=%r", cl.get("mhash"), exc)
+        return False
+
+
+def _llm_cluster_summaries(cur, datasource_key, eff_schema, clusters, remaining=None) -> int:
+    """클러스터 합성 요약 생성·적재. 반환 = 이번 pass 에서 새로 만든 수.
+
+    clusters: [{"mhash", "cluster_id", "label", "names"(정렬됨), "analyses"(정렬됨),
+                "member_count", "analyzed_count", "l1_version", "evidence_version"}]
+
+    캐시 적중 판정은 **멤버셋 + L1 지문 + L0 지문 3중 일치**다. 셋 중 하나라도 다르면 요약이
+    낡은 것이므로 재생성한다 — 증거·분석 변경이 요약에 전파되는 유일한 경로가 이 키다
+    (클러스터링 시그니처에는 절대 유입하지 않는다).
+    """
+    if not clusters:
+        return 0
+    if not _summary_enabled():
+        return 0
+    cached = _summary_cache(cur, datasource_key, eff_schema, [c["mhash"] for c in clusters])
+    misses = [c for c in clusters
+              if (cached.get(c["mhash"]) or {}).get("l1_version") != c["l1_version"]
+              or (cached.get(c["mhash"]) or {}).get("evidence_version") != c["evidence_version"]]
+    if not misses:
+        return 0
+    # pass 당 상한 — 첫 실행에 전량(818개)을 만들지 않고 여러 pass 에 나눠 채운다. 멤버가 많은
+    # 클러스터부터(도메인 파악 기여가 크다), 동률은 해시 순(결정적).
+    misses.sort(key=lambda c: (-int(c["member_count"]), c["mhash"]))
+    # ⚠ 상한은 **pass 전체** 기준이다(codex P1). 이 함수는 effective-schema 루프 안에서 불리므로
+    #   스키마마다 상한을 새로 주면 총량이 스키마 수만큼 곱해진다(라이브 스키마 수백 개 → 폭주).
+    #   호출측이 이미 쓴 몫을 빼고 남은 잔여를 넘긴다.
+    cap_here = _SUMMARY_MAX_PER_PASS if remaining is None else max(0, int(remaining))
+    if cap_here <= 0:
+        return 0
+    misses = misses[:cap_here]
+
+    try:
+        from . import llm as _llm
+    except Exception:
+        return 0
+    try:
+        from shared import resource_budget as _rb_su
+    except Exception:
+        _rb_su = None
+
+    try:
+        from shared import llm_budget as _lb_su
+    except Exception:
+        _lb_su = None
+
+    made = 0
+    for i in range(0, len(misses), _SUMMARY_CLUSTERS_PER_CALL):
+        # ⚠ 백그라운드 토큰 예산을 **배치마다 다시 본다**(codex P1). pass 진입 시 1회만 보면
+        #   긴 pass 도중 예산이 소진돼도 끝까지 호출한다 — 상한이 있으나 마나가 된다.
+        #   `acquire("llm")` 은 동시성 슬롯일 뿐 누적 소비와 무관한 축이다. 조회는 60초 캐시라
+        #   배치마다 물어도 PG 부담이 없다.
+        if _lb_su is not None and not _lb_su.allowed():
+            _log.info("cluster_summary 중단 — 백그라운드 LLM 토큰 예산 소진(다음 pass 재시도)")
+            return made
+        batch = misses[i:i + _SUMMARY_CLUSTERS_PER_CALL]
+        payload = {
+            "task": "cluster_summary",
+            "datasource": _ds_display_label(cur, datasource_key),
+            "schema": eff_schema,
+            "clusters": [
+                {"idx": j, "label": c.get("label") or "",
+                 "member_count": c["member_count"], "analyzed_count": c["analyzed_count"],
+                 "members": c["names"][:_SUMMARY_MEMBERS_CAP],
+                 "analyses": c["analyses"][:_SUMMARY_ANALYSES_CAP]}
+                for j, c in enumerate(batch)
+            ],
+        }
+        # T0 공유 LLM 예산 게이트 — 여유가 없으면 이번 pass 는 여기서 멈춘다(다음 pass 재시도).
+        if _rb_su is not None:
+            with _rb_su.acquire("llm") as _ok_su:
+                if not _ok_su:
+                    _log.info("cluster_summary 중단 — 공유 LLM 예산 여유 없음(다음 pass 재시도)")
+                    return made
+                res = _summary_call(_llm, payload, datasource_key)
+        else:
+            res = _summary_call(_llm, payload, datasource_key)
+        if res is None:
+            return made   # LLM 실패는 이번 pass 중단(부분 성공은 유지)
+        got = {}
+        for item in (res.get("summaries") or []) if isinstance(res, dict) else ():
+            if not isinstance(item, dict):
+                continue
+            try:
+                got[int(item.get("idx"))] = str(item.get("summary") or "").strip()
+            except (TypeError, ValueError):
+                continue
+        model = getattr(_cfg, "AGENT_NODE_ANALYSIS_MODEL", "") or ""
+        for j, c in enumerate(batch):
+            text = got.get(j) or ""
+            if len(text) < 20:
+                continue   # 빈약한 응답은 저장하지 않는다(다음 pass 재시도)
+            if _summary_put(cur, datasource_key, eff_schema, c, text, model):
+                made += 1
+    return made
+
+
+def _summary_call(_llm, payload, datasource_key):
+    """요약 LLM 1회. 예외는 None 으로 평탄화(호출측이 이번 pass 를 중단한다)."""
+    try:
+        return _llm.llm_cluster_summary(payload, scope_key=datasource_key)
+    except Exception as exc:
+        _log.warning("llm_cluster_summary 실패(다음 pass 재시도): %r", exc)
+        return None
+
+
 def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summaries=None) -> dict:
     """클러스터별 한국어 컨텐츠 라벨 — kv 캐시(멤버셋 해시) 우선, 미스만 llm.llm_cluster_label 배치 호출.
 
@@ -1593,6 +1838,49 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                 for i in members:
                     assign[i] = (local_idx, label)   # 스키마-로컬 id(m5) — 배치 순서(MDS serpentine)
                     in_core.add(i)
+            # feature-0033 L2: 클러스터가 **확정된 이 시점**의 멤버셋으로 합성 요약을 만든다.
+            #   여기가 일관성 경계다 — 병합·재정렬·라벨 확정이 모두 끝난 상태라 요약이 가리키는
+            #   멤버셋과 저장되는 member_set_hash 가 정확히 일치한다. 이후 pass 가 다른 멤버셋에
+            #   도달하면 해시가 달라져 자연히 캐시 미스 → 재생성된다.
+            try:
+                _ev_map = _evidence_versions(cur, datasource_key, eff)
+                _sum_inputs = []
+                for local_idx, (_key, members) in enumerate(valid):
+                    # 결정적 정렬 — 같은 클러스터가 pass 마다 다른 순서로 조립되면 버전 지문이
+                    #   흔들려 캐시가 오적중한다(현행 라벨 payload 가 ORDER BY 없이 겪던 문제).
+                    _names = sorted(str(items[i]["name"]) for i in members)
+                    _keys = sorted(str(items[i]["key"]) for i in members)
+                    _texts = []
+                    for i in members:
+                        nk = (items[i]["key"] if items[i]["kind"] == "routine"
+                              else f"{datasource_key}:{eff}.{items[i]['name']}")
+                        t = _fetch_analysis_text(cur, scope_key, datasource_key, nk)
+                        if t:
+                            _texts.append(str(t))
+                    _texts.sort()
+                    _sum_inputs.append({
+                        "mhash": _member_set_hash(_keys),
+                        "cluster_id": local_idx,
+                        "label": labels[local_idx] or "",
+                        "names": _names,
+                        "analyses": [t[:400] for t in _texts],
+                        "member_count": len(members),
+                        "analyzed_count": len(_texts),
+                        "l1_version": _version_hash(_texts),
+                        "evidence_version": _version_hash(
+                            [f"{n.casefold()}:{_ev_map.get(n.casefold(), '')}"
+                             for n in _names if _ev_map.get(n.casefold())]),
+                    })
+                # 상한은 pass 전체 기준 — 이미 이 pass 에서 만든 몫을 빼고 잔여만 넘긴다.
+                #   (스키마 루프 안에서 상한을 새로 주면 총량이 스키마 수만큼 곱해진다 — codex P1)
+                _sum_left = _SUMMARY_MAX_PER_PASS - int(rep.get("summaries", 0) or 0)
+                _n_sum = _llm_cluster_summaries(cur, datasource_key, eff, _sum_inputs,
+                                                remaining=_sum_left)
+                if _n_sum:
+                    rep["summaries"] = rep.get("summaries", 0) + _n_sum
+            except Exception as _sx:
+                # 요약은 부가 산출물이다 — 실패가 클러스터링·라벨 역기록을 막지 않는다.
+                _log.warning("cluster_summary pass 실패(다음 pass 재시도): %r", _sx)
             # p2 RC-A(soft-attach 2차 패스): 코어 미배정 잔여를 centroid 코사인 ≥ ATTACH_SIM 이면 최근접
             # 클러스터에 편입(라벨 상속) — 잔여가 프론트 affix 폴백("dt_c" 류 가짜 가족)으로 흐르는 것을
             # 컨텐츠 기반으로 흡수. 미달은 NULL 유지(무리한 편입 금지). 라벨·캐시 키는 코어 멤버만으로
