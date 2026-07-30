@@ -330,9 +330,23 @@ def test_merge_blocks_bridge_chaining_complete_linkage():
     comps = [[0, 1], [2, 3], [4, 5]]
     keyof = (lambda m: min("t%02d" % i for i in m))
     merged, n = sc._merge_components_by_centroid(embs, comps, 0.90, 80, key_of=keyof)
-    sizes = sorted(len(m) for m in merged)
-    assert n == 1, "A~B 한 번만 병합돼야 한다(B~C 는 A~C 가 임계 미만이라 차단)"
-    assert sizes == [2, 4], sizes
+    # cluster-signal-repair(2026-07-30) 이후: complete linkage **에 더해** 적응형 하한이 함께 막는다.
+    #   이 fixture 는 3쌍 중 2쌍(A-B·B-C)이 0.94 로 같아 median 이 0.94 → floor 0.98 → 병합 0건.
+    #   "0.94 가 이 분포에서 distinctive 하지 않다" 는 판정이 맞다(어느 쌍을 고를지 임의가 된다).
+    #   ⭐ 불변식(본 테스트의 목적)은 그대로: **A 와 C 가 같은 밴드에 절대 들어가지 않는다.**
+    assert n == 0, "적응형 하한 + complete linkage 이중 차단"
+    assert sorted(len(m) for m in merged) == [2, 2, 2]
+    # 순수 complete-linkage 동작은 적응형 하한을 끈 상태로 별도 확인(로직 커버리지 유지).
+    from shared import config as _c
+    _old = getattr(_c, "AGENT_METADATA_CLUSTER_MERGE_MARGIN", 0.04)
+    try:
+        _c.AGENT_METADATA_CLUSTER_MERGE_MARGIN = 0.0
+        m2, n2 = sc._merge_components_by_centroid(embs, comps, 0.90, 80, key_of=keyof)
+        assert n2 == 1 and sorted(len(m) for m in m2) == [2, 4], (n2, [sorted(x) for x in m2])
+        for m in m2:
+            assert not ({0, 1} & set(m) and {4, 5} & set(m)), m
+    finally:
+        _c.AGENT_METADATA_CLUSTER_MERGE_MARGIN = _old
     # 어떤 밴드도 A 와 C 를 동시에 담지 않는다(의미군 혼입 금지).
     for m in merged:
         assert not ({0, 1} & set(m) and {4, 5} & set(m)), m
