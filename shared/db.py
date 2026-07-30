@@ -30,6 +30,30 @@ except Exception:  # pragma: no cover — 배포 skew 방어
         @staticmethod
         def incr(key, n=1):
             pass
+
+
+try:
+    # T0 worker-resource-isolation: 프로세스-전역 커넥션 카운터. `_perf_counters` 는 **요청-스코프**라
+    # 워커(insight/ask)에서는 no-op 이라 워커가 얼마나 커넥션을 여는지가 어디에도 남지 않았다 —
+    # 본 훅이 그 공백만 메운다(**게이트 아님**: 게이트를 여기 넣으면 같은 헬퍼를 쓰는 web 요청
+    # 경로가 백그라운드 예산에 걸린다). 모듈 레벨 1회 import — 커넥션 수립 hot path 에서 매번
+    # lazy import 하지 않는다(codex P3). 배포 skew 방어는 `_perf_counters` 와 동일한 스텁 폴백.
+    from . import resource_budget as _resource_budget
+except Exception:  # pragma: no cover — 배포 skew 방어
+    class _resource_budget:  # type: ignore[no-redef]
+        @staticmethod
+        def incr_conn(key, n=1):
+            pass
+
+
+def _worker_conn_incr(key: str, n: int = 1) -> None:
+    """워커 커넥션 카운터 증분. fail-open — 계측이 커넥션 수립을 죽이지 않는다."""
+    try:
+        _resource_budget.incr_conn(key, n)
+    except Exception:
+        pass
+
+
 import logging
 import threading
 import time
@@ -300,6 +324,8 @@ def connect(database: str | None = None, autocommit: bool = True, datasource: di
         # 안이 아님 — 내부 retry 가 1요청을 threshold 까지 밀어올리는 false-open 증폭 차단).
         # Stage 2 (P4): engine 디스패치 — mssql 은 pymssql, 그 외(mysql)는 mysql.connector.
         if (datasource.get("engine") or "mysql").strip().lower() == "mssql":
+            # T0: 소스 DB 연결 수립 계측(게이트 아님) — 워커의 운영 DB 부하 신호.
+            _worker_conn_incr("ds_conns")
             return _connect_mssql(datasource, database, autocommit)
         host = datasource.get("host") or DB_HOST
         port = int(datasource.get("port") or DB_PORT)
@@ -323,7 +349,9 @@ def connect(database: str | None = None, autocommit: bool = True, datasource: di
         if database:
             params["database"] = database
         if not AGENT_DB_POOL_ENABLED:
+            _worker_conn_incr("ds_conns")   # T0: 소스 DB 연결 수립 계측(게이트 아님)
             return mysql.connector.connect(**params)
+        _worker_conn_incr("ds_conns")
         return _pooled_connect(params)
 
     # 복제 DB (TASK-0044): REPLICA_DB_HOST 가 설정되어 있고 요청된 database 가
@@ -884,6 +912,7 @@ def _pg_connect(database: str | None = None, autocommit: bool = True):
     conninfo = " ".join(conninfo_parts)
     conn = _psycopg.connect(conninfo)
     _perf_counters.incr("pg_conns")  # feature-0026: 요청-스코프 계측 (컨텍스트 밖 no-op)
+    _worker_conn_incr("pg_conns")    # T0: 프로세스-전역 워커 계측 (요청-스코프가 no-op 인 공백)
     if autocommit:
         conn.autocommit = True
     return conn
@@ -934,6 +963,7 @@ def _pg_connect_ro(database: str | None = None, autocommit: bool = True):
     conninfo = " ".join(conninfo_parts)
     conn = _psycopg.connect(conninfo)
     _perf_counters.incr("pg_ro_conns")  # feature-0026: 요청-스코프 계측 (컨텍스트 밖 no-op)
+    _worker_conn_incr("pg_ro_conns")    # T0: 프로세스-전역 워커 계측
     if autocommit:
         conn.autocommit = True
     return conn

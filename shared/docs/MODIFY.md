@@ -105,3 +105,12 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - `__all__` 등록은 rel-selfheal(ADR-007) 교훈의 직접 적용 — `AGENT_RELATIONSHIP_*` 누락이 `from shared.config import *` 소비처에서 NameError 를 내 자기교정 파이프라인을 3일 조용히 정지시킨 전례가 있다.
 - Affected Features: feature-0016-metadata-graph(정본 — 재시도 상태머신·회로차단), feature-0002-agent-core(코드 거주 `node_analysis.py`·`llm.py`·`insight.py`).
 - Cross-ref: unit/feature-0016-metadata-graph/docs/MODIFY.md CHG-20260730T1105-ai-claude-feature-0016-analysis-retry-resilience(정본) · 동 DECISIONS ADR-20260730T1105-analysis-retry-resilience · 동 TEST.md.
+
+## CHG-20260730T1235-worker-resource-budget (shared: 공유 자원 예산·워커 계측 모듈 신설, cross-unit: 정본 feature-0025)
+- Date: 2026-07-30. 상위 설계 트랙 0(RI-0 공유 자원 전역 예산·직렬화 부재). 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0025-worker-resource-isolation`.
+- `shared/resource_budget.py` **신규**: 자원 종류(현재 `llm`) 단위 예산 게이트 + 프로세스 전역 워커 계측 + 전역 kill-switch + JSON 파일 flush. 소비처는 백그라운드 워커(node_analysis·semantic_cluster·product_classify·insight)와 `bin/perf-snapshot.sh`.
+- `shared/runtime_settings.py` (additive): `performance` 그룹에 `자원 격리·관측` 카테고리 **2 knob** — `AGENT_BACKGROUND_ANALYSIS_ENABLED` · `AGENT_WORKER_LLM_BUDGET`. 커넥션 총량(PG/DS) knob 은 게이트가 T0b 라 노출하지 않는다(거짓 컨트롤 금지, ADR-0025-06). 전부 `apply_mode: live`(정지 스위치가 재배포를 요구하면 무의미). `shared/config.py` 무변경 — 신규 knob 은 spec default 만으로 동작하며 노출 대상 env 상수가 아니다.
+- `shared/db.py` (additive): `_worker_conn_incr` 훅을 `_pg_connect`/`_pg_connect_ro` 에 추가. **계측만이고 게이트가 아니다** — 게이트를 커넥션 헬퍼에 넣으면 같은 헬퍼를 쓰는 web 요청 경로가 백그라운드 예산에 걸린다. lazy import + 예외 삼킴(이미지/마운트 skew 로 신규 모듈이 없는 배포 창에도 커넥션 수립이 실패하지 않아야 한다 — `_perf_counters` 스텁 폴백과 동일 정합).
+- 설계 경계: 프로세스 **내** 조율이다(한 컨테이너의 스레드). 프로세스 간 총량(insight-worker ↔ ask-worker ↔ web-a/b)은 본 슬라이스 범위 밖이며 pgbouncer 풀 상한이 backstop — 필요해지면 PG advisory lock 또는 토큰 테이블로 승격.
+- Affected Features: feature-0025-worker-parallelism(정본 — 자원 총량 축), feature-0016-metadata-graph(게이트 대상 워크로드), feature-0026-perf-observability(`perf_counters` 요청-스코프와 직교하는 워커 계측 축).
+- Cross-ref: unit/feature-0025-worker-parallelism/docs/MODIFY.md CHG-20260730T1235-ai-claude-feature-0025-worker-resource-isolation(정본) · 동 TASK.md `## 20260730T1235-worker-resource-isolation` · 동 REVIEW.md.

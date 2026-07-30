@@ -111,6 +111,15 @@ def run_classify_pass(kb_conn=None, mem_conn=None, *, dry_run: bool = False) -> 
     멱등: Pending UNIQUE(Product, Ds, Schema) + INSERT IGNORE + taken(매핑·대기) 선제 제외.
     실패는 datasource 단위 격리(errors 에 loud) — 데몬 루프를 죽이지 않는다.
     """
+    # T0 전역 kill-switch (worker-resource-isolation): 백그라운드 분석 정지 시 제안 pass 를
+    #   건너뛴다. 설정 조회 실패는 활성 취급(fail-open) — 설정 장애가 데몬을 멈추지 않게.
+    try:
+        from shared import resource_budget as _rb_pc
+        if not _rb_pc.background_enabled():
+            return {"datasources": {}, "suggested_total": 0, "errors": [],
+                    "skipped": "background_disabled"}
+    except Exception:
+        pass
     from shared.db import connect_with_retry
     from shared import datasources as _dsr
     from modules import metadata_graph as _mg
@@ -167,7 +176,21 @@ def run_classify_pass(kb_conn=None, mem_conn=None, *, dry_run: bool = False) -> 
                     "schemas": [_schema_evidence(kb_conn, scope, n) for n in unmapped],
                 }
                 # 0047: target 은 표시용 datasource 라벨(dsk), scope 는 콘솔 스코프 선택 키.
-                obj = llm_product_classify(payload, scope_key=scope)
+                # T0: 공유 LLM 예산 게이트 — 노드 분석·클러스터 라벨과 같은 예산을 쓴다. 거절되면
+                #   이 datasource 는 건너뛴다(다음 pass 재시도 — 제안은 멱등 적재라 무해).
+                #   게이트 없이 두면 기본 설정에서 예산이 우회된다(codex 적대 리뷰 P1).
+                try:
+                    from shared import resource_budget as _rb_lc
+                except Exception:
+                    _rb_lc = None
+                if _rb_lc is None:
+                    obj = llm_product_classify(payload, scope_key=scope)
+                else:
+                    with _rb_lc.acquire("llm") as _ok_lc:
+                        if not _ok_lc:
+                            _log.info("product_classify skip(ds=%s) — 공유 LLM 예산 여유 없음", dsk)
+                            continue
+                        obj = llm_product_classify(payload, scope_key=scope)
                 if not isinstance(obj, dict):
                     continue
                 valid_pid = {int(p["id"]) for p in products}

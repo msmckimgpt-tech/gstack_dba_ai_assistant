@@ -38,3 +38,14 @@ source_of_truth: true
 - **Risks:** 병렬 활성(override≥2) 시 pgbouncer 풀·Bedrock 429 부하 실증 필요 → 배포 후 PB-0008 + 운영 현황 관측.
 - **Open Questions:** run_agent run_id 전역→인자 전환(정밀 귀속), docker replicas 자동스케일 — 별도 initiative 이연.
 - **Human Approval Needed:** PLAN-APPROVED (AskUserQuestion "전체 + 인프라 여력"). 배포는 별도 confirm.
+
+## REV-20260730T125000-ai-claude-feature-0025-worker-resource-isolation [CODEX:worker-resource-isolation] — PASS
+- Related TASK: feature-0025-worker-parallelism (T0 공유 자원 격리·계측)
+- Source: codex exec 0.146.0 (`-s read-only`, `model_reasoning_effort=high`, 대상 `git diff --cached`) — 2 라운드(초기 + 수정 재검증)
+- Trigger: performance/성능·caching/캐싱 keyword matched (backend/qa 렌즈). 채널 선택 근거 = AGENTS.md §18.8.2 — 세션 Agent-tool 제약과 무관한 경량 채널 우선.
+- Timestamp: 2026-07-30T13:05:00+09:00
+- Verdict: PASS (재검증 P1 0건 — 초기 P1 2·P2 2·P3 1 + 재검증 P2 2·NEW P2 2 전건 in-cycle 수정)
+- Critical issue (해소됨): P1-a 게이트 없는 상한 knob = 거짓 컨트롤(PG/DS) → knob 제거·`RESOURCES=("llm",)`·회귀 단정 / P1-b LLM 예산이 semantic_cluster 직렬 경로·product_classify 에서 우회(기본 설정에서 무효) → 양쪽 배선 / P2-b terminal budget 이 generic 분기로 fall-through 해 attempts 이중 증가·error_kind 덮어쓰기(실버그) → 분기 완결+return
+- Artifact: unit/feature-0025-worker-parallelism/docs/reviews/2026-07-30T12-50-00-codex.md
+- Human Approval Needed: no (PLAN-APPROVED 2026-07-30 범위 내 · 배포는 별도 confirm)
+- 판단 근거 요약: ① 게이트 없는 knob 을 노출하지 않는다는 규약을 ADR-0025-06 으로 승격(이 repo 가 `attachment.execute_sql_on.*` 를 같은 이유로 제거한 선례) ② 게이트는 호출측 명시 — 커넥션 헬퍼에 넣으면 web 요청 경로가 백그라운드 예산에 걸린다(ADR-0025-05) ③ 예산 거절은 실패가 아니라 순번 대기이나 **연속** 거절은 terminal 로 표면화해야 한다(무기한 pending 이 run 을 영구 running 으로 만들어 사용자 재트리거를 막는다)

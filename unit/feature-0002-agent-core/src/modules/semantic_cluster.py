@@ -1269,6 +1269,31 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
         # 직렬(기존 byte-동치): 배치 순차, LLM 실패/부적합 응답 시 남은 배치 중단(affix 폴백).
         for batch in batches:
             payload = _payload_for(batch)
+            # T0: 공유 LLM 예산 — **직렬 경로도 게이트한다**. 병렬 경로만 걸면 기본 설정
+            #   (concurrency==1)에서 예산이 통째로 우회된다(codex 적대 리뷰 P1).
+            try:
+                from shared import resource_budget as _rb_s
+            except Exception:
+                _rb_s = None
+            if _rb_s is not None:
+                with _rb_s.acquire("llm") as _ok_s:
+                    if not _ok_s:
+                        _log.info("llm_cluster_label 중단 — 공유 LLM 예산 여유 없음(affix 폴백·다음 pass 재시도)")
+                        return out
+                    try:
+                        res = _llm.llm_cluster_label(payload, scope_key=datasource_key)
+                    except Exception as exc:
+                        _log.warning("llm_cluster_label 실패(affix 폴백): %r", exc)
+                        return out
+                got = _parse_labels(res)
+                if got is None:
+                    return out
+                for (cl, kv_key) in batch:
+                    lab = got.get(cl["idx"])
+                    if lab:
+                        out[cl["idx"]] = lab
+                        _kv_put(cur, kv_key, lab)
+                continue
             try:
                 # 0047: 사용 기록 데이터소스 귀속(target 은 사람이 읽는 라벨이라 콘솔 선택 키로 못 씀).
                 res = _llm.llm_cluster_label(payload, scope_key=datasource_key)
@@ -1289,7 +1314,23 @@ def _llm_content_labels(cur, datasource_key, eff_schema, clusters, fetch_summari
         payloads = [_payload_for(batch) for batch in batches]
 
         def _call(p):
-            """DB 미접근 — 스레드 병렬 안전. 실패 시 None(해당 배치 affix 폴백)."""
+            """DB 미접근 — 스레드 병렬 안전. 실패 시 None(해당 배치 affix 폴백).
+
+            T0: 공유 LLM 예산 게이트 — 노드 분석과 같은 예산을 쓴다. 거절되면 그 배치만 affix
+            폴백(기존 실패 경로와 동일 — 라벨은 표시 전용이라 다음 pass 에 캐시 미적중으로 재시도)."""
+            try:
+                from shared import resource_budget as _rb_cl
+            except Exception:
+                _rb_cl = None
+            if _rb_cl is None:
+                return _call_inner(p)
+            with _rb_cl.acquire("llm") as _ok:
+                if not _ok:
+                    _log.info("llm_cluster_label 배치 보류 — 공유 LLM 예산 여유 없음(affix 폴백·다음 pass 재시도)")
+                    return None
+                return _call_inner(p)
+
+        def _call_inner(p):
             try:
                 # 0047: 병렬 스레드 — ContextVar 미전파라 명시 전달 필수.
                 return _llm.llm_cluster_label(p, scope_key=datasource_key)
@@ -1741,6 +1782,15 @@ def run_cluster_maintenance(conn=None) -> dict:
 
     embedding 은 별도 embedding 데몬이 처리(여기 없음). fail-soft. insight-worker 데몬 스레드가 주기 호출."""
     rep = {"signature": None, "scopes": 0, "clustered": 0, "updated": 0}
+    # T0 전역 kill-switch (worker-resource-isolation): 백그라운드 분석 정지 시 시그니처 백필·
+    #   클러스터링·라벨 LLM 을 모두 멈춘다. 설정 조회 실패는 활성 취급(fail-open).
+    try:
+        from shared import resource_budget as _rb_cm
+        if not _rb_cm.background_enabled():
+            rep["skipped"] = "background_disabled"
+            return rep
+    except Exception:
+        pass
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
