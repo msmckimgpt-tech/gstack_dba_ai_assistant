@@ -972,3 +972,29 @@ Trigger: §18.8 dispatch 표 키워드 0건 + code change(코어 워커 lifecycl
 
 Cross-ref: TASK-20260730T160000-ask-redeploy-handoff · CHG-20260730T160000-ask-redeploy-handoff ·
 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-ask-orphan-redeploy-dead-air`.
+
+## REV-20260730T172000-dedup-param-cast [SKIPPED:post-deploy-live-evidence] — PASS
+
+Trigger: §18.8 dispatch — 변경이 SQL 파라미터 캐스트 2곳 + 회귀 테스트 1건(2줄 실질). 선행
+cycle 의 3렌즈 적대 리뷰(REV-20260730T160000)가 이미 이 쿼리의 **의미론**을 검증했고, 본 변경은
+그 의미론을 **바꾸지 않고 실행 가능하게만** 만든다(캐스트). 검증의 무게중심을 패널이 아니라
+**실 PostgreSQL 실행**에 두었다 — 선행 리뷰가 P2 로 지적한 정확히 그 공백이 이번 결함의 원인이라,
+같은 층(FakeConn/문자열)에서 리뷰를 한 번 더 도는 것은 이 결함류를 못 잡는다.
+
+### 실 PG 실행 증거 (배포본 `76dbfedd` 워커 컨테이너, RO 연결)
+| 케이스 | 기대 | 결과 |
+|---|---|---|
+| core — 동일 sender | True | True |
+| core — 다른 sender | False | False |
+| display — 그룹 동일 sender | True | True |
+| display — 그룹 다른 sender | False | False |
+| display — 1:1 (mirror_sender NULL) | True | True |
+
+### 자기 지적(정직)
+- 이 결함은 **내가 선행 cycle 에서 출하한 코드의 결함**이다. 적대 리뷰가 "테스트가 실 PG 를 쓰지
+  않는다" 를 P2 로 지적했을 때 근거와 함께 수용했는데, 그 수용의 대가가 첫 라이브 노출에서 바로
+  나왔다. 완료 보고를 "테스트 통과" 에서 멈추지 않고 배포 후 실측까지 밀어붙인 덕에 잡혔다.
+- 남은 한계: 이 스위트는 여전히 FakeConn 기반이며, 캐스트 회귀는 **문자열 고정**이다. 같은 계열
+  (타입 추론 불가 파라미터)이 다른 쿼리에 새로 생기면 자동으로는 못 잡는다.
+
+Cross-ref: TASK-20260730T172000-dedup-param-cast · CHG-20260730T172000-dedup-param-cast.

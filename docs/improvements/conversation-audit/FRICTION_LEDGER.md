@@ -466,9 +466,13 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-ask-orphan-redeploy-dead-air — fixed:undeployed (L4↔인프라 경계; 재배포가 진행 중 답변을 삼키고 회수가 수백초 지연)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 23 PASS · 전체 회귀 `make test` EXIT=0 ·
-  verify-completion 전건 PASS · codex 적대 2라운드 P1 0건) 완료, **PR #1088**. 배포 전.
-  배포 후 `fixed:deployed:unverified-live` → 다음 audit corroboration 재측정으로 `verified` 전이.
+- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-07-30, PR #1088 merge main
+  `76dbfedd` → `deploy-web` 전체 롤아웃: web-a/web-b 무중단 롤링 + insight-worker/ask-worker
+  재생성 + gateway reconcile, soak 통과. **4서비스 GIT_COMMIT=76dbfedd healthy**, edge
+  `/healthz` ok·mysql_ok·pg_ok). 배포본 런타임 실증: `worker_role=ask_worker`(compose 주입,
+  재생성 불변) · `role_prefix=ask-worker[ask_worker]-` · `drain=60` · `role_stale=60` · 봉인 심볼
+  6종 적재. **라이브 대화 corroboration 재측정 전** → `unverified-live`.
+  후속 `TASK-20260730T172000-dedup-param-cast` 로 봉인 C 활성화(아래 POST-DEPLOY 절).
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-07-30) — 지정 대화 "레거시 호환성을
   고려한 실제 DB 기반 쿼리 리뷰", "요청이 도중에 중단된 것으로 추측".
 - **last_seen**: 2026-07-30 · **seen_count**: 1 · **seen_distinct_conv**: 8 (60일 고아 재큐 기준)
@@ -518,3 +522,21 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   dead-air 소멸"** 은 배포 후 실측분(미수행) → 다음 audit 이 corroboration(`attempts>1` 재큐의
   생성→재시작 중앙값 · 연속 동일 user 메시지 distinct_conv) 재측정 → 감소 시 `verified`, 재증가 시
   `regressed`.
+- **POST-DEPLOY 실측 (2026-07-30, 정직 기록)**:
+  - **결함의 심각도가 진단 시점보다 크다**: 회수 창 `AGENT_ASK_WORKER_STALE_SEC` 는
+    `AGENT_TIMEOUT_SEC` 파생(`max(timeout×3,…)+180`)이라, 병렬 세션이 timeout 을 90→**900** 으로
+    올린 뒤 창이 450s → **2,880s(48분)** 로 함께 커져 있었다. 즉 **LLM 타임아웃을 튜닝하면 고아
+    job 의 무응답 상한이 조용히 같이 커지는 결합**이 있다. 본 봉인의 `ROLE_STALE_SEC` 는
+    `AGENT_TIMEOUT_SEC` 와 무관한 고정 60s 라 이 결합을 끊는다.
+  - **라이브 재현·회복 관측**: 배포 직전 job 485(대상 대화, 15:57 요청)가 16:10 타 세션 배포로
+    죽어 **42분 좀비**였고, 전역 sweeper 가 16:59:44 에 회수 → 신규 워커(새 형식
+    `ask-worker[ask_worker]-…`)가 17:00:08 claim → **17:02:07 답변 완료**. 사용자 원 요청 해소.
+  - **전환기 공백(1회성)**: 구 형식 `claimed_by` 로 claim 된 job 은 새 role 패턴에 매칭되지 않아
+    본 봉인이 구제하지 못한다. 이번 배포로 고아가 된 job 488 은 **사용자 승인 하에 1회 수동
+    requeue**(sweeper 와 동일 전이, `pending`+`lease_epoch++`) → 신규 워커가 ~0.4s 안에 재claim.
+    배포 이후 claim 되는 job 부터 봉인 발효.
+  - **봉인 C 는 배포 시점에 무력이었다**: job 485 재시도가 사용자 메시지를 다시 중복 저장
+    (6301↔6322). 원인 = 판정 SQL 의 `%(mirror_sender)s IS NULL` 파라미터에 타입 컨텍스트가 없어
+    PG 가 쿼리를 거부 → `_read_runtime_pg` 예외 흡수 → fail-open 저장. FakeConn 테스트가 실 SQL 을
+    실행하지 않아 못 잡았다(적대 리뷰 P2 로 이미 지적됐던 공백). 수정
+    `CHG-20260730T172000-dedup-param-cast`(`::text`/`::bigint` 캐스트 + 실 PG 5케이스 검증).

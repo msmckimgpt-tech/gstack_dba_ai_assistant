@@ -880,3 +880,30 @@ REVIEW REV-20260729T183000-test-live-pg-isolation-postdeploy.
 Cross-ref: TASK-20260730T160000-ask-redeploy-handoff ·
 REVIEW REV-20260730T160000-ask-redeploy-handoff ·
 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-ask-orphan-redeploy-dead-air`.
+
+## CHG-20260730T172000-dedup-param-cast — 중복 억제 판정 SQL 파라미터 캐스트 (봉인 C 활성화)
+
+**무엇을**: `user_message_persisted_since` 의 두 판정 쿼리에 파라미터 타입 캐스트 추가.
+
+**왜**: `%(mirror_sender)s IS NULL` 은 타입 컨텍스트가 없어 PostgreSQL 이 쿼리를 거부하고
+(`could not determine data type of parameter $4`), `_read_runtime_pg` 가 그 예외를 흡수해
+호출부가 fail-open 으로 저장한다 → **선행 CHG 의 봉인 C 가 배포본에서 통째로 무력**이었다.
+배포 후 라이브 job 485 재시도에서 사용자 메시지가 다시 중복 저장되며 실증됐다(6301↔6322).
+
+**어느 RC**: conv-audit `FR-ask-orphan-redeploy-dead-air` RC-2 (중복 저장) — 선행 수정의 결함 보정.
+
+**재발 봉인 방식**: fail-open 자체는 유지가 옳다(중복 1행 < 요청문 유실). 대신 그 fail-open 이
+**조용한 전면 무력화**로 번지지 않도록 캐스트를 회귀로 고정한다.
+
+### 변경
+- `modules/runtime_backend.py` — `_PG_USER_MESSAGE_EXISTS_DISPLAY` 의 `mirror_sender` 양쪽에
+  `::text`, `_PG_USER_MESSAGE_EXISTS_CORE` 의 `sender_account_id` 에 `::bigint`. 캐스트가 왜
+  필수인지 주석에 실측 근거 명시.
+- `tests/test_ask_redeploy_handoff.py` — `test_dedup_sql_casts_bare_parameters` 신규.
+
+### 검증 (실 PG 포함 — 선행 cycle 의 공백을 메움)
+배포본 워커에서 RO 연결로 두 쿼리를 직접 실행: core hit/miss, display 그룹 hit/miss, display 1:1
+NULL hit **5케이스 전부 계약대로**. 전체 회귀 `make test` EXIT=0 · ruff clean.
+
+Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-dedup-param-cast ·
+선행 CHG-20260730T160000-ask-redeploy-handoff.

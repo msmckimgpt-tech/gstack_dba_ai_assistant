@@ -1878,3 +1878,37 @@ rationale=REVIEW `REV-20260730T160000-ask-redeploy-handoff` ·
 
 **주장 affordance 실측 (G3)**: 본 변경은 사용자 표면에 새 affordance 를 주장하지 않는다
 (워커 내부 회수 계약 + 중복 저장 억제). → `해당 없음`.
+
+## TASK-20260730T172000-dedup-param-cast — POST-DEPLOY 실측: 중복 억제(봉인 C)가 무력이었다
+
+선행 `TASK-20260730T160000-ask-redeploy-handoff` 의 배포 후 라이브 검증에서 잡힌 결함.
+**미검증을 완료로 보고하지 않기 위해 결함과 경위를 그대로 남긴다.**
+
+- [x] 관측 — 배포본(`76dbfedd`)에서 job 485 가 실제로 requeue·재실행됐고(전역 sweeper 16:59:44
+      → 신규 워커 17:00:08 claim → 17:02:07 done, **사용자 원 요청 답변 완료**), 그런데
+      `core_messages` 에 사용자 메시지가 **다시 중복 저장**됐다(6301 ↔ 6322, md5 동일·sender 동일).
+- [x] 근본 — 표시 store 판정 SQL 의 `%(mirror_sender)s IS NULL` 이 **타입 컨텍스트가 없어**
+      PostgreSQL 이 `could not determine data type of parameter $4` 로 **쿼리 자체를 거부**.
+      `_read_runtime_pg` 가 예외를 흡수해 `None` → 헬퍼가 `{}` → 호출부가 fail-open 으로 저장.
+      즉 core 판정까지 함께 죽어 봉인 C 가 통째로 inert 였다. 배포본 컨테이너에서 직접 재현
+      (`runtime_read_pg_fallback: method=user_message_persisted_since error=could not determine…`).
+- [x] 왜 테스트가 못 잡았나 — 신규 스위트는 FakeConn 기반이라 **실 SQL 을 실행하지 않는다**.
+      선행 cycle 의 적대 리뷰가 P2 로 정확히 지적("실 PG 미사용")했고 그때는 근거와 함께
+      수용했는데, 첫 라이브 노출에서 바로 발현했다.
+- [x] 수정 — `%(mirror_sender)s::text` · `%(sender_account_id)s::bigint` 캐스트. 캐스트 존재를
+      문자열로 고정하는 회귀 테스트 추가(FakeConn 층에서 가능한 유일한 자동 방어선).
+- [x] 검증 — **실 PostgreSQL 직접 실행 5케이스**(배포본 워커 컨테이너 → RO 연결):
+      core hit=True / core 다른 sender=False / disp 그룹 hit=True / disp 그룹 다른 sender=False /
+      disp 1:1 NULL hit=True. + 전체 회귀 `make test` EXIT=0 · ruff clean.
+- [ ] 라이브 실측(재배포 후) — 다음 재시도에서 사용자 메시지 중복이 실제로 사라지는지.
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260730T172000-dedup-param-cast
+- [x] `봉인 C 무력화 원인 규명` — 산출물: 본 섹션 · 배선 확인: 배포본 컨테이너 재현 로그.
+- [x] `수정` — 산출물: `CHG-20260730T172000-dedup-param-cast` · 배선 확인: 실 PG 5케이스 + 회귀 EXIT=0.
+- [ ] `라이브 실측` — **미수행**(다음 재시도 발생 시). 정직 분리 표기.
+
+**주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 없음 → `해당 없음`.
+
+### 정본
+rationale=REVIEW `REV-20260730T172000-dedup-param-cast` ·
+변경이력=MODIFY `CHG-20260730T172000-dedup-param-cast`.
