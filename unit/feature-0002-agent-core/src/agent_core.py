@@ -1941,7 +1941,7 @@ _KNOWLEDGE_TIMINGS: contextvars.ContextVar[dict | None] = contextvars.ContextVar
     "knowledge_timings", default=None
 )
 
-# feature-0031 (infdetail): 직전 `_call_llm` 의 **순수 provider 왕복** ms.
+# perf-infdetail: 직전 `_call_llm` 의 **순수 provider 왕복** ms.
 # ContextVar 인 이유는 `_KNOWLEDGE_TIMINGS` 와 동일 — ask-worker 가 답변을 병렬 executor 로
 # 돌려서 전역 변수는 run 간에 섞인다. 값은 매 호출 직전 None 으로 리셋한 뒤 읽어, 예외로
 # 호출이 실패했을 때 **직전 라운드 값을 재사용하지 않도록** 한다.
@@ -2109,7 +2109,7 @@ def _build_knowledge_context(
     except Exception:
         _shared_qvec = None
     _kt_mark("query_embed_ms")
-    # feature-0035 (qembed-vis): 질의 임베딩 **성공 여부**를 분해에 남긴다.
+    # perf-qembed: 질의 임베딩 **성공 여부**를 분해에 남긴다.
     #   왜 — 실패하면 caller 가 trigram 으로 graceful degrade 하는데(설계된 거동), 그 강등이
     #   **완전히 무음**이었다. `query_embed_ms` 만 보면 "느렸다" 는 알아도 "그 답변은 벡터 검색
     #   없이 나갔다"(= 검색 품질 저하)는 알 수 없다. 라이브 실측(2026-07-31): 임베딩 백엔드가
@@ -2117,7 +2117,7 @@ def _build_knowledge_context(
     #   trigram 폴백** 했는데(warm 실측 p50 206ms / p90 215ms / max 429ms, 47 표본), 분해만
     #   봐서는 성공한 느린 임베딩과 구분되지 않았다. 그 상태가 2주간 유지됐다.
     #   값은 **수치**(1/0)다 — `bin/perf-snapshot.sh` §3b 가 `jsonb_each_text(init_detail)` 로
-    #   전 키를 `::float` 캐스트하므로 bool 을 넣으면 섹션이 통째로 죽는다(feature-0034 패널
+    #   전 키를 `::float` 캐스트하므로 bool 을 넣으면 섹션이 통째로 죽는다(perf-initpro 패널
     #   MAJOR-1 라이브 재현).
     #   임베딩을 시도조차 안 한 경우(빈 질문·양 기능 OFF)는 강등이 아니므로 키를 남기지 않는다.
     try:
@@ -2173,7 +2173,7 @@ def _build_knowledge_context(
         pass
     _kt_mark("account_recall_ms")
     try:
-        # `v >= 0.1` 은 **소요(ms) 잡음 제거**용 필터다. feature-0035 의 상태 플래그는 소요가
+        # `v >= 0.1` 은 **소요(ms) 잡음 제거**용 필터다. perf-qembed 의 상태 플래그는 소요가
         # 아니라서 이 문턱에 걸리면 안 된다 — §18.8 패널 BLOCKER-1(런타임 실증): 강등 시
         # `query_embed_ok = 0.0` 이 필터에 걸려 **탈락**하고 성공(1.0)만 통과해, 대시보드가
         # 언제나 "강등 0%" 라는 **거짓 안심**을 보고했다(종전의 무음보다 나쁘다 — 운영자가
@@ -2410,7 +2410,7 @@ def _inf_tool_key(name) -> str:
 
 
 def new_inference_acc() -> dict[str, Any]:
-    """inference_detail 누산기 (feature-0031 infdetail)."""
+    """inference_detail 누산기 (perf-infdetail)."""
     return {"llm_ms": 0.0, "llm_calls": 0, "tool_ms": 0.0, "tool_calls": 0}
 
 
@@ -2452,18 +2452,18 @@ _INIT_KNOWLEDGE_LEAVES = frozenset({
 })
 # 잔차 leaf 가 **아닌** 키 — 소요(ms)가 아니거나 빌더가 스스로 만든 값.
 #   · init_other_ms / init_residual_neg_ms : 빌더 산출물. 재적용 시 leaf 로 세면 잔차 붕괴(§18.8 MINOR-3).
-#   · query_embed_ok (feature-0035)        : 성공 여부 플래그(1/0). 시간이 아니라 **상태**이므로
+#   · query_embed_ok (perf-qembed)        : 성공 여부 플래그(1/0). 시간이 아니라 **상태**이므로
 #     빼지 않으면 잔차가 1ms 어긋난다. 값이 수치인 이유는 §3b 가 전 키를 ::float 캐스트하기 때문.
 _INIT_DERIVED_KEYS = frozenset({"init_other_ms", "init_residual_neg_ms", "query_embed_ok"})
 
 
 def _build_init_detail(init_ms, detail: dict) -> dict[str, Any]:
-    """init_ms 내부 분해 + **잔차 노출** (feature-0034 initpro).
+    """init_ms 내부 분해 + **잔차 노출** (perf-initpro).
 
     feature-0026 의 init_detail 은 history_load 이후만 담아, 7일 실측에서 init_ms 평균
     4,921ms 중 750ms 만 설명하고 **4,171ms(85%)가 어디로 가는지 알 수 없었다**. 프롤로그
     (메모리 DB 준비·datasource resolve·데이터플레인 연결) 3구간을 추가하고, 그래도 남는 몫을
-    `init_other_ms` 로 **명시**한다. 잔차 노출이 핵심 설계다(feature-0031 교훈) — 노출하지
+    `init_other_ms` 로 **명시**한다. 잔차 노출이 핵심 설계다(perf-infdetail 교훈) — 노출하지
     않으면 다음 블라인드스팟이 또 조용히 숨는다.
 
     §18.8 패널 MAJOR-3 — knowledge 는 `max(Σleaf, 롤업)` 으로 센다. 롤업은 **무조건** 기록되지만
@@ -2509,7 +2509,7 @@ def _build_init_detail(init_ms, detail: dict) -> dict[str, Any]:
 
 
 def _build_inference_detail(inference_ms, redteam_ms, acc, tool_ms, tool_n) -> dict[str, Any]:
-    """inference_ms 내부 분해 (feature-0031 infdetail).
+    """inference_ms 내부 분해 (perf-infdetail).
 
     반환 키:
       - llm_ms / llm_calls   : 메인 루프의 성공한 LLM 왕복 합계
@@ -4148,7 +4148,7 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     kwargs["extra_body"] = _extra_body
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)
-    # feature-0031 (infdetail, §18.8 패널 MAJOR-3): 호출측이 **순수 왕복**만 llm_ms 로 집계할 수
+    # perf-infdetail (§18.8 패널 MAJOR-3): 호출측이 **순수 왕복**만 llm_ms 로 집계할 수
     # 있도록 이 창의 소요를 넘긴다. 호출측이 `_call_llm` 전체를 재면 그 안의 오케스트레이션
     # (첨부 인라인 로드·messages_for_provider 재조립·runtime_settings DB 읽기(TTL 10s 라 라운드마다
     # 대개 miss)·llm_usage INSERT)이 llm_ms 로 청구돼, **잔차가 찾으려던 바로 그 시간이 사라진다**
@@ -4896,13 +4896,13 @@ def _run_agent_core(
     # init_ms 가 포함되고, queued_ms_seed 로 큐 대기까지 더해 total 을 정직하게 낸다.
     agent_entry_perf = time.perf_counter()
     _queued_ms = max(0.0, float(queued_ms_seed or 0.0))
-    # feature-0034 (initpro): init_ms **프롤로그** 계측 (duration_breakdown.init_detail 에 병합).
+    # perf-initpro: init_ms **프롤로그** 계측 (duration_breakdown.init_detail 에 병합).
     #   계측 동기 — feature-0026 의 init_detail 은 history_load 이후만 담았고, 진입부터 그때까지의
     #   266 줄(메모리 DB 연결·대화 보장·datasource resolve·**데이터플레인 연결**)은 통짜였다.
     #   7일 실측(2026-07-30): init_ms 평균 4,921ms 중 init_detail 설명분은 750ms 뿐 —
     #   **4,171ms(85%)가 미귀속**. 워커에서 직접 재보니 데이터플레인 `connect_with_retry` 만
-    #   1,447ms 였다. feature-0031 이 inference 를 닫자 여기가 최대 블라인드스팟이 됐다.
-    #   설계 교훈(feature-0031): **잔차 키를 반드시 노출**한다 — 그래야 다음 블라인드스팟이
+    #   1,447ms 였다. perf-infdetail 이 inference 를 닫자 여기가 최대 블라인드스팟이 됐다.
+    #   설계 교훈(perf-infdetail): **잔차 키를 반드시 노출**한다 — 그래야 다음 블라인드스팟이
     #   숨지 못한다. 아래 `_build_init_detail` 이 `init_other_ms` 로 계산한다.
     _init_detail: dict[str, Any] = {}
 
@@ -5195,7 +5195,7 @@ def _run_agent_core(
     # 주입을 억제한다 — origin 은 message id 에 묶이지 않은 자유 텍스트라 window 로 자를 수 없어(가려진
     # 대화 첫 요청이 그대로 남음) self-service 인젝션으로 추출 가능하기 때문. None(비제약)만 주입 허용.
     _suppress_conversation_context = _recall_visibility is not None
-    # feature-0034: 선언은 함수 진입부(agent_entry_perf 직후)로 올렸다 — 여기서 재선언하면
+    # perf-initpro: 선언은 함수 진입부(agent_entry_perf 직후)로 올렸다 — 여기서 재선언하면
     # 프롤로그 계측치가 통째로 사라진다(빈 dict 로 덮임).
     _hist_t0 = time.perf_counter()
     history = _load_conversation_messages(
@@ -5524,7 +5524,7 @@ def _run_agent_core(
 
     # ── 에이전트 루프 ──
     run_start = time.perf_counter()
-    # feature-0031 (infdetail): inference_ms 내부 분해 (duration_breakdown.inference_detail).
+    # perf-infdetail: inference_ms 내부 분해 (duration_breakdown.inference_detail).
     #   계측 동기 — feature-0026 이 init_ms 를 init_detail 로 쪼갠 뒤에도 **가장 큰 단계인
     #   inference_ms 만 블랙박스**로 남아 있었다. 7일 실측(2026-07-29): inference 평균 142.9초 중
     #   llm_usage 로 귀속되는 LLM 시간이 109.9초(4.3 호출)이고 **33.0초(23%)가 미귀속**이다.

@@ -19,7 +19,7 @@ UI(Cytoscape) 와 AI(knowledge context) 가 같은 그래프를 공유해 정합
 """
 from __future__ import annotations
 
-import hashlib as _hashlib   # feature-0030 (cyvol): routine refs 서명
+import hashlib as _hashlib   # perf-cyvol: routine refs 서명
 import json
 import logging
 import math
@@ -400,7 +400,7 @@ def _cache_once(cache, mark) -> bool:
 
 
 def _vmark(label: str, key: str, props: dict) -> tuple:
-    """정점 MERGE 중복 제거 마크 — **속성까지** 포함한다 (feature-0030 cyvol).
+    """정점 MERGE 중복 제거 마크 — **속성까지** 포함한다 (perf-cyvol).
 
     같은 Table 정점이라도 단계마다 싣는 속성이 다르다: `_step_rag` 는 semantic_cluster_*,
     `_step_tables` 는 description, `_step_columns`/routine refs 는 이름 3종만 MERGE 한다.
@@ -412,7 +412,7 @@ def _vmark(label: str, key: str, props: dict) -> tuple:
 
 
 def routine_refs_signature(refs) -> str:
-    """routine 참조 목록의 안정 서명 (feature-0030 cyvol).
+    """routine 참조 목록의 안정 서명 (perf-cyvol).
 
     `sync_routine` 은 routine 마다 ROUTINE_USES 를 **전량 DELETE 후 재-MERGE** 한다(정의 변경으로
     사라진 참조의 stale-edge 방지). 전량 sync 실측에서 이 패턴이 DELETE 23,053 + 엣지 MERGE 28,034
@@ -546,7 +546,7 @@ def delete_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col, tgt_scop
 
 
 def routine_expected_edge_count(refs, scope) -> int:
-    """refs 가 만들어야 할 ROUTINE_USES 엣지 수 (feature-0030 cyvol).
+    """refs 가 만들어야 할 ROUTINE_USES 엣지 수 (perf-cyvol).
 
     엣지 루프와 **같은 필터**(빈 fqn·파싱 후 빈 table 스킵)를 적용하고 tkey 로 중복을 접는다 —
     엣지는 (routine, table) 쌍당 1개라 같은 테이블을 두 번 참조해도 1개다.
@@ -571,7 +571,7 @@ def routine_expected_edge_count(refs, scope) -> int:
 
 
 def _routine_edges_intact(rkey, refs, scope, deg_cache) -> bool:
-    """그래프의 실제 ROUTINE_USES 차수가 기대치와 일치하는가 (feature-0030 cyvol, 패널 B3).
+    """그래프의 실제 ROUTINE_USES 차수가 기대치와 일치하는가 (perf-cyvol, 패널 B3).
 
     서명이 같아도 **엣지가 실제로 있는지** 확인해야 `--full` 의 재조정 보장이 유지된다.
     `_merge_edge` 는 끝점 정점이 없으면 오류 없이 0행이라, 서명만 신뢰하면 그런 소실이 영구

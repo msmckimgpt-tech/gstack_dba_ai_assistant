@@ -1,4 +1,4 @@
-"""feature-0031 (infdetail): inference_ms 내부 분해 회귀 잠금.
+"""perf-infdetail: inference_ms 내부 분해 회귀 잠금.
 
 계측 동기(7일 실측 2026-07-29): 답변 지연의 최대 구간인 inference 가 평균 142.9초인데
 `llm_usage` 로 귀속되는 LLM 시간은 109.9초(4.3 호출)뿐이고 **33.0초(23%)가 미귀속**이었다.

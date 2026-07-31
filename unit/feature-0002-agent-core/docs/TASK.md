@@ -1944,10 +1944,11 @@ rationale=REVIEW `REV-20260730T172000-dedup-param-cast` ·
 - [x] **initpro**: 프롤로그 3구간(mem_setup·ds_resolve·dataplane_connect) + 잔차 `init_other_ms` + perf-snapshot §3b-0
 - [x] **initpro**: 테스트 10건 + 역검증 5종(롤업 이중계상·클램프 플래그·빌더 우회·재선언·폴백 계측) 생존 0
 - [ ] **initpro**: 적대 패널 → 머지 → 배포 → 수집된 init_other_ms 로 개선 대상 확정
-- [x] **qembed-vis**: feature-0034 계측이 init 의 87%=query_embed 를 지목 → 추적 결과 **타임아웃 후 무음 강등**(20,587ms ≈ 타임아웃 20s)
+- [x] **qembed-vis**: perf-initpro 계측이 init 의 87%=query_embed 를 지목 → 추적 결과 **타임아웃 후 무음 강등**(20,587ms ≈ 타임아웃 20s)
 - [x] **qembed-vis**: warm 실측 p50 206ms / p90 215ms / max 429ms(47 표본) — 두 체제만 존재, 중간 없음
 - [x] **qembed-vis**: `query_embed_ok`(수치 1/0) 신설 + 잔차 leaf 제외 + 시도와 동일 게이트, perf-snapshot §3b-1
 - [x] **qembed-vis**: 타임아웃 20→5s(warm p90 23배 여유) — 남는 불확실성(5~20s 체제 미관측) 명시
 - [x] **qembed-vis**: 테스트 6건 + 역검증 4종(bool 화·잔차 leaf 포함·게이트 제거·타임아웃 원복) 생존 0
 - [ ] **qembed-vis**: 적대 패널 → 머지 → 배포 → 강등율 관측
+- [x] **label-fix**: 성능 cycle 별칭 4종이 병렬 세션 실재 feature ID 와 충돌 → `perf-*` 로 정정(내 저술분만, 병렬 참조·과거 증거 보존)
 

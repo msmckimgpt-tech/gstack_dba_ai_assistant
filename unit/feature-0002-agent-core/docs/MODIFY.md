@@ -953,11 +953,11 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 선행 CHG-20260730T160000-ask-redeploy-handoff.
 
 ## CHG-20260730T190000-init-prologue-metrics — init_ms 프롤로그 계측 + 잔차 노출 (Minor §12.3)
-> feature-0031 이 inference 블라인드스팟을 닫자 **init 이 최대 미귀속 구간**으로 드러났다. 같은 패턴(계측 → 데이터가 대상을 정함)을 반복한다.
+> perf-infdetail 이 inference 블라인드스팟을 닫자 **init 이 최대 미귀속 구간**으로 드러났다. 같은 패턴(계측 → 데이터가 대상을 정함)을 반복한다.
 - **선행 cycle 의 결론 정정**: feature-0031 계측이 "inference 미귀속 33초(23%)" 가설을 **반증**했다. 실측 `other_ms` = 235ms(**1.6%**). 그 33초는 숨은 오케스트레이션이 아니라 **red-team** 이었다 — 이전 분석이 `inference_ms` 를 `task='agent'` LLM 시간과만 대조했는데, red-team 은 inference 구간 안에서 돌면서 LLM 을 `task='redteam'` 으로 기록한다. 사용자가 품질 우선으로 유지하기로 결정한 부분이라 개선 대상이 아니다. **계측이 자기 가설을 깬 사례**로 기록한다.
 - **측정(2026-07-30, 7일 63건)**: `init_ms` 평균 **4,921ms** 중 `init_detail` 설명분 **750ms** — **4,171ms(85%) 미귀속**. 원인은 feature-0026 의 `init_detail` 이 `history_load` **이후**만 담았고 함수 진입~그 지점 266 줄이 통짜였던 것. 워커 직접 계측: `_connect_memory` 12ms / `_resolve_product_datasource` 46ms / **데이터플레인 `connect_with_retry` 1,447ms**.
 - **구현**: `_init_detail` 선언을 함수 진입부(`agent_entry_perf` 직후)로 올리고 프롤로그 3구간(`mem_setup_ms`·`ds_resolve_ms`·`dataplane_connect_ms`)을 추가. 신규 `_build_init_detail(init_ms, detail)` 이 **잔차 `init_other_ms`** 를 계산해 붙인다.
-  - **잔차 노출이 설계 핵심**(feature-0031 교훈) — 노출하지 않으면 다음 블라인드스팟이 또 조용히 숨는다. 직전 cycle 에서 33초의 정체를 판정할 수 있었던 이유가 잔차를 명시했기 때문이다.
+  - **잔차 노출이 설계 핵심**(perf-infdetail 교훈) — 노출하지 않으면 다음 블라인드스팟이 또 조용히 숨는다. 직전 cycle 에서 33초의 정체를 판정할 수 있었던 이유가 잔차를 명시했기 때문이다.
   - `knowledge_total_ms` 는 knowledge 하위 항목의 **롤업**이라 잔차 계산에서 제외한다(포함 시 이중 계상 → 잔차 음수). 표시용으로는 보존.
   - 음수 잔차는 0 클램프 + **수치** 키 `init_residual_neg_ms`(bool 금지 — §3b 가 모든 키를 `::float` 캐스트한다).
   - 데이터플레인 계측 종료점은 **폴백(`database=None` 재시도) 뒤**에 둔다 — try 안에 두면 폴백 시간이 잔차로 샌다. 멀티(라우터) 경로도 같은 키로 기록.
@@ -980,11 +980,11 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **Cross-ref**: feature-0026(init_detail 원형) · feature-0031(inference_detail — 잔차 노출 패턴의 출처, 그 가설을 반증한 계측) · ADR-20260728T120000-redteam-gating-not-adopted.
 
 ## CHG-20260731T090000-query-embed-degrade-visibility — 질의 임베딩 강등 가시화 + 타임아웃 재조정 (Minor §12.3)
-> feature-0034 계측이 init 의 87%가 `query_embed_ms` 임을 드러냈고, 추적해보니 **성공한 느린 임베딩이 아니라 타임아웃 후 무음 강등**이었다.
+> perf-initpro 계측이 init 의 87%가 `query_embed_ms` 임을 드러냈고, 추적해보니 **성공한 느린 임베딩이 아니라 타임아웃 후 무음 강등**이었다.
 - **측정(라이브 2026-07-31)**: feature-0034 배포 후 답변 2건의 `init_detail` 이 `query_embed_ms` 20,587ms·20,022ms — init 의 87%, 전체 답변의 64%. 그런데 `AGENT_KB_QUERY_EMBED_TIMEOUT_SEC=20` 과 정확히 일치 → **타임아웃 만료 후 trigram 폴백**이었다. 직접 계측한 warm 은 p50 **206ms** / p90 215ms / max 429ms(47 표본, 4분 연속, 폴백 0건).
 - **원인(환경)**: 병렬 세션이 오늘 돌린 시그니처 전수 재계산(48,226건)의 백필 스윕이 단일 CPU-bound 임베딩 백엔드를 포화시켰다(ollama CPU 109%, `/api/embed` 18~56s, 대기 8,371건). **조사 시점엔 이미 소진**(`pending=0`, CPU 0.03%)돼 급성 조건은 해소됐다.
 - **왜 노브를 더 만지지 않았나**: 같은 노브(`BATCH_MAX_ROWS` 100→1000→600, `BATCH_SIZE` 25)를 병렬 세션이 **오늘만 두 번** 조정 중이다("embed-congestion-fix" 주석이 그 증거). 해소된 조건을 위해 조율 기능을 새로 만들거나 남의 처리량 튜닝과 경합하는 대신, **빠져 있던 것**을 채운다.
-- **① 강등 가시화**: `init_detail.query_embed_ok`(1.0/0.0) 신설. 종전엔 임베딩 실패 → trigram 폴백이 **완전히 무음**이라 `query_embed_ms` 만 보고 '느린 성공'과 구분할 수 없었고, 그 상태가 2주간 드러나지 않았다. 값이 **수치**인 이유 — `bin/perf-snapshot.sh` §3b 가 `jsonb_each_text` 로 전 키를 `::float` 캐스트하므로 bool 은 섹션을 통째로 죽인다(feature-0034 패널 MAJOR-1 라이브 재현). 소요가 아니므로 `_INIT_DERIVED_KEYS` 에 등재해 잔차 leaf 에서 제외. 임베딩을 **시도조차 안 한** 경우(빈 질문·양 기능 OFF)는 강등이 아니므로 시도와 **동일 게이트**(`_SQ_EN or _AR_EN`)로만 기록 — 아니면 강등율이 과대보고된다.
+- **① 강등 가시화**: `init_detail.query_embed_ok`(1.0/0.0) 신설. 종전엔 임베딩 실패 → trigram 폴백이 **완전히 무음**이라 `query_embed_ms` 만 보고 '느린 성공'과 구분할 수 없었고, 그 상태가 2주간 드러나지 않았다. 값이 **수치**인 이유 — `bin/perf-snapshot.sh` §3b 가 `jsonb_each_text` 로 전 키를 `::float` 캐스트하므로 bool 은 섹션을 통째로 죽인다(perf-initpro 패널 MAJOR-1 라이브 재현). 소요가 아니므로 `_INIT_DERIVED_KEYS` 에 등재해 잔차 leaf 에서 제외. 임베딩을 **시도조차 안 한** 경우(빈 질문·양 기능 OFF)는 강등이 아니므로 시도와 **동일 게이트**(`_SQ_EN or _AR_EN`)로만 기록 — 아니면 강등율이 과대보고된다.
 - **② 타임아웃 20s → 12s**(초안 5s 는 패널이 반증 — 아래): 실측이 **두 개의 분리된 체제**만 보여준다 — warm p90 215ms, 포화 시 20s 를 다 쓰고도 미완료. 그 사이는 관측되지 않았다. 즉 20s 는 성공을 건지는 값이 아니라 **실패를 늦게 확인하는 값**이었고, 포화 창의 모든 답변이 15초를 순수 낭비한 뒤 어차피 강등됐다. 5s = warm p90 의 23배 여유. **남는 불확실성을 은폐하지 않는다** — '중간 정도 느린'(5~20s 에 성공) 체제는 실측된 적이 없고, 그 구간이 실재하면 불필요한 강등이 는다. 이제 ①이 강등율을 관측하므로 추측이 아니라 데이터로 재조정한다.
 - **관측**: `bin/perf-snapshot.sh` §3b-1(강등 건수·비율·embed 평균/최대).
 - **불변**: 기존 키·답변 동작·스키마 무변경(additive), fail-open. 강등 자체는 종전과 동일한 설계된 거동(trigram graceful degrade) — 이번 변경은 **그것을 보이게** 할 뿐이다.
@@ -999,3 +999,22 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **패널 clean**: 발행 순서(플래그 기록이 발행보다 앞) · 게이트 스코프(import 실패 시 UnboundLocalError → 그 경우 시도 자체가 없어 fail-safe) · 잔차 상호작용 · 타임아웃 blast radius(3 호출처 전부 대화형, 배치는 별도 노브) · 재시도 증폭 없음(`AGENT_OPENAI_MAX_RETRIES=0`) · §3b-1 SQL · §3b 비회귀 · 프론트 무영향.
 - **위험등급**: Minor. **Rollback**: 커밋 revert(타임아웃은 env `AGENT_KB_QUERY_EMBED_TIMEOUT_SEC` 로 즉시 원복 가능).
 - **Cross-ref**: feature-0034(init 계측 — 이 문제를 드러낸 계측) · feature-0031(잔차 노출 패턴) · CHG-20260625(타임아웃 도입 시 근거였던 warm 0.33s).
+
+## CHG-20260731T110000-perf-cycle-label-fix — 성능 cycle 라벨의 feature ID 충돌 정정 (Minor §12.3)
+> 내가 만든 오염을 되돌린다. 코드 주석·문서 전반에서 **cycle 별칭을 feature ID 처럼 표기**해, 병렬 세션이 실제로 소유한 feature 를 가리키게 돼 있었다.
+- **무엇이 잘못됐나**: 성능 계측 4개 cycle 의 별칭을 `feature-00NN (slug)` 형태로 적었는데, 그 번호가 전부 병렬 세션의 실재 feature 와 겹쳤다.
+
+  | 내가 쓴 라벨 | 실제 그 번호의 feature | 정정 후 |
+  |---|---|---|
+  | `feature-0030 (cyvol)` | feature-0030-ask-timeout-extension | `perf-cyvol` |
+  | `feature-0031 (infdetail)` | feature-0031-analysis-grounding | `perf-infdetail` |
+  | `feature-0034 (initpro)` | feature-0034-analysis-consumption | `perf-initpro` |
+  | `feature-0035 (qembed-vis)` | feature-0035-analysis-planner | `perf-qembed` |
+
+- **왜 문제인가**: `agent_core.py` 에서 `# feature-0034 (initpro)` 주석을 본 사람이 feature-0034 를 찾으면 "analysis-consumption" 이라는 **전혀 다른 기능**이 나온다. 계측 설계 의도를 추적하려던 사람이 엉뚱한 문서로 간다. 실제로 후속 세션 하나가 이 라벨을 물려받아 `ai/claude/feature-0030-cyvol-*` 브랜치명을 썼다(하류 전파 관측).
+- **정본 추적 수단은 바뀌지 않았다**: 커밋 trailer 의 `Feature: feature-0002-agent-core` 와 `CHG-*` ID 가 처음부터 정확했다. 이번 정정은 **별칭 표기만** 바꿔 feature ID 네임스페이스와 겹치지 않게 한다(`perf-*` 접두 — 번호가 없어 feature 로 오독될 여지가 없다).
+- **범위**: 내가 저술한 코드 주석·docstring·테스트·MODIFY/FUNCTION/TASK/REVIEW 항목만. 병렬 세션의 정당한 자기 feature 참조(`feature-0031-analysis-grounding`, `feature-0034(ITEM-09)`, `feature-0030 timeout-extension` 등)는 **건드리지 않았다**. 과거 test-runs.d 증거 기록도 그대로 둔다 — 그 시점 실제 브랜치명이라 고치면 기록이 거짓이 된다(이 항목이 그 추적 단서를 제공한다).
+- **동작 변경 0**: 주석·문서·테스트 docstring 만. 로직·키 이름·설정값 무변경.
+- **파일**: `src/agent_core.py`, `src/modules/metadata_graph.py`, `tests/test_{graph_cypher_volume,inference_detail,init_prologue_detail,query_embed_visibility,routine_column_refs}.py`, `shared/config.py`, `docs/{FUNCTION,TASK}.md`, `bin/perf-snapshot.sh`, `meta/REVIEW.md`.
+- **위험등급**: Minor(주석/문서). **Rollback**: 커밋 revert.
+- **Cross-ref**: CHG-20260728T163000-graph-cypher-volume(perf-cyvol) · CHG-20260729T120000-inference-detail-metrics(perf-infdetail) · CHG-20260730T190000-init-prologue-metrics(perf-initpro) · CHG-20260731T090000-query-embed-degrade-visibility(perf-qembed).
