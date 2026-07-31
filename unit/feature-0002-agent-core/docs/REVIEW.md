@@ -10,6 +10,19 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260730T190000-review-proposed-change-framing [CODEX:adversarial-security+backend+regression] — 쿼리 리뷰 시간 방향 계약 + 미발견 힌트 + 루틴 스니펫 SHIP-WITH-FIXES
+- Date: 2026-07-30
+- Cycle: TASK-20260730T190000-review-proposed-change-framing. **Major §12.3** — core 시스템 프롬프트(모든 첨부 리뷰 답변에 영향) + 도구 피드백.
+- Trigger: §18.8 — (a) 프롬프트·맥락 조립 변경은 dispatch 표 키워드 0건 + code change → **full panel default**; (b) `search_routines` **query/SQL** 변경 → backend+qa. 채널 선택 = **§18.8.2 제약-없는-채널 우선** — 이 세션은 상위 우선순위 지시로 Agent tool 사용이 제한돼 subagent panel 대신 `codex exec`(read-only, reasoning=high) 3렌즈로 수행. 렌즈: security(_safe_ident 통과 keyword 의 SQL 문자열 breakout·sql_guard/allowlist 약화·정보 노출), backend/correctness(LOCATE/CHARINDEX/SUBSTRING/NULL/빈 keyword·3→4 컬럼 계약과 전 caller·튜플 arity·마크다운 표 무결성), regression(신규 지침이 선행 grounding 봉인을 약화하는가·힌트가 진짜 선행 누락을 면책하는가).
+- VERDICT: **SHIP-WITH-FIXES** — **[P1] 0건**, [P2] 4건 → 2건 흡수 수정, 2건 근거와 함께 수용.
+- **CONFIRMED-SAFE (codex 실측 인용)**: ①인젝션 불성립 — `_safe_ident` 를 통과한 `x\' OR 1=1 --`·`x' UNION SELECT 1 --`·`x] UNION SELECT 1 --` 를 실제로 두 dialect 에 넣어 생성 SQL 을 확인, 문자열 리터럴 밖으로 나가는 형태 0. `git diff --cached --check` 통과. ②`sql_guard`/allowlist 약화 없음. ③프롬프트가 live-DB 검증·0행 부재 금지 규칙을 유지 — **직접적 회귀 미확인**.
+- **흡수한 [P2]-1 (스니펫 라벨이 틀린 단정)**: 행 선택 `WHERE` 는 이름 OR 본문 OR 주석을 `LIKE` 로 보는데 스니펫은 **본문만** `LOCATE` 한다 — 주석만 매칭된 행, 그리고 `%`/`_` 가 이스케이프되지 않아 LIKE 와일드카드로 남는 keyword 는 빈 스니펫이 되는데 초기안은 이를 `(이름 매칭)` 으로 라벨했다(도구가 확인하지 못한 것을 단정). **수정**: 라벨을 `(본문 외 매칭)` 으로 바꾸고, 표 아래에 원인(이름·주석 매칭 또는 LIKE 와일드카드)을 명시하는 주석 줄 부착 — "본문에 없다는 뜻이 아님" 을 못박는다. `%`/`_` 이스케이프는 **의도적 미변경**(기존 검색 의미를 바꾸는 별개 결정 — 와일드카드 검색이 유용하고 pre-existing). 회귀 테스트 `test_empty_snippet_row_is_not_labeled_name_match`.
+- **흡수한 [P2]-2 (힌트가 일방 면책이 될 위험)**: `describe_table`/`describe_routine` 의 빈 결과는 권한·스코프·오타로도 나는데 힌트가 무조건 붙어, 조건절이 문구 안에만 있으면 모델이 진짜 선행 누락을 '적용 전제' 로 오인할 수 있다(= 선행 0행≠부재 봉인을 도구 출력에서 되돌림). **수정**: 힌트를 **3분기 양방향 fork** 로 재작성 — ①첨부가 만드는 객체면 적용 전제 ②어느 첨부도 안 만들면 실제 선행 누락(결함) ③권한·스코프·대소문자/오타 가능성, **교차확인 전에는 ①②로 단정 금지**. 회귀 테스트 `test_hint_is_a_two_way_fork_not_a_one_way_excuse`.
+- **수용 [P2]-3 (표 컬럼이 3/4 로 가변)**: 의도된 설계다. SQL 결과는 항상 4컬럼이나 스니펫이 전부 비면(전체 열거·이름 매칭) 종전 3컬럼 마크다운을 유지한다 — 열거 결과 50행에 빈 셀을 붙이지 않기 위한 잡음 억제이자 3컬럼 dialect·fake row 하위호환(`len(row) > 3` 방어 판독). 소비자는 헤더가 자기서술적인 마크다운을 읽는 LLM 하나뿐이라 계약 파손 경로가 없다.
+- **수용 [P2]-4 (루틴 본문 일부 자동 노출)**: 신뢰경계 확장 아님으로 판정. (a) 같은 caller 가 같은 allowlist(`_struct_schema_access_error`)·같은 RO GRANT 뒤에서 `describe_routine` 으로 **정의 전문**을 이미 얻을 수 있다 — 스니펫은 그 진부분집합이다. (b) 프롬프트 인젝션 면 역시 **신규 클래스가 아니다**: 도구 결과는 `role="tool"` 로 원문 주입되며 `_datamark_untrusted` 를 거치지 않는 것이 **pre-existing 속성**(`describe_routine` 전문·`execute_sql` 행·`search_tables` 테이블 주석이 이미 같은 경로) — 본 diff 가 도입한 것이 아니다. 도구 결과 datamarking 은 별도 범위의 pre-existing 갭으로 **인지 기록**(follow-up 후보).
+- Verification: 신규 `tests/test_review_proposed_change_framing.py` **27 PASS**; feature-0002 로컬 전체 **2114 passed / 30 skipped / 0 failed**; `make test`(feature-0002+0003+0023 pytest + ruff, 전용 compose 프로젝트) **RC=0** — P2 수정 후 포함 **연속 4회 clean**. 초기 1회 실행에서 `FAILURES` 배너가 관측됐으나 이후 4회 재현 0(env 파일 복사 이전 실행의 잔여로 판단) — 정직 기록. **라이브 실증(동일 5파일 재리뷰에서 '적용 전제' 절 분리 + 미배포 상태에 🔴 배지 부재)은 배포 게이트**.
+- Cross-ref: CHG-20260730T190000-review-proposed-change-framing / TASK-20260730T190000-review-proposed-change-framing / FRICTION_LEDGER(FR-review-frames-live-db-as-spec · FR-routine-content-scan-missing[rejected]).
+
 ## REV-20260722T034138-dqa-data-grounding-and-scratch-csv [SUBAGENT:adversarial-backend+security] — 데이터 grounding 지침 + scratch CSV export SHIP-WITH-FIXES
 - Date: 2026-07-22
 - Cycle: TASK-20260722-dqa-data-grounding (데이터 의미 grounding 지침 — 타임존 B-1·ENUM D-1·분리저장 D-2) + TASK-20260722-dqa-scratch-csv-export (F-5). **Major §12.3**(core 시스템 프롬프트 — 답변 정확성) + Minor(scratch 결과추출). DQA_assistant_마찰개선사항_20260722_v2.md 검토·개선.

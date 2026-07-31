@@ -185,9 +185,15 @@ class Dialect:
         `sys_exclude_schemas` 는 열거에서 제외할 시스템/내부 스키마(공백이면 제외 없음).
         `keyword` 가 빈 문자열이면 **필터 없이 전체 열거**(개수 파악용).
 
-        컬럼 계약(엔진 무관, 위치 파싱): ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE.
+        컬럼 계약(엔진 무관, 위치 파싱): ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, MATCH_SNIPPET.
         이름·정의 본문에 keyword 가 포함된 루틴을 찾는다(본문 검색이라 "문서 조회 프로시저" 처럼
         **이름만으로는 못 찾는** 탐색 의도를 충족). read-only 카탈로그 조회.
+
+        `MATCH_SNIPPET`(conversation_audit 2026-07-30): 본문 매칭이 일어난 지점의 앞뒤 문맥
+        조각. 종전에는 목록만 돌려줘 "왜 이 루틴이 걸렸는지" 를 알려면 매 후보마다
+        `describe_routine` 을 다시 호출해야 했다 — 후보가 여러 개면 그 왕복이 탐색을 접게 만든다.
+        이름만 매칭됐거나 keyword 가 없으면(전체 열거) 빈 문자열. caller 는 `len(row) > 3` 로
+        방어적으로 읽는다(3-컬럼 dialect·fake row 하위호환).
         """
         raise NotImplementedError
 
@@ -352,11 +358,22 @@ class MySQLDialect(Dialect):
                 f"                OR COALESCE(ROUTINE_COMMENT, '') LIKE '%{keyword}%'\n"
                 f"            )"
             )
+        # MATCH_SNIPPET: 본문 매칭 지점의 앞뒤 문맥(앞 40자 ~ 총 140자). keyword 가 비면(전체 열거)
+        # LOCATE('', x) 가 1 을 돌려 무의미한 머리말이 붙으므로 상수 ''.
+        snippet = "'' AS MATCH_SNIPPET"
+        if keyword:
+            snippet = (
+                f"CASE WHEN LOCATE('{keyword}', COALESCE(ROUTINE_DEFINITION, '')) > 0\n"
+                f"                 THEN SUBSTRING(ROUTINE_DEFINITION,\n"
+                f"                      GREATEST(LOCATE('{keyword}', ROUTINE_DEFINITION) - 40, 1), 140)\n"
+                f"                 ELSE '' END AS MATCH_SNIPPET"
+            )
         return f"""
         SELECT
             ROUTINE_SCHEMA,
             ROUTINE_NAME,
-            ROUTINE_TYPE
+            ROUTINE_TYPE,
+            {snippet}
         FROM information_schema.ROUTINES
         WHERE 1=1{where}
         ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME
@@ -697,11 +714,23 @@ class MSSQLDialect(Dialect):
                 f"                OR COALESCE(m.definition, '') LIKE '%{keyword}%'\n"
                 f"            )"
             )
+        # MATCH_SNIPPET: MySQL 판과 동일 계약 — 본문 매칭 지점의 앞뒤 문맥(앞 40자 ~ 총 140자).
+        # keyword 가 비면(전체 열거) CHARINDEX('', x) 가 1 이라 무의미하므로 상수 ''.
+        snippet = "'' AS MATCH_SNIPPET"
+        if keyword:
+            _ci = f"CHARINDEX('{keyword}', COALESCE(m.definition, ''))"
+            snippet = (
+                f"CASE WHEN {_ci} > 0\n"
+                f"                 THEN SUBSTRING(m.definition,\n"
+                f"                      CASE WHEN {_ci} > 40 THEN {_ci} - 40 ELSE 1 END, 140)\n"
+                f"                 ELSE '' END AS MATCH_SNIPPET"
+            )
         return f"""
         SELECT TOP 51
             SCHEMA_NAME(o.schema_id) AS ROUTINE_SCHEMA,
             o.name AS ROUTINE_NAME,
-            CASE WHEN o.type IN ('P', 'PC', 'X', 'RF') THEN 'PROCEDURE' ELSE 'FUNCTION' END AS ROUTINE_TYPE
+            CASE WHEN o.type IN ('P', 'PC', 'X', 'RF') THEN 'PROCEDURE' ELSE 'FUNCTION' END AS ROUTINE_TYPE,
+            {snippet}
         FROM {c}sys.objects o
         LEFT JOIN {c}sys.sql_modules m ON m.object_id = o.object_id
         WHERE o.type IN ('P', 'PC', 'X', 'RF', 'FN', 'IF', 'TF', 'FS', 'FT', 'AF'){where}
