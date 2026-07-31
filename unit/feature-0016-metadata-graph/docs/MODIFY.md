@@ -452,3 +452,9 @@ source_of_truth: true
 | `unit/feature-0002-agent-core/tests/test_cluster_summary.py` | 캐시 픽스처에 `label` 컬럼 반영 + `test_cache_miss_when_label_changed` 신설 |
 
 근거 수치는 REPORT.md `20260731T0100-label-canon` 참조.
+
+## CHG-20260731T023000-ai-claude-feature-0016-canon-verify — label-canon 라이브 검증(E.11) (2026-07-31, 문서 전용)
+
+실행 코드 0줄. 배포본 `4d5e6678` 에서 재클러스터 pass 2회를 유발해 측정한 결과를 기록.
+밴드 수 불변 · 라벨 종수 감소 · 스키마-내 중복 0 유지 · 요약 재생성 동반을 실증.
+대형 scope 는 컨테이너 메모리 한도로 외부 유발 불가 — cadence 전환 후 확인(E.12).

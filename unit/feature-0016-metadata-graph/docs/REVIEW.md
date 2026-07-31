@@ -864,3 +864,12 @@ config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 �
 
 리뷰어의 pytest 실행은 샌드박스 temp 디렉터리 부재로 중단됐다 — 테스트는 이쪽에서 컨테이너로
 전량 실행했다(agent-core 스위트 전건 통과).
+
+## REV-20260731T023000-canon-verify [SKIPPED:docs-measurement-only] — PASS
+
+- Reason: 문서 전용(실행 코드 0줄). 대상 코드의 적대 검증은
+  `REV-20260731T011000-label-canon [CODEX:cross-schema-label-canon]`(P1 2건·P2 1건 in-cycle 수정)
+  이 담당했고 머지·배포됐다.
+- 본 cycle 의 주장은 라이브 pass 반환값(`label_canon`/`summaries`)과 전후 SQL 집계로 재현 가능하다.
+- 정직 표기: 최대 scope 는 검증하지 못했다(컨테이너 1GiB 한도 · OOM). 미검증 사실과 사유·후속
+  확인 시점을 REPORT 에 명시했다.
