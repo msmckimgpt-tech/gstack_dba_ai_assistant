@@ -2109,6 +2109,22 @@ def _build_knowledge_context(
     except Exception:
         _shared_qvec = None
     _kt_mark("query_embed_ms")
+    # feature-0035 (qembed-vis): 질의 임베딩 **성공 여부**를 분해에 남긴다.
+    #   왜 — 실패하면 caller 가 trigram 으로 graceful degrade 하는데(설계된 거동), 그 강등이
+    #   **완전히 무음**이었다. `query_embed_ms` 만 보면 "느렸다" 는 알아도 "그 답변은 벡터 검색
+    #   없이 나갔다"(= 검색 품질 저하)는 알 수 없다. 라이브 실측(2026-07-31): 임베딩 백엔드가
+    #   대량 백필로 포화된 창에서 답변 2건이 각각 20,587ms·20,022ms 를 쓰고 **타임아웃 →
+    #   trigram 폴백** 했는데(warm 실측 p50 206ms / p90 215ms / max 429ms, 47 표본), 분해만
+    #   봐서는 성공한 느린 임베딩과 구분되지 않았다. 그 상태가 2주간 유지됐다.
+    #   값은 **수치**(1/0)다 — `bin/perf-snapshot.sh` §3b 가 `jsonb_each_text(init_detail)` 로
+    #   전 키를 `::float` 캐스트하므로 bool 을 넣으면 섹션이 통째로 죽는다(feature-0034 패널
+    #   MAJOR-1 라이브 재현).
+    #   임베딩을 시도조차 안 한 경우(빈 질문·양 기능 OFF)는 강등이 아니므로 키를 남기지 않는다.
+    try:
+        if str(user_message or "").strip() and (_SQ_EN or _AR_EN):
+            _kt["query_embed_ok"] = 1.0 if _shared_qvec else 0.0
+    except Exception:
+        pass
 
     # ITEM-02: 샘플쿼리 few-shot 주입(ds-scoped via 활성 datasource, approved∧active top-K).
     # **예시(few-shot)일 뿐 직접 실행 금지** — 패턴 참고용. env gate(A/B 측정·롤백용).
@@ -2157,7 +2173,15 @@ def _build_knowledge_context(
         pass
     _kt_mark("account_recall_ms")
     try:
-        _KNOWLEDGE_TIMINGS.set({k: v for k, v in _kt.items() if v >= 0.1})
+        # `v >= 0.1` 은 **소요(ms) 잡음 제거**용 필터다. feature-0035 의 상태 플래그는 소요가
+        # 아니라서 이 문턱에 걸리면 안 된다 — §18.8 패널 BLOCKER-1(런타임 실증): 강등 시
+        # `query_embed_ok = 0.0` 이 필터에 걸려 **탈락**하고 성공(1.0)만 통과해, 대시보드가
+        # 언제나 "강등 0%" 라는 **거짓 안심**을 보고했다(종전의 무음보다 나쁘다 — 운영자가
+        # 신호가 있다고 믿는다). 게다가 키의 '존재' 가 성공을 뜻하게 돼, 시도-안-함과 강등을
+        # 구분하려고 넣은 게이트가 무효화된다. 플래그류는 값 무관하게 통과시킨다.
+        _KNOWLEDGE_TIMINGS.set({
+            k: v for k, v in _kt.items() if v >= 0.1 or k in _INIT_DERIVED_KEYS
+        })
     except Exception:
         pass
 
@@ -2426,8 +2450,11 @@ _INIT_KNOWLEDGE_LEAVES = frozenset({
     "query_embed_ms", "table_insights_ms", "relationships_ms", "glossary_ms",
     "example_queries_ms", "table_col_desc_ms", "schema_list_ms", "account_recall_ms",
 })
-# 빌더가 스스로 만든 키 — 재적용 시 leaf 로 세면 잔차가 0 으로 붕괴한다(§18.8 패널 MINOR-3).
-_INIT_DERIVED_KEYS = frozenset({"init_other_ms", "init_residual_neg_ms"})
+# 잔차 leaf 가 **아닌** 키 — 소요(ms)가 아니거나 빌더가 스스로 만든 값.
+#   · init_other_ms / init_residual_neg_ms : 빌더 산출물. 재적용 시 leaf 로 세면 잔차 붕괴(§18.8 MINOR-3).
+#   · query_embed_ok (feature-0035)        : 성공 여부 플래그(1/0). 시간이 아니라 **상태**이므로
+#     빼지 않으면 잔차가 1ms 어긋난다. 값이 수치인 이유는 §3b 가 전 키를 ::float 캐스트하기 때문.
+_INIT_DERIVED_KEYS = frozenset({"init_other_ms", "init_residual_neg_ms", "query_embed_ok"})
 
 
 def _build_init_detail(init_ms, detail: dict) -> dict[str, Any]:

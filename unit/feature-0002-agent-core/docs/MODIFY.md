@@ -978,3 +978,24 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **패널이 clean 판정한 축**: 선언 이동(9개 early-return 모두 `_compute_duration_breakdown` 이전이라 무해, 재진입 없음) · 롤업 전제(라이브 63행에서 롤업−Σleaf 가 -0.2~+0.3ms) · 6개 span 상호 배타·순차 · 영속 경로(직전 cycle 의 dead-code 결함 **미재발**, 63행이 이미 같은 경로로 저장됨) · 프론트 무영향.
 - **위험등급**: Minor(계측 additive). **Rollback**: 커밋 revert — 소비처가 키 부재를 견딘다.
 - **Cross-ref**: feature-0026(init_detail 원형) · feature-0031(inference_detail — 잔차 노출 패턴의 출처, 그 가설을 반증한 계측) · ADR-20260728T120000-redteam-gating-not-adopted.
+
+## CHG-20260731T090000-query-embed-degrade-visibility — 질의 임베딩 강등 가시화 + 타임아웃 재조정 (Minor §12.3)
+> feature-0034 계측이 init 의 87%가 `query_embed_ms` 임을 드러냈고, 추적해보니 **성공한 느린 임베딩이 아니라 타임아웃 후 무음 강등**이었다.
+- **측정(라이브 2026-07-31)**: feature-0034 배포 후 답변 2건의 `init_detail` 이 `query_embed_ms` 20,587ms·20,022ms — init 의 87%, 전체 답변의 64%. 그런데 `AGENT_KB_QUERY_EMBED_TIMEOUT_SEC=20` 과 정확히 일치 → **타임아웃 만료 후 trigram 폴백**이었다. 직접 계측한 warm 은 p50 **206ms** / p90 215ms / max 429ms(47 표본, 4분 연속, 폴백 0건).
+- **원인(환경)**: 병렬 세션이 오늘 돌린 시그니처 전수 재계산(48,226건)의 백필 스윕이 단일 CPU-bound 임베딩 백엔드를 포화시켰다(ollama CPU 109%, `/api/embed` 18~56s, 대기 8,371건). **조사 시점엔 이미 소진**(`pending=0`, CPU 0.03%)돼 급성 조건은 해소됐다.
+- **왜 노브를 더 만지지 않았나**: 같은 노브(`BATCH_MAX_ROWS` 100→1000→600, `BATCH_SIZE` 25)를 병렬 세션이 **오늘만 두 번** 조정 중이다("embed-congestion-fix" 주석이 그 증거). 해소된 조건을 위해 조율 기능을 새로 만들거나 남의 처리량 튜닝과 경합하는 대신, **빠져 있던 것**을 채운다.
+- **① 강등 가시화**: `init_detail.query_embed_ok`(1.0/0.0) 신설. 종전엔 임베딩 실패 → trigram 폴백이 **완전히 무음**이라 `query_embed_ms` 만 보고 '느린 성공'과 구분할 수 없었고, 그 상태가 2주간 드러나지 않았다. 값이 **수치**인 이유 — `bin/perf-snapshot.sh` §3b 가 `jsonb_each_text` 로 전 키를 `::float` 캐스트하므로 bool 은 섹션을 통째로 죽인다(feature-0034 패널 MAJOR-1 라이브 재현). 소요가 아니므로 `_INIT_DERIVED_KEYS` 에 등재해 잔차 leaf 에서 제외. 임베딩을 **시도조차 안 한** 경우(빈 질문·양 기능 OFF)는 강등이 아니므로 시도와 **동일 게이트**(`_SQ_EN or _AR_EN`)로만 기록 — 아니면 강등율이 과대보고된다.
+- **② 타임아웃 20s → 12s**(초안 5s 는 패널이 반증 — 아래): 실측이 **두 개의 분리된 체제**만 보여준다 — warm p90 215ms, 포화 시 20s 를 다 쓰고도 미완료. 그 사이는 관측되지 않았다. 즉 20s 는 성공을 건지는 값이 아니라 **실패를 늦게 확인하는 값**이었고, 포화 창의 모든 답변이 15초를 순수 낭비한 뒤 어차피 강등됐다. 5s = warm p90 의 23배 여유. **남는 불확실성을 은폐하지 않는다** — '중간 정도 느린'(5~20s 에 성공) 체제는 실측된 적이 없고, 그 구간이 실재하면 불필요한 강등이 는다. 이제 ①이 강등율을 관측하므로 추측이 아니라 데이터로 재조정한다.
+- **관측**: `bin/perf-snapshot.sh` §3b-1(강등 건수·비율·embed 평균/최대).
+- **불변**: 기존 키·답변 동작·스키마 무변경(additive), fail-open. 강등 자체는 종전과 동일한 설계된 거동(trigram graceful degrade) — 이번 변경은 **그것을 보이게** 할 뿐이다.
+- **파일**: `src/agent_core.py`, `shared/config.py`, `tests/test_query_embed_visibility.py`(신규 9건), `shared/runtime_settings.py`, `bin/perf-snapshot.sh`, `docs/{FUNCTION,TASK}.md`.
+- **§18.8 적대 패널 결함 8건 흡수 — 초안은 BLOCKER 를 안고 있었다**:
+  - **BLOCKER-1(런타임 실증)** 발행부 `_KNOWLEDGE_TIMINGS.set({k: v ... if v >= 0.1})` 의 **소요 잡음 필터에 상태 플래그 0.0 이 걸려 탈락**했다. 성공(1.0)만 통과 → 대시보드가 언제나 **"강등 0%"** 라는 거짓 안심을 보고한다(종전의 무음보다 **나쁘다** — 운영자가 신호가 있다고 믿는다). 키의 '존재' 가 성공을 뜻하게 돼 시도-안-함과 강등을 가르려던 게이트도 무효화됐다. → 플래그류(`_INIT_DERIVED_KEYS`)는 값 무관 통과.
+  - **MAJOR-1(초안 근거 반증)** 5s 의 근거였던 "warm p90 215ms · 23배 여유" 는 **16자 질의 한 종류만** 잰 값이었다. 지연은 **입력 길이에 비례**한다(독립 재현: 5,712자 **4,172ms**; 패널 6KB 3.7~5.4s / 10KB 5.7~8.5s). 라이브 90일 최대 사용자 메시지가 5,996자라 5s 는 **경계**였고 패널이 6KB 3회 중 1회 폴백을 관측했다. 초안 주석의 "5~20s 중간 체제 미관측" 도 거짓 — 유휴 백엔드에서 길이만 바꿔도 나온다. → **12s**(관측 최대-실입력 지연의 2.2~2.9배, 20s 대비 8s 절감).
+  - **MAJOR-2** `shared/runtime_settings.py` spec default 가 20 그대로라 **콘솔은 20 을 표시**하고 운영자가 '초기화' 를 누르면 20 이 override 로 기록돼 변경이 조용히 되돌아간다. 임베딩 강등을 조사하러 콘솔을 연 운영자가 타임아웃을 원인에서 배제하게 만드는 — 이 cycle 이 막으려던 바로 그 오진. → spec default 12 + minimum 5(`llm.py` 의 `max(5,…)` 바닥과 정합) + **parity 테스트**.
+  - **MAJOR-3(변이 실측)** 7 중 2 생존 — 발행문을 플래그 기록 앞으로 옮기기(플래그가 영영 미도달), §3b-1 통째 삭제(유일 소비처 소멸). 종전 테스트가 전부 소스 문자열 검색이라 present-but-wrong 을 못 봤다. **직전 cycle 문서에 같은 교훈을 적어놓고 같은 계열 결함을 재생산했다.** → 발행 필터를 소스에서 추출해 **실제 평가**하는 테스트 + 3지점 순서 잠금 + 소비처 존재 확인.
+  - **MINOR** §3b 에 플래그가 유령 stage 행으로 표시 → 제외 · "0 = 타임아웃" 과잉 주장 수정(모델 미설정·클라이언트 부재·게이트웨이 오류도 0) · 성공/강등 소요 분리 집계(타임아웃 캡 값이 평균을 끌어당김) · 소스 철자 대신 **JSON 왕복 타입** 검증.
+- **역검증**: BLOCKER + 패널 생존 2 + MAJOR-1/2 = 5종 재현, **생존 0**. 테스트 6 → **9건**.
+- **패널 clean**: 발행 순서(플래그 기록이 발행보다 앞) · 게이트 스코프(import 실패 시 UnboundLocalError → 그 경우 시도 자체가 없어 fail-safe) · 잔차 상호작용 · 타임아웃 blast radius(3 호출처 전부 대화형, 배치는 별도 노브) · 재시도 증폭 없음(`AGENT_OPENAI_MAX_RETRIES=0`) · §3b-1 SQL · §3b 비회귀 · 프론트 무영향.
+- **위험등급**: Minor. **Rollback**: 커밋 revert(타임아웃은 env `AGENT_KB_QUERY_EMBED_TIMEOUT_SEC` 로 즉시 원복 가능).
+- **Cross-ref**: feature-0034(init 계측 — 이 문제를 드러낸 계측) · feature-0031(잔차 노출 패턴) · CHG-20260625(타임아웃 도입 시 근거였던 warm 0.33s).
