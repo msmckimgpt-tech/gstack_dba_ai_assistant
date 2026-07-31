@@ -1478,6 +1478,13 @@ AGENT_ANALYSIS_COVERAGE_SEED_CAP = int(os.getenv("AGENT_ANALYSIS_COVERAGE_SEED_C
 #  ⚠ 위 SEED_CAP 은 **스키마당**이다. 시드는 스키마 루프 안에서 일어나고 큐잉 경로의 cap·쿨다운도
 #  스키마 단위라, 사이클 전체 상한이 따로 없으면 스키마 수(라이브 수백)만큼 곱해진다.
 AGENT_ANALYSIS_COVERAGE_CYCLE_CAP = int(os.getenv("AGENT_ANALYSIS_COVERAGE_CYCLE_CAP", "9"))
+
+# ── 분석문 사실성 판정 (feature-0036-analysis-verification, ITEM-10) ────────
+#  생성된 분석문을 L0 통계 증거와 대조해 supported/contradicted/unverifiable 로 판정한다.
+#  ⚠ 판정 실패(LLM 오류·예산 소진)는 **미검증**(행 없음)이며 절대 "검증됨"으로 기록하지 않는다.
+#  기본 활성 — 판정 없이 쌓이는 분석문이 위층(요약·답변)의 확신 근거가 되는 상태가 더 위험하다.
+AGENT_ANALYSIS_VERIFY_ENABLED = int(os.getenv("AGENT_ANALYSIS_VERIFY_ENABLED", "1"))
+AGENT_ANALYSIS_VERIFY_MAX_PER_PASS = int(os.getenv("AGENT_ANALYSIS_VERIFY_MAX_PER_PASS", "20"))
 AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
 # LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
 # candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,
