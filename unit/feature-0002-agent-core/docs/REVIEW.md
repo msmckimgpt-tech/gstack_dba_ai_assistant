@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260731T020000-review-framing-postdeploy [SKIPPED:docs-only-postdeploy-record] — 배포 전이 + 운영자 프롬프트 shadow 발견 기록
+- Date: 2026-07-31
+- Cycle: CHG-20260731T020000-review-framing-postdeploy. **코드 변경 0** — 이미 적대 리뷰(REV-20260730T190000, codex 3렌즈 [P1] 0건)를 통과해 머지·배포된 변경의 **결과 기록**이다.
+- Trigger: §18.8 dispatch 표 키워드 **0건 + code change 0건**(diff = `FRICTION_LEDGER.md`·`TASK.md`·`MODIFY.md` 3개 문서만). §18.8.1 docs-only 경량 경로 대상이며, 새로 검증할 동작 표면이 없어 패널을 SKIP 한다 — 판정 대상 산출물(코드·프롬프트·도구 출력)은 선행 REVIEW 에서 이미 적대 검증됐고 이번 diff 는 그 배포 결과와 측정치를 옮겨 적은 것뿐이다.
+- 기록된 사실의 검증 방식(패널 대체): 서술이 **배포본 직접 측정**으로 뒷받침된다 — 4서비스 `GIT_COMMIT=2ecfe4b5` + `docker inspect` health, edge `/healthz`, ask-worker 안에서 실행한 심볼 적재 13종, 실 `agent_memory` 연결 `compose_system_prompt` 결과(13,604자) marker 판정, 운영자 global row `LENGTH(Content)=15978`/`UpdatedAt=2026-06-18`, 코드 상수 20,575자, 코드-append guidance 16,825자 marker 전수 부재. 추정 서술 없음.
+- **미검증을 완료로 보고하지 않음(§16.3 정직성)**: `FR-review-frames-live-db-as-spec` 는 `fixed:deployed:unverified-live` 로 남겼고(라이브 대화 재리뷰 미수행), 부수 발견은 `needs-human` 으로 열어 두었다.
+- Cross-ref: CHG-20260731T020000-review-framing-postdeploy / REV-20260730T190000-review-proposed-change-framing / FRICTION_LEDGER(FR-review-frames-live-db-as-spec · FR-operator-global-prompt-shadows-code-seals).
+
 ## REV-20260730T190000-review-proposed-change-framing [CODEX:adversarial-security+backend+regression] — 쿼리 리뷰 시간 방향 계약 + 미발견 힌트 + 루틴 스니펫 SHIP-WITH-FIXES
 - Date: 2026-07-30
 - Cycle: TASK-20260730T190000-review-proposed-change-framing. **Major §12.3** — core 시스템 프롬프트(모든 첨부 리뷰 답변에 영향) + 도구 피드백.

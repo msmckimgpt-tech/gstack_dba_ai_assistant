@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260731T020000-review-framing-postdeploy (POST-DEPLOY 기록 — 배포 전이 + 운영자 프롬프트 shadow 발견, docs-only)
+- Date: 2026-07-31. 코드 변경 **0** — `CHG-20260730T190000-review-proposed-change-framing` 의 배포 결과와 그 검증 중 드러난 별 트랙 발견을 원장·TASK 에 정직 기록.
+- **배포 전이**: PR #1102 merge main `2ecfe4b5` → `make deploy-web` 전체 스코프(web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile, soak 90s 통과). 4서비스 GIT_COMMIT=2ecfe4b5 healthy, edge `/healthz` ok·mysql_ok·pg_ok. 원장 `FR-review-frames-live-db-as-spec` → `fixed:deployed:unverified-live`.
+- **라이브 compose 실증**: 실 `agent_memory` 연결로 `compose_system_prompt` 를 호출해 결과(13,604자)에 `REVIEWING A PROPOSED CHANGE — TIME DIRECTION` 도달 확인 — 운영자 global row 가 base 를 대체하는 **실제 프로덕션 조건**에서 계약이 살아 있음(AUTH-1a 설계 검증).
+- **부수 발견(needs-human, 원장 `FR-operator-global-prompt-shadows-code-seals`)**: 그 검증 중 운영자 `WebSystemPrompts` scope='global' row(**15,978자 / UpdatedAt 2026-06-18**)가 코드 상수 `SYSTEM_PROMPT`(**20,575자**)를 통째 대체해, 2026-06-18 이후 **SYSTEM_PROMPT 본문에만** 추가된 규칙이 라이브에 도달하지 않음을 배포본에서 실측. 부재 확정 7종: `ZERO ROWS IS NOT ABSENCE`·`COMPARING an attachment against the live DB`·`COMPLETENESS COMES FROM AN EXPLICIT COMPLETENESS SIGNAL`·`TRUNCATION NOTICES`·`IDENTIFIER CASE`·`check_table_coverage` 유도·`## ATTACHED FILES` 섹션(코드-append guidance 상수 16,825자에도 부재 = 보완 경로 없음). 도달하는 것은 `parts` always-append 4종뿐. **코드 결함이 아니라 운영 데이터 drift** 이며 수정 방향(운영자 row 재동기화 vs compose replace→merge)이 사람 결정이라 별 트랙으로 분리.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(FR-review-frames 상태 전이 + FR-operator-global-prompt-shadows-code-seals 신규), `unit/feature-0002-agent-core/docs/TASK.md`(배포 체크 + 부수 발견 인지).
+- **Rollback**: 문서 되돌리기(코드·스키마 무변경).
+
 ## CHG-20260730T190000-review-proposed-change-framing (쿼리 리뷰 시간 방향 계약 + 미발견 분류 교정 힌트 + 루틴 본문 매칭 스니펫 — conversation_audit FR-review-frames-live-db-as-spec)
 - Date: 2026-07-30. worktree `ai/root/feature-0002-agent-core`(base main bb4be6e4). 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` 사용자 명시 호출. 범위 승인(AskUserQuestion 2026-07-30) = **A+B+C 전부 + search_routines 매칭 스니펫**.
 - **무엇을(A 시간 방향 계약)**: `agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 신설 — 첨부가 **적용될 변경**(DDL/마이그레이션/신규·수정 루틴)이면 라이브 DB=**BEFORE**, 첨부 세트=**AFTER**. 변경이 스스로 도입하는 차이(아직 없는 객체, 바뀐 시그니처, 스크립트가 추가할 키/제약)는 **적용 전제이지 결함이 아니다** — 결함/문제/위험 어휘 금지, 🔴/🟡 배지 금지, "실행되지 않았다/실패했다" 단정 금지. `compose_system_prompt` 의 `parts` 에 always-append 해 **운영자 `WebSystemPrompts` global row 가 base 를 통째로 대체해도 살아남는다**(AUTH-1a 코드 권위선, `_ATTACHMENT_DELIVERY_DIRECTIVE` 와 대칭). SYSTEM_PROMPT §ATTACHED FILES 에 압축 미러 1줄 + 첨부 주입 INSTRUCTION 에 포인터.

@@ -6,9 +6,30 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-operator-global-prompt-shadows-code-seals — needs-human (L1 data/config drift; 운영자 global row 가 코드 상수를 통째 대체해 2026-06-18 이후 프롬프트 봉인 전량 미도달)
+
+- **status**: `needs-human` — **코드 결함이 아니라 운영 데이터 drift**다. 수정 방향이 (a) 운영자 row 갱신(데이터 작업) vs (b) compose 를 replace→merge 로 바꾸기(Major 코드 변경, 운영자 커스터마이즈 계약 변경) 중 **사람 결정 사항**이라 이번 batch 에 넣지 않았다. 미검증을 완료로 보고하지 않기 위해 원장에 남긴다.
+- **source**: `FR-review-frames-live-db-as-spec` 배포 후 라이브 compose 실증 중 **부수 발견**(2026-07-31). 내 계약이 도달하는지 확인하다가 **다른 것들이 도달하지 않음**을 발견했다.
+- **last_seen**: 2026-07-31 · **seen_count**: 1 · **seen_distinct_conv**: n/a(대화 신호 아닌 구성 측정)
+- **rootcause_confidence**: **high** — 배포본 ask-worker 에서 직접 측정. `compose_system_prompt` 는 `WebSystemPrompts` scope='global' row 가 있으면 **코드 상수 `SYSTEM_PROMPT` 를 통째로 대체**한다(`base_prompt = str(_brow[0])`). 라이브 global row = **15,978자 / UpdatedAt 2026-06-18 13:58:25**, 코드 상수 = **20,575자**. 따라서 2026-06-18 이후 `SYSTEM_PROMPT` **본문에만** 추가된 규칙은 프로덕션에 **존재하지 않는다**.
+- **측정(배포본 실측, marker 부재 확정)**: 아래는 라이브 composed prompt 및 코드-append guidance 상수 전체(16,825자)에서 **둘 다 부재** 확인분 —
+  - `ZERO ROWS IS NOT ABSENCE` (FR-false-absence-zero-row-catalog-scope, 원장 `fixed:deployed:verified`)
+  - `COMPARING an attachment against the live DB` (FR-partial-evidence-false-verification)
+  - `COMPLETENESS COMES FROM AN EXPLICIT COMPLETENESS SIGNAL` (FR-false-truncation-belief, 원장 `fixed:deployed:verified`)
+  - `TRUNCATION NOTICES / PREVIEW-TRUNCATED` (동)
+  - `IDENTIFIER CASE` (FR-schema-name-case-drift)
+  - `check_table_coverage` 유도 (REQ-20260714-attach-table-coverage)
+  - `## ATTACHED FILES` 섹션 전체
+- **도달하는 것(대조군)**: `compose_system_prompt` 의 `parts` 로 **코드가 always-append** 하는 것들만 살아 있다 — `_INJECTION_GUARD_NOTICE` · `_ATTACHMENT_DELIVERY_DIRECTIVE` · `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` · **`_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE`(이번 cycle)**. `_run_agent_core` 가 뒤에 붙이는 `_DATA_GROUNDING_GUIDANCE`/`_MYSQL_DIALECT_GUIDANCE`/`_ACTIVE_INTERPRETATION_GUIDANCE` 등도 코드 경로라 살아 있다.
+- **의미(정직 표기)**: 위 봉인들의 **프롬프트 레버 부분**은 라이브에서 무효다. 단 각 마찰의 **도구/코드 레버**(`search_routines`·`_catalog_scope_hint`·완전성 신호 emitter·`describe_routine` offset·`check_table_coverage` 도구 자체 등)는 코드라 정상 작동하므로 봉인이 통째로 무효인 것은 아니다. 그러나 원장이 두 항목을 `fixed:deployed:verified` 로 닫은 근거에는 프롬프트 레버가 포함돼 있었으므로, **그 verified 판정의 일부 전제가 라이브에서 성립하지 않았다**.
+- **왜 이번 수정은 영향을 안 받았나(설계 검증)**: 본 cycle 의 계약을 `SYSTEM_PROMPT` 본문이 아니라 `parts` always-append 로 넣은 것이 정확히 이 drift 를 겨냥한 것이었고(FR-attachment-update-pasted-not-versioned 의 AUTH-1a 선례), 실측이 그 선택을 검증했다. 같은 cycle 에서 §ATTACHED FILES 에 넣은 **미러 1줄은 라이브에 도달하지 않는다** — 코드 상수 경로(운영자 row 부재·bootstrap)에서만 유효한 이중화로 남는다.
+- **필요한 사람 액션(1줄)**: 운영자 global row 를 현재 코드 상수로 재동기화할지, 아니면 `compose_system_prompt` 를 "운영자 row = 코드 상수를 **대체**" 에서 "**추가**"(또는 필수 섹션 merge)로 바꿀지 결정 — 후자는 Major(모든 대화 프롬프트) + 운영자 커스터마이즈 계약 변경이라 plan 필요. **결정 전까지 새 프롬프트 규칙은 `SYSTEM_PROMPT` 본문이 아니라 코드 append 로 넣어야 라이브에 도달한다.**
+
 ## FR-review-frames-live-db-as-spec — fixed:undeployed (L1 시간 방향 계약 부재; 리뷰가 '적용 후'가 아닌 '현재 DB' 기준으로 불평)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 27 PASS · feature-0002 전체 2114 passed/30 skipped · `make test` RC=0 4회 연속) + §18.8 codex 3렌즈 적대 리뷰([P1] 0 · [P2] 4 중 2 흡수·2 근거 수용) 완료. **배포 전**. 배포 후 동일 5파일 재리뷰에서 '적용 전제' 절 분리 + 미배포 상태에 🔴 배지 부재 관측 시 `fixed:deployed:unverified-live`.
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 27 PASS · feature-0002 전체 2114 passed/30 skipped · `make test` RC=0 4회 연속) + §18.8 codex 3렌즈([P1] 0 · [P2] 4 중 2 흡수·2 근거 수용) + verify-completion PASS + **배포 완료**(2026-07-31, PR #1102 merge main `2ecfe4b5` → `make deploy-web` 전체 스코프: web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile, post-cutover soak 90s 통과. **4서비스 GIT_COMMIT=2ecfe4b5 running/healthy**, edge `/healthz` ok·mysql_ok·pg_ok).
+  **배포본 런타임 실증(ask-worker)**: 시간 방향 계약 적재 True · BEFORE/AFTER True · `PRECONDITION`+`결함/문제/위험` 금지 True · 🔴/🟡 배지 금지 True · "실행되지 않았다/실패했다" 금지 True · "적용 전제 / 배포 순서" 절 계약 True · **라이브 대조 강제 문구 존속 True**(회귀 0) · L2 힌트 미발견 오류에 발동 True·3분기 True·무관 오류 잡음 0 True · MySQL/MSSQL `MATCH_SNIPPET` True · 전체열거 상수 `''` True · `(본문 외 매칭)` 라벨 True.
+  **라이브 compose 경로 실증(가장 중요)**: 실 `agent_memory` 연결로 `compose_system_prompt` 호출 → 결과(13,604자)에 `REVIEWING A PROPOSED CHANGE — TIME DIRECTION` **도달 확인**. 즉 운영자 global row 가 base 를 대체하는 실제 프로덕션 조건에서도 계약이 살아 있다(AUTH-1a 설계 검증). **라이브 대화 실측 미수행** → `unverified-live`.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` (2026-07-30) — "곧 적용될 쿼리 구조를 기준으로 답변하는게 아니라 항상 현재DB를 기준으로 불평하듯 주의사항을 전달".
 - **last_seen**: 2026-07-30 · **seen_count**: 1 · **seen_distinct_conv**: 12 (60일 서명 노출)
 - **modality**: 1:1 동기(대상) + 그룹 비동기(`…b5f40d99`) · **product_id(마스킹)**: P-119 외(117/114/109) · **conv(마스킹)**: `…a2efa955`(topic "SQL 쿼리 코드 리뷰") · 대조군 `…4348bc34` · `…b5f40d99` · `…7af6ae1c` · `…5cef7aa2` · `…eb3f79c0` · `…a48a40c8` · `…a8b43197`
