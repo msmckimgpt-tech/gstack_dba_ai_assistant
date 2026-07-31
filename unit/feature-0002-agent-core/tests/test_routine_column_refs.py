@@ -298,7 +298,7 @@ def test_ref_columns_of_defends_against_garbage():
         assert mg._ref_columns_of(bad) == []
 
 
-# ── D. refs 서명 — cols 가 빠지면 기능이 조용히 죽는다 (feature-0030 cyvol 상호작용) ─────
+# ── D. refs 서명 — cols 가 빠지면 기능이 조용히 죽는다 (perf-cyvol 상호작용) ─────
 def test_refs_signature_includes_cols():
     """`sync_routine` 은 서명이 같으면 ROUTINE_USES 재작성을 통째로 생략한다(cyvol 최적화).
     참조 컬럼은 엣지 속성(`ref_columns`)이 되므로 **서명에 포함되어야** 한다 — 빠지면 참조

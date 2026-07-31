@@ -1,4 +1,4 @@
-"""feature-0030 (cyvol): 그래프 sync 의 cypher 호출량 감축 회귀 잠금.
+"""perf-cyvol: 그래프 sync 의 cypher 호출량 감축 회귀 잠금.
 
 라이브 실측(2026-07-28) — 전량 sync 1회 = cypher 158,544 회 / PG 실행 867초(wall 1148초의 75%).
 샘플링 프로파일 지배 형태가 (a) 테이블·루틴마다 재-MERGE 되는 Schema/Table 정점,

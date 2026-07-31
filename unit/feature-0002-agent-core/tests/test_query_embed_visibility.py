@@ -1,4 +1,4 @@
-"""feature-0035 (qembed-vis): 질의 임베딩 강등 가시화 + 타임아웃 재조정 회귀 잠금.
+"""perf-qembed: 질의 임베딩 강등 가시화 + 타임아웃 재조정 회귀 잠금.
 
 라이브 실측(2026-07-31): 임베딩 백엔드가 대량 백필(시그니처 전수 재계산 48,226건)로 포화된
 창에서 답변 2건이 각각 20,587ms·20,022ms 를 쓰고 **타임아웃 → trigram 폴백** 했다. warm 은
@@ -44,7 +44,7 @@ def test_degraded_flag_survives_the_publication_filter():
 
 def test_ok_flag_is_numeric_and_json_safe():
     """§3b 는 `jsonb_each_text(init_detail)` 로 **전 키**를 `::float` 캐스트한다 — bool/문자열이면
-    `invalid input syntax` 로 섹션이 통째로 죽는다(feature-0034 패널 MAJOR-1 라이브 재현).
+    `invalid input syntax` 로 섹션이 통째로 죽는다(perf-initpro 패널 MAJOR-1 라이브 재현).
     소스 문자열이 아니라 **직렬화 후 타입**으로 확인한다(패널 MINOR-5: 종전 테스트는 정확한
     소스 철자를 요구해 무해한 리팩터링에도 깨지면서 정작 실제 타입은 안 봤다)."""
     for v in (1.0, 0.0):

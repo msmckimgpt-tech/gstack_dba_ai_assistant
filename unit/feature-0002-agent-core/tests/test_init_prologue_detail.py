@@ -1,11 +1,11 @@
-"""feature-0034 (initpro): init_ms 프롤로그 계측 + 잔차 노출 회귀 잠금.
+"""perf-initpro: init_ms 프롤로그 계측 + 잔차 노출 회귀 잠금.
 
 계측 동기(7일 실측 2026-07-30): feature-0026 의 `init_detail` 은 `history_load` **이후**만
 담았고, 함수 진입~그 지점 사이 266 줄(메모리 DB 준비·datasource resolve·데이터플레인 연결)은
 통짜였다. 그 결과 `init_ms` 평균 4,921ms 중 설명분이 750ms 뿐 — **4,171ms(85%) 미귀속**.
 워커 직접 계측에서 데이터플레인 `connect_with_retry` 만 1,447ms 로 나왔다.
 
-**feature-0031 에서 얻은 교훈을 적용한다**: 잔차 키(`init_other_ms`)를 반드시 노출한다.
+**perf-infdetail 에서 얻은 교훈을 적용한다**: 잔차 키(`init_other_ms`)를 반드시 노출한다.
 직전 cycle 에서 "미귀속 33초" 를 쫓다 실제로는 red-team 이었음이 드러났는데, 그 판정이
 가능했던 이유가 잔차를 명시했기 때문이다. 노출하지 않으면 다음 블라인드스팟이 또 숨는다.
 """

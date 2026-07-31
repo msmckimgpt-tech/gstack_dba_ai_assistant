@@ -1078,3 +1078,9 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - 조치: 8건 전부 수정. 테스트 6 → 9건(발행 필터를 소스에서 추출해 실제 평가 + config↔spec parity + 소비처 존재). 역검증 5종 생존 0. 전체 스위트 회귀 0.
 - 패널 clean: 발행 순서 · 게이트 스코프(fail-safe) · 잔차 상호작용 · 타임아웃 blast radius · 재시도 증폭 없음 · §3b-1 SQL · §3b 비회귀 · 프론트 무영향.
 - Timestamp: 2026-07-31T09:30:00Z
+
+## REV-20260731T110000-ai-root-perf-cycle-label-fix [SKIPPED:comment-doc-only] — 성능 cycle 라벨 정정
+- Related TASK: CHG-20260731T110000-perf-cycle-label-fix (feature-0002-agent-core, Minor §12.3)
+- Reason: 내가 만든 표기 오염의 되돌림 — 코드 **주석·docstring·문서**만 치환하고 로직·키 이름·설정값·테스트 assert 대상은 무변경. 전체 스위트 회귀 0. 병렬 세션의 정당한 feature 참조와 과거 test-runs.d 증거는 의도적으로 보존(치환 대상에서 제외했음을 grep 으로 확인). 동작 표면이 없어 §18.8 패널 불요.
+- 판단 근거: 사용자가 plan 정합성 검토를 지시했고, 그 과정에서 내 cycle 별칭 4종이 병렬 세션 실재 feature ID(0030/0031/0034/0035)와 전부 충돌함을 발견. 하류 전파(후속 세션이 `ai/claude/feature-0030-cyvol-*` 브랜치명 채택)까지 관측돼 방치 시 오독이 누적된다.
+- Timestamp: 2026-07-31T11:00:00Z

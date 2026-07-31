@@ -807,7 +807,7 @@ AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS
 #   12s = 관측된 최대-실입력 지연(4.2~5.4s)의 2.2~2.9배. 포화 시 낭비는 20s 대비 8s 절감.
 #   포화 창에서는 어떤 값이든 완료되지 않으므로(요청이 큐에 갇힘) 이 값의 유일한 역할은
 #   "실입력이 정상 백엔드에서 성공할 여유" 를 주면서 실패 확인을 앞당기는 것이다.
-#   강등 발생은 feature-0035 `init_detail.query_embed_ok` 로 관측되므로 추측이 아니라
+#   강등 발생은 perf-qembed `init_detail.query_embed_ok` 로 관측되므로 추측이 아니라
 #   데이터로 재조정한다. **주의**: 값 변경 시 `shared/runtime_settings.py` 의 spec default 도
 #   같이 고쳐야 한다(패널 MAJOR-2 — 콘솔이 구값을 표시하고 '초기화' 가 조용히 되돌린다).
 AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = _startup_int("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "12") or "12"))
