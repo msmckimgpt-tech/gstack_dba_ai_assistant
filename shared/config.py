@@ -1442,6 +1442,18 @@ AGENT_METADATA_CLUSTER_SUMMARY = int(os.getenv("AGENT_METADATA_CLUSTER_SUMMARY",
 #  묶음의 요약 1~2건을 답변 컨텍스트에 붙인다. **사전 계산분만** 쓰며(런타임 합성 금지),
 #  0 으로 내리면 주입이 멈추고 답변은 종전 grounding 으로 진행한다.
 AGENT_CLUSTER_SUMMARY_GROUNDING = int(os.getenv("AGENT_CLUSTER_SUMMARY_GROUNDING", "1"))
+
+# ── 커버리지 우선순위 자동 시드 (feature-0035-analysis-planner, ITEM-11) ────
+#  분석 대상이 "사용자가 클릭한 노드 + 이웃"으로만 정해져 커버리지가 중요도와 무관하게 편향된다
+#  (라이브 2026-07-31 실측: 테이블 2,040/17,192 = 11.9%). 구조 변경이 없는 사이클에 중요도 상위
+#  미분석 테이블을 소량 자동 시드해 그 편향을 메운다. 시드 큐잉은 change-reanalysis 와 같은
+#  경로(자격·그래프 실재·cap·쿨다운·busy 가드)를 쓰므로 안전장치가 이중이다.
+#  SEED_CAP 은 **사이클당** 시드 수 — 작게 유지해 자동 LLM 지출이 서서히 오르게 한다.
+AGENT_ANALYSIS_COVERAGE_SEEDS = int(os.getenv("AGENT_ANALYSIS_COVERAGE_SEEDS", "1"))
+AGENT_ANALYSIS_COVERAGE_SEED_CAP = int(os.getenv("AGENT_ANALYSIS_COVERAGE_SEED_CAP", "3"))
+#  ⚠ 위 SEED_CAP 은 **스키마당**이다. 시드는 스키마 루프 안에서 일어나고 큐잉 경로의 cap·쿨다운도
+#  스키마 단위라, 사이클 전체 상한이 따로 없으면 스키마 수(라이브 수백)만큼 곱해진다.
+AGENT_ANALYSIS_COVERAGE_CYCLE_CAP = int(os.getenv("AGENT_ANALYSIS_COVERAGE_CYCLE_CAP", "9"))
 AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
 # LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
 # candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,

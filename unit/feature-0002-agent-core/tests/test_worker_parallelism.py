@@ -60,6 +60,9 @@ PERF_KEYS = {
     "AGENT_METADATA_CLUSTER_SUMMARY",
     # feature-0034 analysis-consumption(2026-07-30): L2 요약의 답변 grounding 주입 스위치.
     "AGENT_CLUSTER_SUMMARY_GROUNDING",
+    # feature-0035 analysis-planner(2026-07-31): 중요도 기반 커버리지 자동 시드.
+    "AGENT_ANALYSIS_COVERAGE_SEEDS", "AGENT_ANALYSIS_COVERAGE_SEED_CAP",
+    "AGENT_ANALYSIS_COVERAGE_CYCLE_CAP",
     # feature-0031 analysis-grounding(2026-07-30): 분석 증거 수집의 사용 여부와 깊이 상한.
     #   운영 DB read 부하가 여기서 나므로 재배포 없이 조절·정지할 수 있어야 한다.
     "AGENT_METADATA_STATS_ENABLED", "AGENT_METADATA_STATS_MAX_STAGE",

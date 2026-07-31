@@ -592,6 +592,13 @@ def _auto_reanalyze_structure_changes(mem_conn, scope_key, schema_label, *, prob
                     report.get("auto_reanalysis_seeded", 0)) + len(seeded)
             _auto_note_status(schema_key, status or "unknown", len(changes), report,
                               seeded=len(seeded), run_id=rep.get("run_id"))
+        else:
+            # feature-0035(ITEM-11): 구조 변경이 없는 사이클에 **커버리지**를 중요도 순으로
+            #   채운다. 지금까지 분석 대상은 "사용자가 클릭한 노드 + 이웃"뿐이라 커버리지가
+            #   중요도와 무관하게 편향됐고(라이브 11.9%), 그 편향이 클러스터 요약·대화 grounding
+            #   품질의 상한이 된다. 시드 큐잉은 change 경로와 **같은 함수**를 쓴다 — 자격·그래프
+            #   실재·cap·쿨다운·busy 가드를 두 번 구현하지 않는다.
+            _seed_coverage_targets(scope_key, schema_key, schema_label, report)
         # 스냅샷 갱신 — 관측한 축만: 삭제 반영 + **시드 성공분만** 새 지문으로 전진.
         # 새로 켜진 축(t/r_new_baseline)은 대조 없이 인벤토리 전량을 baseline 으로 굳힌다.
         if not include_tables:
@@ -629,6 +636,63 @@ def _auto_reanalyze_structure_changes(mem_conn, scope_key, schema_label, *, prob
 
 #: 무발동 status — telemetry `auto_reanalysis_blocked` 로 집계(운영자가 "왜 안 도는가"를 수치로 본다).
 _AUTO_BLOCKED_STATUSES = frozenset({"ineligible", "cooldown", "busy", "disabled", "noop"})
+
+
+def _seed_coverage_targets(scope_key, schema_key, schema_label, report) -> None:
+    """중요도 상위 미분석 테이블을 자동 시드(feature-0035 ITEM-11). 전 경로 예외 흡수.
+
+    구조 변경 감지와 **같은 큐잉 함수**를 쓰되 reason 만 다르다. 이 경로가 자체 cap·쿨다운을
+    새로 만들면 자동 LLM 지출의 안전장치가 두 벌이 되어 서로를 모른다.
+    """
+    try:
+        from . import analysis_planner as _planner
+        if not _planner.enabled():
+            return
+        limit = _planner.seed_limit()
+        if limit <= 0:
+            return
+        # ⚠ 사이클 전역 상한(codex): 이 함수는 effective-schema 루프 안에서 불리고 큐잉 경로의
+        #   cap·쿨다운은 **스키마 단위**다. 사이클 상한이 없으면 스키마 수만큼 곱해진다.
+        #   이미 이 사이클에서 시드한 몫을 빼고 잔여만 요청한다.
+        cycle_cap = _planner.cycle_limit()
+        if cycle_cap > 0:
+            already = int((report or {}).get("coverage_seeded", 0) or 0) if isinstance(report, dict) else 0
+            remaining = cycle_cap - already
+            if remaining <= 0:
+                return
+            limit = min(limit, remaining)
+        from shared import db as _db
+        conn = _db._pg_connect_ro()
+        if conn is None:
+            return
+        try:
+            cur = conn.cursor()
+            try:
+                targets = _planner.select_priority_targets(cur, scope_key, schema_label, limit)
+            finally:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if not targets:
+            return
+        from . import node_analysis as _na
+        rep = _na.enqueue_change_analysis(
+            scope_key, schema_key, targets, reason="coverage_priority",
+            requested_by="auto:coverage-planner", cap=limit) or {}
+        seeded = len(rep.get("seeded_keys") or [])
+        if isinstance(report, dict) and seeded:
+            report["coverage_seeded"] = int(report.get("coverage_seeded", 0)) + seeded
+        logging.getLogger("insight").info(
+            "커버리지 시드 schema=%s 후보=%s 시드=%s status=%s",
+            schema_key, len(targets), seeded, rep.get("status"))
+    except Exception as exc:
+        logging.getLogger("insight").debug("coverage_seed_failed schema=%s err=%r", schema_key, exc)
 
 
 def _auto_note_status(schema_key: str, status: str, candidates: int, report,
