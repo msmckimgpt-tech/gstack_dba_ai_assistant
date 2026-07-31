@@ -1,7 +1,9 @@
 """feature-0033-analysis-synthesis — L2 클러스터 합성 요약 단위 테스트.
 
 검증 축:
-  A(캐시 계약): 멤버셋 + L1 지문 + L0 지문 **3중 일치**일 때만 캐시 적중. 하나라도 다르면 재생성.
+  A(캐시 계약): 멤버셋 + L1 지문 + L0 지문 + **라벨** 일치일 때만 캐시 적중. 하나라도 다르면 재생성.
+     (라벨은 label-canon 2026-07-31 에 추가 — 요약 프롬프트가 label 을 입력으로 받으므로
+      라벨이 바뀌면 요약문이 낡는다.)
   B(결정적 정렬): 입력 순서가 달라도 같은 버전 지문 — 정렬이 빠지면 캐시가 오적중한다.
   C(비용 유계): pass 당 생성 상한 · 배치 크기 · LLM 실패 시 부분 성공 유지.
   D(불변식): 요약이 클러스터링 시그니처에 유입되지 않는다(유입되면 재임베딩 순환).
@@ -98,28 +100,39 @@ def _run(monkeypatch, cur, clusters, llm_result=None, capture=None):
 
 
 def test_cache_hit_when_all_three_versions_match(monkeypatch):
-    cur = _Cur(cached_rows=[("h1", "기존 요약", "v1", "e1")])
+    cur = _Cur(cached_rows=[("h1", "기존 요약", "v1", "e1", "몬스터 스폰")])
     made, calls, _ = _run(monkeypatch, cur, [_cluster(mhash="h1", l1="v1", ev="e1")])
     assert made == 0 and calls == [], "3중 일치인데 재생성했다"
 
 
 def test_cache_miss_when_l1_version_changed(monkeypatch):
     """분석문(L1)이 갱신되면 요약도 낡은 것이다."""
-    cur = _Cur(cached_rows=[("h1", "기존 요약", "v_old", "e1")])
+    cur = _Cur(cached_rows=[("h1", "기존 요약", "v_old", "e1", "몬스터 스폰")])
     made, calls, _ = _run(monkeypatch, cur, [_cluster(mhash="h1", l1="v_new", ev="e1")])
     assert made == 1 and len(calls) == 1
 
 
 def test_cache_miss_when_evidence_version_changed(monkeypatch):
     """증거(L0)가 갱신되면 요약도 낡은 것이다 — 증거 변경이 요약에 전파되는 유일한 경로."""
-    cur = _Cur(cached_rows=[("h1", "기존 요약", "v1", "e_old")])
+    cur = _Cur(cached_rows=[("h1", "기존 요약", "v1", "e_old", "몬스터 스폰")])
     made, calls, _ = _run(monkeypatch, cur, [_cluster(mhash="h1", l1="v1", ev="e_new")])
     assert made == 1 and len(calls) == 1
 
 
+def test_cache_miss_when_label_changed(monkeypatch):
+    """라벨이 바뀌면 요약도 낡은 것이다 — label-canon(2026-07-31) §18.8 codex P1.
+
+    스키마 간 어휘 통일이 라벨만 바꾸는데, 종전 캐시 키(멤버셋+L1+L0)에는 라벨이 없어
+    **기존 요약이 옛 어휘로 영구히 남았다**(밴드는 `거래 시스템`, 요약문은 `거래 처리`).
+    생성 시점을 통일 이후로 옮긴 것만으로는 신규분만 고쳐진다."""
+    cur = _Cur(cached_rows=[("h1", "기존 요약", "v1", "e1", "거래 처리")])
+    made, calls, _ = _run(monkeypatch, cur, [_cluster(mhash="h1", l1="v1", ev="e1", label="거래 시스템")])
+    assert made == 1 and len(calls) == 1, "라벨이 바뀌었는데 요약을 재생성하지 않았다"
+
+
 def test_cache_miss_when_member_set_changed(monkeypatch):
     """멤버가 바뀌면 다른 클러스터다 — 저장된 해시가 없으므로 미스."""
-    cur = _Cur(cached_rows=[("h_other", "기존 요약", "v1", "e1")])
+    cur = _Cur(cached_rows=[("h_other", "기존 요약", "v1", "e1", "몬스터 스폰")])
     made, calls, _ = _run(monkeypatch, cur, [_cluster(mhash="h1", l1="v1", ev="e1")])
     assert made == 1
 

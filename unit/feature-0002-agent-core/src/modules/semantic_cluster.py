@@ -909,6 +909,98 @@ def _merge_clusters_by_label(valid, labels, max_size, key_of) -> tuple:
     return out_valid, out_labels, count
 
 
+def _ws_key(lab) -> str:
+    """공백·대소문자를 무시한 라벨 비교 키. `메일 시스템` 과 `메일시스템` 을 같은 어휘로 본다."""
+    return "".join(str(lab or "").split()).strip().lower()
+
+
+def _canonicalize_labels_across_schemas(clusters, sim=None, max_n=None) -> dict:
+    """**서로 다른 스키마**의 클러스터가 의미적으로 같은데 라벨만 다르면 하나의 어휘로 통일한다.
+
+    같은 스키마 안의 유의어는 `_merge_clusters_by_label` 이 **병합**으로 처리한다. 스키마가 다르면
+    두 클러스터는 별개 밴드가 맞으므로(각 DB 의 자기 테이블·루틴을 가리킨다) **병합하지 않고 라벨
+    텍스트만** 정규화한다.
+
+    라이브 근거(2026-07-31, mssql-06656002eda6 · 클러스터 2,083개 · 스키마 115개): 같은 게임 DB 의
+    사본 스키마들이 각자 라벨링되면서 어휘가 갈렸다 — `거래 시스템`↔`거래 처리`,
+    `아이템 관리`↔`아이템 획득`, `길드 신청`↔`길드 가입` 이 **centroid 유사도 0.9998** 인데 라벨만
+    달랐다. 사용자가 지적한 `메일 시스템`↔`우편 시스템` 도 같은 부류다.
+
+    임계 근거(같은 데이터 실측 분포):
+
+    - 교차-스키마 **같은 라벨** 쌍: 중앙 0.949
+    - 교차-스키마 **다른 라벨** 쌍: 중앙 0.672 · p95 0.788 · **p99 0.848**
+
+    기본값 0.97 은 다른-라벨 쌍의 p99 보다 한참 위라, "같은 클러스터인데 라벨만 다른" 경우만 잡는다.
+
+    **유사도 임계 외 예외 하나**: 공백·대소문자만 다른 라벨(`메일 시스템` vs `메일시스템`)은 유사도와
+    무관하게 같은 어휘로 본다. 이 경로로 채택되는 hub 는 정의상 **철자 변형**이므로(비교 키가 같다)
+    의미가 다른 라벨이 끼어들 수 없다.
+
+    체이닝 방지: union-find 를 쓰지 않는다(A~B, B~C 지만 A~C 는 먼 경우 전이 병합이 어휘를 뭉갠다).
+    각 클러스터는 **직접 이웃**만 보고, 그 이웃 중 가장 큰 클러스터(hub)의 라벨을 따른다 — 1-hop
+    결정론이라 pass 마다 흔들리지 않는다(라벨 캐시 전패 방지).
+
+    반환: {(eff, cid): 새 라벨} — 바뀌는 것만. numpy 부재·과대 입력이면 {}(fail-soft).
+    """
+    try:
+        import numpy as np
+    except Exception:
+        return {}
+    th = float(getattr(_cfg, "AGENT_METADATA_CLUSTER_LABEL_CANON_SIM", 0.97) if sim is None else sim)
+    cap = int(getattr(_cfg, "AGENT_METADATA_CLUSTER_LABEL_CANON_MAX_N", 4000) if max_n is None else max_n)
+    rows = [c for c in (clusters or []) if c.get("centroid") is not None and str(c.get("label") or "").strip()]
+    n = len(rows)
+    if th <= 0 or n < 2 or n > cap:
+        return {}
+    C = np.asarray([r["centroid"] for r in rows], dtype=np.float32)
+    nrm = np.linalg.norm(C, axis=1, keepdims=True)
+    nrm[nrm == 0] = 1.0
+    C = C / nrm
+    S = C @ C.T
+    effs = [r["eff"] for r in rows]
+    labs = [str(r["label"]) for r in rows]
+    sizes = [int(r.get("size") or 0) for r in rows]
+    wkeys = [_ws_key(l) for l in labs]
+    out = {}
+    for i in range(n):
+        # hub 후보 = 자신 + (다른 스키마 & (유사도 >= 임계 | 공백 무시 시 같은 라벨)) 이웃
+        best = (sizes[i], labs[i])
+        for j in range(n):
+            if j == i or effs[j] == effs[i]:
+                continue
+            if not (float(S[i, j]) >= th or wkeys[j] == wkeys[i]):
+                continue
+            cand = (sizes[j], labs[j])
+            # 결정론: 멤버 수 최대 → 동률은 사전순 최소(라벨 문자열)
+            if cand[0] > best[0] or (cand[0] == best[0] and cand[1] < best[1]):
+                best = cand
+        if best[1] != labs[i]:
+            out[(rows[i]["eff"], rows[i]["cid"])] = best[1]
+    if not out:
+        return {}
+    # 같은 스키마 안에서 라벨이 충돌하면(정규화 결과가 겹치면) 작은 쪽을 원래 라벨로 되돌린다 —
+    # 스키마-내 동일 라벨은 `_merge_clusters_by_label`/`_disambiguate_labels` 의 관할이고,
+    # 여기서 새로 만들면 "왜 같은 이름이 둘인가" 가 다시 생긴다.
+    final = dict(out)
+    per_eff = {}
+    for idx, r in enumerate(rows):
+        key = (r["eff"], r["cid"])
+        changed = key in final
+        lab = final.get(key, labs[idx])
+        per_eff.setdefault((r["eff"], _ws_key(lab)), []).append((1 if changed else 0, -sizes[idx], labs[idx], r))
+    for (_eff, _k), group in per_eff.items():
+        if len(group) < 2:
+            continue
+        # 우선순위: **원래 그 라벨이던 밴드가 먼저**(0) → 그다음 큰 밴드 → 사전순. 되돌림 대상은
+        #   항상 통일로 바뀐 쪽이다. 종전처럼 크기만으로 정렬하면, 그 라벨을 이미 갖고 있던
+        #   밴드가 더 작을 때 그쪽을 "되돌리려" 시도해 no-op 이 되고 **충돌이 그대로 남는다**.
+        group.sort()
+        for _chg, _negsz, _orig, r in group[1:]:
+            final.pop((r["eff"], r["cid"]), None)
+    return final
+
+
 def _disambiguate_labels(labels, name_lists) -> list:
     """병합 후에도 남은 동일 라벨을 구별 — 라벨 + ' · ' + 멤버 affix 스템(없으면 순번).
 
@@ -1279,12 +1371,13 @@ def _summary_cache(cur, scope_key, schema_name, hashes) -> dict:
         return {}
     try:
         with _summary_savepoint(cur):
-            cur.execute("SELECT member_set_hash, summary, l1_version, evidence_version "
+            cur.execute("SELECT member_set_hash, summary, l1_version, evidence_version, label "
                         "FROM cluster_summaries WHERE scope_key = %s AND schema_name = %s "
                         "AND member_set_hash = ANY(%s)",
                         (scope_key, schema_name, list(hashes)))
             rows = cur.fetchall() or ()
-        return {str(r[0]): {"summary": r[1], "l1_version": r[2] or "", "evidence_version": r[3] or ""}
+        return {str(r[0]): {"summary": r[1], "l1_version": r[2] or "", "evidence_version": r[3] or "",
+                            "label": r[4] or ""}
                 for r in rows}
     except Exception as exc:
         _log.debug("summary_cache_unavailable schema=%s err=%r", schema_name, exc)
@@ -1312,8 +1405,10 @@ def _summary_put(cur, scope_key, schema_name, cl, summary, model) -> bool:
                 " member_count=EXCLUDED.member_count, analyzed_count=EXCLUDED.analyzed_count, "
                 " l1_version=EXCLUDED.l1_version, evidence_version=EXCLUDED.evidence_version, "
                 " model=EXCLUDED.model, created_at=EXCLUDED.created_at "
+                # label 도 갱신 축 — 위 misses 판정과 같은 이유(라벨이 바뀌면 요약이 낡는다).
                 "WHERE cluster_summaries.l1_version IS DISTINCT FROM EXCLUDED.l1_version "
-                "   OR cluster_summaries.evidence_version IS DISTINCT FROM EXCLUDED.evidence_version",
+                "   OR cluster_summaries.evidence_version IS DISTINCT FROM EXCLUDED.evidence_version "
+                "   OR cluster_summaries.label IS DISTINCT FROM EXCLUDED.label",
                 (scope_key, schema_name, cl["mhash"], cl.get("cluster_id"),
                  (cl.get("label") or "")[:128], str(summary)[:_SUMMARY_MAX_CHARS],
                  cl["member_count"], cl["analyzed_count"],
@@ -1339,9 +1434,14 @@ def _llm_cluster_summaries(cur, datasource_key, eff_schema, clusters, remaining=
     if not _summary_enabled():
         return 0
     cached = _summary_cache(cur, datasource_key, eff_schema, [c["mhash"] for c in clusters])
+    # label-canon(2026-07-31, §18.8 codex P1): **라벨도 신선도 축이다.** 요약 프롬프트가 `label` 을
+    #   입력으로 받으므로 라벨이 바뀌면 요약문이 낡는다. 종전 키(멤버셋+L1+L0)에는 라벨이 없어,
+    #   스키마 간 어휘 통일로 라벨만 바뀐 클러스터의 **기존 요약이 영구히 옛 어휘로 남았다**
+    #   (생성 시점을 통일 이후로 옮긴 것만으로는 신규분만 고쳐진다).
     misses = [c for c in clusters
               if (cached.get(c["mhash"]) or {}).get("l1_version") != c["l1_version"]
-              or (cached.get(c["mhash"]) or {}).get("evidence_version") != c["evidence_version"]]
+              or (cached.get(c["mhash"]) or {}).get("evidence_version") != c["evidence_version"]
+              or (cached.get(c["mhash"]) or {}).get("label") != (c.get("label") or "")[:128]]
     if not misses:
         return 0
     # pass 당 상한 — 첫 실행에 전량(818개)을 만들지 않고 여러 pass 에 나눠 채운다. 멤버가 많은
@@ -1727,6 +1827,10 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
         assign = {}          # 전역 item index → (cid, label)
         total_clusters = 0
         skipped_idx = set()  # skip 스키마 멤버(기존 배정 보존)
+        # label-canon: 스키마 간 어휘 통일용 누적(밴드 단위 centroid·라벨·크기 + 멤버 인덱스).
+        #   스키마 루프가 끝난 뒤에야 "다른 스키마의 같은 개념"을 볼 수 있으므로 여기서 모은다.
+        _canon_rows, _canon_members = [], {}
+        _pending_summaries = []   # [(eff, [summary_input])] — 최종 라벨 확정 후 일괄 생성
         # 스키마 순회는 사전순(lexicographic — 패널 n1 표기 정정) 결정론. cluster id 는 **스키마-로컬
         # 순번**(패널 m5): 프론트 그룹 키가 스키마 네임스페이스(nsKey)라 전역 유일성이 불필요하고,
         # 전역 순번은 앞 스키마의 증감이 뒤 전체 id 를 shift 시켜 대량 UPDATE·재투영 churn 을 만든다.
@@ -1871,13 +1975,12 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                             [f"{n.casefold()}:{_ev_map.get(n.casefold(), '')}"
                              for n in _names if _ev_map.get(n.casefold())]),
                     })
-                # 상한은 pass 전체 기준 — 이미 이 pass 에서 만든 몫을 빼고 잔여만 넘긴다.
-                #   (스키마 루프 안에서 상한을 새로 주면 총량이 스키마 수만큼 곱해진다 — codex P1)
-                _sum_left = _SUMMARY_MAX_PER_PASS - int(rep.get("summaries", 0) or 0)
-                _n_sum = _llm_cluster_summaries(cur, datasource_key, eff, _sum_inputs,
-                                                remaining=_sum_left)
-                if _n_sum:
-                    rep["summaries"] = rep.get("summaries", 0) + _n_sum
+                # label-canon(2026-07-31): **여기서 생성하지 않고 보류**한다. 요약 프롬프트는 `label`
+                #   을 입력으로 받는데, 스키마 간 어휘 통일은 모든 스키마를 본 뒤에야 확정된다. 여기서
+                #   만들면 밴드는 `거래 시스템` 인데 요약문은 `거래 처리` 를 말하는 부정합이 남고,
+                #   요약 캐시 키(멤버셋+L1+L0)에 라벨이 없어 **영구히 고착**된다. 루프 종료 후
+                #   최종 라벨로 생성한다(상한 계산은 그대로 pass 전체 기준).
+                _pending_summaries.append((eff, _sum_inputs))
             except Exception as _sx:
                 # 요약은 부가 산출물이다 — 실패가 클러스터링·라벨 역기록을 막지 않는다.
                 _log.warning("cluster_summary pass 실패(다음 pass 재시도): %r", _sx)
@@ -1908,8 +2011,55 @@ def run_semantic_cluster_pass(scope_key, datasource_key, conn=None) -> dict:
                     # NIT-1: attached = 이번 pass 에서 attach 로 배정된 총수(신규+유지 재배정 포함 —
                     # 멱등 재실행에서도 상태 총수로 유지. 변경분은 updated 가 관측).
                     rep["attached"] += 1
+            # label-canon: 이 스키마의 확정 밴드를 누적(attach 반영 후 = 최종 멤버셋).
+            for _lidx in range(len(valid)):
+                _canon_rows.append({"eff": eff, "cid": _lidx,
+                                    "label": labels_by_cid.get(_lidx) or "",
+                                    "centroid": (centroids[_lidx] if centroids and _lidx < len(centroids) else None),
+                                    "size": 0})
+            for _i in idxs:
+                _c0, _l0 = assign.get(_i, (None, None))
+                if _c0 is not None:
+                    _canon_members.setdefault((eff, _c0), []).append(_i)
+            for _row in _canon_rows[-len(valid):] if valid else []:
+                _row["size"] = len(_canon_members.get((_row["eff"], _row["cid"]), []))
             total_clusters += len(valid)
         rep["clusters"] = total_clusters
+        # label-canon(2026-07-31): 스키마 간 어휘 통일 — 밴드는 그대로 두고 **라벨 텍스트만** 맞춘다.
+        #   같은 게임 DB 의 사본 스키마들이 각자 라벨링돼 `거래 시스템`/`거래 처리` 처럼 갈리던 것을
+        #   해소한다(centroid 0.9998 인데 라벨만 달랐다). 실패해도 라벨이 종전대로 남을 뿐(fail-soft).
+        try:
+            _canon = _canonicalize_labels_across_schemas(_canon_rows)
+            for (_eff, _cid), _newlab in (_canon or {}).items():
+                for _i in _canon_members.get((_eff, _cid), []):
+                    _c0, _l0 = assign.get(_i, (None, None))
+                    if _c0 == _cid:
+                        assign[_i] = (_cid, _newlab)
+            rep["label_canon"] = len(_canon or {})
+        except Exception as _exc:
+            # 통일은 **파생 뷰**다(라벨 kv 캐시에는 LLM 원본 라벨만 남긴다 — 통일 결과를 심으면
+            #   기능을 꺼도 되돌아가지 않는다). 그래서 실패하면 그 pass 는 원본 라벨로 기록되고
+            #   다음 pass 에 자연 복구된다. 조용히 넘기면 그 1-pass 플랩을 아무도 모르므로 warning.
+            _canon = {}
+            _log.warning("label_canon_failed scope=%s err=%r (이번 pass 는 원본 라벨로 기록됨)",
+                         scope_key, _exc)
+        # 보류해 둔 합성 요약을 **최종 라벨**로 생성한다(위 label-canon 주석 참조).
+        for _eff_s, _inputs in _pending_summaries:
+            try:
+                for _ci in _inputs:
+                    _newlab = (_canon or {}).get((_eff_s, _ci.get("cluster_id")))
+                    if _newlab:
+                        _ci["label"] = _newlab
+                _sum_left = _SUMMARY_MAX_PER_PASS - int(rep.get("summaries", 0) or 0)
+                if _sum_left <= 0:
+                    break
+                _n_sum = _llm_cluster_summaries(cur, datasource_key, _eff_s, _inputs,
+                                                remaining=_sum_left)
+                if _n_sum:
+                    rep["summaries"] = rep.get("summaries", 0) + _n_sum
+            except Exception as _sx:
+                # 요약은 부가 산출물이다 — 실패가 클러스터링·라벨 역기록을 막지 않는다.
+                _log.warning("cluster_summary pass 실패(다음 pass 재시도): %r", _sx)
         # 역기록: 변경분만 UPDATE (싱글턴/미클러스터 → NULL 회수, skip 스키마는 보존).
         changed = []   # analysis-freshness: 변경 정점 → AGE targeted 투영(30분 sync 대기 제거)
         for i, it in enumerate(items):

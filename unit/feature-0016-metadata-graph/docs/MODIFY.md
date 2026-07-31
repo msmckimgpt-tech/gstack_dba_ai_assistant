@@ -437,3 +437,18 @@ source_of_truth: true
 - `docs/REPORT.md` `20260731T0000-cluster-outcome-measured` — 전역 지표 전/후, 배치 품질 정량 비교
   (MDS vs 라벨이름순 vs 루틴명순 vs 전체평균, 4개 스키마), 사용자가 든 두 사례의 판정과 근거 수치.
 - `docs/TASK.md` — E.6 완료.
+
+## CHG-20260731T010000-ai-claude-feature-0016-label-canon — 스키마 간 라벨 어휘 통일 (2026-07-31)
+
+사용자 리포트("동일한 의미가 다른 이름으로 구성")의 잔여분. 같은 스키마 안은 이미
+`_merge_clusters_by_label` 이 병합으로 해소했지만, **스키마가 다르면** 각자 라벨링돼 어휘가 갈렸다.
+
+| 파일 | 변경 |
+|---|---|
+| `unit/feature-0002-agent-core/src/modules/semantic_cluster.py` | `_ws_key`·`_canonicalize_labels_across_schemas` 신설 (T-LC1) · `run_semantic_cluster_pass` 에 누적/적용 배선 · 합성 요약 생성을 통일 이후로 이동 (T-LC2) |
+| `shared/config.py` | `AGENT_METADATA_CLUSTER_LABEL_CANON_SIM=0.97` · `..._MAX_N=4000` 신설 |
+| `unit/feature-0002-agent-core/src/modules/semantic_cluster.py` | 요약 캐시 신선도 축에 `label` 추가(§18.8 codex P1 — 기존 요약이 옛 어휘로 잔류하던 결함) |
+| `unit/feature-0002-agent-core/tests/test_semantic_cluster_label_canon.py` | 13건 신설 (T-LC3) |
+| `unit/feature-0002-agent-core/tests/test_cluster_summary.py` | 캐시 픽스처에 `label` 컬럼 반영 + `test_cache_miss_when_label_changed` 신설 |
+
+근거 수치는 REPORT.md `20260731T0100-label-canon` 참조.
