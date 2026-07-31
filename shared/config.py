@@ -381,6 +381,17 @@ try:
 except Exception:  # pragma: no cover
     OpenAI = None
 
+# label-canon(2026-07-31): **스키마 간** 라벨 어휘 통일 임계. 서로 다른 스키마의 두 밴드가 이 유사도
+#   이상이면 라벨만 하나로 맞춘다(밴드는 병합하지 않는다 — 각자 자기 DB 의 객체를 가리키므로).
+#   라이브 실측 분포(mssql-06656002eda6, 밴드 2,083 · 스키마 115): 교차-스키마에서 **같은 라벨** 쌍은
+#   중앙 0.949, **다른 라벨** 쌍은 중앙 0.672 · p95 0.788 · p99 0.848. 0.97 은 다른-라벨 p99 보다
+#   한참 위라 "같은 클러스터인데 라벨만 다른" 경우만 잡는다. 0 이하면 비활성.
+AGENT_METADATA_CLUSTER_LABEL_CANON_SIM = float(
+    os.getenv("AGENT_METADATA_CLUSTER_LABEL_CANON_SIM", "0.97") or "0.97")
+# N×N centroid 행렬 메모리 가드(4000² × 4B ≈ 64MB). 초과 scope 는 통일을 건너뛴다(fail-soft).
+AGENT_METADATA_CLUSTER_LABEL_CANON_MAX_N = int(
+    os.getenv("AGENT_METADATA_CLUSTER_LABEL_CANON_MAX_N", "4000") or "4000")
+
 console = Console()
 
 # feature-0018 runtime-settings: 관리 콘솔(`시스템 > 설정`)에서 저장한 restart-mode override 를
