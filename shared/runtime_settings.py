@@ -1140,6 +1140,28 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
     #   부하는 위 `AGENT_WORKER_DS_BUDGET` 게이트 위에서 나며, 첫 접촉은 카탈로그만 읽어
     #   사용자 테이블 read 가 0 이다. 아래 두 상한이 "얼마나 깊이 파는가"를 정한다.
     {
+        "key": "AGENT_ANALYSIS_VERIFY_ENABLED",
+        "label": "분석 내용 사실 확인",
+        "category": "자원 격리·관측",
+        "description": "AI가 작성한 테이블 설명을 실제 수집된 통계와 대조해 '뒷받침됨 / 어긋남 / 판단 불가' 중 하나로 표시합니다. 확인에 실패하면 아무 표시도 남기지 않습니다 — 확인하지 않은 설명에 확인 도장을 찍지 않기 위해서입니다. 0 으로 내리면 확인이 멈춥니다.",
+        "unit": "",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_ANALYSIS_VERIFY_MAX_PER_PASS",
+        "label": "사실 확인 건수(점검 1회)",
+        "category": "자원 격리·관측",
+        "description": "한 번의 점검에서 확인할 설명 개수입니다. 확인 1건이 AI 호출 1회이므로 이 값이 곧 비용입니다. 통계가 깊게 수집된 테이블부터 확인합니다.",
+        "unit": "건",
+        "default": 20,
+        "minimum": 0,
+        "maximum": 200,
+        "apply_mode": "live",
+    },
+    {
         "key": "AGENT_ANALYSIS_COVERAGE_SEEDS",
         "category": "자원 격리·관측",
         "label": "중요 테이블 자동 분석",

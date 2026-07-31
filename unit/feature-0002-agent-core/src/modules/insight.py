@@ -3004,6 +3004,18 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         #   막지 않는다(코어 비차단). 관리콘솔에서 "AI 능동 분석" 트리거 시에만 잡이 생긴다.
         try:
             from modules import node_analysis as _node_analysis
+            # feature-0036(ITEM-10): 분석문 ↔ 증거 대조 판정. 분석 tick 직후에 둔다 — 방금
+            #   생성된 분석문이 다음 pass 의 판정 대상이 된다. 어떤 실패도 미검증으로 남을 뿐
+            #   분석 흐름을 막지 않는다.
+            try:
+                from . import analysis_verify as _av
+                # ⚠ 자체 PG 연결을 열게 한다(codex P1) — 이 스코프의 `mem_conn` 은
+                #   agent_memory 이고, agent_kb 커넥션은 여기 없다.
+                _av_rep = _av.run_verification_pass() if _av.enabled() else None
+                if _av_rep and _av_rep.get("checked"):
+                    scan_report["analysis_verify"] = _av_rep
+            except Exception as _ave:
+                logging.getLogger("insight").debug("analysis_verify_failed err=%r", _ave)
             _na_rep = _node_analysis.process_pending()
             if _na_rep.get("claimed"):
                 scan_report["node_analysis"] = _na_rep
