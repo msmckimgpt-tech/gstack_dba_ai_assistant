@@ -116,6 +116,24 @@ FROM agent_runtime.messages m,
 WHERE m.role='assistant' AND m.meta_json->'duration_breakdown'->'init_detail' ? 'init_other_ms'
   AND m.created_at > now()-interval '${DAYS} days'"
 
+section "3b-1. 질의 임베딩 강등율 (feature-0035 — 벡터검색 없이 나간 답변 비율, ${DAYS}d)"
+# query_embed_ok=0 = '벡터 없이 나갔다'(trigram 폴백, 검색 품질 저하). 원인은 타임아웃이
+# 대다수지만 그것만은 아니다 — 모델 미설정·클라이언트 부재·게이트웨이 4xx/5xx 도 0 이 된다.
+# 종전엔 완전 무음이라 query_embed_ms 만 보고 "느린 성공" 과 구분되지 않았고, 대량 백필로
+# 백엔드가 포화된 2주 동안 그 상태가 드러나지 않았다. 강등율이 오르면 임베딩 백엔드 경합 신호.
+run_to query_embed_degrade.txt psql_p -c "
+SELECT count(*) AS answers,
+       count(*) FILTER (WHERE (d->>'query_embed_ok')::float = 0) AS degraded,
+       round(100.0*count(*) FILTER (WHERE (d->>'query_embed_ok')::float = 0)
+             / NULLIF(count(*),0)) AS degraded_pct,
+       round(avg((d->>'query_embed_ms')::float) FILTER (WHERE (d->>'query_embed_ok')::float = 1)::numeric) AS ok_avg_ms,
+       round(max((d->>'query_embed_ms')::float) FILTER (WHERE (d->>'query_embed_ok')::float = 1)::numeric) AS ok_max_ms,
+       round(avg((d->>'query_embed_ms')::float) FILTER (WHERE (d->>'query_embed_ok')::float = 0)::numeric) AS degraded_avg_ms
+FROM agent_runtime.messages m,
+     LATERAL (SELECT m.meta_json->'duration_breakdown'->'init_detail') AS x(d)
+WHERE m.role='assistant' AND (m.meta_json->'duration_breakdown'->'init_detail') ? 'query_embed_ok'
+  AND m.created_at > now()-interval '${DAYS} days'"
+
 section "3b. init_detail 단계별 평균 (신규 계측, ${DAYS}d)"
 run_to init_detail.txt psql_p -c "
 SELECT d.key AS stage, count(*) AS n, round(avg(d.value::float)::numeric,1) AS avg_ms,
@@ -123,6 +141,7 @@ SELECT d.key AS stage, count(*) AS n, round(avg(d.value::float)::numeric,1) AS a
 FROM agent_runtime.messages m,
      jsonb_each_text(m.meta_json->'duration_breakdown'->'init_detail') d
 WHERE m.role='assistant' AND m.meta_json->'duration_breakdown' ? 'init_detail'
+  AND d.key NOT IN ('query_embed_ok')   -- 소요가 아닌 상태 플래그 — '단계별 평균' 표의 유령 행 방지
   AND m.created_at > now()-interval '${DAYS} days'
 GROUP BY d.key ORDER BY avg_ms DESC"
 

@@ -283,10 +283,18 @@ _TIMEOUT_SPECS: tuple[dict[str, Any], ...] = (
         "key": "AGENT_KB_QUERY_EMBED_TIMEOUT_SEC",
         "category": "지식베이스",
         "label": "KB 질의 임베딩 타임아웃",
-        "description": "상호작용 준비 단계의 질의 임베딩(빠른 실패) 상한.",
+        # feature-0035: 지연은 **입력 길이에 비례**한다(실측 6자 0.5s / 3,428자 2.4s /
+        # 5,712자 4.2s). 라이브 최대 사용자 메시지 5,996자(p99 1,382자) 기준 12s = 2.2~2.9배 여유.
+        # 초과 시 벡터 검색 없이 trigram 으로 강등되며(설계된 폴백), 그 비율은 perf-snapshot
+        # §3b-1(`init_detail.query_embed_ok`)로 관측한다 — 값 조정은 그 데이터로 한다.
+        "description": "상호작용 준비 단계의 질의 임베딩(빠른 실패) 상한. 초과 시 벡터 검색 없이 trigram 으로 강등된다(지연은 질문 길이에 비례 — 실측 5,712자 4.2초).",
         "unit": "초",
-        "default": 20,
-        "minimum": 2,
+        # §18.8 패널 MAJOR-2: 이 값이 shared/config.py 의 기본값과 어긋나면 콘솔이 구값을
+        # 표시하고 '초기화' 가 그 구값을 override 로 써 변경을 조용히 되돌린다. 아래
+        # test_query_embed_visibility.py 의 parity 테스트가 두 값의 일치를 잠근다.
+        "default": 12,
+        # 하한은 llm.py 의 `max(5, …)` 바닥과 정합해야 한다 — 2 를 넣어도 실효 5 라 무음 불일치.
+        "minimum": 5,
         "maximum": 600,
         "apply_mode": "restart",
     },

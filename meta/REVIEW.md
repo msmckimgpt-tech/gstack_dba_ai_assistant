@@ -1066,3 +1066,15 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - 무변경 정직: `docs/DECISIONS.md` noChange(이번 창 신규 4자리 project ADR 0 — ADR-003·ADR-0025-05~08·ADR-0031-* 는 전부 feature-local 정본) · `docs/RELEASE_NOTES.md` noChange(07-13 이후 10회 연속 doc-sync 미터치 = 사실상 폐지 regime, 무인 런이 타깃을 자기 재량으로 되살리지 않음 — report-only) · `docs/PROJECT.md`/`CONVENTIONS.md` noChange · STATUS passthrough 21행 무확장(ADR-0031 §1 셀 누적 금지).
 - report-only(§13.1 사람/feature-cycle 소관): feature-0031~0034 의 `feature_status_date`/`feature_status_note` 부재로 STATUS 신규 4행이 sparse(feature-0025 와 동일 — doc_sync 는 정본 frontmatter 를 쓰지 않는다) · `docs/STATUS.md` frontmatter `source_of_truth: true` ↔ DOC_REGISTRY '인덱스 only' 모순 · `docs/ARCHITECTURE.md` `## 8.` 절 번호 2회 중복 · feature-0031 ADR-0031-07 thin 하한 '40' ↔ 코드/REVIEW '20' 내부모순 · feature-0016 TASK T-EC2 '300행/서브배치 ≤5회' ↔ 출하 600행 내부모순 · project ADR-0031 ↔ feature-0031 ADR-0031-* ID 네임스페이스 충돌 실현 · `wiki/Glossary/_Index.md` Entry 수 24↔26(prior-window drift) · wiki Decisions ADR 카운트 2참조 stale(prior-window).
 - landing/배포 소유 = wrapper 위임(무인 cron) → 로컬 commit 까지만. reconcile-first: 라이브 서빙 static 파리티 갭 0(라이브 `generated`=2026-07-29 = 커밋 전 origin/main 일치).
+
+## REV-20260731T093000-ai-root-query-embed-degrade-visibility [SUBAGENT:backend] — 질의 임베딩 강등 가시화 + 타임아웃 재조정
+- Related TASK: CHG-20260731T090000-query-embed-degrade-visibility (feature-0002-agent-core, Minor §12.3)
+- 패널: fresh-context 적대 1렌즈(런타임 실행 + 라이브 SQL + 변이 실측). **BLOCKER 1 / MAJOR 3 / MINOR 5**.
+- **판정: 초안 REJECT — 기능이 실제로 동작하지 않았다.**
+  - **BLOCKER-1** 발행부 소요 필터(`v >= 0.1`)가 강등 플래그 0.0 을 탈락시켜 **언제나 "강등 0%"** 보고. 종전 무음보다 나쁜 거짓 안심. 런타임 실증(성공 시 published 에 키 존재 / 강등 시 published={}).
+  - **MAJOR-1** 5s 근거가 **16자 질의 한 종류** 측정이었다 — 지연은 입력 길이 비례(5,712자 4,172ms). 라이브 최대 5,996자에서 경계. "중간 체제 미관측" 주장도 반증. → 12s.
+  - **MAJOR-2** 콘솔 spec default 가 20 잔존 → 표시 불일치 + '초기화' 가 변경을 조용히 되돌림.
+  - **MAJOR-3** 변이 7 중 2 생존(발행 순서 이동 · §3b-1 삭제) — 소스 문자열 검색의 한계. **직전 cycle 의 동일 교훈을 문서에 적어놓고 재생산.**
+- 조치: 8건 전부 수정. 테스트 6 → 9건(발행 필터를 소스에서 추출해 실제 평가 + config↔spec parity + 소비처 존재). 역검증 5종 생존 0. 전체 스위트 회귀 0.
+- 패널 clean: 발행 순서 · 게이트 스코프(fail-safe) · 잔차 상호작용 · 타임아웃 blast radius · 재시도 증폭 없음 · §3b-1 SQL · §3b 비회귀 · 프론트 무영향.
+- Timestamp: 2026-07-31T09:30:00Z

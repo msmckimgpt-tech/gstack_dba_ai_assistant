@@ -797,7 +797,20 @@ AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS
 # 백엔드 지연 시 그 길이만큼 init 을 블로킹하던 회귀(준비 50s)의 한 축이었다.
 # grounding 임베딩은 실패해도 trigram 으로 graceful degrade 되므로 짧게 끊어 빠르게
 # 폴백한다(전용 embed-ollama warm 실측 0.33s — 20s 면 cold·일시지연도 충분히 흡수).
-AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = _startup_int("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "20") or "20"))
+# qembed-vis(2026-07-31): 20 → 12. **초안의 5s 는 §18.8 패널이 반증했다** — 근거였던
+#   "warm p90 215ms, 23배 여유" 는 **16자 질의 한 종류만** 잰 값이었고, 실제 지연은 입력
+#   길이에 비례한다(독립 재현: 6자 524ms / 2,340자 1,700ms / 3,428자 2,419ms / 5,712자
+#   **4,172ms**; 패널은 6KB 에서 3.7~5.4s, 10KB 에서 5.7~8.5s 관측). 라이브 90일 사용자
+#   메시지 최대가 5,996자(p99 1,382자)라 5s 는 **최대 입력에서 경계**였다(패널 실측 6KB
+#   3회 중 1회 폴백). 초안 주석의 "5~20s 중간 체제는 미관측" 도 거짓이었다 — 유휴 백엔드에서
+#   입력 길이만 바꿔도 바로 나온다.
+#   12s = 관측된 최대-실입력 지연(4.2~5.4s)의 2.2~2.9배. 포화 시 낭비는 20s 대비 8s 절감.
+#   포화 창에서는 어떤 값이든 완료되지 않으므로(요청이 큐에 갇힘) 이 값의 유일한 역할은
+#   "실입력이 정상 백엔드에서 성공할 여유" 를 주면서 실패 확인을 앞당기는 것이다.
+#   강등 발생은 feature-0035 `init_detail.query_embed_ok` 로 관측되므로 추측이 아니라
+#   데이터로 재조정한다. **주의**: 값 변경 시 `shared/runtime_settings.py` 의 spec default 도
+#   같이 고쳐야 한다(패널 MAJOR-2 — 콘솔이 구값을 표시하고 '초기화' 가 조용히 되돌린다).
+AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = _startup_int("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "12") or "12"))
 # ITEM-05 (하이브리드 검색 — 벡터+키워드 score fusion). gate ON 시 PG read path
 # (_load_rag_documents_for_request_pg) 가 벡터(cosine)+trigram(pg_trgm) 검색을 둘 다 수행해
 # (conversation_id, fact_key, content) union 병합 후 score = ALPHA·vec_sim + BETA·trigram_sim 으로
