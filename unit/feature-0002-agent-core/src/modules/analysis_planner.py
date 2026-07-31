@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 _log = logging.getLogger("analysis_planner")
 
@@ -102,6 +103,58 @@ def relationship_signals(cur, datasource_key: str) -> dict:
     return out
 
 
+#: 파티션·샤드 접미 감지 — 4자리 이상 연속 숫자(날짜 `20240425`, 연월 `202404`, 일련번호)만
+#: 파티션으로 본다. 3자리 이하(`item2`, `log_01`)는 정당한 이름일 수 있어 건드리지 않는다.
+_PARTITION_SUFFIX_RE = re.compile(r"^(?P<base>.+?)[_-]?\d{4,}$")
+
+
+def partition_base(table_name: str) -> str:
+    """파티션 계열의 베이스 이름. 접미 숫자를 **한 번만** 제거한다.
+
+    `daily_league_ranking_20240425`   → `daily_league_ranking`
+    `daily_league_ranking_1_20240425` → `daily_league_ranking_1`  (샤드 `_1` 은 보존)
+    `tf_log_05_item`                  → 그대로(접미가 아니라 중간)
+
+    ⚠ 반복 제거를 하지 않는다(codex P1): `foo_2024_2025` 를 `foo` 까지 깎으면 `foo_2024` 와
+    `foo_2025` 가 **독립 테이블이어도 한 계열로 합쳐진다**. 잘못 합치면 실제 테이블이 영영
+    분석되지 않으므로, 덜 깎아 계열이 조금 잘게 나뉘는 쪽이 안전한 실패 방향이다.
+    """
+    name = str(table_name or "")
+    m = _PARTITION_SUFFIX_RE.match(name)
+    if not m:
+        return name
+    base = m.group("base").rstrip("_-")
+    return base or name
+
+
+def collapse_partitions(tables, signals=None) -> list:
+    """같은 파티션 계열은 **대표 1개**만 남긴다. 대표는 계열 내 **최고 점수**(동점은 이름 순).
+
+    ⚠ load-bearing(라이브 실측): 어떤 datasource 는 테이블 1,464개 중 **1,364개(93%)가 날짜
+    접미 파티션**이다. 관계 신호가 없는 스키마에서는 점수가 전부 0이라 선정이 이름 순으로
+    퇴화하는데, 그때 축약이 없으면 **같은 구조의 파티션 수백 개를 반복 분석**하게 된다.
+    커버리지 숫자만 오르고 실제 이해는 늘지 않으면서 토큰만 태우는 최악의 조합이다.
+
+    ⚠ 대표를 이름 순으로 고르면 안 된다(codex P1): 계열 안에 대화 조인 이력이 있는 파티션이
+    있어도 사전순 첫 번째에 밀려 **그 신호가 통째로 버려진다**. 축약은 하되 계열이 가진 가장
+    강한 신호는 보존해야 한다.
+
+    한 계열을 대표 하나로 분석해 두면 나머지는 그 분석문이 그대로 설명한다.
+    """
+    sig = signals or {}
+    groups: dict = {}
+    for t in sorted(str(x) for x in (tables or []) if x):
+        groups.setdefault(partition_base(t), []).append(t)
+    out = []
+    for members in groups.values():
+        if len(members) == 1:
+            out.append(members[0])
+            continue
+        # members 는 이름 오름차순이므로 max 의 첫 최대값 반환이 곧 이름 순 tie-break 다.
+        out.append(max(members, key=lambda m: score(m, sig)))
+    return out
+
+
 def score(table_name: str, signals: dict) -> int:
     """우선순위 점수. 신호가 없으면 0(= 이름 순 tie-break 로 밀린다)."""
     edges, conv = signals.get(str(table_name).casefold(), (0, 0))
@@ -136,11 +189,12 @@ def select_priority_targets(cur, datasource_key: str, eff_schema: str, limit: in
         _log.debug("priority_select_failed ds=%s schema=%s err=%r",
                    datasource_key, eff_schema, exc)
         return []
-    ranked = rank_targets(tables, signals, limit)
+    collapsed = collapse_partitions(tables, signals)
+    ranked = rank_targets(collapsed, signals, limit)
     if not ranked:
         return []
-    _log.info("분석 우선순위 선정 ds=%s schema=%s 미분석=%s 선정=%s 최고점=%s",
-              datasource_key, eff_schema, len(tables), len(ranked), ranked[0][1])
+    _log.info("분석 우선순위 선정 ds=%s schema=%s 미분석=%s 계열=%s 선정=%s 최고점=%s",
+              datasource_key, eff_schema, len(tables), len(collapsed), len(ranked), ranked[0][1])
     return [f"{datasource_key}:{eff_schema}.{t}" for t, _s in ranked]
 
 
