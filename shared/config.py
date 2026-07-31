@@ -1485,6 +1485,13 @@ AGENT_ANALYSIS_COVERAGE_CYCLE_CAP = int(os.getenv("AGENT_ANALYSIS_COVERAGE_CYCLE
 #  기본 활성 — 판정 없이 쌓이는 분석문이 위층(요약·답변)의 확신 근거가 되는 상태가 더 위험하다.
 AGENT_ANALYSIS_VERIFY_ENABLED = int(os.getenv("AGENT_ANALYSIS_VERIFY_ENABLED", "1"))
 AGENT_ANALYSIS_VERIFY_MAX_PER_PASS = int(os.getenv("AGENT_ANALYSIS_VERIFY_MAX_PER_PASS", "20"))
+
+# ── 도메인(스키마) 합성 요약, lazy (feature-0037-domain-synthesis, ITEM-08 / L3) ──
+#  클러스터 요약 위에 "이 DB 전체가 어떤 도메인인가"를 얹는다. **요청된 스키마만** 만든다 —
+#  사전 전량 생성(LazyGraphRAG 교훈)도, 답변 경로 런타임 합성(체감 지연)도 하지 않기 위해
+#  grounding 이 요청을 남기고 insight tick 이 합성한다.
+AGENT_DOMAIN_SUMMARY_ENABLED = int(os.getenv("AGENT_DOMAIN_SUMMARY_ENABLED", "1"))
+AGENT_DOMAIN_SUMMARY_MAX_PER_PASS = int(os.getenv("AGENT_DOMAIN_SUMMARY_MAX_PER_PASS", "3"))
 AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
 # LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
 # candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,

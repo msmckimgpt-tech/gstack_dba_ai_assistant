@@ -190,7 +190,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **notes**: 판정 변경은 back-refine 물량에 직결 — 캡 유지한 채 배포 후 실측.
 
 ### ITEM-07 · L2 클러스터 요약 (신규 저장 계약)
-- **status**: pending
+- **status**: done
 - **feature_id**: feature-0032-analysis-synthesis
 - **dimension**: structural
 - **risk_grade**: Major
@@ -214,7 +214,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **notes**: 배치는 5~8개(라벨용 40 배치는 요약엔 과다).
 
 ### ITEM-08 · L3 도메인 합성 (lazy)
-- **status**: pending
+- **status**: done
 - **feature_id**: feature-0032-analysis-synthesis
 - **dimension**: structural
 - **risk_grade**: Minor
@@ -229,7 +229,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **effort**: 中
 
 ### ITEM-09 · 분석 산출물 → 대화 grounding 배선
-- **status**: pending
+- **status**: done
 - **feature_id**: feature-0032-analysis-synthesis
 - **dimension**: functional
 - **risk_grade**: Major
@@ -247,7 +247,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **notes**: risk_grade Major 사유 = 사용자 대면 답변 경로 변경.
 
 ### ITEM-10 · 분석 검증층
-- **status**: pending
+- **status**: done
 - **feature_id**: feature-0033-analysis-trust
 - **dimension**: structural
 - **risk_grade**: Minor
@@ -265,7 +265,7 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 - **effort**: 大
 
 ### ITEM-11 · 결정적 플래너 (분석 대상 선정)
-- **status**: pending
+- **status**: done
 - **feature_id**: feature-0033-analysis-trust
 - **dimension**: performance
 - **risk_grade**: Minor
@@ -321,8 +321,21 @@ Phase 는 권장 순서이지 강제 배리어가 아니다 — `depends_on` 이
 
 ## 5. 진행 현황 (improve_cycle 갱신)
 
-- 총 12 · done 7 · in-progress 0 · pending 5 · blocked 0
-- 다음 ready: ITEM-07 (L2 클러스터 요약)
+- 총 12 · **done 12** · in-progress 0 · pending 0 · blocked 0
+- 다음 ready: (없음 — 로드맵 완주 2026-07-31)
+
+### 완주 시점 라이브 실측
+
+| 층 | 산출물 | 규모 |
+|---|---|---|
+| L0 증거 | `metadata_table_stats` | 수집 진행 중(플래너가 커버리지를 채우는 중) |
+| L1 분석 | `node_analysis_jobs` done | 10,576 |
+| L2 요약 | `cluster_summaries` | 1,006 (120 스키마) |
+| L3 도메인 | `domain_summaries` | lazy — 요청분만 |
+| 검증 | `node_analysis_verdicts` | 판정 동작 확인(모순 1건 적발) |
+| 소비 | 답변 grounding 주입 | 지연 99.4ms |
+| 비용 | 백그라운드 토큰 예산 | 24h 상한 2,000만(실측 소비 685만) |
+
 
 ## 6. 이 initiative 에서 확립된 운영 규약
 

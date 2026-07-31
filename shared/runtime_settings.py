@@ -1140,6 +1140,28 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
     #   부하는 위 `AGENT_WORKER_DS_BUDGET` 게이트 위에서 나며, 첫 접촉은 카탈로그만 읽어
     #   사용자 테이블 read 가 0 이다. 아래 두 상한이 "얼마나 깊이 파는가"를 정한다.
     {
+        "key": "AGENT_DOMAIN_SUMMARY_ENABLED",
+        "label": "DB 전체 개요 만들기",
+        "category": "자원 격리·관측",
+        "description": "테이블 그룹 요약들을 다시 묶어 'DB 하나가 어떤 영역을 담당하는지'를 3~5문장으로 정리해 둡니다. 미리 전부 만들지 않고 **실제로 조회된 DB만** 만듭니다 — 아무도 찾지 않은 DB에는 비용을 쓰지 않습니다. 0 으로 내리면 생성이 멈춥니다.",
+        "unit": "",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_DOMAIN_SUMMARY_MAX_PER_PASS",
+        "label": "DB 개요 생성 수(점검 1회)",
+        "category": "자원 격리·관측",
+        "description": "한 번의 점검에서 만들 DB 개요 수입니다. 개요 하나가 그 DB의 그룹 요약 여러 개를 입력으로 받으므로 다른 작업보다 입력이 큽니다 — 작게 두는 편이 안전합니다.",
+        "unit": "개",
+        "default": 3,
+        "minimum": 0,
+        "maximum": 30,
+        "apply_mode": "live",
+    },
+    {
         "key": "AGENT_ANALYSIS_VERIFY_ENABLED",
         "label": "분석 내용 사실 확인",
         "category": "자원 격리·관측",

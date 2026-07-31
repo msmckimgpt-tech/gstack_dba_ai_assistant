@@ -3016,6 +3016,19 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                     scan_report["analysis_verify"] = _av_rep
             except Exception as _ave:
                 logging.getLogger("insight").debug("analysis_verify_failed err=%r", _ave)
+            # feature-0037(ITEM-08): 요청된 스키마만 도메인(L3) 합성. 사전 전량 생성도
+            #   답변 경로 런타임 합성도 하지 않기 위해, grounding 이 남긴 요청만 처리한다.
+            #   ⚠ **advisory lock 을 얻은 tick 에서만** 돈다(codex P2) — lock 없이 돌면 여러
+            #   워커가 같은 스키마를 동시에 합성해 LLM 호출이 중복된다. 노드 분석(claim 기반)과
+            #   달리 이 pass 에는 행 단위 claim 이 없다.
+            if lock_acquired:
+                try:
+                    from . import domain_synthesis as _dsyn
+                    _ds_rep = _dsyn.run_synthesis_pass() if _dsyn.enabled() else None
+                    if _ds_rep and _ds_rep.get("synthesized"):
+                        scan_report["domain_synthesis"] = _ds_rep
+                except Exception as _dse:
+                    logging.getLogger("insight").debug("domain_synthesis_failed err=%r", _dse)
             _na_rep = _node_analysis.process_pending()
             if _na_rep.get("claimed"):
                 scan_report["node_analysis"] = _na_rep
