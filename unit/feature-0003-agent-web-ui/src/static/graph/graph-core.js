@@ -820,9 +820,24 @@ function _metaG6Build() {
   //   이제 줌아웃 축약 예외는 **선택 노드에 직접 닿는 선(양끝 중 하나가 self)** 만 — 이웃 클러터는
   //   하이라이트 상태에서도 정상 간소화되고, 선택 노드의 관계는 계속 보존된다. dim(밝기)은 불변.
   const fa = _metaGraph.focusAdj;
+  // gb-highlight-lit(2026-07-30, 라이브 실측): **접힌 컨텐츠 카테고리 밴드(GB:)의 소속 판정.**
+  //   `lit`/`litSelf` 는 `SC:`(스키마 카드) 접두만 해소했고 `GB:` 는 몰랐다. 그 결과 노드가 선택된
+  //   하이라이트 상태에서 `hlHide` 가 밴드 집계선을 **항상** 제거했다 — 그래프는 보통 노드 클릭으로
+  //   진입하므로(선택이 곧 기본 상태) 접힌 밴드 사이 관계선이 사실상 보이지 않았다(라이브 확인:
+  //   밴드 접힘 1건인데 방출된 GB: 엣지 0). 밴드는 **멤버의 집합**이므로 "멤버 중 하나라도 밝으면
+  //   밴드도 밝다" 로 판정한다(SC: 가 스키마 키로 접히는 것과 같은 계열의 축약).
+  //   `groupMembers` 는 접힘 포함 전량 멤버를 담는다(§50 REV-wiring fix)라 접힌 밴드에서도 성립한다.
+  const gbMembersLit = (r, has) => {
+    if (!r.startsWith("GB:")) return false;
+    const mm = _metaGraph.groupMembers && _metaGraph.groupMembers.get(r.slice(3));
+    if (!mm || !mm.length) return false;
+    for (let i = 0; i < mm.length; i++) if (has(mm[i])) return true;
+    return false;
+  };
   const lit = (rid) => {
     if (!fa) return false;
     const r = String(rid || "");
+    if (gbMembersLit(r, (k) => fa.self.has(k) || fa.nodes.has(k))) return true;
     const mk = r.startsWith("SC:") ? r.slice(3) : r;
     if (fa.self.has(mk) || fa.nodes.has(mk)) return true;
     // 컬럼-레벨 끝점(모델 밖 키 포함)은 소속 테이블로 접어 판정.
@@ -839,6 +854,7 @@ function _metaG6Build() {
   const litSelf = (rid) => {
     if (!fa) return false;
     const r = String(rid || "");
+    if (gbMembersLit(r, (k) => fa.self.has(k))) return true;   // gb-highlight-lit: 밴드=멤버 집합
     const mk = r.startsWith("SC:") ? r.slice(3) : r;
     if (fa.self.has(mk)) return true;
     const gn = _metaGraph.nodes.get(mk);

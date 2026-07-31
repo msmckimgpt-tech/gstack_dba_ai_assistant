@@ -558,3 +558,44 @@ source_of_truth: true
 - 미해소로 남긴 것(정직 표기): **R1**(root 2순위 체인 — 실증 시점 root 계정 전체 한도 소진) · **R2**(모델별 RBAC 부재 — 사용자 결정 대기, REPORT §7).
 - 위험도: Minor(§12.3) — 카피 변경 비파괴.
 - Cross-ref: MODIFY CHG-20260727T190500-opus5-model-postdeploy / TEST Run 2026-07-27-opus5-model-POSTDEPLOY / 선행 REV-20260727T184425-opus5-model.
+
+## REV-20260730T191535-ai-claude-feature-0007-llm-edge-free-routing [CODEX:llm-edge-free-routing] — CONCERN
+- Related TASK: feature-0007-bedrock-llm-provider (TASK-20260730T191535-llm-edge-free-routing)
+- Source: codex exec (OpenAI Codex v0.146.0, gpt-5.6-luna, `model_reasoning_effort=high`, read-only sandbox, `git diff --cached` 자가 수집)
+- Trigger: 코드+설정 변경(라우팅 폴백 정책) — §18.8.1 경량 경로. 세션 도구 제약(subagent 미호출)과 무관한 채널을 우선 선택(§18.8.2 1번).
+- Timestamp: 2026-07-30T19:15:35+09:00 (1차) / 재리뷰 동일 cycle
+- Verdict: CONCERN (1차 P1 3건 → 2건 해소·1건 범위밖 이월 / P2 3건 + 재리뷰 P2 2건 전부 해소)
+
+### 1차 리뷰 지적과 대응
+
+| # | 지적 | 판정 | 대응 |
+|---|---|---|---|
+| P1-1 | 운영 `.env` 에 `AGENT_INSIGHT_OFFHOURS_MODEL=edge` 가 남아 staged 변경만으로는 라이브 강등이 안 꺼짐 | **유효** | `repo/.env` 값을 비움(백업 `.env.bak-llm-edge-free-20260730-193044`). `docker compose config` 로 `""` 파싱 실측. 인라인 주석이 값으로 새지 않도록 주석은 별 줄로 분리 |
+| P1-2 | off-hours 테스트가 env override 존재 시 skip → **운영 환경에서 vacuous pass** | **유효(핵심)** | skip 제거. `test_offhours_downgrade_disabled_in_effective_config` 로 개명하고 **실효 설정**을 검사하도록 반전. 역검증: `AGENT_INSIGHT_OFFHOURS_MODEL=edge` 주입 시 skip 없이 FAIL 확인 |
+| P1-3 | 문서가 "모든 LLM 요청은 claude 2계정 체인" 이라 주장하나 bare `claude-sonnet-4`·`claude-opus-5` 는 단일 계정 | **주장은 유효, 결함은 범위 밖** | 문서 주장을 "자동 강등 경로 없음"으로 **정정**(과장 제거). bare alias 단일계정은 *의도적 격리 설계*(probe/비대화 경로가 root 로 새지 않게 — opus5-model 2026-07-27 결정)이자 **가용성 축**이라 edge-free 결정과 직교. 뒤집으려면 별 결정이 필요하므로 REPORT §8 에 후속으로 명시 이월 |
+| P2-1 | fallback 검사가 이름 토큰(edge/local/gemma) 문자열만 봐서 `ollama-fallback` 류가 통과 가능 | **유효** | 폴백 대상마다 (a) `model_list` 실재, (b) `litellm_params.model` 이 `anthropic/`, (c) `api_base` 부재를 전수 검증하도록 강화 |
+| P2-2 | `_select_llm_provider()` 의 로컬 provider fallback 이 별도로 잔존 | **유효, 별 층** | litellm 폴백 체인과 다른 층(provider 선택). 운영은 `BEDROCK_GATEWAY_URL` 설정으로 미발동. REPORT §8 후속 이월 |
+| P2-3 | YAML·config 주석이 "insight 야간·주말 gemma 강등 유지" 로 남아 신결정과 모순 | **유효** | `litellm_config.yaml` 2곳 + `shared/config.py` 1곳에 superseded 표기 |
+
+### 재리뷰 (수정 후) 지적과 대응
+- 확인된 것: `.env` 빈 값 · 대상 22건 PASS · `edge` 강제 시 skip 없이 FAIL · fallback 6개 전부 target 실재/`anthropic/`/`api_base` 없음/`edge-fallback` 미참조 · `git diff --cached --check` PASS.
+- **[P2] off-hours 로컬 판정이 여전히 문자열 blocklist** → **해소**: allowlist 로 반전(`startswith("claude")` 강제). 역검증 `ollama/mistral` 주입 시 FAIL 확인.
+- **[P2] `FUNCTION.md` §9 Error Handling 등에 폐기된 edge fallback 설명 잔존** → **해소**: FUNCTION.md §9 를 2계정 종단으로 재작성(이전 동작은 superseded 로 병기), `llm.py` docstring 이력에 superseded 표기.
+- **[P1] bare alias 단일계정** → 위 P1-3 과 동일 항목. 이번 cycle 미해소, REPORT §8 이월(정직 표기).
+
+### 판단 근거 (CONCERN 인 이유)
+남은 P1 은 **본 변경이 만들어낸 결함이 아니라 기존 격리 설계의 가용성 갭**이고, 사용자 요청("로컬 LLM 미사용")과 직교한다. 그러나 "미해소" 인 것은 사실이므로 PASS 로 올리지 않고 CONCERN 으로 남기고 REPORT §8 에 명시한다. edge 안전망 제거로 **두 계정 동시 실패 창에서 기능이 실패**하는 trade-off 는 사용자 결정 사항이며 MODIFY/DECISIONS 에 정직하게 기록했다.
+
+- Critical issue: bare `claude-sonnet-4`/`claude-opus-5` 는 fallback 미등록 단일 계정 — 빈 `.env` 기동 환경에서 claude-corp 429 시 즉시 실패(운영 `.env` 는 `-interactive` 지정이라 현재 라이브 영향 없음).
+- Human Approval Needed: no (사용자 결정은 이미 수령 — 로컬 LLM 전면 미사용)
+- Cross-ref: MODIFY CHG-20260730T191535-llm-edge-free-routing · DECISIONS ADR-003 · TEST Run 2026-07-30-llm-edge-free-routing · REPORT §8(후속 3건).
+
+## REV-20260730T200500-ai-claude-feature-0007-edge-free-postdeploy [SKIPPED:post-deploy-live-evidence] — PASS
+- Related TASK: feature-0007-bedrock-llm-provider (TASK-20260730T191535-llm-edge-free-routing 의 배포 후 기록)
+- Reason: 본 cycle 은 **코드 변경 0 · 문서 전용**이다 — 배포 후 관측한 사실의 기록(TEST Run)·선행 cycle 체크박스 완료·LEARNINGS 2건. 판단이 필요한 설계 변경이 없으므로 별도 적대 패널을 돌리지 않는다. 정본 적대 리뷰는 선행 REV-20260730T191535-ai-claude-feature-0007-llm-edge-free-routing(codex 2회, P1 3건 중 2건 해소·1건 이월).
+- 본 cycle 이 확정한 것: 선행 리뷰가 "배포 후 실측 잔여" 로 남겼던 항목이 해소됐다 — 게이트웨이 실 config 의 edge 참조 0, 프로브 3종 served=claude, **경계 밖 시각(19:59 KST)** 에 insight 강등 없음. 즉 단위 테스트가 잠근 계약이 라이브에서도 성립함을 확인.
+- 미해소로 남긴 것(정직 표기): REPORT §8 후속 3건 — ① 게이트웨이 DNS 안정화(edge 제거로 우선순위 상승: 같은 단절이 재발하면 전면 중단) ② bare `claude-sonnet-4`/`claude-opus-5` 단일계정(codex P1 이월, 의도적 격리 설계라 별 결정 필요) ③ `_select_llm_provider()` 의 provider-선택 층 로컬 fallback(다른 층, 운영 미발동).
+- Timestamp: 2026-07-30T20:05:00+09:00
+- 위험도: Minor(§12.3) — 문서 기록, 동작 영향 0.
+- Human Approval Needed: no
+- Cross-ref: MODIFY CHG-20260730T200500-llm-edge-free-routing-postdeploy / TEST Run 2026-07-30-llm-edge-free-routing-POSTDEPLOY / 선행 REV-20260730T191535.

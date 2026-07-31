@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 30 active |
+| Feature 수 | 34 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-30 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+34 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -75,6 +75,10 @@ sources:
 | feature-0028-web-perf | in-progress | web 계층 성능 — ask_result long-poll 워커 스레드 이관(이벤트 루프 stall 제거)·스냅샷 PG 연결 4~5→1(단일 왕복 번들)·권한 카탈로그 TTL 캐시+세션 touch throttle·web MySQL 풀 opt-in (feature-0026 측정 근거·응답/인가 불변, 2026-07-28) | [[feature-0028-web-perf]] | `unit/feature-0028-web-perf/docs/FUNCTION.md` |
 | feature-0029-graph-churn | in-progress | 그래프 sync churn 근절 — 값 무변경 시 updated_at 미전진(upsert·신호·트리거 alembic 0046)·status 히스테리시스(trusted/broken 왕복 차단)·프로브 broken 부활 금지·공유 정점 중복 MERGE 제거(관계당 cypher 11→1~3). 라이브 실측 근거(2h 갱신의 63%가 값 무변경, sync duration 은 churn 행 수에 선형) (2026-07-28) | [[feature-0029-graph-churn]] | `unit/feature-0029-graph-churn/docs/FUNCTION.md` |
 | feature-0030-ask-timeout-extension | in-progress | 실행 타임아웃 임박 시 사용자 확인 후 연장 — 예산 80%(설정 가능) 도달 시 작업 화면에 비차단 배너 + 백그라운드 브라우저 알림, 승인한 그 요청에 한해 run 예산 컷 해제(개별 LLM 호출 상한 15분은 유지 — 중단·즉시답변 응답성 보존). 미승인 시 종전 타임아웃 동작 (2026-07-29) | [[feature-0030-ask-timeout-extension]] | `unit/feature-0030-ask-timeout-extension/docs/FUNCTION.md` |
+| feature-0031-analysis-grounding | in-progress | 노드 분석 접지 — 운영 DB 에서 **통계만**(원시 샘플값 배제, 문자열 min/max 도 미저장·`value_pattern` 6종 CHECK) 단계적으로 수집해 `metadata_table_stats`/`metadata_column_stats`(alembic 0050)에 적재하고 노드 분석 payload 의 `evidence` 블록으로 주입(L0+L1). `NODE_ANALYSIS_PROMPT` 를 '이름 규칙 추론'→'증거 우선'으로 개정 + thin 판정을 길이→항목 충족도로 재정의. LLM 호출 수 불변(같은 콜에 더 나은 입력)·Stage 0 카탈로그(사용자 테이블 read 0)~Stage 2 표준 표본까지 하루 최대 1단계 승격(주간은 Stage 1 상한)·Stage 3 정밀은 운영자 승인 knob 전용·`ds` 자원 예산 게이트 위 fail-soft (2026-07-30) | [[feature-0031-analysis-grounding]] | `unit/feature-0031-analysis-grounding/docs/FUNCTION.md` |
+| feature-0032-llm-token-budget | in-progress | 백그라운드 LLM 토큰 예산 — 사람이 요청하지 않은 자동 지출(노드 분석·클러스터 유지보수·제품 분류)에 rolling 24시간 토큰 상한(`agent_runtime.llm_usage` 원천·진입점 3곳 게이트·커버리지 96%·60초 캐시). **사용자가 기다리는 호출은 세지도 막지도 않는다**(설계 불변식)·fail-open 3중·기본 2,000만(24h 실측 685만의 약 3배)·콘솔 'AI 운영 현황' 예산 막대+attention 2단계 (2026-07-30) | [[feature-0032-llm-token-budget]] | `unit/feature-0032-llm-token-budget/docs/FUNCTION.md` |
+| feature-0033-analysis-synthesis | in-progress | 클러스터 합성 요약(L2) — 의미 클러스터마다 "이 묶음이 함께 무엇을 하는가"를 2~4문장으로 합성해 `cluster_summaries`(alembic 0051)에 적재(라벨 평균 9자가 이름이라면 요약은 설명). PK 는 churn 하는 `cluster_id` 대신 **멤버셋 지문**·캐시 키 3중 일치(멤버셋+L1+L0)·클러스터링 시그니처 **미유입 불변식**(재임베딩 순환 차단)·pass 당 40개 상한·배치 6·feature-0032 예산 하위·live 정지 스위치 (라이브 818 클러스터·15,365 멤버, 2026-07-30) | [[feature-0033-analysis-synthesis]] | `unit/feature-0033-analysis-synthesis/docs/FUNCTION.md` |
+| feature-0034-analysis-consumption | in-progress | 분석 산출물의 대화 소비 — 질문이 언급한 테이블이 속한 묶음의 L2 요약 1~2건을 답변 컨텍스트 `TABLE GROUP SUMMARIES` 섹션으로 주입해 RI-5(쌓인 분석이 콘솔 열람에만 갇혀 있던 상태) 해소. 사전 계산분만(런타임 합성·LLM 호출 0)·근거 수 병기로 추정/실측 구분·2단계 매칭(`strpos` + `(scope, effective_schema, label)` 격리)·`_datamark_untrusted`·statement_timeout 1.5s·전 구간 fail-soft (2026-07-30) | [[feature-0034-analysis-consumption]] | `unit/feature-0034-analysis-consumption/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

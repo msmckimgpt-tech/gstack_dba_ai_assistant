@@ -28,7 +28,21 @@ sources:
   - unit/feature-0016-zd-pg-pause-caddy/docs/TASK.md
   - unit/feature-0017-deploy-build-gate/docs/TASK.md
   - unit/feature-0019-message-editing/docs/TASK.md
+  - unit/feature-0020-zd-deploy-all/docs/TASK.md
+  - unit/feature-0021-redteam-review/docs/TASK.md
+  - unit/feature-0022-agent-scratch-workspace/docs/TASK.md
   - unit/feature-0023-conversation-api-access/docs/TASK.md
+  - unit/feature-0024-conversation-folders/docs/TASK.md
+  - unit/feature-0025-worker-parallelism/docs/TASK.md
+  - unit/feature-0026-perf-observability/docs/TASK.md
+  - unit/feature-0027-perf-latency-p0/docs/TASK.md
+  - unit/feature-0028-web-perf/docs/TASK.md
+  - unit/feature-0029-graph-churn/docs/TASK.md
+  - unit/feature-0030-ask-timeout-extension/docs/TASK.md
+  - unit/feature-0031-analysis-grounding/docs/TASK.md
+  - unit/feature-0032-llm-token-budget/docs/TASK.md
+  - unit/feature-0033-analysis-synthesis/docs/TASK.md
+  - unit/feature-0034-analysis-consumption/docs/TASK.md
 ---
 
 # Project Status (인덱스)
@@ -52,7 +66,7 @@ sources:
 | feature-0004-browser-automation | in-progress | 2026-07-28 | [TASK](../unit/feature-0004-browser-automation/docs/TASK.md) | 엄격한 브라우저 시나리오(TEST-0003) 확정 + 라이브 왕복·scheme 가드 PASS — Completion Checklist 전건 충족 |
 | feature-0005-qa-mcp | in-progress | 2026-07-28 | [TASK](../unit/feature-0005-qa-mcp/docs/TASK.md) | 엄격한 QA 시나리오(TEST-0003) 확정 + MCP 왕복·실 DB 메타데이터 반환 PASS — Completion Checklist 전건 충족 |
 | feature-0006-lan-proxy-access | in-progress | 2026-04-06 | [TASK](../unit/feature-0006-lan-proxy-access/docs/TASK.md) | caddy 운영 자산 이관 완료 |
-| feature-0007-bedrock-llm-provider | in-progress | 2026-07-07 | [TASK](../unit/feature-0007-bedrock-llm-provider/docs/TASK.md) | AWS Bedrock(Seoul) provider 통합, API Vault 폐기 (ADR-0022) · (07-04) insight 주말/야간 gemma 고착 해소 — 용도별 모델 라우팅 분리(interactive/insight fallback 체인 정정, llm-routing) · (07-07) OAuth 토큰 갱신 cron 라이브 probe 제거→정적 검사 전환(CHG-20260707-oauth-cron-static-refresh) |
+| feature-0007-bedrock-llm-provider | in-progress | 2026-07-30 | [TASK](../unit/feature-0007-bedrock-llm-provider/docs/TASK.md) | AWS Bedrock(Seoul) provider 통합, API Vault 폐기 (ADR-0022) · (07-04) insight 주말/야간 gemma 고착 해소 — 용도별 모델 라우팅 분리(interactive/insight fallback 체인 정정, llm-routing) · (07-07) OAuth 토큰 갱신 cron 라이브 probe 제거→정적 검사 전환(CHG-20260707-oauth-cron-static-refresh) · **(07-30) 자동 로컬 LLM(gemma/edge) 강등 경로 전면 제거 — litellm fallback edge 참조 0 + off-hours 시각 강등 기본 비활성(ADR-003, ADR-002 부분 supersede)** |
 | feature-0008-windows-browser-testing | review | 2026-06-04 | [TASK](../unit/feature-0008-windows-browser-testing/docs/TASK.md) | Windows 브라우저 자동 구동 + Playwright MCP (PB-0008) |
 | feature-0009-group-conversation | in-progress | 2026-07-04 | [TASK](../unit/feature-0009-group-conversation/docs/TASK.md) | 안 읽은 메세지/@멘션 배지(gc-unread-badge, REQ-GC-R8 read-state, alembic 0019 + 0020 baseline backfill + read-fix 커서 전진 보정 + read-500-fix(읽음 API `POST /read` 서버 import 정정 `modules.db`→`shared.db`) + read-idspace-fix(읽음 커서·unread 집계는 core_messages.id 공간인데 FE 가 표시 store messages.id 를 보내 GREATEST 가 전진 영구 거부하던 최종 근본원인 — 핸들러가 항상 MAX(core_messages.id)로 전진) — 읽지 않은 신규만 집계, 읽으면 0) · 공유 대화 join 불가 수정(PG named-param 타입 모순 AmbiguousParameter 해소) · assistant SQL dialect 교정+발신자 맥락 라벨(MySQL T-SQL thrashing 해소, agent-core) · optimistic 발신자 표시 정정(전송 직후 owner 오표시 깜빡임 제거) · 참가자 per-message 제품 선택·발화(authz, REQ-GC-R7) · 라이브 UX(처리 중 composer 비잠금·1:1 인터럽트 재요청·그룹 @assistant 중복차단)·owner 게이트 · (07-03) 공유 링크 참여 시 '참여 알림' pill+기존 멤버 unread(gc-join-notice) · (07-04) 멤버 가시성 [from,to] window 공유 범위 — fork clip·join stamp·owner-answer 태그, SECURITY §21/§21.4 recall 봉인(share-visibility-window) (cross-cut: 0002/0003) |
 | feature-0010-google-drive-integration | in-progress | 2026-06-23 | [TASK](../unit/feature-0010-google-drive-integration/docs/TASK.md) | Google Drive 연동 토대 — 계정별 OAuth 토큰 암호화 + MCP 구성 seam (연동 미수행/비활성 scaffold) |
@@ -76,6 +90,10 @@ sources:
 | feature-0028-web-perf | in-progress | 2026-07-28 | [TASK](../unit/feature-0028-web-perf/docs/TASK.md) | web 계층 성능 — ask_result long-poll 워커 스레드 이관(이벤트 루프 stall 제거)·스냅샷 PG 단일연결 번들(호출당 4~5→1)·권한 카탈로그 TTL 캐시+세션 LastSeenAt throttle(인증 5왕복 완화)·web MySQL 풀 opt-in (feature-0026 측정 근거, 응답 shape·인가 불변) |
 | feature-0029-graph-churn | in-progress | 2026-07-28 | [TASK](../unit/feature-0029-graph-churn/docs/TASK.md) | 그래프 sync churn 근절 — 값 무변경 시 updated_at 미전진(upsert·신호·트리거 alembic 0046)·status 히스테리시스(trusted/broken 왕복 차단)·프로브 broken 부활 금지·공유 정점 중복 MERGE 제거(관계당 cypher 11→1~3). 라이브 실측 근거(2h 갱신의 63%가 값 무변경) |
 | feature-0030-ask-timeout-extension | in-progress | 2026-07-29 | [TASK](../unit/feature-0030-ask-timeout-extension/docs/TASK.md) | 실행 타임아웃 80% 도달 시 사용자 확인 후 그 run 한정 무제한 연장 — KV 시그널(cancel/finalize 미러링)·run 예산+LLM 타임아웃 2층 해제·컴포저 인라인 배너+백그라운드 브라우저 알림·conversation.extend.* 권한 신설 |
+| feature-0031-analysis-grounding | in-progress |  | [TASK](../unit/feature-0031-analysis-grounding/docs/TASK.md) |  |
+| feature-0032-llm-token-budget | in-progress |  | [TASK](../unit/feature-0032-llm-token-budget/docs/TASK.md) |  |
+| feature-0033-analysis-synthesis | in-progress |  | [TASK](../unit/feature-0033-analysis-synthesis/docs/TASK.md) |  |
+| feature-0034-analysis-consumption | in-progress |  | [TASK](../unit/feature-0034-analysis-consumption/docs/TASK.md) |  |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 > **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).

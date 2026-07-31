@@ -1054,7 +1054,7 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
         "label": "임베딩 백필 pass 당 행수",
         "description": "insight-worker 임베딩 백필 데몬이 한 pass 에서 처리하는 최대 행수. 높이면 임베딩이 빨리 따라잡지만 embedding gateway 부하가 커집니다.",
         "unit": "행",
-        "default": 1000,
+        "default": 600,
         "minimum": 10,
         "maximum": 20000,
         "apply_mode": "live",
@@ -1131,6 +1131,28 @@ _PERF_SPECS: tuple[dict[str, Any], ...] = (
     #   주입하지도 않는다** — 집계값과 문자열 형태 분류만 남는다(DB CHECK 제약이 강제).
     #   부하는 위 `AGENT_WORKER_DS_BUDGET` 게이트 위에서 나며, 첫 접촉은 카탈로그만 읽어
     #   사용자 테이블 read 가 0 이다. 아래 두 상한이 "얼마나 깊이 파는가"를 정한다.
+    {
+        "key": "AGENT_CLUSTER_SUMMARY_GROUNDING",
+        "category": "자원 격리·관측",
+        "label": "묶음 요약을 답변에 참고시키기",
+        "description": "질문에 나온 테이블이 속한 묶음의 요약을 답변 근거에 함께 넣습니다. 개별 테이블 설명만으로는 알기 어려운 도메인 맥락(어떤 묶음의 일부인지, 조인 상대가 무엇인지)을 AI가 참고하게 됩니다. 미리 만들어 둔 요약만 쓰므로 답변이 느려지지 않습니다. 0 으로 내리면 주입이 멈춥니다.",
+        "unit": "",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
+    {
+        "key": "AGENT_METADATA_CLUSTER_SUMMARY",
+        "category": "자원 격리·관측",
+        "label": "클러스터 요약 생성 사용",
+        "description": "비슷한 테이블끼리 묶인 그룹마다 '이 묶음이 함께 무엇을 하는지'를 2~4문장으로 요약해 둡니다. 그룹 이름만으로는 알 수 없는 도메인 맥락이 쌓여, 나중에 전체를 파악할 때 개별 분석문을 일일이 읽지 않아도 됩니다. 0 으로 내리면 생성이 멈추고 기존 요약은 그대로 남습니다.",
+        "unit": "",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 1,
+        "apply_mode": "live",
+    },
     {
         "key": "AGENT_BACKGROUND_LLM_TOKEN_CAP_24H",
         "category": "자원 격리·관측",

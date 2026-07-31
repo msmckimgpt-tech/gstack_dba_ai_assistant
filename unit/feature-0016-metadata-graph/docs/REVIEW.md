@@ -762,3 +762,81 @@ source_of_truth: true
 - Timestamp: 2026-07-30T17:50:00+09:00
 - Verdict: PASS
 - Human Approval Needed: no
+
+## REV-20260730T190000-drain-observed [SKIPPED:non-policy-doc] — 라이브 실측 기록(문서 전용)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 실행 코드 0줄 — 배포 후 관측값(E.4)과 오프라인 재현 결과(E.5)를 feature 문서에 고정하는 기록.
+  §18.8 code-change 행 비해당(§18.8.1 표 첫 행 non-policy doc).
+- 기록 요지: ① 임베딩 스로틀 상향의 실효 = 5,400→~16,800건/h(3.1배)이나 용량 42,657/h 미달, 원인은
+  pass 당 고정 오버헤드(1000행 pass 실측 ~154s = 선형 외삽의 2.2배). 추가 튜닝은 비용>이익으로 불채택하고
+  근본안(`count_pending` 빈도 완화)을 별 cycle 후보로 명시. ② `cc_pyron` 테이블 257건 오프라인 재현으로
+  지표 복구 선행 확인(median 0.915→0.764 · 밴드 45→27 · MDS 적격 · complete-linkage 실데이터 증거).
+- **정직 표기**: E.5 는 **오프라인 재현**(읽기 전용, DB 미기록)이며 라이브 재클러스터 산출물이 아니다.
+  루틴 축은 임베딩 미완(597 중 24)이라 사용자 리포트의 유의어 쌍(메일/우편·경매)은 **아직 검증되지 않았다**
+  — 최종 판정은 E.6(재클러스터 후 실측 + PB-0008)이다.
+- Timestamp: 2026-07-30T19:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+## REV-20260730T193000-gb-highlight-lit [SKIPPED:non-policy-doc] — 프론트 하이라이트 판정 보정(Minor)
+- Related TASK: feature-0016-metadata-graph
+- Reason: 변경은 `lit`/`litSelf` 의 접두 해소 한 갈래(+헬퍼). 좌표·기하·인가·API·응답 shape 불변이며,
+  회귀 방어는 기능 계약 4건(기준선/보존/집계속성/**과잉보존 대조군**)이 실 `_metaG6Build` 산출로 직접 잠근다.
+- 발견 경위: R3(집계 관계선) **라이브 육안 검증을 시도하다가** 발견했다 — 헤드리스는 선택 없는 상태로
+  빌드해 통과했고, 라이브는 노드 선택이 기본이라 드러났다. "테스트가 통과했는데 화면엔 없다" 의 전형.
+- **미커버 정직 표기**: 수정 후의 **육안 확증은 아직 없다** — 배포 후 PB-0008 로 접힌 밴드에 종단하는
+  선을 판독 가능 크기로 캡처해야 R3 가 완결된다(§16.6 다운그레이드 금지). 현재 근거는 기능 계약 4건.
+- Timestamp: 2026-07-30T19:30:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+## REV-20260730T211000-embed-congestion-fix [CODEX:embedding-timeout+burst] — PASS
+
+도구: `codex exec --sandbox read-only` (§18.8.2 tool-restricted carve-out — 본 세션은 Agent tool 호출이
+지시로 제한됨). 대상: `git diff --cached -- shared/ unit/feature-0002-agent-core/`.
+
+**판정: NO BLOCKING ISSUES.**
+
+| # | 질문 | 결론 |
+|---|---|---|
+| 1 | timeout=300 · max_attempts=3 이 무한 정체를 만드나 | 아니오. pass 최악 대기 300×3=900s 로 유계, 이후 60s sleep 후 다음 pass. 데몬 스레드라 본업 비블로킹(내가 코드로 별도 확인: `_embedding_backfill_loop` 은 전용 daemon thread) |
+| 2 | 새 pytest 계약이 config 값과 정합한가 | 예. timeout 300≥240 · 서브배치 3≤5 · rows 300≥300 · 시간당 18,000≥15,000 |
+| 3 | 300행이 실제로 도움이 되나, 처리량만 깎는 건 아닌가 | 혼잡 환경에서는 유효. 이론 상한은 60,000→18,000/h 로 줄지만 사고 구간의 **실효 처리량은 0** 이었다 |
+
+**Low (수용, 미조치)**: 계약이 "정확히 300" 이 아니라 최솟값만 검증하므로 이후 기본값이 400~500 으로
+올라가도 통과한다. 다만 `sub_batches <= 5` 가 batch_size 100 기준 **500행에서 물리므로** 이번 사고의
+직접 원인(1000행)은 재발 시 테스트가 잡는다 — 의도한 가드 범위이므로 그대로 둔다.
+
+**리뷰어 서술 중 정정**: 리뷰어는 #3 에서 "1000행 pass 가 큐/재시도 폭주를 만들었다" 고 썼으나,
+타임라인상 1000행은 붕괴 90분 전부터 정상 동작했다. 붕괴의 트리거는 **외부 GPU 경합에 의한 백엔드
+8~12배 열화**이고 1000행은 노출을 키운 요인이다 — REPORT.md 의 정정된 서술이 정본이다.
+
+**후속 (같은 cycle, 리뷰 이후 추가 실증)**: 리뷰 시점의 진단(외부 GPU 경합)은 이후 결정적 실험으로
+반증됐다 — `embed-ollama` 정지 시 GPU 99%→6% 라 경합 주체가 없었고, 무경합 재측정에서 **텍스트 길이가
+지배 요인**임이 확인됐다(16자 0.22s/건 vs 1022자 1.20s/건). 이에 따라 레버를 `BATCH_SIZE` 100→25 로
+바꾸고 계약을 "요청당 작업량 × 4 ≤ 타임아웃" 으로 재정의했다. 리뷰가 확인한 3개 질문(무한 정체 없음·
+계약 정합·버스트 축소의 유효성)의 결론은 변경 후에도 유지된다: max_attempts=3 유계 · 새 계약도
+config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 총 처리량 손실 없이(선형) 여유만 늘린다.
+
+## REV-20260730T220000-cluster-outcome [SKIPPED:docs-evidence-only] — PASS
+
+- Reason: 변경 경로가 **문서·테스트 Run 기록 전용**(실행 코드 0줄, 정책 문서 미포함). 이번 cycle 이
+  기록하는 대상 코드의 적대 검증은 이미 완료됐다 — 클러스터링 로직은
+  `REV-20260730T124000-cluster-signal-repair [CODEX:cluster-signature+bridge]`,
+  프론트 하이라이트/집계선은 `REV-20260730T113000-content-cluster-cohesion [CODEX:...]`,
+  임베딩 파이프라인은 `REV-20260730T211000-embed-congestion-fix [CODEX:embedding-timeout+burst]`
+  가 담당했고 모두 main 머지·배포됐다.
+- 본 cycle 이 새로 주장하는 것은 **라이브 관측 사실**이며, 그 근거는 재현 가능한 형태로 남겼다:
+  씬 객체 수 변화(1478↔1466) · 스크린샷 픽셀 diff bbox · SQL 집계 쿼리 전문.
+- 자가 적대 점검에서 잡아 정정한 것 2건: ① 검색 모드 강제 펼침을 결함으로 오판할 뻔한 것(코드 확인으로
+  반증) ② 밴드 집계 키 오류(기존 기준선 177쌍과 자릿수 불일치가 단서).
+
+## REV-20260731T000000-cluster-result [SKIPPED:docs-measurement-only] — PASS
+
+- Reason: 변경 경로가 **문서 전용**(실행 코드 0줄). 측정 대상 코드의 적대 검증은
+  `REV-20260730T124000-cluster-signal-repair [CODEX:cluster-signature+bridge]` 등에서 완료·머지·배포됨.
+- 본 cycle 의 주장은 전부 **재현 가능한 쿼리 결과**이며 쿼리와 수치를 REPORT 에 함께 남겼다.
+- 자가 적대 점검에서 결론을 바꾼 것 1건: 경매 사례를 "병합 실패" 로 쓰려다, ① 완전연결 최소 쌍
+  0.6950 실측으로 **의도된 거부**임을 확인하고 ② 사용자 원문이 "관계에 비해 거리가 먼" 이었음을
+  재확인해 **배치 인접성** 문제로 재분류했다(실제로 id 57 vs 59 로 인접). 결함 보고가 아니라
+  설계 동작 + 요구 충족으로 정정.

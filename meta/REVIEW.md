@@ -995,7 +995,6 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - **검증(타깃별 실질 + ULTRACODE 2-round 적대)**: wiki feature-count sweep stale-26=0(ground-truth 29=ls unit/feature-*·wiki/Features/feature-*.md=29 cards·6 token-edit=8참조 중 stale 6[Index.md 2참조는 feature 커밋이 이미 29])·신규 wikilink([[feature-0027/0028/0029]] 카드 실재)·pipe 무결(§4 2열|=3·§6 4열|=5·overview §2.1|=5·Architecture §2.3|=4/§2.4|=5)·각 타깃 표 1행씩(중복 0). §-qualify(ARCH 신규행 bare § 0·DECISIONS.md ADR·TASK.md §2.1 doc-qualify). gen-status --check rc=0·ssot-lint rc=0(4 WARN=pre-existing baseline). 정본 독립 재검증(함정 #11): model.access RBAC=feature-0003(1b9ee97a Task-Cycle·커밋본문 'feature-0007 R2'는 동기 리뷰 참조일 뿐 코드 귀속 아님)·사용기록 백엔드=feature-0002(e5860932)·self-check=feature-0021(3e2aae93). **ULTRACODE 적대 2-round**: R1 wf_63a962eb(3-타깃 analyze→타깃-스코프 verify, cross-fault 회피 함정 #12) — RN item3 좌우 오귀속·item5 즉시반영·wiki timeline/hot feature-0007 오귀속·ARCH thinking ADR 과귀속 4건 적발·전건 정본 재검증 후 교정. R2 wf_b705e7ba(3 diverse-lens on applied diff) — 3렌즈 clean·minor 2 교정(wiki §2.4 feature-0028 에 feature-0002 dep 정본 §6 미러 정합·hot.md trailing newline)·STATUS §5 defer 정당 재확인.
 - **인용 무결성 확인**: 본 entry(META-0049) staged 실재. 동반 operational commit(feature-0003 release-notes-data.js + companion TASK/MODIFY/FUNCTION/TEST/REVIEW) 별도 — 서빙 static(릴리즈노트) 배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만).
 - **Human Approval Needed**: 아니오 (색인/미러 additive·구조/보안 경계 불변·제품 런타임 동작 0·pure-meta). 무인 스케줄 run — landing(push/merge)·배포·end-state 서빙 검증은 cron wrapper v3 소유(스킬 로컬 commit 만·감지·보고만).
-
 ## REV-20260729T091700-ai-root-ui-copy-bloat [SKIPPED:프로젝트 학습 기록 1건 append — 제품 코드 무변경]
 - Related TASK: (project-level) docs/LEARNINGS.md — LRN-20260729T091700-ai-root-ui-copy-bloat
 - Trigger: changeset 이 `docs/LEARNINGS.md` append 전용 (§18.8 키워드 비매칭, 제품 코드·정책 계약 무변경)
@@ -1035,3 +1034,35 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - **reconcile-first(자가수리 ①)**: doc delta 계산 *전* 서빙 static surface 파리티 확인 — 라이브 서빙 `release-notes-data.js` md5 `1fa39008…` == `origin/main` 동일 파일 md5 **일치** + `/healthz` 200(자가서명 TLS, `curl -k --resolve`) → **배포 갭 없음**. 배포 이미지 커밋 라벨 vs 브랜치 HEAD 같은 coarse 비교는 고병렬 머지로 상시 오탐하므로 갭 근거로 쓰지 않음.
 - **landing/배포 소유권(자가수리 ④)**: 실행환경 헤더가 LANDING/DEPLOY OWNERSHIP v3 를 명시 위임 → doc_sync 는 현재 `ai/claude/doc-sync-20260730-010301` 브랜치에 **로컬 commit 까지만**. push·main ff-머지·docker 배포는 wrapper 소유(이중 landing/배포 racing 방지). 서빙 static(릴리즈노트) 변경 있음 → wrapper 배포 시 `inject_asset_stamp.py` content-hash 재주입으로 새 콘텐츠 서빙. `committed` != `serving` — end-state 는 wrapper 배포 후 확정.
 - Timestamp: 2026-07-30T01:03:01+09:00
+## REV-20260729T120000-ai-root-inference-detail-metrics [SUBAGENT:backend] — inference_ms 내부 분해 계측
+- Related TASK: CHG-20260729T120000-inference-detail-metrics (feature-0002-agent-core, Minor §12.3)
+- 패널: fresh-context 적대 리뷰 1렌즈(계측 정합성 + 테스트 강도 + 라이브 SQL 실행 검증). BLOCKER 0.
+- **판정: 초안 REJECT — 결함 9건 흡수 후 재검증.** 문서가 주장한 기능(비정상 경로 커버)이 **실재하지 않았고**, 잔차가 체계적으로 과소평가되고 있었다.
+- MAJOR:
+  - **M-1** "비정상 종료 경로에도 분해를 싣는다"는 거짓 — `_slim_result` allowlist + meta 없는 mirror 로 **영속 경로 없음**(죽은 코드). 주장 철회 + 제거, 미커버로 명시.
+  - **M-2** 같은 자리를 `break` 정상 경로도 지나는데 now_perf 가 메시지 저장·큐레이션(25~35초) 뒤 → 잔차 범벅(이 계측이 피하려던 오도).
+  - **M-3(설계)** `llm_ms` 가 `_call_llm` 래퍼 전체를 측정 → 첨부 로드·messages 재조립·settings DB 읽기·usage INSERT 가 llm_ms 로 청구돼 **찾으려던 잔차가 사라지고** 기준선과 비교 불가 → ContextVar 로 provider 왕복만 집계.
+  - **M-4(산술)** §3b-3 `avg(ms/n)` → 라이브 실증 228ms 를 9,025ms(40배) 과대보고 → `sum(ms)/sum(n)`.
+  - **M-5(테스트)** 순수 빌더만 검증해 누산 배선 0% — 변이 5종 전부 생존.
+- MINOR: 누산이 LLM 오류 try 본문 안(성공 라운드가 provider 오류로 둔갑) · finally 무가드(원 예외 대체) · **모델 제어 도구명이 meta_json JSON 키로 유입 → NUL 시 jsonb 실패를 mirror 가 삼켜 답변 행 소실**(라이브 재현) · 문서만 있고 쿼리 없던 llm_usage 교차검증 · 도달 불가 상태를 검증하던 테스트.
+- 조치: 9건 전부 수정. 테스트 7 → **16건**(빌더 + 누산기 계약 + 소스 배선 계약), 패널 생존 변이 6종 되돌림 **생존 0**. feature-0002 전체 스위트 회귀 0.
+- 패널이 clean 판정한 축: red-team 의 `inference_ms` 포함 관계(영속 경로 기준 정확) · 누산기에 red-team LLM/도구 미유입 · 스코프/클로저(모든 early return 이 도달 불가) · try/finally 제어흐름 · 라운드당 1회 누산(empty_retries 포함 정확) · 쓰기 경로 상한(40자·top-6, 최악 ~550B) · 신규 SQL 문법·빈 입력 동작.
+- Timestamp: 2026-07-29T12:00:00Z
+
+## REV-20260730T193000-ai-root-init-prologue-metrics [SUBAGENT:backend] — init_ms 프롤로그 계측 + 잔차 노출
+- Related TASK: CHG-20260730T190000-init-prologue-metrics (feature-0002-agent-core, Minor §12.3)
+- 패널: fresh-context 적대 1렌즈(계측 정합성 · 라이브 SQL 실행 · 변이 실측). BLOCKER 0 / MAJOR 5 / MINOR 3.
+- **판정: 초안 REJECT — 8건 흡수 후 재검증.** 초안의 "기존 `init_detail` 키 무변경" 주장이 라이브에서 반증됐다.
+- MAJOR: ① bool 플래그가 기존 §3b(`jsonb_each_text` 전 키 `::float`)를 죽임(라이브 재현) → 수치 키. ② §3b-0 이 구/신 행 혼합 모집단을 평균해 other_pct 를 과소보고(9구+1신에서 "2%") → 신규 키 필터. ③ 롤업은 무조건·leaf 는 예외 시 누락 → `max(Σleaf, 롤업)` 아니면 knowledge 전체(최대 6,924ms)가 거짓 미귀속. ④ `ds_resolve_ms` 가 지배 경로에서 엉뚱한 함수 측정(복수 vs 단수) → 누산. ⑤ 12 변이 중 7 생존(소스 문자열 검색의 한계).
+- MINOR: eval 경로 미기록(§3b-0 왜곡) · 멀티 span 이 단일보다 좁음 · 빌더 비멱등.
+- 조치: 8건 전부 수정. 테스트 10 → 17건, 역검증 12종(초안 5 + 패널 생존 7) 생존 0. feature-0002 전체 스위트 회귀 0. §3b-0 라이브 실행 확인.
+- 패널 clean: 선언 이동(early-return 9곳 무해·재진입 없음) · 롤업 전제(63행 오차 ≤0.3ms) · span 상호배타 · 영속 경로(직전 cycle dead-code 미재발) · 프론트 무영향.
+- Timestamp: 2026-07-30T19:30:00Z
+
+## REV-20260731T010301-META-0051-doc-sync-0731 [SKIPPED:doc-sync-index-mirror-additive] — 7fd73e3e(07-30 doc-sync) 이후 델타 52 커밋 · 신규 머지 feature-0031~0034 인덱스/미러 정합 + wiki 카운트 30→34 + docs/ARCHITECTURE §4/§6 + SECURITY §31/§32
+- 변경 성격: 색인·미러 additive(정본 재서술 0). 정본(`unit/<id>/docs/*`)은 미변경 — doc_sync 는 정본을 쓰지 않는다.
+- 타깃별 실질 검증: wiki feature 카운트 ground-truth 대조 PASS(`ls -d unit/feature-*`=34 · 카드 34 · stale '30' 잔존 0건 grep 전수) · 신규 wikilink 4건 대상 파일 존재 PASS · `bin/gen-status.sh --check` rc=0(idempotent) · `bin/ssot-lint.sh` 4 WARN(기존 `.env.bak-*` secret·불변, 신규 0) · SECURITY §31/§32 heading resolve PASS.
+- 적대검증(ULTRACODE wf_b0e71477 — 6분면 analyze → 분면-스코프 refute, 12 에이전트·1.61M tok): 5 MAJOR + 9 MINOR 반영. 주요 교정 — ① SECURITY feature-0007 절의 'on-prem 잔류 lane 0'/'LOCAL_LLM 참조 0' 이 정본 REVIEW P2-2·P1-3 과 모순(KB 임베딩은 여전히 로컬 Ollama bge-m3, `_select_llm_provider()` Local gateway 층 잔존·미결) → 층 구분 서술로 정정 ② ARCHITECTURE feature-0016 임베딩 pass 상한 '1000→300행' 이 출하값(600행·배치 100→25)과 모순 → 정정(정본 TASK T-EC2 문면은 내부모순·report-only) ③ feature-0025 카드의 '7일 stale·결정적 정렬' 이 정본(24h·mtime DESC)과 반대 → 정정 ④ wiki 0031 행의 'Stage 0~3 하루 1단계 승격' 이 'Stage 3 은 운영자 승인 전용' 을 누락 → 3표면 정정 ⑤ Log/hot 의 '신규 4건 전부 배포 검증 대기' 가 feature-0032 PB-0008 PASS 와 모순 → 정정 ⑥ ARCHITECTURE feature-0025 ADR 범위 06~08→05~08 ⑦ SECURITY §32 P1 3건 구성 정정.
+- 무변경 정직: `docs/DECISIONS.md` noChange(이번 창 신규 4자리 project ADR 0 — ADR-003·ADR-0025-05~08·ADR-0031-* 는 전부 feature-local 정본) · `docs/RELEASE_NOTES.md` noChange(07-13 이후 10회 연속 doc-sync 미터치 = 사실상 폐지 regime, 무인 런이 타깃을 자기 재량으로 되살리지 않음 — report-only) · `docs/PROJECT.md`/`CONVENTIONS.md` noChange · STATUS passthrough 21행 무확장(ADR-0031 §1 셀 누적 금지).
+- report-only(§13.1 사람/feature-cycle 소관): feature-0031~0034 의 `feature_status_date`/`feature_status_note` 부재로 STATUS 신규 4행이 sparse(feature-0025 와 동일 — doc_sync 는 정본 frontmatter 를 쓰지 않는다) · `docs/STATUS.md` frontmatter `source_of_truth: true` ↔ DOC_REGISTRY '인덱스 only' 모순 · `docs/ARCHITECTURE.md` `## 8.` 절 번호 2회 중복 · feature-0031 ADR-0031-07 thin 하한 '40' ↔ 코드/REVIEW '20' 내부모순 · feature-0016 TASK T-EC2 '300행/서브배치 ≤5회' ↔ 출하 600행 내부모순 · project ADR-0031 ↔ feature-0031 ADR-0031-* ID 네임스페이스 충돌 실현 · `wiki/Glossary/_Index.md` Entry 수 24↔26(prior-window drift) · wiki Decisions ADR 카운트 2참조 stale(prior-window).
+- landing/배포 소유 = wrapper 위임(무인 cron) → 로컬 commit 까지만. reconcile-first: 라이브 서빙 static 파리티 갭 0(라이브 `generated`=2026-07-29 = 커밋 전 origin/main 일치).

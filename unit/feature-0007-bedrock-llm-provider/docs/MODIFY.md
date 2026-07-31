@@ -607,3 +607,33 @@ source_of_truth: true
 - Verification: PB-0008 evidence 3종(`docs/evidence/pb0008-opus5-{model-menu,live-answer,admin-budget-pane}-20260727.png`). 카피 정정은 재배포 후 육안 재확인.
 - 잔여(R1): root 계정 한도 윈도우 리셋 후 `claude-opus-5-chat-root` 실 200 재확인(1순위 claude-corp 경로는 정상 확정).
 - Cross-ref: 선행 CHG-20260727T184425-opus5-model · REVIEW REV-20260727T190500-opus5-model-postdeploy · TEST Run 2026-07-27-opus5-model-POSTDEPLOY.
+
+## CHG-20260730T191535-llm-edge-free-routing (자동 gemma(edge) 강등 경로 전면 제거 — 사용자 결정)
+- Date: 2026-07-30. 사용자 보고 "18시 기준으로 모든 LLM 요청이 edge 로 호출된다. 더 이상 local llm 은 사용하지 않는 것으로 구성되었지만 해당 이슈가 나타난다" 에서 출발.
+- **관측(라이브 근거)**: `bedrock-gateway` 컨테이너가 **18:00:27 재생성** 직후 **18:00:38~18:34:04**(약 34분) 동안 외부 DNS 해석에 실패했다 — `api.anthropic.com` 뿐 아니라 `raw.githubusercontent.com`(기동 시 cost-map fetch)도 `[Errno -3] Temporary failure in name resolution`. 실패 건수는 10분 윈도우당 308건. **계정 문제가 아니다**: 두 OAuth 자격증명의 `expiresAt` 은 유효(root 23:30 / claude-corp 익일 01:58)했고 게이트웨이 주입 토큰도 정상, 429 는 0건이었다. 도달성(reachability) 장애다.
+- **결함의 실체**: 그 34분간 `claude-haiku-4-interactive` 체인이 끝의 `edge-fallback` 으로 흘러 **대화 보조 단계 전체가 gemma 로 서빙**됐다. `.env` 의 **11개 변수**(`OPENAI_MODEL` + `AGENT_OBJECT_RESOLVE/SQL_COMPOSE/SQL_REVIEW/PLAN/TASK_CLASSIFY/SQL_FIX/ANSWER/STEP_GRADE/SUMMARY/TOPIC_MODEL`)가 이 alias 를 가리키므로 blast radius 가 파이프라인 전체였다. 대조군: edge 가 없는 `*-chat`(2026-07-07)·`*-meta`(2026-07-30 오전)는 500 으로 정직하게 실패했다 — 같은 장애에서 두 규약의 거동 차이가 그대로 드러났다.
+- **사용자 결정(2026-07-30)**: "로컬 LLM 을 더 이상 사용하지 않는다" — 2026-07-04 ADR-002 의 "배경 insight 배치는 야간·주말 gemma 강등(비용 절감)" 까지 포함해 override. 따라서 **앱·게이트웨이 두 층 모두**에서 자동 강등 경로를 제거한다.
+- 변경 (5 파일):
+  - `unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml`: `fallbacks` 에서 `claude-haiku-4` → `["claude-haiku-4-root"]`, `claude-haiku-4-interactive` → `["claude-haiku-4-interactive-root"]` 로 축소하고 `claude-haiku-4-root`·`claude-haiku-4-interactive-root` 항목을 제거해 **체인 종단**(`*-chat-root` 와 동일 규약)으로 되돌렸다. `edge-fallback` **deployment 정의는 보존**(참조 0) — 되돌리기 경로를 남기되 라우팅되지 않는다.
+  - `shared/config.py`: `AGENT_INSIGHT_OFFHOURS_MODEL` 기본값 `"edge"` → `""`. 빈 값이면 `_effective_insight_model` 이 시각과 무관하게 base 를 반환하므로 시각 기반 강등이 기본 비활성이 된다. **강등 로직 자체는 보존** — 운영자가 값을 채우면 재활성(그 행위가 곧 사용자 결정 override 임을 주석에 명시).
+  - `unit/feature-0002-agent-core/src/modules/llm.py`: `_effective_insight_model` docstring 을 "기본 비활성" 사실 + 이력으로 갱신(동작 변경 없음).
+  - `.env.example`: 라우팅 정책 블록과 `AGENT_INSIGHT_OFFHOURS_MODEL` 주석을 edge-free 기준으로 재작성.
+  - 테스트: `unit/feature-0002-agent-core/tests/test_llm_edge_free_routing.py` **신규 5건**(전 체인 edge 부재 · 2계정 종단 · deployment 정의는 있되 미참조 · 기본 비활성 · 시각 4지점 무관 base). `test_meta_llm_edge_free.py` 의 `test_background_insight_keeps_offhours_edge_downgrade` 는 **방향 반전**해 `..._no_longer_downgrades_to_edge` 로 대체(같은 날 오전 잠금의 사용자 override — 헤더에 superseded 명시). `test_insight_offhours_routing.py` 는 monkeypatch 로 값을 주입하므로 로직 계약 검증은 그대로 유효(헤더에 "기본 비활성" 주석만 추가).
+- 운영 반영(코드 밖): 라이브 `.env` 의 `AGENT_INSIGHT_OFFHOURS_MODEL=edge` 를 빈 값으로 바꾸고 워커를 재시작해야 앱 층 강등이 실제로 꺼진다(`.env` 는 gitignored — 배포 단계에서 수행).
+- Verification: `make test` PASS(ruff clean) + 대상 3파일 22건 PASS, env override 제거 조건에서 신규·갱신 10건 skip 0 PASS. 라이브 프로브(배포 후): gateway 경유 `claude-haiku-4-interactive` 200 · `served=claude-haiku-4-interactive`.
+- **Trade-off (정직 표기)**: edge 안전망을 걷어냈으므로 **두 계정이 모두 도달 불가한 창에서는 해당 기능이 실패한다**(gemma 로 연명하지 않는다). 이는 사용자 결정이자 `*-chat` 규약과 동일한 선택이며, 대신 "조용히 품질이 무너진 답변" 이 사라진다. 그러나 이번 사건의 촉발 조건(게이트웨이 DNS 34분 단절)이 재발하면 그 창은 곧 **전면 중단**이므로, DNS 안정화가 후속 과제로 남는다(REPORT §8).
+- Rollback: 본 CHG revert(`fallbacks` 4줄 + config 기본값 1줄) → 종전 강등 거동 복귀. deployment 정의를 남겨 두었으므로 config 한 줄로도 부분 복구 가능.
+- ANCHOR 정합: §1(운영자 자격 일원화)·§2(Alt-A gateway 경유) 무충돌 — 라우팅 폴백 정책 변경이며 인증/인가 경계 변경 아님.
+- Cross-ref: REVIEW REV-20260730T191535-llm-edge-free-routing · TASK `## TASK-20260730T191535-llm-edge-free-routing` · DECISIONS ADR-003 · TEST Run 2026-07-30-llm-edge-free-routing · shared/docs/MODIFY.md 동일 CHG · 선행 ADR-002(2026-07-04, 부분 superseded) · feature-0002 `test_meta_llm_edge_free.py`(2026-07-30 오전).
+
+## CHG-20260730T200500-llm-edge-free-routing-postdeploy (edge-free 라우팅 배포 후 라이브 확정 기록)
+- Date: 2026-07-30. 선행 CHG-20260730T191535-llm-edge-free-routing 의 배포 후 확정. **코드 변경 0 — 문서 전용**(TEST Run 추가 · TASK 체크박스 완료 · LEARNINGS 2건).
+- 배포: PR #1097 머지(main **9c4e9935**) → `sudo -E bin/deploy-web.sh`(scope=all). web 롤링 + soak 통과 → 워커 핀 이미지(`mysql-ai-agent:9c4e9935`) 롤아웃 → **bedrock-gateway 드리프트 감지(litellm config `3166d1b9a8a5`≠`be14d75dd402`) → surge replica 무중단 교체**(config 변경이 실제로 반영된 경로).
+- 라이브 확정(상세 TEST Run 2026-07-30-llm-edge-free-routing-POSTDEPLOY):
+  - 게이트웨이 컨테이너 내부 `/app/config.yaml` 파싱 → fallback 6개 전부 2계정 종단, `edge`/`local` 참조 **NONE**.
+  - 프로브 3종(`-interactive`/`claude-haiku-4`/`-chat`) 전부 **200 + served=claude-\***(edge 아님). `max_tokens=5600`(thinking budget 5000 초과)로 호출 — 작게 주면 400 이 나 라우팅 고장으로 오진한다.
+  - **경계 밖 시각 실측**: 목 19:59 KST(근무시간 `[10,19)` 밖 = 종전이라면 강등 구간)에 insight-worker 의 `_effective_insight_model()` → `claude-haiku-4`, OFFHOURS env `''`. 단위 테스트의 시각 4지점 검증을 라이브가 확인.
+  - 사건 재발 없음: 배포 후 게이트웨이 `name resolution` 실패 0건, 최근 10분 응답 전부 200.
+- LEARNINGS: `docs/LEARNINGS.md` LRN-20260730-0001(폴백 안전망이 도달성 장애를 조용한 품질 저하로 번역 — 같은 사건 안의 대조군) · LRN-20260730-0002(env override 시 skip 하는 테스트의 vacuous pass — 실효 설정 검사 + allowlist + 역검증).
+- 잔여: REPORT §8 의 후속 3건(게이트웨이 DNS 안정화 **우선** · bare alias 단일계정 · provider-선택 층 로컬 fallback). 전부 별 cycle.
+- Cross-ref: 선행 CHG-20260730T191535-llm-edge-free-routing · DECISIONS ADR-003 · REVIEW REV-20260730T200500-postdeploy · TEST Run POSTDEPLOY.

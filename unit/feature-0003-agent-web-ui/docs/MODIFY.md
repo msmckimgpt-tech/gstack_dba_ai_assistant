@@ -2082,3 +2082,9 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 적대검증: ULTRACODE wf_0663e5aa R1(3-타깃 analyze→타깃-스코프 verify, cross-fault 회피 함정 #12·9 에이전트) — RN MAJOR 1(item8 제품 선택기 위치 '입력창 아래' 오안내 → 2-렌즈 독립 합치, 위치 중립 '입력창의 제품 선택 드롭다운' 으로 교정)·MINOR 3(summary 가 13항목 중 11만 서술 → item8/item9 절 보강·item13 '기본 접힘' → '가장 최근 대화만 펼쳐짐'·item13 07-27 블록과 중복 → '중간 회차' delta 명시) 적발, 오케스트레이터 정본 독립 재검증 후 전건 교정.
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+
+## CHG-20260731T010301-doc-sync-rn-0731 (2026-07-30 블록) 릴리즈노트 콘텐츠 — 2026-07-30 블록 신규 prepend 8항목(진행단계 박제 해소·재배포 dead-air·연결장애 모델 강등 제거·관계도 컨텐츠 카테고리 3축·AI 능동 분석 회복성)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-07-30" 블록 prepend(8 items: fixed/work 2 · fixed/common 1 · improved/admin 4 · fixed/admin 1) + `generated` "2026-07-29"→"2026-07-30". 기존 38 블록 전량 보존(39 블록).
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수명·테이블명·마이그레이션 번호·내부 설정키(`AGENT_*`)·모델명(gemma/bedrock/titan/embed-ollama)·ADR 번호·PB-0008 누출 0(정규식 기계 검증).
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · vm 구조검증(releases[0]=2026-07-30 8항목·releases[1]=07-29 13항목 보존·enum/title 위반 0·내부용어 누출 0). `verify_release_notes.mjs` 는 jsdom 미설치로 미실행(render 로직 미변경).

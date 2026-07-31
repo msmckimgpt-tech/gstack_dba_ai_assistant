@@ -2310,3 +2310,6 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 - **알려진 한계**: 위 3층은 모두 저장소 파일이므로 **이미 분기된 worktree 사본에는 소급되지
   않는다**. 오래 사는 worktree 는 테스트 인프라 파일을 main 과 동기화해야 한다. DB 레벨 차단은
   운영/테스트 커넥션을 구분할 신호가 없어 불가(상세: REVIEW REV-20260730T162000).
+
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0731, 2026-07-30)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-07-30 블록 8항목 추가. 기능 계약·렌더러 동작 변경 없음(데이터 전용).

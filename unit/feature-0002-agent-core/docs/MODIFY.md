@@ -734,6 +734,31 @@ Cross-ref: REVIEW REV-20260728T182000-cyvol-scope-prefetch-postdeploy ·
 `docs/test-runs.d/20260728T182000-cyvol-scope-prefetch-postdeploy.md` ·
 수정 cycle CHG/REV-20260728T175400-cyvol-scope-prefetch-fix.
 
+## CHG-20260729T120000-inference-detail-metrics — inference_ms 내부 분해 계측 (Minor §12.3)
+> 답변 지연의 최대 구간이자 **유일하게 남은 블랙박스**인 `inference_ms` 를 쪼갠다. 개선이 아니라 **다음 개선 대상을 고르기 위한 계측**이다.
+- **측정 근거(2026-07-29, 7일 창)**: `inference_ms` 평균 **142.9초** 중 `llm_usage`(task='agent') 로 귀속되는 LLM 시간이 109.9초(4.3 호출), **33.0초(23%)가 미귀속**. feature-0026 이 `init_ms` 를 `init_detail` 로 쪼갠 뒤에도 가장 큰 단계만 통짜로 남아 있었다(`duration_breakdown` 키 실측: `init_detail` 20건 / `inference_detail` 0건).
+- **배제된 후보(측정으로)**: ① red-team — wall 의 **95~98%가 실제 LLM 시간**(시간창 조인 귀속: 비-rederive 49.2s 중 48.4s, rederive 304.4s 중 290.5s)이라 제거할 오버헤드가 없다. ② 큐 대기 — p50 0.3s / p90 0.5s / max 876s 로 고정 지연이 아니라 꼬리이며, 최장 4건은 `claimed_by` 컨테이너가 매번 달라 **배포 실패로 워커가 부재**했던 창이었다(정상 롤아웃은 25초 실측). ③ PG — 40분 델타로 총 exec **8.0초**(0.3% 점유), cypher 는 0.37초. 정상 상태에서 PG 는 병목이 아니다.
+- **구현**: `duration_breakdown.inference_detail` = `llm_ms`/`llm_calls`(메인 루프 성공 왕복), `tool_ms`/`tool_calls`(`execute_tool`, 실패 포함 — 실패한 SQL 도 시간을 쓴다), `tool_top`(도구명 → {ms, n}, ms 내림차순 상위 6), `other_ms`(**잔차**).
+  - `other_ms = inference_ms − redteam_ms − llm_ms − tool_ms`. **redteam 을 빼는 것이 핵심** — red-team 은 inference 구간 안에서 돌아 `inference_ms` 에 포함돼 있고(feature-0026 M3 와 동일 전제), 빼지 않으면 그 LLM 시간이 통째로 잔차로 잡혀 "오케스트레이션이 느리다"는 **정반대 결론**이 나온다.
+  - 음수 잔차는 0 클램프 + `residual_clamped=True` 플래그. 조용히 0 을 쓰면 '전부 설명됨'으로 오독된다.
+  - 실패한 LLM 호출은 누산하지 않는다(llm_usage 에도 안 남아 대조가 어긋난다) — 그 시간은 `other_ms` 에 남지만 `llm_calls` vs `llm_usage` 건수 대조로 식별 가능.
+  - 범위는 **메인 에이전트 루프만**. red-team 재추론(`_rt_rederive`)의 도구는 `redteam_ms` 소관이라 섞지 않는다.
+- **관측 경로**: `bin/perf-snapshot.sh` §3b-2(분해 + `other_pct` + clamped 건수) · §3b-3(도구별 총소요·호출당 평균).
+- **불변**: 기존 4키(queued/init/inference/total)와 `redteam_ms`·`init_detail` 무변경 — additive. 답변 동작·저장 스키마 무변경(meta_json 내 키 추가), alembic 무변경.
+- **파일**: `src/agent_core.py`, `tests/test_inference_detail.py`(신규 16건), `bin/perf-snapshot.sh`, `docs/{FUNCTION,TASK}.md`.
+- **§18.8 적대 패널이 잡은 결함 9건 흡수** (초안은 **문서가 주장한 기능이 존재하지 않았고**, 잔차가 체계적으로 과소평가되고 있었다):
+  - **MAJOR-1(초안 주장 반증)**: "비정상 종료 경로에도 분해를 싣는다"는 **거짓**이었다 — `_slim_result` allowlist 가 `duration_breakdown` 을 떨어뜨리고 비정상 경로 mirror 는 meta 를 안 실어 **어디에도 영속되지 않는 죽은 코드**였다(perf-snapshot 은 `messages.meta_json` 을 본다). 주장을 철회하고 해당 부착을 제거했다.
+  - **MAJOR-2**: 같은 자리는 `break` 로 나온 **정상 경로도** 지나는데, 그 시점 `now_perf` 는 메시지 저장·in-process 큐레이션(실측 25~35초) 뒤라 잔차가 red-team+쓰기+큐레이션 범벅이 된다 — 이 계측이 피하려던 바로 그 오도. 제거로 함께 해소(비정상 경로 가시성은 mirror meta 를 손대야 하는 별개 변경 — **미커버로 명시**).
+  - **MAJOR-3(설계 결함)**: `llm_ms` 가 `_call_llm` **래퍼 전체**를 재고 있었다. 그 창 안에는 첨부 인라인 로드·`messages_for_provider` 재조립·`runtime_settings` DB 읽기(TTL 10초라 라운드마다 대개 miss)·`llm_usage` INSERT 가 들어 있어, **잔차가 찾으려던 오케스트레이션 시간이 llm_ms 로 청구**되고 기준선 109.9초(`llm_usage.latency_ms`)와도 비교 불가가 된다. → `_LLM_LAST_PROVIDER_MS` ContextVar 로 **순수 provider 왕복만** 집계하고 래퍼 오버헤드는 의도적으로 `other_ms` 에 남긴다(그게 오케스트레이션의 정의).
+  - **MAJOR-4(산술 오류)**: perf-snapshot §3b-3 `avg_ms_per_call` 이 `avg(ms/n)`(답변별 평균의 평균)이라 느린 1건짜리 답변이 빠른 100건짜리를 압도 — 패널이 라이브 합성 데이터로 228ms 를 **9,025ms(40배)** 로 과대보고함을 실증. → `sum(ms)/sum(n)`.
+  - **MAJOR-5(테스트 무력)**: 초안 테스트는 순수 빌더만 호출해 **누산 배선이 0% 검증**이었고 5개 변이(누산 호출 삭제·도구 계측 제거·키 상한 제거·redteam 미차감·영속 차단)가 전부 생존했다. 누산기를 모듈 함수로 승격해 직접 잠그고, 배선은 소스 계약 테스트로 고정(16건).
+  - **MINOR-1**: 누산이 LLM 오류 `try` 본문 안에 있어, 거기서 난 예외가 `except` 로 잡혀 **성공한 라운드가 provider 오류로 둔갑하고 run 이 중단**될 수 있었다 → 성공 분기(`else`)로 이동 + 가드.
+  - **MINOR-2**: `finally` 안 누산이 무가드라 raise 시 **원래 예외를 대체** → try/except 로 감쌈.
+  - **MINOR-3(데이터 소실 경로)**: 도구명은 모델이 정하는 값이고 이 계측이 그것을 처음으로 `meta_json` 의 **JSON 키**로 싣는다. NUL 이 섞이면 PG jsonb 캐스트가 실패하는데 `_mirror_message` 가 예외를 삼켜 **답변 행 자체가 조용히 사라진다**(패널이 라이브 PG 로 재현) → 제어문자 제거 + 빈 키 placeholder.
+  - **MINOR-5**: "llm_calls vs llm_usage 대조로 식별 가능" 이라 써놓고 그 쿼리를 안 넣었다 → §3b-4 교차검증 섹션 추가.
+- **역검증**: 패널이 생존시킨 변이 6종(LLM 누산 삭제 · 도구 try/finally 해체 · 키 상한 제거 · redteam 미차감 · provider 창 확대 · 라운드 리셋 제거)을 각각 되돌려 해당 테스트 실패 확인 — **생존 0**.
+- **위험등급**: Minor(계측 additive · fail-open try/except). **Rollback**: 커밋 revert — 소비처가 키 부재를 이미 견딘다.
+- **Cross-ref**: feature-0026(init_detail 원형·perf 계측 인프라) · ADR-20260728T120000-redteam-gating-not-adopted(red-team 은 품질 우선으로 불채택 — 이번에도 대상 아님을 실측 재확인).
 ## CHG-20260729T110000-dataplane-conn-liveness (데이터플레인 연결 liveness + 같은 좌표 재연결)
 
 **무엇을**: run-scoped 데이터플레인 연결을 tool 에 넘기기 직전 liveness 를 확인하고, 죽었으면
@@ -918,3 +943,30 @@ NULL hit **5케이스 전부 계약대로**. 전체 회귀 `make test` EXIT=0 ·
 
 Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-dedup-param-cast ·
 선행 CHG-20260730T160000-ask-redeploy-handoff.
+
+## CHG-20260730T190000-init-prologue-metrics — init_ms 프롤로그 계측 + 잔차 노출 (Minor §12.3)
+> feature-0031 이 inference 블라인드스팟을 닫자 **init 이 최대 미귀속 구간**으로 드러났다. 같은 패턴(계측 → 데이터가 대상을 정함)을 반복한다.
+- **선행 cycle 의 결론 정정**: feature-0031 계측이 "inference 미귀속 33초(23%)" 가설을 **반증**했다. 실측 `other_ms` = 235ms(**1.6%**). 그 33초는 숨은 오케스트레이션이 아니라 **red-team** 이었다 — 이전 분석이 `inference_ms` 를 `task='agent'` LLM 시간과만 대조했는데, red-team 은 inference 구간 안에서 돌면서 LLM 을 `task='redteam'` 으로 기록한다. 사용자가 품질 우선으로 유지하기로 결정한 부분이라 개선 대상이 아니다. **계측이 자기 가설을 깬 사례**로 기록한다.
+- **측정(2026-07-30, 7일 63건)**: `init_ms` 평균 **4,921ms** 중 `init_detail` 설명분 **750ms** — **4,171ms(85%) 미귀속**. 원인은 feature-0026 의 `init_detail` 이 `history_load` **이후**만 담았고 함수 진입~그 지점 266 줄이 통짜였던 것. 워커 직접 계측: `_connect_memory` 12ms / `_resolve_product_datasource` 46ms / **데이터플레인 `connect_with_retry` 1,447ms**.
+- **구현**: `_init_detail` 선언을 함수 진입부(`agent_entry_perf` 직후)로 올리고 프롤로그 3구간(`mem_setup_ms`·`ds_resolve_ms`·`dataplane_connect_ms`)을 추가. 신규 `_build_init_detail(init_ms, detail)` 이 **잔차 `init_other_ms`** 를 계산해 붙인다.
+  - **잔차 노출이 설계 핵심**(feature-0031 교훈) — 노출하지 않으면 다음 블라인드스팟이 또 조용히 숨는다. 직전 cycle 에서 33초의 정체를 판정할 수 있었던 이유가 잔차를 명시했기 때문이다.
+  - `knowledge_total_ms` 는 knowledge 하위 항목의 **롤업**이라 잔차 계산에서 제외한다(포함 시 이중 계상 → 잔차 음수). 표시용으로는 보존.
+  - 음수 잔차는 0 클램프 + **수치** 키 `init_residual_neg_ms`(bool 금지 — §3b 가 모든 키를 `::float` 캐스트한다).
+  - 데이터플레인 계측 종료점은 **폴백(`database=None` 재시도) 뒤**에 둔다 — try 안에 두면 폴백 시간이 잔차로 샌다. 멀티(라우터) 경로도 같은 키로 기록.
+  - 기존 선언부(`history_load` 직전)는 **제거**했다 — 남겨두면 프롤로그 계측치가 빈 dict 로 덮여 통째로 사라진다.
+- **관측**: `bin/perf-snapshot.sh` §3b-0(프롤로그 3구간 + `init_other_ms` + `other_pct` + clamped).
+- **불변**: 기존 `init_detail` 키·`inference_detail`·나머지 breakdown 무변경(additive). 답변 동작·스키마·alembic 무변경, 조립은 fail-open.
+- **파일**: `src/agent_core.py`, `tests/test_init_prologue_detail.py`(신규 17건), `bin/perf-snapshot.sh`, `docs/{FUNCTION,TASK}.md`.
+- **§18.8 적대 패널 결함 8건 흡수** (초안은 "기존 `init_detail` 키 무변경" 을 주장했으나 **라이브에서 반증**됐다):
+  - **MAJOR-1(라이브 재현)** 초안이 `init_detail` 에 넣은 bool `init_residual_clamped` 가 **기존 §3b 쿼리를 깬다** — §3b 는 `jsonb_each_text(init_detail)` 로 **모든** 키를 `::float` 캐스트하므로 `invalid input syntax for type double precision: "true"` 로 섹션 전체가 죽는다. 클램프가 뭔가 알리려는 순간에 관측이 꺼지는 최악의 실패. → 수치 키 `init_residual_neg_ms` 로 전환하고, 테스트가 **모든 값의 수치성**을 잠근다.
+  - **MAJOR-2(라이브 실증)** §3b-0 이 `? 'init_detail'` 로 필터해 feature-0026 **구 행이 분모**에 들어가고 분자(신규 키)는 NULL → other_pct 가 실제보다 훨씬 좋게 나온다(패널 실증: 9구+1신 혼합에서 실제 100% 미귀속 행이 9개인데 "2%" 로 보고). → `init_detail ? 'init_other_ms'` 로 신규 행만.
+  - **MAJOR-3** `knowledge_total_ms`(롤업)는 **무조건** 기록되지만 leaf 는 `_build_knowledge_context` 예외 시 하나도 안 온다. 롤업만 제외하면 knowledge 구간 전체(실측 최대 6,924ms — 평균 init_ms 보다 크다)가 잔차로 흘러 **'미귀속이 크다'는 거짓 신호**. → `max(Σleaf, 롤업)` 으로 계산.
+  - **MAJOR-4** `ds_resolve_ms` 가 지배 경로(단일)에서 **엉뚱한 함수**를 쟀다 — 초안은 `_resolve_product_datasources`(복수)만 감쌌는데 바인딩 0~1 개면 즉시 `[]` 를 돌려주고 끝난다. 실제 resolve 인 `_resolve_product_datasource`(단수, WebProducts 조회+자격증명 복호, 실측 46ms)는 미계측이라 잔차로 샜다. **작고 그럴듯한 숫자가 나와 0 보다 나쁘다.** → 단수 호출에 누산.
+  - **MAJOR-5(변이 실측)** 12 변이 중 **7 생존** — 배선 테스트가 전부 소스 문자열 검색이라 present-but-wrong 을 못 본다. 생존: 옛 자리 `_init_detail = {}` / `.clear()` 재추가(철자만 달라도 통과), `_dp_t0` 를 connect 뒤로(헤드라인 1,447ms 가 ~0 이 되고 폴백 경로는 UnboundLocalError 로 run 사망), 멀티 경로 기록 삭제, 부착 조건 `and False`, mem_setup 을 try 밖으로, 롤업 집합 오염. → 계약을 재바인딩 정규식·3분기 카운트·타이머 순서·들여쓰기·집합 동일성으로 강화, **7종 전부 재현해 실패 확인**.
+  - **MINOR-1** eval 경로가 `dataplane_connect_ms` 미기록 — eval runner 도 같은 `messages` 에 답변을 남겨 §3b-0 평균을 '연결 0ms 행' 으로 왜곡. → 기록 추가(3분기 전부).
+  - **MINOR-2** 멀티 경로 span 이 라우터 생성·`refresh_case` 를 제외해 단일 경로보다 좁았다(같은 키인데 범위 불일치). → span 확장.
+  - **MINOR-3** 빌더가 멱등하지 않아 재적용 시 잔차 붕괴. → 파생 키를 leaf 집계에서 제외.
+- **역검증**: 초안 5종 + 패널 생존 7종 = **12종 되돌림, 생존 0**. 테스트 10 → **17건**.
+- **패널이 clean 판정한 축**: 선언 이동(9개 early-return 모두 `_compute_duration_breakdown` 이전이라 무해, 재진입 없음) · 롤업 전제(라이브 63행에서 롤업−Σleaf 가 -0.2~+0.3ms) · 6개 span 상호 배타·순차 · 영속 경로(직전 cycle 의 dead-code 결함 **미재발**, 63행이 이미 같은 경로로 저장됨) · 프론트 무영향.
+- **위험등급**: Minor(계측 additive). **Rollback**: 커밋 revert — 소비처가 키 부재를 견딘다.
+- **Cross-ref**: feature-0026(init_detail 원형) · feature-0031(inference_detail — 잔차 노출 패턴의 출처, 그 가설을 반증한 계측) · ADR-20260728T120000-redteam-gating-not-adopted.

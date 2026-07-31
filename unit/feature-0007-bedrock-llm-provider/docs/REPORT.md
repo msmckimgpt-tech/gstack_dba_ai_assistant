@@ -38,6 +38,17 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
 재설계 + bedrock-gateway 로그 기반 무비용 관측(RateLimitError/AuthenticationError
 카운트) 신설 + stale crontab 주석 정리.
 
+**후속 (llm-edge-free-routing, 2026-07-30, ADR-003 — ADR-002 부분 supersede)**: 18:00:27
+게이트웨이 컨테이너 재생성 직후 34분간(18:00:38~18:34:04) 컨테이너의 외부 DNS 해석이 실패해
+(`api.anthropic.com` 도달 불가 — 계정·토큰은 정상) `claude-haiku-4-interactive` 체인이 끝의
+`edge-fallback` 으로 흘렀고, `.env` 의 11개 변수가 이 alias 를 가리켜 **대화 보조 단계 전체가
+gemma 로 서빙**됐다(사용자 관측: "모든 LLM 요청이 edge"). 같은 창에서 edge 를 배제한
+`*-chat`·`*-meta` 는 500 으로 정직하게 실패 — 두 규약의 대조가 그대로 드러났다. 사용자 결정
+("더 이상 로컬 LLM 을 사용하지 않는다")에 따라 **앱·게이트웨이 두 층 모두에서 자동 강등 경로를
+제거**했다: litellm `fallbacks` 의 `edge-fallback` 참조 전량 삭제(2계정 종단) + 앱 층
+`AGENT_INSIGHT_OFFHOURS_MODEL` 기본값 빈 값(시각 기반 강등 기본 비활성). 로직·deployment 정의는
+되돌리기용으로 보존하되 참조·기본값을 끊었다. 회귀 잠금 `test_llm_edge_free_routing.py`(5건).
+
 ## 2. Progress
 - Planned: Phase E (실 환경 + AWS 자격증명 회귀 검증), Phase F (verify-completion
   PASS + commit + PR).
@@ -64,6 +75,19 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
     작성.
 
 ## 3. Recent Changes
+
+### 2026-07-30 — llm-edge-free-routing: 자동 gemma(edge) 강등 경로 전면 제거 (사용자 결정, Major §12.3)
+- **무엇**: litellm `fallbacks` 에서 `edge-fallback` 참조 전량 제거(`claude-haiku-4`·`claude-haiku-4-interactive`
+  는 각각 `-root` 까지 2계정 체인이고 root 가 종단) + `shared/config.py` 의 `AGENT_INSIGHT_OFFHOURS_MODEL`
+  기본값 `"edge"` → 빈 값(시각 기반 강등 기본 비활성). `edge-fallback` deployment 정의와 강등 로직은 보존(참조 0).
+- **왜**: 게이트웨이 DNS 34분 단절(18:00~18:34) 동안 두 계정이 **도달 불가**해지자 edge 가 남아 있던 체인만
+  조용히 gemma 로 서빙됐다. 계정 quota 문제가 아니라 도달성 장애였고, 결함은 "장애의 발생" 이 아니라
+  "장애가 조용한 품질 저하로 번지는 구조" 였다.
+- **trade-off (정직 표기)**: 안전망을 걷어냈으므로 두 계정 동시 실패 창에서는 해당 기능이 **실패**한다.
+  사용자가 인지한 선택(`*-chat` 2026-07-07 규약과 동일)이나, DNS 단절이 재발하면 그 창은 곧 전면 중단이다
+  → **DNS 안정화가 후속 필수 과제**(아래 §8 최상단).
+- 검증: `make test` rc=0 · ruff clean · 대상 22건 PASS(env override 제거 조건 10건 skip 0) · 경계 4지점 확인.
+  **배포 후 라이브 서빙 모델 실측 잔여.**
 
 ### 2026-07-27 — opus5-model: assistant 선택 모델에 Claude Opus 5 추가 (사용자 요청, Major §12.3 외부비용)
 - **무엇**: `claude-opus-5`(표시 `claude-opus`)를 대화 모델 카탈로그 최상위에 추가. litellm 3 deployment
@@ -267,6 +291,26 @@ found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록�
   probe 제거와 무관한 별도 버그로 보이며, 별 cycle 에서 조사 권장.
 
 ## 8. Suggested Improvements
+- **[신규] bare alias 단일계정 잔존 (codex review 2026-07-30 P1#3)**: `OPENAI_MODEL` 을 비우면
+  `claude-sonnet-4` 로 귀결되는데 bare `claude-sonnet-4`·`claude-opus-5` 는 fallback 미등록(격리 설계)
+  이라 claude-corp 429 시 즉시 실패한다. **운영 `.env` 는 `OPENAI_MODEL=claude-haiku-4-interactive`** 라
+  현재 라이브 영향은 없지만, 빈 `.env` 로 기동하는 환경(신규 배포·CI)에서는 단일계정 경로를 탄다.
+  edge-free 결정과 직교하는 별개 축(가용성)이며, 위 "node_analysis bare sonnet" 항목과 같은 뿌리다 —
+  bare alias 에도 `-root` 2계정 체인을 부여할지 별 cycle 로 판단.
+- **[신규] provider 선택 단계의 로컬 fallback (codex review 2026-07-30 P2)**: `_select_llm_provider()` 는
+  Bedrock/게이트웨이 자격이 없으면 Local LLM gateway 를 고른다(`shared/config.py`). 이는 litellm
+  `edge-fallback` 체인과 **다른 층**이라 이번 cycle 의 제거 범위 밖이다. 운영에서는
+  `BEDROCK_GATEWAY_URL` 이 설정돼 있어 발동하지 않지만, "로컬 LLM 미사용" 을 층 전체로 관철하려면
+  이 경로도 명시적으로 차단할지 결정이 필요하다(별 cycle — 로컬 개발 환경 편의와 trade-off).
+- **[신규·우선] 게이트웨이 컨테이너 DNS 안정화 (llm-edge-free-routing 2026-07-30 의 잔여 위험)**:
+  컨테이너의 `/etc/resolv.conf` 는 Docker embedded DNS(`127.0.0.11`) 단일이고 그 external forwarder 가
+  WSL NAT gateway(`ExtServers: [host(172.26.144.1)]`) **하나**다. 호스트 `/etc/resolv.conf` 에는 `8.8.8.8`
+  보조가 있으나 컨테이너는 그 이점을 못 받는다 — 2026-07-30 18:00~18:34 에 이 단일 경로가 죽자 컨테이너의
+  외부 해석이 통째로 실패했다(`api.anthropic.com`·`raw.githubusercontent.com` 동시). **edge 안전망을 제거한
+  지금은 같은 창이 곧 LLM 전면 중단**이므로 완화 우선순위가 올라갔다. 후보: compose `bedrock-gateway`
+  서비스에 `dns:` 다중 지정(NAT gateway + public resolver), 또는 daemon 레벨 `dns` 설정. 컨테이너 이름
+  해석은 embedded DNS 가 계속 담당하므로 내부 서비스 디스커버리 영향은 없다. **별 cycle**(인프라 변경 —
+  적용 시 컨테이너 재생성 필요, 사용자 확인 대상).
 - **대화 경로 streaming 전환** (llm-timeout-align 2026-07-24 장기 과제): 현 `agent_core._call_llm` 은 비-streaming
   `client.chat.completions.create`. claude-api skill 은 장문/high max_tokens 요청에 **streaming 을 타임아웃 회피
   정본**으로 권장(비-streaming 은 긴 답변에서 request timeout 위험). request_timeout 300 정합으로 즉시 해소했으나,

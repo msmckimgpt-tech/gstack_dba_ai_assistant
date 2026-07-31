@@ -385,3 +385,55 @@ source_of_truth: true
 - 대상: `shared/config.py`(`AGENT_KB_EMBEDDING_BATCH_MAX_ROWS` 100→1000)·`shared/runtime_settings.py`(knob 기본값 100→1000, 상한 2000→20000). 테스트 `test_semantic_cluster_signal.py`(+1).
 - 변경: `sig-backfill-sweep` 으로 시그니처 재작성이 살아나자 병목이 **다음 계층(임베딩 워커 스로틀)으로 이동**했다. 라이브 실측 — 임베딩 지속 용량 **42,657건/h**(로컬 bge-m3 단일 코어)인데 워커 설정(100행 × 60초)이 **6,000건/h** 로 묶어 실처리가 900건/10분(=5,400/h, **86% 유휴**)이었고 잔여 25,196건이 약 4.2시간 걸릴 상태였다. pass 당 행수를 1000 으로 올려 pass 가 ~70s(10 서브배치)로 interval 을 넘기게 해 **연속 처리 = 용량 수렴**시킨다. 평시(백로그 0)에는 `fetch 0건 cheap no-op` 이라 **부하 증가 0** — 이 캡은 대량 유입에서만 드러나는 성격이었다.
 - 근거: 등급 **Minor**(튜너블 상향, 스키마·API·인가 불변, 마이그레이션 0). 증가하는 부하는 **호스트 단일 코어 점유**뿐이고(외부 API·과금 없음 — `CHG-20260730T160000` 귀속 정정 참조) 백로그 소진 후 자동 유휴 복귀한다. 회귀 잠금은 캡 값이 아니라 **시간당 상한(캡÷주기) ≥ 실측 용량** 으로 단정해 주기를 함께 늘려 상향이 상쇄되는 경우까지 커버한다. 검증: `make test` **3287 passed / 3 skipped / 0 failed** · ruff clean. 상세는 TASK.md `## 20260730T1750-embed-throughput`.
+## CHG-20260730T190000-ai-claude-feature-0016-drain-observed — 드레인 실측 기록(E.4/E.5) (2026-07-30, 문서 전용)
+- 대상(문서 전용, 실행 코드 0줄): `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY}.md`.
+- 변경: 임베딩 스로틀 상향의 배포 후 실측을 확정 기록했다 — 5,400건/h → **~16,800건/h**(3.1배)이나 측정 용량 42,657건/h 에는 미달이며, 원인은 1000행 pass 가 실제 **~154s**(선형 외삽 70s 의 2.2배)로 pass 당 고정 오버헤드(배치 fetch·1024-dim vector UPDATE·`count_pending` 전체 스캔)가 지배하기 때문이다. REVIEW 에 "비선형 효과 미측정" 으로 남긴 항목의 값이다. 추가 튜닝(주기 60→10초, +30%)은 잔여 단축 15분 대비 사이클 비용 20분이라 **불채택**하고 근본 개선안(`count_pending` 을 N회당 1회로)을 별 cycle 후보로 남겼다. 아울러 재임베딩이 끝난 `cc_pyron` 테이블 257건으로 신 파이프라인을 **오프라인 재현**해 지표 복구를 선행 확인했다: 밴드간 유사도 median **0.915 → 0.764**(boilerplate 바닥 붕괴), 적응형 하한이 절대 임계로 복귀(과잉 억제 없음), 테이블 밴드 **45→27**, MDS 2-D 적격, `UT_Mail` 계열 응집, 그리고 최대 0.9192 쌍이 하한을 넘고도 complete-linkage 로 미병합(codex P2-4 가드의 실데이터 증거).
+- 근거: 등급 **Minor**(문서 전용). 라이브 관측값을 문서에 고정해 다음 세션이 "왜 용량에 수렴하지 않는가" 를 재조사하지 않게 하고, 추가 튜닝 불채택의 근거(비용>이익)를 남긴다. 루틴 축·재클러스터 후 최종 측정은 E.6 로 이월.
+## CHG-20260730T193000-ai-claude-feature-0016-gb-highlight-lit — 하이라이트 상태에서 밴드 집계선이 항상 사라지던 결함 수정 (2026-07-30)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/graph/graph-core.js`(`gbMembersLit` 헬퍼 + `lit`/`litSelf` 에 `GB:` 해소). 테스트 `tests/headless/test_graph_content_cluster_cohesion.js`(B5 4건).
+- 변경(R3 라이브 검증 중 발견): `lit`/`litSelf` 는 `SC:`(스키마 카드) 접두만 모델 키로 접었고 **`GB:`(컨텐츠 밴드)는 몰랐다**. 그래서 노드가 선택된 하이라이트 상태에서 `hlHide`(§67 focus 밖 관계선 제거)가 밴드 집계선을 **항상** 제거했다 — 사용자는 보통 노드를 클릭해 그래프를 탐색하므로 선택이 곧 기본 상태이고, 결과적으로 직전 cycle(#1076)이 넣은 접힌-밴드 집계 관계선이 **사실상 화면에 나타나지 않았다**(라이브 실측: 밴드 접힘 1건인데 방출된 GB: 엣지 0, 전체 엣지 11). 밴드는 **멤버의 집합**이므로 "멤버 중 하나라도 밝으면 밴드도 밝다" 로 판정한다(`SC:` 가 스키마 키로 접히는 것과 같은 계열의 축약). `groupMembers` 는 접힘 포함 전량 멤버를 담으므로(§50 REV-wiring fix) 접힌 밴드에서도 성립한다.
+- 근거: 등급 **Minor**(프론트 하이라이트 판정 한 곳, 좌표·기하·인가·API 불변). **과잉 보존을 경계**했다 — 무관 노드를 선택하면 그 밴드 집계선은 정상적으로 제거되어야 §67 하이라이트의 의미가 유지되며, 회귀 잠금 B5 가 그 대조군까지 포함한다(⚠ 대조군은 **이웃이 있는** 무관 노드여야 한다 — 고립 노드는 `focusAdj=null` 이라 하이라이트 자체가 미성립해 대조가 성립하지 않는다, 테스트 작성 중 실측). 검증: 헤드리스 **1090 PASS / 0 FAIL** · `make test` 무회귀 · ruff clean.
+
+
+## 20260730T2055-embed-congestion-fix
+
+| 파일 | 변경 |
+|---|---|
+| `shared/config.py` | `AGENT_KB_EMBEDDING_TIMEOUT_SEC` 60→300 (T-EC1) · `AGENT_KB_EMBEDDING_BATCH_MAX_ROWS` 1000→300 (T-EC2) |
+| `shared/runtime_settings.py` | knob 미러 default 1000→300 |
+| `unit/feature-0002-agent-core/tests/test_semantic_cluster_signal.py` | `test_embedding_timeout_exceeds_worst_case_batch_latency` 신설 (T-EC3) · 용량 계약을 이론치(42,657/h)에서 지속 처리량(≥15,000/h)으로 조정 |
+
+## CHG-20260730T205500-ai-claude-feature-0016-embed-congestion-fix — 임베딩 처리량 튜닝이 유발한 congestion collapse 수습 (2026-07-30)
+
+시그니처를 content-forward 로 보강해 임베딩 텍스트가 길어지자(평균 210자·p95 464자) 100건 배치가
+60~120s 로 불어나 클라이언트 타임아웃 60s 를 넘겼다. 배치가 매번 **완료 직전에 버려지고** 재시도가
+큐를 늘려 처리량이 *느려지는* 대신 **0** 이 됐다(25분 정지, 큐 8,371 고착).
+진짜 레버는 버스트 횟수가 아니라 **요청 1건의 작업량**(배치 건수 × 텍스트 길이)이다.
+⚠ 원인을 두 번 오귀속(① 직전 버스트 상향 ② 외부 GPU 경합)했다가 결정적 실험으로 정정 — REPORT 참조.
+
+- `shared/config.py` — `AGENT_KB_EMBEDDING_BATCH_SIZE` 100→**25** (T-EC1, 진짜 레버) · `AGENT_KB_EMBEDDING_TIMEOUT_SEC` 60→**300** (T-EC1) · `AGENT_KB_EMBEDDING_BATCH_MAX_ROWS` 1000→**600** (T-EC2)
+- `shared/runtime_settings.py` — knob 미러 default 1000→600
+- `unit/feature-0002-agent-core/tests/test_semantic_cluster_signal.py` — `test_embedding_request_work_fits_well_inside_timeout` (요청당 작업량 × 4 ≤ 타임아웃). "서브배치 ≤ N회" 계약은 틀린 불변식이라 폐기 (T-EC3)
+
+근거·사후분석은 REPORT.md `20260730T2055-embed-congestion-fix` 참조.
+
+## CHG-20260730T220000-ai-claude-feature-0016-cluster-outcome — R3 픽셀 검증 + 재클러스터 측정 기준선 (2026-07-30, 문서·증거 전용)
+
+실행 코드 0줄. 라이브 관측 결과를 정본에 고정한다.
+
+- `docs/test-runs.d/20260730T2150-r3-band-aggregate-edges.md` — **R3 PASS**(접힘 시 멤버 미방출 +
+  관계선이 밴드 단일 엔드포인트로 수렴). 첫 시도는 검색 모드 강제 펼침(설계)에 걸린 무효 검증이었고,
+  그 사실과 재사용 가능한 검증 제약을 함께 기록.
+- `unit/feature-0003-agent-web-ui/docs/test-runs.d/…-pointer.md` — 그래프 static 자산 거주 feature 포인터.
+- `docs/REPORT.md` `20260730T2200-cluster-outcome-baseline` — 밴드 집계 키 정정
+  (`semantic_cluster_id` 는 전역 고유가 아님 → `(datasource, schema, cluster_id)`), 기준선 수치,
+  **문제의 소재가 루틴 축**임을 실측으로 확정.
+- `docs/TASK.md` — E.9 추가, E.6 진행 상태 갱신.
+
+## CHG-20260731T000000-ai-claude-feature-0016-cluster-result — 재클러스터 결과 측정(E.6) (2026-07-31, 문서 전용)
+
+실행 코드 0줄. 드레인 완료 후 재클러스터 결과를 기준선과 동일 쿼리로 측정해 기록.
+
+- `docs/REPORT.md` `20260731T0000-cluster-outcome-measured` — 전역 지표 전/후, 배치 품질 정량 비교
+  (MDS vs 라벨이름순 vs 루틴명순 vs 전체평균, 4개 스키마), 사용자가 든 두 사례의 판정과 근거 수치.
+- `docs/TASK.md` — E.6 완료.
