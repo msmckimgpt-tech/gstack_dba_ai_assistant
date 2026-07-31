@@ -169,6 +169,65 @@ def fetch_summaries(conn, user_message: str, scopes, limit: int) -> list:
                 pass
 
 
+def _domain_line(cur, scope_key, eff_schemas) -> str:
+    """feature-0037(L3): 매칭된 스키마의 **도메인 요약** 한 줄. 없으면 요청만 남기고 빈 문자열.
+
+    ⚠ 여기서 합성하지 않는다 — 답변 경로에 LLM 을 부르면 체감 지연을 잠식한다(ADR-0034-07).
+    요청만 기록하면 insight tick 이 다음 주기에 만들고, 그 다음 질문부터 실린다. 아무도 찾지
+    않은 스키마는 영원히 만들어지지 않는다(사전 전량 생성 회피).
+    """
+    try:
+        from . import domain_synthesis as _ds
+    except Exception:
+        return ""
+    for eff in list(eff_schemas)[:2]:
+        try:
+            got = _ds.load(cur, scope_key, eff)
+        except Exception:
+            got = {}
+        if got.get("summary"):
+            basis = (f"그룹 {got.get('cluster_count', 0)}개 · 멤버 {got.get('member_count', 0)}개 중 "
+                     f"{got.get('analyzed_count', 0)}개 상세분석 근거")
+            return f"- [{eff} 전체] ({basis}) {got['summary']}"
+        _record_request(scope_key, eff)
+    return ""
+
+
+def _record_request(scope_key, eff_schema) -> None:
+    """도메인 요약 요청을 남긴다 — **요약이 없을 때만** 불린다.
+
+    ⚠ 조회에 쓰는 커넥션은 읽기 전용(`agent_kb_ro` = SELECT only)이라 여기서 쓸 수 없다.
+    요청 기록은 작은 UPSERT 1회이고, 요약이 이미 있으면 아예 오지 않으므로 정상 경로에서는
+    쓰기가 발생하지 않는다. 실패는 조용히 무시한다 — 요청을 못 남기면 다음 질문이 다시 남긴다.
+    """
+    try:
+        from . import domain_synthesis as _ds
+        from shared import db as _db
+    except Exception:
+        return
+    conn = None
+    try:
+        conn = _db._pg_connect()
+        if conn is None:
+            return
+        cur = conn.cursor()
+        try:
+            _ds.request(cur, scope_key, eff_schema)
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        _log.debug("domain_request_skipped %s.%s err=%r", scope_key, eff_schema, exc)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def load_cluster_summary_context(user_message, scope_key=None, conn=None,
                                  limit: int = _DEFAULT_LIMIT) -> str:
     """질문에 매칭되는 클러스터 요약을 프롬프트 본문으로 조립. 매칭 0건이면 빈 문자열.
@@ -186,15 +245,42 @@ def load_cluster_summary_context(user_message, scope_key=None, conn=None,
     c, owned = _ro_conn(conn)
     if c is None:
         return ""
+    domain_line = ""
     try:
         rows = fetch_summaries(c, msg, scopes, limit)
+        # feature-0037: 매칭된 스키마의 도메인(L3) 요약도 함께 — 그룹 요약이 "이 묶음"이라면
+        #   이것은 "이 DB 전체"다. 없으면 요청만 남긴다(합성은 백그라운드).
+        try:
+            cur = c.cursor()
+            try:
+                effs = _matched_effective_schemas(cur, msg, scopes)
+                if effs:
+                    domain_line = _domain_line(cur, scopes[0], effs)
+            finally:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+        except Exception:
+            domain_line = ""
     finally:
         if owned:
             try:
                 c.close()
             except Exception:
                 pass
-    return render(rows, limit)
+    body = render(rows, limit)
+    if domain_line:
+        return f"{domain_line}\n{body}" if body else domain_line
+    return body
+
+
+def _matched_effective_schemas(cur, user_message, scopes) -> list:
+    """질문이 언급한 테이블이 속한 effective schema 목록(결정적 정렬)."""
+    try:
+        return sorted({k[1] for k in _matched_clusters(cur, user_message, scopes)})
+    except Exception:
+        return []
 
 
 def render(rows, limit: int = _DEFAULT_LIMIT) -> str:
