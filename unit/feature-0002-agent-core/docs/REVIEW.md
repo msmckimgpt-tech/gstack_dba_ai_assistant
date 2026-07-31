@@ -1019,3 +1019,56 @@ cycle 의 3렌즈 적대 리뷰(REV-20260730T160000)가 이미 이 쿼리의 **�
   (타입 추론 불가 파라미터)이 다른 쿼리에 새로 생기면 자동으로는 못 잡는다.
 
 Cross-ref: TASK-20260730T172000-dedup-param-cast · CHG-20260730T172000-dedup-param-cast.
+
+## REV-20260731T184300-loadgate-blind-coaching [CODEX:backend+security+qa] — CONCERN → 흡수 후 PASS ([P1] 2건 전부 수정)
+
+**Trigger**(§18.8 dispatch): changeset 키워드 `query`(execute_sql 부하게이트 SQL 경로) + `schema`
+(EXPLAIN 계획 파싱) → **backend + qa**. 거부 로직이 우회 가능하면 부하 방어가 뚫리므로 **security**
+렌즈 추가(3렌즈). 세션 정책상 subagent 미사용 → §18.8.2 제약-없는-채널(codex) 우선.
+
+### 판정: 초안은 출하 차단 상태였다
+codex 가 [P1] 2건을 냈고 **직접 프로브로 재현했다**. 둘 다 "조기 종료가 보장된 쿼리만 보정한다"는
+핵심 전제를 깨고 **실제 전체 스캔을 게이트로 통과**시킨다 — 즉 내 봉인이 정확히 막으려던 부하 회귀를
+내가 만들고 있었다. 나는 재현을 독립 검증한 뒤 수정했다.
+
+| # | 렌즈 | 결함 | 재현(검증됨) | 조치 |
+|---|---|---|---|---|
+| P1-1 | backend | 주석 속 가짜 LIMIT 을 실제 상한으로 인식 | `SELECT * FROM huge -- LIMIT 5` → `guard_ok=True, cap=5` (MySQL 은 `--`/`#` 이후 주석 → LIMIT 없음) | 상한을 **주석 제거본에서만** 인정. 반대로 주석 제거가 문자열 리터럴을 잘라 blocker 를 지우는 역방향 위험이 있어 **blocker·SELECT 개수는 원본·제거본 양쪽 검사** |
+| P1-2 | backend | `SQL_CALC_FOUND_ROWS` 는 LIMIT 뒤에도 전체 행수 계산 → 조기 종료 없음. `DISTINCTROW`·`STRAIGHT_JOIN` 은 `_` 가 word char 라 `\bdistinct\b`/`\bjoin\b` 에 미매칭 | `SELECT SQL_CALC_FOUND_ROWS * FROM huge LIMIT 5` → `cap=5` | blocker 에 `sql_calc_found_rows`·`distinctrow`·`straight_join`·`sql_big_result`·`sql_small_result`·`sql_buffer_result`·`sql_no_cache`·`high_priority` 추가 |
+| P2-1 | backend | 코칭 대상 `worst` 를 raw `rows` 로 선택 → "rows 1,000만·filtered 0.01%(인덱스)" 가 "rows 90만·filtered 100%(풀스캔)" 을 이겨 **진짜 병목을 숨김** | 계획 2행 주입 | `_effective_rows`(rows×filtered/100) 기준 선택 |
+| P2-2 | security | `TRUST_LLM=false` 인데 메시지는 "confirm_heavy 로 호출하면 실행합니다" → 통하지 않는 탈출구 반복 시도 | 정책 off + heavy | 정책을 coach 에 전달, false 면 confirm 안내 대신 "모델 confirm 은 무시됨 — 좁힐 수 없으면 사용자에게 알리라" |
+| P2-3 | security | 승격 카운터가 run 단위라 **다른 테이블의 첫 쿼리**가 남의 차단 횟수를 물려받아 즉시 confirm 권고 | run 내 A→B 순서 | 카운터 키를 `run_id\|대상테이블` 로 분리 |
+| P2-4 | qa | facts 없는 엔진(MSSQL)에서 **집계 쿼리면** 정적 폴백을 건너뛰고 새 문구 반환 → 골든 계약 잠식 | `_heavy_query_coach("SELECT COUNT(*)…", …, {}, 1)` | 진단·집계 안내를 `worst` 존재 시에만. facts 없으면 **정적 문구만** |
+| P2-5 | qa | 기존 MSSQL fail-closed·MySQL fail-open 테스트가 **폐기된** `_estimate_explain_rows` 를 스텁 → 주입값 미사용, MagicMock 이 우연히 None 을 내어 통과 | 3개 테스트 | 새 진입점 `_estimate_explain_load` 스텁 동반 추가 |
+| P3-1 | backend | `LIMIT 0` → cap 1, `LIMIT 1000001, 0` → 1,000,001 | 경계 | `n==0` 이면 cap 0 |
+| P3-2 | qa | warn/off 골든 미봉인 | — | **문서 정정**(아래) + warn/off 골든 테스트 2건 추가 |
+
+**P3-2 는 근거 수용 후 방향을 바꿨다**: codex 는 "warn 모드의 순수 LIMIT 경고가 사라지는 것이
+문서의 '`warn` 무변경' 과 불일치" 라고 지적했다. 불일치는 사실이지만 **고쳐야 할 것은 코드가 아니라
+문서**다 — warn 이 붙이던 그 경고는 정확히 이번에 오판으로 판명된 값이라, 오판을 경고로 남기는 것이
+목적일 수 없다. 문서를 "warn 도 같은 보정을 공유한다(허위 경고 소멸, 진짜 무거운 쿼리 경고는 유지)"
+로 정정하고 그 동작을 테스트로 고정했다.
+
+**결함 없음으로 확인된 축(codex 명시)**: 스키마/인덱스 정보 노출 — allowlist 검사가 EXPLAIN 보다
+먼저 실행되고, 출력되는 table/key/possible_keys 는 이미 조회가 허용된 객체의 계획 정보이며
+`get_table_indexes`/`describe_table` 로 얻는 권한 범위를 넓히지 않는다. 대소문자·개행·다중문
+우회도 별도 경로를 찾지 못했다(다중문은 상위 `sql_guard` 단일문 검증이 차단).
+
+### 역검증(수정 후 재현 시도 — 생존 0)
+`cap=None` : 주석 `--`/`#`/`/* */` LIMIT · `SQL_CALC_FOUND_ROWS` · `DISTINCTROW` · `SQL_BIG_RESULT`
+· 문자열 리터럴로 blocker 를 지우는 트릭. `cap=0` : `LIMIT 0`·`LIMIT 1000001, 0`. `cap=5` : 정상
+순수 LIMIT(과보수 회귀 없음, 선행 주석 포함). 신규 테스트 **19 → 31건**, feature 전체 **2360
+passed / 30 skipped**, ruff clean.
+
+### 잔여·한계(정직)
+- `cfg.CURRENT_RUN_ID` 는 모듈 전역이라 같은 프로세스에서 run 이 병렬이면 카운터 키가 섞일 수 있다
+  (**기존 성격** — 내 변경이 만든 것이 아니다). 대상 테이블을 키에 넣어 영향면을 줄였고, 최악의
+  결과는 escalation 문구가 한 번 이르게/늦게 뜨는 것뿐이다(게이트 판정·실행 여부 무영향). 코드
+  주석·FUNCTION 에 한계로 명시.
+- LIMIT 보정 조건은 **정규식 기반**이라 sqlglot AST 수준의 정확도가 아니다. 판정 실패는 항상
+  "보정 미적용 = 차단 유지" 쪽으로 떨어지도록 설계했고(양쪽 검사), 위 8종 우회를 테스트로 고정했다.
+  그럼에도 미지의 MySQL 확장 문법이 조기 종료를 깨뜨릴 가능성은 남는다 — 발견 시 blocker 추가.
+- 라이브 대화에서 마찰이 실제로 사라지는지는 **배포 후 실측분**(원장 `unverified-live`).
+
+Cross-ref: TASK-20260731T184300-loadgate-blind-coaching · CHG-20260731T184300-loadgate-blind-coaching ·
+원장 `FR-loadgate-blind-coaching`.

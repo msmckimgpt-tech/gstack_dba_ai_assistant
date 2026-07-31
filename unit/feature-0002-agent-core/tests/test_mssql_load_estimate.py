@@ -160,6 +160,9 @@ def _stub_mssql_gate(monkeypatch, est_rows):
     monkeypatch.setattr(sql_guard, "validate_sql_for_sandbox", _ok_guard)
     monkeypatch.setattr(tools, "_freeform_sql_access_error", lambda sql: None)
     monkeypatch.setattr(tools, "_estimate_explain_rows", lambda conn, sql: est_rows)
+    # conv-audit FR-loadgate-blind-coaching: 게이트 진입점이 (추정치, 계획사실) 쌍으로 이동.
+    # MSSQL 은 계획 사실 파싱을 구현하지 않으므로 facts={} = 기존 정적 문구 폴백(골든 유지).
+    monkeypatch.setattr(tools, "_estimate_explain_load", lambda conn, sql: (est_rows, {}))
     monkeypatch.setattr(tools, "_apply_query_cap", lambda conn: None)
     monkeypatch.setattr(tools, "save_csv", lambda *a, **k: "/tmp/x.csv")
     monkeypatch.setattr(tools, "_raw_execute_sql",
@@ -236,6 +239,7 @@ def test_mysql_gate_fail_open_on_estimate_error(monkeypatch):
     monkeypatch.setattr(sql_guard, "validate_sql_for_sandbox", _ok_guard)
     monkeypatch.setattr(tools, "_freeform_sql_access_error", lambda sql: None)
     monkeypatch.setattr(tools, "_estimate_explain_rows", lambda conn, sql: None)  # 추정 실패
+    monkeypatch.setattr(tools, "_estimate_explain_load", lambda conn, sql: (None, {}))  # 동(신 진입점)
     monkeypatch.setattr(tools, "_apply_query_cap", lambda conn: None)
     monkeypatch.setattr(tools, "save_csv", lambda *a, **k: "/tmp/x.csv")
     monkeypatch.setattr(tools, "_raw_execute_sql",

@@ -14,6 +14,8 @@ MSSQL datasource 를 실제 활성화하면 보안 게이트가 아직 MySQL 방
 """
 from __future__ import annotations
 
+import re
+
 from shared import config as cfg
 
 
@@ -98,6 +100,149 @@ def _parse_showplan_estimate(result_sets) -> int | None:
         if best is not None:
             return max(0, best)
     return None
+
+
+# ── 실행계획 사실 추출 + LIMIT 상한 보정 (conv-audit FR-loadgate-blind-coaching) ──
+# 배경(라이브 실측 2026-07-31): 부하게이트가 차단할 때 EXPLAIN 이 이미 알고 있는 "왜 무거운가"
+# (접근형태·미사용 인덱스·스캔 파티션 수)를 **버리고** 정적 일반론만 돌려줘, 모델이 이미 시도한
+# 조언을 다시 받고 같은 형태를 재제출 → 한 대화에서 6연속 차단. 아래 두 함수가 그 정보를 살린다.
+def _parse_explain_plan_facts(result_sets) -> dict:
+    """MySQL EXPLAIN 결과 → 차단 코칭용 실행계획 사실.
+
+    반환 dict: `{"plan_rows": [ {table,select_type,type,key,possible_keys,parts,extra,rows,filtered} ],
+    "worst": <rows 최대 항목|None>}`. 파싱 불가/컬럼 부재는 빈 dict — caller 는 facts 가 비면
+    기존(정적) 문구로 폴백한다(추정치 자체는 `_parse_explain_rows_product` 가 독립 산출).
+    """
+    for kind, columns, rows in result_sets:
+        if kind != "rows" or not isinstance(columns, list) or not isinstance(rows, list):
+            continue
+        lcols = [str(c).strip().lower() for c in columns]
+        if "rows" not in lcols:
+            continue
+
+        def _get(r, key):
+            return r[lcols.index(key)] if key in lcols else None
+
+        plan_rows: list[dict] = []
+        for r in rows:
+            try:
+                nrows = int(_get(r, "rows"))
+            except (ValueError, TypeError, IndexError):
+                nrows = None
+            parts = _get(r, "partitions")
+            plan_rows.append({
+                "table": _get(r, "table"),
+                "select_type": _get(r, "select_type"),
+                "type": _get(r, "type"),
+                "key": _get(r, "key"),
+                "possible_keys": _get(r, "possible_keys"),
+                # 스캔 대상 파티션 수(프루닝 정도의 대리 지표). 비파티션 테이블은 None.
+                "parts": len([p for p in str(parts).split(",") if p.strip()]) if parts else None,
+                "extra": _get(r, "extra"),
+                "rows": nrows,
+                "filtered": _get(r, "filtered"),
+            })
+        if not plan_rows:
+            return {}
+        # 코칭 대상은 **실효 행수**(rows × filtered/100)가 가장 큰 항목이다 — raw `rows` 로 고르면
+        # "rows 1,000만 · filtered 0.01%(인덱스 range)" 가 "rows 90만 · filtered 100%(풀스캔)" 을
+        # 이겨, 실제 병목 테이블의 인덱스 부재를 숨기고 엉뚱한 대상을 안내한다(codex P2).
+        worst = max(plan_rows, key=_effective_rows)
+        return {"plan_rows": plan_rows, "worst": worst}
+    return {}
+
+
+def _effective_rows(pr: dict) -> float:
+    """plan row 의 실효 처리 행수(rows × filtered/100). filtered 미상이면 rows 그대로."""
+    r = float(pr.get("rows") or 0)
+    try:
+        f = float(pr.get("filtered"))
+    except (TypeError, ValueError):
+        return r
+    return r * (f / 100.0) if 0.0 <= f <= 100.0 else r
+
+
+# 조기 종료(LIMIT 상한)를 깨는 SQL 요소. 하나라도 보이면 보정하지 않는다(= 차단 유지).
+# 오탐(있는데 못 봄)만 위험하므로 **넓게** 잡는다 — 미검출 쪽이 안전한 방향이 아니다.
+# `sql_calc_found_rows` 는 LIMIT 이 있어도 **전체 결과 행수를 계산**하므로 조기 종료가 없다.
+# `distinctrow`·`straight_join` 은 `_` 가 word char 라 `\bdistinct\b`/`\bjoin\b` 에 안 걸려 별도 명시
+# (둘 다 codex P1/P1-동류 지적).
+_LIMIT_CAP_BLOCKERS = re.compile(
+    r"\b(where|group\s+by|having|distinct|distinctrow|union|intersect|except|order\s+by|join|"
+    r"straight_join|over|window|for\s+update|lock\s+in\s+share|into|procedure|"
+    r"sql_calc_found_rows|sql_big_result|sql_small_result|sql_buffer_result|sql_no_cache|"
+    r"high_priority)\b",
+    re.IGNORECASE,
+)
+# MySQL 주석: `-- …`(줄 끝) · `# …`(줄 끝) · `/* … */`. 주석 안의 `LIMIT 5` 를 실제 상한으로
+# 오인하면 **LIMIT 없는 전체 스캔이 게이트를 통과**한다(codex P1, 재현 확인).
+_SQL_COMMENT = re.compile(r"--[^\n]*|#[^\n]*|/\*.*?\*/", re.DOTALL)
+_AGGREGATE_CALL = re.compile(
+    r"\b(count|sum|avg|min|max|group_concat|std|stddev|stddev_pop|stddev_samp|"
+    r"var_pop|var_samp|variance|bit_and|bit_or|bit_xor|json_arrayagg|json_objectagg)\s*\(",
+    re.IGNORECASE,
+)
+# LIMIT 은 **문 끝**에서만 인정한다 — 문자열 리터럴 안의 'LIMIT 1'(예 `SELECT 'LIMIT 1' FROM t`)이
+# 상한으로 오인되지 않게. `LIMIT n` / `LIMIT off, n` / `LIMIT n OFFSET off` 세 형태.
+_TAIL_LIMIT = re.compile(r"\blimit\s+(\d+)\s*(?:,\s*(\d+)\s*)?;?\s*\Z", re.IGNORECASE)
+_TAIL_LIMIT_OFFSET = re.compile(r"\blimit\s+(\d+)\s+offset\s+(\d+)\s*;?\s*\Z", re.IGNORECASE)
+
+
+def _limit_scan_cap(sql: str, facts: dict) -> int | None:
+    """순수 `LIMIT n` 조회의 **실제 처리 행수 상한**(=n+offset). 해당 없으면 None.
+
+    MySQL `EXPLAIN.rows` 는 **LIMIT 을 반영하지 않는 스캔 상한**이다 — `SELECT * FROM t LIMIT 5`
+    도 rows=테이블 전체로 보고된다(라이브 실측: 13,903,018). 그 값을 "예상 처리 행수"로 그대로
+    쓰면 실제로 5행만 읽는 쿼리가 heavy 로 오판·차단된다.
+
+    보정은 **조기 종료가 보장되는 형태로만** 좁힌다(부하 회귀 방지 — 아래를 모두 충족):
+      1) 단일 plan row + `select_type=SIMPLE`  (조인·서브쿼리·derived·UNION 배제)
+      2) SELECT 1개 + 집계호출/`_LIMIT_CAP_BLOCKERS` 부재 (WHERE·ORDER BY·GROUP BY 등 전부 배제)
+      3) `Extra` 에 filesort/temporary 부재 (정렬·임시테이블은 전체를 읽어야 함)
+      4) 문 끝 LIMIT 파싱 성공 — **주석 제거본 기준**
+    하나라도 어긋나면 None → 기존 추정치 유지(차단). 즉 이 보정은 **오판 구간만** 되돌린다.
+
+    **주석 처리(codex P1)**: `SELECT * FROM t -- LIMIT 5` 는 MySQL 에 LIMIT 없는 전체 스캔으로
+    가는데 raw 문자열 끝에는 `LIMIT 5` 가 보인다 → 상한을 **주석 제거본에서만** 인정한다. 반대로
+    주석 제거가 문자열 리터럴을 잘라 blocker(WHERE 등)를 지워버리는 반대 방향 위험이 있으므로,
+    **blocker·SELECT 개수는 원본과 제거본 양쪽에서** 검사한다(둘 중 하나라도 걸리면 미적용).
+    """
+    raw = (sql or "").strip()
+    if not raw:
+        return None
+    stripped = _SQL_COMMENT.sub(" ", raw)
+    plan_rows = facts.get("plan_rows") or []
+    if len(plan_rows) != 1:
+        return None
+    only = plan_rows[0]
+    st = str(only.get("select_type") or "").strip().upper()
+    if st and st != "SIMPLE":
+        return None
+    extra = str(only.get("extra") or "").lower()
+    if "filesort" in extra or "temporary" in extra:
+        return None
+    for variant in (raw, stripped):
+        # 서브쿼리/CTE 는 select 가 2회 이상 등장한다(정규식 blocker 로 못 잡는 형태 방어).
+        if len(re.findall(r"\bselect\b", variant, re.IGNORECASE)) != 1:
+            return None
+        if re.search(r"\bwith\b", variant, re.IGNORECASE):
+            return None
+        if _LIMIT_CAP_BLOCKERS.search(variant) or _AGGREGATE_CALL.search(variant):
+            return None
+    m = _TAIL_LIMIT_OFFSET.search(stripped)
+    if m:
+        n, off = int(m.group(1)), int(m.group(2))
+    else:
+        m = _TAIL_LIMIT.search(stripped)
+        if not m:
+            return None
+        # `LIMIT a, b` = offset a, count b / `LIMIT a` = count a
+        if m.group(2) is not None:
+            off, n = int(m.group(1)), int(m.group(2))
+        else:
+            n, off = int(m.group(1)), 0
+    # `LIMIT 0` 은 offset 과 무관하게 즉시 빈 결과 — 처리 행수 0(codex P3).
+    return 0 if n == 0 else n + off
 
 
 class Dialect:
@@ -215,6 +360,15 @@ class Dialect:
         fail-open/closed(`gate_fail_closed_on_estimate_error`)를 결정한다.
         """
         raise NotImplementedError
+
+    def estimate_load(self, run, sql: str) -> "tuple[int | None, dict]":
+        """`estimate_load_rows` + **차단 코칭용 실행계획 사실**을 한 번의 계획 취득으로 함께 반환.
+
+        기본 구현은 추정치만 주고 facts 는 빈 dict(엔진이 계획 사실 파싱을 구현하지 않은 경우) —
+        caller 는 facts 가 비면 기존 정적 문구로 폴백한다. 계획을 두 번 뜨지 않도록(오버헤드 0 유지)
+        엔진별 override 가 EXPLAIN/SHOWPLAN 결과를 재사용한다.
+        """
+        return self.estimate_load_rows(run, sql), {}
 
     def explain_plan(self, run, sql: str):
         """explain_query 도구용 실행계획 result_sets(본 쿼리 미실행). None=미지원/실패."""
@@ -382,11 +536,26 @@ class MySQLDialect(Dialect):
 
     def estimate_load_rows(self, run, sql: str) -> int | None:
         # 골든: EXPLAIN 실행 후 (rows × filtered/100) 곱. 실패(구문/권한/플랜불가)는 None(fail-open).
+        return self.estimate_load(run, sql)[0]
+
+    def estimate_load(self, run, sql: str) -> "tuple[int | None, dict]":
+        """EXPLAIN 1회로 추정치 + 계획 사실을 함께 산출(+ 순수 LIMIT 조회 상한 보정).
+
+        골든 대비 변경은 **오판 구간 한정 하향**뿐이다 — `_limit_scan_cap` 이 조기 종료 보장 형태로
+        판정한 쿼리만 `min(est, n+offset)` 로 낮춘다(그 외 산식·값 무변경).
+        """
         try:
             result_sets = run(f"EXPLAIN {sql}")
         except Exception:
-            return None
-        return _parse_explain_rows_product(result_sets)
+            return None, {}
+        est = _parse_explain_rows_product(result_sets)
+        facts = _parse_explain_plan_facts(result_sets)
+        if est is not None:
+            cap = _limit_scan_cap(sql, facts)
+            if cap is not None and cap < est:
+                facts["limit_capped_from"] = est
+                est = cap
+        return est, facts
 
     def explain_plan(self, run, sql: str):
         try:

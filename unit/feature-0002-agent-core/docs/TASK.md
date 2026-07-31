@@ -1951,3 +1951,55 @@ rationale=REVIEW `REV-20260730T172000-dedup-param-cast` ·
 - [x] **qembed-vis**: 테스트 6건 + 역검증 4종(bool 화·잔차 leaf 포함·게이트 제거·타임아웃 원복) 생존 0
 - [ ] **qembed-vis**: 적대 패널 → 머지 → 배포 → 강등율 관측
 
+
+## TASK-20260731T184300-loadgate-blind-coaching — 부하게이트가 재작성 방향을 못 줘 추론이 정체되던 마찰 봉인
+
+`/_dqa:conversation_audit` 단건 — 사용자 지목 대화(`에러로그 분석 및 원인 대안 제시` 계열,
+conversation `20260731021152-36a7790b`, 105 메시지)에서 **6연속 `execute_sql` 차단**을 관측.
+원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` → `FR-loadgate-blind-coaching`.
+
+- [x] 신호 — 명시 `E-SYS`(도구 거부 반복 6회) + `E-USR`(사용자 직접 불만: "블로킹이 너무 심하게
+      나타난다"). 차단 메시지 6건 모두 동일 문구, 모델은 매번 형태만 바꿔 재제출.
+- [x] 삼각측량 — ⓐ 코드: `tools.py` gate 분기가 정적 문구 반환 · `dialects.py` 는 `rows×filtered`
+      곱만 사용, ⓑ **라이브 EXPLAIN 실측**(product 7 데이터소스, 읽기 전용): `SELECT * FROM
+      tf_log_05_item LIMIT 5` → rows=13,903,018·filtered=100 → est 13.9M → 차단(**실제 5행**),
+      `WHERE LogTime >= …` → est **1**(파티션 4/26 프루닝) → 통과, ⓒ 전사: 6회 차단 후 다른 접근으로 우회.
+- [x] 근본 2건 — **RC-1(L2 거부 피드백)**: EXPLAIN 이 이미 아는 "왜 무거운가"(접근형태·미사용
+      인덱스·스캔 파티션)를 버리고 일반론만 반환 → 모델이 **이미 한 조언**을 재수신 → 재작성 루프.
+      **RC-2(L5 추정)**: `EXPLAIN.rows` 는 LIMIT 미반영 스캔 상한인데 이를 "예상 처리 행수"로 사용.
+- [x] 거짓양성 기각(정직) — 사용자가 지목한 "LIMIT 1인데 차단" 그 쿼리는 `COUNT(*)`·`AVG()` 집계라
+      **LIMIT 과 무관하게 전체 스캔이 맞다**(가드 판정 정당). 전체 차단 25건 중 **24건이 집계** —
+      "가드가 과차단한다"는 표면 가설은 데이터로 `refuted`. 진짜 결함은 거부 *자체*가 아니라 거부
+      *피드백*(F4 위치 재지정)과, 별개로 실재하는 순수 LIMIT 오판(1건 관측·실측 재현).
+- [x] corroboration = **structural** — 30일 distinct_conv **10** / 대화 129건의 7.8%,
+      차단 23건 / `execute_sql` 386건의 **6.0%**(전체 기간 12 대화·25건).
+- [x] 수정 — AC-0604(진단 코칭·반복 시 confirm_heavy 승격) + AC-0605(조기 종료 보장 형태 한정
+      `min(est, n+offset)` 보정). 게이트 메커니즘·임계·fail-closed 규칙 불변.
+- [x] 검증(코드/테스트) — 신규 `tests/test_query_guard_coaching.py` **19건** PASS(오탐 방지 8건:
+      WHERE/집계/filesort/조인/서브쿼리·CTE/DERIVED/문자열 리터럴 LIMIT/하향-전용) + 기존
+      `test_query_guard.py`·`test_mssql_load_estimate.py` 35건 PASS(스텁 진입점 이동 반영).
+- [x] 검증(dogfood, 라이브 계획 주입) — 라이브 EXPLAIN 4건을 새 코드로 판정: 순수 LIMIT 2건
+      13.9M/30.5M → **5/3 로 보정 PASS**, 집계·인덱스미사용 2건 **차단 유지 + 진단 문구 부착** 확인.
+- [x] §18.8 적대 패널(codex 3렌즈) — **[P1] 2건으로 출하 차단 판정을 받았고 둘 다 재현했다**:
+      주석 속 가짜 LIMIT(`-- LIMIT 5`)과 `SQL_CALC_FOUND_ROWS`/`DISTINCTROW` 가 **실제 전체 스캔을
+      게이트로 통과**시켰다 — 내가 막으려던 부하 회귀를 내가 만들고 있었다. [P2] 5건([P2] worst
+      선택·거짓 탈출구 안내·카운터 과발동·MSSQL 폴백 잠식·죽은 스텁) + [P3] 2건 포함 **9건 전부
+      흡수**(1건은 코드가 아니라 문서를 정정). 역검증 재현 **생존 0**, 테스트 19 → **31건**,
+      feature 전체 **2360 passed / 30 skipped**.
+- [ ] 라이브 실측(배포 후) — 실제 대화에서 차단 빈도가 줄고 재작성이 성공하는지. 다음 audit 의
+      corroboration 재측정으로 확인(그 전까지 원장 status = `fixed:deployed:unverified-live`).
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260731T184300-loadgate-blind-coaching
+- [x] `"무거운 쿼리" 블로킹 원인 파악` — 산출물: 본 섹션 근본 2건 + 거짓양성 기각 · 배선 확인:
+      라이브 EXPLAIN 실측표(대화 전사 6건 ↔ 실행계획 대조).
+- [x] `목적 수행을 위한 이슈 해소` — 산출물: `CHG-20260731T184300-loadgate-blind-coaching`
+      (AC-0604/AC-0605) · 배선 확인: 신규 **31** + feature 전체 2360 PASS, 라이브 계획 dogfood 4건,
+      §18.8 패널 [P1] 2건 흡수 후 역검증 생존 0.
+- [ ] `라이브 소멸 확인` — **미수행**(배포 후 실측 필요). 정직 분리 표기.
+
+**주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 없음(도구 결과 문자열 = LLM 대면) → `해당 없음`.
+
+### 정본
+rationale=REVIEW `REV-20260731T184300-loadgate-blind-coaching` ·
+변경이력=MODIFY `CHG-20260731T184300-loadgate-blind-coaching` ·
+마찰원장=`docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-loadgate-blind-coaching`.
