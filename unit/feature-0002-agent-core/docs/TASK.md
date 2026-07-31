@@ -27,7 +27,9 @@ source_of_truth: true
 - [x] search_routines 매칭 스니펫(MySQL+MSSQL) — 사용자 승인 항목
 - [x] 신규 테스트 27 PASS · feature-0002 로컬 2114 passed/30 skipped · `make test`(3 feature + ruff) **RC=0 4회 연속**
 - [x] §18.8 적대 리뷰 — §18.8.2 제약-없는-채널 우선 → codex 3렌즈(security/backend/regression) **[P1] 0건**, [P2] 4건 중 2건 흡수·2건 근거 기록 → REV-20260730T190000-review-proposed-change-framing
-- [ ] 배포(web + ask-worker/insight-worker 재빌드) 후 라이브: 동일 5개 파일 재리뷰에서 '적용 전제' 절 분리 + 미배포 상태에 🔴 배지 부재 관측
+- [x] 배포 완료(2026-07-31, PR #1102 merge main `2ecfe4b5` → `make deploy-web` 전체 스코프, soak 통과, **4서비스 GIT_COMMIT=2ecfe4b5 healthy**, edge `/healthz` ok) + 배포본 런타임 실증(계약·L2 힌트·스니펫 심볼 13종) + **라이브 compose 경로 실증**(실 `agent_memory` 연결 `compose_system_prompt` 결과 13,604자에 계약 도달 — 운영자 global row 대체 조건에서도 존속 = AUTH-1a 검증)
+- [ ] **라이브 대화 실측(잔여)**: 동일 5개 파일 재리뷰에서 '적용 전제' 절 분리 + 미배포 상태에 🔴 배지 부재 관측 — 사용자 표면 재현 필요
+- **부수 발견(별 트랙, 원장 `FR-operator-global-prompt-shadows-code-seals`)**: 배포 검증 중 운영자 `WebSystemPrompts` global row(15,978자·2026-06-18)가 코드 상수 `SYSTEM_PROMPT`(20,575자)를 통째 대체해 **2026-06-18 이후 SYSTEM_PROMPT 본문에만 추가된 규칙 7종이 라이브 미도달**임을 실측. 본 cycle 은 계약을 `parts` always-append 로 넣어 영향 없음(설계 검증). `needs-human` — 사람 결정 필요.
 
 ## TASK-20260722-dqa-data-grounding — 데이터 의미 grounding 지침: 저장값 타임존·ENUM 코드·분리저장 추측 금지 (Major §12.3 — core 시스템 프롬프트·정확성; DQA 마찰 B-1/D-1/D-2)
 - 출처: `/_template:entry` DQA_assistant_마찰개선사항_20260722_v2.md 검토·개선 (2026-07-22, 사용자 명시). FGT 통계 집계를 DQA 로 수행하며 관측된 **정확성 결함**을 서비스 grounding 지침으로 해소.
