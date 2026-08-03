@@ -545,6 +545,17 @@ TASK_TAXONOMY: dict[str, dict[str, Any]] = {
     "node_analysis":       {"category": "ai.insight.analyze",       "label": "그래프 노드 분석"},
     "cluster_label":       {"category": "ai.insight.analyze",       "label": "콘텐츠 그룹 라벨"},
     "product_classify":    {"category": "ai.insight.analyze",       "label": "제품 분류 제안"},
+    # aiops-taxonomy-unmapped(2026-08-03): 라이브 llm_usage 에 존재하나 미등록이라 '운영 현황'
+    #   카테고리 드릴다운에서 '미분류 활동' 그룹으로 떨어지던 3 task 를 인사이트 분석으로 편입.
+    #   셋 다 insight 워커의 분석 파이프라인 산출물이다 (대화 답변 경로 아님):
+    #     · cluster_summary — 콘텐츠 그룹(클러스터) 요약 L2 (semantic_cluster, feature-0034)
+    #     · domain_summary  — 스키마=도메인 단위 합성 요약 L3 (domain_synthesis, feature-0037)
+    #     · analysis_verify — 분석문 사실성 판정 (analysis_verify, feature-0036). 검증 축이지만
+    #       대상·소비처가 인사이트 분석문이라 같은 카테고리에 둔다 (redteam 을 대화 파이프라인의
+    #       ai.reasoning.aux 에 둔 것과 동형 — 검증은 자기가 검증하는 파이프라인에 귀속).
+    "cluster_summary":     {"category": "ai.insight.analyze",       "label": "콘텐츠 그룹 요약"},
+    "domain_summary":      {"category": "ai.insight.analyze",       "label": "도메인 종합 요약"},
+    "analysis_verify":     {"category": "ai.insight.analyze",       "label": "분석문 사실성 검증"},
     # 프롬프트 자동생성 (신규 계측 — 제품/역할/계정 생성 + 자율 sweep 워커)
     "prompt_gen":          {"category": "ai.prompt.autogen",        "label": "프롬프트 자동생성"},
     # 메타데이터 자동완성 (신규 계측)

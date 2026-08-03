@@ -2383,3 +2383,26 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - 타깃별 실질 검증(doc_sync Phase 4): `node --check` PASS · vm 구조검증(generated=2026-07-30 · releases[0]=2026-07-30 8항목 · releases[1]=07-29 13항목 보존 · blocks 39 · type/area enum 위반 0 · title 누락 0 · 내부용어 누출 0 정규식 검증). `verify_release_notes.mjs` 는 jsdom 미설치(env 제약)로 미실행 — render 로직 미변경이라 대상 아님.
 - 적대검증(ULTRACODE wf_b0e71477, 분면-스코프 refute): MAJOR 1(심야·주말 답변 강등 오서술 — 정본은 insight 배치 전용)·MINOR 3('모두 재분석' 과대·'전체 40% 이상' 수치 오류·상태전이 오서술)·MISSED 1(캔버스↔상세 부정합 항목 누락) 전건 반영.
 - 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
+
+## REV-20260803T154922-aiops-taxonomy-unmapped — `운영 현황` 미분류 활동 3종 재배치 (Minor §12.3, shared taxonomy 데이터 + 회귀 테스트)
+- **changeset**: `shared/model_catalog.py`(`TASK_TAXONOMY` +3행) + `tests/test_ai_ops.py`(+2 테스트) + companion docs. 제품 코드 로직·RBAC·스키마·엔드포인트·프론트 0.
+- **판단 근거 — 왜 `ai.insight.analyze` 인가**: 세 task 는 전부 insight 워커가 도는 분석 파이프라인의 층이다(L2 `cluster_summary` → L3 `domain_summary`, 그리고 그 산출물을 대조하는 `analysis_verify`). 라이브 기록도 `conversation_id='__insight_worker__'` 단일, target 축은 데이터소스/스키마/객체로 기존 인사이트 task 와 동형. 대안 2개를 기각했다 — ① 신규 카테고리 `ai.insight.verify` 신설: 드릴다운 그룹만 늘고 운영자가 얻는 분해능은 task 행 수준에서 이미 확보된다(카테고리는 상위 롤업 단위). ② `analysis_verify` 를 `ai.reasoning.aux` 로: aux 는 **대화 파이프라인 내부 소량 호출** 정의(validate/summary/classify/topic/sql_fix/redteam)라 배경 배치 워커를 넣으면 카테고리 의미가 흐려진다.
+- **재발 방지 설계**: 오늘의 3종을 dict 에 넣는 것만으로는 같은 결함이 다음 신규 계측에서 재발한다(2026-07-28 usage-records-system 이 이미 같은 사유로 4종을 편입한 전례 — 반복 패턴). 그래서 회귀 테스트를 **호출부 AST 전수 수집**으로 걸었다: 소스에서 `_record_llm_usage` 의 task 리터럴을 모아 taxonomy 미등록이 하나라도 있으면 fail. 스캐너가 경로 변경 등으로 아무것도 못 찾으면 조용히 통과하므로 수집 하한(`>= 10`)을 둬 vacuous pass 를 막았다. 변수 경유 호출(`_call_llm(task=…)`)은 정적 확정이 불가해 대상 밖 — 그 경로는 명시 매핑 테스트가 보완한다(한계 명시).
+- **검증**: AST 스캐너 실측 수집 18종·missing 0 · **역검증** 3종을 taxonomy 에서 제거한 가정으로 재실행 → 정확히 `analysis_verify`/`cluster_summary`/`domain_summary` 만 missing 으로 적발(게이트가 실제로 작동함을 반증 방향으로 확인).
+- **리스크**: 없음에 가깝다 — 읽기 전용 표시 매핑이고 과거 `llm_usage` 행은 재해석만 된다(데이터 변경 0, 마이그레이션 0, 롤백=dict 3행 되돌리기). 카테고리 합계(호출/토큰/비용)는 '미분류 활동' 에서 '인사이트 분석' 으로 이동하므로 두 행의 수치가 바뀐다 — 의도된 재배치이며 총합은 불변.
+- **§18.8 패널**: [SKIPPED:non-policy-doc] 아님 — 제품 코드(shared) 변경이나 dict 데이터 3행 + 테스트로 Minor·비파괴·인가 무관. 도메인 신호(auth/schema/API/perf) 미매칭이라 패널 미소집.
+
+## REV-20260803T154922-aiops-taxonomy-unmapped-codex [CODEX:shared-taxonomy+regression-gate] — 적대 리뷰 8라운드, 최종 P1 반영 완료
+- **Trigger**: code change (shared dict + 테스트) — §18.8 dispatch 표에서 도메인 키워드 매칭 0건. 세션에 "요청 없이 Agent tool 호출 금지" 상위 지시가 있어 §18.8.2 **carve-out 1번(제약 없는 채널 우선)** 을 적용, `codex exec` 채널로 적대 검증을 수행했다. `[CODEX:*]` 는 §18.8.1-2 가 check #9 accepted review 로 인정하는 경로. **미검증 도메인**: ux/design/security subagent 관점은 이번 변경(표시 매핑 dict + 테스트, 인가·UI 표면 무변경)에 N/A 라 대체 없이 진행 — 미검증을 완료로 오인 보고하지 않기 위해 명시한다.
+- **라운드 요약 (전부 테스트 게이트에 대한 지적, 제품 코드 지적 0)**:
+  1. R1 P1 — AST 스캐너가 두 번째 positional 리터럴만 봐서 keyword·래퍼·f-string 경로를 놓침 → **sink 고정점**(task 를 그대로 흘리는 래퍼 자동 수집) + 파싱 실패 즉시 실패.
+  2. R2 P1 — f-string 산출값(`metadata_summary`) 미등록이 통과 → 파생 규칙 `(producer, template, 산출 튜플)` 선언 + **집합 동치** 검증. P2 — 래퍼 positional 미바인딩 → 함수 시그니처에서 task 인덱스 산출.
+  3. R3 P1 — producer 의 task 가 리터럴이 아니면 조용히 누락 → `unresolved_producer` 로 fail-closed. P2 — 메서드 self 오프셋·고정점 5회 고정 → 메서드 sink 는 미확정 처리, 수렴 실패 시 assert.
+  4. R4 P1 — sink 인데 task 를 특정 못한 호출(`**kwargs`·`*args`) 통과 → `unresolved_sink` fail-closed.
+  5. R5 P1 — `*args` 앞선 unpacking 으로 positional 오독 → `_starred_before` 가드.
+  6. R6 P1 — 이름이 `task` 인 **지역변수**를 래퍼 전달로 오인 → enclosing 함수 파라미터일 때만 passthrough.
+  7. R7 P1 — 파라미터 재바인딩·shadowing(`def/class/import-as/except-as/match-as`·중첩 파라미터) → `_binds_task` 전 형태 검사(자기 파라미터 노드는 제외). P1 — 함수 헤더(데코레이터·기본값·어노테이션)의 호출을 함수 내부로 오기록 → `_FnScope` 가 헤더는 바깥 스코프로 방문.
+  8. R8 P1 — sink/producer 를 **별칭 참조**(`recorder = _record_llm_usage`) → `alias_refs` fail-closed. P1 — 같은 파일·같은 표현식이면 다른 함수의 호출도 allowlist 공유 → 호출 스택에 선언된 producer 가 있어야 승인.
+- **자체 실증(합성 소스 트리)**: 지역변수 task · `*args` · `**kwargs` · 미등록 리터럴 · 파라미터 재대입 · def/class/import-as/except-as/match-as/중첩파라미터 shadowing · 기본값·데코레이터 호출 · 별칭 할당/인자 전달 — **전 케이스 적발**, 순수 passthrough 대조군만 통과. taxonomy 변이(등록 7종 각각 제거·선언 튜플 축소)도 전건 적발.
+- **잔여 한계(정직 기록)**: `getattr(mod, "_record_llm_usage")`·`exec`·동적 import 처럼 **AST 밖**에서 결정되는 경로는 원리상 정적 확정이 불가하다. 게이트의 계약은 "모든 동적 경로를 해석한다"가 아니라 **"미확정 경로를 조용히 통과시키지 않는다"** 이며, docstring 에 그대로 명시했다.
+- **제품 코드(`shared/model_catalog.py`) 지적**: 8라운드 전체에서 0건 — 카테고리 배치·라벨·회귀 위험에 대한 P1/P2 없음.
