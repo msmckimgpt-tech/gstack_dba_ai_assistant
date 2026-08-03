@@ -1078,3 +1078,11 @@ REGISTRY 와 `.lock` 뿐(비밀정보 아님, `*.bak-*` 0600 불변) · post-com
 - 조치: 8건 전부 수정. 테스트 6 → 9건(발행 필터를 소스에서 추출해 실제 평가 + config↔spec parity + 소비처 존재). 역검증 5종 생존 0. 전체 스위트 회귀 0.
 - 패널 clean: 발행 순서 · 게이트 스코프(fail-safe) · 잔차 상호작용 · 타임아웃 blast radius · 재시도 증폭 없음 · §3b-1 SQL · §3b 비회귀 · 프론트 무영향.
 - Timestamp: 2026-07-31T09:30:00Z
+
+## REV-20260803T120000-ai-root-ssot-roadmap-refresh [SKIPPED:doc-measurement-refresh] — SSOT 로드맵 실측 갱신
+- Related TASK: _meta_ (docs/improvements/ssot-consolidation/ROADMAP.md 갱신)
+- Reason: 로드맵 **본문의 근거 수치만** 현재 실측으로 교체하고 진입점 섹션(§3b)을 추가. 코드·정책·계약 변경 0, 항목의 verdict/risk_grade/gate 무변경. 실측은 재현 가능한 명령으로 얻었고 표에 병기했다 — §18.8 패널이 검증할 동작 표면이 없다.
+- 무엇을 왜: `ssot-consolidation` P5a/P5b 가 근거로 든 수치가 낡아, 다음 작업자가 **이미 완료된 백엔드 분할**(feature-0012 가 21 APIRouter 로 전량 추출)을 재착수하게 돼 있었다. 실측: app.py 25,823→3,883줄 · `from modules.*` 148→2 · `@app` 라우트 0 · routers/ 33파일 223 endpoint. 반대로 프론트는 3주 만에 커졌다(admin.js 8.8K→14,007 +59% · app.js 8.7K→13,165 +51% · styles.css 7.6K→9,328 +23%).
+- 함께 기록한 부정 결과: 자매 initiative `parallel-work-structure` C-12 의 재검토 트리거("app.js 충돌 실측 발생")는 **미충족** — 최근 60일 머지 커밋에서 app.js 충돌 0건(커밋 166건). 착수 근거를 '충돌 회피'로 쓰면 안 된다는 것을 §3b 에 명시.
+- 진입점: §3b 에 신선한 세션용 `/_template:entry` 프롬프트 + 착수 불가 항목(P5a=미결정 #4/#5 대기 · P3=사람 승인 · P0=in-progress) 구분.
+- Timestamp: 2026-08-03T12:00:00Z
