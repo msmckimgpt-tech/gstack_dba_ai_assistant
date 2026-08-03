@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260803T200000-precondition-postdeploy (POST-DEPLOY 기록, docs-only)
+- Date: 2026-08-03. 코드 변경 **0**.
+- **배포**: PR #1126 merge main `99d09137` → `make deploy-web` 전체 스코프, soak 통과, 4서비스 GIT_COMMIT=99d09137 healthy.
+- **런타임 실증**: 계약 9요소 전부 LIVE(검증-또는-미확인·미확인 1급값·거부/스코프/미조회⇒미확인·0행 범위조건부·커버리지 명시 조건·첨부 IF NOT EXISTS≠증거·미확인 비-무료·조회 시도 의무·`verify > 미확인 > guess`). 라이브 composed 19,764자에 도달, 선행 seal 공존.
+- **1차 배포 실패·재실행(정직)**: insight-worker 헬스 미도달 → 워커군 last-good 롤백 → **web 만 신코드** 부분 완료(`DEPLOY_RC=2`). 원인은 배포 창의 일시적 네트워크 버스트(전 datasource `probe-tcp timeout`; **롤백본에서도 동일** → 코드 무관, 이후 양 워커 직접 probe 정상). 자체 회복 후 재실행 RC=0. 교훈: 워커 롤백 = 프롬프트 수정 라이브 미도달이므로 `DEPLOY_RC` 뿐 아니라 **서비스별 GIT_COMMIT** 으로 완료를 판정해야 한다.
+- **측정 스냅샷**: 47.8% / `미확인` 0개→**2개**(첫 사용). 90일 창은 과거 지배 → 재측정이 완료 판정.
+- **Rollback**: 문서 되돌리기(코드 무변경).
+
 ## CHG-20260803T190000-precondition-verified-or-unknown (전제 절의 상태 단정을 '검증된 사실 또는 미확인' 으로 봉인 + 상시 감지기 — conversation_audit FR-review-precondition-assumed-not-verified)
 - Date: 2026-08-03. worktree `ai/root/feature-0002-agent-core`(base main 3748c4fd). 범위 승인 **A+C**(AskUserQuestion 2026-08-03).
 - **무엇을(A 계약)**: `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 의 `적용 전제` 절 규칙에서 **"stated as fact" 를 제거**하고 **"모든 행은 검증된 사실이거나 `미확인`"** 으로 대체. 5개 하위 규칙 — (1) 상태를 적으려면 **이 run 에 그 객체의 도구 결과**가 있어야 하고, 없으면 `미확인` + 무엇을 확인 못 했는지. `미확인` 은 실패가 아니라 **1급 값**(미검증 존재/미존재가 정직한 미확인보다 나쁘다 — 사용자가 그걸 믿고 행동한다). (2) 권한거부(`접근이 허용되지 않은 스키마`)·스코프 경고·미조회 ⇒ 미확인, 절대 "존재하지 않음" 아님(거부는 존재 여부를 말하지 않는다). (3) **0행은 범위 조건부** — 정확한 식별자 + 도구가 자기 커버리지를 명시한 경우에만 **그 범위 내** 부재로 말하고 범위를 함께 적는다("허용 DB 전체에서 미발견"); 추측 이름·필터 쿼리·커버리지 미명시 ⇒ 미확인. (4) 첨부의 `CREATE TABLE IF NOT EXISTS x` 는 x 의 **현재** 존재 여부 증거가 아님. (5) **미확인은 공짜가 아님** — 결정이 걸린 객체(변경 대상·기존 데이터가 막을 수 있는 것·스크립트 의존 대상)는 최소 1회 조회 시도 의무, `verify > 미확인 > guess`, 예산 아끼려 바로 미확인 금지. SYSTEM_PROMPT 미러도 동일 3요소로 정합(§18.8 R2 P2 — 미러만 열려 있으면 bootstrap 경로에서 결함 존속).

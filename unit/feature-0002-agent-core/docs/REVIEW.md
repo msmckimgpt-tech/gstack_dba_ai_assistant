@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260803T200000-precondition-postdeploy [SKIPPED:docs-only-postdeploy-record] — 배포 결과·런타임 실증 기록
+- Date: 2026-08-03
+- Cycle: CHG-20260803T200000-precondition-postdeploy. **코드 변경 0** — codex 3라운드를 통과해 머지·배포된 변경의 결과 기록.
+- Trigger: §18.8 표 키워드 0 + code change 0(diff = 원장·TASK·MODIFY 문서). §18.8.1 docs-only 경량 경로.
+- 검증 방식(패널 대체): 배포본 직접 측정 — 4서비스 GIT_COMMIT + health, ask-worker 안에서 계약 9요소 marker + 라이브 `compose_system_prompt` 도달, 감지기 재실행 스냅샷.
+- **정직성**: (1) 1차 배포가 워커 롤백으로 **부분 완료**(프롬프트 수정 라이브 미도달)였음을 숨기지 않고 기록하고, 원인이 내 코드가 아님을 롤백본 동일 증상으로 확증했다. (2) `verified` 로 닫지 않았다 — 90일 창은 과거 대화가 지배해 비율이 즉시 움직이지 않으므로, 새 리뷰 대화 축적 후 재측정이 완료 판정이다. `미확인` 이 0→2 로 처음 쓰인 것은 방향 신호이나 표본이 작다.
+- Cross-ref: CHG-20260803T200000-precondition-postdeploy / REV-20260803T190000-precondition-verified-or-unknown / FRICTION_LEDGER(FR-review-precondition-assumed-not-verified `fixed:deployed:unverified-live`).
+
 ## REV-20260803T190000-precondition-verified-or-unknown [CODEX:adversarial-correctness+detector-validity+security-ops] — 전제 단정 봉인 3라운드 SHIP
 - Date: 2026-08-03
 - Cycle: TASK-20260803T190000-precondition-verified-or-unknown. **Major §12.3** — core 시스템 프롬프트 + 운영 DB 를 읽는 신규 스크립트.

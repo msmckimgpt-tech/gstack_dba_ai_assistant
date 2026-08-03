@@ -116,7 +116,10 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-review-precondition-assumed-not-verified — triaged (L1 2차효과 의심; 시간-방향 계약이 '적용 후 가정'으로 과교정돼 적용 가능성 검증을 건너뜀)
 
-- **status**: `fixed:undeployed` — corroboration 측정 후 봉인(사용자 지시 + 범위 승인 **A+C**, 2026-08-03). 배포 전.
+- **status**: `fixed:deployed:unverified-live` — corroboration 측정 후 봉인(사용자 지시 + 범위 승인 **A+C**) + **배포 완료**(2026-08-03, PR #1126 merge main `99d09137` → `make deploy-web` 전체 스코프, soak 통과, **4서비스 GIT_COMMIT=99d09137 healthy**).
+  **배포본 런타임 실증(ask-worker)**: 계약 9요소 전부 LIVE — 검증-또는-미확인 · 미확인=1급 값 · 거부/스코프/미조회⇒미확인 · **0행 범위 조건부**(과교정 방지) · 커버리지 명시 시에만 부재 · 첨부 `IF NOT EXISTS`≠증거 · 미확인은 공짜 아님 · 조회 시도 의무 · `verify > 미확인 > guess`. 라이브 `compose_system_prompt`(19,764자)에 계약 도달 확인, 선행 seal(`ZERO ROWS IS NOT ABSENCE`) 공존. (미러는 운영자 global row 대체로 미도달 — `FR-operator-global-prompt-shadows-code-seals` 의 기지 조건이며 bootstrap 경로 전용이라 결함 아님.)
+  **배포 시 1회 실패·재실행(정직 기록)**: 1차 배포는 insight-worker 헬스 미도달로 워커군이 last-good 롤백돼 **web 만 신코드** 인 부분 완료로 끝났다(`DEPLOY_RC=2`) — 즉 그 시점엔 프롬프트 수정이 **라이브에 없었다**. 원인은 내 코드가 아니라 배포 창의 일시적 네트워크 버스트(모든 datasource `probe-tcp timeout`; 롤백본에서도 동일 증상, 이후 양 워커에서 동일 datasource 직접 probe 는 정상). insight-worker 자체 회복 후 재실행(멱등)해 RC=0.
+  **완료 판정(측정으로만)**: 배포 직후 스냅샷 = 미검증 47.8% / `미확인` **2개**(0개→2개, 첫 사용). 90일 창이라 과거 대화가 지배하므로 즉시 움직이지 않는다 — **새 리뷰 대화가 쌓인 뒤** `python3 bin/measure-precondition-grounding.py --days 30` 로 재측정해 **비율 < 47.8% + `미확인` 증가**면 `verified`, 재증가면 `regressed`.
 - **corroboration(측정 완료 — structural)**: 90일 `.sql` 첨부 대화 87건에서 객체 상태 단정 **90건 중 43건(47.8%)**이 그 대화의 어떤 도구 결과에도 그 객체명이 없다. **`미확인` 표기는 0건** — 이 서비스는 지금껏 객체 상태에 "미확인" 을 한 번도 쓴 적이 없다. 관측 구간 2026-05-28~08-03.
 - **귀속 정정(중요·정직)**: 최초 보고에서 이를 "내가 만든 계약 결함(2차효과)" 으로 단정했으나 **측정이 그것을 반증했다**. 이 행동은 시간-방향 계약(2026-07-30 출하) **이전부터 광범위**하다. 정확한 진단은 (1) **오래된 구조적 공백** — 상태 단정에 객체별 검증을 요구하는 규칙이 없었고 `미확인` 이 출력 값으로 제시된 적이 없다, (2) **내 계약의 기여** — `적용 전제` 절이 그 단정에 표 형태의 눈에 띄는 자리를 줬고 "stated as fact" 가 확정 압력을 더했다(원인 아닌 **가중 요인**). rootcause_confidence low → **high**.
 - **source**: `FR-review-frames-live-db-as-spec` 봉인의 **라이브 육안검증 중 부수 발견** — 사용자 지시("실제 웹브라우저 조작을 통해 육안검증까지").

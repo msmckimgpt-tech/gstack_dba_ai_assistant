@@ -28,7 +28,8 @@ source_of_truth: true
 - [x] 감지기(C) + 감지기 자체 회귀 테스트 10건
 - [x] feature-0002 전체 2399 passed / 31 skipped / 0 failed
 - [x] §18.8 codex 적대 **3라운드** — R1 [P1]1+[P2]3 → R2 [P1]2+[P2]3 → R3 [P1]**0**+[P2]1 → 전건 수정(마지막은 **성공 신호가 영원히 0** 이던 감지기 결함)
-- [ ] 배포 후 재측정: 미검증 비율 감소 + `미확인` 객체 수 > 0 (현재 baseline 47.8% / 0개)
+- [x] **배포 완료**(2026-08-03, PR #1126 merge main `99d09137`, 4서비스 healthy) + 배포본 런타임 실증 **계약 9요소 전부 LIVE** + 라이브 composed(19,764자) 도달. 1차 배포는 insight-worker 헬스 미도달(일시적 datasource `probe-tcp timeout`, 내 코드 무관)로 워커 롤백 → 자체 회복 후 재실행 RC=0
+- [ ] **재측정으로 완료 판정**: 배포 직후 스냅샷 47.8% / `미확인` **2개**(0→2, 첫 사용). 90일 창은 과거 대화 지배 → 새 리뷰 대화 축적 후 `--days 30` 재측정에서 비율 감소 + 미확인 증가면 `verified`
 
 ## TASK-20260731T030000-grounding-authority-directive — 운영자 프롬프트가 삼킨 grounding 봉인을 코드 권위선으로 복구 + 라이브 모순 제거 (Major §12.3 — core 시스템 프롬프트)
 - 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` 후속 — 선행 cycle(TASK-20260730T190000) **배포 검증 중 부수 발견**된 `FR-operator-global-prompt-shadows-code-seals`. 사용자 지시("후속 이슈가 있다면 해당 부분도 적용을 검토해주세요") + 범위 승인 **A+B**(AskUserQuestion 2026-07-31).
