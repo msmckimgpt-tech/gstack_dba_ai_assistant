@@ -999,3 +999,33 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **패널 clean**: 발행 순서(플래그 기록이 발행보다 앞) · 게이트 스코프(import 실패 시 UnboundLocalError → 그 경우 시도 자체가 없어 fail-safe) · 잔차 상호작용 · 타임아웃 blast radius(3 호출처 전부 대화형, 배치는 별도 노브) · 재시도 증폭 없음(`AGENT_OPENAI_MAX_RETRIES=0`) · §3b-1 SQL · §3b 비회귀 · 프론트 무영향.
 - **위험등급**: Minor. **Rollback**: 커밋 revert(타임아웃은 env `AGENT_KB_QUERY_EMBED_TIMEOUT_SEC` 로 즉시 원복 가능).
 - **Cross-ref**: feature-0034(init 계측 — 이 문제를 드러낸 계측) · feature-0031(잔차 노출 패턴) · CHG-20260625(타임아웃 도입 시 근거였던 warm 0.33s).
+
+## CHG-20260731T184300-loadgate-blind-coaching — 부하게이트: 실행계획 진단 코칭 + 순수 LIMIT 상한 보정 (Major §12.3)
+> TASK-0304 가 게이트를 "차단"에서 "재작성 코칭"으로 바꿨는데, 그 코칭이 **모델이 이미 한 일**을 반복해 말하고 있었다. 라이브 대화 한 건에서 6연속 차단.
+- **마찰(conv-audit)**: conversation `20260731021152-36a7790b` — `execute_sql` 6연속 차단, 사용자 명시 불만("블로킹이 너무 심하게 나타난다"). 30일 corroboration **structural**: distinct_conv 10 / 대화 129 (7.8%), 차단 23 / `execute_sql` 386 (6.0%).
+- **정직한 기각(표면 가설 반증)**: 사용자가 지목한 "`LIMIT 1` 인데 차단" 쿼리는 `COUNT(*)`·`AVG()` **집계**라 LIMIT 과 무관하게 전체 스캔이 맞다 — 게이트 판정 자체는 정당했다. 전체 차단 25건 중 **24건이 집계**. 따라서 "과차단" 프레임을 그대로 수용해 임계를 낮추거나 집계를 통과시키는 방향은 **부하 회귀**다. 결함을 거부 *자체* → 거부 *피드백*으로 **위치 재지정**(F4)했고, 그와 **별개로** 실재하는 오판(순수 LIMIT)만 좁게 되돌린다.
+- **근본 RC-1 (L2 거부 피드백)**: EXPLAIN 은 "왜 무거운가"를 이미 안다(`type=ALL`, `key=None`, 스캔 파티션 26/26). 게이트는 그 정보를 **버리고** "필요 컬럼만·WHERE 한정·서버측 집계·LIMIT" 이라는 정적 일반론만 반환했다. 관측된 실패 모드: 모델이 그 넷을 이미 적용한 쿼리를 냈는데 같은 조언을 다시 받고 → 같은 형태 재제출 → 반복 차단. 특히 **전역 집계는 재작성으로 가벼워질 수 없는데** 계속 재작성을 요구받았다.
+- **근본 RC-2 (L5 추정)**: MySQL `EXPLAIN.rows` 는 **LIMIT 을 반영하지 않는 스캔 상한**이다. 라이브 실측 — `SELECT * FROM tf_log_05_item LIMIT 5` → rows 13,903,018 → 차단(**실제 5행**). `LIMIT 3` 샘플도 30,493,594 로 차단.
+- **① 진단 코칭(AC-0604)**: `_heavy_query_coach()` 신설 — 계획 사실(접근형태·사용/후보 인덱스·스캔 파티션 수)을 싣고 원인별 지시를 붙인다. 인덱스 미사용이면 `get_table_indexes`/`describe_table` 로 **선두 컬럼(로그성 테이블은 시각 컬럼=파티션 키)** 을 확인해 좁히도록, 전역 집계면 "컬럼 축소·LIMIT 으로는 스캔량이 안 준다"는 사실 + `search_tables` 의 `approx_rows` 대안을, 같은 run 2회 이상 차단이면 `confirm_heavy=true` 를 **최후수단에서 명시 선택지로 승격**(좁힐 수 없는 쿼리를 계속 재작성하는 것이 더 나쁘다). 계획 사실이 없는 엔진(MSSQL)은 **기존 문구 그대로 폴백** — 골든 유지.
+- **② LIMIT 상한 보정(AC-0605)**: `MySQLDialect.estimate_load()` 가 **조기 종료가 보장되는 형태에만** `min(est, n+offset)` 적용. 게이트 4중 조건 — 단일 plan row + `SIMPLE` / 집계·WHERE·ORDER BY·GROUP BY·HAVING·DISTINCT·UNION·JOIN·서브쿼리·CTE 부재 / `Extra` 에 filesort·temporary 부재 / **문 끝** LIMIT 파싱 성공. 하나라도 어긋나면 **차단 유지**. 보정은 **하향 전용**(이미 가벼운 추정치를 LIMIT 값으로 올리지 않음).
+- **계획 취득 1회 유지**: `estimate_load()` 가 (추정치, 계획사실) 쌍을 함께 반환 → EXPLAIN 을 두 번 뜨지 않는다(오버헤드 증가 0). `estimate_load_rows()` 는 `estimate_load()[0]` 위임으로 기존 호출부·테스트 계약 보존.
+- **run 카운터 오염 봉인**: `_HEAVY_BLOCK_SEEN` 은 `cfg.CURRENT_RUN_ID` 스코프. **식별자가 없으면(콘솔·eval 경로) 누적하지 않고 항상 1** — 빈 키 하나에 모든 경로가 합산되면 무관한 실행이 남의 차단 횟수를 물려받아 escalation 문구가 잘못 뜬다. 키 수는 256 bound(run 종료 훅 부재).
+- **불변**: 임계값·게이트 모드·`confirm_heavy` 신뢰 정책·MSSQL fail-closed·MySQL 추정실패 fail-open 전부 무변경. 정당한 무거운 쿼리는 **그대로 차단**되고 진단만 붙는다. off 경로 무변경. **warn 은 같은 추정기를 공유**하므로 순수 LIMIT 조회의 *허위* 경고가 함께 사라진다(의도 — 오판을 경고로 남기는 것이 목적이 아니다. 진짜 무거운 쿼리의 warn 경고는 유지).
+- **프롬프트 shadow 무관(설계 검증)**: 이번 레버는 **도구 결과 문자열**이라 운영자 `WebSystemPrompts` global row 가 코드 `SYSTEM_PROMPT` 를 대체하는 경로(원장 `FR-operator-global-prompt-shadows-code-seals`)의 영향을 받지 않는다. TASK-0304 의 프롬프트 레버(ⓐ~ⓓ)는 그 shadow 아래 있을 수 있으나 이 코드 레버는 도달한다.
+- **파일**: `src/modules/dialects.py`(`_parse_explain_plan_facts`·`_limit_scan_cap`·`Dialect.estimate_load`·`MySQLDialect.estimate_load`), `src/modules/tools.py`(`_estimate_explain_load`·`_heavy_query_coach`·`_heavy_block_seen`·gate 분기), `tests/test_query_guard_coaching.py`(신규 19건), `tests/test_query_guard.py`·`tests/test_mssql_load_estimate.py`(스텁 진입점 이동), `docs/{FUNCTION,TASK}.md`.
+- **검증**: 신규 19 + 기존 35 PASS. **dogfood(라이브 계획 주입)** — 라이브 EXPLAIN 4건을 새 코드로 판정: 순수 LIMIT 2건(13.9M/30.5M) → **5/3 보정 PASS**, 집계·인덱스미사용 2건 **차단 유지 + 진단 부착**. 라이브 대화 소멸은 **배포 후 실측 필요**(정직 분리).
+- **§18.8 적대 패널(codex 3렌즈 backend+security+qa) 결함 9건 흡수 — 초안은 출하 차단이었다**:
+  - **[P1] 주석 속 가짜 LIMIT**: `SELECT * FROM huge -- LIMIT 5` 는 MySQL 에 LIMIT 없는 전체 스캔인데 raw 문자열 끝에는 `LIMIT 5` 가 보여 `cap=5` 가 됐다(재현 확인 `guard_ok=True, cap=5`). **내 봉인이 막으려던 부하 회귀를 내가 만들고 있었다.** → 상한은 주석 제거본에서만 인정. 단 주석 제거가 문자열 리터럴을 잘라 blocker(WHERE 등)를 지우는 **역방향** 위험이 있어 blocker·SELECT 개수는 **원본·제거본 양쪽** 검사.
+  - **[P1] `SQL_CALC_FOUND_ROWS`**: LIMIT 행을 보낸 뒤에도 전체 결과 행수를 계산하므로 조기 종료가 없는데 blocker 에 없었다. 같은 계열로 `DISTINCTROW`·`STRAIGHT_JOIN` 은 `_` 가 word char 라 `\bdistinct\b`/`\bjoin\b` 에 **아예 매칭되지 않았다**. → 명시 추가(+`SQL_BIG_RESULT`/`SQL_SMALL_RESULT`/`SQL_BUFFER_RESULT`/`SQL_NO_CACHE`/`HIGH_PRIORITY`).
+  - **[P2] worst 선택 오류**: raw `rows` 로 고르면 "1,000만행·filtered 0.01%(인덱스 range)" 가 "90만행·filtered 100%(풀스캔)" 을 이겨 **진짜 병목의 인덱스 부재를 숨긴다**. → 실효 행수(`_effective_rows`) 기준.
+  - **[P2] 거짓 탈출구 안내**: `AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM=false` 인데 "confirm_heavy 로 호출하면 실행합니다" 라고 안내 → 통하지 않는 우회를 반복 시도. **이 cycle 이 없애려던 루프와 정확히 같은 형태**. → 정책을 coach 에 주입, false 면 안내 자체를 금지.
+  - **[P2] 승격 카운터 과발동**: run 단위 카운트라 다른 테이블의 **첫** 쿼리가 남의 차단 횟수를 물려받아 즉시 confirm 권고. → 키를 `run_id|대상테이블` 로 분리.
+  - **[P2] 골든 계약 잠식**: facts 없는 엔진(MSSQL)에서 **집계 쿼리면** 정적 폴백을 건너뛰고 새 문구를 반환했다(테스트는 비집계만 검사해 놓쳤다). → 진단·집계 안내를 `worst` 존재 시에만.
+  - **[P2] 죽은 스텁**: 기존 MSSQL fail-closed·MySQL fail-open 테스트가 폐기된 `_estimate_explain_rows` 를 스텁해 주입값이 미사용이 됐고, MagicMock 이 우연히 None 을 내어 통과 중이었다. → 새 진입점 스텁 동반.
+  - **[P3] `LIMIT 0`** → cap 1(무해한 빈 쿼리를 heavy 로 재차단 가능). → 0.
+  - **[P3] warn 골든 — 근거 수용 후 방향 전환**: "warn 무변경" 이라는 **문서가 틀렸다**(코드가 아니라). warn 이 붙이던 그 경고가 곧 이번에 오판으로 판명된 값이므로, 문서를 정정하고 동작을 테스트로 고정했다.
+  - **결함 없음 확인(축)**: 계획 정보 노출은 allowlist 검사가 EXPLAIN 보다 먼저라 권한 범위를 넓히지 않음 · 대소문자/개행/다중문 우회 없음(다중문은 상위 `sql_guard`).
+- **역검증**: P1 2종 + P2 5종 + P3 2종 재현, **생존 0**. 테스트 19 → **31건**, feature 전체 **2360 passed / 30 skipped**.
+- **위험등급**: Major(코어 LLM 도구 경로·거부 로직 — §12.3 2차효과). **Rollback**: 커밋 revert. 부분 무력화는 `AGENT_QUERY_GUARD_MODE=warn|off` 로 게이트 자체를 내리는 기존 노브로 가능.
+- **미봉인(명시)**: `scratch_import` 병렬 게이트의 코칭 문구는 범위 밖(LIMIT 보정은 dialect 층이라 자동 적용) · 임계 1M 의 로그 도메인 적합성은 사람 결정(사용자 2026-07-31: 코드만 수정·임계 유지) → 둘 다 원장 기록.
+- **Cross-ref**: TASK-0304(코칭 reframe — 이번 결함의 직전 작업) · TASK-0299(MSSQL SHOWPLAN 추정) · TASK-0172(게이트 도입) · 원장 `FR-loadgate-blind-coaching`.

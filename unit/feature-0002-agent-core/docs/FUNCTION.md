@@ -687,3 +687,61 @@ M-1)·스키마 allowlist 게이트가 그대로다. 재연결 실패는 폴백 
 
 **미봉인(명시)**: insight-worker 의 배경 스캔 연결(`modules/insight.py` `_ds_conn`)은 이 choke-point 를
 거치지 않아 동일 노출이 남는다 — 원장 `FR-insight-worker-conn-stale` 로 이월(별 cycle).
+
+## (TASK-20260731T184300) 부하게이트 자기교정 — 실행계획 진단 코칭 + LIMIT 상한 보정 (AC-0604, AC-0605)
+
+TASK-0304 가 게이트를 "차단"에서 "재작성 코칭"으로 reframe 했으나, 그 코칭이 **정적 일반론**이라
+재작성 방향을 특정하지 못했다. 라이브 대화(2026-07-31, conv-audit `FR-loadgate-blind-coaching`)에서
+모델은 이미 "필요 컬럼만·WHERE 한정·서버측 집계·LIMIT" 을 모두 적용한 쿼리를 냈고, 같은 조언을
+반복 수신하며 같은 형태를 재제출해 **한 대화에서 6연속 차단**됐다(사용자 체감: "블로킹이 너무 심함").
+30일 집계로 10개 대화·23건, `execute_sql` 호출의 6.0%. 게이트 메커니즘(가로채기·임계·fail-closed·
+confirm 우회 규칙)은 **불변**이고, 되돌리는 것은 *오판 구간 하나*와 *버려지던 진단 정보*다.
+
+- **AC-0604 (실행계획 진단 코칭, Major §12.3)**: gate 차단 메시지가 EXPLAIN 이 이미 산출한 계획
+  사실을 싣는다 — 접근형태(`type`: ALL=전체 행 스캔/index=전체 인덱스 스캔/range), 사용·후보 인덱스
+  (`key`/`possible_keys`), 스캔 파티션 수(`partitions`). 그 위에 원인별 지시를 붙인다: ⓐ 인덱스
+  미사용(`type∈{ALL,index}` ∧ `key` 없음)이면 `get_table_indexes`/`describe_table` 로 인덱스·파티션
+  키를 확인해 **선두 컬럼(로그성 테이블은 보통 시각 컬럼=파티션 키)** 으로 좁히도록, ⓑ **전역 집계**면
+  "컬럼 축소·LIMIT 으로는 스캔량이 줄지 않는다"는 사실과 함께 집계 대상 자체를 좁히거나 근사 행수는
+  `search_tables` 의 `approx_rows` 를 쓰도록, ⓒ 같은 run 에서 **2회 이상 차단**되면 `confirm_heavy=true`
+  를 "최후수단"이 아니라 **명시 선택지로 승격**(좁힐 수 없는 쿼리를 계속 재작성하는 것보다 낫다).
+  카운터 키는 `(cfg.CURRENT_RUN_ID, 대상 테이블)` — run 만으로 세면 **다른 테이블의 첫 쿼리**가 남의
+  차단 횟수를 물려받아 좁혀볼 여지가 있는데도 confirm 을 권한다(codex [P2]). 식별자가 없으면
+  (콘솔·eval) 누적하지 않는다. **한계**: `CURRENT_RUN_ID` 는 모듈 전역이라 동일 프로세스 병렬 run 은
+  키가 섞일 수 있다(기존 성격) — 최악의 결과는 escalation 문구가 한 번 이르게/늦게 뜨는 것뿐이고
+  게이트 판정·실행 여부에는 영향이 없다. 운영자 정책이 모델 confirm 을 무시하면
+  (`AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM=false`) confirm 안내 자체를 **하지 않고** 좁히기만 안내한다
+  (통하지 않는 탈출구를 반복 시도하게 만드는 것이 바로 이 cycle 이 없애려는 루프다). 계획 사실을
+  주지 않는 엔진(MSSQL — SHOWPLAN 파싱 미구현)은 집계 쿼리를 포함해 **항상 기존 정적 문구로
+  폴백**(골든 유지). 코칭 대상 plan row 는 raw `rows` 가 아니라 **실효 행수(rows×filtered/100)**
+  최대 항목이다 — 그러지 않으면 인덱스를 잘 탄 대형 테이블이 진짜 풀스캔 대상을 가린다.
+  계획 취득은 여전히 **1회**(`estimate_load` 가 추정치와 사실을 함께 반환 — EXPLAIN 오버헤드 0 증가).
+- **AC-0605 (순수 LIMIT 조회 상한 보정, Major §12.3)**: MySQL `EXPLAIN.rows` 는 **LIMIT 을 반영하지
+  않는 스캔 상한**이라, 실제 n행만 읽는 `SELECT … LIMIT n` 이 테이블 전체 행수로 추정돼 차단됐다
+  (라이브 실측: `SELECT * FROM tf_log_05_item LIMIT 5` → 13,903,018 추정 → 차단). `MySQLDialect.
+  estimate_load` 가 **조기 종료가 보장되는 형태에 한해** `est = min(est, n+offset)` 로 하향한다 —
+  ⓐ 단일 plan row + `select_type=SIMPLE`, ⓑ 집계호출·WHERE·ORDER BY·GROUP BY·HAVING·DISTINCT·
+  UNION·JOIN·서브쿼리·CTE 전부 부재, ⓒ `Extra` 에 filesort/temporary 부재, ⓓ **문 끝** LIMIT 파싱
+  성공(`LIMIT n` / `LIMIT off, n` / `LIMIT n OFFSET off` — 문자열 리터럴 안의 `'LIMIT 1'` 오인 방지).
+  하나라도 어긋나면 기존 추정치 유지(**차단 유지** — 부하 회귀 방지가 우선). 보정은 **하향 전용**이라
+  이미 가벼운 추정치를 LIMIT 값으로 끌어올리지 않는다. `LIMIT 0` 은 offset 무관 0행. **주석 처리**:
+  `-- LIMIT 5`·`# LIMIT 5`·`/* LIMIT 5 */` 는 MySQL 에 LIMIT 이 아니므로 상한을 **주석 제거본에서만**
+  인정하되, 주석 제거가 문자열 리터럴을 잘라 blocker 를 지우는 역방향 위험 때문에 **blocker·SELECT
+  개수는 원본·제거본 양쪽에서** 검사한다. blocker 에는 `SQL_CALC_FOUND_ROWS`(LIMIT 뒤에도 전체 행수
+  계산)·`DISTINCTROW`·`STRAIGHT_JOIN` 등 `_` 로 인해 `\b` 경계에 걸리지 않는 형태를 명시 포함한다
+  (§18.8 codex [P1] 2건 — 셋 다 재현 확인 후 수정). **MSSQL·off 경로 무변경**. `warn` 은 같은
+  추정기를 공유하므로 순수 LIMIT 조회의 **허위** 비용 경고가 함께 사라진다(의도 — 오판을 경고로
+  남기는 것이 목적이 아니다). 진짜 무거운 쿼리의 warn 경고는 그대로.
+
+**불변 유지**: 임계값(`AGENT_QUERY_EXPLAIN_ROWS_WARN`)·게이트 모드·`confirm_heavy` 신뢰 정책
+(`AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM`)·MSSQL fail-closed(`gate_fail_closed_on_estimate_error`)·
+추정 실패 시 MySQL fail-open — 전부 무변경. 정당한 무거운 쿼리(전역 집계·인덱스 미사용 스캔)는
+**그대로 차단**되며 진단만 추가된다. 이 변경은 도구 **결과 문자열**이라 운영자 `WebSystemPrompts`
+global row 가 코드 상수를 가리는 경로(원장 `FR-operator-global-prompt-shadows-code-seals`)의
+영향을 받지 않는다 — 프롬프트 레버가 아니라 코드 레버다.
+
+**미봉인(명시)**: ① `scratch_import` 의 병렬 부하게이트(`⚠ 무거운 반입으로 추정됩니다`)는 같은
+정적 일반론을 쓰지만 이번 범위 밖 — 원장 `FR-loadgate-blind-coaching` 후속으로 이월(LIMIT 보정은
+dialect 층이라 자동 적용, 코칭 문구만 미적용). ② 임계 1,000,000행이 로그 도메인(테이블 1,300만~
+3,000만행)에 낮다는 운영 판단은 사람 결정으로 원장에 report-only 기록(사용자 결정 2026-07-31:
+코드만 수정·임계 유지).

@@ -91,6 +91,9 @@ def _stub_exec(monkeypatch, est_rows):
     """공통 stub: SQL guard·EXPLAIN 추정·실행·CSV·whitelist 를 무력화하고 분기만 검증."""
     monkeypatch.setattr(sql_guard, "validate_sql_for_sandbox", _ok_guard)
     monkeypatch.setattr(tools, "_estimate_explain_rows", lambda conn, sql: est_rows)
+    # conv-audit FR-loadgate-blind-coaching: 게이트는 추정치 + 계획 사실을 함께 받는 경로로 이동.
+    # facts={} = 계획 사실 없음 → 코칭이 기존 정적 문구로 폴백(이 테스트들이 검증하는 골든 계약).
+    monkeypatch.setattr(tools, "_estimate_explain_load", lambda conn, sql: (est_rows, {}))
     monkeypatch.setattr(tools, "_apply_query_cap", lambda conn: None)
     monkeypatch.setattr(tools, "_whitelist_violation", lambda refs: None)
     monkeypatch.setattr(tools, "_extract_sql_schema_refs", lambda sql: set())

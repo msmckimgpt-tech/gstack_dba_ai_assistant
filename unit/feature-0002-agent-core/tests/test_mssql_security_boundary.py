@@ -682,6 +682,7 @@ def test_load_gate_fail_closed_on_mssql_estimate_error():
         tools.set_active_schema_allowlist(["appdb"])
         with mock.patch.object(cfg, "AGENT_QUERY_GUARD_MODE", "gate"), \
              mock.patch.object(tools, "_estimate_explain_rows", lambda *a, **k: None), \
+             mock.patch.object(tools, "_estimate_explain_load", lambda *a, **k: (None, {})), \
              mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "default_db": "appdb"}}):
             out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM appdb.dbo.t"})
             assert "사전 부하추정에 실패" in out  # fail-closed 메시지
@@ -699,6 +700,7 @@ def test_load_gate_mssql_confirm_heavy_does_not_override_estimate_error():
         with mock.patch.object(cfg, "AGENT_QUERY_GUARD_MODE", "gate"), \
              mock.patch.object(cfg, "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", True), \
              mock.patch.object(tools, "_estimate_explain_rows", lambda *a, **k: None), \
+             mock.patch.object(tools, "_estimate_explain_load", lambda *a, **k: (None, {})), \
              mock.patch.object(cfg, "DATASOURCES", {"prod": {"key": "prod", "default_db": "appdb"}}):
             out = tools._tool_execute_sql(mock.MagicMock(), {"sql": "SELECT c FROM appdb.dbo.t", "confirm_heavy": "true"})
             assert "사전 부하추정에 실패" in out  # confirm_heavy 로도 우회 불가

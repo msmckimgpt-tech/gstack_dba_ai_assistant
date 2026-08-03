@@ -517,3 +517,14 @@ feature-0003(primary, `_materialize_assistant_attachment_new` 경로)의 활성�
   항상 0행이 되어, 진행 중이던 답변이 통째로 사라지고 회수까지 전역 stale 창(실측 450s)이
   비었다(60일 8대화·dead-air 142~1,649초·3건 최종 error). 종료 시 lease 반납 + role 기반
   회수 + 재시도 중복 저장 억제로 봉인. 상세 = TASK/MODIFY/REVIEW 동명 섹션.
+
+- **[conv-audit] `FR-loadgate-blind-coaching`** (2026-07-31) — 원장
+  `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, 변경 =
+  `CHG-20260731T184300-loadgate-blind-coaching`(AC-0604/AC-0605). 진단 대상·코드 거주 모두
+  `feature-0002-agent-core`.
+- **요지**: 부하게이트가 EXPLAIN 이 이미 아는 "왜 무거운가"(접근형태·미사용 인덱스·스캔 파티션)를
+  버리고 정적 일반론만 돌려줘, 모델이 **이미 적용한 조언**을 재수신하며 같은 형태를 재제출 →
+  한 대화 6연속 차단(30일 10대화·23건, `execute_sql` 의 6.0%). 진단 코칭 + 전역 집계 불가 사실
+  고지 + 반복 시 `confirm_heavy` 승격으로 봉인하고, 별개로 실재한 순수 `LIMIT n` 오판(라이브
+  실측 13.9M→실제 5행)을 조기 종료 보장 형태 한정으로 보정. 게이트 임계·차단 규칙은 불변 —
+  집계 차단 24/25 건은 **정당**이라 그대로 둔다. 상세 = TASK/MODIFY/REVIEW 동명 섹션.

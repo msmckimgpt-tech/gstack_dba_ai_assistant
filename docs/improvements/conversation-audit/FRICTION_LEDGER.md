@@ -6,6 +6,36 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-loadgate-blind-coaching — fixed:undeployed (L2 거부 피드백 + L5 LIMIT 미반영 추정; 부하게이트가 재작성 방향을 못 줘 추론이 정체)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **31** PASS · feature-0002 전체 **2360 passed / 30 skipped** · ruff clean) + **§18.8 codex 3렌즈에서 [P1] 2건 출하차단 판정 → 9건 전부 흡수·역검증 생존 0** + verify-completion PASS. **배포 전** — 라이브 마찰 소멸은 미증명(아래 §정직).
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit "에러로그 분석 및 원인 대안 제시"` (2026-07-31) — "테이블을 조회할 때 '무거운 쿼리' 에 대한 블로킹이 너무 심하게 나타난다('LIMIT 1' 임에도)".
+- **last_seen**: 2026-07-31 · **seen_count**: 1 · **seen_distinct_conv**: 12(전체) / **10**(30일)
+- **modality**: 1:1 동기 · **product_id(마스킹)**: P-7 · **conv(마스킹)**: `…36a7790b`(topic "프로시저 테스트 에러 로그 분석 및 해결방안", 105 메시지)
+- **symptom_confidence**: high (사용자 명시 불만 + 한 대화 **6연속 차단** 직접 관측) · **rootcause_confidence**: high (코드 file:line + **라이브 EXPLAIN 실측** + 전사 삼각측량 일치)
+- **suspected_layers**: **L2**(거부 피드백 — 자기교정 정보 부재) + **L5**(부하 가드 추정 산식)
+- **증상(signal)**: `E-SYS`(도구 거부 반복 — 메시지 6499·6501·6503·6505·6511·6513 이 **동일 문구**) + `E-USR`(명시 불만). 모델은 매 차단마다 형태만 바꿔 재제출했고(컬럼 축소 → 범위 축소 → 집계 변경), 6회 후 목적을 포기하고 다른 경로로 우회했다.
+- **거짓양성 기각(`refuted`, 정직)**: 사용자가 지목한 "`LIMIT 1` 인데 차단" 그 쿼리는 `COUNT(*)`·`AVG()` **집계**라 LIMIT 과 무관하게 전체 스캔이 맞다 — **게이트 판정 자체는 정당**. 전체 차단 25건 중 **24건이 집계**(`COUNT(|SUM(|AVG(|GROUP BY`), LIMIT 있고 집계 없는 건 1건. 따라서 "가드가 과차단한다 → 임계를 낮추자/집계를 통과시키자" 는 **부하 회귀**이며 채택하지 않았다(F4 — 거부는 기능). 결함을 거부 *자체* → 거부 *피드백*으로 **위치 재지정**했고, 그와 **별개로** 실재하는 오판(순수 LIMIT)만 좁게 되돌렸다.
+- **결정적 증거(라이브 EXPLAIN 실측, product 7 데이터소스 · 읽기 전용)**:
+  | 쿼리 형태 | est | 판정 | 실제 |
+  |---|---|---|---|
+  | `SELECT * FROM <로그테이블> LIMIT 5` | 13,903,018 | 차단 | **5행 — 오판** |
+  | `WHERE <비인덱스컬럼> IN (…) LIMIT 10` | 6.1M~15.2M | 차단 | 풀스캔(`type=ALL`·`key=None`) — 정당 |
+  | `COUNT(*), MIN, MAX … LIMIT 1` | 13.9M | 차단 | 전체 인덱스 스캔 — 정당 |
+  | `WHERE <파티션키> >= '2026-07-31'` | **1** | **통과** | 파티션 4/26 프루닝 — **재작성 경로가 실재** |
+  마지막 행이 핵심이다: 통과하는 재작성이 **존재하는데** 게이트 메시지가 그 방향(인덱스·파티션 선두 컬럼)을 알려주지 않았다.
+- **confirmed_root_cause**: **RC-1** `unit/feature-0002-agent-core/src/modules/tools.py` gate 분기(구 :2628-2641) — EXPLAIN 이 이미 산출한 계획 사실(`type`/`key`/`possible_keys`/`partitions`)을 **버리고** 정적 일반론("필요 컬럼만·WHERE 한정·서버측 집계·LIMIT")만 반환. 모델이 그 넷을 **이미 적용한** 쿼리를 냈으므로 정보량 0 → 재작성 루프. 특히 **전역 집계는 재작성으로 가벼워질 수 없는데** 계속 재작성을 요구받았다. **RC-2** `.../modules/dialects.py` `_parse_explain_rows_product`(:21-55) — `EXPLAIN.rows` 는 **LIMIT 미반영 스캔 상한**인데 이를 "예상 처리 행수"로 사용. 재발경로 = **코드 결함**(model limit 대응: 거부 피드백 정형화) — data/config drift 아님.
+- **선행 작업과의 계보**: TASK-0304 가 게이트를 "차단" → "재작성 코칭" 으로 reframe 했으나 **코칭 내용이 정적**이었다. 즉 이번 결함은 그 reframe 의 미완성분이다.
+- **corroboration**: **structural** — 30일 distinct_conv **10** / 대화 129건의 **7.8%**, 차단 23건 / `execute_sql` 386건의 **6.0%**(전체 기간 12 대화·25건, 2026-06-18 최초).
+- **봉인(①+②, 사용자 승인 2026-07-31)**: (①) `_heavy_query_coach()` — 차단 메시지에 계획 진단(접근형태·사용/후보 인덱스·스캔 파티션 수) + 원인별 지시(인덱스 미사용이면 `get_table_indexes`/`describe_table` 로 선두·파티션 키 확인 후 좁히기 / **전역 집계면 "컬럼 축소·LIMIT 으로는 안 줄어든다"는 사실 + `search_tables` 의 `approx_rows` 대안**) + **같은 run 2회 이상 차단 시 `confirm_heavy=true` 를 최후수단→명시 선택지로 승격**. 계획 사실 없는 엔진(MSSQL)은 기존 문구 폴백(골든). (②) `MySQLDialect.estimate_load` 가 **조기 종료 보장 형태 한정**(단일 SIMPLE plan row / 집계·WHERE·ORDER BY·GROUP BY·HAVING·DISTINCT·UNION·JOIN·서브쿼리·CTE 부재 / filesort·temporary 부재 / **문 끝** LIMIT)으로 `min(est, n+offset)` **하향 전용** 보정. 임계·게이트 모드·`confirm_heavy` 신뢰 정책·MSSQL fail-closed·MySQL fail-open **전부 불변**.
+- **disposition 근거**: Major(§12.3 — 코어 LLM 도구 경로·거부 로직) → attended human-decision. structural corroboration + 코드 file:line confirmed(high) + 라이브 EXPLAIN 으로 오판·정당을 분리 실증 → fix-now. 사용자가 AskUserQuestion 으로 **두 레버 모두 + 임계 유지** 명시 선택 → 승인 후 구현.
+- **fix**: `CHG-20260731T184300-loadgate-blind-coaching`(AC-0604/AC-0605) / **코드 거주 `feature-0002-agent-core`** / `REV-20260731T184300-loadgate-blind-coaching`(§18.8.2 제약-없는-채널 → codex backend+security+qa. **[P1] 2건** — 주석 속 가짜 LIMIT·`SQL_CALC_FOUND_ROWS` 가 실제 전체 스캔을 통과시켰다: **봉인이 막으려던 부하 회귀를 봉인 자신이 만들고 있었다**. [P2] 5 + [P3] 2 포함 전부 흡수, 1건은 코드가 아니라 문서 정정)
+- **rc_ids**: RC-1(L2) · RC-2(L5) · **batch-id**: B-20260731T184300-loadgate-blind-coaching
+- **dogfood(배포 전 가능한 최대치)**: 라이브 EXPLAIN 계획 4건을 **새 코드로 판정** — 순수 LIMIT 2건(13.9M/30.5M) → **5/3 보정 PASS**, 집계·인덱스미사용 2건 **차단 유지 + 진단 문구 부착** 확인.
+- **라이브 실측 필요분(§정직)**: 코드/테스트·dogfood 는 "새 코드가 오판을 되돌리고 정당 차단에 진단을 붙인다" 까지만 증명한다. **"실제 대화에서 차단이 줄고 재작성이 성공하는지"** 는 배포 후 실측분(미수행) → 다음 audit 이 corroboration(`무거운 쿼리로 추정됩니다` distinct_conv / `execute_sql` 대비 rate) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
+- **후속(이월)**: ① `scratch_import` 병렬 게이트(`⚠ 무거운 반입으로 추정됩니다`)의 코칭 문구 미적용(LIMIT 보정은 dialect 층이라 자동 적용) — 같은 friction-id 후속. ② **임계 1,000,000행의 로그 도메인 적합성** = `report-only`(운영 판단) — 대상 테이블이 1,300만~3,000만행이라 인덱스 미사용 조건은 사실상 상시 차단. 사용자 결정(2026-07-31): **코드만 수정·임계 유지**. 봉인 ①이 재작성 경로를 열어주므로 임계 유지로도 목적 수행이 가능한지가 다음 audit 의 측정 대상.
+- **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 라이브 대화에서 차단 빈도·재작성 성공률 실측 + `/_dqa:doc_sync`.
+
 ## FR-operator-global-prompt-shadows-code-seals — needs-human (L1 data/config drift; 운영자 global row 가 코드 상수를 통째 대체해 2026-06-18 이후 프롬프트 봉인 전량 미도달)
 
 - **status**: `needs-human` — **코드 결함이 아니라 운영 데이터 drift**다. 수정 방향이 (a) 운영자 row 갱신(데이터 작업) vs (b) compose 를 replace→merge 로 바꾸기(Major 코드 변경, 운영자 커스터마이즈 계약 변경) 중 **사람 결정 사항**이라 이번 batch 에 넣지 않았다. 미검증을 완료로 보고하지 않기 위해 원장에 남긴다.

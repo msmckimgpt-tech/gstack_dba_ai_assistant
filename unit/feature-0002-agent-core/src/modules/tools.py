@@ -2424,15 +2424,136 @@ def _estimate_explain_rows(conn, sql: str) -> int | None:
     fail-open(MySQL 골든) / fail-closed(MSSQL gate, `gate_fail_closed_on_estimate_error`) 분기.
 
     TASK-0172(MySQL 도입) → TASK-0299(MSSQL SHOWPLAN 확장)."""
+    return _estimate_explain_load(conn, sql)[0]
+
+
+def _estimate_explain_load(conn, sql: str) -> "tuple[int | None, dict]":
+    """`_estimate_explain_rows` + 차단 코칭용 실행계획 사실(계획 취득 1회).
+
+    facts 는 엔진이 파싱을 구현한 경우에만 채워진다(MySQL). 비면 코칭이 기존 정적 문구로 폴백."""
     dialect = _dialects.active()
     if not dialect.supports_load_estimate:
-        return None
+        return None, {}
 
     def _run(stmt: str):
         result_sets, _ = _raw_execute_sql(conn, stmt)
         return result_sets
 
-    return dialect.estimate_load_rows(_run, sql)
+    return dialect.estimate_load(_run, sql)
+
+
+# conv-audit FR-loadgate-blind-coaching: 한 run 안에서 부하게이트가 몇 번 차단했는지. 반복
+# 차단은 "재작성으로는 못 푸는 형태"(전역 집계 등)라는 신호라 그때부터 탈출구(confirm_heavy)를
+# 최후수단이 아니라 **적극 안내**로 승격한다. run 종료 훅이 없으므로 키 수만 bound.
+_HEAVY_BLOCK_SEEN: dict[str, int] = {}
+_HEAVY_BLOCK_SEEN_MAX = 256
+
+
+def _heavy_block_seen(run_id: str, target: str = "") -> int:
+    """이 (run, 대상) 의 부하게이트 차단 횟수를 1 증가시키고 **증가 후** 값을 돌려준다(첫 차단=1).
+
+    키를 run 만으로 잡으면 **다른 테이블의 첫 쿼리**가 남의 차단 횟수를 물려받아, 아직 좁혀볼
+    여지가 있는데도 곧바로 confirm_heavy 를 권하게 된다(codex P2). 대상 단위로 세면 "이 테이블은
+    좁혀도 계속 무겁다" 라는 신호일 때만 승격한다. run 식별자가 없으면(콘솔·eval 등 run 스코프
+    밖) **누적하지 않고 1** — 빈 키 하나에 모든 경로가 합산되는 것을 막는다.
+
+    **알려진 한계**: `cfg.CURRENT_RUN_ID` 는 모듈 전역이라 같은 프로세스에서 run 이 병렬이면
+    키가 섞일 수 있다(기존 성격). 최악의 결과는 escalation 문구가 한 번 이르게/늦게 뜨는 것뿐이며
+    게이트 판정·실행 여부에는 영향이 없다.
+    """
+    rid = str(run_id or "")
+    if not rid:
+        return 1
+    key = f"{rid}|{str(target or '?')}"
+    if len(_HEAVY_BLOCK_SEEN) > _HEAVY_BLOCK_SEEN_MAX:
+        _HEAVY_BLOCK_SEEN.clear()
+    n = _HEAVY_BLOCK_SEEN.get(key, 0) + 1
+    _HEAVY_BLOCK_SEEN[key] = n
+    return n
+
+
+def _heavy_query_coach(sql: str, est: int, warn_thr: int, facts: dict, seen: int,
+                       trust_llm_confirm: bool = True) -> str:
+    """부하게이트 차단 메시지 — EXPLAIN 이 이미 아는 **왜 무거운지**를 실어 자기교정을 유도.
+
+    기존 문구는 "필요한 컬럼만 SELECT / WHERE 로 한정 / 서버측 집계 / LIMIT" 이라는 **정적
+    일반론**이었다. 라이브 실측(2026-07-31)에서 모델은 이미 그 넷을 다 한 쿼리를 냈고, 같은 조언을
+    반복해서 받자 같은 형태를 재제출해 한 대화에서 6연속 차단됐다(사용자 체감: "블로킹이 너무 심함").
+    계획 사실(접근형태·미사용 인덱스·스캔 파티션 수)과 쿼리 형태(전역 집계 여부)를 근거로 **다음에
+    무엇을 바꿔야 하는지**를 특정해 준다. facts 가 비면(엔진 미지원) 기존 일반론으로 폴백한다.
+    """
+    lines = [
+        f"⚠ 무거운 쿼리로 추정됩니다 (예상 처리 ~{est:,}행 > 임계 {warn_thr:,}행) — 실행하지 않았습니다."
+    ]
+    worst = (facts or {}).get("worst") or {}
+    atype = str(worst.get("type") or "").strip().lower()
+    key_used = worst.get("key")
+    cand = worst.get("possible_keys")
+    parts = worst.get("parts")
+    tbl = worst.get("table")
+    if worst:
+        access = {
+            "all": "전체 행 스캔(인덱스 미사용)",
+            "index": "전체 인덱스 스캔",
+            "range": "인덱스 범위 스캔",
+            "ref": "인덱스 참조",
+        }.get(atype, atype or "미상")
+        diag = [f"접근형태={access}", f"사용 인덱스={key_used or '없음'}"]
+        if not key_used and cand:
+            diag.append(f"후보 인덱스={cand}")
+        if parts:
+            diag.append(f"스캔 파티션={parts}개")
+        lines.append(
+            f"[실행계획] 대상 `{tbl or '?'}` — " + ", ".join(diag) + "."
+        )
+
+    if worst:
+        # 전역 집계는 "더 가볍게 재작성" 이 원리적으로 불가능하다 — 그 사실을 말해 주지 않으면
+        # 모델이 같은 집계를 형태만 바꿔 무한 재제출한다(관측된 실패 모드).
+        is_agg = bool(re.search(
+            r"\b(count|sum|avg|min|max|group_concat|std|stddev|var_pop|var_samp|variance)\s*\(",
+            sql or "", re.IGNORECASE,
+        ))
+        if atype in ("all", "index") and not key_used:
+            lines.append(
+                "→ WHERE 절이 인덱스를 타지 못해 대상 전체를 훑습니다. `get_table_indexes` 로 이 테이블의 "
+                "인덱스 구성을, `describe_table` 로 파티션/키 컬럼을 확인한 뒤 **인덱스 선두 컬럼(로그성 "
+                "테이블은 보통 시각 컬럼 = 파티션 키)** 으로 범위를 좁히세요. 인덱스가 없는 컬럼을 조건에 "
+                "써도 스캔량은 줄지 않습니다."
+            )
+        if is_agg:
+            lines.append(
+                "→ 이 쿼리는 **전역 집계**라 컬럼을 줄이거나 LIMIT 을 붙여도 스캔량이 줄지 않습니다"
+                "(집계는 대상 전체를 읽어야 값이 나옵니다). 기간·파티션으로 **집계 대상 자체**를 좁히거나, "
+                "대략적 전체 행수만 필요하면 `search_tables` 의 approx_rows 를 쓰세요."
+            )
+    else:
+        # 계획 사실을 주지 않는 엔진(MSSQL 등) — 진단 없이 **기존 정적 문구 그대로**(골든 계약).
+        # 쿼리 형태로 추정한 조언을 여기서 섞으면 그 계약이 조용히 깨진다(codex P2).
+        lines.append(
+            "→ 같은 목적을 유지하면서 DB 부하가 더 적은 쿼리로 재구성하세요: 필요한 컬럼만 SELECT, "
+            "WHERE 로 대상 한정(id/상태/기간), 서버측 집계(COUNT/SUM/GROUP BY), 표본은 LIMIT/TOP n."
+        )
+    if not trust_llm_confirm:
+        # 운영자 정책이 모델의 confirm 을 무시하는데 "호출하면 실행합니다" 라고 안내하면, 모델은
+        # 통하지 않는 탈출구를 반복 시도한다 — 이 cycle 이 없애려던 바로 그 루프다(codex P2).
+        lines.append(
+            "→ 운영 정책상 모델이 지정하는 `confirm_heavy` 는 무시됩니다(비-LLM 승인만 인정). "
+            "범위를 좁히는 것 외의 우회는 없으니, 좁힐 수 없다면 그 사실과 이유를 사용자에게 알리세요."
+        )
+    elif seen >= 2:
+        # 같은 대상에서 반복 차단 = 재작성으로 못 푸는 형태. 탈출구를 명시적 선택지로 승격.
+        lines.append(
+            f"→ 이 대화에서 같은 대상에 대해 부하게이트가 {seen}회 차단했습니다. 위 방법으로 좁힐 수 없는 "
+            "목적(전역 집계·전수 확인)이라면 **같은 쿼리를 `confirm_heavy=true` 로 다시 호출**해 실행하세요 "
+            "— 좁힐 수 없는 쿼리를 계속 재작성하는 것보다 낫습니다. 좁힐 수 있으면 먼저 좁히세요."
+        )
+    else:
+        lines.append(
+            "더 가벼운 형태로 목적 달성이 정말 불가능한 경우에 한해, 최후수단으로 같은 쿼리를 "
+            "`confirm_heavy=true` 로 호출하면 실행합니다."
+        )
+    return " ".join(lines)
 
 
 def _apply_query_cap(conn) -> None:
@@ -2601,7 +2722,9 @@ def _tool_execute_sql(conn, args: dict) -> str:
             guard_mode == "gate" and _dialect.gate_fail_closed_on_estimate_error
         )
         if must_estimate:
-            est = _estimate_explain_rows(conn, sql)
+            # conv-audit FR-loadgate-blind-coaching: 계획 취득 1회로 추정치 + 계획 사실을 함께
+            # 받는다(오버헤드 0 — EXPLAIN 을 두 번 뜨지 않음). facts 는 차단 코칭에만 쓰인다.
+            est, plan_facts = _estimate_explain_load(conn, sql)
             warn_thr = int(getattr(_cfg, "AGENT_QUERY_EXPLAIN_ROWS_WARN", 1000000) or 1000000)
             if est is None:
                 # 추정 실패. MySQL=fail-open(골든 — EXPLAIN 실패는 드물고 정상 작업 비차단).
@@ -2629,12 +2752,13 @@ def _tool_execute_sql(conn, args: dict) -> str:
                 # 무거운 쿼리(추정치 보유). gate=실행 전 가로채고 LLM 이 더 가벼운 쿼리로 재작성하도록
                 # 코칭(차단이 목적이 아니라 부하 절감 — TASK-0304). confirm_heavy 는 최후수단으로 후순위.
                 if guard_mode == "gate":
-                    return (
-                        f"⚠ 무거운 쿼리로 추정됩니다 (예상 처리 ~{est:,}행 > 임계 {warn_thr:,}행) — 실행하지 않았습니다. "
-                        f"같은 목적을 유지하면서 DB 부하가 더 적은 쿼리로 재구성해 다시 실행하세요: 필요한 컬럼만 SELECT, "
-                        f"WHERE 로 대상 한정(id/상태/기간), 서버측 집계(COUNT/SUM/GROUP BY), 표본은 LIMIT/TOP n. "
-                        f"더 가벼운 형태로 목적 달성이 정말 불가능한 전체 스캔 한정으로만, 최후수단으로 같은 쿼리를 "
-                        f"confirm_heavy=true 로 호출하면 실행합니다."
+                    _target = str(((plan_facts or {}).get("worst") or {}).get("table") or "")
+                    return _heavy_query_coach(
+                        sql, est, warn_thr, plan_facts,
+                        _heavy_block_seen(getattr(_cfg, "CURRENT_RUN_ID", "") or "", _target),
+                        trust_llm_confirm=bool(
+                            getattr(_cfg, "AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM", True)
+                        ),
                     )
                 cost_note = (
                     f"⚠ 무거운 쿼리 (예상 처리 ~{est:,}행). 가능하면 다음엔 범위를 좁히세요."
