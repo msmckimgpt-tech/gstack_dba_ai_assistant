@@ -1072,3 +1072,28 @@ passed / 30 skipped**, ruff clean.
 
 Cross-ref: TASK-20260731T184300-loadgate-blind-coaching · CHG-20260731T184300-loadgate-blind-coaching ·
 원장 `FR-loadgate-blind-coaching`.
+
+## REV-20260731T203000-loadgate-postdeploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+
+코드 변경 0(문서만) — 배포 결과와 **배포본 런타임 실증**을 원장·TASK·REPORT 에 반영하는 기록
+cycle 이다. 선행 `REV-20260731T184300-loadgate-blind-coaching` 이 코드에 대한 3렌즈 적대 리뷰를
+이미 수행했고([P1] 2건 포함 9건 흡수), 본 cycle 은 그 코드가 **라이브에서 실제로 그렇게 동작하는지**
+를 배포본에서 측정한 결과를 남긴다. 검증의 무게중심이 패널이 아니라 **배포본 실측**에 있다.
+
+### 배포본 실증 증거 (ask-worker `97af7d27`, 라이브 datasource EXPLAIN)
+| 케이스 | 기대 | 결과 |
+|---|---|---|
+| 표본 조회 `… LIMIT 5`(마찰 재현) | 보정되어 통과 | est 13,891,780 → **5**, PASS |
+| 전역 집계 `COUNT(*)` | 차단 유지 + 진단 | BLOCKED + `전체 인덱스 스캔·key=LogType·파티션 26개` + 집계 사실 + `approx_rows` 대안 |
+| 주석 위장 `-- LIMIT 5`(§18.8 [P1]) | 차단 유지 | BLOCKED(우회 없음) |
+
+### 자기 지적(정직)
+- 1차 배포는 **부분 완료로 끝났고 나는 그것을 성공으로 읽을 뻔했다** — `make` 종료코드가 파이프에
+  가려 0 이었다. 서비스별 `GIT_COMMIT` 을 직접 조회하고 나서야 ask-worker 가 구코드(`d215af01`)로
+  롤백돼 **마찰 수정이 라이브에 도달하지 않은 상태**임이 드러났다. 배포 검증은 종료코드가 아니라
+  **서빙 주체의 실제 SHA** 로 해야 한다.
+- 남은 한계: 배포본 실증은 도구 함수를 직접 호출한 것이며, **실제 대화의 LLM 루프가 새 코칭을 받고
+  재작성에 성공하는지**는 사용자 트래픽이 쌓여야 측정된다(다음 audit corroboration).
+
+Cross-ref: TASK-20260731T203000-loadgate-postdeploy · CHG-20260731T203000-loadgate-postdeploy ·
+선행 `REV-20260731T184300-loadgate-blind-coaching` · 원장 `FR-loadgate-blind-coaching`.

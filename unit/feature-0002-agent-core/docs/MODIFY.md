@@ -1029,3 +1029,12 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **위험등급**: Major(코어 LLM 도구 경로·거부 로직 — §12.3 2차효과). **Rollback**: 커밋 revert. 부분 무력화는 `AGENT_QUERY_GUARD_MODE=warn|off` 로 게이트 자체를 내리는 기존 노브로 가능.
 - **미봉인(명시)**: `scratch_import` 병렬 게이트의 코칭 문구는 범위 밖(LIMIT 보정은 dialect 층이라 자동 적용) · 임계 1M 의 로그 도메인 적합성은 사람 결정(사용자 2026-07-31: 코드만 수정·임계 유지) → 둘 다 원장 기록.
 - **Cross-ref**: TASK-0304(코칭 reframe — 이번 결함의 직전 작업) · TASK-0299(MSSQL SHOWPLAN 추정) · TASK-0172(게이트 도입) · 원장 `FR-loadgate-blind-coaching`.
+
+## CHG-20260731T203000-loadgate-postdeploy — 배포 결과·배포본 실증 기록 (문서만)
+> `CHG-20260731T184300-loadgate-blind-coaching` 의 배포 후 상태를 원장·TASK·REPORT 에 반영한다. 코드 변경 없음.
+- **배포**: PR #1112 merge → main `97af7d27` → `make deploy-web` 전체 스코프. **4서비스 GIT_COMMIT=97af7d27 healthy**(web-a·web-b·ask-worker·insight-worker), post-cutover soak 통과.
+- **1차 시도 부분 실패(정직 기록)**: insight-worker 가 300s 내 healthy 미도달 → **워커군 last-good 롤백** → web 만 신코드·워커는 구코드. 이번 수정의 실행 주체가 **ask-worker** 라 그 상태로는 마찰 수정이 라이브에 **미도달**이었다. 원인은 이번 변경이 아니라 기동 직후 외부 datasource 다수 도달 불가(`conn_health down … timeout|blocked_target`, MSSQL 로그인 실패)로 헬스체크가 늦게 붙은 것 — 안정 후 **멱등 재실행으로 성공**(insight-worker 20s 내 healthy). `make` 종료코드가 파이프에 가려 0 으로 보였다.
+- **배포본 런타임 실증(ask-worker, 라이브 datasource EXPLAIN)**: 새 심볼 3종 적재 True · `guard_mode=gate`·임계 1,000,000 · ① `SELECT * FROM tf_log_05_item LIMIT 5` → est **13,891,780 → 5 보정 → PASS**(종전 차단) ② `COUNT(*)` → **차단 유지 + 진단**(전체 인덱스 스캔·`key=LogType`·파티션 26개) + 전역집계 사실 + `approx_rows` 대안 ③ `-- LIMIT 5` 주석 위장(§18.8 [P1]) → **차단 유지**(우회 없음).
+- **미검증(정직)**: 실제 사용자 대화에서 차단 빈도가 줄고 재작성이 성공하는지 — 다음 audit 의 corroboration 재측정분. 원장 status = `fixed:deployed:unverified-live`.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REPORT,REVIEW}.md`, `docs/LEARNINGS.md`(LRN-20260731-0001).
+- **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260731T184300-loadgate-blind-coaching` · 원장 `FR-loadgate-blind-coaching`.
