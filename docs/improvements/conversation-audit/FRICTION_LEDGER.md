@@ -116,7 +116,9 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-review-precondition-assumed-not-verified — triaged (L1 2차효과 의심; 시간-방향 계약이 '적용 후 가정'으로 과교정돼 적용 가능성 검증을 건너뜀)
 
-- **status**: `triaged` — **PB-0008 라이브 실측에서 신규 발견**(2026-08-03). 단일 관측이라 corroboration 미측정. 수정 방향이 프롬프트(Major)라 사람 결정 전 promote 하지 않는다.
+- **status**: `fixed:undeployed` — corroboration 측정 후 봉인(사용자 지시 + 범위 승인 **A+C**, 2026-08-03). 배포 전.
+- **corroboration(측정 완료 — structural)**: 90일 `.sql` 첨부 대화 87건에서 객체 상태 단정 **90건 중 43건(47.8%)**이 그 대화의 어떤 도구 결과에도 그 객체명이 없다. **`미확인` 표기는 0건** — 이 서비스는 지금껏 객체 상태에 "미확인" 을 한 번도 쓴 적이 없다. 관측 구간 2026-05-28~08-03.
+- **귀속 정정(중요·정직)**: 최초 보고에서 이를 "내가 만든 계약 결함(2차효과)" 으로 단정했으나 **측정이 그것을 반증했다**. 이 행동은 시간-방향 계약(2026-07-30 출하) **이전부터 광범위**하다. 정확한 진단은 (1) **오래된 구조적 공백** — 상태 단정에 객체별 검증을 요구하는 규칙이 없었고 `미확인` 이 출력 값으로 제시된 적이 없다, (2) **내 계약의 기여** — `적용 전제` 절이 그 단정에 표 형태의 눈에 띄는 자리를 줬고 "stated as fact" 가 확정 압력을 더했다(원인 아닌 **가중 요인**). rootcause_confidence low → **high**.
 - **source**: `FR-review-frames-live-db-as-spec` 봉인의 **라이브 육안검증 중 부수 발견** — 사용자 지시("실제 웹브라우저 조작을 통해 육안검증까지").
 - **last_seen**: 2026-08-03 · **seen_count**: 1 · **seen_distinct_conv**: 1(재현 대화 `20260803081201-969946a2`)
 - **symptom_confidence**: high (ground truth 직접 대조로 오류 확정) · **rootcause_confidence**: low (관측 확정, 코드 경로 미추적 — 프롬프트 2차효과 **가설**)
@@ -126,7 +128,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **방향 반전**: 원 마찰이 "현재 DB 기준 과잉 불평" 이었다면 이 잔여는 **"적용 후를 가정한 과소 검증"** 이다. 시간-방향 계약이 명시한 라이브 대조 목적 **(a) 적용 가능성**(새 PK/UNIQUE 를 위반하는 기존 데이터)이 지켜지지 않았다 — 계약 문구는 이를 요구하므로 **계약 공백이 아니라 준수 실패**이며, 그래서 수정 후보가 프롬프트 강화인지 도구 강제인지 아직 미확정(rootcause low).
 - **red-team 은 이 건을 못 잡았다**: `verdict=revise`·`block_count=1`·`unresolved=1` 로 BLOCK 은 냈으나 지적은 (i) 첨부 excerpt PK 근거 부재 (ii) `Log_AccountUpdateCash` 정의 미확인 두 건이고 `현재 미존재` 오단정은 미포함. 또한 **`revision_applied=false`·`revision_rounds=0`** — 수정 라운드가 돌지 않아 `⚠️ 내부 자가 검증 미해소` 배너와 함께 전달(정직하나 BLOCK→수정 미연결). **별도 추적**: feature-0021.
 - **disposition 근거**: `report-only`/`triaged` — 단일 관측 + corroboration 미측정 + rootcause low + 수정 후보가 Major(코어 프롬프트). Phase 7 의 "명백한 구조결함" 예외를 쓰려면 코드 file:line 확정이 필요한데 아직 없다(모델 준수 실패일 수 있음).
-- **필요한 사람 액션(1줄)**: (a) 여러 리뷰 대화에서 "적용 전제 표의 상태 주장 ↔ 실제 도구 호출" 대조로 corroboration 을 먼저 재고, (b) 그 다음 프롬프트 강화(전제 표의 각 행에 근거 도구 명시 의무) vs 도구 강제(전제 후보 객체 자동 probe) 중 선택.
+- **봉인(A 계약)**: `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 에서 **"stated as fact" 제거 → "모든 행은 검증된 사실이거나 `미확인`"**. `미확인` 을 1급 값으로 승격(미검증 존재/미존재가 정직한 미확인보다 나쁘다 — 사용자가 그걸 믿고 행동한다). 권한거부·스코프경고·미조회 ⇒ 미확인(부재 아님). **0행은 범위 조건부** — 정확한 식별자 + 도구가 커버리지를 명시한 경우에만 그 범위 내 부재로 말하고 범위 병기(과교정 방지). 첨부의 `CREATE TABLE IF NOT EXISTS` 는 현재 존재 증거 아님. **미확인은 공짜가 아님** — 결정이 걸린 객체는 최소 1회 조회 시도 의무(`verify > 미확인 > guess`). SYSTEM_PROMPT 미러도 동일 3요소 정합.
+- **봉인(C 감지기)**: `bin/measure-precondition-grounding.py` — 상태 단정 ↔ 도구 호출 대조를 재현 가능하게 재는 **스크린**(지표 아님, 오탐·누락 명시). RO 트랜잭션 + statement_timeout + `ON_ERROR_STOP` + 빈 결과 fail-closed. 감지기 자체를 회귀 테스트 10건으로 고정 — §18.8 R3 가 **성공 신호(`미확인` 카운터)가 영원히 0** 이던 감지기 결함을 잡았기 때문(감지기가 조용히 틀리면 "수정이 작동한다" 는 거짓 결론이 난다).
+- **fix**: `CHG-20260803T190000-precondition-verified-or-unknown` / **코드 거주 `feature-0002-agent-core`** / `REV-20260803T190000-precondition-verified-or-unknown`(codex 3라운드 — R1 [P1]1+[P2]3 → R2 [P1]2+[P2]3 → R3 [P1]0+[P2]1, 전건 수정).
+- **완료 판정(측정으로만)**: 배포 후 `python3 bin/measure-precondition-grounding.py --days 30` 재실행 → **미검증 비율이 baseline 47.8% 아래로** + **`미확인` 객체 수 > 0**(현재 0) 이면 `fixed:deployed:verified`. 재증가 시 `regressed`.
+- **필요한 사람 액션(1줄)**: PR·deploy confirm(Major — override 불가) → 배포 후 위 감지기 재실행.
 
 ## FR-routine-content-scan-missing — rejected (F3 이미 구현·배포·라이브 사용중; 체감 갭만 개선)
 
