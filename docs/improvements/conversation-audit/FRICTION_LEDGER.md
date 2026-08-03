@@ -87,7 +87,12 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-review-frames-live-db-as-spec — fixed:undeployed (L1 시간 방향 계약 부재; 리뷰가 '적용 후'가 아닌 '현재 DB' 기준으로 불평)
 
-- **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 27 PASS · feature-0002 전체 2114 passed/30 skipped · `make test` RC=0 4회 연속) + §18.8 codex 3렌즈([P1] 0 · [P2] 4 중 2 흡수·2 근거 수용) + verify-completion PASS + **배포 완료**(2026-07-31, PR #1102 merge main `2ecfe4b5` → `make deploy-web` 전체 스코프: web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile, post-cutover soak 90s 통과. **4서비스 GIT_COMMIT=2ecfe4b5 running/healthy**, edge `/healthz` ok·mysql_ok·pg_ok).
+- **status**: `fixed:deployed:verified(framing)` — **라이브 육안 실측 완료(2026-08-03, PB-0008 Windows-browser)**. 사용자 보고 프레임("현재 DB 기준으로 불평하듯")이 **동일 입력에서 재현되지 않았다**. 단 같은 답변에 미검증 부재 단정 1건이 남아 접지 축은 별 항목(`FR-review-precondition-assumed-not-verified`)으로 분리 — 그래서 무조건 `verified` 가 아니라 축 한정 표기.
+  **재현 설계(통제)**: 실제 Windows Chrome 으로 새 대화 생성 → 제품 119(GZ_QA_G) 선택 → **원본 5파일 재업로드(sha256 5/5 일치)** → 동일 요청문 20자 → `#sendBtn` 실제 클릭. 모델 claude-haiku(원 대화와 동일). 재현 대화 `20260803081201-969946a2`.
+  **화면 확인(증적 `unit/feature-0002-agent-core/docs/test-runs.d/evidence/20260803-review-framing-after-*.png`)**: 도입부가 **"마이그레이션/신규 기능 추가 스크립트 … 실제 DB 현황(BEFORE)과 비교"** 로 시간 방향을 명시 · 최상단이 파일별 논리·설계 리뷰(BEFORE 는 `## 0. 배포 순서 의존성(가장 중요)`) · 미배포 상태가 `📊 적용 전제` **단일 절**에 ✅ 로만 기재(BEFORE 는 "아직 존재하지 않습니다" 가 핵심 지적) · 🔴🟡🟢 배지가 **적용 후에도 남는 결함**(중복 결제 멱등성·PK 설계·인덱스·에러코드·주석)에만 부착 · 배포 순서는 말미 Q&A 로 강등.
+  **동반 확인**: `search_routines` **본문 매칭 위치** 컬럼이 라이브 동작 — 호출부 4건은 `CALL 'Log_AccountUpdateCash'(…)` 문맥 조각 표시, 이름 매칭 1건은 `(본문 외 매칭)` + 사유 주석(§18.8 codex P2 교정이 실제로 반영됨).
+  상세: `docs/test-runs.d/20260803T1720-review-framing-live-pb0008.md`.
+- **(이전) status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 27 PASS · feature-0002 전체 2114 passed/30 skipped · `make test` RC=0 4회 연속) + §18.8 codex 3렌즈([P1] 0 · [P2] 4 중 2 흡수·2 근거 수용) + verify-completion PASS + **배포 완료**(2026-07-31, PR #1102 merge main `2ecfe4b5` → `make deploy-web` 전체 스코프: web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile, post-cutover soak 90s 통과. **4서비스 GIT_COMMIT=2ecfe4b5 running/healthy**, edge `/healthz` ok·mysql_ok·pg_ok).
   **배포본 런타임 실증(ask-worker)**: 시간 방향 계약 적재 True · BEFORE/AFTER True · `PRECONDITION`+`결함/문제/위험` 금지 True · 🔴/🟡 배지 금지 True · "실행되지 않았다/실패했다" 금지 True · "적용 전제 / 배포 순서" 절 계약 True · **라이브 대조 강제 문구 존속 True**(회귀 0) · L2 힌트 미발견 오류에 발동 True·3분기 True·무관 오류 잡음 0 True · MySQL/MSSQL `MATCH_SNIPPET` True · 전체열거 상수 `''` True · `(본문 외 매칭)` 라벨 True.
   **라이브 compose 경로 실증(가장 중요)**: 실 `agent_memory` 연결로 `compose_system_prompt` 호출 → 결과(13,604자)에 `REVIEWING A PROPOSED CHANGE — TIME DIRECTION` **도달 확인**. 즉 운영자 global row 가 base 를 대체하는 실제 프로덕션 조건에서도 계약이 살아 있다(AUTH-1a 설계 검증). **라이브 대화 실측 미수행** → `unverified-live`.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` (2026-07-30) — "곧 적용될 쿼리 구조를 기준으로 답변하는게 아니라 항상 현재DB를 기준으로 불평하듯 주의사항을 전달".
@@ -108,6 +113,20 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **후속 규명(2026-07-31, 중요)**: A/B 대조쌍이 갈린 **실제 기전**이 후속 조사에서 확정됐다 — 라이브 운영자 프롬프트에 "명시 요청 없이 execute_sql 금지"+"첨부 지침 우선"(코드에서는 2026-07-14 제거된 환각 유발 지시)이 살아 있어, 동적 INSTRUCTION 의 "반드시 라이브 검증" 과 한 프롬프트 안에서 **정면 충돌**했다. 도구 0회 run 은 정적 억제를, 12회 run 은 동적 검증을 따랐다. 본 cycle 의 시간-방향 계약은 DB-확인 분기의 **프레임**을 고쳤고, 모순 자체는 `FR-operator-global-prompt-shadows-code-seals` 가 제거했다(PR #1114, main `954adc87` 배포).
 - **라이브 실측 필요분(§정직)**: 코드/테스트는 "계약이 항상 주입되고, 운영자 global row 대체를 견디며, 선행 grounding 을 약화하지 않고, 미발견 힌트가 3분기로 붙는다" 까지만 증명한다. **"실제 리뷰가 적용 후 기준으로 쓰이는지"** 는 배포 후 실측분(미수행) → 배포 후 동일 5파일 재리뷰 + 다음 audit 이 corroboration(SQL 첨부 대화의 현재-DB 부재 프레이밍 distinct_conv) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
 - **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 동일 첨부로 라이브 재리뷰 + `/_dqa:doc_sync`.
+
+## FR-review-precondition-assumed-not-verified — triaged (L1 2차효과 의심; 시간-방향 계약이 '적용 후 가정'으로 과교정돼 적용 가능성 검증을 건너뜀)
+
+- **status**: `triaged` — **PB-0008 라이브 실측에서 신규 발견**(2026-08-03). 단일 관측이라 corroboration 미측정. 수정 방향이 프롬프트(Major)라 사람 결정 전 promote 하지 않는다.
+- **source**: `FR-review-frames-live-db-as-spec` 봉인의 **라이브 육안검증 중 부수 발견** — 사용자 지시("실제 웹브라우저 조작을 통해 육안검증까지").
+- **last_seen**: 2026-08-03 · **seen_count**: 1 · **seen_distinct_conv**: 1(재현 대화 `20260803081201-969946a2`)
+- **symptom_confidence**: high (ground truth 직접 대조로 오류 확정) · **rootcause_confidence**: low (관측 확정, 코드 경로 미추적 — 프롬프트 2차효과 **가설**)
+- **suspected_layers**: **L1**(시간-방향 계약의 2차효과 가설) ↔ **L6**(모델이 검증 의무를 건너뜀)
+- **증상(signal)**: `I-FALSE` 미검증 부재 단정. 답변의 `적용 전제` 표가 `ConcurrentUsers5Rocks_gunz 테이블 | ✅ 신규 생성 예정 | **현재 미존재**` 라고 적었으나, 같은 datasource 직접 조회 결과 **실존**(`gunzlog.concurrentusers5rocks_gunz`, 약 **1,478,400행**, `ServerID` 컬럼 없음). 그 run 의 도구 호출 4건 중 **이 테이블을 조회한 것은 0건**이다.
+- **실질 손해(중요)**: BEFORE 답변(…a2efa955)은 이 테이블이 실존·PK 부재임을 확인하고 "PK 추가가 기존 데이터 중복으로 실패할 수 있다 → (ReportTime,PublisherID) 중복 0건" 까지 검증했다. AFTER 답변은 미존재로 **가정**해 그 검증을 건너뛰어 **148만 행 테이블에 3중 복합 PK 를 추가하는 실제 마이그레이션 리스크를 놓쳤다**.
+- **방향 반전**: 원 마찰이 "현재 DB 기준 과잉 불평" 이었다면 이 잔여는 **"적용 후를 가정한 과소 검증"** 이다. 시간-방향 계약이 명시한 라이브 대조 목적 **(a) 적용 가능성**(새 PK/UNIQUE 를 위반하는 기존 데이터)이 지켜지지 않았다 — 계약 문구는 이를 요구하므로 **계약 공백이 아니라 준수 실패**이며, 그래서 수정 후보가 프롬프트 강화인지 도구 강제인지 아직 미확정(rootcause low).
+- **red-team 은 이 건을 못 잡았다**: `verdict=revise`·`block_count=1`·`unresolved=1` 로 BLOCK 은 냈으나 지적은 (i) 첨부 excerpt PK 근거 부재 (ii) `Log_AccountUpdateCash` 정의 미확인 두 건이고 `현재 미존재` 오단정은 미포함. 또한 **`revision_applied=false`·`revision_rounds=0`** — 수정 라운드가 돌지 않아 `⚠️ 내부 자가 검증 미해소` 배너와 함께 전달(정직하나 BLOCK→수정 미연결). **별도 추적**: feature-0021.
+- **disposition 근거**: `report-only`/`triaged` — 단일 관측 + corroboration 미측정 + rootcause low + 수정 후보가 Major(코어 프롬프트). Phase 7 의 "명백한 구조결함" 예외를 쓰려면 코드 file:line 확정이 필요한데 아직 없다(모델 준수 실패일 수 있음).
+- **필요한 사람 액션(1줄)**: (a) 여러 리뷰 대화에서 "적용 전제 표의 상태 주장 ↔ 실제 도구 호출" 대조로 corroboration 을 먼저 재고, (b) 그 다음 프롬프트 강화(전제 표의 각 행에 근거 도구 명시 의무) vs 도구 강제(전제 후보 객체 자동 probe) 중 선택.
 
 ## FR-routine-content-scan-missing — rejected (F3 이미 구현·배포·라이브 사용중; 체감 갭만 개선)
 

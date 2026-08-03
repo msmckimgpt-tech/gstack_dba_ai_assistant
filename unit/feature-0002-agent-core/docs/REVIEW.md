@@ -10,6 +10,15 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260803T172000-review-framing-pb0008-live [SKIPPED:docs-only-live-measurement] — PB-0008 라이브 육안검증 기록
+- Date: 2026-08-03
+- Cycle: CHG-20260803T172000-review-framing-pb0008-live. **코드 변경 0** — 이미 배포된 변경의 **실사용 화면 실측 결과** 기록.
+- Trigger: §18.8 dispatch 표 키워드 0건 + code change 0건(diff = Run 기록·증적 PNG·원장). §18.8.1 docs-only 경량 경로. 새로 검증할 동작 표면 없음.
+- 검증 방식(패널 대체): **실제 Windows 브라우저 조작 + ground truth 대조**. 통제 요소 — 동일 제품(119)·동일 모델(claude-haiku)·동일 요청문·**sha256 일치 동일 첨부 5개**. 주장은 화면 캡처 2장과 datasource 직접 조회로 뒷받침되며 추정 서술 없음.
+- **정직성**: PARTIAL PASS 로 기록했다. 프레이밍 축은 통과했으나 **같은 답변에서 미검증 부재 단정 1건**을 찾았고, 그것이 BEFORE 답변이 잡아냈던 실제 마이그레이션 리스크(148만 행 테이블 PK 추가)를 놓치게 했다. 이를 숨기지 않고 원장 신규 항목 `FR-review-precondition-assumed-not-verified`(triaged, rootcause low)로 분리했다. 원장 status 도 무조건 `verified` 가 아니라 **축 한정**(`verified(framing)`)으로 적었다.
+- **부수 관측(별 추적)**: red-team 이 BLOCK(`unresolved=1`)을 냈으나 `revision_applied=false`·`revision_rounds=0` 로 수정 라운드 미실행 → `⚠️ 내부 자가 검증 미해소` 배너와 함께 전달. 사용자에게 미해소를 숨기지 않은 점은 정직하나 BLOCK→수정 연결은 feature-0021 추적 대상.
+- Cross-ref: CHG-20260803T172000-review-framing-pb0008-live / `docs/test-runs.d/20260803T1720-review-framing-live-pb0008.md` / FRICTION_LEDGER(FR-review-frames-live-db-as-spec `verified(framing)` · FR-review-precondition-assumed-not-verified `triaged`).
+
 ## REV-20260731T040000-grounding-authority-postdeploy [SKIPPED:docs-only-postdeploy-record] — 라이브 census 통과 기록
 - Date: 2026-07-31
 - Cycle: CHG-20260731T040000-grounding-authority-postdeploy. **코드 변경 0** — 이미 codex 3라운드 적대 검증(REV-20260731T030000, R3 [P1]/신규결함 0)을 통과해 머지·배포된 변경의 **측정 결과 기록**.

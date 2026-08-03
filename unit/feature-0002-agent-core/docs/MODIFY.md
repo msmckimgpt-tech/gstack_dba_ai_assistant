@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260803T172000-review-framing-pb0008-live (PB-0008 라이브 육안검증 결과 기록, docs-only)
+- Date: 2026-08-03. 코드 변경 **0**. 사용자 지시("실제 웹브라우저 조작을 통해 육안검증까지 진행해주세요").
+- **Environment: Windows-browser** — `bin/win-browser.py`(실제 Windows Chrome 150, relay 브리지)로 새 대화 생성·제품 119 선택·**원본 5파일 재업로드(sha256 5/5 일치)**·동일 요청문 입력·`#sendBtn` 실제 클릭. 배포본 main `954adc87`.
+- **결과 PARTIAL PASS**: 프레이밍 축 **재현 실패(=수정 성공)** — 도입부가 "실제 DB 현황(BEFORE)과 비교" 로 시간 방향 명시, 미배포 상태가 `적용 전제` 단일 절에 ✅ 로만, 심각도 배지는 적용 후 결함에만, 배포 순서는 말미 Q&A 로 강등. `search_routines` 본문 매칭 스니펫도 라이브 정상(이름 매칭 행은 `(본문 외 매칭)`).
+- **잔여 결함 발견**: 같은 답변의 `적용 전제` 표가 `ConcurrentUsers5Rocks_gunz … 현재 미존재` 라 적었으나 ground truth 는 **실존(약 148만 행·ServerID 없음)** 이고 그 테이블을 조회한 도구 호출은 0건 — 미검증 부재 단정. 원장 신규 항목 `FR-review-precondition-assumed-not-verified`(triaged).
+- **파일**: `docs/test-runs.d/20260803T1720-review-framing-live-pb0008.md`(Run 기록) + `evidence/20260803-review-framing-after-{top,precondition}.png`(화면 증적) + FRICTION_LEDGER.
+- **Rollback**: 문서 되돌리기(코드·스키마 무변경).
+
 ## CHG-20260731T040000-grounding-authority-postdeploy (POST-DEPLOY 기록 — 라이브 census 통과, docs-only)
 - Date: 2026-07-31. 코드 변경 **0**.
 - **배포**: PR #1114 merge main `954adc87` → `make deploy-web` 전체 스코프(web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile), soak 90s 통과, 4서비스 GIT_COMMIT=954adc87 running/healthy.
