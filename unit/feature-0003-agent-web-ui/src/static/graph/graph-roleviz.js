@@ -285,7 +285,14 @@ function _metaColStyle(x, y) {
 function _metaRoutineStyle(x, y, rel) {
   const w = Math.min(190, _METLAY.TW + (typeof rel === "number" ? Math.round(rel * 40) : 0));
   return { x, y, size: [w, 24], radius: 12, fill: _META_GRAPH_COLOR.Routine, stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.NODE,
-    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700, labelMaxWidth: 176, cursor: "pointer" };
+    // band-visual-fit(2026-07-31, PB-0008 육안검증): labelMaxWidth 를 **박스 폭 기준**으로 클램프.
+    //   종전 하드코딩 176 은 위 `_metaTableStyle` 주석이 말하는 "rel 부스트로 최대 190 폭일 때 기준"
+    //   이었는데, §45 가 테이블만 `w - 10` 으로 고치고 **루틴 칩을 빠뜨렸다.** rel 부스트가 없으면
+    //   폭은 TW(150)인데 라벨 예산이 176 이라 26px 넘친다 — 라이브에서 아이콘이 알약 왼쪽 **밖**으로
+    //   밀리고 말줄임표가 오른쪽 **밖**에 그려졌다(짧은 이름은 정상 여백이라 대조가 뚜렷).
+    //   라벨 문자열은 `아이콘 + " " + 이름`(graph-core `rLabel`)이라 이 한 값이 아이콘까지 관장한다.
+    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700,
+    labelMaxWidth: w - 10, cursor: "pointer" };
 }
 function _metaCtlStyle(x, y) {
   return { x, y, size: [18, 18], radius: 4, fill: "#ffffff", stroke: "#0a5b66", lineWidth: 1.5, zIndex: _METZ.CTL,

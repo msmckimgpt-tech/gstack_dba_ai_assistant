@@ -873,7 +873,6 @@ config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 �
 - 본 cycle 의 주장은 라이브 pass 반환값(`label_canon`/`summaries`)과 전후 SQL 집계로 재현 가능하다.
 - 정직 표기: 최대 scope 는 검증하지 못했다(컨테이너 1GiB 한도 · OOM). 미검증 사실과 사유·후속
   확인 시점을 REPORT 에 명시했다.
-
 ## REV-20260803T123000-ai-claude-feature-0016-change-reanalysis-obs [SUBAGENT:backend] — BLOCK→전량 흡수 (계측 도달 규약 역전)
 - Related TASK: feature-0016-metadata-graph
 - Trigger: code change (insight_worker telemetry) — 승인 없는 자동 LLM 지출 경로의 관측 수단
@@ -886,3 +885,13 @@ config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 �
 - 추가 흡수: **C1** `shadow`/`unknown` status 무집계 → `auto_reanalysis_shadow`(의도된 안전 모드를 blocked 와 분리) + `auto_reanalysis_status_unknown`(malformed 응답). 이 과정에서 `baseline` 이 unknown 으로 오집계되는 회귀를 발견해 `_AUTO_INFO_STATUSES` 로 분리. **C2** 예외 핸들러 무카운터 → `auto_reanalysis_errors`(없으면 매 사이클 예외가 "건강한 무변경"과 구별되지 않아 "오탐 0" 판정이 관측이 아니라 추론이 된다). **C3** 문서 정정 — 예산 불변식을 `enqueued == done` · `enqueued <= node_budget` 둘로 분리(`3/4` 는 미소진 정상인데 기존 서술이 자기 데이터로 반증됐다) · blocked·자격 합이 스키마 수를 넘는 이유 · TASK.md 체크박스에 실증 범위 caveat. **C4** 범위 밖 파일 모드 변경(100755→100644) 복원. **부수** per-schema 로그에 `absorbed=` 필드(없으면 TCR.11b 하루 경계 관측이 총합 역산이라 판정 불가).
 - **리뷰가 확정해 준 사실(문서에 반영)**: "3-state" 는 하나의 스위치가 아니다 — `auto_setting_int` 를 타는 **cap 정수만 라이브**이고 env 문자열(`AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE`)은 star-import 상수라 **재배포 필요**. 사고 시 운영자가 env 를 만지면 "즉시 정지"가 성립하지 않으므로 정지·관찰 전환은 cap 으로 한다.
 - 검증: 대상 스위트 56 PASS(+ analysis_planner 37) · 컨테이너 전체(0002+0003) **3,571 PASS · 0 failed · 0 error** · ruff clean(`modules/`·`shared/`).
+## REV-20260731T030000-band-visual-fit [SKIPPED:visual-audit-two-liner] — PASS
+
+- Reason: 코드 변경이 **2줄**(싱글턴 흡수 조건에서 `nm:` 예외 제거 · 루틴 칩 `labelMaxWidth` 상수→
+  `w - 10`)이고, 둘 다 **같은 파일 안의 기존 선례를 그대로 따른다**(테이블 스타일이 이미 `w - 10`,
+  `be:`/역할 family 가 이미 싱글턴 흡수 대상). 새 알고리즘·새 의존성·새 상태가 없다.
+- 근거는 라이브 화면 실측이고 REPORT 에 확대 비교·원인 코드·§45 누락 자국까지 남겼다.
+- 자가 적대 점검에서 **철회한 지적 1건**: 밴드 라벨의 말줄임 방향이 `…tok` / `tok…` 로 섞인 것을
+  불일치로 적으려다, 코드에서 "이 스템으로 시작/끝나는" **범위 신호**라는 의도된 인코딩임을 확인해
+  결함 목록에서 뺐다. 코드를 안 봤으면 오보였다.
+- 회귀 잠금의 한계(소스 계약 · 렌더 결과 아님)를 REPORT 에 명시했고, 픽셀 확인은 배포 후 PB-0008 로 한다.
