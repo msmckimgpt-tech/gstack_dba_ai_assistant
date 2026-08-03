@@ -6,11 +6,25 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-loadgate-blind-coaching — fixed:undeployed (L2 거부 피드백 + L5 LIMIT 미반영 추정; 부하게이트가 재작성 방향을 못 줘 추론이 정체)
+## FR-loadgate-blind-coaching — fixed:deployed:verified (L2 거부 피드백 + L5 LIMIT 미반영 추정; 부하게이트가 재작성 방향을 못 줘 추론이 정체)
 
 - **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 **31** PASS · feature-0002 전체 **2360 passed / 30 skipped** · ruff clean) + **§18.8 codex 3렌즈에서 [P1] 2건 출하차단 판정 → 9건 전부 흡수·역검증 생존 0** + verify-completion PASS + **배포 완료**(2026-07-31, PR #1112 merge main `97af7d27` → `make deploy-web` 전체 스코프. **4서비스 GIT_COMMIT=97af7d27 running/healthy**: web-a·web-b·ask-worker·insight-worker, post-cutover soak 통과).
   **배포본 런타임 실증(ask-worker, 라이브 datasource EXPLAIN)** — 새 심볼 3종 적재 True · `guard_mode=gate`·임계 1,000,000 확인 · **① 마찰 재현 케이스 `SELECT * FROM tf_log_05_item LIMIT 5` → est 13,891,780 → 5 로 보정 → PASS**(종전 차단) · **② 전역 집계 `COUNT(*)` → 차단 유지 + 진단(`접근형태=전체 인덱스 스캔·사용 인덱스=LogType·스캔 파티션=26개`) + "전역 집계는 LIMIT 으로 안 줄어든다" + `search_tables approx_rows` 대안 부착** · **③ P1 회귀 케이스 `-- LIMIT 5` 주석 위장 → 차단 유지**(우회 없음).
-  **라이브 대화 실측 미수행** → `unverified-live`(아래 §정직).
+  **라이브 대화 재현 A/B 대조(2026-08-03, 사용자 요청 검증)** — 배포본 ask-worker 에서 원 대화가 무산됐던 **같은 조사**(1062 PK 중복 · 1264 ContentsResult 범위 초과 원인 규명)를 재현했다. 콘솔 경로(`account_id` 미지정)로 돌려 **라이브 사용자 대화 테이블을 오염시키지 않았다**.
+
+  | 지표 | BEFORE(원 대화 `…36a7790b`) | AFTER(배포본 재현) |
+  |---|---|---|
+  | 부하게이트 차단 | **6회** | 4회 |
+  | 차단 메시지에 `[실행계획]` 진단 | **0 / 6** | **4 / 4 (100%)** |
+  | 전역집계 불가 사실 고지 | 0 | 3 |
+  | `approx_rows` 대안 안내 | 0 | 2 |
+  | 같은 대상 반복 차단 escalation | 0 | **2** (설계대로 발동) |
+  | 차단 직후 **또** 차단(막다른 길) | 4 | 2 |
+  | **조사 목적 달성** | **무산**(6연속 차단 후 다른 경로로 우회) | **완수**(17 steps · 6,078자 답변에 원인 + 대안 3종) |
+
+  **재작성 궤적(코칭이 실제로 방향을 이끌었다는 직접 증거)**: 차단(`대상 tf_log_05_item — 접근형태=전체 행 스캔(인덱스 미사용)…`) → 모델이 **대상을 작은 `TF_ErrorLog` 로 전환 + `ErrorNum IN (…) … LIMIT 10`** 으로 재작성 → 성공. 이후 또 차단되자 **`SequenceID BETWEEN … LIMIT 20` 으로 범위 축소** → 성공 → 실제 데이터(SequenceID 49435127~49435131 행)를 조회해 답변 완성. 원 대화에서는 같은 지점에서 형태만 바꾼 재제출이 6회 반복되고 조사가 끝났다.
+  **답변 품질**: 요청 범위와 에러 범위의 **불일치를 스스로 짚었고**(1264 는 요청 범위 밖), 차단으로 인한 제약을 답변 서두에 **명시**했다(투명성). 대안으로 `REPLACE INTO` / `ON DUPLICATE KEY UPDATE` / 원본 정규화 3종 제시.
+  **재현 한정(정직)**: ① **RC-2(LIMIT 상한 보정)는 이 재현에서 발동하지 않았다** — 모델이 순수 `LIMIT n`(WHERE 없는) 조회를 내지 않았기 때문. 그 레버는 배포본 직접 실측(위)에서만 확인됐다. ② 콘솔 경로라 `scratch_import` 가 "대화 컨텍스트 없음" 으로 1회 거부됐다(재현 방법의 부작용, 실사용 경로에는 없음). ③ **모집단 빈도 감소는 미측정** — 배포 직후라 실사용 표본이 없다. 다음 audit 이 corroboration(`무거운 쿼리로 추정됩니다` distinct_conv / `execute_sql` 대비 rate)을 재측정한다. **본 `verified` 판정의 근거는 "통제된 A/B 재현에서 봉인이 설계대로 작동하고 목적 수행이 회복됐다" 까지이며, "라이브 모집단에서 마찰 빈도가 줄었다" 는 아직 주장하지 않는다.**
   **배포 1차 시도 실패 기록(정직)**: 첫 `make deploy-web` 은 insight-worker 가 300s 내 healthy 미도달 → **워커군 last-good 롤백**으로 끝나, web 만 신코드·워커는 구코드인 부분 완료였다(이번 수정의 실행 주체가 ask-worker 라 그 상태로는 **마찰 수정이 라이브에 미도달**). 원인은 이번 변경이 아니라 기동 직후 외부 datasource 다수 도달 불가(timeout·blocked_target·MSSQL 로그인 실패)로 헬스체크가 늦게 붙은 것 — 안정 후 **멱등 재실행으로 성공**(insight-worker 20s 내 healthy). `make` 종료코드가 파이프에 가려 0 으로 보인 점도 함께 기록한다.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit "에러로그 분석 및 원인 대안 제시"` (2026-07-31) — "테이블을 조회할 때 '무거운 쿼리' 에 대한 블로킹이 너무 심하게 나타난다('LIMIT 1' 임에도)".
 - **last_seen**: 2026-07-31 · **seen_count**: 1 · **seen_distinct_conv**: 12(전체) / **10**(30일)

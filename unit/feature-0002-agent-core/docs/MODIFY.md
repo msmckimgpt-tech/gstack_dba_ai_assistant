@@ -1038,3 +1038,12 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **미검증(정직)**: 실제 사용자 대화에서 차단 빈도가 줄고 재작성이 성공하는지 — 다음 audit 의 corroboration 재측정분. 원장 status = `fixed:deployed:unverified-live`.
 - **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REPORT,REVIEW}.md`, `docs/LEARNINGS.md`(LRN-20260731-0001).
 - **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260731T184300-loadgate-blind-coaching` · 원장 `FR-loadgate-blind-coaching`.
+
+## CHG-20260803T170000-loadgate-replay-verify — 라이브 재현 A/B 검증 결과 기록 (문서만)
+> 부하게이트 봉인이 **실제 대화에서** 마찰을 해소했는지 재현으로 확인하고 원장 status 를 닫는다. 코드 변경 없음.
+- **방법**: 배포본 ask-worker(`97af7d27`)에서 원 대화가 무산됐던 같은 조사를 재현. `account_id` 미지정(콘솔 경로)으로 돌려 **라이브 사용자 대화 테이블을 오염시키지 않았다**.
+- **결과(BEFORE→AFTER)**: 차단 6→4 · 진단 문구 **0/6 → 4/4** · 전역집계 고지 0→3 · `approx_rows` 안내 0→2 · escalation 0→**2** · 차단 직후 또 차단 4→2 · **조사 목적 무산 → 완수**(17 steps, 6,078자 답변에 원인 + 대안 3종).
+- **재작성 궤적(코칭 작동의 직접 증거)**: `접근형태=전체 행 스캔(인덱스 미사용)` 진단 수신 → 대상을 작은 `TF_ErrorLog` 로 전환 + `LIMIT 10` → 성공. 재차단 후 `SequenceID BETWEEN … LIMIT 20` 범위 축소 → 성공 → 실데이터 조회로 답변 완성. 원 대화는 같은 지점에서 형태만 바꾼 재제출이 6회 반복되고 끝났다.
+- **한정(정직)**: RC-2(LIMIT 상한 보정) 이 재현에서 **미발동**(모델이 순수 LIMIT 조회를 내지 않음 — 배포본 직접 실측에서만 확인) · 콘솔 경로 부작용으로 `scratch_import` 1회 거부 · **모집단 빈도 감소 미측정**(다음 audit corroboration). `verified` 판정 근거는 **통제된 A/B 재현까지**로 한정한다.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`.
+- **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260731T184300-loadgate-blind-coaching` · `CHG-20260731T203000-loadgate-postdeploy` · 원장 `FR-loadgate-blind-coaching`.
