@@ -2317,3 +2317,6 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0731, 2026-07-30)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-07-30 블록 8항목 추가. 기능 계약·렌더러 동작 변경 없음(데이터 전용).
+
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0804, 2026-08-03 · 2026-07-31)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-08-03 블록 7항목 · 2026-07-31 블록 3항목 추가. 기능 계약·렌더러 동작 변경 없음(데이터 전용).

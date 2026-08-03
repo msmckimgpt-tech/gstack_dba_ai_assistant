@@ -2313,3 +2313,6 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - Run 기록 정본: `docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md` (§5.3 fragment).
 - **Environment: pytest** — `test_ai_ops.py` 22 passed(신규 2 포함) · 전체 스위트 EXIT=0 · ruff PASS.
 - **Environment: Windows-browser (PB-0008)** — **POST-DEPLOY PASS** (배포 c0c6800f, 실 Chrome 150 relay, https://localhost/admin). 운영 현황 pane 에서 '미분류 활동' 그룹 소멸(텍스트 "미분류" 0회)·인사이트 분석 하위 3행 편입·최근 활동 피드 작업명 노출·기존 카테고리 무회귀. 증거 `artifacts/pb0008/20260803-aiops-taxonomy-unmapped.png`. 상세는 fragment §4.
+
+## TASK-20260804T010301-doc-sync-rn-0804 — 릴리즈노트 신규 2026-08-03·2026-07-31 블록 prepend (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·제품 코드·캐시버스터(`?v=dev` 빌드 자동주입, 수기 편집 0) 무변경. 무인 cron doc_sync 라 인터랙티브 win-browser 브리지 미가동·배포=wrapper(post-merge). 릴리즈노트 전용 render 테스트(`tests/verify_release_notes.mjs`)는 **jsdom 미설치**(env 제약)로 미실행 — render 로직 미변경이라 대상 아님. pre-commit 정적 검증 = `node --check`(문법) PASS + 구조검증(releases[0].date=2026-08-03 7항목 · releases[1]=2026-07-31 3항목 · 기존 39 블록 보존 · 스키마·enum·summary·누출0). 각 항목의 실제 UI 동작은 owning feature 의 POST-DEPLOY(Windows-browser PB-0008)에서 이미 라이브 검증됨. CHECK#13 충족(웹 자산 변경=릴리즈노트 데이터, Windows-browser 미수행 사유 기록).

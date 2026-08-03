@@ -2102,3 +2102,11 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 배포: `--web-only` 스코프, web-a·web-b GIT_COMMIT=c0c6800f(본 cycle 커밋 7c562a0a 포함 확인), soak 90s 통과, Caddyfile 무변경(edge blip 0). 워커 미접촉 — taxonomy 는 web 관제 표시 전용이라 워커 소비 경로 없음.
 - 실증: 배포본 taxonomy 18→21종, 3 task 가 `ai.other.unmapped` → `ai.insight.analyze` · 라이브 API `categories[]`/`attention[]` 에서 미분류 소멸 · PB-0008 육안으로 pane 텍스트 "미분류" 0회 + 최근 활동 피드가 raw task 대신 작업명 노출.
 - Files: `docs/{TASK,MODIFY,REVIEW,TEST}.md`, `docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md`.
+
+## CHG-20260804T010301-doc-sync-rn-0804 (2026-08-03 · 2026-07-31 블록) 릴리즈노트 콘텐츠 — 신규 2블록 10항목 prepend(무거운 조회 코칭·LIMIT 오차단 해소·정확도 규칙 실적용·미확인 표기·AI운영현황 분류·관계도 1멤버 카테고리/칩 오버플로·리뷰 프레이밍·스키마 간 어휘 통일·중요도 기반 자동 분석)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-08-03" 블록(7 items) + "2026-07-31" 블록(3 items) prepend + `generated` "2026-07-30"→"2026-08-03". 기존 39 블록 전량 보존(41 블록).
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수명·테이블명·마이그레이션 번호·내부 설정키(`AGENT_*`)·모델명·ADR 번호·PB-0008 누출 **0**(정규식 기계 검증).
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · vm 구조검증(releases[0]=2026-08-03 7항목 · releases[1]=2026-07-31 3항목 · releases[2]=07-30 8항목·releases[3]=07-29 13항목 보존 · enum/title/summary 위반 0 · 내부용어 누출 0). `verify_release_notes.mjs` 는 jsdom 미설치로 미실행(render 로직 미변경).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
