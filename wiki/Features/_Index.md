@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 34 active |
+| Feature 수 | 38 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-34 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+38 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -79,6 +79,10 @@ sources:
 | feature-0032-llm-token-budget | in-progress | 백그라운드 LLM 토큰 예산 — 사람이 요청하지 않은 자동 지출(노드 분석·클러스터 유지보수·제품 분류)에 rolling 24시간 토큰 상한(`agent_runtime.llm_usage` 원천·진입점 3곳 게이트·커버리지 96%·60초 캐시). **사용자가 기다리는 호출은 세지도 막지도 않는다**(설계 불변식)·fail-open 3중·기본 2,000만(24h 실측 685만의 약 3배)·콘솔 'AI 운영 현황' 예산 막대+attention 2단계 (2026-07-30) | [[feature-0032-llm-token-budget]] | `unit/feature-0032-llm-token-budget/docs/FUNCTION.md` |
 | feature-0033-analysis-synthesis | in-progress | 클러스터 합성 요약(L2) — 의미 클러스터마다 "이 묶음이 함께 무엇을 하는가"를 2~4문장으로 합성해 `cluster_summaries`(alembic 0051)에 적재(라벨 평균 9자가 이름이라면 요약은 설명). PK 는 churn 하는 `cluster_id` 대신 **멤버셋 지문**·캐시 키 3중 일치(멤버셋+L1+L0)·클러스터링 시그니처 **미유입 불변식**(재임베딩 순환 차단)·pass 당 40개 상한·배치 6·feature-0032 예산 하위·live 정지 스위치 (라이브 818 클러스터·15,365 멤버, 2026-07-30) | [[feature-0033-analysis-synthesis]] | `unit/feature-0033-analysis-synthesis/docs/FUNCTION.md` |
 | feature-0034-analysis-consumption | in-progress | 분석 산출물의 대화 소비 — 질문이 언급한 테이블이 속한 묶음의 L2 요약 1~2건을 답변 컨텍스트 `TABLE GROUP SUMMARIES` 섹션으로 주입해 RI-5(쌓인 분석이 콘솔 열람에만 갇혀 있던 상태) 해소. 사전 계산분만(런타임 합성·LLM 호출 0)·근거 수 병기로 추정/실측 구분·2단계 매칭(`strpos` + `(scope, effective_schema, label)` 격리)·`_datamark_untrusted`·statement_timeout 1.5s·전 구간 fail-soft (2026-07-30) | [[feature-0034-analysis-consumption]] | `unit/feature-0034-analysis-consumption/docs/FUNCTION.md` |
+| feature-0035-analysis-planner | in-progress | 결정적 분석 플래너 — 아직 분석되지 않은 테이블 중 **중요한 것부터** 자동으로 분석 대기열에 시드한다. 중요도 = `대화 조인 이력 × 50 + 관계 차수 × 1`(동점은 이름 오름차순)로 **LLM 없이** 결정적으로 계산하고 AGE 실시간 중심성은 쓰지 않는다(multi-hop 라이브 최악 82초 — 필요한 건 정확한 값이 아니라 순서). 큐잉은 재구현하지 않고 `node_analysis.enqueue_change_analysis` 를 `reason="coverage_priority"` 로만 구분해 재사용(자격·그래프 실재·cap·쿨다운·busy 가드 상속)·2중 상한(스키마당 3 · 사이클 9 = load-bearing)·`object_key` prefix + `strpos(…)=1`+`DISTINCT`·파티션 계열은 대표 1개만(라이브 1,464 테이블 중 1,364=93% 가 날짜 접미) (라이브 커버리지 2,040/17,192=11.9% 가 L1·L2·grounding 품질 상한이던 것을 해소, 2026-07-31) | [[feature-0035-analysis-planner]] | `unit/feature-0035-analysis-planner/docs/FUNCTION.md` |
+| feature-0036-analysis-verification | in-progress | 분석문 사실성 판정 — AI 가 쓴 테이블 설명을 **L0 통계 증거와 대조**해 `supported`/`contradicted`/`unverifiable` + 판정을 가른 숫자를 지목하는 근거 한 문장으로 `node_analysis_verdicts`(alembic 0052)에 적재. **판정 실패는 "검증됨"이 아니다** — LLM 오류·타임아웃·계약 위반·근거 없는 응답·증거 부재·저장 실패는 전부 행을 만들지 않는다(= 미검증). fail-soft 가 "통과"가 아니라 **"침묵"**. 예외 하나: 예산 모듈을 읽을 수 없으면 pass 를 중단한다. `analysis_hash` 가 재판정 축(노드당 1행)·pass 당 20건·**배치 없음(1건 1콜** — 배치하면 한 건의 오판이 다른 건으로 번진다)·호출측 `limit` 은 설정 상한을 넘을 수 없다 (2026-07-31) | [[feature-0036-analysis-verification]] | `unit/feature-0036-analysis-verification/docs/FUNCTION.md` |
+| feature-0037-domain-synthesis | in-progress | 도메인 합성(L3, lazy) — DB(스키마) 하나의 도메인 개요를 3~5문장으로 접어 `domain_summaries`(alembic 0053)에 둔다. 입력은 개별 테이블이 아니라 그 스키마의 **클러스터 요약들(L2)** — 이미 한 번 접힌 것을 다시 접는다. **요청과 생성을 분리**해 사전 전량 생성 금지(LazyGraphRAG)와 답변 경로 런타임 합성 금지(ADR-0034-07)를 함께 지킨다: grounding 이 조회하고 없으면 `request()` 만 남기고(LLM 0·지연 0·요청 UPSERT 는 별도 RW 연결) insight tick 이 요청된 것만 `request_count` 우선순위로 합성한다(**사용이 곧 우선순위**). 재생성 축 `cluster_set_hash`(라벨·요약·멤버 수·근거 수)는 payload cap 25 로 자르기 **전** 전체 집합(최대 300)으로 해시·pass 당 3·advisory lock 을 얻은 tick 에서만·30자 미만 미저장 (라이브 클러스터 요약 1,006건/120 스키마=평균 8, 2026-07-31) | [[feature-0037-domain-synthesis]] | `unit/feature-0037-domain-synthesis/docs/FUNCTION.md` |
+| feature-0038-frontend-modularization | in-progress | 프론트엔드 모듈화(ssot-consolidation ROADMAP **ITEM-P5b 잔여**) — 프론트 모놀리스 3파일(admin.js 14,007줄 · app.js 13,165줄 · styles.css 9,328줄, 2026-08-03 실측)을 behavior-neutral 점진 추출로 도메인 모듈화하는 initiative unit. 백엔드 `app.py` 분할은 feature-0012 가 완결했으므로 범위 밖이고, 코드는 feature-0003 `src/static/**` 에 계속 거주하며 본 unit 은 계획·추적·검증 기록 홈이다(feature-0012 와 동일 패턴). big-bang 금지 — cycle 당 단일 PR + 게이트(make test · PB-0008 브라우저 QA · 롤백 리허설 · plan-review Critical). Cycle 1 배포 완료(styles.css → `css/` 7파일 순차 concat 이 원본과 byte-identical·PB-0008 PASS·롤백 리허설 revert 왕복 diff 0) · Cycle 2 머지(admin.js 사용량·AI운영현황 pane → `admin/{usage,aiops}.js`, 14,007→13,057줄; 배포·POST-DEPLOY PB-0008 잔여)·Cycle 3~10 + Final 잔여 (위험도 Critical·PLAN-APPROVED, 2026-08-03) | [[feature-0038-frontend-modularization]] | `unit/feature-0038-frontend-modularization/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

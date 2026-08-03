@@ -203,7 +203,7 @@ TEMP_CLEANUP_ON_SUCCESS="1"
 
 ## 10. Admin Console UI 일관성
 
-관리 콘솔 (`feature-0003-agent-web-ui` 의 `admin.html` / `admin.js` / `styles.css`) 의 카테고리별 UI (Accounts, Roles, Products, 이후 추가될 모든 카테고리) 는 본 섹션의 정책을 따른다.
+관리 콘솔 (`feature-0003-agent-web-ui` 의 `admin.html` / `admin.js` + `admin/` pane 모듈 / `css/` 7파일 — 구 `styles.css` 는 feature-0038 Cycle 1 에서 분할·소멸) 의 카테고리별 UI (Accounts, Roles, Products, 이후 추가될 모든 카테고리) 는 본 섹션의 정책을 따른다.
 
 상세 컴포넌트 명세 · HTML · CSS · JS contract · keyboard map · a11y · cross-page selection · optimistic rollback · confirm · RBAC partial-failure UI · runtime assertion 은 `../unit/feature-0003-agent-web-ui/docs/DESIGN.md` 정본을 따른다. 본 섹션은 project-level 강제 정책만 명시한다.
 

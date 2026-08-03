@@ -100,7 +100,7 @@ sources:
 | feature-0038-frontend-modularization | in-progress | 2026-08-03 | [TASK](../unit/feature-0038-frontend-modularization/docs/TASK.md) | ITEM-P5b 잔여 — Cycle 1(styles.css 7분할) 배포 완료, Cycle 2(usage/aiops 추출) 진행 |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
-> **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
+> **미머지 활성 worktree**(2026-08-04 실측): `ai/claude/feature-0007-llm-timeout-align` · `ai/claude/feature-0012-web-router-modularization` · `ai/claude-corp/feature-0016-node-role-viz` · `ai/claude-corp/feature-0038-c3-audit-settings` · `ai/root/perf-cycle-label-fix` · `ai/root/ssot-roadmap-refresh`. 이들의 작업 현황 정본은 각 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md` 이며, 위 표는 main 머지 기준 상태만 반영한다(머지 시 행 승격 — DOC_REGISTRY In-flight 정책). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
 > 상세 TASK 이력을 셀에 누적하지 않는다(ADR-0031 §1) — 상세는 정본 링크의 unit TASK.md / 인덱스화 이전 분은 STATUS_ARCHIVE.md.
 
 ### 상태 값 정의
