@@ -2053,3 +2053,32 @@ rationale=REVIEW `REV-20260731T184300-loadgate-blind-coaching` ·
 ### 정본
 rationale=REVIEW `REV-20260731T203000-loadgate-postdeploy` ·
 변경이력=MODIFY `CHG-20260731T203000-loadgate-postdeploy`.
+
+## TASK-20260803T170000-loadgate-replay-verify — 라이브 재현 A/B 검증 (문서만)
+
+사용자 요청 "관련된 대화를 재현하며 해당 이슈가 해소되었는지 검증" 에 대한 실측.
+
+- [x] BEFORE 기준선 — 원 대화 `…36a7790b`: 차단 **6회**, 진단 문구 **0/6**, 조사 무산.
+- [x] 재현 실행 — 배포본 ask-worker(`97af7d27`)에서 **같은 조사**(1062 PK 중복 · 1264 범위 초과
+      원인 규명)를 콘솔 경로로 실행(라이브 사용자 대화 테이블 미오염). 17 steps · 6,078자 답변.
+- [x] AFTER 측정 — 차단 4회, **진단 4/4(100%)**, 전역집계 고지 3, `approx_rows` 안내 2,
+      **escalation 2회 설계대로 발동**, 차단 직후 또 차단 4→2, **조사 목적 완수**.
+- [x] 재작성 궤적 확인 — 진단 수신 후 대상을 `TF_ErrorLog` 로 전환 + `LIMIT` 축소 → 성공,
+      재차단 후 `BETWEEN … LIMIT 20` 으로 범위 축소 → 성공 → 실데이터 조회로 답변 완성.
+- [x] 한정 기록(정직) — RC-2(LIMIT 보정)는 이 재현에서 **미발동**(모델이 순수 LIMIT 조회를 내지
+      않음; 그 레버는 배포본 직접 실측에서 확인) · 콘솔 경로 부작용으로 `scratch_import` 1회 거부 ·
+      **모집단 빈도 감소는 미측정**(배포 직후 표본 부재 → 다음 audit corroboration).
+- [x] 원장 status — `fixed:deployed:unverified-live` → **`fixed:deployed:verified`**(근거는 통제된
+      A/B 재현까지로 한정 표기).
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260803T170000-loadgate-replay-verify
+- [x] `관련 대화 재현` — 산출물: 배포본 재현 실행(17 steps) · 배선 확인: `__ask_worker__` id 6587~6622 도구 흐름.
+- [x] `이슈 해소 검증` — 산출물: BEFORE/AFTER 대조표(원장) · 배선 확인: 차단 문구 특성 집계 SQL + 재작성 궤적 tool_calls.
+- [x] `정직한 한정 표기` — 산출물: 미발동 레버·미측정 축 명시.
+
+**주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 없음 → `해당 없음`.
+
+### 정본
+rationale=REVIEW `REV-20260803T170000-loadgate-replay-verify` ·
+변경이력=MODIFY `CHG-20260803T170000-loadgate-replay-verify` ·
+마찰원장=`FR-loadgate-blind-coaching`.

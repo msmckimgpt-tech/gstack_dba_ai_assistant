@@ -1114,3 +1114,31 @@ cycle 이다. 선행 `REV-20260731T184300-loadgate-blind-coaching` 이 코드에
 
 Cross-ref: TASK-20260731T203000-loadgate-postdeploy · CHG-20260731T203000-loadgate-postdeploy ·
 선행 `REV-20260731T184300-loadgate-blind-coaching` · 원장 `FR-loadgate-blind-coaching`.
+
+## REV-20260803T170000-loadgate-replay-verify [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+
+코드 변경 0(문서만) — 배포된 봉인이 **실제 대화 흐름에서** 작동하는지 재현으로 측정한 결과를 남긴다.
+선행 두 REVIEW 가 코드 적대 리뷰(§18.8 3렌즈, [P1] 2건 흡수)와 배포본 함수 단위 실증을 이미
+수행했고, 본 cycle 의 검증 무게중심은 **LLM 루프가 새 코칭을 받고 실제로 재작성에 성공하는가** 다.
+
+### A/B 증거
+| 지표 | BEFORE(원 대화) | AFTER(배포본 재현) |
+|---|---|---|
+| 차단 | 6 | 4 |
+| `[실행계획]` 진단 | 0 / 6 | **4 / 4** |
+| 전역집계 고지 / `approx_rows` | 0 / 0 | 3 / 2 |
+| escalation 발동 | 0 | 2 |
+| 차단 직후 또 차단 | 4 | 2 |
+| 조사 목적 | **무산** | **완수**(6,078자, 원인 + 대안 3종) |
+
+### 자기 지적(정직)
+- **차단이 0 이 되지는 않았다**(4회). 임계 유지가 사용자 결정이었고, 봉인의 목표도 "차단 제거" 가
+  아니라 "차단이 막다른 길이 아니라 우회 경로를 여는 것" 이었다. 그 목표 기준으로는 달성이지만,
+  "블로킹이 심하다" 는 원 체감이 완전히 사라졌는지는 **실사용 트래픽으로만** 확인된다.
+- **RC-2(LIMIT 보정)는 이 재현에서 발동하지 않았다** — 모델이 순수 `LIMIT n` 조회를 내지 않았다.
+  두 레버 중 하나만 대화 흐름에서 실증된 셈이며, 나머지는 함수 단위 실측 근거에 의존한다.
+- 재현은 콘솔 경로라 `scratch_import` 가 컨텍스트 부재로 1회 거부됐다 — 실사용 경로에는 없는
+  재현 방법의 부작용이며, 그만큼 이 재현이 실사용과 **완전히 동일하지는 않다**.
+
+Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-loadgate-replay-verify ·
+원장 `FR-loadgate-blind-coaching`.
