@@ -6,13 +6,13 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-08-03
-feature_status_note: ITEM-P5b 잔여(프론트 3파일 분할) — plan-review 승인 대기
+feature_status_note: ITEM-P5b 잔여 — Cycle 1(styles.css 7분할) 배포 완료, Cycle 2(usage/aiops 추출) 진행
 ---
 
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1 실행 중)
+- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1 완료·배포, Cycle 2 진행 중)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-03
@@ -76,7 +76,7 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 
 **게이트 (각 cycle, 로드맵 ITEM-P5b 명시 그대로)**:
 1. `make test` PASS (격리 compose 프로젝트 `repo-unittest`)
-2. 헤드리스 스위트 PASS (node vm 소스-추출 + chromium 실렌더)
+2. 헤드리스 스위트 PASS (node vm 소스-추출 + chromium 실렌더) + **acorn-globals 자유 식별자 스캔 0** (JS 분할 cycle — §18.8 패널 권고 2026-08-03 채택)
 3. `bin/verify-completion.sh --pre-commit` PASS (check #9 REVIEW entry · check #13 Windows-browser Run staged — `visual_verification_scope: always`)
 4. PR 머지 → 배포 (deploy_scope: included — deploy-web.sh 스파인: asset-stamp verify·soak·자동 롤백)
 5. POST-DEPLOY PB-0008 실 Windows 브라우저 검증 (JS 는 docker cp 사전검증 불가 — 모듈 캐시 이중 인스턴스 함정)
@@ -104,13 +104,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
 ## 3. Task Queue
-- [ ] TASK-0005 Cycle 1 — 롤백 리허설 실증 (revert→검증→재적용)
-- [ ] TASK-0006 Cycle 1 — verify-completion → PR → 배포 → PB-0008 POST-DEPLOY
-- [ ] TASK-0007 Cycle 2 착수 (admin/usage.js·admin/aiops.js) — 이하 §2.1 표 순서
+- [ ] TASK-0008 Cycle 2 — verify → PR → 배포 → POST-DEPLOY PB-0008 (usage/aiops pane)
+- [ ] TASK-0009 Cycle 3 착수 (admin/audit.js·admin/settings.js) — 이하 §2.1 표 순서
 - [ ] TASK-0100 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합
 
 ## 4. In Progress
-- TASK-0005 / TASK-0006 (Cycle 1 마감 절차)
+- TASK-0008 (Cycle 2 마감 절차 — make test·적대 패널 진행 중)
 
 ## 5. Blocked
 - 없음
@@ -123,9 +122,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0002 기준선 실측 — styles.css 9,328줄 sha256 349ce797…·url()/@import 0건 (TEST Run-001)
 - [x] TASK-0003 styles.css 7분할 + html 링크 교체 + 참조 테스트 5건 갱신 (CHG-20260803T1745)
 - [x] TASK-0004 byte-parity cmp identical + per-file 주석/중괄호 균형 + 헤드리스 27+11 PASS + make test EXIT 0 + PB-0008 사전 시각검증 PASS (TEST Run-002~005)
+- [x] TASK-0005 Cycle 1 롤백 리허설 실증 — revert 왕복 base diff 0 (TEST Run-006)
+- [x] TASK-0006 Cycle 1 마감 — PR #1124 머지(1da17988)·deploy-web RC=0(soak 통과)·POST-DEPLOY PB-0008 PASS(TEST Run-007)·worktree/REGISTRY 정리
+- [x] TASK-0007 Cycle 2 추출 — admin/usage.js(693)·admin/aiops.js(289), admin.js 14,007→13,050줄, 역재구성 byte-parity IDENTICAL (TEST Run-008, CHG-20260803T190000)
 
 ## 7. Next Action
-- Cycle 1 롤백 리허설 → verify-completion → PR → 배포 → POST-DEPLOY PB-0008
+- Cycle 2 verify → PR → 배포 → POST-DEPLOY PB-0008 → Cycle 3
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

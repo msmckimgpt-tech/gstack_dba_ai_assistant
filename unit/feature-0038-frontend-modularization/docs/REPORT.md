@@ -9,15 +9,15 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**,
-Cycle 1(styles.css 7분할) 구현·검증 완료, PR/배포 마감 절차 진행 중.
-계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
+**Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
+롤백 리허설 실증). **Cycle 2 진행 중**(admin/usage.js·admin/aiops.js byte-동치 추출 —
+admin.js 14,007→13,050줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
 
 ## 2. Progress
-- Planned: Cycle 2~10 (admin.js/app.js 도메인 추출) + Final(재발 방지)
-- In Progress: Cycle 1 마감 (롤백 리허설 → verify → PR → 배포 → POST-DEPLOY PB-0008)
-- Done: 계획 승인 · Cycle 1 분할/검증 (byte-parity identical · 헤드리스 27+11 ·
-  make test EXIT 0 · PB-0008 사전 시각검증 PASS — TEST.md Run-001~005)
+- Planned: Cycle 3~10 (admin.js 잔여·app.js) + Final(재발 방지)
+- In Progress: Cycle 2 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY PB-0008)
+- Done: 계획 승인 · Cycle 1 완결(TEST Run-001~007) · Cycle 2 추출·기계 검증(Run-008)
 
 ## 3. Recent Changes
 - 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)

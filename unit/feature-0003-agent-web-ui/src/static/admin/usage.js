@@ -1,0 +1,690 @@
+// feature-0038 Cycle 2 — LLM 사용량 pane (관리 콘솔 > 감사 > AI 운영 현황 > LLM 사용량).
+//   admin.js 구 L1560–2238 에서 byte-동치 이동 (본문 무수정 — ITEM-P5b,
+//   unit/feature-0038-frontend-modularization). ESM 순환 import 는 graph/ 선례 패턴:
+//   함수는 호출 시점 참조라 TDZ-안전, 상태 초기화(adminState.usage=…)는 admin.js 잔류.
+import {
+  adminState, apiFetch,
+  _metaPopulateScopeSelect, activateAiConsoleSubtab, switchTab,
+} from "../admin.js?v=dev";
+
+// TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
+//   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
+async function loadUsage(opts) {
+  const refetch = !(opts && opts.refetch === false);
+  const sel = document.getElementById("usageDaysSel");
+  const granSel = document.getElementById("usageGranSel");
+  const days = sel ? sel.value : "30";
+  const gran = granSel ? granSel.value : "day";
+  const summaryEl = document.getElementById("usageSummary");
+  const modelEl = document.getElementById("usageByModel");
+  const roleEl = document.getElementById("usageByRole");
+  const acctEl = document.getElementById("usageByAccount");
+  const dayChartEl = document.getElementById("usageDayChart");
+  const modelChartEl = document.getElementById("usageModelChart");
+  const roleChartEl = document.getElementById("usageRoleChart");
+  const roleCostChartEl = document.getElementById("usageRoleCostChart");
+  const trendTitleEl = document.getElementById("usageTrendTitle");
+  const GRAN_LABEL = { hour: "시간별", day: "일별", week: "주별", month: "월별" };
+  if (trendTitleEl) trendTitleEl.textContent = GRAN_LABEL[gran] || "일별";
+  if (summaryEl && refetch) summaryEl.textContent = "로딩 중…";
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const num = (v) => (Number(v) || 0).toLocaleString();
+  const usd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // TASK-0166: 상용 대시보드식 hover 툴팁 (의존성 0). data-tip 속성을 가진 요소에 마우스.
+  const tip = (() => {
+    let t = document.getElementById("usageTooltip");
+    if (!t) {
+      t = document.createElement("div");
+      t.id = "usageTooltip";
+      t.className = "admin-usage-tooltip";  // TASK-0177: 인라인 cssText → 토큰 클래스
+      document.body.appendChild(t);
+    }
+    return t;
+  })();
+  const bindTip = (root) => {
+    if (!root || root._tipBound) return;
+    root._tipBound = true;
+    root.addEventListener("mousemove", (e) => {
+      const el2 = e.target.closest ? e.target.closest("[data-tip]") : null;
+      if (!el2) { tip.style.display = "none"; return; }
+      tip.innerHTML = el2.getAttribute("data-tip");
+      tip.style.display = "block";
+      let x = e.clientX + 13, y = e.clientY + 13;
+      if (x + tip.offsetWidth > window.innerWidth) x = e.clientX - tip.offsetWidth - 13;
+      if (y + tip.offsetHeight > window.innerHeight) y = e.clientY - tip.offsetHeight - 13;
+      tip.style.left = x + "px"; tip.style.top = y + "px";
+    });
+    root.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  };
+  // TASK-0164/0166: 순수 SVG 차트. 색상 — 로컬/시스템(edge·시스템·역할없음)은 회색.
+  const CHART_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#0ea5e9", "#f43f5e"];
+  const SYS_COLOR = "#94a3b8";
+  const colorMapFor = (keys) => {
+    const m = {}; let i = 0;
+    keys.forEach((k) => {
+      if (k === "(시스템)" || k === "(역할 없음)" || k === "edge") m[k] = SYS_COLOR;
+      else { m[k] = CHART_COLORS[i % CHART_COLORS.length]; i += 1; }
+    });
+    return m;
+  };
+  // TASK-0181: 전역 모델 색맵 — 일별 stacked / 도넛 / 역할·계정 stacked 가 같은 모델은 같은 색.
+  // data 수신 후 by_model 등에서 등장 모델 전체로 1회 채운다.
+  let modelColor = {};
+  const mcol = (k) => modelColor[k] || SYS_COLOR;
+  // bucket 라벨 축약 (YYYY- 제거: 'MM-DD', 'MM-DD HH:00'; 월별 'YYYY-MM' 유지).
+  const shortLabel = (d) => { const s = String(d); return s.length > 7 ? s.slice(5) : s; };
+
+  // ── TASK-0263: 사용량 차트 클릭 → 집계 기여 대화목록 모달 ──────────────────
+  // bindUsageDrill: 차트 컨테이너에 위임 클릭 — data-usage-model/data-usage-day 후크를 가진
+  // 요소 클릭 시 그 차원(현 days/gran context)으로 admin 대화 모달을 연다.
+  const bindUsageDrill = (root) => {
+    if (!root || root._drillBound) return;
+    root._drillBound = true;
+    root.addEventListener("click", (e) => {
+      const el2 = e.target.closest ? e.target.closest("[data-usage-model],[data-usage-day]") : null;
+      if (!el2) return;
+      const model = el2.getAttribute("data-usage-model") || null;
+      const day = el2.getAttribute("data-usage-day") || null;
+      const parts = [];
+      if (model) parts.push(model);
+      if (day) parts.push(day);
+      openUsageConversations({ scope: "admin", model, day, title: parts.join(" · ") || "사용량" });
+    });
+  };
+
+  // openUsageConversations: 차원 필터로 사용 기록 엔드포인트 호출 → 모달 렌더.
+  //   scope=admin → /api/admin/usage/conversations, scope=self → /api/profile/usage/conversations.
+  //   usage-records-system: admin 응답은 대화(items) + 시스템·자율(system_items) 두 축이라
+  //   모달 제목도 "대화 목록" → "사용 기록". profile(self) 은 본인 대화 범위 전용이라 무변경.
+  const openUsageConversations = async (opts) => {
+    const o = opts || {};
+    const scope = o.scope === "self" ? "self" : "admin";
+    const base = scope === "self" ? "/api/profile/usage/conversations" : "/api/admin/usage/conversations";
+    const params = new URLSearchParams();
+    params.set("days", String(days));
+    params.set("gran", String(gran));
+    if (o.model) params.set("model", o.model);
+    if (o.day) params.set("day", o.day);
+    if (o.account_id != null) params.set("account_id", String(o.account_id));
+    if (o.role) params.set("role", o.role);
+    showUsageConvModal({ loading: true, title: o.title || "사용 기록" });
+    try {
+      const data = await apiFetch(`${base}?${params.toString()}`);
+      showUsageConvModal({ data, title: o.title || "사용 기록", scope });
+    } catch (err) {
+      showUsageConvModal({ error: (err && err.message) || "사용 기록 조회 실패", title: o.title || "사용 기록" });
+    }
+  };
+  // 기간별 토큰 사용량 — 모델별 누적(stacked) 세로 막대 + 막대 총합 라벨 + hover 툴팁.
+  const renderStacked = (el, byDayModel) => {
+    if (!el) return;
+    const rows = byDayModel || [];
+    if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
+    const dayMap = {}; const costMap = {}; const models = [];  // TASK-0263: costMap = day→model→cost
+    rows.forEach((r) => {
+      dayMap[r.day] = dayMap[r.day] || {};
+      dayMap[r.day][r.model] = (dayMap[r.day][r.model] || 0) + (r.total_tokens || 0);
+      costMap[r.day] = costMap[r.day] || {};
+      costMap[r.day][r.model] = (costMap[r.day][r.model] || 0) + (r.cost_usd || 0);
+      if (!models.includes(r.model)) models.push(r.model);
+    });
+    const days = Object.keys(dayMap).sort();
+    const totalsByDay = days.map((d) => Object.values(dayMap[d]).reduce((a, b) => a + b, 0));
+    const maxT = Math.max(1, ...totalsByDay);
+    /* TASK-0180: viewBox 폭을 카드 실제 폭에 맞춰 일별 차트가 넓은 카드를 꽉 채우게 한다
+       (높이는 H 고정 → SVG width:100%/height:auto 시 정확히 H px). 측정 실패 시 760 폴백. */
+    const cw = Math.max(360, Math.round(el.clientWidth || 0) || 760);
+    const W = cw, H = 200, pL = 56, pB = 26, pT = 10, pR = 14;
+    const plotW = W - pL - pR, plotH = H - pT - pB, n = days.length;
+    const step = plotW / n, bw = Math.max(2, Math.min(64, step * 0.66));
+    let bars = "", valLabels = "";
+    days.forEach((d, di) => {
+      const x = pL + di * step + (step - bw) / 2;
+      const dayTot = totalsByDay[di];
+      let y = pT + plotH;
+      models.forEach((m) => {
+        const v = dayMap[d][m] || 0; if (v <= 0) return;
+        const h = (v / maxT) * plotH; y -= h;
+        const pct = dayTot ? (v / dayTot * 100).toFixed(1) : "0";
+        // TASK-0263: hover 에 모델별 비용 + 클릭 시 그 일자·모델 기여 대화 모달(data-usage-* 후크).
+        const cst = costMap[d][m] || 0;
+        const costTip = cst > 0 ? `<br>추정 ${usd(cst)}` : "";
+        bars += `<rect class='admin-usage-clickable' x='${x.toFixed(1)}' y='${y.toFixed(1)}' width='${bw.toFixed(1)}' height='${h.toFixed(1)}' fill='${mcol(m)}' rx='1' data-tip='${esc(d)} · ${esc(m)}<br><b>${num(v)}</b> 토큰 (${pct}%)${costTip}<br><span style="opacity:.8">클릭: 사용 기록 보기</span>' data-usage-day='${esc(d)}' data-usage-model='${esc(m)}'/>`;
+      });
+      if (bw >= 20 && (dayTot / maxT) > 0.05) {
+        valLabels += `<text x='${(x + bw / 2).toFixed(1)}' y='${(y - 3).toFixed(1)}' text-anchor='middle' font-size='9' fill='var(--text-2)'>${num(dayTot)}</text>`;
+      }
+    });
+    const axis = `<line x1='${pL}' y1='${pT + plotH}' x2='${W - pR}' y2='${pT + plotH}' stroke='var(--border)'/>`
+      + `<text x='${pL - 6}' y='${pT + 9}' text-anchor='end' font-size='10' fill='var(--text-muted)'>${num(maxT)}</text>`
+      + `<text x='${pL - 6}' y='${pT + plotH}' text-anchor='end' font-size='10' fill='var(--text-muted)'>0</text>`;
+    let xl = "";
+    [...new Set(n <= 1 ? [0] : [0, Math.floor(n / 3), Math.floor(2 * n / 3), n - 1])].forEach((di) => {
+      const x = pL + di * step + step / 2;
+      xl += `<text x='${x.toFixed(1)}' y='${H - 9}' text-anchor='middle' font-size='10' fill='var(--text-muted)'>${esc(shortLabel(days[di]))}</text>`;
+    });
+    const legend = models.map((m) => `<span style='display:inline-flex;align-items:center;gap:5px;margin:2px 14px 2px 0;font-size:12px;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(m)};display:inline-block;'></span>${esc(m)}</span>`).join("");
+    el.innerHTML = `<svg viewBox='0 0 ${W} ${H}' style='width:100%;height:auto;display:block;'>${axis}${bars}${valLabels}${xl}</svg><div style='margin-top:6px;'>${legend}</div>`;
+    bindTip(el);
+    bindUsageDrill(el);  // TASK-0263: 막대 클릭 → 그 일자·모델 기여 대화 모달.
+  };
+  // 모델별 비중 — 도넛 + hover 툴팁(토큰·비중·추정비용).
+  const renderDonut = (el, byModel) => {
+    if (!el) return;
+    const rows = (byModel || []).map((r) => ({
+      label: (r.resolved_model && r.resolved_model !== r.model) ? r.resolved_model : (r.model || "(미상)"),
+      value: r.total_tokens || 0, calls: r.calls || 0, cost: r.cost_usd || 0,
+    })).filter((r) => r.value > 0);
+    if (!rows.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
+    const total = rows.reduce((a, b) => a + b.value, 0);
+
+    const R = 54, C = 2 * Math.PI * R, cx = 70, cy = 70;
+    let off = 0, segs = "";
+    rows.forEach((r) => {
+      const len = (r.value / total) * C;
+      const costTip = r.cost > 0 ? `<br>추정 ${usd(r.cost)}` : "";
+      // TASK-0263: 도넛 세그먼트 클릭 → 그 모델 기여 대화 모달(data-usage-model). 라벨=COALESCE(resolved,model)=백엔드 필터 키.
+      segs += `<circle class='admin-usage-clickable' cx='${cx}' cy='${cy}' r='${R}' fill='none' stroke='${mcol(r.label)}' stroke-width='22' stroke-dasharray='${len.toFixed(2)} ${(C - len).toFixed(2)}' stroke-dashoffset='${(-off).toFixed(2)}' transform='rotate(-90 ${cx} ${cy})' data-tip='${esc(r.label)}<br><b>${num(r.value)}</b> 토큰 (${(r.value / total * 100).toFixed(1)}%)<br>${num(r.calls)} 호출${costTip}<br><span style="opacity:.8">클릭: 사용 기록 보기</span>' data-usage-model='${esc(r.label)}'/>`;
+      off += len;
+    });
+    const legend = rows.map((r) => `<div class='admin-usage-clickable' data-usage-model='${esc(r.label)}' style='display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;'><span style='width:11px;height:11px;border-radius:2px;background:${mcol(r.label)};display:inline-block;flex:none;'></span><span style='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>${esc(r.label)}</span><strong>${(r.value / total * 100).toFixed(1)}%</strong></div>`).join("");
+    el.innerHTML = `<div style='display:flex;align-items:center;gap:18px;flex-wrap:wrap;'><svg viewBox='0 0 140 140' style='width:130px;height:130px;flex:none;'>${segs}<text x='70' y='66' text-anchor='middle' font-size='11' fill='var(--text-muted)'>총 토큰</text><text x='70' y='83' text-anchor='middle' font-size='13' font-weight='700' fill='var(--text)'>${num(total)}</text></svg><div style='flex:1;min-width:150px;'>${legend}</div></div>`;
+    bindTip(el);
+    bindUsageDrill(el);  // TASK-0263
+  };
+  // 가로 막대 (역할별/계정별). rows = [{label, value, tip}].
+  const renderHBar = (el, rows, valueFmt) => {
+    if (!el) return;
+    const fmt = valueFmt || num;
+    const data = (rows || []).filter((r) => r.value > 0);
+    if (!data.length) { el.innerHTML = "<p style='color:var(--text-muted);'>데이터 없음</p>"; return; }
+    const max = Math.max(...data.map((r) => r.value));
+    const cmap = colorMapFor(data.map((r) => r.label));
+    el.innerHTML = data.map((r) => `<div style='margin:6px 0;' data-tip='${r.tip || (esc(r.label) + "<br><b>" + fmt(r.value) + "</b>")}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'><div style='width:${(r.value / max * 100).toFixed(1)}%;height:100%;background:${cmap[r.label]};border-radius:4px;'></div></div></div>`).join("");
+    bindTip(el);
+  };
+  // TASK-0181: 모델별 누적(stacked) 가로 막대 — 역할별/계정별 토큰·비용을 어떤 모델로 썼는지 색 분해.
+  // rows = [{label, total_tokens, cost_usd, models:[{model, total_tokens, cost_usd}]}]. 모델 색 = 전역 modelColor.
+  const renderStackedHBar = (el, rows, valueKey, valFmt, onRowClick) => {
+    if (!el) return;
+    const fmt = valFmt || num;
+    const data = (rows || []).map((r) => ({ label: r.label, value: r[valueKey] || 0, models: r.models || [] })).filter((r) => r.value > 0);
+    if (!data.length) { el.innerHTML = "<p class='admin-usage-empty'>데이터 없음</p>"; return; }
+    const max = Math.max(...data.map((r) => r.value));
+    const clickable = typeof onRowClick === "function";  // TASK-0184: 역할 막대 클릭 → 계정 drill-down.
+    el.innerHTML = data.map((r) => {
+      const segs = (r.models || []).filter((m) => (m[valueKey] || 0) > 0).map((m) => {
+        // TASK-0263: 토큰 차트 hover 에도 모델별 추정 비용 병기(valueKey 가 cost_usd 면 이미 비용이라 중복 생략).
+        const extraCost = (valueKey !== "cost_usd" && (m.cost_usd || 0) > 0) ? `<br>추정 ${usd(m.cost_usd)}` : "";
+        return `<div data-tip='${esc(r.label)} · ${esc(m.model)}<br><b>${fmt(m[valueKey])}</b>${extraCost}' style='width:${(m[valueKey] / max * 100).toFixed(2)}%;background:${mcol(m.model)};height:100%;'></div>`;
+      }).join("");
+      const cls = "admin-usage-hbar-row" + (clickable ? " admin-usage-hbar-row--click" : "");
+      return `<div class='${cls}' data-label='${esc(r.label)}'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;'><span>${esc(r.label)}</span><strong>${fmt(r.value)}</strong></div><div style='display:flex;background:var(--border-subtle);border-radius:4px;height:14px;overflow:hidden;'>${segs}</div></div>`;
+    }).join("");
+    bindTip(el);
+    if (clickable) {
+      el.querySelectorAll(".admin-usage-hbar-row--click").forEach((row, i) => {
+        row.addEventListener("click", () => onRowClick(data[i].label));
+      });
+    }
+  };
+  // TASK-0184: 계정 drill-down — 역할 막대 클릭 시 그 역할의 계정을 검색·Top-N 페이징으로 펼친다.
+  // 역할 키 규칙은 백엔드 _aggregate_usage_by_role 와 동일(시스템/역할 없음/역할명). loadUsage 클로저
+  // 안에 둬 renderStackedHBar·num·mcol(모델 색) 을 재사용하고, 컨트롤 바인딩이 호출하도록 _renderDrill 노출.
+  const usageRoleKeyOf = (a) => (a.account_id == null ? "(시스템)" : (a.role || "(역할 없음)"));
+  const usageAcctLabelOf = (a) => (a.account_id == null ? "(시스템)" : (a.username ? `${a.username} (#${a.account_id})` : `#${a.account_id}`));
+  const renderAccountDrill = () => {
+    const st = adminState.usage;
+    const chartEl = document.getElementById("usageDrillChart");
+    const costChartEl = document.getElementById("usageDrillCostChart");
+    const toolsEl = document.getElementById("usageDrillTools");
+    const pagerEl = document.getElementById("usageDrillPager");
+    const hintEl = document.getElementById("usageDrillHint");
+    const pageInfoEl = document.getElementById("usageDrillPageInfo");
+    if (!chartEl) return;
+    const markActive = () => {
+      document.querySelectorAll("#usageRoleChart .admin-usage-hbar-row, #usageRoleCostChart .admin-usage-hbar-row").forEach((r) => {
+        r.classList.toggle("admin-usage-hbar-row--active", r.getAttribute("data-label") === st.drillRole);
+      });
+    };
+    if (!st.drillRole) {  // 접힘
+      chartEl.innerHTML = "";
+      if (costChartEl) costChartEl.innerHTML = "";
+      if (toolsEl) toolsEl.classList.add("hidden");
+      if (pagerEl) pagerEl.classList.add("hidden");
+      if (hintEl) hintEl.textContent = "· 위 역할 막대를 클릭하면 해당 역할의 계정이 펼쳐집니다";
+      markActive();
+      return;
+    }
+    const all = (st.byAccount || []).filter((a) => usageRoleKeyOf(a) === st.drillRole);
+    const q = (st.drillQuery || "").trim().toLowerCase();
+    const filtered = q ? all.filter((a) => usageAcctLabelOf(a).toLowerCase().includes(q)) : all;
+    const pageSize = st.drillPageSize || 10;
+    const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (st.drillPage >= pages) st.drillPage = pages - 1;
+    if (st.drillPage < 0) st.drillPage = 0;
+    const start = st.drillPage * pageSize;
+    const pageRows = filtered.slice(start, start + pageSize).map((a) => ({
+      label: usageAcctLabelOf(a), total_tokens: a.total_tokens || 0, cost_usd: a.cost_usd || 0, models: a.models || [],
+      _account_id: a.account_id,  // TASK-0263: 클릭 시 대화 모달 필터용(라벨에서 파싱하지 않고 직접 보존)
+    }));
+    if (hintEl) hintEl.textContent = `· ${st.drillRole} — ${filtered.length}개 계정${q ? " (검색됨)" : ""} · 계정 클릭 시 사용 기록 보기`;
+    if (toolsEl) toolsEl.classList.remove("hidden");
+    // TASK-0263: 계정 막대 클릭 → 그 계정의 기여 대화 모달(현재 모델 필터 context 동반).
+    const onAcctClick = (label) => {
+      const row = pageRows.find((r) => r.label === label);
+      if (!row) return;
+      // usage-records-system: "(시스템)" 버킷(account_id 없음)은 계정 필터가 성립하지 않으므로
+      //   role="(시스템)" 으로 호출해 시스템 사용 기록을 받는다. 종전엔 여기서 early-return 해
+      //   막대를 눌러도 아무 일이 없었다(전체 토큰의 약 절반이 열람 불가였던 지점).
+      if (row._account_id == null) {
+        openUsageConversations({ scope: "admin", role: "(시스템)", title: label });
+        return;
+      }
+      openUsageConversations({ scope: "admin", account_id: row._account_id, title: label });
+    };
+    if (pageRows.length) {
+      renderStackedHBar(chartEl, pageRows, "total_tokens", num, onAcctClick);
+      renderStackedHBar(costChartEl, pageRows, "cost_usd", usd, onAcctClick);  // TASK-0184: 계정별 비용 차트(역할별과 일관)
+    } else {
+      chartEl.innerHTML = "<p class='admin-usage-empty'>검색 결과가 없습니다.</p>";
+      if (costChartEl) costChartEl.innerHTML = "";
+    }
+    if (pagerEl) {
+      pagerEl.classList.toggle("hidden", filtered.length <= pageSize);
+      if (pageInfoEl) pageInfoEl.textContent = filtered.length ? `${start + 1}–${Math.min(start + pageSize, filtered.length)} / ${filtered.length}` : "0 / 0";
+      const prevB = document.getElementById("usageDrillPrev");
+      const nextB = document.getElementById("usageDrillNext");
+      if (prevB) prevB.disabled = st.drillPage <= 0;
+      if (nextB) nextB.disabled = st.drillPage >= pages - 1;
+    }
+    markActive();
+  };
+  const toggleAccountDrill = (role) => {
+    const st = adminState.usage;
+    if (st.drillRole === role) { st.drillRole = null; }  // 같은 역할 재클릭 → 접기
+    else {
+      st.drillRole = role; st.drillPage = 0; st.drillQuery = "";
+      const s = document.getElementById("usageDrillSearch"); if (s) s.value = "";
+    }
+    renderAccountDrill();
+  };
+  adminState.usage._renderDrill = renderAccountDrill;  // 컨트롤(검색·페이지)이 호출할 현재 클로저 핸들
+  // TASK-0163: fmt 에 행 전체(r)도 전달 — "별칭 → 해소모델" 등 다중 필드 표시용.
+  // TASK-0177: 인라인 style → .admin-usage-table 클래스 + 숫자 컬럼 우측정렬(align:'right' → td/th.num).
+  const tbl = (rows, cols) => {
+    if (!rows || !rows.length) return "<p class='admin-usage-empty'>없음</p>";
+    const cls = (c) => (c.align === "right" ? " class='num'" : "");
+    const head = cols.map((c) => `<th${cls(c)}>${esc(c.label)}</th>`).join("");
+    const body = rows.map((r) => "<tr>" + cols.map((c) => `<td${cls(c)}>${esc(c.fmt ? c.fmt(r[c.key], r) : r[c.key])}</td>`).join("") + "</tr>").join("");
+    return `<table class='admin-usage-table'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  };
+  const costFmt = (v) => (v && v > 0 ? usd(v) : "—");
+  // TASK-0198: by_model row → 차트/색맵에서 쓰는 모델 키(resolved_model 우선, 미상 폴백).
+  const modelKeyOf = (m) => ((m.resolved_model && m.resolved_model !== m.model) ? m.resolved_model : (m.model || "(미상)"));
+  // TASK-0198: 선택 모델 집합으로 응답을 필터링한 view 를 만든다(백엔드 무변경 — 클라이언트 재계산).
+  //   selectedModels=null → 전체. by_model/by_day_model/도넛은 모델 키로 직접 필터,
+  //   역할·계정은 models[] 를 추려 토큰/비용을 재합산(선택 모델 기여분만), totals 는 by_model 합으로 재계산.
+  const buildView = (data, selSet) => {
+    const all = (selSet == null);
+    const inSel = (k) => all || selSet.has(k);
+    const by_model = (data.by_model || []).filter((m) => inSel(modelKeyOf(m)));
+    const by_day_model = (data.by_day_model || []).filter((m) => inSel(m.model));
+    const reModels = (models) => (models || []).filter((m) => inSel(m.model));
+    const reEntity = (r) => {
+      const models = reModels(r.models);
+      const total_tokens = models.reduce((a, m) => a + (m.total_tokens || 0), 0);
+      const cost_usd = Math.round(models.reduce((a, m) => a + (m.cost_usd || 0), 0) * 10000) / 10000;
+      return { ...r, models, total_tokens, cost_usd };
+    };
+    // 역할·계정: 선택 모델 기여분만 남기고, 그 기여가 0 인 엔티티는 차트/표에서 제외.
+    const by_role = all ? (data.by_role || []) : (data.by_role || []).map(reEntity).filter((r) => r.total_tokens > 0 || r.cost_usd > 0);
+    const by_account = all ? (data.by_account || []) : (data.by_account || []).map(reEntity).filter((r) => r.total_tokens > 0 || r.cost_usd > 0);
+    // totals: 전체면 응답 totals 그대로, 부분 선택이면 by_model 합으로 재계산(prompt/completion/calls/requests/cost).
+    let totals;
+    if (all) {
+      totals = data.totals || {};
+    } else {
+      const sumK = (k) => by_model.reduce((a, m) => a + (m[k] || 0), 0);
+      totals = {
+        requests: sumK("requests"), calls: sumK("calls"),
+        total_tokens: sumK("total_tokens"), prompt_tokens: sumK("prompt_tokens"),
+        completion_tokens: sumK("completion_tokens"),
+        cost_usd: Math.round(sumK("cost_usd") * 10000) / 10000,
+      };
+    }
+    return { totals, by_model, by_day_model, by_role, by_account };
+  };
+  // TASK-0198: 모델 필터 칩 바 — 전체 모델 목록 + 선택 토글. days/gran 동일 캐시로 재렌더(재조회 X).
+  const renderModelFilter = (allModelKeys) => {
+    const barEl = document.getElementById("usageModelFilter");
+    if (!barEl) return;
+    const st = adminState.usage;
+    const sel = st.selectedModels;  // null=전체
+    const isAll = (sel == null);
+    // TASK-0204: 칩은 모델명만 — 버튼 내 토큰 개수(admin-usage-chip-tok) 제거(깔끔). 토큰량은
+    //   '모델별 비중' 도넛·일별 차트·상세 표에 이미 노출되므로 칩은 순수 필터 토글로 둔다.
+    const chip = (key, active) => {
+      const sw = `<span class='admin-usage-chip-dot' style='background:${mcol(key)};'></span>`;
+      return `<button type='button' class='admin-usage-chip${active ? " is-active" : ""}' data-model-key='${esc(key)}'>${sw}<span class='admin-usage-chip-label'>${esc(key)}</span></button>`;
+    };
+    const allChip = `<button type='button' class='admin-usage-chip admin-usage-chip--all${isAll ? " is-active" : ""}' data-model-key='__ALL__'>전체</button>`;
+    const chips = allModelKeys.map((k) => chip(k, !isAll && sel.has(k))).join("");
+    barEl.innerHTML = `<span class='admin-usage-filter-label'>모델</span>${allChip}${chips}`;
+    barEl.querySelectorAll(".admin-usage-chip").forEach((b) => {
+      b.addEventListener("click", () => {
+        const key = b.getAttribute("data-model-key");
+        if (key === "__ALL__") { st.selectedModels = null; }
+        else {
+          const cur = (st.selectedModels == null) ? new Set() : new Set(st.selectedModels);
+          if (cur.has(key)) cur.delete(key); else cur.add(key);
+          st.selectedModels = (cur.size === 0 || cur.size === allModelKeys.length) ? null : cur;
+        }
+        st.drillRole = null;  // 모델 변경 시 계정 drill 접기(정합)
+        loadUsage({ refetch: false });  // 캐시 재렌더(재조회 X)
+      });
+    });
+  };
+  try {
+    let data;
+    if (refetch) {
+      data = await apiFetch(`/api/admin/usage?days=${encodeURIComponent(days)}&gran=${encodeURIComponent(gran)}`);
+      const key = `${days}|${gran}`;
+      // 기간/단위가 바뀌면 모델 집합이 달라질 수 있으므로 선택을 초기화(전체).
+      if (adminState.usage._lastKey !== key) adminState.usage.selectedModels = null;
+      adminState.usage._lastRaw = data;
+      adminState.usage._lastKey = key;
+    } else {
+      data = adminState.usage._lastRaw;
+      if (!data) { return loadUsage({ refetch: true }); }  // 캐시 없으면 강제 조회
+    }
+    // TASK-0181: 전역 모델 색맵 — 등장 모델 전체(도넛/일별/stacked 공유)로 1회 구축(원본 기준 — 색 고정).
+    const _ms = [];
+    (data.by_model || []).forEach((m) => { const k = modelKeyOf(m); if (!_ms.includes(k)) _ms.push(k); });
+    (data.by_day_model || []).forEach((m) => { if (m.model && !_ms.includes(m.model)) _ms.push(m.model); });
+    (data.by_account || []).forEach((a) => (a.models || []).forEach((m) => { if (m.model && !_ms.includes(m.model)) _ms.push(m.model); }));
+    modelColor = colorMapFor(_ms);
+    // TASK-0198: 선택 모델 칩 바(원본 모델 전체 기준) + 선택 적용된 view.
+    renderModelFilter(_ms);
+    const view = buildView(data, adminState.usage.selectedModels);
+    const t = view.totals || {};
+    const selSet = adminState.usage.selectedModels;
+    const isPartial = (selSet != null);
+    if (summaryEl) {
+      // TASK-0177: dashboard 와 동일한 .metric-card / .summary-metrics 로 통일.
+      // TASK-0198: ① 합계 카드(선택 모델 기준) ② 모델별 분리 카드(모델당 토큰/호출/요청/비용).
+      const card = (label, val) => `<article class='metric-card admin-usage-metric'><span>${label}</span><strong>${val}</strong></article>`;
+      const scopeLabel = isPartial ? `선택 ${selSet.size}개 모델` : "전체 모델";
+      const totalsHtml =
+        `<div class='admin-usage-summary-head'><span class='admin-usage-summary-scope'>${esc(scopeLabel)}</span></div>` +
+        `<div class='summary-metrics'>` +
+        card("요청", num(t.requests)) +
+        card("호출", num(t.calls)) +
+        card("총 토큰", num(t.total_tokens)) +
+        card("Prompt", num(t.prompt_tokens)) +
+        card("Completion", num(t.completion_tokens)) +
+        ((t.cost_usd && t.cost_usd > 0) ? card("추정 비용", usd(t.cost_usd)) : "") +
+        `</div>`;
+      // TASK-0204: '모델별' 분리 카드 그리드 제거 — 상단 '모델' 칩 바 + '전체' 가 모델별 분리/선택을
+      //   이미 담당해 중복이고, hover 결합 dim/접힘(TASK-0202)이 re-render 와 충돌해 잭(즉시 사라짐·
+      //   빈 공간·레이아웃 점프)을 유발. 요약은 합계 카드(선택 스코프 기준)만 남긴다.
+      summaryEl.innerHTML = totalsHtml;
+    }
+    // TASK-0164/0166: 일별 stacked / 모델별 도넛 (선택 모델 view 기준).
+    renderStacked(dayChartEl, view.by_day_model);
+    renderDonut(modelChartEl, view.by_model);
+    // TASK-0181: 역할별·계정별 [토큰|비용] 을 모델별 누적(stacked) 막대로 — 어떤 모델로 썼는지 색 분해.
+    const roleRows = (view.by_role || []).map((r) => ({
+      label: String(r.role == null ? "-" : r.role), total_tokens: r.total_tokens || 0, cost_usd: r.cost_usd || 0, models: r.models || [],
+    }));
+    // TASK-0184: 계정별 독립 차트 제거 → 역할 토큰/비용 막대 클릭 시 계정 drill-down 펼침.
+    renderStackedHBar(roleChartEl, roleRows, "total_tokens", num, toggleAccountDrill);
+    renderStackedHBar(roleCostChartEl, roleRows, "cost_usd", usd, toggleAccountDrill);
+    // 계정 drill 데이터 보관 후 현재 펼침 상태 재렌더(선택 모델 view 의 by_account 와 정합 유지).
+    adminState.usage.byAccount = view.by_account || [];
+    renderAccountDrill();
+    // 상세 표 — 모델별(별칭→해소 + prompt/completion + 추정비용) / 역할별 / 계정별 (선택 모델 view 기준).
+    if (modelEl) modelEl.innerHTML = tbl(view.by_model, [
+      { key: "resolved_model", label: "모델", fmt: (v, r) => {
+        const alias = r.model == null ? "" : String(r.model);
+        const resolved = v == null ? "" : String(v);
+        return (!resolved || resolved === alias) ? (alias || "(미상)") : `${alias} → ${resolved}`;
+      } },
+      { key: "requests", label: "요청", fmt: num, align: "right" }, { key: "calls", label: "호출", fmt: num, align: "right" },
+      { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
+      { key: "prompt_tokens", label: "prompt", fmt: num, align: "right" }, { key: "completion_tokens", label: "completion", fmt: num, align: "right" },
+      { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
+    ]);
+    // TASK-0176/0177/0181: 역할별·계정별 표에도 요청(메시지)·호출·추정 비용(차트와 일치).
+    // TASK-0198: 부분 모델 선택 시 요청(distinct run_id)·호출은 모델별 분해 불가(대화/호출은 모델 횡단)
+    //   → 전체값 노출은 오해 소지라 "—" 로 표시. 토큰·비용은 선택 모델 기여분으로 정확히 재계산됨.
+    const dim = () => "—";
+    if (roleEl) roleEl.innerHTML = tbl(view.by_role, [
+      { key: "role", label: "역할" },
+      { key: "requests", label: "요청", fmt: isPartial ? dim : num, align: "right" },
+      { key: "calls", label: "호출", fmt: isPartial ? dim : num, align: "right" },
+      { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
+      { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
+    ]);
+    if (acctEl) acctEl.innerHTML = tbl(view.by_account, [
+      { key: "account_id", label: "계정", fmt: (v, r) => (v == null ? "(시스템)" : (r.username ? `${r.username} (#${v})` : `#${v}`)) },
+      { key: "role", label: "역할", fmt: (v) => (v == null ? "—" : v) },
+      { key: "requests", label: "요청", fmt: isPartial ? dim : num, align: "right" },
+      { key: "calls", label: "호출", fmt: isPartial ? dim : num, align: "right" },
+      { key: "total_tokens", label: "토큰", fmt: num, align: "right" },
+      { key: "cost_usd", label: "추정 비용", fmt: costFmt, align: "right" },
+    ]);
+  } catch (e) {
+    if (summaryEl) summaryEl.textContent = "조회 실패";
+  }
+}
+
+// ── usage-records-system(2026-07-28): 시스템 사용 기록 → 관리 콘솔 화면 이동 ────────────
+//
+// 시스템·자율 사용분은 대화가 없어 `/?conversation=` 딥링크가 없다. 대신 백엔드가 실어 준 nav
+// 서술자(shared/model_catalog.USAGE_TASK_NAV 가 SSOT)를 해석해 **콘솔 안에서** 그 작업이 다룬
+// 객체의 화면으로 이동한다. 프론트에 task 별 분기를 두지 않는 이유: 신규 AI 작업이 추가될 때
+// 백엔드 표 한 줄만 고치면 되게 하려는 것(두 곳 동기화 실패로 클릭이 죽는 회귀 차단).
+//
+// scope_hint: target 자체가 데이터소스인 작업(콘텐츠 그룹 라벨·제품 분류)의 원문. 라벨↔scope_key
+//   매핑은 MySQL 레지스트리라 PG 에서 못 풀어, 프론트가 adminState.datasources 의 key(사람이 읽는
+//   라벨)/scope_key(해시) 양쪽과 대조해 해소한다.
+function _usageResolveScopeKey(nav) {
+  if (!nav) return null;
+  if (nav.scope_key) return nav.scope_key;
+  const hint = String(nav.scope_hint || "").trim().toLowerCase();
+  if (!hint) return null;
+  for (const ds of (adminState.datasources || [])) {
+    const key = String((ds && ds.key) || "").trim().toLowerCase();
+    const scope = String((ds && ds.scope_key) || "").trim().toLowerCase();
+    if (hint && (hint === key || hint === scope)) return scope || key;
+  }
+  return null;
+}
+
+// nav 서술자 적용 — 데이터소스 스코프(가능하면) → 탭 전환 → 메타데이터 서브탭 → 검색어 주입.
+// 미지의 screen/subtab 은 조용히 무시(fail-soft) — 백엔드 표가 앞서 나가도 콘솔이 깨지지 않는다.
+function applyUsageNav(nav) {
+  if (!nav || !nav.screen) return false;
+  const tabBtn = document.querySelector('.admin-tab[data-admin-tab="' + nav.screen + '"]');
+  if (!tabBtn || tabBtn.style.display === "none") return false;  // 권한으로 숨겨진 탭엔 착지시키지 않는다.
+  // 1) 데이터소스 스코프 — 메타데이터/관계도 pane 이 공유하는 adminState.metadata.scopeKey.
+  //    switchTab 이 _metaPopulateScopeSelect 로 select 를 이 값에 동기화하고, 관계도는
+  //    loadedScope 와 다르면 그 스코프로 재로드한다(§45 규약) → 별도 select 조작 불필요.
+  // metadata-product-scope: scope_hint 는 datasource 축이라 그래프 pane 에만 적용한다.
+  //   메타데이터 pane 의 축은 제품이므로 datasource 해시를 넣으면 목록이 영구히 비게 된다.
+  const scopeKey = _usageResolveScopeKey(nav);
+  if (scopeKey && nav.screen === "graph") {
+    if (!adminState.metadata) adminState.metadata = {};
+    adminState.metadata.scopeKey = scopeKey;
+  }
+  // 2) 탭 전환(기존 진입 훅·lazy load 재사용).
+  switchTab(nav.screen);
+  // 3) 메타데이터 서브탭 / AI 운영 현황 서브탭.
+  if (nav.subtab) {
+    if (nav.screen === "metadata") {
+      const sub = document.querySelector('.admin-meta-subtab[data-meta-subtab="' + nav.subtab + '"]');
+      if (sub && sub.style.display !== "none") sub.click();
+    } else if (nav.screen === "ai-console" && typeof activateAiConsoleSubtab === "function") {
+      activateAiConsoleSubtab(nav.subtab);
+    }
+  }
+  // 4) 검색어 주입 — 목록에서 그 객체를 바로 찾도록. input 이벤트로 기존 필터 핸들러를 그대로 태운다.
+  if (nav.search && nav.screen === "metadata") {
+    const box = document.getElementById("metadataSearch");
+    if (box) {
+      box.value = nav.search;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+  return true;
+}
+
+// TASK-0263: 사용량 차트 클릭 → 집계 기여 '사용 기록' 모달. admin/profile 공용 렌더(scope 로 분기).
+//   대화 행은 메인 UI deep-link(/?conversation=<id>)로 이동(새 탭). 대화 제목/일시/소유자/
+//   기간내 usage(호출·토큰·추정비용)만 표시 — 메시지 본문 미포함.
+//   usage-records-system: admin scope 는 대화(items)와 시스템·자율(system_items)을 **한 표**로
+//   합쳐 토큰 큰 순 정렬한다(구분 배지로 종류 표기). 종전 '대화 목록' 은 대화 귀속분만 보여
+//   라이브 기준 전체 토큰의 약 절반(시스템 사용분)이 목록에서 사라졌다.
+function showUsageConvModal(state) {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const num = (v) => (Number(v) || 0).toLocaleString();
+  const usd = (v) => "$" + (Number(v) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtDt = (s) => {
+    if (!s) return "—";
+    try { const d = new Date(s); return isNaN(d.getTime()) ? esc(s) : d.toLocaleString(); } catch (_) { return esc(s); }
+  };
+  // 기존 모달 제거(중복 방지).
+  const prev = document.getElementById("usageConvModalOverlay");
+  if (prev) prev.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "usageConvModalOverlay";
+  overlay.className = "admin-modal-overlay";
+  const title = esc(state.title || "사용 기록");
+  const isAdmin = (state.scope === "admin");
+  // 시스템 행의 클릭 이동에 필요한 nav 서술자 — 인덱스로 참조(HTML 에 JSON 을 심지 않는다).
+  const navByIdx = [];
+  let bodyHtml;
+  if (state.loading) {
+    bodyHtml = "<p class='admin-modal-note'>사용 기록을 불러오는 중…</p>";
+  } else if (state.error) {
+    bodyHtml = `<p class='admin-modal-note usage-conv-error'>${esc(state.error)}</p>`;
+  } else {
+    const items = (state.data && state.data.items) || [];
+    // usage-records-system: 구 백엔드(필드 부재)에서도 안전하게 빈 배열로 폴백 — 배포 순서 무관.
+    const sysItems = (isAdmin && state.data && state.data.system_items) || [];
+    const truncated = !!(state.data && state.data.truncated);
+    const sysTruncated = !!(state.data && state.data.system_truncated);
+    if (!items.length && !sysItems.length) {
+      bodyHtml = "<p class='admin-modal-note'>이 집계에 해당하는 사용 기록이 없습니다.</p>";
+    } else {
+      // 대화·시스템을 한 표로 합쳐 토큰 큰 순 — 어느 쪽이 이 막대를 끌었는지 한눈에 보이게.
+      const merged = items.map((it) => ({ kind: "conv", it }))
+        .concat(sysItems.map((it) => ({ kind: "sys", it })))
+        .sort((a, b) => (Number(b.it.total_tokens) || 0) - (Number(a.it.total_tokens) || 0));
+      const rows = merged.map((row) => {
+        const it = row.it;
+        let kindCell;
+        let whatCell;
+        let whoCell;
+        if (row.kind === "conv") {
+          const topic = esc(it.topic || "(제목 없음)");
+          const blocked = it.blocked ? " <span class='usage-conv-badge'>차단</span>" : "";
+          kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--conv'>대화</span></td>`;
+          whatCell = `<td class='usage-conv-topic'><a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='${topic}'>${topic}</a>${blocked}</td>`;
+          whoCell = isAdmin
+            ? `<td class='usage-conv-owner'>${esc(it.owner_username || ("#" + (it.owner_account_id == null ? "?" : it.owner_account_id)))}${it.owner_role ? " · " + esc(it.owner_role) : ""}</td>`
+            : "";
+        } else {
+          // 시스템 행: "무슨 작업"(task_label) + "어떤 객체"(target) 를 한 셀에 명시.
+          const nav = it.nav || null;
+          const idx = navByIdx.push(nav) - 1;
+          const label = esc(it.task_label || it.task || "(미상 작업)");
+          const tgt = it.target ? `<span class='usage-rec-target'>${esc(it.target)}</span>` : "";
+          const navable = !!(nav && nav.screen);
+          // 이동 안내는 **행에 두 번째 줄로 찍지 않고 hover 툴팁으로만** 전달한다(사용자 결정
+          //   2026-07-28) — 200행 목록에서 매 행 보조문구는 밀도만 떨어뜨리고, 이동 가능 여부는
+          //   링크 스타일로 이미 드러난다. 데이터소스 모호(이동이 화면까지만 됨)도 같은 툴팁에
+          //   합쳐 정직 표기를 유지한다.
+          //   `nav.path_label` 은 raw 텍스트이므로 여기서 **한 번만** esc 한다(이전 이중 escape 로
+          //   툴팁에 `&gt;` 가 그대로 보이던 결함 동반 수정).
+          const where = (nav && nav.path_label) || "관리 화면";
+          const ambigTip = (nav && nav.scope_ambiguous) ? " (데이터소스 여럿 — 화면까지 이동)" : "";
+          const navTitle = esc(where + " 화면으로 이동" + ambigTip);
+          kindCell = `<td class='usage-rec-kind'><span class='usage-rec-badge usage-rec-badge--sys'>시스템</span></td>`;
+          whatCell = `<td class='usage-conv-topic usage-rec-what'>`
+            + (navable
+              ? `<button type="button" class="usage-rec-link" data-usage-nav="${idx}" title="${navTitle}"><b>${label}</b>${tgt ? " · " + tgt : ""}</button>`
+              : `<span><b>${label}</b>${tgt ? " · " + tgt : ""}</span>`)
+            + `</td>`;
+          // 주체 3분기(전부 raw hex 노출 회피):
+          //   ① 실재하는 대화(소유 계정만 없음) → 대화 링크
+          //   ② 비-sentinel 인데 실재하지 않음  → '삭제된 대화'(원 id 는 title 로만; 깨진 링크 금지)
+          //   ③ 예약 sentinel                  → 사람이 읽는 워커명
+          const actorRaw = String(it.actor || "");
+          let whoHtml;
+          if (it.conversation_id) {
+            whoHtml = `<a href='/?conversation=${encodeURIComponent(it.conversation_id)}' target='_blank' rel='noopener' title='소유 계정이 없는 대화 — 새 탭에서 열기'>대화 (소유자 없음)</a>`;
+          } else if (actorRaw && actorRaw.slice(0, 2) !== "__") {
+            whoHtml = `<span title='${esc(actorRaw)}'>삭제된 대화</span>`;
+          } else {
+            whoHtml = esc(_usageActorLabel(actorRaw));
+          }
+          whoCell = isAdmin ? `<td class='usage-conv-owner'>${whoHtml}</td>` : "";
+        }
+        return `<tr>` + kindCell + whatCell + whoCell
+          + `<td class='num'>${num(it.calls)}</td>`
+          + `<td class='num'>${num(it.total_tokens)}</td>`
+          + `<td class='num'>${it.cost_usd > 0 ? usd(it.cost_usd) : "—"}</td>`
+          + `<td class='usage-conv-when'>${fmtDt(it.last_used_at || it.updated_at)}</td>`
+          + `</tr>`;
+      }).join("");
+      const ownerHead = isAdmin ? "<th>주체</th>" : "";
+      const truncNote = (truncated || sysTruncated)
+        ? `<p class='admin-modal-note usage-conv-trunc'>상위 ${num(merged.length)}건만 표시합니다(기간내 토큰 큰 순). 기간을 좁혀 보세요.</p>` : "";
+      const hint = isAdmin
+        ? `<p class='admin-modal-note usage-conv-hint'>대화 행은 새 탭에서 해당 대화로, <b>시스템</b> 행은 그 작업이 다룬 객체의 관리 화면으로 이동합니다.</p>`
+        : `<p class='admin-modal-note usage-conv-hint'>대화 제목을 클릭하면 새 탭에서 해당 대화로 이동합니다.</p>`;
+      bodyHtml = `<div class='usage-conv-tablewrap'><table class='admin-usage-table usage-conv-table'>`
+        + `<thead><tr><th>구분</th><th>${isAdmin ? "대화 / 작업 · 대상" : "대화"}</th>${ownerHead}<th class='num'>호출</th><th class='num'>토큰</th><th class='num'>추정 비용</th><th>최근 사용</th></tr></thead>`
+        + `<tbody>${rows}</tbody></table></div>`
+        + truncNote + hint;
+    }
+  }
+  overlay.innerHTML =
+    '<div class="admin-modal usage-conv-modal" role="dialog" aria-modal="true" aria-label="' + title + ' 사용 기록">'
+    + '  <div class="admin-modal-head"><h3>' + title + ' · 사용 기록</h3>'
+    + '    <button type="button" class="admin-modal-close" id="usageConvModalClose" aria-label="닫기">×</button></div>'
+    + '  <div class="usage-conv-body">' + bodyHtml + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  const closeBtn = document.getElementById("usageConvModalClose");
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  const onEsc = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
+  document.addEventListener("keydown", onEsc);
+  // 시스템 행 클릭 → 콘솔 내 화면 이동. 이동에 성공하면 모달을 닫아 목적 화면이 가려지지 않게 한다.
+  overlay.addEventListener("click", (e) => {
+    const btn = e.target.closest ? e.target.closest("[data-usage-nav]") : null;
+    if (!btn) return;
+    const nav = navByIdx[Number(btn.getAttribute("data-usage-nav"))];
+    if (applyUsageNav(nav)) { close(); document.removeEventListener("keydown", onEsc); }
+  });
+}
+
+// 시스템 사용분의 '주체' 라벨 — llm_usage.conversation_id 예약 sentinel(전부 "__" 접두)을
+// 사람이 읽는 실행 주체로 번역한다. 미등록 sentinel 은 원문을 보존해 self-surface.
+const _USAGE_ACTOR_LABELS = {
+  __insight_worker__: "인사이트 워커",
+  __ask_worker__: "요청 처리 워커",
+  __global__: "전역",
+  __kb_manual__: "지식베이스 수동 등록",
+};
+function _usageActorLabel(actor) {
+  const s = String(actor || "").trim();
+  if (!s) return "시스템";
+  return _USAGE_ACTOR_LABELS[s] || s;
+}
+
+export { loadUsage };

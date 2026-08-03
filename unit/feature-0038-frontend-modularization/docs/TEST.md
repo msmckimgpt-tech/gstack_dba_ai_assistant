@@ -41,6 +41,15 @@ source_of_truth: true
 - Steps: PB-0008 — web-a/b 에 docker cp 주입(CSS-safe) → 실 Windows Chrome 로 / 및 /admin 진입, styleSheets 로드 수·landmark computed style·전체 스크린샷
 - Expected Result: 7 sheets 로드·layout 정상·시각 회귀 0
 
+### TEST-20260803T190000-usage-aiops-split-1 (역재구성 byte-parity)
+- Purpose: admin.js → admin/usage.js·admin/aiops.js 이동이 배선 외 무수정임을 기계 증명
+- Steps: 새 admin.js 에서 import 2줄 제거 + 포인터 주석 2줄을 모듈 본문으로 치환 + export 접두 4개 제거 → HEAD admin.js 와 cmp
+- Expected Result: byte-identical
+
+### TEST-20260803T190000-usage-aiops-split-2 (ESM 파싱·순환 안전)
+- Purpose: 3파일 ESM 파싱 + 순환 import TDZ 안전(모듈 top-level 이 admin.js 바인딩을 평가 시점에 안 읽음)
+- Expected Result: SourceTextModule 파싱 OK · 상태 초기화(adminState.usage/aiOps)는 admin.js 잔류
+
 ## 3. Test Run History
 <!-- append-only: 새 실행 결과를 아래에 추가한다. 기존 결과를 수정하거나 삭제하지 않는다. -->
 
@@ -93,6 +102,51 @@ source_of_truth: true
   라이브 롤백은 deploy-web.sh last-good 병용.
 - Pass/Fail: PASS
 
+### Run 2026-08-03-007 (Cycle 1 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-03
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260803-css-split-postdeploy-admin.png`
+- Result Summary: PR #1124 머지 → deploy-web 스파인 배포(1da17988, soak 90s 통과·워커 롤아웃 포함, RC=0).
+  라이브 검증 — 서빙 html 의 css 7-link 전부 스탬프 주입(`?v=c7ca8cf30ead`), 캐시 계약 실측
+  (스탬프 일치 → `immutable`, 불일치 → `no-store`), 실 Windows Chrome: 작업화면 7 sheets
+  로드·`.app-shell` grid / 관리콘솔 8 sheets·`.admin-pane` flex·스크린샷 정상. 시각 회귀 0.
+- Pass/Fail: PASS
+
+### Run 2026-08-03-008 (Cycle 2 — usage/aiops 추출 기계 검증)
+- Date: 2026-08-03
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: admin.js 14,007→13,050줄(-957). admin/usage.js 693줄·admin/aiops.js 289줄 신설.
+  **역재구성 byte-parity IDENTICAL** (import 2줄·포인터 주석 2줄·export 접두 4개만이 델타임을 기계 증명).
+  3파일 ESM 파싱 OK(SourceTextModule). import/export 표면 기계 산출 — usage←{adminState,apiFetch,
+  _metaPopulateScopeSelect,activateAiConsoleSubtab,switchTab}·aiops←{adminState,apiFetch,
+  mountGuidanceRegistryPanel}·역방향 export 는 loadUsage/loadAiOps 2개뿐(교차 0).
+- Pass/Fail: PASS
+
+### Run 2026-08-03-009 (Cycle 2 — make test 전 스위트)
+- Date: 2026-08-03
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: C2 worktree `sudo make test` (격리 compose `repo-unittest`) — **RC=0**
+  (pytest feature-0002/0003/0023 전 스위트 PASS · ruff "All checks passed!"). 합본 로더로
+  전환한 test_llm_budget_pane.py 3건 포함 — 이동 문자열 단언이 admin/aiops.js 를 통해 충족됨.
+- Pass/Fail: PASS
+
+### Run 2026-08-03-010 (Cycle 2 — 패널 BLOCKING 흡수 후 재검증)
+- Date: 2026-08-03
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: §18.8 패널 BLOCK(aiops.js 자유 식별자 `$` — 운영 현황 pane 크래시) 흡수:
+  admin.js `export const $` + aiops.js import. 경계 재절단(usage=구 L1560–2238·aiops=구
+  L2352–2626 — 주석-코드 정합 3곳 복구) 후 HEAD 재생성. 재검 — **역재구성 byte-parity
+  IDENTICAL** · ESM 파싱 3파일 OK · **acorn-globals 자유 식별자 usage/aiops = 0/0** ·
+  stale 포인터 주석 2건(app.js·admin.html) 갱신. admin.js 최종 13,058줄(-949).
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
-- 배포 파이프라인 통과(asset-stamp 주입·soak)는 머지 후 배포 시 검증 — POST-DEPLOY PB-0008 Run 예정
-- 공유 뷰(share.html)는 share.css 사용으로 본 cycle 영향 없음 (링크 무변경 확인)
+- (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
+  함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저
+  검증은 배포 직후 POST-DEPLOY PB-0008**(LLM 사용량·AI 운영 현황 pane 렌더+인터랙션)로 수행한다.
+- 공유 뷰(share.html)는 본 initiative 영향 없음

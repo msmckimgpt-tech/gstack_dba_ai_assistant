@@ -10,7 +10,18 @@ import pytest
 
 from shared import llm_budget as lb
 
-_ADMIN_JS = (pathlib.Path(__file__).resolve().parents[1] / "src" / "static" / "admin.js")
+_STATIC = pathlib.Path(__file__).resolve().parents[1] / "src" / "static"
+# feature-0038 Cycle 2: AI 운영 현황 pane 은 admin/aiops.js 로 분리(byte-동치 이동).
+#   본 테스트의 단언 대상(예산 막대 렌더)은 그 pane 소속 — admin.js 와 분리 모듈을 합본으로 검사한다.
+_ADMIN_JS_PARTS = ("admin.js", "admin/usage.js", "admin/aiops.js")
+
+
+class _AdminJsView:
+    def read_text(self, encoding="utf-8"):
+        return "".join((_STATIC / n).read_text(encoding=encoding) for n in _ADMIN_JS_PARTS)
+
+
+_ADMIN_JS = _AdminJsView()
 
 
 @pytest.fixture(autouse=True)
