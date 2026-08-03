@@ -26,7 +26,7 @@ source_of_truth: true
 - [x] 라이브 운영자 row 교정(B) — 백업 후 2줄만, 운영자 고유 정책 보존 실증
 - [x] 신규 18건 PASS · feature-0002 전체 2377 passed/31 skipped/0 failed
 - [x] §18.8 적대 리뷰 — §18.8.2 제약-없는-채널 우선 → **codex 3라운드**(R1 P1 1건+P2 4건 → R2 P1 폐쇄·P2 3건 → R3 신규 P1/결함 0·P2 1건) **전건 수정** → REV-20260731T030000-grounding-authority-directive
-- [ ] 배포 후 라이브 census 재측정(운영자 row 대체 조건에서 9 seal 전량 도달 확인)
+- [x] **배포 완료 + 라이브 census 재측정 통과**(2026-07-31, PR #1114 merge main `954adc87` → `make deploy-web` 전체 스코프, soak 통과, 4서비스 GIT_COMMIT=954adc87 healthy). 배포본 ask-worker 실 `agent_memory` compose 결과 **13,604자 → 17,830자**, **필수 seal 9종 전량 LIVE**(수정 전 부재 5종 전부 도달 전환) · 억제/첨부우선 지시 0 · carve-out·보안우선 문구 LIVE · 운영자 마스킹 정책 보존 · composed 가 계약으로 끝남(last-writer)
 
 ## TASK-20260730T190000-review-proposed-change-framing — 쿼리 리뷰가 '곧 적용될 구조'가 아니라 '현재 DB'를 기준으로 불평하던 프레임 봉인 + 루틴 본문 매칭 스니펫 (Major §12.3 — core 시스템 프롬프트·도구 피드백)
 - 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` (2026-07-30, 사용자 명시 호출). 마찰 2건 제기 — ① 리뷰가 항상 현재 DB 기준으로 "불평하듯" 주의사항을 전달 ② 특정 내용을 포함하는 함수/프로시저 탐색(scan) 도구 부재.

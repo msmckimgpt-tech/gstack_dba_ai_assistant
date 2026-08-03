@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260731T040000-grounding-authority-postdeploy [SKIPPED:docs-only-postdeploy-record] — 라이브 census 통과 기록
+- Date: 2026-07-31
+- Cycle: CHG-20260731T040000-grounding-authority-postdeploy. **코드 변경 0** — 이미 codex 3라운드 적대 검증(REV-20260731T030000, R3 [P1]/신규결함 0)을 통과해 머지·배포된 변경의 **측정 결과 기록**.
+- Trigger: §18.8 dispatch 표 키워드 0건 + code change 0건(diff = 원장·TASK·MODIFY 문서만) → §18.8.1 docs-only 경량 경로. 새로 검증할 동작 표면이 없어 패널 SKIP.
+- 기록된 사실의 검증 방식(패널 대체): **배포본 직접 측정** — 4서비스 GIT_COMMIT=954adc87 + health, 배포본 ask-worker 안에서 실 `agent_memory` 연결 `compose_system_prompt` 결과(17,830자)에 대한 seal 9종·모순 2종·carve-out 3종·last-writer 판정. 추정 서술 없음.
+- **정직성**: 이 측정은 "계약이 라이브 프롬프트에 도달함" 을 증명한다. **"실제 대화 행동이 바뀌었는지" 는 증명하지 않는다** — 그 축은 `FR-review-frames-live-db-as-spec` 의 라이브 실측분(미수행)에 귀속되며 다음 audit 이 corroboration 으로 측정한다.
+- Cross-ref: CHG-20260731T040000-grounding-authority-postdeploy / REV-20260731T030000-grounding-authority-directive / FRICTION_LEDGER(FR-operator-global-prompt-shadows-code-seals `fixed:deployed:verified`).
+
 ## REV-20260731T030000-grounding-authority-directive [CODEX:adversarial-correctness+security+test-quality] — grounding 코드 권위선 3라운드 SHIP
 - Date: 2026-07-31
 - Cycle: TASK-20260731T030000-grounding-authority-directive. **Major §12.3** — core 시스템 프롬프트(모든 대화) + 라이브 운영자 프롬프트 데이터 교정.

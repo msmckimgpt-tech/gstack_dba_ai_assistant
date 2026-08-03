@@ -55,7 +55,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-operator-global-prompt-shadows-code-seals — needs-human (L1 data/config drift; 운영자 global row 가 코드 상수를 통째 대체해 2026-06-18 이후 프롬프트 봉인 전량 미도달)
 
-- **status**: `fixed:undeployed` — 사용자 지시("후속 이슈가 있다면 해당 부분도 적용을 검토해주세요") + 범위 승인 **A+B**(AskUserQuestion 2026-07-31) 로 봉인. **(A) 코드 권위선**: `_GROUNDING_AUTHORITY_DIRECTIVE` 신설 + `compose_system_prompt` **반환 직전** append(운영자 global row 뿐 아니라 product/role/account scope row 보다도 뒤 = last-writer). **(B) 라이브 데이터 교정 완료**(아래). 코드 부분 배포 전.
+- **status**: `fixed:deployed:verified` — **라이브 census 재측정 완료(2026-07-31)**. 사용자 지시("후속 이슈가 있다면 해당 부분도 적용을 검토해주세요") + 범위 승인 **A+B**(AskUserQuestion 2026-07-31) 로 봉인.
+  **배포**: PR #1114 merge main `954adc87` → `make deploy-web` 전체 스코프(web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile, soak 90s 통과). **4서비스 GIT_COMMIT=954adc87 running/healthy**.
+  **라이브 census 재측정(이 항목을 `verified` 로 닫는 근거 — 측정으로만 done)**: 배포본 ask-worker 에서 실 `agent_memory` 연결로 `compose_system_prompt` 호출 → composed **13,604자 → 17,830자**, **필수 seal 9종 전량 LIVE**(첨부↔실DB 양측조회 · 0행≠부재 · 절단통지 · 완전성 명시신호 · 식별자 대소문자 · check_table_coverage · 시간방향 계약 · 첨부갱신 · 신규스크립트첨부). 수정 전 측정에서 **부재 확정 5종이 전부 도달로 전환**됐다.
+  **모순 제거 실증**: 억제 지시 0 · 첨부우선 지시 0. **보안 carve-out 실증**: `IT OVERRIDES NOTHING ELSE.` True · "보안·프라이버시 규칙이 이긴다" True · 운영자 마스킹 정책 보존 True. **last-writer 실증**: composed prompt 가 이 상수로 끝남 True(운영자 scope row·첨부 섹션보다 뒤).
+  **잔여**: 실제 대화에서의 행동 변화(리뷰가 적용 후 기준으로 쓰이는지)는 `FR-review-frames-live-db-as-spec` 의 라이브 실측분에 귀속 — 다음 audit 이 corroboration 으로 측정. **(A) 코드 권위선**: `_GROUNDING_AUTHORITY_DIRECTIVE` 신설 + `compose_system_prompt` **반환 직전** append(운영자 global row 뿐 아니라 product/role/account scope row 보다도 뒤 = last-writer). **(B) 라이브 데이터 교정 완료**(아래). 코드 부분 배포 전.
   **초기 판정 정정**: 처음엔 "수정 방향이 사람 결정" 이라 `needs-human` 으로 열었으나, 운영자 row 를 실제로 대조해 보니 **덮어쓰기 안(a)은 배제**가 옳았고(운영자 고유 PII 정책 소실), **replace→merge 안(b)도 배제**가 옳았다(영문 원본+한국어 재작성 중복) — 실제 해는 제3안인 **코드-append 권위선 + 문제 2줄만 국소 교정**이었다. 선택지를 두 개로 좁혀 사람에게 넘긴 것이 성급했다.
 - **source**: `FR-review-frames-live-db-as-spec` 배포 후 라이브 compose 실증 중 **부수 발견**(2026-07-31). 내 계약이 도달하는지 확인하다가 **다른 것들이 도달하지 않음**을 발견했다.
 - **last_seen**: 2026-07-31 · **seen_count**: 1 · **seen_distinct_conv**: n/a(대화 신호 아닌 구성 측정)
@@ -101,6 +105,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **disposition 근거**: Major(§12.3 — 코어 시스템 프롬프트, 모든 첨부 리뷰 답변에 영향) → attended human-decision. structural corroboration + 코드 file:line confirmed(high) + A/B 대조쌍으로 계약 부재 직접 실증 → fix-now. 사용자가 AskUserQuestion 으로 범위 **A+B+C 전부** 명시 선택(2026-07-30) → PLAN-APPROVED 후 구현.
 - **fix**: `CHG-20260730T190000-review-proposed-change-framing` / **코드 거주 `feature-0002-agent-core`** / `REV-20260730T190000-review-proposed-change-framing`(§18.8.2 제약-없는-채널 우선 → codex 3렌즈 security+backend+regression, **[P1] 0건**, [P2] 4건 중 스니펫 라벨 오단정·힌트 일방면책 2건 흡수 수정, 컬럼 가변·본문 노출 2건 근거 기록 수용).
 - **rc_ids**: RC-1 · **batch-id**: B-20260730T190000-review-proposed-change-framing
+- **후속 규명(2026-07-31, 중요)**: A/B 대조쌍이 갈린 **실제 기전**이 후속 조사에서 확정됐다 — 라이브 운영자 프롬프트에 "명시 요청 없이 execute_sql 금지"+"첨부 지침 우선"(코드에서는 2026-07-14 제거된 환각 유발 지시)이 살아 있어, 동적 INSTRUCTION 의 "반드시 라이브 검증" 과 한 프롬프트 안에서 **정면 충돌**했다. 도구 0회 run 은 정적 억제를, 12회 run 은 동적 검증을 따랐다. 본 cycle 의 시간-방향 계약은 DB-확인 분기의 **프레임**을 고쳤고, 모순 자체는 `FR-operator-global-prompt-shadows-code-seals` 가 제거했다(PR #1114, main `954adc87` 배포).
 - **라이브 실측 필요분(§정직)**: 코드/테스트는 "계약이 항상 주입되고, 운영자 global row 대체를 견디며, 선행 grounding 을 약화하지 않고, 미발견 힌트가 3분기로 붙는다" 까지만 증명한다. **"실제 리뷰가 적용 후 기준으로 쓰이는지"** 는 배포 후 실측분(미수행) → 배포 후 동일 5파일 재리뷰 + 다음 audit 이 corroboration(SQL 첨부 대화의 현재-DB 부재 프레이밍 distinct_conv) 재측정 → 감소 시 `verified`, 재증가 시 `regressed`.
 - **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 동일 첨부로 라이브 재리뷰 + `/_dqa:doc_sync`.
 
