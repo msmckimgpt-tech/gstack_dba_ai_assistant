@@ -10,6 +10,16 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260803T190000-precondition-verified-or-unknown (전제 절의 상태 단정을 '검증된 사실 또는 미확인' 으로 봉인 + 상시 감지기 — conversation_audit FR-review-precondition-assumed-not-verified)
+- Date: 2026-08-03. worktree `ai/root/feature-0002-agent-core`(base main 3748c4fd). 범위 승인 **A+C**(AskUserQuestion 2026-08-03).
+- **무엇을(A 계약)**: `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 의 `적용 전제` 절 규칙에서 **"stated as fact" 를 제거**하고 **"모든 행은 검증된 사실이거나 `미확인`"** 으로 대체. 5개 하위 규칙 — (1) 상태를 적으려면 **이 run 에 그 객체의 도구 결과**가 있어야 하고, 없으면 `미확인` + 무엇을 확인 못 했는지. `미확인` 은 실패가 아니라 **1급 값**(미검증 존재/미존재가 정직한 미확인보다 나쁘다 — 사용자가 그걸 믿고 행동한다). (2) 권한거부(`접근이 허용되지 않은 스키마`)·스코프 경고·미조회 ⇒ 미확인, 절대 "존재하지 않음" 아님(거부는 존재 여부를 말하지 않는다). (3) **0행은 범위 조건부** — 정확한 식별자 + 도구가 자기 커버리지를 명시한 경우에만 **그 범위 내** 부재로 말하고 범위를 함께 적는다("허용 DB 전체에서 미발견"); 추측 이름·필터 쿼리·커버리지 미명시 ⇒ 미확인. (4) 첨부의 `CREATE TABLE IF NOT EXISTS x` 는 x 의 **현재** 존재 여부 증거가 아님. (5) **미확인은 공짜가 아님** — 결정이 걸린 객체(변경 대상·기존 데이터가 막을 수 있는 것·스크립트 의존 대상)는 최소 1회 조회 시도 의무, `verify > 미확인 > guess`, 예산 아끼려 바로 미확인 금지. SYSTEM_PROMPT 미러도 동일 3요소로 정합(§18.8 R2 P2 — 미러만 열려 있으면 bootstrap 경로에서 결함 존속).
+- **무엇을(C 감지기)**: `bin/measure-precondition-grounding.py` 신설. `.sql` 첨부 대화의 최장 답변에서 (백틱 식별자 + 상태 어휘) 줄을 뽑아 **객체 단위**로 집계하고, 그 대화 tool 결과 전체와 대조해 미검증 비율·`미확인` 객체 수·지목 대화를 낸다. **지표가 아니라 스크린**임을 docstring·CLI 양쪽에 명시하고 오탐(무관한 상태 어휘 동거·도구가 언급만 한 경우)과 누락(영어 표현·백틱 없는 이름·제약명)을 열거. RO 트랜잭션 + `statement_timeout` + `ON_ERROR_STOP=1` + 빈 결과 **fail-closed**(exit 3, 타임아웃/권한/무데이터 구분 불가 명시).
+- **baseline 측정(90일)**: 대화 87건 · 상태 단정 90건 중 **43건(47.8%) 미검증** · `미확인` **0건**.
+- **파일**: `src/agent_core.py`(전제 절 규칙 + 미러), `bin/measure-precondition-grounding.py`(신규), `tests/test_review_proposed_change_framing.py`(+5), `tests/test_precondition_grounding_detector.py`(신규 10).
+- **왜**: PB-0008 라이브 검증에서 약 148만 행 실존 테이블을 "현재 미존재" 로 적고(조회 0건) 대용량 PK 추가 리스크를 놓친 사례를 발견. 측정해 보니 이 행동은 시간-방향 계약 이전부터 광범위(47.8%)했고 `미확인` 은 한 번도 쓰인 적이 없었다 — **오래된 구조적 공백**이며, 내 `적용 전제` 절은 그 단정에 표 형태의 자리를 준 **가중 요인**이다(앞선 "내가 만든 결함" 귀속은 정정).
+- **호환/안전**: 프롬프트는 보간 없는 정적 상수. 가드·allowlist·RBAC·datamark 무변경. 감지기는 read-only 전용이며 쓰기 구문 부재를 테스트로 고정. 과교정 방지 장치 2종(0행 범위 예외·조회 시도 의무)을 함께 넣어 "미확인 남발" 을 막는다.
+- **Rollback**: 계약 문단·미러 revert + 감지기·테스트 2파일 제거. 스키마/마이그레이션 변경 없음.
+
 ## CHG-20260803T172000-review-framing-pb0008-live (PB-0008 라이브 육안검증 결과 기록, docs-only)
 - Date: 2026-08-03. 코드 변경 **0**. 사용자 지시("실제 웹브라우저 조작을 통해 육안검증까지 진행해주세요").
 - **Environment: Windows-browser** — `bin/win-browser.py`(실제 Windows Chrome 150, relay 브리지)로 새 대화 생성·제품 119 선택·**원본 5파일 재업로드(sha256 5/5 일치)**·동일 요청문 입력·`#sendBtn` 실제 클릭. 배포본 main `954adc87`.

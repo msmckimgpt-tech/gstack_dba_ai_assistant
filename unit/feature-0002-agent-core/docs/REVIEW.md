@@ -10,6 +10,24 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260803T190000-precondition-verified-or-unknown [CODEX:adversarial-correctness+detector-validity+security-ops] — 전제 단정 봉인 3라운드 SHIP
+- Date: 2026-08-03
+- Cycle: TASK-20260803T190000-precondition-verified-or-unknown. **Major §12.3** — core 시스템 프롬프트 + 운영 DB 를 읽는 신규 스크립트.
+- Trigger: §18.8 — 프롬프트 변경(dispatch 표 키워드 0 + code change) → full panel default; 신규 스크립트가 `docker compose exec` 로 운영 replica 조회 → security/ops 렌즈 추가. 채널 = §18.8.2 제약-없는-채널 우선(codex, read-only, high). **3라운드**.
+- VERDICT: **SHIP** — R3 기준 **[P1] 0**, R1~R3 지적 **전건 수정**.
+- **R1 [P1] 감지기 타당성**: docstring 이 측정하지 않는 것을 측정한다고 적었고, 오탐·누락이 둘 다 있어 "하한" 이라는 표현이 거짓. 또 `seen` 을 미확인 분기 **전에** 기록해 앞줄 미확인이 뒷줄의 근거 없는 단정을 가렸다. **수정**: docstring 을 실제 측정 대상 + 오탐/누락 열거 + "스크린이지 지표가 아니다" 로 재작성, 집계를 **객체 단위**로 바꿔 어느 한 줄이라도 단정하면 주장으로 센다.
+- **R1 [P2] 0행 과교정**: 모든 0행을 미확인으로 만들면 정당하게 검증된 부재까지 말할 수 없어 "검증된 사실을 말하라" 와 충돌. **수정**: 정확한 식별자 + 도구가 자기 커버리지를 명시한 0행은 **그 범위 내** 부재 증거로 허용(범위 병기 의무), 추측 이름·커버리지 미명시는 미확인.
+- **R1 [P2] 미확인 남발 유인**: `Prefer checking` 이 권고뿐이라 예산 아끼려 전부 미확인으로 적어도 계약 충족. **수정**: 결정이 걸린 객체는 **최소 1회 조회 시도 의무** + `verify > 미확인 > guess` + 미조회 미확인은 주변 객체·예산 소진 시에만.
+- **R1 [P2] ops**: RO 강제·타임아웃 부재. **수정**: `BEGIN READ ONLY` + `SET LOCAL statement_timeout`.
+- **R2 [P1] 실패 감지 부재**: `ON_ERROR_STOP` 이 없어 timeout abort 가 "대화 0건" **정상 측정**으로 보고될 수 있었다. **수정**: `-v ON_ERROR_STOP=1` + 빈 stdout 은 명시적 실패(exit 3, 타임아웃/권한/무데이터 구분 불가 고지). 주입으로 exit 3·exit 2 양 경로 실증.
+- **R2 [P1] 사용자 출력 오표기**: docstring 만 고치고 CLI 는 여전히 "하한 측정". **수정**: CLI 문구 동기화 + 회귀 테스트로 `하한 측정` 문자열 금지.
+- **R2 [P2] 미러 미정합**: 정적 `SYSTEM_PROMPT` 미러에 0행 예외·조회 의무가 없어 bootstrap 경로에서만 결함 존속. **수정**: 미러를 동적 계약과 동일 3요소로.
+- **R2 [P2] 카운터 이름 불일치**: `honest_unknown_rows` 가 실제로는 배타적 고유 **객체 수**. **수정**: `honest_unknown_objects` 로 개명 + 라벨·docstring 정합.
+- **R3 [P2] — 가장 중요**: `_CLAIM`(상태 어휘)을 먼저 요구해 `` `orders`: 미확인 `` 처럼 **미확인만 쓴 줄이 통째로 누락**됐다. 즉 **수정이 성공해도 성공 신호(`미확인` 카운터)가 영원히 0** 인, 감지기 자체를 무력화하는 결함. **수정**: 상태 어휘 **또는** 미확인 이면 집계 + 전용 회귀 테스트.
+- Verification: 신규 `tests/test_precondition_grounding_detector.py` **10 PASS**(집계 계약 6 + fail-closed 2 + RO/타임아웃 + 오표기 금지) · `tests/test_review_proposed_change_framing.py` +5 · feature-0002 전체 **2399 passed / 31 skipped / 0 failed** · `make test` RC=0. **baseline 90일 47.8% / `미확인` 0건 기록** — 배포 후 재측정이 완료 판정.
+- **정직성**: 이 cycle 은 앞선 보고의 **귀속을 정정**한다 — "내가 만든 계약 결함" 이 아니라 2026-05-28 부터 관측되는 구조적 공백이고, 내 `적용 전제` 절은 가중 요인이다. 측정이 그 정정의 근거다.
+- Cross-ref: CHG-20260803T190000-precondition-verified-or-unknown / FRICTION_LEDGER(FR-review-precondition-assumed-not-verified).
+
 ## REV-20260803T172000-review-framing-pb0008-live [SKIPPED:docs-only-live-measurement] — PB-0008 라이브 육안검증 기록
 - Date: 2026-08-03
 - Cycle: CHG-20260803T172000-review-framing-pb0008-live. **코드 변경 0** — 이미 배포된 변경의 **실사용 화면 실측 결과** 기록.

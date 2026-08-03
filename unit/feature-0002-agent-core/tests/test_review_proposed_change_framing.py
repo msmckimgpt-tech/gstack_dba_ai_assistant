@@ -61,6 +61,81 @@ def test_temporal_directive_defines_output_structure_lever_b():
     assert "STILL" in d and "after the whole attached set has been applied" in d
 
 
+def test_precondition_rows_must_be_verified_or_marked_unknown():
+    """FR-review-precondition-assumed-not-verified — 전제 절이 추측을 초대하지 않게.
+
+    90일 실측: 객체 상태 주장 84건 중 41건(48.8%)이 그 객체를 조회한 도구 결과 없이
+    단정됐고, `미확인` 으로 표기된 행은 **0건**이었다. 라이브 실측에서는 약 148만 행
+    실존 테이블을 "현재 미존재" 로 적어 대용량 PK 추가 리스크를 통째로 놓쳤다.
+    """
+    d = agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE
+    assert "EVERY LINE IN THAT SECTION MUST BE A VERIFIED FACT OR MARKED 미확인" in d
+    assert "table-shaped invitation to guess" in d, "왜 이 절이 위험한지 이유를 줘야 함"
+    assert "an actual tool result for THAT object in THIS run" in d
+    assert "미확인` is a first-class value here" in d or "first-class value here" in d
+
+
+def test_unverifiable_signals_map_to_unknown_not_absence():
+    """권한거부·스코프경고·미조회는 `미확인` — 라이브 3건이 전부 이 경로로 틀렸다."""
+    d = agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE
+    assert "permission refusal" in d
+    assert "접근이 허용되지 않은 스키마" in d, "실제 거부 문구를 지목해야 매핑이 확실해짐"
+    assert "simply not having looked" in d
+    assert "never \"존재하지 않음\"" in d
+    assert "says nothing about existence" in d, "거부→부재 번역 금지를 명시해야 함"
+
+
+def test_zero_rows_rule_is_scope_qualified_not_blanket():
+    """§18.8 codex P2: 0행을 **무조건** 미확인으로 만들면 정당하게 검증된 부재까지 못 말한다.
+
+    정확한 식별자로 조회하고 **도구가 자기 커버리지를 명시**한 0행은 그 범위 내
+    부재의 증거다 — 범위를 함께 말하는 조건으로 허용해야 '검증된 사실을 말하라' 와
+    충돌하지 않는다.
+    """
+    d = agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE
+    assert "0 rows is not automatically 미확인 either" in d
+    assert "EXACT identifier" in d
+    assert "states its own coverage" in d
+    assert "within that stated" in d
+    assert "허용 DB 전체에서 미발견" in d, "범위를 붙여 말하는 예시가 있어야 함"
+    assert "guessed" in d and "did not state its coverage" in d
+
+
+def test_unknown_is_not_a_free_pass_lookup_attempt_required():
+    """§18.8 codex P2: '미조회 ⇒ 미확인' 만 있으면 예산 아끼려 전부 미확인 가능."""
+    d = agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE
+    assert "미확인 is honest, not free" in d
+    assert "MUST attempt at least one lookup" in d
+    assert "verify > 미확인 > guess" in d
+    assert "never skip straight to 미확인 to save a call" in d
+    # 과교정 방지 — 주변 객체·예산 소진 시엔 허용
+    assert "peripheral objects" in d and "discovery budget is genuinely spent" in d
+
+
+def test_attachment_text_is_not_evidence_of_live_state():
+    """`CREATE TABLE IF NOT EXISTS x` 는 x 의 현재 존재 여부에 대한 증거가 아니다."""
+    d = agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE
+    assert "IF NOT EXISTS" in d
+    assert "not evidence about whether" in d
+
+
+def test_static_mirror_carries_verified_or_unknown_rule():
+    """운영자 row 부재(bootstrap) 경로에서도 **같은** 계약이 읽히도록 미러 정합.
+
+    §18.8 codex R2 P2: 초기안 미러는 0행을 무조건 미확인으로 단정하고 lookup 의무가
+    없어, bootstrap 경로에서만 (b)(c) 결함이 열려 있었다. 미러도 동적 계약과 같은
+    3요소를 담아야 한다.
+    """
+    p = agent_core.SYSTEM_PROMPT
+    assert "every line in it must be a verified fact or marked 미확인" in p
+    # 0행 예외가 미러에도 있어야 한다(과교정 방지).
+    assert "absence evidence ONLY within a scope the tool itself declared" in p
+    assert "guessed name or an unstated scope ⇒ 미확인" in p
+    # lookup 의무가 미러에도 있어야 한다(미확인 남발 방지).
+    assert "미확인 is not free" in p
+    assert "verify > 미확인 > guess" in p
+
+
 def test_temporal_directive_keeps_live_verification_mandatory():
     """회귀 방지(중요): 라이브 대조를 약화하지 않는다 — 선행 봉인 계보 보존."""
     d = agent_core._ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE

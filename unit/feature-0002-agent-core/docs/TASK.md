@@ -8,7 +8,29 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260731T030000-grounding-authority-directive (current cycle) — 운영자 프롬프트가 삼킨 grounding 봉인을 코드 권위선으로 복구 + 라이브 모순 제거 (Major §12.3 — core 시스템 프롬프트)
+## TASK-20260803T190000-precondition-verified-or-unknown (current cycle) — 리뷰가 조회한 적 없는 객체의 라이브 상태를 단정하던 결함 봉인 + 상시 감지기 (Major §12.3 — core 시스템 프롬프트)
+- 출처: `/_dqa:conversation_audit` PB-0008 라이브 육안검증 중 발견(`FR-review-precondition-assumed-not-verified`). 사용자 지시("잔여 항목도 작업을 진행해주세요") + 범위 승인 **A+C**(AskUserQuestion 2026-08-03).
+- **corroboration(신규 측정, 90일)**: `.sql` 첨부 대화 87건에서 객체 상태 단정 **90건 중 43건(47.8%)**이 그 대화의 어떤 도구 결과에도 그 객체명이 없었다. `미확인` 표기는 **0건**. 관측 구간이 2026-05-28~08-03 에 걸쳐 있다.
+- **귀속 정정(중요)**: 앞선 보고에서 이를 "내가 만든 계약 결함" 으로 단정했으나 **틀렸다**. 측정 결과 이 행동은 시간-방향 계약(2026-07-30 출하) **이전부터 광범위**했다. 정확한 진단은 — (1) **오래된 구조적 공백**: 상태 단정에 대해 객체별 검증을 요구하는 규칙이 없었고 `미확인` 이 출력 값으로 제시된 적이 없다(90일 0건). (2) **내 계약의 기여**: `적용 전제` 절을 만들라는 지시가 그 단정에 **표 형태의 눈에 띄는 자리**를 줬고 "stated as fact" 문구가 확정 압력을 더했다. 원인이 아니라 **가중 요인**이다.
+- **실질 손해(라이브)**: 재현 대화가 약 **148만 행 실존** 테이블을 "현재 미존재" 로 적고(조회 0건) 그 결과 대용량 테이블에 3중 복합 PK 를 추가하는 마이그레이션 리스크를 통째로 놓쳤다.
+- **해결(A)**: `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 의 "stated as fact" 제거 → **"모든 행은 검증된 사실이거나 `미확인`"**. `미확인` 을 1급 출력 값으로 승격. 권한거부·스코프경고·미조회 ⇒ 미확인(부재 아님). **0행은 범위 조건부** — 정확한 식별자 + 도구가 자기 커버리지를 명시한 경우에만 그 범위 내 부재로 말하고 범위를 함께 적는다(과교정 방지). 첨부의 `CREATE TABLE IF NOT EXISTS` 는 현재 존재 여부의 증거가 아님. **미확인은 공짜가 아님** — 결정이 걸린 객체는 최소 1회 조회 시도 의무(`verify > 미확인 > guess`). SYSTEM_PROMPT 미러도 동일 3요소로 정합.
+- **해결(C)**: `bin/measure-precondition-grounding.py` 신설 — 상태 단정 ↔ 도구 호출 대조를 재현 가능하게 측정하는 **스크린**(지표 아님). RO 트랜잭션 + statement_timeout + `ON_ERROR_STOP` + 빈 결과 fail-closed.
+
+### §1.1 Implementation
+- `src/agent_core.py`: `_ATTACHMENT_REVIEW_TEMPORAL_DIRECTIVE` 전제-절 규칙 재작성(5개 하위 규칙) + SYSTEM_PROMPT 미러 동기화.
+- `bin/measure-precondition-grounding.py`(신규): 답변별 객체 상태 단정 추출 → 대화 tool 결과 대조 → 미검증 비율·`미확인` 객체 수·지목 대화 목록. 오탐/누락을 docstring 과 CLI 출력에 명시.
+- `tests/test_review_proposed_change_framing.py`: 계약 5건 추가(검증-또는-미확인·미확인 매핑·0행 범위조건·미확인 남발 방지·미러 정합).
+- `tests/test_precondition_grounding_detector.py`(신규 10건): 감지기 집계 계약 + fail-closed + RO/타임아웃 + '하한' 오표기 금지.
+
+### §1.2 Completion Checklist
+- [x] corroboration 선측정(90일 47.8% · `미확인` 0건) — 원장이 요구한 선행 단계
+- [x] 계약 재작성(A) + SYSTEM_PROMPT 미러 정합
+- [x] 감지기(C) + 감지기 자체 회귀 테스트 10건
+- [x] feature-0002 전체 2399 passed / 31 skipped / 0 failed
+- [x] §18.8 codex 적대 **3라운드** — R1 [P1]1+[P2]3 → R2 [P1]2+[P2]3 → R3 [P1]**0**+[P2]1 → 전건 수정(마지막은 **성공 신호가 영원히 0** 이던 감지기 결함)
+- [ ] 배포 후 재측정: 미검증 비율 감소 + `미확인` 객체 수 > 0 (현재 baseline 47.8% / 0개)
+
+## TASK-20260731T030000-grounding-authority-directive — 운영자 프롬프트가 삼킨 grounding 봉인을 코드 권위선으로 복구 + 라이브 모순 제거 (Major §12.3 — core 시스템 프롬프트)
 - 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` 후속 — 선행 cycle(TASK-20260730T190000) **배포 검증 중 부수 발견**된 `FR-operator-global-prompt-shadows-code-seals`. 사용자 지시("후속 이슈가 있다면 해당 부분도 적용을 검토해주세요") + 범위 승인 **A+B**(AskUserQuestion 2026-07-31).
 - **근본원인(구조)**: `compose_system_prompt` 은 운영자 `WebSystemPrompts` scope='global' row 가 있으면 **코드 상수 `SYSTEM_PROMPT` 를 통째로 대체**한다. 라이브 row = 9,219자(15,978 bytes) / UpdatedAt **2026-06-18**, 코드 상수 = 21,594자 → 그 날짜 이후 **본문에만** 추가된 grounding 규칙이 프로덕션에 존재하지 않았다. 코드-append guidance 상수(16,825자)에도 없어 보완 경로가 없었다.
 - **부재 확정 5종(배포본 실측)**: 첨부↔실DB 양측 조회(FR-partial-evidence) · 0행≠부재(FR-false-absence) · 절단 통지/완전성 신호(FR-false-truncation) · 식별자 대소문자(FR-schema-name-case-drift) · `check_table_coverage` 유도.
