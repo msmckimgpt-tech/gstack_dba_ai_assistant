@@ -10,6 +10,13 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260731T040000-grounding-authority-postdeploy (POST-DEPLOY 기록 — 라이브 census 통과, docs-only)
+- Date: 2026-07-31. 코드 변경 **0**.
+- **배포**: PR #1114 merge main `954adc87` → `make deploy-web` 전체 스코프(web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile), soak 90s 통과, 4서비스 GIT_COMMIT=954adc87 running/healthy.
+- **라이브 census 재측정(핵심 증거)**: 배포본 ask-worker 에서 실 `agent_memory` 연결로 `compose_system_prompt` 호출 → composed **13,604 → 17,830자**, 필수 seal **9종 전량 LIVE**. 수정 전 측정에서 **부재 확정이던 5종**(첨부↔실DB 양측조회·0행≠부재·절단통지·완전성 명시신호·식별자 대소문자, +check_table_coverage)이 전부 도달로 전환됐다. 억제/첨부우선 지시 0건(Lever B), carve-out(`IT OVERRIDES NOTHING ELSE.`)·"보안·프라이버시 규칙이 이긴다" LIVE, 운영자 마스킹 정책 보존, composed 가 계약으로 끝남(last-writer 실증).
+- **원장**: `FR-operator-global-prompt-shadows-code-seals` → `fixed:deployed:verified`(측정으로만 done). `FR-review-frames-live-db-as-spec` 에 A/B 분기의 실제 기전 규명 cross-ref 추가.
+- **Rollback**: 문서 되돌리기(코드·스키마 무변경).
+
 ## CHG-20260731T030000-grounding-authority-directive (운영자 프롬프트가 삼킨 grounding 봉인을 코드 권위선으로 복구 + 라이브 모순 2줄 제거 — conversation_audit FR-operator-global-prompt-shadows-code-seals)
 - Date: 2026-07-31. worktree `ai/root/feature-0002-agent-core`(base main 97af7d27). 범위 승인 **A+B**(AskUserQuestion 2026-07-31).
 - **무엇을(A 코드 권위선)**: `agent_core._GROUNDING_AUTHORITY_DIRECTIVE` 신설. 라이브에서 부재로 실측된 5종 규칙(첨부↔실DB 양측 조회 / 0행≠부재 / 절단 통지·완전성 명시신호 / 식별자 대소문자 / `check_table_coverage` 유도)을 담고, 운영자 row 에 살아 있는 두 억제 지시를 **의미로 지목해**(언어 무관) 무력화한다. `compose_system_prompt` **반환 직전**에 append — 초기 `parts` 목록에 두면 뒤에 누적되는 운영자 product/role/account scope prompt(최대 20k자, 사람 편집)가 봉인을 다시 덮기 때문(§18.8 codex R2 P2).
