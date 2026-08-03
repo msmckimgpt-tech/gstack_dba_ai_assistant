@@ -82,6 +82,17 @@ source_of_truth: true
 - Pass/Fail: PASS
 - Notes: 주입 도중 병렬 세션의 PR #1120 배포로 컨테이너가 재생성되어 1회 재주입함 — QA 결과에는 영향 없음. POST-DEPLOY 재검증은 배포 후 Run 으로 별도 기록.
 
+### Run 2026-08-03-006 (롤백 리허설)
+- Date: 2026-08-03
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: Cycle 1 커밋(44308fae)에 `git revert --no-edit HEAD` 실적용 →
+  base(c0c6800f) 대비 `git diff` **0줄**(완전 원상: styles.css sha256 원본 일치
+  349ce797…·css/ 소멸·html 단일 link 복원) → revert 제거 후 재적용·최신 main rebase.
+  단일-PR 단일-revert 롤백 가능성 실증 — 이후 cycle 은 동일 절차 준용(§2.1 게이트 6).
+  라이브 롤백은 deploy-web.sh last-good 병용.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - 배포 파이프라인 통과(asset-stamp 주입·soak)는 머지 후 배포 시 검증 — POST-DEPLOY PB-0008 Run 예정
 - 공유 뷰(share.html)는 share.css 사용으로 본 cycle 영향 없음 (링크 무변경 확인)
