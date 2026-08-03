@@ -1,0 +1,2473 @@
+/* =====================================================================
+   CHAT PANE
+   ===================================================================== */
+.chat-pane {
+  /* REQ-20260519-0007 (TASK-0079, Minor §12.3): .chat-column flex container 안에서
+     .chat-pane 의 flex 미정의로 자식 max-content 만 차지하던 결함 (짧은 대화 + 큰
+     viewport 조합 시 composer 아래 회색 빈 영역 노출). TASK-0066 의 ChatGPT 패턴
+     layout 재구조화 시점 누락. .messages-wrap (flex: 1) 가 chat-pane 안에서 grow 하려면
+     chat-pane 자체가 column 의 남은 영역을 차지해야 함. min-height: 0 은 overflow 자식이
+     flex 자라기를 허용. */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* REQ-20260518-0004: .chat-header 폐기 — 대화 제목/부제는 chat-column 의 .topbar 안 .topbar-info 로 이전.
+   .chat-title / .chat-subtitle 의 typography 는 그대로 유지 (topbar-info 안에서 사용). */
+.chat-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.chat-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 1px;
+}
+
+/* Access notice */
+.access-notice {
+  flex-shrink: 0;
+  padding: 8px 20px;
+  background: rgba(217,119,6,.08);
+  border-bottom: 1px solid rgba(217,119,6,.14);
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Progress strip (collapsible <details>) */
+.progress-strip {
+  flex-shrink: 0;
+  padding: 0;
+  background: rgba(37,99,235,.04);
+  border-bottom: 1px solid rgba(37,99,235,.1);
+}
+
+.progress-strip > summary.progress-row {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 20px;
+  user-select: none;
+}
+
+.progress-strip > summary.progress-row::-webkit-details-marker {
+  display: none;
+}
+
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.progress-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.progress-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(37,99,235,.1);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.progress-summary {
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.progress-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.progress-caret {
+  font-size: 11px;
+  color: var(--text-2);
+  transition: transform .15s ease;
+}
+
+.progress-strip[open] .progress-caret {
+  transform: rotate(180deg);
+}
+
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 20px 10px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.progress-step {
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(255,255,255,.75);
+  font-size: 12px;
+  color: var(--text-2);
+  border: 1px solid rgba(37,99,235,.08);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.progress-step > .step-detail {
+  flex: 1;
+  min-width: 0;
+}
+
+.progress-step strong {
+  margin-right: 4px;
+}
+
+.progress-step-index {
+  display: inline-block;
+  min-width: 18px;
+  margin-right: 0;
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 11px;
+  padding-top: 1px;
+  flex-shrink: 0;
+}
+
+/* ─── Messages ───────────────────────────────────────────────────── */
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  min-height: 180px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.empty-state strong { font-size: 14px; color: var(--text-2); font-weight: 600; }
+.empty-state span   { font-size: 13px; }
+.empty-logo { margin-bottom: 4px; opacity: .6; }
+.empty-hints {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.empty-hints kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+/* Message rows */
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  position: relative;
+}
+.message.is-user      { align-self: flex-end;   align-items: flex-end;   max-width: 72%; }
+.message.is-assistant { align-self: stretch;    align-items: flex-start; max-width: none; margin-right: 48px; }
+/* gc-other-msg-left (사용자 요청 2026-06-25): 그룹/공유 대화에서 '상대방'(타 참여자) 메시지는
+   assistant 와 함께 좌측 정렬한다. 내 메시지(is-own-message)만 우측 유지.
+   기본 .message.is-user(특이도 0,2,0) 의 flex-end 를 .is-other-message(0,3,0) 가 이긴다.
+   좌측 끝 기준선을 assistant 와 통일(들여쓰기 없음) — 그룹채팅 관례(상대방=좌측 정렬 버블). */
+.message.is-user.is-other-message { align-self: flex-start; align-items: flex-start; }
+
+.message-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+/* feature-0009: 메시지 발신자 프로필 아이콘(참가자 식별) */
+.msg-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface-muted, #e2e8f0);
+  color: var(--text-muted, #475569);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+  margin-right: 6px;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.msg-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* gc-avatar-identicon: 아바타 미업로드 시 Identicon SVG 폴백 — applyAvatar()/헤더 프로필과 정합. 원형 채움(맨 글자 대신). */
+.msg-avatar > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.msg-avatar.msg-avatar-assistant { background: #2563eb; color: #fff; font-size: 10px; }
+/* feature-0009: 실제 아이콘/제품 이미지가 로드되면 폴백 배경을 중립(흰색)으로 — 투명 PNG 가독성. */
+.msg-avatar.has-img { background: #fff; color: transparent; }
+
+/* feature-0009: 나(현재 사용자)를 @멘션한 (타 멤버) 메시지 강조 — 좌측 강조선 + 옅은 하이라이트 배경.
+   gc-mention-highlight: 타 멤버 메시지 규칙 `.message.is-user.is-other-message .message-bubble`(특이도 0,4,0)이
+   배경·테두리를 덮어써서(이전 멘션 규칙 0,3,0 이 패배 → 하이라이트 미표시 버그), 멘션 강조 선택자를
+   (0,5,0) 특이도로 올려 확실히 이긴다. */
+.message.is-mention-me .message-bubble,
+.message.is-user.is-other-message.is-mention-me .message-bubble {
+  border-left: 3px solid var(--accent, #f59e0b);
+  background: var(--mention-highlight-bg, rgba(245, 158, 11, 0.16));
+}
+.message.is-mention-me {
+  scroll-margin-top: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  .message.is-mention-me .message-bubble,
+  .message.is-user.is-other-message.is-mention-me .message-bubble {
+    background: rgba(245, 158, 11, 0.24);
+  }
+}
+
+/* feature-0009 gc-join-notice: 참여 알림 등 이벤트 메시지 — 좌/우 말풍선이 아닌
+   가운데 정렬 시스템 pill(Slack/Discord "X joined" 패턴). */
+.message-event {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0;
+  text-align: center;
+}
+.message-event-pill {
+  display: inline-block;
+  max-width: 80%;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-muted, #e2e8f0);
+  color: var(--text-muted, #475569);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.message-event-time {
+  font-size: 10px;
+  color: var(--text-muted, #475569);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .message-event-pill {
+    background: rgba(148, 163, 184, 0.18);
+    color: var(--text-muted, #94a3b8);
+  }
+}
+
+.message-meta-duration {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* TASK-0289: 수행시간이 구간 분해 tooltip 을 가질 때 hover 가능함을 점선 밑줄로 암시. */
+.message-meta-duration.has-breakdown {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+/* TASK-0289: 수행시간 구간 분해(대기/준비/추론) 인라인 보조 텍스트 — muted. */
+.message-meta-breakdown {
+  font-size: 10px;
+  opacity: 0.55;
+  margin-left: 4px;
+}
+
+.message-bubble {
+  padding: 11px 15px;
+  border-radius: 14px;
+  line-height: 1.68;
+  font-size: 14px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.message.is-user .message-bubble {
+  background: var(--bubble-user);
+  color: #fff;
+  border-bottom-right-radius: var(--r-xs);
+}
+
+/* 타 계정 사용자 메시지: 파란색(내 메시지) 과 혼동하지 않도록 중성 grey 로 분리 */
+.message.is-user.is-other-message .message-bubble {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  /* gc-other-msg-left: 좌측 정렬되므로 꼬리(모서리)도 좌측 하단으로 — 우측 정렬용 기본값 무효화. */
+  border-bottom-right-radius: 14px;
+  border-bottom-left-radius: var(--r-xs);
+}
+.message.is-user.is-other-message .message-content pre {
+  background: #1a1b26;
+  color: #c0caf5;
+}
+.message.is-user.is-other-message .message-content code {
+  background: rgba(0,0,0,.06);
+  color: inherit;
+}
+.message.is-user.is-own-message .message-meta {
+  color: var(--primary);
+  font-weight: 600;
+}
+.message.is-user.is-other-message .message-meta {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.message.is-assistant .message-bubble {
+  width: 100%;
+  background: var(--bubble-ai);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: var(--r-xs);
+  box-shadow: var(--shadow-sm);
+}
+
+/* UX-COMPACT: 메시지 버블 첨부 파일 표시 */
+.message-bubble-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,.2);
+}
+.message.is-user.is-other-message .message-bubble-attachments {
+  border-top-color: var(--border-subtle);
+}
+.message-bubble-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.18);
+  font-size: 11px;
+}
+.message.is-user.is-other-message .message-bubble-attach-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.attach-chip-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-chip-size {
+  opacity: .7;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.message-bubble-attach-chip.has-download {
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.message-bubble-attach-chip.has-download:hover {
+  background: rgba(255,255,255,.32);
+}
+.message.is-user.is-other-message .message-bubble-attach-chip.has-download:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+.attach-chip-dl {
+  font-size: 10px;
+  opacity: .75;
+  flex-shrink: 0;
+}
+/* ③ TASK-0285: assistant 말풍선 칩 — 밝은 배경이라 반투명 흰 배경 대신 surface(타인 메시지 동형). */
+.message.is-assistant .message-bubble-attach-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.message.is-assistant .message-bubble-attach-chip.has-download:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+/* 첨부 칩 버전 배지(AI 수정본 / version>1) — 첨부 목록 패널 .attach-list-item-ver 와 일관. */
+.attach-chip-ver {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.28);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.attach-chip-ver.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
+
+/* UX-COMPACT: 말풍선 hover 시 버튼 — absolute 배치로 레이아웃 이동 없음 */
+.message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  position: absolute;
+  bottom: -28px;
+  right: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s;
+  z-index: 10;
+}
+.message:hover .message-actions,
+.message-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.message-action-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.message-action-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37,99,235,.25);
+}
+.message.is-user.is-own-message .message-action-btn {
+  background: rgba(255,255,255,.9);
+  color: var(--primary);
+}
+.message.is-user.is-own-message .message-action-btn:hover {
+  background: #fff;
+}
+/* share-visibility-window: 말풍선 액션 통합 ☰ 트리거 — .message-action-btn pill 을 재사용하고
+   ☰ 글리프 크기 + 열림(is-open) 강조만 덧붙인다. 실 <button> 이라 Enter/Space 는 native 로 동작. */
+.message-menu-trigger {
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 8px;
+}
+.message-menu-trigger.is-open {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37,99,235,.25);
+}
+
+/* Message content markdown */
+.message-content p          { margin: 0 0 10px; }
+.message-content p:last-child { margin-bottom: 0; }
+
+.message-content pre {
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  background: #1a1b26;
+  color: #c0caf5;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.message.is-user .message-content pre {
+  background: rgba(255,255,255,.15);
+  color: rgba(255,255,255,.92);
+}
+
+.message-content code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: .14em .4em;
+  border-radius: var(--r-xs);
+  background: rgba(0,0,0,.06);
+}
+
+.message.is-user .message-content code {
+  background: rgba(255,255,255,.18);
+}
+
+/* TASK-0256: ```diff 코드 블록 — 답변 내 변경 제안을 라인별 +/- 색으로 구분.
+   .message-content pre 의 다크 배경(#1a1b26) 위에서 읽히는 팔레트 사용. */
+/* ★ TASK-0286: attachment-edit 블록(전체 수정본 본문) 대체 안내 칩 — 본문 미노출. */
+.attachment-edit-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: var(--primary-soft, #e8f0ff);
+  color: var(--primary, #2563eb);
+  font-size: 12px;
+  font-weight: 500;
+}
+/* feature-0013: 관계 다이어그램(mermaid) 렌더 컨테이너 */
+.message-content .mermaid-block,
+.message-content .mermaid-rendered {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0;
+  padding: 8px 4px;
+  overflow-x: auto;
+  background: var(--surface-soft, #f6f8fc);
+  border: 1px solid var(--border, #e5e9f0);
+  border-radius: 10px;
+}
+.message-content .mermaid-rendered svg { max-width: 100%; height: auto; }
+.message-content .mermaid-pending { color: var(--muted, #6b7280); font-size: 12px; }
+.message-content .mermaid-error {
+  display: block;
+  margin: 10px 0;
+}
+.message-content .mermaid-error pre { margin: 0; }
+
+.message-content pre.diff-block { padding: 10px 0; }
+.message-content pre.diff-block code {
+  display: block;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+.message-content pre.diff-block .diff-line {
+  display: block;
+  position: relative;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* 왼쪽에 gutter(줄번호 + 마커) 공간 확보 — ::before 가 그 자리에 그려진다. */
+  padding: 0 14px 0 calc(var(--diff-gutter-ch, 7) * 1ch + 1.6em);
+  border-left: 2px solid transparent;
+}
+/* TASK-0256c: 줄번호(old/new) + +/- 마커 gutter. data-gutter 속성을 ::before content 로만
+   렌더하므로 선택/복사에 포함되지 않는다(복사 시 순수 코드만). user-select:none 은 이중 안전장치. */
+.message-content pre.diff-block .diff-line::before {
+  content: attr(data-gutter);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--diff-gutter-ch, 7) * 1ch + 1.6em);
+  padding: 0 0.7em;
+  box-sizing: border-box;
+  white-space: pre;
+  text-align: right;
+  color: #565f89;
+  background: rgba(0, 0, 0, 0.18);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+.message-content pre.diff-block .diff-ctx  { color: #c0caf5; }
+.message-content pre.diff-block .diff-add  { background: rgba(158,206,106,.14); color: #9ece6a; border-left-color: #9ece6a; }
+.message-content pre.diff-block .diff-del  { background: rgba(247,118,142,.14); color: #f7768e; border-left-color: #f7768e; }
+.message-content pre.diff-block .diff-add::before { color: #9ece6a; }
+.message-content pre.diff-block .diff-del::before { color: #f7768e; }
+.message-content pre.diff-block .diff-hunk { color: #7aa2f7; }
+.message-content pre.diff-block .diff-meta { color: #737aa2; }
+
+/* TASK-20260724T180458: ```sql 코드블록 구문 하이라이트 — enhanceSqlBlocks 가 토큰을
+   <span class="sql-tok-*"> 로 감싼다. assistant 말풍선의 .message-content pre 는 라이트/다크
+   무관 다크 배경(#1a1b26)이라 diff-block 과 동일 Tokyo Night 팔레트를 쓰고 테마 분기가 불필요.
+   (사용자 말풍선만 기본 반투명 배경이라 아래에서 sql-block 배경을 다크로 별도 고정한다.)
+   TASK-20260727T102027: sql-tok 는 ```sql 블록(pre.sql-block)과 SQL diff(pre.diff-sql) 양쪽에서
+   나오므로 셀렉터를 pre.sql-block 한정에서 .sql-tok-* 로 일반화(토크나이저 전용 클래스라 bleed 없음). */
+.message-content .sql-tok-keyword { color: #bb9af7; font-weight: 600; }
+.message-content .sql-tok-func    { color: #7aa2f7; }
+.message-content .sql-tok-type    { color: #2ac3de; }
+.message-content .sql-tok-string  { color: #9ece6a; }
+.message-content .sql-tok-number  { color: #ff9e64; }
+.message-content .sql-tok-var     { color: #e0af68; }
+.message-content .sql-tok-comment { color: #737aa2; font-style: italic; }
+/* SQL diff(pre.diff-sql): 내용 라인(add/del/ctx) 평문색을 기본 코드색으로 되돌려 토큰이 syntax색을
+   내게 한다. add/del 구분은 배경 tint·좌측 border·gutter(+/-) 마커가 계속 담당(GitHub 식). hunk(@@)·
+   meta 라인은 :not 으로 제외해 고유색(파랑/회색) 유지. 비-SQL diff 는 diff-sql 미부여라 무영향. */
+.message-content pre.diff-block.diff-sql .diff-line:not(.diff-hunk):not(.diff-meta) { color: #c0caf5; }
+/* 사용자 말풍선(반투명 흰 배경)에 SQL diff 가 실릴 때 — sql-block 과 동일하게 배경을 다크로 고정해
+   토큰 팔레트 대비 보장(§18.8 리뷰 parity MINOR). */
+.message.is-user .message-content pre.diff-block.diff-sql { background: #1a1b26; }
+/* 사용자 말풍선(primary 색 위 반투명 흰 배경)에 드물게 sql 블록이 실릴 때 — 배경을 assistant 와
+   동일한 다크로 고정해 위 Tokyo Night 팔레트 대비를 보장한다(색상 규칙 중복 불필요). */
+.message.is-user .message-content pre.sql-block {
+  background: #1a1b26;
+  color: #c0caf5;
+}
+
+.message-content h1, .message-content h2, .message-content h3 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.message-content ul, .message-content ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.message-content li { margin-bottom: 4px; }
+
+.message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  margin: 10px 0;
+}
+
+.message-content th,
+.message-content td {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.message-content th {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+/* Details / expand block */
+.message-details {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.message-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.message-details-body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.message-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.message-detail-block strong { font-size: 12px; color: var(--text-2); }
+
+.message-detail-block ul {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-muted);
+}
+
+.message-detail-block li { margin-bottom: 3px; }
+
+/* SQL 쿼리 + 결과 테이블 그룹 */
+.sql-result-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sql-result-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+}
+
+.sql-block {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: #1a1b26;
+  color: #c0caf5;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  max-height: min(40vh, 320px);
+  overflow: auto;
+}
+
+/* 인라인 쿼리 결과 테이블 */
+.result-table-wrap {
+  overflow: auto;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  max-height: min(60vh, 460px);
+  min-width: 0;
+}
+
+/* 메시지 본문 "전체 N행 미리보기" 펼침 — 헤더바(행수 + 접기) (#122) */
+.inline-full-table {
+  margin: .5rem 0;
+}
+.inline-full-table-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  margin-bottom: .35rem;
+}
+.inline-full-table-count {
+  font-size: .8rem;
+  color: var(--text-2);
+}
+
+.result-table {
+  /* sticky 헤더·첫 열에 border 가 따라가도록 separate 모델 사용.
+     border 대체는 .result-table th/td 의 box-shadow 로 처리. */
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 12px;
+  background: var(--surface);
+}
+
+.result-table th {
+  padding: 6px 10px;
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--text-2);
+  text-align: left;
+  white-space: nowrap;
+  box-shadow:
+    inset 0 -1px 0 var(--border),
+    inset -1px 0 0 var(--border-subtle);
+  /* 헤더 row 고정 (세로 스크롤 중에도 상단 유지) */
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.result-table td {
+  padding: 5px 10px;
+  color: var(--text);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow:
+    inset 0 -1px 0 var(--border-subtle),
+    inset -1px 0 0 var(--border-subtle);
+}
+
+.result-table tbody tr:last-child td { box-shadow: inset -1px 0 0 var(--border-subtle); }
+.result-table th:last-child { box-shadow: inset 0 -1px 0 var(--border); }
+.result-table tbody tr:last-child td:last-child { box-shadow: none; }
+.result-table td:last-child { box-shadow: inset 0 -1px 0 var(--border-subtle); }
+.result-table tbody tr:hover td { background: var(--primary-soft); }
+
+/* RowCount (#) 가상 컬럼 — 첫 열 고정 + 번호 서식 */
+.result-table th.col-rownum,
+.result-table td.col-rownum {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 44px;
+  width: 44px;
+  box-shadow: inset -1px 0 0 var(--border);
+}
+.result-table thead th.col-rownum {
+  /* 코너: 행/열 freeze 의 교차점 — 두 축 모두 위에 있어야 스크롤 시 가려지지 않음 */
+  z-index: 3;
+  box-shadow:
+    inset 0 -1px 0 var(--border),
+    inset -1px 0 0 var(--border);
+}
+.result-table tbody tr:hover td.col-rownum { background: var(--primary-soft); }
+
+.result-table-meta {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.message-link-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.message-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+.message-link:hover { background: var(--primary-soft); color: var(--primary); border-color: rgba(37,99,235,.2); }
+
+/* SQL 쿼리 — 항상 표시 */
+.sql-toggle-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sql-toggle-btn {
+  align-self: flex-start;
+}
+
+/* SQL 결과셋 토글 — 기본 숨김, 클릭 시 펼침 */
+.sql-result-toggle-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sql-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* SQL 결과 액션 영역 (전체 데이터 보기 + CSV 링크) */
+.sql-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* conv-audit (csv-inline-no-download): 답변 본문 ```csv 블록 아래 다운로드 버튼 바. */
+.csv-block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 10px;
+}
+.csv-download-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-2);
+}
+.csv-download-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37, 99, 235, .2);
+}
+
+.result-table-wrap.is-full-data {
+  max-height: min(70vh, 560px);
+  overflow: auto;
+}
+
+/* SQL 쿼리 Navigator — 다수 execute_sql step을 한 화면에서 탐색 */
+.sql-navigator {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px;
+  background: var(--bg);
+  outline: none;
+  min-width: 0;
+}
+.sql-navigator:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.15);
+}
+
+.sql-nav-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sql-nav-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s ease, border-color .12s ease;
+}
+.sql-nav-btn:hover:not(:disabled) {
+  background: var(--primary-soft);
+  border-color: rgba(37,99,235,.2);
+  color: var(--primary);
+}
+.sql-nav-btn:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+.sql-nav-indicator {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 64px;
+  text-align: center;
+}
+
+.sql-nav-context {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sql-nav-panels {
+  display: block;
+}
+
+.sql-nav-panel {
+  display: none;
+  min-width: 0;
+}
+.sql-nav-panel.is-active {
+  display: flex;
+}
+
+/* ─── Composer ───────────────────────────────────────────────────── */
+.composer-wrap {
+  flex-shrink: 0;
+  padding: 8px 20px 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  position: relative;
+}
+
+/* TASK-0094 Sprint 1 Phase 6: 첨부 pills 영역 — composer-box 위에 표시 */
+.composer-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 0;
+  margin-bottom: 6px;
+  border-radius: var(--r-md);
+  background: rgba(37, 99, 235, 0.04);
+  border: 1px dashed rgba(37, 99, 235, 0.2);
+}
+.composer-attachments.hidden { display: none; }
+.composer-attachments-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.composer-attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: var(--text);
+  max-width: 280px;
+  cursor: default;
+  transition: border-color 0.15s, background 0.15s;
+}
+.composer-attachment-pill .pill-kind {
+  font-size: 10px;
+  color: var(--primary);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.composer-attachment-pill .pill-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-attachment-pill .pill-size {
+  font-size: 11px;
+  color: var(--muted);
+}
+/* TASK-0274: 첨부 버전 배지. assistant 수정본은 강조색. */
+.composer-attachment-pill .pill-version {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--surface-2, #eef);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.composer-attachment-pill .pill-version.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
+.composer-attachment-pill .pill-toggle {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: background 0.15s, color 0.15s;
+}
+.composer-attachment-pill .pill-toggle:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--danger, #ef4444);
+}
+.composer-attachment-pill[data-selected="false"] {
+  opacity: 0.55;
+  background: rgba(0, 0, 0, 0.02);
+}
+.composer-attachment-pill[data-selected="false"] .pill-name {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.composer-attachment-pill[data-uploading="true"] {
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.07);
+}
+.composer-attachment-pill[data-uploading="true"] .pill-kind::after {
+  content: " ⏳";
+}
+.composer-attachment-pill[data-error="true"] {
+  border-color: var(--danger, #ef4444);
+  background: rgba(239, 68, 68, 0.06);
+  color: var(--danger, #ef4444);
+}
+.composer-attachments-scope-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.composer-attachments-scope-all input[type="checkbox"] {
+  cursor: pointer;
+}
+
+/* TASK-0094 Phase 6: drag-drop overlay — composer-wrap 위 absolute */
+.composer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-lg);
+  background: rgba(37, 99, 235, 0.08);
+  border: 2px dashed var(--primary);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 4;
+  pointer-events: none;
+}
+.composer-drop-overlay.hidden { display: none; }
+.composer-wrap.is-dragover .composer-drop-overlay { display: flex; }
+
+/* TASK-0107: chat-pane 전체 drag&drop overlay. */
+.chat-pane { position: relative; }
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.10);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  z-index: 50;
+  pointer-events: none;
+  animation: chat-drop-overlay-fade 120ms ease-out;
+}
+.chat-drop-overlay.hidden { display: none; }
+.chat-drop-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 36px;
+  border: 2px dashed var(--primary, #2563eb);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--primary, #2563eb);
+  font-size: 14px;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.18);
+}
+.chat-drop-overlay-card strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+.chat-drop-overlay-card span {
+  font-size: 12px;
+  color: var(--muted, #64748b);
+}
+@keyframes chat-drop-overlay-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* feature-0008 (composer-model-selector): `+` action button — paperclip 첨부
+   버튼을 대체. ChatGPT 패턴. click 시 primary popup (.composer-actions-menu)
+   open — [파일 첨부, 모델 선택]. */
+.composer-actions-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+.composer-actions-btn:hover,
+.composer-actions-btn[aria-expanded="true"] {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--primary);
+}
+.composer-actions-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Primary popup — fixed 포지셔닝으로 overflow:hidden 클리핑 우회. */
+.composer-actions-menu {
+  position: fixed;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, rgba(0,0,0,0.08));
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.15);
+  padding: 4px;
+  min-width: 240px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.composer-actions-menu.hidden { display: none; }
+.composer-actions-item {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text, #111827);
+  transition: background 0.12s;
+  font-size: 13.5px;
+}
+.composer-actions-item:hover {
+  background: rgba(37, 99, 235, 0.06);
+}
+/* feature-0003 reasoning-effort-selector: thinking 미지원 모델 선택 시 추론 강도 항목 비활성. */
+.composer-actions-item.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.composer-actions-item.is-disabled:hover {
+  background: transparent;
+}
+.composer-actions-icon {
+  color: var(--muted, #6b7280);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-actions-label {
+  font-weight: 500;
+  color: var(--text, #111827);
+}
+.composer-actions-hint {
+  font-size: 11.5px;
+  color: var(--text-muted, #9ca3af);
+  margin-left: 6px;
+}
+.composer-actions-caret {
+  color: var(--muted, #9ca3af);
+}
+
+/* Secondary popup — 모델 선택 (description 포함). primary 우측 fixed 로 띄움. */
+.composer-model-menu {
+  position: fixed;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, rgba(0,0,0,0.08));
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.15);
+  padding: 4px;
+  min-width: 280px;
+  max-width: 360px;
+  z-index: 201;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.composer-model-menu.hidden { display: none; }
+.composer-model-empty {
+  padding: 12px;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13px;
+  text-align: center;
+}
+.composer-model-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.composer-model-item:hover {
+  background: rgba(37, 99, 235, 0.06);
+}
+.composer-model-item.is-selected {
+  background: rgba(37, 99, 235, 0.08);
+}
+.composer-model-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+.composer-model-item-label {
+  font-weight: 600;
+  color: var(--text, #111827);
+}
+.composer-model-item-group {
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  background: rgba(0,0,0,0.04);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.composer-model-item-check {
+  margin-left: auto;
+  color: var(--primary, #2563eb);
+  font-weight: 700;
+}
+.composer-model-item-desc {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.4;
+  /* model-picker-copy(2026-07-27): 한국어는 기본 줄바꿈 규칙상 음절 사이 어디서나 끊겨
+     "장기 추론과 복잡한 분|석" 처럼 단어 중간에서 갈라진다(실측). keep-all 로 어절 경계에서만
+     끊기게 한다 — 설명문 단축과 별개로, 폭이 더 좁아지거나 문구가 길어져도 가독성이 유지된다. */
+  word-break: keep-all;
+}
+
+/* 화면 좁을 때 secondary popup 이 화면 밖으로 튀어나가지 않도록 fallback. */
+@media (max-width: 720px) {
+  .composer-model-menu {
+    left: 0;
+    bottom: calc(100% + 56px);
+  }
+}
+
+.composer-box {
+  /* feature-0008: position:relative — `.composer-actions-menu` / `.composer-model-menu`
+     의 absolute anchor. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  transition: border-color .14s, box-shadow .14s;
+}
+
+/* UX-COMPACT: Product chip 왼쪽 배치 (HTML 순서로 위치 결정) */
+.composer-product-chip-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.composer-product-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, color .12s ease;
+  user-select: none;
+  max-width: 200px;
+}
+.composer-product-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.composer-product-chip[aria-expanded="true"] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.composer-product-chip[aria-disabled="true"],
+.composer-product-chip.is-disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.composer-product-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.composer-product-chip[data-mode="auto"] .composer-product-chip-dot {
+  background: var(--text-muted);
+}
+.composer-product-chip[data-mode="pinned"] .composer-product-chip-dot {
+  background: var(--primary);
+}
+/* TASK-0262: 선택 제품 chip dot 도 datasource 네트워크 상태색으로(모드색 override). 드롭업 conn 규칙과 동형 —
+   specificity (0,3,0) 동일이라 mode 규칙보다 소스 뒤에 두어 override. healthy 초록/unstable 빨강/unknown 중립. */
+.composer-product-chip .composer-product-chip-dot--conn.is-ok { background: var(--success, #16a34a); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정"·느림/간헐) / is-down(회색 "연결 끊김"·도달 불가).
+   is-fail 은 레거시 호환(빨강 유지). is-unknown=옅은 회색(확인중). */
+.composer-product-chip .composer-product-chip-dot--conn.is-fail,
+.composer-product-chip .composer-product-chip-dot--conn.is-unstable { background: var(--danger, #dc2626); }
+.composer-product-chip .composer-product-chip-dot--conn.is-down { background: #6b7280; }
+.composer-product-chip .composer-product-chip-dot--conn.is-unknown { background: var(--text-muted); }
+/* product-icon-chip: 선택 제품 프로필 아이콘(이미지 or Identicon SVG) — dot 과 label 사이. 원형 클립. */
+.composer-product-chip-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+.composer-product-chip-icon.hidden { display: none; }
+.composer-product-chip-icon img, .composer-product-chip-icon > svg {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.composer-product-chip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+
+/* drop-up menu — chip 위로 펼침 (composer 위쪽) */
+.product-dropup-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  /* profile-icon 정합: 항목이 상태배지+아이콘+명칭+데이터소스 4요소라 명칭 잘림을 막기 위해 너비 확대.
+     min 220→300, max 280→420. 좁은 뷰포트는 max(420, 92vw 미만)로 clamp. */
+  min-width: 300px;
+  max-width: min(420px, 92vw);
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.product-dropup-menu.hidden { display: none; }
+.product-dropup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.product-dropup-item:hover { background: rgba(37,99,235,.08); }
+/* product-picker-keynav: 검색 후 ↑/↓ 순회 시 '지금 어느 항목에 있는지' 를 보여주는 커서.
+   focus-visible 이라 마우스 클릭 선택에는 링이 남지 않는다(키보드 조작에서만 노출).
+   outline-offset 음수 = 항목이 메뉴 패딩 안이라 링이 잘리지 않게 안쪽으로. */
+.product-dropup-item:focus-visible {
+  background: rgba(37,99,235,.10);
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: -2px;
+}
+.product-dropup-item.is-selected {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+.product-dropup-item-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.product-dropup-item[data-mode="auto"] .product-dropup-item-dot { background: var(--text-muted); }
+.product-dropup-item[data-mode="pinned"] .product-dropup-item-dot { background: var(--primary); }
+/* TASK-0261: datasource 연결(네트워크) 상태 dot — 모드색(auto/pinned)보다 우선해 상태색으로 칠한다.
+   selector specificity 0,3,0 > 모드 규칙 0,2,0. healthy=초록 / unstable=빨강 / unknown=중립. */
+.product-dropup-item .product-dropup-item-dot--conn.is-ok { background: var(--success, #16a34a); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정") / is-down(회색 "연결 끊김"). is-fail 레거시 빨강. */
+.product-dropup-item .product-dropup-item-dot--conn.is-fail,
+.product-dropup-item .product-dropup-item-dot--conn.is-unstable { background: var(--danger, #dc2626); }
+.product-dropup-item .product-dropup-item-dot--conn.is-down { background: #6b7280; }
+.product-dropup-item .product-dropup-item-dot--conn.is-unknown { background: var(--text-muted); }
+.product-dropup-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 멀티 datasource (P2): 제품 항목의 datasource 배지 */
+.product-dropup-item-ds {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--border-subtle, #eef2f7);
+  color: var(--text-2, #6b7280);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.product-dropup-item-check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--primary);
+  opacity: 0;
+}
+.product-dropup-item.is-selected .product-dropup-item-check { opacity: 1; }
+.product-dropup-section-head {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+/* feature-0009 gc-participant-product-select: '공유 대화 생성자 제품 — 열람 전용' 그룹.
+   상단 '내 제품'(선택 가능)과 시각적으로 구분되도록 구분선 + 별도 헤더색. */
+.product-dropup-section-head--viewonly {
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle, #eef2f7);
+  padding-top: 8px;
+}
+/* 열람 전용 항목 — 회색·비활성(선택/발화 불가). 본인 접근권 밖 제품(ANCHOR §1). */
+.product-dropup-item.is-view-only {
+  cursor: not-allowed;
+  opacity: .55;
+}
+.product-dropup-item.is-view-only:hover { background: transparent; }
+.product-dropup-item.is-view-only .product-dropup-item-label { color: var(--text-muted); }
+.product-dropup-item-viewonly {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--border-subtle, #eef2f7);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* TASK-0295: 역할에 제품 접근 권한이 없어 picker 에 표시할 제품이 없을 때 안내. */
+.product-dropup-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* 제품 명칭 검색 필터 — 제품이 많을 때만 노출(렌더 조건은 app.js PRODUCT_DROPUP_SEARCH_MIN).
+   sticky 로 메뉴 상단에 고정해, 목록이 길어 스크롤되어도 입력칸이 항상 보이게 한다. */
+.product-dropup-search-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-1, #ffffff);
+  padding: 2px 0 6px;
+}
+.product-dropup-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+.product-dropup-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.12);
+}
+.product-dropup-search::placeholder { color: var(--text-muted); }
+/* 검색어와 일치하는 제품이 없을 때 안내(filterProductDropupItems 가 .hidden 토글). */
+.product-dropup-no-result {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* feature-0009: @멘션 자동완성 드롭다운 (composer-box 기준 위로 표시) */
+.mention-ac {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  min-width: 220px;
+  max-width: 340px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  padding: 4px;
+}
+.mention-ac.hidden { display: none; }
+.mention-ac-item {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mention-ac-item.is-active,
+.mention-ac-item:hover { background: var(--surface-muted, #f1f5f9); }
+
+.composer-box:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.10);
+  background: var(--surface);
+}
+
+#promptInput {
+  flex: 1;
+  min-height: 24px;
+  max-height: 180px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  resize: none;
+  line-height: 1.6;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  overflow-y: auto;
+}
+
+#promptInput::placeholder { color: var(--text-muted); }
+#promptInput:disabled { opacity: .5; cursor: not-allowed; }
+
+/* TASK-0158: composer 즉시 답변 버튼 (처리 중에만 노출, send 버튼 좌측, 중립 secondary) */
+.composer-finalize-btn {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background .13s, border-color .13s, color .13s;
+}
+.composer-finalize-btn:hover { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); }
+.composer-finalize-btn.is-access-blocked { opacity: .55; cursor: not-allowed; }
+
+/* TASK-0158: 공유 링크 관리 모달 (목록 + 취소) */
+.share-mgr-backdrop {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.share-mgr-panel {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%; max-width: 560px; max-height: 80vh;
+  display: flex; flex-direction: column;
+}
+.share-mgr-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border-subtle);
+}
+.share-mgr-title { margin: 0; font-size: 15px; font-weight: 600; }
+.share-mgr-close {
+  font-size: 20px; line-height: 1; color: var(--text-muted);
+  background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: var(--r-xs);
+}
+.share-mgr-close:hover { background: var(--border-subtle); color: var(--text); }
+.share-mgr-body { padding: 12px 20px 18px; overflow-y: auto; flex: 1; min-height: 0; }
+.share-mgr-msg { padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
+.share-mgr-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.share-mgr-row:last-child { border-bottom: none; }
+.share-mgr-row.is-revoked { opacity: .6; }
+.share-mgr-row-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.share-mgr-token { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.share-mgr-meta { font-size: 12px; color: var(--text-muted); }
+.share-mgr-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.share-mgr-badge.is-active { background: #ecfdf3; color: var(--success); }
+.share-mgr-badge.is-revoked { background: var(--border-subtle); color: var(--text-muted); }
+.share-mgr-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.share-mgr-btn {
+  font-size: 12px; padding: 4px 9px; border-radius: var(--r-sm);
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-2); cursor: pointer;
+}
+.share-mgr-btn:hover { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); }
+.share-mgr-btn.is-danger { color: var(--danger); }
+.share-mgr-btn.is-danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.share-mgr-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* TASK-20260619T012028-share-link-expiry: 만료 배지 + 만료 기간 선택 모달. */
+.share-mgr-badge.is-expired { background: #fff7ed; color: #b45309; }
+.share-expiry-panel { max-width: 420px; }
+.share-expiry-desc { padding: 14px 20px 4px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.share-expiry-opts { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px 20px; }
+/* feature-0009: 공유 링크 '참여 허용' 토글(기본 ON) */
+.share-joinable-row { display: flex; align-items: center; gap: 8px; padding: 14px 20px 0; font-size: 13px; color: var(--text); cursor: pointer; }
+.share-joinable-row input { width: 16px; height: 16px; cursor: pointer; }
+.share-joinable-hint { color: var(--text-muted); font-size: 12px; }
+/* feature-0009-share-joinable-guard: 비소유자에겐 '참여 허용' 토글을 잠금(비활성)으로 표시. */
+.share-joinable-row.is-locked { cursor: not-allowed; color: var(--text-muted); }
+.share-joinable-row.is-locked input { cursor: not-allowed; opacity: 0.5; }
+.share-expiry-opt { flex: 1 1 auto; min-width: 72px; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+/* feature-0009 share-joinable-confirm: '링크 생성' 직후 참여 허용 여부 확인 모달. */
+.share-confirm-panel { max-width: 420px; }
+.share-confirm-desc { padding: 16px 20px 4px; font-size: 13px; color: var(--text); line-height: 1.6; }
+.share-confirm-desc strong { color: var(--text); font-weight: 600; }
+.share-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding: 14px 20px 20px; }
+
+/* gc-settings-notif: 통합 공유 팝업 — 상단 '생성' 영역 + 구분 소제목 + 하단 '발급된 링크' 목록. */
+.share-create-sec { padding: 14px 20px 4px; }
+.share-create-row { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; flex-wrap: wrap; }
+.share-expiry-field { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+.share-expiry-field select { font-size: 13px; padding: 5px 8px; }
+.share-mgr-subhead {
+  padding: 6px 20px 0; margin-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: none;
+}
+
+/* feature-0009 share-participants: 공유 팝업 내 '참여 중인 사용자' 목록.
+   gc-member-actions-hover: 반응형 그리드(셀 고정 위치)로 배치 — 한 셀에서 hover 로 추방/차단
+   버튼이 셀 내부에서 펼쳐져(이름이 자리 양보) 다른 셀의 위치·구성은 바뀌지 않는다(요구사항).
+   평소엔 이름이 셀 폭을 꽉 채워 여백 낭비가 없고, 다열이라 세로 길이도 짧다. */
+.share-participants { padding: 8px 20px 4px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 8px; max-height: 156px; overflow-y: auto; flex-shrink: 0; }
+.share-participants .share-mgr-msg { grid-column: 1 / -1; padding: 8px 0; text-align: left; }
+.share-participant {
+  display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+  padding: 3px 10px 3px 4px; border: 1px solid var(--border-subtle); border-radius: 999px;
+  background: var(--surface-muted, #f6f5f1); font-size: 12px; color: var(--text);
+  transition: background .15s ease, border-color .15s ease;
+}
+.share-participant .msg-avatar { margin-right: 0; flex-shrink: 0; }
+.share-participant-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.share-participant-role {
+  flex-shrink: 0;
+  font-size: 10px; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+  background: var(--primary-soft, #eef2ff); color: var(--primary-dark, #3730a3);
+}
+/* feature-0009 member-kick-ban: owner 전용 추방/차단/해제 컨트롤 + 차단 칩. */
+.share-bans { padding: 4px 20px 4px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 8px; max-height: 120px; overflow-y: auto; flex-shrink: 0; }
+.share-bans .share-mgr-msg { grid-column: 1 / -1; padding: 8px 0; text-align: left; }
+.share-participant.is-banned { background: var(--danger-soft, #fef2f2); border-color: var(--danger-soft, #fecaca); }
+/* gc-member-actions-hover: 액션 버튼은 기본 접힘(이름이 셀 폭 채움) → 칩 hover/focus 시 셀 내부에서
+   부드럽게 펼침(이름이 자리 양보). 셀 폭이 그리드 트랙으로 고정이라 다른 셀은 절대 안 움직인다. */
+.share-participant-acts {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  max-width: 0; margin-left: 0; opacity: 0; overflow: hidden;
+  transform: translateX(-4px); pointer-events: none;
+  transition: max-width .22s ease, opacity .18s ease, margin-left .22s ease, transform .22s ease;
+}
+.share-participant:hover > .share-participant-acts,
+.share-participant:focus-within > .share-participant-acts {
+  max-width: 120px; margin-left: 4px; opacity: 1; transform: translateX(0); pointer-events: auto;
+}
+.share-participant:hover { background: var(--surface, #fff); border-color: var(--border); }
+.share-participant.is-banned:hover { background: var(--danger-soft, #fef2f2); border-color: var(--danger, #dc2626); }
+/* 터치 기기(hover 불가)는 항상 노출 — hover-only 접근성 보완. */
+@media (hover: none) {
+  .share-participant-acts { max-width: 120px; margin-left: 4px; opacity: 1; transform: none; pointer-events: auto; }
+}
+.share-participant-btn {
+  font-size: 11px; line-height: 1; padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid var(--border); background: var(--surface, #fff); color: var(--text-2, #555);
+}
+.share-participant-btn:hover { background: var(--primary-soft, #eef2ff); border-color: var(--primary, #2563eb); color: var(--primary-dark, #1d4ed8); }
+.share-participant-btn.is-danger { color: var(--danger, #dc2626); }
+.share-participant-btn.is-danger:hover { background: var(--danger-soft, #fef2f2); border-color: var(--danger, #dc2626); color: var(--danger, #dc2626); }
+.share-participant-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* gc-settings-notif: 대화 설정 팝업 (제목 변경 + 알림 음소거). share-mgr-panel 골격 재사용. */
+.conv-settings-panel { max-width: 440px; }
+.conv-settings-body { padding: 8px 20px 18px; overflow-y: auto; }
+.conv-settings-sec { padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
+.conv-settings-sec:last-child { border-bottom: none; }
+.conv-settings-sec-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.conv-settings-title-row { display: flex; align-items: center; gap: 8px; }
+.conv-settings-input {
+  flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text);
+}
+.conv-settings-input:disabled { opacity: .6; cursor: not-allowed; }
+.conv-settings-toggle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+.conv-settings-toggle-row input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
+.conv-settings-hint { font-size: 12px; color: var(--text-muted); line-height: 1.45; margin-top: 6px; }
+/* gc-settings-archive-leave: 대화 설정 팝업의 '대화 관리'(보관/나가기) danger 섹션. 버튼은 .btn-danger 재사용. */
+.conv-settings-sec-danger .conv-settings-sec-title { color: var(--danger); }
+.conv-settings-danger-btn { margin-top: 2px; }
+
+/* gc-settings-notif: 프로필>계정>알림 — 토글 행 + 데스크톱 권한 상태. */
+.profile-toggle-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 0; cursor: pointer;
+}
+.profile-toggle-row input { width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; cursor: pointer; accent-color: var(--primary); }
+.profile-toggle-row input:disabled { cursor: not-allowed; }
+.profile-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
+.profile-toggle-text .helper-text { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
+.profile-notify-perm { margin-top: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+/* anim-pref: 선택형 설정 행(라벨 + select). toggle-row 와 시각 정합. */
+.profile-select-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 8px 0;
+}
+.profile-select-row .profile-toggle-text { flex: 1; min-width: 0; cursor: default; }
+.profile-motion-select { flex-shrink: 0; align-self: center; min-width: 128px; }
+.profile-notify-perm .btn-secondary { font-size: 12px; padding: 5px 10px; }
+
+/* feature-0003 attach-full-scope (2026-07-29): 첨부 scopeAll 토글(.attach-scope-all*) 제거 —
+   이 대화의 첨부는 항상 전량이 assistant 참조 스코프라 선택 구분이 사라졌다.
+   대신 참조 범위를 알리는 안내 1줄(.attach-side-panel-note). */
+.attach-side-panel-note {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* TASK-0158: 내 활동 기록 (프로필 감사 탭) */
+.profile-audit-list { display: flex; flex-direction: column; }
+.profile-audit-empty { padding: 16px 0; color: var(--text-muted); font-size: 13px; text-align: center; }
+.profile-audit-row {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 8px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.profile-audit-row:last-child { border-bottom: none; }
+.profile-audit-time { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.profile-audit-action { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.profile-audit-resource { font-size: 12px; color: var(--text-muted); }
+
+.send-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  flex-shrink: 0;
+  transition: background .13s, transform .1s;
+}
+.send-btn:hover   { background: var(--primary-dark); }
+.send-btn:active  { transform: scale(.94); }
+.send-btn:disabled { opacity: .38; cursor: not-allowed; transform: none; }
+/* REQ-20260608-0157: 요청 처리 중 "중단" 모드 — 위험색으로 전송과 구분 */
+.send-btn.is-stop { background: var(--danger); }
+.send-btn.is-stop:hover { background: #b91c1c; }
+.send-btn.is-stop.is-access-blocked { opacity: .55; cursor: not-allowed; }
+
+/* Send mode toggle tooltip — appears above send button on hover */
+.send-mode-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: var(--surface-1, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  white-space: nowrap;
+  z-index: 60;
+  min-width: 160px;
+}
+.send-mode-tip-current {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.send-mode-tip-toggle {
+  font-size: 12px;
+  color: var(--primary);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+}
+.send-mode-tip-toggle:hover { text-decoration: underline; }
+
+/* UX-COMPACT: 정상 상태에서 자동 숨김 (내용 없으면 hidden). 에러/경고 상태에서만 표시. */
+.composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+/* TASK-20260619T014034: 상태점(.llm-status-dot)이 보일 때는 status/hint 가 비어도 footer 유지. */
+.composer-footer:has(.composer-status:empty):has(.composer-hint:empty):has(.llm-status-dot.hidden) { display: none; }
+.composer-hint:empty { display: none; }
+.composer-status:empty { display: none; }
+
+.composer-status { font-weight: 600; }
+
+/* =====================================================================
+   TASK-20260619T014034: LLM provider 외부요인 제한(자격증명 만료 등) 표면.
+   4 surface — (1) 컴포저 상단 직접 배너 (2) footer 상태점+툴팁(glanceable)
+   (3) 대화 인라인 제한 안내 (4) 실행단계 패널 제한 노트. /api/llm/health 폴링이 토글.
+   ===================================================================== */
+.llm-restriction-banner {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 0 8px; padding: 9px 12px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  color: var(--danger);
+  font-size: 13px; line-height: 1.45;
+}
+.llm-restriction-banner.hidden { display: none; }
+.llm-restriction-banner-icon { flex: 0 0 auto; font-size: 14px; line-height: 1.4; }
+.llm-restriction-banner-text { flex: 1 1 auto; font-weight: 600; }
+.llm-restriction-banner-retry {
+  flex: 0 0 auto; align-self: center;
+  border: 1px solid var(--danger); background: transparent;
+  color: var(--danger); border-radius: 7px;
+  padding: 3px 9px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.llm-restriction-banner-retry:hover { background: var(--danger); color: #fff; }
+.llm-restriction-banner-retry.hidden { display: none; }
+
+/* feature-0030: 실행시간 한도 임박 배너. LLM 제한 배너와 같은 자리·같은 형태를 쓰되
+   색은 danger(고장)가 아니라 warning(선택 필요)이다 — 아직 아무것도 잘못되지 않았고
+   사용자가 결정하면 되는 상태이기 때문. 승인 후에는 is-granted 로 톤을 낮춘다. */
+.timeout-extend-banner {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 8px; padding: 9px 12px;
+  background: color-mix(in srgb, var(--warning, #d97706) 10%, transparent);
+  border: 1px solid var(--warning, #d97706);
+  border-radius: 10px;
+  color: var(--warning, #d97706);
+  font-size: 13px; line-height: 1.45;
+}
+.timeout-extend-banner.hidden { display: none; }
+.timeout-extend-banner-icon { flex: 0 0 auto; font-size: 14px; }
+.timeout-extend-banner-text { flex: 1 1 auto; font-weight: 600; }
+.timeout-extend-banner-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--warning, #d97706); background: transparent;
+  color: var(--warning, #d97706); border-radius: 7px;
+  padding: 3px 9px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.timeout-extend-banner-btn:hover { background: var(--warning, #d97706); color: #fff; }
+.timeout-extend-banner-btn.hidden { display: none; }
+.timeout-extend-banner.is-granted {
+  background: color-mix(in srgb, var(--text-muted, #6b7280) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-muted, #6b7280) 35%, transparent);
+  color: var(--text-muted, #6b7280);
+}
+
+.llm-status-dot {
+  flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--danger); cursor: help; align-self: center;
+}
+.llm-status-dot.hidden { display: none; }
+.llm-status-dot.is-restricted { background: var(--danger); animation: llmDotPulse 2s ease-out infinite; }
+.llm-status-dot.is-unknown { background: var(--text-muted); animation: none; }
+@keyframes llmDotPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+.llm-restriction-notice {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 6px; padding: 10px 12px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-left: 3px solid var(--danger);
+  border-radius: 8px;
+  font-size: 13px; line-height: 1.5;
+}
+.llm-restriction-notice-head { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--danger); }
+.llm-restriction-notice-body { color: #7f1d1d; font-weight: 500; }
+.llm-restriction-notice-meta { color: var(--text-muted); font-size: 11.5px; }
+
+.llm-restriction-panel-note {
+  margin: 6px 0; padding: 8px 10px;
+  background: var(--danger-soft); border: 1px solid var(--danger);
+  border-radius: 8px; color: var(--danger);
+  font-size: 12.5px; font-weight: 600; line-height: 1.45;
+}
+.llm-restriction-panel-note.hidden { display: none; }
+
+/* =====================================================================
+   UX-COMPACT: 첨부 파일 사이드 패널 (backdrop 없음)
+   ===================================================================== */
+.attach-side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 180;
+  width: 280px;
+  min-width: 240px;
+  max-width: 92vw;
+  height: 100vh;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .2s ease;
+}
+.attach-side-panel:not(.hidden) {
+  transform: translateX(0);
+}
+.attach-side-panel.hidden { display: flex !important; transform: translateX(100%); }
+/* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) */
+.attach-side-panel.is-resizing { transition: none; user-select: none; }
+/* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽을 끌어 너비 조절 */
+.attach-side-panel-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 1;
+  background: transparent;
+  touch-action: none;
+}
+.attach-side-panel-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background .15s ease;
+}
+.attach-side-panel-resizer:hover::before,
+.attach-side-panel.is-resizing .attach-side-panel-resizer::before {
+  background: var(--primary, #2563eb);
+}
+
+.attach-side-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.attach-side-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.attach-side-panel-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.attach-side-panel-close:hover { background: rgba(0,0,0,.07); color: var(--text); }
+
+.attach-side-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 첨부 파일 pill — side panel 버전 */
+.attach-side-panel .composer-attachment-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 11.5px;
+}
+.attach-side-panel .composer-attachment-pill .pill-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.attach-side-panel .composer-attachment-pill .pill-size {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+.attach-side-panel .composer-attachment-pill .pill-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+.attach-side-panel .composer-attachment-pill .pill-remove:hover { color: var(--danger, #dc2626); }
+.attach-side-panel .composer-attachment-pill[data-error="true"] { border-color: var(--danger, #dc2626); }
+.attach-side-panel .composer-attachment-pill[data-uploading="true"] { opacity: .6; }
+
+/* 세션 파일 섹션 헤더 */
+.attach-section-label {
+  font-size: .65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted, #8b949e);
+  padding: 6px 0 3px;
+  margin-top: 4px;
+}
+.attach-section-label:first-child { margin-top: 0; }
+.attach-section-label.session-label {
+  color: var(--text-muted, #8b949e);
+  opacity: .75;
+}
+
+/* 세션 파일 pill — 이전 요청에서 첨부된 파일 (LLM 컨텍스트 유지) */
+.attach-side-panel .composer-attachment-pill.session-source {
+  background: transparent;
+  border-color: var(--border, #30363d);
+  opacity: .65;
+}
+.attach-side-panel .composer-attachment-pill.session-source .pill-name {
+  color: var(--text-muted, #8b949e);
+}
+.attach-side-panel .composer-attachment-pill.session-source:hover {
+  opacity: .85;
+}
+
+/* =====================================================================
+   UX-COMPACT: 실행 단계 사이드 패널
+   ===================================================================== */
+.step-side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 181;
+  width: 340px;
+  min-width: 300px;
+  max-width: 92vw;
+  height: 100vh;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .2s ease;
+}
+.step-side-panel:not(.hidden) { transform: translateX(0); }
+.step-side-panel.hidden { display: flex !important; transform: translateX(100%); }
+/* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) */
+.step-side-panel.is-resizing { transition: none; user-select: none; }
+/* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽을 끌어 너비 조절 */
+.step-side-panel-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 1;
+  background: transparent;
+  touch-action: none;
+}
+.step-side-panel-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background .15s ease;
+}
+.step-side-panel-resizer:hover::before,
+.step-side-panel.is-resizing .step-side-panel-resizer::before {
+  background: var(--primary, #2563eb);
+}
+
+.step-side-panel-header {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  gap: 4px;
+}
+.step-side-panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.step-side-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.step-side-panel-badge {
+  display: inline-block;
+  background: rgba(37,99,235,.1);
+  color: var(--primary, #2563eb);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 20px;
+  letter-spacing: .3px;
+}
+.step-side-panel-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.step-side-panel-close:hover { background: rgba(0,0,0,.07); color: var(--text); }
+
+.step-side-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.step-side-panel-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.step-side-panel-item-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.step-side-panel-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  min-width: 16px;
+}
+
+/* 대화 첨부파일 목록 아이템 (다운로드 포함) */
+.attach-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+}
+.attach-list-item-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  color: var(--muted, #6b7280);
+}
+.attach-list-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.attach-list-item-name {
+  font-weight: 500;
+  color: var(--text);
+  /* feature-0003 attach-list-delete: 종전엔 이름 텍스트와 버전 배지가 한 인라인 흐름이라,
+     행 폭이 줄면(삭제 × 추가) 말줄임이 **배지부터 먹어** "v2 · AI 수정" 이 조용히 사라졌다
+     (적대 리뷰 design). 텍스트만 잘리고 배지는 남도록 분리한다. */
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.attach-list-item-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach-list-item-meta {
+  font-size: 10.5px;
+  color: var(--text-muted, #9ca3af);
+  margin-top: 1px;
+  /* feature-0003 attach-append-only: 직전 cycle 이 넣었던 메타줄 말줄임(nowrap+ellipsis)을
+     **되돌린다**. 그 규칙의 근거였던 삭제(×) 버튼이 이 cycle 에서 제거돼 행 폭이 회복됐고,
+     남겨두면 텍스트가 아니라 인라인 "버전 N개 ▾" **버튼을 잘라내** 버전 이력의 유일한 진입점이
+     사라진다(적대 리뷰 design — 패널 최소 폭에서 실측). 이름줄의 flex 분리는 배지 보존 효과가
+     있어 그대로 둔다. */
+}
+.attach-list-item-dl {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  transition: background 0.12s;
+}
+.attach-list-item-dl:hover { background: rgba(37, 99, 235, 0.08); }
+.attach-list-item-dl:disabled { color: var(--text-muted); cursor: default; }
+/* feature-0003 attach-append-only (2026-07-29): 목록 행의 삭제(×) 규칙 제거 — 대화의 첨부는
+   append-only 라 목록에서 지우는 컨트롤을 두지 않는다. (이름줄 flex 분리·meta 말줄임 방어는
+   행 레이아웃 개선이므로 유지한다.) */
+.attach-list-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13px;
+}
+/* ② TASK-0285: 첨부 목록 버전 현황 — 버전 배지 + 펼침 토글 + 버전 이력 박스. */
+.attach-list-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.attach-list-item-ver {
+  display: inline-block;
+  flex-shrink: 0;  /* 이름 말줄임에 배지가 먹히지 않게 (attach-list-delete) */
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 7px;
+  background: var(--surface-2, #eef);
+  color: var(--muted);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.attach-list-item-ver.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
+.attach-list-item-vertoggle {
+  border: none;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.attach-list-item-vertoggle:disabled { opacity: 0.6; cursor: default; }
+.attach-list-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px 4px 28px;
+  border-left: 2px solid var(--border);
+  margin-left: 8px;
+}
+.attach-list-versions.hidden { display: none; }
+.attach-list-versions-loading {
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  padding: 2px 0;
+}
+.attach-list-version-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.attach-list-version-tag {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 7px;
+  background: var(--surface-2, #eef);
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.attach-list-version-tag.ai-edited {
+  background: #e8f0ff;
+  color: #2563eb;
+}
+.attach-list-version-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.attach-list-version-role {
+  font-size: 10px;
+  color: var(--text-muted, #9ca3af);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.attach-list-version-dl {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+}
+.attach-list-version-dl:hover { background: rgba(37, 99, 235, 0.08); }
+.attach-list-version-dl:disabled { color: var(--text-muted); cursor: default; }
+

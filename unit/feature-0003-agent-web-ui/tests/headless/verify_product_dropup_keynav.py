@@ -206,7 +206,12 @@ window.openAndSettle = function (count, opts) {
 
 def main() -> int:
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
-    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+    # feature-0038 Cycle 1: styles.css 는 css/ 7파일로 순차 분할(캐스케이드 순서 보존).
+    # 순차 concat 은 구 styles.css 와 byte-동치 — CSS 규칙 검증은 합본 기준으로 수행한다.
+    css = "".join(
+        (STATIC / "css" / f"{n}.css").read_text(encoding="utf-8")
+        for n in ("base", "shell", "chat", "drawers", "admin", "profile", "search-audit")
+    )
     fn_src = "\n\n".join(
         [extract_line(app_js, p) for p in EXTRACT_LINES]
         + [extract_fn(app_js, name) for name in EXTRACT]

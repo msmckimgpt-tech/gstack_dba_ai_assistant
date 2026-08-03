@@ -53,6 +53,15 @@ def _read_static(name: str) -> str:
         return fh.read()
 
 
+# feature-0038 Cycle 1: styles.css 는 css/ 7파일로 순차 분할(캐스케이드 순서 보존).
+# 순차 concat 은 구 styles.css 와 byte-동치 — CSS 규칙 검증은 합본 기준으로 수행한다.
+CSS_SPLIT_ORDER = ("base", "shell", "chat", "drawers", "admin", "profile", "search-audit")
+
+
+def _read_split_css() -> str:
+    return "".join(_read_static(f"css/{n}.css") for n in CSS_SPLIT_ORDER)
+
+
 # ── P: persistence (회귀 수정) ───────────────────────────────────────────────
 def test_p1_persist_helpers_exist_and_default_on():
     js = _read_static("app.js")
@@ -117,6 +126,6 @@ def test_c3_nonowner_cannot_allow_in_confirm():
 
 
 def test_c4_confirm_css_present():
-    css = _read_static("styles.css")
+    css = _read_split_css()
     assert ".share-confirm-panel" in css
     assert ".share-confirm-actions" in css

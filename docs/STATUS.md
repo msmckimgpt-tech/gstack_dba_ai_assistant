@@ -94,6 +94,10 @@ sources:
 | feature-0032-llm-token-budget | in-progress |  | [TASK](../unit/feature-0032-llm-token-budget/docs/TASK.md) |  |
 | feature-0033-analysis-synthesis | in-progress |  | [TASK](../unit/feature-0033-analysis-synthesis/docs/TASK.md) |  |
 | feature-0034-analysis-consumption | in-progress |  | [TASK](../unit/feature-0034-analysis-consumption/docs/TASK.md) |  |
+| feature-0035-analysis-planner | in-progress |  | [TASK](../unit/feature-0035-analysis-planner/docs/TASK.md) |  |
+| feature-0036-analysis-verification | in-progress |  | [TASK](../unit/feature-0036-analysis-verification/docs/TASK.md) |  |
+| feature-0037-domain-synthesis | in-progress |  | [TASK](../unit/feature-0037-domain-synthesis/docs/TASK.md) |  |
+| feature-0038-frontend-modularization | in-progress | 2026-08-03 | [TASK](../unit/feature-0038-frontend-modularization/docs/TASK.md) | ITEM-P5b 잔여(프론트 3파일 분할) — plan-review 승인 대기 |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 > **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).

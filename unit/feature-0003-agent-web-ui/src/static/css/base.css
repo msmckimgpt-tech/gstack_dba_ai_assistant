@@ -1,0 +1,356 @@
+/* =====================================================================
+   DQA — Database Query Assistant — UI v3 (2026-06-04)
+   Design reference: ChatGPT layout + Cursor DS warm canvas palette
+   ===================================================================== */
+
+/* ─── Design Tokens ─────────────────────────────────────────────── */
+:root {
+  /* Surface colors — warm canvas palette (Cursor DS 참조) */
+  --bg:            #f7f7f4;
+  --surface:       #ffffff;
+  /* B1: 한 단계 elevated surface(--surface #fff 와 --bg #f7f7f4 사이) — hover/active/pill 구분 복원. */
+  --surface-2:     #f0efea;
+  --sidebar-bg:    #fafaf7;
+  --border:        #e6e5e0;
+  --border-subtle: #f0efea;
+
+  /* B9: 시맨틱 태그 토큰(bg/fg/border) — provenance(info)와 attention(warn/danger) 구분. */
+  --tag-ok-bg:      rgba(22, 163, 74, 0.12);  --tag-ok-fg:      #15803d;  --tag-ok-bd:      rgba(22, 163, 74, 0.40);
+  --tag-warn-bg:    rgba(202, 138, 4, 0.12);  --tag-warn-fg:    #a16207;  --tag-warn-bd:    rgba(202, 138, 4, 0.40);
+  --tag-danger-bg:  rgba(220, 38, 38, 0.12);  --tag-danger-fg:  #b91c1c;  --tag-danger-bd:  rgba(220, 38, 38, 0.40);
+  --tag-info-bg:    rgba(37, 99, 235, 0.10);  --tag-info-fg:    #1d4ed8;  --tag-info-bd:    rgba(37, 99, 235, 0.35);
+  --tag-neutral-bg: var(--surface-2);         --tag-neutral-fg: var(--text-2);  --tag-neutral-bd: var(--border);
+
+  /* Text — warm near-black ink */
+  --text:          #26251e;
+  --text-2:        #5a5852;
+  --text-muted:    #807d72;
+
+  /* Brand / actions */
+  --primary:       #2563eb;
+  --primary-dark:  #1d4ed8;
+  --primary-soft:  #eff6ff;
+  --success:       #16a34a;
+  --warning:       #d97706;
+  --danger:        #dc2626;
+  --danger-soft:   #fef2f2;
+
+  /* Message bubbles */
+  --bubble-user:   #2563eb;
+  --bubble-ai:     #ffffff;
+
+  /* AI 처리 단계 시맨틱 색상 (Cursor DS AI Timeline 참조) */
+  --stage-thinking: #dfa88f;
+  --stage-grep:     #9fc9a2;
+  --stage-read:     #9fbbe0;
+  --stage-edit:     #c0a8dd;
+  --stage-done:     #c08532;
+
+  /* Typography — UI는 비례 폰트, 코드/SQL은 D2Coding 등폭 유지 */
+  --font: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+  --mono: "D2Coding", "D2Coding ligature", "Cascadia Code", "SFMono-Regular", Consolas, "Noto Sans Mono CJK KR", ui-monospace, Menlo, monospace;
+
+  /* Radii */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  --shadow-md: 0 4px 14px rgba(0,0,0,.10);
+  --shadow-lg: 0 10px 32px rgba(0,0,0,.14);
+
+  /* Layout */
+  --topbar-h:  52px;
+  --sidebar-w: 252px;
+
+  /* Admin bulk toolbar — DESIGN.md §3 */
+  --z-bulk-bar:        12;
+  --z-bulk-banner:     11;
+  --bulk-bar-bottom:   0;
+  --bulk-bar-elev:     0 -2px 8px rgba(0, 0, 0, .06);
+}
+
+/* H1: 이 콘솔은 LIGHT-ONLY — 서피스/시맨틱 태그 토큰의 다크 @media override 를 두지 않는다(라이트 :root 값만 사용).
+   과거 다크 override 는 여전히 흰색인 행 위에서 태그 대비 저하·그룹/pill fill 반투명화 회귀를 유발해 제거함. */
+
+/* ─── Reset ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+/* ─── 페이지 전환 애니메이션 ─────────────────────────────────────── */
+@keyframes page-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  animation: page-fade-in 200ms ease forwards;
+  transition: opacity 150ms ease;
+}
+
+/* 페이지 이동 직전 fade-out */
+body.is-leaving {
+  opacity: 0 !important;
+  transition: opacity 150ms ease !important;
+  animation: none !important;
+}
+
+button  { cursor: pointer; font: inherit; border: none; background: none; }
+input, textarea, select { font: inherit; }
+a { color: inherit; }
+
+/* ─── Utility ───────────────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* =====================================================================
+   AUTH SCREEN
+   ===================================================================== */
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0efe8;
+}
+
+.auth-card {
+  width: min(400px, 100% - 32px);
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  padding: 32px 28px;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.auth-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -.5px;
+  flex-shrink: 0;
+}
+
+.auth-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -.3px;
+  line-height: 1.2;
+}
+
+/* Auth tabs */
+.auth-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.auth-tab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .14s, border-color .14s;
+}
+
+.auth-tab.is-active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* Auth forms */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* TASK-20260619T034522-oauth-google-foundation: 외부 IdP(Google) 로그인 진입.
+   .auth-oauth 는 기본 hidden(index.html) — config google.enabled 일 때만 app.js 가 노출. */
+.auth-oauth {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border, #e2e2e2);
+}
+.btn-oauth {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #dadce0);
+  border-radius: 8px;
+  background: #fff;
+  color: #3c4043;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-oauth:hover {
+  background: #f7f8f8;
+  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.18);
+}
+.btn-oauth .oauth-icon {
+  flex-shrink: 0;
+}
+
+/* =====================================================================
+   FORM FIELDS  (shared: auth + drawer)
+   ===================================================================== */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.field input,
+.field textarea,
+.field select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition: border-color .14s, box-shadow .14s;
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+.field textarea { resize: vertical; min-height: 76px; }
+
+.form-error {
+  font-size: 12px;
+  color: var(--danger);
+  min-height: 0;
+}
+.form-error:empty { display: none; }
+
+.helper-text {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 자동 작성 등 helper-text 영역의 실패·잘림 경고 강조 (프로필 프롬프트 자동완성). */
+.helper-text.helper-text-warn {
+  color: var(--danger);
+}
+
+/* =====================================================================
+   BUTTONS
+   ===================================================================== */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: var(--r-sm);
+  background: var(--primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background .14s, transform .1s, opacity .14s;
+}
+.btn-primary:hover  { background: var(--primary-dark); }
+.btn-primary:active { transform: scale(.98); }
+.btn-primary:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.btn-full { width: 100%; }
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background .14s, border-color .14s;
+}
+.btn-secondary:hover { background: var(--bg); border-color: #c4c4c9; }
+
+/* Tool button — small ghost style used in headers/strips */
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: background .13s, color .13s;
+}
+.tool-btn:hover { background: var(--bg); color: var(--text-2); }
+.tool-btn.danger { color: var(--danger); }
+.tool-btn.danger:hover { background: var(--danger-soft); }
+.tool-btn:disabled { opacity: .38; cursor: not-allowed; }
+
+/* Access-blocked state: 권한이 없어 동작을 수행할 수 없지만, 클릭은 통과시켜 토스트로 안내한다. */
+.is-access-blocked {
+  opacity: .42;
+  cursor: help;
+  color: var(--text-muted);
+}
+.is-access-blocked:hover { background: transparent; color: var(--text-muted); }
+

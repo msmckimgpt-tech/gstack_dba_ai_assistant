@@ -1,0 +1,285 @@
+/* =====================================================================
+   SETTINGS DRAWER
+   ===================================================================== */
+.drawer-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 195;
+  background: rgba(0,0,0,.22);
+  backdrop-filter: blur(2px);
+  opacity: 1;
+  transition: opacity 200ms ease;
+}
+.drawer-bg.hidden { opacity: 0; pointer-events: none; }
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 200;
+  width: 390px;
+  height: 100vh;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  /* 패딩/스크롤은 내부 .drawer-scroll 로 이동 — 비스크롤 shell 에 리사이즈 핸들 고정
+     (단계 보기 패널이 .step-side-panel-body 로 스크롤을 분리한 것과 동일 구조) */
+  overflow: hidden;
+  transform: translateX(0);
+  transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease;
+}
+/* 내부 스크롤 영역 — 헤더/탭/패널을 담고 세로 스크롤. shell(.drawer)은 스크롤 안 함. */
+.drawer-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.drawer.hidden {
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+}
+/* 드래그 중에는 transition 제거(width 가 포인터를 부드럽게 따라오도록) + 텍스트 선택 차단 */
+.drawer.is-resizing { transition: none; user-select: none; }
+/* 좌측 가장자리 리사이즈 핸들 — 우측 고정 패널이라 왼쪽 가장자리를 끌어 너비 조절 (단계 보기 패널과 동일) */
+.drawer-resizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 5;
+  background: transparent;
+  touch-action: none;
+}
+.drawer-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background .15s ease;
+}
+.drawer-resizer:hover::before,
+.drawer.is-resizing .drawer-resizer::before {
+  background: var(--primary, #2563eb);
+}
+
+.drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.drawer-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+.drawer-header h2 {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.drawer-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* 드로어 탭 네비게이션 */
+.drawer-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  margin: -4px -24px 4px;
+  padding: 0 24px;
+}
+
+.drawer-tab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  transition: color .14s, border-color .14s;
+}
+.drawer-tab:hover    { color: var(--text-2); }
+.drawer-tab.is-active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* 드로어 탭 패널 */
+.drawer-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+/* account-subtabs (feature-0003-account-subtabs): '계정' 탭 하위 세분화 secondary nav.
+   상단 drawer-tab(언더라인)과 시각적으로 구분되는 세그먼트/pill 스타일. */
+.profile-subtabs {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 3px;
+  margin-bottom: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.profile-subtab {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+  transition: color .14s, background .14s, box-shadow .14s;
+}
+.profile-subtab:hover { color: var(--text-2); }
+.profile-subtab.is-active {
+  color: var(--primary);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+/* 하위 패널: drawer-pane 과 동일한 세로 스택. */
+.profile-subpane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 프로필 드로어 헤더: 아바타 + 이름 인라인 */
+.profile-header-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.encrypt-panel {
+  padding: 11px 13px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.encrypt-panel summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  user-select: none;
+}
+
+.encrypt-body {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* feature-0007 (REQ-20260521-0001): `.vault-*` 클래스 (.vault-banner /
+   .vault-stepper / .vault-step* / .vault-primary-btn / .vault-saved* /
+   .vault-danger-zone / .vault-advanced*) 일괄 제거. API Vault wizard 폐기 후
+   대응하는 DOM 이 사라졌으므로 더 이상 참조되지 않는다. */
+
+/* =====================================================================
+   TOAST
+   ===================================================================== */
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  z-index: 300;
+  transform: translateX(-50%) translateY(10px);
+  opacity: 0;
+  pointer-events: none;
+  min-width: 180px;
+  max-width: 460px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: rgba(15,23,42,.92);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px);
+  transition: opacity .17s, transform .17s;
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ds-conn-test (feature-0003, C2): 작업화면 토스트(#toast)는 상단 앵커 — 하단 입력창(composer)과
+   위로 열리는 제품 드롭업을 가리지 않도록 topbar 아래에서 내려온다. 관리 콘솔 토스트(#adminToast)는
+   공유 .toast 규칙(하단) 그대로 유지 — id 스코프로만 오버라이드(specificity #toast 0,1,0,0 > .toast). */
+#toast {
+  top: calc(var(--topbar-h, 52px) + 14px);
+  bottom: auto;
+  max-width: min(460px, calc(100vw - 32px));   /* 좁은 뷰포트 좌우 overflow 방지 */
+  transform: translateX(-50%) translateY(-10px);
+  transition: opacity .17s, transform .17s, background .17s;   /* 진행→에러 배경색 전환도 애니메이션 */
+}
+#toast.is-visible {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ds-conn-test: '연결 테스트' 버튼(작업화면 제품 드롭업의 데이터소스 라벨). 실제 <button> — at-rest
+   테두리로 클릭 가능함을 표시(display-only 배지와 구분), 24px 이상 터치 타깃(WCAG 2.5.8), 진행 중 disabled. */
+button.product-dropup-item-ds--test {
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  min-height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+  border: 1px solid var(--border, #d7dae0);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: var(--text-2, #6b7280);
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+button.product-dropup-item-ds--test:hover {
+  background: var(--primary-soft, #eff6ff);
+  color: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+}
+button.product-dropup-item-ds--test:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 1px;
+}
+button.product-dropup-item-ds--test:disabled {
+  opacity: .6;
+  cursor: progress;
+}
+
