@@ -48,7 +48,8 @@ source_of_truth: true
 - [x] 신규 테스트 27 PASS · feature-0002 로컬 2114 passed/30 skipped · `make test`(3 feature + ruff) **RC=0 4회 연속**
 - [x] §18.8 적대 리뷰 — §18.8.2 제약-없는-채널 우선 → codex 3렌즈(security/backend/regression) **[P1] 0건**, [P2] 4건 중 2건 흡수·2건 근거 기록 → REV-20260730T190000-review-proposed-change-framing
 - [x] 배포 완료(2026-07-31, PR #1102 merge main `2ecfe4b5` → `make deploy-web` 전체 스코프, soak 통과, **4서비스 GIT_COMMIT=2ecfe4b5 healthy**, edge `/healthz` ok) + 배포본 런타임 실증(계약·L2 힌트·스니펫 심볼 13종) + **라이브 compose 경로 실증**(실 `agent_memory` 연결 `compose_system_prompt` 결과 13,604자에 계약 도달 — 운영자 global row 대체 조건에서도 존속 = AUTH-1a 검증)
-- [ ] **라이브 대화 실측(잔여)**: 동일 5개 파일 재리뷰에서 '적용 전제' 절 분리 + 미배포 상태에 🔴 배지 부재 관측 — 사용자 표면 재현 필요
+- [x] **라이브 대화 실측 완료(2026-08-03, PB-0008 Windows-browser)** — 실제 Windows Chrome 으로 새 대화·제품 119·**원본 5파일 재업로드(sha256 5/5 일치)**·동일 요청문·`#sendBtn` 실제 클릭. 재현 대화 `20260803081201-969946a2`. **프레이밍 축 PASS**: 도입부 "실제 DB 현황(BEFORE)과 비교" 명시 · `📊 적용 전제` 단일 절 분리 · 미배포 상태에 🔴 배지 **부재**(전부 ✅) · 배지는 적용 후 결함에만 · 배포 순서는 말미 Q&A 강등. `search_routines` 본문 매칭 스니펫 라이브 정상. 증적 `docs/test-runs.d/20260803T1720-review-framing-live-pb0008.md` + PNG 2장
+- [ ] **잔여(별 항목)**: 같은 답변에 미검증 부재 단정 1건(`ConcurrentUsers5Rocks_gunz … 현재 미존재` — ground truth 는 약 148만 행 실존, 조회 도구 호출 0건) → 원장 `FR-review-precondition-assumed-not-verified`(triaged). corroboration 선측정 후 수정 방향 결정 필요
 - **부수 발견(별 트랙, 원장 `FR-operator-global-prompt-shadows-code-seals`)**: 배포 검증 중 운영자 `WebSystemPrompts` global row(15,978자·2026-06-18)가 코드 상수 `SYSTEM_PROMPT`(20,575자)를 통째 대체해 **2026-06-18 이후 SYSTEM_PROMPT 본문에만 추가된 규칙 7종이 라이브 미도달**임을 실측. 본 cycle 은 계약을 `parts` always-append 로 넣어 영향 없음(설계 검증). `needs-human` — 사람 결정 필요.
 
 ## TASK-20260722-dqa-data-grounding — 데이터 의미 grounding 지침: 저장값 타임존·ENUM 코드·분리저장 추측 금지 (Major §12.3 — core 시스템 프롬프트·정확성; DQA 마찰 B-1/D-1/D-2)
