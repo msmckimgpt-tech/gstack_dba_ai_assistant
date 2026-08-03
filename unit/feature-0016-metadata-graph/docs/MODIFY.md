@@ -472,3 +472,8 @@ source_of_truth: true
 | `unit/feature-0003-agent-web-ui/tests/test_graph_band_visual_fit.py` | 소스 계약 4건 신설 |
 
 근거·측정은 REPORT.md `20260731T0300-band-visual-fit` 참조.
+
+## CHG-20260803T173000-ai-claude-feature-0016-visual-postdeploy — POST-DEPLOY 육안 재검증 + E.12 (2026-08-03, 문서 전용)
+
+실행 코드 0줄. 배포본 `a17f769b` 에서 수정 2건의 화면 반영을 확인하고, label-canon 이 전 scope 에
+적용된 뒤의 전역 지표를 측정해 기록. 상세는 `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260803T1730-visual-postdeploy.md`.
