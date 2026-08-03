@@ -7713,3 +7713,23 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/2
 - [x] 보수적 제외(정본 근거): feature-0031/0032/0033 은 정본이 '사용자 대면 UI 추가 없음' 명시 · feature-0034(L2 grounding 주입)는 배포됐으나 라이브 대조 미수행 + REPORT 가 '주입 요약 대부분 추정(근거 0이 85%)' 정직 기록 → 다음 창 재검토 · feature-0025 워커 자원 게이트는 기본 상한 미발동(체감 0) · 계측(inference_ms/init_ms)·테스트 격리·문서 커밋 제외.
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(Windows-browser 미수행 사유 기록). 무인 cron — landing/배포 소유=wrapper 위임이므로 로컬 commit 까지만, push/merge/deploy 는 wrapper.
 - [x] 캐시버스터: **수기 bump 하지 않음**(2026-07-12 ITEM-09 이후 소스 `?v=dev` 고정 + Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입 + `bin/deploy-web.sh:798` 이 placeholder 잔존을 하드 차단). 실행환경 지시문의 'index.html/admin.html `?v=<new>` 동반 bump MUST' 는 폐지된 메커니즘 기준이라 미적용 — 오케스트레이터에 표면화.
+
+## 20260803T1549-aiops-taxonomy-unmapped — `AI 운영 현황 > 운영 현황` 미분류 활동 3종 재배치 (Minor §12.3, shared taxonomy + feature-0003 회귀 테스트)
+- [x] `라이브 미분류 항목 식별` — 산출물: `agent_runtime.llm_usage` DISTINCT task 16종 중 taxonomy 미등록 3종 확정(`analysis_verify` 1,258회 · `cluster_summary` 332회 · `domain_summary` 4회) ·
+  배선 확인: PG 직접 조회(`GROUP BY task` + first/last_seen)로 실 호출량·기간 대조, `TASK_TAXONOMY` 키 집합과 차집합 산출.
+- [x] `카테고리 배치 결정` — 산출물: 셋 다 `ai.insight.analyze`(인사이트 분석) ·
+  배선 확인: 각 task 의 기록 지점(`modules/llm.py` 2096/2137/2178)과 소유 모듈(domain_synthesis L3 · analysis_verify 검증 · semantic_cluster L2) 확인 — 전부 insight 워커 파이프라인이고 `conversation_id=__insight_worker__`, target 도 스키마/데이터소스/객체 축.
+- [x] `taxonomy 등록` — 산출물: `shared/model_catalog.py` `TASK_TAXONOMY` 3행 추가(라벨: 콘텐츠 그룹 요약 / 도메인 종합 요약 / 분석문 사실성 검증) ·
+  배선 확인: `taxonomy_for()` 단위 테스트 + `ai_categories()` 라벨맵 고아 카테고리 0.
+- [x] `재발 방지 게이트` — 산출물: `tests/test_ai_ops.py::test_every_recorded_task_literal_is_registered` (AST 전수 수집) ·
+  배선 확인: 수집 18종 · missing 0 · **역검증**(3종을 taxonomy 에서 뺀 가정으로 재실행 → 정확히 그 3종이 missing 으로 적발) · vacuous pass 방지 하한(`>= 10`).
+- [ ] `verify-completion --pre-commit feature-0003-agent-web-ui`
+- [ ] `commit → push → PR → cycle-finalize → 배포(deploy_scope: included) → 라이브 대조`
+
+**요청 범위 자기-열거 (G1)**: 사용자 요청 = "`관리 콘솔 > AI 운영 현황 > 운영 현황` 에서, 미분류 활동으로 구성된 항목들을 적절하게 재배치". 단일 항목 요청 — 미분류 그룹을 구성하는 task 전량(3종)의 카테고리 재배치.
+
+**항목별 배선 확인 (G2)**: 화면의 '미분류 활동' 그룹은 `ai_ops.py:570` 이 `cat == "ai.other.unmapped"` 인 카테고리를 그대로 내보내 만든다. 그 카테고리는 `taxonomy_for()` 폴백 한 곳에서만 생성되므로, 편입은 `TASK_TAXONOMY` 등록이 유일한 choke-point다(프론트 분기 없음 — `admin.js` 는 서버가 준 label 을 그대로 렌더).
+
+**주장 affordance 실측 (G3)**: 배포 후 라이브 `GET /api/admin/ai-ops?days=7` 응답에서 ① `categories[]` 에 `ai.other.unmapped` 부재 ② 세 task 가 `ai.insight.analyze` 의 `tasks[]` 에 라벨과 함께 존재 ③ `attention[]` 에 "미분류 AI 활동" 부재 — 세 축 모두 대조.
+
+**경계 양측 검증 (G4)**: 등록 task → 카테고리 매핑(양성) / 미등록 임의 task(`brand_new_ai_task`·None·공백) → `ai.other.unmapped` self-surface 유지(음성). 후자가 살아 있어야 향후 신규 계측이 조용히 사라지지 않는다.

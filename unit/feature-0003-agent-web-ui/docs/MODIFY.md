@@ -2088,3 +2088,11 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수명·테이블명·마이그레이션 번호·내부 설정키(`AGENT_*`)·모델명(gemma/bedrock/titan/embed-ollama)·ADR 번호·PB-0008 누출 0(정규식 기계 검증).
 - 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
 - Verification: `node --check` PASS · vm 구조검증(releases[0]=2026-07-30 8항목·releases[1]=07-29 13항목 보존·enum/title 위반 0·내부용어 누출 0). `verify_release_notes.mjs` 는 jsdom 미설치로 미실행(render 로직 미변경).
+
+## CHG-20260803T154922-aiops-taxonomy-unmapped (20260803T1549-aiops-taxonomy-unmapped — `운영 현황` 미분류 활동 3종을 인사이트 분석으로 재배치, Minor §12.3)
+- 변경: `shared/model_catalog.py` `TASK_TAXONOMY` 에 3행 추가 — `cluster_summary`→`ai.insight.analyze`/"콘텐츠 그룹 요약", `domain_summary`→`ai.insight.analyze`/"도메인 종합 요약", `analysis_verify`→`ai.insight.analyze`/"분석문 사실성 검증". 함수·시그니처·카테고리 라벨맵·엔드포인트·RBAC·스키마·프론트 무변경(dict 데이터 추가만).
+- 근거(라이브 실측 2026-08-03): `agent_runtime.llm_usage` DISTINCT task 16종 중 위 3종만 미등록 → `taxonomy_for()` 폴백으로 `ai.other.unmapped` 에 누적(1,258 / 332 / 4회). 셋 다 insight 워커 파이프라인 산출물(`conversation_id='__insight_worker__'`, target=객체/데이터소스/스키마)이라 기존 `ai.insight.analyze` 에 편입 — 신규 카테고리를 만들면 드릴다운만 파편화된다. `analysis_verify` 는 검증 축이지만 검증 대상·소비처가 인사이트 분석문이라 같은 카테고리에 둔다(대화 파이프라인의 검증인 `redteam` 을 `ai.reasoning.aux` 에 둔 선례와 동형).
+- 테스트: `unit/feature-0003-agent-web-ui/tests/test_ai_ops.py` +2 — ① 3종 명시 매핑 ② **AST 전수 게이트**(`shared/**`·`unit/*/src/**` 에서 `_record_llm_usage(model, "<task>", …)` 두 번째 positional 문자열 리터럴 전수 수집 → `TASK_TAXONOMY` 미등록 0 단언, 수집 하한 10 으로 스캐너 무력화 시 vacuous pass 차단).
+- 부수효과(의도): Attention 존의 "미분류 AI 활동" 배지 소멸 · `LLM 사용량 > 사용 기록` 의 raw task 문자열(`analysis_verify` 등)이 사람이 읽는 작업명으로 노출. `USAGE_TASK_NAV` 는 미등록 유지 — 세 task 의 산출물을 보여주는 전용 관리 화면이 없어 기본 폴백(`AI 운영 현황 > 운영 현황`)이 정확한 착지다(§8.1 후속 제안 아님, 현행이 정답).
+- 교차 참조: `shared/docs/MODIFY.md` (§17 shared 거버넌스).
+- Files: `shared/model_catalog.py`, `unit/feature-0003-agent-web-ui/tests/test_ai_ops.py`, `unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST}.md`, `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md`.

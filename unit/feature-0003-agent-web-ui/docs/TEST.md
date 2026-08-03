@@ -2308,3 +2308,8 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 
 ## TASK-20260731T010301-doc-sync-rn-0731 — 릴리즈노트 신규 2026-07-30 블록 8항목 prepend (비-정책 doc-only)
 - **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`)의 신규 date 블록 prepend + `generated` 갱신뿐이고 렌더러(`release-notes.js`)·HTML·CSS·백엔드 무변경이라 화면 렌더 경로가 바뀌지 않는다. 데이터 정합은 `node --check` + vm 구조검증(블록/항목 수·스키마·enum·내부용어 누출)으로 대체. jsdom DOM 테스트는 이 실행 env 에 jsdom 미설치(컨테이너 전용).
+
+## 20260803T1549-aiops-taxonomy-unmapped — `AI 운영 현황 > 운영 현황` 미분류 활동 3종 재배치 (Minor §12.3, 2026-08-03)
+- Run 기록 정본: `docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md` (§5.3 fragment).
+- **Environment: pytest** — `test_ai_ops.py` 22 passed(신규 2 포함) · 전체 스위트 EXIT=0 · ruff PASS.
+- **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 로 이월(정적 자산·렌더 경로 무변경, 표시 delta 는 배포된 web 이미지의 API 응답에서 발생). 배포 후 fragment §4 에 append.

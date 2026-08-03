@@ -136,3 +136,9 @@ shared 코드 변경 시 아래 형식으로 기록한다.
   feature-0016-metadata-graph(node_analysis 는 이미 `-meta` edge-free — 무영향).
 - Cross-ref: feature-0007 DECISIONS ADR-003 · TASK `## TASK-20260730T191535-llm-edge-free-routing` ·
   TEST Run 2026-07-30-llm-edge-free-routing.
+
+## CHG-20260803T154922-aiops-taxonomy-unmapped — `model_catalog.TASK_TAXONOMY` +3 (AI 활동 taxonomy 편입, Minor §12.3)
+- 변경: `shared/model_catalog.py` `TASK_TAXONOMY` 에 `cluster_summary`/`domain_summary`/`analysis_verify` 3행 추가 (전부 `ai.insight.analyze`, 라벨 "콘텐츠 그룹 요약"/"도메인 종합 요약"/"분석문 사실성 검증"). 함수 시그니처·`AI_CATEGORY_LABELS`·`USAGE_TASK_NAV`·canonical model 로직 무변경 — dict 데이터 추가만.
+- 사유: 라이브 `agent_runtime.llm_usage` 의 3 task 가 taxonomy 미등록이라 관리 콘솔 `AI 운영 현황 > 운영 현황` 카테고리 드릴다운에서 '미분류 활동' 으로 노출됐다(1,258 / 332 / 4회). 전부 insight 워커 분석 파이프라인 산출물.
+- 영향 소비자: `feature-0003-agent-web-ui` (`routers/ai_ops.py` 카테고리 롤업·Attention, `routers/admin_usage.py` 사용 기록 라벨) — 표시 계층만. 다른 feature 영향 없음(taxonomy 는 web 관제 표시 전용, 워커·에이전트 런타임 미참조).
+- 교차 참조 정본: `unit/feature-0003-agent-web-ui/docs/MODIFY.md` CHG-20260803T154922-aiops-taxonomy-unmapped · REVIEW.md REV-20260803T154922-aiops-taxonomy-unmapped.

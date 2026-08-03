@@ -50,6 +50,327 @@ def test_taxonomy_unmapped_self_surface():
     assert taxonomy_for("")["category"] == "ai.other.unmapped"
 
 
+def test_taxonomy_insight_pipeline_tasks_mapped():
+    """aiops-taxonomy-unmapped(2026-08-03): 라이브에서 '미분류 활동' 으로 떨어지던 3 task."""
+    for task, label in (("cluster_summary", "콘텐츠 그룹 요약"),
+                        ("domain_summary", "도메인 종합 요약"),
+                        ("analysis_verify", "분석문 사실성 검증")):
+        tx = taxonomy_for(task)
+        assert tx["category"] == "ai.insight.analyze", f"{task} 가 인사이트 분석에 편입되지 않음"
+        assert tx["label"] == label
+
+
+#: `_record_llm_usage` 의 task 를 **정적으로 확정할 수 없는** 호출부의 명시 목록. 키는 파일 경로
+#: (라인 번호 아님 — 코드 이동에 브리틀), 값은 `{task 표현식(ast.unparse 정규형): 파생 규칙}`.
+#: 파생 규칙은 `(producer 함수명, 포맷 템플릿, 산출되는 task 튜플)` 이며 테스트가
+#: producer 호출부의 `task=` 리터럴을 수집해 템플릿을 적용한 뒤 **선언 튜플과 집합 동치**를
+#: 요구한다 — 새 진입점(`_metadata_llm_complete(task="foo")`)이 추가되면 표현식은 그대로여도
+#: 산출 집합이 달라져 red 가 된다. "정적으로 못 잡는 경로"를 조용한 사각이 아니라 검증된
+#: 선언으로 만든다.
+_DYNAMIC_TASK_CALLSITES: dict[str, dict[str, tuple[str, str, tuple[str, ...]]]] = {
+    "unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py": {
+        # `_metadata_llm_complete(..., task="summary"|"prompt_gen")` 두 진입점의 파생값.
+        "f'metadata_{task}'": (
+            "_metadata_llm_complete", "metadata_{}", ("metadata_summary", "metadata_prompt_gen"),
+        ),
+    },
+}
+
+
+def test_every_recorded_task_literal_is_registered():
+    """소스에서 `_record_llm_usage` 로 기록하는 task 전수가 TASK_TAXONOMY 에 등록돼 있어야 한다.
+
+    미분류 재발 방지 — 신규 계측이 taxonomy 등록 없이 들어오면 '운영 현황' 카테고리 드릴다운에서
+    '미분류 활동' 으로 떨어지고, 그 사실은 라이브 데이터가 쌓인 뒤에야 드러난다(2026-07-28 에도
+    같은 사유로 4종을 뒤늦게 편입한 전례).
+
+    dict 대조가 아니라 **호출부 AST 전수 수집**이라 신규 task 가 자동으로 대상이 된다:
+      · 직접 호출 리터럴 — `_record_llm_usage(m, "topic", resp)`
+      · 래퍼 경유 리터럴 — task 를 그대로 흘리는 함수를 고정점으로 찾아(`_openai_chat_completion_
+        with_deadline` 등) 그 호출부의 `task="agent"` 도 수집. keyword·positional 양쪽 바인딩.
+      · f-string 등 동적 표현식 — `_DYNAMIC_TASK_CALLSITES` 의 파생 규칙으로 산출 집합을 계산해
+        선언과 집합 동치 + 전량 등록을 단언. 산출을 정하는 producer 호출부의 task 가 리터럴이
+        아니면(변수·**kwargs) 조용히 통과시키지 않고 실패시킨다.
+    파싱 실패는 삼키지 않는다 — 스캐너가 조용히 눈감으면 게이트가 아니다.
+
+    **한계(명시)**: 완전한 정적 해석기는 아니다. task 가 런타임 값으로만 결정되는 경로
+    (`Class.method(instance, …)` 형태의 unbound 호출로 task 위치가 어긋나는 경우 등)는 원리상
+    정적 확정이 불가하며, 그런 경로가 생기면 위 동적 목록 대조가 red 를 내어 사람이 판단하도록
+    한다 — 게이트의 계약은 "모든 동적 경로를 해석한다"가 아니라 "미확정 경로를 조용히 통과시키지
+    않는다"이다.
+    """
+    import ast
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    roots = [p for p in (repo_root / "shared",) if p.is_dir()]
+    roots += [d for d in sorted(repo_root.glob("unit/*/src")) if d.is_dir()]
+    assert roots, f"소스 트리를 찾지 못함(repo_root={repo_root}) — 스캐너가 무력화됨"
+
+    # 파싱 실패는 즉시 실패 — `continue` 로 숨기면 문법 오류 파일의 신규 task 를 놓친다.
+    trees: dict[str, ast.AST] = {}
+    for root in roots:
+        for py in root.rglob("*.py"):
+            rel = str(py.relative_to(repo_root))
+            trees[rel] = ast.parse(py.read_text(encoding="utf-8"), filename=rel)
+    scanned_files = len(trees)
+
+    def _literal(node) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value:
+            return node.value
+        return None
+
+    def _callee(node) -> str | None:
+        fn = node.func
+        return fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+
+    def _starred_before(args, pos: int) -> bool:
+        """`f(*prefix, "x")` 처럼 앞에 unpacking 이 있으면 positional 인덱스가 확정되지 않는다."""
+        return any(isinstance(a, ast.Starred) for a in args[:pos + 1])
+
+    # 함수 정의에서 `task` 파라미터의 positional 인덱스를 읽는다 — 호출부가 keyword 로 주든
+    # positional 로 주든 같은 인자를 가리키게 하기 위함(keyword 만 보면 positional 호출을 놓친다).
+    # 메서드의 self/cls 는 `obj.m(...)` 의 `node.args` 에 없으므로 인덱스에서 제외한다.
+    #   메서드(첫 파라미터 self/cls)는 bound(`obj.m(...)`)/unbound(`C.m(obj, ...)`) 호출에서
+    #   positional 인덱스가 한 칸 어긋나며 호출부만 보고는 구분할 수 없다 — 잘못 읽느니
+    #   **미확정으로 취급해 실패**시킨다(fail-closed). 현 코드베이스의 sink 는 전부 모듈 함수다.
+    def _task_pos(fdef) -> int | None:
+        names = [a.arg for a in (list(getattr(fdef.args, "posonlyargs", [])) + list(fdef.args.args))]
+        if names and names[0] in ("self", "cls"):
+            return None
+        return names.index("task") if "task" in names else None
+
+    task_pos: dict[str, set[int | None]] = {}
+    for tree in trees.values():
+        for fdef in ast.walk(tree):
+            if isinstance(fdef, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                task_pos.setdefault(fdef.name, set()).add(_task_pos(fdef))
+
+    # 각 Call 을 감싸는 함수 정의 — `task` 라는 **이름**이 그 함수의 파라미터인지 확인해야
+    # "래퍼가 자기 파라미터를 흘리는 것"과 "런타임 지역변수"를 구분할 수 있다(후자는 미확정).
+    enclosing: dict[int, object] = {}
+
+    class _FnScope(ast.NodeVisitor):
+        def __init__(self):
+            self.stack: list = []
+
+        def visit_FunctionDef(self, node):
+            # 데코레이터·기본값·어노테이션은 **바깥 스코프**에서 평가된다 — 그 안의 호출을
+            # 이 함수 내부로 기록하면 `task` 이름이 파라미터로 오인된다(fail-open 경로).
+            for dec in node.decorator_list:
+                self.visit(dec)
+            self.visit(node.args)
+            if node.returns is not None:
+                self.visit(node.returns)
+            self.stack.append(node)
+            for stmt in node.body:
+                self.visit(stmt)
+            self.stack.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node):
+            enclosing[id(node)] = list(self.stack)   # 중첩 클로저까지 포함한 스택 스냅샷
+            self.generic_visit(node)
+
+    for tree in trees.values():
+        _FnScope().visit(tree)
+
+    def _binds_task(n) -> bool:
+        """이 AST 노드가 `task` 라는 이름을 (재)바인딩하는가."""
+        if isinstance(n, ast.Name):
+            return n.id == "task" and isinstance(n.ctx, ast.Store)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return n.name == "task"
+        if isinstance(n, ast.alias):                       # import x as task
+            return (n.asname or n.name.split(".")[0]) == "task"
+        if isinstance(n, ast.ExceptHandler):               # except E as task
+            return n.name == "task"
+        if isinstance(n, ast.arg):                         # 중첩 함수/lambda 파라미터
+            return n.arg == "task"
+        if isinstance(n, getattr(ast, "MatchAs", ())) or isinstance(n, getattr(ast, "MatchStar", ())):
+            return getattr(n, "name", None) == "task"      # case … as task
+        if isinstance(n, getattr(ast, "MatchMapping", ())):
+            return getattr(n, "rest", None) == "task"
+        return False
+
+    def _is_param_passthrough(node, arg) -> bool:
+        """`arg` 가 이 호출을 감싼 함수의 `task` 파라미터를 그대로 넘기는 것인가."""
+        if not (isinstance(arg, ast.Name) and arg.id == "task"):
+            return False
+        stack = enclosing.get(id(node)) or []
+        fdef = stack[-1] if stack else None
+        if fdef is None:
+            return False
+        names = {a.arg for a in (list(getattr(fdef.args, "posonlyargs", []))
+                                 + list(fdef.args.args) + list(fdef.args.kwonlyargs))}
+        if "task" not in names:
+            return False
+        # 파라미터라도 함수 안에서 **재바인딩**되면 넘어가는 값이 더 이상 호출부의 리터럴이
+        # 아니다 — passthrough 로 보지 않고 미확정으로 떨군다. 대입/for/with-as/comprehension
+        # (Name-Store) 뿐 아니라 def·class·import-as·except-as·match-as·중첩 파라미터까지
+        # 이름을 가리는 모든 형태를 본다(fail-closed).
+        own_args = {id(a) for a in ast.walk(fdef.args) if isinstance(a, ast.arg)}
+        return not any(_binds_task(n) for n in ast.walk(fdef)
+                       if n is not fdef and id(n) not in own_args)
+
+    def _task_arg(node, callee: str, sinks: set[str]):
+        """이 호출이 llm_usage 의 task 를 결정하는가 → 그 인자 노드(아니면 None)."""
+        if callee not in sinks:
+            return None
+        for k in node.keywords:
+            if k.arg == "task":
+                return k.value
+        positions = task_pos.get(callee) or {1 if callee == "_record_llm_usage" else None}
+        # 동명 정의가 서로 다른 위치에 task 를 두면 어느 시그니처인지 확정할 수 없다 — 조용히
+        # 잘못 읽느니 실패시킨다.
+        assert len(positions) == 1, f"동명 함수 {callee} 의 task 파라미터 위치가 모호함: {positions}"
+        pos = next(iter(positions))
+        if pos is not None and len(node.args) > pos and not _starred_before(node.args, pos):
+            return node.args[pos]
+        return None
+
+    def _is_sink_call(node, callee: str, sinks: set[str]) -> bool:
+        return callee in sinks
+
+    # sink 집합 고정점 — `_record_llm_usage` 로 자기 `task` 파라미터를 그대로 넘기는 함수(래퍼)를
+    # 모은다. 래퍼의 래퍼도 수렴할 때까지 반복(무관한 `task=` 인자 오탐 없이 래퍼 경유를 흡수).
+    sinks: set[str] = {"_record_llm_usage"}
+    converged = False
+    for _ in range(len(task_pos) + 1):
+        grown = False
+        for tree in trees.values():
+            for fdef in ast.walk(tree):
+                if not isinstance(fdef, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if fdef.name in sinks:
+                    continue
+                for node in ast.walk(fdef):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    arg = _task_arg(node, _callee(node) or "", sinks)
+                    if arg is not None and _is_param_passthrough(node, arg):
+                        sinks.add(fdef.name)
+                        grown = True
+                        break
+        if not grown:
+            converged = True
+            break
+    assert converged, "래퍼 체인이 수렴하지 않음 — 바깥 호출부를 놓칠 수 있다"
+
+    producers = {rule[0] for exprs in _DYNAMIC_TASK_CALLSITES.values() for rule in exprs.values()}
+
+    # sink 를 호출이 아닌 형태로 **참조**하면(별칭 할당·인자 전달) 그 별칭 호출은 이름으로
+    # 추적되지 않는다 — 정적으로 못 따라가므로 조용히 통과시키지 않고 실패시킨다.
+    alias_refs: list[str] = []
+    for rel, tree in trees.items():
+        call_funcs = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Name) and n.id in (sinks | producers)
+                    and isinstance(n.ctx, ast.Load) and id(n) not in call_funcs):
+                alias_refs.append(f"{rel}:{n.lineno} {n.id}")
+
+    found: dict[str, str] = {}                # task -> 최초 발견 위치
+    dynamic: dict[str, dict[str, list[str]]] = {}   # 파일 -> {표현식: [위치…]}
+    producer_args: dict[str, set[str]] = {}   # 동적 파생 producer -> 호출부 task 리터럴 집합
+    unresolved_producer: list[str] = []       # task 를 리터럴로 확정 못한 producer 호출부
+    unresolved_sink: list[str] = []           # task 인자를 특정 못한 sink 호출부(fail-closed)
+    dynamic_encl: dict[tuple, set] = {}       # (파일, 표현식) -> 그 호출을 감싼 함수 이름 집합
+    for rel, tree in trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = _callee(node) or ""
+            if callee in producers:
+                # producer 의 task 인자는 keyword/positional 양쪽에서 읽고, 문자열 리터럴이
+                # 아니면(변수·**kwargs·미전달) 조용히 넘기지 않고 아래에서 실패시킨다 —
+                # 누락은 산출 집합을 축소해 게이트를 무력화한다.
+                p_arg = None
+                for k in node.keywords:
+                    if k.arg == "task":
+                        p_arg = k.value
+                if p_arg is None:
+                    p_positions = task_pos.get(callee) or {None}
+                    p_pos = next(iter(p_positions)) if len(p_positions) == 1 else None
+                    if (p_pos is not None and len(node.args) > p_pos
+                            and not _starred_before(node.args, p_pos)):
+                        p_arg = node.args[p_pos]
+                p_lit = _literal(p_arg) if p_arg is not None else None
+                if p_lit is not None:
+                    producer_args.setdefault(callee, set()).add(p_lit)
+                elif not any(isinstance(k, ast.keyword) and k.arg is None for k in node.keywords):
+                    unresolved_producer.append(
+                        f"{rel}:{node.lineno} {callee}(task={ast.unparse(p_arg) if p_arg is not None else '<미전달>'})")
+                else:
+                    unresolved_producer.append(f"{rel}:{node.lineno} {callee}(**kwargs)")
+            arg = _task_arg(node, callee, sinks)
+            if arg is None:
+                if _is_sink_call(node, callee, sinks):
+                    # sink 호출인데 task 를 찾지 못했다(**kwargs·*args·메서드 sink·미전달) —
+                    # 조용히 넘기면 그 경로의 신규 task 가 영영 게이트 밖이다. fail-closed.
+                    unresolved_sink.append(f"{rel}:{node.lineno} {callee}(…)")
+                continue
+            lit = _literal(arg)
+            if lit is not None:
+                found.setdefault(lit, f"{rel}:{node.lineno}")
+            elif not _is_param_passthrough(node, arg):
+                # 래퍼가 자기 파라미터를 그대로 넘기는 것(위 고정점이 이미 흡수)은 제외하고,
+                # f-string 등 **정적 확정이 불가능한** 표현식만 명시 목록 대조 대상으로 남긴다.
+                expr_key = ast.unparse(arg)
+                dynamic.setdefault(rel, {}).setdefault(expr_key, []).append(f"{rel}:{node.lineno}")
+                _stack = enclosing.get(id(node)) or []
+                dynamic_encl.setdefault((rel, expr_key), set()).update(
+                    [f.name for f in _stack] or ["<module>"])
+
+    # 스캐너가 아무것도 못 찾으면 vacuous pass 다 — 경로 변경/이동 시 조용히 무력화되지 않게 한다.
+    assert scanned_files >= 50, f"스캔된 소스 파일이 비정상적으로 적음({scanned_files})"
+    assert len(found) >= 10, f"수집된 task 리터럴이 비정상적으로 적음({sorted(found)})"
+
+    missing = {t: where for t, where in found.items() if t not in TASK_TAXONOMY}
+    assert not missing, (
+        "llm_usage 에 기록되지만 TASK_TAXONOMY 미등록 → '미분류 활동' 으로 노출됨: " + str(missing))
+
+    # 동적 task 호출부는 목록으로 고정한다 — 신규 항목이 생기면 여기서 red.
+    unknown = {f: exprs for f, exprs in dynamic.items()
+               if set(exprs) - set(_DYNAMIC_TASK_CALLSITES.get(f, {}))}
+    assert not unknown, (
+        "task 를 정적으로 확정할 수 없는 신규 _record_llm_usage 호출부: " + str(unknown) +
+        " — 산출되는 task 를 TASK_TAXONOMY 에 등록하고 _DYNAMIC_TASK_CALLSITES 에 파생 규칙을 등재하라")
+
+    assert not alias_refs, (
+        "sink 함수를 호출이 아닌 형태로 참조(별칭·인자 전달) — 별칭 경유 호출은 정적으로 추적할 수 "
+        "없다: " + str(alias_refs))
+
+    assert not unresolved_sink, (
+        "task 인자를 정적으로 특정할 수 없는 _record_llm_usage/래퍼 호출부: " + str(unresolved_sink) +
+        " — task 를 명시 인자(리터럴 권장)로 전달하라. 미확정 경로는 통과시키지 않는다")
+
+    assert not unresolved_producer, (
+        "동적 파생 producer 의 task 를 리터럴로 확정할 수 없는 호출부: " + str(unresolved_producer) +
+        " — task 는 문자열 리터럴로 전달하거나(권장), 새 파생 규칙을 _DYNAMIC_TASK_CALLSITES 에 등재하라")
+
+    for f, exprs in _DYNAMIC_TASK_CALLSITES.items():
+        for expr, (producer, template, declared) in exprs.items():
+            # 선언된 동적 호출부가 소스에서 사라졌으면 목록이 stale — 정리하도록 실패시킨다.
+            assert expr in dynamic.get(f, {}), \
+                f"_DYNAMIC_TASK_CALLSITES 가 stale (소스에 없는 호출부): {f} :: {expr}"
+            # 같은 파일·같은 표현식이라도 **다른 함수**에서 호출되면 파생 규칙이 다를 수 있다 —
+            # 선언된 producer 함수(중첩 클로저 포함) 안의 호출만 이 규칙으로 승인한다.
+            encl = dynamic_encl.get((f, expr), set())
+            assert producer in encl, (
+                f"{f} :: {expr} 를 감싼 함수 스택에 선언된 producer 가 없다 — 실제 {sorted(encl)} / "
+                f"선언 {producer}")
+            # producer 호출부의 실제 리터럴로 산출 집합을 재계산해 선언과 **집합 동치**를 요구한다
+            # — 새 진입점(`task=\"foo\"`)이 추가되면 표현식이 같아도 여기서 red 가 된다.
+            produced = {template.format(v) for v in producer_args.get(producer, set())}
+            assert produced == set(declared), (
+                f"{f} :: {expr} 의 산출 task 집합이 선언과 다름 — 실제 {sorted(produced)} / "
+                f"선언 {sorted(declared)} (신규 {producer}(task=…) 진입점?)")
+            undeclared = [t for t in produced if t not in TASK_TAXONOMY]
+            assert not undeclared, (
+                f"동적 호출부가 산출하는 task 중 TASK_TAXONOMY 미등록: {undeclared} ({f} :: {expr})")
+
+
 # ── T2: ask-worker 축 임계 + inprocess N/A ───────────────────────────────────
 def test_ask_worker_axis_inprocess_is_na(monkeypatch):
     monkeypatch.setattr(app, "_is_worker_mode", lambda: False)
