@@ -845,3 +845,71 @@ def test_inventory_sink_optional(monkeypatch):
     _routine_env(monkeypatch, cur)
     assert rt.introspect_and_store(object(), "log_v2", [], scope_key=_SCOPE,
                                    store_schema="log_v2", prune=False) == 2
+
+
+# ── telemetry 도달 보장 (역전된 규약) ──────────────────────────────────────
+#   배경: payload 가 명시 allow-list 이던 동안 등재를 빠뜨린 계측은 조용히 사라졌다. 이 cycle 은
+#   그 위험을 1라운드에 진단해 4키를 등재해 놓고도 2라운드 추가분 2키의 등재를 빠뜨려 7일간
+#   무음이었고, 같은 파일에 고아 카운터가 6개 더 있었다. 그래서 규약을 뒤집었다 — 기록된 스칼라는
+#   기본 도달하고, 빼야 할 것만 deny-list 에 명시한다(`_telemetry_sweep`).
+#
+#   이전 버전의 이 테스트는 **소스 텍스트**에 두 정규식을 걸어 "기록 키 ⊆ 등재 키" 를 봤는데,
+#   적대 리뷰가 mutation 3종으로 실측한 결과 ① 등재 줄 삭제만 FAIL 이고 ② 주석 처리 ③ 지역변수로
+#   이동은 **PASS** 했다(②③ 은 이 파일의 실제 관용구다). 즉 "파일 어딘가에 두 문자열이 함께
+#   존재함" 을 검사할 뿐이어서 거짓 안심을 줬다. 아래는 텍스트가 아니라 **동작**을 검사한다.
+def test_sweep_delivers_any_recorded_scalar():
+    """기록된 스칼라는 등재 없이도 payload 에 도달한다 — 이것이 새 규약의 본체다."""
+    payload = {"run_id": "r1", "status": "ok"}
+    scan_report = {"brand_new_counter_never_registered": 7, "another_flag": True,
+                   "float_metric": 1.5}
+    ins._telemetry_sweep(payload, scan_report)
+    assert payload["brand_new_counter_never_registered"] == 7
+    assert payload["another_flag"] is True
+    assert payload["float_metric"] == 1.5
+
+
+def test_sweep_never_overwrites_explicit_entries():
+    """명시 등재가 항상 우선 — sweep 이 가공된 값을 덮어써선 안 된다."""
+    payload = {"auto_reanalysis_candidates": 0}
+    ins._telemetry_sweep(payload, {"auto_reanalysis_candidates": 99})
+    assert payload["auto_reanalysis_candidates"] == 0
+
+
+def test_sweep_skips_non_scalars_and_falsy():
+    """dict/list 는 datasource 순회 병합에서 마지막 것만 남아 관측을 왜곡하므로 흘리지 않는다.
+    0/False 는 로그 크기 억제를 위해 생략 — 0 이어도 보여야 하는 지표는 명시 등재한다."""
+    payload = {}
+    ins._telemetry_sweep(payload, {"a_dict": {"x": 1}, "a_list": [1], "a_str": "s",
+                                   "zero": 0, "false_flag": False, "kept": 3})
+    assert payload == {"kept": 3}
+
+
+def test_sweep_honors_deny_list():
+    payload = {}
+    ins._telemetry_sweep(payload, {"scan_started": True, "kept": 1})
+    assert "scan_started" not in payload and payload["kept"] == 1
+    assert "scan_started" in ins._TELEMETRY_SWEEP_DENY
+
+
+def test_previously_orphaned_counters_now_reach_payload():
+    """적대 리뷰가 실측한 고아 카운터 — 그 중 넷은 FUNCTION.md 가 '관측된다'고 선언한 것들이다.
+    `insight_llm_calls` 는 LLM 호출 수(비용 신호), `tables_fanout` 은 2026-07-03 샤드 그룹화
+    결정이 실제로 LLM 을 아끼는지의 유일한 수치다."""
+    orphans = {"coverage_seeded": 3, "relationships_introspected": 5,
+               "relationships_inferred": 2, "routines_introspected": 4,
+               "insight_llm_calls": 11, "tables_fanout": 6}
+    payload = {}
+    ins._telemetry_sweep(payload, dict(orphans))
+    assert payload == orphans
+
+
+def test_core_auto_reanalysis_counters_stay_explicit():
+    """0 이어도 항상 보여야 하는 핵심 지표는 sweep(truthy-only)에 맡기지 않고 명시 등재한다 —
+    `candidates=0` 은 "안 돌았다" 자체가 POST-DEPLOY 판정 근거이므로 키가 없으면 안 된다."""
+    import re
+    from pathlib import Path
+    src = Path(ins.__file__).read_text(encoding="utf-8")
+    explicit = set(re.findall(r'"(auto_reanalysis_\w+)":\s*int\(scan_report\.get\(', src))
+    for key in ("auto_reanalysis_candidates", "auto_reanalysis_seeded",
+                "auto_reanalysis_runs", "auto_reanalysis_blocked"):
+        assert key in explicit, f"{key} 는 0 이어도 노출돼야 하므로 명시 등재를 유지할 것"

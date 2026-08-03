@@ -591,7 +591,8 @@ def _auto_reanalyze_structure_changes(mem_conn, scope_key, schema_label, *, prob
                 report["auto_reanalysis_seeded"] = int(
                     report.get("auto_reanalysis_seeded", 0)) + len(seeded)
             _auto_note_status(schema_key, status or "unknown", len(changes), report,
-                              seeded=len(seeded), run_id=rep.get("run_id"))
+                              seeded=len(seeded), run_id=rep.get("run_id"),
+                              absorbed=len(absorbed))
         else:
             # feature-0035(ITEM-11): 구조 변경이 없는 사이클에 **커버리지**를 중요도 순으로
             #   채운다. 지금까지 분석 대상은 "사용자가 클릭한 노드 + 이웃"뿐이라 커버리지가
@@ -629,13 +630,25 @@ def _auto_reanalyze_structure_changes(mem_conn, scope_key, schema_label, *, prob
                          "tb": bool(snap.get("tb")), "rb": bool(snap.get("rb"))}:
             _save_auto_snapshot(mem_conn, snap_key, next_snap)
         if (t_new_baseline or r_new_baseline) and not changes:
-            _auto_note_status(schema_key, "baseline", 0, report)
+            _auto_note_status(schema_key, "baseline", 0, report, absorbed=len(absorbed))
+        elif absorbed and not changes:
+            # 샤드만 새로 생긴 사이클 — 시드 0 이라 위 status 로그가 안 남는데, 그 사이클이야말로
+            # 샤드 흡수 방어가 실제로 일한 순간이다. 로그 없이는 하루 경계 관측이 불가능하다.
+            _auto_note_status(schema_key, "absorbed_only", 0, report, absorbed=len(absorbed))
     except Exception:
+        # 카운터 없이 WARN 만 남기면, 자격 스키마에서 KV 파손·드라이버 예외가 **매 사이클** 나도
+        # payload 는 `candidates=0 · seeded=0` 으로 "건강한 무변경" 과 똑같이 보인다 — 그러면
+        # POST-DEPLOY 의 "오탐 0" 판정이 관측이 아니라 추론이 된다(적대 리뷰 C2).
+        if isinstance(report, dict):
+            report["auto_reanalysis_errors"] = int(report.get("auto_reanalysis_errors", 0)) + 1
         log.warning("auto_reanalysis_failed schema=%s", schema_key, exc_info=True)
 
 
 #: 무발동 status — telemetry `auto_reanalysis_blocked` 로 집계(운영자가 "왜 안 도는가"를 수치로 본다).
 _AUTO_BLOCKED_STATUSES = frozenset({"ineligible", "cooldown", "busy", "disabled", "noop"})
+#: 발동도 차단도 아닌 **정상 진행 상태** — 카운터 없이 로그로만 관측한다. blocked 로 세면 "왜 안
+#  도는가" 집계가 부풀고, unknown(malformed) 으로 세면 정상 동작이 오류로 보인다.
+_AUTO_INFO_STATUSES = frozenset({"baseline", "absorbed_only"})
 
 
 def _seed_coverage_targets(scope_key, schema_key, schema_label, report) -> None:
@@ -696,7 +709,7 @@ def _seed_coverage_targets(scope_key, schema_key, schema_label, report) -> None:
 
 
 def _auto_note_status(schema_key: str, status: str, candidates: int, report,
-                      seeded: int = 0, run_id=None) -> None:
+                      seeded: int = 0, run_id=None, absorbed: int = 0) -> None:
     """자동 재분석 결과를 계측 + **상태 변화 시에만** info 로그(무발동 사유도 관측 가능하게).
 
     적대 리뷰 C1: ineligible / cooldown / busy / 그래프 미투영 같은 무발동은 이전 구현에서 로그도
@@ -708,16 +721,28 @@ def _auto_note_status(schema_key: str, status: str, candidates: int, report,
     if isinstance(report, dict) and status:
         if status == "running":
             report["auto_reanalysis_runs"] = int(report.get("auto_reanalysis_runs", 0)) + 1
+        elif status == "shadow":
+            # 무발동이지만 **의도된 안전 모드** — blocked 와 섞으면 "왜 안 도는가" 집계가 오해를
+            # 부른다. 별 카운터가 없으면 payload 가 `candidates>0 · seeded=0 · runs=0 · blocked=0`
+            # 을 내보내, "shadow 가 걸려 있다" 와 "enqueue 가 빈 status 로 조용히 실패했다" 를
+            # 구별할 수 없다(적대 리뷰 C1).
+            report["auto_reanalysis_shadow"] = int(report.get("auto_reanalysis_shadow", 0)) + 1
         elif status in _AUTO_BLOCKED_STATUSES:
             report["auto_reanalysis_blocked"] = int(report.get("auto_reanalysis_blocked", 0)) + 1
+        elif status not in _AUTO_INFO_STATUSES:
+            # 정상 status 집합 밖 = malformed enqueue 응답. 조용히 묻히면 안 된다.
+            report["auto_reanalysis_status_unknown"] = int(
+                report.get("auto_reanalysis_status_unknown", 0)) + 1
     changed = _LAST_AUTO_REANALYSIS_STATUS.get(schema_key) != status
     _LAST_AUTO_REANALYSIS_STATUS[schema_key] = status
     log = logging.getLogger("insight")
-    msg = "auto_reanalysis schema=%s status=%s candidates=%s seeded=%s run=%s"
-    if changed or seeded:
-        log.info(msg, schema_key, status, candidates, seeded, run_id)
+    # absorbed 를 per-schema 로그에 싣는 이유: 사이클 총합 카운터만으로는 "어느 샤드가 언제
+    # 흡수됐는가" 를 역산해야 해서, 하루 경계 관측(TCR.11b)이 사실상 판정 불가다.
+    msg = "auto_reanalysis schema=%s status=%s candidates=%s seeded=%s absorbed=%s run=%s"
+    if changed or seeded or absorbed:
+        log.info(msg, schema_key, status, candidates, seeded, absorbed, run_id)
     else:
-        log.debug(msg, schema_key, status, candidates, seeded, run_id)
+        log.debug(msg, schema_key, status, candidates, seeded, absorbed, run_id)
 
 
 def _insight_target_conversation_id() -> str:
@@ -3434,6 +3459,15 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "auto_reanalysis_seeded": int(scan_report.get("auto_reanalysis_seeded", 0) or 0),
             "auto_reanalysis_runs": int(scan_report.get("auto_reanalysis_runs", 0) or 0),
             "auto_reanalysis_blocked": int(scan_report.get("auto_reanalysis_blocked", 0) or 0),
+            # POST-DEPLOY 관측(2026-08-03): 아래 2키는 `report` 에 기록되면서도 이 allow-list 에
+            # 빠져 있어 7일간 운영자에게 **한 줄도 도달하지 않았다** — 같은 cycle 이 경계했던
+            # "allow-list 미등재 = 관측 소실" 을 계측을 늘리며 그대로 반복한 것이다.
+            #   absorbed   : 동일 구조 샤드로 흡수돼 LLM 을 태우지 않은 수. 로그도 없어 완전 무음이었고,
+            #                하필 발동 DB(log_v2)가 날짜 샤드 DB 라 그 방어의 실효를 볼 수 없었다.
+            #   axis_dropped: 관측 실패로 축을 보존한 횟수(전량/과반 소실). WARN 로그는 남지만
+            #                집계가 없어 빈도·추세를 볼 수 없었다.
+            "auto_reanalysis_absorbed": int(scan_report.get("auto_reanalysis_absorbed", 0) or 0),
+            "auto_reanalysis_axis_dropped": int(scan_report.get("auto_reanalysis_axis_dropped", 0) or 0),
         }
     )
     # feature-0026 (M4): 종전엔 cycle 로그에서 빠지던 처리량 신호 — 노드 분석(claimed/done/failed)과
@@ -3481,6 +3515,7 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         _rb_ins.flush_snapshot()
     except Exception:
         pass
+    _telemetry_sweep(payload, scan_report)
     _base_log = status != "ok" or bool(scan_report.get("scan_started"))
     # feature-0026: 노드 분석만 돈 tick 도 로그 라인은 남긴다(처리량 추적) — 단 timing 파일은
     # 기존 조건에서만 생성(§18.8 C-4: 드레인 기간 tick 마다 무회전 파일 누적 방지).
@@ -3491,6 +3526,42 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             if timing_path:
                 payload["timing_path"] = timing_path
         append_log_line("insight_worker", json.dumps(payload, ensure_ascii=False))
+    return payload
+
+
+#: 계측 sweep 에서 **의도적으로 제외**하는 scan_report 키. 새 키를 여기 넣을 때는 사유를 함께 적는다.
+_TELEMETRY_SWEEP_DENY = frozenset({
+    "scan_started",   # 제어 플래그 — should_log 판정에 쓰이고 payload 의미가 없다.
+})
+
+
+def _telemetry_sweep(payload: dict, scan_report: dict) -> dict:
+    """`scan_report` 의 미등재 스칼라를 payload 로 흘린다 — "기록했다 ⇒ 도달한다" 를 **구조로** 보장.
+
+    **왜 allow-list 를 뒤집는가 (§18.8 적대 리뷰 2026-08-03)**: payload 가 명시 allow-list 이던 동안,
+    등재를 빠뜨린 계측은 조용히 사라졌다. change-reanalysis cycle 은 그 위험을 1라운드에 진단해
+    4키를 등재해 놓고도 2라운드에서 추가한 2키의 등재를 빠뜨려 **7일간 무음**이었고, 같은 파일에
+    이미 6개의 고아 카운터(`coverage_seeded`·`insight_llm_calls`·`tables_fanout`·`relationships_*`)가
+    남아 있었다 — 그 중 넷은 FUNCTION.md 가 "관측된다" 고 선언한 것들이다. 등재를 사람이 기억하게
+    하는 한 이 실수는 계측을 늘릴 때마다 재발한다. 그래서 규약을 뒤집는다: 기록된 스칼라는 기본
+    도달하고, **빼야 할 것만** `_TELEMETRY_SWEEP_DENY` 에 사유와 함께 명시한다.
+
+    - 스칼라(int/float/bool)만 흘린다 — dict/list 는 datasource 순회 병합 규약(int 합산·bool OR·
+      그 외 덮어쓰기)에서 마지막 것만 남아 관측이 왜곡되므로 애초에 담지 않는 것이 맞다.
+    - **truthy 만** 흘린다(0/False 생략) — 로그 한 줄의 크기를 억제하고, 발생한 신호는 반드시 보이게.
+      0 이어도 항상 보여야 하는 핵심 지표(예: `auto_reanalysis_candidates` — "안 돌았다" 자체가
+      판정 근거)는 위 payload 블록에 **명시 등재**해 둔다. 두 층은 대체가 아니라 보완이다.
+    - 이미 payload 에 있는 키는 건드리지 않는다(명시 등재가 항상 우선).
+    """
+    for key in sorted(scan_report):
+        if key in payload or key in _TELEMETRY_SWEEP_DENY:
+            continue
+        val = scan_report[key]
+        if isinstance(val, bool):
+            if val:
+                payload[key] = True
+        elif isinstance(val, (int, float)) and val:
+            payload[key] = val
     return payload
 
 

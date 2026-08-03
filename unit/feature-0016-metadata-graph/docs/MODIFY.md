@@ -458,3 +458,9 @@ source_of_truth: true
 실행 코드 0줄. 배포본 `4d5e6678` 에서 재클러스터 pass 2회를 유발해 측정한 결과를 기록.
 밴드 수 불변 · 라벨 종수 감소 · 스키마-내 중복 0 유지 · 요약 재생성 동반을 실증.
 대형 scope 는 컨테이너 메모리 한도로 외부 유발 불가 — cadence 전환 후 확인(E.12).
+
+## CHG-20260803T1230-ai-claude-feature-0016-change-reanalysis-obs — 자동 재분석 계측 누락 보정 + POST-DEPLOY 실측 기록 (2026-08-03)
+- 대상(cross-cut 코드 거주 feature-0002): `insight.py`(+70 — payload allow-list 에 2키 등재 + **`_telemetry_sweep` 신설**(미등재 스칼라 자동 도달 + `_TELEMETRY_SWEEP_DENY`) + `shadow`/`unknown`/예외 카운터 + `_AUTO_INFO_STATUSES` + per-schema 로그 `absorbed=` 필드), 테스트 `test_node_analysis_change_reanalysis.py`(+60 — sweep 동작 6건: 임의 스칼라 도달·명시 등재 우선·비스칼라/falsy 제외·deny-list·고아 6키 회복·핵심 4키 명시 등재 유지). 문서: TEST.md(POST-DEPLOY Run 실측 표 + 범위 한계 + 라이브/재배포 비대칭 + TCR.11b 예정), TASK.md(TCR.11 완료·11a 신설·11b 예정).
+- 변경(POST-DEPLOY 검토가 드러낸 결함): CHG-20260727T1741 이 2라운드 리뷰를 흡수하며 추가한 계측 2키가 `report` 에는 기록되면서 **payload allow-list 에 미등재**라 배포 후 7일간 운영자에게 한 줄도 도달하지 않았다. 하필 실제 발동 DB(`log_v2`)가 날짜 샤드 DB 라, 그 cycle 의 critical 수정이었던 **샤드 흡수(S1)의 실효를 확인할 수단이 없었다**. `axis_dropped` 는 WARN 로그가 있어 부분 관측 가능했으나 `absorbed` 는 완전 무음.
+- 근거: 등급 **Minor**(비파괴 계측 — 로그 payload 키 추가, 기능 동작 무변경). 이 결함은 1라운드 리뷰 R7("allow-list 등재 없이는 어떤 계측도 도달하지 않는다")의 재발이라, 보정의 본체는 키 2개가 아니라 **재발 방지 구조**다. §18.8 적대 리뷰가 1차 시도(2키 등재 + 정규식 감시자)를 **BLOCK** — 고아 카운터 6건이 남고(그 중 넷은 FUNCTION.md 가 관측 수단으로 선언), 감시자가 유실 3방식 중 2개(주석 처리·지역변수 이동, 둘 다 이 파일의 실제 관용구)를 통과시킴을 mutation 으로 실측했다. 리뷰 Challenge 를 채택해 **규약을 역전**: `_telemetry_sweep` 이 `scan_report` 의 미등재 스칼라를 payload 로 흘리고(deny-list 만 명시), 0 이어도 보여야 하는 핵심 지표는 명시 등재를 유지한다(sweep 은 truthy-only). 병합 규약(int 합산·bool OR·그 외 덮어쓰기)이 이미 스칼라만 안전하게 다루므로 이 역전과 자연히 맞물린다. 테스트는 소스 텍스트가 아닌 **동작**을 검사한다.
+- 동반 기록: TCR.11 POST-DEPLOY 라이브 실측(배포 D+7) — 오탐 0 · 정탐 67 노드 전부 done · 쿨다운·예산·이중지출 정상 · 3-state 정지 스위치 라이브 실증(원복 포함). 실증 범위의 한계(워커 상시 프로세스의 TTL 반영은 미관측)는 TEST.md 에 명시.

@@ -1077,8 +1077,73 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 > **방어를 helper 내부로 옮겨** 호출부가 어떤 값을 넘겨도 안전하도록 설계를 바꿨다(관측 실패 방어·
 > 자격 선확인·shadow 판정 모두 내부). 배선 자체의 회귀는 여전히 POST-DEPLOY(TCR.11)가 잡는다.
 
-### Run (예정) — POST-DEPLOY 라이브 (Environment: CLI + PG 조회) — TCR.11
-- **오탐 규모 우선 확인(적대 리뷰 Challenge)**: 구조를 **전혀 바꾸지 않은** 상태에서
+### Run — POST-DEPLOY 라이브 (Environment: CLI + PG 조회) — TCR.11 · 2026-08-03 (배포 D+7)
+
+배포 `ab0e3f7b`(2026-07-27) 후 7일간의 실운영 관측. **오탐 축을 최우선**으로 확인했다.
+
+| 축 | 실측 | 판정 |
+|---|---|---|
+| **오탐(변경 없을 때 미발동)** | `auto_reanalysis_candidates = 0` — 08-03 최신 사이클까지 전 구간 0 | PASS |
+| 정탐(변경 시 발동) | `SchemaAuto` run **4건 전부 `done`**, 잡 **67건 전부 `done`**, failed 0 | PASS |
+| 분석 산출물 | `analysis` 채워진 잡 **67/67** (빈 분석 0) | PASS |
+| 요청 3축 | 테이블 `log_v2.tf_log_01_contents` · 컬럼 `…LogTime/SequenceID/LogIndex` · 프로시저 `log_v2.SP_LOG_INSERT()` 모두 실동작 | PASS |
+| 재귀 전개 | 테이블 시드 → 소속 컬럼까지 전개(§55 per-seed 앵커) | PASS |
+| MSSQL | `mssql-…:masangsoftweb#auto` 3노드 발동 — 테이블 축 정상(루틴 축은 설계상 비활성) | PASS |
+| 쿨다운 | 연속 자동 run 간격 **7,624s · 4,217s**(설정 1800s 초과) | PASS |
+| 예산 회계 | 불변식 2개 — `enqueued == done`(40·20·4·3 전부 일치, 유실 0) **且** `enqueued <= node_budget`(4/4·20/20·40/40·**3/4**) | PASS |
+| 이중 지출 | 진행 중 수동 run 과 겹치는 노드 **0** | PASS |
+| 자격 게이트 | 116 스키마 중 **112 blocked**(대부분 ineligible) / 자격 보유 13 — 두 수의 합이 116 을 넘는 것은 정상이다: `blocked` 는 스키마 수가 아니라 **무발동 사유 발생 건수**라, 자격 보유 스키마도 cooldown·busy·noop 로 그 사이클에 blocked 로 집계된다 | PASS |
+| 스냅샷 | `agent_runtime.kv` 의 `na_struct_snap:%` **8건**(자격 스키마에만 적재) | PASS |
+
+**라이브 3-state 정지 스위치 실증** (워커 컨테이너, 기존 override 22키 보존·원복 후 스냅샷 바이트 일치):
+
+| 설정 | 관측 |
+|---|---|
+| 평시 | `cap=50` · `shadow=False` · `enabled=True` |
+| `CAP=0` | `enabled=False` · `enqueue_change_analysis → status='disabled'` |
+| `CAP=-1` | `shadow=True` · `enqueue_change_analysis → status='shadow'` |
+| 원복 | `cap=50` · `shadow=False` · 스냅샷 파일 원문 일치 |
+
+> **이 실증의 범위(정직 표기)**: 스냅샷 파일(관리 콘솔이 쓰는 바로 그 경로)에 override 를 심고
+> **워커 컨테이너 안의 새 프로세스**가 그 값을 읽어 게이트가 전환됨을 확인한 것이다 — 즉 "재배포
+> 없이 값이 반영되는 경로"의 실증이다. 상시 구동 중인 워커 프로세스가 TTL 만료 후 같은 값을
+> 집어 다음 스캔에서 무발동으로 바뀌는 것까지는 관측하지 않았다(그 축은 다음 스캔 사이클에서
+> `status=disabled` 로그로 확인 가능). `process_pending` 의 대기 잡 보류 절은 단위 테스트로 검증.
+>
+> **⚠️ "3-state" 는 하나의 스위치가 아니다 (라이브/재배포 비대칭)**: 라이브로 전환되는 것은
+> **cap 정수 3-state** 뿐이다(`auto_setting_int` 가 호출 시점에 `runtime_settings` 를 읽는다).
+> env 문자열 `AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE`(및 `_MODE=shadow`)는 `shared/config.py` 에서
+> **import 시점에 굳는 star-import 상수**라 바꾸려면 재배포가 필요하다 — `auto_setting_int` 의
+> docstring 이 스스로 경계한 바로 그 형태다. 사고 대응 시 운영자가 env 쪽을 만지면 "즉시 정지"가
+> 성립하지 않으므로, **정지·관찰 전환은 관리 콘솔의 cap 값으로** 한다.
+
+**미완 — 관측 창**: 적대 리뷰 재검증이 요구한 "샤드 생성 경계를 포함하는 1 영업일 추이"는 계측
+누락(아래)으로 판정 불가였다. `absorbed` 계측 등재 후 다시 관측한다.
+
+**이 관측이 드러낸 결함**: `auto_reanalysis_absorbed`·`auto_reanalysis_axis_dropped` 가 `report` 에는
+기록되면서 payload allow-list 에 미등재라 **7일간 한 줄도 도달하지 않았다**. 하필 발동 DB(`log_v2`)가
+날짜 샤드 DB 라, 샤드 흡수 방어(S1)의 실효를 확인할 수 없었다. → 등재 + 집합 포함 회귀 테스트
+(`test_every_recorded_counter_reaches_the_payload`, mutation 검사로 방어 확인) 로 보정.
+
+### Run — 단위 테스트 (Environment: CLI, pytest) — TCR.11a 계측 도달 규약 역전
+
+- `_telemetry_sweep` **동작 검사 6건** (소스 텍스트 검사를 대체 — 적대 리뷰가 mutation 으로
+  "주석 처리·지역변수 이동은 통과"를 실측해 텍스트 검사의 거짓 안심을 증명했다):
+  임의 스칼라가 등재 없이 payload 에 도달 / 명시 등재가 sweep 보다 우선 / dict·list·str·0·False 제외 /
+  deny-list 준수 / **고아 카운터 6키 회복**(`coverage_seeded`·`insight_llm_calls`·`tables_fanout`·
+  `relationships_introspected`·`relationships_inferred`·`routines_introspected`) / 핵심 4키는 0 이어도
+  보이도록 명시 등재 유지.
+- 기존 스위트 회귀 0 — `test_node_analysis_change_reanalysis.py` **56 PASS**,
+  `test_analysis_planner.py` **37 PASS**(`coverage_seeded` 소스 assert 무영향).
+- 컨테이너 전체 스위트(0002+0003) **3,571 PASS · 0 failed · 0 error · 2 skipped**, ruff clean
+  (`modules/`·`shared/`).
+- 파일 모드 변경(100755→100644)이 diff 에 섞여 있던 것을 복원해 changeset 을 코드 변경으로 한정.
+
+### Run (예정) — POST-DEPLOY 추가 관측 (Environment: CLI + PG 조회) — TCR.11b
+- **`absorbed` 추이(이번 cycle 등재 후 최우선)**: 날짜 샤드 DB(`log_v2`)에서 하루 경계를 넘겨
+  `auto_reanalysis_absorbed` 가 증가하고 그만큼 `candidates` 는 늘지 않는지 — 샤드 흡수(S1) 방어의
+  실효를 처음으로 수치 확인한다.
+- **오탐 규모 재확인(적대 리뷰 Challenge)**: 구조를 **전혀 바꾸지 않은** 상태에서
   `auto_reanalysis_candidates`(insight_worker 로그 payload)가 **0** 이고 `SchemaAuto` run 이 생성되지
   않는지 먼저 확인한다. "변경하면 도는가" 보다 "변경이 없으면 안 도는가"가 이 기능의 위험 축이다.
   **관측 창(2라운드 리뷰 지적)**: 2 사이클로는 부족하다 — 샤드 오탐은 **하루 경계**에서, 관측 실패
