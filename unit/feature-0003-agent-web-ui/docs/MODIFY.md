@@ -2096,3 +2096,9 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 부수효과(의도): Attention 존의 "미분류 AI 활동" 배지 소멸 · `LLM 사용량 > 사용 기록` 의 raw task 문자열(`analysis_verify` 등)이 사람이 읽는 작업명으로 노출. `USAGE_TASK_NAV` 는 미등록 유지 — 세 task 의 산출물을 보여주는 전용 관리 화면이 없어 기본 폴백(`AI 운영 현황 > 운영 현황`)이 정확한 착지다(§8.1 후속 제안 아님, 현행이 정답).
 - 교차 참조: `shared/docs/MODIFY.md` (§17 shared 거버넌스).
 - Files: `shared/model_catalog.py`, `unit/feature-0003-agent-web-ui/tests/test_ai_ops.py`, `unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST}.md`, `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md`.
+
+## CHG-20260803T174200-aiops-taxonomy-postdeploy (20260803T1740-aiops-taxonomy-postdeploy — 미분류 활동 재배치 POST-DEPLOY 실증, doc-only)
+- 코드 변경 0 — 배포·라이브 대조 결과 기록만. 상세는 `docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md` §4 · TEST.md Run.
+- 배포: `--web-only` 스코프, web-a·web-b GIT_COMMIT=c0c6800f(본 cycle 커밋 7c562a0a 포함 확인), soak 90s 통과, Caddyfile 무변경(edge blip 0). 워커 미접촉 — taxonomy 는 web 관제 표시 전용이라 워커 소비 경로 없음.
+- 실증: 배포본 taxonomy 18→21종, 3 task 가 `ai.other.unmapped` → `ai.insight.analyze` · 라이브 API `categories[]`/`attention[]` 에서 미분류 소멸 · PB-0008 육안으로 pane 텍스트 "미분류" 0회 + 최근 활동 피드가 raw task 대신 작업명 노출.
+- Files: `docs/{TASK,MODIFY,REVIEW,TEST}.md`, `docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md`.

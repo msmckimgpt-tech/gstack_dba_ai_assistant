@@ -7733,3 +7733,9 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/2
 **주장 affordance 실측 (G3)**: 배포 후 라이브 `GET /api/admin/ai-ops?days=7` 응답에서 ① `categories[]` 에 `ai.other.unmapped` 부재 ② 세 task 가 `ai.insight.analyze` 의 `tasks[]` 에 라벨과 함께 존재 ③ `attention[]` 에 "미분류 AI 활동" 부재 — 세 축 모두 대조.
 
 **경계 양측 검증 (G4)**: 등록 task → 카테고리 매핑(양성) / 미등록 임의 task(`brand_new_ai_task`·None·공백) → `ai.other.unmapped` self-surface 유지(음성). 후자가 살아 있어야 향후 신규 계측이 조용히 사라지지 않는다.
+
+## 20260803T1740-aiops-taxonomy-postdeploy — 미분류 활동 재배치 POST-DEPLOY 실증 기록 (doc-only, 코드 변경 0)
+- [x] `배포 실증` — 산출물: `sudo -E bin/deploy-web.sh --web-only` → web-a·web-b GIT_COMMIT=c0c6800f·soak 통과 · 배선 확인: `git merge-base --is-ancestor 7c562a0a c0c6800f` 로 본 cycle 커밋 포함 확인(파이프 exit 아닌 서빙 주체 SHA 로 판정).
+- [x] `BEFORE/AFTER 대조` — 산출물: 배포본 컨테이너 `taxonomy_for` 실측(18종→21종, 3 task 가 unmapped→ai.insight.analyze) · 배선 확인: web-a·web-b 양쪽 동일, 미등록 self-surface 계약 무회귀.
+- [x] `라이브 API 대조` — 산출물: 배포본 `admin_ai_ops(days=7)` 응답에 `ai.other.unmapped` 부재·"미분류 AI 활동" attention 부재 · 배선 확인: 3 task 가 인사이트 분석 `tasks[]` 에 라벨과 함께 존재.
+- [x] `PB-0008 Windows-browser 육안` — 산출물: 운영 현황 pane 에서 "미분류" 텍스트 0회·인사이트 분석 하위 3행·최근 활동 피드 작업명 노출·기존 카테고리 무회귀, 스크린샷 `artifacts/pb0008/20260803-aiops-taxonomy-unmapped.png` · 배선 확인: 실 Chrome 150 relay, https://localhost/admin.

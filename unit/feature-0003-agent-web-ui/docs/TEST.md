@@ -2312,4 +2312,4 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 ## 20260803T1549-aiops-taxonomy-unmapped — `AI 운영 현황 > 운영 현황` 미분류 활동 3종 재배치 (Minor §12.3, 2026-08-03)
 - Run 기록 정본: `docs/test-runs.d/20260803T1549-aiops-taxonomy-unmapped.md` (§5.3 fragment).
 - **Environment: pytest** — `test_ai_ops.py` 22 passed(신규 2 포함) · 전체 스위트 EXIT=0 · ruff PASS.
-- **Environment: Windows-browser (PB-0008)** — POST-DEPLOY 로 이월(정적 자산·렌더 경로 무변경, 표시 delta 는 배포된 web 이미지의 API 응답에서 발생). 배포 후 fragment §4 에 append.
+- **Environment: Windows-browser (PB-0008)** — **POST-DEPLOY PASS** (배포 c0c6800f, 실 Chrome 150 relay, https://localhost/admin). 운영 현황 pane 에서 '미분류 활동' 그룹 소멸(텍스트 "미분류" 0회)·인사이트 분석 하위 3행 편입·최근 활동 피드 작업명 노출·기존 카테고리 무회귀. 증거 `artifacts/pb0008/20260803-aiops-taxonomy-unmapped.png`. 상세는 fragment §4.

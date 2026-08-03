@@ -48,8 +48,44 @@ verdict: PASS
 - **잔여 한계**: `getattr` 문자열·`exec`·동적 import 등 AST 밖 경로는 원리상 정적 확정 불가 —
   게이트 계약은 "미확정 경로를 조용히 통과시키지 않는다"(docstring 명시).
 
-## 4. Environment: Windows-browser (PB-0008)
+## 4. Environment: Windows-browser (PB-0008) — POST-DEPLOY **PASS**
 
-POST-DEPLOY 로 이월 — 본 cycle 은 `shared/model_catalog.py` dict 데이터와 테스트만 바꾸고
-정적 자산(`static/**`·HTML·CSS·JS)·렌더 경로는 무변경이라 pre-commit 시점에 화면에서 확인할 수 있는
-delta 가 없다(표시 내용은 배포된 web 이미지의 API 응답에서 나온다). 배포 후 아래 절에 append 한다.
+본 cycle 은 `shared/model_catalog.py` dict 데이터와 테스트만 바꾸고 정적 자산(`static/**`·HTML·
+CSS·JS)·렌더 경로는 무변경이라 pre-commit 시점엔 화면 delta 가 없다(표시 내용은 배포된 web
+이미지의 API 응답에서 나온다). 배포 후 실측한다.
+
+### 배포
+
+`sudo -E bin/deploy-web.sh --web-only` → **GIT_COMMIT=c0c6800f** (web-a·web-b 실측, soak 90s 통과,
+Caddyfile 무변경으로 edge blip 0). `git merge-base --is-ancestor 7c562a0a c0c6800f` 로 본 cycle
+커밋 포함 확인. 워커는 미접촉(`--web-only`) — taxonomy 는 web 의 관제 표시 전용이라 워커 소비 경로가
+없다(`ai_ops.py`·`admin_usage.py` 만 참조).
+
+### BEFORE / AFTER (배포본 컨테이너 실측)
+
+| 시점 | `analysis_verify` | `cluster_summary` | `domain_summary` | 등록 수 |
+|---|---|---|---|---|
+| 배포 전 (구 이미지) | `ai.other.unmapped` / `analysis_verify` | `ai.other.unmapped` / `cluster_summary` | `ai.other.unmapped` / `domain_summary` | 18 |
+| 배포 후 (c0c6800f, web-a·web-b 동일) | `ai.insight.analyze` / 분석문 사실성 검증 | `ai.insight.analyze` / 콘텐츠 그룹 요약 | `ai.insight.analyze` / 도메인 종합 요약 | 21 |
+
+미등록 self-surface 계약 무회귀도 배포본에서 확인(`taxonomy_for('brand_new_x') → ai.other.unmapped`).
+
+### 라이브 API 대조 (`admin_ai_ops(days=7)`, 배포본 web-a 내부 호출)
+
+- `categories[]` 에 `ai.other.unmapped` **부재** — 인사이트 분석 하위로 편입
+  (`analysis_verify` 1,591 · `cluster_summary` 333 · `domain_summary` 4).
+- `attention[]` 에 "미분류 AI 활동" 배지 **부재**.
+
+### Windows-browser 육안 (실 Chrome 150.0.7871.128 via `bin/win-browser.py` relay, https://localhost/admin)
+
+`AI 운영 현황 > 운영 현황` 진입 후:
+
+- ✅ **AI 활동 카테고리 표에 '미분류 활동' 그룹 소멸** — pane 전체 텍스트에서 "미분류" 출현 **0회**.
+- ✅ 인사이트 분석(8,689 호출 · 31,328,202 토큰 · $86.01) 하위에 신규 3행 표시:
+  `분석문 사실성 검증 (analysis_verify)` 1,594 · `콘텐츠 그룹 요약 (cluster_summary)` 333 ·
+  `도메인 종합 요약 (domain_summary)` 4.
+- ✅ **최근 활동 피드**도 raw task 문자열 대신 사람이 읽는 작업명으로 노출
+  (예: "분석문 사실성 검증 masangsoftweb.Ace_Influence_Mother_Ship").
+- ✅ 기존 카테고리(에이전트 추론·보조 추론·지식베이스 보강·프롬프트 자동생성) 라벨·수치 무회귀,
+  상태 축 4종·KPI 타일·워커 자원 표 정상 렌더.
+- 증거: `artifacts/pb0008/20260803-aiops-taxonomy-unmapped.png`

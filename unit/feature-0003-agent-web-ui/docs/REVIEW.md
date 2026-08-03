@@ -2406,3 +2406,7 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - **자체 실증(합성 소스 트리)**: 지역변수 task · `*args` · `**kwargs` · 미등록 리터럴 · 파라미터 재대입 · def/class/import-as/except-as/match-as/중첩파라미터 shadowing · 기본값·데코레이터 호출 · 별칭 할당/인자 전달 — **전 케이스 적발**, 순수 passthrough 대조군만 통과. taxonomy 변이(등록 7종 각각 제거·선언 튜플 축소)도 전건 적발.
 - **잔여 한계(정직 기록)**: `getattr(mod, "_record_llm_usage")`·`exec`·동적 import 처럼 **AST 밖**에서 결정되는 경로는 원리상 정적 확정이 불가하다. 게이트의 계약은 "모든 동적 경로를 해석한다"가 아니라 **"미확정 경로를 조용히 통과시키지 않는다"** 이며, docstring 에 그대로 명시했다.
 - **제품 코드(`shared/model_catalog.py`) 지적**: 8라운드 전체에서 0건 — 카테고리 배치·라벨·회귀 위험에 대한 P1/P2 없음.
+
+## REV-20260803T174200-aiops-taxonomy-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실증 기록(문서 전용, 코드 변경 0)
+- Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d append) → §18.8 표 첫 행 SKIP.
+- 본 cycle 이 기록하는 실증 자체가 선행 cycle(`REV-20260803T154922-aiops-taxonomy-unmapped`)의 검증 산출물이다 — 배포 SHA·BEFORE/AFTER·라이브 API·PB-0008 육안 4축.
