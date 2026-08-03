@@ -873,3 +873,16 @@ config 값과 정합(25×1.2×4=120 ≤ 300) · 요청당 작업량 축소는 �
 - 본 cycle 의 주장은 라이브 pass 반환값(`label_canon`/`summaries`)과 전후 SQL 집계로 재현 가능하다.
 - 정직 표기: 최대 scope 는 검증하지 못했다(컨테이너 1GiB 한도 · OOM). 미검증 사실과 사유·후속
   확인 시점을 REPORT 에 명시했다.
+
+## REV-20260803T123000-ai-claude-feature-0016-change-reanalysis-obs [SUBAGENT:backend] — BLOCK→전량 흡수 (계측 도달 규약 역전)
+- Related TASK: feature-0016-metadata-graph
+- Trigger: code change (insight_worker telemetry) — 승인 없는 자동 LLM 지출 경로의 관측 수단
+- Timestamp: 2026-08-03T12:30:00+09:00
+- Verdict: BLOCK
+- Artifact: [reviews/2026-08-03T12-30-00-backend-telemetry.md](./reviews/2026-08-03T12-30-00-backend-telemetry.md)
+- Critical issue: B1/B2 — 같은 클래스의 고아 카운터가 **6건** 더 있고(`coverage_seeded`·`insight_llm_calls`·`tables_fanout`·`relationships_introspected`·`relationships_inferred`·`routines_introspected`), 그 중 **넷은 FUNCTION.md 가 "관측된다"고 선언**한 것이다. B3 — 새로 넣은 회귀 테스트가 유실 3방식 중 2개(주석 처리·지역변수 이동, 둘 다 이 파일의 실제 관용구)를 **PASS** 시켜 거짓 안심을 준다(mutation 실측).
+- Human Approval Needed: no (전량 in-cycle 흡수)
+- **흡수 — 리뷰 Challenge 의 "역전" 채택이 본체**: allow-list 를 유지한 채 감시자를 얹는 것은 두 층 모두 사람 규율에 의존한다는 지적을 받아들여, `_telemetry_sweep` 으로 **기록된 스칼라가 기본 도달**하고 빼야 할 것만 `_TELEMETRY_SWEEP_DENY` 에 사유와 함께 명시하는 구조로 바꿨다(고아 6건 동시 해소). 0 이어도 보여야 하는 핵심 4키는 명시 등재 유지(sweep 은 truthy-only — 로그 크기 억제). 테스트는 소스 텍스트 → **동작 검사**로 교체(sweep 6건).
+- 추가 흡수: **C1** `shadow`/`unknown` status 무집계 → `auto_reanalysis_shadow`(의도된 안전 모드를 blocked 와 분리) + `auto_reanalysis_status_unknown`(malformed 응답). 이 과정에서 `baseline` 이 unknown 으로 오집계되는 회귀를 발견해 `_AUTO_INFO_STATUSES` 로 분리. **C2** 예외 핸들러 무카운터 → `auto_reanalysis_errors`(없으면 매 사이클 예외가 "건강한 무변경"과 구별되지 않아 "오탐 0" 판정이 관측이 아니라 추론이 된다). **C3** 문서 정정 — 예산 불변식을 `enqueued == done` · `enqueued <= node_budget` 둘로 분리(`3/4` 는 미소진 정상인데 기존 서술이 자기 데이터로 반증됐다) · blocked·자격 합이 스키마 수를 넘는 이유 · TASK.md 체크박스에 실증 범위 caveat. **C4** 범위 밖 파일 모드 변경(100755→100644) 복원. **부수** per-schema 로그에 `absorbed=` 필드(없으면 TCR.11b 하루 경계 관측이 총합 역산이라 판정 불가).
+- **리뷰가 확정해 준 사실(문서에 반영)**: "3-state" 는 하나의 스위치가 아니다 — `auto_setting_int` 를 타는 **cap 정수만 라이브**이고 env 문자열(`AGENT_NODE_ANALYSIS_AUTO_ON_CHANGE`)은 star-import 상수라 **재배포 필요**. 사고 시 운영자가 env 를 만지면 "즉시 정지"가 성립하지 않으므로 정지·관찰 전환은 cap 으로 한다.
+- 검증: 대상 스위트 56 PASS(+ analysis_planner 37) · 컨테이너 전체(0002+0003) **3,571 PASS · 0 failed · 0 error** · ruff clean(`modules/`·`shared/`).
