@@ -13,6 +13,13 @@ source_of_truth: false
 > 적대 리뷰(42 에이전트, 확정 16/기각 19, blocker 1) 반영 v2. **다른 세션이 0 맥락으로 읽고 착수 가능**해야 한다.
 > 진단 증거: [RESEARCH.md](./RESEARCH.md). SSOT 계약 정본: [../../DECISIONS.md](../../DECISIONS.md) ADR-0031 + [../../DOC_REGISTRY.md](../../DOC_REGISTRY.md).
 
+> **⚠ 2026-08-03 실측 재검증 — P5a/P5b 의 근거 수치가 낡았다.**
+> `app.py` 25,823줄→**3,883줄**, `from modules.*` 148→**2**, `@app` 라우트 **0**
+> (`feature-0012-web-router-modularization` 이 21개 APIRouter 로 전량 추출 완결).
+> **백엔드 모놀리스 분할은 완료 — 재착수 대상이 아니다.** 남은 실체는 프론트 3파일이고 오히려 커졌다
+> (admin.js +59% / app.js +51% / styles.css +23%). 각 항목의 '실측 갱신' 표와, 신선한 세션용
+> 진입 프롬프트는 **§3b** 참조.
+
 ## 0. 맥락 (context-free 진입)
 프로젝트가 거버넌스(메타)·제품 두 레이어로 14개월 누적되며 정본이 다중화·비대화·stale 화되어,
 AI 세션이 "무엇이 진실인지" 판정에 실패 → 작업 미정립. 목표 = 모든 사실이 정확히 한 곳의 정본을 갖는 구조.
@@ -103,14 +110,26 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 - **gate**: wiki-lint + drift 0(정본 mtime ≤ mirror mtime) + check #9
 
 ### ITEM-P5a · 코드 파편화 정리 (SSOT/중복·경계)
-- **status**: pending
+- **status**: pending (**범위 축소 — 아래 실측 갱신 참조**)
 - **feature_id**: (코드 단위 별도 feature-NNNN cycle)
 - **risk_grade**: Major
 - **depends_on**: [ITEM-P1]
 - **dimension**: structural (SSOT — *중복/경계*)
+- **⚠ 실측 갱신 (2026-08-03)**: 이 항목의 "선행" 이던 **import 의존성 그래프 실측은 대상이 소멸**했다.
+  `feature-0012-web-router-modularization` 이 app.py 모놀리스를 21개 도메인 APIRouter 로 전량
+  추출·완결(STATUS.md — "모듈 분리 -81%")했기 때문이다. 재측정치:
+
+  | 로드맵 원 전제 | 2026-08-03 실측 |
+  |---|---|
+  | `app.py` 148 `from modules.*` | **2** |
+  | `app.py` 25,823 줄 | **3,883 줄** |
+  | 모듈 5개뿐 | `src/routers/` **33 파일** |
+
+  → "선행 실측" 과 "148 import 재정의" 작업 항목은 **무효**. 남은 것은 아래 attachment_reconciliation·
+  skeleton 라벨·Dockerfile 결정뿐이며, 그 셋은 모두 **미결정 #4/#5 또는 문서 작업**이다.
 - **작업**:
-  - 선행: import 의존성 그래프 실측(app.py 148 `from modules.*`).
-  - shared/ 추출(modules.→shared. 재정의 + 148 import + 두 이미지 빌드 컨텍스트)을 Dockerfile 분리의 전제로 — 분리 자체는 선행 없이는 비실행.
+  - ~~선행: import 의존성 그래프 실측(app.py 148 `from modules.*`)~~ — **완료/무효**(feature-0012 가 해소, 위 표).
+  - ~~shared/ 추출(modules.→shared. 재정의 + 148 import)~~ — 전제 소멸. Dockerfile 분리(미결정 #5)를 여전히 추진한다면 **현행 `routers/` 구조 기준으로 재설계**가 필요하다(구 전제로 착수 금지).
   - attachment_reconciliation 'dedup' 폐기: live 0003판 무변경, 0002판 GDPR(admin_purge/legal, 미배선) 사양 여부 결정(**미결정 #4**), env키(POLL_SEC vs INTERVAL_SEC) 정본 ADR 후 alias. 단순 합치기 금지.
   - feature-0009 '코드 이동' 옵션 삭제 → cross-cut 을 ANCHOR/CODEBASE_MAP 에 명시만. skeleton(0005/0008/0009) '코드 없음/계획' 라벨.
   - 단일 Dockerfile 분리 여부 = **미결정 #5**.
@@ -122,14 +141,56 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 - **risk_grade**: **Critical** (라이브 web app, 146 endpoint, 런타임 회귀)
 - **depends_on**: [ITEM-P5a]   <!-- import 실측·shared 추출 선행과 정합 -->
 - **dimension**: structural (모듈화 — *파일 크기/유지보수*, SSOT-중복 아님)
-- **why**: 사용자 원 요청 "비대화된 코드들". 실측: `app.py` **25,823줄/146 endpoint/554 함수**(모듈 5개뿐), 프론트 `admin.js`(8.8K)·`app.js`(8.7K)·`styles.css`(7.6K). AI 전체 로드·정확 편집 어려움 → "요청 미수행" 증상 기여.
+- **why**: 사용자 원 요청 "비대화된 코드들". AI 전체 로드·정확 편집 어려움 → "요청 미수행" 증상 기여.
+- **⚠ 실측 갱신 (2026-08-03) — 백엔드는 해소, 프론트만 남았고 오히려 커졌다**:
+
+  | 대상 | 로드맵 원 전제 | 2026-08-03 실측 | 판정 |
+  |---|---|---|---|
+  | `app.py` | 25,823 줄 / 146 endpoint / 554 함수 | **3,883 줄 / `@app` 라우트 0** | **해소** — feature-0012 가 21개 APIRouter 로 전량 추출 |
+  | 백엔드 모듈 | 모듈 5개뿐 | `src/routers/` **33 파일 / 223 endpoint** | **해소** |
+  | `admin.js` | 8.8K 줄 | **14,007 줄** | **미해소 · +59%** |
+  | `app.js` | 8.7K 줄 | **13,165 줄** | **미해소 · +51%** |
+  | `styles.css` | 7.6K 줄 | **9,328 줄** | **미해소 · +23%** |
+
+  → **이 항목의 남은 실체는 프론트 3파일뿐**이다. 백엔드 분할을 다시 착수하지 말 것(완료됨).
+  프론트는 3주 만에 증가했으므로 방치 시 계속 악화된다.
+- **참고 — 자매 initiative 의 트리거는 아직 미충족**: `parallel-work-structure` C-12(프론트 전면 분할)
+  재검토 트리거가 "ITEM-09 완료 + 회귀 0 + **app.js 충돌 실측 발생**" 인데, 최근 60일 머지 커밋에서
+  app.js 충돌 해소 흔적 **0건**(커밋은 166건으로 활발하나 실제 충돌 미발생, 2026-08-03 측정).
+  즉 "충돌 때문에" 라는 근거로는 착수할 수 없고, 착수한다면 근거는 **파일 크기·편집 정확도**여야 한다.
 - **모델**: feature-0002(38 모듈, agent_core 는 오케스트레이터)를 패턴으로. **안전망**: feature-0003 테스트 54파일/11K줄.
 - **작업**:
-  - app.py → APIRouter/모듈 **점진 추출**(router-by-router, 도메인별: auth/conversation/admin/attachment/datasource/share…), 각 추출마다 `make test` + 브라우저 QA. big-bang 금지.
+  - ~~app.py → APIRouter/모듈 점진 추출~~ — **완료**(feature-0012, 위 표). 재착수 금지.
   - 프론트(admin.js/app.js/styles.css) 모듈 분할(번들 또는 ES module).
   - CONVENTIONS 에 *code-modularity* 컨벤션(파일 크기 임계 → 추출 trigger) 추가 — SSOT 계약과 sibling 인 code-health 규약(재발 방지).
 - **gate**: 각 추출 단위 make test PASS + 브라우저 QA + 롤백 리허설 + plan-review(Critical) + check #9. **별도 cycle, doc-SSOT cycle 에 번들 금지.**
 - **note**: SSOT(중복/정본)와 구분되는 *모듈화* 문제. 본 SSOT initiative 의 산출(정본 명확화)과 독립 추진 가능 — 별도 initiative(`docs/improvements/code-modularity`)로 분리해도 무방.
+
+## 3b. 신선한 세션 진입점 (2026-08-03 갱신)
+
+다른 AI 작업자가 **0 맥락**으로 이어받을 때 쓸 프롬프트. 그대로 복사해 실행하면 된다.
+
+### 지금 유일하게 실체가 남은 작업 — 프론트 3파일 모듈 분할 (ITEM-P5b 잔여)
+
+```
+/_template:entry docs/improvements/ssot-consolidation/ROADMAP.md 의 ITEM-P5b 잔여분을 진행해주세요.
+백엔드(app.py) 분할은 feature-0012 가 이미 완료했으니 손대지 마시고, 프론트 3파일만 대상입니다:
+admin.js(14,007줄) · app.js(13,165줄) · styles.css(9,328줄) — 2026-08-03 실측, 3주 만에 +23~59% 증가.
+로드맵의 게이트를 그대로 지켜주세요: 추출 단위마다 make test PASS + 브라우저 QA(PB-0008) +
+롤백 리허설 + risk_grade Critical 이므로 plan-review 승인 선행. big-bang 금지, 단위별 점진 추출.
+착수 전에 로드맵 ITEM-P5b 의 '실측 갱신' 표를 먼저 읽어 전제가 바뀐 것을 확인해주세요.
+```
+
+**착수 전 반드시 확인할 것**
+- 이 항목은 **risk_grade Critical**(라이브 web app)이라 §7.1 plan-review 승인이 게이트다. 무단 착수 금지.
+- 근거는 "충돌 회피" 가 **아니다** — app.js 충돌은 최근 60일 0건이다(위 참고). 근거는 파일 크기로 인한
+  AI 로드·편집 정확도 저하이며, 그것이 사용자 원 요청("비대화된 코드들")이다.
+- 안전망: feature-0003 테스트 54파일/11K줄. 패턴 참고: feature-0002(38 모듈) · feature-0012(라우터 추출).
+
+### 착수 불가 항목 (같은 로드맵)
+- **ITEM-P5a**: 남은 작업이 전부 **미결정 #4(attachment_reconciliation GDPR)·#5(Dockerfile 분리)** 에 걸려 있다. 사용자 결정 없이는 진행 금지.
+- **ITEM-P3**: secret rotation — 사용자/외부 작업 + §12 사람 승인 대기.
+- **ITEM-P0**: in-progress(다른 세션 가능성) — REGISTRY 확인 후 접근.
 
 ## 4. Open Decisions (사용자 입력)
 1. secret rotation 범위 + history rewrite 추가 수행 여부(+저장소 public/private 확인)
