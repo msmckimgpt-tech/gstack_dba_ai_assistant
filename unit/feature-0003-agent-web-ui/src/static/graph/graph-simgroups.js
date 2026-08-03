@@ -116,10 +116,15 @@ function _metaSimGroups(schemaId, tables, adj) {
   });
   // 3차: 역할 family → 기타
   tables.forEach((t) => { if (!famOf.get(t.key)) famOf.set(t.key, roleFam(t) || "misc"); });
-  // 역할/기타 family 도 싱글턴이면 기타로 흡수 (nm: 은 2차 attach 로 커질 수 있어 유지)
+  // 싱글턴 family 는 기타로 흡수. band-visual-fit(2026-07-31, PB-0008 육안검증): 종전에는 `nm:` 을
+  //   예외로 뒀는데("2차 attach 로 커질 수 있어 유지"), 그 2차 attach 는 **바로 위에서 이미 끝났다** —
+  //   이 시점의 nm: 싱글턴은 더 자랄 수 없다. 예외로 남기면 멤버 1개짜리 밴드가 헤더·테두리·접기
+  //   토글을 갖춘 채 46-멤버 밴드와 같은 시각 무게로 서고, 라벨도 `spget…` 같은 기계 어간이라
+  //   한국어 의미 라벨(`경매 거래`·`기타`) 옆에서 분류 체계가 깨진다(라이브 실측: 한 스키마에 3개).
+  //   `be:`(백엔드 클러스터)는 배정 시점에 이미 ≥2 를 요구하므로 싱글턴이 될 수 없다 — 예외 유지.
   const cnt = new Map();
   famOf.forEach((f) => cnt.set(f, (cnt.get(f) || 0) + 1));
-  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("nm:") && !f.startsWith("be:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
+  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("be:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
   // 그룹 리스트 + 라벨
   const groupsBy = new Map();
   tables.forEach((t) => { const f = famOf.get(t.key); if (!groupsBy.has(f)) groupsBy.set(f, []); groupsBy.get(f).push(t); });
