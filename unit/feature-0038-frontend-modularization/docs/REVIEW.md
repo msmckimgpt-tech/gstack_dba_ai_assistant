@@ -41,3 +41,13 @@ source_of_truth: true
 - MINOR 흡수: ② 3연속 빈 줄 코스메틱 → 본 commit 에서 정리. ① CSS 요청 수 1→7(head 내 render-blocking 이라 FOUC 없음·HTTP/2) → 수용(기록만).
 - 판정: **SHIP** — behavior-neutral 주장 반박 실패.
 - Timestamp: 2026-08-03T18:15:00+09:00
+
+## REV-20260803T193000-usage-aiops-panel [SUBAGENT:qa] — BLOCK → 전건 흡수 후 SHIP-경로
+- Related Change: CHG-20260803T190000-usage-aiops-split (Cycle 2)
+- 패널: fresh-context 적대 1렌즈(qa/frontend — acorn/acorn-globals 자유 식별자 스캔·역재구성 parity·컨테이너 실 pytest·AST 문자열 리터럴 전수). **판정: 초안 BLOCK — BLOCKING 1 / MAJOR 1 / MINOR 3.**
+- **BLOCKING (흡수)**: aiops.js 가 admin.js module-scope `$`(getElementById 헬퍼)를 import 없이 6개소 사용 — loadAiOps 첫 줄(try 밖) ReferenceError 로 '운영 현황' pane 영구 공백(initialized 선세팅 탓 재진입 복구 불가). 작성자 식별자 스캔이 `\b`+`$` regex 함정으로 누락한 것을 acorn-globals 가 적발. → admin.js `export const $` + aiops.js import 로 수정, **재검: acorn-globals free-vars usage/aiops = 0/0**.
+- **MAJOR (흡수)**: 이동 경계가 주석-코드 정합 3곳 파괴(TASK-0198 주석 고아 잔류·TASK-0288 주석 usage 꼬리 오이동·feature-0021 주석 aiops 꼬리 오이동) → 경계 재절단(usage=구 L1560–2238·aiops=구 L2352–2626, 선행 주석 포함/후행 이웃 주석 제외) 후 HEAD 에서 재생성. **재검: 역재구성 byte-parity IDENTICAL 유지**.
+- **MINOR (흡수 2·기록 1)**: app.js L2732·admin.html L614 stale 포인터 주석 갱신. F1 부재 단언(`"loadQuotas" not in js`)의 분리 모듈 사각은 현재 실해 없음 — 기록만.
+- 패널 권고 채택: **acorn-globals 자유 식별자 게이트를 분할 cycle 표준 검증에 추가** (TASK §2.1 게이트 2에 편입 — 합본 문자열 테스트가 원리적으로 못 잡는 부류).
+- 패널 clean 실측: 역재구성 parity(sha256 동일)·TDZ top-level 실행문 0·잔여 참조 0·테스트 21+27 passed 컨테이너 실측·문자열 리터럴 39건 전수 오탐 0·스탬프 재귀 커버·admin.html 무변경 정당.
+- Timestamp: 2026-08-03T19:30:00+09:00

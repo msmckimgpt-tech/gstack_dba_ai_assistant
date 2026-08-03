@@ -2729,7 +2729,7 @@ async function openProfileUsageConversations(opts) {
   }
 }
 
-// 본인 사용량 기여 대화 모달. admin 판(admin.js showUsageConvModal)의 self 전용 축약 —
+// 본인 사용량 기여 대화 모달. admin 판(admin/usage.js showUsageConvModal)의 self 전용 축약 —
 // 소유자 컬럼 없음, 대화 클릭 시 같은 탭에서 deep-link 로 이동(작업 화면 내부이므로).
 function showProfileUsageConvModal(st) {
   const num = (v) => (Number(v) || 0).toLocaleString();
