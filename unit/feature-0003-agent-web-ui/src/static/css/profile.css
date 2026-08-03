@@ -1,0 +1,1175 @@
+/* =====================================================================
+   SIDEBAR PROFILE BUTTON  (ChatGPT / Claude 패턴 — 사이드바 하단)
+   ===================================================================== */
+.sidebar-profile {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.profile-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  text-align: left;
+  transition: background .13s;
+}
+.profile-trigger:hover { background: rgba(0,0,0,.05); }
+
+.profile-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.profile-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.profile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-role {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform .15s;
+}
+
+/* =====================================================================
+   PROFILE DRAWER
+   ===================================================================== */
+.profile-avatar-lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 18px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.profile-summary-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.profile-summary-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-muted);
+}
+
+.profile-section-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.profile-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 20px;
+  font-size: 13px;
+  margin: 0;
+}
+
+.profile-dl dt {
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.profile-dl dd {
+  color: var(--text);
+}
+
+.profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-danger-zone {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 16px;
+  margin-top: 4px;
+}
+
+.admin-section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.admin-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.permission-grid,
+.override-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* CONVENTIONS.md §10.6 — 관리 콘솔 권한 grid 2단 묶음 (관리/운영/기타) */
+.permission-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(252, 253, 255, 0.9);
+}
+.permission-section + .permission-section {
+  margin-top: 0;
+}
+.permission-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--border-subtle);
+}
+.permission-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.permission-section-description {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.permission-section-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.permission-section[data-perm-section="manage"] {
+  background: rgba(245, 248, 255, 0.92);
+  border-color: rgba(37, 99, 235, .14);
+}
+.permission-section[data-perm-section="operate"] {
+  background: rgba(248, 252, 248, 0.92);
+  border-color: rgba(22, 163, 74, .14);
+}
+
+.permission-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.74);
+  overflow: hidden;
+}
+
+.permission-group + .permission-group {
+  margin-top: 10px;
+}
+/* section 안에서는 gap 로 간격을 처리하므로 margin-top 중첩 제거. */
+.permission-section-groups > .permission-group + .permission-group {
+  margin-top: 0;
+}
+
+.permission-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  background: rgba(245, 247, 250, .6);
+}
+
+.permission-group-head::-webkit-details-marker { display: none; }
+
+.permission-group-head::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform .15s ease;
+}
+
+.permission-group[open] > .permission-group-head::before {
+  transform: rotate(90deg);
+}
+
+.permission-group-counts {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-soft);
+  padding: 2px 10px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+
+.permission-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px 0;
+}
+
+.permission-group .permission-grid-list {
+  padding: 10px 14px 14px;
+}
+
+.permission-group-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* 권한 트리 (TASK-0267) — 단일 열 + 자식 들여쓰기. 2열 grid 가 자식 숨김 시 가로 reflow 로
+   기존 항목을 뒤틀던 문제 해소(상위 권한 아래로 자식이 tree 형태로 나열, 부모는 제자리 유지). */
+.permission-grid-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* 자식 권한 들여쓰기 + 좌측 가이드(부모-자식 위계). depth 0 = 그룹 내 루트(부모가 같은 그룹에 없음). */
+.permission-grid-list > [data-perm-depth="1"] { margin-left: 24px; }
+.permission-grid-list > [data-perm-depth="2"] { margin-left: 48px; }
+.permission-toggle-card[data-perm-depth="1"],
+.permission-toggle-card[data-perm-depth="2"],
+.override-field[data-perm-depth="1"],
+.override-field[data-perm-depth="2"] {
+  position: relative;
+  border-left: 2px solid var(--primary-soft, rgba(37, 99, 235, .28));
+}
+/* 들여쓰기 gutter ↔ 카드 좌측을 잇는 가로 tick (├/└ 형태). 체크박스 높이쯤(top)에서 연결. */
+.permission-grid-list > .permission-toggle-card[data-perm-depth="1"]::before,
+.permission-grid-list > .permission-toggle-card[data-perm-depth="2"]::before,
+.permission-grid-list > .override-field[data-perm-depth="1"]::before,
+.permission-grid-list > .override-field[data-perm-depth="2"]::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 18px;
+  width: 12px;
+  height: 2px;
+  background: var(--primary-soft, rgba(37, 99, 235, .28));
+}
+
+.permission-toggle-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: rgba(248, 250, 255, 0.95);
+}
+
+.permission-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.permission-text strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.permission-text small,
+.override-field small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.admin-role-create {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.admin-role-head {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.admin-role-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-role-card .admin-controls {
+  grid-template-columns: 1fr;
+}
+
+.override-field {
+  gap: 6px;
+}
+
+.override-field select {
+  min-height: 42px;
+}
+
+/* ── 권한 점진적 세분화 (progressive disclosure) ───────────────────────────
+   PERMISSION_DEPENDENCIES 기반 row 단위 hidden 토글. group/section 정렬(§10.6)은
+   불변 — 본 스타일은 종속 row 의 미세 위계 + "더 보기" 토글 + orphan 경고칩만 담당.
+   reveal 은 즉시 토글(레이아웃 뒤틀림 방지 — 애니메이션 없음). */
+
+/* [hidden] 강제 (TASK-0258 핫픽스 + TASK-0264 override-grid 커버) — `.permission-toggle-card{display:flex}` /
+   `.override-field`(.field{display:flex}) / `.permission-section{display:flex}` 등 author display 규칙이
+   UA 의 `[hidden]{display:none}` 를 동일 specificity·후순위로 override 해, JS 가 `el.hidden=true` 를 줘도
+   row 가 계속 렌더되던 문제(PB-0008 실브라우저 검출 — jsdom 은 CSS 캐스케이드 없어 미검출).
+   `[data-perm-code]` 는 권한 row wrapper 에만 부여되므로 컨테이너 무관하게(.permission-grid / .override-grid
+   양쪽) 강제한다 — TASK-0258 의 `.permission-grid` 한정이 계정 override 편집기(.override-grid)를 놓쳤던 갭 수정.
+   disclosure 의 모든 숨김 대상(section/group/row)을 확실히 display:none 으로 강제한다. */
+.permission-section[hidden],
+.permission-group[hidden],
+[data-perm-code][hidden] {
+  display: none !important;
+}
+
+/* (TASK-0267) 종속 위계는 트리 들여쓰기(`[data-perm-depth]`)로 표현 — 구 `.permission-row-dependent`
+   좌측 accent 는 depth 0 인 cross-group 루트(예: account.read)에도 붙어 혼동을 줘 제거. */
+
+/* "세부 권한 N개 더 보기 / 접기" 토글 — 트리(단일 열) 하단, 좌측 정렬(전체 폭 stretch 방지). */
+.permission-group-more {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+}
+.permission-group-more:hover { text-decoration: underline; }
+.permission-group-more:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+/* "더 보기" 뒤에 부여된 권한이 접혀 있음을 표면화(도달성 단서, TASK-0264). */
+.permission-group-more.has-granted { color: var(--color-danger, #b4231f); font-weight: 700; }
+
+/* orphan 경고칩 — 부여돼 있으나 선행 권한이 OFF 인 권한(비파괴 정책상 숨기지 않고 표면화). */
+.permission-orphan-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--color-danger, #b4231f);
+  background: rgba(220, 38, 38, .08);
+  border: 1px solid rgba(220, 38, 38, .2);
+}
+
+/* =====================================================================
+   RESPONSIVE
+   ===================================================================== */
+@media (max-width: 900px) {
+  :root { --sidebar-w: 210px; }
+}
+
+@media (max-width: 1024px) {
+  .admin-list-detail { grid-template-columns: 1fr; }
+  .admin-list { max-height: 280px; }
+}
+
+@media (max-width: 680px) {
+  /* REQ-20260518-0004 / -0006: .app-body / .admin-body 폐기 후 shell 들이 직접 grid.
+     mobile 에선 sidebar 숨김 + 본문 column 만. */
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .sidebar-resizer { display: none; } /* 모바일: 사이드바 숨김 → 핸들도 숨김 */
+  .drawer { width: min(100vw, 380px); }
+  .admin-controls { grid-template-columns: 1fr; }
+  .permission-grid-list,
+  .admin-role-head { grid-template-columns: 1fr; }
+  .admin-shell { grid-template-columns: 1fr; }
+  .admin-sidebar { display: none; }
+}
+
+/* ─── TASK-0061 (GOAL.md 2026-05-15 8개 항목) ─────────────────────── */
+
+/* Phase 1+2 (REQ-20260515-0003 / -0004): pending assistant bubble */
+.message.is-pending .message-bubble {
+  border: 1px solid var(--border-soft, rgba(0, 0, 0, 0.1));
+  background: var(--surface-2, rgba(0, 0, 0, 0.03));
+}
+.message.is-pending.is-error .message-bubble {
+  border-color: var(--color-danger, #dc2626);
+  background: rgba(220, 38, 38, 0.06);
+}
+.message.is-pending.is-stale-error .message-bubble {
+  border-color: var(--color-danger, #dc2626);
+  background: rgba(220, 38, 38, 0.08);
+}
+.pending-bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.pending-bubble-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--color-primary, #2563eb);
+  border-top-color: transparent;
+  animation: pending-bubble-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+.message.is-pending.is-error .pending-bubble-spinner,
+.message.is-pending.is-stale-error .pending-bubble-spinner {
+  border-color: var(--color-danger, #dc2626);
+  border-top-color: transparent;
+  animation: none;
+}
+@keyframes pending-bubble-spin {
+  to { transform: rotate(360deg); }
+}
+.pending-bubble-status {
+  font-weight: 600;
+  color: var(--color-primary, #2563eb);
+}
+.message.is-pending.is-error .pending-bubble-status,
+.message.is-pending.is-stale-error .pending-bubble-status {
+  color: var(--color-danger, #dc2626);
+}
+.pending-bubble-elapsed {
+  color: var(--text-muted, #6b7280);
+  font-size: 12px;
+  margin-left: auto;
+}
+.pending-bubble-error {
+  color: var(--color-danger, #dc2626);
+  font-size: 13px;
+  padding: 6px 8px;
+  background: rgba(220, 38, 38, 0.04);
+  border-radius: 4px;
+}
+/* compact one-liner current step */
+.pending-bubble-current-step {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.pending-bubble-view-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+  background: rgba(37,99,235,.08);
+  border: none;
+  border-radius: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s;
+}
+.pending-bubble-view-btn:hover { background: rgba(37,99,235,.16); }
+/* row holding current-step + view btn */
+.pending-bubble-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+/* "단계 보기" button on completed bubbles */
+.bubble-steps-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+  margin-top: 6px;
+  transition: background .15s, color .15s;
+}
+.bubble-steps-btn:hover { background: var(--bg); color: var(--text); }
+
+/* Step detail — shared between pending bubble and progress card */
+.step-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.step-tool-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: rgba(37,99,235,.1);
+  color: var(--primary, #2563eb);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  align-self: flex-start;
+  margin-bottom: 2px;
+}
+.step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1, #111827);
+  line-height: 1.4;
+}
+
+/* TASK-0289: 비-tool 내부 동작(activity) step — DB 동작(tool) step 보다 시각적으로 보조.
+   muted 색 + 좌측 점선 accent 로 "내부 동작 타임라인"임을 구분(투명하되 주가 아님). */
+.step-detail-activity {
+  padding-left: 8px;
+  border-left: 2px dotted var(--border, #d1d5db);
+  opacity: 0.85;
+}
+.step-detail-activity .step-title {
+  font-weight: 500;
+  color: var(--text-muted, #6b7280);
+}
+.step-activity-badge {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 1px 7px;
+  margin-bottom: 2px;
+  border-radius: 20px;
+  background: var(--surface, #f3f4f6);
+  color: var(--text-muted, #6b7280);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .3px;
+}
+/* step-reason: 각 실행 단계의 수행 근거를 제목 아래 secondary 라인으로 노출.
+   굵은 step-title(=무엇을) 아래에 "근거"(=왜) 를 명시해 작업의 합리성을 보임. */
+.step-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted, #6b7280);
+}
+.step-reason-label {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: var(--primary, #2563eb);
+  padding: 0 5px;
+  border: 1px solid rgba(37,99,235,.28);
+  border-radius: 10px;
+  line-height: 1.55;
+}
+.step-reason-text {
+  flex: 1 1 auto;
+  word-break: break-word;
+}
+.step-sql-wrap {
+  margin-top: 4px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1e1e2e;
+}
+.step-sql {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #cdd6f4;
+  font-family: 'Fira Mono', 'Consolas', 'Courier New', monospace;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.step-result-wrap {
+  margin-top: 4px;
+}
+.step-result-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin-bottom: 2px;
+}
+.step-result-preview {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text-2, #374151);
+  background: rgba(0,0,0,.04);
+  border-radius: 4px;
+  font-family: 'Fira Mono', 'Consolas', 'Courier New', monospace;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* Phase 3 (REQ-20260515-0005): stale_error dot */
+.conv-dot.is-stale-error {
+  background: var(--color-danger, #dc2626);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18);
+}
+
+/* Phase 4 (REQ-20260515-0006): Point rail */
+.messages-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+.messages-wrap > .messages {
+  flex: 1;
+  min-width: 0;
+}
+/* history-top-indicator: 위에 더 불러올 대화(서버 미로드 or 윈도우 밖)가 있을 때 상단 페이드
+   그라데이션만 표시(칩·텍스트·스피너 없음 — 최소 시각 신호로 난잡함 회피). pointer-events:none
+   이라 스크롤/클릭을 전혀 막지 않는다. rail(16px) 폭은 비워 겹침을 피한다. */
+.history-top-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 16px;
+  height: 44px;
+  pointer-events: none;
+  z-index: 5;
+  background: linear-gradient(to bottom, var(--bg, #f7f7f4) 0%, transparent 100%);
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+.history-top-indicator.hidden { display: none; }
+@media (max-width: 720px) {
+  .history-top-indicator { right: 0; }
+}
+/* conv-switch-fade: 대화 전환 크로스페이드용 "고스트" 오버레이.
+   selectConversation 진입 시 직전 화면의 스냅샷(messageLog clone)을 messages-wrap
+   위에 띄워 fade-out 시키고, 실제 messageLog 은 opacity 0 에서 목표 대화를 재구성한
+   뒤 fade-in 한다(app.js _beginConversationCrossfade / _commitConversationCrossfade).
+   geometry(left/top/width/height/opacity)와 scrollTop 은 app.js 가 인라인 주입. */
+.messages-switch-ghost {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  z-index: 3;
+  pointer-events: none;
+  margin: 0;
+  will-change: opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 모션 최소화: app.js 가 고스트를 생성하지 않지만(가드) 방어적으로 숨김.
+     anim-pref: 단, 인앱 '애니메이션 효과 = 항상 켬'(<html data-motion="on">)이면 OS reduce-motion
+     이어도 크로스페이드를 복원해야 하므로 숨기지 않는다. app.js _prefersReducedMotion() 의
+     'on' 분기가 고스트를 생성하는데, 이 CSS 가 그대로면 display:none 으로 가려 '빈 화면 후
+     fade-in'(크로스페이드 아님)이 되던 결함 수정(REV-...anim-effect-pref). */
+  html:not([data-motion="on"]) .messages-switch-ghost { display: none; }
+}
+/* TASK-0062: rail dot 위치를 scrollHeight 비례 (top: %) 로 배치 — relative + absolute */
+.message-point-rail {
+  position: relative;
+  /* conv-switch-fade: 전환 고스트(.messages-switch-ghost, z-index 3)보다 위에 두어
+     fade 동안 rail dot 이 가려지지 않게 한다(고스트는 messageLog 폭만 덮지만 방어적). */
+  z-index: 4;
+  width: 16px;
+  padding: 0;
+  border-left: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));
+  background: transparent;
+  flex-shrink: 0;
+}
+.message-point-rail.hidden { display: none; }
+.message-point-dot {
+  position: absolute;
+  left: 50%;
+  /* point-rail-range: 고정 점(8×8 원) → 세로 막대. top(상단 기준) 과 height 는
+     JS(layoutMessagePointRail)가 메시지 실 스크롤 범위 비례로 인라인 지정한다.
+     짧은 메시지도 클릭 가능하도록 min-height 를 둔다. */
+  width: 6px;
+  min-height: 4px;
+  border-radius: 3px;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  background: var(--border-soft, rgba(0, 0, 0, 0.2));
+  transition: background 0.15s, opacity 0.15s, width 0.1s;
+  transform: translateX(-50%);
+}
+.message-point-dot.is-user {
+  background: var(--color-primary, #2563eb);
+  opacity: 0.55;
+}
+.message-point-dot.is-assistant {
+  background: var(--text-muted, #6b7280);
+  opacity: 0.5;
+}
+.message-point-dot.is-active {
+  /* 막대는 scale 대신 폭 확대 + 불투명도로 강조(translateY 제거 — top 이 상단 기준). */
+  width: 11px;
+  opacity: 1;
+}
+.message-point-dot:hover {
+  width: 11px;
+  opacity: 0.95;
+}
+.is-anchor-highlight {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 4px;
+  border-radius: 6px;
+  transition: outline 0.3s;
+}
+@media (max-width: 720px) {
+  .message-point-rail { display: none !important; }
+}
+
+/* Phase 5 (REQ-20260515-0007): 캘린더 popover */
+.history-calendar-popover {
+  position: absolute;
+  top: 8px;
+  right: 32px;
+  z-index: 30;
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+  min-width: 260px;
+  max-width: 320px;
+}
+.history-calendar-popover.hidden { display: none; }
+.history-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 6px;
+}
+.history-calendar-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.history-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.history-calendar-day-head {
+  font-size: 10px;
+  color: var(--text-muted, #6b7280);
+  text-align: center;
+  padding: 4px 0;
+}
+.history-calendar-day {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 2px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text, #1f2937);
+}
+.history-calendar-day:disabled,
+.history-calendar-day.is-blank {
+  background: transparent;
+  cursor: default;
+  color: var(--text-muted, #9ca3af);
+  opacity: 0.4;
+}
+.history-calendar-day.has-messages {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--color-primary, #2563eb);
+  font-weight: 600;
+}
+.history-calendar-day.is-selected {
+  border-color: var(--color-primary, #2563eb);
+}
+.history-calendar-times {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));
+  padding-top: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.history-calendar-times-heading {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  margin-bottom: 4px;
+}
+.history-calendar-times-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.history-calendar-time {
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  border: 1px solid transparent;
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text, #1f2937);
+}
+.history-calendar-time:hover {
+  border-color: var(--color-primary, #2563eb);
+}
+.history-calendar-empty {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  text-align: center;
+  padding: 8px 0;
+}
+
+/* Phase 8 (REQ-20260515-0010) + TASK-0062: 내 대화 다중 선택. checkbox 제거되어 시각 표현만 사용. */
+.conv-item.is-multi-selected {
+  background: rgba(37, 99, 235, 0.10);
+  outline: 1px solid var(--color-primary, #2563eb);
+  outline-offset: -1px;
+}
+.conv-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  border-bottom: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.conv-bulk-bar.hidden { display: none; }
+.conv-bulk-label {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+/* REQ-20260518-0001 / REQ-20260518-0003: per-conversation "···" menu trigger + dropdown.
+   trigger 는 우측 하단 위치 (이전 상단은 conv-owner-badge "내"/"sales" 등 우측 상단 badge 와 시각 충돌). */
+.conv-item {
+  position: relative;
+  padding-right: 32px; /* trigger (22px) + margin (10px) 확보 — title/meta 가 trigger 와 겹치지 않도록 */
+}
+.conv-item-menu-trigger {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, background .12s ease, border-color .12s ease;
+  user-select: none;
+}
+.conv-item:hover .conv-item-menu-trigger,
+.conv-item.is-active .conv-item-menu-trigger,
+.conv-item-menu-trigger.is-open,
+.conv-item-menu-trigger:focus-visible {
+  opacity: 1;
+}
+.conv-item-menu-trigger:hover,
+.conv-item-menu-trigger.is-open {
+  background: rgba(0,0,0,.08);
+  border-color: var(--border, rgba(0,0,0,.08));
+  color: var(--text);
+}
+.conv-item-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 168px;
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border, rgba(0,0,0,.10));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.conv-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.conv-menu-item:hover {
+  background: rgba(37,99,235,.08);
+}
+.conv-menu-item.is-danger {
+  color: var(--color-danger, #c0392b);
+}
+.conv-menu-item.is-danger:hover {
+  background: rgba(192,57,43,.08);
+}
+.conv-menu-item.is-access-blocked {
+  color: var(--text-muted);
+  opacity: .65;
+  cursor: not-allowed;
+}
+.conv-menu-item.is-access-blocked:hover {
+  background: rgba(0,0,0,.04);
+}
+
+/* REQ-20260518-0001 / REQ-20260518-0003: 채팅 로그 날짜 분기선 — Slack 패턴.
+   position: sticky + top: 0 으로 부모(`.messages`) overflow-y 스크롤 안에서
+   해당 날짜 그룹이 viewport 를 지나는 동안 분기선이 상단에 stick 된다.
+   사용자가 분기선까지 스크롤할 필요 없이 현재 보이는 영역의 날짜가 항상 시야에 있고,
+   click → openHistoryCalendarAt() 으로 캘린더 popover 가 해당 날짜 anchored 로 열림. */
+.message-date-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 14px 0 6px;
+  padding: 4px 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  pointer-events: auto;
+}
+.message-date-divider::before,
+.message-date-divider::after {
+  content: "";
+  flex: 1;
+  max-width: 80px;
+  height: 1px;
+  background: var(--border, rgba(0,0,0,.10));
+}
+.message-date-divider-label {
+  display: inline-block;
+  padding: 3px 12px;
+  margin: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border, rgba(0,0,0,.10));
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  transition: background .12s ease, color .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.message-date-divider:hover .message-date-divider-label,
+.message-date-divider:focus-visible .message-date-divider-label {
+  background: var(--primary-soft, rgba(37,99,235,.10));
+  color: var(--primary, #2563eb);
+  border-color: rgba(37,99,235,.30);
+  box-shadow: 0 2px 6px rgba(37,99,235,.18);
+}
+
+/* REQ-20260518-0001: history-calendar 의 popover header 에 동적 nav 슬롯 */
+.history-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  justify-content: center;
+}
+.calendar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--border, rgba(0,0,0,.10));
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.calendar-nav-btn:hover:not(.is-disabled) {
+  background: rgba(37,99,235,.08);
+  border-color: rgba(37,99,235,.30);
+  color: var(--primary, #2563eb);
+}
+.calendar-nav-btn.is-disabled,
+.calendar-nav-btn[disabled] {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: .55;
+}
+.calendar-nav-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  padding: 0 6px;
+  min-width: 84px;
+  text-align: center;
+}
+
+/* Phase 6 (REQ-20260515-0008): admin password reset + force change modal */
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.admin-modal {
+  background: var(--surface-1, #ffffff);
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 440px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.admin-modal h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.admin-modal-note {
+  font-size: 13px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.5;
+  margin: 0;
+}
+.admin-modal-error {
+  color: var(--color-danger, #dc2626);
+  font-size: 12px;
+  min-height: 16px;
+}
+.temp-password-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: monospace;
+}
+.temp-password-display code {
+  font-size: 14px;
+  flex: 1;
+  word-break: break-all;
+}
+.admin-modal .field-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong, rgba(0, 0, 0, 0.12));
+  border-radius: 4px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+/* TASK-0158: audit.purge 모달 + 첨부 권한 drift 진단 카드 + btn-danger */
+.btn-danger {
+  background: var(--danger); color: #fff; border: 1px solid var(--danger);
+  padding: 7px 12px; border-radius: var(--r-sm); font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.btn-danger:hover { background: #b91c1c; border-color: #b91c1c; }
+.btn-danger:disabled { opacity: .5; cursor: not-allowed; }
+.admin-modal-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-2); }
+.admin-modal-preview { font-size: 13px; color: var(--text); background: var(--danger-soft); padding: 8px 10px; border-radius: var(--r-sm); }
+.admin-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.admin-grant-health { margin-top: 12px; }
+.grant-health-card { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.grant-health-ok { color: var(--success); }
+.grant-health-bad { color: var(--danger); }
+.grant-health-detail { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-2); }
+.grant-health-detail code { font-family: var(--mono); }
+

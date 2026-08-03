@@ -4,7 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=dev" />
+  <!-- feature-0038 Cycle 1: styles.css 순차 분할 — 원본 캐스케이드 순서 보존 (base→shell→chat→drawers→admin→profile→search-audit) -->
+  <link rel="stylesheet" href="/static/css/base.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/shell.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/chat.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/drawers.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/admin.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/profile.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/search-audit.css?v=dev" />
   <link rel="stylesheet" href="/static/graph/graph.css?v=dev" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),

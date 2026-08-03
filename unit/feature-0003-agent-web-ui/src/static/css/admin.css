@@ -1,0 +1,2360 @@
+/* =====================================================================
+   ADMIN PAGE  (separate route /admin — same stylesheet)
+   REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 — sidebar 전체 height +
+   admin-column (topbar + workspace + commit-bar). 기존 .admin-body wrapper 폐기.
+   ===================================================================== */
+.admin-shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  /* REQ-20260518-0009: single row track 도 명시 — .app-shell 와 동일 패턴.
+     dashboard pane 처럼 content 가 짧을 때 grid track 이 자식 max-content 만큼만 차지해
+     viewport 의 약 30% 가 회색 빈 영역으로 노출되던 회귀 차단. */
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* REQ-20260518-0006: admin-column — sidebar 옆 영역. topbar / workspace / commit-bar 를 flex column 으로 쌓음. */
+.admin-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.admin-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* REQ-20260518-0006: brand 가 sidebar 의 첫 영역. .sidebar-brand rule (index.html 과 공용) 이 padding / height / border 정의 — admin-sidebar 의 padding 0 으로 두고 brand / tabs / foot 각자 padding 갖도록. */
+.admin-sidebar .admin-tabs {
+  padding: 10px 8px 0;
+}
+.admin-sidebar .admin-sidebar-foot {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* TASK-0292: 화면 높이가 작을 때 탭이 사이드바를 넘치면 하단 탭(설정 등)이 잘려
+   클릭 불가하던 문제 — 작업 화면 .conv-list 와 동일한 flex-child 스크롤 idiom 적용.
+   min-height:0 이 없으면 flex 항목 기본 min-height:auto 가 콘텐츠 높이 미만 축소를
+   막아, .admin-sidebar(overflow:hidden) 가 넘친 탭을 스크롤 없이 잘라낸다. */
+.admin-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.admin-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  width: 100%;
+  transition: background .13s, color .13s;
+}
+
+.admin-tab:hover { background: rgba(0,0,0,.05); color: var(--text); }
+
+.admin-tab.is-active {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.admin-tab-label { flex: 1; }
+
+.admin-tab-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.admin-tab.is-active .admin-tab-count {
+  color: var(--primary);
+  border-color: rgba(37,99,235,.2);
+  background: #fff;
+}
+
+.admin-sidebar-foot {
+  padding: 8px 6px;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 8px;
+  /* TASK-0292: 탭이 스크롤될 때 풋(pending 요약)이 squeeze 되지 않고 하단에 고정. */
+  flex-shrink: 0;
+}
+
+.admin-tab-group-label {
+  padding: 10px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted, #6b7280);
+}
+
+.admin-tab-group-divider {
+  height: 1px;
+  margin: 8px 10px;
+  background: var(--border-subtle, rgba(0,0,0,.08));
+}
+
+.admin-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.admin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: rgba(37,99,235,.08);
+  border: 1px solid rgba(37,99,235,.18);
+  color: var(--primary, #2563eb);
+}
+
+.admin-chip-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  /* a11y M1: WCAG 2.5.8 최소 24px 터치 타깃(이전 padding:0 2px ≈ 12px). */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+
+.admin-chip.is-locked {
+  background: rgba(0, 0, 0, .04);
+  border-color: rgba(0, 0, 0, .12);
+  color: var(--text-muted, rgba(0, 0, 0, .55));
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+/* TASK-0228 (1:N): primary datasource 칩 강조 + "기본 지정"(★) 액션 버튼. */
+.admin-chip--primary {
+  background: rgba(37, 99, 235, .16);
+  border-color: rgba(37, 99, 235, .42);
+  font-weight: 600;
+}
+
+.admin-chip-action {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  /* a11y M1: 24px 최소 타깃. M3: resting opacity 제거(0.7 → 0.85)로 affordance 가시성 — */
+  /* hover-only 가시성은 키보드/터치 사용자에게 안 보임. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  opacity: 0.85;
+}
+
+.admin-chip-action:hover {
+  opacity: 1;
+}
+
+/* a11y M2: 키보드 포커스 표시(이전엔 borderless 버튼이라 포커스 불가시). */
+.admin-chip-action:focus-visible,
+.admin-chip-remove:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+/* 이슈①(2026-06-12): 칩 per-datasource 연결 테스트(⟳) 결과 색. */
+.admin-chip-action--ok { color: var(--success, #16a34a); opacity: 1; }
+.admin-chip-action--fail { color: var(--danger, #dc2626); opacity: 1; }
+
+/* ── TASK-0238: datasource accordion (통합 재설계). datasource = 펼침 행 + 행별 ⋯ 메뉴.
+   디자인 토큰 일관 적용(이전 하드코딩 rgba 제거), 단일 시각 패턴(둥근 행). ───────────────── */
+.ds-acc { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.ds-acc-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface, #fff);
+  /* overflow:hidden 금지 — 행 아래로 드롭되는 ⋯ 메뉴(position:absolute)가 잘려 클릭 불가해진다(TASK-0239). */
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.ds-acc-row.is-active { border-color: var(--primary); box-shadow: inset 3px 0 0 0 var(--primary); }
+.ds-acc-head {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  /* 행 overflow 제거에 따라 둥근 모서리는 head 가 직접 — 좌측만(우측엔 ⋯ 메뉴 영역). */
+  border-radius: calc(var(--r-md) - 1px) 0 0 calc(var(--r-md) - 1px);
+}
+/* ⋯ 메뉴 없는(canDs=false) 행은 head 가 폭 전체 → 양쪽 둥글게. */
+.ds-acc-head:only-child { border-radius: calc(var(--r-md) - 1px); }
+/* active 행: 펼친 body 가 아래에 붙으므로 head 하단 모서리는 직각. */
+.ds-acc-row.is-active .ds-acc-head { border-radius: calc(var(--r-md) - 1px) 0 0 0; }
+.ds-acc-row.is-active .ds-acc-head:only-child { border-radius: calc(var(--r-md) - 1px) calc(var(--r-md) - 1px) 0 0; }
+.ds-acc-head:hover { background: var(--bg); }
+.ds-acc-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ds-acc-caret { color: var(--text-2); font-size: 11px; width: 12px; flex: none; }
+.ds-acc-name { font-weight: 600; }
+.ds-acc-engine {
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+}
+/* TASK-0308: 기본(primary) 데이터소스는 별도 '기본' 텍스트 배지 대신 엔진 배지를 primary 색으로
+   표기(조건부 배지가 인사이트 아이콘 위치를 흔들지 않도록 제거). non-primary 는 위 muted 기본형. */
+.ds-acc-engine.is-primary {
+  color: var(--primary);
+  font-weight: 600;
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+/* TASK-0308: 인사이트 탐색 상태 아이콘. 켜짐=은은(정상), 꺼짐=amber 칩으로 두드러지게(놓치기
+   쉬운 문제 상태를 시각적으로 강조). 색 단독 의존 아님 — 켜짐(눈) vs 꺼짐(눈+빗금) 아이콘 형태가
+   다르고 title/aria-label 동반. */
+.ds-acc-insight { display: inline-flex; align-items: center; flex: none; line-height: 0; }
+.ds-acc-insight svg { display: block; }
+.ds-acc-insight.is-on { color: var(--text-2); opacity: .6; }
+.ds-acc-insight.is-off {
+  color: var(--warning);
+  background: #fdf3e3;
+  border: 1px solid #f3d7a4;
+  border-radius: var(--r-sm);
+  padding: 2px 5px;
+}
+.ds-acc-body {
+  padding: 0 12px 10px;
+  border-top: 1px dashed var(--border-subtle);
+  /* 펼침 시 부드러운 등장(깜빡임 제거, TASK-0239). 행 재구축 대신 body 만 애니메이트. */
+  animation: ds-acc-body-in .2s ease;
+  /* overflow:hidden 금지(TASK-0240) — 내부 '+ 데이터베이스 추가' 드롭다운(.admin-db-picker-list,
+     position:absolute)이 body 경계에서 잘린다. 페이드 등장은 opacity 위주라 overflow 없이도 자연스럽다. */
+}
+@keyframes ds-acc-body-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-acc-body { animation: none; }
+  .ds-acc-row, .ds-acc-menu { transition: none; }
+}
+/* 행 ⋯ 액션 메뉴 */
+.ds-acc-menu-wrap { position: relative; flex: none; display: flex; align-items: center; padding-right: 6px; }
+.ds-acc-menu-btn {
+  min-width: 28px; min-height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: none; cursor: pointer;
+  color: var(--text-2); font-size: 16px; border-radius: var(--r-sm);
+}
+.ds-acc-menu-btn:hover { background: var(--bg); color: var(--text); }
+.ds-acc-menu-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ds-acc-menu {
+  position: absolute; top: 100%; right: 6px; z-index: 20;
+  min-width: 140px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,.12));
+  padding: 4px;
+  display: flex; flex-direction: column;
+}
+.ds-acc-menu.hidden { display: none; }
+.ds-acc-menu-item {
+  text-align: left; padding: 7px 10px; font-size: 12.5px;
+  border: none; background: none; cursor: pointer; border-radius: var(--r-sm);
+  color: var(--text);
+}
+.ds-acc-menu-item:hover { background: var(--bg); }
+.ds-acc-menu-item.danger { color: var(--danger); }
+.ds-acc-menu-item.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+/* ＋ 데이터소스 추가 */
+/* ＋ 데이터소스 추가 — DB picker(.admin-db-picker-*)와 동일한 inline 체크박스 토글 드롭다운(TASK-0240). */
+.ds-acc-add-row { margin-top: 8px; position: relative; }
+.ds-acc-add-btn {
+  font-size: 12.5px; padding: 6px 10px;
+  border: 1px dashed var(--border); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--text-2); cursor: pointer;
+}
+.ds-acc-add-btn:not(:disabled):hover { border-color: var(--primary); color: var(--text); }
+.ds-acc-add-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* 펼친 datasource 의 DB 편집기 컨테이너 */
+.cov-db-editor { padding-top: 6px; }
+
+/* TASK-20260618T044318: 정규식 자동 규칙 에디터 + pending 승인 + rule 행 배지. */
+.cov-db-rule {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle, rgba(0,0,0,.12));
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.cov-db-rule-head { font-size: 13px; font-weight: 700; color: var(--text); }
+.cov-db-rule-hint { font-size: 11px; color: var(--text-muted, #888); margin: 2px 0 6px; }
+.cov-db-rule-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.cov-db-rule-input {
+  flex: 1 1 auto; min-width: 0; box-sizing: border-box; padding: 5px 8px; font-size: 12px;
+  color: var(--text); background: var(--surface, #fff); border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 6px; outline: none; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.cov-db-rule-input:focus { border-color: var(--primary, #2563eb); box-shadow: 0 0 0 2px rgba(37,99,235,.12); }
+.cov-db-rule-caplbl { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted, #888); }
+.cov-db-rule-cap { width: 56px; padding: 4px 6px; font-size: 12px; border: 1px solid var(--border, rgba(0,0,0,.15)); border-radius: 6px; }
+.cov-db-rule-count { flex: 1 1 auto; font-size: 11px; color: var(--text-muted, #888); }
+.cov-db-rule-save {
+  font-size: 12px; padding: 5px 10px; border: 1px solid var(--primary, #2563eb); border-radius: 6px;
+  background: var(--primary, #2563eb); color: #fff; cursor: pointer; white-space: nowrap;
+}
+.cov-db-rule-save:disabled { opacity: .5; cursor: not-allowed; }
+.cov-db-rule-del {
+  font-size: 12px; padding: 5px 10px; border: 1px solid var(--danger, #dc2626); border-radius: 6px;
+  background: #fff; color: var(--danger, #dc2626); cursor: pointer; white-space: nowrap;
+}
+.cov-db-rule-err { font-size: 11px; color: var(--danger, #dc2626); margin-top: 2px; }
+.cov-db-rule-pending { margin-top: 8px; }
+.cov-db-rule-pending-head { font-size: 11px; font-weight: 600; color: var(--warning, #b45309); margin-bottom: 4px; }
+.cov-db-rule-pending-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.cov-db-rule-pending-name {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.cov-db-rule-approve {
+  flex: 0 0 auto; font-size: 11px; padding: 3px 10px; border: 1px solid var(--primary, #2563eb);
+  border-radius: 6px; background: var(--primary-soft, rgba(37,99,235,.08)); color: var(--primary, #2563eb); cursor: pointer;
+}
+.cov-db-rule-approve:disabled { opacity: .5; cursor: not-allowed; }
+/* 규칙으로 추가된 DB 행 배지(이름 옆). */
+.cov-db-rule-badge {
+  flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 999px;
+  color: var(--primary, #2563eb); background: color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
+}
+
+/* TASK-20260618T061703: 다중 규칙 — 규칙 카드 + 카드에 종속(중첩)된 DB 목록. */
+.cov-db-rule-cards { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.cov-db-rule-empty { font-size: 12px; color: var(--text-muted, #888); padding: 6px 2px; }
+.cov-db-rule-card {
+  border: 1px solid var(--border, rgba(0,0,0,.15)); border-radius: 8px; padding: 8px 10px;
+  background: var(--surface, #fff); border-left: 3px solid var(--primary, #2563eb);
+}
+.cov-db-rule-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cov-db-rule-card-title { font-size: 12px; font-weight: 700; color: var(--text); flex: 0 0 auto; }
+.cov-db-rule-card-pat {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--primary, #2563eb);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: color-mix(in srgb, var(--primary, #2563eb) 8%, transparent); padding: 1px 6px; border-radius: 4px;
+}
+.cov-db-rule-card-cap { flex: 0 0 auto; font-size: 11px; color: var(--text-muted, #888); }
+/* TASK-20260619 (§10.7): 규칙 편집 스테이징 상태 — 추가/수정/삭제 대기 + 승인 대기 토글. */
+.cov-db-rule-card.is-staged-create { border-left-color: var(--success, #16a34a); background: color-mix(in srgb, var(--success, #16a34a) 5%, var(--surface, #fff)); }
+.cov-db-rule-card.is-staged-update { border-left-color: var(--warning, #d97706); background: color-mix(in srgb, var(--warning, #d97706) 5%, var(--surface, #fff)); }
+.cov-db-rule-card.is-staged-delete { border-left-color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 5%, var(--surface, #fff)); opacity: .72; }
+.cov-db-rule-card.is-staged-delete .cov-db-rule-card-pat { text-decoration: line-through; }
+.cov-db-rule-card-badge { flex: 0 0 auto; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+.cov-db-rule-card-badge.is-create { color: var(--success, #16a34a); background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent); }
+.cov-db-rule-card-badge.is-update { color: var(--warning, #b45309); background: color-mix(in srgb, var(--warning, #d97706) 16%, transparent); }
+.cov-db-rule-card-badge.is-delete { color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent); }
+.cov-db-rule-approve.is-staged { background: color-mix(in srgb, var(--success, #16a34a) 10%, transparent); border-color: var(--success, #16a34a); color: var(--success, #16a34a); }
+.cov-db-rule-pending-tag { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 999px; color: var(--success, #16a34a); background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent); }
+.cov-db-rule-edit, .cov-db-rule-addbtn {
+  flex: 0 0 auto; font-size: 11px; padding: 3px 10px; border: 1px solid var(--border, rgba(0,0,0,.2));
+  border-radius: 6px; background: #fff; color: var(--text); cursor: pointer;
+}
+.cov-db-rule-addbtn { color: var(--primary, #2563eb); border-color: var(--primary, #2563eb); margin: 2px 0; }
+.cov-db-rule-edit:hover, .cov-db-rule-addbtn:hover { background: var(--primary-soft, rgba(37,99,235,.06)); }
+.cov-db-rule-edit-host, .cov-db-rule-add-host { margin-top: 6px; }
+.cov-db-rule-form { border-top: 1px dashed var(--border-subtle, rgba(0,0,0,.12)); padding-top: 6px; }
+/* 규칙에 종속(중첩)된 DB 목록 — 들여쓰기 + 좌측 가이드선으로 '규칙 소속'을 시각화. */
+.cov-db-rule-dblist { margin: 6px 0 2px 10px; padding-left: 8px; border-left: 2px solid var(--border-subtle, rgba(0,0,0,.12)); }
+.cov-db-rule-dblist-head { font-size: 11px; font-weight: 600; color: var(--text-muted, #888); margin-bottom: 2px; }
+.cov-db-rule-dbitem { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+.cov-db-rule-dbdot { flex: 0 0 auto; color: var(--text-muted, #aaa); font-size: 11px; }
+.cov-db-rule-dbname {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cov-db-rule-dbempty { font-size: 11px; color: var(--text-muted, #aaa); font-style: italic; padding: 1px 0; }
+/* feature-0003-rule-db-coverage: 규칙 종속 DB 항목에도 분석 진척 셀(마이크로바+통계+상태칩)을 붙인다.
+   메인 목록(.cov-db-row)은 grid 라 컬럼이 폭을 주지만, 규칙 항목(.cov-db-rule-dbitem)은 flex 라
+   마이크로바에 명시 폭이 없으면 0 으로 접힌다 → flex 컨텍스트용 폭/우측정렬을 못박는다. */
+.cov-db-rule-dbitem .cov-microbar { width: 52px; flex: 0 0 auto; margin-left: auto; }
+.cov-db-rule-dbitem .cov-db-stat { flex: 0 0 auto; min-width: 38px; }
+.cov-db-rule-dbitem .cov-db-status { flex: 0 0 auto; }
+
+.admin-chip-locked-hint {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted, rgba(0, 0, 0, .55));
+  background: rgba(0, 0, 0, .06);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.admin-chip-input-row {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.admin-chip-input-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-db-picker-row {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+  align-items: center;
+}
+
+.admin-db-picker {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, .12));
+  border-radius: 6px;
+  background: #fff;
+}
+
+.admin-db-picker:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 체크박스 드롭다운 DB picker */
+.admin-db-picker-wrap {
+  position: relative;
+  margin: 6px 0;
+}
+
+.admin-db-picker-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle, rgba(0,0,0,.15));
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  color: var(--primary, #2563eb);
+}
+
+.admin-db-picker-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-db-picker-btn:not(:disabled):hover {
+  background: var(--primary-soft, rgba(37,99,235,.06));
+}
+
+.admin-db-picker-list {
+  /* TASK-0240: position:absolute 플로팅을 버리고 정상 흐름(inline)으로 — 패널 스크롤 컨테이너
+     (.admin-detail-col overflow-y:auto)·accordion body 가 absolute 드롭다운을 잘라내던 문제 원천 제거.
+     목록이 길면 자체 max-height + overflow-y:auto 로 흡수(이 박스는 클리핑 조상이 아님). */
+  margin-top: 4px;
+  width: 100%;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  padding: 4px 0;
+}
+
+.admin-db-picker-list.hidden { display: none; }
+
+.admin-db-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.admin-db-picker-item:hover {
+  background: var(--primary-soft, rgba(37,99,235,.06));
+}
+
+.admin-db-picker-item input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--primary, #2563eb);
+  cursor: pointer;
+}
+
+.admin-db-picker-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+
+/* ds-conn-bg-decouple: 연결 불안정/끊김으로 DB 목록 로드를 보류했을 때 picker 위 상태 배너. */
+.admin-db-degraded-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--danger, #dc2626);
+  background: rgba(220, 38, 38, .07);
+  border: 1px solid rgba(220, 38, 38, .25);
+  border-radius: 6px;
+}
+.admin-db-degraded-note > span { flex: 1 1 auto; min-width: 0; }
+.admin-db-degraded-refresh {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--danger, #dc2626);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--danger, #dc2626);
+  cursor: pointer;
+}
+.admin-db-degraded-refresh:hover { background: var(--danger, #dc2626); color: #fff; }
+.admin-db-degraded-refresh:disabled { opacity: .55; cursor: default; }
+
+/* TASK-0242: 추가 picker 항목 — [체크박스 · DB명(flex) · 도메인힌트 · 분석상태칩]. */
+.admin-db-picker-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-db-picker-domain {
+  flex: 0 1 auto; min-width: 0; max-width: 42%;
+  font-size: 11px; color: var(--text-muted, #888);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.admin-db-picker-status {
+  flex: 0 0 auto;
+  font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  padding: 1px 7px; border-radius: 999px;
+}
+.admin-db-picker-status.is-done    { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.admin-db-picker-status.is-running { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); animation: covPickerPulse 1.6s ease-in-out infinite; }
+.admin-db-picker-status.is-none    { color: var(--text-muted); background: var(--bg); }
+@keyframes covPickerPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .admin-db-picker-status.is-running { animation: none; } }
+
+/* ── TASK-20260618T025755: '+ 데이터베이스 추가' picker 검색 필터 + 정규식 일괄 선택 toolbar ──────
+   후보 DB 가 많을 때(잦은 DB 구성 변경 대응) 빠르게 찾고/패턴으로 일괄 선택. sticky 로 목록 상단에
+   고정해 스크롤해도 항상 보이게 한다(검색 결과 0건·정규식 오류 안내는 .hidden 토글). */
+.admin-db-picker-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  padding: 6px 12px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle, rgba(0,0,0,.08));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.admin-db-picker-search,
+.admin-db-picker-regex {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 6px;
+  outline: none;
+}
+.admin-db-picker-search:focus,
+.admin-db-picker-regex:focus {
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.12);
+}
+.admin-db-picker-search::placeholder,
+.admin-db-picker-regex::placeholder { color: var(--text-muted, #888); }
+.admin-db-picker-regex-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.admin-db-picker-regex { flex: 1 1 auto; min-width: 0; font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.admin-db-picker-regex-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+}
+.admin-db-picker-regex-btn {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--primary, #2563eb);
+  border-radius: 6px;
+  background: var(--primary, #2563eb);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.admin-db-picker-regex-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.admin-db-picker-regex-btn:not(:disabled):hover { filter: brightness(0.94); }
+.admin-db-picker-regex-err {
+  font-size: 11px;
+  color: var(--danger, #dc2626);
+}
+.admin-db-picker-selected-count {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+}
+/* 정규식 일치 라이브 하이라이트(적용 전 미리보기). */
+.admin-db-picker-item.is-regex-match {
+  background: color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--primary, #2563eb);
+}
+.admin-db-picker-no-result {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  font-style: italic;
+}
+
+/* ── TASK-0244: '+ 데이터소스 추가' 드롭다운 항목 — 이름/엔진/좌표/연결상태를 accordion·DB picker 와 동일
+   시각 문법으로 정합(이전엔 'key — engine @ host:port' 단일 raw 문자열이라 다른 UI 와 폰트/정렬이 이질적). */
+.admin-ds-picker-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--border-subtle, rgba(0,0,0,.10));
+}
+.admin-ds-picker-head-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+  color: var(--text-muted, #888);
+}
+.admin-ds-picker-refresh {
+  font-size: 11px; padding: 1px 8px;
+  border: 1px solid var(--border-subtle, rgba(0,0,0,.15)); border-radius: 999px;
+  background: var(--bg); color: var(--text-2); cursor: pointer; white-space: nowrap;
+}
+.admin-ds-picker-refresh:hover { border-color: var(--primary); color: var(--text); }
+/* TASK-0246: 항목을 고정 열 폭의 grid 로 — [체크박스 · 이름(가변 1fr) · 엔진 pill · 좌표 · 연결상태 배지].
+   이전엔 flex + 이름 flex:1 이라 행마다 이름·좌표·배지 길이에 따라 엔진/좌표/배지 시작 위치가 달라
+   세로 정렬이 들쭉날쭉했다. 고정 트랙(모든 행 동일 geometry)으로 이름만 가변 흡수하고 나머지 열은 정렬한다. */
+.admin-db-picker-item.admin-ds-picker-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 56px 124px 104px;
+  align-items: center;
+  gap: 8px;
+}
+.admin-ds-picker-engine {
+  justify-self: start;
+  font-size: 11px; color: var(--text-2);
+  background: var(--bg); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm); padding: 1px 6px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.admin-ds-picker-coord {
+  justify-self: start; min-width: 0; max-width: 100%;
+  font-size: 11px; color: var(--text-muted, #888);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 연결상태 배지는 고정폭 열에서 좌측 정렬(자연폭 유지 — 행별 left spread=0). sibling .cov-db-row(TASK-0245)
+   의 .cov-db-status/.cov-db-reset justify-self:start 와 동일 컨벤션으로 통일(사용자 컬럼 정렬 선호). */
+.admin-ds-picker-item .admin-ds-conn { justify-self: start; }
+/* 연결 상태 배지(연결됨/실패/확인 중) — DB picker 의 분석상태(.admin-db-picker-status)와 동일한 pill 형태,
+   의미는 '연결성'이라 별도 클래스. 앞의 ● 점으로 상태를 한눈에. */
+.admin-ds-conn {
+  flex: 0 0 auto;
+  font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  padding: 1px 8px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.admin-ds-conn::before {
+  content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: 0 0 auto;
+}
+.admin-ds-conn.is-ok       { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정") / is-down(회색 "연결 끊김"). is-fail 레거시 빨강. */
+.admin-ds-conn.is-fail,
+.admin-ds-conn.is-unstable { color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent); }
+.admin-ds-conn.is-down     { color: #6b7280; background: color-mix(in srgb, #6b7280 14%, transparent); }
+.admin-ds-conn.is-checking { color: var(--text-muted); background: var(--bg); animation: covPickerPulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .admin-ds-conn.is-checking { animation: none; } }
+
+/* TASK-0277: 데이터소스 목록 행 leading 의 네트워크 상태 도트(아이콘 배지).
+ *  고정폭이라 행 간 leading 컬럼이 일정하게 정렬된다. 색맹 대비는 title/aria-label(JS). */
+.ds-conn-dot {
+  width: 9px; height: 9px; align-self: center;
+  border-radius: 999px;
+  color: var(--text-muted);              /* 상태 클래스가 color 만 바꾸면 점·halo 동시 적용 */
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 20%, transparent);
+}
+.ds-conn-dot.is-ok       { color: var(--success); }
+/* conn-tristate: is-unstable(빨강 "연결 불안정") / is-down(회색 "연결 끊김"). is-fail 레거시 빨강. */
+.ds-conn-dot.is-fail,
+.ds-conn-dot.is-unstable { color: var(--danger, #dc2626); }
+.ds-conn-dot.is-down     { color: #6b7280; }
+.ds-conn-dot.is-checking { color: var(--text-muted); animation: covPickerPulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ds-conn-dot.is-checking { animation: none; } }
+/* TASK-0281(ds-list-multiselect): 데이터소스 목록 행 = [체크박스 auto · 네트워크 도트 auto · main 1fr].
+ *  다중 선택 도입으로 행이 .admin-list-row--nav(단일선택) → .admin-list-row(체크박스 div)로 바뀌어
+ *  PR#251 의 --nav 스코프 grid(auto 1fr)가 미매칭됨 → 체크박스 컬럼을 더한 3열 grid 로 대체.
+ *  #datasourceList 스코프라 #settingsList 등 다른 nav 목록(1fr)은 무영향.
+ *  TASK-20260618T030534: 네트워크 도트 우측에 엔진 서비스 브랜드 아이콘 컬럼을 더해 4열
+ *  [체크박스 auto · 도트 auto · 엔진아이콘 auto · main 1fr]. 행 children(cb·dot·engIcon·main)과
+ *  1:1 매핑 — 고정폭 컬럼이라 콘텐츠 길이 무관 행 간 정렬 안정(행 목록 컬럼 정합 정책). */
+#datasourceList .admin-list-row {
+  grid-template-columns: auto auto auto 1fr;
+}
+/* 목록 행 엔진 아이콘 — 도트(9px)보다 약간 크게(16px) 식별성 확보. 단색 path(currentColor)에
+ *  inline color 로 브랜드색(MySQL #00758F / MSSQL #EE352C). 드롭다운 .engine-icon 과 동형. */
+.ds-list-engine-icon {
+  width: 16px;
+  height: 16px;
+  align-self: center;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ds-list-engine-icon svg { width: 100%; height: 100%; display: block; }
+
+/* TASK-0053 Phase B/C — product subcatalog cards (Role/Account detail) */
+.admin-product-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-product-card {
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, .12));
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .02);
+}
+
+.admin-product-card[open] {
+  background: #fff;
+  border-color: rgba(37, 99, 235, .25);
+}
+
+.admin-product-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+}
+
+.admin-product-card-toggle {
+  flex: 0 0 auto;
+}
+
+.admin-product-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+}
+
+.admin-product-card-info strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-product-card-info small {
+  font-size: 11px;
+  color: var(--text-muted, rgba(0, 0, 0, .55));
+}
+
+.admin-product-card-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--border-subtle, rgba(0, 0, 0, .08));
+  background: rgba(0, 0, 0, .015);
+}
+
+.admin-product-card-flat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.admin-product-card-flat select {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, .12));
+  border-radius: 6px;
+  background: #fff;
+}
+
+.admin-product-card-generic {
+  border-style: dashed;
+  background: rgba(0, 0, 0, .02);
+  margin-top: 4px;
+}
+
+/* embed=true: 권한 grid 의 'product' 그룹 details 안에 inline 배치될 때 */
+.admin-product-card-list-embedded {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-subtle, rgba(0, 0, 0, .12));
+}
+
+.admin-prompt-textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px;
+  border: 1px solid var(--border-subtle, rgba(0,0,0,.12));
+  border-radius: 6px;
+  background: #fff;
+}
+
+.admin-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.admin-inline-row .field-label {
+  font-size: 12px;
+  color: var(--muted, #6b7280);
+  min-width: 96px;
+}
+
+.admin-detail-hint {
+  font-size: 12px;
+  color: var(--muted, #6b7280);
+  margin: 4px 0 6px;
+}
+
+/* 멀티 datasource (P2): 연결테스트 결과 표시 */
+.admin-ds-test-result {
+  font-size: 12px;
+  margin-left: 4px;
+  color: var(--text-2, #6b7280);
+}
+.admin-ds-test-ok { color: var(--success, #16a34a); }
+.admin-ds-test-fail { color: var(--danger, #dc2626); }
+
+.admin-pending-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+}
+
+.admin-workspace {
+  /* REQ-20260518-0007: admin-column flex column 안에서 남은 공간 전부 차지하도록 flex grow 명시.
+     이전 TASK-0068 에서 commit-bar 가 admin-column 안으로 이전된 후 workspace 가 자기 content
+     만큼만 차지해 commit-bar 위로 빈 회색 영역이 노출되던 회귀 차단. 각 admin-pane 의 flex: 1
+     이 의미를 가지려면 workspace 자체가 stretch 되어야 함. */
+  flex: 1 1 auto;
+  overflow: hidden;
+  padding: 20px 24px 24px;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-pane {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.admin-pane.is-active { display: flex; }
+
+/* TASK-0167: dashboard·usage pane 은 list-detail(내부 admin-list 스크롤)이 아니라 단순
+   세로 흐름이라 pane 자체에 세로 스크롤이 필요. admin-shell/admin-workspace 가
+   overflow:hidden + height:100vh 이므로, 누락 시 작은 화면에서 하단(차트·표)이 잘린다.
+   다른 pane(accounts/roles/products/audits)은 내부 admin-list 가 스크롤하므로 제외.
+   TASK-20260624-metadata-ai-autocomplete: metadata pane 도 list-detail 이 아니라 scope+서브탭+
+   부트스트랩 패널+폼+리스트의 단순 세로 흐름이라, 창이 길어지면 하단(폼/리스트)이 잘려 보였다 →
+   dashboard 와 동일하게 pane 자체에 세로 스크롤 부여.
+   metadata-list-detail(v3): metadata pane 은 이제 다른 카테고리처럼 2단 list-detail 구조라
+   (좌측 .admin-list / 우측 .admin-detail-col 가 각자 overflow-y:auto) pane 단일 스크롤에서 제외한다.
+   pane 단일 overflow 를 남기면 list-detail 의 flex:1 fill + 컬럼 독립 스크롤과 충돌(이중 스크롤). */
+.admin-pane[data-admin-pane="dashboard"].is-active,
+/* feature-0021 console-subtabs: usage/ai-ops/reasoning 3 pane 을 통합한 'AI 운영 현황'(ai-console)
+   단일 pane. 옛 3키 → ai-console 1키로 대체(누락 시 하단 콘텐츠 잘림 — 적대검증 MAJOR#2). */
+.admin-pane[data-admin-pane="ai-console"].is-active,
+.admin-pane[data-admin-pane="release-notes"].is-active {
+  /* aiops-scroll: AI 운영 현황 pane 은 배너/축/KPI/Attention/카테고리표/활동feed/커버리지의
+     단순 세로 흐름(list-detail 아님)이라 dashboard/usage 와 동일하게 pane 자체 세로 스크롤 부여.
+     누락 시 admin-shell(overflow:hidden+100vh)에서 하단(카테고리표·커버리지)이 잘려 도달 불가. */
+  overflow-y: auto;
+  /* TASK-0198: 좌우 스크롤 차단 — 카드 min-width 누적/SVG 폭/표 넓이로 가로 넘침이 발생하던 회귀 차단.
+     내부 요소는 min-width:min(Npx,100%) + 표는 카드 내부 스크롤로 흡수(아래). */
+  overflow-x: hidden;
+}
+
+.admin-pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.admin-pane-head-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-pane-head h2 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.admin-dashboard-pending {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.admin-dashboard-pending:empty { display: none; }
+
+.admin-dashboard-pending-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.admin-dashboard-pending-row {
+  color: var(--text-2);
+  padding: 2px 0;
+}
+
+/* ── Master-detail list ──────────────────────────────────────── */
+.admin-list-detail {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  /* REQ-20260518-0008: 단일 row 의 height 를 명시해 list-col / detail-col 이
+     list-detail 의 전체 height 만큼 stretch. 이전엔 grid-auto-rows: auto (default)
+     라 content 가 row 를 채우지 않는 큰 viewport (높이 800+) + 적은 항목 (역할/제품)
+     조합에서 box 가 짧게 표시되고 아래로 회색 빈 영역이 노출. align-items: stretch 는
+     row 안에서의 분배만 담당 — row 자체의 height 는 grid-template-rows 가 결정. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.admin-list-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 12px;
+}
+
+.admin-detail-col {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px 22px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.admin-detail-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.admin-list-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.admin-list-toolbar .admin-search {
+  max-width: unset;
+  width: 100%;
+}
+
+.admin-list-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.admin-list-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.admin-list-count { color: var(--text-muted); }
+
+.admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.admin-list-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .13s, border-color .13s;
+}
+
+.admin-list-row:hover { background: var(--bg); }
+
+.admin-list-row.is-active {
+  background: var(--primary-soft);
+  border-color: rgba(37,99,235,.2);
+}
+
+/* TASK-0053 bug fix: 이전 placeholder rule 인 `.has-pending::before { content: "" }` 가 CSS Grid
+ * 의 ::before 가 4번째 grid item 으로 참여해 cb/main/chips 의 레이아웃을 row 2 로 밀어내던 버그.
+ * pendingDot (`•`) 이 이미 title 안에서 시각적 표시 역할을 하므로 ::before 자체를 제거. */
+.admin-list-row.has-pending {
+  border-color: rgba(37, 99, 235, .35);
+}
+
+.admin-list-row.is-to-delete {
+  background: var(--danger-soft, rgba(220,38,38,.08));
+}
+
+.admin-list-row-cb { flex-shrink: 0; }
+
+.admin-list-row-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-list-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-avatar-sm {
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
+}
+
+.admin-list-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.admin-pending-dot {
+  color: var(--primary);
+  font-weight: 800;
+  width: 10px;
+  text-align: center;
+}
+
+.admin-list-row-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-list-row-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-list-pagination,
+.admin-bulk-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 2px 0;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.admin-list-pagination:empty,
+.admin-bulk-actions:empty {
+  display: none;
+}
+
+/* CONVENTIONS.md §10.2 + DESIGN.md §2/§3 — bulk toolbar 표준 위치 (list 직하단 sticky) */
+.admin-bulk-actions:not(:empty) {
+  position: sticky;
+  bottom: var(--bulk-bar-bottom);
+  z-index: var(--z-bulk-bar);
+  background: var(--surface);
+  box-shadow: var(--bulk-bar-elev);
+  padding: 8px 10px;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+}
+
+.admin-bulk-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+  margin-right: 4px;
+}
+
+/* DESIGN.md §5 — Linear-style inline keyboard hint */
+.kbd-hint {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  vertical-align: 1px;
+}
+
+/* DESIGN.md §6 — cross-page selection banner (Stripe pattern) */
+.admin-bulk-cross-page {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  margin: 4px 0;
+  border: 1px solid var(--primary-soft);
+  background: var(--primary-soft);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  color: var(--text-2);
+  z-index: var(--z-bulk-banner);
+}
+
+.admin-bulk-cross-page:empty {
+  display: none;
+}
+
+.admin-bulk-cross-page-msg {
+  flex: 1 1 auto;
+}
+
+.admin-bulk-cross-page-msg strong {
+  color: var(--primary);
+}
+
+.admin-bulk-cross-page .tool-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+/* DESIGN.md §8 — RBAC partial-failure toast (skipped count chip) */
+.toast .toast-skipped {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--warning);
+  background: rgba(217, 119, 6, .12);
+  border-radius: 3px;
+}
+
+/* ── Detail pane layout ──────────────────────────────────────── */
+.admin-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.admin-detail-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-detail-top-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-detail-top-row .admin-detail-field { flex: 1; min-width: 180px; }
+
+.admin-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.admin-detail-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.admin-detail-note {
+  padding: 10px 12px;
+  background: var(--danger-soft, rgba(220,38,38,.08));
+  border-radius: var(--r-md);
+  font-size: 13px;
+  color: var(--text-2);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  position: sticky;
+  bottom: -18px;
+  margin: 4px -22px -18px;
+  padding: 12px 22px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 2;
+}
+
+.btn-secondary.danger {
+  color: var(--danger);
+}
+
+/* ── TASK-0207: 데이터소스 상세 패널 (계정/제품 상세와 통일) ─────────────────
+ * .admin-badge / .admin-field / .admin-kv / .admin-detail-head / .admin-row-actions
+ * 는 이전엔 미스타일이라 데이터소스 pane 만 이질적이었음 — 표준 토큰으로 정렬. */
+.admin-row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.7;
+  letter-spacing: .02em;
+  background: var(--primary-soft, rgba(37,99,235,.12));
+  color: var(--primary, #2563eb);
+  white-space: nowrap;
+}
+
+.admin-badge--muted {
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.admin-badge--warn {
+  background: var(--danger-soft, rgba(220,38,38,.1));
+  color: var(--danger, #dc2626);
+}
+
+/* key-value 정의 목록 (연결 좌표 / 출처·보안) */
+.admin-kv {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.admin-kv dt {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.admin-kv dd {
+  margin: 0;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* 생성/편집 폼 — label 위, input 아래 (계정/역할 폼 패턴) */
+.admin-ds-form {
+  gap: 12px;
+}
+
+.admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.admin-field-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.admin-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.admin-field input:focus {
+  outline: none;
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 3px var(--primary-soft, rgba(37,99,235,.15));
+}
+
+.admin-field input.is-readonly {
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* ── 데이터소스 엔진 선택 드롭다운 (TASK-20260618T022006) ──────────────────
+   '새 데이터소스' 폼의 엔진 입력 = 아이콘 + 라벨 커스텀 드롭다운. 목록은
+   admin-db-picker 와 동일하게 position:absolute 가 아닌 정상 흐름(inline)으로 둔다 —
+   .admin-detail-col(overflow-y:auto) 이 absolute 드롭다운을 잘라내던 TASK-0240 문제를
+   답습하지 않기 위함. 아이콘은 단색 path(fill:currentColor)라 .engine-icon 의 color 로
+   브랜드색을 받는다. */
+.admin-field--engine .engine-picker { position: relative; }
+
+.engine-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.engine-picker-btn:hover { border-color: var(--primary, #2563eb); }
+.engine-picker-btn:focus-visible {
+  outline: none;
+  border-color: var(--primary, #2563eb);
+  box-shadow: 0 0 0 3px var(--primary-soft, rgba(37,99,235,.15));
+}
+.engine-picker-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.engine-picker-caret { color: var(--text-muted); font-size: 11px; flex: none; }
+
+.engine-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.engine-icon svg { width: 100%; height: 100%; display: block; }
+
+.engine-picker-list {
+  margin-top: 4px;
+  width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border, rgba(0,0,0,.15));
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  padding: 4px 0;
+}
+.engine-picker-list.hidden { display: none; }
+
+.engine-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+.engine-option:hover,
+.engine-option:focus-visible {
+  background: var(--primary-soft, rgba(37,99,235,.06));
+  outline: none;
+}
+.engine-option[aria-selected="true"] { background: var(--primary-soft, rgba(37,99,235,.10)); }
+.engine-option .engine-icon { width: 22px; height: 22px; }
+.engine-option-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.engine-option-text strong { font-weight: 600; font-size: 13px; }
+.engine-option-text small { color: var(--text-muted); font-size: 11px; }
+
+/* ── Commit bar ─────────────────────────────────────────────── */
+.admin-commit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 12px rgba(0,0,0,.04);
+  min-height: 56px;
+}
+
+.admin-commit-bar.has-pending {
+  background: #fffbea;
+  border-top-color: #f0c14b;
+}
+
+/* graph-noise-reduce(2026-07-28, 사용자 요구): pending 이 0 건이면 커밋 바를 숨긴다.
+   "0건 pending" + 비활성 취소/모두 적용 버튼은 정보도 동작도 없는 상시 노이즈이고, 특히 편집 개념이
+   없는 pane(그래프 뷰·대시보드·감사 로그 등)에서는 캔버스 세로 공간만 잡아먹었다. 미저장 변경이
+   생기면 admin.js refreshPendingUI() 가 .has-pending 을 붙여 다시 나타난다(= unsaved-changes 액션
+   바 관습). 사이드바 하단 요약(#adminPendingSummary "변경 없음")이 상시 상태 표시를 계속 담당. */
+.admin-commit-bar:not(.has-pending) { display: none; }
+
+.admin-commit-info {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-commit-count {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.admin-commit-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-commit-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Legacy admin-main fallback (kept for any cached pages) ─── */
+.admin-main {
+  padding: 20px 24px 40px;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* 툴바: 검색 + 필터 */
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.admin-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color .14s, box-shadow .14s;
+}
+.admin-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+}
+
+.admin-filter-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.admin-filter-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: background .13s, color .13s, border-color .13s;
+}
+.admin-filter-btn:hover    { background: var(--bg); }
+.admin-filter-btn.is-active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37,99,235,.2);
+}
+
+/* 페이지네이션 */
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+.page-info {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 계정 카드 헤더 영역 개편 */
+.admin-account-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.admin-account-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* 역할 배지 색상 변형 */
+.status-chip.role-admin    { background: rgba(37,99,235,.1); color: var(--primary); }
+.status-chip.role-operator { background: rgba(22,163,74,.1); color: #15803d; }
+.status-chip.role-pending  { background: rgba(217,119,6,.12); color: #92400e; }
+.status-chip.is-disabled   { background: var(--danger-soft); color: var(--danger); }
+/* TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 배지 (amber). */
+.status-chip.is-locked     { background: #fff7ed; color: #b45309; }
+/* TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 사용 배지 (blue). */
+.status-chip.is-2fa        { background: rgba(37,99,235,.1); color: var(--primary); }
+
+.admin-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.surface-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-sm);
+}
+
+.section-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.section-row h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.metric-card {
+  padding: 16px 18px;
+  border-radius: var(--r-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.metric-card span {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-bottom: 8px;
+}
+
+.metric-card strong {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+/* ── TASK-0210/0218: 대시보드 위젯 그리드 — CloudWatch 스타일 운영 대시보드 ──
+   위젯 데이터는 /api/admin/overview 가 RBAC-스코프로 반환; 표시/순서는 계정별 영속.
+   TASK-0218: 주/보조 metric 위계 + sparkline + 추세 델타 + 신선도/새로고침 + fail-loud
+   + drill-down + drag reorder + 접근성(포커스/aria). App UI 규칙: 차분한 surface,
+   radius --r-md, 8px 그리드, 색 외 텍스트/형태 보조. */
+.dashboard-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dashboard-updated { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.dashboard-window {
+  height: 32px; padding: 0 8px; border: 1px solid var(--border);
+  border-radius: var(--r-md); background: var(--surface); color: var(--text); font-size: 13px;
+}
+.dashboard-edit-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  flex-wrap: wrap; margin-top: 16px; padding: 12px 16px;
+  background: var(--primary-soft); border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.dashboard-edit-hint { font-size: 12px; color: var(--text-2); }
+.dashboard-edit-actions { display: flex; gap: 8px; }
+
+.dashboard-widgets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 16px; margin-top: 16px; align-items: start;
+}
+.dashboard-widget {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0;
+}
+.dashboard-widgets.is-editing .dashboard-widget { border-style: dashed; cursor: grab; }
+.dashboard-widget.widget-hidden { opacity: .5; }
+.dashboard-widget.is-dragging { opacity: .4; }
+.dashboard-widget.drag-over { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
+.dashboard-widget-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dashboard-widget-head h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); }
+.dashboard-widget-open {
+  font-size: 12px; color: var(--primary); background: none; border: none; cursor: pointer;
+  padding: 2px 4px; border-radius: var(--r-sm, 6px); white-space: nowrap;
+}
+.dashboard-widget-open:hover { text-decoration: underline; }
+.dashboard-widget-edit { display: flex; align-items: center; gap: 6px; }
+.dashboard-widget-vis {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); cursor: pointer;
+}
+.dashboard-widget-move {
+  width: 28px; height: 28px; padding: 0; line-height: 1; border: 1px solid var(--border);
+  border-radius: var(--r-md); background: var(--bg); color: var(--text-2); cursor: pointer; font-size: 13px;
+}
+.dashboard-widget-move:hover:not(:disabled) { background: var(--surface); border-color: #c4c4c9; }
+.dashboard-widget-move:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 주 metric — 크게(위계). 큰 숫자 + 추세 델타 배지 + sparkline. */
+.dashboard-primary { display: flex; flex-direction: column; gap: 2px; }
+.dashboard-primary-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.dashboard-primary-val {
+  font-size: 30px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.05;
+}
+.dashboard-primary-val.accent-ok { color: var(--success); }
+.dashboard-primary-val.accent-warn { color: var(--warning); }
+.dashboard-primary-val.accent-muted { color: var(--text-muted); }
+.dashboard-primary-label { font-size: 12px; color: var(--text-2); }
+.dashboard-delta {
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+  padding: 1px 7px; border-radius: 999px;
+}
+.dashboard-delta.delta-good { color: var(--success); background: rgba(22, 163, 74, .12); }
+.dashboard-delta.delta-bad { color: var(--danger); background: var(--danger-soft); }
+.dashboard-delta.delta-neutral { color: var(--text-2); background: var(--bg); }
+.dashboard-spark { width: 100%; height: 26px; margin-top: 6px; display: block; }
+.dashboard-spark polyline { fill: none; stroke: var(--primary); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.dashboard-spark circle { fill: var(--primary); }
+.dashboard-spark.spark-bad polyline { stroke: var(--warning); }
+.dashboard-spark.spark-bad circle { fill: var(--warning); }
+
+/* 보조 metric — 작게. */
+.dashboard-secondary { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 8px; }
+.dashboard-metric {
+  padding: 8px 10px; border-radius: var(--r-md); background: var(--bg);
+  border: 1px solid var(--border-subtle, var(--border));
+}
+.dashboard-secondary .dashboard-metric strong { font-size: 16px; }
+.dashboard-metric strong {
+  display: block; font-size: 20px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums;
+}
+.dashboard-metric span { display: block; font-size: 11px; color: var(--text-2); margin-top: 2px; }
+.dashboard-metric.accent-ok strong { color: var(--success); }
+.dashboard-metric.accent-warn strong { color: var(--warning); }
+.dashboard-metric.accent-muted strong { color: var(--text-muted); }
+
+.dashboard-widget-list-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-2); margin-bottom: 4px;
+}
+.dashboard-widget-list + .dashboard-widget-list { margin-top: 12px; }
+/* Top-N 행 — 하단 인라인 비율막대(--bar)로 상대 비중 표현. */
+.dashboard-list-row {
+  position: relative; display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+  padding: 4px 0; border-bottom: 1px solid var(--border-subtle, var(--border)); font-size: 13px;
+}
+.dashboard-list-row::after {
+  content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+  width: var(--bar, 0%); background: var(--primary); opacity: .3; border-radius: 2px;
+}
+.dashboard-list-row:last-child { border-bottom: none; }
+.dashboard-list-label { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-list-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.dashboard-widget-empty { font-size: 13px; color: var(--text-2); padding: 4px 0; }
+
+/* fail-loud — 전체/위젯 단위 오류 + 재시도(빈 화면으로 장애를 숨기지 않음). */
+.dashboard-error-banner {
+  grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 4px;
+  background: var(--danger-soft); border: 1px solid var(--danger); border-radius: var(--r-md);
+  color: var(--danger); font-size: 13px; font-weight: 600;
+}
+.dashboard-widget-error { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--text-2); }
+.dashboard-retry-btn {
+  font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--bg); color: var(--text-2); cursor: pointer;
+}
+.dashboard-retry-btn:hover { background: var(--surface); border-color: #c4c4c9; }
+
+/* 접근성 — 키보드 포커스 링(sidebar 패턴 정합). */
+.dashboard-window:focus-visible,
+.dashboard-widget-move:focus-visible,
+.dashboard-widget-open:focus-visible,
+.dashboard-retry-btn:focus-visible,
+.dashboard-widget-vis input:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px;
+}
+
+/* ── LLM 사용량 pane (usage) — TASK-0177 디자인 정렬: 인라인 style 추출 + 토큰 통일 ──
+   디자인 리뷰(gstack design-review 관점) 반영: 요약은 .metric-card 재사용, 임의 hex →
+   --text*/--border* 토큰, 8px spacing 그리드, 차트는 surface 카드로 구획. 의존성 0(CSS/SVG). */
+.admin-usage-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+}
+.admin-usage-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+/* TASK-0198: min-width 를 min(Npx,100%) 로 — 컨테이너가 Npx 보다 좁아도 카드가 넘치지 않게(가로 스크롤 차단). */
+.admin-usage-row > .admin-usage-card { flex: 1; min-width: min(300px, 100%); }
+/* TASK-0180: 카테고리별 행 구조. ① 시간별 토큰(flex 4) : 모델별 비중(flex 1) — 4:1.
+   ② 역할별 [토큰|비용], ③ 계정별 [토큰|비용] 은 .admin-usage-row(1:1). 좁으면 wrap. */
+.admin-usage-trend-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.admin-usage-trend-main { flex: 4; min-width: min(420px, 100%); }
+.admin-usage-trend-side { flex: 1; min-width: min(240px, 100%); }
+/* 상세 표 카드 — 표가 카드 폭을 채워(좌측 정렬 + 우측 빈 공간 제거) 여백 해소 */
+.admin-usage-table-card .admin-usage-table { max-width: none; width: 100%; }
+/* TASK-0198: 넓은 표(모델별 7컬럼 등)는 카드 내부에서 가로 스크롤로 흡수 — pane 전체 좌우 스크롤 차단. */
+.admin-usage-table-card { overflow-x: auto; }
+/* TASK-0178: 여백 컴팩트화 — 섹션/카드/요약 패딩·간격 축소 + 차트 높이 다운(admin.js). */
+.admin-usage-section { margin-top: 12px; }
+.admin-usage-section:first-of-type { margin-top: 8px; }
+.admin-usage-h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+.admin-usage-h4 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-2);
+  margin: 0 0 6px;
+}
+.admin-usage-caption {
+  font-weight: 400;
+  font-size: .82em;
+  color: var(--text-muted);
+}
+/* 요약 metric 카드 — dashboard .metric-card 재사용하되 usage 는 컴팩트(패딩·숫자 다운) */
+.admin-usage-metric { padding: 11px 14px; }
+.admin-usage-metric span { letter-spacing: .04em; margin-bottom: 4px; }
+.admin-usage-metric strong { font-size: 19px; font-weight: 800; }
+/* usage 요약 그리드도 약간 촘촘하게. TASK-0198: minmax 하한을 min(160px,100%) 로 — 좁은 폭에서
+   grid track 합이 컨테이너를 초과해 수 px 가로 넘침이 나던 것 차단(전체 모델 5~6 카드 시). */
+/* feature-0021 console-subtabs: usage 콘텐츠가 ai-console 통합 pane 의 usage 서브페인으로
+   이동 — 옛 pane 키 대신 서브페인으로 재타겟(적대검증 MINOR — 미연결 시 metric 그리드/가로 가드 유실). */
+.admin-subpane[data-ai-subpane="usage"] .summary-metrics {
+  gap: 10px; margin-top: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+}
+/* TASK-0198: usage 서브페인 직접 자식이 내부 콘텐츠(차트 SVG·표·칩) 때문에 grow 하며 폭을
+   초과하지 않도록 min-width:0 보장(flex/grid 기본 min-content 넘침 차단). overflow-x:hidden 과 함께
+   잔여 수 px 넘침까지 제거. */
+.admin-subpane[data-ai-subpane="usage"] > * { min-width: 0; max-width: 100%; }
+/* 차트 막대 위 SVG 텍스트·축은 JS 에서 var(--…) 직접 치환 (클래스로 분리 불가) */
+.admin-usage-legend {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.admin-usage-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.admin-usage-swatch { width: 11px; height: 11px; border-radius: 2px; display: inline-block; flex: none; }
+/* 상세 표 */
+.admin-usage-table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 640px;
+  font-size: 13px;
+}
+.admin-usage-table th {
+  text-align: left;
+  padding: 7px 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.admin-usage-table td {
+  padding: 7px 12px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-2);
+}
+.admin-usage-table th.num, .admin-usage-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-usage-table tbody tr:hover { background: var(--bg); }
+.admin-usage-details { margin-top: 24px; }
+/* TASK-20260623T014626-quota-ui-relocate: LLM 사용 한도 편집기 (역할/계정 상세 공용). */
+.admin-quota-editor { margin-top: 4px; }
+.admin-quota-fields { display: flex; gap: 12px; flex-wrap: wrap; }
+.admin-quota-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.admin-quota-field input { max-width: 180px; }
+.admin-quota-hint { font-size: 12px; color: var(--text-muted); margin: 8px 0 0; line-height: 1.5; }
+.admin-detail-section-hint { font-size: 12px; color: var(--text-muted); margin: 2px 0 10px; line-height: 1.5; }
+.admin-usage-details > summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.admin-usage-empty { color: var(--text-muted); font-size: 13px; margin: 6px 0; }
+/* hover 툴팁 (admin.js 인라인 cssText 대체) */
+.admin-usage-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  display: none;
+  background: var(--text);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 6px 9px;
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
+/* ── TASK-0198: 모델 필터 칩 바 + 모델별 요약 카드 ──────────────────────────
+   상단 대시보드가 종합만 보이던 문제 해소 — 모델을 선택(또는 전체)해 요약·차트·역할·계정을
+   그 모델 기준으로 좁혀 본다. 칩 토글은 재조회 없이 캐시 재렌더(admin.js loadUsage refetch:false). */
+.admin-usage-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  /* 칩이 많아도 가로 스크롤 대신 줄바꿈 — pane 좌우 스크롤 차단 정책과 정합. */
+  max-width: 100%;
+}
+.admin-usage-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+.admin-usage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+  max-width: 100%;
+}
+.admin-usage-chip:hover { background: var(--bg); }
+.admin-usage-chip.is-active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--text);
+}
+.admin-usage-chip--all.is-active {
+  border-color: var(--text-2);
+  background: var(--bg);
+}
+.admin-usage-chip-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+.admin-usage-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+
+/* 요약 스코프 라벨 (전체 모델 / 선택 N개 모델) */
+.admin-usage-summary-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
+.admin-usage-summary-scope {
+  font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  color: var(--text-muted); text-transform: uppercase;
+}
+/* TASK-0204: '모델별' 분리 카드 그리드(.admin-usage-mcards*) + TASK-0202 dim/접힘 규칙 제거 —
+   상단 '모델' 칩 바가 모델별 분리/선택을 대신하고, hover 결합 접힘이 잭을 유발해 섹션 자체를 폐기. */
+
+/* TASK-0184: 역할 stacked 막대 행 — 계정 drill-down 진입(클릭) 가능. */
+.admin-usage-hbar-row { margin: 6px 0; }
+.admin-usage-hbar-row--click { cursor: pointer; border-radius: var(--r-sm); padding: 4px 6px; margin: 2px -6px; transition: background .12s; }
+.admin-usage-hbar-row--click:hover { background: var(--bg); }
+.admin-usage-hbar-row--active { background: var(--border-subtle); }
+/* TASK-0184: 계정별 drill-down 패널 (역할 클릭 시 펼침 + 검색 + Top-N 페이징). */
+.admin-usage-drill-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.admin-usage-drill-tools { display: flex; align-items: center; gap: 8px; }
+.admin-usage-drill-search { width: 180px; max-width: 46vw; }
+.admin-usage-drill-body { margin-top: 10px; min-height: 24px; }
+/* TASK-0184: drill 패널 토큰|비용 2열 (역할별 차트와 일관, 좁으면 wrap). */
+.admin-usage-drill-charts { display: flex; gap: 16px; flex-wrap: wrap; }
+.admin-usage-drill-col { flex: 1; min-width: min(240px, 100%); }
+.admin-usage-drill-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.admin-usage-drill-pager button { padding: 4px 12px; }
+.admin-usage-drill-pager button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* TASK-0184: 프로필 '사용 내역' — 본인 LLM 사용량 간소 차트(추정 비용 비노출). */
+.profile-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.profile-usage-controls { display: flex; align-items: center; gap: 8px; flex: none; }
+.profile-usage-days { padding: 4px 8px; }
+.profile-usage-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.profile-usage-metric { flex: 1; min-width: 84px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
+.profile-usage-metric span { font-size: 11px; color: var(--text-muted); letter-spacing: .04em; }
+.profile-usage-metric strong { font-size: 17px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.profile-usage-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px; margin-bottom: 12px; }
+.profile-usage-h { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.profile-usage-caption { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.profile-usage-chart { min-height: 24px; }
+.profile-usage-empty { color: var(--text-muted); font-size: 13px; padding: 14px 0; text-align: center; }
+.profile-usage-legend { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.profile-usage-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
+.profile-usage-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+.profile-usage-donut { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.profile-usage-donut-legend { flex: 1; min-width: 140px; }
+.profile-usage-donut-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 3px 0; }
+.profile-usage-donut-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+
+.admin-accounts { display: flex; flex-direction: column; gap: 12px; }
+
+.admin-account {
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.admin-account-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.admin-account h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 3px;
+}
+
+.admin-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* TASK-0232: 자동작성 결과가 출력 토큰 상한에 도달해 잘렸을 때의 경고색. */
+.admin-meta.admin-meta-warn {
+  color: var(--warning, #d97706);
+}
+
+/* ── TASK-0223: insight 분석 완료율 (목록 배지 + 상세 breakdown) ───────────── */
+.admin-meta.cov-line { margin-top: 2px; }
+.cov-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.cov-badge.cov-ok    { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
+.cov-badge.cov-warn  { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); border-color: color-mix(in srgb, var(--warning) 30%, transparent); }
+.cov-badge.cov-low   { color: var(--danger);  background: color-mix(in srgb, var(--danger) 12%, transparent);  border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+.cov-badge.cov-muted { color: var(--text-muted); background: var(--bg); border-color: var(--border); }
+
+.cov-detail {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cov-detail-head { display: flex; align-items: center; gap: 10px; }
+.cov-detail-title { font-size: 12px; font-weight: 700; color: var(--text-2); }
+.cov-detail-head .cov-refresh { margin-left: auto; }
+.cov-reason { color: var(--danger); }
+
+.cov-bar-row { display: flex; align-items: center; gap: 10px; }
+.cov-bar {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.cov-bar-fill { height: 100%; border-radius: 999px; transition: width .35s ease; }
+.cov-bar.cov-ok   .cov-bar-fill { background: var(--success); }
+.cov-bar.cov-warn .cov-bar-fill { background: var(--warning); }
+.cov-bar.cov-low  .cov-bar-fill { background: var(--danger); }
+.cov-bar-label { font-size: 11px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+
+/* 접근 가능 DB 컨테이너 — 시스템 묶음 칩 + 통합 리스트를 세로로 쌓는다. */
+.cov-db-wrap { display: flex; flex-direction: column; align-items: stretch; padding: 6px 0; }
+
+/* 통합 DB 리스트 — 한 행에 [DB명 · 진행 마이크로바 · 통계 · 상태칩 · 제거]. 완료율 per-DB 와 chip 융합. */
+.cov-db-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.cov-db-row {
+  display: grid;
+  /* TASK-0242: [DB명 · insight-worker 설명 · 마이크로바 · 통계 · 상태칩 · 초기화 · 제거].
+     설명/초기화 컬럼은 항상 자리 유지(reset-spacer)해 권한 유무와 무관히 행 정렬이 일관.
+     TASK-0245: 통계("37/37"↔"123/123")·상태칩("DB✓"↔"연결 불가")·초기화 컬럼이 auto 라
+     행마다 콘텐츠 폭이 달라 → 남는 폭을 가져가는 name/role(fr) 컬럼이 행마다 어긋나
+     설명·진척바 시작 x 가 들쭉날쭉했다. 해당 컬럼을 고정폭으로 못박아 전 행 트랙 동일화. */
+  grid-template-columns: minmax(96px, 0.9fr) minmax(0, 1.7fr) 96px 54px 76px 60px 24px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+}
+.cov-db-row:hover { border-color: var(--border); }
+.cov-db-row.is-offline { opacity: 0.72; }
+.cov-db-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* TASK-0242: insight-worker 가 파악한 DB 역할/도메인 한 줄(전문은 hover title). overflow ellipsis 로 1행 고정. */
+.cov-db-role { font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cov-db-role-muted { color: var(--text-muted); font-style: italic; }
+.cov-db-reset-spacer { display: inline-block; }
+
+/* 행 단위 마이크로바(그 DB 의 분석 진척) */
+.cov-microbar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.cov-microbar-fill { display: block; height: 100%; border-radius: 999px; transition: width .35s ease; }
+.cov-microbar-fill.cov-ok    { background: var(--success); }
+.cov-microbar-fill.cov-warn  { background: var(--warning); }
+.cov-microbar-fill.cov-low   { background: var(--danger); }
+.cov-microbar-fill.cov-muted { background: var(--text-muted); }
+.cov-microbar.is-offline { background: transparent; border: 1px dashed var(--border); }
+.cov-microbar.is-pending { background: var(--border-subtle); opacity: 0.6; }
+
+.cov-db-stat { font-size: 11px; font-weight: 700; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+
+.cov-db-status { font-size: 11px; font-weight: 700; white-space: nowrap; padding: 1px 7px; border-radius: 999px; justify-self: start; }
+.cov-db-status-ok    { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.cov-db-status-warn  { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.cov-db-status-low   { color: var(--danger);  background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.cov-db-status-muted { color: var(--text-muted); background: var(--bg); }
+
+/* TASK-0230: per-DB insight 초기화 버튼 (파괴적 — 위험색). 통합 DB 리스트 행에 위치. */
+.cov-db-reset {
+  font-size: 11px; font-weight: 600;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle); border-radius: 6px;
+  background: transparent; color: var(--danger); cursor: pointer;
+  white-space: nowrap;
+  justify-self: start;
+}
+.cov-db-reset:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+.cov-db-reset:disabled { opacity: .5; cursor: default; }
+
+.cov-db-remove {
+  width: 22px; height: 22px;
+  border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer;
+  font-size: 15px; line-height: 1; border-radius: 6px;
+}
+.cov-db-remove:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.cov-db-remove-spacer { width: 22px; height: 22px; }
+.cov-db-list-empty { font-size: 12px; color: var(--text-muted); padding: 8px; }
+
+.cov-engine-note { font-size: 11px; }
+
+/* 시스템/메타데이터 고정 DB 묶음 칩(단일) — 개별 이름은 hover/focus 툴팁 */
+.sysdb-chip {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: default;
+}
+.sysdb-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sysdb-chip-label { font-weight: 600; }
+.sysdb-chip-tag {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.sysdb-chip-tip {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 120;
+  min-width: 200px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 12%, transparent);
+  font-size: 11px;
+  color: var(--text-2);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .12s ease;
+}
+.sysdb-chip:hover .sysdb-chip-tip,
+.sysdb-chip:focus .sysdb-chip-tip,
+.sysdb-chip:focus-within .sysdb-chip-tip { opacity: 1; visibility: visible; }
+.sysdb-chip-tip-title { color: var(--text); font-weight: 700; margin-bottom: 4px; }
+.sysdb-chip-tip-list { margin: 0; padding: 0; list-style: none; }
+.sysdb-chip-tip-list li { padding: 1px 0; white-space: nowrap; }
+
+.admin-controls {
+  display: grid;
+  grid-template-columns: 200px 1fr auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.admin-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.admin-permissions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+.permission-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.permission-toggle input { accent-color: var(--primary); }
+
+/* Status chip (admin) */
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(217,119,6,.12);
+  color: #92400e;
+}
+

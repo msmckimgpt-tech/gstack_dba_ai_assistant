@@ -11,7 +11,14 @@
   <meta name="ai-conversation-api-manifest" content="/.well-known/ai-conversation-api.json" />
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=dev" />
+  <!-- feature-0038 Cycle 1: styles.css 순차 분할 — 원본 캐스케이드 순서 보존 (base→shell→chat→drawers→admin→profile→search-audit) -->
+  <link rel="stylesheet" href="/static/css/base.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/shell.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/chat.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/drawers.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/admin.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/profile.css?v=dev" />
+  <link rel="stylesheet" href="/static/css/search-audit.css?v=dev" />
 </head>
 <body>
 

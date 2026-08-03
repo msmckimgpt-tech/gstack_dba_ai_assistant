@@ -1,0 +1,585 @@
+/* =====================================================================
+   APP SHELL  (REQ-20260518-0004: ChatGPT 패턴 — sidebar 전체 height + chat-column)
+   ===================================================================== */
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  /* REQ-20260518-0009: single row track 도 명시. height: 100vh 만으로는 일부 환경에서
+     grid track 이 자식 max-content 까지만 차지 → grid container 100vh 와 track height 가
+     mismatch 되어 아래 빈 영역 노출. minmax(0, 1fr) 으로 row 가 container 의 전체 height 차지. */
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  position: relative; /* .sidebar-resizer 절대배치 기준 */
+}
+
+/* 좌측 대화 사이드바 너비 조절 핸들 — app-shell grid 의 sidebar/chat 경계에 위치.
+   우측 고정 패널(.step-side-panel-resizer)과 동일 UX 패턴이나, 좌측은 in-flow grid
+   컬럼이라 패널 width 대신 --sidebar-w CSS 변수를 JS 가 조절하고, 핸들은
+   left: var(--sidebar-w) 로 경계를 추종한다. */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  left: var(--sidebar-w);
+  width: 8px;
+  height: 100%;
+  transform: translateX(-4px);
+  cursor: ew-resize;
+  z-index: 30;
+  background: transparent;
+  touch-action: none;
+}
+.sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 4px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background .15s ease;
+}
+.sidebar-resizer:hover::before,
+.app-shell.is-sidebar-resizing .sidebar-resizer::before {
+  background: var(--primary, #2563eb);
+}
+/* 드래그 중 텍스트 선택 방지 */
+.app-shell.is-sidebar-resizing { user-select: none; }
+
+/* ─── Chat Column (topbar + chat-pane) ──────────────────────────── */
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ─── Top Bar (REQ-20260518-0004: chat-column 안의 헤더, sidebar 옆 영역) ─── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  height: var(--topbar-h);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+
+.topbar-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  /* 좌측 정렬 (사용자 명시) — 중앙 정렬 금지 */
+}
+
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.brand-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: transparent;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.brand-name {
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.topbar-btn {
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: background .13s, color .13s;
+}
+.topbar-btn:hover { background: var(--bg); color: var(--text-2); }
+
+/* REQ-20260518-0004: .app-body 폐기 — .app-shell grid 가 sidebar / chat-column 을 직접 배치. */
+
+/* =====================================================================
+   SIDEBAR (REQ-20260518-0004: 전체 height. brand 포함)
+   ===================================================================== */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* REQ-20260518-0004: brand 가 sidebar 의 첫 영역. topbar-h 와 같은 height 로 chat-column 의 topbar 와 baseline 정렬. */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  height: var(--topbar-h);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-head {
+  padding: 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  /* REQ-20260518-0010 (TASK-0072): "+ 새 대화" 와 돋보기 icon 을 같은 높이 row 로. */
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.sidebar-head .btn-new-conv {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sidebar-head .btn-search-conv,
+.sidebar-head .btn-new-folder {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background .13s, color .13s, border-color .13s;
+}
+.sidebar-head .btn-search-conv:hover,
+.sidebar-head .btn-new-folder:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.sidebar-head .btn-search-conv:focus-visible,
+.sidebar-head .btn-new-folder:focus-visible {
+  outline: 2px solid var(--primary, #8ab4f8);
+  outline-offset: 2px;
+}
+.sidebar-head .btn-new-folder[hidden] { display: none; }
+.sidebar-head .btn-new-folder:disabled { opacity: .4; cursor: not-allowed; }
+/* feature-0024 newfolder-btn: 폴더 아이콘 버튼이 root 드롭 존일 때 시각 피드백(대화/폴더 빼기). */
+.sidebar-head .btn-new-folder.folder-drop-hover {
+  background: rgba(37,99,235,.14); color: var(--primary); border-color: var(--primary);
+  border-style: dashed;
+}
+
+.btn-new-conv {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background .13s, color .13s, border-color .13s, border-style .13s;
+}
+.btn-new-conv:hover {
+  background: var(--surface);
+  color: var(--primary);
+  border-color: var(--primary);
+  border-style: solid;
+}
+.btn-new-conv:disabled { opacity: .38; cursor: not-allowed; }
+
+/* Conversation list */
+.conv-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.conv-list .empty-state {
+  flex-direction: column;
+  min-height: 80px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 16px 8px;
+  text-align: center;
+  gap: 4px;
+}
+.conv-list .empty-state strong { font-size: 13px; color: var(--text-2); }
+
+/* Conversation group header */
+.conv-group-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-muted);
+  padding: 10px 10px 4px;
+  margin-top: 6px;
+}
+.conv-group-title:first-child { margin-top: 0; }
+
+/* UX-COMPACT: 날짜 그룹 헤더 */
+.conv-date-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  padding: 8px 10px 2px;
+  margin-top: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.conv-date-group-header:first-child { margin-top: 0; }
+.conv-date-group-header:hover { color: var(--text-2); }
+/* 타 계정 owner 서브 헤더: 한 단계 들여쓰기 + 살짝 작은 폰트 */
+.conv-owner-header {
+  padding-left: 18px;
+  font-size: 10px;
+  opacity: .85;
+}
+/* conv-date-tree: 연>월 중첩 서브 헤더(들여쓰기는 렌더러가 depth 로 inline 지정). */
+.conv-date-group-sub {
+  font-size: 10px;
+  opacity: .9;
+}
+/* conv-date-tree: 라벨 + 집계 개수 배지를 한 줄에 배치(라벨은 항상 짧아 말줄임 불필요). */
+.conv-date-group-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+/* conv-date-tree: 월/연 집계 노드의 대화 개수 배지(접힘 상태에서도 규모 파악). */
+.conv-date-group-count {
+  font-size: 9px;
+  font-weight: 500;
+  opacity: .55;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.conv-date-group-chevron {
+  font-size: 10px;
+  transition: transform .15s;
+}
+.conv-date-group-header:not(.is-collapsed) .conv-date-group-chevron::after { content: "▾"; }
+.conv-date-group-header.is-collapsed .conv-date-group-chevron::after { content: "›"; }
+
+/* feature-0024-conversation-folders: 폴더(프로젝트) UI */
+/* newfolder-btn: '＋ 새 폴더' 사이드바 바(.conv-folder-tools/.conv-folder-add-btn)는 '새 대화' 우측
+   폴더 아이콘 버튼(.btn-new-folder)으로 통합되어 제거됨. */
+.conv-folder-undo {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 2px 8px 4px; padding: 5px 8px;
+  font-size: 11px; color: var(--text-2);
+  background: rgba(37,99,235,.08); border-radius: var(--r-sm);
+}
+.conv-folder-undo-btn {
+  font-size: 11px; font-weight: 600; color: var(--accent, #2563eb);
+  background: transparent; border: none; cursor: pointer; padding: 0; white-space: nowrap;
+}
+.conv-folder-undo-btn:hover { text-decoration: underline; }
+/* 폴더 헤더 — 날짜 그룹 헤더보다 약간 강조(아이콘 + 이름 + 개수 + 메뉴) */
+.conv-folder-header {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 600; color: var(--text-1);
+  padding: 5px 8px 5px 8px; margin-top: 1px;
+  cursor: pointer; user-select: none; border-radius: var(--r-sm);
+  transition: background .12s;
+}
+.conv-folder-header:hover { background: rgba(0,0,0,.04); }
+.conv-folder-chevron { font-size: 9px; color: var(--text-muted); width: 9px; flex: 0 0 auto; transition: transform .15s; }
+.conv-folder-header:not(.is-collapsed) .conv-folder-chevron::after { content: "▾"; }
+.conv-folder-header.is-collapsed .conv-folder-chevron::after { content: "›"; }
+.conv-folder-icon { font-size: 12px; flex: 0 0 auto; opacity: .85; }
+.conv-folder-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conv-folder-count {
+  font-size: 9.5px; font-weight: 500; opacity: .55;
+  font-variant-numeric: tabular-nums; flex: 0 0 auto;
+}
+.conv-folder-menu-trigger {
+  flex: 0 0 auto; font-size: 13px; line-height: 1; color: var(--text-muted);
+  opacity: 0; cursor: pointer; padding: 0 2px; letter-spacing: -1px;
+  transition: opacity .12s, color .12s;
+}
+.conv-folder-header:hover .conv-folder-menu-trigger,
+.conv-folder-menu-trigger.is-open,
+.conv-folder-menu-trigger:focus-visible { opacity: 1; }
+.conv-folder-menu-trigger:hover { color: var(--text-1); }
+/* folder-ux 개선3: 인라인 이름변경 텍스트박스(라벨 자리) */
+.conv-folder-rename-input {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 11.5px; font-weight: 600; color: var(--text-1);
+  background: var(--surface, #fff);
+  border: 1px solid var(--accent, #2563eb);
+  border-radius: var(--r-sm); padding: 2px 6px; margin: -2px 0;
+  outline: none;
+}
+/* folder-ux 개선6: 드래그&드롭 시각 피드백 */
+.conv-item.is-dragging, .conv-folder-header.is-dragging { opacity: .45; }
+.conv-folder-header.folder-drop-hover {
+  background: rgba(37,99,235,.14);
+  box-shadow: inset 0 0 0 1.5px var(--accent, #2563eb);
+}
+
+/* folder-ux 개선2/4: 폴더 설정 모달 (share-mgr-panel 재사용) */
+.folder-settings-panel, .folder-move-panel { max-width: 460px; width: min(92vw, 460px); }
+.folder-settings-body, .folder-move-body { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.folder-settings-name {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 14px; font-weight: 640; color: var(--text-1);
+  padding-bottom: 10px; border-bottom: 1px solid var(--line, #e5e7eb);
+}
+.folder-settings-ic { font-size: 15px; }
+.folder-settings-sec { display: flex; flex-direction: column; gap: 6px; }
+.folder-settings-sec-title { font-size: 12.5px; font-weight: 640; color: var(--text-1); }
+.folder-settings-sec-desc { font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+.folder-settings-instr {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px;
+  font-size: 12.5px; line-height: 1.6; color: var(--text-1);
+  background: var(--surface, #fff); border: 1px solid var(--line-strong, #d1d5db);
+  border-radius: var(--r-sm); padding: 9px 11px; font-family: inherit;
+}
+.folder-settings-instr:focus { outline: none; border-color: var(--accent, #2563eb); }
+.folder-settings-actions { display: flex; justify-content: flex-end; }
+.folder-settings-danger { border-top: 1px solid var(--line, #e5e7eb); padding-top: 12px; }
+.folder-settings-danger .folder-settings-sec-title { color: var(--danger, #dc2626); }
+
+/* folder-ux 개선5: 대화 이동 모달 */
+.folder-move-controls { display: flex; gap: 8px; }
+.folder-move-search {
+  flex: 1 1 auto; min-width: 0; font-size: 12.5px;
+  border: 1px solid var(--line-strong, #d1d5db); border-radius: var(--r-sm);
+  padding: 7px 10px; background: var(--surface, #fff); color: var(--text-1);
+}
+.folder-move-search:focus { outline: none; border-color: var(--accent, #2563eb); }
+.folder-move-sort {
+  flex: 0 0 auto; font-size: 12px; border: 1px solid var(--line-strong, #d1d5db);
+  border-radius: var(--r-sm); padding: 6px 8px; background: var(--surface, #fff); color: var(--text-1); cursor: pointer;
+}
+.folder-move-fixed { display: flex; flex-direction: column; gap: 4px; }
+.folder-move-list { display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow-y: auto; }
+.folder-move-opt {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font-size: 12.5px; color: var(--text-1); background: transparent;
+  border: 1px solid transparent; border-radius: var(--r-sm); padding: 8px 10px; cursor: pointer;
+  transition: background .12s;
+}
+.folder-move-opt:hover:not(:disabled) { background: rgba(0,0,0,.05); }
+.folder-move-opt:disabled { cursor: default; }
+.folder-move-new { color: var(--accent, #2563eb); font-weight: 600; border-color: color-mix(in srgb, var(--accent, #2563eb) 30%, transparent); border-style: dashed; }
+.folder-move-out { color: var(--text-2); }
+.folder-move-ic { flex: 0 0 auto; font-size: 13px; width: 15px; text-align: center; }
+.folder-move-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-move-row.is-current { opacity: .6; }
+.folder-move-curtag { flex: 0 0 auto; font-size: 10px; color: var(--text-2); background: var(--surface-2, #eef1f4); border-radius: 8px; padding: 1px 7px; }
+.folder-move-empty { font-size: 12px; color: var(--text-2); text-align: center; padding: 18px 0; }
+.conv-group-collapsible {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+.conv-group-collapsible:hover { color: var(--text-2); }
+.conv-group-collapsible:not(.is-collapsed) .conv-date-group-chevron::after { content: "▾"; }
+.conv-group-collapsible.is-collapsed .conv-date-group-chevron::after { content: "›"; }
+
+/* Conversation item — UX-COMPACT: 한 줄, 테두리 제거 */
+.conv-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  position: relative;
+  transition: background .12s;
+}
+.conv-item:hover    { background: rgba(0,0,0,.05); }
+.conv-item.is-active { background: rgba(37,99,235,.09); }
+
+/* Own / other-account differentiation */
+.conv-item.is-own { background: transparent; }
+.conv-item.is-own:hover { background: rgba(37,99,235,.06); }
+.conv-item.is-own.is-active { background: rgba(37,99,235,.12); }
+.conv-item.is-other { background: transparent; opacity: .92; }
+.conv-item.is-other .conv-item-title { color: var(--text-2); }
+
+/* TASK-0048: pending placeholder */
+.conv-item.is-pending {
+  cursor: default;
+  opacity: .75;
+}
+.conv-item.is-pending .conv-item-title { color: var(--text-2); font-style: italic; }
+
+/* UX-COMPACT: hover 시 날짜 tip */
+.conv-item-date-tip {
+  display: none;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-right: 4px;
+}
+.conv-item:hover .conv-item-date-tip { display: block; }
+
+.conv-owner-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-owner-badge.is-own {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid rgba(37,99,235,.22);
+}
+.conv-owner-badge.is-other {
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* TASK-0248: 참조 제품 삭제로 차단된 대화 — 목록 행 dim + "차단" 배지 */
+.conv-item.is-blocked { opacity: .72; }
+.conv-item.is-blocked .conv-item-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(220,38,38,.45);
+}
+.conv-item-blocked-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid rgba(220,38,38,.22);
+}
+
+/* feature-0009 gc-group-authz-flag (#3): 그룹 대화 식별 배지 — 사람-그룹 아이콘 + 멤버 수.
+   1:1 대화와 시각적으로 명확히 구분(.conv-item-blocked-badge 패턴 차용, primary 톤). */
+.conv-item-group-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: var(--primary-soft, #eff6ff);
+  color: var(--primary, #2563eb);
+  border: 1px solid rgba(37,99,235,.22);
+}
+.conv-item-group-badge .conv-group-ic { width: 11px; height: 11px; display: block; }
+.conv-item-group-badge .conv-group-count { font-variant-numeric: tabular-nums; }
+
+/* feature-0009 gc-unread-badge: 그룹 대화 "안 읽은(새) 메세지" 카운트 배지.
+   형식 <안읽음>[ / @<안읽은 멘션>] — 0이면 JS 가 미표시. 내 멘션이 있으면 .has-mention(주의 톤). */
+.conv-item-unread {
+  display: inline-flex;
+  align-items: baseline;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg, #f1f5f9);
+  color: var(--text-muted, #64748b);
+  border: 1px solid var(--border, rgba(0,0,0,.12));
+}
+.conv-item-unread .conv-unread-mention { font-weight: 800; }
+/* 내 @멘션이 포함된 안 읽은 메세지 — 주의 톤(danger). 메신저 관례상 멘션은 빨강 강조. */
+.conv-item-unread.has-mention {
+  background: var(--danger-soft, #fef2f2);
+  color: var(--danger, #dc2626);
+  border-color: rgba(220,38,38,.28);
+}
+.conv-item-unread.has-mention .conv-unread-total { opacity: .85; }
+
+.conv-item-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+}
+
+.conv-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.conv-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c4c4c9;
+  flex-shrink: 0;
+}
+.conv-dot.is-processing { background: var(--warning); }
+.conv-dot.is-completed  { background: var(--success); }
+

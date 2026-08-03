@@ -33,7 +33,14 @@ from pathlib import Path
 import app
 
 ADMIN_JS = Path(__file__).resolve().parents[1] / "src" / "static" / "admin.js"
-STYLES_CSS = Path(__file__).resolve().parents[1] / "src" / "static" / "styles.css"
+CSS_SPLIT_DIR = Path(__file__).resolve().parents[1] / "src" / "static" / "css"
+# feature-0038 Cycle 1: styles.css 는 css/ 7파일로 순차 분할(캐스케이드 순서 보존).
+# 순차 concat 은 구 styles.css 와 byte-동치 — CSS 규칙 검증은 합본 기준으로 수행한다.
+CSS_SPLIT_ORDER = ("base", "shell", "chat", "drawers", "admin", "profile", "search-audit")
+
+
+def _read_split_css() -> str:
+    return "".join((CSS_SPLIT_DIR / f"{n}.css").read_text(encoding="utf-8") for n in CSS_SPLIT_ORDER)
 VALID_CODES = set(app.PERMISSION_CODES)
 
 
@@ -387,7 +394,7 @@ def test_c1_hidden_rows_force_display_none():
     규칙이 UA `[hidden]{display:none}` 를 override 해 JS 의 `el.hidden=true` 가 무력화되던 버그(PB-0008
     실브라우저 검출, jsdom 미검출)의 회귀 가드. styles.css 가 disclosure 숨김 대상에 display:none !important
     를 강제하는지 + 셀렉터가 컨테이너(.permission-grid/.override-grid) 무관(unscoped)인지 검증한다."""
-    css = STYLES_CSS.read_text(encoding="utf-8")
+    css = _read_split_css()
     # `[data-perm-code][hidden]` 셀렉터 + 같은 규칙 블록에 display:none !important 가 있어야 한다.
     m = re.search(
         r"([^{}]*\[data-perm-code\]\[hidden\][^{]*)\{([^}]*display\s*:\s*none\s*!important[^}]*)\}",
@@ -502,7 +509,7 @@ def test_t3_account_category_access_is_group_root_depth0():
 def test_t4_grid_list_is_single_column_not_grid():
     """트리 레이아웃: .permission-grid-list 는 단일 열(flex column) — 2열 grid(자식 숨김 시 가로 reflow
     뒤틀림)가 아니어야 한다 + depth 들여쓰기 규칙 존재."""
-    css = STYLES_CSS.read_text(encoding="utf-8")
+    css = _read_split_css()
     # 줄 시작 앵커 — `.permission-group .permission-grid-list`(padding 규칙) 가 아닌 standalone 규칙.
     m = re.search(r"(?m)^\.permission-grid-list\s*\{([^}]*)\}", css)
     assert m, ".permission-grid-list standalone 규칙 부재"

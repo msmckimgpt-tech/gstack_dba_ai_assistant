@@ -27,6 +27,15 @@ def _read(name: str) -> str:
     return (STATIC / name).read_text(encoding="utf-8")
 
 
+# feature-0038 Cycle 1: styles.css 는 css/ 7파일로 순차 분할(캐스케이드 순서 보존).
+# 순차 concat 은 구 styles.css 와 byte-동치 — CSS 규칙 검증은 합본 기준으로 수행한다.
+CSS_SPLIT_ORDER = ("base", "shell", "chat", "drawers", "admin", "profile", "search-audit")
+
+
+def _read_css() -> str:
+    return "".join((STATIC / "css" / f"{n}.css").read_text(encoding="utf-8") for n in CSS_SPLIT_ORDER)
+
+
 def _start_inline_edit_body(js: str) -> str:
     start = js.find("function _startInlineEdit(")
     assert start != -1, "_startInlineEdit 함수를 app.js 에서 찾지 못함"
@@ -67,7 +76,7 @@ def test_f3_edit_button_joins_existing_actions_container():
 
 
 def test_f4_css_stretches_editing_row_and_bubble():
-    css = _read("styles.css")
+    css = _read_css()
     assert ".message.is-user.is-editing" in css, (
         "편집 중 user 행을 stretch 하는 규칙 없음 (is-other-message 특이도 0,3,0 을 이겨야 함)")
     m = re.search(
@@ -80,7 +89,7 @@ def test_f4_css_stretches_editing_row_and_bubble():
 
 
 def test_f5_edit_box_fills_parent_width():
-    css = _read("styles.css")
+    css = _read_css()
     m = re.search(r"\.message-edit-box\s*\{([^}]*)\}", css, re.S)
     assert m, ".message-edit-box 규칙을 찾지 못함"
     assert re.search(r"width:\s*100%", m.group(1)), (
