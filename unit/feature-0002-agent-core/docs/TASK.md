@@ -8,7 +8,27 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260730T190000-review-proposed-change-framing (current cycle) — 쿼리 리뷰가 '곧 적용될 구조'가 아니라 '현재 DB'를 기준으로 불평하던 프레임 봉인 + 루틴 본문 매칭 스니펫 (Major §12.3 — core 시스템 프롬프트·도구 피드백)
+## TASK-20260731T030000-grounding-authority-directive (current cycle) — 운영자 프롬프트가 삼킨 grounding 봉인을 코드 권위선으로 복구 + 라이브 모순 제거 (Major §12.3 — core 시스템 프롬프트)
+- 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` 후속 — 선행 cycle(TASK-20260730T190000) **배포 검증 중 부수 발견**된 `FR-operator-global-prompt-shadows-code-seals`. 사용자 지시("후속 이슈가 있다면 해당 부분도 적용을 검토해주세요") + 범위 승인 **A+B**(AskUserQuestion 2026-07-31).
+- **근본원인(구조)**: `compose_system_prompt` 은 운영자 `WebSystemPrompts` scope='global' row 가 있으면 **코드 상수 `SYSTEM_PROMPT` 를 통째로 대체**한다. 라이브 row = 9,219자(15,978 bytes) / UpdatedAt **2026-06-18**, 코드 상수 = 21,594자 → 그 날짜 이후 **본문에만** 추가된 grounding 규칙이 프로덕션에 존재하지 않았다. 코드-append guidance 상수(16,825자)에도 없어 보완 경로가 없었다.
+- **부재 확정 5종(배포본 실측)**: 첨부↔실DB 양측 조회(FR-partial-evidence) · 0행≠부재(FR-false-absence) · 절단 통지/완전성 신호(FR-false-truncation) · 식별자 대소문자(FR-schema-name-case-drift) · `check_table_coverage` 유도.
+- **더 나쁜 것(활성 모순)**: 라이브 row 의 `## 첨부 파일` 절에 REQ-20260714-attach-review-grounding 이 **환각 유발로 판정해 코드에서 제거한 두 지시**가 한국어로 살아 있었다 — "명시 요청 없이 execute_sql 을 돌리지 마십시오" + "첨부 지침이 일반 조회 지침보다 우선합니다". 당시 §18.8 패널이 MAJOR 로 못박은 실패 모드("정적본을 남기면 takes precedence 가 verify 를 이긴다")가 그대로 라이브 상태였고, **이것이 선행 cycle 이 진단한 A/B 대조쌍(도구 0회 ↔ 12회)의 실제 기전**이다(정적 억제 vs 동적 검증이 한 프롬프트 안에서 정면 충돌).
+- **왜 운영자 row 를 코드 상수로 덮어쓰지 않는가**: 그 row 는 stale 사본이 아니라 **한국어 재작성 + 코드에 없는 운영자 고유 정책**(보안 경계·민감 데이터 마스킹·재식별 방지·데이터소스 선택)을 담고 있다 — 덮어쓰면 PII 정책이 소실된다. `compose` 를 replace→merge 로 바꾸는 안도 배제(영문 원본과 한국어 재작성이 양쪽 다 실려 중복·모순 확대).
+- **해결(A+B)**: (A) `_GROUNDING_AUTHORITY_DIRECTIVE` 신설 — 5종 규칙 + **좁은 override**(첨부 검토 맥락 한정) + 보안·프라이버시 carve-out. `compose_system_prompt` **반환 직전**(운영자 product/role/account scope prompt 와 첨부 섹션보다 뒤)에 append 해 last-writer 확정. (B) 라이브 운영자 row 에서 **문제의 두 줄만** 교정(운영자 고유 정책 전량 보존·백업 후).
+
+### §1.1 Implementation
+- `src/agent_core.py`: `_GROUNDING_AUTHORITY_DIRECTIVE` 상수 + `compose_system_prompt` 반환 직전 append 1줄(초기 `parts` 목록 **아님** — §18.8 R2 P2).
+- `tests/test_grounding_authority_directive.py` 신규 18건: 상수·5종 seal 본문·좁은 override·carve-out 7종·활성 조건 범위·운영자 row 대체 재현 하네스 자체 검증·last-writer(scope prompt 뒤·프롬프트 말미)·**census 2종**(9 seal 이 code-append 영역에 존재 + composed 도달 + 작동 조항).
+- 라이브 데이터(코드 아님): 운영자 global row id=20 교정 2줄. 백업 `artifacts/websystemprompts-global-backup-20260803T032541Z.txt`.
+
+### §1.2 Completion Checklist
+- [x] `_GROUNDING_AUTHORITY_DIRECTIVE` 신설 + 반환 직전 append(last-writer)
+- [x] 라이브 운영자 row 교정(B) — 백업 후 2줄만, 운영자 고유 정책 보존 실증
+- [x] 신규 18건 PASS · feature-0002 전체 2377 passed/31 skipped/0 failed
+- [x] §18.8 적대 리뷰 — §18.8.2 제약-없는-채널 우선 → **codex 3라운드**(R1 P1 1건+P2 4건 → R2 P1 폐쇄·P2 3건 → R3 신규 P1/결함 0·P2 1건) **전건 수정** → REV-20260731T030000-grounding-authority-directive
+- [ ] 배포 후 라이브 census 재측정(운영자 row 대체 조건에서 9 seal 전량 도달 확인)
+
+## TASK-20260730T190000-review-proposed-change-framing — 쿼리 리뷰가 '곧 적용될 구조'가 아니라 '현재 DB'를 기준으로 불평하던 프레임 봉인 + 루틴 본문 매칭 스니펫 (Major §12.3 — core 시스템 프롬프트·도구 피드백)
 - 출처: `/_dqa:conversation_audit "SQL 쿼리 코드 리뷰"` (2026-07-30, 사용자 명시 호출). 마찰 2건 제기 — ① 리뷰가 항상 현재 DB 기준으로 "불평하듯" 주의사항을 전달 ② 특정 내용을 포함하는 함수/프로시저 탐색(scan) 도구 부재.
 - **마찰 ② 는 정직 기각(F3)**: `search_routines`(FR-false-absence-zero-row-catalog-scope, 2026-07-28 배포 PR #991)가 이미 **이름 + 정의 본문 + 주석**을 검색한다. 제기된 그 대화(`…a2efa955`)에서 실제로 동작했다 — msg 6317 이 keyword `Log_AccountUpdateCash` 로 **이름에 그 문자열이 없는 호출자 4개**(`Game_BuyCashItem_Steam`·`Game_ConvertCash`·`Game_GiftCashItem_Steam`·`Steam_AccountChargeCash`)를 찾아냈다(본문 검색이 아니면 불가). 30일 사용량 23회 / 7 대화. → 도구 신설 대신 **체감 갭(매칭 위치 미표시)** 만 개선(사용자 결정, AskUserQuestion 2026-07-30).
 - **근본원인(L1 프롬프트 합성, 마찰 ①)**: SYSTEM_PROMPT §ATTACHED FILES(agent_core.py:119-124)와 첨부 주입 INSTRUCTION(agent_core.py:~1272)이 "첨부 vs 실 DB 주장은 반드시 라이브 검증" 만 정하고 **그 차이의 해석(시간 방향)** 은 정하지 않는다. 여기에 누적된 부재·완전성 grounding(FR-partial-evidence·FR-false-absence·FR-false-truncation)이 "존재 여부" 를 극도로 부각시켜, 모델의 기본 프레임이 **라이브 DB=정본 스펙 / 첨부=그에 미달하는 후보** 로 굳었다. 변경이 스스로 만들어내는 차이(아직 없는 테이블·컬럼·루틴, 스크립트가 추가할 PK, 바뀐 시그니처)가 전부 결함·경고로 보고된다.
