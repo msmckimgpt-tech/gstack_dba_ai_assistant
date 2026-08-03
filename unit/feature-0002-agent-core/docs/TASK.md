@@ -1986,7 +1986,15 @@ conversation `20260731021152-36a7790b`, 105 메시지)에서 **6연속 `execute_
       선택·거짓 탈출구 안내·카운터 과발동·MSSQL 폴백 잠식·죽은 스텁) + [P3] 2건 포함 **9건 전부
       흡수**(1건은 코드가 아니라 문서를 정정). 역검증 재현 **생존 0**, 테스트 19 → **31건**,
       feature 전체 **2360 passed / 30 skipped**.
-- [ ] 라이브 실측(배포 후) — 실제 대화에서 차단 빈도가 줄고 재작성이 성공하는지. 다음 audit 의
+- [x] 배포 — PR #1112 merge main `97af7d27` → `make deploy-web` 전체 스코프. **4서비스
+      GIT_COMMIT=97af7d27 healthy**(web-a·web-b·ask-worker·insight-worker), soak 통과.
+      **1차 시도는 부분 실패**: insight-worker 가 300s 내 healthy 미도달 → 워커군 last-good 롤백
+      (web 만 신코드). 원인은 이번 변경이 아니라 기동 직후 외부 datasource 다수 도달 불가로 헬스체크
+      지연 — 안정 후 멱등 재실행으로 성공. `make` 종료코드가 파이프에 가려 0 으로 보인 점도 기록.
+- [x] 배포본 런타임 실증(ask-worker, 라이브 EXPLAIN) — 마찰 재현 케이스 `SELECT * FROM
+      tf_log_05_item LIMIT 5` 가 **est 13,891,780 → 5 로 보정되어 PASS**(종전 차단), 전역 집계는
+      **차단 유지 + 진단·approx_rows 대안 부착**, P1 회귀 케이스(`-- LIMIT 5` 주석 위장)는 **차단 유지**.
+- [ ] 라이브 대화 실측 — 실제 사용자 대화에서 차단 빈도가 줄고 재작성이 성공하는지. 다음 audit 의
       corroboration 재측정으로 확인(그 전까지 원장 status = `fixed:deployed:unverified-live`).
 
 ### Requested Scope (요청 범위 자기-열거) — TASK-20260731T184300-loadgate-blind-coaching
@@ -1995,7 +2003,9 @@ conversation `20260731021152-36a7790b`, 105 메시지)에서 **6연속 `execute_
 - [x] `목적 수행을 위한 이슈 해소` — 산출물: `CHG-20260731T184300-loadgate-blind-coaching`
       (AC-0604/AC-0605) · 배선 확인: 신규 **31** + feature 전체 2360 PASS, 라이브 계획 dogfood 4건,
       §18.8 패널 [P1] 2건 흡수 후 역검증 생존 0.
-- [ ] `라이브 소멸 확인` — **미수행**(배포 후 실측 필요). 정직 분리 표기.
+- [x] `배포 + 배포본 코드 동작 실증` — 산출물: 4서비스 `97af7d27` healthy · 배선 확인: ask-worker
+      라이브 EXPLAIN 3케이스(보정 PASS / 차단+진단 / P1 회귀 없음).
+- [ ] `라이브 대화 소멸 확인` — **미수행**(실사용 대화 축적 후 다음 audit corroboration). 정직 분리 표기.
 
 **주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 없음(도구 결과 문자열 = LLM 대면) → `해당 없음`.
 
@@ -2003,3 +2013,23 @@ conversation `20260731021152-36a7790b`, 105 메시지)에서 **6연속 `execute_
 rationale=REVIEW `REV-20260731T184300-loadgate-blind-coaching` ·
 변경이력=MODIFY `CHG-20260731T184300-loadgate-blind-coaching` ·
 마찰원장=`docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-loadgate-blind-coaching`.
+
+## TASK-20260731T203000-loadgate-postdeploy — 배포 결과·배포본 실증 기록 (문서만)
+
+- [x] 배포 — PR #1112 → main `97af7d27`, `make deploy-web` 전체 스코프, 4서비스 healthy.
+- [x] 1차 시도 부분 실패 기록 — insight-worker healthy 미도달 → 워커군 롤백(ask-worker 구코드
+      잔존 = 마찰 수정 라이브 미도달). 원인은 외부 datasource 도달 불가로 인한 헬스체크 지연,
+      멱등 재실행으로 해소. `make` 종료코드 파이프 가림도 기록.
+- [x] 배포본 런타임 실증 — ask-worker 라이브 EXPLAIN 3케이스 통과(보정 PASS · 차단+진단 · P1 회귀 없음).
+- [ ] 라이브 대화 실측 — 다음 audit corroboration 재측정분(미수행, 정직 분리).
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260731T203000-loadgate-postdeploy
+- [x] `배포 결과 기록` — 산출물: 원장 status `fixed:deployed:unverified-live` · 배선 확인: 4서비스 GIT_COMMIT.
+- [x] `배포본 동작 실증` — 산출물: 본 섹션 실증 3케이스 · 배선 확인: ask-worker 컨테이너 직접 실행.
+- [ ] `라이브 대화 소멸` — **미수행**(다음 audit). 정직 분리 표기.
+
+**주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 없음 → `해당 없음`.
+
+### 정본
+rationale=REVIEW `REV-20260731T203000-loadgate-postdeploy` ·
+변경이력=MODIFY `CHG-20260731T203000-loadgate-postdeploy`.

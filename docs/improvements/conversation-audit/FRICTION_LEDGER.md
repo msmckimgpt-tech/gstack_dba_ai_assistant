@@ -8,7 +8,10 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ## FR-loadgate-blind-coaching — fixed:undeployed (L2 거부 피드백 + L5 LIMIT 미반영 추정; 부하게이트가 재작성 방향을 못 줘 추론이 정체)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **31** PASS · feature-0002 전체 **2360 passed / 30 skipped** · ruff clean) + **§18.8 codex 3렌즈에서 [P1] 2건 출하차단 판정 → 9건 전부 흡수·역검증 생존 0** + verify-completion PASS. **배포 전** — 라이브 마찰 소멸은 미증명(아래 §정직).
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 **31** PASS · feature-0002 전체 **2360 passed / 30 skipped** · ruff clean) + **§18.8 codex 3렌즈에서 [P1] 2건 출하차단 판정 → 9건 전부 흡수·역검증 생존 0** + verify-completion PASS + **배포 완료**(2026-07-31, PR #1112 merge main `97af7d27` → `make deploy-web` 전체 스코프. **4서비스 GIT_COMMIT=97af7d27 running/healthy**: web-a·web-b·ask-worker·insight-worker, post-cutover soak 통과).
+  **배포본 런타임 실증(ask-worker, 라이브 datasource EXPLAIN)** — 새 심볼 3종 적재 True · `guard_mode=gate`·임계 1,000,000 확인 · **① 마찰 재현 케이스 `SELECT * FROM tf_log_05_item LIMIT 5` → est 13,891,780 → 5 로 보정 → PASS**(종전 차단) · **② 전역 집계 `COUNT(*)` → 차단 유지 + 진단(`접근형태=전체 인덱스 스캔·사용 인덱스=LogType·스캔 파티션=26개`) + "전역 집계는 LIMIT 으로 안 줄어든다" + `search_tables approx_rows` 대안 부착** · **③ P1 회귀 케이스 `-- LIMIT 5` 주석 위장 → 차단 유지**(우회 없음).
+  **라이브 대화 실측 미수행** → `unverified-live`(아래 §정직).
+  **배포 1차 시도 실패 기록(정직)**: 첫 `make deploy-web` 은 insight-worker 가 300s 내 healthy 미도달 → **워커군 last-good 롤백**으로 끝나, web 만 신코드·워커는 구코드인 부분 완료였다(이번 수정의 실행 주체가 ask-worker 라 그 상태로는 **마찰 수정이 라이브에 미도달**). 원인은 이번 변경이 아니라 기동 직후 외부 datasource 다수 도달 불가(timeout·blocked_target·MSSQL 로그인 실패)로 헬스체크가 늦게 붙은 것 — 안정 후 **멱등 재실행으로 성공**(insight-worker 20s 내 healthy). `make` 종료코드가 파이프에 가려 0 으로 보인 점도 함께 기록한다.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit "에러로그 분석 및 원인 대안 제시"` (2026-07-31) — "테이블을 조회할 때 '무거운 쿼리' 에 대한 블로킹이 너무 심하게 나타난다('LIMIT 1' 임에도)".
 - **last_seen**: 2026-07-31 · **seen_count**: 1 · **seen_distinct_conv**: 12(전체) / **10**(30일)
 - **modality**: 1:1 동기 · **product_id(마스킹)**: P-7 · **conv(마스킹)**: `…36a7790b`(topic "프로시저 테스트 에러 로그 분석 및 해결방안", 105 메시지)

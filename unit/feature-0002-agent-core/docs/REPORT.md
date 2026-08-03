@@ -527,4 +527,7 @@ feature-0003(primary, `_materialize_assistant_attachment_new` 경로)의 활성�
   한 대화 6연속 차단(30일 10대화·23건, `execute_sql` 의 6.0%). 진단 코칭 + 전역 집계 불가 사실
   고지 + 반복 시 `confirm_heavy` 승격으로 봉인하고, 별개로 실재한 순수 `LIMIT n` 오판(라이브
   실측 13.9M→실제 5행)을 조기 종료 보장 형태 한정으로 보정. 게이트 임계·차단 규칙은 불변 —
-  집계 차단 24/25 건은 **정당**이라 그대로 둔다. 상세 = TASK/MODIFY/REVIEW 동명 섹션.
+  집계 차단 24/25 건은 **정당**이라 그대로 둔다. **배포 완료**(2026-07-31, PR #1112 → main
+  `97af7d27`, 4서비스 healthy) + 배포본 ask-worker 라이브 EXPLAIN 실증(표본 조회 13,891,780
+  → 5 보정 PASS · 집계 차단 유지 + 진단 · 주석 위장 회귀 없음). 라이브 **대화** 실측은 다음
+  audit 의 corroboration 재측정분. 상세 = TASK/MODIFY/REVIEW 동명 섹션.
