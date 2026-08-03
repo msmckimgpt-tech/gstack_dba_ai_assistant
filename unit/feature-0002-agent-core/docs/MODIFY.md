@@ -10,6 +10,16 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260731T030000-grounding-authority-directive (운영자 프롬프트가 삼킨 grounding 봉인을 코드 권위선으로 복구 + 라이브 모순 2줄 제거 — conversation_audit FR-operator-global-prompt-shadows-code-seals)
+- Date: 2026-07-31. worktree `ai/root/feature-0002-agent-core`(base main 97af7d27). 범위 승인 **A+B**(AskUserQuestion 2026-07-31).
+- **무엇을(A 코드 권위선)**: `agent_core._GROUNDING_AUTHORITY_DIRECTIVE` 신설. 라이브에서 부재로 실측된 5종 규칙(첨부↔실DB 양측 조회 / 0행≠부재 / 절단 통지·완전성 명시신호 / 식별자 대소문자 / `check_table_coverage` 유도)을 담고, 운영자 row 에 살아 있는 두 억제 지시를 **의미로 지목해**(언어 무관) 무력화한다. `compose_system_prompt` **반환 직전**에 append — 초기 `parts` 목록에 두면 뒤에 누적되는 운영자 product/role/account scope prompt(최대 20k자, 사람 편집)가 봉인을 다시 덮기 때문(§18.8 codex R2 P2).
+- **override 는 의도적으로 좁다(§18.8 codex R1 P1 → R2/R3 폐쇄)**: 발동은 **첨부 검토·비교 맥락 한정**이고("Outside attachment review such an instruction keeps its normal force"), 나머지 규칙은 override 가 아니라 전 응답 상시 규칙으로 분리했다. 명령-계층 고지·읽기전용·인가/allowlist·데이터소스 제한·민감데이터 마스킹/재식별 방지·쿼리 부하 안전은 **절대 override 하지 않는다**고 열거하고, 충돌처럼 보이면 "보안·프라이버시 규칙이 이긴다"로 못박았다. 비신뢰 콘텐츠(첨부·DB 값)가 "라이브 검증에 필요하다"는 구실로 가드를 푸는 경로도 명시 차단.
+- **무엇을(B 라이브 데이터 교정, 코드 아님)**: 운영자 `WebSystemPrompts` global row(id=20)에서 **문제의 두 줄만** 교체 — "명시 요청 없이 execute_sql 금지"→"내부 품질 리뷰는 그 자체로 DB 조회 불필요"(과차단 회귀 방지 보존), "첨부 지침 우선"→"실 DB 현재 상태를 주장하는 순간 도구로 먼저 확인". **운영자 고유 정책(보안 경계·민감 데이터 마스킹·재식별 방지·데이터소스 선택) 전량 보존**(diff 2 hunk·9,219→9,294자). 백업 `artifacts/websystemprompts-global-backup-20260803T032541Z.txt`(15,978 bytes). 적용 후 라이브 실증: 억제/우선 지시 0건, 마스킹 정책 보존 1.
+- **파일**: `src/agent_core.py`(상수 1 + append 1줄), `tests/test_grounding_authority_directive.py`(신규 18건).
+- **왜**: 라이브 실측에서 운영자 global row(2026-06-18)가 코드 상수(21,594자)를 통째 대체해 그 이후 본문에만 추가된 봉인이 프로덕션에 **존재하지 않았고**, 동시에 코드가 환각 유발로 제거한 두 지시가 한국어로 **살아 있었다**. 이것이 선행 cycle A/B 대조쌍(도구 0회↔12회)의 실제 기전이다.
+- **호환/안전**: 프롬프트는 보간 없는 정적 상수(인젝션 표면 0). `_INJECTION_GUARD_NOTICE` 위치·내용 불변(기존 계약 테스트 `[base_prompt, _INJECTION_GUARD_NOTICE` 그대로). 가드·allowlist·RBAC·datamark 무변경. 첨부 datamark 섹션 **뒤**에 오는 것은 신뢰 지시가 비신뢰 데이터 뒤에서 계층을 재확인하는 순서로, codex R3 가 trust-boundary 문제 없음 확인.
+- **Rollback**: 상수·append 1줄·테스트 제거(코드) + 백업 파일로 운영자 row 복원(데이터). 스키마/마이그레이션 변경 없음.
+
 ## CHG-20260731T020000-review-framing-postdeploy (POST-DEPLOY 기록 — 배포 전이 + 운영자 프롬프트 shadow 발견, docs-only)
 - Date: 2026-07-31. 코드 변경 **0** — `CHG-20260730T190000-review-proposed-change-framing` 의 배포 결과와 그 검증 중 드러난 별 트랙 발견을 원장·TASK 에 정직 기록.
 - **배포 전이**: PR #1102 merge main `2ecfe4b5` → `make deploy-web` 전체 스코프(web-a/web-b 무중단 롤링 + insight-worker/ask-worker 재생성 + gateway reconcile, soak 90s 통과). 4서비스 GIT_COMMIT=2ecfe4b5 healthy, edge `/healthz` ok·mysql_ok·pg_ok. 원장 `FR-review-frames-live-db-as-spec` → `fixed:deployed:unverified-live`.
