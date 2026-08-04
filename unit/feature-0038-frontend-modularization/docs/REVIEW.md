@@ -106,3 +106,9 @@ source_of_truth: true
 - MINOR 흡수: 모듈 헤더 레인지 표기 통일(L2584–2908). 기록: 역재구성 규칙에 "마지막 세그먼트 말미 공백 1줄은 스캐폴딩" 각주(본 세션 재구성 스크립트는 동일 규칙으로 이미 IDENTICAL 판정)·줄수 wc/split 표기 관례 차이.
 - 부가 확인: test_menu_action_permission_wiring 의 app.js 단독 스캔 게이트 침식 없음(sidebar.js 에 action: 리터럴 0).
 - Timestamp: 2026-08-05T13:30:00+09:00
+
+## REV-20260805T170000-app-messages-panel [SUBAGENT:qa] — SHIP
+- Related Change: CHG-20260805T150000-app-messages-split (Cycle 10)
+- 패널: fresh-context 적대 1렌즈(7항목 실측 — 역재구성 cmp 완전 일치(산술 정합 포함)·acorn-globals suspect 0·바인딩 양방향 0·잔여 참조 전부 export 집합 내부·테스트 33개 전수 재스캔 회귀 0·컨테이너 pytest 16+전체 스위트 RC=0·csv 하네스 22/0 기준선·mjs 19종 A/B FAIL-set 라인 단위 동일·스탬프 3참조 동일·**headless A/B — 4메시지 스텁 렌더 `#messageLog` innerHTML 8,253자 byte-동일·마커 7종 실증**). **BLOCKING 0 / MAJOR 0 / MINOR 3(표기류).**
+- MINOR 기록: 줄수 960(문서 961 표기 정정)·SQL_FORMAT_KEYWORDS 리터럴 const 1건은 원본도 top-level(무해)·mjs jsdom 환경 이슈 pre-existing.
+- Timestamp: 2026-08-05T17:00:00+09:00

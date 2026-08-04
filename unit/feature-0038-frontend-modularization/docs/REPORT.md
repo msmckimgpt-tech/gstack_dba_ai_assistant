@@ -11,12 +11,12 @@ source_of_truth: false
 ## 1. Summary
 ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
 **Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
-롤백 리허설 실증). **Cycle 1~8 완결**(PR 8건·배포·POST-DEPLOY 전건 PASS)·**Cycle 9 진행 중**(app/sidebar 폴더 관리 — app.js 12,069줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+롤백 리허설 실증). **Cycle 1~9 완결**(PR 9건·배포·POST-DEPLOY 전건 PASS)·**Cycle 10 진행 중**(app/messages 메시지 렌더 — app.js 11,119줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
 
 ## 2. Progress
-- Planned: Cycle 10 (composer·messages/progress 재실측) + Final(재발 방지·CONVENTIONS·정합)
-- In Progress: Cycle 9 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY)
-- Done: 계획 승인 · Cycle 1~8 완결(Run-001~035) · Cycle 9 추출·기계 검증(Run-036)
+- Planned: Final(재발 방지 CONVENTIONS·ROADMAP/STATUS 정합·잔여 재실측 보고)
+- In Progress: Cycle 10 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY)
+- Done: 계획 승인 · Cycle 1~9 완결(Run-001~039) · Cycle 10 추출·기계 검증(Run-040)
 
 ## 3. Recent Changes
 - 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)

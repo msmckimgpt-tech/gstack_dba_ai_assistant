@@ -18,7 +18,9 @@ import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+// feature-0038 Cycle 10: 메시지 콘텐츠 렌더는 app/messages.js 로 분리 — 합본 검사.
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  + readFileSync(join(STATIC, "app/messages.js"), "utf8");
 const shareJs = readFileSync(join(STATIC, "share.js"), "utf8");
 const stylesCss = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
   .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");

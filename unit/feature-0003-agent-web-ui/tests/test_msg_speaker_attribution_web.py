@@ -292,9 +292,14 @@ def test_fork_uses_source_product_not_degraded_binding():
 # ── B5: FE 렌더 구조 고정 ────────────────────────────────────────────────────
 
 def _app_js() -> str:
-    path = os.path.join(os.path.dirname(__file__), "..", "src", "static", "app.js")
-    with open(path, encoding="utf-8") as fh:
-        return fh.read()
+    # feature-0038 Cycle 10: 메시지 콘텐츠 렌더(_assistantSpeakerFor 포함)는 app/messages.js 로
+    #   분리(byte-동치 이동) — app.js 와 분리 모듈 합본으로 검사한다.
+    base = os.path.join(os.path.dirname(__file__), "..", "src", "static")
+    out = []
+    for rel in ("app.js", os.path.join("app", "messages.js")):
+        with open(os.path.join(base, rel), encoding="utf-8") as fh:
+            out.append(fh.read())
+    return "".join(out)
 
 
 def test_assistant_avatar_resolved_per_message_not_from_composer_chip():

@@ -6,13 +6,13 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-08-03
-feature_status_note: ITEM-P5b 잔여 — Cycle 1~8 배포 완료, Cycle 9(app 폴더 관리) 진행 — app.js 12,069줄
+feature_status_note: ITEM-P5b 잔여 — Cycle 1~9 배포 완료, Cycle 10(app 메시지 렌더) 진행 — app.js 11,119줄
 ---
 
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~8 완료·배포, Cycle 9 진행 중)
+- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~9 완료·배포, Cycle 10 진행 중)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-03
@@ -104,12 +104,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
 ## 3. Task Queue
-- [ ] TASK-0022 Cycle 9 — verify → PR → 배포 → POST-DEPLOY (폴더 생성/메뉴/이동 다이얼로그·DnD 회귀 축)
-- [ ] TASK-0023 Cycle 10 착수 (composer·messages/progress — 재실측 후 범위 확정) — 이후 Final
+- [ ] TASK-0024 Cycle 10 — verify → PR → 배포 → POST-DEPLOY (메시지 렌더·SQL 패널·CSV)
+- [ ] TASK-0025 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합 + 잔여 재실측 보고
 - [ ] TASK-0100 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합
 
 ## 4. In Progress
-- TASK-0022 (Cycle 9 마감 절차 — make test·적대 패널 진행 중)
+- TASK-0024 (Cycle 10 마감 절차 — make test·적대 패널 진행 중)
 
 ## 5. Blocked
 - 없음
@@ -138,10 +138,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0018 Cycle 7 마감 — 패널 SHIP(A/B 델타 0, REV-20260804T193000)·PR #1133 머지(c4e613a2)·배포 RC=0·POST-DEPLOY **풀 스모크 PASS**(답변 완주 36초·JS 에러 0·오류/완주 양경로, TEST Run-031)
 - [x] TASK-0019 Cycle 8 추출 — app/auth.js(253)·app/profile.js(570) 비연속 세그먼트, parity IDENTICAL·free-vars 0/0·binding-write 함정 회피(handleLogout 잔류) (TEST Run-032, CHG-20260804T210000)
 - [x] TASK-0020 Cycle 8 마감 — 패널 SHIP(headless A/B 로그인 풀 경로, REV-20260805T093000)·PR #1141 머지(3d08b1e5)·배포 RC=0·POST-DEPLOY PASS(프로필 drawer 전 상호작용·로그인 왕복은 사유 명시 갈음, TEST Run-035)
-- [x] TASK-0021 Cycle 9 추출 — app/sidebar.js(381, 폴더 관리 2세그먼트), app.js 12,069줄, parity IDENTICAL·_dqaDrag 양방향 결합 적발→잔류 재스코프 (TEST Run-036, CHG-20260805T110000)
+- [x] TASK-0021 Cycle 9 추출 — app/sidebar.js(381, 폴더 관리 2세그먼트), parity IDENTICAL·_dqaDrag 양방향 결합 적발→잔류 재스코프 (TEST Run-036, CHG-20260805T110000)
+- [x] TASK-0022 Cycle 9 마감 — 패널 SHIP(headless A/B DOM 992B 동일·폴더 플로우 동등, REV-20260805T133000)·PR #1142 머지(7e229e35)·배포 RC=0·POST-DEPLOY PASS(폴더 생성/정리·DnD 표식, TEST Run-039)
+- [x] TASK-0023 Cycle 10 추출 — app/messages.js(961, 단일 세그먼트 구 L3118–4068), app.js 11,119줄, parity IDENTICAL·테스트 5건 합본 (TEST Run-040, CHG-20260805T150000)
 
 ## 7. Next Action
-- Cycle 9 verify → PR → 배포 → POST-DEPLOY → Cycle 10·Final
+- Cycle 10 verify → PR → 배포 → POST-DEPLOY → Final
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

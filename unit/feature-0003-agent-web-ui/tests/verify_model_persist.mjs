@@ -19,7 +19,9 @@ import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+// feature-0038 Cycle 10: 메시지 콘텐츠 렌더는 app/messages.js 로 분리 — 합본 검사.
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  + readFileSync(join(STATIC, "app/messages.js"), "utf8");
 
 let passed = 0, failed = 0;
 function ok(name, cond) {
