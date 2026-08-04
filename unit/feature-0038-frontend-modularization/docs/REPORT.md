@@ -9,36 +9,48 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
-**Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
-롤백 리허설 실증). **Cycle 1~9 완결**(PR 9건·배포·POST-DEPLOY 전건 PASS)·**Cycle 10 진행 중**(app/messages 메시지 렌더 — app.js 11,119줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+**ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative 완결** — PLAN-APPROVED(mckim 2026-08-03)
+후 10 cycle 전건 머지·배포·POST-DEPLOY PB-0008 PASS (PR #1124/#1125/#1128/#1129/#1130/
+#1132/#1133/#1141/#1142/#1143). 재발 방지 = CONVENTIONS §14. 로드맵 ITEM-P5b done.
+
+**최종 구조 (2026-08-04 실측)**
+- styles.css(9,328) → **소멸**, `css/` 7파일 (cascade 순서 보존, concat byte-parity 증명)
+- admin.js **14,007 → 4,804줄 (-66%)** + `admin/` 9모듈(usage·aiops·settings·audit·
+  accounts·roles·datasources·products·metadata, 계 9,354줄)
+- app.js **13,216* → 11,119줄** + ES module 전환 + `app/` 4모듈(auth·profile·sidebar·
+  messages, 계 2,161줄)  *Cycle 8 착수 시점 실측(병렬 세션 증분 포함)
 
 ## 2. Progress
-- Planned: Final(재발 방지 CONVENTIONS·ROADMAP/STATUS 정합·잔여 재실측 보고)
-- In Progress: Cycle 10 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY)
-- Done: 계획 승인 · Cycle 1~9 완결(Run-001~039) · Cycle 10 추출·기계 검증(Run-040)
+- Done: 계획 승인 · Cycle 1~10 완결(TEST Run-001~043) · Final(CONVENTIONS §14·ROADMAP
+  ITEM-P5b done·STATUS/wiki 정합)
+- **AC-3 (오케스트레이터 ≤~3,000줄) 정직 보고 — 부분 달성**:
+  admin.js 4,804줄 잔여 = 코어 유틸·권한 grid 인프라(계정/역할 공유)·pending/batch-apply
+  엔진·대시보드·archives·sampleReview·탭 디스패치/바인딩. app.js 11,119줄 잔여 =
+  composer/첨부·progress 폴러 3계층·그룹 대화·검색·메시지 편집/피드백·바인딩 init.
+  **차단 요인(전부 문서화)**: 공유 가변 let(_dqaDrag·_sidebarCatchupTimer 류)의 양방향
+  재할당 결합은 byte-동치 원칙 하 이동 불가 — state 편입 mini-change(비-중립·별도 승인)
+  가 선행돼야 다음 감축이 가능. 이는 계획의 "심볼 단위 재실측" 조항으로 각 cycle 에서
+  적발·기록해 온 구조적 한계이며, 무리한 이동(런타임 TypeError)보다 잔류가 정답.
 
 ## 3. Recent Changes
-- 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)
-- 총 변경 횟수: 0 (제품 코드)
+- 2026-08-03~04: 10 cycle 추출·배포 (CHG 11건 — MODIFY.md) + Final 정합
+- 총 변경 횟수: 제품 코드 PR 10건 머지 + Final PR
 
 ## 4. Open Issues
 - Cycle 7 (app.js `type="module"` 전환) 이 유일한 비-기계적 변환 지점 — 단독 cycle 격리
   + classic 순차 분할 fallback 을 계획에 명시함
 
 ## 5. Test Status
-- 자동 테스트: 기준선 실측 예정 (Cycle 1 착수 시 make test·헤드리스 기록)
-- 수동 테스트: PB-0008 은 각 cycle POST-DEPLOY 게이트
-- 미검증 항목: 전부 (승인 전 — 코드 무변경 상태)
+- 자동 테스트: cycle 별 make test RC=0 + §18.8 적대 패널 10회(BLOCK 4회 전건 흡수) — TEST §3 Run-001~043
+- 수동 테스트: PB-0008 Windows-browser Run 11건 (사전 CSS QA + POST-DEPLOY 전 cycle)
+- 미검증 항목: TEST §4 참조 (pre-existing 하네스 red 는 §8 목록)
 
 ## 6. Blocked Items
 - 없음 (plan-review 대기는 §7 로 표기 — 비-승인 작업 없음)
 
 ## 7. Human Attention Needed
-- **PLAN-APPROVED 승인 (Critical §7.1)**: TASK.md §2.1 계획 — cycle 시퀀스(styles.css →
-  admin.js 도메인 5개 cycle → app.js 전환+도메인 3개 cycle → 재발 방지), 게이트 6종
-  (make test·헤드리스·verify-completion·PR/배포·PB-0008·롤백 리허설), behavior-neutral
-  원칙. 승인 시 TASK.md 에 `PLAN-APPROVED by <user> on YYYY-MM-DD` 마커 기록 후 Execute.
+- (완결 — 없음) 후속 후보(§8: composer/progress 추출을 위한 공유 let state-편입
+  mini-change, pre-existing 하네스 정리)는 별도 계획 승인 사안.
 
 ## 8. Suggested Improvements
 - (기록만, C9 발견) `renderConversationList`(~520줄)의 후속 분리는 공유 DnD 상태

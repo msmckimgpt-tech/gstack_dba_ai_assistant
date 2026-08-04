@@ -552,3 +552,32 @@ MySQL agent_memory 는 **단일 인스턴스(replica 없음)**다. `ALTER TABLE`
 check #17 가 이번 cycle 에 **추가·수정된 라인**의 텍스트를 검사한다. 시작 템플릿은
 `.template/ui-copy-budget.conf.example`. 기존 잔여는 막지 않으므로(추가 라인만 검사) 도입
 시점에 정리 부채를 한 번에 갚을 필요가 없다.
+
+## 14. 프론트엔드 code-modularity (feature-0038, ITEM-P5b 재발 방지 — 2026-08-04)
+
+모놀리스 재발을 막는 프론트 파일 크기 규약. 근거: admin.js/app.js/styles.css 가 3주 만에
++23~59% 성장해 AI 전체 로드·정확 편집이 불가능해진 실측 (ssot-consolidation ROADMAP
+ITEM-P5b — 2026-08 에 css/ 7분할 + admin/ 9모듈 + app/ 4모듈로 분할).
+
+### 14.1 임계 (신규 기여 기준)
+
+| 조건 | 요구 |
+|---|---|
+| 단일 프론트 파일(JS/CSS)이 **3,000줄 초과** | 신규 기능 코드는 그 파일에 추가하지 않고 도메인 모듈(`admin/`·`app/`·`css/` 선례)로 분리 |
+| **5,000줄 초과** 파일에 **+200줄 이상** 추가하는 PR | PR 본문에 추출 계획(어느 도메인 모듈로 언제 뺄지) 1줄 동반 — 없으면 리뷰 반려 |
+| 신규 정적 파일 | JS 는 ES module + import specifier `?v=dev` 고정, CSS 는 link `?v=dev` (빌드 inject_asset_stamp 가 content-hash 주입 — 수기 bump 금지) |
+
+### 14.2 분할 방법 정본 (feature-0038 확립)
+
+- **byte-동치 이동**: 본문 무수정, import/export 배선만. "분할본 재조립 == 원본" 을 기계
+  증명(concat cmp 또는 역재구성)하고 PR 에 기록한다.
+- **상태 초기화·공유 가변 let 은 이동 금지 축**: `adminState.X = {…}` top-level init 은
+  entry 파일 잔류(ESM 순환 TDZ). 여러 파일이 재할당하는 `let` 은 ESM import-binding
+  write(TypeError) — **양방향 재할당 전수 검사**(주석 제거 후) 없이 이동하지 않는다.
+- **acorn-globals 자유 식별자 0 게이트**: 분할 후 각 모듈의 비표준 자유 식별자 0 을
+  기계 확인 (문자열/regex 스캔은 `$` 류를 놓친다 — Cycle 2 실증).
+- **소스-추출형 테스트 동반 갱신**: 파일 경로에 결합된 테스트(py `_read_static`·mjs
+  `readFileSync`)는 같은 PR 에서 합본(read concat) 전환. 리터럴-대조 스캔("구본에 있고
+  신본에 없는 문자열을 단언하는 테스트")으로 누락을 잡는다.
+- **검증 사다리**: make test + 적대 패널(§18.8) + (JS 는) POST-DEPLOY PB-0008 — 미머지
+  docker cp 사전 QA 는 CSS 만 안전(JS 는 모듈 캐시·스탬프 함정).
