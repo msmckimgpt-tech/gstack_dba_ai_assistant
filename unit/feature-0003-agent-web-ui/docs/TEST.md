@@ -2347,3 +2347,5 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 서빙 스탬프 `app.js?v=f5eca54ed047`. 라이브 `https://localhost/` 에서 제품 칩을 `GZ_QA_G` → `MV` 로
 실제 전환해도 과거 말풍선 발화자 `unchanged: true`, 이후 원복해 바인딩 무변경.
 상세: `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md` §6.
+## TASK-20260805T010301-doc-sync-rn-0805 — 릴리즈노트 신규 2026-08-04 블록 prepend (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · vm(sandbox) 구조검증 · `tests/verify_release_notes.mjs` 33 pass / 1 fail(pre-existing `styles.css` assertion, 변경 전 동일 재현).

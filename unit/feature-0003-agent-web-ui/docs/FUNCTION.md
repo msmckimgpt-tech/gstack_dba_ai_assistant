@@ -2445,3 +2445,5 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 - 제품 전환 성공 직후 `loadHistory({preserveScroll:true})` 로 방금 각인된 귀속을 즉시 반영한다.
 
 **화면 문구 증가 없음** (§16.8) — 제품 정체성 표면은 종전대로 아바타·툴팁이며, 그것이 고정될 뿐이다.
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0805, 2026-08-04)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-08-04 블록 3항목 추가(공유 링크 참여 버튼 표시 · 대화내역 발화자 발화시점 각인 · 시스템 프롬프트 '자동 작성' 접지 복구). 기능 계약·렌더러 동작 변경 없음(데이터 전용).

@@ -2202,3 +2202,10 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 배포: `sudo -E bin/deploy-web.sh` scope=all(web 롤링 + 워커 3종 + gateway reconcile + soak 90s). `agent_core.py` 변경 포함이라 `--web-only` 불가 — web 만 신코드면 ask-worker 가 구코드로 답변을 저장해 각인이 라이브에 미도달한다.
 - 실증: 서비스별 GIT_COMMIT 5종 전부 `ddc1b589` · 서빙 스탬프 `app.js?v=f5eca54ed047` · 배포본 라이브 제품 전환 후 과거 발화자 `unchanged: true`(원복으로 바인딩 무변경).
 - Files: `docs/{TASK,MODIFY,REVIEW,TEST}.md`, `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md`.
+## CHG-20260805T010301-doc-sync-rn-0805 (2026-08-04 블록) 릴리즈노트 콘텐츠 — 신규 1블록 3항목 prepend(공유 참여 버튼 표시·발화자 발화시점 각인·프롬프트 자동 작성 접지)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-08-04" 블록(3 items: fixed/work 2 · fixed/common 1) prepend + `generated` "2026-08-03"→"2026-08-04". 기존 41 블록 전량 보존(releases 41→42). 08-04 블록이 아직 없었으므로 append 아닌 신규 prepend(선례 규약: 그 배포일 블록이 이미 있으면 append).
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수명(`_normalize_signal_topics`·`wireShareAction` 등)·테이블명(`agent_runtime.summary`)·내부 설정키·ADR 번호·PB-0008 누출 **0**(정규식 기계 검증). UI 라벨은 실코드 대조(`share.html:39` '대화에 참여' · `share.html:40` '내 계정에서 fork' · `index.html:575` '내 프롬프트' · `index.html:580` '자동 작성' · `app.js` '여기서 분기').
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · vm 구조검증(releases[0]=2026-08-04 3항목 · releases[1]=08-03 7항목 · releases[2]=07-31 3항목 · releases[3]=07-30 8항목 · releases[4]=07-29 13항목 보존 · enum/title 위반 0 · 내부용어 누출 0) · `verify_release_notes.mjs` 33 pass / 1 fail(pre-existing `styles.css` 스크롤 assertion — 본 변경 무관, 변경 전 동일 재현).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).

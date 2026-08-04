@@ -2599,3 +2599,10 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - Reason: changed paths are docs only outside policy-doc list — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-04T15:52:00+09:00
 - 본 cycle 이 기록하는 실증 자체가 선행 cycle(`REV-20260804T061000-msg-speaker-attribution`)의 배포 검증 산출물이다 — 배포 스코프·서비스별 SHA·라이브 표면 3축.
+## REV-20260805T010301-doc-sync-rn-0805 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 2026-08-04(3항목) 블록 prepend doc_sync 정합
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check` PASS · vm 구조검증(generated=2026-08-04 · releases[0]=2026-08-04 3항목 · releases[1]=08-03 7항목 · releases[2]=07-31 3항목 · releases[3]=07-30 8항목 · releases[4]=07-29 13항목 보존) · 내부용어 누출 스캔 0 · `verify_release_notes.mjs` 33 pass / 1 fail(pre-existing `styles.css` 스크롤 assertion, doc_sync 미변경 파일 — feature-0003 cycle 소관).
+- 적대검증(ULTRACODE `wf_048fd776`, 타깃-스코프 refute 렌즈): RN 분면 `confirmed=false` + 3 issue. **오케스트레이터가 정본으로 독립 재검증해 3건 전부 실재 확인 후 교정** — ① '복사(사본 만들기)' 는 프론트 진입점이 제거된 라벨(`static/app.js:7121-7123`)이라 실존 라벨 `'내 계정에서 fork'`·`'여기서 분기'` 로 교체 ② `_normalize_signal_topics`(`src/routers/_prompt_context.py:336-367`)는 절단 조각을 **버리지 않고** 개행 정규화·120자 상한만 적용하므로 "잘린 조각은 걸러 냅니다" over-claim 을 "한 줄로 정리" 로 완화 ③ `f8a940ad` 의 사용자 관측 가능한 부수 수정(재렌더 stale 표시·클릭 핸들러 중복 부착)을 1문장 흡수.
+- 포함/제외 판정 근거: 사용자향 4 커밋 중 3 항목으로 통합 — `cb72b816`(부트스트랩 교착)은 단독 사용자 표면 0 이나 `a55ee779` 의 라이브 실효를 0 으로 만들던 직접 원인이라 같은 항목에 흡수(공동 POST-DEPLOY `5dc42e48` 가 두 cycle 잔여 체크박스를 함께 종결). feature-0038 Cycle 3~10 + Final = byte-동치 무동작변경, feature-0039 = 운영 인프라(화면 변화 0) → 기술 색인만·RN 제외.
+- **cache-buster**: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py` + `deploy-web.sh` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 는 무효 churn + 게이트 무력화).
+- **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
+- 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
