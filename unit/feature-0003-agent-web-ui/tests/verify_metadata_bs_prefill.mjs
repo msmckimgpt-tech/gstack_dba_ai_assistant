@@ -35,7 +35,8 @@ import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
-const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
+const adminJs = /* feature-0038 Cycle 6: 메타데이터 콘솔 → admin/metadata.js 분리 — 합본 검사 */ readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/metadata.js"), "utf8");
 const adminHtml = readFileSync(join(STATIC, "admin.html"), "utf8");
 
 const require = createRequire(import.meta.url);
@@ -117,9 +118,11 @@ ok("[A6] post-save 가 loadMetadata 로 재prefill(빈칸 비우기 루프 폐�
 // NUL 바이트 0(키 구분자는 JSON.stringify 로 충돌 회피 — raw NUL 금지).
 ok("[A7] admin.js 에 NUL 바이트 없음", !adminJs.includes(String.fromCharCode(0)));
 // cache-buster lockstep — admin.js == styles.css 동반 bump(정적 자산 전파 누락 방지).
+// feature-0038 Cycle 1: styles.css 는 css/ 7분할 + cache-buster 는 소스 `?v=dev` 고정
+// (빌드 inject_asset_stamp.py 가 content-hash 일괄 주입 — 수기 bump 계약 폐기).
 const _jsV = (adminHtml.match(/admin\.js\?v=([0-9a-z-]+)/) || [])[1];
-const _cssV = (adminHtml.match(/styles\.css\?v=([0-9a-z-]+)/) || [])[1];
-ok("[A8] admin.js·styles.css cache-buster 동일 태그 lockstep", Boolean(_jsV) && _jsV === _cssV);
+const _cssV = (adminHtml.match(/css\/base\.css\?v=([0-9a-z-]+)/) || [])[1];
+ok("[A8] admin.js·css/base.css 가 동일 cache-buster placeholder(?v=dev)", _jsV === "dev" && _cssV === "dev");
 
 // ── [B] 행위 단언 ────────────────────────────────────────────────────────────
 // 색인/조회 헬퍼를 실제 소스에서 추출해 실행(케이스 무관·폴백·정확 우선·키 충돌).

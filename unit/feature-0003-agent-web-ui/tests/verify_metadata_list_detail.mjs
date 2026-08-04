@@ -23,9 +23,11 @@ import { createRequire } from "node:module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
-const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
+const adminJs = /* feature-0038 Cycle 6: 메타데이터 콘솔 → admin/metadata.js 분리 — 합본 검사 */ readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/metadata.js"), "utf8");
 const adminHtml = readFileSync(join(STATIC, "admin.html"), "utf8");
-const adminCss = readFileSync(join(STATIC, "styles.css"), "utf8");
+const adminCss = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 
 const require = createRequire(import.meta.url);
 let JSDOM;
@@ -95,9 +97,11 @@ ok("[C1] metadata pane 을 단일 세로 스크롤 override 에서 제외(list-d
 ok("[C2] 클릭 가능한 행만 cursor affordance(.admin-meta-row[role=button])", /\.admin-meta-row\[role="button"\]\s*\{\s*cursor:\s*pointer/.test(adminCss));
 ok("[C2] 선택 행 강조(.admin-meta-row.is-active)", /\.admin-meta-row\.is-active\s*\{[^}]*border-color:\s*var\(--primary\)/.test(adminCss));
 ok("[C3] 우측 상세 안내문(.admin-meta-detail-note) 스타일", /\.admin-meta-detail-note\b/.test(adminCss));
+// feature-0038 Cycle 1: styles.css 는 css/ 7분할 + cache-buster 는 소스 `?v=dev` 고정
+// (빌드 inject_asset_stamp.py 가 content-hash 일괄 주입 — 수기 bump 계약 폐기).
 const _jsV = (adminHtml.match(/admin\.js\?v=([0-9a-z-]+)/) || [])[1];
-const _cssV = (adminHtml.match(/styles\.css\?v=([0-9a-z-]+)/) || [])[1];
-ok("[C4] cache-buster 동반 bump(admin.js == styles.css)", Boolean(_jsV) && _jsV === _cssV);
+const _cssV = (adminHtml.match(/css\/base\.css\?v=([0-9a-z-]+)/) || [])[1];
+ok("[C4] admin.js·css/base.css 가 동일 cache-buster placeholder(?v=dev)", _jsV === "dev" && _cssV === "dev");
 
 // ── [D] jsdom 행위 — detailMode 별 배타 가시성 ────────────────────────────────
 if (!JSDOM) {

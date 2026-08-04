@@ -21,7 +21,8 @@ function ok(name, cond) {
   else { failed++; console.log(`  FAIL  ${name}`); }
 }
 
-const css = readFileSync(join(STATIC, "styles.css"), "utf8");
+const css = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
 
 // ── 1. 정적: styles.css 규칙 ─────────────────────────────────────────

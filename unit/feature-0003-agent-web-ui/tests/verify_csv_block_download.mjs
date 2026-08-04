@@ -20,7 +20,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
 const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
 const shareJs = readFileSync(join(STATIC, "share.js"), "utf8");
-const stylesCss = readFileSync(join(STATIC, "styles.css"), "utf8");
+const stylesCss = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 
 const require = createRequire(import.meta.url);
 let JSDOM = null;

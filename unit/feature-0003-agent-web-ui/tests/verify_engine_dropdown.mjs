@@ -36,8 +36,11 @@ function ok(name, cond) {
   else { failed++; console.log(`  FAIL  ${name}`); }
 }
 
-const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
-const adminCss = readFileSync(join(STATIC, "styles.css"), "utf8");
+const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/datasources.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/products.js"), "utf8");
+const adminCss = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 
 // ── admin.js 에서 ENGINE_ICON_MYSQL … _dsBuildEngineField 까지 연속 블록 추출 ──────
 //   이들은 한 곳에 연속 정의되므로 시작(const ENGINE_ICON_MYSQL)부터

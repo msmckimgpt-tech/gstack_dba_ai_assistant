@@ -645,7 +645,7 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
         </div>
-        <!-- 2차 보기 strip(secondary nav, 필형) — admin.js(_metaSyncViews)가 review 서브탭(용어사전/ENUM/샘플쿼리)에서만
+        <!-- 2차 보기 strip(secondary nav, 필형) — admin/metadata.js(_metaSyncViews)가 review 서브탭(용어사전/ENUM/샘플쿼리)에서만
              동적으로 [목록 | 검토·검수 큐] 버튼을 생성한다. 권한별 게이트 + review 버튼 pending 배지. -->
         <div class="admin-meta-views" id="metadataViews" role="tablist" aria-label="보기 전환" style="display:none"></div>
         <!-- B8: 필터 바(제품 스코프 + 용어사전 역할) — 서브탭/보기 strip 과 시각적으로 분리된 목록 필터 행.
@@ -739,7 +739,7 @@
             <button type="button" class="btn-secondary" id="metadataCancelBtn" style="display:none">취소</button>
           </div>
         </form>
-        <!-- ux2 #2: 검토·검수 큐 후보 read-only 상세 — 좌측 큐 행 선택 시 admin.js(_metaRenderReviewDetail)가 채운다. 폼과 배타적. 기본 숨김. -->
+        <!-- ux2 #2: 검토·검수 큐 후보 read-only 상세 — 좌측 큐 행 선택 시 admin/metadata.js(_metaRenderReviewDetail)가 채운다. 폼과 배타적. 기본 숨김. -->
         <div id="metadataReviewDetail" class="admin-meta-review-detail" style="display:none"></div>
           </div><!-- /.admin-detail-col #metadataDetail -->
         </div><!-- /.admin-list-detail -->
