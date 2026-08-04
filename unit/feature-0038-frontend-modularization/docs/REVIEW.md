@@ -51,3 +51,11 @@ source_of_truth: true
 - 패널 권고 채택: **acorn-globals 자유 식별자 게이트를 분할 cycle 표준 검증에 추가** (TASK §2.1 게이트 2에 편입 — 합본 문자열 테스트가 원리적으로 못 잡는 부류).
 - 패널 clean 실측: 역재구성 parity(sha256 동일)·TDZ top-level 실행문 0·잔여 참조 0·테스트 21+27 passed 컨테이너 실측·문자열 리터럴 39건 전수 오탐 0·스탬프 재귀 커버·admin.html 무변경 정당.
 - Timestamp: 2026-08-03T19:30:00+09:00
+
+## REV-20260804T090000-settings-audit-panel [SUBAGENT:qa] — SHIP
+- Related Change: CHG-20260803T203000-settings-audit-split (Cycle 3)
+- 패널: fresh-context 적대 1렌즈(qa/frontend — 7항목 전부 실측: 역재구성 parity·acorn-globals·TDZ AST·30모듈 링크체크·AST 리터럴 대조·컨테이너 pytest 62건·census e2e). **BLOCKING 0 / MAJOR 0 / MINOR 2.**
+- 실측 확인: ① 역재구성 cmp IDENTICAL(본문 862+379줄 치환·export 접두 5 제거) ② 4모듈 자유 식별자 0 ③ TDZ — audit top-level 실행문 0·SETTINGS_PANEL_MOUNTERS 참조 전부 동일 모듈 함수 선언·re-export 는 링크 단계 직결이라 순환 무해(근거 제시) ④ 미-import 잔여 참조 0 + 전 static 30모듈 export↔import 링크 에러 0 ⑤ 대표 4파일 컨테이너 pytest 62 PASS·F1 합본 충분 ⑥ 스탬프 재귀 커버·Dockerfile COPY 재귀·census e2e PASS ⑦ window 대입·인라인 onclick 0.
+- MINOR (기록): ① verify_admin_tab_gating.mjs 2건 FAIL 은 **pre-existing**(HEAD·Cycle 2 이전 기준선에서 동일 재현 — 본 변경 무관, make test 미포함이라 CI 사각) → REPORT §8 추적 등록. ② audit.js 의 raw fetch 병용은 byte-이동 산물(기존 동일 동작).
+- 판정: **SHIP** — 반박 실패.
+- Timestamp: 2026-08-04T09:00:00+09:00

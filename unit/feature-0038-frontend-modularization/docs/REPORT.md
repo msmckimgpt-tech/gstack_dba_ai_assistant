@@ -11,13 +11,12 @@ source_of_truth: false
 ## 1. Summary
 ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
 **Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
-롤백 리허설 실증). **Cycle 2 진행 중**(admin/usage.js·admin/aiops.js byte-동치 추출 —
-admin.js 14,007→13,050줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+롤백 리허설 실증). **Cycle 2 완결**(usage/aiops — PR #1125·배포·POST-DEPLOY PASS)·**Cycle 3 진행 중**(settings/audit — admin.js 11,827줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
 
 ## 2. Progress
-- Planned: Cycle 3~10 (admin.js 잔여·app.js) + Final(재발 방지)
-- In Progress: Cycle 2 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY PB-0008)
-- Done: 계획 승인 · Cycle 1 완결(TEST Run-001~007) · Cycle 2 추출·기계 검증(Run-008)
+- Planned: Cycle 4~10 (admin.js 잔여·app.js) + Final(재발 방지)
+- In Progress: Cycle 3 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY PB-0008)
+- Done: 계획 승인 · Cycle 1 완결(Run-001~007) · Cycle 2 완결(Run-008~011) · Cycle 3 추출·기계 검증(Run-012)
 
 ## 3. Recent Changes
 - 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)
@@ -44,3 +43,6 @@ admin.js 14,007→13,050줄). 계획 정본은 TASK.md §2.1. 백엔드는 featu
 ## 8. Suggested Improvements
 - (기록만) 분할 완료 후 verify-completion 또는 pre-commit 에 "단일 프론트 파일 N줄 초과
   WARN" 기계 게이트 추가 검토 — CONVENTIONS 문면 컨벤션의 enforcement 보강.
+- (기록만, C3 패널 발견) `tests/verify_admin_tab_gating.mjs` 2건 FAIL 이 pre-existing
+  으로 방치(「AI 운영 현황 표시」·「접근+usage.read → LLM 사용량 표시」) — make test
+  미포함이라 CI 사각. 본 initiative 와 무관(기준선 대조 입증), 별도 fix 후보.
