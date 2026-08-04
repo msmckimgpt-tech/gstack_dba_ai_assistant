@@ -90,7 +90,7 @@ repo/
 | File | Role | Notes |
 |------|------|-------|
 | `Makefile` | 실행/운영 진입점 | `make start`, `make stop`, `make status`, `make build`, `make web`, `make browser-up`, `make mcp-test` |
-| `docker-compose.yml` | 서비스 오케스트레이션 | `mysql`, `agent`, `memory-init`, `insight-worker`, `mcp`(선택) |
+| `docker-compose.yml` | 서비스 오케스트레이션 | `mysql`, `postgres`(+replica·pgbouncer), `agent`, `memory-init`, `insight-worker`, `ask-worker`, `ops-scheduler`(정기 운영 잡 — feature-0039), `web-a`/`web-b`+`caddy`, `bedrock-gateway`, `minio`, `mcp`(선택) |
 | `.env` | 런타임 환경변수 (정본) | 포트, 모델, DB 자격증명 — 원본 `mysql_ai`의 운영 의미를 보존 |
 | `.env.example` | 예시 템플릿 | 민감값 제거된 샘플. 런타임은 읽지 않음 |
 | `AGENTS.md` | AI 운영 정책 정본 | 섹션 §1~§17 + Part A~G 구조 |
@@ -140,6 +140,7 @@ Makefile PYTHONPATH 의 `/work` 로 import. `from shared.<mod> import ...` 형�
 | `feature-0015-zd-hygiene-backup` | 무중단 위생/백업 | (feature dir) |
 | `feature-0016-metadata-graph` / `feature-0016-zd-pg-pause-caddy` | 메타데이터 그래프 · PG-pause/Caddy 무중단 | (feature dir 2개) |
 | `feature-0017-deploy-build-gate` | 배포 빌드 게이트 | (feature dir) |
+| `feature-0039-ops-scheduler` | **운영 정기 잡 인-컨테이너 스케줄러** — 백업·복원 리허설·AGE 그래프 sync 를 호스트 root crontab 에서 `ops-scheduler` 서비스로 이관(docker 소켓 의존 제거) | 코드 거주: feature-0002 `src/scripts/ops_scheduler.py`·`ops_backup.sh`·`ops_restore_rehearsal.sh`·`ops_graph_sync.sh`·`healthcheck_ops_scheduler.py` + repo-level `docker-compose.yml`(`ops-scheduler`)·`bin/{backup,restore-rehearsal,metadata-graph-sync}.sh`(수동 래퍼) |
 | `_template` | 신규 feature 템플릿 | `docs/AGENTS.md`, `docs/TASK.md`, `docs/FUNCTION.md`, `docs/REPORT.md`, 등 |
 
 각 feature는 `docs/`(AGENTS, FUNCTION, TASK, TEST, REPORT, MODIFY, REVIEW), `src/`, `tests/` 구조를 따른다.
@@ -195,6 +196,8 @@ route 단위 색인(method+path → handler → auth → RBAC)은 **[`docs/ROUTE
 ## 6. Automation Assets
 
 자동화 워크플로 (`ai-*`, `policy-contract`, `selfhosted-runtime-smoke`, `owner-agent-report`) 와 `automation-contract.json` 은 2026-05-15 폐기되어 더 이상 사용하지 않는다. GitHub 흐름은 일반적인 PR 머지 (`gh pr create` + 사람 리뷰 + `gh pr merge`) 로 일원화한다.
+
+**정기 운영 잡 (feature-0039)**: 백업(매일 03:00) · 복원 리허설(일 03:30) · AGE 그래프 sync(매 30분 증분 / 04:17 전량)는 호스트 crontab 이 아니라 `ops-scheduler` 컨테이너가 실행한다. 스케줄 정본은 `docker-compose.yml` 의 `OPS_SCHED_*` 환경변수이며, 잡 로직은 이미지 안 `/app/scripts/ops_*.sh` 다. `bin/{backup,restore-rehearsal,metadata-graph-sync}.sh` 는 수동 1회 실행용 래퍼로 남는다. `bin/install-*-cron.sh` 2종은 제거 전용(deprecated).
 
 `bin/gen-routemap.py` 는 예외 — `routers/__init__.register_all` INCLUDE_ORDER + `@router` 데코레이터를 정적 스캔해 `docs/ROUTEMAP.md` 를 재생성한다(`--check` 로 drift 검사). route 추가/삭제·이동 후 재실행한다.
 

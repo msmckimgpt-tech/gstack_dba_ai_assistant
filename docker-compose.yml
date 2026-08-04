@@ -430,6 +430,75 @@ services:
       retries: 3
       start_period: 40s
 
+  # feature-0039: 운영 정기 잡 인-컨테이너 스케줄러.
+  #
+  # 이전엔 호스트 **root crontab** 이 `cd <repo> && bin/{backup,restore-rehearsal,
+  # metadata-graph-sync}.sh` 를 돌렸다. root 였던 유일한 근거는 그 래퍼들이 `docker exec`
+  # 를 쓰는데 이 호스트의 docker 소켓 접근이 root 에만 있었기 때문이다. 잡을 서비스
+  # 안으로 옮기면 docker 소켓 의존이 사라져 root 권한 근거 자체가 소멸한다.
+  # (docker 소켓을 컨테이너에 마운트하는 반대 방향은 컨테이너→호스트 root 승격 경로라
+  # 채택하지 않았다 — docs/SECURITY.md 및 feature-0039 REVIEW.md 참조.)
+  ops-scheduler:
+    <<: *agent-common
+    environment:
+      TZ: ${TZ}
+      LANG: ${APP_LANG}
+      LANGUAGE: ${APP_LANGUAGE}
+      LC_ALL: ${APP_LC_ALL}
+      PYTHONIOENCODING: utf-8
+      AGENT_SESSION: ops_scheduler
+      AGENT_CONVERSATION_ID: __ops_scheduler__
+      # anchor 의 PG_REQUIRED 는 environment override 시 상속 안 되므로 명시(TASK-0130 패턴).
+      AGENT_RUNTIME_PG_REQUIRED: "1"
+      # 스케줄은 호스트 crontab 시절 값을 그대로 승계한다(벽시계 동일 — 컨테이너 TZ=${TZ}).
+      # 빈 문자열로 두면 해당 잡만 비활성, OPS_SCHED_ENABLED=0 이면 전체 비활성.
+      OPS_SCHED_BACKUP: "0 3 * * *"
+      OPS_SCHED_RESTORE_REHEARSAL: "30 3 * * 0"
+      OPS_SCHED_GRAPH_INCREMENTAL: "*/30 * * * *"
+      OPS_SCHED_GRAPH_FULL: "17 4 * * *"
+      # SIGTERM 후 진행 중 잡을 기다리는 예산. stop_grace_period(300s) 보다 짧게 둬서
+      # 스케줄러가 스스로 정리하고 내려갈 시간을 남긴다.
+      OPS_SCHED_SHUTDOWN_GRACE_SEC: "280"
+    entrypoint: ["python", "/app/scripts/ops_scheduler.py"]
+    # dbnet 만 필요하다(postgres/mysql 직결). LLM·replica 망은 붙이지 않는다 — 최소 노출.
+    networks: [dbnet]
+    # agent-common 의 depends_on 은 **상속하지 않는다**. 백업·그래프 sync 는 LLM 게이트웨이나
+    # MinIO 와 무관한데, 그것들이 unhealthy 이면 cold start 에서 스케줄러가 통째로 안 뜬다
+    # (= 정기 잡 전면 정지). 실제로 필요한 두 DB 만 게이트한다.
+    depends_on:
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../artifacts/shared:/shared
+      # 백업 산출물·잡 로그를 호스트 cron 시절과 **동일 경로**에 남긴다
+      # (컨테이너 /artifacts/... = 호스트 ../artifacts/... — 운영자 조회 경로 보존).
+      # ⚠️ `../artifacts` 전체를 마운트하지 않는다 — 그 아래에 mysql-data·postgres-data·
+      # postgres-replica-data·minio-data 라이브 데이터 디렉터리가 있어서, 스크립트 오류
+      # (예: 보존정책 rm 의 glob 사고)가 곧 DB 파일 훼손이 된다. 잡이 실제로 쓰는 두
+      # 디렉터리만 노출한다.
+      - ../artifacts/backups:/artifacts/backups
+      - ../artifacts/metadata-graph:/artifacts/metadata-graph
+      # ⚠️ AGE 그래프 sync 의 flock 을 **호스트와 공유**하기 위한 마운트.
+      # 2026-07-14 인시던트(feature-0016 §82)의 동시성 가드는 호스트에 남아 있는
+      # bin/routine-backfill.sh 와 공유되어야 실효가 있다. flock 은 inode 단위라
+      # 경로가 달라도 같은 파일이면 상호배제가 성립한다.
+      - ${OPS_LOCK_DIR:-/root/.locks/mysql-ai-delegated-dev}:/opslocks
+    restart: unless-stopped
+    # 진행 중 잡(백업 덤프 ~2분)이 끝날 여유. deploy-web.sh 가 매 배포마다 서비스를
+    # recreate 하므로 짧게 잡으면 하필 백업 중이던 배포가 그 회차를 통째로 날린다
+    # (다음 주기까지 재시도 없음). 스케줄러가 이 예산 안에서 잡을 기다린 뒤 내려간다
+    # (OPS_SCHED_SHUTDOWN_GRACE_SEC=50 기본 → 아래 값에 맞춰 상향). 잡이 없으면 즉시
+    # 종료하므로 평시 배포 지연은 0.
+    stop_grace_period: 300s
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_ops_scheduler.py"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+
   mcp:
     image: bytebase/dbhub:${DBHUB_IMAGE_TAG}
     restart: unless-stopped

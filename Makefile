@@ -137,7 +137,7 @@ dc-build:
 # Lifecycle — 도커 환경 기동/중지/재시작
 # =============================================================================
 
-up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-worker, [mcp], [caddy])
+up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-worker, ask-worker, ops-scheduler, [mcp], [caddy])
 	@$(MAKE) check-llm-network
 	@mkdir -p $(SHARED_DIR) $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) $(SHARED_DIR)/web_sessions $(SHARED_DIR)/out/browser $(CERT_ROOT)/$(WEB_PUBLIC_HOST) $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
 	@chown -R 999:999 $(MYSQL_DATA_DIR) || true
@@ -148,8 +148,10 @@ up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-w
 	@# feature-0014: web 은 web-a/web-b 두 replica(무중단 롤링). 동일 Dockerfile 이라 빌드
 	@# 캐시로 사실상 build-once. (라이브 무중단 재배포는 'make deploy-web' = bin/deploy-web.sh.)
 	@# feature-0020: ask-worker 를 빌드 목록에 추가(cold up 시 이미지 미빌드로 기동 불가하던 공백).
-	@$(DC_QUIET) build agent memory-init insight-worker ask-worker web-a web-b browser || true
-	@for img in repo-agent repo-memory-init repo-insight-worker repo-ask-worker repo-web-a repo-web-b repo-browser; do \
+	@# feature-0039: ops-scheduler 동반 — 정기 잡(백업·복원 리허설·그래프 sync)이 호스트 cron 이 아니라
+	@#   이 서비스에 있으므로, 빌드/기동 목록에서 빠지면 신규·재부팅 환경에서 잡이 통째로 멈춘다.
+	@$(DC_QUIET) build agent memory-init insight-worker ask-worker ops-scheduler web-a web-b browser || true
+	@for img in repo-agent repo-memory-init repo-insight-worker repo-ask-worker repo-ops-scheduler repo-web-a repo-web-b repo-browser; do \
 		docker image inspect $$img >/dev/null 2>&1 \
 			|| { echo "[make up] 빌드된 이미지 누락: $$img" >&2; exit 1; }; \
 	done
@@ -176,6 +178,13 @@ up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-w
 		$(DC_QUIET) up -d ask-worker; \
 	else \
 		$(DC_QUIET) stop ask-worker >/dev/null 2>&1 || true; \
+	fi
+	@# feature-0039: 정기 운영 잡 스케줄러. 기본 기동(ENABLE_OPS_SCHEDULER=0 으로만 비활성).
+	@# 이 서비스가 안 뜨면 백업·복원 리허설·그래프 sync 가 조용히 정지한다 — 호스트 cron 은 제거됐다.
+	@if [[ "$(ENABLE_OPS_SCHEDULER)" != "0" ]]; then \
+		$(DC_QUIET) up -d ops-scheduler; \
+	else \
+		$(DC_QUIET) stop ops-scheduler >/dev/null 2>&1 || true; \
 	fi
 	@if [[ "$(ENABLE_MCP)" == "1" ]]; then \
 		$(DC_QUIET) --profile mcp up -d mcp; \

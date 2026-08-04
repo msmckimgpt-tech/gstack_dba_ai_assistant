@@ -73,8 +73,11 @@ EDGE_FLAP_MAX="${DEPLOY_WEB_EDGE_FLAP_MAX:-4}"   # soak 창 내 비연속 edge �
 IMAGE_KEEP="${DEPLOY_WEB_IMAGE_KEEP:-3}"
 
 # feature-0020: 워커·gateway 롤아웃 상수
-AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask 워커 공용 이미지(동일 Dockerfile build-once)
-WORKERS=(insight-worker ask-worker)
+AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask/ops 워커 공용 이미지(동일 Dockerfile build-once)
+# feature-0039: ops-scheduler 도 같은 agent 이미지를 쓰므로 워커 롤아웃 대상에 포함한다.
+# 빠지면 정기 잡(백업·복원 리허설·그래프 sync)이 배포 후에도 구 이미지로 계속 돈다 —
+# "배포는 됐는데 잡만 stale" 은 조용히 오래 가는 종류의 결함이다.
+WORKERS=(insight-worker ask-worker ops-scheduler)
 AGENT_LASTGOOD_FILE="$STATE_DIR/deploy-agent.last-good"
 WORKER_READY_TIMEOUT="${DEPLOY_WORKER_READY_TIMEOUT:-300}"    # insight 최악 unhealthy 확정(start 60s+60s×3=240s)보다 여유(리뷰 m-3 — 경계 동률 false-fail 방지)
 GATEWAY_READY_TIMEOUT="${DEPLOY_GATEWAY_READY_TIMEOUT:-180}"

@@ -422,6 +422,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: quirk
 
+### LRN-20260804-0001 — 백업이 **생성**되는 것과 **복원**되는 것은 별개다: 확장(extension) 도입이 조용히 복원 경로를 깼다
+- Source: feature-0039 운영 잡 인-컨테이너 이관 중 등가성 검증 (2026-08-04)
+- verified: true (761MB 실 백업 전량 복원 실측 — 수정 전 rc=1 / 수정 후 rc=0, PG 사용자 테이블 67개)
+- Quirk: feature-0016 AGE cutover(2026-06-30, `shared_preload_libraries='age'`) 이후 `pg_dump --clean` 산출물이 **빈 DB 로 복원되지 않는다**. 덤프 앞부분의 `DROP EXTENSION IF EXISTS age;` 가 `ERROR: schema "ag_catalog" does not exist` 로 죽는다 — AGE 의 utility 훅이 `ag_catalog` 를 무조건 조회해 `IF EXISTS` 가 **단락되지 않기** 때문이다. 백업 생성은 계속 정상이었고 파일 크기도 정상이라 어떤 신호도 없었다. 주간 복원 리허설(`bin/restore-rehearsal.sh`)은 07-05·07-12·07-19·07-26 **4주 연속 FAIL** 을 `artifacts/backups/cron.log` 에 남겼지만 아무도 그 로그를 보지 않아 5주간 방치됐다.
+- Correct approach: (1) **복원 대상 DB 에 확장 baseline 을 먼저 재현한다** — 리허설의 throwaway DB 생성 직후 `CREATE EXTENSION IF NOT EXISTS age`. 실제 DR 에서도 대상은 AGE 가 설치된 상태여야 하므로 이것이 정확한 재현이다. (2) 배제한 오답: `--clean` 제거(→ 기존 DB 위 복원이라는 진짜 DR 시나리오가 불가) · `ON_ERROR_STOP=0`(→ '부분 복원 탐지' 라는 리허설의 존재 이유 소멸). (3) **확장·서버 전역 설정을 도입하는 cycle 은 백업/복원 왕복을 완료 조건에 넣는다** — 스키마 마이그레이션 테스트는 이 축을 보지 않는다.
+- 인접 함정 — **덤프 클라이언트 버전**: 같은 조사에서 `pg_dump` 17(Debian trixie 기본)의 산출물이 PG16 서버 복원 시 PG17 전용 GUC `SET transaction_timeout = 0;` 때문에 `unrecognized configuration parameter` 로 죽는 것도 확인했다. `docker exec <postgres> pg_dump` 는 서버 자신의 바이너리를 써서 버전 정합이 **자연히** 성립했지만, 네트워크 클라이언트로 옮기면 그 성질이 사라진다 — 클라이언트 메이저를 서버에 **명시 고정**해야 한다.
+- Applies to: 백업/DR 경로 전반. 판정 질문은 "덤프 파일이 생겼는가" 가 아니라 **"이 파일을 빈 DB 에 넣으면 살아나는가"** 다. 그리고 그 답을 **사람이 안 보는 로그**에만 남기면 실패는 몇 주를 간다 — 리허설 FAIL 은 관측 가능한 신호(알림·health)로 승격할 가치가 있다(REPORT.md §8 제안).
+
 ### LRN-20260730-0001 — 방어를 **저장소 파일**에 두면 이미 분기된 worktree 사본에는 소급되지 않는다 (격리 머지 10분 뒤 재발한 이유)
 - Source: TASK-20260730T1620-test-isolation-hardening (LRN-20260729-0001 의 후속 — 같은 사고의 남은 층)
 - Quirk: 테스트→라이브 오염 격리를 `Makefile`·`tests/conftest.py` 에 넣고 main 에 머지했는데, **머지 10분 뒤 같은 오염이 재발**했다. 원인은 수정의 내용이 아니라 **수정이 사는 장소**였다 — 파일 방어는 머지 시점에 존재하는 사본에만 적용되고, 이미 분기된 worktree(그리고 그 안의 `.env` 복사본)에는 소급되지 않는다. 병렬 세션이 많은 저장소에서는 "main 을 고쳤다" 가 "모든 실행 경로를 고쳤다" 를 의미하지 않는다.
