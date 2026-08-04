@@ -74,9 +74,19 @@ source_of_truth: true
       writer 가 다시 죽는다). P1 의 "사용자 대기 +0" 주장은 **worker 경로 한정**으로 정정(정직 표기).
       흡수분 2건은 **역검증**(결함 재주입 시 FAIL) 확인. REV-20260804T045449-prompt-autogen-wiring §7.
 - [x] `make test` 표준 호출 전량 회귀 **exit 0 PASS** · 신규 테스트 22건 통과 · ruff clean.
-- [ ] 잔여: verify-completion --pre-commit · commit/push/PR/머지 ·
-      배포(`deploy_scope: included` — web + ask-worker 재빌드; W1 이 agent-core 코드라 **워커도
-      함께 나가야 실효**) · 배포 후 라이브 실증(요약 행 증가 + `meta.summary_count > 0`).
+- [x] verify-completion PASS → PR #1135 머지(`c4701a17`) → 전체 롤아웃 배포(web·insight-worker·
+      ask-worker·ops-scheduler 전량 `c4701a17`).
+- [x] **배포 후 라이브 실증 — 1차에서 실패를 검출**: 배포본에서 `refresh_conversation_summary()` 실호출
+      결과 `saved=False`, `agent_runtime.summary` 여전히 0행. 로그 `load_memory_context: PG partial
+      failure (summary=False …)`. 원인은 별 결함(요약 미보유 대화를 PG 읽기 실패로 오판하는 부트스트랩
+      교착) → **feature-0002 `TASK-20260804T0630-summary-bootstrap-deadlock`** 으로 분리 수정,
+      PR #1138 머지(`fba8ee9f`) + 전량 재배포.
+- [x] **라이브 재실증 PASS**(배포본 `fba8ee9f`): 요약 저장 `saved=True`(12.7s) · `agent_runtime.summary`
+      **0행 → 1행** · 저장 본문 육안 확인(쿼리 리뷰 대화 요약). 자동작성 접지 실측 —
+      account(계정 10) `meta.summary_count=1`(종전 상시 0) · role(admin) `summary_count=1` ·
+      "내 과거 분석 사례" 요약 블록 **실제 생성 확인**.
+- [x] **topic 정제 효과 실측**(계정 10, 40건): placeholder `새 대화` **0건** · 중복 **0건** ·
+      개행 포함 raw 절단 **0건**(정제 전 동일 축 실측은 27.5% 잡음). 남은 40건은 전부 실제 요청 제목.
 
 ## TASK-20260730T1620-test-isolation-hardening — 테스트→라이브 설정 오염 **재발** 근본 차단: 도달성 층 + fail-loud + 감지 (Major)
 

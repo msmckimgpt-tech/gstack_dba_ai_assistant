@@ -1908,3 +1908,23 @@ joinable 공유 링크를 여는* 케이스(share `Id=77` · 대화 `20260722015
 
 정본: TASK/CHG/REV `20260804T0620-share-join-btn-postdeploy` · fragment
 `20260804T0458-share-join-btn-visibility.md` §5.
+
+### [POST-DEPLOY 완결 2026-08-04] prompt-autogen-wiring — 2단 배포 후 라이브 실증 PASS (1차에서 실효 0 을 검출해 2차로 종결)
+- 1차: PR #1135 머지 → 배포 `c4701a17`(web·insight-worker·ask-worker·ops-scheduler 전량). **배포본
+  실호출 검증에서 `saved=False` · `agent_runtime.summary` 0행 유지** — writer 복구가 코드상 옳았는데도
+  라이브 실효 0. 로그 `load_memory_context: PG partial failure (summary=False msgs=True kv=True)`.
+- 진단: `_read_runtime_pg` 계약("`None`=읽기 실패")과 `load_summary` 의 "행 없음도 `None`" 이 충돌 →
+  요약 미보유 대화 전부가 PG 실패로 오판 → conn=None 폴백에서 예외 → **첫 요약을 영원히 못 쓰는
+  부트스트랩 교착**. feature-0002 `TASK-20260804T0630-summary-bootstrap-deadlock` 으로 분리 수정.
+- 2차: PR #1138 머지 → 배포 `fba8ee9f` 전량. **라이브 재실증 PASS**:
+  - 요약 writer — `refresh_conversation_summary()` `saved=True`(12.7s), `agent_runtime.summary`
+    **0행 → 1행**, 저장 본문 육안 확인.
+  - 자동작성 접지 — account(계정 10)·role(admin) 양쪽 `meta.summary_count` **0 → 1**(종전 상시 0),
+    "내 과거 분석 사례" 요약 블록 실제 생성 확인.
+  - topic 정제 — 계정 10 의 40건에서 placeholder `새 대화` **0** · 중복 **0** · 개행 raw 절단 **0**
+    (정제 전 동일 축 실측 잡음 27.5%).
+- **교훈(정직 표기)**: 1차 cycle 의 단위 테스트는 `load_memory_context` 를 통째로 스텁했고 결함이 바로
+  그 함수의 분기에 있었다. **배포 후 실호출 검증이 아니었으면 "고쳤다" 고 보고한 채 라이브는 그대로**
+  였을 사안 — 스텁 경계가 결함 지점과 겹치면 단위 테스트는 구조적으로 눈이 먼다.
+- 정본: TASK-20260804T0454-prompt-autogen-wiring · TASK-20260804T0630-summary-bootstrap-deadlock ·
+  REV-20260804T045449 · REV-20260804T063000.

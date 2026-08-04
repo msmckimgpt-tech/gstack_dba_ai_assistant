@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260804T070000-prompt-autogen-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 실증 기록 (doc-only)
+- 대상 diff: `feature-0003/docs/{TASK,REPORT}.md` · `feature-0002/docs/TASK.md` — **코드 변경 0**.
+  선행 2 cycle 의 잔여 체크박스("배포 후 라이브 실증 대기")가 실증 완료로 stale 해진 것을 종결 표기로
+  갱신하고(§5.6 staleness), 2단 배포 경과를 REPORT 에 기록.
+- §18.8 dispatch 표 첫 행(비정책 doc-only) → panel SKIP. 사실 정합만 자체 확인: 배포 SHA
+  (`c4701a17`→`fba8ee9f`)·PR 번호(#1135/#1138)·실증 수치(summary 0→1행, `meta.summary_count` 0→1,
+  topic 잡음 0/40)는 모두 본 세션의 실행 로그에서 그대로 옮긴 값이며 추정치가 없다.
+
 ## REV-20260804T045449-prompt-autogen-wiring [CODEX:prompt-autogen-wiring] — SHIP-WITH-FIXES (P1 1/P2 3 → 흡수 3·반증 1) + 자체 보안 점검 (TASK-20260804T0454)
 - **Trigger**: `schema/query/DELETE` keyword matched (backend, qa) + `performance/cost` keyword matched
   (backend, qa) — code change, §18.8 dispatch 표.
