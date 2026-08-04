@@ -134,7 +134,8 @@ ok("[관리콘솔] 기본 렌더는 관리 콘솔 항목 노출(회귀 없음)",
 // ── 8.8 관리 콘솔 pane 세로 스크롤 가드 (PB-0008 보완 소스 단언) ────
 // jsdom 은 overflow/스크롤 layout 미계산(정본 PB-0008). styles.css 에 release-notes
 // pane 의 overflow-y:auto 규칙이 존재하는지 소스 레벨로 단언.
-const cssForScroll = readFileSync(join(STATIC, "styles.css"), "utf8");
+const cssForScroll = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 ok("[스크롤] admin release-notes pane overflow-y:auto 규칙 존재",
   /\.admin-pane\[data-admin-pane="release-notes"\]\.is-active/.test(cssForScroll) &&
   /data-admin-pane="release-notes"\]\.is-active[\s\S]{0,160}overflow-y:\s*auto/.test(cssForScroll));
@@ -153,7 +154,8 @@ releases.shift(); // 복원
 // jsdom 은 stylesheet cascade 로 computed display 를 계산하지 못하므로(실 화면 정본은
 // PB-0008), 접힘 무력화 트랩(.rn-group-body{display:flex} 가 UA [hidden]{display:none}
 // 를 덮어씀)을 막는 명시 규칙이 styles.css 에 존재하는지 소스 레벨로 단언한다.
-const cssSrc = readFileSync(join(STATIC, "styles.css"), "utf8");
+const cssSrc = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 ok("[CSS] .rn-group-body[hidden]{display:none} 가드 존재", /\.rn-group-body\[hidden\]\s*\{[^}]*display\s*:\s*none/.test(cssSrc));
 
 // ── 10. 빈 데이터 → 안내 ───────────────────────────────────────────

@@ -38,8 +38,11 @@ function ok(name, cond) {
   else { failed++; console.log(`  FAIL  ${name}`); }
 }
 
-const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
-const adminCss = readFileSync(join(STATIC, "styles.css"), "utf8");
+const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/products.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/datasources.js"), "utf8");
+const adminCss = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 const adminHtml = readFileSync(join(STATIC, "admin.html"), "utf8");
 
 // ── admin.js 에서 helper 연속 블록 추출(const DB_PICKER_SEARCH_MIN … applyDbPickerRegexHighlight 닫는 중괄호) ──
@@ -56,7 +59,8 @@ function extractHelpers(src) {
   return end < 0 ? null : src.slice(start, end);
 }
 
-const block = extractHelpers(adminJs);
+// feature-0038 Cycle 5: helper 들이 ESM export 접두를 갖게 됨 — Function 평가용으로 제거.
+const block = (extractHelpers(adminJs) || "").replace(/^export /gm, "");
 ok("helper 블록(DB_PICKER_SEARCH_MIN … applyDbPickerRegexHighlight) 추출", Boolean(block));
 
 const dom = new JSDOM(`<!DOCTYPE html><body></body>`, { url: "https://localhost/" });

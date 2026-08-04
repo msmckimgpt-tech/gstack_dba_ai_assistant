@@ -10,8 +10,11 @@ import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
-const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
-const adminCss = readFileSync(join(STATIC, "styles.css"), "utf8");
+const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/products.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/datasources.js"), "utf8");
+const adminCss = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 const adminHtml = readFileSync(join(STATIC, "admin.html"), "utf8");
 const flat = adminJs.replace(/\s+/g, " ");
 

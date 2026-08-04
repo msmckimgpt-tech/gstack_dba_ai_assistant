@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const staticDir = join(here, "..", "src", "static");
-const css = readFileSync(join(staticDir, "styles.css"), "utf8");
+const css = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"].map((n) => readFileSync(join(staticDir, `css/${n}.css`), "utf8")).join("");
 const indexHtml = readFileSync(join(staticDir, "index.html"), "utf8");
 
 let pass = 0, fail = 0;

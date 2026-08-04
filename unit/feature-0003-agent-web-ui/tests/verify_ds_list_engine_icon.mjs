@@ -30,8 +30,11 @@ if (!JSDOM) { console.error("jsdom 미설치 — `npm i jsdom@22 --prefix /tmp` 
 let passed = 0, failed = 0;
 const ok = (n, c) => { c ? (passed++, console.log(`  PASS  ${n}`)) : (failed++, console.log(`  FAIL  ${n}`)); };
 
-const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
-const adminCss = readFileSync(join(STATIC, "styles.css"), "utf8");
+const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/datasources.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/products.js"), "utf8");
+const adminCss = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 
 // ── engineMeta 블록 추출(드롭다운 task 와 공유) ───────────────────────────────
 function extractBlock(src, startMarker, fnName) {

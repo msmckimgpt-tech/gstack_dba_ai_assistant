@@ -274,6 +274,54 @@ source_of_truth: true
 - Result Summary: 패널 흡수 후 최종 상태 `sudo make test` — **RC=0**.
 - Pass/Fail: PASS
 
+### Run 2026-08-04-023 (Cycle 5 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-04
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260804-c5-postdeploy-products.png`
+- Result Summary: PR #1130 머지 → 배포(03665d28, RC=0) → products/datasources 모듈 서빙 200.
+  실 Windows Chrome (에러 후크): 제품 pane 목록 **19행**·상세 5,283자·**접근 DB allowlist
+  섹션+picker 렌더**(보안 경계 UI)·pending bar 존재 · 데이터소스 pane **27행·엔진 아이콘
+  27**·상세 렌더 · 역할 상세 제품카드 **39**(subcatalog 잔류↔이동 경계 온전) — 전 구간 에러 0.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-024 (Cycle 6 — metadata 추출 기계 검증 + 하네스 부채 상환)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: admin.js 7,647→**4,805줄**(-2,842, 초기 대비 **-65.7%**). admin/metadata.js
+  (2,869줄 — 최대 단일 모듈) 신설. **역재구성 byte-parity IDENTICAL** · ESM OK ·
+  free-vars 는 mermaid-render 전역 브릿지 2건(HEAD 동일 pre-existing, typeof 가드) 외 0.
+  _metaPopulateScopeSelect 는 re-export 로 usage.js 계약 보존.
+  **동반 부채 상환**: styles.css 직독 mjs **20건**(STATIC/staticDir 변수명 무관 리터럴 전수)
+  css/ concat 수선 + 도메인 합본 + 구계약 cache-buster 단언 6건 신계약 전환 + pre-C1
+  기준선(fd61bb48) worktree 대조로 귀책 판별 — 초래 회귀 전부 수선(green 화:
+  engine_dropdown 36/0·ds_list_engine_icon 17/0·bs_paging 32/0·bs_prefill 44/0·
+  share_participants 17/0 등), **가동 하네스 전건 기준선 동치 이상**. 잔여 red/크래시는
+  기준선 동일 pre-existing — inline_desc/list_detail 은 양 트리 동일
+  `ReferenceError: _metaScopeIsProduct`(07-29 metadata-product-scope 이래, REPORT §8).
+  pytest 1건(test_metadata_perm_split) 합본 전환.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-025 (Cycle 6 — make test 전 스위트)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: `sudo make test` — **RC=0** (합본 전환한 test_metadata_perm_split 포함).
+- Pass/Fail: PASS
+
+### Run 2026-08-04-026 (Cycle 6 — 패널 흡수 후 최종)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: 패널 BLOCKING 3건(하네스 3건 변수명 누락·구계약 단언 3건·문서 오기) +
+  MINOR(mermaid dead 배선 제거·admin.html 귀속 주석 2·assert 메시지) 전건 흡수. 패널 기준선
+  오측 1건은 fd61bb48 재측정으로 반증(inline_desc/list_detail = 양 트리 동일 pre-existing
+  ReferenceError). 수선 후 실측: share_participants 17/0·bs_prefill 44/0·member 계열 기준선
+  동치. 최종 `sudo make test` — **RC=0**.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저

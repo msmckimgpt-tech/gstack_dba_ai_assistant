@@ -42,7 +42,8 @@ global.navigator = dom.window.navigator;
 
 const adminHtml = readFileSync(join(STATIC, "admin.html"), "utf8");
 const adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
-const css = readFileSync(join(STATIC, "styles.css"), "utf8");
+const css = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
+  .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 
 // function <name>(...) 한 정의 블록을 중괄호 밸런스로 추출.
 function extractFn(src, name) {

@@ -86,3 +86,15 @@ source_of_truth: true
   `tests/verify_product_icon_chip_list.mjs`(합본)
 - Impact: 동작 변화 0.
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260804T150000-metadata-split
+- Date: 2026-08-04
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 6)
+- Summary: admin.js 메타데이터 거버넌스 콘솔(구 L2742–5591, 최대 단일 블록)을
+  `admin/metadata.js` 로 byte-동치 이동. re-export 1(_metaPopulateScopeSelect)·신규 export 3
+  (mermaid 브릿지·loadSampleReview·_sampleFeedbackAction). 동반: styles.css 직독 mjs 20건(변수명 무관 전수) css/ concat 수선 + 도메인 합본 +
+  구계약 단언 6건 신계약 전환 + 기준선 대조 귀책 판별(초래분 전부 수선·pre-existing 기록).
+- Files: `static/admin.js`(-2,842줄→4,805) · `static/admin/metadata.js`(신규) ·
+  `static/admin.html`(귀속 주석 2) · `tests/verify_*.mjs` 27건 · `tests/test_metadata_perm_split.py`
+- Impact: 동작 변화 0. 하네스 부채 상환으로 mjs 스위트 기준선 복원.
+- Rollback Notes: 단일 PR revert 1회.

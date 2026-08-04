@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const staticDir = join(here, "..", "src", "static");
 const appJs = readFileSync(join(staticDir, "app.js"), "utf8");
-const cssTxt = readFileSync(join(staticDir, "styles.css"), "utf8");
+const cssTxt = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"].map((n) => readFileSync(join(staticDir, `css/${n}.css`), "utf8")).join("");
 const indexHtml = readFileSync(join(staticDir, "index.html"), "utf8");
 
 let pass = 0, fail = 0;
@@ -57,7 +57,8 @@ ok(/\.share-participant-role\s*\{/.test(cssTxt), ".share-participant-role 배지
 
 // 8. 캐시버스터 존재(구체 값은 후속 cycle 마다 advance — 존재 여부만 회귀 가드).
 ok(/app\.js\?v=[0-9a-z-]+/.test(indexHtml), "app.js 캐시버스터 존재");
-ok(/styles\.css\?v=[0-9a-z-]+/.test(indexHtml), "styles.css 캐시버스터 존재");
+// feature-0038 Cycle 1: styles.css → css/ 7분할 — 대표로 css/base.css 참조 존재를 가드.
+ok(/css\/base\.css\?v=[0-9a-z-]+/.test(indexHtml), "css/base.css 캐시버스터 존재");
 
 console.log(`\nverify_share_participants: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

@@ -77,3 +77,11 @@ source_of_truth: true
 - **MINOR (② 절차 반영)**: 신규 2파일 untracked — 커밋 시 git add 포함 확인(finalize 체크).
 - 패널 clean 실측: 역재구성 sha256 동일·8모듈 free-vars 0(admin.js 3건은 HEAD 동일 pre-existing 브릿지)·TDZ 0(ENGINE_BY_VALUE 모듈-로컬만)·import 바인딩 쓰기 9모듈 0·전 그래프 link+eval OK·pending 엔진(§10.7) admin.js 잔류 + products 35회 import 사용 온전·스탬프 실주입 3 specifier 동일 스탬프.
 - Timestamp: 2026-08-04T13:30:00+09:00
+
+## REV-20260804T170000-metadata-panel [SUBAGENT:qa] — BLOCK → 전건 흡수 후 SHIP-경로
+- Related Change: CHG-20260804T150000-metadata-split (Cycle 6)
+- 패널: fresh-context 적대 1렌즈(7항목 실측 — sha256 양측 동일 기계증명·diff 회계 11/2853 완전 일치·acorn-globals 9모듈·실 ESM 그래프 평가(TDZ 0·56 exports)·스탬프 실주입 멱등·컨테이너 pytest 184 passed·mjs 39종 3-트리 대조). **판정: 이동 자체 전건 PASS — BLOCK 은 동반 수선 완결성 주장에 한정 (B3건/M0/m5).**
+- **BLOCKING 흡수**: ① styles.css 직독 3건이 `staticDir` 변수명 차이로 스윕 누락(ENOENT 사망 유지) → 변수명 무관 리터럴 전수 재수선, 잔존 직독 0 실측 ② 구계약 cache-buster 단언 3건(bs_prefill [A8]·inline_desc [A5]·list_detail [C4]) → placeholder 신계약 적용 ③ 문서 오기(TEST Run-024·MODIFY·REPORT §8) → 실측대로 정정(아래).
+- **패널 기준선 수치 반증 1건 (본 세션 재측정이 정본)**: inline_desc/list_detail 의 패널 기준선 26P/0F·26P/3F 는 오측 — fd61bb48 기준선 worktree 재생성 실측에서 **양 트리 동일 `ReferenceError: _metaScopeIsProduct`** 크래시 = metadata-product-scope(07-29) 이래 pre-existing (재현 절차 기록). 나머지 수선 후 실측: share_participants **17/0**(기준선 동치)·member_kick_ban 17/2·member_actions_hover 14/1·bs_prefill **44/0** — 전건 기준선 동치 이상.
+- **MINOR 흡수**: mermaid dead import/export 제거(델타 축소)·admin.html stale 귀속 주석 2건 갱신·test_metadata_perm_split assert 메시지 정정. usage.js 의 _metaPopulateScopeSelect 런타임 미호출은 기록만(링크 계약상 re-export 필수 — 별도 정리 후보).
+- Timestamp: 2026-08-04T17:00:00+09:00

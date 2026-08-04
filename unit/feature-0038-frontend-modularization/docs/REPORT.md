@@ -11,12 +11,12 @@ source_of_truth: false
 ## 1. Summary
 ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
 **Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
-롤백 리허설 실증). **Cycle 1~4 완결**(css·usage/aiops·settings/audit·accounts/roles — PR #1124/#1125/#1128/#1129·배포·POST-DEPLOY 전건 PASS)·**Cycle 5 진행 중**(products/datasources — admin.js 7,647줄, 누적 -45.4%). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+롤백 리허설 실증). **Cycle 1~5 완결**(PR 5건·배포·POST-DEPLOY 전건 PASS)·**Cycle 6 진행 중**(metadata 최대 블록 — admin.js 4,805줄, 누적 -65.7%; mjs 하네스 부채 상환 동반). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
 
 ## 2. Progress
-- Planned: Cycle 6~10 (metadata·app.js) + Final(재발 방지)
-- In Progress: Cycle 5 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY PB-0008)
-- Done: 계획 승인 · Cycle 1~4 완결(Run-001~018) · Cycle 5 추출·기계 검증(Run-019)
+- Planned: Cycle 7~10 (app.js 전환·분할) + Final(재발 방지)
+- In Progress: Cycle 6 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY PB-0008)
+- Done: 계획 승인 · Cycle 1~5 완결(Run-001~023) · Cycle 6 추출·기계 검증+하네스 부채 상환(Run-024)
 
 ## 3. Recent Changes
 - 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)
@@ -49,3 +49,12 @@ ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED 
 - (기록만, C4 패널 발견) `tests/verify_perm_self_scope.mjs` 가 ITEM-09 admin.js
   type=module 전환 이래 classic-script 주입 불가로 pre-existing 파손 — 별도 정리 후보.
   standalone mjs 하네스들이 CI 비배선이라 조용히 썩는 구조 자체도 점검 후보.
+- (C6 부채 상환 후 잔여) 기준선(fd61bb48) 대조로 확인된 **pre-existing red** 목록:
+  db_rule_ui 17/2 · rule_db_coverage 18/2 · settings_archive_leave 20/2 ·
+  llm_restriction 33/2 · metadata_scope_single_ds 10/5(구 함수명 앵커 stale) ·
+  dbpicker 32/1 · release_notes 33/1 · admin_tab_gating 45/2 · member_kick_ban 17/2 ·
+  member_actions_hover 14/1 · perm_self_scope ·
+  **bs_inline_desc/list_detail: 양 트리 동일 `ReferenceError: _metaScopeIsProduct` 크래시**
+  (07-29 metadata-product-scope 가 함수에 신규 의존을 넣고 하네스 주입 인자를 미갱신 —
+  본 initiative 이전 파손, fd61bb48 재측정으로 확정). 전부 별도 fix 후보(우선순위:
+  기능 소유 feature cycle).
