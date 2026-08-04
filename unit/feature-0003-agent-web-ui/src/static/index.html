@@ -653,7 +653,10 @@
   <!-- mermaid 렌더 헬퍼(공유 대화 share.js 와 단일 소스) — mermaid.min.js 다음, app.js 이전 -->
   <script src="/static/mermaid-render.js?v=dev"></script>
   <script src="/static/mentions.js?v=dev"></script>
-  <script src="/static/app.js?v=dev"></script>
+  <!-- feature-0038 Cycle 7: app.js 를 ES module 로 전환 (admin.js ITEM-09 선례).
+       모듈은 deferred — 동반 classic 스크립트(mermaid-render/mentions/textarea-autogrow/
+       release-notes*)와의 결합은 window.* 전역뿐이라 실행 순서 의존 없음(계획 §2.1 Cycle 7 실측). -->
+  <script type="module" src="/static/app.js?v=dev"></script>
   <script src="/static/textarea-autogrow.js?v=dev"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 관리 콘솔과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=dev"></script>

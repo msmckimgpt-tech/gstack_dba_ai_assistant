@@ -85,3 +85,10 @@ source_of_truth: true
 - **패널 기준선 수치 반증 1건 (본 세션 재측정이 정본)**: inline_desc/list_detail 의 패널 기준선 26P/0F·26P/3F 는 오측 — fd61bb48 기준선 worktree 재생성 실측에서 **양 트리 동일 `ReferenceError: _metaScopeIsProduct`** 크래시 = metadata-product-scope(07-29) 이래 pre-existing (재현 절차 기록). 나머지 수선 후 실측: share_participants **17/0**(기준선 동치)·member_kick_ban 17/2·member_actions_hover 14/1·bs_prefill **44/0** — 전건 기준선 동치 이상.
 - **MINOR 흡수**: mermaid dead import/export 제거(델타 축소)·admin.html stale 귀속 주석 2건 갱신·test_metadata_perm_split assert 메시지 정정. usage.js 의 _metaPopulateScopeSelect 런타임 미호출은 기록만(링크 계약상 re-export 필수 — 별도 정리 후보).
 - Timestamp: 2026-08-04T17:00:00+09:00
+
+## REV-20260804T193000-appjs-module-panel [SUBAGENT:qa] — SHIP
+- Related Change: CHG-20260804T183000-appjs-module (Cycle 7 — B0)
+- 패널: fresh-context 적대 1렌즈(7항목 실측 — AST 전수·동반 6스크립트 양방향 교차대조·inject_asset_stamp 계약·index.html 소비 테스트 7종 **HEAD↔변경 A/B 실행 델타 0**·chromium 양팔 비교 headless 스모크 **module 팔 pageerror 0**). **BLOCKING 0 / MAJOR 0 / MINOR 3.**
+- 실측 확인: deferred 안전(후행 classic 3종의 app.js 의존 0·역방향 0)·strict 위험 0(암묵 전역 대입·callee·top-level this 등 전수 0)·전역 소멸 무영향(inline 0·동적 onclick= 생성 0·self-window-read 0)·스탬프 재작성 무관·`window.toggleAuthPane` 등 undefined 화 실증에도 파괴 0.
+- MINOR (기록): ① 이벤트 콜백 내 `this` 3건(L12266~) — **Cycle 8~10 분할 시 화살표 함수로 바꾸면 깨지는 잠복 지점, 분할 계획에 명기** ② 후행 classic 3종이 향후 app.js 전역을 참조하면 회귀 표면(주석 문서화로 수용) ③ PB-0008 eval 레시피의 top-level 함수 직접 호출 관행 불가 — DOM 이벤트 경유로 전환(도구 관행).
+- Timestamp: 2026-08-04T19:30:00+09:00

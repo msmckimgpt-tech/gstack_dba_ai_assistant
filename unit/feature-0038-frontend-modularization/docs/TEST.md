@@ -322,6 +322,49 @@ source_of_truth: true
   동치. 최종 `sudo make test` — **RC=0**.
 - Pass/Fail: PASS
 
+### Run 2026-08-04-027 (Cycle 6 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-04
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260804-c6-postdeploy-metadata.png`
+- Result Summary: PR #1132 머지 → 배포(6f74d8cf, RC=0 — 병렬 세션 feature-0039 ops-scheduler
+  동반 반영·rebase 충돌은 gen-status 재생성으로 해소) → metadata 모듈 서빙 200. 실 Windows
+  Chrome (에러 후크): 지식베이스 > 메타데이터 **5서브뷰 순회 전건 렌더**(용어사전 7행·ENUM
+  4행·테이블/컬럼/샘플 각 1행) · 검토·검수 큐 토글 · 부트스트랩 '스키마 골격 가져오기' 버튼
+  표시 — 전 구간 에러 0.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-028 (Cycle 7 — app.js type=module 전환 기계 검증)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: index.html script 태그 전환(app.js 자체 무변경 — 유일한 비-기계적 지점,
+  단독 격리). 기계 실측: **ESM(strict) 파싱 OK** · **암묵 전역 쓰기 0**(AssignmentExpression
+  좌변 free identifier 전수) · 비표준 free 읽기 = mermaid-render 전역 브릿지 2건뿐(typeof
+  가드) · 동반 classic 5스크립트의 app.js 전역 참조 **0**(share.js 자체 선언·mermaid-render
+  'initialize' 는 프로퍼티) · inline 핸들러 0. fallback(classic 순차 분할)은 §2.1 명시 유지.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-029 (Cycle 7 — make test + 패널)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: §18.8 패널 **SHIP**(B0/M0 — index.html 소비 테스트 7종 HEAD↔변경 A/B 실행
+  델타 0 · chromium 양팔 headless 스모크 module 팔 pageerror 0 · strict/전역 축 AST 전수 청정,
+  MINOR 3건 기록 — 콜백 this 3건 → Cycle 8 계획 명기). `sudo make test` 1·2차는 **네트워크
+  장애로 pip 이 PyPI 도달 불가**(RC=2 — pytest 미설치, 테스트 미도달·코드 무관). 회복 후
+  재실행 결과는 다음 Run.
+- Pass/Fail: PARTIAL (패널 PASS · make test 는 네트워크 회복 후 재실행)
+
+### Run 2026-08-04-030 (Cycle 7 — make test 재실행, 네트워크 회복 후)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: PyPI 도달 회복 후 `sudo make test` — **RC=0, FAILED 0** (Run-029 의 RC=2
+  는 pip 네트워크 장애로 확정 — 코드 무관).
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저
