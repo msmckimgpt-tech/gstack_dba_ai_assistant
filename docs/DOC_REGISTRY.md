@@ -40,6 +40,7 @@ ai_read_priority: 3
 | 공통 코드 | `shared/` | active | (feature 복제 dedup P5) | — |
 | 런타임 산출물 | wrapper `artifacts/`(gitignore, 1곳) | transient | — | — |
 | 마이그레이션 메모 | `docs/MIGRATION_*.md`(진행 중) | draft | — | (완료 시 `docs/archive/`) |
+| 코드 리뷰 판정 기준 | `docs/CODE_REVIEW.md` | active(ai-editable) | `AGENTS.md` §18.8.1(포인터 — "판정 기준의 정본은 `docs/CODE_REVIEW.md`", v3.44.0) | — |
 | doc 레지스트리 | `docs/DOC_REGISTRY.md` (본 문서) | active(rewrite) | — | — |
 
 ## frontmatter 계약 (모든 .md)
