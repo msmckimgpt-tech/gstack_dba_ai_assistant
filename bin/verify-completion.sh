@@ -29,6 +29,15 @@
 
 set -euo pipefail
 
+# git 출력 색상 차단 (v3.44.0, AGENTS.md §16.7 G8 — 적용면 전수).
+# color.ui=always 면 diff 라인 앞 ANSI 로 `^+` 매칭이 전부 빗나가 diff 를
+# 파싱하는 check 들이 조용히 PASS 한다(fail-open). 프로세스 전역으로 끈다.
+_gc_n="${GIT_CONFIG_COUNT:-0}"
+eval "export GIT_CONFIG_KEY_${_gc_n}=color.ui"
+eval "export GIT_CONFIG_VALUE_${_gc_n}=false"
+export GIT_CONFIG_COUNT=$((_gc_n + 1))
+unset _gc_n
+
 # -----------------------------------------------------------------------------
 # Constants
 # -----------------------------------------------------------------------------
@@ -483,7 +492,7 @@ check_2_task_md() {
 
   local diff_output=""
   case "$mode" in
-    pre-commit) diff_output=$(git diff --cached -- "$task_md" 2>/dev/null || true) ;;
+    pre-commit) diff_output=$(git diff --no-color --no-ext-diff --cached -- "$task_md" 2>/dev/null || true) ;;
     post-commit) diff_output=$(git log -1 -p -- "$task_md" 2>/dev/null || true) ;;
   esac
 
@@ -521,7 +530,7 @@ check_3_modify_md() {
 
   local diff_output=""
   case "$mode" in
-    pre-commit) diff_output=$(git diff --cached -- "$modify_md" 2>/dev/null || true) ;;
+    pre-commit) diff_output=$(git diff --no-color --no-ext-diff --cached -- "$modify_md" 2>/dev/null || true) ;;
     post-commit) diff_output=$(git log -1 -p -- "$modify_md" 2>/dev/null || true) ;;
   esac
 
@@ -731,7 +740,7 @@ check_9_review_entry() {
     local diff_output=""
     case "$mode" in
       pre-commit|shared-pre-commit)
-        diff_output=$( { git diff --cached -- "$rmd" 2>/dev/null; git diff -- "$rmd" 2>/dev/null; } || true )
+        diff_output=$( { git diff --no-color --no-ext-diff --cached -- "$rmd" 2>/dev/null; git diff --no-color --no-ext-diff -- "$rmd" 2>/dev/null; } || true )
         ;;
       post-commit)
         diff_output=$(git log -1 -p -- "$rmd" 2>/dev/null || true)
@@ -812,7 +821,7 @@ check_shared_modify() {
   local modify_md="shared/docs/MODIFY.md"
   local diff_output=""
   case "$mode" in
-    pre-commit) diff_output=$(git diff --cached -- "$modify_md" 2>/dev/null || true) ;;
+    pre-commit) diff_output=$(git diff --no-color --no-ext-diff --cached -- "$modify_md" 2>/dev/null || true) ;;
     post-commit) diff_output=$(git log -1 -p -- "$modify_md" 2>/dev/null || true) ;;
   esac
   # NOTE: SIGPIPE+pipefail fix — grep -c with count comparison.
