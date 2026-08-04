@@ -98,3 +98,14 @@ source_of_truth: true
   `static/admin.html`(귀속 주석 2) · `tests/verify_*.mjs` 27건 · `tests/test_metadata_perm_split.py`
 - Impact: 동작 변화 0. 하네스 부채 상환으로 mjs 스위트 기준선 복원.
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260804T183000-appjs-module
+- Date: 2026-08-04
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 7 — B0)
+- Summary: index.html 의 app.js `<script>` 를 `type="module"` 로 전환 (app.js 무변경).
+  Cycle 8~10 도메인 분할의 전제. 의미론 변화 3축(deferred 실행·strict·전역 바인딩 소멸)을
+  기계 스캔으로 사전 검증 — 암묵 전역 쓰기 0·역방향 결합 0.
+- Files: `static/index.html` (script 태그 1 + 주석)
+- Impact: 실행 시점이 파싱-중→파싱-후로 이동하나 스크립트가 body 말미라 실질 동일.
+  전 사용자 플로우는 POST-DEPLOY PB-0008 풀 스모크로 확증.
+- Rollback Notes: 단일 PR revert 1회 (1태그 원복).

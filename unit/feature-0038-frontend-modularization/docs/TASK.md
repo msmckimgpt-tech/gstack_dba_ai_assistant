@@ -6,13 +6,13 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-08-03
-feature_status_note: ITEM-P5b 잔여 — Cycle 1~5 배포 완료, Cycle 6(metadata 최대 블록) 진행 — admin.js 4,805줄
+feature_status_note: ITEM-P5b 잔여 — Cycle 1~6 배포 완료(admin.js 4,805줄·-65.7%), Cycle 7(app.js module 전환) 진행
 ---
 
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~5 완료·배포, Cycle 6 진행 중)
+- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~6 완료·배포, Cycle 7 진행 중)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-03
@@ -58,7 +58,7 @@ app.js 충돌 최근 60일 0건 실측).
 | 5 | admin.js 제품/DS | `admin/products.js` · `admin/datasources.js` | 〃 |
 | 6 | admin.js 최대 덩어리 | `admin/metadata.js`(지식베이스 콘솔: 용어/ENUM/테이블/컬럼/검토큐/채택인박스/샘플검수) | `_meta*` 계열 — graph/ 와의 기존 import 계약 유지 |
 | 7 | app.js module 전환 (B0) | index.html `<script type="module" src="app.js">` — **전환만, 분할 없음** (회귀 원인 격리) | inline handler 0·동반 classic 은 window.* 결합만·body 말미 로드 실측 완료. 실패 시 fallback: classic 순차 분할(전역 lexical 공유) |
-| 8 | app.js 도메인 ① | `app/auth.js`(로그인·세션) · `app/profile.js`(프로필 drawer·설정) | module 패턴 (Cycle 7 이후) |
+| 8 | app.js 도메인 ① | `app/auth.js`(로그인·세션) · `app/profile.js`(프로필 drawer·설정) | module 패턴 (Cycle 7 이후). ⚠ 이벤트 콜백 내 `this` 3건(구 L12266~) — 이동 시 함수식 유지(화살표 전환 금지, C7 패널 MINOR-1) |
 | 9 | app.js 도메인 ② | `app/sidebar.js`(대화목록·폴더·검색) · `app/composer.js`(입력·첨부·전송) | |
 | 10 | app.js 도메인 ③ | `app/messages.js`(말풍선·markdown·SQL 결과·diff) · `app/progress.js`(run 추적·폴러·재연결·타임아웃 연장 배너) | progress 계열은 최근 회귀 다발 영역·테스트 결합 최다 — 마지막 |
 | Final | 재발 방지·정합 | CONVENTIONS code-modularity(임계: 단일 프론트 파일 3,000줄 초과 신규 기여는 모듈로, 5,000줄 초과 파일 증설 PR 은 추출 계획 동반) · ROADMAP ITEM-P5b status·STATUS.md·CODEBASE_MAP | |
@@ -104,12 +104,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
 ## 3. Task Queue
-- [ ] TASK-0016 Cycle 6 — verify → PR → 배포 → POST-DEPLOY PB-0008 (메타데이터 콘솔 5서브뷰)
-- [ ] TASK-0017 Cycle 7 착수 (app.js type=module 전환 — 단독 격리) — 이하 §2.1 표 순서
+- [ ] TASK-0018 Cycle 7 — verify → PR → 배포 → POST-DEPLOY PB-0008 **풀 스모크**(로그인→대화→요청→진행표시→답변→관리 왕복)
+- [ ] TASK-0019 Cycle 8 착수 (app/auth.js·app/profile.js) — 이하 §2.1 표 순서
 - [ ] TASK-0100 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합
 
 ## 4. In Progress
-- TASK-0016 (Cycle 6 마감 절차 — make test·적대 패널 진행 중)
+- TASK-0018 (Cycle 7 마감 절차 — make test·적대 패널 진행 중)
 
 ## 5. Blocked
 - 없음
@@ -132,10 +132,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0012 Cycle 4 마감 — 패널 BLOCK 흡수(quota 테스트 합본·RC=2→RC=0, REV-20260804T110000)·PR #1129 머지(475bde1b)·배포 RC=0·POST-DEPLOY PB-0008 PASS(권한 grid 94/65 게이팅·역할 188행, TEST Run-018)
 - [x] TASK-0013 Cycle 5 추출 — admin/datasources.js(795)·admin/products.js(2,090), admin.js 7,647줄(-45.4%), parity IDENTICAL·free-vars 8모듈 0·chip_list 합본 복구(기준선 18/1) (TEST Run-019, CHG-20260804T120000)
 - [x] TASK-0014 Cycle 5 마감 — 패널 BLOCK 흡수(consistency 합본·dead 배선 정리, REV-20260804T133000)·PR #1130 머지(03665d28)·배포 RC=0·POST-DEPLOY PB-0008 PASS(allowlist·엔진 아이콘·제품카드, TEST Run-023)
-- [x] TASK-0015 Cycle 6 추출 — admin/metadata.js(2,869 최대), admin.js 4,805줄(-65.7%), parity IDENTICAL + **mjs 하네스 부채 상환**(styles.css 17건·도메인 합본·기준선 귀책 판별 — 초래 3건 수선) (TEST Run-024, CHG-20260804T150000)
+- [x] TASK-0015 Cycle 6 추출 — admin/metadata.js(2,868 최대), admin.js 4,805줄(-65.7%), parity IDENTICAL + **mjs 하네스 부채 상환**(styles.css 직독 20건·구계약 단언 6건·기준선 귀책 판별) (TEST Run-024/026, CHG-20260804T150000)
+- [x] TASK-0016 Cycle 6 마감 — 패널 BLOCK 흡수(수선 누락 3+3·문서 정정·기준선 오측 반증, REV-20260804T170000)·PR #1132 머지(6f74d8cf)·배포 RC=0·POST-DEPLOY PB-0008 PASS(5서브뷰·검토큐·부트스트랩, TEST Run-027)
+- [x] TASK-0017 Cycle 7 전환 — index.html app.js type=module (기계 스캔: strict 파싱 OK·암묵 전역 쓰기 0·역방향 결합 0, TEST Run-028, CHG-20260804T183000)
 
 ## 7. Next Action
-- Cycle 6 verify → PR → 배포 → POST-DEPLOY PB-0008 → Cycle 7 (app.js)
+- Cycle 7 verify → PR → 배포 → POST-DEPLOY 풀 스모크 → Cycle 8~10 (app/ 분할)
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

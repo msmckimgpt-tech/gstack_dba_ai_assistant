@@ -11,12 +11,12 @@ source_of_truth: false
 ## 1. Summary
 ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
 **Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
-롤백 리허설 실증). **Cycle 1~5 완결**(PR 5건·배포·POST-DEPLOY 전건 PASS)·**Cycle 6 진행 중**(metadata 최대 블록 — admin.js 4,805줄, 누적 -65.7%; mjs 하네스 부채 상환 동반). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+롤백 리허설 실증). **Cycle 1~6 완결**(PR 6건·배포·POST-DEPLOY 전건 PASS — admin.js 4,805줄·-65.7%·9모듈 분리·하네스 부채 상환)·**Cycle 7 진행 중**(app.js type=module 전환 — B0 단독 격리). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
 
 ## 2. Progress
-- Planned: Cycle 7~10 (app.js 전환·분할) + Final(재발 방지)
-- In Progress: Cycle 6 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY PB-0008)
-- Done: 계획 승인 · Cycle 1~5 완결(Run-001~023) · Cycle 6 추출·기계 검증+하네스 부채 상환(Run-024)
+- Planned: Cycle 8~10 (app/ 도메인 분할) + Final(재발 방지·CONVENTIONS·admin.js 잔여 재실측)
+- In Progress: Cycle 7 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY 풀 스모크)
+- Done: 계획 승인 · Cycle 1~6 완결(Run-001~027) · Cycle 7 전환·기계 검증(Run-028)
 
 ## 3. Recent Changes
 - 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)
