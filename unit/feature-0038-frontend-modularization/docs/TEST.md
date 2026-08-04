@@ -412,6 +412,48 @@ source_of_truth: true
   **IDENTICAL** · free-vars 0/0.
 - Pass/Fail: PASS
 
+### Run 2026-08-05-035 (Cycle 8 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-05
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260805-c8-postdeploy-profile.png`
+- Result Summary: PR #1141 머지 → 배포(3d08b1e5, RC=0) → app/{auth,profile}.js 서빙 200.
+  실 Windows Chrome (에러 후크): 프로필 drawer **열기·탭 3종·전환·리사이즈 핸들·닫기**
+  전 상호작용 PASS — 에러 0. **로그아웃→로그인 왕복은 라이브 미수행 (사유)**: 실사용자
+  활성 세션(같은 Windows Chrome 공유)을 강제 종료하는 조작이라 보류 — 패널의 headless
+  A/B 가 로그인 폼 submit→handleLogin(모듈)→apiFetch→오류 렌더 **풀 경로를 이미 실증**
+  (REV-20260805T093000), C7 풀 스모크가 로그인-후 부트 경로를 라이브 검증. 다음 로그인
+  왕복 기회(사용자 비활성 창)에 보강 가능.
+- Pass/Fail: PASS (사유 명시 — §15.4.1)
+
+### Run 2026-08-05-036 (Cycle 9 — 폴더 관리 추출 기계 검증)
+- Date: 2026-08-05
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: app.js 12,430→**12,069줄**(-361). app/sidebar.js(381줄 — 폴더 로드·트리·
+  생성/이름변경/설정/삭제·undo·이동 다이얼로그·메뉴) 신설, 비연속 2세그먼트.
+  **역재구성 byte-parity IDENTICAL** · ESM OK · free-vars 0. **양방향 binding-write
+  사전 검사**가 공유 DnD `let _dqaDrag` 의 이동 불가 결합(잔류 renderConversationList +
+  중첩 핸들러가 직접 쓰기)을 적발 → 주석+let 잔류, renderConversationList 분리는
+  _dqaDrag 의 state 편입(비-중립 mini-change) 승인 후 후속으로 기록. 리터럴-대조 결합 0.
+- Pass/Fail: PASS
+
+### Run 2026-08-05-037 (Cycle 9 — make test)
+- Date: 2026-08-05
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: `sudo make test` — **RC=0**.
+- Pass/Fail: PASS
+
+### Run 2026-08-05-038 (Cycle 9 — 패널 SHIP)
+- Date: 2026-08-05
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: §18.8 패널 **SHIP**(B0/M0 — headless A/B 사이드바 DOM 992B 동일·새 폴더
+  생성→rename→커밋 플로우 동등·컨테이너 pytest 161+33 passed). MINOR 3(표기류) 흡수/기록.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저

@@ -11,12 +11,12 @@ source_of_truth: false
 ## 1. Summary
 ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
 **Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
-롤백 리허설 실증). **Cycle 1~7 완결**(PR 7건·배포·POST-DEPLOY 전건 PASS — admin.js -65.7%·app.js ES module 전환 풀스모크 완주)·**Cycle 8 진행 중**(app/auth·profile 비연속 세그먼트 추출 — app.js 12,431줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+롤백 리허설 실증). **Cycle 1~8 완결**(PR 8건·배포·POST-DEPLOY 전건 PASS)·**Cycle 9 진행 중**(app/sidebar 폴더 관리 — app.js 12,069줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
 
 ## 2. Progress
-- Planned: Cycle 9~10 (app/ 분할 잔여) + Final(재발 방지·CONVENTIONS·잔여 재실측)
-- In Progress: Cycle 8 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY)
-- Done: 계획 승인 · Cycle 1~7 완결(Run-001~031) · Cycle 8 추출·기계 검증(Run-032)
+- Planned: Cycle 10 (composer·messages/progress 재실측) + Final(재발 방지·CONVENTIONS·정합)
+- In Progress: Cycle 9 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY)
+- Done: 계획 승인 · Cycle 1~8 완결(Run-001~035) · Cycle 9 추출·기계 검증(Run-036)
 
 ## 3. Recent Changes
 - 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)
@@ -41,6 +41,9 @@ ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED 
   원칙. 승인 시 TASK.md 에 `PLAN-APPROVED by <user> on YYYY-MM-DD` 마커 기록 후 Execute.
 
 ## 8. Suggested Improvements
+- (기록만, C9 발견) `renderConversationList`(~520줄)의 후속 분리는 공유 DnD 상태
+  `let _dqaDrag` 를 `state.dqaDrag` 프로퍼티로 편입하는 **비-중립 mini-change**(1클래스
+  치환 + 테스트) 승인 후 가능 — byte-동치 원칙 하에서는 양방향 binding-write 결합으로 불가.
 - (기록만) 분할 완료 후 verify-completion 또는 pre-commit 에 "단일 프론트 파일 N줄 초과
   WARN" 기계 게이트 추가 검토 — CONVENTIONS 문면 컨벤션의 enforcement 보강.
 - (기록만, C3 패널 발견) `tests/verify_admin_tab_gating.mjs` 2건 FAIL 이 pre-existing

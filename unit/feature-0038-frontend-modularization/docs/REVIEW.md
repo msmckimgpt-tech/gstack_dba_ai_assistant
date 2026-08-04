@@ -99,3 +99,10 @@ source_of_truth: true
 - MINOR 흡수 3건: ① dead import/export(setupProfileDrawerResize — 유일 호출자가 모듈 내) 제거 ② profile-B 꼬리로 딸려간 `conv-date-tree` 주석 → 경계 재절단([2547,2993])으로 _ymdKey 와 재결합 ③ 모듈 헤더 레인지 off-by-one 정정. 재검: parity IDENTICAL·free-vars 0/0.
 - MINOR 기록 2건: ④ win-browser 시나리오 json 의 `typeof openProfile` 전역 의존은 C7 ESM 전환 시점부터 pre-existing(도구 시나리오 정비 후보 — REPORT §8) ⑤ 줄수 표기 wc/split 관례 차이(무영향).
 - Timestamp: 2026-08-05T09:30:00+09:00
+
+## REV-20260805T133000-app-sidebar-panel [SUBAGENT:qa] — SHIP
+- Related Change: CHG-20260805T110000-app-sidebar-split (Cycle 9)
+- 패널: fresh-context 적대 1렌즈(7항목 실측 — 역재구성 cmp IDENTICAL(각주: export 앞 공백 1줄은 모듈 스캐폴딩으로 제외 규칙 명기)·acorn-globals 3모듈 앱-자유식별자 0·_dqaDrag 코드 참조 0 독립 실증(잔류 정당)·이동 22심볼 외부 참조 0·컨테이너 pytest 161+33 passed·스탬프 3참조 동일·**headless A/B — 사이드바 DOM 992B 완전 동일 + 새 폴더 생성→인라인 rename→Enter 커밋 클릭 플로우 동등·에러 0/0**). **BLOCKING 0 / MAJOR 0 / MINOR 3.**
+- MINOR 흡수: 모듈 헤더 레인지 표기 통일(L2584–2908). 기록: 역재구성 규칙에 "마지막 세그먼트 말미 공백 1줄은 스캐폴딩" 각주(본 세션 재구성 스크립트는 동일 규칙으로 이미 IDENTICAL 판정)·줄수 wc/split 표기 관례 차이.
+- 부가 확인: test_menu_action_permission_wiring 의 app.js 단독 스캔 게이트 침식 없음(sidebar.js 에 action: 리터럴 0).
+- Timestamp: 2026-08-05T13:30:00+09:00
