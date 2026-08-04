@@ -2152,3 +2152,9 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 부수효과(의도): 버전 페이징 재렌더 시 ① 액션 숨김 상태가 복원되지 않던 것과 ② 클릭 핸들러가 중복 부착돼 `doJoin`/`doFork` 가 여러 번 발사될 수 있던 것이 함께 해소된다(같은 코드 경로).
 - 캐시버스터: 수기 bump 없음 — 소스는 `?v=dev` 고정이고 이미지 빌드가 `scripts/inject_asset_stamp.py` 로 content-hash 를 주입한다(2026-07-12 ITEM-09).
 - Files: `unit/feature-0003-agent-web-ui/src/static/share.js`, `unit/feature-0003-agent-web-ui/src/routers/share.py`, `unit/feature-0003-agent-web-ui/tests/test_share_join_btn_visibility.py`, `unit/feature-0003-agent-web-ui/docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST}.md`, `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260804T0458-share-join-btn-visibility.md`.
+
+## CHG-20260804T062000-share-join-btn-postdeploy (20260804T0620-share-join-btn-postdeploy — POST-DEPLOY 실증, doc-only)
+- 코드 변경 0 — 배포·라이브 실측 결과 기록만. 상세는 `docs/test-runs.d/20260804T0458-share-join-btn-visibility.md` §5 · TEST.md Run.
+- 배포: PR #1134 머지(main `d23f0a0d`) → `--web-only` 스코프, web-a·web-b `GIT_COMMIT=d23f0a0d`, soak 90s 통과, Caddyfile 무변경. 워커 미접촉 — 변경분(share 정적 자산 + 공유 뷰 응답 1필드)은 web 전용 경로.
+- 실증: 소유자 관점 참여 버튼 가시 · 클릭 시 `/join` **0건**(요청 캡처) · deep-link 이동 · 익명 `conversation_id=null` · fork 무회귀.
+- Files: `docs/{TASK,MODIFY,TEST,REPORT}.md`, `docs/test-runs.d/20260804T0458-share-join-btn-visibility.md`.

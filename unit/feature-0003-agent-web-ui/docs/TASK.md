@@ -7869,3 +7869,19 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/2
 
 **경계 양측 검증 (G4)**: 노출(양성) = 로그인 + joinable 링크(소유자 포함). 미노출(음성) = 비로그인
 (로그인 링크만) · `joinable=false` 링크. 후자가 살아 있어야 참여 미허용 링크가 조용히 참여 가능해지지 않는다.
+
+## 20260804T0620-share-join-btn-postdeploy — 공유 링크 '대화에 참여' 버튼 POST-DEPLOY 실증 (doc-only, 코드 변경 0)
+- [x] `배포 실증` — 산출물: PR #1134 머지(main `d23f0a0d`) → `bin/deploy-web.sh --web-only` → web-a·web-b `GIT_COMMIT=d23f0a0d` · soak 90s 통과 · Caddyfile 무변경(edge blip 0) · 배선 확인: 서빙 자산 `/app/web/static/share.js` 에 `shouldShowJoin`/`openJoinedConversation` 참조 5건, `share.py` 에 `conversation_id ... if already_member else None` 존재(파이프 exit 아닌 **서빙 주체 SHA + 실제 코드**로 판정).
+- [x] `PB-0008 라이브 실측` — 산출물: 실 Windows Chrome 150 relay, 소유자 본인이 자기 joinable 링크를 여는 동형 케이스(share `Id=77` · 대화 `20260722015451-d23ad939` · 계정 `bootstrap_admin`) 6축 PASS — 버튼 가시 · 종전 조건 대조(`can_join=false`인데 노출) · **`/join` 요청 0건** · deep-link 이동 · fork/로그인 링크 무회귀 · 익명 `conversation_id=null` · 배선 확인: 요청 캡처(`page.on("request")`)로 join 미호출을 **직접 관측**.
+- [x] `증거` — `artifacts/pb0008/20260804-share-join-btn-owner.png` (하단 액션 바 [링크 복사][대화에 참여][내 계정에서 fork] 3개 렌더).
+- [x] `검증 함정 기록` — `win-browser.py` 의 `ctx.pages[0]` 고정이 사용자 탭과 경합해 **거짓 실패**를 1회 유발 → CDP `/json/list` 로 특정 후 전용 탭(`ctx.new_page()`)으로 재검증. 정본: fragment §5.
+
+**요청 범위 자기-열거 완결성 게이트 (§16.7)**
+
+**항목 열거 (G1)**: 단일 항목 — 선행 cycle 이 잔여로 남긴 PB-0008 라이브 실측을 완결한다.
+
+**항목별 배선 확인 (G2)**: 코드 변경 0. 기록 대상은 배포본 실측치뿐이며 fragment §5 · TEST.md Run · REPORT.md POST-DEPLOY 절 3곳이 같은 실측을 참조한다.
+
+**주장 affordance 실측 (G3)**: 위 6축 표가 곧 실측 결과다(추정·전언 없음).
+
+**경계 양측 검증 (G4)**: 노출(양성) = 소유자·기존 멤버 · 미노출(음성) = 익명 뷰(로그인 링크만, `conversation_id=null`). 둘 다 라이브에서 확인.

@@ -2528,3 +2528,8 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - **기계 검증**: `node --check share.js` PASS · 신규 9건 PASS · share/fork/member/join 스코프 회귀 스위트 **98 passed**(격리 env 적용) · ruff PASS.
 - **[SKIPPED:tool-restricted:ux,design]** — §18.8 표가 요구하는 ux/design subagent 는 상위 지시로 호출 불가. 대체 커버리지: 버튼 문구·DOM·라벨 보존을 F4 로 고정하고, 실제 화면 배치·가시성은 PB-0008 Windows-browser 실측(POST-DEPLOY)이 담당. **미검증 범위를 완료로 보고하지 않는다.**
 - **§9.1 기록된 가정**: 이미 멤버인 viewer 에게 대화 식별자(`conversation_id`) 노출은 새로운 누출이 아니다 — 그 계정은 이미 해당 대화 열람 권한을 보유한다. 익명·비멤버에겐 `None`(B3 로 고정).
+
+## REV-20260804T062000-share-join-btn-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실증 기록(문서 전용, 코드 변경 0)
+- Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/REPORT/test-runs.d append) → §18.8 표 첫 행 SKIP.
+- 본 cycle 이 기록하는 실측 자체가 선행 cycle(`REV-20260804T045828-share-join-btn-visibility`)의 잔여 검증 산출물이다 — 배포 SHA·서빙 코드·PB-0008 6축·증거 스크린샷.
+- 선행 cycle 이 `[SKIPPED:tool-restricted:ux,design]` 로 남겼던 화면 배치·가시성 미검증 범위가 본 실측으로 **해소**됐다(액션 바 3버튼 렌더 육안 확인).

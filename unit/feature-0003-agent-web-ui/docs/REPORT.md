@@ -1885,3 +1885,22 @@ joinable && **!already_member**)이 false → `share.js` 의 `can_join` 단독 �
 4. **관리 콘솔에 계정 스코프 프롬프트 편집기 부재**: `scope:"account"` 를 지원하는 공용 에디터가 있으나
    호출부가 프로필(본인)뿐 — 관리자가 특정 사용자의 개인 프롬프트를 보거나 생성할 수단이 없다(설계상
    self-service 결정이었는지 재확인 필요).
+
+### [POST-DEPLOY 완결 2026-08-04] share-join-btn-visibility — PR #1134 머지(`d23f0a0d`) → 배포 → PB-0008 **PASS**
+선행 cycle 이 잔여로 남긴 라이브 실측 종결. 사용자가 리포트한 상황과 동형인 *소유자 본인이 자기
+joinable 공유 링크를 여는* 케이스(share `Id=77` · 대화 `20260722015451-d23ad939` · 계정
+`bootstrap_admin`)로 실 Windows Chrome 150 에서 6축 검증했다 — ① '대화에 참여' 버튼 가시
+② 배포본 응답이 `can_join=false`·`already_member=true` 인데도 노출(**종전 코드면 숨겨졌을 조건**)
+③ 클릭 시 `/api/share/*/join` 요청 **0건**(요청 캡처 직접 관측 — 적대 리뷰 P1 회피 실증)
+④ `?conversation=<cid>` deep-link 이동 후 목표 대화 열림 ⑤ fork·링크 복사·로그인 링크 무회귀
+⑥ 익명 뷰 `viewer.conversation_id=null`. 증거 `artifacts/pb0008/20260804-share-join-btn-owner.png`.
+
+**남은 리스크**: 없음(이번 범위). 선행 cycle 이 `[SKIPPED:tool-restricted:ux,design]` 로 남긴
+화면 배치·가시성 미검증 범위가 본 실측으로 해소됐다.
+
+**후속 제안(§8.1, 이번 범위 밖)**: `can_fork` 는 ban 된 계정에도 `true` 라 fork 버튼이 보이고 클릭
+시 서버 403 이 난다 — "보이는데 실패하는 버튼" 계열 마찰로 참여 버튼과 동일 계보다. 별도 cycle 로
+다룰 가치가 있다(본 변경으로 나빠지지 않았음).
+
+정본: TASK/CHG/REV `20260804T0620-share-join-btn-postdeploy` · fragment
+`20260804T0458-share-join-btn-visibility.md` §5.
