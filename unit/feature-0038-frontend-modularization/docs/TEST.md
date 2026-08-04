@@ -145,6 +145,39 @@ source_of_truth: true
   stale 포인터 주석 2건(app.js·admin.html) 갱신. admin.js 최종 13,058줄(-949).
 - Pass/Fail: PASS
 
+### Run 2026-08-03-011 (Cycle 2 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-03
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260803-c2-postdeploy-usage.png`
+- Result Summary: PR #1125 머지 → deploy-web 배포(3748c4fd, soak 통과, RC=0). 신규 모듈
+  서빙 200 + 스탬프 전파(`?v=b01e2ae58857`) 확인. 실 Windows Chrome — error/unhandledrejection
+  후크 설치 후: **'운영 현황' 서브탭(패널 BLOCK 축) 클릭 → 85,283자 렌더·KPI 표시·에러 0**,
+  새로고침·'더 보기' 실행, 'LLM 사용량' 서브탭 → KPI/일별차트/모델도넛/역할막대/모델칩 13개
+  렌더, 기간 변경 재조회·모델 칩 토글 실행 — **전 구간 pageerror 0**. 스크린샷 evidence.
+- Pass/Fail: PASS
+
+### Run 2026-08-03-012 (Cycle 3 — settings/audit 추출 기계 검증)
+- Date: 2026-08-03
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: admin.js 13,058→11,827줄(-1,231). admin/settings.js 881줄·admin/audit.js
+  388줄 신설. **역재구성 byte-parity IDENTICAL** · ESM 파싱 5모듈 OK · **acorn-globals
+  자유 식별자 settings/audit = 0/0**. 상태 초기화(adminState.settings/audit)는 admin.js
+  잔류(TDZ 축 — Cycle 2 학습 선반영). mountGuidanceRegistryPanel 은 settings.js export +
+  admin.js re-export 로 aiops.js 계약 보존. 참조 테스트 1건(test_audit_tamper_evidence F1)
+  합본 전환. 검증기 자체 결함(푸터 제거 창 오류)으로 1차 MISMATCH → 규칙 정확화 후 IDENTICAL.
+- Pass/Fail: PASS
+
+### Run 2026-08-03-013 (Cycle 3 — make test 전 스위트)
+- Date: 2026-08-03
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: C3 worktree `sudo make test` — **RC=0** (pytest 전 스위트 PASS · ruff clean).
+  합본 전환한 test_audit_tamper_evidence F1 포함.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저

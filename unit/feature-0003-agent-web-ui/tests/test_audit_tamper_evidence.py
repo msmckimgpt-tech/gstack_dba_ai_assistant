@@ -164,7 +164,9 @@ def test_b8_background_sealer():
 
 # ── F: frontend ─────────────────────────────────────────────────────────────
 def test_f1_admin_verify_ui():
-    js = _read_static("admin.js")
+    # feature-0038 Cycle 3: 감사 로그 pane 은 admin/audit.js 로 분리(byte-동치 이동) —
+    #   pane 소속 단언은 admin.js 와 분리 모듈 합본으로 검사한다.
+    js = _read_static("admin.js") + _read_static("admin/audit.js")
     assert "triggerAuditChainVerify" in js
     assert "/api/admin/audits/verify" in js
     assert "auditVerifyBtn" in js

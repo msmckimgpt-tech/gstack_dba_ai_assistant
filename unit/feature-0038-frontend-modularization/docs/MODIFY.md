@@ -50,3 +50,16 @@ source_of_truth: true
   `static/admin.html`(주석 1줄)
 - Impact: 동작 변화 0 (결함 사전 차단). admin.js 13,058줄.
 - Rollback Notes: Cycle 2 단일 PR revert 에 포함.
+
+## CHG-20260803T203000-settings-audit-split
+- Date: 2026-08-03
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 3)
+- Summary: admin.js 설정 pane(구 L6374–7235)·감사 로그 pane(구 L7257–7635)을
+  `admin/settings.js`·`admin/audit.js` 로 byte-동치 이동. 신규 export 5(bindPaneSubtabs·
+  buildSystemPromptEditor·refreshPendingUI·showGuidanceDetail·formatDateTime),
+  mountGuidanceRegistryPanel 은 re-export 로 aiops 계약 보존. RS_* 5 const 는 settings.js
+  export → admin.js pending-apply 엔진이 import (의존 모듈 선평가라 TDZ-안전).
+- Files: `static/admin.js`(-1,231줄→11,827) · `static/admin/{settings,audit}.js`(신규) ·
+  `tests/test_audit_tamper_evidence.py`(합본 로더)
+- Impact: 동작 변화 0.
+- Rollback Notes: 단일 PR revert 1회.
