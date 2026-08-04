@@ -120,3 +120,13 @@ source_of_truth: true
   `tests/test_two_factor_auth.py`(합본)
 - Impact: 동작 변화 0.
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260805T110000-app-sidebar-split
+- Date: 2026-08-05
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 9 — 재스코프)
+- Summary: app.js 폴더 관리 함수군(구 L2540–2580·L2584–2908)을 app/sidebar.js 로
+  byte-동치 이동. 신규 export 7. `let _dqaDrag`(공유 DnD 상태)·renderConversationList 는
+  양방향 쓰기 결합으로 잔류 — 후속 분리는 state 편입 mini-change 승인 필요 (REPORT §8).
+- Files: `static/app.js`(-361줄→12,069) · `static/app/sidebar.js`(신규 381)
+- Impact: 동작 변화 0.
+- Rollback Notes: 단일 PR revert 1회.
