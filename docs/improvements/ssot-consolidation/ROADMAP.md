@@ -117,7 +117,13 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 - **gate**: make test PASS + 전체 build + browser + 롤백 리허설 + plan-review 승인 + check #9 + 단독 cycle
 
 ### ITEM-P5b · 코드 비대화 해소 (모놀리스 분할/모듈화) — 신규
-- **status**: pending
+- **status**: done — 프론트 잔여분 완결 (feature-0038-frontend-modularization, 2026-08-03~04:
+  css/ 7분할 + admin/ 9모듈(admin.js 14,007→4,804줄·-66%) + app.js ES module 전환 +
+  app/ 4모듈(13,216→11,119줄) — PR #1124/#1125/#1128/#1129/#1130/#1132/#1133/#1141/#1142/#1143,
+  cycle 별 make test·§18.8 적대 패널·POST-DEPLOY PB-0008·롤백 리허설 전건. 재발 방지 =
+  CONVENTIONS §14 code-modularity. 잔여 오케스트레이터 지도·후속 후보는
+  unit/feature-0038-frontend-modularization/docs/REPORT.md. 백엔드 app.py 는 feature-0012
+  기완결 — 본 항목에서 재착수하지 않음)
 - **feature_id**: (코드 단위 별도 feature-NNNN cycle, 라이브 web app)
 - **risk_grade**: **Critical** (라이브 web app, 146 endpoint, 런타임 회귀)
 - **depends_on**: [ITEM-P5a]   <!-- import 실측·shared 추출 선행과 정합 -->

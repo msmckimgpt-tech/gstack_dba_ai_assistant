@@ -112,3 +112,11 @@ source_of_truth: true
 - 패널: fresh-context 적대 1렌즈(7항목 실측 — 역재구성 cmp 완전 일치(산술 정합 포함)·acorn-globals suspect 0·바인딩 양방향 0·잔여 참조 전부 export 집합 내부·테스트 33개 전수 재스캔 회귀 0·컨테이너 pytest 16+전체 스위트 RC=0·csv 하네스 22/0 기준선·mjs 19종 A/B FAIL-set 라인 단위 동일·스탬프 3참조 동일·**headless A/B — 4메시지 스텁 렌더 `#messageLog` innerHTML 8,253자 byte-동일·마커 7종 실증**). **BLOCKING 0 / MAJOR 0 / MINOR 3(표기류).**
 - MINOR 기록: 줄수 960(문서 961 표기 정정)·SQL_FORMAT_KEYWORDS 리터럴 const 1건은 원본도 top-level(무해)·mjs jsdom 환경 이슈 pre-existing.
 - Timestamp: 2026-08-05T17:00:00+09:00
+
+## REV-20260804T194500-final-panel [SUBAGENT:qa] — BLOCK → 전건 흡수 후 SHIP-경로
+- Related Change: Final (CONVENTIONS §14·ROADMAP done·완결 문서화)
+- 패널: fresh-context 적대 1렌즈(docs/policy — 수치 전건 wc/git 실측 일치·PR 10건 해시 1:1·방법 서술↔REVIEW 기록 무모순·최소-diff 준수·차단 요인 코드 실증). **판정: 초안 BLOCK — B2/M2/m4.**
+- **BLOCKING 흡수**: ① REPORT §3/§5/§7 계획-단계 stale(완결 선언과 모순) → 최신화 ② TASK §3 잔재 TASK-0100 중복 → 제거.
+- **MAJOR 흡수**: ③ **날짜 오표기 정정** — 호스트 클록·git 커밋 정본은 2026-08-04 인데 Final diff 문서가 08-05 로 표기(작성자 날짜 진행 오인). 이번 diff 내 전건 08-04 로 정정. **이미 머지된 C8~C10 기록의 `REV-20260805T*` id·Run-035~042 날짜 표기는 append-only 라 존치** — 실제 작업일은 08-04 이며 이 각주가 정정 기록이다. ④ AC-3 이중 체계(§2.1 스모크 vs FUNCTION split-3) → FUNCTION full-id 로 탈모호화.
+- **MINOR 흡수**: Run-011→007 인용 정정·feature_status_date/Last Updated 08-04·app.js 기점 13,216 각주·CONVENTIONS §14.1 "ES module" JS 한정.
+- Timestamp: 2026-08-04T19:45:00+09:00

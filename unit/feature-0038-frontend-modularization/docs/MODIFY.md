@@ -140,3 +140,15 @@ source_of_truth: true
   테스트 5건 합본 전환
 - Impact: 동작 변화 0.
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260804T194500-final-consolidation
+- Date: 2026-08-04
+- Related Requirement: REQ-20260803-code-modularity-convention + initiative 완결 정합
+- Summary: Final — CONVENTIONS §14(프론트 code-modularity 임계·분할 방법 정본) 등재,
+  ssot ROADMAP ITEM-P5b status→done(최소 diff), feature-0038 완결 문서화(TASK §9
+  Requested Scope·Completion Checklist·REPORT 최종화·AC 탈모호·날짜 정본 08-04 정정),
+  wiki 카드/Log·STATUS 정합. 코드 무변경.
+- Files: `docs/CONVENTIONS.md`(§14) · `docs/improvements/ssot-consolidation/ROADMAP.md` ·
+  `unit/feature-0038-frontend-modularization/docs/*` · `wiki/*` · `docs/STATUS.md`
+- Impact: 정책/문서만 — 정적 자산 무변경이라 배포 불필요(웹 이미지 static 무접촉).
+- Rollback Notes: 단일 PR revert 1회.

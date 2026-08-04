@@ -31,9 +31,10 @@ ROADMAP **ITEM-P5b 잔여** — 백엔드 분할은 feature-0012 완결).
 
 ## 2. 상태
 
-- **in-progress** (2026-08-03 착수, PLAN-APPROVED by mckim)
-- Cycle 1 완료: styles.css → `css/` 7파일 순차 분할 (concat byte-identical 증명 +
-  PB-0008 시각검증). Cycle 2~10 (admin.js/app.js 도메인 추출) + Final(재발 방지) 잔여.
+- **완결** (2026-08-03~04, PLAN-APPROVED by mckim — 10 cycle 전건 머지·배포·POST-DEPLOY PASS)
+- 산출: css/ 7분할 · admin.js 14,007→4,804줄(-66%)+admin/ 9모듈 · app.js ES module 전환+
+  app/ 4모듈 · CONVENTIONS §14 code-modularity 재발 방지. 잔여 오케스트레이터 감축은
+  공유 let 결합(state 편입 mini-change 승인 필요)이 전제 — REPORT §2/§8.
 
 ## 3. 책임 경계
 

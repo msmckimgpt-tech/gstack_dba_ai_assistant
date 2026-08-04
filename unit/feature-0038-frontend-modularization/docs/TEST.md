@@ -491,6 +491,17 @@ source_of_truth: true
   7종 실증·mjs 19종 A/B FAIL-set 동일=회귀 0). MINOR 3(표기류) 흡수/기록.
 - Pass/Fail: PASS
 
+### Run 2026-08-04-043 (Cycle 10 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-04
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260805-c10-postdeploy-messages.png`
+- Result Summary: PR #1143 머지 → 배포(e7d2bf93, RC=0) → app/messages.js 서빙 200.
+  실 Windows Chrome (에러 후크): 기존 대화 렌더 — **markdown 39노드·SQL 패널 5·details 3·
+  아바타 7** 전부 정상 표출, 에러 0.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저

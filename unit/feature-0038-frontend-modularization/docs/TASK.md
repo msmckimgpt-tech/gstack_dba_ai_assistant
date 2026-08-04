@@ -4,18 +4,18 @@ feature_id: feature-0038-frontend-modularization
 status: active
 edit_policy: rewrite
 source_of_truth: true
-feature_status: in-progress
-feature_status_date: 2026-08-03
-feature_status_note: ITEM-P5b 잔여 — Cycle 1~9 배포 완료, Cycle 10(app 메시지 렌더) 진행 — app.js 11,119줄
+feature_status: review
+feature_status_date: 2026-08-04
+feature_status_note: ITEM-P5b 완결 — 10 cycle 전건 배포(css 7분할·admin/ 9모듈 -66%·app/ 4모듈)·CONVENTIONS §14 재발 방지, 후속 후보는 REPORT §8
 ---
 
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~9 완료·배포, Cycle 10 진행 중)
+- State: done-with-followups (PLAN-APPROVED 2026-08-03 — Cycle 1~10 완료·배포, Final 정합 landed)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
-- Last Updated: 2026-08-03
+- Last Updated: 2026-08-04
 - 근거 로드맵: `docs/improvements/ssot-consolidation/ROADMAP.md` ITEM-P5b 잔여분
   (⚠ 2026-08-03 실측 갱신 — 백엔드 app.py 분할은 feature-0012 완결, **재착수 금지**.
   잔여 실체 = 프론트 3파일: admin.js 14,007줄 · app.js 13,165줄 · styles.css 9,328줄)
@@ -104,12 +104,10 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
 ## 3. Task Queue
-- [ ] TASK-0024 Cycle 10 — verify → PR → 배포 → POST-DEPLOY (메시지 렌더·SQL 패널·CSV)
-- [ ] TASK-0025 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합 + 잔여 재실측 보고
-- [ ] TASK-0100 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합
+- (비었음 — 후속 후보는 REPORT §8: composer/progress 추출은 _dqaDrag state 편입 등 mini-change 승인 필요)
 
 ## 4. In Progress
-- TASK-0024 (Cycle 10 마감 절차 — make test·적대 패널 진행 중)
+- 없음
 
 ## 5. Blocked
 - 없음
@@ -140,40 +138,41 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0020 Cycle 8 마감 — 패널 SHIP(headless A/B 로그인 풀 경로, REV-20260805T093000)·PR #1141 머지(3d08b1e5)·배포 RC=0·POST-DEPLOY PASS(프로필 drawer 전 상호작용·로그인 왕복은 사유 명시 갈음, TEST Run-035)
 - [x] TASK-0021 Cycle 9 추출 — app/sidebar.js(381, 폴더 관리 2세그먼트), parity IDENTICAL·_dqaDrag 양방향 결합 적발→잔류 재스코프 (TEST Run-036, CHG-20260805T110000)
 - [x] TASK-0022 Cycle 9 마감 — 패널 SHIP(headless A/B DOM 992B 동일·폴더 플로우 동등, REV-20260805T133000)·PR #1142 머지(7e229e35)·배포 RC=0·POST-DEPLOY PASS(폴더 생성/정리·DnD 표식, TEST Run-039)
-- [x] TASK-0023 Cycle 10 추출 — app/messages.js(961, 단일 세그먼트 구 L3118–4068), app.js 11,119줄, parity IDENTICAL·테스트 5건 합본 (TEST Run-040, CHG-20260805T150000)
+- [x] TASK-0023 Cycle 10 추출 — app/messages.js(960, 단일 세그먼트 구 L3118–4068), app.js 11,119줄, parity IDENTICAL·테스트 5건 합본 (TEST Run-040, CHG-20260805T150000)
+- [x] TASK-0024 Cycle 10 마감 — 패널 SHIP(headless A/B 렌더 8,253자 byte-동일, REV-20260805T170000)·PR #1143 머지(e7d2bf93)·배포 RC=0·POST-DEPLOY PASS(TEST Run-043)
+- [x] TASK-0025 Final — CONVENTIONS §14 code-modularity 등재·ROADMAP ITEM-P5b done·STATUS/wiki 정합·잔여 재실측 보고(REPORT §2)
 
 ## 7. Next Action
-- Cycle 10 verify → PR → 배포 → POST-DEPLOY → Final
+- (initiative 완결) 후속 후보는 REPORT §8 — 별도 계획 승인 후 진행
 
 ## 8. Completion Checklist
-- [ ] 모든 REQ의 AC가 구현되었다
-- [ ] 단위 테스트(unit test)가 통과한다 (AGENTS.md §8.2 단계 1)
-- [ ] 전체/통합 테스트(integration test)가 통과하거나, 미작성 사유와 커버 계획이 TEST.md §4에 기록되었다 (AGENTS.md §8.2 단계 2)
-- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 TEST.md §3 또는 test-runs.d/ fragment 에 `Environment: Windows-browser` Run 을 기록했다 (§15.4.1 · PB-0008)
-- [ ] FUNCTION.md가 현재 동작과 일치한다
-- [ ] MODIFY.md에 변경 이력이 기록되었다
-- [ ] REVIEW.md에 판단 근거가 기록되었다
-- [ ] REPORT.md에 최종 상태가 반영되었다
-- [ ] TEST.md에 테스트 결과가 기록되었다
-- [ ] BLOCKED 항목이 없거나 사람에게 전달되었다
-- [ ] STATUS.md에 기능 상태가 갱신되었다
-- [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
-- [ ] Git 커밋이 완료되었다
-- [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
-- [ ] 요청 범위 자기-열거 완결성 게이트를 통과했다 (§9 + AGENTS.md §16.7)
+- [x] 모든 REQ의 AC가 구현되었다 — §2.1 AC-1~5 충족(AC-3 풀 스모크 포함) · FUNCTION §11 `AC-…-split-3`(오케스트레이터 ≤~3,000줄 목표)만 **부분**(잔여 지도 REPORT §2, 정직 표기)
+- [x] 단위 테스트 통과 (cycle 별 make test RC=0 — TEST §3)
+- [x] 전체/통합 — make test 가 feature-0002/0003/0023 스위트 포함 (TEST §3)
+- [x] 웹/UI Windows-browser Run 기록 (Run-005/007/011/014/018/023/027/031/035/039/043 + cycle 별 fragment)
+- [x] FUNCTION.md 정합
+- [x] MODIFY.md 기록 (CHG 11건)
+- [x] REVIEW.md 기록 (패널 REV 10건 + 계획 승인)
+- [x] REPORT.md 최종 반영
+- [x] TEST.md 기록 (Run-001~043)
+- [x] BLOCKED 없음
+- [x] STATUS.md 갱신 (gen-status)
+- [x] LEARNINGS — 교훈은 REVIEW/REPORT §8 에 귀속 (프로젝트 관행)
+- [x] Git 커밋/원격 동기화 (PR 10건 머지 + Final PR)
+- [x] §16.7 게이트 — §9 참조
 
 ## 9. Requested Scope (요청 범위 자기-열거)
 
 완료 선언 **직전**에 채운다. 원 요청에서 요구된 항목·범위를 **항목당 1행**으로 열거하고,
 각 행에 산출물·배선 확인 결과를 적는다 (AGENTS.md §16.7 G1~G3).
 
-- [x] `ITEM-P5b 잔여 — styles.css 분할 (Cycle 1)` — 산출물: `static/css/{base,shell,chat,drawers,admin,profile,search-audit}.css` + index/admin.html 7-link 배선 · 배선 확인: concat cmp byte-identical + PB-0008 실브라우저 7 sheets 로드·렌더 정상 (TEST Run-002/005)
-- [ ] `ITEM-P5b 잔여 — admin.js 모듈 분할` — Cycle 2~6 (이월, §2.1 표)
-- [ ] `ITEM-P5b 잔여 — app.js 모듈 분할` — Cycle 7~10 (이월, §2.1 표)
-- [x] `게이트 준수 (plan-review·make test·브라우저 QA·롤백 리허설)` — 산출물: PLAN-APPROVED 마커(TASK §2.1) + TEST Run-004(make test EXIT 0) + Run-005(PB-0008) + 롤백 리허설(Run-006 예정) · 배선 확인: verify-completion --pre-commit
-- [ ] `CONVENTIONS code-modularity 재발 방지` — Final cycle (이월)
+- [x] `ITEM-P5b 잔여 — styles.css 분할` — 산출물: `css/` 7파일 + 7-link 배선 · 확인: concat cmp identical + PB-0008 (Run-002/005/007)
+- [x] `ITEM-P5b 잔여 — admin.js 모듈 분할` — 산출물: `admin/` 9모듈, 14,007→4,804줄(-66%) · 확인: cycle 별 역재구성 parity IDENTICAL + POST-DEPLOY PB-0008 (Run-008~027)
+- [x] `ITEM-P5b 잔여 — app.js 모듈 분할` — 산출물: ES module 전환 + `app/` 4모듈, 13,216(C8 착수 실측 — 08-03 계획 기점 13,165 + 병렬 세션 증분)→11,119줄 · 확인: parity IDENTICAL + 풀 스모크·POST-DEPLOY (Run-028~043). **오케스트레이터 ≤3,000줄 목표는 부분 달성** — 잔여 지도·차단 요인(공유 let 결합 등) REPORT §2/§8 정직 기록
+- [x] `게이트 준수 (plan-review·make test·브라우저 QA·롤백 리허설)` — PLAN-APPROVED 마커 + cycle 별 make test RC=0 + PB-0008 Run 11건 + 롤백 리허설 실증(Run-006) + §18.8 패널 10회(BLOCK 4회 → 전건 흡수) · 확인: verify-completion 매 cycle PASS
+- [x] `CONVENTIONS code-modularity 재발 방지` — 산출물: CONVENTIONS §14(임계·분할 방법 정본) · 확인: Final PR 포함
 
-**주장 affordance 실측 (G3)**: 해당 없음 (behavior-neutral 분할 — 신규 사용자 기능 주장 없음)
+**주장 affordance 실측 (G3)**: 해당 없음 (behavior-neutral 분할 — 신규 사용자 기능 주장 없음). 라이브 인터랙션 실측은 PB-0008 Run 11건이 담당
 
 **경계변수 양측 검증 (G4)**: CSS 분할 절단선 7곳 — 절단선 양측이 각각 유효한 파일이 되는지
 파일별 주석/중괄호 균형 스캔으로 전건 검증 (TEST Run-002; 원본 기존재 결함 1건은 동일 파일 내 보존)
