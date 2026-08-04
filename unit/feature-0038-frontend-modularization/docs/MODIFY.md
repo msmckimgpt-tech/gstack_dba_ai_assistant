@@ -130,3 +130,13 @@ source_of_truth: true
 - Files: `static/app.js`(-361줄→12,069) · `static/app/sidebar.js`(신규 381)
 - Impact: 동작 변화 0.
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260805T150000-app-messages-split
+- Date: 2026-08-05
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 10)
+- Summary: app.js 메시지 콘텐츠 렌더 묶음(구 L3118–4068)을 app/messages.js 로 byte-동치
+  이동. 신규 export 3(markdownToHtml·_downloadAttachmentById·messageLogEl).
+- Files: `static/app.js`(-949줄→11,119) · `static/app/messages.js`(신규 960) ·
+  테스트 5건 합본 전환
+- Impact: 동작 변화 0.
+- Rollback Notes: 단일 PR revert 1회.

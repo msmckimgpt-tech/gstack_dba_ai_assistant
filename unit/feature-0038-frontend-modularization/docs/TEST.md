@@ -454,6 +454,43 @@ source_of_truth: true
   생성→rename→커밋 플로우 동등·컨테이너 pytest 161+33 passed). MINOR 3(표기류) 흡수/기록.
 - Pass/Fail: PASS
 
+### Run 2026-08-05-039 (Cycle 9 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-05
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260805-c9-postdeploy-sidebar.png`
+- Result Summary: PR #1142 머지 → 배포(7e229e35, RC=0) → app/sidebar.js 서빙 200.
+  실 Windows Chrome (에러 후크): 새 폴더 버튼 → **POST /api/folders 200 → '새 폴더' 렌더**
+  (createFolderFlow 이동분 라이브 동작) → 테스트 폴더 API 삭제 정리(id 21) · 대화 행
+  **dragstart 시각 표식 동작**(잔류 _dqaDrag 경로 회귀 없음) — 전 구간 에러 0.
+- Pass/Fail: PASS
+
+### Run 2026-08-05-040 (Cycle 10 — messages 렌더 추출 기계 검증)
+- Date: 2026-08-05
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: app.js 12,068→**11,119줄**(-949). app/messages.js(960줄 — markdown/SQL/
+  CSV/스텝 패널/상세/첨부 칩/아바타) 신설, 단일 연속 세그먼트(구 L3118–4068).
+  **역재구성 byte-parity IDENTICAL** · ESM OK · free-vars 0(표준 전역 외) ·
+  양방향 binding-write 0 · top-level 실행문 0. 테스트 5건(py 1 + mjs 4) 합본 전환.
+- Pass/Fail: PASS
+
+### Run 2026-08-05-041 (Cycle 10 — make test)
+- Date: 2026-08-05
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: `sudo make test` — **RC=0** (합본 전환 test_msg_speaker_attribution_web 포함).
+- Pass/Fail: PASS
+
+### Run 2026-08-05-042 (Cycle 10 — 패널 SHIP)
+- Date: 2026-08-05
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: §18.8 패널 **SHIP**(B0/M0 — headless A/B 렌더 8,253자 byte-동일·마커
+  7종 실증·mjs 19종 A/B FAIL-set 동일=회귀 0). MINOR 3(표기류) 흡수/기록.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저
