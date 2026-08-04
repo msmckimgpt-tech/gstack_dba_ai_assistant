@@ -4352,6 +4352,76 @@ def _resolve_product_scope_key(mem_conn, product_id):
     return scope, (scope is None)
 
 
+def _lookup_account_username(mem_conn, account_id) -> str | None:
+    """account_id → WebAccounts.Username (msg-speaker-attribution). 실패/미존재 시 None.
+
+    발신자 표시명은 발화 시점의 사실이라 메시지에 각인한다 — 조회 실패는 fail-open(각인 생략)
+    이며 그 경우 FE 는 종전 폴백(대화 owner)으로 표시한다.
+    """
+    if not account_id or int(account_id) <= 0:
+        return None
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute("SELECT Username FROM WebAccounts WHERE Id=%s LIMIT 1", (int(account_id),))
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    name = row.get("Username") if isinstance(row, dict) else row[0]
+    return str(name) if name else None
+
+
+def _answer_product_attribution(mem_conn, product_id, product_mode) -> dict[str, Any]:
+    """답변 메시지에 각인할 **발화자(제품) 귀속** meta 를 만든다 (msg-speaker-attribution).
+
+    표시 store 의 assistant 말풍선은 "어느 제품이 답했는가" 를 아바타/툴팁으로 표시한다.
+    종전엔 FE 가 그 값을 **컴포저의 현재 제품 칩**(state.pinnedProductId)에서 파생해,
+    제품을 바꾸거나 대화를 fork 하면 **과거 답변의 발화자까지 실시간으로 바뀌었다**
+    (제품 변경 토스트 "다음 답변부터 적용됩니다" 와 정면 배치). 귀속은 답변 시점에
+    확정되는 사실이므로 여기서 메시지에 각인해 이후 대화 설정 변경과 무관하게 만든다.
+
+    반환 키 (모두 additive — 기존 소비처 무영향):
+      - product_mode : 'auto' | 'pinned' — auto 면 제품 미고정 답변("AI" 배지)이 영구 확정.
+      - product_id   : pinned 일 때의 제품 id (auto 면 부재).
+      - product_key  : 안정 식별자 스냅샷 (Identicon 시드 — 제품 rename 과 무관).
+      - product_name : 표시명 스냅샷 (제품 삭제·개명 후에도 당시 라벨을 보존).
+
+    key/name 조회 실패는 fail-open — id/mode 만 각인한다(귀속 각인이 답변 저장을 막지 않는다).
+    """
+    mode = "auto" if str(product_mode or "pinned").lower() == "auto" else "pinned"
+    attrib: dict[str, Any] = {"product_mode": mode}
+    if mode == "auto" or not product_id or int(product_id) <= 0:
+        return attrib
+    attrib["product_id"] = int(product_id)
+    try:
+        cur = mem_conn.cursor()
+        try:
+            cur.execute(
+                "SELECT ProductKey, Name FROM WebProducts WHERE Id=%s LIMIT 1",
+                (int(product_id),),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    except Exception:
+        return attrib
+    if not row:
+        return attrib
+    if isinstance(row, dict):
+        key, name = row.get("ProductKey"), row.get("Name")
+    else:
+        key, name = row[0], (row[1] if len(row) > 1 else None)
+    if key:
+        attrib["product_key"] = str(key)
+    if name:
+        attrib["product_name"] = str(name)
+    return attrib
+
+
 def _resolve_product_datasource(mem_conn, product_id):
     """product 에 바인딩된 datasource 좌표를 해석한다 (None=기본 단일 MySQL).
 
@@ -5307,6 +5377,14 @@ def _run_agent_core(
     # windowed recall 쿼리가 뷰어 floor 아래 문맥을 그린 답변을 배제하게 한다("표시 태그만" 을 recall 로
     # 완성; owner 생성은 무손상 — 클램프 아님).
     _answer_recall_floor_ca_val = _answer_recall_floor_ca(_recall_visibility, _conv_has_restricted)
+    # msg-speaker-attribution: 이 run 의 **발화 제품(assistant 발화자)** 을 1회 해석해 이 run 이
+    # 남기는 모든 assistant 표시 메시지에 각인한다 — 정상 답변뿐 아니라 max_steps 초과·중단
+    # 보존·오류 말풍선도 화면에서 같은 제품 아바타로 렌더되므로 한 경로만 각인하면 나머지가
+    # 대화 바인딩 폴백으로 돌아가 다시 사후 변경된다(§16.7 G2 — 대표 1항목 추정 금지).
+    try:
+        _answer_product_meta = _answer_product_attribution(mem_conn, product_id, product_mode)
+    except Exception:
+        _answer_product_meta = {}
     # REVIEW B1: bounded 발신자(window/DENY)에게는 대화 origin_request/thread_goal(CONVERSATION CONTEXT)
     # 주입을 억제한다 — origin 은 message id 에 묶이지 않은 자유 텍스트라 window 로 자를 수 없어(가려진
     # 대화 첫 요청이 그대로 남음) self-service 인젝션으로 추출 가능하기 때문. None(비제약)만 주입 허용.
@@ -5350,29 +5428,42 @@ def _run_agent_core(
     # gc-ask-sender-attrib: 표시 store 미러에도 발신자 meta 를 실어, FE 가 user 메시지를
     # 실제 발신자 프로필로 표시하게 한다(미주입 시 대화 owner=생성자 프로필로 폴백 → 오귀속).
     # 사람-채팅 경로(_save_group_chat_message_pg)의 meta 와 동일 키 집합(sender_account_id/
-    # sender_username/group_chat). 단 이 경로는 1:1+그룹 양용이라 부착을 sender_username 유무로
-    # 게이트한다 — sender_username 은 app.py 가 그룹 발신에만 주입(그룹 게이트 proxy). 미주입
-    # (None=1:1 또는 비그룹)이면 meta=None → 기존 동작(미러 meta 없음) 무변경. account_id 만으로
-    # 게이트하면 1:1 에도 group_chat meta 가 붙어 회귀하므로 sender_username AND 가드가 필수.
+    # sender_username/group_chat). sender_username 은 app.py 가 그룹 발신에만 주입(그룹 게이트
+    # proxy) 이므로 `group_chat: True` 마커는 계속 그 유무로 게이트한다 — 1:1 에 group_chat 이
+    # 붙으면 회귀다.
+    #
+    # msg-speaker-attribution: 단 **발신자 귀속 자체(sender_account_id/username)는 1:1 에도
+    # 각인**한다. 종전엔 1:1 미러가 meta=None 이라 FE 가 "그 대화의 현재 owner" 로 폴백했고,
+    # fork 는 새 owner(복제자)를 부여하므로 복사된 원저자의 질문이 전부 복제자 이름으로
+    # 표시됐다(발화자 사후 변경). 발신자는 발화 시점에 확정되는 사실이므로 여기서 각인한다.
     if _writes_allowed(mem_conn, cid):
         # conv-audit FR-ask-orphan-redeploy-dead-air(RC-2): ask job 이 requeue 되면 재실행이
         # 이 저장을 다시 돌아 **사용자 메시지가 화면에 두 번** 보였다(실측 60일 9대화).
         # 재시도(dedup_user_message_since 주입)일 때만 "이 job 수명 안에 이미 저장됐는지" 를
         # 확인해 건너뛴다 — 무조건 skip 하면 1차 시도가 저장 前에 죽은 경우 요청문이 통째로
         # 유실되므로, 근거(존재 확인) 기반으로만 억제한다. core/display 를 각각 판정.
-        _user_mirror_meta = (
-            {
-                "sender_account_id": int(account_id),
-                "sender_username": sender_username,
-                "group_chat": True,
-            }
-            if (sender_username and account_id) else None
-        )
+        _user_mirror_meta: dict[str, Any] | None = None
+        if account_id:
+            _user_mirror_meta = {"sender_account_id": int(account_id)}
+            if sender_username:
+                # 그룹 발신 — 발신자명 + 그룹 마커까지 (기존 gc-ask-sender-attrib 계약 그대로).
+                _user_mirror_meta["sender_username"] = sender_username
+                _user_mirror_meta["group_chat"] = True
+            else:
+                # 1:1 — sender_username 은 app.py 가 그룹 발신에만 주입하므로 여기서 조회해 채운다.
+                # 표시명이 없으면 FE 가 발신자 id 만으로는 라벨을 만들 수 없어 대화 owner 폴백으로
+                # 되돌아간다(= fork 시 복제자 이름으로 표시되는 그 경로). `group_chat` 은 붙이지
+                # 않는다 — 그룹 판정은 계속 주입된 sender_username 이 proxy 다.
+                _uname = _lookup_account_username(mem_conn, account_id)
+                if _uname:
+                    _user_mirror_meta["sender_username"] = _uname
         _dup = _user_message_already_persisted(
             cid, user_message, account_id, dedup_user_message_since,
             # 그룹 미러는 발신자를 meta 에 싣는다 — 그 경우엔 발신자까지 일치해야 "이미 저장됨"
             # 으로 본다(같은 문장을 보낸 다른 멤버의 행을 오인해 미러를 빠뜨리지 않도록).
-            mirror_sender_account_id=(_user_mirror_meta or {}).get("sender_account_id"),
+            # 1:1 은 발신자가 한 명뿐이라 계속 NULL 을 넘긴다 — 여기서 sender 를 넘기면 각인 이전
+            # 에 저장된 행(배포 경계의 job 재시도)을 못 찾아 사용자 메시지가 두 줄 되는 회귀.
+            mirror_sender_account_id=(int(account_id) if (sender_username and account_id) else None),
         )
         if not _dup.get("core"):
             _save_message(mem_conn, cid, "user", content=user_message, sender_account_id=account_id)
@@ -6202,6 +6293,12 @@ def _run_agent_core(
                 "duration_ms": answer_duration_ms,
                 "duration_breakdown": _ans_breakdown,
             }
+            # msg-speaker-attribution: 답변한 **제품(발화자)** 을 이 메시지에 각인한다.
+            #  대화 바인딩(core_conversations.product_id)은 나중에 바뀔 수 있고 fork 는 새
+            #  바인딩을 갖는다 — 대화 단위 값에서 파생하면 과거 답변의 발화자가 사후에 바뀐다.
+            #  제품은 /api/ask enqueue 시점에 run_kwargs 로 캡처돼 이 run 내내 불변이므로
+            #  (참가자의 per-message override 포함) 이 run 의 각인값이 곧 정답이다.
+            mirror_meta.update(_answer_product_meta)
             if os.getenv(_INLINE_IMAGE_ENV_VAR, "").strip():
                 mirror_meta["attachment_derived"] = True
                 mirror_meta["derivation_type"] = "vision_analysis"
@@ -6466,7 +6563,8 @@ def _run_agent_core(
         result["answer"] = f"최대 도구 호출 횟수({max_steps})를 초과했습니다."
         if _writes_allowed(mem_conn, cid):
             _save_message(mem_conn, cid, "assistant", content=result["answer"], recall_floor_created_at=_answer_recall_floor_ca_val)
-            _mirror_message(mem_conn, cid, "assistant", result["answer"], run_id, recall_tag=_answer_recall_meta)
+            _mirror_message(mem_conn, cid, "assistant", result["answer"], run_id,
+                            meta=dict(_answer_product_meta), recall_tag=_answer_recall_meta)
         if output_mode == "console":
             console.print(f"[yellow]{result['answer']}[/yellow]")
 
@@ -6507,7 +6605,9 @@ def _run_agent_core(
                     if _partial:
                         _kept = f"(이전 요청이 중단되어, 진행된 내용까지 보존합니다.)\n\n{_partial}"
                         _save_message(mem_conn, cid, "assistant", content=_kept, recall_floor_created_at=_answer_recall_floor_ca_val)
-                        _mirror_message(mem_conn, cid, "assistant", _kept, run_id, meta={"interrupted": True}, recall_tag=_answer_recall_meta)
+                        _mirror_message(mem_conn, cid, "assistant", _kept, run_id,
+                                        meta={"interrupted": True, **_answer_product_meta},
+                                        recall_tag=_answer_recall_meta)
             except Exception:
                 pass
         try:
@@ -6536,7 +6636,9 @@ def _run_agent_core(
     elif result["error"]:
         error_text = f"오류: {result['error']}"
         _save_message(mem_conn, cid, "assistant", content=error_text, recall_floor_created_at=_answer_recall_floor_ca_val)
-        _mirror_message(mem_conn, cid, "assistant", error_text, run_id, meta={"internal": False}, recall_tag=_answer_recall_meta)
+        _mirror_message(mem_conn, cid, "assistant", error_text, run_id,
+                        meta={"internal": False, **_answer_product_meta},
+                        recall_tag=_answer_recall_meta)
         try:
             # TASK-0241: terminal write 는 모두 supersede 가드 — lease-fencing 으로 박탈된
             # (superseded) run 이 현재 run 의 상태를 덮어쓰지 못하게 한다(canceled 와 대칭).

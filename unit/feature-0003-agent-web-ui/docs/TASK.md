@@ -7885,3 +7885,63 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/2
 **주장 affordance 실측 (G3)**: 위 6축 표가 곧 실측 결과다(추정·전언 없음).
 
 **경계 양측 검증 (G4)**: 노출(양성) = 소유자·기존 멤버 · 미노출(음성) = 익명 뷰(로그인 링크만, `conversation_id=null`). 둘 다 라이브에서 확인.
+
+## 20260804T0610-msg-speaker-attribution — 대화내역 발화자(사용자·assistant 제품) 사후 변경 차단 (Major §12.3)
+
+**사용자 보고**: "서비스 내 대화내역에 남는 대상(사용자, assistant의 product) 들이 기존 내용과
+정합하도록 구성해주세요. 현재는 대화를 fork 하거나, product를 바꿈으로서 이전에 진행했던 대화의
+발화자가 실시간으로 변경되어 버리는 부정합 이슈가 확인되었습니다."
+
+**근본 원인**: 발화자가 메시지에 각인되지 않고 **렌더 시점의 대화 설정**에서 파생됐다.
+- assistant: `app.js` renderMessages 가 `state.pinnedProductId`(컴포저 제품 칩)로 단일 값을 만들어
+  전 말풍선에 재사용 → 제품 칩을 바꾸는 순간 과거 답변 아바타가 전부 새 제품으로 바뀜. 정작
+  전환 토스트는 "다음 답변부터 적용됩니다" 라 표시와 계약이 배치.
+- user: `agent_core` 가 발신자 meta 를 **그룹 발신에만** 각인(`if sender_username and account_id`)
+  → 1:1 메시지는 미각인 → FE 가 대화의 **현재 owner** 로 폴백 → fork 본(owner=복제자)에서 원저자의
+  질문이 전부 "나 (복제자)" 로 표시.
+
+- [x] `저장 시점 각인(agent-core)` — 산출물: `_answer_product_attribution`·`_lookup_account_username`
+  신설, user 미러 meta 를 1:1 로 확대(group_chat 마커는 주입 sender_username 게이트 유지),
+  assistant 미러 4경로 전부 `_answer_product_meta` 각인 ·
+  배선 확인: `_mirror_message(…, "assistant", …)` 4곳 전수 — 정상 답변(`mirror_meta.update`)·
+  max_steps 초과·중단 보존·오류. dedup 인자는 그룹에만 sender 전달(배포 경계 중복저장 회귀 차단).
+- [x] `freeze-on-change(web)` — 산출물: `_conv_product_attribution`·`_conv_backfill_attribution`
+  신설 + `PATCH /api/conversations/{cid}/product` 가 UPDATE **전** 직전 제품으로 보정 ·
+  배선 확인: PG=`meta_json || payload` + `(meta_json -> probe) IS NULL` 술어, MySQL=행 단위
+  read-modify-write(유효하지 않은 JSON 행이 문 전체를 실패시키지 않도록).
+- [x] `fork/duplicate 보정(web)` — 산출물: `_conv_copy_messages(attribution_defaults=…)` +
+  `_fork_conversation_impl` 이 **강등 전** `_src_product_*` 와 원본 owner 를 전달 ·
+  배선 확인: duplicate 는 `_fork_conversation_impl` 재사용이라 같은 경로로 커버.
+- [x] `렌더 정합(FE)` — 산출물: `_assistantSpeakerFor()` 신설, renderMessages 가 메시지별 해석,
+  user 는 `senderId` 기반 판정 분기 추가, 제품 전환 성공 후 `loadHistory({preserveScroll:true})` ·
+  배선 확인: `_assistantLabel/_assistantIcon/_assistantSeed` 대화-단위 심볼 잔존 0(grep).
+- [x] `회귀 테스트` — 산출물: `feature-0002/tests/test_msg_speaker_attribution.py`(12) +
+  `feature-0003/tests/test_msg_speaker_attribution_web.py`(12) · 배선 확인: 전체 스위트 exit 0.
+- [ ] `§18.8 적대 검증`
+- [ ] `PB-0008 Windows-browser 시각검증`
+- [ ] `verify-completion --pre-commit feature-0003-agent-web-ui`
+- [ ] `commit → push → PR → cycle-finalize → 배포(deploy_scope: included) → 라이브 대조`
+
+## 9. Requested Scope
+
+**요청 범위 자기-열거 (G1)**: 사용자 요청 = "대화내역에 남는 대상(**사용자**, **assistant의
+product**)이 기존 내용과 정합하도록" + 명시된 두 부정합 트리거("대화 fork", "product 변경").
+→ 4항목: ①user 발화자 정합 ②assistant product 정합 ③fork 트리거 ④product 전환 트리거.
+
+**항목별 배선 확인 (G2)**: 항목마다 코드패스가 갈리므로 개별 확인했다 —
+①은 `agent_core` user 미러 meta + FE user speaker 분기, ②는 assistant 미러 4경로 + FE
+`_assistantSpeakerFor`, ③은 `_conv_copy_messages`(fork·duplicate 공용), ④는 PATCH product
+freeze + 전환 후 재조회. ②의 "대표 1경로(정상 답변)만 확인 후 추정" 을 금지 — 나머지 3경로가
+미각인이면 그 말풍선만 다시 사후 변경되므로 전수 테스트(`test_every_assistant_mirror_carries_product_meta`)로 고정.
+
+**주장 affordance 실측 (G3)**: 본 cycle 이 주장하는 affordance = "제품을 바꿔도 / fork 해도
+과거 발화자가 그대로". 배포 후 라이브에서 ①제품 전환 전후 과거 말풍선 아바타 동일 ②fork 본에서
+원저자 이름 유지 ③auto 대화 답변이 "AI" 배지 유지 를 실제 조작으로 확인한다(PB-0008).
+
+**경계 양측 검증 (G4)**: 정확성이 걸린 임계는 **"각인 유무"** 다. 양측 모두 검증한다 —
+(각인 있음) 제품 전환·fork 후에도 불변 / (각인 없음=legacy) 종전 폴백으로 표시되고, freeze·fork
+보정이 그 순간 고정한다. 보정이 **이미 각인된 행을 덮지 않는지**(반대 경계)도 테스트로 고정.
+`product_mode:auto` ↔ `pinned` 경계, 제품 **미접근** 열람자(스냅샷 라벨로 해소) 경계 포함.
+
+**G5/G6 해당 없음**: 신규 리소스·엔드포인트 0, 권한 키·게이트 wiring 변경 0(기존 `conversation.ask`
+게이트 그대로). RBAC 표면 무변경.

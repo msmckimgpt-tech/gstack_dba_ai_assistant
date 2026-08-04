@@ -2402,3 +2402,46 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 ### 관측 계약
 - 자동작성 LLM 실패는 SSE(`error` 프레임)·JSON(502) 뿐 아니라 **서버 로그에도** 남긴다
   (label·model·max_tokens·scope ctx·에러). 프롬프트 본문·생성 결과는 기록하지 않는다.
+
+## (msg-speaker-attribution, 2026-08-04) 대화내역 발화자 귀속 — 발화 시점 각인 (web/UI + agent-core 저장부, Major §12.3, 신규 권한·스키마·마이그레이션 0)
+
+**계약**: 대화내역에 남는 발화자 — 사용자 메시지의 **발신자**, assistant 메시지의 **제품(Product)**
+— 은 **발화 시점의 사실**이며, 이후 대화 설정 변경(제품 전환)이나 대화 복제(fork/duplicate)로
+바뀌지 않는다.
+
+**각인 스키마** (표시 store `messages.meta_json`, 전부 additive):
+
+| 대상 | 키 | 값 |
+|---|---|---|
+| user | `sender_account_id` | 발신 계정 id (1:1·그룹 공통) |
+| user | `sender_username` | 발신 계정 표시명 |
+| user | `group_chat` | 그룹 발신에만 `true` (기존 gc-ask-sender-attrib 계약 불변) |
+| assistant | `product_mode` | `pinned` \| `auto` — `auto` 는 제품 미고정 답변("AI" 배지) 확정 |
+| assistant | `product_id` | pinned 일 때 제품 id |
+| assistant | `product_key` | 제품 안정 식별자 스냅샷 (Identicon 시드) |
+| assistant | `product_name` | 제품 표시명 스냅샷 |
+| 공통 | `attribution_inferred` | 발화 시점이 아니라 **보정으로** 채운 행 표기 |
+
+**생산 경로 (3)**:
+1. **저장 시점 각인 (1차)** — `agent_core._run_agent_core` 가 사용자 메시지와 **모든** assistant
+   표시 메시지(정상 답변 · max_steps 초과 · 중단 보존 · 오류)에 각인한다. 제품은 `/api/ask`
+   enqueue 시점에 캡처돼 run 내내 불변이므로(참가자 per-message override 포함) 그 값이 정답이다.
+2. **제품 전환 시 freeze-on-change (2차)** — `PATCH /api/conversations/{cid}/product` 가 바인딩을
+   바꾸기 **직전**, 미각인 assistant 메시지를 **직전 제품**으로 고정한다. 그 시점이 과거 답변의
+   제품을 알 수 있는 마지막 순간이다.
+3. **fork/duplicate 복사 시 (2차)** — `_conv_copy_messages` 가 미각인 행에 **원본 대화** 기준
+   (원본 owner / 접근권 강등 **전** 원본 제품)을 고정한다.
+
+2·3차는 **미각인 행에만** 기입하고 기존 meta 키는 보존한다(추가만). 각인된 행은 그 값이 진실이라
+덮지 않는다. 전 경로 fail-open — 귀속 보정 실패가 답변 저장·제품 전환·fork 를 막지 않는다.
+
+**표시 규칙** (`static/app.js`):
+- assistant 아바타·툴팁은 `_assistantSpeakerFor(message.meta, …)` 가 **메시지별**로 해석한다.
+  각인이 있으면 라벨·Identicon 시드는 **스냅샷 우선**(제품 개명·삭제·무접근에도 당시 발화자 보존,
+  이후 어떤 변경으로도 재변경 없음), 아이콘 이미지만 현재 제품 설정을 따른다. `product_mode:auto`
+  는 "AI" 배지로 확정. 각인이 전혀 없는 legacy 메시지만 종전 대화-바인딩 폴백을 쓴다.
+- user 발화자는 `sender_username` → (id 만 있으면) **발신자 일치**(`msgIsOwn`) → legacy 폴백 순.
+  대화 소유권(`isOwn`)으로 판정하지 않는다 — fork 본은 소유자가 복제자로 바뀐다.
+- 제품 전환 성공 직후 `loadHistory({preserveScroll:true})` 로 방금 각인된 귀속을 즉시 반영한다.
+
+**화면 문구 증가 없음** (§16.8) — 제품 정체성 표면은 종전대로 아바타·툴팁이며, 그것이 고정될 뿐이다.
