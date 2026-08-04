@@ -6,13 +6,13 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-08-03
-feature_status_note: ITEM-P5b 잔여 — Cycle 1~3 배포 완료, Cycle 4(accounts/roles) 진행 — admin.js 10,466줄
+feature_status_note: ITEM-P5b 잔여 — Cycle 1~4 배포 완료, Cycle 5(products/datasources) 진행 — admin.js 7,647줄
 ---
 
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~3 완료·배포, Cycle 4 진행 중)
+- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~4 완료·배포, Cycle 5 진행 중)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-03
@@ -104,12 +104,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
 ## 3. Task Queue
-- [ ] TASK-0012 Cycle 4 — verify → PR → 배포 → POST-DEPLOY PB-0008 (accounts/roles pane·권한 grid 보안 표면)
-- [ ] TASK-0013 Cycle 5 착수 (admin/products.js·admin/datasources.js) — 이하 §2.1 표 순서
+- [ ] TASK-0014 Cycle 5 — verify → PR → 배포 → POST-DEPLOY PB-0008 (products/datasources·allowlist 보안 경계 UI)
+- [ ] TASK-0015 Cycle 6 착수 (admin/metadata.js — 최대 덩어리) — 이하 §2.1 표 순서
 - [ ] TASK-0100 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합
 
 ## 4. In Progress
-- TASK-0012 (Cycle 4 마감 절차 — make test·적대 패널 진행 중)
+- TASK-0014 (Cycle 5 마감 절차 — make test·적대 패널 진행 중)
 
 ## 5. Blocked
 - 없음
@@ -129,9 +129,11 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0009 Cycle 3 추출 — admin/settings.js(881)·admin/audit.js(388), admin.js 11,827줄, parity IDENTICAL·free-vars 0/0 (TEST Run-012, CHG-20260803T203000)
 - [x] TASK-0010 Cycle 3 마감 — 패널 SHIP(REV-20260804T090000)·PR #1128 머지(86c0d7c3)·배포 RC=0·POST-DEPLOY PB-0008 PASS(설정 5패널 실렌더·감사 100행·re-export 축, TEST Run-014)
 - [x] TASK-0011 Cycle 4 추출 — admin/accounts.js(785)·admin/roles.js(609), admin.js 10,466줄, parity IDENTICAL·free-vars 6모듈 0 (TEST Run-015, CHG-20260804T100000)
+- [x] TASK-0012 Cycle 4 마감 — 패널 BLOCK 흡수(quota 테스트 합본·RC=2→RC=0, REV-20260804T110000)·PR #1129 머지(475bde1b)·배포 RC=0·POST-DEPLOY PB-0008 PASS(권한 grid 94/65 게이팅·역할 188행, TEST Run-018)
+- [x] TASK-0013 Cycle 5 추출 — admin/datasources.js(795)·admin/products.js(2,090), admin.js 7,647줄(-45.4%), parity IDENTICAL·free-vars 8모듈 0·chip_list 합본 복구(기준선 18/1) (TEST Run-019, CHG-20260804T120000)
 
 ## 7. Next Action
-- Cycle 4 verify → PR → 배포 → POST-DEPLOY PB-0008 → Cycle 5
+- Cycle 5 verify → PR → 배포 → POST-DEPLOY PB-0008 → Cycle 6
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

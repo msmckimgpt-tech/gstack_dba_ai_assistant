@@ -223,6 +223,57 @@ source_of_truth: true
   clean; 수정 전 RC=2 였던 test_llm_usage_quota f1/f2 포함).
 - Pass/Fail: PASS
 
+### Run 2026-08-04-018 (Cycle 4 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-04
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260804-c4-postdeploy-roles.png`
+- Result Summary: PR #1129 머지 → 배포(475bde1b, RC=0) → accounts/roles 모듈 서빙 200.
+  실 Windows Chrome (error 후크): 계정 pane 목록 **15행**·상세 권한 grid **94행 렌더 /
+  65행 disclosure 게이트 접힘**(보안 표면 게이팅 정상) · 역할 pane 목록 **8행**·상세 권한
+  grid **188행**(역할 편집기 전 권한 표시 정합)·제품 카드 139·pending bar 존재 — **전 구간
+  에러 0**. (중간에 브라우저 탭이 작업화면으로 이탈해 재진입 1회 — 결과 무영향)
+- Pass/Fail: PASS
+
+### Run 2026-08-04-019 (Cycle 5 — products/datasources 추출 기계 검증)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: admin.js 10,466→**7,647줄**(-2,819 — 최대 감폭, 초기 대비 **-45.4%**).
+  admin/datasources.js(795줄)·admin/products.js(2,090줄) 신설. **역재구성 byte-parity
+  IDENTICAL** · ESM OK · **acorn-globals 8모듈 free-vars 전부 0**. Product subcatalog 는
+  accounts/roles 공유 코어라 admin.js 잔류. 테스트: 리터럴-대조 스캔(12 플래그) →
+  실행 판별 — verify_product_icon_chip_list.mjs 만 실회귀(기준선 18/1 → 13/6) → 합본
+  전환으로 18/1 복구. 나머지 mjs 하네스 다수는 main 기준선에서도 동일 크래시/FAIL =
+  **pre-existing**(REPORT §8 추적 누적). pytest 측 플래그는 백엔드 docstring 노이즈.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-020 (Cycle 5 — make test 전 스위트)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: C5 worktree `sudo make test` — **RC=0** (pytest 전 스위트 PASS · ruff clean).
+- Pass/Fail: PASS
+
+### Run 2026-08-04-021 (Cycle 5 — 패널 BLOCKING 흡수 후 재검증)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: 패널 BLOCK(profile_icon_consistency 22P/1F→21P/2F 신규 회귀) 흡수 —
+  합본 전환 후 **22/1 기준선 복구**. dead import 5건·dead export 3건 정리(표면 산출의
+  주석-텍스트 집계 결함 교정 — 이후 cycle 주석-제거 후 스캔). 재검: 역재구성 byte-parity
+  **IDENTICAL**(export 19 규칙) · free-vars 0/0 · 아이콘 하네스 3종 기준선 동치
+  (22/1·18/1·17/0). make test 최종 재실행 별도 Run.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-022 (Cycle 5 — make test 최종)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: 패널 흡수 후 최종 상태 `sudo make test` — **RC=0**.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저
