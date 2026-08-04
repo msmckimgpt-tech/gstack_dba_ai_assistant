@@ -11,6 +11,16 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260804T070000-prompt-autogen-postdeploy (POST-DEPLOY 라이브 실증 기록, doc-only)
+- Date: 2026-08-04. **코드 변경 0**.
+- `feature-0003/docs/TASK.md` · `feature-0002/docs/TASK.md`: 선행 2 cycle 의 "배포 후 라이브 실증 대기"
+  잔여 체크박스를 실증 결과로 종결(§5.6 staleness — 완료된 작업을 '대기'로 남기면 후속 세션을 오도).
+- `feature-0003/docs/REPORT.md`: `[POST-DEPLOY 완결 2026-08-04]` 블록 추가 — 2단 배포 경과
+  (`c4701a17` 1차 실증 실패 검출 → `fba8ee9f` 2차 PASS)와 실측 수치, 그리고 "스텁 경계가 결함 지점과
+  겹치면 단위 테스트는 구조적으로 눈이 먼다" 는 교훈.
+- Cross-ref: TASK-20260804T0454-prompt-autogen-wiring · TASK-20260804T0630-summary-bootstrap-deadlock ·
+  REV-20260804T070000-prompt-autogen-postdeploy · PR #1135(`c4701a17`) · PR #1138(`fba8ee9f`).
+
 ## CHG-20260804T045449-prompt-autogen-wiring (사용자별 시스템 프롬프트 자동 생성의 끊긴 배선 복구, Major)
 - `unit/feature-0002-agent-core/src/modules/llm.py`: `_summary_deps()` 신설 — `log_timing` /
   `load_memory_context` / `save_memory_summary` / `_record_step_summary` / `sanitize_user_text` /

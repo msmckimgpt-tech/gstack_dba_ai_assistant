@@ -31,8 +31,11 @@ source_of_truth: true
 - [x] `tests/test_summary_bootstrap_deadlock.py`(5) 신규 — 반환 계약 3 + PG 경로 통과(conn=None 으로
       폴백 진입 시 AttributeError 라 통과 자체가 증거) + **진짜 실패는 여전히 폴백**(규약 무디게
       만들지 않았음). 결함 재주입 **역검증** 확인(2건 FAIL).
-- [ ] `make test` 전량 · verify-completion · commit/push/PR/머지 · 배포 · **라이브 재실증**
-      (요약 행 증가 + `meta.summary_count > 0`).
+- [x] `make test` 전량 exit 0 · verify-completion PASS · codex 적대 리뷰(P1 0/P2 1 흡수) ·
+      PR #1138 머지(`fba8ee9f`) · 전체 롤아웃 배포(web·워커 전량 `fba8ee9f`).
+- [x] **라이브 재실증 PASS**: 배포본 ask-worker 에서 `refresh_conversation_summary()` 실호출 →
+      `saved=True`(12.7s), `agent_runtime.summary` **0행 → 1행**, 저장 본문 육안 확인.
+      자동작성 `meta.summary_count` 가 account·role 양쪽에서 **0 → 1**(종전 상시 0).
 
 ## TASK-20260804T0454-summary-writer-wiring — 대화 요약(`agent_runtime.summary`) writer 배선 복구 (cross-feature: 코드 거주=feature-0002, 소비=feature-0003 프롬프트 자동작성 / Major §12.3 — ask 당 외부 LLM 1회 추가)
 
@@ -57,8 +60,10 @@ source_of_truth: true
   사용자 결정(AskUserQuestion 2026-08-04): "복구 + 기존 env 게이트 유지".
 - [x] `modules/llm.py` · `agent_core.py` 수정 + `tests/test_summary_writer_wiring.py`(8) 신규 —
       **배선 가드**(run_post_answer_curation 이 요약 갱신을 호출하는지)가 load-bearing.
-- [ ] `make test` 회귀 · 배포(web + **ask-worker** 재빌드 — 본 변경이 agent-core 라 워커가 나가야
-      실효) · 배포 후 라이브 실증(summary 행 증가 + `meta.summary_count > 0`).
+- [x] `make test` 회귀 exit 0 · 배포(web + 워커 전량) 완료. **단, 배포 직후 실증에서 실효 0 확인** —
+      요약 미보유 대화를 PG 읽기 실패로 오판하는 부트스트랩 교착이 별도로 있었다
+      (`TASK-20260804T0630-summary-bootstrap-deadlock`). 그 수정(PR #1138, `fba8ee9f`) 후
+      **라이브 실증 PASS**: summary 0행 → 1행, `meta.summary_count` 0 → 1.
 
 ## TASK-20260803T190000-precondition-verified-or-unknown (current cycle) — 리뷰가 조회한 적 없는 객체의 라이브 상태를 단정하던 결함 봉인 + 상시 감지기 (Major §12.3 — core 시스템 프롬프트)
 - 출처: `/_dqa:conversation_audit` PB-0008 라이브 육안검증 중 발견(`FR-review-precondition-assumed-not-verified`). 사용자 지시("잔여 항목도 작업을 진행해주세요") + 범위 승인 **A+C**(AskUserQuestion 2026-08-03).
