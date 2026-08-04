@@ -109,3 +109,14 @@ source_of_truth: true
 - Impact: 실행 시점이 파싱-중→파싱-후로 이동하나 스크립트가 body 말미라 실질 동일.
   전 사용자 플로우는 POST-DEPLOY PB-0008 풀 스모크로 확증.
 - Rollback Notes: 단일 PR revert 1회 (1태그 원복).
+
+## CHG-20260804T210000-app-auth-profile-split
+- Date: 2026-08-04
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 8)
+- Summary: app.js 인증 표면(구 L1318–1382·L11685–11859)·프로필 drawer(구 L1383–1435·
+  L2547–2994·L6076–6127)를 app/auth.js·app/profile.js 로 byte-동치 이동(비연속 세그먼트).
+  신규 export 29(함수 11 + const 18). handleLogout 은 import-binding write 금지로 잔류.
+- Files: `static/app.js`(-785줄→12,431) · `static/app/{auth,profile}.js`(신규) ·
+  `tests/test_two_factor_auth.py`(합본)
+- Impact: 동작 변화 0.
+- Rollback Notes: 단일 PR revert 1회.

@@ -143,7 +143,8 @@ def test_b9_bruteforce_absorption():
 
 
 def test_f1_frontend():
-    js = _read_static("app.js")
+    # feature-0038 Cycle 8: 인증/프로필 표면은 app/{auth,profile}.js 로 분리(byte-동치 이동) — 합본 검사.
+    js = _read_static("app.js") + _read_static("app/auth.js") + _read_static("app/profile.js")
     assert "showTotpLoginPrompt" in js and "/api/auth/login/totp" in js
     assert "renderProfileTotp" in js and "/api/auth/totp/setup" in js
     # feature-0038 Cycle 4: 계정 pane 은 admin/accounts.js 로 분리(byte-동치 이동) — 합본 검사.

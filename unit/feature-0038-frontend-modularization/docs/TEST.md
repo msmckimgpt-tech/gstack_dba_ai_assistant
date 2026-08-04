@@ -365,6 +365,53 @@ source_of_truth: true
   는 pip 네트워크 장애로 확정 — 코드 무관).
 - Pass/Fail: PASS
 
+### Run 2026-08-04-031 (Cycle 7 POST-DEPLOY — 풀 스모크 라이브 검증)
+- Date: 2026-08-04
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260804-c7-postdeploy-{workscreen,answer}.png`
+- Result Summary: PR #1133 머지 → 배포(c4e613a2, RC=0) → 라이브 `type="module"` 스탬프 서빙.
+  풀 스모크 — 부트(module 태그·사이드바·컴포저·auth hidden) · 대화 전환/히스토리 로드 ·
+  새 대화 → 전송 → **POST /api/ask 200** → enqueue → worker claim → 진행 표시(폴러) →
+  **답변 완주 렌더**("2", 36초: 대기 0.4·준비 2.6·추론 33) · 프로필 drawer · 관리 링크 —
+  **전 구간 JS 에러(error/unhandledrejection) 0**.
+  검증 중 특이사항 2건 (전부 리팩터 무관 입증): ① 실사용자가 동일 Windows Chrome 사용 중
+  → 탭 전환 간섭 수 회(서버 로그·DB 교차로 갈라냄) ② 호스트 광역 네트워크 장애 창(전
+  datasource probe down·PyPI/GitHub DNS 실패)에서 ask 2건이 회로차단 오류 종결(ask_jobs
+  555/556 — **프론트는 오류를 정확히 표면화**, 회복 후 재시도 완주). 오류 경로·완주 경로
+  양쪽 검증 완료.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-032 (Cycle 8 — app/auth·profile 추출 기계 검증)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: app.js 13,216→**12,431줄**(-785). app/auth.js(253)·app/profile.js(571)
+  신설 — **비연속 다중 세그먼트**(auth 2·profile 3, 구분자 주석 연결) 방식 최초 적용.
+  **역재구성 byte-parity IDENTICAL** · ESM OK · free-vars 0/0. 사전 검사로 **ESM
+  import-binding write 함정 적발·회피**: handleLogout 이 전역 타이머 let 을 재할당 →
+  의도적 잔류(경계 재실측 조항). C7 패널 MINOR-1(콜백 this 함수식 유지) 준수.
+  테스트 1건(test_two_factor_auth) 합본 전환.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-033 (Cycle 8 — make test)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: `sudo make test` — **RC=0** (합본 전환 test_two_factor_auth 포함).
+- Pass/Fail: PASS
+
+### Run 2026-08-05-034 (Cycle 8 — 패널 SHIP + MINOR 흡수 재검)
+- Date: 2026-08-05
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: §18.8 패널 **SHIP**(B0/M0 — 역재구성 sha256 동일·binding-write 0·
+  컨테이너 pytest 111 passed·headless A/B 로그인 풀 경로 동작). MINOR 3건 흡수(dead
+  import 제거·conv-date-tree 주석 경계 재절단·헤더 레인지 정정) 후 재검 — parity
+  **IDENTICAL** · free-vars 0/0.
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저

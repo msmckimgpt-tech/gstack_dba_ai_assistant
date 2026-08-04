@@ -92,3 +92,10 @@ source_of_truth: true
 - 실측 확인: deferred 안전(후행 classic 3종의 app.js 의존 0·역방향 0)·strict 위험 0(암묵 전역 대입·callee·top-level this 등 전수 0)·전역 소멸 무영향(inline 0·동적 onclick= 생성 0·self-window-read 0)·스탬프 재작성 무관·`window.toggleAuthPane` 등 undefined 화 실증에도 파괴 0.
 - MINOR (기록): ① 이벤트 콜백 내 `this` 3건(L12266~) — **Cycle 8~10 분할 시 화살표 함수로 바꾸면 깨지는 잠복 지점, 분할 계획에 명기** ② 후행 classic 3종이 향후 app.js 전역을 참조하면 회귀 표면(주석 문서화로 수용) ③ PB-0008 eval 레시피의 top-level 함수 직접 호출 관행 불가 — DOM 이벤트 경유로 전환(도구 관행).
 - Timestamp: 2026-08-04T19:30:00+09:00
+
+## REV-20260805T093000-app-auth-profile-panel [SUBAGENT:qa] — SHIP
+- Related Change: CHG-20260804T210000-app-auth-profile-split (Cycle 8)
+- 패널: fresh-context 적대 1렌즈(7항목 실측 — 역재구성 sha256 동일·acorn-globals 0/0·엄밀 AST import-binding write 0·handleLogout 잔류 정당성 실증(유일 let 재할당)·이동 41심볼 잔여 참조 0·리터럴-대조 34파일 triage·컨테이너 pytest 111 passed·스탬프 실주입 24파일·**headless A/B 로그인 폼 submit→handleLogin 풀 경로 동작**). **BLOCKING 0 / MAJOR 0 / MINOR 5.**
+- MINOR 흡수 3건: ① dead import/export(setupProfileDrawerResize — 유일 호출자가 모듈 내) 제거 ② profile-B 꼬리로 딸려간 `conv-date-tree` 주석 → 경계 재절단([2547,2993])으로 _ymdKey 와 재결합 ③ 모듈 헤더 레인지 off-by-one 정정. 재검: parity IDENTICAL·free-vars 0/0.
+- MINOR 기록 2건: ④ win-browser 시나리오 json 의 `typeof openProfile` 전역 의존은 C7 ESM 전환 시점부터 pre-existing(도구 시나리오 정비 후보 — REPORT §8) ⑤ 줄수 표기 wc/split 관례 차이(무영향).
+- Timestamp: 2026-08-05T09:30:00+09:00

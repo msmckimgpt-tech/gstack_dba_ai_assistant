@@ -6,13 +6,13 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-08-03
-feature_status_note: ITEM-P5b 잔여 — Cycle 1~6 배포 완료(admin.js 4,805줄·-65.7%), Cycle 7(app.js module 전환) 진행
+feature_status_note: ITEM-P5b 잔여 — Cycle 1~7 배포 완료(admin.js -65.7%·app.js module), Cycle 8(app auth/profile) 진행
 ---
 
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~6 완료·배포, Cycle 7 진행 중)
+- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~7 완료·배포, Cycle 8 진행 중)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-03
@@ -104,12 +104,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
 ## 3. Task Queue
-- [ ] TASK-0018 Cycle 7 — verify → PR → 배포 → POST-DEPLOY PB-0008 **풀 스모크**(로그인→대화→요청→진행표시→답변→관리 왕복)
-- [ ] TASK-0019 Cycle 8 착수 (app/auth.js·app/profile.js) — 이하 §2.1 표 순서
+- [ ] TASK-0020 Cycle 8 — verify → PR → 배포 → POST-DEPLOY PB-0008 (로그아웃→로그인 왕복·프로필 drawer)
+- [ ] TASK-0021 Cycle 9 착수 (app/sidebar.js·app/composer.js) — 이하 §2.1 표 순서
 - [ ] TASK-0100 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합
 
 ## 4. In Progress
-- TASK-0018 (Cycle 7 마감 절차 — make test·적대 패널 진행 중)
+- TASK-0020 (Cycle 8 마감 절차 — make test·적대 패널 진행 중)
 
 ## 5. Blocked
 - 없음
@@ -134,10 +134,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0014 Cycle 5 마감 — 패널 BLOCK 흡수(consistency 합본·dead 배선 정리, REV-20260804T133000)·PR #1130 머지(03665d28)·배포 RC=0·POST-DEPLOY PB-0008 PASS(allowlist·엔진 아이콘·제품카드, TEST Run-023)
 - [x] TASK-0015 Cycle 6 추출 — admin/metadata.js(2,868 최대), admin.js 4,805줄(-65.7%), parity IDENTICAL + **mjs 하네스 부채 상환**(styles.css 직독 20건·구계약 단언 6건·기준선 귀책 판별) (TEST Run-024/026, CHG-20260804T150000)
 - [x] TASK-0016 Cycle 6 마감 — 패널 BLOCK 흡수(수선 누락 3+3·문서 정정·기준선 오측 반증, REV-20260804T170000)·PR #1132 머지(6f74d8cf)·배포 RC=0·POST-DEPLOY PB-0008 PASS(5서브뷰·검토큐·부트스트랩, TEST Run-027)
-- [x] TASK-0017 Cycle 7 전환 — index.html app.js type=module (기계 스캔: strict 파싱 OK·암묵 전역 쓰기 0·역방향 결합 0, TEST Run-028, CHG-20260804T183000)
+- [x] TASK-0017 Cycle 7 전환 — index.html app.js type=module (기계 스캔 3축 청정, TEST Run-028, CHG-20260804T183000)
+- [x] TASK-0018 Cycle 7 마감 — 패널 SHIP(A/B 델타 0, REV-20260804T193000)·PR #1133 머지(c4e613a2)·배포 RC=0·POST-DEPLOY **풀 스모크 PASS**(답변 완주 36초·JS 에러 0·오류/완주 양경로, TEST Run-031)
+- [x] TASK-0019 Cycle 8 추출 — app/auth.js(253)·app/profile.js(571) 비연속 세그먼트, app.js 12,431줄, parity IDENTICAL·free-vars 0/0·import-binding write 함정 사전 회피(handleLogout 잔류) (TEST Run-032, CHG-20260804T210000)
 
 ## 7. Next Action
-- Cycle 7 verify → PR → 배포 → POST-DEPLOY 풀 스모크 → Cycle 8~10 (app/ 분할)
+- Cycle 8 verify → PR → 배포 → POST-DEPLOY → Cycle 9~10 (app/ 분할 잔여)
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
