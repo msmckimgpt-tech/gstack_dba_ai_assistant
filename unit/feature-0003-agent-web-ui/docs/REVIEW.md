@@ -2585,3 +2585,9 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - 그룹 대화의 **pre-feature-0009 미각인 user 행**을 fork 하면 원본 owner 로 추론된다(실제
   발신자가 다른 멤버였을 수 있음). `attribution_inferred: true` 로 구분되며, 복제자 이름으로
   표시되던 종전보다는 엄격히 낫다.
+
+## REV-20260804T065000-msg-speaker-attribution-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실증 기록(문서 전용, 코드 변경 0)
+- Related TASK: feature-0003-agent-web-ui (20260804T0650-msg-speaker-attribution-postdeploy)
+- Reason: changed paths are docs only outside policy-doc list — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-04T15:52:00+09:00
+- 본 cycle 이 기록하는 실증 자체가 선행 cycle(`REV-20260804T061000-msg-speaker-attribution`)의 배포 검증 산출물이다 — 배포 스코프·서비스별 SHA·라이브 표면 3축.

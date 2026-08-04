@@ -66,3 +66,27 @@ web-a/web-b 는 무접촉. 검증 종료 후 컨테이너 제거.
   `test_assistant_speaker_resolver_prefers_stamp_over_live_product` 가 고정한다.
 - **그룹 대화 다중 발신자**의 fork 후 표시는 미실측(원본 소유자 1인 대화로 검증). 그룹 발신자는
   종전부터 `sender_username` 이 각인돼 있어 본 변경의 영향면이 아니다.
+
+---
+
+## 6. POST-DEPLOY 실증 (배포본 `ddc1b589`, 2026-08-04T15:50 KST)
+
+**배포 스코프**: `sudo -E bin/deploy-web.sh` (scope=all) — web 롤링 + 워커 롤아웃 + gateway
+reconcile + soak 90s 통과. 본 변경은 `agent_core.py`(ask-worker 실행 코드)를 포함하므로
+`--web-only` 가 아닌 **전체 스파인**으로 배포했다(web 만 신코드면 각인이 라이브 답변에 미도달).
+
+**서비스별 GIT_COMMIT 대조**(파이프 exit 이 아니라 서빙 주체 SHA 로 판정):
+`web-a`·`web-b`·`ask-worker`·`insight-worker`·`ops-scheduler` = **전부 `ddc1b589`**.
+서빙 자산 스탬프 `app.js?v=f5eca54ed047`(빌드 content-hash 주입). 배포본 코드 존재 확인:
+ask-worker `/app/agent_core.py` 에 `_answer_product_attribution`, web `/app/web/routers/_conv_store.py`
+에 `_conv_backfill_attribution`, `/app/web/static/app.js` 에 `_assistantSpeakerFor`.
+
+**라이브 사용자 표면 검증** (실 Windows Chrome 150, `https://localhost/`, 배포본):
+- 대화 `20260803081201-969946a2` — 컴포저 칩을 `GZ_QA_G` → `(MV) 마이크로볼츠` 로 **실제 클릭**
+  전환 후 과거 말풍선 재수집: **`unchanged: true`** (user `bootstrap_admin` · assistant
+  `건즈 글로벌 QA` 동일). 이후 `GZ_QA_G` 로 원복 — 대화 바인딩 최종 무변경.
+- evidence: `artifacts/pb0008/20260804-attrib-10-postdeploy-live.png`
+- 라이브 데이터 변경 0(제품 바인딩 전환→원복, 메시지 meta 는 pre-merge 검증에서 이미 각인됨).
+
+**결론**: 배포 전 격리 컨테이너 검증(§1~§3)과 배포본 실측이 일치. 요청의 두 트리거
+(fork · product 변경) 모두 라이브에서 과거 발화자를 바꾸지 않는다.
