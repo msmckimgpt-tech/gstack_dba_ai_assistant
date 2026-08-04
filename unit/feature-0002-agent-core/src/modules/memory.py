@@ -55,6 +55,10 @@ def load_memory_context(conn, conversation_id: str, max_turns: int):
         summary_pg = _read_runtime_pg("load_summary", conversation_id=conversation_id)
         msgs_pg = _read_runtime_pg("load_messages", conversation_id=conversation_id, limit=max_fetch)
         kv_pg = _read_runtime_pg("load_kv_all", conversation_id=conversation_id)
+        # FR-summary-bootstrap-deadlock: 세 read 모두 **`None` = 읽기 실패** 규약이다.
+        # `load_summary` 는 "행 없음" 을 `''` 로 돌려주므로(요약 미보유 대화가 실패로
+        # 오판돼 MySQL 폴백을 타던 교착 해소 — runtime_backend.load_summary docstring),
+        # 아래 `is not None` 검사는 그대로 두면서도 요약 없는 대화가 PG 경로를 통과한다.
         if summary_pg is not None and msgs_pg is not None and kv_pg is not None:
             rows: list = []
             for role, content, meta_json, created_at in msgs_pg:

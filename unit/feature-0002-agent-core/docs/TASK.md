@@ -8,6 +8,32 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260804T0630-summary-bootstrap-deadlock — 요약 미보유 대화가 PG 읽기 실패로 오판되던 부트스트랩 교착 (Major §12.3 — 선행 cycle 의 writer 복구를 실효 0 으로 만들던 직접 원인)
+
+- 출처: 선행 cycle `TASK-20260804T0454-summary-writer-wiring` 의 **배포 후 라이브 실증**에서 발견.
+  writer 를 복구하고 `c4701a17` 로 web·ask-worker·insight-worker·ops-scheduler 전량 배포한 뒤
+  배포본에서 `refresh_conversation_summary()` 를 실호출했으나 `saved=False`, `agent_runtime.summary`
+  여전히 **0행**. 로그: `load_memory_context: PG partial failure (summary=False msgs=True kv=True),
+  falling back to MySQL`.
+- **근본 원인**: `_read_runtime_pg` 의 호출 계약은 "`None` = 읽기 실패"인데
+  `PgRuntimeBackend.load_summary` 가 **행 없음도 `None`** 으로 돌려줬다. 두 사건이 구분되지 않아
+  **요약이 아직 없는 대화 전부**가 PG 읽기 실패로 분류되고, 큐레이션 훅은 conn=None 으로 호출하므로
+  MySQL 폴백에서 예외 → 요약 미저장.
+  → **요약이 없으니 읽기가 실패하고, 실패하니 첫 요약을 영원히 못 쓰는 교착.** 선행 cycle 의 writer
+  복구가 코드상 옳았음에도 라이브에서 실효 0 이던 직접 원인이다.
+- **왜 단위 테스트가 못 잡았나(정직 표기)**: 선행 cycle 의 테스트는 `load_memory_context` 를 통째로
+  스텁했다. 그 함수의 **PG/MySQL 분기 자체**가 결함 지점이라 스텁이 결함을 덮었다. 배포 후 실호출
+  검증이 아니었으면 "고쳤다" 고 보고한 채 라이브는 그대로였을 사안.
+- [x] `modules/runtime_backend.py`: `load_summary` 반환을 `Optional[str]` → `str` 로, 행 없음/NULL 은
+      **`''`**. 실패 신호(`None`)와 데이터 부재를 분리. 하위 소비처 정합 확인(MySQL 폴백도 falsy 로
+      넘기고 `_build_summary_payload` 는 `summary or ""`).
+- [x] `modules/memory.py`: `load_memory_context` 의 `is not None` 검사에 계약 주석 명시(코드 무변경).
+- [x] `tests/test_summary_bootstrap_deadlock.py`(5) 신규 — 반환 계약 3 + PG 경로 통과(conn=None 으로
+      폴백 진입 시 AttributeError 라 통과 자체가 증거) + **진짜 실패는 여전히 폴백**(규약 무디게
+      만들지 않았음). 결함 재주입 **역검증** 확인(2건 FAIL).
+- [ ] `make test` 전량 · verify-completion · commit/push/PR/머지 · 배포 · **라이브 재실증**
+      (요약 행 증가 + `meta.summary_count > 0`).
+
 ## TASK-20260804T0454-summary-writer-wiring — 대화 요약(`agent_runtime.summary`) writer 배선 복구 (cross-feature: 코드 거주=feature-0002, 소비=feature-0003 프롬프트 자동작성 / Major §12.3 — ask 당 외부 LLM 1회 추가)
 
 - 출처: `/_template:entry` — "각 사용자 별 시스템 프롬프트 자동 생성(개인·계정·역할)의 배선이

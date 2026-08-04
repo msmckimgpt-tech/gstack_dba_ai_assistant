@@ -774,11 +774,28 @@ class PgRuntimeBackend:
             rows = cur.fetchall() or []
         return [str(r[0]) for r in rows if r and r[0]]
 
-    def load_summary(self, conn: Any, *, conversation_id: str) -> Optional[str]:
+    def load_summary(self, conn: Any, *, conversation_id: str) -> str:
+        """요약 본문. **행이 없으면 `''`(빈 문자열)** — `None` 이 아니다.
+
+        FR-summary-bootstrap-deadlock (라이브 실측 2026-08-04): 호출 계약상 `_read_runtime_pg`
+        는 **읽기 실패**를 `None` 으로 신호한다(`memory.load_memory_context` 가 그 `None` 을
+        보고 MySQL 로 폴백). 그런데 본 메서드가 "행 없음" 도 `None` 으로 돌려주면 두 사건이
+        구분되지 않아, **요약이 아직 없는 대화**가 전부 PG 읽기 실패로 오판된다:
+
+            load_memory_context → summary_pg=None → "PG partial failure" → MySQL 폴백
+            → 큐레이션 훅은 conn=None 으로 부르므로 예외 → 요약 갱신 실패
+
+        결과는 **부트스트랩 교착** — 요약이 없으니 읽기가 실패로 잡히고, 실패하니 첫 요약을
+        영원히 못 쓴다. `agent_runtime.summary` 가 대화 296건에 0행이던 상태에서
+        writer 를 복구(feature-0003 prompt-autogen-wiring)해도 실효가 0 이었던 직접 원인이다.
+
+        `''` 는 하위 소비처와도 정합이다 — MySQL 폴백 경로도 요약 부재를 falsy 로 넘기고
+        (`row[0] if row else None`), `_build_summary_payload` 는 `summary or ""` 로 받는다.
+        """
         with conn.cursor() as cur:
             cur.execute(_PG_LOAD_SUMMARY, {"conversation_id": conversation_id})
             row = cur.fetchone()
-        return str(row[0]) if row and row[0] is not None else None
+        return str(row[0]) if row and row[0] is not None else ""
 
     def load_messages(self, conn: Any, *, conversation_id: str, limit: int = 50) -> list:
         with conn.cursor() as cur:
