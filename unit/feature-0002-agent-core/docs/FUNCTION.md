@@ -748,3 +748,28 @@ global row 가 코드 상수를 가리는 경로(원장 `FR-operator-global-prom
 dialect 층이라 자동 적용, 코칭 문구만 미적용). ② 임계 1,000,000행이 로그 도메인(테이블 1,300만~
 3,000만행)에 낮다는 운영 판단은 사람 결정으로 원장에 report-only 기록(사용자 결정 2026-07-31:
 코드만 수정·임계 유지).
+
+## (summary-bootstrap-deadlock, 2026-08-04) 런타임 PG read 반환 계약 — 데이터 부재 ≠ 읽기 실패
+
+`_read_runtime_pg(method, ...)` 의 반환 규약을 명문화한다. 호출측(`memory.load_memory_context` 등)은
+**`None` 을 "읽기 실패"로만** 해석하고 MySQL 폴백으로 분기한다. 따라서 **`_read_runtime_pg` 를 경유해
+호출되는** backend read method 는 **데이터 부재를 `None` 으로 표현해서는 안 된다** — 타입별 빈 값으로
+돌려준다.
+
+**적용 범위 (중요)**: 본 계약은 `_read_runtime_pg` dispatcher 를 타는 method 에만 적용된다 —
+`load_summary` · `load_messages` · `load_steps` · `load_kv` · `load_kv_all` · `load_kv_by_key` ·
+`load_kv_by_key_value` · `load_core_messages` · `load_branch_state` · `list_conversations`.
+`PgRuntimeBackend` 의 다른 method 를 **직접 호출**하는 경로(예: `max_core_message_id` 는 부재를
+`None` 으로 반환)는 자체 계약을 따르며 본 표의 대상이 아니다. dispatcher 경유로 소비처를 옮길 때
+이 계약 준수 여부를 먼저 확인한다.
+
+| method | 데이터 부재 시 | 읽기 실패 시 |
+|---|---|---|
+| `load_summary` | `''` (빈 문자열) | `None` (`_read_runtime_pg` 가 예외를 흡수하며 반환) |
+| `load_messages` / `load_steps` / `load_kv_all` | `[]` (빈 리스트) | `None` |
+
+- 위반 시 증상: 해당 데이터가 아직 없는 대화가 **전부 PG 읽기 실패로 오판**돼 MySQL 폴백을 타고,
+  conn 없이 호출되는 경로(답변 후 큐레이션 훅)에서는 예외로 끝난다. 요약의 경우 "없으니 실패하고,
+  실패하니 첫 건을 못 쓴다"는 **부트스트랩 교착**이 되어 기능이 영구히 비활성이 된다
+  (라이브 실측 2026-08-04 — `agent_runtime.summary` 0행 고착의 직접 원인).
+- 새 read method 를 추가할 때 이 표에 행을 추가하고, "부재 → 빈 값 / 실패 → None" 을 지킨다.

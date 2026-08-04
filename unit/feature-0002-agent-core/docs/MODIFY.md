@@ -10,6 +10,16 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260804T063000-summary-bootstrap-deadlock (요약 미보유 대화의 PG 읽기 오판 교착 해소, Major)
+- `src/modules/runtime_backend.py`: `PgRuntimeBackend.load_summary` 가 행 없음/NULL 을 `None` 이 아닌
+  **`''`** 로 반환. `_read_runtime_pg` 의 `None` 은 **읽기 실패 전용 신호**라, 데이터 부재를 같은 값으로
+  돌려주면 요약 없는 대화가 전부 실패로 오판돼 `load_memory_context` 가 conn=None 인 채 MySQL 폴백을
+  타고 예외를 낸다(= 첫 요약을 영원히 못 쓰는 교착). 반환 타입도 `Optional[str]`→`str`.
+- `src/modules/memory.py`: `load_memory_context` 의 세 read 검사에 계약 주석 추가(로직 무변경).
+- `tests/test_summary_bootstrap_deadlock.py` 신규(5) — 역검증(구 동작 복원 시 2건 FAIL) 확인.
+- 스키마·RBAC·엔드포인트 무변경. Cross-ref: TASK-20260804T0630-summary-bootstrap-deadlock ·
+  선행 TASK-20260804T0454-summary-writer-wiring(라이브 실증에서 발견).
+
 ## CHG-20260804T045449-summary-writer-wiring (대화 요약 writer 배선 복구, Major)
 - `src/modules/llm.py`: `_summary_deps()` 신설 — `log_timing`/`load_memory_context`/
   `save_memory_summary`/`_record_step_summary`/`sanitize_user_text`/`_near_run_deadline` 을

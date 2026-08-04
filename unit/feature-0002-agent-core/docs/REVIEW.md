@@ -10,6 +10,24 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260804T063000-summary-bootstrap-deadlock [CODEX:summary-bootstrap-deadlock] — SHIP-WITH-FIXES (P1 0 / P2 1 → 흡수) (TASK-20260804T0630)
+- **Trigger**: `query/read backend` keyword matched (backend) — code change, §18.8 dispatch 표.
+  채널은 §18.8.2 1순위 `codex`(제약 없는 채널). 세션 도구 제약으로 subagent panel 미호출.
+- **발견 경위(중요)**: 본 결함은 코드 리뷰가 아니라 **배포 후 라이브 실호출**에서 나왔다. 선행 cycle
+  (prompt-autogen-wiring)이 writer 를 복구하고 `c4701a17` 전량 배포까지 마친 뒤, 배포본에서
+  `refresh_conversation_summary()` 를 실제로 불러 보니 `saved=False` · summary 0행 유지였다.
+  **단위 테스트는 `load_memory_context` 를 스텁했고, 결함이 바로 그 함수의 PG/MySQL 분기에 있었다** —
+  스텁이 결함을 덮은 전형적 사각이다. 실호출 검증이 없었다면 "고쳤다" 고 보고한 채 라이브는
+  그대로였을 사안이라, 이 사실을 축소하지 않고 기록한다.
+- **[P2] FUNCTION.md 계약이 "backend read method 전체" 로 선언됐으나 `max_core_message_id()` 는 부재를
+  정상적으로 `None` 으로 반환 → 계약 모순 → 흡수.** 계약 범위를 **`_read_runtime_pg` dispatcher 를
+  경유하는 method 10종으로 한정**하고, 직접 호출 경로는 자체 계약을 따름을 명시. dispatcher 경유로
+  소비처를 옮길 때 준수 여부를 먼저 확인하라는 지침도 함께 남김.
+- **P1 0**. codex 확인 사항: 반환 타입 변경(`Optional[str]`→`str`)의 소비처 정합 · MySQL 폴백의 falsy
+  동작 패리티 · 신규 테스트가 구 동작 복원 시 실제로 FAIL · 관련 테스트 32건 통과.
+- **자체 역검증**: `load_summary` 를 구 동작(`else None`)으로 되돌리면 신규 테스트 2건 FAIL 확인.
+- **회귀**: `make test` 표준 호출 전량 **exit 0** · ruff clean.
+
 ## REV-20260803T200000-precondition-postdeploy [SKIPPED:docs-only-postdeploy-record] — 배포 결과·런타임 실증 기록
 - Date: 2026-08-03
 - Cycle: CHG-20260803T200000-precondition-postdeploy. **코드 변경 0** — codex 3라운드를 통과해 머지·배포된 변경의 결과 기록.
