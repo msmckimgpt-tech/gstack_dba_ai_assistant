@@ -307,6 +307,66 @@ ORDER BY t.cid, t.rn
     except Exception:
         return {}
 
+# ── 자동작성 접지 신호 정제 (product / role / account 공용) ─────────────────────────
+#
+# 대화 topic 은 개인·역할 스코프에서 **유일하게 남은** 접지원이다(요약 축은 별도 배선 —
+# FR-summary-writer-disconnected). 그런데 topic 원본에는 LLM 에 넣을 가치가 없는 잡음이 섞인다:
+#   - placeholder: 아직 제목이 안 붙은 대화의 `새 대화`(agent_core.PLACEHOLDER_TOPIC) / `(미설정)`
+#   - raw 절단: 첫 메시지는 `_try_update_topic` 이 `user_message[:60]` 을 그대로 제목으로 쓴다 →
+#     개행이 섞인 문장 토막("쿼리 리뷰를 진행해주세요. 반드시 …\n- 기존 DB에 해당 쿼리를 적")
+#   - 인사·의례: "안녕하세요", "반갑습니다", "안녕?" 같은 정보량 0 의 짧은 제목
+#   - 중복: 같은 질문을 여러 대화에서 반복하면 동일 제목이 그대로 N번 들어간다
+# 라이브 실측(계정 4): 40건 중 placeholder 3 · 중복 3 · 인사 3 · raw 절단 2 = 11건(27.5%)이 잡음.
+# 이 상태로 "사용자가 실제로 요청한 주제" 라며 LLM 에 주면 생성 프롬프트가 잡음을 사용자 관심사로
+# 오인해 일반론으로 흐른다. 아래 정제기가 세 스코프 공통으로 그 잡음을 걷어낸다.
+
+_SIGNAL_TOPIC_PLACEHOLDERS = frozenset({"새 대화", "(미설정)", "미설정", "new chat", "untitled"})
+# 정보량 0 의 의례적 제목 — 정규화(공백 축약·소문자·끝 구두점 제거) 후 완전일치만 제거한다.
+# 부분일치로 넓히지 않는다: "안녕하세요, 접속 로그 좀 봐주세요" 같은 실제 요청을 삼키면 안 된다.
+_SIGNAL_TOPIC_GREETINGS = frozenset({
+    "안녕", "안녕하세요", "안녕하십니까", "반갑습니다", "반가워요", "하이", "테스트", "test",
+    "hello", "hi", "ㅎㅇ",
+})
+# 길이 게이트는 **backstop 일 뿐**이다 — 실제 잡음(인사·placeholder)은 위 완전일치 집합이 잡는다.
+# 한국어 제목은 짧아도 정보가 있다("매출", "접속 로그"). 임계를 올리면 그런 제목을 잃으므로
+# 1자 이하(정규화 후 사실상 빈 제목)만 걷어낸다.
+_SIGNAL_TOPIC_MIN_LEN = 2      # 정규화 후 이 미만이면 신호로 보지 않음
+_SIGNAL_TOPIC_MAX_LEN = 120    # raw 메시지 절단본이 목록을 독식하지 않게 표시 상한
+
+def _normalize_signal_topics(raw_topics: "list[str]", *, limit: int) -> list[str]:
+    """topic 원본 목록 → 잡음 제거 + 중복 제거 + 길이 정규화된 접지 신호 목록.
+
+    입력 순서(최신순)를 보존하고 앞에서부터 `limit` 개만 남긴다. 판정은 전부 **정규화 후
+    완전일치**(placeholder / 인사말) 또는 길이 기준이며, 부분일치·형태소 추론은 하지 않는다 —
+    실제 요청을 잘못 버리는 쪽이 잡음을 남기는 쪽보다 나쁘다.
+    """
+    cap = max(0, int(limit))
+    if cap == 0:
+        return []      # 상한 0 = "신호 없음" — 아래 append-후-검사 루프는 1건을 흘린다.
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_topics or []:
+        text = " ".join(str(raw or "").split())      # 개행·연속공백 → 단일 공백(raw 절단본 정규화)
+        if not text:
+            continue
+        key = text.casefold().rstrip(" .!?~,;:")
+        if key in _SIGNAL_TOPIC_PLACEHOLDERS or key in _SIGNAL_TOPIC_GREETINGS:
+            continue
+        if len(key) < _SIGNAL_TOPIC_MIN_LEN:
+            continue
+        # 중복 판정은 **출력될 문자열** 기준이다(codex P2). 원문 전체로 판정하면 앞
+        # `_SIGNAL_TOPIC_MAX_LEN` 자가 같은 긴 제목 여러 개가 서로 다른 키를 받아 통과한 뒤
+        # 화면·프롬프트에는 **똑같은 절단 문자열**로 N번 나타나 limit 을 잠식한다.
+        display = text if len(text) <= _SIGNAL_TOPIC_MAX_LEN else text[:_SIGNAL_TOPIC_MAX_LEN] + "…"
+        dkey = display.casefold().rstrip(" .!?~,;:")
+        if dkey in seen:
+            continue
+        seen.add(dkey)
+        out.append(display)
+        if len(out) >= cap:
+            break
+    return out
+
 def _assemble_product_prompt_llm_request(product_id: int):
     """TASK-0309: 제품 프롬프트 LLM 요청 조립 (request-less, 인증 비포함).
 
@@ -388,7 +448,7 @@ def _assemble_product_prompt_llm_request(product_id: int):
     # source_type 은 fact_key 접두(`schema_insight:` / `table_insight:`)로 판별한다.
     schema_insights: dict[str, str] = {}          # schema -> 스키마 수준 요약 (최고 weight 1건)
     table_insights: dict[str, list[str]] = {}     # schema -> ["table: 설명", ...]
-    topic_lines: list[str] = []                   # 대화 topic (최신 50개)
+    topic_lines: list[str] = []                   # 대화 topic (정제 후 최대 40건)
     summary_lines: list[str] = []                 # 대화 summary 샘플 (최신 5개)
     try:
         from shared.db import _pg_connect
@@ -483,7 +543,9 @@ def _assemble_product_prompt_llm_request(product_id: int):
                             f"- `{table_label}`: {text_content.strip()[:300]}"
                         )
 
-        # topic 집계: 이 제품의 대화 제목 최신 50개
+        # topic 집계: 이 제품의 대화 제목. 잡음(placeholder·인사·중복·raw 절단)이 섞이므로
+        # 정제 후 40건을 목표로, 원본은 그 3배수 창(150)에서 최신순으로 긷는다 — 정제 전 50건만
+        # 읽으면 잡음 비율만큼 실제 신호가 줄어든다(실측 27.5% 잡음).
         pg_cur.execute(
             """
             SELECT COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) AS t
@@ -493,13 +555,13 @@ def _assemble_product_prompt_llm_request(product_id: int):
             WHERE c.product_id = %s
               AND COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) IS NOT NULL
             ORDER BY c.updated_at DESC
-            LIMIT 50
+            LIMIT 150
             """,
             (product_id,),
         )
-        for (t,) in pg_cur.fetchall():
-            if t:
-                topic_lines.append(t)
+        topic_lines = _normalize_signal_topics(
+            [t for (t,) in pg_cur.fetchall() if t], limit=40,
+        )
 
         # summary 샘플: 이 제품의 대화 요약 최신 5개
         pg_cur.execute(
@@ -689,6 +751,8 @@ def _collect_conversation_signals_pg(
     계정 필터 없음(제품 scope 처럼 전체).
 
     원문 메시지가 아닌 집계 메타(제목·요약)만 반환한다 — 제품 경로와 동일 privacy 경계.
+    topic 은 `_normalize_signal_topics` 로 잡음(placeholder·인사·중복·raw 절단)을 걷어낸 뒤
+    `topic_limit` 개까지 반환한다 — 원본은 그 3배수 창에서 긷는다(제품 경로와 동일 규약).
     반환: (topic_lines, summary_lines).
     """
     topic_lines: list[str] = []
@@ -724,11 +788,11 @@ def _collect_conversation_signals_pg(
             ORDER BY c.updated_at DESC
             LIMIT %s
             """,
-            (*params, int(topic_limit)),
+            (*params, max(1, int(topic_limit) * 3)),
         )
-        for (t,) in pg_cur.fetchall():
-            if t:
-                topic_lines.append(t)
+        topic_lines = _normalize_signal_topics(
+            [t for (t,) in pg_cur.fetchall() if t], limit=int(topic_limit),
+        )
         # summary 샘플: 대화 요약 최신순.
         pg_cur.execute(
             f"""
@@ -1143,6 +1207,13 @@ def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str)
                 break
 
         if error_msg is not None:
+            # 실패를 서버에도 남긴다: 종전엔 SSE `error` 프레임으로 브라우저에만 갔고 web 로그엔
+            # 한 줄도 안 남아, 사용자가 "자동 생성 실패" 를 보고해도 운영자가 원인(모델·타임아웃·
+            # 게이트웨이 거부)을 사후 확인할 방법이 없었다. 본문(프롬프트)은 남기지 않는다.
+            logging.getLogger(__name__).warning(
+                "%s LLM 생성 실패 (model=%s, max_tokens=%s, streamed_chars=%d, %s): %s",
+                log_label, llm_model, _mt, sum(len(x) for x in accumulated), log_ctx, error_msg,
+            )
             yield app._sse_pack("error", {"error": f"LLM 생성 실패: {error_msg}"})
             return
 

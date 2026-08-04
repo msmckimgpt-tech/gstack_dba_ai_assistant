@@ -2363,3 +2363,42 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 > 부수(같은 코드 경로): 종전 `render()` 는 액션 표시를 `classList.remove("hidden")` 로만 처리하고
 > 리스너를 매 렌더 부착해, 버전 페이징 재렌더 시 ① 숨김 상태가 복원되지 않고 ② `doJoin`/`doFork`
 > 가 클릭 1회에 중복 발사될 수 있었다. 표시 토글·1회 배선을 `wireShareAction` 으로 일원화했다.
+## (prompt-autogen-wiring, 2026-08-04) 사용자별(개인·계정·역할) 시스템 프롬프트 자동 생성 — 접지 신호 계약 (Major §12.3, 신규 권한·스키마·엔드포인트 0)
+
+시스템 프롬프트 '자동 작성'(scope = product / role / account)이 LLM 에 넘기는 **접지(grounding) 신호**의
+계약을 명문화한다. 호출 경로(엔드포인트·프론트 버튼·`compose_system_prompt` 3층 누적)는 무변경.
+
+### 접지 신호 2축
+| 축 | 출처 | 적용 scope | 비고 |
+|---|---|---|---|
+| DB 인사이트 | `public.fact_entries`(schema/table insight) | product 만 | role·account 에는 없음 |
+| 대화 topic | `core_conversations.topic` ∪ `kv(topic)` | product · role · account | 아래 위생 규약 적용 |
+| 대화 summary | `agent_runtime.summary` | product · role · account | **본 cycle 에서 writer 복구 전까지 상시 공집합이었다** |
+
+- role·account 스코프는 DB 인사이트 축이 없어 **topic + summary 두 축이 접지의 전부**다. 따라서 두 축
+  중 하나라도 죽으면 그 스코프의 자동작성은 조용히 일반론으로 수렴한다 — 본 cycle 이 해소한 결함.
+
+### 대화 요약 writer 계약 (feature-0002 거주)
+- `agent_runtime.summary` 는 `agent_core.run_post_answer_curation()` 이 **ask 당 1회** 갱신한다
+  (`modules.llm.refresh_conversation_summary`). 게이트 `AGENT_SUMMARY_REFRESH`(기본 활성, 0=전면 차단),
+  모델 `AGENT_SUMMARY_MODEL`.
+- 실패는 fail-open — 요약 갱신이 답변 경로를 막지 않는다.
+- 지연: worker 경로(운영 기본)는 job terminal 전이 후 실행이라 사용자 대기 +0. in-process 경로는
+  기존 큐레이션 3건과 같은 자리(terminal 전)라 비례 증가.
+
+### topic 신호 위생 규약 (`_normalize_signal_topics`)
+자동작성 컨텍스트에 들어가는 topic 은 다음을 만족한다:
+1. 개행·연속 공백은 단일 공백으로 정규화한다(첫 메시지 raw 절단본 대응).
+2. placeholder(`새 대화`·`(미설정)` 등)와 의례적 인사말은 **정규화 후 완전일치**로만 제거한다 —
+   부분일치 확장 금지("안녕하세요, 접속 로그 좀 봐주세요" 같은 실제 요청을 삼키면 안 된다).
+3. 중복은 **출력될 문자열**(표시 상한 적용 후) 기준으로 제거한다.
+4. 표시 상한 120자(초과 시 말줄임), 최소 길이 2자(짧은 한국어 제목 보존).
+5. 원본은 목표 건수의 3배 창에서 최신순으로 읽어 정제 손실을 보전한다.
+
+### 스코프 정리 계약
+- 제품·**역할** 삭제 시 해당 scope 의 `WebSystemPrompts` 행을 같은 트랜잭션에서 함께 삭제한다.
+- **계정 삭제는 soft delete 이므로 개인 프롬프트를 지우지 않는다**(행이 살아 있고 복구 가능).
+
+### 관측 계약
+- 자동작성 LLM 실패는 SSE(`error` 프레임)·JSON(502) 뿐 아니라 **서버 로그에도** 남긴다
+  (label·model·max_tokens·scope ctx·에러). 프롬프트 본문·생성 결과는 기록하지 않는다.

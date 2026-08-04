@@ -8,6 +8,76 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260804T0454-prompt-autogen-wiring — 사용자별(개인·계정·역할) 시스템 프롬프트 자동 생성의 끊긴 배선 전역 점검·복구 (Major §12.3 — 답변 후 큐레이션에 외부 LLM 1회 추가 + 라이브 고아행 정리)
+
+- **사용자 요청(`/_template:entry`)**: "서비스 내 각 사용자 별 시스템 프롬프트 자동 생성에 대한
+  작동에 이슈가 확인되었습니다. (개인, 계정, 역할 별 등) 배선이 끊긴 부분에 대해 전역적으로
+  점검 후 정상적으로 작동하도록 수정해주세요."
+- **전역 점검 결과 — 정상 관통 확인분**: 엔드포인트 4종(`POST|GET /api/admin/roles/{id}/prompt/generate[/stream]`,
+  `POST|GET /api/auth/me/system-prompt/generate[/stream]`) · 프론트 버튼 배선(admin `autoGenerateRoleId`,
+  프로필 `#generatePromptBtn`) · 소비 경로 `compose_system_prompt`(PRODUCT/ROLE/ACCOUNT 3층 누적)
+  모두 라이브에서 관통. 역할 28 실호출 45.4s / 4605자 정상 산출. **즉, 끊긴 곳은 호출 경로가
+  아니라 접지(grounding) 신호와 관측·정리 배선이었다.**
+- **W1 (핵심 단절) — 대화 요약 writer 완전 부재**: `modules/llm.py` 의 `_refresh_summary_after_step`
+  / `_refresh_summary_after_ask` 는 **호출자가 0** 이다. 유일한 호출자였던 `agent_cli.py` 가
+  "죽은 코드" 로 삭제되며(커밋 `68ed7a76`, 2026-06-02) 같이 끊겼고, web/worker 루프(`agent_core.py`)
+  는 원래부터 요약을 쓰지 않았다. 결과 `save_memory_summary()` 미실행 → **`agent_runtime.summary`
+  0행**(라이브 대화 296건 기준). 이 테이블을 읽는 제품·역할·개인 자동작성 3종 모두 "실제 분석
+  사례 요약" 접지 블록이 **한 번도 생성된 적 없고** `meta.summary_count` 가 항상 0 이었다.
+  개인·역할 스코프는 제품과 달리 DB 인사이트 축이 없어 **요약+topic 두 축이 접지의 전부**라,
+  그중 하나가 죽은 채였다는 점이 사용자가 체감한 "자동 생성이 이상하다" 의 실체다.
+  (`insight.run_account_insight_pass` 는 이미 "이 배포처럼 요약 쓰기가 비어도" 라는 주석과 함께
+  LEFT JOIN 으로 우회 중이었다 — 단절이 인지됐으나 writer 는 복구되지 않은 상태였다.)
+  부수 발견: 그 두 함수는 `log_timing`/`load_memory_context`/`save_memory_summary` 등을 module
+  전역에서 찾는데 `llm.py` 는 그 어느 것도 import 하지 않아 **호출 즉시 NameError** 였다 —
+  호출자가 0 이라 테스트에도 안 잡혔다(§gate-hidden-call-test-blindspot 계열).
+- **W2 — topic 신호 오염**: 요약 축이 죽은 상태에서 유일하게 남은 접지원인데 잡음이 크다.
+  라이브 실측(계정 4, 40건): placeholder `새 대화` 3 · 동일 제목 중복 3 · 인사말 3 ·
+  첫 메시지 raw 절단(개행 포함 60자, `_try_update_topic` 의 `user_message[:60]`) 2 = **27.5%**.
+- **W3 — 자동작성 실패의 서버측 무로그**: LLM 예외가 SSE `error` 프레임/502 JSON 으로 브라우저에만
+  가고 web 로그엔 한 줄도 안 남아, 사용자가 "자동 생성 실패" 를 보고해도 원인 추적 근거가 없었다.
+- **W4 — 스코프 주체 삭제 시 프롬프트 고아행**: 제품 삭제 경로는 `DELETE FROM WebSystemPrompts
+  WHERE ProductId` 를 이미 수행하는데 **역할 삭제 경로에만 그 정리가 빠져** 있었다. 라이브 고아
+  3건(role Id 2/RoleId 16 · Id 28/RoleId 30 · product Id 46/ProductId 990001). 계정은 soft delete
+  라 대상 아님(행이 살아 있고 복구 가능 — 개인 프롬프트 삭제는 되돌릴 수 없는 손실).
+- **사용자 결정(AskUserQuestion 2026-08-04)**: ① W1 = **복구 + 기존 env 게이트(`AGENT_SUMMARY_REFRESH`,
+  운영 .env 에 이미 1) 유지** — 설정은 ON 인데 코드 경로가 없던 상태의 해소이므로 새 스위치를 만들지
+  않는다. ② 역할·개인의 **무인 자동생성 sweep 은 미도입** — TASK-20260625 의 "온디맨드 버튼만,
+  개인 프롬프트 무동의 자동작성 회피" 결정 유지. ③ W4 = 배선 + **기존 고아행도 정리**.
+- [x] W1 백엔드: `modules/llm.py` — `_summary_deps()` 신설(타 모듈 심볼 지연 해소, NameError 결손
+      복구) + `refresh_conversation_summary(conversation_id, *, last_step_summary)` 공개 함수 신설
+      (게이트=기존 `AGENT_SUMMARY_REFRESH`, conn 불요, fail-open, 저장 여부 bool 반환).
+      `agent_core.py` — `run_post_answer_curation()` 에 호출 추가. **답변 확정 + (worker 경로)
+      job terminal 전이 이후**라 사용자 대기시간 증가 0, 빈도는 ask 당 1회(스텝당 아님).
+      기존 큐레이션(topic/glossary/enum)과 같은 자리 = 삭제 재검증·datasource/제품 스코프 복원·
+      fail-open 계약을 그 함수가 이미 단일 소유.
+- [x] W2 백엔드: `routers/_prompt_context.py` — `_normalize_signal_topics()` 신설(placeholder·
+      인사말 **완전일치** 제거 / 개행·연속공백 정규화 / 대소문자·끝구두점 무시 중복 제거 /
+      표시 상한 120자). `_collect_conversation_signals_pg`(role·account) 와 제품 인라인 쿼리
+      **양쪽에 적용** + 원본 조회 창을 `limit`→`limit*3` 으로 확대(정제로 줄어들 몫 보전).
+      길이 게이트는 1자 이하만(짧은 한국어 제목 "매출"·"접속 로그" 보존 — 회귀 테스트로 고정).
+- [x] W3 백엔드: `_prompt_generate_stream_response`(SSE) · `_prompt_generate_json_response`(JSON)
+      양쪽에 `logging.warning` — label/model/max_tokens/ctx/에러. 프롬프트 본문은 미기록.
+- [x] W4 백엔드: `admin_roles.admin_delete_role` 에 `DELETE FROM WebSystemPrompts WHERE RoleId = %s`
+      (WebRolePermissions 정리와 같은 트랜잭션, 역할 행 삭제 **이전**). 기존 고아 3건은 백업
+      (`artifacts/prompt-autogen-wiring/orphan-system-prompts-backup-20260804.json`) 후 라이브 DELETE
+      — 잔존 고아 0 확인.
+- [x] 테스트 신규 20: `feature-0002/tests/test_summary_writer_wiring.py`(8 — happy/게이트/빈결과/
+      fail-open/**배선 가드(run_post_answer_curation 이 요약 갱신을 호출하는지)**/심볼 해소) +
+      `feature-0003/tests/test_prompt_signal_hygiene.py`(12 — placeholder·인사·중복·raw 절단·
+      상한·limit·짧은 한국어 보존·정제기 통과·3배수 창·실패 로깅·역할 삭제 cascade).
+      배선 가드가 이 cycle 의 load-bearing 테스트다 — 없으면 "함수만 남고 호출자가 사라지는"
+      원래 결함이 그대로 재발한다.
+- [x] §18.8 적대 검증: `codex review`(§18.8.2 1순위 제약 없는 채널) — **P1 1 / P2 3**. 흡수 3
+      (절단-후 dedupe · 실제 완료 경로 AST 배선 가드 · 게이트-우선 의존해소) + 반증 1
+      (`_near_run_deadline` 미적용 — 답변 후 실행이라 가드를 넣으면 `_set_run_deadline` 배선 시
+      writer 가 다시 죽는다). P1 의 "사용자 대기 +0" 주장은 **worker 경로 한정**으로 정정(정직 표기).
+      흡수분 2건은 **역검증**(결함 재주입 시 FAIL) 확인. REV-20260804T045449-prompt-autogen-wiring §7.
+- [x] `make test` 표준 호출 전량 회귀 **exit 0 PASS** · 신규 테스트 22건 통과 · ruff clean.
+- [ ] 잔여: verify-completion --pre-commit · commit/push/PR/머지 ·
+      배포(`deploy_scope: included` — web + ask-worker 재빌드; W1 이 agent-core 코드라 **워커도
+      함께 나가야 실효**) · 배포 후 라이브 실증(요약 행 증가 + `meta.summary_count > 0`).
+
 ## TASK-20260730T1620-test-isolation-hardening — 테스트→라이브 설정 오염 **재발** 근본 차단: 도달성 층 + fail-loud + 감지 (Major)
 
 - **재발 경위**: 어제(07-29) 격리를 main 에 머지(`14:23`)한 **10분 뒤 `14:33:22`** 에 같은 오염이

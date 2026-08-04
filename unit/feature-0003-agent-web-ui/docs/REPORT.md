@@ -1853,3 +1853,35 @@ joinable && **!already_member**)이 false → `share.js` 의 `can_join` 단독 �
   ④ 버전 페이징 후 클릭 1회 = 요청 1회 를 실측해 `docs/test-runs.d/20260804T0458-share-join-btn-visibility.md`
   §5 에 POST-DEPLOY 절로 append 한다. **미검증을 완료로 보고하지 않는다.**
 - 정본: TASK/CHG/REV `20260804T0458-share-join-btn-visibility` · fragment 동명 파일.
+## 20260804T0454-prompt-autogen-wiring — 사용자별(개인·계정·역할) 시스템 프롬프트 자동 생성 배선 복구 (Major §12.3)
+사용자 요청: "각 사용자 별 시스템 프롬프트 자동 생성(개인·계정·역할)의 배선이 끊긴 부분을 전역 점검 후
+수정". 전역 점검 결과 **호출 경로는 전부 관통**했고(엔드포인트 4종·프론트 버튼·`compose_system_prompt`
+3층 누적 — 역할 28 실호출 45.4s/4605자 정상 산출), 끊긴 곳은 **접지 신호와 관측·정리 배선**이었다.
+
+- **W1 대화 요약 writer 완전 부재**: `_refresh_summary_after_step`/`_refresh_summary_after_ask` 호출자 0
+  (유일 호출자 `agent_cli.py` 가 죽은 코드로 삭제, `68ed7a76` 2026-06-02). → `agent_runtime.summary`
+  **0행**(대화 296건). 제품·역할·개인 자동작성 3종의 "실제 분석 사례 요약" 접지가 **한 번도 생성된 적
+  없음**(`meta.summary_count` 항상 0). 개인·역할은 DB 인사이트 축이 없어 요약+topic 이 접지의 전부라
+  그중 하나가 죽은 채였다. 해소: `refresh_conversation_summary()` 신설 + `run_post_answer_curation()`
+  에서 ask 당 1회 호출(사용자 대기 0, 게이트=기존 `AGENT_SUMMARY_REFRESH`).
+- **W2 topic 신호 오염 27.5%**(계정 4 실측 40건 중 placeholder 3·중복 3·인사 3·raw 절단 2) → 정제기
+  `_normalize_signal_topics` 를 role/account/product 3경로 공통 적용 + 원본 조회창 3배 확대.
+- **W3 자동작성 실패 서버측 무로그** → SSE·JSON 양 경로 `logging.warning`.
+- **W4 역할 삭제 시 프롬프트 고아행**(제품 경로엔 있던 cascade 가 역할 경로에만 부재) → cascade 추가 +
+  기존 고아 3건 백업 후 정리(잔존 0).
+
+### 개선 제안(§8.1, 기록만 — 사용자 지시 없이 실행 안 함)
+1. **인가 비대칭(선재)**: 역할 프롬프트 자동작성의 접지(topic·summary)는 `owner_account_id IN (역할
+   소속)` 으로 **타 사용자 대화 메타**를 읽는데 게이트는 `system_prompt.manage.role.any` 단독이다.
+   현재는 그 권한 보유 역할(admin)이 `conversation.read.any` 도 보유해 미발현이나, 둘을 분리 부여하면
+   열람 권한 없는 대화의 메타가 프롬프트 생성 컨텍스트로 흘러간다. topic 축은 이미 라이브였고 본 cycle
+   이 summary 축까지 켜므로 노출 폭이 넓어진다 — 게이트에 `conversation.read.any` 동반 요구를 추가할지
+   검토 필요.
+2. **`_set_run_deadline()` 호출자 0**: `CURRENT_RUN_DEADLINE_TS` 가 항상 0.0 이라 `_near_run_deadline()`
+   은 상시 False — aux-skip 예산 가드(`AGENT_AUX_SKIP_NEAR_DEADLINE_MS`)가 현재 무동작이다. 설정은
+   존재하는데 코드 경로가 없는 W1 과 **동형 패턴**. 별도 cycle 로 활성화 또는 정직한 제거 판단 필요.
+3. **역할×제품 프롬프트에 자동작성 부재**: `buildSystemPromptEditor` 는 `autoGenerateRoleId` 를 지원하나
+   역할 '전체 제품' 카드에만 전달되고 제품별 카드에는 없다(백엔드도 product-scoped role 생성 미지원).
+4. **관리 콘솔에 계정 스코프 프롬프트 편집기 부재**: `scope:"account"` 를 지원하는 공용 에디터가 있으나
+   호출부가 프로필(본인)뿐 — 관리자가 특정 사용자의 개인 프롬프트를 보거나 생성할 수단이 없다(설계상
+   self-service 결정이었는지 재확인 필요).

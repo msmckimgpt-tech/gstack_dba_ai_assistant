@@ -10,6 +10,21 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260804T045449-summary-writer-wiring (대화 요약 writer 배선 복구, Major)
+- `src/modules/llm.py`: `_summary_deps()` 신설 — `log_timing`/`load_memory_context`/
+  `save_memory_summary`/`_record_step_summary`/`sanitize_user_text`/`_near_run_deadline` 을
+  함수-로컬 import 로 해소(본 모듈은 그중 어느 것도 import 하지 않아 `_refresh_summary_after_*`
+  가 호출 즉시 NameError 였다). 레거시 두 진입점도 이 해소를 사용하도록 수정.
+  `refresh_conversation_summary(conversation_id, *, last_step_summary)` 신설 + `__all__` 등재 —
+  게이트 `AGENT_SUMMARY_REFRESH`, conn 불요(PG 런타임 백엔드가 자체 연결), 예외 흡수 후 bool 반환.
+- `src/agent_core.py`: `refresh_conversation_summary` 를 `_refresh_conversation_summary` alias 로
+  import + `run_post_answer_curation()` 말미에서 호출(topic/glossary/enum 큐레이션과 같은 자리).
+  이 한 줄이 `agent_runtime.summary` 의 재연결점 — 이전까지 writer 가 없어 0행이었다.
+- `tests/test_summary_writer_wiring.py` 신규(8) — happy/게이트/빈결과/fail-open/**배선 가드**/
+  심볼 해소/레거시 진입점.
+- 스키마·RBAC·엔드포인트 무변경. Cross-ref: TASK-20260804T0454-summary-writer-wiring ·
+  feature-0003 TASK-20260804T0454-prompt-autogen-wiring · REV-20260804T045449-prompt-autogen-wiring.
+
 ## CHG-20260803T200000-precondition-postdeploy (POST-DEPLOY 기록, docs-only)
 - Date: 2026-08-03. 코드 변경 **0**.
 - **배포**: PR #1126 merge main `99d09137` → `make deploy-web` 전체 스코프, soak 통과, 4서비스 GIT_COMMIT=99d09137 healthy.

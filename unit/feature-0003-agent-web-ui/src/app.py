@@ -3332,6 +3332,8 @@ from routers._prompt_context import (  # noqa: E402
     _collect_matched_excerpts,
     _collect_matched_attachment_names,
     _collect_conversation_signals_pg,
+    _normalize_signal_topics,
+    _SIGNAL_TOPIC_MAX_LEN,
     _collect_account_prompt_context,
     _collect_role_prompt_context,
     _collect_product_prompt_context,
