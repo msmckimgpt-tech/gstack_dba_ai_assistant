@@ -10,13 +10,15 @@ import {
 } from "./admin/settings.js?v=dev";
 export { mountGuidanceRegistryPanel };  // aiops.js 의 "../admin.js" import 계약 보존 (re-export)
 import { loadAuditList, attachAuditFilterHandlers, loadAuditFacets, loadGrantHealth } from "./admin/audit.js?v=dev";
+import { currentPageAccounts, renderAccountList, renderAccountBulkBar, renderAccountDetail } from "./admin/accounts.js?v=dev";
+import { filteredRoles, renderRoleList, renderRoleDetail, startNewRole } from "./admin/roles.js?v=dev";
 const mermaid = window.mermaid;   // UMD 전역 bridge(module scope 의 bare mermaid 참조 보존).
 
 /* =====================================================================
  * Admin console (tab + master-detail + pending changes + bulk commit)
  * ===================================================================== */
 
-const ACCOUNT_PAGE_SIZE = 15;
+export const ACCOUNT_PAGE_SIZE = 15;
 
 export const adminState = {
   me: null,
@@ -369,11 +371,11 @@ const BULK_ACTION_LABEL = { activate: "활성화", deactivate: "비활성화", d
 // DESIGN.md §7 — 위험 액션 typed-confirm 임계치
 const CONFIRM_TYPED_THRESHOLD = 10;
 
-function entityUnit(entity) { return BULK_ENTITY_UNIT[entity] || "개"; }
+export function entityUnit(entity) { return BULK_ENTITY_UNIT[entity] || "개"; }
 function actionLabel(action) { return BULK_ACTION_LABEL[action] || action; }
 
 // DESIGN.md §7 — bulk action confirm 표준
-function confirmBulkAction({ entity, action, count, danger = false }) {
+export function confirmBulkAction({ entity, action, count, danger = false }) {
   const unit = entityUnit(entity);
   const verb = actionLabel(action);
   const summary = `${count}${unit} ${verb}`;
@@ -388,7 +390,7 @@ function confirmBulkAction({ entity, action, count, danger = false }) {
 }
 
 // DESIGN.md §8 — RBAC partial-failure 처리. ids 를 [applied, skipped] 로 분할.
-function runBulkActionWithPartialFail({ entity, ids, action, applyFn, canTargetRow }) {
+export function runBulkActionWithPartialFail({ entity, ids, action, applyFn, canTargetRow }) {
   const applied = [];
   const skipped = [];
   Array.from(ids).forEach((id) => {
@@ -435,7 +437,7 @@ function assertBulkBarContract(entity) {
 }
 
 // DESIGN.md §6 — generic cross-page banner renderer
-function renderCrossPageBanner({ entity, selected, visibleIds, totalCount, onClearAll, onShowCurrentOnly }) {
+export function renderCrossPageBanner({ entity, selected, visibleIds, totalCount, onClearAll, onShowCurrentOnly }) {
   const banner = document.getElementById(`${entity}CrossPageBanner`);
   if (!banner) return;
   banner.innerHTML = "";
@@ -464,7 +466,7 @@ function renderCrossPageBanner({ entity, selected, visibleIds, totalCount, onCle
 }
 
 // DESIGN.md §9 — shift-click range 적용
-function applyShiftRangeSelect({ selected, visibleIds, fromIdx, toIdx, addMode = true }) {
+export function applyShiftRangeSelect({ selected, visibleIds, fromIdx, toIdx, addMode = true }) {
   if (fromIdx < 0 || toIdx < 0) return;
   const [lo, hi] = fromIdx <= toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
   for (let i = lo; i <= hi; i++) {
@@ -555,7 +557,7 @@ function identiconSvg(seed, size) {
 }
 // applyAvatar: el 에 이미지(url 있으면 <img>) 또는 Identicon(seed 해시) 렌더. app.js 와 동형.
 //   url=설정된 이미지 API path. seed=fallback identicon 시드(username/product_key). initials=이미지 로드 실패 시 폴백.
-function applyAvatar(el, { url, seed, initials }) {
+export function applyAvatar(el, { url, seed, initials }) {
   if (!el) return;
   el.textContent = "";
   el.classList.add("has-avatar-img");
@@ -589,7 +591,7 @@ const LEGACY_BUNDLE_PERMISSIONS = new Set([
   "product.manage", "datasource.manage",
 ]);
 
-function groupedPermissions(opts = {}) {
+export function groupedPermissions(opts = {}) {
   // TASK-0053 Phase B: dynamic 권한 (`product.access.<key>`) 은 별도 product subcatalog UI 가
   // 처리하므로 일반 권한 grid 에서는 excludeDynamic=true 로 필터링한다. 정적 권한
   // (`product.manage`, `system_prompt.manage.role.any` 등) 은 그대로 product 그룹에 남는다.
@@ -669,7 +671,7 @@ function dynamicProductPermissions() {
     });
 }
 
-function statusBadge(text, className = "") {
+export function statusBadge(text, className = "") {
   const badge = document.createElement("span");
   badge.className = `status-chip ${className}`.trim();
   badge.textContent = text;
@@ -678,14 +680,14 @@ function statusBadge(text, className = "") {
 
 /* ── Permission grid (collapsible details, from TASK-0027) ───────────── */
 
-function _updateCheckboxGroupSummary(section) {
+export function _updateCheckboxGroupSummary(section) {
   const total = section.querySelectorAll("input[type='checkbox']").length;
   const checked = section.querySelectorAll("input[type='checkbox']:checked").length;
   const badge = section.querySelector(".permission-group-counts");
   if (badge) badge.textContent = `${checked}/${total} 선택`;
 }
 
-function _updateOverrideGroupSummary(section) {
+export function _updateOverrideGroupSummary(section) {
   const selects = section.querySelectorAll("select[data-override-code]");
   let allow = 0, deny = 0, inherit = 0;
   selects.forEach((s) => {
@@ -855,7 +857,7 @@ function _orderItemsAsTree(items) {
   return out;
 }
 
-function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange, opts = {}) {
+export function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overrides, onChange, opts = {}) {
   // TASK-0053 Phase B: opts.excludeDynamic=true 면 dynamic product.access.<key> 권한들을 grid 에서 제외.
   // 그 권한들은 호출처가 별도 buildProductSubcatalog... 함수로 product 카드 형식으로 렌더한다.
   // CONVENTIONS.md §10.6 — group <details> 들은 ADMIN_PERMISSION_SECTIONS 의 2단 section (관리/운영/기타) 으로 묶어 렌더.
@@ -1048,7 +1050,7 @@ function renderPermissionGrid(containerEl, selectedCodes, disabled, mode, overri
 
 /* ── Merged state helpers (server data + pending overlay) ────────────── */
 
-function mergedAccount(accountId) {
+export function mergedAccount(accountId) {
   const base = adminState.accounts.find((a) => Number(a.id) === Number(accountId));
   if (!base) return null;
   const pending = adminState.pending.accounts.get(Number(accountId)) || {};
@@ -1064,7 +1066,7 @@ function mergedAccount(accountId) {
   };
 }
 
-function mergedRole(roleKey) {
+export function mergedRole(roleKey) {
   if (String(roleKey).startsWith("new:")) {
     const draft = adminState.pending.newRoles.get(roleKey);
     if (!draft) return null;
@@ -1102,7 +1104,7 @@ function mergedRole(roleKey) {
   };
 }
 
-function setAccountPending(accountId, patch) {
+export function setAccountPending(accountId, patch) {
   const id = Number(accountId);
   const current = adminState.pending.accounts.get(id) || {};
   const base = adminState.accounts.find((a) => Number(a.id) === id);
@@ -1138,7 +1140,7 @@ function setAccountPending(accountId, patch) {
   refreshPendingUI();
 }
 
-function setRolePending(roleId, patch) {
+export function setRolePending(roleId, patch) {
   if (String(roleId).startsWith("new:")) {
     const draft = adminState.pending.newRoles.get(roleId) || {};
     adminState.pending.newRoles.set(roleId, { ...draft, ...patch });
@@ -1510,7 +1512,7 @@ adminState.aiOps = { initialized: false, data: null };
 //   값: 빈칸=상속(역할 기본은 무제한, 계정은 역할 기본 사용), 0=무제한(명시), 1 이상=한도, 1=사실상 차단.
 //   TASK-20260623T030418-quota-rbac-permission: readOnly=true(quota.read 만 보유, quota.manage 없음)
 //     → 입력 비활성 + 저장 버튼 제거 + "조회 전용" 안내. 섹션 자체는 quota.read 없으면 호출측이 미렌더.
-function buildQuotaEditor(opts) {
+export function buildQuotaEditor(opts) {
   const readOnly = Boolean(opts.readOnly);
   const fmtVal = (v) => (v === null || v === undefined ? "" : String(v));
   const wrap = document.createElement("div");
@@ -7041,1372 +7043,9 @@ function describePatchKeys(patch) {
   return Object.keys(patch).map((k) => labels[k] || k).join(", ");
 }
 
-/* ── Accounts pane ───────────────────────────────────────────────────── */
+// feature-0038 Cycle 4: 계정 pane (renderAccountList/Detail 외) 은 admin/accounts.js 로 분리 (구 L7044–7813).
 
-function filteredAccounts() {
-  const q = adminState.accountSearch.trim().toLowerCase();
-  return adminState.accounts.filter((account) => {
-    const username = String(account.username || "").toLowerCase();
-    if (q && !username.includes(q)) return false;
-    if (adminState.accountFilter === "active") return account.is_active && !account.deleted_at;
-    if (adminState.accountFilter === "inactive") return !account.is_active && !account.deleted_at;
-    if (adminState.accountFilter === "deleted") return Boolean(account.deleted_at);
-    return true;
-  });
-}
-
-function renderAccountList() {
-  const listEl = $("accountList");
-  const paginationEl = $("accountPagination");
-  const countEl = $("accountListCount");
-  listEl.innerHTML = "";
-  paginationEl.innerHTML = "";
-
-  if (!can("account.read")) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.innerHTML = "<strong>계정 조회 권한 없음</strong><span>현재 계정은 계정 목록을 읽을 수 없습니다.</span>";
-    listEl.appendChild(empty);
-    countEl.textContent = "";
-    return;
-  }
-
-  const all = filteredAccounts();
-  countEl.textContent = `${all.length}명`;
-  if (!all.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.innerHTML = "<strong>계정 없음</strong><span>검색 조건을 변경하세요</span>";
-    listEl.appendChild(empty);
-    return;
-  }
-
-  const totalPages = Math.max(1, Math.ceil(all.length / ACCOUNT_PAGE_SIZE));
-  if (adminState.accountPage >= totalPages) adminState.accountPage = 0;
-  const start = adminState.accountPage * ACCOUNT_PAGE_SIZE;
-  const visible = all.slice(start, start + ACCOUNT_PAGE_SIZE);
-
-  // DESIGN.md §9 — shift-click range 를 위한 visible id 시퀀스 (현재 페이지)
-  const visibleIds = visible.map((a) => Number(a.id));
-  visible.forEach((account, visibleIdx) => {
-    const merged = mergedAccount(account.id);
-    const row = document.createElement("div");
-    row.className = "admin-list-row";
-    row.dataset.accountId = String(account.id);
-    row.dataset.idx = String(visibleIdx);
-    row.setAttribute("role", "row");
-    if (Number(adminState.selectedAccountId) === Number(account.id)) row.classList.add("is-active");
-    if (merged._pending) row.classList.add("has-pending");
-    if (merged._delete) row.classList.add("is-to-delete");
-
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "admin-list-row-cb";
-    cb.checked = adminState.accountSelected.has(Number(account.id));
-    cb.setAttribute("aria-label", `계정 ${account.username} 선택`);
-    cb.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      // DESIGN.md §9 — shift-click range 처리는 click phase 에서 (change 이전)
-      if (ev.shiftKey && adminState.accountLastClickIdx >= 0) {
-        const addMode = !cb.checked;  // 곧 toggle 될 새 상태와 같은 방향으로 range 적용
-        applyShiftRangeSelect({
-          selected: adminState.accountSelected,
-          visibleIds,
-          fromIdx: adminState.accountLastClickIdx,
-          toIdx: visibleIdx,
-          addMode,
-        });
-        // 이번 click 의 default toggle 도 처리하도록 그대로 진행 (browser native)
-      }
-    });
-    cb.addEventListener("change", () => {
-      if (cb.checked) adminState.accountSelected.add(Number(account.id));
-      else adminState.accountSelected.delete(Number(account.id));
-      adminState.accountLastClickIdx = visibleIdx;
-      // shift-click range 가 다수 변경했을 수 있으므로 list 재렌더
-      renderAccountList();
-    });
-
-    const main = document.createElement("div");
-    main.className = "admin-list-row-main";
-
-    const title = document.createElement("div");
-    title.className = "admin-list-row-title";
-    const avatar = document.createElement("span");
-    avatar.className = "admin-avatar admin-avatar-sm";
-    // TASK-0293: 아바타 이미지(설정 시) 또는 username 시드 Identicon — 작업화면 프로필과 동일 시드/폴백.
-    //   기존 이니셜 텍스트는 작업화면에서 바꾼 아바타가 관리 콘솔에 반영 안 되던 조회 버그의 원인.
-    applyAvatar(avatar, { url: account.avatar_url, seed: account.username, initials: account.username.slice(0, 2).toUpperCase() });
-    const name = document.createElement("span");
-    name.className = "admin-list-row-name";
-    name.textContent = account.username;
-    const pendingDot = document.createElement("span");
-    pendingDot.className = "admin-pending-dot";
-    pendingDot.title = "pending 변경 있음";
-    pendingDot.textContent = merged._pending ? "•" : "";
-    title.append(avatar, name, pendingDot);
-
-    const meta = document.createElement("div");
-    meta.className = "admin-list-row-meta";
-    const role = adminState.roles.find((r) => Number(r.id) === Number(merged.role_id));
-    meta.textContent = `${role ? role.name : "—"} · ${account.conversation_count || 0}`;
-
-    main.append(title, meta);
-
-    const chips = document.createElement("div");
-    chips.className = "admin-list-row-chips";
-    chips.appendChild(statusBadge(merged.is_active ? "active" : "inactive", merged.is_active ? "role-operator" : ""));
-    if (account.deleted_at) chips.appendChild(statusBadge("deleted", "is-disabled"));
-
-    row.append(cb, main, chips);
-    row.addEventListener("click", () => selectAccount(account.id));
-    listEl.appendChild(row);
-  });
-
-  // Pagination
-  if (totalPages > 1) {
-    const prev = document.createElement("button");
-    prev.type = "button";
-    prev.className = "btn-secondary";
-    prev.textContent = "이전";
-    prev.disabled = adminState.accountPage === 0;
-    prev.addEventListener("click", () => {
-      adminState.accountPage = Math.max(0, adminState.accountPage - 1);
-      renderAccountList();
-    });
-    const info = document.createElement("span");
-    info.className = "page-info";
-    info.textContent = `${adminState.accountPage + 1} / ${totalPages}`;
-    const next = document.createElement("button");
-    next.type = "button";
-    next.className = "btn-secondary";
-    next.textContent = "다음";
-    next.disabled = adminState.accountPage >= totalPages - 1;
-    next.addEventListener("click", () => {
-      adminState.accountPage = Math.min(totalPages - 1, adminState.accountPage + 1);
-      renderAccountList();
-    });
-    paginationEl.append(prev, info, next);
-  }
-
-  updateAccountSelectAllCheckbox();
-  renderAccountBulkBar();
-  renderAccountCrossPageBanner();
-}
-
-// DESIGN.md §6 — Accounts cross-page banner (페이징 있음)
-function renderAccountCrossPageBanner() {
-  const totalPages = Math.max(1, Math.ceil(filteredAccounts().length / ACCOUNT_PAGE_SIZE));
-  if (totalPages <= 1) {
-    const banner = $("accountsCrossPageBanner");
-    if (banner) banner.innerHTML = "";
-    return;
-  }
-  const start = adminState.accountPage * ACCOUNT_PAGE_SIZE;
-  const visible = filteredAccounts().slice(start, start + ACCOUNT_PAGE_SIZE);
-  renderCrossPageBanner({
-    entity: "accounts",
-    selected: adminState.accountSelected,
-    visibleIds: visible.map((a) => Number(a.id)),
-    totalCount: adminState.accounts.length,
-    onClearAll: () => {
-      adminState.accountSelected.clear();
-      renderAccountList();
-    },
-    onShowCurrentOnly: () => {
-      const visibleSet = new Set(visible.map((a) => Number(a.id)));
-      adminState.accountSelected = new Set(
-        Array.from(adminState.accountSelected).filter((id) => visibleSet.has(Number(id)))
-      );
-      renderAccountList();
-    },
-  });
-}
-
-// TASK-0061 Phase 7 (REQ-20260515-0009 / AC-0098): select-all 의 visible 정의를
-// 전체 filteredAccounts 가 아닌 현재 페이지 slice 만 대상으로 한다 (사용자 보고 버그 fix).
-function currentPageAccounts() {
-  const all = filteredAccounts();
-  const totalPages = Math.max(1, Math.ceil(all.length / ACCOUNT_PAGE_SIZE));
-  const page = Math.min(Math.max(0, adminState.accountPage), totalPages - 1);
-  const start = page * ACCOUNT_PAGE_SIZE;
-  return all.slice(start, start + ACCOUNT_PAGE_SIZE);
-}
-
-function updateAccountSelectAllCheckbox() {
-  const visible = currentPageAccounts();
-  const selAll = $("accountSelectAll");
-  if (!visible.length) {
-    selAll.checked = false;
-    selAll.indeterminate = false;
-    return;
-  }
-  const selected = visible.filter((a) => adminState.accountSelected.has(Number(a.id))).length;
-  if (selected === 0) {
-    selAll.checked = false;
-    selAll.indeterminate = false;
-  } else if (selected === visible.length) {
-    selAll.checked = true;
-    selAll.indeterminate = false;
-  } else {
-    selAll.checked = false;
-    selAll.indeterminate = true;
-  }
-}
-
-function renderAccountBulkBar() {
-  const bar = $("accountsBulkBar");
-  bar.innerHTML = "";
-  const count = adminState.accountSelected.size;
-  if (!count) return;
-
-  // DESIGN.md §5 — 표준 컴포넌트 set (label → 액션들 → 선택 해제 + Esc kbd-hint)
-  const label = document.createElement("span");
-  label.className = "admin-bulk-label";
-  label.textContent = `${count}${entityUnit("accounts")} 선택됨`;
-  bar.appendChild(label);
-
-  const makeBtn = (text, handler, danger = false, kbdHint = null) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = danger ? "tool-btn danger" : "tool-btn";
-    btn.textContent = text;
-    if (kbdHint) {
-      const hint = document.createElement("span");
-      hint.className = "kbd-hint";
-      hint.textContent = kbdHint;
-      btn.appendChild(hint);
-    }
-    btn.addEventListener("click", handler);
-    return btn;
-  };
-
-  if (can("account.activate")) {
-    bar.appendChild(makeBtn("활성화 pending", () => bulkAccountSetActive(true)));
-  }
-  if (can("account.deactivate")) {
-    bar.appendChild(makeBtn("비활성화 pending", () => bulkAccountSetActive(false)));
-  }
-  if (can("account.delete")) {
-    bar.appendChild(makeBtn("삭제 pending", () => bulkAccountDelete(), true));
-  }
-  bar.appendChild(makeBtn("선택 해제", () => {
-    adminState.accountSelected.clear();
-    adminState.accountLastClickIdx = -1;
-    renderAccountList();
-  }, false, "Esc"));
-}
-
-// DESIGN.md §7 + §8 — confirm 표준 + partial-fail (deleted/self 보호)
-function bulkAccountSetActive(active) {
-  const action = active ? "activate" : "deactivate";
-  const count = adminState.accountSelected.size;
-  if (!confirmBulkAction({ entity: "accounts", action, count, danger: false })) return;
-  const meId = adminState.me ? Number(adminState.me.id) : null;
-  runBulkActionWithPartialFail({
-    entity: "accounts",
-    ids: adminState.accountSelected,
-    action,
-    applyFn: (id) => setAccountPending(Number(id), { is_active: active }),
-    canTargetRow: (id) => {
-      const base = adminState.accounts.find((a) => Number(a.id) === Number(id));
-      if (!base || base.deleted_at) return false;
-      if (!active && meId !== null && Number(id) === meId) return false;  // self-deactivate 보호
-      return true;
-    },
-  });
-  renderAccountList();  // TASK-0302: pending 점(•) 즉시 반영
-}
-
-function bulkAccountDelete() {
-  const count = adminState.accountSelected.size;
-  if (!confirmBulkAction({ entity: "accounts", action: "delete", count, danger: true })) return;
-  const meId = adminState.me ? Number(adminState.me.id) : null;
-  runBulkActionWithPartialFail({
-    entity: "accounts",
-    ids: adminState.accountSelected,
-    action: "delete",
-    applyFn: (id) => setAccountPending(Number(id), { _delete: true }),
-    canTargetRow: (id) => {
-      const base = adminState.accounts.find((a) => Number(a.id) === Number(id));
-      if (!base || base.deleted_at) return false;
-      if (meId !== null && Number(id) === meId) return false;  // self-delete 보호
-      return true;
-    },
-  });
-  renderAccountList();  // TASK-0302: pending 점(•)/삭제대기 표시 즉시 반영
-}
-
-function selectAccount(accountId) {
-  adminState.selectedAccountId = Number(accountId);
-  renderAccountList();
-  renderAccountDetail();
-}
-
-function renderAccountDetail() {
-  const paneEl = $("accountDetail");
-  paneEl.innerHTML = "";
-  if (!adminState.selectedAccountId) {
-    const empty = document.createElement("div");
-    empty.className = "admin-detail-empty";
-    empty.textContent = "좌측에서 계정을 선택하세요.";
-    paneEl.appendChild(empty);
-    return;
-  }
-  const merged = mergedAccount(adminState.selectedAccountId);
-  const base = adminState.accounts.find((a) => Number(a.id) === Number(adminState.selectedAccountId));
-  if (!merged || !base) {
-    paneEl.textContent = "계정 정보를 찾을 수 없습니다.";
-    return;
-  }
-
-  const header = document.createElement("div");
-  header.className = "admin-detail-head";
-  const idBlock = document.createElement("div");
-  idBlock.className = "admin-detail-identity";
-  const avatar = document.createElement("div");
-  avatar.className = "admin-avatar";
-  // TASK-0293: 아바타 이미지 또는 username 시드 Identicon (작업화면 프로필 정합).
-  applyAvatar(avatar, { url: base.avatar_url, seed: base.username, initials: base.username.slice(0, 2).toUpperCase() });
-  // 관리자(console.manage + account.update)면 대상 계정의 아바타 변경/제거 — 제품 아이콘과 동일 ✎ 오버레이 패턴.
-  let avatarNode = avatar;
-  let avatarRemoveBtn = null;
-  if (can("console.manage") && can("account.update") && !base.deleted_at) {
-    const avatarWrap = document.createElement("div");
-    avatarWrap.className = "profile-avatar-edit";
-    const fileInput = document.createElement("input");
-    fileInput.type = "file"; fileInput.accept = "image/png,image/jpeg,image/webp"; fileInput.hidden = true;
-    const changeBtn = document.createElement("button");
-    changeBtn.type = "button"; changeBtn.className = "profile-avatar-change"; changeBtn.textContent = "✎";
-    changeBtn.title = "프로필 아바타 변경"; changeBtn.setAttribute("aria-label", "프로필 아바타 변경");
-    changeBtn.addEventListener("click", () => fileInput.click());
-    fileInput.addEventListener("change", async () => {
-      const f = fileInput.files && fileInput.files[0];
-      if (!f) return;
-      if (f.size > 2 * 1024 * 1024) { showToast("이미지가 너무 큽니다(최대 2MB).", true); fileInput.value = ""; return; }
-      const fd = new FormData(); fd.append("file", f);
-      try {
-        const r = await apiFetch(`/api/admin/accounts/${Number(base.id)}/avatar`, { method: "PUT", body: fd });
-        base.avatar_url = r.avatar_url || null;
-        renderAccountDetail();
-        renderAccountList();
-        showToast("프로필 아바타를 변경했어요.");
-      } catch (err) { showToast(err.message || "아바타 변경 실패", true); }
-      finally { fileInput.value = ""; }
-    });
-    avatarWrap.append(avatar, changeBtn, fileInput);
-    avatarNode = avatarWrap;
-    if (base.avatar_url) {
-      avatarRemoveBtn = document.createElement("button");
-      avatarRemoveBtn.type = "button"; avatarRemoveBtn.className = "profile-avatar-remove"; avatarRemoveBtn.textContent = "아바타 제거";
-      avatarRemoveBtn.addEventListener("click", async () => {
-        try {
-          await apiFetch(`/api/admin/accounts/${Number(base.id)}/avatar`, { method: "DELETE" });
-          base.avatar_url = null;
-          renderAccountDetail();
-          renderAccountList();
-          showToast("프로필 아바타를 제거했어요.");
-        } catch (err) { showToast(err.message || "아바타 제거 실패", true); }
-      });
-    }
-  }
-  const idText = document.createElement("div");
-  const nameEl = document.createElement("div");
-  nameEl.className = "admin-account-name";
-  nameEl.textContent = base.username;
-  const metaEl = document.createElement("div");
-  metaEl.className = "admin-meta";
-  metaEl.innerHTML = `
-    <span>생성 ${formatDateTime(base.created_at)}</span>
-    <span>최근 로그인 ${formatDateTime(base.last_login_at)}</span>
-    <span>대화 ${Number(base.conversation_count || 0)}개</span>
-  `;
-  idText.append(nameEl, metaEl);
-  if (avatarRemoveBtn) idText.appendChild(avatarRemoveBtn);
-  idBlock.append(avatarNode, idText);
-
-  const badges = document.createElement("div");
-  badges.className = "admin-status-row";
-  badges.appendChild(statusBadge(merged.is_active ? "active" : "inactive", merged.is_active ? "role-operator" : ""));
-  // TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 상태 배지.
-  if (base.is_locked) badges.appendChild(statusBadge("잠김", "is-locked"));
-  // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 사용 배지.
-  if (base.totp_enabled) badges.appendChild(statusBadge("2FA", "is-2fa"));
-  if (base.deleted_at) badges.appendChild(statusBadge("deleted", "is-disabled"));
-  if (merged._pending) badges.appendChild(statusBadge("pending", "role-pending"));
-  if (merged._delete) badges.appendChild(statusBadge("삭제 예정", "is-disabled"));
-
-  header.append(idBlock, badges);
-  paneEl.appendChild(header);
-
-  if (merged._delete) {
-    const note = document.createElement("div");
-    note.className = "admin-detail-note";
-    note.textContent = "삭제 대기 중. 모두 적용 시 삭제됩니다.";
-    const undo = document.createElement("button");
-    undo.type = "button";
-    undo.className = "tool-btn";
-    undo.textContent = "삭제 취소";
-    undo.addEventListener("click", () => {
-      const id = Number(adminState.selectedAccountId);
-      const patch = adminState.pending.accounts.get(id) || {};
-      delete patch._delete;
-      if (Object.keys(patch).length === 0) adminState.pending.accounts.delete(id);
-      else adminState.pending.accounts.set(id, patch);
-      refreshPendingUI();
-      renderAccountDetail();
-    });
-    note.appendChild(undo);
-    paneEl.appendChild(note);
-  }
-
-  const disabledBase = Boolean(base.deleted_at) || !can("console.manage") || !can("account.update");
-
-  // Role select
-  const roleField = document.createElement("label");
-  roleField.className = "field admin-detail-field";
-  const roleLabel = document.createElement("span");
-  roleLabel.textContent = "역할";
-  const roleSelect = document.createElement("select");
-  const currentRoleId = Number(merged.role_id);
-  // TASK-0300 (사용자 결정 2026-06-17): 역할 배정 경유 escalation 차단의 UX 면 — 본인 보유 권한
-  //   범위를 초과하는 권한을 가진 역할은 드롭다운에서 숨긴다(설정 불가). 현재 배정된 역할은
-  //   상태 표시를 위해 초과해도 유지(변경 안 하면 백엔드 no-op). 백엔드가 최종 정본(403).
-  const _actorAllowed = new Set(
-    Object.entries(adminState.me?.permissions || {}).filter(([, g]) => g).map(([c]) => c)
-  );
-  const _roleAssignable = (role) => (role.permission_codes || []).every((c) => _actorAllowed.has(c));
-  adminState.roles
-    .filter((r) => (r.is_active || Number(r.id) === currentRoleId)
-      && (Number(r.id) === currentRoleId || _roleAssignable(r)))
-    .forEach((role) => {
-      const opt = document.createElement("option");
-      opt.value = String(role.id);
-      opt.textContent = `${role.name} (${role.key})`;
-      opt.selected = Number(role.id) === currentRoleId;
-      roleSelect.appendChild(opt);
-    });
-  roleSelect.disabled = disabledBase || !can("account.role.assign");
-  roleSelect.addEventListener("change", () => {
-    setAccountPending(adminState.selectedAccountId, { role_id: Number(roleSelect.value) });
-    renderAccountList();
-  });
-  roleField.append(roleLabel, roleSelect);
-
-  // Active toggle
-  const activeToggle = document.createElement("label");
-  activeToggle.className = "permission-toggle";
-  const activeInput = document.createElement("input");
-  activeInput.type = "checkbox";
-  activeInput.checked = Boolean(merged.is_active);
-  activeInput.disabled = disabledBase || !(can("account.activate") || can("account.deactivate"));
-  const activeText = document.createElement("span");
-  activeText.textContent = "활성";
-  activeToggle.append(activeInput, activeText);
-  activeInput.addEventListener("change", () => {
-    setAccountPending(adminState.selectedAccountId, { is_active: activeInput.checked });
-    renderAccountList();
-  });
-
-  const topRow = document.createElement("div");
-  topRow.className = "admin-detail-top-row";
-  topRow.append(roleField, activeToggle);
-  paneEl.appendChild(topRow);
-
-  // Override grid (TASK-0053 Phase B: dynamic product.access.* override 는 product subcatalog 가 담당).
-  const overrideSection = document.createElement("div");
-  overrideSection.className = "admin-detail-section";
-  const overrideTitle = document.createElement("div");
-  overrideTitle.className = "admin-detail-section-title";
-  overrideTitle.textContent = "권한 Override";
-  overrideSection.appendChild(overrideTitle);
-  // TASK-0300: 본인 보유 권한만 표시·설정. 미보유 권한은 숨김 처리됨을 알리는 안내.
-  const overrideHint = document.createElement("div");
-  overrideHint.className = "admin-detail-hint";
-  overrideHint.textContent = "본인이 보유한 권한만 표시·설정할 수 있습니다.";
-  overrideSection.appendChild(overrideHint);
-  // TASK-0300: 편집 주체(admin)가 보유한(effective=true) 권한 code 집합 — grid 숨김 필터의 상한.
-  const _selfAllowed = new Set(
-    Object.entries(adminState.me?.permissions || {})
-      .filter(([, granted]) => granted)
-      .map(([code]) => code)
-  );
-  const overrideWrap = document.createElement("div");
-  overrideWrap.className = "override-grid";
-  // TASK-0270: "상속(허용)" 게이트 판정용 — 계정 역할이 부여한 권한 code Set(상속 baseline).
-  //   override 값이 "상속"이고 역할이 그 권한을 부여하면 effective 허용 → 게이트로 동작(자식 펼침).
-  const _ovRole = adminState.roles.find((r) => Number(r.id) === Number(merged.role_id));
-  const _inheritedGrants = new Set((_ovRole && _ovRole.permission_codes) || []);
-  renderPermissionGrid(
-    overrideWrap,
-    [],
-    disabledBase || !can("account.permission.override.manage"),
-    "override",
-    merged.permission_overrides || {},
-    () => {
-      // grid 의 select[data-override-code] 에서 현재 값을 수집한다. (제품 접근 카드의 select 도
-      // product_access 그룹 안에 임베드돼 함께 잡힌다 — dynamic product.access.* 포함.)
-      const overrides = {};
-      const seen = new Set();
-      overrideWrap.querySelectorAll("select[data-override-code]").forEach((select) => {
-        overrides[select.dataset.overrideCode] = select.value;
-        seen.add(select.dataset.overrideCode);
-      });
-      // TASK-0300: grid 에 렌더되지 않은(본인 미보유라 숨긴) 권한의 기존 override 는 보존한다.
-      //   payload 에서 누락되면 백엔드 delete-all-then-insert 로 삭제되므로 명시 보존.
-      //   (백엔드도 _enforce_override_self_scope 로 merge 하지만 pending 표시 정합을 위해 여기서도.)
-      Object.entries(merged.permission_overrides || {}).forEach(([code, value]) => {
-        if (!seen.has(code)) overrides[code] = value;
-      });
-      setAccountPending(adminState.selectedAccountId, { permission_overrides: overrides });
-      renderAccountList();
-    },
-    { excludeDynamic: true, inheritedGrants: _inheritedGrants, allowedCodes: _selfAllowed }
-  );
-  overrideSection.appendChild(overrideWrap);
-  paneEl.appendChild(overrideSection);
-
-  // TASK-0053 (사용자 follow-up 2026-05-07): 제품별 접근 카드 list 를 권한 grid 의 제품 접근 그룹 details
-  // 안으로 이전. 사용자가 제품 그룹을 collapse 하면 product 별 override 카드도 함께 접힌다.
-  // TASK-0288: 제품 접근 카드는 'product_access'(제품 사용, 작업 화면) 그룹으로 이전 — 관리 콘솔
-  // 제품 관리(product) 그룹과 분리. (groupedPermissions 가 빈 컨테이너를 보장한다.)
-  const accountProductGroup = overrideWrap.querySelector('details[data-perm-group="product_access"]');
-  const productOverrides = buildAccountProductOverrideList(
-    merged,
-    disabledBase || !can("account.permission.override.manage"),
-    { embed: Boolean(accountProductGroup), allowedCodes: _selfAllowed },
-  );
-  if (accountProductGroup) {
-    accountProductGroup.appendChild(productOverrides);
-    // TASK-0303: 카드(select[data-override-code])는 grid 렌더 이후 임베드되므로 배지를 다시 집계하고,
-    //   allow/deny override 가 있으면 그룹을 펼친다(역할 카드 동형).
-    _updateOverrideGroupSummary(accountProductGroup);
-    const _ov = accountProductGroup.querySelectorAll("select[data-override-code]");
-    let _hasNonInherit = false;
-    _ov.forEach((s) => { if (s.value === "allow" || s.value === "deny") _hasNonInherit = true; });
-    if (_hasNonInherit) accountProductGroup.open = true;
-  } else {
-    // Fallback: product 그룹이 grid 에 없으면 (정적 product.manage 등 권한 부재 시) 별도 section.
-    paneEl.appendChild(productOverrides);
-  }
-
-  // Per-account actions
-  const actions = document.createElement("div");
-  actions.className = "admin-detail-actions";
-
-  if (merged._pending) {
-    const revertBtn = document.createElement("button");
-    revertBtn.type = "button";
-    revertBtn.className = "btn-secondary";
-    revertBtn.textContent = "이 계정 pending 취소";
-    revertBtn.addEventListener("click", () => {
-      adminState.pending.accounts.delete(Number(adminState.selectedAccountId));
-      refreshPendingUI();
-      renderAccountDetail();
-      renderAccountList();
-    });
-    actions.appendChild(revertBtn);
-  }
-
-  if (!base.deleted_at && !merged._delete && can("account.delete")) {
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "btn-secondary danger";
-    deleteBtn.textContent = "삭제 pending";
-    deleteBtn.addEventListener("click", () => {
-      if (!window.confirm(`${base.username} 계정을 삭제할까요? (취소 가능)`)) return;
-      setAccountPending(adminState.selectedAccountId, { _delete: true });
-      renderAccountDetail();
-      renderAccountList();
-    });
-    actions.appendChild(deleteBtn);
-  }
-
-  // TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0096): 비밀번호 초기화 버튼.
-  // 권한 부족 / 자기 자신 / 삭제된 계정 / pending new account 에서는 hidden.
-  const meId = adminState.me ? Number(adminState.me.id) : null;
-  if (
-    !base.deleted_at &&
-    !merged._isNew &&
-    can("console.manage") &&
-    can("account.update") &&
-    meId !== null &&
-    meId !== Number(base.id)
-  ) {
-    const resetBtn = document.createElement("button");
-    resetBtn.type = "button";
-    resetBtn.id = "adminPasswordResetBtn";
-    resetBtn.className = "btn-secondary";
-    resetBtn.textContent = "비밀번호 초기화";
-    resetBtn.title = "임시 비밀번호 생성 및 세션 종료. 1회만 표시됨.";
-    resetBtn.addEventListener("click", () => triggerPasswordResetFlow(base));
-    actions.appendChild(resetBtn);
-
-    // TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 해제 버튼 (잠긴 계정에만 노출).
-    // 비밀번호 변경 없이 잠금만 해제 — 표적 DoS 회복 경로.
-    if (base.is_locked) {
-      const unlockBtn = document.createElement("button");
-      unlockBtn.type = "button";
-      unlockBtn.id = "adminUnlockBtn";
-      unlockBtn.className = "btn-secondary";
-      unlockBtn.textContent = "잠금 해제";
-      unlockBtn.title = "로그인 실패로 잠긴 계정의 잠금을 즉시 해제합니다 (비밀번호 변경 없음).";
-      unlockBtn.addEventListener("click", () => triggerAccountUnlockFlow(base));
-      actions.appendChild(unlockBtn);
-    }
-
-    // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 강제 해제 버튼 (2FA 사용 계정에만).
-    // 분실 디바이스 복구 — 비밀번호 변경 없이 2FA 만 제거.
-    if (base.totp_enabled) {
-      const totpBtn = document.createElement("button");
-      totpBtn.type = "button";
-      totpBtn.id = "adminTotpDisableBtn";
-      totpBtn.className = "btn-secondary";
-      totpBtn.textContent = "2FA 해제";
-      totpBtn.title = "기기 분실 등으로 2단계 인증을 풀어줍니다 (비밀번호 변경 없음). 사용자가 재설정해야 합니다.";
-      totpBtn.addEventListener("click", () => triggerAccountTotpDisableFlow(base));
-      actions.appendChild(totpBtn);
-    }
-  }
-
-  // TASK-20260623T014626-quota-ui-relocate: 계정 특수 LLM 사용 한도 (감사>LLM 사용량에서 이전).
-  // TASK-20260623T030418-quota-rbac-permission: 표시=quota.read, 편집=quota.manage(없으면 readOnly).
-  //   조회 권한 없으면 섹션 자체 미렌더(account.update 종속 제거 — 한도는 독립 권한).
-  if (!base.deleted_at && !merged._isNew && can("quota.read")) {
-    const roleObj = adminState.roles.find((r) => Number(r.id) === Number(merged.role_id));
-    const roleName = roleObj ? (roleObj.name || roleObj.key) : "역할";
-    const fmtInherit = (v) => (v === null || v === undefined ? "무제한" : `${Number(v).toLocaleString()} 토큰`);
-    const inheritNote = roleObj
-      ? `비워 두면 ‘${roleName}’ 역할 기본값을 따릅니다 (현재 역할 기본 — 일일 ${fmtInherit(roleObj.quota_daily)} · 월간 ${fmtInherit(roleObj.quota_monthly)}).`
-      : "비워 두면 역할 기본값을 따릅니다.";
-    const qSection = document.createElement("div");
-    qSection.className = "admin-detail-section";
-    const qTitle = document.createElement("div");
-    qTitle.className = "admin-detail-section-title";
-    qTitle.textContent = "LLM 사용 한도 (계정 개별 지정)";
-    qSection.appendChild(qTitle);
-    qSection.appendChild(buildQuotaEditor({
-      scope: "account",
-      id: base.id,
-      daily: base.quota_daily,
-      monthly: base.quota_monthly,
-      inheritNote: inheritNote,
-      readOnly: !can("quota.manage"),
-      onSaved: async () => { await loadAdminData(); renderAccountDetail(); },
-    }));
-    paneEl.appendChild(qSection);
-  }
-
-  if (actions.children.length) paneEl.appendChild(actions);
-}
-
-// TASK-20260619T040000-two-factor-auth (보안 ⑥): 관리자 2FA 강제 해제 flow.
-async function triggerAccountTotpDisableFlow(account) {
-  if (!account || !account.id) return;
-  if (!window.confirm(`${account.username} 계정의 2단계 인증을 해제하시겠습니까?\n사용자는 비밀번호로 로그인 후 다시 설정해야 합니다.`)) return;
-  try {
-    await apiFetch(`/api/admin/accounts/${Number(account.id)}/totp/disable`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  } catch (error) {
-    showToast(`2FA 해제 실패: ${error.message || error}`, true);
-    return;
-  }
-  showToast(`${account.username} 계정의 2단계 인증을 해제했습니다.`);
-  await loadAdminData();
-  renderAccountDetail();
-}
-
-// TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 즉시 해제 flow.
-async function triggerAccountUnlockFlow(account) {
-  if (!account || !account.id) return;
-  if (!window.confirm(`${account.username} 계정의 로그인 잠금을 해제하시겠습니까?`)) return;
-  try {
-    await apiFetch(`/api/admin/accounts/${Number(account.id)}/unlock`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  } catch (error) {
-    showToast(`잠금 해제 실패: ${error.message || error}`, true);
-    return;
-  }
-  showToast(`${account.username} 계정의 잠금을 해제했습니다.`);
-  await loadAdminData();
-  renderAccountDetail();
-}
-
-// TASK-0061 Phase 6 (REQ-20260515-0008): 임시 비밀번호 생성 + 1 회 표시 modal.
-async function triggerPasswordResetFlow(account) {
-  if (!account || !account.id) return;
-  if (!window.confirm(
-    `${account.username} 계정의 비밀번호를 초기화하시겠습니까?\n\n` +
-    "임시 비밀번호가 생성되며 세션이 종료됩니다. 복사 후 안전하게 전달하세요."
-  )) {
-    return;
-  }
-  let payload;
-  try {
-    payload = await apiFetch(`/api/admin/accounts/${Number(account.id)}/password-reset`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  } catch (error) {
-    showToast(`비밀번호 초기화 실패: ${error.message || error}`, true);
-    return;
-  }
-  showTemporaryPasswordModal(payload);
-}
-
-function showTemporaryPasswordModal(payload) {
-  // 기존 modal 제거.
-  const prev = document.getElementById("adminPasswordResetModal");
-  if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
-
-  const overlay = document.createElement("div");
-  overlay.id = "adminPasswordResetModal";
-  overlay.className = "admin-modal-overlay";
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
-
-  const modal = document.createElement("div");
-  modal.className = "admin-modal";
-  const title = document.createElement("h3");
-  title.textContent = `임시 비밀번호 — ${payload.username || ""}`;
-  modal.appendChild(title);
-
-  const note = document.createElement("p");
-  note.className = "admin-modal-note";
-  note.textContent = "일회용 비밀번호입니다. 지금 바로 복사해 전달하세요.";
-  modal.appendChild(note);
-
-  const passwordRow = document.createElement("div");
-  passwordRow.className = "temp-password-display";
-  const code = document.createElement("code");
-  code.textContent = String(payload.temporary_password || "");
-  const copyBtn = document.createElement("button");
-  copyBtn.type = "button";
-  copyBtn.className = "btn-secondary";
-  copyBtn.textContent = "복사";
-  copyBtn.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(String(payload.temporary_password || ""));
-      showToast("임시 비밀번호를 클립보드에 복사했습니다.");
-    } catch (_err) {
-      showToast("자동 복사 실패. 직접 복사하세요.", true);
-    }
-  });
-  passwordRow.append(code, copyBtn);
-  modal.appendChild(passwordRow);
-
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.className = "btn-primary";
-  closeBtn.textContent = "복사 후 닫기";
-  closeBtn.addEventListener("click", () => {
-    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-  });
-  modal.appendChild(closeBtn);
-
-  overlay.appendChild(modal);
-  document.body.appendChild(overlay);
-}
-
-/* ── Roles pane ──────────────────────────────────────────────────────── */
-
-function filteredRoles() {
-  const q = adminState.roleSearch.trim().toLowerCase();
-  const serverRoles = adminState.roles.filter((role) => {
-    // 계정 탭 filteredAccounts() 와 동형: 상태 필터 먼저, 그다음 검색어 매칭.
-    if (adminState.roleFilter === "active" && !role.is_active) return false;
-    if (adminState.roleFilter === "inactive" && role.is_active) return false;
-    if (!q) return true;
-    return String(role.name || "").toLowerCase().includes(q) ||
-           String(role.key || "").toLowerCase().includes(q);
-  });
-  return serverRoles;
-}
-
-function renderRoleList() {
-  const listEl = $("roleList");
-  const countEl = $("roleListCount");
-  listEl.innerHTML = "";
-
-  if (!can("role.read")) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.innerHTML = "<strong>역할 조회 권한 없음</strong><span>현재 계정은 역할 목록을 읽을 수 없습니다.</span>";
-    listEl.appendChild(empty);
-    countEl.textContent = "";
-    return;
-  }
-
-  const newEntries = Array.from(adminState.pending.newRoles.entries());
-  const serverRoles = filteredRoles();
-  const total = newEntries.length + serverRoles.length;
-  countEl.textContent = `${total}개`;
-  if (!total) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.innerHTML = "<strong>역할 없음</strong><span>새 역할을 생성하세요</span>";
-    listEl.appendChild(empty);
-    return;
-  }
-
-  // DESIGN.md §9 — shift-click range 를 위한 visible id 시퀀스 (newEntries 는 disabled 라 제외)
-  const visibleRoleIds = serverRoles.map((r) => String(r.id));
-  newEntries.forEach(([tempId, _draft]) => {
-    listEl.appendChild(buildRoleRow(tempId, /*visibleIdx=*/-1, visibleRoleIds));
-  });
-  serverRoles.forEach((role, idx) => {
-    listEl.appendChild(buildRoleRow(role.id, idx, visibleRoleIds));
-  });
-
-  updateRoleSelectAllCheckbox();
-  renderRoleBulkBar();
-  // Roles 는 페이징이 없으므로 cross-page banner 는 항상 empty (renderCrossPageBanner 가 off-page 0 으로 skip)
-  renderCrossPageBanner({
-    entity: "roles",
-    selected: adminState.roleSelected,
-    visibleIds: visibleRoleIds,
-    totalCount: serverRoles.length,
-    onClearAll: () => { adminState.roleSelected.clear(); renderRoleList(); },
-    onShowCurrentOnly: () => { /* no-op — 페이징 없음 */ },
-  });
-}
-
-function buildRoleRow(roleKey, visibleIdx = -1, visibleRoleIds = []) {
-  const merged = mergedRole(roleKey);
-  const row = document.createElement("div");
-  row.className = "admin-list-row";
-  row.dataset.roleKey = String(roleKey);
-  if (visibleIdx >= 0) row.dataset.idx = String(visibleIdx);
-  row.setAttribute("role", "row");
-  if (String(adminState.selectedRoleId) === String(roleKey)) row.classList.add("is-active");
-  if (merged._pending) row.classList.add("has-pending");
-  if (merged._delete) row.classList.add("is-to-delete");
-
-  const cb = document.createElement("input");
-  cb.type = "checkbox";
-  cb.className = "admin-list-row-cb";
-  cb.checked = adminState.roleSelected.has(String(roleKey));
-  cb.setAttribute("aria-label", `역할 ${merged.name || merged.key || roleKey} 선택`);
-  if (merged._isNew) cb.disabled = true;
-  cb.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    // DESIGN.md §9 — shift-click range
-    if (ev.shiftKey && adminState.roleLastClickIdx >= 0 && visibleIdx >= 0 && !cb.disabled) {
-      const addMode = !cb.checked;
-      applyShiftRangeSelect({
-        selected: adminState.roleSelected,
-        visibleIds: visibleRoleIds,
-        fromIdx: adminState.roleLastClickIdx,
-        toIdx: visibleIdx,
-        addMode,
-      });
-    }
-  });
-  cb.addEventListener("change", () => {
-    if (cb.checked) adminState.roleSelected.add(String(roleKey));
-    else adminState.roleSelected.delete(String(roleKey));
-    if (visibleIdx >= 0) adminState.roleLastClickIdx = visibleIdx;
-    renderRoleList();
-  });
-
-  const main = document.createElement("div");
-  main.className = "admin-list-row-main";
-  const title = document.createElement("div");
-  title.className = "admin-list-row-title";
-  const avatar = document.createElement("span");
-  avatar.className = "admin-avatar admin-avatar-sm";
-  // TASK-0293: 역할 아이콘 이미지(설정 시) 또는 role_key 시드 Identicon (이니셜 텍스트 폐기).
-  applyAvatar(avatar, { url: merged.icon_url, seed: merged.key || "", initials: (merged.key || "NEW").slice(0, 2).toUpperCase() });
-  const name = document.createElement("span");
-  name.className = "admin-list-row-name";
-  name.textContent = merged._isNew
-    ? `(신규) ${merged.name || merged.key || "새 역할"}`
-    : `${merged.name} (${merged.key})`;
-  const pendingDot = document.createElement("span");
-  pendingDot.className = "admin-pending-dot";
-  pendingDot.textContent = merged._pending ? "•" : "";
-  title.append(avatar, name, pendingDot);
-
-  const meta = document.createElement("div");
-  meta.className = "admin-list-row-meta";
-  meta.textContent = merged._isNew
-    ? "미저장"
-    : `${merged.member_count || 0}명 · ${(merged.permission_codes || []).length}개`;
-
-  main.append(title, meta);
-
-  const chips = document.createElement("div");
-  chips.className = "admin-list-row-chips";
-  chips.appendChild(statusBadge(merged.is_active ? "active" : "inactive", merged.is_active ? "role-operator" : ""));
-  if (merged.is_default_signup) chips.appendChild(statusBadge("기본", "role-admin"));
-
-  row.append(cb, main, chips);
-  row.addEventListener("click", () => selectRole(roleKey));
-  return row;
-}
-
-function updateRoleSelectAllCheckbox() {
-  const all = filteredRoles();
-  const selAll = $("roleSelectAll");
-  if (!all.length) {
-    selAll.checked = false;
-    selAll.indeterminate = false;
-    return;
-  }
-  const selected = all.filter((r) => adminState.roleSelected.has(String(r.id))).length;
-  if (selected === 0) { selAll.checked = false; selAll.indeterminate = false; }
-  else if (selected === all.length) { selAll.checked = true; selAll.indeterminate = false; }
-  else { selAll.checked = false; selAll.indeterminate = true; }
-}
-
-function renderRoleBulkBar() {
-  const bar = $("roleBulkBar");
-  bar.innerHTML = "";
-  const count = adminState.roleSelected.size;
-  if (!count) return;
-
-  // DESIGN.md §5 — 표준 컴포넌트 set
-  const label = document.createElement("span");
-  label.className = "admin-bulk-label";
-  label.textContent = `${count}${entityUnit("roles")} 선택됨`;
-  bar.appendChild(label);
-
-  const makeBtn = (text, handler, danger = false, kbdHint = null) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = danger ? "tool-btn danger" : "tool-btn";
-    btn.textContent = text;
-    if (kbdHint) {
-      const hint = document.createElement("span");
-      hint.className = "kbd-hint";
-      hint.textContent = kbdHint;
-      btn.appendChild(hint);
-    }
-    btn.addEventListener("click", handler);
-    return btn;
-  };
-
-  if (can("role.update")) {
-    bar.appendChild(makeBtn("활성화 pending", () => bulkRoleSetActive(true)));
-    bar.appendChild(makeBtn("비활성화 pending", () => bulkRoleSetActive(false)));
-  }
-  if (can("role.delete")) {
-    bar.appendChild(makeBtn("삭제 pending", () => bulkRoleDelete(), true));
-  }
-  bar.appendChild(makeBtn("선택 해제", () => {
-    adminState.roleSelected.clear();
-    adminState.roleLastClickIdx = -1;
-    renderRoleList();
-  }, false, "Esc"));
-}
-
-// DESIGN.md §7 + §8 — confirm + partial-fail (new: 미저장 row 제외)
-function bulkRoleSetActive(active) {
-  const action = active ? "activate" : "deactivate";
-  const count = adminState.roleSelected.size;
-  if (!confirmBulkAction({ entity: "roles", action, count, danger: false })) return;
-  runBulkActionWithPartialFail({
-    entity: "roles",
-    ids: adminState.roleSelected,
-    action,
-    applyFn: (key) => setRolePending(Number(key), { is_active: active }),
-    canTargetRow: (key) => !String(key).startsWith("new:"),
-  });
-  renderRoleList();  // TASK-0302: pending 점(•) 즉시 반영
-}
-
-function bulkRoleDelete() {
-  const count = adminState.roleSelected.size;
-  if (!confirmBulkAction({ entity: "roles", action: "delete", count, danger: true })) return;
-  runBulkActionWithPartialFail({
-    entity: "roles",
-    ids: adminState.roleSelected,
-    action: "delete",
-    applyFn: (key) => setRolePending(Number(key), { _delete: true }),
-    canTargetRow: (key) => !String(key).startsWith("new:"),
-  });
-  renderRoleList();  // TASK-0302: pending 점(•)/삭제대기 표시 즉시 반영
-}
-
-function selectRole(roleKey) {
-  adminState.selectedRoleId = String(roleKey);
-  renderRoleList();
-  renderRoleDetail();
-}
-
-function startNewRole() {
-  const tempId = `new:${adminState.nextTempRoleId++}`;
-  adminState.pending.newRoles.set(tempId, {
-    role_key: "",
-    name: "",
-    description: "",
-    is_active: true,
-    is_default_signup: false,
-    permission_codes: [],
-  });
-  adminState.selectedRoleId = tempId;
-  refreshPendingUI();
-  renderRoleList();
-  renderRoleDetail();
-}
-
-function renderRoleDetail() {
-  const paneEl = $("roleDetail");
-  paneEl.innerHTML = "";
-  if (!adminState.selectedRoleId) {
-    const empty = document.createElement("div");
-    empty.className = "admin-detail-empty";
-    empty.textContent = "역할을 선택하세요.";
-    paneEl.appendChild(empty);
-    return;
-  }
-  const merged = mergedRole(adminState.selectedRoleId);
-  if (!merged) {
-    paneEl.textContent = "역할 정보를 찾을 수 없습니다.";
-    return;
-  }
-
-  const disabledBase = !can("console.manage") || (merged._isNew ? !can("role.create") : !can("role.update"));
-
-  // Header
-  const header = document.createElement("div");
-  header.className = "admin-detail-head";
-  const idBlock = document.createElement("div");
-  idBlock.className = "admin-detail-identity";
-  const avatar = document.createElement("div");
-  avatar.className = "admin-avatar";
-  // TASK-0293: 역할 아이콘 이미지 또는 role_key 시드 Identicon.
-  applyAvatar(avatar, { url: merged.icon_url, seed: merged.key || "", initials: (merged.key || "NE").slice(0, 2).toUpperCase() });
-  // 관리자(console.manage + role.update)면 역할 아이콘 변경/제거 — 제품 아이콘과 동일 ✎ 오버레이 패턴.
-  //   신규(미저장) 역할은 role_id 가 없어 업로드 불가 → 먼저 저장 후 아이콘 설정.
-  let avatarNode = avatar;
-  let iconRemoveBtn = null;
-  if (!merged._isNew && can("console.manage") && can("role.update")) {
-    const avatarWrap = document.createElement("div");
-    avatarWrap.className = "profile-avatar-edit";
-    const fileInput = document.createElement("input");
-    fileInput.type = "file"; fileInput.accept = "image/png,image/jpeg,image/webp"; fileInput.hidden = true;
-    const changeBtn = document.createElement("button");
-    changeBtn.type = "button"; changeBtn.className = "profile-avatar-change"; changeBtn.textContent = "✎";
-    changeBtn.title = "역할 아이콘 변경"; changeBtn.setAttribute("aria-label", "역할 아이콘 변경");
-    changeBtn.addEventListener("click", () => fileInput.click());
-    fileInput.addEventListener("change", async () => {
-      const f = fileInput.files && fileInput.files[0];
-      if (!f) return;
-      if (f.size > 5 * 1024 * 1024) { showToast("이미지가 너무 큽니다(최대 5MB).", true); fileInput.value = ""; return; }
-      const fd = new FormData(); fd.append("file", f);
-      try {
-        const r = await apiFetch(`/api/admin/roles/${Number(merged.id)}/icon`, { method: "PUT", body: fd });
-        const baseRole = adminState.roles.find((rr) => Number(rr.id) === Number(merged.id));
-        if (baseRole) baseRole.icon_url = r.icon_url || null;
-        renderRoleDetail();
-        renderRoleList();
-        showToast("역할 아이콘을 변경했어요.");
-      } catch (err) { showToast(err.message || "아이콘 변경 실패", true); }
-      finally { fileInput.value = ""; }
-    });
-    avatarWrap.append(avatar, changeBtn, fileInput);
-    avatarNode = avatarWrap;
-    if (merged.icon_url) {
-      iconRemoveBtn = document.createElement("button");
-      iconRemoveBtn.type = "button"; iconRemoveBtn.className = "profile-avatar-remove"; iconRemoveBtn.textContent = "아이콘 제거";
-      iconRemoveBtn.addEventListener("click", async () => {
-        try {
-          await apiFetch(`/api/admin/roles/${Number(merged.id)}/icon`, { method: "DELETE" });
-          const baseRole = adminState.roles.find((rr) => Number(rr.id) === Number(merged.id));
-          if (baseRole) baseRole.icon_url = null;
-          renderRoleDetail();
-          renderRoleList();
-          showToast("역할 아이콘을 제거했어요.");
-        } catch (err) { showToast(err.message || "아이콘 제거 실패", true); }
-      });
-    }
-  }
-  const idText = document.createElement("div");
-  const nameEl = document.createElement("div");
-  nameEl.className = "admin-account-name";
-  nameEl.textContent = merged._isNew ? `신규 역할` : `${merged.name} (${merged.key})`;
-  const metaEl = document.createElement("div");
-  metaEl.className = "admin-meta";
-  if (merged._isNew) {
-    metaEl.textContent = "모두 적용 시 생성됩니다.";
-  } else {
-    metaEl.innerHTML = `
-      <span>멤버 ${merged.member_count || 0}명</span>
-      <span>생성 ${formatDateTime(merged.created_at)}</span>
-      <span>수정 ${formatDateTime(merged.updated_at)}</span>
-    `;
-  }
-  idText.append(nameEl, metaEl);
-  if (iconRemoveBtn) idText.appendChild(iconRemoveBtn);
-  idBlock.append(avatarNode, idText);
-
-  const badges = document.createElement("div");
-  badges.className = "admin-status-row";
-  badges.appendChild(statusBadge(merged.is_active ? "active" : "inactive", merged.is_active ? "role-operator" : ""));
-  if (merged._pending) badges.appendChild(statusBadge("pending", "role-pending"));
-  if (merged._delete) badges.appendChild(statusBadge("삭제 예정", "is-disabled"));
-
-  header.append(idBlock, badges);
-  paneEl.appendChild(header);
-
-  if (merged._delete) {
-    const note = document.createElement("div");
-    note.className = "admin-detail-note";
-    note.textContent = "삭제 대기 중. ";
-    const undo = document.createElement("button");
-    undo.type = "button";
-    undo.className = "tool-btn";
-    undo.textContent = "삭제 취소";
-    undo.addEventListener("click", () => {
-      const id = Number(adminState.selectedRoleId);
-      const patch = adminState.pending.roles.get(id) || {};
-      delete patch._delete;
-      if (Object.keys(patch).length === 0) adminState.pending.roles.delete(id);
-      else adminState.pending.roles.set(id, patch);
-      refreshPendingUI();
-      renderRoleDetail();
-    });
-    note.appendChild(undo);
-    paneEl.appendChild(note);
-  }
-
-  // Key (only editable for new roles)
-  if (merged._isNew) {
-    const keyField = document.createElement("label");
-    keyField.className = "field admin-detail-field";
-    const keyLabel = document.createElement("span");
-    keyLabel.textContent = "role_key";
-    const keyInput = document.createElement("input");
-    keyInput.type = "text";
-    keyInput.value = merged.key || "";
-    keyInput.placeholder = "예: analyst";
-    keyInput.disabled = disabledBase;
-    keyInput.addEventListener("input", () => {
-      setRolePending(adminState.selectedRoleId, { role_key: keyInput.value.trim() });
-      renderRoleList();
-    });
-    keyField.append(keyLabel, keyInput);
-    paneEl.appendChild(keyField);
-  }
-
-  // Name
-  const nameField = document.createElement("label");
-  nameField.className = "field admin-detail-field";
-  const nameLabel = document.createElement("span");
-  nameLabel.textContent = "표시 이름";
-  const nameInput = document.createElement("input");
-  nameInput.type = "text";
-  nameInput.value = merged.name || "";
-  nameInput.disabled = disabledBase;
-  nameInput.addEventListener("input", () => {
-    setRolePending(adminState.selectedRoleId, { name: nameInput.value });
-    renderRoleList();
-  });
-  nameField.append(nameLabel, nameInput);
-  paneEl.appendChild(nameField);
-
-  // Description
-  const descField = document.createElement("label");
-  descField.className = "field admin-detail-field";
-  const descLabel = document.createElement("span");
-  descLabel.textContent = "설명";
-  const descInput = document.createElement("input");
-  descInput.type = "text";
-  descInput.value = merged.description || "";
-  descInput.disabled = disabledBase;
-  descInput.addEventListener("input", () => {
-    setRolePending(adminState.selectedRoleId, { description: descInput.value });
-  });
-  descField.append(descLabel, descInput);
-  paneEl.appendChild(descField);
-
-  // Toggles
-  const toggles = document.createElement("div");
-  toggles.className = "admin-role-toggle-row";
-  const mkToggle = (label, checked, onChange) => {
-    const wrap = document.createElement("label");
-    wrap.className = "permission-toggle";
-    const inp = document.createElement("input");
-    inp.type = "checkbox";
-    inp.checked = checked;
-    inp.disabled = disabledBase;
-    inp.addEventListener("change", () => onChange(inp.checked));
-    const span = document.createElement("span");
-    span.textContent = label;
-    wrap.append(inp, span);
-    return wrap;
-  };
-  toggles.appendChild(mkToggle("활성", merged.is_active, (v) => {
-    setRolePending(adminState.selectedRoleId, { is_active: v });
-    renderRoleList();
-  }));
-  toggles.appendChild(mkToggle("기본 가입 역할", merged.is_default_signup, (v) => {
-    setRolePending(adminState.selectedRoleId, { is_default_signup: v });
-    renderRoleList();
-  }));
-  // 사용자 의도 (2026-05-06 follow-up): 신규 제품 자동 접근 정책의 주체는 Role 이 아닌 Product.
-  // 정책 토글은 Product detail 에 위치 — Role detail 에서는 더 이상 노출하지 않는다.
-  paneEl.appendChild(toggles);
-
-  // Permission grid (TASK-0053 Phase B: dynamic product.access.* 는 product subcatalog 가 처리하므로 제외).
-  const permSection = document.createElement("div");
-  permSection.className = "admin-detail-section";
-  const permTitle = document.createElement("div");
-  permTitle.className = "admin-detail-section-title";
-  permTitle.textContent = "권한";
-  permSection.appendChild(permTitle);
-  // TASK-0300: 본인 보유 권한만 표시·부여. 미보유 권한은 숨김 처리됨을 알리는 안내.
-  const permHint = document.createElement("div");
-  permHint.className = "admin-detail-hint";
-  permHint.textContent = "본인이 보유한 권한만 표시·부여할 수 있습니다.";
-  permSection.appendChild(permHint);
-  // TASK-0300: 편집 주체(admin)가 보유한 권한 code 집합 — 역할 권한 grid 숨김 필터의 상한.
-  const _selfAllowedRole = new Set(
-    Object.entries(adminState.me?.permissions || {})
-      .filter(([, granted]) => granted)
-      .map(([code]) => code)
-  );
-  const permWrap = document.createElement("div");
-  permWrap.className = "permission-grid";
-  renderPermissionGrid(
-    permWrap,
-    merged.permission_codes || [],
-    disabledBase || !can("role.permission.manage"),
-    "checkbox",
-    {},
-    () => {
-      // TASK-0053 Phase B: dynamic perms 는 grid 에 노출되지 않으므로 product subcatalog 의
-      // 상태 (= permission_codes 에 이미 포함된 product.access.*) 를 보존해야 한다. checked 만으로
-      // 새 codes 를 만들면 product 카드의 토글이 무효화됨. 기존 dynamic codes 를 union 으로 유지.
-      const checkedStatic = Array.from(permWrap.querySelectorAll("input[type='checkbox']:checked"))
-        .map((input) => input.value);
-      const renderedStatic = new Set(
-        Array.from(permWrap.querySelectorAll("input[type='checkbox']")).map((input) => input.value)
-      );
-      // TASK-0303: 보존 대상(dynamic product.access.* + 숨긴 권한)은 렌더 시점 merged 스냅샷이 아니라
-      //   라이브 mergedRole(pending 오버레이) 에서 읽어야 한다. 정적 권한 체크박스를 토글하기 전에
-      //   제품 접근 카드를 켰다면 그 pending 이 merged 스냅샷엔 없어, 여기서 정적 변경 시 union 에서
-      //   누락→제품 토글이 사라진다(정적↔제품 상호 클로버). 라이브로 읽어 양쪽 편집을 보존한다.
-      const _liveRole = mergedRole(adminState.selectedRoleId);
-      const _liveCodes = (_liveRole && Array.isArray(_liveRole.permission_codes))
-        ? _liveRole.permission_codes : (merged.permission_codes || []);
-      const existingDynamic = _liveCodes.filter((c) =>
-        String(c).startsWith("product.access.")
-      );
-      // TASK-0300: grid 에 렌더되지 않은(본인 미보유라 숨긴) 기존 역할 권한은 보존한다 —
-      //   숨긴 권한이 payload 에서 누락돼 제거되는 것 방지. 백엔드도 merge 하지만 pending 정합용.
-      const preservedHidden = _liveCodes.filter(
-        (c) => !renderedStatic.has(c) && !String(c).startsWith("product.access.")
-      );
-      const codes = Array.from(new Set([...checkedStatic, ...existingDynamic, ...preservedHidden]));
-      setRolePending(adminState.selectedRoleId, { permission_codes: codes });
-      renderRoleList();
-    },
-    { excludeDynamic: true, allowedCodes: _selfAllowedRole }
-  );
-  permSection.appendChild(permWrap);
-  paneEl.appendChild(permSection);
-
-  // TASK-0053 Phase B/C + 사용자 follow-up (2026-05-07): 제품별 접근 + role-scope system prompt 카드를
-  // 권한 grid 의 제품 접근 그룹 details 안으로 이전. 사용자가 그룹을 collapse 하면 카드도 함께 접힘.
-  // TASK-0288: 제품 접근 카드는 'product_access'(제품 사용) 그룹으로 이전 — 관리 콘솔 제품 관리와 분리.
-  if (!merged._isNew) {
-    const roleProductGroup = permWrap.querySelector('details[data-perm-group="product_access"]');
-    const productCards = buildRoleProductCardList(
-      merged,
-      disabledBase || !can("role.permission.manage"),
-      { embed: Boolean(roleProductGroup), allowedCodes: _selfAllowedRole },
-    );
-    if (roleProductGroup) {
-      roleProductGroup.appendChild(productCards);
-      // TASK-0303: 카드는 grid 렌더(_updateCheckboxGroupSummary 1차 실행) *이후* 임베드되므로
-      //   배지가 "0/0" 으로 고정됐었다. 임베드 직후 다시 집계해 실제 N/M(부여 제품/전체)을 표시하고,
-      //   부여가 있으면 그룹을 펼친다(다른 그룹과 동일 동작).
-      _updateCheckboxGroupSummary(roleProductGroup);
-      const _granted = roleProductGroup.querySelectorAll("input[type='checkbox']:checked").length;
-      if (_granted > 0) roleProductGroup.open = true;
-    } else {
-      paneEl.appendChild(productCards);
-    }
-  }
-
-  // Actions
-  const actions = document.createElement("div");
-  actions.className = "admin-detail-actions";
-
-  if (merged._isNew) {
-    const discardBtn = document.createElement("button");
-    discardBtn.type = "button";
-    discardBtn.className = "btn-secondary";
-    discardBtn.textContent = "신규 역할 버리기";
-    discardBtn.addEventListener("click", () => {
-      adminState.pending.newRoles.delete(adminState.selectedRoleId);
-      adminState.selectedRoleId = null;
-      refreshPendingUI();
-      renderRoleList();
-      renderRoleDetail();
-    });
-    actions.appendChild(discardBtn);
-  } else {
-    if (merged._pending) {
-      const revertBtn = document.createElement("button");
-      revertBtn.type = "button";
-      revertBtn.className = "btn-secondary";
-      revertBtn.textContent = "변경 취소";
-      revertBtn.addEventListener("click", () => {
-        adminState.pending.roles.delete(Number(adminState.selectedRoleId));
-        refreshPendingUI();
-        renderRoleDetail();
-        renderRoleList();
-      });
-      actions.appendChild(revertBtn);
-    }
-    if (!merged._delete && can("role.delete")) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "btn-secondary danger";
-      deleteBtn.textContent = "삭제 pending";
-      deleteBtn.addEventListener("click", () => {
-        if (!window.confirm(`${merged.name} 역할을 삭제할까요?`)) return;
-        setRolePending(adminState.selectedRoleId, { _delete: true });
-        renderRoleDetail();
-        renderRoleList();
-      });
-      actions.appendChild(deleteBtn);
-    }
-  }
-
-  // TASK-20260623T014626-quota-ui-relocate: 역할 기본 LLM 사용 한도 (감사>LLM 사용량에서 이전).
-  // TASK-20260623T030418-quota-rbac-permission: 표시=quota.read, 편집=quota.manage(없으면 readOnly).
-  if (!merged._isNew && !merged._delete && can("quota.read")) {
-    const qSection = document.createElement("div");
-    qSection.className = "admin-detail-section";
-    const qTitle = document.createElement("div");
-    qTitle.className = "admin-detail-section-title";
-    qTitle.textContent = "LLM 사용 한도 (역할 기본)";
-    qSection.appendChild(qTitle);
-    const qHint = document.createElement("p");
-    qHint.className = "admin-detail-section-hint";
-    qHint.textContent = "이 역할에 속한 계정들의 기본 토큰 한도입니다. 계정별로 다르게 지정하려면 ‘계정’ 상세에서 개별 한도를 설정하세요.";
-    qSection.appendChild(qHint);
-    qSection.appendChild(buildQuotaEditor({
-      scope: "role",
-      id: merged.id,
-      daily: merged.quota_daily,
-      monthly: merged.quota_monthly,
-      readOnly: !can("quota.manage"),
-      onSaved: async () => { await loadAdminData(); renderRoleDetail(); },
-    }));
-    paneEl.appendChild(qSection);
-  }
-
-  if (actions.children.length) paneEl.appendChild(actions);
-}
+// feature-0038 Cycle 4: 역할 pane (renderRoleList/Detail 외) 은 admin/roles.js 로 분리 (구 L7815–8409).
 
 /* ── Pending UI refresh ──────────────────────────────────────────────── */
 
@@ -8826,7 +7465,7 @@ function cancelAllPending() {
 
 /* ── Load ────────────────────────────────────────────────────────────── */
 
-async function loadAdminData() {
+export async function loadAdminData() {
   const [permissionsPayload, rolesPayload, accountsPayload, productsPayload, databasesPayload, datasourcesPayload] = await Promise.all([
     apiFetch("/api/admin/permissions").catch((error) => {
       if (error.status === 403) return { permissions: [] };
@@ -11079,7 +9718,7 @@ function buildRoleProductCard({ role, product, perm, disabled, onToggle }) {
   return card;
 }
 
-function buildRoleProductCardList(role, disabled, opts = {}) {
+export function buildRoleProductCardList(role, disabled, opts = {}) {
   // 사용자 follow-up (2026-05-07): embed=true 면 권한 grid 의 'product' 그룹 details 안에 inline 배치 —
   // 별도 section title/hint 는 부모 details summary 가 이미 "제품" 라벨을 보여주므로 중복 회피.
   // TASK-0300: allowedCodes 가 주어지면 본인 미보유 product.access.* 카드는 숨긴다.
@@ -11170,7 +9809,7 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
 /**
  * Account detail 의 product 카드 — product 별 access override (allow/deny/inherit).
  */
-function buildAccountProductOverrideList(account, disabled, opts = {}) {
+export function buildAccountProductOverrideList(account, disabled, opts = {}) {
   // 사용자 follow-up (2026-05-07): embed=true 면 권한 override grid 의 'product' 그룹 details 안에 inline.
   // TASK-0300: allowedCodes 가 주어지면 본인 미보유 product.access.* 카드는 숨긴다.
   const { embed = false, allowedCodes = null } = opts;

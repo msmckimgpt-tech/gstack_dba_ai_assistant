@@ -59,3 +59,12 @@ source_of_truth: true
 - MINOR (기록): ① verify_admin_tab_gating.mjs 2건 FAIL 은 **pre-existing**(HEAD·Cycle 2 이전 기준선에서 동일 재현 — 본 변경 무관, make test 미포함이라 CI 사각) → REPORT §8 추적 등록. ② audit.js 의 raw fetch 병용은 byte-이동 산물(기존 동일 동작).
 - 판정: **SHIP** — 반박 실패.
 - Timestamp: 2026-08-04T09:00:00+09:00
+
+## REV-20260804T110000-accounts-roles-panel [SUBAGENT:qa] — BLOCK → 전건 흡수 후 SHIP-경로
+- Related Change: CHG-20260804T100000-accounts-roles-split (Cycle 4)
+- 패널: fresh-context 적대 1렌즈(qa/frontend — 7항목 실측 + headless chromium 모듈 그래프 실로드·단일 인스턴스 확인·컨테이너 pytest). **판정: 초안 BLOCK — BLOCKING 1 / MAJOR 1 / MINOR 2.**
+- **BLOCKING (흡수)**: test_llm_usage_quota f1/f2 가 admin.js 단독 검사인데 quota 편집기 call-site('scope: "account"'·can("quota.read") 등)가 양 pane 으로 이동 — make test **RC=2** 실측. → `_read_admin_bundle()`(admin+accounts+roles 합본) 전환, f1 negative 단언 합본 성립 패널 실측 완료.
+- **MAJOR (흡수)**: verify_profile_icon_admin_surfaces.mjs(standalone, CI 비배선) admin.js 단독 read 5단언 회귀 → 합본 전환 후 **17 PASS / 0 FAIL 실측**(jsdom 22.1.0 임시 설치·정리).
+- **MINOR (흡수 1·기록 1)**: admin.js dead import(filteredAccounts — roles.js 직접 import 로 대체) 제거 후 parity IDENTICAL 재검. verify_perm_self_scope.mjs 는 ITEM-09 type=module 전환 이래 pre-existing 파손(무귀책) — REPORT §8 추적.
+- 패널 clean 실측: 역재구성 cmp IDENTICAL(델타 -1386/+25 전수 일치)·6모듈 free-vars 0·TDZ 0(ACCOUNT_PAGE_SIZE 함수 내부 9개소)·roles→accounts 평가순서 근거·32모듈 링크 정합·권한 grid 호출 2곳 이동-내부 byte-동일·스탬프 모듈 간 import 재작성 커버(files_rewritten=18 실측).
+- Timestamp: 2026-08-04T11:00:00+09:00

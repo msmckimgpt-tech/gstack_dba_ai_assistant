@@ -146,7 +146,8 @@ def test_f1_frontend():
     js = _read_static("app.js")
     assert "showTotpLoginPrompt" in js and "/api/auth/login/totp" in js
     assert "renderProfileTotp" in js and "/api/auth/totp/setup" in js
-    adm = _read_static("admin.js")
+    # feature-0038 Cycle 4: 계정 pane 은 admin/accounts.js 로 분리(byte-동치 이동) — 합본 검사.
+    adm = _read_static("admin.js") + _read_static("admin/accounts.js")
     assert "triggerAccountTotpDisableFlow" in adm and "/totp/disable" in adm
     assert 'statusBadge("2FA"' in adm
     html = _read_static("index.html")

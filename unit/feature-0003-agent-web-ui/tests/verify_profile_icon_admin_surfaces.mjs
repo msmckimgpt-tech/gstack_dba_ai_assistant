@@ -27,7 +27,11 @@ global.window = dom.window;
 global.document = dom.window.document;
 global.navigator = dom.window.navigator;
 
-const adminSrc = readFileSync(join(STATIC, "admin.js"), "utf8");
+// feature-0038 Cycle 4: 계정/역할 pane 은 admin/{accounts,roles}.js 로 분리(byte-동치 이동) —
+//   pane 소속 단언(계정 목록/상세·역할 avatar 경로)은 합본으로 검사한다.
+const adminSrc = readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/accounts.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/roles.js"), "utf8");
 
 function extractFn(src, name) {
   const start = src.indexOf(`function ${name}(`);
