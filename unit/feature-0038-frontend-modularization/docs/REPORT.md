@@ -11,12 +11,12 @@ source_of_truth: false
 ## 1. Summary
 ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED (mckim 2026-08-03)**.
 **Cycle 1 완결**(styles.css 7분할 — PR #1124 머지·배포 1da17988·POST-DEPLOY PB-0008 PASS·
-롤백 리허설 실증). **Cycle 1~6 완결**(PR 6건·배포·POST-DEPLOY 전건 PASS — admin.js 4,805줄·-65.7%·9모듈 분리·하네스 부채 상환)·**Cycle 7 진행 중**(app.js type=module 전환 — B0 단독 격리). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
+롤백 리허설 실증). **Cycle 1~7 완결**(PR 7건·배포·POST-DEPLOY 전건 PASS — admin.js -65.7%·app.js ES module 전환 풀스모크 완주)·**Cycle 8 진행 중**(app/auth·profile 비연속 세그먼트 추출 — app.js 12,431줄). 계획 정본은 TASK.md §2.1. 백엔드는 feature-0012 완결로 범위 밖.
 
 ## 2. Progress
-- Planned: Cycle 8~10 (app/ 도메인 분할) + Final(재발 방지·CONVENTIONS·admin.js 잔여 재실측)
-- In Progress: Cycle 7 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY 풀 스모크)
-- Done: 계획 승인 · Cycle 1~6 완결(Run-001~027) · Cycle 7 전환·기계 검증(Run-028)
+- Planned: Cycle 9~10 (app/ 분할 잔여) + Final(재발 방지·CONVENTIONS·잔여 재실측)
+- In Progress: Cycle 8 마감 (make test·적대 패널 → verify → PR → 배포 → POST-DEPLOY)
+- Done: 계획 승인 · Cycle 1~7 완결(Run-001~031) · Cycle 8 추출·기계 검증(Run-032)
 
 ## 3. Recent Changes
 - 2026-08-03: unit 생성 + Implementation Plan 작성 (코드 무변경)
@@ -46,6 +46,9 @@ ITEM-P5b 잔여(프론트 3파일 모듈 분할) initiative — **PLAN-APPROVED 
 - (기록만, C3 패널 발견) `tests/verify_admin_tab_gating.mjs` 2건 FAIL 이 pre-existing
   으로 방치(「AI 운영 현황 표시」·「접근+usage.read → LLM 사용량 표시」) — make test
   미포함이라 CI 사각. 본 initiative 와 무관(기준선 대조 입증), 별도 fix 후보.
+- (기록만, C8 패널 발견) `tests/win-browser-settings-notif.scenario.json` 이 page 전역
+  `typeof openProfile` 에 의존 — C7 ESM 전환 시점부터 비전역(pre-existing, 도구 시나리오
+  정비 후보 — PB-0008 레시피의 DOM 이벤트 경유 전환과 같은 축).
 - (기록만, C4 패널 발견) `tests/verify_perm_self_scope.mjs` 가 ITEM-09 admin.js
   type=module 전환 이래 classic-script 주입 불가로 pre-existing 파손 — 별도 정리 후보.
   standalone mjs 하네스들이 CI 비배선이라 조용히 썩는 구조 자체도 점검 후보.
