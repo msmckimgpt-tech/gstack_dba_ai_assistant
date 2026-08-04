@@ -63,3 +63,15 @@ source_of_truth: true
   `tests/test_audit_tamper_evidence.py`(합본 로더)
 - Impact: 동작 변화 0.
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260804T100000-accounts-roles-split
+- Date: 2026-08-04
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 4)
+- Summary: admin.js 계정 pane(구 L7044–7813)·역할 pane(구 L7815–8409)을
+  `admin/accounts.js`·`admin/roles.js` 로 byte-동치 이동. 신규 export 20(함수 19 +
+  ACCOUNT_PAGE_SIZE const). roles→accounts 모듈 간 직접 import(filteredAccounts).
+  권한 grid 인프라는 공유 코어로 admin.js 잔류.
+- Files: `static/admin.js`(-1,361줄→10,466) · `static/admin/{accounts,roles}.js`(신규) ·
+  `tests/{test_two_factor_auth,test_login_attempt_limit}.py`(합본 로더)
+- Impact: 동작 변화 0.
+- Rollback Notes: 단일 PR revert 1회.

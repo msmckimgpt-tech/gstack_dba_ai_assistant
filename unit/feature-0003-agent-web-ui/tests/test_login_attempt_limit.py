@@ -141,7 +141,8 @@ def test_b10_audit_builder_auth_actions():
 
 # ── F: frontend ─────────────────────────────────────────────────────────────
 def test_f1_admin_js_unlock_ui():
-    js = _read_static("admin.js")
+    # feature-0038 Cycle 4: 계정 pane 은 admin/accounts.js 로 분리(byte-동치 이동) — 합본 검사.
+    js = _read_static("admin.js") + _read_static("admin/accounts.js")
     assert "triggerAccountUnlockFlow" in js
     assert "/unlock" in js
     assert "잠금 해제" in js

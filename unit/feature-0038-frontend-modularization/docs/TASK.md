@@ -6,13 +6,13 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-08-03
-feature_status_note: ITEM-P5b 잔여 — Cycle 1·2 배포 완료(css 7분할·usage/aiops), Cycle 3(settings/audit) 진행
+feature_status_note: ITEM-P5b 잔여 — Cycle 1~3 배포 완료, Cycle 4(accounts/roles) 진행 — admin.js 10,466줄
 ---
 
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1·2 완료·배포, Cycle 3 진행 중)
+- State: in-progress (PLAN-APPROVED 2026-08-03 — Cycle 1~3 완료·배포, Cycle 4 진행 중)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-03
@@ -104,12 +104,12 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
 ## 3. Task Queue
-- [ ] TASK-0010 Cycle 3 — verify → PR → 배포 → POST-DEPLOY PB-0008 (settings/audit pane)
-- [ ] TASK-0011 Cycle 4 착수 (admin/accounts.js·admin/roles.js) — 이하 §2.1 표 순서
+- [ ] TASK-0012 Cycle 4 — verify → PR → 배포 → POST-DEPLOY PB-0008 (accounts/roles pane·권한 grid 보안 표면)
+- [ ] TASK-0013 Cycle 5 착수 (admin/products.js·admin/datasources.js) — 이하 §2.1 표 순서
 - [ ] TASK-0100 Final — CONVENTIONS code-modularity + ROADMAP/STATUS 정합
 
 ## 4. In Progress
-- TASK-0010 (Cycle 3 마감 절차 — make test·적대 패널 진행 중)
+- TASK-0012 (Cycle 4 마감 절차 — make test·적대 패널 진행 중)
 
 ## 5. Blocked
 - 없음
@@ -127,9 +127,11 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0007 Cycle 2 추출 — admin/usage.js(699)·admin/aiops.js(287), 역재구성 byte-parity IDENTICAL (TEST Run-008, CHG-20260803T190000·T193000 패널 흡수)
 - [x] TASK-0008 Cycle 2 마감 — PR #1125 머지(3748c4fd)·배포 RC=0·POST-DEPLOY PB-0008 PASS(운영현황 85KB 렌더·에러 0, TEST Run-011)
 - [x] TASK-0009 Cycle 3 추출 — admin/settings.js(881)·admin/audit.js(388), admin.js 11,827줄, parity IDENTICAL·free-vars 0/0 (TEST Run-012, CHG-20260803T203000)
+- [x] TASK-0010 Cycle 3 마감 — 패널 SHIP(REV-20260804T090000)·PR #1128 머지(86c0d7c3)·배포 RC=0·POST-DEPLOY PB-0008 PASS(설정 5패널 실렌더·감사 100행·re-export 축, TEST Run-014)
+- [x] TASK-0011 Cycle 4 추출 — admin/accounts.js(785)·admin/roles.js(609), admin.js 10,466줄, parity IDENTICAL·free-vars 6모듈 0 (TEST Run-015, CHG-20260804T100000)
 
 ## 7. Next Action
-- Cycle 3 verify → PR → 배포 → POST-DEPLOY PB-0008 → Cycle 4
+- Cycle 4 verify → PR → 배포 → POST-DEPLOY PB-0008 → Cycle 5
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

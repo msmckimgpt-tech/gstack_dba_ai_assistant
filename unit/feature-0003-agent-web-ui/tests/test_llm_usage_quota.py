@@ -197,9 +197,15 @@ def test_b13_admin_catchup_grants_quota_permissions():
     assert '"datasource.read"' in src
 
 # ── F: frontend ─────────────────────────────────────────────────────────────
+# feature-0038 Cycle 4: 계정/역할 pane 은 admin/{accounts,roles}.js 로 분리(byte-동치 이동).
+#   quota 편집기 call-site 가 양 pane 상세에 있으므로 pane 소속 단언은 합본으로 검사한다.
+def _read_admin_bundle() -> str:
+    return _read_static("admin.js") + _read_static("admin/accounts.js") + _read_static("admin/roles.js")
+
+
 def test_f1_admin_quota_ui_relocated():
     # TASK-20260623T014626-quota-ui-relocate: 한도 UI 가 'LLM 사용량'(조회 전용) 화면에서 역할/계정 상세로 이전.
-    js = _read_static("admin.js")
+    js = _read_admin_bundle()
     assert "function buildQuotaEditor" in js
     # 엔드포인트는 템플릿 리터럴 `/api/admin/quotas/${opts.scope}/${id}` 사용.
     assert "/api/admin/quotas/${opts.scope}/" in js
@@ -222,7 +228,7 @@ def test_f1_admin_quota_ui_relocated():
 
 def test_f2_quota_permission_ui_gating():
     # TASK-20260623T030418-quota-rbac-permission: 섹션 표시=quota.read, 편집=quota.manage(readOnly).
-    js = _read_static("admin.js")
+    js = _read_admin_bundle()
     # 상세 섹션 게이트가 quota.read 로 전환(구 console.manage/account.update 게이트 제거).
     assert 'can("quota.read")' in js
     # 편집 가능 여부 = quota.manage(없으면 readOnly).

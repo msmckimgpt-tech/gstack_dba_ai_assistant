@@ -178,6 +178,51 @@ source_of_truth: true
   합본 전환한 test_audit_tamper_evidence F1 포함.
 - Pass/Fail: PASS
 
+### Run 2026-08-04-014 (Cycle 3 POST-DEPLOY — 라이브 검증)
+- Date: 2026-08-04
+- Environment: Windows-browser
+- Runner: AI (claude-corp)
+- Bridge: relay @ http://172.26.144.1:9223, Chrome/150.0.7871.128
+- Evidence: `test-runs.d/evidence/20260804-c3-postdeploy-settings.png`
+- Result Summary: PR #1128 머지 → 배포(86c0d7c3, RC=0) → 신규 모듈 서빙 200·스탬프 전파
+  (`?v=a71a85edb03b`). 실 Windows Chrome (error/unhandledrejection 후크): 시스템 > 설정
+  목록 5행 렌더 → **5패널 순회 활성화 전건 실렌더**(prompts 2,481 · runtime-timeouts 25,100 ·
+  model-thinking-budgets 9,719 · redteam-review 16,036 · performance-parallelism 26,212자) →
+  감사 > 감사 로그 목록 **100행**·무결성 검증 버튼 존재 → re-export 경유 축(프롬프트 > 지침
+  서브탭) 5,879자 렌더. **전 구간 에러 0**.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-015 (Cycle 4 — accounts/roles 추출 기계 검증)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: admin.js 11,827→10,466줄(-1,361, 누적 -3,541). admin/accounts.js(792줄)·
+  admin/roles.js(618줄) 신설. **역재구성 byte-parity IDENTICAL** · ESM 파싱 OK ·
+  **acorn-globals 자유 식별자 6모듈 전부 0**. 신규 패턴: roles.js 가 accounts.js 의
+  filteredAccounts 를 모듈 간 직접 import. 권한 grid 인프라(renderPermissionGrid·
+  PERMISSION_DEPENDENCIES·groupedPermissions)는 두 pane 공유 코어라 admin.js 잔류
+  (§2.1 "착수 시 심볼 재실측" 조항 — 표의 '권한 grid 포함' 문언을 경계 재실측으로 보정).
+  참조 테스트 2건(two_factor·login_attempt_limit) 합본 전환.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-016 (Cycle 4 — 패널 BLOCKING/MAJOR 흡수 후 재검증)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: 패널 BLOCK(test_llm_usage_quota f1/f2 — quota call-site 이동으로 make test
+  RC=2) 흡수: `_read_admin_bundle()` 합본 전환. MAJOR(verify_profile_icon_admin_surfaces.mjs
+  5단언 회귀) 합본 전환 → **17 PASS / 0 FAIL** 실측. MINOR(dead import filteredAccounts)
+  제거. 재검 — 역재구성 byte-parity **IDENTICAL** · ESM OK. make test 재실행 별도 Run.
+- Pass/Fail: PASS
+
+### Run 2026-08-04-017 (Cycle 4 — make test 최종)
+- Date: 2026-08-04
+- Environment: CLI
+- Runner: AI (claude-corp)
+- Result Summary: 패널 흡수 후 최종 상태 `sudo make test` — **RC=0** (전 스위트 PASS · ruff
+  clean; 수정 전 RC=2 였던 test_llm_usage_quota f1/f2 포함).
+- Pass/Fail: PASS
+
 ## 4. Untested Areas
 - (Cycle 2) JS 변경은 미머지 docker cp 사전 QA 불가(ES module 스탬프 미주입 시 이중 인스턴스·모듈 캐시
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저
