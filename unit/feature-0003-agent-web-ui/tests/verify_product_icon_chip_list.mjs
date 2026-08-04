@@ -26,7 +26,11 @@ global.document = dom.window.document;
 global.navigator = dom.window.navigator;
 
 const appSrc = readFileSync(join(STATIC, "app.js"), "utf8");
-const adminSrc = readFileSync(join(STATIC, "admin.js"), "utf8");
+// feature-0038 Cycle 5: 제품/데이터소스 pane 은 admin/{products,datasources}.js 로 분리
+//   (byte-동치 이동) — pane 소속 단언은 합본으로 검사한다.
+const adminSrc = readFileSync(join(STATIC, "admin.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/products.js"), "utf8")
+  + readFileSync(join(STATIC, "admin/datasources.js"), "utf8");
 
 function extractFn(src, name) {
   const start = src.indexOf(`function ${name}(`);

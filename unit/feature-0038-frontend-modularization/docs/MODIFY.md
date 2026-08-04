@@ -75,3 +75,14 @@ source_of_truth: true
   `tests/{test_two_factor_auth,test_login_attempt_limit}.py`(합본 로더)
 - Impact: 동작 변화 0.
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260804T120000-products-datasources-split
+- Date: 2026-08-04
+- Related Requirement: REQ-20260803-item-p5b-frontend-split (Cycle 5)
+- Summary: admin.js 데이터소스 pane(구 L5591–6368)·제품 pane(구 L7616–9660)을
+  `admin/datasources.js`·`admin/products.js` 로 byte-동치 이동. 신규 export 22(함수 18 +
+  const 4). ds→products 모듈 간 직접 import(renderProductList). subcatalog 잔류.
+- Files: `static/admin.js`(-2,819줄→7,647) · `static/admin/{datasources,products}.js`(신규) ·
+  `tests/verify_product_icon_chip_list.mjs`(합본)
+- Impact: 동작 변화 0.
+- Rollback Notes: 단일 PR revert 1회.

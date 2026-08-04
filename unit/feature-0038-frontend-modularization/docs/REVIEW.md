@@ -68,3 +68,12 @@ source_of_truth: true
 - **MINOR (흡수 1·기록 1)**: admin.js dead import(filteredAccounts — roles.js 직접 import 로 대체) 제거 후 parity IDENTICAL 재검. verify_perm_self_scope.mjs 는 ITEM-09 type=module 전환 이래 pre-existing 파손(무귀책) — REPORT §8 추적.
 - 패널 clean 실측: 역재구성 cmp IDENTICAL(델타 -1386/+25 전수 일치)·6모듈 free-vars 0·TDZ 0(ACCOUNT_PAGE_SIZE 함수 내부 9개소)·roles→accounts 평가순서 근거·32모듈 링크 정합·권한 grid 호출 2곳 이동-내부 byte-동일·스탬프 모듈 간 import 재작성 커버(files_rewritten=18 실측).
 - Timestamp: 2026-08-04T11:00:00+09:00
+
+## REV-20260804T133000-products-datasources-panel [SUBAGENT:qa] — BLOCK → 전건 흡수 후 SHIP-경로
+- Related Change: CHG-20260804T120000-products-datasources-split (Cycle 5)
+- 패널: fresh-context 적대 1렌즈(qa/frontend — 7항목 실측 + node DOM-stub 전 그래프 link+eval + 스탬프 실주입 + verify_*.mjs 전수 양-트리 스윕 + 컨테이너 pytest 157 passed). **판정: 초안 BLOCK — BLOCKING 1 / MAJOR 0 / MINOR 2.**
+- **BLOCKING (흡수)**: verify_profile_icon_consistency.mjs — admin.js 단독 직독 단언("'(약어) 명칭' 3건")이 이동으로 1+2 분산돼 22P/1F→21P/2F 신규 회귀. 같은 cycle 이 chip_list 에 적용한 합본 전환을 자기 변경에 미적용한 누락. → 합본 전환 후 **22/1 기준선 복구 실측**.
+- **MINOR (흡수 ①)**: dead import 5건(주석만 참조 — 표면 산출이 주석 텍스트까지 식별자로 집계한 방법 결함) 제거 + dead export 3건(applyAllPending·identiconSvg·_DS_CONN_MAX) 원복 → parity IDENTICAL(export 19 규칙)·free-vars 0/0 재검. **교훈: 이후 cycle 의 표면 산출은 주석-제거 후 스캔으로 보정.**
+- **MINOR (② 절차 반영)**: 신규 2파일 untracked — 커밋 시 git add 포함 확인(finalize 체크).
+- 패널 clean 실측: 역재구성 sha256 동일·8모듈 free-vars 0(admin.js 3건은 HEAD 동일 pre-existing 브릿지)·TDZ 0(ENGINE_BY_VALUE 모듈-로컬만)·import 바인딩 쓰기 9모듈 0·전 그래프 link+eval OK·pending 엔진(§10.7) admin.js 잔류 + products 35회 import 사용 온전·스탬프 실주입 3 specifier 동일 스탬프.
+- Timestamp: 2026-08-04T13:30:00+09:00
