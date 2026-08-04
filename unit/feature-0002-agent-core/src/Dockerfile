@@ -2,8 +2,25 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# feature-0039 (ops-scheduler): postgresql-client 를 PGDG 에서 **서버와 같은 메이저(16)** 로
+# 고정 설치한다. Debian trixie 본 저장소는 client-17 만 제공하는데, pg_dump 17 산출물은
+# 첫머리에 PG17 전용 GUC `SET transaction_timeout = 0;` 을 넣어 **PG16 서버로 복원 시
+# `unrecognized configuration parameter` 로 실패**한다(실측: ON_ERROR_STOP=1 restore rc=3).
+# 백업이 복원되지 않으면 백업이 아니므로 메이저를 서버(16.14)에 맞춘다 — 이는 이관 전
+# `docker exec <postgres> pg_dump` 가 자연히 갖던 버전 정합을 명시적으로 복원한 것이다.
+# mysqldump 는 기존 default-mysql-client(MariaDB 계열)를 그대로 쓴다: MySQL 8.0 대상
+# 덤프의 DDL 구간이 서버 내장 mysqldump 산출물과 **바이트 동일**함을 실측 확인했다
+# (SHOW CREATE TABLE 패스스루라 서버 문법·콜레이션이 그대로 보존).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends locales tzdata default-mysql-client \
+ && apt-get install -y --no-install-recommends locales tzdata default-mysql-client ca-certificates gnupg wget \
+ && . /etc/os-release \
+ && wget -qO /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+ && gpg --dearmor -o /usr/share/keyrings/pgdg.gpg /tmp/pgdg.asc \
+ && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-client-16 \
+ && apt-get purge -y --auto-remove gnupg wget \
+ && rm -f /tmp/pgdg.asc \
  && sed -i 's/^# *ko_KR.UTF-8 UTF-8/ko_KR.UTF-8 UTF-8/' /etc/locale.gen \
  && locale-gen ko_KR.UTF-8 \
  && rm -rf /var/lib/apt/lists/*

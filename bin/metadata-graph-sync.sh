@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # feature-0016 Phase 1c: 관계형 메타데이터 → Apache AGE `metadata_kb` 그래프 동기화 wrapper.
 #
-# 워커 컨테이너(insight-worker 우선, 없으면 ask-worker) 안의
+# 컨테이너(ops-scheduler 우선, 없으면 insight-worker/ask-worker) 안의
 # scripts/metadata_graph_sync.py 를 docker exec 으로 실행. 관계형 SSOT 를 AGE 그래프로 멱등 투영.
+#
+# **feature-0039 이후: 정기 실행은 본 래퍼가 아니라 `ops-scheduler` 서비스가 담당한다**
+# (매 30분 --incremental / 매일 04:17 --full). 호스트 root crontab 항목은 제거됐고, 본
+# 래퍼는 **수동 1회 실행** 용도로 남는다. 아래 flock 은 그대로 유지 — 스케줄러 안의
+# ops_graph_sync.sh 가 bind-mount 로 **같은 lock 파일**을 잡으므로 호스트/컨테이너
+# 어느 쪽에서 돌든 §82 의 상호배제가 성립한다.
 #
 # AGE cutover(postgres 커스텀 이미지 + shared_preload_libraries='age') 이후에만 실효.
 # cutover 전엔 sync_graph 가 graceful no-op(비차단). Phase 5 에서 cron 으로 주기 호출 예정.
@@ -43,7 +49,7 @@ if ! flock -n 9; then
   exit 3
 fi
 
-for svc in insight-worker ask-worker; do
+for svc in ops-scheduler insight-worker ask-worker; do
   c="${COMPOSE_PROJECT_NAME}-${svc}-1"
   if docker ps --format '{{.Names}}' | grep -qx "$c"; then
     echo "[metadata-graph-sync] exec → ${c}" >&2
@@ -52,6 +58,6 @@ for svc in insight-worker ask-worker; do
   fi
 done
 
-echo "ERROR: 워커 컨테이너(insight-worker/ask-worker)가 실행 중이 아닙니다." >&2
-echo "  먼저 'make start' 또는 docker compose up -d insight-worker" >&2
+echo "ERROR: 실행 대상 컨테이너(ops-scheduler/insight-worker/ask-worker)가 실행 중이 아닙니다." >&2
+echo "  먼저 'make start' 또는 docker compose up -d ops-scheduler" >&2
 exit 2

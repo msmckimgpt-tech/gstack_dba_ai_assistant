@@ -98,6 +98,7 @@ sources:
 | feature-0036-analysis-verification | in-progress |  | [TASK](../unit/feature-0036-analysis-verification/docs/TASK.md) |  |
 | feature-0037-domain-synthesis | in-progress |  | [TASK](../unit/feature-0037-domain-synthesis/docs/TASK.md) |  |
 | feature-0038-frontend-modularization | in-progress | 2026-08-03 | [TASK](../unit/feature-0038-frontend-modularization/docs/TASK.md) | ITEM-P5b 잔여 — Cycle 1~4 배포 완료, Cycle 5(products/datasources) 진행 — admin.js 7,647줄 |
+| feature-0039-ops-scheduler | review | 2026-08-04 | [TASK](../unit/feature-0039-ops-scheduler/docs/TASK.md) | 운영 정기 잡 4종(백업·복원 리허설·AGE 그래프 sync 증분/전량)을 호스트 root crontab → ops-scheduler 컨테이너 서비스로 이관 — docker 소켓 의존 제거(= root 권한 근거 소멸)·스케줄 정본을 compose 환경변수로 이동·§82 flock 은 bind-mount inode 공유로 호스트 routine-backfill 과 상호배제 유지. pg_dump 는 PGDG 16 으로 서버 메이저 고정(client-17 산출물은 PG16 복원 불가 실측). 부수: AGE cutover 이후 5주간 FAIL 하던 PG 복원 리허설 결함 수정(ag_catalog 사전 프로비저닝, 사용자 승인) — 761MB 실백업 전량 복원 PASS |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 > **미머지 활성 worktree**(2026-08-04 실측): `ai/claude/feature-0007-llm-timeout-align` · `ai/claude/feature-0012-web-router-modularization` · `ai/claude-corp/feature-0016-node-role-viz` · `ai/claude-corp/feature-0038-c3-audit-settings` · `ai/root/perf-cycle-label-fix` · `ai/root/ssot-roadmap-refresh`. 이들의 작업 현황 정본은 각 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md` 이며, 위 표는 main 머지 기준 상태만 반영한다(머지 시 행 승격 — DOC_REGISTRY In-flight 정책). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
