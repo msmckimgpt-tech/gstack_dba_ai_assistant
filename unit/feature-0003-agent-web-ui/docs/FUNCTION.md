@@ -2320,3 +2320,46 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0804, 2026-08-03 · 2026-07-31)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-08-03 블록 7항목 · 2026-07-31 블록 3항목 추가. 기능 계약·렌더러 동작 변경 없음(데이터 전용).
+
+## (share-join-btn-visibility, 2026-08-04) 공유 링크 화면 — 그룹 대화 '참여' 버튼 노출 조건 확대 (web/UI, Minor §12.3, 프론트 표시 전용 — 백엔드·API·RBAC·스키마 무변경)
+
+- REQ-20260804-share-join-btn-visibility (사용자 리포트 "서비스 내 대화를 공유했을 때, 공유 링크
+  내부에서 '내 대화로 fork' 항목만 확인되고 그룹 대화 참여버튼이 나타나지 않는 것으로 확인되어
+  수정이 필요합니다", **Minor §12.3** — 서버 인가 게이트 무변경, 프론트 표시 조건만 확대):
+  공유 링크(`/share/{token}`) 화면의 **'대화에 참여' 버튼을 링크가 참여 허용(Joinable)이고
+  로그인 상태이면 노출**한다. 이미 멤버·소유자인지는 **표시 판정에 관여하지 않는다**.
+
+  **진단(라이브 실측 2026-08-04)**: 문제의 공유 링크(`WebConversationShares.Id=81`, 2026-08-04
+  12:21 발급)는 `Joinable=1` 로 **정상 발급**돼 있었다. 감사로그(`WebAuditEvents`,
+  `share.public.view`) 상 그 링크를 **로그인 상태로** 연 계정은 `account_id=10` 하나이고, 이
+  계정은 해당 대화의 **소유자**이며 `agent_runtime.conversation_members` 에 `role='owner'` 로
+  등록돼 있었다. 서버는 `can_join = 로그인 && joinable && !already_member` 로 계산하므로
+  소유자에게는 `can_join=false` 였고, `share.js` 가 **`can_join` 단독으로** 버튼 표시를 정해
+  참여 버튼이 조건 미충족 사유 없이 사라졌다. 반면 `can_fork` 는 `conversation.create` 권한만
+  보므로 fork 버튼만 남아 "fork 만 있고 참여 버튼이 없다" 는 관측이 됐다. 서버는 이미
+  `viewer.joinable` · `viewer.already_member` 를 응답에 담고 있었으나 프론트가 쓰지 않았다.
+
+  **결정(AskUserQuestion, 2026-08-04)**: 소유자·기존 멤버에게도 참여 버튼을 노출한다. (대안이던
+  "참여 불가 사유를 화면에 표시" 는 사용자가 선택하지 않음.)
+
+  **단, 이미 멤버인 클릭은 `join` 을 호출하지 않는다** (적대 리뷰 P1). 서버 `join` 은 이미 멤버여도
+  **windowed 공유 링크**면 `stamp_member_visibility(is_new_member=False)` 로 가시 범위를 **교집합
+  축소**한다 — `role='owner'` 와 기존 full 멤버(floor·ceiling 모두 NULL)는 skip 되지만, 기존
+  windowed 멤버는 좁아지고 **복구 경로가 없다**. 표시를 넓힌 대가로 그 mutation 을 사용자 클릭에
+  노출할 수 없으므로, 이미 멤버인 viewer 는 서버가 준 `viewer.conversation_id` 로 곧바로 이동한다
+  (join 왕복 0, 데이터 변경 0). 비멤버 클릭만 종전대로 `POST /api/share/{token}/join` 을 탄다.
+
+- AC-1: 로그인 + `viewer.joinable=true` 이면 소유자·기존 멤버에게도 `#shareJoinBtn` 이 보인다.
+- AC-2: 비로그인 또는 `joinable=false` 링크에서는 종전대로 버튼이 보이지 않는다(로그인 링크만).
+- AC-3: 서버 인가 계약 불변 — `can_join` 은 여전히 `already_member` 를 반영하고, `Joinable=0`
+  링크의 `POST /api/share/{token}/join` 은 403 을 유지한다(표시 확대 ≠ 인가 확대).
+- AC-4: 버전 페이징(`‹ n/m ›`)으로 `render()` 가 재호출돼도 참여·fork 클릭 핸들러가 중복
+  부착되지 않고(클릭 1회 = 요청 1회), 조건이 거짓이 된 액션은 다시 숨겨진다.
+- AC-5: 이미 멤버인 viewer 가 참여 버튼을 눌러도 `join` 요청이 발생하지 않는다 — 기존 windowed
+  멤버의 `visible_floor_message_id`/`visible_ceiling_message_id` 가 변하지 않는다(가시 범위 축소 0).
+- AC-6: `viewer.conversation_id` 는 `already_member=true` 일 때만 응답에 실린다 — 익명·비멤버
+  viewer 에게 대화 식별자가 노출되지 않는다.
+
+> 부수(같은 코드 경로): 종전 `render()` 는 액션 표시를 `classList.remove("hidden")` 로만 처리하고
+> 리스너를 매 렌더 부착해, 버전 페이징 재렌더 시 ① 숨김 상태가 복원되지 않고 ② `doJoin`/`doFork`
+> 가 클릭 1회에 중복 발사될 수 있었다. 표시 토글·1회 배선을 `wireShareAction` 으로 일원화했다.

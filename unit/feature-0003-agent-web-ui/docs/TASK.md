@@ -7747,3 +7747,55 @@ Cross-ref: TASK `20260729T1742-product-picker-keynav` · Run `docs/test-runs.d/2
 - [x] 보수적 제외(정본 근거): `refactor(frontend)` 304118fb·a54704bb(styles.css 7분할·admin.js pane 추출) = byte-parity 무동작변경 → 사용자 표면 0 · POST-DEPLOY/문서 커밋 8건(7c96fbc9·4e297a90·54956bb6·9a6b302c·9a09d04a·d8ef1b77·04e77eb6·659383f2·edb482cc·5f4dfc46) · 계측 전용(fa67e668 질의 임베딩 강등 가시화 = 운영자 관측 표면) · feature-0037 도메인 합성(L3)은 정본이 lazy·요청 경로 UI 추가 0 명시.
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3·FUNCTION#4·REVIEW#9([SKIPPED:non-policy-doc])·TEST#13(Windows-browser 미수행 사유 기록). 무인 cron — landing/배포 소유=wrapper 위임이므로 로컬 commit 까지만, push/merge/deploy 는 wrapper. META(wiki/docs) 는 별도 commit(pure-meta).
 - [x] 캐시버스터: **수기 bump 하지 않음**(2026-07-12 ITEM-09 이후 소스 `?v=dev` 고정 + Dockerfile `inject_asset_stamp.py` content-hash 빌드 주입 + `bin/deploy-web.sh` 가 placeholder 잔존을 하드 차단). 실행환경 지시문의 'index.html/admin.html `?v=<new>` 동반 bump MUST' 는 폐지된 메커니즘 기준이라 **미적용** — 오케스트레이터에 표면화(현행 소스 실측 `?v=dev` 2참조).
+
+## 20260804T0458-share-join-btn-visibility — 공유 링크 화면 '대화에 참여' 버튼 노출 조건 확대 (Minor §12.3, 프론트 표시 전용)
+
+**요청(사용자, 2026-08-04)**: "서비스 내 대화를 공유했을 때, 공유 링크 내부에서 '내 대화로 fork'
+항목만 확인되고 그룹 대화 참여버튼이 나타나지 않는 것으로 확인되어 수정이 필요합니다."
+
+**진단(라이브 실측, 코드 변경 전)**:
+- `WebConversationShares` 최신 행 `Id=81`(2026-08-04 12:21 발급) → `Joinable=1` — 링크는 참여 허용 정상.
+- `WebAuditEvents` `share.public.view` 최근 3건: 12:23 `account_id=10` · 12:24 anonymous · 12:26 `account_id=10`.
+  즉 **로그인 상태로 연 계정은 소유자 본인 하나**.
+- `agent_runtime.conversation_members`(대화 `20260804013726-a6fe00cf`) → `account_id=10, role='owner'` 단일 행.
+- ⇒ `share.py` `can_join = bool(viewer) and joinable and not already_member` 가 false → `share.js`
+  가 `can_join` 단독 게이트라 버튼 숨김. `can_fork` 는 소유자 여부 무관이라 fork 만 남음.
+- 서버는 `viewer.joinable`·`viewer.already_member` 를 이미 응답에 담고 있었으나 프론트 미사용.
+- 라이브 서빙 자산 확인: `web-a` 컨테이너 `/app/web/static/share.{html,js}` 에 `shareJoinBtn` 존재,
+  `GIT_COMMIT=03665d28` — **구버전 배포로 인한 누락 아님**(가설 배제).
+
+**결정(AskUserQuestion)**: 소유자·기존 멤버에게도 참여 버튼 노출. 대안이던 "참여 불가 사유 표시"는 미선택.
+
+- [x] `share.js 노출 조건 확대` — 산출물: `shouldShowJoin(viewer)` 순수 함수 신설(`is_authenticated &&
+      (can_join || joinable)`, `already_member` 미참조) + `render()` 가 이를 사용 · 배선 확인:
+      `#shareJoinBtn` 표시 결정 지점이 `render()` 한 곳뿐이라 choke-point 단일(다른 분기 없음).
+- [x] `표시 토글·1회 배선 일원화` — 산출물: `wireShareAction(el, visible, onClick)` — `classList.toggle`
+      로 조건 거짓 시 재숨김 + `dataset.shareWired` 마커로 리스너 1회 부착 · 배선 확인: 참여·fork·
+      로그인 링크 3개 액션 전부 동일 helper 경유(재렌더 경로 `pageBranchShare` → `render` 포함).
+- [x] `보조 정보(툴팁)` — 산출물: 이미 멤버면 `title="이미 참여 중인 대화입니다 — 대화로 이동합니다"`.
+      화면 문구(`대화에 참여`)는 요청대로 불변 — hover 시에만 보이는 보조 정보.
+- [x] `회귀 테스트` — 산출물: `tests/test_share_join_btn_visibility.py` (F1~F4 프론트 4건 + B1~B2 백엔드
+      계약 2건) · 배선 확인: F1 이 `shouldShowJoin` 본문에 `already_member` 부재를 단언해 회귀를 직접 차단.
+- [x] `적대 리뷰 P1 반영 — 이미 멤버 클릭의 join 회피` — 산출물: `openJoinedConversation(cid)` 신설 +
+      `render()` 클릭 분기(`already_member ? 이동 : doJoin`) + 서버 `viewer.conversation_id`
+      (already_member 한정) · 배선 확인: 초안대로 두면 기존 **windowed 멤버**가 버튼을 누를 때
+      `stamp_member_visibility(is_new_member=False)` 가 가시 범위를 교집합 축소(복구 경로 없음).
+      `openJoinedConversation` 은 `fetch`·`/join` 을 포함하지 않음(F5 로 고정).
+- [x] `핸들러 stale 방지` — 산출물: `_latestViewer` 모듈 스냅샷을 클릭 시점에 읽음 · 배선 확인:
+      리스너 1회 부착(F3)과 재렌더 갱신(F6)이 함께 성립.
+- [x] `인가 게이트 무변경 확인` — `can_join` 계산·`Joinable=0 → 403`·RBAC·스키마 diff 0(B2 로 고정).
+      서버 변경은 응답 `viewer.conversation_id` 1 필드 추가뿐(멤버 한정, B3 로 고정).
+
+**요청 범위 자기-열거 완결성 게이트 (§16.7)**
+
+**항목 열거 (G1)**: 요청은 단일 항목 — "공유 링크 화면에 그룹 대화 참여 버튼이 나타나게 한다".
+
+**항목별 배선 확인 (G2)**: 참여 버튼의 표시 여부를 정하는 코드는 `share.js` `render()` 의
+`wireShareAction(joinBtn, showJoin, …)` 한 줄이 유일하다(`shareJoinBtn` 참조는 `share.html` 정의 1곳 +
+`share.js` 취득 1곳뿐 — grep 전수 확인). CSS `.hidden` 외 다른 표시 억제 규칙 없음.
+
+**주장 affordance 실측 (G3)**: 배포 후 실제 Windows 브라우저에서 ① 소유자 계정으로 `/share/<token>`
+진입 시 '대화에 참여' 버튼 가시 ② 클릭 시 해당 대화로 이동 ③ fork 버튼 무회귀 — 3축 대조.
+
+**경계 양측 검증 (G4)**: 노출(양성) = 로그인 + joinable 링크(소유자 포함). 미노출(음성) = 비로그인
+(로그인 링크만) · `joinable=false` 링크. 후자가 살아 있어야 참여 미허용 링크가 조용히 참여 가능해지지 않는다.
