@@ -1825,3 +1825,31 @@ primary=feature-0002 CHG-20260727T105326-worker-attachment-postprocess. web 은 
 **`fixed:deployed:verified`**(잔여: corroboration 추세 재측정 1건, 다음 audit).
 정본 TASK-/CHG-/REV-20260729T113000-model-pick-postdeploy · test-runs.d/20260729T1130-model-pick-postdeploy.md ·
 교훈 `docs/LEARNINGS.md` LRN-20260729-0001/0002.
+
+### [PRE-LANDING 2026-08-04] share-join-btn-visibility — 공유 링크 '대화에 참여' 버튼 노출 조건 확대
+사용자 리포트("공유 링크에 fork 만 있고 그룹 대화 참여 버튼이 없다")의 근본은 **버튼 누락이 아니라
+표시 조건**이었다. 라이브 실측: 링크(share `Id=81`)는 `Joinable=1` 정상이고, 로그인 열람자는 그 대화의
+**소유자 본인**(`account_id=10`, `conversation_members.role='owner'`)이라 서버 `can_join`(= 로그인 &&
+joinable && **!already_member**)이 false → `share.js` 의 `can_join` 단독 게이트가 버튼을 사유 없이 숨겼다.
+`can_fork` 는 소유자 여부를 보지 않아 fork 만 남은 것. 라이브 서빙 자산에 버튼 DOM 은 존재
+(`web-a` `GIT_COMMIT=03665d28`) — 구버전 배포 가설은 배제됐다.
+
+사용자 결정(AskUserQuestion)은 "소유자에게도 참여 버튼 노출". 표시 판정을
+`is_authenticated && (can_join || joinable)` 로 넓혔다(`shouldShowJoin`).
+
+**적대 리뷰(codex)가 초안을 뒤집은 지점(P1)**: 표시만 넓히고 클릭을 그대로 join 으로 보내면, 기존
+**windowed 멤버**가 버튼을 누를 때 서버가 `stamp_member_visibility(is_new_member=False)` 로 가시 범위를
+**교집합 축소**한다(owner·기존 full 멤버는 skip, windowed 멤버는 좁아지고 **복구 경로 없음**). 종전엔
+`already_member` 면 버튼이 없어 UI 로 그 경로에 닿지 않았는데, 표시를 넓히면 닿게 된다. → 이미 멤버인
+클릭은 **join 을 호출하지 않고** `viewer.conversation_id`(멤버 한정 신규 응답 필드)로 곧바로 이동하도록
+설계를 바꿨다. 서버 인가·window 로직은 무변경.
+
+- **남은 리스크(낮음)**: `viewer.conversation_id` 는 `already_member` 일 때만 실리므로 익명·비멤버
+  식별자 누출은 없다(B3 로 고정). ban 된 계정에는 종전과 동일하게 버튼이 보이고 클릭 시 서버 403 —
+  본 변경으로 나빠지지 않았으나, "보이는데 실패하는 버튼" 계열 마찰은 `can_fork` 에도 동일하게 존재한다
+  (§8.1 후속 제안 — 이번 범위 밖).
+- **후속(필수)**: PB-0008 Windows-browser 실측이 **미수행**이다(변경분 미배포). PR 머지 → 배포 후
+  ① 소유자 진입 시 버튼 가시 ② 클릭 시 대화 이동 + 네트워크 `/join` 요청 **0건** ③ fork·링크 복사 무회귀
+  ④ 버전 페이징 후 클릭 1회 = 요청 1회 를 실측해 `docs/test-runs.d/20260804T0458-share-join-btn-visibility.md`
+  §5 에 POST-DEPLOY 절로 append 한다. **미검증을 완료로 보고하지 않는다.**
+- 정본: TASK/CHG/REV `20260804T0458-share-join-btn-visibility` · fragment 동명 파일.

@@ -2417,3 +2417,13 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - **cache-buster**: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py` + `deploy-web.sh` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 폐지·불가침). wrapper 헤더의 수기 bump 지시는 07-12 이전 regime → 부적용(현행 소스로 재검증).
 - **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
 - 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
+
+## REV-20260804T045828-share-join-btn-visibility [CODEX:share-join-visibility] — 공유 링크 '대화에 참여' 버튼 노출 조건 확대 (P1 1건 적발 → 설계 변경 후 해소)
+- **Trigger**: UI/button/screen keyword matched (버튼·화면) → §18.8 표상 `ux, design`. **세션-레벨 상위 지시**("요청 없이 Agent tool 호출 금지")가 subagent 채널을 봉쇄해 §18.8.2 의 *상위 우선순위 지시 carve-out* 을 적용 — 제약 없는 채널(`codex exec` 코드리뷰 + 기계적 정적/런타임 검증)로 수행. 미검증 도메인은 아래 [SKIPPED] 로 명시.
+- **codex review (gpt-5.6-sol, xhigh)** — 스테이징 diff 직독. **P1 1건 · P2 1건 적발, 둘 다 해소.**
+  - **P1 (수용·수정)**: "이미 멤버에게 버튼을 띄우고 그대로 `join` 을 태우면 기존 **windowed 멤버**의 가시 범위가 영구 축소된다." 정본 확인 — `share.py` 의 `elif _share_windowed:` 분기가 `stamp_member_visibility(is_new_member=False)` 를 호출하고, `group_members.py` 가 `role='owner'` 와 기존 full 멤버(floor·ceiling 모두 NULL)만 skip 한 뒤 **기존 windowed 멤버는 교집합(floor=더 높은 id, ceiling=더 낮은 id)으로 좁힌다**. 넓히는 경로가 없어 복구 불가. 초안 주석·문서의 "권한·데이터 변화 없음" 은 **사실과 달랐다**. → 해소: 이미 멤버인 클릭은 `join` 을 호출하지 않고 `viewer.conversation_id`(멤버 한정 신규 필드)로 곧바로 이동(`openJoinedConversation`). 서버 인가·window 로직은 손대지 않음(기존 계약 보존). 회귀 차단 = F5.
+  - **P2 (수용·수정)**: "정적 문자열 검사라 `&&` 오변경·`toggle` 극성 반전을 못 잡는다." → 해소: F1 을 `is_authenticated && (can_join || joinable)` 정규식으로, F3 을 `classList.toggle("hidden", !visible)` + `dataset.shareWired === "1" ) return` 정규식으로 **극성·구조까지** 고정. codex 가 제안한 DOM 런타임 테스트는 **채택 불가** — 테스트 이미지(agent)에 node 부재(`NO_NODE` 실측)라 skip 으로 빠져 vacuous pass 가 된다(정적 검사 강화로 대체, 실동작은 PB-0008 이 담당).
+  - codex 가 "논리적으로 맞다" 고 평한 `wireShareAction` 토글·1회 배선은 유지하되, 1회 부착이 만드는 **stale 클로저** 위험을 자체 발견해 `_latestViewer` 스냅샷으로 해소(F6).
+- **기계 검증**: `node --check share.js` PASS · 신규 9건 PASS · share/fork/member/join 스코프 회귀 스위트 **98 passed**(격리 env 적용) · ruff PASS.
+- **[SKIPPED:tool-restricted:ux,design]** — §18.8 표가 요구하는 ux/design subagent 는 상위 지시로 호출 불가. 대체 커버리지: 버튼 문구·DOM·라벨 보존을 F4 로 고정하고, 실제 화면 배치·가시성은 PB-0008 Windows-browser 실측(POST-DEPLOY)이 담당. **미검증 범위를 완료로 보고하지 않는다.**
+- **§9.1 기록된 가정**: 이미 멤버인 viewer 에게 대화 식별자(`conversation_id`) 노출은 새로운 누출이 아니다 — 그 계정은 이미 해당 대화 열람 권한을 보유한다. 익명·비멤버에겐 `None`(B3 로 고정).

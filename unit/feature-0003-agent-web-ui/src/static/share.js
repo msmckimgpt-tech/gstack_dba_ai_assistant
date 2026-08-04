@@ -162,18 +162,71 @@
     const joinBtn = document.getElementById("shareJoinBtn");
     const forkBtn = document.getElementById("shareForkBtn");
     const loginLink = document.getElementById("shareLoginLink");
-    // feature-0009: 참여(join) — 링크 Joinable + 로그인 + 아직 멤버 아님일 때.
-    if (joinBtn && viewer.is_authenticated && viewer.can_join) {
-      joinBtn.classList.remove("hidden");
-      joinBtn.addEventListener("click", () => doJoin(tok, joinBtn));
+    // share-join-btn-visibility (2026-08-04 사용자 요청): 참여 버튼은 **링크가 참여
+    // 허용(joinable) + 로그인** 이면 노출한다. 종전엔 can_join(= 로그인 && joinable &&
+    // !already_member) 만 봤기 때문에, 대화 소유자·기존 멤버가 자기 공유 링크를 열면
+    // 참여 버튼이 아무 설명 없이 사라져 "그룹 대화 참여 버튼 누락" 으로 인지되는 마찰이
+    // 실측됐다(share Id=81, viewer=owner).
+    // (권한 게이트 자체는 서버 can_join/joinable 계산 그대로 — 프론트 표시만 넓힌다.)
+    //
+    // ⚠ 이미 멤버인 viewer 는 **join 을 호출하지 않는다**(openJoinedConversation). 서버 join 은
+    // 이미 멤버여도 windowed 링크면 `stamp_member_visibility(is_new_member=False)` 로 가시
+    // 범위를 교집합 축소하며(owner·full 멤버는 skip 되지만 기존 windowed 멤버는 좁아지고
+    // 복구 경로가 없다), 표시를 넓힌 대가로 그 mutation 을 사용자에게 노출할 수는 없다.
+    // 핸들러는 1 회만 부착되므로(wireShareAction) 첫 render 의 viewer 를 클로저에 가두면
+    // 재렌더 후 stale 판정이 된다 — 최신 viewer 를 모듈 스코프에 두고 클릭 시점에 읽는다.
+    _latestViewer = viewer;
+    const showJoin = shouldShowJoin(viewer);
+    wireShareAction(joinBtn, showJoin, () => {
+      const v = _latestViewer || {};
+      if (v.already_member) openJoinedConversation(v.conversation_id);
+      else doJoin(tok, joinBtn);
+    });
+    if (joinBtn && showJoin) {
+      // 이미 멤버면 클릭이 '참여' 가 아니라 '대화로 이동' 이라는 점을 보조 정보로만 알린다
+      // (화면 문구는 요청대로 '대화에 참여' 유지).
+      joinBtn.title = viewer.already_member
+        ? "이미 참여 중인 대화입니다 — 대화로 이동합니다"
+        : "이 공유 링크로 그룹 대화에 참여합니다";
     }
-    if (forkBtn && viewer.is_authenticated && viewer.can_fork) {
-      forkBtn.classList.remove("hidden");
-      forkBtn.addEventListener("click", () => doFork(tok, forkBtn));
-    }
-    if (loginLink && !viewer.is_authenticated) {
-      loginLink.classList.remove("hidden");
-    }
+    wireShareAction(
+      forkBtn,
+      Boolean(viewer.is_authenticated && viewer.can_fork),
+      () => doFork(tok, forkBtn),
+    );
+    wireShareAction(loginLink, !viewer.is_authenticated, null);
+  }
+
+  // render() 가 갱신하는 최신 viewer 스냅샷 — 1 회 부착된 클릭 핸들러가 클릭 시점에 읽는다.
+  let _latestViewer = {};
+
+  // 이미 멤버/소유자인 viewer 의 '대화에 참여' 클릭 — **join 을 호출하지 않고** 그 대화로 이동한다.
+  // 이유: 서버 join 은 이미 멤버여도 windowed 링크면 가시 범위를 교집합으로 축소한다
+  // (`stamp_member_visibility(is_new_member=False)`, 복구 경로 없음). 표시를 넓힌 것이
+  // 데이터 축소로 이어지면 안 된다. cid 는 서버가 already_member 일 때만 준다.
+  function openJoinedConversation(cid) {
+    window.location.href = cid ? `/?conversation=${encodeURIComponent(String(cid))}` : "/";
+  }
+
+  // 참여(join) 버튼 노출 여부 — 로그인 + 링크가 참여 허용(joinable) 이면 노출한다.
+  // already_member 는 **관여하지 않는다**: 소유자·기존 멤버에게 버튼이 사라지던 것이
+  // 이번 수정의 대상이다(위 render 주석 참조). viewer.joinable 이 없는 구버전 응답에서는
+  // can_join 만 보아 종전 동작으로 폴백한다.
+  function shouldShowJoin(viewer) {
+    const v = viewer || {};
+    return Boolean(v.is_authenticated && (v.can_join || v.joinable));
+  }
+
+  // 공유 뷰 액션(참여·fork·로그인)의 표시 토글 + 클릭 배선. render() 는 버전 페이징
+  // (pageBranchShare) 으로 재호출되므로 ① 조건이 거짓이 된 경우 다시 숨기고(종전엔
+  // remove 만 해서 상태가 눌어붙었다) ② 리스너는 dataset 마커로 1 회만 부착한다
+  // (종전엔 재렌더마다 중복 부착되어 클릭 1회에 doJoin/doFork 가 여러 번 발사됐다).
+  function wireShareAction(el, visible, onClick) {
+    if (!el) return;
+    el.classList.toggle("hidden", !visible);
+    if (!visible || !onClick || el.dataset.shareWired === "1") return;
+    el.dataset.shareWired = "1";
+    el.addEventListener("click", onClick);
   }
 
   // feature-0019 shared-readonly-paging: 공유 뷰에서도 편집된 user 메시지의 버전을 < n/m > 로

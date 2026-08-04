@@ -402,6 +402,14 @@ WHERE Token = %s AND RevokedAt IS NULL
                     "can_join": can_join,
                     "already_member": already_member,
                     "joinable": joinable,
+                    # share-join-btn-visibility: 이미 멤버/소유자인 viewer 에게만 대화 id 를 준다.
+                    # 공유 화면의 '대화에 참여' 버튼이 **join 호출 없이** 곧바로 그 대화로 이동하기
+                    # 위한 값이다 — 이미 멤버가 join 을 다시 타면 windowed 링크일 때
+                    # `stamp_member_visibility(is_new_member=False)` 가 가시 범위를 교집합으로
+                    # **영구 축소**할 수 있어(복구 경로 없음) 그 경로에 아예 닿지 않게 한다.
+                    # 노출 범위: 이미 그 대화에 접근 권한이 있는 계정 한정 — 익명·비멤버에겐 None
+                    # 이라 새로운 식별자 누출이 없다.
+                    "conversation_id": conversation_id if already_member else None,
                 },
             }
         )
