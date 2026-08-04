@@ -7945,3 +7945,15 @@ freeze + 전환 후 재조회. ②의 "대표 1경로(정상 답변)만 확인 �
 
 **G5/G6 해당 없음**: 신규 리소스·엔드포인트 0, 권한 키·게이트 wiring 변경 0(기존 `conversation.ask`
 게이트 그대로). RBAC 표면 무변경.
+
+## 20260804T0650-msg-speaker-attribution-postdeploy — 발화자 귀속 POST-DEPLOY 실증 기록 (doc-only, 코드 변경 0)
+- [x] `배포 실증` — 산출물: `sudo -E bin/deploy-web.sh`(scope=all) → soak 통과 · 배선 확인: 서비스별 GIT_COMMIT 5종(web-a·web-b·ask-worker·insight-worker·ops-scheduler) 전부 `ddc1b589` + 배포본 컨테이너에 `_answer_product_attribution`/`_conv_backfill_attribution`/`_assistantSpeakerFor` 존재 확인(파이프 exit 아닌 서빙 주체 판정).
+- [x] `라이브 표면 검증` — 산출물: 배포본에서 제품 칩 `GZ_QA_G`→`MV` 실제 전환 후 과거 말풍선 `unchanged: true`, 원복으로 바인딩 무변경 · 배선 확인: 실 Windows Chrome 150 relay, `https://localhost/`, evidence `artifacts/pb0008/20260804-attrib-10-postdeploy-live.png`.
+
+## 9. Requested Scope
+- [x] `배포 후 라이브에서 요청의 두 트리거(fork · product 변경)가 과거 발화자를 바꾸지 않음을 실증` — 산출물: test-runs.d §6 + TEST.md Run · 배선 확인: 워커 포함 전 서비스 SHA 대조 + 라이브 전환 실측.
+
+**G2**: 배포 스코프(web-only vs all)와 라이브 표면 2항목을 개별 확인 — 워커 SHA 를 따로 대조하지 않으면 "web 만 신코드" 부분 배포를 완료로 오인한다.
+**G3**: 본 cycle 이 주장하는 affordance = "배포본에서도 불변" — 실제 칩 전환을 구동해 실측(선언 아님).
+**G4**: 경계 = 배포 전/후. 배포 전은 격리 컨테이너(§1~§3), 배포 후는 §6 — 양측 모두 기록.
+**G5/G6**: 해당 없음(코드 변경 0, 권한·리소스 무변경).

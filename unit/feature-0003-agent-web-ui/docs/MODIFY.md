@@ -2186,3 +2186,9 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Files: `unit/feature-0002-agent-core/src/agent_core.py`,
   `unit/feature-0003-agent-web-ui/src/{app.py,routers/_conv_store.py,routers/conversations.py,static/app.js}`,
   양 feature `tests/`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
+
+## CHG-20260804T065000-msg-speaker-attribution-postdeploy 발화자 귀속 POST-DEPLOY 실증 기록 (문서 전용, 코드 변경 0)
+- 코드 변경 0 — 배포·라이브 대조 결과 기록만. 상세는 `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md` §6 · TEST.md Run.
+- 배포: `sudo -E bin/deploy-web.sh` scope=all(web 롤링 + 워커 3종 + gateway reconcile + soak 90s). `agent_core.py` 변경 포함이라 `--web-only` 불가 — web 만 신코드면 ask-worker 가 구코드로 답변을 저장해 각인이 라이브에 미도달한다.
+- 실증: 서비스별 GIT_COMMIT 5종 전부 `ddc1b589` · 서빙 스탬프 `app.js?v=f5eca54ed047` · 배포본 라이브 제품 전환 후 과거 발화자 `unchanged: true`(원복으로 바인딩 무변경).
+- Files: `docs/{TASK,MODIFY,REVIEW,TEST}.md`, `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md`.

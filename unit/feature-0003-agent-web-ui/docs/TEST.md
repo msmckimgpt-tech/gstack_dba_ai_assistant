@@ -2339,3 +2339,11 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
   전체 스위트 exit 0 · ruff clean.
 - 상세·evidence·미커버 범위: `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md`
   (스크린샷 `artifacts/pb0008/20260804-attrib-0*.png`).
+
+## Run — 20260804T0650-msg-speaker-attribution-postdeploy (Environment: Windows-browser) — POST-DEPLOY PASS
+
+배포본 `ddc1b589` 실측. `sudo -E bin/deploy-web.sh`(scope=all — 워커 포함, `agent_core.py` 변경분이
+ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비스별 GIT_COMMIT 5종 전부 `ddc1b589`,
+서빙 스탬프 `app.js?v=f5eca54ed047`. 라이브 `https://localhost/` 에서 제품 칩을 `GZ_QA_G` → `MV` 로
+실제 전환해도 과거 말풍선 발화자 `unchanged: true`, 이후 원복해 바인딩 무변경.
+상세: `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md` §6.
