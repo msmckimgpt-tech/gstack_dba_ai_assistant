@@ -10,6 +10,107 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260804T045449-prompt-autogen-wiring [CODEX:prompt-autogen-wiring] — SHIP-WITH-FIXES (P1 1/P2 3 → 흡수 3·반증 1) + 자체 보안 점검 (TASK-20260804T0454)
+- **Trigger**: `schema/query/DELETE` keyword matched (backend, qa) + `performance/cost` keyword matched
+  (backend, qa) — code change, §18.8 dispatch 표.
+- **채널 선택(§18.8.2)**: 1순위 제약 없는 채널 `codex review --uncommitted` 를 시도했으나 **외부 DNS
+  단절**로 실패(`failed to lookup address information: wss://chatgpt.com/...`, 재시도 5/5 소진 — 호스트
+  `getent hosts chatgpt.com`·`pypi.org` 동시 실패로 환경 조건 확인). 세션에 "요청 없이 Agent tool 호출
+  금지" 제약이 있어 subagent panel 은 사용자 확인 대상으로 표면화하고, 그 사이 **아래 자체 보안·정합
+  점검을 인라인 수행**했다(자체 SKIP 아님 — 채널 부재를 검증 생략으로 격상하지 않는다).
+
+### 1. 데이터 노출 경계 — 요약 축 활성화의 실제 효과 (가장 중요한 검토점)
+- 본 변경의 핵심은 `agent_runtime.summary` 를 **비어 있던 상태에서 실제로 채우는 것**이다. 그 테이블은
+  역할 프롬프트 자동작성에서 `owner_account_id IN (그 역할 소속 계정)` 으로 조회된다 — 즉 생성 컨텍스트에
+  **타 사용자 대화 요약(최대 600자 × 5건)** 이 들어간다.
+- 이는 신규 노출 경로가 아니라 **TASK-20260625 설계가 이미 승인한 경로**다("원문 메시지가 아닌 집계
+  메타(제목·요약)만 사용" — 제품 경로와 동일 privacy house style). 다만 writer 단절 때문에 지금까지
+  **비활성이었고, 본 변경이 그것을 실제로 켠다**. 이 사실을 은폐하지 않고 명시한다.
+- **인가 실측**: `system_prompt.manage.role.any` 보유 역할은 현재 `admin`(RoleId 3) **단 하나**이며
+  그 역할은 `conversation.read.any` + `conversation.list.any` 도 보유한다. 따라서 **오늘 구성에서는
+  기존 권한 범위를 넘는 새 열람 경로가 생기지 않는다**(권한 경계 교차 없음).
+- **잔여 위험(구조적, 선재)**: 운영자가 향후 `system_prompt.manage.role.any` 를 `conversation.read.any`
+  없이 부여하면, 그 보유자는 열람 권한 없는 대화의 요약을 프롬프트 생성 컨텍스트로 보게 된다. 단 이
+  비대칭은 **요약 축만의 문제가 아니다** — 같은 게이트로 이미 라이브인 topic(대화 제목) 축이 동일한
+  cross-user 노출을 갖는다. 따라서 요약만 별도 게이팅하면 일관성 없는 반쪽 방어가 된다. 본 cycle 은
+  사용자 요청 범위(끊긴 배선 복구) 밖의 인가 재설계를 하지 않고 **REPORT §8 개선 제안으로 등재**한다
+  (§8.1 — 제안은 기록만, 사용자 지시 없이 실행 안 함).
+- account 스코프는 `account_ids=[본인]` 으로 self-scope, product 스코프는 `product.update` 게이트 +
+  제품 대화 한정 — 둘 다 변경 없음. `account_ids=[]` 단락(cross-scope 누출 가드)도 그대로.
+
+### 2. 주입·SQL
+- 신규 SQL 은 `DELETE FROM WebSystemPrompts WHERE RoleId = %s` 1건 — 파라미터 바인딩 + `int()` 캐스팅,
+  경로상 `role_id <= 0` 은 상위에서 400 차단. 문자열 보간 없음.
+- `_normalize_signal_topics` 는 순수 문자열 처리(조회 결과 → 표시 문자열)로 실행 경계에 닿지 않는다.
+  LLM 프롬프트에 사용자 유래 텍스트가 들어가는 것 자체는 종전과 동일(신규 표면 아님).
+- 조회 창 확대(`limit`→`limit*3`, 제품 50→150)는 파라미터 바인딩된 LIMIT 이며 상한이 코드 상수다.
+
+### 3. 로깅
+- 신규 `logging.warning` 2곳은 label·model·max_tokens·log_ctx(`role_id=N`/`product_id=N`)·예외 문자열만
+  기록한다. **프롬프트 본문·생성 결과·자격증명 미기록**. 스트리밍 쪽은 누적 문자 수만 남긴다(내용 아님).
+
+### 4. 예외 안전·순환 import
+- `refresh_conversation_summary` 는 전체를 try 로 감싸 bool 반환(fail-open). 호출부
+  `run_post_answer_curation` 도 자체 try/except 로 흡수 — 답변 경로가 요약 실패로 막히지 않는다
+  (회귀 테스트 `test_post_answer_curation_survives_summary_failure` 로 고정).
+- `_summary_deps()` 는 함수-로컬 import. `memory.py`·`render.py`·`utils.py` 어느 것도 `modules.llm` 을
+  import 하지 않음을 확인 — 순환 없음. 모듈 로드 시점 부작용 없음.
+- **부수 발견(정직 표기)**: `_set_run_deadline()` 은 저장소 전체에서 호출자가 0 이라
+  `CURRENT_RUN_DEADLINE_TS` 가 항상 0.0 → `_near_run_deadline()` 은 항상 False 다. 즉 aux-skip 예산
+  가드는 현재 무동작이다. 본 cycle 은 이를 **건드리지 않는다**(요약 배선과 직교, fail-open 방향이라
+  안전). REPORT §8 등재.
+
+### 5. 비용·지연 회귀
+- 추가 LLM 호출은 **ask 당 1회**(haiku, `AGENT_SUMMARY_MODEL`), 답변 확정 + (worker 경로) job terminal
+  전이 **이후** 실행 — 사용자 대기 경로 밖. 7일 실측 기준 `agent` task 392회 대비 동급 증분이며 같은
+  기간 `node_analysis` 4,214회의 10% 미만. 게이트(`AGENT_SUMMARY_REFRESH=0`)로 즉시 전면 차단 가능.
+- 조회 창 3배 확대는 인덱스된 `ORDER BY updated_at DESC LIMIT n` 이며 상한 150 — 무시 가능.
+
+### 6. over-filtering 반증 (정제기가 실제 신호를 삼키지 않는가)
+- placeholder·인사말 판정은 **정규화 후 완전일치**만 — "안녕하세요, 접속 로그 좀 봐주세요" 는 보존됨을
+  테스트로 고정. 길이 게이트는 초안 4자에서 실패를 확인하고 **2자로 낮춰** 짧은 한국어 제목("매출",
+  "접속 로그")을 보존하도록 정정했다(`test_normalize_keeps_short_korean_topics`).
+- `limit=0` 에서 append-후-검사 루프가 1건을 흘리던 엣지를 자체 발견·수정(가드 + 회귀 테스트).
+
+### 7. [CODEX:prompt-autogen-wiring] 외부 채널 적대 리뷰 (DNS 복구 후 재실행 성공) — P1 1 / P2 3
+- **[P1] `refresh_conversation_summary` 가 `AGENT_SUMMARY_REFRESH_EVERY` 와 `_near_run_deadline()` 을
+  둘 다 우회한다 → 부분 흡수 + 부분 반증.**
+  - `AGENT_SUMMARY_REFRESH_EVERY` 는 **스텝 인덱스 샘플러**다(`step_index % EVERY`). 본 호출은 ask 당
+    1회이고 step_index 개념이 없어 적용 대상이 아니다 — 반증. docstring 에 명시.
+  - `_near_run_deadline()` 은 **의도적으로 넣지 않는다** — 본 함수는 정의상 답변이 끝난 뒤 실행돼
+    항상 run 예산 끝에 붙어 있다. 가드를 넣으면 누군가 `_set_run_deadline()` 을 실제로 배선하는 순간
+    (현재 호출자 0 이라 상시 False) 요약 쓰기가 **다시 통째로 죽는다** — 이 cycle 이 고치는 결함의
+    재발이다. 근거를 docstring 에 남겼다.
+  - **다만 지연 주장은 정정했다(흡수)**: "사용자 대기 +0" 은 **worker 경로에만** 참이다. in-process
+    경로는 큐레이션이 terminal **전**에 인라인으로 돌므로(§18.8 backend B2 의 의도적 결정) 기존 LLM
+    3건에 1건이 더해진다. 운영은 ask-worker 가동(worker 경로)이라 실사용 영향은 +0 이지만, 경로별
+    차이를 은폐하지 않고 코드·문서에 분리 표기했다.
+- **[P2] 중복 판정은 원문 전체, 출력은 120자 절단 → 앞 120자가 같은 긴 제목이 동일 문자열로 중복 출력
+  → 흡수.** dedupe 키를 **출력될 문자열** 기준으로 전환. 회귀 테스트
+  `test_normalize_dedupes_on_truncated_display` 추가 + **역검증**(구 키로 되돌리면 FAIL 확인).
+- **[P2] 배선 테스트가 실제 완료 경로가 훅을 부르는지는 검증 안 함 → 흡수.** AST 기반
+  `test_production_answer_paths_invoke_curation_hook` 추가 — `agent_core`(in-process 분기)·
+  `modules/ask.py`(worker terminal 후)의 `run_post_answer_curation` 호출식과 훅 안의
+  `_refresh_conversation_summary` 호출식을 세어 "함수는 남고 호출만 사라진" 상태를 실패시킨다.
+  **역검증**: 호출 1줄을 주석 처리하면 2개 테스트 FAIL 확인.
+- **[P2] `_refresh_summary_after_step` 이 게이트 확인 전에 `_summary_deps()` 실행 → 흡수.** 게이트를
+  앞으로 이동 — 기능이 꺼져 있으면 지연 import 자체를 하지 않는다.
+
+### Verdict
+- BLOCKER 0. 신규 인가 우회·주입·비밀 노출 없음. 잔여 위험 1건(요약/topic 축의 cross-user 노출이
+  `system_prompt.manage.role.any` 단독 보유자에게 열릴 수 있는 **선재적** 비대칭)은 오늘 구성에서
+  미발현이며 REPORT §8 로 등재.
+- **채널 결과(정직 표기)**: ① codex 외부 채널 **재실행 성공**(위 §7 — P1 1/P2 3, 흡수 3·반증 1)
+  ② §18.8 subagent panel 은 세션 도구 제약으로 미호출(codex 가 dispatch 도메인 backend/qa 를 덮음)
+  ③ `make test` 표준 호출 전량 회귀 **exit 0 PASS**(초기 1회 관측된
+  `test_shutdown_finalizer_marks_this_process_processing` 실패는 비-표준 `COMPOSE_PROJECT_NAME=repo`
+  호출에서만 나타났고, 표준 재실행·파일 단독·feature-0003 전량·3스위트 단일 프로세스 어디서도
+  재현되지 않음 — flake 로 판정)(1차 실행에서
+  `test_shutdown_finalizer_marks_this_process_processing` 1건 FAIL 했으나, 동일 격리 env 로 3스위트
+  단일 프로세스 재현 시 **0 실패** — 파일 단독·feature-0003 전량·3스위트 전량 모두 통과. 본 변경은
+  종료 finalizer 및 그 의존(`_active_ask_job_conversation_ids`·`_parse_kv_timestamp`)을 건드리지
+  않는다. flake 로 판단하되 **단정하지 않고** 재실행으로 확인 예정).
+
 ## REV-20260730T162000-test-isolation-hardening [SKIPPED:user-directive] — 테스트→라이브 오염 재발의 남은 층 차단 (TASK-20260730T1620)
 - 대상 diff: `Makefile`(전용 compose 프로젝트) · `conftest.py`(DB_PORT 격리 + fail-loud) ·
   `bin/check-test-contamination.sh`(신설) + 문서. **제품 코드 변경 0**.

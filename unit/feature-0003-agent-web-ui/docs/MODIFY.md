@@ -11,6 +11,38 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260804T045449-prompt-autogen-wiring (사용자별 시스템 프롬프트 자동 생성의 끊긴 배선 복구, Major)
+- `unit/feature-0002-agent-core/src/modules/llm.py`: `_summary_deps()` 신설 — `log_timing` /
+  `load_memory_context` / `save_memory_summary` / `_record_step_summary` / `sanitize_user_text` /
+  `_near_run_deadline` 을 함수-로컬 import 로 해소. 본 모듈은 그중 **어느 것도 import 하지 않아**
+  `_refresh_summary_after_*` 가 호출 즉시 NameError 였다(호출자 0 이라 미검출). 두 레거시 진입점도
+  이 해소를 쓰도록 수정. `refresh_conversation_summary(conversation_id, *, last_step_summary)`
+  신설 — 답변 후 1회 요약 갱신, 게이트=기존 `AGENT_SUMMARY_REFRESH`, conn 불요(PG 런타임 백엔드),
+  예외 흡수 후 bool 반환. `__all__` 에 등재.
+- `unit/feature-0002-agent-core/src/agent_core.py`: `modules.llm.refresh_conversation_summary` 를
+  `_refresh_conversation_summary` 로 alias import + `run_post_answer_curation()` 말미에서 호출.
+  **이 한 줄이 W1 의 재연결점** — 이전까지 `agent_runtime.summary` 는 writer 가 없어 0행이었고,
+  그 결과 제품·역할·개인 프롬프트 자동작성의 "실제 분석 사례 요약" 접지가 항상 비어 있었다.
+- `unit/feature-0003-agent-web-ui/src/routers/_prompt_context.py`: `_SIGNAL_TOPIC_PLACEHOLDERS` /
+  `_SIGNAL_TOPIC_GREETINGS` / `_SIGNAL_TOPIC_MIN_LEN`(2) / `_SIGNAL_TOPIC_MAX_LEN`(120) 상수 +
+  `_normalize_signal_topics()` 신설. `_collect_conversation_signals_pg`(role/account) 와 제품
+  인라인 topic 쿼리 양쪽에 적용, 원본 조회 창 `limit`→`limit*3`(제품은 50→150). SSE 실패 경로에
+  `logging.warning` 추가(label·model·max_tokens·누적 길이·ctx·에러 / 본문 미기록).
+- `unit/feature-0003-agent-web-ui/src/routers/admin_products.py`: `_prompt_generate_json_response`
+  의 LLM 예외에도 동일 `logging.warning` — 502 응답만 돌려주던 종전엔 서버 추적 근거가 없었다.
+- `unit/feature-0003-agent-web-ui/src/routers/admin_roles.py`: `admin_delete_role` 에
+  `DELETE FROM WebSystemPrompts WHERE RoleId = %s` 추가(WebRolePermissions 정리와 같은 트랜잭션,
+  `DELETE FROM WebRoles` 이전). 제품 삭제 경로에만 있던 정리 계약을 역할 경로에도 맞춘다.
+- `unit/feature-0003-agent-web-ui/src/app.py`: `_normalize_signal_topics` · `_SIGNAL_TOPIC_MAX_LEN`
+  을 `app.<name>` 으로 rebind(라우터·테스트 참조 보존 — 패치-단일점 규약).
+- 테스트 신규 2파일 20건: `feature-0002/tests/test_summary_writer_wiring.py`(8),
+  `feature-0003/tests/test_prompt_signal_hygiene.py`(12).
+- **라이브 데이터 변경(1회)**: `WebSystemPrompts` 고아 3행(Id 2·28·46) DELETE. 사전 백업
+  `artifacts/prompt-autogen-wiring/orphan-system-prompts-backup-20260804.json`. 사용자 승인
+  (AskUserQuestion 2026-08-04 "배선 + 기존 고아행도 정리"). 잔존 고아 0 확인.
+- RBAC·스키마·엔드포인트·프론트 무변경. Cross-ref: TASK-20260804T0454-prompt-autogen-wiring ·
+  REV-20260804T045449-prompt-autogen-wiring · feature-0002 TASK/MODIFY.
+
 ## CHG-20260730T162000-test-isolation-hardening (테스트→라이브 오염 재발 차단: 도달성 층 + fail-loud + 감지, Major)
 - `Makefile`: `TEST_COMPOSE_PROJECT`/`DC_TEST` 신설 — `test` 타깃을 **전용 compose 프로젝트**
   (`-p repo-unittest`)로 실행. 테스트 컨테이너가 자기 네트워크로 떠서 라이브 `mysql`/`pgbouncer`

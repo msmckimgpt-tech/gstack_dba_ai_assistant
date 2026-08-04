@@ -62,6 +62,9 @@ from modules.memory import (
 from shared.model_catalog import OAUTH_FRONTIER_IDENTITY, conversation_answer_model, effort_for_reasoning_level, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, model_thinking_style, requires_oauth_frontier_identity, thinking_budget_for_level
 from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
+# FR-summary-writer-disconnected: 답변 후 큐레이션에서 대화 요약을 갱신한다(alias 로 노출해
+# 테스트가 agent_core 심볼 하나만 patch 하면 되도록 — 다른 큐레이션 호출과 동일 패턴).
+from modules.llm import refresh_conversation_summary as _refresh_conversation_summary
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary, read_csv_preview
 from modules.tools import (
@@ -3182,6 +3185,14 @@ def run_post_answer_curation(payload: "dict[str, Any] | None") -> None:
         # 용어사전 자율등록(0021)/ENUM 자율수집(0039) — best-effort(내부 try/except 흡수).
         _glossary_autopropose(cid, user_message, answer, run_id)
         _enum_autopropose(cid, user_message, answer, run_id)
+        # FR-summary-writer-disconnected: 대화 요약(`agent_runtime.summary`) 갱신.
+        # 이 호출이 붙기 전까지 요약 writer 는 호출자 0 이라 테이블이 영구 비어 있었고
+        # (라이브: 대화 296건 / summary 0행), 이를 접지원으로 읽는 제품·역할·개인 시스템
+        # 프롬프트 자동작성의 "실제 분석 사례 요약" 블록이 한 번도 생성되지 않았다
+        # (`meta.summary_count` 항상 0). 다른 큐레이션과 같은 자리인 이유: 답변 확정 후라
+        # 사용자 대기시간에 0 을 더하고, 삭제 재검증·datasource/제품 스코프 복원·fail-open
+        # 계약을 본 함수가 이미 단일 소유한다. 게이트는 기존 AGENT_SUMMARY_REFRESH.
+        _refresh_conversation_summary(cid, last_step_summary=f"ask={user_message[:200]}")
         _pa_ms = round((time.perf_counter() - _pa_t0) * 1000.0, 1)
         save_memory_kv(None, cid, "last_post_answer_ms", str(_pa_ms))
     except Exception as exc:

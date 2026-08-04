@@ -8,6 +8,32 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260804T0454-summary-writer-wiring — 대화 요약(`agent_runtime.summary`) writer 배선 복구 (cross-feature: 코드 거주=feature-0002, 소비=feature-0003 프롬프트 자동작성 / Major §12.3 — ask 당 외부 LLM 1회 추가)
+
+- 출처: `/_template:entry` — "각 사용자 별 시스템 프롬프트 자동 생성(개인·계정·역할)의 배선이
+  끊긴 부분을 전역 점검 후 수정". 정본 cycle 은 feature-0003 `TASK-20260804T0454-prompt-autogen-wiring`.
+- **결함**: `modules/llm.py` 의 `_refresh_summary_after_step` / `_refresh_summary_after_ask` 는
+  **호출자가 0** 이다. 유일 호출자였던 `agent_cli.py` 가 "죽은 코드" 로 삭제되며(`68ed7a76`,
+  2026-06-02) 함께 끊겼고, `agent_core.py` 는 애초에 요약을 쓰지 않았다. `save_memory_summary()`
+  미실행 → **`agent_runtime.summary` 0행**(라이브 대화 296건). 두 함수 안의 타 모듈 심볼
+  (`log_timing`/`load_memory_context`/`save_memory_summary`/`_record_step_summary`/
+  `sanitize_user_text`/`_near_run_deadline`)은 `llm.py` 가 하나도 import 하지 않아 **호출 즉시
+  NameError** 이기도 했다 — 호출자 0 이라 테스트에도 안 잡혔다(§gate-hidden-call-test-blindspot).
+- **영향**: `agent_runtime.summary` 를 읽는 소비처가 조용히 빈 신호를 받았다 —
+  ① feature-0003 의 제품·역할·개인 시스템 프롬프트 자동작성("실제 분석 사례 요약" 블록 항상 미생성,
+  `meta.summary_count` 항상 0), ② `insight.run_account_insight_pass`(이미 LEFT JOIN 으로 우회 중이며
+  주석에 "이 배포처럼 요약 쓰기가 비어도" 라고 단절을 기록해 뒀다 — 인지됐으나 미복구).
+  `load_memory_context` 의 summary 축은 agent 루프에서 쓰이지 않아 답변 품질 회귀는 없었다.
+- **수정**: `_summary_deps()`(심볼 지연 해소) + `refresh_conversation_summary()` 신설,
+  `agent_core.run_post_answer_curation()` 에서 호출. 답변 확정 + (worker 경로) job terminal 이후라
+  **사용자 대기시간 증가 0**, 빈도 ask 당 1회. 게이트는 기존 `AGENT_SUMMARY_REFRESH`(운영 .env 에
+  이미 1) — 설정은 ON 인데 코드 경로가 없던 상태의 해소이므로 새 스위치를 만들지 않는다.
+  사용자 결정(AskUserQuestion 2026-08-04): "복구 + 기존 env 게이트 유지".
+- [x] `modules/llm.py` · `agent_core.py` 수정 + `tests/test_summary_writer_wiring.py`(8) 신규 —
+      **배선 가드**(run_post_answer_curation 이 요약 갱신을 호출하는지)가 load-bearing.
+- [ ] `make test` 회귀 · 배포(web + **ask-worker** 재빌드 — 본 변경이 agent-core 라 워커가 나가야
+      실효) · 배포 후 라이브 실증(summary 행 증가 + `meta.summary_count > 0`).
+
 ## TASK-20260803T190000-precondition-verified-or-unknown (current cycle) — 리뷰가 조회한 적 없는 객체의 라이브 상태를 단정하던 결함 봉인 + 상시 감지기 (Major §12.3 — core 시스템 프롬프트)
 - 출처: `/_dqa:conversation_audit` PB-0008 라이브 육안검증 중 발견(`FR-review-precondition-assumed-not-verified`). 사용자 지시("잔여 항목도 작업을 진행해주세요") + 범위 승인 **A+C**(AskUserQuestion 2026-08-03).
 - **corroboration(신규 측정, 90일)**: `.sql` 첨부 대화 87건에서 객체 상태 단정 **90건 중 43건(47.8%)**이 그 대화의 어떤 도구 결과에도 그 객체명이 없었다. `미확인` 표기는 **0건**. 관측 구간이 2026-05-28~08-03 에 걸쳐 있다.

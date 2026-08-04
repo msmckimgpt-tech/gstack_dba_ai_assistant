@@ -3079,6 +3079,12 @@ async def _prompt_generate_json_response(ctx: dict, *, log_label: str, log_ctx: 
                 log_label, ctx["llm_model"], ctx["max_tokens"], log_ctx,
             )
     except Exception as llm_exc:
+        # 스트리밍 경로(`_prompt_generate_stream_response`)와 동일 — 실패를 서버 로그에도 남긴다.
+        # 응답만 502 로 돌려주면 사용자 보고 시 원인 추적 근거가 남지 않는다.
+        logging.getLogger(__name__).warning(
+            "%s LLM 생성 실패 (model=%s, max_tokens=%s, %s): %r",
+            log_label, ctx.get("llm_model"), ctx.get("max_tokens"), log_ctx, llm_exc,
+        )
         return app._json_error(f"LLM 생성 실패: {llm_exc}", 502)
     return JSONResponse(
         {"prompt": generated.strip(), "meta": {**ctx["meta_base"], "truncated": truncated}}

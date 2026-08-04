@@ -33,6 +33,7 @@ __all__ = [
     "_openai_request_timeout",
     "_refresh_summary_after_ask",
     "_refresh_summary_after_step",
+    "refresh_conversation_summary",
     "llm_classify_origin_shift",
     "llm_fix_sql",
     "llm_generate_topic",
@@ -1851,41 +1852,129 @@ def _build_summary_payload(
     }
 
 
+def _summary_deps():
+    """요약 갱신이 쓰는 타 모듈 심볼을 지연 해소한다.
+
+    본 모듈은 `log_timing`/`load_memory_context`/`save_memory_summary`/`_record_step_summary`/
+    `sanitize_user_text`/`_near_run_deadline` 중 **어느 것도 import 하지 않는다** — 아래
+    `_refresh_summary_after_*` 는 모듈 분해 이전(`agent_cli.py` 시절)의 전역에 기대 있었고,
+    그 호출자가 사라진 뒤(68ed7a76) 아무도 부르지 않아 NameError 가 드러나지 않은 채 남았다.
+    (§gate-hidden-call-test-blindspot 계열 — 호출자 0 이면 런타임 예외가 테스트에도 안 잡힌다.)
+    함수-로컬 해소로 순환 import 없이 그 결손을 메운다.
+    """
+    from .memory import load_memory_context, save_memory_summary, _record_step_summary
+    from .render import sanitize_user_text
+    from .utils import log_timing, _near_run_deadline
+    return {
+        "load_memory_context": load_memory_context,
+        "save_memory_summary": save_memory_summary,
+        "_record_step_summary": _record_step_summary,
+        "sanitize_user_text": sanitize_user_text,
+        "log_timing": log_timing,
+        "_near_run_deadline": _near_run_deadline,
+    }
+
+
 def _refresh_summary_after_step(
     conn,
     conversation_id: str,
     last_step_summary: str | None,
     step_index: int | None = None,
 ) -> None:
-    if _near_run_deadline():
-        return
+    # 게이트를 의존 해소보다 **먼저** 본다(codex P2) — 기능이 꺼져 있으면 지연 import 조차 하지
+    # 않아, import 실패가 비활성 상태의 동작에 영향을 줄 수 없다.
     if not AGENT_SUMMARY_REFRESH:
+        return
+    d = _summary_deps()
+    if d["_near_run_deadline"]():
         return
     if step_index is not None and AGENT_SUMMARY_REFRESH_EVERY > 1:
         if step_index % AGENT_SUMMARY_REFRESH_EVERY != 0:
             return
     start = time.perf_counter()
-    summary, rows, kv = load_memory_context(conn, conversation_id, AGENT_MEMORY_MAX_TURNS)
+    summary, rows, kv = d["load_memory_context"](conn, conversation_id, AGENT_MEMORY_MAX_TURNS)
     payload = _build_summary_payload(summary, rows, kv, last_step_summary)
     updated = llm_update_summary(payload)
     elapsed_ms = (time.perf_counter() - start) * 1000.0
-    log_timing(
+    d["log_timing"](
         "summary_refresh",
         {"conversation_id": conversation_id, "step_index": step_index or 0, "ms": round(elapsed_ms, 2)},
     )
     if updated:
-        save_memory_summary(conn, conversation_id, updated)
-    
-    
+        d["save_memory_summary"](conn, conversation_id, updated)
+
+
 def _refresh_summary_after_ask(conn, conversation_id: str, question: str) -> None:
     if not AGENT_SUMMARY_REFRESH:
         return
-    question = sanitize_user_text(question or "")
+    d = _summary_deps()
+    question = d["sanitize_user_text"](question or "")
     if not question:
         return
     summary_text = f"ask={question}"
-    _record_step_summary(conn, conversation_id, summary_text)
+    d["_record_step_summary"](conn, conversation_id, summary_text)
     _refresh_summary_after_step(conn, conversation_id, summary_text, None)
+
+
+def refresh_conversation_summary(conversation_id: str, *, last_step_summary: str | None = None) -> bool:
+    """답변 확정 후 대화 요약(`agent_runtime.summary`)을 **1회** 갱신한다.
+
+    FR-summary-writer-disconnected: 위 `_refresh_summary_after_step` / `_refresh_summary_after_ask`
+    는 삭제된 `agent_cli.py`(커밋 68ed7a76, 2026-06-02) 에서만 호출됐고, 이후 web/worker
+    루프에는 **어떤 호출자도 없다**. 그 결과 `save_memory_summary()` 가 한 번도 실행되지
+    않아 `agent_runtime.summary` 가 영구 빈 테이블이 됐고(라이브 실측: 대화 296건 / summary
+    0행), 이 테이블을 접지원으로 읽는 소비처들이 조용히 빈 신호를 받았다:
+      - 제품·역할·개인 시스템 프롬프트 자동작성의 "실제 분석 사례 요약" 블록(항상 미생성,
+        `meta.summary_count` 항상 0) — `routers/_prompt_context.py`
+      - `insight.run_account_insight_pass` 의 summary 축(LEFT JOIN 으로 우회 중)
+
+    본 함수가 그 배선의 재연결점이다. 호출은 `agent_core.run_post_answer_curation()` — 기존
+    큐레이션(topic/glossary/enum)과 같은 자리다. 빈도는 **ask 당 1회**(스텝당 아님) — 기존
+    `AGENT_SUMMARY_REFRESH_EVERY` 는 스텝 인덱스 샘플러라 스텝 루프 안에서 돌던 옛 호출자
+    전용이고 여기엔 적용 대상이 없다.
+
+    **지연 영향은 경로별로 다르다(정직 표기)**:
+      - worker 경로(운영 기본, ask-worker 가동): job terminal 전이 **후** 실행 → 사용자 대기 +0.
+      - in-process 경로: 큐레이션이 terminal **전**에 인라인으로 돈다(§18.8 backend B2 의 의도적
+        결정 — HTTP 응답이 어차피 run_agent 반환 후라 뒤로 미뤄도 체감 이득이 없다). 이 경로에선
+        기존 LLM 3건에 1건이 더해진다. 비례적 증가이지 새 종류의 비용이 아니다.
+
+    **`_near_run_deadline()` 을 의도적으로 적용하지 않는다** (codex 리뷰 P1 에 대한 반증): 그 가드는
+    run 예산이 임박하면 보조 작업을 생략하라는 것인데 본 함수는 정의상 **답변이 끝난 뒤** 실행되므로
+    항상 예산 끝에 붙어 있다. 가드를 넣으면 누군가 `_set_run_deadline()` 을 실제로 배선하는 순간
+    (현재 호출자 0 이라 상시 False) 요약 쓰기가 **다시 통째로 죽는다** — 이 함수가 고치려는 바로 그
+    결함의 재발이다. 빈도를 줄여야 하면 `AGENT_SUMMARY_REFRESH=0` 이 전면 차단 수단이다.
+
+    게이트는 기존 `AGENT_SUMMARY_REFRESH`(운영 .env 에 이미 1) 를 그대로 쓴다 — 설정은 ON 인데
+    코드 경로가 없던 상태를 해소하는 것이므로 새 스위치를 만들지 않는다. 0 으로 두면 종전(무동작).
+
+    conn 을 받지 않는다: `load_memory_context`/`save_memory_summary` 둘 다 PG 런타임 백엔드로
+    자체 연결하며(`AGENT_RUNTIME_READ_BACKEND=postgres`), 큐레이션 훅은 MySQL 핸드셰이크를
+    열지 않는 계약(§run_post_answer_curation docstring)이다. PG 부재로 read 가 MySQL 폴백을
+    타면 conn=None 이라 예외 → 아래 except 가 흡수(fail-open, 답변 경로 무영향).
+
+    반환: 실제로 요약을 저장했으면 True (테스트·계측용).
+    """
+    if not AGENT_SUMMARY_REFRESH:
+        return False
+    cid = str(conversation_id or "").strip()
+    if not cid:
+        return False
+    try:
+        d = _summary_deps()
+        start = time.perf_counter()
+        summary, rows, kv = d["load_memory_context"](None, cid, AGENT_MEMORY_MAX_TURNS)
+        payload = _build_summary_payload(summary, rows, kv, last_step_summary)
+        updated = llm_update_summary(payload)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        d["log_timing"]("summary_refresh", {"conversation_id": cid, "step_index": 0, "ms": round(elapsed_ms, 2)})
+        if not updated:
+            return False
+        d["save_memory_summary"](None, cid, updated)
+        return True
+    except Exception as exc:  # noqa: BLE001 — 큐레이션은 fail-open (답변 경로 차단 금지)
+        _log_llm_warn("refresh_conversation_summary", "exception", f"cid={cid} {exc}")
+        return False
 
 
 def _generate_topic_from_request(text: str) -> str:

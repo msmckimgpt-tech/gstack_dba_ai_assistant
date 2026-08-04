@@ -336,6 +336,14 @@ WHERE RoleId = %s
         cur.close()
         return app._json_error("미삭제 계정이 참조 중인 역할은 삭제할 수 없습니다.", 400)
     cur.execute("DELETE FROM WebRolePermissions WHERE RoleId = %s", (int(role_id),))
+    # 역할 scope 시스템 프롬프트 동반 정리 — 제품 삭제 경로(`admin_delete_product`)가 이미
+    # `DELETE FROM WebSystemPrompts WHERE ProductId = %s` 로 하는 것과 같은 계약인데 역할
+    # 경로에만 빠져 있었다. 그 결과 삭제된 역할의 프롬프트가 고아로 남았고(라이브 실측:
+    # RoleId 16·30 2건), 관리 콘솔 어디에서도 보이지 않아 회수 수단이 없었다. RoleId 는
+    # AUTO_INCREMENT 라 번호 재사용은 없지만, 고아 행은 감사·이관·용량 관점의 잡음이다.
+    # (계정 삭제는 soft delete 라 대상이 아니다 — 계정 행이 살아 있고 복구 가능하므로
+    #  개인 프롬프트를 지우면 되돌릴 수 없는 손실이 된다.)
+    cur.execute("DELETE FROM WebSystemPrompts WHERE RoleId = %s", (int(role_id),))
     cur.execute("DELETE FROM WebRoles WHERE Id = %s", (int(role_id),))
     cur.close()
     # TASK-0073 Phase A5: same-tx audit hook.
