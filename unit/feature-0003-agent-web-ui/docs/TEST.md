@@ -2322,3 +2322,8 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **Environment: pytest** — 신규 `test_share_join_btn_visibility.py` **9 passed** · 회귀 스코프(`-k "share or fork or member or join"`) **98 passed** · `node --check share.js` PASS · ruff PASS. 전체 스위트 동시 실행에서 `test_shutdown_finalizer.py::test_shutdown_finalizer_marks_this_process_processing` 1건 실패했으나 **단독 재실행 통과 + 실패 로그가 `시간 예산 초과` 동반** → 부하 의존 flake, 본 변경(정적 자산 + 응답 1필드)과 무관.
 - **적대 리뷰(codex, [CODEX:share-join-visibility])**: P1 1건(이미 멤버 클릭이 join 을 타면 기존 windowed 멤버 가시 범위 **영구 축소**) + P2 1건(정적 검사가 극성 반전 미포착) — **둘 다 수정 후 해소**. P1 해소는 F5, P2 해소는 F1·F3 정규식 극성 고정.
 - **Environment: Windows-browser (PB-0008)** — **미수행(본 Run 시점)**: 변경분이 아직 라이브 미배포(라이브 `GIT_COMMIT=03665d28`)이고, 운영 컨테이너에 임시 자산을 주입해 검증하는 것은 서비스 변조라 채택하지 않는다. **PR 머지 → 배포 후 POST-DEPLOY 절에 실측 append 예정** — ① 소유자 계정 진입 시 참여 버튼 가시 ② 클릭 시 대화 이동 + 네트워크 `/join` 요청 0건 ③ fork·링크 복사 무회귀 ④ 페이징 후 클릭 1회 = 요청 1회. 미검증을 완료로 보고하지 않는다(§16.3 정직성).
+
+## 20260804T0620-share-join-btn-postdeploy — 공유 링크 '대화에 참여' 버튼 POST-DEPLOY 실증
+- Run 기록 정본: `docs/test-runs.d/20260804T0458-share-join-btn-visibility.md` §5 (POST-DEPLOY 절).
+- **Environment: Windows-browser (PB-0008)** — **POST-DEPLOY PASS** (배포 `d23f0a0d`, 실 Chrome 150 relay). 소유자 본인이 자기 joinable 공유 링크를 여는 동형 케이스에서 ① '대화에 참여' 버튼 가시 ② 배포본 `can_join=false`·`already_member=true` 인데도 노출(종전 코드면 숨김) ③ 클릭 시 **`/join` 요청 0건**(요청 캡처 직접 관측 — P1 회피 실증) ④ `?conversation=<cid>` deep-link 이동 후 목표 대화 열림 ⑤ fork·로그인 링크 무회귀 ⑥ 익명 뷰 `conversation_id=null`. 증거 `artifacts/pb0008/20260804-share-join-btn-owner.png`.
+- 검증 함정: `bin/win-browser.py` 의 `ctx.pages[0]` 고정이 사용자 탭과 경합해 거짓 실패 1회 → 전용 탭(`ctx.new_page()`)으로 재검증. 상세는 fragment §5.

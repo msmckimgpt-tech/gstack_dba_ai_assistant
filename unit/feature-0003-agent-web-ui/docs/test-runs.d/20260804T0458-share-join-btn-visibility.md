@@ -2,7 +2,7 @@
 run_at: 2026-08-04T13:58:28+09:00
 session: ai/root/feature-0003-agent-web-ui
 scope: 공유 링크 화면 '대화에 참여' 버튼 노출 조건 확대 — 소유자·기존 멤버 포함 (Minor §12.3, 프론트 표시 + 응답 1필드)
-verdict: PASS (PRE-LANDING) / PB-0008 POST-DEPLOY 미수행
+verdict: PASS (PRE-LANDING + POST-DEPLOY PB-0008)
 ---
 
 # Run 2026-08-04 — PRE-LANDING (라이브 진단 + 단위)
@@ -71,12 +71,31 @@ verdict: PASS (PRE-LANDING) / PB-0008 POST-DEPLOY 미수행
 | 비로그인 | 버튼 미노출, 로그인 링크만 | F1(`is_authenticated`) |
 | 익명/비멤버 응답 | `viewer.conversation_id = None` | B3 |
 
-## 5. 잔여 — PB-0008 (POST-DEPLOY 예정)
+## 5. PB-0008 — POST-DEPLOY **PASS** (2026-08-04, 배포 d23f0a0d)
 
-**Environment: Windows-browser (PB-0008)** — 본 Run 시점 **미수행**. 변경분이 아직 라이브에 배포되지
-않았고(라이브 `GIT_COMMIT=03665d28`), 라이브 컨테이너에 임시 자산을 주입해 검증하는 것은 운영 서비스
-변조라 채택하지 않는다. 프로젝트 관행대로 PR 머지 → 배포 후 POST-DEPLOY 절에 실측을 append 한다.
+**Environment: Windows-browser (PB-0008)** — PR #1134 머지 → `bin/deploy-web.sh --web-only` 배포
+(web-a·web-b `GIT_COMMIT=d23f0a0d`, soak 90s 통과) 후 **실 Windows Chrome 150 relay** 로 실측.
 
-검증 항목(예정): ① 소유자 계정으로 `/share/<token>` 진입 시 '대화에 참여' 버튼 가시 ② 클릭 시 해당
-대화로 이동하며 **네트워크 탭에 `/join` 요청 0건** ③ fork 버튼·링크 복사 무회귀 ④ 버전 페이징 후
-클릭 1회 = 요청 1회.
+**재현 케이스**: 사용자가 리포트한 상황과 동형인 *소유자 본인이 자기 joinable 공유 링크를 여는* 케이스로
+검증했다 — share `Id=77`(`Joinable=1`, full scope, `CreatedBy=1`), 대화 `20260722015451-d23ad939`
+(`owner_account_id=1`, 멤버=owner 1행·window NULL), 브라우저 로그인 계정 `bootstrap_admin`(id=1).
+(사용자가 실제로 본 share `Id=81` 은 소유자가 `admin`(id=10) 이라 그 계정 자격이 없어 동형 대체.)
+
+| 검증 항목 | 실측 | 판정 |
+|---|---|---|
+| ① 참여 버튼 가시 | `#shareJoinBtn` `is_visible=true` · text `"대화에 참여"` · title `"이미 참여 중인 대화입니다 — 대화로 이동합니다"` | **PASS** |
+| ② 종전 조건 대조 | 배포본 응답 `can_join=false` · `already_member=true` · `joinable=true` · `conversation_id="20260722015451-d23ad939"` → **종전 코드면 숨겨졌을 조건에서 버튼이 보인다** | **PASS** |
+| ③ 클릭 시 join 미호출 (P1) | Playwright request 캡처 `join_endpoint_calls=0` (`/api/share/*/join` 요청 **0건**) | **PASS** |
+| ④ 클릭 시 대화 이동 | 요청 URL `https://localhost/?conversation=20260722015451-d23ad939` (`deeplink_hit=true`) → 로드 후 `app.js` 가 `replaceState` 로 URL 정리(`/`) · 메시지 로그 첫 항목 `"2026년 7월 22일"` = 목표 대화 | **PASS** |
+| ⑤ 무회귀 | fork 버튼 가시 · 로그인 링크 hidden · 링크 복사 버튼 정상 | **PASS** |
+| ⑥ 익명 뷰 계약 | 미로그인 응답 `viewer.conversation_id=null` · `joinable=true` (B3 라이브 실증) | **PASS** |
+
+증거: `artifacts/pb0008/20260804-share-join-btn-owner.png` — 하단 액션 바에 **[링크 복사] [대화에 참여]
+[내 계정에서 fork]** 3개가 나란히 렌더됨(육안 확인).
+
+**검증 함정 기록 (재현자용)**: `bin/win-browser.py` 는 `ctx.pages[0]` 고정이라 사용자가 쓰는 다른 탭과
+경합한다 — 실제로 클릭 후 eval 이 무관한 탭(`127.0.0.1:18099`)을 읽어 "cid 없이 `/` 로 이동" 이라는
+**거짓 실패**를 한 차례 만들었다. CDP `/json/list` 로 탭 목록을 확인해 원인을 특정했고, 최종 검증은
+`ctx.new_page()` 로 **전용 탭**을 열어 수행했다(사용자 탭 무접촉, 검증 후 close). 요청 캡처는
+`page.on("request")` 로 `/join` 호출 유무를 직접 관측 — 서버 access log 는 캐시·워커 분산 때문에
+음성 증거로 쓰기 부적절하다.
