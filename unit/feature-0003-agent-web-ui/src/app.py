@@ -3350,6 +3350,9 @@ from routers._conv_store import (  # noqa: E402
     _conv_message_created_at,
     _conv_update_topic_product,
     _conv_update_topic,
+    # msg-speaker-attribution: 발화자 귀속 각인/보정
+    _conv_product_attribution,
+    _conv_backfill_attribution,
     _conv_copy_messages,
     _conv_load_core_messages_raw,
     _conv_copy_core_messages,

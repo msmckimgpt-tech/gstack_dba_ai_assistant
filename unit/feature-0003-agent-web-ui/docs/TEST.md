@@ -1974,7 +1974,6 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   ③ `▤N` 배지 라벨 앞 가독(긴 이름에서도) ④ 확대(≥0.5) 시 컬럼 전량 복원 ⑤ 상태줄 "컬럼 표시 축약" 안내
   ⑥ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
 
-
 ### Run (2026-07-10) — agg-lod: 극단 줌아웃 클러스터 집계 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §63/ADR-030) — **Environment: Windows-browser**
 - **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_agglod.js` **10 PASS** — 집계 카드 방출·draw 급감(>10x)·
   **T3 reflow-free**(집계 카드가 클러스터 슬롯 위치, 확대 시 원위치 복원)·게이트. 회귀 125 = 134 PASS·`node --check` PASS.
@@ -2016,7 +2015,6 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   (희미하게 남지 않음) ② **마우스 이동해도** 유령 관계선 잔상/깜빡임 없음 ③ focus(선택+1-hop) 관계선 선명 유지
   ④ 빈 캔버스 클릭 해제 시 전량 복원 ⑤ pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
-
 
 ### Run (2026-07-10) — catband-cull: 집계폐기+카테고리밴드규모+테이블뷰포트컬링 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §67/ADR-033) — **Environment: Windows-browser**
 - 헤드리스: viewport-cull 6(테이블 컬링·band-invariant)·agglod 8(집계비활성)·회귀 = 150 PASS·node --check.
@@ -2135,7 +2133,6 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **POST-DEPLOY win-browser 실 Windows Chrome 검증(T76.3)**: 대형 그래프 줌인 → 노드 선택 → ① 화면 밖 관계 노드로 **관계선 유지**(참조) ② 상세 패널 관계행 클릭 → **화면 밖 대상으로 카메라 팬**(상호작용) ③ 무선택 시 컬링·성능 유지 ④ pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl(`?v=20260710-cullrefkeep` + `_faKeep`/`_clusterHasFocus`) + win-browser 실측 PASS append.
 windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/드래그/줌/검색/패널, 사용자 환경 게이트
-
 
 - **CHECK#13 · Environment: Windows-browser — 미수행 사유 (doc-sync-rn-0713, 2026-07-13) 릴리즈노트 콘텐츠·PB-0008 신규 렌더 델타 없음**: 변경은 `release-notes-data.js` 콘텐츠 데이터뿐(렌더 로직 `release-notes.js` 불변·cache-buster 빌드 자동주입) → 새로 Windows-browser 로 시각검증할 UI 렌더 델타 없음(브리지 불가 아님 — 검증 대상 자체가 콘텐츠 데이터라 부적용). 검증: `node --check` PASS + vm 구조검증(블록순서·스키마·누출0). 원천 UI(그래프 §57.4~76·타임아웃 모달 제거·§69 caveats)는 각 원천 cycle POST-DEPLOY PB-0008 이 검증(다수 PASS). 릴리즈노트 실서빙은 본 run 의 make deploy-web(web 재빌드) 후 end-state 검증(라이브 `?v=` 해시 갱신·generated 07-10)으로 확인.
 
@@ -2273,7 +2270,6 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - **POST-DEPLOY PB-0008 — PASS**(HT.9, 2026-07-29): PR #1037 → main `50c5a854` → `make deploy-web` → edge `/healthz git_commit=50c5a854` + web-a/web-b `mysql-ai-web:50c5a854`, 서빙 자산(`?v=6133a5e9907a`)에 신설 `_hdrLevels` 7회 / 폐기 `_metaHdrFitFont`·`STEP_CAP` **0회** 확인 후 실 Chrome relay 로 `mysql-gz-qa-global`/`gunzgame`(421 객체·위계 헤더 84개 — HF.6 과 동일 조건) 검증 — **① 형제 헤더 전원 동일 크기**(구 24.6/27.1/30.1 편차 소멸) · **② 알약이 전 헤더에서 텍스트를 감쌈**(소프트닝 분기 없이 동일 스타일) · **③ 밴드 헤더 > 컨텐츠 카테고리**(부모 상한 24 > 자식 20) · **④ 84개 칩 전량이 예약 행 안쪽, 테두리 물림 0**(팔출 소멸) · **⑥ pageerror 0**. **밴드 불변 라이브 확증**: `h2`→`h3` 전이 후 줌아웃 하한(0.1119)까지 `h3` 고정 — 구 구현(상한 4)이라면 z≈0.4579 에서 걸렸을 헛 rebuild 가 없다(codex P2 수정). 억제 시작 줌도 예측 정합(0.1749 까지 81/84 유지 → 0.1399 에서 83 → 0.1119 전량) · 줌인 복귀 대칭(0.1526 → 0.1907, hdrDropped 83→3). **⑤ 잘림 감소는 "부분"**: 폰트 상한 64→20/24 로 폭 여유는 구조적으로 커졌으나 라이브 긴 한글 헤더에서 ellipsis 는 여전히 관측되고, 구 배포본과의 직접 대조는 불가(이미지 교체됨) — test-runs.d §6 에 정직 병기.
 - **Pass/Fail: PASS**(PRE-COMMIT + POST-DEPLOY). CHECK#13 충족. 상세 Run: `docs/test-runs.d/20260729T1140-graph-hdr-typo-postdeploy.md`. 정본: `unit/feature-0016-metadata-graph/docs/TASK.md` `## 20260729T0930-graph-hdr-label-typo`.
 
-
 ### Run (2026-07-29) — metadata-product-scope (지식베이스 메타데이터 스코프 축 datasource → 제품) — **Environment: container(make test)**
 
 - **PRE-COMMIT — PASS**: `make test` 전 스위트(agent 격리 컨테이너, `--no-deps` + 라이브 DB 차단
@@ -2327,3 +2323,19 @@ windows-browser: ITEM-09 graph browser QA (PB-0008) — 로드/클릭/우클릭/
 - Run 기록 정본: `docs/test-runs.d/20260804T0458-share-join-btn-visibility.md` §5 (POST-DEPLOY 절).
 - **Environment: Windows-browser (PB-0008)** — **POST-DEPLOY PASS** (배포 `d23f0a0d`, 실 Chrome 150 relay). 소유자 본인이 자기 joinable 공유 링크를 여는 동형 케이스에서 ① '대화에 참여' 버튼 가시 ② 배포본 `can_join=false`·`already_member=true` 인데도 노출(종전 코드면 숨김) ③ 클릭 시 **`/join` 요청 0건**(요청 캡처 직접 관측 — P1 회피 실증) ④ `?conversation=<cid>` deep-link 이동 후 목표 대화 열림 ⑤ fork·로그인 링크 무회귀 ⑥ 익명 뷰 `conversation_id=null`. 증거 `artifacts/pb0008/20260804-share-join-btn-owner.png`.
 - 검증 함정: `bin/win-browser.py` 의 `ctx.pages[0]` 고정이 사용자 탭과 경합해 거짓 실패 1회 → 전용 탭(`ctx.new_page()`)으로 재검증. 상세는 fragment §5.
+
+## Run — 20260804T0610-msg-speaker-attribution (Environment: Windows-browser) — PASS
+
+대화내역 발화자 귀속(사용자 · assistant 제품)의 사후 변경 차단. 실 Windows Chrome 150 relay
+(`bin/win-browser.py`)로 fork · 제품 전환 2 트리거와 legacy 경계 반대편까지 실측.
+
+- **fork**: kumin 소유 대화를 bootstrap_admin 이 fork → user 행 `kumin` · assistant `건즈 글로벌 QA`
+  유지(수정 전이라면 `나 (bootstrap_admin)` 로 표시됐을 화면).
+- **제품 전환**: 칩을 `GZ_QA_G` → `KR_QA` 로 실제 클릭 → 과거 답변 6행 아바타 전부 불변,
+  새로고침 후에도 불변(영속 각인 근거).
+- **legacy(각인 전무) 경계**: 칩과 어긋난 제품으로 렌더되던 버그를 라이브 재현 후, 전환 시점의
+  freeze-on-change 가 **직전 제품으로 정정**해 고정함을 확인.
+- 자동 테스트: `test_msg_speaker_attribution.py`(13) + `test_msg_speaker_attribution_web.py`(16),
+  전체 스위트 exit 0 · ruff clean.
+- 상세·evidence·미커버 범위: `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md`
+  (스크린샷 `artifacts/pb0008/20260804-attrib-0*.png`).

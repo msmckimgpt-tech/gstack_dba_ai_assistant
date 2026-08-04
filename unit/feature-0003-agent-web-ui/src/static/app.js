@@ -2162,6 +2162,11 @@ async function setActiveProduct({ mode, pinnedId }) {
           ? "auto 로 바꿨어요. 다음 답변부터 적용됩니다."
           : `제품을 ${label} 으로 바꿨어요. 다음 답변부터 적용됩니다.`,
       );
+      // msg-speaker-attribution: 서버가 방금 **직전 제품**을 과거 답변에 각인했다(freeze-on-change).
+      //  그 각인을 즉시 읽어와야 각인 이전 메시지가 이 자리에서 새 제품으로 잘못 보이지 않는다
+      //  (각인된 메시지는 이미 자기 제품으로 렌더되므로 이 재조회는 legacy 구간을 위한 것).
+      //  스크롤은 보존 — 제품 전환은 읽던 위치를 흔들 이유가 없다.
+      await loadHistory({ preserveScroll: true }).catch(() => {});
     }
     // cid 가 없으면(아직 새 대화 미생성) localStorage 만 갱신하고 다음 새 대화 생성 시 반영.
   } catch (error) {
@@ -4914,8 +4919,33 @@ function _mentionsUser(text, myNameLower) {
   }
 }
 
+// msg-speaker-attribution: assistant 말풍선의 발화자(제품) 표시값을 **그 메시지에 각인된 귀속**
+// 에서 해석한다. 각인 키(product_mode/product_id/product_key/product_name)는 답변 저장 시점에
+// agent_core 가, 각인 이전 메시지는 제품 전환·fork 시점에 web 이 기입한다. 각인이 전혀 없는
+// legacy 메시지만 legacyFallback(대화 바인딩 기준 — 종전 동작)으로 떨어진다.
+//
+// 라벨·Identicon 시드는 **각인 스냅샷 우선**이다. 제품이 개명·삭제되거나 열람자에게 접근권이
+// 없어도 그 대화에서 누가 말했는지가 보존돼야 하고, 무엇보다 이후 어떤 변경으로도 과거 발화자가
+// 다시 바뀌지 않는다(이 함수가 존재하는 이유). 아이콘 이미지만 현재 제품 설정을 따른다.
+function _assistantSpeakerFor(meta, products, legacyFallback) {
+  const m = meta || {};
+  if (!("product_mode" in m)) return legacyFallback;   // 각인 이전 메시지 — 종전 폴백 유지.
+  if (String(m.product_mode) === "auto" || !m.product_id) {
+    return { icon: "", label: "", seed: "" };          // 제품 미고정 답변 → 'AI' 배지로 영구 확정.
+  }
+  const live = (Array.isArray(products) ? products : [])
+    .find((p) => Number(p.id) === Number(m.product_id));
+  const liveName = live ? (live.name || live.product_key || "") : "";
+  const liveKey = live ? (live.product_key || live.name || "") : "";
+  return {
+    icon: (live && live.icon_url) ? live.icon_url : "",
+    label: String(m.product_name || m.product_key || liveName || ""),
+    seed: String(m.product_key || m.product_name || liveKey || ""),
+  };
+}
+
 // feature-0009: 메시지 발신자 프로필 아이콘. user=계정 실제 아바타(/api/avatars/{id}), 없으면 username Identicon.
-// assistant=대화 제품(Product) 아이콘, 없으면 제품 Identicon(제품 칩과 동일 시드), 제품 자체가 없으면(auto) 'AI' 배지.
+// assistant=그 답변을 낸 제품(Product) 아이콘, 없으면 제품 Identicon(제품 칩과 동일 시드), 제품 자체가 없으면(auto) 'AI' 배지.
 // 헤더/프로필의 applyAvatar()/identiconSvg() 와 동일한 Identicon 폴백을 써서, 아바타 미업로드 시에도 "맨 글자"가 아니라
 // 실제 프로필과 정합하는 컬러 아이콘으로 표시한다 (gc-avatar-identicon).
 function _msgAvatarEl(senderId, label, role, assistantIcon, seed) {
@@ -5404,14 +5434,22 @@ function renderMessages() {
   const ownerLabel = conversation && conversation.owner_username ? conversation.owner_username : "사용자";
   const selfLabel = state.user && state.user.username ? `나 (${state.user.username})` : "나";
   const canFork = Boolean(state.activeConversationId) && can("conversation.create");
-  // feature-0009: assistant 아바타 = 이 대화의 제품(Product) 아이콘. 멘션 하이라이트용 내 username.
+  // feature-0009: assistant 아바타 = 그 답변을 낸 제품(Product) 아이콘. 멘션 하이라이트용 내 username.
+  // msg-speaker-attribution: 종전엔 이 값을 **컴포저의 현재 제품 칩**(state.pinnedProductId)에서
+  //  파생해, 제품을 바꾸거나 대화를 fork 하면 이미 지나간 답변의 발화자까지 즉시 바뀌었다
+  //  (제품 변경 토스트 "다음 답변부터 적용됩니다" 와 정면 배치). 발화자는 발화 시점의 사실이므로
+  //  이제 메시지 meta 의 각인(product_mode/product_id/product_key/product_name)을 1순위로 읽고,
+  //  각인 없는 옛 메시지에만 종전 대화-바인딩 폴백을 쓴다.
   const _products = Array.isArray(state.products) ? state.products : [];
   const _pinnedProd = _products.find((p) => Number(p.id) === Number(state.pinnedProductId));
-  const _assistantIcon = (state.productMode === "pinned" && _pinnedProd && _pinnedProd.icon_url) ? _pinnedProd.icon_url : "";
-  // feature-0009 ux2: pinned 제품이면 그 이름(아이콘/라벨 소스), 비-pinned(auto)면 빈 라벨 → _msgAvatarEl 이 "AI" 배지로 폴백(기존 UI 보존).
-  const _assistantLabel = _pinnedProd ? (_pinnedProd.name || _pinnedProd.product_key || "") : "";
-  // gc-avatar-identicon: assistant Identicon 시드 = product_key(제품 칩 identiconSvg 와 동일 시드 → 같은 제품은 같은 아이콘).
-  const _assistantSeed = _pinnedProd ? (_pinnedProd.product_key || _pinnedProd.name || "") : "";
+  // 각인 없는 legacy 메시지용 폴백(종전 동작 보존).
+  const _legacyAssistant = {
+    icon: (state.productMode === "pinned" && _pinnedProd && _pinnedProd.icon_url) ? _pinnedProd.icon_url : "",
+    // feature-0009 ux2: pinned 제품이면 그 이름(아이콘/라벨 소스), 비-pinned(auto)면 빈 라벨 → _msgAvatarEl 이 "AI" 배지로 폴백.
+    label: _pinnedProd ? (_pinnedProd.name || _pinnedProd.product_key || "") : "",
+    // gc-avatar-identicon: assistant Identicon 시드 = product_key(제품 칩 identiconSvg 와 동일 시드 → 같은 제품은 같은 아이콘).
+    seed: _pinnedProd ? (_pinnedProd.product_key || _pinnedProd.name || "") : "",
+  };
   const _myName = String((state.user && state.user.username) || "").toLowerCase();
 
   // point-rail-range window: renderCount 가 설정되면 state.messages 전체가 아니라 최근 그
@@ -5495,12 +5533,24 @@ function renderMessages() {
 
     const meta = document.createElement("div");
     meta.className = "message-meta";
+    // msg-speaker-attribution: assistant 발화자(제품)는 이 메시지의 각인에서 해석한다.
+    const _assistantSpeaker = role === "assistant"
+      ? _assistantSpeakerFor(message.meta, _products, _legacyAssistant)
+      : null;
     let speaker = "Assistant";
     if (role === "user") {
       if (senderUsername) {
         speaker = msgIsOwn ? `나 (${senderUsername})` : senderUsername;
+      } else if (senderId) {
+        // msg-speaker-attribution: 발신자 id 만 각인된 경우 — 대화 소유권(isOwn)이 아니라
+        //  **발신자 일치**(msgIsOwn)로 판정한다. fork 본은 소유자가 복제자로 바뀌므로
+        //  isOwn 을 쓰면 원저자의 질문이 "나 (…)" 로 표시된다.
+        //  타인이면 `ownerLabel` 로 폴백하지 않는다 — 발신자가 owner 와 **다르다는 것을 이미
+        //  아는** 상황이라 owner 이름을 붙이면 확정적 오귀속이다. 이름을 모를 뿐이므로 id 로
+        //  구분한다(참가자 칩의 `사용자 <id>` 표기와 동일 컨벤션).
+        speaker = msgIsOwn ? selfLabel : `사용자 ${senderId}`;
       } else {
-        speaker = isOwn ? selfLabel : ownerLabel;
+        speaker = isOwn ? selfLabel : ownerLabel;   // 각인 이전 legacy — 종전 폴백.
       }
     }
     const durationMs = role === "assistant" ? Number(message.meta?.duration_ms || 0) : 0;
@@ -5683,10 +5733,11 @@ function renderMessages() {
     }
     meta.prepend(_msgAvatarEl(
       role === "assistant" ? 0 : _avSenderId,
-      role === "assistant" ? _assistantLabel : _avLabel,
+      role === "assistant" ? _assistantSpeaker.label : _avLabel,
       role,
-      role === "assistant" ? _assistantIcon : "",
-      role === "assistant" ? _assistantSeed : _avLabel,  // gc-avatar-identicon: Identicon 시드(user=username, assistant=product_key)
+      role === "assistant" ? _assistantSpeaker.icon : "",
+      // gc-avatar-identicon: Identicon 시드(user=username, assistant=product_key)
+      role === "assistant" ? _assistantSpeaker.seed : _avLabel,
     ));
 
     row.append(meta, bubble);

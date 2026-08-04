@@ -2533,3 +2533,55 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/REPORT/test-runs.d append) → §18.8 표 첫 행 SKIP.
 - 본 cycle 이 기록하는 실측 자체가 선행 cycle(`REV-20260804T045828-share-join-btn-visibility`)의 잔여 검증 산출물이다 — 배포 SHA·서빙 코드·PB-0008 6축·증거 스크린샷.
 - 선행 cycle 이 `[SKIPPED:tool-restricted:ux,design]` 로 남겼던 화면 배치·가시성 미검증 범위가 본 실측으로 **해소**됐다(액션 바 3버튼 렌더 육안 확인).
+
+## REV-20260804T061000-msg-speaker-attribution [CODEX:conversation-store+frontend-render] — BLOCK → 4 P1 전건 반영 후 PASS
+- Related TASK: feature-0003-agent-web-ui (20260804T0610-msg-speaker-attribution)
+- Source: codex exec `git diff --cached` review (OpenAI Codex v0.146.0, gpt-5.6-sol, reasoning=high)
+- Trigger: code change — dispatch 키워드 `schema/스키마`(meta_json 각인 스키마)·`API/엔드포인트`
+  (PATCH product · fork)·`UI/화면`(말풍선 렌더) 다중 매칭. §18.8.2 에 따라 **도구 제약 없는 채널**
+  (codex-review)을 우선 선택 — 세션 레벨 "요청 없는 Agent tool 호출 금지" 상위 지시와 무충돌.
+- Timestamp: 2026-08-04T15:10:00+09:00
+- Verdict: PASS (초기 BLOCK — P1 4건, 전건 수정 + 회귀 테스트 고정. P2 0건)
+
+### 반영한 P1 4건
+
+1. **부분 각인 행에서 기존 meta 키를 덮어씀** — PG `existing || payload` 와 MySQL/fork 의
+   `dict.update(payload)` 는 payload 우선이라, probe(`product_mode`/`sender_account_id`)만 없고
+   다른 귀속 키는 있는 행에서 기존 값을 파괴한다. "추가만" 이라는 계약과 정면 배치.
+   → PG 를 `payload || existing`(우측=기존 우선)으로 뒤집고, MySQL 은 `{**payload, **meta}`,
+   fork 는 `setdefault` 로 전환. `test_backfill_never_overwrites_existing_keys` 가 고정.
+2. **MySQL 경로가 판독 불가 meta 를 삭제** — `_meta_json_to_dict` 가 파싱 실패 시 `{}` 를 주므로
+   그대로 되쓰면 **원문 meta 가 통째로 사라진다**(귀속 보정이 데이터 손실로 번지는 경로).
+   부수적으로 SELECT~UPDATE 사이 각인을 덮을 수 있었다.
+   → 파싱 실패 행은 skip(경고 로그), UPDATE 에 읽은 원문 대조(`MetaJson <=> %s`) 낙관적 가드 추가.
+   `test_backfill_skips_unparseable_meta_instead_of_erasing` · `..._guarded_by_read_value` 고정.
+3. **fork 에서 username 조회 1건 실패가 assistant 제품 귀속까지 폐기** — 두 축이 한 try/except 에
+   묶여 `_fork_attrib = {}` 로 초기화됐다. WebAccounts 일시 장애가 제품 귀속까지 날려 legacy
+   메시지를 다시 대화-단위 상태로 되돌린다. → user/assistant 를 독립 best-effort 단계로 분리.
+   `test_fork_attribution_axes_are_independent` 고정.
+4. **sender id 만 각인된 타인 메시지가 여전히 대화 owner 이름을 사용** — 발신자가 owner 와
+   **다르다는 것을 아는** 상태에서 owner 이름을 붙이는 확정적 오귀속. → `사용자 <senderId>`
+   (참가자 칩과 동일 컨벤션)로 교체. legacy(각인 전무) 행만 owner 폴백 유지.
+
+### 판단 근거 (설계 선택)
+
+- **스냅샷 우선 라벨**: 각인된 `product_name`/`product_key` 를 현재 제품 목록보다 우선한다.
+  제품 개명 시 과거 답변이 옛 이름으로 남지만, (a) 요청의 문면이 "기존 내용과의 정합",
+  (b) 열람자에게 접근권 없는 제품에서도 발화자가 보존, (c) **어떤 후속 변경으로도 과거
+  발화자가 다시 바뀌지 않는다** — 이 함수가 존재하는 이유 자체를 지킨다. 아이콘 이미지만
+  현재 제품 설정을 따른다(정체성이 아니라 표현).
+- **제품 전환은 assistant 만 보정**한다. 제품 변경은 발신자에 대해 아무것도 알려주지 않으므로
+  user 행에 owner 를 각인하면 그룹 멤버 메시지를 owner 로 오귀속한다. legacy user 행의 보호는
+  fork 경로(원본 owner 기준)가 담당한다.
+- **`attribution_inferred`**: 발화 시점 각인과 사후 추론을 구분해 남긴다. 없으면 "언제부터
+  믿을 수 있는 값인지" 를 이후 어떤 조사로도 복원할 수 없다.
+
+### 잔여 리스크 (정직 기록)
+
+- legacy 대화가 **fork 도 제품 전환도 겪지 않으면** user/assistant 행은 미각인으로 남아 종전
+  폴백(대화 owner / 대화 바인딩)으로 표시된다. 그 상태에서의 표시는 지금도 정확하며(그 대화의
+  모든 발화가 실제로 그 owner·그 제품이므로), 부정합이 발생할 수 있는 두 순간에 각각 고정된다.
+  전량 일괄 backfill 은 라이브 전 대화 meta 를 쓰는 대규모 변경이라 채택하지 않았다.
+- 그룹 대화의 **pre-feature-0009 미각인 user 행**을 fork 하면 원본 owner 로 추론된다(실제
+  발신자가 다른 멤버였을 수 있음). `attribution_inferred: true` 로 구분되며, 복제자 이름으로
+  표시되던 종전보다는 엄격히 낫다.

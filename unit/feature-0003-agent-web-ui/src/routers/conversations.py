@@ -752,6 +752,23 @@ async def update_conversation_product(
         if not app._account_has_product_access(account, pinned_id, conn=conn):
             return app._json_error("요청을 수행할 수 없습니다.", 403)
 
+    # msg-speaker-attribution: 바인딩을 바꾸기 **전에**, 아직 발화자 미각인인 과거 답변을
+    #  **직전 제품**으로 고정한다. 이 시점이 "그 답변들이 어느 제품에서 나왔는지" 를 알 수 있는
+    #  마지막 순간이다 — 놓치면 FE 폴백이 대화 바인딩을 보고 과거 답변까지 새 제품으로 표시한다
+    #  (사용자 보고: "product 를 바꾸면 이전 대화의 발화자가 실시간으로 바뀐다").
+    #  각인 도입 이후 저장된 답변은 이미 자기 제품을 갖고 있어 여기서 건드리지 않는다.
+    #  fail-open — 보정 실패가 제품 전환 자체를 막지 않는다(전환은 사용자 의도).
+    try:
+        _prev_pid, _prev_mode = app._conv_load_product(conn, cid)
+        app._conv_backfill_attribution(
+            conn, cid, "assistant",
+            app._conv_product_attribution(conn, _prev_pid, _prev_mode),
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "update_conversation_product: 직전 제품 귀속 보정 실패 (cid=%s)", cid, exc_info=True,
+        )
+
     try:
         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
             from shared.db import _pg_connect

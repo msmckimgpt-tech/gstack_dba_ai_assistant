@@ -1105,3 +1105,13 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **한정(정직)**: RC-2(LIMIT 상한 보정) 이 재현에서 **미발동**(모델이 순수 LIMIT 조회를 내지 않음 — 배포본 직접 실측에서만 확인) · 콘솔 경로 부작용으로 `scratch_import` 1회 거부 · **모집단 빈도 감소 미측정**(다음 audit corroboration). `verified` 판정 근거는 **통제된 A/B 재현까지**로 한정한다.
 - **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`, `unit/feature-0002-agent-core/docs/{TASK,REVIEW}.md`.
 - **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260731T184300-loadgate-blind-coaching` · `CHG-20260731T203000-loadgate-postdeploy` · 원장 `FR-loadgate-blind-coaching`.
+
+## CHG-20260804T0610-msg-speaker-attribution 답변·질문 메시지에 발화자 귀속 각인 (feature-0003 cycle 교차 참조)
+- `src/agent_core.py`: `_lookup_account_username`·`_answer_product_attribution` 신설.
+  user 미러 meta 를 1:1 까지 확대(`sender_account_id`/`sender_username`), assistant 미러 4경로
+  (정상 답변·max_steps 초과·중단 보존·오류)에 `product_mode/product_id/product_key/product_name` 각인.
+- 사유: 발화자가 각인되지 않아 web 이 렌더 시점 대화 설정에서 파생 → 제품 전환·fork 로 과거 발화자가
+  사후 변경되는 부정합(사용자 보고). 각인 계약·표시 규칙 정본은 feature-0003 `docs/FUNCTION.md`
+  (msg-speaker-attribution) 참조.
+- 기존 동작 무변경: `group_chat` 마커 게이트, dedup `mirror_sender_account_id` 전달 조건, 각인 실패
+  fail-open. Tests: `tests/test_msg_speaker_attribution.py`(12).

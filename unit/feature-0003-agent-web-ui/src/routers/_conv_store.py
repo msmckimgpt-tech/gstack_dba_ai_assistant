@@ -242,6 +242,147 @@ WHERE conversation_id = %s
     )
     cur.close()
 
+# ── msg-speaker-attribution: 발화자 귀속 각인/보정 ──────────────────────────────
+#
+# 대화내역의 발화자(사용자 = user 메시지 발신자, assistant = 답한 제품)는 **발화 시점의
+# 사실**이다. 종전엔 어디에도 각인되지 않아 FE 가 "대화의 현재 owner / 컴포저의 현재 제품
+# 칩" 에서 파생했고, 그 결과 제품을 바꾸거나 대화를 fork 하면 **이미 지나간 대화의 발화자가
+# 실시간으로 바뀌었다**. 각인은 agent_core 의 저장 시점(신규 메시지)이 1차 경로이고, 아래
+# 헬퍼들은 각인 이전에 쌓인 행을 **귀속이 바뀌는 바로 그 순간**(제품 전환 · fork) 에 마지막
+# 으로 알 수 있는 값으로 고정하는 2차 경로다.
+#
+# 원칙:
+#   - **추가만** 한다. 이미 각인된 행(probe key 보유)과 기존 meta 키는 건드리지 않는다.
+#   - 추론으로 채운 행은 `attribution_inferred: True` 로 구분한다(발화 시점 각인과 미구분 금지).
+#   - 전부 fail-open — 귀속 보정 실패가 제품 전환이나 fork 를 막지 않는다.
+
+_ATTRIB_PROBE_KEY = {"assistant": "product_mode", "user": "sender_account_id"}
+
+
+def _conv_product_attribution(conn, product_id: int | None, product_mode: Any) -> dict[str, Any]:
+    """(product_id, product_mode) → assistant 발화자 귀속 meta. agent_core 각인과 동일 키 집합.
+
+    agent_core._answer_product_attribution 의 web 측 대응물 — 각인 스키마의 단일 정의를
+    양쪽이 공유해야 FE 렌더가 두 경로를 구분하지 않아도 된다(키가 갈리면 폴백이 되살아난다).
+    """
+    mode = "auto" if str(product_mode or "pinned").lower() == "auto" else "pinned"
+    attrib: dict[str, Any] = {"product_mode": mode}
+    if mode == "auto" or not product_id:
+        return attrib
+    attrib["product_id"] = int(product_id)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT ProductKey, Name FROM WebProducts WHERE Id = %s LIMIT 1",
+                (int(product_id),),
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+    except Exception:
+        return attrib
+    if not row:
+        return attrib
+    if isinstance(row, dict):
+        key, name = row.get("ProductKey"), row.get("Name")
+    else:
+        key, name = row[0], (row[1] if len(row) > 1 else None)
+    if key:
+        attrib["product_key"] = str(key)
+    if name:
+        attrib["product_name"] = str(name)
+    return attrib
+
+
+def _conv_backfill_attribution(
+    conn, conversation_id: str, role: str, attribution: dict[str, Any]
+) -> int:
+    """<role> 표시 메시지 중 **아직 미각인인 행**에만 attribution 을 기입한다. 기입 행 수 반환.
+
+    귀속이 바뀌기 **직전**에 호출한다 (예: 제품 전환 PATCH 는 UPDATE 前에 직전 제품으로 호출).
+    미각인 판정은 role 별 probe key 부재 — 이미 각인된 행은 그 값이 진실이므로 덮지 않는다.
+    """
+    probe = _ATTRIB_PROBE_KEY.get(role)
+    if not probe or not attribution:
+        return 0
+    payload = dict(attribution)
+    payload["attribution_inferred"] = True
+    try:
+        if app._runtime_backend_is_pg():
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    # `payload || existing` — jsonb `||` 는 **우측 우선** 이므로 기존 meta 가
+                    # 이긴다. 즉 보정은 **없는 키만 채운다**(부분 각인 행에서 기존 product_id·
+                    # sender_username 을 덮지 않는다 — "추가만" 불변식의 SQL 표현).
+                    pgcur.execute(
+                        "UPDATE agent_runtime.messages "
+                        "SET meta_json = %s::jsonb || COALESCE(meta_json, '{}'::jsonb) "
+                        "WHERE conversation_id = %s AND role = %s "
+                        "  AND (meta_json -> %s) IS NULL",
+                        (json.dumps(payload, ensure_ascii=False), conversation_id, role, probe),
+                    )
+                    return int(pgcur.rowcount or 0)
+            finally:
+                pg.close()
+        # MySQL(legacy): MetaJson 은 longtext 라 유효 JSON 이 아닌 행이 섞일 수 있다.
+        # JSON_MERGE_PATCH 는 그런 행에서 문 전체를 실패시키므로 행 단위 read-modify-write.
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT Id, MetaJson FROM AgentMemoryMessages "
+                "WHERE ConversationId = %s AND Role = %s",
+                (conversation_id, role),
+            )
+            rows = list(cur.fetchall() or [])
+        finally:
+            cur.close()
+        written = 0
+        for mid, raw in rows:
+            if isinstance(raw, dict):
+                meta = dict(raw)
+            elif raw is None or not str(raw).strip():
+                meta = {}
+            else:
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    # 파싱 불가 행은 **건너뛴다**. 여기서 {} 로 폴백해 되쓰면 판독 못한 원문
+                    # meta 를 통째로 지우게 된다(귀속 보정이 데이터 손실로 번지는 경로).
+                    logging.getLogger(__name__).warning(
+                        "_conv_backfill_attribution: meta_json 파싱 불가 — 보정 skip (id=%s)", mid,
+                    )
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                meta = parsed
+            if probe in meta:
+                continue
+            merged = {**payload, **meta}   # 기존 키 우선 — 보정은 없는 키만 채운다.
+            ucur = conn.cursor()
+            try:
+                # 낙관적 동시성 — 읽은 원문과 동일할 때만 쓴다. SELECT~UPDATE 사이에 다른
+                # 경로가 각인했으면 rowcount 0 으로 흘려보내 새 각인을 덮지 않는다
+                # (`<=>` 는 NULL-safe 등가).
+                ucur.execute(
+                    "UPDATE AgentMemoryMessages SET MetaJson = %s "
+                    "WHERE Id = %s AND (MetaJson <=> %s)",
+                    (json.dumps(merged, ensure_ascii=False, default=str), int(mid), raw),
+                )
+                written += int(getattr(ucur, "rowcount", 0) or 0)
+            finally:
+                ucur.close()
+        return written
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_conv_backfill_attribution: 귀속 보정 실패 (cid=%s role=%s)",
+            conversation_id, role, exc_info=True,
+        )
+        return 0
+
+
 def _conv_update_topic(conn, conversation_id: str, topic: str) -> None:
     """대화 topic 만 갱신 (duplicate '사본:' prefix 적용)."""
     if app._runtime_backend_is_pg():
@@ -269,13 +410,22 @@ WHERE conversation_id = %s
     cur.close()
 
 def _conv_copy_messages(
-    conn, new_cid: str, src_rows: list[tuple], source_id: str, from_id: int | None
+    conn, new_cid: str, src_rows: list[tuple], source_id: str, from_id: int | None,
+    *,
+    attribution_defaults: dict[str, dict[str, Any]] | None = None,
 ) -> int:
     """src_rows((id, role, content, created_at, meta_json))를 new_cid 로 복제. 복제 수 반환.
 
     내부/시스템 메시지(app._is_internal_message)는 제외. 실패 시 예외를 전파하여 호출자가
     delete_conversation_records 로 cleanup 하도록 한다.
+
+    attribution_defaults (msg-speaker-attribution): `{role: {meta...}}` — **미각인 행에만**
+    기입할 발화자 귀속. 복제본은 새 owner(복제자)와 새 제품 바인딩을 갖기 때문에, 각인 없는
+    행을 그대로 옮기면 FE 폴백이 원저자의 질문을 복제자 이름으로, 원 제품의 답변을 복제본
+    제품으로 표시한다. 여기서 **원본 대화 기준**으로 고정해 그 사후 변경을 차단한다.
+    (호출자가 미지정이면 종전 동작 그대로 — 각인 없이 복사.)
     """
+    defaults = attribution_defaults or {}
     use_pg = app._runtime_backend_is_pg()
     pg = None
     if use_pg:
@@ -293,6 +443,16 @@ def _conv_copy_messages(
             meta_str_for_filter = json.dumps(meta) if meta else None
             if app._is_internal_message(role, content, meta_str_for_filter):
                 continue
+            # msg-speaker-attribution: 미각인 행에만 원본 대화 기준 귀속을 기입(각인된 행은 불변).
+            #   `setdefault` — 부분 각인 행(probe 는 없는데 다른 귀속 키는 있는 경우)에서
+            #   기존 값을 덮지 않는다("추가만" 불변식).
+            _role_key = str(role or "").lower()
+            _fallback = defaults.get(_role_key)
+            _probe = _ATTRIB_PROBE_KEY.get(_role_key)
+            if _fallback and _probe and _probe not in meta:
+                for _k, _v in _fallback.items():
+                    meta.setdefault(_k, _v)
+                meta.setdefault("attribution_inferred", True)
             meta["forked_from_conversation_id"] = source_id
             meta["forked_from_message_id"] = int(msg_id) if msg_id is not None else None
             if from_id is not None:
@@ -2508,7 +2668,8 @@ def _fork_conversation_impl(
     # 원본 대화의 product_id / product_mode 조회 (없으면 기본 Product).
     # TASK-0052 Phase 1C G5 (Codex Claim 4 fork product_mode 복사 fix): product_mode 도 함께 조회하여 'auto' 보존.
     forked_product_mode = "pinned"
-    forked_product_id, _src_product_mode = app._conv_load_product(conn, source_id)
+    _src_product_id_raw, _src_product_mode_raw = app._conv_load_product(conn, source_id)
+    forked_product_id, _src_product_mode = _src_product_id_raw, _src_product_mode_raw
     if _src_product_mode is not None:
         forked_product_mode = app._normalize_product_mode(_src_product_mode, default="pinned")
     # auto 모드는 product_id 가 의미 없으므로 명시적으로 NULL 유지. pinned 인데 product_id 없으면 default 채움.
@@ -2538,8 +2699,58 @@ def _fork_conversation_impl(
     except Exception:
         return None, app._json_error("failed to create forked conversation", 500)
 
+    # msg-speaker-attribution: 복제본은 새 owner(복제자)와 (권한에 따라 강등될 수 있는) 새 제품
+    #  바인딩을 갖는다. 각인 없는 원본 행을 그대로 옮기면 FE 폴백이 그 두 값을 보고 **원저자의
+    #  질문을 복제자 이름으로, 원 제품의 답변을 복제본 제품으로** 표시한다(보고된 부정합).
+    #  여기서 **원본 대화** 기준값을 미각인 행에 고정한다 — 강등 전 `_src_product_*` 를 쓰는 것이
+    #  요점이다(강등된 fork 바인딩이 아니라 실제로 답했던 제품).
+    #  user 축과 assistant 축은 **서로 독립된 best-effort** 단계다 — 한쪽 조회 실패가 다른 쪽
+    #  귀속까지 버리면 그만큼의 legacy 메시지가 다시 대화-단위 상태(새 owner·강등된 제품)로
+    #  렌더된다(§18.8 codex P1).
+    _fork_attrib: dict[str, dict[str, Any]] = {}
     try:
-        copied = app._conv_copy_messages(conn, new_cid, src_rows, source_id, upper_id)
+        _src_owner_id = app._conversation_owner_account_id(conn, source_id)
+        if _src_owner_id:
+            _u: dict[str, Any] = {"sender_account_id": int(_src_owner_id)}
+            try:
+                _ucur = conn.cursor()
+                try:
+                    _ucur.execute(
+                        "SELECT Username FROM WebAccounts WHERE Id = %s LIMIT 1",
+                        (int(_src_owner_id),),
+                    )
+                    _urow = _ucur.fetchone()
+                finally:
+                    _ucur.close()
+                if _urow and _urow[0]:
+                    _u["sender_username"] = str(_urow[0])
+            except Exception:
+                # 표시명 조회만 실패 — 발신자 id 각인은 그대로 살린다(FE 가 id 로 구분 가능).
+                logging.getLogger(__name__).warning(
+                    "_fork_conversation_impl: 원본 owner 표시명 조회 실패 (source=%s)",
+                    source_id, exc_info=True,
+                )
+            _fork_attrib["user"] = _u
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_fork_conversation_impl: 원본 owner 해석 실패 — user 귀속 없이 복사 (source=%s)",
+            source_id, exc_info=True,
+        )
+    try:
+        _fork_attrib["assistant"] = app._conv_product_attribution(
+            conn, _src_product_id_raw, _src_product_mode_raw
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_fork_conversation_impl: 원본 제품 해석 실패 — assistant 귀속 없이 복사 (source=%s)",
+            source_id, exc_info=True,
+        )
+
+    try:
+        copied = app._conv_copy_messages(
+            conn, new_cid, src_rows, source_id, upper_id,
+            attribution_defaults=_fork_attrib,
+        )
     except Exception:
         # 중간 실패 시 새 대화 기록을 정리하고 error 반환.
         try:

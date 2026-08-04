@@ -2158,3 +2158,31 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 배포: PR #1134 머지(main `d23f0a0d`) → `--web-only` 스코프, web-a·web-b `GIT_COMMIT=d23f0a0d`, soak 90s 통과, Caddyfile 무변경. 워커 미접촉 — 변경분(share 정적 자산 + 공유 뷰 응답 1필드)은 web 전용 경로.
 - 실증: 소유자 관점 참여 버튼 가시 · 클릭 시 `/join` **0건**(요청 캡처) · deep-link 이동 · 익명 `conversation_id=null` · fork 무회귀.
 - Files: `docs/{TASK,MODIFY,TEST,REPORT}.md`, `docs/test-runs.d/20260804T0458-share-join-btn-visibility.md`.
+
+## CHG-20260804T0610-msg-speaker-attribution 대화내역 발화자 귀속 — 발화 시점 각인 + 전환/fork 보정 + 메시지별 렌더
+- **문제**: 발화자(사용자 발신자 / assistant 제품)가 메시지에 각인되지 않아 렌더 시점의 대화 설정
+  (현재 owner · 컴포저 제품 칩)에서 파생됐다 → 제품 전환·fork 시 **과거 대화의 발화자가 실시간 변경**.
+- `unit/feature-0002-agent-core/src/agent_core.py`: `_lookup_account_username`·
+  `_answer_product_attribution` 신설. user 미러 meta 를 1:1 까지 확대(`sender_account_id`+
+  `sender_username`; `group_chat` 마커는 주입 sender_username 게이트 유지 — 1:1 회귀 방지).
+  run 진입부에서 `_answer_product_meta` 1회 해석 후 assistant 미러 **4경로 전부**에 각인
+  (정상 답변·max_steps 초과·중단 보존·오류). dedup 의 `mirror_sender_account_id` 는 종전대로
+  그룹에만 전달 — 1:1 에 넘기면 각인 이전 저장 행을 못 찾아 배포 경계 재시도에서 사용자 메시지가
+  두 줄 되는 회귀.
+- `unit/feature-0003-agent-web-ui/src/routers/_conv_store.py`: `_conv_product_attribution`(각인
+  스키마 web 측 대응물)·`_conv_backfill_attribution`(미각인 행 한정 기입, PG=jsonb `||` set-based /
+  MySQL=행 단위 RMW) 신설. `_conv_copy_messages(attribution_defaults=…)` 추가 —
+  `_fork_conversation_impl` 이 **강등 전** 원본 제품(`_src_product_*`)과 원본 owner 를 전달.
+- `unit/feature-0003-agent-web-ui/src/routers/conversations.py`: `PATCH …/product` 가 바인딩 UPDATE
+  **직전** 직전 제품으로 미각인 assistant 메시지 보정(freeze-on-change). fail-open.
+- `unit/feature-0003-agent-web-ui/src/app.py`: 신규 2 헬퍼 rebind 등재.
+- `unit/feature-0003-agent-web-ui/src/static/app.js`: `_assistantSpeakerFor()` 신설 —
+  renderMessages 가 대화-단위 단일 값(`_assistantLabel/_assistantIcon/_assistantSeed`) 대신
+  **메시지별** 해석. 라벨·시드는 각인 스냅샷 우선, 아이콘만 현재 제품 설정. user 발화자는
+  `senderId` 기반 분기 추가(대화 소유권 판정 제거). 제품 전환 성공 후 `loadHistory({preserveScroll:true})`.
+- **보정은 추가만** — 기존 meta 키 무변경, 이미 각인된 행 무변경, 보정분은 `attribution_inferred: true`.
+- Tests: `feature-0002/tests/test_msg_speaker_attribution.py`(12) ·
+  `feature-0003/tests/test_msg_speaker_attribution_web.py`(12) 신규. 전체 스위트 exit 0, ruff clean.
+- Files: `unit/feature-0002-agent-core/src/agent_core.py`,
+  `unit/feature-0003-agent-web-ui/src/{app.py,routers/_conv_store.py,routers/conversations.py,static/app.js}`,
+  양 feature `tests/`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
