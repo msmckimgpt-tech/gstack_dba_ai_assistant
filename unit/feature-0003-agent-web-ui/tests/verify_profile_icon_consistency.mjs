@@ -8,7 +8,18 @@
 // 실행: NODE_PATH=/tmp/node_modules node verify_profile_icon_consistency.mjs
 //   (jsdom 은 /tmp 에 임시 설치됨 — CI 미의존, frontend-only 변경 로컬 게이트)
 
-import { JSDOM } from "jsdom";
+import { createRequire } from "node:module";
+// jsdom 해석: /tmp 우선(Node18 + jsdom@22 핀 — `npm i jsdom@22 --prefix /tmp`). NODE_PATH/symlink 불요.
+const _requireJsdom = createRequire(import.meta.url);
+let JSDOM = null;
+for (const base of ["/tmp", process.cwd()]) {
+  try { ({ JSDOM } = _requireJsdom(_requireJsdom.resolve("jsdom", { paths: [base] }))); if (JSDOM) break; } catch (_) { /* next */ }
+}
+if (!JSDOM) { try { ({ JSDOM } = _requireJsdom("jsdom")); } catch (_) { /* fall through */ } }
+if (!JSDOM) {
+  console.error("jsdom 미설치 — `npm i jsdom@22 --prefix /tmp` 필요. (frontend-only 로컬 게이트)");
+  process.exit(2);
+}
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -142,8 +153,9 @@ const newPatApp = (appSrc.match(/\(\$\{[\w.]+\.product_key\}\) \$\{[\w.]+\.name\
 const newPatAdmin = (adminSrc.match(/\(\$\{[\w.]+\.product_key\}\) \$\{[\w.]+\.name\}/g) || []).length;
 ok("app.js 에 잔존 '명칭 (약어)' 0건", !oldPat.test(appSrc));
 ok("admin.js 에 잔존 '명칭 (약어)' 0건", !oldPat.test(adminSrc));
-ok("app.js '(약어) 명칭' 4건", newPatApp === 4);
-ok("admin.js '(약어) 명칭' 3건", newPatAdmin === 3);
+// 사이트 증감 시 이 카운트를 실측으로 갱신한다(전환 완전성 계약 — slack 을 두면 1개 소실이 무검출).
+ok("app.js '(약어) 명칭' 5건 (실측 핀)", newPatApp === 5);
+ok("admin.js '(약어) 명칭' 3건 (실측 핀)", newPatAdmin === 3);
 
 // ── 결과 ─────────────────────────────────────────────────────────────────
 console.log(`\n=== ${passed} PASS / ${failed} FAIL ===`);

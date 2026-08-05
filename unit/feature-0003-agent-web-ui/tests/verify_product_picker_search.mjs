@@ -12,7 +12,18 @@
 // 실행: tests/node_modules → /tmp/node_modules symlink 후 node verify_product_picker_search.mjs
 // 참고: layout(sticky 고정·포커스·시각)은 jsdom 미계산 → PB-0008 Windows 브라우저 실측이 정본 게이트.
 
-import { JSDOM } from "jsdom";
+import { createRequire } from "node:module";
+// jsdom 해석: /tmp 우선(Node18 + jsdom@22 핀 — `npm i jsdom@22 --prefix /tmp`). NODE_PATH/symlink 불요.
+const _requireJsdom = createRequire(import.meta.url);
+let JSDOM = null;
+for (const base of ["/tmp", process.cwd()]) {
+  try { ({ JSDOM } = _requireJsdom(_requireJsdom.resolve("jsdom", { paths: [base] }))); if (JSDOM) break; } catch (_) { /* next */ }
+}
+if (!JSDOM) { try { ({ JSDOM } = _requireJsdom("jsdom")); } catch (_) { /* fall through */ } }
+if (!JSDOM) {
+  console.error("jsdom 미설치 — `npm i jsdom@22 --prefix /tmp` 필요. (frontend-only 로컬 게이트)");
+  process.exit(2);
+}
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -81,6 +92,7 @@ function makeRender(state) {
     var PRODUCT_DROPUP_SEARCH_MIN = ${MIN};
     var state = __state;
     function setActiveProduct(){ return Promise.resolve(); }
+    function canOpenAdminConsole(){ return false; }  // 신규 의존: DS 배지 '연결 테스트' 버튼 게이트(_dsTestable) — false 로 단락, 검색 필터 검증과 무관.
     function closeProductDropup(){}
     function showToast(){}
     ${renderMenu}

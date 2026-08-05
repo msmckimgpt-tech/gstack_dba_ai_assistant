@@ -53,7 +53,10 @@ ok(hoverReveal && /max-width:\s*1[0-9][0-9]px/.test(hoverReveal[1]) && /opacity:
 ok(/@media\s*\(hover:\s*none\)\s*\{[^}]*\.share-participant-acts[^}]*opacity:\s*1/.test(css.replace(/\n/g, " ")), "@media (hover: none) 터치 폴백(항상 노출)");
 
 // 5. 캐시버스터 bump(styles.css 변경).
-ok(indexHtml.includes("styles.css?v=20260625-member-actions-hover"), "styles.css 캐시버스터 bump");
+// feature-0014 asset-stamp: 소스는 `?v=dev` placeholder — 빌드(inject_asset_stamp.py)가 content-hash 를
+// 일괄 주입한다(수기 bump 계약 폐기). 구 단언(특정 `?v=YYYYMMDD-slug` 토큰)은 스탬프 체계 전환으로
+// 무의미 — 자산이 스탬프 관리 대상(placeholder 부착)인지만 검증한다.
+ok(/css\/chat\.css\?v=dev/.test(indexHtml), "css 번들이 asset-stamp placeholder(?v=dev)");
 
 console.log(`\nverify_member_actions_hover: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

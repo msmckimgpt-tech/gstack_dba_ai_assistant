@@ -79,7 +79,8 @@ ok("[B2] 검색 매칭 _metaItemMatchesSearch 존재", /function _metaItemMatche
 const startEdit = extractFn(adminJs, "_metaStartEdit");
 ok("[B3] _metaStartEdit 가 detailMode='form' + selectedId 설정", Boolean(startEdit) && /detailMode = "form"/.test(startEdit) && /selectedId =/.test(startEdit));
 ok("[B3] _metaStartEdit 에서 폼 점프 scrollIntoView 제거", Boolean(startEdit) && !/scrollIntoView/.test(startEdit));
-const renderList = extractFn(adminJs, "renderMetadataList");
+// metadata-list-detail 후속: 행 생성(클릭/keydown/인라인 액션)이 _metaListRow 헬퍼로 분리 — 합본 검사.
+const renderList = [extractFn(adminJs, "renderMetadataList"), extractFn(adminJs, "_metaListRow")].filter(Boolean).join("\n");
 ok("[B4] 목록 행에 클릭=선택 wiring(_metaStartEdit) + data-meta-id", Boolean(renderList) && /dataset\.metaId/.test(renderList) && /addEventListener\("click", \(\) => _metaStartEdit\(it\)\)/.test(renderList));
 ok("[B4] 인라인 '수정' 버튼 폐기(행 클릭으로 대체)", Boolean(renderList) && !/admin-meta-edit/.test(renderList));
 ok("[B4] 삭제 버튼 클릭 전파 차단(행 선택과 분리)", Boolean(renderList) && /_metaDelete\(it\);[\s\S]*stopPropagation|stopPropagation\(\);[\s\S]*_metaDelete\(it\)/.test(renderList));
@@ -120,11 +121,12 @@ if (!JSDOM) {
   ok("[D0] _metaRenderDetail 추출", Boolean(renderDetailSrc));
   const make = (md) => new Function(
     "document", "adminState", "can",
-    "_metaIsGlossaryReview", "_METADATA_NO_CREATE", "_metaSyncGlossaryViews",
+    "_metaIsReview", "_METADATA_NO_CREATE", "_metaSyncViews",
     "_metaRenderForm", "_metaSyncBootstrapVisibility", "_metaSyncToolbarVisibility", "_metaSyncListToolbar",
+    "_metaRenderReviewDetail",
     `${renderDetailSrc}; return _metaRenderDetail;`,
   )(document, { metadata: md }, () => true,
-    () => false, {}, () => {}, () => {}, () => {}, () => {}, () => {});
+    () => false, {}, () => {}, () => {}, () => {}, () => {}, () => {}, () => {});
   // empty 모드
   make({ detailMode: "empty", subTab: "glossary" })();
   ok("[D1] empty 모드 — empty-state만 노출", vis("metadataDetailEmpty") && !vis("metadataForm") && !vis("metadataBootstrap"));

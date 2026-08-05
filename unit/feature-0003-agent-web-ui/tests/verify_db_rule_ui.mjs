@@ -47,7 +47,8 @@ ok("multi: preview(/db-rules/preview)", /\$\{_ruleBase\(\)\}\/preview`/.test(adm
 ok("종속: 규칙별 DB 필터(rule_id 일치)", /Number\(d\.rule_id\) === Number\(rule\.id\)/.test(flat));
 ok("종속: 중첩 DB 목록 컨테이너(cov-db-rule-dblist)", /cov-db-rule-dblist/.test(adminJs));
 ok("종속: '이 규칙으로 추가된 DB' 헤더", /이 규칙으로 추가된 DB/.test(adminJs));
-ok("분리: rule 행은 메인 cov-db-list 에서 제외(_isRuleRow return)", /if \(_isRuleRow\) return;/.test(adminJs));
+// feature-0003-rule-db-coverage: read-only 뷰어(product.manage 없음)는 규칙 카드가 없어 rule 행을 메인 목록에 남긴다.
+ok("분리: rule 행은 canManage 시 메인 cov-db-list 에서 제외(_isRuleRow && canManage return)", /if \(_isRuleRow && canManage\) return;/.test(adminJs));
 
 // ── CSS ──
 ok("CSS: .cov-db-rule-card 정의", /\.cov-db-rule-card\s*\{/.test(adminCss));
@@ -56,7 +57,10 @@ ok("CSS: .cov-db-rule-card-pat 정의", /\.cov-db-rule-card-pat\s*\{/.test(admin
 ok("CSS: .cov-db-rule-addbtn 정의", /\.cov-db-rule-addbtn[\s,]/.test(adminCss));
 
 // ── cache-buster ──
-ok("cache-buster: admin.html db-rule-pending(admin.js + styles.css)", /admin\.js\?v=20260619-db-rule-pending/.test(adminHtml) && /styles\.css\?v=20260619-db-rule-pending/.test(adminHtml));
+// feature-0014 asset-stamp: 소스는 `?v=dev` placeholder — 빌드(inject_asset_stamp.py)가 content-hash 를
+// 일괄 주입한다(수기 bump 계약 폐기). 구 단언(특정 `?v=YYYYMMDD-slug` 토큰)은 스탬프 체계 전환으로
+// 무의미 — 자산이 스탬프 관리 대상(placeholder 부착)인지만 검증한다.
+ok("cache-buster: admin.html admin.js·css 가 asset-stamp placeholder(?v=dev)", /admin\.js\?v=dev/.test(adminHtml) && /css\/admin\.css\?v=dev/.test(adminHtml));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

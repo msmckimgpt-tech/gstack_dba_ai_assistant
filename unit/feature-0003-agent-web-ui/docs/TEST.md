@@ -2349,3 +2349,25 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 상세: `docs/test-runs.d/20260804T0610-msg-speaker-attribution.md` §6.
 ## TASK-20260805T010301-doc-sync-rn-0805 — 릴리즈노트 신규 2026-08-04 블록 prepend (비-정책 doc-only)
 - **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · vm(sandbox) 구조검증 · `tests/verify_release_notes.mjs` 33 pass / 1 fail(pre-existing `styles.css` assertion, 변경 전 동일 재현).
+
+## 20260805T1042-harness-repair — standalone mjs 하네스 red 전수 해소 (tests-only)
+
+### Run — 20260805T1042 mjs 전수 재실행 (Environment: CLI/node) — PASS 40/40
+- 기준선(수리 전): 39개 중 red 23 (rc!=0) — jsdom 재설치(`npm i jsdom@22 --prefix /tmp`) 후에도
+  19 red. 수리 후: **40/40 rc=0** (신설 verify_notify_gating.mjs 포함, FAIL 라인 0).
+- 대표 카운트: admin_tab_gating 49 · llm_restriction 35 · release_notes 34 · list_detail 33 ·
+  metadata_bs_inline_desc 30 · picker_search 27 · notify_gating 17 · perm_self_scope 13.
+
+### Run — 20260805T1042 settings-notif 시나리오 (Environment: Windows-browser) — PASS 20/20
+- 실 Windows Chrome 150(무권한 relay @9223), `https://localhost`(Caddy) — 시나리오 파일의
+  base_url(`https://localhost:18080`)은 Caddy 단일 노출 전환 후 stale 이라 scratchpad 사본으로
+  실행(파일 자체의 base_url 정비는 17개 시나리오 공통 후속 후보로 REVIEW 에 기록).
+- 관측(전건 기대 형상): B kebab 메뉴 `["공유","이동","설정"]`(보관/복사/공유 관리/제목 변경 부재)
+  · C 공유 다이얼로그 opened+생성 섹션/joinable/expiry/목록 · D 대화 설정 opened+제목 input/mute
+  토글/섹션(제목·알림·대화 관리) · E 프로필 탭 순서(릴리즈 노트 첫)+계정 병합+알림 체크박스 2종
+  +usage 통합·독립 탭 부재 · 닫힘 왕복 전부 OK.
+- 알림 게이팅 매트릭스(구 A 블록)는 `verify_notify_gating.mjs`(CLI) 로 이관 — default_on=1 ·
+  master_off=0 · desktop_off=0 · muted=0 · unmuted=1 + prefs/muted 왕복 + 셀프 멘션 제외 +
+  high-water 재알림 억제, 9/9 PASS (mentions.js 실물 파서 경유).
+- 본 cycle 은 `src/static/**` 무접촉(tests-only)이라 §15.4.1 check #13 비대상이나, 시나리오
+  자체를 재작성했으므로 실브라우저 완주로 시나리오의 검증 능력을 실증했다.

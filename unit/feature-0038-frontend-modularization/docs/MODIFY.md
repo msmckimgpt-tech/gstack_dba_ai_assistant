@@ -152,3 +152,11 @@ source_of_truth: true
   `unit/feature-0038-frontend-modularization/docs/*` · `wiki/*` · `docs/STATUS.md`
 - Impact: 정책/문서만 — 정적 자산 무변경이라 배포 불필요(웹 이미지 static 무접촉).
 - Rollback Notes: 단일 PR revert 1회.
+
+## CHG-20260805T1042-harness-repair-crossref REPORT §8 후속 후보 상태 정정 (cross-feature, doc-only)
+
+- feature-0003 `harness-repair` cycle (ai/root/feature-0003-harness-repair, CHG-20260805T1042) 이
+  §8 의 pre-existing 하네스 후보 4건(admin_tab_gating FAIL 2·settings-notif 시나리오 전역 의존·
+  perm_self_scope 파손·pre-existing red 목록)을 전건 해소 — §8 해당 불릿을 해소 상태로 정정.
+- 잔여 유지: composer/progress 추출용 state-편입 mini-change(별도 계획 승인 사안) · 파일 크기
+  기계 게이트 검토 · mjs CI 배선 여부 검토.

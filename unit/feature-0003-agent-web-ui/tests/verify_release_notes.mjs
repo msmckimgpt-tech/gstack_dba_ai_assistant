@@ -138,7 +138,8 @@ const cssForScroll = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — �
   .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
 ok("[스크롤] admin release-notes pane overflow-y:auto 규칙 존재",
   /\.admin-pane\[data-admin-pane="release-notes"\]\.is-active/.test(cssForScroll) &&
-  /data-admin-pane="release-notes"\]\.is-active[\s\S]{0,160}overflow-y:\s*auto/.test(cssForScroll));
+  // 셀렉터와 overflow 규칙 사이 설명 주석이 자라며 160자 윈도우 초과(ai-console 통합 주석 등) — 800자로 확대.
+  /data-admin-pane="release-notes"\]\.is-active[^}]{0,800}overflow-y:\s*auto/.test(cssForScroll));
 
 // ── 9. XSS 안전: 제목/부연을 textContent 로 주입 ───────────────────
 const injected = { date: "2099-01-01", summary: "<script>x</script>", items: [{ type: "new", area: "work", title: "<img src=x onerror=alert(1)>", detail: "<b>bold</b>" }] };

@@ -65,8 +65,11 @@ ok(/\.share-participant\.is-banned\s*\{/.test(cssTxt), ".share-participant.is-ba
 ok(/\.share-bans\s*\{/.test(cssTxt), ".share-bans 스타일");
 
 // 12. 캐시버스터 bump.
-ok(indexHtml.includes("app.js?v=20260625-member-kick-ban"), "app.js 캐시버스터 bump");
-ok(indexHtml.includes("styles.css?v=20260625-member-kick-ban"), "styles.css 캐시버스터 bump");
+// feature-0014 asset-stamp: 소스는 `?v=dev` placeholder — 빌드(inject_asset_stamp.py)가 content-hash 를
+// 일괄 주입한다(수기 bump 계약 폐기). 구 단언(특정 `?v=YYYYMMDD-slug` 토큰)은 스탬프 체계 전환으로
+// 무의미 — 자산이 스탬프 관리 대상(placeholder 부착)인지만 검증한다.
+ok(/app\.js\?v=dev/.test(indexHtml), "app.js 가 asset-stamp placeholder(?v=dev)");
+ok(/css\/chat\.css\?v=dev/.test(indexHtml), "css 번들이 asset-stamp placeholder(?v=dev)");
 
 console.log(`\nverify_member_kick_ban: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
