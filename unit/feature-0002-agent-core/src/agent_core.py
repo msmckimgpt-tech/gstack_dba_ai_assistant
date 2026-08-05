@@ -472,6 +472,17 @@ _INLINE_IMAGE_PATH_CTX: "contextvars.ContextVar[str | None]" = contextvars.Conte
 _INLINE_TEXT_PATH_CTX: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
     "inline_text_path_ctx", default=None
 )
+# FR-attachment-change-false-absence (conversation_audit 2026-08-05): 이번 턴의 첨부 변경 사실
+# (신규 N / 이전 버전 대비 갱신 M / 이월 K + 파일명)을 **한 번 계산해 세 소비자가 공유**하는 채널.
+#   ① compose_system_prompt 말미의 코드-권위 사실 블록(A)  ② 사용자 턴 매니페스트(C)
+#   ③ red-team 리뷰어의 모순 검출 사실(B)
+# 세 소비자가 각자 DB 를 다시 읽으면 서로 다른 수치를 말할 수 있어(부분 실패 시) 오히려 모순의
+# 새 원천이 된다 — 단일 계산·단일 사실이 이 봉인의 전제다. 값은 `_build_attachment_context_section`
+# 이 **성공 경로에서만** 채우고, `compose_system_prompt` 가 매 호출 시작에 None 으로 지운다
+# (워커 스레드 재사용 시 이전 run 의 수치가 남아 다른 대화에 주입되는 것을 구조적으로 차단).
+_ATTACHMENT_TURN_FACTS_CTX: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "attachment_turn_facts_ctx", default=None
+)
 
 
 def _ctx_or_env(ctx_var: "contextvars.ContextVar", env_name: str) -> str:
@@ -1230,6 +1241,13 @@ def _build_attachment_context_section(
     sandbox_table_specs: list[tuple[str, str, str]] = []  # (schema, table, source_label)
     text_content_entries: list[tuple[int, str, str, bool]] = []  # (attachment_id, filename, content, is_new)
     version_diff_entries: list[tuple[str, dict]] = []  # REQ-20260713: (filename, version_diff dict)
+    # FR-attachment-change-false-absence: 이번 턴 첨부 변경 사실 집계(공유 채널 원천).
+    # **실제로 이 프롬프트에 렌더된 것만** 사실로 적재한다 — 렌더되지 않은 섹션을 "위에 있다" 고
+    # 가리키면 모델이 없는 증거를 찾다 지어내게 된다(§18.8 backend [P1]).
+    _facts_updated_delta: list[str] = []    # 신규 & 버전>1 & **이번 턴 diff 가 실제 렌더됨**
+    _facts_updated_nodelta: list[str] = []  # 신규 & 버전>1 & diff 미렌더(바이너리·diff 부재 등)
+    _facts_added: list[str] = []            # 신규 & 버전==1 — 이 대화에 처음 들어온 파일
+    _facts_other = 0                        # 위 분류 밖(이월 · AI 생성본 등) — 라벨을 넘겨 짚지 않는다
     for row in rows:
         attachment_id = int(row[0] or 0)
         kind = str(row[3] or "")
@@ -1334,8 +1352,27 @@ def _build_attachment_context_section(
         # 토큰 낭비). 🔄v{n} 버전 표식은 위 file 목록 라인에서 매 턴 유지되므로 assistant 는 이후
         # 턴에도 버전>1 임을 계속 인지하고, 명시 비교 요청 시 버전 조회 API 로 대조 가능.
         _vdiff = meta_obj.get("version_diff") if isinstance(meta_obj, dict) else None
-        if attachment_id in new_ids_set and isinstance(_vdiff, dict) and str(_vdiff.get("unified_diff") or "").strip():
+        _delta_rendered = bool(
+            attachment_id in new_ids_set and isinstance(_vdiff, dict)
+            and str(_vdiff.get("unified_diff") or "").strip()
+        )
+        if _delta_rendered:
             version_diff_entries.append((filename, _vdiff))
+        # FR-attachment-change-false-absence: 목록 표식과 **같은 판정식**으로, 그리고 **이 순회가 실제로
+        # 렌더한 것**만 사실로 적재한다(§18.8 backend/qa [P1] 흡수).
+        #  - AI 생성본(created_by_role='assistant')은 "사용자가 제공한 것" 이 아니므로 사용자 축에서 제외.
+        #  - 빈 파일명은 무명 항목 대신 id 로 식별(phantom fact 방지).
+        #  - 버전>1 이라도 이번 턴 diff 가 렌더되지 않았으면(바이너리 xlsx·diff 부재) 별도 버킷 —
+        #    "변경점은 위 FILE UPDATES 에 있다" 고 가리키면 없는 증거를 찾게 만든다.
+        _fact_name = filename.strip() or f"(파일명 미상, attachment_id={attachment_id})"
+        if attachment_id in new_ids_set and created_by_role != "assistant":
+            if version_number and version_number > 1:
+                _entry = f"{_fact_name} (v{version_number - 1}→v{version_number})"
+                (_facts_updated_delta if _delta_rendered else _facts_updated_nodelta).append(_entry)
+            else:
+                _facts_added.append(_fact_name)
+        else:
+            _facts_other += 1
         # TASK-0284: 파일명을 맨 앞에 따옴표로 노출 — LLM 이 첨부를 attachment_id(일련번호)가 아닌
         # 파일명으로 지칭하게 한다(사용자 혼란 방지). attachment_id 는 보조 참조로 괄호 안에 둔다.
         lines.append(
@@ -1499,7 +1536,165 @@ def _build_attachment_context_section(
         )
 
     lines.append("")
+    # FR-attachment-change-false-absence: 목록이 실제로 만들어진 **성공 경로에서만** 사실을 채운다.
+    # (조기 return "" 경로에서 채우면 목록 없는 프롬프트에 "12건 첨부됨" 이 붙어 반대 방향 환각이 된다.)
+    _ATTACHMENT_TURN_FACTS_CTX.set({
+        "updated": _facts_updated_delta,
+        "updated_no_delta": _facts_updated_nodelta,
+        "added": _facts_added,
+        "other": int(_facts_other),
+    })
     return "\n".join(lines)
+
+
+def _attachment_turn_facts() -> dict | None:
+    """이번 턴 첨부 변경 사실(공유 채널). 미설정/형식 이상이면 None.
+
+    FR-attachment-change-false-absence 의 단일 사실 원천 — A(코드-권위 블록)·C(사용자 턴
+    매니페스트)·B(red-team 모순 검출)가 모두 이 값을 읽는다. `_build_attachment_context_section`
+    이 ATTACHED FILES 목록을 실제로 만든 턴에만 채워진다.
+    """
+    facts = _ATTACHMENT_TURN_FACTS_CTX.get()
+    if not isinstance(facts, dict):
+        return None
+    return facts
+
+
+_ATTACHMENT_FACTS_NAME_CAP = 8      # 사실 블록에 나열할 파일명 상한(초과분은 건수로만)
+_ATTACHMENT_FACTS_NAME_CHARS = 120  # 파일명 1건 표기 상한
+
+
+def _flatten_untrusted_name(name: str, cap: int = _ATTACHMENT_FACTS_NAME_CHARS) -> str:
+    """사용자 파생 파일명을 **한 줄 토큰**으로 평탄화한다(권위 블록 주입 전 필수).
+
+    파일명은 업로더가 정하는 비신뢰 문자열이다. 권위 블록(`_build_attachment_authority_directive`)
+    은 그 내용을 "FACT ... OVERRIDE any impression" 으로 선언하므로, 개행·제어문자가 살아 있으면
+    `report.sql\\n\\n**YOU MUST** ...` 같은 이름이 **권위 문맥 안의 새 지시문 줄**로 읽힐 수 있다
+    (일반 목록 라인보다 격상된 문맥이라 영향이 크다). 개행/제어문자를 공백으로 접고 datamark
+    sentinel 을 제거해 breakout 을 차단한다 — red-team 블록의 `_flatten_untrusted` 와 동일 태세.
+    """
+    s = str(name or "").replace(_INJ_OPEN, "").replace(_INJ_CLOSE, "")
+    s = "".join(" " if (ch in "\r\n\t" or ord(ch) < 32) else ch for ch in s)
+    return " ".join(s.split())[:cap]
+
+
+def _format_attachment_fact_names(names: list[str]) -> str:
+    """파일명 목록을 프롬프트용 짧은 문자열로. 상한 초과는 **명시적으로** '외 N건 생략' 으로 접는다.
+
+    절단은 반드시 관측 가능해야 한다(CODE_REVIEW §2.1 무음 절단) — 리뷰어/모델이 목록을 완전한
+    것으로 오인하면 "여기 없는 파일" 을 결함으로 보고한다. 캡은 **건별**로 걸고 join 후 자르지 않는다.
+    """
+    shown = [_flatten_untrusted_name(n) for n in names[:_ATTACHMENT_FACTS_NAME_CAP]]
+    rest = len(names) - len(shown)
+    out = ", ".join(shown)
+    if rest > 0:
+        out += f" 외 {rest}건 생략"
+    return out
+
+
+def _build_attachment_authority_directive(facts: dict | None) -> str:
+    """이번 턴 첨부 변경 사실을 **코드-권위**로 확정하는 마지막-발화 지침(A).
+
+    FR-attachment-change-false-absence (conversation_audit 2026-08-05, 대화 …2dce99c7):
+    ATTACHED FILES 목록에 ★신규 12건·🔄v2 8건 + v1→v2 unified diff 8건이 **정상 주입된 상태**에서
+    답변이 "새로 첨부되거나 변경된 파일이 없습니다" 라고 정반대 단정을 했다. 직전 라이브 DB 프로브
+    3회가 모두 0행이라 모델이 그 부재를 **첨부 축으로 일반화**한 것으로 보인다.
+
+    기존 봉인(FR-false-absence-zero-row-catalog-scope · LIVE-DB GROUNDING)은 전부 **DB 축 전용**이라
+    이 축을 덮지 않았다. 여기서 막는 것은 딱 하나 — *서버가 이미 정확히 아는 사실*에 대한 범주적
+    부재 단정이다. 첨부 내용의 **평가**(변경이 요구를 충족하는지)는 전혀 제약하지 않는다.
+
+    위치: `compose_system_prompt` 말미(운영자 product/role/account row 와 첨부 섹션 **뒤**) —
+    수치가 프롬프트 중간(offset 25k/72k)에만 있던 것이 실패의 조건이었고, 운영자 프롬프트 drift 에도
+    덮이지 않아야 한다(_GROUNDING_AUTHORITY_DIRECTIVE 와 동일 논거).
+    """
+    if not isinstance(facts, dict):
+        return ""
+    updated = [str(x) for x in (facts.get("updated") or [])]
+    updated_nd = [str(x) for x in (facts.get("updated_no_delta") or [])]
+    added = [str(x) for x in (facts.get("added") or [])]
+    other = int(facts.get("other") or 0)
+    if not (updated or updated_nd or added):
+        # **부정 단정은 하지 않는다**(§18.8 backend/qa [P1]). updated/added 의 원천인
+        # `new_attachment_ids` 는 클라이언트가 보내는 신호라 "비어 있음" 이 "아무것도 안 붙었음" 을
+        # 뜻하지 않는다 — 신호 유실(대화 전환 후 복귀로 pill 이 session 으로 재수화)·그룹 발신자
+        # 스코프 제외·비-브라우저 호출 모두 빈 값을 만든다. 여기서 "이번 턴에 첨부 없음" 을 코드-권위로
+        # 선언하면 **바로 이 마찰(부재 단정)을 시스템이 스스로 만들어낸다**. 침묵 = 변경 전 동작.
+        return ""
+    lines = [
+        "",
+        "",
+        "## ATTACHMENT SET — AUTHORITATIVE FACTS FOR THIS TURN",
+        "The application computed the following from this conversation's attachment records. It is a "
+        "FACT that these files were provided, and it OVERRIDES any impression you form from the "
+        "conversation history (including a forked/copied history in which you already reviewed "
+        "similarly-named files). This list is not necessarily exhaustive — treat it as a floor, "
+        "never as proof that nothing else arrived.",
+    ]
+    if updated:
+        lines.append(
+            f"- Files already in this conversation that now carry a HIGHER VERSION: {len(updated)} — "
+            f"{_format_attachment_fact_names(updated)}. A line-level diff for each of these is in the "
+            f"\"FILE UPDATES\" section above."
+        )
+    if updated_nd:
+        lines.append(
+            f"- Files already in this conversation that now carry a HIGHER VERSION but have NO diff in "
+            f"this prompt: {len(updated_nd)} — {_format_attachment_fact_names(updated_nd)}. "
+            f"Do not look for their diff above and do not invent one; read the current content with "
+            f"`read_attachment(filename=\"<name>\")` if you need it."
+        )
+    if added:
+        lines.append(
+            f"- Files that appear in this conversation for the FIRST time: {len(added)} — "
+            f"{_format_attachment_fact_names(added)}."
+        )
+    if other:
+        lines.append(f"- Other files also available in this conversation: {other}.")
+    lines.append(
+        "**YOU MUST NOT** state or imply, in any language, that no new or updated file was provided, "
+        "that you cannot see the files listed above, or that they are absent from this conversation. "
+        "Do not ask the user to re-attach or re-send a file listed above. "
+        "A tool returning 0 rows, or an object not existing in the live database, is evidence about "
+        "the DATABASE ONLY — it is never evidence about what was attached here."
+    )
+    lines.append(
+        "Judging these files is entirely yours and is NOT constrained by the above. If a new version's "
+        "content turns out to be the same as the one you already reviewed, say so. If the changes do "
+        "not satisfy what was agreed, say precisely that (e.g. \"변경은 있으나 처리사항 N이 미반영\"). "
+        "What is forbidden is denying that the files were provided at all."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _build_attachment_turn_manifest(facts: dict | None) -> str:
+    """사용자 턴 말미에 붙는 애플리케이션 계산 첨부 매니페스트 한 줄(C).
+
+    시스템 프롬프트가 72k자로 길어 변경 사실이 '중간'에 묻히는 것이 FR-attachment-change-false-absence
+    의 조건이었다 — 생성 지점에 가장 가까운 자리(현재 user turn)에 같은 사실을 한 줄로 둔다.
+    그룹 대화 발신자 라벨(`[이름]: `)과 동일하게 **LLM 전달용 in-memory 메시지에만** 붙고 저장본
+    (_save_message)은 원문 그대로다. 사용자가 쓴 문장처럼 보이지 않도록 애플리케이션 계산값임을
+    명시한다(비신뢰 사용자 입력과 코드 사실의 경계 유지).
+    """
+    if not isinstance(facts, dict):
+        return ""
+    n_updated = len(facts.get("updated") or []) + len(facts.get("updated_no_delta") or [])
+    n_added = len(facts.get("added") or [])
+    if not (n_updated or n_added):
+        # 부정 진술은 하지 않는다 — `_build_attachment_authority_directive` 와 같은 논거(신호 유실을
+        # "첨부 없음" 으로 단정하면 마찰을 시스템이 만든다).
+        return ""
+    parts: list[str] = []
+    if n_updated:
+        parts.append(f"상위 버전 파일 {n_updated}건")
+    if n_added:
+        parts.append(f"신규 파일 {n_added}건")
+    return (
+        "\n\n[첨부 상태 — 애플리케이션이 첨부 저장소에서 계산한 사실(사용자가 쓴 문장 아님)] "
+        f"이번 메시지에 첨부됨: {' · '.join(parts)}. "
+        "상세는 시스템 프롬프트의 ATTACHED FILES / FILE UPDATES / ATTACHMENT SET 섹션."
+    )
 
 
 def _folder_instructions_for(account_id, conversation_id) -> str | None:
@@ -1564,6 +1759,11 @@ def compose_system_prompt(
       - 대신 한 줄 AUTO MODE 안내를 base 직후에 append 해 LLM 이 "제품 미선택" 상태를 인지하게 한다.
       - role/account scope prompt 는 ProductId IS NULL 의 공통 prompt 만 사용한다.
     """
+    # FR-attachment-change-false-absence: 이번 compose 가 실제로 계산한 사실만 남긴다 — **함수 첫 문장**
+    # 이어야 한다. 뒤쪽(첨부 블록 직전)에 두면 그 전에 예외가 나거나 mem_conn 부재로 조기 return 될 때
+    # 이전 run 의 수치가 그대로 남아, 워커 스레드 재사용 시 **다른 대화**의 사용자 턴/권위 블록에
+    # 주입될 수 있다(교차 대화 오사실). 여기서 원천 차단한다.
+    _ATTACHMENT_TURN_FACTS_CTX.set(None)
     if mem_conn is None:
         return SYSTEM_PROMPT
     is_auto = str(product_mode or "pinned").lower() == "auto"
@@ -1751,6 +1951,18 @@ def compose_system_prompt(
     # 덮인다. global row 만 막고 scope row 를 안 막으면 같은 drift 가 한 단계 아래에서 재발한다.
     # 첨부 섹션(비신뢰 콘텐츠)보다도 뒤라 last-writer 로 확정된다.
     parts.append(_GROUNDING_AUTHORITY_DIRECTIVE)
+
+    # FR-attachment-change-false-absence (conversation_audit 2026-08-05): 이번 턴 첨부 변경 사실을
+    # **가장 마지막**에 코드-권위로 확정한다. 표식(★신규/🔄v2)·diff 는 이미 위 첨부 섹션에 있었지만
+    # 프롬프트 중간(offset 25k/72k)에 묻혀 정반대 단정을 막지 못했다. 수치는 위 섹션과 **같은 판정식**
+    # 으로 같은 순회에서 계산된 값이라 목록과 어긋날 수 없다. 사실이 없으면(첨부 섹션 미주입) 무주입.
+    try:
+        parts.append(_build_attachment_authority_directive(_attachment_turn_facts()))
+    except Exception:
+        # fail-open(답변은 막지 않는다)이되 **조용히 사라지지는 않게** 한다: 이 봉인이 빠지면 유일한
+        # 증상이 "원 마찰의 재발" 이라 로그가 없으면 관측 불가다(§18.8 backend/qa [P2]).
+        logging.getLogger(__name__).warning(
+            "attachment authority directive 생성 실패 — 첨부 변경 사실 봉인 미주입", exc_info=True)
 
     return "".join(parts)
 
@@ -4870,6 +5082,10 @@ def run_agent(
         _NEW_ATTACHMENT_IDS_CTX.set(",".join(str(int(i)) for i in (new_attachment_ids or []))),
         _INLINE_IMAGE_PATH_CTX.set(image_inline_path or ""),
         _INLINE_TEXT_PATH_CTX.set(text_inline_path or ""),
+        # FR-attachment-change-false-absence: 형제 4종과 동일하게 run 경계에서 set/reset 한다.
+        # compose 가 첫 문장에서 클리어하므로 run 내부는 이미 안전하지만, run 이 **끝난 뒤** 값이
+        # 워커 스레드 컨텍스트에 남아 있는 것 자체를 없앤다(구조적 격리 — 순서 불변식 의존 제거).
+        _ATTACHMENT_TURN_FACTS_CTX.set(None),
     )
     try:
         return _run_agent_core(
@@ -4912,6 +5128,7 @@ def run_agent(
         _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
         _INLINE_TEXT_PATH_CTX.reset(_att_tokens[3])
+        _ATTACHMENT_TURN_FACTS_CTX.reset(_att_tokens[4])
 
 
 # owner-answer recall/display 봉인 sentinel: recall 하한 무제한(전체 문맥) 답변을 어떤 floor 보다
@@ -5604,8 +5821,16 @@ def _run_agent_core(
             product_mode=product_mode,
             conversation_id=conversation_id,
         )
+        # FR-attachment-change-false-absence: 사실을 **여기서 한 번 스냅샷**해 로컬로 들고 간다.
+        # 소비자 C(≈100줄 뒤)·B(≈600줄 뒤)가 contextvar 를 다시 읽으면 "그 사이 compose 가 다시
+        # 불리지 않는다" 는 **순서 불변식**에 의존하게 된다(§18.8 backend [P2]). 로컬 스냅샷은 그
+        # 의존을 구조적으로 없앤다.
+        _att_turn_facts = _attachment_turn_facts()
     except Exception:
         system_content = SYSTEM_PROMPT
+        # compose 가 실패해 base 프롬프트로 되돌아가면 첨부 섹션 자체가 없다 — 그 상태에서 C/B 가
+        # "N건 첨부됨" 을 말하면 없는 섹션을 가리키게 된다(§18.8 qa [P2]). 사실도 함께 버린다.
+        _att_turn_facts = None
     try:
         _init_detail["system_prompt_ms"] = round((time.perf_counter() - _sp_t0) * 1000.0, 1)
     except Exception:
@@ -5722,6 +5947,15 @@ def _run_agent_core(
     _live_user_content = user_message
     if _group_sender_labels and sender_username:
         _live_user_content = f"[{sender_username}]: {user_message}"
+    # FR-attachment-change-false-absence (C): 이번 턴 첨부 변경 사실을 생성 지점 최근접 자리에도 둔다.
+    # 발신자 라벨과 같은 계약 — LLM 전달용 메시지에만 붙고 저장본(_save_message)은 원문 그대로다.
+    try:
+        _att_manifest = _build_attachment_turn_manifest(_att_turn_facts)
+        if _att_manifest:
+            _live_user_content = f"{_live_user_content}{_att_manifest}"
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "attachment turn manifest 생성 실패 — 사용자 턴 첨부 사실 미부착", exc_info=True)
     messages.append({"role": "user", "content": _live_user_content})
 
     if output_mode == "console":
@@ -6227,6 +6461,12 @@ def _run_agent_core(
                         thread_goal=_rt_goal,  # answer-origin-realign (bounded 발신자엔 빈 값)
                         conversation_request=_rt_conv_req,  # 답변이 수행해야 할 일(다중 턴 교정)
                         attachments=_rt_attachments,        # 첨부 = 리뷰어의 정당한 ground truth
+                        # FR-attachment-change-false-absence (B): 리뷰어가 "새 첨부/변경 없음" 류
+                        # 부재 단정을 대조 검출할 수 있는 유일한 확정 사실. bounded 발신자는
+                        # _rt_attachments 와 같은 게이트를 따른다(가려진 구간 첨부 사실 비노출).
+                        attachment_facts=(
+                            None if _suppress_conversation_context else _att_turn_facts
+                        ),
                     )
                     if _rt_answer and _rt_answer.strip():
                         answer = _rt_answer

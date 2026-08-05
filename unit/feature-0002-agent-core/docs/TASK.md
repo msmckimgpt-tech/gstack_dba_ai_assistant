@@ -2163,3 +2163,42 @@ rationale=REVIEW `REV-20260731T203000-loadgate-postdeploy` ·
 rationale=REVIEW `REV-20260803T170000-loadgate-replay-verify` ·
 변경이력=MODIFY `CHG-20260803T170000-loadgate-replay-verify` ·
 마찰원장=`FR-loadgate-blind-coaching`.
+
+## TASK-20260805T1600 — 첨부 변경 사실 코드-권위 봉인 (conversation_audit `FR-attachment-change-false-absence`)
+
+- [x] 마찰 진단 — 대화 `…2dce99c7`(fork, admin, product 119) 답변이 "새로 첨부되거나 변경된 파일이
+      없습니다" 단정. DB 실측: v2 갱신 8 · 신규 4 · 이월 1 = 13(assistant 가 나열한 13과 일치).
+- [x] 컨텍스트 정상 전달 **입증**(거짓 원인 배제) — 배포본 ask-worker 재구성: `★신규` 12 · `🔄v2` 8 ·
+      본문 13건 인라인 · FILE UPDATES diff 8건, 섹션 38,013자. `ask_jobs.payload.new_attachment_ids`
+      12건 정상. 토큰 정합(재구성 66,131 vs 실제 91,054)으로 섹션 부재 시나리오 기각.
+- [x] 근본 확정 — 부재 단정을 막는 **코드-권위 규칙 부재**(기존 봉인 `FR-false-absence-zero-row` ·
+      LIVE-DB GROUNDING 은 **DB 축 전용**) + 표식이 72k자 프롬프트 **중간**(offset 25,840)에만 존재.
+- [x] A — `compose_system_prompt` 말미 코드-권위 사실 블록(`_build_attachment_authority_directive`).
+- [x] C — 사용자 턴 매니페스트 한 줄(`_build_attachment_turn_manifest`, LLM 전달용 한정).
+- [x] B — red-team 리뷰어 능동 검출(`build_attachment_change_facts` + 프롬프트 BLOCK 규칙, find/verify 양 패스).
+- [x] 단일 사실 채널(`_ATTACHMENT_TURN_FACTS_CTX`) — compose 첫 문장 클리어로 교차-대화 오염 차단.
+- [x] 보안 흡수 — 권위 블록 비신뢰 파일명 평탄화(`_flatten_untrusted_name`).
+- [x] 테스트 18건 + `make test` 전량 exit 0 + ruff clean.
+- [x] dogfood(배포 전 최대치) — 실패 대화 데이터로 실측: 사실 8/4/1 정확 · 권위 블록 offset
+      68,005/69,813(**최종 위치**, LIVE-DB GROUNDING 63,854 뒤) · 기존 표식 회귀 0.
+- [x] §18.8 backend/qa 적대 패널(사용자 승인 후 호출) — **BLOCK** 판정, [P1] 5 · [P2] 8 **전건 흡수**:
+      부정 분기 제거(클라이언트 신호를 store 권위로 단정하던 구조) · 리뷰어 블록 무음 절단 제거 ·
+      diff 미렌더 파일 분리 · 내용 동일 결론 금지 해제 · 배선 seam 테스트 신설.
+- [x] 뮤테이션 역검증 8종 전건 KILLED(m1 A삭제·m2 위치이동·m4 C합치기·m5 verify패스·m6 bounded게이트·
+      m10 0행경로·m11 부정단정·m12 무음절단) — 초판은 이 중 6종이 전부 생존했다.
+- [x] 재-dogfood — 사실 8/0/4/1 · A 블록 최종 위치(49,741/51,707, LIVE-DB GROUNDING 45,590 뒤) ·
+      기존 표식 회귀 0(★신규 12·🔄v2 8·diff헤더 8) · A 블록 1,968자.
+- [ ] 라이브 실측(배포 후) — 같은 시나리오에서 부재 단정이 사라지는지 + 리뷰어 BLOCK 발동 여부.
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260805T1600
+- [x] `첨부 v2 갱신을 assistant 가 인식하지 못하는 이슈 개선` — 산출물: A+C+B 3축 봉인 ·
+      배선 확인: dogfood 실측(권위 블록 최종 위치 + 사실 8/4/1) · 리뷰어 사실 블록 초안 앞 주입 테스트.
+- [x] `admin 계정 / fork 대화 한정 확인` — 산출물: fork 10건 중 v2 재업로드 3건 대조
+      (`…774ada22`·`…72c11c4b` 는 정상 인식 → 결정적 파손 아닌 **비결정 실패**로 정직 표기).
+
+**주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 없음(전부 LLM 컨텍스트 내부) → `해당 없음`.
+
+### 정본
+rationale=REVIEW `REV-20260805T160000-attach-change-false-absence` ·
+변경이력=MODIFY `CHG-20260805T160000-attach-change-false-absence` ·
+마찰원장=`FR-attachment-change-false-absence`.

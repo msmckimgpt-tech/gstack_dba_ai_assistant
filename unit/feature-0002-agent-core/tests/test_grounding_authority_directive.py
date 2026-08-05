@@ -280,6 +280,30 @@ def test_grounding_contract_is_the_final_word():
         "grounding 계약 뒤에 다른 지시가 붙으면 last-writer 보장이 깨진다"
 
 
+def test_only_attachment_facts_may_follow_the_grounding_contract():
+    """유일하게 허용된 supersede — 첨부 변경 사실 블록(FR-attachment-change-false-absence).
+
+    위 테스트는 `_composed()` 에 첨부가 없어서만 성립한다(첨부가 있으면 endswith 가 깨진다).
+    그 사실을 **계약으로 명문화**하지 않으면, 이 변경이 문서화된 last-writer 불변식을 조용히
+    위반한 것이 된다(§18.8 qa [P2]). 허용 범위는 좁다:
+      - 뒤에 붙을 수 있는 것은 `## ATTACHMENT SET` 단 하나
+      - 그것은 **데이터 파생 사실**이지 새 행동 규칙이 아니며, grounding 계약과 모순되지 않는다
+        (오히려 "0행은 DB 축 증거일 뿐" 으로 같은 방향을 강화한다)
+    다른 지시가 grounding 뒤에 새로 추가되면 이 테스트가 FAIL 해야 한다.
+    """
+    facts = {"updated": ["a.sql (v1→v2)"], "updated_no_delta": [], "added": [], "other": 0}
+    tail = A._build_attachment_authority_directive(facts)
+    assert tail.strip().startswith("## ATTACHMENT SET")
+    composed = _composed() + tail
+    # grounding 뒤에 남는 것은 첨부 사실 블록 하나뿐 — 그 앞까지는 여전히 grounding 이 끝이다.
+    head = composed[: composed.index("## ATTACHMENT SET")]
+    assert head.rstrip().endswith(A._GROUNDING_AUTHORITY_DIRECTIVE.rstrip()), \
+        "grounding 계약과 첨부 사실 블록 사이에 다른 지시가 끼어들면 안 된다"
+    # 첨부 사실 블록은 행동 규칙을 새로 만들지 않는다 — grounding 의 조회 의무를 약화시키는
+    # 문구가 들어오면 회귀다.
+    assert "without checking" not in tail and "no need to verify" not in tail
+
+
 def test_prior_code_authority_directives_still_present():
     """선행 AUTH-1a 지침들과 공존해야 한다(회귀 0)."""
     p = _composed()

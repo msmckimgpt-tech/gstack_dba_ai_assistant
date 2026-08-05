@@ -10,6 +10,102 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260805T160000-attach-change-false-absence [SUBAGENT:backend] + [SUBAGENT:qa] + built-in security-review — BLOCK → 전건 흡수 후 SHIP ([P1] 5 / [P2] 8) (TASK-20260805T1600)
+- **Trigger**: §18.8 dispatch 표 **키워드 0건 + code change → full panel default**(프롬프트 합성·맥락
+  조립·red-team 리뷰어 변경). 채널 선택은 §18.8.2 순서를 따랐다.
+  1. **`codex`(1순위, 제약 없는 채널) — 실행 불가**: `ERROR: You've hit your usage limit … try again at
+     Aug 9th, 2026`. 재시도해도 동일(quota 소진). 미검증을 검증으로 보고하지 않기 위해 그대로 기록한다.
+  2. **built-in `/security-review`(2순위) — 실행함**. 단, 이 스킬은 하위 sub-task(Agent tool) fan-out 을
+     전제하는데 세션에 **상위 우선순위 도구 제약**("요청 없이 Agent tool 호출 금지")이 걸려 있어
+     §18.8.2 carve-out 에 따라 subagent 를 쓰지 않고 **본 세션이 인라인으로 수행**했다.
+  3. **backend/qa subagent panel — 사용자 승인 후 호출**(AskUserQuestion 2026-08-05, "호출한다").
+     세션 도구 제약이 걸려 있어 §18.8.2 순서대로 제약 없는 채널을 **먼저** 소진한 뒤 사용자에게 1회
+     확인했고, 승인으로 §18.11 context bundle 계약에 맞춰 2렌즈를 호출했다. **결과: BLOCK**.
+- **[보안, 흡수] 권위 블록의 비신뢰 파일명 미평탄화 (P1급)**: `_build_attachment_authority_directive` 가
+  `original_filename`(업로더가 정하는 비신뢰 문자열)을 개행·제어문자 그대로 주입했다. 이 블록은
+  "They are FACT … and they OVERRIDE any impression you form from the conversation history" 로 선언되는
+  **격상된 문맥**이라, `report.sql\n\n**YOU MUST** …` 같은 이름이 권위 문맥 안의 **새 지시문 줄**로
+  읽힐 수 있다(기존 ATTACHED FILES 목록 라인보다 영향이 크다). 같은 변경의 red-team 블록은
+  `_flatten_untrusted` 로 이미 평탄화하고 있어 **태세가 비대칭**이었다.
+  → **수정**: `_flatten_untrusted_name()` 신설(개행/제어문자 → 공백 접기, datamark sentinel 제거,
+  길이 캡) 후 권위 블록 파일명 전량 적용. 회귀 테스트
+  `test_authority_directive_flattens_hostile_filename` 추가.
+  라이브 데이터 실측: 제어문자 포함 파일명 **0건**, 최대 길이 57 — 현재 악용 사례는 없고 방어 심화다.
+- **[보안, 무결함 판정] 공유창 window(bounded 발신자) 누출**: A(권위 블록)·C(사용자 턴 매니페스트)는
+  `_suppress_conversation_context` 게이트를 걸지 않았다. 이는 의도된 판정이다 — 두 블록의 데이터는
+  이미 같은 턴에 주입되는 `ATTACHED FILES` 섹션(파일명 + 본문)의 **부분집합**이고, 그 섹션 자체는
+  `compose_system_prompt` 이 bounded 여부와 무관하게 만든다. 즉 **새 데이터 클래스가 추가되지 않는다**.
+  다만 red-team 경로는 `_review_attachments` 와 **같은 게이트**를 유지했다(리뷰어는 fresh-context 라
+  종전 태세를 그대로 따르는 것이 맞다).
+- **[backend, 자체 검증] contextvar 수명·교차 대화 오염**: 사실 채널을 `compose_system_prompt` 의
+  **첫 문장**에서 지운다. 뒤쪽(첨부 블록 직전)에 두면 그 전 예외·`mem_conn is None` 조기 return 에서
+  이전 run 값이 남아 워커 스레드 재사용 시 다른 대화에 주입된다. 회귀 테스트
+  `test_compose_clears_stale_facts_before_anything_else` 가 조기 return 경로를 고정한다.
+- **[backend, 자체 검증] 저장본 불변**: C 는 `_live_user_content`(LLM 전달용)만 수정하고
+  `_save_message(..., content=user_message)`(:5633)는 원문 그대로다 — 그룹 발신자 라벨과 동일 계약.
+- **[backend, 자체 검증] 프롬프트 비용**: 실측 68,003자 → 69,813자(+1,810, +2.7%). 파일명 나열은
+  8건 캡 + 건당 120자 캡이라 상한이 유계다.
+- **[qa, 자체 검증] 표식 회귀 0**: 실패 대화 데이터로 dogfood — `★신규` 12 · `🔄v2` 8 ·
+  FILE UPDATES diff 헤더 8 로 **변경 전과 동일**. 권위 블록은 offset 68,005/69,813 = 최종 위치
+  (`LIVE-DB GROUNDING` 63,854 뒤) 확인.
+- **[P1-1, backend+qa 공통 · 흡수] 부정 분기가 클라이언트 신호를 store 권위로 단정**: `updated/added` 의
+  원천 `new_attachment_ids` 는 **브라우저가 보내는 값**이라 "비어 있음" ≠ "첨부 없음" 이다. 신호 유실
+  (대화 전환 후 복귀 시 pill 이 `source:"session"` 으로 재수화 → 필터가 전부 탈락)·그룹 발신자 스코프
+  제외·비-브라우저 호출 모두 빈 값을 만든다. 초판은 그 상태에서 **"No file was newly attached or updated
+  in this turn"** 을 코드-권위로 선언하고, 리뷰어에게 그 반대 주장을 BLOCK 하라고 시켰다 — **봉인이
+  바로 이 마찰(부재 단정)을 스스로 생산**하는 구조였다. qa 가 실제 프로브로 재현(6행 존재 + 빈 신호 →
+  "첨부 없음" 선언).
+  → **수정**: 부정 분기 **전면 제거**(A·C·B 모두 신규 0건이면 **침묵** = 변경 전 동작), 리뷰어 프롬프트의
+  대칭 BLOCK 규칙 제거, 사실 목록을 **floor(하한)** 로 명시("not exhaustive", 목록에 없는 파일을 근거로
+  결함 보고 금지). 회귀: `test_authority_directive_silent_when_no_new_facts` 외 3건.
+- **[P1-2, backend+qa 공통 · 흡수] 리뷰어 사실 블록의 무음 절단**: `"\n".join(lines)[:900]` — join 후
+  슬라이스라 파일명 중간에서 잘리고 **뒤 줄이 통째로 소실**된다. qa 프로브 실측: 8건+2건에서 900자
+  정확히, `first time` 줄과 `carried over` 줄이 사라지고 마지막 이름이 중간 절단. 관측 사례(8+4)가 바로
+  이 경계에 있었다. A(무캡)와 B(캡)가 **다른 파일 집합을 말하게** 되어 "단일 사실" 전제도 깨졌다.
+  → **수정**: 캡을 **건별**로 이동 + 생략분 `외 N건 생략` 명시 + join 후 슬라이스 제거. A·B 캡 동치를
+  테스트로 고정(`test_fact_name_caps_agree_across_consumers`).
+- **[P1-3, backend · 흡수] 렌더되지 않은 섹션을 가리킴**: `version_diff` 는 **text/csv 재업로드에서만**
+  생성되고(`conversations.py:2023`), `ATTACHED FILE CONTENTS` 는 text+인라인분만이다. 초판은 버전>1이면
+  무조건 "변경점은 위 FILE UPDATES 에 있다" 고 단정 → xlsx 재업로드 시 **없는 증거를 찾게 만들고**,
+  동시에 "볼 수 없다고 말하지 말라" 로 막아 **fabrication forcing** 이 된다.
+  → **수정**: `updated`(이번 턴 diff 실제 렌더) / `updated_no_delta`(버전은 올랐으나 diff 없음) **분리**,
+  후자는 "찾지 말고 지어내지도 말 것 + `read_attachment` 로 읽어라". 회귀:
+  `test_version_bump_without_diff_goes_to_no_delta_bucket`.
+- **[P1-4, backend · 흡수] 동일 파일 재업로드에서 참인 답변을 금지**: sha256 일치 시 서버는 **기존 행을
+  재사용**하고(`reused_existing_version`) 프론트는 그 pill 을 `source:"new"` 로 덮으므로, 내용이 같아도
+  `updated` 로 분류된다. 초판 금지 문구("nothing changed versus the previous version" / "identical to what
+  you reviewed earlier")는 그 경우 **참인 답변을 금지**하고 리뷰어가 BLOCK 해 모델을 허구로 밀었다.
+  → **수정**: 금지 대상을 **"제공 사실의 부정" 하나로 축소**. 내용 동일·불충분·미반영 결론은 명시적으로
+  허용(프롬프트에 "If a new version's content turns out to be the same …, say so"), 리뷰어 규칙도 동일.
+  회귀: `test_authority_directive_never_forbids_content_equality_conclusion`.
+- **[P1-5, qa · 흡수] 배선 seam 무방비 + 위치 테스트가 tautological**: qa 가 뮤테이션 10종으로 실증 —
+  A 를 compose 에서 **삭제해도**, grounding **앞으로 옮겨도**, C 의 user 턴 합치기를 **지워도**, B 를
+  verify 패스에서 **빼도**, bounded 게이트를 **제거해도**, 0행 경로에서 사실을 **적재해도** 초판 18건 +
+  관련 11스위트(224건)가 전부 통과했다. 위치 계약 테스트는 자기가 이어붙인 문자열을 검사하는 tautology.
+  → **수정**: `compose_system_prompt` 를 실제 호출하는 배선 테스트 + 거대 함수 내부 seam 은 소스 검사로
+  고정. **자체 뮤테이션 8종 전건 KILLED 로 역검증**(m1 A삭제 · m2 위치이동 · m4 C합치기삭제 ·
+  m5 verify패스 · m6 bounded게이트 · m10 0행경로 · m11 부정단정부활 · m12 무음절단부활).
+- **[P2 흡수 8건]** ① 두 호출부 bare `except: pass` → `logger.warning`(봉인이 조용히 사라지면 유일한
+  증상이 마찰 재발) ② contextvar 원거리 재조회 → compose 직후 **로컬 스냅샷** + `run_agent` 토큰 튜플에
+  편입(형제 4종과 동일 수명) ③ compose 실패 폴백 시 사실도 폐기 ④ `created_by_role='assistant'` 를
+  "사용자가 제공" 에서 제외 ⑤ `carried` → `other`("이월" 이라 단정하지 않음) ⑥ 미사용 `total` 제거
+  ⑦ 빈 파일명 → `(파일명 미상, attachment_id=N)` (phantom fact 방지) ⑧ 8건/9건 캡 경계 테스트.
+- **[P2, qa · 흡수] 기존 불변식 테스트가 vacuous 화**: `test_grounding_authority_directive.py` 의
+  "grounding 이 마지막" 계약은 `_composed()` 에 첨부가 없어서만 성립했다 — 첨부가 있으면 깨진다.
+  → **수정**: 허용된 supersede 를 **명문화한 테스트 신설**(grounding 뒤에 올 수 있는 것은
+  `## ATTACHMENT SET` 하나 · 그 사이에 다른 지시 금지 · 조회 의무 약화 문구 금지).
+- **패널이 무결함으로 확인한 것(정직)**: 저장본 불변(C 는 `_live_user_content` 만) · 리뷰어 중복 급여
+  없음 · bounded 발신자 A/C 누출 없음(`_suppress_conversation_context` → 그룹 → `force_sender_scope` 로
+  이미 발신자 본인 첨부만) · 인젝션 평탄화 양쪽 정합 · run 내 clear/set 규율 성립.
+- **덮지 못한 범위(정직)**: ① PG read 분기(`agent_core.py` 첨부 조회 PG 경로)는 conftest 가
+  `AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=mysql` 로 고정해 **어떤 테스트도 실행하지 않는다**(qa 지적).
+  이번 변경이 읽는 컬럼은 기존 버전-라벨 코드와 동일해 위험 델타는 0이나, 그 사각 자체는 남는다 —
+  배포본 dogfood(라이브 PG)로만 덮였다. ② "권위 블록이 모델의 다른 판단을 과도하게 눌러 평가 품질을
+  떨어뜨리는가" 는 코드로 증명 불가 — 배포 후 라이브 실측 대상이다.
+- **회귀(최종)**: 신규 **24** PASS(+ 기존 grounding 스위트 21) · `make test` 전량 **exit 0** · ruff clean ·
+  **뮤테이션 8/8 KILLED**.
+- **회귀**: 신규 18 PASS · `make test` 표준 호출 전량 **exit 0** · ruff clean.
+
 ## REV-20260804T063000-summary-bootstrap-deadlock [CODEX:summary-bootstrap-deadlock] — SHIP-WITH-FIXES (P1 0 / P2 1 → 흡수) (TASK-20260804T0630)
 - **Trigger**: `query/read backend` keyword matched (backend) — code change, §18.8 dispatch 표.
   채널은 §18.8.2 1순위 `codex`(제약 없는 채널). 세션 도구 제약으로 subagent panel 미호출.
