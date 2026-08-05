@@ -1209,3 +1209,18 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   계약 1건. **자체 뮤테이션 8종 전건 KILLED**(초판은 6종 생존).
 - **위험등급**: Major(§12.3 동일 경로). **Cross-ref**: `REV-20260805T160000-attach-change-false-absence` ·
   원장 `FR-attachment-change-false-absence`.
+
+## CHG-20260805T180000-attach-change-deploy 배포 완료 기록 (문서만)
+- **배포**: PR #1155 merge main `70df13a3` → `make deploy-web` 전체 스코프(web 무중단 롤링 + 워커 재빌드
+  + gateway reconcile). post-cutover soak 90s 통과, 롤백 0. last-good 은 web `5977f5f7` / agent `aa46e677`.
+- **4서비스 running/healthy**: ask-worker·insight-worker `70df13a3`, web-a·web-b `8b46bdec`
+  (배포 직후 병렬 세션이 PR #1156 머지·배포. `70df13a3` 이 `8b46bdec` 의 조상이라 4서비스 모두 본 변경 포함).
+- **배포본 런타임 실증(ask-worker, 라이브 연결)**: 신규 심볼 6종 적재 · 실패 대화 데이터로 실행 →
+  사실 updated 8 / no-delta 0 / added 4 / other 1 · 권위 블록 최종 위치 · 부정 단정 침묵 계약 True ·
+  리뷰어 floor 규칙 True · 대칭 BLOCK 제거 True. web /healthz ok·mysql_ok·pg_ok.
+- **미검증(정직)**: 실제 사용자 대화에서 부재 단정이 사라지는지 — 다음 audit corroboration 대상.
+  원장 status = `fixed:deployed:unverified-live`.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`,
+  `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`, `docs/LEARNINGS.md`(LRN-20260805-0002/0003).
+- **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260805T160000-attach-change-false-absence` ·
+  `CHG-20260805T173000-attach-change-panel-absorb` · 원장 `FR-attachment-change-false-absence`.

@@ -2188,7 +2188,14 @@ rationale=REVIEW `REV-20260803T170000-loadgate-replay-verify` ·
       m10 0행경로·m11 부정단정·m12 무음절단) — 초판은 이 중 6종이 전부 생존했다.
 - [x] 재-dogfood — 사실 8/0/4/1 · A 블록 최종 위치(49,741/51,707, LIVE-DB GROUNDING 45,590 뒤) ·
       기존 표식 회귀 0(★신규 12·🔄v2 8·diff헤더 8) · A 블록 1,968자.
-- [ ] 라이브 실측(배포 후) — 같은 시나리오에서 부재 단정이 사라지는지 + 리뷰어 BLOCK 발동 여부.
+- [x] 배포 완료(2026-08-05) — PR #1155 merge main `70df13a3` → `make deploy-web` 전체 스코프,
+      soak 90s 통과·롤백 0. 4서비스 healthy(워커 `70df13a3` · web `8b46bdec`, 후자는 전자의 후손이라
+      본 변경 포함 — `merge-base --is-ancestor` 확인).
+- [x] 배포본 런타임 실증 — ask-worker 에서 실패 대화 데이터로 `compose_system_prompt` 실행:
+      사실 8/0/4/1 · `## ATTACHMENT SET` 이 `## LIVE-DB GROUNDING` 뒤 최종 위치 · 부정 단정 침묵 계약
+      True(A·B) · 리뷰어 floor 규칙 True / 대칭 BLOCK 제거 True. web /healthz ok·mysql_ok·pg_ok.
+- [ ] 라이브 실측(사용자 대화) — 같은 시나리오에서 부재 단정이 사라지는지 + 리뷰어 BLOCK 발동 여부 +
+      권위 블록이 평가 품질을 누르지 않는지. 다음 audit 의 corroboration 대상.
 
 ### Requested Scope (요청 범위 자기-열거) — TASK-20260805T1600
 - [x] `첨부 v2 갱신을 assistant 가 인식하지 못하는 이슈 개선` — 산출물: A+C+B 3축 봉인 ·
