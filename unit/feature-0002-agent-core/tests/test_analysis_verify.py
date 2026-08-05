@@ -10,7 +10,10 @@ fail-open 이 확인 도장으로 둔갑하면 이 층은 있는 것보다 나�
   C(비용): pass 상한 · 1건 1콜 · 토큰 예산 배치별 재확인 · LLM 슬롯 게이트.
   D(격리): savepoint · 예외가 워커로 전파되지 않음.
 """
+import inspect
 import json
+import os
+import re
 
 import pytest
 
@@ -207,11 +210,94 @@ def test_targets_exclude_failed_evidence():
     assert "m.error IS NULL" in sql
 
 
-def test_targets_prefer_deeper_evidence():
+def _target_sql(limit=5):
+    """대상 조회 SQL 과 파라미터. (파이썬 주석은 SQL 문자열에 섞이지 않는다.)"""
     cur = _Cur()
-    av.pending_targets(cur, 5)
-    sql, _p = [c for c in cur.calls if "node_analysis_jobs" in c[0]][0]
-    assert "ORDER BY m.stage DESC" in sql
+    av.pending_targets(cur, limit)
+    return [c for c in cur.calls if "node_analysis_jobs" in c[0]][0]
+
+
+def test_targets_prefer_deeper_evidence():
+    """증거가 깊은 것 우선 — **바깥 정렬의 2차 키**로 위치까지 고정한다.
+
+    위치를 고정하지 않으면 stage 가 3차·4차로 밀려도 통과한다(적대 패널 지적: 종전 단정은
+    1차 키를 고정했는데 이번 변경으로 그 강도가 사라져 있었다)."""
+    sql, _p = _target_sql()
+    assert "ORDER BY t.verdict_at ASC NULLS FIRST, t.stage DESC" in sql
+
+
+def test_targets_take_only_the_latest_analysis_per_node():
+    """**노드당 최신 분석문 1건**만 대상이다 — 이것이 없으면 판정이 무한 순환한다.
+
+    `node_analysis_jobs` 에는 같은 노드에 대해 여러 분석 run 의 done 행이 쌓이는데, 저장은
+    `store_verdict` 가 노드당 1행만 유지한다. 두 정책이 어긋나면 A세대 저장 → B세대 미판정 →
+    B세대 저장(A행 삭제) → A세대 미판정 … 이 영원히 반복된다. 라이브에서 이 순환이 7일간
+    7,896콜(배경 LLM 호출의 62.8%)을 태우고 판정 행은 91개로 고정돼 있었다."""
+    sql, _p = _target_sql()
+    # ⚠ 주석을 걷어낸 뒤 본다 — `/* DISTINCT ON (...) */` 로 주석화하는 변이가 종전 단정을
+    #   그대로 통과했다(적대 패널 실측: 그 변이는 라이브에서 100행/92노드 = 중복 8행 복귀).
+    bare = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
+    assert "SELECT DISTINCT ON (j.scope_key, j.node_key)" in bare
+    inner = bare[bare.index("DISTINCT ON"):]
+    assert "ORDER BY j.scope_key, j.node_key, j.id DESC" in inner
+
+
+def test_latest_generation_is_chosen_by_id_not_updated_at():
+    """노드별 "최신"의 기준은 `id`(삽입 순)다 — `updated_at` 이 아니다.
+
+    `node_analysis_jobs` 의 모든 UPDATE 가 updated_at 트리거를 발화시켜, 과거 run 행이 재분석
+    행보다 "최신"으로 역전된다(role backfill 등). 이 저장소는 그 결함을 이미 겪고 `id DESC` 를
+    정본 규칙으로 삼았다(`node_analysis.get_node_analysis` · `_latest_done_analysis`). 기준이
+    갈리면 판정 대상과 상세 패널이 서로 다른 문장을 가리키고, **사용자가 볼 수 없는 텍스트에
+    확인 도장**이 찍힌다 — 라이브 실측(2026-08-05)에서 두 기준이 갈리는 노드가 13개였고 전부
+    분석문 텍스트가 달랐다."""
+    sql, _p = _target_sql()
+    bare = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
+    inner = bare[bare.index("DISTINCT ON"):bare.rindex(") t ")]
+    assert "j.id DESC" in inner
+    assert "updated_at" not in inner, "updated_at 은 신뢰할 수 없는 최신 기준이다"
+
+
+def test_targets_round_robin_by_oldest_verdict():
+    """판정이 오래된 것부터(미판정은 맨 앞) — 완충 구간이 전체보다 작아도 모두 순회된다.
+
+    "미판정 우선"만 두면 **갱신된 분석문의 재판정이 굶는다**: 미판정 집합 전체 뒤로, 다시 자기보다
+    깊은 stage 전체 뒤로 두 겹 강등되기 때문이다(적대 패널 지적). 대상이 2,052 노드로 늘고 완충이
+    100이면 순위 100 밖의 갱신은 영영 판정되지 않아 ADR-0036-04 계약이 조용히 죽는다.
+    판정하면 verdict_at 이 now() 로 갱신돼 큐 뒤로 가므로 같은 노드가 선두를 물지 않는다."""
+    sql, _p = _target_sql()
+    assert "ORDER BY t.verdict_at ASC NULLS FIRST" in sql
+
+
+def test_targets_buffer_exceeds_cap():
+    """완충 배수(limit*5)는 처리량을 지탱하는 유일한 장치다 — 윈도우 대부분이 skip 경로다.
+
+    (라이브 실측: 윈도우 92행 중 89행이 '이미 판정됨' skip.) 배수를 1로 되돌리는 변이가 종전
+    테스트를 통과했다 — 어떤 테스트도 params 를 보지 않았기 때문이다."""
+    _sql, params = _target_sql(limit=7)
+    assert params == (35,)
+
+
+def test_target_columns_match_unpacking_order():
+    """바깥 SELECT 의 **컬럼 순서**와 호출측 언팩 순서가 일치해야 한다.
+
+    한 줄에서 두 컬럼을 맞바꾸는 변이(`stage` ↔ `analysis_hash`)가 종전 테스트를 전부 통과했다 —
+    mock 커서가 하드코딩 8-튜플을 돌려주므로 순서 정합을 대조하는 곳이 없었다. 그 변이가 나가면
+    `judged_hash` 에 stage(0/1)가 들어가 해시 비교가 **절대 성립하지 않고**, 매 pass 전량 재판정 =
+    이번에 닫은 순환이 그대로 복구된다."""
+    sql, _p = _target_sql()
+    outer = re.match(r"SELECT (.+?) FROM \(", sql)
+    assert outer, sql[:120]
+    cols = [c.strip().split(".")[-1] for c in outer.group(1).split(",")]
+
+    src = inspect.getsource(av.run_verification_pass)
+    unpack = re.search(r"for \(([^)]+)\) in rows:", src)
+    assert unpack, "언팩 구문을 찾지 못했다"
+    names = [v.strip() for v in unpack.group(1).replace("\n", " ").split(",")]
+
+    # 컬럼명 ↔ 변수명 (이름이 다른 것은 여기 한 곳에서만 매핑한다)
+    alias = {"analysis_hash": "judged_hash"}
+    assert [alias.get(c, c) for c in cols] == names
 
 
 def test_targets_short_circuit_on_zero_limit():
@@ -329,7 +415,8 @@ def test_insight_runs_the_verification_pass():
            / "insight.py").read_text(encoding="utf-8")
     assert "run_verification_pass" in src
     idx = src.index("run_verification_pass")
-    assert "except Exception" in src[idx:idx + 400]
+    # 윈도우는 넉넉히 — 호출부 주석이 길어졌다고 "예외 흡수가 사라졌다"로 읽히면 거짓 실패다.
+    assert "except Exception" in src[idx:idx + 1200]
 
 
 def test_prompt_prefers_contradiction_over_rubber_stamp():
@@ -361,11 +448,138 @@ def test_updated_analysis_is_rejudged(monkeypatch):
     assert rep["checked"] == 1 and stored
 
 
-def test_target_query_carries_previous_hash():
-    cur = _Cur()
-    av.pending_targets(cur, 5)
-    sql, _p = [c for c in cur.calls if "node_analysis_jobs" in c[0]][0]
-    assert "v.analysis_hash" in sql and "LEFT JOIN node_analysis_verdicts" in sql
+def test_rejudged_is_counted_separately(monkeypatch):
+    """'많이 도는 것'과 '같은 걸 또 도는 것'은 다르다 — telemetry 가 그 둘을 구분해야
+    운영 화면에서 순환을 알아볼 수 있다(2026-08-05 회귀는 이 구분이 없어 늦게 발견됐다)."""
+    fresh = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, None)])
+    rep, _stored = _run(monkeypatch, fresh, {"verdict": "supported", "reason": "근거"})
+    assert rep["checked"] == 1 and rep["rejudged"] == 0
+
+    stale = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH")])
+    rep2, _s2 = _run(monkeypatch, stale, {"verdict": "supported", "reason": "근거"})
+    assert rep2["checked"] == 1 and rep2["rejudged"] == 1
+
+
+def test_rejudged_is_not_counted_when_store_fails(monkeypatch):
+    """저장이 실패하면 판정이 남지 않았다 — 재판정으로도 세지 않는다.
+
+    증가 지점을 `if store_verdict(...)` 밖으로 옮기는 변이가 종전 테스트를 통과했다."""
+    import modules.llm as _llm
+    monkeypatch.setattr(_llm, "llm_verify_analysis",
+                        lambda p, scope_key=None: {"verdict": "supported", "reason": "근거"},
+                        raising=False)
+    import shared.llm_budget as lb
+    monkeypatch.setattr(lb, "allowed", lambda conn=None: True)
+    monkeypatch.setattr(av, "store_verdict", lambda *a: False)
+    monkeypatch.setattr(av, "enabled", lambda: True)
+    monkeypatch.setattr(av, "max_per_pass", lambda: 5)
+    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH")])
+    rep = av.run_verification_pass(conn)
+    assert rep["checked"] == 0 and rep["rejudged"] == 0
+    assert rep["attempted"] == 1, "콜은 태웠으므로 attempted 에는 남아야 한다"
+
+
+def test_rejudged_is_not_counted_for_same_hash_skip(monkeypatch):
+    """이미 판정된 같은 분석문은 콜도 재판정도 아니다.
+
+    증가 지점을 같은-해시 skip 앞으로 옮기는 변이가 종전 테스트를 통과했다 — 그러면 정상 운영에서
+    `rejudged` 가 상시 포화돼 "cap 을 채우면 순환" 이라는 판정 기준이 영구 오작동한다."""
+    a = _analysis()
+    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", a, "app", "t", 1, av.analysis_hash(a))])
+    rep, _stored = _run(monkeypatch, conn, {"verdict": "supported", "reason": "근거"})
+    assert rep["rejudged"] == 0 and rep["attempted"] == 0
+
+
+def test_attempted_counts_calls_even_when_the_verdict_is_rejected(monkeypatch):
+    """LLM 을 태웠으면 센다 — 저장 성공만 세면 "판정에 실패하며 예산만 먹는" pass 가 무음이 된다.
+
+    이 격차(attempted ≫ checked)는 자기증폭한다: 실패 노드는 미판정으로 남아 큐 선두
+    (verdict_at NULLS FIRST)를 계속 물기 때문이다."""
+    conn = _Conn(targets=[("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None)
+                          for i in range(3)])
+    rep, stored = _run(monkeypatch, conn, {"verdict": "supported"})   # reason 없음 → 판정 거부
+    assert rep["checked"] == 0 and stored == []
+    assert rep["attempted"] == 3
+
+
+def test_consecutive_failures_stop_the_pass(monkeypatch):
+    """판정자가 특정 입력에서 계약 위반 응답을 반복하면 한 pass 예산을 그 노드들이 통째로 먹는다.
+
+    연속 실패 상한에서 멈춰 다음 pass 로 넘긴다(대상 순서가 바뀌어 다른 노드가 앞에 설 기회를 준다)."""
+    monkeypatch.setattr(av, "max_per_pass", lambda: 50)
+    conn = _Conn(targets=[("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None)
+                          for i in range(50)])
+    import modules.llm as _llm
+    monkeypatch.setattr(_llm, "llm_verify_analysis", lambda p, scope_key=None: None, raising=False)
+    import shared.llm_budget as lb
+    monkeypatch.setattr(lb, "allowed", lambda conn=None: True)
+    monkeypatch.setattr(av, "enabled", lambda: True)
+    rep = av.run_verification_pass(conn)
+    assert rep["attempted"] == av._MAX_CONSECUTIVE_FAILURES
+    assert rep["checked"] == 0
+
+
+def test_verify_telemetry_reaches_the_operator_payload():
+    """계측은 **allow-list 에 등재돼야** 운영자에게 도달한다.
+
+    `scan_report["analysis_verify"]` 는 dict 라 `_telemetry_sweep` 의 스칼라 필터가 통째로 버린다.
+    같은 실패(계측을 만들었는데 payload 에 안 실어 무음)가 이 워커에서 이미 두 번 있었고, 그
+    주석이 insight.py 에 남아 있다 — 이 단정이 세 번째를 막는다."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "src" / "modules"
+           / "insight.py").read_text(encoding="utf-8")
+    for key in ("analysis_verify_checked", "analysis_verify_attempted",
+                "analysis_verify_rejudged"):
+        assert key in src, f"{key} 가 payload allow-list 에 없다 — 계측이 도달하지 않는다"
+    # checked 만 보고 기록하면 "콜만 태우고 저장 0" 인 pass 가 통째로 사라진다.
+    assert '_av_rep.get("checked") or _av_rep.get("attempted")' in src
+
+
+def test_verification_pass_runs_under_the_advisory_lock():
+    """판정 pass 에는 행 단위 claim 이 없다 — lock 없이 돌면 워커 수만큼 LLM 콜이 중복된다.
+
+    그리고 그 중복은 전부 `judged_hash IS NULL` 을 같이 읽으므로 `rejudged` 에도 잡히지 않는다
+    (관측 사각). 같은 이유로 `domain_synthesis` 도 lock 안에 있다."""
+    import ast
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "src" / "modules"
+           / "insight.py").read_text(encoding="utf-8")
+    # 위치 비교가 아니라 **AST 포함관계**로 본다 — 단순 인덱스 비교는 lock 블록이 끝난 뒤의 호출도
+    # 통과시킨다(같은 파일에 `if lock_acquired:` 가 앞서 나오기만 하면 된다).
+    guarded = [
+        ast.unparse(n)
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.If) and ast.unparse(n.test).strip() == "lock_acquired"
+    ]
+    assert any("run_verification_pass()" in g for g in guarded), \
+        "판정 pass 가 advisory lock 밖에서 돈다"
+
+
+@pytest.mark.skipif(os.environ.get("AGENT_KB_PG_INTEGRATION_TEST") != "1",
+                    reason="실 Postgres 접속 필요 — AGENT_KB_PG_INTEGRATION_TEST=1 로 활성화")
+def test_target_query_executes_on_live_postgres():
+    """쿼리가 **SQL 로서 유효한지** 실 PG 로 확인하고, 노드당 1행인지 단정한다.
+
+    단위 테스트는 mock 커서라 SQL 을 파싱조차 하지 않는다 — 서브쿼리 select 목록에서 한 항목만
+    지워도(바깥 ORDER BY 가 그것을 참조) 런타임 `column does not exist` 가 나는데, `pending_targets`
+    의 fail-soft 가 그것을 삼켜 `skipped="no_targets"` 로 위장한다: **기능이 영구히 죽은 채
+    텔레메트리는 건강해 보인다.** 이 테스트가 그 창을 닫는다.
+
+    실행: `AGENT_KB_PG_INTEGRATION_TEST=1` + agent_kb 접속 가능 환경(워커 컨테이너).
+    """
+    from shared import db as _db
+    conn = _db._pg_connect()
+    assert conn is not None
+    cur = conn.cursor()
+    try:
+        rows = av.pending_targets(cur, 20)
+        keys = [(r[0], r[1]) for r in rows]
+        assert len(keys) == len(set(keys)), "같은 노드가 두 번 대상이 됐다 — 순환이 살아 있다"
+        for r in rows:
+            assert isinstance(r[6], (int, type(None))), "stage 자리에 다른 컬럼이 왔다"
+    finally:
+        cur.close()
+        conn.close()
 
 
 def test_evidence_query_filters_failed_collection():

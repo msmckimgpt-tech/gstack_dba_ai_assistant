@@ -3029,24 +3029,32 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         #   막지 않는다(코어 비차단). 관리콘솔에서 "AI 능동 분석" 트리거 시에만 잡이 생긴다.
         try:
             from modules import node_analysis as _node_analysis
-            # feature-0036(ITEM-10): 분석문 ↔ 증거 대조 판정. 분석 tick 직후에 둔다 — 방금
-            #   생성된 분석문이 다음 pass 의 판정 대상이 된다. 어떤 실패도 미검증으로 남을 뿐
-            #   분석 흐름을 막지 않는다.
-            try:
-                from . import analysis_verify as _av
-                # ⚠ 자체 PG 연결을 열게 한다(codex P1) — 이 스코프의 `mem_conn` 은
-                #   agent_memory 이고, agent_kb 커넥션은 여기 없다.
-                _av_rep = _av.run_verification_pass() if _av.enabled() else None
-                if _av_rep and _av_rep.get("checked"):
-                    scan_report["analysis_verify"] = _av_rep
-            except Exception as _ave:
-                logging.getLogger("insight").debug("analysis_verify_failed err=%r", _ave)
             # feature-0037(ITEM-08): 요청된 스키마만 도메인(L3) 합성. 사전 전량 생성도
             #   답변 경로 런타임 합성도 하지 않기 위해, grounding 이 남긴 요청만 처리한다.
             #   ⚠ **advisory lock 을 얻은 tick 에서만** 돈다(codex P2) — lock 없이 돌면 여러
             #   워커가 같은 스키마를 동시에 합성해 LLM 호출이 중복된다. 노드 분석(claim 기반)과
             #   달리 이 pass 에는 행 단위 claim 이 없다.
             if lock_acquired:
+                # feature-0036(ITEM-10): 분석문 ↔ 증거 대조 판정. 어떤 실패도 미검증으로 남을 뿐
+                #   분석 흐름을 막지 않는다.
+                #   ⚠ 판정 pass 도 **lock 안에서만** 돈다(2026-08-05 적대 패널 지적). 이 pass 에는
+                #   `node_analysis.process_pending` 같은 행 단위 claim 이 없어서, 워커를 늘리면
+                #   모든 워커가 같은 큐 선두(verdict_at NULLS FIRST — 결정론적)를 동시에 판정해
+                #   LLM 콜이 워커 수만큼 중복된다. 게다가 그 중복은 전부 `judged_hash IS NULL` 을
+                #   같이 읽으므로 `rejudged` 에도 잡히지 않는다(관측 사각). domain_synthesis 와
+                #   같은 이유·같은 처방이다.
+                try:
+                    from . import analysis_verify as _av
+                    # ⚠ 자체 PG 연결을 열게 한다(codex P1) — 이 스코프의 `mem_conn` 은
+                    #   agent_memory 이고, agent_kb 커넥션은 여기 없다.
+                    _av_rep = _av.run_verification_pass() if _av.enabled() else None
+                    # ⚠ `checked` 만 보고 기록하면 **판정에 실패하며 콜만 태우는 pass 가 통째로 무음**이
+                    #   된다(2026-08-05 적대 패널). attempted 가 있으면 checked=0 이어도 남긴다 —
+                    #   attempted ≫ checked 야말로 봐야 할 신호다.
+                    if _av_rep and (_av_rep.get("checked") or _av_rep.get("attempted")):
+                        scan_report["analysis_verify"] = _av_rep
+                except Exception as _ave:
+                    logging.getLogger("insight").debug("analysis_verify_failed err=%r", _ave)
                 try:
                     from . import domain_synthesis as _dsyn
                     _ds_rep = _dsyn.run_synthesis_pass() if _dsyn.enabled() else None
@@ -3484,6 +3492,20 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             # T0(worker-resource-isolation): 공유 LLM 예산이 없어 뒤로 밀린 잡 수 — 실패(failed)·
             #   장애 재시도(retry_pending)와 별 축. 이 값이 지속되면 상한을 올릴 근거가 된다.
             "node_analysis_budget_deferred": int(_na.get("budget_deferred", 0) or 0),
+        })
+    # feature-0036(2026-08-05): 판정 pass 계측. `scan_report["analysis_verify"]` 는 **dict** 라
+    #   `_telemetry_sweep` 의 스칼라 필터에 걸려 통째로 버려진다 — 위 auto_reanalysis 주석이 경계한
+    #   "allow-list 미등재 = 관측 소실"의 세 번째 재발을 여기서 막는다. 특히 `rejudged`/`attempted` 는
+    #   판정 순환(2026-08-05 회귀)의 유일한 조기 신호라, 도달하지 않으면 계측을 만든 의미가 없다.
+    #     attempted : 실제 LLM 콜 수. `checked`(저장 성공)와 크게 벌어지면 판정 실패가 예산을 먹는 중.
+    #     rejudged  : 이전 판정이 있는데 다시 판정한 수. pass 마다 cap 을 채우면 대상 선정이 순환한다.
+    _av = scan_report.get("analysis_verify") or {}
+    if _av:
+        payload.update({
+            "analysis_verify_checked": int(_av.get("checked", 0) or 0),
+            "analysis_verify_attempted": int(_av.get("attempted", 0) or 0),
+            "analysis_verify_rejudged": int(_av.get("rejudged", 0) or 0),
+            "analysis_verify_contradicted": int(_av.get("contradicted", 0) or 0),
         })
     for _pk in ("relationships_probe_probed", "relationships_probe_positive",
                 "relationships_probe_negative", "relationships_probe_neutral",
