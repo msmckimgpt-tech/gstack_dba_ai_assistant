@@ -2632,3 +2632,9 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
   `win-browser-notify-nobracket.scenario.json` 에도 잔존(본 cycle 범위 밖 — 후속 후보). 시나리오
   17개의 base_url `https://localhost:18080` 은 Caddy 단일 노출 전환 후 전부 stale(실행 시
   `https://localhost` 사본 필요 — 후속 후보).
+
+## REV-20260805T192000-verdict-badge-postdeploy [SKIPPED:non-policy-doc] — doc-only
+
+시각 검증 Run 기록 + 증적 이미지 추가만으로, 코드·정책·계약 변경이 없다(§18.8.1 docs-only 경량
+경로). 검증 대상이던 코드 자체는 선행 cycle 에서 ux · backend-security 적대 패널을 거쳤다
+(`unit/feature-0036-analysis-verification/docs/REVIEW.md` REV-20260805T193000 / T193500).
