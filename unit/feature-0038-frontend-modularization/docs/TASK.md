@@ -131,7 +131,7 @@ admin.js 4,804줄 잔여는 공유 코어(pending/batch-apply·권한 grid)라 B
 - TASK-20260805T105500-phaseA-state-intake: Phase A state-편입 → §6 Done (cycle 마감 진행)
 - TASK-20260805T105501-phaseB1-sidebar: B1 → 구현 완료·cycle 마감 진행 (§6 Done)
 - TASK-20260805T105502-phaseB2-composer: B2 → 구현 완료·cycle 마감 진행 (§6 Done)
-- TASK-20260805T105503-phaseB3-progress: B3 progress 폴러 → app/progress.js
+- TASK-20260805T105503-phaseB3-progress: B3 → 구현 완료·cycle 마감 진행 (§6 Done)
 
 ## 4. In Progress
 - 없음
@@ -173,6 +173,8 @@ admin.js 4,804줄 잔여는 공유 코어(pending/batch-apply·권한 grid)라 B
 - [x] TASK-20260805T114000-phaseB1-sidebar B1 추출 — 사이드바 도메인 13세그먼트 이동(app.js -720줄), byte-parity IDENTICAL·free-vars 회귀 0·mjs 41/41·headless 46·make test RC=0 (CHG-20260805T114000)
 - [x] TASK-20260805T121000-phaseB1-postdeploy B1 마감 — PR #1148 머지·배포(web-a/b 41216f66)·POST-DEPLOY PB-0008 17/17 PASS(목록 렌더·선택·토글·DnD·에러 0, TEST Run-20260805T1210)
 - [x] TASK-20260805T123000-phaseB2-composer B2 추출 — composer 도메인 50세그먼트(~2,000줄) → app/composer.js 신설, app.js 8,508줄(-1,891), parity 50/50·free-vars 0·mjs 41/41·headless 46 (CHG-20260805T123000)
+- [x] TASK-20260805T133000-phaseB2-postdeploy B2 마감 — PR #1149 머지·배포(web-a/b f7526401)·POST-DEPLOY 실전송 완주 스모크 14/14 PASS(답변 20초·에러 0, TEST Run-20260805T1330)
+- [x] TASK-20260805T140000-phaseB3-progress B3 추출 — progress 도메인 18함수 → app/progress.js 신설, app.js 8,082줄(계획 기점 대비 -3,037), parity 18/18·free-vars 0·mjs 41/41·headless 46 (CHG-20260805T140000)
 
 ## 7. Next Action
 - Phase A cycle 마감(게이트→PR→배포→POST-DEPLOY PB-0008) → B1 착수

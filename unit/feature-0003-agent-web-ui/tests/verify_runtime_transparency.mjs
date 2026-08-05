@@ -23,7 +23,9 @@ function ok(name, cond) {
 
 const css = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
   .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  // ITEM-P5b B3: pollProgress 등 폴러가 app/progress.js 로 이동 — 합본 검사.
+  + readFileSync(join(STATIC, "app/progress.js"), "utf8");
 
 // ── 1. 정적: styles.css 규칙 ─────────────────────────────────────────
 ok("[1] css: .message-meta-duration.has-breakdown(점선 밑줄 hover hint)",
