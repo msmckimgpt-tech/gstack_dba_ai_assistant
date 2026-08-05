@@ -51,7 +51,7 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 ## 3. 항목 (각 1 cycle)
 
 ### ITEM-P0 · SSOT 계약 고정 + META cycle 등록 + lint 골격
-- **status**: in-progress
+- **status**: done (2026-08-05 정정 — ADR-0031·DOC_REGISTRY·ssot-lint(+--selftest PASS)·ROADMAP 정식화 전부 완비. lint 잔여 4건은 전부 tracked secret = ITEM-P3 귀속)
 - **feature_id**: META-0003-ssot-consolidation
 - **dimension**: structural
 - **risk_grade**: Minor
@@ -103,7 +103,10 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 - **gate**: wiki-lint + drift 0(정본 mtime ≤ mirror mtime) + check #9
 
 ### ITEM-P5a · 코드 파편화 정리 (SSOT/중복·경계)
-- **status**: pending
+- **status**: done (2026-08-05 — 실행 홈: feature-0011-shared-extraction. Step 1~5: shared/ 5모듈
+  추출(model_catalog·config·db·conn_health·datasources)·alias shim 전부 제거·소비처 429ref 마이그레이션,
+  2026-06-25 완성(PR #403/#407/#408 외). 동반: GDPR gap CODEBASE_MAP §7 등재. 종결(2026-08-05):
+  Step 6 Dockerfile 분리 **불채택**·미결정 #4 보존 확정·env 키 정본 — ADR-20260805T153000-p5a-closeout)
 - **feature_id**: (코드 단위 별도 feature-NNNN cycle)
 - **risk_grade**: Major
 - **depends_on**: [ITEM-P1]
@@ -141,6 +144,6 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 1. secret rotation 범위 + history rewrite 추가 수행 여부(+저장소 public/private 확인)
 2. STATUS 과거 누적 셀: unit TASK 링크만 vs STATUS_ARCHIVE 보존
 3. wiki 자동 동기화: pre-commit hook vs CI vs 수동 lint
-4. 0002 attachment_reconciliation GDPR legal-erasure: 배선/제거/보존
-5. 단일 Dockerfile 분리: Phase 5 에서 분리까지 vs cross-cut 명시 + 단일 이미지 유지
+4. ~~0002 attachment_reconciliation GDPR legal-erasure~~ → **해소(2026-08-05)**: 보존 + 파일 헤더 미배선 라벨 (ADR-20260805T153000)
+5. ~~단일 Dockerfile 분리~~ → **해소(2026-08-05)**: 단일 이미지 유지 + cross-cut 명시 (ADR-20260805T153000)
 6. §18.4 인간 개입 강도: 전 Phase vs Critical(P3)·Major(P5)만

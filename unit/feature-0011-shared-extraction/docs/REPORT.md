@@ -14,10 +14,10 @@ source_of_truth: false
 비파괴 추출했고, Step 5(점진 마이그레이션, sub-step 5a/5b/5c)는 모든 소비처를 정본 `shared.*` 로 수렴시키고
 **4개 alias shim(config·db·conn_health·datasources)을 전부 제거**했다. 이제 4개 모듈은 shim 없이 `shared/`
 단일 경로로만 존재(model_catalog 는 Step 1 부터 직접). make test **회귀 0**, 전 파일 residual grep 0.
-남은 것: Step 6(feature 단위 Dockerfile 분리 — P5b 토대) + 동반 저위험 doc.
+완결(2026-08-05): Step 6 Dockerfile 분리는 **불채택 종결**(ADR-20260805T153000 — 단일 이미지 유지, 분리 전제는 shared/ 추출+§7 Known Gaps 로 해소·배포 스파인이 단일 이미지 전제로 안정화). 동반 doc(TASK-0011-11)은 기완료.
 
 ## 2. Progress
-- Planned: Step 6(feature 단위 Dockerfile 분리 + 브라우저 QA) + 동반 doc(GDPR gap·CODEBASE_MAP 정정)
+- Done(2026-08-05): Step 6 불채택 종결 + 미결정 #4(보존)·env 키 정본 ADR — P5a 전체 완결
 - In Progress: 없음
 - Done: Step 1~4(추출) · **Step 5 전체(5a conn_health/datasources · 5b config · 5c db 마이그레이션 + 4개 shim 제거)**
 

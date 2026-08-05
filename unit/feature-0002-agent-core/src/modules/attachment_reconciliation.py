@@ -1,3 +1,8 @@
+# ⚠ 미배선(unwired) — 라이브에서 가동되지 않는 GDPR legal-erasure 설계 코드 (ADR-20260805T153000 · CODEBASE_MAP §7 Known Gaps #4)
+#   라이브 reconciliation 은 feature-0003 판(web.modules.attachment_reconciliation)이며, 본 판은
+#   TASK-0094 D6 4-state + legal pseudonym 사양의 보존본이다. 삭제·dedup-merge 금지(feature-0011 ANCHOR §3),
+#   wiring 은 별도 compliance 결정 사항. env 키 정본은 라이브판 ATTACHMENT_RECON_INTERVAL_SEC —
+#   본 판의 ATTACHMENT_RECON_POLL_SEC 는 wiring 시 정본 키로 통일한다.
 """Attachment delete reconciliation worker.
 
 TASK-0094 Sprint 1 Phase 9 — BRIEFING D6 (lifecycle 4 종 taxonomy) + R-Claim6

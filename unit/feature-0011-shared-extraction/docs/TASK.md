@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in_progress (P5a Step 1~4 + Step 5(5a/5b/5c 마이그·shim제거) 완료 — 4개 alias shim 전부 제거, shared/ 추출 완성. Step 6·동반doc 후속)
+- State: done (Step 1~5 + 동반doc 완료 · Step 6 Dockerfile 분리는 **불채택 종결** — ADR-20260805T153000-p5a-closeout, 2026-08-05)
 - Owner: AI / Human
 - Priority: high (Critical 등급 — 라이브 제품 구조 리팩터)
 - Last Updated: 2026-06-25
@@ -41,7 +41,7 @@ source_of_truth: true
   - [x] 5b config 소비처 shared.config 마이그레이션(~150 ref/53 파일) + modules/config shim 제거 (fan-in 25 foundation)
   - [x] 5c db 소비처 shared.db 마이그레이션(219 ref/52 파일, app.py 112 + .sh-embedded) + modules/db shim 제거 (최다결합)
         → 4개 alias shim(config·db·conn_health·datasources) 전부 제거, shared/ 추출 구조 완성
-- [ ] TASK-0011-10 P5a Step 6 — feature 단위 Dockerfile 분리 + 브라우저 QA [후속]
+- [x] TASK-0011-10 P5a Step 6 — **불채택 종결**(단일 이미지 유지): 분리 전제(import 얽힘·경계 불명)는 shared/ 추출+CODEBASE_MAP §7 로 해소, 이후 배포 스파인(0014/0020/0039)이 단일 이미지 전제로 안정화 — ADR-20260805T153000
 - [x] TASK-0011-11 동반(저위험) — #4 GDPR gap CODEBASE_MAP 명시 + CODEBASE_MAP stale 정정(feature-0007~0011 추가·shared/ 6모듈·§7 Known Gaps 신설) [완료, CHG-0008]
 
 ## 4. In Progress
@@ -78,8 +78,8 @@ source_of_truth: true
   → shared.db 로 수정·전파일 재grep 0) / NIT 0 / deploy SAFE. **→ 4개 alias shim 전부 제거, shared/ 추출 완성.**
 
 ## 7. Next Action
-- Step 5(점진 마이그레이션) 완료. 남은 것: P5a Step 6 (feature 단위 Dockerfile 분리 + 브라우저 QA — 이 WSL env 는
-  Windows 브라우저 QA(PB-0008) 불가, 별도 처리 필요) · 동반 저위험 doc(TASK-0011-11 — GDPR gap + CODEBASE_MAP stale 정정).
+- (완결) P5a 전 단계 종결 — Step 6 은 ADR-20260805T153000 로 불채택. 재개 조건: 이미지 크기/보안
+  요구가 실측으로 등장할 때 별도 initiative.
 
 ## 8. Completion Checklist (P5a Step 5c = db 마이그레이션·shim제거 cycle — Step 5 종결)
 - [x] AC(db 전 소비처가 shared.db 정본 경로로 마이그레이션됨 — 정적+wildcard+dynamic/string+.sh-embedded 포함)이 구현되었다

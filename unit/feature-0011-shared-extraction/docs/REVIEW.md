@@ -203,3 +203,10 @@ source_of_truth: true
   GDPR gap 문구는 feature-0011 ANCHOR §3 동반 메모와 일치. CODEBASE_MAP 내부 표 구조 보존(중복 행 없음).
 - Risks: 없음(doc-only, 배포 불요). 잘못된 기술 시 revert 1 commit.
 - Human Approval Needed: 없음(저위험 doc; PR 생성만 외부노출).
+## REV-20260805T153000-p5a-closeout [SKIPPED:policy-decision-record] — P5a 종결 판단 근거 (doc+주석·동작 0)
+
+- 사용자 위임("현재까지의 개발 및 대화 내역을 먼저 검토하여 작업 방향을 결정") 에 따른 이력-검토 결정:
+  #4 는 적대 리뷰 42-에이전트 판정·ANCHOR §3·CODEBASE_MAP §7 의 기존 결론(보존)을 채택,
+  #5 는 shared/ 추출 완성(선행 충족) 후에도 6주간 배포 스파인 안정화 실적(0014/0020/0039)이
+  분리 리스크를 상회 → 불채택. 정본 ADR-20260805T153000. 코드 변경은 주석 라벨 1파일뿐
+  (py_compile PASS·런타임 0) — 패널은 [SKIPPED] + 본 근거 기록으로 갈음.
