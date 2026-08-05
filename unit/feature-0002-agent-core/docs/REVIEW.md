@@ -1299,3 +1299,8 @@ Cross-ref: TASK-20260731T203000-loadgate-postdeploy · CHG-20260731T203000-loadg
 
 Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-loadgate-replay-verify ·
 원장 `FR-loadgate-blind-coaching`.
+
+## REV-20260805T180000-attach-change-deploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+- **Trigger**: 문서만(원장 status·배포 실증 기록·LEARNINGS). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
+- 배포 실증은 위 `REV-20260805T160000-attach-change-false-absence` 항목과 MODIFY
+  `CHG-20260805T180000-attach-change-deploy` 에 기록. 라이브 대화 실측은 미수행(다음 audit).

@@ -6,10 +6,21 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-attachment-change-false-absence — fixed:undeployed (L1 seal gap + model limit; 첨부 축 부재-단정을 막는 코드-권위 사실 부재)
+## FR-attachment-change-false-absence — fixed:deployed:unverified-live (L1 seal gap + model limit; 첨부 축 부재-단정을 막는 코드-권위 사실 부재)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **18** PASS · `make test` 전량 exit 0 · ruff clean) +
-  §18.8 검증(아래) + dogfood 완료. **배포 전** → 배포 후 `fixed:deployed:unverified-live`.
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 **24** PASS · `make test` 전량 exit 0 ·
+  ruff clean · **뮤테이션 8/8 KILLED**) + §18.8 3채널 검증(아래, 패널 BLOCK 전건 흡수) + dogfood +
+  **배포 완료**(2026-08-05, PR #1155 merge main `70df13a3` → `make deploy-web` 전체 스코프,
+  post-cutover soak 90s 통과, 롤백 0).
+  **4서비스 running/healthy** — ask-worker·insight-worker `70df13a3`, web-a·web-b `8b46bdec`
+  (배포 직후 병렬 세션이 PR #1156 을 머지·배포. `70df13a3` 은 `8b46bdec` 의 **조상**이라 4서비스 모두
+  본 변경을 포함한다 — `git merge-base --is-ancestor` 로 확인).
+  **배포본 런타임 실증(ask-worker, 라이브 agent_memory/PG 연결)**: 신규 심볼 6종 적재 True ·
+  실패 대화 데이터로 `compose_system_prompt` 실행 → 사실 **updated 8 / no-delta 0 / added 4 / other 1** ·
+  `## ATTACHMENT SET` 이 `## LIVE-DB GROUNDING` **뒤 최종 위치**(프롬프트 마지막 문장까지 확인) ·
+  부정 단정 침묵 계약 True(A·B 양쪽) · 리뷰어 프롬프트 floor 규칙 True / 대칭 BLOCK 제거 True.
+  web /healthz `status=ok · mysql_ok · pg_ok`.
+  **라이브 대화 실측 미수행** → `unverified-live`.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit "추가 쿼리 리뷰 요청"` (2026-08-05) —
   "다른 대화를 fork된 대화에서, 첨부파일을 v2로 갱신하였지만 assistant가 이를 인식하지 못하는 이슈".
 - **last_seen**: 2026-08-05 · **seen_count**: 1 · **seen_distinct_conv**: 1 (90일)
@@ -96,8 +107,8 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   증명한다. **"실제 대화에서 부재 단정이 사라지는지"**·**"리뷰어가 실제로 BLOCK 을 올리는지"**·
   **"권위 블록이 평가 품질을 과도하게 누르지 않는지"** 는 배포 후 실측분(미수행). 다음 audit 이
   corroboration(부재 단정 distinct_conv / `redteam_reviews` 의 해당 축 BLOCK 발생)을 재측정한다.
-- **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 동일 시나리오 재현 +
-  `/_dqa:doc_sync`.
+- **필요한 사람 액션(1줄)**: 배포 완료 — 남은 것은 **라이브 실측**(같은 시나리오에서 부재 단정 소멸 ·
+  `redteam_reviews` 의 해당 축 BLOCK 발생 · 권위 블록이 평가 품질을 누르지 않는지) + `/_dqa:doc_sync`.
 
 ## FR-attachment-created-at-tz-skew-9h — deferred (L4 저장 시각 +9h; 이번 마찰의 원인 아님, 사용자 결정으로 별도 항목 이월)
 
