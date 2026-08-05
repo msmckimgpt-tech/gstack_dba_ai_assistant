@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.44.0
+template_version: v3.44.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1086,12 +1086,16 @@ sentinel 검사 후 본 정책을 발동.
 **F0 (강) — Forbidden action**: 소비자의 **main worktree** 에서 `repo/` 안 path
 mutation 금지. 단 §13.2.4 carve-out 외.
 
-> ⚠️ **subagent 격리는 harness v2.1.216+ 에서만 강제된다 (v3.44.0)**. `isolation:
+> ⚠️ **worktree 격리는 harness v2.1.222+ 에서만 강제된다 (v3.44.0)**. `isolation:
 > 'worktree'` 로 띄운 subagent 가 `git -C` / `--git-dir` / `GIT_DIR` / `GIT_WORK_TREE`
 > 로 공유 checkout 에 git mutation 을 걸 수 있던 결함이 v2.1.210 · v2.1.216 에서
-> 수정됐다. 그 미만 버전에서 F0 는 **하네스가 막아주는 게이트가 아니라 선언적 정책**
-> 이며, 병렬 subagent 가 실제로 main worktree 를 오염시킬 수 있다. 상세·대응은 §22.5
-> 참조. (출처: Claude Code CHANGELOG v2.1.210 · v2.1.216)
+> **부분** 수정됐으나, 그것으로 닫히지 않았다 — **격리 worktree 에서 도는 세션 자신과
+> 그 subagent 가 main checkout 에 파괴적 git 명령을 실행할 수 있는 경로가 v2.1.221 까지
+> 남아 있었고**, v2.1.222 에서야 격리가 **모든 세션 종류의 파일 편집과 Bash 에** 적용되며
+> 닫혔다. 그 미만 버전에서 F0 는 **하네스가 막아주는 게이트가 아니라 선언적 정책**이며,
+> 병렬 subagent 뿐 아니라 **격리 세션 자신도** main worktree 를 오염시킬 수 있다.
+> 상세·대응은 §22.5 참조.
+> (출처: Claude Code CHANGELOG v2.1.210 · v2.1.216 · v2.1.222)
 
 **Update path (유일한 수단)**:
 ```bash
@@ -3651,8 +3655,11 @@ sweep 처럼 **여러 agent 가 실제로 파일을 쓰는** 워크로드에만 
 (~200-500ms + 디스크)이 agent 마다 붙으므로 read-only fan-out 에는 낭비다. 변경이 없으면
 worktree 는 자동 정리된다.
 
-⚠️ 이 격리는 **harness v2.1.216+ 에서만 강제**된다 — 그 미만에서는 `git -C`/`--git-dir`/
-`GIT_DIR`/`GIT_WORK_TREE` 로 우회 가능했고 §13.2.7 F0 를 뚫었다. 상세는 §22.5 참조.
+⚠️ 이 격리는 **harness v2.1.222+ 에서만 강제**된다 — v2.1.210·v2.1.216 이 `git -C`/
+`--git-dir`/`GIT_DIR`/`GIT_WORK_TREE` 우회를 **부분** 차단했으나 v2.1.221 까지도 격리 세션
+자신과 그 subagent 가 main checkout 에 파괴적 git 명령을 걸 수 있었고, v2.1.222 에서야
+파일 편집·Bash 를 포함한 모든 세션 종류로 격리가 확장되며 닫혔다. 그 미만에서는 이 옵션을
+신뢰 경계로 쓰지 않는다. 상세는 §22.5 참조.
 
 #### §22.3.1 StructuredOutput 신뢰성 — 복잡 schema fan-out 의 대량 실패 위험
 
@@ -3832,11 +3839,16 @@ bgIsolation 이 기본값(격리 활성) 상태에서 baseRef 는 배경 세션�
 지정하는 설정으로, F0/F1 정책과 무충돌이다. 필요 시 소비자 설정에서 사용 가능.
 
 
-**worktree 격리의 harness 강제 최소버전 — v2.1.216+ (v3.44.0)**
+**worktree 격리의 harness 강제 최소버전 — v2.1.222+ (v3.44.0)**
 
-`isolation: 'worktree'` 로 띄운 subagent 는 **v2.1.216 이상에서만 harness 가 격리를
-강제**한다. 그 이전 버전에는 격리를 우회해 **공유 checkout 에 직접 git mutation** 을 거는
-경로가 있었고, v2.1.210 · v2.1.216 두 릴리스에 걸쳐 수정됐다. 우회 경로:
+`isolation: 'worktree'` 로 띄운 subagent — 그리고 **격리 worktree 에서 도는 세션 자신** —
+은 **v2.1.222 이상에서만 harness 가 격리를 강제**한다. 그 이전 버전에는 격리를 우회해
+**공유 checkout 에 직접 git mutation** 을 거는 경로가 있었다. v2.1.210 · v2.1.216 이 아래
+표의 git-재지정 3종을 subagent 경로에서 막았으나 **그것으로 닫히지 않았고**, v2.1.221
+까지도 격리 세션과 그 subagent 가 main checkout 에 파괴적 git 명령을 실행할 수 있었다.
+v2.1.222 에서야 격리가 **모든 세션 종류의 파일 편집과 Bash 에** 적용되면서 닫혔다.
+즉 아래 표는 **알려진 우회 수단이지 전부가 아니다** — v2.1.222 미만에서는 표에 없는
+평범한 `Bash`·파일 편집도 격리를 넘을 수 있다고 전제한다. 우회 경로:
 
 | 우회 수단 | 효과 |
 |---|---|
@@ -3846,16 +3858,18 @@ bgIsolation 이 기본값(격리 활성) 상태에서 baseRef 는 배경 세션�
 
 정책적 함의:
 
-- **§13.2.7 F0 / §13.2 F1 의 실효성이 harness 버전에 의존한다.** v2.1.216 미만을 쓰는
+- **§13.2.7 F0 / §13.2 F1 의 실효성이 harness 버전에 의존한다.** v2.1.222 미만을 쓰는
   소비자에서는 `isolation: 'worktree'` 가 **정책 선언이지 강제가 아니다** — F0 위반을
   하네스가 막아준다고 전제하지 말고, subagent 프롬프트에서 위 3 수단의 사용을 명시적으로
-  금지한다.
+  금지한다. 또한 격리 대상은 subagent 만이 아니다 — **격리 세션 자신**이 main checkout 에
+  파괴적 git 명령을 거는 경로도 v2.1.221 까지 열려 있었으므로, 그 미만 버전에서는 세션
+  단위 격리도 신뢰 경계로 쓰지 않는다.
 - 병렬 subagent 가 파일을 동시 변경하는 워크로드를 돌리기 전에 `claude --version` 으로
   실제 버전을 확인한다 (§16.7 G7-a — 버전은 이름이 아니라 실측 대상이다).
 - `isolation: 'worktree'` 자체의 운용 지침은 §22.3 참조. 설정 비용(worktree 생성 ~200-500ms
   + 디스크)이 있으므로 **동시 파일 변경이 실제로 일어나는 경우에만** 사용한다.
 
-(출처: Claude Code CHANGELOG v2.1.210 · v2.1.216)
+(출처: Claude Code CHANGELOG v2.1.210 · v2.1.216 · v2.1.222)
 
 ### §22.6 Auto mode — 자율 위임 세션의 런타임 권한 모델 (v2.1.136+)
 
