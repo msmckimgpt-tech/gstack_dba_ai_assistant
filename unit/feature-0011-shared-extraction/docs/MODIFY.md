@@ -191,3 +191,10 @@ source_of_truth: true
   불채택(단일 이미지 유지) · env 키 정본. TASK-0011-10 종결.
 - ssot ROADMAP: ITEM-P0 done 정정(산출물 완비·lint 잔여 4건은 전부 P3 귀속) ·
   ITEM-P5a done(feature-0011 Step 1~5 실적 + 본 종결 반영) · §4 미결정 #4·#5 해소 표기.
+
+## CHG-20260805T160500-p4-residual P3-제외 100% 검증 실증 (doc-only)
+
+- `wiki/README.md` §5.1: mirrors/sources 대상 범위 명문화(미러 카드=대상·자생/구조=비대상 —
+  head-12 절단류 false-negative 재발 방지) · `docs/improvements/ssot-consolidation/ROADMAP.md`:
+  P4 백필 기완료 실증·P5a skeleton 기해소·P3 작업5 pb0008 통합 불채택(참조 20파일 보존) 반영.
+- 코드 변경 0. 결론: P3(rotation) 제외 로드맵 100% 완수 확정.

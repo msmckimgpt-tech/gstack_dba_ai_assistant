@@ -92,6 +92,11 @@ wiki/
 - 전역 `source_of_truth: false` (예외: [[Log]] = wiki 자체 append-only ledger). 검증: `bash bin/ssot-lint.sh --check wiki-sot` (현재 위반 0건).
 - **동기화 메커니즘**: 정본(`docs/`·`unit/<id>/docs/`) 변경 → wiki mirror 갱신은 `/_dqa:doc_sync` persona 가 수행(사람 호출·스케줄 가능). 구조 drift 는 `bin/wiki-lint.sh`. *결정론적 렌더러는 없음* — mirror 는 요약 판단이 필요해 LLM-persona 로 유지(자동 재생성 대신 doc_sync 주기 정합).
 - **stale 카드 정책**: 진행 정지 feature 카드(예: 0001/0004~0007)는 doc_sync 시 백필하거나 `maturity: stale` / '완료-동결' 라벨로 명시 — drift 를 숨기지 않는다.
+- **mirrors/sources 대상 범위 (2026-08-05 명문화)**: `sources:` 선언 대상은 **미러 성격 카드**
+  (Features·Decisions·Architecture·Glossary 등 정본을 요약-참조하는 카드)다. **자생 콘텐츠**
+  (concepts·entities·syntheses·raw — 특정 정본 문서의 미러가 아닌 위키 고유 지식)와 **구조 파일**
+  (README·Index·hot·Log·`_Index`·`_template-*`)은 비대상 — 부재가 drift 가 아니다. 실측(2026-08-05):
+  미러 성격 카드 74개 전원 sources 보유(백필 완료), 부재 34개는 전부 비대상.
 
 ## 6. 안 하는 것
 
