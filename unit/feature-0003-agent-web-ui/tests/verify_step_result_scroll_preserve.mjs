@@ -38,7 +38,9 @@ function ok(name, cond) {
   else { failed++; console.log(`  FAIL  ${name}`); }
 }
 
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  // ITEM-P5b B3: progress 폴러/run 추적 도메인이 app/progress.js 로 이동 — 합본 검사.
+  + readFileSync(join(STATIC, "app/progress.js"), "utf8");
 
 // ── 1. 정적: 헬퍼 정의 + 두 재렌더 경로 배선 + data-step-result-key ─────────────
 ok("[1] app.js: _snapshotStepResultScroll 정의", /function _snapshotStepResultScroll\(body\)\s*\{/.test(appJs));
@@ -91,7 +93,8 @@ ok("[3b] _applyStepPanelScroll: 외부 스크롤 미추종 시 이전 위치 유
 const helpersStart = appJs.indexOf("function _snapshotStepResultScroll(body) {");
 const helpersEnd = appJs.indexOf("function _renderStepSidePanelBody(pending) {");
 ok("[4] 헬퍼 소스 추출 가능", helpersStart >= 0 && helpersEnd > helpersStart);
-const helpersSrc = appJs.slice(helpersStart, helpersEnd);
+// B3 후속: 블록 내 함수가 export 화될 수 있다 — 주입 전 선언 export 접두만 제거.
+const helpersSrc = appJs.slice(helpersStart, helpersEnd).replace(/^export (?=(async )?(function|const|let|var))/gm, "");
 
 const dom = new JSDOM("<!DOCTYPE html><body><div id='panel'></div></body>");
 const { document } = dom.window;

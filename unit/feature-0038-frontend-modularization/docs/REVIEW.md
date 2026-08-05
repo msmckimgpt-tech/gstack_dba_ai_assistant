@@ -177,3 +177,16 @@ source_of_truth: true
 - 기록(선재 결함, B2 비회귀): `win-browser-share-group-sync.scenario.json` 이 Cycle 7 ESM 화
   이후 죽은 전역(state·sendPrompt 등) 참조 — settings-notif 와 같은 뿌리, 후속 정비 후보
   (feature-0003 REVIEW 의 시나리오 정비 후보에 합류).
+
+## REV-20260805T143000-phaseB3-progress [SUBAGENT:frontend-split] — B3 적대 패널: BLOCK/MAJOR/MINOR 0 · NIT 2 (1 흡수·1 기록) PASS
+
+- Trigger: code change (byte-동치 추출 — run 추적 최다 회귀 영역). 렌즈 5축(run 추적 정확성·
+  순환 TDZ 실로드·바인딩 재할당·re-export 계약·이동 완전성).
+- 패널 실측(청정 축): **mutation probe 2건**(foreign-run 가드 훼손 → 하네스 3 FAIL · 백오프
+  제거 → 3 FAIL)으로 합본 하네스의 비-공허 실증 · 실 ESM 그래프 evaluate OK(app export 124 ·
+  progress top-level 실행문 0 = TDZ 면제 · sentinel 미채택/seq/타이머 경계 넘어 정상) ·
+  재할당 양방향 0(7모듈 AST) · re-export 6심볼 런타임 동일성(===) 확인 · parity 18/18.
+- 흡수: [NIT] 합본 extractFn 의 첫-매치가 죽은 사본을 검증할 수 있는 미래-가드 — 다중 출현
+  fail-loud 를 합본 하네스 3건에 추가.
+- 기록: [NIT] run-감지 서브도메인이 경계 상호재귀(detectNewRun[app]↔scheduleRunDetectPolling
+  [progress]) — live-binding 으로 정확, 후속 phase 에서 detectNewRun 동반 이동 시 해소 후보.

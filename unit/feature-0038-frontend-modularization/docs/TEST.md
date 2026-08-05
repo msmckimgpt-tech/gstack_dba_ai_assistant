@@ -574,3 +574,22 @@ source_of_truth: true
 - acorn-globals 미해소 0(app.js·composer.js·sidebar.js) · mjs **41/41**(소스-추출 6건
   합본/marker 갱신: enqpre_run_handoff·llm_restriction·model_persist·new_conv_dedup·
   runtime_transparency + export-접두 strip 관용구) · headless 46케이스 · make test RC=0.
+
+### Run — 20260805T1330 B2 POST-DEPLOY PB-0008 (Environment: Windows-browser) — PASS 14/14
+- 배포: PR #1149 머지(f7526401) → `--web-only` RC=0 → web-a/b GIT_COMMIT **둘 다 f7526401**.
+- 실 Windows Chrome: ① composer 렌더 4요소(prompt·send·chip·actions) ② 액션 메뉴 열림
+  (4항목)·토글 닫힘 ③ 새 대화 → **실전송 완주 스모크**: "1+1 은?" → 진행 말풍선 →
+  **답변 완주 20초(준비 2.3s·추론 18s), "2" 응답** — 이동한 sendPrompt·renderComposer 의
+  라이브 전 경로 실증 ④ pending 0 ⑤ window error **0건** + 스크린샷.
+
+## 20260805T1400-phaseB3-progress — progress 도메인 → app/progress.js (byte-동치)
+
+### Run — 20260805T1400 B3 기계 검증 (Environment: CLI/node) — PASS
+- 이동: 18함수 ~390줄(renderProgress·pollProgress·applyProgressPayload·폴러 스케줄/중지·
+  run 감지 3종·경과 타이머 2종·fetchAskStatus·_adoptRunId·_isEnqueueSentinelRunId·
+  _interruptCurrentRunForResend 등) — app.js 8,508→8,082줄, app/progress.js 신설 460줄.
+  llmHealth 폴링은 원 계획(C10) 범위 밖 — 의도적 잔류.
+- parity **18/18 IDENTICAL** · app.js 정의 잔존 0 · acorn-globals 미해소 0(4파일) ·
+  이동 함수의 모듈-let 결합 0(사전 실측 — 타이머는 전부 state 소유).
+- 배선: 31심볼 import(23 export 화)·역-import 11·composer 계약 6심볼 re-export 보존.
+- mjs **41/41**(하네스 7건 합본/strip 갱신) · headless 46케이스 · make test RC=0.

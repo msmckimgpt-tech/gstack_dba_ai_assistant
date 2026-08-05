@@ -200,3 +200,16 @@ source_of_truth: true
   messages.js "../app.js" 계약은 re-export 로 보존 · composer→sidebar renderConversationList.
 - 소스-추출 하네스 6건 갱신(합본 + marker 재고정 + export-접두 strip).
 - app.js 8,508줄 (B1 대비 -1,891) — B3 progress 후속.
+
+## CHG-20260805T140000-phaseB3-progress progress 도메인 byte-동치 이동 (Phase B3 — TASK §2.2, 마지막 추출)
+
+- `app.js` → `app/progress.js`(신설 460줄): run 추적·진행 표시·폴러(진행/run 감지)·경과 타이머·
+  ask_result long-poll 18함수. 본문 무수정(parity 18/18).
+- 배선: app.js 잔류 31심볼 import(23 export 화) · 역-import 11 · composer.js "../app.js" 계약
+  6심볼(_adoptRunId·_interruptCurrentRunForResend·fetchAskStatus·renderProgress·
+  startElapsedTimer·startProgressPolling)은 app.js re-export 로 보존 · progress→composer
+  (renderComposer). 전부 `?v=dev`.
+- 소스-추출 하네스 7건 갱신(progress 합본 + export-접두 strip 2건).
+- **app.js 8,082줄** — 계획 기점 11,119 대비 **-3,037줄(-27%)**. 잔여는 코어 오케스트레이션
+  (부트스트랩·상태·메시지 이벤트·검색·공유·notify·llmHealth·라이브싱크) — 추가 감축은
+  별도 재실측 후보.

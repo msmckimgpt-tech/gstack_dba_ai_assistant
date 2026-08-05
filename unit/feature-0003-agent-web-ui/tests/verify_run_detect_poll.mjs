@@ -18,7 +18,9 @@ import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  // ITEM-P5b B3: progress 폴러/run 추적 도메인이 app/progress.js 로 이동 — 합본 검사.
+  + readFileSync(join(STATIC, "app/progress.js"), "utf8");
 
 let passed = 0, failed = 0;
 function ok(name, cond) {
@@ -29,6 +31,10 @@ function ok(name, cond) {
 // async / 일반 function 선언 모두 지원하는 추출기 (signature 의 destructuring `{}` 를
 // body `{` 로 오인하지 않도록 먼저 paren-matching 으로 signature 끝을 찾는다).
 function extractFn(src, name) {
+  // B3 패널 NIT 흡수: 합본에서 동명 함수가 2회 이상 출현하면(나쁜 머지로 dead 사본 재출현)
+  // 첫 매치가 죽은 사본을 검증할 수 있다 — 다중 출현은 fail-loud.
+  const _occ = src.split(`function ${name}(`).length - 1;
+  if (_occ > 1) { console.error(`extractFn: "${name}" ${_occ}회 출현 — 합본 내 중복 정의(죽은 사본?)`); process.exit(1); }
   let start = src.indexOf(`async function ${name}(`);
   if (start < 0) start = src.indexOf(`function ${name}(`);
   if (start < 0) return null;
