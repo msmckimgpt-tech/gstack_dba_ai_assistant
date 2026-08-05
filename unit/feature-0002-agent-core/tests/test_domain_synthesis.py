@@ -348,8 +348,18 @@ def test_pending_query_hits_the_partial_index_first():
 
 
 def test_insight_synthesis_runs_only_under_advisory_lock():
-    """lock 없이 돌면 여러 워커가 같은 스키마를 동시에 합성해 LLM 호출이 중복된다(codex P2)."""
+    """lock 없이 돌면 여러 워커가 같은 스키마를 동시에 합성해 LLM 호출이 중복된다(codex P2).
+
+    ⚠ 단정은 **AST 로 포함관계**를 본다 — 종전의 "앞 800자 안에 `if lock_acquired:` 가 있다" 는
+    이웃 코드가 사이에 끼기만 해도 깨지는(그리고 lock 밖으로 나가도 통과할 수 있는) 취약한 근사였다.
+    실제로 2026-08-05 에 판정 pass 를 같은 lock 블록 안으로 옮기자 거짓 실패했다."""
+    import ast
+
     src = _INSIGHT.read_text(encoding="utf-8")
-    idx = src.index("run_synthesis_pass()")
-    window = src[max(0, idx - 800):idx]
-    assert "if lock_acquired:" in window
+    guarded = [
+        ast.unparse(n)
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.If) and ast.unparse(n.test).strip() == "lock_acquired"
+    ]
+    assert any("run_synthesis_pass()" in g for g in guarded), \
+        "domain_synthesis pass 가 advisory lock 블록 밖에 있다"

@@ -39,6 +39,11 @@ _EVIDENCE_COLUMN_CAP = 30
 #: 분석문 절단(문자). 프롬프트 계약이 1~2문장이라 넉넉하다.
 _ANALYSIS_CLIP = 800
 
+#: 연속 판정 실패 상한. 실패 노드는 미판정으로 남아 큐 선두를 계속 물기 때문에, 판정자가 특정
+#: 입력에서 계약 위반 응답을 반복하면 한 pass 예산을 그 노드들이 통째로 먹는다. 그 자리에서 멈춰
+#: 다음 pass 로 넘긴다(대상 순서가 바뀌어 다른 노드가 앞에 설 기회를 준다).
+_MAX_CONSECUTIVE_FAILURES = 5
+
 
 def analysis_hash(text) -> str:
     """판정 대상 분석문의 지문. 분석이 갱신되면 해시가 달라져 자연히 미검증으로 돌아간다."""
@@ -115,6 +120,16 @@ def pending_targets(cur, limit: int) -> list:
 
     분석문과 증거가 **둘 다** 있고 그 분석문 버전으로 아직 판정되지 않은 것. 증거의 수집
     깊이(stage)가 깊은 것부터 — 얕은 증거로 내린 판정은 정보가 적다.
+
+    ⚠ **노드당 최신 분석문 1건만** 대상이다(DISTINCT ON). 이것이 없으면 판정이 무한 순환한다:
+    `node_analysis_jobs` 에는 같은 노드에 대해 **여러 분석 run 의 done 행**이 쌓이는데(라이브 실측:
+    done 2,682행 / distinct 노드 2,052 — 다세대 노드 489개 전부 run_id 가 서로 다르다. back-refine
+    은 행을 만들지 않고 기존 행을 제자리 전이시킨다), 저장은 `store_verdict` 가 **노드당 1행**만
+    유지한다.
+    그래서 A세대를 판정해 저장하면 B세대가 미판정으로 남고, B를 판정하면 A행이 지워져 다시
+    미판정이 된다 — 같은 노드를 영원히 번갈아 판정한다. 2026-08-05 라이브에서 이 순환이
+    7일간 7,896콜(배경 LLM 호출의 62.8%)을 태우고 정보는 한 건도 늘리지 않았다(판정 91행 고정,
+    노드당 평균 87회 재판정). 대상을 노드당 최신 1건으로 좁히면 저장 정책과 정합해 순환이 닫힌다.
     """
     if limit <= 0:
         return []
@@ -125,17 +140,39 @@ def pending_targets(cur, limit: int) -> list:
             #   "분석 갱신 시 자연히 미검증" 계약과 정반대로 동작한다. 해시 비교는 호출측이
             #   파이썬에서 한다(SQL 로 분석문 해시를 계산할 수 없다).
             #   `store_verdict` 가 노드당 1행만 유지하므로 이 LEFT JOIN 은 행을 늘리지 않는다.
+            #
+            # ⚠ 노드별 "최신"은 `updated_at` 이 아니라 **`id`(삽입 순 = 최신 run)** 로 고른다.
+            #   `node_analysis_jobs` 의 모든 UPDATE 가 updated_at 트리거를 발화시켜, 과거 run 행이
+            #   재분석 행보다 "최신"으로 역전된다(role backfill 등). 이 저장소는 그 결함을 이미 한 번
+            #   겪고 `id DESC` 를 정본 규칙으로 삼았다 — `node_analysis.get_node_analysis` ·
+            #   `_latest_done_analysis` 와 **같은 기준을 써야** 판정 대상과 상세 패널이 같은 문장을
+            #   가리킨다. 어긋나면 사용자가 볼 수 없는 텍스트에 확인 도장이 찍힌다.
+            #   (라이브 실측 2026-08-05: 두 기준이 갈리는 노드 13개, 전부 분석문 텍스트가 달랐다.)
+            #   뒤의 `m.stage DESC` 는 join 이 fan-out 할 때만 작동하는 방어다(얕은 증거 선택 차단).
+            #
+            # 바깥 정렬은 **판정이 오래된 것부터**(미판정은 NULLS FIRST 로 맨 앞). 라운드로빈이라
+            #   완충 구간(limit*5)이 전체보다 작아도 모든 노드가 결국 순회된다. "미판정 우선"만 두면
+            #   갱신된 분석문이 미판정 집합 전체 뒤로 밀려 **재판정이 굶는다**(ADR-0036-04 계약 파손) —
+            #   대상이 2,052 노드로 늘고 완충이 100이면 순위 100 밖의 갱신은 영영 판정되지 않는다.
+            #   판정하면 verdict_at 이 now() 로 갱신돼 큐 뒤로 가므로 같은 노드가 선두를 물지 않는다.
             cur.execute(
-                "SELECT j.scope_key, j.node_key, j.node_name, j.analysis, "
-                "       m.schema_name, m.table_name, m.stage, v.analysis_hash "
-                "FROM node_analysis_jobs j "
-                "JOIN metadata_table_stats m "
-                "  ON j.node_key = m.scope_key || ':' || m.schema_name || '.' || m.table_name "
-                "LEFT JOIN node_analysis_verdicts v "
-                "  ON v.scope_key = j.scope_key AND v.node_key = j.node_key "
-                "WHERE j.status = 'done' AND j.node_label = 'Table' AND j.analysis IS NOT NULL "
-                "  AND m.error IS NULL "
-                "ORDER BY m.stage DESC, j.updated_at DESC "
+                "SELECT t.scope_key, t.node_key, t.node_name, t.analysis, "
+                "       t.schema_name, t.table_name, t.stage, t.analysis_hash "
+                "FROM ("
+                "  SELECT DISTINCT ON (j.scope_key, j.node_key) "
+                "         j.scope_key, j.node_key, j.node_name, j.analysis, "
+                "         m.schema_name, m.table_name, m.stage, v.analysis_hash, "
+                "         v.created_at AS verdict_at, j.id AS job_id "
+                "  FROM node_analysis_jobs j "
+                "  JOIN metadata_table_stats m "
+                "    ON j.node_key = m.scope_key || ':' || m.schema_name || '.' || m.table_name "
+                "  LEFT JOIN node_analysis_verdicts v "
+                "    ON v.scope_key = j.scope_key AND v.node_key = j.node_key "
+                "  WHERE j.status = 'done' AND j.node_label = 'Table' AND j.analysis IS NOT NULL "
+                "    AND m.error IS NULL "
+                "  ORDER BY j.scope_key, j.node_key, j.id DESC, m.stage DESC"
+                ") t "
+                "ORDER BY t.verdict_at ASC NULLS FIRST, t.stage DESC, t.job_id DESC "
                 "LIMIT %s",
                 (int(limit) * 5,))
             return cur.fetchall() or []
@@ -282,8 +319,15 @@ def run_verification_pass(conn=None, limit=None) -> dict:
     실패는 전부 **미검증**(행 없음)으로 남는다 — 이 함수는 어떤 경로로도 확인되지 않은 분석문에
     확인 도장을 찍지 않는다.
     """
-    rep = {"checked": 0, "supported": 0, "contradicted": 0, "unverifiable": 0,
-           "skipped": None}
+    # 계측 3축. `checked`(저장 성공)만으로는 비용이 보이지 않는다:
+    #   attempted : 실제로 태운 LLM 콜 수. `checked` 와 벌어지면 판정 실패가 예산을 먹는 중이다.
+    #               (실패 노드는 미판정으로 남아 큐 선두를 계속 물기 때문에 이 격차는 자기증폭한다.)
+    #   rejudged  : 이전 판정이 있었는데 다시 판정한 수. 정상 운영에서는 분석 갱신 빈도만큼만 나온다 —
+    #               pass 마다 cap 을 채우면 대상 선정이 순환한다는 신호다(2026-08-05 회귀의 조기 신호).
+    # ⚠ 이 값들은 `insight.py` 의 명시 payload allow-list 에 등재돼야 운영자에게 도달한다 —
+    #   `scan_report` 의 dict 값은 `_telemetry_sweep` 의 스칼라 필터가 통째로 버린다.
+    rep = {"checked": 0, "attempted": 0, "supported": 0, "contradicted": 0, "unverifiable": 0,
+           "rejudged": 0, "skipped": None}
     if not enabled():
         rep["skipped"] = "disabled"
         return rep
@@ -342,6 +386,7 @@ def run_verification_pass(conn=None, limit=None) -> dict:
             model = str(getattr(_cfg, "AGENT_NODE_ANALYSIS_MODEL", "") or "")
         except Exception:
             model = ""
+        consecutive_failures = 0
         for (scope_key, node_key, node_name, analysis, schema_name, table_name,
              stage, judged_hash) in rows:
             if rep["checked"] >= cap:
@@ -369,12 +414,26 @@ def run_verification_pass(conn=None, limit=None) -> dict:
                     _log.info("분석 검증 보류 — 공유 LLM 예산 여유 없음(다음 pass 재시도)")
                     break
                 res = _verify_call(_llm, payload, scope_key)
+            # 콜을 태운 시점에 센다 — 저장 성공만 세면 "판정에 실패하며 예산만 먹는" pass 가 무음이 된다.
+            rep["attempted"] += 1
             verdict, reason = normalize_verdict(res)
             if verdict is None:
-                continue     # ⚠ 판정 실패 = 미검증. 도장을 찍지 않는다
+                # ⚠ 판정 실패 = 미검증. 도장을 찍지 않는다.
+                # 다만 실패 노드는 미판정으로 남아 큐 선두(verdict_at NULLS FIRST)를 계속 물기 때문에,
+                # 같은 노드가 pass 예산을 통째로 먹을 수 있다. 연속 실패가 이어지면 그 자리에서 멈춰
+                # 다음 pass 로 넘긴다 — 판정자가 특정 분석문에서 계약 위반 응답을 반복하는 경우의 방어.
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    _log.warning("분석 검증 중단 — 판정 실패 %s연속(콜 %s / 저장 %s). 다음 pass 재시도",
+                                 consecutive_failures, rep["attempted"], rep["checked"])
+                    break
+                continue
+            consecutive_failures = 0
             if store_verdict(cur, scope_key, node_key, a_hash, verdict, reason, stage, model):
                 rep["checked"] += 1
                 rep[verdict] = rep.get(verdict, 0) + 1
+                if judged_hash:
+                    rep["rejudged"] += 1
     except Exception as exc:
         _log.warning("analysis_verify pass 실패(다음 pass 재시도): %r", exc)
     finally:
@@ -388,9 +447,10 @@ def run_verification_pass(conn=None, limit=None) -> dict:
                 conn.close()
             except Exception:
                 pass
-    if rep["checked"]:
-        _log.info("분석 검증 pass — 판정 %s (뒷받침 %s · 모순 %s · 판정불가 %s)",
-                  rep["checked"], rep["supported"], rep["contradicted"], rep["unverifiable"])
+    if rep["attempted"]:
+        _log.info("분석 검증 pass — 콜 %s / 판정 %s (뒷받침 %s · 모순 %s · 판정불가 %s / 재판정 %s)",
+                  rep["attempted"], rep["checked"], rep["supported"], rep["contradicted"],
+                  rep["unverifiable"], rep["rejudged"])
     return rep
 
 

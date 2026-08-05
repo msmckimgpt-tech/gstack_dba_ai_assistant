@@ -45,3 +45,54 @@ C1 은 **배선이 통째로 죽어 있었다**. 테스트 38건이 모듈 내�
 - 판정 대상이 현재 7건 수준이다(증거 커버리지 제약). 플래너(feature-0035)가 커버리지를 채운
   뒤에야 이 층이 실질 값을 한다.
 - 판정 결과의 콘솔 표시·grounding 반영은 후속 범위다. 지금은 저장까지.
+
+---
+
+## REV-20260805T160000-analysis-verify-loop [SUBAGENT:backend] — 반려 → 반영 완료
+
+**대상**: 판정 순환 수정 diff (`analysis_verify.pending_targets` · telemetry).
+**방법**: 라이브 read-only 쿼리 + EXPLAIN ANALYZE + 테스트 실행.
+
+- **[P1] `DISTINCT ON` tie-break 이 `updated_at DESC`** — 이 저장소가 이미 기각한 "최신 done" 기준.
+  `node_analysis.py:2554` 가 `id DESC` 를 정본으로 못박아 뒀다(모든 UPDATE 가 updated_at 트리거를
+  올려 과거 run 이 최신으로 역전). 라이브에서 두 기준이 갈리는 노드 **13개, 전부 분석문 텍스트 상이**.
+  → 판정 대상과 상세 패널이 다른 문장을 가리키고, 화면에 보이는 최신 분석문은 영영 미판정.
+  **반영**: 내부 정렬 `j.id DESC` (+ fan-out 대비 `m.stage DESC`).
+- **[P1] 재판정 starvation** — "미판정 우선" 첫 키가 갱신된 분석문을 미판정 집합 뒤 + stage 뒤로 두 겹
+  강등시켜, 완충(limit×5) 밖에서 ADR-0036-04 계약이 조용히 죽는다.
+  **반영**: `ORDER BY t.verdict_at ASC NULLS FIRST` 라운드로빈. (해시 술어를 SQL 로 내리는 대안은
+  Python/SQL 해시 정의 이중화 = drift 위험이라 미채택 — 라운드로빈으로 같은 목적 달성.)
+- **[P1] `rejudged` 가 저장 성공만 센다** — LLM 콜을 태우고 판정에 실패하는 경로가 계기판에 안 보인다.
+  실패 노드는 미판정으로 남아 큐 선두를 계속 물어 자기증폭. **반영**: `attempted` 카운터 + 연속 실패
+  상한(5).
+- **[P2] 원인 오귀속** — 중복 done 행은 back-refine 이 아니라 **별개 분석 run** 산물(다세대 노드 489개
+  전부 run_id 상이). 틀린 전제가 대안 기각 근거로 쓰였다. **반영**: 코드 주석·ADR·FUNCTION·REPORT·
+  TASK·LEARNINGS 정정.
+- **[P2] advisory lock 밖 실행** — 행 단위 claim 이 없어 워커 증설 시 콜이 워커 수만큼 중복되고,
+  그 중복은 `rejudged` 에도 안 잡힌다. **반영**: `if lock_acquired:` 안으로 이동.
+- **[P2] join fan-out 시 얕은 stage 선택 위험** — **반영**: 내부 정렬에 `m.stage DESC` tie-break.
+- 건전 판정: SQL 문법·의미, 불리언 정렬 방향, 순환 폐쇄(구 192행→신 92행), fail-soft 계약 무훼손,
+  telemetry 하위호환, 커밋 경로.
+
+## REV-20260805T160500-analysis-verify-loop [SUBAGENT:qa] — 반려 → 반영 완료
+
+**대상**: 동 diff 의 테스트 검출력. **방법**: 변이 테스트 11건(9건이 41 테스트를 전부 통과).
+
+- **[P1] SQL 유효성 미검증** — 서브쿼리 select 한 항목만 지워도 런타임 `column does not exist` 인데
+  fail-soft 가 삼켜 `skipped="no_targets"` 로 위장한다(기능 영구 사망 + 건강해 보이는 텔레메트리).
+  **반영**: env-gated 실 PG 통합 테스트 추가. 라이브 1회 실행으로 vacuous 아님 확인(92행/92노드).
+- **[P1] SELECT 컬럼 순서 미검증** — `stage` ↔ `analysis_hash` 를 맞바꾸는 한 줄 변이가 전 테스트
+  통과. 그 변이는 해시 비교를 **절대 성립하지 않게** 만들어 순환을 그대로 복구시킨다.
+  **반영**: 컬럼 목록 ↔ 언팩 변수 이름 단위 대조 테스트.
+- **[P1] `rejudged` 가 운영자에게 도달하지 않음** — `scan_report["analysis_verify"]` 는 dict 라
+  `_telemetry_sweep` 스칼라 필터가 통째로 버린다. 같은 실패가 이 워커에서 **이미 두 번** 있었고
+  주석까지 남아 있다(세 번째 재발 직전). **반영**: payload allow-list 등재 + 등재 고정 테스트 +
+  `checked or attempted` 로 기록 조건 완화.
+- **[P2]** DISTINCT ON 주석화 변이 통과 → 주석 제거 후 검사. **[P2]** rejudged 위치 미고정 →
+  저장 실패·같은 해시 skip 두 경우 단정. **[P2]** 완충 배수 미검증 → params 단정.
+  **[P2]** stage 정렬 위치 약화 → 2차 키로 고정. **[P2]** 중복 테스트 2건 → 1건 정리.
+- 건전 판정: 수정 자체는 라이브에서 옳다(윈도우 92행 중 skip 89 / 미판정 1 / 정당 재판정 2 —
+  구 쿼리는 미판정 0 / 재판정 9). mock 분기는 여전히 유효하고 빗나가면 fail-loud.
+- 미해결(정직 표기): 순환을 **행동 수준**으로 재현하는 단위 테스트는 현 mock 구조에서 원리적으로
+  불가(저장이 다음 pass 대상 집합을 바꾸는 것이 mock 에 없음). env-gated PG 통합 테스트가 그 자리를
+  대신하나 CI 기본 실행에는 포함되지 않는다.

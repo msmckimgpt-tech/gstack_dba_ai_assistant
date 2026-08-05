@@ -10,10 +10,10 @@ feature_status: in-progress
 # Task
 
 ## 1. Current Status
-- State: in-progress (구현·리뷰 완료, 출하 중)
+- State: in-progress (출하 완료 · 라이브 회귀 1건 수정 중 — 판정 순환)
 - Owner: AI (claude)
 - Priority: high
-- Last Updated: 2026-07-31
+- Last Updated: 2026-08-05
 
 ## 2. Implementation Plan
 
@@ -38,7 +38,29 @@ feature_status: in-progress
 - [x] TASK-0005 insight tick 배선(자체 PG 연결) + knob 2종
 - [x] TASK-0006 테스트 38건
 - [x] TASK-0007 적대 리뷰 반영(P1 4건·P2 2건)
-- [ ] TASK-0008 verify → PR → CI → 머지 → 배포 → 라이브 판정 실측
+- [x] TASK-0008 verify → PR → CI → 머지 → 배포 → 라이브 판정 실측
+
+### Cycle 2 — 판정 순환 수정 (2026-08-05, 라이브 실측 발단)
+
+운영 현황 화면에서 "분석문 사실성 검증"이 분석 작업의 대부분을 차지한다는 사용자 관측에서 출발.
+실측 결과 대상 선정(행 단위)과 저장(노드당 1행)의 단위 불일치로 **판정이 무한 순환**하고 있었다.
+
+- [x] TASK-0009 라이브 실측 — 7일 7,896콜(배경 LLM 62.8%·토큰 38.3%), 대상 노드 91개,
+      노드당 평균 87회 재판정, 판정 행 91개 고정(정보 증가 0)
+- [x] TASK-0010 원인 확정 — `node_analysis_jobs` done 2,682행 / 노드 2,052(여러 분석 run 의 done 행 중복 — back-refine 아님).
+      done 행 2개 이상인 노드만 반복(상위 8개가 호출의 69%), 1개인 노드는 1회 후 조용 — 대조군 성립
+- [x] TASK-0011 `pending_targets` → `DISTINCT ON (scope_key, node_key)` 노드당 최신 1건 (ADR-0036-08)
+- [x] TASK-0012 telemetry `attempted`/`rejudged` 분리 + 로그 노출(순환·실패 관측 지표)
+- [x] TASK-0013 테스트 추가(순환 방지 SQL 계약·정렬·계수)
+- [x] TASK-0015 적대 패널(backend·qa) P1 6건 반영:
+      ① "최신" 기준 `updated_at` → **`id`**(저장소 정본 규칙, 라이브 divergent 13노드)
+      ② 정렬 "미판정 우선" → **판정 오래된 것부터**(재판정 starvation 해소, 라운드로빈)
+      ③ `attempted` 카운터 + 연속 판정 실패 상한(5) — 실패가 예산 먹는 경로 관측·차단
+      ④ telemetry payload **allow-list 등재**(dict 는 sweep 이 버림 — 무음 3회차 차단)
+      ⑤ 판정 pass 를 **advisory lock 안**으로(행 claim 부재 → 워커 증설 시 콜 중복)
+      ⑥ 테스트: 컬럼순서↔언팩 대조 · 주석화 변이 방어 · id 기준 · 완충 배수 · 실 PG 통합(env-gated)
+- [x] TASK-0016 원인 귀속 정정 — 중복 done 행은 back-refine 이 아니라 **여러 분석 run** 산물
+- [ ] TASK-0014 verify → PR → 머지 → 배포 → 라이브 호출량 재실측
 
 ## 9. Requested Scope (요청 범위 자기-열거)
 
