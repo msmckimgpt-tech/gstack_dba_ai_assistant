@@ -2542,8 +2542,47 @@ def get_run_status(run_id: str, conn=None) -> dict | None:
                 pass
 
 
+def _verdict_for(cur, scope_key: str, node_key: str, analysis_text) -> dict | None:
+    """지금 반환하는 **그 분석문 버전**에 대한 사실성 판정(feature-0036). 없으면 None.
+
+    ⚠ **해시 일치 검사가 이 함수의 전부다.** 판정은 노드당 1행이라, 분석문이 갱신되면 그 행은
+    지금 화면에 보이는 문장이 아니라 **다른 문장**에 대한 판정이다. 그걸 그대로 붙이면 확인 도장이
+    엉뚱한 문장에 찍히고, 운영자는 읽고 있는 서술이 검증된 것으로 오인한다 — 이 층이 저지를 수 있는
+    최악의 실패(ADR-0036-01)를 표시 단계에서 되풀이하는 셈이다. PK 가 (scope,node,hash) 라서
+    해시를 조건에 넣으면 불일치는 자연히 0행이 된다.
+
+    조회 실패는 None — 판정 표시가 없는 것이 상세 패널 자체를 깨는 것보다 낫다.
+    """
+    if not analysis_text:
+        return None
+    try:
+        from . import analysis_verify as _av
+        h = _av.analysis_hash(analysis_text)
+        if not h:
+            return None
+        with _av._savepoint(cur):
+            cur.execute(
+                "SELECT verdict, reason, evidence_stage, created_at "
+                "FROM node_analysis_verdicts "
+                "WHERE scope_key=%s AND node_key=%s AND analysis_hash=%s",
+                (scope_key, node_key, h))
+            row = cur.fetchone()
+    except Exception as exc:
+        _log.debug("node_verdict_unavailable node=%s err=%r", node_key, exc)
+        return None
+    if not row or not row[0]:
+        return None
+    return {"verdict": str(row[0]),
+            "reason": str(row[1] or ""),
+            "evidence_stage": int(row[2] or 0),
+            "created_at": row[3].isoformat() if row[3] else None}
+
+
 def get_node_analysis(scope_key: str, node_key: str, conn=None) -> dict | None:
-    """노드의 최신 분석 상태/결과 (상세 패널). done 이 있으면 그 analysis, 없으면 최신 상태만."""
+    """노드의 최신 분석 상태/결과 (상세 패널). done 이 있으면 그 analysis, 없으면 최신 상태만.
+
+    분석문이 있으면 그 **버전에 대한** 사실성 판정(feature-0036)을 `verdict` 로 함께 싣는다 —
+    해시가 어긋나는 옛 판정은 싣지 않는다(`_verdict_for`)."""
     if not node_key:
         return None
     c, owned = _rw_conn(conn)
@@ -2554,7 +2593,8 @@ def get_node_analysis(scope_key: str, node_key: str, conn=None) -> dict | None:
         # node-role-viz(적대 패널 Q1): "최신 done" 선택은 updated_at 이 아니라 **id(삽입 순 = 최신 run)**.
         #   backfill_roles 의 UPDATE 가 updated_at 트리거를 발화시켜 과거 run 행이 재분석 행보다 "최신"으로
         #   역전되던 결함 차단(get_scope_analysis_status 의 집계 정렬도 동일 기준).
-        _SEL_SQL = ("SELECT status, analysis, model, updated_at, run_id{role_col} FROM node_analysis_jobs "
+        _SEL_SQL = ("SELECT status, analysis, model, updated_at, run_id, node_label{role_col} "
+                    "FROM node_analysis_jobs "
                     "WHERE scope_key=%s AND node_key=%s "
                     "ORDER BY (status='done') DESC, id DESC LIMIT 1")
         try:
@@ -2565,6 +2605,13 @@ def get_node_analysis(scope_key: str, node_key: str, conn=None) -> dict | None:
             _warn_role_column_once("get_node_analysis", role_exc)
             cur.execute(_SEL_SQL.format(role_col=", NULL"), (scope_key or "common", node_key))
             r = cur.fetchone()
+        # feature-0036: 이 분석문 **그 버전**의 사실성 판정(있으면). 커서를 닫기 전에 조회한다.
+        #   판정 대상은 Table 노드뿐이라(`pending_targets` 의 `node_label='Table'`) 그 외 라벨에는
+        #   판정이 존재할 수 없다 — 라이브 done 행은 Column 5,192 / Routine 2,558 / Table 2,052 라
+        #   가드가 없으면 클릭의 ~79% 가 결과가 보장된 빈 왕복을 한다(product_classify 는 Schema
+        #   키로 스키마마다 부른다).
+        verdict = (_verdict_for(cur, scope_key or "common", node_key, r[1])
+                   if r and str(r[5] or "") == "Table" else None)
         cur.close()
         if not r:
             return {"status": "none", "analysis": None}
@@ -2574,9 +2621,14 @@ def get_node_analysis(scope_key: str, node_key: str, conn=None) -> dict | None:
                 analysis = json.loads(r[1])
             except Exception:
                 analysis = {"summary": str(r[1])}
-        return {"status": r[0], "analysis": analysis, "model": r[2],
-                "updated_at": r[3].isoformat() if r[3] else None, "run_id": r[4],
-                "role": r[5]}
+        out = {"status": r[0], "analysis": analysis, "model": r[2],
+               "updated_at": r[3].isoformat() if r[3] else None, "run_id": r[4],
+               "role": r[6]}
+        # 판정이 없으면 키 자체를 싣지 않는다 — "아직 확인되지 않음"과 "판정 실패"를 프론트가
+        # 구분할 필요가 없게(둘 다 표시 없음). 세 verdict 값만이 표시 대상이다.
+        if verdict:
+            out["verdict"] = verdict
+        return out
     except Exception as exc:
         _log.debug("get_node_analysis_failed err=%r", exc)
         return None

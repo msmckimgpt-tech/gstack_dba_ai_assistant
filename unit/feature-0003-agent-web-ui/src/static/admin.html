@@ -921,6 +921,10 @@
                     <li><i class="lg-dot" style="background:#f4b400;box-shadow:0 0 5px 2px rgba(244,180,0,.85)"></i>검색 매칭(앰버 글로우)</li>
                     <li><i class="lg-simgroup"></i>유사 속성 그룹(배경·헤더 드래그=그룹 이동 · −/+=접기 · 클러스터 이동은 여백/이름/카드)</li>
                   </ul>
+                  <!-- feature-0036: 노드 상세의 AI 표본 대조 판정 3종. **표시 없음 = 아직 판정 안 됨**을
+                       화면 어딘가는 말해야 한다 — 대상 대부분이 아직 미판정이라, 없는 것을 '문제없음'으로
+                       읽는 것이 기본 오독이다(ADR-0036-09). -->
+                  <p class="amg-legend-note">노드 상세 <b>AI 표본 대조 판정</b>: 모순 없음 / ⚠ 어긋남 / 통계가 다루지 않음 — <b>배지가 없으면 아직 판정 전</b>(표본 통계가 있는 테이블만 대상)</p>
                 </div>
                 <div class="amg-legend-panel" role="tabpanel" data-legend-panel="roles" aria-labelledby="amgLegendTabRoles" hidden>
                   <ul class="admin-meta-graph-rolelegend-list" aria-label="테이블 역할 범례">

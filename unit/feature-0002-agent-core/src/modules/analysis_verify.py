@@ -91,7 +91,13 @@ def _savepoint(cur):
     def _sp():
         name = "sp_analysis_verify"
         opened = False
+        # ⚠ autocommit 커넥션에서는 SAVEPOINT 가 **항상 실패**한다(트랜잭션 블록이 없다). 예외는
+        #   아래서 삼켜지지만 PostgreSQL 서버 로그에는 매 호출 ERROR 가 남는다 — 노드 상세는
+        #   클릭마다 호출되므로 그 노이즈가 실제 오류를 덮는다. autocommit 이면 애초에 오염될
+        #   트랜잭션이 없으므로 시도 자체를 건너뛴다(방어 효과 동일, 로그만 조용해진다).
         try:
+            if getattr(getattr(cur, "connection", None), "autocommit", False):
+                raise RuntimeError("autocommit — savepoint unnecessary")
             cur.execute(f"SAVEPOINT {name}")
             opened = True
         except Exception:
@@ -157,11 +163,12 @@ def pending_targets(cur, limit: int) -> list:
             #   판정하면 verdict_at 이 now() 로 갱신돼 큐 뒤로 가므로 같은 노드가 선두를 물지 않는다.
             cur.execute(
                 "SELECT t.scope_key, t.node_key, t.node_name, t.analysis, "
-                "       t.schema_name, t.table_name, t.stage, t.analysis_hash "
+                "       t.schema_name, t.table_name, t.stage, t.analysis_hash, t.judged_stage "
                 "FROM ("
                 "  SELECT DISTINCT ON (j.scope_key, j.node_key) "
                 "         j.scope_key, j.node_key, j.node_name, j.analysis, "
                 "         m.schema_name, m.table_name, m.stage, v.analysis_hash, "
+                "         v.evidence_stage AS judged_stage, "
                 "         v.created_at AS verdict_at, j.id AS job_id "
                 "  FROM node_analysis_jobs j "
                 "  JOIN metadata_table_stats m "
@@ -388,7 +395,7 @@ def run_verification_pass(conn=None, limit=None) -> dict:
             model = ""
         consecutive_failures = 0
         for (scope_key, node_key, node_name, analysis, schema_name, table_name,
-             stage, judged_hash) in rows:
+             stage, judged_hash, judged_stage) in rows:
             if rep["checked"] >= cap:
                 break
             # 배치마다 토큰 예산을 다시 본다 — 긴 pass 도중 소진되면 그 자리에서 멈춘다.
@@ -401,8 +408,14 @@ def run_verification_pass(conn=None, limit=None) -> dict:
             a_hash = analysis_hash(analysis)
             if not a_hash:
                 continue
-            if judged_hash and str(judged_hash) == a_hash:
-                continue     # 이 분석문 버전은 이미 판정됐다
+            # ⚠ 판정은 (분석문, 증거) **두 입력**의 함수인데 해시는 분석문만 고정한다. 증거
+            #   (`metadata_table_stats`)는 테이블당 1행이 제자리 갱신되므로, 해시만 보면 커버리지가
+            #   깊어져도 옛 판정이 영원히 남는다 — stage 0(표본 0행, 컬럼 통계 전무)에서 내린 판정이
+            #   stage 1 수집 후에도 "대조했다"는 얼굴로 화면에 남는 것이 그 결과다(적대 패널 실측:
+            #   라이브 판정 95건 중 82건이 stage 0). 증거가 깊어졌으면 다시 판정한다.
+            if (judged_hash and str(judged_hash) == a_hash
+                    and int(judged_stage or 0) >= int(stage or 0)):
+                continue     # 이 분석문 버전을, 지금과 같거나 더 깊은 증거로 이미 판정했다
             ev = load_evidence(cur, scope_key, schema_name, table_name, stage)
             if not ev:
                 continue     # 증거 없음 = 대조 불가. 판정하지 않는다
@@ -448,7 +461,9 @@ def run_verification_pass(conn=None, limit=None) -> dict:
             except Exception:
                 pass
     if rep["attempted"]:
-        _log.info("분석 검증 pass — 콜 %s / 판정 %s (뒷받침 %s · 모순 %s · 판정불가 %s / 재판정 %s)",
+        # 어휘는 화면(노드 상세 배지)과 같은 말을 쓴다 — 로그와 UI 가 같은 세 값을 다르게 부르면
+        #   운영자가 3개 enum 에 2개 어휘를 매핑해야 한다(적대 패널 지적).
+        _log.info("분석 검증 pass — 콜 %s / 판정 %s (모순없음 %s · 어긋남 %s · 다루지않음 %s / 재판정 %s)",
                   rep["attempted"], rep["checked"], rep["supported"], rep["contradicted"],
                   rep["unverifiable"], rep["rejudged"])
     return rep

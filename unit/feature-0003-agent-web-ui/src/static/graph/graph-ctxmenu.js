@@ -3590,6 +3590,41 @@ async function _metaGraphLoadNodeAnalysis(key) {
     const rows = [];
     // node-role-viz: AI 분류 역할 칩 — 그래프 칩 색과 동일 색/아이콘으로 상세 패널에서도 역할을 명시.
     if (roleObj) rows.push(`<p><span class="admin-meta-graph-badge" style="background:${roleObj.color}${roleObj.dark ? ";color:#161b22" : ""}">${roleObj.icon} ${esc(roleObj.ko)}</span> <span class="admin-meta-graph-muted">AI 분류 테이블 역할</span></p>`);
+    // feature-0036: 이 분석문을 **표본 통계와 대조**한 판정. 백엔드가 해시가 일치할 때만 싣는다 —
+    //   판정이 없으면(미검증·판정 실패·분석문 갱신 직후) 아무 표시도 하지 않는 것이 계약이다.
+    //   ⚠ 색은 역할 팔레트(_META_ROLE)가 아니라 **상태 태그 시스템**(--tag-*)을 쓴다(ADR-0036-09):
+    //   역할 색을 재사용하면 `config`(#D55E00) 역할 칩 + contradicted 배지가 **같은 색·같은 모양**으로
+    //   연달아 붙어 경보가 카테고리 태그로 읽힌다. --tag-* 는 대비도 함께 보증한다(4.3~5.7:1).
+    //   ⚠ 라벨은 "부합/검증됨"이 아니라 **"모순 없음"** 이다. 판정 근거는 100행 안팎의 표본이고
+    //   실패한 판정은 애초에 기록되지 않는다(ADR-0036-01) — `✓` 같은 합격 도장을 붙이면 위층이
+    //   더 확신하게 되는, 이 층이 막으려던 실패를 표시 단계가 되살린다.
+    // ⚠ 대조 **기준을 라벨이 말한다**. 증거 stage 0 은 표본이 0행이라 컬럼 통계가 하나도 없다
+    //   (컬럼명·타입·행수 추정만 있다) — 그것을 "표본 통계와 모순 없음"으로 부르면 없는 표본을
+    //   근거로 내세우는 것이다. 라이브 판정의 대다수가 stage 0 이므로 이 구분이 곧 정직성이다.
+    const V = { supported:    { tag: "ok",      ko: (b) => `${b}와 모순 없음` },
+                contradicted: { tag: "danger",  ko: (b) => `⚠ ${b}와 어긋남` },
+                unverifiable: { tag: "neutral", ko: () => "통계가 다루지 않음" } };
+    const vd = res.verdict && V[res.verdict.verdict] ? V[res.verdict.verdict] : null;
+    if (vd) {
+      const st = `background:var(--tag-${vd.tag}-bg);color:var(--tag-${vd.tag}-fg);border:1px solid var(--tag-${vd.tag}-bd)`;
+      // 판정 강도(증거 stage)와 시각은 tooltip 으로 — 얕은 증거로 내린 판정과 깊은 증거로 내린
+      //   판정이 화면에서 똑같아 보이면 안 된다(대상 선정이 stage 로 정렬까지 하는 이유).
+      const st_n = Number(res.verdict.evidence_stage || 0);
+      const basis = st_n >= 1 ? "표본 통계" : "구조";
+      const when = res.verdict.created_at ? ` · ${String(res.verdict.created_at).slice(0, 16).replace("T", " ")}` : "";
+      const tip = st_n >= 1
+        ? `표본 통계와 대조 · 증거 수집 단계 ${st_n}${when}`
+        : `표본 없이 구조만 대조(컬럼명·타입·행수 추정) · 증거 수집 단계 0${when}`;
+      rows.push(`<p><span class="admin-meta-graph-badge" style="${st}" title="${esc(tip)}">${esc(vd.ko(basis))}</span> <span class="admin-meta-graph-muted">AI 표본 대조 판정</span></p>`);
+      if (res.verdict.reason) {
+        // 라벨을 붙인다 — 관계/활용/주의와 같은 형태. 없으면 이 회색 문장이 판정자의 말이 아니라
+        //   분석문 도입부로 읽힌다. 길면 접어서 요약을 fold 아래로 밀지 않게 한다(계약은 1문장이나
+        //   강제되지 않고 저장 상한이 500자다).
+        const r = String(res.verdict.reason);
+        const shown = r.length > 200 ? `${r.slice(0, 200)}…` : r;
+        rows.push(`<p class="admin-meta-graph-muted"><strong>판정 근거</strong> — <span title="${esc(r)}">${esc(shown)}</span></p>`);
+      }
+    }
     if (a.summary) rows.push(`<p class="admin-meta-graph-ai-summary">${esc(a.summary)}</p>`);
     if (a.relationships) rows.push(`<p><strong>관계</strong> — ${esc(a.relationships)}</p>`);
     if (a.usage) rows.push(`<p><strong>활용</strong> — ${esc(a.usage)}</p>`);

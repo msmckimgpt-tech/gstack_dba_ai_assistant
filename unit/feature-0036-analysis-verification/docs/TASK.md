@@ -60,7 +60,18 @@ feature_status: in-progress
       ⑤ 판정 pass 를 **advisory lock 안**으로(행 claim 부재 → 워커 증설 시 콜 중복)
       ⑥ 테스트: 컬럼순서↔언팩 대조 · 주석화 변이 방어 · id 기준 · 완충 배수 · 실 PG 통합(env-gated)
 - [x] TASK-0016 원인 귀속 정정 — 중복 done 행은 back-refine 이 아니라 **여러 분석 run** 산물
-- [ ] TASK-0014 verify → PR → 머지 → 배포 → 라이브 호출량 재실측
+- [x] TASK-0014 verify → PR #1156 → 머지 → 배포(8b46bdec) → 라이브 재실측:
+      25분간 6콜/6판정(낭비 0), 판정 행 91→94, 시간당 148콜 → ~14콜
+
+### Cycle 3 — 판정 결과 노출 (2026-08-05, ANCHOR §3 실현)
+
+순환을 고쳐 비용은 90% 줄었으나 `node_analysis_verdicts` 를 읽는 코드가 0곳이라 효용은 0이었다.
+
+- [x] TASK-0017 `_verdict_for` — 해시 일치 조회(불일치는 0행)·savepoint·fail-soft
+- [x] TASK-0018 `get_node_analysis` 응답에 `verdict` (없으면 키 부재)
+- [x] TASK-0019 노드 상세 AI 박스에 판정 배지 + 근거 한 줄(역할 칩과 색 계열 분리)
+- [x] TASK-0020 테스트 8건 — 해시 정합 3 · 격리 2 · 프론트 계약 2 · savepoint 1
+- [ ] TASK-0021 PB-0008 시각 검증 → verify → PR → 머지 → 배포
 
 ## 9. Requested Scope (요청 범위 자기-열거)
 
@@ -72,10 +83,12 @@ feature_status: in-progress
       배선 확인: LLM 실패·계약 위반·근거 없음·증거 부재·저장 실패 각각을 테스트로 단정
 - [x] `독립 비용 상한` — 산출물: pass 상한 + 인자 우회 차단 · 배선 확인: limit=99 로 불러도
       설정 상한(2)만 처리됨을 단정
-- [ ] `배포·라이브 판정 실측` — 산출물: `TBD` · 배선 확인: `TBD`
+- [x] `배포·라이브 판정 실측` — 산출물: 배포 8b46bdec · 배선 확인: 25분 6콜/6판정, 판정행 91→94
+- [ ] `판정 결과 소비처 연결` — 산출물: `verdict` 응답 필드 + 상세 패널 배지 ·
+      배선 확인: 해시 불일치 시 미표시를 테스트로 단정 + PB-0008 시각 검증(진행 중)
 
-**주장 affordance 실측 (G3)**: 사용자 대면 UI 없음. 콘솔 knob 2개는 실제 게이트를 가진다
-(`enabled()` → pass 조기 반환, `max_per_pass()` → cap). 판정 결과의 콘솔 표시는 후속 범위.
+**주장 affordance 실측 (G3)**: 사용자 대면 UI = 그래프 뷰 노드 상세의 판정 배지(cycle 3). 콘솔 knob 2개는 실제 게이트를 가진다
+(`enabled()` → pass 조기 반환, `max_per_pass()` → cap). 판정 결과의 콘솔 표시는 cycle 3 에서 연결했다.
 
 **경계변수 양측 검증 (G4)**:
 - `MAX_PER_PASS`(20) → 0 이면 `cap_zero` / >0 이면 그 수만큼, 인자로 초과 불가

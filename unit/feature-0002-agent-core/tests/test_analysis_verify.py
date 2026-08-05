@@ -31,7 +31,7 @@ class _Cur:
     def __init__(self, targets=None, tstat=None, cstats=None):
         self.calls = []
         self._targets = targets if targets is not None else [
-            ("ds1", "ds1:app.items", "items", _analysis(), "app", "items", 1, None)]
+            ("ds1", "ds1:app.items", "items", _analysis(), "app", "items", 1, None, None)]
         self._tstat = tstat if tstat is not None else (1000, 5, ["id"], ["id"], 1, 0, 100)
         self._cstats = cstats if cstats is not None else [
             ("id", "int", False, 100, 0.0, 1.0, 999.0, None, None, True)]
@@ -135,7 +135,7 @@ def test_missing_evidence_records_nothing(monkeypatch):
 
 
 def test_unparsable_analysis_records_nothing(monkeypatch):
-    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", "not-json{", "app", "t", 1, None)])
+    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", "not-json{", "app", "t", 1, None, None)])
     rep, stored = _run(monkeypatch, conn, {"verdict": "supported", "reason": "r"})
     assert rep["checked"] == 0 and stored == []
 
@@ -296,7 +296,7 @@ def test_target_columns_match_unpacking_order():
     names = [v.strip() for v in unpack.group(1).replace("\n", " ").split(",")]
 
     # 컬럼명 ↔ 변수명 (이름이 다른 것은 여기 한 곳에서만 매핑한다)
-    alias = {"analysis_hash": "judged_hash"}
+    alias = {"analysis_hash": "judged_hash", "judged_stage": "judged_stage"}
     assert [alias.get(c, c) for c in cols] == names
 
 
@@ -308,7 +308,7 @@ def test_targets_short_circuit_on_zero_limit():
 
 # ── C: 비용 ─────────────────────────────────────────────────────────────────
 def test_pass_cap_limits_calls(monkeypatch):
-    targets = [("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None)
+    targets = [("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None, None)
                for i in range(10)]
     import modules.llm as _llm
     calls = []
@@ -348,7 +348,7 @@ def test_token_budget_is_rechecked_per_item(monkeypatch):
     monkeypatch.setattr(av, "store_verdict", lambda *a: True)
     monkeypatch.setattr(av, "enabled", lambda: True)
     monkeypatch.setattr(av, "max_per_pass", lambda: 5)
-    targets = [("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None)
+    targets = [("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None, None)
                for i in range(5)]
     rep = av.run_verification_pass(_Conn(targets=targets))
     assert rep["checked"] == 1, "예산 소진 후에도 계속 판정했다"
@@ -435,7 +435,7 @@ def test_prompt_prefers_contradiction_over_rubber_stamp():
 def test_already_judged_same_analysis_is_skipped(monkeypatch):
     """같은 분석문 버전을 다시 판정하면 비용만 든다."""
     a = _analysis()
-    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", a, "app", "t", 1, av.analysis_hash(a))])
+    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", a, "app", "t", 1, av.analysis_hash(a), 1)])
     rep, stored = _run(monkeypatch, conn, {"verdict": "supported", "reason": "근거"})
     assert rep["checked"] == 0 and stored == []
 
@@ -443,7 +443,7 @@ def test_already_judged_same_analysis_is_skipped(monkeypatch):
 def test_updated_analysis_is_rejudged(monkeypatch):
     """분석문이 갱신되면 옛 판정은 그 문장에 대한 것이 아니다 — 재판정해야 한다.
     '판정 행이 있으면 제외'로 두면 문서에 적은 계약과 **정반대**로 동작한다(codex P1)."""
-    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH")])
+    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH", 1)])
     rep, stored = _run(monkeypatch, conn, {"verdict": "contradicted", "reason": "근거"})
     assert rep["checked"] == 1 and stored
 
@@ -451,11 +451,11 @@ def test_updated_analysis_is_rejudged(monkeypatch):
 def test_rejudged_is_counted_separately(monkeypatch):
     """'많이 도는 것'과 '같은 걸 또 도는 것'은 다르다 — telemetry 가 그 둘을 구분해야
     운영 화면에서 순환을 알아볼 수 있다(2026-08-05 회귀는 이 구분이 없어 늦게 발견됐다)."""
-    fresh = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, None)])
+    fresh = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, None, None)])
     rep, _stored = _run(monkeypatch, fresh, {"verdict": "supported", "reason": "근거"})
     assert rep["checked"] == 1 and rep["rejudged"] == 0
 
-    stale = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH")])
+    stale = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH", 1)])
     rep2, _s2 = _run(monkeypatch, stale, {"verdict": "supported", "reason": "근거"})
     assert rep2["checked"] == 1 and rep2["rejudged"] == 1
 
@@ -473,7 +473,7 @@ def test_rejudged_is_not_counted_when_store_fails(monkeypatch):
     monkeypatch.setattr(av, "store_verdict", lambda *a: False)
     monkeypatch.setattr(av, "enabled", lambda: True)
     monkeypatch.setattr(av, "max_per_pass", lambda: 5)
-    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH")])
+    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", _analysis(), "app", "t", 1, "OLDHASH", 1)])
     rep = av.run_verification_pass(conn)
     assert rep["checked"] == 0 and rep["rejudged"] == 0
     assert rep["attempted"] == 1, "콜은 태웠으므로 attempted 에는 남아야 한다"
@@ -485,7 +485,7 @@ def test_rejudged_is_not_counted_for_same_hash_skip(monkeypatch):
     증가 지점을 같은-해시 skip 앞으로 옮기는 변이가 종전 테스트를 통과했다 — 그러면 정상 운영에서
     `rejudged` 가 상시 포화돼 "cap 을 채우면 순환" 이라는 판정 기준이 영구 오작동한다."""
     a = _analysis()
-    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", a, "app", "t", 1, av.analysis_hash(a))])
+    conn = _Conn(targets=[("ds1", "ds1:app.t", "t", a, "app", "t", 1, av.analysis_hash(a), 1)])
     rep, _stored = _run(monkeypatch, conn, {"verdict": "supported", "reason": "근거"})
     assert rep["rejudged"] == 0 and rep["attempted"] == 0
 
@@ -495,7 +495,7 @@ def test_attempted_counts_calls_even_when_the_verdict_is_rejected(monkeypatch):
 
     이 격차(attempted ≫ checked)는 자기증폭한다: 실패 노드는 미판정으로 남아 큐 선두
     (verdict_at NULLS FIRST)를 계속 물기 때문이다."""
-    conn = _Conn(targets=[("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None)
+    conn = _Conn(targets=[("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None, None)
                           for i in range(3)])
     rep, stored = _run(monkeypatch, conn, {"verdict": "supported"})   # reason 없음 → 판정 거부
     assert rep["checked"] == 0 and stored == []
@@ -507,7 +507,7 @@ def test_consecutive_failures_stop_the_pass(monkeypatch):
 
     연속 실패 상한에서 멈춰 다음 pass 로 넘긴다(대상 순서가 바뀌어 다른 노드가 앞에 설 기회를 준다)."""
     monkeypatch.setattr(av, "max_per_pass", lambda: 50)
-    conn = _Conn(targets=[("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None)
+    conn = _Conn(targets=[("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None, None)
                           for i in range(50)])
     import modules.llm as _llm
     monkeypatch.setattr(_llm, "llm_verify_analysis", lambda p, scope_key=None: None, raising=False)
@@ -611,7 +611,7 @@ def test_caller_limit_cannot_exceed_configured_cap(monkeypatch):
                         lambda p, scope_key=None: calls.append(1) or {
                             "verdict": "supported", "reason": "근거"}, raising=False)
     monkeypatch.setattr(av, "store_verdict", lambda *a: True)
-    targets = [("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None)
+    targets = [("ds1", f"ds1:app.t{i}", f"t{i}", _analysis(), "app", f"t{i}", 1, None, None)
                for i in range(10)]
     rep = av.run_verification_pass(_Conn(targets=targets), limit=99)
     assert rep["checked"] == 2 and len(calls) == 2
@@ -656,3 +656,40 @@ def test_insight_calls_pass_without_undefined_variable():
     src = (pathlib.Path(__file__).resolve().parents[1] / "src" / "modules"
            / "insight.py").read_text(encoding="utf-8")
     assert "run_verification_pass()" in src
+
+
+def test_deeper_evidence_triggers_rejudgement(monkeypatch):
+    """분석문이 그대로여도 **증거가 깊어졌으면** 다시 판정한다.
+
+    판정은 (분석문, 증거) 두 입력의 함수인데 해시는 분석문만 고정한다. 증거는 테이블당 1행이
+    제자리 갱신되므로, 해시만 보면 stage 0(표본 0행·컬럼 통계 전무)에서 내린 판정이 stage 1
+    수집 후에도 "대조했다"는 얼굴로 남는다 — 적대 패널 실측으로 라이브 판정 95건 중 82건이
+    그 상태였다."""
+    a = _analysis()
+    h = av.analysis_hash(a)
+    # 같은 해시 + 더 깊어진 증거(judged 0 < current 1) → 재판정
+    deeper = _Conn(targets=[("ds1", "ds1:app.t", "t", a, "app", "t", 1, h, 0)])
+    rep, stored = _run(monkeypatch, deeper, {"verdict": "supported", "reason": "근거"})
+    assert rep["checked"] == 1 and stored, "증거가 깊어졌는데 재판정하지 않았다"
+
+    # 같은 해시 + 같은 깊이 → skip(비용만 드는 재판정 금지)
+    same = _Conn(targets=[("ds1", "ds1:app.t", "t", a, "app", "t", 1, h, 1)])
+    rep2, stored2 = _run(monkeypatch, same, {"verdict": "supported", "reason": "근거"})
+    assert rep2["checked"] == 0 and stored2 == []
+
+
+def test_savepoint_is_skipped_on_autocommit_connections():
+    """autocommit 에서 SAVEPOINT 는 항상 실패하고 **PG 서버 로그에 ERROR 를 남긴다**.
+
+    노드 상세는 클릭마다 이 경로를 타므로 그 노이즈가 실제 오류를 덮는다. autocommit 이면
+    오염될 트랜잭션이 없으니 시도 자체를 건너뛴다(방어 효과 동일)."""
+    class _AutoCur(_Cur):
+        class _C:
+            autocommit = True
+        connection = _C()
+
+    cur = _AutoCur()
+    with av._savepoint(cur):
+        pass
+    assert not any("SAVEPOINT" in c[0].upper() for c in cur.calls), \
+        "autocommit 인데 SAVEPOINT 를 발행했다"
