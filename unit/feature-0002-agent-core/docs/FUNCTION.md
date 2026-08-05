@@ -773,3 +773,31 @@ dialect 층이라 자동 적용, 코칭 문구만 미적용). ② 임계 1,000,0
   실패하니 첫 건을 못 쓴다"는 **부트스트랩 교착**이 되어 기능이 영구히 비활성이 된다
   (라이브 실측 2026-08-04 — `agent_runtime.summary` 0행 고착의 직접 원인).
 - 새 read method 를 추가할 때 이 표에 행을 추가하고, "부재 → 빈 값 / 실패 → None" 을 지킨다.
+
+## (attach-change-false-absence, 2026-08-05) 첨부 변경 사실 = 코드-권위 사실 (Major §12.3, TASK-20260805T1600)
+
+**계약**: 이번 턴에 사용자가 무엇을 새로 첨부했고 무엇을 버전 갱신했는지는 **애플리케이션이 첨부
+저장소에서 계산하는 사실**이며, LLM 의 추론 대상이 아니다. 그 사실은 **한 번만 계산**되어
+(`_ATTACHMENT_TURN_FACTS_CTX`) 세 지점에 같은 값으로 실린다.
+
+| 소비자 | 위치 | 싣는 것 |
+|---|---|---|
+| A `_build_attachment_authority_directive` | `compose_system_prompt` **말미**(운영자 prompt·첨부 섹션·`_GROUNDING_AUTHORITY_DIRECTIVE` 뒤) | 건수 + 파일명(평탄화·8건 캡) + 부재 단정 금지 |
+| C `_build_attachment_turn_manifest` | 현재 user turn 말미(**LLM 전달용만**) | 건수만 |
+| B `redteam.build_attachment_change_facts` | 리뷰어 user block, **초안 앞** | 건수 + 파일명(평탄화) |
+
+- **사실의 원천은 목록 표식과 동일 판정식**: `_build_attachment_context_section` 이 `★신규`/`🔄vN` 을
+  붙이는 그 순회에서 적재한다. 별도 재계산 금지 — 어긋나면 권위 블록이 스스로 모순의 원천이 된다.
+- **성공 경로 한정**: 목록이 실제로 만들어진 턴에만 채운다. `compose_system_prompt` 는 **첫 문장**에서
+  항상 클리어한다(워커 스레드 재사용 → 교차-대화 오사실 차단).
+- **금지 대상은 "부재 단정" 하나**: "새 첨부 없음 / 변경 없음 / 이전과 동일 / 갱신을 볼 수 없음" 과
+  그 반대 방향(없는 첨부를 주장). **평가는 제약하지 않는다** — "변경은 있으나 처리사항 N 미반영" 은
+  정당한 결론이며 리뷰어도 이를 오탐으로 보고하지 않는다.
+- **0행 ≠ 첨부 불변**: 라이브 DB 프로브가 0행이어도 그것은 DB 축 증거일 뿐이다(원 마찰의 직접 인과).
+- **비신뢰 경계**: 파일명은 업로더가 정한다 → 권위/리뷰어 블록 주입 전 `_flatten_untrusted_name` /
+  `redteam._flatten_untrusted` 로 개행·제어문자 접기 + datamark sentinel 제거 + 길이 캡.
+- **저장본 불변**: C 는 `_live_user_content`(LLM 전달용)만 수정한다. `_save_message` 는 원문 저장
+  (그룹 발신자 라벨과 동일 계약).
+- **fresh-context 불변식 유지**(feature-0021 ANCHOR §1): 리뷰어에게 넘기는 것은 assistant 의 추론
+  과정이 아니라 애플리케이션 계산 사실 몇 줄이다.
+- 사실이 없으면(첨부 섹션 미주입·bounded 발신자 리뷰어 경로) **세 블록 모두 미주입** — 기존 동작 무회귀.

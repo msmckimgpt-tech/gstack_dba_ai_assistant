@@ -358,6 +358,21 @@ CONVERSATION REQUEST, not against the literal latest utterance.
   digest. Do NOT report `grounding`/`honesty` merely because a file's excerpt is absent here, and do
   NOT demand that the assistant ask the user to re-attach a file that is already listed.
 
+ATTACHMENT CHANGE FACTS (when the section is present, it is application-computed FACT — the counts
+come from the attachment store, not from any model). This is the one place where you can check a
+claim with certainty, so check it:
+- If the section says files were newly attached or re-uploaded as a NEW VERSION this turn, and the
+  draft nonetheless states or implies that nothing was newly attached, that nothing changed versus
+  the previous version, that the files are identical to ones already reviewed, or that it cannot see
+  any update — that is a BLOCK on `grounding`. It contradicts a fact the assistant was given, and it
+  refuses the user's actual request. Report it and say which files the facts list.
+- The reverse is also a BLOCK: if the section says nothing was newly attached this turn, but the
+  draft claims the user just attached or updated files.
+- This is about the EXISTENCE of the change only. The assistant judging the change as insufficient,
+  incomplete, or not matching what was agreed is a legitimate review conclusion — never report that.
+- A tool returning 0 rows, or an object missing from the live database, says nothing about whether
+  the attachments changed. Do not accept it as the draft's justification for denying the change.
+
 Review axes:
 - grounding: every factual claim in the draft must be supported by the evidence digest (tool runs
   AND user-attached files). Partial evidence (truncated previews, sample rows, row caps) must NOT be
@@ -566,6 +581,45 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
     return out[:cap_chars]
 
 
+_ATTACH_FACTS_NAME_CAP = 8
+_ATTACH_FACTS_BLOCK_CAP_CHARS = 900
+
+
+def build_attachment_change_facts(facts: dict[str, Any] | None) -> str:
+    """이번 턴 첨부 변경 사실 블록 — 리뷰어가 **확실하게 대조할 수 있는 유일한 축**(B).
+
+    FR-attachment-change-false-absence (conversation_audit 2026-08-05): 첨부 v2 갱신 8건이
+    프롬프트에 정상 주입됐는데도 답변이 "새로 첨부되거나 변경된 파일이 없습니다" 라고 단정했고,
+    리뷰어는 그 모순을 **볼 근거가 없어** pass 했다(실측 redteam_reviews #260 verdict=pass).
+    evidence digest 는 도구 실행과 첨부 본문만 담을 뿐 "이번 턴에 무엇이 새로 왔는가" 는 없었다.
+
+    fresh-context 불변식(ANCHOR §1)과 충돌하지 않는다 — 넘기는 것은 assistant 의 추론 과정이
+    아니라 애플리케이션이 첨부 저장소에서 계산한 사실 몇 줄이다(CONVERSATION REQUEST 와 동급).
+
+    파일명은 사용자 입력 파생이라 sentinel strip + 길이 캡을 건다(리뷰 지시 위조 차단).
+    """
+    if not isinstance(facts, dict):
+        return ""
+    updated = [str(x) for x in (facts.get("updated") or [])]
+    added = [str(x) for x in (facts.get("added") or [])]
+    carried = int(facts.get("carried") or 0)
+
+    def _names(items: list[str]) -> str:
+        shown = [_flatten_untrusted(n, 120) for n in items[:_ATTACH_FACTS_NAME_CAP]]
+        rest = len(items) - len(shown)
+        return ", ".join(shown) + (f" 외 {rest}건" if rest > 0 else "")
+
+    lines = ["ATTACHMENT CHANGE FACTS (application-computed, authoritative):"]
+    if updated:
+        lines.append(f"- re-uploaded as a NEW VERSION this turn: {len(updated)} — {_names(updated)}")
+    if added:
+        lines.append(f"- attached for the first time this turn: {len(added)} — {_names(added)}")
+    if not (updated or added):
+        lines.append("- nothing was newly attached or updated in this turn")
+    lines.append(f"- carried over from earlier turns: {carried}")
+    return "\n".join(lines)[:_ATTACH_FACTS_BLOCK_CAP_CHARS]
+
+
 def build_evidence_digest(steps: list[dict[str, Any]] | None, executed_sql: str = "",
                           cap_chars: int = _EVIDENCE_CAP_CHARS,
                           attachments: list[dict[str, Any]] | None = None) -> str:
@@ -671,7 +725,8 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
                revised: bool = False,
                model: str | None = None,
                history: str = "",
-               conversation_request: str = "") -> dict[str, Any] | None:
+               conversation_request: str = "",
+               attachment_facts: str = "") -> dict[str, Any] | None:
     """fresh-context 리뷰어 1패스. 실패 시 None (fail-open — caller 가 원 초안 유지).
 
     model: 이 패스에 쓸 리뷰어 모델(정합 도출값). 미지정이면 REDTEAM_MODEL(기본/env pin).
@@ -696,8 +751,13 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
             "conversation — judge completeness against THIS, not the latest utterance):\n"
             f"{conv_req}\n\n"
         ) if conv_req else ""
+        # FR-attachment-change-false-absence (B): 초안 **앞**에 둔다 — 리뷰어가 초안을 읽기 전에
+        # "이번 턴에 무엇이 실제로 들어왔는가"를 먼저 확정해야 부재 단정을 모순으로 인식한다.
+        att_facts = _strip_review_sentinels(str(attachment_facts or "")).strip()
+        att_block = f"{att_facts}\n\n" if att_facts else ""
         user_block = (
             f"{conv_block}"
+            f"{att_block}"
             f"LATEST USER UTTERANCE (may be a short follow-up like '네 맞습니다'):\n"
             f"{str(question or '')[:2000]}\n\n"
             f"DRAFT ANSWER{' (revised after your earlier findings — verify pass)' if revised else ''}:\n"
@@ -1232,6 +1292,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                        thread_goal: str = "",
                        conversation_request: str = "",
                        attachments: list[dict[str, Any]] | None = None,
+                       attachment_facts: dict[str, Any] | None = None,
                        ) -> tuple[str, dict[str, Any] | None]:
     """choke-point 오케스트레이터 — (최종 답변, 리뷰 meta | None) 반환.
 
@@ -1274,6 +1335,11 @@ def orchestrate_review(*, question: str, draft_answer: str,
     수행해야 할 일**과 **사용자 첨부 근거**를 준다. 둘이 없으면 리뷰어가 후속 턴 발화만 보고
     실질 답변을 "묻지 않은 걸 답했다"·"근거 없는 창작"으로 오판하고, 그 오판이 수정 루프를 통해
     답변을 붕괴시킨다(run #132 실측). bounded 발신자에겐 caller 가 둘 다 비운다(누출 게이트).
+
+    attachment_facts (FR-attachment-change-false-absence, 2026-08-05): 이번 턴 첨부 변경 사실
+    (`agent_core._attachment_turn_facts()` 산출 dict). find/verify 두 패스 모두에 같은 사실을 실어
+    "새 첨부/변경 없음" 류 부재 단정을 리뷰어가 **능동 검출**하게 한다. None 이면 블록 미주입
+    (기존 동작 무변경).
     """
     try:
         if not (draft_answer or "").strip():
@@ -1299,12 +1365,15 @@ def orchestrate_review(*, question: str, draft_answer: str,
         # 지적했고 어떻게 마무리됐는지. conversation_id 로만 스코프되어 다른 대화로 새지 않는다.
         conv_history = recent_conversation_reviews(conversation_id, exclude_run_id=run_id)
         round_history: list[dict[str, Any]] = []
+        # FR-attachment-change-false-absence (B): 사실 블록은 라운드 불변이라 1회만 만든다.
+        att_facts_block = build_attachment_change_facts(attachment_facts)
         review = run_review(
             question, draft_answer, evidence,
             is_group=is_group, conversation_id=conversation_id, run_id=run_id,
             timeout_sec=plan["timeout_sec"], model=review_model,
             history=_history_block(conv_history, round_history),
             conversation_request=conversation_request,
+            attachment_facts=att_facts_block,
         )
         if review is None:
             record_review(
@@ -1525,6 +1594,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 timeout_sec=plan["timeout_sec"], revised=True, model=review_model,
                 history=_history_block(conv_history, round_history),
                 conversation_request=conversation_request,
+                attachment_facts=att_facts_block,
             )
             if verify is None:
                 stop_reason = "verify_error"

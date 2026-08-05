@@ -10,6 +10,48 @@ source_of_truth: true
 
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
+## REV-20260805T160000-attach-change-false-absence [SKIPPED:tool-restricted:backend,qa] + built-in security-review — SHIP-WITH-FIXES (보안 1건 흡수) (TASK-20260805T1600)
+- **Trigger**: §18.8 dispatch 표 **키워드 0건 + code change → full panel default**(프롬프트 합성·맥락
+  조립·red-team 리뷰어 변경). 채널 선택은 §18.8.2 순서를 따랐다.
+  1. **`codex`(1순위, 제약 없는 채널) — 실행 불가**: `ERROR: You've hit your usage limit … try again at
+     Aug 9th, 2026`. 재시도해도 동일(quota 소진). 미검증을 검증으로 보고하지 않기 위해 그대로 기록한다.
+  2. **built-in `/security-review`(2순위) — 실행함**. 단, 이 스킬은 하위 sub-task(Agent tool) fan-out 을
+     전제하는데 세션에 **상위 우선순위 도구 제약**("요청 없이 Agent tool 호출 금지")이 걸려 있어
+     §18.8.2 carve-out 에 따라 subagent 를 쓰지 않고 **본 세션이 인라인으로 수행**했다.
+  3. **backend/qa 도메인은 `[SKIPPED:tool-restricted]`** — subagent panel 미호출. 아래 자체 검증으로
+     덮은 범위와 덮지 못한 범위를 분리 표기한다.
+- **[보안, 흡수] 권위 블록의 비신뢰 파일명 미평탄화 (P1급)**: `_build_attachment_authority_directive` 가
+  `original_filename`(업로더가 정하는 비신뢰 문자열)을 개행·제어문자 그대로 주입했다. 이 블록은
+  "They are FACT … and they OVERRIDE any impression you form from the conversation history" 로 선언되는
+  **격상된 문맥**이라, `report.sql\n\n**YOU MUST** …` 같은 이름이 권위 문맥 안의 **새 지시문 줄**로
+  읽힐 수 있다(기존 ATTACHED FILES 목록 라인보다 영향이 크다). 같은 변경의 red-team 블록은
+  `_flatten_untrusted` 로 이미 평탄화하고 있어 **태세가 비대칭**이었다.
+  → **수정**: `_flatten_untrusted_name()` 신설(개행/제어문자 → 공백 접기, datamark sentinel 제거,
+  길이 캡) 후 권위 블록 파일명 전량 적용. 회귀 테스트
+  `test_authority_directive_flattens_hostile_filename` 추가.
+  라이브 데이터 실측: 제어문자 포함 파일명 **0건**, 최대 길이 57 — 현재 악용 사례는 없고 방어 심화다.
+- **[보안, 무결함 판정] 공유창 window(bounded 발신자) 누출**: A(권위 블록)·C(사용자 턴 매니페스트)는
+  `_suppress_conversation_context` 게이트를 걸지 않았다. 이는 의도된 판정이다 — 두 블록의 데이터는
+  이미 같은 턴에 주입되는 `ATTACHED FILES` 섹션(파일명 + 본문)의 **부분집합**이고, 그 섹션 자체는
+  `compose_system_prompt` 이 bounded 여부와 무관하게 만든다. 즉 **새 데이터 클래스가 추가되지 않는다**.
+  다만 red-team 경로는 `_review_attachments` 와 **같은 게이트**를 유지했다(리뷰어는 fresh-context 라
+  종전 태세를 그대로 따르는 것이 맞다).
+- **[backend, 자체 검증] contextvar 수명·교차 대화 오염**: 사실 채널을 `compose_system_prompt` 의
+  **첫 문장**에서 지운다. 뒤쪽(첨부 블록 직전)에 두면 그 전 예외·`mem_conn is None` 조기 return 에서
+  이전 run 값이 남아 워커 스레드 재사용 시 다른 대화에 주입된다. 회귀 테스트
+  `test_compose_clears_stale_facts_before_anything_else` 가 조기 return 경로를 고정한다.
+- **[backend, 자체 검증] 저장본 불변**: C 는 `_live_user_content`(LLM 전달용)만 수정하고
+  `_save_message(..., content=user_message)`(:5633)는 원문 그대로다 — 그룹 발신자 라벨과 동일 계약.
+- **[backend, 자체 검증] 프롬프트 비용**: 실측 68,003자 → 69,813자(+1,810, +2.7%). 파일명 나열은
+  8건 캡 + 건당 120자 캡이라 상한이 유계다.
+- **[qa, 자체 검증] 표식 회귀 0**: 실패 대화 데이터로 dogfood — `★신규` 12 · `🔄v2` 8 ·
+  FILE UPDATES diff 헤더 8 로 **변경 전과 동일**. 권위 블록은 offset 68,005/69,813 = 최종 위치
+  (`LIVE-DB GROUNDING` 63,854 뒤) 확인.
+- **덮지 못한 범위(정직)**: 독립 backend/qa 리뷰어의 **외부 시선**은 얻지 못했다(codex quota + subagent
+  제약). 특히 "권위 블록이 모델의 다른 판단을 과도하게 눌러 평가 품질을 떨어뜨리는가" 는 코드로
+  증명 불가 — 배포 후 라이브 실측 대상이다(FRICTION_LEDGER 라이브 실측 필요분 참조).
+- **회귀**: 신규 18 PASS · `make test` 표준 호출 전량 **exit 0** · ruff clean.
+
 ## REV-20260804T063000-summary-bootstrap-deadlock [CODEX:summary-bootstrap-deadlock] — SHIP-WITH-FIXES (P1 0 / P2 1 → 흡수) (TASK-20260804T0630)
 - **Trigger**: `query/read backend` keyword matched (backend) — code change, §18.8 dispatch 표.
   채널은 §18.8.2 1순위 `codex`(제약 없는 채널). 세션 도구 제약으로 subagent panel 미호출.

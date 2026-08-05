@@ -1125,3 +1125,44 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   (msg-speaker-attribution) 참조.
 - 기존 동작 무변경: `group_chat` 마커 게이트, dedup `mirror_sender_account_id` 전달 조건, 각인 실패
   fail-open. Tests: `tests/test_msg_speaker_attribution.py`(12).
+
+## CHG-20260805T160000-attach-change-false-absence 첨부 변경 사실의 코드-권위 봉인 (A+C+B)
+> conversation_audit 마찰 `FR-attachment-change-false-absence` — fork 된 대화에서 사용자가 첨부 8건을 v2 로
+> 갱신·4건을 신규 첨부했는데 답변이 "새로 첨부되거나 변경된 파일이 없습니다" 라고 **정반대 단정**을 했다.
+> 배포본 재현 결과 프롬프트에는 `★신규` 12·`🔄v2` 8·v1→v2 unified diff 8 이 **정상 주입**돼 있었다
+> (실측 재구성 66,131 prompt tokens vs 실제 run 91,054 — 섹션 부재 시나리오와 불일치). 즉 데이터가 아니라
+> **부재 단정을 막는 코드-권위 규칙과 리뷰어의 대조 근거가 없던 것**이 결함이다. 답변 직전 라이브 DB 프로브
+> 3연속 0행이 있었고, 모델이 그 부재를 **첨부 축으로 일반화**했다.
+- `src/agent_core.py`
+  - `_ATTACHMENT_TURN_FACTS_CTX` 신설 — 이번 턴 첨부 변경 사실(신규/버전갱신/이월 + 파일명)을
+    **한 번 계산해 세 소비자가 공유**하는 request-scoped 채널. 소비자가 각자 재계산하면 부분 실패 시
+    서로 다른 수치를 말해 모순의 새 원천이 된다. `compose_system_prompt` **첫 문장**에서 항상 클리어해
+    워커 스레드 재사용 시 이전 run 수치의 교차-대화 주입을 원천 차단한다.
+  - `_build_attachment_context_section` — 목록 표식(`★신규`/`🔄vN`)과 **같은 판정식**으로 사실을 적재.
+    성공 경로(목록 생성 후)에서만 채운다(조기 return 경로에서 채우면 목록 없는 프롬프트에 "N건 첨부됨"
+    이 붙어 반대 방향 환각).
+  - **(A)** `_build_attachment_authority_directive` — `compose_system_prompt` **말미**(운영자 product/role/
+    account row·첨부 섹션·`_GROUNDING_AUTHORITY_DIRECTIVE` 뒤)에 붙는 코드-권위 사실 블록. 부재 단정 금지 +
+    "0행은 **DB 축 증거일 뿐** 첨부 불변의 증거가 아니다" 명시 + 신규 0건일 때는 **대칭 진술**(반대 방향
+    환각 차단). **평가의 자유는 유지** — "변경은 있으나 처리사항 N 미반영" 은 정당한 결론임을 명시.
+  - `_flatten_untrusted_name` — 권위 블록에 들어가는 비신뢰 파일명 평탄화(개행/제어문자 접기 + datamark
+    sentinel 제거 + 캡). 권위 블록은 "FACT … OVERRIDE" 문맥이라 개행이 살면 이름이 **새 지시문 줄**로
+    읽힌다(§18.8 security 흡수).
+  - **(C)** `_build_attachment_turn_manifest` — 사용자 턴 말미의 애플리케이션 계산 매니페스트 한 줄
+    (생성 지점 최근접 자리). 그룹 발신자 라벨과 동일 계약 — **LLM 전달용 `_live_user_content` 에만** 붙고
+    `_save_message(content=user_message)` 저장본은 원문 불변. 건수만 싣고 파일명은 싣지 않는다.
+- `src/modules/redteam.py` **(B, 사용자 지정: "red-team review 가 능동 검출")**
+  - `build_attachment_change_facts` + `run_review(attachment_facts=)` + `orchestrate_review(attachment_facts=)`
+    — find/verify 두 패스 모두에 사실 블록을 **초안 앞**에 싣는다(초안을 읽기 전에 무엇이 들어왔는지
+    확정해야 부재 단정을 모순으로 인식). fresh-context 불변식(feature-0021 ANCHOR §1) 준수 — 넘기는 것은
+    assistant 의 추론 과정이 아니라 애플리케이션 계산 사실 몇 줄이다(CONVERSATION REQUEST 와 동급).
+  - `REDTEAM_REVIEW_PROMPT` — 부재 단정 ↔ 사실 모순을 `grounding` **BLOCK** 으로 올리는 규칙. 반대 방향
+    (없는 첨부를 주장)도 대칭 BLOCK. **평가(불충분·미반영 결론)는 오탐으로 보고 금지** 를 명시해
+    리뷰어가 정당한 리뷰 결론을 깎지 않게 했다. 파일명은 `_flatten_untrusted` + 블록 캡.
+- 기존 동작 무변경: `★신규`/`🔄vN` 표식·FILE UPDATES diff·인라인 상한·IDOR/sender 스코프 가드 전부 불변
+  (dogfood 실측 표식 수 동일). 사실 미전달(bounded 발신자·기존 호출부)이면 블록 미주입.
+  프롬프트 비용 +1,810자(+2.7%, 파일명 8건·건당 120자 캡으로 유계).
+- Tests: `tests/test_attachment_change_false_absence.py`(18).
+- **위험등급**: Major(§12.3 — 코어 LLM 경로). 사용자 승인 **A+C+B**(AskUserQuestion 2026-08-05).
+  **Cross-ref**: 리뷰 `REV-20260805T160000-attach-change-false-absence` · 원장
+  `FR-attachment-change-false-absence` · 리뷰어 기능 소유 feature-0021-redteam-review(코드 거주는 본 feature).

@@ -6,6 +6,99 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-attachment-change-false-absence — fixed:undeployed (L1 seal gap + model limit; 첨부 축 부재-단정을 막는 코드-권위 사실 부재)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **18** PASS · `make test` 전량 exit 0 · ruff clean) +
+  §18.8 검증(아래) + dogfood 완료. **배포 전** → 배포 후 `fixed:deployed:unverified-live`.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit "추가 쿼리 리뷰 요청"` (2026-08-05) —
+  "다른 대화를 fork된 대화에서, 첨부파일을 v2로 갱신하였지만 assistant가 이를 인식하지 못하는 이슈".
+- **last_seen**: 2026-08-05 · **seen_count**: 1 · **seen_distinct_conv**: 1 (90일)
+- **modality**: 1:1 (fork) · **product_id(마스킹)**: P-119 · **conv(마스킹)**: `…2dce99c7`
+  (topic "추가 쿼리 리뷰 요청", `…a6fe00cf` 에서 fork, 43 메시지, run `…9f0d1a4c`)
+- **symptom_confidence**: high (사용자 명시 보고 + 답변 원문 직접 관측) ·
+  **rootcause_confidence**: high (주입 컨텍스트 실측 재구성 + 토큰 정합 + 코드 file:line 삼각측량)
+- **suspected_layers**: **L1**(프롬프트 합성 — 부재 단정 금지 규칙 부재 + 표식이 중간 위치) ·
+  **L6**(모델 한계 — 0행 프로브의 축 넘어 일반화). L4/L3 은 **데이터로 기각**(아래 refuted).
+- **증상(signal)**: `E-USR`(사용자 명시 보고) + `E-AST`(환각 — 자기 프롬프트 안의 diff 와 정면 모순).
+  답변: "## 확인 결과: 새로 첨부되거나 변경된 파일이 없습니다 … 13개 파일은 모두 지난 라운드에서 이미
+  리뷰를 마친 것과 동일한 내용입니다". **실제**: v2 갱신 8 · 신규 4 · 이월 1 = 13.
+- **거짓양성 기각(`refuted`, 정직 — 다음 진단자가 재추적하지 않도록)**:
+  - **"컨텍스트가 안 들어갔다"(L3/L4) → REFUTED**. 배포본 ask-worker 로 그 턴을 재구성한 결과
+    `★신규` **12** · `🔄v2` **8** · 본문 13건 전량 인라인(절단 0) · `## FILE UPDATES` v1→v2 unified
+    diff **8건**, 첨부 섹션 38,013자가 **정상 생성**됐다.
+  - **"프론트가 신규 표식을 안 보냈다" → REFUTED**. `ask_jobs.payload.new_attachment_ids` = 12건 정상.
+  - **"인라인 파일이 워커 읽기 전에 삭제됐다"(경합) → REFUTED**. worker mode 는 web 이 정리하지 않는다
+    (`if not app._is_worker_mode()`), 정리 주체는 워커. 잔존 동일-대화 인라인 파일에 v2 본문 13건 확인.
+  - **"섹션이 프롬프트에서 빠졌다" → REFUTED(정량)**. 재구성 프롬프트 실측 **66,131 prompt tokens**
+    vs 실제 run **91,054**(차이는 도구정의+지식주입). 섹션 부재 시나리오는 약 43k 로 불일치.
+  - **"항상 깨지는 경로다" → REFUTED**. 같은 패턴(fork + v2 재업로드) `…72c11c4b`(2026-07-15)·
+    `…774ada22`(2026-08-04)는 **정상 인식**. 결정적 파손이 아닌 **비결정 실패**다.
+- **confirmed_root_cause**: 첨부 축의 **범주적 부재 단정을 막는 코드-권위 사실이 없었다**.
+  (1) `agent_core.py` `compose_system_prompt` — `★신규`/`🔄vN`/diff 는 전부 첨부 섹션(offset **25,840**
+  of 72,488)에만 있고, `_GROUNDING_AUTHORITY_DIRECTIVE` 같은 **last-writer 권위 위치의 대응물이 없다**.
+  (2) 기존 봉인 `FR-false-absence-zero-row-catalog-scope`·LIVE-DB GROUNDING 은 **DB 축 전용**이라 이 축을
+  덮지 않는다. (3) `modules/redteam.py` — 리뷰어의 evidence digest 에 "이번 턴에 무엇이 새로 왔는가" 가
+  없어 모순을 **볼 근거가 없었다**(실측 `redteam_reviews` #260 verdict=`pass`).
+  **직접 인과**: 답변 직전 라이브 DB 프로브 3연속 0행(`search_tables`×2·`search_routines`) → 모델이 그
+  부재를 첨부 축으로 일반화. steps 기록상 4~6단계에서는 신규 파일(`T_gunzlog_masangcreatorshistory.sql`)을
+  **정확히 인지**하고 있었다 → 마지막 합성 단계에서 뒤집혔다.
+  **fork 의 역할(정직)**: fork 는 코드 결함이 아니라 **오판 확률을 극대화하는 조건**이다 — 복사된 이전
+  라운드 히스토리가 "이미 다 리뷰했다" 는 강한 사전확률을 만들고, 첨부 복사본(v1)과 새 v2 를 구분하는
+  신호가 `★`/`🔄` 표식뿐이다. 재발경로 = **model limit**(코드 결함 아님 → 입력·피드백 정형화로 봉인).
+- **봉인(A+C+B, 사용자 승인 2026-08-05 AskUserQuestion)**:
+  (A) `compose_system_prompt` **말미**에 코드-권위 `## ATTACHMENT SET — AUTHORITATIVE FACTS` 블록
+  (건수+파일명, 부재 단정 금지, "0행은 DB 축 증거일 뿐", 신규 0건 시 대칭 진술, **평가의 자유는 유지**).
+  (C) 사용자 턴 말미 매니페스트 한 줄(생성 지점 최근접, LLM 전달용 한정 — 저장본 불변).
+  (B) **red-team 리뷰어 능동 검출** — find/verify 두 패스에 사실 블록을 **초안 앞**에 싣고, 부재 단정 ↔
+  사실 모순을 `grounding` **BLOCK** 으로 규정(반대 방향도 대칭). 사용자 지정: 정규식 사후 게이트가 아니라
+  리뷰어가 능동 검출.
+  세 소비자는 **단일 계산**(`_ATTACHMENT_TURN_FACTS_CTX`)을 공유하고, `compose_system_prompt` 첫 문장에서
+  항상 클리어해 워커 스레드 재사용 시 교차-대화 오사실을 차단한다. **보안 회귀 0** — 표식·diff·인라인 상한·
+  IDOR/sender 스코프 전부 불변, 비신뢰 파일명은 평탄화 후 주입.
+- **corroboration**: **idiosyncratic** — 90일 `new_attachment_ids>0` 인 118 job / 92 대화 중 부재 단정
+  **distinct_conv 1**(이 건). 동일 패턴 fork 3건 중 2건은 정상. **disposition=fix-now 근거**: 빈도가 아니라
+  (a) S 최상위(요청 자체가 거절되고 사용자가 직접 이슈 제기) (b) 근본이 코드 file:line 까지 confirmed
+  (c) **서버가 이미 정확히 아는 축**이라 코드-권위 사실로 결정화 가능 — 명백한 구조결함 예외.
+- **disposition 근거**: Major(§12.3 코어 LLM 경로) → attended human-decision. 사용자가 **A+C+B** 명시 선택.
+- **fix**: `CHG-20260805T160000-attach-change-false-absence`(TASK-20260805T1600) /
+  **코드 거주 `feature-0002-agent-core`**(리뷰어 기능 소유는 feature-0021-redteam-review — cross-ref) /
+  `REV-20260805T160000-attach-change-false-absence`.
+- **§18.8 검증 채널(정직)**: codex(1순위) **quota 소진으로 실행 불가**(Aug 9 까지) → built-in
+  `/security-review` 인라인 수행(상위 도구 제약으로 subagent fan-out 미사용) → **보안 1건 흡수**
+  (권위 블록의 비신뢰 파일명 미평탄화). **backend/qa 독립 리뷰어 시선은 미확보**
+  `[SKIPPED:tool-restricted:backend,qa]`.
+- **dogfood(배포 전 최대치)**: 실패 대화 데이터로 새 코드 실측 — 사실 **8/4/1** 정확 · 권위 블록 offset
+  **68,005/69,813 = 최종 위치**(LIVE-DB GROUNDING 63,854 뒤) · 기존 표식 회귀 0(`★신규` 12·`🔄v2` 8·
+  diff 헤더 8) · 프롬프트 +1,810자(+2.7%).
+- **rc_ids**: RC-1(L1 seal gap) · RC-2(L6 축-넘어 일반화) · **batch-id**: B-20260805T160000-attach-change-false-absence
+- **라이브 실측 필요분(§정직)**: 코드/테스트/dogfood 는 "사실이 정확히 계산되어 최종 위치에 실린다" 까지만
+  증명한다. **"실제 대화에서 부재 단정이 사라지는지"**·**"리뷰어가 실제로 BLOCK 을 올리는지"**·
+  **"권위 블록이 평가 품질을 과도하게 누르지 않는지"** 는 배포 후 실측분(미수행). 다음 audit 이
+  corroboration(부재 단정 distinct_conv / `redteam_reviews` 의 해당 축 BLOCK 발생)을 재측정한다.
+- **필요한 사람 액션(1줄)**: PR 생성·deploy confirm(Major — override 불가) → 배포 후 동일 시나리오 재현 +
+  `/_dqa:doc_sync`.
+
+## FR-attachment-created-at-tz-skew-9h — deferred (L4 저장 시각 +9h; 이번 마찰의 원인 아님, 사용자 결정으로 별도 항목 이월)
+
+- **status**: `deferred` — 사용자 결정(2026-08-05, AskUserQuestion): "별도 항목으로 이월". 코드 변경 없음.
+- **last_seen**: 2026-08-05 · **seen_count**: 1 · **seen_distinct_conv**: 해당 없음(데이터 전역)
+- **rootcause_confidence**: high (DDL + 서버 TZ + 미러 코드 file:line + 30일 집계 4중 확인)
+- **suspected_layers**: **L4**(데이터 로드·스키마 — 저장 시각 의미 불일치)
+- **증상(signal)**: `core_attachments.created_at` 이 같은 행의 `superseded_at`·`core_conversations`·
+  `core_messages` 대비 **일관되게 +9시간**. 실측: 30일 표본 최빈 **9.00h**(관측 대화에서 첨부 생성
+  `23:14:32+09` vs 같은 사건의 supersede `14:14:53+09`).
+- **confirmed_root_cause**: MySQL `WebConversationAttachments.CreatedAt datetime(6) NOT NULL DEFAULT
+  CURRENT_TIMESTAMP(6)` 가 **서버 로컬 시각**으로 기록되는데(`@@time_zone=SYSTEM`, `NOW()`=14:42 vs
+  `UTC_TIMESTAMP()`=05:42), PG 미러 `attachment_pg_mirror._dt_to_pg`(:140-151)가 그 naive 값을
+  **UTC 로 간주**해 `timestamptz` 로 넣는다. `SupersededAt` 은 앱이 UTC 로 써서 정상 → 같은 행 안에서
+  두 시각이 9시간 어긋난다. 재발경로 = **코드 결함**(경계에서의 시각 의미 가정).
+- **영향(미조사 — deferred 사유)**: 첨부 간 정렬은 전부 같은 방향으로 치우쳐 **순서 자체는 보존**
+  (`_collect_matched_attachment_names` ORDER BY created_at). 화면 표시·기간 필터·share window 등
+  **다른 테이블과 시각을 비교하는 경로**의 영향 범위는 미조사. 기존 행 backfill 여부도 미결정.
+- **이번 마찰과의 관계**: **무관**(원인 아님). `FR-attachment-change-false-absence` 진단 중 부수 발견.
+- **필요한 사람 액션(1줄)**: 별도 cycle 로 영향 범위(표시·필터·window) 조사 후 미러 변환 교정 + 기존 행
+  backfill 여부 결정.
+
 ## FR-loadgate-blind-coaching — fixed:deployed:verified (L2 거부 피드백 + L5 LIMIT 미반영 추정; 부하게이트가 재작성 방향을 못 줘 추론이 정체)
 
 - **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 **31** PASS · feature-0002 전체 **2360 passed / 30 skipped** · ruff clean) + **§18.8 codex 3렌즈에서 [P1] 2건 출하차단 판정 → 9건 전부 흡수·역검증 생존 0** + verify-completion PASS + **배포 완료**(2026-07-31, PR #1112 merge main `97af7d27` → `make deploy-web` 전체 스코프. **4서비스 GIT_COMMIT=97af7d27 running/healthy**: web-a·web-b·ask-worker·insight-worker, post-cutover soak 통과).
