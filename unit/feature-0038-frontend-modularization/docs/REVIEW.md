@@ -162,3 +162,18 @@ source_of_truth: true
   로 복원·커밋 제외(근본 처방 = 하네스 출력 경로 분리, 후속 후보로 기록) · **[MINOR]** app.js
   의 dead 역-import `_saveCollapsedGroups` 제거(사용처 0 — "필요한 전부만" 계약).
 - 흡수 후: 문법 PASS · make test RC=0(FAILED/ERROR 0).
+
+## REV-20260805T125500-phaseB2-composer [SUBAGENT:frontend-split] — B2 적대 패널: BLOCK 1·MINOR 1 흡수 후 PASS
+
+- Trigger: code change (byte-동치 추출, sendPrompt 포함 — 핵심 경로 send). 렌즈 5축(import
+  바인딩 재할당·순환 TDZ 실로드·이동 완전성·export 부작용·하네스 정합).
+- 패널 실측 확인(청정 축): 이동 let 6종 재할당 전부 composer 내부(양방향 read-only 위반 0,
+  acorn AST 전수) · **실 ESM 그래프 evaluate OK**(app export 101·composer 23·단일 인스턴스·
+  renderComposer 실호출·_mentionAC live-binding) · parity 50/50 verbatim · 중복 export 0 ·
+  inject_asset_stamp 가 JS 내부 specifier 까지 재작성(이중 인스턴스화 없음).
+- 흡수: **[BLOCK]** pytest `test_msg_speaker_attribution_web.py` 의 개행-앵커 마커
+  `\nfunction renderMessages(` 가 잔류-export 화로 미매칭 → ValueError 2건(CI 적색 예정) —
+  export-prefix 내성 마커로 2곳 수정 + 합본에 composer.js 추가, make test 재실행 완주(FAILED 0).
+- 기록(선재 결함, B2 비회귀): `win-browser-share-group-sync.scenario.json` 이 Cycle 7 ESM 화
+  이후 죽은 전역(state·sendPrompt 등) 참조 — settings-notif 와 같은 뿌리, 후속 정비 후보
+  (feature-0003 REVIEW 의 시나리오 정비 후보에 합류).

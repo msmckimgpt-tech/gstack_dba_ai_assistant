@@ -130,7 +130,7 @@ admin.js 4,804줄 잔여는 공유 코어(pending/batch-apply·권한 grid)라 B
 ## 3. Task Queue
 - TASK-20260805T105500-phaseA-state-intake: Phase A state-편입 → §6 Done (cycle 마감 진행)
 - TASK-20260805T105501-phaseB1-sidebar: B1 → 구현 완료·cycle 마감 진행 (§6 Done)
-- TASK-20260805T105502-phaseB2-composer: B2 composer/첨부+mention → app/composer.js
+- TASK-20260805T105502-phaseB2-composer: B2 → 구현 완료·cycle 마감 진행 (§6 Done)
 - TASK-20260805T105503-phaseB3-progress: B3 progress 폴러 → app/progress.js
 
 ## 4. In Progress
@@ -171,6 +171,8 @@ admin.js 4,804줄 잔여는 공유 코어(pending/batch-apply·권한 grid)라 B
 - [x] TASK-20260805T105500-phaseA-state-intake Phase A 구현 — `_dqaDrag`·`_sidebarCatchupTimer` state 편입(치환 22건·bare 잔존 0)·계약 가드 verify_state_intake 18/18·전수 mjs 40/40·headless 46케이스·make test RC=0·패널 MINOR 2/NIT 3 흡수 (CHG-20260805T105500, REV-20260805T111500)
 - [x] TASK-20260805T111200-phaseA-postdeploy Phase A 마감 — PR #1147 머지·--web-only 배포(web-a/b 801b379f)·POST-DEPLOY PB-0008 12스텝 PASS(크로스 사이트 state 공유 실증·에러 0, TEST Run-20260805T1112)
 - [x] TASK-20260805T114000-phaseB1-sidebar B1 추출 — 사이드바 도메인 13세그먼트 이동(app.js -720줄), byte-parity IDENTICAL·free-vars 회귀 0·mjs 41/41·headless 46·make test RC=0 (CHG-20260805T114000)
+- [x] TASK-20260805T121000-phaseB1-postdeploy B1 마감 — PR #1148 머지·배포(web-a/b 41216f66)·POST-DEPLOY PB-0008 17/17 PASS(목록 렌더·선택·토글·DnD·에러 0, TEST Run-20260805T1210)
+- [x] TASK-20260805T123000-phaseB2-composer B2 추출 — composer 도메인 50세그먼트(~2,000줄) → app/composer.js 신설, app.js 8,508줄(-1,891), parity 50/50·free-vars 0·mjs 41/41·headless 46 (CHG-20260805T123000)
 
 ## 7. Next Action
 - Phase A cycle 마감(게이트→PR→배포→POST-DEPLOY PB-0008) → B1 착수

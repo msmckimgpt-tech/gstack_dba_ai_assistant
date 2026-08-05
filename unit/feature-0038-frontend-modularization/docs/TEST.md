@@ -553,3 +553,24 @@ source_of_truth: true
   **app.js 잔류**(순환 import 초기화 순서상 sidebar top-level 이 app.js 보다 먼저 실행).
 - 전수 mjs 41/41 green(소스-추출 하네스 3건 합본 갱신: date_group_collapse·new_conv_dedup·
   state_intake) + headless chromium 3종 46케이스 PASS + make test RC=0.
+
+### Run — 20260805T1210 B1 POST-DEPLOY PB-0008 (Environment: Windows-browser) — PASS 17/17
+- 배포: PR #1148 머지(41216f66) → `--web-only` RC=0 → web-a/b GIT_COMMIT **둘 다 41216f66** 실측.
+- 실 Windows Chrome: ① 대화 목록 렌더(conv_items 3·date_groups 3 — **이동한
+  renderConversationList 의 라이브 렌더 실증**) ② 대화 선택→히스토리 로드(messages 2·is-active)
+  ③ 날짜 그룹 접힘 토글 왕복 ④ DnD 왕복(dragstart→root 드롭존 리더→leave→end 가드 — Phase A
+  시나리오 재실행) ⑤ window error 후크 **0건**.
+
+## 20260805T1230-phaseB2-composer — composer 도메인 → app/composer.js (byte-동치)
+
+### Run — 20260805T1230 B2 기계 검증 (Environment: CLI/node) — PASS
+- 이동: 50세그먼트(함수 44 — sendPrompt 583줄·첨부 15·메뉴 15·mention 7·리사이즈 3·Esc 쌍 2 +
+  let 6) 약 2,000줄 — app.js 10,399→8,508줄(배선 포함), app/composer.js 신설 2,140줄.
+- 수술 정밀도: acorn AST 경계(문자열 내 중괄호·이모지 UTF-16 오프셋 드리프트 보정 — brace
+  파서 2회 파손을 AST 로 근본 해소) + 세그먼트 원문 부분문자열 **전건 IDENTICAL** + app.js
+  정의 잔존 0.
+- 배선: app.js 잔류 61심볼 import(53건 export 화)·역-import 23심볼·messages.js 계약
+  re-export(_downloadAttachmentById)·composer→sidebar(renderConversationList). 전부 `?v=dev`.
+- acorn-globals 미해소 0(app.js·composer.js·sidebar.js) · mjs **41/41**(소스-추출 6건
+  합본/marker 갱신: enqpre_run_handoff·llm_restriction·model_persist·new_conv_dedup·
+  runtime_transparency + export-접두 strip 관용구) · headless 46케이스 · make test RC=0.

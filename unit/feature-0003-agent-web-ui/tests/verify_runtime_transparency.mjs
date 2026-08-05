@@ -46,7 +46,9 @@ ok("[2] app.js: pollProgress 처리중 ACTIVE 주기(즉각 반응)",
 // ── 3. 기능: formatElapsed + formatDurationBreakdown 격리 실행 ─────────
 const blkStart = appJs.indexOf("function formatElapsed(ms)");
 const afterBd = appJs.indexOf("function formatDurationBreakdown");
-const blkEnd = appJs.indexOf("\nfunction ", afterBd + 10);
+// B2 후속: 인접 함수의 export 화로 다음 경계가 `\nexport `일 수 있다 — 이른 쪽을 블록 끝으로.
+const _cand = [appJs.indexOf("\nfunction ", afterBd + 10), appJs.indexOf("\nexport ", afterBd + 10)].filter((i) => i >= 0);
+const blkEnd = _cand.length ? Math.min(..._cand) : -1;
 ok("[3] app.js: 포맷 함수 블록 추출 가능", blkStart >= 0 && afterBd > blkStart && blkEnd > afterBd);
 const block = appJs.slice(blkStart, blkEnd);
 const factory = new Function(

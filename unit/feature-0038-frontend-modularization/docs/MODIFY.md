@@ -188,3 +188,15 @@ source_of_truth: true
   순환 import 초기화 순서).
 - 소스-추출 하네스 3건 합본 갱신(date_group_collapse·new_conv_dedup·state_intake).
 - app.js 10,399줄 (목표 ≤~3,000 을 향한 B1 단계 — B2 composer·B3 progress 후속).
+
+## CHG-20260805T123000-phaseB2-composer composer 도메인 byte-동치 이동 (Phase B2 — TASK §2.2)
+
+- `app.js` → `app/composer.js`(신설): 첨부 스테이징/업로드/버전 15fn · composer 액션/모델/추론
+  메뉴 15fn · renderComposer · sendPrompt(583줄) · 첨부 사이드패널 리사이즈 3fn ·
+  _attachShareRangeEsc/_detachShareRangeEsc 쌍 · mention AC 7fn + let 6종(_mentionAC·
+  _mentionMembers* 4·_shareRangeEscHandler). 본문 무수정(부분문자열 IDENTICAL 50/50).
+- 배선: app.js 잔류 61심볼 import(53건 export 화 — 상수·DOM ref 포함, 전부 함수-내 사용이라
+  TDZ 안전) · app.js 역-import 23심볼(let 재할당은 전부 이동측 — read-only 바인딩 안전) ·
+  messages.js "../app.js" 계약은 re-export 로 보존 · composer→sidebar renderConversationList.
+- 소스-추출 하네스 6건 갱신(합본 + marker 재고정 + export-접두 strip).
+- app.js 8,508줄 (B1 대비 -1,891) — B3 progress 후속.

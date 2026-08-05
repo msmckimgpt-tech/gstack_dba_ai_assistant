@@ -23,7 +23,9 @@ const STATIC = join(__dirname, "..", "src", "static");
 const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
   + readFileSync(join(STATIC, "app/messages.js"), "utf8")
   // ITEM-P5b Cycle 9: moveConversationToFolder(S8) 등 사이드바 도메인이 app/sidebar.js 로 분리 — 합본 검사.
-  + readFileSync(join(STATIC, "app/sidebar.js"), "utf8");
+  + readFileSync(join(STATIC, "app/sidebar.js"), "utf8")
+  // ITEM-P5b B2: composer/첨부/전송/mention 도메인이 app/composer.js 로 이동 — 합본 검사.
+  + readFileSync(join(STATIC, "app/composer.js"), "utf8");
 
 let passed = 0, failed = 0;
 function ok(name, cond) {
