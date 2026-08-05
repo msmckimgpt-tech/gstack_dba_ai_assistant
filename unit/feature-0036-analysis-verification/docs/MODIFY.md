@@ -70,3 +70,31 @@ source_of_truth: true
 
 ### 배포 scope
 워커(insight-worker). `make deploy-all` (web 무변경이나 스파인 일관 배포).
+
+## CHG-20260805T190000 판정 결과를 노드 상세 패널에 노출 (Minor, 사용자 대면)
+
+- **무엇:** `get_node_analysis` 응답에 `verdict`(판정·근거·증거 stage·시각)를 싣고, 그래프 뷰 노드
+  상세의 AI 박스에 배지 + 근거 한 줄을 렌더한다. **해시가 일치할 때만** 싣는다.
+- **왜:** 판정층은 출하됐지만 `node_analysis_verdicts` 를 읽는 코드가 0곳이었다 — ANCHOR §3 이
+  그리는 장면("분석문 옆에 `contradicted` 와 근거 한 줄")이 없어 이 층의 산출이 아무 데도 닿지
+  않았다. 순환 수정(CHG-20260805T143000)으로 비용은 90% 줄었지만 효용은 여전히 0이었다.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `feature-0002/src/modules/node_analysis.py` | `_verdict_for` 신규(해시 일치 조회·savepoint·fail-soft) + `get_node_analysis` 응답에 `verdict` |
+| `feature-0003/src/static/graph/graph-ctxmenu.js` | 노드 상세 AI 박스에 판정 배지 + 근거 한 줄 |
+| `feature-0002/tests/test_node_verdict_surfacing.py` | **신규** 8건 (해시 정합·격리·프론트 계약) |
+
+### 위험과 완화
+
+| 위험 | 완화 |
+|---|---|
+| **엉뚱한 문장에 확인 도장** | 조회 WHERE 에 현재 분석문 해시 — 불일치는 0행. 그 축만 테스트 3건 |
+| 상세 패널 파손(신규 테이블 부재 창) | savepoint + 예외 흡수 → 판정만 사라지고 패널은 정상 |
+| `reason` 주입(LLM 산출 문자열) | 기존 `esc()` 로 이스케이프, 테스트로 고정 |
+| 역할 칩과 색 혼동 | 판정은 테두리형(모순만 채움) — 채움형 역할 칩과 계열 분리 |
+
+### 배포 scope
+web + 워커(백엔드 모듈 공용). `make deploy-all`.
