@@ -190,3 +190,5 @@ source_of_truth: true
   fail-loud 를 합본 하네스 3건에 추가.
 - 기록: [NIT] run-감지 서브도메인이 경계 상호재귀(detectNewRun[app]↔scheduleRunDetectPolling
   [progress]) — live-binding 으로 정확, 후속 phase 에서 detectNewRun 동반 이동 시 해소 후보.
+
+## REV-20260805T145500-followup-final [SKIPPED:non-policy-doc] — 후속 완결 정합 기록 (doc-only, 코드 변경 0)

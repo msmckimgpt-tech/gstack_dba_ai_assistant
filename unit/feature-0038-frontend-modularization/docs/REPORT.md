@@ -23,7 +23,9 @@ source_of_truth: false
 ## 2. Progress
 - Done: 계획 승인 · Cycle 1~10 완결(TEST Run-001~043) · Final(CONVENTIONS §14·ROADMAP
   ITEM-P5b done·STATUS/wiki 정합)
-- In Progress: 후속 Phase A(state-편입 mini-change — TASK §2.2, PLAN-APPROVED 2026-08-05)
+- Done(후속, 2026-08-05): Phase A~B3 완결 — state-편입(#1147) · sidebar 추출(#1148) ·
+  composer 추출(#1149) · progress 추출(#1150), 전건 배포+POST-DEPLOY PB-0008 PASS.
+  **app.js 11,119 → 8,082줄(-27%)** · sidebar.js 1,138 · composer.js 2,140 · progress.js 460
 - **AC-3 (오케스트레이터 ≤~3,000줄) 정직 보고 — 부분 달성**:
   admin.js 4,804줄 잔여 = 코어 유틸·권한 grid 인프라(계정/역할 공유)·pending/batch-apply
   엔진·대시보드·archives·sampleReview·탭 디스패치/바인딩. app.js 11,119줄 잔여 =
@@ -50,9 +52,8 @@ source_of_truth: false
 - 없음 (plan-review 대기는 §7 로 표기 — 비-승인 작업 없음)
 
 ## 7. Human Attention Needed
-- 없음 — 후속 2축 모두 처리 경로 확정: 하네스 정리는 2026-08-05 해소(feature-0003
-  harness-repair, PR #1146), 오케스트레이터 감축은 Phase A+B PLAN-APPROVED(2026-08-05,
-  TASK §2.2) 로 진행 중.
+- 없음 — 후속 2축 완결: 하네스 정리(PR #1146) + 오케스트레이터 감축 Phase A~B3
+  (PR #1147~#1150, 전건 배포·POST-DEPLOY PASS).
 
 ## 8. Suggested Improvements
 - (기록만, C9 발견) `renderConversationList`(~520줄)의 후속 분리는 공유 DnD 상태
