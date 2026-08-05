@@ -181,3 +181,13 @@ source_of_truth: true
 - Files: `docs/CODEBASE_MAP.md` (M, 프로젝트 doc — 본 cycle 유일 코드외 변경) + feature-0011 docs(MODIFY/REVIEW/TASK/REPORT).
 - Impact: 문서 전용(런타임/이미지 무영향, 배포 불요). CODEBASE_MAP 가 현행 11개 feature + shared/ 6모듈 + GDPR gap 을 반영.
 - Rollback Notes: 단일 commit revert(doc only).
+## CHG-20260805T153000-p5a-closeout P5a 종결 — 미결정 #4·#5 해소 (사용자 위임 이력-검토 결정)
+
+- `unit/feature-0002-agent-core/src/modules/attachment_reconciliation.py`: 파일 헤더에
+  미배선(unwired) 라벨 주석 5줄 — 코드를 여는 세션이 CODEBASE_MAP §7 미참조여도 오인 방지.
+  동작 변경 0 (주석-only, py_compile PASS).
+- `.env.example`: reconciliation 주기 정본 키 `ATTACHMENT_RECON_INTERVAL_SEC` 문서화.
+- `docs/DECISIONS.md` ADR-20260805T153000-p5a-closeout: #4 보존 확정 · #5 Dockerfile 분리
+  불채택(단일 이미지 유지) · env 키 정본. TASK-0011-10 종결.
+- ssot ROADMAP: ITEM-P0 done 정정(산출물 완비·lint 잔여 4건은 전부 P3 귀속) ·
+  ITEM-P5a done(feature-0011 Step 1~5 실적 + 본 종결 반영) · §4 미결정 #4·#5 해소 표기.

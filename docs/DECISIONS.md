@@ -960,3 +960,24 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   이 결정을 뒤집지 않는다 — 지연 예산이 문제면 큐레이션·인프라·전달 경로를 먼저 본다.
 - **재검토 조건**: '즉시 답변' 사용률이 매우 높아 사실상 전원이 리뷰를 건너뛰거나,
   revision 적용률이 유의하게 떨어져 리뷰의 품질 기여가 사라진 것이 계측으로 확인될 때.
+
+## ADR-20260805T153000-p5a-closeout
+
+- **결정 (2026-08-05, 사용자 위임 "개발 이력·대화 내역 검토 후 방향 결정" — ssot ROADMAP §4 미결정 #4·#5 종결)**:
+  1. **#4 GDPR legal-erasure 사본 = 보존 확정** — feature-0002 `attachment_reconciliation.py`(미배선)는
+     삭제·dedup-merge 하지 않는다. 근거: 적대 리뷰(42 에이전트) 판정 "중복 아닌 별개 worker" +
+     feature-0011 ANCHOR §3 + CODEBASE_MAP §7 Known Gaps 등재. 보강: 파일 헤더 미배선 라벨(본 ADR 동반).
+     wiring 은 별도 compliance 결정 사항으로 유지.
+  2. **#5 Dockerfile 분리 = 불채택(단일 이미지 유지)** — P5a Step 6 을 수행하지 않고 P5a 를 종결한다.
+     근거: 분리의 원 전제(148 cross-feature import 얽힘·SSOT 경계 불명)는 shared/ 추출(feature-0011
+     Step 1~5, 2026-06-25 완성)과 CODEBASE_MAP §7 명시로 해소됐고, 이후 배포 인프라(feature-0014
+     asset-stamp·feature-0020 deploy-web 스파인·feature-0039 ops-scheduler)가 단일 이미지 전제로
+     구축·안정화됨. web→0002 modules 의존 실측 8종(2026-08-05) — 분리 실익 대비 스파인 전면 재설계
+     비용이 큼. 향후 이미지 크기/보안 요구가 실측으로 등장하면 별도 initiative 로 재평가.
+  3. **reconciliation env 키 정본 = `ATTACHMENT_RECON_INTERVAL_SEC`** (라이브 0003판 기준,
+     .env.example 문서화). 미배선 0002판의 `ATTACHMENT_RECON_POLL_SEC` 는 사양 보존본 내부 명칭 —
+     wiring 시 정본 키로 통일하며 별도 alias 배선은 하지 않는다(미배선 코드에 alias 는 무의미).
+- **대안**: #4 제거(사양은 문서 보존) — SSOT 이중정본 해소 관점의 후보였으나, 적대 리뷰·ANCHOR 의
+  기존 판정("별개 worker·보존")을 뒤집을 신규 근거 부재로 불채택. #5 분리 강행 — 선행(shared/)은
+  충족했으나 6주간의 스파인 안정화 실적을 리스크로 되돌릴 실익 부재로 불채택.
+- **영향**: ssot ROADMAP ITEM-P5a 종결(§4 미결정 #4·#5 해소), feature-0011 TASK Step 6 불채택 종결.
