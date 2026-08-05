@@ -75,7 +75,7 @@ sources:
 - `_audit_user_action` = fail-open (long-running 격리, stderr log)
 - prod fail-closed: `AGENT_AUDIT_ENABLED=1` 강제 (dev/test 만 toggle)
 
-### 2.4 frontend state (app.js)
+### 2.4 frontend state (app.js + `app/` 모듈)
 
 - `state.pendingNewConversation` + `state.pendingSentinel` (unique per lazy-create) → "+ 새 대화" race 차단 (TASK-0082)
 - `state.composerAttachments.byConv[pendingSentinel]` — lazy-create staged attachment bucket (TASK-0106)
@@ -86,6 +86,8 @@ sources:
 - **전체 N행 미리보기 인라인 표** — "📎 전체 N행 미리보기" 링크를 값-기반 매칭으로 인라인 렌더 + "접기" toggle (TASK-0155/0156/0174)
 - **데이터소스 연결상태 3색 배지** — composer 제품 chip + sidebar 가 `connStatusMeta()` 로 정상(초록)/불안정(빨강)/끊김(회색) ●점+라벨 (TASK-0244/0261/0282)
 - **프롬프트 자동작성 스트리밍 스크롤** — SSE 토큰 append 시 `atBottom` 판정 후에만 추종 (TASK-0254)
+- **도메인 모듈 추출** (2026-08-03~05, 정본 feature-0038) — app.js 가 ES module 오케스트레이터가 되고 도메인이 `static/app/` 6모듈(auth·profile·messages·sidebar·composer·progress)로 byte-동치 이동, **13,216 → 8,082줄**. 사이드바·composer/첨부·메시지·진행표시 계열은 각 모듈로 옮겨졌으나 데이터소스 연결상태 3색 배지(`connStatusMeta`)·스트리밍 스크롤(`atBottom`)·실행 단계 side panel 등은 오케스트레이터에 잔류한다 — AC-3(오케스트레이터 ≤~3,000줄)은 **부분 달성**이고 잔여 지도는 REPORT §2.
+- **공유 가변 state 편입** (Phase A) — 모듈 경계를 넘어 재할당되던 `_dqaDrag`·`_sidebarCatchupTimer` 가 `state.dqaDrag`·`state.sidebarCatchupTimer` 로 편입되고, 계약 가드 `tests/verify_state_intake.mjs` 가 bare 식별자 잔존 0 을 고정한다.
 
 ### 2.5 관리 콘솔 + 실행 확장 (2026-06)
 
@@ -147,6 +149,8 @@ sources:
 - **TASK-0094 multi-cycle 의 hub** — Sprint 1 (MinIO + sandbox), Sprint 2 (vision), Sprint 4 (D RAG, 예정)
 - **admin password reset** (TASK-0061 Phase 6, Critical §12.3) — 16 자 1 회용 임시비번 + `MustChangePassword` 강제
 - **stale_error 판정** (TASK-0061 Phase 3) — `processing` 상태가 `WEB_PROGRESS_STALE_TIMEOUT_SECONDS` (기본 1200 초) 초과 시 stale 라벨
+- **standalone mjs 하네스 계약** (2026-08-05, harness-repair — tests-only·제품 코드 변경 0) — `tests/verify_*.mjs` red 23건을 전건 수리해 **40/40 green**(단언은 현행 계약으로 갱신하되 검증 취지 보존). 신설 2건: `esm-classic-inject.mjs`(ESM 전환 이후 jsdom classic 주입용 import/export strip — 미커버 형태는 SyntaxError 로 fail-loud) · `verify_notify_gating.mjs`(알림 게이팅 매트릭스 — 구 시나리오 A 블록 이관). `win-browser-settings-notif.scenario.json` 은 죽은 page-전역 의존을 DOM 이벤트 경유로 전환(실 Windows Chrome 20스텝 OK). **mjs 40개가 `make test` 밖이라는 CI 비배선 구조는 잔존.** 정본 FUNCTION `(harness-repair)` · TEST `20260805T1042`.
+- **분석문 판정 배지** (2026-08-05, 정본 feature-0036) — 그래프 뷰 노드 상세 'AI 능동 분석' 박스의 판정 배지 + `판정 근거` 한 줄이 본 feature static(`graph/graph-ctxmenu.js` · `admin.html` 범례)에 거주한다. 미판정·판정 실패·해시 불일치는 전부 미표시로 수렴. 정적 자산이 web 이미지에 baked 되므로 시각 검증은 배포 후 수행 — PB-0008 라이브 4항목 PASS(TASK-20260805T192000).
 
 ## 4. 사용법
 

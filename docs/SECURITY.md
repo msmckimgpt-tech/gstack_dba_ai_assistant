@@ -1109,3 +1109,35 @@ re-grant 금지**(★ 관리자 해제 보존)·프론트 그룹 키 parity·see
 - **발화자 귀속을 렌더 시점 파생 → 발화 시점 각인으로**: 대화 fork·제품 전환으로 **과거 발화의 표시 주체가 사후에 바뀌던** 경로를 닫았다(assistant = 컴포저 제품 칩에서 만든 단일값을 전 말풍선이 공유 / user = 발신자 meta 를 그룹 발신에만 각인해 1:1 미각인 → 대화의 현재 owner 폴백, fork 본에서 원저자 질문이 복제자 이름으로 표시). 각인은 `agent_core` 미러 meta(user 1:1 확대 · assistant 4경로 전부)와 fork/duplicate·`PATCH …/product` 의 **강등 전 보정**으로 고정하고, 사후 추론분은 `attribution_inferred` 로 구분해 "언제부터 믿을 수 있는 값인지" 를 남긴다.
 - **귀속 보정 쓰기의 비파괴 계약(적대 리뷰가 닫은 P1 4건)**: 보정은 **미각인 행 한정·추가만·fail-open** 이며 — PG `payload || existing`(우측=기존 우선) · MySQL `{**payload, **meta}` · fork `setdefault` 로 기존 meta 키를 덮지 않고, 판독 불가 meta 행은 **삭제 대신 skip**(읽은 원문 대조 `MetaJson <=> %s` 낙관적 가드로 SELECT~UPDATE race 차단), fork 의 user/assistant 축은 독립 best-effort 로 분리해 조회 1건 실패가 다른 축 귀속을 폐기하지 않게 했다. sender id 만 각인된 **타인 메시지에 대화 owner 이름을 붙이던 확정적 오귀속**은 `사용자 <senderId>` 표기로 교체했다(legacy = 각인 전무 행만 owner 폴백 유지).
 - **잔여(정직)**: fork 도 제품 전환도 겪지 않은 legacy 대화의 user/assistant 행은 미각인으로 남아 종전 폴백으로 표시된다(그 대화의 모든 발화가 실제로 그 owner·그 제품이므로 표시는 정확하며, 전량 backfill 은 라이브 전 대화 meta 를 쓰는 대규모 변경이라 미채택). pre-feature-0009 미각인 그룹 user 행을 fork 하면 원본 owner 로 추론되며(`attribution_inferred: true`), 복제자 이름으로 표시되던 종전보다는 엄격히 낫다. 검증: 신규 테스트 29(agent-core 13 + web 16) · 전체 3,671 passed · PB-0008 실 Windows Chrome PASS(fork·제품 전환·legacy 경계 3축).
+
+## 38. 첨부 변경 사실의 코드-권위화 · 판정 표시의 노출 경계 · 미배선 사양본 보존 (feature-0002-agent-core · feature-0036-analysis-verification · feature-0011-shared-extraction, 2026-08-05)
+
+- **부재 단정의 차단은 "부정 단정의 추가"가 아니다** (feature-0002, `1612d1ac`·`ca4d9584`): 이번 턴에
+  사용자가 무엇을 새로 첨부/버전갱신했는지는 애플리케이션이 첨부 저장소에서 계산하는 **사실**이며 LLM
+  추론 대상이 아니다. 사실은 한 번만 계산돼(`_ATTACHMENT_TURN_FACTS_CTX`) 시스템 프롬프트 말미·현재
+  user turn 말미·리뷰어 user block 세 지점에 같은 값으로 실린다. **금지 대상은 "제공 사실의 부정"
+  하나**(새/갱신 파일이 없다 · 목록의 파일을 볼 수 없다)이고, 내용이 같다는 결론·변경 불충분 지적은
+  모두 정당하다 — 넓히면 참인 답변을 막는다. 신규 0건이면 **세 블록 모두 미주입**: 사실 원천
+  `new_attachment_ids` 는 클라이언트 신호라 "비어 있음" 이 "첨부 없음" 을 뜻하지 않으므로(세션 재수화·
+  그룹 발신자 스코프 제외·비-브라우저 호출) 여기서 "첨부 없음" 을 코드-권위로 선언하면 이 봉인이 막으려는
+  마찰을 스스로 생산한다. 목록은 **floor 이지 ceiling 이 아니다**(스코프 제외분 존재 → "목록에 없으니
+  오지 않았다" 추론 금지).
+- **비신뢰 입력 경계**: 파일명은 업로더가 정한다 → 권위/리뷰어 블록 주입 **전** `_flatten_untrusted_name`
+  / `redteam._flatten_untrusted` 로 개행·제어문자 접기 + datamark sentinel 제거 + 길이 캡을 적용하고,
+  파일명 캡은 **건별**로 걸어 생략분을 `외 N건 생략` 으로 관측 가능하게 표기한다(join 후 슬라이스는
+  파일명 중간 절단 + 뒤 줄 소실을 낳는다). 저장본은 불변 — 주입은 `_live_user_content`(LLM 전달용)만
+  수정하고 `_save_message` 는 원문을 저장한다. fresh-context 불변식(feature-0021 ANCHOR §1) 유지:
+  리뷰어에게 넘기는 것은 assistant 의 추론 과정이 아니라 애플리케이션 계산 사실 몇 줄이다.
+- **판정 표시의 노출 경계** (feature-0036, ADR-0036-09, 배포 `2a1089eb`): 노드 상세에 판정을 실을 때
+  `WHERE analysis_hash = <현재 분석문 해시>` 로 조회하고 불일치 시 `verdict` 키 자체를 응답에 넣지
+  않는다 — 판정은 노드당 1행이라(ADR-0036-04) 분석문이 갱신되면 그 행은 **지금 화면에 보이는 문장이
+  아닌 다른 문장**의 판정이고, 노드 키만으로 붙이면 확인 도장이 엉뚱한 문장에 찍힌다. 미판정·판정 실패·
+  해시 불일치는 **모두 표시 없음**으로 수렴시킨다(운영자가 구분해야 할 것은 판정의 유무이지 없는 이유가
+  아니다). 이 표면은 관계도 열람 권한 보유 관리자에게만 노출되며 신규 권한·엔드포인트·스키마 추가 0.
+- **미배선 사양본의 보존 결정** (feature-0011, ADR-20260805T153000 §1): feature-0002
+  `attachment_reconciliation.py` 는 **미배선(unwired)** 이며 SSOT 이중정본 정리 대상이 아니라 **보존**
+  으로 확정됐다(적대 리뷰 판정 "중복 아닌 별개 worker" + feature-0011 ANCHOR §3 + CODEBASE_MAP §7
+  Known Gaps 등재). GDPR legal-erasure 경로의 사양이 코드로 남아 있으나 **런타임 경로에 없다** 는 사실을
+  파일 헤더 라벨로 명시했다 — wiring 은 별도 compliance 결정 사항이고, 그때까지 이 파일은 실행되지
+  않으므로 삭제 요구 처리의 근거로 쓸 수 없다. 정본 env 키는 라이브 판(`ATTACHMENT_RECON_INTERVAL_SEC`)
+  이며 미배선 판의 `ATTACHMENT_RECON_POLL_SEC` 는 사양 보존본 내부 명칭이다(alias 배선 없음).
