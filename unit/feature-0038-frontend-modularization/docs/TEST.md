@@ -593,3 +593,11 @@ source_of_truth: true
   이동 함수의 모듈-let 결합 0(사전 실측 — 타이머는 전부 state 소유).
 - 배선: 31심볼 import(23 export 화)·역-import 11·composer 계약 6심볼 re-export 보존.
 - mjs **41/41**(하네스 7건 합본/strip 갱신) · headless 46케이스 · make test RC=0.
+
+### Run — 20260805T1450 B3 POST-DEPLOY PB-0008 (Environment: Windows-browser) — PASS 14/14
+- 배포: PR #1150 머지(5977f5f7) → `--web-only` RC=0 → web-a/b GIT_COMMIT **둘 다 5977f5f7**.
+- 실전송 완주 스모크: 답변 완주 **15초(준비 2.2s·추론 13s)·"2" 응답** +
+  **progress_steps_rendered: true** — 이동한 renderProgress·pollProgress·startProgressPolling
+  의 진행 말풍선·단계 표시 라이브 전 경로 실증. pending 0 · window error 0.
+- **후속 Phase A+B1+B2+B3 전체 완결** — app.js 11,119(계획 기점) → **8,082줄(-27%)**,
+  app/ 7모듈(auth·profile·sidebar·messages·composer·progress + 기존).

@@ -4,15 +4,15 @@ feature_id: feature-0038-frontend-modularization
 status: active
 edit_policy: rewrite
 source_of_truth: true
-feature_status: in-progress
+feature_status: review
 feature_status_date: 2026-08-05
-feature_status_note: ITEM-P5b 본편 완결(10 cycle) + 후속 Phase A~B 진행(PLAN-APPROVED 2026-08-05 — 공유 let state-편입 후 sidebar/composer/progress 추출)
+feature_status_note: ITEM-P5b 본편(10 cycle) + 후속 Phase A~B3 완결 — app.js 11,119→8,082줄(-27%), 4 PR(#1147~#1150) 전건 배포·POST-DEPLOY PASS
 ---
 
 # Task
 
 ## 1. Current Status
-- State: followups-in-progress (본편 PLAN-APPROVED 2026-08-03 완결 · 후속 Phase A+B PLAN-APPROVED 2026-08-05)
+- State: done (본편 + 후속 Phase A~B3 완결 — 2026-08-05)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-04
@@ -128,10 +128,7 @@ admin.js 4,804줄 잔여는 공유 코어(pending/batch-apply·권한 grid)라 B
 <!-- PLAN-APPROVED by mckim on 2026-08-05 (AskUserQuestion "Phase A+B 전체 승인 (권장)" — resume 세션 기록) -->
 
 ## 3. Task Queue
-- TASK-20260805T105500-phaseA-state-intake: Phase A state-편입 → §6 Done (cycle 마감 진행)
-- TASK-20260805T105501-phaseB1-sidebar: B1 → 구현 완료·cycle 마감 진행 (§6 Done)
-- TASK-20260805T105502-phaseB2-composer: B2 → 구현 완료·cycle 마감 진행 (§6 Done)
-- TASK-20260805T105503-phaseB3-progress: B3 → 구현 완료·cycle 마감 진행 (§6 Done)
+- (비었음 — 후속 Phase A~B3 전체 완결. 잔여 후보는 REPORT §8: admin.js 재실측·run-감지 동반 이동·mjs CI 배선 검토 등 별도 사안)
 
 ## 4. In Progress
 - 없음
@@ -175,9 +172,10 @@ admin.js 4,804줄 잔여는 공유 코어(pending/batch-apply·권한 grid)라 B
 - [x] TASK-20260805T123000-phaseB2-composer B2 추출 — composer 도메인 50세그먼트(~2,000줄) → app/composer.js 신설, app.js 8,508줄(-1,891), parity 50/50·free-vars 0·mjs 41/41·headless 46 (CHG-20260805T123000)
 - [x] TASK-20260805T133000-phaseB2-postdeploy B2 마감 — PR #1149 머지·배포(web-a/b f7526401)·POST-DEPLOY 실전송 완주 스모크 14/14 PASS(답변 20초·에러 0, TEST Run-20260805T1330)
 - [x] TASK-20260805T140000-phaseB3-progress B3 추출 — progress 도메인 18함수 → app/progress.js 신설, app.js 8,082줄(계획 기점 대비 -3,037), parity 18/18·free-vars 0·mjs 41/41·headless 46 (CHG-20260805T140000)
+- [x] TASK-20260805T145000-phaseB3-postdeploy B3 마감 — PR #1150 머지·배포(web-a/b 5977f5f7)·POST-DEPLOY 실전송 스모크 14/14 PASS(완주 15초·진행 단계 표시 실증·에러 0, TEST Run-20260805T1450) — **후속 Phase 전체 완결**
 
 ## 7. Next Action
-- Phase A cycle 마감(게이트→PR→배포→POST-DEPLOY PB-0008) → B1 착수
+- (완결) 잔여 후보는 REPORT §8 — 별도 계획 사안
 
 ## 8. Completion Checklist
 - [x] 모든 REQ의 AC가 구현되었다 — §2.1 AC-1~5 충족(AC-3 풀 스모크 포함) · FUNCTION §11 `AC-…-split-3`(오케스트레이터 ≤~3,000줄 목표)만 **부분**(잔여 지도 REPORT §2, 정직 표기)
