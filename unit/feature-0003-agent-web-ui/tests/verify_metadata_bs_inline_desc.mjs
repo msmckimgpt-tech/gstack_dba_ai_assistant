@@ -185,9 +185,9 @@ const dom2 = new JSDOM("<!doctype html><html><body><div id='metadataBootstrap'><
 const adminState2 = { metadata: { subTab: "tables", bootstrap: { tables: [], open: false } } };
 let renderCalls = 0;
 const sync = new Function(
-  "document", "adminState", "can", "_metaScopeDatasourceKey", "_metaBootstrapSyncToScopeDs", "_metaBootstrapRenderResult",
+  "document", "adminState", "can", "_metaScopeIsProduct", "_metaBootstrapSyncToScope", "_metaBootstrapRenderResult",
   `${syncSrcB}; return _metaSyncBootstrapVisibility;`,
-)(dom2.window.document, adminState2, () => true, () => "x", () => {}, () => { renderCalls += 1; });
+)(dom2.window.document, adminState2, () => true, () => true /* 구체 제품 스코프 */, () => {}, () => { renderCalls += 1; });
 sync();
 ok("[B4] 골격 없으면 재렌더 안 함", renderCalls === 0);
 adminState2.metadata.bootstrap.tables = [{ schema_name: "s", table_name: "t", columns: [] }];
@@ -199,9 +199,9 @@ ok("[B4] columns 전환 시에도 재렌더(평면↔접힘 구조 교체)", ren
 // scope-single-ds-ui: 공용(common) 스코프(_metaScopeDatasourceKey="")는 empty-state early-return →
 //   골격이 있어도 재렌더 안 함(부트스트랩 컨트롤/저장 UI 비노출 — 공용 저장 footgun 차단의 행위 근거).
 const syncCommon = new Function(
-  "document", "adminState", "can", "_metaScopeDatasourceKey", "_metaBootstrapSyncToScopeDs", "_metaBootstrapRenderResult",
+  "document", "adminState", "can", "_metaScopeIsProduct", "_metaBootstrapSyncToScope", "_metaBootstrapRenderResult",
   `${syncSrcB}; return _metaSyncBootstrapVisibility;`,
-)(dom2.window.document, adminState2, () => true, () => "", () => {}, () => { renderCalls += 1; });
+)(dom2.window.document, adminState2, () => true, () => false /* 공용(common) 스코프 */, () => {}, () => { renderCalls += 1; });
 const _beforeCommon = renderCalls;
 syncCommon();
 ok("[B4-common] 공용 스코프는 골격 있어도 재렌더 안 함(empty-state early-return)", renderCalls === _beforeCommon);

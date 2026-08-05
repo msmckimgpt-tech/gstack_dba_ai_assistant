@@ -7975,3 +7975,37 @@ freeze + 전환 후 재조회. ②의 "대표 1경로(정상 답변)만 확인 �
 - [x] 보수적 제외(정본 근거): feature-0038 ITEM-P5b Cycle 3~10 + Final(`691d9d9e`~`ac20cb04`) = byte-동치 리팩터·동작·시각 무변경 → 사용자 표면 0 · feature-0039 ops-scheduler(`e632c8f5`) = 운영 정기 잡 실행주체 이전으로 화면·버튼·표시 변화 0(기술 색인만) · POST-DEPLOY 문서 커밋 3건 = 코드 변경 0 · `ca02c608` template v3.44.0 = 개발자향.
 - [x] operational gate(feature-0003): TASK#2·MODIFY#3(`## CHG-` 접두)·FUNCTION#4·REVIEW#9(`[SKIPPED:non-policy-doc]`)·TEST#13/#18(Windows-browser 미수행 사유 기록). 무인 cron — landing/배포 소유=wrapper(v3)이므로 로컬 commit 까지만.
 - [x] 캐시버스터: **수기 bump 하지 않음**(2026-07-12 ITEM-09 이후 소스 `?v=dev` 고정 placeholder + `unit/feature-0002-agent-core/src/Dockerfile` `inject_asset_stamp.py` 가 static 트리 content-hash 를 빌드 시 주입 + `bin/deploy-web.sh` 가 baked 이미지의 `?v=dev` 잔존 시 하드 ABORT). `index.html`·`admin.html` 편집 0.
+
+## 20260805T1042-harness-repair — standalone mjs 하네스 red 전수 해소 (tests-only, 라이브 코드 변경 0)
+
+feature-0038 ITEM-P5b 완결 보고의 후속 후보(REPORT §8 "pre-existing 하네스 정리") 승계 cycle.
+`tests/verify_*.mjs` 39개 중 **23개 red**(CI 비배선이라 조용히 썩던 상태 — §8 목록 12건 + 전수
+실측으로 추가 발견 11건)를 전건 수리, 시나리오 1건의 죽은 전역 의존을 DOM 이벤트 경유로 전환.
+
+- [x] `전수 실측` — 39개 mjs + jsdom(/tmp) 재설치 후 기준선: red 23건, 원인 6유형(① jsdom ESM
+  import /tmp 폴백 부재 4 ② 소스-추출 eval 신규 의존 미주입 4 ③ admin.js ESM 전환(C7)로 classic
+  주입 SyntaxError 3 ④ asset-stamp 전환 이전 cache-buster 토큰 단언 7 ⑤ 기능 진화 미추종 stale
+  앵커(ai-console 탭 통합·함수 리네임/분리·이동) 6 ⑥ 정확 카운트/윈도우 취약 단언 2).
+- [x] `수리` — 단언은 **현행 계약으로 갱신하되 검증 취지 보존**(동어반복 금지): cache-buster 는
+  placeholder(`?v=dev`) 관리 대상 단언으로(asset-stamp 계약 — 수기 bump 폐기), ai-console 은 OR
+  게이트 3항목 개별 케이스로, 분리 모듈(products/datasources/metadata/sidebar/messages)은 합본
+  검사로. 신설 2파일: `esm-classic-inject.mjs`(classic 주입용 import/export strip 공용기),
+  `verify_notify_gating.mjs`(시나리오 A_notify_gating 이관 — 게이팅 매트릭스 5 + 보조 계약 4).
+- [x] `시나리오 정비` — `win-browser-settings-notif.scenario.json` 전 블록(B/C/D/E)을 page 전역
+  호출 → DOM 이벤트 경유(kebab 클릭·`#openProfileBtn`·`#closeProfileBtn`)로 전환, async 팝업은
+  클릭→wait_for→관측 3단 분리. A 블록은 mjs 이관 후 제거(notes 필드에 이관 기록).
+- [x] `검증` — mjs **40/40 전건 green**(신설 포함) + 시나리오 실 Windows Chrome 150 relay 로
+  **20스텝 전건 OK**(kebab 메뉴 3항목·공유 다이얼로그·대화 설정 패널·프로필 계정 탭 실관측).
+- [x] `적대 패널` — MAJOR 1(시나리오 A~D 죽은 전역 잔존 — vacuous 관측) · MINOR 5 · NIT 2 전건
+  흡수 (REVIEW REV-20260805T104213-harness-repair).
+
+## 9. Requested Scope
+- [x] `pre-existing 하네스 정리 (feature-0038 REPORT §8 후속)` — 산출물: 24파일 수리 + 2파일 신설
+  · 배선 확인: 전수 재실행 40/40 green + 시나리오 실브라우저 20스텝 OK.
+
+**G2**: red 목록을 §8 기록(12건)이 아니라 **전수 실측(23건)** 으로 재확정 — 기록 이후 Cycle 7~10
+ESM 전환으로 새로 부러진 것 + jsdom 환경 소실이 §8 에 없던 11건을 만들었다.
+**G3**: 주장 affordance = "하네스가 다시 결함을 검출할 수 있음" — 패널이 단언 완화의 검증력
+약화를 별도 축으로 적대 검증(C1 strict 복원·정확 카운트 핀·블록-내 매칭 등으로 교정).
+**G4**: 경계 = 하네스 vs 라이브 코드 — `src/static` 접촉 0 을 git status 로 확인(tests-only).
+**G5/G6**: 해당 없음(권한·리소스·스키마 무변경).

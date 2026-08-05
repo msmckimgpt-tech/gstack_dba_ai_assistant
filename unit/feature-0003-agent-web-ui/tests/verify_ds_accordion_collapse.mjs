@@ -11,6 +11,7 @@
 // 실행: node verify_ds_accordion_collapse.mjs  (Node18 + jsdom@22, /tmp 우선 해석)
 
 import { readFileSync } from "node:fs";
+import { stripEsmForClassicInject } from "./esm-classic-inject.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -44,6 +45,14 @@ let adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
 const initIdx = adminJs.lastIndexOf("initialize().catch(");
 ok("initialize() 자동실행 블록 위치 확인", initIdx > 0);
 if (initIdx > 0) adminJs = adminJs.slice(0, initIdx);
+// ESM 전환(ITEM-P5b Cycle 7) 후속: classic 주입 전 import/export 배선 제거(본문 무수정).
+adminJs = stripEsmForClassicInject(adminJs);
+// ITEM-P5b Cycle 5: 제품/DS 도메인이 admin/{products,datasources}.js 로 분리 —
+// renderProductDetail/renderDatasourcesPane 계열은 분리 모듈에 있으므로 동일 realm 에 순서 주입한다
+// (classic top-level 선언은 global lexical 공유 — admin.js 의 adminState/can 을 그대로 참조).
+const productsJs = stripEsmForClassicInject(readFileSync(join(STATIC, "admin/products.js"), "utf8"));
+const datasourcesJs = stripEsmForClassicInject(readFileSync(join(STATIC, "admin/datasources.js"), "utf8"));
+
 
 const dom = new JSDOM(
   `<!DOCTYPE html><body><div id="adminToast"></div><div id="productDetail"></div></body>`,
@@ -61,7 +70,9 @@ function injectScript(code) {
 
 try {
   injectScript(adminJs);
-  ok("admin.js realm 로드(자동실행 제거)", typeof window.renderProductDetail === "function");
+  injectScript(datasourcesJs);
+  injectScript(productsJs);
+  ok("admin.js+분리모듈 realm 로드(자동실행 제거)", typeof window.renderProductDetail === "function");
 } catch (e) {
   ok("admin.js realm 로드(자동실행 제거)", false);
   console.error(e && e.stack ? e.stack : e);

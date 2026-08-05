@@ -46,13 +46,16 @@ function extractFn(src, name) {
 
 const seedSrc = extractFn(appJs, "_seedDateGroupsCollapsedOnce");
 ok("[추출] _seedDateGroupsCollapsedOnce", Boolean(seedSrc));
+// month:/year: 집계 그룹 후속: seed 가 _isAggregateGroupKey 로 day 그룹만 걸러 접는다 — 실함수 동반 추출.
+const aggKeySrc = extractFn(appJs, "_isAggregateGroupKey");
+ok("[추출] _isAggregateGroupKey", Boolean(aggKeySrc));
 
 // 모듈 스코프 플래그 _dateGroupsSeededThisLoad 를 함수와 같은 클로저로 묶어,
 // 호출 사이 1회-게이트가 실제로 동작하는지 검증한다. state 는 클로저 캡처.
 function build(state) {
   const factory = new Function(
     "state",
-    `let _dateGroupsSeededThisLoad = false;\n${seedSrc}\n` +
+    `let _dateGroupsSeededThisLoad = false;\nlet _seededAggKeys = new Set();\n${aggKeySrc}\n${seedSrc}\n` +
       `return { seed: _seedDateGroupsCollapsedOnce, getFlag: () => _dateGroupsSeededThisLoad };`
   );
   return factory(state);
@@ -127,14 +130,15 @@ ok("[no-persist] seed 가 _saveCollapsedGroups 호출 안 함", !/_saveCollapsed
 ok("[no-persist] seed 가 localStorage 직접 참조 안 함", !/localStorage/.test(seedSrc));
 
 // Case 8 — renderConversationList 가 sortedDateKeys 계산 직후 seed 를 호출(렌더 전 반영)
-ok("[wired] renderConversationList 가 _seedDateGroupsCollapsedOnce(sortedDateKeys) 호출",
-  /_seedDateGroupsCollapsedOnce\(sortedDateKeys\)/.test(appJs));
+// conv-date-tree 리팩터: sortedDateKeys → dateTree.keys(적응형 일/월/연 트리) 로 배선 변경.
+ok("[wired] renderConversationList 가 _seedDateGroupsCollapsedOnce(dateTree.keys) 호출",
+  /_seedDateGroupsCollapsedOnce\(dateTree\.keys\)/.test(appJs));
 // seed 호출이 sortedDateKeys 선언 이후 & sortedDateKeys.forEach 렌더 이전 위치인지(순서)
 {
-  const sortIdx = appJs.indexOf("const sortedDateKeys = Array.from(dateGroups.keys())");
-  const seedIdx = appJs.indexOf("_seedDateGroupsCollapsedOnce(sortedDateKeys);");
-  const renderIdx = appJs.indexOf("sortedDateKeys.forEach((dateKey) =>");
-  ok("[wired] seed 호출이 정렬 이후·렌더 이전", sortIdx > 0 && seedIdx > sortIdx && renderIdx > seedIdx);
+  const sortIdx = appJs.indexOf("const dateTree = _buildOwnDateTree(");
+  const seedIdx = appJs.indexOf("_seedDateGroupsCollapsedOnce(dateTree.keys);");
+  const renderIdx = appJs.indexOf("dateTree.nodes.forEach(renderDateNode);");
+  ok("[wired] seed 호출이 트리 구축 이후·렌더 이전", sortIdx > 0 && seedIdx > sortIdx && renderIdx > seedIdx);
 }
 
 console.log(`\n${failed === 0 ? "ALL PASS" : "HAS FAILURES"} — ${passed} passed, ${failed} failed`);

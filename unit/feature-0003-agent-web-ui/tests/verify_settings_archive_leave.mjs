@@ -55,8 +55,9 @@ ok("leaveConversation 추출됨", !!leaveFn);
 
 // [변경1] ··· 메뉴에서 '보관' 제거, 공유/설정은 유지.
 ok("··· 메뉴에 '보관' 항목 없음", !!menuFn && !/makeItem\("보관"/.test(menuFn));
-ok("··· 메뉴에 '공유' 항목 유지", !!menuFn && /makeItem\("공유"/.test(menuFn));
-ok("··· 메뉴에 '설정' 항목 유지", !!menuFn && /makeItem\("설정"/.test(menuFn));
+// conv-item-menu 리팩터: makeItem(...) → openFloatingMenu buildItems 의 make(...) 콜백.
+ok("··· 메뉴에 '공유' 항목 유지", !!menuFn && /make\("공유"/.test(menuFn));
+ok("··· 메뉴에 '설정' 항목 유지", !!menuFn && /make\("설정"/.test(menuFn));
 
 // [변경2] 설정 팝업 '대화 관리' 섹션: 권한 분기 + 보관/나가기.
 ok("설정 팝업에 '대화 관리' 섹션 라벨", !!settingsFn && settingsFn.includes("대화 관리"));

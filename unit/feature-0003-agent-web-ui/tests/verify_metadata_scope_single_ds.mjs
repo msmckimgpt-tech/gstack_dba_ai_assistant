@@ -75,16 +75,17 @@ ok("[B1] empty-state 요소(#metadataBootstrapEmpty)가 list-detail .admin-detai
 ok("[B2] 부트스트랩 헤더에 토글 숨김용 #metadataBootstrapHead id 부여", /id=["']metadataBootstrapHead["']/.test(adminHtml));
 ok("[B3] 노트에 상속 데이터소스명 표기 슬롯(#metadataBootstrapDsName)", /id=["']metadataBootstrapDsName["']/.test(adminHtml));
 
-const syncToScope = extractFn(adminJs, "_metaBootstrapSyncToScopeDs");
-ok("[B4] _metaBootstrapSyncToScopeDs(스코프 DS 상속) 함수 존재", Boolean(syncToScope));
+// scope-key-unify 후속: DS 키 상속(_metaBootstrapSyncToScopeDs) → 제품 스코프 상속(_metaBootstrapSyncToScope) 리네임.
+const syncToScope = extractFn(adminJs, "_metaBootstrapSyncToScope");
+ok("[B4] _metaBootstrapSyncToScope(스코프 상속) 함수 존재", Boolean(syncToScope));
 ok("[B5] 상속 함수가 스코프 DS 변경 시 골격/스키마 리셋 + 스키마 재로드",
    Boolean(syncToScope) && /bootstrap\.tables\s*=\s*\[\]/.test(syncToScope) && /_metaBootstrapLoadSchemas\(\)/.test(syncToScope));
 
 const syncVis = extractFn(adminJs, "_metaSyncBootstrapVisibility");
-ok("[B6] _metaSyncBootstrapVisibility 가 스코프 DS(_metaScopeDatasourceKey)로 분기",
-   Boolean(syncVis) && /_metaScopeDatasourceKey\(\)/.test(syncVis));
+ok("[B6] _metaSyncBootstrapVisibility 가 제품 스코프(_metaScopeIsProduct)로 분기",
+   Boolean(syncVis) && /_metaScopeIsProduct\(\)/.test(syncVis));
 ok("[B7] 공용(common) 스코프 분기에서 empty-state 노출 + 상속 함수 호출",
-   Boolean(syncVis) && /metadataBootstrapEmpty/.test(syncVis) && /_metaBootstrapSyncToScopeDs\(/.test(syncVis));
+   Boolean(syncVis) && /metadataBootstrapEmpty/.test(syncVis) && /_metaBootstrapSyncToScope\(/.test(syncVis));
 
 const bindCtl = extractFn(adminJs, "_metaBindControls");
 // metadata-list-detail: 스코프 핸들러는 _metaRenderDetail(우측 상세 코디네이터) 경유로 부트스트랩
@@ -98,8 +99,8 @@ ok("[B8b] _metaRenderDetail 가 bootstrap 모드에서 _metaSyncBootstrapVisibil
 
 // ── [C] 저장 불변식(footgun 제거 후에도 보존) ───────────────────────────────
 const saveSrc = extractFn(adminJs, "_metaBootstrapSave");
-ok("[C1] 부트스트랩 저장은 여전히 헤더 스코프(scopeKey)로 저장",
-   Boolean(saveSrc) && /scope\s*=\s*adminState\.metadata\.scopeKey/.test(saveSrc) && /scope_key:\s*scope/.test(saveSrc));
+ok("[C1] 부트스트랩 저장은 여전히 헤더 스코프(productScope)로 저장",
+   Boolean(saveSrc) && /scope\s*=\s*adminState\.metadata\.productScope/.test(saveSrc) && /scope_key:\s*scope\b/.test(saveSrc));
 
 // ── [D] cache-buster 동반 bump + empty-state CSS ────────────────────────────
 // feature-0038 Cycle 1: styles.css 는 css/ 7분할 + cache-buster 는 소스 `?v=dev` 고정

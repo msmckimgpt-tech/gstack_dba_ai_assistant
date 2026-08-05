@@ -12,6 +12,7 @@
 // 실행: node verify_db_rule_pending.mjs  (Node18 + jsdom@22, /tmp 우선 해석)
 
 import { readFileSync } from "node:fs";
+import { stripEsmForClassicInject } from "./esm-classic-inject.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -43,6 +44,9 @@ let adminJs = readFileSync(join(STATIC, "admin.js"), "utf8");
 const initIdx = adminJs.lastIndexOf("initialize().catch(");
 ok("initialize() 자동실행 블록 위치 확인", initIdx > 0);
 if (initIdx > 0) adminJs = adminJs.slice(0, initIdx);
+// ESM 전환(ITEM-P5b Cycle 7) 후속: classic 주입 전 import/export 배선 제거(본문 무수정).
+adminJs = stripEsmForClassicInject(adminJs);
+
 
 const dom = new JSDOM(
   `<!DOCTYPE html><body>

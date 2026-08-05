@@ -44,8 +44,11 @@ ok("[1] index.html: 배너 텍스트 #llmRestrictionBannerText", /id=["']llmRest
 ok("[1] index.html: 다시확인 버튼 #llmRestrictionBannerRetry", /id=["']llmRestrictionBannerRetry["']/.test(html));
 ok("[1] index.html: footer 상태점 #llmStatusDot", /id=["']llmStatusDot["']/.test(html));
 ok("[1] index.html: 패널 노트 #llmRestrictionPanelNote (step 패널 내)", /id=["']llmRestrictionPanelNote["']/.test(html));
-ok("[1] index.html: styles.css 캐시버스터 bump(llm-restriction)", /styles\.css\?v=[^"']*llm-restriction/.test(html));
-ok("[1] index.html: app.js 캐시버스터 bump(llm-restriction)", /app\.js\?v=[^"']*llm-restriction/.test(html));
+// feature-0014 asset-stamp: 소스는 `?v=dev` placeholder — 빌드(inject_asset_stamp.py)가 content-hash 를
+// 일괄 주입한다(수기 bump 계약 폐기). 구 단언(특정 `?v=YYYYMMDD-slug` 토큰)은 스탬프 체계 전환으로
+// 무의미 — 자산이 스탬프 관리 대상(placeholder 부착)인지만 검증한다.
+ok("[1] index.html: css 번들이 asset-stamp placeholder(?v=dev)", /css\/chat\.css\?v=dev/.test(html));  // llm-restriction 4-surface 규칙 거주지 = chat.css
+ok("[1] index.html: app.js 가 asset-stamp placeholder(?v=dev)", /app\.js\?v=dev/.test(html));
 
 // ── 2. 정적: styles.css 4-surface 클래스 ────────────────────────────────
 ok("[2] styles.css: .llm-restriction-banner", /\.llm-restriction-banner\s*\{/.test(css));

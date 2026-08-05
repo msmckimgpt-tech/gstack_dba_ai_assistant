@@ -144,7 +144,10 @@ ok("CSS: .admin-db-picker-regex-btn 정의", /\.admin-db-picker-regex-btn\s*\{/.
 ok("CSS: .is-regex-match 하이라이트 정의", /\.admin-db-picker-item\.is-regex-match\s*\{/.test(adminCss));
 ok("CSS: .admin-db-picker-no-result 정의", /\.admin-db-picker-no-result\s*\{/.test(adminCss));
 ok("CSS: 글로벌 .hidden !important 존재(항목 display:flex 오버라이드 보장)", /\.hidden\s*\{\s*display:\s*none\s*!important/.test(adminCss));
-ok("cache-buster: admin.html styles.css/admin.js bump", /styles\.css\?v=20260618-dbpicker-search-regex/.test(adminHtml) && /admin\.js\?v=20260618-dbpicker-search-regex/.test(adminHtml));
+// feature-0014 asset-stamp: 소스는 `?v=dev` placeholder — 빌드(inject_asset_stamp.py)가 content-hash 를
+// 일괄 주입한다(수기 bump 계약 폐기). 구 단언(특정 `?v=YYYYMMDD-slug` 토큰)은 스탬프 체계 전환으로
+// 무의미 — 자산이 스탬프 관리 대상(placeholder 부착)인지만 검증한다.
+ok("cache-buster: admin.html css/admin.js 가 asset-stamp placeholder(?v=dev)", /css\/admin\.css\?v=dev/.test(adminHtml) && /admin\.js\?v=dev/.test(adminHtml));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

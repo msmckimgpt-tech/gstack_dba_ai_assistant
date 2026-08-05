@@ -109,9 +109,10 @@ function buildLoadConversations(state, payload) {
   const apiFetch = async () => payload;
   const factory = new Function(
     "apiFetch", "state", "renderConversationList", "renderConversationHeader", "renderComposer",
+    "loadFolders",  // 폴더 기능 후속: loadConversations 가 await loadFolders() 선행.
     `${loadConvSrc}\n return loadConversations;`
   );
-  return factory(apiFetch, state, noop, noop, noop);
+  return factory(apiFetch, state, noop, noop, noop, async () => {});
 }
 
 const PAYLOAD = { items: [{ id: "A" }, { id: "B" }, { id: "C9" }], current: "C9" };

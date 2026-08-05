@@ -2447,3 +2447,23 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 **화면 문구 증가 없음** (§16.8) — 제품 정체성 표면은 종전대로 아바타·툴팁이며, 그것이 고정될 뿐이다.
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0805, 2026-08-04)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-08-04 블록 3항목 추가(공유 링크 참여 버튼 표시 · 대화내역 발화자 발화시점 각인 · 시스템 프롬프트 '자동 작성' 접지 복구). 기능 계약·렌더러 동작 변경 없음(데이터 전용).
+
+## (harness-repair, 2026-08-05) standalone mjs 하네스 red 전수 해소 (테스트 인프라, Minor §12.3, 제품 코드 변경 0)
+
+- REQ-20260805T104213-harness-repair: `tests/verify_*.mjs` 39개 중 red 23개(§ CI 비배선이라
+  조용히 썩던 상태 — feature-0038 REPORT §8 후속 후보 승계)를 전건 수리하고, 시나리오
+  `win-browser-settings-notif.scenario.json` 의 죽은 page-전역 의존을 DOM 이벤트 경유로
+  전환한다. 단언은 현행 계약으로 갱신하되 검증 취지를 보존한다(동어반복 금지 — §18.8 패널이
+  검증력-약화 렌즈로 적대 검증).
+- 신설 계약 2건:
+  - `tests/esm-classic-inject.mjs` — `stripEsmForClassicInject(src)`: admin.js/app.js ESM 전환
+    (ITEM-P5b C7·ITEM-09) 이후 jsdom classic `<script>` 주입 하네스용 import/export 배선 제거기
+    (본문 무수정 · bare import 선행 제거로 over-consumption 차단 · 미커버 형태는 주입 시
+    SyntaxError 로 fail-loud).
+  - `tests/verify_notify_gating.mjs` — gc-settings-notif 알림 게이팅 매트릭스(default_on=1 ·
+    master_off=0 · desktop_off=0 · muted=0 · unmuted=1)의 소스-추출 정본 (구 시나리오 A 블록
+    이관, mentions.js 실물 파서 경유 + prefs/muted 왕복 + 셀프 멘션 제외 + high-water 계약).
+- AC-20260805T104213-harness-repair-1: 전 mjs 하네스 `node <file>` 40/40 rc=0 (FAIL 0).
+- AC-20260805T104213-harness-repair-2: settings-notif 시나리오가 실 Windows 브라우저에서
+  전 스텝 OK + 전 관측 필드 기대 형상 (kebab 3항목 · 공유/설정 팝업 · 프로필 계정 병합).
+- AC-20260805T104213-harness-repair-3: `src/static/**` 접촉 0 (tests-only — git diff 로 검증).

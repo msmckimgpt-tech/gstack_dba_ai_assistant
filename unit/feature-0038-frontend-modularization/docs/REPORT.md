@@ -58,21 +58,19 @@ source_of_truth: false
   치환 + 테스트) 승인 후 가능 — byte-동치 원칙 하에서는 양방향 binding-write 결합으로 불가.
 - (기록만) 분할 완료 후 verify-completion 또는 pre-commit 에 "단일 프론트 파일 N줄 초과
   WARN" 기계 게이트 추가 검토 — CONVENTIONS 문면 컨벤션의 enforcement 보강.
-- (기록만, C3 패널 발견) `tests/verify_admin_tab_gating.mjs` 2건 FAIL 이 pre-existing
-  으로 방치(「AI 운영 현황 표시」·「접근+usage.read → LLM 사용량 표시」) — make test
-  미포함이라 CI 사각. 본 initiative 와 무관(기준선 대조 입증), 별도 fix 후보.
-- (기록만, C8 패널 발견) `tests/win-browser-settings-notif.scenario.json` 이 page 전역
-  `typeof openProfile` 에 의존 — C7 ESM 전환 시점부터 비전역(pre-existing, 도구 시나리오
-  정비 후보 — PB-0008 레시피의 DOM 이벤트 경유 전환과 같은 축).
-- (기록만, C4 패널 발견) `tests/verify_perm_self_scope.mjs` 가 ITEM-09 admin.js
-  type=module 전환 이래 classic-script 주입 불가로 pre-existing 파손 — 별도 정리 후보.
-  standalone mjs 하네스들이 CI 비배선이라 조용히 썩는 구조 자체도 점검 후보.
-- (C6 부채 상환 후 잔여) 기준선(fd61bb48) 대조로 확인된 **pre-existing red** 목록:
-  db_rule_ui 17/2 · rule_db_coverage 18/2 · settings_archive_leave 20/2 ·
-  llm_restriction 33/2 · metadata_scope_single_ds 10/5(구 함수명 앵커 stale) ·
-  dbpicker 32/1 · release_notes 33/1 · admin_tab_gating 45/2 · member_kick_ban 17/2 ·
-  member_actions_hover 14/1 · perm_self_scope ·
-  **bs_inline_desc/list_detail: 양 트리 동일 `ReferenceError: _metaScopeIsProduct` 크래시**
-  (07-29 metadata-product-scope 가 함수에 신규 의존을 넣고 하네스 주입 인자를 미갱신 —
-  본 initiative 이전 파손, fd61bb48 재측정으로 확정). 전부 별도 fix 후보(우선순위:
-  기능 소유 feature cycle).
+- ~~(기록만, C3 패널 발견) `tests/verify_admin_tab_gating.mjs` 2건 FAIL pre-existing~~
+  → **2026-08-05 해소** — feature-0003 `harness-repair` cycle (CHG-20260805T1042) 이 ai-console
+  탭 통합(feature-0021) 미추종 stale 앵커로 판정·현행 계약으로 갱신 + OR 게이트 3항목 개별 검증 추가.
+- ~~(기록만, C8 패널 발견) `tests/win-browser-settings-notif.scenario.json` page 전역 의존~~
+  → **2026-08-05 해소** — 전 블록 DOM 이벤트 경유 전환 + A(게이팅 매트릭스)는
+  `verify_notify_gating.mjs` 신설 이관, 실 Windows Chrome 20스텝 전건 OK. (동일 죽은-전역 패턴이
+  mention-hl-notify·notify-nobracket 시나리오에 잔존 + 시나리오 17개 base_url `:18080` stale —
+  후속 후보로 feature-0003 REVIEW 에 이관 기록.)
+- ~~(기록만, C4 패널 발견) `tests/verify_perm_self_scope.mjs` classic-script 주입 파손~~
+  → **2026-08-05 해소** — `esm-classic-inject.mjs` 공용 strip 으로 perm_self_scope·db_rule_pending·
+  ds_accordion_collapse 3건 복구. **CI 비배선 구조 자체는 잔존**(mjs 40개가 make test 밖 —
+  배선 여부는 별도 검토 후보).
+- ~~(C6 부채 상환 후 잔여) pre-existing red 목록 (db_rule_ui … bs_inline_desc/list_detail)~~
+  → **2026-08-05 전건 해소** — feature-0003 `harness-repair` cycle 이 전수 실측(red 23 — §8 기록
+  12 + Cycle 7~10 ESM 전환·jsdom 환경 소실로 추가 11)로 재확정 후 **40/40 green**. 원인 6유형·
+  수리 상세는 feature-0003 CHG-20260805T1042 / REV-20260805T1042 참조.

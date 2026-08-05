@@ -8,7 +8,18 @@
 // 실행: NODE_PATH=/tmp/node_modules node verify_profile_icon_admin_surfaces.mjs
 //   (jsdom 은 /tmp 에 임시 설치 — CI 미의존, frontend-only 변경 로컬 게이트. layout 검증은 PB-0008.)
 
-import { JSDOM } from "jsdom";
+import { createRequire } from "node:module";
+// jsdom 해석: /tmp 우선(Node18 + jsdom@22 핀 — `npm i jsdom@22 --prefix /tmp`). NODE_PATH/symlink 불요.
+const _requireJsdom = createRequire(import.meta.url);
+let JSDOM = null;
+for (const base of ["/tmp", process.cwd()]) {
+  try { ({ JSDOM } = _requireJsdom(_requireJsdom.resolve("jsdom", { paths: [base] }))); if (JSDOM) break; } catch (_) { /* next */ }
+}
+if (!JSDOM) { try { ({ JSDOM } = _requireJsdom("jsdom")); } catch (_) { /* fall through */ } }
+if (!JSDOM) {
+  console.error("jsdom 미설치 — `npm i jsdom@22 --prefix /tmp` 필요. (frontend-only 로컬 게이트)");
+  process.exit(2);
+}
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

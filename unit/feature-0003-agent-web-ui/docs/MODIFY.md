@@ -2209,3 +2209,11 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Verification: `node --check` PASS · vm 구조검증(releases[0]=2026-08-04 3항목 · releases[1]=08-03 7항목 · releases[2]=07-31 3항목 · releases[3]=07-30 8항목 · releases[4]=07-29 13항목 보존 · enum/title 위반 0 · 내부용어 누출 0) · `verify_release_notes.mjs` 33 pass / 1 fail(pre-existing `styles.css` 스크롤 assertion — 본 변경 무관, 변경 전 동일 재현).
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+
+## CHG-20260805T1042-harness-repair standalone mjs 하네스 red 전수 해소 (tests-only — 라이브 코드 변경 0)
+
+- 대상: `tests/verify_*.mjs` 22파일 수정 + `tests/esm-classic-inject.mjs`·`tests/verify_notify_gating.mjs` 신설 + `tests/win-browser-settings-notif.scenario.json` 재작성. `src/static/**` 접촉 0.
+- 수리 유형: ① jsdom `/tmp` 폴백 관용구 통일(product_icon_chip_list·product_picker_search·profile_icon_admin_surfaces·profile_icon_consistency) ② eval 의존 주입 갱신(conv_entry_defaults loadFolders·date_group_collapse _isAggregateGroupKey·metadata_bs_inline_desc _metaScopeIsProduct/_metaBootstrapSyncToScope·new_conv_dedup folders/date-tree 4의존·metadata_list_detail _metaRenderDetail 신 의존) ③ classic 주입 ESM strip(perm_self_scope·db_rule_pending·ds_accordion_collapse — 공용기 esm-classic-inject.mjs, ds_accordion 은 분리 모듈 순서 주입) ④ cache-buster 단언 → asset-stamp placeholder 계약(db_rule_ui·rule_db_coverage·llm_restriction(chat.css 짝)·dbpicker·member_kick_ban·member_actions_hover·new_conv_dedup) ⑤ stale 앵커 현행 계약 갱신(admin_tab_gating ai-console OR 3항목 개별 케이스·settings_archive_leave make()·metadata_scope_single_ds 함수 리네임·db_rule_ui _isRuleRow&&canManage·release_notes [^}] 블록-내 윈도우·model_persist sidebar.js 합본) ⑥ 정확 카운트 실측 핀(profile_icon_consistency 5/3).
+- 시나리오: 전 블록 DOM 이벤트 경유 전환(kebab·#openProfileBtn·#closeProfileBtn) + async 팝업 클릭→wait_for→관측 3단 + A_notify_gating 은 verify_notify_gating.mjs 이관.
+- 검증: mjs 40/40 green · 시나리오 실 Windows Chrome 20스텝 전건 OK (TEST.md Run-20260805T1042).
+- 근거: feature-0038 REPORT §8 후속 후보 — 사용자 resume 지시(2026-08-05). 적대 패널 MAJOR 1·MINOR 5·NIT 2 전건 흡수(REV-20260805T104213-harness-repair).

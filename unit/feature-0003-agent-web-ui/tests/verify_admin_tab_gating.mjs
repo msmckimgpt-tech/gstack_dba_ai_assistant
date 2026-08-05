@@ -141,7 +141,8 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[admin] 제품 표시", r.tabVisible("products"));
   ok("[admin] 데이터소스 표시", r.tabVisible("datasources"));
   ok("[admin] 설정 표시", r.tabVisible("settings"));
-  ok("[admin] AI 운영 현황 표시 (console.aiops.read)", r.tabVisible("ai-ops"));
+  // feature-0021 console-subtabs: usage/ai-ops/reasoning → 'ai-console' 단일 탭 통합(카테고리=console.audit.access).
+  ok("[admin] AI 운영 현황 표시 (ai-console 통합 탭, console.aiops.read)", r.tabVisible("ai-console"));
   ok("[admin] 계정 그룹라벨 표시", r.groupLabelVisible("계정"));
   ok("[admin] 제품 그룹라벨 표시", r.groupLabelVisible("제품"));
 }
@@ -169,7 +170,7 @@ function run(permissionList, activeTab = "dashboard") {
   // 세부 권한만 있고 카테고리 접근이 없으면 탭 숨김(카테고리 최상위 조회 게이트).
   const r = run(["console.access", "audit.read.own", "console.usage.read"]);
   ok("[카테고리게이트] 접근 없이 감사로그 숨김", !r.tabVisible("audits"));
-  ok("[카테고리게이트] 접근 없이 LLM 사용량 숨김", !r.tabVisible("usage"));
+  ok("[카테고리게이트] 접근 없이 AI 운영 현황(ai-console) 숨김", !r.tabVisible("ai-console"));
   ok("[카테고리게이트] 감사 그룹라벨 숨김", !r.groupLabelVisible("감사"));
   // 카테고리 접근만 있고 세부 권한이 없으면 역시 숨김(빈 카테고리 미노출).
   const r2 = run(["console.access", "console.audit.access"]);
@@ -177,7 +178,12 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[카테고리게이트] 접근만으론 보관대화 숨김", !r2.tabVisible("archives"));
   // 접근 + 탭별 조회 권한 → 해당 탭만 노출(감사 4탭 개별 게이트).
   const r3 = run(["console.access", "console.audit.access", "console.usage.read"]);
-  ok("[카테고리게이트] 접근+usage.read → LLM 사용량 표시", r3.tabVisible("usage"));
+  ok("[카테고리게이트] 접근+usage.read → AI 운영 현황(ai-console) 표시", r3.tabVisible("ai-console"));
+  // OR 게이트 항목별 검증 — ADMIN_TAB_PERMISSIONS["ai-console"] 에서 한 권한이 빠지는 회귀를 개별 검출.
+  const rAiops = run(["console.access", "console.audit.access", "console.aiops.read"]);
+  ok("[카테고리게이트] 접근+aiops.read 단독 → ai-console 표시", rAiops.tabVisible("ai-console"));
+  const rReason = run(["console.access", "console.audit.access", "console.reasoning.read"]);
+  ok("[카테고리게이트] 접근+reasoning.read 단독 → ai-console 표시", rReason.tabVisible("ai-console"));
   ok("[카테고리게이트] 접근+usage.read → 감사로그 숨김", !r3.tabVisible("audits"));
 }
 
@@ -211,7 +217,7 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[빈권한] 대시보드만 표시", r.tabVisible("dashboard"));
   ok("[빈권한] 계정 숨김", !r.tabVisible("accounts"));
   ok("[빈권한] 감사로그 숨김", !r.tabVisible("audits"));
-  ok("[빈권한] AI 운영 현황 숨김 (fail-open 방지)", !r.tabVisible("ai-ops"));
+  ok("[빈권한] AI 운영 현황(ai-console) 숨김 (fail-open 방지)", !r.tabVisible("ai-console"));
   // 시스템 라벨은 릴리즈 노트 탭(비민감, 전원 노출)로 항상 표시 — 계정/제품/감사만 숨김 기대.
   ok("[빈권한] 계정/제품/감사 라벨 숨김",
     !r.groupLabelVisible("계정") && !r.groupLabelVisible("제품") && !r.groupLabelVisible("감사"));

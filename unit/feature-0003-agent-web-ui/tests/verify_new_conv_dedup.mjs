@@ -105,11 +105,19 @@ ok("[A3] 첨부 경로 등재 topic: \"(파일 첨부 중)\"", appJs.includes('t
 ok("[A3] 첨부 경로 등재 title: \"(파일 첨부 중)\" 잔존 0", !appJs.includes('title: "(파일 첨부 중)"'));
 
 // cache-buster bump (변경 전파).
-ok("[A5] index.html app.js cache-buster 가 new-conv-dedup 로 bump", /app\.js\?v=20260629d-new-conv-dedup/.test(indexHtml));
+// feature-0014 asset-stamp: 소스는 `?v=dev` placeholder — 빌드(inject_asset_stamp.py)가 content-hash 를
+// 일괄 주입한다(수기 bump 계약 폐기). 구 단언(특정 `?v=YYYYMMDD-slug` 토큰)은 스탬프 체계 전환으로
+// 무의미 — 자산이 스탬프 관리 대상(placeholder 부착)인지만 검증한다.
+ok("[A5] index.html app.js 가 asset-stamp placeholder(?v=dev)", /app\.js\?v=dev/.test(indexHtml));
 
 // ── [B] jsdom 행위 단언 — 실 renderConversationList ───────────────────────────
 const renderSrc = extractFn(appJs, "renderConversationList");
 ok("[B] renderConversationList 추출", Boolean(renderSrc));
+// conv-date-tree 후속: 날짜 트리 빌더는 실함수로 주입(keys 계약이 렌더 경로를 결정).
+const treeSrc = extractFn(appJs, "_buildOwnDateTree");
+const ymdSrc = extractFn(appJs, "_ymdKey");
+ok("[B] _buildOwnDateTree/_ymdKey 추출", Boolean(treeSrc) && Boolean(ymdSrc));
+const { buildOwnDateTree, ymdKey } = new Function(`${ymdSrc}\n${treeSrc}\n return { buildOwnDateTree: _buildOwnDateTree, ymdKey: _ymdKey };`)();
 
 const dom = new JSDOM("<!doctype html><html><body><div id='convList'></div></body></html>");
 const { document } = dom.window;
@@ -121,6 +129,9 @@ function buildRender(conversationListEl) {
     "isOwnConversation", "isGroupConversation", "can",
     "_getDateGroupKey", "_formatDateGroupLabel", "formatDateTime",
     "_seedDateGroupsCollapsedOnce", "_saveCollapsedGroups", "OTHERS_GROUP_KEY",
+    "_syncNewFolderBtn", "_seedAggregateGroupsCollapsedOnce",  // conv-date-tree/newfolder-btn 후속 top-level 의존(no-op)
+    "_folderChildren",  // 폴더 트리 루트 순회 — folders 빈 시나리오라 빈 배열 stub
+    "_buildOwnDateTree", "_ymdKey",  // 날짜 트리 빌더 — 실함수 주입(아래 추출)
     "openConversationItemMenu", "closeConversationItemMenu",
     "_switchToPendingConversationContext", "selectConversation", "renderConversationBulkBar",
     `${renderSrc}\n return renderConversationList;`,
@@ -137,6 +148,11 @@ function buildRender(conversationListEl) {
     noop,              // _seedDateGroupsCollapsedOnce
     noop,              // _saveCollapsedGroups
     "__others__",      // OTHERS_GROUP_KEY
+    noop,              // _syncNewFolderBtn
+    noop,              // _seedAggregateGroupsCollapsedOnce
+    () => [],          // _folderChildren — folders:[] 시나리오
+    buildOwnDateTree,  // _buildOwnDateTree — 실함수(날짜 트리 keys 계약 유지)
+    ymdKey,            // _ymdKey
     noop, noop, noop, noop, noop,
   );
 }
@@ -145,6 +161,7 @@ let state;
 function freshState() {
   return {
     conversations: [],
+    folders: [],  // 폴더 기능 후속: renderConversationList 가 state.folders 를 순회(_activeFolderIds).
     pendingConversationEntries: new Map(),
     pendingNewConversation: false,
     pendingSentinel: null,

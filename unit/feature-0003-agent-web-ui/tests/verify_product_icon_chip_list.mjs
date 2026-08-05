@@ -6,7 +6,18 @@
 //
 // 실행: tests/node_modules → /tmp/node_modules symlink 후 node verify_product_icon_chip_list.mjs
 
-import { JSDOM } from "jsdom";
+import { createRequire } from "node:module";
+// jsdom 해석: /tmp 우선(Node18 + jsdom@22 핀 — `npm i jsdom@22 --prefix /tmp`). NODE_PATH/symlink 불요.
+const _requireJsdom = createRequire(import.meta.url);
+let JSDOM = null;
+for (const base of ["/tmp", process.cwd()]) {
+  try { ({ JSDOM } = _requireJsdom(_requireJsdom.resolve("jsdom", { paths: [base] }))); if (JSDOM) break; } catch (_) { /* next */ }
+}
+if (!JSDOM) { try { ({ JSDOM } = _requireJsdom("jsdom")); } catch (_) { /* fall through */ } }
+if (!JSDOM) {
+  console.error("jsdom 미설치 — `npm i jsdom@22 --prefix /tmp` 필요. (frontend-only 로컬 게이트)");
+  process.exit(2);
+}
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -137,7 +148,7 @@ console.log("\n[3] 제품 목록 행 레이아웃 뒤틀림 수정 (3열 grid �
 const renderList = extractFn(adminSrc, "renderProductList");
 ok("renderProductList 정의 존재", !!renderList);
 // avatar 가 row 최상위가 아니라 titleRow(admin-list-row-title) 안에 들어가야 한다(grid 깨짐 방지).
-ok("avatar 를 titleRow.append(avatar, name) 로 묶음", /titleRow\.append\(avatar, name\)/.test(renderList));
+ok("avatar 를 titleRow.append(avatar, name[, ...]) 로 묶음", /titleRow\.append\(avatar, name[,)]/.test(renderList));
 ok("titleRow 클래스 = admin-list-row-title (계정 행 동형)", /titleRow\.className = "admin-list-row-title"/.test(renderList));
 ok("meta 첫 줄이 titleRow (meta.append(titleRow, sub, covLine))", /meta\.append\(titleRow, sub, covLine\)/.test(renderList));
 // row 는 [cb, meta] 2자식 — grid `auto 1fr auto` 정상 (avatar 별도 칸 금지)

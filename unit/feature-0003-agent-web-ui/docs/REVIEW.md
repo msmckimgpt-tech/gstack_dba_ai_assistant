@@ -2606,3 +2606,29 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - **cache-buster**: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py` + `deploy-web.sh` 가 배포 시 content-hash 주입·`?v=dev` 잔존 시 ABORT, 수동 bump 는 무효 churn + 게이트 무력화).
 - **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
 - 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
+
+## REV-20260805T104213-harness-repair [SUBAGENT:tests-harness] — 적대 QA 패널 1회: MAJOR 1·MINOR 5·NIT 2 전건 흡수 후 PASS
+
+- Trigger: code change (tests-only) — dispatch 키워드 무매칭이나 "하네스 단언 완화가 검증력을
+  약화시킬 위험" 이 본 변경의 핵심 리스크라 검증력-약화 전담 렌즈로 단일 적대 리뷰어 dispatch.
+- 대상: 하네스 24파일 수리 + 2파일 신설 + 시나리오 재작성 (CHG-20260805T1042-harness-repair).
+- 판정 요지:
+  - **[MAJOR] 흡수** — 시나리오 DOM 전환이 E 블록만 적용되고 A~D 가 죽은 전역(typeof
+    openConversationItemMenu 등)에 잔존해 vacuous 관측(러너가 error 페이로드를 실패로 안 봄).
+    → 전 블록 DOM 이벤트 경유 재작성 + A(게이팅 매트릭스)는 `verify_notify_gating.mjs` 이관
+    + async 팝업 클릭→wait_for→관측 3단 분리. 실브라우저 20스텝 전건 OK 로 재검증.
+  - **[MINOR 5] 흡수** — ① scope_single_ds C1 `scope_key:` 완화 → strict(`scope_key:\s*scope\b`)
+    복원(실코드 통과 실측) ② esm strip 의 bare import 무음 over-consumption → bare 선행 제거 +
+    `[^;]*?` 문장-경계 제약 ③ ai-console 교체로 aiops.read 단독 게이트 검증 소실 → OR 3항목
+    개별 케이스 추가 ④ llm_restriction placeholder 짝 오류(base.css) → 실거주 chat.css 교정
+    ⑤ profile_icon_consistency `>=` slack → 실측 카운트(5/3) 핀.
+  - **[NIT 2] 흡수** — release_notes 윈도우 `[\s\S]{0,800}` → `[^}]{0,800}`(블록-내 강제) ·
+    picker stub 주석 실 seam(_dsTestable) 교정.
+  - 패널 통과 확인 축: strip 6종 `node --check` 전부 통과·본문 무손상, cache-buster 완화는
+    asset-stamp 계약(inject_asset_stamp + test_static_cache_integrity) 하 취지 보존, stub 주입의
+    시나리오 왜곡 없음, ai-console 전환은 양성 케이스로 vacuity 아님.
+- 흡수 후 재검증: mjs 40/40 green + 시나리오 실 Windows Chrome 20스텝 OK. 미해소 잔여 0.
+- 패널 외 관찰(기록만): 같은 죽은-전역 패턴이 `win-browser-mention-hl-notify.scenario.json`·
+  `win-browser-notify-nobracket.scenario.json` 에도 잔존(본 cycle 범위 밖 — 후속 후보). 시나리오
+  17개의 base_url `https://localhost:18080` 은 Caddy 단일 노출 전환 후 전부 stale(실행 시
+  `https://localhost` 사본 필요 — 후속 후보).
