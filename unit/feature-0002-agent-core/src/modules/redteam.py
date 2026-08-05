@@ -358,20 +358,21 @@ CONVERSATION REQUEST, not against the literal latest utterance.
   digest. Do NOT report `grounding`/`honesty` merely because a file's excerpt is absent here, and do
   NOT demand that the assistant ask the user to re-attach a file that is already listed.
 
-ATTACHMENT CHANGE FACTS (when the section is present, it is application-computed FACT — the counts
-come from the attachment store, not from any model). This is the one place where you can check a
-claim with certainty, so check it:
-- If the section says files were newly attached or re-uploaded as a NEW VERSION this turn, and the
-  draft nonetheless states or implies that nothing was newly attached, that nothing changed versus
-  the previous version, that the files are identical to ones already reviewed, or that it cannot see
-  any update — that is a BLOCK on `grounding`. It contradicts a fact the assistant was given, and it
-  refuses the user's actual request. Report it and say which files the facts list.
-- The reverse is also a BLOCK: if the section says nothing was newly attached this turn, but the
-  draft claims the user just attached or updated files.
-- This is about the EXISTENCE of the change only. The assistant judging the change as insufficient,
-  incomplete, or not matching what was agreed is a legitimate review conclusion — never report that.
-- A tool returning 0 rows, or an object missing from the live database, says nothing about whether
-  the attachments changed. Do not accept it as the draft's justification for denying the change.
+ATTACHMENT CHANGE FACTS (present only in some reviews; when present it is application-computed from
+the conversation's attachment records, not produced by any model). Use it ONE way only:
+- It is a FLOOR, never a ceiling. It proves the listed files were provided. It does NOT prove that
+  nothing else was provided, so NEVER report a defect on the grounds that the draft mentions a file
+  the list does not contain, and never treat an absent section as evidence that nothing arrived.
+- If the section lists files and the draft nonetheless states or implies that no new or updated file
+  was provided, that it cannot see those files, or that they are absent from this conversation —
+  that is a BLOCK on `grounding`. It contradicts a fact the assistant was given and refuses the
+  user's actual request. Name the files the list contains.
+- This covers the EXISTENCE of the files only. Everything about their CONTENT is the assistant's
+  call: concluding that a new version's content is unchanged from the previous one, that the changes
+  are insufficient, or that they do not match what was agreed are all legitimate review conclusions.
+  Never report those.
+- A tool returning 0 rows, or an object missing from the live database, says nothing about what was
+  attached here. Do not accept it as the draft's justification for denying that the files exist.
 
 Review axes:
 - grounding: every factual claim in the draft must be supported by the evidence digest (tool runs
@@ -581,8 +582,11 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
     return out[:cap_chars]
 
 
+# 값은 agent_core._ATTACHMENT_FACTS_NAME_{CAP,CHARS} 와 **의도적으로 동일**해야 한다 — 두 소비자가
+# 같은 사실에 대해 다른 파일 집합을 말하면 "단일 사실" 전제가 깨진다. 모듈 경계상 상수는 각자 두되,
+# 한쪽을 바꾸면 다른 쪽도 바꾸도록 테스트가 동치를 고정한다(test_attachment_change_false_absence).
 _ATTACH_FACTS_NAME_CAP = 8
-_ATTACH_FACTS_BLOCK_CAP_CHARS = 900
+_ATTACH_FACTS_NAME_CHARS = 120
 
 
 def build_attachment_change_facts(facts: dict[str, Any] | None) -> str:
@@ -601,23 +605,32 @@ def build_attachment_change_facts(facts: dict[str, Any] | None) -> str:
     if not isinstance(facts, dict):
         return ""
     updated = [str(x) for x in (facts.get("updated") or [])]
+    updated_nd = [str(x) for x in (facts.get("updated_no_delta") or [])]
     added = [str(x) for x in (facts.get("added") or [])]
-    carried = int(facts.get("carried") or 0)
+    other = int(facts.get("other") or 0)
+    if not (updated or updated_nd or added):
+        # 부정 진술 금지 — 사실 원천(`new_attachment_ids`)이 클라이언트 신호라 "빈 값 = 첨부 없음" 이
+        # 아니다. 여기서 "nothing was attached" 를 사실로 주면 리뷰어가 **정확한 답변을 BLOCK** 한다
+        # (§18.8 backend/qa [P1]). 블록 미주입 = 리뷰어는 이 축을 판정하지 않는다.
+        return ""
 
     def _names(items: list[str]) -> str:
-        shown = [_flatten_untrusted(n, 120) for n in items[:_ATTACH_FACTS_NAME_CAP]]
+        # 캡은 **건별**로 — join 후 슬라이스하면 파일명 중간에서 잘리고 뒤 줄이 통째로 사라진다
+        # (무음 절단, CODE_REVIEW §2.1). 생략분은 반드시 표기한다.
+        shown = [_flatten_untrusted(n, _ATTACH_FACTS_NAME_CHARS) for n in items[:_ATTACH_FACTS_NAME_CAP]]
         rest = len(items) - len(shown)
-        return ", ".join(shown) + (f" 외 {rest}건" if rest > 0 else "")
+        return ", ".join(shown) + (f" 외 {rest}건 생략" if rest > 0 else "")
 
-    lines = ["ATTACHMENT CHANGE FACTS (application-computed, authoritative):"]
+    lines = ["ATTACHMENT CHANGE FACTS (application-computed, authoritative floor — not exhaustive):"]
     if updated:
-        lines.append(f"- re-uploaded as a NEW VERSION this turn: {len(updated)} — {_names(updated)}")
+        lines.append(f"- now at a HIGHER VERSION, with a diff in this prompt: {len(updated)} — {_names(updated)}")
+    if updated_nd:
+        lines.append(f"- now at a HIGHER VERSION, no diff in this prompt: {len(updated_nd)} — {_names(updated_nd)}")
     if added:
-        lines.append(f"- attached for the first time this turn: {len(added)} — {_names(added)}")
-    if not (updated or added):
-        lines.append("- nothing was newly attached or updated in this turn")
-    lines.append(f"- carried over from earlier turns: {carried}")
-    return "\n".join(lines)[:_ATTACH_FACTS_BLOCK_CAP_CHARS]
+        lines.append(f"- present in this conversation for the first time: {len(added)} — {_names(added)}")
+    if other:
+        lines.append(f"- other files also available in this conversation: {other}")
+    return "\n".join(lines)
 
 
 def build_evidence_digest(steps: list[dict[str, Any]] | None, executed_sql: str = "",

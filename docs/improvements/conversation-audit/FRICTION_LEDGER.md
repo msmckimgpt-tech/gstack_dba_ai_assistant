@@ -64,13 +64,34 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   **코드 거주 `feature-0002-agent-core`**(리뷰어 기능 소유는 feature-0021-redteam-review — cross-ref) /
   `REV-20260805T160000-attach-change-false-absence`.
 - **§18.8 검증 채널(정직)**: codex(1순위) **quota 소진으로 실행 불가**(Aug 9 까지) → built-in
-  `/security-review` 인라인 수행(상위 도구 제약으로 subagent fan-out 미사용) → **보안 1건 흡수**
-  (권위 블록의 비신뢰 파일명 미평탄화). **backend/qa 독립 리뷰어 시선은 미확보**
-  `[SKIPPED:tool-restricted:backend,qa]`.
-- **dogfood(배포 전 최대치)**: 실패 대화 데이터로 새 코드 실측 — 사실 **8/4/1** 정확 · 권위 블록 offset
-  **68,005/69,813 = 최종 위치**(LIVE-DB GROUNDING 63,854 뒤) · 기존 표식 회귀 0(`★신규` 12·`🔄v2` 8·
-  diff 헤더 8) · 프롬프트 +1,810자(+2.7%).
+  `/security-review` 인라인 수행 → 보안 1건 흡수(권위 블록의 비신뢰 파일명 미평탄화) → **사용자 승인 후
+  backend/qa subagent 패널 호출 → BLOCK**. **[P1] 5 · [P2] 8 전건 흡수**:
+  ① **부정 분기 제거** — `new_attachment_ids` 는 클라이언트 신호라 "비어 있음 ≠ 첨부 없음" 인데 초판은
+  그 상태에서 "이번 턴 첨부 없음" 을 코드-권위로 선언하고 리뷰어에게 반대 주장을 BLOCK 시켰다.
+  **봉인이 이 마찰을 스스로 생산하는 구조**였다(qa 프로브 재현). 신규 0건이면 전면 침묵으로 수정.
+  ② 리뷰어 블록 **무음 절단**(join 후 900자 슬라이스 → 파일명 중간 절단 + 뒷줄 소실; 관측 사례 8+4 가
+  정확히 이 경계) → 건별 캡 + `외 N건 생략` 표기. ③ `version_diff` 는 text/csv 재업로드에서만 생성되는데
+  버전>1이면 무조건 "FILE UPDATES 에 있다" 고 가리켜 **fabrication forcing** → `updated`/`updated_no_delta`
+  분리. ④ 동일 파일 재업로드(sha256 일치 시 기존 행 재사용)에서 **"내용 동일" 이라는 참인 답변을 금지**
+  → 금지 범위를 "제공 사실의 부정" 하나로 축소. ⑤ **배선 seam 무방비** — qa 뮤테이션 10종 중 6종(A삭제·
+  위치이동·C합치기삭제·verify패스·bounded게이트·0행경로)이 초판 18건 + 관련 224건을 전부 통과했고,
+  위치 계약 테스트는 자기가 만든 문자열을 검사하는 tautology 였다 → 배선 테스트 신설 후 **자체 뮤테이션
+  8/8 KILLED** 로 역검증. P2: bare except → logger.warning · 로컬 스냅샷 + run_agent 토큰 튜플 · AI
+  생성본 제외 · `carried`→`other` · 빈 파일명 placeholder · 캡 경계 · 기존 grounding endswith 계약 명문화.
+- **dogfood(배포 전 최대치, 패널 흡수 후 재실행)**: 실패 대화 데이터로 새 코드 실측 — 사실
+  **updated(diff) 8 / no-delta 0 / added 4 / other 1** 정확 · 권위 블록 offset **49,741/51,707 = 최종
+  위치**(LIVE-DB GROUNDING 45,590 뒤, 프롬프트 마지막 줄까지 확인) · 기존 표식 회귀 0(`★신규` 12·
+  `🔄v2` 8·diff 헤더 8) · A 블록 1,968자(3.8%) · C 151자.
+  (1차 dogfood 는 인라인 본문이 남아 있어 프롬프트 69,813자였고, 2차는 그 임시 파일이 reaper 로 회수된
+  뒤라 51,707자다 — 사실 계산이 **인라인 본문 유무와 무관**하게 동일했다는 부수 확인이 된다.)
+- **회귀 테스트**: 신규 **24**(배선 seam 포함) + 기존 grounding 스위트 21 PASS · `make test` 전량
+  **exit 0** · ruff clean · **뮤테이션 8/8 KILLED**.
 - **rc_ids**: RC-1(L1 seal gap) · RC-2(L6 축-넘어 일반화) · **batch-id**: B-20260805T160000-attach-change-false-absence
+- **범위 밖(deferred/watch)**: ① **동일 파일 재업로드의 `★신규` 오라벨** — sha256 일치 시 서버가 기존
+  행을 재사용하는데 프론트가 그 pill 을 `source:"new"` 로 덮어 `new_attachment_ids` 에 실린다. 이번
+  수정은 "내용 동일" 결론을 허용해 **피해를 없앴지만** 라벨 자체는 여전히 부정확하다(근본은
+  feature-0003 composer). ② PG 첨부 조회 분기는 conftest 고정으로 **어떤 테스트도 실행하지 않는다** —
+  배포본 dogfood 로만 덮였다.
 - **라이브 실측 필요분(§정직)**: 코드/테스트/dogfood 는 "사실이 정확히 계산되어 최종 위치에 실린다" 까지만
   증명한다. **"실제 대화에서 부재 단정이 사라지는지"**·**"리뷰어가 실제로 BLOCK 을 올리는지"**·
   **"권위 블록이 평가 품질을 과도하게 누르지 않는지"** 는 배포 후 실측분(미수행). 다음 audit 이

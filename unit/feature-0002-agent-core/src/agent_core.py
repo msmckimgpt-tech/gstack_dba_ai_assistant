@@ -1242,9 +1242,12 @@ def _build_attachment_context_section(
     text_content_entries: list[tuple[int, str, str, bool]] = []  # (attachment_id, filename, content, is_new)
     version_diff_entries: list[tuple[str, dict]] = []  # REQ-20260713: (filename, version_diff dict)
     # FR-attachment-change-false-absence: 이번 턴 첨부 변경 사실 집계(공유 채널 원천).
-    _facts_updated: list[str] = []   # 이번 턴 신규 & 버전>1 — "갱신"
-    _facts_added: list[str] = []     # 이번 턴 신규 & 버전==1 — "새 파일"
-    _facts_carried = 0               # 이전 턴에서 이월된 첨부
+    # **실제로 이 프롬프트에 렌더된 것만** 사실로 적재한다 — 렌더되지 않은 섹션을 "위에 있다" 고
+    # 가리키면 모델이 없는 증거를 찾다 지어내게 된다(§18.8 backend [P1]).
+    _facts_updated_delta: list[str] = []    # 신규 & 버전>1 & **이번 턴 diff 가 실제 렌더됨**
+    _facts_updated_nodelta: list[str] = []  # 신규 & 버전>1 & diff 미렌더(바이너리·diff 부재 등)
+    _facts_added: list[str] = []            # 신규 & 버전==1 — 이 대화에 처음 들어온 파일
+    _facts_other = 0                        # 위 분류 밖(이월 · AI 생성본 등) — 라벨을 넘겨 짚지 않는다
     for row in rows:
         attachment_id = int(row[0] or 0)
         kind = str(row[3] or "")
@@ -1337,15 +1340,6 @@ def _build_attachment_context_section(
 
         # 신규 vs 세션 라벨 (NEW_ATTACHMENT_IDS 기반).
         source_label = " ★신규" if attachment_id in new_ids_set else " ◆세션"
-        # FR-attachment-change-false-absence: 라벨과 **같은 판정식**으로 사실을 적재한다.
-        # (별도 재판정하면 목록 표식과 권위 블록이 어긋나 모순의 새 원천이 된다.)
-        if attachment_id in new_ids_set:
-            if version_number and version_number > 1:
-                _facts_updated.append(f"{filename} (v{version_number - 1}→v{version_number})")
-            else:
-                _facts_added.append(filename)
-        else:
-            _facts_carried += 1
         # REQ-20260713-attach-user-version: 버전>1 이면 갱신 표식 — assistant 가 "이 파일이
         # 이전 버전에서 갱신되었음"을 인지하게 한다. 사용자 재업로드(user)/AI 수정(assistant) 구분.
         version_label = ""
@@ -1358,8 +1352,27 @@ def _build_attachment_context_section(
         # 토큰 낭비). 🔄v{n} 버전 표식은 위 file 목록 라인에서 매 턴 유지되므로 assistant 는 이후
         # 턴에도 버전>1 임을 계속 인지하고, 명시 비교 요청 시 버전 조회 API 로 대조 가능.
         _vdiff = meta_obj.get("version_diff") if isinstance(meta_obj, dict) else None
-        if attachment_id in new_ids_set and isinstance(_vdiff, dict) and str(_vdiff.get("unified_diff") or "").strip():
+        _delta_rendered = bool(
+            attachment_id in new_ids_set and isinstance(_vdiff, dict)
+            and str(_vdiff.get("unified_diff") or "").strip()
+        )
+        if _delta_rendered:
             version_diff_entries.append((filename, _vdiff))
+        # FR-attachment-change-false-absence: 목록 표식과 **같은 판정식**으로, 그리고 **이 순회가 실제로
+        # 렌더한 것**만 사실로 적재한다(§18.8 backend/qa [P1] 흡수).
+        #  - AI 생성본(created_by_role='assistant')은 "사용자가 제공한 것" 이 아니므로 사용자 축에서 제외.
+        #  - 빈 파일명은 무명 항목 대신 id 로 식별(phantom fact 방지).
+        #  - 버전>1 이라도 이번 턴 diff 가 렌더되지 않았으면(바이너리 xlsx·diff 부재) 별도 버킷 —
+        #    "변경점은 위 FILE UPDATES 에 있다" 고 가리키면 없는 증거를 찾게 만든다.
+        _fact_name = filename.strip() or f"(파일명 미상, attachment_id={attachment_id})"
+        if attachment_id in new_ids_set and created_by_role != "assistant":
+            if version_number and version_number > 1:
+                _entry = f"{_fact_name} (v{version_number - 1}→v{version_number})"
+                (_facts_updated_delta if _delta_rendered else _facts_updated_nodelta).append(_entry)
+            else:
+                _facts_added.append(_fact_name)
+        else:
+            _facts_other += 1
         # TASK-0284: 파일명을 맨 앞에 따옴표로 노출 — LLM 이 첨부를 attachment_id(일련번호)가 아닌
         # 파일명으로 지칭하게 한다(사용자 혼란 방지). attachment_id 는 보조 참조로 괄호 안에 둔다.
         lines.append(
@@ -1526,10 +1539,10 @@ def _build_attachment_context_section(
     # FR-attachment-change-false-absence: 목록이 실제로 만들어진 **성공 경로에서만** 사실을 채운다.
     # (조기 return "" 경로에서 채우면 목록 없는 프롬프트에 "12건 첨부됨" 이 붙어 반대 방향 환각이 된다.)
     _ATTACHMENT_TURN_FACTS_CTX.set({
-        "updated": _facts_updated,
+        "updated": _facts_updated_delta,
+        "updated_no_delta": _facts_updated_nodelta,
         "added": _facts_added,
-        "carried": int(_facts_carried),
-        "total": len(rows),
+        "other": int(_facts_other),
     })
     return "\n".join(lines)
 
@@ -1566,12 +1579,16 @@ def _flatten_untrusted_name(name: str, cap: int = _ATTACHMENT_FACTS_NAME_CHARS) 
 
 
 def _format_attachment_fact_names(names: list[str]) -> str:
-    """파일명 목록을 프롬프트용 짧은 문자열로. 상한 초과는 '외 N건' 으로 접는다."""
+    """파일명 목록을 프롬프트용 짧은 문자열로. 상한 초과는 **명시적으로** '외 N건 생략' 으로 접는다.
+
+    절단은 반드시 관측 가능해야 한다(CODE_REVIEW §2.1 무음 절단) — 리뷰어/모델이 목록을 완전한
+    것으로 오인하면 "여기 없는 파일" 을 결함으로 보고한다. 캡은 **건별**로 걸고 join 후 자르지 않는다.
+    """
     shown = [_flatten_untrusted_name(n) for n in names[:_ATTACHMENT_FACTS_NAME_CAP]]
     rest = len(names) - len(shown)
     out = ", ".join(shown)
     if rest > 0:
-        out += f" 외 {rest}건"
+        out += f" 외 {rest}건 생략"
     return out
 
 
@@ -1594,47 +1611,59 @@ def _build_attachment_authority_directive(facts: dict | None) -> str:
     if not isinstance(facts, dict):
         return ""
     updated = [str(x) for x in (facts.get("updated") or [])]
+    updated_nd = [str(x) for x in (facts.get("updated_no_delta") or [])]
     added = [str(x) for x in (facts.get("added") or [])]
-    carried = int(facts.get("carried") or 0)
-    n_new = len(updated) + len(added)
+    other = int(facts.get("other") or 0)
+    if not (updated or updated_nd or added):
+        # **부정 단정은 하지 않는다**(§18.8 backend/qa [P1]). updated/added 의 원천인
+        # `new_attachment_ids` 는 클라이언트가 보내는 신호라 "비어 있음" 이 "아무것도 안 붙었음" 을
+        # 뜻하지 않는다 — 신호 유실(대화 전환 후 복귀로 pill 이 session 으로 재수화)·그룹 발신자
+        # 스코프 제외·비-브라우저 호출 모두 빈 값을 만든다. 여기서 "이번 턴에 첨부 없음" 을 코드-권위로
+        # 선언하면 **바로 이 마찰(부재 단정)을 시스템이 스스로 만들어낸다**. 침묵 = 변경 전 동작.
+        return ""
     lines = [
         "",
         "",
         "## ATTACHMENT SET — AUTHORITATIVE FACTS FOR THIS TURN",
-        "The application computed the following from the attachment store. They are FACT about what "
-        "the user provided, not inference, and they OVERRIDE any impression you form from the "
+        "The application computed the following from this conversation's attachment records. It is a "
+        "FACT that these files were provided, and it OVERRIDES any impression you form from the "
         "conversation history (including a forked/copied history in which you already reviewed "
-        "similarly-named files).",
+        "similarly-named files). This list is not necessarily exhaustive — treat it as a floor, "
+        "never as proof that nothing else arrived.",
     ]
     if updated:
         lines.append(
-            f"- NEW VERSIONS of files already in this conversation, re-uploaded by the user this turn: "
-            f"{len(updated)} — {_format_attachment_fact_names(updated)}. "
-            f"Their line-level changes are in the \"FILE UPDATES\" section above; the full current "
-            f"content is in \"ATTACHED FILE CONTENTS\"."
+            f"- Files already in this conversation that now carry a HIGHER VERSION: {len(updated)} — "
+            f"{_format_attachment_fact_names(updated)}. A line-level diff for each of these is in the "
+            f"\"FILE UPDATES\" section above."
+        )
+    if updated_nd:
+        lines.append(
+            f"- Files already in this conversation that now carry a HIGHER VERSION but have NO diff in "
+            f"this prompt: {len(updated_nd)} — {_format_attachment_fact_names(updated_nd)}. "
+            f"Do not look for their diff above and do not invent one; read the current content with "
+            f"`read_attachment(filename=\"<name>\")` if you need it."
         )
     if added:
         lines.append(
-            f"- Files attached for the FIRST time this turn: {len(added)} — "
+            f"- Files that appear in this conversation for the FIRST time: {len(added)} — "
             f"{_format_attachment_fact_names(added)}."
         )
-    lines.append(f"- Files carried over from earlier turns: {carried}.")
-    if n_new:
-        lines.append(
-            "**YOU MUST NOT** state or imply any of the following, in any language: that no new file "
-            "was attached this turn; that nothing changed versus the previous version; that the "
-            "attached files are identical to what you reviewed earlier; or that you cannot see the "
-            "update. Do not ask the user to re-attach or re-send a file listed above. "
-            "A tool returning 0 rows, or an object not existing in the live database, is evidence "
-            "about the DATABASE ONLY — it is never evidence that the attachments are unchanged. "
-            "Judging the changes is still fully yours: if they do not satisfy what was agreed, say "
-            "precisely that (e.g. \"변경은 있으나 처리사항 N이 미반영\") — but never \"변경 없음\"."
-        )
-    else:
-        lines.append(
-            "**No file was newly attached or updated in this turn.** Do not claim the user just "
-            "attached or updated something; if you need a new revision, ask for it explicitly."
-        )
+    if other:
+        lines.append(f"- Other files also available in this conversation: {other}.")
+    lines.append(
+        "**YOU MUST NOT** state or imply, in any language, that no new or updated file was provided, "
+        "that you cannot see the files listed above, or that they are absent from this conversation. "
+        "Do not ask the user to re-attach or re-send a file listed above. "
+        "A tool returning 0 rows, or an object not existing in the live database, is evidence about "
+        "the DATABASE ONLY — it is never evidence about what was attached here."
+    )
+    lines.append(
+        "Judging these files is entirely yours and is NOT constrained by the above. If a new version's "
+        "content turns out to be the same as the one you already reviewed, say so. If the changes do "
+        "not satisfy what was agreed, say precisely that (e.g. \"변경은 있으나 처리사항 N이 미반영\"). "
+        "What is forbidden is denying that the files were provided at all."
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -1650,13 +1679,15 @@ def _build_attachment_turn_manifest(facts: dict | None) -> str:
     """
     if not isinstance(facts, dict):
         return ""
-    n_updated = len(facts.get("updated") or [])
+    n_updated = len(facts.get("updated") or []) + len(facts.get("updated_no_delta") or [])
     n_added = len(facts.get("added") or [])
     if not (n_updated or n_added):
+        # 부정 진술은 하지 않는다 — `_build_attachment_authority_directive` 와 같은 논거(신호 유실을
+        # "첨부 없음" 으로 단정하면 마찰을 시스템이 만든다).
         return ""
     parts: list[str] = []
     if n_updated:
-        parts.append(f"이전 버전 대비 갱신 {n_updated}건")
+        parts.append(f"상위 버전 파일 {n_updated}건")
     if n_added:
         parts.append(f"신규 파일 {n_added}건")
     return (
@@ -1928,7 +1959,10 @@ def compose_system_prompt(
     try:
         parts.append(_build_attachment_authority_directive(_attachment_turn_facts()))
     except Exception:
-        pass
+        # fail-open(답변은 막지 않는다)이되 **조용히 사라지지는 않게** 한다: 이 봉인이 빠지면 유일한
+        # 증상이 "원 마찰의 재발" 이라 로그가 없으면 관측 불가다(§18.8 backend/qa [P2]).
+        logging.getLogger(__name__).warning(
+            "attachment authority directive 생성 실패 — 첨부 변경 사실 봉인 미주입", exc_info=True)
 
     return "".join(parts)
 
@@ -5048,6 +5082,10 @@ def run_agent(
         _NEW_ATTACHMENT_IDS_CTX.set(",".join(str(int(i)) for i in (new_attachment_ids or []))),
         _INLINE_IMAGE_PATH_CTX.set(image_inline_path or ""),
         _INLINE_TEXT_PATH_CTX.set(text_inline_path or ""),
+        # FR-attachment-change-false-absence: 형제 4종과 동일하게 run 경계에서 set/reset 한다.
+        # compose 가 첫 문장에서 클리어하므로 run 내부는 이미 안전하지만, run 이 **끝난 뒤** 값이
+        # 워커 스레드 컨텍스트에 남아 있는 것 자체를 없앤다(구조적 격리 — 순서 불변식 의존 제거).
+        _ATTACHMENT_TURN_FACTS_CTX.set(None),
     )
     try:
         return _run_agent_core(
@@ -5090,6 +5128,7 @@ def run_agent(
         _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
         _INLINE_TEXT_PATH_CTX.reset(_att_tokens[3])
+        _ATTACHMENT_TURN_FACTS_CTX.reset(_att_tokens[4])
 
 
 # owner-answer recall/display 봉인 sentinel: recall 하한 무제한(전체 문맥) 답변을 어떤 floor 보다
@@ -5782,8 +5821,16 @@ def _run_agent_core(
             product_mode=product_mode,
             conversation_id=conversation_id,
         )
+        # FR-attachment-change-false-absence: 사실을 **여기서 한 번 스냅샷**해 로컬로 들고 간다.
+        # 소비자 C(≈100줄 뒤)·B(≈600줄 뒤)가 contextvar 를 다시 읽으면 "그 사이 compose 가 다시
+        # 불리지 않는다" 는 **순서 불변식**에 의존하게 된다(§18.8 backend [P2]). 로컬 스냅샷은 그
+        # 의존을 구조적으로 없앤다.
+        _att_turn_facts = _attachment_turn_facts()
     except Exception:
         system_content = SYSTEM_PROMPT
+        # compose 가 실패해 base 프롬프트로 되돌아가면 첨부 섹션 자체가 없다 — 그 상태에서 C/B 가
+        # "N건 첨부됨" 을 말하면 없는 섹션을 가리키게 된다(§18.8 qa [P2]). 사실도 함께 버린다.
+        _att_turn_facts = None
     try:
         _init_detail["system_prompt_ms"] = round((time.perf_counter() - _sp_t0) * 1000.0, 1)
     except Exception:
@@ -5903,11 +5950,12 @@ def _run_agent_core(
     # FR-attachment-change-false-absence (C): 이번 턴 첨부 변경 사실을 생성 지점 최근접 자리에도 둔다.
     # 발신자 라벨과 같은 계약 — LLM 전달용 메시지에만 붙고 저장본(_save_message)은 원문 그대로다.
     try:
-        _att_manifest = _build_attachment_turn_manifest(_attachment_turn_facts())
+        _att_manifest = _build_attachment_turn_manifest(_att_turn_facts)
         if _att_manifest:
             _live_user_content = f"{_live_user_content}{_att_manifest}"
     except Exception:
-        pass
+        logging.getLogger(__name__).warning(
+            "attachment turn manifest 생성 실패 — 사용자 턴 첨부 사실 미부착", exc_info=True)
     messages.append({"role": "user", "content": _live_user_content})
 
     if output_mode == "console":
@@ -6417,7 +6465,7 @@ def _run_agent_core(
                         # 부재 단정을 대조 검출할 수 있는 유일한 확정 사실. bounded 발신자는
                         # _rt_attachments 와 같은 게이트를 따른다(가려진 구간 첨부 사실 비노출).
                         attachment_facts=(
-                            None if _suppress_conversation_context else _attachment_turn_facts()
+                            None if _suppress_conversation_context else _att_turn_facts
                         ),
                     )
                     if _rt_answer and _rt_answer.strip():

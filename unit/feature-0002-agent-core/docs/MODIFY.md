@@ -1162,7 +1162,50 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - 기존 동작 무변경: `★신규`/`🔄vN` 표식·FILE UPDATES diff·인라인 상한·IDOR/sender 스코프 가드 전부 불변
   (dogfood 실측 표식 수 동일). 사실 미전달(bounded 발신자·기존 호출부)이면 블록 미주입.
   프롬프트 비용 +1,810자(+2.7%, 파일명 8건·건당 120자 캡으로 유계).
-- Tests: `tests/test_attachment_change_false_absence.py`(18).
-- **위험등급**: Major(§12.3 — 코어 LLM 경로). 사용자 승인 **A+C+B**(AskUserQuestion 2026-08-05).
-  **Cross-ref**: 리뷰 `REV-20260805T160000-attach-change-false-absence` · 원장
+- Tests: `tests/test_attachment_change_false_absence.py`(24, 배선 seam 포함) +
+  `tests/test_grounding_authority_directive.py` 에 허용 supersede 계약 1건 신설.
+- **§18.8 패널(backend+qa) BLOCK 흡수 — 설계 변경분**:
+  - **부정 단정 전면 제거**: 신규 0건이면 A·C·B 모두 **침묵**한다(변경 전 동작). 사실 원천
+    `new_attachment_ids` 가 클라이언트 신호라 "비어 있음 ≠ 첨부 없음" 이고, 초판은 그 상태에서
+    "이번 턴 첨부 없음" 을 코드-권위로 선언해 **봉인이 이 마찰을 스스로 생산**했다. 리뷰어의 대칭
+    BLOCK 규칙도 제거하고 사실 목록을 **floor(하한)** 로 명시했다.
+  - **diff 렌더 여부 분리**: `updated`(이번 턴 diff 실제 렌더) / `updated_no_delta`(버전만 상승) —
+    후자는 FILE UPDATES 를 가리키지 않고 `read_attachment` 로 유도한다(xlsx 등 비-text 재업로드에서
+    없는 증거를 찾게 만들던 fabrication forcing 제거).
+  - **금지 범위 축소**: 금지는 "제공 사실의 부정" 하나. 내용 동일·불충분·미반영 결론은 명시 허용
+    (동일 파일 재업로드 시 참인 답변을 막던 결함).
+  - **무음 절단 제거**: 리뷰어 블록 캡을 join 후 슬라이스 → **건별 캡 + `외 N건 생략` 표기**.
+  - **관측성**: 두 호출부 bare except → `logger.warning`. 사실은 compose 직후 **로컬 스냅샷**으로 들고
+    가고(`_att_turn_facts`), contextvar 는 `run_agent` 토큰 튜플에 편입(형제 4종과 동일 수명).
+  - 기타: assistant 생성본을 "사용자 제공" 에서 제외 · `carried`→`other` 라벨 정정 · 미사용 `total`
+    제거 · 빈 파일명 placeholder · A/B 캡 동치 테스트.
+- **위험등급**: Major(§12.3 — 코어 LLM 경로). 사용자 승인 **A+C+B**(AskUserQuestion 2026-08-05) +
+  패널 호출 승인(동일 일자). **Cross-ref**: 리뷰 `REV-20260805T160000-attach-change-false-absence` · 원장
   `FR-attachment-change-false-absence` · 리뷰어 기능 소유 feature-0021-redteam-review(코드 거주는 본 feature).
+
+## CHG-20260805T173000-attach-change-panel-absorb §18.8 backend+qa 패널 BLOCK 흡수 (P1 5 · P2 8)
+> 선행 `CHG-20260805T160000-attach-change-false-absence` 의 적대 패널 판정 흡수. 패널은 **BLOCK** 을 냈고
+> 그 근거가 전부 실재해 설계를 좁혔다. 요지: 초판 봉인은 *부재 단정을 막으려다 스스로 부재를 단정*했다.
+- `src/agent_core.py`
+  - **부정 분기 제거**: 신규 0건이면 `_build_attachment_authority_directive`·`_build_attachment_turn_manifest`
+    모두 **빈 문자열**(변경 전 동작). 사실 원천 `new_attachment_ids` 는 클라이언트 신호라 "비어 있음"이
+    "첨부 없음"이 아니다(대화 전환 후 복귀 시 pill 이 `source:"session"` 재수화 · 그룹 발신자 스코프 제외 ·
+    비-브라우저 호출). 사실 목록에 **floor(하한, not exhaustive)** 명시.
+  - **버킷 4종 분리**: `updated`(이번 턴 diff 실제 렌더) / `updated_no_delta`(버전만 상승 — 비-text
+    재업로드 등) / `added` / `other`. 후자는 FILE UPDATES 를 가리키지 않고 `read_attachment` 로 유도한다.
+    `created_by_role='assistant'` 는 "사용자 제공" 3버킷에서 제외. 빈 파일명은 id 로 식별.
+  - **금지 범위 축소**: "제공 사실의 부정" 하나. 내용 동일·불충분·미반영 결론은 명시 허용.
+  - `_format_attachment_fact_names`: 생략을 `외 N건 생략` 으로 **표기**.
+  - `_att_turn_facts` 로컬 스냅샷(compose 직후) → C·B 가 원거리 contextvar 재조회를 하지 않는다.
+    `_ATTACHMENT_TURN_FACTS_CTX` 를 `run_agent` set/reset 토큰 튜플에 편입. compose 실패 폴백 시 사실 폐기.
+  - A/C 호출부 bare `except: pass` → `logger.warning`(봉인이 조용히 사라지면 유일 증상이 마찰 재발).
+- `src/modules/redteam.py`
+  - `build_attachment_change_facts`: 캡을 **건별**로(join 후 슬라이스 제거 — 파일명 중간 절단 + 뒷줄 소실),
+    생략 표기, 신규 0건이면 빈 문자열, delta 유무 버킷 분리. `_ATTACH_FACTS_NAME_CHARS` 신설(A 와 동치).
+  - `REDTEAM_REVIEW_PROMPT`: 대칭 BLOCK 규칙 제거, **floor-not-ceiling** 명시(목록 밖 파일 언급을 결함으로
+    보고 금지), 내용 판단(동일·불충분)은 리뷰어 관할 밖임을 명시.
+- Tests: `test_attachment_change_false_absence.py` 18 → **24**(배선 seam: compose 실측 위치·C 의 user 턴
+  합류·B verify 패스·bounded 게이트·0행 경로) + `test_grounding_authority_directive.py` 에 허용 supersede
+  계약 1건. **자체 뮤테이션 8종 전건 KILLED**(초판은 6종 생존).
+- **위험등급**: Major(§12.3 동일 경로). **Cross-ref**: `REV-20260805T160000-attach-change-false-absence` ·
+  원장 `FR-attachment-change-false-absence`.
