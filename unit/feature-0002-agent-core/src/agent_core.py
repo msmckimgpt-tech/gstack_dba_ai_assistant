@@ -728,9 +728,20 @@ def read_attachment_content(
     chunk = all_lines[start - 1: start - 1 + limit]
     body = "\n".join(chunk)
     truncated = (start - 1 + len(chunk)) < total
+    delivered = len(chunk)
+    char_capped = False
     if len(body) > _ATTACHMENT_READ_CHAR_CAP:
-        body = body[:_ATTACHMENT_READ_CHAR_CAP]
+        # FR-read-attachment-preview-looks-partial (§18.8 backend/qa [P1]):
+        # 문자 상한은 **줄 중간을 자른다**. 종전에는 `end_line` 을 자르기 **전** 청크 길이로
+        # 돌려줘, 호출자가 "1~600줄 전달" 로 믿고 이어읽기 시작점을 601 로 잡았다 — 실제로
+        # 전달된 건 400줄뿐이라 401~600 이 **어떤 호출로도 오지 않는 구멍**이 됐다.
+        # 여기서는 **온전한 줄만** 전달분으로 인정한다(마지막 조각줄 폐기). 보수적 계산이라
+        # 과대주장은 절대 일어나지 않는다.
+        cut = body[:_ATTACHMENT_READ_CHAR_CAP]
+        delivered = cut.count("\n")  # 마지막 개행까지가 온전한 줄
+        body = "\n".join(chunk[:delivered])
         truncated = True
+        char_capped = True
     return {
         "ok": True,
         "filename": target["filename"],
@@ -738,9 +749,16 @@ def read_attachment_content(
         "kind": kind,
         "text": body,
         "start_line": start,
-        "end_line": start - 1 + len(chunk),
+        # 실제로 전달된 마지막 줄 번호. delivered==0(첫 줄 자체가 상한 초과)이면 start-1 이 되어
+        # start 보다 작아지므로, 호출자는 그 역전을 "전달된 줄 없음" 신호로 읽어야 한다.
+        "end_line": start - 1 + delivered,
+        "delivered_lines": delivered,
         "total_lines": total,
         "truncated": truncated,
+        "char_capped": char_capped,
+        # start_line 이 파일 끝을 넘은 경우 — 빈 본문이 "그 자리에 내용이 없다" 로 오독되지 않게
+        # 호출자가 명시 안내를 낼 수 있도록 사실 자체를 넘긴다.
+        "start_beyond_eof": bool(total and start > total),
     }
 
 
@@ -3821,11 +3839,33 @@ def _cap_tool_result(text: str) -> str:
     return text
 
 
+_STEP_PREVIEW_CAP_CHARS = 500  # 화면 표시용 발췌 상한 — 모델이 받은 결과와 무관하다
+
+
 def _build_step_result_summary(tool_name: str, tool_result: str) -> dict[str, Any] | None:
     summary: dict[str, Any] = {}
     preview = str(tool_result or "").strip()
     if preview:
-        summary["preview"] = preview[:500]
+        summary["preview"] = preview[:_STEP_PREVIEW_CAP_CHARS]
+        # FR-read-attachment-preview-looks-partial (conversation_audit 2026-08-05):
+        # 단계 보기 사이드 패널은 이 `preview` 를 **그대로** 렌더한다. 상한에서 잘렸다는 표시가
+        # 없어 사용자가 "assistant 가 파일 일부만 읽었다" 로 오인했다(실제로는 전문 수신·실측).
+        # 절단 사실을 **플래그로** 넘겨 표시층이 "발췌" 를 명시할 수 있게 한다 — 무음 절단 금지
+        # (CODE_REVIEW §2.1).
+        # 표시 상한은 이번 범위에서 올리지 않는다. 사유는 "공유 저장 경로" 가 아니라(도구별 분기는
+        # tool_name 이 이미 있어 기술적으로 가능하다 — §18.8 backend [P2] 정정) **steps 가 run 진행
+        # 중 폴링으로 반복 전송**되기 때문이다: 캡 상향은 매 폴링 payload 에 곱해진다. 도구별 상향은
+        # 별도 판단 항목으로 원장에 남긴다.
+        if len(preview) > _STEP_PREVIEW_CAP_CHARS:
+            summary["preview_truncated"] = True
+            # 이름 정정(§18.8 backend [P2]): 이 값은 "원본 전체" 가 아니라 **이 단계 결과 문자수**다.
+            # 아래 result_capped_for_model 이 True 면 그 결과 자체가 이미 상한에서 잘린 값이다.
+            summary["result_chars"] = len(preview)
+        # §18.8 backend/qa [P1-2]: `_cap_tool_result` 가 **이 함수보다 먼저** 도구 결과를 자른다
+        # (AGENT_TOOL_RESULT_MAX_CHARS). 그 경우 모델도 전문을 받지 못했다 — 표시층이 "assistant 는
+        # 전문을 받았다" 고 말하면 **거짓**이 된다. 사실을 플래그로 넘겨 반대로 경고하게 한다.
+        if preview.endswith("... (truncated)"):
+            summary["result_capped_for_model"] = True
     csv_paths = _extract_csv_paths(tool_result)
     if csv_paths:
         summary["csv_paths"] = csv_paths

@@ -2209,3 +2209,40 @@ rationale=REVIEW `REV-20260803T170000-loadgate-replay-verify` ·
 rationale=REVIEW `REV-20260805T160000-attach-change-false-absence` ·
 변경이력=MODIFY `CHG-20260805T160000-attach-change-false-absence` ·
 마찰원장=`FR-attachment-change-false-absence`.
+
+## TASK-20260805T1900 — `read_attachment` 완전성 계약 (conversation_audit `FR-read-attachment-preview-looks-partial`)
+
+- [x] 사용자 보고 검증 — 대화 `…843232a3` step 6~8 실측: **전부 전문 수신**(1~42/42 · 1~32/32 ·
+      1~28/28, tool 메시지 1,485·692·1,213자, 절단 마커 0). 보고된 건은 **표시 오인**이 맞다.
+- [x] 표시 경로 특정 — 단계 보기 사이드 패널(`app.js` `_renderStepSidePanelBody`)이 `rs.preview`
+      (500자 캡)를 절단 표시 없이 `<pre>` 렌더. 본문 채팅의 `buildStepBlocks` 는 non-SQL 스텝을
+      `work — reason` 한 줄로만 그려 여기서는 안 보인다.
+- [x] 실재 결함 분리 — 라이브 41회 / 8대화 중 절단 2회, **둘 다 모델의 `max_lines` 자기 제한**
+      (3, 250). 그중 `SP_LOG_SCHEDULE_improved_v2.sql`(327줄 중 250줄)은 **이어 읽지 않음**.
+      시스템 기본 600줄 캡 발동 **0회**.
+- [x] 문구 — 전문/부분 헤더 분기(`start_line>1` 은 전문 아님).
+- [x] 이어읽기 MUST 계약 + 남은 줄 수 + 미이어읽기 시 범위 명시 의무 + 도구 description 보강.
+- [x] 표시 — `preview_truncated`/`preview_full_chars` 플래그(캡 상향 아님) + 패널 발췌 주석(feature-0003).
+- [x] §18.8 backend+qa 패널 — **BLOCK**, [P1] 2 · [P2] 9 · [P3] 6 **전건 흡수**.
+      초판 테스트가 `read_attachment_content` 를 통째로 stub 해 실 슬라이싱을 안 태웠고, 그 사각에
+      **문자 상한 경로의 정량화된 허위**(남은 줄 수 오보 → 이어읽기 구멍)와 **패널 주석의 모델
+      수신분 단정**(진짜 미열람 단계를 안심 문구로 덮음)이 있었다.
+- [x] 테스트 재작성 — **실 함수 경유 17건** + headless JS 17 assert.
+      **구코드 대비 12/17 FAIL**(초판 5/9) 로 판별력 확인.
+- [x] 정정 2건(§2.5) — "CI 가 JS 를 검증하지 않는다"(오류: headless 29건 관행 존재) ·
+      표시 캡 유지 사유(오류: 도구별 분기 가능 → 실제 사유는 폴링 반복 전송).
+- [ ] 라이브 실측(배포 후) — 절단 발생 시 모델이 실제로 이어 읽는지 + 패널 주석 실 화면 확인.
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260805T1900
+- [x] `웹 표시 간소화인지 실제 미열람인지 검토` — 산출물: 실측 대조표(전문 수신 3건 + 표시 500자 캡) ·
+      배선 확인: `steps.result_summary_json` vs `core_messages` role=tool 길이 대조.
+- [x] `이어읽기 계약까지 강화` — 산출물: MUST 계약·남은 줄 수·description 보강 · 배선 확인: 뮤테이션 4종.
+
+**주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 = 단계 보기 패널의 "발췌" 주석.
+로직은 headless JS 로 고정(주석 유무·폴백·문구 금지어·표 분기 포함)했고, **실 브라우저 렌더는
+배포 후 확인**(미실측).
+
+### 정본
+rationale=REVIEW `REV-20260805T190000-read-attach-completeness` ·
+변경이력=MODIFY `CHG-20260805T190000-read-attach-completeness` ·
+마찰원장=`FR-read-attachment-preview-looks-partial`.

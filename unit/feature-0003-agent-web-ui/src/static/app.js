@@ -3316,6 +3316,41 @@ function toolLabel(toolName) {
 // step 의 "결과 보기" 펼침 상태 영속화용 안정 키.
 // progressSteps dedup 과 동일하게 step_index + created_at 조합을 쓴다(같은 step 이
 // 폴링 재렌더를 거쳐도 동일 키 → 펼침 상태 유지). 둘 다 없으면 idx fallback.
+// 단계 결과 패널의 표시 상한(서버 `_STEP_PREVIEW_CAP_CHARS` 와 같은 값). 폴백 판정에만 쓴다.
+const STEP_PREVIEW_CAP = 500;
+
+/** 표시 발췌 주석 — 잘리지 않았으면 null.
+ *
+ * FR-read-attachment-preview-looks-partial (conversation_audit 2026-08-05): 이 패널은 서버가
+ * 500자로 자른 발췌를 렌더하는데 잘렸다는 표시가 없어, 사용자가 "assistant 가 파일 일부만
+ * 읽었다" 로 오인했다(실측: 그 호출들은 전문 수신).
+ *
+ * 계약 3가지 — 어기면 이 주석이 새로운 오도가 된다:
+ *  1. **모델이 무엇을 받았는지 단정하지 않는다.** `_cap_tool_result` 가 서버에서 이 요약보다
+ *     **먼저** 도구 결과를 자를 수 있어(§18.8 backend/qa [P1-2]) "전문이 전달됐다" 는 거짓일 수
+ *     있고, 모델이 스스로 `max_lines` 를 줄여 실제로 일부만 본 단계에서는 **진짜 문제를 덮는다**.
+ *     서버가 그 사실을 알려줄 때(`result_capped_for_model`)만 반대 방향으로 경고한다.
+ *  2. **길이 폴백**을 둔다 — 플래그는 배포 후 기록된 step 에만 있다. 이미 저장된(사용자가 지금
+ *     보고 있는) step 에도 붙어야 보고된 화면이 실제로 개선된다.
+ *  3. 텍스트는 `textContent` 로만 넣는다(결과는 비신뢰 데이터).
+ */
+export function _buildStepPreviewNote(rs, preview) {
+  const rsObj = rs && typeof rs === "object" ? rs : null;
+  const looksCut = typeof preview === "string" && preview.length >= STEP_PREVIEW_CAP;
+  if (!rsObj || !(rsObj.preview_truncated || looksCut)) return null;
+  const note = document.createElement("div");
+  note.className = "step-result-preview-note";
+  const chars = Number(rsObj.result_chars) || 0;
+  let text = chars
+    ? `※ 화면에는 이 단계 결과의 앞부분만 표시됩니다 (결과 ${chars.toLocaleString()}자 중 발췌).`
+    : "※ 화면에는 이 단계 결과의 앞부분만 표시됩니다 (발췌).";
+  if (rsObj.result_capped_for_model) {
+    text += " 이 결과는 도구 결과 상한에 걸려 assistant 에게 전달될 때도 잘렸습니다.";
+  }
+  note.textContent = text;
+  return note;
+}
+
 function _stepResultKey(step, idx) {
   const si = step && step.step_index != null ? step.step_index : "";
   const ca = step && step.created_at ? step.created_at : "";
@@ -3428,6 +3463,11 @@ export function buildStepDetailEl(step, idx, { compact = false } = {}) {
         pre.textContent = preview;
         resultBody.appendChild(pre);
       }
+      // FR-read-attachment-preview-looks-partial: 표시 발췌 사실을 명시한다.
+      // 표/텍스트 **양쪽 분기 뒤**에 붙인다 — 마크다운 표로 파싱된 발췌는 `truncated:false` 를
+      // 날조해 완전한 표처럼 보이므로(§18.8 qa [P2]) 표 분기야말로 이 주석이 필요하다.
+      const _note = _buildStepPreviewNote(rs, preview);
+      if (_note) resultBody.appendChild(_note);
 
       toggleBtn.addEventListener("click", () => {
         const willShow = resultBody.hidden;

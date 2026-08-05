@@ -688,6 +688,14 @@
   overflow-y: auto;
 }
 
+/* FR-read-attachment-preview-looks-partial: 발췌 표시가 없어 "모델도 일부만 봤다"로 오인됐다. */
+.step-result-preview-note {
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted, #6b7280);
+}
+
 /* Phase 3 (REQ-20260515-0005): stale_error dot */
 .conv-dot.is-stale-error {
   background: var(--color-danger, #dc2626);
