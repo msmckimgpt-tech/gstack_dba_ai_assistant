@@ -160,3 +160,14 @@ source_of_truth: true
   perm_self_scope 파손·pre-existing red 목록)을 전건 해소 — §8 해당 불릿을 해소 상태로 정정.
 - 잔여 유지: composer/progress 추출용 state-편입 mini-change(별도 계획 승인 사안) · 파일 크기
   기계 게이트 검토 · mjs CI 배선 여부 검토.
+
+## CHG-20260805T105500-phaseA-state-intake 공유 let 2건 state 편입 (Phase A mini-change — TASK §2.2, PLAN-APPROVED 2026-08-05)
+
+- `unit/feature-0003-agent-web-ui/src/static/app.js`: `let _dqaDrag`(구 L2544)·
+  `let _sidebarCatchupTimer`(구 L3359) 선언 제거 → `export const state` 정의에
+  `dqaDrag: null`·`sidebarCatchupTimer: null` 편입 + 참조 22건(14+8) 기계 치환. 함수 본문
+  로직 무수정 — 단일 스레드 참조 치환이라 동작 의미 동일(비-중립 지점은 선언 위치·스코프).
+- `unit/feature-0003-agent-web-ui/tests/verify_state_intake.mjs` 신설 — 편입 계약 가드
+  (bare 재생/치환 누락 양방향 회귀 검출, 15 케이스).
+- 목적: B1(renderConversationList→sidebar.js)·이후 B2/B3 추출의 차단 해소 — 도메인 경계를
+  넘는 양방향 재할당 결합 2건이 이것으로 소멸(실측 매트릭스는 TASK §2.2).

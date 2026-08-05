@@ -111,6 +111,11 @@ const ASK_ATTACH_POLL_WAIT_SEC = 45;
 const ASK_ATTACH_MAX_TOTAL_SEC = 1800;
 
 export const state = {
+  // ITEM-P5b 후속 Phase A (state-intake, PLAN-APPROVED 2026-08-05): 도메인 추출을 막던
+  // 모듈-스코프 공유 가변 let 을 state 프로퍼티로 편입 — renderConversationList(B1)·
+  // 사이드바 catchup 이 core(initialize/handleLogout)와 양방향 재할당 결합이던 2건.
+  dqaDrag: null,             // { type: 'conv'|'folder', id } — 사이드바 DnD 진행 상태
+  sidebarCatchupTimer: null, // 사이드바 unread catch-up 디바운스 타이머
   user: null,
   session: null,
   conversations: [],
@@ -2541,7 +2546,7 @@ export function _saveCollapsedGroups() {
 
 // feature-0038 Cycle 9: 폴더 관리 세그먼트 1 은 app/sidebar.js 로 분리 (구 L2540–2580).
 // feature-0024 folder-ux: 드래그 중 페이로드(모듈 변수 — dragover 에서 dataTransfer.getData 불가 대응).
-let _dqaDrag = null;  // { type: 'conv'|'folder', id }
+// (ITEM-P5b Phase A) 구 `let _dqaDrag` 는 state.dqaDrag 로 편입 — 선언 위치 흔적만 유지.
 
 // feature-0038 Cycle 9: 폴더 관리 세그먼트 2 은 app/sidebar.js 로 분리 (구 L2584–2908).
 
@@ -2762,12 +2767,12 @@ export function renderConversationList() {
     if (mine && can("folder.manage.own")) {
       button.setAttribute("draggable", "true");
       button.addEventListener("dragstart", (ev) => {
-        _dqaDrag = { type: "conv", id: String(item.id) };
+        state.dqaDrag = { type: "conv", id: String(item.id) };
         try { ev.dataTransfer.setData("text/plain", String(item.id)); ev.dataTransfer.effectAllowed = "move"; } catch (_) {}
         button.classList.add("is-dragging");
       });
       button.addEventListener("dragend", () => {
-        _dqaDrag = null; button.classList.remove("is-dragging");
+        state.dqaDrag = null; button.classList.remove("is-dragging");
         document.querySelectorAll(".folder-drop-hover").forEach((n) => n.classList.remove("folder-drop-hover"));
       });
     }
@@ -2954,17 +2959,17 @@ export function renderConversationList() {
     // 개선6: 드래그&드롭 — 폴더 자체 드래그(이동) + 대화/폴더 드롭 대상.
     header.setAttribute("draggable", "true");
     header.addEventListener("dragstart", (ev) => {
-      _dqaDrag = { type: "folder", id: Number(folder.folder_id) };
+      state.dqaDrag = { type: "folder", id: Number(folder.folder_id) };
       try { ev.dataTransfer.setData("text/plain", "folder:" + folder.folder_id); ev.dataTransfer.effectAllowed = "move"; } catch (_) {}
       header.classList.add("is-dragging");
     });
     header.addEventListener("dragend", () => {
-      _dqaDrag = null; header.classList.remove("is-dragging");
+      state.dqaDrag = null; header.classList.remove("is-dragging");
       document.querySelectorAll(".folder-drop-hover").forEach((n) => n.classList.remove("folder-drop-hover"));
     });
     header.addEventListener("dragover", (ev) => {
-      if (!_dqaDrag) return;
-      if (_dqaDrag.type === "folder" && Number(_dqaDrag.id) === Number(folder.folder_id)) return;  // 자기 자신 제외
+      if (!state.dqaDrag) return;
+      if (state.dqaDrag.type === "folder" && Number(state.dqaDrag.id) === Number(folder.folder_id)) return;  // 자기 자신 제외
       ev.preventDefault(); try { ev.dataTransfer.dropEffect = "move"; } catch (_) {}
       header.classList.add("folder-drop-hover");
     });
@@ -2972,7 +2977,7 @@ export function renderConversationList() {
     header.addEventListener("drop", async (ev) => {
       ev.preventDefault(); ev.stopPropagation();  // 컨테이너 root 드롭 핸들러로 버블 방지(폴더 배정 우선)
       header.classList.remove("folder-drop-hover");
-      const d = _dqaDrag; _dqaDrag = null;
+      const d = state.dqaDrag; state.dqaDrag = null;
       if (!d) return;
       if (d.type === "conv") await moveConversationToFolder(d.id, folder.folder_id);
       else if (d.type === "folder" && Number(d.id) !== Number(folder.folder_id)) await moveFolderTo(Number(d.id), folder.folder_id);
@@ -3356,11 +3361,11 @@ async function _fetchHistoryPayload(query, cacheKey) {
 // 사이드바(대화 목록 프리뷰) 지연 갱신 — 페이징은 활성 버전에 따라 목록 프리뷰가 달라질 수
 // 있지만, 클릭마다 /api/conversations 를 부를 필요는 없다. 사용자가 한 버전에 안착한 뒤
 // 1회만 따라잡는다.
-let _sidebarCatchupTimer = null;
+// (ITEM-P5b Phase A) 구 `let _sidebarCatchupTimer` 는 state.sidebarCatchupTimer 로 편입.
 function _scheduleSidebarCatchup(cid) {
-  if (_sidebarCatchupTimer) clearTimeout(_sidebarCatchupTimer);
-  _sidebarCatchupTimer = setTimeout(() => {
-    _sidebarCatchupTimer = null;
+  if (state.sidebarCatchupTimer) clearTimeout(state.sidebarCatchupTimer);
+  state.sidebarCatchupTimer = setTimeout(() => {
+    state.sidebarCatchupTimer = null;
     loadConversations(cid)
       .then(() => { try { renderConversationHeader(); } catch (_e) {} })
       .catch(() => { /* network blip: 다음 갱신이 따라잡는다 */ });
@@ -9784,7 +9789,7 @@ async function handleLogout() {
   // 마다 다른 그룹 대화에서, 좁은 window 를 가진 계정이 넓은 window 의 본문을 보게 되는 누출
   // (share-visibility-window fail-closed 게이트 우회). 지연 사이드바 타이머도 함께 취소한다.
   _branchViewCacheClear();
-  if (_sidebarCatchupTimer) { clearTimeout(_sidebarCatchupTimer); _sidebarCatchupTimer = null; }
+  if (state.sidebarCatchupTimer) { clearTimeout(state.sidebarCatchupTimer); state.sidebarCatchupTimer = null; }
   // TASK-0048: 로그아웃 시 pending 새 대화 placeholder 도 정리.
   state.pendingNewConversation = false;
   renderConversationList();
@@ -10067,15 +10072,15 @@ async function initialize() {
   if (newFolderBtn) {
     newFolderBtn.addEventListener("click", () => { createFolderFlow(null); });
     newFolderBtn.addEventListener("dragover", (ev) => {
-      if (!_dqaDrag) return;
+      if (!state.dqaDrag) return;
       ev.preventDefault(); try { ev.dataTransfer.dropEffect = "move"; } catch (_) {}
       newFolderBtn.classList.add("folder-drop-hover");
-      newFolderBtn.title = _dqaDrag.type === "conv" ? "여기로 놓으면 폴더에서 빼기" : "여기로 놓으면 최상위로";
+      newFolderBtn.title = state.dqaDrag.type === "conv" ? "여기로 놓으면 폴더에서 빼기" : "여기로 놓으면 최상위로";
     });
     newFolderBtn.addEventListener("dragleave", () => { newFolderBtn.classList.remove("folder-drop-hover"); newFolderBtn.title = "새 폴더"; });
     newFolderBtn.addEventListener("drop", async (ev) => {
       ev.preventDefault(); newFolderBtn.classList.remove("folder-drop-hover"); newFolderBtn.title = "새 폴더";
-      const d = _dqaDrag; _dqaDrag = null;
+      const d = state.dqaDrag; state.dqaDrag = null;
       if (!d) return;
       if (d.type === "conv") await moveConversationToFolder(d.id, null);
       else if (d.type === "folder") await moveFolderTo(Number(d.id), null);

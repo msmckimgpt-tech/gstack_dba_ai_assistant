@@ -120,3 +120,31 @@ source_of_truth: true
 - **MAJOR 흡수**: ③ **날짜 오표기 정정** — 호스트 클록·git 커밋 정본은 2026-08-04 인데 Final diff 문서가 08-05 로 표기(작성자 날짜 진행 오인). 이번 diff 내 전건 08-04 로 정정. **이미 머지된 C8~C10 기록의 `REV-20260805T*` id·Run-035~042 날짜 표기는 append-only 라 존치** — 실제 작업일은 08-04 이며 이 각주가 정정 기록이다. ④ AC-3 이중 체계(§2.1 스모크 vs FUNCTION split-3) → FUNCTION full-id 로 탈모호화.
 - **MINOR 흡수**: Run-011→007 인용 정정·feature_status_date/Last Updated 08-04·app.js 기점 13,216 각주·CONVENTIONS §14.1 "ES module" JS 한정.
 - Timestamp: 2026-08-04T19:45:00+09:00
+
+## REV-20260805T105500-phaseAB-plan-approval [SKIPPED:plan-approval-record] — 후속 Phase A+B 계획 승인 기록 (판단 근거, 패널 아님)
+
+- 사용자 resume 지시(2026-08-05, "ITEM-P5b 프론트엔드 파일 분할 진행" + REPORT §8 후속 후보)로
+  잔여 오케스트레이터 감축 계획 수립 → AskUserQuestion 3택(전체 승인/Phase A만/보류) 제시 →
+  **"Phase A+B 전체 승인 (권장)"** 채택. 위험도 Critical 승계(§12.3 — 본편과 동일 축).
+- 계획 정본: TASK §2.2. 차단 실측(let 21 × 함수 297 매트릭스)으로 state 편입 대상을 REPORT §8
+  추정("_dqaDrag·_sidebarCatchupTimer 류")에서 **정확 2건**으로 확정 — 과편입 회피(§8 의
+  _shareRangeEscHandler·mention 계열은 B2 함수 집합 설계로 해소).
+- 본 entry 는 승인 이력 기록이며 check #9 의 accepted 근거로 쓰지 않는다 — Phase A 구현 패널은
+  별도 REV(SUBAGENT) 로 기록.
+
+## REV-20260805T111500-phaseA-state-intake [SUBAGENT:frontend-state] — Phase A 적대 패널: BLOCK/MAJOR 0 · MINOR 2 · NIT 3 전건 흡수 후 PASS
+
+- Trigger: code change — state-편입 mini-change(비-중립). 렌즈 = 치환 완전성·의미 동일성·
+  열거/직렬화 누출·하네스 vacuity·B1~B3 전제 충족 5축.
+- 패널 실측 확인(청정 축): 전 트리 bare 잔존 0(코드) · `state` 재할당/spread 복제/for-in
+  열거·JSON.stringify(state)·localStorage 통저장 전무 → 의미 동일성·직렬화 누출 없음 ·
+  가드 15케이스는 mutation 2종(부분 revert → 2 FAIL·프로퍼티 삭제 → 1 FAIL)으로 비-vacuity
+  실증 · **renderConversationList 본문 522줄의 잔여 모듈-let 참조 0** — Phase A 범위 판단
+  (양방향 차단재 = 2건뿐) 유효 재확증.
+- 흡수: [MINOR] tombstone 주석 오치환(`let state.dqaDrag` 자기모순) → 원 식별자 복원 ·
+  [MINOR] 가드 [A3] 스캔이 2파일 하드코딩 → app/*.js 디렉토리 전수(readdirSync — B1~B3 의
+  코드 목적지 자동 커버) · [NIT 3] 죽은 주입 파라미터 → 실 자유식별자(loadConversations·
+  renderConversationHeader) · codeOnly `//` 스트리퍼의 문자열 내 URL false-negative 방지 ·
+  sidebar.js stale 차단 서술 현행화. 흡수 후 가드 18/18 PASS + ESM 문법 PASS.
+- 관찰(기록만): verify_*.mjs 전체가 CI(pytest 전용) 밖 — 본 가드도 동일(기존 조건과 같음,
+  feature-0003 REVIEW 의 "mjs CI 배선 검토" 후속 후보에 합류).

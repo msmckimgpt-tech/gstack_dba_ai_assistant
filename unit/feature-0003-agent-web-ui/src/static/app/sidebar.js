@@ -1,8 +1,8 @@
 // feature-0038 Cycle 9 — 폴더(프로젝트) 관리 (로드·트리·생성/이름변경/설정/삭제·undo·
 //   이동 다이얼로그·폴더 메뉴). app.js 비연속 2세그먼트(구 L2540–2580 · L2584–2908)를
-//   byte-동치 이동 (본문 무수정 — ITEM-P5b). ⚠ 공유 DnD 상태 `let _dqaDrag` 는
-//   renderConversationList(잔류)와 잔여 중첩 핸들러가 직접 쓰는 결합이라 app.js 잔류 —
-//   renderConversationList 분리는 _dqaDrag 의 state 편입(비-중립 mini-change) 승인 후 후속.
+//   byte-동치 이동 (본문 무수정 — ITEM-P5b). 공유 DnD 상태는 Phase A(state-intake,
+//   PLAN-APPROVED 2026-08-05)에서 `state.dqaDrag` 로 편입 완료 — renderConversationList
+//   분리(B1)의 차단재 해소, 본 파일로의 편입은 B1 cycle 에서 수행.
 import {
   state, apiFetch, showToast, can,
   loadConversations, loadHistory, renderConversationList,
