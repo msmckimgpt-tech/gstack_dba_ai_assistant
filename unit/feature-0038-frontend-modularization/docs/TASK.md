@@ -4,15 +4,15 @@ feature_id: feature-0038-frontend-modularization
 status: active
 edit_policy: rewrite
 source_of_truth: true
-feature_status: review
-feature_status_date: 2026-08-04
-feature_status_note: ITEM-P5b 완결 — 10 cycle 전건 배포(css 7분할·admin/ 9모듈 -66%·app/ 4모듈)·CONVENTIONS §14 재발 방지, 후속 후보는 REPORT §8
+feature_status: in-progress
+feature_status_date: 2026-08-05
+feature_status_note: ITEM-P5b 본편 완결(10 cycle) + 후속 Phase A~B 진행(PLAN-APPROVED 2026-08-05 — 공유 let state-편입 후 sidebar/composer/progress 추출)
 ---
 
 # Task
 
 ## 1. Current Status
-- State: done-with-followups (PLAN-APPROVED 2026-08-03 — Cycle 1~10 완료·배포, Final 정합 landed)
+- State: followups-in-progress (본편 PLAN-APPROVED 2026-08-03 완결 · 후속 Phase A+B PLAN-APPROVED 2026-08-05)
 - Owner: AI (claude-corp) / Human 승인 게이트
 - Priority: high
 - Last Updated: 2026-08-04
@@ -103,8 +103,35 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 
 <!-- PLAN-APPROVED by mckim on 2026-08-03 (AskUserQuestion "전체 승인" — 세션 기록) -->
 
+### 2.2 후속 Phase A+B — 잔여 오케스트레이터 감축 (PLAN-APPROVED 2026-08-05)
+
+**근거**: REPORT §7/§8 "별도 계획 승인 사안" — 사용자 resume 지시(2026-08-05) 로 계획 수립,
+AskUserQuestion "Phase A+B 전체 승인 (권장)" 채택. 위험도 **Critical 승계**(본편과 동일 축 —
+라이브 web app 런타임 회귀). 전 cycle 에 본편 게이트 그대로(make test·헤드리스·free-vars 0·
+PB-0008·§18.8 패널·단일 PR revert·deploy_scope: included 배포).
+
+**차단 실측 (2026-08-05, 모듈-스코프 let 21개 × top-level 함수 297개 결합 매트릭스)**:
+도메인 경계를 넘는 양방향 재할당 결합 = **2건뿐** — `_dqaDrag`(renderConversationList[B1] ↔
+initialize[core], 참조 14) · `_sidebarCatchupTimer`(_scheduleSidebarCatchup[B1] ↔
+handleLogout[core], 참조 8). `_shareRangeEscHandler`·`_mentionMembers` 계열은 B2 함수 집합
+설계(attach/detach 쌍·mention 5-let 계열 동반 이동)로 해소 — state 편입 불요.
+
+| Phase | 내용 | 성격 |
+|---|---|---|
+| A | `_dqaDrag`→`state.dqaDrag` · `_sidebarCatchupTimer`→`state.sidebarCatchupTimer` 편입 + 계약 가드 `tests/verify_state_intake.mjs` 신설 | **비-중립 mini-change** (동작 의미 동일 — 단일 스레드 참조 치환 · byte-동치 아님 → 본 승인 지점) |
+| B1 | renderConversationList(~520줄)+날짜트리/seed/DnD → `app/sidebar.js` 편입 | byte-동치 |
+| B2 | composer/첨부(함수 38) + mention 계열 + `_attachShareRangeEsc`/`_detachShareRangeEsc` 쌍 → `app/composer.js` | byte-동치 |
+| B3 | progress 폴러 3계층(함수 23, 최다 회귀 영역 — 마지막) → `app/progress.js` | byte-동치 |
+
+admin.js 4,804줄 잔여는 공유 코어(pending/batch-apply·권한 grid)라 B 완료 후 재실측·판단.
+
+<!-- PLAN-APPROVED by mckim on 2026-08-05 (AskUserQuestion "Phase A+B 전체 승인 (권장)" — resume 세션 기록) -->
+
 ## 3. Task Queue
-- (비었음 — 후속 후보는 REPORT §8: composer/progress 추출은 _dqaDrag state 편입 등 mini-change 승인 필요)
+- TASK-20260805T105500-phaseA-state-intake: Phase A state-편입 → §6 Done (cycle 마감 진행)
+- TASK-20260805T105501-phaseB1-sidebar: B1 renderConversationList → app/sidebar.js (A 머지 후)
+- TASK-20260805T105502-phaseB2-composer: B2 composer/첨부+mention → app/composer.js
+- TASK-20260805T105503-phaseB3-progress: B3 progress 폴러 → app/progress.js
 
 ## 4. In Progress
 - 없음
@@ -141,9 +168,10 @@ app.js ≤ ~3,000줄(부트스트랩·공용 상태). 도메인 경계는 각 cy
 - [x] TASK-0023 Cycle 10 추출 — app/messages.js(960, 단일 세그먼트 구 L3118–4068), app.js 11,119줄, parity IDENTICAL·테스트 5건 합본 (TEST Run-040, CHG-20260805T150000)
 - [x] TASK-0024 Cycle 10 마감 — 패널 SHIP(headless A/B 렌더 8,253자 byte-동일, REV-20260805T170000)·PR #1143 머지(e7d2bf93)·배포 RC=0·POST-DEPLOY PASS(TEST Run-043)
 - [x] TASK-0025 Final — CONVENTIONS §14 code-modularity 등재·ROADMAP ITEM-P5b done·STATUS/wiki 정합·잔여 재실측 보고(REPORT §2)
+- [x] TASK-20260805T105500-phaseA-state-intake Phase A 구현 — `_dqaDrag`·`_sidebarCatchupTimer` state 편입(치환 22건·bare 잔존 0)·계약 가드 verify_state_intake 18/18·전수 mjs 40/40·headless 46케이스·make test RC=0·패널 MINOR 2/NIT 3 흡수 (CHG-20260805T105500, REV-20260805T111500)
 
 ## 7. Next Action
-- (initiative 완결) 후속 후보는 REPORT §8 — 별도 계획 승인 후 진행
+- Phase A cycle 마감(게이트→PR→배포→POST-DEPLOY PB-0008) → B1 착수
 
 ## 8. Completion Checklist
 - [x] 모든 REQ의 AC가 구현되었다 — §2.1 AC-1~5 충족(AC-3 풀 스모크 포함) · FUNCTION §11 `AC-…-split-3`(오케스트레이터 ≤~3,000줄 목표)만 **부분**(잔여 지도 REPORT §2, 정직 표기)

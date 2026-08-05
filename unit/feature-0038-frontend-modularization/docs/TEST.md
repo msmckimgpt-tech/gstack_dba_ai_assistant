@@ -507,3 +507,22 @@ source_of_truth: true
   함정 — 확립된 제약). 사전 검증은 make test + ESM 파싱 + byte-parity 로 갈음하고, **실브라우저
   검증은 배포 직후 POST-DEPLOY PB-0008**(LLM 사용량·AI 운영 현황 pane 렌더+인터랙션)로 수행한다.
 - 공유 뷰(share.html)는 본 initiative 영향 없음
+
+## 20260805T1055-phaseA-state-intake — 공유 let 2건 state 편입 (Phase A mini-change)
+
+### Run — 20260805T1055 정적·소스-추출 검증 (Environment: CLI/node) — PASS
+- 치환 실측: `_dqaDrag` 14건 · `_sidebarCatchupTimer` 8건 → bare 잔존 **0** (전 static 트리
+  grep + 주석 제외 스캔) · ESM 문법 검사 PASS.
+- 계약 가드 신설 `tests/verify_state_intake.mjs` **15/15 PASS** — [A] let 소멸+state 프로퍼티+
+  잔존0 [B] DnD 세터/가드·catchup 이 state 경유 배선 [C] _scheduleSidebarCatchup 동적 왕복
+  (타이머 저장→디바운스 clear→만료 해제).
+- 전 mjs 하네스 회귀: **40/40 rc=0** (소스-추출 하네스들이 신 코드 형상으로 green — 특히
+  verify_new_conv_dedup 의 renderConversationList eval 경로 정상).
+
+### Run — PB-0008 시각검증 (Environment: Windows-browser — POST-DEPLOY 예정, 사전 미수행 사유 명시)
+- **사전 미수행 사유**: JS(ES module) 변경 — 본편 Cycle 2~10 과 동일한 확립 제약(docker cp
+  사전검증은 모듈 캐시 이중 인스턴스 함정). 사전 검증은 기계 증명(잔존 0·계약 가드·전수
+  하네스 green)으로 갈음.
+- **POST-DEPLOY 계획**: 실 Windows Chrome — ① 사이드바 대화 행 드래그 → 폴더 드롭(이동) ②
+  폴더 헤더 드래그 → 순서 변경 ③ '새 폴더' 버튼 root 드롭존(폴더에서 빼기) ④ 새 메시지 도착
+  시 사이드바 unread catch-up 갱신(디바운스) ⑤ 로그아웃 시 타이머 정리(콘솔 에러 0) + 스크린샷.

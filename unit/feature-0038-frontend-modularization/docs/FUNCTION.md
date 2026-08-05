@@ -88,6 +88,10 @@ styles.css 9,328줄, 2026-08-03 실측)을 behavior-neutral 점진 추출로 모
   revert→재빌드→스모크→재적용 기록)
 - AC-20260803T000000-code-modularity-convention-1: CONVENTIONS.md 에 code-modularity
   임계·트리거 등재
+- AC-20260805T105500-phaseA-state-intake-1 (후속 Phase A — TASK §2.2): 모듈-스코프 공유 가변
+  `let _dqaDrag`·`let _sidebarCatchupTimer` 가 `state.dqaDrag`·`state.sidebarCatchupTimer` 로
+  편입되고 bare 식별자 잔존 0 + 계약 가드 `tests/verify_state_intake.mjs` PASS + 전 mjs 하네스
+  회귀 0 + POST-DEPLOY PB-0008(사이드바 DnD·catchup 라이브 동작)
 
 ## 12. Observability
 - cycle 별 라인 수 감소 실측 (TASK.md §6 Done 에 기록)
