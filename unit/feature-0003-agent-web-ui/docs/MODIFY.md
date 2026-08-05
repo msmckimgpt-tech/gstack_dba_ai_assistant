@@ -2217,3 +2217,12 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 시나리오: 전 블록 DOM 이벤트 경유 전환(kebab·#openProfileBtn·#closeProfileBtn) + async 팝업 클릭→wait_for→관측 3단 + A_notify_gating 은 verify_notify_gating.mjs 이관.
 - 검증: mjs 40/40 green · 시나리오 실 Windows Chrome 20스텝 전건 OK (TEST.md Run-20260805T1042).
 - 근거: feature-0038 REPORT §8 후속 후보 — 사용자 resume 지시(2026-08-05). 적대 패널 MAJOR 1·MINOR 5·NIT 2 전건 흡수(REV-20260805T104213-harness-repair).
+
+## CHG-20260805T192000 판정 배지 PB-0008 라이브 실측 기록 (doc-only)
+
+- **무엇:** `docs/test-runs.d/REV-20260805T190000-verdict-badge.md` 에 Windows-browser 실측 Run
+  (PASS 4항목) + 증적 스크린샷 1장 추가. 코드 변경 없음.
+- **왜:** 해당 REV 의 시각 검증은 정적 자산이 web 이미지에 baked 되는 구조상 배포 후로 미뤄져
+  있었다. 배포본 `2a1089eb` 에서 실측해 그 잔여를 닫는다.
+- **결과:** stage 1/0 라벨 분기, 역할 칩과의 시각 구분, 판정 없는 노드의 완전 미표시(빈 요소 0)
+  전부 실화면 확인.

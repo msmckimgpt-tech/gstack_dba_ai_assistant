@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260805T192000-verdict-badge-postdeploy — 판정 배지 PB-0008 라이브 실측 (doc-only)
+
+선행 cycle(feature-0036 PR #1158)의 시각 검증은 정적 자산이 web 이미지에 baked 되는 구조상 배포
+후로 미뤄져 있었다. 배포본 `2a1089eb` 에서 실측해 그 잔여를 닫는다.
+
+- [x] 판정 있는 노드(stage 1)에 배지 + `판정 근거` 렌더 — 실화면 + 증적 스크린샷
+- [x] 역할 칩(채움)과 판정 배지(--tag-*) 시각 구분 확인
+- [x] stage 분기 실측 — stage 1 "표본 통계와 어긋남" / stage 0 "구조와 어긋남"·"구조와 모순 없음"
+- [x] 판정 없는 노드에서 완전 미표시(빈 `<p>` 0개) + 나머지 문단 회귀 없음
+- [x] test-runs.d fragment 에 Run(PASS) append
+
 ## TASK-20260804T0454-prompt-autogen-wiring — 사용자별(개인·계정·역할) 시스템 프롬프트 자동 생성의 끊긴 배선 전역 점검·복구 (Major §12.3 — 답변 후 큐레이션에 외부 LLM 1회 추가 + 라이브 고아행 정리)
 
 - **사용자 요청(`/_template:entry`)**: "서비스 내 각 사용자 별 시스템 프롬프트 자동 생성에 대한

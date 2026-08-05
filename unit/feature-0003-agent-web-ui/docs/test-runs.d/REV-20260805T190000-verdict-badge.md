@@ -22,3 +22,21 @@
   - 조건부 렌더가 `res.verdict && V[res.verdict.verdict]` 단일 게이트라, 필드 부재 시 기존 화면과
     byte-동치(추가 노드 0).
 - Pass/Fail: **PASS(코드/유닛 범위)** — 라이브 시각 실측은 배포 후 잔여. Runner: AI.
+
+- **PB-0008 Windows-browser 라이브 실측 — PASS** (Environment: Windows-browser, 2026-08-05, 실 Windows
+  Chrome via `bin/win-browser.py` relay, 배포본 `2a1089eb`, `https://localhost/admin` 로그인 세션):
+  1. **판정 있는 노드에 배지 + 근거** — `mysql-ddae8975d793:log_v2.tf_log_09_league_result`(stage 1)에서
+     `⚠ 표본 통계와 어긋남` 배지 + `판정 근거 — LeaguePoint_New 최댓값이 1244로 분석에서 명시한
+     '0~1238 범위' 클레임과 어긋납니다.` 렌더 확인. tooltip = "표본 통계와 대조 · 증거 수집 단계 1 ·
+     2026-08-05 18:48". 증적: `evidence/verdict-badge-stage1-live.png`.
+  2. **역할 칩과 시각 구분** — 같은 박스에서 역할 칩(`📜 로그·이력`, 채움 #E69F00)과 판정 배지
+     (`--tag-danger-*` 연한 배경 + 진한 글자)가 명확히 구분됨(스크린샷). 적대 패널이 지적한
+     "같은 색·같은 모양 두 배지" 상태가 해소된 것을 실화면에서 확인.
+  3. **stage 분기** — `mssql-ee7d238cd884:masangsoftweb.masangsoft_documents`(stage 0)에서
+     `⚠ 구조와 어긋남` + tooltip "표본 없이 구조만 대조(컬럼명·타입·행수 추정) · 증거 수집 단계 0".
+     `masangsoftweb.NX_PLAY_LOG`(supported·stage 0)는 `구조와 모순 없음`. 라벨이 대조 기준을
+     구분해 말하는 것을 실측(ADR-0036-10 의 핵심 요구).
+  4. **판정 없는 노드** — `masangsoftweb.Creator_Sponsorship`(분석 있음·판정 없음)에서 판정 배지 0개,
+     `AI 표본 대조 판정` 라벨 없음, `판정 근거` 없음, **빈 `<p>` 0개**, 나머지 5개 문단(역할·요약·
+     관계·활용·주의) 정상 렌더 — 회귀 없음.
+- Pass/Fail: **PASS** (실 Windows 브라우저 4항목 실측 + 스크린샷). Runner: AI.
