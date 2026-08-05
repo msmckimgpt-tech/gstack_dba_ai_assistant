@@ -18,7 +18,9 @@ function ok(name, cond) {
   else { failed++; console.log(`  FAIL  ${name}`); }
 }
 
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  // ITEM-P5b B1: 대화 목록 렌더·날짜트리·seed 계열이 app/sidebar.js 로 이동 — 합본 검사.
+  + readFileSync(join(STATIC, "app/sidebar.js"), "utf8");
 // 패널 MINOR 흡수: B1~B3 추출이 코드를 옮길 목적지(app/*.js 전수)가 정확히 회귀 발생 지점 —
 // 하드코딩 2파일이 아니라 디렉토리 전수를 스캔한다(새 모듈 추가 시 자동 커버).
 const appModules = readdirSync(join(STATIC, "app")).filter((n) => n.endsWith(".js"))
