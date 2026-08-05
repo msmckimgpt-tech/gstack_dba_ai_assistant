@@ -17,7 +17,9 @@ import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  // ITEM-P5b B1: 대화 목록 렌더·날짜트리·seed 계열이 app/sidebar.js 로 이동 — 합본 검사.
+  + readFileSync(join(STATIC, "app/sidebar.js"), "utf8");
 
 let passed = 0, failed = 0;
 function ok(name, cond) {

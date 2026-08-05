@@ -148,3 +148,17 @@ source_of_truth: true
   sidebar.js stale 차단 서술 현행화. 흡수 후 가드 18/18 PASS + ESM 문법 PASS.
 - 관찰(기록만): verify_*.mjs 전체가 CI(pytest 전용) 밖 — 본 가드도 동일(기존 조건과 같음,
   feature-0003 REVIEW 의 "mjs CI 배선 검토" 후속 후보에 합류).
+
+## REV-20260805T115500-phaseB1-sidebar [SUBAGENT:frontend-split] — B1 적대 패널: MAJOR 1·MINOR 1 흡수 후 PASS
+
+- Trigger: code change (byte-동치 추출) — 렌즈 5축(순환 import TDZ·이동 누락/중복·export 계약·
+  하네스 정합·실 로드).
+- 패널 실측 확인(청정 축): sidebar.js top-level 문의 app.js import 바인딩 참조 **0**(AST 전수)
+  + **실 ESM 로드 검증**(실 index.html DOM + jsdom 글로벌에서 모듈 그래프 evaluate — LOAD OK,
+  순환 초기화 무사, renderConversationList() 실호출 empty-state 렌더) · byte-parity 독립 재검증
+  IDENTICAL · 합본 중복 선언명 0(extractFn 오포착 불가) · 신규 export 11건 전부 실사용.
+- 흡수: **[MAJOR]** headless verify_share_bar_layout.py 가 dated evidence
+  (share-bar-layout-before-20260727.png)를 in-place 재촬영 → 워킹트리 오염 적발 — git restore
+  로 복원·커밋 제외(근본 처방 = 하네스 출력 경로 분리, 후속 후보로 기록) · **[MINOR]** app.js
+  의 dead 역-import `_saveCollapsedGroups` 제거(사용처 0 — "필요한 전부만" 계약).
+- 흡수 후: 문법 PASS · make test RC=0(FAILED/ERROR 0).

@@ -171,3 +171,20 @@ source_of_truth: true
   (bare 재생/치환 누락 양방향 회귀 검출, 15 케이스).
 - 목적: B1(renderConversationList→sidebar.js)·이후 B2/B3 추출의 차단 해소 — 도메인 경계를
   넘는 양방향 재할당 결합 2건이 이것으로 소멸(실측 매트릭스는 TASK §2.2).
+
+## CHG-20260805T114000-phaseB1-sidebar 사이드바 도메인 byte-동치 이동 (Phase B1 — TASK §2.2)
+
+- `app.js` → `app/sidebar.js`: renderConversationList(522줄)·_buildOwnDateTree·_ymdKey·
+  _isAggregateGroupKey·_seedDateGroupsCollapsedOnce·_seedAggregateGroupsCollapsedOnce·
+  _saveCollapsedGroups·_scheduleSidebarCatchup·_maybeSyncConversationListUnread +
+  SEEDED_AGG_LS_KEY·SIDEBAR_UNREAD_SYNC_MS·let 3(_seededAggKeys/_dateGroupsSeededThisLoad/
+  _lastSidebarUnreadSyncAt)·_seededAggKeys 복원 top-level. 본문 무수정(byte-parity IDENTICAL).
+- 배선: app.js 잔류 심볼 11건 export 화(COLLAPSED_GROUPS_LS_KEY·OTHERS_GROUP_KEY·
+  conversationListEl·selectConversation·openConversationItemMenu·closeConversationItemMenu·
+  renderConversationHeader·renderConversationBulkBar·isOwnConversation·isGroupConversation·
+  _switchToPendingConversationContext) + sidebar→app import 12건 추가/2건 제거(자체정의화),
+  app→sidebar import 4건 추가. 전부 `?v=dev` specifier.
+- `_seedOthersCollapsedOnce`(+top-level 즉시 호출)는 state 접촉 top-level 이라 잔류(TDZ —
+  순환 import 초기화 순서).
+- 소스-추출 하네스 3건 합본 갱신(date_group_collapse·new_conv_dedup·state_intake).
+- app.js 10,399줄 (목표 ≤~3,000 을 향한 B1 단계 — B2 composer·B3 progress 후속).

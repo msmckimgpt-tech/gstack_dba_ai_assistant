@@ -526,3 +526,30 @@ source_of_truth: true
 - **POST-DEPLOY 계획**: 실 Windows Chrome — ① 사이드바 대화 행 드래그 → 폴더 드롭(이동) ②
   폴더 헤더 드래그 → 순서 변경 ③ '새 폴더' 버튼 root 드롭존(폴더에서 빼기) ④ 새 메시지 도착
   시 사이드바 unread catch-up 갱신(디바운스) ⑤ 로그아웃 시 타이머 정리(콘솔 에러 0) + 스크린샷.
+
+### Run — 20260805T1112 Phase A POST-DEPLOY PB-0008 (Environment: Windows-browser) — PASS
+- 배포: PR #1147 머지(801b379f) → `sudo -E bin/deploy-web.sh --web-only` RC=0(soak 통과) →
+  web-a/web-b GIT_COMMIT **둘 다 801b379f** 실측(서빙 주체 판정 — 파이프 exit 아님).
+- 실 Windows Chrome 150(relay), `https://localhost`(Caddy). 12스텝 전건 OK:
+  ① 대화 행 dragstart 합성 → `is-dragging` 부착(state.dqaDrag 세터 경로) ② `#newFolderBtn`
+  dragover → `folder-drop-hover` + title "여기로 놓으면 폴더에서 빼기" — **initialize 측 리더가
+  `state.dqaDrag.type` 을 읽어 분기 = 크로스 사이트 state 공유 라이브 실증(Phase A 핵심)**
+  ③ dragleave → 해제·title 원복 ④ dragend → `is-dragging` 해제 + **해제 후 dragover 가 hover
+  미발생(`if (!state.dqaDrag) return;` 가드 실증)** ⑤ window error 후크 수집 **0건**.
+- evidence: test-runs.d/evidence/20260805-phaseA-middrag-dropzone.png (mid-drag 드롭존 하이라이트).
+- 라이브 무접촉: drop(폴더 이동 API)은 미실행 — dragover/leave/end 만으로 상태 왕복 실증.
+
+## 20260805T1140-phaseB1-sidebar — renderConversationList 등 사이드바 도메인 → app/sidebar.js (byte-동치)
+
+### Run — 20260805T1140 B1 기계 검증 (Environment: CLI/node) — PASS
+- 이동: 함수 9(renderConversationList 522줄 포함)+상수 2+let 3+복원 top-level 1 — app.js
+  11,119→10,399줄(-720), sidebar.js 383→1,138줄.
+- **byte-parity 전건 IDENTICAL** (이동 세그먼트 13건 — 함수 9·상수/let/복원 4).
+- **acorn-globals 미해소 자유 식별자: sidebar.js 0 · app.js 4(전부 baseline 동일 — CSS·
+  DOMException·Uint8Array 브라우저 전역 + enhanceMermaidBlocks mermaid-render classic 전역)
+  = 회귀 0**.
+- TDZ 안전성: 이동한 top-level 실행 코드(_seededAggKeys 복원 try)는 localStorage+이동 상수만
+  참조(app.js 바인딩 무접촉). state 를 만지는 `_seedOthersCollapsedOnce`(+즉시 호출)는 의도적
+  **app.js 잔류**(순환 import 초기화 순서상 sidebar top-level 이 app.js 보다 먼저 실행).
+- 전수 mjs 41/41 green(소스-추출 하네스 3건 합본 갱신: date_group_collapse·new_conv_dedup·
+  state_intake) + headless chromium 3종 46케이스 PASS + make test RC=0.
