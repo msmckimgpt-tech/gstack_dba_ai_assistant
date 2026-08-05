@@ -210,3 +210,12 @@ source_of_truth: true
   #5 는 shared/ 추출 완성(선행 충족) 후에도 6주간 배포 스파인 안정화 실적(0014/0020/0039)이
   분리 리스크를 상회 → 불채택. 정본 ADR-20260805T153000. 코드 변경은 주석 라벨 1파일뿐
   (py_compile PASS·런타임 0) — 패널은 [SKIPPED] + 본 근거 기록으로 갈음.
+
+## REV-20260805T160500-p4-residual-verify [SKIPPED:non-policy-doc] — P3-제외 100% 검증 실증 기록 (doc-only)
+
+- 사용자 질문("rotation 제외 시 로드맵 100% 완수?")의 검증 결과: done 항목들의 유보 3건을 전수
+  실측 — ① wiki 백필은 **기완료**(미러 카드 74/74 sources 보유 — 최초 실측의 head-12 절단
+  false-negative 정정, 비대상 34개 범위를 wiki/README §5.1 명문화) ② skeleton 라벨(0005/0008/0009)
+  **기해소**(실기능화·cross-cut 기명시 — 6월 판정 stale) ③ pb0008 통합 **불채택**(unit docs
+  20파일 evidence 참조 파손 방지 — 현행 관행으로 종결). ROADMAP 문면에 실증 반영.
+- 결론: **P3(rotation, 사용자/외부) 제외 로드맵 100% 완수 확정.** 코드 변경 0.

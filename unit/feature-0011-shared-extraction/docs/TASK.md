@@ -43,6 +43,7 @@ source_of_truth: true
         → 4개 alias shim(config·db·conn_health·datasources) 전부 제거, shared/ 추출 구조 완성
 - [x] TASK-0011-10 P5a Step 6 — **불채택 종결**(단일 이미지 유지): 분리 전제(import 얽힘·경계 불명)는 shared/ 추출+CODEBASE_MAP §7 로 해소, 이후 배포 스파인(0014/0020/0039)이 단일 이미지 전제로 안정화 — ADR-20260805T153000
 - [x] TASK-0011-11 동반(저위험) — #4 GDPR gap CODEBASE_MAP 명시 + CODEBASE_MAP stale 정정(feature-0007~0011 추가·shared/ 6모듈·§7 Known Gaps 신설) [완료, CHG-0008]
+- [x] TASK-0011-12 P3-제외 100% 검증 — done 항목 유보 3건 전수 실측(wiki 백필 기완료 실증·skeleton 기해소·pb0008 통합 불채택) + wiki/README §5.1 대상 범위 명문화 + ROADMAP 실증 반영 (CHG-20260805T160500)
 
 ## 4. In Progress
 - 없음 (Step 5b=config 마이그·shim제거 완료; Step 5c=db 마이그·shim제거 부터 별도 cycle/PR)

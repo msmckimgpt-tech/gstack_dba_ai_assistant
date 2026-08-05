@@ -90,12 +90,15 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
   2. ai/claude/META-0004-secret-cleanup worktree + PR(§13.2.7) + §12 사람 최종 승인 + Critical 이중 승인.
   3. .gitignore 글롭(.env*.bak*, *.bak-task*) + pre-commit/ssot-lint 'tracked .env*.bak* 0건' 가드.
   4. history rewrite(filter-repo)는 원격 브랜치+worktree+머지PR 영향 runbook 동반 별도 작업(게이트 아님). rotation 이 1차 방어선.
-  5. 비파괴 clutter: legacy worktrees/ 삭제, pb0008 1곳 통합, .template-backups prune.
+  5. 비파괴 clutter: legacy worktrees/ 삭제(기해소 — tracked 0 실측 2026-08-05), .template-backups
+     prune(기해소 — tracked 0), ~~pb0008 1곳 통합~~ → **불채택(2026-08-05)**: unit docs 20파일이
+     `artifacts/pb0008-*` 를 evidence 경로로 참조 — 이동 시 참조 전건 파손. 현행 관행(정본 evidence =
+     `unit/<id>/docs/test-runs.d/evidence/`, artifacts = 임시 스크린샷 캐시)으로 정합 종결.
 - **gate**: rotation 폐기증빙 + `git ls-files | grep -iE '\.env\..*(bak|secret)|\.bak-task'` → 0건 + `git log --all` 스캔 + GitHub Push Protection + check #9 + §12 승인 기록
 - **rm-only 금지** — 이미 push 된 노출은 rm 으로 제거 불가.
 
 ### ITEM-P4 · wiki 참조-only 체계화
-- **status**: done (핵심 — wiki/README §5.1 에 SSOT 계약 연결 + 동기화 메커니즘 명시. sot:false 이미 양호[lint 확인, Log.md 만 예외]. 85파일 mirrors frontmatter 백필·stale 카드 라벨은 /_dqa:doc_sync 점진 위임)
+- **status**: done (핵심 — wiki/README §5.1 에 SSOT 계약 연결 + 동기화 메커니즘 명시. sot:false 이미 양호[lint 확인, Log.md 만 예외]. 85파일 mirrors frontmatter 백필·stale 카드 라벨은 /_dqa:doc_sync 점진 위임 → **2026-08-05 실증: 백필 완료** — 미러 성격 카드 74개 전원 sources 보유, 부재 34개는 전부 자생·구조 파일[비대상 — wiki/README §5.1 대상 범위 명문화]. stale 라벨은 maturity 필드로 기부여)
 - **feature_id**: META-0003-ssot-consolidation
 - **risk_grade**: Major
 - **depends_on**: [ITEM-P1]
@@ -106,7 +109,9 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 - **status**: done (2026-08-05 — 실행 홈: feature-0011-shared-extraction. Step 1~5: shared/ 5모듈
   추출(model_catalog·config·db·conn_health·datasources)·alias shim 전부 제거·소비처 429ref 마이그레이션,
   2026-06-25 완성(PR #403/#407/#408 외). 동반: GDPR gap CODEBASE_MAP §7 등재. 종결(2026-08-05):
-  Step 6 Dockerfile 분리 **불채택**·미결정 #4 보존 확정·env 키 정본 — ADR-20260805T153000-p5a-closeout)
+  Step 6 Dockerfile 분리 **불채택**·미결정 #4 보존 확정·env 키 정본 — ADR-20260805T153000-p5a-closeout.
+  skeleton 라벨(0005/0008/0009)은 기해소 실증(2026-08-05): 0008=win-browser 실기능·0009=CODEBASE_MAP
+  cross-cut 명시 완료·0005=실코드(mcp_tests.py) — 6월 RESEARCH 의 skeleton 판정이 이후 개발로 stale)
 - **feature_id**: (코드 단위 별도 feature-NNNN cycle)
 - **risk_grade**: Major
 - **depends_on**: [ITEM-P1]
