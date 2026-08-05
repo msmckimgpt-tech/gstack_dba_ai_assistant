@@ -36,7 +36,9 @@ function ok(name, cond) {
 const html = readFileSync(join(STATIC, "index.html"), "utf8");
 const css = /* feature-0038 Cycle 1: styles.css → css/ 7분할 — 순차 concat(byte-동치) */ ["base","shell","chat","drawers","admin","profile","search-audit"]
   .map((n) => readFileSync(join(STATIC, `css/${n}.css`), "utf8")).join("");
-const appJs = readFileSync(join(STATIC, "app.js"), "utf8");
+const appJs = readFileSync(join(STATIC, "app.js"), "utf8")
+  // ITEM-P5b B2: composer/첨부/전송/mention 도메인이 app/composer.js 로 이동 — 합본 검사.
+  + readFileSync(join(STATIC, "app/composer.js"), "utf8");
 
 // ── 1. 정적: index.html 4-surface 마크업 + 캐시버스터 bump ───────────────
 ok("[1] index.html: 컴포저 배너 #llmRestrictionBanner", /id=["']llmRestrictionBanner["']/.test(html));
@@ -69,7 +71,10 @@ ok("[3] app.js: 인라인 notice 는 restricted 일 때만", /state === "restric
 
 // ── 4. 동작: 함수 추출 + jsdom DOM 토글 ─────────────────────────────────
 const startMarker = "let _llmHealthPollTimer = null;";
-const endMarker = "// TASK-0041: /api/ask_result 를 long-poll";
+// B2 후속: 구 endMarker(attachAndWaitForResult lead 주석)가 composer.js 로 이동 — 대상 함수들
+// (applyLlmProviderStatus·renderLlmRestrictionInlineNotice·pollLlmHealth·startLlmHealthPolling)은
+// 전부 app.js 잔류이므로, 블록 끝을 그 직후의 잔류 앵커(_sha256HexOfFile lead 주석)로 재고정.
+const endMarker = "// REQ-20260713-attach-user-version: 파일 내용의 SHA-256";
 const si = appJs.indexOf(startMarker);
 const ei = appJs.indexOf(endMarker);
 ok("[4] app.js: surface 함수 블록 추출 가능", si >= 0 && ei > si);
@@ -94,7 +99,8 @@ const dom = new JSDOM(`<!DOCTYPE html><html><body>
 const { window } = dom;
 const document = window.document;
 
-const block = appJs.slice(si, ei);
+// B2 후속: 블록 내 함수가 export 화될 수 있다 — new Function 주입 전 선언 export 접두만 제거.
+const block = appJs.slice(si, ei).replace(/^export (?=(async )?(function|const|let|var))/gm, "");
 const factory = new Function(
   "window", "document", "apiFetch",
   block + "\nreturn { applyLlmProviderStatus, renderLlmRestrictionInlineNotice, _llmKindLabel, _llmTooltipText };",

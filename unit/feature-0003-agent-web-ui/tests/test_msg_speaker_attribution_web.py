@@ -296,7 +296,8 @@ def _app_js() -> str:
     #   분리(byte-동치 이동) — app.js 와 분리 모듈 합본으로 검사한다.
     base = os.path.join(os.path.dirname(__file__), "..", "src", "static")
     out = []
-    for rel in ("app.js", os.path.join("app", "messages.js")):
+    # ITEM-P5b B2: 전송/발신자 각인(sendPrompt·_selfSenderMeta)은 app/composer.js 로 이동 — 합본에 포함.
+    for rel in ("app.js", os.path.join("app", "messages.js"), os.path.join("app", "composer.js")):
         with open(os.path.join(base, rel), encoding="utf-8") as fh:
             out.append(fh.read())
     return "".join(out)
@@ -309,7 +310,9 @@ def test_assistant_avatar_resolved_per_message_not_from_composer_chip():
     말풍선에 재사용했다. 그래서 제품 칩을 바꾸는 순간 과거 답변이 전부 새 제품으로 보였다.
     """
     src = _app_js()
-    render = src[src.index("\nfunction renderMessages("):]
+    # B2: renderMessages 는 export 화(`export function`)되어 개행-앵커가 미매칭 — export-prefix 내성 마커
+    # (합본 내 "function renderMessages(" 유일 출현 — 호출부는 "function " 접두 없음).
+    render = src[src.index("function renderMessages("):]
     render = render[:render.index("\nfunction ", 10)]
     # 메시지별 해석기를 통해서만 아바타 인자를 만든다.
     assert "_assistantSpeakerFor(message.meta" in render
@@ -338,7 +341,9 @@ def test_user_speaker_uses_sender_not_conversation_ownership():
     **다르다는 것을 아는** 상태에서 owner 이름을 붙이는 확정적 오귀속이 된다. id 로 구분한다.
     """
     src = _app_js()
-    render = src[src.index("\nfunction renderMessages("):]
+    # B2: renderMessages 는 export 화(`export function`)되어 개행-앵커가 미매칭 — export-prefix 내성 마커
+    # (합본 내 "function renderMessages(" 유일 출현 — 호출부는 "function " 접두 없음).
+    render = src[src.index("function renderMessages("):]
     render = render[:render.index("\nfunction ", 10)]
     block = render[render.index('let speaker = "Assistant";'):][:1200]
     assert "else if (senderId)" in block
