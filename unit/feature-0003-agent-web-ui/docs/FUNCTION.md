@@ -2467,3 +2467,5 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 - AC-20260805T104213-harness-repair-2: settings-notif 시나리오가 실 Windows 브라우저에서
   전 스텝 OK + 전 관측 필드 기대 형상 (kebab 3항목 · 공유/설정 팝업 · 프로필 계정 병합).
 - AC-20260805T104213-harness-repair-3: `src/static/**` 접촉 0 (tests-only — git diff 로 검증).
+### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0806, 2026-08-05)
+- 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-08-05 블록 3항목 추가(이어받은 대화의 첨부 변경 부재-단정 해소 · 관계도 노드 상세 판정 배지 신설 · 분석문 사실성 검증의 무한 재판정 차단). 기능 계약·렌더러 동작 변경 없음(데이터 전용).

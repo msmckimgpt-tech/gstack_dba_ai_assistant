@@ -2371,3 +2371,6 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   high-water 재알림 억제, 9/9 PASS (mentions.js 실물 파서 경유).
 - 본 cycle 은 `src/static/**` 무접촉(tests-only)이라 §15.4.1 check #13 비대상이나, 시나리오
   자체를 재작성했으므로 실브라우저 완주로 시나리오의 검증 능력을 실증했다.
+## TASK-20260806T010301-doc-sync-rn-0806 — 릴리즈노트 신규 2026-08-05 블록 prepend (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · 구조검증(releases 42→43·기존 블록 전량 보존·type/area enum 위반 0) · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0).
+- `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0). 구조: releases 42→43, 기존 블록 전량 보존, type/area enum 위반 0, 내부용어 누출 0. 렌더러·CSS 무변경이므로 PB-0008 신규 실측 불요(데이터 블록 추가는 기존 그룹 렌더 경로 재사용).

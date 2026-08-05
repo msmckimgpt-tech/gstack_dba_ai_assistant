@@ -2638,3 +2638,11 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 시각 검증 Run 기록 + 증적 이미지 추가만으로, 코드·정책·계약 변경이 없다(§18.8.1 docs-only 경량
 경로). 검증 대상이던 코드 자체는 선행 cycle 에서 ux · backend-security 적대 패널을 거쳤다
 (`unit/feature-0036-analysis-verification/docs/REVIEW.md` REV-20260805T193000 / T193500).
+## REV-20260806T010301-doc-sync-rn-0806 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 2026-08-05(3항목) 블록 prepend doc_sync 정합
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 34/0 동일 — 메모리에 기록된 pre-existing 스크롤 FAIL 1건은 본 worktree 에서 미재현, feature-0038 css 분할 완결로 해소된 것으로 관측) · 구조검증(generated=2026-08-05 · releases[0]=2026-08-05 3항목 · releases[1]=08-04 3항목 · releases[2]=08-03 7항목 보존 · type/area enum 위반 0) · 내부용어 누출 스캔 0.
+- 적대검증(ULTRACODE `wf_d0b1fd46`, 축-스코프 refute 렌즈): RN 축 `accurate=false` + 결함 4건. **오케스트레이터가 정본으로 독립 재검증해 전건 실재 확인 후 교정** — ① old_string 이 끝 빈 줄 포함형이라 디스크 count=0(적용 실패) → 바이트 확정형으로 교체 ② "'판정 근거' 는 어긋난 경우에만 붙는다" = **사실 오류**(`graph-ctxmenu.js:3619-3626` 은 `if (res.verdict.reason)` 단일 게이트로 verdict 종류 무관하게 렌더하고 `analysis_verify.py` `normalize_verdict` 가 근거 없는 응답을 기각하므로 저장된 모든 판정에 근거가 있다 → `모순 없음`·`통계가 다루지 않음` 배지에도 근거 줄이 항상 뜬다. 원안대로면 사용자가 supported 노드의 근거 줄을 경고로 오독) → summary·item detail 양쪽 교정 ③ 순환 차단 효과를 배포 후 실측(25분 6콜/6판정·낭비 0)으로 교체 ④ 검증자 제공 교정 전문이 설명 prose 를 fence 로 감싸 반환돼 1차 적용이 JS 문법을 깼고(`node --check` SyntaxError), revert 후 fence 추출로 재적용해 PASS 확인(자동 적용의 정본 검증 필요성 재확인).
+- 포함/제외 판정 근거: 사용자향 3항목. feature-0002 첨부 봉인은 원장 status `fixed:deployed:unverified-live` 이나 **배포 게이트는 해소**(PR#1155 merge `70df13a3` → `make deploy-web` 전체 스코프, 4서비스 배포본 런타임 실증 신규 심볼 6종 적재)이고 잔여는 라이브 대화 시나리오 재확인이라 사용자 표면은 이미 라이브 → 포함(배포 미완이면 보수 유보였다). feature-0038 Phase A~B3 = byte-동치 무동작변경 · `a39aaf84` = tests-only · feature-0011 P5a 종결 = 거버넌스 결정 → 기술 색인만·RN 제외.
+- **cache-buster**: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime; `inject_asset_stamp.py` + `deploy-web.sh` 가 배포 시 content-hash 주입, 수동 bump 는 무효 churn + 게이트 무력화).
+- **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
+- 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
+- Timestamp: 2026-08-06T01:03:01+09:00

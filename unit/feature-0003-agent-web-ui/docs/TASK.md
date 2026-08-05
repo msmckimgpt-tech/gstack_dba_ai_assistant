@@ -8020,3 +8020,10 @@ ESM 전환으로 새로 부러진 것 + jsdom 환경 소실이 §8 에 없던 11
 약화를 별도 축으로 적대 검증(C1 strict 복원·정확 카운트 핀·블록-내 매칭 등으로 교정).
 **G4**: 경계 = 하네스 vs 라이브 코드 — `src/static` 접촉 0 을 git status 로 확인(tests-only).
 **G5/G6**: 해당 없음(권한·리소스·스키마 무변경).
+## 20260806T010301-doc-sync-rn-0806 — 릴리즈노트 신규 2026-08-05 블록 3항목 prepend (doc_sync maintenance, 비-정책 doc-only, 무인 cron)
+- [x] `static/release-notes-data.js` 최상단에 신규 "2026-08-05" 블록(3항목: fixed/work 1 · new/admin 1 · fixed/admin 1) prepend + `generated` "2026-08-04"→"2026-08-05". 블록 date = 델타 머지 git-date(전 커밋 2026-08-05) 규약. 기존 42 블록 전량 보존(releases 42→43).
+- [x] 항목 귀속(정본 교차확인): ① 이어받은 대화의 첨부 변경 부재-단정 봉인 = `1612d1ac`+`ca4d9584`(배포 PR#1155 merge `70df13a3`, 배포 완료 기록 `bda27c8d`, FRICTION_LEDGER `FR-attachment-change-false-absence` 실측 "v2 갱신 8·신규 4") ② 노드 상세 판정 배지 신설 = `15d53429`(배포 `2a1089eb` + PB-0008 실 Windows 브라우저 4항목 PASS `bf578bfb`) ③ 판정 무한 순환 차단 = `73184bf8`(배포 `8b46bdec`, 시간당 148→~14콜 실측).
+- [x] 제외(정본 근거): feature-0038 Phase A~B3 = byte-동치 이동으로 동작·시각 무변경(REPORT 에 체감/성능 실측 0건) · `a39aaf84` = tests-only(src 접촉 0) · feature-0011 P5a 종결 = 파일 헤더 주석 + env 문서(거버넌스 결정, 라이브 동작 무변경) · `803a5ecd` meta-0003 = doc-only · `8b0eefa5` template v3.44.1 = 개발자향.
+- [x] 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(baseline 도 34/0 — 회귀 0) · 내부용어 누출 정규식 스캔 0(feature-id·ADR·PB-0008·모듈/함수명·테이블명·PR#·commit sha) · 화면 문구는 실코드 대조(`admin.html:924` 범례 `AI 표본 대조 판정`·`배지가 없으면 아직 판정 전`, `graph/graph-ctxmenu.js:3604-3626` V map·`판정 근거`).
+- [x] 적대검증 교정 2건 반영: '판정 근거' 는 **어긋난 경우에만** 이 아니라 세 판정 모두에 항상 함께 뜬다(`graph-ctxmenu.js:3619-3626` `if (res.verdict.reason)` 단일 게이트 + `analysis_verify.py` `normalize_verdict` 가 근거 없는 응답을 기각) → summary·detail 문면 교정 · 순환 차단 효과 서술을 배포 후 실측(25분 6콜/6판정, 낭비 0)으로 교체.
+- [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(ITEM-09 빌드 자동주입 · `index.html`/`admin.html` 편집 0).

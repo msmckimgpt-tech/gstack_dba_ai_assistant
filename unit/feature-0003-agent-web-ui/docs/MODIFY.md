@@ -2226,3 +2226,12 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   있었다. 배포본 `2a1089eb` 에서 실측해 그 잔여를 닫는다.
 - **결과:** stage 1/0 라벨 분기, 역할 칩과의 시각 구분, 판정 없는 노드의 완전 미표시(빈 요소 0)
   전부 실화면 확인.
+## CHG-20260806T010301-doc-sync-rn-0806 (2026-08-05 블록) 릴리즈노트 콘텐츠 — 신규 1블록 3항목 prepend(첨부 변경 부재-단정 봉인·노드 상세 판정 배지·판정 순환 차단)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-08-05" 블록(3 items: fixed/work 1 · new/admin 1 · fixed/admin 1) prepend + `generated` "2026-08-04"→"2026-08-05". 기존 42 블록 전량 보존(releases 42→43). 08-05 블록이 아직 없었으므로 append 아닌 신규 prepend(선례 규약: 그 배포일 블록이 이미 있으면 append).
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수명·테이블명·내부 설정키·ADR 번호·PB-0008 누출 **0**(정규식 기계 검증). UI 라벨은 실코드 대조(`admin.html:924` 범례 · `graph/graph-ctxmenu.js:3604-3626` 배지/근거 · 기존 릴리즈노트 `분석문 사실성 검증`·`내 계정에서 fork` 선례).
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일) · 블록 순서·항목 enum(type/area)·기존 블록 보존 확인 · 내부용어 누출 0.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-06T01:03:01+09:00
