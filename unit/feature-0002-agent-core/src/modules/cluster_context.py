@@ -106,6 +106,10 @@ def _matched_clusters(cur, user_message: str, scopes) -> list:
         "  AND o.semantic_cluster_label <> '' "
         "  AND length(o.table_name) >= %s "
         "  AND strpos(lower(%s), lower(o.table_name)) > 0 "
+        # ⚠ 정렬 없는 LIMIT 은 **어느 200행이 오는지 비결정적**이다. 테이블명 하나가 24개
+        #   eff-schema(DB 사본군 cc_data_main/cc_data_test/cc_dbrestore_*/cc_obt …)에 걸리는
+        #   라이브에서는 상한에 실제로 닿고, 그때 같은 질문이 매번 다른 근거를 받는다.
+        "ORDER BY o.datasource_key, o.object_key, o.semantic_cluster_label "
         "LIMIT %s",
         (list(scopes), _MIN_TABLE_NAME_LEN, user_message, _MATCH_ROW_CAP))
     seen = set()
@@ -144,11 +148,17 @@ def fetch_summaries(conn, user_message: str, scopes, limit: int) -> list:
         if not keys:
             return []
         cur.execute(
-            "SELECT label, summary, member_count, analyzed_count "
+            # schema_name 을 함께 읽는다 — 라벨은 datasource 안에서 유일하지 않다(라이브: `메일
+            #   시스템` 9개 스키마 · `길드 관리` 8개). 스키마를 빼고 렌더하면 서로 다른 DB 의
+            #   같은 이름 클러스터 요약이 구분 없이 나란히 실려, 모델이 한 DB 의 사실로 읽는다.
+            "SELECT label, summary, member_count, analyzed_count, schema_name "
             "FROM cluster_summaries "
             "WHERE (scope_key, schema_name, label) IN "
             "      (SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])) "
-            "ORDER BY analyzed_count DESC, member_count DESC, label "
+            # member_set_hash 를 최종 tie-breaker 로 — (label, member_count, analyzed_count) 가
+            #   완전 동률인 그룹이 라이브에 실재해(`일일 경험치 · dayexp` mc79/ac0 ×2) 그것 없이는
+            #   같은 질문이 매번 다른 행을 받는다.
+            "ORDER BY analyzed_count DESC, member_count DESC, label, member_set_hash "
             "LIMIT %s",
             ([k[0] for k in keys], [k[1] for k in keys], [k[2] for k in keys],
              max(1, int(limit))))
@@ -298,13 +308,22 @@ def render(rows, limit: int = _DEFAULT_LIMIT) -> str:
             analyzed_count = int(r[3] or 0)
         except (IndexError, TypeError, ValueError):
             continue
+        # 5번째 원소(schema_name)는 선택 — 없으면 기존 형태로 렌더한다(하위호환).
+        try:
+            schema = str(r[4] or "").strip()
+        except (IndexError, TypeError):
+            schema = ""
         if not label or not summary:
             continue
         if analyzed_count > 0:
             basis = f"멤버 {member_count}개 중 {analyzed_count}개 상세분석 근거"
         else:
             basis = f"멤버 {member_count}개 · 상세분석 근거 없음(이름·구조 기반 추정)"
-        out.append(f"- [{label}] ({basis}) {summary}")
+        # 스키마를 앞에 **따로** 붙인다 — 라벨 자체가 `_disambiguate_labels` 로 `" · "` 를 품기
+        #   때문에(`일일 경험치 · dayexp`) 같은 구분자로 이으면 스키마 경계가 소실된다.
+        #   5번째 원소가 없으면 기존 형태(하위호환).
+        head = f"[{schema}] {label}" if schema else f"[{label}]"
+        out.append(f"- {head} ({basis}) {summary}")
     return "\n".join(out)
 
 

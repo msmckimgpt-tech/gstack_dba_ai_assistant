@@ -23,8 +23,15 @@ _INSIGHT = (pathlib.Path(__file__).resolve().parents[1] / "src" / "modules" / "i
 
 
 class _Cur:
-    def __init__(self, pending=None, inputs=None, loaded=None, generated=None):
+    def __init__(self, pending=None, inputs=None, loaded=None, generated=None,
+                 live=None, live_routine=None):
         self.calls = []
+        # live / live_routine = 현재 살아있는 라벨을 **저장처별로** 나눠 준다. 클러스터링은 라벨을
+        #   kind 에 따라 다른 테이블에 역기록한다(table→rag_objects, routine→routine_objects).
+        #   두 축을 분리해야 "루틴으로만 이뤄진 클러스터"를 픽스처로 표현할 수 있다 — 하나로 뭉치면
+        #   "rag 만이 정본"이라는 잘못된 전제를 테스트가 그대로 복제한다(적대 패널 지적).
+        self._live = live
+        self._live_routine = live_routine
         # pending = 미생성분(partial index 경로), generated = 이미 만들어진 것의 재검사분
         self._pending = pending if pending is not None else [("ds1", "mydb", None)]
         self._generated = generated if generated is not None else []
@@ -45,6 +52,16 @@ class _Cur:
             self._last_all = self._generated
         elif "FROM domain_summaries" in sql:
             self._last = self._loaded
+        elif "FROM rag_objects" in sql:
+            # live_cluster_labels 가 읽는 현재 라벨. (object_key, schema_name, label) 형태이고
+            #   effective_schema(scope, object_key, schema) == schema 여야 채택된다.
+            scope = (params or ("ds1", "mydb", ""))[0]
+            schema = (params or ("ds1", "mydb", ""))[1]
+            labels = self._live if self._live is not None else [r[0] for r in self._inputs]
+            self._last_all = [(f"{scope}:{schema}.dbo.t{i}", "dbo", lab)
+                              for i, lab in enumerate(labels)]
+        elif "FROM routine_objects" in sql:
+            self._last_all = [(lab,) for lab in (self._live_routine or [])]
         elif "FROM cluster_summaries" in sql:
             self._last_all = self._inputs
         else:
@@ -410,3 +427,81 @@ def test_pass_is_recorded_even_when_all_counters_are_zero():
     gate = src[max(0, idx - 400):idx]
     assert "if _ds_rep:" in gate, "카운터 조건이 걸린 게이트는 0 인 tick 을 통째로 버린다"
     assert '"domain_synthesis_ran": 1' in src
+
+
+# ── 현재 유효성 필터 (2026-08-06 라벨 네임스페이스 cycle) ─────────────────────
+def test_dead_clusters_are_excluded_from_l3_inputs():
+    """이미 없어진 클러스터의 요약은 도메인 합성 재료에서 뺀다.
+
+    `cluster_summaries` 는 member_set_hash 별로 누적되므로 클러스터가 재구성돼도 옛 행이 남는다.
+    그것을 입력으로 쓰면 도메인 요약이 죽은 클러스터를 재료로 만들어지고, cluster_count/
+    member_count 가 부풀려진 채 `_domain_line` 으로 **사용자 답변 프롬프트에 그대로 실린다**.
+    라이브 실측(2026-08-06): `atum2_db_1` 은 90행(멤버 887) 중 현재 유효가 17행(멤버 196) —
+    81%가 죽은 클러스터였다."""
+    cur = _Cur(inputs=[("살아있음", "요약 A", 10, 5), ("사라짐", "요약 B", 99, 40)],
+               live=["살아있음"])
+    got = ds.cluster_inputs(cur, "ds1", "mydb")
+    assert [r[0] for r in got] == ["살아있음"]
+
+
+def test_all_labels_alive_keeps_everything():
+    """정합 상태에서는 아무것도 버리지 않는다(과잉 필터 방지)."""
+    cur = _Cur(inputs=[("A", "요약 A", 10, 5), ("B", "요약 B", 9, 4)])
+    assert len(ds.cluster_inputs(cur, "ds1", "mydb")) == 2
+
+
+def test_live_label_lookup_failure_skips_synthesis(monkeypatch):
+    """현재 라벨을 못 읽으면 **합성하지 않는다**(부풀려진 재료로 만드느니 건너뛴다).
+
+    요청은 남아 있으므로 다음 pass 가 재시도한다 — 판정 실패를 침묵으로 처리하는 feature-0036 의
+    계약과 같은 방향이다."""
+    monkeypatch.setattr(ds, "live_cluster_labels", lambda *a: None)
+    assert ds.cluster_inputs(_Cur(), "ds1", "mydb") == []
+
+
+def test_live_labels_join_uses_effective_schema():
+    """조인 키는 `effective_schema` 를 거쳐야 한다.
+
+    MSSQL 은 `rag_objects.schema_name` 이 리터럴 'dbo' 라 DB 차원이 소실된다 — 그대로 비교하면
+    한 건도 매칭되지 않아 **모든 요약이 죽은 것으로 판정**되고 L3 가 통째로 멈춘다."""
+    import inspect
+    src = inspect.getsource(ds.live_cluster_labels)
+    assert "effective_schema" in src
+    cur = _Cur(inputs=[("A", "요약", 5, 1)])
+    assert ds.live_cluster_labels(cur, "ds1", "mydb") == {"A"}
+    sql = [c[0] for c in cur.calls if "FROM rag_objects" in c[0]][0]
+    # SQL 은 후보만 좁힌다(정확 판정은 파이썬) — object_key 접두로 스키마 단위 선별.
+    assert "object_key LIKE" in sql and "datasource_key=%s" in sql
+
+
+def test_routine_only_clusters_count_as_alive():
+    """루틴(프로시저)으로만 이뤄진 클러스터도 살아있다.
+
+    라벨 역기록은 kind 로 갈린다 — 테이블은 `rag_objects`, 루틴은 `routine_objects`. rag 만 보면
+    그런 클러스터가 통째로 죽은 것으로 판정된다. 라이브 실측(2026-08-06): rag 만 보면 사망 933행
+    이지만 루틴을 합치면 **63행(3.4%)** 이고, 버려질 뻔한 933행 중 870행이 살아있는 루틴
+    클러스터였다(MSSQL 은 루틴이 압도적: `atum2_db_1` 루틴 865 vs 테이블 115)."""
+    cur = _Cur(inputs=[("테이블 묶음", "요약 A", 10, 5), ("펫 시스템", "프로시저 묶음", 17, 2)],
+               live=["테이블 묶음"], live_routine=["펫 시스템"])
+    got = ds.cluster_inputs(cur, "ds1", "mydb")
+    assert sorted(r[0] for r in got) == ["테이블 묶음", "펫 시스템"]
+
+
+def test_live_labels_union_both_member_stores():
+    cur = _Cur(inputs=[("A", "요약", 5, 1)], live=["A"], live_routine=["B"])
+    assert ds.live_cluster_labels(cur, "ds1", "mydb") == {"A", "B"}
+    tables = [c[0] for c in cur.calls if "FROM " in c[0]]
+    assert any("FROM rag_objects" in t for t in tables)
+    assert any("FROM routine_objects" in t for t in tables)
+
+
+def test_empty_live_labels_are_logged_not_silent(caplog):
+    """현재 라벨이 0 이면 건너뛰되 **로그를 남긴다**.
+
+    조용히 continue 하면 그 스키마가 pass cap 을 계속 물어 뒤의 요청까지 굶는다(head-of-line).
+    telemetry 는 `ran=1, attempted=0` 이라 무음과 구별되지 않는다."""
+    import logging
+    cur = _Cur(inputs=[("A", "요약", 5, 1)], live=[], live_routine=[])
+    with caplog.at_level(logging.INFO):
+        assert ds.cluster_inputs(cur, "ds1", "mydb") == []
+    assert any("현재 클러스터 라벨 없음" in r.message for r in caplog.records)
