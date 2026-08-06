@@ -1269,3 +1269,20 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **위험등급**: Major(§12.3 — 코어 LLM 도구 결과 계약). 사용자 승인 "이어읽기 계약까지 강화"
   (AskUserQuestion 2026-08-05). **Cross-ref**: 표시층은 feature-0003
   (`CHG-20260805T190000-step-preview-excerpt-note`) · 원장 `FR-read-attachment-preview-looks-partial`.
+
+## CHG-20260806T104500-read-attach-deploy `read_attachment` 완전성 계약 배포 완료 기록 (문서만)
+- **배포**: PR #1161 merge main `2cab05f3` → `make deploy-web` 전체 스코프. soak 90s 통과, 롤백 0.
+  **4서비스 GIT_COMMIT=2cab05f3 running/healthy**. last-good(agent) = `e21606d2`.
+- **배포본 런타임 실증(ask-worker)**: ① 전문 → `전체 42줄 **전문**` ② 문자상한(100줄×700자) →
+  `1~85번째 줄 / 전체 100줄 (미열람: 뒤 15줄)` + 조각줄 폐기 명시 — **초판이 `남은 0줄 미열람`
+  허위를 내던 입력** ③ EOF 초과 → `**전달된 줄 없음**` + 유효 범위 안내 ④ 단계 요약 플래그
+  `preview_truncated`/`result_chars`, `result_capped_for_model` True. web-a 정적 자산 반영 확인.
+- **배포 절차 기록(정직)**: 1차 시도는 로그 리다이렉트 경로가 사라져 `make` 가 **실행되지 않았다**
+  (`PIPE_EXIT=1`). 서비스별 GIT_COMMIT 이 구 커밋에 머문 것으로 발견 — "파이프 exit ≠ 배포 완료"
+  규칙이 실제 미배포를 잡은 사례. 재실행으로 성공.
+- **미검증(정직)**: 절단 시 모델이 실제로 이어 읽는지(절단 자체가 드묾) · 패널 주석의 실 대화 화면
+  배치. 원장 status = `fixed:deployed:unverified-live`.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`,
+  `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`.
+- **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260805T190000-read-attach-completeness` ·
+  원장 `FR-read-attachment-preview-looks-partial`.

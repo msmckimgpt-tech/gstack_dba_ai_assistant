@@ -6,12 +6,22 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-read-attachment-preview-looks-partial — fixed:undeployed (L7 표시 오인 + L2 완전성 계약 부재)
+## FR-read-attachment-preview-looks-partial — fixed:deployed:unverified-live (L7 표시 오인 + L2 완전성 계약 부재)
 
 - **status**: `fixed:undeployed` — 코드/테스트(신규 **17** PASS[실 함수 경유] · 기존 read_attachment
   16 PASS · headless JS **17 assert** PASS · `make test` 전량 exit 0 · ruff clean ·
   **구코드 대비 12/17 FAIL** 로 판별력 확인) + §18.8 backend+qa 패널 **BLOCK → [P1] 2 · [P2] 9 ·
-  [P3] 6 전건 흡수**. 배포 전.
+  [P3] 6 전건 흡수** + **배포 완료**(2026-08-06, PR #1161 merge main `2cab05f3` → `make deploy-web`
+  전체 스코프, post-cutover soak 90s 통과·롤백 0, **4서비스 GIT_COMMIT=2cab05f3 running/healthy**).
+  **배포본 런타임 실증(ask-worker)**: 전문 → `전체 42줄 **전문**` · 문자상한(100줄×700자) →
+  `1~85번째 줄 / 전체 100줄 (미열람: 뒤 15줄)` + `줄 중간에서 잘렸고 그 조각줄은 버렸습니다`
+  (초판이 `남은 0줄` 허위를 내던 바로 그 입력) · EOF 초과 → `**전달된 줄 없음**` ·
+  단계 요약 플래그 `{preview_truncated, result_chars}` · `result_capped_for_model` True.
+  web-a 정적 자산에 `_buildStepPreviewNote` 2건 · `.step-result-preview-note` 1건 반영 확인.
+  **라이브 대화 실측 미수행** → `unverified-live`.
+  **배포 절차 기록(정직)**: 1차 시도는 로그 리다이렉트 경로 부재로 `make` 가 **실행조차 되지 않았고**
+  (`PIPE_EXIT=1`), 서비스별 GIT_COMMIT 이 구 커밋(`e21606d2`)에 머물러 있어 발견했다 — 파이프 exit 이
+  아니라 **서비스별 GIT_COMMIT** 으로 판정한다는 규칙이 실제로 미배포를 잡아낸 사례다. 재실행으로 성공.
   **패널이 잡은 P1 2건(내 초판 결함)**: ① 초판 테스트가 `read_attachment_content` 를 통째로 stub 해
   실 슬라이싱을 안 태웠고, 그 사각에서 **문자 상한(60,000자) 경로가 정량화된 허위**를 냈다 —
   `end_line` 이 자르기 전 청크 길이라 "남은 400줄" 이 실제로는 600줄(1,000줄×150자 실측)이었고,
