@@ -2326,3 +2326,9 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Files: `unit/feature-0003-agent-web-ui/src/static/{share.js,share.css}`, `unit/feature-0003-agent-web-ui/src/routers/{share.py,_conv_store.py}`, `unit/feature-0003-agent-web-ui/tests/{test_share_sender_nickname.py,verify_share_sender_nickname.mjs}`, `unit/feature-0003-agent-web-ui/docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `unit/feature-0003-agent-web-ui/docs/test-runs.d/20260806T032732-share-sender-nickname.md`(§5.3 fragment), `docs/SECURITY.md`(§21.7 신설).
 - 캐시버스터 수기 bump 없음 — `share.html` 은 `?v=dev` placeholder 고정이고 배포 시 `inject_asset_stamp.py` 가 content-hash 를 주입한다(ITEM-09 regime). `share.html` 편집 0.
 - Timestamp: 2026-08-06T12:27:32+09:00
+## CHG-20260806T045000-share-sender-postdeploy 공유 발화자 배지 PB-0008 라이브 실측 기록 (doc-only)
+- `docs/test-runs.d/20260806T032732-share-sender-nickname.md`: POST-DEPLOY Run(**Environment: Windows-browser**) 7항목 PASS 기록으로 "미수행(이월)" 블록 교체 + frontmatter verdict 갱신. 코드 변경 없음.
+- **왜:** 선행 cycle 의 시각 검증이 정적 자산 baked 구조상 배포 후로 미뤄져 있었다. 배포본 `ddbc6ebe`(web-a/web-b GIT_COMMIT 실측 일치 · 서빙 `share.js?v=24613708d61a`)에서 실측해 그 잔여를 닫는다.
+- **결과:** 각인 메시지 닉네임 렌더 · **사용자 제보 메시지 실물 대조(종전 `사용자` → 현재 `admin`)** · rail 라벨 일치 · 긴 이름 주입 시 시각 표기 불변(ux F-1 실증) · title 조건부(F-2 실증) · 각인 0 대화 소유자명 미발동(security F-2 실증) · 콘솔 에러 0.
+- **실측 발견(정직):** 공유 생성이 `is_group=true` 를 set 하므로 3순위 소유자명 폴백은 라이브에서 사실상 미발동(활성 공유 링크 6건 전수 `is_group=true`, 멤버 1명). 안전 방향이나 사용자 결정의 절반이 화면에 안 나타남 — 별 cycle 이월.
+- Timestamp: 2026-08-06T13:50:00+09:00

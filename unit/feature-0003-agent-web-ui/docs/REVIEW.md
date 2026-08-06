@@ -2759,3 +2759,9 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
   메시지의 `meta.sender_username`/`sender_account_id` 존재를 확인 — 주장 A 의 1차 근거.
 - 실 Windows 브라우저 시각검증은 정적 자산 baked 구조상 **POST-DEPLOY** (test-runs.d fragment 에
   계획·사유 명시).
+
+## REV-20260806T045000-share-sender-postdeploy [SKIPPED:non-policy-doc] — doc-only
+시각 검증 Run 기록 + 실측 발견 1건 추가만으로, 코드·정책·계약 변경이 0 이다(§18.8.1 docs-only 경량
+경로). 검증 대상 코드는 선행 cycle 에서 security·ux 2렌즈 적대 패널을 거쳤다
+(REV-20260806T032732-share-sender-nickname, medium 5건 전건 흡수).
+- Timestamp: 2026-08-06T13:50:00+09:00

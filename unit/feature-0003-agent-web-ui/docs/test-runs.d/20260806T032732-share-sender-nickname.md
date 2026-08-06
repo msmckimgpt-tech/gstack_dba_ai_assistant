@@ -2,7 +2,7 @@
 run_at: 2026-08-06T12:27:32+09:00
 session: ai/claude/share-sender-nickname
 scope: share-sender-nickname (공유 링크 화면 발화자 배지 → 메시지별 발신자 닉네임)
-verdict: PASS (pre-deploy) · Windows-browser 는 POST-DEPLOY
+verdict: PASS (pre-deploy + POST-DEPLOY Windows-browser 7항목)
 ---
 
 ### Run (2026-08-06) — 발신자 라벨 분기 동작 — **Environment: CLI**
@@ -53,17 +53,53 @@ verdict: PASS (pre-deploy) · Windows-browser 는 POST-DEPLOY
 - 부작용: 해당 share row 의 `ViewCount` +1 (soft metric — 코드 주석이 이미 허용 오차로 명시).
 - 결과: **PASS** (주장 "신규 백엔드 노출 없음" 확증).
 
-### 미수행 — 실 Windows 브라우저 시각검증 (POST-DEPLOY 로 이월)
+### Run (2026-08-06, POST-DEPLOY) — 공유 링크 발화자 배지 실화면 — **Environment: Windows-browser**
 
-- 사유: 정적 자산(`share.js`/`share.css`)이 web 이미지에 baked 되는 배포 구조라, 미머지
-  브랜치 상태로는 라이브 `/share/{token}` 이 새 자산을 서빙하지 않는다. 라이브 컨테이너에
-  자산을 주입하는 사전 QA 는 다른 세션의 라이브 화면을 오염시키므로 채택하지 않는다
-  (선행 선례: `20260805T192000-verdict-badge-postdeploy`).
-- 계획(배포 직후 수행, PB-0008 · `bin/win-browser.py` 실 Windows Chrome):
-  1. 그룹 발신 각인이 있는 공유 링크에서 **참여자별 닉네임**이 배지에 뜨는지(같은 화면에
-     서로 다른 이름이 갈리는지) — 본 요청의 직접 확인.
-  2. 각인 없는 메시지(1:1·초기 메시지)가 **대화 소유자명**으로 뜨는지.
-  3. 우측 rail dot 툴팁이 말풍선 배지와 **같은 이름**인지(표기 단일 출처).
-  4. 긴 사용자명에서 배지가 ellipsis 로 잘리고 **meta 줄(시각·범위 표기)이 밀리지 않는지**
-     — 확대 렌더로 대조(§16.7 G9-a 시각 불변식).
-  5. assistant 배지가 `어시스턴트` 로 무회귀인지 · 콘솔 에러 0.
+- 방법: PB-0008 — `bin/win-browser.py run --scenario`(실 Windows Chrome 150, CDP relay),
+  배포본 `ddbc6ebe`(web-a/web-b GIT_COMMIT 실측 일치), 서빙 자산 `share.js?v=24613708d61a`
+  (§16.6 evidence identity — 자기 빌드 스탬프 대조). 익명(비로그인) 열람 경로로만 접근.
+  base_url 은 `https://localhost`(Caddy 단일 노출 — `mysql-ai.company.local` 은 Windows 측
+  미해석이라 REVIEW REV-20260805T104213 이 지적한 stale base_url 이슈와 동일 처리).
+
+- **① 발신자 닉네임 표시 (요청의 직접 확인)** — PASS.
+  각인 있는 메시지의 배지가 `admin` 으로 렌더(배경 `rgb(37,99,235)` primary pill).
+  한 화면 내 라벨 집합 `["사용자","admin"]` — 각인 유무로 갈린다. 증적 `05_named_badge_live.png`.
+
+- **② 사용자 제보 메시지 실물 대조 (§16.7 G3)** — PASS.
+  제보 스크린샷의 메시지를 DB 로 특정(`20260804013726-a6fe00cf` id=1965,
+  `2026-08-06 01:33:19 UTC` = **10:33:19 KST**, sender_username=`admin` 각인 보유) 후 그 대화의
+  공유 링크를 실브라우저로 열어 대조 — **종전 `사용자` → 현재 `admin`**.
+  같은 대화 user 8건 중 **5건 닉네임 / 3건 `사용자`**(각인 없는 legacy). 증적 `06_reported_message_after.png`.
+
+- **③ rail 툴팁 = 배지 라벨 (표기 단일 출처)** — PASS. dot 18개, 앞 6개 대조 `match: true`
+  (`admin`↔`admin`, `사용자`↔`사용자`, `어시스턴트`↔`어시스턴트`).
+
+- **④ 긴 사용자명 — 시각 불변식 (§16.7 G9-a · ux 패널 F-1)** — PASS.
+  50자 계정명을 배지에 주입해 실측: 배지 `width=220px`(max-width 도달) + `scrollWidth>clientWidth`
+  (ellipsis 절단 확인), **시각 표기 `width=126px` 불변 · 같은 줄 유지(`same_line: true`) ·
+  meta 줄 높이 21px 불변**. 수정 전이라면 여기서 시각이 눌려 2줄로 접혔다. 증적 `03_long_name_ellipsis.png`.
+  평상시 페이지 전체 `meta_heights: [21]` 단일값 · `time_widths: [126]` 단일값(카드 간 높이 요동 0).
+
+- **⑤ title 조건부 (ux 패널 F-2)** — PASS. 절단이 없는 평상 상태에서 `truncated_count: 0`,
+  `title_count: 0` — 화면 텍스트와 중복되는 툴팁이 붙지 않는다.
+
+- **⑥ 각인 0 대화 — 소유자명 폴백 미발동 (security 패널 F-2 게이트)** — PASS.
+  `owner=bootstrap_admin` 인 대화의 user 7건이 전부 `사용자`. `is_group=true` 라 소유자명을
+  붙이지 않는다(오귀속 차단이 실제로 발동).
+
+- **⑦ 무회귀** — assistant 배지 `어시스턴트` 유지 · **콘솔 에러 0**(`window.__errs` 훅, 전 페이지).
+
+- 스크린샷: `artifacts/pb0008-share-sender-nickname/{01..06}*.png`.
+
+### [실측 발견] 소유자명 폴백(3순위)은 라이브에서 사실상 발동하지 않는다 — 정직 기록
+
+사용자 결정(2026-08-06)의 "각인 없는 과거 메시지 = 대화 소유자명" 은 `is_group=false` 일 때만
+발동하는데, **공유 생성 자체가 `core_conversations.is_group` 을 true 로 set** 한다. 라이브 활성
+공유 링크 6건을 실측한 결과 **전부 `is_group=true`**(멤버는 owner 1명뿐인데 플래그가 `t`).
+따라서 각인 없는 메시지는 실질적으로 항상 `사용자` 로 표시된다.
+
+- **안전 방향의 미발동**이다 — 오귀속 위험이 0 이고(§18.8 security F-2 가 지적한 그 위험),
+  요청의 핵심(각인 있는 메시지의 닉네임 표시)은 그대로 충족된다.
+- 다만 사용자 결정의 절반이 화면에 나타나지 않으므로 여기 남긴다. 더 정확한 판정 축은
+  "공유 여부"가 아니라 **그 window 안에서 각인된 발신자 계정 수**(owner 1명뿐이면 소유자명이
+  안전)다. 채택하려면 별 cycle 에서 사용자 확인 후 진행한다 — 본 cycle 범위 밖(scope 확장).
