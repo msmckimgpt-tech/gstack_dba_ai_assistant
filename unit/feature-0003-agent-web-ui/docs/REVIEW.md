@@ -3438,3 +3438,22 @@ CONCERN 1(security)** → P1 4건 · P2 7건 · P3 4건 전건 흡수 후 재검
   분열 이전에 계산된 diff 가 새 이웃과 어긋날 수 있다. 화면 비교(`/diff`)는 요청 시점 계산이라 무영향.
 - 라이브 적용은 배포 후 수행하며, 사후 재검증(잔여 0)과 목록 실측으로 확인한다.
 - Artifact: 본 entry
+
+## REV-20260807T004000-ai-claude-attach-chain-merge-rebase [SKIPPED:doc-only] — 형제 결정 흡수 기록
+
+- Related TASK: feature-0003-agent-web-ui (20260806T2000-attach-chain-merge)
+- Trigger: rebase 정합 — 형제 cycle 결정 반영 + main red 하네스 수리(실행 코드 1파일)
+- Timestamp: 2026-08-07T00:40:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+**판단**: 형제 cycle 이 제거한 `_versionedFilename` 을 rebase 에서 되살리지 않았다 — 되살리면
+그쪽 결정(저장명 규칙 서버 단일화)을 뒤집는 dead code 부활이고, 토글을 끈 뒤 한쪽 경로에만 접미가
+남는 결함이 돌아온다. 선행 cycle 의 내 개선(idempotent 화)이 형제 결정으로 무의미해진 것을 인정하고
+삭제했다.
+
+**부수 수리**: 그 제거로 `verify_attach_multi_upload.mjs`(내 선행 산출물)가 **main 에서 실행 불가**
+상태였다(`함수 미발견`). dead assertion 을 지우는 데 그치지 않고, (D) 축을 "저장명 생성 함수가
+프론트에 없다 · 개별 다운로드가 서버 헤더 이름을 쓴다" 로 **재설계해 형제 결정 자체를 가드로 승격**
+했다 — 다음 사람이 규칙을 다시 두 벌로 만들면 red 가 된다.
+- Artifact: 본 entry

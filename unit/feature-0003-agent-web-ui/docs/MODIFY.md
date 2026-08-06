@@ -2820,3 +2820,9 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   18 PASS · `verify_attach_version_diff.mjs` 89 PASS · 전수 mjs **47 스위트** 통과.
 - Files: `src/static/app/composer.js`, `tests/verify_attach_multi_upload.mjs`, `docs/MODIFY.md`.
 - Timestamp: 2026-08-07T00:30:00+09:00
+## CHG-20260807T004000-attach-chain-merge-doc — AC-AMU-5 supersede 기록 (doc-only)
+
+- 형제 cycle `attach-suffix-toggle` 이 저장명 규칙을 서버 단일 권위로 옮긴 결정을 FUNCTION.md 에
+  반영 — 선행 `AC-AMU-5`(프론트 버전 접미)는 그 범위에서 **superseded**. 실행 코드 변경 0줄.
+- Files: `docs/FUNCTION.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
+- Timestamp: 2026-08-07T00:40:00+09:00
