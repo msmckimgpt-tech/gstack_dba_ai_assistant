@@ -2235,3 +2235,69 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-06T01:03:01+09:00
+## CHG-20260806T1144-modal-backdrop-dismiss 사이드바 항목(대화/폴더) 모달 배경 dismiss — click 단일 이벤트 → pointerdown+pointerup 2단 계약
+- **무엇:** 좌측 사이드바 항목에서 열리는 backdrop 모달 6종의 "바깥 배경 클릭으로 닫기" 판정을
+  `click` 리스너에서 떼어내 신설 primitive `bindBackdropDismiss(backdrop, onDismiss)` (`static/app.js`,
+  export) 로 단일화. 누름(`pointerdown`)과 뗌(`pointerup`)의 target 이 **둘 다 backdrop 자신**일
+  때만 dismiss 성립하고, **실행은 이어지는 `click` 단계**에서 한다. 주 버튼(`button === 0`)·
+  primary 포인터만 인정, `pointerId` 추적으로 보조 터치 간섭 차단, `pointercancel` 은 press 해제,
+  배경에서 시작한 제스처의 **implicit pointer capture 는 즉시 해제**.
+- **왜:** DOM `click` 의 target 은 mousedown/mouseup 두 지점의 **공통 조상**이다. 기존 6곳의
+  `click` + `e.target === backdrop` 검사는 패널 안에서 누르고 배경에서 떼거나(폴더 지침 textarea
+  드래그 선택 중 손이 밖으로 나감) 그 반대일 때도 target 이 backdrop 으로 승격돼 모달을 닫았다 —
+  사용자 관점 "down 만 해도 / up 만 해도 종료", 작성 중이던 지침이 통째로 사라진다.
+- **어디:** `static/app.js` — `promptShareExpiry`(공유 링크 설정) · `confirmShareJoinable`(참여 허용
+  확인) · `openShareDialog`(공유) · `openConversationSettings`(대화 설정). `static/app/sidebar.js` —
+  `openFolderSettings`(폴더 설정) · `openMoveConversationDialog`(폴더로 이동). 요청은 '설정 모달'을
+  지목했으나 형제 모달이 같은 결함을 공유하므로 전건 적용(부분 수정 시 같은 마찰 잔존).
+- **무엇이 안 바뀌었나:** ESC 닫기 · × 버튼 닫기 · 모달 내용/레이아웃/CSS · 서버 계약 · 권한 ·
+  스키마 — 전부 무변경(하네스가 ESC·× 경로 유지를 함께 단언). `click` 은 더 이상 dismiss 경로가
+  아니지만 모달 내부 버튼의 `click` 핸들러는 무관(리스너가 backdrop 에만 붙었던 것을 교체).
+- **§18.8 적대 패널이 1차 구현을 BLOCK 했고 그 지적을 반영했다** (사용자 지시로 ux·design
+  subagent 경로 선택):
+  - **P1-1 implicit pointer capture** — 터치·펜은 브라우저가 `pointerdown` 대상에 포인터 캡처를
+    자동으로 걸어 `pointerup` 이 **뗀 위치와 무관하게** 그 대상으로 retarget 된다(마우스는 캡처
+    없음). 1차 구현은 해제를 안 해서 터치에서 계약이 "누른 위치가 배경이면 닫힘" 으로 무너져
+    **원 결함이 그대로 남아 있었다**(AC3 불성립). → 배경에서 시작한 제스처에 한해
+    `releasePointerCapture` (패널 안 제스처의 캡처는 터치 텍스트 선택이 의존하므로 미간섭).
+  - **P2-1 ghost click** — 1차는 `pointerup` 에서 노드를 제거해, 터치의 compat `click` 이 제거 후
+    DOM 으로 히트테스트되어 backdrop **아래** 사이드바 항목을 눌렀다. → 실행을 `click` 단계로 이동.
+  - **P3-2 멀티터치 간섭** → `pointerId` 추적 + `isPrimary === false` early-return.
+  - **장전(armed) 잔류** (라운드2 — ux·design **양쪽이 독립적으로** 실제 헬퍼를 실행해 dismiss=1
+    로 실증) — "배경에서 down+up 했는데 브라우저가 `click` 을 발행하지 않은" 제스처가 장전을
+    무기한 남겨, 뒤이은 click 하나가 사용자가 누른 적 없는 모달을 닫았다(폴더 지침 작성분 소실 =
+    이번 cycle 이 없애려던 바로 그 피해). → `pointerup` 이 `downOk` 를 즉시 소비 + `click` 이
+    `armed` 를 소비(제스처 1회분) + **`e.isTrusted` 요구**(물리 제스처는 언제나 `pointerdown`
+    으로 시작해 상태를 리셋하므로, 선행 pointerdown 없이 오는 click 은 정의상 합성).
+  - **캡처 해제의 fail-open** → `hasPointerCapture` 선행 조건 제거, **무조건 시도 + throw 만
+    삼킴**(메서드 부재·캡처 보고 차이 엔진에서 조용히 건너뛰어 구 결함으로 회귀하던 경로 봉인).
+  - **`pointerup` 의 중복 `button === 0` 제거** — 누름 시점에 이미 걸렀고, `button` 을 `-1` 로
+    보고하는 환경에서 정상 dismiss 가 조용히 죽는 쪽이 더 나쁘다.
+  - **주석 정정** — "배경이 그 click 을 소비한다" 는 부정확(코드는 `stopPropagation` 미호출).
+    실제 근거는 "터치 compat click 의 히트테스트가 dispatch 전에 끝난다" 로 교체.
+  - **P2-2 backdrop 스크롤바 드래그** → `.share-mgr-backdrop` 에 `overflow` 선언이 없어(CSS 실확인)
+    스크롤바가 생기지 않으므로 **N/A**. 실행이 `click` 단계라 이중으로 제외된다.
+  - **P2-3 armed 고착**(창 밖 release) → `document` 레벨 리스너 추가 대신 click 게이팅으로 완화
+    (창 밖에서 시작한 press 는 페이지 `click` 을 만들지 않는다).
+  - **P3-3 순수 합성 `click` 으로는 더 이상 닫히지 않음** → 의도로 수용·주석 명시(물리 포인터
+    제스처만 인정, ESC·`×` 상시 생존).
+- **커버리지 정정(design 리뷰어 반증 수용):** "old 패턴 6곳 전수" 의 1차 근거는 식별자 `backdrop`
+  키잉 grep 이라 **변수명의 부재만** 증명한 non sequitur 였다. `overlay` 로 명명된 동형 3곳이 남아
+  있다 — `app/profile.js:306`(**사용자향** · `mousedown` 단독으로 닫힘) · `admin/usage.js:662`
+  (mousedown) · `admin/audit.js:317`(click). 요청 스코프가 "좌측 항목 모달" 로 명시돼 있어 이번
+  cycle 미적용, FUNCTION 표 + REPORT §8 원장에 file:line 등재 + 사용자 표면화.
+- **Verification:** `tests/verify_modal_backdrop_dismiss.mjs` 신설 — 동작 18(실제 헬퍼 본문을 최소
+  DOM 이벤트 shim 위에서 실행. shim 이 ① 이벤트 순서·target 공통조상 승격 ② implicit pointer
+  capture ③ click 미발행 상호작용 ④ `isTrusted` 를 모델링) + 배선 30 = **48 pass / 0 fail**.
+  **역검증 5종** — 각 변형이 정확히 의도한 단언만 red: 옛 `click` 단독(11) · 캡처 해제 삭제(1) ·
+  `pointerup` 실행(3) · `downOk` 미소비(1) · `isTrusted` 미검사(1). ESM `node --check` PASS 2파일.
+  `verify_*.mjs` 전수 red 21건 = main baseline 과 동일 집합(회귀 0).
+  **PB-0008**: 실 Windows Chrome 150 + CDP **trusted 입력**(`Input.dispatchMouseEvent`/
+  `dispatchTouchEvent`) **10/10 PASS**, 같은 하네스 `--negative` 에서 **사용자 보고 현상 3건 재현**.
+  실행 자산은 `tests/pb0008_modal_backdrop_dismiss.py` 로 커밋(재현 가능).
+- **Files:** `static/app.js`, `static/app/sidebar.js`, `tests/verify_modal_backdrop_dismiss.mjs`,
+  `tests/pb0008_modal_backdrop_dismiss.py`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md`,
+  `docs/test-runs.d/20260806T1144-modal-backdrop-dismiss.md`,
+  `docs/test-runs.d/evidence/modal-backdrop-dismiss-harness-live.png`, `.gitignore`.
+- **캐시버스터:** `?v=dev` 고정 — `index.html` 편집 0 (ITEM-09 빌드 자동주입 regime, `inject_asset_stamp.py` + `deploy-web.sh` 가 배포 시 content-hash 주입).
+- Timestamp: 2026-08-06T11:44:13+09:00

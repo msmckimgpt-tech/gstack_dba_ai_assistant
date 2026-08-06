@@ -2374,3 +2374,24 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 ## TASK-20260806T010301-doc-sync-rn-0806 — 릴리즈노트 신규 2026-08-05 블록 prepend (비-정책 doc-only)
 - **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · 구조검증(releases 42→43·기존 블록 전량 보존·type/area enum 위반 0) · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0).
 - `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0). 구조: releases 42→43, 기존 블록 전량 보존, type/area enum 위반 0, 내부용어 누출 0. 렌더러·CSS 무변경이므로 PB-0008 신규 실측 불요(데이터 블록 추가는 기존 그룹 렌더 경로 재사용).
+## TASK-20260806T1144-modal-backdrop-dismiss — 사이드바 항목(대화/폴더) 모달 배경 dismiss (web/UI, Minor §12.3)
+- **Environment: Windows-browser (PB-0008)** — **PASS 10/10**. 실 Windows Chrome 150.0.7871.128
+  via `bin/win-browser.py` relay + CDP `Input.dispatchMouseEvent`/`dispatchTouchEvent` **trusted
+  입력**(합성 JS 이벤트 아님 — 원 결함의 기전인 `click` target 공통-조상 승격과 터치 implicit
+  pointer capture 가 실제로 적용되어야 검증이 성립). 실행:
+  `python3 tests/pb0008_modal_backdrop_dismiss.py`.
+- **역검증(negative control, 같은 실 브라우저)** — `--negative`(헬퍼만 수정 전 구현으로 교체)에서
+  **의도대로 FAIL 3/10**: 패널→배경 드래그, 배경→패널 드래그, 지침 textarea 드래그 선택 이탈이
+  전부 모달을 닫는다 = **사용자가 보고한 현상의 실 브라우저 재현**. Run 1 의 PASS 가 vacuous 하지
+  않음을 이것이 보증한다.
+- `node tests/verify_modal_backdrop_dismiss.mjs` — **48 passed / 0 failed**(동작 18 + 배선 30).
+  역검증 **5종** 전부 의도한 단언만 red: 옛 `click` 단독 11 · 캡처 해제 삭제 1 · `pointerup` 실행 3
+  · `downOk` 미소비(장전 잔류) 1 · `isTrusted` 미검사 1 — 각 방어가 독립적으로 load-bearing.
+- **§18.8 ux·design 적대 패널 2 라운드** — 지적 전건 반영 후 SHIP (상세: REVIEW
+  `REV-20260806T114413-modal-backdrop-dismiss`). 하네스가 두 번 vacuous pass 를 내 교정됐다.
+- `verify_*.mjs` 전수 — red 21건이 **main baseline 과 동일 집합**(본 변경 기인 신규 red 0).
+- `make test` — **3782 passed · 3 skipped · 0 failed**(exit 0), ruff clean.
+- 잔여: 배포 후 라이브 작업 화면에서 실제 6개 모달 재확인 → fragment Run 3 append.
+- **범위 밖(미적용, REPORT §8 원장)**: 동형 오버레이 3곳 — `app/profile.js:306`(사용자향
+  `mousedown` 단독) · `admin/usage.js:662` · `admin/audit.js:317`.
+- Run 기록 정본: `docs/test-runs.d/20260806T1144-modal-backdrop-dismiss.md` (§5.3 fragment).

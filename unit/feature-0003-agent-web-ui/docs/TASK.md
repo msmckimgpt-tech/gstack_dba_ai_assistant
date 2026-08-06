@@ -8027,3 +8027,96 @@ ESM 전환으로 새로 부러진 것 + jsdom 환경 소실이 §8 에 없던 11
 - [x] 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(baseline 도 34/0 — 회귀 0) · 내부용어 누출 정규식 스캔 0(feature-id·ADR·PB-0008·모듈/함수명·테이블명·PR#·commit sha) · 화면 문구는 실코드 대조(`admin.html:924` 범례 `AI 표본 대조 판정`·`배지가 없으면 아직 판정 전`, `graph/graph-ctxmenu.js:3604-3626` V map·`판정 근거`).
 - [x] 적대검증 교정 2건 반영: '판정 근거' 는 **어긋난 경우에만** 이 아니라 세 판정 모두에 항상 함께 뜬다(`graph-ctxmenu.js:3619-3626` `if (res.verdict.reason)` 단일 게이트 + `analysis_verify.py` `normalize_verdict` 가 근거 없는 응답을 기각) → summary·detail 문면 교정 · 순환 차단 효과 서술을 배포 후 실측(25분 6콜/6판정, 낭비 0)으로 교체.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(ITEM-09 빌드 자동주입 · `index.html`/`admin.html` 편집 0).
+
+## 20260806T1144-modal-backdrop-dismiss — 사이드바 항목(대화/폴더) 모달: 바깥 배경 "누름+뗌 모두 배경"일 때만 닫기 (Minor §12.3, frontend-only)
+
+- **사용자 요청(`/_template:entry`)**: "서비스 내 대화화면 좌측의 항목(대화/폴더) 요소들의 설정
+  모달에서 바깥의 어두운 배경을 클릭했을때만(mouse down + up) 모달이 종료되도록 구성해주세요.
+  현재는 마우스를 down or up 되었을 때 모두 종료되는 현상이 확인되었습니다."
+- **근본 원인**: 6개 모달이 전부 `backdrop.addEventListener("click", e => { if (e.target === backdrop) close(); })`
+  패턴이었다. DOM `click` 의 target 은 mousedown/mouseup 두 지점의 **공통 조상**이라, 패널 안에서
+  누르고 배경에서 떼거나(지침 textarea 드래그 선택 후 손이 밖으로 나감) 그 반대여도 target 이
+  backdrop 으로 **승격**돼 닫혔다 — 사용자 관점에선 "down 만 해도 / up 만 해도 종료". 배경 클릭
+  판정이 `click` 단일 이벤트에 위임돼 있어 press/release 를 구분할 수단 자체가 없었다.
+
+### §2.1 Implementation Plan
+
+- **영향 파일 / symbol**
+  - `unit/feature-0003-agent-web-ui/src/static/app.js` — 신설 `bindBackdropDismiss(backdrop, onDismiss)`
+    (export) + 배선 교체 4곳: `promptShareExpiry` · `confirmShareJoinable` · `openShareDialog` ·
+    `openConversationSettings`.
+  - `unit/feature-0003-agent-web-ui/src/static/app/sidebar.js` — `bindBackdropDismiss` import +
+    배선 교체 2곳: `openFolderSettings` · `openMoveConversationDialog`.
+  - `unit/feature-0003-agent-web-ui/tests/verify_modal_backdrop_dismiss.mjs` — 신설 하네스.
+- **접근**: 배경 dismiss **판정**을 `click` 에서 떼어내 **pointerdown(누름)·pointerup(뗌) 2단
+  계약**으로 옮긴다 — 두 이벤트의 target 이 **모두 backdrop 자신**일 때만 성립. **실행**은 그
+  판정을 들고 `click` 단계에서 한다(§18.8 ux 패널 P2-1 반영 — backdrop 이 그 click 을 소비해
+  ghost click 을 막고, click 을 발행하지 않는 상호작용이 자연히 제외된다). 터치·펜은 브라우저가
+  `pointerdown` 대상에 **implicit pointer capture** 를 걸어 `pointerup` 이 뗀 위치와 무관하게
+  retarget 되므로, 배경에서 시작한 제스처에 한해 즉시 해제한다(ux 패널 P1-1). 6곳에 같은
+  조건문을 복붙하지 않고 primitive 1개로 단일화해, 이후 새 모달이 옛 패턴을 복사하는 drift 를
+  차단한다. 주 버튼(`button === 0`)·primary 포인터만 인정하고, `pointerId` 를 추적해 보조 터치가
+  주 포인터 상태를 흔들지 않게 한다.
+- **완료 판정 기준(AC)**
+  - AC1 배경에서 누르고 배경에서 떼면 닫힌다.
+  - AC2 패널 안에서 누르고 배경에서 떼면 **닫히지 않는다**(드래그 선택 이탈 — 원 결함).
+  - AC3 배경에서 누르고 패널 안에서 떼면 **닫히지 않는다**(원 결함).
+  - AC4 ESC · × 버튼 닫기 경로는 회귀 없음.
+  - AC5 6개 모달 전부 동일 계약(하네스가 배선을 기계 검증).
+  - AC6 **터치·펜에서도** AC2·AC3 이 성립한다(implicit pointer capture 로 무너지지 않음).
+  - AC7 배경 dismiss 직후 그 좌표 **아래 레이어가 눌리지 않는다**(ghost click 부재).
+  - AC8 `click` 미발행 제스처가 **장전 상태를 남기지 않는다**(뒤이은 click 이 누른 적 없는
+    모달을 닫지 않음).
+- **위험도**: **Minor** — 프론트 전용·비파괴, 인증/인가·데이터·외부계약·스키마 무관. 신규 권한·
+  엔드포인트·마이그레이션 0. 실패 모드는 "모달이 안 닫힘"이며 ESC·× 두 대체 경로가 상시 존재.
+
+### 체크리스트
+
+- [x] `app.js`: `bindBackdropDismiss` primitive 신설(export) + 4개 모달 배선 교체
+- [x] `app/sidebar.js`: import + 2개 모달(폴더 설정 · 폴더로 이동) 배선 교체
+- [x] `tests/verify_modal_backdrop_dismiss.mjs` 신설 — 동작 18 + 배선 30 = **48 pass / 0 fail**
+      (shim 이 ① 이벤트 순서·target 공통조상 승격 ② implicit pointer capture ③ click 미발행
+      상호작용 ④ `isTrusted` 4가지 브라우저 의미론을 모델링)
+- [x] **역검증 5종(카고컬트 방지)** — 각 변형이 **정확히 의도한 단언만** red 로 떨어짐:
+      ① 옛 `click` 단독 → 11 fail ② 캡처 해제 삭제 → 1 fail(터치 AC3) ③ 실행을 `pointerup`
+      으로 되돌림 → 3 fail ④ `pointerup` 이 `downOk` 미소비 → 1 fail(장전 잔류) ⑤ `click` 에서
+      `isTrusted` 미검사 → 1 fail. 하네스는 두 번 vacuous pass 를 냈다가 교정됐다 — 1차는 shim
+      이 `click` 을 발화하지 않아 옛 구현도 통과했고, 2차는 "합성 click 단독" 을 **깨끗한 초기
+      상태에서만** 검사해 장전 잔류를 놓쳤다(§18.8 패널이 실증).
+- [x] ESM `node --check` PASS (app.js · app/sidebar.js)
+- [x] 프론트 하네스 회귀 — `verify_*.mjs` 전수 실행: 본 worktree red 21건 = **main baseline red 21건과 동일 집합**(본 변경 기인 0)
+- [x] `make test` (pytest) 회귀 — 최종본 **3782 passed · 3 skipped · 0 failed**(exit 0), ruff clean.
+      1차 전수 실행에서는 `test_shutdown_finalizer.py::
+      test_shutdown_finalizer_marks_this_process_processing` 1건 FAILED. **본 변경 무관 flake**:
+      실패 로그가 `shutdown finalize: 시간 예산 초과`(app.py `time.monotonic() > deadline` wall-clock
+      예산)이고, 본 cycle 은 Python 파일을 전혀 건드리지 않았으며(`git diff` = js/docs only),
+      **단독 재실행 5/5 rc=0**. 최종본으로 전수 재실행해 결과 기록.
+- [x] **§18.8 ux·design 적대 패널** — 2 라운드. 라운드1 ux BLOCK(P1-1 implicit pointer capture ·
+      P2-1 ghost click), 라운드2 에서 두 리뷰어가 **독립적으로 동일 잔여 결함**(click 미발행
+      제스처의 장전 잔류)을 실제 헬퍼 실행으로 실증 → 전건 반영 후 SHIP. 상세: REVIEW
+      `REV-20260806T114413-modal-backdrop-dismiss`.
+- [x] PB-0008 실 Windows 브라우저 시각검증 (`visual_verification_scope: always`) — 실 Windows
+      Chrome + CDP **trusted 입력** 10/10 PASS. 같은 하네스 `--negative`(수정 전 구현)에서
+      **사용자 보고 현상 3건 재현**(안→밖·밖→안·지침 드래그 이탈이 전부 모달을 닫음).
+
+## 9. Requested Scope
+- [x] `좌측 항목(대화/폴더) 설정 모달을 배경 down+up 둘 다일 때만 종료` — 산출물: `bindBackdropDismiss`
+  primitive + 6개 모달 배선 · 배선 확인: 하네스가 6개 모달 각각에 대해 헬퍼 사용 + 결함 패턴 부재를
+  기계 단언(파일 전역 잔존 0 포함).
+
+**G1(요청 항목 열거)**: ① "바깥 어두운 배경 클릭 시에만 종료" ② "down+up 둘 다여야 함" ③ 대상 =
+좌측 사이드바 항목(대화/폴더)에서 열리는 설정 모달 — 3항목 전부 처리.
+**G2(항목별 배선 확인)**: 요청이 "설정 모달"을 특정했으나, 좌측 항목 메뉴에서 열리는 backdrop 모달을
+전수 조사해 **6종**(대화 설정 · 공유 · 공유 링크 설정 · 참여 허용 확인 · 폴더 설정 · 폴더로 이동)이
+같은 결함을 공유함을 확인하고 전건 적용했다 — '설정' 하나만 고치면 형제 모달에서 같은 마찰이 남는다.
+⚠️ **1차 sweep 의 근거가 부실했다** — 식별자 `backdrop` 에 키잉된 grep 이라 **결함 클래스의 부재가
+아니라 변수명의 부재만** 증명했고(§18.8 design 리뷰어가 반증), `overlay` 로 명명된 동형 3곳
+(`app/profile.js:306` 사용자향 `mousedown` 단독 · `admin/usage.js:662` · `admin/audit.js:317`)이
+남아 있었다. 요청 스코프가 "좌측 항목 모달" 로 명시돼 있어 이번 cycle 은 6종만 고치고, 나머지 3곳은
+file:line 과 함께 REPORT §8 원장 등재 + 사용자 표면화(§8.1 기록만·미실행).
+**G3(주장 affordance 실측)**: "down+up 둘 다 배경일 때만" 주장은 정적 문자열이 아니라 헬퍼 본문을
+실행하는 동작 테스트 + 역검증 3종으로 확보(위 참조). §18.8 ux 패널이 **1차 구현을 BLOCK** 했고
+(P1-1 implicit pointer capture — 터치에서 AC3 불성립 · P2-1 ghost click), 그 지적이 실재함을
+확인해 구현·하네스 양쪽에 반영 후 재검증했다 — 즉 이 주장은 패널을 한 번 통과 못 한 뒤 얻은 것.
+**G4(경계 양측)**: 경계 = dismiss 이벤트 계약 — 배경 쪽(닫힘)과 패널 쪽(안 닫힘) 양측을 모두 단언.
+**G5/G6**: 해당 없음(권한·리소스·스키마 무변경).
