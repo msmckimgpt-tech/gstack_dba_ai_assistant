@@ -1,0 +1,32 @@
+{
+  "name": "attach-multi-upload — 폴더 단위 첨부 · 드롭 이중처리 · 중복 스킵 요약 (authed, PB-0008 POST-DEPLOY)",
+  "base_url": "https://localhost",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-attach-multi-upload",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json().catch(()=>({}));return JSON.stringify({login_ok:!!j.ok});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/new_conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'auto'})});const j=await r.json();window.__amuCid=String(j.conversation_id||'');return JSON.stringify({cid:window.__amuCid});})()", "stop_on_fail": true},
+    {"action": "eval", "script": "(async()=>{const cid=window.__amuCid;location.href='/?conversation='+encodeURIComponent(cid);return JSON.stringify({navigating_to:cid});})()", "stop_on_fail": false},
+    {"action": "wait_for", "selector": ".composer-wrap", "timeout_ms": 25000},
+    {"action": "wait_for", "timeout_ms": 3000, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const el=document.getElementById('attachFileInput');const cid=new URLSearchParams(location.search).get('conversation');window.__amuCid=cid;return JSON.stringify({T1_multiple_attr:el?el.hasAttribute('multiple'):null,T1_multiple_prop:el?el.multiple:null,cid:cid});})()"},
+
+    {"action": "eval", "script": "(async()=>{const mk=(n,c)=>new File([c],n,{type:'text/plain'});const dt=new DataTransfer();['amu_a.sql','amu_b.sql','amu_c.sql'].forEach((n,i)=>dt.items.add(mk(n,'-- amu test '+n+'\\nSELECT '+(i+1)+';\\n')));const el=document.getElementById('attachFileInput');el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(r=>setTimeout(r,6000));const t=document.getElementById('toast');const pills=document.querySelectorAll('#attachSidePanelList .attach-pill, #attachSidePanelList [class*=pill]');const srv=await (await fetch('/api/conversations/'+encodeURIComponent(window.__amuCid)+'/attachments')).json();return JSON.stringify({T2_toast:t?t.textContent:null,T2_toast_isError:t?(getComputedStyle(t).backgroundColor.indexOf('124')>=0):null,T2_pill_count:pills.length,T2_server_count:(srv.attachments||[]).length,T2_server_names:(srv.attachments||[]).map(a=>a.original_filename)});})()"},
+    {"action": "screenshot", "path": "01_multi_select_3files.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{const mk=(n,c)=>new File([c],n,{type:'text/plain'});const dt=new DataTransfer();['amu_a.sql','amu_b.sql','amu_c.sql'].forEach((n,i)=>dt.items.add(mk(n,'-- amu test '+n+'\\nSELECT '+(i+1)+';\\n')));const el=document.getElementById('attachFileInput');el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(r=>setTimeout(r,6000));const t=document.getElementById('toast');const srv=await (await fetch('/api/conversations/'+encodeURIComponent(window.__amuCid)+'/attachments')).json();return JSON.stringify({T3_toast:t?t.textContent:null,T3_toast_isError:t?(getComputedStyle(t).backgroundColor.indexOf('124')>=0):null,T3_server_count:(srv.attachments||[]).length});})()"},
+    {"action": "screenshot", "path": "02_reupload_skip_summary.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{const mk=(n,c)=>new File([c],n,{type:'text/plain'});const dt=new DataTransfer();['amu_d.sql','amu_e.sql','amu_f.sql'].forEach((n,i)=>dt.items.add(mk(n,'-- drop test '+n+'\\nSELECT '+(i+10)+';\\n')));const wrap=document.querySelector('.composer-wrap');const mkEv=(type)=>{const e=new DragEvent(type,{bubbles:true,cancelable:true,dataTransfer:dt});return e;};wrap.dispatchEvent(mkEv('dragenter'));wrap.dispatchEvent(mkEv('dragover'));wrap.dispatchEvent(mkEv('drop'));await new Promise(r=>setTimeout(r,7000));const t=document.getElementById('toast');const srv=await (await fetch('/api/conversations/'+encodeURIComponent(window.__amuCid)+'/attachments')).json();const names=(srv.attachments||[]).map(a=>a.original_filename);const dCount=names.filter(n=>n==='amu_d.sql').length;return JSON.stringify({T4_toast:t?t.textContent:null,T4_server_count:names.length,T4_names:names,T4_first_dropped_file_rows:dCount});})()"},
+    {"action": "screenshot", "path": "03_composer_drop_no_dup.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{const dt=new DataTransfer();dt.items.add(new File(['-- single\\nSELECT 99;\\n'],'amu_single.sql',{type:'text/plain'}));const el=document.getElementById('attachFileInput');el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));await new Promise(r=>setTimeout(r,5000));const t=document.getElementById('toast');return JSON.stringify({T5_single_toast:t?t.textContent:null,T5_is_summary:t?/첨부 \\d+개 중/.test(t.textContent):null});})()"},
+    {"action": "screenshot", "path": "04_single_upload_toast.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{const srv=await (await fetch('/api/conversations/'+encodeURIComponent(window.__amuCid)+'/attachments')).json();const list=(srv.attachments||[]);const badge=document.getElementById('composerAttachCountBadge');return JSON.stringify({T6_final_server_count:list.length,T6_final_names:list.map(a=>a.original_filename),T6_badge:badge?badge.textContent:null});})()"},
+
+    {"action": "eval", "script": "(async()=>{const cid=window.__amuCid;const r=await fetch('/api/conversations/'+encodeURIComponent(cid),{method:'DELETE'});return JSON.stringify({cleanup_status:r.status,cid:cid});})()", "stop_on_fail": false}
+  ]
+}

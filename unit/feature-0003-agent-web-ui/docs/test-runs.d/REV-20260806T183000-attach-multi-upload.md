@@ -69,3 +69,45 @@ de-risk (배포 전 확보):
 - ESM `node --check` PASS(composer.js) + 위 3 Run.
 - 백엔드 변경은 파일명 결정 1곳 + 다운로드 표시명 1곳으로 좁고, 스키마·엔드포인트·RBAC 변경 0.
 - 인라인 보안 검토 HIGH/MEDIUM 0건(REVIEW.md REV-20260806T183000 참조).
+
+#### Run 4 — PB-0008 실 Windows Chrome POST-DEPLOY (Environment: Windows-browser, 2026-08-06, 배포본 `d3a520fd`)
+
+`bin/win-browser.py run --scenario tests/win-browser-attach-multi-upload{,-visual}.scenario.json`
+(실 Windows Chrome 150.0.7871.128 via relay, 자기 세션이 띄운 인스턴스 한정 — §16.6 세션-격리)
+
+**배포 반영 선확인**: web-a·web-b·ask-worker·insight-worker·ops-scheduler 전부 `GIT_COMMIT=d3a520fd`,
+서빙 자산 census — `/app/web/static/index.html` 에 `multiple`, `composer.js` 에
+`_uploadComposerAttachments` 6회·"이미 최신입니다(내용 동일) — 건너뜀" 문구 존재.
+
+| # | 항목 | 실측 |
+|---|---|---|
+| T1 | `#attachFileInput` 다중 선택 | 실 브라우저 DOM 에서 `multiple` 속성·프로퍼티 **true** (첫 실행의 wait_for 실패 로그가 `<input multiple type="file" …>` 를 그대로 출력해 이중 확인) |
+| T2 | 파일 3개 선택 → 전량 업로드 | 토스트 **"첨부 3개 중 3개 업로드"** · **에러 톤 아님** · 서버 3 row |
+| T3 | 같은 3개 재업로드 | **"첨부 3개 중 3개 변경 없음(건너뜀)"** · 정보 톤 · 서버 row **증가 0**(멱등 유지) |
+| T4 | composer 영역에 3개 drop | **"첨부 3개 중 3개 업로드"** · 서버에 3 row 추가 · **첫 파일 `amu_d.sql` 이 정확히 1 row** |
+| T5 | 단건 업로드 | **"첨부 업로드 완료: amu_single.sql"** — 개별 토스트, 요약 아님(단건 UX 무회귀) |
+| T6 | 최종 정합 | 배지 7 · DB 실측 7 row, **7개 파일명 전부 각 1건**(`Counter` 로 확인) |
+
+**T4 가 이 cycle 의 핵심 증거다** — 수정 전이라면 `.composer-wrap` 과 `#chatPane` 두 핸들러가
+같은 drop 을 처리해 `amu_d.sql` 이 2회 업로드 시도되고, 두 번째가 dedup 에 걸려 사용자에게
+"이미 첨부된 파일입니다" 오탐이 떴다. 실측은 **1 row · 오탐 토스트 0**.
+
+**시각 캡처**: `artifacts/pb0008-attach-multi-upload/` — `05_visual_summary_toast.png` ·
+`06_visual_attach_panel.png`(재업로드 후에도 `vis_a/b/c.sql` **각 1건**만 목록에 존재 =
+중복 미생성 시각 증거, 배지 "첨부파일 목록 3") · `07_visual_skip_toast.png`.
+
+**정직 표기 — 확보하지 못한 캡처**: 토스트는 표시 후 2.2초에 사라지는데(`showToast` TTL)
+playwright screenshot 왕복이 그 창을 넘겨 **토스트가 담긴 프레임은 캡처하지 못했다**. 대신
+표시 순간의 상태를 DOM 으로 실측했다 — `is-visible` 클래스 **true** + `getComputedStyle`
+배경색 `rgba(15,23,42,.92)`(업로드) / `rgba(10,22,44,.92)`(스킵)로 **에러 색 `rgba(124,24,24,.94)`
+가 아님**을 확인. 본 변경은 기존 토스트 컴포넌트의 **문구와 색 토큰만** 바꾸며 레이아웃 기하
+(정렬·간격·줄바꿈·overflow)를 건드리지 않으므로 §16.6 의 "픽셀로만 드러나는 변경" 이 아니고,
+element 상태 실측이 그 축을 덮는다 — 그 판단 근거를 여기 명시한다.
+
+**미검증(이월)**: assistant 편집본의 원본명 승계는 실 LLM 왕복이 필요해 이번 라이브 실측에서
+제외했다(AC-AMU-4·5 는 pytest N3/N5/N6 로 잠금). 다음 실 편집 발생 시 목록에서 원본과 같은
+항목으로 묶이는지 확인한다.
+
+**라이브 데이터 경계**: 자체 테스트 대화 3건(`…094333-da2eb9c2` · `…094424-e73c7500` ·
+`…095025-6a3cc35a`)만 생성·사용 후 **전부 보관 처리**했다. 사용자 대화
+(`구 로그 테이블 DROP 유지 결정` 포함) 무접촉 — 읽기 전용 조회만 수행.

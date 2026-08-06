@@ -1,0 +1,26 @@
+{
+  "name": "attach-multi-upload (visual) — 요약 토스트 · 첨부 패널 판독 캡처 (authed, PB-0008 POST-DEPLOY)",
+  "base_url": "https://localhost",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-attach-multi-upload",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json().catch(()=>({}));return JSON.stringify({login_ok:!!j.ok});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/new_conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'auto'})});const j=await r.json();sessionStorage.setItem('__amuCid',String(j.conversation_id||''));return JSON.stringify({cid:j.conversation_id});})()", "stop_on_fail": true},
+    {"action": "eval", "script": "(async()=>{location.href='/?conversation='+encodeURIComponent(sessionStorage.getItem('__amuCid'));return JSON.stringify({nav:true});})()", "stop_on_fail": false},
+    {"action": "wait_for", "selector": ".composer-wrap", "timeout_ms": 25000},
+    {"action": "wait_for", "timeout_ms": 3000, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=sessionStorage.getItem('__amuCid');const mk=(n,c)=>new File([c],n,{type:'text/plain'});const dt=new DataTransfer();['vis_a.sql','vis_b.sql','vis_c.sql'].forEach((n,i)=>dt.items.add(mk(n,'-- visual '+n+'\\nSELECT '+(i+1)+';\\n')));const el=document.getElementById('attachFileInput');el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));const t=document.getElementById('toast');let seen=null;for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,100));if(t&&t.classList.contains('is-visible')&&/첨부 3개 중/.test(t.textContent)){seen=t.textContent;break;}}return JSON.stringify({cid:cid,V1_summary_toast:seen,V1_visible:t?t.classList.contains('is-visible'):null,V1_bg:t?getComputedStyle(t).backgroundColor:null});})()"},
+    {"action": "screenshot", "path": "05_visual_summary_toast.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{const badge=document.getElementById('composerAttachCountBadge');const btn=document.getElementById('composerActionsBtn');if(btn)btn.click();await new Promise(r=>setTimeout(r,600));const item=document.getElementById('composerActionsAttachItem');const panel=document.getElementById('attachSidePanel');return JSON.stringify({V2_badge:badge?badge.textContent:null,V2_panel_hidden:panel?panel.classList.contains('hidden'):null});})()", "stop_on_fail": false},
+    {"action": "eval", "script": "(async()=>{const panel=document.getElementById('attachSidePanel');if(panel)panel.classList.remove('hidden');await new Promise(r=>setTimeout(r,400));const rows=document.querySelectorAll('#attachSidePanelList .attach-pill, #attachSidePanelList > *');return JSON.stringify({V3_panel_rows:rows.length,V3_texts:[...rows].slice(0,8).map(e=>(e.textContent||'').trim().slice(0,40))});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "06_visual_attach_panel.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{const mk=(n,c)=>new File([c],n,{type:'text/plain'});const dt=new DataTransfer();['vis_a.sql','vis_b.sql','vis_c.sql'].forEach((n,i)=>dt.items.add(mk(n,'-- visual '+n+'\\nSELECT '+(i+1)+';\\n')));const el=document.getElementById('attachFileInput');el.files=dt.files;el.dispatchEvent(new Event('change',{bubbles:true}));const t=document.getElementById('toast');let seen=null;for(let i=0;i<120;i++){await new Promise(r=>setTimeout(r,100));if(t&&t.classList.contains('is-visible')&&/변경 없음/.test(t.textContent)){seen=t.textContent;break;}}return JSON.stringify({V4_skip_toast:seen,V4_visible:t?t.classList.contains('is-visible'):null,V4_bg:t?getComputedStyle(t).backgroundColor:null});})()"},
+    {"action": "screenshot", "path": "07_visual_skip_toast.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=sessionStorage.getItem('__amuCid');const srv=await (await fetch('/api/conversations/'+encodeURIComponent(cid)+'/attachments')).json();const names=(srv.attachments||[]).map(a=>a.original_filename);const r=await fetch('/api/delete_conversation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:cid})});const j=await r.json().catch(()=>({}));return JSON.stringify({V5_server_names:names,V5_server_count:names.length,cleanup:j.archived||j.deleted||null});})()", "stop_on_fail": false}
+  ]
+}

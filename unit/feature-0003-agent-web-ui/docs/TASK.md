@@ -8770,9 +8770,12 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 - [x] D5 백엔드 수정 (`_conv_store.py` 편집본 명명 + `attachments.py` 다운로드 표시명)
 - [x] 신규 하네스 `tests/verify_attach_multi_upload.mjs` — **28 PASS**(정적 5 · 실행 8 · 집계 9 · 저장명 3 · **뮤테이션 역검증 3**)
 - [x] pytest 갱신 — N3(원본명 승계로 계약 전환) · N4(확장자 안전 불변 유지) · **N5**(체인 단일성) · **N6**(다운로드 표시명)
-- [ ] 전 스위트 회귀 + verify-completion
-- [ ] PB-0008 실 Windows 브라우저 라이브 검증(폴더 다중 선택 · 드롭 · 요약 토스트)
-- [ ] 배포 + POST-DEPLOY 재검증
+- [x] 전 스위트 회귀(pytest exit 0 · mjs 45 suite) + verify-completion **PASS**
+- [x] PB-0008 실 Windows 브라우저 라이브 검증 — 배포본 `d3a520fd` 에서 T1~T6 **전건 PASS**
+      (다중 선택 3/3 · 재업로드 3건 스킵·row 증가 0 · **composer 드롭 첫 파일 1 row**(오탐 0) ·
+      단건 개별 토스트 · DB 실측 7 파일 각 1건). 토스트 프레임 캡처는 2.2초 TTL 로 미확보 —
+      `is-visible`+computed 배경색 실측으로 대체하고 fragment 에 사유 명시.
+- [x] 배포(`deploy-web.sh` scope=all, soak 통과) + POST-DEPLOY 실측 — 전 서비스 `GIT_COMMIT=d3a520fd`
 
 ## 9. Requested Scope
 - [x] `내용에 차이가 나타나는 파일들임에도 '동일한 파일' 이슈가 나타나며 블로킹` — 산출물: ① 오탐을
