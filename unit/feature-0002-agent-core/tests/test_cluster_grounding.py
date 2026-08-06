@@ -287,3 +287,56 @@ def test_agent_core_injection_is_failsoft():
     idx = src.index("load_cluster_summary_context")
     window = src[max(0, idx - 300):idx + 300]
     assert "except Exception" in window
+
+
+# ── 라벨 네임스페이스 (2026-08-06) ───────────────────────────────────────────
+def test_render_marks_the_schema_of_each_label():
+    """라벨은 datasource 안에서 유일하지 않다 — 어느 DB 이야기인지 함께 적는다.
+
+    라이브 실측: `메일 시스템` 9개 스키마 · `길드 관리` 8개 · `경매 시스템` 7개. 스키마를 빼면
+    서로 다른 DB 의 같은 이름 클러스터 요약이 나란히 실려 모델이 한 DB 의 사실로 읽는다."""
+    out = cc.render([("메일 시스템", "메일 보관·발송을 다룬다.", 12, 4, "atum2_db_1")])
+    assert "[atum2_db_1] 메일 시스템" in out
+
+
+def test_render_separator_survives_labels_that_contain_the_separator():
+    """라벨 자체가 `" · "` 를 품는다(`_disambiguate_labels` 가 동명 라벨에 접미를 붙인다).
+
+    같은 구분자로 스키마를 이으면 `[web_statistics · 일일 경험치 · dayexp]` 가 되어 어디까지가
+    스키마인지 사라진다 — 스키마는 대괄호로 따로 묶는다."""
+    out = cc.render([("일일 경험치 · dayexp", "요약", 5, 0, "web_statistics")])
+    assert "[web_statistics] 일일 경험치 · dayexp" in out
+
+
+def test_render_stays_backward_compatible_without_schema():
+    """5번째 원소가 없으면 기존 형태 — 호출부·저장 행 형태 변화에 대해 fail-soft."""
+    out = cc.render([("메일 시스템", "메일 보관·발송을 다룬다.", 12, 4)])
+    assert "[메일 시스템]" in out
+
+
+def test_summary_query_breaks_ties_deterministically():
+    """(label, member_count, analyzed_count) 완전 동률 그룹이 라이브에 실재한다 — 최종 tie-breaker
+    가 없으면 같은 질문이 매번 다른 행을 받는다."""
+    conn = _Conn()
+    cc.fetch_summaries(conn, "질문", ["ds1"], 2)
+    sql, _p = _sql_of(conn, "FROM cluster_summaries")
+    assert "label, member_set_hash" in sql
+
+
+def test_summary_query_selects_schema():
+    conn = _Conn()
+    cc.fetch_summaries(conn, "질문", ["ds1"], 2)
+    sql, _p = _sql_of(conn, "FROM cluster_summaries")
+    assert "analyzed_count, schema_name" in sql
+
+
+def test_match_query_is_deterministic_under_the_row_cap():
+    """정렬 없는 LIMIT 은 어느 200행이 오는지 비결정적이다.
+
+    테이블명 하나가 24개 eff-schema(DB 사본군)에 걸리는 라이브에서는 상한에 실제로 닿고,
+    그때 같은 질문이 매번 다른 근거를 받는다."""
+    conn = _Conn()
+    cc.fetch_summaries(conn, "질문", ["ds1"], 2)
+    sql, _p = _sql_of(conn, "FROM rag_objects")
+    assert "ORDER BY o.datasource_key, o.object_key" in sql
+    assert sql.index("ORDER BY") < sql.index("LIMIT")

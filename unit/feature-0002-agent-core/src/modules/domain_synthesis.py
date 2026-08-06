@@ -210,11 +210,80 @@ def pending_schemas(cur, limit: int) -> list:
         return []
 
 
-def cluster_inputs(cur, scope_key: str, schema_name: str) -> list:
-    """그 스키마의 클러스터 요약들. **결정적 정렬**(근거 많은 순 → 라벨).
+def live_cluster_labels(cur, scope_key: str, schema_name: str):
+    """그 스키마에 **현재 존재하는** 클러스터 라벨 집합. 조회 실패는 `None`.
 
-    조회 실패는 빈 목록(= 합성 대상에서 제외).
+    `cluster_summaries` 의 PK 는 (scope, schema, member_set_hash) 라 클러스터가 재구성되면 옛 행이
+    지워지지 않고 남는다. 그것을 L3 입력으로 쓰면 도메인 요약이 **이미 없어진 클러스터를 재료로**
+    만들어지고, `cluster_count`/`member_count` 가 부풀려진 채 `_domain_line` 을 통해 사용자 답변
+    프롬프트에 그대로 실린다("그룹 90개 · 멤버 887개 중 …개 상세분석 근거").
+
+    라이브 실측(2026-08-06): `atum2_db_1` 은 요약 90행(멤버 887) 중 현재 유효한 것이 **17행
+    (멤버 196)** — 81%가 죽은 클러스터였다. `gunzgame` 은 45행(329) → 25행(147).
+
+    현재 유효성의 정본은 클러스터링이 매 pass 역기록하는 라벨이고, 그 저장처가 **멤버 종류에 따라
+    갈린다**: 테이블은 `rag_objects`, 루틴(프로시저·함수)은 `routine_objects`. 둘을 합쳐야 한다 —
+    `rag_objects` 만 보면 **루틴으로만 이뤄진 클러스터가 통째로 죽은 것으로 판정된다**. 라이브 실측
+    (2026-08-06): rag 만 보면 사망 933행이지만 루틴을 합치면 **63행(3.4%)** 이다. 버려질 뻔한 933행
+    중 870행이 살아있는 루틴 클러스터였고, MSSQL 은 루틴이 압도적이다(`atum2_db_1` 라벨 달린 루틴
+    865 vs 테이블 115). 이 축을 빼먹으면 그 DB 의 프로시저 표면을 통째로 못 본 요약이 나간다.
+
+    ⚠ `rag_objects` 쪽 조인 키는 `effective_schema` 를 거쳐야 한다 — MSSQL 은 `schema_name` 이
+    리터럴 'dbo' 라 DB 차원이 소실돼, 그대로 비교하면 한 건도 매칭되지 않는다. SQL 로 후보를 좁히고
+    (object_key 접두) 파이썬에서 정확히 판정한다. `routine_objects.schema_name` 은 이미
+    eff-schema 라 변환이 필요 없다.
     """
+    out = set()
+    try:
+        with _savepoint(cur):
+            cur.execute(
+                "SELECT object_key, schema_name, semantic_cluster_label FROM rag_objects "
+                "WHERE datasource_key=%s AND semantic_cluster_label IS NOT NULL "
+                "  AND semantic_cluster_label <> '' "
+                "  AND (schema_name=%s OR object_key LIKE %s)",
+                (scope_key, schema_name, f"{scope_key}:{schema_name}.%"))
+            rag_rows = cur.fetchall() or []
+        with _savepoint(cur):
+            cur.execute(
+                "SELECT semantic_cluster_label FROM routine_objects "
+                "WHERE datasource_key=%s AND schema_name=%s "
+                "  AND semantic_cluster_label IS NOT NULL AND semantic_cluster_label <> ''",
+                (scope_key, schema_name))
+            routine_rows = cur.fetchall() or []
+    except Exception as exc:
+        _log.debug("live_labels_unavailable %s.%s err=%r", scope_key, schema_name, exc)
+        return None
+    try:
+        from .cluster_context import effective_schema
+    except Exception as exc:
+        _log.debug("effective_schema_unavailable err=%r", exc)
+        return None
+    for object_key, sch, label in rag_rows:
+        if effective_schema(scope_key, object_key, sch) == schema_name and label:
+            out.add(str(label))
+    for (label,) in routine_rows:
+        if label:
+            out.add(str(label))
+    return out
+
+
+def cluster_inputs(cur, scope_key: str, schema_name: str) -> list:
+    """그 스키마의 **현재 살아있는** 클러스터 요약들. **결정적 정렬**(근거 많은 순 → 라벨).
+
+    조회 실패는 빈 목록(= 합성 대상에서 제외). 현재 라벨 집합을 못 읽어도 마찬가지다 —
+    **부풀려진 재료로 만든 요약을 내보내느니 이번 pass 를 건너뛴다**(요청은 남아 있으므로 다음
+    pass 가 재시도한다). 판정 실패를 침묵으로 처리하는 feature-0036 의 계약과 같은 방향이다.
+    """
+    live = live_cluster_labels(cur, scope_key, schema_name)
+    if live is None:
+        return []
+    if not live:
+        # 요약은 있는데 현재 라벨이 하나도 없다 = 클러스터링이 아직 역기록하지 않았거나 스키마가
+        #   비었다. 조용히 건너뛰면 그 스키마가 pass cap 을 계속 물어 **뒤의 요청까지 굶는다**
+        #   (head-of-line). 로그로 남겨 스톨을 식별 가능하게 한다.
+        _log.info("도메인 합성 건너뜀 — 현재 클러스터 라벨 없음 %s.%s(클러스터링 역기록 대기)",
+                  scope_key, schema_name)
+        return []
     try:
         with _savepoint(cur):
             cur.execute(
@@ -224,10 +293,11 @@ def cluster_inputs(cur, scope_key: str, schema_name: str) -> list:
                 "ORDER BY analyzed_count DESC, member_count DESC, label "
                 "LIMIT %s",
                 (scope_key, schema_name, _HASH_SCAN_CAP))
-            return cur.fetchall() or []
+            rows = cur.fetchall() or []
     except Exception as exc:
         _log.debug("domain_inputs_unavailable %s.%s err=%r", scope_key, schema_name, exc)
         return []
+    return [r for r in rows if r and str(r[0] or "") in live]
 
 
 def build_payload(datasource_label: str, schema_name: str, rows) -> dict:
