@@ -6,11 +6,18 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-attach-delivery-truncated-by-output-cap — fixed:undeployed (L6↔L2 구조; 전달 payload 가 답변 출력 예산을 잠식)
+## FR-attach-delivery-truncated-by-output-cap — fixed:deployed:unverified-live (L6↔L2 구조; 전달 payload 가 답변 출력 예산을 잠식)
 
 - **status**: `fixed:undeployed` — 코드/테스트(신규 **56** PASS[33+23] · **뮤테이션 9/9 KILLED** ·
   컨테이너 정본 회귀 실패 0 · ruff clean) + §18.8 security/backend+qa 패널 **BLOCK → [P1] 4 · [P2] 9 ·
-  [P3] 6 전건 흡수**. 배포 전.
+  [P3] 6 전건 흡수** + **배포 완료**(2026-08-06, PR #1178 merge main `d04ab2f2` → `make deploy-web`
+  전체 스코프, soak 통과·롤백 0, **4서비스 GIT_COMMIT=d04ab2f2 running/healthy**).
+  병렬 세션 머지로 rebase 1회(FUNCTION.md 말미 append 충돌 → union 해소), rebase 후 컨테이너 정본
+  회귀 재실행 실패 0.
+  **배포본 런타임 실증(ask-worker)**: 도구 노출 True · `_TOOL_HANDLERS` 라우팅 True · datasource-free
+  True · `_bind_tool_delivered_attachments` 적재 True · 절단 감지 + latch True · 패치 정상 적용 ·
+  **잘린 패치 거부**(선언 -3/+3, 실제 -1/+1) · **문맥 없는 삽입 거부** · DELIVERY FACTS floor True.
+  **라이브 대화 실측 미수행** → `unverified-live`.
 - **source**: 사용자 보고(2026-08-06) — "assistant 가 모든 첨부파일들을 갱신했다고 전달받았지만
   정작 갱신된 첨부파일은 하나 뿐". 대화 제목 `파일 개선사항 지속적 갱신`.
 - **last_seen**: 2026-08-06 · **seen_count**: 1 · **seen_distinct_conv**: 1
