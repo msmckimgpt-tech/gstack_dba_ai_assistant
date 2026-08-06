@@ -2826,3 +2826,15 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   반영 — 선행 `AC-AMU-5`(프론트 버전 접미)는 그 범위에서 **superseded**. 실행 코드 변경 0줄.
 - Files: `docs/FUNCTION.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
 - Timestamp: 2026-08-07T00:40:00+09:00
+## CHG-20260807T0640-ai-claude-attach-diff-syntax-css-fix — keyword 규칙 미적용 hotfix
+
+- **프론트** `src/static/css/chat.css`: 고아 주석 블록 해소(여는 `/*` 없는 `**굵기는 … */` 가
+  CSS 파서에게 셀렉터로 읽혀 다음 규칙 `.code-tok-keyword` 를 삼켰다). 문단을 원 주석 안으로 병합.
+- **테스트** `tests/verify_attach_diff_syntax_highlight.mjs`: F2 섹션 신설 — F8(고아 `*/`)·
+  F9(미닫힘 주석)·F10(주석 제거 후 셀렉터 위치 산문 누출) × chat.css·base.css → **113 PASS**.
+  결함 재주입 시 F8·F10 2중 검출.
+- 적발 = 배포본 `6cd4afd2` PB-0008 라이브 computed style 실측(keyword `rgb(38,37,30)`/400).
+- 백엔드·API·RBAC·스키마·마이그레이션 **0**.
+- Files: `src/static/css/chat.css`, `tests/verify_attach_diff_syntax_highlight.mjs`,
+  `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260807T0640-attach-diff-syntax-css-fix.md`.
+- Timestamp: 2026-08-07T06:40:00+09:00

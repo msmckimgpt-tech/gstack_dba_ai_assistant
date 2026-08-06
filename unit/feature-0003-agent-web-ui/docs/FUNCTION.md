@@ -2876,8 +2876,12 @@ scrollTop 픽셀 복원은 행 수·행 높이가 바뀌는 경우(전개·2열�
 - **AC-AVD-25** 구조 색이 비구조 텍스트에 내려앉지 않는다 — XML 산문의 `word = value`, YAML 문장
   중간의 `on`/`No`, 숫자 섞인 CSV 텍스트 필드는 무색이다.
 - **AC-AVD-26** 적대적 입력에서도 한 줄 토큰화가 1ms 미만이고 길이 2배당 비용 증가가 3배 미만이다.
-- 검증 = `tests/verify_attach_diff_syntax_highlight.mjs` A~I **108건**(G=대비 계산, H=토글 실구동,
-  I=성능 회귀) + PB-0008 실화면 가독성 실측.
+- **AC-AVD-27** 토큰 CSS 규칙이 실제로 **적용된다** — 라이브 computed style 에서 `code-tok-keyword`
+  가 `--code-tok-keyword`(#7c3aed) · weight 600 이다. (2026-08-07 적발: 고아 주석 블록이 CSS 파서에게
+  셀렉터로 읽혀 이 규칙 하나를 삼켰다. 문자열 검사·jsdom CSSOM 둘 다 못 잡는 축이라 정적 가드는
+  주석 균형·셀렉터 오염에 걸고, "적용된다" 의 정본은 실 브라우저 computed style 로 둔다.)
+- 검증 = `tests/verify_attach_diff_syntax_highlight.mjs` A~I **113건**(F2=CSS 구조 유효성,
+  G=대비 계산, H=토글 실구동, I=성능 회귀) + PB-0008 실화면 computed style·가독성 실측.
 
 ## REQ-20260806-attach-manage — 대화 첨부 삭제(버전 선택)·복구·일괄 다운로드
 

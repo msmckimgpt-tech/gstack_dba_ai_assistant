@@ -9082,3 +9082,41 @@ row 수가 적고, 되돌릴 수단(스냅샷 + 롤백 SQL)을 함께 만들며,
 **G9-b**: 병합은 무음 절단이 아니다 — 제외 그룹을 사유와 함께 출력하고 스냅샷에 남긴다.
 **G9-d**: 산출물(스냅샷)의 소비 경로를 함께 만들었다 — `--rollback <snapshot.json>` 으로
 before-state 를 되돌리는 경로가 있고, 사람이 읽을 수 있는 `.rollback.sql` 도 동시 생성한다.
+
+## 20260807T0640-attach-diff-syntax-css-fix — 구문 하이라이트 keyword 규칙 미적용 hotfix (Minor §12.3, frontend-only)
+
+- **적발 경로**: 직전 cycle(`20260806T1853-attach-diff-syntax`) 배포본 `6cd4afd2` 의 **PB-0008 라이브
+  실측**. `code-tok-keyword` 의 computed color 가 `rgb(38,37,30)`(=`--text` 기본값) · weight 400 —
+  **규칙은 파일에 있는데 적용되지 않았다**. number(`rgb(15,118,110)`)·comment(`rgb(90,88,82)`)는 정상.
+
+### §2.1 Implementation Plan
+
+- **원인**: 설명 문단을 추가할 때 기존 주석의 닫는 `*/` **뒤에** 붙여 여는 `/*` 가 없는 고아
+  블록이 생겼다. CSS 파서가 `**굵기는 … */` 를 셀렉터로 읽기 시작해 **바로 다음 규칙 하나
+  (`code-tok-keyword`)를 통째로 삼켰다** — 그래서 keyword 만 죽고 `type` 이후는 정상이라는,
+  실측과 정확히 일치하는 증상이 나왔다.
+- **왜 하네스가 통과했는가**: F/G 섹션의 CSS 단언이 전부 **문자열 grep** 이라 "그 규칙이 적법한
+  위치에 있는가" 를 묻지 않았다. jsdom 의 CSSOM 파서는 관대해서 **깨진 버전도 13 규칙을 그대로
+  인식**한다(실측 확인) — CSSOM 검사로 바꿔도 잡히지 않는다.
+- **수정**: ① 고아 주석의 `*/` 제거(문단을 원 주석 안으로 병합) ② 결정적으로 잡히는 정적 가드
+  **F8**(고아 `*/`)·**F9**(미닫힘)·**F10**(주석 제거 후 셀렉터 위치에 한글·`**` 누출)을 chat.css·
+  base.css 양쪽에 적용.
+- **영향 파일**: `src/static/css/chat.css`(주석 2줄) · `tests/verify_attach_diff_syntax_highlight.mjs`(F2 섹션 5단언).
+- **AC**: 라이브에서 `code-tok-keyword` 의 computed color == `--code-tok-keyword`(#7c3aed) · weight 600 /
+  결함 재주입 시 하네스 red.
+- **위험도**: **Minor** — CSS 주석 2줄 + 테스트. 백엔드·API·RBAC·스키마 0.
+
+### 체크리스트
+
+- [x] chat.css 고아 주석 해소 — 전 파일 주석 균형 확인(`/*` 143 = `*/` 143, 고아 0, 미닫힘 0)
+- [x] 정적 가드 F8·F9·F10 신설 → 하네스 **113 PASS**
+- [x] **뮤테이션 역검증** — 라이브 결함을 그대로 재주입하니 F8(line 2865)·F10 이 **2중 검출**
+- [ ] 배포 + PB-0008 재검증(keyword computed color·weight 실측)
+
+## 9. Requested Scope
+- [x] `구문 하이라이트 keyword 미적용` — 산출물: 주석 구조 수정 · 배선 확인: F8/F9/F10 정적 가드 +
+      PB-0008 computed style 실측(배포 후).
+
+**교훈**: CSS 는 문자열 검사로 검증되지 않는다. 이번 실패 모드(주석 파손)는 정적으로 잡을 수 있어
+가드를 넣었지만, "규칙이 실제로 적용되는가" 의 정본은 **실 브라우저의 computed style** 이다 —
+`visual_verification_scope: always` 가 이 결함을 잡은 것이 그 근거다.
