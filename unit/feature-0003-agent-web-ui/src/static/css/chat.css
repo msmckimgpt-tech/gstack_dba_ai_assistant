@@ -2471,3 +2471,221 @@
 .attach-list-version-dl:hover { background: rgba(37, 99, 235, 0.08); }
 .attach-list-version-dl:disabled { color: var(--text-muted); cursor: default; }
 
+/* ── REQ-20260806-attach-version-diff: 버전 비교 진입점 + 전용 diff 모달 ──────────── */
+
+/* 버전 이력 박스 머리의 "⇄ 버전 비교" (기본 직전↔최신) */
+.attach-list-versions-head {
+  display: flex;
+  justify-content: flex-start;
+  padding-bottom: 2px;
+}
+.attach-list-versions-compare {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.attach-list-versions-compare:hover { background: var(--primary-soft, #eff6ff); }
+/* 각 구버전 행의 `⇄` (그 버전 ↔ 최신 — 여러 단계 차이 포함) */
+.attach-list-version-cmp {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #9ca3af);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+}
+.attach-list-version-cmp:hover { background: rgba(37, 99, 235, 0.08); color: var(--primary, #2563eb); }
+
+/* 모달 — share-mgr 골격을 재사용하고 폭/높이만 diff 용으로 넓힌다. */
+.attach-diff-panel {
+  max-width: 1180px;
+  max-height: 88vh;
+}
+.attach-diff-fname {
+  font-weight: 500;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.attach-diff-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.attach-diff-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.attach-diff-ctl select {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  max-width: 220px;
+}
+.attach-diff-swap {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: var(--r-sm);
+}
+.attach-diff-swap:hover { background: var(--surface-2); color: var(--text); }
+.attach-diff-stats {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.attach-diff-viewtoggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.attach-diff-mode {
+  border: none;
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 10px;
+}
+.attach-diff-mode + .attach-diff-mode { border-left: 1px solid var(--border); }
+.attach-diff-mode:hover { background: var(--surface-2); }
+.attach-diff-mode.is-active {
+  background: var(--primary-soft, #eff6ff);
+  color: var(--primary-dark, #1d4ed8);
+  font-weight: 600;
+}
+.attach-diff-ctxtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.attach-diff-body {
+  padding: 12px 20px 18px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.attach-diff-notice {
+  font-size: 12.5px;
+  color: var(--text-2);
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  margin-bottom: 8px;
+}
+.attach-diff-notice.is-warn {
+  background: var(--tag-warn-bg);
+  color: var(--tag-warn-fg);
+  border: 1px solid var(--tag-warn-bd);
+}
+.attach-diff-notice.is-same {
+  background: var(--tag-ok-bg);
+  color: var(--tag-ok-fg);
+  border: 1px solid var(--tag-ok-bd);
+}
+/* 가로로 긴 코드 줄은 본문 대신 이 컨테이너 안에서만 스크롤한다(모달 폭 붕괴 방지). */
+.attach-diff-scroller {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.attach-diff-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  table-layout: fixed;
+}
+.attach-diff-lineno {
+  width: 48px;
+  min-width: 48px;
+  text-align: right;
+  padding: 0 8px 0 6px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  user-select: none;
+  vertical-align: top;
+  border-right: 1px solid var(--border-subtle);
+}
+.attach-diff-sign {
+  width: 18px;
+  min-width: 18px;
+  text-align: center;
+  color: var(--text-muted);
+  user-select: none;
+  vertical-align: top;
+}
+.attach-diff-code {
+  padding: 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  color: var(--text);
+}
+.attach-diff-table.is-split .attach-diff-code { width: calc(50% - 48px); }
+.attach-diff-table.is-split .attach-diff-code.side-left { border-right: 1px solid var(--border); }
+.attach-diff-row.is-insert .attach-diff-code,
+.attach-diff-row.is-replace .attach-diff-code.side-right { background: var(--tag-ok-bg); }
+.attach-diff-row.is-delete .attach-diff-code,
+.attach-diff-row.is-replace .attach-diff-code.side-left { background: var(--tag-danger-bg); }
+.attach-diff-row.is-insert .attach-diff-sign { color: var(--tag-ok-fg); }
+.attach-diff-row.is-delete .attach-diff-sign { color: var(--tag-danger-fg); }
+.attach-diff-gap {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--border-subtle);
+  text-align: center;
+}
+.attach-diff-meta {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  width: 100%;
+}
+.attach-diff-meta th,
+.attach-diff-meta td {
+  border: 1px solid var(--border-subtle);
+  padding: 5px 9px;
+  text-align: left;
+  color: var(--text);
+}
+.attach-diff-meta thead th { background: var(--surface-2); color: var(--text-2); font-weight: 600; }
+.attach-diff-meta tbody th { background: var(--surface-2); color: var(--text-2); font-weight: 500; width: 96px; }
+
+/* 좁은 폭 폴백 — 2열은 가로폭을 요구하므로 세로 스택 대신 좌우 스크롤을 허용하고,
+   컨트롤 줄은 자연 줄바꿈으로 접힌다(위 flex-wrap). */
+@media (max-width: 820px) {
+  .attach-diff-table.is-split { table-layout: auto; min-width: 720px; }
+  .attach-diff-stats { margin-left: 0; }
+}
+

@@ -6607,6 +6607,228 @@ def _compute_version_diff(
         "truncated": truncated,
     }
 
+# ── REQ-20260806-attach-version-diff: 임의 버전 쌍 비교 (버전 이력 diff 화면) ──
+#
+# 기존 `_compute_version_diff` 는 **업로드 시점에 직전↔신규 1쌍만** 계산해
+# `MetaJson.version_diff` 로 저장한다(LLM 컨텍스트 주입용). 사용자가 화면에서 v1↔v3 처럼
+# **여러 단계 떨어진 쌍**을 비교하려면 그 저장분으로는 답이 없다 — 아래 두 헬퍼가 체인
+# 로드와 on-the-fly 비교를 담당한다.
+
+# diff 뷰 행 상한 — 초과분은 잘리고 `truncated.rows=True` 로 **표면화**한다
+# (AGENTS.md §16.7 G9-b 무음 절단 금지).
+_VERSION_DIFF_ROW_CAP = 6000
+_VERSION_DIFF_CONTEXT_DEFAULT = 3
+# 텍스트 비교가 성립하는 kind — `_EXTENSION_KIND_MAP` 의 텍스트 계열(.sql/.md/.json/…)과 csv.
+# 바이너리(xlsx/pdf/image/other)는 줄 단위 diff 가 무의미하므로 메타 비교로 강등한다.
+_VERSION_DIFF_TEXT_KINDS = ("text", "csv")
+
+
+def _load_attachment_version_chain(
+    conn, root_id: int, *, scope_row: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """첨부 버전 체인 전체를 VersionNumber ASC 로 로드한다 (구버전 포함, soft-delete 제외).
+
+    TASK-0277 read cutover 규약을 따라 PG 미러를 우선 읽고 실패 시 MySQL 로 폴백한다.
+    **권한 검사는 하지 않는다** — 호출자가 기준 첨부에 대해
+    `_account_can_access_attachment` 를 이미 통과했음을 전제한다(버전은 같은
+    conversation·account 귀속이라 기준 첨부 권한이 체인 전체를 덮는다).
+
+    `scope_row`(기준 첨부 행)를 주면 그 전제를 **데이터로 재확인**한다 — 체인 행 중
+    `ConversationId`/`AccountId` 가 기준과 다른 것을 제외하고 그 사실을 warning 으로 남긴다.
+    체인 편입 경로(`_find_latest_same_name_attachment` · assistant materialize)가 이미
+    `(conversation, account, filename)` 스코프를 강제하므로 정상 데이터에서는 아무것도 걸러지지
+    않는다. 그러나 그 전제가 깨진 행(레거시·수기 조작)이 하나라도 있으면 기준 첨부 게이트가
+    덮지 못하는 첨부를 반환하게 되므로, 방어를 **가정이 아니라 필터**로 둔다(fail-closed).
+    """
+    rows: list[dict[str, Any]] | None = None
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_get_attachment_versions(int(root_id))
+    except Exception:
+        rows = None
+        logging.getLogger(__name__).warning(
+            "_load_attachment_version_chain: PG read failed → MySQL fallback (root=%s)",
+            root_id, exc_info=True)
+    if rows is None:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                    DeletePending, DeleteReason, MetaJson,
+                    RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                FROM WebConversationAttachments
+                WHERE (RootAttachmentId = %s OR Id = %s) AND DeletedAt IS NULL
+                ORDER BY VersionNumber ASC, Id ASC
+                """,
+                (int(root_id), int(root_id)),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+    out = [dict(r) for r in rows]
+    if scope_row:
+        want_conv = str(scope_row.get("ConversationId") or "")
+        want_acct = int(scope_row.get("AccountId") or 0)
+        kept = [
+            r for r in out
+            if str(r.get("ConversationId") or "") == want_conv
+            and int(r.get("AccountId") or 0) == want_acct
+        ]
+        if len(kept) != len(out):
+            logging.getLogger(__name__).warning(
+                "_load_attachment_version_chain: 체인에 스코프 밖 행 %d건 — 제외(root=%s conv=%s acct=%s)",
+                len(out) - len(kept), root_id, want_conv, want_acct)
+        out = kept
+    return out
+
+
+def _build_version_diff_view(
+    left_text: str,
+    right_text: str,
+    *,
+    left_version: int,
+    right_version: int,
+    filename: str,
+    context_lines: int | None = _VERSION_DIFF_CONTEXT_DEFAULT,
+    row_cap: int = _VERSION_DIFF_ROW_CAP,
+) -> dict[str, Any]:
+    """두 버전 본문의 비교 뷰(unified 문자열 + 좌우 정렬 행)를 만든다.
+
+    `unified` 는 단일열 렌더용 git 형식 문자열, `rows` 는 2열 렌더용 좌우 정렬 행이다.
+    한 번의 `SequenceMatcher` opcode 로 **두 표현을 함께** 만들어, 두 뷰가 서로 다른
+    비교 결과를 보이는 일이 구조적으로 없게 한다(프론트 토글은 같은 데이터의 두 표현).
+
+    - `context_lines=None` → 전체 맥락 유지(동일한 줄도 전부 행으로 방출).
+      정수면 변경 지점 주변 그 줄 수만 남기고, 생략된 구간은 `type="gap"` 행으로
+      **생략 사실과 줄 수를 표면화**한다(조용히 사라지지 않게).
+    - 행 수가 `row_cap` 을 넘으면 잘라내고 `truncated["rows"]=True`.
+    - `replace` opcode 는 좌/우 줄 수가 다를 수 있어 짧은 쪽을 None 으로 패딩한다.
+    """
+    import difflib
+
+    left_lines = (left_text or "").splitlines()
+    right_lines = (right_text or "").splitlines()
+
+    unified = "\n".join(
+        difflib.unified_diff(
+            left_lines,
+            right_lines,
+            fromfile=f"{filename} (v{left_version})",
+            tofile=f"{filename} (v{right_version})",
+            lineterm="",
+            n=(3 if context_lines is None else max(0, int(context_lines))),
+        )
+    )
+
+    sm = difflib.SequenceMatcher(None, left_lines, right_lines, autojunk=False)
+    opcodes = sm.get_opcodes()
+    added = removed = 0
+
+    # 1차 패스 — opcode 를 좌우 정렬 행으로 펼친다(맥락 축약 전).
+    flat: list[dict[str, Any]] = []
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag == "equal":
+            for off in range(i2 - i1):
+                flat.append({
+                    "type": "equal",
+                    "left_no": i1 + off + 1, "left": left_lines[i1 + off],
+                    "right_no": j1 + off + 1, "right": right_lines[j1 + off],
+                })
+        elif tag == "replace":
+            span = max(i2 - i1, j2 - j1)
+            for off in range(span):
+                li = i1 + off
+                rj = j1 + off
+                has_l = li < i2
+                has_r = rj < j2
+                if has_l and has_r:
+                    flat.append({
+                        "type": "replace",
+                        "left_no": li + 1, "left": left_lines[li],
+                        "right_no": rj + 1, "right": right_lines[rj],
+                    })
+                    added += 1
+                    removed += 1
+                elif has_l:
+                    flat.append({
+                        "type": "delete",
+                        "left_no": li + 1, "left": left_lines[li],
+                        "right_no": None, "right": None,
+                    })
+                    removed += 1
+                else:
+                    flat.append({
+                        "type": "insert",
+                        "left_no": None, "left": None,
+                        "right_no": rj + 1, "right": right_lines[rj],
+                    })
+                    added += 1
+        elif tag == "delete":
+            for off in range(i2 - i1):
+                flat.append({
+                    "type": "delete",
+                    "left_no": i1 + off + 1, "left": left_lines[i1 + off],
+                    "right_no": None, "right": None,
+                })
+                removed += 1
+        elif tag == "insert":
+            for off in range(j2 - j1):
+                flat.append({
+                    "type": "insert",
+                    "left_no": None, "left": None,
+                    "right_no": j1 + off + 1, "right": right_lines[j1 + off],
+                })
+                added += 1
+
+    # 2차 패스 — 맥락 축약. 변경 행에서 context_lines 밖의 equal 런을 gap 으로 접는다.
+    if context_lines is None:
+        rows = flat
+    else:
+        ctx = max(0, int(context_lines))
+        keep = [False] * len(flat)
+        for idx, r in enumerate(flat):
+            if r["type"] == "equal":
+                continue
+            for k in range(max(0, idx - ctx), min(len(flat), idx + ctx + 1)):
+                keep[k] = True
+        rows = []
+        run = 0
+        for idx, r in enumerate(flat):
+            if keep[idx]:
+                if run:
+                    rows.append({"type": "gap", "skipped": run})
+                    run = 0
+                rows.append(r)
+            else:
+                run += 1
+        if run:
+            rows.append({"type": "gap", "skipped": run})
+
+    rows_truncated = False
+    if len(rows) > int(row_cap):
+        rows = rows[: int(row_cap)]
+        rows_truncated = True
+
+    return {
+        "unified": unified,
+        "rows": rows,
+        "stats": {
+            "added": added,
+            "removed": removed,
+            "left_lines": len(left_lines),
+            "right_lines": len(right_lines),
+            # 내용 동일 판정은 opcode 집계로만 한다 — 축약·행 상한(rows)에 영향받지 않게.
+            "identical": (added == 0 and removed == 0),
+        },
+        "truncated": {"rows": rows_truncated},
+    }
+
+
 def _conversation_scope_key(conn, conversation_id: str) -> str:
     """대화의 활성 데이터소스 scope_key 를 해석한다 (샘플 피드백 적재용).
 

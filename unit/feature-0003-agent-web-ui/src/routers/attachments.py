@@ -170,36 +170,11 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
 
         root_id = int(base.get("RootAttachmentId") or 0) or int(base.get("Id") or 0)
         # TASK-0277: read cutover — PG 우선(권한은 위 _account_can_access_attachment 로 이미 게이트),
-        # PG read 실패 시 MySQL 폴백.
-        rows = None
-        try:
-            from web.modules import attachment_pg_mirror as _apm
-            if _apm.read_pg_enabled():
-                rows = _apm.pg_get_attachment_versions(root_id)
-        except Exception:
-            rows = None
-            logging.getLogger(__name__).warning(
-                "get_attachment_versions: PG read failed → MySQL fallback (root=%s)", root_id, exc_info=True)
-        if rows is None:
-            cur = conn.cursor(dictionary=True)
-            try:
-                cur.execute(
-                    """
-                    SELECT
-                        Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
-                        FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
-                        UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
-                        DeletePending, DeleteReason, MetaJson,
-                        RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
-                    FROM WebConversationAttachments
-                    WHERE (RootAttachmentId = %s OR Id = %s) AND DeletedAt IS NULL
-                    ORDER BY VersionNumber ASC, Id ASC
-                    """,
-                    (root_id, root_id),
-                )
-                rows = cur.fetchall() or []
-            finally:
-                cur.close()
+        # PG read 실패 시 MySQL 폴백. REQ-20260806-attach-version-diff 에서 diff 엔드포인트와
+        # **같은 체인 로더**(`_load_attachment_version_chain`)를 공유하도록 추출 — 목록과 비교가
+        # 서로 다른 체인 집합을 보는 비대칭을 구조적으로 없앤다. `scope_row` 로 체인의
+        # conversation/account 스코프도 데이터로 재확인한다(기준 첨부 게이트의 전제 강제).
+        rows = app._load_attachment_version_chain(conn, root_id, scope_row=base)
 
         is_pending = app._account_is_pending(account)
         versions: list[dict[str, Any]] = []
@@ -217,6 +192,162 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
             versions.append(app._serialize_attachment_for_api(
                 d, include_signed_url=bool(signed_url), signed_url=signed_url))
         return JSONResponse({"root_attachment_id": root_id, "versions": versions})
+    finally:
+        conn.close()
+
+@router.get("/api/attachments/{attachment_id}/diff")
+def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONResponse:
+    """REQ-20260806-attach-version-diff: 같은 버전 체인의 **임의 두 버전** 본문 비교.
+
+    `MetaJson.version_diff`(업로드 시점 계산분)는 **직전↔신규 1쌍**만 담으므로 v1↔v3 같은
+    다단계 비교에는 답이 없다. 본 엔드포인트는 두 버전의 MinIO 원본을 그때그때 읽어
+    비교한다(저장 없음 — 어떤 쌍이든 대칭적으로 답한다).
+
+    Query:
+      - `from_version`(필수), `to_version`(필수) — 같은 체인 안의 VersionNumber.
+      - `context`(선택) — 변경 지점 주변 맥락 줄 수(기본 3). `full` 이면 전체 맥락.
+
+    권한: 기준 첨부의 `conversation.attachment.read.{own,any}` 재사용 — **신규 권한 코드 0**.
+    체인 밖 버전 번호는 400 이 아니라 404 로 답한다(존재 여부 oracle 방지 —
+    SECURITY.md §8.2.1 의 "매칭 여부가 곧 존재 여부를 답한다" 와 같은 계열).
+
+    **D21 pending 게이트 (필수)**: diff 행은 파일 **본문**을 그대로 담는다. 따라서 승인 대기
+    계정에 대한 판정은 metadata 조회(`get_attachment_metadata` — signed URL 만 보류)가 아니라
+    **본문 다운로드**(`download_attachment` — 403)와 동형이어야 한다. 이 게이트가 없으면
+    diff 가 D21 bytes-deny 의 우회 경로가 된다.
+
+    바이너리(xlsx/pdf/image/other)는 줄 diff 가 무의미하므로 `comparable=false` +
+    메타 비교(크기·sha256·시각·작성 주체)로 강등해 답한다 — 조용히 빈 diff 를 주지 않는다.
+    """
+    try:
+        from web.modules import storage_minio
+    except Exception as exc:
+        return app._json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    raw_from = (request.query_params.get("from_version") or "").strip()
+    raw_to = (request.query_params.get("to_version") or "").strip()
+    if not raw_from or not raw_to:
+        return app._json_error("from_version / to_version 이 필요합니다.", 400)
+    try:
+        from_version = int(raw_from)
+        to_version = int(raw_to)
+    except (TypeError, ValueError):
+        return app._json_error("from_version / to_version 은 정수여야 합니다.", 400)
+    if from_version == to_version:
+        return app._json_error("서로 다른 두 버전을 지정해야 합니다.", 400)
+
+    raw_ctx = (request.query_params.get("context") or "").strip().lower()
+    if raw_ctx in ("full", "all"):
+        context_lines: int | None = None
+    elif raw_ctx:
+        try:
+            context_lines = max(0, min(200, int(raw_ctx)))
+        except (TypeError, ValueError):
+            return app._json_error("context 는 정수 또는 'full' 이어야 합니다.", 400)
+    else:
+        context_lines = app._VERSION_DIFF_CONTEXT_DEFAULT
+
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        base = app._load_attachment_row(conn, attachment_id)
+        if not app._account_can_access_attachment(
+            conn, account, base,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return app._json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # D21 — diff 는 본문 노출이므로 다운로드와 동일 등급으로 막는다(위 docstring 참조).
+        if app._account_is_pending(account):
+            return app._json_error("승인 대기 계정은 첨부 본문을 비교할 수 없습니다.", 403)
+
+        root_id = int(base.get("RootAttachmentId") or 0) or int(base.get("Id") or 0)
+        chain = app._load_attachment_version_chain(conn, root_id, scope_row=base)
+        by_version = {int(r.get("VersionNumber") or 1): r for r in chain}
+        left = by_version.get(from_version)
+        right = by_version.get(to_version)
+        if not left or not right:
+            return app._json_error("지정한 버전을 찾을 수 없습니다.", 404)
+
+        def _side(row: dict[str, Any]) -> dict[str, Any]:
+            created = row.get("CreatedAt")
+            return {
+                "id": int(row.get("Id") or 0),
+                "version_number": int(row.get("VersionNumber") or 1),
+                "created_by_role": str(row.get("CreatedByRole") or "user"),
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else (
+                    str(created) if created else None),
+                "size": int(row.get("SizeBytes") or 0),
+                "sha256": str(row.get("Sha256") or ""),
+                "kind": str(row.get("Kind") or ""),
+                "original_filename": str(row.get("OriginalFilename") or ""),
+                "is_latest": not bool(row.get("SupersededAt")),
+            }
+
+        payload: dict[str, Any] = {
+            "root_attachment_id": root_id,
+            "filename": str(right.get("OriginalFilename") or left.get("OriginalFilename") or ""),
+            "from": _side(left),
+            "to": _side(right),
+        }
+
+        text_kinds = tuple(app._VERSION_DIFF_TEXT_KINDS)
+        left_kind = str(left.get("Kind") or "")
+        right_kind = str(right.get("Kind") or "")
+        if left_kind not in text_kinds or right_kind not in text_kinds:
+            payload.update({
+                "comparable": False,
+                "reason": "binary",
+                "identical": (str(left.get("Sha256") or "") == str(right.get("Sha256") or "")
+                              and bool(left.get("Sha256"))),
+            })
+            return JSONResponse(payload)
+
+        cap = int(app._ASSISTANT_EDIT_SIZE_CAP_BYTES)
+        sides: dict[str, str] = {}
+        truncated_sides: dict[str, bool] = {}
+        for key, row in (("from", left), ("to", right)):
+            try:
+                raw = storage_minio.get_object_bytes(str(row.get("ObjectKey") or ""))
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "get_attachment_version_diff: object read failed (id=%s)",
+                    row.get("Id"), exc_info=True)
+                payload.update({"comparable": False, "reason": "source_unavailable"})
+                return JSONResponse(payload, status_code=503)
+            truncated_sides[key] = len(raw) > cap
+            sides[key] = raw[:cap].decode("utf-8", "replace")
+
+        view = app._build_version_diff_view(
+            sides["from"],
+            sides["to"],
+            left_version=from_version,
+            right_version=to_version,
+            filename=str(payload["filename"] or "file"),
+            context_lines=context_lines,
+        )
+        payload.update({
+            "comparable": True,
+            "context_lines": context_lines,
+            "unified_diff": view["unified"],
+            "rows": view["rows"],
+            "stats": view["stats"],
+            "identical": bool(view["stats"]["identical"]),
+            # 절단 3종을 각각 표면화한다 — 어느 쪽이 잘렸는지 모르면 사용자가 diff 를
+            # 전체로 오인한다(§16.7 G9-b).
+            "truncated": {
+                "from_source": bool(truncated_sides.get("from")),
+                "to_source": bool(truncated_sides.get("to")),
+                "rows": bool(view["truncated"]["rows"]),
+            },
+            "caps": {"source_bytes": cap, "rows": int(app._VERSION_DIFF_ROW_CAP)},
+        })
+        return JSONResponse(payload)
     finally:
         conn.close()
 
