@@ -1269,7 +1269,6 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **위험등급**: Major(§12.3 — 코어 LLM 도구 결과 계약). 사용자 승인 "이어읽기 계약까지 강화"
   (AskUserQuestion 2026-08-05). **Cross-ref**: 표시층은 feature-0003
   (`CHG-20260805T190000-step-preview-excerpt-note`) · 원장 `FR-read-attachment-preview-looks-partial`.
-
 ## CHG-20260806T104500-read-attach-deploy `read_attachment` 완전성 계약 배포 완료 기록 (문서만)
 - **배포**: PR #1161 merge main `2cab05f3` → `make deploy-web` 전체 스코프. soak 90s 통과, 롤백 0.
   **4서비스 GIT_COMMIT=2cab05f3 running/healthy**. last-good(agent) = `e21606d2`.
@@ -1286,3 +1285,68 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`.
 - **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260805T190000-read-attach-completeness` ·
   원장 `FR-read-attachment-preview-looks-partial`.
+## CHG-20260806T110000 도메인 합성 계측 도달 (Minor) — 클러스터 요약 recency 수정은 **적대 검증에서 반증되어 철회**
+
+- **무엇:** `domain_synthesis` 에 `attempted` 카운터 추가 + insight payload allow-list 등재
+  (`domain_synthesis_{ran,synthesized,attempted}`) + 기록 게이트를 `if _ds_rep:` 로 완화.
+- **왜:** `scan_report["domain_synthesis"]` 는 dict 라 `_telemetry_sweep` 의 스칼라 필터가 통째로
+  버린다. 이 워커에서 "계측을 만들고 payload 에 안 실어 무음"이 반복된 **네 번째** 사례다.
+  lazy 생성이라 카운터가 0 인 tick 이 대부분이므로, 0 을 안 싣는 게이트는 "요청이 없어 조용함"과
+  "배선이 죽어 조용함"을 같은 무음으로 만든다 — `ran=1` 이 그 둘을 가르는 유일한 증거다.
+
+### 철회한 변경 — 클러스터 요약 "최신 1건" (반증 기록)
+
+`cluster_context.fetch_summaries` 를 라벨당 최신 1건(`DISTINCT ON` + `created_at DESC`)으로 좁히려
+했다. 근거는 "같은 라벨의 여러 행 = 클러스터 구성이 바뀐 **버전**이고, 소비가 recency 를 안 봐서
+옛 버전이 뽑힌다(1,759 그룹 중 9건)" 였다. **적대 패널이 라이브 데이터로 그 전제를 반증했다**:
+
+- 다중행 26 그룹을 현재 `rag_objects` 클러스터링과 대조하면 **5 그룹이 "버전"이 아니라 동시에
+  살아있는 서로 다른 클러스터**(라벨 충돌)다. 선택이 바뀌는 9건 중 **4건이 그 경우**다.
+- 예: `web_statistics · 활성 사용자 · stat_active` 의 두 행은 요약 **내용이 다르다** — 유지되는 쪽은
+  "재계산 및 이력"(멤버 14), 버려지는 쪽은 "일일 활성 사용자 통계 2012~2023 스냅샷"(멤버 79).
+  62초 먼저 적재됐다는 이유로 79-멤버 클러스터 설명이 답변 근거에서 영구히 사라진다.
+  이것은 중복 제거가 아니라 **내용 손실**이다.
+- 객관 지표(선택된 요약의 `member_count` vs 그 라벨의 현재 테이블 수) — 총 편차
+  **339 → 645(1.9배 악화)**, 정확 일치 그룹은 6 → 6 으로 그대로. 개선 3 · 악화 5.
+- 부수 반증: `created_at` 은 "현재 유효한 구성"의 대리변수가 아니다. `_summary_put` 의 조건부
+  UPDATE(`l1_version`/`evidence_version`/`label` 중 하나라도 달라야 갱신) 때문에 구성이 그대로면
+  시각이 안 바뀌고, 캐시 적중 시엔 writer 가 아예 호출되지 않는다. 실제로 44-멤버를 기술하는 행이
+  5-멤버 행보다 **오래된** 그룹이 라이브에 있다.
+
+**남은 진짜 문제(이번 범위 밖, 별도 판단 필요)**:
+- 라벨 충돌 자체 — 같은 datasource 안에서 `메일 시스템`·`경매 시스템` 이 각 7개 스키마에 재사용되고,
+  테이블명 하나가 24개 eff-schema 에 매칭된다. 중복 주입의 **지배적 벡터는 크로스-스키마**이고,
+  `render` 가 `[label]` 만 출력해 스키마를 구분하지 않는다.
+- 형제 소비자 `domain_synthesis.cluster_inputs` 에도 dedupe·recency 가 없어 이미 오염된 값이
+  답변 프롬프트에 실린다(`gunzgame` 저장값 45/329 vs 라벨당 최신 기준 42/306).
+- `_matched_clusters` 의 `LIMIT 200` 에 `ORDER BY` 가 없어 다중 스키마 팬아웃 시 어느 200개가
+  오는지 비결정적(기존 결함).
+
+이 셋은 "소비 시 최신 1건" 으로는 풀리지 않는다 — 라벨 네임스페이스 설계 문제이므로 별도 cycle 에서
+다뤄야 한다. 잘못된 방향으로 한 줄 고치는 것보다 실측 반증을 남기는 편이 낫다고 판단했다.
+
+### 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `src/modules/domain_synthesis.py` | `attempted` 카운터(LLM 콜 직후·저장 판정 앞) |
+| `src/modules/insight.py` | payload `domain_synthesis_{ran,synthesized,attempted}` + 게이트 `if _ds_rep:` |
+| `tests/test_domain_synthesis.py` | attempted 를 **동작으로** 단정(소스 순서 검사는 변이 M4 를 통과시켰다) · payload 도달 · 0-tick 기록 · insight 호출 예외흡수 AST 판정 |
+
+### 위험과 완화
+
+| 위험 | 완화 |
+|---|---|
+| 0-tick 기록으로 로그 증가 | insight cycle 로그는 tick 당 1줄이고 키 3개 추가일 뿐 — 라인 수는 불변 |
+| `ran=1` 이 sweep 병합에서 합산됨(datasource 순회) | int 합산 규약대로 "몇 번 돌았나"가 되어 의미가 보존된다 |
+| 계측만 늘고 소비가 없음 | 이 값들은 cycle 로그 → `bin/perf-snapshot.sh` 수집 경로에 그대로 실린다 |
+
+### 이번 cycle 제외 (사유 명시)
+
+`shared/model_catalog.py` 의 유령 taxonomy 2건(`metadata_summary`·`metadata_prompt_gen` — 호출부 없음,
+전체 기간 사용 0건) 정리는 **제외**한다. `shared/**` 는 §13.2.2 F2 단일 mutator 대상인데
+`ai/claude/feature-0003-usage-records` 가 같은 파일을 편집 중이다(cycle-init 핫스팟 경고). 그 세션
+머지 후 별도 처리한다 — 화면 영향은 없다(라이브 데이터가 없으면 표시되지 않음).
+
+### 배포 scope
+워커(insight). `make deploy-all`.

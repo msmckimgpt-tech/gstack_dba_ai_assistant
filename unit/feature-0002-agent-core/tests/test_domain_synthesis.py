@@ -300,10 +300,21 @@ def test_grounding_does_not_synthesize_inline():
 
 
 def test_insight_runs_synthesis_pass():
+    """호출이 존재하고 **예외 흡수 안에** 있어야 한다(어떤 실패도 insight cycle 을 막지 않는다).
+
+    ⚠ 판정은 AST 포함관계로 한다 — 종전의 "뒤 400자 안에 except 가 있다"는 호출부 주석이
+    길어지기만 해도 깨지는 근사였고, 실제로 2026-08-06 에 거짓 실패했다."""
+    import ast
+
     src = _INSIGHT.read_text(encoding="utf-8")
     assert "run_synthesis_pass()" in src
-    idx = src.index("run_synthesis_pass()")
-    assert "except Exception" in src[idx:idx + 400]
+    guarded = [
+        ast.unparse(n) for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.Try) and any(
+            isinstance(h.type, ast.Name) and h.type.id == "Exception" for h in n.handlers)
+    ]
+    assert any("run_synthesis_pass()" in g for g in guarded), \
+        "합성 pass 호출이 예외 흡수 밖에 있다"
 
 
 # ── codex 리뷰 회귀 방지 ─────────────────────────────────────────────────────
@@ -363,3 +374,39 @@ def test_insight_synthesis_runs_only_under_advisory_lock():
     ]
     assert any("run_synthesis_pass()" in g for g in guarded), \
         "domain_synthesis pass 가 advisory lock 블록 밖에 있다"
+
+
+def test_attempted_counts_calls_even_when_nothing_is_stored(monkeypatch):
+    """LLM 을 태웠으면 센다 — **저장되지 않아도**.
+
+    `synthesized`(저장 성공)만 세면 "콜만 태우고 산출 0" 인 pass 가 통째로 무음이 된다. 그 대표
+    경로가 빈약한 응답(30자 미만)이다. 증가문을 `len(summary) < 30` 뒤로 옮기는 변이는 순서만
+    보는 소스 검사(call < attempt < store)를 **통과하면서** 이 계약을 정확히 파괴하므로,
+    여기서는 소스가 아니라 **동작**을 본다(적대 패널 변이 M4 생존 대응)."""
+    rep, stored = _run(monkeypatch, _Conn(), {"summary": "짧음"})   # 30자 미만 → 저장 안 함
+    assert rep["synthesized"] == 0 and stored == []
+    assert rep["attempted"] == 1, "콜을 태웠는데 attempted 에 남지 않았다"
+
+
+def test_synthesis_telemetry_reaches_the_operator_payload():
+    """계측은 **allow-list 에 등재돼야** 운영자에게 도달한다.
+
+    `scan_report["domain_synthesis"]` 는 dict 라 `_telemetry_sweep` 의 스칼라 필터가 통째로 버린다.
+    이 워커에서 "계측을 만들고 payload 에 안 실어 무음"이 반복된 네 번째 사례였다."""
+    src = _INSIGHT.read_text(encoding="utf-8")
+    for key in ("domain_synthesis_ran", "domain_synthesis_synthesized",
+                "domain_synthesis_attempted"):
+        assert key in src, f"{key} 가 payload allow-list 에 없다 — 계측이 도달하지 않는다"
+
+
+def test_pass_is_recorded_even_when_all_counters_are_zero():
+    """카운터가 0 이어도 **돌았다는 사실**은 남아야 한다.
+
+    lazy 생성이라 0 인 tick 이 대부분이다. 0 을 안 싣는 게이트는 "요청이 없어 조용한 tick" 과
+    "배선이 죽어 조용한 tick" 을 같은 무음으로 만든다 — 그러면 이 pass 의 사망을 영영 못 본다.
+    `ran=1` 이 sweep 의 truthy 필터를 통과하는 유일한 증거다."""
+    src = _INSIGHT.read_text(encoding="utf-8")
+    idx = src.index('scan_report["domain_synthesis"] = _ds_rep')
+    gate = src[max(0, idx - 400):idx]
+    assert "if _ds_rep:" in gate, "카운터 조건이 걸린 게이트는 0 인 tick 을 통째로 버린다"
+    assert '"domain_synthesis_ran": 1' in src
