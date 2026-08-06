@@ -1224,3 +1224,48 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`, `docs/LEARNINGS.md`(LRN-20260805-0002/0003).
 - **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260805T160000-attach-change-false-absence` ·
   `CHG-20260805T173000-attach-change-panel-absorb` · 원장 `FR-attachment-change-false-absence`.
+
+## CHG-20260805T190000-read-attach-completeness `read_attachment` 완전성 계약 + 표시 발췌 명시
+> conversation_audit 마찰 `FR-read-attachment-preview-looks-partial` — 라이브 실측 중 사용자가
+> "assistant 가 첨부를 일부만 조회하는 것처럼 보인다" 고 보고. 진단 결과 **오인 + 실재 결함이 겹쳐** 있었다.
+> 보고된 그 호출들(대화 `…843232a3` step 6~8)은 **전부 전문 수신**이었다(1~42/42 · 1~32/32 · 1~28/28,
+> tool 메시지 1,485·692·1,213자, 절단 마커 0). 다만 (a) 헤더 문구가 전문인데도 범위 표기라 부분처럼 읽히고
+> (b) 단계 보기 패널이 500자 발췌를 절단 표시 없이 렌더하며 (c) 라이브 41회 중 절단 2회는 **모두 모델의
+> `max_lines` 자기 제한**이고 그중 1건(327줄 중 250줄)은 **이어 읽지 않고 판단**했다(기본 600줄 캡 발동 0회).
+- `src/modules/tools.py`
+  - `_tool_read_attachment` 헤더를 **전문/부분으로 분기**: `truncated=False ∧ start_line==1` 이면
+    `전체 N줄 **전문**(처음부터 끝까지 아래에 있습니다)`. 그 외는 범위 표기 유지(`start_line>1` 은
+    끝까지 읽었어도 앞부분 미열람이라 전문이 아니다).
+  - 절단 시 **남은 줄 수**(`남은 N줄 미열람`) + **이어읽기 MUST 계약**: 그 파일 전체를 근거로 삼는
+    판단(리뷰·검증·요약·정합성·'문제 없음' 결론) 전에 반드시 이어 읽고, 이어 읽지 않기로 했다면
+    **어디까지 확인했는지 답변에 명시**. "방법만 알려주기" 로는 실측 미열람을 못 막았다.
+  - 도구 description: `max_lines` 임의 축소 금지 + 절단 시 이어읽기 의무 명시.
+- `src/agent_core.py`: `_build_step_result_summary` 가 500자 절단 시 `preview_truncated` +
+  `preview_full_chars` 플래그를 붙인다(`_STEP_PREVIEW_CAP_CHARS` 상수화). **표시 상한은 그대로** —
+  steps 는 모든 도구가 공유하는 저장 경로라 캡을 올리면 execute_sql 대량 결과까지 함께 커진다.
+  해법은 캡 상향이 아니라 **발췌임을 명시**하는 것이다(무음 절단 금지).
+- **§18.8 backend+qa 패널 BLOCK 흡수([P1] 2 · [P2] 9 · [P3] 6)** — 초판은 `read_attachment_content`
+  를 통째로 stub 해 **실 슬라이싱 로직을 한 번도 태우지 않았고**, 그 사각에 P1 이 있었다:
+  - **문자 상한(60,000자) 경로가 정량화된 허위를 냈다.** `end_line` 이 자르기 전 청크 길이라
+    "남은 400줄" 이 실제로는 600줄이었고(1,000줄×150자 실측), 이어읽기 시작점이 전달분보다 앞서
+    **중간 구간이 어떤 호출로도 오지 않는 구멍**이 됐다. 다른 형태는 `남은 0줄 미열람` +
+    `반드시 이어 읽으십시오` 라는 자기모순. → `read_attachment_content` 가 **온전한 줄만** 전달분으로
+    인정(조각줄 폐기)하고 `end_line`·`delivered_lines`·`char_capped`·`start_beyond_eof` 를 반환.
+    헤더의 모든 수치는 그 값에서만 파생한다. 전달 0줄이면 **"전달된 줄 없음"** 을 명시.
+  - **패널 주석이 모델 수신분을 단정했다.** `_cap_tool_result` 가 먼저 자르면 거짓이고, 모델이
+    `max_lines` 를 줄인 단계에서는 **진짜 결함을 덮는다**. → 단정 삭제(화면 표시 한정 진술) +
+    서버가 모델측 절단을 알릴 때만 반대로 경고(`result_capped_for_model`).
+    `preview_full_chars` → `result_chars` 개명.
+  - 부분 조회의 앞뒤 미열람 명시 · 이어읽기 탈출구 **조건부화** · 머리말 권위 조항 · EOF 초과 안내 ·
+    주석을 표 분기 **바깥**으로(마크다운 표는 `truncated:false` 를 날조) · **길이 폴백**으로 기존
+    저장 step 에도 주석 · 인자 전달/도구 게이트/저장→API seam 테스트 · CSS 토큰 정정.
+- **정정 2건(§2.5, 초판 주장이 틀렸다)**: ① "CI 가 JS 를 검증하지 않는다" → 저장소에 **29개 headless
+  JS 회귀 테스트** 관행이 있다. 관행대로 `tests/headless/test_step_preview_note.js`(17 assert) 신설,
+  검증 가능하도록 주석 생성을 `_buildStepPreviewNote()` 로 분리. ② 표시 캡 유지 사유는 "공유 저장
+  경로" 가 아니라(도구별 분기는 `tool_name` 으로 가능) **steps 가 폴링으로 반복 전송**되기 때문이다.
+- Tests: `tests/test_read_attachment_completeness_contract.py`(**17**, 실 함수 경유) +
+  `unit/feature-0003-agent-web-ui/tests/headless/test_step_preview_note.js`(17 assert).
+  **구코드 대비 17건 중 12건 FAIL**(초판은 9건 중 5건 — 판별력 검증).
+- **위험등급**: Major(§12.3 — 코어 LLM 도구 결과 계약). 사용자 승인 "이어읽기 계약까지 강화"
+  (AskUserQuestion 2026-08-05). **Cross-ref**: 표시층은 feature-0003
+  (`CHG-20260805T190000-step-preview-excerpt-note`) · 원장 `FR-read-attachment-preview-looks-partial`.

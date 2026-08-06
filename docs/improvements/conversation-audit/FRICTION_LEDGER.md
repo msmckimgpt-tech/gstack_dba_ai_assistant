@@ -6,6 +6,68 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-read-attachment-preview-looks-partial — fixed:undeployed (L7 표시 오인 + L2 완전성 계약 부재)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **17** PASS[실 함수 경유] · 기존 read_attachment
+  16 PASS · headless JS **17 assert** PASS · `make test` 전량 exit 0 · ruff clean ·
+  **구코드 대비 12/17 FAIL** 로 판별력 확인) + §18.8 backend+qa 패널 **BLOCK → [P1] 2 · [P2] 9 ·
+  [P3] 6 전건 흡수**. 배포 전.
+  **패널이 잡은 P1 2건(내 초판 결함)**: ① 초판 테스트가 `read_attachment_content` 를 통째로 stub 해
+  실 슬라이싱을 안 태웠고, 그 사각에서 **문자 상한(60,000자) 경로가 정량화된 허위**를 냈다 —
+  `end_line` 이 자르기 전 청크 길이라 "남은 400줄" 이 실제로는 600줄(1,000줄×150자 실측)이었고,
+  MUST 계약이 가리킨 `start_line=601` 때문에 **401~600 이 어떤 호출로도 오지 않는 구멍**이 됐다.
+  다른 형태는 `남은 0줄 미열람` + `반드시 이어 읽으십시오` 라는 자기모순. 게다가 같은 변경이 도구
+  설명에서 `max_lines` 축소를 금지해 **상한 발동 빈도를 스스로 올렸다**. ② 패널 주석이
+  `assistant 에게는 결과 전문이 전달되었습니다` 를 **무조건** 단정 — `_cap_tool_result` 가 먼저
+  자르면 거짓이고, **모델이 `max_lines` 를 줄인 단계**(이 감사가 찾은 유일한 진짜 미열람)에 안심
+  문구를 덮어 **true-positive 를 false-negative 로 바꾼다**.
+- **source**: 사용자 라이브 실측 중 보고(2026-08-05) — "assistant 가 `read_attachment` 로 파일을 조회할 때
+  마치 일부분만 조회하는 것처럼 동작. 웹 출력 간소화인지 실제 미열람인지 검토 필요".
+- **last_seen**: 2026-08-05 · **seen_count**: 1 · **seen_distinct_conv**: 1(보고) / 41회·8대화(도구 전체)
+- **modality**: 1:1 (fork) · **conv(마스킹)**: `…843232a3`([Fork] 실무 처리사항…, run `…acd234ec`)
+- **symptom_confidence**: high (사용자 명시 보고) · **rootcause_confidence**: high (DB 실측 + 코드 file:line)
+- **suspected_layers**: **L7**(표시 — 단계 패널이 500자 발췌를 절단 표시 없이 렌더) +
+  **L2**(도구 결과가 완전성을 스스로 진술하지 않음)
+- **판정(정직 분리)**:
+  - **보고된 건은 실제 결함 아님** — step 6~8 실측: `1~42/전체 42줄` · `1~32/전체 32줄` ·
+    `1~28/전체 28줄`, 절단 마커 **0**, assistant 수신 tool 메시지 **1,485 / 692 / 1,213자**.
+    같은 스텝의 표시용 preview 는 **500자 캡**(`agent_core._build_step_result_summary`). 즉 **전문 수신**.
+  - **오인의 직접 원인 2가지**: (a) 전문인데도 헤더가 `1~42번째 줄 / 전체 42줄` 이라 부분처럼 읽힘
+    (b) 단계 보기 사이드 패널(`app.js` `_renderStepSidePanelBody`)이 `rs.preview` 를 **발췌 표시 없이**
+    `<pre>` 로 렌더. 본문 채팅의 `buildStepBlocks` 는 non-SQL 스텝을 `work — reason` 한 줄로만 그리므로
+    이 표면은 사이드 패널 한정.
+  - **실재하는 미열람(드묾, 별개)**: 라이브 **41회 / 8대화** 중 절단 **2회**, 둘 다 **모델이 스스로
+    `max_lines` 지정**(3 · 250). 그중 `SP_LOG_SCHEDULE_improved_v2.sql`(327줄 중 250줄)은
+    **이어 읽지 않고 판단**(`…36a7790b`, 2026-07-31). **시스템 기본 600줄 캡 발동 0회.**
+- **confirmed_root_cause**: 도구 결과가 "이 응답이 전문인가" 를 **문구로 구분하지 않았고**(전문·부분이
+  같은 범위 표기), 절단 시에도 **이어읽는 방법만** 알려줄 뿐 **언제 반드시 이어 읽어야 하는지**를 계약으로
+  못박지 않았다. 표시층은 별도로 무음 절단(500자)이었다. 재발경로 = `ux contract` + `model limit`.
+- **봉인(사용자 승인 "이어읽기 계약까지 강화", AskUserQuestion 2026-08-05)**:
+  (1) 헤더 전문/부분 분기(`start_line>1` 은 전문 아님) (2) 절단 시 **남은 줄 수 + MUST 이어읽기 계약**
+  + 미이어읽기 시 **확인 범위 명시 의무** (3) 도구 description 에서 `max_lines` 임의 축소 금지
+  (4) 표시층에 `preview_truncated`/`preview_full_chars` 플래그 + 패널 발췌 주석(feature-0003).
+  **표시 캡은 상향하지 않음** — steps 는 전 도구 공유 저장 경로라 execute_sql 대량 결과까지 커진다.
+- **corroboration**: 표시 오인은 **structural**(모든 도구·모든 절단 스텝에 해당) / 실제 미열람은
+  **idiosyncratic**(41회 중 1회). disposition=fix-now 근거: 표시는 저위험 문구·플래그, 계약은 근본이
+  코드 file:line confirmed 이고 재발 경로가 확실(대형 SQL 파일 리뷰는 상시 작업).
+- **fix**: `CHG-20260805T190000-read-attach-completeness`(TASK-20260805T1900) /
+  **코드 거주 primary `feature-0002-agent-core`** + secondary cross-ref `feature-0003-agent-web-ui`
+  (`CHG-20260805T190000-step-preview-excerpt-note`) / `REV-20260805T190000-read-attach-completeness`.
+- **rc_ids**: RC-1(L7 무음 절단 표시) · RC-2(L2 완전성 계약 부재) ·
+  **batch-id**: B-20260805T190000-read-attach-completeness
+- **정정(§2.5 — 초판 주장 2건이 틀렸다)**: ① "CI 가 JS 를 검증하지 않는다" → 저장소에
+  `unit/feature-0003-agent-web-ui/tests/headless/` **29개 headless JS 회귀 테스트 관행**이 있다.
+  관행대로 `test_step_preview_note.js` 신설(주석 유무·길이 폴백·**모델 수신분 단정 금지**·모델측 절단
+  경고·`textContent` 강제·표 분기 포함). ② 표시 캡 유지 사유 "공유 저장 경로" → 도구별 분기는
+  `tool_name` 으로 가능하므로 **틀렸다**. 실제 사유는 **steps 가 run 진행 중 폴링으로 반복 전송**되어
+  캡 상향이 매 payload 에 곱해진다는 것.
+- **범위 밖(deferred/watch)**: ① `read_attachment` 전용 표시 캡 상향(기술적으로 가능 — 폴링 전송량과
+  맞바꾸는 판단이라 별도 항목) ② CRLF 정규화로 "전문" 이 바이트 동일을 뜻하지는 않음(선재)
+  ③ 인라인 재사용 경로와 스토리지 경로의 `.strip()`·디코딩 차이(선재).
+- **라이브 실측 필요분(§정직)**: ① 절단 발생 시 모델이 **실제로 이어 읽는지**(절단 자체가 41회 중
+  2회로 드물어 자연 발생을 기다려야 한다) ② 패널 주석은 headless 로 **로직**을 고정했을 뿐
+  **실 브라우저 렌더는 배포 후** 확인.
+
 ## FR-attachment-change-false-absence — fixed:deployed:unverified-live (L1 seal gap + model limit; 첨부 축 부재-단정을 막는 코드-권위 사실 부재)
 
 - **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 **24** PASS · `make test` 전량 exit 0 ·
