@@ -2596,3 +2596,21 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Files: `docs/{TASK,MODIFY,REVIEW,FUNCTION}.md`, `docs/test-runs.d/REV-20260806T183000-attach-multi-upload.md`,
   `tests/win-browser-attach-multi-upload{,-visual}.scenario.json`.
 - Timestamp: 2026-08-06T20:00:00+09:00
+## CHG-20260807T0620-attach-diff-unified-bg 단일열 줄 배경 소실 회귀 수정 (Minor §12.3)
+
+- **자기 적발 회귀**: 직전 cycle(`CHG-20260807T0430-attach-diff-scroll-block`)이 줄 배경을
+  `.has-content` 로 좁힐 때 `_renderSplit` 에만 클래스를 부여해, 단일열의 내용 있는 추가/삭제
+  줄이 danger/ok 를 잃고 `rgb(240,239,234)`(내가 "대응 내용 없음" 용으로 도입한 중립 filler)를
+  받았다. **의미가 반대로 뒤집힌다** — 내용이 있는데 "없음" 색이 된다.
+- 수정: `_renderUnified` 의 code 셀에 `text != null` 일 때 `has-content` 부여(1줄).
+  패딩 행(text==null)은 filler 유지 — 경계 양측이 각각 옳게 동작한다.
+- **재발 차단**(이번 결함의 기전 = 렌더러 둘 중 한쪽만 규칙 준수):
+  - 헤드리스 **B9**(단일열 변경 줄이 중립 filler 아님) · **B9b**(delete=danger / insert=ok)
+  - mjs **A1d** 4건 — `has-content`/`has-block` 부여 지점 **개수**를 세어 한쪽 누락 적발 +
+    게이트 형태 + CSS 반대편(filler) 규칙 실재
+- 검증: 헤드리스 **46/46** · mjs **88 PASS** · 뮤테이션 **4/4**(수정 되돌림 → B9·B9b·A1d×2 red).
+- Files: `src/static/app/attach-diff.js`, `tests/headless/verify_attach_diff_geometry.py`,
+  `tests/verify_attach_version_diff.mjs`, `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`,
+  `docs/test-runs.d/…`.
+- CSS·백엔드·API·스키마 0.
+- Timestamp: 2026-08-07T06:20:00+09:00

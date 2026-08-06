@@ -2921,3 +2921,17 @@ scrollTop 픽셀 복원은 행 수·행 높이가 바뀌는 경우(전개·2열�
     실측에서 제외하고 pytest N3/N5/N6 로 잠갔다. 시나리오
     `tests/win-browser-attach-multi-upload{,-visual}.scenario.json`, Run 기록
     `docs/test-runs.d/REV-20260806T183000-attach-multi-upload.md` Run 4.
+
+
+### (attach-diff-unified-bg, 2026-08-07) 두 뷰의 줄 배경 규칙 대칭
+
+`has-content` 는 **줄 배경**(danger/ok)의 게이트이고 `has-block` 은 **문단 accent** 의 게이트다.
+두 클래스는 짝이며 **두 렌더러가 모두** 부여해야 한다. 직전 cycle 이 배경 규칙을 좁힐 때
+`_renderSplit` 만 갱신해 단일열이 색을 잃었고, 그 자리에 "대응 내용 없음" 을 뜻하는 중립
+filler 가 들어가 **의미가 반대로 뒤집혔다**(라이브 실측 교정).
+
+- **AC-AVD-19** 단일열에서 내용이 있는 추가/삭제 줄은 중립 filler(`rgb(240,239,234)`)가 아니다.
+- **AC-AVD-20** 단일열의 삭제 줄은 danger(`rgba(220,38,38,0.12)`), 추가 줄은 ok
+  (`rgba(22,163,74,0.12)`) 로 칠해진다 — 2열과 같은 색 어휘.
+- **AC-AVD-21** 패딩된 빈 셀은 두 뷰 모두 중립 filler 를 유지한다(경계의 반대편).
+- 검증 = 헤드리스 B9 · B9b(실 브라우저 computed style) + mjs A1d 4건(부여 지점 **개수** 대칭).

@@ -509,6 +509,40 @@ with sync_playwright() as p:
         check("B7 단일열도 같은 블록 1개(replace 2행 전개 반영, 시작·끝 각 1행)",
               blku["starts"] == 1 and blku["ends"] == 1 and blku["inBlock"] == 5,
               json.dumps(blku))
+
+        # B9/B9b — **단일열의 줄 배경**. B8 은 배경을 2열에서만 봤고 B7 은 단일열의 블록 구조만
+        #   봤다. 그 틈으로 실제 회귀가 배포까지 나갔다: 배경 규칙을 `.has-content` 로 좁힐 때
+        #   `_renderUnified` 가 그 클래스를 붙이지 않아, 단일열의 추가/삭제 줄이 danger/ok 를
+        #   잃고 **"대응 내용 없음" 을 뜻하는 중립 filler** 를 받았다(라이브 실측 rgb(240,239,234)).
+        #   색이 사라진 것보다 나쁘게 의미가 반대로 뒤집혔다 — 두 뷰를 **각각** 재야 한다.
+        ubg = page.evaluate("""() => {
+          const bd = document.querySelector('.attach-diff-backdrop');
+          const out = [];
+          for (const tr of bd.querySelectorAll('tr.attach-diff-row')) {
+            if (tr.classList.contains('is-equal')) continue;
+            const td = tr.querySelector('td.attach-diff-code');
+            if (!td) continue;
+            out.push({kind: tr.classList.contains('is-delete') ? 'delete' :
+                            tr.classList.contains('is-insert') ? 'insert' : 'other',
+                      text: td.textContent, empty: td.textContent === '',
+                      hasContent: td.classList.contains('has-content'),
+                      bg: getComputedStyle(td).backgroundColor});
+          }
+          return out;
+        }""")
+        withtext = [u for u in ubg if not u["empty"]]
+        dels = [u for u in withtext if u["kind"] == "delete"]
+        inss = [u for u in withtext if u["kind"] == "insert"]
+        check("B9 단일열 — 내용 있는 변경 줄이 중립 filler 가 아니다(의미 반전 차단)",
+              bool(withtext) and all("240, 239, 234" not in u["bg"] for u in withtext),
+              json.dumps([{"k": u["kind"], "t": u["text"][:10], "bg": u["bg"]} for u in withtext],
+                         ensure_ascii=False))
+        check("B9b 단일열 — 삭제 줄은 danger, 추가 줄은 ok 로 칠해진다",
+              bool(dels) and bool(inss)
+              and all("220, 38, 38" in u["bg"] for u in dels)
+              and all("22, 163, 74" in u["bg"] for u in inss),
+              f"delete={[u['bg'] for u in dels]} insert={[u['bg'] for u in inss]}")
+
         page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"split\"]').click()")
         page.wait_for_timeout(250)
 

@@ -3102,7 +3102,6 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 - 단일 토스트 엘리먼트 구조 자체는 그대로다 — 배치가 요약 1회로 줄여 회피할 뿐, 다른 경로에서
   연속 토스트가 겹치는 문제는 별도 축이다.
 - Artifact: 본 entry
-
 ## REV-20260806T200000-ai-claude-attach-multi-upload-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY 라이브 실측 기록
 
 - Related TASK: feature-0003-agent-web-ui (20260806T1820-attach-multi-upload)
@@ -3127,3 +3126,26 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 **라이브 데이터 경계**: 자체 테스트 대화 3건만 생성·사용 후 전부 보관 처리. 사용자 대화 무접촉
 (읽기 전용 조회만).
 - Artifact: 본 entry
+## REV-20260807T062000-attach-diff-unified-bg [SKIPPED:tool-restricted:ux,design] — 단일열 줄 배경 소실 회귀 자기 적발·수정
+
+- [SKIPPED:tool-restricted:ux,design] — Agent tool 세션 금지 + codex 사용량 한도(8/9 까지).
+  본 결함이 **시각 판단 축**이었으므로 이 skip 이 실제로 비용을 냈다 — 자동 44축이 전부 PASS 인
+  상태로 배포됐고, 배포 후 사람(내)의 확대 캡처 판독이 유일한 검출 지점이었다. 그 판독을
+  B9/B9b/A1d 로 자동화해 다음부터는 사람 눈에 의존하지 않게 했다.
+- **자기 적발 — 내가 넣고 배포한 회귀**: 직전 cycle 이 "강조는 내용 있는 쪽에만" 규칙을 넣으며
+  줄 배경을 `.has-content` 로 좁혔다. 그 클래스를 `_renderSplit` 에만 부여해 단일열의 내용
+  있는 변경 줄이 danger/ok 를 잃고 `rgb(240,239,234)` 를 받았다. **색 소실보다 나쁜 의미 반전** —
+  내용이 있는데 "대응 내용 없음" 색이 된다. 라이브 실측으로 확정(추측 아님).
+- **기전 진단**: 렌더러가 둘(`_renderSplit`/`_renderUnified`)인데 규칙 준수를 **한쪽에서만**
+  확인했다. 헤드리스 B8/B8b 는 배경을 2열에서만, B7 은 단일열의 블록 구조만 봤다. "두 뷰가
+  같은 규칙을 따르는가" 라는 축 자체가 없었다.
+- **재발 차단 2층**: ① 동작층 — 헤드리스 B9/B9b 가 단일열 computed style 을 실측. ② 구조층 —
+  mjs A1d 가 `has-content`/`has-block` 부여 지점 **개수**를 세어 한쪽 누락을 정적으로 적발.
+  구조층을 둔 이유: 새 렌더러가 추가되면 동작 테스트는 그것을 모르지만 개수는 어긋난다.
+- **뮤테이션 역검증 4/4**: 수정 되돌림 → 헤드리스 B9·B9b red(실측 `rgb(240,239,234)`) +
+  mjs A1d 2건 red. 이번 cycle 은 **미포착 뮤테이션이 없다**(직전 cycle 의 rAF 항목과 다르다).
+- **결함 아님으로 확인**: 패딩된 빈 셀은 여전히 중립 filler(경계 반대편 유지) · 2열 배경 무변경
+  (B8/B8b 회귀 없음) · 블록 accent 는 이번 수정과 무관하게 두 뷰 모두 정상(B6/B7).
+- **미검증**: 수정된 단일열의 색 대비·가독성 **판단**. 배포 후 PB-0008 확대 캡처 판독이 backstop.
+- **검증**: 헤드리스 46/46 · mjs 88 PASS · 전수 mjs suite OK · verify-completion PASS.
+- Timestamp: 2026-08-07T06:20:00+09:00

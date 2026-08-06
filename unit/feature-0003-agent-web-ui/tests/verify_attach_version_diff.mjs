@@ -209,6 +209,20 @@ const SPLIT_DATA = {
   ok("A1c 앵커는 픽셀이 아니라 줄번호 기준", /dataset\.lno/.test(diffJs) && /anchor\.lno/.test(diffJs));
   ok("A1c 블록 계산은 단일 함수(두 렌더러 공유)",
     (diffJs.match(/_assignBlocks\(/g) || []).length === 3);   // 정의 1 + 호출 2
+
+  // A1d — `has-content`/`has-block` 은 **두 렌더러 모두** 부여해야 한다.
+  //   이 결함이 배포까지 나간 기전이 정확히 이것이다: 배경 규칙을 `.has-content` 로 좁힐 때
+  //   `_renderSplit` 에만 클래스를 붙여, 단일열의 추가/삭제 줄이 danger/ok 를 잃고 **"대응
+  //   내용 없음" 을 뜻하는 중립 filler** 를 받았다(의미 반전). 렌더러가 둘인데 규칙을 한쪽만
+  //   따르는 부류는 정적으로 셀 수 있다 — 세지 않으면 다음에도 같은 방식으로 빠진다.
+  ok("A1d has-content 를 두 렌더러가 모두 부여한다",
+    (diffJs.match(/classList\.add\("has-content"\)/g) || []).length >= 3);  // split 2 + unified 1
+  ok("A1d has-block 도 두 렌더러가 모두 부여한다",
+    (diffJs.match(/classList\.add\("has-block"\)/g) || []).length >= 3);
+  ok("A1d 단일열이 has-content 를 텍스트 유무로 게이트한다",
+    /if \(text != null\) tdTxt\.classList\.add\("has-content"\)/.test(diffJs));
+  ok("A1d 빈 셀 filler 규칙이 CSS 에 실재(의미 반전의 반대편)",
+    /\.attach-diff-code:not\(\.has-content\)/.test(chatCss));
   // 첫 행이 gap 인 케이스가 실제로 렌더되는지(= 결함 조건이 재현 가능한 데이터인지) 확인.
   const firstRow = host.querySelector("tbody tr");
   ok("A1b 결함 조건(첫 행 gap) 이 테스트 데이터에 존재",
