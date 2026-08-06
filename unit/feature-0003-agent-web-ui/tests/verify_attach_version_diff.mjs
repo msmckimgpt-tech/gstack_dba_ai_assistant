@@ -167,6 +167,48 @@ const SPLIT_DATA = {
     /document\.removeEventListener\("mousemove", moveHandler\)/.test(diffJs));
   ok("A1b gap 전개는 전체 맥락 1회 캐시(축약 로직 프론트 재구현 금지)",
     /fullRowsCache/.test(diffJs) && !/context_lines/.test(diffJs));
+}
+
+// A1c — 스크롤 보존 + 문단(블록) 하이라이트의 **구조** 계약 (2026-08-07 사용자 보고·요청).
+//   기하·타이밍은 헤드리스(실 브라우저)가 보고, 여기서는 "설계가 그 형태를 유지하는가" 만 잠근다.
+{
+  const host = window.document.createElement("div");
+  const rows = [
+    { type: "equal", left_no: 1, left: "a", right_no: 1, right: "a" },
+    { type: "replace", left_no: 2, left: "b1", right_no: 2, right: "B1" },
+    { type: "replace", left_no: 3, left: "b2", right_no: 3, right: "B2" },
+    { type: "delete", left_no: 4, left: "c", right_no: null, right: null },
+    { type: "equal", left_no: 5, left: "d", right_no: 4, right: "d" },
+    { type: "insert", left_no: null, left: null, right_no: 5, right: "e" },
+  ];
+  M._renderSplit(host, { ...SPLIT_DATA, rows: rows.map((r) => ({ ...r })) });
+  const trs = Array.from(host.querySelectorAll("tr"));
+  const inBlock = trs.filter((t) => t.classList.contains("in-block"));
+  const ids = [...new Set(inBlock.map((t) => t.dataset.block))];
+  ok("A1c 연속 변경은 한 블록 · 떨어진 변경은 다른 블록", ids.length === 2, ids.join(","));
+  ok("A1c 블록 시작·끝이 블록마다 각 1행",
+    trs.filter((t) => t.classList.contains("is-block-start")).length === 2 &&
+    trs.filter((t) => t.classList.contains("is-block-end")).length === 2);
+  ok("A1c 1행 블록에는 is-block-multi 없음",
+    !trs.filter((t) => t.dataset.block === "2")[0].classList.contains("is-block-multi"));
+  ok("A1c equal 행은 블록에 미포함",
+    trs.filter((t) => t.classList.contains("is-equal") && t.classList.contains("in-block")).length === 0);
+  ok("A1c accent 는 내용 있는 쪽에만",
+    (() => {
+      const del = trs.find((t) => t.classList.contains("is-delete"));
+      const cells = del.querySelectorAll("td.attach-diff-code");
+      return cells[0].classList.contains("has-block") && !cells[1].classList.contains("has-block");
+    })());
+  ok("A1c 모든 비-gap 행에 스크롤 앵커(data-lno)",
+    trs.filter((t) => !t.classList.contains("is-gap")).every((t) => t.dataset.lno));
+
+  // 보존 경로가 코드에 실재하는지 — 재렌더 기본이 보존이고, 버전 쌍 변경만 초기화.
+  ok("A1c 재렌더 기본이 스크롤 보존", /const rerender = \(keepScroll = true\)/.test(diffJs));
+  ok("A1c 버전 쌍 변경은 보존하지 않는다(rerender(false))", /rerender\(false\)/.test(diffJs));
+  ok("A1c '모두 보기' 토글은 보존 로드", /load\(\{ keepScroll: true \}\)/.test(diffJs));
+  ok("A1c 앵커는 픽셀이 아니라 줄번호 기준", /dataset\.lno/.test(diffJs) && /anchor\.lno/.test(diffJs));
+  ok("A1c 블록 계산은 단일 함수(두 렌더러 공유)",
+    (diffJs.match(/_assignBlocks\(/g) || []).length === 3);   // 정의 1 + 호출 2
   // 첫 행이 gap 인 케이스가 실제로 렌더되는지(= 결함 조건이 재현 가능한 데이터인지) 확인.
   const firstRow = host.querySelector("tbody tr");
   ok("A1b 결함 조건(첫 행 gap) 이 테스트 데이터에 존재",
@@ -292,9 +334,11 @@ function extractFn(src, name) {
   // 토글이 재요청하지 않는다 = 두 뷰가 같은 응답의 두 표현(비교 결과 불일치 구조적 차단).
   // 토글은 `rerender()`(= 같은 lastData 로 _renderBody 재호출)만 하고 apiFetch 를 타지 않는다.
   const modeBtnBlock = diffJs.slice(diffJs.indexOf("for (const b of modeBtns)"));
+  // 계약 갱신(2026-08-07): rerender 가 keepScroll 인자를 받게 되어 본문 시그니처가 바뀌었다.
+  // 핵심은 그대로 — 토글은 apiFetch 를 타지 않고 같은 lastData 로 재렌더한다.
   ok("C4 보기 토글은 재요청 없이 같은 응답을 재렌더",
     /rerender\(\);/.test(modeBtnBlock) && !/apiFetch/.test(modeBtnBlock.slice(0, 400)) &&
-    /if \(lastData\) _renderBody\(bodyEl, lastData, mode, renderOpts\(\)\)/.test(diffJs));
+    /_renderBody\(bodyEl, lastData, mode, \{ \.\.\.renderOpts\(\), keepScroll \}\)/.test(diffJs));
   ok("C5 늦게 온 응답이 최신 선택을 덮지 않는다(seq 가드)",
     /if \(seq !== reqSeq\) return;/.test(diffJs));
   ok("C6 from==to 는 요청 전에 차단", /if \(from === to\)/.test(diffJs));

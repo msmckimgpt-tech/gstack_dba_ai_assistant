@@ -129,6 +129,106 @@ function _applySplitRatio(table, cols, ratio) {
   cols[3].style.width = `${(avail * (1 - r) / tableW * 100).toFixed(4)}%`;
 }
 
+// ── 문단(블록) 단위 하이라이트 ───────────────────────────────────────────────
+// 사용자 요청(2026-08-07): "line 단위 하이라이트 뿐만 아니라, 문단 단위 하이라이트도".
+// 줄마다 배경만 칠하면 5줄이 한 덩어리로 바뀐 변경과 1줄씩 5곳이 바뀐 변경이 **같아 보인다**.
+// 연속된 비-equal 행을 한 **블록**으로 묶어 시작/끝 경계와 좌측 accent 를 준다.
+//
+// 계산은 **한 곳**에서만 한다 — 2열·단일열이 같은 블록 경계를 봐야 한다(두 뷰가 같은 응답의
+// 두 표현이라는 불변식의 연장). gap 은 블록을 끊는다(생략 구간을 건너 이어붙이면 거짓 연속).
+function _assignBlocks(rows) {
+  const list = rows || [];
+  let blockId = 0;
+  let i = 0;
+  while (i < list.length) {
+    const r = list[i];
+    if (!r || r.type === "equal" || r.type === "gap") { i += 1; continue; }
+    let j = i;
+    while (j < list.length && list[j] && list[j].type !== "equal" && list[j].type !== "gap") j += 1;
+    blockId += 1;
+    for (let k = i; k < j; k++) {
+      list[k]._block = blockId;
+      list[k]._blockFirst = (k === i);
+      list[k]._blockLast = (k === j - 1);
+      list[k]._blockSize = j - i;
+    }
+    i = j;
+  }
+  return blockId;
+}
+
+// 행에 블록 클래스·앵커 데이터를 붙인다. 두 렌더러가 공유한다.
+//   `data-lno` — 스크롤 앵커용 줄번호(우측 우선, 없으면 좌측). gap 은 없음.
+function _decorateRow(tr, r, opts) {
+  if (r._block) {
+    tr.classList.add("in-block");
+    if (r._blockFirst) tr.classList.add("is-block-start");
+    if (r._blockLast) tr.classList.add("is-block-end");
+    if (Number(r._blockSize) > 1) tr.classList.add("is-block-multi");
+    tr.dataset.block = String(r._block);
+  }
+  const lno = (opts && opts.lnoSide === "left")
+    ? (r.left_no ?? r.right_no)
+    : (r.right_no ?? r.left_no);
+  if (lno != null) tr.dataset.lno = String(lno);
+}
+
+// ── 스크롤 위치 보존 ────────────────────────────────────────────────────────
+// 사용자 보고(2026-08-07): "상호작용을 할 때(펼치기, 동일한 줄도 모두 보기, 좌우 2열/단일열
+// 교체 등) 스크롤이 최상단으로 이동".
+//
+// 원인: `_renderBody` 가 `bodyEl.innerHTML = ""` 로 본문을 비우고 **scroller 를 새로 만든다** —
+// 스크롤은 그 요소의 상태이므로 요소와 함께 사라진다. scrollTop 을 그냥 복원하면 안 되는 이유:
+//   ① 전개·토글로 **행 수가 바뀌면** 같은 픽셀 위치가 다른 줄을 가리킨다.
+//   ② 2열↔단일열은 `replace` 가 1행↔2행이라 높이가 근본적으로 다르다.
+// 그래서 **줄번호로 앵커**한다 — 화면 최상단에 보이던 줄을 찾아 그 줄을 다시 최상단에 둔다.
+// 픽셀이 아니라 "사용자가 보고 있던 내용" 을 보존한다.
+//
+// 검증 정본은 **실 브라우저**다 — innerHTML 교체 직후 scrollHeight 가 작으면 브라우저가
+// scrollTop 을 0으로 clamp 하는데, jsdom 은 clamp 를 하지 않아 그 결함을 통과시킨다
+// (auto-memory `project-frontend-scroll-restore-jsdom-gotcha`).
+function _captureScrollAnchor(scroller) {
+  if (!scroller) return null;
+  const top = scroller.scrollTop;
+  if (top <= 0) return null;   // 최상단이면 보존할 것이 없다
+  const rows = scroller.querySelectorAll("tr[data-lno]");
+  const scRect = scroller.getBoundingClientRect();
+  for (const tr of rows) {
+    const r = tr.getBoundingClientRect();
+    if (r.bottom > scRect.top + 1) {   // 첫 '보이는' 행
+      return { lno: Number(tr.dataset.lno), offset: Math.round(r.top - scRect.top), left: scroller.scrollLeft };
+    }
+  }
+  return { lno: null, offset: 0, left: scroller.scrollLeft, ratio: top / Math.max(1, scroller.scrollHeight) };
+}
+
+function _restoreScrollAnchor(scroller, anchor) {
+  if (!scroller || !anchor) return;
+  const apply = () => {
+    if (anchor.left) scroller.scrollLeft = anchor.left;
+    if (anchor.lno == null) {
+      if (anchor.ratio) scroller.scrollTop = anchor.ratio * scroller.scrollHeight;
+      return;
+    }
+    // 같은 줄번호가 없으면(뷰 전환으로 그 줄이 다른 쪽에만 존재) **가장 가까운 이하 줄**로.
+    let best = null;
+    for (const tr of scroller.querySelectorAll("tr[data-lno]")) {
+      const n = Number(tr.dataset.lno);
+      if (n === anchor.lno) { best = tr; break; }
+      if (n < anchor.lno && (!best || n > Number(best.dataset.lno))) best = tr;
+    }
+    if (!best) return;
+    scroller.scrollTop = best.offsetTop - anchor.offset;
+  };
+  // rAF 2회 후 적용 — **방어적 조치이며 현재 호출 지점에서는 필수가 아니다**(정직 표기).
+  // `_renderBody` 는 `_attachSplitHandle`(→ `_applySplitRatio`)을 동기로 끝낸 뒤 여기 오고,
+  // `apply()` 가 읽는 `offsetTop` 이 동기 레이아웃을 강제하므로 즉시 실행도 동작한다 —
+  // 헤드리스 하네스는 rAF 제거를 **구별하지 못한다**(뮤테이션 실측: S1~S6 전부 생존).
+  // 그래도 남겨 두는 이유: 호출 지점이 늘어 레이아웃이 강제되지 않는 경로가 생기면 그때는
+  // clamp 가 되살아나고, 그 실패는 조용하다. 비용이 프레임 2개뿐이라 방어를 유지한다.
+  requestAnimationFrame(() => requestAnimationFrame(apply));
+}
+
 // gap 행을 만든다. `onExpand` 가 주어지면 **누를 수 있는 버튼**이 되어 그 구간만 국소 전개한다
 // (사용자 요청 2026-08-07 — "동일한 줄도 모두 보기" 가 꺼진 상태에서 부분만 펼치는 수요).
 function _gapRow(r, colSpan, onExpand) {
@@ -157,6 +257,7 @@ function _gapRow(r, colSpan, onExpand) {
 function _renderSplit(container, data, opts) {
   const table = document.createElement("table");
   table.className = "attach-diff-table is-split";
+  _assignBlocks(data.rows);
   _appendColgroup(table, "split", {
     linenoCh: _linenoCh(data.rows), ratio: (opts && opts.ratio) });
   const tbody = document.createElement("tbody");
@@ -179,6 +280,15 @@ function _renderSplit(container, data, opts) {
     const rTxt = document.createElement("td");
     rTxt.className = "attach-diff-code side-right";
     rTxt.textContent = r.right == null ? "" : r.right;
+    // 좌/우 강조는 **내용이 있는 쪽**에만 — 빈 셀에 색을 얹으면 없는 변경을 가리킨다.
+    // (`has-content` 는 줄 배경, `has-block` 은 문단 accent. 둘이 같은 규칙을 따라야 한다.)
+    if (r.left != null) lTxt.classList.add("has-content");
+    if (r.right != null) rTxt.classList.add("has-content");
+    if (r._block) {
+      if (r.left != null) lTxt.classList.add("has-block");
+      if (r.right != null) rTxt.classList.add("has-block");
+    }
+    _decorateRow(tr, r, {});
     tr.append(lNo, lTxt, rNo, rTxt);
     tbody.appendChild(tr);
   }
@@ -193,11 +303,22 @@ function _renderSplit(container, data, opts) {
 function _renderUnified(container, data, opts) {
   const table = document.createElement("table");
   table.className = "attach-diff-table is-unified";
+  _assignBlocks(data.rows);
   _appendColgroup(table, "unified", { linenoCh: _linenoCh(data.rows) });
   const tbody = document.createElement("tbody");
-  const push = (type, no, sign, text) => {
+  // `src` = 이 표시 행이 파생된 원본 row (블록 경계·앵커 산출용). `replace` 는 두 행으로
+  // 펼쳐지므로 경계 플래그를 **펼친 결과 기준**으로 보정한다(첫 행만 start, 끝 행만 end).
+  const push = (type, no, sign, text, src, edge) => {
     const tr = document.createElement("tr");
     tr.className = `attach-diff-row is-${type}`;
+    if (src) {
+      const view = {
+        ...src,
+        _blockFirst: src._blockFirst && (edge !== "tail"),
+        _blockLast: src._blockLast && (edge !== "head"),
+      };
+      _decorateRow(tr, view, { lnoSide: type === "delete" ? "left" : "right" });
+    }
     const tdNo = document.createElement("td");
     tdNo.className = "attach-diff-lineno";
     tdNo.textContent = no == null ? "" : String(no);
@@ -206,6 +327,7 @@ function _renderUnified(container, data, opts) {
     tdSign.textContent = sign;
     const tdTxt = document.createElement("td");
     tdTxt.className = "attach-diff-code";
+    if (src && src._block) tdTxt.classList.add("has-block");
     tdTxt.textContent = text == null ? "" : text;
     tr.append(tdNo, tdSign, tdTxt);
     tbody.appendChild(tr);
@@ -214,14 +336,14 @@ function _renderUnified(container, data, opts) {
     if (r.type === "gap") {
       tbody.appendChild(_gapRow(r, 3, opts && opts.onExpandGap));
     } else if (r.type === "equal") {
-      push("equal", r.right_no, " ", r.right);
+      push("equal", r.right_no, " ", r.right, r);
     } else if (r.type === "delete") {
-      push("delete", r.left_no, "-", r.left);
+      push("delete", r.left_no, "-", r.left, r);
     } else if (r.type === "insert") {
-      push("insert", r.right_no, "+", r.right);
+      push("insert", r.right_no, "+", r.right, r);
     } else {  // replace — 삭제 줄과 추가 줄을 연달아
-      push("delete", r.left_no, "-", r.left);
-      push("insert", r.right_no, "+", r.right);
+      push("delete", r.left_no, "-", r.left, r, "head");
+      push("insert", r.right_no, "+", r.right, r, "tail");
     }
   }
   table.appendChild(tbody);
@@ -229,6 +351,10 @@ function _renderUnified(container, data, opts) {
 }
 
 function _renderBody(bodyEl, data, mode, opts) {
+  // 교체 **전** 현재 scroller 에서 앵커를 뜬다(요소가 사라지면 스크롤도 사라진다).
+  const anchor = (opts && opts.keepScroll)
+    ? _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"))
+    : null;
   bodyEl.innerHTML = "";
 
   // 비교 불가(바이너리) — 메타 비교로 강등해 답한다.
@@ -300,6 +426,7 @@ function _renderBody(bodyEl, data, mode, opts) {
   if (mode !== "unified" && opts && opts.onRatioChange) {
     _attachSplitHandle(wrap, scroller, opts);
   }
+  _restoreScrollAnchor(scroller, anchor);
 }
 
 // 2열 중앙선 드래그 (사용자 요청 2026-08-07). 표는 `table-layout: fixed` + colgroup 이라
@@ -496,8 +623,10 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     onExpandGap: ctxCb.checked ? null : expandGap,
   });
 
-  const rerender = () => {
-    if (lastData) _renderBody(bodyEl, lastData, mode, renderOpts());
+  // 재렌더는 **기본적으로 스크롤을 보존**한다. 새 비교(버전 쌍 변경)만 최상단으로 돌아간다 —
+  // 그건 다른 내용이므로 위치 보존이 오히려 혼란이다.
+  const rerender = (keepScroll = true) => {
+    if (lastData) _renderBody(bodyEl, lastData, mode, { ...renderOpts(), keepScroll });
   };
 
   // gap 한 칸만 국소 전개. 서버가 gap 에 실어 준 줄번호 범위로 전체 맥락 응답에서 해당
@@ -538,7 +667,12 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     }
   }
 
-  const load = async () => {
+  const load = async (loadOpts) => {
+    const keepScroll = Boolean(loadOpts && loadOpts.keepScroll);
+    // 재요청 전에 앵커를 떠 둔다 — 응답이 오면 본문이 통째로 교체된다.
+    const pendingAnchor = keepScroll
+      ? _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"))
+      : null;
     const from = Number(fromSel.value);
     const to = Number(toSel.value);
     fullRowsCache = null;   // 쌍이 바뀌면 전개 캐시 무효
@@ -550,7 +684,8 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     }
     const seq = ++reqSeq;
     statsEl.textContent = "비교 중…";
-    bodyEl.innerHTML = '<div class="attach-diff-notice">불러오는 중…</div>';
+    // 보존 요청이면 기존 표를 남겨 둔다 — 지우면 '불러오는 중' 사이에 화면이 튄다.
+    if (!keepScroll) bodyEl.innerHTML = '<div class="attach-diff-notice">불러오는 중…</div>';
     const qs = new URLSearchParams({ from_version: String(from), to_version: String(to) });
     if (ctxCb.checked) qs.set("context", "full");
     try {
@@ -561,7 +696,12 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       statsEl.textContent = data.comparable === false
         ? ""
         : (data.identical ? "차이 없음" : `+${Number(st.added || 0)} / -${Number(st.removed || 0)}`);
-      rerender();
+      if (keepScroll && pendingAnchor) {
+        _renderBody(bodyEl, data, mode, { ...renderOpts(), keepScroll: false });
+        _restoreScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"), pendingAnchor);
+      } else {
+        rerender(false);
+      }
     } catch (e) {
       if (seq !== reqSeq) return;
       lastData = null;
@@ -572,7 +712,10 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
 
   fromSel.addEventListener("change", load);
   toSel.addEventListener("change", load);
-  ctxCb.addEventListener("change", () => { _writeContextFull(ctxCb.checked); load(); });
+  ctxCb.addEventListener("change", () => {
+    _writeContextFull(ctxCb.checked);
+    load({ keepScroll: true });   // 같은 비교의 표시 범위만 바뀐다 — 보던 위치를 유지
+  });
   backdrop.querySelector(".attach-diff-swap").addEventListener("click", () => {
     const a = fromSel.value;
     fromSel.value = toSel.value;

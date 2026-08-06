@@ -2807,10 +2807,38 @@
   color: var(--text);
 }
 .attach-diff-table.is-split .attach-diff-code.side-left { border-right: 1px solid var(--border); }
-.attach-diff-row.is-insert .attach-diff-code,
-.attach-diff-row.is-replace .attach-diff-code.side-right { background: var(--tag-ok-bg); }
-.attach-diff-row.is-delete .attach-diff-code,
-.attach-diff-row.is-replace .attach-diff-code.side-left { background: var(--tag-danger-bg); }
+/* 줄 배경도 **내용이 있는 쪽**에만 — `delete` 행의 빈 우측 셀을 빨갛게 칠하면 우측 파일에는
+   없는 내용을 "여기 삭제분이 있다" 로 읽게 만든다(실측 2026-08-07: 빈 셀이 danger-bg 였다).
+   반대쪽 빈 자리는 중립 filler 로 두어 "이 줄엔 대응 내용이 없다" 를 표현한다. */
+.attach-diff-row.is-insert .attach-diff-code.has-content,
+.attach-diff-row.is-replace .attach-diff-code.side-right.has-content { background: var(--tag-ok-bg); }
+.attach-diff-row.is-delete .attach-diff-code.has-content,
+.attach-diff-row.is-replace .attach-diff-code.side-left.has-content { background: var(--tag-danger-bg); }
+.attach-diff-row.is-insert .attach-diff-code:not(.has-content),
+.attach-diff-row.is-delete .attach-diff-code:not(.has-content),
+.attach-diff-row.is-replace .attach-diff-code:not(.has-content) {
+  background: var(--tag-neutral-bg);
+}
+/* ── 문단(블록) 단위 하이라이트 (사용자 요청 2026-08-07) ─────────────────────────
+   줄 단위 배경만으로는 "5줄이 한 덩어리로 바뀜" 과 "1줄씩 5곳이 바뀜" 이 같아 보인다.
+   연속 변경 행을 한 블록으로 묶어 ① 좌측 accent 바 ② 시작/끝 경계선 ③ 배경 한 단계 강조
+   로 표시한다. accent 색은 **그 셀이 속한 쪽**(좌=삭제/우=추가)을 따른다. */
+.attach-diff-row.in-block .attach-diff-code.has-block {
+  box-shadow: inset 3px 0 0 0 var(--tag-neutral-bd);
+}
+.attach-diff-row.in-block .attach-diff-code.has-block.side-left,
+.attach-diff-row.is-delete.in-block .attach-diff-code.has-block {
+  box-shadow: inset 3px 0 0 0 var(--tag-danger-bd);
+}
+.attach-diff-row.in-block .attach-diff-code.has-block.side-right,
+.attach-diff-row.is-insert.in-block .attach-diff-code.has-block {
+  box-shadow: inset 3px 0 0 0 var(--tag-ok-bd);
+}
+/* 블록 경계선 — 여러 줄 블록에만(1줄 블록은 줄 배경으로 충분하고, 선을 그으면 노이즈다). */
+.attach-diff-row.is-block-start.is-block-multi > td { border-top: 1px solid var(--tag-neutral-bd); }
+.attach-diff-row.is-block-end.is-block-multi > td { border-bottom: 1px solid var(--tag-neutral-bd); }
+/* 블록 안 줄번호도 같은 덩어리로 읽히게 배경을 한 단계 얹는다. */
+.attach-diff-row.in-block .attach-diff-lineno { background: var(--border-subtle); }
 .attach-diff-row.is-insert .attach-diff-sign { color: var(--tag-ok-fg); }
 .attach-diff-row.is-delete .attach-diff-sign { color: var(--tag-danger-fg); }
 /* ③ 2열 중앙선 드래그 핸들 (사용자 요청 2026-08-07). 표 위에 떠 있고 위치는 JS 가 경계

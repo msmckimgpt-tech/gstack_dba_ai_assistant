@@ -2501,7 +2501,6 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 신규 테이블·마이그레이션·권한 코드 **0**.
 - Files: `src/routers/{attachments,conversations}.py`, `src/app.py`, `src/static/app/composer.js`, `src/static/index.html`, `src/static/css/chat.css`, `tests/test_attach_manage.py`, `tests/route_snapshot_p5b.json`, `docs/{TASK,FUNCTION,DECISIONS,MODIFY,REVIEW,TEST}.md`, `docs/ROUTEMAP.md`.
 - Timestamp: 2026-08-06T15:41:00+09:00
-
 ## CHG-20260806T181000-attach-manage-postdeploy — 삭제·복구·일괄 다운로드 POST-DEPLOY 실측 기록 (doc-only)
 
 - `20260806T1541-attach-manage`(PR #1173, 배포 `5000e577`) 의 배포 후 라이브 검증. 실행 코드·정적 자산 변경 **0줄**.
@@ -2509,3 +2508,41 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 미검증 3건(버전 체인 2개 이상 · 공유창 window clip · 실 DOM 렌더)을 fragment 에 명시.
 - Files: `docs/{TASK,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260806T1541-attach-manage.md`.
 - Timestamp: 2026-08-06T18:10:00+09:00
+## CHG-20260807T0430-attach-diff-scroll-block 상호작용 스크롤 보존 + 문단 단위 하이라이트 (Minor §12.3)
+- 사용자 보고·요청(2026-08-07): 상호작용(펼치기·모두보기·2열/단일열 교체) 시 스크롤이 최상단으로
+  이동 / line 단위 외 **문단 단위 하이라이트**도.
+- ① 원인: `_renderBody` 가 본문을 비우고 scroller 를 **새로 만들어** 스크롤 상태가 요소와 함께
+  사라진다. 픽셀 복원은 행 수·높이가 바뀌면 어긋나므로 **줄번호 앵커**(`data-lno`)로 보존.
+  버전 쌍 변경만 최상단으로(의도된 비대칭).
+- ② `_assignBlocks` 로 연속 비-equal 행을 블록화(gap 이 끊는다) + accent·경계선·줄번호 배경.
+  계산은 한 곳 — 2열·단일열이 같은 경계를 본다.
+- **부수 적발·교정(선행 결함)**: `delete` 행의 빈 우측 셀이 danger 배경(`rgba(220,38,38,0.12)`)
+  이었다 — 우측 파일에 없는 내용을 "삭제분 있음" 으로 읽게 만든다. `has-content` 로 좁히고
+  빈 자리는 중립 filler. 내가 넣은 accent 규칙("내용 있는 쪽에만")과의 불일치도 함께 해소.
+- 검증: 헤드리스 **44/44**(S1~S6 스크롤 · B1~B8 블록) · mjs **84 PASS** · 전수 mjs 44 suite OK ·
+  뮤테이션 역검증 3/4(keepScroll off · _assignBlocks 무력화 · 빈 셀 accent).
+  **rAF 제거는 하네스가 구별 못함 — 정직 표기**(방어적 조치, 코드 주석에 근거 명시).
+- **리베이스 접합부(요청 범위 밖)**: 작업 중 `REQ-20260806-attach-manage`(PR #1173, 첨부
+  soft-delete·복구·일괄 다운로드)가 먼저 랜딩해 리베이스. 코드 충돌은 자동 병합됐으나 **내 코드
+  밑의 데이터 모델·같은 액션 영역에 변화가 생겼다** → 두 축을 실측하고 테스트로 고정했다.
+  - ① **삭제한 버전이 비교 선택기에 남는가** → 아니다. 삭제 write 3경로(`attachments.py` user /
+    `attachment_reconciliation.py` conv_soft / `conversations.py`)가 `DeletePending=1` 과
+    `DeletedAt` 을 같은 statement 에서 세우고, 체인 조회 **양쪽**(MySQL 폴백 + PG 미러)이
+    `deleted_at IS NULL` 을 건다. 읽어서 확인한 상태로 두지 않고 **V3**(PG 미러 필터)·**V3b**(두
+    컬럼 동반 세팅 불변식)로 고정 — 새 삭제 경로가 `DeletedAt` 을 안 채우면 삭제한 버전이
+    선택기에 되살아나고 그 실패는 조용하다. pytest **26 PASS**, 뮤테이션 양측 red.
+  - ② **`⇄`(내 비교)와 `🗑`(#1173)가 같은 `.attach-list-version-actions` 를 공유**해 버튼이
+    2→3개가 됐다. git 은 텍스트상 병합했지만 좁은 버전 박스(좌측 28px 들여쓰기)에서 성립하는지는
+    아무도 재지 않았다 → `verify_attach_version_row_actions.py` 신설, 240~420px × 이름 2종
+    **10 조합 A1~A5 통과**(넘침 0 · foot overflow 0 · 가로 스크롤 0 · 긴 이름이 버튼을 밀어내지
+    않음). 뮤테이션(`min-width:64px`) → A2·A3 red. **내 어포던스가 병합 후에도 살아 있다.**
+  - **W1 관측(고치지 않음)**: 버튼 3개 모두 WCAG 2.2 AA 최소 타겟(24×24) 미달(`⇄`17×17 ·
+    `⬇`17×17 · `🗑`22×15). 병합이 만든 것이 아닌 **선행 상태**이고, 고치면 방금 랜딩한
+    `attach-manage` 의 버튼 외형까지 바꾸므로 사용자 판단 대상으로 남긴다.
+- Files: `src/static/app/attach-diff.js`, `src/static/css/chat.css`,
+  `tests/headless/verify_attach_diff_geometry.py`,
+  `tests/headless/verify_attach_version_row_actions.py`(신규),
+  `tests/test_attachment_version_diff.py`, `tests/verify_attach_version_diff.mjs`,
+  `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/…`.
+- 백엔드·API·RBAC·스키마·마이그레이션 0 (V3·V3b 는 기존 SQL 을 **단정만** 하고 바꾸지 않는다).
+- Timestamp: 2026-08-07T04:30:00+09:00
