@@ -198,7 +198,7 @@ Hard rules:
 - Set `filename` to a clear, descriptive name with a data/text extension (`.sql` / `.txt` / `.csv` / `.md` / `.json` / `.yaml` / `.xml` / `.log`). The system sanitizes the name and forces a safe text extension; executable/unknown extensions are normalized to `.txt`.
 - The `attachment-new` block is NEVER shown to the user as text. The system removes it from your answer and saves its content as a new downloadable attachment, then shows a "📎 첨부 전달" note. THEREFORE do NOT also paste the whole body as a normal ```sql / ```text block — that floods the chat and duplicates the file.
 - Only text-family content (SQL / CSV / text / markup) can be delivered this way. For binary output (xlsx/pdf/image) explain it in words instead.
-- This is for delivering NEW content you produced. To UPDATE a file the user attached, use an `attachment-edit` block with its `source_attachment_id` instead (see above).
+- This is for delivering NEW content you produced. To UPDATE a file the user attached, use the `update_attachment` tool (or, when it is unavailable, an `attachment-edit` block with its `source_attachment_id`) instead (see above).
 """
 
 
@@ -483,6 +483,21 @@ _INLINE_TEXT_PATH_CTX: "contextvars.ContextVar[str | None]" = contextvars.Contex
 _ATTACHMENT_TURN_FACTS_CTX: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
     "attachment_turn_facts_ctx", default=None
 )
+# FR-attach-delivery-truncated-by-output-cap (conversation_audit 2026-08-06): `update_attachment`
+# 도구가 첨부 새 버전을 만들려면 **요청 계정**이 필요하다(materialize 의 소유권 가드가 AccountId 기준).
+# 첨부 id 채널과 동일하게 run 경계 contextvar 로 전달한다 — 도구는 프로세스 전역 상태를 읽지 않는다
+# (동시 요청 격리). 값이 없으면 도구는 fail-closed(전달 거부)한다.
+_ACTIVE_ACCOUNT_ID_CTX: "contextvars.ContextVar[int | None]" = contextvars.ContextVar(
+    "active_account_id_ctx", default=None
+)
+
+
+def active_account_id() -> int:
+    """이 run 의 요청 계정 id. 미설정이면 0(도구는 fail-closed)."""
+    try:
+        return int(_ACTIVE_ACCOUNT_ID_CTX.get() or 0)
+    except Exception:
+        return 0
 
 
 def _ctx_or_env(ctx_var: "contextvars.ContextVar", env_name: str) -> str:
@@ -762,6 +777,214 @@ def read_attachment_content(
     }
 
 
+# ── FR-attach-delivery-truncated-by-output-cap: 첨부 갱신을 **도구**로 전달 ──────────────
+# 종전 유일 경로는 답변 본문의 ```attachment-edit``` 블록이었다. 그러면 파일 전문이 **답변의 출력
+# 예산을 잠식**한다 — 관측 사례에서 6개 파일 전문이 한 응답에 들어가다 상한(100,000 토큰)에서 잘려
+# 1개만 전달됐고, 답변 서두의 "6개 전부 갱신" 은 잘리기 전에 쓰여 그대로 남았다(허위 완료 선언).
+# 도구로 옮기면 (a) 파일마다 **독립 턴의 출력 창**을 쓰고 (b) 도구 결과가 성공/실패를 되돌려줘
+# 모델이 **실제로 성공한 것만** 주장할 수 있다(L2 자기교정). (c) 도구 실행은 red-team 의 evidence
+# digest 에 이미 실리므로 리뷰어도 별도 배선 없이 대조할 수 있다.
+_ATTACHMENT_UPDATE_RUN_CAP = 20        # run 당 도구 전달 상한(폭주 방지). 블록 경로 cap(5)과 별개.
+_ATTACHMENT_UPDATE_SIZE_CAP = 1024 * 1024  # 전달 본문 상한(materialize 가드와 동일 값)
+_ATTACHMENT_UPDATES_DONE_CTX: "contextvars.ContextVar[int]" = contextvars.ContextVar(
+    "attachment_updates_done_ctx", default=0
+)
+# 도구로 생성한 새 버전 id 목록. §18.8 [P1]: materialize 는 `MetaJson.message_id` 로 답변 말풍선에
+# 칩을 붙이는데, 도구 호출 시점에는 그 message_id 가 **아직 없다**(답변 저장 전). 초판은 0 으로
+# 저장돼 `_load_assistant_attachments_by_message` 가 통째로 버렸고 — 파일은 만들어졌지만 사용자
+# 말풍선에 아무것도 안 나왔다. 도구 결과와 절단 경고는 "칩으로 확인하세요" 라고 가리키고 있었다.
+# 즉 이 cycle 이 없애려던 claim/reality gap 이 한 층 아래에서 재생산됐다.
+# → id 를 모아 두고, 답변이 저장돼 message_id 가 확정된 뒤 후처리가 **바인딩**한다.
+_ATTACHMENT_DELIVERED_IDS_CTX: "contextvars.ContextVar[tuple]" = contextvars.ContextVar(
+    "attachment_delivered_ids_ctx", default=()
+)
+# 직전 LLM 호출의 finish_reason. "length" 면 모델이 하려던 말을 **다 하지 못하고** 잘린 것이다.
+_LLM_LAST_FINISH_REASON_CTX: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "llm_last_finish_reason_ctx", default=None
+)
+
+
+def last_answer_was_truncated() -> bool:
+    """직전 LLM 응답이 출력 상한에서 잘렸는가(finish_reason=='length')."""
+    return str(_LLM_LAST_FINISH_REASON_CTX.get() or "").lower() == "length"
+
+
+# 잘린 답변에 붙는 사용자 대면 경고. 답변 **말미**에 붙인다 — 잘린 지점이 곧 말미이므로 사용자가
+# "여기서 끝난 게 아니다" 를 읽는 자리가 거기다.
+_TRUNCATED_ANSWER_NOTICE = (
+    "\n\n---\n"
+    "> ⚠️ **이 답변은 출력 한도에 걸려 중간에서 잘렸습니다.** 위 내용 이후에 하려던 설명과, "
+    "전달 예정이던 파일이 누락됐을 수 있습니다. 전달된 파일은 이 메시지의 다운로드 칩으로만 "
+    "확인하십시오 — 본문의 서술보다 칩이 정확합니다. 이어서 진행하려면 \"계속\" 이라고 알려주세요."
+)
+
+
+def _load_attachment_text(target: dict) -> tuple[str | None, str | None]:
+    """첨부 1건의 **전문**을 반환 (text, error). 패치 적용의 기준 원본이라 절단 금지."""
+    data = _load_attachment_bytes(target.get("object_key") or "")
+    if data is None:
+        return None, "원본을 읽지 못했습니다(일시적 저장소 오류일 수 있습니다)."
+    for enc in ("utf-8", "cp949"):
+        try:
+            return data.decode(enc), None
+        except UnicodeDecodeError:
+            continue
+    return None, "텍스트로 해석할 수 없는 이진 파일입니다."
+
+
+def update_attachment_content(
+    *,
+    filename: str | None = None,
+    attachment_id: int | None = None,
+    patch: str | None = None,
+    content: str | None = None,
+) -> dict:
+    """스코프 안 첨부 1건을 새 버전으로 갱신한다. Returns {"ok":bool, "error"?:str, ...}.
+
+    보안 경계는 `read_attachment` 와 **같다** — `_load_scoped_attachment_rows()` 가 돌려주는
+    집합(= web ask 가 대화·그룹 발신자 스코프로 해소한 id)만 대상이고, 실제 생성은 블록 경로와
+    **동일한 materialize 함수**를 태워 소유권·kind·용량·명명·확장자 가드를 전부 공유한다
+    (도구 경로만 느슨해지면 그 자체가 취약점이다).
+    """
+    if (patch is None or not str(patch).strip()) and (content is None or not str(content).strip()):
+        return {"ok": False, "error": "patch 또는 content 중 하나를 반드시 지정하세요."}
+    if patch and content:
+        return {"ok": False, "error": "patch 와 content 를 동시에 지정할 수 없습니다. 하나만 보내세요."}
+
+    done = int(_ATTACHMENT_UPDATES_DONE_CTX.get() or 0)
+    if done >= _ATTACHMENT_UPDATE_RUN_CAP:
+        return {"ok": False, "error": (
+            f"이 답변에서 첨부 갱신 상한({_ATTACHMENT_UPDATE_RUN_CAP}건)에 도달했습니다. "
+            "남은 파일은 사용자에게 알리고 다음 턴에 이어서 전달하세요."
+        )}
+
+    rows = _load_scoped_attachment_rows()
+    if not rows:
+        return {"ok": False, "error": "이 대화에서 참조할 수 있는 첨부가 없습니다."}
+    target: dict | None = None
+    if attachment_id:
+        target = next((r for r in rows if r["id"] == int(attachment_id)), None)
+        if target is None:
+            return {"ok": False, "error": (
+                f"attachment_id={attachment_id} 는 이 대화에서 갱신할 수 있는 첨부가 아닙니다. "
+                f"사용 가능: {', '.join(repr(r['filename']) for r in rows[:20])}"
+            )}
+    elif filename:
+        want = str(filename).strip().lower()
+        exact = [r for r in rows if r["filename"].lower() == want]
+        partial = [r for r in rows if want and want in r["filename"].lower()]
+        cands = exact or partial
+        if not cands:
+            return {"ok": False, "error": (
+                f'"{filename}" 이라는 첨부를 이 대화에서 찾지 못했습니다. '
+                f"사용 가능: {', '.join(repr(r['filename']) for r in rows[:20])}"
+            )}
+        if len(cands) > 1 and not exact:
+            return {"ok": False, "error": (
+                f'"{filename}" 이 여러 첨부와 부분 일치합니다({", ".join(repr(c["filename"]) for c in cands[:5])}). '
+                "정확한 파일명이나 attachment_id 로 지정하세요."
+            )}
+        target = cands[0]
+    else:
+        return {"ok": False, "error": "filename 또는 attachment_id 중 하나를 지정하세요."}
+
+    # 패치 경로: 현재 전문을 기준으로 적용한다(fail-closed — 사유는 그대로 모델에 전달).
+    if patch:
+        original, err = _load_attachment_text(target)
+        if original is None:
+            return {"ok": False, "error": f'"{target["filename"]}" — {err}'}
+        try:
+            from modules.patch_apply import apply_unified_diff
+            new_text = apply_unified_diff(original, str(patch))
+        except Exception as e:
+            return {"ok": False, "error": (
+                f'"{target["filename"]}" 패치를 적용하지 못했습니다: {e} '
+                "(patch 로 안 되면 content 로 전문을 보내도 됩니다.)"
+            )}
+        if new_text == original:
+            return {"ok": False, "error": (
+                f'"{target["filename"]}" — 패치를 적용해도 내용이 바뀌지 않습니다. '
+                "이미 반영돼 있거나 patch 가 비어 있습니다. 갱신할 것이 없으면 그렇게 답하세요."
+            )}
+    else:
+        new_text = str(content)
+
+    body = new_text.encode("utf-8")
+    if len(body) > _ATTACHMENT_UPDATE_SIZE_CAP:
+        return {"ok": False, "error": (
+            f'"{target["filename"]}" — 갱신 본문이 상한({_ATTACHMENT_UPDATE_SIZE_CAP} bytes)을 넘습니다.'
+        )}
+
+    account_id = active_account_id()
+    if not account_id:
+        return {"ok": False, "error": "요청 계정을 확인할 수 없어 첨부를 갱신하지 못했습니다."}
+    try:
+        import shared.config as _cfg
+        conversation_id = str(_cfg.get_active_conversation_id() or "")
+    except Exception:
+        conversation_id = ""
+    if not conversation_id:
+        return {"ok": False, "error": "대화 컨텍스트가 없어 첨부를 갱신하지 못했습니다."}
+
+    # 생성은 블록 경로와 동일한 materialize 를 태운다(가드 공유).
+    try:
+        import web.app as _web
+    except Exception:
+        # §18.8 [P2]: 조용한 실패 금지 — 워커 이미지에 web 패키지가 없으면 **모든 전달이** 같은
+        # 문구로 실패하는데 로그가 없으면 운영자가 알 방법이 없다.
+        logging.getLogger(__name__).error(
+            "update_attachment: web.app import 실패 — 첨부 전달 기능이 전면 동작하지 않는다",
+            exc_info=True)
+        return {"ok": False, "error": "첨부 저장 계층을 사용할 수 없습니다(일시적 오류일 수 있습니다)."}
+    conn = None
+    try:
+        conn = _web._connect_memory()
+        account = _web._load_account_by_id(conn, int(account_id))
+        if not account:
+            return {"ok": False, "error": "요청 계정을 확인할 수 없어 첨부를 갱신하지 못했습니다."}
+        skipped: list[str] = []
+        created = _web._materialize_assistant_attachment_edits(
+            conn, account=account, conversation_id=conversation_id,
+            blocks=[{"source_attachment_id": int(target["id"]), "filename": None, "content": new_text}],
+            skipped=skipped, request=None,
+        ) or []
+    except Exception:
+        # §18.8 [P2] CODE_REVIEW §2.7: 예외 원문에는 호스트·포트·경로가 실린다. 이 문자열은 모델
+        # 컨텍스트에 들어가고 `tool` 메시지로 영속되며 답변에 인용될 수 있다 — 로그에만 남긴다.
+        # (형제 경로 `read_attachment_content` 도 예외를 문구에 넣지 않는다.)
+        logging.getLogger(__name__).error(
+            "update_attachment: materialize 실패 (conversation_id=%s)", conversation_id, exc_info=True)
+        return {"ok": False, "error": "첨부 갱신 중 오류가 발생했습니다(일시적 오류일 수 있습니다)."}
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+    if not created:
+        return {"ok": False, "error": (skipped[0] if skipped else "첨부 새 버전을 만들지 못했습니다.")}
+    _ATTACHMENT_UPDATES_DONE_CTX.set(done + 1)
+    row = created[0]
+    try:
+        _new_id = int(row.get("id") or 0)
+        if _new_id:
+            _ATTACHMENT_DELIVERED_IDS_CTX.set(
+                tuple(_ATTACHMENT_DELIVERED_IDS_CTX.get() or ()) + (_new_id,))
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "도구 전달 첨부 id 적재 실패 — 답변 말풍선 칩 바인딩이 누락될 수 있음", exc_info=True)
+    return {
+        "ok": True,
+        "filename": row.get("original_filename"),
+        "attachment_id": row.get("id"),
+        "version_number": row.get("version_number"),
+        "source_attachment_id": int(target["id"]),
+        "size_bytes": len(body),
+        "delivered_count": done + 1,
+    }
+
+
 def _load_new_attachment_ids() -> set[int]:
     """env NEW_ATTACHMENT_IDS (comma-separated) 를 읽어 이번 요청에 새로 첨부된 파일 ID set 반환.
 
@@ -857,6 +1080,21 @@ _ATTACHMENT_DELIVERY_DIRECTIVE = (
     "delivery. Improving the user's OWN attached file is an EDIT, never 'brand-new SQL'. If the "
     "source file is not in the current ATTACHED FILES list, ask the user to re-attach it rather "
     "than pasting the whole body.\n"
+    # FR-attach-delivery-truncated-by-output-cap (2026-08-06): 블록 경로는 파일 전문을 **답변의
+    # 출력 예산 안에** 싣는다 — 파일이 여럿이면 서로를 밀어내고, 상한에서 잘리면 앞쪽 몇 개만
+    # 전달된 채 "전부 갱신했다" 는 문장만 남는다(관측: 6건 중 1건). 도구 경로는 파일마다 독립
+    # 턴이라 그 경합이 없고, 성공/실패가 즉시 돌아와 모델이 **실제 전달분만** 주장할 수 있다.
+    # 블록 경로는 폴백으로 남긴다(도구 미노출 대화·구 프롬프트 정합).
+    "**PREFERRED PATH — use the `update_attachment` tool, one call per file.** When that tool is "
+    "available, call it for each file instead of emitting `attachment-edit` blocks: pass `patch` "
+    "(a unified diff) when only part of the file changes, or `content` for a full rewrite. Emitting "
+    "several full file bodies inside one answer risks hitting the output limit — the later files are "
+    "then silently lost while your summary still claims you delivered them. The tool returns success "
+    "or failure per file, so it cannot happen there.\n"
+    "**NEVER claim a file was updated unless you received a success result for it** (a tool "
+    "'전달 완료' response, or an `attachment-edit` block you actually finished writing). If some files "
+    "could not be delivered, say exactly which ones and why. Write the per-file delivery FIRST and "
+    "the summary LAST, so that a summary can never describe deliveries that did not happen.\n"
 )
 
 # FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): 사용자가 **새로
@@ -878,7 +1116,8 @@ _ATTACHMENT_NEW_DELIVERY_DIRECTIVE = (
     "(.sql/.txt/.csv/.md/.json/.yaml/.xml/.log) — the system sanitizes the name and forces a safe "
     "text extension. The block is removed from your answer and saved as a new downloadable "
     "attachment (a '📎 첨부 전달' note is shown), so do NOT also paste the full body. To UPDATE a file "
-    "the user attached, use `attachment-edit` with its `source_attachment_id` instead.\n"
+    "the user attached, use the `update_attachment` tool (or, when it is unavailable, an "
+    "`attachment-edit` block with its `source_attachment_id`) instead.\n"
 )
 
 # FR-operator-global-prompt-shadows-code-seals (conversation_audit 2026-07-31): `compose_system_prompt`
@@ -4541,6 +4780,15 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
                           step_gap_ms=step_gap_ms)
     except Exception:
         pass
+    # FR-attach-delivery-truncated-by-output-cap (§18.8 안전망): `finish_reason` 은 종전 코드
+    # **어디에서도 읽지 않았다** — 출력 상한에서 잘린 응답이 완전한 응답과 구별 없이 전달됐고,
+    # 잘리기 전에 쓰인 "6개 파일 전부 갱신했습니다" 같은 문장이 그대로 남아 허위 완료 선언이 됐다
+    # (관측: completion_tokens 100,000 = 상한 정확히 도달, 첨부 6건 중 1건만 전달).
+    # 반환 타입(message)은 다수 호출자가 의존하므로 바꾸지 않고, 사실만 run-scoped 채널에 남긴다.
+    try:
+        _LLM_LAST_FINISH_REASON_CTX.set(str(getattr(response.choices[0], "finish_reason", "") or ""))
+    except Exception:
+        pass
     return response.choices[0].message
 
 
@@ -5126,6 +5374,13 @@ def run_agent(
         # compose 가 첫 문장에서 클리어하므로 run 내부는 이미 안전하지만, run 이 **끝난 뒤** 값이
         # 워커 스레드 컨텍스트에 남아 있는 것 자체를 없앤다(구조적 격리 — 순서 불변식 의존 제거).
         _ATTACHMENT_TURN_FACTS_CTX.set(None),
+        # FR-attach-delivery-truncated-by-output-cap: update_attachment 도구의 소유권 가드용.
+        _ACTIVE_ACCOUNT_ID_CTX.set(int(account_id) if account_id else None),
+        # 도구 전달 건수는 run 마다 0에서 시작한다(워커 스레드 재사용 시 이전 run 의 카운터가
+        # 남아 상한을 조기 소진시키는 것을 차단).
+        _ATTACHMENT_UPDATES_DONE_CTX.set(0),
+        _LLM_LAST_FINISH_REASON_CTX.set(None),
+        _ATTACHMENT_DELIVERED_IDS_CTX.set(()),
     )
     try:
         return _run_agent_core(
@@ -5169,6 +5424,10 @@ def run_agent(
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
         _INLINE_TEXT_PATH_CTX.reset(_att_tokens[3])
         _ATTACHMENT_TURN_FACTS_CTX.reset(_att_tokens[4])
+        _ACTIVE_ACCOUNT_ID_CTX.reset(_att_tokens[5])
+        _ATTACHMENT_UPDATES_DONE_CTX.reset(_att_tokens[6])
+        _LLM_LAST_FINISH_REASON_CTX.reset(_att_tokens[7])
+        _ATTACHMENT_DELIVERED_IDS_CTX.reset(_att_tokens[8])
 
 
 # owner-answer recall/display 봉인 sentinel: recall 하한 무제한(전체 문맥) 답변을 어떤 floor 보다
@@ -6254,6 +6513,11 @@ def _run_agent_core(
             # (게이팅·깊이는 modules/redteam.review_plan 의 결정론 파이프라인). 어떤 실패도
             # 답변 전달을 막지 않는다. 노트 축적(agent_notes)은 리뷰 여부와 무관 best-effort.
             _rt_meta: dict[str, Any] | None = None
+            # §18.8 [P1]: 초안이 출력 상한에서 잘렸는지를 **red-team 이 돌기 전에** 확정(latch)한다.
+            # 리뷰의 revise/rederive 도 `_call_llm` 을 타므로 finish_reason 채널은 그 뒤에 덮인다.
+            # 수정본이 실제로 채택되면(아래) 그 호출의 결과로 갱신한다 — 채택되지 않으면 잘린
+            # 초안이 그대로 전달되므로 latch 값이 여전히 옳다.
+            _draft_truncated = last_answer_was_truncated()
             _rt_t0 = time.perf_counter()  # feature-0026 (M3): red-team 전체 구간(리뷰+수정+재도출+노트)
             try:
                 from modules import agent_notes as _agent_notes
@@ -6507,10 +6771,22 @@ def _run_agent_core(
                         attachment_facts=(
                             None if _suppress_conversation_context else _att_turn_facts
                         ),
+                        # FR-attach-delivery-truncated-by-output-cap: 리뷰어가 "전부 갱신했다" 류
+                        # 허위 완료 선언을 대조할 수 있는 서버 사실. delivered 는 이 run 에서
+                        # update_attachment 도구로 **실제 생성된** 새 버전 수이고, truncated 는
+                        # 응답이 출력 상한에서 잘렸는지다. 둘 다 모델이 알 수 없는 사실이라
+                        # 리뷰어에게만 의미가 있다.
+                        delivery_facts={
+                            "delivered": int(_ATTACHMENT_UPDATES_DONE_CTX.get() or 0),
+                            "truncated": last_answer_was_truncated(),
+                        },
                     )
                     if _rt_answer and _rt_answer.strip():
                         answer = _rt_answer
                         result["answer"] = answer
+                        # 수정본이 채택됐다 — 이제 사용자가 받는 텍스트는 그 호출의 산출물이므로
+                        # 절단 여부도 그 호출 기준으로 다시 판정한다.
+                        _draft_truncated = last_answer_was_truncated()
                     # W1(추적성): 재도출이 채택돼 새 SQL/도구를 돌렸으면 outer steps·last_sql 에 반영해
                     # 표시 step·result["executed_sql"] 이 초안이 아닌 재도출 근거를 가리키게 한다.
                     # **오케스트레이터가 실제로 채택한 라운드의 step 만** 쓴다(meta["rederive_steps"]).
@@ -6542,6 +6818,30 @@ def _run_agent_core(
                     steps=steps, review_meta=_rt_meta)
             except Exception:
                 pass
+            # FR-attach-delivery-truncated-by-output-cap: 잘린 답변을 완전한 답변처럼 전달하지
+            # 않는다. red-team **이후**에 붙여 리뷰어의 재작성으로 사라지지 않게 하고, 저장 전에
+            # 붙여 히스토리에도 남긴다. 잘리지 않았으면 아무것도 붙지 않는다.
+            try:
+                # §18.8 [P1]: `last_answer_was_truncated()` 를 **여기서** 읽으면 안 된다 —
+                # red-team 의 revise/rederive 도 `_call_llm` 을 타므로, 리뷰가 한 번이라도 돌면
+                # finish_reason 이 그 호출의 'stop' 으로 덮여 경고가 사라진다. 게다가 새 리뷰 규칙이
+                # truncated 일 때 BLOCK 을 지시하므로 **경고가 필요한 경우일수록 확실히 지워졌다**.
+                # 초안 확정 시점에 latch 해 둔 값을 쓴다(아래 _draft_truncated).
+                if _draft_truncated and _TRUNCATED_ANSWER_NOTICE.strip() not in answer:
+                    answer = f"{answer}{_TRUNCATED_ANSWER_NOTICE}"
+                    result["answer"] = answer
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "절단 경고 부착 실패 — 잘린 답변이 표시 없이 전달될 수 있음", exc_info=True)
+            # §18.8 [P1]: 도구로 만든 첨부는 답변 저장 후 message_id 에 바인딩해야 칩이 뜬다.
+            # 후처리(worker `modules/ask.py` · web inproc)가 이 목록을 읽는다.
+            try:
+                _delivered_ids = [int(i) for i in (_ATTACHMENT_DELIVERED_IDS_CTX.get() or ())]
+                if _delivered_ids:
+                    result["tool_delivered_attachment_ids"] = _delivered_ids
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "도구 전달 첨부 id 전달 실패 — 칩 바인딩 누락", exc_info=True)
             _rt_ms = round((time.perf_counter() - _rt_t0) * 1000.0, 1)  # feature-0026 (M3)
 
             # 메시지 저장 (duration_ms 포함)

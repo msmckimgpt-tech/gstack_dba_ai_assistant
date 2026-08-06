@@ -6,6 +6,58 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-attach-delivery-truncated-by-output-cap — fixed:undeployed (L6↔L2 구조; 전달 payload 가 답변 출력 예산을 잠식)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **56** PASS[33+23] · **뮤테이션 9/9 KILLED** ·
+  컨테이너 정본 회귀 실패 0 · ruff clean) + §18.8 security/backend+qa 패널 **BLOCK → [P1] 4 · [P2] 9 ·
+  [P3] 6 전건 흡수**. 배포 전.
+- **source**: 사용자 보고(2026-08-06) — "assistant 가 모든 첨부파일들을 갱신했다고 전달받았지만
+  정작 갱신된 첨부파일은 하나 뿐". 대화 제목 `파일 개선사항 지속적 갱신`.
+- **last_seen**: 2026-08-06 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **modality**: 1:1 · **product_id(마스킹)**: P-97 · **conv(마스킹)**: `…1d8ed346` · run `…2fd932dc`
+- **symptom_confidence**: high (사용자 보고 + DB 실측) · **rootcause_confidence**: high (토큰 실측 +
+  코드 file:line + 첨부 테이블 대조)
+- **suspected_layers**: **L6**(출력 상한 — 응답이 잘림) ↔ **L2**(도구/전달 계약: 절단 미감지 · 전달
+  결과 미피드백). L7 은 무관.
+- **증상(signal)**: `E-USR` 명시 보고 + `E-AST` 허위 완료 선언. 답변 서두 "…6개 파일을 전부
+  갱신했습니다" + 파일별 표/diff, 말미는 raw SQL **중간 절단**.
+- **confirmed_root_cause**: **전달 payload 가 답변 서술과 같은 출력 창을 공유한다.**
+  `completion_tokens = 100,000`(= `agent_max_output` 상한 정확히 도달). 파일 전문 6개(하나 8.5KB)를
+  한 응답에 담다 잘렸고, 완성된 `attachment-edit` 블록은 첫 파일뿐 → 새 버전 1건(878)만 생성.
+  요약이 **먼저** 쓰였기에 절단 후에도 "전부 갱신" 문장이 남았다.
+  부수 사실: `_ASSISTANT_EDIT_COUNT_CAP=5` 라 6건은 절단이 없었어도 하나는 못 갔다.
+  왜 아무도 못 잡았나 — (a) `finish_reason` 을 코드 **어디에서도 읽지 않았다**(grep 0건) (b) red-team 은
+  materialize **이전**에 도는 구조라 실제 전달 결과를 볼 수 없고, 초안의 블록 수조차 사실로 받지 못했다.
+  재발경로 = **구조**(예산 공유) + model limit.
+- **사용자 지시로 방향 전환(중요)**: 초판 제안은 감지(finish_reason)·리뷰어 대조·순서 변경 3종이었으나
+  사용자가 "첨부 수정은 completion_tokens 과 별개로 작동해야 한다. 구조개선을 검토해달라" 고 지적.
+  셋 다 **예산 공유 전제를 남긴 증상 대응**이었고(파일이 더 많거나 크면 순서 변경도 깨진다) 구조 개선으로
+  재설계했다. 승인 범위 **①+②**.
+- **봉인**: ① `update_attachment` 도구(파일당 독립 출력 창 + 성공/실패 즉시 피드백 + 스코프·가드 공유 +
+  run 상한 20) ② `patch`(unified diff) 전달(fail-closed 적용기 — 선언 길이 권위·문맥 없는 hunk 거부·
+  모호 다중일치 거부·전체 미적용·줄바꿈 보존) ③ `finish_reason` 절단 감지(초안 확정 시 latch → 사용자
+  경고 + 리뷰어 사실) ④ red-team `DELIVERY FACTS`(허위 완료 `honesty` BLOCK, floor 프레이밍으로 오탐 가드)
+  ⑤ 프롬프트: 도구 우선 · 성공 응답 없인 주장 금지 · 전달 먼저 요약 나중 · 블록 경로는 폴백 강등.
+- **§18.8 패널 BLOCK 흡수(가장 중요한 것)**: 초판은 도구로 만든 첨부를 **답변 메시지에 바인딩하지
+  않아** 다운로드 칩이 하나도 뜨지 않았다(`MetaJson.message_id=0` → `_load_assistant_attachments_by_message`
+  가 버림). 파일은 생성되고 이전 버전은 supersede 되는데 사용자에겐 아무것도 안 보이고, 하필 도구
+  결과와 절단 경고가 "칩으로 확인하세요" 를 가리켰으며 `delivered=6` 이 리뷰어에게 사실로 제시돼
+  **허위 완료를 리뷰어가 승인**하는 구조였다 — 고치려던 gap 의 한 층 아래 재생산. 또 패치 적용기가
+  **무음 오적용 3종**(문맥 없는 삽입 한 줄 앞 · 잘린 패치 부분 적용 후 성공 반환 · 후행 산문 파일 기록)을
+  냈고, 절단 경고는 red-team revise 가 지웠다(경고가 필요할수록 확실히 사라지는 자기무력화).
+- **corroboration**: 단일 대화이나 **구조적**(전달 payload 가 예산을 공유하는 한 파일 수·크기에 따라
+  재발 확정). disposition=fix-now — 근본이 코드 file:line confirmed + 사용자 명시 지시.
+- **fix**: `CHG-20260806T160000-attach-delivery-tool`(TASK-20260806T1600) /
+  **코드 거주 primary `feature-0002-agent-core`** + secondary cross-ref `feature-0003-agent-web-ui`
+  (칩 바인딩 `_bind_tool_delivered_attachments`) / `REV-20260806T160000-attach-delivery-tool`.
+- **rc_ids**: RC-1(예산 공유 구조) · RC-2(절단 미감지) · RC-3(전달 결과 미피드백) ·
+  **batch-id**: B-20260806T160000-attach-delivery-tool
+- **범위 밖(deferred/watch)**: ① 짧은 `content` 가드(모델이 절단된 preview 를 읽고 전문이라 착각하는
+  경우 — 선재, 별 항목) ② 턴당 최대 버전 수가 블록 5 + 도구 20 = 25 로 늘어난 점(용량 상한으로만 유계)
+  ③ 도구 경로 audit 에 request IP 부재(워커 경로와 동일, 선재).
+- **라이브 실측 필요분(§정직)**: ① 모델이 실제로 도구를 채택하는지 ② 다중 파일 전달이 완주하는지
+  ③ **다운로드 칩이 실제로 뜨는지**(패널이 잡은 결함이라 최우선) ④ 패치 경로 적용 성공률.
+
 ## FR-read-attachment-preview-looks-partial — fixed:deployed:unverified-live (L7 표시 오인 + L2 완전성 계약 부재)
 
 - **status**: `fixed:undeployed` — 코드/테스트(신규 **17** PASS[실 함수 경유] · 기존 read_attachment

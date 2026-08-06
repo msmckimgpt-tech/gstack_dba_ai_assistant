@@ -1350,7 +1350,6 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 
 ### 배포 scope
 워커(insight). `make deploy-all`.
-
 ## CHG-20260806T170000 라벨 네임스페이스 — 죽은 클러스터 배제 · 스키마 표기 · 결정적 매칭 (Minor)
 
 - **무엇:** ① L3 도메인 합성 입력을 **현재 살아있는 클러스터**로 제한(`live_cluster_labels` —
@@ -1429,3 +1428,53 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 
 ### 배포 scope
 워커(insight) + web. `make deploy-all`.
+## CHG-20260806T160000-attach-delivery-tool 첨부 전달을 답변 예산에서 분리 — `update_attachment` 도구 + 패치 전달
+> conversation_audit 마찰 `FR-attach-delivery-truncated-by-output-cap` — 답변이 "6개 파일을 전부
+> 갱신했습니다" 라고 했으나 실제 생성된 새 버전은 **1건**(대화 `…1d8ed346`, run `…2fd932dc`).
+> `completion_tokens = 100,000` = 출력 상한 정확히 도달. 모델이 요약을 먼저 쓰고 파일 전문 6개를
+> 이어 붙이다 잘렸고, 완성된 `attachment-edit` 블록은 첫 파일 하나뿐이었다. 서두의 "전부 갱신" 은
+> 잘리기 **전**에 쓰여 그대로 남았다. 부수 사실: `_ASSISTANT_EDIT_COUNT_CAP=5` 라 6건은 절단이
+> 없었어도 하나는 못 갔다.
+> **사용자 지시(2026-08-06)**: "첨부된 파일 수정은 completion_tokens 과 별개로 작동되어야 합니다.
+> 가장 적절한 대안이나 구조개선을 검토해줄 수 있을까요?" → 증상 대응(감지·리뷰·순서) 대신 **전달
+> payload 를 답변의 출력 예산에서 분리**하는 구조 개선으로 방향 전환. 승인 범위 = ①+②.
+- **① 도구 기반 전달** `src/modules/tools.py` `update_attachment` + `src/agent_core.py`
+  `update_attachment_content` — 파일마다 **독립 턴의 출력 창**을 쓰고, 성공/실패가 즉시 되돌아와
+  모델이 **실제 성공분만** 주장할 수 있다(L2 자기교정). 권한 경계는 `read_attachment` 와 동일 스코프,
+  생성은 **블록 경로와 같은 materialize** 를 태워 가드 전부 공유(도구만 느슨해지면 그게 취약점).
+  run 당 `_ATTACHMENT_UPDATE_RUN_CAP=20`, 본문 1MB. 실패 사유는 materialize 의 skip 사유를 그대로
+  모델에 전달(`skipped` out-param 신설).
+- **② 패치 전달** `src/modules/patch_apply.py`(신규) — unified diff 를 서버가 적용. 이번 건의 실제
+  변경은 몇 줄인데 8.5KB 전문을 재생성하고 있었다. **fail-closed**: 문맥 불일치·모호한 다중 일치·
+  겹치는 hunk·알 수 없는 접두·**선언 길이 불일치**·**문맥 없는 hunk** 를 전부 거부하고, 하나라도
+  실패하면 아무것도 적용하지 않는다. 원본의 지배적 줄바꿈(CRLF/LF)을 보존한다.
+- **③ 절단 감지** `finish_reason` 은 종전 코드 **어디에서도 읽지 않았다**. 이제 포착해 초안 확정
+  시점에 latch 하고, 잘렸으면 답변 말미에 사용자 경고를 붙이며 red-team 에 사실로 넘긴다.
+- **red-team 포착** `src/modules/redteam.py` `build_delivery_facts` — 실제 생성 건수 + 절단 여부를
+  초안 **앞**에 실어 "N개 갱신했다는데 delivered 가 적으면 `honesty` BLOCK". `delivered` 는
+  **floor**(블록 경로는 리뷰 이후 materialize 라 미집계)임을 명시해 정직한 혼합 턴 오탐을 막는다.
+- **프롬프트** 도구 우선 전달 + "성공 응답을 받은 파일만 갱신했다고 말하라" + "전달 먼저, 요약 나중".
+  블록 경로는 **폴백으로 강등**하고 `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` 상호참조도 함께 갱신.
+- **§18.8 security + backend/qa 패널 BLOCK 흡수([P1] 4 · [P2] 9 · [P3] 6)**:
+  - **[P1] 도구로 만든 첨부가 다운로드 칩에 안 나온다.** materialize 는 `MetaJson.message_id` 로
+    말풍선 칩을 붙이는데(`_load_assistant_attachments_by_message` 가 `mid<=0` 을 버린다) 도구 호출
+    시점엔 답변이 저장 전이라 0 이 들어갔다. **파일은 만들어졌는데 사용자에겐 아무것도 안 보이고**,
+    도구 결과·절단 경고가 하필 "칩으로 확인하세요" 라고 가리켰다 — 고치려던 claim/reality gap 의
+    재생산. → 전달 id 를 run 채널에 모아 `result["tool_delivered_attachment_ids"]` 로 내보내고,
+    답변 저장 후 `_bind_tool_delivered_attachments`(feature-0003 신설)가 message_id 에 바인딩한다
+    (워커·web inproc 양쪽). 워커의 "블록 없으면 조기 반환" 도 도구 전달분을 고려하도록 수정.
+  - **[P1] 패치 적용기 무음 오적용 3종**(패널이 실행으로 실증): `-N,0` 문맥 없는 삽입이 **한 줄 앞**
+    (EOF append 가 마지막 줄 앞으로) · 선언 길이(`-l,c`)를 파싱만 하고 안 써서 **잘린 패치가 부분
+    적용되고 성공 반환**(이 cycle 이 없애려는 실패의 재현) · 마지막 hunk 뒤 산문이 파일에 기록.
+    → 선언 길이를 **본문 경계의 권위**로 삼고, 문맥 없는 hunk 는 거부한다.
+  - **[P1] 절단 경고가 red-team revise 로 지워짐** — revise/rederive 도 `_call_llm` 을 타 finish_reason
+    이 'stop' 으로 덮인다. 새 리뷰 규칙이 truncated 일 때 BLOCK 을 지시하므로 **경고가 필요할수록
+    확실히 사라졌다**(자기무력화). → 초안 확정 시 latch, 수정본 채택 시에만 재판정.
+  - **[P2]** execute_tool 라우팅/시그니처 계약/워커 배선 테스트 신설 · CRLF 보존 · 패치 후행 개행
+    허용 · 예외 원문 비노출(CODE_REVIEW §2.7) · `web.app` import 실패 로그 · DELIVERY FACTS floor
+    프레이밍 · 프롬프트 모순 해소.
+- Tests: `tests/test_attachment_delivery_tool.py`(33) + `tests/test_patch_apply.py`(23).
+  **뮤테이션 9/9 KILLED**(선언길이·zero-context·줄바꿈·라우팅·전달id·latch·워커바인딩·floor·예외노출).
+- **위험등급**: Major(§12.3 — 코어 LLM 경로 + **모델이 첨부 저장소에 쓰는 첫 도구**).
+  사용자 승인 "①+② 한번에"(AskUserQuestion 2026-08-06). **Cross-ref**: 표시/저장층 feature-0003
+  (`CHG-20260806T160000-attach-tool-chip-binding`) · 원장 `FR-attach-delivery-truncated-by-output-cap`.

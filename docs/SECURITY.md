@@ -1196,3 +1196,35 @@ re-grant 금지**(★ 관리자 해제 보존)·프론트 그룹 키 parity·see
   파일 헤더 라벨로 명시했다 — wiring 은 별도 compliance 결정 사항이고, 그때까지 이 파일은 실행되지
   않으므로 삭제 요구 처리의 근거로 쓸 수 없다. 정본 env 키는 라이브 판(`ATTACHMENT_RECON_INTERVAL_SEC`)
   이며 미배선 판의 `ATTACHMENT_RECON_POLL_SEC` 는 사양 보존본 내부 명칭이다(alias 배선 없음).
+
+## 39. 모델이 첨부 저장소에 쓰는 첫 도구 — `update_attachment` 의 권한 경계·쓰기 프리미티브 한계 (feature-0002-agent-core · feature-0003-agent-web-ui · conv-audit FR-attach-delivery-truncated-by-output-cap, 2026-08-06)
+
+**무엇이 새로 열렸나.** 종전까지 assistant 가 첨부 새 버전을 만드는 유일한 경로는 답변 본문의
+```attachment-edit``` 블록이었고, 생성은 **답변이 끝난 뒤** 후처리가 했다. `update_attachment` 도구는
+**모델이 답변 도중 자기 판단으로** 첨부 저장소에 쓰는 첫 경로다. 트리거가 되는 내용(파일 본문)은
+사용자가 올린 것이라 **공격자 영향 하에 있을 수 있다**(§14 datamarking 은 확률적 완화이지 보장이 아니다).
+
+**경계(코드로 강제되는 것).**
+- 대상 해소는 `agent_core._load_scoped_attachment_rows()` 집합 안에서만 — web ask 가 대화 스코프와
+  그룹 발신자 스코프(CSO F1)로 이미 좁힌 id 다. 대화 컨텍스트가 없으면 빈 목록(fail-closed).
+- 생성은 **블록 경로와 동일한** `_materialize_assistant_attachment_edits` 를 태운다. 대화 일치·
+  **AccountId 일치**·kind allowlist(text/csv)·파일당/대화/계정 용량 상한·파일명 sanitize·확장자 강제·
+  버전 체인 UNIQUE 가 그대로 적용된다. **도구 전용 우회 경로는 없다.**
+- 소유권은 run 경계 contextvar(`_ACTIVE_ACCOUNT_ID_CTX`)로 전달하며 env 폴백이 없다 — 프로세스 전역
+  오염으로 계정을 주입할 수 없다. 미설정이면 전달 거부.
+- 공유창 window 로 가시 구간이 잘린 발신자에게는 **도구 자체가 노출되지 않는다**(`read_attachment` 와 동일 게이트).
+- 바인딩(`_bind_tool_delivered_attachments`)도 대화·소유권·`CreatedByRole='assistant'` 를 재확인한다.
+
+**정직하게 기록하는 한계.**
+- **run 당 최대 20건**(`_ATTACHMENT_UPDATE_RUN_CAP`), 건당 1MB. 블록 경로 상한(5)과 **독립**이라
+  한 턴의 최대 새 버전 수는 25 로 늘었다. 용량은 대화/계정 상한이 superseded 분까지 계상해 유계다.
+- 새 버전 생성 시 **직전 버전은 목록에서 사라진다**(`SupersededAt`). 복구는 버전 API 로 가능하나
+  사용자 확인 단계는 없다 — 되돌릴 수 있는 변경이라 §3 파괴적 변경 승인 대상으로 보지 않았다.
+- 도구 경로 audit 에는 **request IP 가 없다**(`request=None`) — 워커 경로와 동일한 선재 한계이며,
+  이제 이 경로가 주 경로가 된다. 첨부 row 의 `CreatedByRole='assistant'` + `MetaJson.delivered_by`
+  가 provenance 를 남긴다.
+- `patch` 경로는 모델 출력(비신뢰)을 파싱해 파일을 재작성한다. **fail-closed** 로 설계했다 — 문맥
+  불일치·모호한 다중 일치·겹친 hunk·머리말 선언 길이 불일치(잘린 패치)·문맥 없는 hunk 를 거부하고,
+  하나라도 실패하면 전체를 적용하지 않는다. 잘못 적용된 패치는 전달 실패보다 나쁘다는 판단이다.
+- 실패 메시지는 예외 원문을 담지 않는다(§2.7) — 호스트·경로가 모델 컨텍스트와 저장 메시지로 새지
+  않게 로그로만 남긴다.

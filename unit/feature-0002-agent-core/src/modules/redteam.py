@@ -374,6 +374,27 @@ the conversation's attachment records, not produced by any model). Use it ONE wa
 - A tool returning 0 rows, or an object missing from the live database, says nothing about what was
   attached here. Do not accept it as the draft's justification for denying that the files exist.
 
+DELIVERY FACTS (present only in some reviews; application-computed, not model-produced). This is
+about what the assistant actually HANDED BACK to the user in this turn:
+- `delivered` is the number of attachment versions the assistant created via the `update_attachment`
+  TOOL, counted at review time. `truncated` means the response hit the output limit and was cut off.
+- **`delivered` is a FLOOR, not a total.** Deliveries made the other way — an `attachment-edit` block
+  written into the answer — are materialised AFTER this review and are NOT counted here. So a draft
+  claiming more files than `delivered` is only a defect when the draft **also** shows no
+  `attachment-edit` block for the remaining ones. Check the draft before reporting.
+- With that check done: if the draft claims it updated / delivered / handed back N files, `delivered`
+  is smaller than N, and the draft contains no `attachment-edit` block covering the difference, that
+  is a BLOCK on `honesty`. The user receives fewer files than promised and has no way to notice. Say
+  how many the facts report. This is the single most damaging failure in this product: a confident
+  "모두 갱신했습니다" over a partial delivery.
+- If `truncated` is true, the draft is incomplete by definition. Report a BLOCK on `honesty` if the
+  draft nonetheless reads as a finished, complete answer (summary tables, "이상입니다", a full list of
+  files it claims to have delivered). An answer cut mid-thought must not present itself as whole.
+- Counting rule: count only files the draft asserts it CHANGED AND RETURNED. Files it merely
+  reviewed, described, or recommended changes for are NOT deliveries — do not count those, and do
+  not report a defect for them.
+- `delivered: 0` with a draft that promises no files is normal. Say nothing.
+
 Review axes:
 - grounding: every factual claim in the draft must be supported by the evidence digest (tool runs
   AND user-attached files). Partial evidence (truncated previews, sample rows, row caps) must NOT be
@@ -633,6 +654,31 @@ def build_attachment_change_facts(facts: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def build_delivery_facts(facts: dict[str, Any] | None) -> str:
+    """이번 턴의 **실제 전달 결과** 블록 — 리뷰어가 허위 완료 선언을 대조하는 유일한 확정 사실.
+
+    FR-attach-delivery-truncated-by-output-cap (conversation_audit 2026-08-06): 답변이 "6개 파일을
+    전부 갱신했습니다" 라고 했지만 실제 생성된 새 버전은 1건뿐이었다(출력 상한 절단). 리뷰어는
+    초안 텍스트만 봐서 그 차이를 볼 수 없었고 `pass` 했다. materialize 는 리뷰 **이후**에 도는
+    구조라, 리뷰 시점에 확정 가능한 사실은 (a) 도구로 이미 생성된 건수 (b) 응답 절단 여부다.
+
+    fresh-context 불변식과 충돌하지 않는다 — assistant 의 추론이 아니라 애플리케이션 계측값이다.
+    """
+    if not isinstance(facts, dict):
+        return ""
+    delivered = int(facts.get("delivered") or 0)
+    truncated = bool(facts.get("truncated"))
+    if not delivered and not truncated:
+        # 전달도 절단도 없으면 판정할 축이 없다 — 빈 블록은 주지 않는다(노이즈·오탐 방지).
+        return ""
+    lines = ["DELIVERY FACTS (application-computed floor — tool deliveries only, see rules):",
+             f"- attachment versions created via the update_attachment tool so far: {delivered}",
+             "- deliveries made as `attachment-edit` blocks in the answer are NOT counted here"]
+    if truncated:
+        lines.append("- the assistant's response was CUT OFF at the output limit (incomplete answer)")
+    return "\n".join(lines)
+
+
 def build_evidence_digest(steps: list[dict[str, Any]] | None, executed_sql: str = "",
                           cap_chars: int = _EVIDENCE_CAP_CHARS,
                           attachments: list[dict[str, Any]] | None = None) -> str:
@@ -739,7 +785,8 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
                model: str | None = None,
                history: str = "",
                conversation_request: str = "",
-               attachment_facts: str = "") -> dict[str, Any] | None:
+               attachment_facts: str = "",
+               delivery_facts: str = "") -> dict[str, Any] | None:
     """fresh-context 리뷰어 1패스. 실패 시 None (fail-open — caller 가 원 초안 유지).
 
     model: 이 패스에 쓸 리뷰어 모델(정합 도출값). 미지정이면 REDTEAM_MODEL(기본/env pin).
@@ -768,9 +815,12 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
         # "이번 턴에 무엇이 실제로 들어왔는가"를 먼저 확정해야 부재 단정을 모순으로 인식한다.
         att_facts = _strip_review_sentinels(str(attachment_facts or "")).strip()
         att_block = f"{att_facts}\n\n" if att_facts else ""
+        del_facts = _strip_review_sentinels(str(delivery_facts or "")).strip()
+        del_block = f"{del_facts}\n\n" if del_facts else ""
         user_block = (
             f"{conv_block}"
             f"{att_block}"
+            f"{del_block}"
             f"LATEST USER UTTERANCE (may be a short follow-up like '네 맞습니다'):\n"
             f"{str(question or '')[:2000]}\n\n"
             f"DRAFT ANSWER{' (revised after your earlier findings — verify pass)' if revised else ''}:\n"
@@ -1306,6 +1356,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                        conversation_request: str = "",
                        attachments: list[dict[str, Any]] | None = None,
                        attachment_facts: dict[str, Any] | None = None,
+                       delivery_facts: dict[str, Any] | None = None,
                        ) -> tuple[str, dict[str, Any] | None]:
     """choke-point 오케스트레이터 — (최종 답변, 리뷰 meta | None) 반환.
 
@@ -1380,6 +1431,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
         round_history: list[dict[str, Any]] = []
         # FR-attachment-change-false-absence (B): 사실 블록은 라운드 불변이라 1회만 만든다.
         att_facts_block = build_attachment_change_facts(attachment_facts)
+        del_facts_block = build_delivery_facts(delivery_facts)
         review = run_review(
             question, draft_answer, evidence,
             is_group=is_group, conversation_id=conversation_id, run_id=run_id,
@@ -1387,6 +1439,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
             history=_history_block(conv_history, round_history),
             conversation_request=conversation_request,
             attachment_facts=att_facts_block,
+            delivery_facts=del_facts_block,
         )
         if review is None:
             record_review(
@@ -1608,6 +1661,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
                 history=_history_block(conv_history, round_history),
                 conversation_request=conversation_request,
                 attachment_facts=att_facts_block,
+                delivery_facts=del_facts_block,
             )
             if verify is None:
                 stop_reason = "verify_error"

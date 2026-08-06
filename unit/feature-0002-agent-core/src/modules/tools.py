@@ -1438,6 +1438,53 @@ _ATTACHMENT_TOOL_DEFS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_attachment",
+            "description": (
+                "사용자가 첨부한 텍스트/CSV 파일을 **새 버전으로 갱신해 전달한다**(사용자는 다운로드 "
+                "칩으로 받는다). 파일을 고쳐 돌려주기로 했다면 답변 본문에 전문을 붙여넣지 말고 "
+                "**반드시 이 도구를 파일마다 한 번씩 호출**한다. 여러 파일을 고칠 때 답변 본문에 "
+                "전문을 나열하면 출력 상한에서 잘려 일부만 전달되고, 그 사실을 너는 알 수 없다 — "
+                "도구는 파일마다 독립적으로 실행되고 성공/실패를 즉시 돌려주므로 그 문제가 없다. "
+                "**변경이 일부분이면 `patch`(unified diff)를 쓰는 것이 강력히 권장된다** — 전문 "
+                "재작성보다 훨씬 짧고 실수도 적다. 파일을 통째로 다시 쓴 경우에만 `content` 를 쓴다. "
+                "호출이 성공하면 새 버전 번호와 파일명이 반환된다. **성공 응답을 받은 파일만** "
+                "'갱신했다'고 사용자에게 말한다. 실패하면 사유가 반환되니 그에 맞게 고쳐 재시도하거나 "
+                "사용자에게 그 파일은 전달하지 못했다고 명시한다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "갱신할 파일 이름(ATTACHED FILES 목록의 이름).",
+                    },
+                    "attachment_id": {
+                        "type": "integer",
+                        "description": "파일 이름 대신 쓸 첨부 id. 동명 파일 구분이 필요할 때.",
+                    },
+                    "patch": {
+                        "type": "string",
+                        "description": (
+                            "적용할 unified diff. `@@ -<시작>,<줄수> +<시작>,<줄수> @@` 머리말 + "
+                            "' '(문맥)/'-'(삭제)/'+'(추가) 줄. 문맥은 현재 파일과 **정확히** 일치해야 "
+                            "하며(공백·대소문자 포함), 애매하면 적용하지 않고 사유를 돌려준다. "
+                            "content 와 동시 지정 불가."
+                        ),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "새 파일 **전문**. patch 로 표현하기 어려울 때만 쓴다(전면 재작성 등). "
+                            "patch 와 동시 지정 불가."
+                        ),
+                    },
+                },
+            },
+        },
+    },
 ]
 
 _inject_step_narration_params(_ATTACHMENT_TOOL_DEFS)
@@ -3611,11 +3658,55 @@ def _tool_read_attachment(conn, args: dict) -> str:
     return f"{header}\n\n{body}"
 
 
+def _tool_update_attachment(conn, args: dict) -> str:
+    """FR-attach-delivery-truncated-by-output-cap: 첨부 1건을 새 버전으로 갱신(도구 전달).
+
+    권한 경계·생성 가드는 agent_core.update_attachment_content 가 소유한다(블록 경로와 동일
+    materialize 를 태운다). 여기서는 인자 정제와 **모델이 읽을 결과 문장**만 만든다 — 실패 사유가
+    구체적이어야 모델이 자기교정(다른 id·전문 폴백)을 할 수 있다.
+    """
+    import agent_core as _ac  # 지연 import (순환 회피 — read_attachment 와 동형)
+
+    filename = str(args.get("filename") or "").strip() or None
+    try:
+        attachment_id = int(args.get("attachment_id") or 0) or None
+    except (TypeError, ValueError):
+        attachment_id = None
+    patch = args.get("patch")
+    content = args.get("content")
+    patch = str(patch) if isinstance(patch, str) and patch.strip() else None
+    content = str(content) if isinstance(content, str) and content.strip() else None
+
+    try:
+        res = _ac.update_attachment_content(
+            filename=filename, attachment_id=attachment_id, patch=patch, content=content,
+        )
+    except Exception:
+        # 예외 원문(호스트·경로)을 모델 컨텍스트/저장 메시지에 넣지 않는다(CODE_REVIEW §2.7).
+        import logging as _logging
+        _logging.getLogger(__name__).error("update_attachment 도구 실패", exc_info=True)
+        return ("오류: 첨부를 갱신하지 못했습니다(일시적 오류일 수 있습니다).\n"
+                "**이 파일은 전달되지 않았습니다** — 답변에서 갱신했다고 말하지 마십시오.")
+
+    if not res.get("ok"):
+        return (
+            f"오류: {res.get('error') or '첨부를 갱신하지 못했습니다.'}\n"
+            "**이 파일은 전달되지 않았습니다** — 답변에서 갱신했다고 말하지 마십시오."
+        )
+    return (
+        f'전달 완료: "{res["filename"]}" (v{res["version_number"]}, attachment_id={res["attachment_id"]}, '
+        f'원본 attachment_id={res["source_attachment_id"]}, {res["size_bytes"]} bytes). '
+        f'사용자가 다운로드 칩으로 받습니다. 이 답변에서 지금까지 전달한 파일: {res["delivered_count"]}건. '
+        "전달 완료 응답을 받은 파일만 '갱신했다'고 말하십시오."
+    )
+
+
 # 데이터소스 연결이 필요 없는 도구 — execute_tool 이 라우팅·연결 획득을 건너뛴다.
-_DATASOURCE_FREE_TOOLS = frozenset({"read_attachment"})
+_DATASOURCE_FREE_TOOLS = frozenset({"read_attachment", "update_attachment"})
 
 _TOOL_HANDLERS = {
     "read_attachment": _tool_read_attachment,
+    "update_attachment": _tool_update_attachment,
     "list_schemas": _tool_list_schemas,
     "describe_schema": _tool_describe_schema,
     "check_table_coverage": _tool_check_table_coverage,

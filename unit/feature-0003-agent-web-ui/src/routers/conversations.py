@@ -4033,6 +4033,23 @@ async def ask(request: Request) -> JSONResponse:
                     message_id=_edit_msg_id,
                     request=request,
                 )
+                # FR-attach-delivery-truncated-by-output-cap (§18.8 [P1]): `update_attachment`
+                # 도구로 전달한 첨부는 답변 본문에 블록이 없어 위 materialize 가 잡지 못한다.
+                # message_id 가 확정된 지금 바인딩하지 않으면 **말풍선에 칩이 뜨지 않는다**
+                # (파일은 존재하는데 보이지 않는 상태 — 도구 결과의 "칩으로 받습니다" 가 거짓이 된다).
+                _tool_ids = [int(i) for i in (agent_result.get("tool_delivered_attachment_ids") or [])]
+                if _tool_ids:
+                    _bound = app._bind_tool_delivered_attachments(
+                        conn, conversation_id=conversation_id,
+                        account_id=int(account.get("id") or 0),
+                        attachment_ids=_tool_ids, message_id=_edit_msg_id,
+                    ) or []
+                    if _bound:
+                        materialized_attachments = list(_bound) + list(materialized_attachments)
+                    else:
+                        logging.getLogger(__name__).warning(
+                            "ask: 도구 전달 첨부 %d건 바인딩 결과 0 — 칩 미노출 가능 (conversation_id=%s)",
+                            len(_tool_ids), conversation_id)
             except Exception:
                 # best-effort: materialize 실패는 사용자 응답을 막지 않는다.
                 logging.getLogger(__name__).warning(
