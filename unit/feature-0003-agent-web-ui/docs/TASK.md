@@ -8297,7 +8297,6 @@ PB-0008 에서 확대 렌더 대조.
 ## 9. Requested Scope
 - [x] `배포 후 신규 전환 5종 라이브 재확인(선행 cycle 잔여)` — 산출물: fragment Run 4 + 증적 1장
   · 배선 확인: 사용자와 동일한 UI 경로로 열어 CDP trusted 제스처 실측(SVG 차트는 좌표 클릭).
-
 ## 20260806T2320-attach-version-diff — 첨부 버전 diff 비교 화면 (임의 쌍·다단계) (Major §12.3)
 
 - **사용자 요청(`/_template:entry`)**: "서비스 내 대화에서 첨부파일이 여러 버전이 있을 때, 각
@@ -8550,3 +8549,98 @@ verify-completion PASS 로도 "렌더된 그림" 을 보지 않으면 놓친다.
 선행 T9 는 한쪽만 봐서 잘못된 계약을 통과시켰다.
 **G9-a**: 자동 44축 PASS 로도 "렌더된 그림" 을 보지 않으면 놓친다 — 이 cycle 은 그 판독이
 만든 것이다.
+## 20260806T1541-attach-manage — 대화 첨부 삭제(버전 선택)·복구·일괄 다운로드 (Critical §12.3)
+
+사용자 요청(2026-08-06): ① 첨부 목록에서 특정 첨부 삭제 — **일부/모든 버전 선택 가능**
+② 모든 첨부 다운로드 — **압축/개별 취사 선택**.
+
+`ADR-20260729T163000-attach-append-only`(2026-07-29 사용자 지시로 삭제 UI 철회)를 **supersede**
+한다 — 사용자 승인 2026-08-06. 등급 Critical: 파괴적 데이터 삭제(§12) + 인가 경계 변경.
+
+### 2.1 Implementation Plan
+
+**사용자 확정 결정 (2026-08-06)**
+
+- **D1 append-only 철회** — 삭제 UI 재도입. 안내 문구 "첨부는 대화에 계속 쌓입니다" 교체.
+- **D2 soft-delete + 복구(휴지통) UI** — 즉시 purge 불채택. `DeletePending=1`/`DeletedAt` 표시
+  후 목록·AI 참조 스코프에서 즉시 제외, 실 객체 삭제는 기존 reconciliation worker 가 retention
+  (`ATTACHMENT_RECON_RETENTION_DAYS`, 기본 30일) 만료 후 수행. 그 창 안에서는 복구 가능.
+- **D3 삭제·복구 주체 = 업로더 본인 + 대화 소유자** — 현 백엔드는 `_account_can_access_attachment`
+  가 **그룹 멤버 전원**을 통과시켜 제3자가 남의 첨부를 지울 수 있다(ADR-20260729T163000 이
+  "별도 판단 대상"으로 이월한 미해결 이슈). UI 재도입과 함께 경계를 좁힌다.
+- **D4 다운로드 기본 = 최신본만, 전 버전은 옵션** — 전 버전 선택 시 버전 번호를 파일명에 부여.
+- **D5 (AI 판단, §9.1)** 최신 버전을 삭제하면 **직전 버전을 최신으로 승격**(`SupersededAt=NULL`)
+  해 목록에 남긴다. 승격하지 않으면 체인 전체가 목록에서 사라져 "이 버전만 삭제" 의 의미가
+  성립하지 않는다. 반대 방향(체인 전체 삭제)은 `scope=chain` 이 담당.
+
+**영향 파일 · symbol**
+
+| # | 파일 | 변경 symbol | 내용 |
+|---|---|---|---|
+| B1 | `src/routers/attachments.py` | 신규 `_account_can_manage_attachment` | 삭제·복구 공통 인가. `upload.any` → 통과 / `upload.own` + (첨부 `AccountId` == 요청자 **또는** 대화 소유자) → 통과 / 그룹 멤버 단독 → 거부 |
+| B2 | `src/routers/attachments.py` | `delete_attachment` | `?scope=version\|chain`(기본 `version`) · 인가를 B1 로 교체 · 응답 `deleted_ids[]`/`deleted_count` · 최신 삭제 시 D5 승격 |
+| B3 | `src/routers/attachments.py` | 신규 `restore_attachment` (`POST /api/attachments/{id}/restore`) | retention 미만료 + `UploadStatus != 'deleted'` 인 행만 `DeletePending=0, DeletedAt=NULL, DeleteReason=NULL` · `scope` 동일 지원 · 승격 재계산 · audit `attachment.restore` |
+| B4 | `src/routers/attachments.py` | 신규 `_load_attachment_row_any_state` | 삭제분 포함 조회(기존 `_load_attachment_row`/`_account_can_access_attachment` 는 `DeletedAt` 이면 거부하므로 복구 경로에 쓸 수 없음) |
+| B5 | `src/routers/conversations.py` | `list_conversation_attachments` | `?state=active\|deleted`(기본 `active`) — `deleted` 는 `lifecycle_state=delete_pending` + `restorable_until` 반환 |
+| B6 | `src/routers/conversations.py` | 신규 `bulk_download_conversation_attachments` (`GET /api/conversations/{cid}/attachments/download`) | `format=zip\|manifest` · `scope=latest\|all` · `ids=` 부분 선택 · ZIP 은 `StreamingResponse` 청크 생성 · **총 바이트 상한 초과 시 절단하지 않고 명시 오류**(§16.7 G9-b) · audit `attachment.bulk_download` |
+| B7 | `src/routers/_conv_store.py` | 신규 `_promote_latest_version(conn, root_id)` | 미삭제 행 중 `VersionNumber` 최대를 `SupersededAt=NULL`, 나머지 확정 |
+| F1 | `src/static/app/composer.js` | `_renderAttachmentList`·`_renderAttachmentVersionsBox` | 목록 행 삭제 버튼 + 버전 행별 삭제. 버전 ≥ 2 면 "이 버전만 / 전체 버전" 선택 |
+| F2 | `src/static/app/composer.js` | 신규 `_toggleAttachTrash`·`_restoreAttachment` | 휴지통 보기 토글 + 복구 버튼 + 남은 기간 표시 |
+| F3 | `src/static/app/composer.js` | 신규 `_openAttachDownloadDialog` | 전체 다운로드 — 압축(ZIP)/개별 · 최신본/전 버전 · 파일 선택 |
+| F4 | `src/static/css/` | 신규 클래스 | 삭제·복구·다운로드 컨트롤 스타일 |
+| D1 | `docs/DECISIONS.md` | 신규 ADR | `ADR-20260729T163000-attach-append-only` supersede |
+
+**접근 요약**: 백엔드는 기존 soft-delete 인프라(`DeletePending`/`DeletedAt`/`lifecycle_state`/
+reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소 ② 버전 체인 scope ③ 복구 경로
+④ 일괄 다운로드 네 축만 추가한다. 프론트는 `#attachSidePanel` 목록과 기존 버전 펼침 박스에
+컨트롤을 붙인다. 신규 테이블·마이그레이션 **0** (기존 컬럼만 사용).
+
+**완료 판정 기준 (acceptance criteria)**
+
+- AC-1 (버전 단위 삭제): 버전 3개 체인에서 v3 삭제 → v3 `DeletePending=1`, **v2 가 목록에 최신으로 표시**, v1·v2 무영향.
+- AC-2 (체인 전체 삭제): `scope=chain` 삭제 → 체인 전 버전 `DeletePending=1`, 목록에서 해당 첨부 사라짐.
+- AC-3 (인가 축소): 그룹 대화에서 업로더도 소유자도 아닌 멤버의 삭제 요청 → **404**. 업로더 본인·대화 소유자·`upload.any` 보유자는 성공.
+- AC-4 (복구): 삭제 후 retention 만료 전 복구 → `lifecycle_state=active` 로 복귀하고 목록·AI 참조 스코프에 재등장. 만료분(`UploadStatus='deleted'`)은 **409**.
+- AC-5 (휴지통 조회): `state=deleted` 응답의 각 항목에 `restorable_until` 이 있고, active 목록에는 삭제분이 없다.
+- AC-6 (ZIP 다운로드): `format=zip&scope=latest` → 대화의 최신본 전량이 담긴 ZIP 이 내려오고, 파일 수가 목록 수와 일치한다.
+- AC-7 (전 버전 ZIP): `scope=all` → 버전 체인 전량이 버전 번호가 붙은 파일명으로 담긴다.
+- AC-8 (무음 절단 금지): 총 바이트가 상한을 넘으면 **부분 ZIP 을 주지 않고** 초과 사실과 대안(개별 다운로드)을 명시한다.
+- AC-9 (개별 다운로드): `format=manifest` → 각 첨부의 presigned URL 목록이 반환되고 프론트가 순차 다운로드한다.
+- AC-10 (경계 양측 §16.7 G4): 버전 체인 길이 1 / N, retention 만료 전 / 후, 첨부 0건 / 상한 초과 각각 검증.
+- AC-11 (PB-0008): 실 Windows 브라우저에서 삭제·복구·ZIP·개별 다운로드를 실제로 구동하고 파일 수신까지 확인.
+
+**위험도**: **Critical** (§12.3) — 파괴적 데이터 삭제 + 인가 경계 변경. §7.1 에 따라 사람 승인 후 실행.
+
+### 작업 항목
+
+- [x] B1 삭제·복구 공통 인가 `_manage_gate_for_conversation`(그룹 멤버 단독 거부) + `_account_can_manage_attachment`
+- [x] B2 `DELETE /api/attachments/{id}?scope=version|chain` — 승격 동반, `deleted_ids`/`promoted_id` 응답
+- [x] B3 `POST /api/attachments/{id}/restore` — retention·사유 판정(`_is_restorable`) 통과분만
+- [x] B5 `GET /api/conversations/{cid}/attachments?state=deleted` 휴지통 + `can_manage`
+- [x] B6 `GET /api/conversations/{cid}/attachments/download` — `format=zip|manifest` × `scope=latest|all`
+- [x] B7 `_promote_latest_version` — 미삭제 최신 1행만 `SupersededAt=NULL`
+- [x] F1 목록 행·버전 행 삭제 컨트롤 + 범위 선택 모달
+- [x] F2 휴지통 토글 + 복구 + 남은 기간 표시
+- [x] F3 전체 다운로드 모달(압축/개별 × 최신본/전 버전)
+- [x] F4 CSS — 선행 cycle 이 실측한 폭 회귀 재발 방지(메타줄 말줄임 미도입)
+- [x] 인라인 적대 리뷰 P1 2건 흡수 — ① 복구가 `conv_soft`/`admin_purge`/`legal` 까지 되살리던 결함(사유 화이트리스트 + WHERE 재확인) ② 삭제·승격이 별개 커밋이라 승격 실패 시 체인이 목록에서 사라지던 결함(명시 트랜잭션 + `FOR UPDATE` 체인 잠금 + 승격 예외 전파)
+- [x] 테스트 33건 + route golden 갱신(224→226, 제거 0) + ROUTEMAP 재생성
+- [ ] §18.8 적대 검증 패널 (security·backend·qa·ux/design)
+- [ ] PB-0008 실 Windows 브라우저 시각검증
+- [ ] verify-completion PASS → commit → PR → cycle-finalize → 배포
+
+## 9. Requested Scope
+
+- [x] `첨부파일 목록 중 특정 첨부파일 삭제 (일부, 모든 버전에 대해 선택할 수 있도록)` — 산출물: 목록 행 🗑 + 버전 행 🗑 + `scope=version|chain` 선택 모달, soft-delete + 휴지통 복구
+  · 배선 확인: 버전 3개 체인에서 v3 만 삭제 시 v2 승격(AC-1), `scope=chain` 은 체인 전량(AC-2) — 승격 대상은 `VersionNumber` 최대이며 Id 순서가 아님을 별도 단정.
+- [x] `모든 첨부파일 다운로드 기능 추가 (압축, 개별 등. 취사 선택 가능)` — 산출물: 헤더 ⤓ + `format=zip|manifest` × `scope=latest|all` 모달, ZIP 스트리밍 + 개별 매니페스트
+  · 배선 확인: ZIP 엔트리명 버전 접미·중복 회피·zip-slip 제거를 단정하고, 상한 초과가 **부분 ZIP 이 아니라 413** 임을 상한 검사 위치(ZIP 생성보다 앞)까지 단정.
+
+**G2**: 요청을 두 항목으로 분해해 각각 배선을 확인했다. 삭제는 "일부/모든 버전" 이 실제 선택지로 존재하는지(모달 라디오 + 서버 `scope`), 다운로드는 "압축/개별" 과 "최신본/전 버전" 이 각각 독립 축인지를 따로 봤다.
+**G3**: 주장한 affordance 중 **휴지통 복구**는 `restorable_until`·`lifecycle_state` 필드가 이미 직렬화되고 있었으나 **소비처가 0곳**이라 실제로는 배선이 없던 것을 실측으로 확인하고 새로 이었다 — 필드 존재를 배선의 근거로 삼지 않았다.
+**G4**: 정확성이 걸린 임계·윈도잉 변수를 먼저 식별했다 — ① 버전 체인 길이(1 vs N) ② retention 만료 전/후 ③ ZIP 총량 상한 전/후 ④ 삭제 사유(`user` vs `conv_soft`/`admin_purge`/`legal`). 각 경계의 양측을 단정한다.
+**G6**: 삭제 어포던스 표시(`can_manage`)를 프론트 추정이 아니라 **집행과 같은 술어**(`_manage_gate_for_conversation`)로 계산해 내리고, 세 응답 경로가 모두 그 술어를 쓰는지 구조 테스트로 고정했다.
+**G9-b**: ZIP 상한을 무음 절단이 아니라 413 + 대안 안내로 처리하고, 상한 검사가 ZIP 생성보다 **앞에** 있음을 위치로 단정했다.
+**G10**: 재발 클래스(열람 경계를 파괴적 동작에 재사용)를 점수정으로 끝내지 않고 **AST 호출 검사**로 잠갔다 — 삭제·복구가 열람 헬퍼를 호출하지 않고, 반대로 열람 경로는 그것을 계속 쓰는지 양방향으로 단정한다.
+
+<!-- PLAN-APPROVED by user on 2026-08-06 -->

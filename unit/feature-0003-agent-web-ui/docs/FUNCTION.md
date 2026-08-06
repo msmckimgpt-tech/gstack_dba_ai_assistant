@@ -2813,3 +2813,37 @@ intra-line 하이라이트.
 - **AC-AVD-10 (개정)** 모달 **폭**은 뷰포트의 95% 이상. **높이**는 상한 94vh 로, 짧은 diff 에서는
   상한 미만(빈 영역 없음), 긴 diff 에서는 상한에 닿고 표 컨테이너가 스크롤한다(페이지 스크롤 아님).
   검증 = 헤드리스 T9 / T9b / T9c / T9d.
+
+## REQ-20260806-attach-manage — 대화 첨부 삭제(버전 선택)·복구·일괄 다운로드
+
+- REQ-20260806-attach-manage (사용자 요청 "첨부파일 목록 중 특정 첨부파일 삭제(일부, 모든 버전에 대해 선택할 수 있도록) / 모든 첨부파일 다운로드 기능 추가(압축, 개별 등 취사 선택 가능)", **Critical §12.3** — 파괴적 데이터 삭제 + 인가 경계 변경, PLAN-APPROVED 2026-08-06): 대화 첨부를 목록에서 삭제·복구하고, 대화의 첨부 전량을 한 번에 내려받는다. 선행 `REQ-20260729-attach-append-only` 의 AC-1(삭제 컨트롤 부재)·AC-3(안내 문구)은 **superseded** — 삭제 UI 가 돌아오므로 그 계약은 성립하지 않는다. AC-2(미완료 로컬 placeholder 정리)는 계속 유효하다.
+
+### 동작
+
+- **삭제 범위** — 목록 행의 🗑 는 버전이 하나면 그 첨부를, 여럿이면 모달에서 "이 버전만 / 전체 버전" 을 고르게 한다. 버전 이력 펼침 박스의 각 행에도 그 버전만 지우는 🗑 가 붙는다. 기본 선택은 항상 좁은 쪽(`version`)이다.
+- **삭제 강도** — soft-delete(`DeletePending=1`). 삭제 즉시 목록과 assistant 참조 스코프에서 빠지고, 실 객체 삭제는 기존 reconciliation worker 가 retention(`ATTACHMENT_RECON_RETENTION_DAYS`, 기본 30일) 만료 후 수행한다.
+- **복구(휴지통)** — 패널 헤더의 🗑 토글이 삭제된 **버전 단위** 목록을 보여준다. 각 항목에 남은 복구 기간이 표시되고 ↩ 로 되살린다. retention 이 지났거나 worker 가 이미 객체를 지운 항목(`UploadStatus='deleted'`)은 휴지통에 나타나지 않는다.
+- **삭제·복구 주체** — `conversation.attachment.upload.any` 보유자, 또는 `upload.own` 보유 + (업로더 본인 또는 대화 소유자). **그룹 멤버라는 사실만으로는 남의 첨부를 지울 수 없다.** 열람 경계(멤버 전원 열람 가능)는 종전대로다.
+- **일괄 다운로드** — 패널 헤더의 ⤓ 가 "압축 파일 하나로 / 파일별로 따로" × "최신 버전만 / 모든 버전" 을 묻는다. 압축은 ZIP 한 개, 개별은 파일마다 순차 저장. 모든 버전 모드는 파일명에 `_v<n>` 이 붙는다.
+
+### AC
+
+- AC-20260806T154100-attach-manage-1 (버전 단위 삭제): 버전 3개 체인에서 v3 을 `scope=version` 으로 삭제하면 v3 만 `DeletePending=1` 이 되고 **v2 가 목록의 최신으로 승격**된다(`SupersededAt=NULL`). 승격 대상은 `VersionNumber` 최대값이며 Id 순서가 아니다.
+- AC-20260806T154100-attach-manage-2 (체인 전체 삭제): `scope=chain` 은 체인의 미삭제 전 버전을 `DeletePending=1` 로 만들고, 그 첨부가 목록에서 사라진다. 승격 대상이 없으면 `promoted_id=null`.
+- AC-20260806T154100-attach-manage-3 (인가 축소): 업로더도 대화 소유자도 아닌 그룹 멤버의 삭제·복구 요청은 **404**. 업로더 본인 / 대화 소유자 / `upload.any` 보유자는 성공. 삭제·복구 핸들러는 열람 헬퍼(`_account_can_access_attachment`)를 **호출하지 않는다**(AST 로 단정).
+- AC-20260806T154100-attach-manage-4 (복구): retention 창 안의 soft-deleted 첨부는 `POST /restore` 로 `lifecycle_state=active` 로 복귀하고 목록·AI 참조 스코프에 재등장한다. 복구 대상이 하나도 없으면 **409** 로 사유를 알린다 — 조용한 성공 응답을 주지 않는다.
+- AC-20260806T154100-attach-manage-5 (휴지통 조회): `GET /api/conversations/{cid}/attachments?state=deleted` 는 `DeletePending=1 AND UploadStatus <> 'deleted'` 인 행만 반환하며 각 항목에 `restorable_until` 이 있다. `state=active` 응답 계약(`DeletedAt IS NULL AND SupersededAt IS NULL`)은 무변경.
+- AC-20260806T154100-attach-manage-6 (ZIP 다운로드): `format=zip&scope=latest` 는 대화의 최신본 전량을 담은 ZIP 을 반환하고 `X-Attachment-Count` 헤더에 담긴 개수를 싣는다.
+- AC-20260806T154100-attach-manage-7 (전 버전 ZIP): `scope=all` 은 버전 체인 전량을 `_v<n>` 접미 파일명으로 담는다. 이름이 겹치면 id 를 덧붙여 **덮어쓰기를 막는다**. 경로 구분자·상위 참조는 제거한다(zip-slip).
+- AC-20260806T154100-attach-manage-8 (무음 절단 금지, §16.7 G9-b): 합계 용량이 `ATTACHMENT_BULK_ZIP_MAX_BYTES`(기본 512MB)를 넘으면 **부분 ZIP 을 만들지 않고** 413 으로 초과 사실과 대안을 알린다. 상한 검사는 ZIP 생성보다 먼저 수행된다.
+- AC-20260806T154100-attach-manage-9 (개별 다운로드): `format=manifest` 는 각 첨부의 앱-내부 다운로드 URL(`/api/attachments/{id}/download`) 목록을 반환한다 — presigned MinIO URL 은 내부 endpoint 호스트가 박혀 외부 브라우저가 열지 못한다(TASK-0284). 전 버전 모드에서는 프론트가 저장 파일명에 `_v<n>` 을 붙여 ZIP 경로와 같은 규칙을 따른다(원본명 그대로면 브라우저가 `report (1).csv` 로 저장해 버전 구분이 사라진다).
+- AC-20260806T154100-attach-manage-10 (표시-집행 정합, §16.7 G6): 목록·휴지통·버전 응답의 `can_manage` 는 실제 인가와 **같은 술어**(`_manage_gate_for_conversation`)로 계산된다. 프론트는 이 값만 보고 컨트롤을 렌더하며 소유권을 따로 추정하지 않는다.
+- AC-20260806T154100-attach-manage-11 (scope 오타 격하 금지): `scope` 가 `version`/`chain` 밖이면 400. 기본값으로 조용히 격하해 "전체 삭제" 의도를 "한 버전" 으로 만들지 않는다.
+
+### 구현 중 정정 (§18.8 패널 흡수)
+
+- 계획서 B4 `_load_attachment_row_any_state` 는 **불필요**했다 — `_load_attachment_row` 는
+  `WHERE Id = %s` 뿐이라 삭제분도 반환한다(`DeletedAt` 필터가 없다). 계획의 전제가 틀렸다.
+  대신 다른 이유로 `_load_attachment_row_mysql` 이 필요했다: 기본 경로가 PG 미러를 읽어
+  미러 유실 시 "삭제했다는데 안 지워짐" 이 되기 때문(backend 패널 P2-1).
+- 계획서 B7 은 `_conv_store.py` 라 적었으나 실제 거주는 `routers/attachments.py` 다.

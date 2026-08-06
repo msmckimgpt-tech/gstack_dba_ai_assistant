@@ -2911,3 +2911,89 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 - **미검증**: ux·design 의 여백·비례 **판단**. 배포 후 PB-0008 캡처 판독이 backstop.
 - **검증**: 헤드리스 25/25 · 전수 mjs 44 suite OK · pytest 무영향(CSS 단독) · verify-completion PASS.
 - Timestamp: 2026-08-07T03:20:00+09:00
+## REV-20260806T154100-attach-manage [SUBAGENT:security] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260806T1541-attach-manage
+- Trigger: auth/credential·API/endpoint keyword matched (인가 경계 변경 + 파괴적 삭제 + 대량 반출)
+- Timestamp: 2026-08-06T16:40:00+09:00
+- Verdict: BLOCK (P1 3 · P2 8) → 전건 반영
+- Critical issue: `attachment.restore`·`attachment.bulk_download` 가 `build_audit_change_json` allowlist 에 없어 `ValueError` → `_audit_user_action` 이 삼킴 → **감사 행 0**. 유일한 대량 반출 경로와 유일한 삭제-되돌리기 경로가 둘 다 무감사.
+- Human Approval Needed: no
+
+주요 지적과 조치:
+- **P1-1 무감사**: builder 에 두 액션 분기 신설. 부수로 `attachment.delete` 가 `(before or {})` 만 읽어 **전 필드 `null`** 이던 선재 결함도 `request_ctx` 기반으로 교체(scope·deleted_count 포함 — 없으면 12개 삭제와 1개 삭제가 감사에서 구별 불가).
+- **P1-2 공유창 window 미적용**: bounded 멤버("여기부터 공유")가 `scope=all` 한 번으로 floor 이전 첨부를 전량 ZIP 반출. SECURITY §21.2 AR-2 / CSO F3 와 정면 충돌. fork 와 **같은 헬퍼**(`_resolve_copy_window` + `_attachment_outside_window`)로 clip, `deny`→403 fail-closed, 제외 건수를 응답·헤더·audit 에 표면화. 개별 경로의 선재 갭은 별건으로 REPORT §8 원장 등재.
+- **P1-3 staged/worktree 괴리**: 인덱스 스냅샷에 `DeleteReason` 가드가 없어 그대로 커밋되면 `legal`/`admin_purge` 복구 구멍이 출하됨 → 커밋 전 `git add -u` 로 정합 확인.
+- **P2-5 `ids` 무음 확대**: 파싱 실패가 "필터 없음"으로 흘러 3개를 고른 사용자가 전량을 받음 → 400.
+- **P2-6 이탈자**: kick 당한 업로더가 자기 파일을 되살리거나 지울 수 있음(열람 게이트와 비대칭) → manage 게이트에 현재 멤버십 AND 조건 추가, 판정 불가 시 fail-closed.
+- **P2-9 retention TOCTOU**: UPDATE WHERE 에 retention 조건 추가 + `_is_restorable` 의 파싱 실패 fallback 을 **fail-closed** 로 전환.
+- **P2-10 휴지통 PII**: `can_manage=false` 행을 표시만 숨기고 응답에는 파일명·크기·sha256 을 실어, 삭제 전 전원이 보던 것이 삭제 **후에도** 계속 보임 → 서버에서 **필터**(미반환).
+- **P2-8 헤더 인젝션**: ZIP 만 `Content-Disposition` 정제를 건너뜀(현재 cid 가 서버 생성이라 미발동) → `_sanitize_disposition_filename` 공통 헬퍼로 두 경로 통일.
+- 확인되어 결함 아님: `_manage_gate_for_conversation` 이 그룹 멤버 단독을 실제로 거부 · `upload.any` 는 admin 전용 시드라 경계 확대 아님 · pending 계정 차단 동형 · `ids` IDOR 무효(대화 스코프 교집합) · zip-slip 방어 · CSRF(samesite lax) · audit 민감정보 미포함 · 프론트 XSS escapeHtml.
+- Artifact: 본 entry (subagent 출력 요약 — 전문은 cycle 대화 로그)
+
+## REV-20260806T154100-attach-manage [SUBAGENT:backend] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260806T1541-attach-manage
+- Trigger: schema/query/migration keyword matched (트랜잭션·버전 체인·dual-write)
+- Timestamp: 2026-08-06T16:45:00+09:00
+- Verdict: BLOCK (P1 2 · P2 8) → P1 전건 + P2 대부분 반영
+- Critical issue: 라이브 env 실측 `AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND=postgres` — PG read 가 **프로덕션 목록 경로**이고, 복구 후 미러 집합에 강등 형제가 빠져 **같은 첨부가 목록에 두 줄**로 뜬다(다음 write 까지 영구).
+- Human Approval Needed: no
+
+주요 지적과 조치:
+- **P1-1 테스트 red**: `_row()` 에 `DeleteReason` 키가 없어 `test_r3` 실패(feature-0003 유일 실패) → fixture 기본값 추가. 부수로 `test_r2` 가 첫 가드에서 컷돼 **vacuous** 였던 것도 해소.
+- **P1-2 PG 미러 부족**: `_promote_latest_version` 은 승격 행 + **강등 행들**을 바꾸는데 미러는 `targets + promoted` 만. 저장소에 이미 정답 선례(업로드 supersede 가 체인 전량 미러)가 있었고 신규 경로만 규약을 안 따랐다 → `_mirror_chain` 신설.
+- **P2-1 판정 소스 분기**: 기본 경로 `scope=version` 이 `_load_attachment_row`(PG 우선)를 써서, 미러 유실 시 "삭제했다는데 안 지워짐"(200 already_pending) 가능 → `_load_attachment_row_mysql`(정본) 신설해 삭제·복구 판정 전용으로.
+- **P2-2 잠금 비대칭**: `for_update` 가 `scope=chain` 분기에만 전달되고 `_promote_latest_version` 내부 재조회는 비잠금 → `lock` 파라미터로 scope 무관 전달. `SET SupersededAt = NULL` 에 `AND DeletedAt IS NULL` 가드 추가(그 사이 삭제된 행을 current 로 승격하는 것 차단).
+- **P2-3 휴지통 경계 불일치**: docstring 은 "되살릴 수 없는 항목을 보이지 않는다" 인데 retention 조건이 없어 만료분이 계속 보이고 ↩ 는 항상 409 → SQL 에 retention + `LIMIT 200`.
+- **P2-6 `ids` 무음 확대**: security 와 동일 지적 → 400.
+- **P2-7 휴지통 노출**: security P2-10 과 동일 → 서버 필터.
+- 확인되어 결함 아님: `_begin_tx` 가 autocommit 연결에서 정상 동작 · `_promote_latest_version` 의 깨진 체인 수렴성 · retention env 가 worker 와 동일 · 복구↔worker 만료 배치가 시점 단조성상 배타적 · ZIP zip-slip · 상한 검사가 ZIP 생성보다 앞 · `_manage_gate` N+1 없음 · ROUTEMAP up-to-date.
+- **미반영(잔여, REPORT §8 등재)**: P2-4 복구 시 size cap 우회(삭제→업로드→복구로 상한 초과 가능) · P2-5 ZIP 동시성 제한·`ZIP_STORED` · P2-8 `_begin_tx` contextmanager 화.
+- Artifact: 본 entry
+
+## REV-20260806T154100-attach-manage [SUBAGENT:qa] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260806T1541-attach-manage
+- Trigger: 신규 엔드포인트 2 + 파괴적 동작 — 테스트 충실도 축
+- Timestamp: 2026-08-06T16:50:00+09:00
+- Verdict: BLOCK (P1 7 · P2 10) → 테스트 축 전건 반영
+- Critical issue: fake cursor 가 WHERE·params 를 흉내내지 않아 `(RootAttachmentId = %s OR Id = %s)` 를 `RootAttachmentId = %s` 로 바꿔도 green — **`RootAttachmentId` NULL 인 루트 원본이 체인에서 빠지는** 뮤테이션이 생존.
+- Human Approval Needed: no
+
+주요 지적과 조치:
+- **P1-1/P1-2**: `test_r3` red · `test_r2` vacuous → fixture 수정(backend P1-1 과 동일 근원).
+- **P1-5 SQL 계약 무검증** → `test_p4/p5` 신설: 체인 SQL 의 `(RootAttachmentId = %s OR Id = %s)`·params·`include_deleted`·`FOR UPDATE` 를 값으로 단정.
+- **P1-6 승격 대상 무검증**: SQL 문자열만 보고 바인딩을 버려 **루트를 승격**하는 뮤테이션이 생존 → `test_p1` 을 params 단정으로 재작성(`null_upd[0][1] == (2,)` + 강등 제외 대상 일치 + `DeletedAt IS NULL` 가드).
+- **P1-7 대화 스코핑 무검증**: 휴지통·bulk download 의 `WHERE ConversationId = %s` 를 지워도 green(주석에도 매치되는 문자열 단정이었음) → `test_z7/z8` 로 분리, bulk 는 window clip 호출까지 AST 로 단정.
+- **P2-1 `_zip_entry_name` 재충돌**: id 접미가 재충돌을 다시 확인하지 않아 **여전히 덮어쓰기 발생**(실측 `["a_4.csv","a.csv","a_4.csv"]`) → while 루프 + 대소문자 케이스 테스트(`z5/z6`).
+- **P2-8/P2-9 요청 범위 비대칭**: manifest 가 전부 실패해도 성공 토스트 · 복구가 `"version"` 하드코딩 → 각각 문구 교정(건수 단정 제거)·휴지통 체인 복구 버튼 추가.
+- **P2-10 문서 drift**: AC-9 가 "presigned URL" 이라 적혀 있으나 구현은 의도적으로 앱 내부 경로 → FUNCTION AC 문구 정정. 계획 B4(`_load_attachment_row_any_state`)는 전제가 틀려 불필요했음을 명시(`_load_attachment_row` 에 `DeletedAt` 필터 없음).
+- **미반영(잔여)**: P1-4 엔드포인트 레벨 요청 테스트(conftest `client` 픽스처) — 라이브 DB 의존이라 이번 cycle 은 헬퍼·SQL 계약 단정으로 대체하고 POST-DEPLOY 실측으로 보완. REPORT §8 등재.
+- Artifact: 본 entry
+
+## REV-20260806T154100-attach-manage [SUBAGENT:ux] — BLOCK → 해소
+
+- Related TASK: feature-0003-agent-web-ui / 20260806T1541-attach-manage
+- Trigger: UI/button/modal/layout keyword matched
+- Timestamp: 2026-08-06T16:55:00+09:00
+- Verdict: BLOCK (P1 2 · P2 12) → P1 전건 + P2 대부분 반영
+- Critical issue: `_refreshAttachPanelAfterMutation` 이 부르는 `_renderAttachmentPills()` 가 **같은 `#attachSidePanelList`** 를 `innerHTML=""` 후 pill 로 덮음 — 삭제 직후 관리 목록이 통째로 사라지고 **방금 지운 파일이 그대로 보인다**(🗑·버전 토글 소실, 빈 버킷이면 패널이 스스로 닫힘).
+- Human Approval Needed: no
+
+주요 지적과 조치:
+- **P1-1 목록 덮임**: 주석에 적은 목적("pill 정합")도 달성 못 함 — 그 함수는 배열을 다시 그릴 뿐 정리하지 않는다 → `_loadConversationAttachments`(서버 ground truth)로 버킷 재수화 후 목록 렌더 순서로 교체.
+- **P1-2 폭 회귀**: 실 렌더 측정으로 240px 파일명 가용폭 69.7 → **37.8px(≈3자)**, 버전 행 **23.2px(≈2자)**·전 구간 잘림. CSS 주석이 "폭 회귀를 되풀이하지 않는다" 고 적어둔 바로 그 회귀 → 목록 행·버전 행을 **2줄 구조**로 재구성(액션을 메타줄/foot 로). hover 노출 안이 아닌 이유: 터치에서 도달 불가.
+- **P2 타임존**: `restorable_until` 이 오프셋 없는 UTC → KST 브라우저에서 **9시간 짧게** 표시(표시·집행 불일치) → `Z` 보정.
+- **P2 radio `name` 전역 충돌**: 모달 2개 시 `:checked` 가 null → fallback `"version"` 으로 **조용한 격하**(서버가 400 으로 막는 원칙의 프론트 위반) → 인스턴스 uid 접미 + 중복 인스턴스 가드.
+- **P2 409 처리**: "이미 처리됨" 은 목록이 stale 하다는 신호인데 목록을 안 고쳐 같은 버튼으로 같은 409 반복 → stale 분기에서 목록 재로드 + 모달 닫기.
+- **P2 확인 버튼 라벨**: 파괴 범위가 5배 달라지는데 버튼은 계속 "삭제" → 선택과 동기화(`최신 버전(v3)만 삭제` / `전체 버전 삭제 (5개)`).
+- **P2 manifest**: 전 버전 모드인데 원본명 그대로 저장돼 버전 구분 소실 + 차단돼도 성공 단정 → `_v{n}` 부여 + 건수 단정 제거 + 진행 표시.
+- **P2 접근성**: aria-label 이 title 과 어긋남 · 행 버튼 접근 이름에 파일명 없음 · `aria-labelledby` 부재 · 포커스 미이동/미복원 → 전건 수정.
+- **P2 헤더 간격 0px**: ×를 누르려다 휴지통 토글 오조작 → `gap: 4px` + × 앞 6px.
+- **P2 대화 전환 잔류**: 패널을 연 채 전환하면 내용은 활성인데 토글은 "휴지통"(aria-pressed 거짓) → `switchConversation` choke-point 에서 리셋.
+- **P2 휴지통에서 ⤓**: 화면은 삭제분인데 받는 건 활성 첨부 → 다운로드 모달 진입 시 active 로 복귀.
+- **P2 UI copy 예산(§16.8)**: 라벨 재진술 힌트 3건·2문장 안내 2건 제거·축약.
+- **미반영(잔여)**: `can_manage=false` 사용자의 휴지통 막다른 화면 — 서버 필터로 **행 자체를 반환하지 않게** 바꿔 빈 목록이 되므로 부분 해소. 진입점 숨김은 미적용(REPORT §8). `.template/ui-copy-budget.conf` 규칙 확장도 미적용.
+- Artifact: 본 entry
