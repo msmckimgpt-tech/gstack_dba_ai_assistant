@@ -3061,3 +3061,9 @@ filler 가 들어가 **의미가 반대로 뒤집혔다**(라이브 실측 교�
     백엔드 변경 0 — `created_at` 은 이미 응답에 있었다.
   - **검증**: `tests/test_attach_chain_merge.py` 17건 + `tests/verify_attach_date_compact.mjs` 18건
     (뮤테이션 역검증 포함). 라이브 적용은 배포 후 `--apply` + 사후 재검증 + PB-0008.
+  - **형제 cycle 정합 (rebase 흡수, 2026-08-07)**: `REQ-20260806-attach-suffix-toggle` 이 프론트
+    `_versionedFilename` 을 제거하고 저장명 규칙의 권위를 서버(`X-Attachment-Download-Name` ·
+    manifest `download_filename`)로 모았다. 본 REQ 는 그 결정을 **되돌리지 않으며**, 선행
+    `AC-AMU-5`(프론트 버전 접미)는 그 범위에서 **superseded** 된다 — 저장명 규칙은 서버 단일
+    권위다. `tests/verify_attach_multi_upload.mjs` (D) 축을 그 불변식(프론트에 저장명 생성 함수
+    부재 · 개별 다운로드가 서버 헤더 이름 사용)으로 재설계해 가드로 승격했다.
