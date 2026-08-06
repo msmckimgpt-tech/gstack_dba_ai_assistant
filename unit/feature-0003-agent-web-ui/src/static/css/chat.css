@@ -2512,8 +2512,11 @@
 .attach-diff-panel {
   max-width: min(1920px, calc(100vw - 24px));
   width: calc(100vw - 24px);
+  /* 높이는 **상한**이다 — `height: 94vh` 로 고정했더니 짧은 diff 에서 표 아래에 큰 빈 영역이
+     남았다(라이브 캡처 실측 2026-08-07: 내용 y≈495 종료 / 패널 940). 사용자 요청은 "내용이
+     잘리지 않게" 였으므로 내용에 맞춰 자라고 뷰포트 94% 에서 멈추는 것이 맞다. 긴 diff 는
+     상한에 닿아 `.attach-diff-scroller` 가 스크롤한다. */
   max-height: 94vh;
-  height: 94vh;
 }
 /* 본문이 남는 높이를 전부 먹고, 스크롤은 표 컨테이너가 갖는다. */
 .attach-diff-body { display: flex; flex-direction: column; min-height: 0; }

@@ -2799,3 +2799,17 @@ intra-line 하이라이트.
 - **AC-AVD-14** "동일한 줄도 모두 보기" 활성 시 전개 버튼 미부착.
 - 검증 = `tests/headless/verify_attach_diff_geometry.py` 22건(실 chromium 기하·드래그·전개) +
   `verify_attach_version_diff.mjs` 73건 + pytest `test_attachment_version_diff.py` 24건.
+
+### (attach-diff-height, 2026-08-07) 모달 높이 = 상한, 고정 아님
+
+`(attach-diff-ux, 2026-08-07)` 의 높이 계약 정정. **`max-height: 94vh` 만** 두고 `height` 는
+지정하지 않는다 — 내용에 맞춰 자라고 뷰포트 94% 에서 멈추며, 넘치는 내용은
+`.attach-diff-scroller` 가 스크롤한다.
+
+**근거**: `height: 94vh` 고정은 짧은 diff 에서 표 아래에 큰 빈 영역을 남겼다(라이브 캡처 실측
+2026-08-07: 내용 y≈495 종료 / 패널 940). 사용자 요청은 "내용이 잘리지 않게" 였고 "항상 크게"
+가 아니었다.
+
+- **AC-AVD-10 (개정)** 모달 **폭**은 뷰포트의 95% 이상. **높이**는 상한 94vh 로, 짧은 diff 에서는
+  상한 미만(빈 영역 없음), 긴 diff 에서는 상한에 닿고 표 컨테이너가 스크롤한다(페이지 스크롤 아님).
+  검증 = 헤드리스 T9 / T9b / T9c / T9d.

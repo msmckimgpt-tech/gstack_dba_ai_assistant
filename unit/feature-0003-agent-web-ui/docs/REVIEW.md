@@ -2894,3 +2894,20 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 - **검증**: 헤드리스 22/22 · mjs 73 PASS · 전수 mjs 44 suite OK · pytest 신규 24건 · 정본
   `make test` 전수 · verify-completion PASS.
 - Timestamp: 2026-08-07T02:00:00+09:00
+## REV-20260807T032000-attach-diff-height [SKIPPED:tool-restricted:ux,design] — 잘못된 계약을 테스트가 인증한 사례
+
+- **Trigger**: `layout · 레이아웃` keyword matched → §18.8 은 ux + design 을 요구하나 Agent tool
+  금지(상위 우선순위 지시) + `codex review` 한도 소진 → §18.8.2 carve-out.
+- **이 cycle 의 교훈 — 테스트가 잘못된 계약을 굳혔다**: 선행 cycle 은 사용자의 "모달이 작아
+  내용이 잘린다" 를 `height: 94vh` **고정**으로 구현하고, 헤드리스 T9 에 "높이 ≥ 88vh" 를
+  단언으로 박았다. 그 결과 짧은 diff 의 큰 빈 영역이 **정상으로 인증**됐고 44축 전부 PASS 했다.
+  요청의 본질은 "잘리지 않게"(= 상한 확대)였고 "항상 크게" 가 아니었다.
+  → **요청을 계약으로 옮길 때 그 계약이 요청보다 강하지 않은지 확인해야 한다.** 강한 계약은
+  테스트를 통해 요구사항으로 굳어 다음 사람이 되돌리기 어렵게 만든다.
+- **재설계한 검증**: 높이 축을 **경계 양측**으로 나눴다(§16.7 G4) — 짧은 diff 는 상한 미만,
+  긴 diff(120행)는 상한에 닿고 표 컨테이너가 스크롤한다. 한쪽만 보면 이번 결함이 다시 통과한다.
+- **적발 수단**: 자동 게이트가 아니라 **라이브 캡처 판독**이었다. §16.9-a 가 "렌더된 그림을
+  대조하라" 고 한 이유의 세 번째 실증이다(앞선 두 번은 열 폭 4등분, calc-무시).
+- **미검증**: ux·design 의 여백·비례 **판단**. 배포 후 PB-0008 캡처 판독이 backstop.
+- **검증**: 헤드리스 25/25 · 전수 mjs 44 suite OK · pytest 무영향(CSS 단독) · verify-completion PASS.
+- Timestamp: 2026-08-07T03:20:00+09:00
