@@ -26,6 +26,10 @@
   T10 중앙선 드래그로 좌/우 code 폭 비율이 실제로 바뀐다(합 보존 · localStorage 영속)
   T11 "N줄 생략" 이 버튼이고, 누르면 **그 구간만** 국소 전개된다(전체 맥락은 1회만 조회)
   T12 "동일한 줄도 모두 보기" 가 켜져 있으면 전개 버튼을 달지 않는다(중복 어포던스 금지)
+  S1~S4 상호작용(토글·모두보기·펼치기) 후 **스크롤이 최상단으로 튀지 않고 보던 줄이 유지**된다
+      — 실 브라우저만 검증 가능한 축(jsdom 은 scrollTop clamp 를 하지 않아 통과시킨다)
+  S5  버전 쌍 변경은 최상단으로 (의도된 비대칭 — 다른 비교이므로 보존이 혼란)
+  B1~B7 문단(블록) 단위 하이라이트 — 연속 변경의 묶임·경계·accent 가 두 뷰에서 동일
 
 실행:
   PLAYWRIGHT_BROWSERS_PATH=<ms-playwright> python3 tests/headless/verify_attach_diff_geometry.py
@@ -304,6 +308,209 @@ with sync_playwright() as p:
         })""")
         check("T12 '동일한 줄도 모두 보기' 시 전개 버튼 미부착",
               ck["checked"] is True and ck["btns"] == 0, json.dumps(ck))
+
+        # ── S1~S4 스크롤 위치 보존 (사용자 보고 2026-08-07) ─────────────────────
+        # ⚠️ 이 축은 **실 브라우저만** 검증할 수 있다 — innerHTML 교체 직후에는 scrollHeight 가
+        # 아직 작아 브라우저가 scrollTop 을 0으로 clamp 한다. jsdom 은 clamp 를 하지 않아
+        # verbatim 저장하므로 이 결함을 통과시킨다(auto-memory scroll-restore-jsdom-gotcha).
+        scroll_rows = []
+        for i in range(1, 61):
+            scroll_rows.append({"type": "equal", "left_no": i, "left": f"-- ctx {i}",
+                                "right_no": i, "right": f"-- ctx {i}"})
+        # 중간에 3줄 연속 변경(문단 블록) + 뒤에 gap
+        scroll_rows.append({"type": "replace", "left_no": 61, "left": "old A", "right_no": 61, "right": "new A"})
+        scroll_rows.append({"type": "replace", "left_no": 62, "left": "old B", "right_no": 62, "right": "new B"})
+        scroll_rows.append({"type": "delete", "left_no": 63, "left": "old C", "right_no": None, "right": None})
+        for i in range(64, 90):
+            scroll_rows.append({"type": "equal", "left_no": i, "left": f"-- tail {i}",
+                                "right_no": i, "right": f"-- tail {i}"})
+        scroll_rows.append({"type": "gap", "skipped": 10, "left_from": 90, "left_to": 99,
+                            "right_from": 89, "right_to": 98})
+
+        def _scroll_state():
+            return page.evaluate("""() => {
+              const sc = document.querySelector('.attach-diff-backdrop .attach-diff-scroller');
+              const scRect = sc.getBoundingClientRect();
+              let topLno = null;
+              for (const tr of sc.querySelectorAll('tr[data-lno]')) {
+                if (tr.getBoundingClientRect().bottom > scRect.top + 1) { topLno = tr.dataset.lno; break; }
+              }
+              return {top: Math.round(sc.scrollTop), topLno, max: Math.round(sc.scrollHeight - sc.clientHeight)};
+            }""")
+
+        open_modal(page, scroll_rows)
+        base = page.evaluate("""() => {
+          const sc = document.querySelector('.attach-diff-backdrop .attach-diff-scroller');
+          sc.scrollTop = Math.round((sc.scrollHeight - sc.clientHeight) * 0.5);
+          return Math.round(sc.scrollTop);
+        }""")
+        page.wait_for_timeout(150)
+        before = _scroll_state()
+        check("전제: 스크롤 가능하고 중간까지 내려갔다", before["top"] > 50 and before["topLno"],
+              json.dumps(before))
+
+        # S1 — 2열 → 단일열 토글
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"unified\"]').click()")
+        page.wait_for_timeout(400)
+        s1 = _scroll_state()
+        check("S1 2열→단일열 토글 후 최상단으로 튀지 않는다",
+              s1["top"] > 50, f"{before['top']} → {s1['top']}")
+        check("S1b 보고 있던 줄이 유지된다(±3줄)",
+              s1["topLno"] and abs(int(s1["topLno"]) - int(before["topLno"])) <= 3,
+              f"lno {before['topLno']} → {s1['topLno']}")
+
+        # S2 — 단일열 → 2열 복귀
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"split\"]').click()")
+        page.wait_for_timeout(400)
+        s2 = _scroll_state()
+        check("S2 단일열→2열 복귀 후에도 유지", s2["top"] > 50, f"{s1['top']} → {s2['top']}")
+        check("S2b 보고 있던 줄 유지(±3줄)",
+              s2["topLno"] and abs(int(s2["topLno"]) - int(before["topLno"])) <= 3,
+              f"lno → {s2['topLno']}")
+
+        # S3 — '동일한 줄도 모두 보기' 토글(재요청 경로)
+        page.evaluate("() => document.querySelector('.attach-diff-ctxfull').click()")
+        page.wait_for_timeout(700)
+        s3 = _scroll_state()
+        check("S3 '모두 보기' 토글 후 최상단으로 튀지 않는다",
+              s3["top"] > 50, f"{s2['top']} → {s3['top']}")
+        page.evaluate("() => document.querySelector('.attach-diff-ctxfull').click()")
+        page.wait_for_timeout(700)
+
+        # S4 — gap '펼치기'
+        page.evaluate("""() => {
+          const sc = document.querySelector('.attach-diff-backdrop .attach-diff-scroller');
+          sc.scrollTop = Math.round((sc.scrollHeight - sc.clientHeight) * 0.6);
+        }""")
+        page.wait_for_timeout(200)
+        pre4 = _scroll_state()
+        page.evaluate("() => { const b=document.querySelector('.attach-diff-gap-btn'); if (b) b.click(); }")
+        page.wait_for_timeout(700)
+        s4 = _scroll_state()
+        check("S4 gap '펼치기' 후 최상단으로 튀지 않는다",
+              s4["top"] > 50, f"{pre4['top']} → {s4['top']}")
+        check("S4b 펼치기 후에도 보고 있던 줄 유지(±3줄)",
+              s4["topLno"] and pre4["topLno"]
+              and abs(int(s4["topLno"]) - int(pre4["topLno"])) <= 3,
+              f"lno {pre4['topLno']} → {s4['topLno']}")
+
+        # S5 — 버전 쌍을 바꾸면(다른 내용) 최상단으로 돌아가야 한다(의도된 비대칭)
+        page.evaluate("""() => {
+          const sel = document.querySelector('.attach-diff-backdrop').querySelectorAll('select');
+          sel[0].value = '2';
+          sel[0].dispatchEvent(new Event('change', {bubbles: true}));
+        }""")
+        page.wait_for_timeout(700)
+        s5 = _scroll_state()
+        check("S5 버전 쌍 변경은 최상단으로 (다른 비교 = 보존이 오히려 혼란)",
+              s5["top"] <= 2, f"top={s5['top']}")
+
+        # S6 — 중앙선 비율이 기본이 아닐 때. 좁은 좌측 열은 줄바꿈을 늘려 **행 높이가 달라진다**.
+        #   `_applySplitRatio` 는 렌더 후 rAF 에서 열 폭을 다시 쓰므로, 스크롤 복원이 그 **전**에
+        #   일어나면 복원 기준 높이가 낡아 앵커가 밀린다. 이 케이스가 rAF 순서의 판별력이다.
+        long_line = "SELECT " + ", ".join(f"col_{i}" for i in range(1, 26)) + " FROM member;"
+        wrap_rows = []
+        for i in range(1, 41):
+            wrap_rows.append({"type": "equal", "left_no": i, "left": long_line,
+                              "right_no": i, "right": long_line})
+        wrap_rows.append({"type": "replace", "left_no": 41, "left": "old " + long_line,
+                          "right_no": 41, "right": "new " + long_line})
+        for i in range(42, 70):
+            wrap_rows.append({"type": "equal", "left_no": i, "left": long_line,
+                              "right_no": i, "right": long_line})
+        open_modal(page, wrap_rows, ratio=0.22)
+        page.evaluate("""() => {
+          const sc = document.querySelector('.attach-diff-backdrop .attach-diff-scroller');
+          sc.scrollTop = Math.round((sc.scrollHeight - sc.clientHeight) * 0.5);
+        }""")
+        page.wait_for_timeout(250)
+        pre6 = _scroll_state()
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"unified\"]').click()")
+        page.wait_for_timeout(400)
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"split\"]').click()")
+        page.wait_for_timeout(500)
+        s6 = _scroll_state()
+        check("S6 비대칭 비율(0.22)에서도 왕복 후 보던 줄 유지(±3줄)",
+              s6["topLno"] and pre6["topLno"]
+              and abs(int(s6["topLno"]) - int(pre6["topLno"])) <= 3,
+              f"lno {pre6['topLno']} → {s6['topLno']} (top {pre6['top']} → {s6['top']})")
+
+        # ── B1~B4 문단(블록) 단위 하이라이트 ─────────────────────────────────────
+        open_modal(page, scroll_rows)
+        blk = page.evaluate("""() => {
+          const bd = document.querySelector('.attach-diff-backdrop');
+          const rows = Array.from(bd.querySelectorAll('tr.attach-diff-row'));
+          const inBlock = rows.filter(r => r.classList.contains('in-block'));
+          const starts = rows.filter(r => r.classList.contains('is-block-start'));
+          const ends = rows.filter(r => r.classList.contains('is-block-end'));
+          const multi = rows.filter(r => r.classList.contains('is-block-multi'));
+          const ids = [...new Set(inBlock.map(r => r.dataset.block))];
+          const accent = inBlock.map(r => Array.from(r.querySelectorAll('td.attach-diff-code'))
+            .map(td => ({has: td.classList.contains('has-block'),
+                         shadow: getComputedStyle(td).boxShadow.replace(/\s+/g, ' ')})));
+          const equalInBlock = rows.filter(r => r.classList.contains('is-equal')
+                                              && r.classList.contains('in-block')).length;
+          const borderTop = starts.length
+            ? getComputedStyle(starts[0].querySelector('td')).borderTopWidth : null;
+          return {inBlock: inBlock.length, starts: starts.length, ends: ends.length,
+                  multi: multi.length, blockIds: ids, accent, equalInBlock, borderTop};
+        }""")
+        check("B1 연속 변경 3행이 한 블록으로 묶인다",
+              blk["inBlock"] == 3 and blk["blockIds"] == ["1"] and blk["multi"] == 3,
+              json.dumps({k: blk[k] for k in ("inBlock", "blockIds", "multi")}))
+        check("B2 블록 시작·끝이 각각 1행", blk["starts"] == 1 and blk["ends"] == 1,
+              f"start={blk['starts']} end={blk['ends']}")
+        check("B3 equal 행은 블록에 들어가지 않는다", blk["equalInBlock"] == 0, str(blk["equalInBlock"]))
+        check("B4 여러 줄 블록의 시작 행에 경계선", blk["borderTop"] not in (None, "0px"),
+              str(blk["borderTop"]))
+        # accent 는 **내용 있는 쪽에만** — delete 행의 우측(빈 셀)에는 붙지 않아야 한다.
+        last = blk["accent"][-1]
+        check("B5 accent 는 내용 있는 쪽에만(delete 행 우측 빈 셀 제외)",
+              last[0]["has"] is True and last[1]["has"] is False,
+              json.dumps(last))
+        check("B6 accent 가 실제 렌더된다(inset box-shadow)",
+              "inset" in blk["accent"][0][0]["shadow"], blk["accent"][0][0]["shadow"][:60])
+        # B8 — 줄 배경도 "내용 있는 쪽에만". delete 행의 빈 우측 셀이 danger 로 칠해지면
+        #   우측 파일에 없는 내용을 "여기 삭제분이 있다" 로 읽게 만든다(선행 결함, 실측 교정).
+        fill = page.evaluate("""() => {
+          const out = {};
+          for (const cls of ['is-delete', 'is-insert']) {
+            const tr = document.querySelector('.attach-diff-backdrop tr.' + cls);
+            if (!tr) { out[cls] = null; continue; }
+            out[cls] = Array.from(tr.querySelectorAll('td.attach-diff-code')).map(td => ({
+              side: td.classList.contains('side-left') ? 'left' : 'right',
+              empty: td.textContent === '',
+              hasContent: td.classList.contains('has-content'),
+              bg: getComputedStyle(td).backgroundColor,
+            }));
+          }
+          return out;
+        }""")
+        d = fill.get("is-delete") or []
+        check("B8 delete 행의 빈 우측 셀은 danger 가 아닌 중립 filler",
+              len(d) == 2 and d[0]["hasContent"] is True and d[1]["hasContent"] is False
+              and "220, 38, 38" not in d[1]["bg"],
+              json.dumps(d))
+        check("B8b 내용 있는 좌측 셀은 danger 유지",
+              len(d) == 2 and "220, 38, 38" in d[0]["bg"], d[0]["bg"] if d else "")
+
+        # 단일열에서도 같은 블록 경계
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"unified\"]').click()")
+        page.wait_for_timeout(300)
+        blku = page.evaluate("""() => {
+          const bd = document.querySelector('.attach-diff-backdrop');
+          const rows = Array.from(bd.querySelectorAll('tr.attach-diff-row'));
+          return {
+            inBlock: rows.filter(r => r.classList.contains('in-block')).length,
+            starts: rows.filter(r => r.classList.contains('is-block-start')).length,
+            ends: rows.filter(r => r.classList.contains('is-block-end')).length,
+          };
+        }""")
+        check("B7 단일열도 같은 블록 1개(replace 2행 전개 반영, 시작·끝 각 1행)",
+              blku["starts"] == 1 and blku["ends"] == 1 and blku["inBlock"] == 5,
+              json.dumps(blku))
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"split\"]').click()")
+        page.wait_for_timeout(250)
 
         # ── T7 회귀 재현: colgroup 제거 시 열 폭 계약 붕괴 ────────────────────────
         open_modal(page, _rows())

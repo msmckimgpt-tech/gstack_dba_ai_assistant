@@ -12,6 +12,12 @@
 검증(`make test` agent 이미지, DB 없이 monkeypatch):
   V1  체인 로더 — MySQL 폴백 SQL 이 soft-delete 제외 + VersionNumber ASC.
   V2  체인 로더 — PG 미러 활성 시 PG 를 읽고 MySQL cursor 를 건드리지 않는다.
+  V3  체인 로더 — **PG 미러 경로도** soft-delete 를 제외한다(MySQL 만 걸면 미러 활성 시 무방비).
+  V3b 접합부 — `DeletePending = 1` 로 만드는 모든 write 가 같은 statement 에서 `DeletedAt` 도
+      채운다 ⇒ `DeletePending=1 AND DeletedAt IS NULL` 은 도달 불가 ⇒ 체인 로더의 `DeletedAt
+      IS NULL` 단일 필터가 삭제 버전 배제에 충분하다. 이 전제가 깨지면(새 삭제 경로가 DeletedAt
+      을 안 채우면) 삭제한 버전이 비교 선택기에 되살아나므로, 읽어서 확인한 것을 고정한다
+      (REQ-20260806-attach-manage 리베이스로 생긴 접합부, 2026-08-07).
   B1  diff 뷰 — 순수 추가/삭제/교체 opcode 가 좌우 정렬 행으로 펼쳐진다.
   B2  diff 뷰 — replace 의 좌우 줄 수가 다르면 짧은 쪽을 None 으로 패딩(정렬 붕괴 방지).
   B3  diff 뷰 — 기본 맥락(3줄) 밖 equal 런이 gap 행으로 접히고 **생략 줄 수를 표면화**.
@@ -210,6 +216,50 @@ def test_v2_chain_loader_prefers_pg_mirror(monkeypatch):
     rows = app._load_attachment_version_chain(conn, 10)
     assert [r["VersionNumber"] for r in rows] == [1, 2, 3]
     assert conn.cursor_calls == 0, "PG 미러 활성인데 MySQL cursor 를 열었다"
+
+
+def _src(rel: str) -> str:
+    """`unit/feature-0003-agent-web-ui/src/<rel>` 원문. 테스트 파일 위치에서 상대 해석."""
+    import pathlib
+    return (pathlib.Path(__file__).resolve().parent.parent / "src" / rel).read_text(encoding="utf-8")
+
+
+def test_v3_pg_mirror_version_query_also_excludes_soft_deleted():
+    """PG 미러 경로도 soft-delete 를 제외한다.
+
+    체인 로더는 미러가 활성이면 **PG 만** 읽는다(V2). MySQL SQL 에만 `DeletedAt IS NULL` 이
+    있으면(V1) 미러 활성 환경에서는 삭제한 버전이 비교 선택기에 그대로 남는다 — 한쪽만 걸린
+    필터는 안 걸린 것과 같다.
+    """
+    src = _src("modules/attachment_pg_mirror.py")
+    i = src.index("def pg_get_attachment_versions")
+    body = src[i:src.index("\ndef ", i + 1)]
+    norm = " ".join(body.lower().split())
+    assert "deleted_at is null" in norm, "PG 미러 버전 조회에 soft-delete 필터가 없다"
+    assert "root_attachment_id = %s or id = %s" in norm, "PG 미러 체인 스코프가 바뀌었다"
+
+
+def test_v3b_delete_pending_writes_always_set_deleted_at():
+    """`DeletePending = 1` 로 만드는 모든 write 가 같은 statement 에서 `DeletedAt` 도 채운다.
+
+    체인 로더는 `DeletedAt IS NULL` **하나만** 본다(목록 엔드포인트는 `DeletePending = 0` 까지
+    본다 — 비대칭이 의도적이다). 그 단일 필터가 충분한 근거는 "두 컬럼이 항상 함께 세팅된다" 는
+    이 불변식뿐이다. 새 삭제 경로가 `DeletePending` 만 세우면 삭제한 버전이 비교 선택기에
+    되살아나고, 그 실패는 조용하다(에러 없이 목록에만 안 보인다).
+    """
+    import re
+    hits = []
+    for rel in ("routers/attachments.py", "modules/attachment_reconciliation.py",
+                "routers/conversations.py", "routers/_conv_store.py"):
+        src = _src(rel)
+        for m in re.finditer(r"SET\s+DeletePending\s*=\s*1(.*?)(?:WHERE|\"\"\")", src, re.S | re.I):
+            hits.append((rel, m.group(1)))
+    assert hits, "DeletePending=1 write 를 하나도 못 찾았다 — 패턴이 낡았다(허위 통과 방지)"
+    for rel, tail in hits:
+        assert re.search(r"DeletedAt\s*=", tail, re.I), (
+            f"{rel}: DeletePending=1 을 세우면서 DeletedAt 을 채우지 않는다 — "
+            "삭제한 버전이 diff 비교 선택기에 남는다"
+        )
 
 
 # ── B1~B6: diff 뷰 빌더 ─────────────────────────────────────────────────────
