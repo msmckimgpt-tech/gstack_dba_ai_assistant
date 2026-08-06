@@ -9,7 +9,7 @@
      실제 브라우저가 그렇게 동작하는지는 증명하지 못한다.
   2. **`click` 의 target 공통-조상 승격** — 원 결함의 기전. 역시 모델링일 뿐이다.
 
-이 스크립트는 실제 `static/app.js` 에서 `bindBackdropDismiss` 본문을 그대로 떼어내 최소 페이지에
+이 스크립트는 실제 `static/modal-dismiss.js`(저장소 단일 정본)에서 `bindBackdropDismiss` 본문을 그대로 떼어내 최소 페이지에
 싣고, `bin/win-browser.py` relay 에 붙은 **실 Windows Chrome** 에 CDP `Input.dispatchMouseEvent`
 / `Input.dispatchTouchEvent` 로 **trusted 입력**을 넣어 계약을 실측한다(합성 JS 이벤트 아님).
 
@@ -65,8 +65,9 @@ def _css_rule(css: str, selector: str) -> str:
 
 
 def build_page(negative: bool) -> str:
-    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
-    helper = OLD_IMPL if negative else _extract_fn(app_js, "bindBackdropDismiss").replace("export ", "", 1)
+    # primitive 는 저장소 단일 모듈(작업 화면·관리 콘솔 두 ESM 번들이 공유) — 그 정본을 그대로 싣는다.
+    primitive_js = (STATIC / "modal-dismiss.js").read_text(encoding="utf-8")
+    helper = OLD_IMPL if negative else _extract_fn(primitive_js, "bindBackdropDismiss").replace("export ", "", 1)
     chat_css = (STATIC / "css" / "chat.css").read_text(encoding="utf-8")
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>PB-0008 modal-backdrop-dismiss harness</title>

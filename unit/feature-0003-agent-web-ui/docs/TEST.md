@@ -2402,3 +2402,13 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   생성·자가 삭제, 잔재 0 단언).
 - 미실측 2종(공유 링크 설정·참여 허용 확인) — 진입에 실제 공유 링크 발급이 필요해 제외, 사유 명시.
 - Run 기록 정본: `docs/test-runs.d/20260806T1144-modal-backdrop-dismiss.md` Run 3.
+## TASK-20260806T1830-modal-dismiss-siblings — 배경 dismiss 전 표면 통일 (web/UI, Minor §12.3)
+- **Environment: Windows-browser (PB-0008)** — **PASS 10/10** (실 Windows Chrome + CDP trusted 입력,
+  정본 경로 `static/modal-dismiss.js`). `--negative` 에서 수정 전 구현의 사용자 보고 현상 3건 재현.
+- `node tests/verify_modal_backdrop_dismiss.mjs` — **76 passed / 0 failed**(동작 18 + 배선 52 +
+  **리스너 수명 실측 6**). census 는 `src/static/**/*.js` 재귀 walk + 핸들러 본문 경계 판정.
+- **뮤테이션 역검증 6종** 전부 의도한 단언만 red — 그중 3종(button 가드·isPrimary 가드·census 범위
+  밖 신규 파일)은 **교정 전 하네스에서 생존**했다(vacuous). §18.8 design 패널이 실증.
+- `verify_*.mjs` 전수 — red 21건 = main baseline 동일 집합(신규 red 0).
+- 잔여: 배포 후 신규 전환 5종 라이브 재확인 → fragment Run 4 append.
+- Run 기록 정본: `docs/test-runs.d/20260806T1830-modal-dismiss-siblings.md` (§5.3 fragment).

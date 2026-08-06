@@ -8199,7 +8199,6 @@ file:line 과 함께 REPORT §8 원장 등재 + 사용자 표면화(§8.1 기록
 확인(배지 1 + rail 1)했고, `roleLabel` 은 assistant/알 수 없는 role 폴백용으로만 남는다.
 **G9-a**: 렌더 시각 불변식 = 가변 길이 사용자명이 meta 줄을 밀지 않을 것 → CSS 폭 제한으로 잠그고
 PB-0008 에서 확대 렌더 대조.
-
 ## 20260806T0450-share-sender-postdeploy — 공유 발화자 배지 PB-0008 라이브 실측 (doc-only, 코드 변경 0)
 
 선행 cycle(`20260806T0327-share-sender-nickname`, PR #1166 → 배포 `ddbc6ebe`)의 시각 검증은
@@ -8225,3 +8224,64 @@ PB-0008 에서 확대 렌더 대조.
 바로 그 메시지**를 DB 로 특정해 대조했다 — 개선이 그 사용자의 화면에 실제로 도달하는지가 요점.
 **G9-a**: 렌더 시각 불변식(시각 표기가 밀리지 않음)을 getBoundingClientRect 실측으로 대조.
 **G7-c**: 3순위 미발동은 "추정" 이 아니라 라이브 공유 링크 6건 전수 + PG 플래그 조회로 확정.
+## 20260806T1830-modal-dismiss-siblings — 배경 dismiss 를 저장소 단일 primitive 로 통일 (Minor §12.3, frontend-only)
+
+- **사용자 요청**: "동형 오버레이의 형태 또한 정합하게 구성해주세요." (선행 cycle
+  `20260806T1144-modal-backdrop-dismiss` 완료 보고에서 표면화한 잔존 3곳에 대한 승인)
+- **왜 공용 모듈인가**: 이 앱은 ESM 번들이 **둘**(작업 화면 `app.js` 트리 / 관리 콘솔 `admin.js`
+  트리)이다. primitive 를 `app.js` 에 두면 admin 쪽은 **복제**할 수밖에 없고, **그 복제가 애초에
+  이 결함을 만든 기전**이다(같은 판정이 9곳에 흩어져 6곳 `click` · 3곳 `mousedown` 으로 굳어
+  있었다). `static/modal-dismiss.js` 를 정본으로 두고 양 번들이 import 한다.
+
+### §2.1 Implementation Plan
+
+- **영향 파일 / symbol**
+  - `static/modal-dismiss.js` **(신설)** — `bindBackdropDismiss` 정본. 선행 cycle 의 본문 그대로.
+  - `static/app.js` — primitive 본문 제거 → import + **re-export**(`app/sidebar.js` 의 기존
+    import 무회귀). `_bindSearchModalListeners` 의 손수 구현 이관 + 전용 상태 플래그 2개 제거.
+  - `static/app/profile.js` `showProfileUsageConvModal` — `mousedown` 단독 → primitive.
+  - `static/admin/usage.js` `showUsageConvModal` — `mousedown` 단독 → primitive.
+  - `static/admin/audit.js` `openAuditPurgeModal` — `click` → primitive.
+  - `static/graph/graph-core.js` `_metaGraphBindHelp` — `click` + 속성/클래스 판정 → primitive.
+  - `tests/verify_modal_backdrop_dismiss.mjs` · `tests/pb0008_modal_backdrop_dismiss.py` — 정본 경로
+    갱신 + 전-트리 census + 리스너 수명 실측.
+- **접근**: 계약은 선행 cycle 그대로. 이번엔 **적용면**을 전 표면으로 넓히고, 회귀 잠금을
+  "파일 목록 하드코딩" 이 아니라 `src/static/**/*.js` **재귀 walk + 표기 변형 무관 detector** 로
+  바꾼다(그래야 *다음* 파일에 옛 패턴이 들어와도 잡힌다).
+- **완료 판정 기준(AC)**
+  - AC1 전 static 트리(vendor 제외)에 "수신자 자신을 target 과 비교하는" 배경 dismiss 잔존 0.
+  - AC2 두 번들이 같은 정본을 import(자체 정의 0).
+  - AC3 선행 6종의 계약·ESC·× 경로 무회귀.
+  - AC4 재렌더되는 모달에서 document keydown 리스너 누수 0(실측).
+  - AC5 파괴적 purge 모달에 중복 인스턴스 가드.
+- **위험도**: **Minor** — 프론트 전용·비파괴. 신규 권한·엔드포인트·스키마 0.
+
+### 체크리스트
+
+- [x] `static/modal-dismiss.js` 신설 + `app.js` import/re-export (sidebar 무회귀)
+- [x] 동형 3곳 전환 — profile(사용자향 `mousedown`) · admin usage(`mousedown`) · admin audit(`click`)
+- [x] **요청 범위 밖 2건 추가 전환(명시)** — 그래프 뷰 도움말 오버레이(마지막 남은 배경-클릭
+      dismiss) · 검색 모달(**같은 계약을 손수 중복 구현**하고 있어 그대로 두면 '정합' 미성립)
+- [x] **프로필 드로어는 의도적 제외** — backdrop 과 패널이 **형제**라 target 승격이 구조적으로
+      불가(양 리뷰어가 `index.html:410-411` 로 독립 검증)
+- [x] 하네스 **76 pass / 0 fail** — 전-트리 walk census + detector 자기검증 + 리스너 수명 실측
+- [x] **뮤테이션 역검증 6종** 전부 의도한 단언만 red: button 가드 제거 · isPrimary 가드 제거 ·
+      profile 재렌더 누수 복원 · usage close() ESC 미해제 · **census 범위 밖 신규 파일에 옛 패턴** ·
+      부정형(`!==`) 표기 변형
+- [x] `make test` **3784 passed · 3 skipped · 0 failed**(exit 0, ruff clean) · 전수 mjs red 21건 = main baseline 동일 집합 · PB-0008 10/10
+- [x] §18.8 ux·design 적대 패널 — 지적 전건 반영(아래 Requested Scope 참조)
+
+## 9. Requested Scope
+- [x] `동형 오버레이의 형태를 정합하게 구성` — 산출물: 공용 primitive 모듈 + 전 표면 전환
+  · 배선 확인: 전-트리 census 가 잔존 0 을 기계 단언하고, **census 범위 밖 신규 파일에 옛 패턴을
+  심는 뮤테이션이 red 로 떨어지는 것**까지 확인(잠금이 미래에도 작동함의 증거).
+
+**G2**: "동형" 을 사용자가 지목한 3곳으로만 읽지 않고 전 트리를 census 했다. 그 결과 그래프 도움말
+오버레이와 **검색 모달의 손수 중복 구현**이 추가로 나왔고, 둘을 남기면 '정합' 이 성립하지 않아
+함께 전환했다(요청 범위 밖임을 완료 보고에 명시).
+**G3**: "잔존 0" 주장은 식별자에 키잉하지 않는 전-트리 detector 로 확보했고, **detector 자체가
+표기 변형 5종을 검출하는지**와 **인접 리스너를 오검출하지 않는지**를 자기검증한다.
+**G4**: 경계 = 모달 배경 dismiss. 드롭다운·컨텍스트 메뉴의 `document` 레벨 outside-click 해제는
+같은 뿌리지만 **다른 UX 범주**라 대상 밖 — `modal-dismiss.js` 주석에 경계를 명시했다.
+**G10**: 재발 관측된 결함 클래스(복제 drift · vacuous 단언)를 점수정으로 끝내지 않고 구조로 잠갔다
+— 전자는 공용 모듈 + 전-트리 census, 후자는 뮤테이션 역검증 6종.

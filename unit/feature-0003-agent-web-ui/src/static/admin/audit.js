@@ -2,6 +2,8 @@
 //   무결성 검증·purge·첨부 DB 권한 상태). admin.js 구 L7257–7635 에서 byte-동치 이동
 //   (본문 무수정 — ITEM-P5b). 배너 주석·상태 초기화(adminState.audit=…)는 admin.js 잔류.
 import { adminState, apiFetch, can, $, formatDateTime, showToast } from "../admin.js?v=dev";
+// modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (작업 화면 번들과 공유).
+import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 
 function _auditEscapeHtml(s) {
   return String(s == null ? "" : s)
@@ -289,7 +291,14 @@ async function loadAuditFacets() {
 
 // TASK-0158: audit.purge 모달 — 기준 날짜 → dry-run 미리보기 → 건수 typed-confirm → 실 삭제.
 function openAuditPurgeModal() {
+  // 중복 인스턴스 가드 — 형제 모달(showUsageConvModal·showProfileUsageConvModal)과 동일 패턴.
+  // 이 모달의 컨트롤은 전부 id 로 조회되는데(`$("purgeCutoff")` 등) 오버레이가 겹쳐 뜨면 중복 id
+  // 가 생겨 **위쪽 모달의 버튼에 핸들러가 하나도 붙지 않는다**(파괴적 플로우가 조작 불능이 됨,
+  // §18.8 ux 패널 P2-1). 열림 버튼에 포커스가 남는 브라우저에서 Enter/Space 재활성으로 재현.
+  const prev = document.getElementById("auditPurgeOverlay");
+  if (prev) prev.remove();
   const overlay = document.createElement("div");
+  overlay.id = "auditPurgeOverlay";
   overlay.className = "admin-modal-overlay";
   const d = new Date(Date.now() - 90 * 86400000);
   const defCutoff = d.toISOString().slice(0, 10);
@@ -314,10 +323,11 @@ function openAuditPurgeModal() {
   };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  bindBackdropDismiss(overlay, close);
   const cutoffEl = $("purgeCutoff");
   const previewEl = $("purgePreview");
   const runBtn = $("purgeRunBtn");
+  if (cutoffEl && cutoffEl.focus) { try { cutoffEl.focus(); } catch (_) {} }   // 키보드 진입점
   let lastCount = -1;
   const cutoffIso = () => (cutoffEl.value ? new Date(cutoffEl.value + "T00:00:00").toISOString() : "");
   $("purgeCancelBtn").addEventListener("click", close);

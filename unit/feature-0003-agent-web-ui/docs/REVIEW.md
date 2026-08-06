@@ -2759,9 +2759,23 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
   메시지의 `meta.sender_username`/`sender_account_id` 존재를 확인 — 주장 A 의 1차 근거.
 - 실 Windows 브라우저 시각검증은 정적 자산 baked 구조상 **POST-DEPLOY** (test-runs.d fragment 에
   계획·사유 명시).
-
 ## REV-20260806T045000-share-sender-postdeploy [SKIPPED:non-policy-doc] — doc-only
 시각 검증 Run 기록 + 실측 발견 1건 추가만으로, 코드·정책·계약 변경이 0 이다(§18.8.1 docs-only 경량
 경로). 검증 대상 코드는 선행 cycle 에서 security·ux 2렌즈 적대 패널을 거쳤다
 (REV-20260806T032732-share-sender-nickname, medium 5건 전건 흡수).
 - Timestamp: 2026-08-06T13:50:00+09:00
+## REV-20260806T183000-modal-dismiss-siblings [SUBAGENT:ux] [SUBAGENT:design] — BLOCK 후 전건 반영, SHIP
+- **Trigger**: `UI/dialog/modal/screen · 모달·화면` keyword matched → §18.8 dispatch 표에 따라 **ux + design**. 선행 cycle 에서 사용자가 이미 "ux·design subagent 패널 호출" 을 선택했고 같은 주제의 연속 작업이라 그 결정을 승계. 이번엔 §18.11 bundle 대신 **repo 직접 접근**을 허용해(worktree 경로 제공) 리뷰어가 주장을 스스로 검증하게 했다 — 그 덕에 아래 뮤테이션 실증이 나왔다.
+- **판정**: ux **SHIP**(P1 0 · P2 2) · design **BLOCK**(P1 0 · P2 4). 두 리뷰어가 **독립적으로 같은 P2 2건**(census 하드코딩 · ESC 누수 미완)을 짚었다.
+- **핵심 지적과 반영 — 넷 중 셋이 "이 cycle 이 한 일을 내 산출물이 거짓 인증" 이었다**:
+  - **P2 census 가 전수가 아니었다** — 주석·테스트 헤더는 "전 static 트리 census" 라 단정했으나 실제로는 **33개 중 6개 파일 하드코딩**이었다. design 이 뮤테이션으로 실증: TREE 밖 파일에 옛 패턴 모달을 신설해도 **73/73 통과**. 이 cycle 의 존재 이유(복제 drift 차단)가 잠기지 않았다는 뜻. → `readdirSync` 재귀 walk + 핸들러 **본문 경계** 판정으로 교체(표기 변형 무관). 고정 lookahead 가 인접 리스너 본문을 물어 `app.js:1792` 를 오검출하던 것도 이때 함께 잡아 회귀 케이스로 잠갔다.
+  - **P2 vacuous 단언 2건** — "배경 우클릭 → 안 닫힘", "비-primary 포인터 → 안 닫힘" 이 `press()` 헬퍼가 비주 버튼에 click 을 안 쏘는 탓에 **primitive 의 판정 단계에 도달조차 못했다**. design 이 `downOk = true` 와 `isPrimary` 가드 삭제 뮤테이션으로 **둘 다 73/73 생존**을 실증. + "보조 손가락 얹힌 채 배경 탭" 은 보조 pointerdown 을 주 press **앞**에 쏘아 가드를 우회. → 세 단언을 click 까지 명시 발화 / 순서 교정으로 재작성, 뮤테이션 red 확인. **이 cycle 에서만 vacuous 단언을 세 번째로 잡은 것**(앞서 내가 역참조 그룹 오지정 1건을 자체 적발).
+  - **P2 ESC 리스너 누수 하드닝이 절반** — 두 모달은 loading→data 로 **재렌더**되므로 이전 인스턴스의 `onEsc` 를 떼지 않으면 열 때마다 하나씩 샌다(design 수명 시뮬레이션: 6회 열기 → 6개 잔존). 그런데 내 테스트는 `close()` 본문에 문자열이 있는지만 정규식으로 봐 **PASS** 했다. → `overlay._modalClose` 로 이전 인스턴스를 닫도록 완결 + 테스트를 **수명 실측**(리스너 수를 세는 시뮬레이션)으로 교체, 누수 복원 뮤테이션 2종 red 확인.
+  - **P2 `FUNCTION.md` AC-0168 이 삭제된 구현을 계약으로 기술**(`source_of_truth: true`) — 다음 cycle 이 이 AC 로 역검증하면 "기능 파손" 오판 또는 삭제한 flag 복원. → primitive 위임으로 갱신 + "flag 존재로 역검증하지 말 것" 명시.
+  - **P2 purge 모달 중복 인스턴스**(ux) — 오버레이에 id·가드가 없어 겹쳐 뜨면 중복 id 로 **위쪽 모달 버튼에 핸들러가 하나도 안 붙는다**(파괴적 플로우 조작 불능). 형제 두 모달은 이미 가드를 갖고 있었다. → 동일 패턴 가드 + 기준 날짜 포커스.
+  - **P3 stale 주석**(`app.js` 의 "overlay mousedown 의 mouseup race fix 와 함께 동작") 정정 · **P3 범위 경계** 명시(`document` 레벨 outside-click 은 다른 UX 범주) · **P3 터치 캡처 단언 라벨 정직화**(`downOk` 가 이미 false 라 캡처 축을 증명 못함 — 판별력은 다른 케이스가 담당) · **P3 nav 경로 중복 해제 제거**.
+- **자체 적발(패널 전)**: 그래프 도움말에 오버레이+자식 **이중 바인딩**을 했다가, `graph.css` 확인 결과 자식이 `inset:0` 으로 전면을 덮어 오버레이 바인딩이 **dead code** 이고 내 주석의 "오버레이 여백" 서술이 사실이 아님을 발견 → 단일 표면(자식, 폴백 오버레이)으로 축소·주석 정정. 양 리뷰어가 CSS 로 이 판정을 독립 확인했다.
+- **결함 아님으로 교차 확인된 축**: 프로필 드로어 구조적 면역(양쪽이 `index.html:410-411` 형제 구조로 VERIFIED — 제외 판단 정당) · 지속 DOM(검색 모달·도움말)의 stale state 누출 없음(`pointerdown` 최상단 무조건 `reset()` 이 불변식, 서브트리 내 pointerdown stopper 0건) · 바인딩 중복 stacking 없음(`_helpBound`·모듈 1회 배선) · TDZ 없음 · `admin/usage.js` nav 리스너와 무간섭(primitive 가 먼저 등록되나 `preventDefault`/`stopPropagation` 미사용, 행 클릭은 `downOk=false`) · 모듈 그래프 순환 없음(`modal-dismiss.js` 는 import 0 leaf) · `inject_asset_stamp.py` 가 신규 파일 자동 포함(전역 단일 스탬프 → 모듈 단일 인스턴스) · `isTrusted` 가 AT 활성화를 깨지 않음(OS 레벨 실입력은 trusted, backdrop 은 focusable 아님).
+- **잔여(범위 밖·REPORT §8)**: 포커스 트랩 부재(전 표면 공통, 기존) · 검색 모달에서 날짜 popover 열린 채 배경 1클릭이 popover+모달을 함께 닫음(구/신 동일, 회귀 아님) · `document` 레벨 outside-click closer 군 · `admin/accounts.js` 임시 비밀번호 모달은 배경 dismiss 자체가 없음(정합 이탈이나 위험 없음).
+- **검증**: 하네스 **76 pass / 0 fail** · **뮤테이션 역검증 6종** 전부 의도한 단언만 red · ESM `node --check` 6파일 · 전수 mjs red 21건 = main baseline 동일 집합 · PB-0008 실 Windows Chrome 10/10 · `make test` 회귀.
+- Timestamp: 2026-08-06T18:30:00+09:00

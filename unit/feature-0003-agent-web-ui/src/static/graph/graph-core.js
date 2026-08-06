@@ -2,6 +2,8 @@
 // 규약: 공개 표면은 graph/graph.js(barrel) 가 re-export — admin.js 는 barrel 만 import.
 // 모듈 간/admin 순환 import 는 ES live-binding + 호출시점 사용이라 안전(ITEM-09 batch1 실증).
 import { adminState, apiFetch } from "../admin.js?v=dev";
+// modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (작업 화면 번들과 공유).
+import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_HDR_TYPO_CHARW, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _metaComboName, _metaGraph, _metaHdrFitNote, _metaHdrFitReset, _metaHdrLevelFont, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf, _METLAY, _METtype, _METZ } from "./graph-state.js?v=dev";
 import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
@@ -1738,11 +1740,18 @@ function _metaGraphBindHelp() {
   const btn = document.getElementById("metadataGraphHelpBtn");
   if (btn) btn.addEventListener("click", () => _metaGraphShowHelp());
   const ov = document.getElementById("metadataGraphHelp");
-  if (ov) ov.addEventListener("click", (ev) => {
-    // 배경(data-amg-help-close) 또는 오버레이 여백 클릭 시 닫기 — 카드 내부 클릭은 무시(버블 target 판정).
-    const t = ev.target;
-    if (t && (t.hasAttribute("data-amg-help-close") || t.classList.contains("amg-help-overlay"))) _metaGraphHideHelp();
-  });
+  if (ov) {
+    // modal-backdrop-dismiss: 배경 클릭 판정을 저장소 단일 primitive 로 통일 — 누름·뗌이 **둘 다**
+    // 그 배경 위일 때만 닫는다(구 `click` 단독은 카드 안에서 눌러 배경에서 떼도 target 이 공통
+    // 조상으로 승격돼 닫혔다).
+    // 이 오버레이는 다른 모달과 달리 **전용 배경 자식**(`.amg-help-backdrop[data-amg-help-close]`)
+    // 을 둔다. 그 자식이 `position:absolute; inset:0`(graph.css)으로 오버레이를 전면 덮으므로
+    // 실제 dismiss 표면은 **그 자식 하나**다 — 오버레이 자신에 바인딩해도 `target === ov` 인
+    // 이벤트가 오지 않아 dead code 가 된다(구 코드의 `classList.contains("amg-help-overlay")`
+    // 분기도 같은 이유로 죽어 있었다). 자식이 없는 구조라면 오버레이로 폴백한다.
+    const dismissSurface = ov.querySelector("[data-amg-help-close]") || ov;
+    bindBackdropDismiss(dismissSurface, () => _metaGraphHideHelp());
+  }
   const close = document.getElementById("metadataGraphHelpClose");
   if (close) close.addEventListener("click", () => _metaGraphHideHelp());
   const ok = document.getElementById("metadataGraphHelpOk");
