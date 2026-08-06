@@ -1779,21 +1779,92 @@ WHERE ConversationId = %s
 
 # ── ITEM-10 p6: fork·steps 로드·assistant 첨부 편집 렌더 (conversations 도메인) ──
 
+def _bind_tool_delivered_attachments(
+    conn, *, conversation_id: str, account_id: int, attachment_ids: list[int],
+    message_id: int,
+) -> list[dict[str, Any]]:
+    """`update_attachment` 도구가 만든 새 버전들을 **답변 메시지에 바인딩**하고 직렬화해 돌려준다.
+
+    FR-attach-delivery-truncated-by-output-cap (§18.8 [P1], 두 패널 공통): materialize 는
+    `MetaJson.message_id` 로 답변 말풍선의 다운로드 칩을 붙이는데(`_load_assistant_attachments_by_message`
+    가 `mid <= 0` 을 버린다), 도구 호출 시점에는 답변이 아직 저장되지 않아 그 id 가 없다. 그대로 두면
+    **파일은 만들어졌는데 사용자 말풍선에는 아무것도 안 뜬다** — 도구 결과가 "칩으로 받습니다" 라고
+    가리키는 바로 그 자리가 비는 것이라, 고치려던 claim/reality gap 이 한 층 아래에서 재생산된다.
+
+    답변 저장 후 message_id 가 확정된 시점에 호출한다. 소유권·대화 일치를 **여기서 다시 확인**한다
+    (도구가 이미 걸렀지만, 이 함수는 id 목록만 받으므로 자체 방어선을 갖는다).
+    """
+    ids = [int(i) for i in (attachment_ids or []) if int(i or 0) > 0]
+    if not ids or int(message_id or 0) <= 0:
+        return []
+    out: list[dict[str, Any]] = []
+    for aid in ids:
+        row = app._load_attachment_row(conn, aid)
+        if not row:
+            continue
+        if str(row.get("ConversationId") or "") != str(conversation_id):
+            continue
+        if int(row.get("AccountId") or 0) != int(account_id):
+            continue
+        if str(row.get("CreatedByRole") or "") != "assistant":
+            continue
+        try:
+            meta = json.loads(row.get("MetaJson") or "{}") or {}
+        except (ValueError, TypeError):
+            meta = {}
+        meta["message_id"] = int(message_id)
+        meta["message_id_space"] = "display"
+        meta.setdefault("delivered_by", "update_attachment_tool")
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE WebConversationAttachments SET MetaJson = %s WHERE Id = %s",
+                (json.dumps(meta), aid),
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "tool-delivered attachment bind failed (id=%s, message_id=%s)", aid, message_id,
+                exc_info=True)
+            continue
+        finally:
+            cur.close()
+        row["MetaJson"] = json.dumps(meta)
+        out.append(app._serialize_attachment_for_api(row))
+    return out
+
+
 def _materialize_assistant_attachment_edits(
     conn,
     *,
     account: dict[str, Any],
     conversation_id: str,
-    answer: str,
+    answer: str = "",
     message_id: int | None = None,
     request: "Request | None" = None,
+    blocks: list[dict[str, Any]] | None = None,
+    skipped: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """assistant 답변의 attachment-edit 블록을 새 첨부 버전으로 materialize.
 
     Returns: 생성된 새 버전들의 직렬화 dict 리스트(0개면 빈 리스트). 모든 실패는
     fail-open(로깅만) — materialize 실패가 사용자 답변을 막지 않는다.
+
+    blocks (FR-attach-delivery-truncated-by-output-cap, 2026-08-06): 답변 텍스트에서 파싱하는
+    대신 **블록을 직접** 받는다. `update_attachment` 도구가 파일 한 건을 즉시 전달할 때 쓰며,
+    이 경로가 생긴 이유는 전달 payload 가 답변의 출력 예산을 잠식해 다중 파일 전달이 상한에서
+    잘렸기 때문이다(관측: 6개 중 1개만 전달). **가드는 전부 공유한다** — 도구 경로가 블록 경로보다
+    느슨해지면 그 자체가 취약점이므로 분기하지 않고 같은 루프를 태운다.
+
+    skipped: 주어지면 건너뛴 사유를 사람이 읽을 수 있는 문장으로 append 한다. 도구 경로가 이것을
+    모델에게 그대로 돌려줘 자기교정(다른 id·전문 폴백)을 가능하게 한다 — 조용한 skip 은 모델이
+    "전달했다" 고 오인하는 원인이다.
     """
-    blocks = app._parse_attachment_edit_blocks(answer)
+    def _skip(reason: str) -> None:
+        if skipped is not None:
+            skipped.append(reason)
+
+    if blocks is None:
+        blocks = app._parse_attachment_edit_blocks(answer)
     if not blocks:
         return []
     try:
@@ -1812,27 +1883,34 @@ def _materialize_assistant_attachment_edits(
 
         # 가드 4: 내용 size cap(텍스트 계열).
         if not body_bytes:
+            _skip(f"attachment_id={src_id}: 내용이 비어 있습니다.")
             continue
         if len(body_bytes) > app._ASSISTANT_EDIT_SIZE_CAP_BYTES:
             logging.getLogger(__name__).warning(
                 "attachment-edit: content too large (src=%s, %d bytes) — skip",
                 src_id, len(body_bytes),
             )
+            _skip(f"attachment_id={src_id}: 내용이 파일당 상한을 초과했습니다"
+                  f"({len(body_bytes)} bytes > {app._ASSISTANT_EDIT_SIZE_CAP_BYTES}).")
             continue
 
         # source 첨부 로드 + 가드 2: 같은 conversation + 같은 account scope.
         src = app._load_attachment_row(conn, src_id)
         if not src:
+            _skip(f"attachment_id={src_id}: 그런 첨부가 없습니다.")
             continue
         if str(src.get("ConversationId") or "") != str(conversation_id):
             logging.getLogger(__name__).warning(
                 "attachment-edit: source conv mismatch (src=%s) — skip", src_id)
+            _skip(f"attachment_id={src_id}: 이 대화의 첨부가 아닙니다.")
             continue
         if int(src.get("AccountId") or 0) != account_id:
             logging.getLogger(__name__).warning(
                 "attachment-edit: source account mismatch (src=%s) — skip", src_id)
+            _skip(f"attachment_id={src_id}: 이 대화에서 당신이 갱신할 수 있는 첨부가 아닙니다.")
             continue
         if src.get("DeletedAt") or src.get("DeletePending"):
+            _skip(f"attachment_id={src_id}: 삭제된(또는 삭제 예정) 첨부입니다.")
             continue
 
         # 가드 1: 텍스트 계열 kind 만(csv/text). 바이너리(xlsx/pdf/image)는 거부.
@@ -1840,6 +1918,8 @@ def _materialize_assistant_attachment_edits(
         if src_kind not in ("text", "csv"):
             logging.getLogger(__name__).warning(
                 "attachment-edit: non-text kind '%s' (src=%s) — skip", src_kind, src_id)
+            _skip(f"attachment_id={src_id}: kind={src_kind} 는 텍스트 계열이 아니라 갱신할 수 없습니다"
+                  " (text/csv 만 가능).")
             continue
 
         # 가드 3: size cap(per_file/conv/account) 재사용.
@@ -1850,6 +1930,7 @@ def _materialize_assistant_attachment_edits(
         if not ok:
             logging.getLogger(__name__).warning(
                 "attachment-edit: size cap exceeded (src=%s) — skip", src_id)
+            _skip(f"attachment_id={src_id}: 대화/계정 첨부 용량 상한을 초과했습니다.")
             continue
 
         # 버전 체인: root = source 의 root(없으면 source 자신). 체인 내 최대 VersionNumber+1.
@@ -1918,6 +1999,7 @@ def _materialize_assistant_attachment_edits(
         except Exception:
             logging.getLogger(__name__).warning(
                 "attachment-edit: MinIO put failed (src=%s) — skip", src_id)
+            _skip(f"attachment_id={src_id}: 저장소 쓰기에 실패했습니다(일시적일 수 있음).")
             continue
 
         # INSERT 새 버전 row. 보안리뷰 V6(race): IX_WCA_VersionChain 가 UNIQUE 이므로 동시
@@ -1956,6 +2038,7 @@ def _materialize_assistant_attachment_edits(
         finally:
             cur.close()
         if not new_id:
+            _skip(f"attachment_id={src_id}: 새 버전 기록에 실패했습니다(동시 갱신 충돌일 수 있음).")
             continue
 
         # 직전 최신 버전을 superseded 마킹 — 새 버전만 목록 노출. 보안리뷰 V8: WHERE 를

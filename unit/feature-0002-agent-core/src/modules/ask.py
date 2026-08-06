@@ -319,8 +319,13 @@ def _postprocess_attachment_blocks(cid: str, account_id: Any,
         content = str(latest.get("content") or "")
         if not content or message_id <= 0:
             return
-        if ("attachment-edit" not in content) and ("attachment-new" not in content):
-            return  # 블록 없음 — 흔한 경로에서 조기 반환(비용 0)
+        # FR-attach-delivery-truncated-by-output-cap (§18.8 [P1]): `update_attachment` 도구로
+        # 전달한 첨부는 답변 본문에 블록이 없다. 조기 반환하면 그 첨부들이 message_id 에
+        # 바인딩되지 않아 **사용자 말풍선에 칩이 하나도 뜨지 않는다**(파일은 존재하는데 보이지
+        # 않는 상태). 도구 전달분이 있으면 계속 진행한다.
+        _tool_ids = [int(i) for i in (result.get("tool_delivered_attachment_ids") or [])]
+        if not _tool_ids and ("attachment-edit" not in content) and ("attachment-new" not in content):
+            return  # 블록도 도구 전달도 없음 — 흔한 경로에서 조기 반환(비용 0)
 
         # request=None: worker 에는 HTTP 요청 컨텍스트가 없어 web audit dispatch 는 생략된다
         # (materialize 내부가 request None 이면 audit skip). 첨부 row 자체의 CreatedByRole=
@@ -340,6 +345,23 @@ def _postprocess_attachment_blocks(cid: str, account_id: Any,
 
         # strip 은 materialize 성패와 무관하게 수행 — 전체 파일 본문이 채팅에 노출되는 것을 막는다
         # (web 경로와 동일 정책). 두 태그를 순차 적용.
+        # 도구 전달분을 답변 메시지에 바인딩 — 칩·step 노출의 전제. 블록 경로 결과와 합쳐
+        # web inproc 경로와 동일한 응답 shape 를 만든다.
+        if _tool_ids:
+            try:
+                bound = _web._bind_tool_delivered_attachments(
+                    conn, conversation_id=cid, account_id=int(account.get("id") or 0),
+                    attachment_ids=_tool_ids, message_id=message_id,
+                ) or []
+                if bound:
+                    edited = list(bound) + list(edited)
+                else:
+                    log.warning("ask-worker: 도구 전달 첨부 %d건 바인딩 결과 0 — 칩 미노출 가능",
+                                len(_tool_ids))
+            except Exception:
+                log.error("ask-worker: 도구 전달 첨부 바인딩 실패 — 사용자 말풍선에 칩이 뜨지 않는다",
+                          exc_info=True)
+
         stripped = _web._strip_attachment_edit_blocks(content, edited)
         stripped = _web._strip_attachment_new_blocks(stripped, created)
         if stripped != content:

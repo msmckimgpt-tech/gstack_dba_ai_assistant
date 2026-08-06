@@ -3368,6 +3368,7 @@ from routers._conv_store import (  # noqa: E402
     _fork_conversation_impl,
     _materialize_assistant_attachment_edits,
     _materialize_assistant_attachment_new,
+    _bind_tool_delivered_attachments,
     # feature-0019 message-editing — 브랜치 오케스트레이션
     _branch_get_display_message,
     _branch_reanswer_setup,

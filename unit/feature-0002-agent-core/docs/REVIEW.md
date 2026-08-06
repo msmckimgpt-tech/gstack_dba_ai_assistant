@@ -1385,7 +1385,6 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   (라벨 네임스페이스 설계 문제라 한 줄 수정으로 풀리지 않는다).
 - 건전 판정: SQL 문법·인덱스·성능(200키 4.6ms, timeout 1500ms 대비 여유), `analyzed_count` 역전
   반례 라이브 0건, `attempted` 계측 위치 정확, payload 도달 배선 정확, 기존 테스트 vacuous 화 없음.
-
 ## REV-20260806T173000-label-namespace [SUBAGENT:backend] — 머지 불가 → 반영 완료
 
 **대상**: 라벨 네임스페이스 cycle diff. **방법**: 라이브 read-only 대조 + 정확판정 재구현 + 변이 7종.
@@ -1410,3 +1409,40 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   못 잡았다(올바른 구현과 잘못된 구현이 똑같이 74 passed). **반영: 픽스처를 저장처별로 분리.**
 - 건전 판정: SQL 후보 선별 차집합 0(26 datasource 전량), 비용 115행/1.5ms, 하위호환(4-튜플
   IndexError 흡수), 첫 매칭 쿼리 결정성, "동시 생존 클러스터는 둘 다 남는다"(라벨이 다른 경우 성립).
+## REV-20260806T160000-attach-delivery-tool [SUBAGENT:security] + [SUBAGENT:backend+qa] — BLOCK → 전건 흡수 후 SHIP ([P1] 4 · [P2] 9 · [P3] 6) (TASK-20260806T1600)
+- **Trigger**: §18.8 dispatch — **모델이 첨부 저장소에 쓰는 첫 도구** 신설이라 `security` 를 독립
+  렌즈로 세우고, 키워드 0건 code change 이므로 backend+qa 를 함께. `codex`(1순위)는 quota 소진 지속.
+- **[P1-1, 두 패널 공통] 도구로 만든 첨부가 다운로드 칩에 나오지 않는다**: materialize 는
+  `MetaJson.message_id` 로 말풍선 칩을 붙이는데(`_load_assistant_attachments_by_message` 가 `mid<=0`
+  을 버림) 도구 호출 시점엔 답변이 저장 전이라 0 이 들어갔다. 워커 후처리도 "블록 없으면 조기 반환"
+  이라 그냥 지나쳤다. **파일은 만들어지고 이전 버전은 supersede 되는데 사용자 말풍선엔 아무것도 안
+  뜬다.** 게다가 이번 변경이 추가한 두 문구(도구 결과 "사용자가 다운로드 칩으로 받습니다", 절단 경고
+  "전달된 파일은 다운로드 칩으로만 확인하십시오")가 하필 그 빈 자리를 가리켰고, `delivered=6` 이
+  리뷰어에게 authoritative 사실로 제시돼 **허위 완료를 리뷰어가 승인**하는 구조였다.
+  → 전달 id 를 run 채널에 모아 `result["tool_delivered_attachment_ids"]` 로 내보내고,
+  `_bind_tool_delivered_attachments`(feature-0003 신설)가 답변 저장 후 바인딩(워커·web inproc 양쪽,
+  소유권·대화 재확인 포함). 조기 반환 조건도 도구 전달분 고려로 수정.
+- **[P1-2, 두 패널 공통] 패치 적용기가 조용히 틀린 파일을 만든다(실행으로 실증 3종)**:
+  ① `-N,0`(문맥 없는 삽입)이 **한 줄 앞**에 삽입 — "스크립트 끝에 추가" 가 마지막 줄 **앞**으로 감.
+  ② 머리말 선언 길이(`-l,c`/`+l,c`)를 파싱만 하고 쓰지 않아 **잘린 패치가 부분 적용되고 성공 반환** —
+  이 cycle 이 없애려는 실패(절단→부분전달→성공보고)를 새 코드가 재현. ③ 마지막 hunk 뒤의 산문이
+  hunk 본문으로 흡수돼 파일에 기록. **내 테스트 `test_pure_insertion_hunk` 는 ①을 encode 하고 있었다**
+  (위치 미검증, 멤버십·길이만 단언).
+  → 선언 길이를 **본문 경계의 권위**로 삼고(①②③ 동시 해소), 문맥 없는 hunk 는 **거부**한다
+  (검증할 문맥이 없는 삽입은 위치를 확인할 방법이 원리적으로 없다).
+- **[P1-3, 두 패널 공통] 절단 경고가 red-team revise 로 지워진다**: `finish_reason` 은 revise/rederive
+  호출로 덮이고, 새 리뷰 규칙이 truncated 일 때 BLOCK 을 지시하므로 **경고가 필요할수록 확실히
+  사라지는** 자기무력화 구조였다. → 초안 확정 시점 latch + 수정본 채택 시에만 재판정.
+- **[P2 흡수 9건]** execute_tool 라우팅 미검증(뮤턴트 생존 실증) · `_FakeWeb` 이 시그니처 drift 를
+  못 잡음 → `inspect.signature().bind()` 계약 테스트 · `DELIVERY FACTS` 가 ceiling 으로 읽혀 **정직한
+  혼합 턴을 BLOCK** → floor 프레이밍 + 블록경로 미집계 명시 · CRLF 전체 재작성 → 지배적 줄바꿈 보존 ·
+  patch 후행 개행이 허위 오류 유발 → 선언 길이 파싱으로 동시 해소 · 예외 원문이 모델·저장 메시지로
+  누출(CODE_REVIEW §2.7) → 로그로만 · `web.app` import 실패 무로그 → error 로그 · 프롬프트 ¶1/¶2 모순과
+  `_ATTACHMENT_NEW_DELIVERY_DIRECTIVE` stale 상호참조 → 블록 경로를 폴백으로 강등.
+- **패널이 무결함으로 확인**: 권한/IDOR(스코프 + materialize 의 Conversation·Account 이중 가드,
+  그룹 sender_scope, bounded 발신자에게 도구 미노출) · 프롬프트 인젝션(도구 결과가 datamark 통과,
+  파일명 `repr()` 이스케이프) · 교차요청 격리(토큰 튜플 인덱스 정합, env 폴백 없음) · 저장소 고갈
+  (superseded 도 용량 상한에 계상) · 자기제조 증거 불가 · `_conv_store` 리팩터의 기존 호출자 무회귀.
+- **회귀**: 신규 **56** PASS(33+23) · **뮤테이션 9/9 KILLED** · 전량 회귀 실패 0 · ruff clean.
+- **미검증(정직)**: ① 모델이 실제로 도구를 채택하는지·다중 파일 전달이 완주하는지는 **라이브 실측분**
+  ② 칩의 실 브라우저 렌더는 배포 후 확인 ③ 패치 경로의 실사용 적용 성공률 미측정.

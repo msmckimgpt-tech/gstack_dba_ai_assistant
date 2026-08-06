@@ -2290,3 +2290,36 @@ rationale=REVIEW `REV-20260805T160000-attach-change-false-absence` ·
 rationale=REVIEW `REV-20260805T190000-read-attach-completeness` ·
 변경이력=MODIFY `CHG-20260805T190000-read-attach-completeness` ·
 마찰원장=`FR-read-attachment-preview-looks-partial`.
+
+## TASK-20260806T1600 — 첨부 전달 구조 개선 (conversation_audit `FR-attach-delivery-truncated-by-output-cap`)
+
+- [x] 진단 — 대화 `…1d8ed346`: 첨부 6건 중 갱신본 **1건**, 답변은 "6개 전부 갱신".
+      `completion_tokens=100,000`(상한 정확 도달), 답변 말미 raw SQL 중간 절단.
+      `finish_reason` 은 코드 전체에서 **한 번도 읽지 않음**. red-team 은 materialize **이전**에
+      돌아 실제 전달 결과를 구조적으로 볼 수 없음. `_ASSISTANT_EDIT_COUNT_CAP=5` 로 6건은 애초 초과.
+- [x] 방향 전환(사용자 지시) — 증상 대응(A 감지·B 리뷰·C 순서)이 전부 "전달 payload 가 답변 출력
+      예산을 공유한다" 는 전제를 남긴다는 지적을 수용, **구조 개선**으로 재설계.
+- [x] ① `update_attachment` 도구 — 파일당 독립 출력 창 + 성공/실패 피드백 + 스코프·가드 공유.
+- [x] ② `patch`(unified diff) 전달 — fail-closed 적용기(`modules/patch_apply.py`).
+- [x] ③ `finish_reason` 절단 감지 + 사용자 경고 + red-team 사실(구조 개선과 무관하게 필요).
+- [x] red-team `DELIVERY FACTS` — 허위 완료 선언 `honesty` BLOCK 규칙(floor 프레이밍으로 오탐 가드).
+- [x] §18.8 security + backend/qa 패널 — **BLOCK**, [P1] 4 · [P2] 9 · [P3] 6 **전건 흡수**.
+      가장 중요한 건 **도구로 만든 첨부가 다운로드 칩에 안 나오던 것**(message_id 미바인딩) —
+      기능 무효이자 새 허위 완료 채널이었다.
+- [x] 테스트 56건(33+23) + **뮤테이션 9/9 KILLED** + 전량 회귀 실패 0.
+- [ ] 라이브 실측(배포 후) — 모델이 실제로 도구를 채택하는지 · 다중 파일 전달이 완주하는지 ·
+      칩이 뜨는지 · 패치 경로 적용 성공률.
+
+### Requested Scope (요청 범위 자기-열거) — TASK-20260806T1600
+- [x] `assistant 및 red-team 이 해당 이슈를 포착하도록 개선` — 산출물: 도구 성공/실패 피드백(assistant)
+      + DELIVERY FACTS BLOCK 규칙(red-team) · 배선 확인: execute_tool 라우팅 테스트 · 리뷰어 주입 테스트.
+- [x] `completion_tokens 과 별개로 작동` — 산출물: 파일당 독립 턴 전달 + 패치로 토큰 급감 ·
+      배선 확인: 전달 id → message_id 바인딩 → 칩 노출 경로 고정(워커·web 양쪽).
+
+**주장 affordance 실측 (G3)**: 사용자 표면 affordance 주장 = "다운로드 칩으로 받습니다".
+패널이 이 주장이 **거짓이었음**을 잡아냈고(바인딩 부재) 수정했다. 실 브라우저 칩 렌더는 배포 후 확인.
+
+### 정본
+rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
+변경이력=MODIFY `CHG-20260806T160000-attach-delivery-tool` ·
+마찰원장=`FR-attach-delivery-truncated-by-output-cap`.
