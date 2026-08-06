@@ -2,10 +2,10 @@
 run_at: 2026-08-06T17:10:00+09:00
 session: ai/claude/feature-0003-attach-manage
 scope: feature-0003-agent-web-ui / REQ-20260806-attach-manage
-verdict: PARTIAL PASS
+verdict: PASS
 ---
 
-### 20260806T1541-attach-manage 첨부 삭제(버전 선택)·복구·일괄 다운로드 (Critical §12.3, 2026-08-06, feature-0003 web/UI) — **Environment: Windows-browser — PASS(레이아웃 축) / e2e 흐름은 POST-DEPLOY 이월**
+### 20260806T1541-attach-manage 첨부 삭제(버전 선택)·복구·일괄 다운로드 (Critical §12.3, 2026-08-06, feature-0003 web/UI) — **Environment: Windows-browser — PASS (레이아웃 축 + POST-DEPLOY e2e 왕복)**
 
 - **무엇**: 대화 첨부를 목록에서 버전 단위/체인 단위로 삭제(soft-delete)하고, retention 창
   안에서 휴지통으로 복구하며, 대화 첨부 전량을 ZIP 또는 개별로 내려받는다.
@@ -71,3 +71,58 @@ POST-DEPLOY 로 수행하고 그 결과를 본 fragment 에 append 한다. 확�
 - 신규 pytest 45건(`tests/test_attach_manage.py`) — 인가 8 · scope 3 · 승격 5 · 복구 8 ·
   ZIP 7 · 휴지통 6 · 미러 2 · audit 1 · 원자성 3 · 구조 가드 2.
 - ESM `node --check` — `app/composer.js`·`app.js`.
+
+#### Run 4 — **POST-DEPLOY e2e 왕복** (2026-08-06, 배포 `5000e577` 라이브, 실 Windows Chrome 전용 프로필 + 자기 탭 한정) — **12/12 PASS**
+
+배포 확인 선행: web-a·web-b·ask-worker·insight-worker **모두 `GIT_COMMIT=5000e577`**(종료코드가
+아니라 서빙 주체의 실 SHA). 서빙 자산 census — `attach-list-item-actions` 2 · `_openAttachDeleteModal` 3 ·
+헤더 액션 2 · 병렬 세션의 `openAttachmentDiffModal` 3(**두 기능 공존 확인**). 배포본 백엔드 —
+audit 분기 2 · window clip 2 · `_manage_gate_for_conversation`/`_mirror_chain`/`_load_attachment_row_mysql` 반영.
+
+**라이브 데이터 경계**: 자체 테스트 대화 1건 + 테스트 CSV 1개만 생성해 그것으로만 왕복하고
+종료 시 대화를 삭제했다. 기존 사용자 대화·첨부 **무접촉**. §16.6 세션-격리 — `win-browser` 전용
+프로필 위에서 **이 스크립트가 새로 연 탭만** 조작(탭 수 before=6 / after=6).
+
+| # | 검증 | 결과 |
+|---|---|---|
+| S2 | 목록 `can_manage` 가 서버 술어로 내려옴(§16.7 G6) | `true` |
+| S3 | ZIP 다운로드 | 182 bytes · PK 시그니처 · `X-Attachment-Count: 1` · `X-Attachment-Clipped: 0` · `Content-Length` 동봉 |
+| S4 | manifest | `/api/attachments/890/download`(앱 내부 경로 — presigned 아님, TASK-0284) |
+| S5 | `?scope=chian` 오타 | **400** — 기본값으로 조용히 격하되지 않음 |
+| S6 | `scope=version` 삭제 | 200 · `deleted_count=1` · `promoted_id=null`(단일 버전이라 승격 대상 없음) |
+| S7 | active 목록에서 제거 | n=0 |
+| S8 | 휴지통 노출 + 남은 기간 | `restorable_until=2026-09-05T09:04:33`(retention 30일 정확) |
+| S9 | 복구 | 200 · `restored_count=1` |
+| S10 | active 재등장 | n=1 |
+| S11 | 이미 활성인 것 재복구 | **409** |
+
+#### Run 5 — **audit 행 생성 실측** (§18.8 security P1 회귀 잠금)
+
+라이브 `agent_memory.WebAuditEvents` 40분 창 집계:
+
+```
+attachment.bulk_download   2
+attachment.delete          1
+attachment.restore         1
+```
+
+`ChangeJson` 표본 — 파괴 규모와 범위가 실제로 담긴다(종전 `attachment.delete` 는 전 필드 `null` 이었다):
+
+```json
+{"scope":"version","promoted_id":890,"restored_ids":[890],"restored_count":1,"conversation_id":"…"}
+{"scope":"version","deleted_ids":[890],"promoted_id":null,"size_bucket":"<1KB","attachment_id":890,"delete_reason":"user","deleted_count":1,…}
+{"scope":"all","format":"manifest","total_bytes":20,"packed_count":0,"clipped_count":0,"attachment_ids":[890],"requested_count":1,…}
+```
+
+builder 분기가 없으면 `ValueError` 를 `_audit_user_action` 이 삼켜 **행이 0** 이 된다 — 행이
+실제로 생성됨을 값으로 확인했으므로 그 경로가 닫혔다.
+
+#### 잔여 (미검증 — 정직 표기)
+
+- **버전 체인 2개 이상**에서의 승격(AC-1)·`scope=chain`(AC-2)·체인 복구(⇤): 이번 e2e 는 단일
+  버전 첨부라 `promoted_id=null` 경로만 탔다. 체인 시나리오는 pytest(`test_p1`/`p3`)가 params
+  값으로 단정하나 **라이브 왕복은 미실측**.
+- **공유창 window clip**(AR-2): bounded 멤버 계정이 필요해 미실측. 코드 배포는 census 확인.
+- 삭제 직후 화면에서 목록이 pill 로 덮이지 않는지(§18.8 ux P1)는 **API 왕복으로만** 확인했고
+  실 DOM 렌더는 미실측.
+

@@ -2501,3 +2501,11 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 신규 테이블·마이그레이션·권한 코드 **0**.
 - Files: `src/routers/{attachments,conversations}.py`, `src/app.py`, `src/static/app/composer.js`, `src/static/index.html`, `src/static/css/chat.css`, `tests/test_attach_manage.py`, `tests/route_snapshot_p5b.json`, `docs/{TASK,FUNCTION,DECISIONS,MODIFY,REVIEW,TEST}.md`, `docs/ROUTEMAP.md`.
 - Timestamp: 2026-08-06T15:41:00+09:00
+
+## CHG-20260806T181000-attach-manage-postdeploy — 삭제·복구·일괄 다운로드 POST-DEPLOY 실측 기록 (doc-only)
+
+- `20260806T1541-attach-manage`(PR #1173, 배포 `5000e577`) 의 배포 후 라이브 검증. 실행 코드·정적 자산 변경 **0줄**.
+- e2e 12/12 PASS(자체 테스트 대화 1건 생성→왕복→삭제, 기존 데이터 무접촉) + `WebAuditEvents` 행 생성 실측.
+- 미검증 3건(버전 체인 2개 이상 · 공유창 window clip · 실 DOM 렌더)을 fragment 에 명시.
+- Files: `docs/{TASK,MODIFY,REVIEW}.md`, `docs/test-runs.d/20260806T1541-attach-manage.md`.
+- Timestamp: 2026-08-06T18:10:00+09:00

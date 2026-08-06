@@ -8644,3 +8644,20 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 **G10**: 재발 클래스(열람 경계를 파괴적 동작에 재사용)를 점수정으로 끝내지 않고 **AST 호출 검사**로 잠갔다 — 삭제·복구가 열람 헬퍼를 호출하지 않고, 반대로 열람 경로는 그것을 계속 쓰는지 양방향으로 단정한다.
 
 <!-- PLAN-APPROVED by user on 2026-08-06 -->
+
+## 20260806T1810-attach-manage-postdeploy — 삭제·복구·일괄 다운로드 POST-DEPLOY 실측 (doc-only, 코드 변경 0)
+
+`20260806T1541-attach-manage`(PR #1173) 배포 후 라이브 실측. 실행 코드·정적 자산 변경 **0줄**.
+
+- [x] 배포 반영 확인 — web-a·web-b·ask-worker·insight-worker 전부 `GIT_COMMIT=5000e577`, 서빙 자산 census(신규 심볼 + 병렬 세션 diff 기능 공존)
+- [x] e2e 왕복 **12/12 PASS** — can_manage 서버 판정 · ZIP(PK·Count·Content-Length) · manifest · scope 오타 400 · 삭제→휴지통(retention 30일)→복구→재복구 409
+- [x] audit 행 생성 실측 — `attachment.restore` 1 · `bulk_download` 2 · `delete` 1, ChangeJson 에 scope·deleted_ids·promoted_id 포함(§18.8 security P1 회귀 잠금)
+- [x] 라이브 데이터 경계 — 자체 테스트 대화 1건만 생성·삭제, 기존 사용자 데이터 무접촉. §16.6 세션-격리(전용 프로필 + 자기 탭 한정, 탭 수 before=after=6)
+- [x] fragment Run 4·5 append + 잔여 3건 명시
+
+## 9. Requested Scope
+- [x] `배포 후 삭제·복구·다운로드 왕복 실측(선행 cycle 이월분)` — 산출물: fragment Run 4·5
+  · 배선 확인: API 왕복 12단계를 라이브에서 실행하고 audit 행을 DB 에서 값으로 확인했다.
+
+**G3**: "감사 로그가 남는다"는 주장을 builder 분기 존재가 아니라 **실제 생성된 행과 ChangeJson 내용**으로 확인했다 — 분기가 있어도 호출부가 예외를 삼키면 행은 0 이다.
+**G7-c**: 미검증 3건(버전 체인 2개 이상 왕복 · 공유창 window clip · 실 DOM 렌더)을 fragment 에 **주장과 같은 자리**에 명시했다. 단일 버전 첨부로만 왕복했으므로 `promoted_id=null` 경로만 탔다는 사실도 함께 적었다.
