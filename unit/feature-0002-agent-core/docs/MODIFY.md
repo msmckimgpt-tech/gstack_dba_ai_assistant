@@ -1478,3 +1478,18 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **위험등급**: Major(§12.3 — 코어 LLM 경로 + **모델이 첨부 저장소에 쓰는 첫 도구**).
   사용자 승인 "①+② 한번에"(AskUserQuestion 2026-08-06). **Cross-ref**: 표시/저장층 feature-0003
   (`CHG-20260806T160000-attach-tool-chip-binding`) · 원장 `FR-attach-delivery-truncated-by-output-cap`.
+
+## CHG-20260806T173000-attach-delivery-deploy 첨부 전달 구조 개선 배포 완료 기록 (문서만)
+- **배포**: PR #1178 merge main `d04ab2f2` → `make deploy-web` 전체 스코프. soak 통과, 롤백 0.
+  **4서비스 GIT_COMMIT=d04ab2f2 running/healthy**. 병렬 세션 머지로 rebase 1회(FUNCTION.md 말미
+  append 충돌 → 양쪽 union 보존), rebase 후 컨테이너 정본 회귀 재실행 실패 0.
+- **배포본 런타임 실증(ask-worker)**: `update_attachment` 도구 노출·라우팅·datasource-free 전부 True ·
+  `_bind_tool_delivered_attachments` 적재 True · 절단 감지 + latch True · 패치 정상 적용 ·
+  **잘린 패치 거부**(패널 P1 재현 입력) · **문맥 없는 삽입 거부**(패널 P1 재현 입력) · DELIVERY FACTS
+  floor 프레이밍 True.
+- **미검증(정직)**: 모델이 실제로 도구를 채택하는지 · 다중 파일 전달 완주 · **다운로드 칩 실 렌더**
+  (패널이 잡은 P1 이라 최우선) · 패치 적용 성공률. 원장 status = `fixed:deployed:unverified-live`.
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`,
+  `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`.
+- **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260806T160000-attach-delivery-tool` ·
+  원장 `FR-attach-delivery-truncated-by-output-cap`.

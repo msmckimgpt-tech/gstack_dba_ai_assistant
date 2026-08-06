@@ -1446,3 +1446,7 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 - **회귀**: 신규 **56** PASS(33+23) · **뮤테이션 9/9 KILLED** · 전량 회귀 실패 0 · ruff clean.
 - **미검증(정직)**: ① 모델이 실제로 도구를 채택하는지·다중 파일 전달이 완주하는지는 **라이브 실측분**
   ② 칩의 실 브라우저 렌더는 배포 후 확인 ③ 패치 경로의 실사용 적용 성공률 미측정.
+
+## REV-20260806T173000-attach-delivery-deploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+- **Trigger**: 문서만(원장 status·배포 실증 기록). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
+- 배포 실증은 MODIFY `CHG-20260806T173000-attach-delivery-deploy` 에 기록. 라이브 대화 실측 미수행.
