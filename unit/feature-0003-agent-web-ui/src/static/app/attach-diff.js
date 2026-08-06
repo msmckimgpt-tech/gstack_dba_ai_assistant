@@ -328,6 +328,12 @@ function _renderUnified(container, data, opts) {
     const tdTxt = document.createElement("td");
     tdTxt.className = "attach-diff-code";
     if (src && src._block) tdTxt.classList.add("has-block");
+    // `has-content` 는 **줄 배경**(danger/ok)의 게이트다 — `has-block`(문단 accent) 과 짝이며
+    // 둘 다 붙여야 한다. 직전 cycle 이 배경 규칙을 `.has-content` 로 좁힐 때 2열 렌더러에만
+    // 클래스를 부여해, 단일열의 추가/삭제 줄이 색을 잃고 오히려 **"대응 내용 없음" 을 뜻하는
+    // 중립 filler** 를 받았다(라이브 실측: 내용 있는 'B2' 가 rgb(240,239,234)). 색이 사라진
+    // 것보다 나쁘게 **의미가 반대로 뒤집혔다**. 두 렌더러가 같은 규칙을 따르는지 B9/B9b 가 고정.
+    if (text != null) tdTxt.classList.add("has-content");
     tdTxt.textContent = text == null ? "" : text;
     tr.append(tdNo, tdSign, tdTxt);
     tbody.appendChild(tr);
