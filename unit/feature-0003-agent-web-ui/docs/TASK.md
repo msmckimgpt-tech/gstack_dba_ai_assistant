@@ -8285,3 +8285,15 @@ PB-0008 에서 확대 렌더 대조.
 같은 뿌리지만 **다른 UX 범주**라 대상 밖 — `modal-dismiss.js` 주석에 경계를 명시했다.
 **G10**: 재발 관측된 결함 클래스(복제 drift · vacuous 단언)를 점수정으로 끝내지 않고 구조로 잠갔다
 — 전자는 공용 모듈 + 전-트리 census, 후자는 뮤테이션 역검증 6종.
+
+## 20260806T2010-modal-siblings-postdeploy — 신규 전환 5종 POST-DEPLOY 라이브 실측 (doc-only, 코드 변경 0)
+
+- [x] 배포 반영 확인 — 서빙 `modal-dismiss.js` 200 + 4파일 전부 primitive 호출 존재, 4서비스 `2ab2b27e`
+- [x] 라이브 실측 **16/16 PASS** — 검색 모달 · 그래프 도움말 · 감사 purge · 사용 기록 · 프로필 사용 내역
+      각 3제스처 + **감사 purge 중복 인스턴스 가드**(2회 열어도 오버레이 1개)
+- [x] 라이브 데이터 변경 0 — purge 미리보기·삭제 미클릭, 나머지는 읽기 전용 조회
+- [x] fragment Run 4 + 증적 append
+
+## 9. Requested Scope
+- [x] `배포 후 신규 전환 5종 라이브 재확인(선행 cycle 잔여)` — 산출물: fragment Run 4 + 증적 1장
+  · 배선 확인: 사용자와 동일한 UI 경로로 열어 CDP trusted 제스처 실측(SVG 차트는 좌표 클릭).

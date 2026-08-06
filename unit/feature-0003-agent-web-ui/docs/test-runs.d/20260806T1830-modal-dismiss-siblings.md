@@ -48,3 +48,33 @@
 그래프 도움말 · 대화 검색)을 실제 UI 경로로 열어 3제스처를 재확인하고 Run 4 를 append 한다.
 
 - Pass/Fail: **PASS**. Runner: AI.
+
+#### Run 4 — **POST-DEPLOY 라이브 실측** (Environment: Windows-browser, 2026-08-06, 실 Windows Chrome via `bin/win-browser.py` relay, 배포본 `2ab2b27e`, 로그인 세션 `bootstrap_admin`) — **PASS 16/16**
+
+Run 1 은 **계약**을, 본 Run 은 **배포된 실제 화면**을 실측한다. 진입은 사용자와 동일한 UI 경로
+(탭·버튼 클릭, 차트 요소는 실제 좌표 마우스 클릭 — SVG 는 `.click()` 이 없어 CDP trusted 좌표
+입력을 썼다). 이번 cycle 이 **새로 전환한 5종 전부** 실측했다.
+
+| # | 표면 | 화면 | 패널→배경 | 배경→패널 | 배경 클릭 |
+|---|---|---|---|---|---|
+| 1 | 대화 검색 모달 | 작업 화면 | 안 닫힘 (AC2) | 안 닫힘 (AC3) | 닫힘 (AC1) |
+| 2 | 그래프 뷰 도움말 | 관리 콘솔 | 안 닫힘 | 안 닫힘 | 닫힘 |
+| 3 | 감사 › purge | 관리 콘솔 | 안 닫힘 | 안 닫힘 | 닫힘 |
+| 4 | 사용 기록 | 관리 콘솔 | 안 닫힘 | 안 닫힘 | 닫힘 |
+| 5 | 프로필 › 사용 내역 | 작업 화면 | 안 닫힘 | 안 닫힘 | 닫힘 |
+
+**+ 중복 인스턴스 가드 실측** — 감사 purge 진입 버튼을 **연속 2회** 눌러도 오버레이가 **1개**임을
+확인(§18.8 ux 패널 P2-1 로 추가한 가드가 라이브에서 작동). 가드가 없으면 겹친 오버레이의 중복
+id 때문에 위쪽 모달 버튼에 핸들러가 하나도 안 붙어 파괴적 플로우가 조작 불능이 된다.
+
+- **라이브 데이터 변경 0**: purge 모달에서 **미리보기·삭제 실행 버튼을 누르지 않았고**, 사용 기록·
+  사용 내역 모달은 읽기 전용 조회다. 저장·전송·이동·보관 어느 것도 실행하지 않았다.
+- 배포 반영 확인: 서빙 `modal-dismiss.js?v=cf34bab66daa` 200(7,002 B)에 `bindBackdropDismiss`
+  존재, `app/profile.js`·`admin/usage.js`·`admin/audit.js`·`graph/graph-core.js` 4파일 전부 서빙본에
+  primitive 호출 존재. web-a/web-b/ask-worker/insight-worker 4서비스 전부 `2ab2b27e` 이미지.
+- 증적: `evidence/modal-dismiss-siblings-live.png`.
+
+**선행 6종은 Run 3(PR #1165 fragment Run 3)에서 이미 라이브 실측**했고 본 cycle 은 계약을 바꾸지
+않았다(primitive 본문 무수정 — 모듈 위치만 이동). 전수 mjs·PB-0008·`make test` 로 무회귀 확인.
+
+- Pass/Fail: **PASS** (신규 전환 5종 15항목 + 중복 인스턴스 가드 1항목). Runner: AI.

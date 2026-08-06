@@ -2412,3 +2412,8 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - `verify_*.mjs` 전수 — red 21건 = main baseline 동일 집합(신규 red 0).
 - 잔여: 배포 후 신규 전환 5종 라이브 재확인 → fragment Run 4 append.
 - Run 기록 정본: `docs/test-runs.d/20260806T1830-modal-dismiss-siblings.md` (§5.3 fragment).
+## TASK-20260806T2010-modal-siblings-postdeploy — 신규 전환 5종 POST-DEPLOY 라이브 실측 (doc-only)
+- **Environment: Windows-browser (PB-0008)** — **PASS 16/16**. 배포본 `2ab2b27e` 라이브에서 신규 전환
+  5종(대화 검색 · 그래프 도움말 · 감사 purge · 사용 기록 · 프로필 사용 내역)을 사용자 UI 경로로 열어
+  CDP trusted 제스처 3종씩 + 감사 purge 중복 인스턴스 가드 실측. 라이브 데이터 변경 0.
+- Run 기록 정본: `docs/test-runs.d/20260806T1830-modal-dismiss-siblings.md` Run 4.
