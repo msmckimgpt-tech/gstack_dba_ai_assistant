@@ -3650,8 +3650,12 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
         if app._is_internal_message(role, content, meta_str):
             continue
         # feature-0009 gc-join-notice: 멤버십 이벤트(참여 알림)는 대화 내부 멤버 전용 in-room
-        # 표식이다. anonymous 공유 스냅샷에는 노출하지 않는다(멤버 username 비노출 + share.js
-        # 는 pill 렌더 분기가 없어 정합성도 깨짐). in-room /api/history 경로에서만 pill 로 보인다.
+        # 표식이다. anonymous 공유 스냅샷에는 노출하지 않는다(**발화하지 않은** 멤버 명부의
+        # username 비노출 + share.js 는 pill 렌더 분기가 없어 정합성도 깨짐).
+        # ⚠ share-sender-nickname(2026-08-06) 이후 **발화 메시지**의 `meta.sender_username` 은
+        #   공유 화면 배지로 표시된다 — 즉 이 배제가 지키는 것은 "멤버 명부"이지 "발화자"가
+        #   아니다. 노출 경계 정본은 docs/SECURITY.md §21.7.
+        # in-room /api/history 경로에서만 pill 로 보인다.
         _ev_meta = meta_json if isinstance(meta_json, dict) else None
         if _ev_meta is None and isinstance(meta_json, str) and meta_json:
             try:

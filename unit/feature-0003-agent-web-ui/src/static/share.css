@@ -133,10 +133,21 @@
   margin-bottom: 8px;
 }
 
-/* 역할 배지 — 수신자가 화자(사용자/어시스턴트)를 한눈에 구분 */
+/* 화자 배지 — 수신자가 발신자(참여자 닉네임/어시스턴트)를 한눈에 구분.
+   share-sender-nickname: user 배지에 실제 발신자명이 들어가면서 길이가 가변이 됐다.
+   폭이 부족할 때 **줄어드는 쪽은 배지**이고 시각 표기는 보존한다(아래 .share-message-time
+   의 flex:0 0 auto 와 한 쌍 — 배지만 max-width 로 막으면 실제로는 시각 span 이 눌려
+   2줄로 접힌다). flex item 이라 display 는 blockify 되며, ellipsis 가 적용되도록
+   inline-flex 대신 inline-block 을 쓴다(inline-flex 는 blockify 돼도 block *container* 가
+   아니라 text-overflow 미적용 → 글자 중간 하드 클리핑).
+   ⚠ overflow:hidden 인 inline-block 은 baseline 이 margin-bottom edge 로 합성된다 —
+   이 배지를 인라인 문맥에 재사용하거나 부모를 align-items:baseline 으로 바꾸면 내려앉는다. */
 .share-role-badge {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 2px 9px;
   border-radius: 999px;
   font-size: 0.7rem;
@@ -146,7 +157,21 @@
 
 .share-role-user { background: var(--share-primary); color: #fff; }
 .share-role-assistant { background: #e2e8f0; color: #334155; }
-.share-message-time { color: var(--share-text-muted); }
+/* share-sender-nickname: 시각은 축소·줄바꿈 대상이 아니다. 이것이 없으면 좁은 폭에서
+   시각이 max-content 미만으로 눌려 2줄로 접히고 meta 줄 높이가 카드마다 달라진다. */
+.share-message-time {
+  color: var(--share-text-muted);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* 좁은 폭(모바일)에서는 이름을 자르는 대신 줄을 바꾼다 — 공통 접두사 계정명
+   (kim.a@corp / kim.b@corp)이 ellipsis 로 같은 문자열이 되면 "누가 말했는지 구분"
+   이라는 본 기능의 목적 자체가 깨진다. rail 은 ≤720px 에서 숨겨져 툴팁 대체 경로도 없다. */
+@media (max-width: 720px) {
+  .share-message-meta { flex-wrap: wrap; }
+  .share-role-badge { max-width: 100%; }
+}
 
 /* REQ-20260629-point-scroll: 공유 대화 우측 스크롤바 가이드 뱃지(point rail).
    공유 페이지는 window 스크롤이므로 rail 은 뷰포트 우측에 position:fixed 미니맵으로

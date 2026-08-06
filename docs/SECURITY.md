@@ -741,6 +741,61 @@ feature-0023 Bearer API 토큰 cross-account 감사(2026-07-23)에서 발견된 
   **멤버 윈도우 격리** 강화. 정합 정본 = feature-0009 MODIFY.md CHG-20260723·REVIEW.md
   REV-20260723.
 
+### 21.7 익명 공유 뷰의 발신자 표시명 — 표시 계층 노출 경계 (share-sender-nickname, 2026-08-06)
+
+공유 링크 화면의 user 말풍선 배지를 role 고정 라벨(`사용자`)에서 **메시지별 발신자명**으로
+바꿨다(사용자 요청). 표시 경계가 바뀌므로 여기에 명시한다.
+
+- **백엔드 노출면 불변 (실측)**: 발신자명은 본 변경 **이전부터** `/api/public/share/{token}` 응답의
+  `messages[].meta.sender_username`/`sender_account_id` 로 나가고 있었다 — `_share_load_messages`
+  가 표시 store 의 `meta_json` 을 필터 없이 전달하기 때문이다(2026-08-06 라이브 익명 payload 실측:
+  그룹 발신 메시지에 `{"group_chat":true,"sender_username":"…","sender_account_id":…}` 존재.
+  §18.8 적대 패널이 코드로 재확증 — 배제 필터 3종(내부/시스템 메시지·`event_type`·
+  attachment_derived redact) 어디에도 sender 키가 없고, redact 대상 메시지조차 sender 는 남는다).
+  응답 shape 변경은 아래 `is_group` **불리언 1개**뿐이며 인가 게이트·권한 코드는 불변이다.
+- **실질 열람자는 넓어진다 (정직)**: payload 에 있었다는 사실이 "노출이 없다"는 뜻은 아니다.
+  종전엔 개발자도구/스크립트로 응답을 뜯어보는 사람만 볼 수 있었고, 이제는 링크를 연 **모든**
+  열람자(익명 포함)가 화면에서 본다. 사용자 결정(2026-08-06): 전원 노출. 근거 — 대화 소유자명은
+  이미 헤더 `소유자 X` 로 익명 노출 중이었고, 공유 링크는 사내 IP 전제(§7.1)다.
+- **노출 집합 = 발화 시점에 각인된 계정** (§18.8 패널 F-1/F-3 반영): 라벨은 **발화 시점 각인**
+  (`meta.sender_username`/`sender_account_id`, `attribution_inferred` 없음)일 때만 사람 이름을
+  쓴다. 사후 보정으로 채워진 각인(fork·제품 전환이 미각인 행에 원본 대화 owner 를 기입하며
+  `attribution_inferred: true` 를 남긴다)은 **이름·id 둘 다 쓰지 않는다** — 그 행의 실제 발신자는
+  다른 멤버였을 수 있고, 공유 링크는 전달되는 증거물이라 익명 뷰어가 오귀속을 교정할 맥락이 없다.
+  이 게이트가 없으면 A 의 대화를 B 가 fork 해 공유했을 때 **그 대화의 owner 도 멤버도 아닌 A** 의
+  계정명이 익명 화면에 등장한다(패널이 지적한 경로 — 지금은 닫혀 있다).
+- **소유자명 폴백은 1:1 한정**: 각인이 전혀 없는 메시지(각인 도입 이전 legacy)는 **1:1 로 확인된
+  대화에서만** 대화 소유자명으로 표기한다. 그룹 legacy 행은 발신자가 owner 가 아닐 수 있어
+  소유자명이 오귀속이 되기 때문이다. 판정 신호는 신규 `conversation.is_group`(불리언, 새 식별자
+  노출 0)이고 게이트는 **fail-closed** — 조회 실패·대화 행 부재·구 payload 는 전부 "그룹"으로
+  간주해 이름을 붙이지 않는다(`_share_conversation_is_group`).
+- **window 격리와 직교 (§21.2 불변)**: 발신자 라벨은 **이미 렌더되는 메시지**에만 붙는다. window
+  밖 메시지는 애초에 payload 에 없으므로(`_share_load_messages` 의 hard window, 브랜치 열람도
+  `_branch_resolve_readonly_leaf`/`_branch_idrange_pred` 로 floor/anchor 게이트) 새 escape 면이
+  아니다 — 패널이 코드로 확인. 참여 알림 이벤트(`event_type`)는 종전대로 익명 스냅샷에서
+  배제되므로 **발화하지 않은 멤버**의 이름은 여전히 나가지 않는다(멤버 명부 ≠ 발화자).
+- **표시 안전 (2중)**: ① 싱크 — 배지는 `textContent`, `title` 은 속성 대입, rail 은 `title`/
+  `setAttribute`(§21.2 house style)라 마크업 해석 경로가 없다. ② 입력 — 계정명은 생성 전 경로
+  (로컬 가입·OAuth 프로비저닝·부트스트랩 시드)에서 `USERNAME_RE`(`web_context.py`)로
+  `[A-Za-z0-9_.-]` 로 제한돼 bidi/homograph 스푸핑도 구조적으로 차단된다.
+  ⚠ **이 방어의 절반은 입력 측 불변식이다** — 별도 표시명/닉네임 필드를 도입해 계정명 문자
+  정책을 완화하면 배지·title 이 즉시 노출·스푸핑 표면이 되므로 그 cycle 에서 재평가할 것.
+- **[수용 잔여] 1 — 계정 표시명의 PII 성**: 실명 계정 운용 시 이름 자체가 PII 다. `.any`
+  감사자에게 이미 노출되는 대화 topic·첨부 파일명(§8.2.1)과 동급이며, 외부 LAN 노출이
+  가시화되면 §7.2 의 IP allowlist / 토큰 비밀번호가 본 표면에도 동일하게 적용된다.
+- **[수용 잔여] 2 — 내부 계정 PK 의 육안 노출**: `사용자 <id>` 표기로 내부 계정 id 가 화면·
+  스크린샷·전달 링크에 드러난다. 값 자체는 종전에도 payload 에 있었으나, 화면 표기는 "같은 id =
+  같은 사람" 상관관계와 대략적 계정 규모를 육안으로 읽히게 한다. 이름을 모르는 발신자를 서로
+  구분하려면 안정적 식별자가 필요하고(작업 화면 `사용자 <id>` 와 동일 컨벤션), 대안인 순번
+  익명화는 대화 간 상관을 오히려 감춰 오독을 만든다고 판단해 수용한다.
+- **선행 권고 supersede**: feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`
+  ("일반 그룹채팅 메시지의 `meta.sender_username` 이 anonymous 공유에 노출 — 후속 티켓 권고")는
+  본 §21.7 이 대체한다. 그 권고는 **비노출** 방향의 후속을 상정했으나, 사용자 결정(2026-08-06)은
+  **표시** 방향으로 종결했다. 원장에 상충 기록이 남지 않도록 여기에 명시한다.
+
+정합 정본 = feature-0003 `FUNCTION.md` (share-sender-nickname, 2026-08-06) · `REVIEW.md`
+REV-20260806T032732-share-sender-nickname.
+
 ## 22. 관리 콘솔 권한 카테고리 계층 — 카테고리 '접근' 게이트 (perm-category-hier, TASK-20260714T181936-perm-category-hier)
 
 관리 콘솔 `계정 및 역할` 의 권한 체계를 좌측 nav 카테고리(계정/제품/감사/지식베이스/시스템) 정합

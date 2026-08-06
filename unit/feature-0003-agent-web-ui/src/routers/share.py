@@ -391,6 +391,13 @@ WHERE Token = %s AND RevokedAt IS NULL
                     # 요약 누출을 막기 위해 genericize 한다. (상단만 있는 anchored 공유는 종전대로.)
                     "topic": ("공유된 대화" if floor_id_view_int is not None else str(conv_meta.get("topic") or "대화")),
                     "owner_username": str(conv_meta.get("owner_username") or ""),
+                    # share-sender-nickname: 공유 뷰가 **각인 없는** user 메시지의 화자를
+                    # 대화 소유자명으로 표기해도 되는지 판정하는 유일한 신호(불리언 1개 —
+                    # 새 식별자·계정 정보 노출 0). 1:1 은 발신자 = 소유자라 정확하지만,
+                    # 각인 도입(feature-0009 gc-ask-sender-attrib) 이전 legacy **그룹** 행은
+                    # 발신자가 owner 가 아닐 수 있어 소유자명이 오귀속이 된다.
+                    # 판정 실패 시 True(그룹으로 간주) — fail-closed 로 이름을 붙이지 않는다.
+                    "is_group": _share_conversation_is_group(conversation_id),
                     "product_key": str(conv_meta.get("product_key") or ""),
                     "product_name": str(conv_meta.get("product_name") or ""),
                     "product_mode": str(conv_meta.get("product_mode") or "pinned"),
@@ -492,6 +499,51 @@ def public_share_fork(token: str, request: Request, account=Depends(app.require_
         },
     )
     return JSONResponse(payload)
+
+
+def _share_conversation_is_group(conversation_id: str) -> bool:
+    """share-sender-nickname: 공유 뷰의 소유자명 폴백 게이트 (fail-closed).
+
+    판정 기준은 `app._conversation_is_group` 과 동일(`is_group` 플래그 OR 멤버 ≥ 2, 정본 PG)
+    이지만 **실패 방향이 반대**라 감싸지 않고 직접 조회한다. 그 함수는 조회 실패를 내부에서
+    False(비그룹)로 삼키는데 — `/api/ask` 서버 방어선처럼 "그룹 전용 동작을 켤지" 판정에서는
+    그것이 안전 방향이다 — 본 용도에서 False 는 "각인 없는 user 메시지에 **대화 소유자
+    이름을 붙여도 된다**" 는 뜻이 되어, 각인 도입(feature-0009 gc-ask-sender-attrib) 이전
+    legacy 그룹 행의 발화가 owner 이름으로 익명 공유 페이지에 확정 표기되는 오귀속을 낳는다.
+    모르면 이름을 안 붙이는 쪽(True=그룹)이 언제나 안전한 실패다 (§18.8 적대 패널 F-2).
+    """
+    if not conversation_id:
+        return True
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT COALESCE(is_group, false) FROM agent_runtime.core_conversations "
+                    "WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return True  # 대화 행을 못 찾음 = 판정 불가 → fail-closed
+                if bool(row[0]):
+                    return True
+                cur.execute(
+                    "SELECT COUNT(*) FROM agent_runtime.conversation_members "
+                    "WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+                crow = cur.fetchone()
+                return bool(crow and int(crow[0] or 0) > 1)
+        finally:
+            pg.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_share_conversation_is_group: lookup failed — 그룹으로 간주(fail-closed)",
+            exc_info=True,
+        )
+        return True
 
 
 # ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
