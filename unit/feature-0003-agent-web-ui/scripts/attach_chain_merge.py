@@ -12,6 +12,8 @@
 
 동작:
     논리 파일 = `(ConversationId, AccountId, base(OriginalFilename))`.
+    대상 = 그룹 안에 root 가 둘 이상이거나 · 이름이 둘 이상이거나 · **live(`SupersededAt IS NULL`)가
+    둘 이상**인 경우(마지막은 supersede 누락이 남긴 선재 결함 — 증상이 같으므로 함께 정리).
     `base()` 는 파일명 끝의 `_v<숫자>` 접미를 제거한 것(`x_v3.sql` → `x.sql`).
     그룹 안 row 를 **CreatedAt 오름차순**으로 정렬해
       - 첫 row: `RootAttachmentId=NULL`, `VersionNumber=1`
@@ -105,8 +107,13 @@ def build_plan(rows: list[dict], days: int | None) -> tuple[list[dict], list[dic
     for (conv, acct, base), members in sorted(groups.items()):
         chains = {int(m["RootAttachmentId"] or m["Id"]) for m in members}
         names = {str(m["OriginalFilename"]) for m in members}
-        if len(chains) <= 1 and len(names) <= 1:
-            continue  # 이미 단일 체인 · 단일 이름 — 손댈 것 없음
+        # 체인이 하나로 모여 있어도 `SupersededAt IS NULL` 이 둘 이상이면 목록에 **같은 파일이
+        # 여러 줄**로 뜬다(업로드 경로의 supersede 누락이 남긴 선재 결함 — 라이브 실측 1건).
+        # 분열(root/이름)과 원인은 다르지만 사용자가 보는 증상과 해소 수단(체인 재정렬)이
+        # 같으므로 같은 판정에 넣는다.
+        lives = sum(1 for m in members if not m["SupersededAt"])
+        if len(chains) <= 1 and len(names) <= 1 and lives <= 1:
+            continue  # 이미 단일 체인 · 단일 이름 · live 1건 — 손댈 것 없음
         if cutoff is not None and max(m["CreatedAt"] for m in members) < cutoff:
             continue  # 범위 밖
 
@@ -231,15 +238,66 @@ def apply_plan(conn, plan: list[dict]) -> int:
 
 
 def mirror(conn, ids: list[int]) -> str:
-    """변경분을 PG 미러로 동기화. 실패는 fail-soft(사유 반환) — MySQL 이 정본이다."""
+    """변경분을 PG 미러로 **2단계**로 동기화. 실패는 fail-soft(사유 반환) — MySQL 이 정본이다.
+
+    ⚠️ 단순 호출로는 안 된다(2026-08-07 라이브 실측): PG 에도 MySQL 과 같은
+    `UNIQUE(root_attachment_id, version_number)` 제약이 있고 미러는 row 단위 upsert 라,
+    재배열된 번호를 순서대로 밀어 넣는 도중 **기존 행과 충돌**한다
+    (`duplicate key ... (699, 4) already exists` — 29 row 가 옛 상태로 남았다).
+    MySQL 쪽에서 쓴 것과 같은 회피를 PG 에도 적용한다:
+      ① 영향 **대화 전체**의 PG row 를 충돌 불가 오프셋으로 선이동
+         (변경 대상만 밀면 그 자리를 차지한 *기존* 행과 다시 부딪친다)
+      ② MySQL 정본으로 재미러
+    """
     if not ids:
         return "no-op"
     try:
         from web.modules import attachment_pg_mirror as _apm
-        _apm.mirror_attachments(conn, sorted(set(ids)))
-        return "ok"
+        from shared import db as _db
     except Exception as exc:  # noqa: BLE001
-        return f"failed: {exc}"
+        return f"failed(import): {exc}"
+
+    targets = sorted(set(int(i) for i in ids))
+    # 영향 대화 전체로 확장 — 충돌 상대까지 함께 밀어야 중간 상태가 풀린다.
+    cur = conn.cursor()
+    try:
+        marks = ",".join(["%s"] * len(targets))
+        cur.execute(
+            f"""SELECT Id FROM WebConversationAttachments
+                 WHERE ConversationId IN (
+                     SELECT DISTINCT ConversationId FROM WebConversationAttachments WHERE Id IN ({marks}))
+                   AND DeletedAt IS NULL AND DeletePending = 0""",
+            targets,
+        )
+        scope = sorted({int(r[0]) for r in cur.fetchall()}) or targets
+    except Exception:
+        scope = targets
+    finally:
+        cur.close()
+
+    try:
+        rw = _db._pg_connect()
+        w = rw.cursor()
+        try:
+            w.execute("SELECT COALESCE(MAX(version_number), 0) FROM agent_runtime.core_attachments")
+            off = int(w.fetchone()[0] or 0) + 100000
+            for i in scope:
+                w.execute(
+                    "UPDATE agent_runtime.core_attachments SET version_number = %s WHERE id = %s",
+                    (off + i, i),
+                )
+            rw.commit()
+        finally:
+            w.close()
+            rw.close()
+    except Exception as exc:  # noqa: BLE001
+        return f"failed(pre-shift): {exc}"
+
+    try:
+        _apm.mirror_attachments(conn, scope)
+        return f"ok (scope={len(scope)} row)"
+    except Exception as exc:  # noqa: BLE001
+        return f"failed(mirror): {exc}"
 
 
 def do_rollback(conn, snapshot_path: str) -> int:

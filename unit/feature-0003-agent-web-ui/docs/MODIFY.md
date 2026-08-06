@@ -2847,3 +2847,19 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - `docs/TASK.md`: 두 cycle 의 배포·PB-0008 체크박스 마감. `docs/REPORT.md`: Summary 2건 갱신 +
   §8 원장 3건(선행 red `verify_attach_multi_upload.mjs` · CSS 정적검사 한계 · 라이브 표본 부재).
 - 코드 변경 **0**(doc-only). Timestamp: 2026-08-07T07:00:00+09:00
+## CHG-20260807T032000-attach-chain-live-dup — 라이브 병합 실행 + PG 미러 2단계 흡수 + live 중복 조건
+
+- 선행 cycle 의 라이브 적용(155 row, 잔여 0)과 그 과정에서 드러난 결함 2건 수리.
+- **`scripts/attach_chain_merge.py` `mirror()` 2단계화**: PG 에도 같은 `UNIQUE(root, version)` 이
+  있어 단순 upsert 가 중간 상태에서 충돌한다(라이브 실측 `(699,4) already exists` → 29 row 가 옛
+  상태로 잔존). 영향 **대화 전체**를 오프셋 선이동 후 재미러하도록 흡수(변경분만 밀면 그 자리를
+  차지한 기존 행과 재충돌). 반환값에 스코프 row 수 표기.
+- **판정 조건에 live>1 추가**: root·이름이 같아도 `SupersededAt IS NULL` 이 둘이면 목록에 두 줄로
+  뜬다(업로드 supersede 누락이 남긴 선재 결함, 라이브 1건). 증상·해소 수단이 분열과 같아 같은
+  판정에 넣었다.
+- **테스트** `test_attach_chain_merge.py` **C10/C10b 신규** — live 중복이 수리되는지 + 그 조건이
+  정합 체인을 건드리지 않는지(반대 방향).
+- 라이브 결과: MySQL 활성 780 = PG 780 · **불일치 0** · **체인당 live>1 : 0**(양쪽).
+  스냅샷·롤백 SQL 을 `artifacts/attach-chain-merge/` 로 회수.
+- Files: `scripts/attach_chain_merge.py`, `tests/test_attach_chain_merge.py`, `docs/{TASK,MODIFY,REVIEW}.md`.
+- Timestamp: 2026-08-07T03:20:00+09:00

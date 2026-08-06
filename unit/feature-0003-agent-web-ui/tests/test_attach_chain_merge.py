@@ -261,3 +261,35 @@ def test_c9b_apply_rolls_back_on_failure():
     with pytest.raises(RuntimeError):
         M.apply_plan(conn, plan)
     assert conn.rolled_back and not conn.committed, "실패 시 부분 적용이 남으면 안 된다"
+
+# ── C10: 체인은 하나인데 live 가 둘 이상 (supersede 누락 선재 결함) ─────────────
+def test_c10_multiple_live_in_single_chain_is_repaired():
+    """root·이름이 모두 같아도 `SupersededAt IS NULL` 이 둘이면 목록에 두 줄로 뜬다.
+
+    라이브 실측(2026-08-07): `P_gunzgame_Game_MasangCreatorsGetByAID.sql` 이 한 체인(root=802)
+    안에서 v1·v2 둘 다 live 로 남아 있었다 — 업로드 경로의 supersede 누락이 남긴 선재 결함.
+    분열(root/이름)과 원인은 다르지만 증상과 해소 수단이 같으므로 같은 판정에 넣는다.
+    """
+    t1, t2 = T0, T0 + _dt.timedelta(hours=1)
+    rows = [
+        _row(90, "k.sql", ver=1, root=None, superseded=None, created=t1),
+        _row(91, "k.sql", ver=2, root=90, superseded=None, created=t2),
+    ]
+    plan, skipped = M.build_plan(rows, None)
+    assert skipped == []
+    after = {p["id"]: p["after"] for p in plan}
+    assert 90 in after and after[90]["SupersededAt"] == t2, "구버전이 강등돼야 한다"
+    lives = [i for i, a in after.items() if a["SupersededAt"] is None]
+    # 최신(91)은 이미 정합해 계획에 오르지 않을 수 있다 — 계획에 오른 것 중 live 는 없어야 한다.
+    assert lives == [] or lives == [91]
+    remaining_live = [r["Id"] for r in rows if r["Id"] not in after and not r["SupersededAt"]]
+    assert len(lives) + len(remaining_live) == 1, "정리 후 체인의 live 는 정확히 1건"
+
+
+def test_c10b_single_live_chain_still_untouched():
+    """live 1건인 정합 체인은 여전히 계획 0 — C10 조건이 과하지 않은지 반대 방향 확인."""
+    rows = [
+        _row(95, "k.sql", ver=1, root=None, superseded=T0 + _dt.timedelta(hours=1), created=T0),
+        _row(96, "k.sql", ver=2, root=95, superseded=None, created=T0 + _dt.timedelta(hours=1)),
+    ]
+    assert M.build_plan(rows, None)[0] == []
