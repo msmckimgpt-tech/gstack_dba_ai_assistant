@@ -5791,6 +5791,56 @@ def _next_version_filename(original: str, version_number: int) -> str:
     stem = app.re.sub(r"_v\d+$", "", stem) or stem  # 기존 버전 접미 제거(idempotent)
     return f"{stem}_v{version_number}.{ext}" if ext else f"{stem}_v{version_number}"
 
+# REQ-20260806-attach-suffix-toggle: 다운로드 파일명의 버전 접미사 적용 규칙 — 단일
+# 다운로드·ZIP·개별 저장이 **같은 함수**를 쓴다. 경로마다 규칙을 복제하면 같은 파일을
+# 어느 버튼으로 받았는지에 따라 이름이 달라지고(선행 cycle 의 `_versionedFilename` 주석이
+# 지적한 그 문제), 토글을 껐는데 한 경로만 접미가 남는 식으로 어긋난다.
+_VERSION_SUFFIX_MODES = ("auto", "keep", "strip", "force")
+
+
+def _download_filename_with_version(raw: str, version_number: int, mode: str = "keep") -> str:
+    """버전 접미사(`_v<n>`)를 저장명에서 떼거나 붙인다.
+
+    - `auto`(경로 기본): v1 은 저장명 그대로, v2 이상은 정확히 하나의 `_v<n>`. 사용자가 같은
+      이름으로 재업로드한 버전은 저장명이 원본명을 승계하므로(체인 정합), 이 규칙이 없으면
+      구버전을 받을 때 로컬 최신본을 덮어쓴다(attach-multi-upload 가 세운 계약).
+    - `keep`: 저장된 이름 그대로.
+    - `strip`: stem 끝의 `_v<version_number>` **한 개만** 제거. 번호가 일치할 때만
+      건드리므로, 사용자가 원래 `plan_v2.docx` 라는 이름으로 올린 v1 첨부는 그대로 둔다
+      (임의의 `_v\\d+$` 를 지우면 사용자가 지은 이름을 왜곡한다).
+    - `force`: 정확히 하나의 `_v<version_number>` 를 보장(idempotent). AI 편집본은 저장명이
+      이미 `report_v2.csv` 라 무조건 덧붙이면 `report_v2_v2.csv` 가 된다 — 먼저 떼고 붙인다.
+    """
+    name = str(raw or "")
+    norm = str(mode or "keep").strip().lower()
+    if norm == "auto":
+        norm = "force" if int(version_number or 1) > 1 else "keep"
+    if norm not in ("strip", "force") or not name:
+        return name
+    # `os.path.splitext` 를 쓴다 — `rsplit(".", 1)` 은 선행점 파일(`.env` → stem 소멸 후
+    # `_v1.env`)과 끝점 이름(`a.` → 점 소실)을 망가뜨린다. splitext 는 `.env`→(".env","")
+    # `a.`→("a",".") 로 원형을 보존한다(§18.8 backend/qa 패널 P3 2건).
+    stem, ext = os.path.splitext(name)
+    marker = f"_v{int(version_number or 1)}"
+    if stem.endswith(marker):
+        stem = stem[: -len(marker)] or stem
+    if norm == "force":
+        stem = f"{stem}{marker}"
+    return f"{stem}{ext}"
+
+
+def _normalize_version_suffix_mode(value: Any, default: str = "keep") -> str:
+    """쿼리 파라미터 정규화. 미지의 값은 조용히 기본값으로 흘리지 않고 caller 가 400 을
+    낼 수 있도록 빈 문자열을 돌려준다 — `scope` 오타를 400 으로 막는 것과 같은 원칙."""
+    if default not in _VERSION_SUFFIX_MODES:
+        # caller 의 오타를 조용히 통과시키면 그 경로만 다른 이름을 내고도 아무도 모른다.
+        raise ValueError(f"invalid default version_suffix mode: {default!r}")
+    raw = str(value if value is not None else "").strip().lower()
+    if not raw:
+        return default
+    return raw if raw in _VERSION_SUFFIX_MODES else ""
+
+
 def _extract_intent_from_content(content: str) -> str:
     text = (content or "").strip()
     for prefix in ("실행 완료:", "완료:"):

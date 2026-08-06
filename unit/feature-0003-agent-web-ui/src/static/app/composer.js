@@ -889,10 +889,71 @@ async function _loadConversationAttachments(convId) {
 // ② TASK-0285: 첨부 다운로드 공통 헬퍼(목록 항목 + 버전 이력 행 공유). web 프록시 경로
 // (/api/attachments/{id}/download)로 외부 머신에서도 동작(TASK-0284) — same-origin 쿠키 인증.
 // apiFetch 는 octet-stream 을 text 로 망가뜨리므로 raw fetch + blob 을 쓴다.
-export async function _downloadAttachmentById(attId, filename, btn) {
+// REQ-20260806-attach-suffix-toggle: 파일명에 버전 표시(_v2)를 넣을지 — 개별·전체
+// 다운로드가 공유하는 하나의 선택. 브라우저에 기억시켜 매번 다시 고르지 않게 한다
+// (기본 = 포함 = 종전 동작). localStorage 접근은 사파리 private 모드 등에서 던지므로 감싼다.
+const ATTACH_SUFFIX_PREF_KEY = "dqa.attachDownloadVersionSuffix";
+// 패널·모달이 **같은 문구**를 쓴다 — 같은 상태를 공유한다는 것이 이 기능의 핵심 주장인데
+// 라벨이 갈리면 두 개의 설정처럼 읽힌다. "유지" 인 이유: 켜도 없던 표시를 새로 만들지는
+// 않는다(사용자가 같은 이름으로 재업로드한 버전은 저장명에 애초에 접미가 없다).
+export const ATTACH_SUFFIX_LABEL = "다운로드 파일명의 버전 표시(_v2) 유지";
+const ATTACH_SCOPE_ALL_HINT_ON = "파일명에 v1·v2 가 붙습니다";
+const ATTACH_SCOPE_ALL_HINT_OFF = "버전 표시 없이 받습니다";
+
+// 저장이 막힌 브라우저(사파리 프라이빗·쿠키 차단)를 위한 세션 내 폴백. 이것이 없으면
+// `setItem` 예외를 삼킨 뒤 화면 체크박스만 꺼지고 실제 다운로드는 계속 포함으로 나가,
+// **표시와 집행이 세션 내내 어긋난다**(§18.8 ux 패널 P2).
+let _attachSuffixMemory = null;
+
+export function _attachVersionSuffixIncluded() {
+  try {
+    const v = localStorage.getItem(ATTACH_SUFFIX_PREF_KEY);
+    if (v !== null) return v !== "0";
+  } catch (e) {}
+  return _attachSuffixMemory === null ? true : _attachSuffixMemory;
+}
+
+function _setAttachVersionSuffixIncluded(on) {
+  _attachSuffixMemory = Boolean(on);
+  try { localStorage.setItem(ATTACH_SUFFIX_PREF_KEY, on ? "1" : "0"); } catch (e) {}
+  _syncAttachSuffixSurfaces(Boolean(on));
+}
+
+// 열려 있는 모든 표면(패널 체크박스 ↔ 모달 체크박스)을 되맞춘다 — 한쪽만 바뀌면 사용자는
+// 방금 끈 옵션이 켜져 있는 화면을 보게 된다. 체크박스에 딸린 안내 문구도 함께 갱신한다.
+function _syncAttachSuffixSurfaces(on) {
+  document.querySelectorAll(".js-attach-suffix-toggle").forEach((el) => {
+    if (el.checked !== on) el.checked = on;
+    if (typeof el._attachSuffixSyncHint === "function") el._attachSuffixSyncHint();
+  });
+}
+
+// 다른 탭에서 바꾼 선택이 이 탭 화면에 반영되지 않으면, 체크박스는 옛 값을 보여주는데
+// 다운로드는 매번 새로 읽은 값을 따른다 — 같은 표시-집행 괴리다(§18.8 ux 패널 P2).
+try {
+  window.addEventListener("storage", (ev) => {
+    if (ev.key !== ATTACH_SUFFIX_PREF_KEY) return;
+    _attachSuffixMemory = null;  // 저장소가 정본 — 메모리 폴백을 비운다.
+    _syncAttachSuffixSurfaces(_attachVersionSuffixIncluded());
+  });
+} catch (e) {}
+
+// 서버 파라미터(keep/strip/force)로 옮긴다. `force` 는 전 버전 일괄 다운로드처럼 같은
+// 이름이 여럿 섞이는 경로에서만 서버가 기본으로 쓴다.
+function _versionSuffixMode({ forceWhenIncluded = false } = {}) {
+  if (!_attachVersionSuffixIncluded()) return "strip";
+  // 켜져 있으면 경로별 서버 기본을 그대로 쓴다 — 단일·최신본은 `auto`(v2 이상에만 부착),
+  // 전 버전 일괄만 `force`(v1 도 구분해야 압축 안에서 이름이 겹치지 않는다).
+  return forceWhenIncluded ? "force" : "auto";
+}
+
+export async function _downloadAttachmentById(attId, filename, btn, opts = {}) {
   if (btn) btn.disabled = true;
   try {
-    const resp = await fetch(`/api/attachments/${encodeURIComponent(attId)}/download`, { credentials: "same-origin" });
+    const mode = opts.versionSuffix || _versionSuffixMode();
+    const resp = await fetch(
+      `/api/attachments/${encodeURIComponent(attId)}/download?version_suffix=${encodeURIComponent(mode)}`,
+      { credentials: "same-origin" });
     if (!resp.ok) {
       showToast(resp.status === 403 ? "이 첨부를 다운로드할 권한이 없습니다." : "다운로드할 수 없습니다.", true);
       return;
@@ -901,7 +962,16 @@ export async function _downloadAttachmentById(attId, filename, btn) {
     const objUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = objUrl;
-    link.download = filename || "download";
+    // 최종 파일명은 서버가 정한 것을 쓴다 — blob 저장은 Content-Disposition 을 무시하므로
+    // 이름 규칙을 프론트가 복제하면 ZIP·개별 경로가 서로 어긋난다(버전 번호를 모르는
+    // 호출부도 있다). 헤더가 없는 옛 응답이면 호출자가 준 이름으로 되돌아간다.
+    //
+    // 예외 `opts.preferGivenName` — 일괄 개별 저장은 매니페스트가 **묶음 전체를 보고**
+    // 중복을 푼 이름을 이미 줬다. 단건 응답 헤더는 그 묶음을 모르므로 여기서 헤더를
+    // 우선하면 같은 이름 여럿이 되살아나 어느 게 몇 버전인지 사라진다.
+    let served = "";
+    try { served = decodeURIComponent(resp.headers.get("X-Attachment-Download-Name") || ""); } catch (e) {}
+    link.download = (opts.preferGivenName ? (filename || served) : (served || filename)) || "download";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -988,13 +1058,11 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
     dl.setAttribute("aria-label", `${v.original_filename || "파일"} 버전 ${vnum} 다운로드`);
     dl.textContent = "⬇";
     // attach-multi-upload: 버전 체인의 모든 row 가 같은 파일명을 쓰므로(원본명 승계),
-    // 구버전을 받으면 로컬에서 최신본을 덮어쓴다. 저장명에만 버전 접미를 붙인다
-    // (서버 Content-Disposition 도 동일 규칙 — 여기 blob 저장은 link.download 가 이긴다).
+    // 구버전을 받으면 로컬에서 최신본을 덮어쓴다 → 저장명에만 버전 접미를 붙인다.
+    // 그 규칙은 이제 서버 `auto` 가 수행하고 프론트는 응답 헤더의 이름을 그대로 쓴다
+    // (규칙이 두 벌이면 토글을 껐을 때 한쪽에만 접미가 남는다).
     dl.addEventListener("click", () =>
-      _downloadAttachmentById(
-        v.id,
-        vnum > 1 ? _versionedFilename(v.original_filename, vnum) : v.original_filename,
-        dl));
+      _downloadAttachmentById(v.id, v.original_filename, dl));
     acts.appendChild(dl);
     // 삭제 어포던스는 서버 판정(can_manage)만 따른다 — 프론트가 소유권을 따로 추정하면
     // 표시와 집행이 어긋난다(§16.7 G6).
@@ -1257,9 +1325,47 @@ function _openAttachDownloadDialog() {
   scopeGroup.className = "attach-manage-choices";
   const readScope = _attachRadioGroup(scopeGroup, `attachDlScope-${m.uid}`, [
     { value: "latest", label: "최신 버전만" },
-    { value: "all", label: "모든 버전", hint: "파일명에 v1·v2 가 붙습니다" },
+    { value: "all", label: "모든 버전", hint: ATTACH_SCOPE_ALL_HINT_ON },
   ], "latest");
   m.body.appendChild(scopeGroup);
+  const scopeAllHint = scopeGroup.querySelector('input[value="all"]')
+    ?.closest(".attach-manage-choice")?.querySelector("em") || null;
+
+  // REQ-20260806-attach-suffix-toggle: 패널의 토글과 같은 값을 쓰는 체크박스.
+  // 여기서 바꾸면 패널 쪽도 즉시 따라가고 다음 다운로드까지 유지된다.
+  const suffixLabel = document.createElement("label");
+  suffixLabel.className = "attach-manage-choice attach-manage-suffix";
+  const suffixInput = document.createElement("input");
+  suffixInput.type = "checkbox";
+  suffixInput.className = "js-attach-suffix-toggle";
+  suffixInput.checked = _attachVersionSuffixIncluded();
+  const suffixText = document.createElement("span");
+  suffixText.className = "attach-manage-choice-text";
+  suffixText.innerHTML = `<strong>${escapeHtml(ATTACH_SUFFIX_LABEL)}</strong><em></em>`;
+  const suffixHint = suffixText.querySelector("em");
+  // 스크린리더는 조용히 바뀐 텍스트를 읽지 않는다 — "미리 말한다" 는 목적이 SR 경로에서
+  // 무음이 되지 않도록 live region 으로 둔다(§18.8 ux 패널 P2).
+  suffixHint.setAttribute("aria-live", "polite");
+  suffixLabel.append(suffixInput, suffixText);
+  m.body.appendChild(suffixLabel);
+
+  // 두 안내를 **함께** 갱신한다. '모든 버전' 의 "파일명에 v1·v2 가 붙습니다" 만 정적으로
+  // 두면, 토글을 끈 상태에서 그 문구와 체크박스가 한 화면에서 서로를 부정한다 — 그리고
+  // 실제로 붙는 것은 v1·v2 가 아니라 첨부 구분용 번호다(§18.8 ux 패널 P1).
+  const syncSuffixHint = () => {
+    const on = suffixInput.checked;
+    if (scopeAllHint) scopeAllHint.textContent = on ? ATTACH_SCOPE_ALL_HINT_ON : ATTACH_SCOPE_ALL_HINT_OFF;
+    // 접미를 떼면 '최신 버전만' 에서도 이름이 겹칠 수 있다(같은 이름의 다른 첨부, 또는
+    // `report_v2.csv` 가 기존 `report.csv` 위로 접히는 경우) — scope 로 좁히지 않는다.
+    suffixHint.textContent = on ? "" : "이름이 겹치면 파일마다 다른 번호가 덧붙습니다";
+  };
+  suffixInput._attachSuffixSyncHint = syncSuffixHint;  // 패널에서 바꿔도 여기 문구가 따라온다
+  suffixInput.addEventListener("change", () => {
+    _setAttachVersionSuffixIncluded(suffixInput.checked);
+    syncSuffixHint();
+  });
+  scopeGroup.addEventListener("change", syncSuffixHint);
+  syncSuffixHint();
 
   const progress = document.createElement("p");
   progress.className = "attach-manage-hint hidden";
@@ -1284,25 +1390,16 @@ function _openAttachDownloadDialog() {
   try { cancel.focus(); } catch (e) {}
 }
 
-// 전 버전 모드에서 개별 저장할 때 붙일 이름 — ZIP 경로(`_zip_entry_name`)가 `_v3` 를
-// 붙이는데 개별 경로가 원본명 그대로면 브라우저가 `report (1).csv` 로 저장해 **어느 게
-// 몇 버전인지 사라진다**. 두 경로의 결과물이 같은 규칙을 따르게 한다.
-// 저장(로컬) 파일명에 버전 접미를 붙인다. 서버 `_next_version_filename` 과 같은 규칙:
-// 이미 `_v<n>` 접미가 있으면 제거 후 재부여(이중접미 방지 — 과거 사이클이 만든
-// `x_v2.sql` 같은 저장명이 `x_v2_v3.sql` 이 되지 않게), 확장자는 보존.
-// attach-multi-upload: 버전 체인의 모든 row 가 같은 저장 파일명을 쓰게 되면서(원본명 승계)
-// 구버전 다운로드가 로컬 최신본을 덮어쓸 수 있어, 버전 박스 행도 이 함수를 쓴다.
-function _versionedFilename(filename, versionNumber) {
-  const n = Number(versionNumber || 1);
-  const raw = String(filename || "download");
-  const dot = raw.lastIndexOf(".");
-  const stem = (dot > 0 ? raw.slice(0, dot) : raw).replace(/_v\d+$/, "");
-  const ext = dot > 0 ? raw.slice(dot) : "";
-  return `${stem}_v${n}${ext}`;
-}
+// (REQ-20260806-attach-suffix-toggle) 개별 저장 이름을 프론트에서 만들던 `_versionedFilename`
+// 제거 — 이름 규칙의 권위를 서버로 모았다(manifest 의 `download_filename`,
+// 개별 응답의 `X-Attachment-Download-Name`). 규칙이 두 벌이면 토글을 끈 뒤 한쪽 경로에만
+// 접미가 남고, 저장명에 이미 `_v2` 가 있는 AI 편집본은 `report_v2_v2.csv` 가 됐다.
 
 async function _runBulkDownload(convId, format, scope, progressEl) {
   const base = `/api/conversations/${encodeURIComponent(convId)}/attachments/download`;
+  // '모든 버전' 은 v1 까지 구분해야 하므로 켜져 있으면 force, 그 외는 서버 기본(auto).
+  const suffixMode = _versionSuffixMode({ forceWhenIncluded: scope === "all" });
+  const suffixQs = `&version_suffix=${encodeURIComponent(suffixMode)}`;
   const setProgress = (text) => {
     if (!progressEl) return;
     progressEl.textContent = text || "";
@@ -1310,15 +1407,15 @@ async function _runBulkDownload(convId, format, scope, progressEl) {
   };
   if (format === "manifest") {
     try {
-      const resp = await apiFetch(`${base}?format=manifest&scope=${encodeURIComponent(scope)}`);
+      const resp = await apiFetch(`${base}?format=manifest&scope=${encodeURIComponent(scope)}${suffixQs}`);
       const files = Array.isArray(resp?.files) ? resp.files : [];
       if (!files.length) { showToast("다운로드할 첨부가 없습니다.", true); return false; }
       let i = 0;
       for (const f of files) {
         i += 1;
         setProgress(`${i} / ${files.length} 저장 요청 중…`);
-        const name = scope === "all" ? _versionedFilename(f.filename, f.version_number) : f.filename;
-        await _downloadAttachmentById(f.id, name, null);
+        await _downloadAttachmentById(f.id, f.download_filename || f.filename, null,
+                                      { versionSuffix: suffixMode, preferGivenName: true });
       }
       setProgress("");
       // 건수를 단정하지 않는다 — 브라우저의 다중 다운로드 차단은 **건수 기준**이라
@@ -1332,7 +1429,8 @@ async function _runBulkDownload(convId, format, scope, progressEl) {
     }
   }
   try {
-    const resp = await fetch(`${base}?format=zip&scope=${encodeURIComponent(scope)}`, { credentials: "same-origin" });
+    const resp = await fetch(`${base}?format=zip&scope=${encodeURIComponent(scope)}${suffixQs}`,
+                             { credentials: "same-origin" });
     if (!resp.ok) {
       // 413(상한 초과)은 서버가 사유와 대안을 문장으로 준다 — 그대로 보여준다.
       let msg = "다운로드할 수 없습니다.";
@@ -1372,8 +1470,11 @@ async function _loadConversationAttachmentList(convId) {
   // 있을 때만 노출한다(첨부 0건 대화에서는 의미 없는 문구).
   const noteEl = document.getElementById("attachSidePanelNote");
   const trashNoteEl = document.getElementById("attachSidePanelTrashNote");
+  // 버전 표시 토글은 받을 것이 있을 때만 의미가 있다 — 빈 목록·휴지통에서는 숨긴다.
+  const suffixOptEl = document.getElementById("attachSidePanelSuffixOpt");
   if (noteEl) noteEl.classList.add("hidden");
   if (trashNoteEl) trashNoteEl.classList.add("hidden");
+  if (suffixOptEl) suffixOptEl.classList.add("hidden");
   // REQ-20260806-attach-manage: 휴지통 모드면 삭제분을 본다.
   const isTrash = _attachListState === "deleted";
   listEl.innerHTML = `<div class="attach-list-empty">불러오는 중...</div>`;
@@ -1394,6 +1495,7 @@ async function _loadConversationAttachmentList(convId) {
       return;
     }
     if (noteEl) noteEl.classList.remove("hidden");  // 첨부 존재 시 참조 범위 안내 노출
+    if (suffixOptEl) suffixOptEl.classList.remove("hidden");
     const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
     const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
     for (const a of arr) {
@@ -1546,6 +1648,17 @@ function _bindAttachPanelManageControls() {
     trashBtn.dataset.wired = "1";
     trashBtn.addEventListener("click", () =>
       _setAttachListState(_attachListState === "deleted" ? "active" : "deleted"));
+  }
+  // REQ-20260806-attach-suffix-toggle: 버전 표시 토글. 저장된 선택으로 시작한다 —
+  // HTML 의 `checked` 만 믿으면 지난번에 끈 사용자가 켜진 체크박스를 보고, 실제 동작은
+  // 저장값을 따라 서로 어긋난다.
+  const suffixToggle = document.getElementById("attachSidePanelSuffixToggle");
+  if (suffixToggle && suffixToggle.dataset.wired !== "1") {
+    suffixToggle.dataset.wired = "1";
+    suffixToggle.classList.add("js-attach-suffix-toggle");
+    suffixToggle.checked = _attachVersionSuffixIncluded();
+    suffixToggle.addEventListener("change", () =>
+      _setAttachVersionSuffixIncluded(suffixToggle.checked));
   }
 }
 

@@ -2414,19 +2414,22 @@ def _bulk_zip_max_bytes() -> int:
         return 512 * 1024 * 1024
 
 
-def _zip_entry_name(row: dict, *, with_version: bool, used: set[str]) -> str:
+def _zip_entry_name(row: dict, *, mode: str, used: set[str]) -> str:
     """ZIP 안 파일명. 전 버전 모드는 버전 번호를 붙이고, 그래도 겹치면 id 를 덧붙인다
-    — 같은 이름이 두 번 들어가면 압축 해제 시 한쪽이 조용히 덮인다."""
+    — 같은 이름이 두 번 들어가면 압축 해제 시 한쪽이 조용히 덮인다.
+
+    `mode` 는 `app._download_filename_with_version` 의 keep/strip/force — 개별 다운로드와
+    같은 규칙 함수를 쓴다(REQ-20260806-attach-suffix-toggle). 특히 `force` 는 저장명에 이미
+    있는 접미를 떼고 다시 붙여, AI 편집본(`report_v2.csv`)이 `report_v2_v2.csv` 로 나가던
+    이중접미를 없앤다."""
     import os as _os
     import re as _re
     raw = str(row.get("OriginalFilename") or "") or f"attachment-{row.get('Id')}"
     # 경로 구분자·상위 참조 제거 (zip-slip 방지) + 제어문자 제거.
     raw = raw.replace("\\", "/").split("/")[-1]
     raw = _re.sub(r"[\x00-\x1f\x7f]", "", raw).strip().lstrip(".") or f"attachment-{row.get('Id')}"
-    stem, ext = _os.path.splitext(raw)
-    if with_version:
-        stem = f"{stem}_v{int(row.get('VersionNumber') or 1)}"
-    name = f"{stem}{ext}"
+    name = app._download_filename_with_version(raw, int(row.get("VersionNumber") or 1), mode)
+    stem, ext = _os.path.splitext(name)
     # id 접미 **한 번**으로는 부족하다 — 다른 첨부가 이미 `a_4.csv` 라는 이름을 갖고
     # 있으면 id=4 의 fallback 이 그것과 다시 충돌해 압축 해제 시 한쪽이 조용히 덮인다.
     # 충돌이 풀릴 때까지 접미를 늘린다.
@@ -2448,6 +2451,7 @@ def bulk_download_conversation_attachments(
     format: str = "zip",
     scope: str = "latest",
     ids: str = "",
+    version_suffix: str = "",
     account=Depends(app.get_current_account),
     conn=Depends(app.get_conn),
 ):
@@ -2458,6 +2462,10 @@ def bulk_download_conversation_attachments(
     - `scope=latest`(기본) — 첨부별 최신 버전 1개. `scope=all` — 버전 체인 전량
       (파일명에 `_v<n>`).
     - `ids=1,2,3` — 부분 선택(첨부 id 기준, 위 scope 결과와 교집합).
+    - `version_suffix=auto|keep|strip|force` — 파일명의 버전 접미사 처리
+      (REQ-20260806-attach-suffix-toggle). 미지정 시 종전 동작을 그대로 재현하는 값
+      (`scope=all`→force, `latest`→auto)을 쓴다. `auto` 는 개별 다운로드와 같은 규칙(v2 이상만
+      부착)이라 같은 파일을 ⬇ 로 받든 ⤓ '최신 버전만' 으로 받든 이름이 같다.
 
     권한은 개별 다운로드(`download_attachment`)와 동형 — 대화 단위 read.{own,any} +
     승인 대기 계정 본문 차단(D21). 즉 이 엔드포인트는 **한 번에 받는 편의**를 줄 뿐
@@ -2469,6 +2477,10 @@ def bulk_download_conversation_attachments(
         return app._json_error("format 은 zip 또는 manifest 여야 합니다.", 400)
     if scope_norm not in ("latest", "all"):
         return app._json_error("scope 는 latest 또는 all 이어야 합니다.", 400)
+    suffix_mode = app._normalize_version_suffix_mode(
+        version_suffix, default=("force" if scope_norm == "all" else "auto"))
+    if not suffix_mode:
+        return app._json_error("version_suffix 는 auto, keep, strip, force 중 하나여야 합니다.", 400)
 
     if not app._account_can_access_conversation(
         conn,
@@ -2547,15 +2559,23 @@ def bulk_download_conversation_attachments(
             else "열람 가능한 범위에 첨부가 없습니다.", 404)
 
     if fmt == "manifest":
+        # 저장할 최종 이름은 **서버가 정한다** — 프론트가 같은 규칙을 복제하면 ZIP 경로와
+        # 개별 저장 경로의 결과물이 서로 어긋난다. 이름 함수도 ZIP 과 **같은 것**을 쓴다:
+        # 접미를 떼면 같은 이름이 여럿 나오는데, 여기서만 중복을 허용하면 모달이 약속한
+        # "이름이 겹치는 파일에는 구분 번호가 붙습니다" 가 개별 저장에서만 거짓이 된다
+        # (브라우저가 붙이는 `(1)` 은 어느 버전인지 말해주지 않는다).
+        manifest_names: set[str] = set()
         files = [
             {
                 "id": int(r.get("Id") or 0),
                 "filename": str(r.get("OriginalFilename") or ""),
+                "download_filename": _zip_entry_name(r, mode=suffix_mode, used=manifest_names),
                 "size": int(r.get("SizeBytes") or 0),
                 "version_number": int(r.get("VersionNumber") or 1),
                 # presigned MinIO URL 이 아니라 앱 경로 — presigned 는 내부 endpoint 호스트가
                 # 박혀 외부 브라우저가 열지 못한다(TASK-0284 배경).
-                "url": f"/api/attachments/{int(r.get('Id') or 0)}/download",
+                "url": (f"/api/attachments/{int(r.get('Id') or 0)}/download"
+                        f"?version_suffix={suffix_mode}"),
             }
             for r in rows
         ]
@@ -2593,6 +2613,10 @@ def bulk_download_conversation_attachments(
     try:
         with zipfile.ZipFile(spool, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
             for r in rows:
+                # 이름은 **건너뛸 행까지 포함해** 미리 확정한다. 실패 행을 `used` 에서
+                # 빼면 뒤 행들의 충돌 재배정이 밀려, 같은 요청의 manifest(전 행 소비)와
+                # ZIP 이 같은 첨부에 다른 이름을 준다(§18.8 backend/qa 패널 P3).
+                entry_name = _zip_entry_name(r, mode=suffix_mode, used=used_names)
                 object_key = str(r.get("ObjectKey") or "")
                 if not object_key:
                     continue
@@ -2609,10 +2633,7 @@ def bulk_download_conversation_attachments(
                         f"개별 다운로드(/api/attachments/{int(r.get('Id') or 0)}/download)로 다시 시도하세요.\n",
                     )
                     continue
-                zf.writestr(
-                    _zip_entry_name(r, with_version=(scope_norm == "all"), used=used_names),
-                    data,
-                )
+                zf.writestr(entry_name, data)
                 packed += 1
     except Exception:
         spool.close()

@@ -3639,6 +3639,8 @@ from routers._conv_store import (  # noqa: E402
     _attachment_edit_block_spans,
     _attachment_new_block_spans,
     _next_version_filename,
+    _download_filename_with_version,
+    _normalize_version_suffix_mode,
     _find_latest_same_name_attachment,
     _compute_version_diff,
     _load_attachment_version_chain,
