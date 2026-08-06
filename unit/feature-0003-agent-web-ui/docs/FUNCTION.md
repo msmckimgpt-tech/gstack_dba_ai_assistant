@@ -450,7 +450,7 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
   - AC-0165: min char gate 가 raw-len 3 → 2 char (backend `_normalize_search_query` + frontend `runSearchQuery` / `_searchHighlight` / empty state 문구 / `_jumpToSearchMatchedMessage` 정합). 한국어 grapheme 2 char 검색 가능. post-escape 0 char 차단 (`q="%%"` 등) 그대로 유지.
   - AC-0166: 소유자 facet 폐기 — DOM (`#searchFacetOwner` / `#searchOwnerPopover` / `#searchOwnerList`) + JS (`_loadOwnerAccountsForSearch` / `_openOwnerPopover` / `state.searchModal.owner_id` / `owner_username` / `ownerAccountsCache`) 전부 제거. backend `_list_conversations` 의 `owner_id` 파라미터는 호환 위해 유지 — frontend 가 보내지 않음.
   - AC-0167: 기간 popover 에 preset 5 종 (1시간 / 1일 / 1주 / 1개월 / 1년 전부터 지금까지). click 시 from/to 자동 채움 + popover input sync + 즉시 적용 + runSearchQuery. preset hours = `data-preset-hours` (1 / 24 / 168 / 720 / 8760).
-  - AC-0168: mouseup race fix — `overlay.mousedown` 시 `state.searchModal.mousedownOnOverlay` 기록, `overlay.click` 시 그 flag + `ev.target === overlay` 둘 다 true 일 때만 close. modal 안 text drag 후 backdrop 위 mouseup 발생해도 close 안 됨.
+  - AC-0168: mouseup race fix — 누름·뗌·click 세 target 이 **모두 overlay** 일 때만 close(모달 안 text drag 후 backdrop 위에서 놓아도 close 안 됨). **(modal-backdrop-dismiss, 2026-08-06 이관)** 이 계약의 구현은 `static/modal-dismiss.js` 의 저장소 단일 primitive `bindBackdropDismiss` 로 옮겼다 — `state.searchModal.mousedownOnOverlay`/`mouseupOnOverlay` 전용 flag 는 그때 제거됐으므로 **그 flag 의 존재로 이 AC 를 역검증하지 말 것**. 현 계약은 pointer 이벤트 기반이라 터치·펜까지 포함하고 implicit pointer capture·`isTrusted`·제스처 1회분 수명을 추가로 보장한다.
   - AC-0169: snippet 본문 excerpt — backend `_collect_matched_excerpts` (MySQL 8.0 `ROW_NUMBER() OVER (PARTITION BY ConversationId ORDER BY Id DESC)` 으로 conv 별 최근 매칭 message 1건, content 매칭 위치 ±40 char clip + "…" prefix/suffix). endpoint `/api/conversations` search mode 응답에 `matched_excerpts: {conv_id: "...본문..."}` 첨부. frontend `runSearchQuery` 가 state 에 캐시, `renderSearchModalResults` 의 snippet 영역이 topic 대신 excerpt + `_searchHighlight` highlight. TASK-0072 의 snippet opt-in chip + `WebAccountActivity` audit log 정책 무변경 (신규 PII 표면 아님 — 이미 노출 의도된 영역의 정확화).
 - REQ-20260519-0004 (TASK-0076, Minor §12.3 — search modal UX 3 결함 hotfix bundle of TASK-0072, RBAC/backend/audit 무변경): 사용자 직접 테스트 보고 3 항목 — facet click 무동작 / 키보드 ↑↓ scroll 미동작 / 매칭 message bubble jump 미동작. frontend 만 수정.
   - AC-0161: 사이드바 검색 modal 의 facet chip (소유자 / 기간) click 시 popover 열림. 소유자 popover 는 `/api/admin/accounts` 의 활성 계정 list 노출 (`.any` 한정, 1 회 캐시) + "전체" + 각 계정 (role label 부수). 기간 popover 는 `<input type="date">` from / to + 적용 / 지우기. 적용 시 chip label 갱신 (`소유자: <username>` / `기간: <from> ~ <to>`) + `aria-pressed="true"` + 즉시 runSearchQuery. 제품 facet 은 사용자 결정 ("대화 중 product 변경 가능 → 필터 부적합") 으로 DOM 제거.
@@ -2622,3 +2622,60 @@ assistant 배지는 종전 `어시스턴트` 유지(본 요청 범위 = user 발
   유지, rail 툴팁은 배지와 동일 라벨, 배지 주입은 `textContent`, 긴 사용자명이 와도 **시각 표기가
   눌리거나 2줄로 접히지 않으며**(`.share-message-time { flex:0 0 auto; nowrap }`), ≤720px 에서는
   절단 대신 줄바꿈되고, `title` 은 실제 절단 시에만 붙는다. RBAC·스키마 변경 0.
+
+## (modal-dismiss-siblings, 2026-08-06) 배경 dismiss — 저장소 단일 primitive 와 전 표면 적용면 (web/UI, Minor §12.3, frontend-only)
+
+`(modal-backdrop-dismiss, 2026-08-06)` 의 계약은 그대로 두고, **정본 위치**와 **적용면**을 확정한다.
+
+### 정본
+
+`static/modal-dismiss.js` 의 `bindBackdropDismiss(backdrop, onDismiss)` **하나**가 이 저장소의
+배경 dismiss 판정이다. 이 앱은 ESM 번들이 둘(작업 화면 `app.js` / 관리 콘솔 `admin.js`)이라
+한쪽에 두면 다른 쪽이 복제하게 되고, **그 복제가 원 결함의 기전**이었다. `app.js` 는 import 후
+re-export 하여 `app/sidebar.js` 의 기존 import 를 보존한다.
+
+### 적용면 (전 표면)
+
+| 표면 | 화면 | 진입 |
+|---|---|---|
+| `app.js` `openConversationSettings` | 대화 설정 | 좌측 conv-item `···` > 설정 |
+| `app.js` `openShareDialog` | 공유 | 좌측 conv-item `···` > 공유 |
+| `app.js` `promptShareExpiry` | 공유 링크 설정 | 공유 팝업 > 링크 생성 |
+| `app.js` `confirmShareJoinable` | 참여 허용 확인 | 링크 생성 확정 |
+| `app/sidebar.js` `openFolderSettings` | 폴더 설정 | 폴더 `···` > 설정 |
+| `app/sidebar.js` `openMoveConversationDialog` | 폴더로 이동 | conv-item `···` > 이동 |
+| `app.js` `_bindSearchModalListeners` | 대화 검색 | 사이드바 검색 |
+| `app/profile.js` `showProfileUsageConvModal` | 프로필 > 사용 내역 > 대화 목록 | 사용량 차트 클릭 |
+| `admin/usage.js` `showUsageConvModal` | 관리 콘솔 > 사용 기록 | 사용량 막대/행 클릭 |
+| `admin/audit.js` `openAuditPurgeModal` | 관리 콘솔 > 감사 > purge | 보존기간 초과 정리 |
+| `graph/graph-core.js` `_metaGraphBindHelp` | 관리 콘솔 > 그래프 뷰 > 도움말 | ❓ 버튼 |
+
+### 적용면 밖 (근거 명시)
+
+- **프로필 드로어**(`app.js` `profileBackdropEl`): `#profileBackdrop` 과 `#profileDrawer` 가
+  `index.html:410-411` 에서 **형제**다. 둘 사이 드래그의 `click` target 은 공통 조상 `<body>` 가
+  되어 backdrop 리스너의 전파 경로에 오르지 않는다 — **target 승격 결함이 구조적으로 성립하지
+  않는다**. 통일하지 않는 것이 정확한 판단이다.
+- **드롭다운·컨텍스트 메뉴의 `document` 레벨 outside-click 해제**(`admin/products.js`·
+  `admin/datasources.js`·`graph/graph-core.js` 등): 같은 뿌리(click target 승격)를 공유하지만
+  **다른 UX 범주**다. "배경 dismiss 잔존 0" 주장은 이 경계 안에서만 참이다.
+- `app/auth.js` 2단계 인증 모달: 배경 dismiss 자체가 없다(인증 흐름은 배경 클릭으로 이탈시키지
+  않는다).
+
+### 동반 계약
+
+- **재렌더 모달의 리스너 수명**: `showProfileUsageConvModal`·`showUsageConvModal` 은 한 번 열 때
+  loading→data(또는 error)로 **재렌더**된다. 이전 인스턴스는 `overlay._modalClose()` 로 닫아
+  document keydown 리스너까지 회수한다 — 노드만 떼면 열 때마다 하나씩 샌다.
+- **파괴적 모달의 중복 인스턴스 가드**: `openAuditPurgeModal` 은 `auditPurgeOverlay` id 로 이전
+  인스턴스를 제거한다. 겹쳐 뜨면 중복 id 때문에 위쪽 모달 버튼에 핸들러가 붙지 않아 조작 불능이
+  된다(형제 두 모달과 동일 패턴).
+
+### AC
+
+- AC-20260806T1830-modal-dismiss-siblings-1: 전 static 트리(vendor 제외)에 "수신자 자신을 `target`
+  과 비교하는" 배경 dismiss 잔존 0 — 하네스가 **재귀 walk** 로 단언(파일 목록 하드코딩 금지).
+- AC-20260806T1830-modal-dismiss-siblings-2: 두 번들이 같은 정본을 import(자체 정의 0).
+- AC-20260806T1830-modal-dismiss-siblings-3: 선행 6종의 계약·ESC·× 경로 무회귀.
+- AC-20260806T1830-modal-dismiss-siblings-4: 재렌더 모달의 document keydown 리스너 누수 0(수명 실측).
+- AC-20260806T1830-modal-dismiss-siblings-5: purge 모달 중복 인스턴스 가드 존재.

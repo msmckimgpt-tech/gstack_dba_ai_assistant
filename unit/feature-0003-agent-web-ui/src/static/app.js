@@ -7,6 +7,9 @@ export { _adoptRunId, _interruptCurrentRunForResend, fetchAskStatus, renderProgr
 // messages.js 의 "../app.js" import 계약 보존 (re-export) — 첨부 다운로드 진입점.
 export { _downloadAttachmentById };
 import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSignup, showForceChangePasswordModal } from "./app/auth.js?v=dev";
+// modal-backdrop-dismiss: 배경 dismiss 판정은 저장소 단일 primitive (관리 콘솔 번들과 공유).
+import { bindBackdropDismiss } from "./modal-dismiss.js?v=dev";
+export { bindBackdropDismiss };
 import { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, renderProfile, renderAccountState, renderNotifyPrefs, loadProfileUsage, handlePasswordChange } from "./app/profile.js?v=dev";
 export const authOverlayEl = document.getElementById("authOverlay");
 const loginFormEl = document.getElementById("loginForm");
@@ -278,8 +281,6 @@ export const state = {
     requestGen: 0,
     // REQ-20260519-0005 (TASK-0077) + REQ-20260519-0006 (TASK-0078): mouseup race fix.
     // mousedown / mouseup / click target 3 개 모두 overlay 일 때만 close.
-    mousedownOnOverlay: false,
-    mouseupOnOverlay: false,
   },
   // TASK-0094 Sprint 1 Phase 6 (D16 + R-F5): composer 의 첨부 selection state.
   // - byConv: 대화 ID 또는 pending sentinel 별 첨부 목록.
@@ -5205,75 +5206,6 @@ export function _switchToPendingConversationContext(entry) {
   if (promptInputEl) promptInputEl.focus();
 }
 
-// modal-backdrop-dismiss: 모달 바깥(어두운 배경) 클릭으로 닫는 동작의 단일 primitive.
-//
-// 기존 구현은 backdrop 에 `click` 리스너를 달고 `e.target === backdrop` 만 확인했다. 그런데
-// DOM `click` 의 target 은 mousedown/mouseup 두 지점의 **공통 조상**이라, 패널 안에서 누르고
-// 배경에서 떼거나(텍스트 드래그 선택 후 바깥에서 놓기) 배경에서 누르고 패널 안에서 떼면
-// target 이 backdrop 으로 승격돼 모달이 닫혔다 — 사용자 관점에선 "down 만 해도 / up 만 해도
-// 닫힌다". 특히 textarea(폴더 지침)·입력 필드에서 드래그 선택 중 손이 패널 밖으로 나가면
-// 작성 중인 내용이 통째로 사라진다.
-//
-// 계약: **누름(pointerdown)과 뗌(pointerup)이 둘 다 backdrop 자신**일 때만 dismiss.
-//   - 어느 한쪽이라도 패널(자식) 위면 무시 → 드래그 선택 중 이탈로 닫히지 않는다.
-//   - 주 버튼(좌클릭/터치 primary)만 — 우클릭·보조 버튼은 무시(기존 `click` 동작과 동일 범위).
-//   - pointercancel(스크롤 제스처 전환 등) 은 press 상태를 해제해 유령 dismiss 를 막는다.
-//
-// 구현 주의 2가지 (§18.8 ux 패널 P1-1 · P2-1 반영):
-//  (1) **implicit pointer capture 해제** — 터치·펜 같은 direct-manipulation 포인터는
-//      `pointerdown` 대상에 브라우저가 자동으로 포인터 캡처를 걸어, 이후 `pointerup` 이 실제로
-//      뗀 위치와 **무관하게 그 대상으로 retarget** 된다(마우스는 캡처 없음). 해제하지 않으면
-//      터치에서 계약이 "누른 위치가 배경이면 닫힘" 으로 무너져 원 결함이 그대로 남는다.
-//      배경에서 시작한 제스처에 대해서만 해제한다 — 패널 안에서 시작한 제스처(터치 텍스트
-//      선택 등)의 캡처는 그 동작이 의존하는 것이라 건드리지 않는다.
-//  (2) **판정은 pointer 2단, 실행은 `click`** — 판정을 끝낸 뒤 실행을 click 으로 미루면
-//      (a) 터치 compat click 의 히트테스트는 click dispatch **전에** 끝나므로, dispatch 중에
-//      노드를 제거해도 아래 레이어가 눌리지 않는다(`pointerup` 에서 제거하면 눌린다 — ghost
-//      click), (b) 브라우저가 click 을 발행하지 않는 상호작용(스크롤바 드래그 등)이 자연히
-//      제외된다. `click` 은 **트리거일 뿐 판정 근거가 아니다** — 결함의 원인이던 target
-//      공통-조상 승격은 `armed` 플래그가 이미 걸러낸다.
-//
-// 상태 수명 규칙 (§18.8 ux·design 패널이 **양쪽 다** 실증한 결함의 봉인):
-//   장전(`armed`)은 **제스처 1회분**이다. `pointerup` 이 `downOk` 를 즉시 소비하고, `click`
-//   이 `armed` 를 소비한다. 이 소비가 없으면 "배경에서 down+up 했는데 브라우저가 click 을
-//   발행하지 않은" 제스처가 장전 상태를 **무기한 남기고**, 그 뒤 도착한 click 하나가 사용자가
-//   누른 적 없는 모달을 닫는다(패널이 실제 헬퍼를 실행해 dismiss=1 로 재현). 나아가 물리
-//   제스처는 언제나 `pointerdown` 으로 시작해 상태를 리셋하므로, **선행 pointerdown 없이 오는
-//   click 은 정의상 합성 이벤트**다 — `e.isTrusted` 로 배제한다. 즉 순수 합성
-//   click(`el.click()`)은 어떤 상태에서도 배경 dismiss 를 일으키지 않는다(의도 — 물리 포인터
-//   제스처만 인정). ESC·`×` 두 경로는 그대로 살아 있다.
-export function bindBackdropDismiss(backdrop, onDismiss) {
-  let activeId = null;   // 주 포인터 1개만 추적 — 보조 터치가 주 상호작용을 흔들지 않게.
-  let downOk = false;    // 누름이 배경 자신이었나 (이어지는 pointerup 이 소비)
-  let armed = false;     // 누름·뗌이 둘 다 배경이었나 (이어지는 click 이 소비)
-  const reset = () => { activeId = null; downOk = false; armed = false; };
-
-  backdrop.addEventListener("pointerdown", (e) => {
-    if (e.isPrimary === false) return;   // 멀티터치 2번째 이후 — 주 포인터 상태 보존
-    reset();
-    activeId = e.pointerId;
-    if (e.target !== backdrop) return;
-    // (1) 캡처 해제는 **무조건 시도**한다. `hasPointerCapture` 를 선행 조건으로 두면 그 메서드가
-    // 없거나 캡처를 다르게 보고하는 엔진에서 조용히 건너뛰어 터치 계약이 구 결함으로 되돌아간다
-    // (fail-open). 캡처가 없을 때의 throw 만 삼킨다.
-    try { e.target.releasePointerCapture(e.pointerId); } catch (_) { /* 캡처 없음 — 무해 */ }
-    downOk = e.button === 0;
-  });
-  backdrop.addEventListener("pointercancel", (e) => { if (e.pointerId === activeId) reset(); });
-  backdrop.addEventListener("pointerup", (e) => {
-    if (e.pointerId !== activeId) return;
-    // `button` 재검사 안 함 — 누름 시점에 이미 걸렀고(`downOk`), `pointerup` 의 `button` 을
-    // -1 로 보고하는 환경에서 정상 dismiss 가 조용히 죽는 쪽이 더 나쁘다.
-    armed = downOk && e.target === backdrop;
-    downOk = false;   // 이 뗌으로 누름을 소비 — 다음 제스처로 이월 금지
-  });
-  backdrop.addEventListener("click", (e) => {   // (2) 실행 단계
-    const ok = armed && e.isTrusted && e.target === backdrop;
-    reset();
-    if (ok) onDismiss(e);
-  });
-}
-
 // REQ-20260514-0001: 대화 공유 링크 생성. anchorMessageId 가 주어지면 'anchored', 아니면 'full'.
 // 성공 시 절대 URL 을 clipboard 에 복사하고 toast 로 노출. 실패 시 throw.
 // TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 기간 선택 프리셋.
@@ -7506,8 +7438,6 @@ function openSearchModal() {
   state.searchModal.date_to = null;
   state.searchModal.matched_excerpts = {};
   state.searchModal.matched_attachments = {};
-  state.searchModal.mousedownOnOverlay = false;
-  state.searchModal.mouseupOnOverlay = false;
   if (snippetChip) snippetChip.setAttribute("aria-pressed", "false");
   _updateSearchFacetChipLabels();
   _closeSearchPopovers();
@@ -7800,24 +7730,13 @@ function _bindSearchModalListeners() {
   if (openBtn) openBtn.addEventListener("click", openSearchModal);
   if (closeBtn) closeBtn.addEventListener("click", closeSearchModal);
   if (overlay) {
-    // REQ-20260519-0005 (TASK-0077) + REQ-20260519-0006 (TASK-0078): mouseup race fix —
-    // backdrop close 는 mousedown / mouseup / click target 3 개 모두 overlay 일 때만 발동.
-    // 이렇게 해야 (a) modal 안 text drag → backdrop 위 mouseup 도 close 안 됨,
-    // (b) backdrop 위 mousedown → modal 안 drag → modal 안 mouseup 도 close 안 됨.
-    // 즉 의도적인 backdrop click (mousedown + mouseup 모두 backdrop) 만 close 트리거.
-    overlay.addEventListener("mousedown", (ev) => {
-      state.searchModal.mousedownOnOverlay = (ev.target === overlay);
-    });
-    overlay.addEventListener("mouseup", (ev) => {
-      state.searchModal.mouseupOnOverlay = (ev.target === overlay);
-    });
-    overlay.addEventListener("click", (ev) => {
-      const sm = state.searchModal;
-      const shouldClose = sm.mousedownOnOverlay && sm.mouseupOnOverlay && (ev.target === overlay);
-      sm.mousedownOnOverlay = false;
-      sm.mouseupOnOverlay = false;
-      if (shouldClose) closeSearchModal();
-    });
+    // REQ-20260519-0005 (TASK-0077) + REQ-20260519-0006 (TASK-0078) 이 여기서 손수 구현했던
+    // "mousedown·mouseup·click 3 target 이 모두 overlay 일 때만 close" 계약을, 저장소 단일
+    // primitive 로 이관한다(modal-backdrop-dismiss). 계약은 동일하고 구현이 강화된다 —
+    // pointer 이벤트라 터치·펜 포함, implicit pointer capture 해제, `isTrusted` 요구,
+    // pointerId 추적, pointercancel 처리. state.searchModal 의 mousedownOnOverlay/
+    // mouseupOnOverlay 플래그는 이 로직 전용이었으므로 함께 제거했다.
+    bindBackdropDismiss(overlay, closeSearchModal);
   }
   if (input) {
     input.addEventListener("input", () => {
@@ -7950,8 +7869,9 @@ function _bindSearchModalListeners() {
       runSearchQuery({ append: false }).catch(() => {});
     });
   }
-  // REQ-20260519-0005 (TASK-0077): 외부 click 시 popover close — overlay mousedown 의 mouseup race fix
-  // 와 함께 동작. ev.target 이 date chip / date popover 외부면 popover close (modal 자체 close 는 별 로직).
+  // REQ-20260519-0005 (TASK-0077): 외부 click 시 popover close. ev.target 이 date chip / date
+  // popover 외부면 popover 를 닫는다(모달 자체 close 는 위 bindBackdropDismiss 가 별도로 판정 —
+  // 구 "overlay mousedown 의 mouseup race fix" 서술은 그 구현이 primitive 로 이관되며 무효).
   if (overlay) {
     overlay.addEventListener("mousedown", (ev) => {
       const inDatePop = ev.target.closest && ev.target.closest("#searchDatePopover");

@@ -2332,3 +2332,51 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - **결과:** 각인 메시지 닉네임 렌더 · **사용자 제보 메시지 실물 대조(종전 `사용자` → 현재 `admin`)** · rail 라벨 일치 · 긴 이름 주입 시 시각 표기 불변(ux F-1 실증) · title 조건부(F-2 실증) · 각인 0 대화 소유자명 미발동(security F-2 실증) · 콘솔 에러 0.
 - **실측 발견(정직):** 공유 생성이 `is_group=true` 를 set 하므로 3순위 소유자명 폴백은 라이브에서 사실상 미발동(활성 공유 링크 6건 전수 `is_group=true`, 멤버 1명). 안전 방향이나 사용자 결정의 절반이 화면에 안 나타남 — 별 cycle 이월.
 - Timestamp: 2026-08-06T13:50:00+09:00
+## CHG-20260806T1830-modal-dismiss-siblings 배경 dismiss — 저장소 단일 primitive 로 통일(전 표면)
+- **무엇:** 선행 cycle 이 `app.js` 안에 두었던 `bindBackdropDismiss` 를 **신설 공용 모듈**
+  `static/modal-dismiss.js` 로 옮기고, 앱의 **모든** 배경 dismiss 표면을 그 정본에 배선했다.
+  `app.js` 는 import 후 **re-export** 하여 `app/sidebar.js` 의 기존 import 를 무회귀 보존한다.
+- **왜 별도 모듈:** ESM 번들이 둘(작업 화면 `app.js` / 관리 콘솔 `admin.js`)이라 한쪽에 두면 다른
+  쪽은 복제할 수밖에 없다 — **그 복제가 이 결함을 만든 기전**이다(판정이 9곳에 흩어져 6곳
+  `click`, 3곳 `mousedown` 으로 굳어 있었다).
+- **어디 (전환 표면):**
+  | 파일 · 함수 | 화면 | 변경 전 |
+  |---|---|---|
+  | `app/profile.js` `showProfileUsageConvModal` | 프로필 > 사용 내역 > 대화 목록 | `mousedown` 단독 |
+  | `admin/usage.js` `showUsageConvModal` | 관리 콘솔 > 사용 기록 | `mousedown` 단독 |
+  | `admin/audit.js` `openAuditPurgeModal` | 관리 콘솔 > 감사 > purge | `click` |
+  | `graph/graph-core.js` `_metaGraphBindHelp` | 관리 콘솔 > 그래프 뷰 > 도움말 | `click` + 속성/클래스 판정 |
+  | `app.js` `_bindSearchModalListeners` | 대화 검색 | **같은 계약의 손수 구현**(전용 상태 플래그 2개) |
+  뒤 2건은 **사용자 요청 범위 밖**이나, 남기면 '정합' 이 성립하지 않아 함께 전환하고 완료 보고에
+  명시했다. 검색 모달의 `state.searchModal.mousedownOnOverlay`/`mouseupOnOverlay` 는 제거했다.
+- **의도적 미변경:** 프로필 드로어(`app.js` `profileBackdropEl`) — `#profileBackdrop` 과
+  `#profileDrawer` 가 `index.html:410-411` 에서 **형제**라 둘 사이 드래그의 click target 이
+  `<body>` 가 되어 backdrop 리스너에 닿지 않는다. **target 승격 결함이 구조적으로 성립하지 않음**
+  (ux·design 두 리뷰어가 독립 검증). 드롭다운·컨텍스트 메뉴의 `document` 레벨 outside-click 해제는
+  같은 뿌리지만 다른 UX 범주라 대상 밖 — 경계를 `modal-dismiss.js` 주석에 명시.
+- **동반 하드닝 (§18.8 패널 지적):**
+  - `app/profile.js`·`admin/usage.js` 는 loading→data 로 **재렌더**되는데, 이전 인스턴스를
+    `remove()` 로만 치워 그때 붙인 `document` keydown 리스너가 **열 때마다 하나씩 샜다**. 이제
+    이전 인스턴스의 `close()`(`overlay._modalClose`)로 닫아 리스너까지 회수한다.
+  - `admin/audit.js` purge 모달에 **중복 인스턴스 가드**(`auditPurgeOverlay` id + prev 제거) +
+    기준 날짜 입력 포커스. 없으면 겹쳐 뜬 오버레이의 중복 id 때문에 **위쪽 모달의 버튼에 핸들러가
+    하나도 붙지 않아** 파괴적 플로우가 조작 불능이 됐다.
+  - `close()` 가 참조하는 `onEsc` 를 **먼저 선언**하도록 순서 교정(잠재 TDZ 함정 제거).
+- **회귀 잠금 재설계:** 하네스의 census 를 **파일 목록 하드코딩(33개 중 6개)** 에서
+  `src/static/**/*.js` **재귀 walk** 로 바꾸고, 판정을 리스너 **핸들러 본문 경계** 안에서
+  "수신자 자신을 `target` 과 비교하는가" 로 일반화했다(화살표/함수식·괄호 유무·`===`/`!==`·`&&`
+  축약 무관). detector 자기검증 2건 포함 — 표기 변형 5종 검출 + **인접 리스너 오검출 안 함**
+  (고정 lookahead 가 `app.js:1792` 의 이웃 keydown 본문을 물어오던 버그의 회귀 잠금).
+- **Verification:** `verify_modal_backdrop_dismiss.mjs` **76 pass / 0 fail**. **뮤테이션 역검증
+  6종** 전부 의도한 단언만 red — button 가드 제거 · isPrimary 가드 제거 · profile 재렌더 누수
+  복원 · usage `close()` ESC 미해제 · **census 범위 밖 신규 파일에 옛 패턴 신설** · 부정형 표기.
+  (앞의 두 뮤테이션은 교정 전 하네스에서 **생존**했다 — vacuous 단언이었다.) ESM `node --check`
+  6파일 PASS · 전수 mjs red 21건 = main baseline 동일 집합 · PB-0008 실 Windows Chrome 10/10 ·
+  `make test` 회귀.
+- **Files:** `static/modal-dismiss.js`(신설), `static/app.js`, `static/app/profile.js`,
+  `static/admin/usage.js`, `static/admin/audit.js`, `static/graph/graph-core.js`,
+  `tests/{verify_modal_backdrop_dismiss.mjs,pb0008_modal_backdrop_dismiss.py}`,
+  `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/…`.
+- **캐시버스터:** `?v=dev` 고정 — `inject_asset_stamp.py` 가 static 트리를 walk 하며 신규 파일의
+  import specifier 까지 자동 스탬프(전역 content-hash 단일 값 → 모듈 단일 인스턴스 보장).
+- Timestamp: 2026-08-06T18:30:00+09:00

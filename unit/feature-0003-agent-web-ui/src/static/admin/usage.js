@@ -6,6 +6,8 @@ import {
   adminState, apiFetch,
   _metaPopulateScopeSelect, activateAiConsoleSubtab, switchTab,
 } from "../admin.js?v=dev";
+// modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (작업 화면 번들과 공유).
+import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 
 // TASK-0198: opts.refetch=false → days/gran 동일 캐시(_lastRaw)로 재렌더만(모델 칩 토글용).
 //   기간/단위 변경(컨트롤 change) 은 refetch=true(기본) — 새 모델 집합이 올 수 있으므로 선택 초기화.
@@ -556,7 +558,10 @@ function showUsageConvModal(state) {
   };
   // 기존 모달 제거(중복 방지).
   const prev = document.getElementById("usageConvModalOverlay");
-  if (prev) prev.remove();
+  // 이전 인스턴스는 remove() 가 아니라 그 인스턴스의 close() 로 닫는다 — 이 모달은
+  // loading→data(또는 error) 로 **재렌더**되므로, 노드만 떼면 그때 붙인 document keydown
+  // 리스너가 그대로 남아 열 때마다 하나씩 샌다(§18.8 ux 패널 P3-1).
+  if (prev) { if (typeof prev._modalClose === "function") prev._modalClose(); else prev.remove(); }
   const overlay = document.createElement("div");
   overlay.id = "usageConvModalOverlay";
   overlay.className = "admin-modal-overlay";
@@ -658,18 +663,21 @@ function showUsageConvModal(state) {
     + '  <div class="usage-conv-body">' + bodyHtml + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  // onEsc 를 close 보다 먼저 선언 — close 가 onEsc 를 참조한다(잠재 TDZ 함정 제거, profile.js 동형).
+  const onEsc = (e) => { if (e.key === "Escape") close(); };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onEsc); };
+  overlay._modalClose = close;   // 재렌더 시 이전 인스턴스를 완전히 닫기 위한 핸들.
+  // 배경 dismiss: 누름·뗌이 둘 다 배경일 때만(구 `mousedown` 단독은 뗌을 보지 않고 닫았다).
+  bindBackdropDismiss(overlay, close);
   const closeBtn = document.getElementById("usageConvModalClose");
   if (closeBtn) closeBtn.addEventListener("click", close);
-  const onEsc = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
   document.addEventListener("keydown", onEsc);
   // 시스템 행 클릭 → 콘솔 내 화면 이동. 이동에 성공하면 모달을 닫아 목적 화면이 가려지지 않게 한다.
   overlay.addEventListener("click", (e) => {
     const btn = e.target.closest ? e.target.closest("[data-usage-nav]") : null;
     if (!btn) return;
     const nav = navByIdx[Number(btn.getAttribute("data-usage-nav"))];
-    if (applyUsageNav(nav)) { close(); document.removeEventListener("keydown", onEsc); }
+    if (applyUsageNav(nav)) close();   // close() 가 ESC 리스너까지 해제 — 중복 해제 불요.
   });
 }
 

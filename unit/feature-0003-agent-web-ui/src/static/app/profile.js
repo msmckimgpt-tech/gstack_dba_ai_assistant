@@ -10,6 +10,8 @@ import {
   profileCreatedAtEl, profileDrawerEl, profileLastLoginEl, profileNameEl,
   profileRoleEl, profileSummaryMetaEl, profileSummaryNameEl,
 } from "../app.js?v=dev";
+// modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (관리 콘솔 번들과 공유).
+import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 
 function switchProfileTab(tab) {
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
@@ -261,7 +263,10 @@ function showProfileUsageConvModal(st) {
   const num = (v) => (Number(v) || 0).toLocaleString();
   const fmtDt = (s) => { if (!s) return "—"; try { const d = new Date(s); return isNaN(d.getTime()) ? _pUsageEsc(s) : d.toLocaleString(); } catch (_) { return _pUsageEsc(s); } };
   const prev = document.getElementById("profileUsageConvOverlay");
-  if (prev) prev.remove();
+  // 이전 인스턴스는 remove() 가 아니라 그 인스턴스의 close() 로 닫는다 — 이 모달은
+  // loading→data(또는 error) 로 **재렌더**되므로, 노드만 떼면 그때 붙인 document keydown
+  // 리스너가 그대로 남아 열 때마다 하나씩 샌다(§18.8 ux 패널 P3-1).
+  if (prev) { if (typeof prev._modalClose === "function") prev._modalClose(); else prev.remove(); }
   const overlay = document.createElement("div");
   overlay.id = "profileUsageConvOverlay";
   overlay.className = "usage-conv-overlay";
@@ -302,11 +307,16 @@ function showProfileUsageConvModal(st) {
     + '  <div class="usage-conv-content">' + body + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  // onEsc 를 close 보다 먼저 선언한다 — close 가 onEsc 를 참조하므로, 선언이 뒤에 오면
+  // "본문 실행 중 close 가 불리면 TDZ" 가 되는 잠재 함정이 남는다(지금은 리스너 등록만이라
+  // 실제로는 안 불리지만, 그 안전성이 호출부 배치에 의존하게 두지 않는다).
+  const onEsc = (e) => { if (e.key === "Escape") close(); };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onEsc); };
+  overlay._modalClose = close;   // 재렌더 시 이전 인스턴스를 완전히 닫기 위한 핸들.
+  // 배경 dismiss: 누름·뗌이 둘 다 배경일 때만(구 `mousedown` 단독은 뗌을 보지 않고 닫았다).
+  bindBackdropDismiss(overlay, close);
   const cb = document.getElementById("profileUsageConvClose");
   if (cb) cb.addEventListener("click", close);
-  const onEsc = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
   document.addEventListener("keydown", onEsc);
 }
 
