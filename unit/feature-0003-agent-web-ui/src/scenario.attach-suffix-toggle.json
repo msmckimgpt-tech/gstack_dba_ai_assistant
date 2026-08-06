@@ -1,0 +1,164 @@
+{
+  "name": "REQ-20260806-attach-suffix-toggle 다운로드 파일명 버전 접미사 토글 — 패널·모달 동기화 + 단일/전체 경로 반영",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0003-attach-suffix-toggle/unit/feature-0003-agent-web-ui/docs/evidence/attach-suffix-toggle",
+  "steps": [
+    {
+      "action": "goto",
+      "url": "http://127.0.0.1:18099/",
+      "label": "goto_preview_root"
+    },
+    {
+      "action": "eval",
+      "script": "(async () => { const r = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, credentials:'same-origin', body: JSON.stringify({username:'bootstrap_admin', password:'ChangeThisBootstrapPass_2026!'})}); const j = await r.json().catch(()=>({})); return { status: r.status, ok: !!j.ok }; })()",
+      "label": "login_via_api"
+    },
+    {
+      "action": "goto",
+      "url": "http://127.0.0.1:18099/?conversation=20260806062717-1d8ed346",
+      "label": "deeplink_conversation_with_attachments"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#composerActionsBtn",
+      "timeout": 15000
+    },
+    {
+      "action": "eval",
+      "script": "(() => ({ authHidden: document.getElementById('authOverlay').classList.contains('hidden') }))()",
+      "label": "T0_logged_in"
+    },
+    {
+      "action": "eval",
+      "script": "localStorage.removeItem('dqa.attachDownloadVersionSuffix'); 'cleared'",
+      "label": "reset_pref_to_default"
+    },
+    {
+      "action": "eval",
+      "script": "(() => { let n=0; document.querySelectorAll('link[rel=stylesheet]').forEach(l => { if (l.href.includes('/static/')) { l.href = l.href.split('?')[0] + '?cb=' + performance.now(); n++; } }); return { reloaded: n }; })()",
+      "label": "bust_css_cache"
+    },
+    {
+      "action": "wait_for",
+      "timeout": 1500,
+      "label": "css_settle"
+    },
+    {
+      "action": "click",
+      "selector": "#composerActionsBtn",
+      "label": "open_composer_actions"
+    },
+    {
+      "action": "click",
+      "selector": "#composerActionsListItem",
+      "label": "open_attach_side_panel"
+    },
+    {
+      "action": "wait_for",
+      "selector": "#attachSidePanelList .attach-list-item",
+      "timeout": 15000
+    },
+    {
+      "action": "assert_visible",
+      "selector": "#attachSidePanelSuffixOpt",
+      "timeout": 8000,
+      "label": "T1_panel_toggle_visible"
+    },
+    {
+      "action": "eval",
+      "script": "(() => { const t = document.getElementById('attachSidePanelSuffixToggle'); const opt = document.getElementById('attachSidePanelSuffixOpt'); const names = [...document.querySelectorAll('.attach-list-item-name-text')].map(e => e.textContent.trim()); const r = opt.getBoundingClientRect(); return { checked: t.checked, hidden: opt.classList.contains('hidden'), label: opt.textContent.trim(), width: Math.round(r.width), height: Math.round(r.height), filenames: names }; })()",
+      "label": "T2_default_checked_and_filenames"
+    },
+    {
+      "action": "screenshot",
+      "label": "01_panel_toggle_default_on",
+      "path": "01_panel_toggle_default_on.png"
+    },
+    {
+      "action": "click",
+      "selector": "#attachSidePanelSuffixToggle",
+      "label": "T3_uncheck_panel_toggle"
+    },
+    {
+      "action": "eval",
+      "script": "(() => ({ checked: document.getElementById('attachSidePanelSuffixToggle').checked, stored: localStorage.getItem('dqa.attachDownloadVersionSuffix') }))()",
+      "label": "T4_pref_persisted_off"
+    },
+    {
+      "action": "screenshot",
+      "label": "02_panel_toggle_off",
+      "path": "02_panel_toggle_off.png"
+    },
+    {
+      "action": "click",
+      "selector": "#attachSidePanelDownloadAll",
+      "label": "open_bulk_download_modal"
+    },
+    {
+      "action": "wait_for",
+      "selector": ".attach-manage-backdrop .attach-manage-suffix input",
+      "timeout": 8000
+    },
+    {
+      "action": "eval",
+      "script": "(() => { const m = document.querySelector('.attach-manage-backdrop .attach-manage-suffix input'); return { modalChecked: m.checked, matchesPanel: m.checked === document.getElementById('attachSidePanelSuffixToggle').checked }; })()",
+      "label": "T5_modal_reflects_panel_state"
+    },
+    {
+      "action": "screenshot",
+      "label": "03_modal_synced_off",
+      "path": "03_modal_synced_off.png"
+    },
+    {
+      "action": "click",
+      "selector": ".attach-manage-backdrop input[value='all']",
+      "label": "select_scope_all"
+    },
+    {
+      "action": "eval",
+      "script": "(() => { const bd = document.querySelector('.attach-manage-backdrop'); const em = bd.querySelector('.attach-manage-suffix em'); const allEm = bd.querySelector(\"input[value='all']\").closest('.attach-manage-choice').querySelector('em'); const box = bd.querySelector('.share-mgr-panel').getBoundingClientRect(); return { hint: em.textContent, ariaLive: em.getAttribute('aria-live'), scopeAllHint: allEm.textContent, modalH: Math.round(box.height) }; })()",
+      "label": "T6_both_hints_agree"
+    },
+    {
+      "action": "screenshot",
+      "label": "04_scope_all_collision_hint",
+      "path": "04_scope_all_collision_hint.png"
+    },
+    {
+      "action": "click",
+      "selector": ".attach-manage-backdrop .attach-manage-suffix input",
+      "label": "T7_recheck_in_modal"
+    },
+    {
+      "action": "eval",
+      "script": "(() => { const bd = document.querySelector('.attach-manage-backdrop'); const allEm = bd.querySelector(\"input[value='all']\").closest('.attach-manage-choice').querySelector('em'); const box = bd.querySelector('.share-mgr-panel').getBoundingClientRect(); return { modalChecked: bd.querySelector('.attach-manage-suffix input').checked, panelChecked: document.getElementById('attachSidePanelSuffixToggle').checked, stored: localStorage.getItem('dqa.attachDownloadVersionSuffix'), hint: bd.querySelector('.attach-manage-suffix em').textContent, scopeAllHint: allEm.textContent, modalH: Math.round(box.height) }; })()",
+      "label": "T8_reverse_sync_panel_follows_modal"
+    },
+    {
+      "action": "screenshot",
+      "label": "05_reverse_sync_on",
+      "path": "05_reverse_sync_on.png"
+    },
+    {
+      "action": "press",
+      "selector": "body",
+      "key": "Escape",
+      "label": "close_modal",
+      "stop_on_fail": false
+    },
+    {
+      "action": "eval",
+      "script": "(async () => { const r = await fetch('/api/conversations/20260806062717-1d8ed346/attachments/download?format=manifest&scope=all&version_suffix=strip', {credentials:'same-origin'}); const j = await r.json(); const r2 = await fetch('/api/conversations/20260806062717-1d8ed346/attachments/download?format=manifest&scope=all&version_suffix=force', {credentials:'same-origin'}); const j2 = await r2.json(); return { strip: (j.files||[]).map(f => f.download_filename), force: (j2.files||[]).map(f => f.download_filename), stored: (j.files||[]).map(f => f.filename) }; })()",
+      "label": "T9_manifest_names_strip_vs_force"
+    },
+    {
+      "action": "eval",
+      "script": "(async () => { const r = await fetch('/api/conversations/20260806062717-1d8ed346/attachments/download?format=manifest&scope=all&version_suffix=bogus', {credentials:'same-origin'}); return { status: r.status }; })()",
+      "label": "T10_invalid_param_rejected"
+    },
+    {
+      "action": "screenshot",
+      "label": "06_final_panel",
+      "path": "06_final_panel.png"
+    }
+  ]
+}

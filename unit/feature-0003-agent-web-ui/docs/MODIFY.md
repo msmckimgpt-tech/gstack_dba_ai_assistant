@@ -2623,3 +2623,95 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-07T01:03:01+09:00
+## CHG-20260806T182500-attach-suffix-toggle 다운로드 파일명 버전 접미사 토글 (Minor §12.3)
+
+- 사용자 요청(2026-08-06): 첨부 다운로드 시 `_v2`·`_v3` 접미 포함 여부를 체크박스로 고르게 —
+  **단일·전체 다운로드 모두**.
+- **전제 정정(실측)**: 접미는 다운로드 시점에만 붙는 게 아니었다. AI 편집본은 **저장명 자체**가
+  `report_v2.csv`(`_next_version_filename`) 라 최신본 1개를 받아도 접미가 남는다. "전 버전
+  다운로드의 부착을 끄는" 스위치로 좁게 만들었다면 사용자가 겪는 대부분의 경우를 못 잡는다.
+- **동반 적발(이중접미)**: 규칙이 서버 `_zip_entry_name`(무조건 부착)과 프론트
+  `_versionedFilename`(무조건 부착) 두 벌로 있어, 저장명에 이미 `_v2` 가 있는 AI 편집본을
+  `scope=all` 로 받으면 **`report_v2_v2.csv`** 가 나왔다. 토글과 함께 정합화했다.
+- **백엔드** `routers/_conv_store.py`: 규칙 정본 `_download_filename_with_version(raw,
+  version_number, mode)` 신설 — `keep`(그대로) / `strip`(`_v<VersionNumber>` **일치 시에만**
+  제거) / `force`(떼고 붙여 idempotent). 파라미터 정규화 `_normalize_version_suffix_mode` —
+  미지의 값은 `""` 를 돌려 caller 가 400 을 내게 한다(기본값 격하 금지).
+- **백엔드** `routers/attachments.py`: `download_attachment` 에 `?version_suffix=`(기본 `keep`)
+  + 응답 헤더 `X-Attachment-Download-Name`(최종 이름, percent-encoded UTF-8). 프론트가
+  fetch+blob 으로 저장해 `Content-Disposition` 이 무시되므로 최종 이름을 별도 헤더로 준다.
+- **백엔드** `routers/conversations.py`: `_zip_entry_name` 의 `with_version: bool` → `mode: str`
+  (공용 규칙 위임, id 충돌 fallback 유지). `bulk_download_conversation_attachments` 에
+  `?version_suffix=` 추가 — **미지정 기본은 scope 별 종전 동작**(all→force, latest→keep)이라
+  파라미터를 모르는 호출자의 결과가 안 바뀐다. manifest 응답에 `download_filename` 추가 +
+  `url` 에 파라미터 전파.
+- **프론트** `static/app/composer.js`: `_versionedFilename` **제거**(규칙 두 벌 해소).
+  `_attachVersionSuffixIncluded`/`_setAttachVersionSuffixIncluded`(localStorage
+  `dqa.attachDownloadVersionSuffix`) + `.js-attach-suffix-toggle` 클래스로 패널·모달 체크박스
+  즉시 동기화. `_downloadAttachmentById(…, opts)` 가 `?version_suffix=` 를 싣고 응답 헤더의
+  이름을 채택(헤더 없으면 인자 fallback). `_runBulkDownload` 는 zip·manifest 양쪽에 파라미터
+  전파. `_bindAttachPanelManageControls` 가 저장된 선택으로 체크박스를 초기화한다(HTML
+  `checked` 만 믿으면 표시와 동작이 어긋난다).
+- **프론트** `static/index.html`·`css/chat.css`: 패널 체크박스 `#attachSidePanelSuffixOpt` +
+  `.attach-side-panel-opt`(note 와 같은 여백, 240px 에서 두 줄로 접힘). 첨부 0건·휴지통에서는 숨김.
+- 신규 권한·테이블·마이그레이션 **0**. 기본값이 종전 동작이라 미사용자 영향 0.
+- 검증: 신규 pytest 33건(`tests/test_attach_suffix_toggle.py` — 엔드포인트 배선 B1~B6 포함) + 기존 `test_attach_manage.py`
+  의 `with_version=` 9곳을 `mode=` 로 갱신.
+- Files: `src/routers/{_conv_store,attachments,conversations}.py`, `src/app.py`,
+  `src/static/{index.html,app/composer.js,css/chat.css}`,
+  `tests/{test_attach_suffix_toggle,test_attach_manage}.py`,
+  `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md`
+- **§18.8 패널 흡수 (codex 할당량 소진 → 사용자 승인 후 subagent 대체, §18.8.2)**:
+  - security PASS + P3 2건 — 단일 다운로드 헤더에도 ZIP 과 같은 경로 성분·제어문자 정제 적용,
+    파라미터 400 을 `_require_account` 뒤로 이동(미인증이 401 대신 400 을 받던 순서 역전).
+  - backend/qa BLOCK → 해소 — ① **핵심 배선 행위 테스트 0건**(ZIP 이 토글을 무시하도록 만들어도
+    전건 통과했음이 뮤테이션으로 실증) → 라우트를 그대로 호출해 ZIP namelist·manifest JSON 을
+    보는 B1~B6 신설(같은 뮤턴트로 red 재확인) ② 소스 문자열 단정 완화(공백 한 칸·포매터에 거짓
+    적색) ③ `rsplit(".",1)` → `os.path.splitext`(선행점 `.env`·끝점 `a.` 이름 파괴) ④ ZIP 이 실패
+    행의 이름을 소비하지 않아 manifest 와 재배정이 어긋나던 것 → 이름을 루프 선두에서 확정
+    ⑤ `_normalize_version_suffix_mode` 가 `default` 를 검증하지 않던 것 → allowlist 밖이면 ValueError.
+  - ux BLOCK → 해소 — ① **P1**: `모든 버전` 라디오의 정적 힌트가 토글 OFF 에서 체크박스와 정면
+    모순(사용자 대면 거짓 진술) → 두 안내를 한 함수가 함께 갱신 ② localStorage 쓰기 실패 시
+    표시-집행 괴리 → 세션 메모리 폴백 ③ 탭 간 동기화 → `storage` 이벤트 ④ 충돌 경고 `aria-live`
+    ⑤ 경고 게이트를 scope 로 좁히던 것 해제 + "구분 번호"→"파일마다 다른 번호" ⑥ 모달 체크박스
+    9px 내어쓰기 정렬 + 힌트 자리 예약(높이 20px 변동 → 1px).
+  - **라벨 정정**(계약 정합): "…버전 표시(_v2) **포함**" → "**유지**". 켜도 없던 표시를 새로 만들지는
+    않는다 — 사용자가 같은 이름으로 재업로드한 버전은 저장명에 애초에 접미가 없다. FUNCTION 의
+    "어느 버튼으로 받아도 이름이 같다" 도 "같은 범위에서는" 으로 정정.
+- **rebase 정합 (main `attach-multi-upload` 흡수)**: 머지 대기 중 main 이 단일 다운로드에
+  "v2 이상은 응답 파일명에만 버전 접미 부착"(`_next_version_filename`)을 도입했다 — 저장명이
+  원본명을 승계하는 사용자 재업로드 체인에서 구버전이 로컬 최신본을 덮어쓰는 문제 때문.
+  이는 backend/qa 패널이 지적한 P2("토글 ON 인데 사용자 재업로드 체인에는 접미가 안 붙는다")를
+  main 이 먼저 해결한 것이라, 그 규칙을 **`auto` 모드로 흡수**해 규칙 함수 하나로 통일했다:
+  단일·`scope=latest` 기본 = `auto`, `scope=all` 기본 = `force`. 프론트의 `_versionedFilename`
+  (main 이 버전 이력 행에도 쓰도록 확장한 상태)은 제거하고 서버가 준 이름을 쓴다.
+- Timestamp: 2026-08-06T18:25:00+09:00
+
+## CHG-20260807T004500-attach-suffix-toggle-rebase main `attach-multi-upload` 계약 흡수 (Minor §12.3)
+
+- 머지 대기 중 main 이 단일 다운로드에 "v2 이상은 **응답 파일명에만** 버전 접미 부착"을 도입했다
+  (`attachments.py` 의 `_next_version_filename` 호출) — 저장명이 원본명을 승계하는 사용자 재업로드
+  체인에서 구버전을 받으면 로컬 최신본을 덮어쓰기 때문. rebase 충돌 5파일(코드 2 · 문서 3).
+- 이 규칙은 §18.8 backend/qa 패널이 지적한 P2("토글 ON 인데 사용자 재업로드 체인에는 접미가
+  안 붙는다")를 main 이 **먼저 해결한 것**이라, 내 `keep` 기본을 그대로 두면 미지정 호출자가
+  main 과 다른 이름을 받는다.
+- 변경: 규칙 함수에 **`auto`** 모드 추가(v1=저장명 그대로 / v2+=정확히 하나의 `_v<n>`) 후 경로
+  기본을 옮겼다 — 단일 `auto` · 일괄 `scope=latest` `auto` · `scope=all` `force`(한 압축에 v1 까지
+  들어가므로 v1 도 구분 필요). 프론트는 `_versionSuffixMode` 가 ON 일 때 `keep` 대신 `auto` 를 쓴다.
+- main 이 버전 이력 행에도 쓰도록 확장했던 프론트 `_versionedFilename` 은 제거하고 서버가 준
+  이름(`X-Attachment-Download-Name`)을 쓴다 — 규칙 두 벌이 이 cycle 의 출발점이었던 결함.
+- **부수 이득(실측)**: 저장명에 접미가 없는 사용자 재업로드 v2(`T_gunzgame_account.sql`)에서
+  종전엔 ⬇=`…account.sql` / ⤓ latest=`…account.sql` 였다가 main 변경 후 ⬇ 만 `_v2` 가 붙어
+  어긋났는데, 이제 **양쪽 모두 ON=`…account_v2.sql` / OFF=`…account.sql`** 로 일치한다.
+- 테스트: A1~A4 신설(auto 규칙 · 단일 미지정 기본이 main 재현 · ⬇↔⤓ latest 이름 일치 · auto
+  기본 하에서도 OFF 가 접미 제거). 신규 총 37건.
+- Files: `src/routers/{_conv_store,attachments,conversations}.py`, `src/static/app/composer.js`,
+  `tests/test_attach_suffix_toggle.py`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`,
+  `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md`
+- **선행 테스트 1건 갱신** (`test_attachment_versioning.py::test_n6`): main 이 만든 그 테스트는
+  `download_attachment` 소스에 `_next_version_filename` 과 `_dl_version > 1` 이라는 **문자열이
+  있는지**를 봤다. 계약(v2 이상만 접미)은 `auto` 가 그대로 지키지만 수행 주체가 규칙 함수로
+  옮겨져 red 가 됐다 — **같은 계약을 지키는 리팩터링에 red 를 내는** 형태라(§18.8 backend/qa
+  패널이 지적한 그 패턴) 결과를 보는 단정으로 바꿨다: 규칙 함수의 실제 반환값(v2→`_v2`,
+  v1→원본명) + 라우트의 미지정 기본이 `auto` 인지.
+- Timestamp: 2026-08-07T00:45:00+09:00

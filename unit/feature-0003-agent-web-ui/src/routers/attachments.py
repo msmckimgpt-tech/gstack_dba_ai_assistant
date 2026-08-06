@@ -71,7 +71,7 @@ def get_attachment_metadata(attachment_id: int, request: Request) -> JSONRespons
         conn.close()
 
 @router.get("/api/attachments/{attachment_id}/download")
-def download_attachment(attachment_id: int, request: Request):
+def download_attachment(attachment_id: int, request: Request, version_suffix: str = "auto"):
     """TASK-0284: 첨부 본문을 web FastAPI 가 직접 프록시 스트리밍한다.
 
     배경: presigned(signed) URL 은 MinIO 내부 endpoint(`minio:9000`) 호스트가 박혀 외부 머신
@@ -81,7 +81,13 @@ def download_attachment(attachment_id: int, request: Request):
 
     권한은 get_attachment_metadata 와 동형(`_account_can_access_attachment` own/any), 승인 대기
     계정은 본문 차단(D21). 보안: 원본 mime 대신 octet-stream + `Content-Disposition: attachment`
-    + nosniff 로 inline 렌더/XSS 를 차단한다(이미지 서빙 12710 의 nosniff 선례 동형)."""
+    + nosniff 로 inline 렌더/XSS 를 차단한다(이미지 서빙 12710 의 nosniff 선례 동형).
+
+    REQ-20260806-attach-suffix-toggle: `version_suffix=keep|strip|force` 로 파일명의 버전
+    접미사(`_v2`)를 뗄지 붙일지 고른다(기본 `auto` = v2 이상에만 부착 = 기존 동작). 규칙은 일괄 다운로드와 공용
+    (`app._download_filename_with_version`)이라 같은 범위에서는 어느 버튼으로 받아도 이름이
+    같다(전 버전 일괄 다운로드만 버전 구분을 위해 `force` 를 기본으로 쓴다)."""
+    mode = app._normalize_version_suffix_mode(version_suffix, default="auto")
     try:
         from web.modules import storage_minio
     except Exception as exc:
@@ -96,6 +102,10 @@ def download_attachment(attachment_id: int, request: Request):
         account, error = app._require_account(request, conn)
         if error:
             return error
+        # 파라미터 오류는 **인증 뒤에** 알린다 — 미인증 요청이 401 대신 400 을 받으면
+        # 인증 경계보다 입력 검증이 먼저 말을 하는 셈이다(§18.8 security 패널 P3).
+        if not mode:
+            return app._json_error("version_suffix 는 auto, keep, strip, force 중 하나여야 합니다.", 400)
         row = app._load_attachment_row(conn, attachment_id)
         if not app._account_can_access_attachment(
             conn,
@@ -117,14 +127,21 @@ def download_attachment(attachment_id: int, request: Request):
 
         from starlette.responses import Response as _Resp
         from urllib.parse import quote as _quote
+        import re as _re
         filename = str((row or {}).get("OriginalFilename") or "download")
-        # attach-multi-upload: 저장 파일명은 버전 체인 정합을 위해 원본명을 승계한다
-        # (`_materialize_assistant_attachment_edits` 주석 참조 — 이름이 갈리면 체인이 분열).
-        # 그래서 v2 이상을 내려받을 때 로컬에서 원본을 덮어쓰지 않도록 **응답 파일명에만**
-        # 버전 접미를 붙인다(DB 저장값 불변 → 체인 스코프·dedup 판정에 영향 없음).
-        _dl_version = int((row or {}).get("VersionNumber") or 1)
-        if _dl_version > 1:
-            filename = app._next_version_filename(filename, _dl_version)
+        # 경로 성분·제어문자 제거 — ZIP 경로(`_zip_entry_name`)와 **같은 정제**를 여기서도 한다.
+        # 헤더 소비자가 브라우저면 UA 가 `download` 값을 정규화해 주지만, 스크립트로 저장하는
+        # 소비자에겐 그 보호가 없다(§18.8 security 패널 P3 — 방어심층 비대칭 해소).
+        filename = filename.replace("\\", "/").split("/")[-1]
+        filename = _re.sub(r"[\x00-\x1f\x7f]", "", filename).strip().lstrip(".") or "download"
+        # attach-multi-upload: 저장 파일명은 버전 체인 정합을 위해 원본명을 승계하므로
+        # (`_materialize_assistant_attachment_edits` 주석 참조 — 이름이 갈리면 체인이 분열),
+        # v2 이상은 **응답 파일명에만** 버전 접미를 붙여 로컬 최신본 덮어쓰기를 막는다.
+        # 그 규칙이 곧 `auto` 이며 미지정 시 기본이다 — 접미를 원치 않는 사용자는
+        # `version_suffix=strip` 으로 끈다(REQ-20260806-attach-suffix-toggle).
+        # 규칙 적용은 인가 통과 **후** — 이름 계산이 존재 여부를 흘리지 않는다.
+        filename = app._download_filename_with_version(
+            filename, int((row or {}).get("VersionNumber") or 1), mode) or "download"
         # Content-Disposition: ASCII fallback + RFC5987 비-ASCII(UTF-8) filename*.
         # REV-20260616-0291 MINOR 흡수: 따옴표 + 모든 비출력 제어문자(CR/LF 포함)를 제거해 헤더
         # 인젝션을 차단(OriginalFilename 은 업로드 시 .strip() 만 거쳐 CRLF 가 남을 수 있음).
@@ -140,6 +157,12 @@ def download_attachment(attachment_id: int, request: Request):
             media_type="application/octet-stream",
             headers={
                 "Content-Disposition": disposition,
+                # 프론트는 fetch+blob 으로 저장하므로(TASK-0287) `<a download>` 이름을 스스로
+                # 정해야 하고, 그러면 Content-Disposition 은 무시된다 — 두 이름이 어긋나지
+                # 않도록 최종 파일명을 별도 헤더(percent-encoded UTF-8)로도 준다. 이름 규칙의
+                # 권위는 서버 한 곳이고, 프론트는 버전 번호를 몰라도 된다(말풍선 칩처럼
+                # version_number 가 없는 호출부가 있다).
+                "X-Attachment-Download-Name": _quote(filename, safe=""),
                 "X-Content-Type-Options": "nosniff",
                 "Cache-Control": "private, no-store",
             },

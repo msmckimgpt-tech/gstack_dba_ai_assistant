@@ -1857,6 +1857,25 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* REQ-20260806-attach-suffix-toggle: 다운로드 파일명 버전 접미사 토글.
+   note 와 같은 여백·크기를 쓰되 클릭 대상이므로 라벨 전체가 히트 영역이다.
+   패널 최소 폭(240px)에서 문구가 두 줄로 접히도록 flex-start 정렬. */
+.attach-side-panel-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+.attach-side-panel-opt input { margin: 1px 0 0; flex-shrink: 0; cursor: pointer; }
+.attach-side-panel-opt:hover { color: var(--text-2, var(--text)); }
+
+
 /* TASK-0158: 내 활동 기록 (프로필 감사 탭) */
 .profile-audit-list { display: flex; flex-direction: column; }
 .profile-audit-empty { padding: 16px 0; color: var(--text-muted); font-size: 13px; text-align: center; }
@@ -2157,6 +2176,25 @@
 .attach-manage-choice:hover { border-color: var(--primary, #2563eb); background: rgba(37, 99, 235, 0.04); }
 .attach-manage-choice input { margin-top: 2px; flex-shrink: 0; }
 .attach-manage-choice-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* REQ-20260806-attach-suffix-toggle: 모달 안 버전 표시 토글 — 위 두 라디오 그룹(형식·범위)과
+   **다른 축**이라 테두리 박스를 벗고 구분선 아래에 둔다. 같은 박스 외형으로 나란히 두면
+   세 번째 라디오 그룹으로 읽혀 "셋 중 하나를 고르는 것" 처럼 보인다(PB-0008 캡처 판독).
+   ⚠ `.attach-manage-choice` 와 특이성이 같으므로 **반드시 그 규칙 뒤**에 온다 — 앞에 두면
+   border 재선언이 그대로 덮인다(첫 시도에서 실제로 그랬다). */
+.attach-manage-suffix {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0;
+  margin-top: 2px;
+  /* 좌측 padding 은 라디오의 `8px 10px` + border 1px 과 같은 11px — 컨트롤 축이 어긋나면
+     구분선을 둔 의도와 달리 그냥 삐뚤어 보인다(§18.8 ux 패널 P3, 실측 9px 내어쓰기). */
+  padding: 12px 11px 0;
+}
+.attach-manage-suffix:hover { border-color: var(--border-subtle); background: transparent; }
+/* 안내 문구 자리를 항상 확보한다 — 등장/소멸이 모달 높이를 바꾸면 방금 누른 라디오와
+   다운로드 버튼이 움직인다(§18.8 ux 패널 P3, 실측 약 20px). */
+.attach-manage-suffix .attach-manage-choice-text em { display: block; min-height: 15px; }
 .attach-manage-choice-text strong { font-size: 12.5px; font-weight: 600; color: var(--text); }
 .attach-manage-choice-text em { font-size: 11px; font-style: normal; color: var(--text-muted, #9ca3af); }
 .attach-manage-actions {

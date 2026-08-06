@@ -8835,3 +8835,73 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 - [x] 검증: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 34/0 동일 = 회귀 0) · 구조(releases 43→44 · `releases[0].date`=2026-08-06 9항목 · 08-05(3)/08-04(3)/08-03(7) 블록 보존 · `type`/`area` enum 위반 0 · 스키마 외 키 0 · `generated`==head.date) · 내부용어 누출 정규식 스캔 **0**(feature-id·파일명·함수명·ADR·§·PR#·sha·PB-0008·ZIP·audit·retention 등 19 패턴).
 - [x] 적대검증 9건 전건 정본 재확인 후 반영(ULTRACODE `wf_d4d5af5d` 2 렌즈, MAJOR 1 + MINOR 8): 상세·근거는 REVIEW `REV-20260807T010301-doc-sync-rn-0807`.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(2026-07-12 ITEM-09 빌드 자동주입 regime · `?v=dev` 고정 · `index.html`/`admin.html` 편집 0).
+
+## 20260806T1825-attach-suffix-toggle — 다운로드 파일명 버전 접미사(`_v2`) 토글 (Minor §12.3)
+
+사용자 요청(2026-08-06): "첨부파일을 다운로드 받을 때 접미사(`_v2`, `_v3` 등)가 포함되는
+상태로 받을지 토글할 수 있는 체크박스를 적절히 구성 — **단일 파일 / 전체 파일 다운로드
+모두 대응**".
+
+### 2.1 Implementation Plan
+
+**실측이 바꾼 전제**: 접미는 다운로드 시점에만 붙는 게 아니었다. AI 편집본은 **저장명 자체**가
+`report_v2.csv` 다(`_next_version_filename`). 그래서 "전 버전 다운로드에서만 붙는 것을 끄는"
+스위치로는 요청을 만족할 수 없고, 최신본 1개를 받는 경우까지 다뤄야 한다. 또 그 두 출처가
+겹쳐 `scope=all` 에서 `report_v2_v2.csv` 가 나오던 이중접미도 함께 드러났다.
+
+**영향 파일 · symbol**
+
+| # | 파일 | 변경 symbol | 내용 |
+|---|---|---|---|
+| B1 | `src/routers/_conv_store.py` | 신규 `_download_filename_with_version` · `_normalize_version_suffix_mode` | 접미 규칙 정본(auto/keep/strip/force). `auto` = main `attach-multi-upload` 계약(v2 이상만 부착) 흡수. strip 은 `_v<VersionNumber>` 일치 시에만 — 사용자가 지은 `plan_v2.docx` 를 왜곡하지 않는다. force 는 떼고 붙여 idempotent |
+| B2 | `src/app.py` | `from routers._conv_store import (...)` | 두 심볼 재바인딩(`app.X` 동적참조 보존) |
+| B3 | `src/routers/attachments.py` | `download_attachment` | `?version_suffix=keep\|strip\|force`(기본 keep) + 응답 헤더 `X-Attachment-Download-Name`(최종 이름, percent-encoded) |
+| B4 | `src/routers/conversations.py` | `_zip_entry_name` · `bulk_download_conversation_attachments` | `with_version: bool` → `mode: str` 로 교체(공용 규칙 위임) · `?version_suffix` 추가 · manifest 에 `download_filename` + url 에 파라미터 전파 · 미지정 기본은 scope 별 종전 동작(**이중접미 해소분과 그로 인한 충돌 재배정은 제외** — 아래 참조) |
+| F1 | `src/static/index.html` | 신규 `#attachSidePanelSuffixOpt` | 패널 체크박스 1개 |
+| F2 | `src/static/css/chat.css` | 신규 `.attach-side-panel-opt` | note 와 같은 여백, 240px 에서 두 줄로 접힘 |
+| F3 | `src/static/app/composer.js` | `_downloadAttachmentById` · `_openAttachDownloadDialog` · `_runBulkDownload` · `_bindAttachPanelManageControls` · **`_versionedFilename` 제거** | localStorage 공유 상태 + 두 표면 동기화 + 서버 결정 이름 채택 |
+
+**접근 요약**: 이름 결정 권위를 서버 한 곳(`_download_filename_with_version`)으로 모으고,
+프론트는 서버가 준 이름(개별=`X-Attachment-Download-Name` 헤더, 일괄=manifest
+`download_filename`)을 그대로 쓴다. 토글 상태는 `localStorage` 1개를 패널·모달이 공유한다.
+신규 권한·테이블·마이그레이션 **0**.
+
+**완료 판정 기준 (acceptance criteria)** — FUNCTION `AC-20260806T1825-attach-suffix-toggle-1~7` 과 동일.
+
+- AC-1 토글이 패널·모달 양쪽에 있고 상태를 공유한다(첨부 0건·휴지통에서는 숨김).
+- AC-2 단일 다운로드 3경로(목록 ⬇ / 버전 이력 ⬇ / 말풍선 칩)가 토글을 따르고 결과가 같다.
+- AC-3 `scope=all` + 토글 off → 접미 없음 + 이름 충돌 시 id 구분 접미(무음 덮어쓰기 0).
+- AC-4 AI 편집본 이중접미(`report_v2_v2.csv`) 회귀 없음.
+- AC-5 `plan_v2.docx`(v1) 는 토글 off 여도 이름 불변.
+- AC-6 `version_suffix` 미지의 값 400 · 미지정 시 종전 이름 그대로 — **단 두 예외는 의도된 변경**:
+  ① AI 편집본 이중접미(`report_v2_v2.csv`→`report_v2.csv`) ② 그 이름이 풀리면서 같은 묶음의
+  다른 동명 파일이 id 접미로 재배정될 수 있다(무음 덮어쓰기는 없음).
+- AC-7 프론트에 접미 생성 규칙 부재(소스 단정), ZIP·단일이 같은 함수 경유.
+
+**위험도**: **Minor** (§12.3) — 비파괴 표시 옵션. 인증·인가·스키마·외부 비용 무관. 기본값이
+종전 동작이라 미사용자 영향 0.
+
+### 작업 항목
+
+- [x] B1 규칙 정본 `_download_filename_with_version` + 파라미터 정규화
+- [x] B2 `app.X` 재바인딩
+- [x] B3 단일 다운로드 `version_suffix` + 최종 이름 헤더
+- [x] B4 일괄 다운로드 `version_suffix`(zip·manifest) + `_zip_entry_name` mode 전환
+- [x] F1~F3 패널 체크박스 · CSS · 공유 상태 · 서버 결정 이름 채택 · `_versionedFilename` 제거
+- [x] 테스트 신규 37건(`tests/test_attach_suffix_toggle.py` — 규칙 함수 + **엔드포인트 배선** B1~B6 + rebase 흡수 `auto` 계약 A1~A4) + 기존 `test_attach_manage.py` 시그니처 갱신
+- [x] §18.8 적대 검증 패널 (security PASS / backend·qa BLOCK / ux BLOCK) — P1 1건 + P2 4건 + P3 8건 전건 흡수, 뮤테이션 2종으로 신규 테스트 유효성 역검증
+- [x] PB-0008 실 Windows 브라우저 시각검증 (31 step 전건 PASS, 패널 흡수 후 재실행)
+- [ ] verify-completion PASS → commit → PR → cycle-finalize → 배포
+
+## 9. Requested Scope
+
+- [x] `접미사('_v2', '_v3', 등...) 문자가 포함되는 상태로 받을지 토글할 수 있는 체크박스를 적절히 구성` — 산출물: 첨부 패널 체크박스(`#attachSidePanelSuffixToggle`) + 전체 다운로드 모달의 같은 체크박스, `localStorage` 로 선택 기억
+  · 배선 확인: 체크박스 change → `_setAttachVersionSuffixIncluded` → 서버 파라미터 `version_suffix` → `_download_filename_with_version` 까지 한 줄로 이어지는지 확인. 두 표면이 같은 클래스(`js-attach-suffix-toggle`)로 즉시 동기화됨을 구조 테스트로 고정.
+- [x] `단일 파일 / 전체 파일 다운로드 모두 대응` — 산출물: 단일 = `GET /api/attachments/{id}/download?version_suffix=`, 전체 = `GET /api/conversations/{cid}/attachments/download?version_suffix=`(zip·manifest 공통)
+  · 배선 확인: 단일 다운로드 진입점이 **3개**(목록 행 ⬇ · 버전 이력 행 ⬇ · 말풍선 첨부 칩)임을 전수 확인하고 모두 `_downloadAttachmentById` 로 수렴함을 확인 — 한 choke-point 수정으로 3경로가 동시에 대응된다.
+
+**G2**: 요청을 "체크박스 구성" 과 "단일/전체 모두 대응" 두 항목으로 분해해 각각 배선을 확인했다.
+**G3**: 주장한 affordance 를 실측했다 — "전체 다운로드가 `_v<n>` 을 붙인다" 는 기존 서술만 보고 스위치를 달았다면 **최신본 1개 다운로드에서 `_v2` 가 남는 사용자의 실제 불편**을 못 잡았을 것이다. 저장명 자체가 접미를 갖는다는 사실을 코드(`_next_version_filename`)에서 확인한 뒤 범위를 정했다.
+**G4**: 경계 양측을 검증했다 — 버전 번호 일치/불일치(`plan_v2.docx` v1), 접미 유/무 저장명에 force 적용, scope=latest/all, 파라미터 지정/미지정.
+**G9-b**: 접미를 떼면 이름이 겹치는데, 그 경우 **조용히 덮지 않고** id 구분 접미가 붙는다는 사실을 모달이 미리 알린다(무음 덮어쓰기 방지 우선).
+**G10**: 재발 클래스(같은 규칙이 서버·프론트 두 벌)를 점수정으로 끝내지 않고 소스 단정으로 잠갔다 — 프론트에 `_versionedFilename` 류 규칙이 되살아나면 테스트가 red.

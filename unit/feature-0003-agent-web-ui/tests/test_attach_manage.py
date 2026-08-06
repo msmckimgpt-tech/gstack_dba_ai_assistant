@@ -395,15 +395,15 @@ def test_x3_chain_load_locks_rows_under_transaction():
 def test_z1_zip_entry_name_versioned():
     used: set[str] = set()
     name = convs._zip_entry_name(_row(Id=3, OriginalFilename="a.csv", VersionNumber=2),
-                                 with_version=True, used=used)
+                                 mode="force", used=used)
     assert name == "a_v2.csv"
 
 
 def test_z2_zip_entry_name_collision_gets_id():
     """같은 이름이 두 번 들어가면 압축 해제 시 한쪽이 조용히 사라진다."""
     used: set[str] = set()
-    first = convs._zip_entry_name(_row(Id=3, OriginalFilename="a.csv"), with_version=False, used=used)
-    second = convs._zip_entry_name(_row(Id=4, OriginalFilename="a.csv"), with_version=False, used=used)
+    first = convs._zip_entry_name(_row(Id=3, OriginalFilename="a.csv"), mode="keep", used=used)
+    second = convs._zip_entry_name(_row(Id=4, OriginalFilename="a.csv"), mode="keep", used=used)
     assert first == "a.csv"
     assert second == "a_4.csv"
     assert first != second
@@ -412,7 +412,7 @@ def test_z2_zip_entry_name_collision_gets_id():
 def test_z3_zip_entry_name_strips_path_traversal():
     used: set[str] = set()
     name = convs._zip_entry_name(_row(Id=9, OriginalFilename="../../etc/passwd"),
-                                 with_version=False, used=used)
+                                 mode="keep", used=used)
     assert "/" not in name and ".." not in name
     assert name == "passwd"
 
@@ -422,9 +422,9 @@ def test_z5_zip_entry_name_survives_fallback_recollision():
     다시 충돌해 압축 해제 시 한쪽이 조용히 덮인다."""
     used: set[str] = set()
     names = [
-        convs._zip_entry_name(_row(Id=7, OriginalFilename="a_4.csv"), with_version=False, used=used),
-        convs._zip_entry_name(_row(Id=3, OriginalFilename="a.csv"), with_version=False, used=used),
-        convs._zip_entry_name(_row(Id=4, OriginalFilename="a.csv"), with_version=False, used=used),
+        convs._zip_entry_name(_row(Id=7, OriginalFilename="a_4.csv"), mode="keep", used=used),
+        convs._zip_entry_name(_row(Id=3, OriginalFilename="a.csv"), mode="keep", used=used),
+        convs._zip_entry_name(_row(Id=4, OriginalFilename="a.csv"), mode="keep", used=used),
     ]
     assert len(set(n.lower() for n in names)) == len(names), f"ZIP 안 이름 중복: {names}"
 
@@ -432,8 +432,8 @@ def test_z5_zip_entry_name_survives_fallback_recollision():
 def test_z6_zip_entry_name_is_case_insensitive_unique():
     """대소문자 무시 파일시스템에서 `A.csv` 가 `a.csv` 를 덮는다."""
     used: set[str] = set()
-    a = convs._zip_entry_name(_row(Id=1, OriginalFilename="a.csv"), with_version=False, used=used)
-    b = convs._zip_entry_name(_row(Id=2, OriginalFilename="A.csv"), with_version=False, used=used)
+    a = convs._zip_entry_name(_row(Id=1, OriginalFilename="a.csv"), mode="keep", used=used)
+    b = convs._zip_entry_name(_row(Id=2, OriginalFilename="A.csv"), mode="keep", used=used)
     assert a.lower() != b.lower(), f"대소문자만 다른 중복: {a} / {b}"
 
 
