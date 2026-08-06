@@ -3027,3 +3027,37 @@ filler 가 들어가 **의미가 반대로 뒤집혔다**(라이브 실측 교�
 ### 결정 (D1) — 이름 결정 권위를 서버로
 
 프론트는 fetch+blob 으로 저장하므로 `<a download>` 이름을 스스로 정해야 하고, 그러면 `Content-Disposition` 은 무시된다. 규칙을 프론트에도 두면 두 벌이 되어 (a) 토글을 껐는데 한 경로에만 접미가 남고 (b) 버전 번호를 모르는 호출부(말풍선 칩의 user snapshot)는 규칙을 적용할 수 없다. 그래서 서버가 최종 이름을 계산해 전용 헤더로 실어 보내고, 프론트는 그 값을 그대로 쓴다.
+
+
+## REQ-20260806-attach-chain-merge — 분열 첨부 체인 병합 · 첨부 날짜 compact 표기
+
+- REQ-20260806-attach-chain-merge (사용자 지시 "갈라진 첨부파일에 대해서는 하나의 체인으로 합쳐주세요
+  (범위가 너무 넓다면 최근 1주일) / 첨부파일이 첨부된 날짜도 compact하게 출력", **Critical §12.3** —
+  라이브 첨부 메타데이터 rewrite; 스키마·마이그레이션·RBAC·엔드포인트 shape 무변경):
+  선행 `REQ-20260806-attach-multi-upload` AC-AMU-4 가 **앞으로의** 분열을 막았고, 본 REQ 는
+  **이미 갈라진 기존 데이터**를 병합하며 첨부 시각을 목록에 표기한다. AC-ACM-1 ~ AC-ACM-5.
+
+  - **AC-ACM-1 (병합 단위·순서)**: 논리 파일 = `(ConversationId, AccountId, base(OriginalFilename))`
+    이고 `base` 는 파일명 끝의 `_v<숫자>` 접미를 제거한 것이다. 그룹 구성원을 **CreatedAt 오름차순**
+    으로 정렬해 첫 row 는 `RootAttachmentId=NULL`·`VersionNumber=1`, 이후는 `root=<첫 row Id>`·
+    `VersionNumber=2..N` 을 갖고, `OriginalFilename` 은 base 이름으로 통일하며 `FilenameHmac` 을
+    재계산한다. `ObjectKey`·MinIO 객체·본문·`Sha256` 은 불변이다.
+  - **AC-ACM-2 (SupersededAt 사실성)**: 체인의 **마지막 1건만** `SupersededAt IS NULL`(live)이고,
+    나머지는 **다음 버전의 CreatedAt** 으로 스탬프된다 — `NOW()` 일괄 스탬프는 "언제까지 최신이었나"
+    를 지우므로 쓰지 않는다.
+  - **AC-ACM-3 (안전장치)**: 기본 dry-run이며 `--apply` 없이는 쓰지 않는다. 적용 시 변경 전 상태를
+    스냅샷 JSON + **사람이 실행 가능한 롤백 SQL** 로 남기고, 단일 트랜잭션에서 `UNIQUE(root, version)`
+    충돌을 **2단계 UPDATE**(오프셋 → 최종)로 회피하며, 실패 시 전체 롤백한다. 적용 후 PG 미러를
+    동기화하고(실패는 fail-soft — MySQL 이 정본), 같은 판정을 다시 돌려 **잔여 0** 을 확인한다.
+    `--rollback <snapshot>` 으로 before-state 를 복원할 수 있다. `--days N` 으로 범위를 좁힌다.
+  - **AC-ACM-4 (오병합 방지)**: base 이름 row 가 없고 `_v<n>` 이름을 **사용자가 직접** 올린 것만
+    모인 그룹은 병합하지 않는다(사용자가 고른 이름일 수 있음). 제외분은 사유와 함께 출력·스냅샷에
+    기록한다. 대화·계정 경계를 넘어 합치지 않는다.
+  - **AC-ACM-5 (첨부 날짜 compact)**: 첨부 목록 메타줄에 첨부 시각을 한 토막으로 표기한다 —
+    오늘 `14:20` · 올해 `8/6` · 그 외 `25/8/6`, 전체 시각은 `title` 로만(§16.8 예산). 버전 이력 행의
+    역할 뒤에도 같은 표기를 붙인다(같은 파일명이 한 체인에 쌓이면 행 구분이 버전번호·시각에 남는다).
+    ⚠️ `created_at` 은 **오프셋 없는 로컬(KST) naive** 문자열이라 그대로 `new Date()` 로 파싱한다 —
+    `Z` 를 붙이면 9시간 어긋난다(선행 `restorable_until` 은 UTC 라 보정이 필요했던 반대 사례).
+    백엔드 변경 0 — `created_at` 은 이미 응답에 있었다.
+  - **검증**: `tests/test_attach_chain_merge.py` 17건 + `tests/verify_attach_date_compact.mjs` 18건
+    (뮤테이션 역검증 포함). 라이브 적용은 배포 후 `--apply` + 사후 재검증 + PB-0008.

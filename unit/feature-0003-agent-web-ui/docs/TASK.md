@@ -8835,7 +8835,6 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 - [x] 검증: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 34/0 동일 = 회귀 0) · 구조(releases 43→44 · `releases[0].date`=2026-08-06 9항목 · 08-05(3)/08-04(3)/08-03(7) 블록 보존 · `type`/`area` enum 위반 0 · 스키마 외 키 0 · `generated`==head.date) · 내부용어 누출 정규식 스캔 **0**(feature-id·파일명·함수명·ADR·§·PR#·sha·PB-0008·ZIP·audit·retention 등 19 패턴).
 - [x] 적대검증 9건 전건 정본 재확인 후 반영(ULTRACODE `wf_d4d5af5d` 2 렌즈, MAJOR 1 + MINOR 8): 상세·근거는 REVIEW `REV-20260807T010301-doc-sync-rn-0807`.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(2026-07-12 ITEM-09 빌드 자동주입 regime · `?v=dev` 고정 · `index.html`/`admin.html` 편집 0).
-
 ## 20260806T1825-attach-suffix-toggle — 다운로드 파일명 버전 접미사(`_v2`) 토글 (Minor §12.3)
 
 사용자 요청(2026-08-06): "첨부파일을 다운로드 받을 때 접미사(`_v2`, `_v3` 등)가 포함되는
@@ -9024,3 +9023,62 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 `tests/headless/verify_attach_diff_geometry.py` 는 이 환경에 playwright 브라우저 바이너리가 없어
 실행하지 못했다(span 은 inline 이라 열 폭 기하에 영향이 없다는 것이 근거이나 **측정하지는 않았다**).
 ③ 6,000행 렌더 체감(AC-6)은 상한 방어(`MAX_LINE_LEN`)만 코드로 두었고 실측은 PB-0008 로 이월.
+## 20260806T2000-attach-chain-merge — 분열 첨부 체인 병합 + 첨부 날짜 compact 표기 (Critical §12.3)
+
+사용자 지시(2026-08-06): "갈라진 첨부파일에 대해서는, 하나의 체인으로 합쳐주세요. 범위가 너무
+넓다면, 최근 1주일 범위의 첨부파일만 수행해주세요. / 또한, 첨부파일이 첨부된 날짜도 compact하게
+출력되도록 개선해주세요."
+
+선행 cycle `20260806T1820-attach-multi-upload` 가 **분열 기전**(편집본이 다른 파일명으로 저장)은
+막았지만 **이미 갈라진 데이터**는 남겨 뒀다(그 cycle REPORT §8 에 사용자 결정 대기로 등재).
+등급 Critical — 라이브 첨부 메타데이터를 다시 쓰는 파괴적 변경.
+
+### 범위 판단 (사용자 조건부 지시에 대한 답)
+
+전수 실측: **활성 첨부 780 row 중 분열 62 논리파일 / 155 row / 14 대화**. 최근 7일로 좁히면
+25그룹 / 67 row / 4 대화. **155 row 는 "너무 넓지 않다"** 고 판단해 전체를 대상으로 한다 —
+row 수가 적고, 되돌릴 수단(스냅샷 + 롤백 SQL)을 함께 만들며, 오래된 대화만 갈라진 채 남기면
+요청의 목적(목록에서 한 파일이 여러 줄로 보이는 것 해소)을 절반만 달성한다.
+`--days 7` 로 좁히는 경로는 스크립트에 그대로 남겨 둔다.
+
+### 2.1 Implementation Plan
+
+| 대상 | 변경 |
+|---|---|
+| `scripts/attach_chain_merge.py`(신설) | 논리 파일 = `(conv, account, base(filename))`. CreatedAt 오름차순으로 root/version 재부여 + 파일명 통일 + FilenameHmac 재계산 + SupersededAt 재계산. **기본 dry-run**, `--apply` 로만 반영. 스냅샷 JSON + 롤백 SQL 생성, 단일 트랜잭션, UNIQUE 회피 2단계 UPDATE, PG 미러 동기화, 사후 재검증 |
+| `static/app/composer.js` | 첨부 목록 메타줄에 compact 시각(오늘 `14:20` / 올해 `8/6` / 그 외 `25/8/6`) + 전체 시각 title · 버전 이력 행에도 시각 |
+
+**손대지 않는 것**: `ObjectKey`·MinIO 객체·본문·`Sha256`(파일 실체 무이동) · 백엔드 API(응답에
+`created_at` 이 이미 있어 프론트만 렌더) · 스키마·마이그레이션·RBAC.
+
+**병합 제외 규칙**: base 이름 row 가 없고 `_v<n>` 이름을 **사용자가 직접** 올린 것만 모인 그룹은
+분열이 아니라 사용자가 고른 이름일 수 있어 건드리지 않는다(전수 실측 0건이나 가드로 유지).
+
+### 체크리스트
+
+- [x] 병합 스크립트 신설 + dry-run 실측(155 row / 62 논리파일 / 14 대화)
+- [x] 첨부 날짜 compact 표기(목록 메타줄 + 버전 이력 행)
+- [x] pytest `test_attach_chain_merge.py` **17건** — base_name · 무의미 write 0 · 편집본 흡수 ·
+      분열 재결합 · SupersededAt 체인(live 정확히 1건) · 사용자명 제외/미과잉 · days 범위 ·
+      대화·계정 경계 · **2단계 UPDATE 순서** · 실패 시 롤백
+- [x] mjs `verify_attach_date_compact.mjs` **18건**(포맷 6 · **시간대 3** · 배선 6 · 뮤테이션 3)
+- [ ] 전 스위트 회귀 + verify-completion
+- [ ] 배포 → **라이브 병합 `--apply` 실행** → 사후 검증(잔여 0)
+- [ ] PB-0008 라이브 시각검증(합쳐진 목록 · 날짜 표기)
+
+## 9. Requested Scope
+- [x] `갈라진 첨부파일에 대해서는, 하나의 체인으로 합쳐주세요` — 산출물: `attach_chain_merge.py`.
+      배선 확인: dry-run 이 155 row 계획을 산출하고, 사후 재검증이 잔여 0 을 단정한다.
+- [x] `범위가 너무 넓다면, 최근 1주일 범위만` — 판단: 155 row 는 넓지 않아 **전체 수행**,
+      `--days 7` 경로는 보존. 그 판단 근거(전수 실측 수치)를 위에 명시했다.
+- [x] `첨부파일이 첨부된 날짜도 compact하게 출력` — 산출물: 메타줄 칩 + 버전 행 시각.
+      배선 확인: mjs C1~C6 이 렌더 배선을, A1~A3 가 3구간 포맷을 단정.
+
+**G4**: 경계 양측 — 오늘/올해/그 외 3구간, 체인 길이 1 vs N, days 범위 안/밖, UNIQUE 충돌
+전/후(2단계 UPDATE 순서).
+**G7-a**: `created_at` 의 시간대를 **문서·기억이 아니라 실측**으로 확정했다(18:50 업로드 →
+`2026-08-06T18:50:29`, MySQL `NOW()`=KST). 선행 cycle 의 `restorable_until` 은 UTC 라 `Z` 보정이
+필요했던 반대 사례이므로, 필드마다 다르다는 사실을 주석·테스트에 고정했다.
+**G9-b**: 병합은 무음 절단이 아니다 — 제외 그룹을 사유와 함께 출력하고 스냅샷에 남긴다.
+**G9-d**: 산출물(스냅샷)의 소비 경로를 함께 만들었다 — `--rollback <snapshot.json>` 으로
+before-state 를 되돌리는 경로가 있고, 사람이 읽을 수 있는 `.rollback.sql` 도 동시 생성한다.
