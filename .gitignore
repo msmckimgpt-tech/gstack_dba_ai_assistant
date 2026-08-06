@@ -56,3 +56,6 @@ artifacts/
 
 # feature-0016: .env 안전 백업(비밀 포함) 커밋 방지
 .env.bak*
+
+# PB-0008 브라우저 하네스 런타임 서빙 디렉토리 (tests/pb0008_*.py 가 생성)
+unit/*/tests/.pb0008-serve/

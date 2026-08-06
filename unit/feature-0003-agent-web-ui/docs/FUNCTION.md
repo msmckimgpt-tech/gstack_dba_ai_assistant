@@ -2469,3 +2469,77 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
 - AC-20260805T104213-harness-repair-3: `src/static/**` 접촉 0 (tests-only — git diff 로 검증).
 ### 릴리즈노트 콘텐츠 갱신 이력 (doc-sync-rn-0806, 2026-08-05)
 - 사용자향 릴리즈노트 데이터(`static/release-notes-data.js`)에 2026-08-05 블록 3항목 추가(이어받은 대화의 첨부 변경 부재-단정 해소 · 관계도 노드 상세 판정 배지 신설 · 분석문 사실성 검증의 무한 재판정 차단). 기능 계약·렌더러 동작 변경 없음(데이터 전용).
+
+## (modal-backdrop-dismiss, 2026-08-06) 사이드바 항목(대화/폴더) 모달 — 배경 dismiss 계약 (web/UI, Minor §12.3, frontend-only · 백엔드·API·RBAC·스키마 무변경)
+
+좌측 사이드바 항목(대화 · 폴더)에서 열리는 backdrop 모달의 "바깥 어두운 배경을 눌러 닫기"
+동작을, 누름과 뗌이 **둘 다 배경 위**에서 일어났을 때로 한정한다.
+
+### 계약 (`bindBackdropDismiss(backdrop, onDismiss)` — `static/app.js`, export)
+
+- **닫힘 조건**: `pointerdown` 의 target 과 `pointerup` 의 target 이 **모두 `backdrop` 자신**이고,
+  주 버튼(`button === 0`) · primary 포인터이며, 이어서 backdrop 을 target 으로 하는 `click` 이
+  발행될 때. 그때만 `onDismiss(e)` 를 1회 호출한다.
+- **안 닫힘**: 어느 한쪽이라도 패널(`.share-mgr-panel` 및 그 자손) 위 · 보조 버튼(우클릭/휠) ·
+  비-primary 포인터(멀티터치 2번째 이후) · 선행 press 없는 단독 `pointerup` ·
+  press 후 `pointercancel` 이 낀 경우 · 브라우저가 `click` 을 발행하지 않는 상호작용 ·
+  포인터 이벤트 없는 순수 합성 `click`(`el.click()`).
+- **`click` 은 트리거일 뿐 판정 근거가 아니다.** DOM `click` 의 target 은 mousedown/mouseup 두
+  지점의 **공통 조상**이라 패널 안에서 시작한 드래그가 배경에서 끝나면(그 반대도) target 이
+  backdrop 으로 승격된다 — 이 승격이 "down 만 해도 / up 만 해도 닫힘" 의 기전이었다. 판정은
+  위 두 pointer 플래그가 이미 끝냈고, 실행만 `click` 단계로 미룬다. 그래야 ① backdrop 이 그
+  `click` 을 소비하므로 노드 제거 직후 아래 레이어가 눌리는 ghost click 이 없고 ② 브라우저가
+  `click` 을 발행하지 않는 상호작용이 자연히 제외된다.
+- **implicit pointer capture 해제**: 터치·펜은 `pointerdown` 대상에 브라우저가 자동으로 포인터
+  캡처를 걸어 `pointerup` 이 **실제로 뗀 위치와 무관하게** 그 대상으로 retarget 된다(마우스는
+  캡처 없음). 배경에서 시작한 제스처에 한해 즉시 해제해 마우스와 같은 히트테스트 의미론으로
+  되돌린다. 해제하지 않으면 터치에서 계약이 "누른 위치가 배경이면 닫힘" 으로 무너져 원 결함이
+  그대로 남는다. 패널 안에서 시작한 제스처의 캡처는 그 동작(터치 텍스트 선택 등)이 의존하므로
+  건드리지 않는다.
+- **불변**: `Escape` 키 닫기, `×`(`.share-mgr-close`) 버튼 닫기, 모달 내용·레이아웃·CSS.
+  두 대체 닫기 경로가 항상 살아 있으므로, 배경 판정이 보수적이어도 사용자가 갇히지 않는다.
+
+### 적용면 (6종 — 좌측 항목에서 열리는 backdrop 모달 전건)
+
+| 모달 | 진입 | 정의 |
+|---|---|---|
+| 대화 설정 | conv-item `···` > 설정 | `app.js` `openConversationSettings` |
+| 공유 | conv-item `···` > 공유 | `app.js` `openShareDialog` |
+| 공유 링크 설정(만료·참여허용) | 공유 팝업 > 링크 생성 | `app.js` `promptShareExpiry` |
+| 참여 허용 확인 | 공유 링크 생성 확정 | `app.js` `confirmShareJoinable` |
+| 폴더 설정(지침·삭제) | 폴더 `···` > 설정 | `app/sidebar.js` `openFolderSettings` |
+| 폴더로 이동 | conv-item `···` > 폴더로 이동 | `app/sidebar.js` `openMoveConversationDialog` |
+
+**적용면 밖(요청 범위 밖 — 이번 cycle 미적용, REPORT §8 후속 원장 등재)**
+
+- `app/auth.js` 2단계 인증 모달: `share-mgr-backdrop` 클래스를 쓰지만 **배경 dismiss 자체가 없다**
+  (인증 흐름은 배경 클릭으로 이탈시키지 않는다 — 무변경이 정합).
+- **동형 오버레이 3곳** — 변수명이 `overlay` 라 최초 sweep(식별자 `backdrop` 키잉)에서 누락됐고,
+  §18.8 design 리뷰어가 반증해 확인했다:
+  | 위치 | 화면 | 현재 동작 |
+  |---|---|---|
+  | `app/profile.js:306` | 프로필 > 사용 내역 > 대화 목록 | **`mousedown` 단독** — 누르기만 해도 닫힘 |
+  | `admin/usage.js:662` | 관리 콘솔 > 사용 기록 | **`mousedown` 단독** |
+  | `admin/audit.js:317` | 관리 콘솔 > 감사 > purge | `click` (원 결함과 동형) |
+  사용자 요청이 "좌측 항목(대화/폴더) 설정 모달" 로 명시 스코프되어 이번 cycle 은 손대지 않는다.
+  셋 다 읽기 전용 표/폼이라 작성분 소실 피해면은 없다(각 파일 확인).
+- 관리 콘솔 그래프 뷰 도움말 오버레이(`graph/graph-core.js` `amg-help-overlay`): 같은 부류의
+  `click` 기반 판정, 입력 필드 없음 — 동일하게 후속 후보.
+
+### AC
+
+- AC-20260806T1144-modal-backdrop-dismiss-1: 배경에서 누르고 배경에서 떼면 닫힌다.
+- AC-20260806T1144-modal-backdrop-dismiss-2: 패널 안에서 누르고 배경에서 떼면 **닫히지 않는다**
+  (폴더 지침 textarea 드래그 선택 중 손이 밖으로 나가도 작성분이 살아 있다).
+- AC-20260806T1144-modal-backdrop-dismiss-3: 배경에서 누르고 패널 안에서 떼면 **닫히지 않는다**.
+- AC-20260806T1144-modal-backdrop-dismiss-4: `Escape` · `×` 닫기 경로 회귀 없음.
+- AC-20260806T1144-modal-backdrop-dismiss-5: 위 표 6종(**사용자 요청 범위 = 좌측 사이드바 항목
+  모달**) 전부 동일 계약(하네스가 기계 단언). 요청 범위 밖의 동형 오버레이 3곳은 아래 참조 —
+  "앱 전체 모달 전수" 를 주장하지 않는다.
+- AC-20260806T1144-modal-backdrop-dismiss-6: **터치·펜**에서도 AC2·AC3 이 성립한다(implicit
+  pointer capture 로 계약이 "누른 위치만"으로 무너지지 않는다).
+- AC-20260806T1144-modal-backdrop-dismiss-7: 배경 dismiss 직후 그 좌표 **아래 레이어가 눌리지
+  않는다**(ghost click 부재 — 터치 compat click 의 히트테스트가 dispatch 전에 끝나므로, 실행을
+  `click` 단계로 미루면 dispatch 중 노드를 제거해도 아래가 눌리지 않는다).
+- AC-20260806T1144-modal-backdrop-dismiss-8: 브라우저가 `click` 을 발행하지 않은 제스처가
+  **장전 상태를 남기지 않는다** — 그 뒤 도착한 click 이 누른 적 없는 모달을 닫지 않는다.

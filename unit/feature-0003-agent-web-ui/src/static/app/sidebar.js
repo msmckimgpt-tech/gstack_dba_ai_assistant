@@ -6,7 +6,7 @@
 import {
   state, apiFetch, showToast, can,
   loadConversations, loadHistory,
-  openFloatingMenu, closeFloatingMenus,
+  openFloatingMenu, closeFloatingMenus, bindBackdropDismiss,
   // ITEM-P5b B1: renderConversationList 이동에 따른 잔류-코어 의존 (전부 함수/상수 — 호출 시점 사용이라 순환 안전)
   COLLAPSED_GROUPS_LS_KEY, OTHERS_GROUP_KEY, _switchToPendingConversationContext,
   closeConversationItemMenu, conversationListEl, formatDateTime,
@@ -131,7 +131,7 @@ function openFolderSettings(folder) {
     '</div>';
   const close = () => { if (backdrop.parentNode) document.body.removeChild(backdrop); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
-  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+  bindBackdropDismiss(backdrop, close);
   backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.appendChild(backdrop);
@@ -214,7 +214,7 @@ function openMoveConversationDialog(cid) {
     '</div>';
   const close = () => { if (backdrop.parentNode) document.body.removeChild(backdrop); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
-  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+  bindBackdropDismiss(backdrop, close);
   backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.appendChild(backdrop);
