@@ -8394,3 +8394,57 @@ kind 경계(E7). 경계를 건드리지 않은 케이스의 PASS 를 완료 근�
 **G9-b**: 절단 3종을 응답 필드와 화면 배너 양쪽에서 표면화한다(cap 크기·상한 행수 명시). 무음
 절단이면 사용자는 존재하는 변경을 놓치고도 "차이 없음" 으로 읽는다.
 **G7-c**: 시각검증 미완을 완료로 쓰지 않았다 — 위 Requested Scope 마지막 항을 `[ ]` 로 남긴다.
+
+## 20260807T0030-attach-diff-colgroup — diff 표 열 폭이 계약대로 적용되지 않던 결함 (Minor §12.3, frontend-only)
+
+- **적발 경로**: 선행 cycle `20260806T2320-attach-version-diff` 의 **POST-DEPLOY PB-0008**.
+  자동 게이트(pytest 22 · mjs 57 · verify-completion)는 **전부 통과**했고, 실 Windows 브라우저
+  캡처를 판독해서야 좌우 열이 표 폭을 채우지 못하고 가운데로 몰린 것이 보였다.
+- **근본 원인(라이브 실측)**: `table-layout: fixed` 는 열 폭을 **첫 행의 셀**에서 가져온다.
+  맥락 축약 뷰의 첫 행은 흔히 `gap`(`colspan=4`) 이라 개별 열 폭이 정의되지 않고 브라우저가
+  표를 **균등 분할**한다 — `.attach-diff-lineno{width:48px}` 과
+  `.attach-diff-code{width:calc(50% - 48px)}` 가 **통째로 무시됐다**. 실측: 표 1136px 에서
+  네 열이 전부 **284px**. 파일 앞부분에 동일 줄이 4줄 이상이면 gap 이 맨 위에 오므로 사실상
+  **거의 항상** 발현한다.
+- **수정**: 열 폭 선언을 `<colgroup>`(`_appendColgroup`)으로 옮긴다 — `col` 규칙은 행 순서와
+  무관하다. CSS 의 `td` width 선언은 **제거**해 정본을 하나로 둔다(두 곳에 두면 drift 원).
+
+### §2.1 Implementation Plan
+
+- **영향 파일 / symbol**
+  - `src/static/app/attach-diff.js` — `_appendColgroup`(신설) + `_renderSplit`·`_renderUnified` 가 호출.
+  - `src/static/css/chat.css` — `.attach-diff-col-{no,sign,code}` 신설, `td` width 3건 제거.
+  - `tests/verify_attach_version_diff.mjs` — A1b 구조 가드 7건(colgroup 유무·열 수·클래스·
+    첫 자식 위치·CSS 가 col 을 타깃·td 잔존 0·결함 조건 존재).
+  - `tests/headless/verify_attach_diff_geometry.py` **(신설)** — 실 브라우저 기하 실측.
+- **왜 헤드리스 기하 테스트를 신설하나**: 이 결함 클래스는 **레이아웃 산출물**이라 jsdom(레이아웃
+  미계산)·정적 스캔·pytest 가 원리적으로 못 본다. 배포 후 PB-0008 만이 유일한 감지 수단이면
+  같은 클래스가 또 배포를 통과한다 → 실 chromium 에 실 CSS·실 렌더 함수를 올려 **열 폭을 숫자로**
+  잠근다.
+- **완료 판정 기준(AC)**
+  - AC1 첫 행이 gap 인 2열 표에서 줄번호 열 = 48px, 좌우 code 열 동폭.
+  - AC2 열 폭 합 == 표 폭(여백 ≤ 2px) — 가운데 몰림 없음.
+  - AC3 단일열 = 48 / 18 / 잔여.
+  - AC4 colgroup 을 제거하면 AC1 이 깨진다(가드 load-bearing 실증).
+  - AC5 CSS 정본이 `col` 에만 있고 `td` width 잔존 0.
+- **위험도**: **Minor** — 프론트 전용·비파괴. 백엔드·API·RBAC·스키마 0.
+
+### 체크리스트
+
+- [x] `_appendColgroup` 신설 + 2열(4 col)·단일열(3 col) 배선
+- [x] CSS 정본을 `col` 로 이관 + `td` width 3건 제거
+- [x] mjs A1b 구조 가드 7건 — 하네스 **65 PASS**(선행 57 + 8)
+- [x] 헤드리스 기하 실측 **8/8 PASS** — `T7 colgroup 제거 시 [284,284,284,284]` 로
+      **원 결함을 그대로 재현**(라이브 실측치와 동일 = 가드가 실제로 그 결함을 잡는다는 증거)
+- [x] 전수 mjs **44 suite OK** · pytest 전수 회귀
+- [ ] 배포 + PB-0008 재검증(기하 실측 단언 포함)
+
+## 9. Requested Scope
+- [x] `선행 cycle 이 배포한 diff 화면의 열 폭 결함 수정` — 산출물: colgroup 이관 + 기하 테스트
+  · 배선 확인: 헤드리스 기하 실측이 수정 후 [48,520,48,520]/합=표폭, 제거 시 [284×4] 을 각각 단언.
+
+**G9-a**: 이 cycle 자체가 G9-a(렌더 결과의 시각 불변식)의 실증이다 — 테스트 통과·문서 정합·
+verify-completion PASS 로도 "렌더된 그림" 을 보지 않으면 놓친다.
+**G10**: 재발을 기다리지 않고 **첫 관측에서** 구조 가드로 승격했다(헤드리스 기하 + mjs 구조).
+근거: 이 결함 클래스(레이아웃 산출물)는 기존 게이트 전체가 원리적으로 눈이 없고, 감지 수단이
+배포 후 육안뿐이면 다음 번에도 배포를 통과한다.

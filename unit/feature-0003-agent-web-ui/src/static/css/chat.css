@@ -2626,9 +2626,14 @@
   line-height: 1.55;
   table-layout: fixed;
 }
+/* 열 폭의 정본은 `<colgroup>` 이다 — `table-layout: fixed` 는 첫 행에서 열 폭을 가져오고,
+   맥락 축약 뷰의 첫 행은 흔히 gap(colspan)이라 td 의 width 가 무시되고 표가 균등 분할된다
+   (라이브 실측 2026-08-06: 1136px 표의 네 열이 전부 284px). col 규칙은 행 순서와 무관하다. */
+.attach-diff-col-no { width: 48px; }
+.attach-diff-col-sign { width: 18px; }
+.attach-diff-table.is-split .attach-diff-col-code { width: calc(50% - 48px); }
+.attach-diff-table.is-unified .attach-diff-col-code { width: calc(100% - 66px); }
 .attach-diff-lineno {
-  width: 48px;
-  min-width: 48px;
   text-align: right;
   padding: 0 8px 0 6px;
   color: var(--text-muted);
@@ -2638,8 +2643,6 @@
   border-right: 1px solid var(--border-subtle);
 }
 .attach-diff-sign {
-  width: 18px;
-  min-width: 18px;
   text-align: center;
   color: var(--text-muted);
   user-select: none;
@@ -2652,7 +2655,6 @@
   vertical-align: top;
   color: var(--text);
 }
-.attach-diff-table.is-split .attach-diff-code { width: calc(50% - 48px); }
 .attach-diff-table.is-split .attach-diff-code.side-left { border-right: 1px solid var(--border); }
 .attach-diff-row.is-insert .attach-diff-code,
 .attach-diff-row.is-replace .attach-diff-code.side-right { background: var(--tag-ok-bg); }

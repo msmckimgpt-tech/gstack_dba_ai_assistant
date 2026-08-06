@@ -49,10 +49,33 @@ function _fmtBytes(b) {
   return `${n}B`;
 }
 
+// 열 폭은 **반드시 `<colgroup>` 으로 선언**한다 — `td` 의 width 규칙으로는 안 된다.
+//
+// `table-layout: fixed` 는 열 폭을 **첫 행의 셀**에서 가져온다. 그런데 맥락 축약 뷰의 첫 행은
+// 흔히 `gap`(`colspan=4|3`) 이고, 그러면 개별 열 폭이 정의되지 않아 브라우저가 표를 **균등
+// 분할**한다 — `.attach-diff-lineno{width:48px}` 과 `.attach-diff-code{width:calc(50% - 48px)}`
+// 가 통째로 무시된다. 라이브 실측(PB-0008, 2026-08-06): 표 1136px 에서 네 열이 전부 284px 로
+// 잡혀 본문이 가운데로 몰리고 양옆에 큰 여백이 생겼다. jsdom·정적 검사로는 보이지 않는
+// 픽셀-클래스 결함이다(§16.6). `<colgroup>` 은 행 순서와 무관하게 열 폭을 확정한다.
+function _appendColgroup(table, kind) {
+  const cg = document.createElement("colgroup");
+  const cols = kind === "unified"
+    ? ["attach-diff-col-no", "attach-diff-col-sign", "attach-diff-col-code"]
+    : ["attach-diff-col-no", "attach-diff-col-code", "attach-diff-col-no", "attach-diff-col-code"];
+  for (const cls of cols) {
+    const col = document.createElement("col");
+    col.className = cls;
+    cg.appendChild(col);
+  }
+  table.appendChild(cg);
+  return cg;
+}
+
 // 2열 렌더 — 서버 rows(좌우 정렬 + gap)를 그대로 표로 펼친다.
 function _renderSplit(container, data) {
   const table = document.createElement("table");
   table.className = "attach-diff-table is-split";
+  _appendColgroup(table, "split");
   const tbody = document.createElement("tbody");
   for (const r of data.rows || []) {
     const tr = document.createElement("tr");
@@ -93,6 +116,7 @@ function _renderSplit(container, data) {
 function _renderUnified(container, data) {
   const table = document.createElement("table");
   table.className = "attach-diff-table is-unified";
+  _appendColgroup(table, "unified");
   const tbody = document.createElement("tbody");
   const push = (type, no, sign, text) => {
     const tr = document.createElement("tr");

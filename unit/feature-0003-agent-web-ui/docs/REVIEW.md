@@ -2837,3 +2837,27 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
   57건 + 전수 44 suite OK · `acorn-globals` 자유 식별자 0 · `gen-routemap --check` 정합 ·
   `codenav-lint` OK · route 골든 parity(added 1 / removed 0 / order drift 0).
 - Timestamp: 2026-08-06T23:20:00+09:00
+## REV-20260807T003000-attach-diff-colgroup [SKIPPED:tool-restricted:ux,design] — POST-DEPLOY 적발 결함의 근본수정 + 감지축 신설
+
+- **Trigger**: `UI/layout · 레이아웃` keyword matched → §18.8 은 ux + design 을 요구하나 본 세션은
+  Agent tool 금지(상위 우선순위 지시) + `codex review` 사용량 한도 소진(8/9 까지). §18.8.2
+  carve-out 에 따라 제약 없는 채널(헤드리스 기하 실측 · mjs 구조 가드 · 실 브라우저 재검증)로
+  수행하고 미검증 도메인을 명시한다.
+- **이 cycle 의 판단 근거 — 왜 점수정으로 끝내지 않았나**: 결함 자체는 `<colgroup>` 3줄이면
+  닫힌다. 그러나 문제의 본질은 **감지축의 부재**였다 — pytest·mjs(jsdom)·정적 스캔·
+  verify-completion 이 전부 통과했고, 유일한 감지 수단이 "배포 후 사람이 캡처를 본다" 였다.
+  그 상태를 유지하면 같은 클래스(레이아웃 산출물)가 다음에도 배포를 통과한다. 그래서 실
+  chromium 기하 실측을 배포 **전** 게이트로 신설했다(§16.7 G10 — 재발을 기다리지 않고 승격).
+- **가드가 load-bearing 임의 실증**: 기하 테스트 T7 은 `colgroup` 을 제거한 뒤 열 폭을 다시 재어
+  `[284,284,284,284]` 를 확인한다 — **라이브에서 관측된 값과 동일**하다. 즉 이 테스트는 "지금
+  통과한다" 가 아니라 "그 결함이 들어오면 반드시 red 가 된다" 를 증명한다.
+- **정본 이중화 제거**: CSS 폭 선언을 `col` 로 옮기면서 `td` 쪽 width 3건을 **삭제**했다. 남겨두면
+  같은 사실이 두 곳에 있고, 다음 사람이 `td` 쪽을 고치며 "적용되지 않는다" 로 혼란한다.
+  mjs A1b 가 `td` width 잔존 0 을 단언한다.
+- **결함 아님으로 확인한 축**: 행 세로 정렬(같은 행의 좌/우 셀 top 일치, T5) · 문서 폭 불변(T6 —
+  긴 줄은 scroller 안에서만 넘침) · 단일열 3열 폭(T4) · 좁은 폭 폴백의 `min-width` 규칙 불변.
+- **미검증 범위(정직 표기)**: ux·design 관점의 시각 위계·가독성 **판단**은 채널 제약으로 미수행.
+  기하는 숫자로 잠갔으나 "읽기 좋은가" 는 별 축이며, 배포 후 PB-0008 캡처 판독이 그 backstop 이다.
+- **검증**: 헤드리스 기하 8/8(T7 역재현 포함) · mjs 하네스 65 PASS · 전수 mjs 44 suite OK ·
+  pytest 전수 회귀 · verify-completion PASS.
+- Timestamp: 2026-08-07T00:30:00+09:00

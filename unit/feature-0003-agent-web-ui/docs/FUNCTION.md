@@ -2750,3 +2750,25 @@ re-export 하여 `app/sidebar.js` 의 기존 import 를 보존한다.
 **범위 밖 (명시)**: 말풍선 첨부 칩에서의 비교 진입(진입점 2개면 §16.6 복수 surface 개별 검증이
 필요해 별 cycle) · 공유 뷰(읽기 전용) · 바이너리 내용 비교(xlsx 시트 diff 등) · 단어 단위
 intra-line 하이라이트.
+
+### (attach-diff-colgroup, 2026-08-07) diff 표 열 폭 계약 — `<colgroup>` 정본
+
+`(attach-version-diff, 2026-08-06)` 의 열 폭 규약 보정. **열 폭은 `<colgroup>` 의 `col` 로만
+선언한다** — `td` 의 `width` 로는 성립하지 않는다.
+
+**근거**: `table-layout: fixed` 는 열 폭을 **첫 행의 셀**에서 가져온다. 맥락 축약 뷰의 첫 행은
+파일 앞부분에 동일 줄이 4줄 이상이면 `gap`(`colspan`) 이고, 그러면 개별 열 폭이 정의되지 않아
+브라우저가 표를 균등 분할한다 — 선언한 width 가 무시된다. 라이브 실측(2026-08-06): 표 1136px
+에서 네 열이 전부 284px 로 잡혀 본문이 가운데로 몰렸다.
+
+| 모드 | col 구성 | 폭 |
+|---|---|---|
+| 2열(`is-split`) | no · code · no · code | 48px · `calc(50% - 48px)` · 48px · `calc(50% - 48px)` |
+| 단일열(`is-unified`) | no · sign · code | 48px · 18px · `calc(100% - 66px)` |
+
+- **정본 단일화**: CSS 의 폭 선언은 `.attach-diff-col-*` 에만 둔다. `td`(`.attach-diff-lineno`·
+  `.attach-diff-code`·`.attach-diff-sign`)에 width 를 남기면 정본이 둘이 되어 drift 원이 된다 —
+  mjs 가드가 `td` width 잔존 0 을 단언한다.
+- **AC-AVD-9**: 첫 행이 `gap` 인 2열 표에서도 줄번호 열 48px · 좌우 code 열 동폭 · 열 폭 합 ==
+  표 폭(±2px). 검증 = `tests/headless/verify_attach_diff_geometry.py`(실 chromium 기하 실측,
+  `colgroup` 제거 시 붕괴를 함께 단언) + `verify_attach_version_diff.mjs` A1b 구조 가드.

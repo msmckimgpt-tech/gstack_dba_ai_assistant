@@ -64,7 +64,7 @@ function extractFn(src, name) {
 }
 
 // ── (A) 렌더 — 정본 함수 본문을 jsdom 위에서 실행 ────────────────────────────
-const fnNames = ["_renderSplit", "_renderUnified", "_renderBody", "_fmtBytes", "_versionLabel"];
+const fnNames = ["_appendColgroup", "_renderSplit", "_renderUnified", "_renderBody", "_fmtBytes", "_versionLabel"];
 const fnSrcs = fnNames.map((n) => [n, extractFn(diffJs, n)]);
 for (const [n, s] of fnSrcs) ok(`${n} 추출됨`, !!s);
 
@@ -123,6 +123,41 @@ const SPLIT_DATA = {
   const del = host.querySelector("tr.is-delete");
   ok("A1 delete 는 우측 줄번호가 비어 있다",
     Array.from(del.querySelectorAll("td.attach-diff-lineno"))[1].textContent === "");
+}
+
+// A1b — 열 폭 계약은 `<colgroup>` 이 진다 (2026-08-06 PB-0008 라이브 적발의 회귀 잠금).
+//   `table-layout: fixed` 는 **첫 행**에서 열 폭을 가져오는데, 맥락 축약 뷰의 첫 행은 흔히
+//   `gap`(colspan) 이라 개별 열 폭이 정의되지 않고 표가 균등 분할된다 — `td` 의 width 규칙이
+//   통째로 무시됐다(라이브: 1136px 표의 네 열 전부 284px). `col` 은 행 순서와 무관하다.
+//   jsdom 은 레이아웃을 계산하지 않으므로 여기서는 **구조**(colgroup 유무·열 수·클래스)와
+//   **CSS 가 col 을 타깃하는지**를 잠근다. 실제 기하 검증은 PB-0008 기하 실측이 담당한다.
+{
+  const host = window.document.createElement("div");
+  M._renderSplit(host, SPLIT_DATA);
+  const cg = host.querySelector("table.attach-diff-table.is-split > colgroup");
+  ok("A1b 2열 표에 colgroup", !!cg);
+  const cols = cg ? Array.from(cg.querySelectorAll("col")).map((c) => c.className) : [];
+  ok("A1b 2열 colgroup = no/code/no/code 4열",
+    cols.join(",") === "attach-diff-col-no,attach-diff-col-code,attach-diff-col-no,attach-diff-col-code",
+    cols.join(","));
+  const hostU = window.document.createElement("div");
+  M._renderUnified(hostU, SPLIT_DATA);
+  const cgU = hostU.querySelector("table.attach-diff-table.is-unified > colgroup");
+  const colsU = cgU ? Array.from(cgU.querySelectorAll("col")).map((c) => c.className) : [];
+  ok("A1b 단일열 colgroup = no/sign/code 3열",
+    colsU.join(",") === "attach-diff-col-no,attach-diff-col-sign,attach-diff-col-code",
+    colsU.join(","));
+  ok("A1b colgroup 이 첫 자식(첫 행보다 앞)", !!cg && cg.previousElementSibling === null);
+  // CSS 정본이 col 로 옮겨졌는지 — td 에 남아 있으면 같은 결함이 되살아난다.
+  ok("A1b CSS 가 col 클래스로 폭 선언", /\.attach-diff-col-no\s*\{[^}]*width/.test(chatCss));
+  ok("A1b td 폭 선언 잔존 0(정본 이중화 금지)",
+    !/\.attach-diff-lineno\s*\{[^}]*width\s*:/.test(chatCss) &&
+    !/\.attach-diff-code\s*\{[^}]*width\s*:/.test(chatCss) &&
+    !/\.is-split\s+\.attach-diff-code\s*\{[^}]*width\s*:/.test(chatCss));
+  // 첫 행이 gap 인 케이스가 실제로 렌더되는지(= 결함 조건이 재현 가능한 데이터인지) 확인.
+  const firstRow = host.querySelector("tbody tr");
+  ok("A1b 결함 조건(첫 행 gap) 이 테스트 데이터에 존재",
+    SPLIT_DATA.rows.findIndex((r) => r.type === "gap") >= 0 && !!firstRow);
 }
 
 // A2 — gap: 생략 줄 수를 **문구로 표면화**(무음 절단 금지의 UI 면).
