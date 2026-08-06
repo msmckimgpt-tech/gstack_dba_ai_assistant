@@ -318,9 +318,13 @@
             <div class="composer-model-menu hidden" id="composerModelMenu" role="menu" aria-label="LLM 모델 선택"></div>
             <!-- feature-0003: 추론 강도 secondary popup (모델 메뉴와 동일 스타일). hidden 으로 시작. -->
             <div class="composer-model-menu hidden" id="composerReasoningMenu" role="menu" aria-label="추론 강도 선택"></div>
+            <!-- attach-multi-upload: 폴더 단위 첨부(여러 파일 동시 선택)를 지원한다.
+                 multiple 이 없으면 파일 선택 대화상자가 1개만 고르게 해, 22개 파일을
+                 올리려면 22회 반복해야 했다(사용자 보고 2026-08-06). -->
             <input type="file"
                    id="attachFileInput"
                    class="hidden"
+                   multiple
                    aria-hidden="true" />
             <!-- UX-COMPACT: Product chip 왼쪽으로 이동 (textarea 앞) -->
             <div class="composer-product-chip-wrap">

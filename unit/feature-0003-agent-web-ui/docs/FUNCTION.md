@@ -2880,3 +2880,39 @@ scrollTop 픽셀 복원은 행 수·행 높이가 바뀌는 경우(전개·2열�
   대신 다른 이유로 `_load_attachment_row_mysql` 이 필요했다: 기본 경로가 PG 미러를 읽어
   미러 유실 시 "삭제했다는데 안 지워짐" 이 되기 때문(backend 패널 P2-1).
 - 계획서 B7 은 `_conv_store.py` 라 적었으나 실제 거주는 `routers/attachments.py` 다.
+
+## REQ-20260806-attach-multi-upload — 폴더 단위 첨부 · 중복 스킵 알림 · 편집본 버전 체인 통합
+
+- REQ-20260806-attach-multi-upload (사용자 보고 "내용에 차이가 나타나는 파일들임에도 '동일한 파일'
+  이슈가 나타나며 블로킹", **Major §12.3** — 프론트 첨부 경로 + assistant 편집본 명명 규칙 변경;
+  스키마/마이그레이션/RBAC/엔드포인트 shape 무변경): 여러 파일(폴더 전체)을 한 번에 첨부할 수 있고,
+  이미 올라간 것과 **내용이 같은 파일**은 오류가 아니라 "변경 없음" 으로 **건너뛰며**, assistant 가
+  만든 수정본은 원본과 **같은 버전 체인**에 남는다. 선행 `REQ-20260713-attach-user-version` 의
+  AC-AUV-1·2(해시 대조 버전 편입/멱등)는 **불변** — 본 REQ 는 그 판정을 완화하지 않고, 판정을
+  둘러싼 경로와 알림, 그리고 체인 스코프 정합만 고친다. AC-AMU-1 ~ AC-AMU-5.
+
+  - **AC-AMU-1 (다중 선택)**: `#attachFileInput` 이 `multiple` 이며, change 핸들러는 선택된 파일
+    **전량**을 순차 업로드한다(종전: `files[0]` 만). `input.value` 리셋은 업로드 **전**에 수행해
+    같은 파일을 다시 골라도 change 가 발화한다.
+  - **AC-AMU-2 (드롭 단일 처리)**: `.composer-wrap` 은 `#chatPane` 의 자손이므로 drop 업로드를
+    chatPane 핸들러에 **위임**한다 — 두 핸들러가 같은 이벤트를 처리해 **첫 파일이 2회 업로드**되고
+    두 번째가 dedup 에 걸려 "이미 첨부된 파일입니다" 오탐을 내던 경로를 제거한다. `#chatPane` 이
+    없는 구조에서는 `.composer-wrap` 이 전량을 직접 처리한다(기능 소실 방지).
+  - **AC-AMU-3 (배치 요약)**: 2개 이상 업로드는 파일별 토스트를 억제하고 **요약 1회**를 띄운다
+    (`첨부 22개 중 6개 업로드 · 16개 변경 없음(건너뜀)`). 실패·차단이 있을 때만 에러 톤이다.
+    단건은 기존대로 개별 토스트(요약 없음). 중복 스킵 문구는 "이미 최신입니다(내용 동일) — 건너뜀"
+    이며 **정보 톤**이다 — 오류가 아니라 no-op 이기 때문이다.
+  - **AC-AMU-4 (편집본 = 같은 체인)**: assistant 편집본(`_materialize_assistant_attachment_edits`)의
+    저장 파일명은 **원본을 승계**한다(LLM 이 준 filename 무시, 확장자는 source 강제 보존).
+    버전 체인 스코프가 `(ConversationId, AccountId, OriginalFilename)` 이므로 이름이 갈리면 원본이
+    head 에서 빠지고 사용자 재업로드가 **새 root(v1)** 를 만들어 한 논리 파일이 두 체인으로 나뉜다
+    (라이브 실측: 한 대화에 분열 쌍 9건). LLM filename 을 무시하므로 실행파일류 확장자 승격은
+    정의상 불가능해져 SEC-1 불변이 강화된다.
+  - **AC-AMU-5 (버전 구분은 표시 계층)**: 체인 통합으로 모든 버전이 같은 저장명을 갖게 되므로,
+    구버전을 내려받을 때 **응답/저장 파일명에만** `_v{n}` 을 붙인다 — 서버는
+    `download_attachment` 가 `VersionNumber>1` 에서 `_next_version_filename` 적용,
+    프론트 버전 박스는 `_versionedFilename`(idempotent) 적용. DB `OriginalFilename` 은 불변이라
+    체인 스코프·dedup 판정에 영향이 없다.
+  - **검증**: `tests/verify_attach_multi_upload.mjs` 28건(정적 5 · jsdom 실행 8 · 집계 9 · 저장명 3 ·
+    뮤테이션 역검증 3) + `tests/test_attachment_versioning.py` N3/N4/N5/N6.
+    PB-0008 실 Windows 브라우저 라이브 검증(visual_verification_scope: always).

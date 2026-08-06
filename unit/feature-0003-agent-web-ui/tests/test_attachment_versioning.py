@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 
 import app
+from routers import attachments  # feature-0012 P5b
 from routers import conversations  # feature-0012 P5b
 
 
@@ -364,13 +365,14 @@ def test_n2_next_version_filename_idempotent():
     assert app._next_version_filename("v2_report.csv", 2) == "v2_report_v2.csv"
 
 
-# ── N3: materialize 가 LLM filename 을 코드-권위로 정규화 (버전 접미 + source 확장자 강제) ──
-def test_n3_materialize_normalizes_llm_filename(monkeypatch):
+# ── N3: materialize 가 원본 파일명을 승계하고 LLM filename 을 무시 (attach-multi-upload) ──
+def test_n3_materialize_inherits_source_filename(monkeypatch):
     storage = _install_fake_storage(monkeypatch)
     store = {"max_version": 1, "new_id": 9010}
     conn = _Conn(store)
-    # source = orig.txt (kind text, v1). LLM 이 위험/불일치 이름을 줘도 stem 만 취하고
-    # 버전 접미(_v2)와 source 확장자(txt)를 코드가 강제해야 한다.
+    # source = orig.txt (kind text, v1). 버전 체인 스코프가 (conv, account, OriginalFilename)
+    # 이므로 편집본 파일명이 원본과 다르면 체인이 갈라진다(사용자 재업로드가 새 root 를 만듦).
+    # → 편집본은 **원본 파일명을 그대로 승계**하고, LLM 이 준 이름은 무시한다.
     monkeypatch.setattr(app, "_load_attachment_row", lambda c, i: _src_row())
     monkeypatch.setattr(app, "_check_attachment_size_caps", lambda *a, **k: (True, ""))
 
@@ -386,13 +388,15 @@ def test_n3_materialize_normalizes_llm_filename(monkeypatch):
     assert len(created) == 1
     ins = store.get("insert_params")
     assert ins is not None
-    # INSERT params[3] = OriginalFilename(코드가 실제 저장하는 값). LLM 의 .exe 는 버려지고
-    # source 확장자 txt + 버전 접미 _v2 가 강제된다. (created[0] 직렬화는 monkeypatch 된
-    # _load_attachment_row 재조회 결과라 harness 아티팩트 — INSERT param 이 authoritative.)
-    assert ins[3] == "hacked_v2.txt", f"명명 정규화 실패: {ins[3]!r}"
+    # INSERT params[3] = OriginalFilename(코드가 실제 저장하는 값). LLM 의 hacked.exe 는 통째로
+    # 버려지고 source 파일명이 그대로 쓰인다 — 실행파일류 확장자 승격도 정의상 불가능해진다.
+    # (created[0] 직렬화는 monkeypatch 된 _load_attachment_row 재조회 결과라 harness 아티팩트
+    #  — INSERT param 이 authoritative.)
+    assert ins[3] == "orig.txt", f"원본 파일명 승계 실패: {ins[3]!r}"
+    assert "_v2" not in ins[3], "저장 파일명에 버전 접미가 붙으면 체인이 이름 기준으로 갈라진다"
 
 
-# ── N4: 확장자 없는 source + LLM 이중확장자 → 유효 확장자 안전 강제 (§18.8 SEC-1) ──
+# ── N4: 확장자 없는 source → kind 기반 안전 확장자 부여 (§18.8 SEC-1 불변) ──
 def test_n4_extensionless_source_forces_safe_ext(monkeypatch):
     _install_fake_storage(monkeypatch)
     store = {"max_version": 1, "new_id": 9011}
@@ -419,7 +423,45 @@ def test_n4_extensionless_source_forces_safe_ext(monkeypatch):
     saved = store["insert_params"][3]
     # 유효(마지막) 확장자는 반드시 안전값 txt (실행파일류 확장자 승격 차단).
     assert saved.rsplit(".", 1)[-1] == "txt", f"유효 확장자가 안전하지 않음: {saved!r}"
-    assert saved.endswith("_v2.txt"), f"버전 접미/확장자 강제 실패: {saved!r}"
+    # 확장자 없는 원본은 stem 을 승계하고 안전 확장자만 덧붙인다 — 버전 접미는 붙지 않는다.
+    assert saved == "statement.txt", f"확장자 없는 원본의 이름 승계 실패: {saved!r}"
+
+
+# ── N5: 편집본이 원본 체인의 head 로 이어진다 (이름 분열 회귀 차단) ──────────────
+def test_n5_edit_keeps_single_chain_for_reupload(monkeypatch):
+    """편집본 파일명 == 원본 파일명 이어야 `_find_latest_same_name_attachment` 가
+    사용자 재업로드를 같은 체인의 다음 버전으로 편입한다.
+
+    회귀 배경(2026-08-06 라이브 실측): 편집본이 `x_v2.sql` 로 저장되던 동안 원본 `x.sql` 은
+    supersede 되어 head 에서 빠졌고, 사용자가 `x.sql` 을 다시 올리면 같은 이름의 head 가 없어
+    **새 root(v1)** 가 생겼다 — 한 논리 파일이 두 체인으로 갈라져 목록에 나란히 남았다(9쌍).
+    """
+    _install_fake_storage(monkeypatch)
+    store = {"max_version": 1, "new_id": 9012}
+    conn = _Conn(store)
+    monkeypatch.setattr(app, "_load_attachment_row", lambda c, i: _src_row())
+    monkeypatch.setattr(app, "_check_attachment_size_caps", lambda *a, **k: (True, ""))
+
+    answer = '```attachment-edit\n{"source_attachment_id": 100}\n수정\n```'
+    app._materialize_assistant_attachment_edits(
+        conn, account=_account(), conversation_id="conv-1", answer=answer, message_id=5,
+    )
+    saved_name = store["insert_params"][3]
+    src_name = _src_row()["OriginalFilename"]
+    assert saved_name == src_name, (
+        f"편집본 파일명이 원본과 다르면 재업로드가 새 체인을 만든다: {saved_name!r} != {src_name!r}")
+
+
+# ── N6: 다운로드는 v2+ 에서만 응답 파일명에 버전 접미 (저장값 불변) ────────────
+def test_n6_download_response_filename_versioned():
+    import inspect
+
+    src = inspect.getsource(attachments.download_attachment)
+    norm = " ".join(src.split())
+    assert "_next_version_filename" in norm, (
+        "체인 통합으로 모든 버전이 같은 저장명을 쓰므로, 구버전 다운로드는 응답 파일명에 "
+        "버전 접미를 붙여 로컬 최신본 덮어쓰기를 막아야 한다")
+    assert "_dl_version > 1" in norm, "v1 은 원본명 그대로여야 한다(불필요한 _v1 접미 금지)"
 
 
 # ── R1: 목록 SQL 최신버전 필터 (정적 소스 검사) ──────────────────────────────

@@ -2546,3 +2546,41 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/…`.
 - 백엔드·API·RBAC·스키마·마이그레이션 0 (V3·V3b 는 기존 SQL 을 **단정만** 하고 바꾸지 않는다).
 - Timestamp: 2026-08-07T04:30:00+09:00
+## CHG-20260806T182000-attach-multi-upload — 폴더 단위 첨부 경로 · 중복 스킵 UX · 편집본 버전 체인 통합
+
+- 사용자 보고(2026-08-06): "내용에 차이가 나타나는 파일들임에도 '동일한 파일' 이슈가 나타나며 블로킹".
+  **실측 선행** — 지목된 22개 파일(`D:\…\dev-GunzPlus\Schema\*`)의 sha256 을 계산해 대화
+  `20260806052006-3f48cbb7`(제목 `구 로그 테이블 DROP 유지 결정`)의 활성 첨부와 전수 대조한 결과
+  **22개 전부 내용 동일**. dedup 판정은 정확했으므로 판정을 완화하지 않고, 실재 결함만 고쳤다(G7-a).
+- **프론트** `static/index.html`: `#attachFileInput` 에 `multiple` — 없던 탓에 파일 대화상자가 1개만
+  고르게 해 22개를 올리려면 22회 반복해야 했다.
+- **프론트** `static/app/composer.js`:
+  · change 핸들러가 `files[0]` → **선택 전량** 순차 업로드. value 리셋을 업로드 **전**으로 옮겨
+    같은 파일 재선택이 change 를 발화하게 유지.
+  · `_uploadComposerAttachment(file, {silent})` 가 결과 코드(`ATTACH_UPLOAD_RESULT`) 반환.
+  · `_uploadComposerAttachments(files)` 신설 — 순차 업로드 + 집계. 2개 이상이면 개별 토스트를
+    억제하고 **요약 1회**(`첨부 22개 중 6개 업로드 · 16개 변경 없음(건너뜀)`). 단건은 기존 UX 유지.
+  · 중복 스킵 토스트를 **에러→정보** 톤으로 낮추고 문구를 "이미 최신입니다(내용 동일) — 건너뜀" 로
+    (오류가 아니라 no-op 이다).
+  · `.composer-wrap` drop 이 `#chatPane` 자손이면 업로드를 **위임**(chatPane 핸들러가 전량 처리).
+    종전엔 같은 drop 이 두 핸들러에서 처리돼 **첫 파일이 2회 업로드**되고 두 번째가 dedup 에 걸려
+    "이미 첨부된 파일입니다" 오탐을 냈다. chatPane 부재 시엔 자체 전량 처리로 폴백(기능 소실 방지).
+  · `_versionedFilename` 을 idempotent 화(기존 `_v<n>` 접미 재부여) + 버전 박스 다운로드가 v2+ 에서
+    그 이름을 쓰도록 배선 — 체인 통합으로 모든 버전이 같은 저장명을 갖게 된 부작용(로컬 덮어쓰기) 차단.
+- **백엔드** `routers/_conv_store.py`(`_materialize_assistant_attachment_edits`): assistant 편집본
+  저장 파일명을 `<stem>_v<n>.<ext>` → **원본 파일명 승계**. 버전 체인 스코프가
+  `(conv, account, OriginalFilename)` 이라 이름이 갈리면 원본이 head 에서 빠지고 사용자 재업로드가
+  **새 root(v1)** 를 만든다(라이브 실측: 한 대화에 분열 쌍 9건). LLM 이 준 filename 은 무시 —
+  실행파일류 확장자 승격이 정의상 불가능해져 SEC-1 불변도 강화된다.
+- **백엔드** `routers/attachments.py`(`download_attachment`): 응답 파일명만 v2+ 에서
+  `_next_version_filename` 적용(DB 저장값 불변 → 체인 스코프·dedup 판정 무영향).
+- **테스트** `tests/verify_attach_multi_upload.mjs` 신규 **28 PASS** — 정적 계약 5 · jsdom 실행 8
+  (3개 선택→3개 업로드 · composer 드롭 첫 파일 1회 · chatPane 부재 폴백) · 집계/문구 9 · 저장명 3 ·
+  **뮤테이션 역검증 3**(files[0] 복원 · drop 가드 제거 · multiple 제거 시 모두 검출).
+  `tests/test_attachment_versioning.py`: N3 를 원본명 승계 계약으로 전환, N4 는 안전 확장자 불변 유지,
+  **N5**(편집본 파일명 == 원본 = 체인 단일성) · **N6**(다운로드 표시명 분리) 신규.
+- 신규 테이블·마이그레이션·권한 코드 · 라우트 **0**.
+- Files: `src/static/index.html`, `src/static/app/composer.js`, `src/routers/_conv_store.py`,
+  `src/routers/attachments.py`, `tests/verify_attach_multi_upload.mjs`,
+  `tests/test_attachment_versioning.py`, `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT,TEST}.md`.
+- Timestamp: 2026-08-06T18:20:00+09:00

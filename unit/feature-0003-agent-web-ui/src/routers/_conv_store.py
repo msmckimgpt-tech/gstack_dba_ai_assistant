@@ -1869,24 +1869,32 @@ def _materialize_assistant_attachment_edits(
         finally:
             cur.close()
 
-        # 명칭 정합(FR-attachment-update-pasted-not-versioned, 사용자 요구): 새 버전 파일명은
-        # 항상 원본과 정합하는 `<stem>_v<n>.<ext>` 형태로 **코드가 권위적으로** 결정한다. LLM 이
-        # filename 을 주더라도(프롬프트는 생략 유도) stem 만 취해 버전 접미(_v<n>)를 강제하고,
-        # 확장자는 source 를 강제 보존한다(보안리뷰 V3: `.exe` 등 실행파일류 확장자 차단). 이렇게
-        # LLM 명명·재편집 이중접미와 무관하게 명칭 정합이 코드로 보장된다.
+        # 명칭 정합(FR-attachment-update-pasted-not-versioned → attach-multi-upload 로 개정):
+        # 새 버전 파일명은 **원본 파일명을 그대로 승계**한다. LLM 이 filename 을 주더라도 무시하고,
+        # 확장자는 source 를 강제 보존한다(보안리뷰 V3: `.exe` 등 실행파일류 확장자 차단).
+        #
+        # 왜 `<stem>_v<n>.<ext>` 접미를 저장 파일명에서 뺐나 (2026-08-06 사용자 결정):
+        #   버전 체인 스코프는 `(conversation_id, account_id, OriginalFilename)` 이다
+        #   (_find_latest_same_name_attachment). 편집본이 다른 이름(`x_v2.sql`)으로 저장되면
+        #   ① 원본(`x.sql`)은 supersede 되어 head 에서 빠지고, ② 사용자가 `x.sql` 을 다시 올리면
+        #   같은 이름의 head 를 못 찾아 **새 root(v1) 체인**이 생긴다 → 한 논리 파일이 두 체인으로
+        #   갈라지고 목록에 `x.sql` 과 `x_v2.sql` 이 나란히 남는다(라이브 실측: 한 대화에 9쌍).
+        #   이름을 승계하면 v1→v2→v3 가 한 체인으로 이어지고, 목록에는 최신본만 보이며
+        #   이전 버전은 버전 박스(`/api/attachments/{id}/versions`)로 접근한다.
+        # 다운로드 시의 로컬 파일 구분은 저장 파일명이 아니라 응답 헤더에서 처리한다
+        # (download_attachment 가 v>1 이면 `<stem>_v<n>.<ext>` 로 내려줌) — `_next_version_filename`
+        # 은 그 표시 계층에서 계속 쓰인다.
         src_filename = str(src.get("OriginalFilename") or "")
         src_ext = src_filename.rsplit(".", 1)[1].lower() if "." in src_filename else ""
         # 확장자는 source 를 강제 보존한다. source 에 확장자가 없더라도 kind 기반 안전 확장자
         # (txt/csv)를 부여해, LLM 이 준 이름의 내부 dot(예: `x.exe.txt`)이 유효 확장자로 승격되는
         # 것을 차단한다(§18.8 security 패널 SEC-1 — 보안리뷰 V3 실행파일류 확장자 차단 불변).
         safe_ext = src_ext or ("csv" if src_kind == "csv" else "txt")
-        llm_filename = str(block.get("filename") or "").replace("/", "_").replace("\\", "_").strip()
-        if llm_filename:
-            llm_stem = llm_filename.rsplit(".", 1)[0] if "." in llm_filename else llm_filename
-            base_for_naming = f"{llm_stem}.{safe_ext}"
+        if src_ext:
+            filename = src_filename
         else:
-            base_for_naming = src_filename if src_ext else f"{src_filename or 'edited'}.{safe_ext}"
-        filename = app._next_version_filename(base_for_naming, next_version)
+            _stem = (src_filename or "edited").replace("/", "_").replace("\\", "_").strip() or "edited"
+            filename = f"{_stem}.{safe_ext}"
         # kind 는 source kind 를 그대로 따른다(텍스트 계열만 여기 도달 — 가드 1).
         new_kind = src_kind
         mime_type = "text/csv" if new_kind == "csv" else "text/plain; charset=utf-8"
