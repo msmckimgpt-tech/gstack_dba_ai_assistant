@@ -2380,3 +2380,14 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - **캐시버스터:** `?v=dev` 고정 — `inject_asset_stamp.py` 가 static 트리를 walk 하며 신규 파일의
   import specifier 까지 자동 스탬프(전역 content-hash 단일 값 → 모듈 단일 인스턴스 보장).
 - Timestamp: 2026-08-06T18:30:00+09:00
+## CHG-20260806T2010-modal-siblings-postdeploy 신규 전환 5종 POST-DEPLOY 라이브 실측 기록 (doc-only)
+- 선행 cycle `CHG-20260806T1830-modal-dismiss-siblings`(PR #1168, 배포본 `2ab2b27e`)의 잔여였던
+  "배포 후 신규 전환 5종 라이브 재확인" 을 수행하고 fragment 에 Run 4(PASS 16/16) + 증적 append.
+  **코드 변경 0**.
+- 실측 표면: 대화 검색 모달 · 그래프 뷰 도움말 · 감사 purge · 관리 콘솔 사용 기록 · 프로필 사용 내역.
+  각 3제스처(AC1~AC3) + 감사 purge **중복 인스턴스 가드**(연속 2회 진입 시 오버레이 1개) 실측.
+- 진입은 사용자 경로 그대로. 차트 요소는 SVG 라 `.click()` 이 없어 **좌표 기반 CDP trusted 클릭**.
+- 라이브 데이터 변경 0(purge 미리보기·삭제 미클릭, 나머지는 읽기 전용 조회).
+- Files: `docs/{TASK,MODIFY,REVIEW,TEST}.md`, `docs/test-runs.d/20260806T1830-modal-dismiss-siblings.md`,
+  `docs/test-runs.d/evidence/modal-dismiss-siblings-live.png`.
+- Timestamp: 2026-08-06T20:10:00+09:00

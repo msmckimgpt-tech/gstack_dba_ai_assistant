@@ -2779,3 +2779,8 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 - **잔여(범위 밖·REPORT §8)**: 포커스 트랩 부재(전 표면 공통, 기존) · 검색 모달에서 날짜 popover 열린 채 배경 1클릭이 popover+모달을 함께 닫음(구/신 동일, 회귀 아님) · `document` 레벨 outside-click closer 군 · `admin/accounts.js` 임시 비밀번호 모달은 배경 dismiss 자체가 없음(정합 이탈이나 위험 없음).
 - **검증**: 하네스 **76 pass / 0 fail** · **뮤테이션 역검증 6종** 전부 의도한 단언만 red · ESM `node --check` 6파일 · 전수 mjs red 21건 = main baseline 동일 집합 · PB-0008 실 Windows Chrome 10/10 · `make test` 회귀.
 - Timestamp: 2026-08-06T18:30:00+09:00
+## REV-20260806T201000-modal-siblings-postdeploy [SKIPPED:non-policy-doc] — doc-only
+
+시각 검증 Run 기록 + 증적 이미지 추가만으로 코드·정책·계약 변경이 0 이다(§18.8.1 docs-only 경량
+경로). 검증 대상 코드는 선행 cycle 에서 ux·design 적대 패널을 거쳤다
+(`REV-20260806T183000-modal-dismiss-siblings`).
