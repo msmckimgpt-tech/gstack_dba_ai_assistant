@@ -9010,12 +9010,14 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
         화면에 닿지 않는다(`svg` 는 항상 image). 주석·FUNCTION.md 에 명시(등록≠도달).
 - [x] 흡수 후 재검증 — 하네스 **108 PASS**(신규 A~I 9섹션) · 기존 diff 하네스 85 PASS ·
       **mjs 전수 46 suite OK** · **뮤테이션 9/9 KILLED**(패널이 생존 지적한 4종 포함)
-- [ ] PB-0008 실 Windows 브라우저 시각검증 (`visual_verification_scope: always`) + 배포
+- [x] 배포 `6cd4afd2` + **PB-0008 실측이 CSS 결함 1건 적발**(keyword 미적용) → hotfix
+      `20260807T0640-attach-diff-syntax-css-fix` 후 배포 `6a3b1a97` 에서 재실측 **전건 PASS**
+      (keyword `rgb(124,58,237)`/600 · 끔 span 12→0 텍스트 불변 · 단일열 parity · 2버전 체인)
 
 ## 9. Requested Scope
-- [ ] `파일 유형에 따른 확장 하이라이트(SQL 예약어 등)` — 산출물: `code-highlight.js` 레지스트리
+- [x] `파일 유형에 따른 확장 하이라이트(SQL 예약어 등)` — 산출물: `code-highlight.js` 레지스트리
       (SQL/JSON/YAML/XML/CSV·TSV) + diff 두 렌더러 배선 + 팔레트 · 배선 확인: 신규 하네스 A(판정 14)
-      B(토큰 28) C(무손실 2) D(XSS 7) E(렌더 통합 19) F(CSS·정본 7). **시각 확인은 PB-0008 잔여.**
+      B(토큰 28) C(무손실 2) D(XSS 7) E(렌더 통합 19) F(CSS·정본 7). **시각 확인 PB-0008 전건 PASS**(배포 `6a3b1a97`).
 
 **정직 표기 — 검증하지 못한 것**: ① 색 **대비비는 계산으로 잠갔다**(하네스 G2 — 초판의 "jsdom 은 색을
 못 본다" 는 이월 사유가 틀렸다는 것이 §18.8 design 패널의 지적이었다). 다만 **실제 화면에서의 가독성**
@@ -9111,7 +9113,7 @@ before-state 를 되돌리는 경로가 있고, 사람이 읽을 수 있는 `.ro
 - [x] chat.css 고아 주석 해소 — 전 파일 주석 균형 확인(`/*` 143 = `*/` 143, 고아 0, 미닫힘 0)
 - [x] 정적 가드 F8·F9·F10 신설 → 하네스 **113 PASS**
 - [x] **뮤테이션 역검증** — 라이브 결함을 그대로 재주입하니 F8(line 2865)·F10 이 **2중 검출**
-- [ ] 배포 + PB-0008 재검증(keyword computed color·weight 실측)
+- [x] 배포 `6a3b1a97` + PB-0008 재검증 — keyword computed `rgb(124,58,237)` · weight 600 **PASS**
 
 ## 9. Requested Scope
 - [x] `구문 하이라이트 keyword 미적용` — 산출물: 주석 구조 수정 · 배선 확인: F8/F9/F10 정적 가드 +

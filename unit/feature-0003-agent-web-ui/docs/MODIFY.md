@@ -2838,3 +2838,12 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Files: `src/static/css/chat.css`, `tests/verify_attach_diff_syntax_highlight.mjs`,
   `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260807T0640-attach-diff-syntax-css-fix.md`.
 - Timestamp: 2026-08-07T06:40:00+09:00
+
+## CHG-20260807T0700-ai-claude-attach-diff-syntax-postdeploy — POST-DEPLOY 실측 기록 (doc-only)
+
+- `docs/test-runs.d/20260806T1853-attach-diff-syntax.md` · `…/20260807T0640-attach-diff-syntax-css-fix.md`:
+  `verdict: PARTIAL → PASS` + PB-0008 실측 블록(computed style·토글 왕복·단일열 parity·2버전 체인) +
+  미수행 축 3건 명시(기하 하네스 미실행 · 비교불가 유형 라이브 표본 0 · 6,000행 체감).
+- `docs/TASK.md`: 두 cycle 의 배포·PB-0008 체크박스 마감. `docs/REPORT.md`: Summary 2건 갱신 +
+  §8 원장 3건(선행 red `verify_attach_multi_upload.mjs` · CSS 정적검사 한계 · 라이브 표본 부재).
+- 코드 변경 **0**(doc-only). Timestamp: 2026-08-07T07:00:00+09:00
