@@ -1359,3 +1359,7 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 - **미검증(정직)**: 절단 시 모델이 **실제로 이어 읽는지**는 라이브 실측분(절단 자체가 41회 중 2회로
   드물어 자연 발생을 기다려야 한다). 패널 주석의 실제 렌더는 headless 로 로직을 고정했을 뿐
   **실 브라우저 화면 확인은 배포 후**다.
+
+## REV-20260806T104500-read-attach-deploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+- **Trigger**: 문서만(원장 status·배포 실증 기록). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
+- 배포 실증은 MODIFY `CHG-20260806T104500-read-attach-deploy` 에 기록. 라이브 대화 실측은 미수행.
