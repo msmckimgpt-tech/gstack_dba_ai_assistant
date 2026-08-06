@@ -8891,7 +8891,8 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 - [x] 테스트 신규 37건(`tests/test_attach_suffix_toggle.py` — 규칙 함수 + **엔드포인트 배선** B1~B6 + rebase 흡수 `auto` 계약 A1~A4) + 기존 `test_attach_manage.py` 시그니처 갱신
 - [x] §18.8 적대 검증 패널 (security PASS / backend·qa BLOCK / ux BLOCK) — P1 1건 + P2 4건 + P3 8건 전건 흡수, 뮤테이션 2종으로 신규 테스트 유효성 역검증
 - [x] PB-0008 실 Windows 브라우저 시각검증 (31 step 전건 PASS, 패널 흡수 후 재실행)
-- [ ] verify-completion PASS → commit → PR → cycle-finalize → 배포
+- [x] verify-completion PASS → commit → PR #1183 → cycle-finalize(main `abdf13bd`) → `make deploy-web` exit 0
+- [x] POST-DEPLOY PB-0008 (배포본 이미지 baked 자산, 31 step 전건 PASS, 라이브 무접촉)
 
 ## 9. Requested Scope
 

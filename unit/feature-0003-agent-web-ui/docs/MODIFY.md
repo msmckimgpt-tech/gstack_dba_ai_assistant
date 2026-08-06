@@ -2715,3 +2715,15 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   패널이 지적한 그 패턴) 결과를 보는 단정으로 바꿨다: 규칙 함수의 실제 반환값(v2→`_v2`,
   v1→원본명) + 라우트의 미지정 기본이 `auto` 인지.
 - Timestamp: 2026-08-07T00:45:00+09:00
+
+## CHG-20260807T012000-attach-suffix-toggle-postdeploy 배포 완료 기록 (doc-only)
+
+- PR #1183 머지 → main `abdf13bd` → `make deploy-web` **exit 0**(web 롤링 + soak + 워커군
+  `mysql-ai-agent:abdf13bd` + gateway 드리프트 없음).
+- 라이브 서빙 자산 확인: `attachSidePanelSuffixToggle`·`_download_filename_with_version`·
+  `ATTACH_SUFFIX_LABEL` 존재 + 캐시 스탬프 `chat.css?v=3a7d33acaddd`.
+- POST-DEPLOY PB-0008 **31 step 전건 PASS** — 배포본 이미지를 **bind-mount 없이** 띄운 컨테이너
+  (정적 자산이 이미지에 baked 되므로 소스 마운트로는 이 축을 못 본다). 라이브 트래픽 무접촉.
+- 코드 변경 0 (doc-only).
+- Files: `docs/{TEST,REPORT,MODIFY}.md`, `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md`
+- Timestamp: 2026-08-07T01:20:00+09:00

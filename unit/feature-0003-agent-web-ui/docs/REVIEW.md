@@ -3307,3 +3307,8 @@ codex 채널 할당량 소진(8/9 리셋 — `ERROR: You've hit your usage limit
   그 테스트가 **구현 함수 이름을 문자열로 단정**했기 때문이다(backend/qa 패널이 이 cycle 에서
   지적한 바로 그 패턴). 계약이 유지됨을 A1~A2 가 행위로 증명하므로, 삭제가 아니라 **결과를
   보는 단정으로 재작성**했다 — 계약을 지키는 다음 리팩터링에 다시 red 가 나지 않도록.
+
+## REV-20260807T012000-attach-suffix-postdeploy [SKIPPED:non-policy-doc] — 배포 완료 기록
+
+코드 변경 0 의 doc-only cycle(배포 결과·POST-DEPLOY 실측 기록). 정책 문서 변경 없음.
+검증 내용 자체는 `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md` §7 에 실측치로 기록.
