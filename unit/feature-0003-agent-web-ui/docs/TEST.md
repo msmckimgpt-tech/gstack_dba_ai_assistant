@@ -2423,7 +2423,7 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - **테스트 env 정직 표기**: 위 `verify_release_notes.mjs` **34 pass / 0 fail** 은 본 cycle 에서 편집 전(baseline)·편집 후 **두 번 실제 실행해 측정한 값**이다. 다만 cycle 후반 재확인 시점에 `/tmp/node_modules/jsdom` 이 사라져(무인 env 의 tmp 정리) 동일 명령이 `MODULE_NOT_FOUND` 로 미가동됐다 — `git stash` 로 **pristine HEAD 에서도 동일 실패가 재현**되므로 본 변경과 무관한 환경 사유다. 콘텐츠 검증은 `node --check` + vm 샌드박스 구조검증(releases 44 · head 9항목 · enum 위반 0 · 내부용어 누출 0)으로 갈음했다.
 
 ## TASK-20260806T1825-attach-suffix-toggle — 다운로드 파일명 버전 접미사(`_v2`) 토글 (Minor §12.3)
-- **Environment: container** — pytest **78 passed**(신규 `test_attach_suffix_toggle.py` 33 + 기존
+- **Environment: container** — pytest **82 passed**(신규 `test_attach_suffix_toggle.py` 37 — rebase 로 흡수한 `auto` 계약 A1~A4 포함 + 기존
   `test_attach_manage.py` 45). `make test` 전량 exit 0 · ruff clean. **뮤테이션 역검증 2종** — ZIP 이
   토글을 무시하게 만들면 B1·B2·B5 red, manifest url 하드코딩이면 B4 red(§18.8 패널이 지적한
   vacuous 상태에서는 둘 다 전건 통과했다).
@@ -2432,7 +2432,7 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   해제 시 `localStorage=0` · 모달 체크박스 양방향 동기화 · `모든 버전`+해제 시 충돌 고지 문구 ·
   매니페스트 12건 전량 고유 이름 · 잘못된 파라미터 400. 증거 `docs/evidence/attach-suffix-toggle/*.png`.
   **bind-mount 프리뷰 컨테이너(`:18099`)에서 수행 — 라이브 스택 무접촉, 라이브 데이터 변경 0.**
-- **서버 계약 실측** — 단일 다운로드 4모드(keep/strip/force/400) · ZIP 실물 엔트리명(미지정=종전 `_v1`·`_v2`,
+- **서버 계약 실측** — 단일 다운로드 모드별(auto/keep/strip/force/400) · ZIP 실물 엔트리명(미지정=종전 `_v1`·`_v2`,
   strip=접미 제거 + id 구분) · **이중접미 역검증**(수정 전 로직 재현 시 `..._v2_v2.sql`).
 - 잔여: 브라우저 저장 대화상자의 실제 파일명은 OS 대화상자라 자동화 미도달(서버 결정 이름 →
   `link.download` 배선까지 검증). `localStorage` 는 기기·프로필 단위.

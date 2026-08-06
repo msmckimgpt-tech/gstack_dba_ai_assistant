@@ -2678,4 +2678,40 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   - **라벨 정정**(계약 정합): "…버전 표시(_v2) **포함**" → "**유지**". 켜도 없던 표시를 새로 만들지는
     않는다 — 사용자가 같은 이름으로 재업로드한 버전은 저장명에 애초에 접미가 없다. FUNCTION 의
     "어느 버튼으로 받아도 이름이 같다" 도 "같은 범위에서는" 으로 정정.
+- **rebase 정합 (main `attach-multi-upload` 흡수)**: 머지 대기 중 main 이 단일 다운로드에
+  "v2 이상은 응답 파일명에만 버전 접미 부착"(`_next_version_filename`)을 도입했다 — 저장명이
+  원본명을 승계하는 사용자 재업로드 체인에서 구버전이 로컬 최신본을 덮어쓰는 문제 때문.
+  이는 backend/qa 패널이 지적한 P2("토글 ON 인데 사용자 재업로드 체인에는 접미가 안 붙는다")를
+  main 이 먼저 해결한 것이라, 그 규칙을 **`auto` 모드로 흡수**해 규칙 함수 하나로 통일했다:
+  단일·`scope=latest` 기본 = `auto`, `scope=all` 기본 = `force`. 프론트의 `_versionedFilename`
+  (main 이 버전 이력 행에도 쓰도록 확장한 상태)은 제거하고 서버가 준 이름을 쓴다.
 - Timestamp: 2026-08-06T18:25:00+09:00
+
+## CHG-20260807T004500-attach-suffix-toggle-rebase main `attach-multi-upload` 계약 흡수 (Minor §12.3)
+
+- 머지 대기 중 main 이 단일 다운로드에 "v2 이상은 **응답 파일명에만** 버전 접미 부착"을 도입했다
+  (`attachments.py` 의 `_next_version_filename` 호출) — 저장명이 원본명을 승계하는 사용자 재업로드
+  체인에서 구버전을 받으면 로컬 최신본을 덮어쓰기 때문. rebase 충돌 5파일(코드 2 · 문서 3).
+- 이 규칙은 §18.8 backend/qa 패널이 지적한 P2("토글 ON 인데 사용자 재업로드 체인에는 접미가
+  안 붙는다")를 main 이 **먼저 해결한 것**이라, 내 `keep` 기본을 그대로 두면 미지정 호출자가
+  main 과 다른 이름을 받는다.
+- 변경: 규칙 함수에 **`auto`** 모드 추가(v1=저장명 그대로 / v2+=정확히 하나의 `_v<n>`) 후 경로
+  기본을 옮겼다 — 단일 `auto` · 일괄 `scope=latest` `auto` · `scope=all` `force`(한 압축에 v1 까지
+  들어가므로 v1 도 구분 필요). 프론트는 `_versionSuffixMode` 가 ON 일 때 `keep` 대신 `auto` 를 쓴다.
+- main 이 버전 이력 행에도 쓰도록 확장했던 프론트 `_versionedFilename` 은 제거하고 서버가 준
+  이름(`X-Attachment-Download-Name`)을 쓴다 — 규칙 두 벌이 이 cycle 의 출발점이었던 결함.
+- **부수 이득(실측)**: 저장명에 접미가 없는 사용자 재업로드 v2(`T_gunzgame_account.sql`)에서
+  종전엔 ⬇=`…account.sql` / ⤓ latest=`…account.sql` 였다가 main 변경 후 ⬇ 만 `_v2` 가 붙어
+  어긋났는데, 이제 **양쪽 모두 ON=`…account_v2.sql` / OFF=`…account.sql`** 로 일치한다.
+- 테스트: A1~A4 신설(auto 규칙 · 단일 미지정 기본이 main 재현 · ⬇↔⤓ latest 이름 일치 · auto
+  기본 하에서도 OFF 가 접미 제거). 신규 총 37건.
+- Files: `src/routers/{_conv_store,attachments,conversations}.py`, `src/static/app/composer.js`,
+  `tests/test_attach_suffix_toggle.py`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`,
+  `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md`
+- **선행 테스트 1건 갱신** (`test_attachment_versioning.py::test_n6`): main 이 만든 그 테스트는
+  `download_attachment` 소스에 `_next_version_filename` 과 `_dl_version > 1` 이라는 **문자열이
+  있는지**를 봤다. 계약(v2 이상만 접미)은 `auto` 가 그대로 지키지만 수행 주체가 규칙 함수로
+  옮겨져 red 가 됐다 — **같은 계약을 지키는 리팩터링에 red 를 내는** 형태라(§18.8 backend/qa
+  패널이 지적한 그 패턴) 결과를 보는 단정으로 바꿨다: 규칙 함수의 실제 반환값(v2→`_v2`,
+  v1→원본명) + 라우트의 미지정 기본이 `auto` 인지.
+- Timestamp: 2026-08-07T00:45:00+09:00

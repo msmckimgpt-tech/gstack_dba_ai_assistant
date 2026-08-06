@@ -113,3 +113,30 @@ backend/qa BLOCK, ux BLOCK — 전건 흡수 후 아래를 다시 돌렸다.
 | T6 | 충돌 안내가 SR 에 전달 | PASS `aria-live="polite"` |
 | T8 | 토글 ON 복귀 시 라디오 힌트도 복귀 | PASS `파일명에 v1·v2 가 붙습니다` |
 | T6/T8 | 힌트 등장·소멸에도 모달 높이 불변 | PASS `417 ↔ 416px`(종전 약 20px 변동) |
+
+#### 6. rebase 정합 후 재검증 (2026-08-07, main `attach-multi-upload` 흡수)
+
+main 이 단일 다운로드에 "v2 이상은 응답 파일명에만 접미 부착" 을 도입해, 그 규칙을 `auto`
+모드로 흡수하고 경로 기본을 옮겼다(단일·`scope=latest`=auto, `scope=all`=force).
+
+**단일 다운로드 모드별** (id=883, 저장명 `…_08_fix_log_tables_v2.sql`, v=2):
+
+| version_suffix | X-Attachment-Download-Name |
+|---|---|
+| (미지정) · `auto` · `keep` · `force` | `…_08_fix_log_tables_v2.sql` |
+| `strip` | `…_08_fix_log_tables.sql` |
+| `bogus` | **400** |
+
+**⬇ 와 ⤓ '최신 버전만' 이름 일치** — 저장명에 접미가 **없는** 사용자 재업로드 버전
+(id=306 `T_gunzgame_account.sql`, v=2)으로 실측. rebase 전에는 토글 ON 이어도 단일에 접미가
+붙지 않아 두 경로가 어긋났다(§18.8 backend/qa 패널 P2):
+
+| 토글 | 단일 ⬇ | 일괄 ⤓ latest |
+|---|---|---|
+| ON(기본) | `T_gunzgame_account_v2.sql` | `T_gunzgame_account_v2.sql` |
+| OFF(strip) | `T_gunzgame_account.sql` | `T_gunzgame_account.sql` |
+
+**PB-0008 재실행 — 31 step 전건 PASS**(라벨 `다운로드 파일명의 버전 표시(_v2) 유지` 279×32px ·
+토글 OFF 시 라디오 힌트 `버전 표시 없이 받습니다` · `aria-live=polite` · 모달 높이 417↔416px ·
+매니페스트 12건 전량 고유). 프리뷰 컨테이너(`:18099`, 라이브 이미지 `00431585` + worktree
+bind-mount) — 라이브 무접촉.

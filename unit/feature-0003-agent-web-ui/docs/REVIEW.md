@@ -3286,3 +3286,24 @@ codex 채널 할당량 소진(8/9 리셋 — `ERROR: You've hit your usage limit
 - **미흡수(범위 밖 · 선재)**: 모달 focus trap 부재와 닫힌 패널의 탭 순서 잔류는 `_attachModalShell`
   과 `.attach-side-panel.hidden` 의 선재 성질이다. 첨부 0건에서 ⤓ 가 disable 되지 않는 것도
   선행 cycle 범위. REPORT §잔여에 원장 등재.
+
+## REV-20260807T004500-attach-suffix-toggle [SUBAGENT:rebase-integration] — main 계약 흡수
+
+머지 대기 중 main 에 `attach-multi-upload` 가 들어와 단일 다운로드가 **v2 이상이면 항상**
+`_next_version_filename` 으로 접미를 붙이게 됐다(저장명이 원본명을 승계하는 체인에서 구버전이
+로컬 최신본을 덮어쓰는 문제 해결).
+
+- 이는 backend/qa 패널의 P2("토글 ON 인데 사용자 재업로드 체인에는 접미가 안 붙는다")를 main 이
+  **먼저 해결한 것**이다. 내 `keep` 을 그대로 두면 미지정 호출자가 main 과 다른 이름을 받는다.
+- 그래서 그 규칙을 규칙 함수의 **`auto` 모드로 흡수**하고 경로 기본을 옮겼다: 단일 = `auto`,
+  `scope=latest` = `auto`, `scope=all` = `force`(한 압축에 v1 까지 들어가므로 v1 도 구분 필요).
+- **부수 이득**: 종전에 어긋나던 "목록 ⬇(v>1 이면 접미)" 와 "⤓ 최신 버전만(접미 없음)" 이 이제
+  같은 이름을 낸다. 토글 OFF(`strip`)는 두 경로 모두에서 접미를 뗀다 — 요청의 핵심은 불변.
+- 프론트의 `_versionedFilename` 은 main 이 버전 이력 행에도 쓰도록 확장한 상태였으나 제거하고
+  서버가 준 이름을 쓴다(규칙 두 벌이 이 cycle 의 출발점이었던 결함).
+- 회귀 방어: A1~A4 신설 — `auto` 규칙 · 단일 미지정 기본이 main 재현 · **⬇ 와 ⤓ latest 이름 일치**
+  · `auto` 기본 하에서도 토글 OFF 가 접미를 뗀다.
+- **선행 테스트 갱신 판단**: main 의 `test_n6` 이 red 가 됐는데, 원인은 계약 위반이 아니라
+  그 테스트가 **구현 함수 이름을 문자열로 단정**했기 때문이다(backend/qa 패널이 이 cycle 에서
+  지적한 바로 그 패턴). 계약이 유지됨을 A1~A2 가 행위로 증명하므로, 삭제가 아니라 **결과를
+  보는 단정으로 재작성**했다 — 계약을 지키는 다음 리팩터링에 다시 red 가 나지 않도록.

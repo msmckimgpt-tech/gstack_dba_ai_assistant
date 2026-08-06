@@ -425,3 +425,44 @@ def test_g3_panel_and_modal_toggles_share_one_state():
     assert "attachSidePanelSuffixToggle" in html, "패널에 토글이 없다(단일 다운로드 대응 누락)"
     assert js.count("js-attach-suffix-toggle") >= 2, "두 표면이 같은 클래스로 동기화되지 않는다"
     assert "_attachVersionSuffixIncluded" in js
+
+
+# ── A. auto 모드 (main 의 attach-multi-upload 계약 재현) ───────────────────
+def test_a1_auto_matches_previous_single_download_behavior():
+    """rebase 로 들어온 main 계약: 단일 다운로드는 v2 이상에만 접미를 붙인다(저장명은
+    체인 정합을 위해 원본명을 승계하므로, 구버전을 받으면 로컬 최신본을 덮어쓴다).
+    `auto` 가 그 규칙이며 미지정 기본이다."""
+    assert app._download_filename_with_version("report.csv", 1, "auto") == "report.csv"
+    assert app._download_filename_with_version("report.csv", 2, "auto") == "report_v2.csv"
+    # 저장명에 이미 접미가 있어도 두 번 붙지 않는다.
+    assert app._download_filename_with_version("report_v2.csv", 2, "auto") == "report_v2.csv"
+
+
+def test_a2_single_download_default_is_auto(monkeypatch):
+    """미지정 호출자(기존 프론트·외부 링크)가 main 과 다른 이름을 받으면 안 된다."""
+    _prepare_download(monkeypatch, _row(Id=5, OriginalFilename="report.csv", VersionNumber=2))
+    resp = att.download_attachment(5, object())
+    assert resp.headers["X-Attachment-Download-Name"] == "report_v2.csv"
+    _prepare_download(monkeypatch, _row(Id=6, OriginalFilename="report.csv", VersionNumber=1))
+    resp = att.download_attachment(6, object())
+    assert resp.headers["X-Attachment-Download-Name"] == "report.csv"
+
+
+def test_a3_bulk_latest_agrees_with_single(monkeypatch):
+    """같은 파일을 목록 ⬇ 로 받든 ⤓ '최신 버전만' 으로 받든 이름이 같아야 한다."""
+    row = _row(Id=2, OriginalFilename="report.csv", VersionNumber=2, ObjectKey="k2")
+    conn = _prepare_bulk(monkeypatch, [row])
+    resp = convs.bulk_download_conversation_attachments(
+        "conv-1", object(), format="manifest", scope="latest", account={"id": 7}, conn=conn)
+    import json
+    name = json.loads(bytes(resp.body).decode("utf-8"))["files"][0]["download_filename"]
+    _prepare_download(monkeypatch, row)
+    single = att.download_attachment(2, object())
+    assert name == single.headers["X-Attachment-Download-Name"] == "report_v2.csv"
+
+
+def test_a4_toggle_off_still_strips_under_auto_default(monkeypatch):
+    """`auto` 가 기본이 되어도 토글 OFF(strip)는 접미를 뗀다 — 요청의 핵심."""
+    _prepare_download(monkeypatch, _row(Id=5, OriginalFilename="report_v2.csv", VersionNumber=2))
+    resp = att.download_attachment(5, object(), version_suffix="strip")
+    assert resp.headers["X-Attachment-Download-Name"] == "report.csv"

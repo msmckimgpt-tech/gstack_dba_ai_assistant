@@ -8853,7 +8853,7 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 
 | # | 파일 | 변경 symbol | 내용 |
 |---|---|---|---|
-| B1 | `src/routers/_conv_store.py` | 신규 `_download_filename_with_version` · `_normalize_version_suffix_mode` | 접미 규칙 정본(keep/strip/force). strip 은 `_v<VersionNumber>` 일치 시에만 — 사용자가 지은 `plan_v2.docx` 를 왜곡하지 않는다. force 는 떼고 붙여 idempotent |
+| B1 | `src/routers/_conv_store.py` | 신규 `_download_filename_with_version` · `_normalize_version_suffix_mode` | 접미 규칙 정본(auto/keep/strip/force). `auto` = main `attach-multi-upload` 계약(v2 이상만 부착) 흡수. strip 은 `_v<VersionNumber>` 일치 시에만 — 사용자가 지은 `plan_v2.docx` 를 왜곡하지 않는다. force 는 떼고 붙여 idempotent |
 | B2 | `src/app.py` | `from routers._conv_store import (...)` | 두 심볼 재바인딩(`app.X` 동적참조 보존) |
 | B3 | `src/routers/attachments.py` | `download_attachment` | `?version_suffix=keep\|strip\|force`(기본 keep) + 응답 헤더 `X-Attachment-Download-Name`(최종 이름, percent-encoded) |
 | B4 | `src/routers/conversations.py` | `_zip_entry_name` · `bulk_download_conversation_attachments` | `with_version: bool` → `mode: str` 로 교체(공용 규칙 위임) · `?version_suffix` 추가 · manifest 에 `download_filename` + url 에 파라미터 전파 · 미지정 기본은 scope 별 종전 동작(**이중접미 해소분과 그로 인한 충돌 재배정은 제외** — 아래 참조) |
@@ -8888,7 +8888,7 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 - [x] B3 단일 다운로드 `version_suffix` + 최종 이름 헤더
 - [x] B4 일괄 다운로드 `version_suffix`(zip·manifest) + `_zip_entry_name` mode 전환
 - [x] F1~F3 패널 체크박스 · CSS · 공유 상태 · 서버 결정 이름 채택 · `_versionedFilename` 제거
-- [x] 테스트 신규 33건(`tests/test_attach_suffix_toggle.py` — 규칙 함수 + **엔드포인트 배선** B1~B6) + 기존 `test_attach_manage.py` 시그니처 갱신
+- [x] 테스트 신규 37건(`tests/test_attach_suffix_toggle.py` — 규칙 함수 + **엔드포인트 배선** B1~B6 + rebase 흡수 `auto` 계약 A1~A4) + 기존 `test_attach_manage.py` 시그니처 갱신
 - [x] §18.8 적대 검증 패널 (security PASS / backend·qa BLOCK / ux BLOCK) — P1 1건 + P2 4건 + P3 8건 전건 흡수, 뮤테이션 2종으로 신규 테스트 유효성 역검증
 - [x] PB-0008 실 Windows 브라우저 시각검증 (31 step 전건 PASS, 패널 흡수 후 재실행)
 - [ ] verify-completion PASS → commit → PR → cycle-finalize → 배포

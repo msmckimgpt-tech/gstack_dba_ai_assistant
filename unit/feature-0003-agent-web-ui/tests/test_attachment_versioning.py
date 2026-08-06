@@ -454,14 +454,23 @@ def test_n5_edit_keeps_single_chain_for_reupload(monkeypatch):
 
 # ── N6: 다운로드는 v2+ 에서만 응답 파일명에 버전 접미 (저장값 불변) ────────────
 def test_n6_download_response_filename_versioned():
+    """체인 통합으로 모든 버전이 같은 저장명을 쓰므로, 구버전 다운로드는 응답 파일명에
+    버전 접미를 붙여 로컬 최신본 덮어쓰기를 막아야 한다. v1 은 원본명 그대로.
+
+    (attach-suffix-toggle) 이 계약은 그대로이나 수행 주체가 `_next_version_filename` 직접
+    호출에서 **규칙 함수의 `auto` 모드**로 옮겨졌다(단일·ZIP·매니페스트가 한 규칙을 공유하고,
+    사용자가 토글로 끌 수 있게 하려면 규칙이 한 곳이어야 한다). 그래서 구현 함수 이름이
+    아니라 **결과**를 단정한다 — 이름을 단정하면 같은 계약을 지키는 리팩터링에 red 가 된다.
+    """
     import inspect
 
-    src = inspect.getsource(attachments.download_attachment)
-    norm = " ".join(src.split())
-    assert "_next_version_filename" in norm, (
-        "체인 통합으로 모든 버전이 같은 저장명을 쓰므로, 구버전 다운로드는 응답 파일명에 "
-        "버전 접미를 붙여 로컬 최신본 덮어쓰기를 막아야 한다")
-    assert "_dl_version > 1" in norm, "v1 은 원본명 그대로여야 한다(불필요한 _v1 접미 금지)"
+    assert app._download_filename_with_version("report.csv", 2, "auto") == "report_v2.csv"
+    assert app._download_filename_with_version("report.csv", 1, "auto") == "report.csv", (
+        "v1 은 원본명 그대로여야 한다(불필요한 _v1 접미 금지)")
+    # 라우트가 그 규칙을 **기본으로** 쓰는지 — 미지정 호출자의 결과가 바뀌면 안 된다.
+    norm = " ".join(inspect.getsource(attachments.download_attachment).split())
+    assert "_download_filename_with_version" in norm, "다운로드가 공용 규칙을 거치지 않는다"
+    assert 'version_suffix: str = "auto"' in norm, "미지정 기본이 auto 가 아니다"
 
 
 # ── R1: 목록 SQL 최신버전 필터 (정적 소스 검사) ──────────────────────────────
