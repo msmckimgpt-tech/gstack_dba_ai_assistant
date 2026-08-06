@@ -6796,18 +6796,37 @@ def _build_version_diff_view(
                 continue
             for k in range(max(0, idx - ctx), min(len(flat), idx + ctx + 1)):
                 keep[k] = True
+
+        def _gap(hidden: list[dict[str, Any]]) -> dict[str, Any]:
+            """생략 구간의 **줄번호 범위**를 함께 실어 보낸다.
+
+            프론트가 "동일한 N줄 생략" 을 눌러 그 구간만 국소 전개할 때, 전체 맥락 응답에서
+            어느 행을 되살릴지 특정할 근거가 필요하다. 개수(`skipped`)만으로는 위치를 알 수
+            없다. 접히는 대상은 항상 `equal` 런이므로 좌·우 줄번호가 둘 다 존재한다.
+            """
+            lefts = [int(h["left_no"]) for h in hidden if h.get("left_no") is not None]
+            rights = [int(h["right_no"]) for h in hidden if h.get("right_no") is not None]
+            return {
+                "type": "gap",
+                "skipped": len(hidden),
+                "left_from": min(lefts) if lefts else None,
+                "left_to": max(lefts) if lefts else None,
+                "right_from": min(rights) if rights else None,
+                "right_to": max(rights) if rights else None,
+            }
+
         rows = []
-        run = 0
+        hidden_run: list[dict[str, Any]] = []
         for idx, r in enumerate(flat):
             if keep[idx]:
-                if run:
-                    rows.append({"type": "gap", "skipped": run})
-                    run = 0
+                if hidden_run:
+                    rows.append(_gap(hidden_run))
+                    hidden_run = []
                 rows.append(r)
             else:
-                run += 1
-        if run:
-            rows.append({"type": "gap", "skipped": run})
+                hidden_run.append(r)
+        if hidden_run:
+            rows.append(_gap(hidden_run))
 
     rows_truncated = False
     if len(rows) > int(row_cap):

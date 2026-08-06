@@ -8394,3 +8394,126 @@ kind 경계(E7). 경계를 건드리지 않은 케이스의 PASS 를 완료 근�
 **G9-b**: 절단 3종을 응답 필드와 화면 배너 양쪽에서 표면화한다(cap 크기·상한 행수 명시). 무음
 절단이면 사용자는 존재하는 변경을 놓치고도 "차이 없음" 으로 읽는다.
 **G7-c**: 시각검증 미완을 완료로 쓰지 않았다 — 위 Requested Scope 마지막 항을 `[ ]` 로 남긴다.
+
+## 20260807T0030-attach-diff-colgroup — diff 표 열 폭이 계약대로 적용되지 않던 결함 (Minor §12.3, frontend-only)
+
+- **적발 경로**: 선행 cycle `20260806T2320-attach-version-diff` 의 **POST-DEPLOY PB-0008**.
+  자동 게이트(pytest 22 · mjs 57 · verify-completion)는 **전부 통과**했고, 실 Windows 브라우저
+  캡처를 판독해서야 좌우 열이 표 폭을 채우지 못하고 가운데로 몰린 것이 보였다.
+- **근본 원인(라이브 실측)**: `table-layout: fixed` 는 열 폭을 **첫 행의 셀**에서 가져온다.
+  맥락 축약 뷰의 첫 행은 흔히 `gap`(`colspan=4`) 이라 개별 열 폭이 정의되지 않고 브라우저가
+  표를 **균등 분할**한다 — `.attach-diff-lineno{width:48px}` 과
+  `.attach-diff-code{width:calc(50% - 48px)}` 가 **통째로 무시됐다**. 실측: 표 1136px 에서
+  네 열이 전부 **284px**. 파일 앞부분에 동일 줄이 4줄 이상이면 gap 이 맨 위에 오므로 사실상
+  **거의 항상** 발현한다.
+- **수정**: 열 폭 선언을 `<colgroup>`(`_appendColgroup`)으로 옮긴다 — `col` 규칙은 행 순서와
+  무관하다. CSS 의 `td` width 선언은 **제거**해 정본을 하나로 둔다(두 곳에 두면 drift 원).
+
+### §2.1 Implementation Plan
+
+- **영향 파일 / symbol**
+  - `src/static/app/attach-diff.js` — `_appendColgroup`(신설) + `_renderSplit`·`_renderUnified` 가 호출.
+  - `src/static/css/chat.css` — `.attach-diff-col-{no,sign,code}` 신설, `td` width 3건 제거.
+  - `tests/verify_attach_version_diff.mjs` — A1b 구조 가드 7건(colgroup 유무·열 수·클래스·
+    첫 자식 위치·CSS 가 col 을 타깃·td 잔존 0·결함 조건 존재).
+  - `tests/headless/verify_attach_diff_geometry.py` **(신설)** — 실 브라우저 기하 실측.
+- **왜 헤드리스 기하 테스트를 신설하나**: 이 결함 클래스는 **레이아웃 산출물**이라 jsdom(레이아웃
+  미계산)·정적 스캔·pytest 가 원리적으로 못 본다. 배포 후 PB-0008 만이 유일한 감지 수단이면
+  같은 클래스가 또 배포를 통과한다 → 실 chromium 에 실 CSS·실 렌더 함수를 올려 **열 폭을 숫자로**
+  잠근다.
+- **완료 판정 기준(AC)**
+  - AC1 첫 행이 gap 인 2열 표에서 줄번호 열 = 48px, 좌우 code 열 동폭.
+  - AC2 열 폭 합 == 표 폭(여백 ≤ 2px) — 가운데 몰림 없음.
+  - AC3 단일열 = 48 / 18 / 잔여.
+  - AC4 colgroup 을 제거하면 AC1 이 깨진다(가드 load-bearing 실증).
+  - AC5 CSS 정본이 `col` 에만 있고 `td` width 잔존 0.
+- **위험도**: **Minor** — 프론트 전용·비파괴. 백엔드·API·RBAC·스키마 0.
+
+### 체크리스트
+
+- [x] `_appendColgroup` 신설 + 2열(4 col)·단일열(3 col) 배선
+- [x] CSS 정본을 `col` 로 이관 + `td` width 3건 제거
+- [x] mjs A1b 구조 가드 7건 — 하네스 **65 PASS**(선행 57 + 8)
+- [x] 헤드리스 기하 실측 **8/8 PASS** — `T7 colgroup 제거 시 [284,284,284,284]` 로
+      **원 결함을 그대로 재현**(라이브 실측치와 동일 = 가드가 실제로 그 결함을 잡는다는 증거)
+- [x] 전수 mjs **44 suite OK** · pytest 전수 회귀
+- [ ] 배포 + PB-0008 재검증(기하 실측 단언 포함)
+
+## 9. Requested Scope
+- [x] `선행 cycle 이 배포한 diff 화면의 열 폭 결함 수정` — 산출물: colgroup 이관 + 기하 테스트
+  · 배선 확인: 헤드리스 기하 실측이 수정 후 [48,520,48,520]/합=표폭, 제거 시 [284×4] 을 각각 단언.
+
+**G9-a**: 이 cycle 자체가 G9-a(렌더 결과의 시각 불변식)의 실증이다 — 테스트 통과·문서 정합·
+verify-completion PASS 로도 "렌더된 그림" 을 보지 않으면 놓친다.
+**G10**: 재발을 기다리지 않고 **첫 관측에서** 구조 가드로 승격했다(헤드리스 기하 + mjs 구조).
+근거: 이 결함 클래스(레이아웃 산출물)는 기존 게이트 전체가 원리적으로 눈이 없고, 감지 수단이
+배포 후 육안뿐이면 다음 번에도 배포를 통과한다.
+
+## 20260807T0200-attach-diff-ux — 비교 모달 확대 · 줄번호 여백 · 중앙선 드래그 · gap 국소 전개 (Minor §12.3)
+
+- **사용자 요청(스크린샷 2장 동반)**: "모달 자체의 창이 너무 작아 내용을 모두 출력하기
+  제한됩니다. 또한, line number에 대한 컬럼의 여백이 너무 넓습니다. 각 이슈에 대해
+  개선해주세요. 추가로, 다음 개선사항도 적용해주세요 — '좌우 2열' 에서 중앙선 조절을
+  드래그하여 조절할 수 있도록 / '동일한 N줄 생략' 클릭 시, 생략된 내용도(해당 구간만
+  국소적으로) 표시될 수 있도록 ('동일한 줄도 모두 보기' 가 비활성화 되어있을 경우)"
+- **줄번호 여백은 선행 결함과 같은 뿌리**: 사용자가 본 화면은 배포본 `d46a6b04` 이고, 거기서는
+  열 폭이 4등분돼 **줄번호 열이 284px** 였다(`20260807T0030-attach-diff-colgroup` 이 이미 수정,
+  push 대기 중이었다). 본 cycle 은 그 수정 위에 자릿수 기반 폭을 얹는다.
+
+### §2.1 Implementation Plan
+
+- **영향 파일 / symbol**
+  - `src/routers/_conv_store.py` `_build_version_diff_view` — gap 행에 **줄번호 범위**
+    (`left_from/left_to/right_from/right_to`) 추가. 국소 전개가 "어느 행을 되살릴지" 특정할 근거.
+  - `src/static/app/attach-diff.js` — `_linenoCh`(자릿수) · `_applySplitRatio`(실측 기반 plain %) ·
+    `_gapRow`(버튼화) · `_attachSplitHandle`(드래그) · `expandGap`(전체맥락 1회 캐시 후 splice).
+  - `src/static/css/chat.css` — 모달 `94vh × (100vw-24px)` · 줄번호 padding 축소 · splitter · gap 버튼.
+  - `tests/headless/verify_attach_diff_geometry.py` — 모듈 전체 로드로 재작성 + T8~T12 신설.
+  - `tests/verify_attach_version_diff.mjs` — 모듈 전체 로드로 전환 + calc-함정 금지 가드.
+- **핵심 발견 (실측)**: `table-layout: fixed` 의 `col` 폭에서 Chrome 은 **퍼센트를 포함한
+  `calc()` 를 무시**하고 그 열을 auto 로 떨어뜨려 균등 분배한다. 5형태 대조 실측:
+  `calc(0.3*(100% - 4ch - 24px))` → 468/468(무시) · `calc(30% - 12px)` → 468/468(무시) ·
+  `30%` → 281/655(honor) · `300px` → 300/700(honor) · 퍼센트 없는 `calc(2ch + 12px)` → honor.
+  ⇒ 선행 cycle 의 colgroup 이 **줄번호에는 적용됐지만 좌우 code 열에는 조용히 무효**였다.
+  좌우 폭은 렌더 후 **실측 기반 plain %** 로 설정하고, 창 크기 변화 시 재적용한다.
+- **완료 판정 기준(AC)**
+  - AC1 모달이 뷰포트 폭 ≥95% · 높이 ≥88% 를 쓴다.
+  - AC2 줄번호 열 폭이 자릿수에 비례하고 3자리에서 옛 48px 보다 좁다.
+  - AC3 중앙선을 드래그하면 좌/우 code 폭 비율이 실제로 바뀌고 합은 표 폭을 유지한다.
+  - AC4 "N줄 생략" 클릭 시 **그 gap 만** 전개되고 다른 gap 은 남는다. 전체 맥락은 1회만 조회.
+  - AC5 "동일한 줄도 모두 보기" 가 켜져 있으면 전개 버튼을 달지 않는다.
+- **위험도**: **Minor** — 프론트 + 백엔드 응답 필드 추가(additive). RBAC·스키마·마이그레이션 0.
+
+### 체크리스트
+
+- [x] ① 모달 확대 — `94vh × calc(100vw - 24px)` + backdrop 여백 24→12px + body flex 로 본문이
+      잔여 높이 전부 사용. 실측 1416×846 / 뷰포트 1440×900
+- [x] ② 줄번호 열 — 자릿수 기반 `calc(Nch + 12px)` + padding 축소. 실측 3자리 **30px**(옛 48px) ·
+      5자리 42px(잘림 없음)
+- [x] ③ 중앙선 드래그 — 핸들 + document 레벨 리스너 + 키보드(←/→/Home) + localStorage 영속.
+      실측 `[662,662] → [395,929]`
+- [x] ④ gap 국소 전개 — 서버가 gap 에 줄번호 범위를 실어 주고, 프론트가 전체 맥락을 **1회만**
+      받아 그 구간 행만 splice(축약 로직 프론트 재구현 0). 실측 rows 5→16 · gap 2→1
+- [x] **드래그 결함을 하네스가 잡았다** — 초판은 `pointermove` 를 핸들에만 바인딩해 포인터가
+      11px 핸들을 벗어나는 첫 이동에 이벤트가 끊겼다(T10 red). document 레벨로 교정
+- [x] 헤드리스 기하·상호작용 **22/22 PASS**(T7 colgroup 제거 시 균등분배 재현 포함) ·
+      mjs 하네스 **73 PASS** · 전수 mjs **44 suite OK** · pytest 신규 24건
+- [ ] 배포 + PB-0008 재검증
+
+## 9. Requested Scope
+- [x] `모달 창이 작아 내용이 잘린다` — 산출물: 94vh × (100vw-24px) · 배선 확인: 헤드리스 T9 가
+      뷰포트 대비 비율을 수치로 단언.
+- [x] `line number 컬럼 여백이 너무 넓다` — 산출물: 자릿수 기반 폭 + padding 축소 ·
+      배선 확인: 헤드리스 T1/T8(3자리 30px < 48px, 5자리 42px).
+- [x] `'좌우 2열' 중앙선 드래그 조절` — 산출물: `_attachSplitHandle` · 배선 확인: 헤드리스 T10
+      (실 마우스 드래그로 폭 변화) · T10b(합 보존) · T10c(영속).
+- [x] `'동일한 N줄 생략' 클릭 시 그 구간만 표시` — 산출물: gap 범위 필드 + `expandGap` ·
+      배선 확인: 헤드리스 T11b/T11c/T11d + pytest B3b(범위 정확성).
+- [x] `('동일한 줄도 모두 보기' 비활성 시)` 조건 — 배선 확인: 헤드리스 T12(켜짐 시 버튼 0개).
+- [ ] `화면` 최종 시각 확인 — PB-0008 배포 후 잔여.
+
+**G4**: 임계 축을 먼저 식별해 양측을 봤다 — 줄번호 자릿수(3↔5), 맥락 축약(3↔full), 중앙선 비율
+(기본↔드래그 후), gap 전개(켬↔끔). 특히 **col 폭 형태**(calc-with-% ↔ plain %)는 5형태 대조로
+경계를 확정했다.
+**G9-a**: 사용자가 지적한 두 항목 모두 "렌더된 그림" 축이다. 이번엔 그 축을 배포 전 게이트로
+끌어와 수치로 잠갔다(헤드리스 22건).

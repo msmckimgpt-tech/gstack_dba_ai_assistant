@@ -46,41 +46,37 @@ function ok(name, cond) {
   else { failed++; console.log(`  FAIL  ${name}`); }
 }
 
-// function <name>(...) 한 정의 블록을 중괄호 밸런스로 추출 (export 접두 허용).
-function extractFn(src, name) {
-  const start = src.search(new RegExp(`(?:export\\s+)?function ${name}\\(`));
-  if (start < 0) return null;
-  let p = src.indexOf("(", start), paren = 0, sigEnd = -1;
-  for (let j = p; j < src.length; j++) {
-    if (src[j] === "(") paren++;
-    else if (src[j] === ")") { paren--; if (paren === 0) { sigEnd = j; break; } }
-  }
-  let i = src.indexOf("{", sigEnd), depth = 0, end = -1;
-  for (; i < src.length; i++) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}") { depth--; if (depth === 0) { end = i + 1; break; } }
-  }
-  return end < 0 ? null : src.slice(start, end).replace(/^export\s+/, "");
+// ── (A) 렌더 — 정본 **모듈 전체**를 jsdom 위에서 실행 ─────────────────────────
+// 함수를 개별 추출하면 모듈 상수·상호 호출(`_linenoCh`·`_gapRow`·`_applySplitRatio`)이 빠져
+// 하네스가 계속 깨진다. import 한 줄만 스텁으로 대체하고 본문 전체를 그대로 태운다
+// (로직 재구현 0 — 헤드리스 기하 하네스와 동일 방식).
+const MODULE_BODY = diffJs
+  .replace(/^import\s+\{[^}]*\}\s+from\s+"[^"]*";\s*$/m, "")
+  .replace(/^export\s+/gm, "");
+if (/^import\s/m.test(MODULE_BODY)) {
+  console.error("import 잔존 — 스텁 치환 실패");
+  process.exit(2);
 }
-
-// ── (A) 렌더 — 정본 함수 본문을 jsdom 위에서 실행 ────────────────────────────
-const fnNames = ["_renderSplit", "_renderUnified", "_renderBody", "_fmtBytes", "_versionLabel"];
-const fnSrcs = fnNames.map((n) => [n, extractFn(diffJs, n)]);
-for (const [n, s] of fnSrcs) ok(`${n} 추출됨`, !!s);
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>");
 const { window } = dom;
-const sandbox = {
+const _stubs = {
   document: window.document,
+  window,
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  requestAnimationFrame: (fn) => fn(),
+  apiFetch: async () => ({}),
+  bindBackdropDismiss: () => {},
+  showToast: () => {},
   escapeHtml: (v = "") => String(v).replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])),
 };
-// 추출한 함수들을 한 스코프에 정의하고 핸들을 돌려받는다(정본 본문 그대로 — 재작성 금지).
-const factory = new Function(
-  "document", "escapeHtml",
-  fnSrcs.map(([, s]) => s).join("\n") + `\nreturn { ${fnNames.join(", ")} };`
-);
-const M = factory(sandbox.document, sandbox.escapeHtml);
+const EXPORTS = ["_appendColgroup", "_applySplitRatio", "_gapRow", "_linenoCh",
+  "_renderSplit", "_renderUnified", "_renderBody", "_fmtBytes", "_versionLabel",
+  "openAttachmentDiffModal"];
+const M = new Function(...Object.keys(_stubs),
+  `${MODULE_BODY}\nreturn { ${EXPORTS.join(", ")} };`)(...Object.values(_stubs));
+for (const n of EXPORTS) ok(`${n} 로드됨`, typeof M[n] === "function");
 
 const SPLIT_DATA = {
   comparable: true,
@@ -123,6 +119,58 @@ const SPLIT_DATA = {
   const del = host.querySelector("tr.is-delete");
   ok("A1 delete 는 우측 줄번호가 비어 있다",
     Array.from(del.querySelectorAll("td.attach-diff-lineno"))[1].textContent === "");
+}
+
+// A1b — 열 폭 계약은 `<colgroup>` 이 진다 (2026-08-06 PB-0008 라이브 적발의 회귀 잠금).
+//   `table-layout: fixed` 는 **첫 행**에서 열 폭을 가져오는데, 맥락 축약 뷰의 첫 행은 흔히
+//   `gap`(colspan) 이라 개별 열 폭이 정의되지 않고 표가 균등 분할된다 — `td` 의 width 규칙이
+//   통째로 무시됐다(라이브: 1136px 표의 네 열 전부 284px). `col` 은 행 순서와 무관하다.
+//   jsdom 은 레이아웃을 계산하지 않으므로 여기서는 **구조**(colgroup 유무·열 수·클래스)와
+//   **CSS 가 col 을 타깃하는지**를 잠근다. 실제 기하 검증은 PB-0008 기하 실측이 담당한다.
+{
+  const host = window.document.createElement("div");
+  M._renderSplit(host, SPLIT_DATA);
+  const cg = host.querySelector("table.attach-diff-table.is-split > colgroup");
+  ok("A1b 2열 표에 colgroup", !!cg);
+  const cols = cg ? Array.from(cg.querySelectorAll("col")).map((c) => c.className) : [];
+  ok("A1b 2열 colgroup = no/code/no/code 4열",
+    cols.join(",") === "attach-diff-col-no,attach-diff-col-code,attach-diff-col-no,attach-diff-col-code",
+    cols.join(","));
+  const hostU = window.document.createElement("div");
+  M._renderUnified(hostU, SPLIT_DATA);
+  const cgU = hostU.querySelector("table.attach-diff-table.is-unified > colgroup");
+  const colsU = cgU ? Array.from(cgU.querySelectorAll("col")).map((c) => c.className) : [];
+  ok("A1b 단일열 colgroup = no/sign/code 3열",
+    colsU.join(",") === "attach-diff-col-no,attach-diff-col-sign,attach-diff-col-code",
+    colsU.join(","));
+  ok("A1b colgroup 이 첫 자식(첫 행보다 앞)", !!cg && cg.previousElementSibling === null);
+  // CSS 정본이 col 로 옮겨졌는지 — td 에 남아 있으면 같은 결함이 되살아난다.
+  ok("A1b CSS 가 col 클래스로 폭 선언", /\.attach-diff-col-no\s*\{[^}]*width/.test(chatCss));
+  ok("A1b td 폭 선언 잔존 0(정본 이중화 금지)",
+    !/\.attach-diff-lineno\s*\{[^}]*width\s*:/.test(chatCss) &&
+    !/\.attach-diff-code\s*\{[^}]*width\s*:/.test(chatCss) &&
+    !/\.is-split\s+\.attach-diff-code\s*\{[^}]*width\s*:/.test(chatCss));
+  // ⚠️ fixed-table `col` 폭에서 **퍼센트를 포함한 calc() 는 Chrome 이 무시**한다(실측 2026-08-07:
+  // `calc(0.3*(100% - 4ch - 24px))`·`calc(30% - 12px)` 모두 균등 분배로 떨어짐). 이 형태가
+  // 다시 들어오면 열 폭 계약이 **조용히** 무효가 되므로 소스에서 금지한다.
+  const colWidthAssigns = [...diffJs.matchAll(/cols?\[\d\]\.style\.width\s*=\s*`([^`]*)`/g)]
+    .concat([...diffJs.matchAll(/list\[\d\]\.style\.width\s*=\s*`([^`]*)`/g)])
+    .map((m) => m[1]);
+  ok("A1b col 폭에 '퍼센트 포함 calc()' 없음(Chrome 이 무시하는 형태)",
+    colWidthAssigns.every((v) => !(v.includes("calc(") && v.includes("%"))),
+    colWidthAssigns.join(" | ") || "(없음)");
+  ok("A1b 좌우 code 폭은 실측 기반 plain % 로 설정",
+    /cols\[1\]\.style\.width\s*=\s*`\$\{[^`]*\}%`/.test(diffJs) &&
+    /cols\[3\]\.style\.width\s*=\s*`\$\{[^`]*\}%`/.test(diffJs));
+  ok("A1b 중앙선 드래그는 document 레벨 리스너(핸들 밖 이탈에도 유지)",
+    /document\.addEventListener\("mousemove", moveHandler\)/.test(diffJs) &&
+    /document\.removeEventListener\("mousemove", moveHandler\)/.test(diffJs));
+  ok("A1b gap 전개는 전체 맥락 1회 캐시(축약 로직 프론트 재구현 금지)",
+    /fullRowsCache/.test(diffJs) && !/context_lines/.test(diffJs));
+  // 첫 행이 gap 인 케이스가 실제로 렌더되는지(= 결함 조건이 재현 가능한 데이터인지) 확인.
+  const firstRow = host.querySelector("tbody tr");
+  ok("A1b 결함 조건(첫 행 gap) 이 테스트 데이터에 존재",
+    SPLIT_DATA.rows.findIndex((r) => r.type === "gap") >= 0 && !!firstRow);
 }
 
 // A2 — gap: 생략 줄 수를 **문구로 표면화**(무음 절단 금지의 UI 면).
@@ -196,6 +244,24 @@ const SPLIT_DATA = {
   ok("A7 원본 조회 실패 문구", /원본 파일을 읽을 수 없/.test(host.textContent));
 }
 
+// composer.js 는 모듈 전체를 태울 수 없다(app.js 전역 의존 다수) — 대상 함수 한 블록만
+// 중괄호 밸런스로 떼어 **문자열 계약**을 본다.
+function extractFn(src, name) {
+  const start = src.search(new RegExp(`(?:export\\s+)?function ${name}\\(`));
+  if (start < 0) return null;
+  let p = src.indexOf("(", start), paren = 0, sigEnd = -1;
+  for (let j = p; j < src.length; j++) {
+    if (src[j] === "(") paren++;
+    else if (src[j] === ")") { paren--; if (paren === 0) { sigEnd = j; break; } }
+  }
+  let i = src.indexOf("{", sigEnd), depth = 0, end = -1;
+  for (; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  return end < 0 ? null : src.slice(start, end);
+}
+
 // ── (B) 배선 — composer.js 진입점 ────────────────────────────────────────────
 {
   ok("B1 composer 가 모달을 import", /import\s*\{\s*openAttachmentDiffModal\s*\}\s*from\s*"\.\/attach-diff\.js\?v=dev"/.test(composerJs));
@@ -224,8 +290,11 @@ const SPLIT_DATA = {
     /bindBackdropDismiss\(backdrop, close\)/.test(diffJs) && !/e\.target === backdrop/.test(diffJs));
   ok("C3 ESC 닫기 경로 상시 배선", /e\.key === "Escape"/.test(diffJs));
   // 토글이 재요청하지 않는다 = 두 뷰가 같은 응답의 두 표현(비교 결과 불일치 구조적 차단).
+  // 토글은 `rerender()`(= 같은 lastData 로 _renderBody 재호출)만 하고 apiFetch 를 타지 않는다.
+  const modeBtnBlock = diffJs.slice(diffJs.indexOf("for (const b of modeBtns)"));
   ok("C4 보기 토글은 재요청 없이 같은 응답을 재렌더",
-    /if \(lastData\) _renderBody\(bodyEl, lastData, mode\)/.test(diffJs));
+    /rerender\(\);/.test(modeBtnBlock) && !/apiFetch/.test(modeBtnBlock.slice(0, 400)) &&
+    /if \(lastData\) _renderBody\(bodyEl, lastData, mode, renderOpts\(\)\)/.test(diffJs));
   ok("C5 늦게 온 응답이 최신 선택을 덮지 않는다(seq 가드)",
     /if \(seq !== reqSeq\) return;/.test(diffJs));
   ok("C6 from==to 는 요청 전에 차단", /if \(from === to\)/.test(diffJs));

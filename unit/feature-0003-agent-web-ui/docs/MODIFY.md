@@ -2430,3 +2430,47 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - **캐시버스터:** 신규 JS 의 import specifier `?v=dev` 고정 — 빌드 `inject_asset_stamp.py` 가
   content-hash 주입(수기 bump 금지).
 - Timestamp: 2026-08-06T23:20:00+09:00
+## CHG-20260807T0030-attach-diff-colgroup diff 표 열 폭을 colgroup 정본으로 (Minor §12.3)
+- 선행 cycle `CHG-20260806T2320-attach-version-diff`(PR #1170, 배포본 `d46a6b04`)의 **POST-DEPLOY
+  PB-0008 이 적발한 레이아웃 결함** 수정. 자동 게이트(pytest 22 · mjs 57 · verify-completion)는
+  전부 통과했고 실 브라우저 캡처 판독에서만 드러났다.
+- 근본 원인: `table-layout: fixed` 가 열 폭을 **첫 행**에서 가져오는데 맥락 축약 뷰의 첫 행이
+  `gap`(`colspan=4`) 이라 개별 열 폭이 정의되지 않고 표가 균등 분할됨 — CSS `td` width 무시.
+  라이브 실측 표 1136px / 네 열 전부 284px.
+- 변경: `_appendColgroup` 신설(2열 4 col · 단일열 3 col) + CSS 정본을 `.attach-diff-col-*` 로
+  이관 + `td` width 3건 제거(정본 이중화 방지).
+- 재발 방지: `tests/headless/verify_attach_diff_geometry.py` 신설 — 실 chromium 에 실 CSS·실 렌더
+  함수를 올려 열 폭을 숫자로 잠근다. **T7 이 colgroup 제거 시 [284,284,284,284] 를 재현**해
+  가드가 그 결함을 실제로 잡는다는 것을 증명한다(라이브 실측치와 동일). mjs A1b 구조 가드 7건 동반.
+- 검증: 헤드리스 기하 8/8 · mjs 하네스 65 PASS · 전수 mjs 44 suite OK · pytest 전수 회귀.
+- Files: `src/static/app/attach-diff.js`, `src/static/css/chat.css`,
+  `tests/verify_attach_version_diff.mjs`, `tests/headless/verify_attach_diff_geometry.py`(신설),
+  `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT,TEST}.md`, `docs/test-runs.d/…`.
+- 백엔드·API·RBAC·스키마·마이그레이션 변경 0.
+- Timestamp: 2026-08-07T00:30:00+09:00
+## CHG-20260807T0200-attach-diff-ux 비교 모달 확대 · 줄번호 여백 · 중앙선 드래그 · gap 국소 전개 (Minor §12.3)
+- 사용자 지적·요청 4건(2026-08-07, 스크린샷 동반): 모달이 작아 내용이 잘림 · 줄번호 열 여백 과다 ·
+  좌우 2열 중앙선 드래그 · "동일한 N줄 생략" 클릭 시 국소 전개("모두 보기" 비활성 시).
+- **줄번호 여백은 선행 결함과 같은 뿌리**: 사용자가 본 화면은 배포본 `d46a6b04` 로 열 폭이
+  4등분돼 줄번호 열이 284px 였다(`CHG-20260807T0030-attach-diff-colgroup` 이 이미 수정·push 대기).
+- **실측으로 확정한 함정**: `table-layout: fixed` 의 `col` 폭에서 Chrome 은 **퍼센트를 포함한
+  `calc()` 를 무시**하고 auto 로 떨어뜨려 균등 분배한다(5형태 대조: `calc(0.3*(100%-4ch-24px))`
+  468/468 무시 · `calc(30% - 12px)` 무시 · `30%` 281/655 honor · `300px` honor · `calc(2ch+12px)`
+  honor). ⇒ 선행 colgroup 이 **줄번호에는 적용됐지만 좌우 code 열에는 조용히 무효**였다.
+  좌우 폭은 렌더 후 실측 기반 **plain %** 로 지정하고 창 크기 변화 시 재적용한다.
+- 변경: `_conv_store._build_version_diff_view` 가 gap 에 줄번호 범위 4필드 추가(additive) /
+  `attach-diff.js` 에 `_linenoCh`·`_applySplitRatio`·`_gapRow`(버튼)·`_attachSplitHandle`·
+  `expandGap` 신설 / `chat.css` 모달 94vh×(100vw-24px)·줄번호 padding 축소·splitter·gap 버튼.
+- **드래그 결함을 하네스가 잡았다**: 초판은 `pointermove` 를 핸들에만 바인딩해 포인터가 11px
+  핸들을 벗어나는 첫 이동(32px)에 이벤트가 끊겼다 — mousedown 은 성립하는데 비율은 그대로였다.
+  저장소 기존 리사이저(`setupAttachSidePanelResize`)와 동형인 **document 레벨** 리스너로 교정.
+- 하네스 방식 전환: 헤드리스·mjs 둘 다 함수 개별 추출 → **모듈 전체 로드**(import 만 스텁).
+  추출 방식은 모듈 상수·상호 호출이 늘 때마다 깨졌다(로직 재구현 0 유지).
+- 검증: 헤드리스 기하·상호작용 **22/22**(T7 colgroup 제거 시 균등분배 재현) · mjs **73 PASS** ·
+  전수 mjs **44 suite OK** · pytest 신규 24건 · 정본 `make test` 전수.
+- Files: `src/routers/_conv_store.py`, `src/static/app/attach-diff.js`, `src/static/css/chat.css`,
+  `tests/headless/verify_attach_diff_geometry.py`, `tests/verify_attach_version_diff.mjs`,
+  `tests/test_attachment_version_diff.py`, `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`,
+  `docs/test-runs.d/…`.
+- RBAC·스키마·마이그레이션 변경 0. 응답은 additive(기존 필드 불변).
+- Timestamp: 2026-08-07T02:00:00+09:00
