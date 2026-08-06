@@ -8297,3 +8297,100 @@ PB-0008 에서 확대 렌더 대조.
 ## 9. Requested Scope
 - [x] `배포 후 신규 전환 5종 라이브 재확인(선행 cycle 잔여)` — 산출물: fragment Run 4 + 증적 1장
   · 배선 확인: 사용자와 동일한 UI 경로로 열어 CDP trusted 제스처 실측(SVG 차트는 좌표 클릭).
+
+## 20260806T2320-attach-version-diff — 첨부 버전 diff 비교 화면 (임의 쌍·다단계) (Major §12.3)
+
+- **사용자 요청(`/_template:entry`)**: "서비스 내 대화에서 첨부파일이 여러 버전이 있을 때, 각
+  파일들 간의 diff를 비교할 수 있는 화면을 구성해주세요. 해당 파일의 직전/직후의 diff 뿐만
+  아니라, 여러 단계의 차이가 나는 버전 간 비교도 진행할 수 있어야 합니다."
+- **사용자 결정(AskUserQuestion 2026-08-06)**: 화면 형태 = **전용 모달** · diff 렌더 =
+  **좌우 2열 / 단일열 둘 다 + 토글**.
+- **기존 자산과의 간극(실측)**: 버전 체인(`RootAttachmentId`/`VersionNumber`/`SupersededAt`,
+  TASK-0274·REQ-20260713)과 체인 조회(`GET …/versions`)는 이미 있고, 첨부 패널의 "버전 N개 ▾"
+  박스도 각 버전의 존재·다운로드를 보여준다. 없던 것은 **비교 그 자체**다 —
+  `MetaJson.version_diff` 는 업로드 시점의 **직전↔신규 1쌍**만 담고(LLM 컨텍스트 주입용) 프론트에
+  diff 렌더 코드가 0이었다. 즉 v1↔v3 같은 다단계 비교는 데이터로도 화면으로도 불가능했다.
+
+### §2.1 Implementation Plan
+
+- **영향 파일 / symbol**
+  - `src/routers/_conv_store.py` — `_load_attachment_version_chain`(신설, 체인 로더 추출) ·
+    `_build_version_diff_view`(신설, unified+좌우정렬 동시 산출) · 상수 3
+    (`_VERSION_DIFF_ROW_CAP`·`_VERSION_DIFF_CONTEXT_DEFAULT`·`_VERSION_DIFF_TEXT_KINDS`).
+  - `src/app.py` — 위 5 심볼 `app.X` rebind(§21.11 규약 — 라우터는 `import app`+`app.X` 동적참조).
+  - `src/routers/attachments.py` — `get_attachment_version_diff`(신설
+    `GET /api/attachments/{attachment_id}/diff`) + `get_attachment_versions` 의 체인 SQL 을
+    공용 로더 호출로 치환.
+  - `src/static/app/attach-diff.js` **(신설)** — `openAttachmentDiffModal` 전용 모달.
+  - `src/static/app/composer.js` `_renderAttachmentVersionsBox` — 진입점 2종 배선.
+  - `src/static/css/chat.css` — 모달·2열/단일열·gap·메타표 스타일.
+  - `docs/ROUTEMAP.md`(재생성) · `tests/route_snapshot_p5b.json`(골든 +1).
+- **접근**
+  1. 비교는 **저장분을 쓰지 않고** 두 버전의 MinIO 원본을 요청 시점에 읽어 계산한다 — 어떤 쌍이든
+     대칭적으로 답하려면 사전 계산은 원리적으로 N² 이다.
+  2. 2열과 단일열은 **한 번의 `SequenceMatcher` opcode 패스**에서 함께 나온다. 두 표현을 별
+     경로로 만들면 같은 두 버전에 대해 서로 다른 결과를 보일 수 있고, 그때 사용자는 어느 쪽을
+     믿을지 알 수 없다. 프론트 토글은 재요청 없이 **같은 응답을 재렌더**한다.
+  3. 권한은 기준 첨부의 `conversation.attachment.read.{own,any}` 재사용 — **신규 권한 코드 0**
+     (§16.7 G5/G6: 새 리소스가 아니라 기존 리소스의 새 표현이므로 scope 를 새로 정의하지 않는다).
+  4. 바이너리(xlsx/pdf/image)는 줄 diff 가 무의미하므로 `comparable=false` + 메타 비교(크기·
+     sha256·시각·작성 주체)로 **강등해 답한다** — 빈 diff 를 주면 "차이 없음" 으로 오독된다.
+- **완료 판정 기준(AC)**
+  - AC1 같은 체인의 **임의 두 버전**(인접·다단계 모두)을 골라 diff 를 볼 수 있다.
+  - AC2 2열/단일열 토글이 같은 비교 결과의 두 표현이다(재요청 없음).
+  - AC3 절단 3종(원본 cap ×2 · 행 상한)이 **각각 화면에 표면화**된다(§16.7 G9-b 무음 절단 금지).
+  - AC4 체인 밖 버전 번호는 404(존재 여부 oracle 차단), 권한 미보유도 404.
+  - AC5 바이너리는 메타 비교로 강등하고 diff 표를 흉내내지 않는다.
+  - AC6 목록(`/versions`)과 비교(`/diff`)가 **같은 체인 로더**를 통과한다(체인 집합 비대칭 차단).
+  - AC7 신규 권한·스키마·마이그레이션 0 · 기존 응답 shape 무변경.
+- **위험도**: **Major** — 백엔드 신규 엔드포인트 + 프론트 신규 모듈 + CSS 3계층. 단
+  스키마·마이그레이션·권한 코드 변경은 없고 전부 additive.
+
+### 체크리스트
+
+- [x] 백엔드 — 체인 로더 추출 + diff 뷰 빌더 + `GET /api/attachments/{id}/diff`
+- [x] 프론트 — `app/attach-diff.js` 신설(전용 모달·from/to 선택기·⇄ 맞바꾸기·2열/단일열 토글·
+      "동일한 줄도 모두 보기") + `composer.js` 진입점 2종(머리 "⇄ 버전 비교" = 직전↔최신 ·
+      구버전 행 `⇄` = 그 버전↔최신 = 다단계 직행)
+- [x] CSS — 모달 폭 1180px · 2열/단일열 표 · gap 행 · 절단 배너 · 메타표 · 좁은 폭 폴백
+- [x] 산출물 재정합 — `gen-routemap.py` 재생성(223→224 route) · `codenav-lint` OK ·
+      route 골든 스냅샷 +1(추가 1 / 삭제 0 / 순서 drift 0)
+- [x] **자체 적대 검증에서 결함 2건 적발·수정** — **[P1] D21 우회**(diff 행은 파일 본문이라
+      승인 대기 계정 판정을 metadata 조회가 아니라 **본문 다운로드(403)와 동형**으로 맞춰야 한다.
+      초판에 게이트가 없었다 → 원본 조회 **앞**에 403 추가) · **[P2] 체인 스코프를 가정으로 둔 것**
+      (체인이 같은 conversation·account 귀속이라는 전제를 필터로 강제 — `scope_row`, fail-closed +
+      제외 건수 warning. 두 엔드포인트 모두)
+- [x] pytest **신규 22건**(체인 로더 2 · diff 뷰 6 · 엔드포인트 11 · 보안 3) — 전수 회귀
+      **3,806 passed · 3 skipped · 0 failed**(exit 0)
+- [x] **뮤테이션 역검증 7/7** — 404→400 강등 · 맥락 축약 무력화 · 행 상한 무력화 · D21 게이트 제거 ·
+      `/versions` scope_row 누락 · 스코프 필터 무력화 — 각각 의도한 단언만 red (vacuous 아님)
+- [x] 헤드리스 mjs **신규 57건**(jsdom 실행 렌더 + 배선 + 계약·CSS 존재) · 전수 mjs **44 suite OK**
+- [x] `acorn-globals` 자유 식별자 **0**(신규 모듈) · composer.js 잔여 1건은 `DOMException`
+      (표준 브라우저 전역·선행 존재)
+- [x] §18.8 검증 채널 — `codex review` **사용량 한도 소진**(8/9 까지)으로 물리적 불가 · Agent tool
+      은 상위 우선순위 지시로 금지 → §18.8.2 carve-out 에 따라 제약 없는 채널(기계 게이트 +
+      자체 적대 검증)만 수행하고 ux·design·backend·qa 는 `[SKIPPED:tool-restricted:…]` 로 명시
+- [ ] PB-0008 실 Windows 브라우저 시각검증 — **배포 후**(JS 는 `docker cp` 사전 QA 불가:
+      스탬프 미주입 + 모듈 캐시 이중 인스턴스, `visual_verification_scope: always` hard gate)
+
+## 9. Requested Scope
+- [x] `첨부파일 여러 버전 간 diff 를 비교할 수 있는 화면` — 산출물: `app/attach-diff.js` 전용 모달
+  (from/to 선택기 · 2열/단일열 토글 · gap 축약/전체 맥락) · 배선 확인: 첨부 패널 버전 박스의
+  진입점 2종이 모달을 열고 `/api/attachments/{id}/diff` 를 실호출하는 경로를 mjs 배선 검증 8건이
+  단언(진입점·인자 전달·최신 행 제외 조건).
+- [x] `직전/직후 diff` — 산출물: 머리 "⇄ 버전 비교" 의 기본 선택이 직전↔최신 · 배선 확인:
+      pytest E1(인접 쌍) + mjs B5.
+- [x] `여러 단계 차이가 나는 버전 간 비교` — 산출물: from/to 독립 선택기 + 구버전 행 `⇄`(그
+      버전↔최신) · 배선 확인: pytest **E2** 가 v1↔v3 비교에서 **중간 v2 원본을 읽지 않음**까지
+      단언(다단계가 실제로 체인을 건너뛰어 성립).
+- [ ] `화면` 의 시각 확인 — **PB-0008 배포 후 잔여**(위 체크리스트 마지막 항). 현 시점 근거는
+      jsdom 실행 렌더이며 **레이아웃·픽셀은 미검증**이다(§16.6 픽셀-클래스는 실 캡처 필수).
+
+**G3**: "비교 가능" 주장의 배선을 서버 응답까지 실측했다 — 엔드포인트 11건이 정상·경계·거부
+경로를 덮고, 그중 E2 가 다단계 요청이 실제로 두 원본만 읽는 것을 확인한다.
+**G4**: 임계·윈도잉 변수를 먼저 식별해 양측을 검증했다 — ① 맥락 축약 경계(context 3 ↔ full:
+B3/B4/E10) ② 행 상한(B5) ③ 원본 byte cap(E8) ④ 체인 경계(E5 = 체인 밖 번호) ⑤ 텍스트/바이너리
+kind 경계(E7). 경계를 건드리지 않은 케이스의 PASS 를 완료 근거로 쓰지 않았다.
+**G9-b**: 절단 3종을 응답 필드와 화면 배너 양쪽에서 표면화한다(cap 크기·상한 행수 명시). 무음
+절단이면 사용자는 존재하는 변경을 놓치고도 "차이 없음" 으로 읽는다.
+**G7-c**: 시각검증 미완을 완료로 쓰지 않았다 — 위 Requested Scope 마지막 항을 `[ ]` 로 남긴다.

@@ -66,6 +66,7 @@ import {
   state,
 } from "../app.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
+import { openAttachmentDiffModal } from "./attach-diff.js?v=dev";
 
 function _attachPanelMaxW() {
   return Math.max(ATTACH_PANEL_MIN_W, Math.floor(window.innerWidth * 0.92));
@@ -844,13 +845,32 @@ export async function _downloadAttachmentById(attId, filename, btn) {
 
 // ② TASK-0285: 버전 이력 펼침 박스 렌더. /api/attachments/{id}/versions 응답(VersionNumber ASC,
 // 구→신)을 최신→구 순으로 표시하고 각 버전을 개별 다운로드할 수 있게 한다.
-function _renderAttachmentVersionsBox(box, versions) {
+// REQ-20260806-attach-version-diff: 여기에 비교 진입점을 얹는다 — 박스 머리의 "버전 비교"
+// (기본 직전↔최신)와 각 행의 `⇄`(그 버전 ↔ 최신, 여러 단계 차이 포함). 실제 diff 화면은
+// `app/attach-diff.js` 의 전용 모달이 담당한다.
+function _renderAttachmentVersionsBox(box, versions, attachmentId) {
   box.innerHTML = "";
   if (!Array.isArray(versions) || !versions.length) {
     box.innerHTML = `<div class="attach-list-versions-loading">버전 이력이 없습니다.</div>`;
     return;
   }
   const ordered = [...versions].reverse(); // 최신 버전이 위로.
+  const latestNum = Number(ordered[0]?.version_number || 1);
+  const canCompare = versions.length > 1;
+
+  if (canCompare) {
+    const head = document.createElement("div");
+    head.className = "attach-list-versions-head";
+    const cmpBtn = document.createElement("button");
+    cmpBtn.type = "button";
+    cmpBtn.className = "attach-list-versions-compare";
+    cmpBtn.textContent = "⇄ 버전 비교";
+    cmpBtn.title = "두 버전을 골라 내용 차이를 봅니다 (여러 단계 떨어진 버전도 가능)";
+    cmpBtn.addEventListener("click", () => openAttachmentDiffModal(attachmentId, versions));
+    head.appendChild(cmpBtn);
+    box.appendChild(head);
+  }
+
   ordered.forEach((v) => {
     const row = document.createElement("div");
     row.className = "attach-list-version-row";
@@ -867,13 +887,27 @@ function _renderAttachmentVersionsBox(box, versions) {
     const roleEl = document.createElement("span");
     roleEl.className = "attach-list-version-role";
     roleEl.textContent = (isAi ? "AI 수정" : "사용자") + (isLatest ? " · 최신" : "");
+    row.append(tag, nameEl, roleEl);
+    // 최신 행에는 `⇄` 를 두지 않는다 — 자기 자신과의 비교는 무의미하고, 최신 기준 비교는
+    // 위 "버전 비교" 버튼이 이미 담당한다.
+    if (canCompare && !isLatest) {
+      const cmp = document.createElement("button");
+      cmp.type = "button";
+      cmp.className = "attach-list-version-cmp";
+      cmp.title = `v${vnum} ↔ v${latestNum}(최신) 비교`;
+      cmp.setAttribute("aria-label", `v${vnum} 을 최신 버전과 비교`);
+      cmp.textContent = "⇄";
+      cmp.addEventListener("click", () =>
+        openAttachmentDiffModal(attachmentId, versions, { from: vnum, to: latestNum }));
+      row.appendChild(cmp);
+    }
     const dl = document.createElement("button");
     dl.type = "button";
     dl.className = "attach-list-version-dl";
     dl.title = "이 버전 다운로드";
     dl.textContent = "⬇";
     dl.addEventListener("click", () => _downloadAttachmentById(v.id, v.original_filename, dl));
-    row.append(tag, nameEl, roleEl, dl);
+    row.appendChild(dl);
     box.appendChild(row);
   });
 }
@@ -947,7 +981,7 @@ async function _loadConversationAttachmentList(convId) {
           entry.appendChild(versionsBox);
           try {
             const vresp = await apiFetch(`/api/attachments/${encodeURIComponent(a.id)}/versions`);
-            _renderAttachmentVersionsBox(versionsBox, Array.isArray(vresp?.versions) ? vresp.versions : []);
+            _renderAttachmentVersionsBox(versionsBox, Array.isArray(vresp?.versions) ? vresp.versions : [], a.id);
             verToggleBtn.textContent = `버전 ${verCount}개 ▴`;
           } catch (e) {
             versionsBox.innerHTML = `<div class="attach-list-versions-loading">버전 이력을 불러올 수 없습니다.</div>`;

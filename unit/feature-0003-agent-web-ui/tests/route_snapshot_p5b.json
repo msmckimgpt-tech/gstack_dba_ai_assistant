@@ -1,6 +1,6 @@
 {
- "total_routes": 224,
- "api_routes": 223,
+ "total_routes": 225,
+ "api_routes": 224,
  "ordered": [
   {
    "path": "/static",
@@ -947,6 +947,13 @@
   },
   {
    "path": "/api/attachments/{attachment_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/attachments/{attachment_id}/diff",
    "methods": [
     "GET"
    ],

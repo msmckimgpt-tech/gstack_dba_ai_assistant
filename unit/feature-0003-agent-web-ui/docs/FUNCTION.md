@@ -2679,3 +2679,74 @@ re-export 하여 `app/sidebar.js` 의 기존 import 를 보존한다.
 - AC-20260806T1830-modal-dismiss-siblings-3: 선행 6종의 계약·ESC·× 경로 무회귀.
 - AC-20260806T1830-modal-dismiss-siblings-4: 재렌더 모달의 document keydown 리스너 누수 0(수명 실측).
 - AC-20260806T1830-modal-dismiss-siblings-5: purge 모달 중복 인스턴스 가드 존재.
+
+## (attach-version-diff, 2026-08-06) 첨부 버전 diff 비교 화면 — 임의 쌍·다단계 (web/UI + attachments 라우터, Major §12.3, 신규 권한·스키마·마이그레이션 0)
+
+첨부 버전 체인(`RootAttachmentId`/`VersionNumber`/`SupersededAt` — TASK-0274 · REQ-20260713)에서
+**임의의 두 버전**을 골라 본문 차이를 보는 전용 모달. 인접 쌍(v2↔v3)뿐 아니라 **여러 단계 떨어진
+쌍**(v1↔v4)도 대상이다.
+
+**왜 기존 자산으로 안 됐나**: `MetaJson.version_diff` 는 업로드 시점에 **직전↔신규 1쌍**만 계산해
+저장한다(용도 = LLM 컨텍스트 주입, AC-AUV-4). 다단계 쌍은 그 저장분에 존재하지 않으며, 사전 계산은
+쌍의 수가 체인 길이의 제곱이라 원리적으로 저장 대상이 아니다. 따라서 비교는 **요청 시점 계산**이다.
+
+### 백엔드 계약 — `GET /api/attachments/{attachment_id}/diff`
+
+| 항목 | 계약 |
+|---|---|
+| Query | `from_version`·`to_version`(필수, 같은 체인의 `VersionNumber`) · `context`(선택, 정수 0~200 또는 `full`, 기본 3) |
+| 권한 | 기준 첨부의 `conversation.attachment.read.{own,any}` **재사용** — 신규 권한 코드 0 |
+| 체인 해석 | 기준 첨부의 root → `_load_attachment_version_chain`(PG 미러 우선·MySQL 폴백, soft-delete 제외, `VersionNumber ASC`) |
+| 400 | 파라미터 누락·정수 아님·`context` 형식 오류·`from_version == to_version` |
+| 404 | 기준 첨부 부재/무권한 · **체인 밖 버전 번호**(존재 여부 oracle 차단 — SECURITY §8.2.1 과 같은 계열) |
+| 503 | 원본 객체 조회 실패 → `comparable:false`·`reason:"source_unavailable"` |
+| 텍스트 계열 | `kind ∈ {text, csv}`(`.sql`·`.md`·`.json`·소스코드 등은 `_EXTENSION_KIND_MAP` 에서 `text`) |
+| 바이너리 | `comparable:false`·`reason:"binary"` + 메타 비교(작성 주체·크기·시각·sha256) — 빈 diff 를 주지 않는다 |
+| 상한 | 원본 각 1MB(`_ASSISTANT_EDIT_SIZE_CAP_BYTES`) · 행 6000(`_VERSION_DIFF_ROW_CAP`) |
+| 절단 표면화 | `truncated.{from_source,to_source,rows}` + `caps.{source_bytes,rows}` — 3종을 **각각** 보고(§16.7 G9-b) |
+| 응답 | `from`/`to`(버전 메타) · `unified_diff`(문자열) · `rows`(좌우 정렬 + `gap`) · `stats.{added,removed,left_lines,right_lines,identical}` |
+
+**단일 opcode 패스 불변식**: `_build_version_diff_view` 가 한 번의 `SequenceMatcher` opcode 순회에서
+`unified`(단일열용)와 `rows`(2열용)를 **함께** 산출한다. 두 표현을 별 경로로 만들면 같은 두 버전에
+대해 서로 다른 결과를 보일 수 있고, 그때 사용자는 어느 쪽을 믿을지 알 수 없다. 프론트 토글도
+재요청 없이 같은 응답을 재렌더한다.
+
+**행 타입**: `equal` · `insert` · `delete` · `replace`(좌우 줄 수가 다르면 짧은 쪽을 `None` 패딩 후
+남는 줄을 `delete`/`insert` 로 방출 — 정렬 붕괴 방지) · `gap`(`skipped` = 생략된 동일 줄 수).
+`identical` 은 opcode 집계로만 판정해 **축약·행 상한에 영향받지 않는다**.
+
+**체인 로더 단일화**: `GET …/versions`(목록)와 `GET …/diff`(비교)가 같은
+`_load_attachment_version_chain` 을 통과한다 — 목록에 보이는 버전을 비교하지 못하는 비대칭을
+구조적으로 없앤다(회귀 잠금 = pytest E11).
+
+### 화면 (`static/app/attach-diff.js` — `openAttachmentDiffModal`)
+
+- **진입점 2종** (첨부 사이드 패널 `'+' > 첨부파일 목록` 의 "버전 N개 ▾" 박스 안):
+  - 박스 머리 **"⇄ 버전 비교"** — 기본 선택 = 직전↔최신.
+  - 각 **구버전 행의 `⇄`** — 그 버전↔최신(= 다단계 비교 직행). 최신 행에는 두지 않는다(자기 비교
+    무의미) · 버전이 1개면 진입점 자체를 노출하지 않는다.
+- **컨트롤**: 기준/비교 버전 선택기 2개(독립 — 임의 쌍) · `⇄` 맞바꾸기 · **좌우 2열 / 단일열 토글**
+  (선택은 `localStorage` 영속) · "동일한 줄도 모두 보기"(= `context=full`).
+- **렌더**: 좌우 줄번호 + 등폭(`--mono`) · 추가/삭제는 시맨틱 태그 토큰(`--tag-ok-*`/`--tag-danger-*`)
+  · gap 행은 "⋯ 동일한 N줄 생략" · 절단 배너는 cap 크기·상한 행수를 밝힌다 · 내용 동일이면 빈 표
+  대신 "두 버전의 내용이 동일합니다".
+- **안전**: diff 본문은 `textContent` 전용(`innerHTML` 미사용) · 배경 dismiss 는 저장소 단일
+  primitive `bindBackdropDismiss` · ESC·`×` 상시 · 늦게 도착한 응답이 최신 선택을 덮지 않는
+  `reqSeq` 가드.
+
+### AC
+
+- **AC-AVD-1** 같은 체인의 임의 두 버전(인접·다단계)을 골라 diff 를 본다. 다단계 요청은 중간
+  버전 원본을 읽지 않는다.
+- **AC-AVD-2** 2열/단일열은 같은 응답의 두 표현이며 토글이 재요청하지 않는다.
+- **AC-AVD-3** 절단 3종이 응답 필드와 화면 배너 양쪽에 표면화된다.
+- **AC-AVD-4** 체인 밖 버전·권한 미보유는 404, `from==to` 는 400.
+- **AC-AVD-5** 바이너리는 메타 비교로 강등하고 diff 표를 렌더하지 않는다.
+- **AC-AVD-6** 목록과 비교가 같은 체인 로더를 통과한다.
+- **AC-AVD-7** 신규 권한 코드·스키마·마이그레이션 0 · 기존 엔드포인트 응답 shape 무변경.
+- **AC-AVD-8** PB-0008 실 Windows 브라우저 시각검증(`visual_verification_scope: always`) —
+  배포 후 수행.
+
+**범위 밖 (명시)**: 말풍선 첨부 칩에서의 비교 진입(진입점 2개면 §16.6 복수 surface 개별 검증이
+필요해 별 cycle) · 공유 뷰(읽기 전용) · 바이너리 내용 비교(xlsx 시트 diff 등) · 단어 단위
+intra-line 하이라이트.

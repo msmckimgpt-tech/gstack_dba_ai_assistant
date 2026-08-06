@@ -2784,3 +2784,56 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 시각 검증 Run 기록 + 증적 이미지 추가만으로 코드·정책·계약 변경이 0 이다(§18.8.1 docs-only 경량
 경로). 검증 대상 코드는 선행 cycle 에서 ux·design 적대 패널을 거쳤다
 (`REV-20260806T183000-modal-dismiss-siblings`).
+## REV-20260806T232000-attach-version-diff [SKIPPED:tool-restricted:ux,design,backend,qa] — 자체 적대 검증 P1 1 · P2 1 반영, 기계 게이트 전건 PASS
+
+- **Trigger**: `UI/modal/screen · 모달·화면` + `API/endpoint · 엔드포인트` keyword matched →
+  §18.8 dispatch 표의 요구 subset 은 **ux + design + backend + security + qa** 다.
+- **채널 판정 (§18.8.2 순서대로)**:
+  1. **제약 없는 채널 우선** — `codex review --uncommitted` 를 시도했으나 **사용량 한도 소진**
+     (`ERROR: You've hit your usage limit … try again at Aug 9th`)으로 물리적 불가. 이 버전의
+     codex 는 `--uncommitted` 와 커스텀 프롬프트를 함께 받지 않아(`the argument '--uncommitted'
+     cannot be used with '[PROMPT]'`) 축 지정 리뷰도 같은 한도에 걸린다.
+  2. **subagent panel** — 본 세션에는 **상위 우선순위 지시로 Agent tool 사용이 금지**돼 있다.
+     §18.8.2 「상위 우선순위 지시 carve-out」에 따라 그 지시가 우선하며, 본 §를 우회 근거로
+     쓰지 않는다. 따라서 ux·design·backend·qa 도메인은 **미검증**으로 명시한다.
+  3. **수행한 검증(제약 없는 채널)** — 아래 기계 게이트 + 자체 적대 검증. 미검증 범위를 완료로
+     오인 보고하지 않는다(§16.3 정직성).
+- **자체 적대 검증에서 적발·수정한 결함 2건** (초판을 그대로 출하했다면 라이브에 남았다):
+  - **[P1] D21 bytes-deny 우회** — `download_attachment` 는 승인 대기 계정의 **본문** 다운로드를
+    403 으로 막는다(D21). 초판 diff 엔드포인트는 그 게이트가 없었고, diff 행은 파일 본문을 그대로
+    담으므로 **승인 대기 계정이 diff 로 내용을 읽을 수 있었다**. 판정 기준을 metadata
+    조회(`get_attachment_metadata` — signed URL 만 보류)가 아니라 **본문 다운로드와 동형**으로
+    맞추고, 게이트를 원본 조회 **앞**에 두었다(회귀 잠금 E12 가 `storage.reads == []` 까지 단언
+    — 403 을 주면서 뒤에서 읽는 구현을 배제).
+  - **[P2] 체인 스코프를 가정으로 둔 것** — 체인 로더는 root 로 전체 행을 반환하고 "체인은 같은
+    conversation·account 귀속" 을 전제한다(기존 `/versions` 도 동일한 가정). 그 전제가 깨진 행이
+    하나라도 있으면 **기준 첨부 게이트가 덮지 못하는 첨부가 응답에 실린다**. 정상 편입 경로가
+    스코프를 강제하더라도 방어를 가정이 아니라 **필터**로 두는 쪽이 옳다 → `scope_row` 로
+    conversation/account 를 재확인하고 걸러진 건수를 warning 으로 남긴다(fail-closed).
+    두 엔드포인트 모두 적용(E14 가 한쪽 누락을 red 로 잡는다).
+- **결함 아님으로 확인한 축**:
+  - **SQL 인젝션 없음** — `from_version`/`to_version` 은 `int()` 로 강제되고 dict 키로만 쓰인다.
+    체인 조회는 파라미터 바인딩(`%s`).
+  - **XSS 없음** — diff 본문은 `textContent` 전용(`innerHTML` 미사용, mjs C8 이 렌더 함수 소스로
+    단언). 바이너리 메타표만 `innerHTML` 이고 값은 전부 `escapeHtml` 경유.
+  - **존재 oracle 없음** — 체인 밖 버전은 400("있지만 잘못됨")이 아니라 404. E5 가 잠금.
+  - **`/versions` 리팩터는 동작 불변** — 추출한 로더가 PG 우선·MySQL 폴백·soft-delete 제외·
+    `VersionNumber ASC` 를 그대로 유지(V1/V2). `scope_row` 추가는 정상 데이터에서 no-op.
+  - **응답 크기 유계** — 원본 각 1MB cap × 2 + 행 6000 cap. `context=full` 도 이 상한 안.
+  - **경쟁 조건** — 프론트 `reqSeq` 가드로 늦게 온 응답이 최신 선택을 덮지 않는다(C5).
+- **의도된 설계 선택(리뷰 시 재론 금지 사유 명시)**:
+  - 비교 결과를 **저장하지 않는다** — 임의 쌍은 체인 길이의 제곱이라 사전 계산 대상이 아니고,
+    저장하면 원본 변경 시 stale 판정 축을 새로 만들어야 한다.
+  - unified 와 rows 를 **한 opcode 패스**에서 산출 — 두 경로면 같은 두 버전에 서로 다른 결과를
+    보일 수 있고, 그때 사용자는 어느 쪽을 믿을지 알 수 없다.
+  - 신규 권한 코드 0 — 새 리소스가 아니라 **기존 리소스의 새 표현**이므로 scope 를 새로 정의하지
+    않는다(§16.7 G5: `.any` 관행 상속 금지의 반대면).
+- **잔여(범위 밖 · REPORT §8)**: 말풍선 첨부 칩에서의 비교 진입(진입점 2개면 §16.6 복수 surface
+  개별 검증 필요) · 바이너리 내용 비교 · 단어 단위 intra-line 하이라이트 · 포커스 트랩(전 표면 공통).
+- **미검증 범위(정직 표기)**: ux·design 관점의 **시각 위계·레이아웃 판단**과 backend·qa 관점의
+  독립 적대 검토는 위 채널 제약으로 수행하지 못했다. 레이아웃·픽셀은 **PB-0008 실 Windows
+  브라우저 검증(배포 후)** 이 유일한 backstop이며, 그 전까지 시각 축은 미검증이다.
+- **검증**: pytest 신규 22건 · 전수 회귀 exit 0 · **뮤테이션 역검증 7/7** · 헤드리스 mjs 신규
+  57건 + 전수 44 suite OK · `acorn-globals` 자유 식별자 0 · `gen-routemap --check` 정합 ·
+  `codenav-lint` OK · route 골든 parity(added 1 / removed 0 / order drift 0).
+- Timestamp: 2026-08-06T23:20:00+09:00

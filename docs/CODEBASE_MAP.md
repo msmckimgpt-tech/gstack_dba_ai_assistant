@@ -60,7 +60,11 @@ repo/
     │       │   └── _<shared helper>.py    # _audit_infra·_bootstrap_schema·_conv_store·_prompt_context (register_all 제외)
     │       └── static/          # 프론트 자산 — ?v= 는 전부 `?v=dev` placeholder(빌드가 content-hash 주입, §13.1)
     │           ├── admin.js     # 관리 콘솔(12,520줄, type=module) — 13 pane 도메인. 그래프는 graph/ 로 분리
-    │           ├── app.js       # 작업 화면(10,464줄) · styles.css(공유 CSS) · share.js/css · index/admin/share.html
+    │           ├── app.js       # 작업 화면(8,082줄) · css/ 7분할 · share.js/css · index/admin/share.html
+    │           ├── app/        # 작업 화면 도메인 모듈(auth·profile·sidebar·messages·composer·progress
+    │           │               #   + attach-diff = 첨부 버전 diff 비교 모달, 2026-08-06)
+    │           ├── admin/      # 관리 콘솔 도메인 모듈 9
+    │           ├── modal-dismiss.js  # 배경 dismiss 저장소 단일 primitive(양 ESM 번들 공유)
     │           └── graph/       # 그래프 뷰 ES 모듈 (ITEM-09 batch3, 2026-07-12) — CODE_NAVIGATION §8 참조
     │               ├── graph.js           # barrel — 공개 4심볼 re-export (admin.js 는 이 경로만 import)
     │               ├── graph-state.js     # `_metaGraph` 상태 + 배치 상수 · graph-roleviz.js(역할 표식)

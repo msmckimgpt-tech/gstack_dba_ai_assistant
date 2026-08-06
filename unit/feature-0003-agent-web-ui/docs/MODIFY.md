@@ -2391,3 +2391,42 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Files: `docs/{TASK,MODIFY,REVIEW,TEST}.md`, `docs/test-runs.d/20260806T1830-modal-dismiss-siblings.md`,
   `docs/test-runs.d/evidence/modal-dismiss-siblings-live.png`.
 - Timestamp: 2026-08-06T20:10:00+09:00
+## CHG-20260806T2320-attach-version-diff 첨부 버전 diff 비교 화면 — 임의 쌍·다단계 (Major §12.3)
+- **사용자 요청**: 대화 첨부의 여러 버전 간 diff 비교 화면. 직전/직후뿐 아니라 **여러 단계 차이가
+  나는 버전 간** 비교도. 결정(AskUserQuestion): 전용 모달 + 2열/단일열 토글.
+- **왜 신규인가**: 버전 체인·조회 API·"버전 N개 ▾" 목록은 이미 있었고(TASK-0274/0285,
+  REQ-20260713), 없던 것은 **비교 자체**다 — `MetaJson.version_diff` 는 업로드 시점의 직전↔신규
+  1쌍만 담고(LLM 컨텍스트용) 프론트 diff 렌더는 0이었다. 다단계 쌍은 사전 계산 대상이 아니다
+  (쌍 수가 체인 길이의 제곱) → **요청 시점 계산**.
+- **백엔드**: `_conv_store.py` 에 `_load_attachment_version_chain`(체인 로더 — `/versions` 의
+  중복 SQL 을 추출·공유) + `_build_version_diff_view`(단일 `SequenceMatcher` opcode 패스에서
+  unified 문자열과 좌우 정렬 rows 를 **함께** 산출) + 상수 3. `attachments.py` 에
+  `GET /api/attachments/{attachment_id}/diff` 신설. `app.py` 는 5 심볼 rebind(§21.11 `app.X` 규약).
+- **프론트**: `static/app/attach-diff.js` 신설(`openAttachmentDiffModal` — from/to 선택기 ·
+  `⇄` 맞바꾸기 · 2열/단일열 토글(localStorage) · "동일한 줄도 모두 보기" · `reqSeq` 경쟁 가드) +
+  `app/composer.js` `_renderAttachmentVersionsBox` 진입점 2종 + `css/chat.css` 스타일.
+- **자체 적발 2건(출하 전 수정)**:
+  - **D21 우회(P1)** — diff 행은 파일 **본문**이다. 초판은 승인 대기 계정 게이트가 없어
+    `download_attachment`(403 bytes-deny)를 diff 로 우회할 수 있었다. 판정 기준을 metadata
+    조회가 아니라 **본문 다운로드와 동형**으로 맞추고, 게이트를 원본 조회 **앞**에 두었다.
+  - **체인 스코프 가정(P2)** — 체인 로더는 root 로 전체를 반환하고 "체인은 같은
+    conversation·account 귀속" 을 **가정**했다(기존 `/versions` 도 동일). 그 전제가 깨진 행이
+    하나라도 있으면 기준 첨부 게이트가 덮지 못한다 → `scope_row` 로 **필터**하고(fail-closed)
+    걸러진 건수를 warning 으로 남긴다. 두 엔드포인트 모두 적용.
+- **경계 판정**: 텍스트 계열(`text`/`csv` — `.sql` 포함)만 줄 diff. 바이너리는 `comparable:false`
+  + 메타 비교로 **강등해 답한다**(빈 diff = "차이 없음" 오독 방지). 절단 3종(원본 cap ×2 · 행
+  상한)은 응답 필드와 화면 배너 양쪽에 표면화(§16.7 G9-b).
+- **산출물 재정합**: `gen-routemap.py` 재생성(223→224) · `codenav-lint` OK · route 골든 +1
+  (added 1 / removed 0 / order drift 0).
+- **검증**: pytest 신규 **22건** · 전수 회귀 exit 0 · **뮤테이션 역검증 7/7**(404→400 · 맥락 축약
+  무력화 · 행 상한 무력화 · D21 게이트 제거 · scope_row 누락 · 스코프 필터 무력화) · 헤드리스
+  mjs 신규 **57건** + 전수 mjs **44 suite OK** · `acorn-globals` 자유 식별자 0.
+- **Files:** `src/routers/_conv_store.py`, `src/routers/attachments.py`, `src/app.py`,
+  `src/static/app/attach-diff.js`(신설), `src/static/app/composer.js`, `src/static/css/chat.css`,
+  `tests/test_attachment_version_diff.py`(신설), `tests/verify_attach_version_diff.mjs`(신설),
+  `tests/route_snapshot_p5b.json`, `../../../docs/ROUTEMAP.md`,
+  `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT,TEST}.md`.
+- **스키마·마이그레이션·RBAC 카탈로그 변경 0** · 기존 엔드포인트 응답 shape 무변경.
+- **캐시버스터:** 신규 JS 의 import specifier `?v=dev` 고정 — 빌드 `inject_asset_stamp.py` 가
+  content-hash 주입(수기 bump 금지).
+- Timestamp: 2026-08-06T23:20:00+09:00
