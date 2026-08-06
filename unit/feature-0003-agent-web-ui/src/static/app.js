@@ -10,6 +10,11 @@ import { toggleAuthPane, showAuthOverlay, hideAuthOverlay, handleLogin, handleSi
 // modal-backdrop-dismiss: 배경 dismiss 판정은 저장소 단일 primitive (관리 콘솔 번들과 공유).
 import { bindBackdropDismiss } from "./modal-dismiss.js?v=dev";
 export { bindBackdropDismiss };
+// attach-diff-syntax: 파일 유형별 구문 하이라이트도 저장소 단일 primitive. SQL 예약어·타입
+// 목록의 **정본이 그 모듈**이며 아래 sqlTokenizeToFragment(답변 말풍선)도 같은 목록을 쓴다 —
+// 목록을 두 벌 두면 예약어를 한쪽에만 추가하는 결함이 예약된다(modal-dismiss 와 같은 이유).
+import { SQL_HL_KEYWORDS, SQL_HL_TYPES, detectCodeLanguage, paintCodeInto, codeLanguageLabel } from "./code-highlight.js?v=dev";
+export { detectCodeLanguage, paintCodeInto, codeLanguageLabel };
 import { switchProfileTab, switchAccountSubtab, openProfile, closeProfile, renderProfile, renderAccountState, renderNotifyPrefs, loadProfileUsage, handlePasswordChange } from "./app/profile.js?v=dev";
 export const authOverlayEl = document.getElementById("authOverlay");
 const loginFormEl = document.getElementById("loginForm");
@@ -1026,38 +1031,9 @@ const SQL_HL_LANGS = new Set([
   "sql", "mysql", "mariadb", "postgresql", "postgres", "pgsql", "plpgsql",
   "plsql", "tsql", "sqlite", "oracle", "mssql",
 ]);
-// 방언 공통 예약어(대문자 비교). 집계/스칼라 함수명은 제외 — 뒤에 '(' 가 오면 함수로
-// 분류하는 휴리스틱이 담당한다(함수 목록 유지 불필요).
-const SQL_HL_KEYWORDS = new Set([
-  "SELECT","FROM","WHERE","AND","OR","NOT","NULL","IS","IN","LIKE","ILIKE",
-  "RLIKE","REGEXP","BETWEEN","EXISTS","ANY","SOME","JOIN","INNER","LEFT",
-  "RIGHT","FULL","OUTER","CROSS","NATURAL","ON","USING","GROUP","BY","ORDER",
-  "HAVING","LIMIT","OFFSET","UNION","INTERSECT","EXCEPT","MINUS","ALL",
-  "DISTINCT","AS","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE",
-  "ALTER","DROP","TRUNCATE","TABLE","VIEW","MATERIALIZED","INDEX","SEQUENCE",
-  "TRIGGER","DATABASE","SCHEMA","WITH","RECURSIVE","CASE","WHEN","THEN","ELSE",
-  "END","ASC","DESC","NULLS","FIRST","LAST","PRIMARY","KEY","FOREIGN",
-  "REFERENCES","CONSTRAINT","UNIQUE","CHECK","DEFAULT","AUTO_INCREMENT",
-  "IDENTITY","ENGINE","PROCEDURE","FUNCTION","RETURNS","RETURN","DECLARE",
-  "BEGIN","IF","ELSEIF","WHILE","LOOP","FOR","CALL","EXEC","EXECUTE","GRANT",
-  "REVOKE","COMMIT","ROLLBACK","SAVEPOINT","TRANSACTION","START","EXPLAIN",
-  "ANALYZE","DESCRIBE","SHOW","USE","ADD","COLUMN","MODIFY","CHANGE","RENAME",
-  "TO","CASCADE","RESTRICT","TEMPORARY","TEMP","REPLACE","IGNORE","PARTITION",
-  "OVER","WINDOW","ROWS","RANGE","UNBOUNDED","PRECEDING","FOLLOWING","CURRENT",
-  "ROW","TOP","FETCH","NEXT","ONLY","LATERAL","PIVOT","UNPIVOT","MERGE",
-  "MATCHED","OUTPUT","GO","ESCAPE","COLLATE","INTERVAL","TRUE","FALSE",
-  "UNKNOWN","PRINT","INTO","SEPARATOR","STRAIGHT_JOIN","FORCE","LOCK","UNLOCK",
-]);
-// 데이터 타입(대문자 비교).
-const SQL_HL_TYPES = new Set([
-  "INT","INTEGER","BIGINT","SMALLINT","TINYINT","MEDIUMINT","DECIMAL","NUMERIC",
-  "FLOAT","DOUBLE","REAL","BIT","BOOLEAN","BOOL","CHAR","VARCHAR","NCHAR",
-  "NVARCHAR","VARCHAR2","TEXT","TINYTEXT","MEDIUMTEXT","LONGTEXT","NTEXT",
-  "DATE","DATETIME","DATETIME2","SMALLDATETIME","TIMESTAMP","TIME","YEAR",
-  "BLOB","TINYBLOB","MEDIUMBLOB","LONGBLOB","BINARY","VARBINARY","JSON","JSONB",
-  "UUID","SERIAL","BIGSERIAL","MONEY","ENUM","GEOMETRY","XML","CLOB","NUMBER",
-  "UNSIGNED","ZEROFILL",
-]);
+// 예약어·타입 목록의 정본은 `code-highlight.js` 다(위 import) — 첨부 diff 화면과 같은 목록을
+// 공유해 한쪽만 갱신되는 드리프트를 없앤다. 아래 토크나이저는 `sql-tok-*` 클래스를 유지한다
+// (라이브 검증된 말풍선·공유뷰 CSS 계약 — 클래스 통합은 REPORT §8 원장).
 
 // SQL 텍스트를 토큰화해 DocumentFragment 로 반환한다(textContent 만 사용 — XSS 무첨가).
 // highlightSqlInto(```sql 블록)·enhanceDiffBlocks(SQL diff 라인)가 공용으로 쓴다.

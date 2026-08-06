@@ -2765,7 +2765,14 @@
   color: var(--primary-dark, #1d4ed8);
   font-weight: 600;
 }
-.attach-diff-ctxtoggle {
+/* 이진 표시 옵션은 **한 가지 관용구**로 — "동일한 줄도 모두 보기"(맥락)와 "구문 색"(하이라이트)은
+   같은 성격(on/off)이라 같은 위젯을 쓴다. 초판은 후자를 `aria-pressed` pill 로 두었는데, 10px
+   간격의 두 on/off 가 서로 다른 상태 채널(체크마크 vs 배경색)·다른 보조기술 announce(`checked`
+   vs `pressed`)를 갖는 불일치였고(§18.8 ux·design 양쪽 지적) 네이티브 label+state 를 버리는
+   대가로 `is-active` CSS·`aria-pressed` 동기화·title 문구를 손으로 유지해야 했다.
+   `attach-diff-mode`(좌우 2열/단일열)만 segmented 로 남는다 — 그쪽은 상호배타 2택이다. */
+.attach-diff-ctxtoggle,
+.attach-diff-hltoggle {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2845,6 +2852,40 @@
   color: var(--text);
 }
 .attach-diff-table.is-split .attach-diff-code.side-left { border-right: 1px solid var(--border); }
+/* ── 파일 유형별 구문 하이라이트 (사용자 요청 2026-08-06) ─────────────────────
+   `code-highlight.js` 가 code 셀 안을 `<span class="code-tok-*">` 로 나눈다. 색 정본은
+   base.css 의 `--code-tok-*` 변수(전역 팔레트 전환 시 한 곳만 바꾸면 되도록).
+   셀렉터를 `.attach-diff-code` 하위로 좁힌 이유: 같은 클래스가 다른 표면에 퍼질 때 색이
+   딸려가지 않게 — 답변 말풍선은 `sql-tok-*` 로 독립 유지한다(배경이 달라 팔레트도 다르다).
+   diff 행 배경(초록/빨강)이 이미 얹혀 있으므로 토큰은 **배경을 칠하지 않는다** — 구분자만
+   예외로 아주 옅은 회색 배경을 준다(구분자 1글자는 색만으로는 눈에 걸리지 않는다). */
+   **굵기는 `keyword` 하나만** 쓴다(§18.8 design P3): `key` 는 JSON/YAML 의 *모든* 키, `tag` 는
+   XML 의 *모든* 요소명에 붙어서 굵기 밀도가 강조 의도가 아니라 파일 구조로 결정된다 — 그러면
+   굵기가 강조 기능을 잃는다. 게다가 이 표에서 굵기를 쓰는 것은 토큰뿐이라(diff 자신의 신호는
+   배경·테두리·box-shadow) 굵은 2차 신호가 1차 신호를 앞지른다. keyword 의 600 만 남기는 이유는
+   그것이 이색형(deuteranopia)에서 `func` 와 갈리는 유일한 채널이라는 측정 때문이다. */
+.attach-diff-code .code-tok-keyword { color: var(--code-tok-keyword); font-weight: 600; }
+.attach-diff-code .code-tok-type    { color: var(--code-tok-type); }
+.attach-diff-code .code-tok-func    { color: var(--code-tok-func); }
+.attach-diff-code .code-tok-tag     { color: var(--code-tok-keyword); }
+.attach-diff-code .code-tok-key     { color: var(--code-tok-key); }
+.attach-diff-code .code-tok-attr    { color: var(--code-tok-key); }
+.attach-diff-code .code-tok-string  { color: var(--code-tok-string); }
+.attach-diff-code .code-tok-number  { color: var(--code-tok-number); }
+.attach-diff-code .code-tok-bool    { color: var(--code-tok-keyword); }
+.attach-diff-code .code-tok-var     { color: var(--code-tok-var); }
+.attach-diff-code .code-tok-comment { color: var(--code-tok-comment); font-style: italic; }
+.attach-diff-code .code-tok-punct   { color: var(--code-tok-punct); }
+/* CSV/TSV 구분자 — 배경 칩을 쓰지 않는다. 초판은 `rgba(0,0,0,0.06)` 칩을 얹었는데 측정하니
+   ① 칩 자체가 자기 셀 배경 대비 **1.14:1**(WCAG 1.4.11 은 3:1)로 "1글자는 색만으론 안 보인다"는
+   자기 목적을 달성하지 못하고 ② 칩 안 글자 대비를 4.01→3.52 로 **더 떨어뜨리며** ③ 인라인 배경은
+   line box(18.6px)가 아니라 content area(≈14px)만 칠해 줄마다 점선 띠가 생기고 ④ 20열 CSV 는
+   한 줄에 19개가 깔려 "이 행이 추가/삭제됐다"는 1차 신호(행 배경)를 벌집처럼 뚫었다
+   (§18.8 design P1). 굵기로 대신한다 — 배경을 얹지 않고도 1글자가 눈에 걸린다. */
+.attach-diff-code .code-tok-delim { color: var(--code-tok-punct); font-weight: 700; }
+/* 문맥(equal) 행의 토큰은 한 단계 죽인다 — 안 바뀐 줄의 `SELECT` 가 바뀐 줄의 실제 델타보다
+   먼저 읽히는 위계 역전을 막는다(§18.8 design P3). 1차 신호는 "무엇이 바뀌었나" 다. */
+.attach-diff-row.is-equal .attach-diff-code [class^="code-tok-"] { opacity: 0.78; }
 /* 줄 배경도 **내용이 있는 쪽**에만 — `delete` 행의 빈 우측 셀을 빨갛게 칠하면 우측 파일에는
    없는 내용을 "여기 삭제분이 있다" 로 읽게 만든다(실측 2026-08-07: 빈 셀이 danger-bg 였다).
    반대쪽 빈 자리는 중립 filler 로 두어 "이 줄엔 대응 내용이 없다" 를 표현한다. */

@@ -21,6 +21,29 @@
   --tag-info-bg:    rgba(37, 99, 235, 0.10);  --tag-info-fg:    #1d4ed8;  --tag-info-bd:    rgba(37, 99, 235, 0.35);
   --tag-neutral-bg: var(--surface-2);         --tag-neutral-fg: var(--text-2);  --tag-neutral-bd: var(--border);
 
+  /* 구문 하이라이트 토큰 (attach-diff-syntax) — 첨부 diff 표처럼 **문서 배경(라이트)** 위에
+     올라가는 코드에 쓴다. 답변 말풍선의 `sql-tok-*` 는 항상 어두운 코드블록 배경이라 별
+     팔레트(tokyo-night)를 유지한다 — 두 팔레트는 배경이 달라서 값이 다른 것이지 중복이 아니다.
+     아래 **9개** 변수가 값의 정본이다(전역 다크 팔레트가 도입되면 여기서 override).
+     ⚠️ 값은 눈으로 고르지 않는다 — 세 실배경(흰색 · 추가 초록12% · **삭제 빨강12%**) 합성 후
+     WCAG 2.1 대비를 계산해 **최저값이 4.5:1 이상**인 것만 쓴다. 12px 등폭이라 large-text 예외가
+     없고, 미달은 시선이 가장 오래 머무는 삭제 행에 집중된다(§18.8 design 패널 P1 실측: 초판의
+     type/func/string/var/comment/punct 6종이 27조합 중 12조합 미달, type 은 흰 배경도 3.68).
+     회귀는 하네스 F8 이 이 변수들을 파싱해 매 실행마다 재계산한다 — 값을 바꾸면 그쪽이 잡는다.
+     색상군 배치 근거: string=앰버 / number=**teal**(로즈는 삭제 빨강과 같은 arc 라 "추가 행 안의
+     삭제 표식" 으로 읽혔다 — design P2) / var=보라 진한 쪽(앰버 계열이면 string 과 ΔE 9.5·이색형
+     0.75 로 사실상 동일했다) / comment·punct=**warm** 회색(#6b7280 은 273° cool 로 이 파일의
+     warm canvas 100°대 회색들과 어긋났다 — design P3). */
+  --code-tok-keyword: #7c3aed;   /* 예약어 · XML 태그 · bool/null   (최저 4.73) */
+  --code-tok-type:    #155e75;   /* 데이터 타입                     (최저 6.03) */
+  --code-tok-func:    #1d4ed8;   /* 함수 호출                       (최저 5.56) */
+  --code-tok-key:     #0369a1;   /* JSON/YAML 키 · XML 속성명       (최저 4.92) */
+  --code-tok-string:  #92400e;   /* 문자열 리터럴                   (최저 5.88) */
+  --code-tok-number:  #0f766e;   /* 숫자 리터럴                     (최저 4.54) */
+  --code-tok-var:     #6b21a8;   /* @변수 · YAML 앵커 · XML 엔티티  (최저 7.24) */
+  --code-tok-comment: #5a5852;   /* 주석                            (최저 5.90) */
+  --code-tok-punct:   #625f55;   /* 구두점 · CSV 구분자             (최저 5.30) */
+
   /* Text — warm near-black ink */
   --text:          #26251e;
   --text-2:        #5a5852;
