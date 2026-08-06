@@ -2417,3 +2417,7 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   5종(대화 검색 · 그래프 도움말 · 감사 purge · 사용 기록 · 프로필 사용 내역)을 사용자 UI 경로로 열어
   CDP trusted 제스처 3종씩 + 감사 purge 중복 인스턴스 가드 실측. 라이브 데이터 변경 0.
 - Run 기록 정본: `docs/test-runs.d/20260806T1830-modal-dismiss-siblings.md` Run 4.
+## TASK-20260807T010301-doc-sync-rn-0807 — 릴리즈노트 신규 2026-08-06 블록 prepend (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · 구조검증(releases 43→44 · head 9항목 · 기존 블록 전량 보존 · type/area enum 위반 0) · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0).
+- `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0). 구조: releases 43→44, `generated`==`releases[0].date`==2026-08-06, 기존 블록 전량 보존, type/area enum 위반 0, 스키마 외 키 0, 내부용어 누출 0. 렌더러·CSS 무변경이므로 PB-0008 신규 실측 불요(데이터 블록 추가는 기존 그룹 렌더 경로 재사용).
+- **테스트 env 정직 표기**: 위 `verify_release_notes.mjs` **34 pass / 0 fail** 은 본 cycle 에서 편집 전(baseline)·편집 후 **두 번 실제 실행해 측정한 값**이다. 다만 cycle 후반 재확인 시점에 `/tmp/node_modules/jsdom` 이 사라져(무인 env 의 tmp 정리) 동일 명령이 `MODULE_NOT_FOUND` 로 미가동됐다 — `git stash` 로 **pristine HEAD 에서도 동일 실패가 재현**되므로 본 변경과 무관한 환경 사유다. 콘텐츠 검증은 `node --check` + vm 샌드박스 구조검증(releases 44 · head 9항목 · enum 위반 0 · 내부용어 누출 0)으로 갈음했다.

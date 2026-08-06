@@ -2614,3 +2614,12 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/…`.
 - CSS·백엔드·API·스키마 0.
 - Timestamp: 2026-08-07T06:20:00+09:00
+## CHG-20260807T010301-doc-sync-rn-0807 (2026-08-06 블록) 릴리즈노트 콘텐츠 — 신규 1블록 9항목 prepend(첨부 삭제·복구·일괄 반출 · 버전 diff 비교 · 다중 첨부 · 전달 정직성 · 공유 발신자 · 배경 dismiss · 발췌 명시)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-08-06" 블록(9 items: new/work 3 · improved/work 2 · fixed/work 3 · fixed/common 1) prepend + `generated` "2026-08-05"→"2026-08-06". 기존 43 블록 전량 보존(releases 43→44). 08-06 블록이 아직 없었으므로 append 아닌 신규 prepend.
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수명·테이블명·내부 설정키·ADR 번호·PB-0008·ZIP/audit/retention 등 내부 어휘 누출 **0**(19 패턴 정규식 기계 검증). UI 라벨은 실코드 대조 — `app/composer.js:940`(`⇄ 버전 비교`)·`:1121-1122`(`최신 버전(vN)만 삭제`/`전체 버전 삭제 (N개)`)·`:1259`(`최신 버전만`/`모든 버전`)·`:562`(`이미 최신입니다(내용 동일)`)·`:779`(배치 요약)·`app/attach-diff.js:245`(`동일한 N줄 생략 — 펼치기`)·`:566-569`(`좌우 2열`/`단일열`)·`index.html:383-384`(⤓·🗑 아이콘 전용 — 가시 텍스트 없음)·`app.js:3346`(`화면에는 이 단계 결과의 앞부분만 표시됩니다`).
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일) · 블록 순서·항목 enum(type/area)·스키마 외 키 0·기존 블록 보존 확인 · 내부용어 누출 0.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-07T01:03:01+09:00
