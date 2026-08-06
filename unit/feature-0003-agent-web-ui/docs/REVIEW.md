@@ -3102,3 +3102,28 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 - 단일 토스트 엘리먼트 구조 자체는 그대로다 — 배치가 요약 1회로 줄여 회피할 뿐, 다른 경로에서
   연속 토스트가 겹치는 문제는 별도 축이다.
 - Artifact: 본 entry
+
+## REV-20260806T200000-ai-claude-attach-multi-upload-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY 라이브 실측 기록
+
+- Related TASK: feature-0003-agent-web-ui (20260806T1820-attach-multi-upload)
+- Trigger: doc-only + 시나리오 JSON 추가 — 실행 코드·정적 자산 변경 0줄
+- Timestamp: 2026-08-06T20:00:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
+배포본 `d3a520fd` 에서 PB-0008 실 Windows Chrome 실측 T1~T6 전건 PASS. 상세는
+`docs/test-runs.d/REV-20260806T183000-attach-multi-upload.md` Run 4.
+
+**가장 load-bearing 한 관측 (T4)**: composer 영역에 3개 드롭 시 첫 파일이 서버에 **정확히 1 row**.
+수정 전이라면 `.composer-wrap` 과 `#chatPane` 두 핸들러가 같은 drop 을 처리해 2회 업로드 시도가
+발생하고 두 번째가 dedup 에 걸려 사용자에게 "이미 첨부된 파일입니다" 오탐이 떴다 — 사용자가 보고한
+현상의 기전 중 하나가 라이브에서 닫힌 것을 확인했다.
+
+**정직 표기**: 토스트가 담긴 프레임 캡처는 2.2초 TTL 로 확보하지 못했고, `is-visible` + computed
+배경색 실측으로 대체했다(에러 색이 아님을 확인). 본 변경이 토스트의 **문구·색 토큰만** 바꾸고
+레이아웃 기하를 건드리지 않는다는 근거를 fragment 에 명시했다. assistant 편집본 승계(AC-AMU-4·5)는
+실 LLM 왕복이 필요해 라이브 실측에서 제외 — pytest N3/N5/N6 로 잠갔다.
+
+**라이브 데이터 경계**: 자체 테스트 대화 3건만 생성·사용 후 전부 보관 처리. 사용자 대화 무접촉
+(읽기 전용 조회만).
+- Artifact: 본 entry

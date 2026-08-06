@@ -2584,3 +2584,15 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `src/routers/attachments.py`, `tests/verify_attach_multi_upload.mjs`,
   `tests/test_attachment_versioning.py`, `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT,TEST}.md`.
 - Timestamp: 2026-08-06T18:20:00+09:00
+## CHG-20260806T200000-attach-multi-upload-postdeploy — POST-DEPLOY 라이브 실측 기록 (doc + 시나리오, 실행 코드 0줄)
+
+- 배포본 `d3a520fd`(web-a/web-b/ask-worker/insight-worker/ops-scheduler 전부 동일 SHA, soak 통과)에서
+  PB-0008 실 Windows Chrome 실측 T1~T6 **전건 PASS** — `docs/test-runs.d/REV-20260806T183000-attach-multi-upload.md` Run 4.
+- 신규 시나리오 2종: `tests/win-browser-attach-multi-upload.scenario.json`(기능 6축) ·
+  `…-visual.scenario.json`(토스트·첨부 패널 판독 캡처). 둘 다 자체 테스트 대화만 만들고 끝에 보관 처리한다.
+- T4 가 핵심 — composer 영역 드롭에서 첫 파일이 서버에 **1 row**(수정 전 기전이었던 이중 처리·오탐 토스트 소멸).
+- 정직 표기: 토스트 프레임 캡처는 2.2초 TTL 로 미확보 → `is-visible` + computed 배경색 실측으로 대체.
+  AC-AMU-4·5(편집본 승계)는 실 LLM 왕복이 필요해 라이브 실측 제외(pytest N3/N5/N6 로 잠금).
+- Files: `docs/{TASK,MODIFY,REVIEW,FUNCTION}.md`, `docs/test-runs.d/REV-20260806T183000-attach-multi-upload.md`,
+  `tests/win-browser-attach-multi-upload{,-visual}.scenario.json`.
+- Timestamp: 2026-08-06T20:00:00+09:00

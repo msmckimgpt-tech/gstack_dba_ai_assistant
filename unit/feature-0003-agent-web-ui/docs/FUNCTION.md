@@ -2915,4 +2915,9 @@ scrollTop 픽셀 복원은 행 수·행 높이가 바뀌는 경우(전개·2열�
     체인 스코프·dedup 판정에 영향이 없다.
   - **검증**: `tests/verify_attach_multi_upload.mjs` 28건(정적 5 · jsdom 실행 8 · 집계 9 · 저장명 3 ·
     뮤테이션 역검증 3) + `tests/test_attachment_versioning.py` N3/N4/N5/N6.
-    PB-0008 실 Windows 브라우저 라이브 검증(visual_verification_scope: always).
+    **PB-0008 실 Windows 브라우저 POST-DEPLOY 실측 완료**(배포본 `d3a520fd`, 2026-08-06) — AC-AMU-1~3
+    전건 PASS(다중 선택 3/3 · 재업로드 3건 스킵·row 증가 0 · **composer 드롭 첫 파일 1 row** · 단건
+    개별 토스트 · DB 7 파일 각 1건). AC-AMU-4·5(편집본 승계·표시명)는 실 LLM 왕복이 필요해 라이브
+    실측에서 제외하고 pytest N3/N5/N6 로 잠갔다. 시나리오
+    `tests/win-browser-attach-multi-upload{,-visual}.scenario.json`, Run 기록
+    `docs/test-runs.d/REV-20260806T183000-attach-multi-upload.md` Run 4.
