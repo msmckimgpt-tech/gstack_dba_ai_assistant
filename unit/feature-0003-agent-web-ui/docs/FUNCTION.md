@@ -2772,3 +2772,30 @@ intra-line 하이라이트.
 - **AC-AVD-9**: 첫 행이 `gap` 인 2열 표에서도 줄번호 열 48px · 좌우 code 열 동폭 · 열 폭 합 ==
   표 폭(±2px). 검증 = `tests/headless/verify_attach_diff_geometry.py`(실 chromium 기하 실측,
   `colgroup` 제거 시 붕괴를 함께 단언) + `verify_attach_version_diff.mjs` A1b 구조 가드.
+
+### (attach-diff-ux, 2026-08-07) 비교 모달 — 크기 · 줄번호 폭 · 중앙선 드래그 · gap 국소 전개
+
+사용자 지적·요청(2026-08-07, 스크린샷 동반) 4건을 반영한 계약 보정.
+
+| 축 | 계약 |
+|---|---|
+| 모달 크기 | `height/max-height: 94vh` · `width/max-width: calc(100vw - 24px)`(상한 1920px) · backdrop padding 12px. 본문은 flex 로 잔여 높이 전부 사용, 스크롤은 표 컨테이너가 갖는다 |
+| 줄번호 열 폭 | **자릿수 기반** `calc(<digits>ch + 12px)` — `_linenoCh()` 가 표시 행의 최대 줄번호 자릿수를 구한다. 고정 48px 은 3자리에서 여백만 넓고 5자리에서 잘린다 |
+| 좌우 code 열 폭 | **렌더 후 실측 기반 plain %** (`_applySplitRatio`) — 아래 ⚠️ 참조. 비율은 `localStorage` `attachDiffSplitRatio`(0.15~0.85) |
+| 중앙선 드래그 | `.attach-diff-splitter`(11px 히트영역) 를 잡아 좌우 비율 조절. 리스너는 **document 레벨** · 키보드 ←/→(0.02, Shift 0.1)·Home(초기화) · 창 크기 변화 시 비율 재적용 |
+| gap 국소 전개 | 서버가 gap 에 `left_from/left_to/right_from/right_to` 를 실어 주고, 프론트가 **전체 맥락을 1회만** 받아(캐시) 그 범위의 행만 splice. "동일한 줄도 모두 보기" 가 켜져 있으면 버튼을 달지 않는다 |
+
+> ⚠️ **`table-layout: fixed` 의 `col` 폭 함정 (실측 2026-08-07)**: Chrome 은 **퍼센트를 포함한
+> `calc()` 를 무시**하고 그 열을 auto 로 떨어뜨려 균등 분배한다. 5형태 대조 —
+> `calc(0.3*(100% - 4ch - 24px))` 무시 · `calc(30% - 12px)` 무시 · `30%` honor · `300px` honor ·
+> 퍼센트 없는 `calc(2ch + 12px)` honor. 그래서 줄번호는 절대 calc 로 colgroup 에 두고, 좌우
+> code 는 렌더 후 실측해 **plain %** 로 지정한다. 이 형태를 다시 쓰면 열 폭 계약이 **조용히**
+> 무효가 되므로 `verify_attach_version_diff.mjs` 가 소스에서 금지한다.
+
+- **AC-AVD-10** 모달이 뷰포트 폭 ≥95% · 높이 ≥88% 를 쓴다.
+- **AC-AVD-11** 줄번호 열 폭이 자릿수에 비례하고 3자리에서 48px 미만이다.
+- **AC-AVD-12** 중앙선 드래그로 좌/우 code 폭이 바뀌고 합은 표 폭을 유지한다. 비율은 영속.
+- **AC-AVD-13** "N줄 생략" 클릭 시 그 gap 만 전개되고 다른 gap 은 남는다. 전체 맥락 조회 1회.
+- **AC-AVD-14** "동일한 줄도 모두 보기" 활성 시 전개 버튼 미부착.
+- 검증 = `tests/headless/verify_attach_diff_geometry.py` 22건(실 chromium 기하·드래그·전개) +
+  `verify_attach_version_diff.mjs` 73건 + pytest `test_attachment_version_diff.py` 24건.

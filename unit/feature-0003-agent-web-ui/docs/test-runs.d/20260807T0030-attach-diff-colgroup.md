@@ -70,3 +70,42 @@ colgroup 이 첫 자식 · CSS 가 `col` 로 폭 선언 · **`td` width 잔존 0
 신규/수정 JS 는 스탬프 미주입 + 모듈 캐시 이중 인스턴스로 배포 전 `docker cp` QA 가 불가하다.
 배포 후 선행 cycle 의 31항목 + **기하 실측 4항목**(G1 colgroup · G2 줄번호 48px · G3 code 동폭 ·
 G4 열 폭 합 == 표 폭)을 재실행한다 — 이번엔 육안이 아니라 **숫자로** 판정한다.
+
+---
+
+### Run (2026-08-07) — attach-diff-ux: 모달 크기 · 줄번호 폭 · 중앙선 드래그 · gap 국소 전개
+
+사용자 지적·요청 4건(스크린샷 2장 동반) 반영. **Environment: WSL-headless (chromium)** —
+`tests/headless/verify_attach_diff_geometry.py` 를 **모듈 전체 로드**로 재작성해 실 모듈의
+`openAttachmentDiffModal` 흐름을 그대로 구동한다.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| T1 | 줄번호 열이 자릿수 폭으로 고정(균등분배 아님) | PASS `[24, 24]` |
+| T2 | 좌우 code 동폭 + 줄번호의 5배 이상 | PASS `[662, 662]` |
+| T3 | 열 합 == 표 폭 | PASS `1372 == 1372` |
+| T4 | 단일열 = 줄번호 · 부호 18 · 잔여 (+ 핸들 없음) | PASS `[24, 18, 1330]` |
+| T5 | 좌/우 셀 세로 정렬 일치 | PASS |
+| T6 | 문서 폭 불변(scroller 안에서만 넘침) | PASS |
+| T7 | **colgroup 제거 시 균등분배 재현** | PASS `[343×4]` |
+| T8 | 줄번호 폭이 자릿수 비례 + 3자리 < 48px | PASS `3자리=30px 5자리=42px` |
+| T9 | 모달이 뷰포트 폭≥95%·높이≥88% | PASS `1416x846 / 1440x900` |
+| T10 | **드래그로 좌/우 비율 변화** | PASS `[662,662] → [395,929]` |
+| T10b | 드래그 후에도 열 합 == 표 폭 | PASS |
+| T10c | 비율 localStorage 영속 | PASS |
+| T11 | **gap 국소 전개** (그 구간만) | PASS `rows 5→16 · gaps 2→1` |
+| T11c | 숨은 줄 내용 실제 표시 | PASS |
+| T11d | 전체 맥락 조회 1회만 | PASS |
+| T12 | '모두 보기' 시 전개 버튼 미부착 | PASS `btns=0` |
+
+**22/22 PASS.** 이 하네스가 이 cycle 에서 **결함 2건을 잡았다**:
+1. 좌우 code 열의 `calc(...%...)` 가 Chrome 에서 무시돼 선행 colgroup 이 절반만 듣고 있었음
+   (기본 비율 0.5 가 균등분배와 같은 수치라 선행 8/8 이 구별하지 못했다).
+2. 중앙선 드래그가 `pointermove` 핸들-바인딩 탓에 첫 이동에서 끊김.
+
+**Environment: CLI** — `verify_attach_version_diff.mjs` **73 PASS**(모듈 전체 로드 전환 +
+calc-함정 소스 금지 가드 5건) · 전수 mjs **44 suite OK** · pytest 신규 24건(gap 범위 정확성
+B3b/B3c 포함) · 정본 `make test` 전수.
+
+**Environment: Windows-browser** — 배포 후 재검증 잔여. 선행 31항목 + 기하 4항목 + 이번 4축
+(모달 크기 · 줄번호 폭 · 드래그 · gap 전개) 을 실 화면에서 확인한다.

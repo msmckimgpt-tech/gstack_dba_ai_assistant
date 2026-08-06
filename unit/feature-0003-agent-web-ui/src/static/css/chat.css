@@ -2505,10 +2505,20 @@
 .attach-list-version-cmp:hover { background: rgba(37, 99, 235, 0.08); color: var(--primary, #2563eb); }
 
 /* 모달 — share-mgr 골격을 재사용하고 폭/높이만 diff 용으로 넓힌다. */
+/* 사용자 지적(2026-08-07): "모달 창이 너무 작아 내용을 모두 출력하기 제한됩니다."
+   diff 는 좌우 2열 × 등폭 코드라 가로·세로 모두 여유가 필요하다. 뷰포트를 거의 다 쓰되
+   좌우 24px 만 남긴다(backdrop 여백도 축소). 높이는 94vh — 컨트롤 줄이 접혀도 본문이 살아 있게. */
+.attach-diff-backdrop { padding: 12px; }
 .attach-diff-panel {
-  max-width: 1180px;
-  max-height: 88vh;
+  max-width: min(1920px, calc(100vw - 24px));
+  width: calc(100vw - 24px);
+  max-height: 94vh;
+  height: 94vh;
 }
+/* 본문이 남는 높이를 전부 먹고, 스크롤은 표 컨테이너가 갖는다. */
+.attach-diff-body { display: flex; flex-direction: column; min-height: 0; }
+.attach-diff-splitwrap { position: relative; flex: 1; min-height: 0; display: flex; }
+.attach-diff-splitwrap > .attach-diff-scroller { flex: 1; min-height: 0; overflow-y: auto; }
 .attach-diff-fname {
   font-weight: 500;
   color: var(--text-2);
@@ -2629,13 +2639,17 @@
 /* 열 폭의 정본은 `<colgroup>` 이다 — `table-layout: fixed` 는 첫 행에서 열 폭을 가져오고,
    맥락 축약 뷰의 첫 행은 흔히 gap(colspan)이라 td 의 width 가 무시되고 표가 균등 분할된다
    (라이브 실측 2026-08-06: 1136px 표의 네 열이 전부 284px). col 규칙은 행 순서와 무관하다. */
-.attach-diff-col-no { width: 48px; }
+/* 폭 값은 `_appendColgroup` 이 **자릿수 기반**(`Nch + 12px`)으로 인라인 지정한다 —
+   사용자 지적(2026-08-07) "line number 컬럼의 여백이 너무 넓습니다". 아래는 인라인이
+   없을 때의 폴백이며, 좌우 code 는 중앙선 비율(드래그)이 인라인으로 덮어쓴다. */
+.attach-diff-col-no { width: 4ch; }
 .attach-diff-col-sign { width: 18px; }
-.attach-diff-table.is-split .attach-diff-col-code { width: calc(50% - 48px); }
-.attach-diff-table.is-unified .attach-diff-col-code { width: calc(100% - 66px); }
+/* code 열에는 폭을 선언하지 않는다 — auto 로 두면 남는 폭을 먹고(단일열) 균등 분배되며(2열),
+   2열의 정확한 비율은 `_applySplitRatio` 가 실측 기반 **plain %** 로 인라인 지정한다.
+   ⚠️ 퍼센트를 포함한 `calc()` 는 fixed-table col 폭에서 Chrome 이 무시한다(실측 2026-08-07). */
 .attach-diff-lineno {
   text-align: right;
-  padding: 0 8px 0 6px;
+  padding: 0 5px 0 3px;
   color: var(--text-muted);
   background: var(--surface-2);
   user-select: none;
@@ -2662,6 +2676,48 @@
 .attach-diff-row.is-replace .attach-diff-code.side-left { background: var(--tag-danger-bg); }
 .attach-diff-row.is-insert .attach-diff-sign { color: var(--tag-ok-fg); }
 .attach-diff-row.is-delete .attach-diff-sign { color: var(--tag-danger-fg); }
+/* ③ 2열 중앙선 드래그 핸들 (사용자 요청 2026-08-07). 표 위에 떠 있고 위치는 JS 가 경계
+   셀의 실측 좌표로 갱신한다. 히트 영역을 시각 선보다 넓게 잡아 잡기 쉽게 한다. */
+.attach-diff-splitter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 11px;
+  margin-left: -5px;
+  cursor: col-resize;
+  z-index: 2;
+  background: transparent;
+  touch-action: none;
+}
+.attach-diff-splitter::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 5px;
+  width: 1px;
+  background: var(--border);
+}
+.attach-diff-splitter:hover::before,
+.attach-diff-splitter:focus-visible::before,
+.attach-diff-splitter.is-dragging::before {
+  background: var(--primary, #2563eb);
+  width: 2px;
+  left: 4.5px;
+}
+.attach-diff-splitter:focus-visible { outline: none; }
+
+/* ④ "동일한 N줄 생략" 을 눌러 그 구간만 펼친다. */
+.attach-diff-gap-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.attach-diff-gap-btn:hover { background: var(--surface); color: var(--primary, #2563eb); }
+.attach-diff-gap-btn:disabled { color: var(--text-muted); cursor: default; background: transparent; }
 .attach-diff-gap {
   padding: 3px 10px;
   font-size: 11px;

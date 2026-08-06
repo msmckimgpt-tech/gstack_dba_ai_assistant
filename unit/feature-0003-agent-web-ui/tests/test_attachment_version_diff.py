@@ -15,6 +15,8 @@
   B1  diff 뷰 — 순수 추가/삭제/교체 opcode 가 좌우 정렬 행으로 펼쳐진다.
   B2  diff 뷰 — replace 의 좌우 줄 수가 다르면 짧은 쪽을 None 으로 패딩(정렬 붕괴 방지).
   B3  diff 뷰 — 기본 맥락(3줄) 밖 equal 런이 gap 행으로 접히고 **생략 줄 수를 표면화**.
+  B3b diff 뷰 — gap 에 좌·우 줄번호 범위가 실린다(프론트 국소 전개의 전제, 2026-08-07).
+  B3c diff 뷰 — 전체 맥락에서는 gap 자체가 없다.
   B4  diff 뷰 — context_lines=None 이면 동일 줄도 전부 방출(gap 없음).
   B5  diff 뷰 — 행 상한 초과 시 잘리고 truncated.rows=True (무음 절단 금지).
   B6  diff 뷰 — 내용 동일이면 identical=True 이고 축약·행 상한과 무관.
@@ -247,6 +249,35 @@ def test_b3_context_collapses_far_equal_runs_and_surfaces_skipped():
     # 20줄 중 변경 주변 3줄만 남으므로 17줄 생략 — 그 수가 응답에 노출된다.
     assert gaps[0]["skipped"] == 17
     assert sum(1 for r in view["rows"] if r["type"] == "equal") == 3
+
+
+def test_b3b_gap_carries_line_ranges_for_local_expand():
+    """gap 에 줄번호 범위가 실려야 프론트가 "N줄 생략" 클릭 시 **그 구간만** 되살릴 수 있다.
+    개수(`skipped`)만으로는 위치를 알 수 없다(사용자 요청 2026-08-07 국소 전개의 전제)."""
+    left = "\n".join(["ctx"] * 20 + ["old"] + ["tail"] * 20)
+    right = "\n".join(["ctx"] * 20 + ["new"] + ["tail"] * 20)
+    view = app._build_version_diff_view(
+        left, right, left_version=1, right_version=2, filename="f", context_lines=3)
+    gaps = [r for r in view["rows"] if r["type"] == "gap"]
+    assert len(gaps) == 2, "앞·뒤 두 구간이 각각 접혀야 한다"
+    head, tail = gaps
+    assert (head["left_from"], head["left_to"]) == (1, 17), head
+    assert (head["right_from"], head["right_to"]) == (1, 17), head
+    assert head["skipped"] == 17
+    assert tail["left_from"] == 25 and tail["left_to"] == 41, tail
+    assert tail["skipped"] == 17
+    # 범위 길이와 skipped 가 일치해야 전개 결과가 정확히 그 구간이다.
+    for g in gaps:
+        assert g["left_to"] - g["left_from"] + 1 == g["skipped"], g
+
+
+def test_b3c_gap_ranges_absent_when_no_collapse():
+    """전체 맥락에서는 gap 이 없으므로 범위 필드도 없다(전개 버튼 미부착의 근거)."""
+    left = "\n".join(["ctx"] * 10 + ["old"])
+    right = "\n".join(["ctx"] * 10 + ["new"])
+    view = app._build_version_diff_view(
+        left, right, left_version=1, right_version=2, filename="f", context_lines=None)
+    assert not [r for r in view["rows"] if r["type"] == "gap"]
 
 
 def test_b4_full_context_emits_every_line():
