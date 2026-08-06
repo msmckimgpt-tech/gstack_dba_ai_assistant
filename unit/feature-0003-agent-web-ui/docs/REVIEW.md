@@ -2997,3 +2997,9 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 - **P2 UI copy 예산(§16.8)**: 라벨 재진술 힌트 3건·2문장 안내 2건 제거·축약.
 - **미반영(잔여)**: `can_manage=false` 사용자의 휴지통 막다른 화면 — 서버 필터로 **행 자체를 반환하지 않게** 바꿔 빈 목록이 되므로 부분 해소. 진입점 숨김은 미적용(REPORT §8). `.template/ui-copy-budget.conf` 규칙 확장도 미적용.
 - Artifact: 본 entry
+
+## REV-20260806T181000-attach-manage-postdeploy [SKIPPED:non-policy-doc]
+
+- Related TASK: feature-0003-agent-web-ui / 20260806T1810-attach-manage-postdeploy
+- Reason: changed paths are docs only (test-runs.d fragment + TASK/MODIFY/REVIEW) outside policy-doc list — 실행 코드·정적 자산 변경 0줄
+- Timestamp: 2026-08-06T18:10:00+09:00
