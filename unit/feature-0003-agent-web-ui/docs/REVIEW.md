@@ -2661,3 +2661,8 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 - **검증**: `verify_modal_backdrop_dismiss.mjs` **48 pass / 0 fail** + **역검증 5종**(각 변형이 정확히 의도한 단언만 red — 옛 `click` 단독 11 · 캡처 해제 삭제 1 · `pointerup` 실행 3 · `downOk` 미소비 1 · `isTrusted` 미검사 1) · **PB-0008 실 Windows Chrome CDP trusted 입력 10/10 PASS** + 같은 하네스 negative control 에서 **사용자 보고 현상 3건 재현** · `make test` 회귀 · `verify_*.mjs` 전수 red 21건 = main baseline 동일 집합.
 - **판정**: ux **SHIP** · design 은 BLOCK 사유 2건(합성-click 주장 · 커버리지 주장)을 제기했고 **둘 다 해소**(전자는 코드로, 후자는 범위 재서술 + 원장 등재). 두 리뷰어가 제시한 P1/P2 중 미해소 잔여 없음.
 - Timestamp: 2026-08-06T11:44:13+09:00
+## REV-20260806T162000-modal-dismiss-postdeploy [SKIPPED:non-policy-doc] — doc-only
+
+시각 검증 Run 기록 + 증적 이미지 추가만으로, 코드·정책·계약 변경이 0 이다(§18.8.1 docs-only 경량
+경로). 검증 대상 코드는 선행 cycle 에서 ux·design 적대 패널 2 라운드를 거쳤다
+(`REV-20260806T114413-modal-backdrop-dismiss`).

@@ -75,3 +75,34 @@
 baked 되는 구조라 미머지 상태에서는 라이브 무접촉으로 그 6개 화면을 띄울 수 없다.
 
 - Pass/Fail: **PASS** (실 Windows 브라우저 10항목 + 역검증 3항목 재현). Runner: AI.
+
+#### Run 3 — **POST-DEPLOY 라이브 실측** (Environment: Windows-browser, 2026-08-06, 실 Windows Chrome via `bin/win-browser.py` relay, 배포본 `44627bad`, `https://localhost/` 로그인 세션 `bootstrap_admin`) — **PASS 13/13**
+
+Run 1 은 헬퍼를 떼어낸 최소 페이지에서 **계약**을 실측했다. 본 Run 은 **배포된 실제 작업 화면**의
+좌측 사이드바 항목 `···` 메뉴를 눌러 진짜 모달을 열고 같은 제스처를 넣는다. app.js 가 ES module
+이라 opener 함수가 전역이 아니므로(`promptShareExpiry is not defined` 로 확인) `page.evaluate`
+호출이 아니라 **사용자와 동일한 클릭 경로**로 열었다.
+
+| 모달 | 진입 | 패널→배경 드래그 | 배경→패널 드래그 | 배경 클릭 |
+|---|---|---|---|---|
+| 대화 설정 | conv-item `···` > 설정 | 안 닫힘 (AC2) | 안 닫힘 (AC3) | 닫힘 (AC1) |
+| 공유 | conv-item `···` > 공유 | 안 닫힘 | 안 닫힘 | 닫힘 |
+| 폴더로 이동 | conv-item `···` > 이동 | 안 닫힘 | 안 닫힘 | 닫힘 |
+| 폴더 설정 | 폴더 `···` > 설정 | 안 닫힘 | 안 닫힘 | 닫힘 |
+
+- **라이브 데이터 변경 0**: 저장·전송·보관 버튼은 누르지 않았다. 폴더 설정 검증에만 임시 폴더를
+  스스로 만들고 스스로 지웠으며(로그인 계정 own-scope), 폴더 수 `before=0 → after=1 → final=0`
+  으로 잔재 0 을 단언했다.
+- 배포 반영 확인: 서빙 `app.js?v=981fc8deaf7a` 에 `bindBackdropDismiss`·`releasePointerCapture`·
+  `isTrusted` 존재, **옛 결함 패턴 잔존 0**. web-a/web-b/ask-worker/insight-worker 4서비스 전부
+  `mysql-ai-{web,agent}:44627bad` 이미지로 기동.
+- 증적: `evidence/modal-backdrop-dismiss-live.png` (배포본 라이브 화면의 실제 '대화 설정' 모달).
+
+**미실측 2종 (사유 명시)**: `promptShareExpiry`(공유 링크 설정)·`confirmShareJoinable`(참여 허용
+확인)은 공유 팝업에서 **'링크 생성'을 눌러야** 진입한다 — 라이브에서 그 경로를 타면 **실제 공유
+링크가 발급**되므로(보안 표면·데이터 변경) 실행하지 않았다. 두 모달은 나머지 4종과 **동일한
+`bindBackdropDismiss` 호출**이고(같은 파일·같은 인자 형태), Run 1 의 실 브라우저 계약 실측 +
+`verify_modal_backdrop_dismiss.mjs` 의 배선 단언(두 함수 각각 헬퍼 사용 + 결함 패턴 부재)이 이를
+커버한다.
+
+- Pass/Fail: **PASS** (라이브 4종 12항목 + 잔재 0 단언). Runner: AI.
