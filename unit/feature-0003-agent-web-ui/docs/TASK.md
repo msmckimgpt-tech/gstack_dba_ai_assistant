@@ -8906,3 +8906,121 @@ reconciliation worker)를 **그대로 재사용**하고 ① 인가 경계 축소
 **G4**: 경계 양측을 검증했다 — 버전 번호 일치/불일치(`plan_v2.docx` v1), 접미 유/무 저장명에 force 적용, scope=latest/all, 파라미터 지정/미지정.
 **G9-b**: 접미를 떼면 이름이 겹치는데, 그 경우 **조용히 덮지 않고** id 구분 접미가 붙는다는 사실을 모달이 미리 알린다(무음 덮어쓰기 방지 우선).
 **G10**: 재발 클래스(같은 규칙이 서버·프론트 두 벌)를 점수정으로 끝내지 않고 소스 단정으로 잠갔다 — 프론트에 `_versionedFilename` 류 규칙이 되살아나면 테스트가 red.
+## 20260806T1853-attach-diff-syntax — 첨부 버전 diff 화면의 파일 유형별 구문 하이라이트 (Minor §12.3, frontend-only)
+
+- **사용자 요청(`/_template:entry`, 2026-08-06)**: "서비스 내 첨부파일의 버전 간 diff 를 비교하는
+  화면에서 파일 유형에 따른 확장 하이라이트(SQL 예약어 등) 를 구성해주세요."
+- **범위 결정(사용자 confirm)**: "SQL + 구조화 데이터를 우선 추가하되, 차후 확장될 수 있습니다."
+  → 1차 = SQL · JSON · YAML · XML/HTML · CSV/TSV, 확장은 레지스트리 한 항목으로 끝나게 설계.
+
+### §2.1 Implementation Plan
+
+- **왜 필요한가**: diff 행 배경(초록/빨강)은 "이 줄이 바뀌었다" 까지만 말한다. 바뀐 것이
+  테이블명인지 값인지 주석인지는 **토큰 색**이 있어야 갈린다 — `SET status = status` 류의 줄에서
+  예약어와 식별자가 같은 색이면 변경 지점을 눈으로 찾지 못한다.
+- **① 단일 primitive 신설** — `src/static/code-highlight.js`. 언어 레지스트리
+  `LANGS = { <key>: { label, exts, tokenize } }` + `detectCodeLanguage(filename)` +
+  `paintCodeInto(el, text, lang)` + `codeLanguageLabel(lang)`. **SQL 예약어·타입 목록의 정본을
+  이 모듈로 이전**하고 `app.js`(답변 말풍선 하이라이터)가 import 한다 — 목록을 두 벌 두면 예약어를
+  한쪽에만 추가하는 결함이 예약된다(`modal-dismiss.js` 가 기록한 "복제가 곧 결함 기전" 과 동일 판단).
+- **② 렌더 배선** — `app/attach-diff.js` 의 두 렌더러가 **같은 `_paintCell`** 로 칠한다(2열·단일열이
+  같은 응답의 두 표현이라는 기존 불변식의 연장 — 한쪽만 칠하면 토글이 다른 화면이 된다). 언어 판정은
+  파일명 1회(버전 체인은 같은 파일의 이력이라 유형이 바뀔 수 없다).
+- **③ 라인 독립 토큰화(의도된 절충)** — diff 는 행 단위로 렌더되므로 토큰화도 행 단위다. 여러 줄
+  블록 주석·멀티라인 문자열은 각 행이 독립 판정된다. 행 상태를 이어붙이지 **않는** 이유: 맥락 축약
+  뷰는 중간을 `gap` 으로 생략하므로 상태가 끊긴 지점부터 색이 통째로 어긋난다(무색보다 나쁘다).
+- **④ 미지원이면 무색** — 확장자가 레지스트리에 없으면 `null` → 종전 평문 경로 그대로. 모르는 파일에
+  색을 칠하면 **없는 구조를 있는 것처럼** 보이게 만든다(`looksLikeSql` 이 보수적인 것과 같은 이유).
+  `dump.sql.gz` 는 마지막 확장자(gz)만 보므로 무색이 정답이다.
+- **⑤ on/off 토글** — 확장자 판정이 틀릴 수 있어(`.config` 가 XML 이 아닌 경우) 탈출구를 둔다.
+  **감지된 유형이 있을 때만** 노출(무색 파일에 끄기 버튼 = 거짓 어포던스), 기본 켬(끈 상태만 저장),
+  `aria-pressed` 동기화, 끄면 `lang` 을 아예 넘기지 않아 "끔 = 종전 동작" 이 구조로 보장된다.
+- **영향 파일 / symbol**
+  - `src/static/code-highlight.js` **(신규)** — `LANGS`·`detectCodeLanguage`·`tokenizeCodeLine`·
+    `paintCodeInto`·`codeLanguageLabel`·`SQL_HL_KEYWORDS`/`SQL_HL_TYPES`(정본).
+  - `src/static/app.js` — 로컬 `SQL_HL_KEYWORDS`/`SQL_HL_TYPES` 정의 **삭제 → import**, paint API re-export.
+    기존 `sqlTokenizeToFragment` 의 `sql-tok-*` 클래스·로직은 **무변경**(라이브 검증된 말풍선 CSS 계약).
+  - `src/static/app/attach-diff.js` — `_paintCell` 신설, `_renderSplit`/`_renderUnified` 셀 배선,
+    `HIGHLIGHT_KEY`·`_readHighlightOn`/`_writeHighlightOn`, 토글 버튼 + `renderOpts().lang`.
+  - `src/static/css/base.css` — `--code-tok-*` 9개 변수(팔레트 정본).
+  - `src/static/css/chat.css` — `.attach-diff-code .code-tok-*` 13종 + `.attach-diff-hl` 토글 pill.
+  - `tests/verify_attach_diff_syntax_highlight.mjs` **(신규 77건)** · `tests/verify_attach_version_diff.mjs`
+    (하이라이트 primitive 를 스텁이 아닌 **실물**로 주입 + `_paintCell` 로드 단언).
+- **완료 판정 기준(AC)**
+  - AC-1 `.sql` 첨부 diff 에서 예약어·타입·문자열·주석·숫자·함수가 각각 다른 색으로 갈린다.
+  - AC-2 **원문 무손실** — 토큰 조각을 이어붙이면 항상 원문과 byte 동일(fuzz 포함).
+  - AC-3 미지원 확장자·토글 off 는 종전 평문과 **완전히 동일**(span 0).
+  - AC-4 2열·단일열이 같은 토큰 결과를 본다.
+  - AC-5 임의 바이트(`<script>` 포함)가 element 로 파싱되지 않는다(span 외 0).
+  - AC-6 6,000행 표에서 체감 지연 없음(초장문 줄은 토큰화 skip).
+- **위험도**: **Minor** — 프론트 전용. 백엔드·API·RBAC·스키마·마이그레이션 **0**.
+
+### 체크리스트
+
+- [x] ① `code-highlight.js` 신설 — 언어 5종(SQL/JSON/YAML/XML/CSV·TSV) + 확장 지점 문서화
+- [x] ② `_paintCell` 로 두 렌더러 배선(호출 4 = 정의1+2열2+단일열1, 정적 단언 E8)
+- [x] ③ SQL 예약어 정본 이전 — `app.js` 의 로컬 두 `Set` 삭제 + import(F5 단언)
+- [x] ④ 팔레트 — `--code-tok-*` 9변수(base.css) + `.attach-diff-code` 하위 13규칙(chat.css),
+      diff 배경(초록/빨강)과 색상군 분리(string=앰버·number=로즈)
+- [x] ⑤ 토글 — 감지 시만 노출·기본 켬·`aria-pressed`·off 는 lang 미전달
+- [x] 신규 하네스 **77 PASS** / 기존 diff 하네스 **85 PASS**(회귀 0) / **mjs 전수 46 suite 전건 OK**
+- [x] **fuzz 가 실결함 1건 적발·수정** — CSV 토크나이저에 catch-all 대안이 없어 **짝 없는 따옴표
+      한 글자가 조용히 소실**(1,200 표본 중 152건). 깨진·잘린 CSV 는 실제로 들어온다 → `([\s\S])`
+      대안 추가. 초판 코드에 있던 결함이며 표본 13건으로는 잡히지 않았다.
+- [x] **뮤테이션 역검증 5/5 KILLED** — M1 lang 무시(E1) · M2 JSON key 판정 제거(B9) ·
+      M3 CSV catch-all 제거(C2) · M4 미지원도 토글 노출(E14) · M5 innerHTML 조립(D1~D5, 실제
+      `<script>` 주입이 D2/D3 에 검출 — XSS 단언이 vacuous 하지 않음을 실증)
+- [x] **§18.8 적대 리뷰 패널 3도메인 — BLOCK 2(ux·design) + CONCERN 1(security), P1 4건 전건 흡수**
+      - **[design/ux P1] 팔레트 AA 미달 — 27조합 중 12조합**(type 은 흰 배경도 3.68). 대비는 브라우저
+        없이 계산 가능한 축인데 초판이 "jsdom 은 색을 못 본다" 로 이월해 놓쳤다 → 6종 명도 강하
+        (`type #155e75`·`func #1d4ed8`·`string #92400e`·`comment #5a5852`·`punct #625f55`) +
+        `number` 를 **teal `#0f766e`** 로(로즈는 삭제 빨강과 같은 arc → "추가 행 안의 삭제 표식") +
+        `var` 를 **보라 `#6b21a8`** 로(앰버면 string 과 ΔE 9.5·이색형 0.75 = 사실상 동일).
+        회귀는 **하네스 G2 가 매 실행 재계산**한다(계산 가능한 축을 사람 눈에 맡기지 않는다).
+      - **[design P1] `.code-tok-delim` 배경 칩 제거** — 칩 자체가 1.14:1(WCAG 1.4.11 은 3:1)로
+        자기 목적 미달인데 글자 대비를 4.01→3.52 로 **더 떨어뜨렸고**, 인라인 배경이 line box 를
+        못 채워 줄마다 점선 띠 + 20열 CSV 는 한 줄 19개가 행 배경(1차 신호)을 벌집처럼 뚫었다 →
+        `font-weight: 700` 으로 대체.
+      - **[ux P1] 토글 노출을 파일명 → 렌더 결과 기반으로** — `logo.svg`·`rows.tsv` 처럼 서버가 줄
+        비교를 거부한 첨부, 내용 동일, 조회 실패, `from===to` **6종 상태에서 "TSV 구문 색" 이 켜진
+        채** 떠 있었다(눌러도 아무 일 없음). 이 모듈이 스스로 금지한 거짓 어포던스와 같은 결함이
+        다른 축에서 난 것 → `syncHlToggle(data)` 가 `comparable`·`identical`·`rows.length` 를 본다.
+      - **[ux/design P2] pill → checkbox 통일** — 10px 옆의 "동일한 줄도 모두 보기" 와 같은 성격의
+        on/off 인데 다른 위젯·다른 상태 채널·다른 보조기술 announce 였다. 네이티브 label+checked 로
+        바꿔 `is-active` CSS·`aria-pressed` 동기화·title 문구가 전부 사라졌다(코드도 줄었다).
+      - **[ux P2] 라벨 "강조" → "구문 색"** — 이 제품 카피에서 "강조" 는 일관되게 *선택적 emphasis*
+        (검색 강조·관계 강조)라 "SQL 부분만 보여주는 행 필터" 로 읽혔다. title 카피도 제거(§12 조작법 금지).
+      - **[security P2] 토글 축 하네스가 vacuous** — 초판 E10~E14 가 버튼 속성만 봐서 `lang` 상수화·
+        `rerender` 제거·localStorage no-op **4종 뮤테이션이 77/77 통과**로 생존. → H 섹션 신설(실제
+        모달 + apiFetch 스텁으로 **셀 span 수**와 저장·복원 확인) → 4종 전건 KILLED.
+      - **[security P2] O(n²) 토큰화** — `MAX_LINE_LEN` 이 줄 하나만 막아 4,000자 적대 입력 7.99ms,
+        1MB 원본 누적 **4.4초 main-thread 정지**(그룹 멤버가 심은 첨부로 교차 도달 가능). 4곳 수정:
+        YAML_KEY_RE 중복 문자클래스·반복 상한·`:` 없는 줄 skip(358×) / T-SQL `[…]` 문자집합 제한 /
+        문자열 닫는 인용부호 optional(실패 경로 제거) → 최악 **0.609ms**, 성장률 1.92×(선형).
+        상설 가드 I1(<1.0ms)·I2(<3× 성장).
+      - **[security P2] 오색(structure color on prose)** — XML 산문 `Total price = 100` 의 `price` 가
+        속성 색, YAML `note: turn it on when ready` 의 `on` 이 boolean 색. "무색이 오색보다 낫다" 는
+        자기 선언 위반 → XML 은 `inTag` 상태로 열린 태그 안에서만, YAML bool 은 스칼라 전체일 때만.
+      - **[design P3] bold 밀도** — `key`/`tag` 의 600 제거(파일 구조가 굵기를 결정하면 강조 기능이
+        사라진다). `keyword` 만 유지 — 이색형에서 `func` 와 갈리는 유일한 채널이라는 측정 근거.
+      - **[design P3] warm 정합** — `comment`/`punct` 의 `#6b7280`(273° cool)이 이 파일의 warm
+        canvas 회색(100°대)과 어긋났다 → `#5a5852`/`#625f55`.
+      - **[design P3] equal 행 토큰 침강** — 안 바뀐 줄의 `SELECT` 가 바뀐 줄의 델타보다 먼저 읽히던
+        위계 역전 → `.is-equal` 행 토큰 `opacity: .78`.
+      - **[security nit] 레지스트리 도달성** — 등록 확장자 다수가 서버 `Kind` allowlist 밖이라 이
+        화면에 닿지 않는다(`svg` 는 항상 image). 주석·FUNCTION.md 에 명시(등록≠도달).
+- [x] 흡수 후 재검증 — 하네스 **108 PASS**(신규 A~I 9섹션) · 기존 diff 하네스 85 PASS ·
+      **mjs 전수 46 suite OK** · **뮤테이션 9/9 KILLED**(패널이 생존 지적한 4종 포함)
+- [ ] PB-0008 실 Windows 브라우저 시각검증 (`visual_verification_scope: always`) + 배포
+
+## 9. Requested Scope
+- [ ] `파일 유형에 따른 확장 하이라이트(SQL 예약어 등)` — 산출물: `code-highlight.js` 레지스트리
+      (SQL/JSON/YAML/XML/CSV·TSV) + diff 두 렌더러 배선 + 팔레트 · 배선 확인: 신규 하네스 A(판정 14)
+      B(토큰 28) C(무손실 2) D(XSS 7) E(렌더 통합 19) F(CSS·정본 7). **시각 확인은 PB-0008 잔여.**
+
+**정직 표기 — 검증하지 못한 것**: ① 색 **대비비는 계산으로 잠갔다**(하네스 G2 — 초판의 "jsdom 은 색을
+못 본다" 는 이월 사유가 틀렸다는 것이 §18.8 design 패널의 지적이었다). 다만 **실제 화면에서의 가독성**
+(폰트 렌더링·주변 색과의 상호작용·6,000행 스크롤 중 판독)은 PB-0008 실측이 정본이다. ② 기하 하네스
+`tests/headless/verify_attach_diff_geometry.py` 는 이 환경에 playwright 브라우저 바이너리가 없어
+실행하지 못했다(span 은 inline 이라 열 폭 기하에 영향이 없다는 것이 근거이나 **측정하지는 않았다**).
+③ 6,000행 렌더 체감(AC-6)은 상한 방어(`MAX_LINE_LEN`)만 코드로 두었고 실측은 PB-0008 로 이월.

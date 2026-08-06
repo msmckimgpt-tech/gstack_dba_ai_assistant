@@ -2715,7 +2715,6 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   패널이 지적한 그 패턴) 결과를 보는 단정으로 바꿨다: 규칙 함수의 실제 반환값(v2→`_v2`,
   v1→원본명) + 라우트의 미지정 기본이 `auto` 인지.
 - Timestamp: 2026-08-07T00:45:00+09:00
-
 ## CHG-20260807T012000-attach-suffix-toggle-postdeploy 배포 완료 기록 (doc-only)
 
 - PR #1183 머지 → main `abdf13bd` → `make deploy-web` **exit 0**(web 롤링 + soak + 워커군
@@ -2727,3 +2726,48 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 코드 변경 0 (doc-only).
 - Files: `docs/{TEST,REPORT,MODIFY}.md`, `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md`
 - Timestamp: 2026-08-07T01:20:00+09:00
+## CHG-20260806T1853-ai-claude-feature-0003-attach-diff-syntax — 첨부 버전 diff 파일 유형별 구문 하이라이트
+
+- **요청**: "첨부파일의 버전 간 diff 를 비교하는 화면에서 파일 유형에 따른 확장 하이라이트(SQL
+  예약어 등)" (사용자, 2026-08-06). 범위 = SQL + 구조화 데이터 우선, 차후 확장 가능한 구조.
+- **프론트(신규)** `src/static/code-highlight.js`: 저장소 단일 primitive. 언어 레지스트리
+  `LANGS`(sql/json/yaml/xml/csv/tsv — `{label, exts, tokenize}`) · `detectCodeLanguage(filename)`
+  (마지막 확장자만·소문자·경로/쿼리 제거) · `tokenizeCodeLine` · `paintCodeInto`(textContent 전용,
+  innerHTML 경로 0) · `codeLanguageLabel`. **SQL 예약어/타입 Set 의 정본**이 여기로 이전.
+- **프론트** `src/static/app.js`: 로컬 `SQL_HL_KEYWORDS`/`SQL_HL_TYPES`(32줄) 삭제 → code-highlight
+  import(정본 단일화). `detectCodeLanguage`/`paintCodeInto`/`codeLanguageLabel` re-export
+  (`modal-dismiss.js` 와 동형 패턴). 기존 `sqlTokenizeToFragment`·`sql-tok-*` 는 **무변경**.
+- **프론트** `src/static/app/attach-diff.js`: `_paintCell` 신설 — 두 렌더러(`_renderSplit`·
+  `_renderUnified`)가 같은 함수로 code 셀을 칠한다. 언어는 파일명 1회 판정. `HIGHLIGHT_KEY`
+  localStorage(기본 켬·끈 상태만 저장) + `.attach-diff-hl` 토글(감지 시만 노출·`aria-pressed`).
+  off 는 `renderOpts().lang = null` 이라 종전 평문 경로와 구조적으로 동일.
+- **CSS** `css/base.css`: `--code-tok-{keyword,type,func,key,string,number,var,comment,punct}` 9변수
+  (팔레트 정본 — 전역 다크 도입 시 이 6줄만). diff 행 배경이 초록/빨강 12% 알파라 string=앰버
+  `#b45309` · number=로즈 `#be185d` 로 색상군을 분리.
+  `css/chat.css`: `.attach-diff-code .code-tok-*` 13규칙 + `.attach-diff-hl` pill(`is-active`).
+- **테스트** `tests/verify_attach_diff_syntax_highlight.mjs` 신규 **77 PASS** — A 판정 14 · B 토큰 28 ·
+  C 무손실 2(표본 13 + **결정적 PRNG fuzz 1,200**) · D XSS 7 · E 렌더 통합 19 · F CSS·정본 7.
+  `tests/verify_attach_version_diff.mjs`: 하이라이트 primitive 를 **실물 주입**(스텁 금지 — 렌더가
+  span 을 만드는지가 하네스에서 사라지지 않게) + `_paintCell` 로드 단언 → **85 PASS**(회귀 0).
+- **적발·수정(초판 결함)**: CSV/TSV 토크나이저에 catch-all 대안이 없어 **짝 없는 따옴표 1글자가
+  소실**(fuzz 152/1,200). diff 뷰어는 깨진·잘린 원본도 받으므로 무손실이 계약 → `([\s\S])` 추가.
+- **§18.8 패널 흡수(BLOCK 2 + CONCERN 1 → P1 4·P2 7·P3 4 전건)**:
+  - `css/base.css` 팔레트 6종 명도 강하 + `number`→teal `#0f766e` + `var`→보라 `#6b21a8`
+    (27조합 AA 전면 통과, 최저 4.54). `css/chat.css` — delim 배경 칩 제거→`font-weight:700`,
+    `key`/`tag` 의 600 제거(keyword 만), `.is-equal` 행 토큰 `opacity:.78`.
+  - `app/attach-diff.js` — 토글을 pill→**checkbox**(`.attach-diff-hltoggle` label + `.attach-diff-hl`
+    input, `aria-pressed`·`is-active`·title 제거), 라벨 "강조"→"**구문 색**", 노출 판정을
+    `syncHlToggle(data)` 로 **렌더 결과 기반**(comparable/identical/rows.length) — load 성공·실패·
+    `from===to` 3경로 배선.
+  - `code-highlight.js` — XML `inTag` 상태(산문 오색 차단) · YAML bool 스칼라 앵커 ·
+    성능 4곳(YAML_KEY_RE 문자클래스 중복 제거+반복 상한+`:` 없는 줄 skip / T-SQL `[…]` 문자집합 /
+    문자열 닫는 인용부호 optional) → 최악 7.99ms→**0.609ms**, 성장률 1.92× · 레지스트리 도달성 주석.
+  - `tests/verify_attach_diff_syntax_highlight.mjs` **77→108건** — G(팔레트 대비 계산 5) ·
+    H(토글 실구동 12 — 실제 모달+apiFetch 스텁으로 셀 span 수·저장·복원) · I(성능 회귀 2) ·
+    B29~B36(오색 negative 8) 신설, E10~E14 를 checkbox 계약으로 갱신.
+- 백엔드·API·RBAC·스키마·마이그레이션·신규 권한 **0**. 라우트 **0**.
+- Files: `src/static/code-highlight.js`, `src/static/app.js`, `src/static/app/attach-diff.js`,
+  `src/static/css/base.css`, `src/static/css/chat.css`,
+  `tests/verify_attach_diff_syntax_highlight.mjs`, `tests/verify_attach_version_diff.mjs`,
+  `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260806T1853-attach-diff-syntax.md`.
+- Timestamp: 2026-08-06T21:30:00+09:00 (패널 흡수 반영)

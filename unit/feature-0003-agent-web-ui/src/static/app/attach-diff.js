@@ -14,10 +14,14 @@
 //    조용히 잘린 diff 를 "전체" 로 오인하면 사용자가 존재하는 변경을 놓친다.
 //  - 배경 dismiss 는 저장소 단일 primitive `bindBackdropDismiss` 를 쓴다(복제 금지 —
 //    modal-dismiss.js 주석의 결함 기전 참조).
-import { apiFetch, bindBackdropDismiss, escapeHtml, showToast } from "../app.js?v=dev";
+//  - **구문 하이라이트도 단일 primitive**(`code-highlight.js`): 파일명 확장자로 언어를 한 번
+//    판정하고 각 code 셀을 토큰 span 으로 칠한다. 미지원 확장자는 판정이 `null` → 평문 경로
+//    그대로(무색). 모르는 파일에 색을 칠하면 없는 구조를 있는 것처럼 보이게 만든다.
+import { apiFetch, bindBackdropDismiss, escapeHtml, showToast, detectCodeLanguage, paintCodeInto, codeLanguageLabel } from "../app.js?v=dev";
 
 const VIEW_MODE_KEY = "attachDiffViewMode";   // "split" | "unified"
 const CONTEXT_KEY = "attachDiffContextFull";  // "1" 이면 전체 맥락
+const HIGHLIGHT_KEY = "attachDiffHighlight";  // "0" 이면 구문 하이라이트 끔 (기본 켬)
 const SPLIT_RATIO_KEY = "attachDiffSplitRatio";  // 2열 중앙선 위치 (좌측 비율 0.15~0.85)
 const SPLIT_RATIO_DEFAULT = 0.5;
 const SPLIT_RATIO_MIN = 0.15;
@@ -61,6 +65,15 @@ function _readContextFull() {
 }
 function _writeContextFull(on) {
   try { localStorage.setItem(CONTEXT_KEY, on ? "1" : "0"); } catch (e) { /* private mode */ }
+}
+// 하이라이트는 **기본 켬**이며 끈 상태만 저장한다(부재 = 켬) — 새 기능이 기본 off 면 사용자
+// 대다수에게 없는 기능과 같다. 끄기 수단을 두는 이유는 확장자 판정이 틀릴 수 있고(예: `.config`
+// 가 XML 이 아닌 경우) 그때 색이 오히려 방해가 되기 때문이다.
+function _readHighlightOn() {
+  try { return localStorage.getItem(HIGHLIGHT_KEY) !== "0"; } catch (e) { return true; }
+}
+function _writeHighlightOn(on) {
+  try { localStorage.setItem(HIGHLIGHT_KEY, on ? "1" : "0"); } catch (e) { /* private mode */ }
 }
 
 function _versionLabel(v) {
@@ -253,6 +266,24 @@ function _gapRow(r, colSpan, onExpand) {
   return tr;
 }
 
+// ── 파일 유형별 구문 하이라이트 ──────────────────────────────────────────────
+// 사용자 요청(2026-08-06): "파일 유형에 따른 확장 하이라이트(SQL 예약어 등)".
+//
+// 왜 필요한가: diff 배경색은 "이 줄이 바뀌었다" 까지만 말한다. 바뀐 것이 테이블명인지 값인지
+// 주석인지는 토큰 색이 있어야 한 눈에 갈린다 — 특히 SQL·설정 파일에서 예약어와 식별자가
+// 같은 색이면 `SET status = status` 류의 줄에서 변경 지점을 눈으로 찾지 못한다.
+//
+// 두 렌더러가 **같은 함수**로 칠한다(2열·단일열이 같은 응답의 두 표현이라는 불변식의 연장 —
+// 한쪽만 칠하면 토글이 서로 다른 화면이 된다). 토큰화 자체는 `code-highlight.js` 정본이고
+// 여기서는 셀에 적용하는 얇은 어댑터만 둔다.
+//
+// `opts.lang` 이 없으면(미지원 확장자·판정 실패) 종전과 **완전히 같은** 평문 경로다.
+function _paintCell(td, text, opts) {
+  const lang = opts && opts.lang;
+  if (!lang) { td.textContent = text == null ? "" : text; return; }
+  paintCodeInto(td, text == null ? "" : text, lang);
+}
+
 // 2열 렌더 — 서버 rows(좌우 정렬 + gap)를 그대로 표로 펼친다.
 function _renderSplit(container, data, opts) {
   const table = document.createElement("table");
@@ -273,13 +304,13 @@ function _renderSplit(container, data, opts) {
     lNo.textContent = r.left_no == null ? "" : String(r.left_no);
     const lTxt = document.createElement("td");
     lTxt.className = "attach-diff-code side-left";
-    lTxt.textContent = r.left == null ? "" : r.left;
+    _paintCell(lTxt, r.left, opts);
     const rNo = document.createElement("td");
     rNo.className = "attach-diff-lineno";
     rNo.textContent = r.right_no == null ? "" : String(r.right_no);
     const rTxt = document.createElement("td");
     rTxt.className = "attach-diff-code side-right";
-    rTxt.textContent = r.right == null ? "" : r.right;
+    _paintCell(rTxt, r.right, opts);
     // 좌/우 강조는 **내용이 있는 쪽**에만 — 빈 셀에 색을 얹으면 없는 변경을 가리킨다.
     // (`has-content` 는 줄 배경, `has-block` 은 문단 accent. 둘이 같은 규칙을 따라야 한다.)
     if (r.left != null) lTxt.classList.add("has-content");
@@ -334,7 +365,7 @@ function _renderUnified(container, data, opts) {
     // 중립 filler** 를 받았다(라이브 실측: 내용 있는 'B2' 가 rgb(240,239,234)). 색이 사라진
     // 것보다 나쁘게 **의미가 반대로 뒤집혔다**. 두 렌더러가 같은 규칙을 따르는지 B9/B9b 가 고정.
     if (text != null) tdTxt.classList.add("has-content");
-    tdTxt.textContent = text == null ? "" : text;
+    _paintCell(tdTxt, text, opts);
     tr.append(tdNo, tdSign, tdTxt);
     tbody.appendChild(tr);
   };
@@ -567,6 +598,10 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     '      <button type="button" class="attach-diff-mode" data-mode="unified">단일열</button>' +
     '    </div>' +
     '    <label class="attach-diff-ctxtoggle"><input type="checkbox" class="attach-diff-ctxfull"><span>동일한 줄도 모두 보기</span></label>' +
+    // 구문 하이라이트 토글 — **색이 실제로 칠해질 수 있을 때만** 표시한다(아래 `syncHlToggle`).
+    // 옆의 맥락 토글과 같은 체크박스 관용구를 쓴다(같은 성격의 on/off 를 다른 위젯으로 두지 않는다).
+    '    <label class="attach-diff-hltoggle" hidden><input type="checkbox" class="attach-diff-hl">' +
+    '<span class="attach-diff-hl-label"></span></label>' +
     '  </div>' +
     '  <div class="attach-diff-body"></div>' +
     '</div>';
@@ -611,6 +646,30 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   };
   syncModeButtons();
 
+  // 언어 판정은 **파일명 한 번**으로 끝난다 — 버전 체인은 같은 파일의 이력이므로 유형이 바뀔 수
+  // 없다(파일명·sha256 대조로 체인을 잇는 구조). 행마다 재판정하면 6,000행 표에서 낭비다.
+  const detectedLang = detectCodeLanguage(filename);
+  const hlWrap = backdrop.querySelector(".attach-diff-hltoggle");
+  const hlCb = backdrop.querySelector(".attach-diff-hl");
+  const hlLabel = backdrop.querySelector(".attach-diff-hl-label");
+  let hlOn = _readHighlightOn();
+  hlCb.checked = hlOn;
+  // 노출 판정은 **파일명이 아니라 렌더 결과**에 걸린다. 파일명만 보면 `logo.svg`·`rows.tsv` 처럼
+  // 서버가 줄 비교를 거부한(`comparable: false`) 첨부, 내용이 동일한 쌍, 조회 실패, 같은 버전 두 개
+  // 선택 — 즉 **칠할 본문이 아예 없는 화면**에서도 "TSV 구문 색" 이 켜진 채 떠 있었다(§18.8 ux P1
+  // 실측 6종). 누르면 아무 일도 일어나지 않으니 사용자는 토글이 고장 났다고 읽는다. 이 모듈이
+  // 스스로 금지한 거짓 어포던스와 같은 결함이 다른 축(파일명은 지원인데 본문이 없음)에서 난 것.
+  const syncHlToggle = (data) => {
+    const paintable = Boolean(detectedLang) && Boolean(data)
+      && data.comparable !== false && !data.identical
+      && Array.isArray(data.rows) && data.rows.length > 0;
+    hlWrap.hidden = !paintable;
+    if (!paintable) return;
+    hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+    hlCb.checked = hlOn;
+  };
+  syncHlToggle(null);   // 응답 도착 전에는 숨김 — 칠할 수 있는지 아직 모른다
+
   let lastData = null;
   let reqSeq = 0;
   let ratio = _readSplitRatio();
@@ -624,6 +683,9 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   const renderOpts = () => ({
     ratio,
     rows: (lastData && lastData.rows) || [],
+    // 하이라이트가 꺼져 있으면 lang 을 아예 넘기지 않는다 — 렌더러가 종전 평문 경로를 타므로
+    // "끔" 이 곧 이전 동작과 동일함이 구조로 보장된다(끈 상태에 잔여 span 이 남지 않는다).
+    lang: hlOn ? detectedLang : null,
     onRatioChange: (r) => { ratio = r; },
     // "동일한 줄도 모두 보기" 가 켜져 있으면 이미 전부 보이므로 전개 버튼을 달지 않는다.
     onExpandGap: ctxCb.checked ? null : expandGap,
@@ -686,6 +748,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       lastData = null;
       statsEl.textContent = "";
       bodyEl.innerHTML = '<div class="attach-diff-notice">서로 다른 두 버전을 선택하세요.</div>';
+      syncHlToggle(null);
       return;
     }
     const seq = ++reqSeq;
@@ -698,6 +761,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       const data = await apiFetch(`/api/attachments/${encodeURIComponent(attachmentId)}/diff?${qs.toString()}`);
       if (seq !== reqSeq) return;   // 늦게 도착한 응답이 최신 선택을 덮지 않게
       lastData = data;
+      syncHlToggle(data);   // 칠할 본문이 실제로 왔을 때만 토글이 보인다
       const st = data.stats || {};
       statsEl.textContent = data.comparable === false
         ? ""
@@ -711,6 +775,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     } catch (e) {
       if (seq !== reqSeq) return;
       lastData = null;
+      syncHlToggle(null);
       statsEl.textContent = "";
       bodyEl.innerHTML = `<div class="attach-diff-notice is-warn">${escapeHtml(e?.message || "비교에 실패했습니다.")}</div>`;
     }
@@ -737,6 +802,13 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       rerender();
     });
   }
+  // 하이라이트 on/off — 같은 응답의 표시 방식만 바뀌므로 재요청 없이 재렌더하고,
+  // 보고 있던 줄을 유지한다(스크롤 보존 계약은 다른 토글들과 동일해야 한다).
+  hlCb.addEventListener("change", () => {
+    hlOn = hlCb.checked;
+    _writeHighlightOn(hlOn);
+    rerender();
+  });
 
   load();
 }

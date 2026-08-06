@@ -60,6 +60,12 @@ if (/^import\s/m.test(MODULE_BODY)) {
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>");
 const { window } = dom;
+// 구문 하이라이트 primitive 는 **스텁이 아니라 실물**을 넘긴다 — 순수 함수(DOM 전역 미사용,
+// `el.ownerDocument` 만 사용)라 jsdom 에서 그대로 돈다. 스텁으로 대체하면 렌더 경로가 span 을
+// 만드는지 여부가 이 하네스에서 사라진다(하이라이트 자체의 토큰 계약은 별 하네스
+// `verify_attach_diff_syntax_highlight.mjs` 가 담당).
+const CH = new Function(`${read("code-highlight.js").replace(/^export\s+/gm, "")}
+  return { detectCodeLanguage, paintCodeInto, codeLanguageLabel };`)();
 const _stubs = {
   document: window.document,
   window,
@@ -70,10 +76,13 @@ const _stubs = {
   showToast: () => {},
   escapeHtml: (v = "") => String(v).replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])),
+  detectCodeLanguage: CH.detectCodeLanguage,
+  paintCodeInto: CH.paintCodeInto,
+  codeLanguageLabel: CH.codeLanguageLabel,
 };
 const EXPORTS = ["_appendColgroup", "_applySplitRatio", "_gapRow", "_linenoCh",
   "_renderSplit", "_renderUnified", "_renderBody", "_fmtBytes", "_versionLabel",
-  "openAttachmentDiffModal"];
+  "_paintCell", "openAttachmentDiffModal"];
 const M = new Function(...Object.keys(_stubs),
   `${MODULE_BODY}\nreturn { ${EXPORTS.join(", ")} };`)(...Object.values(_stubs));
 for (const n of EXPORTS) ok(`${n} 로드됨`, typeof M[n] === "function");
