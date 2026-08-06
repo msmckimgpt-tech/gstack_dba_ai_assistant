@@ -2771,3 +2771,58 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/verify_attach_diff_syntax_highlight.mjs`, `tests/verify_attach_version_diff.mjs`,
   `docs/{TASK,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/20260806T1853-attach-diff-syntax.md`.
 - Timestamp: 2026-08-06T21:30:00+09:00 (패널 흡수 반영)
+## CHG-20260806T200000-attach-chain-merge — 분열 첨부 체인 병합 도구 + 첨부 날짜 compact 표기
+
+- 사용자 지시(2026-08-06): 갈라진 첨부를 하나의 체인으로 병합(넓으면 최근 1주일) + 첨부 날짜 compact 출력.
+  선행 cycle `attach-multi-upload` 이 분열 **기전**을 막았고, 본 cycle 이 **이미 갈라진 데이터**를 정리한다.
+- **신설** `scripts/attach_chain_merge.py`: 논리 파일 = `(ConversationId, AccountId, base(OriginalFilename))`
+  (`base` = 끝의 `_v<n>` 접미 제거). 그룹을 CreatedAt 오름차순으로 정렬해 root/VersionNumber 재부여 +
+  OriginalFilename 통일 + FilenameHmac 재계산 + SupersededAt 을 **다음 버전의 CreatedAt** 으로 스탬프
+  (최신 1건만 NULL). **기본 dry-run**, `--apply` 로만 반영. 단일 트랜잭션 + `UNIQUE(root, version)`
+  회피 **2단계 UPDATE**(오프셋 → 최종) + 스냅샷 JSON·**롤백 SQL** 생성 + PG 미러 동기화 +
+  사후 재검증(잔여 0 아니면 exit 2) + `--rollback <snapshot>` 복원 경로. `--days N` 으로 범위 한정.
+  `ObjectKey`·MinIO 객체·본문·`Sha256` 은 불변(파일 실체 무이동).
+- **범위 판단**: 전수 실측 결과 활성 780 row 중 분열 **62 논리파일 / 155 row / 14 대화**(최근 7일은
+  25/67/4). 155 row 는 넓지 않다고 보아 **전체 수행**하고 `--days 7` 경로는 보존했다.
+- **제외 규칙**: base 이름 row 없이 `_v<n>` 이름을 사용자가 직접 올린 것만 모인 그룹은 병합하지 않는다
+  (사용자가 고른 이름일 수 있음 — 실측 0건이나 가드 유지). 제외분은 사유와 함께 출력·스냅샷 기록.
+- **프론트** `static/app/composer.js`: 첨부 목록 메타줄에 compact 시각 칩(오늘 `14:20` / 올해 `8/6` /
+  그 외 `25/8/6`, 전체 시각은 `title`) + 버전 이력 행의 역할 뒤에 시각. 백엔드 무변경 —
+  `created_at` 이 이미 응답에 있었다.
+  ⚠️ **시간대 실측**: `CreatedAt` 은 MySQL `NOW()` 기반 **로컬(KST) naive** 라 오프셋 없는 문자열을
+  그대로 `new Date()` 에 넘겨야 맞다(18:50 업로드 → `2026-08-06T18:50:29` 확인). 선행 cycle 의
+  `restorable_until` 은 UTC 라 `Z` 보정이 필요했던 **반대 사례** — 필드마다 다르므로 주석·테스트로 고정.
+- **테스트** `tests/test_attach_chain_merge.py` 신규 **17건**(base_name · 무의미 write 0 · 편집본 흡수 ·
+  분열 재결합 · SupersededAt 체인 · 사용자명 제외/미과잉 · days 범위 · 대화·계정 경계 · 2단계 UPDATE
+  순서 · 실패 롤백) · `tests/verify_attach_date_compact.mjs` 신규 **18건**(포맷 6 · 시간대 3 · 배선 6 ·
+  뮤테이션 역검증 3).
+- 스키마·마이그레이션·RBAC·엔드포인트 **0**.
+- Files: `scripts/attach_chain_merge.py`, `src/static/app/composer.js`,
+  `tests/{test_attach_chain_merge.py,verify_attach_date_compact.mjs}`,
+  `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/…`.
+- Timestamp: 2026-08-06T20:00:00+09:00
+## CHG-20260807T003000-attach-chain-merge-rebase — 형제 cycle 결정 흡수 (rebase 정합)
+
+- rebase 중 형제 cycle `REQ-20260806-attach-suffix-toggle`(PR #1183, main 선반영)과 충돌.
+  그 cycle 은 프론트 `_versionedFilename` 을 **제거**하고 저장명 규칙의 권위를 서버로 모았다
+  (`X-Attachment-Download-Name` · manifest `download_filename`). 규칙이 두 벌이면 토글을 끈 뒤
+  한쪽 경로에만 접미가 남고 AI 편집본이 `report_v2_v2.csv` 가 되기 때문.
+- **그 결정을 존중**해 선행 cycle 에서 내가 넣었던 `_versionedFilename` idempotent 개선을
+  되살리지 않고 **삭제**했다 — 함수가 사라진 뒤 되돌리면 형제 결정을 뒤집는 dead code 부활이다.
+  본 cycle 이 추가하는 날짜 함수 3종만 보존.
+- **main red 수리**: 형제 cycle 이 함수를 지우면서 그 함수를 추출하던
+  `tests/verify_attach_multi_upload.mjs`(선행 cycle 산출물)를 갱신하지 않아 **main 에서 하네스가
+  실행 불가**(`함수 미발견: _versionedFilename`) 상태였다. 같은 파일을 다루는 본 cycle 에서 수리:
+  (D) 축을 "저장명 생성 함수가 프론트에 없다(규칙 이중화 0) · 개별 다운로드가 서버 헤더 이름 사용 ·
+  버전 박스도 원본명 그대로 전달" 로 **재설계**해 그 결정이 되돌려지지 않는지를 잠근다.
+  dead assertion 을 지우는 데 그치지 않고 결정 자체를 가드로 승격했다.
+- 검증: `verify_attach_multi_upload.mjs` **28 PASS**(재설계 후) · `verify_attach_date_compact.mjs`
+  18 PASS · `verify_attach_version_diff.mjs` 89 PASS · 전수 mjs **47 스위트** 통과.
+- Files: `src/static/app/composer.js`, `tests/verify_attach_multi_upload.mjs`, `docs/MODIFY.md`.
+- Timestamp: 2026-08-07T00:30:00+09:00
+## CHG-20260807T004000-attach-chain-merge-doc — AC-AMU-5 supersede 기록 (doc-only)
+
+- 형제 cycle `attach-suffix-toggle` 이 저장명 규칙을 서버 단일 권위로 옮긴 결정을 FUNCTION.md 에
+  반영 — 선행 `AC-AMU-5`(프론트 버전 접미)는 그 범위에서 **superseded**. 실행 코드 변경 0줄.
+- Files: `docs/FUNCTION.md`, `docs/MODIFY.md`, `docs/REVIEW.md`.
+- Timestamp: 2026-08-07T00:40:00+09:00

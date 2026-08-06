@@ -17,6 +17,7 @@
 //       업로드가 3회 호출되는가, composer-wrap drop 이 chatPane 자손일 때 위임하는가(중복 0),
 //       chatPane 이 없으면 자체 처리로 폴백하는가.
 //   (C) 집계·문구 — 배치 요약이 업로드/건너뜀/실패를 구분해 1회로 알리는가, 단건은 개별 토스트인가.
+//   (D) 저장명 규칙이 서버 단일 권위인가(형제 cycle attach-suffix-toggle 결정 유지).
 //   (D) 뮤테이션 역검증 — 결함 코드를 되살린 소스로 같은 단언을 돌려 하네스가 **FAIL 하는지**
 //       확인한다(vacuous PASS 차단).
 //
@@ -79,7 +80,6 @@ function extractFunction(src, name) {
 const SRC_BIND = extractFunction(composerJs, "_bindComposerAttachmentEvents");
 const SRC_BATCH = extractFunction(composerJs, "_uploadComposerAttachments");
 const SRC_SUMMARY = extractFunction(composerJs, "_attachBatchSummaryMessage");
-const SRC_VERNAME = extractFunction(composerJs, "_versionedFilename");
 
 // ── (A) 정적 계약 ─────────────────────────────────────────────────────────────
 console.log("(A) 정적 계약");
@@ -224,13 +224,21 @@ function runBatch(results) {
     /처리된 항목 없음/.test(summary({ total: 3, uploaded: 0, skipped: 0, staged: 0, blocked: 0, failed: 0 })));
 }
 
-// ── (D) 버전 저장명 (체인 통합의 로컬 부작용 차단) ───────────────────────────
-console.log("(D) 버전 저장명");
+// ── (D) 저장명 규칙의 단일 권위 (형제 cycle attach-suffix-toggle 반영) ────────
+// 원래 이 축은 프론트 `_versionedFilename` 의 idempotent 동작을 검증했다. 형제 cycle
+// (REQ-20260806-attach-suffix-toggle)이 **그 함수를 제거하고 이름 규칙의 권위를 서버로**
+// 옮겼으므로(`X-Attachment-Download-Name` · manifest `download_filename`), 옛 단정은
+// 존재하지 않는 코드를 검사하는 dead assertion 이 된다 — 삭제하고, 그 결정이 **되돌려지지
+// 않는지**(규칙이 다시 두 벌이 되지 않는지)를 대신 잠근다. 규칙이 두 벌이면 토글을 끈 뒤
+// 한쪽 경로에만 접미가 남고 AI 편집본이 `report_v2_v2.csv` 가 된다(형제 cycle 실측).
+console.log("(D) 저장명 규칙의 단일 권위");
 {
-  const vf = new JSDOM("<!doctype html>").window.Function(`${SRC_VERNAME}\nreturn _versionedFilename;`)();
-  ok("D1 확장자 보존", vf("query.sql", 2) === "query_v2.sql");
-  ok("D2 기존 _v<n> 접미 재부여(이중접미 방지)", vf("query_v2.sql", 3) === "query_v3.sql");
-  ok("D3 확장자 없는 이름", vf("README", 4) === "README_v4");
+  ok("D1 프론트에 저장명 생성 함수가 없다(규칙 이중화 0)",
+    !/function\s+_versionedFilename\s*\(/.test(composerJs));
+  ok("D2 개별 다운로드가 서버가 준 이름을 쓴다",
+    /X-Attachment-Download-Name/.test(composerJs));
+  ok("D3 버전 박스 행도 원본명을 그대로 넘긴다(프론트 가공 없음)",
+    /_downloadAttachmentById\(v\.id,\s*v\.original_filename,\s*dl\)/.test(composerJs));
 }
 
 // ── (E) 뮤테이션 역검증 — 결함을 되살리면 반드시 FAIL 해야 한다 ───────────────

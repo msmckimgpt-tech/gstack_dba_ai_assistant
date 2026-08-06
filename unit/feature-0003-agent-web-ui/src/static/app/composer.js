@@ -1035,7 +1035,14 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
 
     const roleEl = document.createElement("span");
     roleEl.className = "attach-list-version-role";
-    roleEl.textContent = (isAi ? "AI 수정" : "사용자") + (isLatest ? " · 최신" : "");
+    // attach-date-compact: 버전 이력은 "언제의 버전인가" 가 곧 식별자다 — 역할 뒤에 compact
+    // 시각을 붙인다(같은 파일명이 한 체인에 쌓이면서 행 구분이 버전번호·시각에만 남는다).
+    const vWhen = _fmtAttachWhen(v.created_at);
+    roleEl.textContent = (isAi ? "AI 수정" : "사용자")
+      + (vWhen ? " · " + vWhen : "")
+      + (isLatest ? " · 최신" : "");
+    const vWhenTitle = _attachWhenTitle(v.created_at);
+    if (vWhenTitle) roleEl.title = vWhenTitle;
     const acts = document.createElement("span");
     acts.className = "attach-list-version-actions";
     // 최신 행에는 `⇄` 를 두지 않는다 — 자기 자신과의 비교는 무의미하고, 최신 기준 비교는
@@ -1395,6 +1402,40 @@ function _openAttachDownloadDialog() {
 // 개별 응답의 `X-Attachment-Download-Name`). 규칙이 두 벌이면 토글을 끈 뒤 한쪽 경로에만
 // 접미가 남고, 저장명에 이미 `_v2` 가 있는 AI 편집본은 `report_v2_v2.csv` 가 됐다.
 
+// attach-date-compact: 첨부 시각을 목록·버전 이력에 compact 하게 표기한다.
+//
+// ⚠️ 시간대 — 서버 `created_at` 은 **오프셋 없는 로컬(KST) naive** 문자열이다
+// (`WebConversationAttachments.CreatedAt` 이 MySQL `NOW()` 기반이며 컨테이너 TZ=Asia/Seoul.
+//  실측 2026-08-06: 18:50 업로드 → `2026-08-06T18:50:29`). 오프셋 없는 ISO date-time 을
+// `new Date()` 가 **로컬로** 해석하므로 그대로 넘기면 정합한다 — 여기에 `Z` 를 붙이면
+// 9시간 어긋난다(선행 cycle 의 `restorable_until` 이 정확히 그 반대 케이스였다: 그 필드는
+// UTC 라 `Z` 보정이 필요했다. 필드마다 다르므로 값을 실측하고 쓴다).
+function _attachWhenDate(iso) {
+  if (!iso) return null;
+  const d = new Date(String(iso));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// 오늘 → `14:20` · 올해 → `8/6` · 그 외 → `25/8/6`.
+function _fmtAttachWhen(iso) {
+  const d = _attachWhenDate(iso);
+  if (!d) return "";
+  const now = new Date();
+  const sameDay = d.getFullYear() === now.getFullYear()
+    && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (sameDay) return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
+  return `${String(d.getFullYear()).slice(2)}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// 전체 시각(title 전용) — compact 표기가 생략한 정보를 hover 로만 제공한다.
+function _attachWhenTitle(iso) {
+  const d = _attachWhenDate(iso);
+  if (!d) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 async function _runBulkDownload(convId, format, scope, progressEl) {
   const base = `/api/conversations/${encodeURIComponent(convId)}/attachments/download`;
   // '모든 버전' 은 v1 까지 구분해야 하므로 켜져 있으면 force, 그 외는 서버 기본(auto).
@@ -1523,12 +1564,19 @@ async function _loadConversationAttachmentList(convId) {
       // 아이콘만 제외한 전체 폭을 쓰고, 메타줄은 이미 wrap 을 허용하므로 좁아지면
       // 액션이 다음 줄로 접힌다(잘림 대신 줄바꿈 — 선행 cycle 이 세운 원칙과 동일).
       const nameSafe = escapeHtml(a.original_filename || "");
+      // attach-date-compact: 첨부 시각을 메타줄에 **한 토막**으로 얹는다(오늘=`14:20` /
+      // 올해=`8/6` / 그 외=`25/8/6`). 전체 시각은 title 로만 — §16.8 예산상 메타줄은 이미
+      // 크기·상태·버전토글을 이고 있어 여기서 절대시각을 펼치면 240px 폭에서 줄이 접힌다.
+      const whenTitle = _attachWhenTitle(a.created_at);
+      const whenChip = _fmtAttachWhen(a.created_at)
+        ? ` · <span class="attach-list-item-when"${whenTitle ? ` title="${escapeHtml(whenTitle)}"` : ""}>${escapeHtml(_fmtAttachWhen(a.created_at))}</span>`
+        : "";
       item.innerHTML = `
         <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
         <div class="attach-list-item-info">
           <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}</div>
           <div class="attach-list-item-meta">
-            <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
+            <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${whenChip}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
             <span class="attach-list-item-actions">
               <button class="attach-list-item-dl" title="다운로드" aria-label="${nameSafe} 다운로드" data-id="${a.id}">⬇</button>
               ${a.can_manage ? `<button class="attach-list-item-del" title="삭제" aria-label="${nameSafe} 삭제" data-id="${a.id}">🗑</button>` : ""}
