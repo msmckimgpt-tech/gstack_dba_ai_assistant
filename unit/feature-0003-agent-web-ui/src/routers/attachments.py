@@ -118,6 +118,13 @@ def download_attachment(attachment_id: int, request: Request):
         from starlette.responses import Response as _Resp
         from urllib.parse import quote as _quote
         filename = str((row or {}).get("OriginalFilename") or "download")
+        # attach-multi-upload: 저장 파일명은 버전 체인 정합을 위해 원본명을 승계한다
+        # (`_materialize_assistant_attachment_edits` 주석 참조 — 이름이 갈리면 체인이 분열).
+        # 그래서 v2 이상을 내려받을 때 로컬에서 원본을 덮어쓰지 않도록 **응답 파일명에만**
+        # 버전 접미를 붙인다(DB 저장값 불변 → 체인 스코프·dedup 판정에 영향 없음).
+        _dl_version = int((row or {}).get("VersionNumber") or 1)
+        if _dl_version > 1:
+            filename = app._next_version_filename(filename, _dl_version)
         # Content-Disposition: ASCII fallback + RFC5987 비-ASCII(UTF-8) filename*.
         # REV-20260616-0291 MINOR 흡수: 따옴표 + 모든 비출력 제어문자(CR/LF 포함)를 제거해 헤더
         # 인젝션을 차단(OriginalFilename 은 업로드 시 .strip() 만 거쳐 CRLF 가 남을 수 있음).

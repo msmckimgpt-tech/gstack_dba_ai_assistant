@@ -525,11 +525,27 @@ function _discardPendingAttachmentPill(attachmentId) {
   _renderAttachmentPills();
 }
 
-async function _uploadComposerAttachment(file) {
+// attach-multi-upload: 업로드 1건의 결과 코드. 배치 호출부(_uploadComposerAttachments)가
+// 이 값을 집계해 **요약 1회**로 알린다 — 파일마다 토스트를 띄우면 단일 토스트 엘리먼트가
+// 서로를 덮어써 마지막 1건만 남고, 22개 폴더 업로드에서 무슨 일이 일어났는지 알 수 없다.
+const ATTACH_UPLOAD_RESULT = {
+  UPLOADED: "uploaded",
+  SKIPPED_DUPLICATE: "skipped-duplicate",
+  STAGED: "staged",
+  BLOCKED: "blocked",
+  FAILED: "failed",
+};
+
+async function _uploadComposerAttachment(file, opts = {}) {
   // TASK-0124 de-duplication → REQ-20260713-attach-user-version: 이름+크기 차단을 **해시 대조**로
   // 정밀화한다. 같은 이름의 파일이라도 내용이 다르면(sha256 불일치) 통과시켜 백엔드가 새 버전으로
   // 편입하게 하고, 내용이 완전히 동일할 때만 중복 차단한다(기존 안티-중복 의도 보존). 새 파일 해시는
   // 백엔드 저장값(bucket item.sha256, 업로드 응답에서 적재)과만 비교 — sha256 미상이면 통과(백엔드 권위).
+  //
+  // attach-multi-upload: 배치(여러 파일) 호출에서는 개별 토스트를 억제하고(silent) 결과 코드만
+  // 반환한다. 호출부가 집계해 요약 1회를 띄운다.
+  const _silent = Boolean(opts.silent);
+  const _toast = (msg, isError = false) => { if (!_silent) showToast(msg, isError); };
   const _deupKey = _composerAttachmentKey(state.activeConversationId);
   const _dedupBucket = state.composerAttachments.byConv[_deupKey];
   if (_dedupBucket && file) {
@@ -541,8 +557,10 @@ async function _uploadComposerAttachment(file) {
       try { _newHash = await _sha256HexOfFile(file); } catch (_e) { _newHash = null; }
       const _identical = Boolean(_newHash) && _sameNameSize.some((it) => it.sha256 && it.sha256 === _newHash);
       if (_identical) {
-        showToast(`이미 첨부된 파일입니다(내용 동일): ${file.name || "unnamed"}`, true);
-        return;
+        // 오류가 아니라 **변경 없음(no-op)** 이다 — 빨간 에러 토스트로 알리면 폴더 재업로드에서
+        // "차단당했다"로 읽힌다(사용자 보고 2026-08-06). 정보 토스트로 낮춘다.
+        _toast(`이미 최신입니다(내용 동일) — 건너뜀: ${file.name || "unnamed"}`);
+        return ATTACH_UPLOAD_RESULT.SKIPPED_DUPLICATE;
       }
       // 이름·크기는 같으나 내용이 다르거나(해시 불일치)·해시 미상 → 통과(백엔드가 버전 판정).
     }
@@ -555,8 +573,8 @@ async function _uploadComposerAttachment(file) {
   const hasContext = Boolean(state.activeConversationId) || Boolean(state.pendingSentinel);
   if (!hasContext) {
     if (!can("conversation.create")) {
-      showPermissionDeniedToast("conversation.create");
-      return;
+      if (!_silent) showPermissionDeniedToast("conversation.create");
+      return ATTACH_UPLOAD_RESULT.BLOCKED;
     }
     state.pendingNewConversation = true;
     state.pendingSentinel = _newPendingSentinel();
@@ -576,8 +594,8 @@ async function _uploadComposerAttachment(file) {
   const key = _composerAttachmentKey(state.activeConversationId);
   const bucket = _ensureComposerBucket(key);
   if (!bucket) {
-    showToast("대화 컨텍스트 미정 — 새 대화 또는 기존 대화를 선택해 주세요.", true);
-    return;
+    _toast("대화 컨텍스트 미정 — 새 대화 또는 기존 대화를 선택해 주세요.", true);
+    return ATTACH_UPLOAD_RESULT.BLOCKED;
   }
   // UX-COMPACT: lazy-create 단계에서도 파일 선택 즉시 대화 생성 + 업로드 + ingest 병렬 시작.
   // 대화 생성 중인 경우(race) staged 방식으로 fallback — sendPrompt 가 첫 send 전 _flushStagedAttachmentsToCid 로 처리.
@@ -587,10 +605,11 @@ async function _uploadComposerAttachment(file) {
       state.composerAttachments.nextLocalId -= 1;
       bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "staged", selected: true, _localFile: file, source: "new" });
       _renderAttachmentPills();
-      showToast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
-      return;
+      _toast(`첨부가 추가되었습니다 (첫 메시지와 함께 업로드됩니다): ${file.name || "unnamed"}`);
+      return ATTACH_UPLOAD_RESULT.STAGED;
     }
     state.composerAttachments.lazyConvCreating = true;
+    let _lazyOutcome = ATTACH_UPLOAD_RESULT.FAILED;
     const localId = state.composerAttachments.nextLocalId;
     state.composerAttachments.nextLocalId -= 1;
     bucket.items.push({ id: localId, kind: _guessKindFromFile(file), name: file.name || "unnamed", size: Number(file.size) || 0, status: "uploading", selected: true, source: "new" });
@@ -635,11 +654,14 @@ async function _uploadComposerAttachment(file) {
       if (resp && Number(resp.id) > 0) {
         const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
         if (idx2 >= 0) uploadBucket.items[idx2] = { id: Number(resp.id), kind: String(resp.kind || _guessKindFromFile(file)), name: String(resp.original_filename || file.name || "unnamed"), size: Number(resp.size || file.size || 0), status: "ready", selected: true, signed_url: resp.signed_url || null, source: "new", sha256: resp.sha256 || null, version_number: Number(resp.version_number || 1) };
-        showToast(_attachUploadDoneMessage(resp, file.name || "unnamed"));
+        _toast(_attachUploadDoneMessage(resp, file.name || "unnamed"));
+        _lazyOutcome = resp.reused_existing_version
+          ? ATTACH_UPLOAD_RESULT.SKIPPED_DUPLICATE
+          : ATTACH_UPLOAD_RESULT.UPLOADED;
       } else {
         const idx2 = uploadBucket?.items.findIndex((it) => it.id === localId) ?? -1;
         if (idx2 >= 0) uploadBucket.items[idx2] = { ...uploadBucket.items[idx2], status: "failed", error: resp?.error || "업로드 실패" };
-        showToast(`첨부 업로드 실패: ${resp?.error || "알 수 없는 오류"}`, true);
+        _toast(`첨부 업로드 실패: ${resp?.error || "알 수 없는 오류"}`, true);
       }
     } catch (exc) {
       const curBucket = state.activeConversationId
@@ -647,13 +669,13 @@ async function _uploadComposerAttachment(file) {
         : (pendingKey ? state.composerAttachments.byConv[pendingKey] : null);
       const idx2 = curBucket?.items.findIndex((it) => it.id === localId) ?? -1;
       if (idx2 >= 0) curBucket.items[idx2] = { ...curBucket.items[idx2], status: "failed", error: String(exc?.message || exc) };
-      showToast(`첨부 업로드 실패: ${exc?.message || exc}`, true);
+      _toast(`첨부 업로드 실패: ${exc?.message || exc}`, true);
     } finally {
       state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
       state.composerAttachments.lazyConvCreating = false;
       _renderAttachmentPills();
     }
-    return;
+    return _lazyOutcome;
   }
   const convId = String(state.activeConversationId);
 
@@ -673,6 +695,7 @@ async function _uploadComposerAttachment(file) {
   state.composerAttachments.uploadingCount += 1;
   _renderAttachmentPills();
 
+  let _outcome = ATTACH_UPLOAD_RESULT.FAILED;
   try {
     const formData = new FormData();
     formData.append("file", file);
@@ -699,24 +722,65 @@ async function _uploadComposerAttachment(file) {
           version_number: Number(resp.version_number || 1),
         };
       }
-      showToast(_attachUploadDoneMessage(resp, optimistic.name));
+      _toast(_attachUploadDoneMessage(resp, optimistic.name));
+      _outcome = resp.reused_existing_version
+        ? ATTACH_UPLOAD_RESULT.SKIPPED_DUPLICATE
+        : ATTACH_UPLOAD_RESULT.UPLOADED;
     } else if (resp && resp.error) {
       const idx = bucket.items.findIndex((it) => it.id === localId);
       if (idx >= 0) {
         bucket.items[idx] = { ...bucket.items[idx], status: "failed", error: resp.error };
       }
-      showToast(`첨부 업로드 실패: ${resp.error}`, true);
+      _toast(`첨부 업로드 실패: ${resp.error}`, true);
     }
   } catch (exc) {
     const idx = bucket.items.findIndex((it) => it.id === localId);
     if (idx >= 0) {
       bucket.items[idx] = { ...bucket.items[idx], status: "failed", error: String(exc) };
     }
-    showToast(`첨부 업로드 실패: ${exc}`, true);
+    _toast(`첨부 업로드 실패: ${exc}`, true);
   } finally {
     state.composerAttachments.uploadingCount = Math.max(0, state.composerAttachments.uploadingCount - 1);
     _renderAttachmentPills();
   }
+  return _outcome;
+}
+
+// attach-multi-upload: 여러 파일을 순차 업로드하고 **결과를 요약 1회**로 알린다.
+// - 파일 1개면 기존과 동일하게 개별 토스트(요약 없음) — 단건 UX 회귀 방지.
+// - 2개 이상이면 개별 토스트를 억제하고 집계 요약만 띄운다. showToast 는 단일 엘리먼트를
+//   갱신하는 구조라(app.js showToast) 파일마다 띄우면 서로를 덮어써 마지막 1건만 남는다.
+// 반환: 집계 결과 객체(테스트·호출부 검증용).
+async function _uploadComposerAttachments(files) {
+  const list = Array.from(files || []).filter(Boolean);
+  const tally = { total: list.length, uploaded: 0, skipped: 0, staged: 0, blocked: 0, failed: 0 };
+  if (!list.length) return tally;
+  const batch = list.length > 1;
+  for (const file of list) {
+    // 파일 사이 race 방지를 위해 await 직렬 (버킷·lazy-create 상태 공유).
+    // eslint-disable-next-line no-await-in-loop
+    const result = await _uploadComposerAttachment(file, { silent: batch });
+    if (result === ATTACH_UPLOAD_RESULT.UPLOADED) tally.uploaded += 1;
+    else if (result === ATTACH_UPLOAD_RESULT.SKIPPED_DUPLICATE) tally.skipped += 1;
+    else if (result === ATTACH_UPLOAD_RESULT.STAGED) tally.staged += 1;
+    else if (result === ATTACH_UPLOAD_RESULT.BLOCKED) tally.blocked += 1;
+    else tally.failed += 1;
+  }
+  if (batch) showToast(_attachBatchSummaryMessage(tally), tally.failed > 0 || tally.blocked > 0);
+  return tally;
+}
+
+// attach-multi-upload: 배치 업로드 요약 문구. "건너뜀"은 오류가 아니라 변경 없음을 뜻한다 —
+// 사용자가 폴더 전체를 다시 올리는 흐름에서 대부분이 건너뜀이 되는 것이 정상이다.
+function _attachBatchSummaryMessage(t) {
+  const parts = [];
+  if (t.uploaded) parts.push(`${t.uploaded}개 업로드`);
+  if (t.staged) parts.push(`${t.staged}개 첨부 대기`);
+  if (t.skipped) parts.push(`${t.skipped}개 변경 없음(건너뜀)`);
+  if (t.failed) parts.push(`${t.failed}개 실패`);
+  if (t.blocked) parts.push(`${t.blocked}개 차단`);
+  if (!parts.length) return `첨부 ${t.total}개 — 처리된 항목 없음`;
+  return `첨부 ${t.total}개 중 ${parts.join(" · ")}`;
 }
 
 // REQ-20260713-attach-user-version: 업로드 응답의 버전 상태에 따른 완료 toast 메시지.
@@ -923,7 +987,14 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
     dl.title = "이 버전 다운로드";
     dl.setAttribute("aria-label", `${v.original_filename || "파일"} 버전 ${vnum} 다운로드`);
     dl.textContent = "⬇";
-    dl.addEventListener("click", () => _downloadAttachmentById(v.id, v.original_filename, dl));
+    // attach-multi-upload: 버전 체인의 모든 row 가 같은 파일명을 쓰므로(원본명 승계),
+    // 구버전을 받으면 로컬에서 최신본을 덮어쓴다. 저장명에만 버전 접미를 붙인다
+    // (서버 Content-Disposition 도 동일 규칙 — 여기 blob 저장은 link.download 가 이긴다).
+    dl.addEventListener("click", () =>
+      _downloadAttachmentById(
+        v.id,
+        vnum > 1 ? _versionedFilename(v.original_filename, vnum) : v.original_filename,
+        dl));
     acts.appendChild(dl);
     // 삭제 어포던스는 서버 판정(can_manage)만 따른다 — 프론트가 소유권을 따로 추정하면
     // 표시와 집행이 어긋난다(§16.7 G6).
@@ -1216,12 +1287,18 @@ function _openAttachDownloadDialog() {
 // 전 버전 모드에서 개별 저장할 때 붙일 이름 — ZIP 경로(`_zip_entry_name`)가 `_v3` 를
 // 붙이는데 개별 경로가 원본명 그대로면 브라우저가 `report (1).csv` 로 저장해 **어느 게
 // 몇 버전인지 사라진다**. 두 경로의 결과물이 같은 규칙을 따르게 한다.
+// 저장(로컬) 파일명에 버전 접미를 붙인다. 서버 `_next_version_filename` 과 같은 규칙:
+// 이미 `_v<n>` 접미가 있으면 제거 후 재부여(이중접미 방지 — 과거 사이클이 만든
+// `x_v2.sql` 같은 저장명이 `x_v2_v3.sql` 이 되지 않게), 확장자는 보존.
+// attach-multi-upload: 버전 체인의 모든 row 가 같은 저장 파일명을 쓰게 되면서(원본명 승계)
+// 구버전 다운로드가 로컬 최신본을 덮어쓸 수 있어, 버전 박스 행도 이 함수를 쓴다.
 function _versionedFilename(filename, versionNumber) {
   const n = Number(versionNumber || 1);
   const raw = String(filename || "download");
   const dot = raw.lastIndexOf(".");
-  if (dot <= 0) return `${raw}_v${n}`;
-  return `${raw.slice(0, dot)}_v${n}${raw.slice(dot)}`;
+  const stem = (dot > 0 ? raw.slice(0, dot) : raw).replace(/_v\d+$/, "");
+  const ext = dot > 0 ? raw.slice(dot) : "";
+  return `${stem}_v${n}${ext}`;
 }
 
 async function _runBulkDownload(convId, format, scope, progressEl) {
@@ -1482,12 +1559,15 @@ function _bindComposerAttachmentEvents() {
 
   if (fileInput) {
     fileInput.addEventListener("change", async (ev) => {
-      const file = ev.target?.files?.[0];
-      if (file) {
-        await _uploadComposerAttachment(file);
-      }
-      // reset value so same file selectable again.
+      // attach-multi-upload: input[multiple] 이므로 선택된 **전량**을 순차 업로드한다.
+      // 종전엔 files[0] 만 처리해, 여러 개를 골라도 첫 파일만 올라갔다.
+      const files = Array.from(ev.target?.files || []);
+      // value 리셋을 업로드 **전에** 한다 — 업로드가 await 로 길어지는 동안 input 이
+      // 이전 선택을 물고 있으면 같은 파일 재선택이 change 를 발화하지 않는다.
       ev.target.value = "";
+      if (files.length) {
+        await _uploadComposerAttachments(files);
+      }
     });
   }
   if (composerWrap) {
@@ -1509,8 +1589,15 @@ function _bindComposerAttachmentEvents() {
       ev.preventDefault();
       dragCounter = 0;
       composerWrap.classList.remove("is-dragover");
-      const file = ev.dataTransfer?.files?.[0];
-      if (file) await _uploadComposerAttachment(file);
+      // attach-multi-upload: composer-wrap 은 #chatPane 의 자손이라, 여기서 업로드까지 하면
+      // 버블링된 같은 drop 을 chatPane 핸들러가 다시 처리해 **첫 파일이 2회 업로드**된다
+      // (두 번째 시도가 dedup 에 걸려 "이미 첨부된 파일입니다" 오탐 토스트를 냈다).
+      // chatPane 이 조상이면 업로드는 그쪽에 위임하고 여기서는 시각효과만 되돌린다.
+      // chatPane 이 없는(구조 변경) 환경에서는 여기서 직접 전량 업로드해 기능 소실을 막는다.
+      const chatPaneEl = document.getElementById("chatPane");
+      if (chatPaneEl && chatPaneEl.contains(composerWrap)) return;
+      const files = Array.from(ev.dataTransfer?.files || []);
+      if (files.length) await _uploadComposerAttachments(files);
     });
   }
 
@@ -1569,12 +1656,8 @@ function _bindComposerAttachmentEvents() {
       const files = Array.from(ev.dataTransfer?.files || []);
       if (!files.length) return;
       // 한 번에 여러 파일 드롭 시 순차 업로드 (backend 는 1 파일/요청 단위).
-      for (const file of files) {
-        // 파일 사이 race condition 방지를 위해 await 직렬.
-        // _uploadComposerAttachment 가 lazy-create / 실 업로드 모두 처리.
-        // eslint-disable-next-line no-await-in-loop
-        await _uploadComposerAttachment(file);
-      }
+      // attach-multi-upload: 배치 요약 1회로 결과를 알린다(파일마다 토스트 → 상호 덮어쓰기).
+      await _uploadComposerAttachments(files);
     });
     // 윈도우 밖으로 드래그 빠져나가면 counter 리셋 (dragleave 누락 방어).
     window.addEventListener("dragend", () => {
@@ -2629,6 +2712,7 @@ function _applyMention(name) {
 
 export {  // 인라인 export(_downloadAttachmentById) 제외
   _applyMention,
+  _attachBatchSummaryMessage,
   _attachShareRangeEsc,
   _bindComposerActionsEvents,
   _bindComposerAttachmentEvents,
@@ -2647,6 +2731,8 @@ export {  // 인라인 export(_downloadAttachmentById) 제외
   _resetComposerModelSelection,
   _updateComposerModelLabel,
   _updateComposerReasoningLabel,
+  _uploadComposerAttachments,
+  ATTACH_UPLOAD_RESULT,
   attachAndWaitForResult,
   renderComposer,
   sendPrompt,

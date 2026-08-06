@@ -3054,3 +3054,51 @@ feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹�
 - **검증**: 헤드리스 44/44 · mjs 84 PASS · 전수 mjs 44 suite OK · pytest 26 PASS(접합부 2축 신설) ·
   뮤테이션 5/6 · verify-completion PASS.
 - Timestamp: 2026-08-07T04:30:00+09:00
+## REV-20260806T183000-ai-claude-attach-multi-upload [SKIPPED:tool-restricted:panel] — 폴더 단위 첨부 · 중복 스킵 UX · 편집본 체인 통합
+
+- Related TASK: feature-0003-agent-web-ui (20260806T1820-attach-multi-upload)
+- Trigger: UI/화면·업로드 경로 + 파일명 규칙 변경 → 원래 dispatch 대상은 ux·design + backend·qa
+- Timestamp: 2026-08-06T18:30:00+09:00
+- Verdict: PASS (인라인 보안 검토 · 기계적 계약 점검 · 뮤테이션 역검증 기준)
+- Human Approval Needed: no
+
+**검증 채널 (정직 표기, AGENTS.md §18.8.2 4번)**
+- `codex review --uncommitted` — **실행 불가**: 계정 사용량 한도 초과(리셋 2026-08-09). 시도 로그 보유.
+- subagent panel — 본 세션의 상위 우선순위 지시(AgentTool 사용 금지)로 제약. §18.8.2 "상위 우선순위
+  지시 carve-out" 에 따라 제약 없는 채널로 대체하고 미검증 범위를 여기에 명시한다.
+- **수행한 것**: built-in security-review 지침에 따른 **인라인 보안 검토**(서브태스크 미사용) +
+  기계적 계약 점검(정적 5축) + **뮤테이션 역검증 3종** + 전 스위트 회귀.
+- **미검증 범위**: ux·design 도메인의 독립 관점 리뷰(토스트 문구·요약 정보 밀도), backend 도메인의
+  독립 리뷰. PB-0008 라이브 시각검증으로 부분 보완하되, 그것이 패널을 대체하지 않는다.
+
+**인라인 보안 검토 결과 — HIGH/MEDIUM 0건**
+- **Path traversal(승계 파일명 → ObjectKey)**: 차단. `storage_minio.make_object_key` 가
+  `safe_filename()` 을 거치고 `[A-Za-z0-9._-]` 외 전 문자를 `_` 로 치환한다(`../` 도달 불가).
+- **실행파일 확장자 승격(SEC-1)**: **강화**. 편집본이 LLM `filename` 을 전혀 쓰지 않고 source
+  `OriginalFilename` 을 승계하므로 프롬프트로 확장자를 주입할 경로가 정의상 소멸. 확장자 없는
+  source 의 kind 기반 안전 확장자(txt/csv) 강제는 유지(N4 로 잠금).
+- **Content-Disposition 인젝션**: 무변경. `_next_version_filename` 은 stem/ext 재조립만 하고
+  CR/LF 를 만들지 않으며, 기존 제어문자 제거 + RFC5987 `quote(safe='')` 방어가 그대로 적용된다.
+- **인가 경계**: 무변경. 배치는 파일당 기존 엔드포인트를 호출해 서버
+  `conversation.attachment.upload.{own,any}` 게이트를 그대로 통과한다. `silent` 는 토스트 표시만
+  억제하고 집행에 관여하지 않으며, 억제된 차단은 요약에 "N개 차단" 으로 표면화된다.
+- **하위호환**: 기존 `_v2` 저장명 row 는 불변. 두 접미 함수 모두 idempotent 라 `x_v2_v3` 이중접미가
+  생기지 않는다.
+
+**설계 판단**
+- **dedup 판정을 완화하지 않았다**: 사용자 전제("내용이 다른데 차단")를 sha256 실측으로 검증한
+  결과 지목된 22개가 전부 동일했다(G7-a). 판정을 느슨하게 했다면 진짜 중복이 매번 새 버전으로
+  쌓여 버전 이력이 무의미해진다 — 고친 것은 판정이 아니라 **판정 주변의 경로·알림**이다.
+- **drop 은 제거가 아니라 위임**: `.composer-wrap` 핸들러를 지우면 `#chatPane` 이 없는 구조에서
+  composer 드롭이 죽는다. 조상 관계를 런타임에 확인해 위임하고, 아니면 자체 처리한다(폴백 보존).
+- **버전 접미를 표시 계층으로 이동**: 저장명에서 빼야 체인이 하나로 유지되고, 로컬 덮어쓰기는
+  다운로드 시점 이름으로 막는다. DB 저장값 불변이라 dedup·체인 스코프에 회귀가 없다.
+- **기존 `_v2` 분열 체인 9쌍은 소급 병합하지 않았다** — 파괴적 데이터 변경(§12.3)이라 별도 승인
+  대상이다. REPORT §8 에 잔여로 등재한다.
+
+**남은 리스크**
+- 배치 업로드 중 lazy-create(새 대화) 경로는 첫 파일이 대화 생성을 겸하므로, 그 사이 도착한
+  파일은 `staged` 로 큐잉된다(기존 동작). 요약에서 "N개 첨부 대기" 로 구분 표기한다.
+- 단일 토스트 엘리먼트 구조 자체는 그대로다 — 배치가 요약 1회로 줄여 회피할 뿐, 다른 경로에서
+  연속 토스트가 겹치는 문제는 별도 축이다.
+- Artifact: 본 entry
