@@ -387,6 +387,49 @@ ok("F6 attach-diff 의 import specifier 는 ?v=dev 고정 (CONVENTIONS §14.1 �
 ok("F7 app.js 가 code-highlight 를 ?v=dev 로 참조",
   /from "\.\/code-highlight\.js\?v=dev"/.test(appJs));
 
+// ── (F2) CSS 구조 유효성 — PB-0008 이 잡은 결함의 회귀 잠금 ──────────────────
+// 라이브 실측(2026-08-07, PB-0008): `code-tok-keyword` 의 computed color 가 `rgb(38,37,30)`
+// (=`--text` 기본값) · weight 400 이었다. 규칙은 파일에 있었는데 **적용되지 않았다** —
+// 앞선 주석 블록에 여는 `/*` 가 없어서(설명 문단을 추가할 때 기존 주석의 `*/` 뒤에 붙였다)
+// CSS 파서가 `**굵기는 … */` 를 셀렉터로 읽기 시작해 **바로 다음 규칙 하나를 통째로 삼켰다**.
+// 그래서 keyword 만 죽고 type 이후는 정상이었다(실측과 정확히 일치).
+//
+// 이 축을 놓친 이유: F/G 섹션의 CSS 단언이 전부 **문자열 grep** 이라 "파일에 그 규칙이 적법한
+// 위치에 있는가" 를 묻지 않았다. jsdom 의 CSSOM 파서(cssom)는 관대해서 깨진 버전도 13 규칙을
+// 그대로 인식하므로 그것으로도 잡히지 않는다(실측 확인). 결정적으로 잡히는 두 검사를 둔다.
+console.log("\n[F2] CSS 구조 유효성 (주석 균형 · 셀렉터 오염)");
+{
+  const scanComments = (css) => {
+    let i = 0, depth = 0; const orphans = [];
+    for (;;) {
+      const a = css.indexOf("/*", i), b = css.indexOf("*/", i);
+      if (a === -1 && b === -1) break;
+      if (a !== -1 && (b === -1 || a < b)) { i = a + 2; depth += 1; }
+      else {
+        if (depth === 0) orphans.push(css.slice(0, b).split("\n").length);
+        else depth -= 1;
+        i = b + 2;
+      }
+    }
+    return { orphans, unclosed: depth };
+  };
+  for (const [name, css] of [["chat.css", chatCss], ["base.css", baseCss]]) {
+    const { orphans, unclosed } = scanComments(css);
+    ok(`F8 ${name} 고아 '*/' 없음 (여는 '/*' 누락 = 다음 규칙이 삼켜진다)`,
+      orphans.length === 0, `line ${orphans.join(",")}`);
+    ok(`F9 ${name} 미닫힌 주석 없음`, unclosed === 0, `depth ${unclosed}`);
+  }
+  // 주석을 제거한 잔여 CSS 의 **셀렉터 위치**에 산문이 섞이지 않았는지. 이 저장소의 셀렉터는
+  // ASCII 이므로 한글·`**` 가 셀렉터에 나타나면 주석 밖으로 새어 나온 설명문이다.
+  const stripped = chatCss.replace(/\/\*[\s\S]*?\*\//g, "");
+  const bad = [];
+  for (const m of stripped.matchAll(/(^|\})([^{}]{0,400}?)\{/g)) {
+    const sel = m[2];
+    if (/[가-힣]|\*\*/.test(sel)) bad.push(sel.trim().replace(/\s+/g, " ").slice(0, 60));
+  }
+  ok("F10 셀렉터 위치에 산문(한글·`**`) 누출 0", bad.length === 0, bad.slice(0, 2).join(" | "));
+}
+
 // ── (G) 팔레트 대비 — 계산으로 잠근다 ────────────────────────────────────────
 // 색 대비는 브라우저 없이 계산 가능한 축이다. 초판은 "jsdom 은 색을 못 본다 → PB-0008 이월" 로
 // 미확정 처리했는데 §18.8 design 패널이 계산해 보니 **27조합 중 12조합이 AA 미달**이었다
