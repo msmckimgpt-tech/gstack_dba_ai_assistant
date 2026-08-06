@@ -2395,3 +2395,10 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - **범위 밖(미적용, REPORT §8 원장)**: 동형 오버레이 3곳 — `app/profile.js:306`(사용자향
   `mousedown` 단독) · `admin/usage.js:662` · `admin/audit.js:317`.
 - Run 기록 정본: `docs/test-runs.d/20260806T1144-modal-backdrop-dismiss.md` (§5.3 fragment).
+## TASK-20260806T1620-modal-dismiss-postdeploy — 배경 dismiss POST-DEPLOY 라이브 실측 (doc-only)
+- **Environment: Windows-browser (PB-0008)** — **PASS 13/13**. 배포본 `44627bad` 라이브
+  `https://localhost/` 에서 사이드바 `···` 메뉴 실제 클릭으로 모달 4종(대화 설정·공유·폴더로
+  이동·폴더 설정)을 열고 CDP trusted 제스처 3종씩 실측. 라이브 데이터 변경 0(임시 폴더 자가
+  생성·자가 삭제, 잔재 0 단언).
+- 미실측 2종(공유 링크 설정·참여 허용 확인) — 진입에 실제 공유 링크 발급이 필요해 제외, 사유 명시.
+- Run 기록 정본: `docs/test-runs.d/20260806T1144-modal-backdrop-dismiss.md` Run 3.

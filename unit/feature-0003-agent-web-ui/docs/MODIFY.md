@@ -2301,3 +2301,15 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/evidence/modal-backdrop-dismiss-harness-live.png`, `.gitignore`.
 - **캐시버스터:** `?v=dev` 고정 — `index.html` 편집 0 (ITEM-09 빌드 자동주입 regime, `inject_asset_stamp.py` + `deploy-web.sh` 가 배포 시 content-hash 주입).
 - Timestamp: 2026-08-06T11:44:13+09:00
+## CHG-20260806T1620-modal-dismiss-postdeploy 배경 dismiss POST-DEPLOY 라이브 실측 기록 (doc-only)
+- 선행 cycle `CHG-20260806T1144-modal-backdrop-dismiss`(PR #1164, 배포본 `44627bad`)의 잔여였던
+  "배포 후 라이브 실제 모달 육안 확인" 을 수행하고 `docs/test-runs.d/20260806T1144-modal-backdrop-dismiss.md`
+  에 Run 3(PASS 13/13) + 증적 스크린샷 1장을 append. **코드 변경 0**.
+- 라이브 4종(대화 설정·공유·폴더로 이동·폴더 설정) 각 3제스처 실측. 진입은 `page.evaluate` 함수
+  호출이 아니라 **사이드바 `···` 메뉴 실제 클릭** — app.js 가 ES module 이라 opener 가 전역이
+  아님을 실측으로 확인(`promptShareExpiry is not defined`).
+- 라이브 데이터 변경 0(저장·전송·보관 미클릭, 임시 폴더 자가 생성·자가 삭제 + 잔재 0 단언).
+- 미실측 2종은 진입에 실제 공유 링크 발급이 필요해 제외 — 사유를 fragment 에 명시.
+- Files: `docs/{TASK,MODIFY,REVIEW,TEST}.md`, `docs/test-runs.d/20260806T1144-modal-backdrop-dismiss.md`,
+  `docs/test-runs.d/evidence/modal-backdrop-dismiss-live.png`.
+- Timestamp: 2026-08-06T16:20:00+09:00
