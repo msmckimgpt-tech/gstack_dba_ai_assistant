@@ -2,7 +2,7 @@
 run_at: 2026-08-07T06:40:00+09:00
 session: ai/claude/feature-0003-attach-diff-syntax-css-fix
 scope: 구문 하이라이트 keyword 규칙 미적용 hotfix
-verdict: PARTIAL
+verdict: PASS
 ---
 
 # Run — attach-diff 구문 하이라이트 CSS hotfix
@@ -22,7 +22,8 @@ verdict: PARTIAL
 - `tests/verify_attach_diff_syntax_highlight.mjs` **113 PASS / 0 FAIL** (F2 섹션 5단언 신설)
 - 뮤테이션: 라이브 결함 재주입 → **F8(line 2865)·F10 2중 red**
 
-## 잔여
+## Environment: Windows-browser (PB-0008) — 수정 확인 Run (배포본 6a3b1a97)
 
-- 배포 후 PB-0008 재검증 — `code-tok-keyword` computed color `#7c3aed`(rgb(124,58,237)) · weight 600
-  실측 시 본 fragment 를 `verdict: PASS` 로 갱신한다.
+- `code-tok-keyword` computed **`rgb(124,58,237)`(=`#7c3aed`) · `font-weight: 600`** → 규칙 적용 확인.
+- 동반 축: 토글 끔/재켬 span 12↔0(텍스트 불변) · 단일열 parity · 2버전 체인.
+- Evidence: `/tmp/win-browser-shots/pb0008-attach-diff-syntax-02-fixed-split-on.png`

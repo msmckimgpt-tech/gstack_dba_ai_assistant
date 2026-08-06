@@ -3476,3 +3476,12 @@ CONCERN 1(security)** → P1 4건 · P2 7건 · P3 4건 전건 흡수 후 재검
 
 **남은 리스크**: 없음(주석 문자 변경 + 테스트 추가).
 - Artifact: 본 entry
+
+## REV-20260807T070000-ai-claude-attach-diff-syntax-postdeploy [SKIPPED:non-code-doc] — SHIP
+
+doc-only(실측 결과 기록 + 원장 등재). 코드·CSS·테스트 변경 0 이므로 적대 패널이 검토할 판단면이 없다.
+
+**기록의 요지**: PB-0008 이 이 cycle 의 값을 증명했다 — 108건 하네스 + 3도메인 적대 패널 + 뮤테이션
+9/9 를 통과한 변경에서 **실 브라우저만이 잡을 수 있는 결함**(CSS 규칙이 파서에게 삼켜짐)이 나왔다.
+`visual_verification_scope: always` 가 형식이 아니라 게이트로 작동한 사례로 남긴다.
+- Artifact: 본 entry
