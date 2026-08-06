@@ -2666,3 +2666,96 @@ Trigger: 코드 변경 0 · 비정책 doc-only(TASK/MODIFY/TEST/test-runs.d appe
 시각 검증 Run 기록 + 증적 이미지 추가만으로, 코드·정책·계약 변경이 0 이다(§18.8.1 docs-only 경량
 경로). 검증 대상 코드는 선행 cycle 에서 ux·design 적대 패널 2 라운드를 거쳤다
 (`REV-20260806T114413-modal-backdrop-dismiss`).
+## REV-20260806T032732-share-sender-nickname [SUBAGENT:adversarial-security-authz + SUBAGENT:adversarial-ux-design] — CONCERN → 전건 흡수 후 SHIP
+- Related TASK: 20260806T0327-share-sender-nickname
+- Trigger: UI/screen/layout keyword(화면·배지·표시) + anonymous 노출면 변경 → ux·design + security
+- Timestamp: 2026-08-06T12:27:32+09:00
+- Verdict: CONCERN (medium 5건) → **전건 in-cycle 수정 후 재검증 green**
+- Human Approval Needed: no (사용자 결정 2건은 사전 수령 — 노출 범위·폴백 정책)
+
+### 채널 선택 근거 (§18.8.2)
+`/codex review` 는 OpenAI 사용량 한도 소진(리셋 2026-08-09)으로 불가, `/security-review` 스킬은
+본문이 검증을 sub-task 로 돌리는데 세션에 "요청 없이 Agent tool 금지" 상위 지시가 걸려 있었다.
+§18.8.2 의 "충돌을 자체 SKIP 하지 않는다" 에 따라 **사용자에게 1회 확인**해 subagent 패널 1회
+사용을 승인받고 security·ux 2렌즈를 호출했다(자체 판단으로 SKIP 하지 않음).
+
+### 흡수한 결함 (5건, 전부 medium — critical/high 0)
+- **[security F-1] 사후 추론 각인이 확정 라벨로 렌더**: `_conv_copy_messages` 는 fork 시 미각인 행에
+  **원본 대화 owner** 를 기입하며 `attribution_inferred: true` 를 남기는데(그 행의 실제 발신자는 다른
+  멤버였을 수 있다 — feature-0003 REVIEW REV-20260804 가 명시), `senderLabel` 이 그 플래그를 무시했다.
+  본 변경이 스스로 내건 "확정적 오귀속 차단" 불변식을 1순위 경로가 관통. → **0순위 게이트 신설**
+  (추론 각인은 이름·id 둘 다 미사용, 3~4순위로 강등) + 하네스 케이스 4건.
+- **[security F-2] 소유자명 폴백의 근거가 실제 발화 집합에서 미성립**: "1:1 은 발신자 = 소유자"
+  라는 근거로 각인 없는 행에 소유자명을 붙였으나, 3순위가 오늘 실제로 발화하는 집합은 **legacy 행**
+  이고 그중 그룹분은 발신자가 owner 가 아닐 수 있다. 프론트에는 그룹/1:1 구분 신호가 없었다.
+  → payload 에 `conversation.is_group` **불리언 1개** 추가(새 식별자 노출 0) + 게이트를 fail-closed 로.
+  `app._conversation_is_group` 은 조회 실패를 False(비그룹)로 삼켜 **실패 방향이 반대**라 감싸지 않고
+  `_share_conversation_is_group` 으로 직접 조회했다(그 함수의 다른 호출부에서는 False 가 안전 방향).
+  → "백엔드 무변경" 이라는 초기 서술도 함께 정정(FUNCTION/MODIFY/REPORT/SECURITY).
+- **[security F-3] §21.7 의 노출집합 서술이 실제보다 좁음**: "window 안에서 발화한 계정으로 한정"
+  이라 적었으나 fork 보정 경로가 **그 대화의 owner 도 멤버도 아닌 제3 계정명**을 화면에 올릴 수
+  있었다. F-1 수정으로 실제 집합이 원 문장과 일치하게 만들고(권장안 채택), §21.7 을 발화-시점-각인
+  기준으로 재서술 + 잔여 위험 2종(표시명 PII · 내부 계정 PK 육안 노출) 명시.
+- **[ux F-1] 절단 레시피가 절반만 구현 — 배지가 아니라 시각 표기가 먼저 깨진다**: `.share-message-time`
+  에 `flex-shrink:0`·`nowrap` 이 없어, 배지의 `overflow:hidden` 이 flex 자동 최소크기를 0 으로 만든
+  뒤 축소 압력이 **양쪽에 비례 배분**된다. 360px 실측 계산상 배지 가용폭 ≈156px 를 넘는 순간 시각이
+  max-content 미만으로 눌려 **2줄로 접히고** meta 줄 높이가 카드마다 달라진다. CSS 주석이 선언한
+  목적("시각 표기를 밀어내지 않는다")과 실제 렌더가 반대. → `.share-message-time { flex:0 0 auto;
+  white-space:nowrap }` + ≤720px 은 절단 대신 `flex-wrap:wrap`(공통 접두사 계정명이 ellipsis 로
+  동일 문자열이 되는 케이스도 함께 차단).
+- **[ux F-2] `title` 무조건 부여 → 중복 툴팁·중복 낭독**: 절단되지 않은 절대다수 배지에서 화면
+  텍스트와 완전 동일한 툴팁이 뜨고(assistant 배지 포함), `<span>` 은 포커스 대상이 아니라 정작
+  절단됐을 때 키보드·터치 사용자에겐 복구 경로로 기능하지 못한다. → `_deferOverflowTitle`
+  (rAF 후 `scrollWidth > clientWidth` 일 때만 부여, 아니면 속성 제거).
+
+### 패널이 확증한 것 (반증 아님 — 근거 보강)
+- **주장 A 참**: `_share_load_messages` 는 `meta_json` 을 allowlist 없이 전달하고, 배제 필터 3종
+  (내부/시스템 메시지 · `event_type` · attachment_derived redact — 삭제 키는 `final_sql`/`sql`/
+  `result_rows`/`result_text`/`steps`) 어디에도 sender 키가 없다. redact 된 메시지조차 sender 는 남는다.
+  쓰기 측도 전부 서버 권위값(인증 actor + DB 조회)이라 클라이언트 meta 주입 경로 0(spoofing 불가).
+- **XSS 실행 경로 0 (2중)**: 싱크가 전부 `textContent`/속성 대입이고, 입력도 `USERNAME_RE`
+  (`[A-Za-z0-9_.-]`)로 전 생성 경로에서 제한된다(로컬 가입·OAuth 프로비저닝·부트스트랩 시드).
+  bidi/homograph 스푸핑도 구조적 차단 — 단 이는 **입력 측 불변식**이라 표시명 필드 도입 시 재평가
+  대상임을 §21.7 에 남겼다.
+- **window 격리(§21) 직교**: 라벨은 hard window 산출물(`_conv_load_messages_raw(anchor, from_id)`)
+  에만 붙고, 브랜치 열람도 `_branch_resolve_readonly_leaf`/`_branch_idrange_pred` 로 게이트된다.
+- **`inline-flex → inline-block` 전환은 회귀 없음 + 필요했다**: 배지는 flex item 이라 두 값 모두
+  blockify 돼 outer display 가 동일하고, 교차축 위치는 부모 `align-items:center` 가 결정한다.
+  반대로 `inline-flex` 를 유지했다면 `text-overflow` 가 **적용되지 않아**(block container 아님)
+  글자 중간 하드 클리핑이 났을 것. 다만 `overflow:hidden` inline-block 은 baseline 이 margin-bottom
+  edge 로 합성되므로, 인라인 문맥 재사용·`align-items:baseline` 전환 시 내려앉는다 → CSS 주석 봉인.
+- **캐시버스터 정상**: `share.html` 은 `?v=dev` placeholder 이고 배포 시 `inject_asset_stamp.py` 가
+  content-hash 를 주입한다(수기 bump 금지·불요).
+
+### 반영하지 않은 지적과 근거
+- **[ux §3] 1:1 대화에서 소유자명 반복이 §16.8-A.1("화면이 이미 보여주는 것은 넣지 않는다") 위반**:
+  타당한 지적이나 **사용자가 명시 선택한 표시**다(2026-08-06 결정: "각인 없는 과거 메시지 = 대화
+  소유자명"). §3.1 우선순위상 사용자의 현재 직접 지시가 최상위라 그대로 둔다. 다만 지적의 실질
+  위험(그룹 legacy 오귀속)은 F-2 수정으로 제거됐고, 남는 것은 1:1 화면의 중복 표기뿐이다.
+  트레이드오프를 여기에 기록해 다음 감사자가 재발견하지 않게 한다.
+- **[ux C4] 참여자 구분에 아바타/색 도입**: 패널 자신이 과잉으로 판정. `share.js` 는 독립 IIFE 라
+  Identicon 도입에 코드 복제가 필요하고 "의도적으로 단순화된 별도 페이지" 설계와 충돌한다. F-1/F-2
+  수정으로 이름이 안 잘리면 위계 문제의 실질 대부분이 해소된다는 패널 결론에 동의.
+- **[ux C5] assistant 발화자(제품)는 여전히 대화 단위**: 본 요청 범위(user 발신자) 밖 — 차기 항목
+  으로 기록(다제품 그룹 대화 공유 시 "누가 답했는지" 는 여전히 헤더의 대화 단위 제품 하나).
+- **[security] mjs 하네스가 CI 밖(pytest 전용 게이트)**: 알려진 프로젝트 구조(CI 는 pytest 전용).
+  대신 pytest 쪽 단언을 배선 문자열에서 **동작 계약**(추론 각인 배제·is_group fail-closed·title 조건부·
+  시각 표기 고정)까지 확장해 CI 커버리지를 넓혔다. 하네스의 CI 배선 자체는 별 cycle 범위.
+
+### 선행 권고 supersede
+feature-0009 `REVIEW.md` REV-20260703T182740 의 `ADJACENT NIT`("일반 그룹채팅 메시지의
+`meta.sender_username` 이 anonymous 공유에 노출 — 후속 티켓 권고")를 본 cycle 이 **표시 방향으로**
+종결한다(그 권고는 비노출 방향 후속을 상정). `docs/SECURITY.md §21.7` 에 명시해 원장 상충을 막았다.
+
+### 검증
+- 동작 하네스 `verify_share_sender_nickname.mjs` **17/17 green**(패널 반영 전 11 → 추론 각인 4 +
+  is_group 분기 2 추가). 배포 소스에서 함수를 추출해 실행하므로 로직 재구현 tautology 아님.
+- pytest `test_share_sender_nickname.py` **2 passed**(배선 + 백엔드 계약 — is_group payload 배선과
+  게이트 fail-closed 를 `inspect.getsource` 로 단언).
+- `make test` 전 스위트 **exit=0**. (1회차에 `test_shutdown_finalizer` 1건 FAIL 이 있었으나 로그가
+  `shutdown finalize: 시간 예산 초과` 를 남긴 시간 예산 flake — 격리 재실행 통과, 전체 재실행 exit=0,
+  본 cycle 은 그 경로의 Python 코드를 접촉하지 않는다.) ruff clean.
+- 라이브 익명 payload 실측(2026-08-06): 활성 공유 링크 1건을 Caddy 경유 익명 호출해 그룹 발신
+  메시지의 `meta.sender_username`/`sender_account_id` 존재를 확인 — 주장 A 의 1차 근거.
+- 실 Windows 브라우저 시각검증은 정적 자산 baked 구조상 **POST-DEPLOY** (test-runs.d fragment 에
+  계획·사유 명시).

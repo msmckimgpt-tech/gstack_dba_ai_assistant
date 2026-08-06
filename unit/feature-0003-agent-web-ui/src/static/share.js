@@ -34,6 +34,13 @@
     "VALUES",
   ];
 
+  // share-sender-nickname: 발신자 각인이 없는 메시지(1:1 대화·legacy)의 화자 라벨 폴백 기준.
+  // render() 가 payload 의 conversation.{owner_username,is_group} 으로 갱신한다(senderLabel 참조).
+  // `_shareIsGroup` 은 **그룹으로 확인됐을 때만** false 가 아니게 되며, 미상(구 payload)이면
+  // true 로 둬 소유자명 폴백을 막는다(fail-closed — 오귀속보다 익명 토큰이 정직하다).
+  let _shareOwnerUsername = "";
+  let _shareIsGroup = true;
+
   const path = window.location.pathname.split("/").filter(Boolean);
   const token = path.length > 0 ? decodeURIComponent(path[path.length - 1]) : "";
 
@@ -116,6 +123,12 @@
 
     const ownerEl = document.getElementById("shareOwner");
     if (ownerEl) ownerEl.textContent = conv.owner_username ? `소유자 ${conv.owner_username}` : "";
+    // share-sender-nickname: 각인 없는 메시지의 화자 폴백 기준을 이번 payload 로 갱신.
+    // 메시지 렌더(renderMessage)·rail 라벨보다 **먼저** 세팅돼야 한다.
+    _shareOwnerUsername = typeof conv.owner_username === "string" ? conv.owner_username.trim() : "";
+    // 소유자명 폴백은 1:1 로 **확인된** 대화에서만 허용한다(그룹 legacy 행 오귀속 차단).
+    // 서버가 신호를 안 주면(구 payload) 그룹으로 간주 — fail-closed.
+    _shareIsGroup = conv.is_group !== false;
 
     const scopeEl = document.getElementById("shareScope");
     if (scopeEl) {
@@ -293,7 +306,14 @@
     meta.className = "share-message-meta";
     const badge = document.createElement("span");
     badge.className = `share-role-badge share-role-${role}`;
-    badge.textContent = roleLabel(msg.role);
+    // share-sender-nickname: user 는 메시지별 발신자명(닉네임), assistant 는 종전 역할 라벨.
+    // textContent 라 사용자명이 마크업으로 해석되지 않는다(XSS 차단).
+    badge.textContent = senderLabel(msg);
+    // 긴 사용자명은 배지 폭을 CSS 로 제한(ellipsis)하므로 **실제로 잘렸을 때만** 전체 값을
+    // title 로 보존한다. 무조건 걸면 화면 텍스트와 똑같은 툴팁이 전 말풍선에서 점멸하고
+    // AT 에도 같은 문자열이 두 번(이름+설명) 전달된다(§18.8 적대 패널 F-2 반영).
+    // 레이아웃 확정 후 판정해야 scrollWidth/clientWidth 가 유효하다.
+    _deferOverflowTitle(badge);
     const time = document.createElement("span");
     time.className = "share-message-time";
     time.textContent = formatDateTime(msg.created_at);
@@ -376,7 +396,9 @@
       dot.className = `share-point-dot is-${role}`;
       dot.dataset.idx = String(idx);
       const when = (msg && msg.created_at) ? formatDateTime(msg.created_at) : "";
-      const who = role === "user" ? "사용자" : "Assistant";
+      // share-sender-nickname: rail 툴팁/aria 도 말풍선 배지와 같은 화자 라벨을 쓴다
+      // (한 화면에서 같은 메시지의 화자가 두 이름으로 보이지 않게 — 표기 단일 출처).
+      const who = senderLabel(msg);
       const topic = String((msg && msg.content) || "").trim().slice(0, 60).replace(/\s+/g, " ");
       dot.title = [when, who].filter(Boolean).join(" · ") + (topic ? ` · ${topic}` : "");
       dot.setAttribute("aria-label", dot.title);
@@ -1372,6 +1394,60 @@
     if (role === "user") return "사용자";
     if (role === "assistant") return "어시스턴트";
     return role || "메시지";
+  }
+
+  // share-sender-nickname: 공유 뷰의 user 말풍선 화자 라벨을 **메시지별 발신자**로 해석한다.
+  // 종전엔 role 만 보고 전원 "사용자" 로 고정돼, 여러 참여자가 발화한 그룹 대화를 공유하면
+  // 누가 무엇을 말했는지 링크 수신자가 구분할 수 없었다(사용자 보고).
+  //
+  // **지배 규칙: 발화 시점에 각인된 사실일 때만 사람 이름을 쓴다.** 공유 링크는 전달되는
+  // 증거물이고 익명 뷰어는 오귀속을 교정할 맥락이 전혀 없으므로, 확신이 없으면 이름 대신
+  // 익명 토큰을 쓴다(§18.8 적대 패널 F-1/F-2 반영).
+  //   0) meta.attribution_inferred === true → **이름 사용 금지**. fork/제품전환 보정이
+  //      사후에 채운 추론값이다(`_conv_copy_messages` 가 미각인 행에 원본 대화 owner 를
+  //      기입하며 이 플래그를 남긴다). 그 행의 실제 발신자는 다른 멤버였을 수 있다.
+  //      각인 없는 행과 동일하게 아래 3)~4) 로 내려보낸다.
+  //   1) meta.sender_username  — 발화 시점 각인된 실제 발신자명.
+  //   2) `사용자 <id>`          — id 만 각인된 경우(표시명 조회 실패분). 이름을 모를 뿐
+  //                              발신자가 소유자와 다르다는 것은 알고 있으므로 소유자명으로
+  //                              폴백하지 않는다(확정적 오귀속 차단 — app.js 와 동일 근거).
+  //   3) 대화 소유자명           — 각인이 전혀 없는 메시지 중 **1:1 대화로 확인된 경우만**.
+  //                              1:1 은 발신자 = 소유자이고 소유자명은 이미 헤더에
+  //                              "소유자 X" 로 노출돼 있어 새 식별자를 더하지 않는다.
+  //                              **그룹(또는 판별 불가)이면 쓰지 않는다** — 각인 도입
+  //                              (feature-0009 gc-ask-sender-attrib) 이전 legacy 그룹 행은
+  //                              발신자가 owner 가 아닐 수 있어 소유자명이 오귀속이 된다.
+  //   4) "사용자"               — 위 어디에도 해당 없을 때의 최종 폴백(종전 동작).
+  // 익명 열람자에게도 동일 적용(사용자 결정 2026-08-06). 값 자체는 이전부터
+  // /api/public/share/{token} 응답의 meta 에 실려 나가고 있었고, 본 변경은 그 값을
+  // 화면에 쓰는 표시 계층 수정이다(노출 경계는 SECURITY.md §21.7).
+  // share-sender-nickname: 배지가 CSS ellipsis 로 **실제 잘렸을 때만** title 을 건다.
+  // 렌더 직후엔 아직 레이아웃이 없어 scrollWidth/clientWidth 가 0 이므로 rAF 로 미룬다
+  // (rAF 미지원·비가시 환경이면 조용히 skip — title 은 보조 수단이라 없어도 기능 손실 없음).
+  function _deferOverflowTitle(el) {
+    if (!el) return;
+    const apply = () => {
+      try {
+        if (el.scrollWidth > el.clientWidth + 1) el.title = el.textContent || "";
+        else el.removeAttribute("title");
+      } catch (e) { /* 레이아웃 접근 실패는 무시 */ }
+    };
+    if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(apply);
+    else setTimeout(apply, 0);
+  }
+
+  function senderLabel(msg) {
+    if (!msg || msg.role !== "user") return roleLabel(msg && msg.role);
+    const meta = (msg && msg.meta) || {};
+    // 0) 사후 추론 각인은 사실이 아니다 — 이름·id 둘 다 쓰지 않는다.
+    if (meta.attribution_inferred !== true) {
+      const uname = typeof meta.sender_username === "string" ? meta.sender_username.trim() : "";
+      if (uname) return uname;
+      const sid = Number(meta.sender_account_id || 0);
+      if (Number.isFinite(sid) && sid > 0) return `사용자 ${sid}`;
+    }
+    if (!_shareIsGroup && _shareOwnerUsername) return _shareOwnerUsername;
+    return roleLabel("user");
   }
 
   function formatDateTime(ts) {

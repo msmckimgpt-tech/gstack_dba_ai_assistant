@@ -8027,7 +8027,6 @@ ESM 전환으로 새로 부러진 것 + jsdom 환경 소실이 §8 에 없던 11
 - [x] 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(baseline 도 34/0 — 회귀 0) · 내부용어 누출 정규식 스캔 0(feature-id·ADR·PB-0008·모듈/함수명·테이블명·PR#·commit sha) · 화면 문구는 실코드 대조(`admin.html:924` 범례 `AI 표본 대조 판정`·`배지가 없으면 아직 판정 전`, `graph/graph-ctxmenu.js:3604-3626` V map·`판정 근거`).
 - [x] 적대검증 교정 2건 반영: '판정 근거' 는 **어긋난 경우에만** 이 아니라 세 판정 모두에 항상 함께 뜬다(`graph-ctxmenu.js:3619-3626` `if (res.verdict.reason)` 단일 게이트 + `analysis_verify.py` `normalize_verdict` 가 근거 없는 응답을 기각) → summary·detail 문면 교정 · 순환 차단 효과 서술을 배포 후 실측(25분 6콜/6판정, 낭비 0)으로 교체.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(ITEM-09 빌드 자동주입 · `index.html`/`admin.html` 편집 0).
-
 ## 20260806T1144-modal-backdrop-dismiss — 사이드바 항목(대화/폴더) 모달: 바깥 배경 "누름+뗌 모두 배경"일 때만 닫기 (Minor §12.3, frontend-only)
 
 - **사용자 요청(`/_template:entry`)**: "서비스 내 대화화면 좌측의 항목(대화/폴더) 요소들의 설정
@@ -8142,3 +8141,61 @@ file:line 과 함께 REPORT §8 원장 등재 + 사용자 표면화(§8.1 기록
 
 **G3**: 4종은 라이브 실측, 2종은 **미실측임을 명시**하고 근거를 대체 증거로 한정 — "6종 전부
 라이브 확인" 으로 부풀리지 않는다.
+## 20260806T0327-share-sender-nickname — 공유 링크 화면 발화자 배지를 메시지별 발신자(닉네임)로 (Major §12.3, 프론트 표시 전용)
+
+사용자 보고: 공유 링크로 열린 대화 내역에서 각 사용자가 닉네임이 아닌 '사용자' 라는 명칭으로
+고정 표시된다. 여러 참여자가 발화한 그룹 대화를 공유하면 링크 수신자가 누가 무엇을 말했는지
+구분할 수 없다.
+
+- [x] `원인 확정` — `share.js renderMessage()` 가 배지를 `roleLabel(msg.role)` 로만 채워 user 는
+  무조건 "사용자". 작업 화면(`app.js renderMessage`)은 `meta.sender_username`→`사용자 <id>`→
+  소유자 순으로 해석하는데 공유 뷰에는 그 계층이 없었다(표시 계층 단일 결함).
+- [x] `데이터 가용성 실측` — 라이브 활성 공유 링크를 익명으로 호출해 payload 확인:
+  그룹 발신 메시지는 `meta.sender_username`/`sender_account_id` 가 **이미** 응답에 실려 나오고
+  있었다(`_share_load_messages` 가 meta 를 그대로 전달). 백엔드 변경 불요 — 표시만 고치면 된다.
+  표시 store 전수로는 user 961건 중 175건 각인(각인은 그룹 발신 한정) → 폴백 계층 필수.
+- [x] `구현` — `share.js` 에 `senderLabel(msg)` 신설(4단 폴백: 닉네임 → `사용자 <id>` →
+  대화 소유자명 → `사용자`), 말풍선 배지·point rail 툴팁/aria 를 그 단일 출처로 통일,
+  `render()` 가 payload 의 `conversation.owner_username` 으로 폴백 기준 갱신.
+  `share.css .share-role-badge` 는 가변 길이 사용자명 방어(max-width + ellipsis + nowrap,
+  전체 값은 `title` 보존).
+- [x] `사용자 결정 반영 (2026-08-06)` — ① 노출 범위 = **모든 열람자(익명 포함)** ② 각인 없는
+  과거 메시지 = **대화 소유자명 폴백**. 근거: 발신자명은 이전부터 익명 payload 에 있었고,
+  소유자명은 이미 헤더 `소유자 X` 로 노출 중이라 새 식별자를 더하지 않는다.
+- [x] `테스트` — pytest `test_share_sender_nickname.py`(CI 배선 정적 배선 가드 7축 + 백엔드
+  meta 전달 계약 고정) · mjs `verify_share_sender_nickname.mjs`(배포 소스에서 함수를 추출해
+  실행하는 **동작** 하네스 11 케이스 — 로직을 테스트에 재구현하지 않음).
+- [x] `§18.8 적대 패널 (security · ux/design 2렌즈)` — **CONCERN medium 5건 전건 in-cycle 흡수**.
+  ① 사후 추론 각인(`attribution_inferred`)이 확정 라벨로 렌더되던 경로 차단(0순위 게이트 신설 —
+  fork 본 공유 시 원본 대화 owner 이름이 익명 화면에 등장하던 결함) ② 각인 없는 행의 소유자명
+  폴백을 **1:1 확인 시에만** 허용(그룹 legacy 행 오귀속 — payload `conversation.is_group` 불리언
+  1개 추가 + fail-closed 게이트) ③ `SECURITY.md §21.7` 노출집합 서술을 실제 동작에 맞춰 재서술
+  + 잔여 위험 2종 명시 ④ `.share-message-time` 축소·줄바꿈 고정(배지만 막으면 **시각 표기가**
+  눌려 2줄로 접힘 — ux 패널 360px 실측 계산) + ≤720px 절단 대신 wrap ⑤ 배지 `title` 을 실제
+  절단 시에만 부여(중복 툴팁·중복 낭독 제거). 미반영 지적 2건(1:1 중복 표기 §16.8 · assistant
+  제품 발화자)은 근거와 함께 REVIEW 에 기록. 채널: codex 한도 소진 → **사용자 1회 확인 후**
+  subagent 패널(§18.8.2 — 자체 SKIP 하지 않음).
+- [x] `선행 권고 supersede` — feature-0009 REVIEW REV-20260703T182740 의 ADJACENT NIT
+  (`sender_username` anonymous 노출 → 후속 티켓 권고)를 본 cycle 이 **표시 방향**으로 종결,
+  `SECURITY.md §21.7` 에 명시(원장 상충 방지).
+- [ ] `PB-0008` — 실 Windows 브라우저로 공유 링크 렌더 실측(배포 후, `visual_verification_scope: always`).
+
+## 9. Requested Scope
+- [x] `공유 링크 웹페이지에서 각 사용자의 고유 닉네임이 표시되도록 개선` — 산출물:
+  `share.js senderLabel`(4단 + 추론각인 0순위 배제) + 배지·rail 배선 · `share.css` 폭/줄바꿈 방어 ·
+  `routers/share.py` is_group 게이트 · 배선 확인: mjs **17/17** green + pytest 신규 2건 +
+  전 스위트 exit=0 · 라이브 렌더 확인은 PB-0008(배포 후).
+
+**G2**: deliverable 이 단일 항목이라 항목 분해 없음. 다만 표시면이 **2곳**(말풍선 배지 · 우측 rail
+툴팁/aria)이라 둘 다 개별 배선·단언했다 — 한쪽만 고치면 같은 메시지의 화자가 두 이름으로 보인다.
+**G3**: 주장 affordance = "닉네임이 화면에 뜬다". 값의 존재는 라이브 payload 실측으로, 분기 동작은
+배포 소스 함수를 추출 실행하는 mjs 하네스로 확인했다(정적 grep 단언만으로 끝내지 않음).
+**G4**: 경계 = **발신자 각인 유무**(그룹 발신 각인 있음 ↔ 1:1·legacy 각인 없음)와 **소유자명 유무**.
+각 경계의 양측을 하네스 케이스로 덮었다(①/② vs ③/④) — 각인 있는 메시지만 확인했다면 1:1 공유가
+빈 라벨로 깨지는 것을 놓친다.
+**G5/G7**: 신규 리소스·권한 없음. 노출 범위 주장은 이름·기억이 아니라 **라이브 익명 payload 실측**으로
+확인했다(meta 가 이미 나가고 있음).
+**G8**: 결정 적용면 = 화자 라벨을 만드는 모든 지점. `share.js` 내 화자 라벨 생산 지점을 전수
+확인(배지 1 + rail 1)했고, `roleLabel` 은 assistant/알 수 없는 role 폴백용으로만 남는다.
+**G9-a**: 렌더 시각 불변식 = 가변 길이 사용자명이 meta 줄을 밀지 않을 것 → CSS 폭 제한으로 잠그고
+PB-0008 에서 확대 렌더 대조.

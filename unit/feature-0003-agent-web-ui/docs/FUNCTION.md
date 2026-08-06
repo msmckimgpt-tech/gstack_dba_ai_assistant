@@ -2543,3 +2543,82 @@ docker exec <agent> python -m scripts.kb_scope_rescope --verify-contract   # 0 �
   `click` 단계로 미루면 dispatch 중 노드를 제거해도 아래가 눌리지 않는다).
 - AC-20260806T1144-modal-backdrop-dismiss-8: 브라우저가 `click` 을 발행하지 않은 제스처가
   **장전 상태를 남기지 않는다** — 그 뒤 도착한 click 이 누른 적 없는 모달을 닫지 않는다.
+
+## (share-sender-nickname, 2026-08-06) 공유 링크 화면 — 발화자 배지를 메시지별 발신자(닉네임)로 (web/UI, Major §12.3, 표시 계층 + payload 불리언 1개 — RBAC·스키마·마이그레이션 무변경)
+
+**계약**: 공유 링크(`/share/{token}`)로 열린 대화 내역의 user 말풍선 배지는 **그 메시지의 발신자**를
+가리킨다. 종전에는 role 만 보고 전원 `사용자` 로 고정돼, 여러 참여자가 발화한 그룹 대화를 공유하면
+링크 수신자가 누가 무엇을 말했는지 구분할 수 없었다(사용자 보고 2026-08-06).
+
+**지배 규칙 — 발화 시점에 각인된 사실일 때만 사람 이름을 쓴다.** 공유 링크는 전달되는 증거물이고
+익명 뷰어는 오귀속을 교정할 맥락이 전혀 없으므로, 확신이 없으면 이름 대신 익명 토큰을 쓴다.
+
+**해석 우선순위** (`static/share.js senderLabel`, 작업 화면 `app.js renderMessage` 와 동일 컨벤션 —
+[msg-speaker-attribution](#msg-speaker-attribution-2026-08-04) 의 각인 스키마를 공유 뷰에서 소비):
+
+| 순위 | 입력 | 표시 |
+|---|---|---|
+| 0 | `meta.attribution_inferred === true` (사후 보정 각인) | **이름·id 미사용** — 3~4순위로 강등 |
+| 1 | `meta.sender_username` (발화 시점 각인) | 그 발신자명 |
+| 2 | `meta.sender_account_id` 만 (표시명 조회 실패분) | `사용자 <id>` |
+| 3 | 각인 없음 **AND 1:1 로 확인된 대화** | 대화 소유자명 (`conversation.owner_username`) |
+| 4 | 그 외 (그룹·판별 불가·소유자명 부재) | `사용자` (종전 동작) |
+
+- **0순위 (§18.8 패널 F-1)**: fork·제품 전환 보정이 미각인 행에 **원본 대화 owner** 를 기입하며
+  `attribution_inferred: true` 를 남긴다(`_conv_copy_messages`). 그 행의 실제 발신자는 다른 멤버였을
+  수 있으므로 추론값을 확정 이름으로 렌더하지 않는다 — id 역시 추론값이라 함께 배제한다.
+- **2순위**: **소유자명으로 폴백하지 않는다** — 발신자가 소유자와 다르다는 것을 이미 아는 상태라
+  이름을 붙이면 확정적 오귀속이 된다(app.js 와 동일 근거).
+- **3순위 (§18.8 패널 F-2)**: 1:1 은 발신자 = 소유자라 정확하지만, 각인 도입(feature-0009
+  gc-ask-sender-attrib) 이전 **그룹** legacy 행은 발신자가 owner 가 아닐 수 있다. 판정 신호는 신규
+  `conversation.is_group` 이고 **fail-closed** — 조회 실패·대화 행 부재·구 payload 는 전부 그룹으로
+  간주해 이름을 붙이지 않는다(`_share_conversation_is_group`. `app._conversation_is_group` 은 실패를
+  False 로 삼켜 본 용도와 실패 방향이 반대라 감싸지 않고 직접 조회한다).
+
+assistant 배지는 종전 `어시스턴트` 유지(본 요청 범위 = user 발신자). 우측 point rail 툴팁/aria 도
+같은 라벨을 써서 한 화면에서 화자 이름이 갈리지 않는다(부수적으로 rail 의 assistant 라벨이
+`Assistant` → `어시스턴트` 로 배지와 일치, `lang="ko"` 정합).
+
+**노출 경계**: 발신자명은 본 cycle 이전부터 `/api/public/share/{token}` 응답의 `messages[].meta` 에
+실려 나가고 있었다(`_share_load_messages` 가 meta 를 필터 없이 전달 — 2026-08-06 라이브 payload
+실측 + §18.8 패널 코드 재확증). 본 변경의 응답 shape 변경은 `conversation.is_group` **불리언 1개**
+뿐이고(새 식별자·계정 정보 노출 0), 인가 게이트·권한 코드는 불변이다. 익명 열람자에게도 동일 적용
+(사용자 결정 2026-08-06). 표시 경계·잔여 위험 정본은 `docs/SECURITY.md §21.7`.
+
+**표시 안전**: 배지 주입은 `textContent`. 계정명은 생성 경로에서 `[A-Za-z0-9_.-]` 로 제한되므로
+(`web_context.USERNAME_RE`) 마크업·bidi 스푸핑이 구조적으로 차단된다 — 별도 표시명 필드를 도입해
+문자 정책을 완화하면 이 방어의 절반이 사라지므로 그 cycle 에서 재평가할 것(§21.7).
+
+**레이아웃 규약** (§18.8 패널 F-1/F-2 반영): 사용자명 길이가 가변이 되므로
+- 축소 압력은 **배지가 흡수**하고 시각 표기는 보존한다 — `.share-message-time { flex: 0 0 auto;
+  white-space: nowrap; }`. 배지에 `max-width` 만 걸면 `overflow:hidden` 이 flex 자동 최소크기를 0 으로
+  만들어 **시각 span 이 눌려 2줄로 접히고** meta 줄 높이가 카드마다 달라진다(배지만 막는 것으로는
+  부족).
+- 좁은 폭(≤720px)에서는 자르는 대신 `flex-wrap: wrap` 으로 줄을 바꾼다 — 공통 접두사 계정명
+  (`kim.a@corp`/`kim.b@corp`)이 ellipsis 로 같은 문자열이 되면 "누가 말했는지 구분" 이라는 본 기능의
+  목적 자체가 깨지고, rail 은 그 폭에서 숨겨져 툴팁 대체 경로도 없다.
+- `title` 은 **실제 잘렸을 때만** 부여한다(`scrollWidth > clientWidth`, rAF 지연 판정). 무조건 걸면
+  화면 텍스트와 동일한 툴팁이 전 말풍선에서 점멸하고 AT 에 같은 문자열이 두 번 전달된다.
+
+**화면 문구 증가 없음** (§16.8 — 신규 문단·hint·빈 상태 문구 0, 기존 배지의 내용만 정확해진다).
+
+- REQ-20260806T032732-share-sender-nickname: 공유 링크로 생성된 대화 내역에서 각 사용자가 닉네임이
+  아닌 '사용자' 고정 명칭으로 표시되는 것을, 고유 닉네임이 나타나도록 개선한다. `/_template:entry`
+  arg-given dispatch (사용자 원문: "서비스 내 대화를 공유하여 링크를 통해 생성된 대화 내역에서 각
+  사용자는 닉네임이 아닌 '사용자' 라는 명칭이 고정되며 나타나고 있습니다. 고유한 닉네임이 공유된
+  링크 웹페이지에서 나타나도록 개선해주세요.").
+- AC-20260806T032732-share-sender-nickname-1 (발신자 닉네임 표시): 발화 시점 각인
+  (`meta.sender_username`)이 있는 공유 메시지의 배지가 그 발신자명으로 렌더되며, 서로 다른
+  참여자는 서로 다른 이름으로 갈린다.
+- AC-20260806T032732-share-sender-nickname-2 (폴백 체인): id 만 각인된 메시지는 `사용자 <id>`,
+  각인이 전혀 없는 메시지는 **1:1 로 확인된 대화에서만** 대화 소유자명, 그 외(그룹·판별 불가·
+  소유자명 부재)는 종전 `사용자` 로 표시된다.
+- AC-20260806T032732-share-sender-nickname-3 (추론 각인 배제): `attribution_inferred: true` 인
+  메시지는 이름도 id 도 쓰지 않고 3~4순위로 강등된다 — fork 본을 공유해도 원본 대화 owner 의
+  계정명이 확정 라벨로 등장하지 않는다.
+- AC-20260806T032732-share-sender-nickname-4 (게이트 fail-closed): `conversation.is_group` 판정이
+  실패하거나 대화 행이 없거나 payload 에 신호가 없으면 그룹으로 간주해 소유자명을 붙이지 않는다.
+- AC-20260806T032732-share-sender-nickname-5 (무회귀·레이아웃·안전): assistant 배지는 `어시스턴트`
+  유지, rail 툴팁은 배지와 동일 라벨, 배지 주입은 `textContent`, 긴 사용자명이 와도 **시각 표기가
+  눌리거나 2줄로 접히지 않으며**(`.share-message-time { flex:0 0 auto; nowrap }`), ≤720px 에서는
+  절단 대신 줄바꿈되고, `title` 은 실제 절단 시에만 붙는다. RBAC·스키마 변경 0.
