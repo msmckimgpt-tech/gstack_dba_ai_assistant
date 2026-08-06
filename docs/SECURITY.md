@@ -1228,3 +1228,17 @@ re-grant 금지**(★ 관리자 해제 보존)·프론트 그룹 키 parity·see
   하나라도 실패하면 전체를 적용하지 않는다. 잘못 적용된 패치는 전달 실패보다 나쁘다는 판단이다.
 - 실패 메시지는 예외 원문을 담지 않는다(§2.7) — 호스트·경로가 모델 컨텍스트와 저장 메시지로 새지
   않게 로그로만 남긴다.
+
+## 40. 대화 첨부의 파괴적 쓰기·일괄 반출 경계 — 삭제·복구 인가를 열람 경계에서 분리 (feature-0003-agent-web-ui, 2026-08-06)
+
+> 색인 항목 — 전체 설계·적대 검증 정본은 `unit/feature-0003-agent-web-ui/docs/{DECISIONS.md, FUNCTION.md, REVIEW.md, TASK.md}`
+> (`ADR-20260806T154100-attach-manage` — 2026-07-29 `ADR-20260729T163000-attach-append-only` 를 **supersede**(사용자 승인 · **Critical**) /
+> `REV-20260806T154100-attach-manage` 4도메인 패널(security·backend·qa·ux)이 **전부 BLOCK → 해소**, P1 14건 전건 흡수).
+> **신규 권한 코드 0 · 신규 테이블·마이그레이션 0 · 신규 라우트 2**(`POST /api/attachments/{attachment_id}/restore` · `GET /api/conversations/{cid}/attachments/download` — ROUTEMAP 반영) — §21(공유창 window 격리)·§13(감사 해시 체인)이 다루지 않는 **첨부의 파괴적 쓰기 주체**와 **일괄 반출** 축의 boundary 색인이며 정책 본문 신규 서술이 아니다.
+
+- **삭제·복구 인가를 열람 경계에서 분리(본 절의 핵심)**: 종전 `DELETE /api/attachments/{id}` 는 열람 헬퍼(`_account_can_access_attachment`)를 재사용해 **업로더도 대화 소유자도 아닌 그룹 멤버가 남의 첨부를 지울 수 있었다** — 2026-07-29 append-only 전환이 UI 경로 소멸을 근거로 "제품 표면에서는 무효" 로 이월했던 미해결 이슈이고, 삭제 UI 를 되살리면 그 경로가 함께 산다. 신설 `_manage_gate_for_conversation` 은 `conversation.attachment.upload.any`(관리·보존정책 경로) 단락 OR `upload.own` + (업로더 본인 OR 대화 소유자)를 요구하고, 소유자가 아닌 경우 **현재 멤버십**까지 AND 로 요구한다(추방된 업로더가 볼 수 없는 방의 내용을 지우거나 되살리던 비대칭 차단 · 판정 불가는 fail-closed). 열람 경계(멤버 전원 열람)는 **무변경** — 두 경계는 서로 다른 것을 지킨다. 목록·휴지통·버전 응답의 `can_manage` 는 집행과 **같은 술어**로 계산해 표시-집행을 정합시킨다(프론트가 소유권을 추정하지 않는다).
+- **파괴 강도 = soft-delete + retention 창 복구**: 즉시 purge 는 불채택. `DeletePending=1` 로 목록과 assistant 참조 스코프에서 즉시 빠지고, 실 객체 삭제는 기존 reconciliation worker 가 retention(`ATTACHMENT_RECON_RETENTION_DAYS`, 기본 30일) 만료 후 수행한다. §3(승인 필요 변경) 대상이며 사용자 요청·승인(PLAN-APPROVED 2026-08-06)으로 충족했다. `?scope` 가 `version`/`chain` 밖이면 기본값으로 조용히 격하하지 않고 **400** — "전체 버전 삭제" 의도를 "한 버전" 으로 만들지 않는다. retention TOCTOU 는 UPDATE WHERE 에 retention 조건을 더하고 `_is_restorable` 의 파싱 실패 fallback 을 **fail-closed** 로 뒤집어 봉인했다.
+- **일괄 반출에 공유창 window 를 적용(적대 리뷰 P1-2)**: 초안은 bounded 멤버("여기부터 공유")가 `scope=all` 한 번으로 floor 이전 첨부를 전량 ZIP 반출할 수 있었다 — **§21.3 AR-2 / CSO F3**(무권한 멤버 fork 전체 반출 봉인)와 정면 충돌. fork 와 **같은 헬퍼**(`_resolve_copy_window` + `_attachment_outside_window`)로 clip 하고 `deny` 는 403 fail-closed, 제외 건수를 응답·헤더·audit 에 표면화한다. 총량이 `ATTACHMENT_BULK_ZIP_MAX_BYTES`(기본 512MB)를 넘으면 **부분 ZIP 이 아니라 413** — 무음 절단은 무엇이 빠졌는지를 감춘다. zip-slip(경로 구분자·상위 참조 제거)·이름 재충돌 시 덮어쓰기 방지(재확인 루프)·`Content-Disposition` 정제를 ZIP/개별 두 경로 공통 헬퍼로 통일했다. `ids` 파싱 실패가 "필터 없음"(전량 반출)으로 흐르던 무음 확대도 400 으로 닫았다.
+- **감사 공백이 기본값이었다(적대 리뷰 P1-1)**: `attachment.restore`·`attachment.bulk_download` 가 `build_audit_change_json` allowlist 에 없어 `ValueError` 를 `_audit_user_action` 이 삼키고 **감사 행이 0** 이 됐다 — 유일한 대량 반출 경로와 유일한 삭제-되돌리기 경로가 둘 다 무감사. 두 분기를 신설했고, 부수로 `attachment.delete` 가 전 필드 `null` 이던 선재 결함도 `request_ctx` 기반(scope·deleted_count 포함 — 없으면 12건 삭제와 1건 삭제를 감사에서 구별할 수 없다)으로 교체했다. §13 해시 체인 계약 자체는 무변경.
+- **삭제 후 잔존 노출(P2-10)**: 휴지통 응답이 `can_manage=false` 행까지 파일명·크기·sha256 을 실어, **삭제 전에 전원이 보던 것이 삭제 후에도 계속 보이던** 경로를 서버측 **필터**(행 미반환)로 닫았다 — 표시만 숨기면 응답 본문에 남는다.
+- **잔여(정직)**: ① 복구 경로가 용량 상한을 우회할 수 있다(삭제→업로드→복구로 대화·계정 상한 초과 가능) ② 엔드포인트 레벨 요청 테스트는 라이브 DB 의존이라 이번 cycle 은 헬퍼·SQL 계약 단정 + AST 단정으로 대체했고 e2e 흐름은 POST-DEPLOY 로 이월 ③ 개별 다운로드 경로의 window 선재 갭은 본 cycle 범위 밖으로 별건 등재 ④ retention 만료 후에는 되돌릴 수 없다(휴지통이 남은 기간을 표시한다).
