@@ -3058,7 +3058,11 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                 try:
                     from . import domain_synthesis as _dsyn
                     _ds_rep = _dsyn.run_synthesis_pass() if _dsyn.enabled() else None
-                    if _ds_rep and _ds_rep.get("synthesized"):
+                    # ⚠ 카운터가 0 이어도 **돌았다는 사실 자체**를 남긴다. `synthesized` 만 보면
+                    #   "콜은 태웠는데 저장 0" 이, attempted 까지 봐도 "요청이 없어 조용한 tick" 과
+                    #   "배선이 죽어 조용한 tick" 이 구별되지 않는다 — lazy 생성이라 0 인 tick 이
+                    #   대부분이라서, 0 을 안 싣는 순간 이 pass 는 사실상 영구 무음이 된다.
+                    if _ds_rep:
                         scan_report["domain_synthesis"] = _ds_rep
                 except Exception as _dse:
                     logging.getLogger("insight").debug("domain_synthesis_failed err=%r", _dse)
@@ -3506,6 +3510,21 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             "analysis_verify_attempted": int(_av.get("attempted", 0) or 0),
             "analysis_verify_rejudged": int(_av.get("rejudged", 0) or 0),
             "analysis_verify_contradicted": int(_av.get("contradicted", 0) or 0),
+        })
+    # feature-0037(2026-08-06): 도메인 합성 계측. `scan_report["domain_synthesis"]` 도 **dict** 라
+    #   analysis_verify 와 같은 이유로 sweep 의 스칼라 필터에 걸려 통째로 버려지고 있었다 —
+    #   이 워커에서 "계측을 만들고 payload 에 안 실어 무음" 이 반복된 네 번째 사례다.
+    #   lazy 생성(요청이 있어야 합성)이라 값이 0인 tick 이 대부분인데, 그래서 더더욱 **돌았는지
+    #   여부**가 로그에 남아야 한다(무음과 "요청 없음"이 구별되지 않으면 배선 사망을 못 본다).
+    _ds = scan_report.get("domain_synthesis") or {}
+    if _ds:
+        payload.update({
+            # ran=1 은 **항상** 실린다 — sweep 의 truthy 필터를 통과하는 유일한 키라, 이것이
+            #   "이 tick 에서 도메인 합성 pass 가 실제로 돌았다"의 유일한 증거다. 나머지 둘은
+            #   명시 update 라 0 이어도 기록된다(sweep 은 기존 키를 건드리지 않는다).
+            "domain_synthesis_ran": 1,
+            "domain_synthesis_synthesized": int(_ds.get("synthesized", 0) or 0),
+            "domain_synthesis_attempted": int(_ds.get("attempted", 0) or 0),
         })
     for _pk in ("relationships_probe_probed", "relationships_probe_positive",
                 "relationships_probe_negative", "relationships_probe_neutral",

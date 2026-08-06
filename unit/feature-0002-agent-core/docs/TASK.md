@@ -8,6 +8,32 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260806T110000-aiops-hygiene — AI 운영 현황 실측 후속: stale 클러스터 요약 차단 + 도메인 합성 계측 도달 (Minor §12.3)
+
+사용자 요청("AI 운영 현황 전반 실측 후 유사 이슈 검토")으로 16개 task 를 실측한 결과, 선행
+cycle(feature-0036 판정 순환)과 **같은 계열의 결함 2건**을 찾았다.
+
+- [x] 전반 실측 — task 별 호출·대상 반복도·산출 대비·실패·taxonomy 정합. `cluster_*` 의 높은
+      반복도는 배치 때문이며 낭비가 아님을 확인(초기 신호 오독 정정), taxonomy 미분류 0건
+- [x] ~~stale 소비 차단~~ — **적대 검증에서 반증되어 철회**. 다중행의 상당수가 "버전"이 아니라
+      동시 생존하는 다른 클러스터(라벨 충돌)였고, 최신 1건으로 좁히면 79-멤버 클러스터 설명이
+      사라지는 **내용 손실**이 발생한다. 정합 편차 339→645(1.9배 악화) 실측. 상세는 MODIFY.md
+      CHG-20260806T110000 "철회한 변경" 절 — 진짜 원인(라벨 네임스페이스·크로스-스키마 재사용)은
+      별도 cycle 범위
+- [x] **계측 도달** — `domain_synthesis` 계측이 dict 라 sweep 이 버려 무음이었다(이 워커 네 번째
+      재발). payload allow-list 등재 + `attempted` 추가(콜만 태우고 산출 0인 pass 관측)
+- [x] 테스트 — attempted 를 **동작으로** 단정(소스 순서 검사는 변이를 통과시켰다) · payload 도달 ·
+      0-tick 기록 · insight 호출 예외흡수 AST 판정(윈도우 근사가 주석 길이에 깨지던 것 교체)
+- [ ] verify → PR → 머지 → 배포 → 라이브 확인
+
+**이번 cycle 제외**: `shared/model_catalog.py` 유령 taxonomy 2건(`metadata_summary`·
+`metadata_prompt_gen` — 호출부 없음·전체 기간 사용 0건)은 §13.2.2 F2 단일 mutator 대상이고
+`ai/claude/feature-0003-usage-records` 가 편집 중이라 그 세션 머지 후 처리한다(화면 영향 없음).
+
+**정정**: 실측 1차 보고에서 "`domain_summaries` 소비처 0곳"이라 했으나 **오류**다. 테이블명으로만
+grep 해 모듈 경유 호출을 놓쳤다 — `cluster_context._domain_line` 이 `domain_synthesis.load()` 로
+읽어 답변 근거 한 줄로 주입한다(설계대로 배선됨). 5행 전부 합성 완료·대기 0.
+
 ## TASK-20260804T0630-summary-bootstrap-deadlock — 요약 미보유 대화가 PG 읽기 실패로 오판되던 부트스트랩 교착 (Major §12.3 — 선행 cycle 의 writer 복구를 실효 0 으로 만들던 직접 원인)
 
 - 출처: 선행 cycle `TASK-20260804T0454-summary-writer-wiring` 의 **배포 후 라이브 실증**에서 발견.

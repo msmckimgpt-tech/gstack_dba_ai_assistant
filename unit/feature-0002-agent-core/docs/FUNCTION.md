@@ -859,3 +859,20 @@ dialect 층이라 자동 적용, 코칭 문구만 미적용). ② 임계 1,000,0
   **진짜 미열람을 덮는다**. 모델측 절단은 `result_capped_for_model` 로 **반대 방향 경고**만 한다.
   **캡은 올리지 않는다** — 사유는 "공유 저장 경로"(도구별 분기는 `tool_name` 으로 가능)가 아니라
   **steps 가 run 진행 중 폴링으로 반복 전송**되어 상향이 매 payload 에 곱해지기 때문이다.
+
+## 백그라운드 pass 계측의 도달 규약 (2026-08-06)
+
+`run_insight_cycle` 의 `scan_report` 에 **dict 로 담긴 계측은 운영자에게 도달하지 않는다** —
+`_telemetry_sweep` 이 스칼라(int/float/bool)만 payload 로 흘리기 때문이다. 백그라운드 pass 를
+추가할 때 계측을 만드는 것과 **도달시키는 것은 별개 작업**이고, 이 워커는 그 구분을 놓쳐 무음을
+네 번 겪었다(auto_reanalysis 2회 · analysis_verify · domain_synthesis).
+
+pass 계측의 최소 계약:
+
+- **명시 payload 등재** — `scan_report[<pass>]` 가 dict 면 그 안의 스칼라를 `payload.update` 로
+  펼친다. sweep 은 기존 키를 건드리지 않으므로 값이 0 이어도 기록된다.
+- **`ran` 지표** — 카운터가 0 인 tick 이 정상인 pass(lazy 생성 등)에서는 "돌았다는 사실" 자체를
+  실어야 한다. 0 만 싣지 않으면 *요청이 없어 조용한 것*과 *배선이 죽어 조용한 것*이 같은 무음이 된다.
+- **`attempted` 와 산출을 분리** — 저장 성공만 세면 "LLM 을 태우고 산출 0" 인 pass 가 통째로
+  사라진다. 둘의 격차가 곧 "재료는 있는데 못 만들고 있다"는 신호다.
+- **기록 게이트에 카운터 조건을 걸지 않는다** — `if rep.get("synthesized")` 류는 위 셋을 무력화한다.

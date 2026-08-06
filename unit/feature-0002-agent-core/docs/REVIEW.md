@@ -1363,3 +1363,25 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 ## REV-20260806T104500-read-attach-deploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
 - **Trigger**: 문서만(원장 status·배포 실증 기록). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
 - 배포 실증은 MODIFY `CHG-20260806T104500-read-attach-deploy` 에 기록. 라이브 대화 실측은 미수행.
+
+## REV-20260806T113000-aiops-hygiene [SUBAGENT:backend] — BLOCK → 반영(1건 철회 · 3건 수정)
+
+**대상**: AI 운영 현황 실측 후속 diff. **방법**: 라이브 read-only 대조 + EXPLAIN + 변이 테스트 7종.
+
+- **[P1] 클러스터 요약 "최신 1건" 의 전제가 라이브로 반증됨** — 다중행 26 그룹 중 5 그룹이 버전이
+  아니라 **동시 생존하는 다른 클러스터**(라벨 충돌). 선택이 바뀌는 9건 중 4건이 그 경우이고,
+  `stat_active` 는 두 요약의 **내용이 다르다**(멤버 79 스냅샷 설명이 멤버 14 재계산 설명에 밀려
+  사라짐). 정합 편차 339→645. **반영: 변경 철회 + 반증을 문서화.**
+- **[P1] base drift** — 브랜치 base 가 `2cab05f3` 인데 main 이 `00dd35e4`(PR #1162)로 전진해,
+  `git diff main` 이 이미 머지된 배포 기록을 **삭제로** 표시했다. **반영: rebase.**
+- **[P2] `created_at` 은 현재 유효 구성의 대리변수가 아니다** — `_summary_put` 의 조건부 UPDATE·
+  캐시 적중 경로에서 갱신되지 않는다(44-멤버 행이 5-멤버 행보다 오래된 그룹 실재). 철회 근거 보강.
+- **[P2] 변이 M4 생존** — `attempted` 테스트가 소스 순서만 봐서, 증가문을 `len<30 continue` 뒤로
+  옮기는 변이가 통과했다(그 변이는 고치려던 무음을 정확히 되살린다). **반영: 동작 기반 테스트로 교체.**
+- **[P2] 게이트가 주석의 약속을 이행 안 함** — `attempted==0` 이면 여전히 무음이라 "요청 없음"과
+  "배선 사망"이 구별되지 않는다. **반영: `if _ds_rep:` + `ran=1`.**
+- **[P2] 형제 소비자 `domain_synthesis.cluster_inputs` 에 같은 결함** · **크로스-스키마 라벨 재사용이
+  중복 주입의 지배적 벡터** · `_matched_clusters` 의 `LIMIT 200` 무정렬 — **반영: 범위 밖으로 명시**
+  (라벨 네임스페이스 설계 문제라 한 줄 수정으로 풀리지 않는다).
+- 건전 판정: SQL 문법·인덱스·성능(200키 4.6ms, timeout 1500ms 대비 여유), `analyzed_count` 역전
+  반례 라이브 0건, `attempted` 계측 위치 정확, payload 도달 배선 정확, 기존 테스트 vacuous 화 없음.

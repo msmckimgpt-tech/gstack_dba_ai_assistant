@@ -275,7 +275,11 @@ def run_synthesis_pass(conn=None, limit=None) -> dict:
     `conn` 이 없으면 자체 agent_kb 연결을 연다(insight tick 스코프에는 그 커넥션이 없다 —
     feature-0036 에서 같은 실수를 했다).
     """
-    rep = {"synthesized": 0, "skipped": None}
+    # `attempted` = 실제로 태운 LLM 콜 수. `synthesized`(저장 성공)만 세면 **콜만 태우고 산출이
+    #   0인 pass 가 통째로 무음**이 된다 — 빈약한 응답(30자 미만)·저장 실패가 그 경로다.
+    #   feature-0036 이 같은 결함을 라이브에서 겪었고(판정 실패가 예산을 먹는데 계기판은 조용),
+    #   여기서도 둘의 격차가 곧 "재료는 있는데 못 만들고 있다"는 신호다.
+    rep = {"synthesized": 0, "attempted": 0, "skipped": None}
     if not enabled():
         rep["skipped"] = "disabled"
         return rep
@@ -344,6 +348,7 @@ def run_synthesis_pass(conn=None, limit=None) -> dict:
                     _log.info("도메인 합성 보류 — 공유 LLM 예산 여유 없음(다음 pass 재시도)")
                     break
                 res = _synth_call(_llm, payload, scope_key)
+            rep["attempted"] += 1
             summary = ""
             if isinstance(res, dict):
                 summary = " ".join(str(res.get("summary") or "").split())
