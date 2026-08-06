@@ -140,3 +140,35 @@ main 이 단일 다운로드에 "v2 이상은 응답 파일명에만 접미 부�
 토글 OFF 시 라디오 힌트 `버전 표시 없이 받습니다` · `aria-live=polite` · 모달 높이 417↔416px ·
 매니페스트 12건 전량 고유). 프리뷰 컨테이너(`:18099`, 라이브 이미지 `00431585` + worktree
 bind-mount) — 라이브 무접촉.
+
+#### 7. POST-DEPLOY 라이브 배포본 검증 (2026-08-07, `abdf13bd`)
+
+PR #1183 머지 → main `abdf13bd` → `make deploy-web` **exit 0**(web-a/web-b 롤링 + soak 통과 +
+워커군 `mysql-ai-agent:abdf13bd` 롤아웃 + gateway 드리프트 없음).
+
+**서빙 자산에 신규 코드 존재 확인**(라이브 `repo-web-a-1` 내부):
+`static/index.html` 의 `attachSidePanelSuffixToggle` 1회 · `routers/attachments.py` 의
+`_download_filename_with_version` 2회 · `static/app/composer.js` 의 `ATTACH_SUFFIX_LABEL` 2회 ·
+캐시 스탬프 갱신(`chat.css?v=3a7d33acaddd`).
+
+**PB-0008 재실행 — 31 step 전건 PASS**. 배포본 이미지 `mysql-ai-web:abdf13bd` 를 **bind-mount
+없이** 그대로 띄운 검증 컨테이너(`:18099`)에서 수행 — 즉 사용자에게 서빙되는 것과 **같은 baked
+자산**이다(정적 자산이 이미지에 굽히는 구조라 소스 마운트로는 이 축을 못 본다). 라이브 Caddy
+트래픽 무접촉, 라이브 데이터 변경 0.
+
+| # | 항목 | 실측 |
+|---|---|---|
+| T1 | 패널 토글 노출·라벨 | PASS `다운로드 파일명의 버전 표시(_v2) 유지` 279×32px |
+| T5/T8 | 패널↔모달 양방향 동기화 | PASS `panelChecked=true`·`stored=1` |
+| T6 | 토글 OFF 시 두 안내 정합 | PASS 라디오 `버전 표시 없이 받습니다` + 체크박스 `이름이 겹치면…` |
+| T6 | SR 전달 | PASS `aria-live=polite` |
+| T6/T8 | 모달 높이 안정 | PASS `417 ↔ 416px` |
+| T9 | 매니페스트 이름 | PASS strip 12/12 고유 · force 12/12 고유 |
+| T10 | 잘못된 파라미터 | PASS `400` |
+
+**배포 검증 체크리스트(feature-0014 RUNBOOK §10)** [1] 배포+soak ✓ [2] 워커 롤아웃 ✓
+[3] 캐시 스탬프 갱신 ✓ [4] 실 사용자 표면 PB-0008 ✓ [5] 완료 보고 가능.
+
+**한계(정직)**: Windows hosts 에 `mysql-ai.company.local` 이 없어 공개 도메인 경로(Caddy TLS
+종단)를 브라우저로 통과시키지는 못했다. 검증한 것은 **같은 배포 이미지의 web 앱**이며, Caddy
+계층(TLS·라우팅)은 이번 변경의 영향면이 아니다(정적 자산·앱 라우터만 변경).

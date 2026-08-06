@@ -2436,5 +2436,10 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   strip=접미 제거 + id 구분) · **이중접미 역검증**(수정 전 로직 재현 시 `..._v2_v2.sql`).
 - 잔여: 브라우저 저장 대화상자의 실제 파일명은 OS 대화상자라 자동화 미도달(서버 결정 이름 →
   `link.download` 배선까지 검증). `localStorage` 는 기기·프로필 단위.
-- **Pass/Fail: PASS**(PRE-COMMIT). CHECK#13 충족. Run 기록 정본:
+- **POST-DEPLOY PB-0008 — PASS**(2026-08-07): PR #1183 → main `abdf13bd` → `make deploy-web` exit 0
+  (soak 통과·워커 롤아웃 포함) → 라이브 서빙 자산에 신규 코드·캐시 스탬프(`chat.css?v=3a7d33acaddd`)
+  확인 후, 배포본 이미지 `mysql-ai-web:abdf13bd` 를 **bind-mount 없이** 띄운 컨테이너에서 31 step
+  전건 PASS(라이브 트래픽 무접촉). 한계: Windows hosts 에 공개 도메인이 없어 Caddy TLS 경로는
+  브라우저로 통과시키지 못했다(이번 변경의 영향면 밖).
+- **Pass/Fail: PASS**. CHECK#13 충족. Run 기록 정본:
   `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md` (§5.3 fragment).
