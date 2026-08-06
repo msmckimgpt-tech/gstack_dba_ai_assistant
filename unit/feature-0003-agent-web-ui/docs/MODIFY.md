@@ -2801,3 +2801,22 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/{test_attach_chain_merge.py,verify_attach_date_compact.mjs}`,
   `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/…`.
 - Timestamp: 2026-08-06T20:00:00+09:00
+## CHG-20260807T003000-attach-chain-merge-rebase — 형제 cycle 결정 흡수 (rebase 정합)
+
+- rebase 중 형제 cycle `REQ-20260806-attach-suffix-toggle`(PR #1183, main 선반영)과 충돌.
+  그 cycle 은 프론트 `_versionedFilename` 을 **제거**하고 저장명 규칙의 권위를 서버로 모았다
+  (`X-Attachment-Download-Name` · manifest `download_filename`). 규칙이 두 벌이면 토글을 끈 뒤
+  한쪽 경로에만 접미가 남고 AI 편집본이 `report_v2_v2.csv` 가 되기 때문.
+- **그 결정을 존중**해 선행 cycle 에서 내가 넣었던 `_versionedFilename` idempotent 개선을
+  되살리지 않고 **삭제**했다 — 함수가 사라진 뒤 되돌리면 형제 결정을 뒤집는 dead code 부활이다.
+  본 cycle 이 추가하는 날짜 함수 3종만 보존.
+- **main red 수리**: 형제 cycle 이 함수를 지우면서 그 함수를 추출하던
+  `tests/verify_attach_multi_upload.mjs`(선행 cycle 산출물)를 갱신하지 않아 **main 에서 하네스가
+  실행 불가**(`함수 미발견: _versionedFilename`) 상태였다. 같은 파일을 다루는 본 cycle 에서 수리:
+  (D) 축을 "저장명 생성 함수가 프론트에 없다(규칙 이중화 0) · 개별 다운로드가 서버 헤더 이름 사용 ·
+  버전 박스도 원본명 그대로 전달" 로 **재설계**해 그 결정이 되돌려지지 않는지를 잠근다.
+  dead assertion 을 지우는 데 그치지 않고 결정 자체를 가드로 승격했다.
+- 검증: `verify_attach_multi_upload.mjs` **28 PASS**(재설계 후) · `verify_attach_date_compact.mjs`
+  18 PASS · `verify_attach_version_diff.mjs` 89 PASS · 전수 mjs **47 스위트** 통과.
+- Files: `src/static/app/composer.js`, `tests/verify_attach_multi_upload.mjs`, `docs/MODIFY.md`.
+- Timestamp: 2026-08-07T00:30:00+09:00
