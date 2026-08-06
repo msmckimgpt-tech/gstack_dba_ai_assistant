@@ -2242,8 +2242,19 @@ async def upload_conversation_attachment(
         conn.close()
 
 @router.get("/api/conversations/{cid}/attachments")
-def list_conversation_attachments(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
-    """대화의 active 첨부 목록 (DeletedAt IS NULL). 권한: read.{own,any}."""
+def list_conversation_attachments(cid: str, request: Request, state: str = "active", account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """대화의 첨부 목록. 권한: read.{own,any}.
+
+    - `state=active`(기본) — 현행 계약 그대로: 미삭제 × 최신 버전만.
+    - `state=deleted` — REQ-20260806-attach-manage 휴지통. soft-delete 되었으나 아직
+      reconciliation worker 가 실 객체를 지우지 않은 행(`UploadStatus <> 'deleted'`)만
+      VersionNumber 를 포함해 반환한다. 각 항목의 `restorable_until` 로 남은 복구
+      기간이 드러난다(`_serialize_attachment_for_api` 가 계산).
+    """
+    state_norm = str(state or "active").strip().lower()
+    if state_norm not in ("active", "deleted"):
+        return app._json_error("state 는 active 또는 deleted 여야 합니다.", 400)
+
     if not app._account_can_access_conversation(
         conn,
         account,
@@ -2252,6 +2263,12 @@ def list_conversation_attachments(cid: str, request: Request, account=Depends(ap
         "conversation.attachment.read.any",
     ):
         return app._json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
+
+    if state_norm == "deleted":
+        # 휴지통은 PG mirror read 경로가 없다(mirror helper 는 active 전용) — 첨부 정본인
+        # MySQL 을 직접 읽는다. 최신 버전만이 아니라 삭제된 **모든 버전**을 보여야
+        # "이 버전만 삭제" 를 되돌릴 수 있다.
+        return _list_deleted_conversation_attachments(conn, cid, account)
 
     # TASK-0277: read cutover — PG 우선(권한은 위 _account_can_access_conversation 로 이미 게이트),
     # PG read 실패 시 MySQL 폴백. PG helper 의 WHERE 는 MySQL 판과 동형(최신·미삭제).
@@ -2319,6 +2336,10 @@ def list_conversation_attachments(cid: str, request: Request, account=Depends(ap
     except Exception:
         version_counts = {}
 
+    # REQ-20260806-attach-manage: 삭제 어포던스 표시 여부를 서버가 계산해 내린다 —
+    # 표시 판정과 집행 판정이 같은 술어를 쓰도록(§16.7 G6). 프론트가 소유권을 따로
+    # 추정하면 두 벌이 어긋나 "보이는데 404" 또는 "숨겨졌는데 권한 있음" 이 된다.
+    _gate = app._manage_gate_for_conversation(conn, account, cid)
     results = []
     for row in rows:
         ser = app._serialize_attachment_for_api(dict(row))
@@ -2326,8 +2347,362 @@ def list_conversation_attachments(cid: str, request: Request, account=Depends(ap
         if _vc:
             ser["version_count"] = _vc["count"]
             ser["ai_version_count"] = _vc["ai_count"]
+        ser["can_manage"] = bool(_gate(dict(row)))
         results.append(ser)
     return JSONResponse({"attachments": results})
+
+
+def _list_deleted_conversation_attachments(conn, cid: str, account=None) -> JSONResponse:
+    """REQ-20260806-attach-manage: 휴지통 목록 (사용자가 삭제한, 실 객체 잔존분).
+
+    첨부 정본은 MySQL(dual-write, TASK-0279). 두 가지를 제외한다 — 되살릴 수 없는
+    항목을 휴지통에 보이면 사용자는 복구 가능하다고 믿는다:
+      - `UploadStatus='deleted'` — worker 가 객체까지 지운 종착 상태.
+      - `DeleteReason <> 'user'` — `conv_soft`(대화 삭제 cascade)·`admin_purge`/`legal`
+        은 이 경로의 복구 대상이 아니다(`_is_restorable` 과 같은 경계).
+    """
+    from routers import attachments as _att
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                DeletePending, DeleteReason, MetaJson,
+                RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+            FROM WebConversationAttachments
+            WHERE ConversationId = %s
+              AND DeletePending = 1
+              AND DeleteReason = 'user'
+              AND UploadStatus <> 'deleted'
+              AND DeletedAt > UTC_TIMESTAMP(6) - INTERVAL %s DAY
+            ORDER BY DeletedAt DESC, Id DESC
+            LIMIT 200
+            """,
+            (cid, _att._retention_days()),
+        )
+        rows = cur.fetchall() or []
+    finally:
+        cur.close()
+
+    # 관리 권한이 있는 행만 **반환**한다 — 표시만 숨기면 응답에는 원본 파일명·크기·
+    # sha256 이 그대로 실려, 삭제 전에는 전원이 보던 것이 삭제 **후에도** 계속 보인다.
+    # 파일명 자체가 PII 인 사례가 SECURITY §8.2.1 잔여 리스크로 기록돼 있다.
+    _gate = app._manage_gate_for_conversation(conn, account, cid)
+    results = []
+    for r in rows:
+        d = dict(r)
+        if not _gate(d):
+            continue
+        ser = app._serialize_attachment_for_api(d)
+        ser["can_manage"] = True
+        results.append(ser)
+    return JSONResponse({"attachments": results, "state": "deleted"})
+
+
+# ==== REQ-20260806-attach-manage — 일괄 다운로드 (ZIP / 개별 매니페스트) ====
+
+def _bulk_zip_max_bytes() -> int:
+    """ZIP 총량 상한. 초과분을 조용히 잘라내지 않고 413 으로 알린다(§16.7 G9-b —
+    무음 절단 금지). 개별 다운로드(`format=manifest`)가 상한 없는 경로다."""
+    import os
+    try:
+        return max(1, int(os.getenv("ATTACHMENT_BULK_ZIP_MAX_BYTES") or str(512 * 1024 * 1024)))
+    except Exception:
+        return 512 * 1024 * 1024
+
+
+def _zip_entry_name(row: dict, *, with_version: bool, used: set[str]) -> str:
+    """ZIP 안 파일명. 전 버전 모드는 버전 번호를 붙이고, 그래도 겹치면 id 를 덧붙인다
+    — 같은 이름이 두 번 들어가면 압축 해제 시 한쪽이 조용히 덮인다."""
+    import os as _os
+    import re as _re
+    raw = str(row.get("OriginalFilename") or "") or f"attachment-{row.get('Id')}"
+    # 경로 구분자·상위 참조 제거 (zip-slip 방지) + 제어문자 제거.
+    raw = raw.replace("\\", "/").split("/")[-1]
+    raw = _re.sub(r"[\x00-\x1f\x7f]", "", raw).strip().lstrip(".") or f"attachment-{row.get('Id')}"
+    stem, ext = _os.path.splitext(raw)
+    if with_version:
+        stem = f"{stem}_v{int(row.get('VersionNumber') or 1)}"
+    name = f"{stem}{ext}"
+    # id 접미 **한 번**으로는 부족하다 — 다른 첨부가 이미 `a_4.csv` 라는 이름을 갖고
+    # 있으면 id=4 의 fallback 이 그것과 다시 충돌해 압축 해제 시 한쪽이 조용히 덮인다.
+    # 충돌이 풀릴 때까지 접미를 늘린다.
+    if name.lower() in used:
+        base = f"{stem}_{int(row.get('Id') or 0)}"
+        name = f"{base}{ext}"
+        n = 2
+        while name.lower() in used:
+            name = f"{base}-{n}{ext}"
+            n += 1
+    used.add(name.lower())
+    return name
+
+
+@router.get("/api/conversations/{cid}/attachments/download")
+def bulk_download_conversation_attachments(
+    cid: str,
+    request: Request,
+    format: str = "zip",
+    scope: str = "latest",
+    ids: str = "",
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+):
+    """REQ-20260806-attach-manage: 대화 첨부 일괄 다운로드.
+
+    - `format=zip`(기본) — 한 개의 ZIP 스트림. `format=manifest` — 각 첨부의 앱-내부
+      다운로드 URL 목록(JSON). 프론트가 개별 저장에 쓴다.
+    - `scope=latest`(기본) — 첨부별 최신 버전 1개. `scope=all` — 버전 체인 전량
+      (파일명에 `_v<n>`).
+    - `ids=1,2,3` — 부분 선택(첨부 id 기준, 위 scope 결과와 교집합).
+
+    권한은 개별 다운로드(`download_attachment`)와 동형 — 대화 단위 read.{own,any} +
+    승인 대기 계정 본문 차단(D21). 즉 이 엔드포인트는 **한 번에 받는 편의**를 줄 뿐
+    개별 경로로 이미 받을 수 있는 것 이상을 열지 않는다.
+    """
+    fmt = str(format or "zip").strip().lower()
+    scope_norm = str(scope or "latest").strip().lower()
+    if fmt not in ("zip", "manifest"):
+        return app._json_error("format 은 zip 또는 manifest 여야 합니다.", 400)
+    if scope_norm not in ("latest", "all"):
+        return app._json_error("scope 는 latest 또는 all 이어야 합니다.", 400)
+
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.attachment.read.own",
+        "conversation.attachment.read.any",
+    ):
+        return app._json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
+    if app._account_is_pending(account):
+        return app._json_error("승인 대기 계정은 첨부 본문을 다운로드할 수 없습니다.", 403)
+
+    id_filter: set[int] = set()
+    _ids_raw = str(ids or "").strip()
+    for tok in _ids_raw.split(","):
+        tok = tok.strip()
+        if tok.isdigit():
+            id_filter.add(int(tok))
+    if _ids_raw and not id_filter:
+        # 무음 확대 금지 — 파싱 실패를 "필터 없음"으로 흘리면 3개를 고른 사용자가 대화
+        # 전량을 받는다. scope 오타를 400 으로 막는 것과 같은 원칙의 반대 방향이다.
+        return app._json_error("ids 파라미터에 유효한 첨부 id 가 없습니다.", 400)
+
+    # share-visibility-window (SECURITY §21.2 · AR-2 / CSO F3): "여기부터 공유" 로 들어온
+    # bounded 멤버는 floor 이전 구간을 볼 수 없다. 개별 다운로드·목록에 선재하는 갭이
+    # 있더라도, 한 요청으로 전량이 나가는 이 경로에 clip 이 없으면 그 갭이 산업화된다.
+    # 판정은 fork 와 **같은 헬퍼**를 쓴다 — 별도 구현은 두 벌이 어긋난다.
+    win_lower_ca = win_upper_ca = None
+    try:
+        _cw_status, _lower_id, _upper_id = app._resolve_copy_window(conn, cid, int(account["id"]))
+    except Exception:
+        _cw_status, _lower_id, _upper_id = "deny", None, None
+    if _cw_status == "deny":
+        return app._json_error("열람 범위를 확인할 수 없어 다운로드를 중단했습니다.", 403)
+    if _cw_status == "empty":
+        return app._json_error("공유된 범위에 다운로드할 첨부가 없습니다.", 404)
+    if _lower_id is not None or _upper_id is not None:
+        # window 의 created_at 경계는 clip 된 표시 행에서 유도한다(발명 금지 — fork 와 동일).
+        try:
+            _win_rows = app._conv_load_messages_raw(conn, cid, upto_id=_upper_id, from_id=_lower_id)
+        except Exception:
+            return app._json_error("열람 범위를 확인할 수 없어 다운로드를 중단했습니다.", 403)
+        if not _win_rows:
+            return app._json_error("공유된 범위에 다운로드할 첨부가 없습니다.", 404)
+        win_lower_ca = _win_rows[0][3] if _lower_id is not None else None
+        win_upper_ca = _win_rows[-1][3] if _upper_id is not None else None
+
+    where_latest = "" if scope_norm == "all" else " AND SupersededAt IS NULL"
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            f"""
+            SELECT Id, ObjectKey, OriginalFilename, SizeBytes, VersionNumber,
+                   RootAttachmentId, CreatedByRole, UploadStatus, CreatedAt
+            FROM WebConversationAttachments
+            WHERE ConversationId = %s AND DeletedAt IS NULL{where_latest}
+            ORDER BY COALESCE(RootAttachmentId, Id) ASC, VersionNumber ASC, Id ASC
+            """,
+            (cid,),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+
+    if id_filter:
+        rows = [r for r in rows if int(r.get("Id") or 0) in id_filter]
+    clipped_count = 0
+    if win_lower_ca is not None or win_upper_ca is not None:
+        _kept = [r for r in rows
+                 if not app._attachment_outside_window(r.get("CreatedAt"), win_lower_ca, win_upper_ca)]
+        clipped_count = len(rows) - len(_kept)
+        rows = _kept
+    if not rows:
+        return app._json_error(
+            "다운로드할 첨부가 없습니다." if not clipped_count
+            else "열람 가능한 범위에 첨부가 없습니다.", 404)
+
+    if fmt == "manifest":
+        files = [
+            {
+                "id": int(r.get("Id") or 0),
+                "filename": str(r.get("OriginalFilename") or ""),
+                "size": int(r.get("SizeBytes") or 0),
+                "version_number": int(r.get("VersionNumber") or 1),
+                # presigned MinIO URL 이 아니라 앱 경로 — presigned 는 내부 endpoint 호스트가
+                # 박혀 외부 브라우저가 열지 못한다(TASK-0284 배경).
+                "url": f"/api/attachments/{int(r.get('Id') or 0)}/download",
+            }
+            for r in rows
+        ]
+        _audit_bulk_download(conn, request, account, cid, rows, fmt, scope_norm, 0, clipped_count)
+        return JSONResponse({
+            "files": files, "count": len(files), "scope": scope_norm,
+            "clipped_count": clipped_count,
+        })
+
+    total_bytes = sum(int(r.get("SizeBytes") or 0) for r in rows)
+    cap = _bulk_zip_max_bytes()
+    if total_bytes > cap:
+        # 부분 ZIP 을 주지 않는다 — 받은 사람은 그것이 전부라고 믿는다(§16.7 G9-b).
+        return app._json_error(
+            f"선택한 첨부의 합계 용량({total_bytes // (1024 * 1024)}MB)이 압축 다운로드 상한"
+            f"({cap // (1024 * 1024)}MB)을 넘습니다. 파일을 나눠 선택하거나 개별 다운로드를 사용하세요.",
+            413,
+        )
+
+    try:
+        from web.modules import storage_minio
+    except Exception as exc:
+        return app._json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    import tempfile
+    import zipfile
+    from urllib.parse import quote as _quote
+    from starlette.responses import StreamingResponse as _Stream
+
+    # SpooledTemporaryFile — 작은 묶음은 메모리, 임계 초과 시 디스크로 자동 전환.
+    # 전량을 bytes 로 들고 있으면 큰 대화에서 web 프로세스 RSS 가 곧바로 튄다.
+    spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+    used_names: set[str] = set()
+    packed = 0
+    try:
+        with zipfile.ZipFile(spool, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            for r in rows:
+                object_key = str(r.get("ObjectKey") or "")
+                if not object_key:
+                    continue
+                try:
+                    data = storage_minio.get_object_bytes(object_key)
+                except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                    # 한 파일의 실패로 전체를 버리지 않되, 빠진 사실을 사용자에게 남긴다
+                    # — 조용히 적은 파일 수를 주면 누락을 알 길이 없다.
+                    logging.getLogger(__name__).warning(
+                        "bulk_download: object fetch failed (id=%s, key=%s)", r.get("Id"), object_key)
+                    zf.writestr(
+                        f"_다운로드_실패_{int(r.get('Id') or 0)}.txt",
+                        f"{r.get('OriginalFilename') or ''} 파일을 저장소에서 가져오지 못했습니다.\n"
+                        f"개별 다운로드(/api/attachments/{int(r.get('Id') or 0)}/download)로 다시 시도하세요.\n",
+                    )
+                    continue
+                zf.writestr(
+                    _zip_entry_name(r, with_version=(scope_norm == "all"), used=used_names),
+                    data,
+                )
+                packed += 1
+    except Exception:
+        spool.close()
+        logging.getLogger(__name__).warning("bulk_download: zip build failed (cid=%s)", cid, exc_info=True)
+        return app._json_error("압축 파일을 만들지 못했습니다.", 500)
+
+    spool.seek(0)
+    zip_size = spool.seek(0, 2)
+    spool.seek(0)
+    _audit_bulk_download(conn, request, account, cid, rows, fmt, scope_norm, packed, clipped_count)
+
+    # `download_attachment` 과 같은 정제를 거친다 — 지금은 cid 가 서버 생성이라 발동
+    # 불가하지만, cid 출처가 하나라도 늘면 즉시 헤더 인젝션 면이 된다.
+    filename = _sanitize_disposition_filename(f"attachments-{cid[:8]}.zip")
+    failed_count = max(0, len(rows) - packed)
+
+    def _iter():
+        try:
+            while True:
+                chunk = spool.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            spool.close()
+
+    return _Stream(
+        _iter(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"; '
+                f"filename*=UTF-8''{_quote(filename, safe='')}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+            # 완성 크기를 알고 있으므로 준다 — 없으면 브라우저 진행률이 안 나온다.
+            "Content-Length": str(zip_size),
+            "X-Attachment-Count": str(packed),
+            # 빠진 것이 있으면 헤더로도 말한다(프론트가 토스트에 반영).
+            "X-Attachment-Clipped": str(clipped_count),
+            "X-Attachment-Failed": str(failed_count),
+        },
+    )
+
+
+def _sanitize_disposition_filename(name: str) -> str:
+    """Content-Disposition 의 ASCII fallback 정제 (REV-20260616-0291 동형).
+
+    따옴표와 모든 비출력 제어문자(CR/LF 포함)를 제거해 헤더 인젝션을 차단한다.
+    `download_attachment` 이 같은 처리를 인라인으로 하고 있었고, 신규 ZIP 경로만
+    빠져 있었다 — 두 곳이 같은 규칙을 쓰도록 헬퍼로 뺀다.
+    """
+    import re as _re
+    s = str(name or "").replace('"', "")
+    s = _re.sub(r"[\x00-\x1f\x7f]", "", s)
+    s = "".join(c for c in s if c.isprintable()).strip()
+    return s or "download"
+
+
+def _audit_bulk_download(conn, request, account, cid, rows, fmt, scope_norm, packed, clipped=0) -> None:
+    """일괄 반출은 개별 다운로드보다 흔적이 필요하다 — 무엇을 몇 건 가져갔는지 남긴다.
+
+    `attachment.bulk_download` 는 `_audit_infra.build_audit_change_json` 에 분기가
+    **있어야** 기록된다 — 없으면 그 함수가 `ValueError` 를 올리고 `_audit_user_action`
+    이 삼켜 감사 행이 0 이 된다(라우터의 except 는 재-raise 가 없어 발화조차 안 함).
+    """
+    try:
+        app._audit_user_action(
+            conn,
+            request,
+            account,
+            action="attachment.bulk_download",
+            resource_type="conversation",
+            resource_id=str(cid),
+            request_ctx={
+                "conversation_id": str(cid),
+                "format": fmt,
+                "scope": scope_norm,
+                "attachment_ids": [int(r.get("Id") or 0) for r in rows],
+                "requested_count": len(rows),
+                "packed_count": packed,
+                "clipped_count": int(clipped or 0),
+                "total_bytes": sum(int(r.get("SizeBytes") or 0) for r in rows),
+            },
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "bulk_download: audit dispatch failed (cid=%s)", cid, exc_info=True)
+
 
 @router.get("/api/conversations")
 def conversations(

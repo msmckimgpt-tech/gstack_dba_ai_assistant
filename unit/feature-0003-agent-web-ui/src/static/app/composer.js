@@ -67,6 +67,12 @@ import {
 } from "../app.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
 import { openAttachmentDiffModal } from "./attach-diff.js?v=dev";
+import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
+
+// REQ-20260806-attach-manage: 첨부 사이드 패널의 목록 모드. "active"(기본) / "deleted"(휴지통).
+// 이 모듈 안에서만 읽고 쓴다 — 다른 모듈과 양방향 재할당이 없어 state 편입 대상이 아니다
+// (feature-0038 Phase A 의 결합 매트릭스 기준).
+let _attachListState = "active";
 
 function _attachPanelMaxW() {
   return Math.max(ATTACH_PANEL_MIN_W, Math.floor(window.innerWidth * 0.92));
@@ -848,6 +854,9 @@ export async function _downloadAttachmentById(attId, filename, btn) {
 // REQ-20260806-attach-version-diff: 여기에 비교 진입점을 얹는다 — 박스 머리의 "버전 비교"
 // (기본 직전↔최신)와 각 행의 `⇄`(그 버전 ↔ 최신, 여러 단계 차이 포함). 실제 diff 화면은
 // `app/attach-diff.js` 의 전용 모달이 담당한다.
+// REQ-20260806-attach-manage: 같은 행에 그 버전만 삭제하는 버튼(`scope=version`)도 둔다.
+// 두 기능이 같은 행을 공유하므로 행은 2줄 구조(head=이름 / foot=역할+액션)를 쓴다 —
+// 한 줄에 몰면 패널 최소 폭에서 파일명이 2자로 남는다(§18.8 design 실측).
 function _renderAttachmentVersionsBox(box, versions, attachmentId) {
   box.innerHTML = "";
   if (!Array.isArray(versions) || !versions.length) {
@@ -872,6 +881,8 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
   }
 
   ordered.forEach((v) => {
+    // 목록 행과 같은 이유로 2줄 구조 — 버전 박스는 좌측 들여쓰기(28px)까지 먹어 한 줄에
+    // 몰면 파일명이 2자로 남는다(§18.8 design 패널 실측 240/280/360px 전 구간 잘림).
     const row = document.createElement("div");
     row.className = "attach-list-version-row";
     const vnum = Number(v.version_number || 1);
@@ -884,10 +895,15 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
     nameEl.className = "attach-list-version-name";
     nameEl.title = v.original_filename || "";
     nameEl.textContent = v.original_filename || "파일";
+    const head = document.createElement("div");
+    head.className = "attach-list-version-head";
+    head.append(tag, nameEl);
+
     const roleEl = document.createElement("span");
     roleEl.className = "attach-list-version-role";
     roleEl.textContent = (isAi ? "AI 수정" : "사용자") + (isLatest ? " · 최신" : "");
-    row.append(tag, nameEl, roleEl);
+    const acts = document.createElement("span");
+    acts.className = "attach-list-version-actions";
     // 최신 행에는 `⇄` 를 두지 않는다 — 자기 자신과의 비교는 무의미하고, 최신 기준 비교는
     // 위 "버전 비교" 버튼이 이미 담당한다.
     if (canCompare && !isLatest) {
@@ -899,17 +915,376 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
       cmp.textContent = "⇄";
       cmp.addEventListener("click", () =>
         openAttachmentDiffModal(attachmentId, versions, { from: vnum, to: latestNum }));
-      row.appendChild(cmp);
+      acts.appendChild(cmp);
     }
     const dl = document.createElement("button");
     dl.type = "button";
     dl.className = "attach-list-version-dl";
     dl.title = "이 버전 다운로드";
+    dl.setAttribute("aria-label", `${v.original_filename || "파일"} 버전 ${vnum} 다운로드`);
     dl.textContent = "⬇";
     dl.addEventListener("click", () => _downloadAttachmentById(v.id, v.original_filename, dl));
-    row.appendChild(dl);
+    acts.appendChild(dl);
+    // 삭제 어포던스는 서버 판정(can_manage)만 따른다 — 프론트가 소유권을 따로 추정하면
+    // 표시와 집행이 어긋난다(§16.7 G6).
+    if (v.can_manage) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "attach-list-version-del";
+      del.title = `v${vnum} 삭제`;
+      del.setAttribute("aria-label", `${v.original_filename || "파일"} 버전 ${vnum} 삭제`);
+      del.textContent = "🗑";
+      del.addEventListener("click", () =>
+        _openAttachDeleteModal({ ...v, version_count: ordered.length }, { fixedScope: "version" }));
+      acts.appendChild(del);
+    }
+    const foot = document.createElement("div");
+    foot.className = "attach-list-version-foot";
+    foot.append(roleEl, acts);
+
+    row.append(head, foot);
     box.appendChild(row);
   });
+}
+
+// ==== REQ-20260806-attach-manage — 삭제 / 복구 / 일괄 다운로드 ====
+
+// 모달 인스턴스마다 고유 접미 — radio `name` 은 **문서 전역** 이라, 모달이 2개 쌓이면
+// 위쪽에서 고른 값이 아래쪽 선택을 해제하고 `:checked` 가 null 이 되어 fallback 으로
+// **조용히 격하**된다(서버는 오타 scope 를 400 으로 막는데 프론트에 그 격하가 남는 꼴).
+let _attachModalSeq = 0;
+
+function _attachModalShell(titleText) {
+  // 폴더 설정 모달(sidebar.js)과 같은 껍데기를 쓴다 — 배경 dismiss 는 저장소 단일
+  // primitive(`bindBackdropDismiss`)를 거친다(복제가 곧 결함 기전이었다).
+  // 파괴적 확인 다이얼로그라 중복 인스턴스를 허용하지 않는다(겹친 배경·Escape 동시 종료).
+  const existing = document.querySelector(".share-mgr-backdrop.attach-manage-backdrop");
+  if (existing && typeof existing._attachModalClose === "function") existing._attachModalClose();
+
+  const uid = `am${++_attachModalSeq}`;
+  const opener = document.activeElement;
+  const backdrop = document.createElement("div");
+  backdrop.className = "share-mgr-backdrop attach-manage-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.setAttribute("aria-labelledby", `${uid}-title`);
+  backdrop.innerHTML =
+    '<div class="share-mgr-panel attach-manage-panel">' +
+    '  <div class="share-mgr-head">' +
+    `    <h3 class="share-mgr-title" id="${uid}-title">${escapeHtml(titleText)}</h3>` +
+    '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+    '  </div>' +
+    '  <div class="attach-manage-body"></div>' +
+    '  <div class="attach-manage-actions"></div>' +
+    '</div>';
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const close = () => {
+    if (backdrop.parentNode) document.body.removeChild(backdrop);
+    document.removeEventListener("keydown", onKey);
+    // 목록 DOM 이 갈아치워지면 포커스가 body 로 떨어진다 — 연 곳으로 되돌린다.
+    try { if (opener && document.contains(opener)) opener.focus(); } catch (e) {}
+  };
+  backdrop._attachModalClose = close;
+  bindBackdropDismiss(backdrop, close);
+  backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
+  return {
+    uid,
+    backdrop,
+    close,
+    body: backdrop.querySelector(".attach-manage-body"),
+    actions: backdrop.querySelector(".attach-manage-actions"),
+  };
+}
+
+function _attachRadioGroup(container, name, options, checkedValue) {
+  options.forEach((opt) => {
+    const label = document.createElement("label");
+    label.className = "attach-manage-choice";
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = name;
+    input.value = opt.value;
+    if (opt.value === checkedValue) input.checked = true;
+    const text = document.createElement("span");
+    text.className = "attach-manage-choice-text";
+    text.innerHTML =
+      `<strong>${escapeHtml(opt.label)}</strong>` +
+      (opt.hint ? `<em>${escapeHtml(opt.hint)}</em>` : "");
+    label.append(input, text);
+    container.appendChild(label);
+  });
+  return () => {
+    const picked = container.querySelector(`input[name="${name}"]:checked`);
+    return picked ? picked.value : checkedValue;
+  };
+}
+
+// 삭제 확인 — 버전이 2개 이상이면 "이 버전만 / 전체 버전" 을 고르게 한다.
+// 파괴적 동작이라 기본 선택은 항상 좁은 쪽(version)이다.
+function _openAttachDeleteModal(att, opts = {}) {
+  const verCount = Number(att.version_count || 1);
+  const canChoose = !opts.fixedScope && verCount > 1;
+  const m = _attachModalShell("첨부 삭제");
+  const vnum = Number(att.version_number || 1);
+
+  const name = document.createElement("p");
+  name.className = "attach-manage-target";
+  name.textContent = att.original_filename || "이 첨부";
+  m.body.appendChild(name);
+
+  const confirm = document.createElement("button");
+  let readScope = () => opts.fixedScope || "version";
+  // 확인 버튼 라벨을 선택과 동기화한다 — 파괴 범위가 선택에 따라 N배 달라지는데
+  // 버튼이 계속 "삭제" 면 무엇을 확정하는지 말하지 않는 셈이다.
+  const syncConfirmLabel = () => {
+    const s = readScope();
+    confirm.textContent = s === "chain" ? `전체 버전 삭제 (${verCount}개)` : `v${vnum} 삭제`;
+  };
+  if (canChoose) {
+    const group = document.createElement("div");
+    group.className = "attach-manage-choices";
+    // 목록 행의 att.id 는 최신 버전이므로 "이 버전" 이 무엇인지 명시한다.
+    readScope = _attachRadioGroup(group, `attachDeleteScope-${m.uid}`, [
+      { value: "version", label: `최신 버전(v${vnum})만 삭제`, hint: `나머지 ${verCount - 1}개는 유지됩니다` },
+      { value: "chain", label: `전체 버전 삭제 (${verCount}개)`, hint: "이 첨부가 목록에서 사라집니다" },
+    ], "version");
+    group.addEventListener("change", syncConfirmLabel);
+    m.body.appendChild(group);
+  }
+
+  const warn = document.createElement("p");
+  warn.className = "attach-manage-hint";
+  // §16.8 B-2 — 결과를 미리 알리되 1문장. 되살리는 경로는 휴지통 아이콘이 이미 말한다.
+  warn.textContent = "삭제하면 AI 가 더 이상 참고하지 않습니다.";
+  m.body.appendChild(warn);
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn-secondary";
+  cancel.textContent = "취소";
+  cancel.addEventListener("click", m.close);
+  confirm.type = "button";
+  confirm.className = "btn-danger";
+  syncConfirmLabel();
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true;
+    const r = await _performAttachDelete(att.id, readScope());
+    confirm.disabled = false;
+    // 409 는 "이미 그 상태" — 실패가 아니라 목록이 stale 하다는 신호다. 모달을 닫고
+    // 목록을 되맞춰야 사용자가 같은 버튼으로 같은 409 를 반복하지 않는다.
+    if (r.ok || r.stale) m.close();
+  });
+  m.actions.append(cancel, confirm);
+  try { cancel.focus(); } catch (e) {}
+}
+
+// 409 = "이미 그 상태" — 실패로 다루면 사용자가 stale 한 행을 계속 눌러 같은 응답을
+// 반복한다. 목록을 되맞추고 모달을 닫는 것이 옳은 처리다.
+function _isStaleStateError(e) {
+  const status = Number(e?.status || e?.statusCode || 0);
+  if (status === 409) return true;
+  return /이미 처리|복구할 수 있는 첨부가 없습니다/.test(String(e?.message || ""));
+}
+
+async function _performAttachDelete(attachmentId, scope) {
+  try {
+    const resp = await apiFetch(
+      `/api/attachments/${encodeURIComponent(attachmentId)}?scope=${encodeURIComponent(scope)}`,
+      { method: "DELETE" },
+    );
+    const n = Number(resp?.deleted_count || 0);
+    showToast(n > 1 ? `첨부 ${n}개 버전을 삭제했습니다.` : "첨부를 삭제했습니다.");
+    await _refreshAttachPanelAfterMutation();
+    return { ok: true };
+  } catch (e) {
+    const stale = _isStaleStateError(e);
+    showToast(stale ? "이미 삭제된 첨부입니다. 목록을 새로 불러왔습니다." : (e?.message || "삭제하지 못했습니다."), !stale);
+    if (stale) await _refreshAttachPanelAfterMutation();
+    return { ok: false, stale };
+  }
+}
+
+async function _performAttachRestore(attachmentId, scope, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await apiFetch(
+      `/api/attachments/${encodeURIComponent(attachmentId)}/restore?scope=${encodeURIComponent(scope || "version")}`,
+      { method: "POST" },
+    );
+    const n = Number(resp?.restored_count || 0);
+    showToast(n > 1 ? `첨부 ${n}개 버전을 복구했습니다.` : "첨부를 복구했습니다.");
+    await _refreshAttachPanelAfterMutation();
+  } catch (e) {
+    const stale = _isStaleStateError(e);
+    showToast(stale ? "복구할 수 없는 첨부입니다. 목록을 새로 불러왔습니다." : (e?.message || "복구하지 못했습니다."), !stale);
+    if (stale) await _refreshAttachPanelAfterMutation();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// 삭제·복구 후 pill 버킷과 관리 목록을 되맞춘다.
+//
+// ⚠ `_renderAttachmentPills()` 를 부르면 안 된다 — 그 함수는 **같은 `#attachSidePanelList`**
+// 를 소유해 `innerHTML=""` 후 pill 을 그린다. 관리 목록이 통째로 덮여 방금 지운 파일이
+// 그대로 보이고(🗑·버전 토글 소실), 버킷이 빈 대화에서는 `items.length===0` 분기가 패널을
+// 스스로 닫는다. 그리고 그 함수는 배열을 **다시 그릴 뿐 정리하지 않아** 원래 목적(pill 정합)
+// 도 달성하지 못한다 — 정합의 정본은 서버를 다시 읽는 `_loadConversationAttachments`(복수형)다.
+// (§18.8 ux 패널 P1)
+async function _refreshAttachPanelAfterMutation() {
+  const convId = state.activeConversationId;
+  if (!convId) return;
+  // 1) 버킷을 서버 ground truth 로 재수화 (배지·다음 전송 payload 정합).
+  //    렌더는 하지 않는다 — 이 함수는 state 만 갱신한다.
+  try { await _loadConversationAttachments(convId); } catch (e) {}
+  // 2) 그 다음 관리 목록을 그린다. 순서가 뒤집히면 1)의 렌더가 목록을 덮는다.
+  await _loadConversationAttachmentList(convId);
+}
+
+function _setAttachListState(next, { reload = true } = {}) {
+  _attachListState = next === "deleted" ? "deleted" : "active";
+  const btn = document.getElementById("attachSidePanelTrashToggle");
+  if (btn) {
+    const label = _attachListState === "deleted" ? "첨부 목록으로" : "휴지통";
+    btn.setAttribute("aria-pressed", _attachListState === "deleted" ? "true" : "false");
+    btn.classList.toggle("is-active", _attachListState === "deleted");
+    btn.title = label;
+    // aria-label 이 title 을 이긴다 — 함께 갱신하지 않으면 스크린리더는 어느 모드에서든
+    // "휴지통" 으로만 듣고 되돌아가는 버튼임을 알 수 없다.
+    btn.setAttribute("aria-label", label);
+  }
+  const convId = state.activeConversationId;
+  if (reload && convId) _loadConversationAttachmentList(convId);
+}
+
+// 대화 전환은 패널을 닫지 않는다 — 휴지통 모드로 열어둔 채 다른 대화로 가면 내용은
+// 활성 첨부인데 토글은 계속 "휴지통 보는 중"(aria-pressed=true)이라 거짓 보고가 된다.
+// app.js 의 switchConversation choke-point 가 호출한다.
+export function resetAttachListStateForConversationSwitch() {
+  _setAttachListState("active", { reload: false });
+}
+
+// 전체 다운로드 — 압축(ZIP) / 개별, 최신본 / 전 버전을 고른다.
+function _openAttachDownloadDialog() {
+  const convId = state.activeConversationId;
+  if (!convId) { showToast("대화를 먼저 선택하세요.", true); return; }
+  // 휴지통을 보는 중이면 화면(삭제분)과 받는 것(활성 첨부)이 다르다 — 먼저 되돌린다.
+  if (_attachListState === "deleted") _setAttachListState("active");
+  const m = _attachModalShell("전체 다운로드");
+
+  const fmtGroup = document.createElement("div");
+  fmtGroup.className = "attach-manage-choices";
+  const readFormat = _attachRadioGroup(fmtGroup, `attachDlFormat-${m.uid}`, [
+    { value: "zip", label: "압축 파일 하나로" },
+    { value: "manifest", label: "파일별로 따로", hint: "브라우저가 파일마다 저장을 묻습니다" },
+  ], "zip");
+  m.body.appendChild(fmtGroup);
+
+  const scopeGroup = document.createElement("div");
+  scopeGroup.className = "attach-manage-choices";
+  const readScope = _attachRadioGroup(scopeGroup, `attachDlScope-${m.uid}`, [
+    { value: "latest", label: "최신 버전만" },
+    { value: "all", label: "모든 버전", hint: "파일명에 v1·v2 가 붙습니다" },
+  ], "latest");
+  m.body.appendChild(scopeGroup);
+
+  const progress = document.createElement("p");
+  progress.className = "attach-manage-hint hidden";
+  m.body.appendChild(progress);
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn-secondary";
+  cancel.textContent = "취소";
+  cancel.addEventListener("click", m.close);
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "btn-primary";
+  go.textContent = "다운로드";
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    const ok = await _runBulkDownload(convId, readFormat(), readScope(), progress);
+    go.disabled = false;
+    if (ok) m.close();
+  });
+  m.actions.append(cancel, go);
+  try { cancel.focus(); } catch (e) {}
+}
+
+// 전 버전 모드에서 개별 저장할 때 붙일 이름 — ZIP 경로(`_zip_entry_name`)가 `_v3` 를
+// 붙이는데 개별 경로가 원본명 그대로면 브라우저가 `report (1).csv` 로 저장해 **어느 게
+// 몇 버전인지 사라진다**. 두 경로의 결과물이 같은 규칙을 따르게 한다.
+function _versionedFilename(filename, versionNumber) {
+  const n = Number(versionNumber || 1);
+  const raw = String(filename || "download");
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return `${raw}_v${n}`;
+  return `${raw.slice(0, dot)}_v${n}${raw.slice(dot)}`;
+}
+
+async function _runBulkDownload(convId, format, scope, progressEl) {
+  const base = `/api/conversations/${encodeURIComponent(convId)}/attachments/download`;
+  const setProgress = (text) => {
+    if (!progressEl) return;
+    progressEl.textContent = text || "";
+    progressEl.classList.toggle("hidden", !text);
+  };
+  if (format === "manifest") {
+    try {
+      const resp = await apiFetch(`${base}?format=manifest&scope=${encodeURIComponent(scope)}`);
+      const files = Array.isArray(resp?.files) ? resp.files : [];
+      if (!files.length) { showToast("다운로드할 첨부가 없습니다.", true); return false; }
+      let i = 0;
+      for (const f of files) {
+        i += 1;
+        setProgress(`${i} / ${files.length} 저장 요청 중…`);
+        const name = scope === "all" ? _versionedFilename(f.filename, f.version_number) : f.filename;
+        await _downloadAttachmentById(f.id, name, null);
+      }
+      setProgress("");
+      // 건수를 단정하지 않는다 — 브라우저의 다중 다운로드 차단은 **건수 기준**이라
+      // 순차 실행으로 회피되지 않고, 사용자가 차단하면 2번째부터 오지 않는다.
+      showToast(`${files.length}개 파일의 저장을 요청했습니다. 브라우저 저장 알림을 확인하세요.`);
+      return true;
+    } catch (e) {
+      setProgress("");
+      showToast(e?.message || "다운로드하지 못했습니다.", true);
+      return false;
+    }
+  }
+  try {
+    const resp = await fetch(`${base}?format=zip&scope=${encodeURIComponent(scope)}`, { credentials: "same-origin" });
+    if (!resp.ok) {
+      // 413(상한 초과)은 서버가 사유와 대안을 문장으로 준다 — 그대로 보여준다.
+      let msg = "다운로드할 수 없습니다.";
+      try { const j = await resp.json(); if (j?.error) msg = j.error; } catch (e) {}
+      showToast(msg, true);
+      return false;
+    }
+    const blob = await resp.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objUrl;
+    link.download = `attachments-${String(convId).slice(0, 8)}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+    const packed = resp.headers.get("X-Attachment-Count");
+    const clipped = Number(resp.headers.get("X-Attachment-Clipped") || 0);
+    const failed = Number(resp.headers.get("X-Attachment-Failed") || 0);
+    let msg = packed ? `첨부 ${packed}개를 압축해 내려받았습니다.` : "첨부를 내려받았습니다.";
+    // 빠진 것이 있으면 반드시 말한다 — 조용한 부분 성공은 받은 사람이 전부라고 믿는다.
+    if (clipped > 0) msg += ` (열람 범위 밖 ${clipped}개 제외)`;
+    if (failed > 0) msg += ` (${failed}개는 저장소에서 가져오지 못했습니다)`;
+    showToast(msg, failed > 0);
+    return true;
+  } catch (e) {
+    showToast("다운로드 중 오류가 발생했습니다.", true);
+    return false;
+  }
 }
 
 async function _loadConversationAttachmentList(convId) {
@@ -919,16 +1294,28 @@ async function _loadConversationAttachmentList(convId) {
   // assistant 참조 스코프이므로 동기화할 토글이 없다. 대신 그 범위를 알리는 안내를 첨부가
   // 있을 때만 노출한다(첨부 0건 대화에서는 의미 없는 문구).
   const noteEl = document.getElementById("attachSidePanelNote");
+  const trashNoteEl = document.getElementById("attachSidePanelTrashNote");
   if (noteEl) noteEl.classList.add("hidden");
+  if (trashNoteEl) trashNoteEl.classList.add("hidden");
+  // REQ-20260806-attach-manage: 휴지통 모드면 삭제분을 본다.
+  const isTrash = _attachListState === "deleted";
   listEl.innerHTML = `<div class="attach-list-empty">불러오는 중...</div>`;
   try {
-    const resp = await apiFetch(`/api/conversations/${encodeURIComponent(convId)}/attachments`);
+    const resp = await apiFetch(
+      `/api/conversations/${encodeURIComponent(convId)}/attachments${isTrash ? "?state=deleted" : ""}`);
     const arr = Array.isArray(resp?.attachments) ? resp.attachments : [];
     if (arr.length === 0) {
-      listEl.innerHTML = `<div class="attach-list-empty">첨부 파일이 없습니다.</div>`;
+      // 0건일 때는 안내를 띄우지 않는다 — "삭제한 첨부입니다" 와 "삭제한 첨부가 없습니다"
+      // 가 위아래로 붙어 서로를 부정한다(활성 목록의 note 도 같은 규칙).
+      listEl.innerHTML = `<div class="attach-list-empty">${isTrash ? "삭제한 첨부가 없습니다." : "첨부 파일이 없습니다."}</div>`;
       return;
     }
     listEl.innerHTML = "";
+    if (isTrash) {
+      if (trashNoteEl) trashNoteEl.classList.remove("hidden");
+      _renderTrashAttachmentList(listEl, arr);
+      return;
+    }
     if (noteEl) noteEl.classList.remove("hidden");  // 첨부 존재 시 참조 범위 안내 노출
     const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
     const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
@@ -952,16 +1339,29 @@ async function _loadConversationAttachmentList(convId) {
       const verToggle = verCount > 1
         ? ` · <button type="button" class="attach-list-item-vertoggle">버전 ${verCount}개 ▾</button>`
         : "";
+      // 액션 버튼은 **메타줄**에 둔다 — 행 우측에 두면 이름줄의 가용 폭을 먹어, 패널
+      // 최소 폭(240px)에서 파일명이 3자로 붕괴한다(§18.8 design 패널 실측). 이름줄은
+      // 아이콘만 제외한 전체 폭을 쓰고, 메타줄은 이미 wrap 을 허용하므로 좁아지면
+      // 액션이 다음 줄로 접힌다(잘림 대신 줄바꿈 — 선행 cycle 이 세운 원칙과 동일).
+      const nameSafe = escapeHtml(a.original_filename || "");
       item.innerHTML = `
         <span class="attach-list-item-icon">${kindIcon(a.kind)}</span>
         <div class="attach-list-item-info">
-          <div class="attach-list-item-name" title="${escapeHtml(a.original_filename || "")}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}</div>
-          <div class="attach-list-item-meta">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}${verToggle}</div>
+          <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span>${verBadge}</div>
+          <div class="attach-list-item-meta">
+            <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${statusLabel ? " · " + statusLabel : ""}${verToggle}</span>
+            <span class="attach-list-item-actions">
+              <button class="attach-list-item-dl" title="다운로드" aria-label="${nameSafe} 다운로드" data-id="${a.id}">⬇</button>
+              ${a.can_manage ? `<button class="attach-list-item-del" title="삭제" aria-label="${nameSafe} 삭제" data-id="${a.id}">🗑</button>` : ""}
+            </span>
+          </div>
         </div>
-        <button class="attach-list-item-dl" title="다운로드" data-id="${a.id}">⬇</button>
       `;
       const dlBtn = item.querySelector(".attach-list-item-dl");
       dlBtn.addEventListener("click", () => _downloadAttachmentById(a.id, a.original_filename, dlBtn));
+      // REQ-20260806-attach-manage: 삭제. 버전이 여럿이면 모달이 범위를 묻는다.
+      const delBtn = item.querySelector(".attach-list-item-del");
+      if (delBtn) delBtn.addEventListener("click", () => _openAttachDeleteModal(a));
       entry.appendChild(item);
 
       // 버전 체인이 2개 이상이면 펼침 토글 — lazy 로 /versions 를 불러 이력 박스를 토글한다.
@@ -994,6 +1394,81 @@ async function _loadConversationAttachmentList(convId) {
     }
   } catch (exc) {
     listEl.innerHTML = `<div class="attach-list-empty">목록을 불러올 수 없습니다.</div>`;
+  }
+}
+
+// REQ-20260806-attach-manage: 휴지통 목록. 삭제된 **버전 단위**로 나열한다 — "이 버전만
+// 삭제" 를 되돌리려면 그 버전이 개별로 보여야 한다.
+function _renderTrashAttachmentList(listEl, arr) {
+  const fmtSize = (b) => b > 1048576 ? `${(b / 1048576).toFixed(1)}MB` : b > 1024 ? `${(b / 1024).toFixed(0)}KB` : `${b}B`;
+  // `restorable_until` 은 서버가 UTC 로 계산하지만 **오프셋 없는** ISO 문자열이라
+  // `new Date(...)` 가 로컬 시각으로 읽는다 — KST 브라우저에서 마감이 9시간 당겨져
+  // 표시(프론트)와 집행(서버 `_is_restorable`)이 어긋난다. `Z` 를 붙여 UTC 로 못박는다.
+  const asUtc = (iso) => {
+    const s = String(iso || "");
+    if (!s) return NaN;
+    const hasZone = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s);
+    return new Date(hasZone ? s : s + "Z").getTime();
+  };
+  const remainText = (iso) => {
+    const t = asUtc(iso);
+    if (!Number.isFinite(t)) return "";
+    const ms = t - Date.now();
+    if (ms <= 0) return "곧 삭제됨";
+    const days = Math.floor(ms / 86400000);
+    return days >= 1 ? `${days}일 남음` : "오늘까지";
+  };
+  // 같은 버전 체인은 한 번에 되돌릴 수 있게 root 별로 묶는다 — 서버는 `scope=chain` 을
+  // 지원하는데 프론트가 버전당 ↩ 만 두면 체인 삭제를 N번 클릭해 되돌려야 한다.
+  const byRoot = new Map();
+  for (const a of arr) {
+    const root = Number(a.root_attachment_id || a.id);
+    if (!byRoot.has(root)) byRoot.set(root, []);
+    byRoot.get(root).push(a);
+  }
+  for (const a of arr) {
+    const entry = document.createElement("div");
+    entry.className = "attach-list-entry is-trashed";
+    const item = document.createElement("div");
+    item.className = "attach-list-item";
+    const vnum = Number(a.version_number || 1);
+    const remain = remainText(a.restorable_until);
+    const nameSafe = escapeHtml(a.original_filename || "");
+    const siblings = byRoot.get(Number(a.root_attachment_id || a.id)) || [a];
+    const isChainHead = siblings[0] === a && siblings.length > 1;
+    item.innerHTML = `
+      <span class="attach-list-item-icon">🗑</span>
+      <div class="attach-list-item-info">
+        <div class="attach-list-item-name" title="${nameSafe}"><span class="attach-list-item-name-text">${escapeHtml(a.original_filename || "알 수 없음")}</span> <span class="attach-list-item-ver">v${vnum}</span></div>
+        <div class="attach-list-item-meta">
+          <span class="attach-list-item-metatext">${fmtSize(a.size || 0)}${remain ? " · " + escapeHtml(remain) : ""}</span>
+          <span class="attach-list-item-actions">
+            ${a.can_manage ? `<button class="attach-list-item-restore" title="복구" aria-label="${nameSafe} 버전 ${vnum} 복구" data-id="${a.id}">↩</button>` : ""}
+            ${a.can_manage && isChainHead ? `<button class="attach-list-item-restore is-chain" title="전체 버전 복구 (${siblings.length}개)" aria-label="${nameSafe} 전체 버전 복구" data-id="${a.id}" data-scope="chain">⇤</button>` : ""}
+          </span>
+        </div>
+      </div>
+    `;
+    item.querySelectorAll(".attach-list-item-restore").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        _performAttachRestore(a.id, btn.dataset.scope === "chain" ? "chain" : "version", btn));
+    });
+    entry.appendChild(item);
+    listEl.appendChild(entry);
+  }
+}
+
+function _bindAttachPanelManageControls() {
+  const dlAll = document.getElementById("attachSidePanelDownloadAll");
+  if (dlAll && dlAll.dataset.wired !== "1") {
+    dlAll.dataset.wired = "1";
+    dlAll.addEventListener("click", () => _openAttachDownloadDialog());
+  }
+  const trashBtn = document.getElementById("attachSidePanelTrashToggle");
+  if (trashBtn && trashBtn.dataset.wired !== "1") {
+    trashBtn.dataset.wired = "1";
+    trashBtn.addEventListener("click", () =>
+      _setAttachListState(_attachListState === "deleted" ? "active" : "deleted"));
   }
 }
 
@@ -1415,6 +1890,11 @@ function _bindComposerActionsEvents() {
         _applyAttachSidePanelWidth(panel);
         panel.classList.remove("hidden");
       }
+      // REQ-20260806-attach-manage: 패널을 열 때마다 목록 모드를 active 로 되돌린다 —
+      // 휴지통 상태가 남아 있으면 다른 대화에서 열었을 때 첨부가 없는 것처럼 보인다.
+      // reload:false — 아래 한 줄이 어차피 로드한다(같은 목록을 두 번 가져오지 않는다).
+      _setAttachListState("active", { reload: false });
+      _bindAttachPanelManageControls();
       const cid = state.activeConversationId;
       if (cid) _loadConversationAttachmentList(cid);
     });

@@ -3787,6 +3787,14 @@ from routers.share import (  # noqa: E402
 from routers.attachments import (  # noqa: E402
     _account_is_pending,
     _account_can_access_attachment,
+    # REQ-20260806-attach-manage — 삭제(버전 선택)·복구·일괄 다운로드 공통 헬퍼.
+    _account_can_manage_attachment,
+    _manage_gate_for_conversation,
+    _load_attachment_chain,
+    _promote_latest_version,
+    _is_restorable,
+    _normalize_scope,
+    _root_id_of,
 )
 from routers.media import (  # noqa: E402
     _sniff_image,

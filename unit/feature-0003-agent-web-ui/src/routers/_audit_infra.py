@@ -398,16 +398,59 @@ def build_audit_change_json(
             ["attachment.original_filename", "attachment.bytes"],
         )
     if action == "attachment.delete":
+        # REQ-20260806-attach-manage: `_audit_user_action` 은 항상 before=None/after=None 으로
+        # 호출하므로 아래 `(before or {})` 는 전부 None 이 된다(선재 결함 — 삭제 감사가 빈
+        # 레코드였다). 호출부가 싣는 request_ctx 를 1순위로 읽고 종전 경로를 폴백으로 남긴다.
+        # scope/deleted_count 가 없으면 버전 12개를 한 번에 지운 사건과 1개를 지운 사건이
+        # 감사에서 구별되지 않는다 — 파괴 규모가 기록에 없는 셈.
+        _src = request_ctx or {}
         return (
             {
-                "attachment_id": (before or {}).get("id"),
-                "conversation_id": (before or {}).get("conversation_id"),
-                "filename_hmac": (before or {}).get("filename_hmac"),
-                "extension_bucket": (before or {}).get("extension_bucket"),
-                "size_bucket": (before or {}).get("size_bucket"),
-                "delete_reason": (before or {}).get("delete_reason") or "user",
+                "attachment_id": _src.get("id") or (before or {}).get("id"),
+                "conversation_id": _src.get("conversation_id") or (before or {}).get("conversation_id"),
+                "filename_hmac": _src.get("filename_hmac") or (before or {}).get("filename_hmac"),
+                "extension_bucket": _src.get("extension_bucket") or (before or {}).get("extension_bucket"),
+                "size_bucket": _src.get("size_bucket") or (before or {}).get("size_bucket"),
+                "delete_reason": _src.get("delete_reason") or (before or {}).get("delete_reason") or "user",
+                "scope": _src.get("scope"),
+                "deleted_count": _src.get("deleted_count"),
+                "deleted_ids": list(_src.get("deleted_ids") or []),
+                "promoted_id": _src.get("promoted_id"),
             },
             ["attachment.original_filename", "attachment.bytes"],
+        )
+    # REQ-20260806-attach-manage: 삭제 되돌리기. 이 builder 에 분기가 없으면 함수 말미의
+    # `raise ValueError` 로 떨어지고, `_audit_user_action` 의 except 가 그 예외를 삼켜
+    # **감사 행이 아예 생성되지 않는다**(라우터의 try/except 도 재-raise 가 없어 무발화).
+    # D12 정합: raw filename/bytes/object_key 미포함 — id·count·scope 만.
+    if action == "attachment.restore":
+        _src = request_ctx or {}
+        return (
+            {
+                "conversation_id": _src.get("conversation_id"),
+                "scope": _src.get("scope"),
+                "restored_count": int(_src.get("restored_count") or 0),
+                "restored_ids": list(_src.get("restored_ids") or []),
+                "promoted_id": _src.get("promoted_id"),
+            },
+            ["attachment.original_filename", "attachment.bytes", "attachment.object_key"],
+        )
+    # REQ-20260806-attach-manage: 일괄 반출. 개별 다운로드보다 흔적이 필요한 경로다
+    # (한 요청으로 대화 첨부 전량이 나간다). 위 restore 와 같은 이유로 분기 필수.
+    if action == "attachment.bulk_download":
+        _src = request_ctx or {}
+        return (
+            {
+                "conversation_id": _src.get("conversation_id"),
+                "format": _src.get("format"),
+                "scope": _src.get("scope"),
+                "attachment_ids": list(_src.get("attachment_ids") or []),
+                "requested_count": int(_src.get("requested_count") or 0),
+                "packed_count": int(_src.get("packed_count") or 0),
+                "clipped_count": int(_src.get("clipped_count") or 0),
+                "total_bytes": int(_src.get("total_bytes") or 0),
+            },
+            ["attachment.original_filename", "attachment.bytes", "attachment.object_key"],
         )
     # TASK-0094 Sprint 2 (S2.5) — vision invoke audit. D12 정합:
     # raw bytes / raw filename / raw object_key 절대 미노출. attachment_metas 는

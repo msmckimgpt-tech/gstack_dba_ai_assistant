@@ -177,6 +177,9 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
         rows = app._load_attachment_version_chain(conn, root_id, scope_row=base)
 
         is_pending = app._account_is_pending(account)
+        # REQ-20260806-attach-manage: 버전 행의 삭제 어포던스도 서버 판정을 따른다
+        # (목록과 동일 술어 — §16.7 G6 표시-집행 정합).
+        gate = _manage_gate_for_conversation(conn, account, str(base.get("ConversationId") or ""))
         versions: list[dict[str, Any]] = []
         for row in rows:
             d = dict(row)
@@ -189,8 +192,10 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
                     )
                 except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
                     signed_url = None
-            versions.append(app._serialize_attachment_for_api(
-                d, include_signed_url=bool(signed_url), signed_url=signed_url))
+            ser = app._serialize_attachment_for_api(
+                d, include_signed_url=bool(signed_url), signed_url=signed_url)
+            ser["can_manage"] = bool(gate(d))
+            versions.append(ser)
         return JSONResponse({"root_attachment_id": root_id, "versions": versions})
     finally:
         conn.close()
@@ -352,63 +357,101 @@ def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONRes
         conn.close()
 
 @router.delete("/api/attachments/{attachment_id}")
-def delete_attachment(attachment_id: int, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+def delete_attachment(
+    attachment_id: int,
+    request: Request,
+    scope: str = "version",
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
     """첨부 soft-delete (D6 user delete_reason). MinIO 객체 실삭제는 Phase 9
-    reconciliation worker 가 retention 만료 후 처리. 권한: upload.{own,any}.
+    reconciliation worker 가 retention 만료 후 처리.
 
-    BRIEFING D6 의 4 종 taxonomy 중 user delete 만 본 endpoint 가 trigger.
-    admin_purge / legal erasure / conv_soft 는 별 endpoint (Phase 9 ship).
+    REQ-20260806-attach-manage:
+      - `scope=version`(기본) — 지정한 **그 버전 한 건**만. 최신본이었으면 직전
+        미삭제 버전을 최신으로 승격한다(D5) — 승격하지 않으면 체인 전체가 목록에서
+        사라져 "이 버전만 삭제" 가 성립하지 않는다.
+      - `scope=chain` — 그 첨부가 속한 **버전 체인 전량**. 목록에서 첨부가 사라진다.
+
+    권한은 `_account_can_manage_attachment`(D3) — 종전 `_account_can_access_attachment`
+    는 그룹 멤버 전원을 통과시켜 제3자가 남의 첨부를 지울 수 있었다.
     """
-    row = app._load_attachment_row(conn, attachment_id)
-    # upload.{own,any} 가 soft-delete 권한 (uploader 가 자기 첨부 회수).
-    if not app._account_can_access_attachment(
-        conn,
-        account,
-        row,
-        "conversation.attachment.upload.own",
-        "conversation.attachment.upload.any",
-    ):
+    scope_norm = _normalize_scope(scope)
+    if scope_norm is None:
+        return app._json_error("scope 는 version 또는 chain 이어야 합니다.", 400)
+
+    row = _load_attachment_row_mysql(conn, attachment_id)
+    if not _account_can_manage_attachment(conn, account, row):
         return app._json_error("첨부를 찾을 수 없거나 삭제 권한이 없습니다.", 404)
 
-    # 이미 soft-deleted 면 idempotent 응답.
-    if row.get("DeletePending"):
-        return JSONResponse(
-            {
-                "ok": True,
-                "delete_reason": str(row.get("DeleteReason") or "user"),
-                "already_pending": True,
-            }
-        )
-
-    before_snapshot = app._serialize_attachment_for_audit(row)
-    cur = conn.cursor()
+    root_id = _root_id_of(row)
+    # 삭제 UPDATE 와 승격 UPDATE 는 한 트랜잭션이어야 한다 — 사이가 벌어지면 최신본만
+    # 지운 체인이 목록에서 통째로 사라지는 중간 상태가 커밋된다.
+    in_tx = _begin_tx(conn)
     try:
-        cur.execute(
-            """
-            UPDATE WebConversationAttachments
-            SET DeletePending = 1, DeleteReason = 'user', DeletedAt = UTC_TIMESTAMP(6)
-            WHERE Id = %s AND DeletePending = 0
-            """,
-            (int(attachment_id),),
-        )
-        updated = int(cur.rowcount or 0)
-    finally:
-        cur.close()
+        if scope_norm == "chain":
+            targets = [
+                int(r.get("Id") or 0)
+                for r in _load_attachment_chain(conn, root_id, for_update=in_tx)
+                if not r.get("DeletePending") and not r.get("DeletedAt")
+            ]
+        else:
+            targets = [] if row.get("DeletePending") else [int(attachment_id)]
+        targets = [t for t in targets if t > 0]
 
-    if updated <= 0:
-        return app._json_error("삭제 처리 실패 (이미 처리됨)", 409)
+        if not targets:
+            # 이미 전부 soft-deleted — idempotent 응답 (종전 단일 삭제의 already_pending 계약 보존).
+            if in_tx:
+                conn.rollback()
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "delete_reason": str(row.get("DeleteReason") or "user"),
+                    "already_pending": True,
+                    "scope": scope_norm,
+                    "deleted_ids": [],
+                    "deleted_count": 0,
+                }
+            )
 
-    try:
+        before_snapshot = app._serialize_attachment_for_audit(row)
+        placeholders = ",".join(["%s"] * len(targets))
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
+                UPDATE WebConversationAttachments
+                SET DeletePending = 1, DeleteReason = 'user', DeletedAt = UTC_TIMESTAMP(6)
+                WHERE Id IN ({placeholders}) AND DeletePending = 0
+                """,
+                tuple(targets),
+            )
+            updated = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+
+        if updated <= 0:
+            if in_tx:
+                conn.rollback()
+            return app._json_error("삭제 처리 실패 (이미 처리됨)", 409)
+
+        # D5 — 최신본을 지웠으면 남은 미삭제 버전 중 최신을 승격한다. chain 삭제로 남은
+        # 행이 없으면 no-op(None).
+        promoted_id = _promote_latest_version(conn, root_id, lock=in_tx)
         conn.commit()
     except Exception:
-        pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning(
+            "delete_attachment failed (attachment_id=%s, scope=%s)", attachment_id, scope_norm,
+            exc_info=True)
+        return app._json_error("삭제 처리 중 오류가 발생했습니다.", 500)
 
     # TASK-0277: dual-write — soft-delete(DeletePending/DeletedAt) 상태를 PG 로 미러(flag-gated, fail-soft).
-    try:
-        from web.modules import attachment_pg_mirror as _apm
-        _apm.mirror_attachments(conn, [int(attachment_id)])
-    except Exception:
-        pass
+    # 승격으로 SupersededAt 이 바뀐 행도 함께 미러해야 PG read 경로의 목록이 어긋나지 않는다.
+    _mirror_chain(conn, root_id, targets)
 
     # audit dispatch.
     try:
@@ -419,7 +462,14 @@ def delete_attachment(attachment_id: int, request: Request, account=Depends(app.
             action="attachment.delete",
             resource_type="attachment",
             resource_id=str(attachment_id),
-            request_ctx={**before_snapshot, "delete_reason": "user"},
+            request_ctx={
+                **before_snapshot,
+                "delete_reason": "user",
+                "scope": scope_norm,
+                "deleted_ids": targets,
+                "deleted_count": updated,
+                "promoted_id": promoted_id,
+            },
         )
     except Exception:
         # fail-open: attachment.delete audit dispatch 실패는 삭제 응답을 막지 않으나 가시화.
@@ -428,7 +478,131 @@ def delete_attachment(attachment_id: int, request: Request, account=Depends(app.
             attachment_id, exc_info=True,
         )
 
-    return JSONResponse({"ok": True, "delete_reason": "user"})
+    return JSONResponse({
+        "ok": True,
+        "delete_reason": "user",
+        "scope": scope_norm,
+        "deleted_ids": targets,
+        "deleted_count": updated,
+        "promoted_id": promoted_id,
+    })
+
+
+@router.post("/api/attachments/{attachment_id}/restore")
+def restore_attachment(
+    attachment_id: int,
+    request: Request,
+    scope: str = "version",
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    """REQ-20260806-attach-manage: soft-delete 된 첨부를 retention 창 안에서 되살린다.
+
+    복구 가능 조건 — ① `DeletePending=1` ② reconciliation worker 가 아직 실 객체를
+    지우지 않음(`UploadStatus <> 'deleted'`) ③ retention 미만료
+    (`DeletedAt > now - ATTACHMENT_RECON_RETENTION_DAYS`). 셋 중 하나라도 어긋나면
+    그 행은 대상에서 빠지고, 대상이 하나도 없으면 409 로 사유를 알린다 — 조용히
+    "성공" 을 돌려주면 사용자는 복구됐다고 믿는다.
+
+    권한은 삭제와 동일(`_account_can_manage_attachment`). `scope` 의미도 삭제와 대칭.
+    """
+    scope_norm = _normalize_scope(scope)
+    if scope_norm is None:
+        return app._json_error("scope 는 version 또는 chain 이어야 합니다.", 400)
+
+    row = _load_attachment_row_mysql(conn, attachment_id)
+    if not _account_can_manage_attachment(conn, account, row):
+        return app._json_error("첨부를 찾을 수 없거나 복구 권한이 없습니다.", 404)
+
+    root_id = _root_id_of(row)
+    in_tx = _begin_tx(conn)
+    try:
+        candidates = (
+            _load_attachment_chain(conn, root_id, include_deleted=True, for_update=in_tx)
+            if scope_norm == "chain"
+            else [row]
+        )
+        targets = [int(r.get("Id") or 0) for r in candidates if _is_restorable(r)]
+        targets = [t for t in targets if t > 0]
+
+        if not targets:
+            if in_tx:
+                conn.rollback()
+            return app._json_error(
+                "복구할 수 있는 첨부가 없습니다 — 이미 사용 중이거나 보관 기간이 지나 삭제되었습니다.",
+                409,
+            )
+
+        placeholders = ",".join(["%s"] * len(targets))
+        cur = conn.cursor()
+        try:
+            # WHERE 절이 `_is_restorable` 의 판정을 SQL 로 한 번 더 건다 — 판정과 실행
+            # 사이에 worker 가 상태를 바꿨어도 되돌리면 안 되는 행은 갱신되지 않는다.
+            cur.execute(
+                f"""
+                UPDATE WebConversationAttachments
+                SET DeletePending = 0, DeleteReason = NULL, DeletedAt = NULL
+                WHERE Id IN ({placeholders})
+                  AND DeletePending = 1
+                  AND DeleteReason = %s
+                  AND UploadStatus <> 'deleted'
+                  AND DeletedAt > UTC_TIMESTAMP(6) - INTERVAL %s DAY
+                """,
+                (*targets, _USER_DELETE_REASON, _retention_days()),
+            )
+            restored = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+
+        if restored <= 0:
+            if in_tx:
+                conn.rollback()
+            return app._json_error("복구 처리 실패 (이미 처리됨)", 409)
+
+        # 되살아난 행이 체인의 최신이 될 수 있다 — 승격을 다시 계산한다.
+        promoted_id = _promote_latest_version(conn, root_id, lock=in_tx)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning(
+            "restore_attachment failed (attachment_id=%s, scope=%s)", attachment_id, scope_norm,
+            exc_info=True)
+        return app._json_error("복구 처리 중 오류가 발생했습니다.", 500)
+
+    _mirror_chain(conn, root_id, targets)
+
+    try:
+        app._audit_user_action(
+            conn,
+            request,
+            account,
+            action="attachment.restore",
+            resource_type="attachment",
+            resource_id=str(attachment_id),
+            request_ctx={
+                "conversation_id": str(row.get("ConversationId") or ""),
+                "scope": scope_norm,
+                "restored_ids": targets,
+                "restored_count": restored,
+                "promoted_id": promoted_id,
+            },
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "restore_attachment: restore audit dispatch failed (attachment_id=%s)",
+            attachment_id, exc_info=True,
+        )
+
+    return JSONResponse({
+        "ok": True,
+        "scope": scope_norm,
+        "restored_ids": targets,
+        "restored_count": restored,
+        "promoted_id": promoted_id,
+    })
 
 
 # ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
@@ -467,3 +641,309 @@ def _account_can_access_attachment(
     # feature-0009: 그룹 대화 멤버도 첨부 접근 가능 (첨부는 전원 공유, REQ-GC-R6). LLM 맥락
     # 주입은 발신자-한정(CSO F1, S3) 으로 별도 제한 — 여기는 열람/공유 경계.
     return app._account_is_conversation_member(conversation_id, acct_id)
+
+
+# ==== REQ-20260806-attach-manage — 삭제(버전 선택)·복구 공통 헬퍼 ====
+
+# 삭제/복구 scope. version = 지정한 그 버전 한 건, chain = 버전 체인 전량.
+_SCOPE_VERSION = "version"
+_SCOPE_CHAIN = "chain"
+
+
+def _normalize_scope(scope: str | None) -> str | None:
+    """scope 쿼리 정규화. 허용 밖 값은 None → caller 가 400.
+
+    기본값을 조용히 적용하지 않는다 — 오타(`chian`)가 "그 버전만 삭제" 로 조용히
+    격하되면 사용자는 전체를 지웠다고 믿는다(§16.7 G9-c 정합).
+    """
+    s = str(scope or _SCOPE_VERSION).strip().lower()
+    return s if s in (_SCOPE_VERSION, _SCOPE_CHAIN) else None
+
+
+def _load_attachment_row_mysql(conn, attachment_id: int) -> dict[str, Any] | None:
+    """삭제·복구 **판정용** 단일 행 — 항상 MySQL(첨부 정본)을 읽는다.
+
+    `app._load_attachment_row` 는 `ATTACHMENTS_READ_BACKEND=postgres`(라이브 기본)면
+    PG 미러를 읽는다. 미러가 fail-soft 로 한 번 유실돼 PG 는 `delete_pending=1`, MySQL 은
+    0 인 상태가 되면, 기본 경로(`scope=version`)가 그 PG 행을 보고 "이미 삭제됨"(200
+    already_pending)을 돌려주면서 **실제로는 아무것도 지우지 않는다** — 사용자는 삭제됐다고
+    믿는다. 인가 판정(열람 게이트)과 달리 상태 판정은 정본이어야 한다.
+    """
+    if not attachment_id:
+        return None
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                MimeType, SizeBytes, Sha256, Kind, UploadStatus, CreatedAt,
+                DeletedAt, DeletePending, DeleteReason,
+                RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+            FROM WebConversationAttachments
+            WHERE Id = %s
+            LIMIT 1
+            """,
+            (int(attachment_id),),
+        )
+        r = cur.fetchone()
+        return dict(r) if r else None
+    finally:
+        cur.close()
+
+
+def _root_id_of(row: dict[str, Any] | None) -> int:
+    """버전 체인의 root id. RootAttachmentId 가 비면 그 행 자신이 root(원본)."""
+    if not row:
+        return 0
+    return int(row.get("RootAttachmentId") or 0) or int(row.get("Id") or 0)
+
+
+def _manage_gate_for_conversation(conn, account: dict[str, Any] | None, conversation_id: str):
+    """삭제·복구 인가를 **대화 단위로 1회 해석**한 뒤 행 술어를 돌려준다 (D3).
+
+    `_account_can_access_attachment`(열람 경계)와 두 곳이 다르다:
+
+    1. **그룹 멤버 단독은 거부**. 종전엔 열람 헬퍼를 삭제에 재사용해 업로더도 대화
+       소유자도 아닌 제3자가 남의 첨부를 지울 수 있었다 — ADR-20260729T163000 이
+       "별도 판단 대상" 으로 이월한 미해결 이슈이며, 삭제 UI 재도입과 함께 닫는다.
+    2. **soft-deleted 행도 통과**. 복구 경로가 쓰기 때문 — 열람 헬퍼는 `DeletedAt`
+       이면 거부하므로 복구에 재사용할 수 없다.
+
+    통과 조건: `upload.any` 보유(관리·보존정책 경로) OR `upload.own` 보유 + (첨부
+    업로더 본인 OR 대화 소유자).
+
+    목록 응답의 `can_manage` 표시와 실제 집행이 **같은 코드**를 공유하도록 술어를
+    반환한다 (§16.7 G6 — 표시용 판정을 따로 구현하면 두 벌이 어긋난다). 대화 소유자
+    조회는 여기서 1회만 수행해 목록 렌더의 N+1 을 피한다.
+    """
+    if not account:
+        return lambda row: False
+    if app._account_has_permission(account, "conversation.attachment.upload.any"):
+        return lambda row: bool(row)
+    if not app._account_has_permission(account, "conversation.attachment.upload.own"):
+        return lambda row: False
+    acct_id = int(account["id"])
+    is_owner = bool(conversation_id) and app._conversation_owned_by_account(conn, conversation_id, acct_id)
+    # **현재 접근 가능한 대화**여야 한다. 업로더 조건만 보면 그룹에서 kick 당한 이탈자가
+    # 자기 파일을 되살리거나 지울 수 있다 — 그 방을 볼 수 없는 사람이 그 방의 내용을
+    # 바꾸는 셈이다. 열람 게이트(멤버십)와 비대칭이던 부분을 닫는다.
+    if not is_owner:
+        try:
+            can_reach = bool(conversation_id) and app._account_is_conversation_member(
+                conversation_id, acct_id)
+        except Exception:
+            can_reach = False  # 판정 불가 → fail-closed (파괴적 경로).
+        if not can_reach:
+            return lambda row: False
+
+    def _pred(row: dict[str, Any] | None) -> bool:
+        if not row:
+            return False
+        return bool(is_owner) or int(row.get("AccountId") or 0) == acct_id
+
+    return _pred
+
+
+def _account_can_manage_attachment(
+    conn,
+    account: dict[str, Any] | None,
+    attachment_row: dict[str, Any] | None,
+) -> bool:
+    """삭제·복구 공통 인가 (D3, REQ-20260806-attach-manage). 판정은
+    `_manage_gate_for_conversation` 단일 정의를 쓴다."""
+    if not attachment_row:
+        return False
+    gate = _manage_gate_for_conversation(
+        conn, account, str(attachment_row.get("ConversationId") or "")
+    )
+    return gate(attachment_row)
+
+
+def _load_attachment_chain(
+    conn, root_id: int, *, include_deleted: bool = False, for_update: bool = False
+) -> list[dict[str, Any]]:
+    """버전 체인 전량을 VersionNumber ASC 로. 첨부 정본은 MySQL(dual-write, TASK-0279)
+    이라 삭제·복구 판정은 항상 MySQL 을 읽는다(PG mirror 는 active 목록 read 전용).
+
+    `for_update=True` 는 `FOR UPDATE` 로 체인을 잠근다 — 두 요청이 같은 체인을 동시에
+    삭제/복구하면 각자 다른 '최신' 을 계산해 **두 행이 `SupersededAt=NULL`** 이 될 수
+    있고, 그러면 같은 첨부가 목록에 두 번 나온다. 트랜잭션 안에서만 의미가 있다.
+    """
+    if not root_id:
+        return []
+    where_deleted = "" if include_deleted else " AND DeletedAt IS NULL"
+    lock = " FOR UPDATE" if for_update else ""
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            f"""
+            SELECT
+                Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                MimeType, SizeBytes, Sha256, Kind, UploadStatus, CreatedAt,
+                DeletedAt, DeletePending, DeleteReason,
+                RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+            FROM WebConversationAttachments
+            WHERE (RootAttachmentId = %s OR Id = %s){where_deleted}
+            ORDER BY VersionNumber ASC, Id ASC{lock}
+            """,
+            (int(root_id), int(root_id)),
+        )
+        return [dict(r) for r in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+
+
+# 복구가 허용되는 삭제 사유. `conv_soft`(대화 soft-delete cascade)는 대화 자체의 복구
+# 흐름이 담당하고, `admin_purge`/`legal`(BRIEFING D6 taxonomy)은 **되돌리면 안 되는**
+# 삭제다 — 사용자 회수 경로가 그것들을 되살리면 관리·법적 삭제가 무력화된다.
+_USER_DELETE_REASON = "user"
+
+
+def _begin_tx(conn) -> bool:
+    """명시 트랜잭션 시작. 연결이 autocommit 이면 삭제 UPDATE 와 승격 UPDATE 가 별개
+    커밋이 되어, 승격이 실패하면 **최신본만 지운 체인이 목록에서 통째로 사라진다**
+    (목록은 `SupersededAt IS NULL` 을 보는데 그런 행이 없어진다). 두 문장을 한 트랜잭션
+    으로 묶어 그 중간 상태를 없앤다.
+
+    반환: 트랜잭션을 실제로 열었는지(드라이버 미지원·이미 진행 중이면 False — 그 경우
+    종전 동작으로 떨어지되 호출측은 흐름을 바꾸지 않는다).
+    """
+    try:
+        conn.start_transaction()
+        return True
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_begin_tx: start_transaction unavailable — falling back to autocommit semantics",
+            exc_info=True)
+        return False
+
+
+def _retention_days() -> int:
+    """reconciliation worker 와 같은 env 를 읽는다 — 두 곳이 어긋나면 UI 가 복구
+    가능하다고 표시한 것을 서버가 거부하거나 그 반대가 된다."""
+    import os
+    try:
+        return max(1, int(os.getenv("ATTACHMENT_RECON_RETENTION_DAYS") or "30"))
+    except Exception:
+        return 30
+
+
+def _is_restorable(row: dict[str, Any] | None) -> bool:
+    """retention 창 안의 **사용자 삭제** 행인가.
+
+    세 가지를 배제한다:
+      - `DeleteReason != 'user'` — `conv_soft`(대화 삭제 cascade)는 대화 복구가 담당하고,
+        `admin_purge`/`legal` 은 되돌리면 안 되는 삭제다. 사용자 회수 경로가 이것들을
+        되살리면 관리·법적 삭제가 무력화된다.
+      - `UploadStatus == 'deleted'` — worker 가 MinIO 객체까지 지운 종착 상태라 DB
+        플래그를 되돌려도 본문이 없다.
+      - retention 만료분 — worker 의 다음 사이클이 곧 가져간다.
+    """
+    if not row:
+        return False
+    if not row.get("DeletePending"):
+        return False
+    if str(row.get("DeleteReason") or "").lower() != _USER_DELETE_REASON:
+        return False
+    if str(row.get("UploadStatus") or "").lower() == "deleted":
+        return False
+    deleted_at = row.get("DeletedAt")
+    if not deleted_at:
+        # DeletePending=1 인데 DeletedAt 이 비면 worker 의 만료 판정 대상이 아니다
+        # (`DeletedAt IS NOT NULL` 조건). 되살릴 수 있다.
+        return True
+    import datetime as _dt
+    try:
+        dt = deleted_at if isinstance(deleted_at, _dt.datetime) else _dt.datetime.fromisoformat(str(deleted_at))
+    except Exception:
+        # 파싱 불가 → 만료 여부를 단정할 수 없다. **fail-closed** — 보존정책 우회 비용이
+        # 데이터 회수 편익보다 크다. UPDATE WHERE 의 retention 조건이 2차 방어이므로
+        # 여기서 True 를 돌려줘도 결국 막히지만, 판정과 집행이 같은 답을 내야 한다.
+        logging.getLogger(__name__).warning(
+            "_is_restorable: DeletedAt parse failed → fail-closed (id=%s, value=%r)",
+            row.get("Id"), deleted_at)
+        return False
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+    return dt > (_dt.datetime.utcnow() - _dt.timedelta(days=_retention_days()))
+
+
+def _promote_latest_version(conn, root_id: int, *, lock: bool = False) -> int | None:
+    """체인의 미삭제 행 중 최신(VersionNumber 최대)을 `SupersededAt=NULL` 로 승격.
+
+    D5 — 최신본을 지우면 직전 버전이 목록의 최신이 되어야 "이 버전만 삭제" 가
+    성립한다. 복구로 더 높은 버전이 되살아난 경우도 같은 계산으로 수렴한다.
+    목록 SQL(`SupersededAt IS NULL`)이 **정확히 한 행**만 보도록 나머지는 스탬프를
+    채운다 — 두 행이 NULL 이면 같은 첨부가 목록에 두 번 나온다.
+
+    반환: 승격된 행 id (미삭제 행이 없으면 None — chain 삭제 후의 정상 상태).
+
+    **예외를 삼키지 않는다.** 승격은 삭제/복구와 같은 트랜잭션의 일부이며, 여기서
+    실패했는데 삭제만 커밋되면 그 체인은 목록에서 조용히 사라진다. 호출측이 rollback
+    할 수 있도록 올린다.
+    """
+    if not root_id:
+        return None
+    # 체인을 잠근 채 읽는다 — 잠그지 않으면 두 요청이 각자 다른 '최신' 을 계산해 두 행이
+    # `SupersededAt=NULL` 이 될 수 있고, 그러면 목록에 같은 첨부가 두 번 나온다.
+    alive = [r for r in _load_attachment_chain(conn, int(root_id), for_update=bool(lock))
+             if not r.get("DeletePending")]
+    if not alive:
+        return None
+    latest = max(alive, key=lambda r: (int(r.get("VersionNumber") or 1), int(r.get("Id") or 0)))
+    latest_id = int(latest.get("Id") or 0)
+    if not latest_id:
+        return None
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE WebConversationAttachments
+            SET SupersededAt = COALESCE(SupersededAt, UTC_TIMESTAMP(6))
+            WHERE (RootAttachmentId = %s OR Id = %s)
+              AND DeletedAt IS NULL AND Id <> %s AND SupersededAt IS NULL
+            """,
+            (int(root_id), int(root_id), latest_id),
+        )
+        # `DeletedAt IS NULL` 가드 — 그 사이 다른 트랜잭션이 이 행을 지우고 커밋했으면
+        # 삭제된 행을 current 로 승격하게 된다.
+        cur.execute(
+            "UPDATE WebConversationAttachments SET SupersededAt = NULL "
+            "WHERE Id = %s AND DeletedAt IS NULL",
+            (latest_id,),
+        )
+    finally:
+        cur.close()
+    return latest_id
+
+
+def _mirror_attachment_ids(conn, attachment_ids: list[int]) -> None:
+    """TASK-0277 dual-write — 상태 변경분을 PG 로 미러(flag-gated, fail-soft)."""
+    ids = sorted({int(i) for i in (attachment_ids or []) if i})
+    if not ids:
+        return
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        _apm.mirror_attachments(conn, ids)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_mirror_attachment_ids: PG mirror failed (ids=%s)", ids, exc_info=True)
+
+
+def _mirror_chain(conn, root_id: int, extra_ids: list[int] | None = None) -> None:
+    """체인 **전량** 을 미러한다.
+
+    `_promote_latest_version` 은 승격 행뿐 아니라 **강등 행들**(`SupersededAt` 스탬프)도
+    바꾼다. 변경분만 골라 미러하면 그 강등 행이 빠져 PG 에 `superseded_at IS NULL` 이
+    둘 남고, `pg_list_conversation_attachments`(PG read 가 **라이브 기본**)가 같은 첨부를
+    두 줄로 반환한다 — 이후 그 행을 건드리는 write 가 나올 때까지 영구히 어긋난다.
+    업로드 supersede 경로(`conversations.py` 재업로드)가 이미 같은 규약을 쓴다.
+    """
+    ids = list(extra_ids or [])
+    try:
+        ids += [int(r.get("Id") or 0) for r in _load_attachment_chain(conn, int(root_id), include_deleted=True)]
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_mirror_chain: chain reload failed (root_id=%s)", root_id, exc_info=True)
+    _mirror_attachment_ids(conn, ids)

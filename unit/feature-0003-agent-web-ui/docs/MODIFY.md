@@ -2488,3 +2488,16 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Files: `src/static/css/chat.css`, `tests/headless/verify_attach_diff_geometry.py`,
   `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/…`.
 - Timestamp: 2026-08-07T03:20:00+09:00
+## CHG-20260806T154100-attach-manage — 첨부 삭제(버전 선택)·복구·일괄 다운로드 (append-only 철회)
+
+- 사용자 요청(2026-08-06)으로 `ADR-20260729T163000-attach-append-only` 를 supersede. Critical §12.3 — PLAN-APPROVED 2026-08-06.
+- **백엔드** `routers/attachments.py`: `_manage_gate_for_conversation`(대화 단위 1회 해석 후 행 술어 반환) + `_account_can_manage_attachment` 신설 — 삭제·복구 인가를 열람 경계에서 분리(그룹 멤버 단독 거부, soft-deleted 행 통과). `delete_attachment` 에 `?scope=version|chain` + 최신 삭제 시 `_promote_latest_version` 승격 + `deleted_ids`/`deleted_count`/`promoted_id` 응답. `restore_attachment`(`POST /api/attachments/{id}/restore`) 신설 — `_is_restorable`(retention·purge 상태 판정) 통과분만 되살리고 대상 0건은 409. 부수 헬퍼 `_normalize_scope`(오타→400)·`_root_id_of`·`_load_attachment_chain`·`_retention_days`·`_mirror_attachment_ids`(PG dual-write). `get_attachment_versions` 응답에 `can_manage` 추가.
+- **백엔드** `routers/conversations.py`: `list_conversation_attachments` 에 `?state=active|deleted` + `can_manage`. `_list_deleted_conversation_attachments`(휴지통, `DeletePending=1 AND UploadStatus <> 'deleted'`) 신설. `bulk_download_conversation_attachments`(`GET /api/conversations/{cid}/attachments/download`) 신설 — `format=zip|manifest` × `scope=latest|all` × `ids=` 부분 선택, `SpooledTemporaryFile` 스풀 ZIP, 상한 초과 413, 객체 fetch 실패는 안내 텍스트 엔트리로 표면화, `attachment.bulk_download` audit. 헬퍼 `_bulk_zip_max_bytes`·`_zip_entry_name`(버전 접미·중복 회피·zip-slip 방지)·`_audit_bulk_download`.
+- **백엔드** `app.py`: 신규 헬퍼 7종 re-export.
+- **프론트** `static/app/composer.js`: 목록 행 🗑(can_manage 시)·버전 행 🗑 · 삭제 범위 모달(`_openAttachDeleteModal`) · 휴지통 토글/렌더(`_setAttachListState`·`_renderTrashAttachmentList`) · 복구(`_performAttachRestore`) · 전체 다운로드 모달(`_openAttachDownloadDialog`·`_runBulkDownload`). 모달 껍데기는 `share-mgr-*` 재사용 + 배경 dismiss 는 저장소 단일 primitive(`bindBackdropDismiss`). 패널 열 때 목록 모드를 `active` 로 리셋(reload 중복 없음).
+- **프론트** `static/index.html`: 헤더에 ⤓(전체 다운로드)·🗑(휴지통) 액션 + 휴지통 안내 문단. 안내 문구에서 "첨부는 대화에 계속 쌓입니다" 제거(사실이 아니게 됨).
+- **프론트** `static/css/chat.css`: `.attach-side-panel-act` · `.attach-list-item-del/-restore` · `.attach-list-version-del` · `.attach-list-entry.is-trashed` · `.attach-manage-*` 모달. **선행 cycle 이 실측한 폭 회귀를 되풀이하지 않는다** — 메타줄 말줄임을 다시 넣지 않아 "버전 N개 ▾" 진입점을 보존하고, 새 버튼은 아이콘 1자 폭.
+- **테스트** `tests/test_attach_manage.py` 신규 23건 — 인가 6 + AST 구조 가드 2(삭제/복구가 열람 헬퍼 미호출 · 열람 경로는 유지) + scope 3 + 승격 3 + 복구 판정 4 + ZIP 4 + 휴지통 3. `tests/route_snapshot_p5b.json` 골든 갱신(224→226, 신규 2 · 제거 0). `docs/ROUTEMAP.md` 재생성.
+- 신규 테이블·마이그레이션·권한 코드 **0**.
+- Files: `src/routers/{attachments,conversations}.py`, `src/app.py`, `src/static/app/composer.js`, `src/static/index.html`, `src/static/css/chat.css`, `tests/test_attach_manage.py`, `tests/route_snapshot_p5b.json`, `docs/{TASK,FUNCTION,DECISIONS,MODIFY,REVIEW,TEST}.md`, `docs/ROUTEMAP.md`.
+- Timestamp: 2026-08-06T15:41:00+09:00
