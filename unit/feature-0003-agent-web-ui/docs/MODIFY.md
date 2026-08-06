@@ -2474,3 +2474,17 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/…`.
 - RBAC·스키마·마이그레이션 변경 0. 응답은 additive(기존 필드 불변).
 - Timestamp: 2026-08-07T02:00:00+09:00
+## CHG-20260807T0320-attach-diff-height 비교 모달 높이를 고정에서 상한으로 (Minor §12.3)
+- 선행 `CHG-20260807T0200-attach-diff-ux`(PR #1171, 배포본 `b23df012`)의 PB-0008 라이브 캡처
+  **판독**에서 적발. 자동 44축은 전부 PASS 했으나 짧은 diff 에서 표 아래 빈 영역이 컸다
+  (내용 y≈495 / 패널 940).
+- 원인은 내 계약 자체 — `height: 94vh` **고정**. 요청은 "내용이 잘리지 않게" 였고 "항상 크게"
+  가 아니었다. 게다가 그 고정을 **테스트가 요구사항으로 굳혔다**(선행 T9 의 높이 ≥88% 단언).
+- 변경: `height: 94vh` 제거(= `max-height` 만). CSS 1선언. JS·백엔드 무변경.
+- 테스트 재설계: T9 는 폭만 검사하고, 높이는 상한의 **양측**으로 나눴다 — T9b 짧은 diff 는 상한
+  미만 · T9c 긴 diff(120행)는 상한에 닿음 · T9d 넘치면 표 컨테이너가 스크롤(페이지 스크롤 아님).
+- 검증: 헤드리스 **25/25**(짧은 244px · 긴 846px=94vh · scroller True · doc overflowY False) ·
+  전수 mjs 44 suite OK · pytest 무영향.
+- Files: `src/static/css/chat.css`, `tests/headless/verify_attach_diff_geometry.py`,
+  `docs/{TASK,FUNCTION,MODIFY,REVIEW,REPORT}.md`, `docs/test-runs.d/…`.
+- Timestamp: 2026-08-07T03:20:00+09:00

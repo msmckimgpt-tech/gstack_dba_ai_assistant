@@ -21,7 +21,8 @@
   T6  긴 줄이 표를 넘겨도 scroller 안에서만 넘친다(문서 폭 불변)
   T7  회귀 재현 — colgroup 을 제거하면 열 폭 계약이 붕괴한다(가드가 load-bearing 임의 증거)
   T8  줄번호 폭이 **자릿수에 비례**하고, 3자리 폭은 옛 고정 48px 보다 좁다
-  T9  모달이 뷰포트를 거의 다 쓴다 — "작아서 내용이 잘린다" 의 수치 반대증명
+  T9  모달 폭이 뷰포트의 95% 이상 (+ T9b 짧은 diff 는 높이 상한 미만 = 빈 영역 없음,
+      T9c/T9d 긴 diff 는 상한에 닿고 표 컨테이너가 스크롤 — "내용이 잘린다" 의 반대증명)
   T10 중앙선 드래그로 좌/우 code 폭 비율이 실제로 바뀐다(합 보존 · localStorage 영속)
   T11 "N줄 생략" 이 버튼이고, 누르면 **그 구간만** 국소 전개된다(전체 맥락은 1회만 조회)
   T12 "동일한 줄도 모두 보기" 가 켜져 있으면 전개 버튼을 달지 않는다(중복 어포던스 금지)
@@ -201,9 +202,14 @@ with sync_playwright() as p:
         check("T6 문서 폭 불변(scroller 안에서만 넘침)",
               m["docOverflowX"] is False and m["scrollerOverflowX"] == "auto",
               f"docOverflow={m['docOverflowX']} scroller={m['scrollerOverflowX']}")
-        check("T9 모달이 뷰포트를 거의 다 쓴다(폭 ≥ 95% · 높이 ≥ 88%)",
-              m["panelW"] >= m["viewportW"] * 0.95 and m["panelH"] >= m["viewportH"] * 0.88,
-              f"{m['panelW']}x{m['panelH']} / vw={m['viewportW']} vh={m['viewportH']}")
+        # T9 는 **폭**만 "거의 다 쓴다" 를 요구한다. 높이는 상한(94vh)이며 짧은 diff 에서는 더
+        # 작아야 한다(고정 높이는 표 아래에 큰 빈 영역을 남겼다 — 라이브 캡처 실측 2026-08-07).
+        check("T9 모달 폭이 뷰포트의 95% 이상",
+              m["panelW"] >= m["viewportW"] * 0.95,
+              f"{m['panelW']} / vw={m['viewportW']}")
+        check("T9b 짧은 diff 는 높이가 상한(94vh) 미만 — 빈 영역 없음",
+              m["panelH"] < m["viewportH"] * 0.94,
+              f"panelH={m['panelH']} / 94vh={round(m['viewportH'] * 0.94)}")
         check("T11a 'N줄 생략' 이 버튼이다(2개 전부)",
               m["gapButtons"] == m["gapCells"] == 2, f"btn={m['gapButtons']} cell={m['gapCells']}")
         check("T10a 2열에 중앙선 핸들 존재", m["hasSplitter"] is True)
@@ -216,6 +222,28 @@ with sync_playwright() as p:
         check("T4 단일열 = 줄번호 · 부호 18 · code 잔여",
               len(uw) == 3 and uw[1] == 18 and abs(sum(uw) - u["tableW"]) <= 2, str(uw))
         check("T4b 단일열에는 중앙선 핸들 없음", u["hasSplitter"] is False)
+
+        # ── T9c 긴 diff 는 높이 상한에 닿고 표 컨테이너가 스크롤한다(내용 잘림 없음) ─────
+        long_rows = [{"type": "replace", "left_no": i, "left": f"old {i}",
+                      "right_no": i, "right": f"new {i}"} for i in range(1, 121)]
+        open_modal(page, long_rows)
+        tall = page.evaluate("""() => {
+          const bd = document.querySelector('.attach-diff-backdrop');
+          const panel = bd.querySelector('.attach-diff-panel');
+          const sc = bd.querySelector('.attach-diff-scroller');
+          return {
+            panelH: Math.round(panel.getBoundingClientRect().height),
+            vh: window.innerHeight,
+            scrollable: sc.scrollHeight > sc.clientHeight + 1,
+            docOverflowY: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+          };
+        }""")
+        check("T9c 긴 diff 는 높이 상한(94vh)에 닿는다",
+              tall["panelH"] >= tall["vh"] * 0.90 and tall["panelH"] <= tall["vh"] * 0.95,
+              f"panelH={tall['panelH']} / vh={tall['vh']}")
+        check("T9d 넘치는 내용은 표 컨테이너가 스크롤(페이지 스크롤 아님)",
+              tall["scrollable"] is True and tall["docOverflowY"] is False,
+              f"scroller={tall['scrollable']} docOverflowY={tall['docOverflowY']}")
 
         # ── T8 줄번호 폭이 자릿수에 비례 ────────────────────────────────────────
         open_modal(page, _rows(mid_no=120))
