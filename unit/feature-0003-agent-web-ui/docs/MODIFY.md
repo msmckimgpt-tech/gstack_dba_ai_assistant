@@ -3022,3 +3022,75 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - 89 → **91 PASS**. 코드 변경 0(테스트 계약만).
 - Files: `tests/verify_attach_version_diff.mjs`, `docs/{MODIFY,REPORT}.md`.
 - Timestamp: 2026-08-07T14:20:00+09:00
+## CHG-20260807T1400-ai-claude-attach-diff-intraline — 첨부 버전 diff 에 **줄 안(글자 단위) 변경 구간** 표시
+
+- 사용자 지적(2026-08-07): "여전히 line 단위 차이만 나타나고 있는 상태이며 **각 글자 단위의
+  차이점은 출력되지 않는** 형태라 작업 완수가 필요합니다." — `(attach-version-diff, 2026-08-06)`
+  가 §범위 밖으로 미뤄 둔 "단어 단위 intra-line 하이라이트" 를 완수한다.
+- **서버가 구간을 단독 산출** (`_conv_store.py`): `_intraline_tokens`(문자 계열별 단위 — ASCII 단어
+  런 / **CJK 한 글자** / 공백 런 / 그 외 한 글자, 자소 묶음은 결합문자·VS·ZWJ·피부톤까지 흡수) +
+  `_intraline_segments`(토큰 `SequenceMatcher` → `[{t:"eq"|"ch", v:"…"}]`). 좌우가 모두 있는
+  `replace` 행에만 `left_segs`/`right_segs` 를 붙인다. 계산은 **행 상한·맥락 축약 이후**(표시
+  확정 행에만) 수행.
+- **2단 정밀화**: 토큰이 **정렬 앵커**를 잡고, 바뀐 조각 안에서 다시 **자소 단위**로 좁힌다
+  (`_intraline_refine`). 토큰 단위만 쓰면 `m.last_login_at`→`m.last_logout_at` 이 식별자 전체를
+  칠하고(=줄 단위 불만이 한 단계 아래에서 반복), 문자 단위만 쓰면 `SELECT`↔`INSERT` 가 색종이가
+  된다. 정밀화 안에서도 변경이 40% 를 넘으면 좁히지 않는다(실측으로 0.7/0.5/0.4 비교).
+- **비용 상한 3겹** — 초판의 "토큰쌍 예산" 은 **비용의 대리값이 못 됐다**(§18.8 backend 패널
+  실측: 같은 명목 예산에서 실제 시간 **83배** 차 · 예산을 한 푼도 안 쓰고 1,039ms 소모 · 정밀화
+  비용이 게이트 뒤에 더해져 1.33배 초과). 통화를 바꿨다 —
+  ① 행별 **문자쌍 컷**(`_INTRALINE_PAIR_CAP` 250k, **토큰화 이전** O(1) 판정)
+  ② 패스 **경과시간**(`_INTRALINE_TIME_BUDGET_S` 0.5s — 대리값 대신 지키려는 값을 직접 측정)
+  ③ **응답 바이트**(`_INTRALINE_PAYLOAD_CAP_BYTES` 512KB — 행 상한은 바이트를 막지 않는다).
+  패널이 든 최악 입력 재측정: **2997→5.3ms · 2367→4.1ms · 1079→2.7ms · 1039→2.1ms**,
+  정밀화 게이트 탈출 사례 266→0.00ms. 현실 CSV 6,000행은 510ms/1,204행 마크(배너 표시).
+- 비용 가드로 생략된 줄이 있으면 `truncated.intraline` 로 **표면화**하되, **비율 컷은 세지
+  않는다** — 좌우가 전혀 다른 줄은 화면이 이미 그렇게 읽히고, 그것까지 세면 재작성이 많은
+  diff 마다 배너가 상시가 된다.
+- **프론트는 덧그리기** (`attach-diff.js` `_markSegments`): 구문 하이라이트가 이미 만든 텍스트
+  노드를 **문자 오프셋으로 쪼개** `<span class="attach-diff-chunk">` 로 감싼다. 텍스트를 다시
+  만들지 않으므로 구문 색과 변경 마크가 독립 레이어로 공존한다. 세그먼트 총 길이 ≠ 셀 텍스트
+  길이면 **아무것도 그리지 않는다**(어긋난 위치의 마크는 없느니만 못하다). 2열·단일열이 같은
+  구간을 쓴다(단일열 replace 는 삭제 줄=좌측·추가 줄=우측).
+- **마크는 배경이 아니라 `inset box-shadow` 밑줄** (`chat.css`): 배경 칠은 이 표에서 접근성
+  회귀다 — 구문 토큰 9색은 세 실배경에서 AA 4.5:1 로 잠겨 있는데(하네스 G2), 같은 색조를 얹으면
+  알파 0.20 에서도 `number` 가 삭제 행에서 **3.40** 으로 떨어진다(계산 실측).
+  초판은 `text-decoration` 밑줄이었으나 §18.8 ux 패널이 **탭 위에 0px 도포**를 실측했다(마크
+  구간이 `\t\t` 일 때 span 박스 78×17 에 칠해진 픽셀 0 — 들여쓰기 변경이 이 기능의 주 대상인데
+  화면에 아무것도 안 나왔다). `inset box-shadow` + `box-decoration-break: clone` 으로 교체해
+  같은 입력에서 156px 도포·줄바꿈 조각 복제를 실측했고, `background-color` 는 여전히
+  `transparent` 라 위 대비 논거가 유지된다.
+- **마크 색은 이색형에서 명도로 갈린다** (`base.css` `--diff-mark-*`): 이색형(deuteranopia)은
+  색상 차가 사라지고 명도만 남는데 `--tag-danger-fg`/`--tag-ok-fg` 는 그때 명도가 가까워
+  좌/우 구분이 약했다(패널 지적). 삭제쪽을 `#7f1d1d` 로 한 단계 어둡게 잡아 **명도 자체를 쪽
+  구분 채널로** 쓴다(비-텍스트 대비 삭제 8.32/deut 7.17 · 추가 4.39/deut 4.12).
+- **렌더-측 마크 예산**(`MARK_RENDER_BUDGET` 12,000 span): 서버 상한은 **계산**만 막고 렌더된
+  span 수는 막지 않는다 — 패널 실측으로 6,000행 CSV 에서 chunk span 60,000개·노드 222,007개가
+  나왔고 표는 상호작용마다 통째로 다시 그려진다. 예산 초과분은 줄 단위 강조 그대로 두고 고지한다.
+- **정밀도 고지는 내용 절단과 다른 톤**(`is-note`): amber `is-warn` 3장이 쌓이면 "diff 가
+  불완전하다" 와 같은 강도로 읽힌다(패널 P2). 사유도 "길어서" 로 말하지 않는다 — 같은 길이의
+  윗줄은 마크되는데 아랫줄만 안 되는 경우가 있어 화면과 어긋난 설명이 된다.
+- **선행 파손 수리**: `tests/headless/verify_attach_diff_geometry.py` 가 구문 하이라이트 cycle 이후
+  `detectCodeLanguage is not defined` 로 **전 케이스 미실행**이었다(main 에서도 동일 재현). 정본
+  `code-highlight.js` 를 같은 페이지에 인라인해 부활 — 이 하네스가 본 변경의 픽셀 게이트다.
+- **§18.8 적대 패널 3도메인(ux+design / frontend+security / backend+qa) 전건 흡수** — P1 4건
+  (탭 위 0px 도포 · 정밀화 부재로 sha256 류가 마크도 배너도 없음 · 정밀화가 자소 클러스터를
+  가름 · 브랜치 자체 테스트 red) · P2 5건(비용 대리값 실패 3종 · 렌더 노드 폭증 · 배너 톤) ·
+  P3 다수(과장 마킹 · 악센트 라틴 · 무음 실패 · 재적용 중첩 · 기본 마크색 부재 · 두 렌더러 분기
+  불일치 · 국기/tag sequence). 패널이 **확인해 준 것**: XSS 무첨가(모든 신규 경로 textContent
+  전용, `</span><img onerror>` 주입 실측 0 요소) · UTF-16↔코드포인트 오프셋 드리프트 없음
+  (양쪽 다 JS 에서 재측정) · 토큰 왕복 무손실(32만 표본 0 위반) · 세그먼트 이어붙이기 계약
+  무위반(5.6만 표본) · 2열/단일열 마크 문자집합 동일 · 엔드포인트 계약 가산만.
+- **테스트**: pytest `test_attachment_version_diff.py` **B20~B36 신규 17건**(왕복 동치·CJK 글자 단위·
+  정렬 앵커≠마크 단위·무관 쌍 폴백·insert/delete 무세그먼트·길이 컷·행 상한 이후 계산·자소 묶음·
+  비용 가드 표면화·늑대소년 방지·자소 단위 정밀화·과장 0·악센트 라틴·**토큰화 전 컷**·
+  정밀화 클러스터 보존·국기/tag sequence) + E1 절단 4종 전열거. jsdom `verify_attach_version_diff.mjs` **D1~D8 신규**
+  (2열·단일열 마크·구문 공존·토큰 내부 부분 구간·세그먼트 없음 무영향·계약 위반 거부·스타일 계약·
+  서버 단독 산출·절단 배너). 실브라우저 `verify_attach_diff_geometry.py` **M1~M5 신규**(밑줄 렌더·
+  쪽별 색·배경 미칠 실측·행 높이 불변·단일열 parity).
+- 신규 권한·스키마·마이그레이션 **0**. 응답은 `truncated.intraline` 1키 + `replace` 행 2키 추가(가산).
+- Files: `src/routers/_conv_store.py`, `src/routers/attachments.py`, `src/static/app/attach-diff.js`,
+  `src/static/css/chat.css`, `tests/test_attachment_version_diff.py`,
+  `tests/verify_attach_version_diff.mjs`, `tests/headless/verify_attach_diff_geometry.py`,
+  `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
+- Timestamp: 2026-08-07T14:00:00+09:00

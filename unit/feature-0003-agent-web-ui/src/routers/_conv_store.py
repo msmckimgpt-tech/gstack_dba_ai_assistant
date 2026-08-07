@@ -6763,6 +6763,52 @@ _VERSION_DIFF_CONTEXT_DEFAULT = 3
 # 바이너리(xlsx/pdf/image/other)는 줄 단위 diff 가 무의미하므로 메타 비교로 강등한다.
 _VERSION_DIFF_TEXT_KINDS = ("text", "csv")
 
+# ── intra-line(줄 안) 세그먼트 상한 ─────────────────────────────────────────
+# `SequenceMatcher` 는 최악 O(n·m) 이라 **행 수 상한만으로는 비용이 잡히지 않는다**.
+#
+# 초판은 "좌·우 토큰 수의 곱" 을 예산 통화로 썼는데, §18.8 backend 패널이 그 통화가
+# **비용의 대리값이 못 된다**는 것을 실측으로 보였다:
+#   ① 같은 명목 work=1,000,000 에서 실제 시간이 한글 9.2ms ~ `a,b;c.` 767.6ms 로 **83배** 벌어짐
+#   ② 토큰화가 예산 검사보다 **먼저** 일어나 예산을 한 푼도 안 쓰고 1,039ms 를 태우는 입력 존재
+#   ③ 정밀화(문자 단위) 비용이 게이트 **뒤에** 더해져 한 행이 전체 예산을 1.33배 초과 가능
+# 그래서 통화를 둘로 바꾼다 — 둘 다 **토큰화 전에** 알 수 있거나 직접 측정된다.
+#
+#   ⓐ 행 단위 결정론적 상한: 좌·우 **문자 수의 곱**(`_INTRALINE_PAIR_CAP`). O(1) 로 계산되고
+#      토큰화 이전에 판정하므로 ②·③ 이 구조적으로 발생하지 않는다.
+#   ⓑ 패스 단위 backstop: **실제 경과 시간**(`_INTRALINE_TIME_BUDGET_S`). 대리값을 정교하게
+#      맞추려 애쓰는 대신 정작 우리가 지키려는 값(응답 지연)을 직접 잰다.
+#
+# 상한에 걸려 마크를 못 준 줄이 있으면 `truncated.intraline` 으로 **표면화**한다 — 화면만
+# 봐서는 "줄 안 변경 없음" 과 구별되지 않기 때문이다(§16.7 G9-b 와 같은 취지).
+_INTRALINE_MAX_LEN = 2000          # 한 줄 문자 수 상한 — 토큰화 전 조기 컷
+_INTRALINE_PAIR_CAP = 250_000      # 한 행의 len(left)*len(right) 상한 (≈ 500×500자)
+# 한 응답에서 intra-line 계산에 쓰는 총 시간. 값은 실측으로 골랐다(2026-08-07, 현실 CSV
+# 142자 6,000행 — intra-line 없을 때 8.1ms 가 기준):
+#   0.25s → 259ms · 마크 606행 / 0.50s → 510ms · 1,204행 / 1.0s → 818ms · 1,860행(여기서
+#   페이로드 상한이 먼저 걸려 더 늘려도 같다). 모달 한 화면이 ≈40행이라 1,204행이면 30화면
+#   분량이고, 사용자가 부른 모달 응답에 0.5초는 감당 가능한 범위다. 작은 diff 는 예산에
+#   닿지도 않는다(상한은 할 일이 많을 때만 작동한다).
+_INTRALINE_TIME_BUDGET_S = 0.5
+# 세그먼트는 원문 조각을 그대로 실어 보내므로 응답이 커진다(실측 6,000행 CSV 에서 +1.2MB).
+# 행 상한(`rows`)은 바이트를 제한하지 않으므로 별도로 둔다.
+_INTRALINE_PAYLOAD_CAP_BYTES = 512 * 1024
+# 정밀화(문자 단위) 안에서도 이 비율을 넘게 바뀌었으면 좁히지 않고 조각을 통째로 둔다 —
+# 완전히 다른 두 낱말을 글자별로 쪼개면 그것이 색종이다. 값은 실측으로 골랐다(2026-08-07):
+#   0.7/0.5 — `SELECT * FROM t`↔`INSERT INTO t` 가 `SE[LEC]T [* FROM]` 로 쪼개져 색종이
+#   **0.4 (채택)** — 위는 정밀화하지 않고, 바깥 비율 컷이 받아 마크 없음(화면이 스스로 말한다).
+#             `1284000`↔`1341500` 은 숫자 통째로(깔끔), 식별자·해시의 부분 변경은 정확히 좁힘.
+_INTRALINE_REFINE_MAX_RATIO = 0.4
+# 줄 전체가 사실상 바뀐 경우 — 조각 강조가 오히려 신호를 가린다.
+_INTRALINE_MAX_CHANGE_RATIO = 0.85
+#
+# ⚠️ "변경 사이에 낀 짧은 equal 조각을 변경으로 흡수" 하는 규칙은 **두지 않는다**.
+# 조각이 잘게 쪼개지는 것을 막으려 도입했었으나, 그 대가로 바뀌지 않은 글자를 "바뀌었다" 고
+# 칠하게 된다 — §18.8 ux 패널이 실측으로 지적했다(`2026년 1`/`2027년 3` 에서 동일한 `년 ` 이
+# 밑줄에 포함 · CSV `a,b,c,[27,1284000],x` 처럼 필드 구분자를 삼켜 **두 변경이 한 덩어리로**
+# 읽힘). diff 는 "무엇이 바뀌었나" 를 말하는 화면이라 과장이 곧 오답이고, 흡수를 없앤 뒤
+# 같은 CSV 가 `a,b,c,[27],[1284000],x` 로 정확히 갈렸다. 파편화 방어는 위 정밀화 비율 컷이
+# 이미 담당하므로 이 규칙은 필요하지도 않았다.
+
 
 def _load_attachment_version_chain(
     conn, root_id: int, *, scope_row: dict[str, Any] | None = None
@@ -6828,6 +6874,240 @@ def _load_attachment_version_chain(
     return out
 
 
+def _grapheme_clusters(s: str) -> list[str]:
+    """문자열을 **자소 클러스터**(사용자가 한 글자로 보는 단위)로 쪼갠다.
+
+    diff 경계가 클러스터 한가운데를 지나면 프론트가 그 경계에서 `<span>` 을 쪼개면서 합자가
+    깨진다 — ZWJ 가족 이모지가 낱개 이모지 셋으로, 국기가 알파벳 상자 둘로, keycap 이
+    숫자와 고아 조합문자로 렌더된다(§18.8 backend 패널 실측 3종). 텍스트 자체는 보존되지만
+    **화면이 원문과 달라 보이므로** 문자 단위 diff 의 목적을 정면으로 어긴다.
+
+    완전한 UAX #29 구현은 아니고, 이 화면에서 실제로 깨지는 결합 형태만 묶는다:
+    결합 표시(Mn/Me/Mc)·variation selector·피부톤 modifier·ZWJ 연결·지역 지시자 쌍(국기)·
+    emoji tag sequence.
+    """
+    import unicodedata
+
+    out: list[str] = []
+    n = len(s)
+    i = 0
+
+    def _is_ri(ch: str) -> bool:                       # 지역 지시자 — 둘이 모여 국기 하나
+        return 0x1F1E6 <= ord(ch) <= 0x1F1FF
+
+    def _is_glue(ch: str) -> bool:
+        o = ord(ch)
+        return (
+            unicodedata.combining(ch) != 0
+            or unicodedata.category(ch) in ("Mn", "Me", "Mc")
+            or 0xFE00 <= o <= 0xFE0F        # variation selector
+            or o == 0x20E3                  # combining enclosing keycap
+            or 0x1F3FB <= o <= 0x1F3FF      # 피부톤 modifier
+            or 0xE0020 <= o <= 0xE007F      # emoji tag sequence (예: 스코틀랜드 깃발)
+        )
+
+    while i < n:
+        j = i + 1
+        if _is_ri(s[i]) and j < n and _is_ri(s[j]):
+            j += 1                          # RI 쌍 = 국기 한 글자
+        while j < n:
+            if _is_glue(s[j]):
+                j += 1
+            elif ord(s[j]) == 0x200D and j + 1 < n:   # ZWJ — 뒤 문자와 한 덩어리
+                j += 2
+            else:
+                break
+        out.append(s[i:j])
+        i = j
+    return out
+
+
+def _intraline_tokens(s: str) -> list[str]:
+    """한 줄을 intra-line **정렬(anchor) 단위**로 쪼갠다.
+
+    **왜 문자 단위가 아닌가**: 순수 문자 diff 는 `SELECT` → `INSERT` 처럼 공통 글자가 흩어진
+    쌍에서 `S`·`E`·`T` 를 개별 일치로 잡아 색종이(confetti)를 만든다. 반대로 순수 단어 단위는
+    한국어에 답을 못 준다 — 한글은 어절 안에서 한두 글자만 바뀌는 일이 흔한데(`수정합니다`
+    → `삭제합니다`) 어절 전체가 통으로 칠해지면 "어느 글자가 바뀌었나" 가 사라진다.
+
+    그래서 **문자 계열별로 단위를 달리** 한다:
+      - 단어(영숫자·`_`, 악센트 라틴 포함) 런 → 한 토큰 (코드·식별자는 단어가 의미 단위)
+      - CJK(한글 음절·한자·가나) → **한 글자 = 한 토큰** (사용자 요청의 "글자 단위")
+      - 공백 런 → 한 토큰 (들여쓰기 변화가 한 조각으로 읽히게)
+      - 그 외(구두점·기호) → 한 글자
+
+    여기서 잡은 경계는 **정렬**용이며, 최종 마크 경계는 `_intraline_refine` 이 그 안에서 더
+    좁힌다. 입력은 자소 클러스터 단위로 다루므로 어떤 토큰도 클러스터를 가르지 않는다.
+    """
+    cl = _grapheme_clusters(s)
+    out: list[str] = []
+    n = len(cl)
+    i = 0
+
+    def _is_cjk(g: str) -> bool:
+        o = ord(g[0])
+        return (
+            0xAC00 <= o <= 0xD7A3      # 한글 음절
+            or 0x1100 <= o <= 0x11FF   # 한글 자모
+            or 0x3130 <= o <= 0x318F   # 한글 호환 자모
+            or 0x3040 <= o <= 0x30FF   # 가나
+            or 0x3400 <= o <= 0x4DBF   # CJK 확장 A
+            or 0x4E00 <= o <= 0x9FFF   # CJK 통합 한자
+            or 0xF900 <= o <= 0xFAFF   # CJK 호환 한자
+        )
+
+    def _is_word(g: str) -> bool:
+        """단어 문자 — **ASCII 로 좁히지 않는다**.
+
+        `isascii()` 로 좁혔더니 `café` 가 `caf`+`é` 로 갈려 악센트 라틴 문장이 통째로 매칭에
+        실패했다(§18.8 ux 패널 실측: `café naïve`→`cafe naive` 가 마크 0개).
+        `isalnum()` 은 악센트·키릴·그리스를 포함하지만 CJK 도 포함하므로 그것만 제외한다.
+        """
+        return (g[0].isalnum() or g[0] == "_") and not _is_cjk(g)
+
+    while i < n:
+        g = cl[i]
+        if g[0].isspace():
+            j = i + 1
+            while j < n and cl[j][0].isspace():
+                j += 1
+        elif _is_cjk(g) or not _is_word(g):
+            j = i + 1                  # CJK·구두점·기호·이모지는 한 클러스터가 한 토큰
+        else:
+            j = i + 1
+            while j < n and _is_word(cl[j]):
+                j += 1
+        out.append("".join(cl[i:j]))
+        i = j
+    return out
+
+
+def _intraline_refine(left: str, right: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """토큰 단위로 "바뀌었다" 고 잡힌 좌/우 조각을 **자소 단위로 좁힌다**(2단 정밀화).
+
+    왜 필요한가(§18.8 ux 패널 실측 2건):
+      - `m.last_login_at` → `m.last_logout_at` 에서 토큰 단위는 식별자 **전체**를 칠했다.
+        사용자가 줄 단위에 대해 제기한 불만("어디가 바뀌었는지 안 보인다")이 한 단계 아래에서
+        똑같이 반복된 것이다 — 한글은 글자별인데 영문·숫자만 통짜라는 비대칭도 같은 뿌리.
+      - `-- sha256: e3b0…855` → `…856` 처럼 **한 토큰이 줄의 대부분**이면 변경 비율이 0.85 를
+        넘어 세그먼트가 통째로 버려졌다(= 이 기능이 정확히 겨냥한 경우인데 아무것도 안 나왔다).
+
+    토큰 단위를 먼저 돌리는 이유는 유지한다 — 문자 단위 단독은 `SELECT`↔`INSERT` 에서 공통
+    글자를 흩어 잡아 색종이가 된다. 토큰이 **정렬(anchor)** 을 잡고, 정밀화는 이미 바뀐 구간
+    안에서만 일어나므로 그 위험이 구조적으로 없다.
+
+    ⚠️ 코드 포인트가 아니라 **자소 클러스터**를 비교 단위로 쓴다. 초판은 raw `SequenceMatcher`
+    를 문자열에 바로 걸어 `_intraline_tokens` 가 세운 클러스터 보호를 정밀화 단계에서 무너뜨렸다
+    (§18.8 backend 패널 실측: ZWJ 가족 이모지·keycap·국기 3종에서 경계가 클러스터 내부에 떨어짐).
+    """
+    import difflib
+
+    if not left or not right:
+        return ([("ch", left)] if left else [], [("ch", right)] if right else [])
+    lg = _grapheme_clusters(left)
+    rg = _grapheme_clusters(right)
+    sm = difflib.SequenceMatcher(None, lg, rg, autojunk=False)
+    lruns: list[tuple[str, str]] = []
+    rruns: list[tuple[str, str]] = []
+    changed = 0
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        lp, rp = "".join(lg[i1:i2]), "".join(rg[j1:j2])
+        if tag == "equal":
+            lruns.append(("eq", lp))
+            rruns.append(("eq", rp))
+        else:
+            if lp:
+                lruns.append(("ch", lp))
+            if rp:
+                rruns.append(("ch", rp))
+            changed += len(lp) + len(rp)
+    if changed / max(1, len(left) + len(right)) > _INTRALINE_REFINE_MAX_RATIO:
+        return ([("ch", left)], [("ch", right)])
+    return (lruns, rruns)
+
+
+def _intraline_segments(
+    left: str, right: str, *, pair_cap: int = _INTRALINE_PAIR_CAP
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None, bool]:
+    """짝지어진 두 줄의 **줄 안 변경 구간**을 좌/우 각각의 세그먼트 열로 만든다.
+
+    반환은 `(좌 세그먼트, 우 세그먼트, degraded)`. `degraded=True` 는 **계산할 수 있었는데
+    비용 상한 때문에 포기했다**는 뜻이며, 호출자가 배너로 표면화한다 — 화면만 봐서는
+    "줄 안 변경 없음" 과 구별되지 않기 때문이다.
+
+    세그먼트 형태는 `[{"t": "eq"|"ch", "v": "<원문 조각>"}, …]` 이며 각 열의 `v` 를 순서대로
+    이으면 입력 줄과 **바이트 동치**다(프론트가 이 불변식에 기대어 구문 하이라이트 위에 구간만
+    덧칠한다 — 텍스트를 다시 만들지 않는다).
+
+    상한은 **토큰화보다 먼저** 판정한다. 초판은 토큰 수를 센 뒤에 예산을 봤는데, 토큰화 자체가
+    문자당 비용이라 예산을 한 푼도 안 쓰고 1초를 태우는 입력이 있었다(§18.8 backend 패널 실측).
+    `len(left)*len(right)` 는 O(1) 이고 `SequenceMatcher` 비용의 상계이므로 그 함정이 없다.
+
+    세그먼트를 주지 않는 경우와 그 성격 — **모두 정밀도 하락이지 정보 손실이 아니다**
+    (줄이 바뀌었다는 사실과 좌우 원문은 그대로 보인다):
+      ① 한쪽이 비었거나 두 줄이 같음 — 줄 단위 신호로 이미 충분 (degraded=False)
+      ② 줄이 `_INTRALINE_MAX_LEN` 초과 / 문자쌍이 `pair_cap` 초과 — 비용 가드 (degraded=True)
+      ③ 변경 비율이 `_INTRALINE_MAX_CHANGE_RATIO` 초과 — 좌우가 사실상 전혀 다른 줄이라
+         화면이 이미 "통째로 바뀜" 으로 정확히 읽힌다 (degraded=False — 배너를 띄우면
+         재작성이 많은 diff 마다 상시 표시되어 늑대소년이 된다)
+    """
+    if not left or not right or left == right:
+        return (None, None, False)
+    if len(left) > _INTRALINE_MAX_LEN or len(right) > _INTRALINE_MAX_LEN:
+        return (None, None, True)
+    if len(left) * len(right) > pair_cap:
+        return (None, None, True)
+
+    import difflib
+
+    lt = _intraline_tokens(left)
+    rt = _intraline_tokens(right)
+    sm = difflib.SequenceMatcher(None, lt, rt, autojunk=False)
+
+    # 1차 — opcode 를 (종류, 텍스트) 런으로 펼치되, 바뀐 조각은 **자소 단위로 정밀화**한다.
+    lruns: list[tuple[str, str]] = []
+    rruns: list[tuple[str, str]] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        lpiece = "".join(lt[i1:i2])
+        rpiece = "".join(rt[j1:j2])
+        if tag == "equal":
+            if lpiece:
+                lruns.append(("eq", lpiece))
+                rruns.append(("eq", rpiece))
+        else:
+            lsub, rsub = _intraline_refine(lpiece, rpiece)
+            lruns.extend(lsub)
+            rruns.extend(rsub)
+
+    def _polish(runs: list[tuple[str, str]]) -> list[dict[str, Any]]:
+        """인접 동종 런을 병합한다(정밀화가 조각을 나눠 놓은 뒤라 필요).
+
+        **바뀌지 않은 조각을 변경으로 흡수하지 않는다** — 위 상수 주석의 근거 참조.
+        """
+        merged: list[dict[str, Any]] = []
+        for kind, text in runs:
+            if not text:
+                continue
+            if merged and merged[-1]["t"] == kind:
+                merged[-1]["v"] += text
+            else:
+                merged.append({"t": kind, "v": text})
+        return merged
+
+    lsegs = _polish(lruns)
+    rsegs = _polish(rruns)
+
+    # 비율 컷은 **정밀화 이후** 결과로 판정한다 — 정밀화 전 기준이면 `sha256: …855`→`…856`
+    # 처럼 한 토큰이 줄의 대부분인 경우가 0.85 를 넘겨 버려졌다(§18.8 ux 패널 P1).
+    changed = sum(len(x["v"]) for x in lsegs if x["t"] == "ch") + \
+        sum(len(x["v"]) for x in rsegs if x["t"] == "ch")
+    if (changed / (len(left) + len(right))) > _INTRALINE_MAX_CHANGE_RATIO:
+        return (None, None, False)
+    if not any(x["t"] == "ch" for x in lsegs) and not any(x["t"] == "ch" for x in rsegs):
+        return (None, None, False)
+    return (lsegs, rsegs, False)
+
+
 def _build_version_diff_view(
     left_text: str,
     right_text: str,
@@ -6856,6 +7136,10 @@ def _build_version_diff_view(
       금지 계약은 `truncated["rows"]` 가 유지).
     - 행 수가 `row_cap` 을 넘으면 잘라내고 `truncated["rows"]=True`.
     - `replace` opcode 는 좌/우 줄 수가 다를 수 있어 짧은 쪽을 None 으로 패딩한다.
+    - 좌우가 모두 있는 `replace` 행에는 **줄 안 변경 구간**(`left_segs`/`right_segs`)을 덧붙인다
+      (`_intraline_segments`). 줄 배경만으로는 "이 줄이 바뀌었다" 까지만 말하고 *무엇이* 바뀌었는지
+      눈으로 찾아야 한다 — 긴 줄·CSV·SQL 에서 실제로 그 탐색이 사용자 부담이었다. 계산이 성립하지
+      않는 줄에는 키 자체를 붙이지 않으므로 프론트는 종전의 줄 단위 경로를 그대로 탄다.
     """
     import difflib
 
@@ -6986,6 +7270,42 @@ def _build_version_diff_view(
         rows = rows[: int(row_cap)]
         rows_truncated = True
 
+    # 3차 패스 — intra-line 세그먼트. **표시 대상으로 확정된 행에만** 계산한다(축약·행 상한
+    # 뒤에 두는 이유 = 화면에 안 나올 행의 비용을 치르지 않기 위해). 두 뷰가 같은 세그먼트를
+    # 보도록 서버가 한 번만 산출한다 — 단일 opcode 패스 불변식(`unified`/`rows`)의 연장이다.
+    # 프론트가 각자 계산하면 2열과 단일열이 같은 줄에 다른 강조를 그릴 수 있다.
+    #
+    # 상한 3겹: 행별 문자쌍 컷(결정론적) · 패스 경과시간(실측 backstop) · 응답 바이트.
+    # 시간 backstop 은 대리값 모델링 오차에 면역이라 마지막 방어선으로 둔다 — 대리값(토큰쌍)
+    # 하나만 믿었을 때 같은 명목 비용에서 실제 시간이 83배 벌어졌다(§18.8 backend 패널).
+    import time as _time
+    started = _time.monotonic()
+    intraline_skipped = False
+    payload = 0
+    for r in rows:
+        if r.get("type") != "replace":
+            continue
+        left_s = r.get("left") or ""
+        right_s = r.get("right") or ""
+        if not left_s or not right_s or left_s == right_s:
+            continue                      # 비교가 성립하지 않는 행 — 상한과 무관
+        if payload >= _INTRALINE_PAYLOAD_CAP_BYTES:
+            intraline_skipped = True
+            continue
+        if _time.monotonic() - started > _INTRALINE_TIME_BUDGET_S:
+            intraline_skipped = True
+            continue
+        lsegs, rsegs, degraded = _intraline_segments(left_s, right_s)
+        if lsegs is None or rsegs is None:
+            # `degraded`(비용 가드) 만 표면화한다 — "비교가 무의미해서" 또는 "좌우가 전혀 달라서"
+            # 안 준 경우까지 세면 배너가 상시가 되어 늑대소년이 된다. 반대로 비용 때문에 **버린**
+            # 것을 숨기면 사용자가 마크 부재를 "이 줄은 통째로 바뀜" 으로 오독한다.
+            intraline_skipped = intraline_skipped or degraded
+            continue
+        r["left_segs"] = lsegs
+        r["right_segs"] = rsegs
+        payload += len(left_s) + len(right_s)
+
     return {
         "unified": unified,
         "rows": rows,
@@ -6996,7 +7316,9 @@ def _build_version_diff_view(
             "right_lines": len(right_lines),
             "identical": identical,
         },
-        "truncated": {"rows": rows_truncated},
+        # `intraline` 은 **정밀도** 절단이다(줄 단위 차이는 온전). 그래도 표면화하는 이유:
+        # 마크가 없는 줄을 "통째로 바뀐 줄" 로 오독할 수 있어서다.
+        "truncated": {"rows": rows_truncated, "intraline": intraline_skipped},
     }
 
 

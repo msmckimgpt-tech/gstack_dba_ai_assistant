@@ -17,6 +17,10 @@
 //  - **구문 하이라이트도 단일 primitive**(`code-highlight.js`): 파일명 확장자로 언어를 한 번
 //    판정하고 각 code 셀을 토큰 span 으로 칠한다. 미지원 확장자는 판정이 `null` → 평문 경로
 //    그대로(무색). 모르는 파일에 색을 칠하면 없는 구조를 있는 것처럼 보이게 만든다.
+//  - **줄 안 변경은 서버 세그먼트를 덧그린다**(`_markSegments`): 줄 배경은 "이 줄이 바뀌었다"
+//    까지만 말하므로 긴 줄에서는 사용자가 두 줄을 눈으로 대조해야 했다. 구간 계산은 서버가
+//    한 번만 하고(2열·단일열 동일), 프론트는 이미 칠해진 텍스트 노드를 문자 오프셋으로 쪼개
+//    감싼다 — 구문 색과 변경 마크가 서로를 지우지 않는 독립 레이어가 된다.
 import { apiFetch, bindBackdropDismiss, escapeHtml, showToast, detectCodeLanguage, paintCodeInto, codeLanguageLabel } from "../app.js?v=dev";
 
 const VIEW_MODE_KEY = "attachDiffViewMode";   // "split" | "unified"
@@ -283,10 +287,108 @@ function _gapRow(r, colSpan, onExpand) {
 // 여기서는 셀에 적용하는 얇은 어댑터만 둔다.
 //
 // `opts.lang` 이 없으면(미지원 확장자·판정 실패) 종전과 **완전히 같은** 평문 경로다.
-function _paintCell(td, text, opts) {
+// 렌더-측 마크 예산 — 서버 예산은 **계산**을 막을 뿐 **렌더된 span 수**는 막지 않는다.
+// 실측(§18.8 frontend 패널 P2, jsdom): 10필드 CSV 6,000행에 행마다 5필드 변경이면 서버 예산
+// (361/행 × 6,000 = 2.17M ≤ 3M)을 통과해 **전 행이 마크**되고, chunk span 60,000개 · 노드
+// 222,007개가 된다(구문 하이라이트까지 켜면 438,007). 표는 가상화가 없고 `_renderBody` 가
+// 상호작용마다 통째로 다시 만들므로 그 비용을 매번 치른다. 예산을 넘으면 남은 행은 **줄 단위
+// 강조 그대로** 두고 배너로 알린다 — 조용히 절반만 칠하는 것이 가장 나쁜 결과다.
+const MARK_RENDER_BUDGET = 12000;
+// 계약 위반 경고는 렌더당 1회만 — 6,000행에서 매 행 경고하면 콘솔이 무용지물이 된다.
+let _markContractWarned = false;
+
+function _paintCell(td, text, opts, segs) {
   const lang = opts && opts.lang;
-  if (!lang) { td.textContent = text == null ? "" : text; return; }
-  paintCodeInto(td, text == null ? "" : text, lang);
+  if (!lang) td.textContent = text == null ? "" : text;
+  else paintCodeInto(td, text == null ? "" : text, lang);
+  if (!segs) return;
+  const budget = opts && opts.markBudget;
+  if (budget && budget.left <= 0) { budget.exhausted = true; return; }
+  const made = _markSegments(td, segs);
+  if (budget) budget.left -= made;
+}
+
+// ── 줄 안(intra-line) 변경 구간 마킹 ────────────────────────────────────────
+// 사용자 요청(2026-08-07): "여전히 line 단위 차이만 나타나고 각 글자 단위의 차이점은 출력되지
+// 않는다". 줄 배경은 "이 줄이 바뀌었다" 까지만 말한다 — 200자 CSV 행에서 한 칸이 바뀐 경우
+// 사용자가 두 줄을 눈으로 대조해야 했다.
+//
+// **구간은 서버가 정한다**(`left_segs`/`right_segs`). 프론트가 각자 계산하면 2열과 단일열이
+// 같은 줄에 다른 강조를 그릴 수 있다 — "두 뷰는 같은 응답의 두 표현" 불변식의 연장이다.
+//
+// **덧그리기이지 다시 그리기가 아니다**: 구문 하이라이트가 이미 셀을 토큰 span 으로 나눠 놓았고,
+// 변경 경계는 토큰 경계와 일치하지 않는다(`user_id` 가 한 토큰인데 `id` 만 바뀔 수 있다).
+// 그래서 텍스트를 다시 만들지 않고 **이미 있는 텍스트 노드를 문자 오프셋으로 쪼개** 감싼다.
+// 두 강조가 독립 레이어라 어느 쪽도 상대를 지우지 않는다.
+function _markSegments(td, segs) {
+  if (!td || !Array.isArray(segs) || segs.length === 0) return 0;
+  // 재적용 방지 — 두 번 씌우면 chunk 가 중첩된다. 현재 호출부는 매번 새 `td` 를 만들어
+  // 도달하지 않지만, `_markSegments` 가 하네스 2곳이 쓰는 이름 있는 seam 이 된 이상
+  // 잠재 함정으로 남는다(§18.8 frontend 패널 P3 — 재현 확인됨).
+  if (td.querySelector(".attach-diff-chunk")) return 0;
+  const ranges = [];
+  const parts = [];
+  let pos = 0;
+  for (const s of segs) {
+    const v = String((s && s.v) || "");
+    parts.push(v);
+    if (s && s.t === "ch" && v.length > 0) ranges.push([pos, pos + v.length]);
+    pos += v.length;
+  }
+  if (ranges.length === 0) return 0;
+  // 세그먼트를 이으면 원문과 동치라는 것이 서버 계약이다. 어긋나면(계약 드리프트·부분 응답)
+  // **아무것도 하지 않는다** — 어긋난 위치에 마크를 그리는 것은 마크가 없는 것보다 나쁘다.
+  // 안 그리면 종전의 줄 단위 강조가 그대로 남지만, 잘못 그리면 없는 변경을 지목한다.
+  //
+  // 길이만 비교하면 **같은 길이의 다른 내용**이 통과해 엉뚱한 위치를 칠한다(§18.8 frontend
+  // 패널 P3 재현: `[eq "SELECT ", ch "uid", eq " FROM user"]` 가 `id ` 를 칠했다). 서버에서
+  // 도달 가능한 경로는 확인되지 않았지만, 이미 모든 조각을 손에 쥐고 있어 문자열 비교가 같은
+  // O(n) 이다 — 더 약한 검사를 고를 이유가 없다.
+  if (parts.join("") !== (td.textContent || "")) {
+    // fail-closed 는 맞지만 **조용하면 안 된다** — 계약이 드리프트하면 표 전체에서 마크가
+    // 사라지는데 사용자도 개발자도 "원래 변경이 없었다" 와 구별하지 못한다(§18.8 frontend
+    // 패널 P3 · docs/CODE_REVIEW.md §2.1 "삼켜진 예외"). 렌더당 1회만 알린다.
+    if (!_markContractWarned) {
+      _markContractWarned = true;
+      console.warn("[attach-diff] 줄 안 세그먼트가 셀 원문과 일치하지 않아 마킹을 건너뜁니다.");
+    }
+    return 0;
+  }
+
+  const doc = td.ownerDocument;
+  const walker = doc.createTreeWalker(td, 4 /* NodeFilter.SHOW_TEXT */);
+  const nodes = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n);
+
+  let off = 0;
+  let made = 0;
+  for (const node of nodes) {
+    const text = node.nodeValue || "";
+    const start = off;
+    const end = off + text.length;
+    off = end;
+    const local = [];
+    for (const [rs, re] of ranges) {
+      const a = Math.max(rs, start);
+      const b = Math.min(re, end);
+      if (b > a) local.push([a - start, b - start]);
+    }
+    if (local.length === 0) continue;
+    const frag = doc.createDocumentFragment();
+    let cur = 0;
+    for (const [a, b] of local) {
+      if (a > cur) frag.appendChild(doc.createTextNode(text.slice(cur, a)));
+      const span = doc.createElement("span");
+      span.className = "attach-diff-chunk";
+      span.textContent = text.slice(a, b);
+      frag.appendChild(span);
+      made += 1;
+      cur = b;
+    }
+    if (cur < text.length) frag.appendChild(doc.createTextNode(text.slice(cur)));
+    node.parentNode.replaceChild(frag, node);
+  }
+  return made;   // 만든 span 수 — 호출자가 렌더 예산에서 차감한다
 }
 
 // 2열 렌더 — 서버 rows(좌우 정렬 + gap)를 그대로 표로 펼친다.
@@ -309,13 +411,13 @@ function _renderSplit(container, data, opts) {
     lNo.textContent = r.left_no == null ? "" : String(r.left_no);
     const lTxt = document.createElement("td");
     lTxt.className = "attach-diff-code side-left";
-    _paintCell(lTxt, r.left, opts);
+    _paintCell(lTxt, r.left, opts, r.left_segs);
     const rNo = document.createElement("td");
     rNo.className = "attach-diff-lineno";
     rNo.textContent = r.right_no == null ? "" : String(r.right_no);
     const rTxt = document.createElement("td");
     rTxt.className = "attach-diff-code side-right";
-    _paintCell(rTxt, r.right, opts);
+    _paintCell(rTxt, r.right, opts, r.right_segs);
     // 좌/우 강조는 **내용이 있는 쪽**에만 — 빈 셀에 색을 얹으면 없는 변경을 가리킨다.
     // (`has-content` 는 줄 배경, `has-block` 은 문단 accent. 둘이 같은 규칙을 따라야 한다.)
     if (r.left != null) lTxt.classList.add("has-content");
@@ -344,7 +446,9 @@ function _renderUnified(container, data, opts) {
   const tbody = document.createElement("tbody");
   // `src` = 이 표시 행이 파생된 원본 row (블록 경계·앵커 산출용). `replace` 는 두 행으로
   // 펼쳐지므로 경계 플래그를 **펼친 결과 기준**으로 보정한다(첫 행만 start, 끝 행만 end).
-  const push = (type, no, sign, text, src, edge) => {
+  // `segs` = 이 표시 행이 쓸 intra-line 세그먼트. `replace` 는 두 행으로 펼쳐지므로 삭제 행에는
+  // 좌측(`left_segs`), 추가 행에는 우측(`right_segs`) 을 넘긴다 — 2열과 같은 구간을 보게 된다.
+  const push = (type, no, sign, text, src, edge, segs) => {
     const tr = document.createElement("tr");
     tr.className = `attach-diff-row is-${type}`;
     if (src) {
@@ -370,7 +474,7 @@ function _renderUnified(container, data, opts) {
     // 중립 filler** 를 받았다(라이브 실측: 내용 있는 'B2' 가 rgb(240,239,234)). 색이 사라진
     // 것보다 나쁘게 **의미가 반대로 뒤집혔다**. 두 렌더러가 같은 규칙을 따르는지 B9/B9b 가 고정.
     if (text != null) tdTxt.classList.add("has-content");
-    _paintCell(tdTxt, text, opts);
+    _paintCell(tdTxt, text, opts, segs);
     tr.append(tdNo, tdSign, tdTxt);
     tbody.appendChild(tr);
   };
@@ -380,12 +484,16 @@ function _renderUnified(container, data, opts) {
     } else if (r.type === "equal") {
       push("equal", r.right_no, " ", r.right, r);
     } else if (r.type === "delete") {
-      push("delete", r.left_no, "-", r.left, r);
+      // 두 렌더러가 **같은 규칙**으로 세그먼트를 전달한다. 오늘은 서버가 `replace` 에만
+      // 세그먼트를 실어 실동작이 같지만, 여기서 조건이 갈라져 있으면 서버가 범위를 넓히는
+      // 순간 2열에만 마크가 뜨고 단일열에는 안 뜬다 — 조용히 두 뷰가 달라진다
+      // (§18.8 frontend 패널 P3).
+      push("delete", r.left_no, "-", r.left, r, undefined, r.left_segs);
     } else if (r.type === "insert") {
-      push("insert", r.right_no, "+", r.right, r);
+      push("insert", r.right_no, "+", r.right, r, undefined, r.right_segs);
     } else {  // replace — 삭제 줄과 추가 줄을 연달아
-      push("delete", r.left_no, "-", r.left, r, "head");
-      push("insert", r.right_no, "+", r.right, r, "tail");
+      push("delete", r.left_no, "-", r.left, r, "head", r.left_segs);
+      push("insert", r.right_no, "+", r.right, r, "tail", r.right_segs);
     }
   }
   table.appendChild(tbody);
@@ -458,6 +566,7 @@ function _renderBody(bodyEl, data, mode, opts) {
     ? _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"))
     : null;
   bodyEl.innerHTML = "";
+  _markContractWarned = false;   // 렌더마다 1회 경고
 
   // 비교 불가(바이너리) — 메타 비교로 강등해 답한다.
   if (data.comparable === false) {
@@ -511,6 +620,18 @@ function _renderBody(bodyEl, data, mode, opts) {
     el.textContent = w;
     bodyEl.appendChild(el);
   }
+  // 위 둘은 **내용** 절단이지만 이건 **정밀도** 절단이다 — 줄 단위 차이는 전부 나와 있고
+  // 글자 단위 마크만 생략됐다. 무음으로 두면 마크 없는 줄을 "통째로 바뀐 줄" 로 오독하지만,
+  // 같은 amber `is-warn` 으로 두면 "내용이 잘렸다" 와 같은 경보 강도로 읽힌다(§18.8 ux 패널
+  // P2) — 별도 톤(`is-note`)으로 낮춘다. 사유도 "길어서" 가 아니다: 길이 컷·표시 분량 상한·
+  // 조각화 판단이 섞여 있고, 같은 길이의 윗줄은 마크되는데 아랫줄만 안 되는 경우가 있어
+  // 길이를 사유로 말하면 사용자가 화면과 어긋난 설명을 읽는다.
+  if (tr.intraline) {
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice is-note";
+    el.textContent = "일부 줄은 글자 단위 표시를 생략했습니다 — 줄 단위 차이는 모두 표시됩니다.";
+    bodyEl.appendChild(el);
+  }
 
   // 내용이 같으면 **원문을 출력**한다(사용자 요청 2026-08-07). 종전에는 "동일합니다" 한 줄만
   // 두고 return 했는데, 그 화면에는 본문이 없어 사용자가 "무엇이 같은지" 를 확인할 수단이
@@ -547,8 +668,18 @@ function _renderBody(bodyEl, data, mode, opts) {
   wrap.className = "attach-diff-splitwrap";
   const scroller = document.createElement("div");
   scroller.className = "attach-diff-scroller";
-  if (mode === "unified") _renderUnified(scroller, data, opts);
-  else _renderSplit(scroller, data, opts);
+  // 렌더-측 마크 예산(위 `MARK_RENDER_BUDGET` 주석 참조). 소진 여부는 렌더가 끝나야 알 수
+  // 있으므로 배너를 **뒤에 만들어 표 앞에 끼운다** — 순서를 위 절단 배너들과 맞춘다.
+  const markBudget = { left: MARK_RENDER_BUDGET, exhausted: false };
+  const renderOptsWithBudget = { ...(opts || {}), markBudget };
+  if (mode === "unified") _renderUnified(scroller, data, renderOptsWithBudget);
+  else _renderSplit(scroller, data, renderOptsWithBudget);
+  if (markBudget.exhausted && !tr.intraline) {
+    const el = document.createElement("div");
+    el.className = "attach-diff-notice is-note";
+    el.textContent = "변경 지점이 많아 아래쪽 일부 줄은 글자 단위 표시를 생략했습니다 — 줄 단위 차이는 모두 표시됩니다.";
+    bodyEl.appendChild(el);
+  }
   wrap.appendChild(scroller);
   bodyEl.appendChild(wrap);
   if (mode !== "unified" && opts && opts.onRatioChange) {

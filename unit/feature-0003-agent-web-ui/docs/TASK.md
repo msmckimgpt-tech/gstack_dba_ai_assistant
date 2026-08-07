@@ -9318,3 +9318,43 @@ MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복
 ## 9. Requested Scope
 - [x] `파일 내용이 동일하다면 문서 원문을 출력` — 서버·프론트·테스트 구현 + 적대 패널 반영 +
       PB-0008 라이브 실측 완료. 라이브 A/B 로 종전 "본문 0줄" → "원문 전량" 확인.
+
+## 20260807T1400-attach-diff-intraline
+
+**요청 (사용자, 2026-08-07)**: "문장 단위 diff를 표시해달라는 요청이 아직 수행되지 않았습니다.
+여전히 line 단위 차이만 나타나고 있는 상태이며 각 글자 단위의 차이점은 출력되지 않는 형태라
+작업 완수가 필요합니다."
+
+`(attach-version-diff, 2026-08-06)` 가 §범위 밖 원장에 "단어 단위 intra-line 하이라이트" 로
+미뤄 둔 항목의 완수. 정본 = FUNCTION `(attach-diff-intraline, 2026-08-07)` · CHG/REV
+`20260807T1400-ai-claude-attach-diff-intraline`.
+
+### Next Action
+- 배포 후 PB-0008 실 Windows 브라우저 시각검증(AC-ADI-9).
+
+### 체크리스트
+
+- [x] 서버 구간 산출 — `_intraline_tokens`(계열별 단위 · 자소 묶음 보호) + `_intraline_segments`
+      (왕복 바이트 동치 · 폴백 4종)
+- [x] 2단 정밀화 — 토큰=정렬 앵커, 그 안에서 자소 단위로 좁힘(식별자·해시 부분 변경 정확화)
+- [x] 비용 상한 3겹 — 행별 문자쌍 컷(**토큰화 이전**)·경과시간 0.5s·응답 바이트 512KB.
+      패널 최악 입력 2997→5.3ms · 2367→4.1ms · 1079→2.7ms · 1039→2.1ms · 탈출사례 266→0.00ms
+- [x] 비용 가드 표면화 — `truncated.intraline` + `is-note` 톤(내용 절단과 구분) · 비율 컷 제외
+- [x] 프론트 덧그리기 — `_markSegments`(문자 오프셋 분할 · 계약 위반 시 미마킹) · 2열/단일열 동일
+- [x] 마크는 `inset box-shadow`(배경 칠은 구문 토큰 AA 회귀 — 알파 0.20 에서도 number 3.40 /
+      `text-decoration` 은 **탭 위 0px** 실측 → 교체 후 156px) · 이색형 명도 분리 색 토큰
+- [x] 렌더-측 마크 예산 12,000 span(서버 상한은 계산만 막는다 — 6,000행에서 span 60,000개)
+- [x] 선행 파손 수리 — 기하 하네스 `detectCodeLanguage is not defined` 전-케이스 미실행 복구
+- [x] pytest B20~B36 신규 17건 + E1 절단 4종 전열거 — 47/47 PASS (형제 cycle 이 B7 선점 → 재번호)
+- [x] jsdom `verify_attach_version_diff.mjs` D1~D8 신규 — 124 PASS · mjs 전수 49 suite OK
+- [x] 실브라우저 기하 `verify_attach_diff_geometry.py` M1~M5+M3b 신규 — 54 PASS
+- [x] 전체 스위트 — pytest **4,018 PASS / 0 FAIL** · ruff clean · 구문 하이라이트 하네스 113 PASS
+- [x] §18.8 적대 패널 3도메인 — codex 한도 소진 + 세션 지시 상충을 **사용자에게 1회 확인**한 뒤
+      subagent dispatch. **P1 4 · P2 5 · P3 다수 전건 흡수**(탭 0px · 정밀화 부재 · 자소 클러스터
+      분할 · 자체 테스트 red · 비용 대리값 실패 · 렌더 폭증 · 배너 톤 · 이색형 · 과장 마킹 …)
+- [ ] 배포(deploy_scope: included) + PB-0008 라이브 시각검증
+
+## 9. Requested Scope
+- [x] `각 글자 단위의 차이점 출력` — 줄 안 변경 구간이 밑줄 마크로 표시된다(한국어 글자 단위,
+      ASCII 단어 단위). 2열·단일열 동일. 계산은 서버 단독이라 두 뷰가 갈리지 않는다.
+- [ ] 라이브 확인 — 배포 후 PB-0008.
