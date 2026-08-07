@@ -1536,3 +1536,17 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 - **Trigger**: 문서만(라이브 실측 기록·원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
 - 실측 절차·증거(스크린샷 포함)는 `docs/test-runs.d/REV-20260807T130000-attach-delivery-live.md`.
 - 미실측 축과 부수 발견 2건을 같은 문서에 명시(통과 못 한 것을 통과로 적지 않음).
+
+## REV-20260807T160000-redteam-attach-excerpt [SUBAGENT:backend+qa] — REVISED → PASS
+- **Trigger**: 리뷰어 프롬프트 + 첨부 발췌 선택 로직 변경(Major, 코어 LLM 경로) → §18.8 패널 필수.
+- **채널 순서(§18.8.2)**: `codex review` 쿼터 소진(복구 8/9) → 내장 `/security-review` 수행
+  (신규 HIGH/MEDIUM 0 — 대상 집합·누출 게이트·sentinel strip 불변, head-only 는 애초에 보안
+  통제가 아니었음) → 세션의 "요청 없이 AgentTool 금지" 지시와 상충해 **1회 확인 후** subagent
+  패널 호출(사용자 승인).
+- **결과**: **BLOCKING 4 · MAJOR 4 · MINOR 7 전건 흡수**. 패널 판정은 "초판이 원 버그를 세 경로로
+  재도입했다" 였고 타당했다 — 상세·해소는 MODIFY `CHG-20260807T160000-redteam-attach-excerpt-anchoring`.
+- **패널이 반증한 내 주장 2건**: "예산 불변·쓰는 위치만 바뀜"(→ 전달량이 1/3로 감소) ·
+  "`draft=""` 는 기존과 동일, 회귀 없음"(→ 420자로 감소). 둘 다 문서에서 정정했다.
+- **재검증**: 패널이 제시한 실패 입력(1줄 minified JSON · 1줄 CSV · 761자 첨부 3~5개 ·
+  64KB 상류 절단 · sentinel 폭탄 · 마커 위조 본문 · 한국어 패러프레이즈 초안)을 **그대로 재현해**
+  전부 해소 확인. 뮤테이션 24종 중 23 KILLED(1 등가).

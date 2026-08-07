@@ -624,6 +624,27 @@ red-team 자가검증(feature-0021)이 답변 초안에서 `BLOCK` 결함(verdic
   - `_rederive_eligible_axes(ordinal)`: `sql`(항상) + `completeness`(ordinal ≥ `REDTEAM_REDERIVE_COMPLETENESS_MIN_LEVEL`, 기본 3=매우높음). `_block_rederive_axes(findings, ordinal)` 로 BLOCK 축 중 승격 대상 추출. `_rederive_enabled()`=`REDTEAM_REDERIVE_ENABLED`.
   - `orchestrate_review(rederive_fn=…)`: revise 루프에서 BLOCK 축이 재도출 대상이면 `rederive_fn`(도구 허용 재추론), 아니면 `revise_fn`(텍스트 재작성). 재추론이 새 도구를 돌렸으면 `build_evidence_digest((steps)+new_steps, new_sql)` 로 evidence 재계산 → verify 가 **최신 근거**로 재검증. 무산출/비활성/예외는 텍스트 재작성 폴백(fail-open 불변). `record_review`/meta 에 `rederive_applied`/`rederive_tool_rounds`/`rederive_axis`.
   - `build_rederive_instruction`: "필요하면 도구를 다시 호출해 올바른 근거 수집 후 재도출"(텍스트 경로의 "증거 밖 신규 사실 금지"와 반대). `_findings_bullets`/`_strip_review_sentinels`: 비신뢰 findings(claim/fix_hint/evidence)에서 `<<REVIEW_FINDINGS>>` sentinel 을 결정론 제거해 구획 breakout 차단(`_datamark_untrusted` 대칭, 텍스트·재도출 경로 공용).
+- `src/modules/redteam.py` `build_attachment_digest(attachments, cap_chars, draft="")` — 리뷰어에게 줄
+  첨부 발췌. `_select_excerpt_spans()` 가 **앞머리 창 + 초안 인용 창 + 꼬리 창**을 고르고, 남은
+  예산은 전액 앞머리 연장에 쓴다 — `sum(span) == min(len(body), 파일당 캡)` 이 **항상** 성립한다.
+  이 불변식이 없으면 probe 가 안 맞을 때(한국어 답변 ↔ 영문 파일은 verbatim 매칭이 구조적으로 0건)
+  전달량이 1,200 → 420자로 줄어 **미탐이 넓어진다**(적대 패널 backend+qa BLOCKING 실측).
+  `draft=""` 는 총량이 구 동작과 같고 배치만 다르다(앞머리+꼬리) — **동일하지 않다.**
+  probe = 마크다운 벗긴 24자+ 줄 + 식별자성 12자+ 토큰, `str.find` + 대소문자 무시 폴백 1회.
+  coverage 는 **문자 기준이 권위**다: `[FULL FILE SHOWN]`(전량 전달 시에만) 또는
+  `[PARTIAL EXCERPT — you were given N of M chars; lines shown in full: …]`. 줄 범위는 편의 표기이며
+  **완전히 보인 줄만** 싣는다 — 경계에서 부분만 보인 줄을 SHOWN 으로 보고하면 그 줄의 숨은 부분을
+  인용한 정확한 답변이 '모순' 판정을 받는다. 상류 절단(`truncated=True`)이면 총량을 `M+` 하한으로만
+  진술하고 `SOURCE ALSO TRUNCATED` 를 붙인다(총량 단정은 뒷부분 인용을 '없는 줄'로 오판시킨다).
+  파일 블록은 **통째로** 총예산에 적재하고, 안 들어가면 `ALSO ATTACHED` 로 강등한다 — 조인 문자열을
+  raw slice 하면 `[FULL FILE SHOWN]` 라벨을 단 파일의 본문이 잘려 라벨이 거짓이 된다.
+  본문의 `[FULL FILE SHOWN]`·`[PARTIAL EXCERPT` 는 `_neutralize_digest_markers` 로 대괄호를 무력화한다
+  (첨부는 비신뢰 입력인데 프롬프트가 그 토큰에 권한을 부여했다).
+  FR-redteam-attach-excerpt-cap-false-grounding-block.
+- `src/modules/redteam.py` `build_evidence_digest(..., draft="")` — `draft` 를 첨부 발췌 앵커로만
+  전달(digest 본문에 초안을 싣지 않는다). `orchestrate_review` 는 3지점에서 재계산한다:
+  최초 `draft_answer` · **수정본 채택 직후 `final_answer` 재앵커** 2지점. 후자가 없으면 verify 가
+  수정본의 인용 구간을 못 본 채 판정해 같은 grounding BLOCK 이 재발한다(비수렴).
 - `src/agent_core.py` `_rt_rederive`: `_run_tool_defs`+`execute_tool` 재사용 상한 도구 루프 — `REDTEAM_REDERIVE_MAX_TOOL_ROUNDS`(기본3) 라운드, 마지막 라운드 `tools=None` 로 최종 답변 확정, 라운드당 도구 3개 상한, 도구 결과 `_datamark_untrusted`+4000자 truncation(메인 루프 대칭), 각 라운드/도구 실행 전 `_cancel_requested_for_run` 존중(취소 시 초안 유지). `build_evidence_digest` 호환 step 생성 후 `{text,new_steps,executed_sql,tool_rounds}` 반환. 채택 시 outer `steps`·`last_sql`(→`result["executed_sql"]`)에 재도출 근거 반영(추적성).
 - 설정(live): `REDTEAM_REDERIVE_ENABLED`(1, 마스터 스위치·비용 급증 시 즉시 0), `REDTEAM_REDERIVE_MAX_TOOL_ROUNDS`(3), `REDTEAM_REDERIVE_COMPLETENESS_MIN_LEVEL`(3=매우높음에서만 — 모호축 비용/드리프트 위험을 최대사양 티어로 국한). 관측: `agent_runtime.redteam_reviews.{rederive_applied,rederive_tool_rounds,rederive_axis}`(migration 0043).
 - 축별: grounding/permission/honesty=텍스트 재작성(무회귀), sql=도구 재추론(항상), completeness=도구 재추론(매우높음만).

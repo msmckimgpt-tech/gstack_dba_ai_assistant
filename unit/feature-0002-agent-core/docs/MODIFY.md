@@ -1582,3 +1582,61 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   `unit/feature-0002-agent-core/docs/test-runs.d/REV-20260807T130000-attach-delivery-live.{md,png}`,
   `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`.
 - **위험등급**: Minor(문서만·코드 변경 0). **Cross-ref**: `CHG-20260806T173000-attach-delivery-deploy`.
+
+## CHG-20260807T160000-redteam-attach-excerpt-anchoring 리뷰어 첨부 발췌를 초안 인용 구간에 앵커
+- **문제**(FR-redteam-attach-excerpt-cap-false-grounding-block, 라이브 실측 run
+  `20260807040816-3a3b6f52`): 리뷰어에게 주는 첨부 발췌가 `body[:1200]` **head-only** 라, 파일
+  뒤쪽을 근거로 쓴 **정확한** 답변이 무근거로 보여 grounding BLOCK 을 맞았다. `grounding` 은
+  rederive 적격 축이 아니어서(`_REDERIVE_ALWAYS_AXES=("sql",)`) 텍스트 재작성으로 해소가
+  구조적으로 불가능 → `stop_reason=revise_failed` → **옳은 답변에 "자가 검증 미해소" 배너**.
+- **수정 3축** (`modules/redteam.py`):
+  1. `_draft_probes()` + `_select_excerpt_spans()` — 발췌를 **초안이 인용한 구간**에 앵커.
+     예산은 동일(파일당 1,200자), 쓰는 위치만 변경. 앞머리 창은 항상 유지(파일 정체성).
+     probe = 마크다운 장식 벗긴 24자+ 줄 + 식별자성 12자+ 토큰. `str.find` 만 사용(정규식 미생성).
+  2. 절단 표기를 `[TRUNCATED]` → `[PARTIAL EXCERPT — SHOWN lines … of N; NOT SHOWN lines …
+     (unknown to you, not absent)]` **구조적 사실**로. `[FULL FILE SHOWN]` 일 때만 부재 추론 허용.
+     `_line_starts`/`_count_lines` 는 말미 개행이 유령 줄을 만들지 않도록 규약 통일 — 아니면
+     coverage 가 **존재하지 않는 줄을 미표시로 보고**한다(구현 중 실제 발생, 즉시 교정).
+  3. `REDTEAM_REVIEW_PROMPT` 규칙 — 기존 규칙은 본문 없는 "ALSO ATTACHED" 만 다뤄 본문이
+     실린 파일의 부분 발췌엔 적용 안 되는 것으로 읽혔다. 그 구멍 + "no tool runs 를 첨부 근거
+     부재로 읽지 말 것"(첨부는 도구가 아니라 프롬프트로 도달). **과교정 방지**: 보여준 줄과
+     **모순되는** 주장은 여전히 BLOCK.
+- **배선**: `build_evidence_digest(..., draft=)` 로 전달. `orchestrate_review` 3지점 —
+  최초 `draft_answer`, rederive 근거 누적 후 `final_answer`, **수정본 채택 후 재앵커**
+  `final_answer`. 재앵커가 없으면 verify 가 수정본의 인용 구간을 못 봐 같은 BLOCK 이 재발한다(비수렴).
+- **검증**: 신규 27건 + 기존 계약 1건 강화 · **뮤테이션 12/12 KILLED** · 호스트 전량 회귀
+  3,998 collected(실패는 선재 7건뿐, `git stash` 확인) · ruff clean · 배포본 컨테이너 재현
+  (수정 전 마커 부재 → 수정 후 포함). 뮤테이션 1차 3건 생존 → 테스트 결함 3개 교정.
+- **§18.8 적대 패널(backend+qa)이 초판을 반려 — BLOCKING 4 · MAJOR 4 · MINOR 7 전건 흡수**.
+  패널 판정 요지: *초판은 원 버그를 세 경로로 재도입했다.*
+  1. **예산 소멸(A)** — 앞머리 420자만 쓰고 나머지 780자를 probe 히트에만 배정, 히트 0이면
+     **버렸다**. 한국어 답변 ↔ 영문 파일은 verbatim 매칭이 구조적으로 0건이라 전달량이
+     1,200 → 420자로 줄었다. 실측: 117줄 파일의 28행 근거를 구 배포본은 보여줬고 초판은 감췄다
+     (미탐 62% → 87%). 해소: **남은 예산 전액을 앞머리 연장에 소진** + 꼬리 창 예약 →
+     `sum(span) == min(본문, 캡)` 불변식. 원 마찰(꼬리 인용)이 이제 **패러프레이즈·초안없음**
+     에서도 도달한다(초판은 verbatim 일 때만).
+  2. **char↔line 불일치(B)** — span 은 문자, coverage 는 줄이라 1줄 minified JSON 이
+     `NOT SHOWN lines none`(=다 봤다)으로 보고됐다. 해소: **문자 기준이 권위**
+     (`you were given N of M chars`), 줄 범위는 **완전히 보인 줄만**.
+  3. **총예산 절단(C)** — 파일당 캡으로 `[FULL FILE SHOWN]` 을 붙인 뒤 전체 캡이 본문을 잘랐다
+     (761자 첨부 3개로 재현). 해소: **블록 단위 적재**, 안 들어가면 `ALSO ATTACHED` 강등.
+  4. **`ALSO ATTACHED` 날조 보호(D)** — "no tool runs 는 근거 부재가 아니다" 규칙이, 본문이
+     프롬프트에 **없고** `read_attachment` 로만 도달하는 파일까지 덮어 **날조 탐지가 가장 확실한
+     경우를 무력화**했다. 해소: 면책을 **발췌가 있는 파일 한정**으로 좁히고, ALSO ATTACHED 는
+     "도구 0 + 구체적 주장 = grounding 결함" 을 명시.
+  MAJOR: 상류 `truncated=True` 파일의 총량 단정(→ `M+` 하한 + `SOURCE ALSO TRUNCATED`) ·
+  모순 규칙의 축 한정 부재(→ `grounding`/`honesty` 로 한정) · **본문의 coverage 마커 위조**
+  (→ `_neutralize_digest_markers`) · sanitized/raw 문자수 혼재(→ sanitized 통일).
+  MINOR: 죽은 digest 재계산 제거 · 대소문자 무시 폴백 · strip 후 빈 본문 manifest 라우팅 ·
+  창 padding 양측 유지.
+- **패널이 잡은 내 거짓 문서 주장 2건 정정**: FUNCTION.md "예산 불변 — 쓰는 위치만" ·
+  "`draft=""` 는 기존과 동일(회귀 없음)", SECURITY.md §41 "노출량 동일". *캡*은 불변이었지만
+  *전달량*은 1/3로 줄었다 — 노출 축만 보고 안전을 결론내면 **검출력 축**을 놓친다는 것을 §41 에 남겼다.
+- **검증(패널 반영 후)**: 신규 39건 + 기존 계약 1건 강화 · **뮤테이션 24종 중 23 KILLED**
+  (1건은 등가 뮤턴트로 테스트에 근거 기록) · 호스트 전량 회귀 3,998 collected(실패는 선재
+  `test_share_redaction_invariant.py` 7건뿐) · ruff clean.
+  뮤테이션이 테스트 결함을 5회 적발했다(모듈 grep 이 규칙 삭제를 가림 · probe 미매칭 fixture ·
+  창 병합으로 상한 미발동 · 꼬리 창이 대소문자 폴백을 가림 · 예산 소진이 개수 상한을 가림).
+- **위험등급**: Major(리뷰어 프롬프트 = 코어 LLM 경로). 신규 권한·스키마·엔드포인트 변경 0.
+- **Cross-ref**: 원장 `FR-redteam-attach-excerpt-cap-false-grounding-block` ·
+  `CHG-20260807T130000-attach-delivery-live-measure`(이 결함이 발견된 실측) · SECURITY §41.

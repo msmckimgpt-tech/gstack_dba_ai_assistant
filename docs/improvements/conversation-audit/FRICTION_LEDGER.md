@@ -173,10 +173,10 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **라이브 실측 필요분(§정직)**: ① 모델이 실제로 도구를 채택하는지 ② 다중 파일 전달이 완주하는지
   ③ **다운로드 칩이 실제로 뜨는지**(패널이 잡은 결함이라 최우선) ④ 패치 경로 적용 성공률.
 
-## FR-redteam-attach-excerpt-cap-false-grounding-block — triaged (L2↔L1; 리뷰어 발췌가 head-only 라 캡 밖 근거가 '무근거'로 보임)
+## FR-redteam-attach-excerpt-cap-false-grounding-block — fixed:undeployed (L2↔L1; 리뷰어 발췌가 head-only 라 캡 밖 근거가 '무근거'로 보임)
 
-- **status**: `triaged` — 2026-08-07 라이브 실측 중 **부수 발견**(원 마찰 검증을 위한 턴에서 재현).
-  수정 미착수.
+- **status**: `fixed:undeployed` — 2026-08-07 라이브 실측 중 **부수 발견**(원 마찰 검증을 위한 턴에서
+  재현) → 사용자 지시로 같은 날 수정. 코드/테스트 완료, 배포 전.
 - **source**: 자체 실측(2026-08-07). 사용자 보고 아님.
 - **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1
 - **symptom_confidence**: high · **rootcause_confidence**: high(코드 위치 + 라이브 런 삼각측량)
@@ -203,11 +203,52 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **후보 방향(미결정)**: ① 발췌를 head-only 대신 **답변이 인용한 구간 중심**으로 선택
   ② `grounding` 을 rederive 적격 축에 포함(도구로 실제 읽어 해소 가능하게)
   ③ 절단 사실을 산문이 아닌 **구조적 사실**(캡·총길이·미표시 구간)로 제공.
-- **fix**: 미착수 · **rc_ids**: RC-LM1 · **batch-id**: (미배정)
+- **fix**: `CHG-20260807T160000-redteam-attach-excerpt-anchoring`
+  (`unit/feature-0002-agent-core/src/modules/redteam.py`) — **봉인 3축**:
+  1. **발췌를 초안이 인용한 구간에 앵커**(`_draft_probes` + `_select_excerpt_spans`). 예산(파일당
+     1,200자)은 **그대로 두고 쓰는 위치만** 바꿨다 — 캡을 키우는 것은 더 큰 파일에서 같은 실패가
+     재발하므로 오답이다. 앞머리 창은 파일 정체성 확인용으로 항상 유지.
+  2. **절단 표기를 산문 → 구조적 사실**: `[PARTIAL EXCERPT — SHOWN lines A-B of N; NOT SHOWN
+     lines C-D (unknown to you, not absent)]`. 기존 산문 경고("absence here is not proof")를
+     받고도 리뷰어가 정확히 그 오판을 냈다는 것이 실측이라, 사실 줄에 직접 붙였다.
+     `[FULL FILE SHOWN]` 일 때만 부재 추론이 허용된다는 것도 명시.
+  3. **리뷰어 규칙**(`REDTEAM_REVIEW_PROMPT`): 기존 규칙은 본문 없는 "ALSO ATTACHED" 파일만
+     다뤄 **본문이 실렸으나 발췌가 잘린 파일**에는 적용되지 않는 것으로 읽혔다. 그 구멍을 막고,
+     "no tool runs" 를 첨부 근거 부재로 읽지 말 것도 추가(첨부 본문은 도구가 아니라 프롬프트로
+     도달한다). **과교정 방지**: 실제로 보여준 줄과 **모순되는** 주장은 여전히 BLOCK.
+- **§18.8 적대 패널(backend+qa)이 초판을 반려 — BLOCKING 4 · MAJOR 4 · MINOR 7 전건 흡수**.
+  판정 요지: *초판 수정이 원 버그를 세 경로로 재도입했다.* ① 앞머리 420자만 쓰고 남은 780자를
+  probe 히트에만 배정해 **히트 0이면 버렸다**(한국어 답변 ↔ 영문 파일은 verbatim 매칭이 구조적
+  0건 → 전달량 1,200→420자, 미탐 62%→87%) ② span 은 문자인데 coverage 는 줄이라 1줄 minified
+  JSON 이 `NOT SHOWN lines none`(=다 봤다)으로 **거짓 완전성**을 진술 ③ 파일당 캡으로
+  `[FULL FILE SHOWN]` 을 붙인 뒤 총예산이 본문을 잘라 "전문을 봤는데 없다"는 **정당화된** BLOCK 을
+  만듦 ④ "no tool runs 는 근거 부재 아님" 규칙이 `ALSO ATTACHED`(본문이 프롬프트에 없고 도구로만
+  도달)까지 덮어 **날조 탐지가 가장 확실한 경우를 보호**.
+  해소: 남은 예산 전액을 앞머리 연장에 소진 + 꼬리 창 예약(`sum(span)==min(본문,캡)` 불변식) ·
+  문자 기준 coverage + 완전히 보인 줄만 SHOWN · 블록 단위 적재(초과 시 ALSO ATTACHED 강등) ·
+  면책을 발췌 있는 파일로 한정 + `[FULL FILE SHOWN]` 에선 부재가 증거 · 상류 절단은 `M+` 하한 +
+  `SOURCE ALSO TRUNCATED` · 모순 규칙 축 한정 · 본문의 coverage 마커 위조 중화 · sanitized 통일.
+- **검증(패널 반영 후)**: 신규 39건 + 기존 계약 1건 강화 · **뮤테이션 24종 중 23 KILLED**
+  (1건은 등가 뮤턴트로 근거 기록) · 호스트 전량 회귀 3,998 collected(실패는 선재
+  `test_share_redaction_invariant.py` 7건뿐, `git stash` 로 확인) · ruff clean ·
+  **배포본 컨테이너 재현**(수정 전 마커 부재 → 수정 후 포함) · 패널이 제시한 실패 입력
+  (1줄 minified JSON · 761자 첨부 3~5개 · 64KB 상류 절단 · sentinel 폭탄 · 마커 위조 본문 ·
+  한국어 패러프레이즈 초안)을 그대로 재현해 전부 해소 확인.
+  뮤테이션이 테스트 결함을 **5회** 적발했다 — 모듈 grep 이 규칙 삭제를 가림 · probe 미매칭
+  fixture · 창 병합으로 예산 상한 미발동 · 꼬리 창이 대소문자 폴백을 가림 · 예산 소진이 개수
+  상한을 가림. 매번 프로덕션이 아니라 **테스트**가 결함이었다.
+- **정직**: 초판에서 "예산 불변 · 회귀 없음" 을 문서 4곳에 적었으나 **거짓이었다**(캡은 불변,
+  전달량은 1/3). 패널이 반증했고 전부 정정했다. 노출 경계만 보고 안전을 결론내면 **검출력 축**을
+  놓친다는 교훈을 SECURITY §41 에 남겼다.
+- **rc_ids**: RC-LM1 · **batch-id**: redteam-attach-excerpt
 
-## FR-datasource-eager-connect-blocks-datasource-free-turn — triaged (L8↔L2; datasource 불필요 턴이 datasource 회로차단에 죽는다)
+## FR-datasource-eager-connect-blocks-datasource-free-turn — rejected (의도된 동작 — 사용자 판단 2026-08-07)
 
-- **status**: `triaged` — 2026-08-07 라이브 실측 중 **부수 발견**. 수정 미착수.
+- **status**: `rejected` — **의도된 동작**(사용자 판단 2026-08-07). 아래 관측·근본원인은 사실이나,
+  이를 결함으로 보지 않기로 했다: **datasource 연결이 성립하지 않은 상태에서 작업을 수행하면
+  assistant 답변 품질을 보증할 수 없으므로 차단하는 방향이 옳다.** 제안했던 lazy 연결·degraded
+  진입(①②③)은 전부 채택하지 않는다 — 부분적으로만 접지된 답변을 내보내는 것이 조용한 오답의
+  원천이 되기 때문이다. 재발견 시 이 항목으로 합류하고 재진단하지 않는다(§C5 rejected).
 - **source**: 자체 실측(2026-08-07). 사용자 보고 아님.
 - **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1
 - **symptom_confidence**: high · **rootcause_confidence**: high(코드 위치 + 실패 런)
@@ -225,11 +266,10 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **영향**: 사외 datasource 가 넓게 불안정한 시간대에는 첨부 편집·문서 질의 같은
   **datasource-free 작업까지 전부 불가**해진다. 실측 시점 워커 로그에 `conn_health down` 이
   16개 scope 이상 동시 발생.
-- **후보 방향(미결정)**: ① 선연결을 **lazy**(첫 datasource 도구 사용 시점)로 이동
-  ② 선연결 실패를 치명 중단이 아닌 **degraded 진입**으로 낮추고 datasource-free 도구만 노출
-  ③ 회로차단 시 사용자에게 "데이터 조회는 불가하나 첨부 작업은 가능" 을 제시.
-  ①은 grounding·스키마 주입 경로와 얽히므로 영향 범위 확인 필요(Major 예상).
-- **fix**: 미착수 · **rc_ids**: RC-LM2 · **batch-id**: (미배정)
+- **후보 방향(전부 기각)**: ~~① 선연결을 lazy 로 이동~~ ~~② degraded 진입 + datasource-free 도구만
+  노출~~ ~~③ "조회 불가·첨부 작업 가능" 안내~~ — 셋 다 "접지되지 않은 상태에서의 답변"을 허용하는
+  방향이라 품질 보증 기준과 충돌한다. **다시 제안하지 말 것.**
+- **fix**: 해당 없음(기각) · **rc_ids**: RC-LM2 · **batch-id**: 해당 없음
 
 ## FR-read-attachment-preview-looks-partial — fixed:deployed:unverified-live (L7 표시 오인 + L2 완전성 계약 부재)
 
