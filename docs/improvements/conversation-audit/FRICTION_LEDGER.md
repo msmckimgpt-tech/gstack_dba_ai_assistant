@@ -6,9 +6,9 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-attach-delivery-truncated-by-output-cap — fixed:deployed:unverified-live (L6↔L2 구조; 전달 payload 가 답변 출력 예산을 잠식)
+## FR-attach-delivery-truncated-by-output-cap — fixed:deployed:verified (L6↔L2 구조; 전달 payload 가 답변 출력 예산을 잠식)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **56** PASS[33+23] · **뮤테이션 9/9 KILLED** ·
+- **status**: `fixed:deployed:verified` — 코드/테스트(신규 **56** PASS[33+23] · **뮤테이션 9/9 KILLED** ·
   컨테이너 정본 회귀 실패 0 · ruff clean) + §18.8 security/backend+qa 패널 **BLOCK → [P1] 4 · [P2] 9 ·
   [P3] 6 전건 흡수** + **배포 완료**(2026-08-06, PR #1178 merge main `d04ab2f2` → `make deploy-web`
   전체 스코프, soak 통과·롤백 0, **4서비스 GIT_COMMIT=d04ab2f2 running/healthy**).
@@ -17,7 +17,18 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   **배포본 런타임 실증(ask-worker)**: 도구 노출 True · `_TOOL_HANDLERS` 라우팅 True · datasource-free
   True · `_bind_tool_delivered_attachments` 적재 True · 절단 감지 + latch True · 패치 정상 적용 ·
   **잘린 패치 거부**(선언 -3/+3, 실제 -1/+1) · **문맥 없는 삽입 거부** · DELIVERY FACTS floor True.
-  **라이브 대화 실측 미수행** → `unverified-live`.
+  **라이브 대화 실측 완료(2026-08-07, `fixed:deployed:verified`)** — 배포본 web UI(실 Windows Chrome,
+  PB-0008)에서 4파일 동시 갱신을 1턴에 요청해 전 축을 실측했다. 상세는
+  `unit/feature-0002-agent-core/docs/test-runs.d/REV-20260807T130000-attach-delivery-live.md`.
+  - **도구 채택 4/4** — 모델이 첫 라이브 사용에서 `update_attachment` 를 파일당 1회씩 호출(steps 4·5·6·8).
+  - **다중 파일 완주 4/4** — 도구 응답의 러닝 카운터가 1→2→3→4 로 증가, 오류 0.
+  - **답변↔실재 일치** — 답변이 주장한 "4개 파일 모두 갱신"이 저장소 실제와 일치(원 마찰의 소멸 조건).
+  - **다운로드 칩 렌더 4/4**(패널 P1) — `.message-bubble-attach-chip.has-download` 4개,
+    `v2 · AI 수정` 배지 + 다운로드 화살표. 스크린샷 evidence 첨부.
+  - **패치 적용 4/4 1회차 성공** — 다운로드 실물 대조: 122줄(SELECT 120줄 전량 보존),
+    삽입 위치가 정확히 2번째 줄, 마커 1회만, CRLF 드리프트 없음.
+  - **★ completion_tokens 분리 실증**(사용자가 요구한 구조 조건) — 4×7KB 전달의 총 답변
+    completion_tokens 는 **1,973**(1486+269+218). 본문이 답변 출력창에 실리지 않음을 수치로 확인.
 - **source**: 사용자 보고(2026-08-06) — "assistant 가 모든 첨부파일들을 갱신했다고 전달받았지만
   정작 갱신된 첨부파일은 하나 뿐". 대화 제목 `파일 개선사항 지속적 갱신`.
 - **last_seen**: 2026-08-06 · **seen_count**: 1 · **seen_distinct_conv**: 1
@@ -65,6 +76,64 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **라이브 실측 필요분(§정직)**: ① 모델이 실제로 도구를 채택하는지 ② 다중 파일 전달이 완주하는지
   ③ **다운로드 칩이 실제로 뜨는지**(패널이 잡은 결함이라 최우선) ④ 패치 경로 적용 성공률.
 
+## FR-redteam-attach-excerpt-cap-false-grounding-block — triaged (L2↔L1; 리뷰어 발췌가 head-only 라 캡 밖 근거가 '무근거'로 보임)
+
+- **status**: `triaged` — 2026-08-07 라이브 실측 중 **부수 발견**(원 마찰 검증을 위한 턴에서 재현).
+  수정 미착수.
+- **source**: 자체 실측(2026-08-07). 사용자 보고 아님.
+- **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **symptom_confidence**: high · **rootcause_confidence**: high(코드 위치 + 라이브 런 삼각측량)
+- **suspected_layers**: L2↔L1
+- **증상**: 첨부 파일의 **뒤쪽 영역**을 근거로 한 정확한 답변에, red-team 이 grounding 축
+  BLOCK("파일을 읽은 근거가 없습니다")을 걸고 → 수정 실패 → 사용자에게
+  `⚠️ 내부 자가 검증 미해소` 배너가 붙은 채 전달된다. **답변 내용은 옳았다.**
+- **confirmed_root_cause.location** (3중):
+  1. `unit/feature-0002-agent-core/src/modules/redteam.py` — `build_attachment_digest()` 의
+     `excerpt = _strip_review_sentinels(body)[:_ATTACH_PER_FILE_CAP_CHARS]`(파일당 **1200자
+     head-only** 절단). 캡 밖 영역을 근거로 삼은 답변은 리뷰어 시야에서 근거가 사라진다.
+  2. 같은 함수의 산문 가드("Excerpts are TRUNCATED — absence here is not proof …")가 **실효
+     없었다** — 리뷰어가 그 문장을 받고도 정확히 그 오판(BLOCK)을 냈다. 산문 경고로는 안 막힌다.
+  3. `_REDERIVE_ALWAYS_AXES=("sql",)` · `_REDERIVE_LEVEL_GATED_AXES=("completeness",)` —
+     **`grounding` 은 도구 재추론 대상 축이 아니다**. 그래서 "read_attachment 로 읽어라"는
+     fix_hint 를 텍스트 재작성 패스가 이행할 방법이 원천적으로 없다 → `revise_failed` 구조적 확정.
+- **라이브 증거**: run `20260807040816-3a3b6f52` — `verdict=revise · block_count=1 ·
+  revision_applied=false · revision_rounds=0 · unresolved_block_count=1 ·
+  stop_reason=revise_failed`. 대상 첨부 7,046자(캡 1,200자의 5.9배), 변경점은 마지막 줄.
+  재작성 시도는 실제로 호출됐다(`llm_usage` agent p=47138 **c=425**) — 과거
+  prefill 결함(c=3)과는 **다른 원인**이므로 그 회귀가 아니다.
+- **영향**: 대용량 첨부를 다루는 정확한 답변마다 경고 배너가 붙는다. 배너는 fail-safe(정직)
+  방향이라 **위해는 없으나**, 반복되면 배너 자체가 신뢰를 잃어 진짜 BLOCK 을 가린다(경보 피로).
+- **후보 방향(미결정)**: ① 발췌를 head-only 대신 **답변이 인용한 구간 중심**으로 선택
+  ② `grounding` 을 rederive 적격 축에 포함(도구로 실제 읽어 해소 가능하게)
+  ③ 절단 사실을 산문이 아닌 **구조적 사실**(캡·총길이·미표시 구간)로 제공.
+- **fix**: 미착수 · **rc_ids**: RC-LM1 · **batch-id**: (미배정)
+
+## FR-datasource-eager-connect-blocks-datasource-free-turn — triaged (L8↔L2; datasource 불필요 턴이 datasource 회로차단에 죽는다)
+
+- **status**: `triaged` — 2026-08-07 라이브 실측 중 **부수 발견**. 수정 미착수.
+- **source**: 자체 실측(2026-08-07). 사용자 보고 아님.
+- **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **symptom_confidence**: high · **rootcause_confidence**: high(코드 위치 + 실패 런)
+- **suspected_layers**: L8↔L2
+- **증상**: 첨부 파일만 편집하면 되는 요청(=datasource 를 전혀 쓰지 않는 턴)이, 대화에 바인딩된
+  제품의 datasource 가 회로차단(`DatasourceCircuitOpen`) 상태면 **도구 루프에 진입도 못 하고**
+  런 전체가 중단된다. 사용자에게는 "데이터소스 응답 지연" 안내만 남는다.
+- **confirmed_root_cause.location**: `unit/feature-0002-agent-core/src/agent_core.py` —
+  `run_agent` 가 런 시작 시 primary datasource 를 **선연결**하고, 실패 시 `return result` 로
+  즉시 종료한다(멀티 datasource 분기 ~5767-5779, 단일 분기도 동형). 이 턴이 datasource 를
+  필요로 하는지와 무관하게 걸리는 **무조건 전제조건**이다.
+- **라이브 증거**: `ask_jobs` id=615 — `status=error`, `steps: []`, `answer: ""`,
+  error=회로차단 사용자 문구. 동일 요청을 **로컬 도달 가능한 제품(MV)** 으로 바꾸자 즉시 성공
+  (id=616, `update_attachment` 4회). 즉 요청 자체는 datasource 와 무관했다.
+- **영향**: 사외 datasource 가 넓게 불안정한 시간대에는 첨부 편집·문서 질의 같은
+  **datasource-free 작업까지 전부 불가**해진다. 실측 시점 워커 로그에 `conn_health down` 이
+  16개 scope 이상 동시 발생.
+- **후보 방향(미결정)**: ① 선연결을 **lazy**(첫 datasource 도구 사용 시점)로 이동
+  ② 선연결 실패를 치명 중단이 아닌 **degraded 진입**으로 낮추고 datasource-free 도구만 노출
+  ③ 회로차단 시 사용자에게 "데이터 조회는 불가하나 첨부 작업은 가능" 을 제시.
+  ①은 grounding·스키마 주입 경로와 얽히므로 영향 범위 확인 필요(Major 예상).
+- **fix**: 미착수 · **rc_ids**: RC-LM2 · **batch-id**: (미배정)
+
 ## FR-read-attachment-preview-looks-partial — fixed:deployed:unverified-live (L7 표시 오인 + L2 완전성 계약 부재)
 
 - **status**: `fixed:undeployed` — 코드/테스트(신규 **17** PASS[실 함수 경유] · 기존 read_attachment
@@ -90,6 +159,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   `assistant 에게는 결과 전문이 전달되었습니다` 를 **무조건** 단정 — `_cap_tool_result` 가 먼저
   자르면 거짓이고, **모델이 `max_lines` 를 줄인 단계**(이 감사가 찾은 유일한 진짜 미열람)에 안심
   문구를 덮어 **true-positive 를 false-negative 로 바꾼다**.
+
+- **라이브 실측(2026-08-07) 미도달 — `unverified-live` 유지**: 2회의 라이브 턴(첨부 4건 갱신 ·
+  신규 버전 변경점 질의) 모두 모델이 `read_attachment` 를 **호출하지 않고** 주입된 첨부 컨텍스트로
+  답했다. 즉 완전성 계약(전문/부분 머리말 · MUST-이어읽기)이 **실행되지 않아 관측 자체가 불가**했다.
+  이 축을 재려면 인라인 상한을 넘는 대용량 첨부로 도구 경로를 강제해야 한다(다음 실측 설계 항목).
 - **source**: 사용자 라이브 실측 중 보고(2026-08-05) — "assistant 가 `read_attachment` 로 파일을 조회할 때
   마치 일부분만 조회하는 것처럼 동작. 웹 출력 간소화인지 실제 미열람인지 검토 필요".
 - **last_seen**: 2026-08-05 · **seen_count**: 1 · **seen_distinct_conv**: 1(보고) / 41회·8대화(도구 전체)
@@ -152,6 +226,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   부정 단정 침묵 계약 True(A·B 양쪽) · 리뷰어 프롬프트 floor 규칙 True / 대칭 BLOCK 제거 True.
   web /healthz `status=ok · mysql_ok · pg_ok`.
   **라이브 대화 실측 미수행** → `unverified-live`.
+
+- **라이브 실측(2026-08-07) 1건 양성 관측 — 상태는 `unverified-live` 유지**: 첨부를 새 버전으로
+  다시 올린 뒤 "직전 버전 대비 무엇이 바뀌었는지"를 물었을 때 assistant 가 **부재-단정 없이**
+  신규 버전을 인식하고 변경점(맨 끝 1줄 추가)을 정확히 서술했다. 다만 ① 표본 1건 ② 원 보고의
+  fork 시나리오가 아님 ③ 빈도 감소 시계열 부재 → §C5 의 `verified` 요건 미충족이라 승격하지 않는다.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit "추가 쿼리 리뷰 요청"` (2026-08-05) —
   "다른 대화를 fork된 대화에서, 첨부파일을 v2로 갱신하였지만 assistant가 이를 인식하지 못하는 이슈".
 - **last_seen**: 2026-08-05 · **seen_count**: 1 · **seen_distinct_conv**: 1 (90일)
