@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260807T160000-redteam-abortable-postdeploy [SKIPPED:non-policy-doc] (TASK-20260807T130000)
+- **Trigger**: §18.8 dispatch 표 첫 행 — 비정책 doc-only(배포 실증 기록 · 마찰 원장 status 갱신 ·
+  LEARNINGS 환류). 코드 변경 0, 스키마·RBAC·엔드포인트·프롬프트 무변경.
+- 본 cycle 이 기록하는 변경 자체의 적대 검증은 선행
+  `REV-20260807T130000-redteam-abortable-review`(backend+qa 패널 BLOCKING 3 · MAJOR 12 전건 흡수)에서
+  이미 수행했다. 여기서는 그 결과의 **배포 실증 수치만** 옮긴다.
+
 ## REV-20260807T130000-redteam-abortable-review [SUBAGENT:backend] + [SUBAGENT:qa] + built-in security-review — BLOCK → 전건 흡수 후 SHIP (BLOCKING 3 / MAJOR 12 / MINOR 12) (TASK-20260807T130000)
 - **Trigger**: §18.8 dispatch — `performance/latency/지연` + 동시성(스레드 경계) 신호 → **backend, qa**.
   채널 선택은 §18.8.2 순서를 따랐다.

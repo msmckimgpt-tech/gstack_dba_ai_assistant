@@ -6,11 +6,22 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-redteam-first-pass-unabortable — triaged (L7↔L2 구조; 자가 검증 대기 구간에 사용자 탈출구·진행 표시 부재)
+## FR-redteam-first-pass-unabortable — fixed:deployed:unverified-live (L7↔L2 구조; 자가 검증 대기 구간에 사용자 탈출구·진행 표시 부재)
 
-- **status**: `triaged` — 코드/테스트(신규 **25** PASS · 기존 red-team 127 PASS · ruff clean ·
-  역검증 3종 판별력 확인) + **§18.8 backend/qa 패널 BLOCKING 3 · MAJOR 12 전건 흡수**
-  (MINOR 12 중 8 흡수 · 4 는 선재/범위 밖 명시). verify-completion·PR·배포 미착수.
+- **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 **25** PASS + headless **13** PASS ·
+  기존 red-team 127 PASS · `make test` 전량 exit 0 · ruff clean · 역검증 **4종** 판별력 확인) +
+  **§18.8 backend/qa 패널 BLOCKING 3 · MAJOR 12 전건 흡수**(MINOR 12 중 8 흡수 · 4 는 선재/범위 밖
+  명시) + **배포 완료**(2026-08-07, PR #1195 merge main `6b0f50c0` → `make deploy-web` 전체 스코프,
+  soak 통과·롤백 0, gateway 드리프트 0). 병렬 세션 머지로 rebase 1회(원장 헤더 충돌 → union 해소:
+  신규 항목 유지 + 다른 세션의 `verified` 상태 채택), rebase 후 회귀 재실행 exit 0 ·
+  verify-completion(post-commit) PASS.
+  **5서비스 GIT_COMMIT=`6b0f50c0` running/healthy**(web-a·web-b·ask-worker·insight-worker·ops-scheduler).
+  **배포본 런타임 실증(ask-worker)**: `_await_review_interruptible` 적재 True · 출하 상수
+  (poll 1.0 / poll_max 3.0 / tick 15.0 / backoff 2.0 / tick_max 120.0 / grace 5.0 / ratio 0.1 /
+  abort_grace 0.5) · **양쪽 배선 2회** True · `verify_incomplete` True · `review_wait_giveup` True ·
+  `copy_context` True. web-a 서빙 `admin.js` 에 `review_wait_giveup` 3건 · `리뷰 미완료` 1건.
+  web /healthz `status=ok · mysql_ok · pg_ok · git_commit=6b0f50c0`.
+  **라이브 대화 실측 미수행** → `unverified-live`.
 - **source**: 사용자 명시 호출 `/_dqa:conversation_audit "안녕 처음 사용하는데 리뷰 가능할까?"`
   (2026-08-07) — "해당 대화에서 assistant의 응답이 더 이상 진행되지 않는 이슈".
 - **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1(보고) / 아래 corroboration 별도
