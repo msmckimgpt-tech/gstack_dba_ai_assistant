@@ -2,7 +2,7 @@
 run_at: 2026-08-07T15:45:00+09:00
 session: ai/claude/feature-0009-join-guide
 scope: unit/feature-0003-agent-web-ui/src/static (index.html · app/composer.js · css/chat.css)
-verdict: PASS (유닛/계약 범위) / PENDING (Windows-browser — 배포 후)
+verdict: PASS (유닛/계약) / PARTIAL→PASS (Windows-browser — 실측이 결함 1건 적발, 후속 cycle 로 수정)
 ---
 
 ### Run (2026-08-07) — 그룹 대화 기능 첫 사용 1회 안내 툴팁 (gc-first-use-guide)
@@ -66,3 +66,46 @@ Run 을 append 한다. 이 환경에는 브라우저 바이너리가 없어 렌�
 
 de-risk 근거: 위 1~3 절(계약 61 PASS · 뮤테이션 5/5 · 대비 계산)로 코드 정합과 색 대비는
 확증했고, 남은 것은 실 렌더 기하·스택 순서다.
+
+
+---
+
+### Run (2026-08-07) — **Environment: Windows-browser (PB-0008)** · 배포본 `f81c5bcb`
+
+실 Windows Chrome/150 via `bin/win-browser.py` relay @ `172.26.144.1:9223`,
+`https://localhost/` 로그인 세션 `bootstrap_admin`, 뷰포트 2386×1255 (DPR 1).
+대상 그룹 대화 `20260806052006-3f48cbb7`(멤버 2) · 대조 1:1 `20260807035225-9cb592cb`.
+서빙 자산 스탬프 `?v=c2838fc68348` 확인.
+
+| # | 축 | 결과 |
+|---|---|---|
+| 1 | 그룹 대화 첫 진입 → 카드 노출 · 컴포저 위 배치 | **PASS** `hidden=false` · rect `(272,1014) 210×151` · 카드 bottom 1165 / `.composer-wrap` top 1168 → **카드 전체가 wrap 밖**, caret 만 상단 padding(8px) 안으로 3px |
+| 2 | **각 안내가 실제로 한 줄로 렌더** (문자열 단언이 못 보는 축) | **PASS** 5항목 전부 `height 17px = lineHeight×1` |
+| 3 | `@` 입력 시 멘션 자동완성이 카드보다 **위** | **PASS** 두 박스 overlap 상태에서 `elementFromPoint` = `mentionAutocomplete` (tip z=40 < ac z=50) |
+| 4 | "다시 안 보기" → 다른 그룹 대화 2곳 · 새로고침 미재노출 | **PASS** `localStorage=["bootstrap_admin"]`, `a6fe00cf`·`b5f40d99` 모두 `tipShown=false` |
+| 5 | 입력만 하고 새로고침 → **다시 뜸**(닫기≠소진 분리) | **PASS** `@` 입력 시 즉시 숨김 + `localStorage=null` 유지 → 재진입 시 `tipShown=true` |
+| 6 | 1:1 대화 무노출 + **무소진** | **PASS** 클린 상태로 1:1 방문 후에도 `localStorage=null`, 이어 그룹 진입 시 정상 노출 |
+| 7 | Esc → 숨김, 소진 없음 | **PASS** `tipHidden=true`, `localStorage=null` |
+| 8 | **Esc 양보 — 멘션 AC 열림 중** | **FAIL → 후속 cycle 에서 수정** (아래) |
+
+증적: `scratchpad/gcguide-01-shown.png`(전체) · `gcguide-01-crop.png`(확대 판독 — 카드·caret·
+5줄·"다시 안 보기" 대비).
+
+#### 실측이 적발한 결함 (#8) — 유닛 하네스가 통과시킨 것
+
+멘션 자동완성이 열린 상태에서 Esc 를 누르면 안내까지 함께 닫혔다
+(`tipVisibleBefore=true → tipVisibleAfter=false`). 원인은 **핸들러 실행 순서**다 — 우리
+Esc 핸들러가 버블 단계라, 먼저 등록된 멘션 AC 의 핸들러가 AC 를 이미 닫은 **뒤에** 돌아
+`_gcGuideOtherOverlayOpen()` 이 "열려 있지 않다" 로 오판했다.
+
+**왜 61 PASS 가 이걸 놓쳤나**: 가짜 DOM 에 경쟁 핸들러가 없어, "양보한다" 는 단언이
+*우리 함수만 존재하는 세계* 에서만 참인 **vacuous pass** 였다. 단언 자체가 형식적이지
+않았음에도(뮤테이션 5/5 KILLED) **합성(composition)을 재현하지 않은 것**이 사각이었다.
+
+**수정(후속 cycle `20260807T1700-gc-guide-esc-capture`)**: 핸들러를 **capture 단계**로 등록
+(저장소 선례 `_attachShareRangeEsc` 와 동일 이유). 하네스는 가짜 document 를 capture→bubble
+2단계로 바꾸고 경쟁 오버레이 핸들러를 주입해 **라이브 조건**에서 검증하도록 고쳤다.
+
+**피해 범위(정직)**: 이 결함으로도 안내가 **영구 소진되지는 않는다**(`localStorage=null`
+실측 확인) — 앞선 ux BLOCKING #1 수정이 그 경로를 이미 끊어 두었다. 잔여 영향은 "그 로드에서
+안내가 함께 사라짐" 이었다.

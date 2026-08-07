@@ -196,11 +196,16 @@ function _wireGroupFirstUseGuide(el) {
   if (promptInputEl) promptInputEl.addEventListener("input", () => {
     if (!el.classList.contains("hidden")) hideGroupFirstUseGuide();
   });
+  // ★capture 단계로 등록한다 — 양보 판정이 **다른 핸들러가 상태를 바꾸기 전** 이뤄져야 한다.
+  // 버블 단계에 두면 먼저 등록된 멘션 AC/드롭업의 Esc 핸들러가 그 오버레이를 이미 닫은 뒤에
+  // 우리 핸들러가 돌아, "열려 있지 않다" 로 오판하고 안내까지 함께 닫는다(PB-0008 라이브 실측
+  // 2026-08-07 에서 재현 — 유닛 하네스는 경쟁 핸들러가 없어 통과했다). 같은 파일의
+  // `_attachShareRangeEsc` 가 동일한 이유로 이미 capture 를 쓴다(저장소 선례).
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (el.classList.contains("hidden") || _gcGuideOtherOverlayOpen()) return;
     hideGroupFirstUseGuide();
-  });
+  }, true);
 }
 
 function _maybeShowGroupFirstUseGuide() {

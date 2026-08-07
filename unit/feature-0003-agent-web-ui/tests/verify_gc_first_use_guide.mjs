@@ -67,6 +67,9 @@ for (const n of FN_NAMES) {
 const LS_KEY = "mad.gcFirstUseGuide.v1";
 ok("[상수] GC_GUIDE_LS_KEY 선언", composerJs.includes(`GC_GUIDE_LS_KEY = "${LS_KEY}"`));
 ok("[배선] renderComposer 가 안내 판정을 호출", /_maybeShowGroupFirstUseGuide\(\);/.test(composerJs));
+// 양보 판정은 다른 핸들러가 상태를 바꾸기 전에 이뤄져야 한다 → capture 등록(저장소 선례:
+// 같은 파일 `_attachShareRangeEsc`). 버블로 되돌리면 아래 [Esc 양보/라이브] 가 red 가 된다.
+ok("[배선] Esc 핸들러가 capture 단계로 등록", /hideGroupFirstUseGuide\(\);\s*\n\s*\}, true\);/.test(composerJs));
 
 // ── 가짜 환경 ─────────────────────────────────────────────────────────────
 function makeEl(id, { hidden = true } = {}) {
@@ -97,15 +100,31 @@ function build({ store = {} } = {}) {
   const closeBtn = makeEl("groupGuideTipClose");
   const promptInputEl = makeEl("promptInput");
   const overlays = Object.fromEntries(OVERLAY_IDS.map((id) => [id, makeEl(id)]));
-  const docListeners = {};
+  // ★실 DOM 의 2단계 디스패치를 재현한다(capture → bubble). 이게 없으면 "다른 오버레이가
+  //   열려 있으면 Esc 를 양보한다" 는 단언이 **경쟁 핸들러가 없는 세계**에서만 참인
+  //   vacuous pass 가 된다 — PB-0008 라이브에서 실제로 그렇게 통과하고 결함이 나갔다.
+  const docListeners = { capture: {}, bubble: {} };
   const document = {
     getElementById: (id) => {
       if (id === "groupGuideTip") return tip;
       if (id === "groupGuideTipClose") return closeBtn;
       return overlays[id] || null;
     },
-    addEventListener: (t, fn) => { (docListeners[t] ||= []).push(fn); },
-    fire: (t, ev) => (docListeners[t] || []).forEach((f) => f(ev)),
+    addEventListener: (t, fn, opts) => {
+      const cap = opts === true || (opts && opts.capture);
+      ((cap ? docListeners.capture : docListeners.bubble)[t] ||= []).push(fn);
+    },
+    fire: (t, ev) => {
+      (docListeners.capture[t] || []).forEach((f) => f(ev));
+      (docListeners.bubble[t] || []).forEach((f) => f(ev));
+    },
+    // 라이브의 멘션 AC/드롭업처럼, **먼저 등록된 버블 단계** 핸들러가 Esc 에 자기 오버레이를
+    // 닫는다. capture 로 등록하지 않으면 우리 핸들러는 이미 닫힌 상태를 보고 오판한다.
+    installCompetingOverlayEsc: (id) => {
+      ((docListeners.bubble.keydown ||= [])).unshift((e) => {
+        if (e.key === "Escape") overlays[id].classList.add("hidden");
+      });
+    },
   };
   const localStorage = {
     getItem: (k) => (k in store ? store[k] : null),
@@ -225,12 +244,30 @@ function groupSession(store) {
 }
 
 // ── 8) Esc 는 다른 오버레이가 열려 있으면 가로채지 않는다 (ux MAJOR #2) ───
+//    ★두 조건 모두에서 본다: (a) 경쟁 핸들러 없음, (b) **라이브 조건** — 그 오버레이의
+//    Esc 핸들러가 버블 단계에서 먼저 자기를 닫는다. (b) 가 진짜 계약이며, capture 등록이
+//    아니면 (a) 만 통과하는 vacuous pass 가 된다(PB-0008 2026-08-07 실측으로 드러남).
 for (const oid of OVERLAY_IDS) {
   const t = groupSession();
   t.api._maybeShowGroupFirstUseGuide();
   t.overlays[oid].classList.remove("hidden");      // 그 오버레이가 열림
   t.document.fire("keydown", { key: "Escape" });
   ok(`[Esc 양보] ${oid} 열림 중 Esc 는 안내를 닫지 않는다`, !t.tip.isHidden());
+}
+for (const oid of OVERLAY_IDS) {
+  const t = groupSession();
+  t.api._maybeShowGroupFirstUseGuide();
+  t.overlays[oid].classList.remove("hidden");
+  t.document.installCompetingOverlayEsc(oid);     // 라이브: 그 오버레이가 먼저 닫힌다
+  t.document.fire("keydown", { key: "Escape" });
+  ok(`[Esc 양보/라이브] ${oid} 의 Esc 핸들러가 먼저 닫아도 안내는 유지`, !t.tip.isHidden());
+}
+{
+  const t = groupSession();
+  t.api._maybeShowGroupFirstUseGuide();
+  t.document.installCompetingOverlayEsc("mentionAutocomplete"); // 열린 오버레이 없음
+  t.document.fire("keydown", { key: "Escape" });
+  ok("[Esc] 열린 오버레이가 없으면 정상적으로 닫힌다(과잉 양보 아님)", t.tip.isHidden());
 }
 {
   const t = groupSession();

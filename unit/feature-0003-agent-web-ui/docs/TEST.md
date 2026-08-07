@@ -116,6 +116,15 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260807T1700-gc-guide-esc-capture 안내 툴팁 Esc 양보 무효 수정 (Minor §12.3, 2026-08-07, feature-0003 프론트 1줄) — **Environment: Windows-browser (선행 cycle 의 PB-0008 실측 #8 이 이 결함을 적발했고, 수정 확인도 실 브라우저 핸들러 순서가 정본이라 headless 대체 불가 — de-risk=하네스가 capture→bubble 2단계 디스패치 + 경쟁 오버레이 핸들러를 주입해 **라이브 조건**을 재현, 68/68 PASS + 되돌림 뮤테이션 6 red + `node --check` PASS + mjs 전수 49 suite exit 0, 정적 자산 web 이미지 baked → 라이브 재실측은 배포 후 잔여, visual_verification_scope: always)**
+- 증상(PB-0008 라이브 실측 2026-08-07, 배포본 `f81c5bcb`): 멘션 자동완성이 열린 상태에서 Esc → 사용자는 목록만 닫으려 했는데 안내 툴팁도 함께 닫힘.
+- 근본원인: 로직이 아니라 **핸들러 실행 순서** — 버블 단계라 먼저 등록된 멘션 AC 핸들러가 AC 를 닫은 뒤 우리 핸들러가 돌아 "열려 있지 않다" 로 오판.
+- 수정: Esc 핸들러 **capture 등록**(`…, true`). 저장소 선례 `_attachShareRangeEsc` 와 동일 이유.
+- **왜 선행 61 PASS 가 놓쳤나(기록)**: 가짜 DOM 에 경쟁 핸들러가 없어 단언이 *우리 함수만 있는 세계* 에서만 참인 **vacuous pass**. 뮤테이션 5/5 KILLED 였음에도 남은 사각은 **합성 미재현**이었다.
+- **유닛 검증 — PASS**: `node tests/verify_gc_first_use_guide.mjs` **68/68**(신규 `[Esc 양보/라이브]` 5 + 과잉양보 반대방향 1 + capture 구조 단정 1). capture→버블 되돌림 시 **6 red**.
+- **PB-0008 Windows-browser 재실측 — DEFERRED(배포 후)**: #8 축(멘션 AC 열림 중 Esc) + 선행 7축 회귀. `docs/test-runs.d/20260807T1500-gc-first-use-guide.md` 에 append.
+- Pass/Fail: **PASS(코드/유닛 범위)** — 라이브 재실측은 배포 후 잔여. Runner: AI.
+
 ### 20260807T1500-gc-first-use-guide 그룹 대화 기능 첫 사용 1회 안내 툴팁 (Minor §12.3, 2026-08-07, feature-0003 프론트 단독 — 기능 정본 feature-0009) — **Environment: Windows-browser (첫 노출 위치·caret 지시·각 안내의 실 렌더 줄 수·멘션 자동완성과의 스택 순서는 실 브라우저 렌더가 정본이라 headless 대체 불가 — 이 환경에 브라우저 바이너리 없음; de-risk=`verify_gc_first_use_guide.mjs` 61/61(노출·소진·게이트·a11y·스타일 계약, 실 함수 본문 구동) + **뮤테이션 5/5 KILLED** + `node --check` PASS + 대비 계산 본문 9.15:1/제목 15.38:1/닫기 5.17:1 전부 AA 통과, 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
 - 요청(사용자 2026-08-07): 그룹대화 참여 기능을 **처음 쓸 때**(각 그룹대화의 처음이 아니라) 한 줄 30자 이하 가이드 툴팁. 팝업은 화면을 가리므로 금지. 일반 대화·`@assistant` 요청 방법 포함.
 - 기대: 그룹 대화 첫 진입에 컴포저 위 안내 5줄 노출 → "다시 안 보기" 후에는 **다른 그룹 대화·새로고침 어디서도 미재노출** / 입력·Esc 로 닫으면 이번 로드만 숨고 다음 방문에 재노출 / 1:1 대화 무노출 / 발화 불가 계정 무노출·무소진 / 멘션 자동완성이 카드 위에 뜸.

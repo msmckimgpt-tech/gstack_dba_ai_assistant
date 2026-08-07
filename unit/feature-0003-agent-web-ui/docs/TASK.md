@@ -8,6 +8,37 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260807T1700-gc-guide-esc-capture — 안내 툴팁 Esc 양보가 라이브에서 무효였던 결함 (Minor §12.3 — feature-0003 `static/app/composer.js` 1줄 + 하네스, PB-0008 적발)
+
+- **적발 경로**: 선행 cycle(`20260807T1500-gc-first-use-guide`, 배포본 `f81c5bcb`)의 **PB-0008
+  라이브 실측**. 8축 중 7축 PASS, #8 에서 멘션 자동완성이 열린 채 Esc 를 누르면 안내까지
+  함께 닫혔다(`tipVisibleBefore=true → tipVisibleAfter=false`).
+- **근본 원인 — 로직이 아니라 핸들러 실행 순서**: 우리 Esc 핸들러가 **버블 단계**라, 먼저
+  등록된 멘션 AC 의 핸들러가 AC 를 이미 닫은 뒤에 돌아 `_gcGuideOtherOverlayOpen()` 이
+  "열려 있지 않다" 로 오판했다. 양보 판정은 **다른 핸들러가 상태를 바꾸기 전** 이뤄져야 한다.
+- **왜 유닛 61 PASS 가 놓쳤나**: 가짜 DOM 에 경쟁 핸들러가 없어 "양보한다" 가 *우리 함수만
+  있는 세계* 에서만 참인 **vacuous pass** 였다. 뮤테이션 5/5 KILLED 였음에도 사각이 남은 것은
+  단언이 형식적이어서가 아니라 **합성을 재현하지 않아서**다.
+- **수정**: `document.addEventListener("keydown", …, true)` — capture 등록. 저장소 선례
+  `_attachShareRangeEsc`(같은 파일)가 동일한 이유로 이미 capture 를 쓴다.
+- **하네스 수정(본질)**: 가짜 document 를 **capture → bubble 2단계 디스패치**로 바꾸고,
+  `installCompetingOverlayEsc()` 로 라이브처럼 "그 오버레이가 먼저 자기를 닫는" 핸들러를
+  주입해 검증한다. 경쟁 핸들러 없음(a) / 있음(b) **양쪽**을 다 본다 — (b) 가 진짜 계약이다.
+- **위험도**: Minor (프론트 1줄 + 테스트, 비파괴)
+- **완료 판정(AC)**: AC-1 멘션 AC·드롭업 4종이 열린 상태의 Esc 가 안내를 닫지 않는다(라이브
+  조건). AC-2 열린 오버레이가 없으면 Esc 로 정상 닫힌다(과잉 양보 아님). AC-3 어느 경로든
+  영구 소진하지 않는다.
+
+- [x] `app/composer.js` Esc 핸들러 capture 등록
+- [x] 하네스 2단계 디스패치 + 경쟁 핸들러 주입 → **68/68 PASS**, 되돌림 뮤테이션 **6 red**
+- [ ] 배포 후 PB-0008 재실측(#8 축 + 7축 회귀)
+
+### 9. Requested Scope
+
+- 선행 cycle 의 PB-0008 잔여 실측 — ✓ (8축 실행, 결과 fragment 기록)
+- 실측이 적발한 결함 수정 — ✓ (capture 등록)
+- 같은 사각의 재발 차단 — ✓ (하네스가 라이브 합성을 재현, 되돌림 시 6 red)
+
 ## TASK-20260807T1500-gc-first-use-guide — 그룹 대화 **기능 첫 사용** 1회 가이드 툴팁 (Minor §12.3 — feature-0003 프론트 `static/index.html`·`static/app/composer.js`·`css/chat.css`, 기능 정본 feature-0009, `/_template:entry` arg-given)
 
 - **사용자 요청(2026-08-07)**: "서비스 내 사용자가 그룹대화 참여 기능을 처음 사용할 때(각 그룹대화의
@@ -54,7 +85,7 @@ source_of_truth: true
 - [x] `app/composer.js` 계정단위 소진 로직 + `renderComposer` 배선
 - [x] `tests/verify_gc_first_use_guide.mjs` **61/61 PASS** + 뮤테이션 역검증 **5/5 KILLED**
 - [x] §18.8 적대 패널(ux·design) — 양쪽 BLOCK 지적 반영 (REV-20260807T153000, artifact 2건)
-- [ ] 배포 후 PB-0008 Windows-browser 실측(6축 — test-runs.d fragment §4)
+- [x] 배포 후 PB-0008 Windows-browser 실측(배포본 `f81c5bcb`) — **7/8 PASS, #8 Esc 양보 FAIL 적발** → 아래 후속 cycle 에서 수정
 
 ### 9. Requested Scope
 

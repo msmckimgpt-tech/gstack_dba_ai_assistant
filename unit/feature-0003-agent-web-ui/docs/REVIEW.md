@@ -10,6 +10,20 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260807T170000-gc-guide-esc-capture [SKIPPED:non-policy-doc] — 1줄 배선 수정 + 하네스 강화
+- Related TASK: feature-0003-agent-web-ui (TASK-20260807T1700-gc-guide-esc-capture)
+- Trigger: 선행 cycle 의 §18.8 ux·design 패널(REV-20260807T153000)이 이미 이 표면을 검증했고,
+  본 변경은 그 패널이 요구한 동작(Esc 양보)을 **실제로 성립시키는 1줄 배선 수정**(버블→capture)
+  + 테스트 하네스 강화다. 새 표면·새 로직·권한/데이터 변경 0 → panel SKIP (§18.8 표 첫 행 준용).
+- Timestamp: 2026-08-07T17:00:00+09:00
+- Verdict: PASS
+- Critical issue: 없음. 다만 **선행 하네스가 vacuous pass 였다는 사실 자체가 결함**이므로,
+  점수정에 그치지 않고 하네스가 **라이브 합성(경쟁 핸들러 순서)** 을 재현하도록 고쳤다
+  (§16.7 G10 재발 클래스 구조 가드 정신 — 되돌림 시 6 red).
+- 자체 검증: `node --check` PASS · 하네스 68/68 · 뮤테이션(capture→버블) 6 red ·
+  mjs 전수 49 suite exit 0. 배포 후 PB-0008 #8 재실측이 최종 근거.
+- Human Approval Needed: no
+
 ## REV-20260807T153000-gc-first-use-guide [SUBAGENT:ux] — BLOCK → 반영 후 해소
 - Related TASK: feature-0003-agent-web-ui (TASK-20260807T1500-gc-first-use-guide)
 - Trigger: UI/screen/layout keyword matched · 화면 (§18.8 dispatch 표 3행 → ux, design)
