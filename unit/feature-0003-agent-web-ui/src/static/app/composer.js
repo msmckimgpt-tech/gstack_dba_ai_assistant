@@ -122,6 +122,104 @@ function setupAttachSidePanelResize() {
   handle.addEventListener("touchstart", (e) => { if (e.touches[0]) start(e.touches[0].clientX, e); }, { passive: false });
 }
 
+// ── feature-0009 gc-first-use-guide ─────────────────────────────────────────
+// 그룹 대화(참여) 기능을 **처음 쓰는 계정**에게 컴포저 위 툴팁으로 사용법을 1회 안내한다.
+// "각 그룹 대화의 처음" 이 아니라 "기능을 처음 쓸 때" 라서 대화 id 가 아니라 계정 단위로 소진한다.
+// 팝업/모달을 쓰지 않는다(사용자 결정 2026-08-07) — 백드롭도 포커스 트랩도 없다.
+//
+// ★닫기와 소진을 분리한다(§18.8 ux 패널 BLOCKING #1 반영): 안내가 뜬 순간 반사적으로
+//   타이핑하면 첫 글자에 카드가 사라지는데, 그것까지 영구 소진으로 처리하면 한 줄도 못 읽은
+//   사용자가 **복구 경로 없이** 안내를 잃는다. 그래서
+//     - "다시 안 보기" 클릭 = 영구 소진(localStorage)
+//     - 입력 시작 / Esc      = **이 페이지 로드에서만** 숨김(다음 방문에 다시 뜬다)
+//   로 나눈다. 화면을 비우는 목적은 둘 다 달성하되, 읽을 기회는 명시적 확인 전까지 남는다.
+const GC_GUIDE_LS_KEY = "mad.gcFirstUseGuide.v1"; // 값: 안내를 소진한 username 배열
+const GC_GUIDE_SEEN_MAX = 50;                      // 공용 PC 대비 상한(오래된 항목부터 밀어냄)
+let _gcGuideDismissedThisLoad = false;             // 세션 한정 숨김(영구 소진과 별개)
+
+function _gcGuideSeenList() {
+  try {
+    const raw = localStorage.getItem(GC_GUIDE_LS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch (_) { return []; }
+}
+
+function _gcGuideAccountKey() {
+  const name = state.user && state.user.username;
+  return name ? String(name) : "";
+}
+
+// 계정 미상(세션 하이드레이션 전)이면 "이미 봤다" 로 취급해 노출을 미룬다 — 익명 키로 소진해
+// 정작 로그인한 계정이 안내를 못 받는 일을 막는다. 세션이 붙으면 다음 renderComposer 가 다시 본다.
+function _gcGuideAlreadySeen() {
+  const key = _gcGuideAccountKey();
+  if (!key) return true;
+  return _gcGuideSeenList().includes(key);
+}
+
+function _gcGuideMarkSeen() {
+  const key = _gcGuideAccountKey();
+  if (!key) return;
+  const list = _gcGuideSeenList().filter((v) => v !== key);
+  list.push(key);
+  try {
+    localStorage.setItem(GC_GUIDE_LS_KEY, JSON.stringify(list.slice(-GC_GUIDE_SEEN_MAX)));
+  } catch (_) { /* localStorage 불가 환경 — 이 세션에서만 숨김 */ }
+}
+
+// persist=true 만 영구 소진. 기본은 이 로드에서만 숨긴다(위 주석의 분리 규칙).
+function hideGroupFirstUseGuide({ persist = false } = {}) {
+  const el = document.getElementById("groupGuideTip");
+  if (el) el.classList.add("hidden");
+  _gcGuideDismissedThisLoad = true;
+  if (persist) _gcGuideMarkSeen();
+}
+
+// 다른 컴포저 오버레이(@멘션 자동완성 · `+` 드롭업 메뉴)가 열려 있으면 그 Esc 는 그쪽 몫이다 —
+// 안내가 가로채면 사용자는 "메뉴만 닫으려" 했는데 안내까지 잃는다(ux 패널 MAJOR #2).
+function _gcGuideOtherOverlayOpen() {
+  const ids = ["mentionAutocomplete", "composerActionsMenu", "composerModelMenu", "composerReasoningMenu", "productDropupMenu"];
+  return ids.some((id) => {
+    const n = document.getElementById(id);
+    return Boolean(n) && !n.classList.contains("hidden");
+  });
+}
+
+// 닫기 경로 배선은 요소당 1회만(재렌더마다 리스너가 쌓이지 않게 dataset 가드).
+function _wireGroupFirstUseGuide(el) {
+  if (!el || el.dataset.wired === "1") return;
+  el.dataset.wired = "1";
+  const closeBtn = document.getElementById("groupGuideTipClose");
+  if (closeBtn) closeBtn.addEventListener("click", () => hideGroupFirstUseGuide({ persist: true }));
+  // 입력을 시작하면 화면을 비운다 — 단 소진은 하지 않는다(다음 방문에 다시 뜬다).
+  if (promptInputEl) promptInputEl.addEventListener("input", () => {
+    if (!el.classList.contains("hidden")) hideGroupFirstUseGuide();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (el.classList.contains("hidden") || _gcGuideOtherOverlayOpen()) return;
+    hideGroupFirstUseGuide();
+  });
+}
+
+function _maybeShowGroupFirstUseGuide() {
+  const el = document.getElementById("groupGuideTip");
+  if (!el) return;
+  _wireGroupFirstUseGuide(el);
+  const conv = currentConversation();
+  // 발화할 수 없는 상태(요청 권한 없음 / 참조 제품 삭제로 차단)에서는 표시도 소진도 하지
+  // 않는다 — "@assistant 를 붙이면 AI가 답해요" 가 그 계정에겐 지금 참이 아니고, 유일한
+  // 1회 기회를 거짓 안내로 소비하게 된다(ux 패널 BLOCKING #2).
+  const speakable = can("conversation.ask") && !(conv && conv.blocked);
+  if (!conv || !isGroupConversation(conv) || !speakable
+      || _gcGuideDismissedThisLoad || _gcGuideAlreadySeen()) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+}
+
 function renderComposer() {
   const busy = isCurrentConvBusy();
   const hasAsk = can("conversation.ask");
@@ -222,6 +320,9 @@ function renderComposer() {
     composerHintEl.textContent = "";
   }
 
+  // feature-0009 gc-first-use-guide: 그룹 대화 첫 사용 안내(계정당 1회). 컴포저 렌더는 대화
+  // 전환·복원·폴링 모든 경로가 거치는 choke-point 라 진입 경로별 누락이 생기지 않는다.
+  try { _maybeShowGroupFirstUseGuide(); } catch (_) { /* 안내 실패가 컴포저를 막지 않는다 */ }
 }
 
 let _shareRangeEscHandler = null;

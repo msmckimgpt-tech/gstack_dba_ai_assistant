@@ -116,6 +116,14 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### 20260807T1500-gc-first-use-guide 그룹 대화 기능 첫 사용 1회 안내 툴팁 (Minor §12.3, 2026-08-07, feature-0003 프론트 단독 — 기능 정본 feature-0009) — **Environment: Windows-browser (첫 노출 위치·caret 지시·각 안내의 실 렌더 줄 수·멘션 자동완성과의 스택 순서는 실 브라우저 렌더가 정본이라 headless 대체 불가 — 이 환경에 브라우저 바이너리 없음; de-risk=`verify_gc_first_use_guide.mjs` 61/61(노출·소진·게이트·a11y·스타일 계약, 실 함수 본문 구동) + **뮤테이션 5/5 KILLED** + `node --check` PASS + 대비 계산 본문 9.15:1/제목 15.38:1/닫기 5.17:1 전부 AA 통과, 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
+- 요청(사용자 2026-08-07): 그룹대화 참여 기능을 **처음 쓸 때**(각 그룹대화의 처음이 아니라) 한 줄 30자 이하 가이드 툴팁. 팝업은 화면을 가리므로 금지. 일반 대화·`@assistant` 요청 방법 포함.
+- 기대: 그룹 대화 첫 진입에 컴포저 위 안내 5줄 노출 → "다시 안 보기" 후에는 **다른 그룹 대화·새로고침 어디서도 미재노출** / 입력·Esc 로 닫으면 이번 로드만 숨고 다음 방문에 재노출 / 1:1 대화 무노출 / 발화 불가 계정 무노출·무소진 / 멘션 자동완성이 카드 위에 뜸.
+- **유닛·계약 검증 — PASS**: `node tests/verify_gc_first_use_guide.mjs` **61/61**. 뮤테이션 역검증 **5/5 KILLED**(입력-소진 복원·게이트 제거·Esc 양보 제거·z-index 60·caret wrap 잠식). 상세 fragment: `docs/test-runs.d/20260807T1500-gc-first-use-guide.md`.
+- **§18.8 적대 패널(ux·design) — 양쪽 BLOCK 후 반영**: 입력 첫 타건이 안내를 영구 소진(복구 경로 없음)·발화 불가 계정에 거짓 안내·`z-index 60` 이 멘션 자동완성 가림 등. 반영 결과는 REVIEW.md `REV-20260807T153000-gc-first-use-guide` 2건 + artifact 2건.
+- **PB-0008 Windows-browser 라이브 실측 — DEFERRED(배포 후)**: 위 fragment §4 의 6축을 실측하고 Run 을 append 한다.
+- Pass/Fail: **PASS(코드/유닛 범위)** — 라이브 실측은 배포 후 잔여. Runner: AI.
+
 ### 20260728T1911-model-pick-early-cid 조기 cid 전환 시 모델 선택 유실(sonnet→haiku 조용한 강등) 수정 (Major §12.3, 2026-07-28, feature-0003 web/UI 단독) — **Environment: Windows-browser ([새 대화 → 모델 선택기에서 sonnet → 파일 첨부 업로드 → 전송] 은 실 브라우저 파일선택+업로드 왕복과 선택기 DOM 이 필요해 headless 대체 불가 — de-risk=`node --check` PASS + `verify_model_persist.mjs` 49/49(승계·오귀속 차단·미선택 보존·무음 감지·구조 계약) + 서버측 pytest 57건 rc=0 + 인접 JS 스위트 baseline 동일, 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
 - 증상(사용자 보고 2026-07-28): "sonnet 모델로 요청한 **즉시** haiku 모델로 폴백" — 모델 선택기에서 sonnet 을 골라 요청했는데 나머지 작업이 haiku 로 진행됨. 대상 대화 `쿼리 리뷰 : 게시글 기능` · `쿼리 리뷰 : 홈페이지 공지 기능 추가`(product 117).
 - 근본원인: LLM 라우팅 폴백이 **아니다**. 모델 선택은 `state.activeConversationId` 로 귀속되어 새 대화(pending)에서는 `_modelPickedForConvId=""` 인데, **첨부 업로드가 early-cid 를 발급**해 `activeConversationId` 를 실 cid 로 바꾸면서 귀속을 승계하지 않아 `_shouldSendModelField()` 가 false → `askBody.model` 누락 → 서버가 `API_DEFAULT_MODEL`(haiku) 로 채움(`model_explicit=False` 라 KV 저장도 skip). 화면은 sonnet 을 계속 표시 → 조용한 강등. 첫 전송 후 hydration 이 저장값 부재로 `selectedModel=null` 을 넣어 선택기까지 haiku 로 되돌아간다("즉시 폴백"이 화면에서 보인 기전).

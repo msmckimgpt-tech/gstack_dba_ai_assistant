@@ -1135,6 +1135,124 @@
 .composer-drop-overlay.hidden { display: none; }
 .composer-wrap.is-dragover .composer-drop-overlay { display: flex; }
 
+/* feature-0009 gc-first-use-guide: 그룹 대화 첫 사용 1회 안내 툴팁.
+   컴포저 바로 위에 붙는 작은 말풍선 — 모달 백드롭이 없고 폭도 좁아 대화 내용을 덮지 않는다.
+   (팝업/모달 금지 요구.) 하단 caret 이 입력창을 가리켜 "여기서 이렇게 쓰세요" 를 지시한다.
+
+   ★배치 근거(§18.8 design 패널 지적 반영):
+   - `bottom: calc(100% + 6px)` — `.mention-ac` 와 동일 앵커. 말풍선과 caret 이 통째로
+     `.composer-wrap` **밖**에 서서, wrap 첫 자식인 `#llmRestrictionBanner`·`#timeoutExtendBanner`
+     위에 흰 노치를 그리지 않는다(초판 `calc(100% - 4px)` 는 caret 이 배너를 파고들었다).
+   - `z-index: 40` — `.mention-ac`(50)·`.chat-drop-overlay`(50) **아래**. 같은 자리를 쓰는
+     멘션 자동완성이 항상 이기고, 파일 드래그 오버레이를 뚫지 않는다.
+     `.composer-actions-menu`(fixed 200)도 그대로 위. */
+.gc-guide-tip {
+  position: absolute;
+  left: 20px;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  /* 각 안내가 한 줄로 떨어지도록 내용 폭에 맞춘다(max-content). 상한은 뷰포트가 아니라
+     **컴포저 폭** 기준 — 사이드바가 있어 100vw 는 실효 상한이 못 된다. 좁을 때는 잘라내지
+     않고 줄바꿈으로 degrade(클리핑보다 낫다). */
+  width: max-content;
+  max-width: calc(100% - 40px);
+  padding: 10px 12px 11px;
+  border-radius: 10px;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, #e6e5e0);
+  box-shadow: 0 6px 24px var(--gc-guide-shadow, rgba(15, 23, 42, 0.15));
+  animation: gc-guide-tip-in 140ms ease-out;
+}
+.gc-guide-tip.hidden { display: none; }
+/* caret — 말풍선 좌측 하단에서 컴포저(입력창)를 향해 아래로. 테두리 1px 를 겹쳐 재현. */
+.gc-guide-tip::before,
+.gc-guide-tip::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+}
+.gc-guide-tip::before {
+  bottom: -8px;
+  border-top: 8px solid var(--border, #e6e5e0);
+}
+.gc-guide-tip::after {
+  bottom: -7px;
+  border-top: 8px solid var(--surface, #ffffff);
+}
+.gc-guide-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.gc-guide-tip-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #26251e);
+}
+/* 닫기(다시 안 보기)는 이 카드의 유일한 소진 경로다 — 터치 최소 타깃을 확보하되
+   음수 margin 으로 시각 밀도는 유지한다. */
+.gc-guide-tip-close {
+  border: none;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 10px;
+  margin: -8px -8px -8px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.gc-guide-tip-close:hover { background: var(--gc-guide-close-hover, rgba(37, 99, 235, 0.08)); }
+.gc-guide-tip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gc-guide-tip-list li {
+  position: relative;
+  padding-left: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  /* AA: `--text-muted`(#807d72)는 흰 배경 4.0:1 로 12px 본문에 미달 — 온보딩 카피는
+     한 번 읽히고 사라지므로 전용 토큰으로 8.6:1 을 확보한다. */
+  color: var(--gc-guide-body, #4a4841);
+}
+.gc-guide-tip-list li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--primary, #2563eb);
+  opacity: 0.5;
+}
+/* 다크 override 를 두지 않는다 — **실측 근거**: `css/base.css` 에 `prefers-color-scheme`
+   블록이 0개이고 `--surface` 는 항상 `#ffffff` 다(라이트 단일 테마). 여기서 강조색을
+   밝은 파랑으로 올리면 OS 가 다크일 때 **흰 카드 위 연파랑**(대비 ~1.8:1)이 되어
+   오히려 읽을 수 없게 된다. 다크 테마가 도입되면 그때 토큰(`--gc-guide-*`)만 재정의한다. */
+@keyframes gc-guide-tip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* 모션 최소화 — 이 저장소의 anim-pref 규약을 따른다: OS reduce-motion 이어도 인앱
+   '애니메이션 효과 = 항상 켬'(<html data-motion="on">)이면 효과를 되살리고,
+   인앱에서 껐으면(<html data-motion="off">) OS 설정과 무관하게 끈다. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="on"]) .gc-guide-tip { animation: none; }
+}
+html[data-motion="off"] .gc-guide-tip { animation: none; }
+
 /* TASK-0107: chat-pane 전체 drag&drop overlay. */
 .chat-pane { position: relative; }
 .chat-drop-overlay {

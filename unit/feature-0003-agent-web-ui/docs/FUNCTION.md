@@ -647,6 +647,11 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - `src/app.py`
 - `src/static/*`
 - Web UI 관련 문서
+- (gc-first-use-guide, 2026-08-07) 그룹 대화 **기능 첫 사용** 1회 안내 툴팁 — 컴포저 위
+  `#groupGuideTip` 말풍선(모달/백드롭 없음). 소진 단위는 **계정(username)** 이라 대화마다
+  반복하지 않는다(localStorage `mad.gcFirstUseGuide.v1`). 노출 판정은 `renderComposer` 말미
+  `_maybeShowGroupFirstUseGuide()` 1회 — 대화 전환·복원·폴링이 모두 지나는 choke-point.
+  기능 정본은 feature-0009-group-conversation.
 
 ## 4. Out of Scope
 - planner, SQL 실행, memory 로직
@@ -782,6 +787,21 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - AC-0481 (TASK-0267, **Minor** §12.3 — 권한 grid 트리 레이아웃): 그룹 내 권한 row 는 `PERMISSION_DEPENDENCIES` 트리 순서(부모 먼저, 자식 들여쓰기)로 렌더된다 — `admin.js` `_orderItemsAsTree(items)` 가 DFS 로 `[{permission, depth}]` 를 만들고(그룹 내 루트=부모가 같은 그룹에 없음 → depth 0, 자식 depth+1, 누락 시 안전망으로 depth 0 말미 추가) 각 row wrapper 에 `data-perm-depth` 를 부여한다. `.permission-grid-list` 는 **단일 열 flex column**(2열 grid 아님) 이라, 자식 row 가 숨겨져도(`hidden`) 부모는 제자리에 남고 가로 reflow 가 발생하지 않는다(2열 grid 가 행 숨김 시 항목을 재배치해 기존 항목을 뒤틀던 문제 해소). 자식 단계는 `[data-perm-depth]` 기반 들여쓰기 + 좌측 가이드/연결선으로 위계를 표시한다. 본 변경은 **렌더 순서·레이아웃 전용** — disclosure 가시성·게이트·도달성·저장 경로·권한 의미는 불변. 회귀 테스트 `test_t1~t4`(트리 정렬·depth·own→any 중첩·단일열 CSS 계약).
 - AC-0485 (TASK-0269, **Minor** §12.3 — 운영 권한 대화 그룹 분리 + "목록 조회" 게이트): 운영 권한의 대화 권한은 백엔드 `group` 으로 **`conversation_own`(내 대화 권한) / `conversation_any`(전체 대화 권한)** 2 그룹으로 분리된다 — `app.py` `PERMISSION_DEFINITIONS` 에서 `conversation.*` 권한의 group 을 `.any` 접미면 `conversation_any`, 그 외(create/ask/list.own/`*.own`/share.create)면 `conversation_own` 로 둔다(권한 code·enforce 불변, group 은 UI 분류 메타). 각 그룹의 종속성은 "목록 조회" 게이트 카테고리다: `conversation.create`·`conversation.list.own`·`conversation.list.any` 는 루트(기반, 항상 표시), 내 대화 동작 권한(read.own/ask/file.read.own/rename.own/delete.own/cancel.own/finalize.own/duplicate.own/share.create/attachment.upload.own/attachment.read.own)은 `conversation.list.own` 을, 전체 대화 동작 권한(`*.any`)은 `conversation.list.any` 를 부모로 둔다 → "내 대화 목록 조회" 체크 시 내 동작이, "전체 대화 목록 조회" 체크 시 전체 동작이 노출된다(기존 `.any→.own` 1:1 종속 폐기). `permissionGroupOf`(app.js, 작업 화면)·`PERMISSION_GROUP_LABELS`·`PERMISSION_GROUP_ORDER`·`ADMIN_/WORK_SCREEN_PERMISSION_SECTIONS`(operate=[conversation_own, conversation_any, product, attachment]) 가 두 그룹을 일관 반영한다. 회귀 테스트 `test_m4_conversation_list_gate`·`test_t2_conversation_groups_split_and_list_gate_nesting`.
 - AC-0486 (TASK-0270, **Minor** §12.3 — 계정 override 게이트: 허용/상속(허용) 펼침): 계정 override(`mode="override"`) 편집기의 disclosure 게이트는 게이트 권한의 override 값이 **"허용"** 이거나 **"상속"이면서 계정 역할이 그 권한을 부여**(상속(허용))할 때 자식 row 를 펼친다 — `admin.js` `gateSatisfied(code)` (override) = `value==="allow" || (value==="inherit" && inheritedGrants.has(code))`. `inheritedGrants` 는 `renderPermissionGrid` opts(기본 빈 Set)로 받으며, 계정 호출부가 계정 역할의 `role.permission_codes`(상속 baseline — `_load_role_permission_codes`/WebRolePermissions = 백엔드 계정 effective `_apply_permission_overrides` 의 base 와 동일 출처, 자동부여 audit.read.own 포함)로 구성한다. 명시 "거부"는 역할 부여와 무관하게 게이트 OFF(거부 우선). 역할(`mode="checkbox"`) 편집기 게이트(체크)는 무변경이며 `inheritedGrants` 미전달 시 빈 Set 으로 동작 불변. 본 변경은 **노출 affordance 전용** — enforcement·override 저장 경로(select 값)·권한 의미는 불변. 회귀 테스트 `test_v7_override_inherit_allow_gate_reveals_children`.
+
+### (gc-first-use-guide, 2026-08-07) 그룹 대화 첫 사용 안내
+- AC-GCG-1: 그룹 대화를 **처음** 여는 계정에게 컴포저 위 안내 툴팁이 1회 노출된다.
+- AC-GCG-2: 같은 계정의 **다른** 그룹 대화에서는 다시 노출되지 않는다(소진 단위 = 계정, 대화 아님).
+- AC-GCG-3: 새로고침·재로그인 후에도 재노출되지 않는다(localStorage 영속). 다른 계정은 자기 몫을 받는다.
+- AC-GCG-4: 1:1 대화에서는 노출되지 않고 소진 기록도 남지 않는다.
+- AC-GCG-5: 안내는 5줄이며 각 줄이 30자 이하 한 줄이고, 일반 대화 방법과 `@assistant` 요청 방법을 포함한다.
+- AC-GCG-6: 모달 백드롭·포커스 트랩이 없어 대화 내용 열람과 입력창 조작을 차단하지 않는다.
+- AC-GCG-7: **닫기와 소진이 분리된다** — "다시 안 보기" 클릭만 영구 소진이고, 입력 시작·Esc 는
+  그 페이지 로드에서만 숨겨 다음 방문에 다시 뜬다(한 줄도 못 읽은 사용자의 복구 경로 보존).
+  Esc 는 멘션 자동완성·컴포저 드롭업이 열려 있으면 양보한다.
+- AC-GCG-8: `conversation.ask` 권한이 없거나 대화가 `blocked` 이면 표시도 소진도 하지 않는다
+  (그 상태에서 "@assistant" 안내는 참이 아니다).
+- AC-GCG-9: 안내는 `#mentionAutocomplete`·`.chat-drop-overlay`(z 50) **아래**에 서고, 카드와
+  caret 전체가 `.composer-wrap` 밖이라 상단 배너(`#llmRestrictionBanner` 등)를 잠식하지 않는다.
 
 ## 12. Observability
 - 웹 세션: `../../../../artifacts/shared/web_sessions`

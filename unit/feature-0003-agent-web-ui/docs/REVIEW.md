@@ -10,6 +10,35 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260807T153000-gc-first-use-guide [SUBAGENT:ux] — BLOCK → 반영 후 해소
+- Related TASK: feature-0003-agent-web-ui (TASK-20260807T1500-gc-first-use-guide)
+- Trigger: UI/screen/layout keyword matched · 화면 (§18.8 dispatch 표 3행 → ux, design)
+- Timestamp: 2026-08-07T15:30:00+09:00
+- Verdict: BLOCK (반영 완료 — 아래 disposition)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260807T153000-ux.md
+- Critical issue: 안내가 뜬 직후 첫 타건이 카드를 **영구 소진**해, 한 줄도 못 읽은 신규
+  참여자가 복구 경로 없이 온보딩을 잃는다(B1). + 발화 불가 계정에 거짓 안내로 1회 기회 소비(B2).
+- Disposition: B1·B2·M1·M2·M3 수용(닫기≠소진 분리 · `conversation.ask`/`blocked` 게이트 ·
+  `aria-live` · Esc 오버레이 양보 · 첨부 문구 F1 정합), m2·m3·m4·m1 수용(앵커·라벨·문구·z-index),
+  M4·NIT 은 근거 명시 후 설계 유지. 반영분은 하네스 61 PASS + **뮤테이션 5/5 KILLED** 로 고정.
+- Human Approval Needed: no
+
+## REV-20260807T153000-gc-first-use-guide [SUBAGENT:design] — BLOCK → 반영 후 해소
+- Related TASK: feature-0003-agent-web-ui (TASK-20260807T1500-gc-first-use-guide)
+- Trigger: UI/layout keyword matched · 레이아웃 (§18.8 dispatch 표 3행 → ux, design)
+- Timestamp: 2026-08-07T15:30:00+09:00
+- Verdict: BLOCK (반영 완료 — 아래 disposition)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260807T153000-design.md
+- Critical issue: `z-index:60` 이 같은 자리를 쓰는 `#mentionAutocomplete`(50)를 가려,
+  안내가 시킨 `@` 입력의 결과인 멤버 목록이 안내에 덮인다.
+- Disposition: z-index 40(멘션 AC·드롭 오버레이 아래) · caret 을 `calc(100% + 6px)` 로
+  wrap 밖에 세워 배너 잠식 제거 · 터치 타깃 · 컨테이너 기준 max-width · 모션 anim-pref 규약 ·
+  제목 13px 수용. **다크 모드 지적은 실측 후 반대로 조치** — `base.css` 에
+  `prefers-color-scheme` 0개(라이트 단일 테마)라 다크 override 는 흰 카드 위 연파랑(≈1.8:1)을
+  만든다 → 넣지 않고 토큰화 + 대비를 계산해 본문 9.15:1 확보(제목 15.38 · 닫기 5.17).
+  줄바꿈 nowrap 은 클리핑을 낳아 미반영, 렌더 줄 수는 PB-0008 몫으로 정직 표기.
+- Human Approval Needed: no
+
 ## REV-20260804T070000-prompt-autogen-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 라이브 실증 기록 (doc-only)
 - 대상 diff: `feature-0003/docs/{TASK,REPORT}.md` · `feature-0002/docs/TASK.md` — **코드 변경 0**.
   선행 2 cycle 의 잔여 체크박스("배포 후 라이브 실증 대기")가 실증 완료로 stale 해진 것을 종결 표기로

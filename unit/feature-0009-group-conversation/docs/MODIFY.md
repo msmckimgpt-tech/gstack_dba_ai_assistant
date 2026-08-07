@@ -538,3 +538,19 @@ source_of_truth: true
 - Impact: 비파괴. cookie 세션 + API 토큰 동일 인가 choke-point. 순수 cross-account(비-멤버)는
   이전에도 404 차단 — 본 수정은 멤버 윈도우 격리 강화. owner/`.any` 감사자 흐름 무회귀.
 - Rollback Notes: 코드 revert(게이트 제거) 시 윈도우 escape 재현. 완전 가역, 데이터 무관.
+
+## CHG-20260807T1500-gc-first-use-guide — 그룹 대화 기능 첫 사용 1회 안내 툴팁 (cross-reference)
+
+- Motivation: 사용자 요청(2026-08-07) — 그룹대화 참여 기능을 **처음 쓸 때**(각 그룹대화의
+  처음이 아니라) 한 줄 30자 이하의 간단한 가이드를 툴팁으로. 팝업은 화면을 가리므로 금지.
+- Scope: 코드는 전부 feature-0003-agent-web-ui 에 거주한다(`src/static/index.html` ·
+  `src/static/app/composer.js` · `src/static/css/chat.css` · `tests/verify_gc_first_use_guide.mjs`).
+  본 feature 는 **기능 정본** 으로서 FUNCTION.md §3 In Scope + AC-GC-A13 만 갱신한다.
+  상세 변경·검증·§18.8 패널 기록은 feature-0003 의 `docs/{MODIFY,REVIEW,TEST,REPORT}.md`
+  `…-gc-first-use-guide` 항목.
+- Impact: 프론트 표시 전용. 백엔드·스키마·RBAC·엔드포인트·권한 변경 **0**. 1:1 대화 무영향.
+  안내 문구는 본 FUNCTION 의 기존 계약(REQ-GC-R2/R3/R4/R6/R8)에 대응하는 실재 동작만 담았다 —
+  권한별로 갈리는 ☰ 말풍선 액션은 §16.7 G3(주장 affordance ≠ 배선)을 피해 제외.
+- Rollback Notes: 프론트 3파일 revert 로 완전 가역. 데이터 영향 없음(localStorage 키
+  `mad.gcFirstUseGuide.v1` 만 남으며 무해).
+- Timestamp: 2026-08-07T15:00:00+09:00
