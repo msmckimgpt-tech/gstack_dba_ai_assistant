@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260807T130000-redteam-abortable-review (cross-ref — 코드 거주 feature-0002-agent-core)
+- Date: 2026-08-07 · **본 feature 파일 변경 없음**(기능 소유만 여기, 코드는 feature-0002 거주).
+- 자가 검증 대기 구간(최초 검증 패스·재검증 호출)이 취소·'즉시 답변'을 듣지 않고
+  `REDTEAM_TIMEOUT_SEC`(운영 300초)까지 답변 전달을 막던 결함을 봉인. 라이브 실측: 9.6초에 완성된
+  답변이 312초 만에 전달(대화 `…226e27aa`, `redteam_reviews` #283 `stop_reason=review_error`).
+- 구현·검증 정본: `unit/feature-0002-agent-core/docs/MODIFY.md`
+  `CHG-20260807T130000-redteam-abortable-review` · 마찰 원장
+  `docs/improvements/conversation-audit/FRICTION_LEDGER.md` `FR-redteam-first-pass-unabortable`.
+- 관측 계약 변화: `redteam_reviews.stop_reason` 에 `aborted` 가 최초 패스·재검증 중단에서도 기록된다
+  (`verdict` enum 은 불변). 콘솔 라벨은 기존 "사용자 '즉시 답변'/취소" 를 그대로 쓴다.
+
 ## CHG-20260715-0001
 - Date: 2026-07-15
 - Related Requirement: REQ-20260715T140000-redteam-selfreview · REQ-20260715T140001-orchestration ·

@@ -11,6 +11,23 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260807T130000-reasoning-stop-reason-stage (AI 추론 콘솔 ② 단계가 중단 사유를 읽음, Minor)
+- **cross-ref — 정본은 feature-0002-agent-core** `CHG-20260807T130000-redteam-abortable-review`
+  (FR-redteam-first-pass-unabortable). 그쪽 변경으로 red-team 자가 검증이 사용자 '즉시 답변'이나
+  대기 포기로 끝날 수 있게 됐는데, 그 행은 `verdict` enum 을 지키느라 `error` 로 남는다.
+- `src/static/admin.js`: ② "적대 리뷰" 단계가 `it.stop_reason` 을 읽어 `aborted`(사용자 중단)·
+  `review_wait_giveup`(리뷰어 지연으로 대기 포기)를 **`err` 가 아닌 `warn`** 으로, "리뷰 미완료 —
+  <사유> (초안 그대로 전달)" 로 표시한다. 진짜 리뷰어 실패는 종전 문구·상태 유지(무회귀).
+  `_REASONING_STOP_REASONS` 에 `review_wait_giveup` 라벨 신설.
+- **왜(§18.8 backend 패널 MAJOR)**: 종전에는 `verdict === "error"` 를 **무조건** "리뷰 수행 실패"로
+  렌더했고 `stop_reason` 라벨은 `unresolved > 0` 분기에서만 그려졌다. 중단 경로는 항상
+  `unresolved_block_count = 0` 이라 기존 "사용자 '즉시 답변'/취소" 라벨이 **구조적으로 도달 불가**
+  였다 — 정상적인 사용자 중단이 리뷰어 오류로 보이고, 그 오류율은 이 감사가 근거로 쓴 지표다.
+- `tests/headless/test_reasoning_stop_reason_stage.js` 신규 — 실 소스에서 라벨 맵·라벨 함수·② 분기
+  본문을 추출해 vm 으로 **동작 평가**(소스 문자열 검사는 변이를 통과시킨다). **13 PASS**,
+  구동작 복원 시 **3 FAIL** 로 판별력 확인.
+- 백엔드·스키마·RBAC·엔드포인트 변경 0.
+
 ## CHG-20260804T070000-prompt-autogen-postdeploy (POST-DEPLOY 라이브 실증 기록, doc-only)
 - Date: 2026-08-04. **코드 변경 0**.
 - `feature-0003/docs/TASK.md` · `feature-0002/docs/TASK.md`: 선행 2 cycle 의 "배포 후 라이브 실증 대기"

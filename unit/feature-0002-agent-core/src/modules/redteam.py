@@ -17,6 +17,8 @@ choke-point. 수정(revise)은 초안을 만든 대화 컨텍스트에서 수행
 
 from __future__ import annotations
 
+import concurrent.futures
+import contextvars
 import json
 import os
 import re
@@ -873,6 +875,141 @@ def run_review(question: str, draft_answer: str, evidence_digest: str, *,
         return None
 
 
+# 리뷰어 호출 대기 중 중단 신호를 확인하는 **첫** 주기. 사용자 체감(버튼을 눌렀는데 반응이
+# 없다)의 상한이 이 값 + `_REVIEW_ABORT_RESULT_GRACE_SEC` 다.
+_REVIEW_ABORT_POLL_SEC = 1.0
+# 이후 폴링 간격. `abort_fn`(= `agent_core._rt_abort`)은 호출마다 메모리 DB 를 최대 4회 읽으므로
+# (취소 플래그 2 + '즉시 답변' 플래그 2), 1초 고정이면 상한 300초 대기에 **패스당 ~1,200 왕복**이
+# 되고 동시 ask 수만큼 곱해진다(§18.8 backend 패널 MAJOR). 버튼을 누를 만한 초반에는 1초로 촘촘히
+# 보고, 그 뒤에는 3초로 벌린다 — 300초를 대체하는 마당에 3초 지연은 체감되지 않는다.
+_REVIEW_ABORT_POLL_FAST_WINDOW_SEC = 10.0
+_REVIEW_ABORT_POLL_MAX_SEC = 3.0
+# 대기가 길어질 때 진행 표시를 다시 그리는 **첫** 주기. 갱신이 없으면 화면은 "자가 검증하는 중"에
+# 멈춘 것처럼 보이고, 사용자는 응답이 죽었다고 판단한다(FR-redteam-first-pass-unabortable).
+_REVIEW_PROGRESS_TICK_SEC = 15.0
+# 이후 tick 은 이 배수로 벌어지고 `_REVIEW_PROGRESS_TICK_MAX_SEC` 에서 멈춘다. 고정 간격이면
+# `progress_fn`(= `_emit_activity`)이 **매번 step 행을 새로 저장**하므로 상한 300초 대기에 20행이
+# 쌓여 단계 목록을 오염시키고, steps 는 run 진행 중 폴링으로 반복 전송돼 그 비용이 매 payload 에
+# 곱해진다. 사용자에게 필요한 정보는 "아직 살아 있고 지금 받을 수도 있다" 이지 초 단위 정밀도가
+# 아니라, 백오프로 같은 신호를 5~6행에 담는다.
+_REVIEW_PROGRESS_TICK_BACKOFF = 2.0
+_REVIEW_PROGRESS_TICK_MAX_SEC = 120.0
+# run_review 는 자체 timeout_sec 로 끝나므로, 폴링 루프는 그보다 약간만 더 기다린 뒤 포기한다
+# (워커 스레드가 어떤 이유로도 반환하지 않을 때 오케스트레이터까지 같이 묶이지 않게).
+# **비례 하한**을 두는 이유: `run_review` 의 자체 상한 밖에 계측되지 않는 구간이 양쪽에 있다
+# (클라이언트/엔드포인트 해소 전, `_record_llm_usage` 의 PG 연결+INSERT 후). PG 경합 시 그 오버헤드가
+# 고정 5초를 넘으면 **정상적으로 도착한 리뷰를 우리가 버리고** 리뷰어 실패로 기록하게 된다
+# (§18.8 backend 패널 MINOR — CODE_REVIEW §2.1 무음 실패).
+_REVIEW_WAIT_GRACE_SEC = 5.0
+_REVIEW_WAIT_GRACE_RATIO = 0.1
+# 중단 신호를 본 뒤 리뷰어에게 주는 마지막 유예. 이미 반환 직전인 리뷰까지 버리면 판정과
+# findings(콘솔의 "무엇이 남았는지")를 공짜로 잃는다 — 사용자 체감에는 무의미한 길이다.
+_REVIEW_ABORT_RESULT_GRACE_SEC = 0.5
+
+
+def _await_review_interruptible(
+    call: Callable[[], dict[str, Any] | None],
+    *,
+    timeout_sec: int,
+    abort_fn: Callable[[], bool] | None = None,
+    progress_fn: Callable[[str], None] | None = None,
+    progress_prefix: str = "",
+) -> tuple[dict[str, Any] | None, bool, bool]:
+    """리뷰어 1패스를 **중단 가능하게** 기다린다. 반환 `(review, aborted, gave_up)`.
+
+    `gave_up` 은 "워커가 자기 상한 + 유예 안에 반환하지 않아 **우리가** 기다리기를 그만뒀다" 는
+    뜻이다. 리뷰어 자체 실패(`review is None`)와 구분해 기록해야 원장에서 남 탓을 하지 않는다.
+
+    왜 필요한가 (FR-redteam-first-pass-unabortable, 2026-08-07): 리뷰어 호출은
+    `REDTEAM_TIMEOUT_SEC`(운영 최대 300초)까지 블로킹하는데, 이 구간에는 취소·'즉시 답변'
+    체크가 **하나도 없었다**. 라이브 실측: 답변 본문이 9.6초에 완성된 인사 턴이 리뷰어
+    무응답 300초를 그대로 사용자 대기로 전가해 312초 만에 전달됐고(대화 `…226e27aa`),
+    그 사이 화면은 "답변을 자가 검증하는 중"에서 멈춘 채 어떤 버튼도 듣지 않았다.
+    반복 수정 루프에는 `abort_fn` 이 있었으므로 "사용자는 언제든 그 시점 답변을 받을 수
+    있다"는 계약이 **첫 패스에서만 예외**였던 것이다.
+
+    호출은 워커 스레드에 맡기고 이 함수가 폴링한다. 중단 시 워커는 버려두는데(그쪽은
+    자체 timeout 으로 끝난다) 답변 초안은 이미 확정돼 있으므로 caller 는 fail-open 으로
+    즉시 전달하면 된다 — 리뷰 결과를 못 쓰는 것은 타임아웃 경로와 동일한 손실이다.
+
+    `abort_fn`·`progress_fn` 이 둘 다 없으면 폴링할 이유가 없어 직접 호출한다(무회귀).
+    중단 신호를 연속으로 읽지 못하면(예: 메모리 DB 장애) 폴링만 유지하고 중단 판정은
+    포기한다 — 신호 부재를 중단으로 오해해 리뷰를 통째로 건너뛰지 않기 위해서다.
+    """
+    if abort_fn is None and progress_fn is None:
+        return call(), False, False
+    # thread_name_prefix: 인시던트 중 스레드 덤프에서 주인 없는 `ThreadPoolExecutor-N_0` 로 보이지
+    # 않게 한다(§18.8 backend 패널 MINOR).
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="redteam-review")
+    try:
+        # ContextVar 를 명시 복사해서 넘긴다. 스레드는 asyncio 와 달리 컨텍스트를 상속하지
+        # 않으므로, 이걸 빠뜨리면 `_record_llm_usage` 의 `get_active_datasource()` 폴백이
+        # 워커에서 빈 값을 봐 `llm_usage.target_scope` 가 통째로 NULL 이 된다 — 리뷰어
+        # 호출의 데이터소스 비용 귀속이 조용히 사라지는 회귀다(라이브 14일 redteam 295건 중
+        # 218건이 이 폴백으로 채워져 있었다). llm.py 의 동일 함정 주석과 대칭.
+        future = executor.submit(contextvars.copy_context().run, call)
+        started = time.perf_counter()
+        wait_sec = max(1.0, float(timeout_sec))
+        deadline = started + wait_sec + max(
+            float(_REVIEW_WAIT_GRACE_SEC), wait_sec * float(_REVIEW_WAIT_GRACE_RATIO))
+        tick_gap = float(_REVIEW_PROGRESS_TICK_SEC)
+        next_tick = started + tick_gap
+        abort_failures = 0
+        while True:
+            elapsed = time.perf_counter() - started
+            poll_gap = (float(_REVIEW_ABORT_POLL_SEC)
+                        if elapsed < float(_REVIEW_ABORT_POLL_FAST_WINDOW_SEC)
+                        else float(_REVIEW_ABORT_POLL_MAX_SEC))
+            try:
+                return future.result(timeout=poll_gap), False, False
+            except concurrent.futures.TimeoutError:
+                pass
+            except Exception:
+                # `run_review` 는 Exception 을 삼키지만 그 밖으로 새는 것(인자 평가 예외 등)이
+                # 여기서 터지면, 예전 코드가 남기던 `review_error` 행조차 사라진다 — 호출측이
+                # 리뷰 실패로 기록할 수 있게 정상 실패로 되돌린다(§18.8 backend 패널 MINOR).
+                return None, False, False
+            now = time.perf_counter()
+            if abort_fn is not None:
+                try:
+                    if abort_fn():
+                        # 이미 끝난 리뷰는 절대 버리지 않는다. `done()` 을 먼저 보는 이유는
+                        # 스케줄링 지연으로 완료 직전 결과가 유예 밖으로 밀려나는 경우까지
+                        # 결정론적으로 살리기 위해서다(§18.8 패널 MINOR — 기존 테스트 race).
+                        if not future.done():
+                            try:
+                                future.result(timeout=_REVIEW_ABORT_RESULT_GRACE_SEC)
+                            except concurrent.futures.TimeoutError:
+                                return None, True, False
+                            except Exception:
+                                return None, False, False
+                        try:
+                            return future.result(timeout=0), False, False
+                        except Exception:
+                            return None, False, False
+                    abort_failures = 0
+                except Exception:
+                    abort_failures += 1
+                    if abort_failures >= 3:
+                        abort_fn = None
+            if now >= deadline:
+                return None, False, True
+            if progress_fn is not None and now >= next_tick:
+                tick_gap = min(float(_REVIEW_PROGRESS_TICK_MAX_SEC),
+                               tick_gap * float(_REVIEW_PROGRESS_TICK_BACKOFF))
+                next_tick = now + tick_gap
+                try:
+                    progress_fn(
+                        f"{progress_prefix} ({int(now - started)}초 경과 / 상한 "
+                        f"{int(timeout_sec)}초 · '즉시 답변'으로 지금 받을 수 있습니다)")
+                except Exception:
+                    pass
+    finally:
+        # wait=False: 버려진 워커가 끝날 때까지 오케스트레이터를 붙잡지 않는다.
+        executor.shutdown(wait=False)
+
+
 # red-team 수정 지시에서 findings 를 구획하는 sentinel. 비신뢰 findings 필드
 # (claim/fix_hint/evidence — 리뷰어 LLM 산출이며 적대적 DB 텍스트 유래 가능)에서 이 마커를
 # 결정론적으로 제거해 "닫는 마커 위조(breakout)"를 차단한다 — agent_core._datamark_untrusted
@@ -1432,15 +1569,35 @@ def orchestrate_review(*, question: str, draft_answer: str,
         # FR-attachment-change-false-absence (B): 사실 블록은 라운드 불변이라 1회만 만든다.
         att_facts_block = build_attachment_change_facts(attachment_facts)
         del_facts_block = build_delivery_facts(delivery_facts)
-        review = run_review(
-            question, draft_answer, evidence,
-            is_group=is_group, conversation_id=conversation_id, run_id=run_id,
-            timeout_sec=plan["timeout_sec"], model=review_model,
-            history=_history_block(conv_history, round_history),
-            conversation_request=conversation_request,
-            attachment_facts=att_facts_block,
-            delivery_facts=del_facts_block,
+        # 이미 '즉시 답변'이 눌린 상태로 들어와도 리뷰를 **시작은 한다** — 빠르게 끝나면
+        # 그 판정을 콘솔에 남길 수 있기 때문이다(중단 유예). 달라진 것은 리뷰어가 늦을 때
+        # 사용자를 붙잡지 않는다는 점이다.
+        review, review_aborted, review_gave_up = _await_review_interruptible(
+            lambda: run_review(
+                question, draft_answer, evidence,
+                is_group=is_group, conversation_id=conversation_id, run_id=run_id,
+                timeout_sec=plan["timeout_sec"], model=review_model,
+                history=_history_block(conv_history, round_history),
+                conversation_request=conversation_request,
+                attachment_facts=att_facts_block,
+                delivery_facts=del_facts_block,
+            ),
+            timeout_sec=plan["timeout_sec"],
+            abort_fn=abort_fn, progress_fn=progress_fn,
+            progress_prefix="답변을 자가 검증하는 중",
         )
+        # 중단은 실패가 아니다 — verdict 컬럼은 기존 enum(pass/revise/error)을 유지하되
+        # stop_reason 으로 구분한다. 콘솔은 이 stop_reason 을 ② 단계에 그대로 표시하므로
+        # (feature-0003 `admin.js` cross-ref) 중단이 "리뷰 실패"로 읽히지 않는다.
+        if review_aborted or review_gave_up:
+            record_review(
+                conversation_id=conversation_id, run_id=run_id, verdict="error",
+                findings=None, verify_verdict=None, revision_applied=False,
+                model=review_model,
+                latency_ms=int((time.perf_counter_ns() - t0) // 1_000_000),
+                reasoning_level=reasoning_level, is_group=is_group,
+                stop_reason=("aborted" if review_aborted else "review_wait_giveup"))
+            return draft_answer, None
         if review is None:
             record_review(
                 conversation_id=conversation_id, run_id=run_id, verdict="error",
@@ -1480,6 +1637,10 @@ def orchestrate_review(*, question: str, draft_answer: str,
         revisions_done = 0
         stop_reason = "resolved"
         abort_check_failures = 0
+        # 마지막 수정본에 대한 재검증이 **완료되지 않은** 채 루프를 빠져나왔는가. 참이면
+        # 직전(수정 이전) 판정의 BLOCK 을 "미해소"로 단정하지 않는다 — 검증하지 않은 답변에
+        # 대한 사실 주장이 되고, 그 주장이 사용자 답변에 고지로 찍힌다.
+        verify_incomplete = False
         # 강등 추적 — 어느 시점에 BLOCK 이었던 축이 마지막 판정에서 사라졌는지. 리뷰어가
         # "여러 라운드 생존한 결함은 WARN 강등 가능" 지침을 따르면 최종 verdict 가 pass 로
         # 바뀌어 unresolved=0·stop_reason=resolved 로 기록된다 — 실제로는 '해소'가 아니라
@@ -1654,15 +1815,36 @@ def orchestrate_review(*, question: str, draft_answer: str,
                     progress_fn(f"수정본을 재검증하는 중 ({revisions_done}회차)")
                 except Exception:
                     pass
-            verify = run_review(
-                question, final_answer, evidence,
-                is_group=is_group, conversation_id=conversation_id, run_id=run_id,
-                timeout_sec=plan["timeout_sec"], revised=True, model=review_model,
-                history=_history_block(conv_history, round_history),
-                conversation_request=conversation_request,
-                attachment_facts=att_facts_block,
-                delivery_facts=del_facts_block,
+            # 재검증도 같은 사각지대였다 — 라운드 **사이**에만 abort 를 보므로, 재검증
+            # 호출이 상한까지 매달리면 그동안 '즉시 답변'이 듣지 않는다.
+            verify, verify_aborted, verify_gave_up = _await_review_interruptible(
+                lambda: run_review(
+                    question, final_answer, evidence,
+                    is_group=is_group, conversation_id=conversation_id, run_id=run_id,
+                    timeout_sec=plan["timeout_sec"], revised=True, model=review_model,
+                    history=_history_block(conv_history, round_history),
+                    conversation_request=conversation_request,
+                    attachment_facts=att_facts_block,
+                    delivery_facts=del_facts_block,
+                ),
+                timeout_sec=plan["timeout_sec"],
+                abort_fn=abort_fn, progress_fn=progress_fn,
+                progress_prefix=f"수정본을 재검증하는 중 ({revisions_done}회차)",
             )
+            if verify_aborted or verify_gave_up:
+                # 마지막 수정본을 그대로 채택한다(루프 안 abort 와 동형). **재검증이 끝나지
+                # 않았으므로** 직전 리뷰의 BLOCK 을 "미해소"로 단정하면 안 된다 — 그 판정은
+                # 수정 *이전* 답변에 대한 것이고, 지금 나가는 것은 수정본이다(아래
+                # `verify_incomplete`). `unverified` 분기가 같은 이유로 이미 하는 처리이며,
+                # 그 주석("검증하지도 않은 결함을 단정하는 것이 된다")이 이 분기에도 그대로
+                # 적용된다 — §18.8 backend 패널 MAJOR.
+                stop_reason = "aborted" if verify_aborted else "review_wait_giveup"
+                verify_incomplete = True
+                rounds_ledger.append({
+                    "round_index": revisions_done, "phase": "verify",
+                    "note": stop_reason, "at": _now_utc(),
+                })
+                break
             if verify is None:
                 stop_reason = "verify_error"
                 rounds_ledger.append({
@@ -1684,7 +1866,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
         # `unverified` 는 **수정본을 한 번도 검증하지 않은** 종료다. current_review 는 수정 *이전*
         # 판정이므로 그 findings 를 "미해소"로 단정하면 검증하지도 않은 결함을 단정하는 것이 된다
         # (적대 패널 MAJOR — 재검증을 끈 구성에서 모든 수정 답변에 경고가 붙던 회귀). 미상으로 둔다.
-        if stop_reason == "unverified":
+        if stop_reason == "unverified" or verify_incomplete:
             unresolved = []
         # 강등 감지 — BLOCK 이었던 축이 최종 판정에서 사라져 verdict=pass 가 된 경우.
         # '해소'가 아니라 리뷰어의 severity 강등일 수 있으므로 감사 원장에서 구분한다.

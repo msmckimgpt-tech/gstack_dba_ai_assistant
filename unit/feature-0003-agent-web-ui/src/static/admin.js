@@ -1746,6 +1746,7 @@ const _REASONING_STOP_REASONS = {
   resolved: "결함 해소",
   downgraded: "지적이 경고로 강등되어 종료",
   aborted: "사용자 '즉시 답변'/취소",
+  review_wait_giveup: "리뷰어 응답 지연 — 대기 포기(초안 전달)",
   no_progress: "수정본이 직전과 동일 — 반복 중단",
   revise_collapsed: "수정본이 초안 대비 과도하게 축소 — 붕괴 방지로 중단",
   revise_failed: "수정 산출 실패",
@@ -1779,7 +1780,18 @@ function _reasoningStageTimeline(esc, it) {
   const stages = [];
   stages.push({ icon: "①", label: "초안 답변", state: "done", detail: "assistant 1차 답변 생성" });
   if (err) {
-    stages.push({ icon: "②", label: "적대 리뷰", state: "err", detail: "리뷰 수행 실패 (fail-open — 초안 그대로 전달)" });
+    // verdict=error 는 "리뷰어가 실패했다"만 뜻하지 않는다 — 사용자가 '즉시 답변'을 눌러
+    // 중단됐거나(aborted) 우리가 대기를 포기한(review_wait_giveup) 경우도 같은 값으로 남는다
+    // (redteam.py). stop_reason 을 함께 읽지 않으면 사용자 중단이 리뷰어 오류율로 집계되고,
+    // 콘솔은 멀쩡한 중단을 "수행 실패"로 표시한다(§18.8 backend 패널 MAJOR).
+    const stopLabel = _reasoningStopReasonLabel(it.stop_reason);
+    const userStopped = it.stop_reason === "aborted" || it.stop_reason === "review_wait_giveup";
+    stages.push({
+      icon: "②", label: "적대 리뷰", state: userStopped ? "warn" : "err",
+      detail: userStopped
+        ? `리뷰 미완료 — ${stopLabel || it.stop_reason} (초안 그대로 전달)`
+        : `리뷰 수행 실패 (fail-open — 초안 그대로 전달)${stopLabel ? " · " + stopLabel : ""}`,
+    });
   } else if (hasBlock) {
     stages.push({ icon: "②", label: "적대 리뷰", state: "warn", detail: `결함 검출 — BLOCK ${nBlock}${nWarn ? " · WARN " + nWarn : ""}` });
   } else if (warnOnly) {
