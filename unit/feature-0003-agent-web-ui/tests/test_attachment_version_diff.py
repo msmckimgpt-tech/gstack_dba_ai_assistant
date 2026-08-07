@@ -31,6 +31,23 @@
       본문이 사라진다 — 사용자 요청 "파일 내용이 동일하다면 문서 원문을 출력" (2026-08-07).
   B7b diff 뷰 — 원문 전량 방출도 행 상한을 넘지 않고, 넘으면 truncated.rows 로 표면화.
   B7c diff 뷰 — 빈 문서끼리는 행 0개(프론트가 '비어 있습니다' 로 답하는 근거).
+  B20  intra-line — replace 행에 좌우 세그먼트가 실리고 이어 붙이면 원문과 바이트 동치.
+  B21  intra-line — CJK 는 **글자 단위**(어절 통짜 강조는 사용자 요청 미달).
+  B22  intra-line — ASCII 단어는 통 토큰(글자 단위로 쪼개면 색종이).
+  B23 intra-line — 무관한 쌍은 세그먼트를 주지 않고 줄 단위로 폴백.
+  B24 intra-line — insert/delete 행은 대응 줄이 없어 세그먼트 없음.
+  B25 intra-line — 상한 초과 긴 줄은 세그먼트 없이도 줄 단위 변경은 유지.
+  B26 intra-line — 세그먼트는 행 상한 **통과 행에만** 계산(잘린 행 비용 0).
+  B27 intra-line — 자소 묶음(결합 문자·VS·ZWJ·피부톤)이 토큰 경계에 갈리지 않는다.
+  B28 intra-line — 작업량 예산 초과 시 `truncated.intraline` 로 표면화 + 줄 단위는 온전.
+  B29 intra-line — 정상 diff 는 절단을 주장하지 않는다(배너 늑대소년 방지 — 비율 컷 제외).
+  B30 intra-line — 바뀐 조각을 **자소 단위로 정밀화**(식별자·해시 부분 변경이 통째로 안 칠해짐).
+  B31 intra-line — 바뀌지 않은 글자를 변경으로 **주장하지 않는다**(흡수 규칙 제거 회귀 잠금).
+  B32 intra-line — 악센트 라틴이 단어 런을 끊지 않는다(`café`→`cafe` 마크 0 회귀).
+  B33 intra-line — **비용 가드**(길이·문자쌍 컷)만 `truncated.intraline` 로 표면화.
+  B34 intra-line — 비용 가드가 **토큰화보다 먼저** 걸린다(대리값 함정 회귀 잠금).
+  B35 intra-line — 정밀화도 자소 클러스터를 가르지 않는다(ZWJ·keycap·국기).
+  B36 intra-line — 국기·emoji tag sequence 가 한 토큰이다.
   E1  엔드포인트 — 직전↔최신 정상 비교(comparable/rows/stats/unified_diff).
   E2  엔드포인트 — **다단계**(v1↔v3) 비교가 중간 버전을 건너뛰고 성립.
   E3  엔드포인트 — from==to → 400.
@@ -55,6 +72,8 @@ import json
 
 import app
 from routers import attachments as att_router
+# intra-line 상한은 app.py 가 쓰지 않는 내부 상수라 재-export 하지 않는다 — 사는 곳에서 읽는다.
+from routers import _conv_store
 
 
 # ── fakes ──────────────────────────────────────────────────────────────────
@@ -403,6 +422,157 @@ def test_b7c_identical_empty_document_has_no_rows():
         "", "", left_version=1, right_version=2, filename="f", context_lines=3)
     assert view["stats"]["identical"] is True
     assert view["rows"] == []
+# ── B20~B25: intra-line 세그먼트 (사용자 요청 2026-08-07) ─────────────────────
+# "여전히 line 단위 차이만 나타나고 각 글자 단위의 차이점은 출력되지 않는다."
+# 세그먼트는 **서버가 단독으로** 정한다(2열·단일열이 같은 구간을 보게 하는 불변식의 연장).
+def _seg_text(segs):
+    """세그먼트를 이어 붙인 원문 — 프론트가 문자 오프셋으로 덧그리는 근거가 되는 계약."""
+    return "".join(s["v"] for s in segs)
+
+
+def _changed(segs):
+    return [s["v"] for s in segs if s["t"] == "ch"]
+
+
+def test_b20_replace_rows_carry_intraline_segments_roundtrip():
+    view = app._build_version_diff_view(
+        "SELECT id FROM users WHERE a = 1",
+        "SELECT id FROM users WHERE a = 2",
+        left_version=1, right_version=2, filename="q.sql", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    # 이어 붙이면 원문과 **바이트 동치** — 이 계약이 깨지면 프론트가 마킹을 통째로 포기한다.
+    assert _seg_text(row["left_segs"]) == row["left"]
+    assert _seg_text(row["right_segs"]) == row["right"]
+    assert _changed(row["left_segs"]) == ["1"]
+    assert _changed(row["right_segs"]) == ["2"]
+
+
+def test_b21_cjk_is_segmented_per_character_not_per_word():
+    """한글은 어절 안에서 한두 글자만 바뀌므로 **글자 단위**여야 변경 지점이 드러난다."""
+    view = app._build_version_diff_view(
+        "이 문서는 수정합니다.", "이 문서는 삭제합니다.",
+        left_version=1, right_version=2, filename="note.md", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    assert _changed(row["left_segs"]) == ["수정"]
+    assert _changed(row["right_segs"]) == ["삭제"]
+    # 어절 전체("수정합니다")가 통으로 잡히면 사용자 요청("각 글자 단위")이 미달이다.
+    assert "합니다" not in "".join(_changed(row["left_segs"]))
+
+
+def test_b22_ascii_word_is_the_alignment_unit_not_the_mark_unit():
+    """단어 토큰은 **정렬 앵커**일 뿐 마크 단위가 아니다 — 마크는 글자까지 좁혀진다.
+
+    순수 문자 diff 는 `SELECT`↔`INSERT` 에서 공통 글자를 흩어 잡아 색종이가 되므로 정렬은
+    토큰으로 잡는다. 그러나 정렬이 끝난 뒤의 마크는 사용자가 요청한 대로 글자 단위여야 한다
+    (§18.8 ux 패널: 한글만 글자별이고 영문은 통짜인 비대칭 지적).
+    """
+    view = app._build_version_diff_view(
+        "alpha beta gamma", "alpha delta gamma",
+        left_version=1, right_version=2, filename="a.txt", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    assert "beta" not in _changed(row["left_segs"])      # 어절 통짜가 아니다
+    assert "delta" not in _changed(row["right_segs"])
+    assert _seg_text(row["left_segs"]) == row["left"]
+    assert _seg_text(row["right_segs"]) == row["right"]
+
+
+def test_b23_unrelated_pair_falls_back_to_line_level():
+    """무관한 두 줄이 위치로 짝지어지면 조각 강조가 신호를 가린다 → 세그먼트를 주지 않는다."""
+    view = app._build_version_diff_view(
+        "완전히 다른 내용입니다", "totally unrelated line",
+        left_version=1, right_version=2, filename="a.txt", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    # 키 자체가 없어야 한다 — 빈 배열이면 프론트가 "구간 0개" 로 읽어 분기가 갈린다.
+    assert "left_segs" not in row and "right_segs" not in row
+
+
+def test_b24_insert_delete_rows_have_no_segments():
+    """대응할 상대 줄이 없으면 줄 안 비교 자체가 성립하지 않는다(줄 전체가 변경)."""
+    view = app._build_version_diff_view(
+        "a", "a\nb", left_version=1, right_version=2, filename="a.txt", context_lines=None)
+    for r in view["rows"]:
+        if r["type"] in ("insert", "delete"):
+            assert "left_segs" not in r and "right_segs" not in r
+
+
+def test_b25_long_lines_skip_segments_but_keep_line_diff():
+    """O(n²) 방어 — 상한 초과 줄은 세그먼트 없이도 **줄 단위 변경은 그대로** 보인다."""
+    left = "x" * (_conv_store._INTRALINE_MAX_LEN + 10)
+    view = app._build_version_diff_view(
+        left, left + "y", left_version=1, right_version=2, filename="a.txt",
+        context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    assert "left_segs" not in row
+    assert view["stats"]["added"] == 1 and view["stats"]["removed"] == 1
+
+
+def test_b27_grapheme_clusters_are_not_split_by_token_boundary():
+    """자소 묶음(결합 문자·variation selector·ZWJ)이 토큰 경계에 걸리면 화면에서 합자가 깨진다.
+
+    텍스트는 보존되지만 **원문과 달라 보이는** 렌더가 나오므로, 문자 단위 diff 의 목적을 어긴다.
+    """
+    tok = _conv_store._intraline_tokens
+    # ZWJ 가족 이모지는 통째로 한 토큰이어야 한다(낱개 이모지 여럿으로 쪼개지면 안 됨).
+    family = "\U0001F468‍\U0001F469‍\U0001F467"
+    assert tok(f"a{family}b") == ["a", family, "b"]
+    # 결합 악센트는 앞 문자에 붙는다.
+    assert tok("é") == ["é"]
+    # variation selector·피부톤 modifier 도 앞 문자에 흡수.
+    assert tok("❤️") == ["❤️"]
+    assert tok("\U0001F44D\U0001F3FD") == ["\U0001F44D\U0001F3FD"]
+    # 실제 diff 에서도 경계가 자소를 가르지 않는다.
+    view = app._build_version_diff_view(
+        f"상태 {family} 확인", "상태 \U0001F600 확인",
+        left_version=1, right_version=2, filename="a.md", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    assert _changed(row["left_segs"]) == [family]
+    assert _seg_text(row["left_segs"]) == row["left"]
+
+
+def test_b28_work_budget_surfaces_intraline_truncation():
+    """O(n·m) 예산을 넘어 마크를 생략한 줄이 있으면 **표면화**한다(무음 정밀도 하락 금지).
+
+    예산이 없으면 폭 2000자 × 1500행에서 411초까지 갔다(실측 2026-08-07) — 상한이 행 수가
+    아니라 작업량인 이유. 여기서는 그 상한이 실제로 걸리고, **줄 단위 차이는 온전한지**를 본다.
+    """
+    wide_l = "\n".join(",".join(f"c{i}v{j}" for i in range(300)) for j in range(40))
+    wide_r = "\n".join(",".join(f"c{i}w{j}" for i in range(300)) for j in range(40))
+    view = app._build_version_diff_view(
+        wide_l, wide_r, left_version=1, right_version=2, filename="w.csv",
+        context_lines=None)
+    reps = [r for r in view["rows"] if r["type"] == "replace"]
+    assert len(reps) == 40                       # 줄 단위 diff 는 전부 살아 있다
+    assert view["truncated"]["intraline"] is True
+    assert any("left_segs" not in r for r in reps)
+
+
+def test_b29_normal_diff_does_not_claim_intraline_truncation():
+    """늑대소년 방지 — 배너는 **비용 가드**(길이·문자쌍 컷)에만 뜬다.
+
+    비율 컷이 걸린 줄(좌우가 사실상 전혀 다름)은 화면에서 이미 "통째로 바뀜" 으로 정확히
+    읽히므로 알릴 오해가 없다. 그것까지 세면 재작성이 많은 diff 마다 배너가 상시 표시된다.
+    """
+    view = app._build_version_diff_view(
+        "alpha\nbeta", "alpha\ngamma", left_version=1, right_version=2,
+        filename="a.txt", context_lines=None)
+    assert view["truncated"]["intraline"] is False
+    # 무관한 쌍(비율 컷)·insert/delete 도 절단으로 세지 않는다.
+    view2 = app._build_version_diff_view(
+        "완전히 다른 내용입니다", "totally unrelated line",
+        left_version=1, right_version=2, filename="a.txt", context_lines=None)
+    assert view2["truncated"]["intraline"] is False
+
+
+def test_b26_segments_only_for_rows_that_survive_cap():
+    """행 상한으로 잘린 행에는 비용을 치르지 않는다(세그먼트는 표시 확정 뒤에 계산)."""
+    left = "\n".join(f"line {i} a" for i in range(20))
+    right = "\n".join(f"line {i} b" for i in range(20))
+    view = app._build_version_diff_view(
+        left, right, left_version=1, right_version=2, filename="a.txt",
+        context_lines=None, row_cap=5)
+    assert view["truncated"]["rows"] is True
+    assert len(view["rows"]) == 5
+    assert all("left_segs" in r for r in view["rows"] if r["type"] == "replace")
 
 
 # ── E1~E11: 엔드포인트 ──────────────────────────────────────────────────────
@@ -433,7 +603,9 @@ def test_e1_adjacent_pair_diff(monkeypatch):
     assert body["stats"]["added"] == 1 and body["stats"]["removed"] == 1
     assert any(r["type"] == "replace" for r in body["rows"])
     assert "SELECT 3;" in body["unified_diff"]
-    assert body["truncated"] == {"from_source": False, "to_source": False, "rows": False}
+    # 절단 4종(내용 3 + 정밀도 1)을 **전부** 열거해 잠근다 — 키가 늘거나 줄면 여기가 먼저 깨진다.
+    assert body["truncated"] == {
+        "from_source": False, "to_source": False, "rows": False, "intraline": False}
 
 
 def test_e2_multi_step_pair_skips_intermediate(monkeypatch):
@@ -652,3 +824,143 @@ def test_e11_versions_and_diff_share_one_chain_loader(monkeypatch):
     att_router.get_attachment_versions(11, _Request())
     att_router.get_attachment_version_diff(11, _Request(from_version=1, to_version=2))
     assert len(calls) == 2, "두 엔드포인트 중 하나가 자체 체인 SQL 로 우회했다"
+
+
+# ── B30~B36: §18.8 적대 패널(ux · backend) 흡수 (2026-08-07) ─────────────────
+def test_b30_changed_run_is_refined_to_characters():
+    """토큰 단위로 잡힌 변경 조각을 자소 단위로 좁힌다.
+
+    패널 실측: `m.last_login_at`→`m.last_logout_at` 이 식별자 **전체**를 칠했고,
+    `sha256: …855`→`…856` 은 한 토큰이 줄의 대부분이라 비율 컷에 걸려 **마크가 아예 없었다**.
+    사용자가 줄 단위에 대해 제기한 불만이 한 단계 아래에서 반복된 형태다.
+    """
+    view = app._build_version_diff_view(
+        "m.last_login_at = NOW()", "m.last_logout_at = NOW()",
+        left_version=1, right_version=2, filename="a.sql", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    assert _changed(row["left_segs"]) == ["in"]
+    assert _changed(row["right_segs"]) == ["out"]
+
+    h = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b"
+    view2 = app._build_version_diff_view(
+        f"-- sha256: {h}855", f"-- sha256: {h}856",
+        left_version=1, right_version=2, filename="a.sql", context_lines=None)
+    row2 = [r for r in view2["rows"] if r["type"] == "replace"][0]
+    assert _changed(row2["left_segs"]) == ["5"]
+    assert _changed(row2["right_segs"]) == ["6"]
+    assert _seg_text(row2["left_segs"]) == row2["left"]
+
+
+def test_b31_does_not_claim_unchanged_characters():
+    """마크는 **바뀐 글자만** 덮는다 — 짧은 equal 흡수 규칙 제거의 회귀 잠금.
+
+    패널 실측: 흡수가 있으면 CSV `a,b,c,[27,1284000],x` 처럼 필드 구분자까지 삼켜 두 변경이
+    한 덩어리로 읽혔고, `2026년 1`/`2027년 3` 은 동일한 `년 ` 을 "바뀌었다" 고 칠했다.
+    diff 는 무엇이 바뀌었는지 말하는 화면이므로 과장은 곧 오답이다.
+    """
+    view = app._build_version_diff_view(
+        "a,b,c,27,1284000,x", "a,b,c,31,1341500,x",
+        left_version=1, right_version=2, filename="a.csv", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    assert all("," not in v for v in _changed(row["left_segs"])), _changed(row["left_segs"])
+    assert _changed(row["left_segs"]) == ["27", "1284000"]
+    assert _changed(row["right_segs"]) == ["31", "1341500"]
+
+    view2 = app._build_version_diff_view(
+        "본 약관은 2026년 1월 5일부터", "본 약관은 2027년 3월 5일부터",
+        left_version=1, right_version=2, filename="a.md", context_lines=None)
+    row2 = [r for r in view2["rows"] if r["type"] == "replace"][0]
+    assert _changed(row2["left_segs"]) == ["6", "1"]
+    assert all("년" not in v and " " not in v for v in _changed(row2["left_segs"]))
+
+
+def test_b32_accented_latin_stays_one_word_token():
+    """`isascii()` 로 좁혔더니 `café` 가 `caf`+`é` 로 갈려 마크가 0개였다(패널 실측)."""
+    tok = _conv_store._intraline_tokens
+    assert tok("café naïve") == ["café", " ", "naïve"]
+    view = app._build_version_diff_view(
+        "café naïve 문장", "cafe naive 문장",
+        left_version=1, right_version=2, filename="a.txt", context_lines=None)
+    row = [r for r in view["rows"] if r["type"] == "replace"][0]
+    assert _changed(row["left_segs"]) == ["é", "ï"]
+    assert _seg_text(row["left_segs"]) == row["left"]
+
+
+def test_b33_cost_guards_are_surfaced_not_silent():
+    """**비용 가드**로 마크를 못 준 줄은 표면화한다 — 화면만 봐선 알 수 없기 때문이다."""
+    long_l = "x" * (_conv_store._INTRALINE_MAX_LEN + 10)
+    view = app._build_version_diff_view(
+        long_l, long_l + "y", left_version=1, right_version=2, filename="a.txt",
+        context_lines=None)
+    assert view["truncated"]["intraline"] is True
+    assert [r for r in view["rows"] if r["type"] == "replace"]   # 줄 단위는 온전
+
+    w = int(_conv_store._INTRALINE_PAIR_CAP ** 0.5) + 60
+    wide_l = "\n".join("a,b;c." * (w // 6) for _ in range(20))
+    wide_r = "\n".join("a;b,c." * (w // 6) for _ in range(20))
+    view2 = app._build_version_diff_view(
+        wide_l, wide_r, left_version=1, right_version=2, filename="w.csv",
+        context_lines=None)
+    assert view2["truncated"]["intraline"] is True
+    assert len([r for r in view2["rows"] if r["type"] == "replace"]) == 20
+    assert all("left_segs" not in r for r in view2["rows"] if r["type"] == "replace")
+
+    view3 = app._build_version_diff_view(
+        "a", "a\nb", left_version=1, right_version=2, filename="a.txt", context_lines=None)
+    assert view3["truncated"]["intraline"] is False
+
+
+def test_b34_cost_guard_is_checked_before_tokenizing():
+    """비용 가드가 **토큰화보다 먼저** 걸리는지 — 대리값 함정의 회귀 잠금.
+
+    초판은 좌·우 '토큰 수의 곱' 을 예산으로 썼는데, 그 값을 알려면 토큰화를 해야 했다.
+    §18.8 backend 패널 실측: 예산을 한 푼도 안 쓰고 1,039ms 를 태우는 입력이 존재했고,
+    같은 명목 예산에서 실제 시간이 **83배** 벌어졌다. `len(left)*len(right)` 는 O(1) 이다.
+    """
+    calls = []
+    real = _conv_store._intraline_tokens
+    try:
+        _conv_store._intraline_tokens = lambda s: (calls.append(s), real(s))[1]
+        big = "a" * (int(_conv_store._INTRALINE_PAIR_CAP ** 0.5) + 60)
+        lsegs, rsegs, degraded = _conv_store._intraline_segments(big, big[:-1] + "b")
+        assert lsegs is None and degraded is True
+        assert calls == [], "문자쌍 컷은 토큰화 전에 판정해야 한다"
+    finally:
+        _conv_store._intraline_tokens = real
+
+
+def test_b35_refine_never_splits_grapheme_clusters():
+    """정밀화도 **자소 클러스터** 단위로 자른다.
+
+    §18.8 backend 패널 실측: 초판은 토큰화에만 클러스터 보호를 걸고 정밀화는 raw code point
+    `SequenceMatcher` 라, ZWJ 가족 이모지·keycap·국기에서 경계가 클러스터 **내부**에 떨어졌다.
+    프론트가 그 경계에서 span 을 쪼개면 합자가 깨져 화면이 원문과 달라 보인다.
+    """
+    seg = _conv_store._intraline_segments
+    cl = _conv_store._grapheme_clusters
+    for left, right, label in [
+        ("\U0001F468\u200D\U0001F469\u200D\U0001F467 팀 확인",
+         "\U0001F468\u200D\U0001F469\u200D\U0001F466 팀 확인", "ZWJ 가족"),
+        ("num 1\ufe0f\u20e3 end", "num 2\ufe0f\u20e3 end", "keycap"),
+        ("seoul,\U0001F1F0\U0001F1F7,cap", "seoul,\U0001F1F0\U0001F1F5,cap", "국기(RI 쌍)"),
+    ]:
+        lsegs, rsegs, _ = seg(left, right)
+        assert lsegs and rsegs, label
+        for segs, orig in ((lsegs, left), (rsegs, right)):
+            assert "".join(x["v"] for x in segs) == orig, label
+            bounds, acc = set(), 0
+            for g in cl(orig):
+                acc += len(g)
+                bounds.add(acc)
+            acc = 0
+            for x in segs[:-1]:
+                acc += len(x["v"])
+                assert acc in bounds, f"{label}: 경계 {acc} 가 자소 클러스터를 가름"
+
+
+def test_b36_flag_and_tag_sequences_are_single_tokens():
+    """국기(지역 지시자 쌍)·emoji tag sequence 도 한 글자로 다룬다(패널 P3)."""
+    tok = _conv_store._intraline_tokens
+    assert tok("\U0001F1F0\U0001F1F7") == ["\U0001F1F0\U0001F1F7"]
+    scot = "\U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F"
+    assert tok(scot) == [scot]

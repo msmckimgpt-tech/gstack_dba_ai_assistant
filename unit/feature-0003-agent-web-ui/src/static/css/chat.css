@@ -2937,6 +2937,17 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   color: var(--tag-ok-fg);
   border: 1px solid var(--tag-ok-bd);
 }
+/* 정밀도 절단 고지 — **내용 절단(`is-warn`)과 같은 경보 강도로 두지 않는다**. 후자는
+   "diff 가 불완전하다"(=놓친 변경이 있을 수 있다)이고, 이건 "줄 단위 차이는 전부 있고 글자
+   단위 마크만 생략됐다" 이다. amber 3장이 쌓이면 사용자가 셋을 같은 위험으로 읽는다
+   (§18.8 ux 패널 P2). 중립 톤 + 좌측 accent 로 "알림" 층위에 둔다. */
+.attach-diff-notice.is-note {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--tag-neutral-bd);
+  font-size: 12px;
+}
 /* 가로로 긴 코드 줄은 본문 대신 이 컨테이너 안에서만 스크롤한다(모달 폭 붕괴 방지). */
 .attach-diff-scroller {
   overflow-x: auto;
@@ -3049,6 +3060,39 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
 /* 블록 경계선 — 여러 줄 블록에만(1줄 블록은 줄 배경으로 충분하고, 선을 그으면 노이즈다). */
 .attach-diff-row.is-block-start.is-block-multi > td { border-top: 1px solid var(--tag-neutral-bd); }
 .attach-diff-row.is-block-end.is-block-multi > td { border-bottom: 1px solid var(--tag-neutral-bd); }
+/* ── 줄 안(intra-line) 변경 구간 마크 (사용자 요청 2026-08-07) ─────────────────
+   "여전히 line 단위 차이만 나타나고 각 글자 단위의 차이점은 출력되지 않는다."
+   구간은 서버(`left_segs`/`right_segs`)가 정하고 `_markSegments` 가 이 span 을 덧씌운다.
+
+   **왜 배경 칠이 아닌가** — 구문 토큰 9색은 세 실배경(흰색·추가 12%·삭제 12%) 위에서 WCAG AA
+   4.5:1 을 넘도록 고른 값이고 하네스 G2 가 매 실행 재계산한다. 그 위에 같은 색조를 더 얹으면
+   배경이 어두워져 최저값이 무너진다 — 계산상 알파 0.20 에서도 `number` 가 삭제 행에서 **3.40**
+   이다(4.5 미달). 즉 배경 칠은 이 표에서 접근성 회귀 없이는 성립하지 않는다.
+
+   **왜 `text-decoration` 이 아니라 `box-shadow` 인가 (2026-08-07 실측으로 교체)** — 밑줄은
+   **탭 문자 위에 그려지지 않는다**. 실 chromium 계측: 마크 구간이 `\t\t` 일 때 span 박스는
+   78×17 인데 칠해진 픽셀 **0**, 같은 폭의 공백 8개는 48px. 들여쓰기를 탭으로 쓰는 파일에서
+   들여쓰기 변경은 이 기능이 정확히 겨냥한 경우인데 화면에 아무것도 나오지 않았고, 사용자에겐
+   "여긴 마크가 없으니 통째로 바뀐 줄" 로 읽힌다(§18.8 ux 패널 P1). `inset box-shadow` 는 같은
+   입력에서 156px 를 칠하고, `box-decoration-break: clone` 으로 줄바꿈 조각마다 다시 그려진다
+   (실측 frags=2, 940px). 그러면서 `background-color` 는 여전히 `transparent` 라 위 대비 논거가
+   그대로 유지된다 — `background-image` 그라디언트 안(같은 픽셀 수)을 버린 이유가 이것이다.
+
+   색은 그 셀이 속한 쪽을 따른다(좌=삭제 / 우=추가). 단일열은 side 클래스가 없으므로 행 타입에서
+   같은 결론을 얻는다 — 두 뷰가 같은 구간을 같은 색으로 그려야 한다. 값의 정본은 base.css 의
+   `--diff-mark-*`(이색형 명도 분리 근거는 그쪽 주석). */
+.attach-diff-chunk {
+  box-shadow: inset 0 -2px 0 0 var(--diff-mark-del);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+/* 기본값을 위에 두는 이유: side/행-타입 어느 쪽에도 안 걸리는 셀에 chunk 가 놓이면 색이
+   `currentColor` 로 떨어져 **본문 색 밑줄**이 된다(링크·강조로 오독). 오늘 도달 경로는 없지만
+   클래스가 어디에 놓이든 diff 마크로 보이게 기본을 박아 둔다(§18.8 frontend 패널 P3). */
+.attach-diff-code.side-right .attach-diff-chunk,
+.attach-diff-row.is-insert .attach-diff-chunk {
+  box-shadow: inset 0 -2px 0 0 var(--diff-mark-ins);
+}
 /* 블록 안 줄번호도 같은 덩어리로 읽히게 배경을 한 단계 얹는다. */
 .attach-diff-row.in-block .attach-diff-lineno { background: var(--border-subtle); }
 .attach-diff-row.is-insert .attach-diff-sign { color: var(--tag-ok-fg); }

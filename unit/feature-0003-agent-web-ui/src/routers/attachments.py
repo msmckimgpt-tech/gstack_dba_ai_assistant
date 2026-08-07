@@ -373,12 +373,15 @@ def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONRes
             "rows": view["rows"],
             "stats": view["stats"],
             "identical": bool(view["stats"]["identical"]),
-            # 절단 3종을 각각 표면화한다 — 어느 쪽이 잘렸는지 모르면 사용자가 diff 를
-            # 전체로 오인한다(§16.7 G9-b).
+            # 절단 4종을 각각 표면화한다 — 어느 쪽이 잘렸는지 모르면 사용자가 diff 를
+            # 전체로 오인한다(§16.7 G9-b). 앞의 3종은 **내용** 절단, `intraline` 은
+            # **정밀도** 절단(줄 단위 차이는 온전하고 글자 단위 마크만 생략)이라 성질이 다르므로
+            # 프론트 문구도 달리 간다.
             "truncated": {
                 "from_source": bool(truncated_sides.get("from")),
                 "to_source": bool(truncated_sides.get("to")),
                 "rows": bool(view["truncated"]["rows"]),
+                "intraline": bool(view["truncated"].get("intraline")),
             },
             "caps": {"source_bytes": cap, "rows": int(app._VERSION_DIFF_ROW_CAP)},
         })

@@ -30,6 +30,8 @@
       — 실 브라우저만 검증 가능한 축(jsdom 은 scrollTop clamp 를 하지 않아 통과시킨다)
   S5  버전 쌍 변경은 최상단으로 (의도된 비대칭 — 다른 비교이므로 보존이 혼란)
   B1~B7 문단(블록) 단위 하이라이트 — 연속 변경의 묶임·경계·accent 가 두 뷰에서 동일
+  M1~M5 줄 안(intra-line) 변경 구간 마크 — 밑줄이 실제로 렌더되고, 색이 쪽(좌=삭제/우=추가)을
+      따르며, **배경을 칠하지 않고**(구문 토큰 대비 보존), 행 높이를 바꾸지 않으며, 단일열도 동일
 
 실행:
   PLAYWRIGHT_BROWSERS_PATH=<ms-playwright> python3 tests/headless/verify_attach_diff_geometry.py
@@ -52,6 +54,18 @@ FAILURES: list[str] = []
 PASSES: list[str] = []
 
 
+def _count_mark_pixels(png_bytes: bytes) -> int:
+    """스크린샷에서 '마크색으로 칠해진' 픽셀 수. 탭 위 도포 여부는 픽셀로만 알 수 있다."""
+    try:
+        import io
+        from PIL import Image
+    except Exception:
+        return -1   # PIL 부재 — 판정 불가(호출자가 -1 을 skip 으로 다룬다)
+    im = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    return sum(1 for px in im.getdata()
+               if (px[0] > 90 and px[1] < 90 and px[2] < 90) or (px[1] > 90 and px[0] < 90 and px[2] < 110))
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     (PASSES if ok else FAILURES).append(f"{name}: {detail}" if detail else name)
     print(f"  {'PASS' if ok else 'FAIL'}  {name}{(' — ' + detail) if detail else ''}")
@@ -67,6 +81,15 @@ if re.search(r"^import\s", MODULE_BODY, flags=re.M):
     raise SystemExit("import 잔존 — 스텁 치환 실패")
 
 CSS = "\n".join((STATIC / "css" / n).read_text(encoding="utf-8") for n in ("base.css", "chat.css"))
+
+# 구문 하이라이트 primitive 는 **실물**을 같은 페이지에 태운다(스텁 아님).
+# 왜: `attach-diff.js` 의 import 한 줄을 지우면 `detectCodeLanguage`/`paintCodeInto`/
+# `codeLanguageLabel` 이 미정의가 되어 모달 열기가 `ReferenceError` 로 죽는다 — 실제로
+# 구문 하이라이트 cycle 이후 이 하네스는 **전 케이스 미실행**이었다(2026-08-07 적발: main
+# 에서도 동일 에러). 스텁으로 때우면 셀이 평문으로만 칠해져 토큰 span 이 있는 실제 렌더의
+# 기하를 재지 못하므로, mjs 하네스와 같은 방식으로 정본 모듈을 그대로 인라인한다.
+CH_JS = re.sub(r"^export\s+", "",
+               (STATIC / "code-highlight.js").read_text(encoding="utf-8"), flags=re.M)
 
 
 def _rows(head: int = 12, tail: int = 12, mid_no: int = 13):
@@ -120,6 +143,7 @@ const apiFetch = async (url) => {
   window.__apiCalls.push(url);
   return url.includes("context=full") ? window.__FULL : window.__DATA;
 };
+__CH__
 __JS__
 window.__open = (versions) => openAttachmentDiffModal(99, versions);
 </script></body></html>"""
@@ -183,7 +207,7 @@ with sync_playwright() as p:
         # `set_content` 는 opaque origin 이라 localStorage 가 SecurityError 다(모듈은 try/catch 로
         # 흡수하지만, 그러면 영속 축을 검증할 수 없고 T12 가 거짓 실패한다). route 로 가짜 URL 을
         # 가로채 **실 origin** 에서 렌더한다 — 서버 불요.
-        html = PAGE.replace("__CSS__", CSS).replace("__JS__", MODULE_BODY)
+        html = PAGE.replace("__CSS__", CSS).replace("__CH__", CH_JS).replace("__JS__", MODULE_BODY)
         page.route("**/__diff_test", lambda route: route.fulfill(
             status=200, content_type="text/html; charset=utf-8", body=html))
         page.goto("http://localhost.test/__diff_test", wait_until="domcontentloaded")
@@ -545,6 +569,108 @@ with sync_playwright() as p:
 
         page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"split\"]').click()")
         page.wait_for_timeout(250)
+
+        # ── M1~M5 줄 안(intra-line) 변경 구간 마크 (사용자 요청 2026-08-07) ──────
+        # "여전히 line 단위 차이만 나타나고 각 글자 단위의 차이점은 출력되지 않는다."
+        # jsdom 하네스(D 축)는 **구조**(span 유무·텍스트 보존)를 잠근다. 여기서만 잠글 수 있는
+        # 것은 **렌더된 픽셀** — 밑줄이 실제로 그려지는가, 색이 쪽(좌=삭제/우=추가)을 따르는가,
+        # 그리고 마크가 행 높이를 바꾸지 않는가(§16.6 픽셀 클래스).
+        seg_rows = [{
+            "type": "replace", "left_no": 1, "right_no": 1,
+            "left": "SELECT id, name FROM member WHERE status = 1;",
+            "right": "SELECT id, name FROM member WHERE status = 2;",
+            "left_segs": [{"t": "eq", "v": "SELECT id, name FROM member WHERE status = "},
+                          {"t": "ch", "v": "1"}, {"t": "eq", "v": ";"}],
+            "right_segs": [{"t": "eq", "v": "SELECT id, name FROM member WHERE status = "},
+                           {"t": "ch", "v": "2"}, {"t": "eq", "v": ";"}],
+        }]
+        plain_rows = [{k: v for k, v in seg_rows[0].items() if not k.endswith("_segs")}]
+
+        open_modal(page, seg_rows)
+        mk = page.evaluate("""() => {
+          const q = (s) => document.querySelector('.attach-diff-backdrop ' + s);
+          const read = (side) => {
+            const cell = q('tr.is-replace td.side-' + side);
+            const sp = cell.querySelector('.attach-diff-chunk');
+            if (!sp) return null;
+            const cs = getComputedStyle(sp);
+            const r = sp.getBoundingClientRect();
+            return { text: sp.textContent, shadow: cs.boxShadow,
+                     clone: cs.boxDecorationBreak || cs.webkitBoxDecorationBreak,
+                     bg: cs.backgroundColor, w: Math.round(r.width), h: Math.round(r.height),
+                     cellText: cell.textContent };
+          };
+          return { left: read('left'), right: read('right'),
+                   rowH: Math.round(q('tr.is-replace').getBoundingClientRect().height) };
+        }""")
+        check("M1 변경 구간이 실제로 마크된다(좌·우)",
+              bool(mk["left"]) and bool(mk["right"])
+              and mk["left"]["text"] == "1" and mk["right"]["text"] == "2",
+              json.dumps({"L": mk["left"] and mk["left"]["text"],
+                          "R": mk["right"] and mk["right"]["text"]}, ensure_ascii=False))
+        check("M1b 셀 전체 텍스트 무손실",
+              mk["left"]["cellText"] == seg_rows[0]["left"]
+              and mk["right"]["cellText"] == seg_rows[0]["right"])
+        check("M2 마크가 렌더된다(inset box-shadow · 줄바꿈 조각 복제)",
+              "inset" in mk["left"]["shadow"] and mk["left"]["clone"] == "clone",
+              f"shadow={mk['left']['shadow']} clone={mk['left']['clone']}")
+        # 색이 쪽을 따르지 않으면 "추가된 글자" 와 "삭제된 글자" 가 같은 색이 되어 신호가 죽는다.
+        check("M2b 좌=삭제색(#7f1d1d) / 우=추가색(#15803d)",
+              "127, 29, 29" in mk["left"]["shadow"] and "21, 128, 61" in mk["right"]["shadow"],
+              f"L={mk['left']['shadow']} R={mk['right']['shadow']}")
+        # 배경을 칠하면 구문 토큰 대비(AA 4.5:1)가 무너진다 — 계산 근거는 chat.css 주석·mjs D6.
+        # 여기서는 **렌더된 값**으로 확인한다(규칙이 없어도, 다른 규칙이 얹혀도 잡힌다).
+        check("M3 마크는 배경을 칠하지 않는다(렌더 실측)",
+              "rgba(0, 0, 0, 0)" in mk["left"]["bg"] or mk["left"]["bg"] == "transparent",
+              f"bg={mk['left']['bg']}")
+        # M3b — **탭 위에도 칠해지는가**. `text-decoration` 밑줄은 탭 advance 위에 그려지지 않아
+        # 들여쓰기 변경(이 기능의 주 대상)이 화면에서 사라졌다(실측 0px). 스크린샷 픽셀로 센다.
+        tab_rows = [{
+            "type": "replace", "left_no": 1, "right_no": 1,
+            "left": "\treturn member", "right": "\t\treturn member",
+            "left_segs": [{"t": "ch", "v": "\t"}, {"t": "eq", "v": "return member"}],
+            "right_segs": [{"t": "ch", "v": "\t\t"}, {"t": "eq", "v": "return member"}],
+        }]
+        open_modal(page, tab_rows)
+        box = page.evaluate("""() => {
+          const sp = document.querySelector('.attach-diff-backdrop tr.is-replace td.side-right .attach-diff-chunk');
+          const r = sp.getBoundingClientRect();
+          return {x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height)};
+        }""")
+        shot = page.screenshot(clip={"x": box["x"], "y": box["y"],
+                                     "width": max(1, box["w"]), "height": max(1, box["h"])})
+        inked = _count_mark_pixels(shot)
+        check("M3b 탭 문자 위에도 마크가 칠해진다(밑줄 회귀 차단)",
+              inked > 0, f"{inked}px / 박스 {box['w']}x{box['h']}")
+
+        # 마크는 **덧그리기**다 — 행 높이가 바뀌면 표 전체가 밀려 스크롤 앵커 계약(S1~S6)까지 흔든다.
+        open_modal(page, plain_rows)
+        plain_h = page.evaluate(
+            "() => Math.round(document.querySelector('.attach-diff-backdrop tr.is-replace')"
+            ".getBoundingClientRect().height)")
+        check("M4 마크가 행 높이를 바꾸지 않는다(레이아웃 무영향)",
+              mk["rowH"] == plain_h, f"세그먼트有={mk['rowH']} 無={plain_h}")
+
+        # M5 — 단일열도 **같은 구간을 같은 색으로**. 두 뷰가 갈리면 사용자가 어느 쪽을 믿을지 모른다.
+        open_modal(page, seg_rows)
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"unified\"]').click()")
+        page.wait_for_timeout(200)
+        umk = page.evaluate("""() => {
+          const read = (rowCls) => {
+            const sp = document.querySelector(
+              '.attach-diff-backdrop tr.' + rowCls + ' td.attach-diff-code .attach-diff-chunk');
+            if (!sp) return null;
+            return { text: sp.textContent, color: getComputedStyle(sp).boxShadow };
+          };
+          return { del: read('is-delete'), ins: read('is-insert') };
+        }""")
+        check("M5 단일열도 같은 구간·같은 쪽 색",
+              bool(umk["del"]) and bool(umk["ins"])
+              and umk["del"]["text"] == "1" and umk["ins"]["text"] == "2"
+              and "127, 29, 29" in umk["del"]["color"] and "21, 128, 61" in umk["ins"]["color"],
+              json.dumps(umk, ensure_ascii=False))
+        page.evaluate("() => document.querySelector('.attach-diff-mode[data-mode=\"split\"]').click()")
+        page.wait_for_timeout(200)
 
         # ── T7 회귀 재현: colgroup 제거 시 열 폭 계약 붕괴 ────────────────────────
         open_modal(page, _rows())

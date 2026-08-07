@@ -21,6 +21,18 @@
   --tag-info-bg:    rgba(37, 99, 235, 0.10);  --tag-info-fg:    #1d4ed8;  --tag-info-bd:    rgba(37, 99, 235, 0.35);
   --tag-neutral-bg: var(--surface-2);         --tag-neutral-fg: var(--text-2);  --tag-neutral-bd: var(--border);
 
+  /* diff 줄 안(intra-line) 변경 마크 색 (attach-diff-intraline, 2026-08-07).
+     `--tag-*-fg` 를 그대로 쓰지 않는 이유: 이색형(deuteranopia)에서 두 색의 **색상 차가
+     사라지고 명도만 남는데**, `#b91c1c`(삭제)와 `#15803d`(추가)는 시뮬레이션 후 명도가
+     가까워 좌/우 구분이 약해진다(§18.8 ux 패널 실측 지적). 삭제쪽을 한 단계 어둡게 잡아
+     **명도 자체를 쪽 구분 채널로** 쓴다 — 색이 안 보여도 진하기로 갈린다.
+     비-텍스트 대비(WCAG 1.4.11, 3:1)는 각자의 행 배경 위에서 계산 —
+       삭제 #7f1d1d on 삭제행: 정상 8.32 · deut 7.17 · prot 9.18
+       추가 #15803d on 추가행: 정상 4.39 · deut 4.12 · prot 4.20
+     (`--tag-*-bd` 는 1.51/1.81 로 미달이라 후보가 아니다.) */
+  --diff-mark-del:  #7f1d1d;
+  --diff-mark-ins:  #15803d;
+
   /* 구문 하이라이트 토큰 (attach-diff-syntax) — 첨부 diff 표처럼 **문서 배경(라이트)** 위에
      올라가는 코드에 쓴다. 답변 말풍선의 `sql-tok-*` 는 항상 어두운 코드블록 배경이라 별
      팔레트(tokyo-night)를 유지한다 — 두 팔레트는 배경이 달라서 값이 다른 것이지 중복이 아니다.

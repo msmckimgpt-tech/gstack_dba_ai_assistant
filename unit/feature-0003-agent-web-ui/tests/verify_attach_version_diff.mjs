@@ -28,6 +28,7 @@ const read = (...seg) => readFileSync(join(STATIC, ...seg), "utf8");
 const diffJs = read("app", "attach-diff.js");
 const composerJs = read("app", "composer.js");
 const chatCss = read("css", "chat.css");
+const baseCss = read("css", "base.css");
 
 const require = createRequire(import.meta.url);
 let JSDOM = null;
@@ -82,7 +83,7 @@ const _stubs = {
 };
 const EXPORTS = ["_appendColgroup", "_applySplitRatio", "_gapRow", "_linenoCh",
   "_renderSplit", "_renderUnified", "_renderBody", "_fmtBytes", "_versionLabel",
-  "_paintCell", "openAttachmentDiffModal"];
+  "_paintCell", "_markSegments", "openAttachmentDiffModal"];
 const M = new Function(...Object.keys(_stubs),
   `${MODULE_BODY}\nreturn { ${EXPORTS.join(", ")} };`)(...Object.values(_stubs));
 for (const n of EXPORTS) ok(`${n} 로드됨`, typeof M[n] === "function");
@@ -358,6 +359,161 @@ function extractFn(src, name) {
   // 최신 행의 `⇄` 는 자기 자신과의 비교라 무의미 — 조건이 실제로 걸려 있는지.
   ok("B7 최신 행에는 비교 버튼을 두지 않는다", /if \(canCompare && !isLatest\)/.test(boxFn));
   ok("B8 단일 버전이면 비교 진입점 미노출", /const canCompare = versions\.length > 1/.test(boxFn));
+}
+
+// ── (D) 줄 안(intra-line) 변경 구간 마크 (사용자 요청 2026-08-07) ────────────
+// "여전히 line 단위 차이만 나타나고 각 글자 단위의 차이점은 출력되지 않는다."
+// 서버가 `left_segs`/`right_segs` 로 구간을 주고 `_markSegments` 가 **이미 칠해진** 셀 위에
+// 덧그린다. 여기서 잠그는 것은 ① 마크가 실제 DOM 에 나오는지 ② 텍스트가 보존되는지
+// ③ 구문 하이라이트와 공존하는지 ④ 두 뷰가 같은 구간을 그리는지 ⑤ 계약 위반 시 안전 폴백.
+console.log("\n[D] 줄 안 변경 구간 마크");
+{
+  const doc = window.document;
+  const SEG_DATA = {
+    comparable: true, identical: false,
+    caps: { source_bytes: 1048576, rows: 6000 },
+    truncated: { from_source: false, to_source: false, rows: false },
+    stats: { added: 1, removed: 1 },
+    from: { version_number: 1 }, to: { version_number: 2 },
+    rows: [{
+      type: "replace", left_no: 1, right_no: 1,
+      left: "SELECT id FROM users", right: "SELECT uid FROM users",
+      left_segs: [{ t: "eq", v: "SELECT " }, { t: "ch", v: "id" }, { t: "eq", v: " FROM users" }],
+      right_segs: [{ t: "eq", v: "SELECT " }, { t: "ch", v: "uid" }, { t: "eq", v: " FROM users" }],
+    }],
+    unified_diff: "",
+  };
+
+  // D1 — 2열: 변경 구간만 마크되고 셀 전체 텍스트는 그대로다.
+  {
+    const host = doc.createElement("div");
+    M._renderSplit(host, SEG_DATA, {});
+    const l = host.querySelector("td.side-left");
+    const r = host.querySelector("td.side-right");
+    ok("D1 2열 좌측 변경 구간 마크", l.querySelector(".attach-diff-chunk")?.textContent === "id");
+    ok("D1 2열 우측 변경 구간 마크", r.querySelector(".attach-diff-chunk")?.textContent === "uid");
+    ok("D1 셀 텍스트 무손실(좌)", l.textContent === SEG_DATA.rows[0].left);
+    ok("D1 셀 텍스트 무손실(우)", r.textContent === SEG_DATA.rows[0].right);
+    // 변경 **밖**은 마크가 없어야 한다 — 전부 칠하면 줄 단위 강조와 같아져 기능이 사라진다.
+    ok("D1 마크는 구간 1개뿐(줄 전체 아님)",
+      l.querySelectorAll(".attach-diff-chunk").length === 1);
+  }
+
+  // D2 — 단일열도 **같은 구간**을 그린다. 두 뷰가 같은 응답의 두 표현이라는 불변식의 연장.
+  {
+    const host = doc.createElement("div");
+    M._renderUnified(host, SEG_DATA, {});
+    const del = host.querySelector("tr.is-delete td.attach-diff-code");
+    const ins = host.querySelector("tr.is-insert td.attach-diff-code");
+    ok("D2 단일열 삭제 줄 = 좌측 구간", del.querySelector(".attach-diff-chunk")?.textContent === "id");
+    ok("D2 단일열 추가 줄 = 우측 구간", ins.querySelector(".attach-diff-chunk")?.textContent === "uid");
+    ok("D2 단일열 텍스트 무손실", del.textContent === SEG_DATA.rows[0].left);
+  }
+
+  // D3 — 구문 하이라이트와 **공존**. 마크가 토큰 span 을 지우거나 그 반대가 되면 안 된다.
+  //   경계가 토큰 경계와 어긋나는 경우(`user_id` 한 토큰 중 `id` 만 변경)까지 포함해 잠근다.
+  {
+    const host = doc.createElement("div");
+    M._renderSplit(host, SEG_DATA, { lang: "sql" });
+    const l = host.querySelector("td.side-left");
+    ok("D3 구문 토큰 span 생존", l.querySelectorAll("[class^='code-tok-']").length > 0);
+    ok("D3 변경 마크도 생존", l.querySelectorAll(".attach-diff-chunk").length === 1);
+    ok("D3 하이라이트 켬 상태에서도 텍스트 무손실", l.textContent === SEG_DATA.rows[0].left);
+  }
+  {
+    // 토큰 **안쪽** 부분 변경 — `_markSegments` 가 텍스트 노드를 문자 오프셋으로 쪼개는지.
+    const td = doc.createElement("td");
+    CH.paintCodeInto(td, "SELECT user_id FROM t", "sql");
+    const okMark = M._markSegments(td, [
+      { t: "eq", v: "SELECT user_" }, { t: "ch", v: "id" }, { t: "eq", v: " FROM t" }]);
+    ok("D3b 토큰 내부 부분 구간도 마크", okMark > 0 &&
+      td.querySelector(".attach-diff-chunk")?.textContent === "id");
+    ok("D3b 부분 마킹 후 텍스트 무손실", td.textContent === "SELECT user_id FROM t");
+  }
+
+  // D4 — 세그먼트가 없는 행(무관 쌍·긴 줄·insert/delete)은 **종전 경로 그대로**.
+  {
+    const host = doc.createElement("div");
+    M._renderSplit(host, SPLIT_DATA, {});
+    ok("D4 세그먼트 없는 응답에는 마크 0개",
+      host.querySelectorAll(".attach-diff-chunk").length === 0);
+    ok("D4 줄 단위 강조는 그대로", !!host.querySelector("tr.is-replace td.side-left.has-content"));
+  }
+
+  // D5 — 계약 위반은 **안 그린다**. 길이가 어긋난 세그먼트에 마크를 그리면 없는 변경을 지목한다
+  //   (마크가 없는 것보다 나쁘다 — 줄 단위 신호는 어차피 남아 있다).
+  {
+    const td = doc.createElement("td");
+    td.textContent = "abcdef";
+    const drew = M._markSegments(td, [{ t: "eq", v: "abc" }, { t: "ch", v: "XY" }]);  // 5 != 6
+    ok("D5 길이 불일치 세그먼트는 마킹 거부", drew === 0 &&
+      td.querySelectorAll(".attach-diff-chunk").length === 0);
+    ok("D5 거부해도 텍스트는 온전", td.textContent === "abcdef");
+  }
+  {
+    const td = doc.createElement("td");
+    td.textContent = "abc";
+    ok("D5b 변경 구간이 없으면 마킹하지 않음",
+      M._markSegments(td, [{ t: "eq", v: "abc" }]) === 0);
+  }
+
+  // D6 — 스타일 계약. 배경 칠은 이 표에서 **접근성 회귀**다(아래 근거는 chat.css 주석 참조):
+  //   구문 토큰 9색은 흰/추가12%/삭제12% 세 배경에서 AA 4.5:1 을 넘도록 고른 값이고,
+  //   마크가 같은 색조를 더 얹으면 알파 0.20 에서도 `number` 가 삭제 행에서 3.40 으로 떨어진다.
+  //   그래서 밑줄만 쓴다 — 이 게이트가 없으면 나중에 "GitHub 처럼 배경" 으로 되돌아가기 쉽다.
+  {
+    const block = chatCss.slice(chatCss.indexOf(".attach-diff-chunk {"),
+      chatCss.indexOf(".attach-diff-row.in-block .attach-diff-lineno"));
+    ok("D6 마크 규칙 존재", /box-shadow:\s*inset 0 -2px 0 0 var\(--diff-mark-del\)/.test(block));
+    ok("D6 마크는 배경을 칠하지 않는다(토큰 대비 4번째 배경면 금지)",
+      !/background/.test(block));
+    // 밑줄(`text-decoration`)은 **탭 위에 그려지지 않는다** — 실 chromium 실측 0px.
+    // 들여쓰기 변경이 이 기능의 대상이므로 그 표현으로 되돌아가지 못하게 막는다.
+    ok("D6b 탭 위에 안 그려지는 text-decoration 밑줄로 회귀 금지",
+      !/text-decoration-line:\s*underline/.test(block));
+    ok("D6c 줄바꿈 조각마다 다시 그린다(box-decoration-break: clone)",
+      /box-decoration-break:\s*clone/.test(block));
+    ok("D6 좌=삭제색 / 우=추가색 (2열·단일열 양쪽 셀렉터)",
+      /\.attach-diff-code\.side-right \.attach-diff-chunk,\s*\.attach-diff-row\.is-insert \.attach-diff-chunk/.test(chatCss));
+    // 기본색이 없으면 side/행타입 어디에도 안 걸린 셀에서 `currentColor` 본문색 마크가 된다.
+    ok("D6d 기본 마크색이 base 규칙에 박혀 있다(currentColor 폴백 금지)",
+      /\.attach-diff-chunk \{[^}]*var\(--diff-mark-del\)/.test(chatCss));
+    // 색 값의 정본은 base.css — 이색형에서 명도로 쪽이 갈리도록 삭제쪽을 어둡게 잡았다.
+    ok("D6e 마크 색 토큰이 base.css 에 정의",
+      /--diff-mark-del:\s*#7f1d1d/.test(baseCss) && /--diff-mark-ins:\s*#15803d/.test(baseCss));
+  }
+
+  // D8 — 정밀도 절단 표면화. 마크 없는 줄을 "통째로 바뀐 줄" 로 오독하지 않게 알리되,
+  //   **내용 절단과 다른 문구**여야 한다(같은 문구면 "내용이 잘렸다" 로 읽혀 과잉 경보).
+  {
+    const host = doc.createElement("div");
+    const withCut = {
+      ...SEG_DATA,
+      truncated: { from_source: false, to_source: false, rows: false, intraline: true },
+    };
+    M._renderBody(host, withCut, "split", {});
+    const notes = Array.from(host.querySelectorAll(".attach-diff-notice.is-note"))
+      .map((n) => n.textContent);
+    ok("D8 정밀도 절단 배너 노출", notes.some((t) => t.includes("글자 단위 표시를 생략")));
+    ok("D8b 문구가 '줄 단위 차이는 모두 표시' 를 명시(내용 절단과 구분)",
+      notes.some((t) => t.includes("줄 단위 차이는 모두 표시")));
+    // 사유를 "길어서" 로 말하면 화면과 어긋난다 — 같은 길이의 윗줄은 마크되는데 아랫줄만
+    // 안 되는 경우가 있다(예산·조각화 판단). 잘못된 설명은 설명이 없는 것보다 나쁘다.
+    ok("D8b2 사유를 길이로 단정하지 않는다", !notes.some((t) => t.includes("길어서")));
+    // 내용 절단(is-warn)과 **다른 톤**이어야 한다 — amber 3장이 쌓이면 같은 위험으로 읽힌다.
+    ok("D8b3 정밀도 절단은 내용 절단 톤(is-warn)을 쓰지 않는다",
+      host.querySelectorAll(".attach-diff-notice.is-warn").length === 0);
+    const host2 = doc.createElement("div");
+    M._renderBody(host2, SEG_DATA, "split", {});
+    ok("D8c 절단이 없으면 배너도 없다(늑대소년 방지)",
+      host2.querySelectorAll(".attach-diff-notice").length === 0);
+    ok("D8d is-note 스타일이 CSS 에 실재", /\.attach-diff-notice\.is-note\s*\{/.test(chatCss));
+  }
+
+  // D7 — 구간 계산은 **서버 단독**. 프론트가 재구현하면 2열/단일열이 갈릴 수 있다.
+  ok("D7 프론트에 줄 안 diff 재구현 없음(서버 세그먼트만 소비)",
+    /left_segs/.test(diffJs) && /right_segs/.test(diffJs) &&
+    !/SequenceMatcher|longestCommonSubsequence|myersDiff/i.test(diffJs));
 }
 
 // ── (C) 계약 ────────────────────────────────────────────────────────────────
