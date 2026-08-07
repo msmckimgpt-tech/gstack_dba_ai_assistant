@@ -599,3 +599,28 @@ source_of_truth: true
 - 위험도: Minor(§12.3) — 문서 기록, 동작 영향 0.
 - Human Approval Needed: no
 - Cross-ref: MODIFY CHG-20260730T200500-llm-edge-free-routing-postdeploy / TEST Run 2026-07-30-llm-edge-free-routing-POSTDEPLOY / 선행 REV-20260730T191535.
+
+## REV-20260807T144800-ai-root-feature-0007-oauth-exhaustion-gate [SKIPPED:user-declined-panel] — CONCERN
+- Related TASK: feature-0007-bedrock-llm-provider (TASK-20260807T144800-oauth-exhaustion-gate)
+- Trigger: `token`/`credential`/`auth` keyword matched (자격증명·토큰) → §18.8 dispatch 상 `security` subagent 대상.
+- **SKIP 사유(정직 표기)**: 세션 지시가 "Do not call the AgentTool unless the user requested it" 이라 subagent 패널을 자율 호출하지 않았고, 대체 경로인 `/codex review` 는 **사용자가 실행 중 중단하고 "continue" 로 진행을 지시**했다. 즉 외부 적대 리뷰는 **미수행**이며 아래는 자체 리뷰다. 이 cycle 의 적대 검증 커버리지는 그만큼 낮다.
+
+### 자체 리뷰에서 실제로 잡아 고친 것 (구현 중 발견)
+- **[P1·해소] trigger 가 실환경에서 영구 미발화**: 최초 구현은 게이트웨이 로그의 `RateLimitError` grep 을 probe trigger 로 삼았다. 라이브 확인 결과 **폴백이 성공하면 게이트웨이 로그엔 `200 OK` 만 남는다**(폴백 사실은 `x-litellm-attempted-fallbacks` 응답 헤더에만). 즉 고치려는 바로 그 상태가 로그상 무증상이라 게이트가 절대 켜지지 않는 **no-op 수정**이었다. → 저빈도 heartbeat(기본 1h)를 주 신호로 재설계하고 로그 grep 은 보조로 강등. 교훈: "신호가 존재한다" 를 가정하지 말고 실측할 것.
+- **[P2·해소] 테스트 vacuous pass 위험**: 하네스가 주변 `CLAUDE_OAUTH_*` 를 상속해, 운영자 셸에 `CLAUDE_OAUTH_EXHAUSTION_GATE=0` 같은 override 가 남아 있으면 스위트가 다른 계약으로 조용히 통과할 수 있었다. → `_PINNED` 로 전 변수 고정 + `CLAUDE_OAUTH_ACCOUNT` 제거. 역검증으로 확인(ambient override 를 걸어도 결과 불변).
+- **[P2·해소] 도달성 장애 오판**: 초안은 probe 실패를 전부 "사용 불가" 로 취급할 여지가 있었다 → 429/401·403 만 우회 사유로 인정하고 그 외·네트워크 오류는 **fail-open**(상태 미변경). 2026-07-30 DNS 34분 단절이 계정 강등으로 번역되던 사고 패턴을 명시적으로 차단하고 테스트 2건으로 잠갔다.
+
+### 남긴 위험 (미해소, 정직 표기)
+- **[P1·이월] root access token 회전 주체 부재** — 스크립트는 디스크의 access token 을 읽기만 하고 `refreshToken` 을 쓰지 않는다. root 토큰 TTL 은 ~8h 이고 root Claude Code CLI 세션이 돌 때만 회전한다. claude-corp 가 2026-08-09 15:00 KST 까지 소진된 지금 **root 가 유일 가용 계정**이므로, root 세션 공백이 8시간을 넘으면(야간·주말) 정적 검사가 root 를 탈락시켜 **LLM 전면 중단**이 된다. 본 cycle 이 만든 결함은 아니지만 본 cycle 이 그 의존도를 높였다. 해법(스크립트가 refresh token 으로 직접 회전)은 사용자 Claude Code 자격증명 저장소에 쓰는 행위 + refresh token 회전이 CLI 로그인을 깨뜨릴 수 있어 **§12.3 Critical — 사람 승인 필요**. TASK 「이월 항목」.
+- **[P2] heartbeat 는 라이브 호출을 0 이 아니게 만든다** — 1순위 후보에 최대 시간당 1회 최소 ping. 2026-07-07 의 "라이브 API 호출 없음" 속성은 더 이상 성립하지 않는다(MODIFY Trade-off 에 명시, 킬스위치 `CLAUDE_OAUTH_GATE_RECHECK_SEC=0`).
+- **[P2] 무-트래픽 구간 탐지 지연** — 소진이 발생해도 최대 1시간(heartbeat 주기)까지는 1순위가 소진 계정에 남는다. 그 동안은 종전과 동일(litellm 폴백이 흡수).
+- **[P2] 외부 적대 리뷰 미수행** — 위 SKIP 사유. bash quoting·상태머신 경계·테스트 실효성에 대한 독립 검증이 없다.
+
+### 검증 근거
+- 대상 15건 PASS · 역검증(게이트 off = 수정 전 동작으로 실행 시 9건 FAIL) · `bash -n` PASS · 임베디드 python 2블록 `compile()` PASS · `make test` 완주(ruff `All checks passed!`).
+- 라이브: 1순위 slot 이 root 로 전환됐고 게이트웨이 프로브 3종이 `fallbacks=0`. 상태 파일의 `until` 이 Anthropic `unified-7d-reset` 과 정확히 일치.
+- 전체 `make test` 요약 라인은 캡처하지 못했다(실패 라인 없음은 확인) — 사용자 지시로 재실행하지 않았다.
+- Critical issue: 위 [P1·이월] root 토큰 회전 부재.
+- Human Approval Needed: **yes** — 이월 [P1] 의 해법(자격증명 저장소 쓰기)은 사람 결정 필요. 본 cycle 변경 자체는 Minor(§12.3, 계정 선택 로직 + 킬스위치 보유).
+- Timestamp: 2026-08-07T14:55:00+09:00
+- Cross-ref: MODIFY CHG-20260807T144800-oauth-exhaustion-gate / TASK `## TASK-20260807T144800-oauth-exhaustion-gate` / TEST Run 2026-08-07-oauth-exhaustion-gate / 선행 REV-20260730T191535(bare alias 단일계정 이월 P1 이 본 건으로 발현).

@@ -131,11 +131,23 @@ source_of_truth: true
   그대로 올려 **정직하게 실패**한다 — 로컬 gemma 로 강등하지 않는다(사용자 결정 2026-07-30 "더 이상
   로컬 LLM 을 사용하지 않는다"). 이 규약은 대화 답변(`*-chat`, 2026-07-07)·개발용 메타데이터
   (`*-meta`, 2026-07-30 오전)와 동일하며, `claude-haiku-4-interactive` 체인도 같다.
-  deployment 별 자격: `claude-haiku-4`=ANTHROPIC_API_KEY(claude-corp), `claude-haiku-4-root`=
-  ANTHROPIC_API_KEY_ROOT(root). 두 토큰은 `bin/refresh-claude-oauth-token.sh` 가 병행 주입(각 slot 독립
-  static 검사, 사용가능 시만 갱신, 만료/401/429 는 litellm 이 다음 fallback 으로 흡수).
+  deployment 별 자격: `claude-haiku-4`=ANTHROPIC_API_KEY(1순위 slot), `claude-haiku-4-root`=
+  ANTHROPIC_API_KEY_ROOT(root 고정). 두 토큰은 `bin/refresh-claude-oauth-token.sh` 가 병행 주입한다
+  (각 slot 독립 static 검사, 사용가능 시만 갱신, 일시적 401/429 는 litellm 이 다음 fallback 으로 흡수).
   (이전 동작: 3순위로 `edge-fallback`(로컬 gemma)까지 폴백 — **superseded**. deployment 정의는
   되돌리기용으로 남아 있으나 어떤 체인에서도 참조되지 않는다.)
+  - **1순위 slot 의 사용량-소진 게이트 (oauth-exhaustion-gate 2026-08-07)**: `ANTHROPIC_API_KEY` 에
+    들어갈 계정은 정적 검사(파일 존재·만료)만으로 정해지지 않는다. 계정 쿼터 소진은 자격증명 파일에
+    아무 흔적을 남기지 않으므로(2026-08-07 claude-corp **7일 쿼터 100% 소진**: `unified-7d-status=rejected`,
+    `retry-after`≈2.04일) 정적 검사만으로는 소진 계정이 1순위에 **일 단위로 고착**된다. 그래서 갱신
+    스크립트가 저빈도 heartbeat(`CLAUDE_OAUTH_GATE_RECHECK_SEC`, 기본 1h) 로 1-probe 해 429 면 그 계정을
+    `unified-reset` 시각까지 건너뛰고 다음 계정(root)을 1순위로 승격한다. 캐시가 유효한 동안 probe 는 0회,
+    만료 후 1-probe 로 자동 복귀. 네트워크·미분류 오류는 **fail-open**(도달성 장애를 소진으로 오판하지
+    않는다 — 2026-07-30 DNS 단절 사고 반영). 킬스위치 `CLAUDE_OAUTH_EXHAUSTION_GATE=0`.
+    **왜 litellm fallback 만으로 부족한가**: 폴백은 성공하지만 매 요청이 소진 계정을 먼저 때리고
+    (`num_retries=1` → 2회 왕복), **폴백이 없는 bare alias(`claude-sonnet-4`/`claude-opus-5`)는 그대로
+    실패**한다. 게다가 폴백이 성공하면 게이트웨이 로그엔 `200 OK` 만 남아(실측) 이 상태는 로그상 무증상이다.
+    `ANTHROPIC_API_KEY_ROOT` 는 "체인 종단 = root" 고정 배선이라 게이트 미적용.
 - **대화 답변(task='agent') 전용 edge-free 2계정 체인** (no-edge 2026-07-07 + sonnet-chat-fallback 2026-07-24):
   사용자 대면 assistant 답변은 `agent_core._call_llm` 이 `conversation_answer_model()` 로 outbound alias 를
   edge-free `-chat` 계열로 치환한다 — `claude-haiku-4`→`claude-haiku-4-chat`(→`-chat-root`),

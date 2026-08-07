@@ -637,3 +637,28 @@ source_of_truth: true
 - LEARNINGS: `docs/LEARNINGS.md` LRN-20260730-0001(폴백 안전망이 도달성 장애를 조용한 품질 저하로 번역 — 같은 사건 안의 대조군) · LRN-20260730-0002(env override 시 skip 하는 테스트의 vacuous pass — 실효 설정 검사 + allowlist + 역검증).
 - 잔여: REPORT §8 의 후속 3건(게이트웨이 DNS 안정화 **우선** · bare alias 단일계정 · provider-선택 층 로컬 fallback). 전부 별 cycle.
 - Cross-ref: 선행 CHG-20260730T191535-llm-edge-free-routing · DECISIONS ADR-003 · REVIEW REV-20260730T200500-postdeploy · TEST Run POSTDEPLOY.
+
+## CHG-20260807T144800-oauth-exhaustion-gate (사용량 소진 계정이 1순위 slot 에 고착되는 결함 수정)
+- Date: 2026-08-07. 사용자 보고 "claude-corp 의 모든 토큰이 소진되었지만 root 계정으로 게이트가 옮겨오지 않는다" 에서 출발.
+- **관측(라이브 근거)**: claude-corp OAuth 토큰으로 Anthropic `/v1/messages` 직접 호출 → **429**, 헤더가 원인을 확정한다 — `anthropic-ratelimit-unified-7d-status=rejected`, `7d-utilization=1.0`, `7d-reset=1786255200`(2026-08-09 15:00 KST), `retry-after=176528`(≈2.04일), 반면 `5h-status=allowed`/`5h-utilization=0.0`. 즉 burst(5h)가 아니라 **주간(7d) 쿼터 전소**이고, **일 단위로 지속되는 상태**다. 같은 조건에서 root 는 HTTP 200.
+- **결함의 실체**: 본 스크립트는 2026-07-07 이후 **정적 검사(파일 존재·만료)만** 한다. 소진은 자격증명 파일에 아무 흔적을 남기지 않으므로 claude-corp 는 계속 "사용 가능" 으로 판정돼 30분마다 `ANTHROPIC_API_KEY`(1순위 slot)에 재주입됐다. 당시 근거였던 "litellm 요청-레벨 fallback 이 흡수한다" 는 **부분적으로만 참**이다:
+  - 흡수는 되지만 **매 요청이 소진 계정을 먼저 때린다** — 라이브 응답 헤더 실측 `x-litellm-attempted-fallbacks=1`, `x-litellm-model-group=claude-haiku-4-chat-root`. `num_retries=1` 이라 폴백 전 2회 왕복이 붙고, 대화 한 턴의 보조 단계(plan/classify/sql_*/answer/…) 전부에 곱해진다.
+  - **폴백이 없는 alias 는 그대로 죽는다** — bare `claude-sonnet-4`/`claude-opus-5`(의도적 격리). REV-20260730T191535 가 "이월 P1" 로 남겨 둔 그 갭이 이번에 실제로 발현했다.
+- **trigger 설계에서 한 번 틀렸다가 실측으로 정정한 것(중요)**: 최초 구현은 게이트웨이 로그의 `RateLimitError` grep 을 probe trigger 로 삼았다. 라이브에서 확인해 보니 **claude-corp 가 429 여도 litellm 이 root 로 성공 폴백하면 게이트웨이 로그에는 `200 OK` 한 줄만 남는다**(폴백 사실은 응답 헤더에만). 즉 "매 요청이 소진 계정을 때리는" 바로 그 상태가 로그상 완전 무증상이라 그 trigger 는 영원히 발화하지 않는다. → 저빈도 **heartbeat** 를 주 신호로 바꾸고 로그 grep 은 보조로 강등했다.
+- 변경 (2 파일):
+  - `bin/refresh-claude-oauth-token.sh`: 1순위 slot 선택에 **사용량-소진 게이트** 추가.
+    - probe 조건: (a) heartbeat — 마지막 라이브 판정 후 `CLAUDE_OAUTH_GATE_RECHECK_SEC`(기본 3600s) 경과 / (b) 소진 캐시 만료(복구 확인 1회) / (c) 게이트웨이 로그 오류 관측(보조) / (d) `CLAUDE_OAUTH_FORCE_PROBE=1`.
+    - 판정: 200 → 사용(+캐시 해제) / 429 → `anthropic-ratelimit-unified-reset`(없으면 `retry-after`)을 우회 만료로 캐시하고 **다음 계정 승격** / 401·403 → 짧은 우회 / **그 외·네트워크 오류 → fail-open**(상태 미변경, 정적 결과 유지).
+    - 소진 캐시가 유효한 동안은 **probe 0회** → 로그가 깨끗해져도 30분마다 소진 계정으로 되돌아가는 flapping 이 없다.
+    - `ANTHROPIC_API_KEY_ROOT`(2순위 slot)는 **게이트 미적용** — "체인 종단 = root" 고정 배선이라 바꿀 여지가 없고, 소진돼도 주입을 멈추면 stale 토큰만 남는다.
+    - 후보 전원이 소진이면 게이트를 무시하고 정적 1순위를 유지(주입 중단이 더 나쁘다).
+    - 상태 파일 `CLAUDE_OAUTH_STATE_FILE`(기본 `/var/lib/dqa-llm-oauth/exhaustion.json`) — `{until, checked, detail}`. 소실돼도 다음 실행이 heartbeat 로 복구(내구성 요구 없음).
+    - 테스트/스테이징 훅(운영 기본값 무변경): `CLAUDE_OAUTH_CRED_ROOT` · `CLAUDE_OAUTH_PROBE_URL` · `CLAUDE_OAUTH_REPO`.
+  - `unit/feature-0002-agent-core/tests/test_oauth_exhaustion_gate.py`: **신규 15건**. 하네스가 `CLAUDE_OAUTH_*` 를 전부 고정해 운영자 셸 override 로 인한 vacuous pass 를 차단한다(LRN-20260730-0002 반영).
+- **2026-07-07 결정과의 관계**: 그때 probe 를 없앤 이유는 30분 주기 호출이 claude-corp 5h 윈도우를 :00/:30 격자에 재고정해 `session-keepalive-cron.sh`(07:35/12:35 정렬 핑)를 무력화한다는 것이었다. 그 keepalive cron 은 **현재 crontab 에 없고**(2026-08-07 확인) 서비스는 24/7 실 트래픽으로 이미 윈도우를 연다. 그래도 남는 우려에는 `CLAUDE_OAUTH_GATE_RECHECK_SEC=0` 킬스위치를 뒀다. probe 빈도는 30분→최대 1시간, 소진 기간 중에는 0 이다.
+- Verification: 대상 15건 PASS · **역검증**(게이트 off 로 실행 시 9건 FAIL — 테스트가 실제로 신 계약을 잠근다) · `bash -n` PASS · ruff `All checks passed!`. 라이브: 1순위 slot 이 root 로 전환됐고 게이트웨이 프로브 3종이 `fallbacks=0` 으로 1순위 직행(상세 TEST Run 2026-08-07-oauth-exhaustion-gate).
+- **Trade-off (정직 표기)**: 정상 상태에서 1순위 후보에 대해 **최대 시간당 1회 최소 ping**(max_tokens=16, haiku)이 발생한다 — 2026-07-07 의 "라이브 호출 0" 은 더 이상 성립하지 않는다. 대가로 소진이 일 단위로 고착되는 상태를 최대 1시간 안에 해소한다.
+- **미해소(이월)**: root access token 은 root Claude Code CLI 세션이 돌 때만 회전한다(TTL ~8h). claude-corp 소진 기간 동안 root 가 유일 가용 계정이므로, root 세션 공백이 8시간을 넘으면 정적 검사가 root 를 탈락시켜 **전면 중단**이 된다. 스크립트가 `refreshToken` 으로 직접 회전하는 해법은 사용자 자격증명 저장소 쓰기(§12.3 Critical)라 사람 결정 필요 — TASK 「이월 항목」.
+- Rollback: `CLAUDE_OAUTH_EXHAUSTION_GATE=0`(즉시, 재배포 불요) 또는 본 CHG revert → 2026-07-07~2026-08-06 정적-검사-전용 동작 복귀.
+- ANCHOR 정합: §1(운영자 자격 일원화)·§2(Alt-A gateway 경유) 무충돌 — 어느 자격증명을 주입할지의 선택 로직이며 인증/인가 경계 변경 아님.
+- Cross-ref: REVIEW REV-20260807T144800-oauth-exhaustion-gate · TASK `## TASK-20260807T144800-oauth-exhaustion-gate` · TEST Run 2026-08-07-oauth-exhaustion-gate · 선행 CHG-20260707(정적 검사 전환)·REV-20260730T191535(bare alias 단일계정 이월 P1 이 본 건으로 발현).
