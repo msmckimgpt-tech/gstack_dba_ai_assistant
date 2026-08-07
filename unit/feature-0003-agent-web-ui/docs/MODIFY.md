@@ -2913,3 +2913,25 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/verify_gc_first_use_guide.mjs`, `docs/{TASK,MODIFY,REVIEW,TEST,REPORT,FUNCTION}.md`,
   `docs/reviews/20260807T153000-{ux,design}.md`, `docs/test-runs.d/20260807T1500-gc-first-use-guide.md`.
 - Timestamp: 2026-08-07T15:00:00+09:00
+
+## CHG-20260807T1700-gc-guide-esc-capture — 안내 툴팁 Esc 양보가 라이브에서 무효였던 결함
+
+- **적발**: 선행 cycle 배포본 `f81c5bcb` 의 PB-0008 라이브 실측 #8. 멘션 자동완성이 열린 채
+  Esc → 안내까지 함께 닫힘.
+- **근본 원인**: 로직이 아니라 **핸들러 실행 순서**. 우리 Esc 핸들러가 버블 단계라, 먼저
+  등록된 멘션 AC 핸들러가 AC 를 닫은 뒤에 돌아 `_gcGuideOtherOverlayOpen()` 이 "열려 있지
+  않다" 로 오판.
+- `src/static/app/composer.js`: Esc 핸들러를 **capture 단계**로 등록(`…, true`). 같은 파일의
+  `_attachShareRangeEsc` 가 동일한 이유로 이미 capture 를 쓴다(저장소 선례).
+- `tests/verify_gc_first_use_guide.mjs`: 가짜 document 를 **capture → bubble 2단계 디스패치**로
+  전환 + `installCompetingOverlayEsc()` 주입. 선행 하네스 61 PASS 는 경쟁 핸들러가 없어
+  **vacuous pass** 였다 — 단언이 형식적이어서가 아니라 **합성을 재현하지 않아서**다.
+  경쟁 핸들러 없음/있음 **양쪽**을 검사하고, 과잉 양보(오버레이 없는데 안 닫힘)도 반대
+  방향으로 단정한다. **68/68 PASS**, capture→버블 되돌림 뮤테이션 **6 red**.
+- 피해 범위(정직): 이 결함으로도 **영구 소진은 없었다**(라이브 `localStorage=null` 확인) —
+  앞선 ux BLOCKING #1 수정이 그 경로를 이미 끊어 뒀다. 잔여 영향은 "그 로드에서 함께 사라짐".
+- 백엔드·스키마·RBAC·엔드포인트 변경 0.
+- Files: `src/static/app/composer.js`, `tests/verify_gc_first_use_guide.mjs`,
+  `docs/{TASK,MODIFY,REVIEW,TEST,REPORT,FUNCTION}.md`,
+  `docs/test-runs.d/20260807T1500-gc-first-use-guide.md`(PB-0008 Run append).
+- Timestamp: 2026-08-07T17:00:00+09:00
