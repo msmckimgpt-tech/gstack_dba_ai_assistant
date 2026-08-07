@@ -10,6 +10,16 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260807T183000-gc-guide-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
+- 대상 diff: `feature-0003/docs/{TASK,MODIFY,REPORT}.md` + `docs/test-runs.d/*.md` — **코드 변경 0**.
+- §18.8 dispatch 표 첫 행(비정책 doc-only) → panel SKIP. 사실 정합만 자체 확인: 배포 SHA
+  (`f81c5bcb`→`f60d67c5`)·PR 번호(#1190/#1191)·실측 수치(z 40 / 카드 bottom 853 < wrap top 858 /
+  linesPerItem [1,1,1,1,1] / `acAfter=false`+`tipAfter=true` / 스탬프 `c2838fc68348`→`4909197d7ea4`)는
+  전부 본 세션의 브라우저 실행 로그에서 그대로 옮긴 값이며 추정치가 없다.
+- Timestamp: 2026-08-07T18:30:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+
 ## REV-20260807T170000-gc-guide-esc-capture [SKIPPED:non-policy-doc] — 1줄 배선 수정 + 하네스 강화
 - Related TASK: feature-0003-agent-web-ui (TASK-20260807T1700-gc-guide-esc-capture)
 - Trigger: 선행 cycle 의 §18.8 ux·design 패널(REV-20260807T153000)이 이미 이 표면을 검증했고,
