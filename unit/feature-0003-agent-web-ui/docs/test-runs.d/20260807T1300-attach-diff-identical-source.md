@@ -86,3 +86,40 @@ verdict: PASS
 - **원본 1MB cap 절단의 라이브 표본 없음** — `truncated.rows` 만 스텁으로 재현했고
   `from_source/to_source` 경로는 하네스 B8f(jsdom)로만 확인.
 - 스크린리더 실기기 검증 미수행 — `aria-label`/`aria-hidden` 은 DOM 속성으로만 확인.
+
+## Environment: Windows-browser (PB-0008) — POST-DEPLOY 라이브 실측 (배포본 `ca801d46`)
+
+- Bridge: relay @ `http://172.26.144.1:9243` · Chrome/150.0.7871.128 · 전용 인스턴스
+  (프로필 `C:\temp\win-browser-attachdiff`) · Runner: AI
+- 대상: `https://localhost/` (라이브) · 서빙 자산 스탬프 `?v=140b1360451f` ·
+  `web-a`/`web-b` 둘 다 `GIT_COMMIT=ca801d46` · 서빙 `attach-diff.js` 에
+  `_renderSource`/`_identicalFlags` 심볼 6건 · 서빙 `_conv_store.py` 에 `context_lines is None or
+  identical` 분기 존재.
+
+### 서버 (라이브 배포본, 기본 `context=3`)
+
+`GET /api/attachments/1049/diff?from_version=1&to_version=2` →
+`identical=true` · `rows=5` · `types=['equal']` · gap **0** · `truncated` 3축 전부 false ·
+`sha from/to = f0145f9e / 8fa460cf`. 5행을 이어붙인 텍스트가 업로드 원본과 일치.
+(배포 전 같은 요청은 `rows=1 types=['gap']` — 본문 0줄이었다.)
+
+### 화면 — 원문 출력 (`pb0008-attachdiff-live-01.png`) **PASS**
+
+- 배너(is-warn): "줄 내용은 같지만 두 파일이 완전히 동일하지는 않습니다(줄바꿈 방식·마지막 줄
+  개행 등). 아래는 v2 원문(5줄)입니다." / 배지: `줄 차이 없음 · 파일은 다름`
+- 원문 표 5행 · 렌더 텍스트 == 원본(줄바꿈까지 동일) · SQL 구문 색 토큰 7개 ·
+  `aria-label="문서 원문 5행"`
+- 2열/단일열 `disabled=true` · "동일한 줄도 모두 보기" `disabled=true` · 구문 색 토글 노출
+  — 컨트롤이 사라지지 않아 바가 흔들리지 않음
+- 모달 높이가 내용에 맞춰 축소(빈 영역 없음)
+
+### 화면 — 정상 diff 회귀 (`pb0008-attachdiff-live-02-regression.png`) **PASS**
+
+- `probe_b.sql` v1↔v2: 배지 `+1 / -0` · `table.is-split` 6행 · gap 전개 버튼 존재 ·
+  2열/단일열·맥락 토글 **전부 활성**
+- 단일열 토글 왕복: split → unified(`table.is-unified` 생성, split 소멸) → split 복귀 — 정상 동작
+
+### 정리
+
+- 검증용 대화 `20260807093618-0abd048e` **삭제 완료**(잔존 0). 전용 Chrome 인스턴스만 `down`
+  (marker `win-browser-attachdiff` — 공용 Chrome 무접촉).

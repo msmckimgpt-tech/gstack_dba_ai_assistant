@@ -2114,3 +2114,14 @@ joinable 공유 링크를 여는* 케이스(share `Id=77` · 대화 `20260722015
 - **원문 뷰의 대용량 체감 미측정**: identical 이면 `rows` 가 각 줄을 `left`/`right` 두 벌로 싣는다.
   "줄 수는 적고 줄이 긴" 파일(minify 된 `.json`/`.js`)에서 payload·렌더 비용이 종전 gap 1행 대비
   크게 늘 수 있다. 하이라이트 성능 하네스(I1)는 4,000자/줄까지만 본다.
+
+### [POST-DEPLOY 완결 2026-08-07] attach-diff-identical-source — PR #1192 머지(`ca801d46`) → 배포 → PB-0008 라이브 **PASS**
+
+- 배포 `bin/deploy-web.sh` scope=all — web-a/web-b 롤링(soak 통과) + insight/ask/ops 워커 전량
+  `mysql-ai-agent:ca801d46` + gateway 드리프트 없음(무접촉).
+- 라이브 서버: 기본 `context=3` 요청에 `rows=5 types=['equal']` gap 0 (배포 전 동일 요청은
+  `rows=1 types=['gap']` — 본문 0줄).
+- 라이브 화면: 원문 5행 렌더 + 구문 색 + `aria-label` · diff 전용 컨트롤 비활성 ·
+  배너/배지가 sha 불일치를 정확히 표기. 정상 diff 회귀(2열 6행·gap 전개 버튼·토글 왕복) PASS.
+- 검증용 대화 삭제 완료(잔존 0). fragment
+  `docs/test-runs.d/20260807T1300-attach-diff-identical-source.md` POST-DEPLOY 절 참조.
