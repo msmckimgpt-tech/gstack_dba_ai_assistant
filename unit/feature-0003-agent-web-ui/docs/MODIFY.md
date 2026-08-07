@@ -2935,3 +2935,11 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/{TASK,MODIFY,REVIEW,TEST,REPORT,FUNCTION}.md`,
   `docs/test-runs.d/20260807T1500-gc-first-use-guide.md`(PB-0008 Run append).
 - Timestamp: 2026-08-07T17:00:00+09:00
+
+## CHG-20260807T1830-gc-guide-postverify — 안내 툴팁 PB-0008 재실측 기록 (doc-only)
+
+- `docs/test-runs.d/20260807T1500-gc-first-use-guide.md`: 배포본 `f60d67c5` 재실측 Run append
+  (**8/8 PASS**) + frontmatter verdict 를 `PASS (Windows-browser)` 로 갱신.
+- `docs/TASK.md`: 선행 2 cycle 의 PB-0008 체크박스 마감. `docs/REPORT.md`: Summary 2건에
+  배포·검증 종결 표기.
+- 코드 변경 **0**(doc-only). Timestamp: 2026-08-07T18:30:00+09:00

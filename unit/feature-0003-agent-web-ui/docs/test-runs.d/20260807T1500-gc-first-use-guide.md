@@ -2,7 +2,7 @@
 run_at: 2026-08-07T15:45:00+09:00
 session: ai/claude/feature-0009-join-guide
 scope: unit/feature-0003-agent-web-ui/src/static (index.html · app/composer.js · css/chat.css)
-verdict: PASS (유닛/계약) / PARTIAL→PASS (Windows-browser — 실측이 결함 1건 적발, 후속 cycle 로 수정)
+verdict: PASS (유닛/계약) / PASS (Windows-browser — 1차 실측이 결함 1건 적발 → 수정 후 재실측 전축 PASS)
 ---
 
 ### Run (2026-08-07) — 그룹 대화 기능 첫 사용 1회 안내 툴팁 (gc-first-use-guide)
@@ -109,3 +109,29 @@ Esc 핸들러가 버블 단계라, 먼저 등록된 멘션 AC 의 핸들러가 A
 **피해 범위(정직)**: 이 결함으로도 안내가 **영구 소진되지는 않는다**(`localStorage=null`
 실측 확인) — 앞선 ux BLOCKING #1 수정이 그 경로를 이미 끊어 두었다. 잔여 영향은 "그 로드에서
 안내가 함께 사라짐" 이었다.
+
+
+---
+
+### Run (2026-08-07, 재실측) — **Environment: Windows-browser (PB-0008)** · 배포본 `f60d67c5`
+
+capture 수정(`20260807T1700-gc-guide-esc-capture`) 배포 후 재실측. 실 Windows Chrome/150 via
+`bin/win-browser.py` relay, `https://localhost/` 세션 `bootstrap_admin`, 뷰포트 1904×945.
+서빙 스탬프 `?v=4909197d7ea4`(이전 `c2838fc68348` 에서 변경 — 캐시 무효화 확인).
+
+| # | 축 | 결과 |
+|---|---|---|
+| 1 | 첫 진입 노출 · 컴포저 위 배치 | **PASS** `z=40` · 카드 bottom 853 < `.composer-wrap` top 858 |
+| 2 | 각 안내가 한 줄로 렌더 | **PASS** `linesPerItem = [1,1,1,1,1]` |
+| 3 | 타이핑 시 자동 숨김 + 멘션 AC 가 카드 위 | **PASS** `tipAutoHiddenOnTyping=true` · overlap 상태 `elementFromPoint = mentionAutocomplete` |
+| 4 | "다시 안 보기" → 타 그룹 2곳 · 새로고침 미재노출 | **PASS** `localStorage=["bootstrap_admin"]`, 두 대화 모두 `shown=false` |
+| 5 | 입력 dismiss 후 새로고침 → 다시 뜸 | **PASS** `shown=true`, `localStorage=null` |
+| 6 | 1:1 무노출 | **PASS** |
+| 7 | Esc(열린 오버레이 없음) → 닫힘, 소진 없음 — **과잉 양보 아님** | **PASS** `tipAfter=false`, `localStorage=null` |
+| 8 | **Esc 양보 — 멘션 AC 열림 중** (1차 FAIL 축) | **PASS** 실제 버블 경로(textarea 발생) Esc 에서 **AC 는 닫히고**(`acAfter=false`) **안내는 유지**(`tipAfter=true`), `localStorage=null` |
+
+증적: `scratchpad/gcguide-02-postfix.png` · `gcguide-02-crop.png`(확대 판독).
+
+#8 은 `acAfter=false` 와 `tipAfter=true` 를 **같은 이벤트에서** 확인한 것이 근거다 — "안내가 안
+닫혔다" 만으로는 AC 핸들러가 아예 안 돌았을 가능성을 배제하지 못한다(1차 실측에서 document 에
+직접 dispatch 했을 때가 그 경우였다). 포커스가 있는 textarea 에서 발생시켜 실제 전파 경로를 태웠다.

@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260807T1830-gc-guide-postverify — 안내 툴팁 PB-0008 재실측 기록 (비-정책 doc-only)
+
+capture 수정 배포본 `f60d67c5` 에서 8축 전부 재실측해 선행 2 cycle 의 잔여를 닫는다.
+
+- [x] #8 Esc 양보 — 실제 버블 경로에서 AC 만 닫히고 안내 유지 (1차 FAIL 축 해소)
+- [x] #7 과잉 양보 아님 — 열린 오버레이가 없으면 Esc 로 정상 닫힘 (반대 방향)
+- [x] #1~#6 선행 축 회귀 없음 + 서빙 스탬프 변경 확인
+- [x] test-runs.d fragment 에 Run(PASS) append + verdict 갱신
+
+### 9. Requested Scope
+
+- 선행 cycle 의 PB-0008 잔여 종결 — ✓ (8/8 PASS 기록)
+
 ## TASK-20260807T1700-gc-guide-esc-capture — 안내 툴팁 Esc 양보가 라이브에서 무효였던 결함 (Minor §12.3 — feature-0003 `static/app/composer.js` 1줄 + 하네스, PB-0008 적발)
 
 - **적발 경로**: 선행 cycle(`20260807T1500-gc-first-use-guide`, 배포본 `f81c5bcb`)의 **PB-0008
@@ -31,7 +44,7 @@ source_of_truth: true
 
 - [x] `app/composer.js` Esc 핸들러 capture 등록
 - [x] 하네스 2단계 디스패치 + 경쟁 핸들러 주입 → **68/68 PASS**, 되돌림 뮤테이션 **6 red**
-- [ ] 배포 후 PB-0008 재실측(#8 축 + 7축 회귀)
+- [x] 배포 후 PB-0008 재실측(배포본 `f60d67c5`) — **8/8 PASS**(#8 은 `acAfter=false` + `tipAfter=true` 동시 확인)
 
 ### 9. Requested Scope
 
