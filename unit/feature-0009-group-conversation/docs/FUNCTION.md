@@ -55,6 +55,13 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
   경로 누락을 보정 — 그 전엔 새로고침으로 복원된 대화가 아무리 봐도 배지가 안 줄었다).
 - per-conversation run cap + llm_usage actor 귀속.
 - 멤버 add/remove + @assistant actor 감사(audit) 액션.
+- **(gc-first-use-guide, 2026-08-07)** 그룹 대화 **기능 첫 사용** 1회 안내 툴팁 — 컴포저 위
+  `#groupGuideTip` 말풍선(모달/백드롭 없음, 5줄 각 30자 이하). 소진 단위는 **계정(username)**
+  이라 각 그룹 대화마다 반복하지 않는다(`localStorage mad.gcFirstUseGuide.v1`). "다시 안 보기"
+  만 영구 소진이고 입력·Esc 는 그 로드에서만 숨긴다. `conversation.ask` 없음·`blocked` 대화는
+  표시도 소진도 안 함. 문구는 본 FUNCTION 계약과 대조해 작성 — 첨부는 **열람 전원 공유 / LLM
+  주입은 발신자 본인 한정**(REQ-GC-R6, F1), `@이름` 은 LLM 미호출(REQ-GC-R4). 코드/문서 정본은
+  feature-0003-agent-web-ui.
 
 ## 4. Out of Scope (deferred / accepted-risk)
 - **풀 스레드 UI + 스레드별 AI run 병렬화** — 별도 계획(S6). run-status KV 가
@@ -137,6 +144,8 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - AC-GC-A10: read-state 커서 + @mention 표시가 멤버별로 동작한다.
 - AC-GC-A11: backfill 후 기존 1:1 대화·fork·share-link 가 무회귀로 동작한다.
 - AC-GC-A12: 멘션 자동완성이 방 멤버 roster 로 한정된다(전역 계정 검색 금지, F7).
+- AC-GC-A13: 그룹 대화 기능을 처음 쓰는 계정에게 사용법 안내가 1회 노출되고, 같은 계정의 다른
+  그룹 대화·새로고침에서는 재노출되지 않는다("각 대화의 처음" 이 아니라 "기능의 처음").
 
 ### share-visibility-window (TASK-20260704, [from,to] 공유창 격리 — SECURITY.md §21 정본)
 - AC-GC-A20: "여기부터 공유"(floor) + "여기까지 공유"(ceiling)로 공유가 `[from,to]` window 만 노출하고, 말풍선 액션 3종(샘플 등록/여기서 분기/여기까지·여기부터 공유)은 ☰ 메뉴로 통합되며 👍/👎 는 밖에 보존된다.

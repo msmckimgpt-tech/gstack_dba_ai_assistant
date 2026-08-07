@@ -2863,3 +2863,53 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   스냅샷·롤백 SQL 을 `artifacts/attach-chain-merge/` 로 회수.
 - Files: `scripts/attach_chain_merge.py`, `tests/test_attach_chain_merge.py`, `docs/{TASK,MODIFY,REVIEW}.md`.
 - Timestamp: 2026-08-07T03:20:00+09:00
+
+## CHG-20260807T1500-gc-first-use-guide — 그룹 대화 기능 첫 사용 1회 가이드 툴팁
+
+- 사용자 요청(2026-08-07, `/_template:entry`): 그룹대화 참여 기능을 **처음 쓸 때**(각 대화의 처음이
+  아니라) 한 줄 30자 이하의 간단한 안내를 툴팁으로. 팝업은 화면을 가려 쓰지 않는다.
+- `src/static/index.html`: 컴포저 바로 위에 `#groupGuideTip` 안내 말풍선 마크업 + 안내 5줄
+  (일반 대화 · `@assistant` 요청 · 멤버 멘션 · 첨부 공유 · 안 읽음 배지). 최장 24자.
+- `src/static/app/composer.js`: 계정(username) 단위 소진 로직 — `GC_GUIDE_LS_KEY`
+  (`mad.gcFirstUseGuide.v1`, 소진한 username 배열 · 상한 50) + `_gcGuideSeenList` /
+  `_gcGuideAccountKey` / `_gcGuideAlreadySeen` / `_gcGuideMarkSeen` / `hideGroupFirstUseGuide` /
+  `_wireGroupFirstUseGuide` / `_maybeShowGroupFirstUseGuide`. 판정 호출은 `renderComposer` 말미 1회 —
+  대화 전환·복원·폴링이 전부 지나는 choke-point 라 진입 경로별 누락이 생기지 않는다
+  (`gc-unread-read-fix` 가 겪은 경로 누락 실패 모드의 반대 설계). 세션 하이드레이션 전(계정 미상)
+  에는 노출을 **보류**해 익명 키로 소진되는 일을 막는다.
+- `src/static/css/chat.css`: `.gc-guide-tip*` — 컴포저 위 caret 말풍선, `width:max-content`
+  (각 안내가 한 줄로 떨어짐) + 좁은 뷰포트 줄바꿈 degrade, `prefers-reduced-motion` 등장효과 생략.
+  **모달 백드롭·포커스 트랩 없음** — 대화 내용도 입력창 조작도 차단하지 않는다.
+- **닫기와 소진 분리**(§18.8 ux 패널 BLOCKING #1): "다시 안 보기" 클릭만 영구 소진,
+  입력 시작·Esc 는 `_gcGuideDismissedThisLoad` 로 이 로드에서만 숨김 → 다음 방문에 재노출.
+  Esc 는 `_gcGuideOtherOverlayOpen()`(멘션 AC·액션/모델/추론/제품 드롭업 5종)이 열려 있으면
+  양보한다(그 Esc 는 그쪽 몫). 재렌더가 리스너를 쌓지 않도록 `dataset.wired` 1회 배선.
+- **발화 가능 게이트**(ux BLOCKING #2): `can("conversation.ask") && !conv.blocked` 가 아니면
+  표시도 소진도 하지 않는다 — 거짓 안내로 유일한 1회 기회를 소비하지 않게.
+- **a11y**: `aria-live="polite"`(표시 전환 통지) + 닫기 라벨을 `다시 안 보기` + `title` 로
+  영구성 명시. 포커스 이동은 채택 안 함(팝업 금지 요구와 상충).
+- **문구 F1 정합**(ux MAJOR #3): "첨부파일은 멤버 모두가 봅니다" → `첨부는 전원 공유, AI엔 내 것만`.
+  LLM 주입은 발신자 본인 첨부 한정이라 전자는 오도다. `@이름` 줄도 `@이름 은 알림만, AI 미호출`
+  로 바꿔 바로 윗줄(`@assistant` → AI 응답)과 대비시켰다.
+- **스택·배치**(design BLOCKING/MAJOR): `z-index: 40`(`.mention-ac`·`.chat-drop-overlay` 의
+  50 **아래**) + 앵커 `bottom: calc(100% + 6px)` 로 카드·caret 전체를 `.composer-wrap` 밖에
+  세워 `#llmRestrictionBanner`/`#timeoutExtendBanner` 잠식을 제거. `max-width` 는 뷰포트가
+  아니라 컨테이너 기준. 터치 타깃 확보(padding 8/10 + 음수 margin). 제목 13px.
+- **다크 모드 — 지적을 실측으로 검증해 반대로 조치**: `css/base.css` 에 `prefers-color-scheme`
+  블록이 **0개**(라이트 단일 테마, `--surface` 항상 `#ffffff`)라 다크 override 를 넣으면 OS 가
+  다크일 때 흰 카드 위 연파랑(≈1.8:1)이 된다 → **넣지 않고** 그림자·hover 를 `--gc-guide-*`
+  토큰으로 빼 다크 도입 지점만 남겼다. 대비는 계산해서 고쳤다 — `--text-muted`(#807d72)는
+  흰 배경 **4.12:1** 로 12px 본문 AA 미달이라 전용 토큰 `#4a4841`(**9.15:1**)로 교체
+  (제목 15.38 · 닫기 5.17).
+- **모션**: 저장소 anim-pref 규약 이식 — `html:not([data-motion="on"])` + `html[data-motion="off"]`.
+- 백엔드·스키마·RBAC·엔드포인트·권한 변경 **0**. 1:1 대화는 노출도 소진도 없음.
+- 검증: `tests/verify_gc_first_use_guide.mjs` **61/61 PASS**(실 함수 본문 추출 + 가짜 DOM/localStorage —
+  문자열 grep 아님) · **뮤테이션 역검증 5/5 KILLED**(입력-소진 복원 · 게이트 제거 · Esc 양보 제거 ·
+  z-index 60 · caret wrap 잠식) · `node --check`(ESM) PASS · chat.css brace 624=624.
+- §18.8 적대 패널 ux·design **양쪽 BLOCK** → 전건 disposition(REVIEW.md REV-20260807T153000 2건 +
+  `docs/reviews/20260807T153000-{ux,design}.md`).
+- 기능 정본 문서는 feature-0009-group-conversation (cross-reference).
+- Files: `src/static/index.html`, `src/static/app/composer.js`, `src/static/css/chat.css`,
+  `tests/verify_gc_first_use_guide.mjs`, `docs/{TASK,MODIFY,REVIEW,TEST,REPORT,FUNCTION}.md`,
+  `docs/reviews/20260807T153000-{ux,design}.md`, `docs/test-runs.d/20260807T1500-gc-first-use-guide.md`.
+- Timestamp: 2026-08-07T15:00:00+09:00

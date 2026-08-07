@@ -253,6 +253,26 @@
             <button type="button" class="timeout-extend-banner-btn" id="timeoutExtendBannerBtn"
                     title="이번 요청에 한해 시간 제한 없이 끝까지 추론합니다">계속 추론</button>
           </div>
+          <!-- feature-0009 gc-first-use-guide: 그룹 대화 기능을 **처음 쓰는 계정**에 1회만 뜨는
+               비차단 가이드 툴팁. 모달/팝업이 아니라 컴포저 위에 붙는 작은 말풍선이라 작업 화면을
+               가리지 않는다(사용자 결정 2026-08-07). 각 그룹 대화마다 반복하지 않는다 — 계정당 1회.
+               노출 판정·닫기 영속(localStorage)은 app/composer.js 의
+               _maybeShowGroupFirstUseGuide / hideGroupFirstUseGuide. -->
+          <div class="gc-guide-tip hidden" id="groupGuideTip" role="note"
+               aria-live="polite" aria-label="그룹 대화 사용 안내">
+            <div class="gc-guide-tip-head">
+              <span class="gc-guide-tip-title">그룹 대화 사용법</span>
+              <button type="button" class="gc-guide-tip-close" id="groupGuideTipClose"
+                      title="이 안내를 앞으로 표시하지 않습니다">다시 안 보기</button>
+            </div>
+            <ul class="gc-guide-tip-list">
+              <li>그냥 입력하면 멤버끼리 대화해요</li>
+              <li>@assistant 를 붙이면 AI가 답해요</li>
+              <li>@이름 은 알림만, AI 미호출</li>
+              <li>첨부는 전원 공유, AI엔 내 것만</li>
+              <li>안 읽은 메시지는 목록에 배지 표시</li>
+            </ul>
+          </div>
           <div class="composer-box">
             <!-- feature-0008 (composer-model-selector): textarea 좌측의 multi-action `+`
                  dropdown. ChatGPT 패턴 — primary popup 에 [파일 첨부, 모델 선택] 2 항목.

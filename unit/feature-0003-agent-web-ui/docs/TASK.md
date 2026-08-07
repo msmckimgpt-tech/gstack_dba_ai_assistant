@@ -8,6 +8,64 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260807T1500-gc-first-use-guide — 그룹 대화 **기능 첫 사용** 1회 가이드 툴팁 (Minor §12.3 — feature-0003 프론트 `static/index.html`·`static/app/composer.js`·`css/chat.css`, 기능 정본 feature-0009, `/_template:entry` arg-given)
+
+- **사용자 요청(2026-08-07)**: "서비스 내 사용자가 그룹대화 참여 기능을 처음 사용할 때(각 그룹대화의
+  처음이 아니라, 기능을 처음 사용할 때) 간단한 가이드 툴팁을 사용자에게 보여주세요. (팝업은 화면을
+  가리기 때문에 사용하지 않습니다) 일반 대화 및 assistant에게 요청하는 방법등을 포함하고, 그 외
+  기능들도 단순명료하게 전달해주세요. 각 가이드는 한 줄, 30 글자를 넘지 않을만큼 간단해야 합니다."
+
+### 2.1 Implementation Plan
+
+- **영향받는 파일 / symbol**
+  - `unit/feature-0003-agent-web-ui/src/static/index.html` — `#groupGuideTip`(정적 마크업 + 안내 5줄)
+  - `unit/feature-0003-agent-web-ui/src/static/app/composer.js` — `GC_GUIDE_LS_KEY` ·
+    `_gcGuideSeenList` · `_gcGuideAccountKey` · `_gcGuideAlreadySeen` · `_gcGuideMarkSeen` ·
+    `hideGroupFirstUseGuide` · `_wireGroupFirstUseGuide` · `_maybeShowGroupFirstUseGuide` ·
+    `renderComposer`(말미 호출 1줄)
+  - `unit/feature-0003-agent-web-ui/src/static/css/chat.css` — `.gc-guide-tip*`
+  - `unit/feature-0003-agent-web-ui/tests/verify_gc_first_use_guide.mjs` — 신규 하네스
+- **접근 방법**: 소진 단위를 **대화 id 가 아니라 계정(username)** 으로 잡아 "기능의 처음" 요구를
+  만족시킨다(localStorage `mad.gcFirstUseGuide.v1` = 소진한 username 배열). 노출 판정은
+  `renderComposer` 말미 1회 호출 — 대화 전환·새로고침 복원·폴링이 모두 지나는 choke-point 라
+  진입 경로별 누락(gc-unread-read-fix 가 겪은 실패 모드)이 생기지 않는다. 표면은 컴포저 위에
+  붙는 caret 말풍선이며 **백드롭·포커스 트랩이 없다**(팝업 금지 요구).
+  **닫기와 소진을 분리한다**(§18.8 ux 패널 반영): "다시 안 보기" 클릭만 영구 소진이고,
+  입력 시작·Esc 는 **이 페이지 로드에서만** 숨긴다 — 안내가 뜬 순간 반사적으로 타이핑한
+  사용자가 한 줄도 못 읽고 복구 경로 없이 온보딩을 잃는 것을 막는다. 발화 불가 상태
+  (`conversation.ask` 없음 / 대화 `blocked`)에서는 표시도 소진도 하지 않는다 — 그 계정에겐
+  "@assistant 를 붙이면 AI가 답해요" 가 지금 참이 아니다. 백엔드·스키마·RBAC·엔드포인트 변경 0.
+- **완료 판정 기준(AC)**
+  - AC-1: 그룹 대화를 **처음** 여는 계정에게 컴포저 위에 안내가 뜬다.
+  - AC-2: **두 번째** 그룹 대화에서는 다시 뜨지 않는다(대화 단위 반복 금지).
+  - AC-3: 새로고침·재로그인 후에도 다시 뜨지 않는다(localStorage 영속).
+  - AC-4: 1:1 대화에서는 뜨지 않고 소진도 되지 않는다.
+  - AC-5: 안내 항목은 5줄이고 각 줄이 30자 이하 한 줄이며, 일반 대화 방법과 `@assistant`
+    요청 방법을 포함한다.
+  - AC-6: 모달 백드롭이 없어 대화 내용·입력창 조작을 차단하지 않는다.
+  - AC-7: "다시 안 보기" 만 영구 소진이고, 입력·Esc 로 닫으면 다음 방문에 다시 뜬다.
+  - AC-8: `conversation.ask` 권한이 없거나 차단된 대화에서는 표시도 소진도 하지 않는다.
+  - AC-9: 안내는 `#mentionAutocomplete`(z 50)·`.chat-drop-overlay`(z 50) **아래**에 서고,
+    카드와 caret 전체가 `.composer-wrap` 밖이라 상단 배너를 잠식하지 않는다.
+- **위험도**: Minor (프론트 표시 전용·비파괴·additive, 인가/데이터/외부비용 무관)
+
+- [x] `index.html` 안내 툴팁 마크업 + 5줄 문구
+- [x] `css/chat.css` `.gc-guide-tip*` (caret · max-content 폭 · reduced-motion)
+- [x] `app/composer.js` 계정단위 소진 로직 + `renderComposer` 배선
+- [x] `tests/verify_gc_first_use_guide.mjs` **61/61 PASS** + 뮤테이션 역검증 **5/5 KILLED**
+- [x] §18.8 적대 패널(ux·design) — 양쪽 BLOCK 지적 반영 (REV-20260807T153000, artifact 2건)
+- [ ] 배포 후 PB-0008 Windows-browser 실측(6축 — test-runs.d fragment §4)
+
+### 9. Requested Scope
+
+- 그룹대화 **참여 기능 첫 사용 시** 가이드 노출 — ✓ (계정단위 1회, `_maybeShowGroupFirstUseGuide`)
+- **각 그룹대화의 처음이 아니라 기능의 처음** — ✓ (소진 키 = username, 대화 id 아님 / 하네스 [1회] 케이스)
+- **팝업 금지, 툴팁** — ✓ (백드롭·포커스 트랩 없음, 컴포저 위 caret 말풍선)
+- **일반 대화 방법 포함** — ✓ ("그냥 입력하면 멤버끼리 대화해요")
+- **assistant 요청 방법 포함** — ✓ ("@assistant 를 붙이면 AI가 답해요")
+- **그 외 기능 단순명료 전달** — ✓ (멤버 멘션 · 첨부 공유 · 안 읽음 배지 3줄)
+- **각 가이드 한 줄 · 30자 이하** — ✓ (최장 24자, 하네스가 단정 / 실 렌더 줄 수는 PB-0008)
+
 ## TASK-20260805T192000-verdict-badge-postdeploy — 판정 배지 PB-0008 라이브 실측 (doc-only)
 
 선행 cycle(feature-0036 PR #1158)의 시각 검증은 정적 자산이 web 이미지에 baked 되는 구조상 배포
