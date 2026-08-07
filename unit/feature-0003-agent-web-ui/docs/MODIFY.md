@@ -2863,7 +2863,6 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   스냅샷·롤백 SQL 을 `artifacts/attach-chain-merge/` 로 회수.
 - Files: `scripts/attach_chain_merge.py`, `tests/test_attach_chain_merge.py`, `docs/{TASK,MODIFY,REVIEW}.md`.
 - Timestamp: 2026-08-07T03:20:00+09:00
-
 ## CHG-20260807T1500-gc-first-use-guide — 그룹 대화 기능 첫 사용 1회 가이드 툴팁
 
 - 사용자 요청(2026-08-07, `/_template:entry`): 그룹대화 참여 기능을 **처음 쓸 때**(각 대화의 처음이
@@ -2943,3 +2942,66 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - `docs/TASK.md`: 선행 2 cycle 의 PB-0008 체크박스 마감. `docs/REPORT.md`: Summary 2건에
   배포·검증 종결 표기.
 - 코드 변경 **0**(doc-only). Timestamp: 2026-08-07T18:30:00+09:00
+## CHG-20260807T1300-ai-claude-attach-diff-identical-source — 내용 동일 시 문서 원문 출력
+
+- **서버** `src/routers/_conv_store.py` `_build_version_diff_view`: `identical` 판정을 2차 패스보다
+  앞에서 확정하고, 축약 분기를 `context_lines is None or identical` 로 넓혔다. 맥락 축약은 변경
+  주변만 남기는 연산이라 변경 0개면 **파일 전체가 gap 한 줄**로 접혔다 — 프론트에 줄 근거가 없었다.
+  행 상한·`truncated.rows` 계약은 불변.
+- **프론트** `src/static/app/attach-diff.js`: `_renderSource` 신설(줄번호+본문 2열, `is-source`) ·
+  `_appendColgroup` 에 `source` kind · `_renderBody` identical 분기가 배너 + 원문 표를 렌더(빈 문서는
+  안내만) · `syncDiffOnlyControls` 신설(identical 이면 2열/단일열·맥락 토글 숨김) · `syncHlToggle`
+  노출 조건에서 `identical` 제외 제거(원문도 칠할 본문이다) · 요약 배지 `차이 없음 — 원문 표시`.
+- **CSS** `src/static/css/chat.css`: `.attach-diff-table.is-source` + **`[hidden]` override 3종**.
+  후자는 부수 적발 — author `display:inline-flex` 가 UA `[hidden]{display:none}` 를 이겨 선행 cycle 의
+  토글 숨김(AC-AVD-23)이 화면에서 작동하지 않았다(같은 기전을 쓰는 이번 변경과 함께 봉인).
+- **테스트** `tests/verify_attach_diff_identical_source.mjs` 신설 39건(A 원문 무손실 · B 본문 분기 ·
+  C 하이라이트 parity · D 거짓 어포던스+CSS 실효 · E 서버 계약) ·
+  `tests/test_attachment_version_diff.py` B7/B7b/B7c/E15 신규 ·
+  `tests/verify_attach_diff_syntax_highlight.mjs` E8 `_paintCell` 개수 계약 4→5(렌더러 3종).
+- 신규 권한·스키마·마이그레이션·엔드포인트 shape 변경 **0**. 본문 노출 경계 불변(`context=full` 로
+  이미 조회 가능하던 범위 · D21 pending 403 그대로).
+- Files: `src/routers/_conv_store.py`, `src/static/app/attach-diff.js`, `src/static/css/chat.css`,
+  `tests/verify_attach_diff_identical_source.mjs`, `tests/test_attachment_version_diff.py`,
+  `tests/verify_attach_diff_syntax_highlight.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`,
+  `docs/test-runs.d/20260807T1300-attach-diff-identical-source.md`.
+- Timestamp: 2026-08-07T13:00:00+09:00
+
+## CHG-20260807T1345-ai-claude-attach-diff-identical-source-panel — §18.8 적대 리뷰 반영
+
+`REV-20260807T133000`(ux) · `REV-20260807T133001`(design) 의 CONCERN 대응. 초판 대비 변경:
+
+- **`_identicalFlags(data)` 신설**(`attach-diff.js`): `clipped`(행 상한 또는 원본 cap 절단) ·
+  `shaDiff`(줄 비교는 같은데 sha256 상이) 두 플래그를 **한 곳**에서 판정하고 안내 배너·요약 배지가
+  같이 쓴다. 초판은 세 요약이 각자 다른 근거로 만들어져 한 화면에서 서로를 반박했다
+  ("차이가 많아 앞쪽 6000행" + "문서 원문(20000줄)" + "차이 없음").
+- **절단 배너 문구 분기**: identical 이면 "차이가 많아" 대신 "문서가 길어". 안내 배너는 절단 시
+  "원문" 단정을 버리고 "비교한 범위에서 … 문서 앞부분 N줄" 로 약화(등급도 is-warn).
+- **sha256 불일치 표면화**: `splitlines()` 비교가 CRLF↔LF·마지막 줄 개행을 흡수하므로 "완전히
+  동일" 이라 단정하지 않는다. 판별 근거는 이미 응답에 있던 필드(신규 API 0).
+- **컨트롤 = 숨김 → 비활성**: 판정면을 `syncHlToggle` 과 동일화(`comparable !== false` ·
+  `!identical` · `rows.length > 0`)해 비교 불가·같은 버전·조회 실패 화면에도 적용하고, 숨기는 대신
+  비활성 + `title` 사유. 숨기면 `.attach-diff-stats{margin-left:auto}` 때문에 컨트롤 바가 흔들린다.
+  초기 호출 추가로 응답 전 깜빡임 제거.
+- **dead 자산 정리**: `.attach-diff-table.is-source .attach-diff-code{border-right:none}` 는
+  끌 대상이 없는 **no-op** 이라 삭제(`border-right` 를 주는 규칙은 `is-split .side-left` 하나뿐).
+  행 클래스 `is-source` → `is-plain`(표 계층 modifier 와 계층 충돌 + dead class).
+- **접근성**: 원문 표 `aria-label` + 줄번호 셀 `aria-hidden`(원문 뷰는 문서라 매 줄 낭독이 방해).
+- **테스트**: 하네스 39 → **61건**. D 섹션을 정적 정규식에서 **모달 실구동 4상태 실측**으로 재작성,
+  B8b~B8f(절단 문구) · B9~B9c(sha 불일치) · D9/D9b(구조 단언 — 초판 D8 은 CSS 문자열 존재만 보는
+  "항상 통과하는 검사") 추가. 뮤테이션 3/3 red 확인.
+- Files: `src/static/app/attach-diff.js`, `src/static/css/chat.css`,
+  `tests/verify_attach_diff_identical_source.mjs`, `docs/{FUNCTION,REVIEW,REPORT,TASK,MODIFY}.md`,
+  `docs/reviews/20260807T1330Z-{ux,design}.md`.
+- Timestamp: 2026-08-07T13:45:00+09:00
+
+## CHG-20260807T1420-ai-claude-attach-diff-identical-source-a5 — 선행 하네스 A5 계약 개정
+
+- `tests/verify_attach_version_diff.mjs` A5: 초판 계약("identical 이면 표 대신 안내만")이 이번
+  cycle 로 바뀌어 red 가 됐다. 픽스처가 **서로 다른 sha256**(`aaaa`/`bbbb`)을 쓰고 있었는데 그
+  조합이 이제 의미를 갖기 때문(줄 종단자 차이 → 단정 약화 is-warn).
+- 해소: 기본 경로는 해시 동일 픽스처로 고정(is-same) + **A5b**(빈 문서면 원문 표도 없음) ·
+  **A5c**(sha 불일치는 is-warn) 신설. 갈래별 문구는 전용 하네스가 담당한다는 경계를 주석에 명시.
+- 89 → **91 PASS**. 코드 변경 0(테스트 계약만).
+- Files: `tests/verify_attach_version_diff.mjs`, `docs/{MODIFY,REPORT}.md`.
+- Timestamp: 2026-08-07T14:20:00+09:00

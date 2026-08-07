@@ -2898,6 +2898,21 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   color: var(--text-2);
   cursor: pointer;
 }
+/* `[hidden]` 강제 (권한 grid `[hidden]` 트랩과 동일 계열 — profile.css §387 참조).
+   위 `display: inline-flex` 는 author origin 이라 UA 의 `[hidden]{display:none}` 를 이긴다.
+   그래서 JS 가 `el.hidden = true` 를 줘도 컨트롤이 그대로 보였다 — 하이라이트 토글의 "칠할
+   본문이 없으면 숨김" 계약(AC-AVD-23)이 CSS 층에서 무력화돼 있던 것. class+attr (0,2,0) 로
+   명시 우선. (2026-08-07 적발: 원문 뷰 cycle 에서 같은 기전을 쓰려다 드러났다.) */
+.attach-diff-ctxtoggle[hidden],
+.attach-diff-hltoggle[hidden],
+.attach-diff-viewtoggle[hidden] { display: none; }
+/* diff 표가 없는 화면(내용 동일·바이너리·같은 버전·조회 실패)의 diff 전용 컨트롤은 **비활성**이다
+   — 숨기면 `.attach-diff-stats{margin-left:auto}` 때문에 컨트롤 바가 통째로 흔들린다(버전 쌍을
+   오가며 훑을 때 누르려던 버튼이 이동). 비활성은 위치를 지키면서 "지금은 쓸 수 없다" 를 말한다. */
+.attach-diff-mode:disabled { color: var(--text-muted); background: var(--surface-2); cursor: default; }
+.attach-diff-mode:disabled:hover { background: var(--surface-2); }
+.attach-diff-ctxtoggle.is-disabled,
+.attach-diff-viewtoggle.is-disabled { opacity: 0.55; cursor: default; }
 .attach-diff-body {
   padding: 12px 20px 18px;
   overflow-y: auto;

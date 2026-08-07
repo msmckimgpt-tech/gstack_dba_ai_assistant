@@ -3563,3 +3563,43 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 
 **잔여**: PB-0008 라이브 시각검증(합쳐진 목록 · 날짜 표기).
 - Artifact: 본 entry
+
+## REV-20260807T133000-ai-claude-attach-diff-identical-source [SUBAGENT:ux] — CONCERN
+
+- Related TASK: feature-0003-agent-web-ui (20260807T1300-attach-diff-identical-source)
+- Trigger: UI/modal/screen keyword matched (모달·화면·표시)
+- Timestamp: 2026-08-07T13:30:00Z
+- Verdict: CONCERN
+- Artifact: `unit/feature-0003-agent-web-ui/docs/reviews/20260807T1330Z-ux.md`
+- Critical issue: 줄바꿈 계열 차이를 흡수한 `identical` 위에 "문서 원문" 이라는 더 강한 단정을
+  얹었고(판별 근거 sha256 은 이미 응답에 있음), 절단 상태에서 "차이가 많아"/"차이 없음" 이 모순
+- Human Approval Needed: no
+
+**대응**: P2 3건 전부 같은 cycle 에서 수정 — `_identicalFlags` 신설(배너·배지 동일 판정) ·
+절단 문구 상태별 분기 · 판정면을 `syncHlToggle` 과 동일화 + 초기 호출. P3 접근성·문서도 반영.
+메타 요약 표 추가(권고 4)는 요청 범위 밖이라 REPORT.md §8 후속 제안으로 등재.
+
+## REV-20260807T133001-ai-claude-attach-diff-identical-source [SUBAGENT:design] — CONCERN
+
+- Related TASK: feature-0003-agent-web-ui (20260807T1300-attach-diff-identical-source)
+- Trigger: UI/modal/layout keyword matched (모달·레이아웃·표시)
+- Timestamp: 2026-08-07T13:30:00Z
+- Verdict: CONCERN
+- Artifact: `unit/feature-0003-agent-web-ui/docs/reviews/20260807T1330Z-design.md`
+- Critical issue: 원문 표에 추가한 CSS 가 **no-op** 인데 하네스가 그 문자열 존재만 잠근다(항상
+  통과하는 검사) + 절단 상태의 완결성 오진술 + 거짓 어포던스 규칙의 4상태 중 1개 적용
+- Human Approval Needed: no
+
+**대응**: dead CSS 삭제 · row dead class(`is-source` → `is-plain`) 정리 · D8 을 DOM 구조 단언으로
+교체 · 컨트롤은 숨김이 아니라 **비활성**(ux 리뷰의 레이아웃 흔들림 지적과 수렴) · colgroup 계약
+표에 `is-source` 행 추가 · `is-equal` opacity 비대칭을 "의도" 로 명시.
+`base.css` 전역 `[hidden]` 종결 규칙(R4)은 기존 9지점 회수를 동반해야 안전해 후속으로 등재.
+`is-same` 초록 어휘 충돌(R5)은 절단·해시 불일치 시 warn 으로 내려가 발생 빈도가 줄었고, 최종
+판정은 PB-0008 실화면에 맡긴다.
+
+**두 리뷰의 수렴점(가장 중요한 교훈)**: 이번 변경의 진짜 위험은 렌더가 아니라 **말**이었다.
+"문서 원문" 은 전량을 봤을 때만 쓸 수 있는 단어인데, 초판은 (a) 행 상한 절단 — 이번 변경으로
+**처음 도달 가능해진 상태** — 와 (b) 원본 1MB cap, (c) `splitlines()` 가 흡수하는 줄 종단자
+차이 세 경우 모두에서 그 단어를 썼다. 화면의 세 요약(절단 배너·안내 배너·요약 배지)이 각자 다른
+근거로 만들어져 서로를 반박한 것이 근본이며, 해소는 **판정을 한 곳(`_identicalFlags`)으로 모으는
+것**이었다 — 서버에서 `identical` 판정을 한 번만 하도록 한 것과 같은 처방을 프론트에도 적용.
