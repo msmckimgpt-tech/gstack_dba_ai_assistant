@@ -372,6 +372,24 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 
 §16.7 G1 — 현재 cycle 에서 사용자가 요청한 범위의 명시 열거(cycle 마다 rewrite).
 
+**cycle: TASK-20260807T144800-oauth-exhaustion-gate** (원 요청: "`bin/refresh-claude-oauth-token.sh`
+'claude-corp' 의 모든 토큰이 소진되었지만, 'root' 계정으로 게이트가 옮겨오지 않는 이슈가 확인되어
+수정이 필요합니다.")
+
+- [x] "게이트가 root 로 옮겨오지 않는" 원인 규명 — 산출물: TEST.md Run 2026-08-07-oauth-exhaustion-gate 「원인 확정」(claude-corp **7일 쿼터 100% 소진** 실측 헤더 + 정적 검사가 이를 못 보는 구조)
+- [x] 1순위 slot 이 소진 계정을 벗어나도록 수정 — 산출물: `bin/refresh-claude-oauth-token.sh` 사용량-소진 게이트(heartbeat probe + 소진 캐시 + fail-open)
+- [x] 회귀 잠금 — 산출물: `test_oauth_exhaustion_gate.py` 15건(+역검증: 게이트 off 시 9건 FAIL 확인)
+- [x] 라이브 적용·확인 — 산출물: TEST.md 동 Run 「라이브 적용」(1순위 = root 전환 · 게이트웨이 `fallbacks=0` · bare `claude-sonnet-4` 200 회복)
+- [ ] **이월(별 결정 필요)**: root access token 자체의 갱신 주체 부재 — 아래 「이월 항목」 참조
+
+### 이월 항목 (TASK-20260807T144800 에서 발견, 본 cycle 범위 밖)
+- **root OAuth access token 은 root Claude Code CLI 세션이 돌 때만 회전한다**(TTL ~8h). 본 스크립트는
+  refresh token 을 쓰지 않고 디스크의 access token 을 읽기만 한다. claude-corp 가 소진된 지금 root 는
+  **유일한 가용 계정**이므로, root 세션이 8시간 이상 돌지 않으면(야간·주말) 정적 검사가 root 를 탈락시켜
+  **두 slot 모두 사용불가 → LLM 전면 중단**이 된다. 해소하려면 스크립트가 `refreshToken` 으로 토큰을
+  직접 회전시켜야 하는데, 이는 사용자의 Claude Code 자격증명 저장소에 쓰는 행위이고 refresh token 이
+  일회성으로 회전하는 경우 CLI 로그인을 깨뜨릴 수 있어 **사람 결정이 필요**하다(§12.3 Critical — 자격증명).
+
 **cycle: TASK-20260730T191535-llm-edge-free-routing** (원 요청: "18시 기준으로 모든 LLM 요청이
 edge 로 호출되는 이슈가 확인되었습니다. 더 이상 local llm 은 사용하지 않는 것으로 구성되었지만
 해당 이슈가 나타나는 상황이라 수정이 필요합니다.")
@@ -413,3 +431,13 @@ edge 로 호출되는 이슈가 확인되었습니다. 더 이상 local llm 은 
 - [x] 회귀 잠금 — `test_llm_edge_free_routing.py` 신규 5건(전 체인 edge 부재 · 2계정 종단 · deployment 미참조 · 기본 비활성 · 시각 무관 base). `test_meta_llm_edge_free.py` 의 "off-hours 강등 유지" 단정은 방향 반전(같은 날 오전 결정의 사용자 override)
 - [x] 배포(gateway config reconcile + `.env` OFFHOURS 비움 → 워커 재시작) 후 라이브 실측 완료 — 배포 9c4e9935, TEST Run POSTDEPLOY 참조
 - [ ] **후속 제안(별 cycle)**: 게이트웨이 컨테이너 DNS 안정화 — 현재 embedded DNS 의 ExtServers 가 WSL NAT gateway 단일이라 그 경로가 죽으면 컨테이너 전체가 외부 해석 불가. edge 를 걷어낸 지금은 그 창이 곧 **전면 중단**이므로 완화가 필요(compose `dns:` 다중 지정 등). REPORT §8 참조
+
+## TASK-20260807T144800-oauth-exhaustion-gate — 사용량 소진 계정이 1순위 slot 에 고착되는 결함 (사용자 보고, Minor §12.3)
+- [x] 원인 규명 — claude-corp **7일(주간) 쿼터 100% 소진**(`anthropic-ratelimit-unified-7d-status=rejected`, `7d-utilization=1.0`, `retry-after=176528`≈2.04일). 자격증명 파일은 유효 → 정적 검사 통과 → 매 cron 이 소진 계정을 재주입
+- [x] 영향 확정 — 라이브 응답 헤더로 실증: `x-litellm-attempted-fallbacks=1`, `x-litellm-model-group=claude-haiku-4-chat-root`. 즉 **모든 요청이 소진 계정을 먼저 때리고**(num_retries=1 → 2회) root 로 우회 중. bare `claude-sonnet-4`/`claude-opus-5` 는 폴백이 없어 그대로 실패(REVIEW REV-20260730 의 이월 P1 이 실제로 발현)
+- [x] trigger 설계 정정 — 게이트웨이 로그 grep(`RateLimitError`)만으로는 **영영 안 잡힌다**: 폴백이 성공하면 로그엔 `200 OK` 만 남는다(라이브 실측). 저빈도 heartbeat(기본 1h)를 주 신호로 채택
+- [x] `bin/refresh-claude-oauth-token.sh` — 사용량-소진 게이트: heartbeat 1-probe → 429 면 `unified-reset` 을 우회 만료로 캐시하고 다음 계정 승격 / 캐시 유효 동안 probe 0 / 만료 후 1-probe 로 자동 복귀 / 네트워크·미분류 오류는 fail-open
+- [x] 킬스위치 — `CLAUDE_OAUTH_EXHAUSTION_GATE=0`(게이트 전체), `CLAUDE_OAUTH_GATE_RECHECK_SEC=0`(heartbeat 만)
+- [x] 회귀 잠금 — `unit/feature-0002-agent-core/tests/test_oauth_exhaustion_gate.py` 신규 15건(게이트 off 보존 · heartbeat 3종 · 소진 검출 · flapping 0 · 자동 복귀 · fail-open 2종 · root slot 무게이트 · --check 무부작용 · clamp 2종 · 정적 검사 선행 · 구문)
+- [x] 라이브 적용 — 1순위 slot 이 root 로 전환(`.env.bedrock` + gateway 재생성). 프로브 3종 전부 `fallbacks=0` 로 1순위 직행
+- [ ] **후속(별 결정)**: root access token 회전 주체 부재 — 위 「이월 항목」 참조

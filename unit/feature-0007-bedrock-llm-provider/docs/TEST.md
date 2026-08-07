@@ -482,3 +482,47 @@ source_of_truth: true
 - **검증 3 — 앱 층 off-hours 강등 (경계 밖 시각에 실측)**: 목요일 **19:59 KST** = 근무시간 `[10,19)` 밖 = 종전이라면 강등 구간. insight-worker 컨테이너에서 `llm._effective_insight_model()` → **`claude-haiku-4`**, `AGENT_INSIGHT_OFFHOURS_MODEL` → `''`. 즉 강등이 실제로 꺼졌다(단위 테스트의 시각 4지점 검증을 라이브가 확인).
 - **검증 4 — 사건 재발 없음**: 배포 후 게이트웨이 로그의 `name resolution` 실패 0건, 최근 10분 `/v1/chat/completions` 응답 전부 200.
 - 결론: 사용자 보고("모든 LLM 요청이 edge")의 경로가 게이트웨이·앱 양 층에서 제거됐고 라이브에서 확인됐다. UI 표면 변경 없음 → PB-0008 비해당(§15.4.1 예외).
+
+### Run 2026-08-07-oauth-exhaustion-gate
+- Date: 2026-08-07 14:20~14:50 KST · Environment: `CLI` + 라이브 게이트웨이 실측 · 대상 `bin/refresh-claude-oauth-token.sh`
+
+- **원인 확정 (라이브 실측)**
+  - claude-corp OAuth 토큰으로 Anthropic `/v1/messages` 직접 호출(haiku, max_tokens=16, CC identity 주입) → **HTTP 429**.
+    ```
+    anthropic-ratelimit-unified-7d-status      = rejected
+    anthropic-ratelimit-unified-7d-utilization = 1.0
+    anthropic-ratelimit-unified-7d-reset       = 1786255200   (2026-08-09 15:00 KST)
+    anthropic-ratelimit-unified-5h-status      = allowed   / 5h-utilization = 0.0
+    retry-after                                = 176528    (≈2.04일)
+    ```
+    → burst(5h)가 아니라 **주간(7d) 쿼터 전소**. 같은 조건에서 root 는 **HTTP 200**.
+  - 자격증명 파일은 정상(`expiresAt` 유효) → 스크립트의 정적 검사는 통과 → 30분 cron 이 소진 계정을 1순위 slot 에 계속 재주입. `/tmp/refresh-oauth.log` 전 구간이 `[claude-corp] 선택` 이었다.
+  - **영향 실증(게이트웨이 응답 헤더)**: `claude-haiku-4-chat` 호출 → `x-litellm-attempted-fallbacks=1`, `x-litellm-model-group=claude-haiku-4-chat-root`. 즉 매 요청이 소진 계정을 먼저 때린 뒤 root 로 우회 중이었다.
+  - **trigger 설계 정정의 근거**: 위 폴백 성공 요청의 게이트웨이 로그는 `INFO ... "POST /v1/chat/completions HTTP/1.1" 200 OK` 한 줄뿐 — `RateLimitError`/`429` 문자열 **0건**. 로그 grep 기반 trigger 는 이 상태를 영영 못 잡는다는 것을 실측으로 확인하고 heartbeat 를 주 신호로 채택했다.
+
+- **단위 테스트** (`unit/feature-0002-agent-core/tests/test_oauth_exhaustion_gate.py`, 신규 15건)
+  - 15 passed. 가짜 Anthropic 엔드포인트(`http.server`)로 200/429/401/500·도달불가를 주입하고, 격리 repo·credentials·mock `docker` 로 `.env` 쓰기와 recreate 까지 전 경로를 탄다.
+  - 잠근 계약: 게이트 off 보존 · heartbeat(최근 판정→probe 0 / RECHECK_SEC=0 킬스위치 / 간격 경과→1회) · 소진 검출 후 root 승격 + reset 캐시 · flapping 0 · 자동 복귀 · fail-open 2종 · root slot 무게이트 · `--check` 무부작용 · cooldown clamp 2종 · 정적 검사 선행.
+  - **역검증**: `CLAUDE_OAUTH_EXHAUSTION_GATE=0`(=수정 전 동작)으로 실행 시 **9건 FAIL** — 통과만 보고 "잠겼다" 고 결론내지 않았다. 이후 하네스가 `CLAUDE_OAUTH_*` 를 전부 고정하도록 바꿔 운영자 셸 override 로 인한 vacuous pass 도 차단했다(LRN-20260730-0002).
+  - `bash -n` PASS · 임베디드 python heredoc 2개 `compile()` PASS · `make test` 완주(ruff `All checks passed!`, 실패 라인 없음 — 단 요약 라인은 미캡처).
+
+- **라이브 적용 (14:48 KST)**
+  ```
+  [claude-corp] 건너뜀 — 라이브 429 5h=allowed(0.0) 7d=rejected(1.0) claim=seven_day → 2026-08-09 15:00:00 까지 우회
+  [root] 선택 — 라이브 확인 통과 (HTTP 200)
+  [root → ANTHROPIC_API_KEY] 토큰 갱신
+  OAuth 토큰 갱신 완료(1순위=root, root slot=갱신/동일) → bedrock-gateway 재생성
+  ```
+  - 상태 파일 `/var/lib/dqa-llm-oauth/exhaustion.json`: `claude-corp.until=1786255200`(=7d reset 정확 일치), `root.until=0`.
+  - **적용 후 게이트웨이 프로브** (컨테이너 내부, `max_tokens=5100`):
+    | alias | HTTP | served (`x-litellm-model-group`) | `attempted-fallbacks` |
+    |---|---|---|---|
+    | `claude-haiku-4-chat` | 200 | `claude-haiku-4-chat` | **0** |
+    | `claude-haiku-4-interactive` | 200 | `claude-haiku-4-interactive` | **0** |
+    | `claude-sonnet-4` (bare, 폴백 없음) | 200 | `claude-sonnet-4` | **0** |
+    → 적용 전 `claude-haiku-4-chat` 은 `served=claude-haiku-4-chat-root` / `fallbacks=1` 이었다. 낭비 왕복이 사라졌다.
+    → bare `claude-sonnet-4` 는 폴백이 없어 소진 계정이 1순위인 동안 429 로 실패할 수밖에 없는 경로였다(계정-레벨 7d 거부이므로 모델 무관) — 이제 200. *단, 적용 전 이 alias 의 실패는 직접 측정하지 않고 계정-레벨 429 사실로부터 추론했다.*
+
+- **미수행 / 이월**
+  - root access token 회전 주체 부재(TASK 「이월 항목」) — 사람 결정 필요.
+  - UI 표면 변경 없음(운영 스크립트 전용) → PB-0008 Windows-browser 검증 **비해당**(§15.4.1 예외).
