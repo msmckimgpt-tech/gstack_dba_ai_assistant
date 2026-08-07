@@ -1493,3 +1493,21 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`.
 - **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260806T160000-attach-delivery-tool` ·
   원장 `FR-attach-delivery-truncated-by-output-cap`.
+
+## CHG-20260807T130000-attach-delivery-live-measure 첨부 전달 라이브 실측 기록 (문서만)
+- **실측**: 배포본(main `d04ab2f2`) web UI 를 PB-0008(실 Windows Chrome)로 조작해 4파일 동시
+  갱신 1턴을 수행. **도구 채택 4/4 · 완주 4/4 · 다운로드 칩 4/4 렌더(패널 P1) · 패치 1회차
+  4/4 · 답변↔실재 일치**. ★사용자 요구 구조 조건인 **completion_tokens 분리**를 수치로 확증
+  (4×7KB 전달의 답변 completion 합 **1,973**).
+- **원장**: `FR-attach-delivery-truncated-by-output-cap` → **`fixed:deployed:verified`**.
+- **미실측(정직)**: `read_attachment` 완전성 계약(2턴 모두 모델이 미호출 → 관측 불가) ·
+  DELIVERY FACTS 의 BLOCK 경로(happy path 라 조건 미발생). 두 항목은 `unverified-live` 유지.
+- **부수 발견 2건 원장 신규 등재(수정 미착수)**:
+  `FR-redteam-attach-excerpt-cap-false-grounding-block`(리뷰어 발췌 1,200자 head-only →
+  캡 밖 근거가 무근거로 보임 → grounding 은 rederive 비적격 → `revise_failed` → 정확한 답변에
+  경고 배너) · `FR-datasource-eager-connect-blocks-datasource-free-turn`(런 시작 primary
+  datasource 선연결이 무조건 전제 → datasource-free 턴도 회로차단에 중단).
+- **파일**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md`,
+  `unit/feature-0002-agent-core/docs/test-runs.d/REV-20260807T130000-attach-delivery-live.{md,png}`,
+  `unit/feature-0002-agent-core/docs/{TASK,MODIFY}.md`.
+- **위험등급**: Minor(문서만·코드 변경 0). **Cross-ref**: `CHG-20260806T173000-attach-delivery-deploy`.

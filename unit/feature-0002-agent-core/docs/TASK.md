@@ -2311,8 +2311,13 @@ rationale=REVIEW `REV-20260805T190000-read-attach-completeness` ·
       soak 통과·롤백 0, 4서비스 healthy. 병렬 세션 머지로 rebase 1회 후 정본 회귀 재실행 실패 0.
 - [x] 배포본 런타임 실증 — 도구 노출·라우팅·바인더 적재·절단 latch·패치 정상적용 ·
       **잘린 패치 거부**·**문맥 없는 삽입 거부**(둘 다 패널 P1 재현 입력)·DELIVERY FACTS floor.
-- [ ] 라이브 실측 — 모델이 실제로 도구를 채택하는지 · 다중 파일 전달이 완주하는지 ·
-      **칩이 뜨는지**(패널 P1) · 패치 경로 적용 성공률.
+- [x] 라이브 실측 완료(2026-08-07, PB-0008) — 도구 채택 4/4 · 완주 4/4 · **칩 4/4 렌더**(패널 P1) ·
+      패치 1회차 4/4 · **completion_tokens 분리 1,973 확증**. 원장 → `fixed:deployed:verified`.
+      증거: `docs/test-runs.d/REV-20260807T130000-attach-delivery-live.md`.
+- [ ] 미실측 잔여 — `read_attachment` 완전성 계약(모델 미호출로 관측 불가 → 인라인 상한 초과
+      첨부로 도구 경로 강제하는 실측 설계 필요) · DELIVERY FACTS BLOCK 경로(happy path 라 미발생).
+- [ ] 부수 발견 2건 처리 방향 결정 — `FR-redteam-attach-excerpt-cap-false-grounding-block` ·
+      `FR-datasource-eager-connect-blocks-datasource-free-turn`(둘 다 원장 `triaged`, 미착수).
 
 ### Requested Scope (요청 범위 자기-열거) — TASK-20260806T1600
 - [x] `assistant 및 red-team 이 해당 이슈를 포착하도록 개선` — 산출물: 도구 성공/실패 피드백(assistant)

@@ -1450,3 +1450,8 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 ## REV-20260806T173000-attach-delivery-deploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
 - **Trigger**: 문서만(원장 status·배포 실증 기록). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
 - 배포 실증은 MODIFY `CHG-20260806T173000-attach-delivery-deploy` 에 기록. 라이브 대화 실측 미수행.
+
+## REV-20260807T130000-attach-delivery-live [SKIPPED:live-measurement+docs-only] — PASS
+- **Trigger**: 문서만(라이브 실측 기록·원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
+- 실측 절차·증거(스크린샷 포함)는 `docs/test-runs.d/REV-20260807T130000-attach-delivery-live.md`.
+- 미실측 축과 부수 발견 2건을 같은 문서에 명시(통과 못 한 것을 통과로 적지 않음).
