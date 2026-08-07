@@ -26,6 +26,11 @@
   B4  diff 뷰 — context_lines=None 이면 동일 줄도 전부 방출(gap 없음).
   B5  diff 뷰 — 행 상한 초과 시 잘리고 truncated.rows=True (무음 절단 금지).
   B6  diff 뷰 — 내용 동일이면 identical=True 이고 축약·행 상한과 무관.
+  B7  diff 뷰 — 내용 동일이면 **원문 전량**이 equal 행으로 나온다(gap 으로 접지 않는다).
+      맥락 축약은 변경 주변만 남기는 연산이라 변경 0개면 파일 전체가 gap 한 줄이 되어 화면에
+      본문이 사라진다 — 사용자 요청 "파일 내용이 동일하다면 문서 원문을 출력" (2026-08-07).
+  B7b diff 뷰 — 원문 전량 방출도 행 상한을 넘지 않고, 넘으면 truncated.rows 로 표면화.
+  B7c diff 뷰 — 빈 문서끼리는 행 0개(프론트가 '비어 있습니다' 로 답하는 근거).
   E1  엔드포인트 — 직전↔최신 정상 비교(comparable/rows/stats/unified_diff).
   E2  엔드포인트 — **다단계**(v1↔v3) 비교가 중간 버전을 건너뛰고 성립.
   E3  엔드포인트 — from==to → 400.
@@ -41,6 +46,8 @@
       (diff 가 본문 bytes-deny 의 우회 경로가 되지 않게 — `download_attachment` 와 동형).
   E13 체인 로더 — `scope_row` 를 주면 conversation/account 스코프 밖 행을 제외한다(fail-closed).
   E14 회귀 — **두 엔드포인트 모두** `scope_row` 를 넘긴다(한쪽만 걸면 그쪽만 안전하다).
+  E15 엔드포인트 — 텍스트 두 버전의 내용이 같으면 identical=True 와 **원문 행**을 함께 준다
+      (B7 의 계약이 응답 payload 까지 도달하는지 — 빌더만 고쳐도 라우터가 삼키면 화면은 그대로).
 """
 from __future__ import annotations
 
@@ -358,6 +365,46 @@ def test_b6_identical_is_independent_of_collapse_and_cap():
     assert view["stats"]["added"] == 0 and view["stats"]["removed"] == 0
 
 
+def test_b7_identical_emits_full_source_rows_not_a_gap():
+    """내용이 동일하면 **원문 전량**이 행으로 나와야 한다 (사용자 요청 2026-08-07).
+
+    맥락 축약은 '변경 지점 주변만 남기는' 연산이라 변경이 0개면 파일 전체가 gap 한 줄로
+    접힌다 — 종전에는 그 화면에 본문이 한 줄도 없었다. 프론트가 원문을 그리려면 서버가
+    행을 줘야 하므로, identical 은 `context_lines` 값과 무관하게 축약 대상이 아니다.
+    """
+    same = "\n".join(f"line{i}" for i in range(40))
+    view = app._build_version_diff_view(
+        same, same, left_version=1, right_version=3, filename="f", context_lines=3)
+    assert view["stats"]["identical"] is True
+    assert not [r for r in view["rows"] if r["type"] == "gap"], "identical 은 접히지 않는다"
+    assert len(view["rows"]) == 40
+    assert all(r["type"] == "equal" for r in view["rows"])
+    # 원문 무손실 — 행의 좌/우 텍스트를 이어붙이면 입력과 동일해야 한다(렌더가 원문이라 주장하려면
+    # 그 행이 원문이어야 한다). 좌우 어느 쪽으로 이어붙여도 같다.
+    assert "\n".join(r["right"] for r in view["rows"]) == same
+    assert "\n".join(r["left"] for r in view["rows"]) == same
+    assert view["rows"][0]["right_no"] == 1 and view["rows"][-1]["right_no"] == 40
+
+
+def test_b7b_identical_still_respects_row_cap_and_flags_truncation():
+    """원문 전량 방출도 행 상한을 넘지 못한다 — 넘으면 무음이 아니라 플래그로 표면화한다."""
+    same = "\n".join(f"line{i}" for i in range(50))
+    view = app._build_version_diff_view(
+        same, same, left_version=1, right_version=2, filename="f",
+        context_lines=3, row_cap=10)
+    assert view["stats"]["identical"] is True
+    assert len(view["rows"]) == 10
+    assert view["truncated"]["rows"] is True
+
+
+def test_b7c_identical_empty_document_has_no_rows():
+    """빈 문서끼리의 비교는 행이 0개다 — 프론트는 이 경우 '비어 있습니다' 로 답한다."""
+    view = app._build_version_diff_view(
+        "", "", left_version=1, right_version=2, filename="f", context_lines=3)
+    assert view["stats"]["identical"] is True
+    assert view["rows"] == []
+
+
 # ── E1~E11: 엔드포인트 ──────────────────────────────────────────────────────
 def _endpoint_setup(monkeypatch, chain, objects, *, allowed=True, fail_keys=(), pending=False):
     store: dict = {}
@@ -454,6 +501,28 @@ def test_e7_binary_downgrades_to_meta_compare(monkeypatch):
     assert body["identical"] is True          # 해시 동일
     assert "rows" not in body                 # 빈 diff 를 흉내내지 않는다
     assert storage.reads == []                # 바이너리 원본은 읽지 않는다
+
+
+def test_e15_identical_text_returns_source_rows(monkeypatch):
+    """텍스트 두 버전의 내용이 같을 때 응답이 원문 행을 싣는다 (사용자 요청 2026-08-07).
+
+    빌더(B7)만 고치고 라우터가 rows 를 안 실으면 화면은 종전과 같다 — 계약이 payload 까지
+    도달하는지를 별도로 잠근다. 기본 요청(`context` 미지정 = 축약 3줄)으로 확인해야 의미가 있다.
+    """
+    body_text = "SELECT 1;\nSELECT 2;\nSELECT 3;\nSELECT 4;\nSELECT 5;\n"
+    chain = [_row(vid=10, version=1), _row(vid=11, version=2, superseded=False)]
+    objects = {
+        "conv-1/u1/f.sql": body_text.encode(),
+        "conv-1/u2/f.sql": body_text.encode(),
+    }
+    _endpoint_setup(monkeypatch, chain, objects)
+    resp = att_router.get_attachment_version_diff(11, _Request(from_version=1, to_version=2))
+    body = _body(resp)
+    assert body["comparable"] is True
+    assert body["identical"] is True
+    assert not [r for r in body["rows"] if r["type"] == "gap"]
+    assert [r["right"] for r in body["rows"]] == body_text.splitlines()
+    assert body["truncated"]["rows"] is False
 
 
 def test_e8_source_cap_truncation_is_surfaced(monkeypatch):

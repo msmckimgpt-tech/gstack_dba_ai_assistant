@@ -275,12 +275,26 @@ const SPLIT_DATA = {
   ok("A4 절단 상태에서도 diff 표는 렌더된다", !!host.querySelector("table.attach-diff-table"));
 }
 
-// A5 — 동일 내용: 표 대신 "차이 없음" 만 — 빈 표를 보여 사용자가 오작동으로 읽는 것을 막는다.
+// A5 — 동일 내용: 안내 배너 + (행이 있으면) **원문 표**. diff 표(2열/단일열)는 렌더하지 않는다.
+//
+// 계약 개정 2026-08-07 (attach-diff-identical-source): 초판은 "표 대신 안내만" 이었으나 그 화면에
+// 본문이 한 줄도 없어 사용자가 "무엇이 같은지" 를 볼 수 없었다. 이제 원문을 출력한다.
+// 배너 등급도 근거에 따라 갈린다 — 절단·sha256 불일치는 is-warn(단정 약화). 여기서는 **행 0개**
+// (빈 문서)와 **해시 동일**의 기본 경로만 고정하고, 갈래별 문구는 전용 하네스
+// `verify_attach_diff_identical_source.mjs` B8b~B9c 가 담당한다.
 {
   const host = window.document.createElement("div");
-  M._renderBody(host, { ...SPLIT_DATA, identical: true, rows: [] }, "split");
-  ok("A5 identical 은 is-same 안내", !!host.querySelector(".attach-diff-notice.is-same"));
+  const SAME = { ...SPLIT_DATA, identical: true, rows: [],
+    from: { ...SPLIT_DATA.from, sha256: "same" }, to: { ...SPLIT_DATA.to, sha256: "same" } };
+  M._renderBody(host, SAME, "split");
+  ok("A5 identical(해시 동일) 은 is-same 안내", !!host.querySelector(".attach-diff-notice.is-same"));
   ok("A5 identical 은 diff 표 미렌더", !host.querySelector("table.attach-diff-table"));
+  ok("A5b 행 0개(빈 문서)면 원문 표도 만들지 않는다", !host.querySelector("table.is-source"));
+  // 해시가 다르면(줄 종단자 차이) 같은 identical 이라도 단정을 약화한다 — 초판 A5 픽스처가
+  // 서로 다른 sha 를 쓰고 있었고, 그 조합이 이제 의미를 갖는다.
+  const host2 = window.document.createElement("div");
+  M._renderBody(host2, { ...SPLIT_DATA, identical: true, rows: [] }, "split");
+  ok("A5c identical + sha 불일치는 is-warn", !!host2.querySelector(".attach-diff-notice.is-warn"));
 }
 
 // A6 — 바이너리: comparable=false → 메타 비교표(줄 diff 흉내 금지).

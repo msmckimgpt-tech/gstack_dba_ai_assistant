@@ -334,8 +334,10 @@ const DATA = {
 }
 {
   // 렌더러 두 곳이 **같은 함수**를 부르는지 (복제 금지 — 한쪽만 칠하면 토글이 다른 화면이 된다)
+  // 렌더러가 셋으로 늘었다(2026-08-07 원문 뷰 — 내용 동일 시 문서 원문 출력). 세 렌더러가
+  // **같은 함수**로 칠해야 같은 파일이 화면마다 다른 색을 갖지 않는다.
   const paintCalls = (diffJs.match(/_paintCell\(/g) || []).length;
-  ok("E8 _paintCell 호출 = 정의1 + 2열2 + 단일열1", paintCalls === 4, String(paintCalls));
+  ok("E8 _paintCell 호출 = 정의1 + 2열2 + 단일열1 + 원문1", paintCalls === 5, String(paintCalls));
   ok("E9 code 셀에 textContent 직접 대입이 남아 있지 않다",
     !/attach-diff-code[\s\S]{0,400}?(lTxt|rTxt|tdTxt)\.textContent\s*=/.test(diffJs));
 }

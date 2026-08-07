@@ -102,7 +102,9 @@ function _appendColgroup(table, kind, opts) {
   const cg = document.createElement("colgroup");
   const cols = kind === "unified"
     ? ["attach-diff-col-no", "attach-diff-col-sign", "attach-diff-col-code"]
-    : ["attach-diff-col-no", "attach-diff-col-code", "attach-diff-col-no", "attach-diff-col-code"];
+    : kind === "source"
+      ? ["attach-diff-col-no", "attach-diff-col-code"]
+      : ["attach-diff-col-no", "attach-diff-col-code", "attach-diff-col-no", "attach-diff-col-code"];
   for (const cls of cols) {
     const col = document.createElement("col");
     col.className = cls;
@@ -120,6 +122,9 @@ function _appendColgroup(table, kind, opts) {
   if (kind === "unified") {
     // 부호 열은 CSS(18px), code 열은 auto — 남는 폭을 전부 먹는다.
     list[2].style.width = "";
+  } else if (kind === "source") {
+    // 원문 뷰는 줄번호 + 본문 2열뿐 — 본문이 남는 폭을 전부 먹는다(auto).
+    list[1].style.width = "";
   } else {
     list[2].style.width = noW;
   }
@@ -387,6 +392,66 @@ function _renderUnified(container, data, opts) {
   container.appendChild(table);
 }
 
+// identical 응답의 **단정 강도**를 정하는 두 플래그. 렌더(배너)와 요약 배지가 같은 판정을
+// 써야 한 화면에서 서로 반박하지 않는다(§18.8 패널 공통 지적 — "차이가 많아" ↔ "차이 없음").
+//  - `clipped`: 원본 바이트 cap 또는 행 상한에 걸렸다 ⇒ **본 범위 안에서만** 동일하다.
+//    이때 "원문" 이라는 말을 쓰면 안 된다 — 보지 않은 뒷부분을 봤다고 주장하는 셈이다.
+//  - `shaDiff`: 줄 비교는 같은데 파일 해시가 다르다. 서버 비교는 `splitlines()` 기반이라
+//    CRLF↔LF·마지막 줄 개행 유무가 **판정에서 흡수**된다. 그 차이는 사용자에게 실재하고
+//    (크기·해시가 다르다), 판별 근거(sha256)는 이미 응답에 실려 있다.
+function _identicalFlags(data) {
+  const tr = (data && data.truncated) || {};
+  const clipped = Boolean(tr.rows || tr.from_source || tr.to_source);
+  const a = String(data?.from?.sha256 || "");
+  const b = String(data?.to?.sha256 || "");
+  return { clipped, shaDiff: Boolean(a) && Boolean(b) && a !== b };
+}
+
+// 원문 렌더 — **두 버전의 내용이 동일할 때** 쓰는 제3의 표현(사용자 요청 2026-08-07:
+// "파일 내용이 동일하다면 문서 원문을 출력").
+//
+// 왜 별 렌더러인가: 2열은 같은 글을 좌우에 두 번 그려 폭을 절반씩 낭비하고(비교할 것이
+// 없는데 비교 표 모양을 유지하면 "어딘가 다른가?" 하고 찾게 만든다), 단일열은 부호 열이
+// 전부 공백이라 의미 없는 열이 남는다. 원문은 줄번호 + 본문 2열이면 충분하다.
+//
+// 줄번호는 **우측(to) 기준**이다 — 두 내용이 같으므로 좌우 번호가 같지만, 없을 때만
+// 좌측으로 떨어뜨려(빈 파일·구버전 응답 방어) 번호 칸이 비지 않게 한다.
+// gap 행은 여기 오지 않는 것이 정상이다(서버가 identical 이면 축약하지 않는다). 그래도
+// 오면 "생략" 문구로 그린다 — 조용히 버리면 사용자가 잘린 원문을 전체로 오인한다.
+function _renderSource(container, data, opts) {
+  const table = document.createElement("table");
+  // `is-source` 는 **표 계층** modifier 다(`is-split`·`is-unified` 와 같은 축). 행 계층은
+  // `is-equal`/`is-insert`… 어휘라 같은 토큰을 두 계층에 얹지 않는다 — 후속 CSS 규칙이 두 곳에
+  // 걸려 의도치 않게 번진다(§18.8 design 지적). 원문 행은 diff 타입이 없으므로 `is-plain`.
+  table.className = "attach-diff-table is-source";
+  table.setAttribute("aria-label", `문서 원문 ${(data.rows || []).length}행`);
+  _appendColgroup(table, "source", { linenoCh: _linenoCh(data.rows) });
+  const tbody = document.createElement("tbody");
+  for (const r of data.rows || []) {
+    if (r.type === "gap") {
+      tbody.appendChild(_gapRow(r, 2, null));
+      continue;
+    }
+    const tr = document.createElement("tr");
+    tr.className = "attach-diff-row is-plain";
+    const no = r.right_no ?? r.left_no;
+    if (no != null) tr.dataset.lno = String(no);
+    const tdNo = document.createElement("td");
+    tdNo.className = "attach-diff-lineno";
+    // 원문 뷰는 성격이 **문서**다 — 줄번호를 매 행 낭독하면 읽기가 불가능해진다. diff 표는
+    // 좌/우 대조라는 표 성격이 있어 낭독이 정당하지만 여기서는 시각 보조에 불과하다.
+    tdNo.setAttribute("aria-hidden", "true");
+    tdNo.textContent = no == null ? "" : String(no);
+    const tdTxt = document.createElement("td");
+    tdTxt.className = "attach-diff-code";
+    _paintCell(tdTxt, r.right ?? r.left, opts);
+    tr.append(tdNo, tdTxt);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  container.appendChild(table);
+}
+
 function _renderBody(bodyEl, data, mode, opts) {
   // 교체 **전** 현재 scroller 에서 앵커를 뜬다(요소가 사라지면 스크롤도 사라진다).
   const anchor = (opts && opts.keepScroll)
@@ -434,7 +499,11 @@ function _renderBody(bodyEl, data, mode, opts) {
     warnings.push(`원본이 ${capMB}MB 를 넘어 앞부분만 비교했습니다 — 이후 변경은 표시되지 않습니다.`);
   }
   if (tr.rows) {
-    warnings.push(`차이가 많아 앞쪽 ${Number(data.caps?.rows || 0)}행만 표시했습니다.`);
+    // 같은 절단인데 사유가 다르다 — identical 화면에서 "차이가 많아" 는 바로 아래 "차이 없음"
+    // 배지와 정면으로 모순한다(§18.8 패널 2인 공통 지적). 행이 많은 이유를 상태에 맞게 말한다.
+    warnings.push(data.identical
+      ? `문서가 길어 앞쪽 ${Number(data.caps?.rows || 0)}행만 표시했습니다.`
+      : `차이가 많아 앞쪽 ${Number(data.caps?.rows || 0)}행만 표시했습니다.`);
   }
   for (const w of warnings) {
     const el = document.createElement("div");
@@ -443,11 +512,33 @@ function _renderBody(bodyEl, data, mode, opts) {
     bodyEl.appendChild(el);
   }
 
+  // 내용이 같으면 **원문을 출력**한다(사용자 요청 2026-08-07). 종전에는 "동일합니다" 한 줄만
+  // 두고 return 했는데, 그 화면에는 본문이 없어 사용자가 "무엇이 같은지" 를 확인할 수단이
+  // 없었다(서버 축약이 파일 전체를 gap 한 줄로 접기 때문 — `_build_version_diff_view` 참조).
   if (data.identical) {
     const same = document.createElement("div");
-    same.className = "attach-diff-notice is-same";
-    same.textContent = "두 버전의 내용이 동일합니다.";
+    const lines = Number(data.stats?.right_lines ?? data.stats?.left_lines ?? 0);
+    const shown = Array.isArray(data.rows) ? data.rows.length : 0;
+    const { clipped, shaDiff } = _identicalFlags(data);
+    // 단정의 강도를 근거에 맞춘다 — "원문" 은 **전량을 봤을 때만** 쓸 수 있는 말이다.
+    same.className = `attach-diff-notice ${clipped || shaDiff ? "is-warn" : "is-same"}`;
+    same.textContent = lines <= 0
+      ? "두 버전의 내용이 동일합니다 — 문서가 비어 있습니다."
+      : clipped
+        ? `비교한 범위에서 두 버전의 내용이 동일합니다 — 아래는 문서 앞부분 ${shown}줄입니다(전체는 더 길 수 있습니다).`
+        : shaDiff
+          ? `줄 내용은 같지만 두 파일이 완전히 동일하지는 않습니다(줄바꿈 방식·마지막 줄 개행 등). 아래는 v${Number(data.to?.version_number || 0)} 원문(${lines}줄)입니다.`
+          : `두 버전의 내용이 동일합니다 — 아래는 문서 원문(${lines}줄)입니다.`;
     bodyEl.appendChild(same);
+    if (!Array.isArray(data.rows) || data.rows.length === 0) return;
+    const srcWrap = document.createElement("div");
+    srcWrap.className = "attach-diff-splitwrap";
+    const srcScroller = document.createElement("div");
+    srcScroller.className = "attach-diff-scroller";
+    _renderSource(srcScroller, data, opts);
+    srcWrap.appendChild(srcScroller);
+    bodyEl.appendChild(srcWrap);
+    _restoreScrollAnchor(srcScroller, anchor);
     return;
   }
 
@@ -659,9 +750,12 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   // 선택 — 즉 **칠할 본문이 아예 없는 화면**에서도 "TSV 구문 색" 이 켜진 채 떠 있었다(§18.8 ux P1
   // 실측 6종). 누르면 아무 일도 일어나지 않으니 사용자는 토글이 고장 났다고 읽는다. 이 모듈이
   // 스스로 금지한 거짓 어포던스와 같은 결함이 다른 축(파일명은 지원인데 본문이 없음)에서 난 것.
+  // (내용 동일 = 원문 뷰도 **칠할 본문이 있는 화면**이다 — 원문 출력이 생긴 뒤로는
+  //  `identical` 을 제외하지 않는다. 제외한 채 두면 원문만 무색으로 남아, 같은 파일이
+  //  diff 화면에서는 색이 있고 원문 화면에서는 없는 비일관이 된다.)
   const syncHlToggle = (data) => {
     const paintable = Boolean(detectedLang) && Boolean(data)
-      && data.comparable !== false && !data.identical
+      && data.comparable !== false
       && Array.isArray(data.rows) && data.rows.length > 0;
     hlWrap.hidden = !paintable;
     if (!paintable) return;
@@ -669,6 +763,33 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     hlCb.checked = hlOn;
   };
   syncHlToggle(null);   // 응답 도착 전에는 숨김 — 칠할 수 있는지 아직 모른다
+
+  // 보기 방식(2열/단일열)·맥락 토글은 **diff 표가 실제로 그려질 때만** 뜻이 있다.
+  //
+  // 판정면은 `syncHlToggle` 과 **동일**하다 — 초판은 `identical` 하나만 봤는데, 그러면 바로 옆
+  // 하이라이트 토글은 사라지는데 이 둘은 남는 화면(바이너리 메타 비교·같은 버전 두 개 선택·
+  // 조회 실패)이 생겨 사용자에게는 규칙 없는 컨트롤 바가 된다(§18.8 패널 2인 공통 지적).
+  // 같은 인자(`null`)가 두 함수에서 반대 뜻을 갖던 것도 사고였다.
+  //
+  // 숨김이 아니라 **비활성**인 이유: 이 컨트롤들은 모달 안에서 위치를 외우는 primary 컨트롤이고,
+  // `.attach-diff-stats{margin-left:auto}` 때문에 사라지면 컨트롤 바가 통째로 흔들린다(버전 쌍을
+  // 오가며 훑을 때 누르려던 버튼이 응답 도착 순간 이동). 비활성은 레이아웃을 고정하면서
+  // "지금은 쓸 수 없다" 는 사실까지 전달한다 — 거짓 어포던스를 없애는 목적에도 부합한다.
+  // (반면 하이라이트 토글은 라벨 자체가 `<유형> 구문 색` 이라 유형 판정 없이는 문구가 성립하지
+  //  않는다. 그쪽이 숨김인 것은 그 이유이며, 이 비대칭은 의도다.)
+  const viewToggleEl = backdrop.querySelector(".attach-diff-viewtoggle");
+  const ctxToggleEl = backdrop.querySelector(".attach-diff-ctxtoggle");
+  const syncDiffOnlyControls = (data) => {
+    const hasDiff = Boolean(data) && data.comparable !== false && !data.identical
+      && Array.isArray(data.rows) && data.rows.length > 0;
+    const why = hasDiff ? "" : "비교할 차이가 없는 화면이라 표시 방식을 바꿀 대상이 없습니다.";
+    for (const b of modeBtns) { b.disabled = !hasDiff; b.title = why; }
+    ctxCb.disabled = !hasDiff;
+    ctxToggleEl.title = why;
+    viewToggleEl.classList.toggle("is-disabled", !hasDiff);
+    ctxToggleEl.classList.toggle("is-disabled", !hasDiff);
+  };
+  syncDiffOnlyControls(null);   // 응답 전에는 비활성 — `syncHlToggle(null)` 과 같은 뜻
 
   let lastData = null;
   let reqSeq = 0;
@@ -749,6 +870,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       statsEl.textContent = "";
       bodyEl.innerHTML = '<div class="attach-diff-notice">서로 다른 두 버전을 선택하세요.</div>';
       syncHlToggle(null);
+      syncDiffOnlyControls(null);
       return;
     }
     const seq = ++reqSeq;
@@ -762,10 +884,20 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       if (seq !== reqSeq) return;   // 늦게 도착한 응답이 최신 선택을 덮지 않게
       lastData = data;
       syncHlToggle(data);   // 칠할 본문이 실제로 왔을 때만 토글이 보인다
+      syncDiffOnlyControls(data);
       const st = data.stats || {};
+      // 배지도 배너와 **같은 판정**(`_identicalFlags`)을 쓴다 — 한 화면의 두 요약이 서로
+      // 반박하면 사용자는 어느 쪽을 믿을지 판단할 수 없다.
+      const flags = _identicalFlags(data);
       statsEl.textContent = data.comparable === false
         ? ""
-        : (data.identical ? "차이 없음" : `+${Number(st.added || 0)} / -${Number(st.removed || 0)}`);
+        : !data.identical
+          ? `+${Number(st.added || 0)} / -${Number(st.removed || 0)}`
+          : flags.clipped
+            ? "차이 없음(부분 비교)"
+            : flags.shaDiff
+              ? "줄 차이 없음 · 파일은 다름"
+              : "차이 없음 — 원문 표시";
       if (keepScroll && pendingAnchor) {
         _renderBody(bodyEl, data, mode, { ...renderOpts(), keepScroll: false });
         _restoreScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"), pendingAnchor);
@@ -776,6 +908,7 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
       if (seq !== reqSeq) return;
       lastData = null;
       syncHlToggle(null);
+      syncDiffOnlyControls(null);
       statsEl.textContent = "";
       bodyEl.innerHTML = `<div class="attach-diff-notice is-warn">${escapeHtml(e?.message || "비교에 실패했습니다.")}</div>`;
     }

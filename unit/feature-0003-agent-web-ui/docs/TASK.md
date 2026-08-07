@@ -9266,3 +9266,55 @@ before-state 를 되돌리는 경로가 있고, 사람이 읽을 수 있는 `.ro
 MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복 0 을 각각 확인했다.
 **G8-b**: repo 밖 권위 표면(PG 미러)을 적용면에 포함했다. MySQL 만 고치고 끝냈다면 라이브 화면은
 그대로 어긋나 있었다 — fail-soft 로 조용히 실패했기 때문에 **대조하지 않으면 드러나지 않았다**.
+
+## 20260807T1300-attach-diff-identical-source — 내용 동일 시 문서 원문 출력 (Minor §12.3)
+
+사용자 요청: "서비스 내 첨부파일 diff 부분에서, 파일 내용이 동일하다면 문서 원문을 출력하도록
+구성해주세요."
+
+### 2.1 Implementation Plan
+
+- 영향 파일 / symbol
+  - `src/routers/_conv_store.py` — `_build_version_diff_view` (맥락 축약 분기)
+  - `src/static/app/attach-diff.js` — `_renderSource`(신설) · `_renderBody` · `_appendColgroup` ·
+    `syncHlToggle` · `syncDiffOnlyControls`(신설)
+  - `src/static/css/chat.css` — `.attach-diff-table.is-source` · `[hidden]` override 3종
+  - `tests/verify_attach_diff_identical_source.mjs`(신설) · `tests/test_attachment_version_diff.py` ·
+    `tests/verify_attach_diff_syntax_highlight.mjs`(E8 개수 계약)
+- 접근: 축약은 "변경 주변만 남기는" 연산이라 변경 0개면 파일 전체가 gap 한 줄로 접힌다. **서버에서**
+  identical 을 축약 대상에서 제외해 원문 행을 방출하고(정본 1곳 — 프론트가 축약 로직을 재구현하면
+  두 구현이 갈라진다), 프론트는 그 행을 줄번호+본문 2열로 렌더한다.
+- 완료 판정: ① 기본 요청(축약 3줄)에서도 응답에 gap 0 · 원문 전량 · ② 렌더 텍스트 == 원문 byte
+  동일 · ③ 행 상한 초과 시 절단 배너 유지 · ④ 빈 문서는 표 없이 안내 · ⑤ identical 화면에서
+  diff 전용 토글 비노출(CSS `[hidden]` 실효 포함).
+- 위험도: **Minor** — 비파괴, 신규 권한·스키마·마이그레이션 0. 본문 노출 경계는 불변(같은
+  엔드포인트·같은 권한·D21 pending 게이트 그대로이며, `context=full` 로 이미 조회 가능하던 범위).
+
+### 실행 결과
+
+- 서버: `identical` 을 2차 패스(맥락 축약) **앞에서** 확정하고 `context_lines is None or identical`
+  로 축약을 건너뛴다. `stats.identical` 은 같은 값을 재사용(판정 정본 1곳).
+- 프론트: `_renderSource` 신설(2열 colgroup `source` kind) + `_renderBody` identical 분기가 배너 +
+  원문 표를 낸다. 스크롤 앵커(`data-lno`)·구문 색은 diff 뷰와 같은 primitive 를 탄다.
+- 부수 적발 — **`[hidden]` 이 CSS 에서 무력화되어 있었다**: `.attach-diff-hltoggle{display:inline-flex}`
+  (author) 가 UA `[hidden]{display:none}` 를 이겨, 선행 cycle 의 "칠할 본문이 없으면 토글 숨김"
+  (AC-AVD-23) 계약이 화면에서 작동하지 않았다. 같은 기전을 쓰는 이번 변경과 함께 override 규칙으로
+  봉인(3종).
+
+### 체크리스트
+
+- [x] 서버 축약 분기 + pytest B7/B7b/B7c/E15
+- [x] 프론트 원문 렌더러 + JS 하네스 39건 PASS
+- [x] 선행 하네스 회귀 — `verify_attach_version_diff.mjs` 89 · `verify_attach_diff_syntax_highlight.mjs`
+      113 · `verify_diff_lineno_leak.mjs` 30 전부 PASS
+- [x] §18.8 적대 패널(ux·design, 사용자 승인 하 호출) — 둘 다 **CONCERN** → P2 지적 3건 전부
+      같은 cycle 에서 수정(`_identicalFlags` 판정 단일화 · 절단 문구 분기 · 판정면 동일화).
+      하네스 39 → **61건**, 뮤테이션 3/3 red.
+- [x] PB-0008 실 Windows 브라우저 — 격리 컨테이너(라이브 무접촉) 4시나리오 PASS +
+      **구·신 코드 A/B**(같은 첨부: 구 `rows=1 gap` → 신 `rows=5 equal`).
+      fragment `docs/test-runs.d/20260807T1300-attach-diff-identical-source.md`
+- [ ] pytest 전량 (`make test`)
+
+## 9. Requested Scope
+- [x] `파일 내용이 동일하다면 문서 원문을 출력` — 서버·프론트·테스트 구현 + 적대 패널 반영 +
+      PB-0008 라이브 실측 완료. 라이브 A/B 로 종전 "본문 0줄" → "원문 전량" 확인.

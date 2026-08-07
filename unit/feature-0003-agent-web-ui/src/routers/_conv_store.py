@@ -6847,6 +6847,13 @@ def _build_version_diff_view(
     - `context_lines=None` → 전체 맥락 유지(동일한 줄도 전부 행으로 방출).
       정수면 변경 지점 주변 그 줄 수만 남기고, 생략된 구간은 `type="gap"` 행으로
       **생략 사실과 줄 수를 표면화**한다(조용히 사라지지 않게).
+    - **내용이 동일하면 맥락 축약을 하지 않는다** (사용자 요청 2026-08-07 — "파일 내용이
+      동일하다면 문서 원문을 출력"). 축약은 *변경 지점 주변만 남기는* 연산인데 변경 지점이
+      0개면 남는 것도 0개라, 종전에는 파일 전체가 gap 한 줄("동일한 N줄 생략")로 접혀
+      **화면에 본문이 한 줄도 없었다**. 그 화면에서 사용자가 실제로 원하는 답은 "무엇이
+      같은가" = 원문이다. 그래서 identical 이면 `flat`(전량 equal 행)을 그대로 방출해
+      프론트가 원문을 렌더할 수 있게 한다. `row_cap` 절단은 그대로 적용된다(무음 절단
+      금지 계약은 `truncated["rows"]` 가 유지).
     - 행 수가 `row_cap` 을 넘으면 잘라내고 `truncated["rows"]=True`.
     - `replace` opcode 는 좌/우 줄 수가 다를 수 있어 짧은 쪽을 None 으로 패딩한다.
     """
@@ -6926,8 +6933,13 @@ def _build_version_diff_view(
                 })
                 added += 1
 
+    # 내용 동일 판정은 **opcode 집계로만** 한다 — 축약·행 상한(rows)에 영향받지 않게.
+    # 2차 패스보다 앞에서 확정해야 축약 분기가 이 값을 읽을 수 있다.
+    identical = (added == 0 and removed == 0)
+
     # 2차 패스 — 맥락 축약. 변경 행에서 context_lines 밖의 equal 런을 gap 으로 접는다.
-    if context_lines is None:
+    # identical 은 축약 대상이 아니다(위 docstring — 접으면 본문이 통째로 사라진다).
+    if context_lines is None or identical:
         rows = flat
     else:
         ctx = max(0, int(context_lines))
@@ -6982,8 +6994,7 @@ def _build_version_diff_view(
             "removed": removed,
             "left_lines": len(left_lines),
             "right_lines": len(right_lines),
-            # 내용 동일 판정은 opcode 집계로만 한다 — 축약·행 상한(rows)에 영향받지 않게.
-            "identical": (added == 0 and removed == 0),
+            "identical": identical,
         },
         "truncated": {"rows": rows_truncated},
     }

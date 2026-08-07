@@ -2061,3 +2061,56 @@ joinable 공유 링크를 여는* 케이스(share `Id=77` · 대화 `20260722015
   변경 줄이 danger/ok 를 잃고 "대응 내용 없음" 중립 filler 를 받았다(**의미 반전**). 배포 후
   확대 캡처 판독 → 라이브 실측으로 확정 → 1줄 수정 + 재발 차단 4축(헤드리스 B9/B9b 동작층,
   mjs A1d 구조층 — 부여 지점 개수 대칭). 뮤테이션 4/4. 헤드리스 46/46 · mjs 88 PASS.
+
+## 20260807T1300-attach-diff-identical-source — 내용 동일 시 문서 원문 출력 (Minor §12.3)
+
+**요청**: "서비스 내 첨부파일 diff 부분에서, 파일 내용이 동일하다면 문서 원문을 출력하도록
+구성해주세요."
+
+**종전 결함**: 맥락 축약은 *변경 지점 주변만 남기는* 연산이라 변경이 0개면 남는 행도 0개다 —
+파일 전체가 `gap` 한 줄로 접혔고 프론트는 배너만 두고 return 했다. **화면에 본문이 한 줄도 없었다.**
+
+**변경**: 서버 `_build_version_diff_view` 가 `identical` 을 축약 대상에서 제외해 원문 전량을 방출하고
+(정본 1곳 — 프론트가 축약 로직을 재구현하면 두 구현이 갈라진다), 프론트 `_renderSource` 가 줄번호 +
+본문 2열 표로 렌더한다. 신규 권한·스키마·마이그레이션·엔드포인트 shape 변경 0.
+
+**적대 리뷰(§18.8 ux·design, 사용자 승인 하에 호출)에서 드러난 것 — 이번 cycle 의 핵심**:
+위험은 렌더가 아니라 **말**이었다. "문서 원문" 은 전량을 봤을 때만 쓸 수 있는 단어인데 초판은
+세 경우 모두에서 그 단어를 썼다 — ① 행 상한 절단(**이번 변경으로 처음 도달 가능해진 상태**.
+종전엔 identical → gap 1행이라 6,000행을 넘을 수 없었다), ② 원본 1MB cap, ③ `splitlines()` 가
+흡수하는 줄 종단자 차이(CRLF↔LF·마지막 줄 개행 — sha256 은 다른데 `identical=True`).
+화면의 세 요약(절단 배너·안내 배너·요약 배지)이 각자 다른 근거로 만들어져 서로를 반박했다
+("차이가 많아 앞쪽 6000행" + "문서 원문(20000줄)" + "차이 없음" 동시 표시). 해소는 판정을 한 곳
+(`_identicalFlags`)으로 모으는 것 — 서버에서 `identical` 을 한 번만 판정하게 한 것과 같은 처방.
+
+**부수 적발(선행 결함)**: `el.hidden = true` 가 **CSS 층에서 무력화**돼 있었다. author
+`.attach-diff-hltoggle{display:inline-flex}` 가 UA `[hidden]{display:none}` 를 이겨, 선행 cycle 의
+"칠할 본문이 없으면 하이라이트 토글 숨김"(AC-AVD-23)이 화면에서 작동하지 않았다. 같은 기전을
+쓰려다 드러났고 override 규칙으로 봉인.
+
+**검증**
+- `tests/verify_attach_diff_identical_source.mjs` **61 PASS**(D 섹션은 모달을 실제로 열어 4상태
+  컨트롤을 실측 — 정적 정규식으로는 "코드에 그런 줄이 있다" 까지만 알 수 있다)
+- 뮤테이션 3/3 red — 판정면 되돌리기(D4·D6) · 절단 게이트 무력화(B8d·B8e·B8f) ·
+  sha 판정 무력화(B9·B9b)
+- `tests/test_attachment_version_diff.py` B7·B7b·B7c·E15 신규
+- 선행 하네스 회귀 — `verify_attach_version_diff.mjs` 89 · `verify_attach_diff_syntax_highlight.mjs`
+  113 · `verify_diff_lineno_leak.mjs` 30 전부 PASS
+- pytest 전량 · PB-0008 라이브 시각검증 — 아래 "Git 동기화 결과" 참조
+
+### 개선 제안(§8.1, 기록만 — 사용자 지시 없이 실행 안 함)
+
+- **`[hidden]` 트랩의 계열 종결**: 같은 함정을 `profile.css`·`shell.css`·`search-audit.css`·
+  `chat.css` 4파일 9지점이 각각 **클래스 열거**로 막고 있다. `base.css` 에
+  `[hidden]:not([hidden="until-found"]) { display: none !important; }` 한 줄이면 계열이 끝나지만,
+  기존 9지점을 함께 회수해야 정본이 둘이 되지 않는다 — 별 cycle 감. (design 리뷰 R4)
+- **identical 화면의 메타 요약 표**: "내용이 같다" 를 받은 사용자의 다음 질문은 "그럼 왜 버전이
+  둘인가" 다. 바이너리 identical 화면은 이미 작성 주체·크기·시각·sha256 표를 준다 — 텍스트
+  identical 에도 같은 표를 재사용하면 두 화면의 비대칭이 사라진다. (ux 리뷰 권고 4)
+- **`verify_attach_diff_syntax_highlight.mjs` I1 은 부하 의존 flake**: "최악 적대 입력 <
+  1.0ms/line" 임계가 호스트 부하에 따라 0.735~1.164ms 로 흔들린다(같은 커밋에서 4회 실행 중 1회
+  red). 이번 변경은 토큰화를 건드리지 않으므로 무관하지만, 절대 시간 임계는 공유 호스트에서
+  구조적으로 flaky 하다 — 상대 비교(I2 처럼 길이 2배당 증가율)로 바꾸는 편이 낫다.
+- **원문 뷰의 대용량 체감 미측정**: identical 이면 `rows` 가 각 줄을 `left`/`right` 두 벌로 싣는다.
+  "줄 수는 적고 줄이 긴" 파일(minify 된 `.json`/`.js`)에서 payload·렌더 비용이 종전 gap 1행 대비
+  크게 늘 수 있다. 하이라이트 성능 하네스(I1)는 4,000자/줄까지만 본다.
