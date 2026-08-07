@@ -10,6 +10,22 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260807T160000-redteam-abortable-postdeploy (배포 실증 + 원장/학습 환류, doc-only)
+- **POST-DEPLOY(2026-08-07)**: PR #1195 merge main `6b0f50c0` → `make deploy-web` 전체 스코프
+  (soak 통과·롤백 0·gateway 드리프트 0). **5서비스 GIT_COMMIT=`6b0f50c0` running/healthy**
+  (web-a·web-b·ask-worker·insight-worker·ops-scheduler).
+  배포본 ask-worker 런타임 실증: 헬퍼 적재 · 출하 상수(poll 1.0/3.0 · tick 15.0→2배→120.0 ·
+  grace 5.0/0.1 · abort_grace 0.5) · **양쪽 배선 2회** · `verify_incomplete` · `review_wait_giveup` ·
+  `copy_context` 전부 True. web-a 서빙 `admin.js` 에 `review_wait_giveup` 3건 · `리뷰 미완료` 1건.
+  web /healthz `status=ok · mysql_ok · pg_ok · git_commit=6b0f50c0`. **라이브 대화 실측 미수행**
+  → 원장 `fixed:deployed:unverified-live`.
+- `docs/improvements/conversation-audit/FRICTION_LEDGER.md`: `FR-redteam-first-pass-unabortable`
+  status 갱신 + 배포 실증 기록.
+- `docs/LEARNINGS.md`: `LRN-20260807-0001`(테스트가 상수를 낮추면 그 상수를 사고 값으로 되돌리는
+  뮤테이션이 전부 생존한다) · `LRN-20260807-0002`(호출을 다른 스레드로 옮기면 그 호출이 읽던
+  ContextVar 가 조용히 끊긴다 — 기능은 멀쩡하고 관측만 사라진다) 신설.
+- 코드 변경 0.
+
 ## CHG-20260807T130000-redteam-abortable-review (자가 검증 대기의 사용자 탈출구 복구, Major)
 - `src/modules/redteam.py`: `_await_review_interruptible()` 신설 — 리뷰어 1패스를 워커 스레드
   (`thread_name_prefix="redteam-review"`)에 맡기고 폴링하며 ① 중단 신호(`abort_fn`: '즉시 답변'·취소)

@@ -31,7 +31,11 @@ source_of_truth: true
       사용자 답변에 찍음 ④ 사용자 중단이 콘솔에서 "리뷰 수행 실패"로 표시되고 리뷰어 오류율을
       부풀림(admin.js cross-ref) ⑤ abort 폴링이 메모리 DB 왕복 ~300배 증폭
 - [x] 테스트 — 신규 **25**건(출하 상수 계약 3 + 헬퍼 14 + orchestrate 배선 8) · 기존 red-team 127 PASS
-- [ ] verify-completion → PR → 머지 → 배포 → 라이브 실측
+- [x] verify-completion PASS → PR #1195 → main `6b0f50c0` 머지 → **배포 완료**
+      (`make deploy-web` 전체 스코프, 5서비스 GIT_COMMIT=`6b0f50c0` running/healthy,
+      배포본 런타임 실증 7항목 True, web /healthz ok)
+- [ ] 라이브 대화 실측(대기 중 버튼 즉시 반응 · 진행 표시 갱신 · 콘솔 중단 표시 PB-0008 ·
+      `redteam_ms>120초` 비율 추이) — 다음 audit 의 corroboration 재측정 대상
 
 ## TASK-20260806T170000-label-namespace — 라벨 네임스페이스: 죽은 클러스터 배제·스키마 표기·결정적 매칭 (Minor §12.3)
 
