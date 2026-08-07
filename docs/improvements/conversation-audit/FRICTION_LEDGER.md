@@ -6,6 +6,92 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-redteam-first-pass-unabortable — triaged (L7↔L2 구조; 자가 검증 대기 구간에 사용자 탈출구·진행 표시 부재)
+
+- **status**: `triaged` — 코드/테스트(신규 **25** PASS · 기존 red-team 127 PASS · ruff clean ·
+  역검증 3종 판별력 확인) + **§18.8 backend/qa 패널 BLOCKING 3 · MAJOR 12 전건 흡수**
+  (MINOR 12 중 8 흡수 · 4 는 선재/범위 밖 명시). verify-completion·PR·배포 미착수.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit "안녕 처음 사용하는데 리뷰 가능할까?"`
+  (2026-08-07) — "해당 대화에서 assistant의 응답이 더 이상 진행되지 않는 이슈".
+- **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1(보고) / 아래 corroboration 별도
+- **modality**: 1:1 · **product_id(마스킹)**: P-119 · **conv(마스킹)**: `…226e27aa` · run `…bfc5ec3e`
+  · 계정(마스킹) A-27, **첫 사용 사용자**(대화 4건 전부 단발)
+- **symptom_confidence**: high (사용자 명시 보고 + DB 실측) ·
+  **rootcause_confidence**: high (duration_breakdown + redteam_reviews + llm_usage + 코드 file:line 삼각측량)
+- **suspected_layers**: **L7**(표면 — 진행 표시가 갱신되지 않아 "멈춤"으로 읽힘) ↔
+  **L2**(계약 — 리뷰어 대기 구간이 취소·'즉시 답변'을 듣지 않음). L6(리뷰어 호출 자체의 무응답)은
+  **직접 유발 조건이나 근본 아님**(아래 분리).
+- **증상(signal)**: `E-USR` 명시 보고 + `I-SIL` 침묵 이탈(첫 인사 턴 이후 대화가 2메시지로 종료).
+- **실측(정직 분리 — 무엇이 느렸나)**:
+  - 답변 본문 생성 **9.6초**(`inference_detail.llm_ms=9644`, `tool_calls=0`, `llm_calls=1`).
+  - 총 소요 **312.0초**(`total_ms=312034`), 그중 **red-team 300.1초**(`redteam_ms=300086`).
+  - `redteam_reviews` #283: `verdict=error` · `stop_reason=review_error` · `latency_ms=300038` ·
+    `reasoning_level=max`. `llm_usage` 에 redteam 행 **없음** = 응답을 아예 받지 못하고 상한까지 대기.
+  - 리뷰어 정상 지연은 **p50 20.4초 / max 54.5초**(14일, haiku 209건) → 300초는 분포 밖.
+  - 운영 설정 `REDTEAM_TIMEOUT_SEC=300`(콘솔 최댓값). 즉 **1회 실패 = 사용자 5분 대기**.
+- **confirmed_root_cause**: **리뷰어를 기다리는 구간에 사용자 탈출구가 없었다.**
+  `redteam.py` `orchestrate_review` 의 `abort_fn`(취소·'즉시 답변')과 `progress_fn` 은 **반복 수정
+  루프에만** 걸려 있고, 최초 검증 패스(`run_review`)와 재검증 호출은 상한까지 블로킹하며 어떤
+  신호도 보지 않았다. `agent_core.py` 쪽도 red-team 진입 전(6473)과 재도출 내부(6631) 사이에
+  취소 체크가 없다. 그래서 (a) 화면은 "답변을 자가 검증하는 중"에서 정지 (b) 버튼이 듣지 않음
+  (c) 이미 완성된 답변이 300초 인질이 됐다. 코드 주석이 "사용자는 언제든 그 시점 답변을 받을 수
+  있다"고 선언하는데 **첫 패스가 그 계약의 예외**였다. 재발경로 = **ux contract + 구조**.
+  - **L6(리뷰어 300초 무응답)은 별개 축**: 그 시각 게이트웨이는 한산했고(동시 LLM 호출 0),
+    컨테이너 로그는 이후 재시작(03:00Z)으로 소실돼 공급자측 원인은 **미확정(inconclusive)**.
+    다만 그 원인이 무엇이든 **사용자를 5분 붙잡는 것은 별개의 결함**이라 이번 봉인 대상은 탈출구다.
+- **corroboration**: **structural**(30일, `duration_breakdown` 보유 assistant 턴 347건 기준)
+  - red-team 이 **총 응답시간의 과반**인 턴 **52건**
+  - `redteam_ms > 120초` **19턴 / 15 대화** · `> 60초` 35턴
+  - 리뷰 `verdict=error`(대기만 하고 이득 0) **12 / 247**, `latency ≥ 290초` **11건**
+  - 도구 0회의 사소한 턴 40건 중에도 60초 초과 9건 → 인사·스몰토크도 예외가 아니다.
+- **거짓양성 기각(`refuted`)**: F1 무해 아님(첫 사용자 이탈) · F3 기수정 아님(`git log` 확인) ·
+  F4 의도된 동작 아님(위 계약 위반) · 보안 가드와 무관.
+- **triage**: S=5 · F=4(structural) · L=4 · C=5 · R=3 → **32**, disposition=**fix-now**.
+  위험등급 **Major**(§12.3 코어 LLM 전달 경로) → attended human-decision. 사용자가 봉인 범위
+  **A(사각지대 해소만)** 명시 선택 — 타임아웃 값 조정·리뷰 스킵 게이팅은 **범위 밖**.
+- **봉인**: `_await_review_interruptible` — 리뷰어 1패스를 워커 스레드에 맡기고 1초 주기 폴링으로
+  ① 중단 신호 즉시 반영 ② 15초 주기 진행 표시(경과/상한/탈출 안내). 중단 감지 시 0.5초 유예로
+  **반환 직전인 판정은 살리고**(콘솔의 "무엇이 남았는지" 보존), 넘기면 버리고 초안 즉시 전달.
+  최초·재검증 **양쪽** 배선. `verdict` enum 불변 — 중단은 `stop_reason="aborted"` 로만 구분.
+- **초판 정정 3건(정직)**:
+  ① 첫 구현은 "진입 전 abort 면 리뷰 skip" 이었으나 그러면 중단 시에도 findings 를 기록하던 기존
+     관측 계약이 깨진다 — 기존 회귀 테스트가 FAIL 로 잡아냈다. 유예 방식으로 대체.
+  ② **보안 채널 검증 중 발견한 회귀**: 호출을 워커 스레드로 옮기면 ContextVar 가 전파되지 않아
+     `_record_llm_usage` 의 `get_active_datasource()` 폴백이 빈 값을 보고 `llm_usage.target_scope`
+     가 통째로 NULL 이 된다(라이브 14일 redteam **295건 중 218건**이 이 폴백으로 채워져 있었다).
+     `contextvars.copy_context().run` 으로 수정 + 회귀 테스트. `llm.py` 에 같은 함정 주석이 이미
+     있었다 — **스레드 경계를 옮기는 변경의 표준 점검 항목**.
+  ③ 초판 문서가 "콘솔 라벨('사용자 즉시 답변/취소')이 이미 있으니 그대로 쓴다"고 적었으나
+     **거짓이었다** — 그 라벨은 `unresolved>0` 분기에서만 렌더되는데 이 경로는 `unresolved=0` 이라
+     구조적으로 도달 불가였고, 콘솔은 중단을 "리뷰 수행 실패"로 표시하며 사용자 중단이 리뷰어
+     오류율(이 감사가 근거로 쓴 그 지표)을 부풀린다. admin.js 수정으로 흡수.
+- **§18.8 패널 흡수(가장 중요한 것)**: 초판 테스트는 대기 상수를 낮추는 autouse fixture 를 써서
+  **`_REVIEW_ABORT_POLL_SEC=1.0 → 300.0` 뮤턴트가 전 스위트를 통과**했다 — 그 값이 곧 이 감사가
+  고치려던 인시던트 그 자체다(저장소의 알려진 `test-env-override-skip-vacuous-pass` 패턴).
+  fixture 를 autouse 해제하고 **출하 값을 직접 읽는 상수 계약 테스트**를 세웠다. 그 밖에
+  ① 대기 포기 시점이 리뷰어 상한과 무관해도 통과(운영 결과 = p50 20초 리뷰를 6초에 전부 버리고
+  리뷰어 실패로 기록) ② **재검증 중단이 '검증하지 않은 결함' 고지를 사용자 답변에 찍음**(직전
+  판정은 *수정 이전* 답변에 대한 것) ③ abort 폴링이 메모리 DB 왕복을 ~300배로 증폭 ④ 진행 표시가
+  tick 마다 DB step 행 INSERT ⑤ verify 쪽 progress 배선만 지워도 통과(고치려던 비대칭의 재생산)
+  — 전건 흡수.
+- **fix**: `CHG-20260807T130000-redteam-abortable-review`(TASK-20260807T130000-redteam-abortable-review) /
+  **코드 거주 primary `feature-0002-agent-core`**(기능 소유 `feature-0021-redteam-review` — cross-ref only).
+- **rc_ids**: RC-1(첫 패스 무-탈출구) · RC-2(재검증 무-탈출구) · RC-3(진행 표시 미갱신) ·
+  **batch-id**: B-20260807T130000-redteam-abortable-review
+- **범위 밖(deferred/watch)**: ① `REDTEAM_TIMEOUT_SEC=300` 운영값이 성공 분포(p50 20초) 대비 과대
+  ② 도구 0회·검증 대상 사실이 없는 인사 턴에도 `max` 강도 리뷰가 도는 게이팅 ③ 리뷰어 호출
+  300초 무응답의 공급자측 원인(로그 소실, 별 트랙) ④ '즉시 답변' 버튼의 권한 게이트
+  (`conversation.finalize.own`) — 권한 없는 사용자에겐 탈출구 자체가 없다.
+- **라이브 실측 필요분(§정직)**: ① 실제 대화에서 대기 중 '즉시 답변'·취소가 즉시 듣는지
+  ② 진행 표시가 실제로 갱신돼 보이는지(실 브라우저) ③ 관리 콘솔 'AI 추론' 탭에서 중단된 리뷰가
+  **"리뷰 미완료 — 사용자 '즉시 답변'/취소"** 로, 대기 포기가 **"리뷰어 응답 지연 — 대기 포기"** 로
+  뜨는지(PB-0008 — 이 조합의 행은 배포 후에야 생기므로 배포 전 실화면 검증 불가, headless 13 PASS 로
+  로직만 고정) ④ 배포 후 `redteam_ms > 120초` 턴 비율과 `stop_reason IN ('aborted','review_wait_giveup')`
+  발생 추이 — 다음 audit 의 corroboration 재측정 대상.
+- **선재 결함 이월(이번 범위 밖)**: `verify_error` 분기도 재검증 미완료인데 직전(수정 이전) BLOCK 을
+  `unresolved` 로 세어 같은 오귀속을 낸다(§18.8 backend 패널이 "둘 다 정리할 가치" 로 지적). 이번
+  승인 범위(A=사각지대 해소)에 없어 손대지 않았다 — 별 cycle.
+
 ## FR-attach-delivery-truncated-by-output-cap — fixed:deployed:verified (L6↔L2 구조; 전달 payload 가 답변 출력 예산을 잠식)
 
 - **status**: `fixed:deployed:verified` — 코드/테스트(신규 **56** PASS[33+23] · **뮤테이션 9/9 KILLED** ·

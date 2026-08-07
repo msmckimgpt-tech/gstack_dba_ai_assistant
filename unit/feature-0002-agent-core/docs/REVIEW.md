@@ -8,6 +8,80 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260807T130000-redteam-abortable-review [SUBAGENT:backend] + [SUBAGENT:qa] + built-in security-review — BLOCK → 전건 흡수 후 SHIP (BLOCKING 3 / MAJOR 12 / MINOR 12) (TASK-20260807T130000)
+- **Trigger**: §18.8 dispatch — `performance/latency/지연` + 동시성(스레드 경계) 신호 → **backend, qa**.
+  채널 선택은 §18.8.2 순서를 따랐다.
+  1. **`codex`(1순위, 제약 없는 채널) — 실행 불가**: `ERROR: You've hit your usage limit … try again at
+     Aug 9th, 2026`. 미검증을 검증으로 보고하지 않기 위해 그대로 기록한다.
+  2. **built-in `/security-review`(2순위) — 실행함**. 이 스킬은 sub-task fan-out 을 전제하는데 세션에
+     **상위 우선순위 도구 제약**("요청 없이 Agent tool 호출 금지")이 걸려 있어 §18.8.2 carve-out 에
+     따라 subagent 없이 **본 세션이 인라인 수행**. 보안 findings **0건**(주입·인증·비밀·RCE·XSS 없음;
+     진행 표시 문자열은 상수뿐이고 리뷰어 프롬프트·판정 기준·RBAC·스키마 불변).
+     **부수로 회귀 1건 적발** — 아래 [C-1].
+  3. **backend/qa subagent panel — 사용자 승인 후 호출**(AskUserQuestion 2026-08-07, "호출한다").
+     제약 없는 채널을 먼저 소진한 뒤 1회 확인했다. **결과: 양쪽 BLOCK**. qa 는 모든 판정을
+     **뮤테이션 실제 실행**(pytest 반복 + CPU 2~4배 과부하)으로 실증했다.
+- **[C-1 보안 채널 발견, 흡수] 스레드 이동이 ContextVar 전파를 끊어 `llm_usage.target_scope` 소실**:
+  리뷰어 호출을 워커 스레드로 옮기면 `_record_llm_usage` 의 `get_active_datasource()` 폴백이 빈 값을
+  본다. 라이브 14일 redteam **295건 중 218건**이 이 폴백으로 채워져 있었으므로 데이터소스별 비용
+  귀속이 통째로 사라진다. `llm.py` 에 **같은 함정 주석이 이미 있었다**(node_analysis·semantic_cluster
+  병렬 경로). → `contextvars.copy_context().run` + 회귀 테스트(실제 `cfg` ContextVar 경유).
+- **[BLOCKING-1 qa, 흡수] 출하 상수가 전혀 잠기지 않음 — 인시던트를 되돌리는 뮤턴트가 전 스위트 통과**:
+  autouse fixture 가 `_REVIEW_ABORT_POLL_SEC` 등을 모든 테스트에서 낮춰, `1.0 → 300.0`(= 원래 인시던트
+  그 자체) 뮤턴트가 **140/140 통과**했다. 저장소의 알려진 `test-env-override-skip-vacuous-pass` 패턴.
+  → fixture 를 **autouse 해제**하고, 실제 출하 값을 읽는 상수 계약 테스트 3종 신설(중단 체감 상한
+  `poll+grace ≤ 5초`, 진행 표시 첫 tick ≤ 20초 + 300초 대기 누적 행 ≤ 8, 대기 유예 비율 상한).
+- **[BLOCKING-2 qa, 흡수] 대기 포기 시점이 리뷰어 상한과 무관해도 통과**: `deadline` 에서 `timeout_sec`
+  을 빼거나 호출부를 `timeout_sec=1` 로 바꿔도 **생존**. 운영 결과는 "p50 20초 리뷰를 6초에 전부 버리고
+  리뷰어 실패로 기록"(CODE_REVIEW §2.1 무음 실패). → `timeout_sec=3` 으로 포기 시점을 실측하는 테스트
+  (≥3.0s, <4.5s)로 **공식과 배선을 동시에** 잠금.
+- **[BLOCKING-3 backend, 이미 해소]** 진행 표시 고정 간격 → 패널 스냅샷 이후 백오프를 구현했고 qa 가
+  baseline 15/15 로 확인. 단 그 테스트가 **지터 지배**(뮤턴트 8/15 생존)라 아래 MAJOR 로 재적발.
+- **[MAJOR, 흡수] 재검증 중단이 '검증하지 않은 결함'을 사용자 답변에 고지**(backend M2): verify 중단 시
+  `current_review` 는 **수정 이전** 판정이라 그 BLOCK 이 `unresolved` 로 세어지고
+  `REDTEAM_UNRESOLVED_NOTICE`(운영 기본 1)가 "지적 사항이 해소되지 않았다"를 답변에 찍는다 — 아무도
+  검증하지 않은 답변에 대한 사실 주장. 바로 한 분기 옆의 `unverified` 처리가 **정확히 이 이유로**
+  존재했다("검증하지도 않은 결함을 단정하는 것이 된다"). → `verify_incomplete` 플래그로 동일 예외 적용
+  + 전용 테스트. **선재 `verify_error` 분기도 같은 형태이나 이번 범위(A) 밖 — 원장에 별 항목으로 이월**.
+- **[MAJOR, 흡수] 사용자 중단이 콘솔에서 "리뷰 수행 실패"로 보이고 리뷰어 오류율을 부풀림**(backend M2b):
+  `verdict="error"` 를 admin.js 가 무조건 "리뷰 수행 실패"로 렌더하고, `stop_reason` 라벨은
+  `unresolved>0` 분기에서만 그려지는데 이 경로는 `unresolved=0` 이라 **"사용자 '즉시 답변'/취소" 라벨이
+  구조적으로 도달 불가**였다. 즉 MODIFY/FUNCTION 의 "콘솔 라벨이 이미 있다"는 주장이 **거짓**(§2.5).
+  → feature-0003 `admin.js` ② 단계가 `stop_reason` 을 읽어 중단/포기를 `warn` 으로 구분 표시 +
+  `review_wait_giveup` 라벨 신설(cross-ref).
+- **[MAJOR, 흡수] abort 폴링이 메모리 DB 왕복을 ~300배로 증폭**(backend M3): `_rt_abort` 는 호출마다
+  최대 4 SELECT(취소 2 + 즉시답변 2) → 1초 고정 폴링이면 상한 대기에 **패스당 ~1,200 왕복**, 동시 ask
+  수만큼 곱해진다. → 초반 10초는 1초, 이후 3초로 백오프(`_REVIEW_ABORT_POLL_MAX_SEC`).
+  300초를 대체하는 마당에 3초는 체감되지 않는다.
+- **[MAJOR, 흡수] 진행 표시가 tick 마다 DB step 행을 INSERT**(backend M4): `progress_fn` 은
+  `_emit_activity` → `save_memory_step`. 고정 15초면 300초 대기에 20행이 쌓여 단계 목록을 오염시키고
+  steps 는 폴링으로 반복 전송돼 매 payload 에 곱해진다. → 15→120초 백오프(누적 행 ≤ 8, 테스트로 계산).
+- **[MAJOR, 흡수] 백오프 테스트가 지터 지배**(qa M1): `gaps[-1] > gaps[0]` 는 0.02s 신호를 0.01s 지터로
+  재는 것이라 뮤턴트가 **8/15 생존**. → 비율 단정(`>= 3배`) + 백오프 상수도 fixture 로 명시.
+- **[MAJOR, 흡수] cap·prefix·문구·verify 배선·감사 필드·회차 원장·실패 streak 전부 미잠금**(qa M2~M8):
+  `_REVIEW_PROGRESS_TICK_MAX_SEC` 1,000,000 / 첫 패스 prefix 삭제 / verify prefix 를 첫 패스 것으로 교체 /
+  탈출구 안내 문장 삭제 / `상한 {0}초` / **verify 쪽만 `progress_fn=None`**(첫 패스는 kill) /
+  `verdict="pass"` 로 기록 / `rounds_ledger` 통째 삭제 / `>=3`→`>=1` / 연속→누적 — **전부 생존**했다.
+  → cap 테스트, 첫 패스·재검증 라벨을 각각 단정하는 배선 테스트 2종, 문구·상한값 단정,
+  `record_review` 필드 4종 단정, verify 회차 `note="aborted"` 단정, 일시 실패 후 **회복 시 중단 성립** /
+  연속 3회 후 **신호 무시** 2종 추가.
+- **[MINOR, 흡수]** 대기 유예를 `timeout_sec` 비례 하한으로(계측되지 않는 앞뒤 구간이 고정 5초를 넘으면
+  정상 리뷰를 우리가 버린다) + **대기 포기를 `review_wait_giveup` 으로 분리 기록**(리뷰어 실패와 구분) ·
+  워커 예외를 정상 실패로 매핑(예전엔 남던 `review_error` 행이 사라졌다) · abort 시 `future.done()`
+  선확인(완료된 리뷰는 스케줄링 지연에도 절대 버리지 않는다 — 기존 테스트 race 도 함께 해소) ·
+  `thread_name_prefix="redteam-review"` · `progress_fn` 예외 가드 테스트 · 중단 유예 경로 증거
+  (`abort_fn` 호출 횟수 단정).
+- **[미흡수 — 명시 기록]** ① 선재 `verify_error` 분기의 동일 오귀속(범위 A 밖, 원장 이월)
+  ② `budget`/`backstop` 체크가 abort 체크보다 먼저인 선재 순서(경계에서 중단이 다른 사유로 기록)
+  ③ 워커 스레드에서 **실제** `run_review` 를 태우는 테스트는 없다 — 스레드 친화성은 코드 점검으로만
+  확인했다(`_get_pg_runtime_conn` 은 호출마다 새 연결, `signal` 미사용). ④ `shutdown(wait=False)` 는
+  인터프리터 종료 시 `_python_exit` 조인을 막지 못한다(llm.py 동형, 선재).
+- **검증**: `tests/test_redteam_abort.py` **25 PASS**(상수 계약 3 · 헬퍼 14 · orchestrate 배선 8) +
+  기존 `test_redteam.py` 127 PASS. 역검증: 구동작(직접 블로킹 호출) 복원 **6 FAIL** · 중단 유예 제거
+  **1 FAIL** · ContextVar 복사 제거 **1 FAIL** · 백오프 제거(패널 실측) baseline 15/15 vs 뮤턴트 8/15 →
+  비율 단정으로 교체 후 재잠금.
+- **판정**: SHIP (BLOCKING 3 · MAJOR 12 전건 흡수, MINOR 12 중 8 흡수 · 4 는 선재/범위 밖 명시).
+
 > 이전 기록(94건): [REVIEW-archive-20260711T120311.md](./_archive/REVIEW-archive-20260711T120311.md)
 
 ## REV-20260805T160000-attach-change-false-absence [SUBAGENT:backend] + [SUBAGENT:qa] + built-in security-review — BLOCK → 전건 흡수 후 SHIP ([P1] 5 / [P2] 8) (TASK-20260805T1600)

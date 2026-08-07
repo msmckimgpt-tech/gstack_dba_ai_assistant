@@ -10,6 +10,61 @@ source_of_truth: true
 
 > 이전 기록(109건): [MODIFY-archive-20260711T120311.md](./_archive/MODIFY-archive-20260711T120311.md)
 
+## CHG-20260807T130000-redteam-abortable-review (자가 검증 대기의 사용자 탈출구 복구, Major)
+- `src/modules/redteam.py`: `_await_review_interruptible()` 신설 — 리뷰어 1패스를 워커 스레드
+  (`thread_name_prefix="redteam-review"`)에 맡기고 폴링하며 ① 중단 신호(`abort_fn`: '즉시 답변'·취소)
+  ② 진행 표시 갱신을 처리한다. 반환 `(review, aborted, gave_up)`.
+  - **ContextVar 복사**(`contextvars.copy_context().run`) — 아래 [정정 ②].
+  - **중단 폴링 백오프**: 초반 10초 1초 → 이후 3초(`_REVIEW_ABORT_POLL_MAX_SEC`). `abort_fn`
+    (=`agent_core._rt_abort`)이 호출마다 메모리 DB 를 최대 4회 읽어, 1초 고정이면 상한 300초 대기에
+    **패스당 ~1,200 왕복** × 동시 ask 수가 된다.
+  - **중단 유예**(`_REVIEW_ABORT_RESULT_GRACE_SEC` 0.5s) + `future.done()` 선확인: 이미 끝났거나
+    유예 안에 도착한 판정은 절대 버리지 않고, 넘기면 버리고 초안을 즉시 전달(fail-open).
+  - **진행 표시 백오프**: 15s → 2배 → 120s cap. `progress_fn` 은 `_emit_activity`→`save_memory_step`
+    이라 tick 마다 DB step 행이 생기고 steps 는 폴링으로 반복 전송된다(고정 15초면 300초에 20행).
+  - **대기 포기**: `timeout_sec + max(_REVIEW_WAIT_GRACE_SEC 5s, timeout_sec × 0.1)`. 비례 하한은
+    `run_review` 자체 상한 밖의 미계측 구간(클라이언트 해소 전 / `_record_llm_usage` PG INSERT 후)이
+    고정 5초를 넘을 때 정상 도착한 리뷰를 우리가 버리지 않기 위한 것. 포기는 `gave_up=True` 로
+    리뷰어 실패와 구분해 `stop_reason="review_wait_giveup"` 으로 기록한다.
+  - **fail-safe**: 콜백이 없으면 직접 호출(무회귀) · 신호 읽기 **연속** 3회 실패면 중단 판정만 포기
+    (중간 성공 시 streak 초기화) · 워커 예외는 정상 실패로 매핑해 `review_error` 행을 보존 ·
+    `progress_fn` 예외가 리뷰를 삼키지 않는다.
+- `src/modules/redteam.py` `orchestrate_review`: 최초 검증 패스와 재검증 호출 **양쪽**을 이 헬퍼
+  경유로 전환. 최초 패스 중단/포기 → `record_review(stop_reason=...)` 후 초안 반환. 재검증 중단/포기
+  → 마지막 수정본 채택 + 같은 `stop_reason` + 회차 원장 `note`.
+  **`verify_incomplete` 신설** — 재검증이 끝나지 않은 채 나가면 직전(수정 이전) 판정의 BLOCK 을
+  `unresolved` 로 세지 않는다. 세면 검증하지도 않은 답변에 "지적 사항 미해소" 고지가 찍힌다
+  (`REDTEAM_UNRESOLVED_NOTICE` 운영 기본 1). `unverified` 분기가 같은 이유로 이미 하던 처리의 확장.
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`(cross-ref): ② 단계가 `stop_reason` 을 읽어
+  사용자 중단(`aborted`)·대기 포기(`review_wait_giveup`)를 "리뷰 수행 실패"가 아닌 `warn` 으로
+  구분 표시 + `review_wait_giveup` 라벨 신설. 종전에는 `verdict="error"` 가 무조건 "리뷰 수행 실패"로
+  렌더되고 `stop_reason` 라벨은 `unresolved>0` 분기에서만 그려져, 이 경로(`unresolved=0`)에서는
+  "사용자 '즉시 답변'/취소" 라벨이 **구조적으로 도달 불가**였다.
+- 왜 이 형태인가: `_openai_chat_completion_with_deadline`(llm.py 공용 경로)을 건드리지 않는다 —
+  모든 LLM 호출자가 공유하는 함수라 blast radius 가 크고, 필요한 것은 red-team 오케스트레이션의
+  대기 방식뿐이다.
+- **정정 3건(정직)**:
+  ① 첫 구현은 "진입 전 abort 면 리뷰 자체를 skip" 이었으나, 그러면 중단 시에도 '무엇이 남았는지'를
+     기록하던 기존 관측 계약(`test_verify_findings_present_even_without_rounds`)이 깨진다 — 실제로 그
+     회귀 테스트가 FAIL 로 잡았다. 중단의 의미를 "리뷰 금지"가 아니라 "리뷰 때문에 기다리게 하지
+     않음"으로 재정의하고 유예 방식으로 대체했다.
+  ② **스레드 이동이 ContextVar 전파를 끊었다** — `_record_llm_usage` 의 `get_active_datasource()`
+     폴백이 워커에서 빈 값을 봐 `llm_usage.target_scope` 가 통째로 NULL 이 된다(라이브 14일 redteam
+     **295건 중 218건**이 이 폴백 사용). `llm.py` 에 같은 함정 주석이 이미 있었다 —
+     **스레드 경계를 옮기는 변경의 표준 점검 항목**. `contextvars.copy_context().run` 으로 수정.
+  ③ 초판 문서가 "콘솔 라벨이 이미 있으니 그대로 쓴다"고 적었으나 **거짓이었다**(위 admin.js 항목).
+- `tests/test_redteam_abort.py` 신규(**25**) — 출하 상수 계약 3 + 헬퍼 14 + orchestrate 배선 8.
+  **상수 계약 테스트는 fixture 를 쓰지 않는다**: 대기 상수를 낮추는 autouse fixture 아래에서는
+  `_REVIEW_ABORT_POLL_SEC=300`(= 원 인시던트) 뮤턴트조차 전 스위트를 통과했다(§18.8 qa 패널 실측,
+  저장소의 `test-env-override-skip-vacuous-pass` 패턴). 배선 테스트를 둔 이유는 헬퍼 직접 호출만으로는
+  orchestrate 가 실제로 그 경로를 타는지 증명하지 못하기 때문이다(게이트 뒤 호출 사각).
+- 스키마·RBAC·엔드포인트·프롬프트 무변경. 보안 회귀 없음(리뷰 **강도·판정 기준**은 불변이며,
+  중단은 종전에도 존재하던 fail-open 경로와 같은 손실 모델이다). built-in security-review 인라인
+  수행 결과 보안 findings 0건.
+- Cross-ref: TASK-20260807T130000-redteam-abortable-review ·
+  `docs/improvements/conversation-audit/FRICTION_LEDGER.md` FR-redteam-first-pass-unabortable ·
+  기능 소유 feature-0021-redteam-review(cross-ref only).
+
 ## CHG-20260804T063000-summary-bootstrap-deadlock (요약 미보유 대화의 PG 읽기 오판 교착 해소, Major)
 - `src/modules/runtime_backend.py`: `PgRuntimeBackend.load_summary` 가 행 없음/NULL 을 `None` 이 아닌
   **`''`** 로 반환. `_read_runtime_pg` 의 `None` 은 **읽기 실패 전용 신호**라, 데이터 부재를 같은 값으로
