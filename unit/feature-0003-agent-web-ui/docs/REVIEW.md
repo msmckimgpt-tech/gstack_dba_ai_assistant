@@ -3691,3 +3691,14 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 - 실브라우저 기하 `verify_attach_diff_geometry.py` **54 PASS**(M1~M5+M3b 신규)
 - 구문 하이라이트 하네스 **113 PASS**(토큰 대비 G2 무회귀 — 마크가 배경을 안 칠하므로 3면 유지)
 - Artifact: 본 entry + `docs/test-runs.d/20260807T1400-attach-diff-intraline.md`
+
+
+## REV-20260811T113000-ai-claude-attach-diff-intraline-postdeploy [SKIPPED:non-policy-doc]
+
+- doc-only POST-DEPLOY 실측 기록(코드 변경 0) — §18.8 dispatch 표 첫 행("비정책 doc-only")에 해당.
+- 기록 대상은 배포본 `9f1622f9` 의 PB-0008 라이브 실측이며, 판정 근거는 그 Run 자체다
+  (`docs/test-runs.d/20260807T1400-attach-diff-intraline.md`).
+- **정직 표기**: 라이브 표본이 SQL 3버전 체인 1건이라, 탭 들여쓰기 변경·`is-note` 절단 배너·
+  6,000행 체감은 이 Run 에서 확인하지 못했다. 각각 헤드리스 M3b · jsdom D8 계열이 잠그고 있으나
+  **실 Windows 브라우저 픽셀로는 미확인**이다.
+- Artifact: 본 entry

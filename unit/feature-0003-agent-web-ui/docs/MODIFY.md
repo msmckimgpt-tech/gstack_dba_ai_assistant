@@ -3094,3 +3094,16 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/verify_attach_version_diff.mjs`, `tests/headless/verify_attach_diff_geometry.py`,
   `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
 - Timestamp: 2026-08-07T14:00:00+09:00
+
+
+## CHG-20260811T1130-ai-claude-attach-diff-intraline-postdeploy — POST-DEPLOY PB-0008 실측 기록 (doc-only)
+
+- 배포본 `9f1622f9` 라이브 실측. **완료 판정은 파이프 exit 이 아니라 서비스별 커밋**으로 했다 —
+  `repo-web-a-1`·`repo-web-b-1`·`repo-ask-worker-1`·`repo-insight-worker-1` 전부 `GIT_COMMIT=9f1622f9`.
+- `docs/test-runs.d/20260807T1400-attach-diff-intraline.md`: `verdict: PARTIAL → PASS` +
+  PB-0008 실측 블록(마크 렌더 13개·쪽별 색 `rgb(127,29,29)`/`rgb(21,128,61)`·배경 `rgba(0,0,0,0)`·
+  구문 토큰 147개 공존·하이라이트 OFF→ON 왕복 텍스트 불변·2열↔단일열 parity·한글/부분 마크) +
+  **관측된 한계 2건**(마크 span 수 ≠ 변경 구간 수 · 무관한 줄 짝짓기에서 마크가 노이즈) +
+  **라이브 표본에서 확인 못한 축 3건**(탭 들여쓰기·`is-note` 배너·6,000행 체감 — 헤드리스가 잠금).
+- `docs/TASK.md`: 배포·PB-0008 체크박스 마감 + Next Action 해제.
+- 코드 변경 **0**(doc-only). Timestamp: 2026-08-11T11:30:00+09:00

@@ -2,7 +2,7 @@
 run_at: 2026-08-07T14:00:00+09:00
 session: ai/claude/attach-diff-intraline
 scope: 첨부 버전 diff — 줄 안(글자 단위) 변경 구간 표시
-verdict: PARTIAL
+verdict: PASS
 ---
 
 # Run — attach-diff intra-line 변경 구간
@@ -10,8 +10,9 @@ verdict: PARTIAL
 사용자 요청: "여전히 line 단위 차이만 나타나고 있는 상태이며 **각 글자 단위의 차이점은 출력되지
 않는** 형태라 작업 완수가 필요합니다" (2026-08-07).
 
-`verdict: PARTIAL` 인 이유는 **PB-0008 라이브 시각검증이 배포 후 잔여**이기 때문이다
-(`visual_verification_scope: always`). 아래 축은 모두 PASS.
+배포 전 근거(pytest·jsdom·WSL-headless chromium)와 **배포 후 PB-0008 실 Windows 브라우저 실측**을
+함께 담는다. 초판은 `verdict: PARTIAL`(PB-0008 잔여)이었고, 배포본 `9f1622f9` 실측으로 PASS 로
+전환했다(`visual_verification_scope: always`).
 
 ## Environment: CLI (pytest, 컨테이너 오프라인 이미지)
 
@@ -111,7 +112,48 @@ cycle 이후 `ReferenceError: detectCodeLanguage is not defined` 로 **전 케�
 gradient 도 동수치지만 `background-image` 를 쓰므로 "배경을 칠하지 않는다" 는 진술이 흐려진다 —
 같은 결과라면 진술이 정확한 쪽을 고른다.
 
-## Environment: Windows-browser (PB-0008) — **미수행 (배포 후 수행)**
+## Environment: Windows-browser (PB-0008) — **POST-DEPLOY 실측 (배포본 `9f1622f9`)**
+
+- Bridge: relay @ `http://172.26.144.1:9223` · Chrome/150.0.7871.128 · Runner: AI
+- 라이브 서비스 커밋 실측 — `repo-web-a-1` / `repo-web-b-1` / `repo-ask-worker-1` /
+  `repo-insight-worker-1` **전부 `GIT_COMMIT=9f1622f9`**(파이프 exit 이 아니라 서비스별 커밋으로
+  배포 완료를 판정).
+- 대상: 대화 `20260804051001-774ada22` → 첨부 패널 → `P_gunzgame_Game_MasangCreatorsStop.sql`
+  "버전 3개 ▾" → `⇄ 버전 비교` (v2 · 사용자 ↔ v3 · AI 수정 · 최신, stats `+59 / -2`)
+
+**PASS 항목**
+
+| 축 | 실측 |
+|---|---|
+| 마크 렌더 | `.attach-diff-chunk` **13개** · `box-shadow: rgb(...) 0px -2px 0px 0px inset` |
+| 쪽별 색 | 좌(삭제) `rgb(127,29,29)` · 우(추가) `rgb(21,128,61)` — 명도 분리 확인 |
+| 배경 미칠 | 마크 span `background-color: rgba(0,0,0,0)` — 구문 토큰 대비 논거 유지 |
+| 줄바꿈 조각 | `box-decoration-break: clone` 적용 |
+| 구문 색 공존 | 하이라이트 ON 에서 토큰 span **147개** + 마크 13개 동시 생존 |
+| 구문 색 OFF→ON | 토큰 147→0→147 · 마크 13→11→13 · **셀 텍스트 4단계 전부 동일** |
+| 2열↔단일열 | 단일열에서도 같은 구간, `is-delete` 빨강 / `is-insert` 초록 |
+| 한글 마크 | `-- 진행 중인 후원이 있는지 확인하고 정보 저장` 전체가 추가분으로 정확히 마크 |
+| 부분 마크 | `SET`→`SELECT` 에서 삽입분 `LEC` 만 마크(어절 통짜 아님) |
+
+- Evidence: `/tmp/win-browser-shots/pb0008-intraline-01-split.png`(2열 전체) ·
+  `…-02-zoom.png`(변경 블록 2.6× 확대 — §16.6 "판독 가능한 캡처" 요건)
+
+**관측된 한계 (결함 아님 · 기록)**
+
+- **마크 span 수 ≠ 변경 구간 수**: 구문 색 ON 이면 한 논리 구간이 토큰 경계마다 쪼개져 13개,
+  OFF 면 11개다. 시각적으로는 인접 박스가 맞닿아 연속으로 보인다(§18.8 frontend 패널이 예고).
+- **무관한 두 줄이 위치로 짝지어진 `replace` 블록**에서는 마크가 노이즈로 읽힌다 — 위 실측의
+  `SET \`SponsorEndTime\` = FROM_UNIXTIME(...)` ↔ `SELECT CreatorAuthNo, ... INTO ...` 쌍이 그
+  예다. 마크 자체는 정확하지만(두 줄의 실제 공통/차이) 줄 짝짓기가 어긋난 것이라, 해소는
+  **줄 정렬 알고리즘**의 문제이고 FUNCTION.md §범위 밖에 명시돼 있다. 변경비율 컷(0.85)이
+  이런 쌍을 걸러내지만 줄이 길면 비율이 임계 아래로 내려가 통과한다.
+
+**이번 라이브 표본에서 확인하지 못한 축** (헤드리스가 대신 잠금)
+
+- 탭 들여쓰기 변경(M3b 가 실 chromium 픽셀 192px 로 잠금) · `is-note` 절단 배너(비용 가드가
+  걸릴 만큼 큰 diff 가 라이브 표본에 없었다 — jsdom D8 계열이 잠금) · 6,000행 체감.
+
+## (배포 전) PB-0008 미수행 사유 — 기록 보존
 
 **미수행 사유**: 이 변경은 `static/app/attach-diff.js`·`css/{base,chat}.css` 정적 자산이며,
 정적 자산은 **web 이미지에 baked** 된다(무번들 ESM + content-hash 스탬프). 따라서 라이브에
@@ -129,8 +171,8 @@ gradient 도 동수치지만 `background-image` 를 쓰므로 "배경을 칠하�
 - `is-note` 배너가 내용 절단 배너와 시각적으로 구분되는가
 - 2열↔단일열 토글에서 같은 구간이 같은 색으로 나오는가
 
-배포 전 근거는 위 WSL-headless chromium Run(54 PASS)이며, §15.4.1 표상 그것은 UI 완료 검증으로
-**인정되지 않는다** — 이 fragment 의 `verdict: PARTIAL` 이 그 사실을 담고 있다.
+배포 전 근거는 위 WSL-headless chromium Run(54 PASS)이었고, §15.4.1 표상 그것만으로는 UI 완료
+검증이 성립하지 않는다 — 그래서 이 절이 배포 후 실측으로 채워졌다.
 
 ## 미수행 (정직 표기)
 
