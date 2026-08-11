@@ -459,3 +459,92 @@ def test_reviewer_rules_do_not_disable_other_axes():
     idx = rules.index("contradicts")
     window = rules[max(0, idx - 400):idx]
     assert "`grounding`/`honesty`" in window, "모순 규칙이 첨부 축으로 한정되지 않았다"
+
+
+# ──────────── I. 라이브 실측(2026-08-11)이 배포본에서 잡은 결함 ────────────
+#
+# 앵커링 배포 후 원 대화(`20260807035225-9cb592cb`)에서 같은 시나리오를 반복했더니 grounding
+# BLOCK 이 **재발**했다. 리뷰어 근거는 "그 파일 내용이 제시되지 않았습니다" 였고, 사실이었다.
+# 두 결함이 겹쳐 있었다 — 둘 다 "예산을 남기지 않는다" 계약이 조용히 깨진 형태다.
+
+def _probe_file(name: str, rows: int = 120, extra: list[str] | None = None) -> str:
+    lines = [f"-- {name} (live-measure fixture)", "-- reviewed: 2026-08-07"]
+    lines += [f"SELECT {i} AS seq, '{name}' AS src, 'row-{i}' AS note;" for i in range(1, rows + 1)]
+    lines += extra or []
+    return "\n".join(lines) + "\n"
+
+
+V4_MARKER = "-- USER-EDIT-V4-TAIL-MARKER: sigma-lynx-4471"
+_LIVE_DRAFT = f"probe_a.sql v4 는 맨 끝에 {V4_MARKER} 한 줄이 추가되었습니다."
+
+
+def _live_attachments() -> list[dict]:
+    """라이브 대화의 실제 구성: b·c·d 가 먼저(id 오름차순), 질문 대상 a 가 마지막."""
+    a = {"filename": "probe_a.sql", "truncated": False,
+         "content": _probe_file("probe_a.sql",
+                                extra=["-- USER-EDIT-V3-TAIL-MARKER: zeta-quokka-8817", V4_MARKER])}
+    bcd = [{"filename": f"probe_{c}.sql", "content": _probe_file(f"probe_{c}.sql"),
+            "truncated": False} for c in ("b", "c", "d")]
+    return bcd + [a]
+
+
+def test_budget_survives_overlapping_cited_windows():
+    """결함 1: 겹치는 인용 창에 예산을 **이중 과금**해 실제 전달량이 캡에 못 미쳤다.
+
+    라이브 입력에서 probe 두 개(`USER-EDIT-V4-TAIL-MARKER` · `sigma-lynx-4471`)가 같은 꼬리
+    영역을 가리켜 862/1,200 자만 전달됐다. 회계를 **병합된 union** 기준으로 바꿔야 한다.
+    """
+    body = _probe_file("probe_a.sql", extra=["-- USER-EDIT-V3-TAIL-MARKER: zeta-quokka-8817",
+                                             V4_MARKER])
+    spans = redteam._select_excerpt_spans(body, _LIVE_DRAFT, PER_FILE_CAP)
+    assert len(spans) >= 2, spans
+    # 겹침이 실제로 발생하는 입력인지 확인 — 아니면 이 테스트는 결함을 못 잡는다.
+    raw = []
+    lowered = body.lower()
+    for p in redteam._draft_probes(_LIVE_DRAFT):
+        pos = redteam._find_probe(body, lowered, p)
+        if pos >= 0:
+            raw.append(pos)
+    assert len(raw) >= 2 and max(raw) - min(raw) < redteam._ATTACH_CITED_WINDOW_CHARS, \
+        "인용 창이 겹치지 않는 fixture 라 이중과금을 검증할 수 없다"
+    assert sum(e - s for s, e in spans) == PER_FILE_CAP, spans
+
+
+def test_file_the_draft_is_about_is_not_demoted_by_input_order():
+    """결함 2: 조립 순서가 입력 순서(첨부 id) 고정이라, **질문 대상 파일**이 통째로 강등됐다.
+
+    라이브에서 probe_a(질문 대상, id 최신)가 ALSO ATTACHED 로 밀리고 probe_b 만 본문이
+    실려, 리뷰어가 "그 파일 내용이 제시되지 않았습니다" 로 정확한 답변을 BLOCK 했다.
+    """
+    digest = redteam.build_attachment_digest(_live_attachments(), draft=_LIVE_DRAFT)
+    cov = _coverage_line(digest, "probe_a.sql")
+    assert "PARTIAL EXCERPT" in cov or "[FULL FILE SHOWN]" in cov, cov
+    assert V4_MARKER in digest, "초안이 인용한 구간이 digest 에 없다"
+
+
+def test_every_attachment_is_at_least_announced():
+    """본문이 못 실린 파일도 존재는 고지되어야 한다 — 감추면 다시 '창작' 오판이 난다."""
+    digest = redteam.build_attachment_digest(_live_attachments(), draft=_LIVE_DRAFT)
+    for c in ("a", "b", "c", "d"):
+        assert f"probe_{c}.sql" in digest, c
+
+
+def test_many_attachments_share_the_budget_instead_of_all_or_nothing():
+    """파일이 많으면 파일당 지분을 **비례 축소**한다 — 통째 강등만 쓰면 대부분이 사라진다."""
+    digest = redteam.build_attachment_digest(_live_attachments(), draft=_LIVE_DRAFT)
+    with_body = [ln for ln in digest.splitlines()
+                 if ln.startswith("- ") and ("PARTIAL EXCERPT" in ln or "[FULL FILE SHOWN]" in ln)]
+    assert len(with_body) >= 3, f"본문이 실린 파일이 너무 적다: {with_body}"
+    assert len(digest) <= redteam._ATTACH_TOTAL_CAP_CHARS
+
+
+def test_per_file_share_never_drops_below_the_floor():
+    """지분이 바닥나면 진실하지만 쓸모없는 발췌가 된다 — floor 아래로는 강등이 옳다."""
+    atts = [{"filename": f"f{i}.sql", "content": _probe_file(f"f{i}.sql"), "truncated": False}
+            for i in range(20)]
+    digest = redteam.build_attachment_digest(atts, draft="확인했습니다.")
+    for ln in digest.splitlines():
+        if ln.startswith("- ") and "PARTIAL EXCERPT" in ln:
+            given, _total = _shown_chars(ln)
+            assert given >= redteam._ATTACH_MIN_PER_FILE_CHARS - 1, ln
+    assert len(digest) <= redteam._ATTACH_TOTAL_CAP_CHARS

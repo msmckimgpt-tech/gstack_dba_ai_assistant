@@ -1554,3 +1554,10 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 ## REV-20260811T090000-redteam-attach-excerpt-deploy [SKIPPED:post-deploy-evidence+docs-only] — PASS
 - **Trigger**: 문서만(배포 실증·원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
 - 배포 실증은 MODIFY `CHG-20260811T090000-redteam-attach-excerpt-deploy`. 라이브 대화 실측 미수행.
+
+## REV-20260811T110000-redteam-excerpt-budget [SKIPPED:live-measurement-driven] — PASS
+- **Trigger**: 라이브 실측이 배포본 결함을 직접 적발해 나온 후속 수정. 선행 cycle 에서 §18.8
+  패널(backend+qa)을 이미 수행했고, 본 변경은 그 패널이 지목한 **결함(A) 축의 잔여**를 닫는
+  동일 축 수정이다(새 설계면 없음).
+- **적대 검증 대체**: 라이브 재현 입력 + 뮤테이션 18/18 KILLED + 기존 테스트가 수정 중 부수
+  결함 1건을 실제로 적발(매니페스트 증발). 배포 후 같은 대화에서 재측정 예정.
