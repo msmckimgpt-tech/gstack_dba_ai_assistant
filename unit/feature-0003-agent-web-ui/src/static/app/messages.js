@@ -3,7 +3,12 @@
 //   발화자/아바타). app.js 구 L3118–4068 에서 byte-동치 이동 (본문 무수정 — ITEM-P5b).
 import {
   state, showToast, identiconSvg, markdownToHtml, messageLogEl, _downloadAttachmentById,
+  apiFetch,
 } from "../app.js?v=dev";
+// attach-diff-bubble-chip: 말풍선 칩의 비교·원문 진입점도 **저장소 단일 모달**을 쓴다.
+// 첨부 사이드 패널(composer.js)이 쓰는 것과 같은 모듈이며, 렌더러를 복제하지 않는다
+// (복제가 곧 결함 기전 — modal-dismiss.js·attach-diff.js 주석의 같은 근거).
+import { openAttachmentDiffModal, openAttachmentSourceModal } from "./attach-diff.js?v=dev";
 
 function collapseSqlCodeBlocksInContent(target) {
   // marked 렌더 결과의 ```sql 블록은 쿼리 문자열이므로 항상 표시.
@@ -865,6 +870,35 @@ function _buildMessageAttachChip(att) {
     verEl.textContent = isAi ? `v${verNum} · AI 수정` : `v${verNum}`;
     parts.push(verEl);
   }
+  // attach-diff-bubble-chip: 수정본 칩에서 **그 수정 내용**으로 바로 들어가는 버튼.
+  // 사용자 요청(2026-08-11): "assistant 가 답변을 전달할 때, 첨부파일의 수정이 나타났다면
+  // 해당 수정에 따라 diff 패널이 출력될 수 있도록 버튼을 구성해주세요."
+  //
+  // 종전에 이 칩에서 할 수 있는 일은 다운로드뿐이었다. 방금 받은 답변이 만든 변경을 보려면
+  // 첨부 사이드 패널을 열고 → 그 파일을 찾고 → "버전 N개 ▾" 를 펼치고 → `⇄` 를 눌러야 했다.
+  // 변경을 만든 화면에서 그 변경으로 가는 길이 없었던 셈이다.
+  //
+  // 조건은 **`version_number > 1` + id 보유** — 즉 "비교할 짝이 존재하는가" 다. v1(신규 생성)은
+  // 직전 버전이 없어 diff 자체가 성립하지 않으므로 버튼을 두지 않는다(거짓 어포던스 금지 —
+  // attach-diff.js 의 하이라이트 토글 노출 판정과 같은 원칙). AI 수정본으로 좁히지 않는 이유:
+  // 같은 화면에서 사용자 재업로드 v2 칩에는 버튼이 없는 비대칭이 되고, 칩의 버전 배지는 이미
+  // 두 경우 모두에 붙는다(위 `attach-chip-ver`).
+  if (att.id && verNum > 1) {
+    const cmpBtn = document.createElement("button");
+    cmpBtn.type = "button";
+    cmpBtn.className = "attach-chip-cmp";
+    cmpBtn.textContent = "⇄";
+    cmpBtn.title = `v${verNum} 수정 내용 보기 (직전 버전과 비교)`;
+    cmpBtn.setAttribute("aria-label", `${attName} 버전 ${verNum} 의 수정 내용 비교`);
+    cmpBtn.addEventListener("click", (evt) => {
+      // 칩 자체의 click 은 다운로드다 — 비교를 누르려다 파일이 함께 내려가면 안 된다
+      // (첨부 목록 행이 원문 보기를 얻을 때 지킨 것과 같은 계약).
+      evt.stopPropagation();
+      evt.preventDefault();
+      _openBubbleAttachDiff(att, attName, verNum, cmpBtn);
+    });
+    parts.push(cmpBtn);
+  }
   if (downloadable) {
     const dlIcon = document.createElement("span");
     dlIcon.className = "attach-chip-dl";
@@ -873,6 +907,60 @@ function _buildMessageAttachChip(att) {
   }
   chip.append(...parts);
   return chip;
+}
+
+// attach-diff-bubble-chip: 칩의 `⇄` 실행부. 칩 payload 에는 버전 **체인**이 없으므로
+// (`_serialize_attachment_for_api` 는 그 한 행만 싣는다) 누를 때 lazy 로 체인을 불러
+// 비교 모달에 넘긴다 — 말풍선마다 선행 조회를 깔면 첨부 N개짜리 대화를 열 때마다 N회
+// 왕복이 생기고, 그 대부분은 아무도 누르지 않는다.
+async function _openBubbleAttachDiff(att, attName, thisVer, btn) {
+  // 재진입 가드. `disabled` **하나만으로는 부족하다** — 그 속성은 trusted 클릭을 막지만
+  // 프로그램 dispatch 와 (브라우저 구현에 따라) 아주 빠른 연속 입력에서는 리스너가 그대로
+  // 실행돼 같은 왕복이 여러 번 뜨고 모달이 겹쳐 쌓인다(codex P2 가 지적한 축을 테스트로
+  // 재현: dispatch 3회 → 왕복 3회). 상태 플래그로 왕복 자체를 1회로 봉인한다.
+  if (btn && btn.dataset.diffBusy === "1") return;
+  if (btn) { btn.dataset.diffBusy = "1"; btn.disabled = true; }
+  try {
+    const resp = await apiFetch(`/api/attachments/${encodeURIComponent(att.id)}/versions`);
+    const versions = Array.isArray(resp?.versions) ? resp.versions : [];
+    if (versions.length < 2) {
+      // 구버전이 삭제된 체인(attach-manage soft-delete)에는 비교할 짝이 없다. 눌렀는데 아무
+      // 일도 일어나지 않는 대신 그 버전의 **원문**을 열고 사유를 알린다 — 이 경로도 정본
+      // 모달(`openAttachmentSourceModal`)이며, 사용자가 하려던 "내용 확인" 은 충족된다.
+      showToast("비교할 이전 버전이 남아 있지 않아 원문을 표시합니다.", false);
+      openAttachmentSourceModal(att.id, { filename: attName });
+      return;
+    }
+    // `to` = 이 칩이 가리키는 버전(= 이 답변이 만든 결과), `from` = 체인에 **실제로 남아 있는**
+    // 직전 버전. `thisVer - 1` 을 그대로 preselect 하면 중간 버전이 삭제된 체인에서 없는 번호를
+    // 지정해 `<select>` 가 조용히 첫 옵션(가장 오래된 버전)으로 떨어진다 — 엉뚱한 쌍이 "이
+    // 수정" 으로 보이는 무음 오표시다.
+    const nums = versions
+      .map((v) => Number(v.version_number || 1))
+      .filter((n) => Number.isFinite(n))
+      .sort((a, b) => a - b);
+    const newest = nums[nums.length - 1];
+    const anchor = nums.includes(thisVer) ? thisVer : newest;
+    const older = nums.filter((n) => n < anchor);
+    // anchor 가 체인의 최소 번호면 앞이 없다 — 그때만 뒤(더 새 버전) 방향으로 비교한다.
+    let preselect = older.length
+      ? { from: older[older.length - 1], to: anchor }
+      : { from: anchor, to: newest };
+    // 같은 번호 두 개를 고르는 preselect 는 서버가 400 으로 막는 쌍이다(존재 oracle 방지 계약).
+    // 그런 값을 넘기지 않고 모달 기본값(직전↔최신)에 맡긴다.
+    if (preselect.from === preselect.to) preselect = undefined;
+    openAttachmentDiffModal(att.id, versions, preselect);
+  } catch (e) {
+    // apiFetch 는 non-2xx 를 throw 한다. 실패를 조용히 삼키지 않는다 — 버튼을 눌렀는데 아무
+    // 반응이 없으면 고장으로 읽힌다. 단 **403 은 apiFetch 가 이미 공통 토스트를 냈으므로**
+    // 여기서 다시 띄우지 않는다(같은 사유가 두 번 뜨고 두 번째가 첫 번째의 표시 시간을
+    // 리셋한다 — 저장소 공통 403 처리와 중복, codex P2).
+    if (!(e && e.status === 403)) {
+      showToast(`버전 이력을 불러오지 못했습니다: ${(e && e.message) || e}`, true);
+    }
+  } finally {
+    if (btn) { btn.disabled = false; delete btn.dataset.diffBusy; }
+  }
 }
 
 // feature-0009: 텍스트가 주어진 (소문자) username 을 @멘션하는지 — canonical mentions.js 사용.

@@ -9488,7 +9488,6 @@ AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 ## 9. Requested Scope
 - [x] `버전비교 버튼 유무에 따른 원문 조회 버튼 위치 뒤틀림 수정` — 열 좌표 단일값으로 실측 확인.
       같은 결함 클래스인 활성 목록·휴지통도 함께 닫음.
-
 ## 20260811T1830-api-exposure-hardening — 익명 API 표면 축소 + 엣지 보안 헤더 + 데이터플레인 RO 계정 (Critical §12.3)
 
 사용자 보고: "codex가(root 계정) 현재 프로젝트의 서비스 내 api 에 접근할 때 보안 이슈를 확인하였습니다.
@@ -9545,3 +9544,25 @@ AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 - [x] 검증: `node --check` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 34/0 동일 = 회귀 0) · 구조(releases 44→46 · `releases[0].date`=2026-08-11 5항목 · `[1]`=2026-08-07 8항목 · 08-06(9)/08-05(3) 등 기존 블록 전량 보존 · `type`/`area` enum 위반 0 · 스키마 외 키 0 · `generated`==`releases[0].date`) · 내부용어 누출 정규식 스캔(feature-id·sha·§·PR#·ADR·PB-0008·모듈/함수명·환경변수·API 경로·인프라 용어 19 패턴) **0**(유일 매치 `report_v2_v2.csv` 는 사용자가 실제로 내려받은 파일명으로 정본 `FUNCTION.md:3228` 인용).
 - [x] 적대검증 6건 전건 정본 재확인 후 반영/정정(ULTRACODE `wf_d01b1421` 2 렌즈, MAJOR 1 + MINOR 5): 상세·근거는 REVIEW `REV-20260812T010301-doc-sync-rn-0812`.
 - [x] landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3). 캐시버스터 수기 bump 없음(2026-07-12 ITEM-09 빌드 자동주입 regime · `?v=dev` 고정 · `index.html`/`admin.html` 편집 0).
+## 20260811T1845-attach-diff-bubble-chip — 말풍선 수정본 첨부 칩의 diff 진입 버튼 (Minor §12.3 — feature-0003 `static/app/messages.js`·`static/css/chat.css` + 신규 하네스. 백엔드·라우터·권한·스키마·마이그레이션 0)
+
+**사용자 요청**: "서비스 내 assistant가 답변을 전달할 때, 첨부파일의 수정이 나타났다면 해당
+수정에 따라 diff 패널이 출력될 수 있도록 버튼을 구성해주세요."
+
+- [x] 조사 — 비교 모달은 이미 있고 **진입점이 첨부 사이드 패널에만** 있음을 확인(칩은 다운로드 전용)
+- [x] `_buildMessageAttachChip` 에 `⇄` 버튼(조건 `version_number > 1` + id 보유) — AC-ADBC-1·2
+- [x] 클릭 배선 — `stopPropagation`(다운로드 억제) + lazy `/versions` 1회 + 정본 모달 호출 — AC-ADBC-3·4
+- [x] preselect = (체인에 남아 있는 직전 ↔ 이 버전) + 최소버전·스냅샷 불일치·`from==to` 분기 — AC-ADBC-5
+- [x] 체인 1개면 원문 모달 폴백 + 사유 토스트 — AC-ADBC-6
+- [x] 실패 표면화 · 403 중복 토스트 억제 · 재진입 가드 — AC-ADBC-7·8
+- [x] CSS — 토큰만 사용 · hover 테두리(대비 1.09 실측 근거) · `flex-shrink: 0` · 히트영역 20×17 — AC-ADBC-9·10
+- [x] 하네스 신설 47건 + 뮤테이션 12/12 red · 기존 전수 1,684 체크 0 FAIL
+- [x] codex 적대 리뷰 P1 0 · **P2 4건 전건 반영**(403 중복 · vacuous C8 · 하드코딩 색 · TEST 기록)
+- [x] PB-0008 실 Windows Chrome — 칩 렌더·실제 클릭→diff 패널·preselect·hover·레이아웃 이동 0 — AC-ADBC-11
+- [ ] POST-DEPLOY 라이브 재확인(배포본 baked 자산) → fragment Run append
+
+### 9. Requested Scope
+
+- "첨부파일의 수정이 나타났다면 해당 수정에 따라 diff 패널이 출력될 수 있도록 버튼을 구성" —
+  ✓ (수정본 칩에 `⇄` 신설, 클릭 시 **그 수정의 쌍**(직전↔자신)으로 기존 diff 패널 출력. 실
+  브라우저에서 체인 v1~v7 중 칩(v2)의 쌍 `1↔2` 가 열림을 실측)
