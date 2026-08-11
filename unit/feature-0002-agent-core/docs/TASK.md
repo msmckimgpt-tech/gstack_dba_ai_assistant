@@ -2388,3 +2388,10 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
       증거: `docs/test-runs.d/REV-20260811T120000-excerpt-live-measure.md`.
 - [ ] 잔여 2건 처리 방향 결정 — `FR-redteam-digest-lacks-prior-attachment-version` ·
       `FR-redteam-verify-pass-ignores-window-rule`(둘 다 원장 `triaged`, 미착수).
+
+## TASK-20260811T140000 라이브 실측 잔여 2건 (R1 버전 근거 · R2 완독요구 면책)
+- [x] R1 `_review_attachments` 가 version_diff 동봉(프롬프트 렌더와 **동일 판정식**)
+- [x] R1 digest `VERSION CHANGE` 블록 — diff 몫을 파일 지분 **안에서** 배분 + 절단 명시 + 마커 중화
+- [x] R2 리뷰어 규칙 2조 — 버전 비교 접지 · 완독 요구가 창을 넓히지 않음(verify 패스 포함)
+- [x] 신규 13건 · 뮤테이션 11/11 KILLED · 전량 회귀 · ruff
+- [ ] 배포 + 라이브 재측정(다중 첨부 + 버전 비교에서 BLOCK 이 사라지는지)

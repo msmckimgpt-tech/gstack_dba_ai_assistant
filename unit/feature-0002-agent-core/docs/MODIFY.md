@@ -1689,3 +1689,29 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   `read.any` 로 정상 — 라우트 권한 강제 확인). 그 런은 측정으로 세지 않았다.
 - **파일**: 원장 · `docs/test-runs.d/REV-20260811T120000-excerpt-live-measure.md` · TASK/MODIFY.
 - **위험등급**: Minor(문서만).
+
+## CHG-20260811T140000-redteam-version-evidence 리뷰어에게 버전 비교 근거 + 완독요구 면책
+- **문제 2건**(라이브 실측 2026-08-11, run `20260811031709-7f1ff22c`) — 격리 조건에서는 원 마찰이
+  소멸했으나 **다중 첨부 + "직전 버전 대비 뭐가 바뀌었나"** 는 여전히 BLOCK 이었고, 원인이 둘이었다.
+  - **R1 `FR-redteam-digest-lacks-prior-attachment-version`**: 답변 모델은 프롬프트
+    `## FILE UPDATES` 로 v(n-1)→v(n) unified diff 를 받는데 **리뷰어 digest 에는 없었다**.
+    리뷰어 근거: "현재 첨부된 파일은 v6 뿐이며, v5 파일은 없습니다." 답변이 정당하게 가진 근거를
+    리뷰어만 못 보는 구조 — 발췌 결함과 **같은 축, 다른 얼굴**.
+  - **R2 `FR-redteam-verify-pass-ignores-window-rule`**: verify 패스가 "네 창이 좁은 것은
+    assistant 결함이 아니다" 규칙을 어기고 honesty BLOCK("125줄인데 lines 1-4, 123-125 만 제시…
+    미지 영역을 도구 실행 없이 단정"). 사용자가 **완독을 명시**하면 규칙보다 그 문구를 우선했다.
+- **해소**:
+  - `agent_core._review_attachments()` 가 `MetaJson.version_diff` 를 동봉한다. **판정식은 프롬프트
+    렌더와 동일**(`attachment_id in new_ids_set` + `unified_diff` 비어있지 않음) — 두 소비자가 다른
+    집합을 말하면 "단일 사실" 전제가 깨진다(FR-attachment-change-false-absence 규율).
+  - `build_attachment_digest` 가 `VERSION CHANGE vN → vM` 블록으로 렌더한다. **diff 몫은 파일
+    지분 안에서 배분**(`min(_ATTACH_VERSION_DIFF_CAP_CHARS, per_file//2)`) — 지분 밖에 두면 블록이
+    커져 2-pass 회계가 그 파일을 통째로 강등한다(구현 중 실측: 3,000자 diff 하나로 파일 소멸).
+    절단은 `[DIFF SHOWN n of m+ chars]` 로 명시하고, diff 본문에도 마커 위조 중화를 적용한다.
+  - 리뷰어 규칙 2조 추가 — "이전 버전은 설계상 사라진다, diff 가 증거다" · "**사용자의 완독 요구가
+    네 창을 넓혀 주지 않는다**, verify 패스에도 동일 적용, 보여준 내용과 **모순**일 때만 보고".
+- **검증**: 신규 13건(발췌 8 + 배선 5) 포함 · **뮤테이션 11/11 KILLED** · 호스트 전량 회귀
+  3,998 collected(실패는 선재 7건뿐) · ruff clean. 라이브 실패 형태(다중 첨부 + 질문 대상이
+  마지막) 재현에서 VERSION CHANGE 블록 + probe_a 본문 + 전 파일 고지 동시 성립 확인.
+- **위험등급**: Major(리뷰어 evidence·프롬프트). 신규 권한·스키마·엔드포인트 변경 0.
+- **Cross-ref**: `CHG-20260811T110000-redteam-excerpt-budget` · 원장 R1·R2 항목.

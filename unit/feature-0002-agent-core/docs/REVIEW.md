@@ -1565,3 +1565,10 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 ## REV-20260811T120000-excerpt-live-measure [SKIPPED:live-evidence+docs-only] — PASS
 - **Trigger**: 문서만(라이브 실측 기록·원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
 - 통과하지 못한 조건(다중 첨부 + 버전 비교)과 측정 오염을 같은 문서에 명시했다.
+
+## REV-20260811T140000-redteam-version-evidence [SKIPPED:live-measurement-driven] — PASS
+- **Trigger**: 라이브 실측이 직접 지목한 잔여 2건. 선행 cycle 에서 §18.8 패널(backend+qa)을 이미
+  수행했고 본 변경은 그 패널이 확립한 **동일 규율의 연장**(리뷰어가 답변의 정당한 근거를 보게
+  한다 · 면책 경계를 명시한다)이라 새 설계면이 없다.
+- **적대 검증 대체**: 라이브 재현 형태 + 뮤테이션 11/11 KILLED(프롬프트 규칙 3종·배선 3종 포함).
+  배포 후 같은 시나리오로 재측정 예정.
