@@ -624,3 +624,31 @@ source_of_truth: true
 - Human Approval Needed: **yes** — 이월 [P1] 의 해법(자격증명 저장소 쓰기)은 사람 결정 필요. 본 cycle 변경 자체는 Minor(§12.3, 계정 선택 로직 + 킬스위치 보유).
 - Timestamp: 2026-08-07T14:55:00+09:00
 - Cross-ref: MODIFY CHG-20260807T144800-oauth-exhaustion-gate / TASK `## TASK-20260807T144800-oauth-exhaustion-gate` / TEST Run 2026-08-07-oauth-exhaustion-gate / 선행 REV-20260730T191535(bare alias 단일계정 이월 P1 이 본 건으로 발현).
+
+## REV-20260807T190000-ai-root-feature-0007-oauth-gate-hardening [SUBAGENT:security+backend+qa] — CONCERN
+- Related TASK: feature-0007-bedrock-llm-provider (TASK-20260807T190000-oauth-gate-hardening)
+- Trigger: `token`/`credential`/`auth` keyword matched → security. code change + 상태머신/가용성 → backend, qa 추가. 사용자가 명시적으로 subagent 패널을 요청(선행 cycle 의 `[SKIPPED:user-declined-panel]` 해소).
+- 패널 구성: 3 subagent, 각 렌즈 독립. 실행 제약을 프롬프트에 못박음 — 라이브 `.env`/게이트웨이 무접촉, api.anthropic.com 실호출 금지(쿼터), repo 무변경(사본 위에서만 mutation). 세 에이전트 모두 종료 시 무접촉을 검증해 보고.
+
+### 패널 판정
+| 렌즈 | 판정 | 핵심 |
+|---|---|---|
+| security | CONCERN | 신규 치명 취약점은 없으나 **살아 있는 bearer 를 싣는 신규 egress** 와 **월드리더블 상태 아티팩트** 를 열어 놓고 아무 하드닝이 없었다. 최대 노출은 **선행 결함**(.env.bedrock 0664) |
+| backend | CONCERN, availability 축 FAIL 경계 | 게이트가 "동기가 된 그 한 사건"(7d 거부 + 정상 reset 헤더)에만 맞춰져 있고, 그 밖의 429 모양은 전부 오처리 |
+| qa | CONCERN | 52 mutant 중 33 KILL(63%). **9개 계약 중 2개가 실제로는 잠기지 않음**, 게이트웨이-로그 트리거는 8개 호출부가 장식이었다 |
+
+### 반영 (전량 수정 — 상세는 MODIFY CHG-20260807T190000)
+- P1 ×3: burst-429 오강등 / recreate 실패 영구화 / fail-open 후 회복 probe 무한 반복.
+- P2 ×6(기능): 쿨다운 헤더 파싱(stale·상대초·ms·HTTP-date) · 손상 상태항목이 1순위 slot 을 무음 정지 · 전원소진 시 최단 회복 계정 · SEL tab 가드 · `$ACCOUNTS` glob · `--check` 라벨.
+- P2 ×6(보안): `.env.bedrock` 0600 · 상태 디렉토리 0700/파일 0600 + `mkstemp` · `detail` redaction · 리다이렉트 미추종 · 제어문자 토큰 거부 · 상태 쓰기 실패가 주입을 막지 않음.
+- 테스트: 15 → 41건, mutation 으로 폐쇄 확인(위 TEST Run 표).
+
+### 정직 표기
+- **패널 지적 중 내가 반박한 것 없음** — 세 렌즈의 P1/P2 는 전부 재현 근거(하네스 실행 로그)를 동반했고, 내가 독립 확인한 것만 반영했다.
+- 패널이 "선행이며 이 커밋 탓 아님" 으로 분류한 `.env.bedrock` 0664 도 **닫았다**. 이 호스트에는 `docker` 그룹이 아닌 비특권 계정(`claude-corp`, 에이전트 세션 신원)이 있어 실질 노출이었다.
+- **미해소**: ① root access token 회전 주체 부재(§12.3 Critical, 사람 승인 필요) ② `select_account` stdout tab 가드는 외부 유발 불가라 회귀 테스트 미부착(mutation 생존 1건) ③ heartbeat 로 인한 시간당 최대 1회 라이브 호출은 설계상 유지(2026-07-07 의 "라이브 호출 0" 은 폐기).
+- 패널이 검증하지 못한 것(각 보고서 명시): 실제 Anthropic 429/401 헤더 모양(실호출 금지), 실 `docker compose` 동작(스텁), litellm 이 동일 api_key 를 가진 두 deployment 를 어떻게 다루는지(게이트웨이 미기동 추론).
+- Critical issue: 위 미해소 ①.
+- Human Approval Needed: **yes** (미해소 ① 한정). 본 cycle 변경 자체는 Minor(§12.3, knob·킬스위치 보유).
+- Timestamp: 2026-08-07T19:40:00+09:00
+- Cross-ref: MODIFY CHG-20260807T190000-oauth-gate-hardening / TEST Run 2026-08-07-oauth-gate-hardening / 선행 REV-20260807T144800(`[SKIPPED:user-declined-panel]` — 본 entry 로 해소).

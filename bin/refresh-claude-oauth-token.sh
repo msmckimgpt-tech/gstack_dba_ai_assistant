@@ -58,6 +58,9 @@
 #       (a) 저빈도 heartbeat — 이 계정의 마지막 라이브 판정으로부터
 #           CLAUDE_OAUTH_GATE_RECHECK_SEC(기본 3600s) 이상 지났다.
 #       (b) 이 계정에 소진 캐시가 있고 그 만료 시각이 지났다(= 복구 확인 1회).
+#           **쿨다운 만료당 정확히 1회**다(`checked < until` 조건). 그 1회가 네트워크 오류로
+#           fail-open 하면 이후는 (a) heartbeat 가 맡는다 — 종전엔 과거 `until` 이 남아
+#           매 cron 실행마다 probe 가 나갔다(gate-hardening 2026-08-07).
 #       (c) 게이트웨이 최근 로그에 RateLimitError/AuthenticationError 가 잡혔다
 #           (아래 관측 단계가 무료로 수집 — 체인 전체가 죽는 장애를 더 빨리 잡는 보조 신호).
 #       (d) CLAUDE_OAUTH_FORCE_PROBE=1 (운영자 수동 진단).
@@ -82,10 +85,20 @@
 #
 #   § 판정 → 상태
 #     · HTTP 200            → 소진 캐시 해제, 그 계정을 1순위로 사용(복구 자동 승격).
-#     · HTTP 429            → `anthropic-ratelimit-unified-reset`(epoch) 또는 `retry-after`
-#                             로 우회 만료시각을 계산해 캐시에 적재하고 다음 계정으로.
+#     · HTTP 429 (지속형)   → `unified-reset` / `retry-after` 로 우회 만료시각을 계산해
+#                             캐시에 적재하고 다음 계정으로 **강등**. "지속형" 판정 기준은
+#                             `unified-7d-status=rejected` 이거나 헤더가 말하는 쿨다운이
+#                             CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC(기본 1800s) 이상일 때.
+#     · HTTP 429 (버스트)   → **강등하지 않는다**. 5h RPM 캡 같은 단발 429 는 이 시스템에서
+#                             정상 이벤트이고 litellm 이 요청-레벨로 흡수한다. 종전엔 모든
+#                             429 를 소진으로 보고 `retry-after=5s` 마저 최소 쿨다운(300s)으로
+#                             **끌어올려** 강등했다 → 1순위·root slot 이 같은 토큰이 되어
+#                             2계정 체인이 1계정으로 붕괴하고, 강등/복귀마다 게이트웨이
+#                             force-recreate(LLM 순단)가 붙었다(gate-hardening 2026-08-07).
 #     · HTTP 401/403        → 짧은 우회(기본 900s) 후 재확인.
-#     · 그 외/네트워크 오류 → **fail-open**: 상태를 바꾸지 않고 정적 결과를 그대로 채택.
+#     · 3xx                 → 따라가지 않는다(판정 보류). Authorization 헤더가 타 호스트로
+#                             재전송되는 것을 막기 위해 리다이렉트 자체를 비활성화한다.
+#     · 그 외/네트워크 오류 → **fail-open**: 우회 상태를 바꾸지 않고 정적 결과를 그대로 채택.
 #                             (2026-07-30 게이트웨이 DNS 34분 단절을 "계정 소진"으로
 #                              오판해 계정을 옮기는 사고를 원천 차단 — 도달성 장애 ≠ 소진)
 #
@@ -96,6 +109,15 @@
 #
 #   § 되돌리기 — CLAUDE_OAUTH_EXHAUSTION_GATE=0 이면 게이트 전체가 비활성이 되어
 #     2026-07-07~2026-08-06 의 정적-검사-전용 동작으로 즉시 복귀한다.
+#
+# 보안 (gate-hardening 2026-08-07, 적대 리뷰 반영):
+#   - `.env.bedrock` 은 살아 있는 OAuth bearer 2개를 평문 보관하므로 쓰기 시 0600 으로 고정한다.
+#     (종전 0644/0664 → 비특권 로컬 계정이 root Max 토큰을 읽을 수 있었다.)
+#   - 상태 파일과 그 임시 파일은 0700 디렉토리 / 0600 + mkstemp(O_EXCL) — 고정 `.tmp` 이름은
+#     심링크로 임의 파일을 덮어쓸 수 있었다.
+#   - 로그·상태파일로 나가는 `detail` 은 `sk-ant-*` 를 마스킹하고 제어문자를 제거한 뒤 200자로 자른다
+#     (자격증명이 깨지면 예외 메시지에 Bearer 헤더 전체가 실릴 수 있다 — 실증됨).
+#   - probe 는 리다이렉트를 따라가지 않는다(Authorization 헤더 유출 차단).
 #
 # 안전장치:
 #   - 어떤 후보도 사용 불가면 .env/컨테이너를 **건드리지 않고** exit 1 (transient 장애로
@@ -120,6 +142,9 @@
 #   CLAUDE_OAUTH_STATE_FILE        소진 캐시 경로. 기본 /var/lib/dqa-llm-oauth/exhaustion.json.
 #   CLAUDE_OAUTH_GATE_RECHECK_SEC  heartbeat 간격(초). 기본 3600. 0 이면 heartbeat 비활성
 #                                  (소진 캐시 만료·게이트웨이 오류·강제 probe 만 남는다).
+#   CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC 429 를 "지속형 소진" 으로 보고 계정을 강등할 최소 쿨다운(초).
+#                                  기본 1800. 이보다 짧은 429 는 버스트로 보고 강등하지 않는다
+#                                  (`unified-7d-status=rejected` 면 길이와 무관하게 강등).
 #   CLAUDE_OAUTH_PROBE_MODEL       probe 모델. 기본 claude-haiku-4-5(최저가·frontier 아님).
 #   CLAUDE_OAUTH_PROBE_TIMEOUT     probe 타임아웃(초). 기본 20.
 #   CLAUDE_OAUTH_PROBE_MAX_COOLDOWN 소진 우회 상한(초). 기본 691200(8일).
@@ -157,6 +182,7 @@ PROBE_TIMEOUT="${CLAUDE_OAUTH_PROBE_TIMEOUT:-20}"
 PROBE_MAX_COOLDOWN="${CLAUDE_OAUTH_PROBE_MAX_COOLDOWN:-691200}"
 PROBE_MIN_COOLDOWN="${CLAUDE_OAUTH_PROBE_MIN_COOLDOWN:-300}"
 GATE_RECHECK_SEC="${CLAUDE_OAUTH_GATE_RECHECK_SEC:-3600}"
+GATE_MIN_DEMOTE_SEC="${CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC:-1800}"
 FORCE_PROBE="${CLAUDE_OAUTH_FORCE_PROBE:-0}"
 
 # 계정 우선순위 결정
@@ -191,11 +217,12 @@ select_account() {
   PROBE_MAX_COOLDOWN="$PROBE_MAX_COOLDOWN" \
   PROBE_MIN_COOLDOWN="$PROBE_MIN_COOLDOWN" \
   GATE_RECHECK_SEC="$GATE_RECHECK_SEC" \
+  GATE_MIN_DEMOTE_SEC="$GATE_MIN_DEMOTE_SEC" \
   FORCE_PROBE="$FORCE_PROBE" \
   CRED_ROOT="${CLAUDE_OAUTH_CRED_ROOT:-}" \
   PROBE_URL="${CLAUDE_OAUTH_PROBE_URL:-https://api.anthropic.com/v1/messages}" \
   python3 - "$@" <<'PY'
-import json, os, sys, time, urllib.error, urllib.request
+import json, os, re, sys, tempfile, time, urllib.error, urllib.request
 
 min_ttl = int(os.environ.get('MIN_TTL', '300'))
 gate_on = os.environ.get('GATE', '0').strip().lower() not in ('0', '', 'false', 'off', 'no')
@@ -208,6 +235,7 @@ probe_timeout = float(os.environ.get('PROBE_TIMEOUT', '20'))
 max_cooldown = int(os.environ.get('PROBE_MAX_COOLDOWN', '691200'))
 min_cooldown = int(os.environ.get('PROBE_MIN_COOLDOWN', '300'))
 recheck_sec = int(os.environ.get('GATE_RECHECK_SEC', '3600'))
+min_demote_sec = int(os.environ.get('GATE_MIN_DEMOTE_SEC', '1800'))
 cred_root = os.environ.get('CRED_ROOT', '')  # 테스트/스테이징 훅 — 미지정이면 실계정 경로
 probe_url = os.environ.get('PROBE_URL') or 'https://api.anthropic.com/v1/messages'
 accounts = sys.argv[1:]
@@ -260,6 +288,22 @@ def static_check(acct):
     return tok, None
 
 
+_SECRET_RE = re.compile(r'sk-ant-[A-Za-z0-9_\-]+')
+
+
+def _scrub(text):
+    """로그·상태파일로 나가는 문자열에서 토큰·제어문자를 제거하고 길이를 자른다.
+
+    gate-hardening 2026-08-07 (적대 리뷰 P2): probe 의 응답 본문과 예외 텍스트가 그대로
+    `detail` 에 실려 상태 파일(과거 0644)과 /tmp/refresh-oauth.log 로 흘렀다. 자격증명이
+    깨져 accessToken 에 개행이 섞이면 http.client 가 **Bearer 헤더 전체를 담은** ValueError
+    를 던지는데, 그것이 두 파일에 평문으로 남았다(실증됨).
+    """
+    t = _SECRET_RE.sub('sk-ant-<redacted>', str(text))
+    t = ''.join(ch if ch.isprintable() or ch == ' ' else ' ' for ch in t)
+    return t[:200]
+
+
 def load_state():
     if not state_file:
         return {}
@@ -274,36 +318,78 @@ def load_state():
 def save_state(state):
     if not state_file or check_only:
         return
+    # 0700/0600 + mkstemp: 상태 파일에는 조직의 쿼터 상태와 응답 본문 발췌가 남는다.
+    # 종전엔 cron umask(022)로 0644 였고 `.tmp` 고정 이름이라 심링크로 임의 파일을
+    # 덮어쓸 수 있었다(gate-hardening 2026-08-07, 적대 리뷰 P2 — 둘 다 실증됨).
+    d = os.path.dirname(state_file) or '.'
+    tmp = None
     try:
-        os.makedirs(os.path.dirname(state_file) or '.', exist_ok=True)
-        tmp = state_file + '.tmp'
-        with open(tmp, 'w') as f:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        # 이미 존재하던 디렉토리는 makedirs 의 mode 가 적용되지 않는다(운영 환경의 실제 경우).
+        if os.stat(d).st_mode & 0o077:
+            os.chmod(d, 0o700)
+        fd, tmp = tempfile.mkstemp(dir=d, prefix='.exhaustion-', suffix='.tmp')
+        with os.fdopen(fd, 'w') as f:
             json.dump(state, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.chmod(tmp, 0o600)
         os.replace(tmp, state_file)
+        tmp = None
     except Exception as e:  # noqa: BLE001 — 캐시 쓰기 실패가 토큰 주입을 막아선 안 된다
         logd(f'WARN: 소진 캐시 저장 실패({state_file}): {e}')
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
-def _cooldown_until(headers):
-    """429 응답 헤더에서 우회 만료 epoch 을 뽑는다. 없으면 1시간."""
+def _raw_cooldown(headers):
+    """429 헤더에서 **클램프 이전의** 우회 만료 epoch 후보를 뽑는다.
+
+    `unified-reset` 을 우선하되 **그것이 그럴듯할 때만** 쓰고, 아니면 `retry-after` 로
+    폴백한다(gate-hardening 2026-08-07, 적대 리뷰 P2). 종전엔 `unified-reset` 이 파싱만
+    되면 무조건 이겼는데, 그 값이
+      · 절대 epoch 이 아니라 상대 초이거나
+      · 시계 스큐로 과거이면
+    같은 응답에 있는 명시적 `retry-after`(사건 당시 176528s)를 영영 못 읽고 최소 쿨다운으로
+    떨어졌다. 반대로 ms 단위로 오면 상한(8일)에 박혀 회복 probe 가 사라졌다.
+    반환 None = "지속성을 판단할 근거 없음"(호출측이 transient 로 처리).
+    """
     now = int(time.time())
-    cand = None
+    cands = []
+
+    def _plausible(epoch):
+        # 과거·근미래 잡음과 ms 스케일을 배제. 상한은 max_cooldown 로 별도 클램프.
+        return epoch if now < epoch <= now + max_cooldown else None
+
     reset = headers.get('anthropic-ratelimit-unified-reset')
     if reset:
         try:
-            cand = int(float(reset))
+            v = float(reset)
+            if v > 1e12:      # ms epoch 보정 (static_check 와 동일 휴리스틱)
+                v = v / 1000.0
+            if 0 < v < 1e6:   # 절대 epoch 이 아니라 상대 초로 온 경우
+                v = now + v
+            cands.append(_plausible(int(v)))
         except (TypeError, ValueError):
-            cand = None
-    if cand is None:
-        ra = headers.get('retry-after')
-        if ra:
+            pass
+
+    ra = headers.get('retry-after')
+    if ra:
+        try:
+            cands.append(_plausible(now + int(float(ra))))
+        except (TypeError, ValueError):
+            # RFC 9110 은 HTTP-date 형식도 허용한다.
             try:
-                cand = now + int(float(ra))
-            except (TypeError, ValueError):
-                cand = None
-    if cand is None:
-        cand = now + 3600
-    return max(now + min_cooldown, min(cand, now + max_cooldown))
+                from email.utils import parsedate_to_datetime
+                cands.append(_plausible(int(parsedate_to_datetime(ra).timestamp())))
+            except Exception:  # noqa: BLE001
+                pass
+
+    for c in cands:   # 우선순위: unified-reset → retry-after
+        if c:
+            return c
+    return None
 
 
 def _rl_summary(headers):
@@ -318,6 +404,22 @@ def _rl_summary(headers):
     if claim:
         bits.append(f'claim={claim}')
     return ' '.join(bits) or 'rate_limit_error'
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """3xx 를 따라가지 않는다.
+
+    gate-hardening 2026-08-07 (적대 리뷰 P2, 실증됨): urllib 의 기본 리다이렉트 핸들러는
+    `Authorization` 헤더를 **다른 호스트로도 그대로 재전송**한다(requests 와 다름).
+    probe 는 살아 있는 OAuth bearer 를 싣고 나가므로 리다이렉트를 아예 막고 3xx 는
+    'unknown'(판정 보류)으로 떨어뜨린다.
+    """
+
+    def redirect_request(self, *_a, **_kw):
+        return None
+
+
+_PROBE_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def probe(tok):
@@ -341,7 +443,7 @@ def probe(tok):
             'content-type': 'application/json',
         })
     try:
-        with urllib.request.urlopen(req, timeout=probe_timeout) as r:
+        with _PROBE_OPENER.open(req, timeout=probe_timeout) as r:
             r.read()
             return 'ok', 0, f'HTTP {r.status}'
     except urllib.error.HTTPError as e:
@@ -351,12 +453,27 @@ def probe(tok):
         except Exception:  # noqa: BLE001
             raw = ''
         if e.code == 429:
-            return 'exhausted', _cooldown_until(headers), f'429 {_rl_summary(headers)}'
+            now = int(time.time())
+            raw_until = _raw_cooldown(headers)
+            long_lived = str(headers.get('anthropic-ratelimit-unified-7d-status') or '').lower() == 'rejected'
+            # burst-429 는 강등하지 않는다 (gate-hardening 2026-08-07, 적대 리뷰 P1).
+            # 5h RPM/버스트 캡은 이 시스템에서 **정상 이벤트**이고 litellm 이 요청-레벨로 흡수한다.
+            # 종전엔 모든 429 를 '소진' 으로 보고, retry-after=5s 조차 min_cooldown(300s)으로
+            # **끌어올려** 계정을 강등했다 → 1순위·root slot 이 같은 토큰이 되어 2계정 체인이
+            # 1계정으로 붕괴하고, 강등/복귀마다 게이트웨이 force-recreate(=LLM 순단)가 붙었다.
+            # 강등은 (a) 7d 창이 rejected 이거나 (b) 헤더가 말하는 쿨다운 자체가
+            # min_demote_sec 이상일 때만 한다. 그 외는 transient — litellm 에 맡긴다.
+            if not long_lived and (raw_until is None or raw_until - now < min_demote_sec):
+                span = 'unknown' if raw_until is None else f'{raw_until - now}s'
+                return 'transient', 0, f'429(burst, cooldown={span}) {_rl_summary(headers)}'
+            cooled = raw_until if raw_until is not None else now + 3600
+            cooled = max(now + min_cooldown, min(cooled, now + max_cooldown))
+            return 'exhausted', cooled, f'429 {_rl_summary(headers)}'
         if e.code in (401, 403):
-            return 'unauthorized', int(time.time()) + max(min_cooldown, 900), f'{e.code} {raw}'
-        return 'unknown', 0, f'{e.code} {raw}'
+            return 'unauthorized', int(time.time()) + max(min_cooldown, 900), f'{e.code} {_scrub(raw)}'
+        return 'unknown', 0, f'{e.code} {_scrub(raw)}'
     except Exception as e:  # noqa: BLE001 — DNS/TLS/타임아웃 등은 전부 판정 보류(fail-open)
-        return 'unknown', 0, f'{type(e).__name__}: {e}'
+        return 'unknown', 0, _scrub(f'{type(e).__name__}: {e}')
 
 
 def _as_int(v):
@@ -368,8 +485,8 @@ def _as_int(v):
 
 state = load_state()
 state_dirty = False
-chosen = None          # (acct, token)
-gated_fallback = None  # 전 계정 소진 시 되돌아갈 정적 1순위
+chosen = None    # (acct, token)
+gated = []       # 전 계정 소진 시 후보 — [(until, acct, token)]
 
 for acct in accounts:
     tok, reason = static_check(acct)
@@ -383,32 +500,48 @@ for acct in accounts:
         break
 
     now = int(time.time())
-    entry = state.get(acct) or {}
+    # load_state 는 최상위만 dict 검증한다 — 항목 값이 dict 가 아니면 .get 에서
+    # AttributeError → 파이썬 블록 사망 → `|| SEL=""` 가 삼켜 1순위 slot 이 조용히
+    # 갱신 정지(exit 0). 항목 단위로도 강제한다(gate-hardening, 적대 리뷰 P2 — 실증됨).
+    entry = state.get(acct)
+    if not isinstance(entry, dict):
+        entry = {}
     until = _as_int(entry.get('until'))
     checked = _as_int(entry.get('checked'))
 
     if until > now:
         detail = entry.get('detail') or ''
         logd(f'[{acct}] 건너뜀 — 사용량 소진 캐시 ({fmt(until)} 까지 우회, {detail})')
-        if gated_fallback is None:
-            gated_fallback = (acct, tok)
+        gated.append((until, acct, tok))
         continue
 
     # 게이트 조건 (a) heartbeat / (b) 소진 캐시 만료 / (c) 게이트웨이 오류 관측 / (d) 강제
     stale = recheck_sec > 0 and (now - checked) >= recheck_sec
-    need_probe = force_probe or until > 0 or gw_dirty or stale
+    # (b) 는 **쿨다운 만료당 1회**만이다. 종전엔 `until > 0` 만 봤는데, 만료 시점의 probe 가
+    # 네트워크 오류로 fail-open 하면 until(과거)이 그대로 보존돼 이후 **매 cron 실행마다**
+    # probe 가 나갔다(heartbeat 우회, 실증됨 — 적대 리뷰 P2). checked < until 을 함께 봐서
+    # "쿨다운 설정 이후 아직 재확인하지 않았을 때"만 회복 probe 를 낸다.
+    recovery_due = until > 0 and now >= until and checked < until
+    need_probe = force_probe or recovery_due or gw_dirty or stale
     if not need_probe:
         age = f'{now - checked}s 전 판정' if checked else '판정 이력 없음'
         logd(f'[{acct}] 선택 — 정적 검사 통과 (게이트 재확인 불요: {age}, 라이브 probe 생략)')
         chosen = (acct, tok)
         break
     if check_only:
-        why = '캐시 만료' if until > 0 else ('게이트웨이 오류 관측' if gw_dirty else 'heartbeat 도래')
+        why = '캐시 만료' if recovery_due else ('게이트웨이 오류 관측' if gw_dirty else 'heartbeat 도래')
         logd(f'[{acct}] 선택(잠정) — 정적 검사 통과. --check 이므로 라이브 probe 생략({why} 상태)')
         chosen = (acct, tok)
         break
 
     verdict, until_new, detail = probe(tok)
+    if verdict == 'transient':
+        # 짧은 버스트 캡 — 강등하지 않는다(litellm 이 요청-레벨로 흡수). 계정은 그대로 사용.
+        state[acct] = {'until': 0, 'checked': now, 'detail': detail}
+        state_dirty = True
+        logd(f'[{acct}] 선택 — 일시적 {detail} (강등 안 함, litellm 폴백에 위임)')
+        chosen = (acct, tok)
+        break
     if verdict == 'ok':
         if until > 0:
             logd(f'[{acct}] 사용량 회복 확인(HTTP 200) — 1순위 복귀')
@@ -422,8 +555,7 @@ for acct in accounts:
         state[acct] = {'until': until_new, 'checked': now, 'detail': detail}
         state_dirty = True
         logd(f'[{acct}] 건너뜀 — 라이브 {detail} → {fmt(until_new)} 까지 우회')
-        if gated_fallback is None:
-            gated_fallback = (acct, tok)
+        gated.append((until_new, acct, tok))
         continue
     # 판정 보류(네트워크/도달성/미분류) — 계정 소진으로 오판하지 않는다.
     # checked 만 갱신해 heartbeat 간격을 적용한다(도달성 장애 동안 매 실행 재시도로 cron 이
@@ -434,9 +566,14 @@ for acct in accounts:
     chosen = (acct, tok)
     break
 
-if chosen is None and gated_fallback is not None:
-    logd(f'WARN: 후보 전원 사용량 소진 — 게이트 무시하고 정적 1순위 [{gated_fallback[0]}] 유지')
-    chosen = gated_fallback
+if chosen is None and gated:
+    # 전원 소진 — 어차피 어디로 가도 실패지만, **가장 빨리 회복되는** 계정을 남긴다.
+    # 종전엔 정적 1순위를 남겨, 2일 뒤 회복하는 계정이 10분 뒤 회복하는 계정을 밀어냈다
+    # (적대 리뷰 P2).
+    gated.sort(key=lambda t: t[0])
+    _until, _acct, _tok = gated[0]
+    logd(f'WARN: 후보 전원 사용량 소진 — 가장 빨리 회복되는 [{_acct}] 유지 ({fmt(_until)})')
+    chosen = (_acct, _tok)
 
 if state_dirty:
     save_state(state)
@@ -462,8 +599,12 @@ PY
 
 write_env_key() {  # $1=key $2=token — .env.bedrock 의 key= 안전 치환(없으면 추가). 특수문자 대응 python.
   python3 - "$ENV_FILE" "$1" "$2" <<'PY'
-import sys
+import os, sys
 path, key, tok = sys.argv[1], sys.argv[2], sys.argv[3]
+# 토큰에 개행/제어문자가 섞이면 .env 가 여러 줄로 깨져 다른 키를 덮어쓴다(적대 리뷰 P2).
+if any(c in tok for c in '\r\n') or not tok.isprintable():
+    sys.stderr.write('[refresh-oauth] ERROR: %s 토큰에 제어문자 — 주입 거부\n' % key)
+    sys.exit(3)
 try:
     lines = open(path).read().splitlines()
 except FileNotFoundError:
@@ -476,7 +617,15 @@ for l in lines:
         out.append(l)
 if not done:
     out.append(key + '=' + tok)
+# 이 파일은 두 계정의 살아 있는 OAuth bearer 를 평문 보관한다. 종전엔 cron umask(022)로
+# 0644/0664 라 비특권 로컬 계정(예: claude-corp)이 root Max 계정 토큰을 읽을 수 있었다
+# — 자격증명 원본(/root/.claude/.credentials.json, 0600 root:root)의 OS 경계를 우회한다.
+# (gate-hardening 2026-08-07, 적대 리뷰 P1 — 본 결함은 선행이지만 여기서 닫는다.)
 open(path, 'w').write('\n'.join(out) + '\n')
+try:
+    os.chmod(path, 0o600)
+except OSError:
+    pass
 PY
 }
 cur_env_key() { grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true; }
@@ -498,9 +647,17 @@ log_fallback_observability() {
 log_fallback_observability
 
 # 1순위 slot: 우선순위 순회(claude-corp 우선 + root 폴백) 첫 사용가능 계정 — 소진 게이트 적용.
+set -f  # $ACCOUNTS 는 의도적 워드분할 대상 — pathname expansion 은 막는다
 SEL="$(GATE="$GATE_ENABLED" GW_DIRTY="$GW_DIRTY" select_account $ACCOUNTS)" || SEL=""
+set +f
 PRIMARY_ACCT="(none)"; PRIMARY_TOKEN=""
-if [ -n "$SEL" ]; then PRIMARY_ACCT="${SEL%%$'\t'*}"; PRIMARY_TOKEN="${SEL#*$'\t'}"; fi
+# tab 가드 — root slot(아래)에는 있었으나 여기엔 없어서, stdout 에 tab 이 없으면
+# **계정 이름이 토큰으로** 주입될 수 있었다(비어 있지 않으니 -n 가드도 통과). 적대 리뷰 P2.
+case "$SEL" in
+  *$'\t'*) PRIMARY_ACCT="${SEL%%$'\t'*}"; PRIMARY_TOKEN="${SEL#*$'\t'}" ;;
+  "")      : ;;
+  *)       log "ERROR: select_account 출력 형식 이상(tab 없음) — 1순위 slot 미변경" ;;
+esac
 
 # 2순위 slot: root 계정 전용(claude-*-root deployment 용) — 고정 배선이라 게이트 미적용.
 ROOT_SEL="$(GATE=0 GW_DIRTY=0 select_account root)" || ROOT_SEL=""
@@ -532,12 +689,25 @@ if [ -n "$ROOT_TOKEN" ] && [ "$ROOT_TOKEN" != "$CUR_ROOT" ]; then
   log "[root → ANTHROPIC_API_KEY_ROOT] 토큰 갱신"
 fi
 
-if [ "$CHANGED" = 0 ]; then
+# recreate 실패 sentinel — 종전엔 `docker compose up` 실패를 검사하지 않아, .env 는 새 토큰인데
+# 컨테이너는 옛 토큰을 물고 있고 다음 실행은 CHANGED=0 으로 "변경 없음 skip" 하며 **영구히**
+# 재시도하지 않았다(토큰 만료 후 전량 401). 적대 리뷰 P1.
+RECREATE_SENTINEL="$REPO/.env.bedrock.needs-recreate"
+if [ "$CHANGED" = 0 ] && [ ! -f "$RECREATE_SENTINEL" ]; then
   log "토큰 변경 없음(1순위=$PRIMARY_ACCT, root slot 동일) — skip (recreate 안 함)"
   exit 0
 fi
+if [ "$CHANGED" = 0 ]; then
+  log "토큰 변경 없음이나 직전 recreate 미완료(sentinel) — 재생성 재시도"
+fi
 
 # 토큰 변경 반영 — restart 는 env_file 재로드 안 하므로 반드시 재생성
+: > "$RECREATE_SENTINEL"
 cd "$REPO"
-docker compose -f docker-compose.yml up -d --force-recreate bedrock-gateway >/dev/null 2>&1
-log "OAuth 토큰 갱신 완료(1순위=$PRIMARY_ACCT, root slot=$([ -n "$ROOT_TOKEN" ] && echo '갱신/동일' || echo 미변경)) → bedrock-gateway 재생성"
+if docker compose -f docker-compose.yml up -d --force-recreate bedrock-gateway >/tmp/refresh-oauth-recreate.log 2>&1; then
+  rm -f "$RECREATE_SENTINEL"
+  log "OAuth 토큰 갱신 완료(1순위=$PRIMARY_ACCT, root slot=$([ -n "$ROOT_TOKEN" ] && echo '갱신/동일' || echo 미변경)) → bedrock-gateway 재생성"
+else
+  log "ERROR: bedrock-gateway 재생성 실패 — .env 는 새 토큰, 컨테이너는 구 토큰. 다음 실행이 재시도한다. 로그: $(tail -3 /tmp/refresh-oauth-recreate.log | tr '\n' ' ')"
+  exit 1
+fi

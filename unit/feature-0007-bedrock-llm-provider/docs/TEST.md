@@ -526,3 +526,25 @@ source_of_truth: true
 - **미수행 / 이월**
   - root access token 회전 주체 부재(TASK 「이월 항목」) — 사람 결정 필요.
   - UI 표면 변경 없음(운영 스크립트 전용) → PB-0008 Windows-browser 검증 **비해당**(§15.4.1 예외).
+
+### Run 2026-08-07-oauth-gate-hardening
+- Date: 2026-08-07 19:00~ KST · Environment: `CLI`(격리 하네스) + 라이브 게이트웨이 · 대상 `bin/refresh-claude-oauth-token.sh`
+- **적대 리뷰(§18.8 subagent 패널 3렌즈)**: security / backend·상태머신 / QA·테스트 실효성. 세 렌즈 모두 `CONCERN`, backend 는 "availability 축에서 FAIL 경계". 상세는 REVIEW REV-20260807T190000.
+- **단위 테스트**: 15건 → **41건** PASS. 신규 커버: burst-429 미강등 · 긴 429 강등 · 게이트웨이 로그 트리거 (c) 격리(+음성 대조군) · FORCE_PROBE · 401/403 · retry-after 단독/헤더 없음/stale reset/ms reset · fail-open 후 heartbeat 준수 · 전원소진 시 최단 회복 계정 · probe 형태(model·system·anthropic-beta) · 사용 가능 계정 0 → exit 1 무변경 · recreate 변경시에만/실패 재시도 · 손상 상태항목 3종 · 상태 쓰기 실패 · 파일 권한 · 심링크 미추종 · detail redaction · 리다이렉트 미추종 · 개행 토큰 거부.
+- **Mutation 재검증** (`/tmp/.../scratchpad/mut4`, 스크립트 사본에 결함 주입 후 전체 스위트 실행):
+
+  | mutant | 이전(15건) | 현재(41건) |
+  |---|---|---|
+  | gw_dirty 트리거 제거 / GW_DIRTY 배선 사망 / grep 패턴 오타 | SURVIVED ×3 | **KILLED ×3** |
+  | 회복 트리거 제거 · FORCE_PROBE 무시 | SURVIVED ×2 | **KILLED ×2** |
+  | 401/403 → unknown · retry-after 무시 | SURVIVED ×2 | **KILLED ×2** |
+  | 항상 recreate · 사용가능계정0 에 exit 0 · `_as_int` 예외 제거 | SURVIVED ×3 | **KILLED ×3** |
+  | anthropic-beta 헤더 제거 · probe 모델 opus 고정 | SURVIVED ×2 | **KILLED ×2** |
+  | (신규 계약) burst 강등 · 전원소진 정렬 · entry 타입강제 · .env chmod · stale reset 필터 · 토큰 마스킹 · 제어문자 제거 · mkstemp · 디렉토리 0700 · 리다이렉트 · 개행토큰 거부 · recreate 실패 무시 | — | **KILLED ×12** |
+  | `os.chmod(tmp,0600)` 제거 | — | SURVIVED(**등가** — `mkstemp` 가 이미 0600. `mkstemp`→`open` mutant 는 KILLED) |
+  | SEL tab 가드 제거 | — | SURVIVED(**외부 유발 불가**한 내부 불변식 — 정직 표기) |
+
+- **자체 발견(정직 표기)**: 처음 작성한 보안 테스트 2건이 **vacuous** 였다 — ① 가짜 엔드포인트가 3-tuple 응답 스펙에서 `ValueError` 로 죽어 스크립트에는 '연결 끊김'으로 보였고 fail-open 경로가 대신 통과했다, ② 302 뒤 urllib 이 POST→GET 으로 바꾸는데 핸들러가 GET 을 기록하지 않아 "리다이렉트를 안 따라갔다"가 항상 참이었다. mutation 이 둘 다 잡아냈다. 하네스에 핸들러 예외 표면화(`errors`)·GET 기록·잉여 probe 감지(`overflow`)를 추가했다.
+- `bash -n` PASS · 임베디드 python 2블록 `compile()` PASS.
+- **라이브 재적용**: 하단 POSTDEPLOY 항목 참조.
+- UI 표면 변경 없음 → PB-0008 비해당(§15.4.1 예외).

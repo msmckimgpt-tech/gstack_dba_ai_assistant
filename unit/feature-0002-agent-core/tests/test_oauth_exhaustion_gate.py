@@ -47,6 +47,8 @@ class _ProbeServer:
     def __init__(self, responses):
         self._responses = list(responses)
         self.calls = []
+        self.overflow = 0   # 시나리오가 정의하지 않은 잉여 probe 수
+        self.errors = []    # 핸들러 내부 예외 — 조용히 '연결 끊김'으로 위장되면 안 된다
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -55,18 +57,49 @@ class _ProbeServer:
                 raw = self.rfile.read(length)
                 outer.calls.append({
                     "authorization": self.headers.get("authorization", ""),
+                    "anthropic-beta": self.headers.get("anthropic-beta", ""),
                     "body": json.loads(raw or b"{}"),
                 })
-                idx = min(len(outer.calls) - 1, len(outer._responses) - 1)
-                status, headers = outer._responses[idx]
-                payload = b'{"content":[{"type":"text","text":"pong"}]}' if status == 200 \
-                    else b'{"type":"error","error":{"type":"rate_limit_error"}}'
+                # 종전엔 마지막 응답을 무한 반복해 **잉여 probe 가 보이지 않았다**(적대 리뷰).
+                # 시나리오가 정의한 횟수를 넘으면 599 로 튀게 해 테스트가 알아채도록 한다.
+                idx = len(outer.calls) - 1
+                if idx >= len(outer._responses):
+                    outer.overflow += 1
+                    self.send_response(599)
+                    self.send_header("content-length", "0")
+                    self.end_headers()
+                    return
+                spec = outer._responses[idx]
+                status, headers = spec[0], spec[1]
+                payload = spec[2] if len(spec) > 2 else (
+                    b'{"content":[{"type":"text","text":"pong"}]}' if status == 200
+                    else b'{"type":"error","error":{"type":"rate_limit_error"}}')
                 self.send_response(status)
                 for k, v in headers.items():
                     self.send_header(k, str(v))
                 self.send_header("content-length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+
+            def do_GET(self):  # noqa: N802 — 302 이후 urllib 은 POST 를 GET 으로 바꾼다
+                outer.calls.append({
+                    "method": "GET",
+                    "authorization": self.headers.get("authorization", ""),
+                    "anthropic-beta": self.headers.get("anthropic-beta", ""),
+                    "body": {},
+                })
+                payload = b'{"content":[{"type":"text","text":"pong"}]}'
+                self.send_response(200)
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def handle_one_request(self):
+                try:
+                    super().handle_one_request()
+                except Exception as exc:  # noqa: BLE001
+                    outer.errors.append(repr(exc))
+                    raise
 
             def log_message(self, *_a):  # 테스트 출력 오염 방지
                 pass
@@ -81,6 +114,8 @@ class _ProbeServer:
     def __exit__(self, *_exc):
         self._httpd.shutdown()
         self._httpd.server_close()
+        assert self.overflow == 0, f"시나리오보다 probe 가 {self.overflow}회 더 나갔다"
+        assert not self.errors, f"가짜 엔드포인트가 죽었다(테스트가 vacuous 하게 통과할 수 있다): {self.errors}"
 
     @property
     def url(self):
@@ -151,6 +186,7 @@ _PINNED = {
     "CLAUDE_OAUTH_PROBE_MAX_COOLDOWN": "691200",
     "CLAUDE_OAUTH_PROBE_MIN_COOLDOWN": "300",
     "CLAUDE_OAUTH_GATE_RECHECK_SEC": "3600",
+    "CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC": "1800",
 }
 
 
@@ -193,9 +229,33 @@ _RL_HEADERS = {
 }
 
 
+def _burst_headers(retry_after=5):
+    """5h RPM/버스트 캡 — 7d 는 멀쩡하고 쿨다운이 짧다. 강등 대상이 아니다."""
+    return {
+        "anthropic-ratelimit-unified-status": "rejected",
+        "anthropic-ratelimit-unified-5h-status": "rejected",
+        "anthropic-ratelimit-unified-5h-utilization": "1.0",
+        "anthropic-ratelimit-unified-7d-status": "allowed",
+        "anthropic-ratelimit-unified-7d-utilization": "0.4",
+        "anthropic-ratelimit-unified-representative-claim": "five_hour",
+        "retry-after": str(retry_after),
+    }
+
+
+def _seed(env, **accounts):
+    env["state_file"].parent.mkdir(parents=True, exist_ok=True)
+    env["state_file"].write_text(json.dumps(accounts))
+
+
+def _fresh(offset=-60):
+    return {"until": 0, "checked": int(time.time()) + offset, "detail": "HTTP 200"}
+
+
 def _rl_headers(reset_epoch):
+    """실측 헤더 모양 — reset 과 retry-after 는 같은 시각을 가리킨다(2026-08-07 라이브 캡처)."""
     h = dict(_RL_HEADERS)
     h["anthropic-ratelimit-unified-reset"] = str(int(reset_epoch))
+    h["retry-after"] = str(max(1, int(reset_epoch) - int(time.time())))
     return h
 
 
@@ -294,12 +354,14 @@ def test_cached_exhaustion_skips_without_probe(env):
 
 # ── G5: 캐시 만료 후 200 이면 원 1순위로 자동 복귀 ────────────────────────────
 def test_recovery_after_cooldown_promotes_back(env):
-    env["state_file"].parent.mkdir(parents=True, exist_ok=True)
-    env["state_file"].write_text(json.dumps({
-        "claude-corp": {"until": int(time.time()) - 5, "detail": "429 7d=rejected(1.0)", "checked": 0}}))
+    # heartbeat 를 끄고 캐시-만료 트리거(b)만 남긴다. 종전 이 테스트는 `checked: 0` 이라
+    # heartbeat 가 probe 를 냈고, (b) 를 삭제해도 통과했다(적대 리뷰 mutation M22 생존).
+    now = int(time.time())
+    _seed(env, **{"claude-corp": {"until": now - 5, "detail": "429 7d=rejected(1.0)", "checked": now - 10},
+                  "root": _fresh()})
 
     with _ProbeServer([(200, {})]) as srv:
-        r = _run(env, probe_url=srv.url, gateway_logs="")  # 로그 깨끗해도 캐시 만료면 복구 확인 1회
+        r = _run(env, probe_url=srv.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
         assert r.returncode == 0, r.stderr
         assert len(srv.calls) == 1, "캐시 만료 시 복구 확인 probe 1회여야 한다"
     assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-corp"
@@ -357,7 +419,7 @@ def test_check_mode_is_side_effect_free(env):
 @pytest.mark.parametrize(
     "reset_offset,max_cooldown,expect_max",
     [(10 ** 7, 3600, True),   # reset 이 상한을 넘으면 상한으로 클램프
-     (1, 3600, False)],       # reset 이 하한보다 가까우면 하한으로 클램프
+     (60, 3600, False)],      # reset 이 하한보다 가까우면 하한으로 클램프
 )
 def test_cooldown_is_clamped(env, reset_offset, max_cooldown, expect_max):
     now = int(time.time())
@@ -390,3 +452,319 @@ def test_script_syntax_is_valid():
     assert shutil.which("bash"), "bash 필요"
     r = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+# ── 버스트 429 는 강등하지 않는다 (gate-hardening, 적대 리뷰 P1) ──────────────
+def test_burst_429_does_not_demote(env):
+    """5h RPM 캡 같은 단발 429 로 계정을 옮기면 2계정 체인이 1계정으로 붕괴한다.
+
+    종전엔 모든 429 를 소진으로 보고 `retry-after=5s` 를 min_cooldown(300s)으로 끌어올려
+    강등했다 → 두 slot 이 같은 root 토큰이 되고, 강등/복귀마다 게이트웨이 force-recreate.
+    """
+    _seed(env, **{"root": _fresh()})
+    with _ProbeServer([(429, _burst_headers(retry_after=5))]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+        assert len(srv.calls) == 1
+
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-corp", "버스트 429 로 계정을 강등했다"
+    assert _env_val(env, "ANTHROPIC_API_KEY") != _env_val(env, "ANTHROPIC_API_KEY_ROOT"), \
+        "두 slot 이 같은 토큰이 되어 2계정 폴백 체인이 붕괴했다"
+    assert _state(env)["claude-corp"]["until"] == 0
+    assert "일시적" in r.stderr
+
+
+def test_long_429_without_7d_rejection_still_demotes(env):
+    """7d 가 allowed 여도 헤더가 말하는 쿨다운이 길면(≥ MIN_DEMOTE) 강등한다."""
+    _seed(env, **{"root": _fresh()})
+    with _ProbeServer([(429, _burst_headers(retry_after=7200)), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-root"
+    assert _state(env)["claude-corp"]["until"] > int(time.time()) + 3600
+
+
+# ── 게이트웨이 로그 트리거 (c) 를 격리 — 종전 8개 호출부가 장식이었다 ─────────
+def test_gateway_log_trigger_fires_probe(env):
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _ProbeServer([(200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="litellm.RateLimitError: boom",
+                 CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(srv.calls) == 1, "게이트웨이 오류 관측이 probe 를 내지 않았다"
+    assert "[관측]" in r.stderr and "RateLimitError 1건" in r.stderr
+
+
+def test_clean_gateway_log_fires_nothing(env):
+    """(c) 의 음성 대조군 — 로그가 깨끗하면 probe 0."""
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _ProbeServer([(200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="INFO 200 OK",
+                 CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert srv.calls == []
+    assert "[관측]" not in r.stderr
+
+
+# ── FORCE_PROBE (d) ───────────────────────────────────────────────────────────
+def test_force_probe_overrides_all_gates(env):
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _ProbeServer([(200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="",
+                 CLAUDE_OAUTH_GATE_RECHECK_SEC=0, CLAUDE_OAUTH_FORCE_PROBE=1)
+        assert r.returncode == 0, r.stderr
+        assert len(srv.calls) == 1, "FORCE_PROBE=1 이 무시됐다"
+
+
+# ── 401/403 — 정적 검사가 못 보는 '취소된 토큰' 방어선 ────────────────────────
+@pytest.mark.parametrize("code", [401, 403])
+def test_revoked_token_is_skipped(env, code):
+    _seed(env, **{"root": _fresh()})
+    now = int(time.time())
+    with _ProbeServer([(code, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+        assert len(srv.calls) == 1
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-root", "취소된 토큰이 주입됐다"
+    until = _state(env)["claude-corp"]["until"]
+    assert now + 850 <= until <= now + 950
+
+
+# ── 쿨다운 헤더 파싱: retry-after 단독 / 헤더 없음 / 과거 reset / ms reset ────
+@pytest.mark.parametrize("headers,expect_offset", [
+    ({"retry-after": "7200"}, 7200),                                  # retry-after 단독
+    ({}, 3600),                                                       # 헤더 없음 → 기본 1h
+])
+def test_cooldown_from_retry_after_and_default(env, headers, expect_offset):
+    _seed(env, **{"root": _fresh()})
+    h = dict(headers); h["anthropic-ratelimit-unified-7d-status"] = "rejected"
+    now = int(time.time())
+    with _ProbeServer([(429, h), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+    until = _state(env)["claude-corp"]["until"]
+    assert now + expect_offset - 10 <= until <= now + expect_offset + 10
+
+
+def test_stale_reset_header_falls_back_to_retry_after(env):
+    """`unified-reset` 이 과거(시계 스큐)면 같은 응답의 retry-after 를 써야 한다.
+
+    종전엔 reset 이 파싱만 되면 무조건 이겨서, 2일짜리 소진이 300s 최소 쿨다운으로
+    떨어지고 30분마다 재승격/재강등 + 게이트웨이 recreate 를 반복했다.
+    """
+    now = int(time.time())
+    _seed(env, **{"root": _fresh()})
+    h = _rl_headers(now - 90)          # 과거 epoch
+    h["retry-after"] = "176528"
+    with _ProbeServer([(429, h), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+    until = _state(env)["claude-corp"]["until"]
+    assert now + 176000 <= until <= now + 177000, f"stale reset 을 걸러내지 못했다: until-now={until-now}"
+
+
+def test_millisecond_reset_header_is_corrected(env):
+    """reset 이 ms 로 오면 상한(8일)에 박혀 회복 probe 가 사라졌다 — ms 보정 확인."""
+    now = int(time.time())
+    _seed(env, **{"root": _fresh()})
+    h = _rl_headers((now + 7200) * 1000)
+    del h["retry-after"]
+    with _ProbeServer([(429, h), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+    until = _state(env)["claude-corp"]["until"]
+    assert now + 7000 <= until <= now + 7400, f"ms epoch 보정 실패: until-now={until-now}"
+
+
+# ── fail-open 이 heartbeat 를 우회해 매 실행 probe 하지 않는다 ────────────────
+def test_fail_open_at_cooldown_expiry_does_not_probe_every_run(env):
+    """만료 시점 probe 가 네트워크 오류면, 다음 실행은 heartbeat 간격을 지켜야 한다.
+
+    종전엔 과거 `until` 이 남아 `until > 0` 만으로 매 cron 실행이 probe 했다.
+    """
+    now = int(time.time())
+    _seed(env, **{"claude-corp": {"until": now - 5, "checked": now - 10, "detail": "429"},
+                  "root": _fresh()})
+    # 1회차: 도달 불가 → fail-open
+    r1 = _run(env, probe_url="http://127.0.0.1:1/v1/messages", gateway_logs="",
+              CLAUDE_OAUTH_GATE_RECHECK_SEC=3600)
+    assert r1.returncode == 0, r1.stderr
+    assert "판정 보류" in r1.stderr
+    # 2회차: heartbeat 미도래 → probe 0 이어야 한다
+    with _ProbeServer([(200, {})]) as srv:
+        r2 = _run(env, probe_url=srv.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=3600)
+        assert r2.returncode == 0, r2.stderr
+        assert srv.calls == [], "fail-open 후 매 실행 probe 가 나갔다"
+
+
+# ── 전원 소진이면 가장 빨리 회복되는 계정을 남긴다 ────────────────────────────
+def test_all_exhausted_keeps_soonest_recovering(env):
+    now = int(time.time())
+    _seed(env, **{"claude-corp": {"until": now + 176000, "checked": now, "detail": "429 7d"},
+                  "root": {"until": now + 600, "checked": now, "detail": "429 5h"}})
+    r = _run(env, gateway_logs="")
+    assert r.returncode == 0, r.stderr
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-root", "2일 뒤 회복하는 계정을 남겼다"
+    assert "가장 빨리 회복되는" in r.stderr
+
+
+# ── probe 형태 (비용·OAuth 호환) ──────────────────────────────────────────────
+def test_probe_shape_is_pinned(env):
+    _seed(env, **{"root": _fresh()})
+    with _ProbeServer([(429, _rl_headers(int(time.time()) + 172800)), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+        c = srv.calls[0]
+    assert c["body"]["max_tokens"] == 16
+    assert c["body"]["model"] == "claude-haiku-4-5"
+    assert c["body"]["system"][0]["text"].startswith("You are Claude Code")
+    assert c["anthropic-beta"] == "oauth-2025-04-20", "OAuth 토큰 추론에 필요한 beta 헤더가 빠졌다"
+
+
+# ── 안전장치: 사용 가능 계정 0 → .env·컨테이너 무변경 + exit 1 ────────────────
+def test_no_usable_account_exits_1_without_touching_anything(env):
+    for acct in ("claude-corp", "root"):
+        (env["cred_root"] / acct / ".credentials.json").unlink()
+    before = env["env_file"].read_text()
+    r = _run(env, gateway_logs="")
+    assert r.returncode == 1, r.stderr
+    assert env["env_file"].read_text() == before
+    assert not env["docker_calls"].exists()
+
+
+# ── recreate 는 토큰이 실제로 바뀐 경우에만 ───────────────────────────────────
+def test_recreate_only_when_token_changed(env):
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    r1 = _run(env, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+    assert r1.returncode == 0, r1.stderr
+    assert env["docker_calls"].read_text().count("--force-recreate") == 1
+    r2 = _run(env, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+    assert r2.returncode == 0, r2.stderr
+    assert env["docker_calls"].read_text().count("--force-recreate") == 1, "변경 없는데 재생성했다"
+    assert "토큰 변경 없음" in r2.stderr
+
+
+# ── 상태 파일 견고성 ──────────────────────────────────────────────────────────
+@pytest.mark.parametrize("payload", ['{"claude-corp": "pwned"}',
+                                     '{"claude-corp": [1,2,3]}',
+                                     '{"claude-corp": {"until": "abc", "checked": null}}'])
+def test_malformed_state_entry_does_not_break_primary_slot(env, payload):
+    env["state_file"].parent.mkdir(parents=True, exist_ok=True)
+    env["state_file"].write_text(payload)
+    with _ProbeServer([(200, {}), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+        assert srv.overflow == 0
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-corp", \
+        "손상된 상태 항목이 1순위 slot 갱신을 멈췄다"
+
+
+def test_unwritable_state_dir_does_not_block_injection(env):
+    r = _run(env, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0,
+             CLAUDE_OAUTH_STATE_FILE="/proc/nowhere/exhaustion.json")
+    assert r.returncode == 0, r.stderr
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-corp"
+
+
+# ── 보안: 파일 권한 ───────────────────────────────────────────────────────────
+def test_secrets_are_not_world_readable(env):
+    _seed(env, **{"root": _fresh()})
+    with _ProbeServer([(429, _rl_headers(int(time.time()) + 172800)), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+    assert oct(env["env_file"].stat().st_mode)[-3:] == "600", ".env.bedrock 이 world-readable 이다"
+    assert oct(env["state_file"].stat().st_mode)[-3:] == "600"
+
+
+def test_probe_detail_redacts_tokens_and_control_chars(env):
+    """엔드포인트가 돌려준 본문이 그대로 상태파일·로그로 새지 않는다.
+
+    종전 버전은 기본 500 본문에 토큰이 없어 scrub 을 통째로 지워도 통과했다(vacuous pass) —
+    적대 리뷰 mutation 으로 확인. 이제 서버가 토큰 모양 문자열·제어문자·장문을 실어 보낸다.
+    """
+    _seed(env, **{"root": _fresh()})
+    leak = (b'{"error":"sk-ant-oat01-LEAKEDSECRET0123456789 \x07ctl \x00nul'
+            + b'A' * 400 + b'"}')
+    with _ProbeServer([(401, {}, leak)]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+    detail = _state(env)["claude-corp"]["detail"]
+    assert "LEAKEDSECRET" not in detail, f"토큰 모양 문자열이 상태파일에 남았다: {detail!r}"
+    assert "sk-ant-<redacted>" in detail
+    assert "\x07" not in detail and "\x00" not in detail, f"제어문자가 남았다: {detail!r}"
+    assert len(detail) <= 210
+    assert "LEAKEDSECRET" not in r.stderr, "stderr(=/tmp/refresh-oauth.log)로도 새면 안 된다"
+
+
+# ── 보안: 상태 파일 디렉토리 권한 + 심링크 미추종 ─────────────────────────────
+def test_state_dir_is_private_and_tmp_does_not_follow_symlink(env):
+    victim = env["tmp"] / "victim.txt"
+    victim.write_text("DO-NOT-OVERWRITE")
+    env["state_file"].parent.mkdir(parents=True, exist_ok=True)
+    (env["tmp"] / "state" / "exhaustion.json.tmp").symlink_to(victim)
+
+    _seed(env, **{"root": _fresh()})
+    with _ProbeServer([(429, _rl_headers(int(time.time()) + 172800)), (200, {})]) as srv:
+        r = _run(env, probe_url=srv.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+
+    assert victim.read_text() == "DO-NOT-OVERWRITE", "고정 .tmp 이름이 심링크를 따라가 임의 파일을 덮어썼다"
+    assert not env["state_file"].is_symlink()
+    assert oct(env["state_file"].parent.stat().st_mode)[-3:] == "700"
+
+
+# ── 보안: probe 는 리다이렉트를 따라가지 않는다 (Authorization 유출 차단) ─────
+def test_probe_does_not_follow_redirects(env):
+    """3xx 를 따라가면 urllib 은 Authorization 헤더를 **다른 호스트로도** 재전송한다."""
+    collector = _ProbeServer([(200, {})])
+    with collector:
+        redirector = _ProbeServer([(302, {"location": collector.url})])
+        with redirector:
+            _seed(env, **{"root": _fresh()})
+            r = _run(env, probe_url=redirector.url, gateway_logs="")
+            assert r.returncode == 0, r.stderr
+            assert len(redirector.calls) == 1
+        assert collector.calls == [], "리다이렉트를 따라가 토큰이 다른 호스트로 전송됐다"
+
+    assert "판정 보류" in r.stderr, "3xx 는 판정 보류(fail-open)여야 한다"
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-corp"
+
+
+# ── 개행/제어문자가 섞인 토큰은 .env 를 깨뜨리기 전에 거부한다 ────────────────
+def test_token_with_newline_is_rejected_before_writing_env(env):
+    """토큰에 개행이 있으면 .env.bedrock 이 여러 줄로 깨져 다른 키를 덮어쓴다."""
+    _write_cred(env["cred_root"], "claude-corp", "tokA\nANTHROPIC_API_KEY_ROOT=pwned")
+    before = env["env_file"].read_text()
+    r = _run(env, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+    assert r.returncode != 0, "제어문자 토큰을 그대로 주입했다"
+    assert env["env_file"].read_text() == before, ".env.bedrock 이 오염됐다"
+    assert "pwned" not in env["env_file"].read_text()
+
+
+# ── recreate 실패는 sentinel 로 남아 다음 실행이 재시도한다 ───────────────────
+def test_failed_recreate_is_retried_next_run(env):
+    """종전엔 recreate 실패 후 다음 실행이 CHANGED=0 으로 skip 해 **영구히** 재시도하지 않았다.
+
+    .env 는 새 토큰인데 컨테이너는 옛 토큰 → 만료 후 전량 401.
+    """
+    docker = env["binstub"] / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "${1:-}" = "compose" ]; then\n'
+        '  for a in "$@"; do [ "$a" = "logs" ] && { printf "%s\\n" "${MOCK_GATEWAY_LOGS:-}"; exit 0; }; done\n'
+        "fi\n"
+        'printf "%s\\n" "$@" >> "$MOCK_DOCKER_CALLS"\n'
+        'exit "${MOCK_DOCKER_UP_RC:-0}"\n')
+    docker.chmod(0o755)
+    sentinel = env["repo"] / ".env.bedrock.needs-recreate"
+
+    r1 = _run(env, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0, MOCK_DOCKER_UP_RC=1)
+    assert r1.returncode == 1, "recreate 실패가 성공으로 보고됐다"
+    assert sentinel.exists(), "재시도 sentinel 이 남지 않았다"
+    assert "재생성 실패" in r1.stderr
+
+    # 토큰은 그대로(CHANGED=0)지만 sentinel 이 있으므로 재시도해야 한다.
+    r2 = _run(env, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0, MOCK_DOCKER_UP_RC=0)
+    assert r2.returncode == 0, r2.stderr
+    assert not sentinel.exists()
+    assert env["docker_calls"].read_text().count("--force-recreate") == 2, "재시도하지 않았다"
