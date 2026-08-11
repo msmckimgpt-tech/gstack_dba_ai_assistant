@@ -131,3 +131,15 @@ source_of_truth: true
 - Cross-ref: ANCHOR §1("구조적으로 항상 ≥1 healthy upstream")·§3(사용자는 배포를 알지 못한다) —
   본 변경은 그 앵커가 **미달성** 상태였음을 드러내고 되돌린 것 · AGENTS.md §16.7 G9(검증면의 사각:
   차단·가용성 로직의 실측)·G10(재발 클래스 구조 가드).
+
+## CHG-20260811T173500-edge-rolling-gate-postdeploy
+- Date: 2026-08-11
+- Related: CHG-20260811T155700-edge-rolling-gate 의 POST-DEPLOY 실증 기록(문서만 — 코드 변경 0).
+- 결과: **PASS**. main `8cad9cd7` 배포 창(17:30~17:35)에서 `no upstreams available` **0건**,
+  요청 **172건 전부 200**. 수정 전 동일 규모 창(12:40, 111요청)은 503×8·502×1·끊김×1 이었고
+  전면 503 이 13초 지속됐다 — 게이트가 그 창을 제거했다.
+- 게이트 실동작 확인: `web-b 엣지 passive fails=1 — 격리 해제 대기` → `복귀 확인(fails=0 +
+  Caddy→web-b /livez 200)`. 즉 게이트는 "그냥 통과" 한 것이 아니라 **실제로 격리 해제를 기다렸다**.
+- 부수 확인: 이번 배포는 Caddyfile 변경으로 `reconcile_caddy` 가 caddy 를 recreate 했는데(단일 edge)
+  그 구간에서도 5xx 0. 전 서비스 `GIT_COMMIT=8cad9cd7`.
+- Files: TASK.md · REPORT.md · test-runs.d/20260811T1557-edge-rolling-gate.md (기록만).

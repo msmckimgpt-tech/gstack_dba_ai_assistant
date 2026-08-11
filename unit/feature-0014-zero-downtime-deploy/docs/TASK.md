@@ -93,8 +93,12 @@ source_of_truth: true
       `feature-0014/tests` 를 testpaths 에 등재.
 - [x] **(4) 적대 검증** — codex P1 3건·P2 3건 전건 반영(hang·게이트 무의미화·소스파일 신뢰·주장범위·
       설정 인하 대가·테스트 vacuous 구멍).
-- [ ] **(5) 라이브 실증** — 다음 배포 창에서 `no upstreams available` = 0 (수정 전 기준선 = 배포당
-      8~13건). 이것이 "사용자가 겪던 멈춤이 사라졌다" 의 유일한 ground truth.
+- [x] **(5) 라이브 실증 완료 (2026-08-11 17:30~17:35, main 8cad9cd7)** — 배포 창
+      `no upstreams available` = **0**, 요청 **172건 전부 200**(5xx·연결끊김 0). 수정 전 동일
+      규모 창(12:40 배포: 111요청 중 503×8·502×1·끊김×1)과 대조된다. 게이트가 실제로 발동한
+      로그도 확인: `web-b 엣지 passive fails=1 — 격리 해제 대기` → `복귀 확인(fails=0 +
+      Caddy→web-b /livez 200)`. 이번 배포는 Caddyfile 변경으로 caddy recreate 까지 동반했는데
+      그 blip 도 0 이었다.
 
 
 ## 20260711T1137-deploy-flake-hardening — 배포 스파인 flake 하드닝 (사용자 지시 2026-07-11 "나머지 작업 재개")
@@ -169,4 +173,5 @@ source_of_truth: true
 - [x] 배포 체크리스트 [5] 신설 — 매 배포 후 `caddy logs | grep -c 'no upstreams available'` = 0 확인.
       "스파인이 성공 보고 = 무중단" 이 아니라는 사실을 상시 표면화.
 - [x] 검증: `bash -n` · 신규 **39 PASS** · **뮤테이션 17종 전건 KILLED** · 라이브 Caddy admin 응답 파싱 실측 · 라이브 Caddy→web-a `/livez` 200 실측(peer probe 경로 확인)
-- [ ] POST-DEPLOY 라이브 실측 — 배포 창의 `no upstreams available` = **0** 확인(수정 전 12~17초 → 0)
+- [x] POST-DEPLOY 라이브 실측 **완료** — 배포 창 `no upstreams available` = **0**(수정 전 12~17초 전면 503 → 0),
+      요청 172건 전부 200. 4서비스 GIT_COMMIT=8cad9cd7 확인(web-a/web-b/ask-worker/insight-worker/ops-scheduler).

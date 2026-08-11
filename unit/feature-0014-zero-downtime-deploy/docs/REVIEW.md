@@ -234,3 +234,10 @@ source_of_truth: true
 - Cross-ref: MODIFY CHG-20260811T155700-edge-rolling-gate · TASK `20260811T1557-edge-rolling-gate` ·
   ANCHOR §1/§3(본 변경은 앵커가 미달성이던 상태를 되돌린 것) · AGENTS.md §16.7 G9-c(차단 로직의
   정상 경로 실측)·G10(재발 클래스 구조 가드).
+
+## REV-20260811T173500-edge-gate-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실증 기록
+- Related Change: CHG-20260811T173500-edge-rolling-gate-postdeploy (문서만 — 코드 변경 0)
+- Reason: changed paths are feature docs only (TASK/REPORT/MODIFY/test-runs) outside policy-doc list
+- Timestamp: 2026-08-11T08:35:00Z
+- 결과: 게이트 실효 **PASS** — 배포 창 `no upstreams available` 0건 / 172요청 전부 200
+  (수정 전 동일 규모 창: 111요청 중 503×8, 전면 503 13초).

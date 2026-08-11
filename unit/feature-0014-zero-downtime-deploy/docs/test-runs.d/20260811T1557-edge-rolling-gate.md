@@ -67,6 +67,21 @@ verdict: PASS (라이브 실증은 POST-DEPLOY 이월)
   **main 기준선에서도 동일 실패**를 별도 실행으로 확인 → 본 변경과 무관(OAuth 토큰 갱신 스크립트 영역).
 - ruff: All checks passed.
 
-## 5. 미수행 (POST-DEPLOY 이월)
-- **라이브 실증**: 다음 배포 창에서 `docker compose logs caddy --since 10m | grep -c 'no upstreams available'` = **0** 확인.
-  수정 전 기준선 = 배포 1회당 8~13건. 이 수치가 게이트 실효의 유일한 ground truth 다.
+## 5. POST-DEPLOY 라이브 실증 — **PASS** (2026-08-11 17:30~17:35, main 8cad9cd7)
+
+| 항목 | 수정 전 (12:40 배포) | 수정 후 (17:30 배포) |
+|---|---|---|
+| `no upstreams available` | **8건** | **0건** |
+| 배포 창 요청 | 111 | 172 |
+| 5xx / 연결끊김 | 503×8 · 502×1 · 끊김×1 | **0** |
+| 전면 503 지속 | **13초** | **없음** |
+
+- 게이트 발동 로그(실제로 기다렸다는 증거):
+  `web-b 엣지 passive fails=1 — 격리 해제 대기` (반복) → `web-b 엣지 후보 복귀 확인(fails=0 + Caddy→web-b /livez 200)`
+- 이번 배포는 Caddyfile 변경을 동반해 **caddy recreate 까지** 일어났는데(단일 edge, 수초 blip 예상 구간)
+  그 창에서도 5xx 0 — `reconcile_caddy` 의 edge 회복 대기가 흡수했다.
+- 배포 후 upstream 상태: `[{"address":"web-a:8000","fails":0},{"address":"web-b:8000","fails":0}]`
+- 전 서비스 `GIT_COMMIT=8cad9cd7`(web-a·web-b·ask-worker·insight-worker·ops-scheduler).
+
+> 트래픽 부족으로 503 이 "안 난" 것이 아니다 — 수정 전 12:40 창(111요청)보다 **많은 172요청**이
+> 같은 구간에 흘렀고 전부 200 이었다.
