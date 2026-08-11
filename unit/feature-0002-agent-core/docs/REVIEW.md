@@ -1561,3 +1561,7 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   동일 축 수정이다(새 설계면 없음).
 - **적대 검증 대체**: 라이브 재현 입력 + 뮤테이션 18/18 KILLED + 기존 테스트가 수정 중 부수
   결함 1건을 실제로 적발(매니페스트 증발). 배포 후 같은 대화에서 재측정 예정.
+
+## REV-20260811T120000-excerpt-live-measure [SKIPPED:live-evidence+docs-only] — PASS
+- **Trigger**: 문서만(라이브 실측 기록·원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
+- 통과하지 못한 조건(다중 첨부 + 버전 비교)과 측정 오염을 같은 문서에 명시했다.

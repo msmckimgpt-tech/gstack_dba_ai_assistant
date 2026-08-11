@@ -173,7 +173,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **라이브 실측 필요분(§정직)**: ① 모델이 실제로 도구를 채택하는지 ② 다중 파일 전달이 완주하는지
   ③ **다운로드 칩이 실제로 뜨는지**(패널이 잡은 결함이라 최우선) ④ 패치 경로 적용 성공률.
 
-## FR-redteam-attach-excerpt-cap-false-grounding-block — fixed:deployed:unverified-live (L2↔L1; 리뷰어 발췌가 head-only 라 캡 밖 근거가 '무근거'로 보임)
+## FR-redteam-attach-excerpt-cap-false-grounding-block — fixed:deployed:verified (원 축 한정) (L2↔L1; 리뷰어 발췌가 head-only 라 캡 밖 근거가 '무근거'로 보임)
 
 - **status**: `fixed:deployed:unverified-live` — 2026-08-07 라이브 실측 중 **부수 발견**(원 마찰
   검증 턴에서 재현) → 사용자 지시로 수정. **배포 완료**(PR #1196 merge main `4c7a8f27` →
@@ -188,7 +188,19 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   **사실이었다**. ① 겹치는 인용 창에 예산을 이중 과금해 862/1,200 자만 전달 ② 조립 순서가 첨부 id
   고정이라 **질문 대상 파일이 통째로 강등**(probe_a → ALSO ATTACHED, probe_b 만 본문).
   → `CHG-20260811T110000-redteam-excerpt-budget` 로 해소(관련성 정렬 + union 기준 회계 + 지분
-  비례 축소 + 2-pass 적재), 뮤테이션 18/18 KILLED. **배포 후 재측정 필요** → `unverified-live` 유지.
+  비례 축소 + 2-pass 적재), 뮤테이션 18/18 KILLED, 배포 `649d9b03`.
+  **라이브 실측 2차(2026-08-11, 격리 조건) — 원 축 PASS**: 단일 첨부 8,827자, 질문은 "맨 마지막
+  줄이 무엇인가"(마커 offset 8,811 = 앞머리 창 밖 = 원 마찰과 동일 형태). 결과 —
+  답변이 마지막 줄을 정확히 인용했고 red-team `verdict=pass · blocks=0 · unresolved=0 ·
+  stop=resolved` → **경고 배너 없음**. 원 마찰(정확한 답변이 꼬리 근거 때문에 BLOCK 당하는 것)은
+  **소멸**했다. → `fixed:deployed:verified` (원 축 한정).
+- **정직 — 아직 BLOCK 이 나는 조건이 있다**: 다중 첨부 + "직전 버전 대비 무엇이 바뀌었나" 시나리오는
+  여전히 BLOCK 이 난다. 원인은 이 항목의 근본과 **다른 둘**이며 신규 등재했다 —
+  `FR-redteam-digest-lacks-prior-attachment-version` · `FR-redteam-verify-pass-ignores-window-rule`.
+- **측정 오염(자기 기록)**: 3차 측정에서 내가 잘못된 첨부 id(938 = 타 계정 대화의 파일, admin
+  `conversation.attachment.read.any` 로 정상 접근)를 원본으로 v5 를 만들어 대화를 오염시켰다.
+  올바른 v6 으로 덮었으나 버전 체인에 v5 가 남아 있다. 그 런의 BLOCK 은 오염 탓이라 **측정으로
+  세지 않는다**. 접근 경계 자체는 정상(라우트가 own/any 권한을 강제).
   **교훈**: 배포본 합성 입력 실증은 통과했는데 라이브 실입력은 실패했다 — 첨부가 **여러 개**이고
   순서가 실제 id 순일 때만 드러나는 결함이었다. 합성 실증이 라이브 실측을 대체하지 못한다.
 - **source**: 자체 실측(2026-08-07). 사용자 보고 아님.
@@ -284,6 +296,41 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   노출~~ ~~③ "조회 불가·첨부 작업 가능" 안내~~ — 셋 다 "접지되지 않은 상태에서의 답변"을 허용하는
   방향이라 품질 보증 기준과 충돌한다. **다시 제안하지 말 것.**
 - **fix**: 해당 없음(기각) · **rc_ids**: RC-LM2 · **batch-id**: 해당 없음
+
+## FR-redteam-digest-lacks-prior-attachment-version — triaged (L2; 리뷰어는 현재 버전만 받는데 답변은 직전 버전을 비교한다)
+
+- **status**: `triaged` — 2026-08-11 라이브 실측 중 발견. 수정 미착수.
+- **source**: 자체 실측(2026-08-11, run `20260811031709-7f1ff22c`). 사용자 보고 아님.
+- **last_seen**: 2026-08-11 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **symptom_confidence**: high · **rootcause_confidence**: med(리뷰어 findings + digest 구성으로 추정)
+- **suspected_layers**: L2
+- **증상**: "직전 버전 대비 무엇이 바뀌었나" 에 정확히 답해도 grounding BLOCK. 리뷰어 근거:
+  "현재 첨부된 파일은 v6 뿐이며, v5 파일은 없습니다. 도구 실행도 없으므로 v5 의 정확한 내용을
+  검증할 수 없습니다."
+- **근본(추정)**: `agent_core._review_attachments()` 는 **현재 버전 본문만** 싣는다. 반면 답변
+  모델은 프롬프트로 v(n-1)→v(n) diff 를 받는다(선행 cycle `FR-attachment-change-false-absence`).
+  즉 **답변이 정당하게 가진 근거를 리뷰어만 못 본다** — 이 원장의 발췌 결함과 같은 구조, 다른 축.
+- **후보 방향(미결정)**: ① digest 에 직전 버전 diff 를 (캡 안에서) 동봉 ② 리뷰어 규칙에 "버전
+  비교 근거는 프롬프트로 주입된다" 를 명시 ③ 둘 다. ①이 정공법이나 예산 경쟁이 커진다.
+- **fix**: 미착수 · **rc_ids**: RC-LM3 · **batch-id**: (미배정)
+
+## FR-redteam-verify-pass-ignores-window-rule — triaged (L1↔L2; 면책 규칙이 verify 패스에서 안 지켜진다)
+
+- **status**: `triaged` — 2026-08-11 라이브 실측 중 발견. 수정 미착수.
+- **source**: 자체 실측(2026-08-11, run `20260811031709-7f1ff22c` verify_findings).
+- **last_seen**: 2026-08-11 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **symptom_confidence**: high · **rootcause_confidence**: med
+- **suspected_layers**: L1↔L2
+- **증상**: verify 패스가 honesty BLOCK — "v6 은 125줄인데 증거에는 lines 1-4, 123-125 만 제시되며
+  5-122 줄은 unknown 으로 명시됩니다. 초안은 이 미지 영역에 대한 도구 실행 없이 단정합니다."
+  이는 `REDTEAM_REVIEW_PROMPT` 가 **명시적으로 금지한 추론**이다("The assistant was given more of
+  the file than you were … do NOT raise `grounding`/`honesty` merely because …").
+- **근본(추정)**: 규칙이 find 패스 기준으로 쓰였고, 사용자 요청이 "전체 내용을 끝까지 확인해서"
+  처럼 **완독을 명시**하면 리뷰어가 규칙보다 그 문구를 우선한다. 즉 규칙의 **적용 조건이 약하다**.
+- **후보 방향(미결정)**: ① 규칙을 verify 패스 지침에도 동일 강도로 반복 ② "사용자가 완독을
+  요구했더라도, 네 창이 좁다는 사실은 assistant 의 결함이 아니다" 를 명문화 ③ 지분이 일정 비율
+  미만이면 그 파일에 대한 honesty 판정 자체를 금지.
+- **fix**: 미착수 · **rc_ids**: RC-LM4 · **batch-id**: (미배정)
 
 ## FR-read-attachment-preview-looks-partial — fixed:deployed:unverified-live (L7 표시 오인 + L2 완전성 계약 부재)
 

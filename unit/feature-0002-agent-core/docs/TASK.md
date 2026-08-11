@@ -2384,4 +2384,7 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 - [x] 결함2 입력 순서 고정 → 관련성 정렬 + 지분 비례 축소(floor·오버헤드 선공제)
 - [x] 부수: 1-pass 적재가 매니페스트를 절단에 삼켜 파일이 증발 → 2-pass 적재
 - [x] 신규 5건 포함 44건 · 뮤테이션 18/18 KILLED · 전량 회귀 · ruff
-- [ ] 배포 + **라이브 재측정**(같은 대화에서 BLOCK 이 실제로 사라지는지)
+- [x] 배포(`649d9b03`) + **라이브 재측정** — 격리 조건에서 원 축 PASS(`pass·0 block·resolved`).
+      증거: `docs/test-runs.d/REV-20260811T120000-excerpt-live-measure.md`.
+- [ ] 잔여 2건 처리 방향 결정 — `FR-redteam-digest-lacks-prior-attachment-version` ·
+      `FR-redteam-verify-pass-ignores-window-rule`(둘 다 원장 `triaged`, 미착수).

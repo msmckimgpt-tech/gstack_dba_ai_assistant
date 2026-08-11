@@ -1677,3 +1677,15 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **위험등급**: Major(리뷰어 evidence 조립). 신규 권한·스키마·엔드포인트 변경 0.
 - **Cross-ref**: `CHG-20260807T160000-redteam-attach-excerpt-anchoring` ·
   원장 `FR-redteam-attach-excerpt-cap-false-grounding-block`.
+
+## CHG-20260811T120000-excerpt-live-measure 발췌 앵커링 라이브 실측 기록 (문서만)
+- **원 축 PASS**: 격리 조건(단일 첨부 8,827자, 꼬리 offset 8,811 인용 질의)에서 답변이 정확했고
+  red-team `pass · 0 block · resolved` → **배너 없음**. 원 마찰 소멸.
+  원장 `FR-redteam-attach-excerpt-cap-false-grounding-block` → `fixed:deployed:verified`(원 축 한정).
+- **잔여(정직)**: 다중 첨부 + 버전 비교 시나리오는 여전히 BLOCK. 원인은 다른 둘이며 신규 등재 —
+  `FR-redteam-digest-lacks-prior-attachment-version`(리뷰어는 현재 버전만 받는다) ·
+  `FR-redteam-verify-pass-ignores-window-rule`(면책 규칙이 verify 패스에서 안 지켜진다).
+- **측정 오염 자기 기록**: 잘못된 첨부 id 로 만든 버전이 한 런을 오염시켰다(접근 자체는 admin
+  `read.any` 로 정상 — 라우트 권한 강제 확인). 그 런은 측정으로 세지 않았다.
+- **파일**: 원장 · `docs/test-runs.d/REV-20260811T120000-excerpt-live-measure.md` · TASK/MODIFY.
+- **위험등급**: Minor(문서만).
