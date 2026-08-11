@@ -652,3 +652,27 @@ source_of_truth: true
 - Human Approval Needed: **yes** (미해소 ① 한정). 본 cycle 변경 자체는 Minor(§12.3, knob·킬스위치 보유).
 - Timestamp: 2026-08-07T19:40:00+09:00
 - Cross-ref: MODIFY CHG-20260807T190000-oauth-gate-hardening / TEST Run 2026-08-07-oauth-gate-hardening / 선행 REV-20260807T144800(`[SKIPPED:user-declined-panel]` — 본 entry 로 해소).
+
+## REV-20260811T120000-ai-root-feature-0007-oauth-auto-rotate [SUBAGENT:security+correctness] — CONCERN
+- Related TASK: feature-0007-bedrock-llm-provider (TASK-20260811T120000-oauth-auto-rotate)
+- Trigger: `token`/`credential`/`auth` keyword matched — 그리고 이번 변경은 **사용자 자격증명 저장소에 쓴다**(§12.3 Critical). 사람 승인 2026-08-11 수령.
+- 패널: subagent 2렌즈(security / correctness·availability). 라이브 무접촉·실 엔드포인트 무호출·실 자격증명 무열람을 프롬프트에 못박고, 두 에이전트 모두 종료 시 무접촉을 검증 보고.
+
+### 패널 판정 — **두 렌즈 모두 FAIL** (수정 전)
+| 렌즈 | 핵심 |
+|---|---|
+| security | root 가 비특권 계정 소유 디렉토리에 쓰면서 심링크를 따라갔다(임의 파일 덮어쓰기 + 소유권 탈취, 실증). POST 성공 후 백업 단계 실패가 소모된 refresh token 을 유실시켜 **재로그인 필요** 상태를 만들었고, 그것을 비특권 계정이 유발할 수 있었다 |
+| correctness | `--check` 가 실제로 회전 / 회전 중 예외가 slot 선택을 통째로 정지 / `expires_in` 부재 시 과거 만료 되쓰기 → 재생성 폭풍 |
+
+### 반영
+P1 5건 + P2 7건 전량 수정(상세는 MODIFY CHG-20260811T120000). 특히 패널이 **"이미 한 번 고쳤다고 문서에 적힌 구멍을 새 코드가 다시 열었다"** 고 지적한 부분(파이썬 블록 사망 → slot 무음 정지)은 호출부 가드 + payload 타입 검사로 닫고 mutation 으로 잠갔다.
+
+### 정직 표기
+- 패널 지적 중 **반박한 것 없음**. 모두 재현 근거를 동반했고 내가 독립 확인한 것만 반영했다.
+- 1차 mutation 에서 생존한 5건 중 3건은 코드가 아니라 **내 테스트의 vacuous pass** 였다. 하네스를 고쳐 전부 잡았다(최종 20/20 KILL).
+- **미해소(이월)**: 패널(security)이 발견한 **선행 상태** — `/root/.claude` 와 `/root` 에 `user:claude-corp:rwx` POSIX ACL 이 걸려 있어 비특권 계정이 root 자원에 접근할 수 있다. 본 변경이 만든 것이 아니고 코드로 닫을 문제도 아니지만, 계정 분리라는 전제 자체를 무너뜨리므로 **운영 결정이 필요**하다.
+- 패널이 검증하지 못한 것: 실 엔드포인트의 응답 형태(`expires_in` 항상 오는지, `scope` 를 좁히는지, 429 정책) — 안전 규칙상 실호출 금지. 그래서 응답 처리 계약은 전부 "서버가 무엇을 주든 안전하게" 쪽으로 방어적으로 구현했다.
+- Critical issue: 위 이월 ACL 건(코드 밖).
+- Human Approval Needed: **수령됨** (2026-08-11 사용자 승인 — 자격증명 저장소 쓰기).
+- Timestamp: 2026-08-11T12:55:00+09:00
+- Cross-ref: MODIFY CHG-20260811T120000-oauth-auto-rotate / TEST Run 2026-08-11-oauth-auto-rotate / 선행 REV-20260807T190000.

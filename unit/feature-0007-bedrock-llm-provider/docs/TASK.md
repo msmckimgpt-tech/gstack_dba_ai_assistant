@@ -372,6 +372,16 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 
 §16.7 G1 — 현재 cycle 에서 사용자가 요청한 범위의 명시 열거(cycle 마다 rewrite).
 
+**cycle: TASK-20260811T120000-oauth-auto-rotate** (원 요청: "후속 과제 또한 승인하겠습니다.
+토큰 만료에 따라 자동회전되도록 구성해주세요.")
+
+- [x] OAuth 토큰 엔드포인트·client_id·요청 본문 규약을 **CLI 번들에서 실측**해 확정(추측 금지)
+- [x] 만료 임박 access token 을 refreshToken 으로 선제 회전 + 자격증명 파일 되쓰기 구현
+- [x] 동시성·권한·복구 방어(lock, 요청 전후 2회 재확인, 원자적 교체, 소유자/모드 보존, 백업)
+- [x] §18.8 적대 패널(security / correctness) 수행 → 두 렌즈 모두 FAIL 판정 → P1 5건 전량 수정
+- [x] 회귀 잠금 55 → 75건 + mutation 재검증(20 mutant 전량 KILL)
+- [x] 라이브 적용·확인
+
 **cycle: TASK-20260807T190000-oauth-gate-hardening** (원 요청: "subagent 를 통해 적대 리뷰를 수행해주세요." —
 선행 cycle TASK-20260807T144800 의 산출물에 대한 §18.8 패널 수행 및 지적 반영)
 
@@ -468,3 +478,12 @@ edge 로 호출되는 이슈가 확인되었습니다. 더 이상 local llm 은 
 - [x] **보안** `.env.bedrock` 0600(비특권 로컬 계정이 root Max 토큰을 읽을 수 있었다 — 선행 결함이나 여기서 폐쇄) · 상태 디렉토리 0700 / 파일 0600 + `mkstemp`(고정 `.tmp` 심링크 덮어쓰기 차단) · `detail` 토큰 마스킹·제어문자 제거·길이 컷 · probe 리다이렉트 미추종(Authorization 유출 차단) · 제어문자 토큰 주입 거부
 - [x] 테스트 15건 → **41건**. mutation 재검증: 패널이 생존시킨 19건 중 18건 KILL, 1건은 등가 mutant
 - [ ] **이월**: root access token 회전 주체 부재(§12.3 Critical — 사람 승인 필요)
+
+## TASK-20260811T120000-oauth-auto-rotate — access token 자동 회전 (사용자 승인, §12.3 Critical)
+- [x] **규약 실측** — `claude` CLI 번들(2.1.220)에서 `TOKEN_URL=https://platform.claude.com/v1/oauth/token`, `CLIENT_ID=9d1c250a-…`, JSON 본문 `{grant_type,refresh_token,client_id,scope}` 확인. 비파괴 계약 검증(잘못된 refresh token → 400 `invalid_grant`)
+- [x] **Cloudflare UA 지문** — 기본 urllib UA 는 **1010 Access denied** 로 앱에 닿지도 못한다. `Claude-User (claude-code/<설치버전>)` 로 해소(실측)
+- [x] 구현 — lead(기본 1h) 안쪽이면 회전, 원자적 교체(mkstemp+fsync+replace), 소유자/모드 보존, `.bak-*` 백업(기본 5개), 실패 시 파일 무접촉
+- [x] **적대 패널 P1 5건 수정**: ① `--check` 가 실제로 회전(부작용 0 계약 위반) ② 회전 중 예외가 selector 를 죽여 slot 무음 정지 ③ `expires_in` 부재 시 과거 만료 되쓰기 → 재회전·재생성 폭풍 ④ `.bak` 경로 심링크 추종(root 임의 파일 덮어쓰기·소유권 탈취) ⑤ POST 성공 후 백업 단계 실패 시 소모된 refresh token 유실(백업을 쓰기 **뒤**로 이동)
+- [x] **P2 수정**: 요청 직후 재확인(lost update) · scope 잠식 방지 · `keep_backups=0` 의미 반전 · 실패 backoff(지수, 상한 6h) · lock O_NOFOLLOW/lstat · `expires_in` 상한 클램프 · CLI lock 과 배타되지 않는다는 사실을 주석에서 정정
+- [x] 회귀 75건 + mutation 20/20 KILL
+- [ ] **이월**: `/root/.claude`·`/root` 의 POSIX ACL 이 `claude-corp` 에 rwx 를 주고 있다(패널 발견, 본 변경과 무관한 선행 상태). 계정 분리 전제를 무너뜨리므로 별도 검토 필요

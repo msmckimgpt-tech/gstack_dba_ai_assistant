@@ -677,3 +677,22 @@ source_of_truth: true
 - **미해소(이월)**: root access token 회전 주체 부재(§12.3 Critical). `select_account` stdout 의 tab 가드는 외부 유발 불가한 내부 불변식이라 회귀 테스트 미부착(mutation 생존 1건, 정직 표기).
 - Rollback: 본 CHG revert 또는 `CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC=0`(강등 기준만 종전으로).
 - Cross-ref: REVIEW REV-20260807T190000-oauth-gate-hardening · TASK `## TASK-20260807T190000-oauth-gate-hardening` · TEST Run 2026-08-07-oauth-gate-hardening · 선행 CHG-20260807T144800.
+
+## CHG-20260811T120000-oauth-auto-rotate (access token 자동 회전 — 사용자 승인, §12.3 Critical)
+- Date: 2026-08-11. 사용자 승인 "후속 과제 또한 승인하겠습니다. 토큰 만료에 따라 자동회전되도록 구성해주세요."
+- **문제**: 이 스크립트는 디스크의 access token 을 읽기만 했고 실제 회전은 그 계정의 Claude Code CLI 세션이 돌 때만 일어났다. TTL ~8h 라 야간·주말 세션 공백이 생기면 정적 검사가 계정을 탈락시키고, 다른 계정마저 소진돼 있으면 LLM 전면 중단이 됐다(2026-08-07~11 실사례).
+- **규약은 실측으로 확정**(추측 금지): CLI 번들 2.1.220 에서 `TOKEN_URL=https://platform.claude.com/v1/oauth/token`, `CLIENT_ID=9d1c250a-e61b-44d9-88ed-5944d1962f5e`, JSON 본문 `{grant_type,refresh_token,client_id,scope}`. 비파괴 확인: 잘못된 refresh token → `400 invalid_grant`. **UA 필수** — 기본 urllib UA 는 Cloudflare 1010 으로 앱 미도달, `Claude-User (claude-code/<ver>)` 필요.
+- **구현**: 만료까지 `CLAUDE_OAUTH_ROTATE_LEAD_SEC`(기본 3600) 이하면 선제 회전. 원자적 교체(mkstemp+fsync+`os.replace`), 소유자·모드 보존(root 소유로 바꾸면 계정 CLI 로그인이 깨진다), `.bak-*` 백업(기본 5), 실패 시 파일 무접촉, 지수 backoff.
+- **적대 패널(§18.8, subagent 2렌즈) 결과 두 렌즈 모두 FAIL — P1 5건 전량 수정**:
+  1. **`--check` 가 실제로 회전**했다. 부작용 0 계약 위반이자, 인시던트 진단 중 운영자가 부르는 명령이 일회성 refresh token 을 태웠다. → `check_only` 면 즉시 skip.
+  2. **회전 중 예외가 selector 를 죽였다**. 서버가 돌려준 응답 하나(`scope` 가 배열, 본문이 배열/`null`)만으로 파이썬 블록이 죽고, bash `SEL="$(...)" || SEL=""` 가 삼켜 1순위 slot 이 **exit 0 으로 조용히 갱신 정지**했다(`:742-744` 가 이미 한 번 고쳤다고 적어 둔 그 구멍). → 호출부 try/except + payload 타입 검사.
+  3. **`expires_in` 부재 시 과거 만료를 되썼다**. 회전한 이유가 "곧 만료"이므로 그 값을 되쓰면 방금 받은 멀쩡한 토큰이 만료로 판정된다 → 매 실행 재회전 + 게이트웨이 재생성 폭풍(3런 3회 실측). → 기본 TTL 폴백 + 상한 클램프.
+  4. **`.bak` 경로 심링크 추종**. 이름이 `…bak-<epoch>` 로 완전 예측 가능하고 `shutil.copy2`/`chmod`/`chown` 이 전부 심링크를 따라가, 비특권 계정이 root 로 임의 파일 덮어쓰기 + **소유권 탈취**를 할 수 있었다(실증). → `O_CREAT|O_EXCL|O_NOFOLLOW` + 랜덤 접미사, `os.lstat`.
+  5. **POST 성공 후 백업 단계에서 실패하면 소모된 refresh token 이 유실**됐다(재로그인 외 복구 불가). 백업이 durable write 보다 **앞**이었다. → 원자적 쓰기를 먼저 끝내고, 백업은 메모리에 든 직전 바이트로 best-effort.
+- **P2 수정**: 요청 **직후** 재확인 추가(HTTP 왕복 동안 CLI 가 쓴 결과를 우리 스냅샷이 덮어쓰던 lost update) · 서버가 좁힌 `scope` 를 영속화하지 않음(RFC 6749 §5.1 — 저장하면 되돌릴 수 없다) · `keep_backups=0` 이 오히려 전부 보관하던 의미 반전 · 실패 backoff(지수, 상한 6h)로 무한 재시도 차단 · lock 을 `O_NOFOLLOW`/`lstat` 로 · **"CLI 와 같은 lock 규약" 주석이 거짓이었음을 정정**(CLI 는 `.oauth_refresh.lock` 을 쓴다 — 실제 방어는 lock 이 아니라 요청 전후 2회 재확인).
+- 변경 (2 파일): `bin/refresh-claude-oauth-token.sh`, `unit/feature-0002-agent-core/tests/test_oauth_exhaustion_gate.py`.
+- 새 knob: `CLAUDE_OAUTH_AUTO_ROTATE`(킬스위치) · `ROTATE_LEAD_SEC` · `TOKEN_URL` · `CLIENT_ID` · `USER_AGENT` · `ROTATE_KEEP_BACKUPS` · `ROTATE_DEFAULT_TTL` · `ROTATE_BACKOFF_BASE/MAX` · (테스트 훅) `ROTATE_RACE_DELAY_SEC`.
+- Verification: 55 → **75건** PASS. **mutation 20/20 KILL**(패널이 남긴 5개 생존 mutant 포함 — 그중 3개는 내 테스트가 vacuous 해서 살아 있었고 하네스를 고쳐 잡았다). 실 자격증명 **사본**으로 write-back preflight: 필드 유실 0, 소유자·모드 보존, 원본 무접촉.
+- **미해소(이월)**: 패널이 발견한 선행 상태 — `/root/.claude` 와 `/root` 의 POSIX ACL 이 `claude-corp` 에 rwx 를 부여한다. 본 변경이 만든 것이 아니지만 계정 분리 전제를 무너뜨리므로 별도 검토 필요.
+- Rollback: `CLAUDE_OAUTH_AUTO_ROTATE=0`(즉시) 또는 본 CHG revert. 자격증명은 `.bak-*` 로 되돌릴 수 있다.
+- Cross-ref: REVIEW REV-20260811T120000 · TASK `## TASK-20260811T120000-oauth-auto-rotate` · TEST Run 2026-08-11-oauth-auto-rotate · 선행 CHG-20260807T190000.

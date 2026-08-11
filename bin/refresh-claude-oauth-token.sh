@@ -20,6 +20,31 @@
 #   - 우선순위는 CLAUDE_OAUTH_ACCOUNTS 로 지정 가능 (공백 구분, 기본 "claude-corp root"). CLAUDE_OAUTH_ACCOUNT
 #     명시 시 1순위 slot 은 그 계정만 사용(root slot 은 항상 root — litellm root deployment 용).
 #
+# ── 2026-08-11 access token 자동 회전 (CHG-20260811-oauth-auto-rotate, 사용자 승인) ──
+#   본 스크립트는 오랫동안 디스크의 access token 을 **읽기만** 했고, 실제 회전은 그 계정의
+#   Claude Code CLI 세션이 돌 때만 일어났다. OAuth access token TTL 은 ~8h 라 야간·주말에
+#   세션 공백이 생기면 정적 검사가 그 계정을 탈락시켰고, 다른 계정마저 소진돼 있으면
+#   **LLM 전면 중단**이 됐다(2026-08-07~11 실사례: claude-corp 7일 쿼터 소진 + refresh token
+#   만료로 자격증명이 비워져 root 단독 운용).
+#
+#   이제 만료까지 CLAUDE_OAUTH_ROTATE_LEAD_SEC(기본 3600s) 이하로 남으면 `refreshToken` 으로
+#   선제 회전하고 자격증명 파일에 되쓴다. 요청 규약은 CLI 번들에서 실측한 것과 동일하다:
+#     POST https://platform.claude.com/v1/oauth/token   (Content-Type: application/json)
+#     {"grant_type":"refresh_token","refresh_token":…,"client_id":"9d1c250a-…","scope":"…"}
+#
+#   ⚠ **자격증명 저장소 쓰기**(§12.3 Critical — 사용자 승인 2026-08-11). CLI 와 동시에 돌 수
+#   있으므로 CLI 자신과 같은 규약으로 방어한다:
+#     · 계정별 lock(`<creds>.rotate.lock`, 300s 후 stale 회수)으로 직렬화
+#     · lock 획득 후 **다시 읽어** accessToken 이 바뀌었으면 남이 회전한 것으로 보고 즉시 포기
+#     · refresh token 은 회전형이라 새 값을 받으면 원자적으로 즉시 영속화(mkstemp+replace)
+#     · **소유자/모드 보존** — root 로 돌지만 파일 주인은 계정 사용자다. root 소유로 바꾸면
+#       그 계정의 CLI 가 자기 자격증명을 못 써서 로그인이 깨진다
+#     · 교체 직전본을 `.bak-<epoch>` 로 남긴다(기본 5개 보관) — 잘못되면 되돌릴 수 있게
+#     · 어떤 실패든 파일을 건드리지 않는다. 회전 못 한 계정은 정적 검사가 걸러 폴백이 받는다
+#   선제 lead 를 1h 로 크게 잡은 이유: CLI 는 만료 직전/직후에 회전하므로, 그보다 훨씬 이른
+#   시점에 끝내 두면 같은 창에서 부딪힐 확률 자체가 낮다.
+#   킬스위치: CLAUDE_OAUTH_AUTO_ROTATE=0 (종전대로 읽기 전용).
+#
 # "사용 불가(실패)" 판정 — 2단:
 #   (A) 정적 검사(cheap, 네트워크 없음) — 항상 수행
 #       1) credentials 파일 부재
@@ -150,6 +175,18 @@
 #   CLAUDE_OAUTH_PROBE_MAX_COOLDOWN 소진 우회 상한(초). 기본 691200(8일).
 #   CLAUDE_OAUTH_PROBE_MIN_COOLDOWN 소진 우회 하한(초). 기본 300.
 #   CLAUDE_OAUTH_FORCE_PROBE       1 이면 게이트 조건과 무관하게 라이브 probe 강제(운영자 진단).
+#   CLAUDE_OAUTH_AUTO_ROTATE       access token 자동 회전 on/off. 기본 1(on). 0 이면 읽기 전용.
+#   CLAUDE_OAUTH_ROTATE_LEAD_SEC   만료 몇 초 전부터 선제 회전할지. 기본 3600.
+#   CLAUDE_OAUTH_TOKEN_URL         OAuth 토큰 엔드포인트. 기본 platform.claude.com/v1/oauth/token.
+#   CLAUDE_OAUTH_CLIENT_ID         OAuth client_id. 기본 9d1c250a-…(Claude Code, CLI 번들 실측).
+#   CLAUDE_OAUTH_ROTATE_KEEP_BACKUPS 자격증명 백업 보관 개수. 기본 5. 0=보관 안 함, 음수=무제한.
+#   CLAUDE_OAUTH_ROTATE_DEFAULT_TTL  응답에 expires_in 이 없을 때 가정할 TTL(초). 기본 28800.
+#   CLAUDE_OAUTH_ROTATE_BACKOFF_BASE 회전 실패 backoff 기준(초). 기본 1800(지수 증가).
+#   CLAUDE_OAUTH_ROTATE_BACKOFF_MAX  회전 실패 backoff 상한(초). 기본 21600(6h).
+#   CLAUDE_OAUTH_ROTATE_RACE_DELAY_SEC (테스트 훅) lock 획득 후 race 재확인 전 인위 지연. 기본 0.
+#   CLAUDE_OAUTH_USER_AGENT        토큰 엔드포인트용 UA. 기본 `Claude-User (claude-code/<설치버전>)`.
+#                                  ⚠ 이 UA 가 아니면 Cloudflare 가 **1010 Access denied** 로 끊는다
+#                                  (2026-08-11 실측 — 기본 urllib UA 는 앱에 닿지도 못한다).
 #   CLAUDE_OAUTH_CRED_ROOT         (테스트/스테이징 훅) credentials 탐색 루트. 지정 시
 #                                  `<root>/<account>/.credentials.json` 를 읽는다. 미지정(기본)이면
 #                                  실계정 경로(/root/.claude, /home/<acct>/.claude).
@@ -183,6 +220,22 @@ PROBE_MAX_COOLDOWN="${CLAUDE_OAUTH_PROBE_MAX_COOLDOWN:-691200}"
 PROBE_MIN_COOLDOWN="${CLAUDE_OAUTH_PROBE_MIN_COOLDOWN:-300}"
 GATE_RECHECK_SEC="${CLAUDE_OAUTH_GATE_RECHECK_SEC:-3600}"
 GATE_MIN_DEMOTE_SEC="${CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC:-1800}"
+
+# 자동 토큰 회전 (auto-rotate 2026-08-11, 사용자 승인)
+AUTO_ROTATE="${CLAUDE_OAUTH_AUTO_ROTATE:-1}"
+ROTATE_LEAD_SEC="${CLAUDE_OAUTH_ROTATE_LEAD_SEC:-3600}"
+ROTATE_TOKEN_URL="${CLAUDE_OAUTH_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
+ROTATE_CLIENT_ID="${CLAUDE_OAUTH_CLIENT_ID:-9d1c250a-e61b-44d9-88ed-5944d1962f5e}"
+ROTATE_KEEP_BACKUPS="${CLAUDE_OAUTH_ROTATE_KEEP_BACKUPS:-5}"
+# 토큰 엔드포인트는 Cloudflare UA 지문 검사를 한다 — 기본 urllib UA 로는 **1010 Access denied**
+# 로 앱에 닿지도 못한다(2026-08-11 실측). CLI 와 같은 UA 를 쓴다: `Claude-User (claude-code/<ver>)`.
+# 버전은 설치된 CLI 심링크에서 뽑고, 못 뽑으면 마지막 확인 버전으로 폴백한다.
+_cc_ver="$(basename "$(readlink -f "$(command -v claude 2>/dev/null)" 2>/dev/null)" 2>/dev/null || true)"
+case "$_cc_ver" in [0-9]*.[0-9]*) : ;; *) _cc_ver="2.1.220" ;; esac
+ROTATE_USER_AGENT="${CLAUDE_OAUTH_USER_AGENT:-Claude-User (claude-code/$_cc_ver)}"
+ROTATE_DEFAULT_TTL="${CLAUDE_OAUTH_ROTATE_DEFAULT_TTL:-28800}"
+ROTATE_BACKOFF_BASE="${CLAUDE_OAUTH_ROTATE_BACKOFF_BASE:-1800}"
+ROTATE_BACKOFF_MAX="${CLAUDE_OAUTH_ROTATE_BACKOFF_MAX:-21600}"
 FORCE_PROBE="${CLAUDE_OAUTH_FORCE_PROBE:-0}"
 
 # 계정 우선순위 결정
@@ -218,11 +271,21 @@ select_account() {
   PROBE_MIN_COOLDOWN="$PROBE_MIN_COOLDOWN" \
   GATE_RECHECK_SEC="$GATE_RECHECK_SEC" \
   GATE_MIN_DEMOTE_SEC="$GATE_MIN_DEMOTE_SEC" \
+  AUTO_ROTATE="$AUTO_ROTATE" \
+  ROTATE_LEAD_SEC="$ROTATE_LEAD_SEC" \
+  ROTATE_TOKEN_URL="$ROTATE_TOKEN_URL" \
+  ROTATE_CLIENT_ID="$ROTATE_CLIENT_ID" \
+  ROTATE_KEEP_BACKUPS="$ROTATE_KEEP_BACKUPS" \
+  ROTATE_RACE_DELAY_SEC="${CLAUDE_OAUTH_ROTATE_RACE_DELAY_SEC:-0}" \
+  ROTATE_USER_AGENT="$ROTATE_USER_AGENT" \
+  ROTATE_DEFAULT_TTL="$ROTATE_DEFAULT_TTL" \
+  ROTATE_BACKOFF_BASE="$ROTATE_BACKOFF_BASE" \
+  ROTATE_BACKOFF_MAX="$ROTATE_BACKOFF_MAX" \
   FORCE_PROBE="$FORCE_PROBE" \
   CRED_ROOT="${CLAUDE_OAUTH_CRED_ROOT:-}" \
   PROBE_URL="${CLAUDE_OAUTH_PROBE_URL:-https://api.anthropic.com/v1/messages}" \
   python3 - "$@" <<'PY'
-import json, os, re, sys, tempfile, time, urllib.error, urllib.request
+import glob, json, os, re, shutil, sys, tempfile, time, urllib.error, urllib.request
 
 min_ttl = int(os.environ.get('MIN_TTL', '300'))
 gate_on = os.environ.get('GATE', '0').strip().lower() not in ('0', '', 'false', 'off', 'no')
@@ -236,6 +299,19 @@ max_cooldown = int(os.environ.get('PROBE_MAX_COOLDOWN', '691200'))
 min_cooldown = int(os.environ.get('PROBE_MIN_COOLDOWN', '300'))
 recheck_sec = int(os.environ.get('GATE_RECHECK_SEC', '3600'))
 min_demote_sec = int(os.environ.get('GATE_MIN_DEMOTE_SEC', '1800'))
+auto_rotate = os.environ.get('AUTO_ROTATE', '1').strip().lower() not in ('0', '', 'false', 'off', 'no')
+rotate_lead = int(os.environ.get('ROTATE_LEAD_SEC', '3600'))
+token_url = os.environ.get('ROTATE_TOKEN_URL') or 'https://platform.claude.com/v1/oauth/token'
+client_id = os.environ.get('ROTATE_CLIENT_ID') or '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+keep_backups = int(os.environ.get('ROTATE_KEEP_BACKUPS', '5'))
+# 테스트 훅 — lock 획득 직후 race 재확인 전에 인위적 창을 연다(기본 0=무동작).
+# 이 창이 없으면 "남이 먼저 회전했을 때 포기한다" 계약을 외부에서 재현할 수 없다.
+rotate_race_delay = float(os.environ.get('ROTATE_RACE_DELAY_SEC', '0') or 0)
+rotate_ua = os.environ.get('ROTATE_USER_AGENT') or 'Claude-User (claude-code/2.1.220)'
+rotate_default_ttl = int(os.environ.get('ROTATE_DEFAULT_TTL', '28800'))
+rotate_backoff_base = int(os.environ.get('ROTATE_BACKOFF_BASE', '1800'))
+rotate_backoff_max = int(os.environ.get('ROTATE_BACKOFF_MAX', '21600'))
+rotate_max_ttl = 90 * 86400
 cred_root = os.environ.get('CRED_ROOT', '')  # 테스트/스테이징 훅 — 미지정이면 실계정 경로
 probe_url = os.environ.get('PROBE_URL') or 'https://api.anthropic.com/v1/messages'
 accounts = sys.argv[1:]
@@ -258,11 +334,262 @@ def ts():
 
 
 def fmt(epoch):
-    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(epoch))
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(epoch)) if epoch else '알 수 없음'
 
 
 def logd(msg):
     sys.stderr.write(f'{ts()} [refresh-oauth] {msg}\n')
+
+
+def _read_creds(acct):
+    """(전체 json, claudeAiOauth 오브젝트, 원본 bytes). 실패 시 (None, None, None)."""
+    try:
+        with open(cred_path(acct), 'rb') as f:
+            raw = f.read()
+        d = json.loads(raw.decode('utf-8'))
+        o = d.get('claudeAiOauth')
+        return (d, o, raw) if isinstance(o, dict) else (None, None, None)
+    except Exception:  # noqa: BLE001
+        return None, None, None
+
+
+def _exp_epoch(o):
+    e = _as_int(o.get('expiresAt'))
+    if not e:
+        return 0
+    return int(e / 1000 if e > 1e12 else e)
+
+
+def _open_new(path, mode=0o600):
+    """심링크를 따라가지 않고 **새로** 만드는 경우에만 여는 fd.
+
+    root 가 비특권 계정 소유 디렉토리(예: /home/claude-corp/.claude)에 쓰기 때문에 필수다.
+    O_EXCL 없이 열면 미리 심어 둔 심링크를 따라가 임의 파일을 root 권한으로 덮어쓴다
+    (적대 리뷰 P1 — .bak 경로로 실증됨: copy2/chmod/chown 이 전부 심링크를 따라갔다).
+    """
+    return os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, mode)
+
+
+def _write_creds(acct, doc, old_raw):
+    """자격증명을 원자적으로 교체하고, **교체 성공 후에** 직전본을 백업한다.
+
+    순서가 중요하다(적대 리뷰 P1): 백업을 먼저 하던 종전 구현은 POST 성공(=refresh token 이
+    서버에서 이미 소모됨) 이후 백업 단계에서 실패하면 **새 토큰을 잃고 죽은 refresh token 만
+    디스크에 남겼다** — 재로그인 외에는 복구 불가. 이제 내구성 있는 쓰기를 먼저 끝내고,
+    백업은 메모리에 들고 있던 직전 바이트로 best-effort 로 남긴다.
+
+    소유자/모드도 보존한다 — root 소유로 바꾸면 그 계정의 CLI 가 자기 자격증명을 못 쓴다.
+    """
+    path = cred_path(acct)
+    st = os.lstat(path)
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix='.credentials-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(doc, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, st.st_mode & 0o777)
+        os.chown(tmp, st.st_uid, st.st_gid)
+        os.replace(tmp, path)   # 원자적 — 중간 상태(빈/잘린 파일)가 노출되지 않는다
+        tmp = None
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    # ── 여기부터는 best-effort. 실패해도 회전 결과는 이미 안전하게 영속됐다. ──
+    bak = None
+    if keep_backups != 0 and old_raw:
+        name = f'{path}.bak-{int(time.time())}-{os.urandom(3).hex()}'
+        try:
+            bfd = _open_new(name)
+            with os.fdopen(bfd, 'wb') as f:
+                f.write(old_raw)
+            os.chown(name, st.st_uid, st.st_gid)
+            bak = name
+        except OSError as e:
+            logd(f'WARN: [{acct}] 자격증명 백업 실패(회전 자체는 성공): {_scrub(e)}')
+    if keep_backups >= 0:
+        olds = sorted(glob.glob(f'{path}.bak-*'))
+        drop = olds if keep_backups == 0 else olds[:-keep_backups]
+        for stale in drop:
+            try:
+                os.unlink(stale)
+            except OSError:
+                pass
+    return bak
+
+
+def _rotate_lock(acct):
+    """계정별 배타 lock. 획득 실패면 None.
+
+    ⚠ 이 lock 은 **이 스크립트의 인스턴스끼리만** 직렬화한다. Claude Code CLI 는 자체
+    lock(`.oauth_refresh.lock`)을 쓰므로 서로 배타되지 않는다 — CLI 와의 경합은 lock 이 아니라
+    요청 **전후 두 번의 재확인**(아래 rotate_if_needed)이 막는다. 종전 주석은 "CLI 와 같은
+    규약" 이라고 썼는데 사실이 아니었다(적대 리뷰 P2에서 지적, 여기서 정정).
+    """
+    path = cred_path(acct) + '.rotate.lock'
+    try:
+        if time.time() - os.lstat(path).st_mtime > 300:   # 죽은 프로세스 잔재 회수
+            os.unlink(path)
+    except OSError:
+        pass
+    try:
+        fd = _open_new(path)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return path
+    except FileExistsError:
+        return None
+    except OSError as e:
+        logd(f'WARN: [{acct}] 회전 lock 생성 실패: {_scrub(e)}')
+        return None
+
+
+def _rotate_backoff_key(acct):
+    return f'rotate:{acct}'
+
+
+def rotate_if_needed(acct):
+    """만료 임박 access token 을 refreshToken 으로 선제 회전한다.
+
+    auto-rotate(2026-08-11, 사용자 승인). 배경: 이 스크립트는 디스크의 access token 을 읽기만
+    했고, 실제 회전은 **그 계정의 Claude Code CLI 세션이 돌 때만** 일어났다. TTL 이 ~8h 라
+    야간·주말에 세션 공백이 생기면 정적 검사가 그 계정을 탈락시키고, 다른 계정마저 소진돼
+    있으면 LLM 이 전면 중단됐다(2026-08-07~11 실사례).
+
+    ⚠ 자격증명 저장소에 쓰는 행위다(§12.3 Critical, 사용자 승인 2026-08-11). refresh token 은
+    **일회성 회전형**이라 한 번 성공한 POST 는 이전 토큰을 즉시 무효화한다. 그래서:
+      · 계정별 lock 으로 이 스크립트 인스턴스끼리 직렬화(CLI 와는 배타되지 않는다)
+      · 요청 **직전**과 **직후** 두 번 재확인 — 그 사이 남이 회전했으면 우리 결과를 버린다
+        (직후 재확인이 없으면 HTTP 왕복 동안 들어온 CLI 의 쓰기를 우리가 덮어쓴다)
+      · 성공 시 원자적으로 먼저 영속화하고, 백업은 그 뒤 best-effort
+      · 어떤 실패도 예외로 새어 나가지 않는다 — 호출측 선택 로직을 죽이면 slot 이 통째로 정지한다
+    returns: 'rotated' | 'not_needed' | 'skipped:<사유>'
+    """
+    if not auto_rotate:
+        return 'skipped:disabled'
+    if check_only:
+        # --check 는 부작용 0 계약이다. 회전은 자격증명 파일을 쓰고 일회성 refresh token 을
+        # 소모하므로 진단 모드에서 절대 하지 않는다(적대 리뷰 P1).
+        return 'skipped:check_only'
+    doc, o, raw = _read_creds(acct)
+    if not o:
+        return 'skipped:no_credentials'
+    path = cred_path(acct)
+    if os.path.islink(path):
+        return 'skipped:credentials_is_symlink'
+    before = o.get('accessToken') or ''
+    exp = _exp_epoch(o)
+    now = int(time.time())
+    if before and exp and exp - now > rotate_lead:
+        return 'not_needed'
+    rt = o.get('refreshToken') or ''
+    if not rt:
+        return 'skipped:no_refresh_token'
+    rte = _as_int(o.get('refreshTokenExpiresAt'))
+    rte = int(rte / 1000 if rte > 1e12 else rte)
+    if rte and rte <= now:
+        return f'skipped:refresh_token_expired({fmt(rte)})'
+
+    # 실패 backoff — 엔드포인트가 계속 429/1010 을 주는 상황에서 30분마다(그것도 slot 당 2회)
+    # 무한 재시도하지 않는다. 상태는 게이트와 같은 파일에 얹는다(적대 리뷰 P2).
+    bo = state.get(_rotate_backoff_key(acct)) or {}
+    if isinstance(bo, dict) and _as_int(bo.get('next')) > now:
+        return f'skipped:backoff({fmt(_as_int(bo.get("next")))})'
+
+    lock = _rotate_lock(acct)
+    if lock is None:
+        return 'skipped:lock_busy'
+    try:
+        if rotate_race_delay > 0:
+            time.sleep(rotate_race_delay)
+        # (1) 요청 전 재확인 — lock 획득 사이에 CLI 가 먼저 회전했을 수 있다.
+        doc2, o2, _raw2 = _read_creds(acct)
+        if not o2:
+            return 'skipped:no_credentials'
+        if (o2.get('accessToken') or '') != before:
+            return 'skipped:race_resolved'
+        rt = o2.get('refreshToken') or rt
+
+        body = json.dumps({
+            'grant_type': 'refresh_token',
+            'refresh_token': rt,
+            'client_id': client_id,
+            'scope': ' '.join(x for x in (o2.get('scopes') or []) if isinstance(x, str)),
+        }).encode()
+        req = urllib.request.Request(
+            token_url, data=body,
+            headers={'content-type': 'application/json', 'accept': 'application/json',
+                     'user-agent': rotate_ua})
+        try:
+            with _PROBE_OPENER.open(req, timeout=probe_timeout) as r:
+                payload = json.loads(r.read().decode('utf-8', 'replace'))
+        except urllib.error.HTTPError as e:
+            try:
+                raw_err = e.read().decode('utf-8', 'replace')[:200]
+            except Exception:  # noqa: BLE001
+                raw_err = ''
+            return _rotate_failed(acct, f'http_{e.code} {_scrub(raw_err)}')
+        except Exception as e:  # noqa: BLE001 — 도달성 장애는 회전 실패일 뿐, 파일 무변경
+            return _rotate_failed(acct, _scrub(f'{type(e).__name__}: {e}'))
+
+        if not isinstance(payload, dict):
+            return _rotate_failed(acct, 'malformed_response')
+        at = payload.get('access_token')
+        if not isinstance(at, str) or not at:
+            return _rotate_failed(acct, 'no_access_token_in_response')
+
+        # (2) 요청 직후 재확인 — HTTP 왕복(최대 probe_timeout) 동안 CLI 가 썼을 수 있다.
+        #     여기서 덮어쓰면 CLI 가 방금 받은 토큰이 사라진다(lost update).
+        doc3, o3, raw3 = _read_creds(acct)
+        if not o3 or (o3.get('accessToken') or '') != before:
+            logd(f'[{acct}] 회전 결과 폐기 — 요청 중 남이 먼저 회전함(lost-update 방지)')
+            return 'skipped:race_resolved_late'
+
+        o3['accessToken'] = at
+        if isinstance(payload.get('refresh_token'), str) and payload['refresh_token']:
+            o3['refreshToken'] = payload['refresh_token']
+        ttl = _as_int(payload.get('expires_in'))
+        # expires_in 이 없거나 0 이면 **과거 값을 그대로 두면 안 된다** — 회전한 이유 자체가
+        # "곧 만료" 였으므로 그 값을 되쓰면 방금 받은 멀쩡한 토큰이 만료로 판정되고, 매 실행
+        # 재회전 + 게이트웨이 재생성 폭풍이 된다(적대 리뷰 P1, 실증됨).
+        if ttl <= 0 or ttl > rotate_max_ttl:
+            # 상한도 둔다 — 비정상적으로 큰 expires_in 은 epoch 연산·표시에서 예외가 되고,
+            # 그 예외가 회전 이후 단계에서 터지면 파일은 이미 바뀐 뒤다.
+            ttl = rotate_default_ttl
+        o3['expiresAt'] = int((now + ttl) * 1000)
+        # scope 는 요청 입력일 뿐이다. 서버가 좁혀서 돌려준 값을 영속화하면(RFC 6749 §5.1 허용)
+        # 다음 회전 요청이 그 좁은 scope 로 나가 되돌릴 수 없다 — 저장하지 않는다.
+        doc3['claudeAiOauth'] = o3
+        bak = _write_creds(acct, doc3, raw3)
+        if state.pop(_rotate_backoff_key(acct), None) is not None:
+            globals()['state_dirty'] = True
+        logd(f'[{acct}] access token 자동 회전 — 새 만료 {fmt(_exp_epoch(o3))} '
+             f'(refresh_token {"교체됨" if payload.get("refresh_token") else "유지"}'
+             f'{", 백업 " + os.path.basename(bak) if bak else ""})')
+        return 'rotated'
+    finally:
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
+
+
+def _rotate_failed(acct, detail):
+    """회전 실패를 backoff 상태로 적재하고 사유를 반환한다(파일은 건드리지 않는다)."""
+    now = int(time.time())
+    key = _rotate_backoff_key(acct)
+    bo = state.get(key)
+    n = (_as_int(bo.get('count')) if isinstance(bo, dict) else 0) + 1
+    delay = min(rotate_backoff_max, rotate_backoff_base * (2 ** (n - 1)))
+    state[key] = {'count': n, 'next': now + delay, 'detail': detail, 'since':
+                  (_as_int(bo.get('since')) if isinstance(bo, dict) else 0) or now}
+    globals()['state_dirty'] = True
+    return f'skipped:{detail}'
 
 
 def static_check(acct):
@@ -489,6 +816,18 @@ chosen = None    # (acct, token)
 gated = []       # 전 계정 소진 시 후보 — [(until, acct, token)]
 
 for acct in accounts:
+    # 정적 검사 **전에** 만료 임박 토큰을 선제 회전한다 — 그래야 "만료돼서 탈락" 이 아니라
+    # "회전해서 계속 사용" 이 된다(auto-rotate 2026-08-11).
+    # 회전은 **절대** 선택 로직을 죽여선 안 된다 — 파이썬 블록이 죽으면 bash 의
+    # `SEL="$(...)" || SEL=""` 가 삼켜 1순위 slot 이 조용히 갱신 정지한다(적대 리뷰 P1, 실증됨).
+    try:
+        rot = rotate_if_needed(acct)
+    except Exception as e:  # noqa: BLE001
+        rot = f'skipped:예외 {_scrub(f"{type(e).__name__}: {e}")}'
+    if rot.startswith('skipped:') and rot not in ('skipped:disabled', 'skipped:no_credentials',
+                                                  'skipped:check_only'):
+        logd(f'[{acct}] 토큰 회전 생략 — {rot[len("skipped:"):]}')
+
     tok, reason = static_check(acct)
     if not tok:
         logd(f'[{acct}] 건너뜀 — {reason}')
