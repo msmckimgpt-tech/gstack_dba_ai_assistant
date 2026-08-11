@@ -79,3 +79,36 @@ verdict: PASS
 - **hover 대비 육안 미판정** — design 패널이 `--bg`→`--surface-2` ΔL ≈ 2% 로 "사실상 안 보인다" 고
   지적했고 어포던스가 border 색과 **파일명 밑줄**에 걸려 있다. 스크린샷으로 밑줄·커서는 확인했으나
   hover 배경 대비 자체는 정량 측정하지 않았다.
+
+## Environment: Windows-browser (PB-0008) — POST-DEPLOY 라이브 실측 (배포본 `bc8d0597`)
+
+- Bridge: relay @ `http://172.26.144.1:9253` · Chrome/150.0.7871.128 · 전용 인스턴스
+  (프로필 `C:\temp\win-browser-attachsrc`) · Runner: AI
+- 대상: `https://localhost/` (라이브) · 서빙 자산 스탬프 `?v=2539b6c08f21` ·
+  `web-a`/`web-b` 둘 다 `GIT_COMMIT=bc8d0597` · 서빙 소스에 `def get_attachment_source` ·
+  서빙 JS 에 `openAttachmentSourceModal` 존재.
+
+### 서버 (라이브 배포본)
+
+`GET /api/attachments/1052/source` → `viewable=true` · `rows=5` · `stats.lines=5` ·
+`lines_partial=false` · `truncated={source:false,rows:false}` · 5행 텍스트가 업로드 원본과 일치.
+응답 헤더 `cache-control: private, no-store` · `x-content-type-options: nosniff`.
+
+### 화면 실측 — 전건 PASS
+
+1. **단일 버전 원문**(`pb0008-attachsrc-live-01.png`): 파일명 버튼 focus → `Enter` →
+   `문서 원문 — postdeploy_src.sql` · 5행 · SQL 토큰 7개 · `aria-label="문서 원문 5행"` ·
+   열린 동안 포커스 `share-mgr-close` · 통계 `5줄 · 128B`.
+2. **접근성 구조**: 행 `role=null` + `is-openable` / 파일명 `role=button` · `tabIndex=0` ·
+   `aria-label="postdeploy_src.sql 원문 보기"` · title `클릭하면 문서 원문을 봅니다`.
+3. **포커스 복귀**: `Escape` → 닫힘 + 포커스가 `attach-list-item-name-text`(`postdeploy_src.sql`).
+4. **행 안 버튼 격리**: ⬇ 클릭 후 `attach-source-backdrop` 미생성.
+5. **버전 이력 👁**: `probe_b.sql` 에 2개(`버전 2 원문 보기` / `버전 1 원문 보기`).
+   v1 클릭 → `문서 원문 — probe_b.sql (v1)` · 121행 · `121줄 · 7KB`.
+6. **스크롤 보존**: scrollTop 900 → 구문 색 토글 → **899**(토큰 span 0).
+7. **비교 모달 회귀**: `+1 / -0` · `table.is-split` 6행 — 형제 cycle(intraline) 머지 후에도 정상.
+
+### 정리
+
+- 검증용 대화 `20260811024418-f2ecd249` **삭제 완료**(잔존 0) · 전용 Chrome 인스턴스만 `down`
+  (marker `win-browser-attachsrc` — 공용 Chrome 무접촉).

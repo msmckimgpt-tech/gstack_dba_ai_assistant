@@ -2211,3 +2211,14 @@ security 패널이 `get_object_bytes` 전체 적재(최대 25× 증폭)를 지�
 - **stash 잔재 2건**: 이번 cycle 중 `git stash -q -- <path>` 가 경로 한정으로 동작하지 않아 전체
   트리가 stash 됐다(작업 손실은 없었고 트리 무결성 재확인). 단일 파일 되돌리기는 `git checkout --`
   만 쓸 것. 남은 stash 는 현재 트리와 동일 내용이라 무해하나 정리 대상.
+
+### [POST-DEPLOY 완결 2026-08-11] attach-source-view — PR #1199 머지(`bc8d0597`) → 배포 → PB-0008 라이브 **PASS**
+
+- 배포 `bin/deploy-web.sh` scope=all — web-a/web-b 롤링(soak 통과) + 워커 전량 `mysql-ai-agent:bc8d0597`.
+- 라이브 서버: `/source` 가 원문 5행 + `lines_partial=false` + `no-store`/`nosniff` 헤더 반환
+  (배포 전 같은 요청은 404 — 엔드포인트 자체가 없었다).
+- 라이브 화면 7축 PASS: 단일 버전 원문(키보드 Enter) · 접근성 구조(행 `role=null`, 파일명 버튼) ·
+  포커스 복귀 · 행 안 버튼 격리 · 버전 이력 👁 구버전(v1, 121행) · 스크롤 보존 900→899 ·
+  비교 모달 회귀(형제 cycle intraline 머지 후에도 정상).
+- 검증용 대화 삭제 완료(잔존 0). fragment
+  `docs/test-runs.d/20260807T1900-attach-source-view.md` POST-DEPLOY 절 참조.
