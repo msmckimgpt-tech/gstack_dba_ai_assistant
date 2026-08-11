@@ -230,6 +230,135 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
     finally:
         conn.close()
 
+# 첨부 **본문**을 싣는 응답의 공통 헤더. `download_attachment` 가 같은 이유로 쓰는 것과 동일하다 —
+# 노출되는 데이터가 같은데 JSON 으로 감쌌다는 이유만으로 저장 정책이 사라지면 공용 단말의 디스크
+# 캐시에 본문이 남는다(로그아웃 후 뒤로가기·URL 재입력으로 재노출, §18.8 security).
+_BODY_VIEW_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+@router.get("/api/attachments/{attachment_id}/source")
+def get_attachment_source(attachment_id: int, request: Request) -> JSONResponse:
+    """REQ-20260807T-attach-source-view: 첨부 **한 버전의 본문 원문** 조회.
+
+    사용자 요청: "별도로 추가된 버전이 없는 첨부파일 또한, 클릭했을 때 문서 원문이 출력되도록"
+    (2026-08-07). 버전이 하나뿐인 첨부에는 비교할 짝이 없어 `/diff` 를 쓸 수 없다 — 그 엔드포인트는
+    두 버전을 요구하고 `from==to` 를 400 으로 막는다(존재 여부 oracle 방지 계약의 일부).
+
+    **버전 선택 파라미터를 두지 않는다**: 체인의 각 버전은 자기 행·자기 `Id` 를 가지므로
+    (`RootAttachmentId` + `VersionNumber` 구조) 경로의 id 하나로 버전이 이미 특정된다.
+    `?version=` 을 얹으면 같은 대상을 가리키는 식별 경로가 둘이 되고, 그 중 하나만 스코프 검사를
+    통과하는 비대칭이 생길 수 있다. 구버전 원문은 그 버전의 id 로 호출한다.
+
+    권한·게이트는 `/diff` 와 **동형**이다 — 본문 bytes 를 그대로 노출하기 때문이다:
+      - 기준 첨부의 `conversation.attachment.read.{own,any}` 재사용 (**신규 권한 코드 0**)
+      - **D21 pending 게이트**: 승인 대기 계정은 403 (metadata 조회가 아니라 **다운로드**와 동형.
+        이 게이트가 없으면 원문 보기가 bytes-deny 의 우회 경로가 된다.)
+
+    바이너리(xlsx/pdf/image/other)는 줄 단위 표시가 무의미하므로 `viewable=false` +
+    메타(크기·sha256·시각·작성 주체)로 강등해 답한다 — 조용히 빈 본문을 주지 않는다.
+    """
+    try:
+        from web.modules import storage_minio
+    except Exception as exc:
+        return app._json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        base = app._load_attachment_row(conn, attachment_id)
+        if not app._account_can_access_attachment(
+            conn, account, base,
+            "conversation.attachment.read.own",
+            "conversation.attachment.read.any",
+        ):
+            return app._json_error("첨부를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # D21 — 원문 보기는 본문 노출이므로 다운로드와 동일 등급으로 막는다(위 docstring 참조).
+        if app._account_is_pending(account):
+            return app._json_error("승인 대기 계정은 첨부 본문을 볼 수 없습니다.", 403)
+        # per-account rate limit — 트리거가 **목록 행 클릭**이라 마찰이 0 에 가깝고, 모달은 열 때마다
+        # 재요청한다(클라이언트 캐시 없음). 다운로드는 나가는 바이트가 자연 제동을 걸지만 이 경로는
+        # 앞부분만 보내므로 그 제동이 없다(§18.8 security).
+        if not app._search_rate_limit_check(
+            int(account.get("id") or 0), max_per_min=30, scope=app.RATE_SCOPE_ATTACHMENT_SOURCE,
+        ):
+            return app._json_rate_limited(
+                "첨부 원문 조회가 너무 잦습니다.",
+                app._rate_limit_retry_after(
+                    int(account.get("id") or 0), app.RATE_SCOPE_ATTACHMENT_SOURCE),
+            )
+
+        row = base
+        created = row.get("CreatedAt")
+        payload: dict[str, Any] = {
+            "attachment_id": int(row.get("Id") or 0),
+            "root_attachment_id": int(row.get("RootAttachmentId") or 0) or int(row.get("Id") or 0),
+            "filename": str(row.get("OriginalFilename") or ""),
+            "version": {
+                "id": int(row.get("Id") or 0),
+                "version_number": int(row.get("VersionNumber") or 1),
+                "created_by_role": str(row.get("CreatedByRole") or "user"),
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else (
+                    str(created) if created else None),
+                "size": int(row.get("SizeBytes") or 0),
+                "sha256": str(row.get("Sha256") or ""),
+                "kind": str(row.get("Kind") or ""),
+                "is_latest": not bool(row.get("SupersededAt")),
+            },
+        }
+
+        if str(row.get("Kind") or "") not in tuple(app._VERSION_DIFF_TEXT_KINDS):
+            payload.update({"viewable": False, "reason": "binary"})
+            return JSONResponse(payload, headers=_BODY_VIEW_HEADERS)
+
+        object_key = str(row.get("ObjectKey") or "")
+        if not object_key:
+            # 데이터 결손을 저장소 장애(503)로 오분류하지 않는다 — `download_attachment` 와 동형.
+            return app._json_error("첨부 본문을 찾을 수 없습니다.", 404)
+
+        cap = int(app._ASSISTANT_EDIT_SIZE_CAP_BYTES)
+        try:
+            # **ranged read** — 화면에 앞부분(cap)만 보여 주므로 전체를 메모리로 올리지 않는다.
+            raw = storage_minio.get_object_head_bytes(object_key, max_bytes=cap)
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+            logging.getLogger(__name__).warning(
+                "get_attachment_source: object read failed (id=%s)", row.get("Id"), exc_info=True)
+            # `error` 를 함께 싣는 이유: 프론트 `apiFetch` 는 non-2xx 를 throw 하고 메시지를
+            # `payload.error || payload.detail || statusText` 로 고른다. 이 키가 없으면 사용자는
+            # 영문 `Service Unavailable`(HTTP/2 면 빈 문자열)을 보게 되고, 렌더 쪽에 준비해 둔
+            # 한국어 사유는 **도달 불가**가 된다(§18.8 ux 지적).
+            payload.update({
+                "viewable": False,
+                "reason": "source_unavailable",
+                "error": "원본 파일을 읽을 수 없어 원문을 표시하지 못했습니다.",
+            })
+            return JSONResponse(payload, status_code=503, headers=_BODY_VIEW_HEADERS)
+
+        # 절단 판정은 **정본 크기**로 한다 — ranged read 는 정확히 cap 만큼 오므로
+        # `len(raw) > cap` 는 영원히 거짓이 된다(무음 절단이 될 뻔한 자리).
+        source_truncated = int(row.get("SizeBytes") or 0) > cap
+        view = app._build_source_view(
+            raw[:cap].decode("utf-8", "replace"), source_truncated=source_truncated)
+        payload.update({
+            "viewable": True,
+            "rows": view["rows"],
+            "stats": view["stats"],
+            # 절단 2종을 각각 표면화한다 — 어느 쪽이 잘렸는지 모르면 사용자가 앞부분을 전체로
+            # 오인한다(§16.7 G9-b, `/diff` 와 동일 계약).
+            "truncated": {"source": source_truncated, "rows": bool(view["truncated"]["rows"])},
+            "caps": {"source_bytes": cap, "rows": int(app._VERSION_DIFF_ROW_CAP)},
+        })
+        return JSONResponse(payload, headers=_BODY_VIEW_HEADERS)
+    finally:
+        conn.close()
+
 @router.get("/api/attachments/{attachment_id}/diff")
 def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONResponse:
     """REQ-20260806-attach-version-diff: 같은 버전 체인의 **임의 두 버전** 본문 비교.
@@ -353,7 +482,13 @@ def get_attachment_version_diff(attachment_id: int, request: Request) -> JSONRes
                 logging.getLogger(__name__).warning(
                     "get_attachment_version_diff: object read failed (id=%s)",
                     row.get("Id"), exc_info=True)
-                payload.update({"comparable": False, "reason": "source_unavailable"})
+                # 위 `/source` 와 같은 이유로 `error` 동봉 — 503 은 apiFetch 가 throw 하므로
+                # 이 키가 없으면 사용자는 영문 상태 문자열을 본다(선행 결함, 같은 cycle 에서 정정).
+                payload.update({
+                    "comparable": False,
+                    "reason": "source_unavailable",
+                    "error": "원본 파일을 읽을 수 없어 내용을 비교하지 못했습니다.",
+                })
                 return JSONResponse(payload, status_code=503)
             truncated_sides[key] = len(raw) > cap
             sides[key] = raw[:cap].decode("utf-8", "replace")

@@ -344,7 +344,10 @@ function extractFn(src, name) {
 
 // ── (B) 배선 — composer.js 진입점 ────────────────────────────────────────────
 {
-  ok("B1 composer 가 모달을 import", /import\s*\{\s*openAttachmentDiffModal\s*\}\s*from\s*"\.\/attach-diff\.js\?v=dev"/.test(composerJs));
+  // 이 모듈은 모달 2종(비교·원문, 2026-08-07)을 내보내므로 import 목록에 형제가 들어올 수 있다.
+  // 고정해야 할 것은 "비교 모달을 **버전 스탬프 붙은 specifier** 로 가져온다" 이지 목록의 길이가 아니다.
+  ok("B1 composer 가 비교 모달을 import",
+    /import\s*\{[^}]*\bopenAttachmentDiffModal\b[^}]*\}\s*from\s*"\.\/attach-diff\.js\?v=dev"/.test(composerJs));
   const boxFn = extractFn(composerJs, "_renderAttachmentVersionsBox");
   ok("B2 버전 박스 함수 추출됨", !!boxFn);
   ok("B3 박스가 attachmentId 를 인자로 받는다(모달 권한 기준)",

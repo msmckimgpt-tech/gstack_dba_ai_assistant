@@ -2532,6 +2532,49 @@ html[data-motion="off"] .gc-guide-tip { animation: none; }
   background: var(--bg);
   font-size: 12px;
 }
+/* 원문 보기 진입(REQ-20260807T-attach-source-view). 클릭 가능하다는 사실이 화면에 없으면
+   아무도 누르지 않으므로 hover 를 눈에 보이게 준다.
+
+   **어포던스의 정본은 파일명 버튼**이다(행은 마우스 편의용 확장 히트영역) — 행에 role=button 을
+   주면 그 안의 ⬇·🗑·버전 토글이 버튼 안의 버튼이 되어 보조기술이 행 전체 텍스트를 버튼 이름으로
+   읽는다(§18.8 ux). 그래서 포커스 링도 이름 버튼에 붙인다. */
+.attach-list-item.is-openable { cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+.attach-list-item.is-openable:hover {
+  background: var(--surface-2);
+  border-color: var(--primary, #2563eb);
+}
+/* 액션 버튼(⬇·🗑·버전 토글) 위에서는 행 하이라이트를 **끈다** — 삭제 버튼을 겨누는데 행이
+   "열림" 을 시사하면 두 동작이 같은 신호를 갖는다. 세 버튼 모두 자기 cursor:pointer 를 갖고
+   있어 커서만으로는 구분이 생기지 않는다(§18.8 design). */
+.attach-list-item.is-openable:has(.attach-list-item-actions:hover),
+.attach-list-item.is-openable:has(.attach-list-item-vertoggle:hover) {
+  background: var(--bg);
+  border-color: var(--border);
+}
+.attach-list-item-name-text[role="button"] { cursor: pointer; }
+.attach-list-item-name-text[role="button"]:hover { text-decoration: underline; }
+.attach-list-item-name-text[role="button"]:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* 버전 이력 행의 원문 보기(👁) — 형제 액션(⇄·⬇·🗑)과 같은 관용구. */
+.attach-list-version-src {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #9ca3af);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+}
+.attach-list-version-src:hover { background: rgba(37, 99, 235, 0.08); color: var(--primary, #2563eb); }
+/* 모션 규약(chat.css §1249 계열) — 감속 선호 시 색 전이를 끈다. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="on"]) .attach-list-item.is-openable { transition: none; }
+}
+html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
 .attach-list-item-icon {
   font-size: 16px;
   flex-shrink: 0;

@@ -1204,6 +1204,7 @@ _COLLATION_AUDIT_DONE = False
 # 오타로 인한 조용한 버킷 병합을 막기 위해 상수로 고정한다.
 RATE_SCOPE_CONVERSATION_SEARCH = "conversation_search"  # 대화 본문 검색(무거운 LIKE 스캔)
 RATE_SCOPE_SAMPLE_FEEDBACK = "sample_feedback"          # 👍/👎 샘플 피드백
+RATE_SCOPE_ATTACHMENT_SOURCE = "attachment_source"      # 첨부 원문 보기(본문 read)
 RATE_SCOPE_FIX_WITH_AI = "fix_with_ai"                  # 실패 SQL 정정 — LLM run 1회 점유
 RATE_SCOPE_MESSAGE_EDIT = "message_edit"                # 메시지 편집(reanswer 는 LLM run)
 RATE_SCOPE_BRANCH_NAV = "branch_nav"                    # 버전 페이징 — DB 읽기 전용
@@ -3645,6 +3646,7 @@ from routers._conv_store import (  # noqa: E402
     _compute_version_diff,
     _load_attachment_version_chain,
     _build_version_diff_view,
+    _build_source_view,
     _VERSION_DIFF_ROW_CAP,
     _VERSION_DIFF_CONTEXT_DEFAULT,
     _VERSION_DIFF_TEXT_KINDS,

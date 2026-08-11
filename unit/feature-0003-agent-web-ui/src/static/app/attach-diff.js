@@ -1,9 +1,16 @@
-// attach-diff — 첨부 버전 비교 모달 (REQ-20260806-attach-version-diff)
+// attach-diff — 첨부 **본문 보기** 모달 2종: 버전 비교(REQ-20260806-attach-version-diff)와
+// 원문 보기(REQ-20260807T-attach-source-view).
 //
 // 첨부 사이드 패널의 "버전 N개 ▾" 이력 박스는 각 버전의 존재와 다운로드만 보여줬다.
 // 이 모듈은 그 체인에서 **임의의 두 버전**(v1↔v3 처럼 여러 단계 떨어진 쌍 포함)을 골라
 // 본문 차이를 보는 전용 모달을 담당한다. 비교 계산은 서버
 // (`GET /api/attachments/{id}/diff`)가 하고, 여기서는 선택·렌더·토글만 한다.
+//
+// **원문 보기가 같은 모듈에 있는 이유**(2026-08-07): 두 화면은 같은 렌더 primitive
+// (`_renderSource`·`_appendColgroup`·`_paintCell`·스크롤 앵커)를 쓴다. 별 모듈로 나누면 그
+// primitive 를 복제하거나 순환 import 를 만들게 되고, 이 저장소는 "복제가 곧 결함 기전"
+// (modal-dismiss.js)을 이미 한 번 치렀다. 서버도 `_build_source_view` 가 diff `rows` 와
+// **호환 shape** 을 내보내 렌더러 분기가 0 이다.
 //
 // 설계 메모
 //  - **저장된 diff 를 쓰지 않는다**: `MetaJson.version_diff` 는 업로드 시점의 직전↔신규
@@ -1072,6 +1079,241 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     hlOn = hlCb.checked;
     _writeHighlightOn(hlOn);
     rerender();
+  });
+
+  load();
+}
+
+/**
+ * 첨부 **원문 보기** 모달을 연다 (REQ-20260807T-attach-source-view).
+ *
+ * 사용자 요청(2026-08-07): "별도로 추가된 버전이 없는 첨부파일 또한, 클릭했을 때 문서 원문이
+ * 출력되도록 구성해주세요."
+ *
+ * 왜 비교 모달로 대신할 수 없나: 버전이 하나뿐인 첨부에는 **비교할 짝이 없다**. `/diff` 는 두
+ * 버전을 요구하고 `from==to` 를 400 으로 막으므로(존재 여부 oracle 방지 계약), 원문 전용
+ * 엔드포인트 `GET /api/attachments/{id}/source` 를 별도로 둔다. 렌더는 비교 모달의 identical
+ * 화면과 **같은 `_renderSource`** 를 쓴다 — 같은 파일이 두 화면에서 다르게 보이지 않는다.
+ *
+ * **버전 선택기를 두지 않는다**: 체인의 각 버전은 자기 id 를 가지므로 `attachmentId` 하나로
+ * 버전이 이미 특정된다. 고를 것이 하나뿐인 select 는 조작할 수 없는 컨트롤이고(이 모듈이
+ * 금지한 거짓 어포던스), 구버전 원문은 그 버전의 id 로 이 모달을 열면 된다.
+ *
+ * @param {number|string} attachmentId  첨부(=버전) id — 권한·대상 기준
+ * @param {object} [opts]
+ * @param {string} [opts.filename]      제목·언어 판정용 파일명(미지정 시 응답에서 취함)
+ */
+export function openAttachmentSourceModal(attachmentId, opts) {
+  const o = opts || {};
+
+  // 열기 전 포커스를 기억한다 — 이 모달은 **키보드로도 열린다**(목록의 파일명 버튼). 닫을 때
+  // 돌려주지 않으면 사용자가 문서 맨 앞으로 튕긴다(첨부 관리 모달 `_openAttachDeleteModal` 과 동형).
+  const opener = document.activeElement;
+  const uid = `attach-source-${Math.random().toString(36).slice(2, 9)}`;
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "share-mgr-backdrop attach-diff-backdrop attach-source-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  // 정적 `aria-label` 대신 **제목을 이름으로** 쓴다 — 파일명·절단 여부가 이름에 실린다.
+  backdrop.setAttribute("aria-labelledby", `${uid}-title`);
+  backdrop.innerHTML =
+    '<div class="share-mgr-panel attach-diff-panel">' +
+    '  <div class="share-mgr-head">' +
+    `    <h3 class="share-mgr-title" id="${uid}-title"><span class="attach-source-titleword">문서 원문</span>` +
+    ' — <span class="attach-diff-fname"></span><span class="attach-source-vertag"></span></h3>' +
+    '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+    '  </div>' +
+    '  <div class="attach-diff-controls">' +
+    '    <span class="attach-diff-stats" role="status" aria-live="polite"></span>' +
+    // 구문 색 토글은 비교 모달과 **같은 관용구·같은 저장 키**다 — 한쪽에서 끈 사용자가 다른
+    // 쪽에서 다시 켜야 한다면 그건 두 기능이 아니라 한 기능의 일관성 결함이다.
+    '    <label class="attach-diff-hltoggle" hidden><input type="checkbox" class="attach-diff-hl">' +
+    '<span class="attach-diff-hl-label"></span></label>' +
+    '  </div>' +
+    '  <div class="attach-diff-body"></div>' +
+    '</div>';
+
+  const close = () => {
+    if (backdrop.parentNode) document.body.removeChild(backdrop);
+    document.removeEventListener("keydown", onKey);
+    // 열어 준 요소로 포커스 복귀(사라졌으면 조용히 포기 — 목록이 재렌더됐을 수 있다).
+    try { if (opener && document.contains(opener)) opener.focus(); } catch (e) { /* detached */ }
+  };
+  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  bindBackdropDismiss(backdrop, close);
+  backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
+  try { backdrop.querySelector(".share-mgr-close").focus(); } catch (e) { /* jsdom */ }
+
+  const titleWordEl = backdrop.querySelector(".attach-source-titleword");
+  const verTagEl = backdrop.querySelector(".attach-source-vertag");
+  const controlsEl = backdrop.querySelector(".attach-diff-controls");
+  const fnameEl = backdrop.querySelector(".attach-diff-fname");
+  const statsEl = backdrop.querySelector(".attach-diff-stats");
+  const bodyEl = backdrop.querySelector(".attach-diff-body");
+  const hlWrap = backdrop.querySelector(".attach-diff-hltoggle");
+  const hlCb = backdrop.querySelector(".attach-diff-hl");
+  const hlLabel = backdrop.querySelector(".attach-diff-hl-label");
+
+  fnameEl.textContent = String(o.filename || "파일");
+  let detectedLang = detectCodeLanguage(fnameEl.textContent);
+  let hlOn = _readHighlightOn();
+  hlCb.checked = hlOn;
+
+  let lastData = null;
+  let reqSeq = 0;
+
+  const syncHlToggle = (data) => {
+    const paintable = Boolean(detectedLang) && Boolean(data) && data.viewable !== false
+      && Array.isArray(data.rows) && data.rows.length > 0;
+    hlWrap.hidden = !paintable;
+    if (!paintable) return;
+    hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+    hlCb.checked = hlOn;
+  };
+  syncHlToggle(null);
+
+  // 컨트롤이 하나도 없으면 컨트롤 바를 통째로 숨긴다 — 바이너리 화면에서 통계도 토글도 없이
+  // padding + border-bottom 만 남아 제목 아래에 정체불명의 빈 띠가 그어졌다(§18.8 design 지적).
+  const syncControlsBar = () => {
+    controlsEl.hidden = !statsEl.textContent && hlWrap.hidden;
+  };
+  syncControlsBar();
+
+  const renderOpts = () => ({ lang: hlOn ? detectedLang : null });
+
+  // 절단·해시와 같은 계열의 판정: **"원문" 은 전량을 봤을 때만 쓸 수 있는 말**이다.
+  // (비교 모달 `_identicalFlags` 와 같은 원칙 — 형제 화면이 명시적으로 금지한 것을 여기서
+  //  반복하지 않는다. 절단이면 제목·통계·배너가 함께 강도를 낮춘다.)
+  const isClipped = (data) => Boolean(data && (
+    (data.truncated && (data.truncated.source || data.truncated.rows))
+    || data.stats?.lines_partial));
+
+  // 재렌더는 **스크롤을 보존**한다 — `bodyEl.innerHTML = ""` 가 scroller 요소를 통째로 갈아치우고
+  // 스크롤은 그 요소의 상태이므로 함께 사라진다. 원문 뷰는 축약이 없어 항상 전량(최대 6,000행)을
+  // 그리므로 diff 보다 잃는 거리가 크다(§18.8 ux 지적 — 비교 모달 AC-AVD-15 와 같은 계약).
+  const render = (renderCfg) => {
+    const data = lastData;
+    const keepScroll = Boolean(renderCfg && renderCfg.keepScroll);
+    const anchor = keepScroll
+      ? _captureScrollAnchor(bodyEl.querySelector(".attach-diff-scroller"))
+      : null;
+    bodyEl.innerHTML = "";
+    if (!data) return;
+
+    // 볼 수 없는 형식(스프레드시트·PDF·이미지 등) — 메타로 강등해 답한다. 조용히 빈 화면을
+    // 주면 사용자는 기능이 고장 났다고 읽는다.
+    // (`source_unavailable` 은 서버가 **503** 으로 답하므로 `apiFetch` 가 throw 하고 아래 catch
+    //  경로로 간다 — 여기서 그 사유를 분기하면 도달 불가 코드가 된다. 서버가 payload 에 `error`
+    //  문구를 실어 catch 가 그대로 보여 준다.)
+    if (data.viewable === false) {
+      const msg = document.createElement("div");
+      msg.className = "attach-diff-notice";
+      msg.textContent =
+        "이 형식(스프레드시트·PDF·이미지 등)은 원문 보기를 지원하지 않습니다. 내려받아 확인하세요.";
+      bodyEl.appendChild(msg);
+      const v = data.version || {};
+      const meta = document.createElement("table");
+      meta.className = "attach-diff-meta";
+      const rowOf = (label, val) =>
+        `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(val)}</td></tr>`;
+      meta.innerHTML = "<tbody>" +
+        rowOf("작성 주체", v.created_by_role === "assistant" ? "AI 수정" : "사용자") +
+        rowOf("크기", _fmtBytes(v.size)) +
+        rowOf("등록 시각", v.created_at || "-") +
+        rowOf("sha256", (v.sha256 || "").slice(0, 16) + "…") +
+        "</tbody>";
+      bodyEl.appendChild(meta);
+      return;
+    }
+
+    // 절단 배너 — 무음 절단 금지(`/diff` 화면과 같은 계약).
+    const tr = data.truncated || {};
+    if (tr.source) {
+      const capMB = ((data.caps?.source_bytes || 0) / 1048576).toFixed(0);
+      const el = document.createElement("div");
+      el.className = "attach-diff-notice is-warn";
+      el.textContent = `원본이 ${capMB}MB 를 넘어 앞부분만 표시했습니다 — 이후 내용은 보이지 않습니다.`;
+      bodyEl.appendChild(el);
+    }
+    if (tr.rows) {
+      const el = document.createElement("div");
+      el.className = "attach-diff-notice is-warn";
+      el.textContent = `문서가 길어 앞쪽 ${Number(data.caps?.rows || 0)}행만 표시했습니다.`;
+      bodyEl.appendChild(el);
+    }
+
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    if (rows.length === 0) {
+      const el = document.createElement("div");
+      el.className = "attach-diff-notice";
+      el.textContent = "문서가 비어 있습니다.";
+      bodyEl.appendChild(el);
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "attach-diff-splitwrap";
+    const scroller = document.createElement("div");
+    scroller.className = "attach-diff-scroller";
+    _renderSource(scroller, data, renderOpts());
+    wrap.appendChild(scroller);
+    bodyEl.appendChild(wrap);
+    _restoreScrollAnchor(scroller, anchor);
+  };
+
+  const load = async () => {
+    const seq = ++reqSeq;
+    statsEl.textContent = "불러오는 중…";
+    bodyEl.innerHTML = '<div class="attach-diff-notice">불러오는 중…</div>';
+    try {
+      const data = await apiFetch(
+        `/api/attachments/${encodeURIComponent(attachmentId)}/source`);
+      if (seq !== reqSeq) return;   // 늦게 도착한 응답이 최신 선택을 덮지 않게
+      lastData = data;
+      // 파일명은 서버가 정본이다 — 호출부가 이름을 안 넘겼을 때(말풍선 칩 등) 제목·언어
+      // 판정이 어긋나지 않게 응답으로 다시 맞춘다.
+      if (data.filename && data.filename !== fnameEl.textContent) {
+        fnameEl.textContent = String(data.filename);
+        detectedLang = detectCodeLanguage(fnameEl.textContent);
+      }
+      syncHlToggle(data);
+      // 어느 버전의 원문인지 화면에 남긴다 — 체인의 모든 버전이 같은 파일명을 쓰므로
+      // 번호가 없으면 구별 단서가 0 이다(§18.8 ux 지적).
+      const vn = Number(data.version?.version_number || 0);
+      verTagEl.textContent = vn > 1 || data.version?.is_latest === false
+        ? ` (v${vn}${data.version?.is_latest === false ? "" : " · 최신"})`
+        : "";
+      const clipped = isClipped(data);
+      titleWordEl.textContent = clipped ? "문서 앞부분" : "문서 원문";
+      const shown = Array.isArray(data.rows) ? data.rows.length : 0;
+      statsEl.textContent = data.viewable === false
+        ? ""
+        : clipped
+          ? `앞 ${shown}행 표시 · 전체 ${_fmtBytes(data.version?.size)}`
+          : `${Number(data.stats?.lines || 0)}줄 · ${_fmtBytes(data.version?.size)}`;
+      syncControlsBar();
+      render();
+    } catch (e) {
+      if (seq !== reqSeq) return;
+      lastData = null;
+      syncHlToggle(null);
+      statsEl.textContent = "";
+      titleWordEl.textContent = "문서 원문";
+      verTagEl.textContent = "";
+      syncControlsBar();
+      bodyEl.innerHTML =
+        `<div class="attach-diff-notice is-warn">${escapeHtml(e?.message || "원문을 불러오지 못했습니다.")}</div>`;
+    }
+  };
+
+  // 같은 응답의 표시 방식만 바뀌므로 재요청 없이 재렌더하고, **보고 있던 줄을 유지**한다
+  // (비교 모달과 동일 계약 — 계약의 절반만 옮기면 스크롤이 최상단으로 튄다).
+  hlCb.addEventListener("change", () => {
+    hlOn = hlCb.checked;
+    _writeHighlightOn(hlOn);
+    render({ keepScroll: true });
   });
 
   load();

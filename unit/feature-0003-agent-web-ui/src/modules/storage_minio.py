@@ -246,6 +246,52 @@ def put_object_bytes(
         raise StorageOperationError(f"put_object failed for {object_key}: {exc}") from exc
 
 
+def get_object_head_bytes(
+    object_key: str,
+    *,
+    max_bytes: int,
+    client: Any = None,
+    bucket: str | None = None,
+) -> bytes:
+    """객체의 **앞 max_bytes 만** ranged GET 으로 읽는다.
+
+    `get_object_bytes` 는 객체 전체를 메모리로 올린다(그 docstring 참조). 화면에 앞부분만
+    보여 주는 소비자(첨부 원문 보기 — 뷰 cap 1MB)가 그 함수를 쓰면 per-file cap(25MB)까지
+    읽고 버리게 되어 **최대 25배 증폭**이 된다: 클라이언트로 나가는 바이트가 자연 제동을 걸지
+    않는 read 경로라 반복 클릭이 곧 서버 메모리·MinIO 대역 소모다(§18.8 security 지적).
+
+    Range 미지원 백엔드 대비로 응답이 더 길게 와도 호출측 계약이 깨지지 않게 잘라서 반환한다.
+    """
+    if not object_key:
+        raise StorageConfigError("object_key required")
+    if int(max_bytes) <= 0:
+        raise StorageConfigError("max_bytes must be positive")
+
+    cli = client or get_s3_client()
+    bucket_name = bucket or get_storage_config()["bucket"]
+    try:
+        resp = cli.get_object(
+            Bucket=bucket_name, Key=object_key, Range=f"bytes=0-{int(max_bytes) - 1}")
+    except (ClientError, BotoCoreError, EndpointConnectionError) as exc:  # type: ignore[misc]
+        raise StorageOperationError(f"get_object(range) failed for {object_key}: {exc}") from exc
+
+    body = resp.get("Body")
+    if body is None:
+        raise StorageOperationError(f"get_object(range) returned no Body for {object_key}")
+    try:
+        data = body.read()
+    finally:
+        try:
+            body.close()
+        except Exception:
+            pass
+    if not isinstance(data, (bytes, bytearray)):
+        raise StorageOperationError(
+            f"get_object(range) body returned non-bytes for {object_key}: {type(data).__name__}"
+        )
+    return bytes(data[: int(max_bytes)])
+
+
 def get_object_bytes(
     object_key: str,
     *,
