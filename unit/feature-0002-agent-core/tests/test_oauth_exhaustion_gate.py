@@ -1096,6 +1096,8 @@ def test_already_expired_access_token_is_recovered(env):
     assert _env_val(env, "ANTHROPIC_API_KEY") == "REVIVED", "만료된 토큰을 되살리지 못했다"
 
 
+@pytest.mark.skipif(os.geteuid() != 0,
+                    reason="다른 uid 로 chown 하려면 root 필요 — 운영 cron 은 root 로 돈다")
 def test_rotation_preserves_file_owner(env):
     """root 로 돌지만 파일 주인은 계정 사용자다 — root 소유로 바꾸면 그 CLI 로그인이 깨진다."""
     import pwd
