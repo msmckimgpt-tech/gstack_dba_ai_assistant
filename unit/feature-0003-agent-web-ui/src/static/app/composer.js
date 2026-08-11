@@ -74,6 +74,24 @@ import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 // (실제 판정은 서버 응답 `viewable`), 두 집합이 갈라지지 않게 하네스가 양쪽을 대조해 잠근다.
 const ATTACH_SOURCE_VIEWABLE_KINDS = ["text", "csv"];
 
+// 액션 열 정렬용 **빈 슬롯**(사용자 보고 2026-08-11). 첨부 목록 3종(활성·버전 이력·휴지통)의
+// 액션 컨테이너는 모두 `margin-left: auto` 오른쪽 정렬 flex 라, 행마다 버튼 **개수**가 다르면
+// 있는 버튼이 통째로 밀려 같은 기능의 아이콘이 행마다 다른 x 좌표에 선다.
+//
+// 조건부 버튼이 있는 목록은 셋 다다:
+//   - 활성 목록: `🗑` — 서버 `can_manage` 가 **행별 술어**(`is_owner || row.AccountId == 나`)
+//   - 버전 이력: `⇄`(최신 행에 없음) · `🗑`(같은 술어)
+//   - 휴지통: `⇤`(체인 머리 행에만)
+// 정의를 한 곳에 두는 이유는 이 저장소가 이미 치른 교훈 — 복제가 곧 결함 기전이다
+// (`modal-dismiss.js` 주석 참조). 보조기술에는 없는 것이고 포커스도 받지 않는다.
+function _attachActionSlot() {
+  const sp = document.createElement("span");
+  sp.className = "attach-list-action-slot";
+  sp.setAttribute("aria-hidden", "true");
+  return sp;
+}
+
+
 // REQ-20260806-attach-manage: 첨부 사이드 패널의 목록 모드. "active"(기본) / "deleted"(휴지통).
 // 이 모듈 안에서만 읽고 쓴다 — 다른 모듈과 양방향 재할당이 없어 state 편입 대상이 아니다
 // (feature-0038 Phase A 의 결합 매트릭스 기준).
@@ -1111,6 +1129,15 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
   const ordered = [...versions].reverse(); // 최신 버전이 위로.
   const latestNum = Number(ordered[0]?.version_number || 1);
   const canCompare = versions.length > 1;
+  // 액션 열 정렬(사용자 보고 2026-08-11): 행마다 버튼 **개수**가 다르면 오른쪽 정렬(`margin-left:
+  // auto`) 이라 있는 버튼들이 통째로 밀려, 같은 기능의 아이콘이 행마다 다른 x 좌표에 선다.
+  // 체인 안에서 실제로 갈리는 슬롯은 둘이다:
+  //   - `⇄`(비교): 최신 행에만 없다(자기 자신과의 비교는 무의미 — 그 계약은 유지).
+  //   - `🗑`(삭제): 서버 `can_manage` 가 **행별 술어**(`is_owner || row.AccountId == 나`)라
+  //     그룹 대화에서 업로더가 섞이면 행마다 갈린다.
+  // 그래서 "이 체인에서 한 번이라도 쓰이는 슬롯" 만 자리를 예약한다 — 아무도 못 쓰는 슬롯까지
+  // 예약하면 쓰이지도 않는 빈 여백이 상시로 남는다.
+  const anyManage = ordered.some((v) => Boolean(v.can_manage));
 
   if (canCompare) {
     const head = document.createElement("div");
@@ -1171,6 +1198,7 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
 
     // 최신 행에는 `⇄` 를 두지 않는다 — 자기 자신과의 비교는 무의미하고, 최신 기준 비교는
     // 위 "버전 비교" 버튼이 이미 담당한다.
+    if (canCompare && isLatest) acts.appendChild(_attachActionSlot());   // ⇄ 자리 예약
     if (canCompare && !isLatest) {
       const cmp = document.createElement("button");
       cmp.type = "button";
@@ -1197,6 +1225,7 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
     acts.appendChild(dl);
     // 삭제 어포던스는 서버 판정(can_manage)만 따른다 — 프론트가 소유권을 따로 추정하면
     // 표시와 집행이 어긋난다(§16.7 G6).
+    if (anyManage && !v.can_manage) acts.appendChild(_attachActionSlot());   // 🗑 자리 예약
     if (v.can_manage) {
       const del = document.createElement("button");
       del.type = "button";
@@ -1661,6 +1690,7 @@ async function _loadConversationAttachmentList(convId) {
     }
     if (noteEl) noteEl.classList.remove("hidden");  // 첨부 존재 시 참조 범위 안내 노출
     if (suffixOptEl) suffixOptEl.classList.remove("hidden");
+    const anyItemManage = arr.some((x) => Boolean(x.can_manage));
     const kindIcon = (k) => ({csv:"📊", xlsx:"📊", pdf:"📄", txt:"📝", image:"🖼️"})[k] || "📎";
     const fmtSize = (b) => b > 1048576 ? `${(b/1048576).toFixed(1)}MB` : b > 1024 ? `${(b/1024).toFixed(0)}KB` : `${b}B`;
     for (const a of arr) {
@@ -1713,6 +1743,12 @@ async function _loadConversationAttachmentList(convId) {
       // REQ-20260806-attach-manage: 삭제. 버전이 여럿이면 모달이 범위를 묻는다.
       const delBtn = item.querySelector(".attach-list-item-del");
       if (delBtn) delBtn.addEventListener("click", () => _openAttachDeleteModal(a));
+      // 🗑 자리 예약 — `can_manage` 는 **행별 술어**라 그룹 대화에서 업로더가 섞이면 행마다
+      // 갈리고, 오른쪽 정렬이라 없는 행의 ⬇ 가 통째로 밀린다(버전 이력과 같은 결함 클래스).
+      // 아무도 삭제할 수 없는 목록에서는 예약하지 않는다 — 쓰이지 않는 빈 여백을 남기지 않는다.
+      if (anyItemManage && !a.can_manage) {
+        item.querySelector(".attach-list-item-actions").appendChild(_attachActionSlot());
+      }
 
       // REQ-20260807T-attach-source-view: 첨부 **원문 보기** 진입(사용자 요청 2026-08-07).
       // 종전 이 행은 클릭 대상이 아니었고, 내용을 보는 유일한 길이 "버전 2개 이상일 때의
@@ -1820,6 +1856,17 @@ function _renderTrashAttachmentList(listEl, arr) {
     if (!byRoot.has(root)) byRoot.set(root, []);
     byRoot.get(root).push(a);
   }
+  // 체인 머리가 하나라도 있으면 그 슬롯을 예약한다(위 `_attachActionSlot` 주석 참조).
+  //
+  // ⚠️ **`↩` 는 예약하지 않는다** — 서버가 휴지통 목록에서 관리 불가 행을 **응답에서 제외**하고
+  // 남은 전 행에 `can_manage = True` 를 박기 때문이다(`routers/conversations.py` 의
+  // `list_deleted_conversation_attachments`). 즉 여기서 `a.can_manage` 는 항상 참이고 `↩` 열은
+  // 갈리지 않는다. 그 서버 전제가 바뀌면(예: "남이 삭제한 항목도 보여주기") `↩` 도 행마다
+  // 갈리므로 같은 방식으로 예약해야 한다 — 전제를 여기 남겨 두는 이유다.
+  const anyChainHead = arr.some((x) => {
+    const sib = byRoot.get(Number(x.root_attachment_id || x.id)) || [x];
+    return Boolean(x.can_manage) && sib[0] === x && sib.length > 1;
+  });
   for (const a of arr) {
     const entry = document.createElement("div");
     entry.className = "attach-list-entry is-trashed";
@@ -1843,6 +1890,11 @@ function _renderTrashAttachmentList(listEl, arr) {
         </div>
       </div>
     `;
+    // ⇤(전체 버전 복구) 자리 예약 — 체인 머리 행에만 있어 나머지 행의 ↩ 가 밀린다
+    // (활성 목록·버전 이력과 같은 결함 클래스). 체인 머리가 하나도 없으면 예약하지 않는다.
+    if (anyChainHead && !(a.can_manage && isChainHead)) {
+      item.querySelector(".attach-list-item-actions").appendChild(_attachActionSlot());
+    }
     item.querySelectorAll(".attach-list-item-restore").forEach((btn) => {
       btn.addEventListener("click", () =>
         _performAttachRestore(a.id, btn.dataset.scope === "chain" ? "chain" : "version", btn));

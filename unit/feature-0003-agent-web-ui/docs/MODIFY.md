@@ -3187,7 +3187,6 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`, `docs/reviews/20260807T1930Z-{security,ux-design}.md`,
   `docs/SECURITY.md`(repo).
 - Timestamp: 2026-08-07T19:45:00+09:00
-
 ## CHG-20260811T1500-ai-claude-attach-diff-mark-underscore — 줄 안 마크가 `_` 를 가리는 문제 수정
 
 - 사용자 지적(2026-08-11): "변경을 강조하는 하이라이트 밑줄이 특정 문자의 가독성을 떨어뜨린다
@@ -3227,3 +3226,54 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   단일열 parity · 구문 색 왕복 텍스트 불변) + 라이브 미확인 축 2건.
 - `docs/TASK.md`: 배포·PB-0008 체크박스 마감. 코드 변경 **0**.
 - Timestamp: 2026-08-11T16:00:00+09:00
+## CHG-20260811T1200-ai-claude-attach-version-action-align — 버전 이력 행 액션 열 정렬
+
+- **프론트** `src/static/app/composer.js`: 빈 슬롯 primitive `_attachActionSlot()`
+  (`span.attach-list-action-slot`, `aria-hidden="true"`, 포커스 불가)을 **모듈 레벨 단일 정의**로
+  두고 목록 **3종이 공유**한다(복제가 곧 결함 기전 — `modal-dismiss.js` 의 교훈).
+  - 버전 이력: `⇄`(최신 행 없음) · `🗑`(행별 술어) — `canCompare`/`anyManage` 로 예약
+  - 활성 첨부 목록: `🗑` — `anyItemManage` 로 예약
+  - 휴지통: `⇤`(전체 버전 복구, 체인 머리만) — `anyChainHead` 로 예약
+  사용자가 본 것은 버전 이력이지만 셋 다 같은 오른쪽 정렬 flex + 조건부 버튼이라 **같은 결함
+  클래스**다. 한쪽만 고치면 같은 증상이 다른 화면에 남는다.
+- **CSS** `src/static/css/chat.css`: `.attach-list-version-actions > *` · `.attach-list-item-actions > *`
+  에 `flex: 0 0 auto; min-width: 22px; text-align: center` — 슬롯 폭을 글리프가 아니라 규칙으로
+  고정(👁·⇄·⬇·🗑·↩·⇤ 의 advance 폭이 제각각이라 폰트·플랫폼이 바뀌면 같은 열도 폭이 달라진다).
+  `.attach-list-action-slot`.
+- 버튼을 없애지 않는다는 선행 계약(최신 행 `⇄` 미배치 — 자기 자신과의 비교는 무의미)은 유지.
+- **테스트** `tests/verify_attach_version_action_align.mjs` 신설 **28건**(A~E) — `_renderAttachmentVersionsBox`
+  를 중괄호 밸런스로 떼어 **실제 실행**하고 행별 슬롯 배열을 대조한다(정적 문자열 검사로는 행마다
+  슬롯이 몇 개 붙는지 알 수 없다). 뮤테이션 3/3 red.
+- 서버·권한·스키마 변경 **0**.
+- Files: `src/static/app/composer.js`, `src/static/css/chat.css`,
+  `tests/verify_attach_version_action_align.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`.
+- Timestamp: 2026-08-11T12:00:00+09:00
+
+## CHG-20260811T1300-ai-claude-attach-version-action-align-panel — §18.8 적대 리뷰 반영
+
+`REV-20260811T130000`(ux+design) 의 CONCERN 대응.
+
+- **폭을 바닥이 아니라 못으로**: `flex: 0 0 auto; min-width: 22px` → **`flex: 0 0 22px;
+  min-width: 0`**. `min-width` 는 `max(값, 내용폭)` 이라 글리프가 넘으면 그 버튼만 넓어져 열이 다시
+  갈린다 — 이 규칙이 겨냥한 상황에서 정확히 실패한다. `min-width: 0` 은 flex 자동 최소 크기
+  (min-content)가 `flex-basis` 를 되밀지 못하게 하는 **필수** 항이다.
+  **A/B 실증**(PB-0008): 글꼴 16px 확대 시 `min-width` 방식은 버튼 22→24px, 그 행 `👁` 1135→**1133**
+  (열 깨짐). `flex-basis` 방식은 22px 유지·좌표 불변.
+- **형제 목록 픽셀 근거 확보**: 활성 첨부 목록에서 DOM-level control 로 한 행의 `🗑` 를 제거 →
+  `⬇` 1180→**1204**(24px 드리프트), 예약 슬롯 삽입 → 1180 복귀. 결함 존재와 해소를 모두 실측.
+- **휴지통을 실행 테스트로 승격**: `_renderTrashAttachmentList` 를 `extractFn` + `new Function` 으로
+  실제 실행해 슬롯 배열을 대조(E2~E7). 초판의 소스 정규식은 슬롯을 엉뚱한 컨테이너에 붙이거나
+  `↩` 앞에 넣어 열 순서를 깨도 통과했다 — 이 파일 헤더가 스스로 금지한 방식이었다.
+  활성 목록은 async + `apiFetch` 라 실행 불가 → **defer 를 파일에 명시**하고 구조 단언만 유지.
+- **뮤테이션 3 → 7종**: M4(활성 예약 제거) · M5(휴지통 예약 제거) · **M6(슬롯을 앞에 삽입 → 열 순서
+  파괴)** · M7(CSS 를 바닥 규칙으로 되돌림). M6 이 리뷰어가 지목한 "오배치 통과" 구멍을 겨냥한다.
+- **죽은 선언 제거**: 슬롯의 `display: inline-block`(flex item 이라 blockify) · `text-align: center`
+  (버튼 UA 기본값이고 슬롯은 내용 없음).
+- **잔여 명시**(FUNCTION.md): ① 재렌더 시 1회 열 점프(예약 범위가 목록 단위인 대가) ② 체인 간
+  정렬은 보장하지 않음(AC-AVA-1 스코프는 한 체인) ③ 휴지통 `↩` 미예약은 서버가 관리 불가 행을
+  응답에서 제외한다는 전제 의존 — 그 전제를 코드 주석에 기록.
+- 하네스 28 → **34건**.
+- Files: `src/static/app/composer.js`, `src/static/css/chat.css`,
+  `tests/verify_attach_version_action_align.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`,
+  `docs/reviews/20260811T1300Z-ux-design.md`, `docs/test-runs.d/20260811T1200-attach-version-action-align.md`.
+- Timestamp: 2026-08-11T13:00:00+09:00
