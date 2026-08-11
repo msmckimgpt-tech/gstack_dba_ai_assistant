@@ -9488,3 +9488,52 @@ AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 ## 9. Requested Scope
 - [x] `버전비교 버튼 유무에 따른 원문 조회 버튼 위치 뒤틀림 수정` — 열 좌표 단일값으로 실측 확인.
       같은 결함 클래스인 활성 목록·휴지통도 함께 닫음.
+
+## 20260811T1830-api-exposure-hardening — 익명 API 표면 축소 + 엣지 보안 헤더 + 데이터플레인 RO 계정 (Critical §12.3)
+
+사용자 보고: "codex가(root 계정) 현재 프로젝트의 서비스 내 api 에 접근할 때 보안 이슈를 확인하였습니다.
+대화 내역을 파악 후 지침이 올바른지 판단하고 대응해주세요."
+
+외부 AI(codex)가 **로컬 파일 없이 라이브 HTTP 응답만으로** 감사한 결과 9건을 코드·인프라로 교차검증했다.
+감사가 무인증으로 수행됐다는 사실 자체가 표면 크기의 증거다.
+
+### 판정 (codex 지침의 타당성)
+
+- **사실로 확인**: 공인 IP 외부 노출 · 익명 인프라 정보 3종 · 보안 헤더 전무 · `WWW-Authenticate` 부재 ·
+  사설 CA(설계 의도) · OpenAPI 불완전 · 멱등성 부재 · MCP 계약 불일치.
+- **진단 오판 1건**: "DB 읽기 전용 보장이 없다 = LLM 프롬프트 의존" 은 코드 기준으로 **사실이 아니다** —
+  `sql_guard` 가 sqlglot AST allowlist 로 단일 SELECT/CTE 만 통과시키고 **sqlglot 부재 시 fail-closed**,
+  `execute_sql(multi=False)`, product 스키마 allowlist 까지 있다. 감사자가 로컬 파일을 못 여는 제약의 결과.
+  다만 **처방(전용 SELECT 계정)은 유효**했다 — 실제로 `DB_USER=root` 폴백이 살아 있었다.
+- **우선순위 오류**: codex 2차 세션은 "OpenAPI 불완전" 을 1순위로 뒀으나, 실제 최우선은 외부 공개 자체다.
+
+### 실행 결과
+
+- 익명 3종(`/api/session`·`/api/llm/health`·`/api/api-vault/options`) 응답을 축소. **인증 응답은 불변**.
+- `api-vault/options` 의 예외 경로가 `fail-soft` 를 넘어 **fail-open** 이던 것을 함께 닫았다 — 종전에는
+  DB 예외 시 필터 전 전체 카탈로그로 되돌려, DB 를 불능으로 만들 수 있는 요청자에게 오히려 전량을 내줬다.
+- 엣지(Caddyfile)에서 보안 헤더 일괄 부착. CSP 는 **Report-Only** 로 선배포(PixiJS·mermaid 의 blob/worker
+  경로가 조용히 깨질 위험 — 헤드리스로 관측되지 않는 부류).
+- `agent_ro` 프로비저닝 + `.env.mysql` 설정으로 데이터플레인 DB 층 심층방어 복원.
+
+### 체크리스트
+
+- [x] codex 세션 2건(13:24 / 13:32) 대화 전문 파악 — 지시 제약(로컬 파일 미열람)과 실제 수행 범위 대조
+- [x] 지적 9건 전수 코드·라이브 교차검증 — 사실 8건 / 진단 오판 1건 판정
+- [x] 외부 노출 실증 — `ifconfig.me` = 감사 대상 IP · `netsh portproxy` 에 공인 IP 80/443 **명시 규칙** ·
+      `WEB_ALLOWED_HOSTS` 에 공인 IP 등재. 반면 MySQL·PG·MinIO·MCP 는 portproxy 부재로 **공인 도달 없음**
+- [x] 익명 3종 축소 — `tests/test_anonymous_surface_hardening.py` **7 PASS**(미인증 축소 + 인증 불변 + DB
+      실패 시 fail-open 차단). 기존 `test_di_seam_p5b.py` 31건 동반 통과
+- [x] Caddyfile `caddy validate` — adapt 성공(문법 게이트). 잔여 에러는 인증서 미마운트로 provision 단계
+- [x] `agent_ro` 권한 경계 **5축 실측** — SELECT 통과 · information_schema 통과(구조 탐색 회귀 0) ·
+      `CREATE DATABASE` 1044 거부 · `agent_memory.*` 1142 거부 · `mysql.*` 1142 거부
+- [x] pytest 전량 — 사전 실패 1건(`test_oauth_exhaustion_gate` — `chattr` 부재, **main baseline 에서 동일
+      재현** 확인) 제외 **EXIT=0 전통과**
+- [ ] **미조치(사용자 결정 대기)**: 공인 IP 노출 유지·차단 — 서비스 중단을 수반해 본 cycle 범위 밖
+- [ ] **미수행**: §18.8 적대 패널 — 세션 제약(subagent 미사용 지시). REVIEW.md 에 정직 표기
+- [ ] **미배포**: 코드 변경(헤더·익명 축소)과 RO 계정 전환은 **재시작 시점부터** 효력
+
+## 9. Requested Scope
+- [x] `codex 대화 내역 파악` — 세션 2건 전문 + 지시 제약 확인
+- [x] `지침이 올바른지 판단` — 9건 전수 검증, 오판 1건·우선순위 오류 1건 적발
+- [x] `대응` — 승인 범위(보안 헤더 · 익명 3종 · RO 계정) 3건 전부 적용 + 검증

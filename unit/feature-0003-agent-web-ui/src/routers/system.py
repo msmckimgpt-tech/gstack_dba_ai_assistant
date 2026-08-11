@@ -21,6 +21,23 @@ INCLUDE_ORDER = 60  # 등록 순서 고정 — 2026-07-10 현행 include 순서 
 router = APIRouter()
 
 
+def _anonymous_provider_status() -> "dict[str, Any]":
+    """미인증 요청에 돌려줄 **축소된** LLM provider 상태.
+
+    api-exposure-hardening (2026-08-11): 인증 없이 `/api/llm/health` 를 부르면 `provider`(bedrock)·
+    `source`·`since_epoch`·`updated_epoch` 가 그대로 나갔다 — LLM 공급자 스택과 **장애 발생/복구
+    시각**을 익명에게 알려주는 정찰 표면이다(외부 AI 감사가 적발, 라이브 실측 재현). 상태점 UI 가
+    실제로 필요로 하는 것은 `state` 하나뿐이므로 그 키만 남긴다.
+
+    인증된 요청의 응답은 불변 — 축소는 미인증 경로에만 적용한다.
+    """
+    status = app._read_llm_provider_status()
+    state = "unknown"
+    if isinstance(status, dict):
+        state = str(status.get("state") or "unknown")
+    return {"state": state}
+
+
 @router.get("/api/llm/health")
 def get_llm_health(request: Request, force: int = 0, conn=Depends(app.get_conn)) -> JSONResponse:
     """TASK-20260619T014034: LLM provider health(외부요인 제한) 조회 + hybrid active probe.
@@ -38,11 +55,11 @@ def get_llm_health(request: Request, force: int = 0, conn=Depends(app.get_conn))
     """
     if conn is None:
         # conn 획득 실패: probe 트리거 없이 마지막 알려진 상태만 (legacy `except → cheap read` 동치).
-        return JSONResponse(app._read_llm_provider_status())
+        return JSONResponse(_anonymous_provider_status())
     account = app._get_authenticated_account(conn, request)
     if not account:
         # 미인증: probe 트리거 없이 마지막 알려진 상태만.
-        return JSONResponse(app._read_llm_provider_status())
+        return JSONResponse(_anonymous_provider_status())
     try:
         from modules.llm_provider_health import probe_provider
         status = probe_provider(force=bool(force))
@@ -137,27 +154,20 @@ def readyz() -> JSONResponse:
 
 @router.get("/api/session")
 def get_session(request: Request) -> JSONResponse:
+    # api-exposure-hardening (2026-08-11): 미인증 응답은 `authenticated` 판정 하나로 좁힌다.
+    # 종전에는 로그인 전에도 `local_llm_enabled`(로컬 LLM 운용 여부)와 `default_model`(기본 모델)을
+    # 익명에게 노출했다 — 로그인 오버레이가 화면을 덮는 시점이라 UI 가 쓰지 않는 값이고, 프론트의
+    # 모델 라벨은 `state.session?.default_model || state.modelCatalog?.default_model || ...` fallback
+    # 체인이라 부재에 graceful 하다. 로그인 후 initializeWorkspace() 가 인증 상태로 재조회한다.
     local_llm_enabled = app._is_local_llm_available()
     try:
         conn = app._connect_memory()
     except Exception:
-        return JSONResponse(
-            {
-                "authenticated": False,
-                "local_llm_enabled": local_llm_enabled,
-                "default_model": app._resolve_session_default_model(),
-            }
-        )
+        return JSONResponse({"authenticated": False})
     account = app._get_authenticated_account(conn, request)
     if not account:
         conn.close()
-        return JSONResponse(
-            {
-                "authenticated": False,
-                "local_llm_enabled": local_llm_enabled,
-                "default_model": app._resolve_session_default_model(),
-            }
-        )
+        return JSONResponse({"authenticated": False})
     # TASK-0048 후속 fix: /api/session 응답 조립 시 자동으로 빈 대화를 만들지 않는다 (lazy 정책).
     conversation_id = app._repair_current_conversation(
         conn,
@@ -215,27 +225,44 @@ def get_api_vault_options(request: Request) -> JSONResponse:
     필터한다(`_filter_products_for_account_access` 가 제품 목록에 하는 것과 동형) — 선택기에 안
     보이는 모델을 서버가 거부하고, 서버가 거부할 모델이 선택기에 안 보이게 표시·집행을 함께 닫는다.
 
-    비인증 요청은 **필터 전 카탈로그를 그대로** 반환한다(기존 동작 유지): 비인증은 애초에
-    `/api/ask` 가 401 이라 노출로 얻을 것이 없고, 로그인 화면의 카탈로그 프리로드를 깨지 않는다.
-    권한 판정 실패(DB 미가용 등)도 필터 전 목록으로 graceful — 집행은 ask() 게이트가 담당한다
-    (display-permissive · backend-enforced).
+    api-exposure-hardening (2026-08-11): 비인증 요청은 **빈 카탈로그**를 받는다. 종전에는 필터 전
+    전체 목록에 더해 `public_host`(내부 호스트명)·`public_url`·`provider`(bedrock-gateway)까지
+    익명에게 나갔고, 외부 AI 감사가 이를 "인증 없이 공개되는 인프라 정보"로 적발했다(라이브 재현).
+    "비인증은 `/api/ask` 가 401 이라 노출로 얻을 것이 없다" 는 종전 판단은 *데이터* 접근만 본 것이고,
+    LLM 스택·모델 구성·내부 호스트명은 그 자체가 정찰 표면이다.
+
+    회귀 없음의 근거: 미인증 프론트 경로는 auth overlay 가 화면을 덮은 상태에서 loadVaultOptions()
+    를 부르고, 그 실패/공백을 이미 graceful 처리한다(`catch → state.modelCatalog = null`). 로그인
+    직후 initializeWorkspace() 가 인증 상태로 재호출해 선택기를 채운다.
+
+    인증 요청의 응답은 불변 — `model.access.<value>` 권한 필터도 그대로다. 권한 판정 실패(DB 미가용
+    등)는 필터 전 목록으로 graceful — 집행은 ask() 게이트가 담당한다(display-permissive ·
+    backend-enforced).
     """
-    models = list(PUBLIC_API_MODEL_OPTIONS)
+    models: list = []
+    authenticated = False
     conn = None
     try:
         conn = app._connect_memory()
         account = app._get_authenticated_account(conn, request)
         if account:
-            models = app._filter_models_for_account_access(account, models, conn=conn)
+            authenticated = True
+            models = app._filter_models_for_account_access(
+                account, list(PUBLIC_API_MODEL_OPTIONS), conn=conn
+            )
     except Exception:
         # 카탈로그 조회는 화면 부트스트랩 경로 — 권한 필터 실패로 선택기를 비우지 않는다(fail-soft).
-        models = list(PUBLIC_API_MODEL_OPTIONS)
+        # 단 인증 여부를 확정하지 못한 요청에까지 전체 목록을 주지는 않는다(fail-soft ≠ fail-open).
+        if authenticated:
+            models = list(PUBLIC_API_MODEL_OPTIONS)
     finally:
         if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
+    if not authenticated:
+        return JSONResponse({"default_model": None, "models": []})
     return JSONResponse(
         {
             "default_model": API_DEFAULT_MODEL,
