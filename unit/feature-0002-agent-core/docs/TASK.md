@@ -2372,4 +2372,8 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 - [x] §18.8 적대 패널(backend·qa) — **BLOCKING 4 · MAJOR 4 · MINOR 7 전건 흡수**
       (예산 소멸 · char↔line 허위 · 총예산이 FULL 라벨을 거짓말로 · ALSO ATTACHED 날조 보호)
 - [x] 패널이 잡은 거짓 문서 주장 2건 정정(예산 불변 · 회귀 없음)
-- [ ] 배포 + 라이브 실측(정확한 답변에 경고 배너가 사라지는지)
+- [x] 배포 완료(2026-08-11) — PR #1196 merge main `4c7a8f27`, soak 통과, 4서비스 healthy.
+      rebase 1회 후 전량 회귀·뮤테이션 재실행(23/23 KILLED).
+- [x] 배포본 런타임 실증 — 꼬리 근거 3형태 도달 · 예산 소진 · 허위 완전성 0 · 거짓 FULL 0 ·
+      면책 경계 4종 탑재.
+- [ ] 라이브 실측 — 정확한 답변에서 경고 배너가 실제로 사라지는지(다음 실사용 턴).

@@ -1550,3 +1550,7 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 - **재검증**: 패널이 제시한 실패 입력(1줄 minified JSON · 1줄 CSV · 761자 첨부 3~5개 ·
   64KB 상류 절단 · sentinel 폭탄 · 마커 위조 본문 · 한국어 패러프레이즈 초안)을 **그대로 재현해**
   전부 해소 확인. 뮤테이션 24종 중 23 KILLED(1 등가).
+
+## REV-20260811T090000-redteam-attach-excerpt-deploy [SKIPPED:post-deploy-evidence+docs-only] — PASS
+- **Trigger**: 문서만(배포 실증·원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
+- 배포 실증은 MODIFY `CHG-20260811T090000-redteam-attach-excerpt-deploy`. 라이브 대화 실측 미수행.
