@@ -95,3 +95,39 @@ source_of_truth: true
 - Impact: 롤링 창의 버전 스큐 응답이 **캐시에 들어가지 못한다** → 창이 끝나면 자연 수렴. sticky LB 는 창을 좁히는 최적화로 유지. 정상 상태(스탬프 일치)의 캐시 동작·성능은 종전과 동일.
 - Rollback: 4파일 revert(엣지 규칙 복원 포함). 데이터·스키마·API 영향 0.
 - Cross-ref: REVIEW REV-20260728T123000-asset-stamp-cache-integrity · 선행 사고 관측 `feature-0003/docs/test-runs.d/20260728T113000-graph-noise-reduction.md` · feature-0027 P0-E(원 immutable 규칙) · AGENTS.md §13.1 v3.35.1(스탬프 자동 주입) · §13.2.9(배포 단계 격리).
+
+## CHG-20260811T155700-edge-rolling-gate
+- Date: 2026-08-11
+- Related: TASK `20260811T1557-edge-rolling-gate` / REVIEW `REV-20260811T155700-edge-rolling-gate`
+- Trigger: 사용자 보고 "최근 배포 과정 중 서비스가 멈춘다" → 라이브 엣지 로그 실측으로 근본 원인 확정.
+- Root cause: 롤링 게이트가 **앱 레벨**(`/readyz`)까지만 보고 **엣지 레벨 후보 복귀**를 보지 않았다.
+  Caddy passive health(`max_fails 1` + `fail_duration 30s`)가 실패한 upstream 을 30초 격리하는데
+  실측 롤링 간격은 10초 → 두 replica 동시 격리 → `no upstreams available` → 전 요청 503.
+  6시간 창 실측: 배포 6회 × 12~17초 전면 503, 엣지 에러 71건. 그 창의 active health 는 양쪽 `host is up`.
+- Files:
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` — **값은 원복(`fail_duration 30s` 유지)**,
+    대신 이 값이 롤링과 결합된다는 계약을 주석으로 고정. 초안은 3s 로 낮췄으나 적대 검증이
+    "`/livez` 는 통과하면서 특정 요청만 5xx 인 upstream 이 3초마다 재투입된다"(= active health 가
+    못 잡는 장애 유형의 격리가 10배 약화)를 지적했고, 그 트레이드오프를 정당화할 SLO 근거가 없다.
+    결합은 스파인 게이트가 흡수한다.
+  - `bin/deploy-web.sh` — `EDGE_AVAIL_TIMEOUT`/`CADDY_ADMIN_URL` 상수 + `caddy_fail_duration_s()` ·
+    `edge_upstream_fails()` · `wait_edge_available()` 신설. **2층 배선**: `recreate_replica()` 말미
+    = 선제 대기(비차단 — 롤백 경로도 이 함수를 타므로 여기서 끊으면 롤백이 중단된다),
+    `predrain()` = **fail-closed 결정 지점**(상대가 엣지 후보로 복귀하지 않았으면 다음 replica 를
+    내리지 않고 중단, 호출부는 `|| die`). admin 조회는 `timeout` 2겹으로 감싼다(hang 시 배포가
+    flock 을 쥔 채 정지하는 경로 차단). degrade 대기 기준은 **max(repo Caddyfile, 컨테이너 파일) 에 floor 30s**(파일은 '런타임 적용값' 이 아니므로 관측된 최악값 이상을 기다린다). `predrain` 은 **3조건 fail-closed**(상대 존재·상대 ready·상대 엣지 복귀).
+    파싱은 **순수 bash 문자열 연산**
+    (호스트 python3 의존 0 + `printf|grep` 의 pipefail SIGPIPE 오판 함정 회피 — preflight_fileset 선례).
+    `post_deploy_checklist` 에 [5] 무중단 실측 항목 추가(output-only).
+  - `unit/feature-0014-zero-downtime-deploy/tests/test_edge_rolling_gate.py` — 신규 18건.
+  - `pyproject.toml` — testpaths 에 `unit/feature-0014-zero-downtime-deploy/tests` 등재(그동안 이
+    디렉토리는 수집 대상이 아니어서 배포 스파인 불변식을 잠그는 테스트가 0건이었다).
+- Verification: 신규 **39 PASS** · **뮤테이션 17종 전건 KILLED**(각 뮤테이션이 대응 테스트 1건에 정확히 잡힘) · codex 적대 리뷰 P1 3건·P2 3건 전건 반영 · `bash -n` OK · 라이브 Caddy admin
+  응답(`[{"address":"web-a:8000","num_requests":0,"fails":0},…]`)으로 파싱 실측 · 전체 회귀는 `make test`.
+- Impact: 롤링 중 `available upstream 0` 창이 구조적으로 제거된다(엣지 복귀 확인 후에만 다음 replica
+  를 내림). 정상 경로 배포 지연은 `fails==0` 즉시 통과라 **≈0**(격리가 남아 있을 때만 그만큼 대기).
+  응답 shape·인가·스키마·마이그레이션 영향 0.
+- Rollback: deploy-web.sh 함수·배선 revert + testpaths 되돌림(Caddyfile 은 주석만 변경이라 동작 영향 0). 데이터 영향 0.
+- Cross-ref: ANCHOR §1("구조적으로 항상 ≥1 healthy upstream")·§3(사용자는 배포를 알지 못한다) —
+  본 변경은 그 앵커가 **미달성** 상태였음을 드러내고 되돌린 것 · AGENTS.md §16.7 G9(검증면의 사각:
+  차단·가용성 로직의 실측)·G10(재발 클래스 구조 가드).

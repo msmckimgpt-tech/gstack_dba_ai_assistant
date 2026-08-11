@@ -78,6 +78,25 @@ source_of_truth: true
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
 
+## 9. Requested Scope (요청 범위)
+
+원 요청(2026-08-11): "최근 배포 과정 중 사용자들로부터 서비스가 멈춘다는 이슈가 자주 확인되었습니다.
+이전에 무중단 배포를 구성한 것으로 알고 있는데 이와 같은 이슈가 나타나는 근본적인 원인을 분석 후
+대응해주세요."
+
+- [x] **(1) 근본 원인 분석** — 추정이 아니라 라이브 증거로 확정할 것.
+      → 엣지 로그 실측: `no upstreams available` 71건/6h · 503 창 6회 × 12~17초 · duration 전부
+        `lb_try_duration`(5.01s) 소진 · 창 중 active health 는 양쪽 `host is up` · 503 종료가 매 창
+        "먼저 내린 replica 첫 실패 + fail_duration" 과 일치 · 롤링 간격 10초(StartedAt 실측).
+- [x] **(2) 대응 — 원인 제거** — 롤링이 엣지 후보 복귀를 확인하고 미복귀면 중단(fail-closed).
+- [x] **(3) 대응 — 재발 방지** — 그 불변식을 구조 테스트로 잠금(39건) + 그동안 수집조차 되지 않던
+      `feature-0014/tests` 를 testpaths 에 등재.
+- [x] **(4) 적대 검증** — codex P1 3건·P2 3건 전건 반영(hang·게이트 무의미화·소스파일 신뢰·주장범위·
+      설정 인하 대가·테스트 vacuous 구멍).
+- [ ] **(5) 라이브 실증** — 다음 배포 창에서 `no upstreams available` = 0 (수정 전 기준선 = 배포당
+      8~13건). 이것이 "사용자가 겪던 멈춤이 사라졌다" 의 유일한 ground truth.
+
+
 ## 20260711T1137-deploy-flake-hardening — 배포 스파인 flake 하드닝 (사용자 지시 2026-07-11 "나머지 작업 재개")
 
 - [x] preflight_fileset: `docker compose config` stderr 포획 + rc≠0/web-a·b 미검출 시 2s backoff 3회 재시도 + 최종 실패 시 stderr·출력헤더 진단 덤프 (배경: 07-11 배포 6회 중 3회 간헐 실패 — 구코드는 stderr 유실로 진단 불가. 프로덕션 원인은 미확정 — 본 변경은 계측+재시도)
@@ -106,3 +125,48 @@ source_of_truth: true
 - [x] 전체 회귀 **2719 passed / 2 skipped / 0 failed** · ruff All checks passed · `caddy validate` adapt OK
 - [x] 이미지 경로 정합 사전 확인 — Dockerfile `--root /app/web/static` == app `STATIC_DIR`, `COPY unit/feature-0003-agent-web-ui/src /app/web` 로 `static_cache.py` 동봉, `/app/web` 이 런타임 sys.path 에 존재(`perf_metrics` 와 동일 기전, 컨테이너 실측)
 - [ ] POST-DEPLOY 라이브 결정론 검증 — 구 스탬프 → `no-store` / 현 스탬프 → `immutable` / vendor pin → `immutable`
+
+## 20260811T1557-edge-rolling-gate — 롤링이 **엣지 관점에서는** 무중단이 아니던 근본 결함 수정
+
+사용자 보고: "최근 배포 과정 중 사용자들로부터 서비스가 멈춘다는 이슈가 자주 확인된다."
+
+- [x] **근본 원인 확정(라이브 로그 실측, 2026-08-11)** — 엣지가 `no upstreams available` 로 503 을
+      반환한 창이 6시간 안에 **6회**, 각 **12~17초**(에러 로그 71건). 503 응답의 duration 이 전부
+      `5.01s` = `lb_try_duration` 을 다 쓰고 포기. **그 창에서 active health 는 양 replica 모두
+      `host is up`** 이었다 → 원인은 active 가 아니라 **passive 격리**.
+- [x] **기전** — `recreate_replica` 의 게이트가 **컨테이너 내부 `/readyz`**(= 앱이 떴다)까지만 보고
+      **엣지가 그 replica 를 다시 LB 후보로 쓰는지**는 보지 않았다. Caddy 는 실패한 upstream 을
+      `fail_duration`(당시 30s) 동안 후보에서 뺀다. 실측 롤링 간격은 **10초**(web-a 12:39:54 →
+      web-b 12:40:04)이므로, web-a 가 아직 격리 중인 상태에서 web-b 를 내려 **available upstream 0**
+      이 됐다. 503 종료 시각이 매 창마다 "먼저 내린 replica 의 첫 실패 + 30s" 와 일치(12:16:26,
+      12:11:56, 12:40:23)해 기전이 확정됐다.
+- [x] **왜 자동 게이트가 못 잡았나** — soak 는 web-b recreate 가 끝난 **뒤** 시작하고 edge 실패를
+      "일시 blip"(`EDGE_FLAP_MAX`)으로 관용한다. 503 은 격리 타이머로 자연 회복하므로 배포는 매번
+      **성공으로 보고**됐다. `unit/feature-0014-*/tests/` 는 testpaths 밖이라 테스트도 0건이었다 —
+      사용자가 유일한 backstop 이었던 무증상 장애(§16.7 G9).
+- [x] **수정 1 (스파인 게이트, 근본)** — `wait_edge_available` 신설: Caddy admin API
+      `/reverse_proxy/upstreams` 로 upstream 별 `fails==0` 복귀를 확인. 2층 배선 —
+      ① `recreate_replica` 말미 **선제 대기(비차단)**, ② `predrain <target> <other>` 에서
+      **상대의 복귀를 fail-closed 로 확인**하고 미복귀면 배포 중단(기존 replica 가 계속 서빙 =
+      무중단 유지). 중단이 강행보다 항상 낫다 — 강행하면 정확히 그 전면 503 이 재현된다.
+- [x] **수정 2 (Caddyfile 은 값 변경 대신 계약 문서화)** — 초안은 `fail_duration 30s→3s` 였으나
+      적대 검증에서 **실장애 격리를 10배 약화**시킨다는 지적(P2)을 받고 **원복**했다: `/livez` 는
+      통과하면서 특정 요청만 5xx 를 내는 upstream(active health 가 못 잡는 유형)이 3초마다 다시
+      투입된다. 그 트레이드오프를 정당화할 SLO 근거가 없다. 대신 **결합을 스파인이 흡수**하도록
+      두고, 이 값이 롤링과 결합된다는 사실·바꿀 때의 제약(`< EDGE_AVAIL_TIMEOUT`)을 주석으로 고정.
+- [x] **적대 검증 반영 (codex, §18.8.1 경량 경로)** — P1 3건 전건 수정:
+      ① admin 조회가 멈추면 while 이 deadline 을 재검사 못 해 **배포가 flock 을 쥔 채 무기한 정지**
+         → `timeout` 2겹(wget `-T 5` + exec 전체 15s).
+      ② 격리를 관측한 채 timeout 인데 성공 반환 → 다음 replica 를 그대로 내려 원 결함 재현
+         → **관측-timeout 은 실패 반환**, predrain 이 fail-closed 중단.
+      ③ degrade 대기가 repo Caddyfile 만 신뢰 → 이 변경을 처음 배포하는 창에는 **라이브 Caddy 가
+         아직 옛 값**이라 덜 기다림 → **max(repo, 라이브 컨테이너 설정)**, 둘 다 미상이면 30s.
+      P2 3건도 반영(주장 범위 정직 표기 · fail_duration 원복 · 실효하지 않던 fallback 테스트 수정).
+- [x] **수정 3 (회귀 잠금)** — `unit/feature-0014-*/tests/test_edge_rolling_gate.py` **건**(테스트 함수 32 + 파라미터 확장) 신설 +
+      `pyproject.toml` testpaths 등재. G1 배선(recreate·predrain·호출부 `|| die`)·G2 파싱(8케이스)·
+      G3 대기·G4 degrade/hang/라이브값·G5 비차단·G6 예산정합·G7 passive 존치.
+      **뮤테이션 17종 전건 KILLED** — 3라운드 적대 검증마다 추가된 계약까지 포함.
+- [x] 배포 체크리스트 [5] 신설 — 매 배포 후 `caddy logs | grep -c 'no upstreams available'` = 0 확인.
+      "스파인이 성공 보고 = 무중단" 이 아니라는 사실을 상시 표면화.
+- [x] 검증: `bash -n` · 신규 **39 PASS** · **뮤테이션 17종 전건 KILLED** · 라이브 Caddy admin 응답 파싱 실측 · 라이브 Caddy→web-a `/livez` 200 실측(peer probe 경로 확인)
+- [ ] POST-DEPLOY 라이브 실측 — 배포 창의 `no upstreams available` = **0** 확인(수정 전 12~17초 → 0)

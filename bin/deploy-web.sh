@@ -71,6 +71,9 @@ PREDRAIN_TIMEOUT="${DEPLOY_WEB_PREDRAIN_TIMEOUT:-90}"
 SOAK_SECONDS="${DEPLOY_WEB_SOAK:-90}"
 EDGE_FLAP_MAX="${DEPLOY_WEB_EDGE_FLAP_MAX:-4}"   # soak 창 내 비연속 edge 실패 누적 임계(하드닝 2026-07-11, 패널 MINOR-1)
 IMAGE_KEEP="${DEPLOY_WEB_IMAGE_KEEP:-3}"
+EDGE_AVAIL_TIMEOUT="${DEPLOY_WEB_EDGE_AVAIL_TIMEOUT:-60}"   # 엣지 후보 복귀 대기 상한(2026-08-11, no-upstreams-503 근본수정)
+EDGE_DEGRADE_FLOOR="${DEPLOY_WEB_EDGE_DEGRADE_FLOOR:-30}"   # admin 조회 불가 시 최소 대기(관측된 최악 fail_duration)
+CADDY_ADMIN_URL="${DEPLOY_WEB_CADDY_ADMIN_URL:-http://127.0.0.1:2019}"  # Caddy admin API(컨테이너 loopback 전용)
 
 # feature-0020: 워커·gateway 롤아웃 상수
 AGENT_IMAGE_REPO="mysql-ai-agent"                # insight/ask/ops 워커 공용 이미지(동일 Dockerfile build-once)
@@ -437,13 +440,34 @@ wait_ready() {  # $1 = svc, $2 = expected sha → 0 성공
   return 1
 }
 
-predrain() {  # $1 = recreate 대상 svc, $2 = 상대(살아있어야 함) svc
+predrain() {  # $1 = recreate 대상 svc, $2 = 상대(살아있어야 함) svc → 1 = 내리면 안 됨(중단)
   local target="$1" other="$2" deadline=$(( SECONDS + PREDRAIN_TIMEOUT )) n
   step "pre-drain: $other 건강 확인 + $target 진행 스트림 종료 대기"
   [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] pre-drain skip"; return 0; }
-  # 상대 replica 가 살아있어야 무중단. (초기 배포로 상대가 아직 없으면 skip.)
-  if replica_cid "$other" >/dev/null 2>&1 && [ -n "$(replica_cid "$other")" ]; then
-    replica_readyz "$other" >/dev/null 2>&1 || warn "$other 가 ready 아님 — $target recreate 시 순간 단일 upstream 위험."
+  # ⚠ **fail-closed 결정 지점 3단** — "지금 $target 을 내려도 되는가" 에 답하는 자리.
+  # 세 조건이 모두 성립해야 내린다. 어느 하나라도 아니면 **내리지 않고 중단**한다 —
+  # 중단하면 $target(구버전)이 계속 서빙하므로 무중단이 유지되지만, 강행하면 upstream 이 0 이 된다.
+  # (초기 배포 = 양 replica 부재는 main 이 별도 분기로 처리하므로 여기 오지 않는다.
+  #  여기서 상대가 없다는 것은 "한쪽만 살아 있는 비정상 상태" 이고, 그 유일한 replica 를
+  #  내리는 것이 정확히 전면 다운이다.)
+  local other_cid
+  other_cid="$(replica_cid "$other" 2>/dev/null || true)"
+  if [ -z "$other_cid" ]; then
+    err "$other 컨테이너가 없다 — $target 이 유일 replica 다. 지금 내리면 upstream 0(전면 다운)."
+    err "  복구: docker compose -f docker-compose.yml up -d --no-deps $other  → 양 replica 확보 후 재실행(멱등)."
+    return 1
+  fi
+  if ! replica_readyz "$other" >/dev/null 2>&1; then
+    err "$other 가 ready 아님 — 지금 $target 을 내리면 healthy upstream 이 0 이 된다. 중단."
+    err "  진단: docker compose -f docker-compose.yml logs --tail 50 $other"
+    return 1
+  fi
+  # 앱은 살아 있어도 엣지 passive 격리 중이면 LB 후보가 아니다(= 2026-08-11 사고 기전).
+  if ! wait_edge_available "$other"; then
+    err "$other 가 엣지 후보로 복귀하지 않았다 — 지금 $target 을 내리면 available upstream 0(전면 503)."
+    err "  진단: docker compose -f docker-compose.yml exec -T caddy wget -qO- $CADDY_ADMIN_URL/reverse_proxy/upstreams"
+    err "  현재 상태 유지(=$target 이 계속 서빙) 후 원인 해결하고 재실행(멱등)."
+    return 1
   fi
   # 대상의 진행 중 SSE/CSV 스트림이 끝날 때까지 대기(fetch/getReader 는 자동재접속 없음).
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -455,11 +479,169 @@ predrain() {  # $1 = recreate 대상 svc, $2 = 상대(살아있어야 함) svc
   warn "$target pre-drain timeout(${PREDRAIN_TIMEOUT}s) — 진행 스트림이 남았지만 계속 진행(해당 스트림은 끊김)."
 }
 
+# ── 엣지(Caddy) 후보 복귀 게이트 (2026-08-11 — `no upstreams available` 503 근본수정) ──
+# `wait_ready` 는 **컨테이너 내부** /readyz 만 본다. 그것은 "앱이 떴다" 이지 "엣지가 이 replica 를
+# 다시 LB 후보로 쓴다" 가 아니다. Caddy 는 passive health(max_fails/fail_duration)로 방금 실패한
+# upstream 을 일정 시간 후보에서 제외하는데, 그 격리가 풀리기 전에 상대 replica 를 내리면
+# **available upstream 0** 이 되어 전 요청이 lb_try_duration 소진 후 503 을 받는다.
+#
+# 라이브 실측(2026-08-11): 롤링 간격 ≈10s < 당시 fail_duration 30s → 배포 1회당 12~17초 전면 503,
+# 6시간 창에 엣지 에러 `no upstreams available` 71건. 그 창에서 active health 는 양 replica 모두
+# `host is up` 이었다(= passive 격리가 유일 원인). 503 종료 시각이 매번 "먼저 내린 replica 의 첫
+# 실패 + fail_duration" 과 일치.
+#
+# **게이트 배치 — 두 층 (적대 검증 P1 반영)**:
+#   (a) `recreate_replica` 말미 — 방금 올린 replica 의 복귀를 **선제 대기**(비차단). 롤백 경로도
+#       이 층을 타므로 롤백이 게이트 때문에 멈추지 않는다(롤백은 완주가 우선).
+#   (b) `predrain <target> <other>` — **다음 replica 를 내리기 직전**, 상대(`other`)가 엣지 후보로
+#       복귀했는지 확인하고 아니면 **배포를 중단**한다(fail-closed). 여기가 결정 지점인 이유:
+#       "내려도 되는가" 라는 질문에 답하는 자리이고, 중단하면 기존 replica 가 계속 서빙해
+#       **무중단이 유지**되지만 강행하면 정확히 우리가 고치려는 전면 503 이 재현되기 때문이다.
+#       초판은 (a) 만 두고 비차단이었는데, 그러면 timeout 후 그대로 다음 replica 를 내려
+#       게이트가 무의미해진다(적대 검증 P1 지적 — 정확).
+# 판정 순서:
+#   1순위 Caddy admin API 의 upstream 별 `fails` 카운터(정확·즉시)
+#   2순위 조회 불가 시 fail_duration 만큼 고정 대기(degrade). 이때 기준값은 **실행 중 Caddy 의
+#         설정과 repo 소스 중 큰 값** — 배포로 Caddyfile 이 바뀌는 창에서는 라이브가 아직 옛 값
+#         이므로 repo 값만 믿으면 덜 기다린다(적대 검증 P1 지적).
+# ⚠ **주장 범위 (정직 표기)**: 게이트는 두 축을 본다 — ① passive fail 카운터 해제(`fails==0`)
+#   ② **Caddy 네트워크에서의 실도달**(`edge_peer_live` — Caddy 컨테이너에서 그 replica 의
+#   health_uri 를 직접 200 확인, active health probe 와 동일 조건). ①만 보면 active health 가
+#   제외한 replica 를 복귀로 오판한다(적대 검증 P1). 남는 갭: Caddy 내부 healthy 플래그 자체는
+#   admin API 가 노출하지 않으므로 "방금 실패를 기록해 아직 unhealthy 마킹 중이나 지금은 200"
+#   인 최대 `health_interval`(2s) 창은 우리 폴링(1s)이 흡수한다.
+caddy_fail_duration_s() {  # 실행 중 Caddy 설정과 repo 소스 중 **큰** fail_duration(초). 미상이면 30.
+  local from_file from_live v out=0
+  from_file="$(sed -n 's/^[[:space:]]*fail_duration[[:space:]]\{1,\}\([0-9]\{1,\}\)s.*/\1/p' "$CADDYFILE" 2>/dev/null | head -1 || true)"
+  # 라이브 값 — 배포가 Caddyfile 을 바꾸는 창에서는 컨테이너가 아직 옛 설정으로 돌고 있다.
+  from_live="$(timeout -k 5 10 "${DC[@]}" exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null \
+    | sed -n 's/^[[:space:]]*fail_duration[[:space:]]\{1,\}\([0-9]\{1,\}\)s.*/\1/p' | head -1 || true)"
+  for v in "$from_file" "$from_live"; do
+    case "$v" in ''|*[!0-9]*) continue ;; esac
+    [ "$v" -gt "$out" ] && out="$v"
+  done
+  [ "$out" -gt 0 ] || out=30      # 양쪽 다 미상 → 관측된 최악값(30s)을 보수적으로 가정
+  printf '%s' "$out"
+}
+
+edge_peer_live() {  # $1 = svc → 0 = **Caddy 네트워크에서** 그 replica 의 health_uri 가 200
+  # Caddy 의 active health probe 를 그대로 재현한다 — 같은 컨테이너·같은 경로·같은 Host·같은 TLS
+  # 조건. passive `fails` 만 보면 active health 가 제외한 replica 를 "복귀" 로 오판할 수 있다
+  # (적대 검증 P1): 컨테이너 내부 /readyz 는 200 이고 fails 도 0 인데 Caddy→replica 도달이
+  # 끊긴 상태가 성립하며, 그 상대를 믿고 다음 replica 를 내리면 다시 upstream 0 이 된다.
+  # Host 는 실 트래픽과 동일하게 공개 호스트로 — 앱 TrustedHost 가 내부 서비스명을 400 거부한다.
+  # ⚠ **http fallback 을 두지 않는다** — Caddyfile 의 transport 는 `tls` 고정이라 엣지는 https 로만
+  # 붙는다. web 이 TLS 없이 같은 포트에 HTTP 로 떴다면 Caddy 는 그 replica 를 제외하는데, http 로
+  # 폴백하는 probe 는 200 을 받아 **false-pass** 한다(적대 검증 P1, 4R).
+  # 한계와 그 전제(5R 적대 검증 — 수용된 잔여 리스크): caddy 이미지의 busybox wget 은 CA 를
+  # 지정할 수 없어 `--no-check-certificate` 로 붙는다. 즉 이 probe 는 "TLS 로 도달해 200 을
+  # 받는가" 까지이고 CA/SAN 검증은 하지 못한다. 그래서 "Caddy 는 CA 검증 실패로 제외했는데
+  # probe 만 200" 인 false-pass 가 이론상 가능하다.
+  #   그 시나리오가 성립하려면 **replica 마다 다른 leaf** 를 제시해야 하는데, 이 구성은
+  #   `x-web-extra` 가 양 replica 에 **동일한 `../artifacts/certs` 마운트 + 동일 WEB_TLS_CERT_FILE**
+  #   을 주므로 성립하지 않는다(둘은 항상 같은 cert 를 제시한다). cert 를 교체했는데 Caddy 가
+  #   옛 CA 를 들고 있으면 **양쪽이 동시에** 제외되어 배포 이전에 이미 전면 503 이고, 그 축은
+  #   `preflight_tls` 의 (2) rootCA 검증·(4) 컨테이너 CA 대조가 배포 시작 전에 ABORT 시킨다.
+  #   실제로 한쪽만 TLS 도달 불가가 되는 경우(예: 그 replica 가 cert 를 못 읽어 평문 기동)는
+  #   http 폴백이 없으므로 handshake 실패 → probe 실패로 이 게이트가 잡는다.
+  #   ⚠ 전제(단일 cert 소스 공유)가 깨지면 위 논거가 무너진다 —
+  #     `test_edge_rolling_gate.py::test_g10_replicas_share_a_single_cert_source` 가 그것을 잠근다.
+  local svc="$1"
+  timeout -k 5 15 "${DC[@]}" exec -T caddy wget -q -T 3 --no-check-certificate \
+    --header="Host: $WEB_PUBLIC_HOST" -O /dev/null "https://$svc:8000/livez" 2>/dev/null
+}
+
+edge_upstream_fails() {  # $1 = svc → 그 upstream 의 passive fail 카운터. 조회·파싱 불가 시 빈 출력.
+  local svc="$1" json rest obj v
+  # `timeout` 2겹: wget 자체(-T)와 docker exec 전체. 어느 한쪽이 응답 없이 멈추면 while 루프가
+  # deadline 을 재검사하지 못해 **배포가 flock 을 쥔 채 무기한 정지**한다(적대 검증 P1 지적).
+  json="$(timeout -k 5 15 "${DC[@]}" exec -T caddy wget -q -T 5 -O- "$CADDY_ADMIN_URL/reverse_proxy/upstreams" 2>/dev/null || true)"
+  [ -n "$json" ] || return 0
+  # 순수 bash 문자열 연산으로 파싱한다 — 호스트 python3 의존을 만들지 않고, `printf | grep`
+  # 파이프라인이 pipefail 하에서 SIGPIPE(141)로 오판되던 기존 함정(preflight_fileset 주석)도 피한다.
+  # 응답 형식: [{"address":"web-a:8000","num_requests":N,"fails":M},...]
+  rest="${json#*\"${svc}:8000\"}"
+  [ "$rest" = "$json" ] && return 0            # 해당 upstream 미검출(설정 변경 등) → degrade
+  obj="${rest%%\}*}"                            # 같은 객체 범위로 한정(다른 upstream 의 fails 오독 방지)
+  case "$obj" in *'"fails":'*) : ;; *) return 0 ;; esac
+  v="${obj#*\"fails\":}"
+  v="${v#"${v%%[![:space:]]*}"}"                # 선행 공백 제거(compact JSON 이 아닌 경우 방어)
+  v="${v%%[!0-9]*}"                             # 선행 숫자만
+  [ -n "$v" ] && printf '%s' "$v"
+  return 0
+}
+
+wait_edge_available() {  # $1 = svc → 0 = 복귀 확인(또는 게이트 무의미), 1 = **미확인**(호출자가 판단)
+  local svc="$1" deadline f probed=0 w cid ps_rc=0
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] wait_edge_available $svc skip"; return 0; }
+  # caddy 실존 확인 — **조회 실패와 "정말 없음" 을 구분**한다. 둘을 빈 문자열로 합치면 일시적
+  # docker stall 이 게이트 우회(즉시 성공)로 둔갑한다(적대 검증 P2 지적).
+  cid="$(timeout -k 5 15 "${DC[@]}" ps -q caddy 2>/dev/null)" || ps_rc=$?
+  if [ "$ps_rc" -eq 0 ] && [ -z "$cid" ]; then
+    warn "caddy 미기동 — 엣지가 없으므로 '무중단' 개념 자체가 성립하지 않는다(서비스는 이미 중단 상태). 게이트 skip 후 진행하되, 롤아웃 뒤 caddy 기동을 확인할 것."
+    return 0
+  fi
+  if [ "$ps_rc" -ne 0 ]; then
+    warn "caddy 상태 조회 실패(rc=$ps_rc) — '미기동' 으로 단정하지 않고 degrade 대기로 진행한다."
+  fi
+  step "엣지 후보 복귀 대기: $svc (Caddy passive 격리 해제 확인)"
+  deadline=$(( SECONDS + EDGE_AVAIL_TIMEOUT ))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    f="$(edge_upstream_fails "$svc")"
+    [ -n "$f" ] || break                        # 조회 불가 → degrade 경로
+    probed=1
+    if [ "$f" -eq 0 ] 2>/dev/null; then
+      # passive 격리 해제(fails=0) **와** active 축(Caddy→replica 실도달)을 모두 본다.
+      if edge_peer_live "$svc"; then
+        log "  $svc 엣지 후보 복귀 확인(fails=0 + Caddy→$svc /livez 200)"; return 0
+      fi
+      log "  $svc fails=0 이나 Caddy→$svc /livez 미응답 — active health 제외 상태로 보고 대기"
+    else
+      log "  $svc 엣지 passive fails=$f — 격리 해제 대기"
+    fi
+    sleep 1
+  done
+  if [ "$probed" -eq 0 ]; then
+    # 조회 자체가 불가 — 관측이 없으니 "복귀했다"고 단정할 수 없다. 설정 파일에서 읽은 값만큼
+    # 기다린 뒤 **확인됨이 아니라 degrade 성공**으로 처리한다.
+    #
+    # ⚠ **floor 30s** — 파일에서 읽은 값은 "Caddy 프로세스가 지금 적용 중인 값" 이 아니다.
+    # bind mount 파일이 이미 새 값으로 갱신됐어도 프로세스는 reload 전까지 옛 값으로 돈다
+    # (적대 검증 P1 지적). admin API 를 못 읽는 상황에서는 런타임 값을 확인할 수단 자체가 없으므로,
+    # **관측된 최악값(30s) 이상**을 기다린다. 덜 기다린 대가는 전면 503 이고, 더 기다린 대가는
+    # 배포 30초다 — 비대칭이 명백하다.
+    w="$(caddy_fail_duration_s)"
+    [ "$w" -lt "$EDGE_DEGRADE_FLOOR" ] && w="$EDGE_DEGRADE_FLOOR"
+    w=$(( w + 2 ))
+    warn "Caddy admin API($CADDY_ADMIN_URL) 조회 불가 — 런타임 fail_duration 확인 불가로 ${w}s 고정 대기(floor=${EDGE_DEGRADE_FLOOR}s). 정확도↓·안전성 유지."
+    sleep "$w" || true
+    # 대기만 하고 통과시키면 **active 축이 통째로 우회**된다(적대 검증 P1, 4R): admin 조회는
+    # 실패하는데 Caddy→replica 연결도 끊긴 상태가 성립하고, 그 상대를 믿고 다음 replica 를 내리면
+    # 다시 upstream 0 이다. admin 실패와 exec 실패는 서로 다른 고장이므로 probe 는 여전히 유의미하다.
+    if edge_peer_live "$svc"; then
+      log "  $svc degrade 대기 후 Caddy→$svc /livez 200 확인."
+      return 0
+    fi
+    warn "$svc degrade 대기 후에도 Caddy→$svc /livez 미응답 — 복귀로 단정하지 않는다."
+    return 1
+  fi
+  # 격리를 **실제로 관측**했는데 상한까지 안 풀렸다 — 여기서 진행하면 게이트가 방지하려던 전면
+  # 503 을 그대로 재현한다. 판단은 호출자에게 넘긴다(predrain 은 중단, recreate 말미는 경고).
+  warn "$svc 엣지 후보 복귀가 ${EDGE_AVAIL_TIMEOUT}s 내 확인되지 않음(마지막 fails=${f:-?})."
+  return 1
+}
+
 recreate_replica() {  # $1 = svc, $2 = expected sha
   local svc="$1" want="$2"
   step "recreate $svc → $want (one-at-a-time)"
   run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$svc" || return 1
   wait_ready "$svc" "$want" || { err "$svc 가 ${READY_TIMEOUT}s 내 ready+correct-commit 실패."; return 1; }
+  # 선제 대기(비차단). 앱 ready 와 엣지 후보 복귀는 다른 층이라 여기서 미리 기다려 두면 다음
+  # predrain 이 즉시 통과한다. **여기서 실패해도 배포를 끊지 않는다** — 이 replica 는 이미 올라와
+  # 있고, 위험한 것은 "다음 replica 를 내리는 것" 이라 그 판단은 predrain 이 fail-closed 로 한다
+  # (롤백 경로도 이 함수를 타므로 여기서 끊으면 롤백이 중단된다).
+  wait_edge_available "$svc" || warn "$svc 엣지 복귀 미확인 — 다음 replica 를 내리기 전 predrain 이 재확인한다."
+  return 0
 }
 
 # ── 공개 edge 검증 (Caddy 경유) ────────────────────────────────────────────────
@@ -820,7 +1002,14 @@ post_deploy_checklist() {
      하드 리프레시(Ctrl+F5) 안내 — stale JS 로 구 동작이 관측되는 것을 방지.
  [4] 실 사용자 표면 검증: 백엔드 API 뿐 아니라 사용자가 실제 쓰는 경로(UI 업로드/클릭 등)를
      라이브 배포본에서 PB-0008 로 검증한다 (백엔드 fetch 만 타면 client-only 결함을 놓친다).
- [5] 완료 보고: [1]~[4] 통과 후에만 "배포·검증 완료"를 사용자에게 보고한다.
+ [5] 무중단 실측(2026-08-11 신설): 이번 배포 창에 엣지가 실제로 무중단이었는지 확인한다.
+     배포 스크립트의 soak 는 blip 을 관용하므로 "성공 보고 = 무중단" 이 아니다.
+       docker compose -f docker-compose.yml logs caddy --since 10m \
+         | grep -c 'no upstreams available'      # 기대 0
+     0 이 아니면 롤링이 엣지 후보 복귀보다 빨랐다는 뜻 — 사용자에게는 그 시간만큼 전면 503
+     이었다. bin/deploy-web.sh 의 wait_edge_available 로그와 Caddyfile 의 fail_duration 을
+     함께 확인한다.
+ [6] 완료 보고: [1]~[5] 통과 후에만 "배포·검증 완료"를 사용자에게 보고한다.
 ================================================================================
 CKL
 }
@@ -912,15 +1101,22 @@ main() {
 
     step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
     # 첫 배포(둘 다 없음)면 둘 다 올림. 아니면 하나씩.
-    if [ -z "$(replica_cid web-a)" ] && [ -z "$(replica_cid web-b)" ]; then
+    # ⚠ **조회 실패와 "정말 없음" 을 구분한다** — 둘을 빈 문자열로 합치면 일시적 compose 조회
+    # 실패가 "초기 배포" 로 오인되어 **양 replica 를 동시에 recreate** 한다(= 전면 다운).
+    # `if` 조건 안이라 set -e 도 막아주지 않는다(적대 검증 P1, 4R).
+    _cid_a="$(replica_cid web-a)" || die "web-a 컨테이너 조회 실패 — 상태 불명으로 롤링을 시작하지 않는다(동시 recreate 위험). docker/compose 상태 확인 후 재실행."
+    _cid_b="$(replica_cid web-b)" || die "web-b 컨테이너 조회 실패 — 상태 불명으로 롤링을 시작하지 않는다(동시 recreate 위험). docker/compose 상태 확인 후 재실행."
+    if [ -z "$_cid_a" ] && [ -z "$_cid_b" ]; then
       log "초기 배포 — web-a, web-b 동시 기동."
       run "${DC_PROD[@]}" up -d --no-deps --no-build web-a web-b || die "초기 web 기동 실패."
       wait_ready web-a "$TARGET_SHA" || die "web-a 초기 ready 실패."
       wait_ready web-b "$TARGET_SHA" || die "web-b 초기 ready 실패."
     else
-      predrain web-a web-b
+      # predrain 은 fail-closed 게이트다(상대가 엣지 후보로 복귀했는가) — 실패 시 어떤 replica 도
+      # 내리지 않고 중단한다. 현 상태(구버전 2 replica)가 그대로 서빙되므로 사용자 영향 0.
+      predrain web-a web-b || die "web-a 를 내릴 수 없다(상대 web-b 가 엣지 후보 아님) — 배포 중단, 현 상태 유지."
       recreate_replica web-a "$TARGET_SHA" || die "web-a 배포 실패 — web-b(OLD) 가 계속 서빙 중. 수동 확인."
-      predrain web-b web-a
+      predrain web-b web-a || die "web-b 를 내릴 수 없다(상대 web-a 가 엣지 후보 아님) — 배포 중단. web-a 는 이미 $TARGET_SHA, web-b 는 구버전으로 **혼합 서빙 중**(expand/contract 로 안전, CONVENTIONS §12). 원인 해결 후 재실행(멱등)."
       recreate_replica web-b "$TARGET_SHA" || { err "web-b 배포 실패 — web-a(NEW) 가 서빙 중. web-b 만 롤백/재시도 권장."; auto_rollback "$TARGET_SHA"; exit 1; }
     fi
 
