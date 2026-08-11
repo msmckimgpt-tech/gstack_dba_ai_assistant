@@ -52,3 +52,24 @@
 대화의 파일이며 admin `conversation.attachment.read.any` 로 **정상 접근**된 것이다(라우트가 own/any
 권한을 강제 — 접근 경계 결함 아님). 올바른 원본으로 덮었으나 버전 체인에 그 버전이 남아 있고,
 #3 의 BLOCK 은 오염 탓이라 측정으로 세지 않는다.
+
+---
+
+## 후속 측정 (잔여 2건 수정 배포 `d7fca5fe` 후, 2026-08-11)
+
+`FR-redteam-digest-lacks-prior-attachment-version` · `FR-redteam-verify-pass-ignores-window-rule`
+수정 배포 뒤 **원 실패 시나리오를 그대로** 반복했다 — 같은 대화(다중 첨부 4건 + probe_a 재업로드),
+같은 문구("파일 전체 내용을 끝까지 확인해서, 직전 버전 대비 무엇이 바뀌었는지 정확히 알려줘").
+
+| # | run | 조건 | red-team |
+|---|---|---|---|
+| 1 | `20260807040816-3a3b6f52` | 수정 전 | `revise · 1 block · revise_failed` |
+| 2 | `20260811025604-5386c583` | 앵커링 `4c7a8f27` | `revise · 1 block` |
+| 3 | `20260811031709-7f1ff22c` | 예산수정 `649d9b03`(측정 오염) | `revise · 1 block` |
+| 4 | `20260811032010-7da1b285` | 예산수정, 격리 조건 | `pass · 0 block` |
+| 5 | `20260811034406-480a42a6` | 잔여 2건 수정 `d7fca5fe`, **원 시나리오** | **`pass · 0 block · resolved`** |
+
+답변도 정확했다 — 맨 끝 1줄 추가를 diff 로 제시하고 "파일의 마지막(126번 줄)" 을 명시했다.
+verify 패스도 결함 0(선행 런은 이 축에서 honesty BLOCK 을 냈다).
+
+**원 마찰과 그 잔여 2건이 모두 라이브에서 소멸했다.**

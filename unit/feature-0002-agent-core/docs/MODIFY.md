@@ -1715,3 +1715,12 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
   마지막) 재현에서 VERSION CHANGE 블록 + probe_a 본문 + 전 파일 고지 동시 성립 확인.
 - **위험등급**: Major(리뷰어 evidence·프롬프트). 신규 권한·스키마·엔드포인트 변경 0.
 - **Cross-ref**: `CHG-20260811T110000-redteam-excerpt-budget` · 원장 R1·R2 항목.
+
+## CHG-20260811T150000-version-evidence-deploy 잔여 2건 배포 + 라이브 재측정 종결 (문서만)
+- **배포**: PR #1208 merge main `d7fca5fe` → `make deploy-web` 전체 스코프, soak 통과.
+- **라이브 재측정(원 실패 시나리오 그대로)**: run `20260811034406-480a42a6` =
+  **`verdict=pass · 0 block · unresolved=0 · resolved`** → 경고 배너 없음. 답변도 정확
+  (맨 끝 1줄 추가를 diff 로 제시, 126번 줄 명시). verify 패스 결함 0.
+- **원장**: `FR-redteam-digest-lacks-prior-attachment-version` ·
+  `FR-redteam-verify-pass-ignores-window-rule` → **`fixed:deployed:verified`**.
+- **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260811T140000-redteam-version-evidence`.
