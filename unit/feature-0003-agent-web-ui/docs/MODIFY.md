@@ -3277,3 +3277,30 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/verify_attach_version_action_align.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`,
   `docs/reviews/20260811T1300Z-ux-design.md`, `docs/test-runs.d/20260811T1200-attach-version-action-align.md`.
 - Timestamp: 2026-08-11T13:00:00+09:00
+
+## CHG-20260811T1830-ai-claude-api-exposure-hardening — 익명 API 표면 축소 + 엣지 보안 헤더 + 데이터플레인 RO 계정
+
+- Trigger: 사용자 보고 — 외부 AI(codex, root 계정)의 무인증 라이브 API 감사 결과 검증·대응 요청.
+- 판정: 지적 9건 중 8건 사실, 1건(`DB 읽기 전용 보장 없음`)은 **진단 오판·처방 유효**. 감사자가 로컬
+  코드를 못 보는 제약 아래 있어 `sql_guard` 의 sqlglot AST allowlist(fail-closed)를 알 수 없었으나,
+  `DB_USER=root` 폴백이 실제로 살아 있어 DB 층 최소권한 처방 자체는 옳았다.
+- 변경:
+  - `src/routers/system.py` — 미인증 응답 축소 3종. `/api/session` → `{"authenticated": false}`,
+    `/api/llm/health` → `{"state": ...}`(신설 `_anonymous_provider_status()`),
+    `/api/api-vault/options` → `{"default_model": null, "models": []}`. **인증 응답 불변**.
+    아울러 `api-vault/options` 의 예외 경로가 fail-soft 를 넘어 **fail-open**(DB 예외 시 전체 카탈로그
+    반환)이던 것을 인증 확정 시에만 되돌리도록 좁혔다.
+  - `unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile` — `X-Content-Type-Options`·
+    `X-Frame-Options`·`Referrer-Policy`·`Permissions-Policy`·`-Server` 일괄 부착 + CSP **Report-Only**.
+    **HSTS 는 의도적 제외** — `/trust/*` 평문 HTTP CA 번들 배포(호스트 단위 HSTS 는 경로 예외 불가)를
+    깨뜨리고 브라우저 캐시라 롤백이 즉시 반영되지 않는다.
+  - `docs/SECURITY.md` — §7 allowlist 에 익명 3종 등재(축소 응답 명시) + §7.3(drift·외부 노출 실측·
+    codex 지적 중 기각분) + §7.4(데이터플레인 RO 계정) 신설. §7.2 의 조건부 TODO 가 **이미 전제가
+    깨진 미결 항목**임을 경고 블록으로 표기.
+  - `tests/test_anonymous_surface_hardening.py` (신규) — 미인증 축소 + 인증 불변 + fail-open 차단 7건.
+- 운영 조치(코드 외): `bin/agent-ro-bootstrap.sh` 로 `agent_ro` 프로비저닝 + `.env.mysql` 자격증명 설정.
+  권한 경계 5축 실측 검증 완료. **효력은 컨테이너 재시작 시점부터**.
+- 검증: 신규 7 PASS · `test_di_seam_p5b` 31 PASS · pytest 전량 EXIT=0(사전 실패 1건은 main baseline
+  동일 재현 확인) · `caddy validate` adapt 성공 · `agent_ro` 5축 실측.
+- 미조치: 공인 IP 노출 유지·차단은 서비스 중단 수반 → 사용자 결정 대기. 배포 미수행.
+- Timestamp: 2026-08-11T18:30:00+09:00

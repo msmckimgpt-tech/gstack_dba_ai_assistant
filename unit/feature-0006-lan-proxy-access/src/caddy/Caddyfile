@@ -20,6 +20,37 @@ http://{$WEB_PUBLIC_HOST}, :80 {
 https://{$WEB_PUBLIC_HOST}, :443 {
 	tls {$WEB_TLS_CERT_FILE} {$WEB_TLS_KEY_FILE}
 
+	# api-exposure-hardening (2026-08-11): 브라우저 보안 헤더. 외부 AI(codex) 의 무인증 API 감사가
+	# "로그인 입력을 받는 페이지에 주요 보안 헤더가 하나도 없다" 를 적발했고 라이브 실측으로 재현했다
+	# (루트 200 응답에 nosniff·frame-ancestors·Referrer-Policy 전무). 엣지에서 전 응답에 일괄 부착한다 —
+	# 앱 층 개별 부착(첨부·미디어 응답의 nosniff)은 HTML 문서 응답을 덮지 못했다.
+	#
+	# HSTS 는 의도적으로 제외한다. 위 http:// 블록의 `/trust/*` 는 사내 Root CA 미설치 상태의 테스터가
+	# TLS 경고 없이 번들을 받도록 **평문 HTTP 로 서빙하는 설계**(TASK-20260617T083954)인데, HSTS 는
+	# 호스트 단위로 걸려 경로 예외를 둘 수 없다 — 한 번이라도 HTTPS 응답을 받은 브라우저는 이후
+	# `http://<host>/trust/` 를 HTTPS 로 강제 업그레이드해 CA 신뢰 부트스트랩 경로가 막힌다. 게다가
+	# HSTS 는 브라우저에 캐시되어 롤백이 즉시 반영되지 않는다. CA 배포 채널을 HTTP 외로 옮긴 뒤
+	# 별 cycle 에서 함께 결정한다.
+	header {
+		# MIME 스니핑 차단 — 업로드/첨부 응답에만 있던 것을 전 응답으로 확장.
+		X-Content-Type-Options nosniff
+		# 클릭재킹 차단. 정적 화면 3종(index/admin/share) 모두 iframe 미사용(실측 0건)이라 안전.
+		X-Frame-Options DENY
+		# Referer 누출 축소 — 외부로는 origin 만, 다운그레이드 시 미전송.
+		Referrer-Policy strict-origin-when-cross-origin
+		# 미사용 강력 기능 비활성(기능 회귀 없음 — 카메라/마이크/위치 사용처 0).
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+		# 서버 구현 노출 축소(uvicorn 버전 정찰 표면).
+		-Server
+	}
+
+	# CSP 는 Report-Only 로 먼저 배포한다 — enforce 로 바로 켜면 PixiJS 그래프·mermaid 렌더가
+	# blob/worker 를 쓰는 경로에서 조용히 깨질 수 있다(헤드리스로 관측 안 되는 부류). 화면 3종은
+	# inline <script> 0건·on*= 핸들러 0건이라 script-src 는 'self' 로 충분하나, style= 속성이
+	# 있어(admin 43건) style-src 는 'unsafe-inline' 이 필요하다. 외부 origin 은 Bunny Fonts 뿐.
+	# 위반 리포트를 관측한 뒤 다음 cycle 에서 enforce 로 승격한다.
+	header Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.bunny.net; font-src 'self' data: https://fonts.bunny.net; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+
 	# feature-0026 (M6): edge access log — 계측 사각 B2(엣지 QPS/상태코드/업스트림 지연 무기록) 해소.
 	# stdout(JSON) → docker json-file 로그(20m×5 rotate, compose 전역 상한)로 수집 — 별도 볼륨/파일 없음.
 	# 요청 지연은 duration 필드로 사후 분석(bin/perf-snapshot.sh 소비).

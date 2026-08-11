@@ -117,6 +117,9 @@ ai_read_priority: 4
 | `/api/ai/guide` | GET | anonymous | AI 학습 가이드라인 (`static/ai-api-guide.md`, static contract) | feature-0023 api-discovery |
 | `/api/ai/openapi.json` | GET | anonymous | 큐레이션 OpenAPI 3.1 스펙 (conversation-only, 관리 제외, 수기 정본·코드젠용) | feature-0023 api-discovery-polish (SEC-20260724) |
 | ~~`/openapi.json`·`/docs`·`/redoc`~~ | GET | **비활성화** | FastAPI 기본 anonymous 노출(admin 포함 전체 스키마) → SEC-20260724 로 disable. 대체: 위 큐레이션 발견 + admin-gated `/api/admin/openapi.json`(`console.access`) | feature-0023 api-discovery |
+| `/api/session` | GET | anonymous (**축소 응답**) | 로그인 화면 부트스트랩의 인증 상태 판정. 미인증 응답 = `{"authenticated": false}` **뿐** | SEC-20260811 (아래 §7.3) |
+| `/api/llm/health` | GET | anonymous (**축소 응답**) | LLM 제한 상태점. 미인증 응답 = `{"state": ...}` **뿐** (probe 미트리거) | SEC-20260811 |
+| `/api/api-vault/options` | GET | anonymous (**빈 카탈로그**) | 모델 선택기 카탈로그. 미인증 응답 = `{"default_model": null, "models": []}` | SEC-20260811 |
 
 ### 7.1 운영 정책
 
@@ -135,6 +138,92 @@ ai_read_priority: 4
 3. ~~**시간 기반 만료**: `ExpiresAt DATETIME NULL` 컬럼 + GET 시 `NOW() > ExpiresAt` → 410. 기본은 무기한 + 명시 revoke 그대로 유지.~~ **→ 구현 완료 (TASK-20260619T012028-share-link-expiry, 2026-06-19)**: `WebConversationShares.ExpiresAt DATETIME NULL` + 생성 시 `expires_in_seconds`(무기한/1일/7일/30일, 상한 365일) + anonymous view/fork 시 `ExpiresAt <= NOW()` → 410("만료되었습니다", 취소와 구분). 만료 판정 전부 DB 시계(`DATE_ADD(NOW())`/`NOW()`)로 clock skew 차단. 기본 NULL=무기한(무회귀). 정합 정본 = feature-0003 FUNCTION.md AC-0584~0587.
 
 §7.2 의 IP allowlist(1) / token 별 비밀번호(2) 는 외부 배포 가시화 시점에 후속 cycle 로 진행한다 (사용자 직접 결정 필요).
+
+> ⚠ **§7.2 의 전제가 이미 깨져 있다 (SEC-20260811, 아래 §7.3 참조)**. 본 절은 "외부 배포가
+> *가시화되면*" 이라는 조건부로 쓰였으나, 2026-08-11 실측에서 서비스는 이미 공인 IP 로 공개된
+> 상태였다. 즉 (1) IP allowlist 와 (2) token 별 비밀번호는 **미래 조건부 TODO 가 아니라 현재
+> 미이행 상태의 미결 항목**이다. 노출 유지 여부는 사용자 결정 대기 중이며, 유지하기로 하면 두 항목이
+> 선행 조건이 된다.
+
+### 7.3 SEC-20260811 — 익명 표면 drift 와 외부 노출 실측
+
+외부 AI(codex, root 계정)가 **로컬 파일 없이 라이브 HTTP 응답만으로** API 를 감사한 결과와, 그것을
+코드·인프라로 교차검증한 기록이다. 감사 자체가 무인증으로 수행됐다는 점이 표면 크기의 증거다.
+
+**(a) 익명 표면 drift — 해소됨.** 본 §7 은 "모든 endpoint 는 기본적으로 로그인 쿠키 검증을 요구하며
+아래 표는 명시적 예외" 라고 선언해 왔으나, `/api/session`·`/api/llm/health`·`/api/api-vault/options`
+세 경로가 **표에 등재되지 않은 채** 익명 200 을 반환하고 있었다. 각각의 코드에는 의도를 적은 주석이
+있었지만(로그인 화면 부트스트랩 / cheap read / 카탈로그 프리로드), 그 의도가 본 정책 표로 올라오지
+않아 "예외는 표가 전부" 라는 불변식이 조용히 깨져 있었다. 노출 실측값:
+
+| 경로 | 종전 익명 응답 | 조치 후 |
+|---|---|---|
+| `/api/session` | `local_llm_enabled`, `default_model` | `{"authenticated": false}` |
+| `/api/llm/health` | `provider`(bedrock), `source`, `since_epoch`, `updated_epoch` | `{"state": ...}` |
+| `/api/api-vault/options` | 전체 모델 카탈로그, `public_host`, `public_url`, `provider` | `{"default_model": null, "models": []}` |
+
+데이터 유출은 아니지만 **LLM 스택·모델 구성·내부 호스트명·장애 발생 시각**은 그 자체로 정찰 표면이다.
+"비인증은 `/api/ask` 가 401 이라 노출로 얻을 것이 없다" 는 종전 판단은 *데이터* 축만 본 것이었다.
+회귀 가드 = `unit/feature-0003-agent-web-ui/tests/test_anonymous_surface_hardening.py` (인증 응답
+불변까지 함께 고정). **신규 익명 endpoint 는 위 표 등재가 필수**라는 §7.1 규칙을 재확인한다.
+
+**(b) 브라우저 보안 헤더 부재 — 해소됨.** 로그인 입력을 받는 루트 응답에 `X-Content-Type-Options`·
+`X-Frame-Options`·`Referrer-Policy`·`Permissions-Policy`·CSP 가 **전무**했다(nosniff 는 첨부·미디어
+응답에만 개별 부착돼 HTML 문서를 덮지 못했다). 엣지(`feature-0006 Caddyfile`)에서 전 응답 일괄
+부착으로 전환했다. CSP 는 PixiJS·mermaid 의 blob/worker 경로가 조용히 깨질 위험 때문에
+**Report-Only 로 먼저 배포**하고 위반 관측 후 enforce 로 승격한다.
+
+**HSTS 는 의도적으로 미적용**이다 — `/trust/*`(사내 Root CA 번들)는 CA 미설치 테스터가 TLS 경고 없이
+받도록 **평문 HTTP 로 서빙하는 설계**인데, HSTS 는 호스트 단위라 경로 예외를 둘 수 없어 CA 신뢰
+부트스트랩 경로를 막는다. 게다가 브라우저 캐시라 롤백이 즉시 반영되지 않는다. CA 배포 채널을 HTTP
+외로 옮긴 뒤 별 cycle 에서 함께 결정한다.
+
+**(c) 공인 IP 외부 노출 — 사용자 결정 대기(미조치).** 확인된 사실:
+
+- 이 호스트의 공인 IP = 감사 대상 주소와 동일(`curl ifconfig.me` 로 확인).
+- Windows `netsh portproxy` 에 **공인 IP 의 80/443 → WSL 포워딩 규칙이 명시 존재** — 우발 노출이 아닌
+  구성된 상태.
+- `WEB_ALLOWED_HOSTS` 에 공인 IP 가 등재돼 있어 앱의 TrustedHost 게이트도 그 경로를 수락한다.
+- 반면 MySQL·Postgres·MinIO·MCP 포트는 WSL 내부 `0.0.0.0` 바인딩이지만 **portproxy 규칙이 없어 공인
+  IP 로는 도달하지 않는다** — 포워딩된 것은 80/443 뿐이다.
+
+§9.7 이 "외부 인터넷 / 미신뢰 LAN 노출이 가시화되는 시점" 의 조치로 남긴 두 항목 중
+`WEB_TRUSTED_PROXIES` 좁히기는 이미 docker bridge(`172.18.0.0/16`)로 이행돼 있다. 노출 자체의
+유지·차단은 서비스 중단을 수반하는 사용자 결정이라 본 cycle 에서 변경하지 않았다.
+
+**(d) codex 지적 중 기각한 것.** "LLM 프롬프트로 SELECT 만 생성하라 지시하는 것은 보안 통제가
+아니다 / DB 가 기술적으로 읽기 전용이라는 보장이 없다" 는 진단은 **코드 기준으로 사실이 아니다** —
+`modules/sql_guard.py` 가 sqlglot AST allowlist 로 단일 SELECT/CTE 만 통과시키고 다중문·write verb·
+`INTO OUTFILE`·`LOAD_FILE`·금지 스키마를 거부하며, **sqlglot 부재 시 fail-closed(deny)** 다.
+`execute_sql` 은 `multi=False` 이고 product 단위 스키마 allowlist 가 추가로 적용된다. 감사자가 로컬
+파일을 열지 않는 제약 아래 있었기에 알 수 없던 부분이다. 다만 **처방(전용 SELECT 계정)은 유효**했다 —
+아래 §7.4 참조.
+
+### 7.4 데이터플레인 DB 계정 최소권한 (`agent_ro`) — SEC-20260811 적용
+
+TASK-0128 이 도입한 `AGENT_DATA_DB_USER` 분기와 `bin/agent-ro-bootstrap.sh` 는 **배선만 존재하고 실제
+값이 비어 있었다**. `shared/config.py` 의 `DB_USER = os.getenv("DB_USER", "root")` 폴백이 그대로
+작동해, **고객 데이터 조회가 root 계정으로 실행되고 있었다**(2026-08-11 실측: `.env.mysql` 의
+`AGENT_DATA_DB_USER=` 공란, `AGENT_MULTI_DATASOURCE_ENABLED=1` 이나 `AGENT_DATASOURCE_KEYS` 미등록이라
+DS_* 경로도 비활성).
+
+앱 층 방어(`sql_guard` AST allowlist, fail-closed)가 견고하더라도 **그것이 유일한 층이면 파서 우회 한
+번이 곧 root 권한 임의 SQL 이 된다.** DB 층을 채워 심층방어를 복원했다.
+
+적용 내용 — `agent_ro` 프로비저닝 후 `.env.mysql` 에 자격증명 설정. 권한 경계 실측 결과:
+
+| 검증 | 결과 |
+|---|---|
+| 일반 `SELECT` | 통과 |
+| `information_schema` 조회(구조 탐색 도구 경로) | 통과 — 회귀 없음 |
+| `CREATE DATABASE` | `ERROR 1044` 거부 |
+| `agent_memory.*`(인증·RBAC 저장소) | `ERROR 1142` 거부 |
+| `mysql.*`(자격증명 저장소) | `ERROR 1142` 거부 |
+
+> ⚠ **효력 시점**: `.env.mysql` 은 컨테이너 `env_file` 이므로 **web / agent / insight-worker /
+> memory-init / mcp 재시작(재생성) 시점부터** 적용된다. 계정과 설정은 준비됐고 코드는 무변경이므로,
+> 다음 배포·재시작이 곧 전환이다. 전환 후에는 데이터플레인 조회가 `agent_ro` 로 나가는지
+> (그리고 `agent_memory` 제어 연결은 `DB_USER` 를 유지하는지) 라이브에서 한 번 확인한다.
 
 ## 8. Cross-account 대화 검색·필터 정책 (TASK-0072)
 

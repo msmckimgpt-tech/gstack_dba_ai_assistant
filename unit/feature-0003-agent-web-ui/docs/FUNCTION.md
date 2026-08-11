@@ -3410,3 +3410,30 @@ border box 안쪽으로 그려지지 않으므로 글자 영역 마크색 픽셀
 
 **범위 밖 (명시)**: `insert`/`delete` 행의 줄 안 비교(대응 줄이 없어 성립하지 않음) · 무관한 두 줄이
 위치로 짝지어진 `replace` 블록의 재정렬(줄 짝짓기 자체를 바꾸는 별 문제) · 바이너리 내용 비교.
+
+### REQ-20260811-api-exposure-hardening — 익명 API 표면 축소 (Critical §12.3)
+
+외부 AI(codex)의 무인증 라이브 감사에서 `docs/SECURITY.md §7` anonymous allowlist 에 **등재되지 않은**
+세 경로가 익명 200 을 반환하며 인프라 정보를 공개함이 적발됐다(정책-코드 drift). 정본 = `SECURITY.md`
+§7.3·§7.4.
+
+- **AC-AEH-1** `GET /api/session` 미인증 응답은 `{"authenticated": false}` **뿐** — `default_model`·
+  `local_llm_enabled` 를 싣지 않는다. DB 연결 실패 fallback 경로도 동일(우회로 없음).
+- **AC-AEH-2** `GET /api/llm/health` 미인증 응답은 `{"state": ...}` **뿐** — `provider`·`source`·
+  `since_epoch`·`updated_epoch` 를 싣지 않고, probe 도 트리거하지 않는다(기존 계약 유지).
+- **AC-AEH-3** `GET /api/api-vault/options` 미인증 응답은 `{"default_model": null, "models": []}` —
+  모델 카탈로그·`public_host`·`public_url`·`provider` 를 싣지 않는다.
+- **AC-AEH-4** **인증 응답은 불변** — 세 경로 모두 로그인 후 응답의 키 집합과 값 산출 경로가 종전과
+  같다. `api-vault/options` 의 `model.access.<value>` 권한 필터도 그대로 적용된다.
+- **AC-AEH-5** `api-vault/options` 의 예외 처리는 fail-soft 이되 **fail-open 이 아니다** — 인증을
+  확정하지 못한 요청(DB 예외 포함)에는 카탈로그를 반환하지 않는다. 종전 구현은 예외 시 필터 전 전체
+  목록으로 되돌아가, DB 를 불능으로 만들 수 있는 요청자에게 오히려 전량을 내줬다.
+- **AC-AEH-6** 프론트 회귀 0 — 미인증 경로는 auth overlay 가 덮은 상태이고 모델 라벨은
+  `state.session?.default_model || state.modelCatalog?.default_model || ...` fallback 체인이라 부재에
+  graceful 하며, 로그인 직후 `initializeWorkspace()` 가 인증 상태로 재조회해 채운다.
+- **AC-AEH-7** 엣지(`feature-0006` Caddyfile)가 전 응답에 `X-Content-Type-Options`·`X-Frame-Options`·
+  `Referrer-Policy`·`Permissions-Policy` 를 부착하고 `Server` 를 제거한다. CSP 는 **Report-Only**
+  (enforce 승격은 위반 관측 후). **HSTS 는 미적용** — `/trust/*` 평문 CA 번들 배포와 충돌.
+- **AC-AEH-8** 신규 권한 코드·스키마·마이그레이션 0 · 신규 endpoint 0(기존 3종의 미인증 분기만 변경).
+- **AC-AEH-9** 회귀 가드 = `tests/test_anonymous_surface_hardening.py` (미인증 축소 + 인증 불변 +
+  fail-open 차단 7건).
