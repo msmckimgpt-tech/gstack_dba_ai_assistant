@@ -548,3 +548,28 @@ source_of_truth: true
 - `bash -n` PASS · 임베디드 python 2블록 `compile()` PASS.
 - **라이브 재적용**: 하단 POSTDEPLOY 항목 참조.
 - UI 표면 변경 없음 → PB-0008 비해당(§15.4.1 예외).
+
+### Run 2026-08-11-oauth-auto-rotate
+- Date: 2026-08-11 12:00~ KST · Environment: `CLI`(격리 하네스 + 실 자격증명 사본) · 대상 `bin/refresh-claude-oauth-token.sh`
+- **규약 실측**: CLI 번들 2.1.220 grep → `TOKEN_URL`/`CLIENT_ID`/JSON 본문 확정. 비파괴 계약 검증 — 잘못된 refresh token 으로 실 엔드포인트 호출:
+  - UA `Python-urllib/*` → **HTTP 403 Cloudflare Error 1010**(앱 미도달)
+  - UA `Claude-User (claude-code/2.1.220)` → **HTTP 400 `invalid_grant`**(정상 도달)
+  → UA 지문이 필수임을 확인하고 구현·테스트에 반영.
+- **Preflight(실 자격증명 사본, 원본 무접촉)**: 가짜 토큰 서버로 두 계정 회전 →
+  소유자 `claude-corp:claude-corp` / `root:root` 와 모드 `600` **그대로 보존**, 백업도 동일 소유자·모드,
+  top-level·oauth 필드 **유실 0**, 원본 파일 mtime 무변경.
+- **적대 패널(§18.8 subagent 2렌즈)**: security / correctness 둘 다 **FAIL** 판정. P1 5건 + P2 다수. 상세는 REVIEW REV-20260811T120000.
+- **단위 테스트**: 55 → **75건** PASS.
+- **Mutation 재검증** (`scratchpad/mut7`·`mut8`):
+
+  | mutant | 결과 |
+  |---|---|
+  | `--check` 도 회전 / 호출부 가드 제거 / `expires_in` 폴백 제거 / 백업-우선 순서 복귀 | KILLED ×4 |
+  | 백업 `O_NOFOLLOW` 제거 / 심링크 creds 허용 / `chown` 제거 / 원자성 제거 | KILLED ×4 |
+  | 요청후 재확인 제거 / backoff 제거 / `keep_backups=0` 오동작 / scope 재영속화 | KILLED ×4 |
+  | access_token 타입 미검 / 만료토큰 회전 거부 / 에러본문 scrub 제거 / ttl 상한 제거 | KILLED ×4 |
+  | (1차 라운드) 회전 미실행·lead 무시·race 재확인·refresh 미영속·타 필드 유실·모드·lock·UA·백업 prune 등 | KILLED |
+  | **총계** | **20/20 KILL** |
+
+- **자체 발견(정직 표기)**: 1차 mutation 에서 생존한 5건 중 **3건은 코드가 아니라 내 테스트가 vacuous** 해서였다 — ① `keep_backups=0` 테스트에 지울 백업이 없었고 ② lost-update 테스트의 '지연' 헤더를 서버가 무시했으며 ③ scope 잠식은 아예 테스트가 없었다. 하네스에 응답 지연을 실제로 구현하고 사전 백업을 심어 잡았다.
+- UI 표면 변경 없음 → PB-0008 비해당(§15.4.1 예외).

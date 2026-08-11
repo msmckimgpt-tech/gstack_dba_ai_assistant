@@ -58,6 +58,7 @@ class _ProbeServer:
                 outer.calls.append({
                     "authorization": self.headers.get("authorization", ""),
                     "anthropic-beta": self.headers.get("anthropic-beta", ""),
+                    "user-agent": self.headers.get("user-agent", ""),
                     "body": json.loads(raw or b"{}"),
                 })
                 # 종전엔 마지막 응답을 무한 반복해 **잉여 probe 가 보이지 않았다**(적대 리뷰).
@@ -70,10 +71,13 @@ class _ProbeServer:
                     self.end_headers()
                     return
                 spec = outer._responses[idx]
-                status, headers = spec[0], spec[1]
+                status, headers = spec[0], dict(spec[1])
                 payload = spec[2] if len(spec) > 2 else (
                     b'{"content":[{"type":"text","text":"pong"}]}' if status == 200
                     else b'{"type":"error","error":{"type":"rate_limit_error"}}')
+                delay = float(headers.pop("x-test-delay", 0) or 0)
+                if delay:
+                    time.sleep(delay)
                 self.send_response(status)
                 for k, v in headers.items():
                     self.send_header(k, str(v))
@@ -124,17 +128,48 @@ class _ProbeServer:
 
 
 # ── 하네스 ────────────────────────────────────────────────────────────────────
-def _write_cred(cred_root: Path, account: str, token: str, *, ttl_sec: int = 7200):
+def _write_cred(cred_root: Path, account: str, token: str, *, ttl_sec: int = 7200,
+                refresh_token=None, refresh_ttl_sec: int = 30 * 86400, extra=None):
     d = cred_root / account
     d.mkdir(parents=True, exist_ok=True)
-    (d / ".credentials.json").write_text(json.dumps({
+    doc = {
         "claudeAiOauth": {
             "accessToken": token,
-            "refreshToken": "refresh-" + token,
+            "refreshToken": "refresh-" + token if refresh_token is None else refresh_token,
             "expiresAt": int((time.time() + ttl_sec) * 1000),
-            "scopes": ["user:inference"],
-        }
-    }))
+            "refreshTokenExpiresAt": int((time.time() + refresh_ttl_sec) * 1000),
+            "scopes": ["user:inference", "user:profile"],
+            "subscriptionType": "max",
+        },
+        "organizationUuid": "org-keep-me",
+    }
+    if extra:
+        doc["claudeAiOauth"].update(extra)
+    f = d / ".credentials.json"
+    f.write_text(json.dumps(doc))
+    f.chmod(0o600)
+
+
+def _cred(env, account):
+    return json.loads((env["cred_root"] / account / ".credentials.json").read_text())
+
+
+class _TokenServer(_ProbeServer):
+    """가짜 OAuth 토큰 엔드포인트. 응답 스펙은 _ProbeServer 와 동일한 (status, headers[, body])."""
+
+    @property
+    def url(self):
+        host, port = self._httpd.server_address[:2]
+        return f"http://{host}:{port}/v1/oauth/token"
+
+
+def _token_body(access="new-access", refresh="new-refresh", expires_in=28800, scope=None):
+    d = {"access_token": access, "expires_in": expires_in}
+    if refresh is not None:
+        d["refresh_token"] = refresh
+    if scope is not None:
+        d["scope"] = scope
+    return json.dumps(d).encode()
 
 
 @pytest.fixture()
@@ -187,10 +222,15 @@ _PINNED = {
     "CLAUDE_OAUTH_PROBE_MIN_COOLDOWN": "300",
     "CLAUDE_OAUTH_GATE_RECHECK_SEC": "3600",
     "CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC": "1800",
+    "CLAUDE_OAUTH_AUTO_ROTATE": "1",
+    "CLAUDE_OAUTH_ROTATE_LEAD_SEC": "3600",
+    "CLAUDE_OAUTH_ROTATE_KEEP_BACKUPS": "5",
+    "CLAUDE_OAUTH_CLIENT_ID": "test-client-id",
 }
 
 
-def _run(env, *args, probe_url="http://127.0.0.1:1/v1/messages", gateway_logs="", **extra):
+def _run(env, *args, probe_url="http://127.0.0.1:1/v1/messages", gateway_logs="",
+         token_url="http://127.0.0.1:1/v1/oauth/token", **extra):
     e = dict(os.environ)
     e.pop("CLAUDE_OAUTH_ACCOUNT", None)  # 단일-계정 강제가 남아 있으면 폴백 계약 자체가 무의미
     e.update(_PINNED)
@@ -200,6 +240,7 @@ def _run(env, *args, probe_url="http://127.0.0.1:1/v1/messages", gateway_logs=""
         "CLAUDE_OAUTH_CRED_ROOT": str(env["cred_root"]),
         "CLAUDE_OAUTH_STATE_FILE": str(env["state_file"]),
         "CLAUDE_OAUTH_PROBE_URL": probe_url,
+        "CLAUDE_OAUTH_TOKEN_URL": token_url,
         "CLAUDE_OAUTH_PROBE_TIMEOUT": "5",
         "MOCK_GATEWAY_LOGS": gateway_logs,
         "MOCK_DOCKER_CALLS": str(env["docker_calls"]),
@@ -768,3 +809,477 @@ def test_failed_recreate_is_retried_next_run(env):
     assert r2.returncode == 0, r2.stderr
     assert not sentinel.exists()
     assert env["docker_calls"].read_text().count("--force-recreate") == 2, "재시도하지 않았다"
+
+
+# ═══ access token 자동 회전 (auto-rotate 2026-08-11, 사용자 승인) ══════════════
+# R1 만료 임박이면 refreshToken 으로 선제 회전하고 새 토큰을 주입한다.
+# R2 여유가 있으면 회전하지 않는다(토큰 엔드포인트 무접촉).
+# R3 회전 실패(네트워크·4xx)는 자격증명 파일을 **건드리지 않는다**.
+# R4 회전형 refresh token 을 원자적으로 영속화하고, 다른 필드·소유자·모드를 보존한다.
+# R5 lock 이 잡혀 있으면(CLI 가 회전 중) 건드리지 않는다.
+# R6 lock 획득 뒤 파일이 바뀌었으면(남이 이미 회전) 포기한다.
+# R7 refresh token 자체가 만료됐으면 시도하지 않는다.
+# R8 킬스위치.
+
+def _expiring(env, acct="claude-corp", **kw):
+    """만료 임박(=lead 안쪽) 자격증명으로 교체."""
+    _write_cred(env["cred_root"], acct, "tok-" + acct.split("-")[-1], ttl_sec=600, **kw)
+
+
+def test_rotate_refreshes_token_near_expiry_and_injects_it(env):
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)   # lead(3600) 안쪽
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body(access="rotated-corp"))]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1, "만료 임박인데 회전하지 않았다"
+        body = ts.calls[0]["body"]
+        assert body["grant_type"] == "refresh_token"
+        assert body["refresh_token"] == "refresh-tok-corp"
+        assert body["client_id"] == "test-client-id"
+        assert body["scope"] == "user:inference user:profile"
+    o = _cred(env, "claude-corp")["claudeAiOauth"]
+    assert o["accessToken"] == "rotated-corp"
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "rotated-corp", "회전된 토큰이 주입되지 않았다"
+    assert "자동 회전" in r.stderr
+
+
+def test_rotate_skipped_when_ttl_is_comfortable(env):
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})   # 기본 TTL 7200 > lead 3600
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == [], "여유가 있는데 회전을 시도했다"
+    assert _cred(env, "claude-corp")["claudeAiOauth"]["accessToken"] == "tok-corp"
+
+
+@pytest.mark.parametrize("mode", ["http_400", "unreachable", "no_access_token"])
+def test_rotate_failure_never_touches_credentials(env, mode):
+    # MIN_TTL(300) 미만으로 둔다 — 회전에 실패하면 정적 검사가 걸러 폴백이 받아야 한다.
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=120)
+    before = (env["cred_root"] / "claude-corp" / ".credentials.json").read_text()
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    if mode == "unreachable":
+        r = _run(env, token_url="http://127.0.0.1:1/v1/oauth/token", gateway_logs="",
+                 CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+    else:
+        resp = (400, {}, b'{"error":"invalid_grant"}') if mode == "http_400" \
+            else (200, {}, b'{"expires_in":100}')
+        with _TokenServer([resp]) as ts:
+            r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+            assert len(ts.calls) == 1
+    assert r.returncode == 0, r.stderr
+    after = (env["cred_root"] / "claude-corp" / ".credentials.json").read_text()
+    assert after == before, "회전 실패인데 자격증명 파일이 바뀌었다"
+    assert "회전 생략" in r.stderr
+    # 회전 못 한 계정은 정적 검사(만료 임박)로 걸러지고 폴백이 받는다
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-root"
+
+
+def test_rotate_persists_new_refresh_token_and_preserves_everything_else(env):
+    _expiring(env)
+    path = env["cred_root"] / "claude-corp" / ".credentials.json"
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body(access="A2", refresh="R2", expires_in=28800,
+                                             scope="user:inference user:profile"))]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+
+    doc = _cred(env, "claude-corp")
+    o = doc["claudeAiOauth"]
+    assert o["accessToken"] == "A2"
+    assert o["refreshToken"] == "R2", "회전형 refresh token 을 영속화하지 않으면 다음 회전이 죽는다"
+    assert doc["organizationUuid"] == "org-keep-me", "다른 필드가 유실됐다"
+    assert o["subscriptionType"] == "max"
+    assert int(o["expiresAt"] / 1000) - int(time.time()) > 28000, "expiresAt 이 갱신되지 않았다"
+    assert oct(path.stat().st_mode)[-3:] == "600"
+    baks = sorted((env["cred_root"] / "claude-corp").glob(".credentials.json.bak-*"))
+    assert len(baks) == 1, "교체 직전본 백업이 없다"
+    assert json.loads(baks[0].read_text())["claudeAiOauth"]["accessToken"] == "tok-corp"
+    assert oct(baks[0].stat().st_mode)[-3:] == "600"
+    assert not list((env["cred_root"] / "claude-corp").glob(".credentials-*.tmp")), "임시 파일이 남았다"
+
+
+def test_rotate_yields_to_existing_lock(env):
+    _expiring(env)
+    lock = env["cred_root"] / "claude-corp" / ".credentials.json.rotate.lock"
+    lock.write_text("99999")
+    before = (env["cred_root"] / "claude-corp" / ".credentials.json").read_text()
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == [], "다른 프로세스가 회전 중인데 끼어들었다"
+    assert (env["cred_root"] / "claude-corp" / ".credentials.json").read_text() == before
+    assert lock.exists(), "남의 lock 을 지웠다"
+    assert "lock_busy" in r.stderr
+
+
+def test_stale_lock_is_reclaimed(env):
+    _expiring(env)
+    lock = env["cred_root"] / "claude-corp" / ".credentials.json.rotate.lock"
+    lock.write_text("1")
+    os.utime(lock, (time.time() - 3600, time.time() - 3600))   # 죽은 프로세스 잔재
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body(access="A3"))]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1, "stale lock 때문에 영구히 회전 못 하면 안 된다"
+    assert _cred(env, "claude-corp")["claudeAiOauth"]["accessToken"] == "A3"
+    assert not lock.exists(), "회전 후 lock 을 해제하지 않았다"
+
+
+def test_expired_refresh_token_is_not_attempted(env):
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600, refresh_ttl_sec=-60)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == [], "만료된 refresh token 으로 요청했다(불필요한 invalid_grant 유발)"
+    assert "refresh_token_expired" in r.stderr
+
+
+def test_missing_refresh_token_is_not_attempted(env):
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600, refresh_token="")
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == []
+    assert "no_refresh_token" in r.stderr
+
+
+def test_auto_rotate_kill_switch(env):
+    _expiring(env)
+    before = (env["cred_root"] / "claude-corp" / ".credentials.json").read_text()
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_AUTO_ROTATE=0,
+                 CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == []
+    assert (env["cred_root"] / "claude-corp" / ".credentials.json").read_text() == before
+
+
+def test_backup_retention_is_bounded(env):
+    d = env["cred_root"] / "claude-corp"
+    for i in range(7):
+        (d / f".credentials.json.bak-{1700000000 + i}").write_text("{}")
+    _expiring(env)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_ROTATE_KEEP_BACKUPS=3,
+                 CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert len(list(d.glob(".credentials.json.bak-*"))) == 3, "백업이 무한 증식한다"
+
+
+def test_rotate_aborts_when_another_process_already_rotated(env):
+    """lock 획득 사이에 CLI 가 먼저 회전했으면 포기한다.
+
+    이 재확인이 없으면 두 프로세스가 같은 refresh token 으로 각각 회전을 시도하고, 늦은 쪽이
+    이미 죽은 refresh token 을 써서 `invalid_grant` 를 받는다 — CLI 는 그때 자격증명을 통째로
+    비운다(2026-08-09 claude-corp 이 그렇게 로그아웃됐다). `CLAUDE_OAUTH_ROTATE_RACE_DELAY_SEC`
+    로 그 창을 인위적으로 열어 재현한다.
+    """
+    _expiring(env)
+    cred = env["cred_root"] / "claude-corp" / ".credentials.json"
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+
+    def _cli_rotates_first():
+        time.sleep(0.8)
+        _write_cred(env["cred_root"], "claude-corp", "rotated-by-cli", ttl_sec=28800)
+
+    with _TokenServer([(200, {}, _token_body(access="rotated-by-us"))]) as ts:
+        t = threading.Thread(target=_cli_rotates_first, daemon=True)
+        t.start()
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0,
+                 CLAUDE_OAUTH_ROTATE_RACE_DELAY_SEC=2)
+        t.join(timeout=5)
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == [], "남이 이미 회전했는데 죽은 refresh token 으로 또 요청했다"
+
+    o = json.loads(cred.read_text())["claudeAiOauth"]
+    assert o["accessToken"] == "rotated-by-cli", "남의 회전 결과를 덮어썼다"
+    assert "race_resolved" in r.stderr
+    assert not list((env["cred_root"] / "claude-corp").glob(".credentials.json.bak-*")), \
+        "포기했는데 백업을 남겼다(=파일을 건드렸다)"
+
+
+def test_rotate_sends_cli_user_agent(env):
+    """토큰 엔드포인트는 Cloudflare UA 지문 검사를 한다 — 기본 urllib UA 면 1010 으로 끊긴다.
+
+    2026-08-11 실측: `Python-urllib/*` → HTTP 403 Cloudflare Error 1010(앱 미도달),
+    `Claude-User (claude-code/<ver>)` → 400 invalid_grant(정상 도달).
+    """
+    _expiring(env)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        ua = ts.calls[0]["user-agent"]
+    assert ua.startswith("Claude-User (claude-code/"), f"CLI UA 가 아니다: {ua!r}"
+    assert "urllib" not in ua.lower()
+
+
+# ═══ 적대 리뷰(2026-08-11 패널) 반영 회귀 ═══════════════════════════════════════
+def test_check_mode_never_rotates(env):
+    """`--check` 는 부작용 0 계약이다 — 회전은 파일을 쓰고 일회성 refresh token 을 태운다.
+
+    종전 구현은 `--check` 에서도 실제로 회전했다(적대 리뷰 P1). 인시던트 진단 중 운영자가
+    무심코 부르는 명령이라 위험이 크다.
+    """
+    _expiring(env)
+    before = (env["cred_root"] / "claude-corp" / ".credentials.json").read_text()
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, "--check", token_url=ts.url, gateway_logs="")
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == [], "--check 인데 refresh token 을 소모했다"
+    assert (env["cred_root"] / "claude-corp" / ".credentials.json").read_text() == before
+    assert not list((env["cred_root"] / "claude-corp").glob(".credentials.json.bak-*"))
+
+
+@pytest.mark.parametrize("payload", [b'[1,2,3]', b'null', b'{"access_token":123}',
+                                     b'{"access_token":"A","scope":["not","a","string"]}',
+                                     b'not json at all'])
+def test_malformed_token_response_cannot_kill_slot_selection(env, payload):
+    """회전 중 어떤 예외도 선택 로직을 죽이면 안 된다.
+
+    죽으면 bash 의 `SEL="$(...)" || SEL=""` 가 삼켜 1순위 slot 이 조용히 갱신 정지한다
+    (exit 0). 적대 리뷰 P1 — 서버가 돌려주는 응답만으로 재현됐다.
+    """
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, payload)]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert "Traceback" not in r.stderr, f"선택 로직이 예외로 죽었다:\n{r.stderr[-600:]}"
+    assert "(none)" not in r.stderr, "1순위 slot 이 갱신 정지했다"
+    # 응답이 쓰레기여도 slot 은 살아 있어야 한다 — 회전 결과(정상 access_token) 또는 기존 토큰.
+    assert _env_val(env, "ANTHROPIC_API_KEY") in ("tok-corp", "A"), _env_val(env, "ANTHROPIC_API_KEY")
+
+
+def test_missing_expires_in_never_persists_a_past_expiry(env):
+    """expires_in 이 없어도 방금 받은 토큰을 '만료됨' 으로 기록하면 안 된다.
+
+    종전엔 과거 값을 되써서 (a) 멀쩡한 토큰이 정적 검사에서 탈락하거나 (b) 매 실행 재회전 +
+    게이트웨이 재생성 폭풍이 됐다(적대 리뷰 P1, 둘 다 실증됨).
+    """
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, b'{"access_token":"A-NEW"}')]) as ts:
+        r1 = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r1.returncode == 0, r1.stderr
+        assert len(ts.calls) == 1
+    o = _cred(env, "claude-corp")["claudeAiOauth"]
+    assert int(o["expiresAt"] / 1000) - int(time.time()) > 3600, "과거 만료를 되썼다"
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "A-NEW"
+    # 2회차: 이미 여유가 생겼으므로 재회전하지 않는다(= 재생성 폭풍 없음)
+    with _TokenServer([(200, {}, _token_body())]) as ts2:
+        r2 = _run(env, token_url=ts2.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r2.returncode == 0, r2.stderr
+        assert ts2.calls == [], "매 실행 재회전한다"
+    assert env["docker_calls"].read_text().count("--force-recreate") == 1
+
+
+def test_already_expired_access_token_is_recovered(env):
+    """동기가 된 사건 그 자체 — 밤사이 만료된 토큰을 회전해 되살린다."""
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=-3600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body(access="REVIVED"))]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "REVIVED", "만료된 토큰을 되살리지 못했다"
+
+
+def test_rotation_preserves_file_owner(env):
+    """root 로 돌지만 파일 주인은 계정 사용자다 — root 소유로 바꾸면 그 CLI 로그인이 깨진다."""
+    import pwd
+    uid = pwd.getpwnam("nobody").pw_uid
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    f = env["cred_root"] / "claude-corp" / ".credentials.json"
+    os.chown(f, uid, -1)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert f.stat().st_uid == uid, "회전 후 파일 주인이 바뀌었다(계정 CLI 로그인 파손)"
+    bak = list((env["cred_root"] / "claude-corp").glob(".credentials.json.bak-*"))
+    assert bak and bak[0].stat().st_uid == uid
+
+
+def test_credentials_replace_is_atomic(env):
+    """교체는 rename 이어야 한다 — 제자리 덮어쓰기는 중간에 잘린 파일을 노출한다."""
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    f = env["cred_root"] / "claude-corp" / ".credentials.json"
+    ino = f.stat().st_ino
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+    assert f.stat().st_ino != ino, "os.replace 가 아니라 제자리 쓰기였다(원자성 없음)"
+
+
+def test_no_backup_written_when_rotation_yields_nothing(env):
+    """응답에 access_token 이 없으면 파일을 **아예** 건드리지 않는다(백업도 없다)."""
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, b'{"expires_in":100}')]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+    assert not list((env["cred_root"] / "claude-corp").glob(".credentials.json.bak-*"))
+
+
+def test_backup_path_symlink_is_not_followed(env):
+    """root 가 비특권 계정 소유 디렉토리에 쓴다 — .bak 경로 심링크를 따라가면 임의 파일 덮어쓰기."""
+    victim = env["tmp"] / "victim-root-owned.txt"
+    victim.write_text("DO-NOT-OVERWRITE")
+    d = env["cred_root"] / "claude-corp"
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    now = int(time.time())
+    for t in range(now, now + 8):                      # 예측 가능한 시각을 전부 선점
+        for suffix in ("", "-000000"):
+            try:
+                (d / f".credentials.json.bak-{t}{suffix}").symlink_to(victim)
+            except FileExistsError:
+                pass
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+    assert victim.read_text() == "DO-NOT-OVERWRITE", "심링크를 따라가 임의 파일을 덮어썼다"
+    assert _cred(env, "claude-corp")["claudeAiOauth"]["accessToken"] == "new-access", \
+        "심링크 방해로 회전 자체가 실패하면 안 된다(백업은 best-effort)"
+
+
+def test_symlinked_credentials_file_is_refused(env):
+    real = env["tmp"] / "elsewhere.json"
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    f = env["cred_root"] / "claude-corp" / ".credentials.json"
+    f.rename(real)
+    f.symlink_to(real)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert ts.calls == []
+    assert "credentials_is_symlink" in r.stderr
+
+
+def test_rotation_failure_backs_off(env):
+    """엔드포인트가 계속 실패하면 30분마다 무한 재시도하지 않는다."""
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(429, {}, b'{"error":"rate_limited"}')]) as ts:
+        r1 = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r1.returncode == 0, r1.stderr
+        assert len(ts.calls) == 1
+    assert _state(env)["rotate:claude-corp"]["next"] > int(time.time())
+    with _TokenServer([(200, {}, _token_body())]) as ts2:
+        r2 = _run(env, token_url=ts2.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r2.returncode == 0, r2.stderr
+        assert ts2.calls == [], "backoff 중인데 또 때렸다"
+    assert "backoff" in r2.stderr
+
+
+def test_token_endpoint_error_body_is_scrubbed(env):
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    leak = b'{"error":"sk-ant-ort01-LEAKEDREFRESH0123456789 \x07ctl"}'
+    with _TokenServer([(400, {}, leak)]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+    assert "LEAKEDREFRESH" not in r.stderr, "토큰 모양 문자열이 로그로 샜다"
+    assert "LEAKEDREFRESH" not in json.dumps(_state(env))
+
+
+def test_keep_backups_zero_keeps_nothing(env):
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    d = env["cred_root"] / "claude-corp"
+    for i in range(3):                       # 기존 백업이 있어야 prune 계약이 검증된다
+        (d / f".credentials.json.bak-{1700000000 + i}").write_text("{}")
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body())]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_ROTATE_KEEP_BACKUPS=0,
+                 CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert not list((env["cred_root"] / "claude-corp").glob(".credentials.json.bak-*")), \
+        "0=보관 안 함인데 오히려 전부 남겼다"
+
+
+def test_lost_update_during_http_window_is_discarded(env):
+    """HTTP 왕복 동안 CLI 가 쓴 결과를 우리 스냅샷으로 덮어쓰면 안 된다."""
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+
+    def _cli_writes_midflight():
+        time.sleep(1.2)      # 요청 전 재확인(즉시)은 지나고, 응답(3s) 전에 들어온다
+        _write_cred(env["cred_root"], "claude-corp", "rotated-by-cli", ttl_sec=28800)
+
+    # 서버가 3초 늦게 응답하는 동안 CLI 가 쓴다 — 이 창은 '요청 전' 재확인으로는 못 막고
+    # **요청 직후** 재확인만이 막는다.
+    with _TokenServer([(200, {"x-test-delay": "3"}, _token_body(access="rotated-by-us"))]) as ts:
+        t = threading.Thread(target=_cli_writes_midflight, daemon=True)
+        t.start()
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0,
+                 CLAUDE_OAUTH_PROBE_TIMEOUT=20)
+        t.join(timeout=10)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert _cred(env, "claude-corp")["claudeAiOauth"]["accessToken"] == "rotated-by-cli", \
+        "남의 회전 결과를 덮어썼다(lost update)"
+
+
+def test_narrowed_scope_is_not_persisted(env):
+    """서버가 좁혀 돌려준 scope 를 저장하면(RFC 6749 §5.1 허용) 다음 회전이 그 좁은 scope 로
+    나가 되돌릴 수 없다 — scope 는 요청 입력일 뿐이므로 영속화하지 않는다."""
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    before = _cred(env, "claude-corp")["claudeAiOauth"]["scopes"]
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body(scope="user:inference"))]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert _cred(env, "claude-corp")["claudeAiOauth"]["scopes"] == before, "scope 가 잠식됐다"
+
+
+def test_write_failure_after_successful_post_cannot_kill_slot_selection(env):
+    """POST 성공 후 쓰기 단계에서 예외가 나도 선택 로직은 살아야 한다.
+
+    refresh token 은 이미 소모됐다 — 여기서 selector 가 죽으면 slot 이 통째로 정지한다.
+    """
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    f = env["cred_root"] / "claude-corp" / ".credentials.json"
+    if subprocess.run(["chattr", "+i", str(f)], capture_output=True).returncode != 0:
+        pytest.skip("chattr +i 미지원 파일시스템 — 쓰기 실패를 재현할 수 없다")
+    try:
+        _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+        with _TokenServer([(200, {}, _token_body())]) as ts:
+            r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+            assert len(ts.calls) == 1
+        assert "Traceback" not in r.stderr, f"쓰기 실패가 selector 를 죽였다:\n{r.stderr[-500:]}"
+        assert "(none)" not in r.stderr, "1순위 slot 이 갱신 정지했다"
+        assert _env_val(env, "ANTHROPIC_API_KEY") == "tok-corp"
+    finally:
+        subprocess.run(["chattr", "-i", str(f)], capture_output=True)
+
+
+def test_absurd_expires_in_is_clamped(env):
+    """비정상적으로 큰 expires_in 은 epoch 연산·표시에서 예외가 된다 — 그 예외는 파일을 이미
+    바꾼 뒤에 터지므로 기본 TTL 로 클램프한다."""
+    _write_cred(env["cred_root"], "claude-corp", "tok-corp", ttl_sec=600)
+    _seed(env, **{"claude-corp": _fresh(), "root": _fresh()})
+    with _TokenServer([(200, {}, _token_body(access="A-CLAMP", expires_in=10 ** 18))]) as ts:
+        r = _run(env, token_url=ts.url, gateway_logs="", CLAUDE_OAUTH_GATE_RECHECK_SEC=0)
+        assert r.returncode == 0, r.stderr
+        assert len(ts.calls) == 1
+    assert "Traceback" not in r.stderr, r.stderr[-400:]
+    remaining = int(_cred(env, "claude-corp")["claudeAiOauth"]["expiresAt"] / 1000) - int(time.time())
+    assert 28000 < remaining < 30000, f"클램프되지 않았다: {remaining}s"
+    assert _env_val(env, "ANTHROPIC_API_KEY") == "A-CLAMP"
