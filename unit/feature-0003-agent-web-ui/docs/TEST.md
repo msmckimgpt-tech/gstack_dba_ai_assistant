@@ -2460,3 +2460,9 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   브라우저로 통과시키지 못했다(이번 변경의 영향면 밖).
 - **Pass/Fail: PASS**. CHECK#13 충족. Run 기록 정본:
   `docs/test-runs.d/20260806T1825-attach-suffix-toggle.md` (§5.3 fragment).
+
+## TASK-20260812T010301-doc-sync-rn-0812 — 릴리즈노트 신규 2026-08-11·2026-08-07 2블록 prepend (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 2개 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · 구조검증(releases 44→46 · head 5항목 · `[1]` 8항목 · 기존 44 블록 전량 보존 · type/area enum 위반 0) · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0).
+- `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0, 이 env 에서 편집 전·후 두 번 실측). 구조: releases 44→46, `generated`==`releases[0].date`==2026-08-11, `releases[1].date`==2026-08-07, 기존 블록 전량 보존, type/area enum 위반 0, 스키마 외 키 0, 내부용어 누출 0(19 패턴). 렌더러·CSS 무변경이므로 PB-0008 신규 실측 불요(데이터 블록 추가는 기존 그룹 렌더 경로 재사용).
+- **env 후반 소실**: cycle 후반 재확인 시점에 `/tmp/node_modules/jsdom` 이 무인 env 의 `/tmp` 정리로 사라져 `verify_release_notes.mjs` 가 `MODULE_NOT_FOUND` 로 미가동됐다. 정본 HEAD 의 pristine 릴리즈노트로 교체해도 동일 실패가 재현되므로 본 변경과 무관하다(위 34/0 은 편집 전·후 두 번 실측한 실값).
+- 라이브 파리티 실측(배포 게이트 확증): 델타로 바뀐 서빙 static 8종 전부 라이브가 브랜치 blob 과 byte-identical(`?v=` 정규화 후), `/healthz` 200, 컨테이너 이미지 `d56367c8` = HEAD.

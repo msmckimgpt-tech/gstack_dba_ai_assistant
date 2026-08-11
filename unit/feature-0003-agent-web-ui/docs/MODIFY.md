@@ -3304,3 +3304,14 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   동일 재현 확인) · `caddy validate` adapt 성공 · `agent_ro` 5축 실측.
 - 미조치: 공인 IP 노출 유지·차단은 서비스 중단 수반 → 사용자 결정 대기. 배포 미수행.
 - Timestamp: 2026-08-11T18:30:00+09:00
+
+## CHG-20260812T010301-doc-sync-rn-0812 (2026-08-11 · 2026-08-07 블록) 릴리즈노트 콘텐츠 — 신규 2블록 13항목 prepend(문서 원문 보기 · 액션 열 정렬 · `_` 밑줄 · 자체 점검 접지 · 배포 창 503 / 그룹 가이드 툴팁 · 구문 색 · 줄 안 변경 · 내용 동일 원문 · 접미사 토글 · 체인 병합 · 등록 시각 · 대기 탈출구)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-08-11" 블록(5 items: new/work 1 · fixed/work 3 · fixed/common 1) + "2026-08-07" 블록(8 items: new/work 1 · improved/work 5 · fixed/work 2) 을 최신-먼저 순으로 prepend + `generated` "2026-08-06"→"2026-08-11". 기존 44 블록 전량 보존(releases 44→46). 두 배포일 블록이 모두 부재했으므로 append 아닌 신규 2블록 prepend.
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수명·테이블명·내부 설정키·ADR·PB-0008·인프라 용어(replica/upstream/Caddy/readyz) 누출 **0**(19 패턴 정규식 기계 검증). UI 라벨은 실코드 대조 — `app/composer.js:1192`(`v{n} 원문 보기` 👁)·`:1148`(`⇄ 버전 비교`)·`:1028`(`ATTACH_SUFFIX_LABEL` 버전 표시 체크박스)·`:1573-1582`(등록 시각 compact `14:20`/`8/6`/`25/8/6`)·`app/attach-diff.js:1123`(`문서 원문`)·`:825-829`(`좌우 2열`/`단일열`/`동일한 줄도 모두 보기`)·`:900`·`index.html:261-275`(`그룹 대화 사용법` 5줄·`다시 안 보기`).
+- 정직성 교정 4건(적대검증 반영): ① identical 화면의 비교 전용 조작은 **숨김이 아니라 비활성**(`attach-diff.js:905-928` `b.disabled = !hasDiff` + `css/chat.css:2981` `.is-disabled{opacity:.55}` — 코드 주석이 숨김을 명시적으로 기각) → "나타나지 않습니다"→"흐리게 바뀌어 눌리지 않습니다" ② 배포 창 길이에 정본이 명시한 outlier 보존(12~17초, 한 번은 41초) ③ 수정 후 창의 트래픽이 **더 많았다**는 정본 논거 보존("같은 규모"→"그보다 적은 111건") ④ 아이콘 열 정렬 보장 스코프는 정본 `FUNCTION.md:3078-3080`(AC-AVA-1 = 한 체인 안)에 맞춰 "어느 행에서나"→"한 파일의 버전 이력 안에서".
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일) · 블록 순서(46 · head=2026-08-11)·항목 enum(type/area)·스키마 외 키 0·기존 블록 보존·`generated`==head.date 확인 · 내부용어 누출 0.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-12T01:03:01+09:00
