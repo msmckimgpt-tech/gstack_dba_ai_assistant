@@ -139,3 +139,98 @@ source_of_truth: true
 - **§18.8 패널 미수행** — 세션 정책. 위 H1~H10 이 대체이며, 특히 H3 은 자체 통합 테스트가 잡은 실결함이라 검토가 형식적이지 않았음을 보인다.
 - 위험도: **Major(§12.3)** — 엣지 설정 + 전역 캐싱 semantics. 롤백 = 4파일 revert.
 - Cross-ref: MODIFY CHG-20260728T123000-asset-stamp-cache-integrity · 선행 사고 관측 `feature-0003/docs/test-runs.d/20260728T113000-graph-noise-reduction.md` · feature-0027 P0-E · AGENTS.md §13.1 v3.35.1 · §13.2.9.
+
+## REV-20260811T155700-edge-rolling-gate [CODEX:deploy-spine-edge-gate] — PASS (2R)
+- Related Change: CHG-20260811T155700-edge-rolling-gate (롤링의 엣지 후보 복귀 게이트)
+- Source: codex review (0.146.0, staged diff) — §18.8.1 경량 경로
+- Trigger: 배포 인프라·가용성 코드 변경(performance/availability keyword). 세션에 subagent 호출
+  제약이 있어 §18.8.2 순서대로 **제약 없는 채널(codex)** 로 수행 — panel 대체가 아니라 동일 목적의
+  다른 채널이며, 덮지 못한 도메인은 아래 「검증 범위」에 명시.
+- Timestamp: 2026-08-11T06:57Z
+- Verdict: PASS (**5라운드** — 1R P1 3·P2 3 / 2R P1 2·P2 2 / 3R P1 1·P2 3 / 4R P1 4·P2 1 전건 반영 / 5R P1 1 = **근거 기록 후 수용**(아래 §2c).
+  4R 에서 P1 이 다시 는 것은 3R 대응으로 **새 코드(edge_peer_live)를 넣어 새 표면이 생겼기** 때문이다 —
+  리뷰가 수렴하지 않은 게 아니라 수정이 새 검토면을 만든 것이고, 그 4건도 전부 잠갔다)
+- Human Approval Needed: no (Major — 배포 스파인·엣지 설정. 사용자가 대응 범위를 사전 선택)
+
+### 1. 근본 원인 판정의 근거 (추정 아님)
+- 엣지 에러 로그 `no upstreams available` **71건/6h**, 배포 창 6회 각 12~17초.
+- 503 응답 duration 이 전부 `5.01s` = `lb_try_duration` 소진.
+- **그 창에서 active health 는 양 replica 모두 `host is up`** → active 가 아니라 passive 격리.
+- 503 종료 시각 = "먼저 내린 replica 의 첫 실패 + fail_duration(30s)" 과 매 창 일치
+  (12:16:26 / 12:11:56 / 12:40:23). 컨테이너 StartedAt 실측 롤링 간격 = **10초**(12:39:54 → 12:40:04).
+- 즉 "롤링 간격 < passive 격리" 라는 수치 관계가 기전이며, 다른 설명이 남지 않는다.
+
+### 2. 적대 검증(codex) 지적과 처리
+- **P1-a 배포 hang** — admin 조회가 멈추면 while 이 deadline 을 재검사하지 못해 배포가 flock 을
+  쥔 채 무기한 정지. → `timeout` 2겹(wget `-T 5` + exec 15s). 회귀 잠금 G4c2 가 실제 hang(60s)을
+  재현해 게이트가 상한 내 반환함을 단정.
+- **P1-b 게이트가 무의미해지는 경로** — 격리를 관측했는데 timeout 후 성공 반환 → 다음 replica 를
+  그대로 내려 원 결함 재현. 지적이 옳다. → **관측-timeout 은 실패 반환**으로 바꾸고, 결정 지점을
+  `predrain`(= "내려도 되는가" 를 묻는 자리)으로 옮겨 **fail-closed**. 중단하면 기존 replica 가
+  계속 서빙하므로 강행보다 항상 낫다. 회귀 잠금 G1c/G1d/G3b.
+- **P1-c 소스 파일 신뢰** — degrade 대기가 repo Caddyfile 만 읽으면, 이 변경을 처음 배포하는
+  창에서 라이브 Caddy 는 아직 옛 값이라 덜 기다린다. → **max(repo, 실행 중 컨테이너 설정)**,
+  둘 다 미상이면 30s. 회귀 잠금 G4b2/G4b3.
+- **P2-a 주장 범위** — `fails==0` 은 passive 격리 해제이지 엣지 availability 전부가 아니다(active
+  health 실패·네트워크 단절에도 0 일 수 있다). → 함수 주석에 범위를 명시하고, 나머지 두 축은
+  `wait_ready`(같은 uvicorn 의 /readyz)와 soak 의 `edge_ok` 가 담당함을 적었다. **보장 확대 아님.**
+- **P2-b fail_duration 인하의 대가** — 3s 로 낮추면 `/livez` 는 통과하면서 특정 요청만 5xx 인
+  upstream 이 3초마다 재투입된다(active health 가 못 잡는 유형). 지적이 옳다. → **원복(30s)**.
+  게이트가 결합을 흡수하므로 값은 본래 역할(장애 격리 강도)로 판단하면 된다.
+- **P2-c 테스트가 실효하지 않음** — fallback 검사가 harness 에 덮여 실제 fallback 을 타지 않았고
+  기대값에 17 을 허용해 fallback 을 지워도 통과. → 지시어 없는 Caddyfile 을 harness 로 주입하고
+  30 만 허용(G4b2). 이 지적은 **내 테스트의 vacuous 구멍**이었다.
+
+### 2b. 2·3라운드 지적과 처리
+- **2R P1-a `predrain` fail-open** — 상대 컨테이너 부재·unready 검사가 "상대 존재" 분기 **안**에만
+  있어, 한쪽만 살아 있는 상태에서 그 **유일한 replica** 를 내릴 수 있었다. → `predrain` 을
+  **3조건 fail-closed**(상대 존재 / 상대 ready / 상대 엣지 복귀)로 재구성, 각 조건이 `return 1`.
+  텍스트 단정으로는 `if false;` 무력화를 못 잡아 **실행 검증**(스텁 주입 후 실제 실행)으로 승격.
+- **2R P1-b 파일 ≠ 런타임 설정** — bind mount 파일이 새 값이어도 Caddy 프로세스는 reload 전까지
+  옛 값이다. admin 을 못 읽는 상황에서는 런타임 값을 알 수단이 없다. → degrade 대기에 **floor
+  30s**(관측된 최악값). 덜 기다린 대가는 전면 503, 더 기다린 대가는 배포 30초 — 비대칭이 명백.
+- **2R P2 `ps` 실패 ≠ caddy 부재** — 반환코드를 분리해 조회 실패는 degrade 로, 진짜 부재만 skip.
+- **3R P1 active health 축 누락** — `fails==0` 은 passive 축일 뿐이다. active health 가 제외한
+  replica 도 내부 `/readyz` 200 + `fails==0` 일 수 있고, 그 상대를 믿고 다음 replica 를 내리면
+  다시 upstream 0 이 된다. 1·2R 에서 이것을 "한계" 로 문서화만 했는데 **문서화는 결정을 보호하지
+  않는다**. → `edge_peer_live` 신설: **Caddy 컨테이너에서** 그 replica 의 `/livez` 를 직접 200
+  확인(같은 네트워크·같은 Host·같은 TLS = active health probe 와 동일 조건). 라이브 실측으로
+  경로 확인(`Caddy → web-a:8000/livez` → `{"status":"ok",...}`).
+- **3R P2 우회 테스트가 `main` 전체를 허용** — `main` 에 `"$svc"` 직접 recreate 를 넣으면 통과.
+  → allowlist 에서 `main` 제거, 초기 dual-start 한 줄만 예외. `stop`/`restart` 도 검사 대상에 편입.
+- **3R P2 문서 수치 불일치** — 24/32/18 혼재. → 전 문서 실측값(34 PASS)으로 통일.
+
+### 2c. 5R 지적 — 수용된 잔여 리스크와 그 근거
+- **지적**: `edge_peer_live` 가 `--no-check-certificate` 로 붙으므로 CA/SAN 을 검증하지 않는다.
+  "Caddy 는 CA 검증 실패로 replica 를 제외했는데 probe 만 200" 인 false-pass 가 이론상 가능하다.
+- **수용 근거(실측)**: 그 시나리오는 **replica 마다 다른 leaf 를 제시할 때만** 성립한다. 이 구성은
+  `docker-compose.yml` 의 `x-web-extra` 가 양 replica 에 **동일한 `../artifacts/certs` 마운트 +
+  동일 `WEB_TLS_CERT_FILE`** 을 주므로 둘은 항상 같은 cert 를 제시한다(실측 확인). cert 를
+  교체했는데 Caddy 가 옛 CA 를 들고 있으면 **양쪽이 동시에** 제외되어 배포 이전에 이미 전면
+  503 이고, 그 축은 `preflight_tls` (2) rootCA 검증 · (4) 컨테이너 CA 대조가 배포 시작 전에
+  ABORT 시킨다. 한쪽만 TLS 도달 불가가 되는 실제 경우(그 replica 가 cert 를 못 읽어 평문 기동)는
+  **http 폴백이 없으므로** handshake 실패 → probe 실패로 게이트가 잡는다.
+- **가드**: 수용의 전제(단일 cert 소스 공유)를 테스트로 잠갔다 —
+  `test_g10_replicas_share_a_single_cert_source`. replica 별 cert 를 도입하면 이 테스트가 실패해
+  probe 보강 필요성을 알린다. 도구 제약(busybox wget 은 CA 를 지정할 수 없다)이 근본 제한이며,
+  그것을 넘으려면 probe 수단 자체를 바꿔야 한다 — 본 cycle 범위 밖으로 둔다.
+
+### 3. 검증 범위와 한계 (정직 표기)
+- **덮은 것**: 신규 39건 PASS · **뮤테이션 17종 전건 KILLED**(게이트 제거·`|| die` 제거·실패반환 뒤집기·
+  라이브 조회 제거·timeout 제거·fallback 0·비차단 파기 — 각각 대응 테스트 1건에 정확히 잡힘) ·
+  `bash -n` · 라이브 Caddy admin 응답으로 파싱 실측.
+- **덮지 못한 것 `[SKIPPED:tool-restricted:security,ux]`** — 세션의 subagent 호출 제약으로 §18.8
+  패널(backend/qa 도메인)은 codex 단일 채널로 대체했다. 다만 본 변경은 인증·인가·데이터·UI 표면이
+  0(배포 스크립트 + 엣지 주석 + 테스트)이라 security/ux 도메인의 실질 표면이 없다.
+- **게이트 판정 2축**: passive 격리 해제(`fails==0`) + **Caddy→replica 실도달**(`edge_peer_live`).
+  남는 갭 — Caddy 내부 healthy 플래그 자체는 admin API 가 노출하지 않으므로, "방금 실패를 기록해
+  아직 unhealthy 마킹 중이나 지금은 200" 인 최대 `health_interval`(2s) 창은 폴링(1s)이 흡수한다.
+- **라이브 실증은 배포 후에만 가능** — 게이트의 실효(배포 창 `no upstreams available` = 0)는
+  다음 배포에서 측정한다. 그 전까지 본 변경은 "코드·테스트 완료, 라이브 미실증" 이다.
+- 전체 회귀(`make test`)에 **기존 실패 1건**(`test_oauth_exhaustion_gate.py::test_write_failure_
+  after_successful_post_cannot_kill_slot_selection`)이 있으나 **main 기준선에서도 동일하게 실패**함을
+  확인했다(무관 영역 — OAuth 토큰 갱신 스크립트).
+- 위험도: **Major(§12.3)** — 배포 스파인. 롤백 = deploy-web.sh revert(Caddyfile 은 주석만).
+- Cross-ref: MODIFY CHG-20260811T155700-edge-rolling-gate · TASK `20260811T1557-edge-rolling-gate` ·
+  ANCHOR §1/§3(본 변경은 앵커가 미달성이던 상태를 되돌린 것) · AGENTS.md §16.7 G9-c(차단 로직의
+  정상 경로 실측)·G10(재발 클래스 구조 가드).

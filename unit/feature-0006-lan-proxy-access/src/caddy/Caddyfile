@@ -102,6 +102,28 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 			lb_try_duration 5s
 			lb_try_interval 250ms
 
+			# ⚠ passive health 는 **롤링 배포와 결합된 값**이다 (2026-08-11 라이브 사고).
+			#
+			# fail_duration = 실패한 upstream 이 LB 후보에서 빠져 있는 시간. 이 값이 롤링의
+			# replica 간 간격보다 길면 무중단 불변식이 깨진다:
+			#   web-a recreate → Fails(web-a)=1 → web-a 는 fail_duration 동안 후보 제외
+			#   → 스파인이 web-a 의 앱 /readyz 만 보고 ~10s 뒤 web-b 를 내림
+			#   → **두 replica 모두 후보 제외 = `no upstreams available`** → lb_try_duration 소진 후 503.
+			# 실측: 배포 1회당 12~17초 전면 503(엣지 에러 `no upstreams available` 71건/6h).
+			# 그 창에서 active health 는 양 replica 모두 `host is up` 이었다 — passive 배제가 유일
+			# 원인이었고, 503 종료 시각이 매번 "먼저 내린 replica 의 첫 실패 + 30s" 와 일치했다.
+			#
+			# **해법은 이 값을 낮추는 것이 아니다.** 값을 낮추면(예: 3s) 롤링 창은 좁아지지만
+			# 실장애 격리가 함께 약해진다 — `/livez` 는 통과하면서 특정 요청만 5xx 를 내는
+			# upstream(= active health 가 못 잡는 유형)이 3초마다 다시 투입된다. 그 트레이드오프를
+			# 정당화할 SLO 근거가 없어 채택하지 않았다(적대 검증 P2 지적).
+			# 대신 **결합을 스파인이 흡수한다**: `bin/deploy-web.sh` 의 `wait_edge_available` 이
+			# 다음 replica 를 내리기 전에 Caddy admin API 로 직전 replica 의 `fails==0` 복귀를
+			# 확인하고, 확인되지 않으면 배포를 **중단**한다(기존 replica 는 계속 서빙 = 무중단 유지).
+			# 그래서 이 값은 "장애 격리 강도" 라는 본래 역할로 판단하면 된다.
+			#
+			# 값을 바꿀 때: 스파인의 `EDGE_AVAIL_TIMEOUT`(기본 60s)보다 작아야 게이트가 timeout
+			# 으로 무력화되지 않는다. 그 관계는 test_edge_rolling_gate.py G6 가 잠근다.
 			fail_duration 30s
 			max_fails 1
 

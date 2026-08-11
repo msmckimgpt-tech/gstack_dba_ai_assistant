@@ -116,6 +116,29 @@ LB 가 클라이언트를 재배정하고, 그 순간 **구 replica 가 `?v=<신
 달라진 것은 그 상태가 캐시에 굳지 않는다는 점이다(다음 로드에서 수렴). 창까지 없애려면
 content-addressed 경로(`/static/<hash>/…` + 구버전 retention)가 필요하며 후속 과제다.
 
+## 엣지 후보 복귀 게이트 (edge-rolling-gate, 2026-08-11)
+
+**계약**: 롤링은 "앱이 떴다"(`/readyz`)가 아니라 **"엣지가 그 replica 를 다시 LB 후보로 쓴다"**
+를 확인한 뒤에만 다음 replica 를 내린다. 두 층은 다르며, 후자를 건너뛰면 두 replica 가 동시에
+후보에서 빠져 `no upstreams available` → 전면 503 이 된다(2026-08-11 라이브 사고).
+
+- **AC-20260811T155700-edge-rolling-gate-1** — `predrain <target> <other>` 는 `other` 가 엣지
+  후보로 복귀했음을 확인하고, 확인되지 않으면 **`target` 을 내리지 않고 배포를 중단**한다
+  (fail-closed). 중단 시 기존 replica 가 계속 서빙하므로 사용자 영향은 0 이다.
+- **AC-…-2** — 복귀 판정은 Caddy admin API `/reverse_proxy/upstreams` 의 해당 upstream
+  `fails == 0`. 조회 불가 시 **max(repo Caddyfile, 실행 중 Caddy)** 의 `fail_duration` 만큼
+  고정 대기로 degrade 하고, 양쪽 다 미상이면 30s 를 가정한다(조회 실패를 "복귀" 로 읽지 않는다).
+- **AC-…-3** — admin 조회는 `timeout` 으로 감싼다(wget `-T 5` + exec 15s). 조회가 멈춰도 게이트는
+  상한 내 반환한다 — 아니면 배포가 flock 을 쥔 채 정지해 다른 배포까지 막는다.
+- **AC-…-4** — `recreate_replica` 말미의 대기는 **비차단**이다. 롤백(auto_rollback·`--rollback`)도
+  이 함수를 타므로 여기서 끊으면 롤백이 중단된다. 차단 판단은 `predrain` 한 곳이 한다.
+- **AC-…-5** — Caddyfile 의 `fail_duration` 은 스파인의 `EDGE_AVAIL_TIMEOUT` 보다 작아야 한다.
+  크면 게이트가 매번 timeout 되어 무력화된다(`test_edge_rolling_gate.py` G6 가 잠금).
+
+**주장 범위 (정직)**: 이 게이트가 확인하는 것은 **passive 격리 해제**다. active health 실패나
+Caddy→replica 네트워크 단절에서도 `fails==0` 일 수 있다 — 그 두 축은 `wait_ready`(같은 uvicorn 의
+`/readyz`)와 soak 의 `edge_ok` 가 담당한다.
+
 ## Pre-approved Changes
 - deploy_scope: included (전역 FIRST_REQUEST.md 상속) — cycle-final 후 자동 배포.
 - reachability_scope: included — 본 기능은 bring-up/도달성이 완료 기준의 핵심이므로,
