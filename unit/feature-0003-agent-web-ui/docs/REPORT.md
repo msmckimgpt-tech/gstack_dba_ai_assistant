@@ -2272,3 +2272,12 @@ security 패널이 `get_object_bytes` 전체 적재(최대 25× 증폭)를 지�
   구조 단언 + DOM-level control 로 대체했다. 렌더 부분을 순수 함수로 떼면 휴지통처럼 실행 가능해진다.
 - **휴지통 `↩` 예약**: 지금은 서버가 관리 불가 행을 응답에서 제외해 열이 갈리지 않는다. 그 전제가
   바뀌면 예약이 필요하다(코드 주석에 전제 기록).
+
+### [POST-DEPLOY 완결 2026-08-11] attach-version-action-align — PR #1207 머지(`04f2ecf5`) → 배포 → PB-0008 라이브 **PASS**
+
+- 배포 `bin/deploy-web.sh` scope=all — web-a/web-b 롤링(soak 통과) + 워커 전량.
+- 라이브 좌표: `probe_b.sql` 2버전 체인에서 두 행 슬롯 수 4로 동일, 열별 x 단일값
+  (`👁`1135 · `⇄`1159 · `⬇`1183 · `🗑`1207), 버튼 실폭 22.00px. 스크린샷에서 최신 행의 비교
+  자리가 비고 나머지 아이콘이 세로 정렬 — **사용자 보고 뒤틀림 해소 확인**.
+- 라이브 데이터는 읽기만. fragment
+  `docs/test-runs.d/20260811T1200-attach-version-action-align.md` POST-DEPLOY 절 참조.
