@@ -3216,3 +3216,14 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/verify_attach_version_diff.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`,
   `docs/test-runs.d/20260811T1500-attach-diff-mark-underscore.md`.
 - 백엔드·API·RBAC·스키마·마이그레이션 **0**. Timestamp: 2026-08-11T15:00:00+09:00
+
+
+## CHG-20260811T1600-ai-claude-attach-diff-underscore-postdeploy — POST-DEPLOY PB-0008 실측 기록 (doc-only)
+
+- 배포본 `97e9c718` 라이브 실측. 판정은 서비스별 `GIT_COMMIT`(web-a/web-b/ask-worker/
+  insight-worker 4종 일치) + **서빙 `chat.css` 의 `inset` 잔존 0건**으로 했다.
+- `docs/test-runs.d/20260811T1500-attach-diff-mark-underscore.md`: `verdict: PARTIAL → PASS` +
+  PB-0008 블록(`_` 3건 판독 · 마크 `0px 2px` non-inset · 배경 `rgba(0,0,0,0)` · 쪽별 색 ·
+  단일열 parity · 구문 색 왕복 텍스트 불변) + 라이브 미확인 축 2건.
+- `docs/TASK.md`: 배포·PB-0008 체크박스 마감. 코드 변경 **0**.
+- Timestamp: 2026-08-11T16:00:00+09:00

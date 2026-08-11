@@ -9358,7 +9358,7 @@ MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복
 - [x] `각 글자 단위의 차이점 출력` — 줄 안 변경 구간이 밑줄 마크로 표시된다(한국어 글자 단위,
       ASCII 단어 단위). 2열·단일열 동일. 계산은 서버 단독이라 두 뷰가 갈리지 않는다.
 - [x] 라이브 확인 — 배포본 `9f1622f9` PB-0008 실측 PASS.
-- [ ] 라이브 확인 — 배포 후 PB-0008.
+- [x] 라이브 확인 — 배포본 `97e9c718` PB-0008 PASS.
 ## 20260807T1900-attach-source-view — 첨부 행 클릭 = 문서 원문 보기 (Minor §12.3)
 
 사용자 요청: "별도로 추가된 버전이 없는 첨부파일 또한, 클릭했을 때 문서 원문이 출력되도록
@@ -9422,7 +9422,7 @@ MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복
 AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 
 ### Next Action
-- 배포 후 PB-0008 라이브 확인(`_` 포함 식별자의 밑줄 분리).
+- (없음 — 배포·PB-0008 완료.)
 
 ### 체크리스트
 
@@ -9434,9 +9434,10 @@ AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 - [x] 회귀 잠금 — 기하 **M6**(잉크↔바 빈 픽셀 행 1행) · mjs **D6a2**(`inset` 금지)
 - [x] 하네스 아티팩트 수정 — **M3b 클립**이 박스 안쪽만 캡처해 거짓 FAIL 을 냈다
 - [x] 기하 55 PASS · jsdom 125 PASS · mjs 전수 50 suite OK
-- [ ] 배포(deploy_scope: included) + PB-0008 라이브 확인
+- [x] 배포(deploy_scope: included) — 배포본 `97e9c718`(web/워커 4종) · 서빙 CSS `inset` 잔존 0
+- [x] PB-0008 라이브 확인 — `FROM_UNIXTIME`·`p_SponsorEndTime`·`v_CreatorAuthNo` 의 `_` 판독 확인
 
 ## 9. Requested Scope
 - [x] `하이라이트 밑줄이 '_' 등의 가독성을 떨어뜨리는 이슈 해소` — 바를 글자 아래로 내려
       글자와 바 사이에 빈 픽셀 행을 확보했다. 픽셀 회귀 잠금(M6) 신설.
-- [ ] 라이브 확인 — 배포 후 PB-0008.
+- [x] 라이브 확인 — 배포본 `97e9c718` PB-0008 PASS.

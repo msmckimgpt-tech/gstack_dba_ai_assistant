@@ -2,7 +2,7 @@
 run_at: 2026-08-11T15:00:00+09:00
 session: ai/claude/attach-diff-mark-underscore
 scope: 줄 안 변경 마크가 `_` 등 밑선 글자를 가리는 문제 수정
-verdict: PARTIAL
+verdict: PASS
 ---
 
 # Run — intra-line 마크 ↔ `_` 충돌 해소
@@ -10,7 +10,7 @@ verdict: PARTIAL
 사용자 지적: "변경을 강조하는 하이라이트 밑줄이 특정 문자의 가독성을 떨어뜨리는 이슈가
 확인되었습니다. (`'_'` 문자 등)"
 
-`verdict: PARTIAL` — PB-0008 실 Windows 브라우저는 **배포 후 수행**(정적 자산이 web 이미지에
+`verdict: PASS` — PB-0008 실 Windows 브라우저는 **배포 후 수행**(정적 자산이 web 이미지에
 baked 되어 배포 전에는 이 CSS 를 라이브에서 열 수 없다). 아래 축은 모두 PASS.
 
 ## Environment: WSL-headless chromium (playwright) — 재현과 판정
@@ -61,7 +61,32 @@ baked 되어 배포 전에는 이 CSS 를 라이브에서 열 수 없다). 아�
 
 - `make test` 전 스위트 — 결과는 아래 "검증 결과" 절 참조. CSS·테스트만 변경이라 백엔드 무영향.
 
-## Environment: Windows-browser (PB-0008) — **미수행 (배포 후 수행)**
+## Environment: Windows-browser (PB-0008) — **POST-DEPLOY 실측 (배포본 `97e9c718`)**
+
+- Bridge: relay @ `http://172.26.144.1:9223` · Chrome/150.0.7871.128 · Runner: AI
+- 라이브 서비스 커밋 — `repo-web-a-1`·`repo-web-b-1`·`repo-ask-worker-1`·`repo-insight-worker-1`
+  **전부 `GIT_COMMIT=97e9c718`**. 서빙 `chat.css` 에 `inset 0 -2px 0 0 var(--diff-mark*` **0건**.
+- 대상: 대화 `20260804051001-774ada22` → `P_gunzgame_Game_MasangCreatorsStop.sql`
+  "버전 3개 ▾" → `⇄ 버전 비교` (v2 ↔ v3, stats `+59 / -2`)
+
+**PASS 항목**
+
+| 축 | 실측 |
+|---|---|
+| 마크 위치 | `box-shadow: rgb(127,29,29) 0px 2px 0px 0px` — **`inset` 아님** |
+| `_` 분리 | `FROM_UNIXTIME` · `(p_SponsorEndTime)` · `v_CreatorAuthNo, v_SponsorCode` 3건에서 밑줄이 바와 분리돼 **`_` 가 판독됨**(확대 캡처로 육안 확인) |
+| 배경 미칠 | 마크 span `background-color: rgba(0,0,0,0)` |
+| 쪽별 색 | 좌 `rgb(127,29,29)` · 우 `rgb(21,128,61)` |
+| 2열↔단일열 | 단일열에서도 마크 13개 · `is-delete`/`is-insert` 색 동일 |
+| 구문 색 OFF→ON | 마크 13→11→13 · **셀 텍스트 불변** |
+
+- Evidence: `/tmp/win-browser-shots/pb0008-underscore-fixed.png`(2열 전체) ·
+  `…-underscore-zoom.png`(변경 블록 3× 확대 — §16.6 판독 가능 캡처)
+
+**라이브 표본에서 확인 못한 축**: 탭 들여쓰기 마크(표본에 탭 변경 없음 — 기하 M3b 가 192px 로
+잠금) · `is-note` 절단 배너.
+
+## (배포 전) PB-0008 미수행 사유 — 기록 보존
 
 **미수행 사유**: 변경 대상이 `css/chat.css` 정적 자산이고, 정적 자산은 **web 이미지에 baked**
 된다. 배포 전에는 실 Windows 브라우저가 이 CSS 를 열 수 없어, 지금 PB-0008 을 돌리면 직전
