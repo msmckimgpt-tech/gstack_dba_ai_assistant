@@ -17,6 +17,7 @@ choke-point. 수정(revise)은 초안을 만든 대화 컨텍스트에서 수행
 
 from __future__ import annotations
 
+import bisect
 import concurrent.futures
 import contextvars
 import json
@@ -359,6 +360,27 @@ CONVERSATION REQUEST, not against the literal latest utterance.
   listed under "ALSO ATTACHED" are real attachments whose body simply was not included in this
   digest. Do NOT report `grounding`/`honesty` merely because a file's excerpt is absent here, and do
   NOT demand that the assistant ask the user to re-attach a file that is already listed.
+- **Excerpts are PARTIAL and each file states how much of it you were given.** A file marked
+  `[PARTIAL EXCERPT — you were given N of M chars; lines shown in full: A-B …]` means you hold only
+  those characters; everything else in that file is UNKNOWN to you. The assistant was given more of
+  the file than you were, so it can legitimately cite, quote, or describe content you cannot see.
+  For such a file, do NOT raise `grounding`/`honesty` merely because a quoted line, value or change
+  "does not appear in the excerpt", "has no evidence", or "was not read" — that is a statement about
+  YOUR window, not about the draft. Two things ARE still reportable for these files: a claim that
+  **contradicts** content you were actually shown, and a quotation presented as verbatim from a
+  range you were shown where the shown text plainly differs.
+- `[FULL FILE SHOWN]` means you hold the entire body. There, absence IS evidence: a specific quote
+  or value that does not occur in the file is a `grounding` defect, and you should say so.
+- `SOURCE ALSO TRUNCATED` means the stored body itself is only the beginning of the file — the
+  assistant did not receive the rest either. Do not extend the "the assistant saw more than you"
+  reasoning past that boundary: confident, specific claims about the part beyond the delivered
+  prefix have no basis for either of you unless a tool run supplied it.
+- Attached file bodies reach the assistant through its prompt, not through a tool, so "no tool runs"
+  is not by itself missing evidence **for a file that has an excerpt above** — do not demand the
+  assistant re-read a file it was already given. This does NOT extend to `ALSO ATTACHED` files:
+  their content was never placed in the assistant's prompt and is reachable only via
+  `read_attachment`. Specific factual claims about an `ALSO ATTACHED` file with no corresponding
+  tool run are ungrounded, and that IS a `grounding` defect worth reporting.
 
 ATTACHMENT CHANGE FACTS (present only in some reviews; when present it is application-computed from
 the conversation's attachment records, not produced by any model). Use it ONE way only:
@@ -549,14 +571,241 @@ _ATTACH_PER_FILE_CAP_CHARS = 1200
 # 대화 전체 첨부(최대 200건)가 실릴 수 있으므로 상한 없이 두면 도구 근거·발췌를 통째로 밀어낸다.
 _ATTACH_MANIFEST_BUDGET_RATIO = 0.35
 
+# FR-redteam-attach-excerpt-cap-false-grounding-block (conversation_audit 2026-08-07):
+# 발췌가 **파일 앞머리 고정**(body[:cap])이라, 캡 밖(뒤쪽)을 근거로 쓴 **정확한** 답변이
+# 리뷰어 시야에서 근거를 잃고 grounding BLOCK 을 맞았다. 그 축은 rederive 적격이 아니라
+# 텍스트 재작성으로는 해소가 불가능해 `revise_failed` 로 끝나고, 옳은 답변에 "자가 검증
+# 미해소" 배너가 붙었다. 실측 run 20260807040816-3a3b6f52 — 7,092자 파일에서 답변이
+# 인용한 마지막 줄이 digest 에 아예 없었다(재현: 발췌가 123줄 중 ~20줄까지만 덮음).
+#
+# 해소: 발췌를 **초안이 실제로 인용한 구간**에 맞춰 고른다. 예산(파일당 캡)은 그대로 두되
+# 어디에 쓰는지를 바꾼다 — 캡을 키우는 것은 더 큰 파일에서 같은 실패가 재발하므로 오답이다.
+_ATTACH_HEAD_WINDOW_CHARS = 420      # 파일 정체성 확인용 앞머리 — draft 유무와 무관하게 항상 포함
+_ATTACH_CITED_WINDOW_CHARS = 300     # 인용 히트 1건을 감싸는 창(히트 앞뒤로 확장)
+_ATTACH_TAIL_WINDOW_CHARS = 260      # 꼬리 예약 — 관측된 원 마찰이 '파일 맨 끝 줄' 인용이었다
+_ATTACH_MAX_CITED_WINDOWS = 4        # 파일당 인용 창 상한(예산·노이즈 제어)
+_ATTACH_MIN_PROBE_CHARS = 24         # 이보다 짧은 초안 줄은 우연 일치가 많아 probe 로 안 쓴다
+_ATTACH_MAX_PROBES = 60              # 초안에서 뽑는 probe 상한(비용 상한)
+# 짧아도 파일 고유성이 충분한 토큰(식별자·해시·마커). 자모/공백 없는 연속열 중 이 길이 이상.
+_ATTACH_MIN_TOKEN_PROBE_CHARS = 12
+
+
+def _line_starts(text: str) -> list[int]:
+    """각 줄의 시작 offset. 줄번호 환산(bisect)용.
+
+    말미 개행 뒤의 offset 은 **줄이 아니다**. 넣으면 파일이 실제보다 한 줄 많아 보이고,
+    coverage 가 존재하지 않는 마지막 줄을 "미표시"로 보고한다 — 리뷰어에게 진실을 말하는 것이
+    목적인 블록이 허위 구간을 만들게 된다.
+    """
+    starts = [0]
+    for m in re.finditer(r"\n", text):
+        if m.end() < len(text):
+            starts.append(m.end())
+    return starts
+
+
+def _count_lines(text: str) -> int:
+    """줄 수 — 말미 개행은 새 줄을 만들지 않는다(`_line_starts` 와 동일 규약)."""
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
+def _line_no(starts: list[int], pos: int) -> int:
+    """offset → 1-based 줄번호."""
+    return bisect.bisect_right(starts, max(0, pos))
+
+
+def _draft_probes(draft: str) -> list[str]:
+    """초안에서 '파일을 인용한 것으로 보이는' 조각을 뽑는다 (발췌 앵커).
+
+    두 종류를 쓴다 — ① 마크다운 장식을 벗긴 **줄**(24자 이상) ② 파일 고유성이 높은
+    **토큰**(12자 이상 연속열). ②가 있어야 초안이 파일 내용을 통째 복사하지 않고
+    식별자·마커만 인용한 경우에도 해당 구간을 찾을 수 있다.
+
+    probe 는 검색어일 뿐 리뷰어에게 노출되지 않으므로 sentinel strip 대상이 아니다.
+    """
+    text = str(draft or "")
+    if not text.strip():
+        return []
+    probes: list[str] = []
+    seen: set[str] = set()
+
+    def _add(p: str) -> None:
+        p = p.strip()
+        if not p or p in seen or len(probes) >= _ATTACH_MAX_PROBES:
+            return
+        seen.add(p)
+        probes.append(p)
+
+    for raw in text.splitlines():
+        # 마크다운 장식(불릿·인용·헤더·번호·코드펜스·백틱)을 벗긴다 — 초안은 파일 내용을
+        # 그대로가 아니라 리스트·코드블록 안에 넣어 인용하는 경우가 대부분이다.
+        line = raw.strip()
+        if line.startswith("```"):
+            continue
+        line = re.sub(r"^(?:[-*+>]\s+|\d+[.)]\s+|#{1,6}\s+)", "", line).strip()
+        line = line.strip("`").strip()
+        if len(line) >= _ATTACH_MIN_PROBE_CHARS:
+            _add(line)
+        for tok in re.findall(r"\S+", line):
+            tok = tok.strip("`\"'(),;:")
+            # 순수 자연어 단어는 우연 일치가 많다 — 식별자성(숫자/밑줄/하이픈/점) 이 있어야 채택.
+            if len(tok) >= _ATTACH_MIN_TOKEN_PROBE_CHARS and re.search(r"[0-9_.\-]", tok):
+                _add(tok)
+    return probes
+
+
+def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """겹치거나 맞닿은 구간 병합 (시작 오름차순)."""
+    out: list[tuple[int, int]] = []
+    for s, e in sorted(spans):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def _missing_ranges(shown: list[tuple[int, int]], total_lines: int) -> list[tuple[int, int]]:
+    """보여준 줄 범위의 여집합 — "무엇을 못 봤는가" 를 리뷰어에게 명시하기 위한 것."""
+    out: list[tuple[int, int]] = []
+    cursor = 1
+    for s, e in sorted(shown):
+        if s > cursor:
+            out.append((cursor, s - 1))
+        cursor = max(cursor, e + 1)
+    if cursor <= total_lines:
+        out.append((cursor, total_lines))
+    return out
+
+
+# 첨부 본문은 비신뢰 입력인데, 새 coverage 어휘는 sentinel 이 아니라 strip 되지 않았다. 프롬프트가
+# `[FULL FILE SHOWN]` 에 "부재 추론 허용" 권한을 부여했으므로, 본문이 그 토큰을 담으면 **정확한
+# 답변을 BLOCK 시키거나 틀린 답변을 통과시키는 레버**가 된다(적대 패널 backend MAJOR/security).
+# 삭제하지 않고 대괄호만 무력화한다 — 내용을 지우면 리뷰어가 보는 본문이 원본과 달라진다.
+_DIGEST_MARKER_RE = re.compile(
+    r"\[(FULL FILE SHOWN|PARTIAL EXCERPT|SOURCE ALSO TRUNCATED)", re.IGNORECASE)
+
+
+def _neutralize_digest_markers(text: str) -> str:
+    return _DIGEST_MARKER_RE.sub(lambda m: "(" + m.group(1), text)
+
+
+def _find_probe(body: str, lowered: str, probe: str) -> int:
+    """probe 위치. 정확 일치 우선, 실패 시 **대소문자 무시** 1회 폴백.
+
+    LLM 은 SQL 식별자·키워드를 대문자로 정규화해 인용하는 습관이 있어, 정확 일치만 쓰면
+    흔한 인용 형태에서 앵커가 조용히 빗나간다(적대 패널 qa MINOR 실측: 6개 인용 형태 중
+    '대소문자 정규화' 만 미스). 미스는 곧 커버리지 손실이므로 폴백을 둔다.
+    """
+    pos = body.find(probe)
+    if pos >= 0:
+        return pos
+    return lowered.find(probe.lower())
+
+
+def _select_excerpt_spans(body: str, draft: str, cap_chars: int) -> list[tuple[int, int]]:
+    """발췌로 보여줄 구간들. 앞머리 + 초안이 인용한 구간 + 꼬리, **예산을 남기지 않고**.
+
+    파일이 캡 안에 들어가면 전문 1구간.
+
+    **예산 회계(적대 패널 backend+qa BLOCKING)**: 초판은 앞머리 420자를 잡고 나머지 780자를
+    probe 히트에만 쓰다가, 히트가 없으면 그 예산을 **버렸다** — 초안이 리터럴 인용 없이 서술만
+    하거나(한국어 답변 ↔ 영문 파일이면 verbatim 매칭은 구조적으로 0건) `draft=""` 이면 리뷰어가
+    보는 양이 1,200자 → 420자로 **줄었다**. 오탐을 줄이려다 미탐 구간을 넓힌 것이라 원 결함보다
+    나쁘다. 그래서 배치 후 **남은 예산 전액을 앞머리 연장에 소진**한다 — 최악의 경우가 구 동작
+    (앞머리 1,200자)과 정확히 같아지고, `sum(span) == min(len(body), cap)` 이 항상 성립한다.
+
+    꼬리 창: 관측된 원 마찰이 "파일 **맨 끝** 줄을 근거로 한 답변" 이었고 그 인용이 패러프레이즈면
+    probe 가 못 잡는다. probe 매칭에 의존하지 않는 최소 보험으로 꼬리를 예약한다.
+    """
+    if len(body) <= cap_chars:
+        return [(0, len(body))]
+    head_end = min(_ATTACH_HEAD_WINDOW_CHARS, cap_chars)
+    spans: list[tuple[int, int]] = [(0, head_end)]
+    budget = cap_chars - head_end
+    hits = 0
+    lowered = body.lower()
+    for probe in _draft_probes(draft):
+        if budget <= 0 or hits >= _ATTACH_MAX_CITED_WINDOWS:
+            break
+        pos = _find_probe(body, lowered, probe)
+        if pos < 0:
+            continue
+        # 히트를 감싸는 창 — 인용 자체보다 넓게 잡아 리뷰어가 전후 맥락으로 대조할 수 있게 한다.
+        # padding 은 **앞뒤 양쪽**에 둔다: 뒤쪽만 잘라내면 인용 직전 맥락(정의·헤더)이 사라진다.
+        want = max(len(probe), _ATTACH_CITED_WINDOW_CHARS)
+        pad = max(0, (want - len(probe)) // 2)
+        s = max(0, pos - pad)
+        e = min(len(body), pos + len(probe) + pad)
+        if e <= head_end:
+            continue  # 이미 앞머리에 완전히 포함됨 — 예산 낭비 방지
+        s = max(s, head_end)  # 앞머리와 겹치는 부분에 예산을 이중 지출하지 않는다
+        take = min(e - s, budget)
+        if take <= 0:
+            continue
+        spans.append((s, s + take))
+        budget -= take
+        hits += 1
+    # 꼬리 예약 — 아직 안 보인 끝부분이 있으면.
+    if budget > 0:
+        tail_len = min(_ATTACH_TAIL_WINDOW_CHARS, budget)
+        tail_s = max(head_end, len(body) - tail_len)
+        if tail_s < len(body) and not any(s <= tail_s and len(body) <= e for s, e in spans):
+            spans.append((tail_s, len(body)))
+            budget -= (len(body) - tail_s)
+    # 남은 예산 전액을 앞머리 연장에 — 예산이 소멸하면 구 동작보다 적게 보여주게 된다.
+    if budget > 0:
+        spans[0] = (0, min(len(body), spans[0][1] + budget))
+    return _merge_spans(spans)
+
+
+def _fully_shown_lines(sanitized: str, starts: list[int],
+                       spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """span 이 **통째로** 덮은 줄만 골라 범위로 접는다.
+
+    span 은 문자 offset 이라 줄 중간에서 시작·종료할 수 있다. 그런 경계 줄을 "보여준 줄" 로
+    보고하면, 리뷰어가 그 줄의 **숨겨진 부분**을 인용한 정확한 답변에 모순 판정을 내린다
+    (적대 패널 backend BLOCKING·qa MAJOR). 그래서 부분만 보인 줄은 **SHOWN 에서 제외**한다 —
+    보수적으로 틀리는 쪽(미관측으로 분류)이 안전하다. 본문 자체는 그대로 전달되며, 달라지는
+    것은 '무엇을 봤다고 주장하는가' 뿐이다.
+    """
+    total = len(sanitized)
+    covered: list[int] = []
+    for idx, ls in enumerate(starts):
+        le = starts[idx + 1] if idx + 1 < len(starts) else total
+        if any(s <= ls and le <= e for s, e in spans):
+            covered.append(idx + 1)
+    out: list[tuple[int, int]] = []
+    for n in covered:
+        if out and n == out[-1][1] + 1:
+            out[-1] = (out[-1][0], n)
+        else:
+            out.append((n, n))
+    return out
+
+
+def _fmt_ranges(ranges: list[tuple[int, int]]) -> str:
+    return ", ".join(f"{a}-{b}" if a != b else f"{a}" for a, b in ranges) or "none"
+
 
 def build_attachment_digest(attachments: list[dict[str, Any]] | None,
-                            cap_chars: int = _ATTACH_TOTAL_CAP_CHARS) -> str:
+                            cap_chars: int = _ATTACH_TOTAL_CAP_CHARS,
+                            draft: str = "") -> str:
     """사용자 첨부 파일 매니페스트 + 발췌 (리뷰어용 ground truth).
 
     각 항목: {"filename": str, "content": str, "truncated": bool}. 본문 전체는 digest 예산을
     넘기므로 파일당 캡을 두고 절단 사실을 명시한다 — 리뷰어가 '발췌에 없음'을 '부재 증명'으로
     오인하지 않게 하는 것이 절단 표기의 목적이다(도구 preview 절단 표기와 동일 축).
+
+    draft (FR-redteam-attach-excerpt-cap-false-grounding-block, 2026-08-07): 리뷰 대상 초안.
+    주어지면 발췌를 **초안이 인용한 구간**에 맞춰 고른다(앞머리 + 인용 창). 예산은 그대로고
+    쓰는 위치만 바뀐다. 미제공이면 앞머리만 — 기존 동작과 동일(회귀 없음).
+
+    절단 표기는 산문 호소가 아니라 **구조적 사실**로 낸다: 실제로 보인 줄 범위와 보이지 않은
+    줄 범위를 명시한다. 산문 경고("absence here is not proof")만으로는 리뷰어가 정확히 그
+    오판을 냈다는 것이 실측으로 확인됐다.
     """
     items = [a for a in (attachments or []) if isinstance(a, dict)]
     if not items:
@@ -564,44 +813,103 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
     # feature-0003 attach-full-scope: 본문이 실린 파일과 매니페스트만 있는 파일을 나눈다.
     # 후자는 인라인 상한 밖이거나 비텍스트라 발췌가 없을 뿐, **대화에 실재하는 첨부**다 —
     # 목록에서 감추면 그 파일을 논한 답변이 다시 '창작'으로 오판된다(honesty false positive).
-    with_body = [a for a in items if str(a.get("content") or "").strip()]
-    manifest_only = [a for a in items if not str(a.get("content") or "").strip()]
+    # sentinel strip 후 본문이 비면 with_body 가 아니다 — "0 lines / 전문 공개" 라는 거짓
+    # 완전성 주장이 나오기 때문이다(적대 패널 backend MINOR).
+    def _sanitized_of(a: dict[str, Any]) -> str:
+        return _neutralize_digest_markers(_strip_review_sentinels(str(a.get("content") or "")))
+
+    with_body = [a for a in items if _sanitized_of(a).strip()]
+    manifest_only = [a for a in items if not _sanitized_of(a).strip()]
     lines = [
         "USER-ATTACHED FILES (the user attached these in this conversation; their content IS",
-        "legitimate ground truth for the review. Excerpts are TRUNCATED — absence here is not",
-        "proof the assistant invented it):",
+        "legitimate ground truth for the review. Each file states how much of it you were given.",
+        "Anything outside the SHOWN ranges is UNKNOWN to you, not absent from the file —",
+        "never treat it as proof the assistant invented something):",
     ]
+    # 파일별 블록을 **통째로** 조립한 뒤 총예산 안에서 블록 단위로 넣는다. 조인된 문자열을 raw
+    # slice 하면 (a) `[FULL FILE SHOWN]` 라벨을 붙인 파일의 본문이 잘리고 (b) coverage 문장 자체가
+    # 반토막 나며 (c) 뒷 파일이 목록에서 통째로 증발한다 — 셋 다 리뷰어에게 **거짓 완전성**을
+    # 주는 경로다(적대 패널 backend+qa BLOCKING, 실측: 761자 첨부 3개로 재현).
+    blocks: list[tuple[str, list[str]]] = []
     for a in with_body:
         fname = _flatten_untrusted(str(a.get("filename") or "(unnamed)"), 120)
-        body = str(a.get("content") or "")
-        nlines = body.count("\n") + 1 if body else 0
-        excerpt = _strip_review_sentinels(body)[:_ATTACH_PER_FILE_CAP_CHARS]
-        mark = " [TRUNCATED]" if (len(body) > _ATTACH_PER_FILE_CAP_CHARS or a.get("truncated")) else ""
-        lines.append(f"- {fname} ({nlines} lines, {len(body)} chars){mark}")
-        if excerpt:
-            lines.append(f"  excerpt: {excerpt}")
+        # 줄번호·문자수는 **리뷰어가 실제로 보는 텍스트** 기준이어야 하므로 sentinel strip 을 먼저.
+        # raw 길이를 쓰면 sentinel 폭탄 파일이 `(3 lines, 6025 chars)` 같은 자기모순 헤더를 만든다.
+        sanitized = _sanitized_of(a)
+        nlines = _count_lines(sanitized)
+        starts = _line_starts(sanitized)
+        spans = _select_excerpt_spans(sanitized, draft, _ATTACH_PER_FILE_CAP_CHARS)
+        shown_chars = sum(e - s for s, e in spans)
+        # 상류(`_prepare_text_inline_attachments`)가 이미 앞부분만 실어 보낸 파일은 **총량을 알 수
+        # 없다** — 여기서 세는 줄 수는 prefix 의 것이다. 총량·완전 여집합을 단정하면 리뷰어가
+        # 뒷부분 인용을 "파일에 없는 줄" 로 오판한다(적대 패널 backend+qa MAJOR).
+        src_truncated = bool(a.get("truncated"))
+        full = (shown_chars >= len(sanitized)) and not src_truncated
+        shown = _fully_shown_lines(sanitized, starts, spans)
+        if full:
+            cover = " [FULL FILE SHOWN]"
+        else:
+            # 문자수가 **권위**다. 줄 범위는 편의 표기이며, 부분만 보인 경계 줄은 SHOWN 에서 뺀다.
+            cover = (f" [PARTIAL EXCERPT — you were given {shown_chars} of "
+                     f"{len(sanitized)}{'+' if src_truncated else ''} chars; "
+                     f"lines shown in full: {_fmt_ranges(shown)}")
+            if src_truncated:
+                cover += ("; SOURCE ALSO TRUNCATED — this body is only the beginning of the file, "
+                          "so the assistant did not receive the rest either, and the line count "
+                          "below is the prefix's, not the file's")
+            elif shown:
+                cover += f"; not shown: lines {_fmt_ranges(_missing_ranges(shown, nlines))}"
+            cover += " (unknown to you, not absent)]"
+        blk = [f"- {fname} ({nlines} lines, {len(sanitized)} chars){cover}"]
+        for s, e in spans:
+            chunk = sanitized[s:e]
+            if not chunk:
+                continue
+            label = ("excerpt" if full
+                     else f"excerpt chars {s}-{e} (around lines "
+                          f"{_line_no(starts, s)}-{_line_no(starts, max(s, e - 1))})")
+            blk.append(f"  {label}: {chunk}")
+        blocks.append((fname, blk))
+    # 매니페스트는 예산을 **일부** 선점한다 — 발췌가 길어 잘리더라도 "이 파일이 실재한다" 는 사실은
+    # 남아야 하기 때문이다(그 사실이 사라지는 것이 false positive 의 직접 원인). 다만 선점은 상한
+    # 안에서만 한다: 참조 스코프가 대화 전량(최대 200건)으로 넓어졌으므로 무제한 선점을 허용하면
+    # 매니페스트가 digest 예산을 통째로 밀어내 **도구 실행 근거와 첨부 발췌가 동시에 소실**된다
+    # (적대 리뷰 backend/qa BLOCK — 실측 cap 2500 대비 7,329~20,641자).
+    manifest_names: list[str] = [
+        f"{_flatten_untrusted(str(a.get('filename') or '(unnamed)'), 120)}"
+        f"{f' ({k})' if (k := _flatten_untrusted(str(a.get('kind') or ''), 24)) else ''}"
+        for a in manifest_only
+    ]
+    header_txt = "\n".join(lines)
+    # 블록 단위 적재 — 통째로 못 들어가는 파일은 **본문 없이 존재만** 알린다(ALSO ATTACHED 합류).
+    # 반쪽 블록을 남기느니 발췌를 포기하는 쪽이 안전하다: 잘린 블록은 라벨과 본문이 어긋나
+    # 리뷰어에게 거짓을 말한다.
+    manifest_cap = max(0, int(cap_chars * _ATTACH_MANIFEST_BUDGET_RATIO))
+    kept: list[str] = []
+    used = len(header_txt)
+    for fname, blk in blocks:
+        blk_txt = "\n".join(blk)
+        # 매니페스트가 최소한 들어갈 여지를 남기고 판단한다.
+        reserve = min(manifest_cap, len("\n".join(manifest_names))) if manifest_names else 0
+        if used + 1 + len(blk_txt) + reserve <= cap_chars:
+            kept.append(blk_txt)
+            used += 1 + len(blk_txt)
+        else:
+            manifest_names.append(fname)
     manifest_lines: list[str] = []
-    if manifest_only:
+    if manifest_names:
         manifest_lines.append(
             "ALSO ATTACHED (present in this conversation, content NOT included in this digest — the "
             "assistant can read these on demand with read_attachment. Do NOT treat statements about "
             "these files as fabricated just because no excerpt appears here):"
         )
-        for a in manifest_only:
-            fname = _flatten_untrusted(str(a.get("filename") or "(unnamed)"), 120)
-            kind = _flatten_untrusted(str(a.get("kind") or ""), 24)
-            manifest_lines.append(f"- {fname}{f' ({kind})' if kind else ''}")
-    # 매니페스트는 예산을 **일부** 선점한다 — 발췌가 길어 잘리더라도 "이 파일이 실재한다" 는 사실은
-    # 남아야 하기 때문이다(그 사실이 사라지는 것이 false positive 의 직접 원인). 다만 선점은 상한
-    # 안에서만 한다: 참조 스코프가 대화 전량(최대 200건)으로 넓어졌으므로 무제한 선점을 허용하면
-    # 매니페스트가 digest 예산을 통째로 밀어내 **도구 실행 근거와 첨부 발췌가 동시에 소실**된다
-    # (적대 리뷰 backend/qa BLOCK — 실측 cap 2500 대비 7,329~20,641자). 최종 절단도 반드시 건다.
-    manifest_txt = "\n".join(manifest_lines)[:max(0, int(cap_chars * _ATTACH_MANIFEST_BUDGET_RATIO))]
+        manifest_lines.extend(f"- {n}" for n in manifest_names)
+    manifest_txt = "\n".join(manifest_lines)[:manifest_cap]
     if manifest_txt and manifest_txt != "\n".join(manifest_lines):
         manifest_txt += "\n- … (이하 생략 — 첨부가 더 있음)"
-    body_budget = max(0, cap_chars - (len(manifest_txt) + 1 if manifest_txt else 0))
-    body_txt = "\n".join(lines)[:body_budget]
+    body_txt = "\n".join([header_txt, *kept]) if kept else header_txt
     out = f"{body_txt}\n{manifest_txt}" if manifest_txt else body_txt
+    # 최종 절단이 걸리면 위의 블록 회계가 깨진 것이다 — 방어적으로만 둔다(정상 경로 미도달).
     return out[:cap_chars]
 
 
@@ -683,7 +991,8 @@ def build_delivery_facts(facts: dict[str, Any] | None) -> str:
 
 def build_evidence_digest(steps: list[dict[str, Any]] | None, executed_sql: str = "",
                           cap_chars: int = _EVIDENCE_CAP_CHARS,
-                          attachments: list[dict[str, Any]] | None = None) -> str:
+                          attachments: list[dict[str, Any]] | None = None,
+                          draft: str = "") -> str:
     """리뷰어에게 줄 유일한 ground truth — 실행된 도구·SQL·결과 preview + 사용자 첨부 파일.
 
     result_preview 는 300자 절단본이므로 digest 헤더에 절단 사실을 명시해 리뷰어가
@@ -692,8 +1001,11 @@ def build_evidence_digest(steps: list[dict[str, Any]] | None, executed_sql: str 
     attachments: 사용자 첨부 파일 [{filename, content, truncated}]. 첨부 섹션은 **자기 예산을
     선점**해 도구 digest 가 길어도 잘리지 않는다 — 첨부가 잘리면 그것을 리뷰하는 답변이 다시
     '창작'으로 오판되기 때문이다. bounded 발신자에게는 caller 가 넘기지 않는다(누출 게이트).
+
+    draft: 이 digest 로 리뷰할 초안. 첨부 발췌를 초안이 인용한 구간에 맞추는 데만 쓰이고
+    digest 본문에 실리지 않는다(리뷰어는 초안을 별도 섹션으로 이미 받는다).
     """
-    attach_block = build_attachment_digest(attachments)
+    attach_block = build_attachment_digest(attachments, draft=draft)
     tool_cap = max(0, cap_chars - (len(attach_block) + 2 if attach_block else 0))
     lines: list[str] = [
         "EVIDENCE DIGEST (tool runs; previews are TRUNCATED — absence in a preview is not proof of absence):",
@@ -1561,7 +1873,7 @@ def orchestrate_review(*, question: str, draft_answer: str,
         accumulated_sql = executed_sql
         adopted_steps: list[dict[str, Any]] = []
         evidence = build_evidence_digest(accumulated_steps, accumulated_sql,
-                                         attachments=attachments)
+                                         attachments=attachments, draft=draft_answer)
         # 리뷰어 맥락 기억 (대화 내부 격리) — 같은 대화의 직전 답변들에서 자기가 무엇을
         # 지적했고 어떻게 마무리됐는지. conversation_id 로만 스코프되어 다른 대화로 새지 않는다.
         conv_history = recent_conversation_reviews(conversation_id, exclude_run_id=run_id)
@@ -1779,8 +2091,8 @@ def orchestrate_review(*, question: str, draft_answer: str,
                     adopted_steps.extend(rd_round_steps)
                     if rd_round_sql:
                         accumulated_sql = rd_round_sql
-                    evidence = build_evidence_digest(accumulated_steps, accumulated_sql,
-                                         attachments=attachments)
+                    # digest 재계산은 아래 **채택 직후** 1회로 모은다 — 여기서 만들면 그 시점
+                    # `final_answer` 가 아직 직전 답변이라 인자 의미가 틀리고, 어차피 곧 덮어쓰인다.
             # 리뷰 이력 — 이번 라운드에서 리뷰어가 무엇을 지적했고 assistant 가 어떻게 응했는지.
             # 다음 라운드 리뷰어가 이 맥락을 이어받아 "해소 여부"를 판정한다 (같은 지적 반복·
             # 이미 고친 항목 재보고 방지 → 수렴).
@@ -1801,6 +2113,11 @@ def orchestrate_review(*, question: str, draft_answer: str,
             final_answer = revised
             revision_applied = True
             revisions_done += 1
+            # FR-redteam-attach-excerpt-cap-false-grounding-block: 채택본은 초안과 다른 구간을
+            # 인용할 수 있다. 발췌를 재앵커하지 않으면 verify 가 "수정본이 인용한 곳"을 못 본 채
+            # 판정해, 고친 답변에 같은 grounding BLOCK 이 다시 붙는다(비수렴).
+            evidence = build_evidence_digest(accumulated_steps, accumulated_sql,
+                                             attachments=attachments, draft=final_answer)
             if not plan["verify_pass"]:
                 # 재검증 미수행 강도 — 수정이 결함을 실제로 고쳤는지 확인되지 않은 채 종료.
                 # (기본 설정에서는 도달하지 않는다: REDTEAM_VERIFY_MIN_LEVEL=0.)

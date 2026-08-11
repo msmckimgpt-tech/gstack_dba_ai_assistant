@@ -2361,3 +2361,15 @@ rationale=REVIEW `REV-20260805T190000-read-attach-completeness` ·
 rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 변경이력=MODIFY `CHG-20260806T160000-attach-delivery-tool` ·
 마찰원장=`FR-attach-delivery-truncated-by-output-cap`.
+
+## TASK-20260807T160000 리뷰어 첨부 발췌 앵커링 (FR-redteam-attach-excerpt-cap-false-grounding-block)
+- [x] 발췌를 head-only → 초안 인용 구간 앵커(`_draft_probes`/`_select_excerpt_spans`), 예산 불변
+- [x] 절단 표기를 구조적 coverage(SHOWN/NOT SHOWN 줄 범위 + "unknown, not absent")로 교체
+- [x] 줄 세기 규약 통일 — 말미 개행이 유령 줄을 만들어 없는 구간을 미표시로 보고하던 것 교정
+- [x] 리뷰어 규칙 확장(부분 발췌 · no tool runs) + 과교정 방지(모순 주장은 여전히 BLOCK)
+- [x] `orchestrate_review` 3지점 draft 배선 + **수정본 채택 후 재앵커**(비수렴 차단)
+- [x] 테스트 27건 · 뮤테이션 12/12 KILLED · 전량 회귀 · ruff · 배포본 재현
+- [x] §18.8 적대 패널(backend·qa) — **BLOCKING 4 · MAJOR 4 · MINOR 7 전건 흡수**
+      (예산 소멸 · char↔line 허위 · 총예산이 FULL 라벨을 거짓말로 · ALSO ATTACHED 날조 보호)
+- [x] 패널이 잡은 거짓 문서 주장 2건 정정(예산 불변 · 회귀 없음)
+- [ ] 배포 + 라이브 실측(정확한 답변에 경고 배너가 사라지는지)

@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import shared.runtime_settings as _rts
 from modules import redteam
 
@@ -1638,9 +1640,23 @@ def test_attachment_digest_empty_without_attachments():
 
 
 def test_attachment_digest_marks_truncation():
+    """부분만 실린 첨부는 그 사실이 표시되어야 한다.
+
+    FR-redteam-attach-excerpt-cap-false-grounding-block (2026-08-07): 표기가 산문 라벨
+    `[TRUNCATED]` 에서 **문자 단위 구조적 사실**로 강화됐다. 산문 라벨만으로는 리뷰어가
+    '발췌에 없음'을 '부재 증명'으로 오인해 정확한 답변을 BLOCK 했다(실측).
+
+    이 fixture 는 개행이 없는 5,000자 1줄이다 — 적대 패널이 짚은 바로 그 형태로, 줄 단위
+    coverage 였다면 "1줄 중 1줄을 봤다"는 **거짓 완전성**이 나왔을 입력이다.
+    """
     d = redteam.build_attachment_digest([
         {"filename": "big.sql", "content": "x" * 5000, "truncated": False}])
-    assert "[TRUNCATED]" in d
+    assert "PARTIAL EXCERPT" in d
+    assert "[FULL FILE SHOWN]" not in d
+    m = re.search(r"you were given (\d+) of (\d+) chars", d)
+    assert m and int(m.group(1)) < int(m.group(2)), d[:300]
+    assert "lines shown in full: none" in d          # 경계만 보인 줄은 SHOWN 이 아니다
+    assert "unknown to you, not absent" in d
 
 
 def test_evidence_digest_includes_attachments_even_when_tools_are_huge():
