@@ -3112,20 +3112,27 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
    배경이 어두워져 최저값이 무너진다 — 계산상 알파 0.20 에서도 `number` 가 삭제 행에서 **3.40**
    이다(4.5 미달). 즉 배경 칠은 이 표에서 접근성 회귀 없이는 성립하지 않는다.
 
-   **왜 `text-decoration` 이 아니라 `box-shadow` 인가 (2026-08-07 실측으로 교체)** — 밑줄은
-   **탭 문자 위에 그려지지 않는다**. 실 chromium 계측: 마크 구간이 `\t\t` 일 때 span 박스는
-   78×17 인데 칠해진 픽셀 **0**, 같은 폭의 공백 8개는 48px. 들여쓰기를 탭으로 쓰는 파일에서
-   들여쓰기 변경은 이 기능이 정확히 겨냥한 경우인데 화면에 아무것도 나오지 않았고, 사용자에겐
-   "여긴 마크가 없으니 통째로 바뀐 줄" 로 읽힌다(§18.8 ux 패널 P1). `inset box-shadow` 는 같은
-   입력에서 156px 를 칠하고, `box-decoration-break: clone` 으로 줄바꿈 조각마다 다시 그려진다
-   (실측 frags=2, 940px). 그러면서 `background-color` 는 여전히 `transparent` 라 위 대비 논거가
-   그대로 유지된다 — `background-image` 그라디언트 안(같은 픽셀 수)을 버린 이유가 이것이다.
+   **왜 `text-decoration` 이 아니라 `box-shadow` 인가** — 밑줄은 **탭 문자 위에 그려지지 않는다**.
+   실 chromium 계측: 마크 구간이 `\t\t` 일 때 span 박스는 78×17 인데 칠해진 픽셀 **0**, 같은 폭의
+   공백 8개는 48px. 들여쓰기를 탭으로 쓰는 파일에서 들여쓰기 변경은 이 기능이 정확히 겨냥한
+   경우인데 화면에 아무것도 나오지 않았고, 사용자에겐 "여긴 마크가 없으니 통째로 바뀐 줄" 로
+   읽힌다(§18.8 ux 패널 P1). `box-shadow` 는 같은 입력을 칠하고 `box-decoration-break: clone` 으로
+   줄바꿈 조각마다 다시 그려진다.
+
+   **왜 `inset` 이 아니라 바깥 그림자인가 (사용자 지적 2026-08-11)** — `inset 0 -2px` 는 바를
+   **content box 안쪽 맨 아래**에 그린다. 그 자리는 `_` 글자가 놓이는 자리와 사실상 같아서
+   `legacy_gy_pay` 가 `legacygypay` + 밑줄 하나로 읽혔다(실측 캡처로 확인). 바깥 그림자
+   `0 2px` 는 같은 두께를 **content box 바로 아래**에 그려 글자와 바 사이에 간격이 생기고,
+   `_` 가 다시 보인다. 바깥 그림자는 **border box 안쪽으로는 그려지지 않는다**(CSS 규정)는 점이
+   중요하다 — 실측으로 글자 영역의 마크색 픽셀 **0** 을 확인했으므로 위 대비 논거가 그대로
+   유지된다(배경을 칠하는 것이 아니다). `padding-bottom` 을 더해 안쪽에 그리는 방법도 같은
+   그림을 주지만 인라인 박스 기하를 바꾸므로, 기하를 건드리지 않는 쪽을 골랐다.
 
    색은 그 셀이 속한 쪽을 따른다(좌=삭제 / 우=추가). 단일열은 side 클래스가 없으므로 행 타입에서
    같은 결론을 얻는다 — 두 뷰가 같은 구간을 같은 색으로 그려야 한다. 값의 정본은 base.css 의
    `--diff-mark-*`(이색형 명도 분리 근거는 그쪽 주석). */
 .attach-diff-chunk {
-  box-shadow: inset 0 -2px 0 0 var(--diff-mark-del);
+  box-shadow: 0 2px 0 0 var(--diff-mark-del);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -3134,7 +3141,7 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
    클래스가 어디에 놓이든 diff 마크로 보이게 기본을 박아 둔다(§18.8 frontend 패널 P3). */
 .attach-diff-code.side-right .attach-diff-chunk,
 .attach-diff-row.is-insert .attach-diff-chunk {
-  box-shadow: inset 0 -2px 0 0 var(--diff-mark-ins);
+  box-shadow: 0 2px 0 0 var(--diff-mark-ins);
 }
 /* 블록 안 줄번호도 같은 덩어리로 읽히게 배경을 한 단계 얹는다. */
 .attach-diff-row.in-block .attach-diff-lineno { background: var(--border-subtle); }

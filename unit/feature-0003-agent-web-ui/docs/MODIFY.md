@@ -3187,3 +3187,32 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`, `docs/reviews/20260807T1930Z-{security,ux-design}.md`,
   `docs/SECURITY.md`(repo).
 - Timestamp: 2026-08-07T19:45:00+09:00
+
+## CHG-20260811T1500-ai-claude-attach-diff-mark-underscore — 줄 안 마크가 `_` 를 가리는 문제 수정
+
+- 사용자 지적(2026-08-11): "변경을 강조하는 하이라이트 밑줄이 특정 문자의 가독성을 떨어뜨린다
+  (`_` 문자 등)." 실측 캡처로 재현 — `legacy_gy_pay` 가 **`legacygypay` + 밑줄 하나**로,
+  `__init__` 은 `init` 으로 읽혔다.
+- **원인**: 마크를 `box-shadow: inset 0 -2px` 로 그렸다. `inset` 은 바를 **content box 안쪽 맨
+  아래**에 놓는데 그 자리가 곧 `_` 글자가 놓이는 자리다. 두 가로 획이 붙어 하나로 보였다.
+- **수정**: 바깥 그림자 `box-shadow: 0 2px` 로 교체. 같은 두께를 **content box 바로 아래**에 그려
+  글자와 바 사이에 간격이 생긴다. 실측: 잉크 최하단 ↔ 바 최상단 사이 **빈 픽셀 행 1행** 확보.
+- **대비 논거가 유지되는 이유**: 바깥 그림자는 CSS 규정상 **border box 안쪽으로는 그려지지
+  않는다**. 글자 영역의 마크색 픽셀을 세어 **0** 임을 실측했으므로, "마크는 배경을 칠하지 않는다
+  = 구문 토큰 AA 4.5:1 이 3면 그대로" 라는 기존 근거가 그대로 성립한다.
+- **후보 비교(실측)**: `padding-bottom+inset` · 바깥 그림자 · 배경색 간격 · 윗줄(overline) 4종을
+  실 chromium 에서 같은 표 맥락으로 렌더해 비교했다. 윗줄은 `_` 문제는 없지만 바가 **위쪽 줄에
+  붙어 보여** 어느 줄의 표시인지 흐려졌고, 배경색 간격은 행 배경색(추가/삭제로 다름)을
+  하드코딩해야 해서 탈락. `padding-bottom` 은 같은 그림을 주지만 인라인 박스 기하를 바꾸므로,
+  기하를 건드리지 않는 바깥 그림자를 골랐다.
+- **무회귀 확인(실측)**: 탭 문자 위 도포 **192px 유지**(밑줄 방식이 0px 였던 원 결함) · 행 높이
+  19px 불변 · `box-decoration-break: clone` 줄바꿈 조각 복제 유지 · 쪽별 색 유지.
+- **회귀 잠금 신설**: 기하 하네스 **M6** — 마크 구간에 `_` 를 넣고 캡처해 **글자 잉크 최하단과
+  바 최상단 사이에 빈 픽셀 행이 있는지**를 직접 센다. computed style 로는 잡히지 않고 렌더된
+  픽셀로만 드러나는 축이다(§16.6). mjs **D6a2** 가 `inset` 재도입을 소스에서 막는다.
+  기하 **M3b** 의 클립 영역도 보정했다 — 바가 박스 바깥으로 나가면서 박스 안쪽만 캡처하던
+  기존 클립이 마크를 0px 로 세어 **거짓 FAIL** 을 냈다(하네스 아티팩트).
+- Files: `src/static/css/chat.css`, `tests/headless/verify_attach_diff_geometry.py`,
+  `tests/verify_attach_version_diff.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`,
+  `docs/test-runs.d/20260811T1500-attach-diff-mark-underscore.md`.
+- 백엔드·API·RBAC·스키마·마이그레이션 **0**. Timestamp: 2026-08-11T15:00:00+09:00

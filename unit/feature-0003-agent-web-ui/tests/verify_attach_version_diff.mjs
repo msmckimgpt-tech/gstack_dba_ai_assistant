@@ -467,7 +467,11 @@ console.log("\n[D] 줄 안 변경 구간 마크");
   {
     const block = chatCss.slice(chatCss.indexOf(".attach-diff-chunk {"),
       chatCss.indexOf(".attach-diff-row.in-block .attach-diff-lineno"));
-    ok("D6 마크 규칙 존재", /box-shadow:\s*inset 0 -2px 0 0 var\(--diff-mark-del\)/.test(block));
+    ok("D6 마크 규칙 존재", /box-shadow:\s*0 2px 0 0 var\(--diff-mark-del\)/.test(block));
+    // `inset` 은 바를 content box 안쪽 맨 아래 = `_` 글자 자리에 그린다. 그러면
+    // `legacy_gy_pay` 가 `legacygypay` + 밑줄 하나로 읽힌다(사용자 지적 2026-08-11).
+    // 픽셀 잠금은 기하 하네스 M6, 여기서는 규칙이 되돌아가지 못하게 막는다.
+    ok("D6a2 `inset` 회귀 금지(`_` 가 바에 먹힌다)", !/inset/.test(block));
     ok("D6 마크는 배경을 칠하지 않는다(토큰 대비 4번째 배경면 금지)",
       !/background/.test(block));
     // 밑줄(`text-decoration`)은 **탭 위에 그려지지 않는다** — 실 chromium 실측 0px.

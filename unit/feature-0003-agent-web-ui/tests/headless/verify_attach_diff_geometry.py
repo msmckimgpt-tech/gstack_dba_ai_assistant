@@ -30,8 +30,9 @@
       — 실 브라우저만 검증 가능한 축(jsdom 은 scrollTop clamp 를 하지 않아 통과시킨다)
   S5  버전 쌍 변경은 최상단으로 (의도된 비대칭 — 다른 비교이므로 보존이 혼란)
   B1~B7 문단(블록) 단위 하이라이트 — 연속 변경의 묶임·경계·accent 가 두 뷰에서 동일
-  M1~M5 줄 안(intra-line) 변경 구간 마크 — 밑줄이 실제로 렌더되고, 색이 쪽(좌=삭제/우=추가)을
-      따르며, **배경을 칠하지 않고**(구문 토큰 대비 보존), 행 높이를 바꾸지 않으며, 단일열도 동일
+  M1~M6 줄 안(intra-line) 변경 구간 마크 — 밑줄이 실제로 렌더되고, 색이 쪽(좌=삭제/우=추가)을
+      따르며, **배경을 칠하지 않고**(구문 토큰 대비 보존), 행 높이를 바꾸지 않으며, 단일열도 동일,
+      그리고 **`_` 글자가 바에 먹히지 않는다**(M6 — 잉크와 바 사이 빈 픽셀 행)
 
 실행:
   PLAYWRIGHT_BROWSERS_PATH=<ms-playwright> python3 tests/headless/verify_attach_diff_geometry.py
@@ -64,6 +65,35 @@ def _count_mark_pixels(png_bytes: bytes) -> int:
     im = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     return sum(1 for px in im.getdata()
                if (px[0] > 90 and px[1] < 90 and px[2] < 90) or (px[1] > 90 and px[0] < 90 and px[2] < 110))
+
+
+def _ink_bar_gap(png_bytes: bytes):
+    """글자 잉크의 최하단 행과 마크 바의 최상단 행 사이 빈 픽셀 행 수.
+
+    `None` 은 PIL 부재로 판정 불가(호출자가 skip 으로 다룬다). 음수/0 이면 글자와 바가 붙어
+    있다는 뜻이고, 그것이 곧 `_` 가 안 보이던 상태다.
+    """
+    try:
+        import io
+        from PIL import Image
+    except Exception:
+        return None
+    im = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    px = im.load()
+    ink_rows, bar_rows = [], []
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b = px[x, y][:3]
+            # 마크 바 = 짙은 적색(#7f1d1d) / 본문 잉크 = 거의 검정(#26251e)
+            if r > 90 and g < 70 and b < 70:
+                bar_rows.append(y)
+                break
+            if r < 80 and g < 80 and b < 80:
+                ink_rows.append(y)
+                break
+    if not ink_rows or not bar_rows:
+        return None
+    return min(bar_rows) - max(ink_rows) - 1
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -611,8 +641,11 @@ with sync_playwright() as p:
         check("M1b 셀 전체 텍스트 무손실",
               mk["left"]["cellText"] == seg_rows[0]["left"]
               and mk["right"]["cellText"] == seg_rows[0]["right"])
-        check("M2 마크가 렌더된다(inset box-shadow · 줄바꿈 조각 복제)",
-              "inset" in mk["left"]["shadow"] and mk["left"]["clone"] == "clone",
+        # 바는 content box **바깥 아래**에 그린다 — `inset` 이면 `_` 글자 자리와 겹쳐
+        # `legacy_gy_pay` 가 `legacygypay` 로 읽힌다(사용자 지적 2026-08-11). M6 가 픽셀로 잠근다.
+        check("M2 마크가 렌더된다(바깥 box-shadow · 줄바꿈 조각 복제)",
+              "inset" not in mk["left"]["shadow"] and "0px 2px 0px 0px" in mk["left"]["shadow"]
+              and mk["left"]["clone"] == "clone",
               f"shadow={mk['left']['shadow']} clone={mk['left']['clone']}")
         # 색이 쪽을 따르지 않으면 "추가된 글자" 와 "삭제된 글자" 가 같은 색이 되어 신호가 죽는다.
         check("M2b 좌=삭제색(#7f1d1d) / 우=추가색(#15803d)",
@@ -637,8 +670,10 @@ with sync_playwright() as p:
           const r = sp.getBoundingClientRect();
           return {x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height)};
         }""")
+        # 클립은 span 박스 **아래 4px 까지** 잡는다 — 바가 content box 바깥에 그려지므로
+        # 박스 안쪽만 캡처하면 마크가 있어도 0px 로 세어진다(하네스 아티팩트).
         shot = page.screenshot(clip={"x": box["x"], "y": box["y"],
-                                     "width": max(1, box["w"]), "height": max(1, box["h"])})
+                                     "width": max(1, box["w"]), "height": max(1, box["h"]) + 4})
         inked = _count_mark_pixels(shot)
         check("M3b 탭 문자 위에도 마크가 칠해진다(밑줄 회귀 차단)",
               inked > 0, f"{inked}px / 박스 {box['w']}x{box['h']}")
@@ -650,6 +685,32 @@ with sync_playwright() as p:
             ".getBoundingClientRect().height)")
         check("M4 마크가 행 높이를 바꾸지 않는다(레이아웃 무영향)",
               mk["rowH"] == plain_h, f"세그먼트有={mk['rowH']} 無={plain_h}")
+
+        # M6 — **`_` 가 바에 먹히지 않는가**(사용자 지적 2026-08-11).
+        #   `inset 0 -2px` 는 바를 content box 안쪽 맨 아래, 즉 `_` 글자가 놓이는 자리에 그렸다.
+        #   그래서 `legacy_gy_pay` 가 `legacygypay` + 밑줄 하나로 읽혔다. 이 검사는 **글자 잉크의
+        #   가장 아랫줄**과 **바의 가장 윗줄** 사이에 빈 픽셀 행이 있는지를 직접 센다 —
+        #   computed style 로는 잡히지 않고, 렌더된 픽셀로만 드러나는 축이다(§16.6).
+        us_rows = [{
+            "type": "replace", "left_no": 1, "right_no": 1,
+            "left": "SET legacy_gy_pay = 1", "right": "SET legacy_id_pay = 1",
+            "left_segs": [{"t": "eq", "v": "SET "}, {"t": "ch", "v": "legacy_gy_pay"},
+                          {"t": "eq", "v": " = 1"}],
+            "right_segs": [{"t": "eq", "v": "SET "}, {"t": "ch", "v": "legacy_id_pay"},
+                           {"t": "eq", "v": " = 1"}],
+        }]
+        open_modal(page, us_rows)
+        ubox = page.evaluate("""() => {
+          const sp = document.querySelector('.attach-diff-backdrop tr.is-replace td.side-left .attach-diff-chunk');
+          const r = sp.getBoundingClientRect();
+          return {x: r.x, y: r.y, w: Math.round(r.width), h: Math.round(r.height)};
+        }""")
+        ushot = page.screenshot(clip={"x": ubox["x"], "y": ubox["y"],
+                                      "width": max(1, ubox["w"]), "height": ubox["h"] + 5})
+        gap = _ink_bar_gap(ushot)
+        check("M6 `_` 글자와 마크 바 사이에 빈 픽셀 행이 있다(inset 회귀 차단)",
+              gap is None or gap >= 1,
+              f"간격 {gap}행 (None=PIL 부재로 판정 불가)")
 
         # M5 — 단일열도 **같은 구간을 같은 색으로**. 두 뷰가 갈리면 사용자가 어느 쪽을 믿을지 모른다.
         open_modal(page, seg_rows)
