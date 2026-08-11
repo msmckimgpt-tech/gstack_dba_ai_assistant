@@ -1380,3 +1380,30 @@ red-team 리뷰어의 evidence digest 에 실리는 첨부 발췌가 `body[:1200
   이상, 첨부 본문이 그것을 담으면 **정확한 답변을 BLOCK 시키거나 틀린 답변을 통과시키는 레버**가
   된다. `_neutralize_digest_markers` 로 대괄호만 무력화한다(내용은 보존 — 지우면 리뷰어가 보는
   본문이 원본과 달라진다).
+
+## 42. OAuth 구독 토큰의 자동 회전 — 스크립트가 자격증명 저장소에 쓰는 첫 경로 (feature-0007-bedrock-llm-provider, 2026-08-11)
+
+> 색인 항목 — 전체 설계·적대 검증 정본은 `unit/feature-0007-bedrock-llm-provider/docs/{TASK,MODIFY,REVIEW,TEST}.md`
+> (`TASK-20260811T120000-oauth-auto-rotate` / `CHG-20260811T120000-oauth-auto-rotate` — 자격증명 저장소 쓰기라 **AGENTS.md §12.3 Critical · 사용자 승인 수령**(2026-08-11) /
+> `REV-20260811T120000-ai-root-feature-0007-oauth-auto-rotate` 적대 2렌즈(security·correctness)가 **둘 다 FAIL → P1 5건 전건 수정** /
+> 선행 `CHG-20260807T144800-oauth-exhaustion-gate` · `CHG-20260807T190000-oauth-gate-hardening`).
+> §6.1(LLM provider 자격증명)이 다루지 않던 **호스트 자격증명 파일에 대한 쓰기 주체**와 **외부 토큰 엔드포인트 호출** 축의 boundary 색인이며 정책 본문 신규 서술이 아니다. 회귀 잠금 = `unit/feature-0002-agent-core/tests/test_oauth_exhaustion_gate.py`(75건, mutation 20/20 KILL — 스크립트는 feature-0007 소관이나 테스트는 feature-0002 에 거주).
+
+- **읽기 전용이던 스크립트가 쓰기 주체가 됐다(본 절의 핵심)**: `bin/refresh-claude-oauth-token.sh` 는 종전 디스크의 access token 을 **읽어 주입만** 했고 실제 회전은 그 계정의 Claude Code CLI 세션이 돌 때만 일어났다. 이제 만료까지 `CLAUDE_OAUTH_ROTATE_LEAD_SEC`(기본 1h) 이하로 남으면 `refreshToken` 으로 **외부 토큰 엔드포인트**를 호출하고 **자격증명 파일에 되쓴다**. 쓰기는 원자적 교체(mkstemp+fsync+replace)로 소유자·모드를 보존하고, 실패 시 파일을 **무접촉**으로 남긴다. 킬스위치 `CLAUDE_OAUTH_AUTO_ROTATE=0`.
+- **일회성 refresh token 이 새 파괴 축이다**: refresh token 은 1회 소모되므로 **회전 실패 = 재로그인 외 복구 불가**다. 적대 패널 P1 중 두 건이 정확히 이 축이었다 — ① `--check`(부작용 0 계약)가 실제로 회전해 토큰을 소모 ② POST 성공 **후** 백업 단계가 실패하면 이미 소모된 토큰이 유실(백업을 쓰기 **뒤**로 이동해 해소). `expires_in` 부재 시 과거 만료를 되써 재회전·게이트웨이 재생성 폭풍을 일으키던 경로도 기본 TTL + 상한 클램프로 닫았다.
+- **fail-open 은 도달성 축에만 허용한다**: 네트워크·미분류 오류는 fail-open 이다 — 도달성 장애를 사용량 소진으로 오판하지 않기 위한 의도된 선택이며 근거는 2026-07-30 외부 DNS 34분 단절 사고다(ARCHITECTURE.md §4 feature-0007 행). 반대로 **회전·게이트 판정 중 예외가 selector 를 죽여 1순위 slot 이 `exit 0` 으로 무음 정지**하던 경로는 결함으로 보고 닫았다 — 무음 정지는 fail-open 이 아니라 **관측 불가**다.
+- **강등 임계를 좁혀 폴백 체인 붕괴를 막았다(`CHG-20260807T190000`)**: 모든 429 를 소진으로 읽어 `retry-after=5s` 조차 최소 쿨다운(300s)으로 끌어올려 강등하던 초판은, 두 slot 이 같은 토큰으로 수렴해 **2계정 폴백 체인을 1계정으로 붕괴**시키고 강등·복귀마다 게이트웨이 force-recreate(LLM 순단)를 유발했다. 이제 7일 상태가 `rejected` 이거나 헤더 쿨다운이 `CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC`(1800s) 이상일 때만 강등한다. 킬스위치 `CLAUDE_OAUTH_EXHAUSTION_GATE=0` · `CLAUDE_OAUTH_GATE_RECHECK_SEC=0`.
+- **토큰 노출면 축소(같은 축의 보안 조치)**: `.env.bedrock` 0600 · 상태 디렉토리 0700/파일 0600 + mkstemp(심링크 덮어쓰기 차단) · `.bak` 경로 `O_CREAT|O_EXCL|O_NOFOLLOW` + 랜덤 접미사 · lock 획득 시 `O_NOFOLLOW`/`lstat` · 실패 detail 의 **토큰 마스킹·제어문자 제거** · probe **리다이렉트 미추종**(`Authorization` 헤더 유출 차단) · 제어문자가 섞인 토큰 주입 거부 · `$ACCOUNTS` glob 차단. 이 조치들의 **근거는 권한 경계가 아니라 위생**이다 — §43 참조.
+- **정직하게 기록하는 한계**: ① 이 스크립트의 lock 은 Claude Code **CLI 자체의 lock 과 배타되지 않는다**(초판 주석의 반대 주장을 정정) — 동시 회전 창이 원리적으로 존재하고 요청 직후 재확인(lost update 방어)은 완화이지 제거가 아니다 ② 회전 실패 시 지수 backoff(상한 6h)로 물러나므로 그 창에서는 종전처럼 CLI 세션에 의존한다 ③ 규약(토큰 엔드포인트·client_id·UA `Claude-User (claude-code/<ver>)`)은 CLI 번들에서 **실측한 비공개 계약**이다 — 상류가 바꾸면 조용히 깨질 수 있고, 기본 urllib UA 로는 Cloudflare 1010 에 막혀 도달조차 못 한다.
+
+## 43. 호스트 계정 분리에 신뢰 경계가 없다 — 적대 리뷰의 권한 상승 판정을 위생 판정으로 재평가 (feature-0007-bedrock-llm-provider · 운영자 확인, 2026-08-11)
+
+> 색인 항목 — 정본은 `unit/feature-0007-bedrock-llm-provider/docs/{MODIFY,REVIEW}.md`
+> (`CHG-20260811T140000-oauth-acl-intent-record` / `REV-20260811T140000-ai-root-feature-0007-acl-intent-record` — **코드 변경 0 · 문서 전용**, 선행 `REV-20260807T190000` · `REV-20260811T120000` 의 security P1 2건 심각도 재평가).
+> 본 절은 특정 취약점의 완화 기록이 아니라 **환경 전제**를 명문화한다 — 이 저장소를 감사하는 리뷰어가 호스트 계정을 볼 때 적용해야 하는 판정 규약이다.
+
+- **전제(운영자 확인 2026-08-11)**: WSL 호스트의 `claude-corp` / `root` 계정 분리는 **복수 Claude 계정을 구분해 쓰기 위한 편의 분리**이고, 각 계정이 내부적으로 접근하는 권한은 **root 단위로 동일**하다. `/root`·`/root/.claude` 의 `user:claude-corp:rwx` POSIX ACL 은 **의도된 구성**이며 조치 대상이 아니다.
+- **따라서 재평가된 것**: 적대 패널이 P1(권한 상승)으로 올린 두 건 — ① `.env.bedrock` 월드리더블 → "비특권 `claude-corp` 가 root Max OAuth 토큰을 읽는다"(`REV-20260807T190000` security) ② `.bak` 심링크 추종 → "소유권 탈취"(`REV-20260811T120000` security) — 은 **이 환경에서 권한 상승이 아니다**. 두 계정 사이에 넘을 경계가 없다.
+- **조치는 되돌리지 않는다 — 근거만 바꾼다**: 0600 · `O_NOFOLLOW` · 원자적 교체 · 랜덤 백업 접미사는 비용이 0 이고, **권한과 무관한 사고**(예측 가능한 이름 + 심링크 오작동에 의한 임의 파일 덮어쓰기, 우발적 노출)를 여전히 막는다. 근거가 "권한 경계" 에서 **"위생·최소노출"** 로 이동한 것이며, §6(자격증명 관리 패턴)의 `0600` 규약과 같은 층이다.
+- **재평가 대상이 아닌 것(경계 긋기)**: 같은 리뷰들의 나머지 P1 — burst-429 오강등, recreate 실패 영구화, `--check` 가 회전, selector 사망에 의한 slot 무음 정지, `expires_in` 과거 만료 되쓰기, POST 후 백업 실패로 refresh token 유실 — 은 전부 **권한과 무관한 가용성·정합성 결함**이고 이미 수정됐다(§42). 본 절은 심각도 인플레이션을 정정하는 것이지 결함 판정을 무르는 것이 아니다.
+- **왜 정책문서에 남기는가**: 리뷰어가 이 전제를 모른 채 감사하면 같은 두 건을 매번 최상위로 올려 **실제 결함 탐색 예산을 갉아먹는다**(실제로 한 security 렌즈는 스스로 "이 호스트에서는 순 상승 폭이 작다" 는 단서를 달았다 — 판정이 부주의했다기보다 환경 정보가 리뷰어에게 없었다). 향후 §18.8 패널과 외부 감사는 본 절을 **환경 전제로 먼저 읽는다**. 단, 전제가 바뀌면(예: 두 계정을 실제로 분리된 신뢰 도메인으로 운용) 두 건은 **다시 권한 상승**이 되므로 본 절 갱신이 선행 조건이다.
