@@ -372,6 +372,20 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 
 §16.7 G1 — 현재 cycle 에서 사용자가 요청한 범위의 명시 열거(cycle 마다 rewrite).
 
+**cycle: TASK-20260807T190000-oauth-gate-hardening** (원 요청: "subagent 를 통해 적대 리뷰를 수행해주세요." —
+선행 cycle TASK-20260807T144800 의 산출물에 대한 §18.8 패널 수행 및 지적 반영)
+
+- [x] §18.8 패널 3렌즈(security / bash·상태머신 / 테스트 실효성) subagent 수행 — 산출물: REVIEW REV-20260807T190000
+- [x] P1 3건 수정 — burst-429 오강등, recreate 실패 영구화, 회복 probe 무한 반복
+- [x] P2 보안 6건 수정 — .env/상태파일 권한, mkstemp, detail redaction, 리다이렉트 차단, 제어문자 토큰 거부
+- [x] 테스트 구멍 폐쇄 — 15건 → 41건, mutation 재검증(이전 생존 19건 중 18건 KILL, 1건 등가)
+- [x] 라이브 재적용·확인
+
+### 이월 항목 (계속 유효)
+- root OAuth access token 회전 주체 부재 — 아래 TASK-20260807T144800 「이월 항목」 참조(미해소).
+- `select_account` stdout 에 tab 이 없는 경우의 가드는 **외부에서 유발 불가**한 내부 불변식이라
+  회귀 테스트를 붙이지 못했다(mutation 생존 1건, 정직 표기).
+
 **cycle: TASK-20260807T144800-oauth-exhaustion-gate** (원 요청: "`bin/refresh-claude-oauth-token.sh`
 'claude-corp' 의 모든 토큰이 소진되었지만, 'root' 계정으로 게이트가 옮겨오지 않는 이슈가 확인되어
 수정이 필요합니다.")
@@ -441,3 +455,16 @@ edge 로 호출되는 이슈가 확인되었습니다. 더 이상 local llm 은 
 - [x] 회귀 잠금 — `unit/feature-0002-agent-core/tests/test_oauth_exhaustion_gate.py` 신규 15건(게이트 off 보존 · heartbeat 3종 · 소진 검출 · flapping 0 · 자동 복귀 · fail-open 2종 · root slot 무게이트 · --check 무부작용 · clamp 2종 · 정적 검사 선행 · 구문)
 - [x] 라이브 적용 — 1순위 slot 이 root 로 전환(`.env.bedrock` + gateway 재생성). 프로브 3종 전부 `fallbacks=0` 로 1순위 직행
 - [ ] **후속(별 결정)**: root access token 회전 주체 부재 — 위 「이월 항목」 참조
+
+## TASK-20260807T190000-oauth-gate-hardening — 적대 리뷰(§18.8 패널) 지적 반영 (사용자 요청, Minor §12.3)
+- [x] subagent 패널 3렌즈 수행(security / backend·상태머신 / QA·테스트 실효성). 선행 cycle 의 `[SKIPPED:user-declined-panel]` 해소
+- [x] **P1** burst-429 오강등 — 모든 429 를 소진으로 보고 `retry-after=5s` 조차 min_cooldown(300s)으로 **끌어올려** 강등했다 → 두 slot 이 같은 root 토큰이 되어 2계정 체인 붕괴 + 강등/복귀마다 게이트웨이 force-recreate. `unified-7d-status=rejected` 이거나 헤더 쿨다운 ≥ `CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC`(1800s)일 때만 강등
+- [x] **P1** recreate 실패 영구화 — `docker compose up --force-recreate` 실패를 검사하지 않아 .env 는 신 토큰/컨테이너는 구 토큰인 채 다음 실행이 `CHANGED=0` 으로 skip. sentinel + 재시도 + stderr 보존
+- [x] **P1** fail-open 후 회복 probe 무한 반복 — 과거 `until` 이 남아 매 cron 실행이 probe(heartbeat 우회). `checked < until` 로 **쿨다운 만료당 1회**로 제한
+- [x] **P2** 쿨다운 헤더 파싱 — stale/상대초/ms `unified-reset` 배제 + `retry-after` 폴백(HTTP-date 포함)
+- [x] **P2** 손상된 상태 항목(non-dict)이 selector 를 죽여 1순위 slot 이 무음 정지(exit 0)하던 결함 — 항목 단위 타입 강제
+- [x] **P2** 전원 소진 시 정적 1순위 대신 **가장 빨리 회복되는** 계정 유지
+- [x] **P2** 1순위 SEL 파싱 tab 가드(계정 이름이 토큰으로 주입될 수 있었다) · `$ACCOUNTS` glob 확장 차단(`set -f`)
+- [x] **보안** `.env.bedrock` 0600(비특권 로컬 계정이 root Max 토큰을 읽을 수 있었다 — 선행 결함이나 여기서 폐쇄) · 상태 디렉토리 0700 / 파일 0600 + `mkstemp`(고정 `.tmp` 심링크 덮어쓰기 차단) · `detail` 토큰 마스킹·제어문자 제거·길이 컷 · probe 리다이렉트 미추종(Authorization 유출 차단) · 제어문자 토큰 주입 거부
+- [x] 테스트 15건 → **41건**. mutation 재검증: 패널이 생존시킨 19건 중 18건 KILL, 1건은 등가 mutant
+- [ ] **이월**: root access token 회전 주체 부재(§12.3 Critical — 사람 승인 필요)

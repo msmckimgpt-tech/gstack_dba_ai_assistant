@@ -662,3 +662,18 @@ source_of_truth: true
 - Rollback: `CLAUDE_OAUTH_EXHAUSTION_GATE=0`(즉시, 재배포 불요) 또는 본 CHG revert → 2026-07-07~2026-08-06 정적-검사-전용 동작 복귀.
 - ANCHOR 정합: §1(운영자 자격 일원화)·§2(Alt-A gateway 경유) 무충돌 — 어느 자격증명을 주입할지의 선택 로직이며 인증/인가 경계 변경 아님.
 - Cross-ref: REVIEW REV-20260807T144800-oauth-exhaustion-gate · TASK `## TASK-20260807T144800-oauth-exhaustion-gate` · TEST Run 2026-08-07-oauth-exhaustion-gate · 선행 CHG-20260707(정적 검사 전환)·REV-20260730T191535(bare alias 단일계정 이월 P1 이 본 건으로 발현).
+
+## CHG-20260807T190000-oauth-gate-hardening (사용량-소진 게이트 적대 리뷰 지적 반영)
+- Date: 2026-08-07. 사용자 요청 "subagent 를 통해 적대 리뷰를 수행해주세요" 로 선행 CHG-20260807T144800 에 §18.8 패널(3렌즈 subagent)을 돌리고 그 지적을 반영한 후속.
+- **패널이 잡은 P1 3건 (전부 수정)**:
+  1. **burst-429 오강등** — 모든 429 를 "소진"으로 보고, `retry-after: 5` 조차 `min_cooldown`(300s)으로 **끌어올려** 계정을 강등했다. 계정이 2개뿐이고 root slot 이 root 고정이라, 1순위를 강등하면 `ANTHROPIC_API_KEY == ANTHROPIC_API_KEY_ROOT` 가 되어 alias→alias-root 2계정 체인이 **1계정으로 붕괴**한다(같은 계정에 4회 시도). 강등/복귀마다 `--force-recreate`(LLM 순단)가 붙어 cron 주기당 최대 2회, 하루 48회까지 가능했다. 5h 버스트 캡은 이 시스템의 config 주석이 스스로 "정상 이벤트"로 기술하는 흔한 상황이라 가설이 아니다. → `unified-7d-status=rejected` 이거나 헤더가 말하는 쿨다운이 `CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC`(기본 1800s) 이상일 때만 강등하고, 짧은 429 는 `transient` 로 분류해 litellm 에 맡긴다. 클램프는 강등이 확정된 뒤에만 적용한다.
+  2. **recreate 실패 영구화** — `docker compose up -d --force-recreate` 의 종료 상태를 검사하지 않고 출력도 버려서, 한 번 실패하면 `.env` 는 새 토큰인데 컨테이너는 옛 토큰을 물고 있고 다음 실행은 `CHANGED=0` 으로 "변경 없음 skip" 하며 **영구히 재시도하지 않았다**(토큰 만료 후 전량 401). → sentinel(`.env.bedrock.needs-recreate`) + 다음 실행 재시도 + 실패 시 exit 1 + stderr 보존.
+  3. **fail-open 후 회복 probe 무한 반복** — 쿨다운 만료 시점의 probe 가 네트워크 오류로 판정 보류되면 과거 `until` 이 그대로 보존돼, 이후 **매 cron 실행마다** probe 가 나갔다(heartbeat 우회, 코드 자신의 주석과 모순). → `checked < until` 을 함께 봐 **쿨다운 만료당 정확히 1회**로 제한.
+- **P2 (수정)**: 쿨다운 헤더 파싱 견고화(stale·상대초·ms `unified-reset` 배제 + `retry-after` 폴백, HTTP-date 포함) · 손상된 상태 항목(non-dict)이 selector 를 죽여 1순위 slot 이 무음 정지하던 결함 · 전원 소진 시 **가장 빨리 회복되는** 계정 유지 · 1순위 SEL tab 가드(계정 이름이 토큰으로 주입될 수 있었다) · `$ACCOUNTS` glob 확장 차단.
+- **보안 (수정)**: `.env.bedrock` 0600 — 이 호스트에는 `docker` 그룹이 아닌 비특권 계정 `claude-corp`(에이전트 세션 신원)이 있고, `namei -m` 상 경로 전 구간이 o+x 이며 파일이 0664 라 **root 개인 Max 계정 OAuth 토큰을 그대로 읽을 수 있었다**(자격증명 원본은 0600 root:root — OS 경계를 .env 가 우회). 선행 결함이지만 본 cycle 이 그 파일을 쓰므로 여기서 닫는다. 그 외: 상태 디렉토리 0700 / 파일 0600 + `mkstemp`(고정 `.tmp` 심링크로 임의 파일 덮어쓰기 — 실증됨) · `detail` 의 `sk-ant-*` 마스킹·제어문자 제거·200자 컷(자격증명이 깨지면 예외 메시지에 Bearer 헤더 전체가 실린다 — 실증됨) · probe 리다이렉트 미추종(urllib 은 3xx 에서 `Authorization` 을 **타 호스트로도** 재전송 — 실증됨) · 제어문자 토큰 주입 거부.
+- 변경 (2 파일): `bin/refresh-claude-oauth-token.sh`, `unit/feature-0002-agent-core/tests/test_oauth_exhaustion_gate.py`.
+- 새 knob: `CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC`(기본 1800).
+- Verification: 41건 PASS(15→41). **mutation 재검증** — 패널이 생존시킨 19개 mutant 중 18개 KILL, 1개(`os.chmod(tmp,0600)`)는 `mkstemp` 가 이미 0600 을 보장하는 **등가 mutant**(같은 경로를 `mkstemp`→고정 `open` 으로 바꾸는 mutant 는 KILL 됨). 자체 발견: 새로 쓴 보안 테스트 2건이 처음엔 **vacuous** 였다(가짜 서버가 3-tuple 응답에서 죽어 '연결 끊김'으로 위장 / 302 이후 GET 을 기록하지 않음) — mutation 이 잡아냈고, 하네스에 핸들러 예외 표면화·GET 기록·잉여 probe 감지를 추가했다.
+- **미해소(이월)**: root access token 회전 주체 부재(§12.3 Critical). `select_account` stdout 의 tab 가드는 외부 유발 불가한 내부 불변식이라 회귀 테스트 미부착(mutation 생존 1건, 정직 표기).
+- Rollback: 본 CHG revert 또는 `CLAUDE_OAUTH_GATE_MIN_DEMOTE_SEC=0`(강등 기준만 종전으로).
+- Cross-ref: REVIEW REV-20260807T190000-oauth-gate-hardening · TASK `## TASK-20260807T190000-oauth-gate-hardening` · TEST Run 2026-08-07-oauth-gate-hardening · 선행 CHG-20260807T144800.
