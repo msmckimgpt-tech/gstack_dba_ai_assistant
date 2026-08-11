@@ -648,6 +648,16 @@ red-team 자가검증(feature-0021)이 답변 초안에서 `BLOCK` 결함(verdic
   본문의 `[FULL FILE SHOWN]`·`[PARTIAL EXCERPT` 는 `_neutralize_digest_markers` 로 대괄호를 무력화한다
   (첨부는 비신뢰 입력인데 프롬프트가 그 토큰에 권한을 부여했다).
   FR-redteam-attach-excerpt-cap-false-grounding-block.
+- `src/agent_core.py` `_review_attachments()` — 리뷰어 digest 용 첨부 목록. 인라인 본문 + 본문 없는
+  매니페스트에 더해, **이번 턴 재업로드된 파일의 `MetaJson.version_diff`** 를 동봉한다. 판정식은
+  프롬프트 `## FILE UPDATES` 렌더와 **동일**(`attachment_id in _load_new_attachment_ids()` +
+  `unified_diff` 비어있지 않음) — 두 소비자가 다른 집합을 말하면 "단일 사실" 전제가 깨진다.
+  행 로드 실패는 fail-open(본문은 그대로 실린다). FR-redteam-digest-lacks-prior-attachment-version.
+- `src/modules/redteam.py` `build_attachment_digest(...)` 의 `VERSION CHANGE vN → vM` 블록 —
+  답변 모델이 프롬프트로 받은 v(n-1)→v(n) diff 를 리뷰어에게도 준다. **diff 몫은 그 파일의 지분
+  안에서** 배분한다(`min(_ATTACH_VERSION_DIFF_CAP_CHARS, per_file // 2)`) — 지분 밖에 두면 블록이
+  커져 2-pass 회계가 그 파일을 통째로 강등한다. 절단은 `[DIFF SHOWN n of m+ chars]` 로 명시하고
+  (은폐하면 부분 diff 를 전체로 오인), diff 본문에도 `_neutralize_digest_markers` 를 적용한다.
 - `src/modules/redteam.py` `build_evidence_digest(..., draft="")` — `draft` 를 첨부 발췌 앵커로만
   전달(digest 본문에 초안을 싣지 않는다). `orchestrate_review` 는 3지점에서 재계산한다:
   최초 `draft_answer` · **수정본 채택 직후 `final_answer` 재앵커** 2지점. 후자가 없으면 verify 가

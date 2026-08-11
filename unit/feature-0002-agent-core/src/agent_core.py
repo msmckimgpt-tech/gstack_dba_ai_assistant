@@ -4283,19 +4283,57 @@ def _review_attachments(suppress_conversation_context: bool) -> list[dict[str, A
         inline = _load_attachment_inline_texts() or {}
     except Exception:
         inline = {}
+    # FR-redteam-digest-lacks-prior-attachment-version (라이브 실측 2026-08-11): 답변 모델은
+    # 프롬프트 `## FILE UPDATES` 로 v(n-1)→v(n) unified diff 를 받는데, 리뷰어 digest 에는 그것이
+    # 없었다. 그래서 "직전 버전 대비 무엇이 바뀌었나" 에 **정확히** 답해도 리뷰어에게는 근거가
+    # 없어 보여 grounding BLOCK 이 났다(run 20260811031709-7f1ff22c: "현재 첨부된 파일은 v6 뿐이며,
+    # v5 파일은 없습니다"). 답변이 정당하게 가진 근거를 리뷰어만 못 보는 구조 — 발췌 결함과 같은 축.
+    #
+    # **판정식은 프롬프트 렌더와 동일해야 한다**: `_build_attachment_context_section` 이
+    # `attachment_id in new_ids_set and version_diff.unified_diff` 일 때만 diff 를 렌더하므로,
+    # 여기서도 같은 조건을 쓴다. 두 소비자가 다른 집합을 말하면 "단일 사실" 전제가 깨진다
+    # (FR-attachment-change-false-absence 에서 확립한 규율).
+    _new_ids = _load_new_attachment_ids()
+    _diff_by_id: dict[int, dict[str, Any]] = {}
+    try:
+        for row in _load_scoped_attachment_rows():
+            aid = int(row.get("id") or 0)
+            if aid not in _new_ids:
+                continue
+            meta_obj = row.get("meta_json")
+            if isinstance(meta_obj, str):
+                try:
+                    meta_obj = json.loads(meta_obj)
+                except ValueError:
+                    meta_obj = None
+            vd = meta_obj.get("version_diff") if isinstance(meta_obj, dict) else None
+            if isinstance(vd, dict) and str(vd.get("unified_diff") or "").strip():
+                _diff_by_id[aid] = vd
+    except Exception:
+        pass
+
     out: list[dict[str, Any]] = []
-    for meta in inline.values():
+    for aid, meta in inline.items():
         if not isinstance(meta, dict):
             continue
         content = str(meta.get("content") or "")
         if not content.strip():
             continue
-        out.append({
+        item: dict[str, Any] = {
             "filename": str(meta.get("filename") or ""),
             "content": content,
             "truncated": bool(meta.get("truncated")),
             "content_available": True,
-        })
+        }
+        vd = _diff_by_id.get(int(aid or 0))
+        if vd:
+            item["version_diff"] = {
+                "from_version": vd.get("from_version"),
+                "to_version": vd.get("to_version"),
+                "unified_diff": str(vd.get("unified_diff") or ""),
+                "truncated": bool(vd.get("truncated")),
+            }
+        out.append(item)
     # feature-0003 attach-full-scope: 본문이 인라인되지 않은 첨부(상한 밖·비텍스트)도 **매니페스트로**
     # 리뷰어에게 알린다. 리뷰어의 실패 모드는 "digest 에 없는 파일 = 답변이 지어낸 것" 이라는 오판이라,
     # 목록에서 파일의 존재 자체를 감추면 첨부 리뷰마다 honesty false positive 가 재발한다.

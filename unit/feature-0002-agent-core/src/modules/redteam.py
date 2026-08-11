@@ -375,6 +375,17 @@ CONVERSATION REQUEST, not against the literal latest utterance.
   assistant did not receive the rest either. Do not extend the "the assistant saw more than you"
   reasoning past that boundary: confident, specific claims about the part beyond the delivered
   prefix have no basis for either of you unless a tool run supplied it.
+- A `VERSION CHANGE vN → vM` line means the user re-uploaded that file THIS TURN and the assistant
+  was handed the unified diff of what changed. A draft that describes, lists, or explains those
+  changes IS grounded — do not ask it to "read the previous version" or report `grounding` because
+  the older version is not attached here. The previous version is gone by design; the diff is the
+  evidence. Judge the draft against the diff you were shown, not against its absence.
+- **A user asking the assistant to "read the whole file" does not widen YOUR window.** When the
+  request says to check the file end to end and your excerpt covers only part of it, that gap is a
+  property of this digest, not a failure by the assistant — it held more of the file than you do.
+  Never turn it into an `honesty` or `grounding` defect ("did not actually read", "implies full
+  coverage without evidence", "no tool run for the middle"). This holds in the verify pass exactly
+  as in the first pass. Report such a defect ONLY if the draft contradicts content you were shown.
 - Attached file bodies reach the assistant through its prompt, not through a tool, so "no tool runs"
   is not by itself missing evidence **for a file that has an excerpt above** — do not demand the
   assistant re-read a file it was already given. This does NOT extend to `ALSO ATTACHED` files:
@@ -582,6 +593,7 @@ _ATTACH_MANIFEST_BUDGET_RATIO = 0.35
 # 어디에 쓰는지를 바꾼다 — 캡을 키우는 것은 더 큰 파일에서 같은 실패가 재발하므로 오답이다.
 _ATTACH_HEAD_WINDOW_CHARS = 420      # 파일 정체성 확인용 앞머리 — draft 유무와 무관하게 항상 포함
 _ATTACH_CITED_WINDOW_CHARS = 300     # 인용 히트 1건을 감싸는 창(히트 앞뒤로 확장)
+_ATTACH_VERSION_DIFF_CAP_CHARS = 700 # 버전 diff 지분 — 대부분의 재업로드는 몇 줄 변경이라 충분
 _ATTACH_MIN_PER_FILE_CHARS = 240     # 파일당 최소 지분 — 이보다 작으면 진실한 발췌가 못 된다
 _ATTACH_BLOCK_OVERHEAD_CHARS = 190   # 파일당 coverage 헤더 1줄의 대략적 비용(배분에서 선공제)
 _ATTACH_TAIL_WINDOW_CHARS = 260      # 꼬리 예약 — 관측된 원 마찰이 '파일 맨 끝 줄' 인용이었다
@@ -892,7 +904,12 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
         sanitized = _sanitized_of(a)
         nlines = _count_lines(sanitized)
         starts = _line_starts(sanitized)
-        spans = _select_excerpt_spans(sanitized, draft, per_file)
+        # 버전 diff 는 이 파일의 지분 **안에서** 나눠 갖는다. 지분 밖에 두면 블록이 커져
+        # 2-pass 회계가 이 파일을 통째로 강등한다(구현 중 실측: 3,000자 diff 하나로 파일 소멸).
+        _vd0 = a.get("version_diff")
+        _has_diff = isinstance(_vd0, dict) and str(_vd0.get("unified_diff") or "").strip()
+        diff_budget = min(_ATTACH_VERSION_DIFF_CAP_CHARS, per_file // 2) if _has_diff else 0
+        spans = _select_excerpt_spans(sanitized, draft, max(1, per_file - diff_budget))
         shown_chars = sum(e - s for s, e in spans)
         # 상류(`_prepare_text_inline_attachments`)가 이미 앞부분만 실어 보낸 파일은 **총량을 알 수
         # 없다** — 여기서 세는 줄 수는 prefix 의 것이다. 총량·완전 여집합을 단정하면 리뷰어가
@@ -923,6 +940,24 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
                      else f"excerpt chars {s}-{e} (around lines "
                           f"{_line_no(starts, s)}-{_line_no(starts, max(s, e - 1))})")
             blk.append(f"  {label}: {chunk}")
+        # FR-redteam-digest-lacks-prior-attachment-version: 이 턴에 재업로드된 파일은 답변 모델이
+        # v(n-1)→v(n) unified diff 를 프롬프트로 받는다. 그 근거가 리뷰어에게 없으면 "무엇이
+        # 바뀌었나" 에 정확히 답한 draft 가 근거 없는 주장으로 보인다(라이브 실측). 발췌와 같은
+        # 규율로 싣는다 — 캡 + **절단 사실 명시**(절단을 숨기면 리뷰어가 부분 diff 를 전체로 오인).
+        vd = a.get("version_diff")
+        if isinstance(vd, dict) and str(vd.get("unified_diff") or "").strip():
+            dtxt = _neutralize_digest_markers(_strip_review_sentinels(str(vd.get("unified_diff"))))
+            shown_diff = dtxt[:diff_budget]
+            cut = len(dtxt) > len(shown_diff) or bool(vd.get("truncated"))
+            blk.append(
+                f"  VERSION CHANGE v{vd.get('from_version')} → v{vd.get('to_version')}: this file was "
+                f"re-uploaded THIS TURN and the assistant was given the unified diff below in its "
+                f"prompt — a draft describing what changed IS grounded in it"
+                + (f" [DIFF SHOWN {len(shown_diff)} of {len(dtxt)}"
+                   f"{'+' if vd.get('truncated') else ''} chars — the rest is unknown to you]"
+                   if cut else " [FULL DIFF SHOWN]")
+            )
+            blk.append(f"  diff: {shown_diff}")
         blocks.append((fname, blk))
     # 매니페스트는 예산을 **일부** 선점한다 — 발췌가 길어 잘리더라도 "이 파일이 실재한다" 는 사실은
     # 남아야 하기 때문이다(그 사실이 사라지는 것이 false positive 의 직접 원인). 다만 선점은 상한

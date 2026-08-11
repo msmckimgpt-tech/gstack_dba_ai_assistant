@@ -134,3 +134,61 @@ def test_review_attachments_still_lists_files_when_inline_loader_fails(monkeypat
     got = agent_core._review_attachments(False)
     assert got == [{"filename": "late.csv", "content": "", "truncated": False,
                     "content_available": False, "kind": "csv"}]
+
+
+# ── FR-redteam-digest-lacks-prior-attachment-version (라이브 실측 2026-08-11) ──
+# 답변 모델은 프롬프트 `## FILE UPDATES` 로 v(n-1)→v(n) unified diff 를 받는데 리뷰어 digest 에는
+# 없어서, "무엇이 바뀌었나" 에 정확히 답해도 무근거로 보여 grounding BLOCK 이 났다.
+# **판정식은 프롬프트 렌더와 동일**해야 한다 — 이번 턴 신규(new_ids) + unified_diff 비어있지 않음.
+
+_VD_ROW = {"id": 7, "filename": "a.sql", "kind": "text", "object_key": "k", "status": "ok",
+           "meta_json": {"version_diff": {"from_version": 1, "to_version": 2,
+                                          "unified_diff": "@@ -1 +1,2 @@\n+added\n",
+                                          "truncated": False}}}
+
+
+def _inline_one(monkeypatch, rows, new_ids="7"):
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_texts",
+                        lambda: {7: {"filename": "a.sql", "content": "SELECT 1"}})
+    monkeypatch.setattr(agent_core, "_load_scoped_attachment_rows", lambda: rows)
+    monkeypatch.setattr(agent_core, "_load_new_attachment_ids",
+                        lambda: {int(x) for x in new_ids.split(",") if x.strip()})
+
+
+def test_review_attachments_carries_version_diff_for_this_turn_upload(monkeypatch):
+    _inline_one(monkeypatch, [_VD_ROW])
+    got = agent_core._review_attachments(False)
+    assert got[0]["version_diff"]["unified_diff"] == "@@ -1 +1,2 @@\n+added\n"
+    assert got[0]["version_diff"]["from_version"] == 1
+    assert got[0]["version_diff"]["to_version"] == 2
+
+
+def test_review_attachments_omits_version_diff_when_not_new_this_turn(monkeypatch):
+    """프롬프트 렌더가 이번 턴 신규에만 diff 를 싣는다 — 두 소비자가 같은 집합을 말해야 한다."""
+    _inline_one(monkeypatch, [_VD_ROW], new_ids="")
+    assert "version_diff" not in agent_core._review_attachments(False)[0]
+
+
+def test_review_attachments_parses_meta_json_string(monkeypatch):
+    """meta_json 이 문자열로 오는 경로(드라이버 차이)도 같은 사실을 내야 한다."""
+    import json as _json
+    row = dict(_VD_ROW, meta_json=_json.dumps(_VD_ROW["meta_json"]))
+    _inline_one(monkeypatch, [row])
+    assert agent_core._review_attachments(False)[0]["version_diff"]["to_version"] == 2
+
+
+def test_review_attachments_ignores_empty_version_diff(monkeypatch):
+    row = dict(_VD_ROW, meta_json={"version_diff": {"unified_diff": "   "}})
+    _inline_one(monkeypatch, [row])
+    assert "version_diff" not in agent_core._review_attachments(False)[0]
+
+
+def test_review_attachments_version_diff_failure_is_fail_open(monkeypatch):
+    def boom():
+        raise RuntimeError("rows unavailable")
+    monkeypatch.setattr(agent_core, "_load_attachment_inline_texts",
+                        lambda: {7: {"filename": "a.sql", "content": "SELECT 1"}})
+    monkeypatch.setattr(agent_core, "_load_scoped_attachment_rows", boom)
+    monkeypatch.setattr(agent_core, "_load_new_attachment_ids", lambda: {7})
+    got = agent_core._review_attachments(False)
+    assert got and got[0]["filename"] == "a.sql"   # 본문은 여전히 실린다

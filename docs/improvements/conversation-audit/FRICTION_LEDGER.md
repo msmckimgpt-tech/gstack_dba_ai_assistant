@@ -297,7 +297,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   방향이라 품질 보증 기준과 충돌한다. **다시 제안하지 말 것.**
 - **fix**: 해당 없음(기각) · **rc_ids**: RC-LM2 · **batch-id**: 해당 없음
 
-## FR-redteam-digest-lacks-prior-attachment-version — triaged (L2; 리뷰어는 현재 버전만 받는데 답변은 직전 버전을 비교한다)
+## FR-redteam-digest-lacks-prior-attachment-version — fixed:undeployed (L2; 리뷰어는 현재 버전만 받는데 답변은 직전 버전을 비교한다)
 
 - **status**: `triaged` — 2026-08-11 라이브 실측 중 발견. 수정 미착수.
 - **source**: 자체 실측(2026-08-11, run `20260811031709-7f1ff22c`). 사용자 보고 아님.
@@ -312,9 +312,14 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   즉 **답변이 정당하게 가진 근거를 리뷰어만 못 본다** — 이 원장의 발췌 결함과 같은 구조, 다른 축.
 - **후보 방향(미결정)**: ① digest 에 직전 버전 diff 를 (캡 안에서) 동봉 ② 리뷰어 규칙에 "버전
   비교 근거는 프롬프트로 주입된다" 를 명시 ③ 둘 다. ①이 정공법이나 예산 경쟁이 커진다.
-- **fix**: 미착수 · **rc_ids**: RC-LM3 · **batch-id**: (미배정)
+- **fix**: `CHG-20260811T140000-redteam-version-evidence` — `_review_attachments()` 가
+  `MetaJson.version_diff` 를 동봉하고(**프롬프트 렌더와 동일 판정식**: 이번 턴 신규 + diff 비어있지
+  않음), digest 가 `VERSION CHANGE vN → vM` 블록으로 렌더한다. diff 몫은 **파일 지분 안에서** 배분
+  (지분 밖에 두면 블록이 커져 2-pass 회계가 그 파일을 통째로 강등 — 구현 중 실측). 절단 명시 +
+  마커 위조 중화. 리뷰어 규칙에 "이전 버전은 설계상 사라진다, diff 가 증거다" 추가.
+- **rc_ids**: RC-LM3 · **batch-id**: redteam-version-evidence
 
-## FR-redteam-verify-pass-ignores-window-rule — triaged (L1↔L2; 면책 규칙이 verify 패스에서 안 지켜진다)
+## FR-redteam-verify-pass-ignores-window-rule — fixed:undeployed (L1↔L2; 면책 규칙이 verify 패스에서 안 지켜진다)
 
 - **status**: `triaged` — 2026-08-11 라이브 실측 중 발견. 수정 미착수.
 - **source**: 자체 실측(2026-08-11, run `20260811031709-7f1ff22c` verify_findings).
@@ -330,7 +335,10 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **후보 방향(미결정)**: ① 규칙을 verify 패스 지침에도 동일 강도로 반복 ② "사용자가 완독을
   요구했더라도, 네 창이 좁다는 사실은 assistant 의 결함이 아니다" 를 명문화 ③ 지분이 일정 비율
   미만이면 그 파일에 대한 honesty 판정 자체를 금지.
-- **fix**: 미착수 · **rc_ids**: RC-LM4 · **batch-id**: (미배정)
+- **fix**: `CHG-20260811T140000-redteam-version-evidence` — 리뷰어 규칙에 **"사용자가 완독을
+  요구했더라도 네 창은 넓어지지 않는다"** 를 명문화하고, *This holds in the verify pass exactly as
+  in the first pass* 로 적용 범위를 못박았다. 보고는 **보여준 내용과 모순일 때만** 허용.
+- **rc_ids**: RC-LM4 · **batch-id**: redteam-version-evidence
 
 ## FR-read-attachment-preview-looks-partial — fixed:deployed:unverified-live (L7 표시 오인 + L2 완전성 계약 부재)
 
