@@ -3758,3 +3758,13 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
   바깥으로 이동하자 마크가 있는데도 0px 로 세어 **거짓 FAIL** 을 냈다. 하네스 아티팩트를
   고쳤다 — 픽셀 검사는 "무엇을 캡처하는가" 가 곧 계약이라는 사례.
 - Artifact: 본 entry + `docs/test-runs.d/20260811T1500-attach-diff-mark-underscore.md`
+
+
+## REV-20260811T160000-ai-claude-attach-diff-underscore-postdeploy [SKIPPED:non-policy-doc]
+
+- doc-only POST-DEPLOY 실측 기록(코드 변경 0) — §18.8 dispatch 표 첫 행에 해당.
+- 판정 근거는 배포본 `97e9c718` 의 PB-0008 Run 자체
+  (`docs/test-runs.d/20260811T1500-attach-diff-mark-underscore.md`).
+- **정직 표기**: 라이브 표본에 탭 들여쓰기 변경이 없어 그 축은 실 Windows 픽셀로 확인하지
+  못했다(기하 M3b 가 192px 로 잠금). `is-note` 절단 배너도 동일.
+- Artifact: 본 entry
