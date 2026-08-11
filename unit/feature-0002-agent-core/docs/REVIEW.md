@@ -1572,3 +1572,6 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   한다 · 면책 경계를 명시한다)이라 새 설계면이 없다.
 - **적대 검증 대체**: 라이브 재현 형태 + 뮤테이션 11/11 KILLED(프롬프트 규칙 3종·배선 3종 포함).
   배포 후 같은 시나리오로 재측정 예정.
+
+## REV-20260811T150000-version-evidence-deploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
+- **Trigger**: 문서만(배포·실측 기록, 원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.

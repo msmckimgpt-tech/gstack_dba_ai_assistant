@@ -297,7 +297,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   방향이라 품질 보증 기준과 충돌한다. **다시 제안하지 말 것.**
 - **fix**: 해당 없음(기각) · **rc_ids**: RC-LM2 · **batch-id**: 해당 없음
 
-## FR-redteam-digest-lacks-prior-attachment-version — fixed:undeployed (L2; 리뷰어는 현재 버전만 받는데 답변은 직전 버전을 비교한다)
+## FR-redteam-digest-lacks-prior-attachment-version — fixed:deployed:verified (L2; 리뷰어는 현재 버전만 받는데 답변은 직전 버전을 비교한다)
 
 - **status**: `triaged` — 2026-08-11 라이브 실측 중 발견. 수정 미착수.
 - **source**: 자체 실측(2026-08-11, run `20260811031709-7f1ff22c`). 사용자 보고 아님.
@@ -317,9 +317,13 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   않음), digest 가 `VERSION CHANGE vN → vM` 블록으로 렌더한다. diff 몫은 **파일 지분 안에서** 배분
   (지분 밖에 두면 블록이 커져 2-pass 회계가 그 파일을 통째로 강등 — 구현 중 실측). 절단 명시 +
   마커 위조 중화. 리뷰어 규칙에 "이전 버전은 설계상 사라진다, diff 가 증거다" 추가.
+- **배포·실측**: PR #1208 merge main `d7fca5fe` → `make deploy-web` 전체 스코프(soak 통과).
+  **라이브 재측정(원 실패 시나리오 그대로)** — 같은 대화에서 다중 첨부 + "직전 버전 대비 무엇이
+  바뀌었나" 를 반복. run `20260811034406-480a42a6` = **`verdict=pass · 0 block · resolved`** →
+  경고 배너 없음. 답변도 정확했다(맨 끝 1줄 추가를 diff 로 제시, 126번 줄 명시).
 - **rc_ids**: RC-LM3 · **batch-id**: redteam-version-evidence
 
-## FR-redteam-verify-pass-ignores-window-rule — fixed:undeployed (L1↔L2; 면책 규칙이 verify 패스에서 안 지켜진다)
+## FR-redteam-verify-pass-ignores-window-rule — fixed:deployed:verified (L1↔L2; 면책 규칙이 verify 패스에서 안 지켜진다)
 
 - **status**: `triaged` — 2026-08-11 라이브 실측 중 발견. 수정 미착수.
 - **source**: 자체 실측(2026-08-11, run `20260811031709-7f1ff22c` verify_findings).
@@ -338,6 +342,7 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **fix**: `CHG-20260811T140000-redteam-version-evidence` — 리뷰어 규칙에 **"사용자가 완독을
   요구했더라도 네 창은 넓어지지 않는다"** 를 명문화하고, *This holds in the verify pass exactly as
   in the first pass* 로 적용 범위를 못박았다. 보고는 **보여준 내용과 모순일 때만** 허용.
+- **배포·실측**: 위와 동일 런에서 verify 패스도 결함 0(선행 런은 이 축에서 honesty BLOCK 을 냈다).
 - **rc_ids**: RC-LM4 · **batch-id**: redteam-version-evidence
 
 ## FR-read-attachment-preview-looks-partial — fixed:deployed:unverified-live (L7 표시 오인 + L2 완전성 계약 부재)

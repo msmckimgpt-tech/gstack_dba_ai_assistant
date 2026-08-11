@@ -2394,4 +2394,5 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 - [x] R1 digest `VERSION CHANGE` 블록 — diff 몫을 파일 지분 **안에서** 배분 + 절단 명시 + 마커 중화
 - [x] R2 리뷰어 규칙 2조 — 버전 비교 접지 · 완독 요구가 창을 넓히지 않음(verify 패스 포함)
 - [x] 신규 13건 · 뮤테이션 11/11 KILLED · 전량 회귀 · ruff
-- [ ] 배포 + 라이브 재측정(다중 첨부 + 버전 비교에서 BLOCK 이 사라지는지)
+- [x] 배포(`d7fca5fe`) + **라이브 재측정** — 원 실패 시나리오 그대로 반복해
+      `pass · 0 block · resolved` 확인(run `20260811034406-480a42a6`). 원장 2건 `verified`.
