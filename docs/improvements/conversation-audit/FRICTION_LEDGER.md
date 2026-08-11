@@ -183,8 +183,14 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   **셋 다** 리뷰어에게 도달 · 예산 소진 1,200/1,200(구 동작 하한 보장) · 1줄 minified JSON 이
   `lines shown in full: none` 으로 **허위 완전성 주장 없음** · 761자 첨부 5개에서 **거짓 FULL 라벨 0**
   + 전 파일 고지 · 면책 경계 4종 프롬프트 탑재 확인.
-  **라이브 대화 실측 미수행** → `unverified-live`(정확한 답변에서 경고 배너가 실제로 사라지는지는
-  다음 실사용 턴에서 측정).
+  **라이브 실측 1차(2026-08-11) — BLOCK 재발, 배포본 결함 2건 적발**: 원 대화에서 동일 시나리오를
+  반복했더니 `revise/1 block` 이 그대로 났다. 리뷰어 근거("그 파일 내용이 제시되지 않았습니다")는
+  **사실이었다**. ① 겹치는 인용 창에 예산을 이중 과금해 862/1,200 자만 전달 ② 조립 순서가 첨부 id
+  고정이라 **질문 대상 파일이 통째로 강등**(probe_a → ALSO ATTACHED, probe_b 만 본문).
+  → `CHG-20260811T110000-redteam-excerpt-budget` 로 해소(관련성 정렬 + union 기준 회계 + 지분
+  비례 축소 + 2-pass 적재), 뮤테이션 18/18 KILLED. **배포 후 재측정 필요** → `unverified-live` 유지.
+  **교훈**: 배포본 합성 입력 실증은 통과했는데 라이브 실입력은 실패했다 — 첨부가 **여러 개**이고
+  순서가 실제 id 순일 때만 드러나는 결함이었다. 합성 실증이 라이브 실측을 대체하지 못한다.
 - **source**: 자체 실측(2026-08-07). 사용자 보고 아님.
 - **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1
 - **symptom_confidence**: high · **rootcause_confidence**: high(코드 위치 + 라이브 런 삼각측량)

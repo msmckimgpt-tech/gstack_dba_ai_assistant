@@ -636,8 +636,15 @@ red-team 자가검증(feature-0021)이 답변 초안에서 `BLOCK` 결함(verdic
   **완전히 보인 줄만** 싣는다 — 경계에서 부분만 보인 줄을 SHOWN 으로 보고하면 그 줄의 숨은 부분을
   인용한 정확한 답변이 '모순' 판정을 받는다. 상류 절단(`truncated=True`)이면 총량을 `M+` 하한으로만
   진술하고 `SOURCE ALSO TRUNCATED` 를 붙인다(총량 단정은 뒷부분 인용을 '없는 줄'로 오판시킨다).
-  파일 블록은 **통째로** 총예산에 적재하고, 안 들어가면 `ALSO ATTACHED` 로 강등한다 — 조인 문자열을
-  raw slice 하면 `[FULL FILE SHOWN]` 라벨을 단 파일의 본문이 잘려 라벨이 거짓이 된다.
+  파일 블록은 **관련성 순서**(초안 probe 적중 수 내림차순)로 조립하고, 파일당 지분은
+  `_body_budget // n - _ATTACH_BLOCK_OVERHEAD_CHARS` 로 **비례 축소**한다(하한
+  `_ATTACH_MIN_PER_FILE_CHARS`). 적재는 **2-pass** — 전량을 가정해 조립한 뒤 총합이 캡을 넘으면
+  관련성 낮은 순으로 강등하며 수렴시킨다. 강등된 파일은 `ALSO ATTACHED` 로 존재를 고지한다.
+  이 셋이 없으면 라이브에서 관측된 세 실패가 난다(2026-08-11 실측): 입력 순서 고정 →
+  **질문 대상 파일이 통째로 강등** · 통째 강등만 → 뒤 파일들이 사라져 false positive 부활 ·
+  1-pass 예약 → 마지막 강등이 매니페스트를 최종 절단에 잃어 **파일이 digest 에서 증발**.
+  `_select_excerpt_spans` 의 예산 회계는 **병합된 union 기준**이다 — 창 단위 차감은 겹치는 인용
+  창을 이중 과금해 전달량이 캡에 못 미친다(실측 862/1,200).
   본문의 `[FULL FILE SHOWN]`·`[PARTIAL EXCERPT` 는 `_neutralize_digest_markers` 로 대괄호를 무력화한다
   (첨부는 비신뢰 입력인데 프롬프트가 그 토큰에 권한을 부여했다).
   FR-redteam-attach-excerpt-cap-false-grounding-block.

@@ -582,6 +582,8 @@ _ATTACH_MANIFEST_BUDGET_RATIO = 0.35
 # 어디에 쓰는지를 바꾼다 — 캡을 키우는 것은 더 큰 파일에서 같은 실패가 재발하므로 오답이다.
 _ATTACH_HEAD_WINDOW_CHARS = 420      # 파일 정체성 확인용 앞머리 — draft 유무와 무관하게 항상 포함
 _ATTACH_CITED_WINDOW_CHARS = 300     # 인용 히트 1건을 감싸는 창(히트 앞뒤로 확장)
+_ATTACH_MIN_PER_FILE_CHARS = 240     # 파일당 최소 지분 — 이보다 작으면 진실한 발췌가 못 된다
+_ATTACH_BLOCK_OVERHEAD_CHARS = 190   # 파일당 coverage 헤더 1줄의 대략적 비용(배분에서 선공제)
 _ATTACH_TAIL_WINDOW_CHARS = 260      # 꼬리 예약 — 관측된 원 마찰이 '파일 맨 끝 줄' 인용이었다
 _ATTACH_MAX_CITED_WINDOWS = 4        # 파일당 인용 창 상한(예산·노이즈 제어)
 _ATTACH_MIN_PROBE_CHARS = 24         # 이보다 짧은 초안 줄은 우연 일치가 많아 probe 로 안 쓴다
@@ -722,13 +724,19 @@ def _select_excerpt_spans(body: str, draft: str, cap_chars: int) -> list[tuple[i
     """
     if len(body) <= cap_chars:
         return [(0, len(body))]
-    head_end = min(_ATTACH_HEAD_WINDOW_CHARS, cap_chars)
+    # 예산 회계는 **병합된 union** 기준이어야 한다. 창 단위로 차감하면 서로 겹치는 창이
+    # 예산을 이중 과금해 실제 전달량이 캡에 못 미친다 — 라이브 실측(2026-08-11)에서 인용
+    # probe 두 개가 같은 꼬리 영역을 가리켜 862/1,200 자만 전달됐다. "예산을 남기지 않는다" 는
+    # 계약이 조용히 깨진 것이라, 초판 패널이 잡은 결함(A)의 다른 얼굴이다.
+    def _used(sp: list[tuple[int, int]]) -> int:
+        return sum(e - s for s, e in _merge_spans(sp))
+
+    head_end = min(_ATTACH_HEAD_WINDOW_CHARS, max(1, cap_chars // 2))
     spans: list[tuple[int, int]] = [(0, head_end)]
-    budget = cap_chars - head_end
     hits = 0
     lowered = body.lower()
     for probe in _draft_probes(draft):
-        if budget <= 0 or hits >= _ATTACH_MAX_CITED_WINDOWS:
+        if hits >= _ATTACH_MAX_CITED_WINDOWS or _used(spans) >= cap_chars:
             break
         pos = _find_probe(body, lowered, probe)
         if pos < 0:
@@ -741,24 +749,42 @@ def _select_excerpt_spans(body: str, draft: str, cap_chars: int) -> list[tuple[i
         e = min(len(body), pos + len(probe) + pad)
         if e <= head_end:
             continue  # 이미 앞머리에 완전히 포함됨 — 예산 낭비 방지
-        s = max(s, head_end)  # 앞머리와 겹치는 부분에 예산을 이중 지출하지 않는다
-        take = min(e - s, budget)
-        if take <= 0:
+        s = max(s, head_end)
+        # 겹침을 반영한 **실제 증가분**이 예산을 넘지 않도록 뒤에서부터 줄인다.
+        while e > s and _used(spans + [(s, e)]) > cap_chars:
+            e -= 1
+        if e <= s:
             continue
-        spans.append((s, s + take))
-        budget -= take
+        spans.append((s, e))
         hits += 1
     # 꼬리 예약 — 아직 안 보인 끝부분이 있으면.
-    if budget > 0:
-        tail_len = min(_ATTACH_TAIL_WINDOW_CHARS, budget)
+    if _used(spans) < cap_chars:
+        tail_len = min(_ATTACH_TAIL_WINDOW_CHARS, cap_chars - _used(spans))
         tail_s = max(head_end, len(body) - tail_len)
         if tail_s < len(body) and not any(s <= tail_s and len(body) <= e for s, e in spans):
-            spans.append((tail_s, len(body)))
-            budget -= (len(body) - tail_s)
+            e = len(body)
+            while e > tail_s and _used(spans + [(tail_s, e)]) > cap_chars:
+                e -= 1
+            if e > tail_s:
+                spans.append((tail_s, e))
     # 남은 예산 전액을 앞머리 연장에 — 예산이 소멸하면 구 동작보다 적게 보여주게 된다.
-    if budget > 0:
-        spans[0] = (0, min(len(body), spans[0][1] + budget))
-    return _merge_spans(spans)
+    # 연장이 다음 창과 병합되면 다시 여유가 생기므로 수렴할 때까지 반복한다.
+    spans = _merge_spans(spans)
+    for _ in range(8):
+        remain = cap_chars - sum(e - s for s, e in spans)
+        if remain <= 0:
+            break
+        s0, e0 = spans[0]
+        limit = spans[1][0] if len(spans) > 1 else len(body)
+        new_e = min(len(body), e0 + remain, max(e0, limit))
+        if new_e <= e0:
+            if len(spans) > 1 and e0 >= spans[1][0]:
+                spans = _merge_spans(spans)
+                continue
+            break
+        spans[0] = (s0, new_e)
+        spans = _merge_spans(spans)
+    return spans
 
 
 def _fully_shown_lines(sanitized: str, starts: list[int],
@@ -830,15 +856,43 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
     # slice 하면 (a) `[FULL FILE SHOWN]` 라벨을 붙인 파일의 본문이 잘리고 (b) coverage 문장 자체가
     # 반토막 나며 (c) 뒷 파일이 목록에서 통째로 증발한다 — 셋 다 리뷰어에게 **거짓 완전성**을
     # 주는 경로다(적대 패널 backend+qa BLOCKING, 실측: 761자 첨부 3개로 재현).
+    # **관련성 순서**로 조립한다. 초판은 입력 순서(= 첨부 id 오름차순)를 그대로 써서, 예산이
+    # 모자라면 **초안이 논하고 있는 바로 그 파일**이 통째로 강등됐다 — 라이브 실측(2026-08-11):
+    # probe_a(질문 대상, id 최신)가 ALSO ATTACHED 로 밀리고 probe_b 만 본문이 실려, 리뷰어가
+    # "그 파일 내용이 제시되지 않았습니다" 로 정확한 답변을 BLOCK 했다. 강등 자체보다 **무엇을
+    # 강등하는가**가 문제였다.
+    _probes = _draft_probes(draft)
+
+    def _relevance(a: dict[str, Any]) -> int:
+        body = _sanitized_of(a)
+        low = body.lower()
+        return sum(1 for p in _probes if _find_probe(body, low, p) >= 0)
+
+    ordered = sorted(with_body, key=lambda a: -_relevance(a))
+    # 파일이 많으면 파일당 캡을 **비례 축소**한다. 통째 강등만 쓰면 뒤 파일들이 digest 에서
+    # 사라져, 그 파일을 논한 답변이 다시 '창작'으로 오판된다(선행 봉인이 막으려던 바로 그것).
+    # 작게라도 진실한 블록을 주는 편이 낫다 — coverage 가 몇 자를 줬는지 스스로 말하기 때문이다.
+    _est_header = len("\n".join(lines)) + 1
+    _est_manifest = min(int(cap_chars * _ATTACH_MANIFEST_BUDGET_RATIO),
+                        sum(len(str(a.get("filename") or "")) + 4 for a in manifest_only) + 200
+                        if manifest_only else 0)
+    _body_budget = max(0, cap_chars - _est_header - _est_manifest)
+    per_file = _ATTACH_PER_FILE_CAP_CHARS
+    if ordered:
+        # 블록마다 coverage 헤더 한 줄이 붙는다. 그 몫을 빼지 않으면 배분이 실제보다 커서
+        # 뒤 파일들이 예산에 못 들어가 통째로 강등된다(본문 없는 파일 = false positive 원천).
+        share = _body_budget // len(ordered) - _ATTACH_BLOCK_OVERHEAD_CHARS
+        per_file = max(_ATTACH_MIN_PER_FILE_CHARS,
+                       min(_ATTACH_PER_FILE_CAP_CHARS, share))
     blocks: list[tuple[str, list[str]]] = []
-    for a in with_body:
+    for a in ordered:
         fname = _flatten_untrusted(str(a.get("filename") or "(unnamed)"), 120)
         # 줄번호·문자수는 **리뷰어가 실제로 보는 텍스트** 기준이어야 하므로 sentinel strip 을 먼저.
         # raw 길이를 쓰면 sentinel 폭탄 파일이 `(3 lines, 6025 chars)` 같은 자기모순 헤더를 만든다.
         sanitized = _sanitized_of(a)
         nlines = _count_lines(sanitized)
         starts = _line_starts(sanitized)
-        spans = _select_excerpt_spans(sanitized, draft, _ATTACH_PER_FILE_CAP_CHARS)
+        spans = _select_excerpt_spans(sanitized, draft, per_file)
         shown_chars = sum(e - s for s, e in spans)
         # 상류(`_prepare_text_inline_attachments`)가 이미 앞부분만 실어 보낸 파일은 **총량을 알 수
         # 없다** — 여기서 세는 줄 수는 prefix 의 것이다. 총량·완전 여집합을 단정하면 리뷰어가
@@ -885,28 +939,35 @@ def build_attachment_digest(attachments: list[dict[str, Any]] | None,
     # 반쪽 블록을 남기느니 발췌를 포기하는 쪽이 안전하다: 잘린 블록은 라벨과 본문이 어긋나
     # 리뷰어에게 거짓을 말한다.
     manifest_cap = max(0, int(cap_chars * _ATTACH_MANIFEST_BUDGET_RATIO))
-    kept: list[str] = []
-    used = len(header_txt)
-    for fname, blk in blocks:
-        blk_txt = "\n".join(blk)
-        # 매니페스트가 최소한 들어갈 여지를 남기고 판단한다.
-        reserve = min(manifest_cap, len("\n".join(manifest_names))) if manifest_names else 0
-        if used + 1 + len(blk_txt) + reserve <= cap_chars:
-            kept.append(blk_txt)
-            used += 1 + len(blk_txt)
-        else:
-            manifest_names.append(fname)
-    manifest_lines: list[str] = []
-    if manifest_names:
-        manifest_lines.append(
+
+    def _manifest_text(names: list[str]) -> str:
+        if not names:
+            return ""
+        ml = [
             "ALSO ATTACHED (present in this conversation, content NOT included in this digest — the "
             "assistant can read these on demand with read_attachment. Do NOT treat statements about "
-            "these files as fabricated just because no excerpt appears here):"
-        )
-        manifest_lines.extend(f"- {n}" for n in manifest_names)
-    manifest_txt = "\n".join(manifest_lines)[:manifest_cap]
-    if manifest_txt and manifest_txt != "\n".join(manifest_lines):
-        manifest_txt += "\n- … (이하 생략 — 첨부가 더 있음)"
+            "these files as fabricated just because no excerpt appears here):",
+            *(f"- {n}" for n in names),
+        ]
+        txt = "\n".join(ml)[:manifest_cap]
+        if txt != "\n".join(ml):
+            txt += "\n- … (이하 생략 — 첨부가 더 있음)"
+        return txt
+
+    # **2-pass 적재.** 1-pass(적재하며 매니페스트 자리를 추정)는 강등이 루프 도중에 발생해
+    # 예약이 항상 과소였다 — 마지막 파일이 강등되면 매니페스트가 최종 절단에 통째로 잘려
+    # **그 파일이 digest 에서 증발**했다(라이브 수정 중 기존 테스트가 적발). 대신 전량 적재를
+    # 가정하고, 총합이 캡을 넘으면 **뒤(=관련성 낮은 순)부터 강등**하며 재계산해 수렴시킨다.
+    keep_n = len(blocks)
+    while True:
+        kept = ["\n".join(blk) for _f, blk in blocks[:keep_n]]
+        names = manifest_names + [f for f, _b in blocks[keep_n:]]
+        manifest_txt = _manifest_text(names)
+        total = (len(header_txt) + sum(1 + len(k) for k in kept)
+                 + (1 + len(manifest_txt) if manifest_txt else 0))
+        if total <= cap_chars or keep_n == 0:
+            break
+        keep_n -= 1
     body_txt = "\n".join([header_txt, *kept]) if kept else header_txt
     out = f"{body_txt}\n{manifest_txt}" if manifest_txt else body_txt
     # 최종 절단이 걸리면 위의 블록 회계가 깨진 것이다 — 방어적으로만 둔다(정상 경로 미도달).
