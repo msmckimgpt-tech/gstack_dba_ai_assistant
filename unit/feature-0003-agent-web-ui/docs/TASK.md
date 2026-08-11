@@ -9330,7 +9330,7 @@ MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복
 `20260807T1400-ai-claude-attach-diff-intraline`.
 
 ### Next Action
-- 배포 후 PB-0008 실 Windows 브라우저 시각검증(AC-ADI-9).
+- (없음 — 배포·PB-0008 완료. 잔여 관측 항목은 REPORT §8 원장.)
 
 ### 체크리스트
 
@@ -9352,9 +9352,10 @@ MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복
 - [x] §18.8 적대 패널 3도메인 — codex 한도 소진 + 세션 지시 상충을 **사용자에게 1회 확인**한 뒤
       subagent dispatch. **P1 4 · P2 5 · P3 다수 전건 흡수**(탭 0px · 정밀화 부재 · 자소 클러스터
       분할 · 자체 테스트 red · 비용 대리값 실패 · 렌더 폭증 · 배너 톤 · 이색형 · 과장 마킹 …)
-- [ ] 배포(deploy_scope: included) + PB-0008 라이브 시각검증
+- [x] 배포(deploy_scope: included) — 배포본 `9f1622f9`(web-a/web-b/ask-worker/insight-worker 전부)
+- [x] PB-0008 라이브 시각검증 — 마크 렌더·쪽별 색·배경 미칠·구문 색 공존·토글 왕복 전건 PASS
 
 ## 9. Requested Scope
 - [x] `각 글자 단위의 차이점 출력` — 줄 안 변경 구간이 밑줄 마크로 표시된다(한국어 글자 단위,
       ASCII 단어 단위). 2열·단일열 동일. 계산은 서버 단독이라 두 뷰가 갈리지 않는다.
-- [ ] 라이브 확인 — 배포 후 PB-0008.
+- [x] 라이브 확인 — 배포본 `9f1622f9` PB-0008 실측 PASS.
