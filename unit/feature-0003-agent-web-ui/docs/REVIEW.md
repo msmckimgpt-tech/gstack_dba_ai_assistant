@@ -3741,7 +3741,6 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 세운 계약(`_identicalFlags`·`modal-dismiss` press-pair·스크롤 앵커)을 **주석으로 인용하면서 절반만
 옮긴 것**이 이번 cycle 의 지배적 실패 양상이다. 새 화면을 만들 때 "같은 primitive 를 쓴다" 는
 렌더 함수 재사용만으로 성립하지 않고 **계약 전체**(스크롤·판정·어포던스)를 옮겨야 한다.
-
 ## REV-20260811T150000-ai-claude-attach-diff-mark-underscore [SKIPPED:css-only-visual-fix]
 
 - Trigger: `UI/layout` keyword — 그러나 변경은 **CSS 선언 1종(마크 바 위치)** 과 그 회귀 잠금
@@ -3768,3 +3767,23 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 - **정직 표기**: 라이브 표본에 탭 들여쓰기 변경이 없어 그 축은 실 Windows 픽셀로 확인하지
   못했다(기하 M3b 가 192px 로 잠금). `is-note` 절단 배너도 동일.
 - Artifact: 본 entry
+## REV-20260811T130000-ai-claude-attach-version-action-align [SUBAGENT:ux+design] — CONCERN
+
+- Related TASK: feature-0003-agent-web-ui (20260811T1200-attach-version-action-align)
+- Trigger: UI/layout keyword matched (버튼 위치·정렬)
+- Timestamp: 2026-08-11T13:00:00Z
+- Verdict: CONCERN
+- Artifact: `unit/feature-0003-agent-web-ui/docs/reviews/20260811T1300Z-ux-design.md`
+- Critical issue: `min-width` 는 **바닥**이라 글리프가 넘으면 열이 다시 갈린다(하네스가 그 잘못된
+  계약을 잠갔다) · 형제 목록 확장은 픽셀 근거 0 인데 AC 는 충족으로 단정 · [E] 가 소스 정규식이라
+  슬롯 오배치를 통과시킨다
+- Human Approval Needed: no
+
+**대응**: P2 3건·P3 5건 전부 반영. 폭을 `flex: 0 0 22px; min-width: 0` 으로 못 박고, 휴지통을 실행
+테스트로 승격, 활성 목록에 DOM-level control 로 픽셀 근거 확보. 하네스 28 → **34건**, 뮤테이션 7종.
+
+**교훈 — 리뷰어의 수치는 틀렸는데 구조는 옳았다**: 리뷰어는 활성 목록 버튼이 24-25px 라 22px 가
+바인딩되지 않는다고 계산했고, 그 수치는 실측(22.00px)으로 **기각**됐다. 그러나 "`min-width` 는
+바닥이라 폭 고정이 아니다" 는 구조적 지적은 옳았고, 글꼴 확대 A/B 로 **실제 열 깨짐을 재현**했다
+(22→24px, `👁` 1135→1133). 추정 수치가 틀렸다고 지적 전체를 기각했으면 그 결함을 놓쳤을 것이다 —
+수치는 검증하고 **기전은 따로 판정**해야 한다.
