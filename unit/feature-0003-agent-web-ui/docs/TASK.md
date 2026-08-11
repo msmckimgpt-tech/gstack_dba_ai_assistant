@@ -9318,7 +9318,6 @@ MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복
 ## 9. Requested Scope
 - [x] `파일 내용이 동일하다면 문서 원문을 출력` — 서버·프론트·테스트 구현 + 적대 패널 반영 +
       PB-0008 라이브 실측 완료. 라이브 A/B 로 종전 "본문 0줄" → "원문 전량" 확인.
-
 ## 20260807T1400-attach-diff-intraline
 
 **요청 (사용자, 2026-08-07)**: "문장 단위 diff를 표시해달라는 요청이 아직 수행되지 않았습니다.
@@ -9359,3 +9358,56 @@ MySQL↔PG 대조로 미러 정합을, 체인당 live 카운트로 목록 중복
 - [x] `각 글자 단위의 차이점 출력` — 줄 안 변경 구간이 밑줄 마크로 표시된다(한국어 글자 단위,
       ASCII 단어 단위). 2열·단일열 동일. 계산은 서버 단독이라 두 뷰가 갈리지 않는다.
 - [x] 라이브 확인 — 배포본 `9f1622f9` PB-0008 실측 PASS.
+- [ ] 라이브 확인 — 배포 후 PB-0008.
+## 20260807T1900-attach-source-view — 첨부 행 클릭 = 문서 원문 보기 (Minor §12.3)
+
+사용자 요청: "별도로 추가된 버전이 없는 첨부파일 또한, 클릭했을 때 문서 원문이 출력되도록
+구성해주세요."
+
+### 2.1 Implementation Plan
+
+- 영향 파일 / symbol
+  - `src/routers/_conv_store.py` — `_build_source_view`(신설) · `src/app.py` re-export
+  - `src/routers/attachments.py` — `get_attachment_source`(신설, `GET /api/attachments/{id}/source`)
+  - `src/static/app/attach-diff.js` — `openAttachmentSourceModal`(신설, `_renderSource` 재사용)
+  - `src/static/app/composer.js` — 첨부 목록 행 클릭·키보드 배선
+  - `src/static/css/chat.css` — `.attach-list-item.is-openable`
+  - `docs/ROUTEMAP.md` 재생성 · 테스트 2종 신설
+- 접근: 비교 모달은 `versions.length > 1` 게이트 뒤에 있어 단일 버전 첨부에는 도달 경로가 없다.
+  `/diff` 는 두 버전을 요구하고 `from==to` 를 400 으로 막으므로 원문 전용 엔드포인트를 둔다.
+  렌더는 **기존 `_renderSource` 를 그대로** 쓰고(복제 0), 서버가 diff `rows` 와 호환 shape 을 낸다.
+- 완료 판정: ① 단일 버전 텍스트 첨부 행 클릭 → 원문 표시 ② 렌더 텍스트 == 원본 byte 동일
+  ③ 행 안 버튼 클릭이 모달을 열지 않음(클릭·키보드) ④ 바이너리 강등·절단 2종 배너
+  ⑤ D21 pending 403 + 원본 미열람 ⑥ 신규 권한·스키마 0
+- 위험도: **Minor** — 비파괴 추가. 단 **본문 bytes 노출 경로 신설**이라 §18.8 security 패널 필수.
+
+### 실행 결과
+
+- 서버: `_build_source_view` + `/source` 엔드포인트. 권한·D21 게이트를 `/diff` 와 동형으로 배치.
+- 프론트: `openAttachmentSourceModal`(같은 모듈 — 렌더 primitive 공유) + 행 클릭/키보드 배선.
+- **버전 파라미터를 두지 않기로 결정**: 각 버전이 자기 id 를 가지므로 식별 경로를 둘로 만들지
+  않는다. 초안에 있던 `?version=` 과 모달 버전 선택기(어느 호출부도 채우지 않는 죽은 컨트롤)를
+  구현 중 제거했다.
+
+### 체크리스트
+
+- [x] 서버 빌더·엔드포인트 + pytest S1~S4·E1~E8
+- [x] 프론트 모달·배선 + JS 하네스 59건 PASS
+- [x] 뮤테이션 2/2 red (행 버튼 가드 제거 → D6 · D21 게이트 제거 → E10)
+- [x] 선행 하네스 회귀 61 / 91 / 113 / 30 PASS (`verify_attach_version_diff.mjs` B1 은 import
+      목록 확장에 맞춰 계약 개정 — 고정 대상은 "버전 스탬프 붙은 specifier" 이지 목록 길이가 아니다)
+- [x] `docs/ROUTEMAP.md` 재생성(신규 route 1)
+- [x] §18.8 적대 패널 (security · ux+design) — **둘 다 CONCERN**. P2 11건(security 4 · ux/design 7)
+      중 10건 같은 cycle 반영, 1건(§21 window)은 계열 선재 갭이라 `SECURITY.md §21.5` 명시 수용 +
+      4경로 동시 봉인을 후속 cycle 로 분리. 하네스 59 → **77건**.
+- [x] 첫 전량 실행에서 자기 결함 2건 적발·수정 — ① 내 E7 단언이 응답의 `version` 메타 키를 잡아
+      **자기 자신을 red** 로 만듦 ② 신규 route 로 인한 route 골든 drift(의도된 게이트, 골든 갱신).
+- [x] PB-0008 실 Windows 브라우저 — 격리 컨테이너(라이브 무접촉) **8시나리오 PASS**
+      (단일 버전 원문 · 접근성 구조 · 키보드+포커스 복귀 · kind 별 문구 · 바이너리 강등 ·
+      버튼 격리 · 버전 이력 👁 구버전 원문 · 스크롤 보존 900→899) + 라이브 구코드 404 대조.
+      fragment `docs/test-runs.d/20260807T1900-attach-source-view.md`
+- [x] pytest 전량 (`make test`) — **4,020 passed · 4 skipped · 실패 0**(EXIT=0)
+
+## 9. Requested Scope
+- [x] `버전 없는 첨부파일도 클릭 시 문서 원문 출력` — 파일명 클릭·Enter 로 원문 표시(라이브
+      격리 컨테이너 실측). 버전이 여럿인 첨부도 같은 진입점 + 버전 이력 행의 👁 로 구버전 원문까지.

@@ -127,12 +127,23 @@ class _Storage:
         self._objects = objects
         self._fail = set(fail_keys)
         self.reads: list[str] = []
+        # ranged read 는 **별 목록**으로 센다 — "전체를 적재했는가" 와 "앞부분만 읽었는가" 는
+        # 다른 사실이고, 원문 보기는 후자여야 한다(§18.8 security: 최대 25× 증폭 회피).
+        self.head_reads: list[tuple[str, int]] = []
 
     def get_object_bytes(self, object_key, **_kw):
         self.reads.append(object_key)
         if object_key in self._fail:
             raise self.StorageOperationError("simulated read failure")
         return self._objects[object_key]
+
+    def get_object_head_bytes(self, object_key, *, max_bytes, **_kw):
+        self.head_reads.append((object_key, int(max_bytes)))
+        if not object_key:
+            raise self.StorageConfigError("object_key required")
+        if object_key in self._fail:
+            raise self.StorageOperationError("simulated read failure")
+        return self._objects[object_key][: int(max_bytes)]
 
     def generate_presigned_get(self, object_key, response_filename=None):
         return f"https://signed/{object_key}"

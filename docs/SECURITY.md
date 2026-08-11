@@ -717,6 +717,19 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
    멤버 대화목록의 topic(익명 뷰는 §21.2 에서 genericize, 로그인 멤버 목록은 잔여). 전부 존재 여부만·콘텐츠 0.
 4. **PG 전용**: windowing 은 PG 런타임에서만 유효(MySQL-only 배포는 익명 뷰 snapshot 만).
 5. **외부 배포**: §7.2 IP allowlist / token 비밀번호가 windowed 공유에도 동일 적용(외부 노출 시).
+6. **개별 첨부 read 경로는 window clip 대상이 아니다 (수용, 2026-08-07)**: window clip 이 적용된
+   곳은 **fork**(`_conv_store._fork_*`)와 **일괄 다운로드**(`bulk_download_conversation_attachments`)
+   뿐이다. `list_conversation_attachments` · `download_attachment` ·
+   `get_attachment_version_diff` · `get_attachment_source`(신설) 네 경로는 미적용 — bounded 멤버가
+   floor 이전 첨부를 목록에서 보고 내려받거나 원문을 열 수 있다.
+   - **왜 수용하는가**: 이 갭은 특정 cycle 이 뚫은 것이 아니라 window 계약 도입 이전부터 첨부 read
+     **계열 전체**에 있던 것이고(일괄 다운로드 구현 주석이 그 사실을 이미 명시), 한 경로만 봉인하면
+     같은 행의 ⬇ 는 열려 있는 채 👁 만 막혀 **사용자에게는 규칙이 없고 보호는 착시**가 된다.
+   - **봉인 조건**: 네 경로를 같은 헬퍼(`_resolve_copy_window` + `_attachment_outside_window`)로
+     한 번에 막고, 미인가는 404 로 균질화(존재 oracle 금지)한다. 별 cycle 로 다룬다 —
+     `unit/feature-0003-agent-web-ui/docs/REPORT.md` §8 후속 제안 등재.
+   - **현재 영향 범위**: bounded 멤버(= "여기부터 공유" 로 들어온 멤버)에 한정. 비-멤버는
+     `_account_can_access_attachment` 가 이미 404 로 차단한다.
 
 ### 21.6 share 목록 owner 게이트 — 윈도우 escape 봉인 (SEC-20260723 REV-share-window)
 

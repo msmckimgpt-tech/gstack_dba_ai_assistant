@@ -66,8 +66,13 @@ import {
   state,
 } from "../app.js?v=dev";
 import { renderConversationList } from "./sidebar.js?v=dev";
-import { openAttachmentDiffModal } from "./attach-diff.js?v=dev";
+import { openAttachmentDiffModal, openAttachmentSourceModal } from "./attach-diff.js?v=dev";
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
+
+// 원문 보기가 성립하는 첨부 kind — 서버 `_VERSION_DIFF_TEXT_KINDS`(`routers/_conv_store.py`)의
+// 프론트 사본이다. 정본은 서버이고 여기는 **어포던스 문구를 미리 맞추기 위한 것**뿐이라
+// (실제 판정은 서버 응답 `viewable`), 두 집합이 갈라지지 않게 하네스가 양쪽을 대조해 잠근다.
+const ATTACH_SOURCE_VIEWABLE_KINDS = ["text", "csv"];
 
 // REQ-20260806-attach-manage: 첨부 사이드 패널의 목록 모드. "active"(기본) / "deleted"(휴지통).
 // 이 모듈 안에서만 읽고 쓴다 — 다른 모듈과 양방향 재할당이 없어 state 편입 대상이 아니다
@@ -1151,6 +1156,19 @@ function _renderAttachmentVersionsBox(box, versions, attachmentId) {
     if (vWhenTitle) roleEl.title = vWhenTitle;
     const acts = document.createElement("span");
     acts.className = "attach-list-version-actions";
+    // 그 버전의 원문 — 각 버전이 자기 id 를 가지므로 같은 모달을 그 id 로 열면 된다.
+    // 이 진입점이 없으면 "구버전 원문은 그 버전의 id 로 연다" 는 계약이 문서에만 있고 화면에는
+    // 없다(§18.8 ux 지적 — 구버전 원문을 보려면 내려받는 수밖에 없었다).
+    const srcBtn = document.createElement("button");
+    srcBtn.type = "button";
+    srcBtn.className = "attach-list-version-src";
+    srcBtn.textContent = "👁";
+    srcBtn.title = `v${vnum} 원문 보기`;
+    srcBtn.setAttribute("aria-label", `${v.original_filename || "파일"} 버전 ${vnum} 원문 보기`);
+    srcBtn.addEventListener("click", () =>
+      openAttachmentSourceModal(v.id, { filename: v.original_filename }));
+    acts.appendChild(srcBtn);
+
     // 최신 행에는 `⇄` 를 두지 않는다 — 자기 자신과의 비교는 무의미하고, 최신 기준 비교는
     // 위 "버전 비교" 버튼이 이미 담당한다.
     if (canCompare && !isLatest) {
@@ -1695,6 +1713,49 @@ async function _loadConversationAttachmentList(convId) {
       // REQ-20260806-attach-manage: 삭제. 버전이 여럿이면 모달이 범위를 묻는다.
       const delBtn = item.querySelector(".attach-list-item-del");
       if (delBtn) delBtn.addEventListener("click", () => _openAttachDeleteModal(a));
+
+      // REQ-20260807T-attach-source-view: 첨부 **원문 보기** 진입(사용자 요청 2026-08-07).
+      // 종전 이 행은 클릭 대상이 아니었고, 내용을 보는 유일한 길이 "버전 2개 이상일 때의
+      // 비교 모달" 이었다 — 버전이 하나인 첨부(대다수)는 **내려받지 않고는 내용을 볼 수 없었다**.
+      //
+      // **접근성 구조**: 행 전체가 아니라 **파일명만** 버튼으로 승격한다. 행에 `role="button"`
+      // 을 주면 그 안의 ⬇·🗑·버전 토글 3개가 버튼 안의 버튼이 되고(ARIA children-presentational),
+      // 스크린리더가 "📎 report.csv v2 108KB … ⬇ 🗑, 버튼" 처럼 행 전체 텍스트를 이름으로 읽는다
+      // (§18.8 ux 지적). 이름 버튼 1개 + 액션 버튼 3개의 평면 구조가 옳다.
+      // 행 클릭은 **마우스 편의**로만 남긴다(role·tabIndex 없음 — AT 트리에 중복 노출 안 함).
+      const srcViewable = ATTACH_SOURCE_VIEWABLE_KINDS.includes(String(a.kind || ""));
+      const openSource = () => openAttachmentSourceModal(a.id, { filename: a.original_filename });
+      item.classList.add("is-openable");
+      // 약속은 사실과 맞춘다 — 서버 판정 기준이 kind 하나뿐이고 클라이언트가 이미 그 값을
+      // 갖고 있으므로, 열어 봐야 "지원하지 않습니다" 를 보는 형식은 미리 그렇게 말한다.
+      item.title = srcViewable
+        ? "클릭하면 문서 원문을 봅니다"
+        : "이 형식은 원문 보기를 지원하지 않습니다 — 메타 정보와 다운로드";
+      const nameBtn = item.querySelector(".attach-list-item-name-text");
+      nameBtn.setAttribute("role", "button");
+      nameBtn.tabIndex = 0;
+      nameBtn.setAttribute("aria-label", `${a.original_filename || "첨부"} 원문 보기`);
+      nameBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openSource(); });
+      nameBtn.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        ev.preventDefault();
+        openSource();
+      });
+      // 행 클릭 — **press-pair 판정**. DOM `click` 의 target 은 mousedown/mouseup 의 공통
+      // 조상이라, 파일명을 드래그 선택하고 손을 떼면 target 이 행으로 승격돼 모달이 열린다
+      // (`modal-dismiss.js` 가 배경 dismiss 에서 봉인한 것과 **같은 기전**). 누른 지점에서
+      // 5px 넘게 이동했거나 행 안에 선택 영역이 남아 있으면 클릭으로 보지 않는다.
+      let pressAt = null;
+      item.addEventListener("pointerdown", (ev) => { pressAt = { x: ev.clientX, y: ev.clientY }; });
+      item.addEventListener("click", (ev) => {
+        // 행 안의 버튼(다운로드·삭제·버전 토글)은 자기 동작만 한다 — 부모로 올라가면
+        // 삭제하려다 원문이 함께 열린다.
+        if (ev.target.closest("button")) return;
+        if (pressAt && Math.hypot(ev.clientX - pressAt.x, ev.clientY - pressAt.y) > 5) return;
+        const sel = typeof window !== "undefined" && window.getSelection && window.getSelection();
+        if (sel && !sel.isCollapsed && sel.anchorNode && item.contains(sel.anchorNode)) return;
+        openSource();
+      });
       entry.appendChild(item);
 
       // 버전 체인이 2개 이상이면 펼침 토글 — lazy 로 /versions 를 불러 이력 박스를 토글한다.

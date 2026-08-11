@@ -6810,6 +6810,42 @@ _INTRALINE_MAX_CHANGE_RATIO = 0.85
 # 이미 담당하므로 이 규칙은 필요하지도 않았다.
 
 
+def _build_source_view(
+    text: str, *, row_cap: int = _VERSION_DIFF_ROW_CAP, source_truncated: bool = False
+) -> dict[str, Any]:
+    """단일 버전 본문의 **원문 뷰**(줄번호 + 줄)를 만든다.
+
+    사용자 요청(2026-08-07): "별도로 추가된 버전이 없는 첨부파일 또한, 클릭했을 때 문서 원문이
+    출력되도록". 버전이 하나뿐인 첨부에는 비교할 짝이 없어 `_build_version_diff_view` 를 쓸 수
+    없다(그 함수는 두 텍스트를 요구하고, 엔드포인트도 `from==to` 를 400 으로 막는다).
+
+    **행 shape 은 diff 의 `rows` 와 호환**된다 — 프론트 원문 렌더러(`_renderSource`)가 행마다
+    `right ?? left` / `right_no ?? left_no` 를 읽으므로 우측 키만 채우면 **렌더러 분기 0** 으로
+    그대로 재사용된다. 좌측까지 채우면 payload 가 두 배가 되므로 채우지 않는다(같은 글을 두 벌
+    실어 보낼 이유가 없다 — diff 는 좌우가 다를 수 있어서 두 벌인 것).
+
+    `row_cap` 초과 시 잘라내고 `truncated["rows"]=True` 로 표면화한다(무음 절단 금지, §16.7 G9-b).
+
+    `source_truncated` 는 **입력 `text` 자체가 이미 앞부분만**임을 뜻한다(호출측이 원본 cap 으로
+    잘라 넘긴 경우). 그러면 `stats["lines"]` 는 문서 전체 줄 수가 아니라 **본 범위의 줄 수**이므로
+    `stats["lines_partial"]` 로 그 사실을 함께 실어 보낸다 — 이 플래그가 없으면 화면이 앞부분의
+    줄 수를 전체 줄 수처럼 말하게 된다(§18.8 security 실측: 200,000줄 파일이 "95,326줄" 로 표기).
+    """
+    lines = (text or "").splitlines()
+    rows: list[dict[str, Any]] = [
+        {"type": "equal", "right_no": i + 1, "right": line} for i, line in enumerate(lines)
+    ]
+    rows_truncated = False
+    if len(rows) > int(row_cap):
+        rows = rows[: int(row_cap)]
+        rows_truncated = True
+    return {
+        "rows": rows,
+        "stats": {"lines": len(lines), "lines_partial": bool(source_truncated)},
+        "truncated": {"rows": rows_truncated},
+    }
+
+
 def _load_attachment_version_chain(
     conn, root_id: int, *, scope_row: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:

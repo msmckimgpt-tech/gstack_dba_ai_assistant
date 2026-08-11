@@ -3094,8 +3094,6 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/verify_attach_version_diff.mjs`, `tests/headless/verify_attach_diff_geometry.py`,
   `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
 - Timestamp: 2026-08-07T14:00:00+09:00
-
-
 ## CHG-20260811T1130-ai-claude-attach-diff-intraline-postdeploy — POST-DEPLOY PB-0008 실측 기록 (doc-only)
 
 - 배포본 `9f1622f9` 라이브 실측. **완료 판정은 파이프 exit 이 아니라 서비스별 커밋**으로 했다 —
@@ -3107,3 +3105,85 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   **라이브 표본에서 확인 못한 축 3건**(탭 들여쓰기·`is-note` 배너·6,000행 체감 — 헤드리스가 잠금).
 - `docs/TASK.md`: 배포·PB-0008 체크박스 마감 + Next Action 해제.
 - 코드 변경 **0**(doc-only). Timestamp: 2026-08-11T11:30:00+09:00
+## CHG-20260807T1900-ai-claude-attach-source-view — 첨부 행 클릭 = 문서 원문 보기
+
+- **서버** `src/routers/_conv_store.py` `_build_source_view` 신설 — 단일 버전 본문을 줄번호 행으로
+  펼친다. 행 shape 을 diff `rows` 와 **호환**(우측 키만)으로 내 프론트 렌더러 분기를 0 으로 둔다.
+  `src/app.py` re-export 1행.
+- **서버** `src/routers/attachments.py` `get_attachment_source` 신설
+  (`GET /api/attachments/{id}/source`). 권한·게이트를 `/diff` 와 **동형**으로 배치 —
+  `read.{own,any}` 재사용(신규 권한 코드 0) + **D21 pending 403**(본문 bytes 노출이므로 metadata
+  조회가 아니라 다운로드와 같은 등급). 바이너리는 `viewable=false` + 메타 강등, read 실패는 503,
+  절단 2종(`truncated.source`/`rows`)을 각각 표면화.
+- **프론트** `src/static/app/attach-diff.js` `openAttachmentSourceModal` 신설. **같은 모듈**에 둔
+  이유는 렌더 primitive(`_renderSource`·`_appendColgroup`·`_paintCell`·스크롤 앵커) 공유 —
+  별 모듈로 나누면 복제하거나 순환 import 를 만들게 된다(이 저장소는 "복제가 곧 결함 기전" 을
+  modal-dismiss.js 에서 이미 치렀다). 구문 색 토글은 비교 모달과 **같은 저장 키**.
+- **프론트** `src/static/app/composer.js` 첨부 목록 행 배선 — `is-openable` + `role="button"` +
+  `tabIndex` + Enter/Space. 행 안의 ⬇·🗑·버전 토글은 `closest("button")` 으로 걸러낸다
+  (삭제하려다 원문이 함께 열리지 않게). 휴지통 목록은 대상 아님.
+- **CSS** `src/static/css/chat.css` `.attach-list-item.is-openable` hover/focus-visible/cursor.
+- **설계 결정 — 버전 파라미터 없음**: 초안에는 `?version=` 쿼리와 모달 버전 선택기가 있었으나,
+  체인의 각 버전이 **자기 id** 를 가지므로 경로 id 하나로 대상이 특정된다. 식별 경로가 둘이 되면
+  그 중 하나만 스코프 검사를 통과하는 비대칭이 생길 수 있고, 어느 호출부도 채우지 않는 select 는
+  죽은 컨트롤이다. 구현 중 둘 다 제거.
+- **테스트** `tests/test_attachment_source_view.py`(S1~S4 빌더 · E1~E8 엔드포인트, diff 테스트의
+  fake 재사용 — 중복 정의 금지) · `tests/verify_attach_source_view.mjs` 59건 ·
+  `tests/verify_attach_version_diff.mjs` B1 계약 개정(import 목록 확장 수용).
+- `docs/ROUTEMAP.md` 재생성(신규 route 1). 스키마·마이그레이션·기존 응답 shape 변경 **0**.
+- Files: `src/app.py`, `src/routers/{_conv_store,attachments}.py`,
+  `src/static/app/{attach-diff,composer}.js`, `src/static/css/chat.css`,
+  `tests/{test_attachment_source_view.py,verify_attach_source_view.mjs,verify_attach_version_diff.mjs}`,
+  `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`, `docs/ROUTEMAP.md`(repo).
+- Timestamp: 2026-08-07T19:00:00+09:00
+
+## CHG-20260807T1945-ai-claude-attach-source-view-panel — §18.8 적대 리뷰 2건 반영
+
+`REV-20260807T193000`(security) · `REV-20260807T193001`(ux+design) 의 CONCERN 대응.
+
+**서버**
+- `modules/storage_minio.py` **`get_object_head_bytes` 신설**(ranged GET) — `get_object_bytes` 는
+  객체 전체를 메모리로 올린다. per-file cap 25MB ÷ 뷰 cap 1MB = **최대 25× 증폭**이고, 트리거가
+  원클릭이라 나가는 바이트의 자연 제동이 없다.
+- `routers/attachments.py`: `_BODY_VIEW_HEADERS`(`private, no-store` + `nosniff`) 신설·3 반환 적용 ·
+  `RATE_SCOPE_ATTACHMENT_SOURCE` 30/분 · 빈 `ObjectKey` 404 가드 · `except` 를 storage 예외로 축소 ·
+  503 payload 에 `error` 문구 동봉(`apiFetch` 가 non-2xx 를 throw 하므로 이 키가 없으면 사용자가
+  영문 `Service Unavailable` 을 본다 — `/diff` 의 같은 선행 결함도 함께 정정).
+- **절단 판정을 DB `SizeBytes` 로 전환**: ranged read 는 항상 cap 만큼 오므로 `len(raw) > cap` 이
+  영원히 거짓 — 증폭을 고치다 **무음 절단**을 만들 뻔한 자리.
+- `routers/_conv_store.py` `_build_source_view(source_truncated=)` → `stats.lines_partial`.
+  절단된 앞부분에서 센 줄 수를 전체처럼 말하지 않기 위한 플래그(실측: 200,000줄 파일 → "95,326줄").
+
+**프론트**
+- `attach-diff.js`: `render({keepScroll})` + 스크롤 앵커(비교 모달 AC-AVD-15 와 같은 계약 — 원문 뷰는
+  축약이 없어 잃는 거리가 더 크다) · `isClipped` 로 제목("문서 앞부분")·통계("앞 N행 표시")·배너가
+  **같은 판정**을 쓰게 · 제목에 버전 태그 · `aria-labelledby` + 열기 시 닫기 버튼 포커스 + 닫을 때
+  opener 복귀 · 빈 컨트롤 바 숨김 · 도달 불가 503 분기 제거.
+- `composer.js`: 행에서 `role`/`tabIndex` 제거하고 **파일명만** 버튼으로 승격(+`aria-label`) —
+  행에 role=button 을 주면 안의 ⬇·🗑·버전 토글이 버튼 안의 버튼이 되어 보조기술이 행 전체 텍스트를
+  이름으로 읽는다 · 행 클릭에 **press-pair(5px) + selection 가드**(드래그 선택이 클릭으로 오인되는
+  기전은 `modal-dismiss.js` 가 배경 dismiss 에서 이미 봉인한 것) · kind 별 title 분기 +
+  `ATTACH_SOURCE_VIEWABLE_KINDS` 사본(하네스가 서버 정본과 대조해 잠금) · **버전 이력 각 행에 👁**
+  (구버전 원문 진입점 — docstring 이 주장하던 경로가 UI 에 없었다).
+- `chat.css`: 파일명 버튼 hover/focus 링 · `:has()` 로 액션 버튼 hover 시 행 하이라이트 억제
+  (삭제와 열기가 같은 신호를 갖지 않게) · `.attach-list-version-src` · `prefers-reduced-motion` 가드.
+
+**테스트**
+- `verify_attach_source_view.mjs` 59 → **77건**. `apiFetch` stub 을 **실 계약(non-2xx throw)** 으로
+  교체 — 항상 resolve 하는 stub 이 503 분기를 vacuous pass 시키고 있었다.
+- `test_attachment_source_view.py` S5(splitlines 정규화 고정) · S6 · E9(실물 게이트로 soft-delete
+  404) · E10(ranged read + 정본 크기 절단) · E11(429) · E12(헤더) · E13(빈 ObjectKey 404) 신규.
+  `_Storage` fake 에 `get_object_head_bytes`/`head_reads` 추가(전체 적재 여부를 구분해 센다).
+- `route_snapshot_p5b.json` 골든 갱신(신규 route 1 — 227→228).
+
+**문서**
+- `docs/SECURITY.md §21.5` 6번 신설 — **§21 window clip 이 첨부 read 4경로(목록·다운로드·비교·원문)에
+  미적용**임을 수용 근거·봉인 조건·영향 범위와 함께 등재. 한 경로만 봉인하면 같은 행의 ⬇ 는 열린 채
+  보호가 착시가 되므로 4경로 동시 봉인을 별 cycle 로 분리.
+- `FUNCTION.md` AC-ASV-2 범위 명시(LF 한정) + AC-ASV-10~18 신설 + 범위 밖 명시.
+- Files: `src/modules/storage_minio.py`, `src/app.py`, `src/routers/{attachments,_conv_store}.py`,
+  `src/static/app/{attach-diff,composer}.js`, `src/static/css/chat.css`,
+  `tests/{test_attachment_source_view.py,test_attachment_version_diff.py,verify_attach_source_view.mjs,route_snapshot_p5b.json}`,
+  `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`, `docs/reviews/20260807T1930Z-{security,ux-design}.md`,
+  `docs/SECURITY.md`(repo).
+- Timestamp: 2026-08-07T19:45:00+09:00

@@ -3603,7 +3603,6 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 차이 세 경우 모두에서 그 단어를 썼다. 화면의 세 요약(절단 배너·안내 배너·요약 배지)이 각자 다른
 근거로 만들어져 서로를 반박한 것이 근본이며, 해소는 **판정을 한 곳(`_identicalFlags`)으로 모으는
 것**이었다 — 서버에서 `identical` 판정을 한 번만 하도록 한 것과 같은 처방을 프론트에도 적용.
-
 ## REV-20260807T140000-ai-claude-attach-diff-intraline [SUBAGENT:ux,design,frontend,security,backend,qa]
 
 - Trigger: `UI/modal/screen/layout` + `API/response shape` keyword matched (§18.8 dispatch 표)
@@ -3702,3 +3701,43 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
   6,000행 체감은 이 Run 에서 확인하지 못했다. 각각 헤드리스 M3b · jsdom D8 계열이 잠그고 있으나
   **실 Windows 브라우저 픽셀로는 미확인**이다.
 - Artifact: 본 entry
+## REV-20260807T193000-ai-claude-attach-source-view [SUBAGENT:security] — CONCERN
+
+- Related TASK: feature-0003-agent-web-ui (20260807T1900-attach-source-view)
+- Trigger: API/endpoint keyword matched + 본문 bytes 노출 경로 신설
+- Timestamp: 2026-08-07T19:30:00Z
+- Verdict: CONCERN
+- Artifact: `unit/feature-0003-agent-web-ui/docs/reviews/20260807T1930Z-security.md`
+- Critical issue: 본문 응답에 `no-store`/`nosniff` 누락 · `get_object_bytes` 전체 적재로 최대 25×
+  증폭 + rate limit 부재 · 절단 프리픽스에서 센 줄 수를 전체로 표기(실측 200,000줄 → "95326줄")
+- Human Approval Needed: no
+
+**대응**: P2 4건 중 3건(헤더·ranged read+rate limit·lines_partial) 같은 cycle 반영.
+§21 window 미적용은 **첨부 read 계열 4경로 공통의 선재 갭**이라 한 경로만 봉인하면 같은 행의 ⬇ 가
+열린 채 보호가 착시가 된다 — `docs/SECURITY.md §21.5` 6번에 수용 근거·봉인 조건·영향 범위와 함께
+등재하고 4경로 동시 봉인을 후속 cycle 로 분리. P3 는 splitlines 범위 명시(AC 개정+S5)·ObjectKey
+404 가드·except 축소·실물 게이트 테스트(E9) 반영.
+
+**가장 값진 지적**: ranged read 로 바꾸면 `len(raw) > cap` 절단 판정이 **영원히 거짓**이 된다 —
+증폭을 고치다 무음 절단을 만들 뻔했다. 판정을 DB 정본 크기(`SizeBytes`)로 옮기고 E10 이 고정한다.
+
+## REV-20260807T193001-ai-claude-attach-source-view [SUBAGENT:ux+design] — CONCERN
+
+- Related TASK: feature-0003-agent-web-ui (20260807T1900-attach-source-view)
+- Trigger: UI/modal/screen/layout keyword matched (모달·화면·클릭)
+- Timestamp: 2026-08-07T19:30:00Z
+- Verdict: CONCERN
+- Artifact: `unit/feature-0003-agent-web-ui/docs/reviews/20260807T1930Z-ux-design.md`
+- Critical issue: 이 모듈이 **주석·문서로 이미 봉인해 둔 결함 기전 3종**이 새 화면에서 재발
+  (스크롤 앵커 미적용 · click target 공통-조상 승격 · 절단 시 "원문" 단정) + 503 문구 도달 불가
+- Human Approval Needed: no
+
+**대응**: P2 7건 전부 반영(스크롤 앵커 · 503 payload `error` + 하네스 stub 실계약화 · press-pair
+가드 · 파일명만 버튼으로 승격 · 버전 태그 + 버전 이력 행 👁 진입점 · 절단 시 제목/통계 강도 하향 ·
+포커스 저장·복귀). P3 는 빈 컨트롤 바 숨김 · 액션 버튼 hover 억제 · kind 별 title · 모션 규약 가드.
+
+**두 패널의 수렴점**: 두 리뷰가 **같은 결함을 다른 축에서** 지적했다 — 절단 상태의 "원문" 단정
+(ux P2-6 = security P2-4)과 `role="button"` 중첩(ux P2-4 = security P3-6). 형제 화면이 직전 cycle 에
+세운 계약(`_identicalFlags`·`modal-dismiss` press-pair·스크롤 앵커)을 **주석으로 인용하면서 절반만
+옮긴 것**이 이번 cycle 의 지배적 실패 양상이다. 새 화면을 만들 때 "같은 primitive 를 쓴다" 는
+렌더 함수 재사용만으로 성립하지 않고 **계약 전체**(스크롤·판정·어포던스)를 옮겨야 한다.
