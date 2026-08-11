@@ -696,3 +696,14 @@ source_of_truth: true
 - **미해소(이월)**: 패널이 발견한 선행 상태 — `/root/.claude` 와 `/root` 의 POSIX ACL 이 `claude-corp` 에 rwx 를 부여한다. 본 변경이 만든 것이 아니지만 계정 분리 전제를 무너뜨리므로 별도 검토 필요.
 - Rollback: `CLAUDE_OAUTH_AUTO_ROTATE=0`(즉시) 또는 본 CHG revert. 자격증명은 `.bak-*` 로 되돌릴 수 있다.
 - Cross-ref: REVIEW REV-20260811T120000 · TASK `## TASK-20260811T120000-oauth-auto-rotate` · TEST Run 2026-08-11-oauth-auto-rotate · 선행 CHG-20260807T190000.
+
+## CHG-20260811T140000-oauth-acl-intent-record (계정 분리의 신뢰 경계 부재를 명문화 — 문서 전용)
+- Date: 2026-08-11. **코드 변경 0.** 선행 CHG-20260807T190000 / CHG-20260811T120000 의 적대 리뷰가 P1 로 올린 두 항목의 **심각도를 운영자 확인에 따라 재평가**한 기록.
+- **운영자 확인(2026-08-11)**: "권한은 의도된 설정이다. WSL 환경에서 여러 claude 계정을 구분하여 사용하기 위해 분리해두었으며, 각 계정이 내부적으로 접근하는 권한은 모두 root 단위로 동일하다."
+- **따라서 재평가되는 것**:
+  - `.env.bedrock` 0664 → 비특권 `claude-corp` 가 root Max OAuth 토큰을 읽을 수 있다(REV-20260807T190000 security P1). **권한 상승 아님** — 두 계정 사이에 신뢰 경계가 없다. 0600 조치는 유지하되 근거는 "권한 경계" 가 아니라 **위생·최소노출**이다.
+  - `.bak` 심링크 추종에 의한 "소유권 탈취"(REV-20260811T120000 security P1). **권한 상승 아님**. 다만 임의 파일 덮어쓰기는 여전히 **사고 유발 요인**(예측 가능한 이름 + 심링크 오작동)이므로 `O_CREAT|O_EXCL|O_NOFOLLOW` + 랜덤 접미사 조치는 유지한다.
+  - `/root`·`/root/.claude` 의 `user:claude-corp:rwx` ACL. **의도된 구성** — 조치 불요. 이월 항목 종결.
+- **유지되는 결함 판정(재평가 대상 아님)**: 같은 리뷰의 나머지 P1 — burst-429 오강등, recreate 실패 영구화, `--check` 가 회전, selector 사망에 의한 slot 무음 정지, `expires_in` 과거 만료 되쓰기, POST 후 백업 실패로 refresh token 유실 — 은 전부 **권한과 무관한 가용성·정합성 결함**이고 이미 수정됐다.
+- **왜 기록하는가**: 원장에 열린 P1 으로 남겨 두면 다음 적대 패널이 같은 것을 다시 최상위로 올려 실제 결함 탐색 예산을 갉아먹는다. 향후 리뷰어는 이 항목을 **환경 전제**로 읽어야 한다.
+- Cross-ref: REVIEW REV-20260811T140000 · TASK `## TASK-20260811T120000-oauth-auto-rotate` 이월 종결 · 선행 REV-20260807T190000 / REV-20260811T120000.

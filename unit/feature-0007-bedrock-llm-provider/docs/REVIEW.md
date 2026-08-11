@@ -676,3 +676,14 @@ P1 5건 + P2 7건 전량 수정(상세는 MODIFY CHG-20260811T120000). 특히 �
 - Human Approval Needed: **수령됨** (2026-08-11 사용자 승인 — 자격증명 저장소 쓰기).
 - Timestamp: 2026-08-11T12:55:00+09:00
 - Cross-ref: MODIFY CHG-20260811T120000-oauth-auto-rotate / TEST Run 2026-08-11-oauth-auto-rotate / 선행 REV-20260807T190000.
+
+## REV-20260811T140000-ai-root-feature-0007-acl-intent-record [SKIPPED:non-policy-doc] — PASS
+- Related TASK: feature-0007-bedrock-llm-provider (TASK-20260811T120000 이월 항목 종결)
+- Reason: **코드 변경 0 · 비정책 doc-only** — §18.8 dispatch 표상 panel SKIP. 판단이 필요한 설계 변경이 없고, 기록하는 내용 자체가 사람의 결정이다.
+- **정정 대상**: REV-20260807T190000(security P1 `.env.bedrock` 월드리더블)과 REV-20260811T120000(security P1 `.bak` 심링크 소유권 탈취)은 둘 다 "비특권 `claude-corp` → root 자원" 을 권한 상승으로 전제했다. 그 전제가 **틀렸다** — 운영자 확인(2026-08-11)에 따르면 계정 분리는 WSL 에서 복수 Claude 계정을 구분하기 위한 것이고 **각 계정의 접근 권한은 root 단위로 동일**하다. 두 계정 사이에 신뢰 경계가 없으므로 해당 두 건은 권한 상승이 아니다.
+- **그럼에도 조치를 되돌리지 않는 이유**: 0600 / `O_NOFOLLOW` / 원자적 교체 / 랜덤 백업 접미사는 비용이 0 이고, 권한과 무관한 사고(예측 가능한 이름 + 심링크 오작동으로 인한 임의 파일 덮어쓰기, 우발적 노출)를 여전히 막는다. 근거만 "권한 경계" → "위생" 으로 바꾼다.
+- **패널 자체에 대한 평가(정직 표기)**: 두 security 렌즈 모두 이 환경 전제를 알 수 없었고, 실제로 한 렌즈는 "이 호스트에서는 claude-corp 가 이미 root 에 도달 가능하므로 **순 상승 폭은 작다**" 고 스스로 단서를 달았다. 판정 자체가 부주의했다기보다 **환경 정보가 리뷰어에게 없었던 것**이며, 그 정보를 원장에 남기는 것이 본 entry 의 목적이다.
+- Critical issue: none (이월 P1 1건 종결).
+- Human Approval Needed: no (사람 결정을 기록하는 항목)
+- Timestamp: 2026-08-11T14:00:00+09:00
+- Cross-ref: MODIFY CHG-20260811T140000-oauth-acl-intent-record.

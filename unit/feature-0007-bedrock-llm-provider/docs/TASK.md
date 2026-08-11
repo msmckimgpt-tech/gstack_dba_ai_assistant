@@ -486,4 +486,4 @@ edge 로 호출되는 이슈가 확인되었습니다. 더 이상 local llm 은 
 - [x] **적대 패널 P1 5건 수정**: ① `--check` 가 실제로 회전(부작용 0 계약 위반) ② 회전 중 예외가 selector 를 죽여 slot 무음 정지 ③ `expires_in` 부재 시 과거 만료 되쓰기 → 재회전·재생성 폭풍 ④ `.bak` 경로 심링크 추종(root 임의 파일 덮어쓰기·소유권 탈취) ⑤ POST 성공 후 백업 단계 실패 시 소모된 refresh token 유실(백업을 쓰기 **뒤**로 이동)
 - [x] **P2 수정**: 요청 직후 재확인(lost update) · scope 잠식 방지 · `keep_backups=0` 의미 반전 · 실패 backoff(지수, 상한 6h) · lock O_NOFOLLOW/lstat · `expires_in` 상한 클램프 · CLI lock 과 배타되지 않는다는 사실을 주석에서 정정
 - [x] 회귀 75건 + mutation 20/20 KILL
-- [ ] **이월**: `/root/.claude`·`/root` 의 POSIX ACL 이 `claude-corp` 에 rwx 를 주고 있다(패널 발견, 본 변경과 무관한 선행 상태). 계정 분리 전제를 무너뜨리므로 별도 검토 필요
+- [x] **종결(운영자 확인 2026-08-11)**: `/root`·`/root/.claude` 의 `user:claude-corp:rwx` ACL 은 **의도된 설정**이다 — WSL 에서 여러 Claude 계정을 구분해 쓰기 위한 분리일 뿐이고, 각 계정의 내부 접근 권한은 root 단위로 동일하다. 따라서 두 계정 사이에 신뢰 경계가 없고, 패널이 P1 로 올린 "소유권 탈취 / 비특권 계정의 root 자원 접근" 은 **이 환경에서는 권한 상승이 아니다**. 관련 하드닝(0600·`O_NOFOLLOW`·원자적 교체)은 위생 목적으로 유지
