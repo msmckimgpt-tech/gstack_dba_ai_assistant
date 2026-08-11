@@ -173,10 +173,18 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - **라이브 실측 필요분(§정직)**: ① 모델이 실제로 도구를 채택하는지 ② 다중 파일 전달이 완주하는지
   ③ **다운로드 칩이 실제로 뜨는지**(패널이 잡은 결함이라 최우선) ④ 패치 경로 적용 성공률.
 
-## FR-redteam-attach-excerpt-cap-false-grounding-block — fixed:undeployed (L2↔L1; 리뷰어 발췌가 head-only 라 캡 밖 근거가 '무근거'로 보임)
+## FR-redteam-attach-excerpt-cap-false-grounding-block — fixed:deployed:unverified-live (L2↔L1; 리뷰어 발췌가 head-only 라 캡 밖 근거가 '무근거'로 보임)
 
-- **status**: `fixed:undeployed` — 2026-08-07 라이브 실측 중 **부수 발견**(원 마찰 검증을 위한 턴에서
-  재현) → 사용자 지시로 같은 날 수정. 코드/테스트 완료, 배포 전.
+- **status**: `fixed:deployed:unverified-live` — 2026-08-07 라이브 실측 중 **부수 발견**(원 마찰
+  검증 턴에서 재현) → 사용자 지시로 수정. **배포 완료**(PR #1196 merge main `4c7a8f27` →
+  `make deploy-web` 전체 스코프, soak 통과·롤백 0, 4서비스 `GIT_COMMIT=4c7a8f27` running/healthy).
+  병렬 세션 머지로 rebase 1회(import 블록 union 해소) 후 전량 회귀·뮤테이션 **재실행**.
+  **배포본 런타임 실증(ask-worker)**: 원 마찰(꼬리 근거)이 verbatim·패러프레이즈·초안없음
+  **셋 다** 리뷰어에게 도달 · 예산 소진 1,200/1,200(구 동작 하한 보장) · 1줄 minified JSON 이
+  `lines shown in full: none` 으로 **허위 완전성 주장 없음** · 761자 첨부 5개에서 **거짓 FULL 라벨 0**
+  + 전 파일 고지 · 면책 경계 4종 프롬프트 탑재 확인.
+  **라이브 대화 실측 미수행** → `unverified-live`(정확한 답변에서 경고 배너가 실제로 사라지는지는
+  다음 실사용 턴에서 측정).
 - **source**: 자체 실측(2026-08-07). 사용자 보고 아님.
 - **last_seen**: 2026-08-07 · **seen_count**: 1 · **seen_distinct_conv**: 1
 - **symptom_confidence**: high · **rootcause_confidence**: high(코드 위치 + 라이브 런 삼각측량)

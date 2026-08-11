@@ -1640,3 +1640,14 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **위험등급**: Major(리뷰어 프롬프트 = 코어 LLM 경로). 신규 권한·스키마·엔드포인트 변경 0.
 - **Cross-ref**: 원장 `FR-redteam-attach-excerpt-cap-false-grounding-block` ·
   `CHG-20260807T130000-attach-delivery-live-measure`(이 결함이 발견된 실측) · SECURITY §41.
+
+## CHG-20260811T090000-redteam-attach-excerpt-deploy 발췌 앵커링 배포 완료 기록 (문서만)
+- **배포**: PR #1196 merge main `4c7a8f27` → `make deploy-web` 전체 스코프. soak 통과, 롤백 0,
+  4서비스 `GIT_COMMIT=4c7a8f27` running/healthy. 병렬 세션 머지로 rebase 1회(`redteam.py` import
+  블록 union 해소) 후 **전량 회귀·뮤테이션 재실행**(23/23 KILLED, 실패는 선재 7건뿐).
+- **배포본 런타임 실증(ask-worker)**: 원 마찰(꼬리 근거)이 verbatim·패러프레이즈·초안없음 셋 다
+  도달 · 예산 소진 1,200/1,200 · 1줄 minified JSON 허위 완전성 주장 없음 · 761자 첨부 5개에서
+  거짓 FULL 라벨 0 + 전 파일 고지 · 면책 경계 4종 탑재.
+- **미검증(정직)**: 라이브 대화에서 **정확한 답변의 경고 배너가 실제로 사라지는지**. 원장
+  status = `fixed:deployed:unverified-live`.
+- **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260807T160000-redteam-attach-excerpt-anchoring`.
