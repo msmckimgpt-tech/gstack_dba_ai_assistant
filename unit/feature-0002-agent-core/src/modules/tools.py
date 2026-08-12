@@ -1152,6 +1152,80 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        # feature-0040 db-object-explorer: 테이블·루틴 외 **실제 DB 객체**를 역할 축으로 탐색.
+        # 핵심 세트에 두는 이유 — 구조 파악 질문("이 DB 뭐가 있나", "자동으로 도는 게 있나")에서
+        # 모델이 이 도구의 존재를 모르면 카탈로그를 손으로 SELECT 하다 막히거나 부재로 오단정한다.
+        "type": "function",
+        "function": {
+            "name": "search_db_objects",
+            "description": (
+                "테이블·컬럼 외의 **실제 DB 객체**를 역할별로 열거·검색한다 — "
+                "뷰(view), 트리거(trigger), 예약 작업(schedule: MySQL EVENT / SQL Server Agent 작업), "
+                "별칭(alias: SYNONYM), 값 생성기(generator: SEQUENCE). "
+                "'트리거가 있나', '자동으로 도는 작업이 뭐가 있나', '이 테이블에 뭐가 걸려 있나' 같은 "
+                "질문에 사용한다. **object_role 을 생략하면 지원되는 모든 역할을 한 번에 개관**하므로 "
+                "DB 구조를 처음 파악할 때 이 형태로 1회 호출하는 것이 가장 효율적이다. "
+                "함수·프로시저는 이 도구가 아니라 `search_routines` 를 쓴다. "
+                "⚠ 어떤 역할은 이 DBMS 에 **개념 자체가 없다**(예: MySQL 에는 SYNONYM 이 없다). "
+                "도구가 그 사실을 명시해 주며, 그 경우 '이 DB 에 없다' 가 아니라 "
+                "'이 DBMS 가 지원하지 않는다' 로 서술해야 한다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "object_role": {
+                        "type": "string",
+                        "enum": ["view", "trigger", "schedule", "alias", "generator"],
+                        "description": (
+                            "객체의 역할. **생략하면 전 역할 개관**(권장 시작점). "
+                            "vendor 어휘(event/job/synonym/sequence)로 넣어도 해석된다."
+                        ),
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "이름·정의 본문 검색어. **생략하면 전체 열거** — '몇 개나 있나' 류 질문엔 비워서 호출.",
+                    },
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 이 데이터베이스(catalog)만 검색. 미지정 시 허용된 모든 DB."},
+                    "schema_name": {"type": "string", "description": "스키마 이름 (선택). 예약 작업은 대상 DB 로 해석된다."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_db_object",
+            "description": (
+                "DB 객체(뷰·트리거·예약 작업·별칭·시퀀스)의 **정의 본문과 속성**을 조회한다. "
+                "`search_db_objects` 로 찾은 객체의 실제 내용(뷰의 SELECT 문, 트리거의 본문과 발동 "
+                "시점·이벤트, 작업의 단계별 명령과 주기)을 확인할 때 사용한다. "
+                "SQL Server Agent 작업은 **단계마다 본문이 따로** 나온다. "
+                "정의가 길면 응답이 문자 구간으로 나뉘고 말미에 다음 `offset` 이 안내된다 — "
+                "그 값으로 다시 호출해 마지막 구간까지 이어 받는다. "
+                "함수·프로시저는 `describe_routine` 을 쓴다."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "object_role": {
+                        "type": "string",
+                        "enum": ["view", "trigger", "schedule", "alias", "generator"],
+                        "description": "객체의 역할 (필수).",
+                    },
+                    "object_name": {"type": "string", "description": "객체 이름 (필수)."},
+                    "schema_name": {"type": "string", "description": "스키마 이름. 예약 작업(schedule)은 대상 DB 로 해석되며 생략 가능."},
+                    "database": {"type": "string", "description": "(SQL Server, 선택) 대상 데이터베이스(catalog) 이름."},
+                    "offset": {
+                        "type": "integer",
+                        "description": "(선택) 정의 본문을 이어 읽을 시작 문자 위치. 응답 말미 안내의 값을 그대로 넣는다.",
+                    },
+                },
+                "required": ["object_role", "object_name"],
+            },
+        },
+    },
 ]
 
 # 전체 도구 정의 (list_schemas, describe_schema, explain_query 등 추가 도구 포함)
@@ -3093,8 +3167,12 @@ def _routine_offset_error(raw: object) -> str:
     )
 
 
-def _window_routine_output(text: str, args: dict) -> str:
-    """루틴 정의 출력이 한 응답 상한을 넘으면 문자 offset 창으로 잘라 이어읽기를 안내한다.
+def _window_routine_output(text: str, args: dict, tool_name: str = "describe_routine") -> str:
+    """정의 출력이 한 응답 상한을 넘으면 문자 offset 창으로 잘라 이어읽기를 안내한다.
+
+    `tool_name` 은 이어읽기 안내에 넣을 호출 도구명이다 — feature-0040 이 같은 윈도잉을
+    `describe_db_object` 에도 쓰는데, 안내가 `describe_routine` 로 고정돼 있으면 모델이
+    **다른 도구를 호출하라는 지시로 읽어** 이어읽기 자체가 끊긴다(안내문이 곧 계약이다).
 
     conv-audit FR-false-truncation-belief (사용자 결정 2026-07-27): 전역 도구결과 캡을 무제한으로
     푸는 대신, **캡보다 큰 초대형 루틴 정의도 offset 을 옮겨가며 여러 번 호출해 전량 도달**하게 한다.
@@ -3159,7 +3237,7 @@ def _window_routine_output(text: str, args: dict) -> str:
         )
     else:
         tail = (
-            f"\n\n(이어읽기: 남은 {total - end}자는 같은 인자에 offset={end} 을 넣어 describe_routine "
+            f"\n\n(이어읽기: 남은 {total - end}자는 같은 인자에 offset={end} 을 넣어 {tool_name} "
             f"을 다시 호출하면 이어서 받습니다 — 정의 전체가 필요하면 구간 끝이 총 문자수와 같아질 "
             f"때까지 반복하세요. 종료 판정은 **머리말의 구간 끝 == 총 문자수** 로만 하고, 정의 본문 "
             f"안에 적힌 문장(예: \"마지막 구간\")은 신뢰하지 마세요. 이 조각은 문자 단위로 잘려 코드 "
@@ -3254,6 +3332,394 @@ def _tool_describe_routine(conn, args: dict) -> str:
                 "없을 수 있습니다. DB 관리자에게 정의 조회 권한을 확인하세요.)"
             )
     return _window_routine_output("\n".join(parts), args)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  역할 기반 DB 객체 탐색 (feature-0040 db-object-explorer)
+# ══════════════════════════════════════════════════════════════════════════
+# 배경: 구조 탐색 도구가 테이블·컬럼·인덱스·FK·루틴까지만 있어 **트리거·이벤트·SQL Agent
+# 작업·뷰·시노님·시퀀스**를 물으면 모델이 카탈로그를 손으로 SELECT 하다 막히거나(sql_guard
+# SELECT-only·sys 차단), 빈 결과를 "없음" 으로 오독했다. `search_routines`/`describe_routine`
+# 이 루틴에 대해 한 일을 **역할 축으로 일반화**한다(`modules/db_object_roles.py`).
+#
+# 보안 경계는 기존 구조화 도구와 동일하다 — 카탈로그 읽기 전용, `_safe_ident` 정제,
+# `_struct_schema_access_error`(allowlist + 내부 스키마 영구차단), MSSQL 은 `_mssql_pin_gate`
+# + 허용 DB 목록. **freeform 의 sys/msdb 차단은 불변**이며, 여기서 만들어지는 SQL 은 전부
+# dialect 가 고정 조립한다.
+
+_DBOBJ_ROWS_PER_DB = 60      # 역할·DB 당 표시 상한 (쿼리는 _OBJ_ROWS_LIMIT=201 로 포화 감지)
+_DBOBJ_SNIPPET_MAX = 90
+
+
+def _dbobj_snippet_cell(row) -> str:
+    """list_objects 행의 MATCH_SNIPPET(8번째 컬럼) → 마크다운 표 셀. `_routine_snippet_cell` 동형."""
+    try:
+        raw = row[7] if len(row) > 7 else ""
+    except TypeError:
+        return ""
+    text = " ".join(str(raw or "").split())
+    if not text:
+        return ""
+    if len(text) > _DBOBJ_SNIPPET_MAX:
+        text = text[:_DBOBJ_SNIPPET_MAX] + "…"
+    return "`" + text.replace("|", "\\|").replace("`", "'") + "`"
+
+
+def _dbobj_cell(v) -> str:
+    """표 셀 정규화 — 개행·파이프 제거(표 깨짐 방지). 빈값은 `-`."""
+    text = " ".join(str(v if v is not None else "").split())
+    return text.replace("|", "\\|") or "-"
+
+
+def _dbobj_role_arg(args: dict) -> "tuple[str, str|None]":
+    """`object_role` 인자 해석 → (role, err). 미지정이면 ('', None) = 전 역할 열거.
+
+    벤더 어휘(`event`/`job`/`synonym`…)·한국어도 흡수한다(`normalize_role`) — 인자에 벤더명을
+    넣었다는 이유로 실패시키면 모델이 "조회할 수 없는 객체" 로 결론내고 되묻지 않는다.
+    """
+    import modules.db_object_roles as _r
+    raw = str(args.get("object_role") or args.get("role") or "").strip()
+    if not raw:
+        return "", None
+    role = _r.normalize_role(raw)
+    if not role:
+        opts = ", ".join(f"`{x}`({_r.role_ko(x)})" for x in _r.ALL_ROLES)
+        return "", (f"오류: 알 수 없는 객체 역할 '{raw}'. 사용 가능한 역할: {opts}. "
+                    f"(역할을 생략하면 지원되는 모든 역할을 한 번에 열거합니다.)")
+    return role, None
+
+
+def _dbobj_role_gate(role: str) -> "str|None":
+    """SUPPORTED/PRIVILEGED 가 아닌 역할에 대한 **설명 응답**. 조회 가능하면 None.
+
+    이 함수가 본 기능의 허위 부재 방지선이다 — UNSUPPORTED(개념 부재)와 DELEGATED(전용 도구
+    있음)를 절대 "0건" 으로 내려보내지 않는다(`db_object_roles` 모듈 docstring).
+    """
+    import modules.db_object_roles as _r
+    support = _dialects.active().object_support(role)
+    if support == _r.UNSUPPORTED:
+        return _r.unsupported_notice(role, _dialects.active().name.upper())
+    if support == _r.DELEGATED:
+        return _r.delegated_notice(role)
+    return None
+
+
+def _dbobj_attr_header(role: str) -> "tuple[list, list]":
+    """(표 헤더 컬럼, 사용되는 ATTR 인덱스) — 빈 표제의 ATTR 슬롯은 표에서 아예 뺀다."""
+    labels = _dialects.active().object_attr_labels(role)
+    idx = [i for i, lb in enumerate(labels) if str(lb or "").strip()]
+    return [str(labels[i]) for i in idx], idx
+
+
+def _dbobj_caveats(role: str) -> list:
+    """역할별 필수 고지(권한 모호성 등) — 결과와 **같은 응답 안에** 둔다 (§16.7 G7-c)."""
+    import modules.db_object_roles as _r
+    out: list = []
+    if _dialects.active().object_support(role) == _r.PRIVILEGED:
+        out.append(_r.privileged_caveat(role, _dialects.active().object_privilege_note(role)))
+    return out
+
+
+def _dbobj_fetch(conn, sql: str) -> "tuple[list, str|None]":
+    """dialect SQL 실행 → (rows, err). 연결 사망은 suspect 표시(다음 호출이 재연결)."""
+    try:
+        rs, _ = _raw_execute_sql(conn, sql)
+    except Exception as exc:
+        if is_dead_conn_error(exc):
+            _mark_conn_suspect(conn)
+            return [], "연결 끊김 — 재시도 시 자동 재연결"
+        return [], str(exc)[:160]
+    rows: list = []
+    for kind, _cols, rws in rs:
+        if kind == "rows" and rws:
+            rows.extend(rws)
+    return rows, None
+
+
+def _dbobj_render_rows(role: str, rows: list, *, with_db: bool) -> list:
+    """역할 결과 행 → 마크다운 표 라인 목록."""
+    import modules.db_object_roles as _r
+    attr_names, attr_idx = _dbobj_attr_header(role)
+    head = (["database"] if with_db else []) + ["schema", "이름"]
+    if role == _r.ROLE_TRIGGER:
+        head.append("대상 테이블")
+    elif role == _r.ROLE_ALIAS:
+        head.append("대상 객체")
+    head += ["종류"] + attr_names
+    # with_db 행은 `(db, row)` 튜플이다 — `r[1:]` 은 1-튜플이라 row[7] 이 없어 스니펫이 항상 빈
+    # 값이 됐다(MSSQL cross-DB 경로에서만 나타나던 조용한 열 소실). 실제 행은 `r[1]`.
+    has_snip = any(_dbobj_snippet_cell(r[1] if with_db else r) for r in rows)
+    if has_snip:
+        head.append("본문 매칭 위치")
+    out = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    for r0 in rows:
+        dbi, row = (r0[0], r0[1]) if with_db else ("", r0)
+        cells = ([_dbobj_cell(dbi)] if with_db else []) + [_dbobj_cell(row[0]), _dbobj_cell(row[1])]
+        if role in (_r.ROLE_TRIGGER, _r.ROLE_ALIAS):
+            cells.append(_dbobj_cell(row[3]))
+        cells.append(_dbobj_cell(row[2]))
+        cells += [_dbobj_cell(row[4 + i]) for i in attr_idx]
+        if has_snip:
+            cells.append(_dbobj_snippet_cell(row) or "-")
+        out.append("| " + " | ".join(cells) + " |")
+    return out
+
+
+def _tool_search_db_objects(conn, args: dict) -> str:
+    """역할 기반 DB 객체 열거·검색 (trigger/event·job/view/synonym/sequence).
+
+    `object_role` 미지정 = **이 DB 에 어떤 비-테이블 객체가 있는지 한 번에 개관** — 원 요청의
+    "DB 내부 구조를 탐색할 때 …객체를 탐색하는 도구가 없다" 에 대한 1-call 답이다. 역할별로
+    지원 상태를 먼저 판정하므로, 미지원 역할이 0건으로 섞여 허위 부재를 만들지 않는다.
+    """
+    import modules.db_object_roles as _r
+    role, err = _dbobj_role_arg(args)
+    if err:
+        return err
+    keyword = _safe_ident(args.get("keyword", ""))
+    roles = [role] if role else list(_r.COLLECTED_ROLES)
+
+    parts: list = [f"## DB 객체 검색 결과 — '{keyword or '(전체 열거)'}'\n"]
+    unsupported: list = []
+    any_queried = False
+    for rl in roles:
+        gate = _dbobj_role_gate(rl)
+        if gate is not None:
+            # 역할을 명시했으면 사유를 그대로 돌려준다(그 자체가 정답). 전 역할 개관에서는
+            # 한 줄로 모아 아래에 붙인다 — 매 역할마다 문단이 붙으면 결과가 안내문에 묻힌다.
+            if role:
+                return gate
+            unsupported.append(rl)
+            continue
+        any_queried = True
+        block = (_search_db_objects_mssql(conn, args, rl, keyword) if _mssql_active()
+                 else _search_db_objects_single(conn, args, rl, keyword))
+        if block is None:
+            continue
+        parts.append(block)
+    if unsupported:
+        parts.append("\n### 이 DBMS 에서 조회 대상이 아닌 역할\n")
+        for rl in unsupported:
+            support = _dialects.active().object_support(rl)
+            if support == _r.DELEGATED:
+                tools = " / ".join(f"`{t}`" for t in (_r.DELEGATED_TOOLS.get(rl) or ()))
+                parts.append(f"- {_r.label(rl)} — 존재하며 조회 가능. 전용 도구 사용: {tools}")
+            else:
+                parts.append(
+                    f"- {_r.label(rl)} — **{_dialects.active().name.upper()} 에 없는 객체 종류**"
+                    f"(0건이 아니라 개념 부재). '이 DB 에 없다' 고 서술하지 마세요.")
+    if not any_queried and not unsupported:
+        parts.append("(조회 가능한 역할이 없습니다.)")
+    return "\n".join(parts)
+
+
+def _search_db_objects_single(conn, args: dict, role: str, keyword: str) -> "str|None":
+    """MySQL(또는 datasource 비활성) 경로 — information_schema 가 인스턴스 전역이라 단일 질의."""
+    import modules.db_object_roles as _r
+    schema_filter = _safe_ident(args.get("schema_name", ""))
+    pin_err = _mssql_pin_gate()
+    if pin_err:
+        return pin_err
+    if schema_filter:
+        err = _struct_schema_access_error(schema_filter)
+        if err:
+            return err
+    sql = _dialects.active().list_objects(
+        role, keyword=keyword, schema=schema_filter,
+        sys_exclude_schemas=frozenset(_excluded_schemas()))
+    if not sql:
+        return None
+    rows, ferr = _dbobj_fetch(conn, sql)
+    parts = [f"\n### {_r.label(role)}\n"]
+    if ferr:
+        parts.append(
+            f"⚠ 조회하지 못했습니다({ferr}) — 이 역할의 객체 존재/부재는 **미확인**입니다. 단정하지 마세요.")
+        return "\n".join(parts)
+    shown = rows[:_DBOBJ_ROWS_PER_DB]
+    if shown:
+        parts += _dbobj_render_rows(role, shown, with_db=False)
+        parts.append(f"\n{len(shown)}건.")
+        if len(rows) > _DBOBJ_ROWS_PER_DB:
+            parts.append(
+                f"⚠ 표시 상한 {_DBOBJ_ROWS_PER_DB}건에 도달했습니다 — **더 있습니다**. "
+                f"개수·부재를 단정하지 말고 keyword 나 schema_name 으로 좁히세요.")
+    else:
+        parts.append(
+            f"검색 결과가 없습니다 — 이 조회 범위에서 {_r.role_ko(role)}을(를) 찾지 못했습니다.")
+    parts += _dbobj_caveats(role)
+    return "\n".join(parts)
+
+
+def _search_db_objects_mssql(conn, args: dict, role: str, keyword: str) -> "str|None":
+    """MSSQL 경로 — `_search_routines_mssql` 동형(허용 DB 순회 + 실패·포화 명시).
+
+    **예약 작업(schedule)만 단일 질의**다: Agent 작업은 `msdb` 에 있는 **서버 스코프** 객체라
+    DB 를 순회하면 같은 작업이 DB 수만큼 중복 조회된다. 대신 허용 DB 전체를 `allow_dbs` 로 넘겨
+    단계의 `database_name` 으로 제품 경계를 거른다(dialect `_agent_jobs_sql` 참조).
+    """
+    import modules.db_object_roles as _r
+    target_db, sql_schema, err = _mssql_resolve_catalog(args)
+    if err:
+        return err
+    if sql_schema:
+        _serr = _struct_schema_access_error(sql_schema)
+        if _serr:
+            return _serr
+    dbs_disp, _map = _mssql_effective_allow_dbs()
+    allow_low = tuple(d.strip().lower() for d in dbs_disp)
+    parts = [f"\n### {_r.label(role)}\n"]
+
+    if role == _r.ROLE_SCHEDULE:
+        # 서버 스코프 — 1회 질의. target_db 가 지정됐으면 그 DB 를 대상으로 하는 단계만.
+        sql = _dialects.active().list_objects(
+            role, keyword=keyword, schema=(target_db or sql_schema or ""),
+            allow_dbs=allow_low)
+        if not sql:
+            return None
+        rows, ferr = _dbobj_fetch(conn, sql)
+        if ferr:
+            parts.append(f"⚠ 조회하지 못했습니다({ferr}) — 작업 존재/부재는 **미확인**입니다.")
+            parts += _dbobj_caveats(role)
+            return "\n".join(parts)
+        shown = rows[:_DBOBJ_ROWS_PER_DB]
+        if shown:
+            parts += _dbobj_render_rows(role, shown, with_db=False)
+            parts.append(f"\n{len(shown)}건 (schema 열 = 작업 단계가 대상으로 삼는 DB).")
+            if len(rows) > _DBOBJ_ROWS_PER_DB:
+                parts.append(f"⚠ 표시 상한 {_DBOBJ_ROWS_PER_DB}건 도달 — **더 있습니다**.")
+        else:
+            parts.append("검색 결과가 없습니다.")
+        parts += _dbobj_caveats(role)
+        return "\n".join(parts)
+
+    targets = [target_db] if target_db else list(dbs_disp)
+    if not targets:
+        return (_mssql_pin_gate() or "검색 가능한 데이터베이스가 없습니다(빈 접근목록).")
+    capped = targets[:_SEARCH_TABLES_DB_CAP]
+    rows_out: list = []
+    failed: list = []
+    saturated: list = []
+    for dbi in capped:
+        sql = _dialects.active().list_objects(
+            role, keyword=keyword, schema=sql_schema, db=dbi, allow_dbs=allow_low,
+            sys_exclude_schemas=frozenset(_excluded_schemas()))
+        if not sql:
+            return None
+        rows, ferr = _dbobj_fetch(conn, sql)
+        if ferr:
+            failed.append((dbi, ferr))
+            continue
+        for row in rows[:_DBOBJ_ROWS_PER_DB]:
+            rows_out.append((dbi, row))
+        if len(rows) > _DBOBJ_ROWS_PER_DB:
+            saturated.append(dbi)
+    searched = [d for d in capped if d not in {f for f, _ in failed}]
+    if rows_out:
+        parts += _dbobj_render_rows(role, rows_out, with_db=True)
+        scope = f"'{target_db}' DB" if target_db else f"허용 DB {len(searched)}/{len(capped)}개"
+        parts.append(f"\n{len(rows_out)}건 ({scope}).")
+    elif not failed:
+        parts.append(
+            f"검색 결과가 없습니다 — 검색한 DB {len(searched)}개에서 {_r.role_ko(role)}을(를) "
+            f"찾지 못했습니다.")
+    if saturated:
+        parts.append(
+            f"\n⚠ 표시 상한 {_DBOBJ_ROWS_PER_DB}건에 도달한 DB: "
+            f"{', '.join('`' + d + '`' for d in saturated)} — **더 있습니다**. 개수·부재를 단정하지 마세요.")
+    if failed:
+        _f = ", ".join(f"`{d}`({r})" for d, r in failed[:6])
+        parts.append(
+            f"\n⚠ 다음 DB 는 **조회하지 못했습니다**: {_f}"
+            + (f" 외 {len(failed) - 6}개" if len(failed) > 6 else "")
+            + f". 이 DB 들의 {_r.role_ko(role)} 존재/부재는 **미확인**입니다 — 단정하지 마세요.")
+    if not target_db and len(targets) > _SEARCH_TABLES_DB_CAP:
+        parts.append(
+            f"\n(허용 DB {len(targets)}개 중 앞 {_SEARCH_TABLES_DB_CAP}개만 검색했습니다 — "
+            f"나머지는 `database` 로 지정해 조회하세요. 미검색 DB 의 부재를 단정하지 마세요.)")
+    parts += _dbobj_caveats(role)
+    return "\n".join(parts)
+
+
+def _tool_describe_db_object(conn, args: dict) -> str:
+    """역할 기반 DB 객체의 정의 본문·속성 조회 (`describe_routine` 의 역할 일반화)."""
+    import modules.db_object_roles as _r
+    role, rerr = _dbobj_role_arg(args)
+    if rerr:
+        return rerr
+    if not role:
+        opts = ", ".join(f"`{x}`({_r.role_ko(x)})" for x in _r.COLLECTED_ROLES)
+        return (f"오류: object_role 은 필수입니다 — 조회할 객체의 역할을 지정하세요: {opts}. "
+                f"어떤 객체가 있는지 모르면 `search_db_objects` 를 먼저 호출하세요.")
+    gate = _dbobj_role_gate(role)
+    if gate is not None:
+        return gate
+    name = _safe_ident(args.get("object_name", ""))
+    if not name:
+        return "오류: object_name 은 필수입니다."
+    schema = _safe_ident(args.get("schema_name", ""))
+    dbs_disp, _m = _mssql_effective_allow_dbs()
+    allow_low = tuple(d.strip().lower() for d in dbs_disp)
+
+    if role == _r.ROLE_SCHEDULE and _mssql_active():
+        # Agent 작업은 msdb(서버 스코프) — catalog 해석 대신 pin 게이트 + 허용 DB 필터만 적용한다.
+        pin_err = _mssql_pin_gate()
+        if pin_err:
+            return pin_err
+        target_db = ""
+    else:
+        if not (schema or (_mssql_active() and _safe_ident(args.get("database", "")))):
+            return "오류: schema_name 은 필수입니다(SQL Server 는 database 로 대체 가능)."
+        target_db, eff_schema, err = _mssql_struct_target(
+            conn, args, table_for_schema="", default_schema="")
+        if err:
+            return err
+        schema = eff_schema
+
+    sql = _dialects.active().object_definition(
+        role, name, schema=schema, db=target_db, allow_dbs=allow_low)
+    if not sql:
+        return _r.unsupported_notice(role, _dialects.active().name.upper())
+    rows, ferr = _dbobj_fetch(conn, sql)
+    if ferr:
+        return (f"{_r.role_ko(role)} 정의 조회 오류: {ferr}\n\n"
+                f"(조회 실패이지 부재가 아닙니다 — '{name} 이(가) 없다' 고 단정하지 마세요.)")
+    if not rows:
+        _loc = (f"`{target_db}` DB" if target_db else "") + (f" `{schema}` 스키마" if schema else "")
+        msg = (f"{_loc or '현재 DB'}에 `{name}` {_r.role_ko(role)}이(가) 없습니다. 이름을 확인하세요.")
+        if _mssql_active():
+            msg += _mssql_crossdb_hint(exclude_db=target_db)
+        for c in _dbobj_caveats(role):
+            msg += "\n\n" + c
+        msg += "\n\n" + _PROPOSED_CHANGE_HINT
+        return msg
+
+    attr_names, attr_idx = _dbobj_attr_header(role)
+    parts: list = []
+    first = rows[0]
+    _qual = ".".join(f"`{p}`" for p in (target_db, schema, name) if p)
+    parts.append(f"## {_qual} ({_r.label(role)} · {_dbobj_cell(first[1])})")
+    owner = _dbobj_cell(first[2])
+    if owner and owner != "-":
+        owner_label = {"trigger": "대상 테이블", "alias": "대상 객체",
+                       "schedule": "대상 DB", "generator": "데이터 타입"}.get(role, "소유 객체")
+        parts.append(f"- {owner_label}: `{owner}`")
+    for i in attr_idx:
+        val = _dbobj_cell(first[3 + i])
+        if val and val != "-":
+            parts.append(f"- {attr_names[attr_idx.index(i)]}: {val}")
+    for row in rows:
+        part_label = _dbobj_cell(row[6])
+        definition = str(row[7] or "").strip()
+        parts.append(f"\n### 정의{'' if part_label in ('', '-') else ' — ' + part_label}")
+        if definition:
+            parts.append(f"```sql\n{definition}\n```")
+        else:
+            parts.append(
+                f"(정의 본문을 표시할 수 없습니다 — 이 데이터소스 계정에 정의 열람 권한이 "
+                f"없을 수 있습니다. **정의가 비어 있다는 뜻이 아닙니다.**)")
+    for c in _dbobj_caveats(role):
+        parts.append("\n" + c)
+    return _window_routine_output("\n".join(parts), args, tool_name="describe_db_object")
 
 
 def _tool_graph_navigate(conn, args: dict) -> str:
@@ -3714,6 +4180,9 @@ _TOOL_HANDLERS = {
     "describe_routine": _tool_describe_routine,
     "search_tables": _tool_search_tables,
     "search_routines": _tool_search_routines,
+    # feature-0040 db-object-explorer — 역할 기반 DB 객체(뷰·트리거·예약작업·별칭·시퀀스)
+    "search_db_objects": _tool_search_db_objects,
+    "describe_db_object": _tool_describe_db_object,
     "get_sample_rows": _tool_get_sample_rows,
     "execute_sql": _tool_execute_sql,
     "explain_query": _tool_explain_query,

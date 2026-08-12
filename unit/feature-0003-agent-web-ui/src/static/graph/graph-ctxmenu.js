@@ -7,7 +7,7 @@ import { _META_ROLE, _metaFocusAdjacency, _metaFocusKeyFor, _metaRoleChipHTML, _
 import { _metaApplyState, _metaCacheSig, _metaSetBusy, _metaSigRole, _metaStateSig, _metaYieldPaint } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency } from "./graph-rellayout.js?v=dev";
 import { _metaSimGroups } from "./graph-simgroups.js?v=dev";
-import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
+import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaDbObjAttrs, _metaDbObjIcon, _metaDbObjKo, _metaDbObjKind, _metaDbObjRoleOf, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
 
 // ── graph-ctxmenu: 노드 우클릭 상세 상호작용 (REQ-20260702T113000) ──────────────────
@@ -1134,19 +1134,24 @@ function _metaGraphShowClusterDetailLocal(comboId) {
   //   kind 필터(hiddenKinds, §54②) 도 build(graph-core L74-75)와 동형으로 적용 — 사용자가 'ƒ 함수'/'⚙ 프로시저'
   //   를 숨기면 캔버스에서 빠진 routine 이 패널에도 안 나와 sim-group·목록이 캔버스와 계속 일치한다.
   const routines = [];
+  const dbObjects = [];   // feature-0040: 역할 객체(뷰·트리거·예약작업·별칭·시퀀스)
   let childCols = 0;
   _metaGraph.nodes.forEach((n) => {
     if (n.label === "Table" && _metaCatParent(n.key, n.fqn) === comboId) tables.push(n);
     else if (n.label === "Routine" && _metaCatParent(n.key, n.fqn) === comboId && !_metaGraph.hiddenKinds.has((n.routine_type === "function") ? "function" : "procedure")) routines.push(n);
+    // feature-0040: 역할 객체도 클러스터 컨텐츠 목록에 포함 — kind 필터를 캔버스와 **동일하게**
+    //   적용한다(숨긴 역할이 패널에만 남으면 화면과 목록이 어긋난다 — 루틴이 같은 이유로 위에서 필터된다).
+    else if (n.label === "DbObject" && _metaCatParent(n.key, n.fqn) === comboId && !_metaGraph.hiddenKinds.has(_metaDbObjKind(n))) dbObjects.push(n);
     else if (n.label === "Column" && _metaCatParent(n.key, n.fqn) === comboId) childCols += 1;
   });
   tables.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
   routines.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+  dbObjects.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
   const snode = _metaGraph.nodes.get(comboId);
   const total = (snode && typeof snode.table_count === "number" && snode.table_count > tables.length)
     ? snode.table_count : null;
   const truncated = _metaGraph.schemaTruncated.has(comboId);
-  _metaGraphRenderClusterDetail(nm, nm, tables, tables.length, childCols, total, truncated, comboId, routines);
+  _metaGraphRenderClusterDetail(nm, nm, tables, tables.length, childCols, total, truncated, comboId, routines, dbObjects);
 }
 
 // "−" 컨트롤 접기 — 이 테이블의 컬럼 노드(+containment 엣지) 모델에서 제거 + 재조회 재허용.
@@ -1987,6 +1992,13 @@ function _metaDetailColsBackfillNeeded(self, meta, colCount) {
   return true;
 }
 
+// feature-0040: 상세 패널 배지 라벨. `DbObject` 는 내부 라벨이라 운영자에게 의미가 없고, 정작
+//   알고 싶은 것은 **역할**(트리거/뷰/예약 작업/별칭/값 생성기)이다 — 그 역할명을 배지에 쓴다.
+//   Table/Column/Routine 등 기존 라벨은 **건드리지 않는다**(이번 요청 범위 밖 UI 변경 금지).
+function _metaDetailBadgeKo(self) {
+  if (self && self.label === "DbObject") return _metaDbObjKo(_metaDbObjRoleOf(self));
+  return (self && self.label) || "";
+}
 function _metaGraphRenderDetail(self, nodes, edges, meta) {
   // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
@@ -2047,7 +2059,7 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button> <button type="button" class="amgr-link" id="metaGraphFocusSelBtn" style="margin-left:0" title="선택한 이 노드로 그래프 카메라를 이동합니다. 화면에 없으면 상위 스키마·테이블을 펼쳐 노출합니다.">🎯 이 노드로 이동</button></div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(_metaDetailBadgeKo(self))}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button> <button type="button" class="amgr-link" id="metaGraphFocusSelBtn" style="margin-left:0" title="선택한 이 노드로 그래프 카메라를 이동합니다. 화면에 없으면 상위 스키마·테이블을 펼쳐 노출합니다.">🎯 이 노드로 이동</button></div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
@@ -2065,6 +2077,29 @@ function _metaGraphRenderDetail(self, nodes, edges, meta) {
       (plist.length
         ? `<ul class="amgr-collist">${plist.map((p) => `<li class="amgr-col amgr-col-plain"><code>${esc(p)}</code></li>`).join("")}</ul>`
         : `<p class="admin-meta-graph-desc admin-meta-graph-muted">파라미터 없음</p>`) + `</div>`);
+  }
+  // feature-0040: 역할 객체 상세 — 역할·구체타입·대상 + **역할별 속성**(시점/이벤트/주기/상태 …).
+  //   속성 표제는 서버(`Dialect.object_attr_labels`)가 붙여 보낸 것을 그대로 쓴다 — 프론트가
+  //   역할별 표제를 다시 정의하면 방언이 늘 때마다 두 벌이 어긋난다(트리거의 '시점' 이 SQL Server
+  //   에선 AFTER/INSTEAD OF, MySQL 에선 BEFORE/AFTER 로 값 자체가 다른데 표제만 고정되는 식).
+  if (self.label === "DbObject") {
+    const mn2 = _metaGraph.nodes.get(selfKey) || {};
+    const orole = _metaDbObjRoleOf(self.object_role ? self : mn2);
+    const otype = self.object_type || mn2.object_type || "";
+    const owner = self.owner_object || mn2.owner_object || "";
+    const attrs = _metaDbObjAttrs(self.object_attrs ? self : mn2);
+    const ownerLabelKo = (orole === "trigger") ? "대상 테이블"
+      : (orole === "alias") ? "대상 객체"
+      : (orole === "schedule") ? "대상 DB" : "대상";
+    const rows = [];
+    if (otype) rows.push([`종류`, otype]);
+    if (owner) rows.push([ownerLabelKo, owner]);
+    attrs.forEach(([k, v]) => { if (v) rows.push([k, v]); });
+    parts.push(`<div class="admin-meta-graph-sec"><h4>${_metaDbObjIcon(orole)} ${esc(_metaDbObjKo(orole))}</h4>` +
+      (rows.length
+        ? `<ul class="amgr-collist">${rows.map(([k, v]) =>
+            `<li class="amgr-col amgr-col-plain"><span class="amgr-col-name">${esc(k)}</span> <code>${esc(v)}</code></li>`).join("")}</ul>`
+        : `<p class="admin-meta-graph-desc admin-meta-graph-muted">추가 속성 없음</p>`) + `</div>`);
   }
   // reldetail-colexpand ①②③: 관계를 **소속 컬럼별**로 그룹화하고, 각 컬럼 안에서 참조함(→)/참조받음(←)
   //   을 분리·개수 표기. 관계 있는 컬럼은 아코디언(클릭 시 펼침)으로 관계 행을 노출한다.
@@ -2589,7 +2624,7 @@ function _metaGraphRenderRelations(key, nodes, edges, meta) {
   const dirLabel = (list, refLabel, neutral) => (list.every((e) => e.type === "REFERENCES") ? refLabel : neutral);
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || key)}</strong> <span class="admin-meta-graph-relbadge">관계 상세</span></div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(_metaDetailBadgeKo(self))}</span><strong>${esc(self.name || self.fqn || key)}</strong> <span class="admin-meta-graph-relbadge">관계 상세</span></div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   // graph-noise-reduce: 설명 문장은 걷어내고 카운트(데이터)만 남김 — 조작 설명은 hover 툴팁으로.
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">참조함 ${out.length} · 참조받음 ${inn.length} · 연관 용어 ${terms.length}${around.length ? ` · 주변 관계 ${around.length}` : ""}${_metaSecHelp("이 노드가 맺은 관계를 방향별로 봅니다. 목록을 잘라내지 않으며, 상대가 여러 DB 에 걸치면 DB 머리글로 묶입니다(머리글 클릭 = 그 DB 접기/펼치기, '모두 펼치기' 로 일괄). 행 클릭 = 상대 노드 상세로 이동.")}</p>`);
@@ -3341,15 +3376,21 @@ async function _metaGraphShowClusterDetailById(comboId, focusFam) {
   //   kind 필터(hiddenKinds, §54②) 를 build(graph-core L74-75)와 동형으로 적용 — 숨긴 kind 는 캔버스처럼 패널에서도 제외.
   let childTables = 0, childCols = 0;
   const routines = [];
+  const dbObjects = [];   // feature-0040: 역할 객체(뷰·트리거·예약작업·별칭·시퀀스)
   _metaGraph.nodes.forEach((n) => {
     if (n.label === "Table" && _metaCatParent(n.key, n.fqn) === comboId) childTables += 1;
     else if (n.label === "Routine" && _metaCatParent(n.key, n.fqn) === comboId && !_metaGraph.hiddenKinds.has((n.routine_type === "function") ? "function" : "procedure")) routines.push(n);
+    // feature-0040: 역할 객체도 클러스터 컨텐츠 목록에 포함 — kind 필터를 캔버스와 **동일하게**
+    //   적용한다(숨긴 역할이 패널에만 남으면 화면과 목록이 어긋난다 — 루틴이 같은 이유로 위에서 필터된다).
+    else if (n.label === "DbObject" && _metaCatParent(n.key, n.fqn) === comboId && !_metaGraph.hiddenKinds.has(_metaDbObjKind(n))) dbObjects.push(n);
     else if (n.label === "Column" && _metaCatParent(n.key, n.fqn) === comboId) childCols += 1;
   });
   if (!tables.length) _metaGraph.nodes.forEach((n) => { if (n.label === "Table" && _metaCatParent(n.key, n.fqn) === comboId) tables.push(n); });
   routines.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
-  const _focused = _metaGraphRenderClusterDetail(schemaName, schemaName, tables, childTables, childCols, null, false, comboId, routines, focusFam);
-  const _rnote = routines.length ? ` · 함수·프로시저 ${routines.length}개` : "";
+  dbObjects.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+  const _focused = _metaGraphRenderClusterDetail(schemaName, schemaName, tables, childTables, childCols, null, false, comboId, routines, dbObjects, focusFam);
+  const _rnote = (routines.length ? ` · 함수·프로시저 ${routines.length}개` : "")
+    + (dbObjects.length ? ` · DB 객체 ${dbObjects.length}개` : "");
   // graph-catcluster-scroll: 캔버스 카테고리 선택으로 진입한 경우, 패널이 어디로 이동했는지 상태줄에 명시
   //   (스크롤이 조용히 일어나면 사용자가 위치 변화를 놓친다). 미매칭이면 기존 문구 그대로.
   const _fnote = _focused ? ` · 목록을 '${_focused}' 위치로 이동` : "";
@@ -3359,7 +3400,7 @@ async function _metaGraphShowClusterDetailById(comboId, focusFam) {
 // 항목2: 클러스터 상세 카드 렌더(우측 상세 패널 body). 노드 상세(_metaGraphRenderDetail)와 동일 컨테이너를 교체.
 // graph-catcluster-scroll: focusFam(선택) 이 주어지면 렌더 직후 그 컨텐츠 카테고리 헤딩으로 패널을 스크롤하고
 //   매칭 라벨을 반환한다(호출자가 상태줄에 표기). 미지정/미매칭이면 null — 기존 동작 그대로.
-function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId, routines, focusFam) {
+function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId, routines, dbObjects, focusFam) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   _metaGraphHoverPanCancel(); _metaGraphClearHoverHighlight();   // detail-hover-fx: 패널 재렌더 시 직전 hover 잔여 정리.
@@ -3372,8 +3413,12 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   //   함수·프로시저만 있는 컨텐츠 카테고리도 목록에 나타난다. 테이블 개수/절단 표기는 기존대로 테이블 기준 유지.
   const tblList = tables || [];
   const rtnList = routines || [];
-  const members = tblList.concat(rtnList);
+  // feature-0040: 역할 객체도 같은 병합집합에 들어간다 — build 가 Table+Routine+DbObject 를 함께
+  //   sim-group 화하므로, 패널이 일부만 집계하면 캔버스와 컨텐츠 카테고리가 어긋난다(루틴 편입 때와 동일 근거).
+  const objList = dbObjects || [];
+  const members = tblList.concat(rtnList, objList);
   const nRoutines = rtnList.length;
+  const nObjects = objList.length;
   // graph-initview(V-G): cap 절단 시 실 총계(table_count) 우선 — 카드 배지와 패널 수치 모순 방지.
   const nTables = (totalOverride != null) ? totalOverride : (tblList.length || childTables || 0);
   const truncNote = (truncated || (totalOverride != null && totalOverride > tblList.length))
@@ -3390,13 +3435,16 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   const _canAnalyzeCluster = (typeof can === "function") && can("metadata.graph.analyze");
   parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}${(comboId && comboId !== _META_TERMS_COMBO && _canAnalyzeCluster) ? ` <button type="button" class="amgr-link" id="metaGraphClusterAnalyzeBtn" title="이 DB(스키마)의 미분석 항목(테이블·함수·프로시저) 전체를 AI 능동 분석합니다 — 실행 전 대상 수를 확인합니다">✨ DB 전체 AI 능동 분석</button>` : ""}</div>`);
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
-  const _rtnDesc = nRoutines ? ` · 함수·프로시저 ${nRoutines}개` : "";
+  const _rtnDesc = (nRoutines ? ` · 함수·프로시저 ${nRoutines}개` : "")
+    + (nObjects ? ` · DB 객체 ${nObjects}개` : "");
   const _clickHint = nRoutines ? "컬럼·파라미터·관계·용어" : "컬럼·관계·용어";
   // graph-noise-reduce: 카운트(데이터)만 남기고 "항목을 클릭하면 …" 조작 설명은 hover 툴팁으로.
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">테이블 ${nTables}개${_rtnDesc}${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}${_metaSecHelp(`이 스키마 클러스터에 속한 항목입니다. 항목을 클릭하면 ${_clickHint} 상세를 봅니다.`)}</p>`);
   if (members.length) {
     // graph-funcproc(cluster-detail-routines): 섹션 제목은 함수·프로시저가 있으면 병합집합을 반영.
-    const secTitle = nRoutines ? `테이블·함수·프로시저 (${members.length})` : `테이블 (${tblList.length})`;
+    const secTitle = (nRoutines || nObjects)
+      ? `${["테이블", nRoutines ? "함수·프로시저" : "", nObjects ? "DB 객체" : ""].filter(Boolean).join("·")} (${members.length})`
+      : `테이블 (${tblList.length})`;
     // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
     //   graph-funcproc: Routine 행은 역할 칩 대신 ƒ/⚙ 보라 칩(캔버스 칩 색과 동일)을 접두사로 — 테이블/루틴을 시각 구분.
     //   graph-funcproc(cluster-detail-collapse): 행 <li> 에 amgr-ct-row-li 클래스 부여(그룹 접힘 시 amgr-ct-collapsed 로 display:none 토글 대상).
@@ -3405,6 +3453,11 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
       if (t.label === "Routine") {
         prefix = `<span class="amgr-role-chip amgr-role-chip-sm" style="background:${_META_GRAPH_COLOR.Routine};color:#fff" title="${esc(_metaRoutineKo(t.routine_type))}">${_metaRoutineIcon(t.routine_type)}</span>`;
         title = "클릭하면 이 함수·프로시저 노드를 선택합니다";
+      } else if (t.label === "DbObject") {
+        // feature-0040: 역할 객체 행 — 캔버스 칩과 동일 색(구리) + 역할 아이콘 접두.
+        const _r = _metaDbObjRoleOf(t);
+        prefix = `<span class="amgr-role-chip amgr-role-chip-sm" style="background:${_META_GRAPH_COLOR.DbObject};color:#fff" title="${esc(_metaDbObjKo(_r))}">${_metaDbObjIcon(_r)}</span>`;
+        title = `클릭하면 이 ${_metaDbObjKo(_r)} 노드를 선택합니다`;
       } else {
         const role = _metaRoleOf(t.key);
         prefix = role ? _metaRoleChipHTML(role, esc, true) : `<span class="amgr-role-chip amgr-role-chip-sm amgr-role-none" aria-hidden="true"></span>`;

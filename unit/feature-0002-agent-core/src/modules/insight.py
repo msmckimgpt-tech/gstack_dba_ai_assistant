@@ -1605,6 +1605,15 @@ def _scan_instance_schema_insights(
     candidates = [s for s in candidates if s and not _is_system_schema(s)]
     if not candidates:
         return report
+    # feature-0040: 서버 스코프 DB 객체(SQL Server Agent 작업)의 제품 경계 필터 + 전량 열거 시
+    # 시스템·내부 스키마 차단. **회전 전 전체 목록**으로 고정한다(아래 candidates 는 rotate/cap 으로
+    # 잘리므로 그것을 쓰면 tick 마다 필터 범위가 흔들린다). 빈 목록은 dialect 의 `_sql_str_list` 가
+    # 매칭 0 으로 닫아 fail-closed 다.
+    _do_allow_dbs = tuple(sorted({s.strip().lower() for s in candidates if s.strip()}))
+    try:
+        _dbobj_sys_exclude = frozenset(_dialects.active().system_schemas()) | frozenset({"agent_memory"})
+    except Exception:
+        _dbobj_sys_exclude = frozenset({"agent_memory"})
     existing_schema_insights = _load_existing_schema_insights(mem_conn)
     missing = [schema for schema in candidates if schema not in existing_schema_insights]
     seen = [schema for schema in candidates if schema in existing_schema_insights]
@@ -1900,6 +1909,43 @@ ORDER BY TABLE_NAME
                     except Exception:
                         logging.getLogger("insight").warning(
                             "routine_introspect_failed schema=%s", schema, exc_info=True)
+
+                # feature-0040 db-object-explorer: 역할 기반 DB 객체(뷰·트리거·예약작업·별칭·
+                # 시퀀스) introspect → db_objects SSOT. 루틴 훅과 **같은 게이트·같은 규약**이며,
+                # 실 스키마(schema)로 질의하고 저장 라벨은 _rel_store_schema(MSSQL=DB명)를 쓴다.
+                # prune 은 루틴과 동일하게 MSSQL 에서 억제한다(_rt_prune_ok — 한 라벨에 복수 실
+                # 스키마가 섞여 뒤 스키마가 앞 스키마 행을 되지우는 §53 MAJOR 와 동형).
+                # 전부 guarded — insight 스캔을 절대 차단하지 않는다(B-F7: 실패는 경고 1줄).
+                if AGENT_DB_OBJECT_INTROSPECT_ENABLED and rel_maintenance_due:
+                    try:
+                        from . import db_objects as _dbobj
+                        _do_scope = get_active_datasource()
+                        _n_do = _dbobj.introspect_and_store(
+                            db_conn, schema, all_table_names,
+                            dialect=_dialects.active(), kb_conn=None, scope_key=_do_scope,
+                            datasource_key=str(_do_scope or ""), source_run_id=run_id,
+                            store_schema=_rel_store_schema,
+                            sql_schema=(schema if _rel_db_scope else ""),
+                            cap=AGENT_DB_OBJECT_INTROSPECT_CAP,
+                            prune=_rt_prune_ok,
+                            # 서버 스코프 객체(SQL Server Agent 작업)의 제품 경계 필터.
+                            # **rotate 된 이번 tick 의 candidates 가 아니라 datasource 의 전체 DB
+                            # 목록**을 쓴다 — 회전 대상만 넘기면 이번 tick 에 안 뽑힌 DB 를 대상으로
+                            # 하는 작업이 필터에서 탈락하고, 다음 tick 에 다시 나타나 진동한다.
+                            allow_dbs=_do_allow_dbs,
+                            sys_exclude_schemas=_dbobj_sys_exclude)
+                        # inventory_sink 미전달(의도) — change-reanalysis 스냅샷은 테이블("t")·
+                        # 루틴("r") **2축 모델**이라(`_auto_axis_trusted`·`snap` 키) 제3축을 넣으려면
+                        # 스냅샷 스키마와 신뢰 판정을 함께 확장해야 한다. 소비처 없는 키를 지금
+                        # 채우면 "변경 감지가 된다" 는 인상만 남고 실제로는 무시된다 → 이번 cycle 은
+                        # 축을 늘리지 않고, 능동 분석 편입은 node_analysis 시드 경로로 수행한다.
+                        # (db_objects.introspect_and_store 는 sink 인자를 이미 지원한다 — 후속
+                        #  cycle 이 스냅샷을 3축으로 확장할 때 호출부만 바꾸면 된다.)
+                        report["db_objects_introspected"] = int(
+                            report.get("db_objects_introspected", 0)) + int(_n_do or 0)
+                    except Exception:
+                        logging.getLogger("insight").warning(
+                            "db_object_introspect_failed schema=%s", schema, exc_info=True)
 
                 # rel-selfheal cadence 스탬프 — introspect/추론/routine 어느 쪽이든 이번 사이클에
                 # 유지보수를 수행했으면 기록(전부 off 면 미기록 → 활성화 시 즉시 발화).

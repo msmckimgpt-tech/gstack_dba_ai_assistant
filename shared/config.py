@@ -192,6 +192,9 @@ __all__ = [
     "AGENT_RELATIONSHIP_PROBE_SAMPLE",
     "AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS",
     "AGENT_RELATIONSHIP_REINFER_SEC",
+    # feature-0040 db-object-explorer: insight.py(star-import) 가 bare 로 소비 — 등재 의무.
+    "AGENT_DB_OBJECT_INTROSPECT_CAP",
+    "AGENT_DB_OBJECT_INTROSPECT_ENABLED",
     # graph-funcproc(ADR-016): insight.py(star-import) 가 bare 로 소비 — 등재 의무(rel-selfheal 계약).
     "AGENT_ROUTINE_INTROSPECT_CAP",
     "AGENT_ROUTINE_INTROSPECT_ENABLED",
@@ -1403,6 +1406,15 @@ AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = _startup_int("AGENT_RELATIONSHIP_PROBE_TIM
 #    metadata_graph.sync_graph 가 AGE Routine 노드 + ROUTINE_USES(참조 테이블) 로 투영.
 AGENT_ROUTINE_INTROSPECT_ENABLED = os.getenv("AGENT_ROUTINE_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_ROUTINE_INTROSPECT_CAP = int(os.getenv("AGENT_ROUTINE_INTROSPECT_CAP", "20000") or "20000")
+# feature-0040 db-object-explorer: 역할 기반 DB 객체(뷰·트리거·예약작업·별칭·시퀀스) introspect.
+#  - 루틴과 **같은 cadence**(rel_maintenance_due)로 카탈로그를 역할 축으로 조회해 db_objects(SSOT)에
+#    upsert → metadata_graph.sync_graph 가 AGE DbObject 노드 + OBJECT_USES/OBJECT_ON 으로 투영.
+#  - 기본 ON: 루틴 introspect 와 동일 판단(카탈로그 read-only 조회라 데이터소스 부하가 미미하고,
+#    OFF 로 두면 그래프에서 객체가 통째로 비어 "이 DB 엔 트리거가 없다" 는 오독을 부른다).
+#    비활성 시 SSOT 가 갱신되지 않을 뿐, 조회 도구(search_db_objects)는 라이브 카탈로그를 직접
+#    보므로 계속 동작한다 — 두 경로의 의존이 분리돼 있다.
+AGENT_DB_OBJECT_INTROSPECT_ENABLED = os.getenv("AGENT_DB_OBJECT_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_DB_OBJECT_INTROSPECT_CAP = int(os.getenv("AGENT_DB_OBJECT_INTROSPECT_CAP", "20000") or "20000")
 # feature-0016 metadata-graph: 관계형 SSOT → Apache AGE `metadata_kb` 그래프 투영 토글.
 #  - 기본 OFF — AGE 확장 미설치(cutover 전) 상태에서 sync/projection 이 no-op 되도록.
 #  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.

@@ -325,7 +325,11 @@ const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 
 function _metaSchemaComboOf(n) {
   if (!n) return _META_TERMS_COMBO;
   if (n.label === "Schema") return n.key;
-  if (n.label === "Table" || n.label === "Column" || n.label === "Routine") {
+  // feature-0040: DbObject 도 스키마 소속 **컨텐츠**다 — 여기서 빠지면 build 가 아무리
+  //   `it.label === "DbObject"` 분기를 잘 써도 combo 가 `__terms__` 로 나와 역할 객체가
+  //   전부 '용어·기타' 클러스터로 강등된다(칩 색·아이콘은 맞는데 자리가 틀리는 형태의 결함).
+  if (n.label === "Table" || n.label === "Column" || n.label === "Routine"
+      || n.label === "DbObject") {
     const sc = _metaCatParent(n.key, n.fqn);
     if (sc) return sc;
   }

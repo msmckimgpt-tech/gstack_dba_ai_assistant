@@ -804,6 +804,18 @@
                     <button type="button" class="btn-secondary is-active" id="metaGraphKindProc" data-kind="procedure" aria-pressed="true" title="프로시저(⚙) 노드 표시/숨김 — 숨기면 자리를 회수해 재배치됩니다">⚙ 프로시저</button>
                   </span>
                 </div>
+                <!-- feature-0040 db-object-explorer: 역할 기반 DB 객체 표시 필터. 역할 하나가 곧 토글 키
+                     (`dbobj:<role>`)이며, 위 함수/프로시저 토글과 같은 바인딩(admin.js data-kind)을 탄다. -->
+                <div class="amg-viewopts-row">
+                  <span class="amg-viewopts-rowlabel" id="amgViewOptsObjLabel">DB 객체</span>
+                  <span class="admin-meta-graph-kindctl" role="group" aria-labelledby="amgViewOptsObjLabel">
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindView" data-kind="dbobj:view" aria-pressed="true" title="뷰(▤) 노드 표시/숨김 — 숨기면 자리를 회수해 재배치됩니다">▤ 뷰</button>
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindTrigger" data-kind="dbobj:trigger" aria-pressed="true" title="트리거(⚡) 노드 표시/숨김 — 데이터 변경에 반응해 자동 실행되는 코드입니다">⚡ 트리거</button>
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindSchedule" data-kind="dbobj:schedule" aria-pressed="true" title="예약 작업(⏱) 노드 표시/숨김 — MySQL 이벤트 · SQL Server Agent 작업입니다">⏱ 예약</button>
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindAlias" data-kind="dbobj:alias" aria-pressed="true" title="별칭(↪) 노드 표시/숨김 — 다른 객체를 가리키는 이름입니다">↪ 별칭</button>
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindSeq" data-kind="dbobj:generator" aria-pressed="true" title="값 생성기(#) 노드 표시/숨김 — 시퀀스입니다">＃ 시퀀스</button>
+                  </span>
+                </div>
                 <!-- graph-initview(E3): 스키마 점프 — 대규모 데이터소스에서 클러스터로 바로 이동(스키마 2개 이상 시 표시).
                      admin.js _metaGraphFillJump 가 style.display 로 자기 토글하므로 별도 행 래퍼 없이 직접 배치(숨김 시 flex 항목 제외 → 빈 행 잔여 없음). -->
                 <select id="metadataGraphJump" class="admin-meta-scope-select amg-viewopts-wide" aria-label="스키마 클러스터로 이동" style="display:none">
@@ -906,6 +918,7 @@
                     <li><i class="lg-dot" style="background:#5c6773"></i>컬럼</li>
                     <li><i class="lg-dot" style="background:#9c6515"></i>용어</li>
                     <li><i class="lg-dot" style="background:#7b5cd6"></i>ƒ/⚙ 함수·프로시저</li>
+                    <li><i class="lg-dot" style="background:#b0592a"></i>▤⚡⏱↪＃ DB 객체(뷰·트리거·예약 작업·별칭·시퀀스)</li>
                     <li><i class="lg-schemacard"></i>스키마 카드(클릭=펼침)</li>
                     <li><i class="lg-box"></i>스키마 클러스터</li>
                     <li><i class="lg-catband"></i>제품 카테고리 밴드(🗂 헤더 드래그=밴드 이동 · −/+=접기 · 접근 DB 미등록 스키마는 '미분류')</li>
@@ -916,6 +929,8 @@
                     <li><i class="lg-line lg-line-solid"></i>신뢰 관계(FK·검증)</li>
                     <li><i class="lg-line lg-line-dashed"></i>추정 관계(암묵 JOIN)</li>
                     <li><i class="lg-line lg-line-routine"></i>함수·프로시저의 테이블 사용 <span class="amg-legend-sub">(화살표=데이터 흐름 · 쓰기 →테이블 · 읽기 테이블→)</span></li>
+                    <li><i class="lg-line lg-line-dbobj"></i>DB 객체의 테이블 사용 <span class="amg-legend-sub">(뷰·트리거·예약 작업의 정의가 참조)</span></li>
+                    <li><i class="lg-line lg-line-dbobj-on"></i>DB 객체가 걸린 대상 <span class="amg-legend-sub">(트리거의 대상 테이블 · 별칭의 대상 — 파선)</span></li>
                     <li><i class="lg-dot" style="background:#fff;border:2px dashed #e08a1e"></i>AI 분석 중</li>
                     <li><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</li>
                     <li><i class="lg-dot" style="background:#f4b400;box-shadow:0 0 5px 2px rgba(244,180,0,.85)"></i>검색 매칭(앰버 글로우)</li>

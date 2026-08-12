@@ -30,10 +30,13 @@ _log = logging.getLogger("metadata_graph")
 
 GRAPH = "metadata_kb"
 
-# alembic 0025(+0034 Routine) 사전선언 라벨 화이트리스트 (런타임 동적 라벨 생성 금지)
-_VLABELS = {"Product", "Datasource", "Schema", "Table", "Column", "GlossaryTerm", "Routine"}
+# alembic 0025(+0034 Routine, +0054 DbObject) 사전선언 라벨 화이트리스트 (런타임 동적 라벨 생성 금지)
+_VLABELS = {"Product", "Datasource", "Schema", "Table", "Column", "GlossaryTerm", "Routine",
+            "DbObject"}
 _ELABELS = {"USES", "HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "REFERENCES", "RELATED_TERM", "DESCRIBES",
-            "HAS_ROUTINE", "ROUTINE_USES"}
+            "HAS_ROUTINE", "ROUTINE_USES",
+            # feature-0040: 역할 기반 DB 객체(뷰·트리거·예약작업·별칭·시퀀스)
+            "HAS_OBJECT", "OBJECT_USES", "OBJECT_ON"}
 # 노드/엣지 속성 화이트리스트 (Cypher SET 대상 — 임의 키 주입 차단)
 #  weight/status: feature-0016 강화 상태 투영(REFERENCES 엣지) — UI 가 신뢰/추정/파단을 구분.
 #  routine_type/params: 함수·프로시저 노드(graph-funcproc, ADR-016).
@@ -46,7 +49,14 @@ _PROP_KEYS = {"key", "name", "fqn", "scope_key", "description", "source",
               # routine-column-edges(2026-07-28): ROUTINE_USES 가 참조하는 **컬럼** 목록(JSON 문자열
               # `[{"n": 컬럼, "k": "read"|"write"}]`). 프론트가 테이블 펼침 시 이 목록으로 사용선을
               # 컬럼별 분해한다. 값이 없거나 매칭 실패면 기존 테이블-레벨 연결 유지(폴백).
-              "ref_columns"}
+              "ref_columns",
+              # feature-0040 db-object-explorer: 역할 기반 DB 객체 노드 속성.
+              #   object_role  — view|trigger|schedule|alias|generator (그래프 kind 필터 축)
+              #   object_type  — 방언 구체 타입(VIEW/DML_TRIGGER/EVENT/AGENT_JOB/SYNONYM/SEQUENCE)
+              #   owner_object — 트리거가 걸린 테이블 · 별칭의 대상 (OBJECT_ON 엣지의 근거)
+              #   object_attrs — 역할별 속성 JSON 문자열(시점/이벤트/주기/상태 …). 상세 패널이 그대로
+              #                  표시하고 node_analysis payload 가 그대로 싣는다.
+              "object_role", "object_type", "owner_object", "object_attrs"}
 # 숫자(float) 리터럴로 SET 하는 속성(문자열 인용 금지)
 _NUMERIC_PROP_KEYS = {"confidence", "weight"}
 # 정수 리터럴로 SET 하는 속성. feature-0016 graphux5: 컬럼 실제 순서(ordinal). Phase C: 의미 클러스터 id.
@@ -70,7 +80,8 @@ _NEIGHBOR_NODE_CAP = 20000   # 투영 1회 노드 안전 가드(종전 300 — �
 # **Table 이 맨 뒤** → 2-hop 예산 300 이 "같은 스키마의 형제 Routine"(최대 490개)으로 먼저 소진되고
 # 사용자가 2-hop 에서 가장 보고 싶어할 "참조로 이어지는 다른 테이블" 이 우선 탈락했다(실측: 앵커
 # masangsoft_documents_20260414 의 2-hop = Routine +258 / Table +0). 절단 순서를 의미 우선순위로 고정한다.
-_NEIGHBOR_LABEL_PRIORITY = ("Table", "Column", "Routine", "GlossaryTerm", "Schema", "Datasource", "Product")
+_NEIGHBOR_LABEL_PRIORITY = ("Table", "Column", "Routine", "DbObject", "GlossaryTerm", "Schema",
+                            "Datasource", "Product")
 # 이웃 엣지 1왕복 fetch 상한. 이 값에 포화하면 우선순위 정렬 *이전* 에 잘린 것이라 절단으로 신고한다
 # (graph-hop-budget 적대리뷰 P2 — 종전엔 노드 cap 만 절단으로 봐서 부분 그래프가 truncated=false 였다).
 _EDGE_FETCH_CAP = _NEIGHBOR_NODE_CAP * 4
@@ -80,10 +91,14 @@ _EDGE_FETCH_CAP = _NEIGHBOR_NODE_CAP * 4
 # 되살아나는 우선순위 역전(적대리뷰 P1). 계층 이웃 채우기 전에 이 몫을 떼어 둔다.
 _PARENT_BACKFILL_RESERVE = 2000   # graph-cap-audit: 가드 상향에 맞춰 비례 확대(종전 60)
 # 관계(의미) 엣지 — "이 노드가 무엇과 실제로 연관되는가". 2-hop 이상에서 예산을 먼저 배정한다.
-_REL_ELABELS = frozenset({"REFERENCES", "ROUTINE_USES", "RELATED_TERM", "USES", "DESCRIBES"})
+_REL_ELABELS = frozenset({"REFERENCES", "ROUTINE_USES", "RELATED_TERM", "USES", "DESCRIBES",
+                          # feature-0040: OBJECT_USES(정의가 참조) · OBJECT_ON(트리거가 걸린 대상)
+                          # 둘 다 **관계** 엣지다 — "이 테이블에 뭐가 걸려 있나" 는 형제 나열이
+                          # 아니라 사용자가 2-hop 에서 가장 먼저 보고 싶어하는 정보다.
+                          "OBJECT_USES", "OBJECT_ON"})
 # 계층(소속) 엣지 — "같은 컨테이너에 들어 있다". 앵커 1-hop 에서는 핵심 정보(컬럼·소속 스키마·직결 루틴)라
 # 그대로 수집하되, 2-hop 이상에서는 형제 폭발의 원인이라 관계 이웃을 채운 뒤 남는 예산으로만 채운다.
-_HIER_ELABELS = frozenset({"HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "HAS_ROUTINE"})
+_HIER_ELABELS = frozenset({"HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "HAS_ROUTINE", "HAS_OBJECT"})
 # graph-cap-audit: 검색 결과도 "찾았는데 안 보여주는" 절단은 오류다 — 사용자가 실제로 마주친 화면이
 #   `'dk_data_release.Item' — 50건 · 상한(검색어를 좁혀보세요)` 였다(검색어를 좁히라는 요구 자체가
 #   도구가 할 일을 사용자에게 미룬 것). 반환은 전량으로 두고, 목록 렌더는 프론트가 그룹 접기·
@@ -688,6 +703,95 @@ def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", 
                  f"SET r.refs_sig = {_cq(_refs_sig)} RETURN 1", 1)
 
 
+def sync_db_object(cur, scope, schema, name, role, object_type="", owner_object="",
+                   attributes=None, refs=None, description="", cache=None) -> None:
+    """DbObject 노드 + HAS_OBJECT(Schema→DbObject) + OBJECT_USES/OBJECT_ON MERGE (feature-0040).
+
+    `sync_routine` 의 역할-객체 판이다. 다른 점 셋:
+
+    1. **key 네임스페이스** — `schema.name[role]`. 루틴이 `()` 로 동명 테이블과의 전역 key 충돌을
+       피한 것과 같은 이유이되, **역할까지 넣어야 한다**: 같은 스키마에 동명의 뷰와 트리거가
+       공존할 수 있고(서로 다른 카탈로그 네임스페이스), 역할이 빠지면 한 정점을 두 SSOT 행이
+       공유해 서로의 엣지를 덮어쓴다.
+
+    2. **OBJECT_ON(소유 관계)** — 트리거의 대상 테이블·별칭의 대상 객체는 "참조" 가 아니라
+       "여기에 걸려 있다" 이다. OBJECT_USES 와 합치면 "이 테이블에 걸린 트리거" 질문에 답할 수
+       없어진다(정의가 그 테이블을 읽기만 하는 다른 객체와 구분 불가).
+
+    3. **refs 서명 최적화 없음** — 루틴은 정의 변경이 드물어 `refs_sig` 로 재작성을 건너뛰지만,
+       역할 객체는 전체 수가 루틴보다 훨씬 적어(라이브 관측 기준 스키마당 수~수십) 서명 관리
+       비용이 이득을 넘는다. 대신 루틴과 **동일한 DELETE→재MERGE 멱등 규약**은 그대로 지킨다 —
+       가산적 MERGE 만 하면 정의 변경으로 사라진 참조가 영구 잔존한다(REFERENCES stale-edge 클래스).
+    """
+    role = str(role or "").strip()
+    fqn = f"{schema}.{name}[{role}]" if schema else f"{name}[{role}]"
+    skey = _vkey(scope, schema or "(default)")
+    okey = _vkey(scope, fqn)
+    sprops = {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope}
+    if _cache_once(cache, _vmark("Schema", skey, sprops)):
+        _merge_vertex(cur, "Schema", skey, sprops)
+    oprops = {"name": name, "fqn": fqn, "scope_key": scope, "schema_name": schema or "",
+              "object_role": role, "object_type": str(object_type or "")[:32],
+              "owner_object": str(owner_object or "")[:512],
+              "source": "db_object_introspect"}
+    if description:
+        oprops["description"] = str(description)[:2000]
+    if isinstance(attributes, dict) and attributes:
+        try:
+            oprops["object_attrs"] = json.dumps(attributes, ensure_ascii=False,
+                                                separators=(",", ":"))[:2000]
+        except (TypeError, ValueError):
+            pass
+    _merge_vertex(cur, "DbObject", okey, oprops)
+    _merge_edge(cur, "Schema", skey, "HAS_OBJECT", "DbObject", okey)
+
+    # 멱등 재작성 — 기존 관계 엣지를 회수한 뒤 현재 상태만 재-MERGE(sync_routine 동형).
+    for _et in ("OBJECT_USES", "OBJECT_ON"):
+        try:
+            _cypher(cur, f"MATCH (o:DbObject {{key: {_cq(okey)}}})-[u:{_et}]->() DELETE u RETURN 1", 1)
+        except Exception:
+            pass   # 라벨 부재(0054 미적용) 등 — MERGE 단계가 실패해 호출측 errors 로 집계된다
+
+    def _anchor_table(tfqn: str) -> str:
+        """참조 Table 최소 MERGE(설명 미설정 — 큐레이션 비파괴). 반환 vertex key ('' = 스킵)."""
+        tfqn = str(tfqn or "").strip()
+        parts = [p for p in tfqn.split(".") if p]
+        table = parts[-1] if parts else ""
+        if not table:
+            return ""
+        tkey = _vkey(scope, tfqn)
+        _tprops = {"name": table, "fqn": tfqn, "scope_key": scope,
+                   "schema_name": ".".join(parts[:-1]), "table_name": table}
+        if _cache_once(cache, _vmark("Table", tkey, _tprops)):
+            _merge_vertex(cur, "Table", tkey, _tprops)
+        return tkey
+
+    # OBJECT_ON — 트리거가 걸린 테이블 / 별칭의 대상. owner 는 스키마 수식이 없는 이름이므로
+    # 저장 slot(schema)으로 수식해 Table key 공간과 맞춘다(sync_routine 의 refs fqn 규약 동일).
+    owner = str(owner_object or "").strip()
+    if owner and role in ("trigger", "alias"):
+        # 별칭 대상은 `[db].[schema].[obj]` 3-part 일 수 있다 — 마지막 세그먼트가 객체명이다.
+        _own_parts = [p.strip("[]`\"") for p in owner.split(".") if p.strip("[]`\"")]
+        _own_leaf = _own_parts[-1] if _own_parts else ""
+        if _own_leaf:
+            _own_fqn = f"{schema}.{_own_leaf}" if schema else _own_leaf
+            _okey_t = _anchor_table(_own_fqn)
+            if _okey_t:
+                _merge_edge(cur, "DbObject", okey, "OBJECT_ON", "Table", _okey_t,
+                            {"relation_type": "owns"})
+
+    for r in (refs or []):
+        tfqn = str((r or {}).get("fqn") or "").strip()
+        if not tfqn:
+            continue
+        tkey = _anchor_table(tfqn)
+        if not tkey:
+            continue
+        _eprops = {"relation_type": (r or {}).get("kind") or "read",
+                   **({"cross_ds": "1"} if (r or {}).get("cross") else {})}
+        _merge_edge(cur, "DbObject", okey, "OBJECT_USES", "Table", tkey, _eprops)
+
+
 def project_cluster_props(changes, conn=None) -> int:
     """재클러스터 변경분의 semantic_cluster_id/label 을 해당 정점에만 targeted SET (analysis-freshness).
 
@@ -826,6 +930,9 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
     """
     rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0,
            "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "routines": 0,
+           # feature-0040: 역할 기반 DB 객체(뷰·트리거·예약작업·별칭·시퀀스) 투영 건수.
+           # 미리 키를 두어야 0054 미적용 배포에서도 리포트 shape 가 동일하다(소비처 KeyError 방지).
+           "db_objects": 0,
            "errors": 0, "step_failures": 0, "since": since, "synced_at": None, "commits": 0}
     _t0 = _time.perf_counter()  # feature-0026 (M4): sync 소요 계측 (cron.log 리포트에 포함)
     c, owned = _rw_conn(conn)
@@ -1133,6 +1240,36 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                     anchor_cache_drop_pending(_vcache)
                     rep["errors"] += 1
         _run_step("routine_objects", _step_routines)
+
+        # 3c) db_objects (역할 기반 DB 객체, feature-0040) — DbObject 노드 + HAS_OBJECT +
+        #     OBJECT_USES(정의 참조) + OBJECT_ON(트리거·별칭의 대상). 테이블 부재(구 DB·0054
+        #     미적용)는 _run_step 이 격리한다 — 구 배포에서 이 step 만 skip 되고 나머지는 정상.
+        #     routine 과 달리 refs 서명 선조회가 없다(sync_db_object docstring 3번 참조).
+        def _step_db_objects():
+            _w, _a = _scope_since_where()
+            cur.execute("SELECT scope_key, schema_name, object_name, object_role, object_type, "
+                        "owner_object, attributes, referenced_tables, description "
+                        "FROM db_objects" + _w, _a)
+            for sc, sch, name, role, otype, owner, attrs, refs, desc in cur.fetchall():
+                def _row(sc=sc, sch=sch, name=name, role=role, otype=otype, owner=owner,
+                         attrs=attrs, refs=refs, desc=desc):
+                    if isinstance(refs, str):
+                        refs = json.loads(refs or "[]")
+                    if isinstance(attrs, str):
+                        attrs = json.loads(attrs or "{}")
+                    sync_db_object(cur, sc, sch or "", name, role,
+                                   object_type=otype or "", owner_object=owner or "",
+                                   attributes=attrs if isinstance(attrs, dict) else {},
+                                   refs=refs if isinstance(refs, list) else [],
+                                   description=desc or "", cache=_vcache)
+                if _sync_row_guard(cur, owned, _err_samples, "db_object", _row, rep):
+                    rep["db_objects"] = int(rep.get("db_objects", 0)) + 1
+                    anchor_cache_commit_pending(_vcache)
+                    _pending[0] += 1; _tick()
+                else:
+                    anchor_cache_drop_pending(_vcache)
+                    rep["errors"] += 1
+        _run_step("db_objects", _step_db_objects)
 
         # 4) kb_glossary
         def _step_glossary():
@@ -1725,6 +1862,56 @@ def schema_tables(scope: str, schema_key: str, limit: int = _NEIGHBOR_NODE_CAP, 
                     result["edges"].append(_e)
         except Exception as exc:
             _log.debug("schema_tables_routines_failed err=%r", exc)
+        # feature-0040: 스키마의 역할 기반 DB 객체(DbObject) 노드 + 관계 엣지도 함께 반환 —
+        #   루틴 블록과 같은 자리에서 같은 방식으로 흐른다(프론트가 kind 필터로 역할별 토글).
+        #   라벨 부재(0054 미적용 배포)는 except 로 비차단 — 나머지 노드는 정상 반환된다.
+        try:
+            orows = _cypher(cur,
+                f"MATCH (s:Schema)-[:HAS_OBJECT]->(o:DbObject) "
+                f"WHERE s.scope_key = {sc} AND s.key = {sk} "
+                f"RETURN o.key, o.name, o.fqn, o.description, o.object_role, o.object_type, "
+                f"o.owner_object, o.object_attrs, o.semantic_cluster_id, o.semantic_cluster_label "
+                f"LIMIT {limit}", 10)
+            okey0 = None
+            for r in orows:
+                okey = _unwrap(r[0])
+                if not okey:
+                    continue
+                if okey not in nodes:
+                    nodes[okey] = {"label": "DbObject", "key": okey, "name": _unwrap(r[1]),
+                                   "fqn": _unwrap(r[2]), "description": _unwrap(r[3]),
+                                   "source": "db_object_introspect",
+                                   "object_role": _unwrap(r[4]), "object_type": _unwrap(r[5]),
+                                   "owner_object": _unwrap(r[6]), "object_attrs": _unwrap(r[7]),
+                                   "cluster_id": _unwrap(r[8]), "cluster_label": _unwrap(r[9])}
+                if okey0 is None:
+                    okey0 = schema_key
+                result["edges"].append({"source": okey0, "target": okey, "type": "HAS_OBJECT",
+                                        "cardinality": None, "edge_source": None})
+            if orows:
+                # OBJECT_USES(정의 참조)와 OBJECT_ON(트리거·별칭의 대상)을 **한 질의로** 받아
+                # 엣지 type 으로 구분한다 — 두 번 왕복하면 스키마 펼침 지연이 두 배가 되고,
+                # 프론트는 어차피 type 으로 스타일을 가른다.
+                erows = _cypher(cur,
+                    f"MATCH (s:Schema)-[:HAS_OBJECT]->(o:DbObject)-[u]->(t:Table) "
+                    f"WHERE s.scope_key = {sc} AND s.key = {sk} "
+                    f"RETURN o.key, t.key, u.relation_type, u.cross_ds, type(u) "
+                    f"LIMIT {limit * 4}", 5)
+                oseen = set()
+                for er in erows:
+                    ok = _unwrap(er[0]); tk = _unwrap(er[1]); et = _unwrap(er[4])
+                    if not ok or not tk or et not in ("OBJECT_USES", "OBJECT_ON"):
+                        continue
+                    if (ok, tk, et) in oseen:
+                        continue
+                    oseen.add((ok, tk, et))
+                    result["edges"].append({
+                        "source": ok, "target": tk, "type": et,
+                        "cardinality": None, "edge_source": None,
+                        "relation_type": _unwrap(er[2]) or ("owns" if et == "OBJECT_ON" else "read"),
+                        "cross_ds": _unwrap(er[3])})
+        except Exception as exc:
+            _log.debug("schema_tables_db_objects_failed err=%r", exc)
         result["nodes"] = list(nodes.values())
         cur.close()
     except Exception as exc:
@@ -1767,6 +1954,48 @@ def schema_table_keys(scope: str, schema_key: str, limit: int = 20000, conn=None
         cur.close()
     except Exception as exc:
         _log.debug("schema_table_keys_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return out
+
+
+def schema_db_object_keys(scope: str, schema_key: str, limit: int = 20000, conn=None) -> list:
+    """스키마 소속 DbObject(뷰·트리거·예약작업·별칭·시퀀스)의 경량 열거 — 능동 분석 시드용.
+
+    `schema_routine_keys` 의 역할-객체 판. 반환 entry 에 `object_role` 을 포함한다 — 분석 페이로드가
+    "이건 트리거다/뷰다" 를 알아야 프롬프트가 역할에 맞는 질문을 던진다(테이블 프롬프트를 트리거에
+    그대로 쓰면 컬럼·행수 같은 무의미한 항목을 묻게 된다).
+
+    실패/HAS_OBJECT 라벨 부재(0054 미적용) 시 [] 로 저하(비차단 — 스키마 분석이 자연 저하)."""
+    out = []
+    if not scope or not schema_key:
+        return out
+    try:
+        limit = max(1, min(int(limit or 2000), 5000))
+    except (TypeError, ValueError):
+        limit = 2000
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return out
+    try:
+        cur = c.cursor()
+        _set_age_path(cur)
+        rows = _cypher(cur,
+            f"MATCH (s:Schema)-[:HAS_OBJECT]->(o:DbObject) "
+            f"WHERE s.scope_key = {_cq(scope)} AND s.key = {_cq(schema_key)} "
+            f"RETURN o.key, o.name, o.fqn, o.object_role LIMIT {limit}", 4)
+        for r in rows:
+            k = _unwrap(r[0])
+            if k:
+                out.append({"key": k, "name": _unwrap(r[1]) or k, "fqn": _unwrap(r[2]) or "",
+                            "object_role": _unwrap(r[3]) or ""})
+        cur.close()
+    except Exception as exc:
+        _log.debug("schema_db_object_keys_failed err=%r", exc)
     finally:
         if owned and c is not None:
             try:
@@ -1821,6 +2050,11 @@ def _node_from_props(label: str, props: dict) -> dict:
     if label == "Routine":   # graph-funcproc: 함수/프로시저 구분 + 파라미터(상세 패널 표시)
         d["routine_type"] = props.get("routine_type")
         d["params"] = props.get("params")
+    elif label == "DbObject":   # feature-0040: 역할·구체타입·대상·역할별 속성(상세 패널·kind 필터)
+        d["object_role"] = props.get("object_role")
+        d["object_type"] = props.get("object_type")
+        d["owner_object"] = props.get("owner_object")
+        d["object_attrs"] = props.get("object_attrs")
     return d
 
 
