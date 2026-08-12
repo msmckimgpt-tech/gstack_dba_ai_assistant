@@ -137,7 +137,13 @@ dc-build:
 # Lifecycle — 도커 환경 기동/중지/재시작
 # =============================================================================
 
-up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-worker, ask-worker, ops-scheduler, [mcp], [caddy])
+quiesce-guard:  ## lifecycle: 진행 중 사용자 run 이 없는지 확인(재생성/정지 전 게이트). FORCE_BUSY=1 로 우회.
+	@# CHG-20260812T200000: `up`/`down`/`restart` 는 이미 떠 있는 서빙 컨테이너를 재생성·정지할 수
+	@# 있고, 그 순간 진행 중이던 대화가 죽는다(2026-08-12 17:30 사고가 정확히 배포 스파인 밖의
+	@# 재생성이었다). 배포와 **같은 라이브러리**로 판정한다 — 기준이 갈라지지 않는다.
+	@FORCE_BUSY=$${FORCE_BUSY:-0} bash -c '		DC=(docker compose -f docker-compose.yml); DC_PROD=("$${DC[@]}"); REPLICAS=(web-a web-b); 		. bin/lib/quiesce.sh; 		quiesce_gate "make $(MAKECMDGOALS)" || { 			echo "[make] 진행 중 사용자 run 이 있어 중단했습니다. 조용해진 뒤 재실행하거나 FORCE_BUSY=1 로 강행하세요." >&2; 			exit 1; }'
+
+up: quiesce-guard  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-worker, ask-worker, ops-scheduler, [mcp], [caddy])
 	@$(MAKE) check-llm-network
 	@mkdir -p $(SHARED_DIR) $(MYSQL_DATA_DIR) $(MYSQL_BACKUP_DIR) $(LOG_DIR) $(OUT_DIR) $(SHARED_DIR)/web_sessions $(SHARED_DIR)/out/browser $(CERT_ROOT)/$(WEB_PUBLIC_HOST) $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
 	@chown -R 999:999 $(MYSQL_DATA_DIR) || true
@@ -195,7 +201,7 @@ start:  ## lifecycle: up 후 ps 로 상태 표시 (사용자 편의 alias)
 	@$(MAKE) up
 	@$(MAKE) ps
 
-down:  ## lifecycle: 전체 스택 정지 (볼륨 보존)
+down: quiesce-guard  ## lifecycle: 전체 스택 정지 (볼륨 보존)
 	@$(DC_QUIET) down
 
 stop: down  ## lifecycle: down 의 alias
@@ -496,6 +502,13 @@ web: init  ## web: Web UI 기동 (web-a/web-b 2-replica + Caddy :443 단일 진�
 	@$(DC_QUIET) up -d caddy
 	@echo "Web UI: https://$(WEB_PUBLIC_HOST)  (Caddy :443 단일 진입 — :18080 web 직접 문은 feature-0014 에서 폐기)"
 	@if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_PUBLIC_HOST) (LAN IP $(WEB_LAN_IP) → DNS/hosts 매핑)"; fi
+
+safe-recreate:  ## web: 배포 밖에서 서빙 컨테이너 1개를 안전하게 재생성 (SVC=<service>). quiesce 게이트 통과 후에만.
+	@test -n "$(SVC)" || { echo "usage: make safe-recreate SVC=<service>  (예: SVC=bedrock-gateway)" >&2; exit 2; }
+	@sudo -E bin/safe-recreate.sh $(SVC)
+
+recreate-audit:  ## web: 인가되지 않은(배포/safe-recreate 밖) 서빙 컨테이너 재생성 사후 적발
+	@bash bin/recreate-audit.sh
 
 deploy-web:  ## web: 라이브 무중단(zero-downtime) 전체 롤아웃 — web 롤링 + 워커 + gateway reconcile (origin/main HEAD). 헤더의 scoped sudo 필요.
 	@sudo -E bin/deploy-web.sh

@@ -26,6 +26,8 @@ import pytest
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _DEPLOY_SH = os.path.join(_ROOT, "bin", "deploy-web.sh")
+_QUIESCE_LIB = os.path.join(_ROOT, "bin", "lib", "quiesce.sh")
+_SAFE_RECREATE = os.path.join(_ROOT, "bin", "safe-recreate.sh")
 
 
 def _script_text() -> str:
@@ -33,12 +35,16 @@ def _script_text() -> str:
         return fh.read()
 
 
+def _lib_text() -> str:
+    with open(_QUIESCE_LIB, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
 def _extract_quiesce_block() -> str:
-    """quiesce 관련 함수만 떼어낸다(스크립트 전체 source 는 main 실행을 유발)."""
-    s = _script_text()
-    start = s.index("# ── 진행 중 사용자 run 관측")
-    end = s.index("wait_ready() {")
-    return s[start:end]
+    """CHG-20260812T200000: 구현이 `bin/lib/quiesce.sh` 로 이동했다 — **배포 밖의 재생성 경로**
+    (safe-recreate.sh · make quiesce-guard)도 같은 판정을 써야 하기 때문이다. 라이브러리는
+    그대로 source 가능하므로 헤더의 기본값 주입까지 포함해 전체를 쓴다."""
+    return _lib_text()
 
 
 _STUBS = textwrap.dedent("""\
@@ -69,12 +75,28 @@ _POST_STUBS = textwrap.dedent("""\
     """)
 
 
+# 라이브러리는 knob 을 `DEPLOY_QUIESCE_*` env 에서 **무조건 재설정**한다(호출측 셸 변수보다 우선).
+# 그래서 테스트가 짧은 상한을 주려면 내부 이름이 아니라 그 env 를 써야 한다 — 초판 하네스가
+# `QUIESCE_TIMEOUT` 을 셸 변수로만 넣어 라이브러리 기본값 900s 가 이겼고 스위트가 멈췄다.
+_KNOB_ENV = {
+    "QUIESCE_TIMEOUT": "DEPLOY_QUIESCE_TIMEOUT",
+    "QUIESCE_POLL": "DEPLOY_QUIESCE_POLL",
+    "QUIESCE_SETTLE": "DEPLOY_QUIESCE_SETTLE",
+    "QUIESCE_HEARTBEAT_FRESH": "DEPLOY_QUIESCE_HEARTBEAT_FRESH",
+}
+
+
 def _run(body: str, env: dict | None = None) -> subprocess.CompletedProcess:
     script = _STUBS + _extract_quiesce_block() + "\n" + _POST_STUBS + body
     e = dict(os.environ)
-    if env:
-        e.update(env)
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=e)
+    # 테스트 기본값: 라이브러리 출하 상한(900s)이 스위트를 멈추지 않게 짧게 둔다.
+    e.setdefault("DEPLOY_QUIESCE_TIMEOUT", "6")
+    e.setdefault("DEPLOY_QUIESCE_POLL", "1")
+    e.setdefault("DEPLOY_QUIESCE_SETTLE", "0")
+    for k, v in (env or {}).items():
+        e[_KNOB_ENV.get(k, k)] = v
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                          env=e, timeout=120)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -333,7 +355,7 @@ def test_heartbeat_freshness_filter_present():
 
 def test_quiesce_timeout_covers_observed_run_tail():
     """실측 agent run p95 = 691s. 상한이 그보다 짧으면 바쁜 시간대에 배포가 항상 중단된다."""
-    s = _script_text()
+    s = _lib_text()   # knob 정의는 라이브러리 소유(CHG-20260812T200000)
     m = re.search(r'QUIESCE_TIMEOUT="\$\{DEPLOY_QUIESCE_TIMEOUT:-(\d+)\}"', s)
     assert m, "QUIESCE_TIMEOUT 기본값을 찾지 못함"
     assert int(m.group(1)) >= 700, "p95(691s)를 못 덮는 상한 — 바쁜 창에서 항상 ABORT"
@@ -373,7 +395,100 @@ def test_rollback_reports_cut_runs_but_does_not_block():
 
 
 def test_settle_knob_documented_and_bounded():
-    s = _script_text()
+    s = _lib_text()   # knob 정의는 라이브러리 소유(CHG-20260812T200000)
     m = re.search(r'QUIESCE_SETTLE="\$\{DEPLOY_QUIESCE_SETTLE:-(\d+)\}"', s)
     assert m, "settle 간격 knob 이 없다"
     assert 0 < int(m.group(1)) <= 30, "settle 은 짧아야 한다(길면 배포가 무의미하게 늘어난다)"
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  7) 배포 밖 경로 봉인 (CHG-20260812T200000)
+# ══════════════════════════════════════════════════════════════════════
+
+def test_gate_lives_in_a_shared_library():
+    """게이트가 배포 스크립트 **안에만** 있으면 `docker compose up -d`·`make up`·단일 서비스
+    재기동 전부가 사각지대다 — 2026-08-12 17:30 사고가 정확히 그 경로였다."""
+    assert os.path.exists(_QUIESCE_LIB)
+    lib = _lib_text()
+    for fn in ("quiesce_gate", "quiesce_user_runs", "quiesce_sample", "ask_execution_mode"):
+        assert f"{fn}()" in lib, f"{fn} 이 라이브러리에 없다"
+    dep = _script_text()
+    # deploy-web.sh 는 구현을 갖지 않고 source 만 한다(중복 구현 = 판정 drift).
+    assert "quiesce_user_runs() {" not in dep, "배포 스크립트에 게이트 구현이 남아 있다(drift 위험)"
+    assert '. "$_QUIESCE_LIB"' in dep
+
+
+def test_safe_recreate_uses_the_same_library_and_gates():
+    """인가된 out-of-band 경로가 배포와 **같은 판정**을 쓰지 않으면 기준이 갈라진다."""
+    with open(_SAFE_RECREATE, "r", encoding="utf-8") as fh:
+        sr = fh.read()
+    assert '. "$_QUIESCE_LIB"' in sr
+    # usage 주석에도 같은 문자열이 있으므로 **실행부**(옵션 파싱 이후)만 본다.
+    body = sr[sr.index("set -euo pipefail"):]
+    gate = body.index("quiesce_gate ")
+    recreate = body.index('"${DC[@]}" "${_args[@]}"')
+    assert gate < recreate, "게이트가 recreate 뒤에 있다"
+    assert "--force-busy" in sr, "탈출구가 없으면 운영자가 raw docker 로 우회한다"
+    assert "_web_count" in sr and "deploy-web" in sr
+
+
+def test_both_sanctioned_paths_stamp_the_same_file():
+    """감사가 대조할 기준이 하나여야 한다 — 두 경로가 다른 파일에 남기면 오탐/미탐."""
+    dep = _script_text()
+    with open(_SAFE_RECREATE, "r", encoding="utf-8") as fh:
+        sr = fh.read()
+    assert "recreate-sanctioned.log" in dep and "recreate-sanctioned.log" in sr
+    assert "SAFE_RECREATE_STAMP_FILE" in dep and "SAFE_RECREATE_STAMP_FILE" in sr
+    # 배포는 web replica·워커·gateway 세 지점 모두 스탬프해야 감사가 오탐하지 않는다.
+    assert dep.count("stamp_sanctioned_recreate ") >= 3
+
+
+def test_recreate_audit_distinguishes_unknown_from_violation():
+    """스탬프 도입 이전 기동을 위반으로 세면 경보 피로로 감사 자체가 무시된다."""
+    with open(os.path.join(_ROOT, "bin", "recreate-audit.sh"), "r", encoding="utf-8") as fh:
+        ra = fh.read()
+    assert "unknown" in ra and "UNSANCTIONED" in ra
+    assert "exit 1" in ra, "위반이 있어도 exit 0 이면 자동화가 못 잡는다"
+    assert "TOLERANCE_SEC" in ra
+
+
+def test_make_targets_that_recreate_pass_the_gate():
+    """`make up`/`down` 은 이미 떠 있는 서빙 컨테이너를 재생성·정지할 수 있다."""
+    with open(os.path.join(_ROOT, "Makefile"), "r", encoding="utf-8") as fh:
+        mk = fh.read()
+    assert re.search(r"^quiesce-guard:", mk, re.M)
+    assert re.search(r"^up: quiesce-guard", mk, re.M), "make up 이 게이트를 건너뛴다"
+    assert re.search(r"^down: quiesce-guard", mk, re.M), "make down 이 게이트를 건너뛴다"
+    assert "bin/lib/quiesce.sh" in mk, "make 가 배포와 다른 판정을 쓴다"
+    assert "FORCE_BUSY" in mk, "탈출구가 없으면 운영자가 raw docker 로 우회한다"
+
+
+# ── 라이브 검증이 잡은 결함 3건 (전부 실측 기반) ──────────────────────────────
+
+def test_error_messages_have_no_backtick_command_substitution():
+    """**라이브 적발**: 큰따옴표 안의 backtick 은 명령 치환이다 — 초판이 `/livez` 를 실제로
+    실행하려 했고(`No such file or directory`) 메시지도 깨졌다. 주석은 무해하나 코드 줄은 아니다."""
+    lib = _lib_text()
+    for i, line in enumerate(lib.split("\n"), 1):
+        if line.strip().startswith("#"):
+            continue
+        if re.search(r'(err|warn|log|step)\s+"[^"]*`', line):
+            raise AssertionError(f"quiesce.sh:{i} 메시지에 백틱 명령 치환: {line.strip()}")
+
+
+def test_exec_failure_is_unknown_not_inprocess():
+    """**라이브 적발**: 컨테이너가 재생성 중이면 `exec` 가 실패해 빈 값을 준다. 초판은 그것을
+    'env 미설정 = inprocess' 로 읽어 **엉뚱한 사유로** 게이트를 막았다(진단이 오도된다)."""
+    lib = _lib_text()
+    fn = lib[lib.index("ask_execution_mode()"):]
+    fn = fn[:fn.index("\n}\n") + 3]
+    assert "rc=$?" in fn, "exec 종료코드를 보지 않는다"
+    assert 'if [ "$rc" -ne 0 ]' in fn, "exec 실패와 env 미설정을 구분하지 않는다"
+
+
+def test_library_initializes_report_vars_for_standalone_use():
+    """**라이브 적발**: 단독 source 시 `QUIESCE_FORCED` 가 비어 `quiesce_summary` 가
+    `[: : integer expression expected` 로 깨졌다."""
+    lib = _lib_text()
+    assert ': "${QUIESCE_FORCED:=0}"' in lib
+    assert ': "${QUIESCE_REPORT:=}"' in lib

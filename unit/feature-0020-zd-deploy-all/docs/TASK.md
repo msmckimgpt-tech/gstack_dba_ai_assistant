@@ -102,3 +102,28 @@ source_of_truth: true
       (`ask-worker recreate=quiet` · `gateway recreate=quiet`, settle 재확인 로그 포함).
       5서비스 `7c2918a8` healthy · `/healthz` ok · gateway `StopTimeout` 120 → **330** 전환 실측 ·
       surge 잔재 0 · 강행 카운터 0(= 이 배포는 실제로 무중단).
+
+## TASK-20260812T200000 배포 스파인 밖 재생성 봉인 (quiesce 게이트 공용화 + 사후 감사)
+사용자 지시(2026-08-12): 2차 사고의 recreate 가 `deploy-web.sh` **밖**이었음을 확인하고
+"직접 막는 장치도 이번에" 요청.
+
+- [x] 근거 확정 — 17:33 시점 배포 lock mtime 이 13:00(직전 배포) 그대로였고 배포는 **17:49·18:07**
+      에 따로 돌았다 → 17:30:05 게이트웨이 recreate 는 배포 경로가 아니다(`restarts=0` = 재생성).
+- [x] `bin/lib/quiesce.sh` 신설 — 게이트 구현을 **단일 정본**으로 분리(deploy-web.sh 는 source 만).
+      호출측이 안 준 것만 기본값 주입해 **단독 source 가능**하게 설계.
+- [x] `bin/safe-recreate.sh` — 배포 밖 재생성의 **인가된 진입점**. 배포와 같은 라이브러리로 판정,
+      fail-closed + `--force-busy`, web replica 동시 지정 거부, compose 미존재 서비스 거부.
+- [x] `Makefile` — `quiesce-guard` 타깃 신설 후 `up`·`down` 에 전치(=`restart` 도 커버).
+      `make safe-recreate SVC=…` · `make recreate-audit` 진입점 추가.
+- [x] `bin/recreate-audit.sh` — raw `docker compose` 는 막을 수 없으므로 **보이게** 만든다:
+      인가 경로 2종이 같은 스탬프 파일에 남기고, 컨테이너 `StartedAt` 과 대조해 우회 재생성을
+      사후 적발(`unknown`/`UNSANCTIONED` 구분, 위반 시 exit 1).
+- [x] 배포 스탬프 3지점 배선(web replica·워커·gateway) — 한 곳이라도 빠지면 감사가 오탐한다.
+- [x] **라이브 검증에서 결함 3건 적발·수정**: ① `err "…\`/livez\`…"` 백틱이 **명령 치환**으로
+      해석돼 `/livez` 실행 시도 + 메시지 파손(**이미 머지된 코드의 버그**) ② 컨테이너 재생성 중
+      `exec` 실패를 'env 미설정=inprocess' 로 오독해 엉뚱한 사유로 게이트 차단 ③ 단독 source 시
+      `QUIESCE_FORCED` 미초기화로 `quiesce_summary` 가 산술 비교 오류.
+- [x] 라이브 재검증 — web probe 가 `unknown` 인 동안 **차단**하고, 조용해진 뒤 settle 재확인을
+      거쳐 통과(`mode=worker`, `sample=0|0|unknown` → `quiet`). 감사 도구도 라이브 판독 확인.
+- [x] 테스트 34 PASS(신규 8) · **뮤테이션 7/7 KILLED** · ruff/bash -n OK
+- [ ] 배포 + POST-DEPLOY(스탬프 생성 확인 → 감사 `ok` 전이)

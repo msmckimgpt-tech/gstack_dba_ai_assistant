@@ -170,3 +170,51 @@ source_of_truth: true
 - Files: 본 문서 · `docs/TASK.md` · `docs/TEST.md` · `docs/LEARNINGS.md`(LRN 신설) ·
   conv-audit 원장(status 전이) · feature-0002 `docs/{TASK,TEST}.md`(cross-ref, 문서만).
 - Impact: 문서만 — 런타임 0.
+
+## CHG-20260812T200000-quiesce-out-of-band (배포 스파인 밖 재생성 봉인)
+- Date: 2026-08-12. 사용자 지시 — 2차 사고(conv-audit `FR-llm-transient-exhaustion-discards-run`)의
+  recreate 가 배포 경로가 아니었음을 확인하고 "직접 막는 장치도 이번에".
+- **근거**: 17:33 시점 `artifacts/locks/deploy-web.lock` mtime = 13:00(직전 배포) 그대로였고,
+  배포는 **17:49·18:07** 에 따로 돌았다. 즉 17:30:05 게이트웨이 recreate(`restarts=0` = 재생성)는
+  `deploy-web.sh` 를 경유하지 않았다 → `CHG-20260812T140000` 의 quiesce 게이트가 **구조적으로
+  볼 수 없는 경로**였다.
+- **봉인**:
+  1. **게이트를 공용 라이브러리로** — `bin/lib/quiesce.sh`. `deploy-web.sh` 는 구현을 버리고
+     source 만 한다. 게이트가 배포 스크립트 안에만 있으면 `docker compose up -d` · `make up` ·
+     단일 서비스 재기동이 전부 사각지대다. 라이브러리는 호출측이 안 준 심볼만 기본값으로 채워
+     **단독 source 가능**하다(safe-recreate.sh · make 가 그렇게 쓴다).
+  2. **인가된 out-of-band 진입점** — `bin/safe-recreate.sh <svc>…`. 배포와 **같은 판정**을 쓰고
+     fail-closed, `--force-busy` 탈출구, web replica 동시 지정 거부(전면 다운 방지),
+     compose 미존재 서비스 거부(오타로 조용히 no-op 되는 것 방지).
+  3. **평범한 운영 경로도 게이트를 통과** — `Makefile` 에 `quiesce-guard` 를 두고 `up`·`down` 에
+     전치(`restart` = down+up 도 커버). `FORCE_BUSY=1` 로 우회 가능.
+  4. **막을 수 없는 것은 보이게** — raw `docker compose` 는 CLI 라 스크립트로 못 막는다.
+     인가 경로 2종이 `artifacts/deploy/recreate-sanctioned.log` 에 스탬프를 남기고,
+     `bin/recreate-audit.sh` 가 컨테이너 `StartedAt` 과 대조해 우회 재생성을 사후 적발한다
+     (`unknown`=스탬프 도입 이전 / `UNSANCTIONED`=위반, 위반 시 exit 1). 사고 원인 규명이
+     "며칠 뒤 추측" 에서 "즉시 조회" 로 바뀐다. 배포는 web replica·워커·gateway **3지점** 스탬프.
+- **라이브 검증이 잡은 결함 3건(전부 실측)**:
+  ① **`err "…\`/livez\`…"` 의 백틱이 명령 치환** — `/livez: No such file or directory` 가 실제로
+     찍히고 메시지가 파손됐다. **`CHG-20260812T140000` 로 이미 머지된 코드의 버그**이며, 그 분기가
+     라이브에서 처음 발화하면서 드러났다(단위 테스트는 문자열 존재만 봐 못 잡았다 → 코드 줄의
+     백틱을 금지하는 테스트 신설).
+  ② **exec 실패를 'env 미설정=inprocess' 로 오독** — 컨테이너 재생성 중 `exec` 가 "is restarting"
+     으로 실패하면 빈 값이 온다. 초판은 그것을 코드 기본값(inprocess)으로 읽어 **게이트를 막긴
+     했지만 사유가 틀렸다**(운영자가 실행 모드를 의심하게 만든다). rc 를 봐 unknown 으로 분리.
+  ③ **단독 source 시 보고 변수 미초기화** — `QUIESCE_FORCED` 가 비어 `quiesce_summary` 가
+     `[: : integer expression expected` 로 깨졌다. 라이브러리가 스스로 기본값을 갖게 했다.
+- **라이브 재검증(읽기 전용)**: 실제 스택에서 `mode=worker` · 첫 표본 `0|0|unknown`(그 순간 web
+  replica 가 재생성 중) → **차단하고 대기** → 15초 뒤 조용해져 settle 재확인 후 `quiet` 통과.
+  `quiesce_summary` 정상. 감사 도구도 실 `StartedAt` 4건 판독 + 스탬프 미배포를 `unknown` 으로
+  구분(위반 오탐 0).
+- **검증**: 테스트 **34 PASS**(신규 8) · **뮤테이션 7/7 KILLED**(make up/down 게이트 제거 ·
+  safe-recreate 게이트 제거 · 백틱 재도입 · exec rc 무시 · 보고 변수 미초기화 · 배포 스탬프 제거) ·
+  `bash -n` 3파일 · ruff clean.
+- **위험등급**: Major(배포·운영 절차 전반). 런타임 서빙 코드 변경 0.
+- **정직 — 남는 것**: raw `docker compose up -d` 자체는 여전히 실행 가능하다. 이 cycle 은
+  (a) 인가 경로를 모두 안전하게 만들고 (b) 우회를 **사후 적발 가능**하게 했을 뿐, 물리적 차단은
+  아니다. 물리적 차단은 사람 권한 분리(docker 소켓 접근 제한)의 영역이다.
+- Files: `bin/lib/quiesce.sh`(신규) · `bin/safe-recreate.sh`(신규) · `bin/recreate-audit.sh`(신규) ·
+  `bin/deploy-web.sh` · `Makefile` · 본 문서 · `docs/{TASK,FUNCTION,TEST,REVIEW}.md` · tests.
+- Rollback Notes: `deploy-web.sh` 의 source 를 되돌리고 신규 3파일을 제거하면 원복. 그 순간부터
+  배포 밖 재생성이 다시 무경보로 대화를 끊는다.

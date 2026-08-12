@@ -102,6 +102,24 @@ cross-cut)·`docker-compose.yml`·`Makefile`·`bin/alembic-migrate.sh`.
   배경 작업(실패=degraded 기록 후 다음 cadence 재시도)이라 제외 — 걸면 유휴 대기만 늘고 얻는 게 없다.
 - **강행은 보고된다**: `--force-busy` 통과 시 배포 말미에 "이 배포는 무중단이 아니었다" 를 남긴다.
   조용히 통과한 배포와 끊고 지나간 배포가 같은 "배포 완료" 로 보이면 안 된다(LRN-20260811T1557).
+- **게이트는 배포 전용이 아니다(MUST, CHG-20260812T200000)**: 구현은 `bin/lib/quiesce.sh` 가 소유하고
+  `deploy-web.sh` 는 source 만 한다. 게이트가 배포 스크립트 **안에만** 있으면
+  `docker compose up -d` · `make up` · 단일 서비스 재기동이 전부 사각지대이고, 2026-08-12 17:30
+  사고가 정확히 그 경로였다(배포 lock mtime 이 그 시각 이전 값 그대로, 배포는 17:49·18:07 에 따로 돌았다).
+  - **인가된 out-of-band 경로** = `bin/safe-recreate.sh <svc>…`(= `make safe-recreate SVC=…`).
+    배포와 같은 판정 · fail-closed · `--force-busy` · **web replica 동시 지정 거부**(전면 다운) ·
+    compose 미존재 서비스 거부.
+  - **평범한 운영 경로도 통과** — `make up`/`down`(→`restart`)은 `quiesce-guard` 를 전치로 갖는다.
+  - **raw `docker compose` 는 막을 수 없다 → 보이게 만든다**: 인가 경로 2종이
+    `artifacts/deploy/recreate-sanctioned.log` 에 스탬프를 남기고 `bin/recreate-audit.sh` 가
+    컨테이너 `StartedAt` 과 대조해 우회를 사후 적발한다(`unknown` 은 스탬프 도입 이전 —
+    위반과 구분해야 경보 피로를 피한다). 배포는 **web replica·워커·gateway 3지점** 모두 스탬프한다 —
+    한 곳이라도 빠지면 감사가 정상 배포를 위반으로 오탐한다.
+- **메시지에 백틱을 쓰지 않는다(MUST)**: 큰따옴표 안의 `` `...` `` 는 명령 치환이다. 초판이
+  `err "… \`/livez\` …"` 로 적어 라이브에서 `/livez` 를 실행하려 했고 메시지도 파손됐다.
+- **관측 실패와 '설정되지 않음' 을 구분한다(MUST)**: 컨테이너 재생성 중 `exec` 는 실패해 빈 값을
+  준다. 그것을 "env 미설정 = 코드 기본값" 으로 읽으면 **게이트는 막되 사유가 틀린다**(운영자가
+  엉뚱한 것을 의심한다). 종료코드를 보고 unknown 으로 분리한다.
 
 ## 8. Edge Cases
 - 워커가 배포 전부터 unhealthy: healthcheck 견고화(AC-4)로 오탐 해소를 선행하되, 게이트는

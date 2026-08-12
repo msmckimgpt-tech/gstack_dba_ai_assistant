@@ -93,3 +93,11 @@ source_of_truth: true
   느린 실패 예산 게이트 `_llm_retry_allowed(...attempt_elapsed=280s, remaining=10s) = False`.
   히스토리 창 교정도 배포본에서 확인 — linear·windowed·branch **3경로 모두** `LIMIT-order=DESC` +
   `returns-ASC=True`.
+
+### 20260812T200000-quiesce-out-of-band 배포 밖 재생성 봉인 (Major §12.3, 2026-08-12) — **Environment: unit + 라이브 실측(읽기 전용) (운영/배포 절차만 — 런타임 서빙 코드 변경 0 → CHECK#13 미해당)**
+- **자동 검증 — PASS**: `test_quiesce_gate.py` **34 passed**(신규 8). 신규 축: 게이트가 공용 라이브러리에 있고 배포 스크립트에 중복 구현이 없음 · `safe-recreate.sh` 가 같은 라이브러리 + recreate **앞** 게이트 + web replica 동시 거부 · 인가 2경로가 **같은 스탬프 파일** + 배포 3지점 스탬프 · 감사가 `unknown`/`UNSANCTIONED` 구분 + 위반 시 exit 1 · `make up`/`down` 에 `quiesce-guard` 전치 · **라이브 적발 3건**(코드 줄 백틱 금지 · exec rc 분리 · 보고 변수 자체 초기화).
+- **뮤테이션 7/7 KILLED**: `make up` 게이트 제거 · `make down` 게이트 제거 · safe-recreate 게이트 무력화 · 백틱 재도입 · exec rc 무시 · `QUIESCE_FORCED` 초기화 제거 · 배포 web replica 스탬프 제거.
+- **하네스 정정(중요)**: 라이브러리가 knob 을 `DEPLOY_QUIESCE_*` env 로 **무조건 재설정**하므로, 테스트가 셸 변수로만 짧은 상한을 주면 출하 기본값 900s 가 이겨 **스위트가 멈춘다**(초판에서 실제로 10분 타임아웃). env 매핑으로 교정 + `subprocess` timeout 부여.
+- **라이브 검증(읽기 전용, 결함 3건 적발)**: 실제 스택에 라이브러리를 source 해 실행 — 1차 시도에서 ① `/livez` 실행 시도(백틱) ② `mode=inprocess` 오판(exec 실패 오독) ③ `[: : integer expression expected`(보고 변수) 를 **동시에** 잡았다. 수정 후 재검증: `mode=worker` · 첫 표본 `0|0|unknown`(그 순간 web replica 재생성 중) → **차단·대기** → 15초 뒤 settle 재확인 통과 `quiet`. `bin/recreate-audit.sh` 도 실 `StartedAt` 4건 판독 + 스탬프 미배포를 `unknown` 으로 구분(위반 오탐 0, exit 0).
+- **Pass/Fail: PASS**. 단위·뮤테이션·라이브 3층 모두 통과.
+- **라이브 실측 필요분(POST-DEPLOY)**: ① 배포가 스탬프를 실제로 남기는지(3지점) ② 이후 `make recreate-audit` 가 `ok` 로 전이하는지 ③ `make safe-recreate SVC=…` 실전 1회.
