@@ -4238,3 +4238,22 @@ escape 를 걸지 않았고**, 그 동작을 이번 cycle 에서 바꾸지 않�
   없으면 완료 판정이 격리 컨테이너 근거에만 의존한다(§16.3 deploy-backed 완료 기준).
 - 서버 정본 무변경(저장 미클릭 — 테이블 설명 목록 `1건` 불변).
 - Human Approval Needed: no
+## REV-20260813T010301-doc-sync-rn-0813 [SKIPPED:non-policy-doc] — 릴리즈노트 신규 2026-08-12 블록(9항목) prepend doc_sync 정합
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 34/0 동일 = 회귀 0) · 구조검증(`generated`=2026-08-12 == `releases[0].date` · head 9항목 · releases 46→47 · 08-11(5)/08-07(8) 등 기존 46 블록 전량 보존 · type/area enum 위반 0 · 스키마 외 키 0) · 내부용어 누출 스캔 **0**(22 패턴).
+- 블록 date 판정: 델타 창(`7b67918c`..HEAD)의 non-merge 26커밋·머지 22건이 전부 git-date 2026-08-12 이고 그 배포일 블록이 부재 → 신규 1블록 prepend. 오늘(08-13)로 적지 않은 것은 기존 블록들이 **배포일** 기준이기 때문.
+- **배포 게이트 = 물리 실측**(본 run 의 핵심 판정): 라이브 이미지 web `105fa2b7` · agent/worker/ops-scheduler `e1372f32`. 9항목 근거 커밋 전건이 해당 이미지의 조상(`git merge-base --is-ancestor` YES). 서빙 static 6종이 라이브에서 브랜치 blob 과 **byte-identical**(`?v=` 정규화 후), `/healthz` 200. alembic 라이브 head `0055_tool_call_usage` = 저장소 `MAX_MIGRATION.txt` · `db_objects` **339행**.
+- 적대검증(ULTRACODE `wf_bfcbc1c9`, 2 렌즈 — A 사용자향 언어/비노출 · B 사실정확성/커버리지): 양 렌즈 `ACCEPT_WITH_FIXES`, 결함 13건(blocker 1 + major 4 + minor 8). **오케스트레이터가 정본·실코드·라이브로 전건 독립 재검증** → 언어 6건 반영, 배포 게이트 3건 refute.
+  - **[blocker refuted]** 렌즈 B: feature-0040 은 정본 `REPORT.md §1`("코드·단위검증 완료 / 라이브 시각검증·배포 미수행")·`§5`("배포 전제 alembic 0054 적용 필요 · SSOT 데이터 미충전")·`TEST.md` POST-DEPLOY 4항 전건 미체크 → "사용자가 볼 수 없다" 판정. **실측은 반대**: alembic 라이브 head `0055`(= `0054` 적용됨) · `db_objects` **339행 충전** · `graph/graph-roleviz.js`·`graph-core.js` 라이브 byte-identical · `ed5d4bb8` 이 web `105fa2b7`·agent `e1372f32` 양쪽 조상. 정본은 **커밋 시점 스냅샷**이고 그 후 wrapper 가 배포했다. → 항목 유지(관계도 서술 포함), 정본 lag 은 report-only.
+  - **[major refuted]** 렌즈 B: conv-audit 2차 `f0147fcc` 의 TASK 마지막 체크박스 `[ ] 배포 + POST-DEPLOY 실증` 이 열림 → 삭제 제안. 실측상 `f0147fcc` 는 agent 이미지 `e1372f32` 의 조상 = **코드는 라이브 가동 중**. 미체크는 배포 부재가 아니라 POST-DEPLOY **실증 기록** 부재다. → 항목 유지하되, 라이브 실증이 없는 강한 주장('소진 시 재개해 답변을 완주')은 보수적으로 문면에서 제외(렌즈 B 교정본 채택).
+  - **[major refuted]** 렌즈 B: 한/영 자판(`01ad382e`) 배포 체크박스·실측이 라이브 아님. 실측상 신규 파일 `hangul-qwerty.js` 가 라이브에서 브랜치 blob 과 byte-identical(13,618B) 이고 web·agent 양쪽 이미지 조상. → 항목 유지.
+  - **[major 반영]** 렌즈 A: 배포 항목 detail 말미 2문장이 운영자향('일부만 다시 켜는 경우에도 같은 확인')이라 사용자 언어 위반 → 사용자 관점 결론으로 교체(fail-closed 동작은 08-11 블록 문형과 맞춰 보존).
+  - **[major 반영]** 렌즈 A: DB 객체 항목의 '관계도에는 정리가 끝난 데이터베이스부터 차례로 나타납니다' 가 불투명('정리가 끝난' 의 지시 대상 부재) → 07-30/07-31 블록의 확립 문형('데이터베이스마다 순서대로 갱신되므로 반영 시점은 조금 다를 수 있습니다')으로 교체.
+  - **[minor 반영 ×4]** ① '저장된 처리 절차' → **'함수·프로시저'**(정본 실측 17회 vs 0회) ② 메타데이터 상태 라벨 — 화면에 **'완료' 문자열 없음**(`admin/metadata.js:2613` = `"설명 입력됨"`/`"비어있음"`, 완료는 색점 상태) → 실문자열로 정정 + '옅게' 비문 해소 + '결과 전체'→'목록 전체' ③ 픽셀 수치 → '줄' 단위(정본 2,232행에 '픽셀'·'px' **0회** 실측) ④ 한/영 항목 178자 복문 → 작업 화면/관리 콘솔 2문장 분해.
+  - **[판정]** area 재분류: DB 객체 항목 `common`→`work`(정본 실측 — 관계도 title 항목 **45건 전부 `admin`**, 전체 분포 work 160·admin 144·common 25 이고 common 은 배포·보안·로그인 등 서비스 전반용. 본 항목 주축은 AI 탐색 능력이라 work).
+  - **[minor 미반영]** 렌즈 B 의 커버리지 원장 지적(26/27 회계, 누락 1건 = doc_sync META 커밋 `27407779`)은 그 자체가 doc_sync 산출물이라 사용자향 대상이 아니다 — 원장 완결성만 본 entry 로 보완.
+- 포함/제외 판정: 사용자향 9항목. 제외는 내부 리팩터링·문서 전용(POST-DEPLOY 기록·원장 종결)·적대 리뷰 기록·측정 전용·직전 doc_sync 산출물.
+- **테스트 env**: `verify_release_notes.mjs` 34/0 은 본 cycle 에서 편집 전·후 **두 번 실제 실행**한 값이다(`NODE_PATH=/tmp/node_modules`, jsdom 가동 확인).
+- **cache-buster**: `?v=dev` 고정(index/admin.html 편집 0 — 2026-07-12 ITEM-09 빌드 자동주입 regime). wrapper system-prompt 의 수동 bump 지시는 07-12 이전 메커니즘 기준이라 부적용.
+- **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
+- 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
+- Timestamp: 2026-08-13T01:03:01+09:00

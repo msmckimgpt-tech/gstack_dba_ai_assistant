@@ -2604,3 +2604,8 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   sticky 도킹 `272 == border edge` · 전각 `＋` 0건. **라이브 데이터 변경 0**(저장 미클릭, 목록 `1건` 불변).
   → Run 1·2 가 이월했던 "라이브 baked 자산" 축을 **종결**.
 - Run 기록 정본: `docs/test-runs.d/20260812T183000-metadata-pane-refresh.md` Run 3.
+## TASK-20260813T010301-doc-sync-rn-0813 — 릴리즈노트 신규 2026-08-12 블록 prepend (비-정책 doc-only)
+- **Environment: Windows-browser (PB-0008)** — 미수행(사유): 본 변경은 사용자향 릴리즈노트 콘텐츠 데이터(`release-notes-data.js`) 신규 date 블록 1개 prepend + `generated` 갱신만이며 렌더 로직(`release-notes.js`)·CSS·HTML 배선 델타 0 이다. 무인 cron 실행이라 인터랙티브 Windows 브라우저 브리지가 가동되지 않고, 배포는 wrapper(v3) post-merge 소관이라 이 커밋 시점에 라이브 자산이 존재하지 않는다. 대체 검증: `node --check` PASS · 구조검증(releases 46→47 · head 9항목 · 기존 46 블록 전량 보존 · type/area enum 위반 0) · `tests/verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 동일 = 회귀 0).
+- `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(이 env 에서 편집 전·후 두 번 실측). 구조: releases 46→47, `generated`==`releases[0].date`==2026-08-12, 기존 블록 전량 보존, type/area enum 위반 0, 스키마 외 키 0, 내부용어 누출 0(22 패턴). 렌더러·CSS 무변경이므로 PB-0008 신규 실측 불요(데이터 블록 추가는 기존 그룹 렌더 경로 재사용).
+- 라이브 파리티 실측(배포 게이트 확증): 서빙 static 6종(`hangul-qwerty.js`·`admin/products.js`·`graph/graph-roleviz.js`·`graph/graph-core.js`·`app/attach-diff.js`·`admin/metadata.js`)이 라이브(`https://localhost:443/static/...`)에서 브랜치 blob 과 byte-identical(`?v=` 정규화 후), `/healthz` 200, 이미지 web `105fa2b7` · agent `e1372f32`, alembic 라이브 head `0055`(= `MAX_MIGRATION.txt`), `db_objects` 339행.
+- **Pass/Fail: PASS**. CHECK#13 충족(Environment 표기 + 미수행 사유 + 대체 검증 명시).

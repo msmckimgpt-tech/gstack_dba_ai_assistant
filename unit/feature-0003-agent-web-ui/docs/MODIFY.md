@@ -3623,3 +3623,14 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/20260812T183000-metadata-pane-refresh.md`(Run 3),
   `docs/evidence/pb0008-metadata-pane-refresh-postdeploy-20260812.png`.
 - Timestamp: 2026-08-12T20:05:00+09:00
+## CHG-20260813T010301-doc-sync-rn-0813 (2026-08-12 블록) 릴리즈노트 콘텐츠 — 신규 1블록 9항목 prepend(한/영 자판 검색 · 말풍선 칩 ⇄ · DB 객체 탐색 · 첨부 `.md` 렌더 · 메타데이터 pane · DB 추가 목록 밀림 · 일시 장애 보존 · 긴 대화 최신행 · 배포 중 답변 끊김)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`) 최상단에 신규 date "2026-08-12" 블록(9 items: new/common 1 · new/work 2 · improved/work 1 · improved/admin 1 · fixed/admin 1 · fixed/work 2 · fixed/common 1) prepend + `generated` "2026-08-11"→"2026-08-12". 기존 46 블록 전량 보존(releases 46→47). 그 배포일 블록이 부재했으므로 append 아닌 신규 블록.
+- 평이화/비노출: feature-id·§번호·PR#·commit sha·모듈/함수/파일명·테이블명·내부 설정키·ADR·PB-0008·인프라 용어(replica/gateway/worker/quiesce/OAuth/SSE/MCP/SSOT/alembic)·픽셀 단위 누출 **0**(22 패턴 정규식 기계 검증).
+- 적대검증 반영 6건(렌즈 A 언어): ① 배포 항목의 운영자향 2문장 제거(사용자 관점 결론으로 닫음) ② '저장된 처리 절차'→정본 릴리즈노트가 실제로 쓰는 **'함수·프로시저'**(정본 17회, '저장된 처리 절차' 0회) + 관계도 반영 시점 hedge 를 07-30/07-31 블록의 확립 문형으로 교체 ③ 메타데이터 상태 라벨을 실코드 문자열로 정정(`admin/metadata.js:2613` = `"설명 입력됨"`/`"비어있음"`, **화면에 '완료' 라벨 없음** — 색점 3단이라 그대로 서술) + '옅게' 비문 해소 ④ 픽셀 수치(38/114px)를 '줄' 단위로 환산(정본 릴리즈노트 2,232행에 '픽셀'·'px' **0회** — 문체 선례 부재) ⑤ 한/영 항목 178자 단일 복문을 작업 화면/관리 콘솔 2문장으로 분해 ⑥ DB 객체 항목 area `common`→**`work`**(정본 통계: 관계도 title 항목 45건 전부 `admin`, AI 조회·답변 능력은 `work` 표준. 본 항목 주축은 AI 탐색이라 work).
+- **적대검증 refute 3건(배포 게이트) — 물리 실측이 정본 문면을 정정**: 렌즈 B 가 ⓐ feature-0040 을 blocker('REPORT §1 배포 미수행 · §5 SSOT 데이터 미충전')로, ⓑ conv-audit 2차(`f0147fcc`)를 major(TASK 배포 체크박스 열림)로, ⓒ 한/영 자판을 major(배포 체크박스·실측이 라이브 아님)로 지목했으나 **라이브 실측은 전부 반대**였다 — alembic 라이브 head `0055_tool_call_usage`(= 저장소 `MAX_MIGRATION.txt`, 즉 `0054_db_objects` **적용됨**) · `db_objects` **339행 충전**(미충전 아님) · 서빙 static 6종 브랜치 blob 과 byte-identical · 근거 커밋 전건이 라이브 이미지(web `105fa2b7` / agent `e1372f32`)의 조상. 즉 정본 REPORT/TASK 는 **커밋 시점 스냅샷**이고 그 뒤 wrapper 가 배포했다(정본 lag = feature-cycle 소관, report-only). 다만 실증되지 않은 동작 주장(2차의 '소진 시 재개해 답변 완주')은 보수적으로 문면에서 제외했다.
+- 캐시버스터 수기 bump 없음(빌드 주입 메커니즘 — ITEM-09). `index.html`/`admin.html` 무변경.
+- Verification: `node --check` PASS · `verify_release_notes.mjs` **34 pass / 0 fail**(편집 전 baseline 동일) · 블록 순서(47 · head=2026-08-12)·항목 enum·스키마 외 키 0·기존 블록 보존·`generated`==head.date 확인 · 내부용어 누출 0.
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
+- Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
+- Timestamp: 2026-08-13T01:03:01+09:00
