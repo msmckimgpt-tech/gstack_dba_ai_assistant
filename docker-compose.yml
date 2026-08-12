@@ -661,7 +661,26 @@ services:
     networks: [dbnet, llm-shared]
     # feature-0020: 재배포 시 in-flight LLM 호출 drain 여유(litellm=uvicorn 이 SIGTERM 에
     # graceful — 신규 수락 중단 + 진행 요청 완료). 기본 10s 면 장시간 LLM 호출이 SIGKILL.
-    stop_grace_period: 120s
+    #
+    # conv-audit FR-llm-transient-failure-kills-run (2026-08-12) — 120s → 330s.
+    # 120s 는 실측 분포 **안쪽**이었다: 30일 대화 LLM 라운드 1,210건 중 **120초 초과 96건(7.9%)**
+    # (p50 11.3s · p95 181.8s). 즉 배포가 게이트웨이를 recreate 할 때마다 진행 중이던 라운드의
+    # 약 8%가 grace 만료 SIGKILL 로 죽었고, 앱은 그 예외로 run 을 통째로 폐기했다. 2026-08-12
+    # 사고에서는 사용자가 7분 40초를 기다린 끝에 도구 10회 분량 조사가 전부 사라졌다
+    # (구 컨테이너 SIGTERM 11:00:05 → SIGKILL 11:02:05 = 정확히 120s).
+    # 330s = 현행 운영값 AGENT_TIMEOUT_SEC(300s) + 여유 30s — 연장 미승인 run 의 단일 호출은
+    # 어차피 클라이언트가 300s 에 컷하므로 이 값이면 사실상 전부 drain 된다.
+    # **정직한 한계(§18.8 패널 P1-3)**: `AGENT_TIMEOUT_SEC` 은 관리 콘솔에서 최대 3600s 까지
+    # 올릴 수 있고, 사용자가 타임아웃 연장을 승인한 run 은 per-call 상한이 900s 다. 그 구간의
+    # 호출은 **이 grace 로 덮이지 않는다** — grace 를 3600s 로 키우면 배포가 한 시간 멎을 수
+    # 있어 오답이다. 덮이지 않는 구간은 앱 층 재시도가 backstop 이며, 운영값이 grace 를 넘기면
+    # `bin/deploy-web.sh` 의 gateway reconcile 이 배포 때마다 경고한다(드리프트 표면화).
+    # **배포 지연 비용은 조건부다**: uvicorn 은 in-flight 가 끝나는 즉시 종료하므로 한산할 때는
+    # 종전과 같고, 긴 호출이 있을 때만 그만큼 기다린다. 그 대기 동안 신규 요청은 surge replica
+    # 가 DNS alias 로 흡수하므로 사용자 무중단은 유지된다(아래 bedrock-gateway-surge 참조).
+    # 이 값을 넘겨 죽는 호출(연장 승인 run 등)은 앱 층 일시 실패 재시도가 흡수한다
+    # (shared/config.py AGENT_LLM_TRANSIENT_RETRY_* — 두 층이 함께여야 봉인이 닫힌다).
+    stop_grace_period: 330s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health/liveliness',timeout=2).status==200 else 1)"]
       interval: 10s
@@ -698,7 +717,11 @@ services:
       - "/app/config.yaml"
       - "--port"
       - "8080"
-    stop_grace_period: 120s
+    # conv-audit FR-llm-transient-failure-kills-run: 본체와 **대칭**으로 330s. surge 는 본체가
+    # healthy 해진 뒤 stop 되는데, 그 시점에도 surge 에 붙은 in-flight LLM 호출이 남아 있을 수
+    # 있다(교체 창에 들어온 요청이 곧 surge 로 갔으므로 오히려 젊은 요청들이다). 여기만 120s 로
+    # 두면 본체 쪽 구멍을 막고 surge 쪽에 같은 구멍을 남기는 셈이다.
+    stop_grace_period: 330s
     networks:
       dbnet:
         aliases: [bedrock-gateway]

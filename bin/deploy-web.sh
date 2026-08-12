@@ -917,8 +917,29 @@ sweep_leaked_surge() {
   fi
 }
 
+# conv-audit FR-llm-transient-failure-kills-run (§18.8 패널 P1-3): gateway 를 recreate 하면
+# 진행 중 LLM 호출은 구 컨테이너의 `stop_grace_period` 안에 끝나야 살아남는다. 운영자가 관리
+# 콘솔/`.env` 에서 `AGENT_TIMEOUT_SEC` 를 grace 보다 크게 올리면 그 초과분은 **매 배포마다
+# SIGKILL** 되는데, compose 값은 정적이라 아무도 그 드리프트를 알려주지 않는다. 배포 때마다
+# 표면화한다(경고만 — 배포를 막지는 않는다. 앱 층 재시도가 backstop 이므로 치명이 아니다).
+gateway_grace_drift_warn() {
+  local grace_raw grace_sec to_sec
+  grace_raw="$(sed -n '/^  bedrock-gateway:/,/^  [a-z]/p' docker-compose.yml \
+                 | sed -n 's/^[[:space:]]*stop_grace_period:[[:space:]]*\([0-9]*\)s.*/\1/p' | head -1)"
+  [ -n "$grace_raw" ] || return 0
+  grace_sec="$grace_raw"
+  to_sec="$(sed -n 's/^AGENT_TIMEOUT_SEC=\([0-9]*\).*/\1/p' .env 2>/dev/null | tail -1)"
+  [ -n "$to_sec" ] || return 0
+  if [ "$to_sec" -ge "$grace_sec" ] 2>/dev/null; then
+    warn "gateway stop_grace_period=${grace_sec}s < AGENT_TIMEOUT_SEC=${to_sec}s — 이 배포에서 진행 중인"
+    warn "  장시간 LLM 호출이 SIGKILL 될 수 있습니다(앱 층 일시 실패 재시도가 흡수하지만, 재시도"
+    warn "  상한을 넘기면 사용자 요청이 실패합니다). compose grace 를 올리거나 타임아웃을 낮추세요."
+  fi
+}
+
 deploy_gateway_reconcile() {
   step "bedrock-gateway reconcile (드리프트 시에만 surge 무중단 교체)"
+  gateway_grace_drift_warn
   [ -f "$GATEWAY_CONFIG_FILE" ] || { warn "gateway config 없음($GATEWAY_CONFIG_FILE) — reconcile skip."; return 0; }
   local cid cfg_now cfg_rec cfg_run img_run img_local drift=""
   cid="$("${DC[@]}" ps -q "$GATEWAY_SERVICE" 2>/dev/null | head -1)"

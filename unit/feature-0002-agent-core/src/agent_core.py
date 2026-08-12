@@ -37,6 +37,11 @@ from shared.config import (
     MEMORY_DB, AGENT_TIMEOUT_SEC, AGENT_MAX_STEPS, AGENT_MAX_SHOW,
     AGENT_LOG_DIR, AGENT_MEMORY_CLEAR_KEEP_IDS,
     AGENT_OPENAI_MAX_RETRIES,
+    # conv-audit FR-llm-transient-failure-kills-run: 대화 루프 LLM 일시 실패 재시도 knob.
+    AGENT_LLM_TRANSIENT_RETRY_MAX,
+    AGENT_LLM_TRANSIENT_RETRY_BASE_SEC,
+    AGENT_LLM_TRANSIENT_RETRY_MAX_SEC,
+    AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC,
 )
 from shared.db import connect_with_retry, execute_sql as raw_execute_sql, DatasourceCircuitOpen
 from modules.memory import (
@@ -65,6 +70,12 @@ from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_genera
 # FR-summary-writer-disconnected: 답변 후 큐레이션에서 대화 요약을 갱신한다(alias 로 노출해
 # 테스트가 agent_core 심볼 하나만 patch 하면 되도록 — 다른 큐레이션 호출과 동일 패턴).
 from modules.llm import refresh_conversation_summary as _refresh_conversation_summary
+# conv-audit FR-llm-transient-failure-kills-run: 실패 분류 정본은 modules.llm 하나만 둔다
+# (노드 분석 경로와 동일 구조) — 어휘가 두 곳으로 갈라지면 한쪽만 갱신되는 drift 가 난다.
+from modules.llm import (
+    classify_agent_llm_failure as _classify_agent_llm_failure,
+    FAILURE_TRANSIENT as _LLM_FAILURE_TRANSIENT,
+)
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary, read_csv_preview
 from modules.tools import (
@@ -4564,6 +4575,61 @@ def _cancel_requested_for_run(conn, conversation_id: str, run_id: str) -> bool:
         return False
 
 
+# ── 대화 루프 LLM 일시 실패 재시도 (conv-audit FR-llm-transient-failure-kills-run) ──────
+# 왜 여기(메인 루프)에만 다는가: `_call_llm` 자체나 red-team 재작성 경로에 달지 않는다.
+# 그 경로들은 실패해도 **초안이 살아남는** fail-soft 라(예외를 삼키고 초안을 그대로 전달),
+# 거기서 재시도로 몇 초를 더 쓰면 이미 완성된 답변의 전달만 늦춘다 — 그건 이 원장의
+# `FR-redteam-first-pass-unabortable` 이 고친 마찰을 되살리는 방향이다. 반면 메인 루프의
+# 실패는 **terminal** 이다: run 이 그 자리에서 끝나고 누적 도구 결과 전량이 폐기된다.
+# 비대칭은 오류가 아니라 이 차이에 대한 의도적 대응이다.
+_LLM_RETRY_CANCEL_POLL_SEC = 1.0
+
+
+def _llm_retry_backoff_sec(attempt: int) -> float:
+    """attempt(1-based)의 대기 시간 — 지수 backoff, 상한 clamp. 0 이면 즉시 재호출."""
+    base = max(0.0, float(AGENT_LLM_TRANSIENT_RETRY_BASE_SEC))
+    if base <= 0.0:
+        return 0.0
+    wait = base * (2.0 ** max(0, int(attempt) - 1))
+    cap = max(0.0, float(AGENT_LLM_TRANSIENT_RETRY_MAX_SEC))
+    return min(wait, cap) if cap > 0.0 else wait
+
+
+# 실패한 시도가 per-attempt 상한의 이 비율 이상을 태웠으면, 분류 어휘와 무관하게 "느린 실패"로
+# 보고 headroom 게이트를 적용한다(§18.8 패널 P1-1). 어휘 매칭만으로는 게이트웨이가 502/504 나
+# 빈 응답으로 뭉갠 **오래 걸린** 실패를 놓치는데, 그 재시도야말로 예산을 한 번 더 통째로 태운다.
+# 측정은 어휘와 달리 provider 문구가 바뀌어도 drift 하지 않는다.
+_LLM_SLOW_FAILURE_RATIO = 0.5
+
+
+def _llm_retry_allowed(failure: dict, attempt: int, *,
+                       remaining_budget_sec: "float | None",
+                       per_attempt_timeout_sec: "float | None",
+                       attempt_elapsed_sec: "float | None" = None) -> bool:
+    """이 실패를 **같은 라운드 재호출**로 흡수할지 판정한다.
+
+    attempt = 이번에 시도하려는 재시도 회차(1-based). remaining_budget_sec=None 이면 예산
+    무제한(사용자가 타임아웃 연장을 승인한 run) — headroom 게이트를 적용하지 않는다.
+    attempt_elapsed_sec = 방금 실패한 시도가 실제로 태운 시간(미전달이면 어휘 판정만 사용).
+    """
+    if attempt > max(0, int(AGENT_LLM_TRANSIENT_RETRY_MAX)):
+        return False
+    if str((failure or {}).get("kind") or "") != _LLM_FAILURE_TRANSIENT:
+        return False
+    _cap = float(per_attempt_timeout_sec or 0.0)
+    _slow = (
+        attempt_elapsed_sec is not None and _cap > 0.0
+        and float(attempt_elapsed_sec) >= _cap * _LLM_SLOW_FAILURE_RATIO
+    )
+    if (failure or {}).get("timeout_class") or _slow:
+        need = float(AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC)
+        if need <= 0.0:
+            need = _cap
+        if remaining_budget_sec is not None and need > 0.0 and remaining_budget_sec < need:
+            return False
+    return True
+
+
 # feature-0030: 연장이 푸는 것은 **run 전체 예산**이지 개별 LLM 호출이 아니다.
 # 단일 호출을 몇 시간 열어두면 그동안 루프가 한 바퀴도 돌지 않아 '중단'·'즉시 답변'·
 # lease fencing·max_steps 가 전부 무응답이 된다 — 승인의 대가로 탈출구를 잃는 셈
@@ -5704,10 +5770,17 @@ def _run_agent_core(
     # (AGENT_TIMEOUT_SEC)을 ask() 진입 시점에 읽어 반영한다. 정적 config.AGENT_TIMEOUT_SEC(import
     # 시 고정)를 쓰면 콘솔에서 값을 올려도 client 가 옛 값에서 조기 컷 → per-request body timeout(live)
     # 과 어긋난다. _call_llm 의 body timeout 과 동일 소스를 읽어 총-대기와 per-attempt 를 정합화.
+    # conv-audit FR-llm-transient-failure-kills-run (§18.8 패널 P2-2): **대화 경로의 재시도
+    # 주체는 앱 층 하나뿐이다** — SDK 층 재시도를 겹치면 (a) 한 라운드가 SDK n회 × 앱 m회로
+    # 곱해져 장애 창에 provider 호출이 증폭되고 (b) 총-대기가 per-attempt 상한의 배수가 되어
+    # 취소·'즉시 답변'·lease fencing 이 그 사이 전부 무응답이 된다(= 콘솔 AGENT_TIMEOUT_SEC 이
+    # 곧 총-대기라는 feature-0007 계약 파기). 운영자가 `AGENT_LLM_MAX_RETRIES` 를 올려도 이
+    # 클라이언트는 0 을 유지하고, 재시도 강도는 `AGENT_LLM_TRANSIENT_RETRY_*` 로만 조절한다.
+    # (insight/분석 등 비대화 경로의 클라이언트는 종전대로 그 knob 을 따른다 — modules/llm.py.)
     client = OpenAI(
         **client_kwargs,
         timeout=max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC"))),
-        max_retries=max(0, int(AGENT_OPENAI_MAX_RETRIES)),
+        max_retries=0,
     )
 
     # ── 대화 ID 관리 ──
@@ -6457,19 +6530,104 @@ def _run_agent_core(
             if _prev_llm_end_ns is not None else None
         )
         _LLM_LAST_PROVIDER_MS.set(None)   # infdetail: 직전 라운드 값 재사용 방지
-        try:
-            response_message = _call_llm(
-                client, messages, model,
-                temperature=temperature,
-                tools=use_tools,
-                conversation_id=cid,  # TASK-0163: race-free 토큰 귀속 (in-process 동시 ask)
-                run_id=run_id,
-                step_gap_ms=_step_gap_ms,
-                reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
-                timeout_override=_ext_llm_timeout,  # feature-0030: 연장 승인 시 per-attempt 확장
+        # conv-audit FR-llm-transient-failure-kills-run: 일시 전송 실패는 **같은 라운드를 다시**
+        # 부른다. `messages` 는 손대지 않으므로 지금까지의 도구 결과·추론이 전부 보존되고,
+        # 재시도가 성공하면 사용자 입장에서 유실은 0 이다(라이브 사고에서는 게이트웨이가 실패
+        # 1.2초 뒤 정상이었다). 재시도 대기 중에도 취소를 매 초 검사한다 — 대기가 새로운
+        # 사각지대가 되지 않게(`FR-redteam-first-pass-unabortable` 의 교훈).
+        _llm_retry_n = 0
+        _llm_defer_to_outer = False   # 패널 P1-2: '즉시 답변' 은 바깥 루프가 정본으로 처리한다
+        while True:
+            _llm_exc: "Exception | None" = None
+            _attempt_t0 = time.perf_counter()
+            try:
+                response_message = _call_llm(
+                    client, messages, model,
+                    temperature=temperature,
+                    tools=use_tools,
+                    conversation_id=cid,  # TASK-0163: race-free 토큰 귀속 (in-process 동시 ask)
+                    run_id=run_id,
+                    step_gap_ms=_step_gap_ms,
+                    reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
+                    timeout_override=_ext_llm_timeout,  # feature-0030: 연장 승인 시 per-attempt 확장
+                )
+                _prev_llm_end_ns = time.perf_counter_ns()  # 이 라운드 LLM 종료 시각 → 다음 라운드 gap 기산점
+            except Exception as _e_round:
+                _llm_exc = _e_round
+            if _llm_exc is None:
+                break
+            _attempt_elapsed = time.perf_counter() - _attempt_t0
+            # per-attempt 상한(연장 승인 시 확장값) — timeout 계열 재시도의 headroom 기준.
+            try:
+                _per_attempt = float(_ext_llm_timeout or max(5, int(_rts.get_int("AGENT_TIMEOUT_SEC"))))
+            except Exception:
+                _per_attempt = float(_ext_llm_timeout or 300)
+            # 연장이 승인된 run 은 예산 컷 자체가 없다 → headroom 무제한(None).
+            _remaining = None if _ext_granted else max(
+                0.0, run_timeout_sec - (time.perf_counter() - run_start)
             )
-            _prev_llm_end_ns = time.perf_counter_ns()  # 이 라운드 LLM 종료 시각 → 다음 라운드 gap 기산점
-        except Exception as e:
+            _fail = _classify_agent_llm_failure(_llm_exc)
+            if not _llm_retry_allowed(_fail, _llm_retry_n + 1,
+                                      remaining_budget_sec=_remaining,
+                                      per_attempt_timeout_sec=_per_attempt,
+                                      attempt_elapsed_sec=_attempt_elapsed):
+                break
+            # ── 탈출구 우선(§18.8 패널 P1-2/P2-1) ───────────────────────────────
+            # 사용자가 이미 중단을 눌렀으면 재시도하지 않는다.
+            if _cancel_requested_for_run(mem_conn, cid, run_id):
+                canceled_by_user = True
+                break
+            # '즉시 답변' 은 여기서 소비하지 않는다 — 소비하면 바깥 루프의 finalize 처리
+            # (도구 끄기 + "지금까지 모은 정보로 최종 답변" system turn)가 건너뛰어지고,
+            # **도구를 켠 원래 라운드를 그대로 다시** 부르게 된다(장시간 호출 재개시).
+            # 바깥 루프로 넘겨 그쪽이 정본대로 마무리하게 한다.
+            try:
+                if _finalize_seen["hit"] or _finalize_requested(mem_conn, cid, run_id):
+                    _llm_defer_to_outer = True
+                    break
+            except Exception:
+                pass
+            _llm_retry_n += 1
+            _emit_activity(
+                f"LLM 연결이 일시적으로 끊겨 재연결하는 중 "
+                f"({_llm_retry_n}/{max(0, int(AGENT_LLM_TRANSIENT_RETRY_MAX))}) — "
+                f"지금까지 조사한 내용은 그대로 유지됩니다"
+            )
+            logger.warning(
+                "llm_transient_retry conv=%s run=%s round=%s attempt=%s kind=%s tag=%s "
+                "timeout_class=%s attempt_elapsed=%.1fs",
+                cid, run_id, llm_round, _llm_retry_n,
+                _fail.get("kind"), _fail.get("tag"), _fail.get("timeout_class"), _attempt_elapsed,
+            )
+            _wait_left = _llm_retry_backoff_sec(_llm_retry_n)
+            while _wait_left > 0.0:
+                if _cancel_requested_for_run(mem_conn, cid, run_id):
+                    canceled_by_user = True
+                    break
+                _tick = min(_LLM_RETRY_CANCEL_POLL_SEC, _wait_left)
+                time.sleep(_tick)
+                _wait_left -= _tick
+            if canceled_by_user:
+                break
+            # 패널 P2-1: backoff 마지막 tick 뒤에 도착한 중단 신호는 위 루프가 못 본다. 바로 다음
+            # 줄이 최대 per-attempt(수 분) 블로킹 호출이므로 여기서 한 번 더 본다.
+            if _cancel_requested_for_run(mem_conn, cid, run_id):
+                canceled_by_user = True
+                break
+            try:
+                if _finalize_seen["hit"] or _finalize_requested(mem_conn, cid, run_id):
+                    _llm_defer_to_outer = True
+                    break
+            except Exception:
+                pass
+        if canceled_by_user:
+            break
+        if _llm_defer_to_outer:
+            # 바깥 루프 진입부가 finalize 를 소비해 도구 없는 마무리 라운드로 전환한다.
+            # step_count 는 증가시키지 않았으므로 한 바퀴만 더 돈다(무한 루프 없음).
+            continue
+        if _llm_exc is not None:
+            e = _llm_exc
             error_msg = f"LLM 호출 오류: {e}"
             # TASK-20260619T014034: 외부요인(자격증명 만료·인증실패·쓰로틀·서비스불가)이면
             # raw 예외 대신 사용자 친화 메시지로 치환 + provider health 에 passive 기록.
@@ -6491,10 +6649,12 @@ def _run_agent_core(
                 console.print(Panel.fit(error_msg, title="오류"))
             break
         else:
-            # infdetail(§18.8 패널 MINOR-1): 누산은 **성공 분기(else)** 에서 한다. try 본문 안에
-            # 두면 여기서 난 예외가 위 `except` 로 잡혀 성공한 라운드가 provider 오류로 둔갑하고
-            # run 이 중단된다(계측이 답변을 깨는 것은 금지). 값은 provider 왕복만 — 래퍼 오버헤드는
-            # 의도적으로 other_ms(오케스트레이션)에 남긴다.
+            # infdetail(§18.8 패널 MINOR-1): 누산은 **성공 분기** 에서만 한다. LLM 호출 try 본문
+            # 안에 두면 여기서 난 예외가 위 재시도 루프의 `except` 로 잡혀 성공한 라운드가
+            # provider 오류로 둔갑하고 run 이 중단된다(계측이 답변을 깨는 것은 금지). 값은
+            # provider 왕복만 — 래퍼 오버헤드는 의도적으로 other_ms(오케스트레이션)에 남긴다.
+            # (재시도가 있었어도 누산 대상은 **성공한 마지막 시도** 한 번뿐 —
+            #  `_LLM_LAST_PROVIDER_MS` 는 호출마다 덮어써지므로 실패분이 섞이지 않는다.)
             try:
                 _inf_add_llm(_LLM_LAST_PROVIDER_MS.get())
             except Exception:
