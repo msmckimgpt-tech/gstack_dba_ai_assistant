@@ -3349,3 +3349,15 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md`,
   `docs/evidence/attach-diff-bubble-chip/*.png`.
 - Timestamp: 2026-08-11T18:45:00+09:00
+
+## CHG-20260812T0030-ai-claude-corp-attach-diff-bubble-chip-postdeploy — POST-DEPLOY 라이브 실측 기록 (doc-only)
+
+- **What**: PR #1215 머지(main `eac20796`) → `deploy-web --web-only` 후 라이브에서 말풍선 칩
+  `⇄` → diff 패널을 재실측하고 fragment Run 2 · TEST.md 에 기록. 코드 변경 0.
+- **파리티 실측**: web-a/web-b 양쪽 `mysql-ai-web:eac20796` healthy · 서빙 `messages.js` 가 main
+  blob 과 byte-identical(`?v=` 정규화, 스탬프 `73f92614ff4d`) · `chat.css` `.attach-chip-cmp` 4 hit.
+- **결과**: 칩 4 · `⇄` 4(20×17px) · 클릭 → 모달 1개 `v1 ↔ v2`(옵션 7 · `+1 / -0` · 행 6) ·
+  페이지 이동 0 · pageerror 0 — **배포 전 bind-mount 프리뷰 결과와 차이 0**.
+- Files: `docs/{TASK,TEST,MODIFY}.md`, `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md`,
+  `docs/evidence/attach-diff-bubble-chip/04-postdeploy-live-diff-modal.png`.
+- Timestamp: 2026-08-12T00:30:00+09:00
