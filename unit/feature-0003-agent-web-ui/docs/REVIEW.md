@@ -4158,3 +4158,15 @@ escape 를 걸지 않았고**, 그 동작을 이번 cycle 에서 바꾸지 않�
   mjs 53 파일 전건 green · pytest 1,390 PASS(feature-0003+0023) · 실 Chrome 재확인
   (columns 모드 title 3종·입력란 시작 x 편차 0.00px·페이지 전체 전각 `＋` 0건·halo 파생 해소).
 - Human Approval Needed: no (P1 0 · 표시 계층 · 승인 항목 §12 해당 0)
+
+## REV-20260812T200500-ai-root-metadata-pane-refresh-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+- Trigger: doc-only (TASK/TEST/MODIFY + fragment Run 3 + 증거 1매). 코드·정책 doc 변경 0 →
+  §18.8 표 첫 행(비정책 doc-only) 적용, panel skip.
+- 근거 실측: 라이브 배포본(main `e250dad7`, 양 replica `mysql-ai-web:e250dad7`)에서 실 Chrome/150
+  으로 전 축 재확인 — **프리뷰와 차이 0**(열 정렬 0.00px/30행 · sticky 272==border edge · 토큰
+  파생 halo 정상 해소 · 상태 3단 전이 · 전각 `＋` 0). 엣지 `no upstreams available` 0건.
+  Run 1·2 가 이월했던 **라이브 baked 자산 축을 종결**했다 — JS/HTML 변경 cycle 이라 이 Run 이
+  없으면 완료 판정이 격리 컨테이너 근거에만 의존한다(§16.3 deploy-backed 완료 기준).
+- 서버 정본 무변경(저장 미클릭 — 테이블 설명 목록 `1건` 불변).
+- Human Approval Needed: no

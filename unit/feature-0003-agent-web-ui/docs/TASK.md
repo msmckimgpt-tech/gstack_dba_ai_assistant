@@ -9851,3 +9851,18 @@ rmffhqjf = 글로벌 - tmzlem = 스키드 - 등…"
   재구성" — ✓ (통합 표 편집기 패턴으로 재조립. "다른 화면에 비해" 를 **토큰·계약 미사용 8건**으로
   환원해 각각 정본 계약에 붙였고, 실 Chrome 에서 열 정렬 편차 0.00px·halo 동치·상태 dot 전이를
   실측. 사용자가 지정한 범위 = pane 전체)
+
+## 20260812T2005-metadata-pane-refresh-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+선행 cycle(`20260812T1739-metadata-pane-refresh`)이 이월한 **라이브 baked 자산 검증**을 종결한다.
+
+- [x] PR #1231 머지 → main `e250dad7` → `make deploy-web-only`(soak 통과 · 무중단 실측 0건)
+- [x] 배포 파리티 — 양 replica `mysql-ai-web:e250dad7` · 스탬프 `06bd063c9b98` · 서빙 HTML 열 헤더 존재
+- [x] 라이브 전 축 재실측 — 프리뷰와 **차이 0**(열 정렬 0.00px/30행 · sticky 272==border edge ·
+      halo 토큰 파생 해소 · 상태 3단 전이 · `D2Coding` · 버튼 nowrap · 전각 `＋` 0)
+- [x] 라이브 데이터 변경 0(저장 미클릭 · 목록 `1건` 불변)
+- [x] fragment Run 3 append + TEST/MODIFY/REVIEW 기록 + 증거 1매
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 이월 종결 — ✓ (라이브 배포본 실측 PASS, 프리뷰 대비 차이 0)
