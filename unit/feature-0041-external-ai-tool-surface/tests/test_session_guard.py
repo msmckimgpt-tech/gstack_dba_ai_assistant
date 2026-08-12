@@ -14,7 +14,8 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..",
+                                "feature-0003-agent-web-ui", "src"))
 
 import session_guard as sg  # noqa: E402
 

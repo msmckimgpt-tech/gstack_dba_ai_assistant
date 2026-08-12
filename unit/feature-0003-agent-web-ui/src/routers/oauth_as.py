@@ -17,14 +17,12 @@ Bearer 토큰과 갈리는 지점은 하나다: **신원이 우리 로그인 세
 ## 이 파일이 하지 않는 것
 
 보안이 걸린 상태 전이(코드 1회 소비·3요소 결합·PKCE·rotation/reuse·redirect 정책)는 전부
-`unit/feature-0041-external-ai-tool-surface/src/oauth_store.py` 에 있다. 여기는 HTTP 를 그 함수
+같은 디렉터리의 `oauth_store.py` 에 있다. 여기는 HTTP 를 그 함수
 호출로 옮기고 오류를 RFC 형태로 렌더할 뿐이다 — 그래야 그 계약을 fake 커서로 전수 검증할 수 있다.
 """
 from __future__ import annotations
 
-import sys
 import urllib.parse
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -35,11 +33,11 @@ import app
 INCLUDE_ORDER = 9_400  # ai_discovery(9_500) 직전 — /api/ai/* 네임스페이스 인접
 router = APIRouter()
 
-_FEATURE_SRC = str(Path(__file__).resolve().parents[3]
-                   / "feature-0041-external-ai-tool-surface" / "src")
-if _FEATURE_SRC not in sys.path:
-    sys.path.insert(0, _FEATURE_SRC)
-
+# feature-0041 서버측 모듈은 **이 디렉터리**(= 컨테이너 `/app/web`)에 있다.
+# 초기 구현은 feature-local `unit/feature-0041-.../src` 에 두고 sys.path 를 주입했는데,
+# agent 이미지가 그 경로를 COPY 하지 않아 라이브 기동이 ModuleNotFoundError 로 죽었다
+# (Dockerfile 은 feature-0002/0003/shared 만 복사). 소비자가 feature-0003 라우터뿐이므로
+# 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import oauth_store as _store  # noqa: E402
 
 

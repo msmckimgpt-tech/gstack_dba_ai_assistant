@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..",
+                                "feature-0003-agent-web-ui", "src"))
 
 import oauth_store as os_  # noqa: E402
 
