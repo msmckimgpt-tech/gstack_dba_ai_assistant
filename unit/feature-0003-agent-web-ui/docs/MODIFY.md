@@ -3361,3 +3361,34 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - Files: `docs/{TASK,TEST,MODIFY}.md`, `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md`,
   `docs/evidence/attach-diff-bubble-chip/04-postdeploy-live-diff-modal.png`.
 - Timestamp: 2026-08-12T00:30:00+09:00
+
+## CHG-20260812T172625-ai-claude-corp-db-picker-layout-stability — '+ 데이터베이스 추가' 목록 위치 안정성 (Minor §12.3, frontend-only)
+
+- **Why**: 사용자 보고 — "참조할 DB 목록에서 체크박스를 활성화/비활성화 할 때, 추가/제거되는
+  요소에 따라 목록의 위치가 상대적으로 밀려나는 현상이 나타나 사용하기 번거롭습니다."
+- **기전**: `.cov-db-editor` 가 `[등록 DB 목록] → [picker]` 순서라, 체크 한 번마다
+  `redrawChips()` 가 **위쪽** 목록에 행을 더해 열려 있는 드롭다운을 밀었다. 실 chromium 실측
+  단일 38.3px · 해제 37.4px · 연속 3회 114.3px · 정규식 일괄 114.3px — 항목 행 높이(29px)보다
+  커서 다음 클릭이 **다른 DB 에 떨어진다**. 같은 결함이 `+ 데이터소스 추가` 에도 있었다(42px).
+- **What**: ① 두 picker 를 각자의 재구성 대상 **앞**으로 이동(`dbEditorWrap` = picker →
+  chipWrap · `dbSection.insertBefore(addRow, dsAccordion)`) — 흐름상 위가 안 바뀌면 아래가 밀
+  방법이 없다. 스크롤 보정 방식은 scrollTop=0 구간에서 원리적으로 실패해 불채택. ② degraded
+  배너 삽입점을 picker 위 → 목록 위(비동기 배너가 같은 밀림을 재생산하지 않게). ③ 선택 카운트
+  (`선택됨 N개`, `role=status`)를 검색 toolbar 노출 임계 미만에서도 상시 렌더. ④ 두 picker 의
+  드롭다운 내부 `scrollTop` 을 재구성 전후로 보존(필터 적용 뒤 복원). ⑤ `.admin-db-picker-list`
+  `max-height` 220px → `min(50vh, 420px)`(sticky toolbar 112px 가 절반을 먹어 후보 130개 중
+  3~4행만 보이던 것 → 10행). ⑥ 빈 상태 안내의 방향 지시어를 "아래에서" → "위 '+ … 추가' 에서"
+  (등록 DB 목록 + 바인딩 없는 datasource 2곳).
+- **Verification**: 신규 하네스 2종 — jsdom 25(순서 + **토글 시 picker 상류 마크업 불변** +
+  방향 지시어 census, 순서 되돌림 뮤테이션 역검증) · 실 chromium 13(축마다 뮤테이션 역검증으로
+  38~115px 재현). 기존 feature-0003 mjs **53 suite 전건 PASS** · pytest 4,287 수집 EXIT=0
+  (사전 실패 `test_oauth_exhaustion_gate` = `chattr` 부재, main baseline 동일분 제외) ·
+  **PB-0008 실 Windows Chrome/150 PASS**(bind-mount 프리뷰 `:18099`, 라이브 무접촉, 서버 정본
+  무변경 확인) · codex 적대 리뷰 P1 1 / P2 1 전건 반영.
+- Files: `src/static/admin/products.js`, `src/static/css/admin.css`,
+  `tests/verify_dbpicker_layout_stability.mjs`,
+  `tests/headless/verify_dbpicker_layout_stability.py`,
+  `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`,
+  `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md`,
+  `docs/evidence/pb0008-dbpicker-layout-stability*.png`.
+- Timestamp: 2026-08-12T17:26:25+09:00

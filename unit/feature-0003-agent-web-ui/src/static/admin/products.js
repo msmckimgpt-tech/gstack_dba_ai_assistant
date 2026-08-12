@@ -954,6 +954,10 @@ function renderProductDetail() {
   // 체크박스 드롭다운 패널 빌더. 드롭다운은 버튼 클릭 시 열리며, 각 항목에 체크박스로
   // 연속 토글 가능. 선택 즉시 draft 에 반영(추가 버튼 불필요).
   const buildPicker = () => {
+    // dbpicker-layout-stability: 재구성(정규식 일괄 선택·× 제거·insight 도착)마다 innerHTML 을
+    //  비우므로 드롭다운 **내부** 스크롤이 맨 위로 튄다 — 방금 보던 항목을 다시 찾아 내려야
+    //  했다. 바깥 밀림(위 순서 수정)과 같은 부류의 "위치 상실" 이라 함께 봉인한다.
+    const _keepScrollTop = pickerDropList.scrollTop;
     pickerDropList.innerHTML = "";
     // TASK-0242: 추가 후보 DB 의 분석 상태/도메인 힌트(편집 대상 datasource 의 insight 캐시).
     const _pkIns = adminState.productDbInsights.get(_dbInsightsKey(product.id, _editDsKey)) || null;
@@ -1020,11 +1024,15 @@ function renderProductDetail() {
       showToast(`정규식 일치 ${res.matches.length}개 중 ${added}개를 선택에 추가했습니다.`);
     };
 
-    if (userSchemas.length >= DB_PICKER_SEARCH_MIN) {
-      const toolbar = document.createElement("div");
-      toolbar.className = "admin-db-picker-toolbar";
-      toolbar.addEventListener("click", (e) => e.stopPropagation());  // toolbar 클릭이 항목 토글로 새지 않게.
+    // dbpicker-layout-stability: 등록 목록이 picker **아래**로 내려가면서, "방금 체크가 반영됐나"
+    //  를 알려주는 표면이 드롭다운 안에 상시 필요해졌다. 종전엔 선택 카운트가 검색 toolbar
+    //  (후보 6개 이상일 때만 노출)에 얹혀 있어 후보가 적은 datasource 에선 아무 피드백이 없었다.
+    //  toolbar 자체는 항상 만들고, 검색·정규식 행만 임계 이상에서 채운다(노출 임계 계약 보존).
+    const toolbar = document.createElement("div");
+    toolbar.className = "admin-db-picker-toolbar";
+    toolbar.addEventListener("click", (e) => e.stopPropagation());  // toolbar 클릭이 항목 토글로 새지 않게.
 
+    if (userSchemas.length >= DB_PICKER_SEARCH_MIN) {
       const searchInput = document.createElement("input");
       searchInput.type = "text";
       searchInput.className = "admin-db-picker-search";
@@ -1061,13 +1069,14 @@ function renderProductDetail() {
       regexErrEl = document.createElement("div");
       regexErrEl.className = "admin-db-picker-regex-err hidden";
       toolbar.appendChild(regexErrEl);
-
-      selectedCountEl = document.createElement("div");
-      selectedCountEl.className = "admin-db-picker-selected-count";
-      toolbar.appendChild(selectedCountEl);
-
-      pickerDropList.appendChild(toolbar);
     }
+
+    selectedCountEl = document.createElement("div");
+    selectedCountEl.className = "admin-db-picker-selected-count";
+    selectedCountEl.setAttribute("role", "status");   // 체크 결과를 보조기술에도 알림.
+    toolbar.appendChild(selectedCountEl);
+
+    pickerDropList.appendChild(toolbar);
 
     userSchemas.forEach((name) => {
       const item = document.createElement("label");
@@ -1133,6 +1142,9 @@ function renderProductDetail() {
     _refreshSelectedCount();
     _applySearch();
     _applyRegexPreview();
+    // 필터 적용까지 끝난 뒤 복원 — .hidden 토글이 scrollHeight 를 바꾸므로 순서가 중요하다
+    // (브라우저가 새 scrollHeight 로 clamp 한다).
+    pickerDropList.scrollTop = _keepScrollTop;
   };
 
   const redrawChips = () => {
@@ -1227,17 +1239,17 @@ function renderProductDetail() {
     if (!draft.length) {
       const empty = document.createElement("div");
       empty.className = "cov-db-list-empty";
-      empty.textContent = "등록된 데이터베이스가 없습니다. 아래에서 추가하세요.";
+      // dbpicker-layout-stability: picker 가 이 목록 **위**로 올라갔다(방향 지시어 정합).
+      empty.textContent = "등록된 데이터베이스가 없습니다. 위 '+ 데이터베이스 추가' 에서 선택하세요.";
       listEl.appendChild(empty);
     }
     chipWrap.appendChild(listEl);
   };
 
-  // 접근 DB 편집기(시스템칩 + 사용자 DB 리스트 + 추가 picker)를 담는 컨테이너.
+  // 접근 DB 편집기(추가 picker + 시스템칩 + 사용자 DB 리스트)를 담는 컨테이너.
   // accordion 의 "펼친 datasource 행" 아래로 이 컨테이너를 옮겨 단다(_renderDsAccordion).
   const dbEditorWrap = document.createElement("div");
   dbEditorWrap.className = "cov-db-editor";
-  dbEditorWrap.appendChild(chipWrap);
 
   const pickerWrap = document.createElement("div");
   pickerWrap.className = "admin-db-picker-wrap";
@@ -1246,20 +1258,36 @@ function renderProductDetail() {
   pickerDropBtn.className = "admin-db-picker-btn";
   pickerDropBtn.textContent = "+ 데이터베이스 추가";
   pickerDropBtn.disabled = !canManage;
+  pickerDropBtn.setAttribute("aria-haspopup", "true");
+  pickerDropBtn.setAttribute("aria-expanded", "false");
   const pickerDropList = document.createElement("div");
   pickerDropList.className = "admin-db-picker-list hidden";
+  pickerDropList.setAttribute("role", "group");
+  pickerDropList.setAttribute("aria-label", "추가할 데이터베이스 선택");
   pickerDropBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    pickerDropList.classList.toggle("hidden");
+    const opened = pickerDropList.classList.toggle("hidden") === false;
+    pickerDropBtn.setAttribute("aria-expanded", opened ? "true" : "false");
   });
   // 패널 바깥 클릭 시 닫기.
   document.addEventListener("click", function _closePicker(e) {
     if (!pickerWrap.contains(e.target)) {
       pickerDropList.classList.add("hidden");
+      pickerDropBtn.setAttribute("aria-expanded", "false");
     }
   });
   pickerWrap.append(pickerDropBtn, pickerDropList);
+
+  // dbpicker-layout-stability(2026-08-12, 사용자 보고): **picker 를 등록 목록보다 앞에 붙인다.**
+  //  종전 순서([목록] → [picker])에서는 체크박스 하나를 켤 때마다 redrawChips() 가 위쪽 목록에
+  //  행을 더해, 그 높이(실측 ~38px = 한 행보다 크다)만큼 열려 있는 드롭다운이 통째로 아래로
+  //  밀렸다. 커서는 그대로인데 항목만 내려가므로 연속 체크가 **다른 DB 를 누르는** 오클릭이
+  //  된다(해제는 반대로 위로 당김). 재구성 대상을 picker 뒤에 두면 흐름상 picker 위쪽이 변하지
+  //  않아 밀림이 구조적으로 0 이다 — 스크롤 보정 같은 사후 계산이 필요 없고, 스크롤 위치가
+  //  0 이라 아래로 당길 여지가 없는 경우(보정이 원리적으로 실패하는 구간)에도 성립한다.
+  //  회귀 잠금: tests/headless/verify_dbpicker_layout_stability.py (L1~L4·L6a).
   dbEditorWrap.appendChild(pickerWrap);
+  dbEditorWrap.appendChild(chipWrap);
 
   redrawChips();
   buildPicker();
@@ -1603,7 +1631,10 @@ function renderProductDetail() {
       _refreshAccessibleDbs(info.key, { force: true });
     });
     note.append(span, btn);
-    host.insertBefore(note, pickerWrap);
+    // dbpicker-layout-stability: 배너를 picker **아래**(등록 목록 바로 위)에 단다. picker 위에
+    //  달면 연결 상태가 비동기로 바뀔 때마다 picker 가 밀려 같은 결함이 다른 경로로 되살아난다.
+    //  의미상으로도 이 배너는 "DB 목록이 왜 비었나" 를 설명하므로 목록 바로 위가 제자리다.
+    host.insertBefore(note, chipWrap);
   };
 
   // TASK-0206: 선택 datasource 의 DB 목록으로 접근가능 DB(고정 시스템칩 + 사용자 picker)을 갱신.
@@ -1781,7 +1812,9 @@ function renderProductDetail() {
       if (!binds.length) {
         const none = document.createElement("div");
         none.className = "admin-detail-hint";
-        none.textContent = "바인딩된 데이터소스 없음 — 기본 단일 MySQL. 아래에서 데이터소스를 선택해 추가하세요.";
+        // dbpicker-layout-stability: picker 가 accordion **위**로 올라갔다 — 방향 지시어 정합
+        //  (빈 상태에서 유일한 진입점이 위에 있는데 "아래에서" 라고 가리키면 길을 잘못 안내한다).
+        none.textContent = "바인딩된 데이터소스 없음 — 기본 단일 MySQL. 위 '+ 데이터소스 추가' 에서 선택하세요.";
         dsAccordion.appendChild(none);
         // 미바인딩: 기본 MySQL 의 접근DB 편집기를 그대로 보인다.
         dsAccordion.appendChild(dbEditorWrap);
@@ -1899,6 +1932,9 @@ function renderProductDetail() {
       };
 
       const _rebuildDsAddList = (forceProbe = false) => {
+        // dbpicker-layout-stability: 체크 재동기화·↻ 새로고침마다 통째로 다시 그리므로 드롭다운
+        //  내부 스크롤이 맨 위로 튄다(DB picker 와 동일 규약으로 보존).
+        const _keepScrollTop = addList.scrollTop;
         addList.innerHTML = "";
         const boundKeys = new Set(effectiveProductDatasources(product).map((d) => String(d.datasource_key).toLowerCase()));
         const all = (adminState.datasources || []);
@@ -1973,6 +2009,7 @@ function renderProductDetail() {
           // forceProbe=true(↻ 명시 새로고침)면 캐시 무시 재probe, 평소엔 캐시 hit→즉시 / miss→'확인 중' 후 probe.
           _kickDsConn(dsk, status, forceProbe);
         });
+        addList.scrollTop = _keepScrollTop;   // 재구성 전 위치 복원(브라우저가 새 scrollHeight 로 clamp).
       };
 
       addBtn.addEventListener("click", (e) => {
@@ -1986,7 +2023,12 @@ function renderProductDetail() {
         if (!addRow.contains(ev.target)) { addList.classList.add("hidden"); addBtn.setAttribute("aria-expanded", "false"); }
       });
       addRow.append(addBtn, addList);
-      dbSection.appendChild(addRow);
+      // dbpicker-layout-stability: DB picker 와 **같은 결함 클래스** — 체크 시 _afterBindChange
+      //  → _renderDsAccordion() 이 위쪽 accordion 을 재구성해(행 추가/제거 + 편집기 이동) 아래의
+      //  이 목록이 밀렸다(실측 42px). 재구성 대상(accordion) 앞에 두어 밀림을 0 으로 만든다.
+      //  복제된 결함은 한 곳만 고치면 다른 표면에서 되살아나므로 두 picker 를 같은 규약으로 묶는다.
+      //  회귀 잠금: tests/headless/verify_dbpicker_layout_stability.py (L5·L6b).
+      dbSection.insertBefore(addRow, dsAccordion);
     }
 
     paneEl.appendChild(dbSection);

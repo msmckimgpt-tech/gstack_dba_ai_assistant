@@ -2498,3 +2498,23 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
   probe_a.sql` 모달 1개(`v1 ↔ v2`, 옵션 7, `+1 / -0`, 행 6) · 페이지 이동 0 · pageerror 0.
   **배포 전 프리뷰 결과와 차이 0**(baked 자산에서도 동일 동작).
 - Run 기록 정본: `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md` Run 2.
+
+## 20260812T1726-dbpicker-layout-stability — '+ 데이터베이스 추가' 목록 위치 안정성
+- **Environment: Windows-browser (PB-0008)** — **PASS**. 실 Chrome/150.0.7871.128 relay,
+  bind-mount 격리 컨테이너(`http://localhost:18099`, 라이브 web-a/web-b·Caddy 무접촉).
+  제품 `CC_QA` × `mssql-qa-idc`(후보 DB 130개) 실화면에서 **실 트러스티드 클릭**:
+  체크 시 항목 이동 **0px** + 같은 화면 좌표의 `elementFromPoint` 가 동일 DB 유지(16→17행,
+  `선택됨 17개`). 역검증으로 DOM 순서를 수정 전으로 되돌리면 같은 클릭이 **+38px** 이동 →
+  이 화면은 수정 전이라면 반드시 달랐다. `+ 데이터소스 추가` 도 0px(역검증 +74px).
+  드롭다운 가시 후보 행 3~4 → **10행**(`max-height` 420px 실측). 페이지 예외 0.
+  서버 정본 무변경 확인(`webproductdatabases` 16/1 · 바인딩 2행 — pending 미적용).
+- **자동 하네스** — 신규 `tests/verify_dbpicker_layout_stability.mjs` **25 PASS**(jsdom:
+  DOM 순서 · 토글 시 picker 상류 마크업 불변 · 선택 카운트 임계 미만 노출 · 방향 지시어 census
+  · 스크롤 보존 배선, 순서 되돌림 뮤테이션 역검증 포함) · 신규
+  `tests/headless/verify_dbpicker_layout_stability.py` **13 PASS**(실 chromium 레이아웃,
+  축마다 뮤테이션 역검증으로 38.3/37.4/114.3/114.3/42.0px 재현).
+- **회귀** — feature-0003 프론트 mjs **53 suite 전건 PASS**(0 fail) · pytest 4,287 수집
+  EXIT=0(사전 실패 `test_oauth_exhaustion_gate` = `chattr` 부재, main baseline 동일분 제외).
+- **Pass/Fail: PASS**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 기록).
+  Run 기록 정본: `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md` (§5.3 fragment).
+  **POST-DEPLOY 이월**: 드롭다운 가시 행 수를 배포본에서 캐시 무효화 없이 재확인.
