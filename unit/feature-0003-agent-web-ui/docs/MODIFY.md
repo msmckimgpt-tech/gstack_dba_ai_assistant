@@ -11,6 +11,19 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260812T193000-attach-md-postverify — 배포본 실측 기록 (doc-only, 코드 변경 0)
+- 선행 `CHG-20260812T183000-attach-md-highlight` 가 "배포 후에만 확인 가능" 으로 남긴 잔여를
+  배포본 `d0241c93` 에서 닫는다. **코드·자산 변경 0** — 문서만.
+- **Files**: `docs/test-runs.d/20260812T1830-attach-md-highlight.md`(POST-DEPLOY Run append) ·
+  `docs/{TASK,REVIEW,REPORT}.md`.
+- **실측 결과**: ① 시나리오 step 3 배포본 probe 가 `has_md: false → true` · `langs` 에 `md`
+  추가로 뒤집힘(codex [P2-3] fail-open 종결, 재실행 가능한 게이트) ② 라이브 페이지에서
+  `import('/static/code-highlight.js')` 한 **서빙 모듈로 직접 렌더** — computed 색 9종 정본
+  일치 · 무손실 · span 외 태그 0 · `- |` 수정 배포본 확인 ③ 배포 품질 — web-a/web-b
+  `GIT_COMMIT=d0241c93`, 엣지 `no upstreams available` **0건**(실 무중단).
+- **미실측 잔여(명시)**: 라이브 `.md` 첨부의 원문 보기 모달을 실 계정으로 여는 **조합** 대조는
+  타 사용자 대화 데이터 접근이라 수행하지 않음. 경로의 두 조각은 각각 실측 완료.
+
 ## CHG-20260812T183000-attach-md-highlight — 첨부 `.md` 구문 하이라이트 (Minor §12.3, frontend-only)
 - **요청**: "프로젝트 내 서비스에서, 첨부파일 중 '.md' 파일에 대한 포멧도 내부적으로 처리할 수
   있도록 구성해주세요." (2026-08-12)
