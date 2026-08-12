@@ -1759,6 +1759,62 @@ def classify_node_analysis_failure(exc: "Exception | None" = None, *, empty: boo
     return {"kind": FAILURE_TRANSIENT, "tag": "unknown", "detail": ""}
 
 
+# ── 대화 경로 LLM 호출 실패 분류 (conv-audit FR-llm-transient-failure-kills-run) ─────────
+# 노드 분석(위)과 **permanent 집합이 다르다**: 분석은 잡 하나가 실패해도 다음 cadence 에 다시
+# 도는 배경 작업이라 자격증명 오류까지 재시도로 흡수해도 손해가 적지만, 대화는 사용자가 화면
+# 앞에서 기다리는 전경 작업이다. 사람이 설정을 고쳐야만 풀리는 실패(자격증명·인증·모델 라우팅·
+# 컨텍스트 초과)를 재시도하면 사용자를 backoff 만큼 더 붙잡아 두고 결과는 같다 → permanent.
+_AGENT_LLM_PERMANENT_KINDS = frozenset({
+    "bad_model", "context_length", "auth_invalid", "credential_expired", "not_configured",
+})
+# per-attempt 상한을 소진한 실패의 시그니처(클래스명 또는 기본 메시지). 이 부류는 호출측이
+# run 예산 headroom 게이트를 적용한다 — 재시도가 다시 상한만큼 태울 수 있기 때문.
+# §18.8 패널 P1-1: 클라이언트측 타임아웃뿐 아니라 **게이트웨이가 상류 대기를 소진하고 돌려준
+# 504/408·deadline** 도 같은 부류다(litellm 은 `Gateway timeout`/`litellm.Timeout` 으로 뭉갠다).
+# 이 목록은 어휘 매칭이라 provider 문구 변경에 drift 하므로, 호출측이 **실제 소요 시간**으로도
+# 같은 게이트를 건다(agent_core `_LLM_SLOW_FAILURE_RATIO`) — 어휘는 보조, 측정이 정본.
+_AGENT_LLM_TIMEOUT_MARKERS = (
+    "apitimeouterror", "request timed out", "read timed out",
+    "gateway timeout", "litellm.timeout", "deadline exceeded", "timeout of ",
+)
+
+
+def classify_agent_llm_failure(exc: "Exception | None") -> dict[str, Any]:
+    """대화 루프의 LLM 호출 1회 실패를 **재시도 판정용**으로 분류한다.
+
+    반환 `{kind, tag, detail, timeout_class}`:
+      - `kind` = FAILURE_TRANSIENT(누적 messages 를 그대로 두고 같은 라운드 재호출 가치 있음)
+                 | FAILURE_PERMANENT(재호출해도 같은 결과 — 즉시 사용자에게 알린다)
+      - `timeout_class` = True 면 per-attempt 상한 소진(재시도 비용 = 상한 1회분).
+                          False 면 요청이 도달조차 못 한 전송 실패(재호출 = 재연결, 비용 ~0).
+
+    분류 자체는 `classify_llm_provider_error`(provider health 정본)에 위임한다 — 판정 어휘가
+    두 곳으로 갈라지면 한쪽만 갱신되는 drift 가 난다(노드 분석 경로와 같은 구조).
+    """
+    if exc is None:
+        return {"kind": FAILURE_PERMANENT, "tag": "no_exception", "detail": "", "timeout_class": False}
+    _blob = f"{type(exc).__name__} {exc}".lower()
+    timeout_class = any(m in _blob for m in _AGENT_LLM_TIMEOUT_MARKERS)
+    restriction = None
+    try:
+        from modules import llm_provider_health as _health
+        restriction = _health.classify_llm_provider_error(exc)
+    except Exception:
+        restriction = None
+    if restriction:
+        kind = str(restriction.get("kind") or "")
+        tag = str(restriction.get("error_tag") or kind or type(exc).__name__)
+        if kind in _AGENT_LLM_PERMANENT_KINDS:
+            return {"kind": FAILURE_PERMANENT, "tag": kind, "detail": tag,
+                    "timeout_class": timeout_class}
+        return {"kind": FAILURE_TRANSIENT, "tag": kind, "detail": tag,
+                "timeout_class": timeout_class}
+    # 분류 불가 = provider 어휘에 없는 네트워크/드라이버 예외. provider health 배너 대상은
+    # 아니지만(그래서 위가 None) **재시도 가치는 오히려 가장 높다** — 본 봉인이 겨냥하는 부류다.
+    return {"kind": FAILURE_TRANSIENT, "tag": type(exc).__name__,
+            "detail": str(exc)[:200], "timeout_class": timeout_class}
+
+
 def _sink_failure(sink, info: dict[str, Any]) -> None:
     """error_sink(호출측이 넘긴 dict)에 분류 결과를 채운다. sink 미전달이면 no-op(기존 호출자 무영향)."""
     if isinstance(sink, dict):

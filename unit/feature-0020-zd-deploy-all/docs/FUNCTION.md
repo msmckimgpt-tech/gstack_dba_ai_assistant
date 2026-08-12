@@ -44,7 +44,10 @@ cross-cut)·`docker-compose.yml`·`Makefile`·`bin/alembic-migrate.sh`.
   gateway surge reconcile phase, caddy 이미지 드리프트 reconcile, `--web-only`/`--workers-only`/
   `--force-gateway` 플래그, `--rollback` 의 워커 포함 확장.
 - `docker-compose.yml`: 워커 healthcheck timeout 상향, bedrock-gateway `stop_grace_period` 상향
-  (in-flight LLM drain), `bedrock-gateway-surge` 서비스(profile `deploy-surge`, DNS alias),
+  (in-flight LLM drain — **120s→330s, CHG-20260812T110000**: 120s 는 실측 라운드 지연 분포 안쪽
+  이라 배포마다 in-flight 의 7.9%가 SIGKILL 됐다. surge 도 대칭. 덮이지 않는 구간(콘솔 타임아웃
+  상향·연장 승인 run)은 앱 층 재시도가 backstop 이며 `deploy-web.sh` 가 드리프트를 경고한다),
+  `bedrock-gateway-surge` 서비스(profile `deploy-surge`, DNS alias),
   라이브 적용분 운영 튜닝 커밋(verbatim).
 - `bin/alembic-migrate.sh`: 직접 호출 폴백 가드(선행 `compose build agent`).
 - `Makefile`: `deploy-all`, `ask-worker-*` 타깃, `up` 빌드 목록 정정.

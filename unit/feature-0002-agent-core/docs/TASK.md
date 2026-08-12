@@ -2396,3 +2396,28 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 - [x] 신규 13건 · 뮤테이션 11/11 KILLED · 전량 회귀 · ruff
 - [x] 배포(`d7fca5fe`) + **라이브 재측정** — 원 실패 시나리오 그대로 반복해
       `pass · 0 block · resolved` 확인(run `20260811034406-480a42a6`). 원장 2건 `verified`.
+
+## TASK-20260812T110000 대화 경로 LLM 일시 실패 재시도 + 누적 추론 재사용 (conv-audit)
+`FR-llm-transient-failure-kills-run` · `FR-agent-history-window-inverted` — 사용자 명시 호출
+`/_dqa:conversation_audit`(대상: 폴더 `쿼리 리뷰 > gz > dev-MasangCreators` 의 `새 대화`,
+`오류: LLM 호출 오류: Connection error.` 로 종료). 승인 범위 = 연결+타임아웃 재시도 ·
+누적 추론 재사용 방어 · 배포측(RC-2) 동반.
+
+- [x] 진단 삼각측량 — `llm_usage`(5라운드 성공 후 6라운드 usage 행 없음) · `core_messages`
+      (도구 10회 조사 완주) · 컨테이너(`created 11:00:04.9 / started 11:02:06.6 / restartCount=0`
+      = 배포 recreate, grace 120s 만료 SIGKILL) · 코드(`agent_core` LLM 예외 = terminal)
+- [x] RC-1 봉인 — 일시 실패 시 **같은 라운드 재호출**(누적 `messages` 무손실), 지수 backoff,
+      대기 중 매 초 취소 폴링, 진행 표시("지금까지 조사한 내용은 그대로 유지됩니다")
+- [x] RC-1 분류 정본 1곳 — `modules/llm.classify_agent_llm_failure`(전경 permanent 집합은
+      배경 노드분석보다 엄격: 자격증명·인증 포함)
+- [x] RC-2 봉인(secondary `feature-0020`) — gateway·surge `stop_grace_period` 120s → 330s
+- [x] RC-3 봉인 — 전송층 예외 2종을 한국어 안내로 치환(`retryable`), **글로벌 배너는 비오염**
+      (`_TAG_PAT` 미등록 → `confirmed=False`)
+- [x] RC-4 봉인 — PG 히스토리 로드 창 역전(`ORDER BY id ASC LIMIT`) 교정, MySQL 경로와 방향 일치
+- [x] 테스트 32건 신규 · **뮤테이션 7/7 KILLED** · feature-0002 전량 회귀(2,830 progress chars,
+      실패는 선재 환경 1건뿐 — main 대조 동일)
+- [x] §18.8 패널(codex backend+qa, `query`/`performance` 키워드) — **P1 3 · P2 2 전건 흡수**
+      (느린 실패 예산 게이트 · '즉시 답변' 무시 · grace 지원범위 한계 · backoff 후 취소 미관측 ·
+      SDK 재시도 중첩). 흡수 검증 뮤테이션 12/12 KILLED
+- [ ] 배포 + POST-DEPLOY 런타임 실증
+- [ ] 라이브 실측 — 다음 배포 창에서 in-flight 대화가 실제로 살아남는지(corroboration 재측정)

@@ -110,7 +110,20 @@ _THROTTLE_PAT = re.compile(
 _UNAVAIL_PAT = re.compile(
     r"serviceunavailable|service is unavailable|modelnotready|model.*not.*available"
     r"|internalserver|bad gateway|gateway timeout|connection.*(refused|reset)"
-    r"|temporarily unavailable",
+    r"|temporarily unavailable"
+    # conv-audit FR-llm-transient-failure-kills-run (2026-08-12): OpenAI SDK 의 **전송층** 예외
+    # 두 종은 위 어휘 중 무엇에도 걸리지 않아 분류가 None 으로 떨어졌고, 그 결과 사용자 화면에
+    # 원문 영어(`오류: LLM 호출 오류: Connection error.` / `... Request timed out.`)가 그대로
+    # 노출됐다 — 무엇이 일어났는지도, 다시 시도하면 되는지도 알려주지 않는 표면이었다(라이브
+    # 90일 18 대화). `_extract_status_and_text` 가 예외 **클래스명**을 텍스트에 넣어주므로
+    # 클래스명과 기본 메시지 양쪽을 잡는다.
+    #   · APIConnectionError("Connection error.") — 요청이 도달조차 못 함(게이트웨이 순단 등)
+    #   · APITimeoutError("Request timed out.")   — per-attempt 상한 초과
+    # **`_TAG_PAT` 에는 넣지 않는다**: 그러면 confirmed=True 가 되어 단발 순단이 전 사용자에게
+    # 보이는 sticky 글로벌 배너를 켠다. 여기 매칭은 confirmed=False 로 남아 per-run 메시지로만
+    # 노출되고 글로벌 health 는 건드리지 않는다(record_provider_restricted 의 confirmed 게이트).
+    r"|apiconnectionerror|apitimeouterror|connection error|request timed out"
+    r"|server disconnected|connection aborted|remote end closed",
     re.I,
 )
 # TASK-20260714-attach-grounding: 요청-레벨 400 패턴.

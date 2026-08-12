@@ -1724,3 +1724,66 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **원장**: `FR-redteam-digest-lacks-prior-attachment-version` ·
   `FR-redteam-verify-pass-ignores-window-rule` → **`fixed:deployed:verified`**.
 - **위험등급**: Minor(문서만). **Cross-ref**: `CHG-20260811T140000-redteam-version-evidence`.
+
+## CHG-20260812T110000-llm-transient-retry-resume (대화 경로 LLM 일시 실패 재시도 + 누적 추론 재사용)
+- **Date**: 2026-08-12. 출처 = 사용자 명시 호출 `/_dqa:conversation_audit` (폴더
+  `쿼리 리뷰 > gz > dev-MasangCreators` 의 `새 대화`, `오류: LLM 호출 오류: Connection error.`).
+  worktree `ai/claude/feature-0002-agent-core`. 원장 `FR-llm-transient-failure-kills-run` ·
+  `FR-agent-history-window-inverted`.
+- **확정 근본원인(4중 삼각측량)**: 배포가 gateway 를 recreate 하면서 in-flight LLM 호출이
+  `stop_grace_period`(120s) 만료 SIGKILL → `APIConnectionError`. 앱은 그 예외로 run 을 **terminal
+  종결**했고, 5라운드·도구 10회 분량 조사(prompt 44,077 tok)가 통째로 폐기됐다. 새 게이트웨이는
+  실패 **1.2초 뒤** healthy 였다(`created 11:00:04.9 / started 11:02:06.6 / restartCount=0`).
+- **왜 아무도 못 잡았나**: (a) SDK 재시도는 총-대기 계약(feature-0007 timeout-console-sync) 때문에
+  0 으로 묶여 있었고 앱 층에는 대체 재시도가 없었다 (b) `classify_llm_provider_error` 의
+  `_UNAVAIL_PAT` 이 `connection.*(refused|reset)` 만 알아 `"Connection error."` 는 **분류 실패
+  → raw 노출** (c) 형제 경로인 **노드 분석은 `14826f4b` 로 이미 일시 실패 재시도를 받았는데
+  대화 경로만 못 받았다**(자매 하드닝 비대칭).
+- **봉인**:
+  1. **RC-1 재시도** — 일시 실패 시 **같은 라운드 재호출**. `messages` 를 손대지 않으므로 누적
+     도구 결과·추론이 전부 보존된다. 지수 backoff(1.5s→cap 8s, 상한 2회), 대기 중 1초 주기 취소
+     폴링. 분류 정본은 `modules/llm.classify_agent_llm_failure` 하나 — 전경(대화)의 permanent
+     집합은 배경(노드 분석)보다 **엄격**하다(자격증명·인증 포함: 사람이 고쳐야 풀리는 실패를
+     재시도하면 사용자를 backoff 만큼 더 붙잡아 두고 결과가 같다).
+  2. **RC-3 표면** — `_UNAVAIL_PAT` 에 전송층 시그니처 추가(`apiconnectionerror`/`apitimeouterror`/
+     `connection error`/`request timed out`/`server disconnected` 등). **`_TAG_PAT` 에는 넣지
+     않는다** — 넣으면 `confirmed=True` 가 되어 단발 순단이 전 사용자 sticky 배너를 켠다.
+  3. **RC-4 누적 추론 재사용** — PG 히스토리 로드가 `ORDER BY id ASC LIMIT n` 으로 **가장 오래된**
+     n행을 집고 있었다(MySQL 경로는 DESC+reverse = 최신 n행 — **PG 경로만 반대**). 호출측이 그
+     목록의 tail 을 윈도우로 쓰므로, core 200행 초과 대화는 최근 맥락이 통째로 사라졌다.
+     라이브 실측(281행 대화): 구 SQL 이 id 3369~3574 만 로드해 **최신 81행 유실**, 신 SQL 은
+     3450~3655. linear/windowed/branch 3경로 모두 교정, 가시성 술어는 서브쿼리 **안**에 유지
+     (은닉 구간이 윈도우 예산을 잠식하지 않고 물리 배제 계약도 보존).
+  4. **RC-2 배포측(secondary `feature-0020`)** — gateway·surge `stop_grace_period` 120s → 330s.
+     120s 는 실측 분포 안쪽이었다(30일 1,210 라운드 중 **120초 초과 96건 = 7.9%**, p95 181.8s).
+- **§18.8 적대 패널(codex, backend+qa) — P1 3건 · P2 2건 전건 흡수**:
+  - **P1-1 느린 실패가 예산 게이트를 우회**: 게이트웨이가 502/504·`litellm.Timeout` 으로 돌려준
+    실패는 `timeout_class` 로 안 잡혀 예산이 없어도 재시도가 허용됐다. 어휘 추가 + **측정 정본**
+    (`_LLM_SLOW_FAILURE_RATIO=0.5` — 상한의 절반 이상을 태운 실패는 분류 무관하게 게이트).
+    어휘는 provider 문구 변경에 drift 하지만 측정은 안 한다.
+  - **P1-2 '즉시 답변' 무시**: 재시도 루프가 finalize 신호를 안 봐서, 사용자가 버튼을 눌러도
+    **도구를 켠 원래 라운드를 그대로 다시** 불렀다. 확인 지점을 재시도 결정 전 + backoff 후
+    **두 곳**에 두고, 소비하지 않고 바깥 루프로 `continue` 해 정본 마무리 경로를 타게 했다.
+  - **P2-1 backoff 마지막 tick 뒤 취소 미관측**: 다음 줄이 최대 per-attempt 블로킹 호출이라
+    사용자가 수 분을 더 기다렸다. 대기 종료 후 재확인 추가.
+  - **P2-2 SDK 재시도 중첩**: 운영자가 `AGENT_LLM_MAX_RETRIES` 를 올리면 SDK n회 × 앱 m회로
+    provider 호출이 곱해지고 총-대기가 상한의 배수가 된다. **대화 클라이언트는 `max_retries=0`
+    고정** — 재시도 주체를 앱 층 하나로 못박았다(비대화 경로는 종전 knob 유지).
+  - **P1-3 grace 가 지원 범위를 못 덮음**: `AGENT_TIMEOUT_SEC` 은 콘솔에서 3600s 까지 올릴 수
+    있는데 grace 는 330s 고정. grace 를 3600s 로 키우면 배포가 한 시간 멎으므로 오답 — 대신
+    한계를 문서에 정직하게 적고 `bin/deploy-web.sh` 가 **배포마다 드리프트를 경고**하게 했다.
+- **의도적 비대칭(설계 근거)**: 재시도는 **메인 루프에만** 단다. red-team 재작성 경로의 LLM
+  실패는 이미 fail-soft(초안 생존)라, 거기서 재시도로 몇 초를 더 쓰면 완성된 답변의 전달만
+  늦춘다 — `FR-redteam-first-pass-unabortable` 이 고친 마찰을 되살리는 방향이다.
+- **검증**: 신규 **42건**(41 PASS + 1 skip[`.env` 없는 환경]) · **뮤테이션 12/12 KILLED**
+  (재시도 상한 0 · 전송층 패턴 제거 · `_TAG_PAT` 오염 · 히스토리 ASC 복귀 · grace 120s 복귀 ·
+  permanent 집합 완화 · headroom 게이트 제거 · SDK 재시도 복귀 · finalize 확인 제거 ·
+  backoff 후 취소 확인 제거 · slow 게이트 제거 · 게이트웨이 타임아웃 어휘 제거) ·
+  feature-0002 전량 회귀(실패는 선재 환경 1건 `chattr` 미존재 — pristine main 대조 동일) ·
+  ruff clean · 신 SQL 3경로 라이브 replica 문법·의미 실행 확인.
+- **위험등급**: **Major**(§12.3 코어 LLM 전달 경로). 사용자 승인 범위 = 연결+타임아웃 재시도 ·
+  누적 추론 재사용 방어 · RC-2 동반. 신규 권한·스키마·엔드포인트 변경 0. 보안 경계 무변경
+  (가시성 술어 위치·물리 배제 계약 보존).
+- **Cross-ref**: `unit/feature-0020-zd-deploy-all/docs/MODIFY.md`(compose grace + 배포 경고, 파일
+  소유) · 원장 `FR-llm-transient-failure-kills-run` · `FR-agent-history-window-inverted` ·
+  `REV-20260812T110000-llm-transient-retry-resume`.

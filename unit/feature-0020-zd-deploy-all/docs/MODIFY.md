@@ -52,3 +52,27 @@ source_of_truth: true
 - Files: unit/feature-0020-zd-deploy-all/docs/{TASK,MODIFY,REPORT,REVIEW}.md, docs/test-runs.d/
 - Impact: 문서만 — 런타임 0.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260812T110000-gateway-drain-grace (cross-unit: 정본 feature-0002 CHG-20260812T110000-llm-transient-retry-resume)
+- Date: 2026-08-12
+- Related: conv-audit 원장 `FR-llm-transient-failure-kills-run` (사용자 명시 호출
+  `/_dqa:conversation_audit`, 2026-08-12).
+- Summary: `bedrock-gateway` / `bedrock-gateway-surge` 의 `stop_grace_period` **120s → 330s** +
+  `bin/deploy-web.sh` 에 grace↔`AGENT_TIMEOUT_SEC` 드리프트 경고(`gateway_grace_drift_warn`)를
+  gateway reconcile 진입부에 추가.
+- 근거(측정): 120s 는 실측 분포 **안쪽**이었다 — 30일 대화 LLM 라운드 1,210건 중 **120초 초과
+  96건(7.9%)**, p50 11.3s · p95 181.8s. 즉 gateway recreate 마다 진행 중이던 라운드의 약 8%가
+  grace 만료 SIGKILL 로 죽었고, 앱은 그 예외로 run 을 통째로 폐기했다(2026-08-12 사고: 구
+  컨테이너 SIGTERM 11:00:05 → SIGKILL 11:02:05 = 정확히 120s, 사용자 7분 40초 대기 후 유실).
+  330s = 현행 `AGENT_TIMEOUT_SEC`(300s) + 여유 30s. surge 도 **대칭**으로 올렸다 — 교체 창에
+  들어온 요청이 surge 로 가므로 그쪽에 같은 구멍을 남기면 안 된다.
+- 비용은 조건부: uvicorn 은 in-flight 가 끝나는 즉시 종료하므로 한산할 때는 종전과 같고, 긴
+  호출이 있을 때만 그만큼 기다린다. 그 대기 동안 신규 요청은 surge 가 DNS alias 로 흡수한다.
+- **정직한 한계(§18.8 패널 P1-3)**: `AGENT_TIMEOUT_SEC` 은 콘솔에서 최대 3600s, 연장 승인 run 은
+  per-call 900s 라 그 구간은 이 grace 로 덮이지 않는다. grace 를 3600s 로 키우면 배포가 한 시간
+  멎을 수 있어 오답 — 덮이지 않는 구간은 **앱 층 일시 실패 재시도가 backstop** 이고, 운영값이
+  grace 를 넘기면 배포마다 경고가 뜬다.
+- Files: `docker-compose.yml`, `bin/deploy-web.sh`, 본 문서, `docs/FUNCTION.md`.
+- Impact: 배포 시 gateway 정지 대기 상한만 변경. 런타임 서빙 동작·자원 사용 무변.
+- Rollback Notes: compose 두 값을 120s 로 되돌리면 즉시 원복(다음 배포부터 적용). 단 앱 층
+  재시도만으로는 8% 구간의 사용자 대기가 backoff 만큼 늘어난다.

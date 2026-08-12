@@ -6,6 +6,124 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-llm-transient-failure-kills-run — fixed:undeployed (L6↔L2 구조; 일시 전송 실패 1회가 run 전체와 누적 도구 작업을 폐기)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **42**[41 PASS + 1 skip] · **뮤테이션 12/12
+  KILLED** · feature-0002 전량 회귀 실패 0[선재 환경 1건 `chattr` 부재는 pristine main 대조 동일]
+  · ruff clean · 신 SQL 3경로 라이브 replica 실행 확인) + **§18.8 codex backend+qa 패널 P1 3 ·
+  P2 2 전건 흡수**. 배포 전.
+- **source**: 사용자 명시 호출 `/_dqa:conversation_audit` (2026-08-12) — 폴더
+  `쿼리 리뷰 > gz > dev-MasangCreators` 의 `새 대화`, "`오류: LLM 호출 오류: Connection error.`
+  라는 출력문과 함께 종료".
+- **last_seen**: 2026-08-12 · **seen_count**: 1 · **seen_distinct_conv**: 18 (90일 corroboration)
+- **modality**: 1:1 · **product_id(마스킹)**: P-119 · **account(마스킹)**: A-10 ·
+  **folder(마스킹)**: F-22 · **conv(마스킹)**: `…fb8697af` · run `…5f666f63`
+- **symptom_confidence**: high (사용자 명시 보고 + DB 실측) ·
+  **rootcause_confidence**: high (`llm_usage` + `core_messages` + 컨테이너 타임스탬프 + 코드
+  file:line **4중 삼각측량**, 실패 시각과 grace 만료가 초 단위로 일치)
+- **suspected_layers**: **L6**(전송층 실패) ↔ **L2**(실패 계약: 재시도 부재 + 거부 피드백 원문
+  노출). 인프라 경계(우리 배포의 gateway recreate)가 유발 조건.
+- **증상(signal)**: `E-USR` 명시 보고 · `E-SYS` 원문 오류 · `I-INT` 재전송(질문 2회) ·
+  `I-DIY` 실패 34초 뒤 **새 대화를 열어 같은 질문 재입력**(수동 우회 이탈).
+- **실측(무엇을 잃었나)**:
+  - LLM 5라운드 성공(마지막 prompt 44,077 tok) + 도구 **10회**(describe_table ×5 ·
+    search_routines ×2 · describe_routine ×3) 조사 완주 → 6라운드에서 사망, usage 행 없음.
+  - 사용자 대기 **7분 40초**(10:54:25 질문 → 11:02:05 오류). 산출물 0.
+  - 컨테이너: `created 11:00:04.9 / started 11:02:06.6 / restartCount=0` = **크래시가 아니라
+    배포 recreate**. create↔start 간격이 정확히 `stop_grace_period` 120s → 구 컨테이너 SIGTERM
+    11:00:05 → **SIGKILL 11:02:05** → 소켓 절단. 같은 배포에서 web-a 10:57:56 · web-b 10:58:33
+    재생성, `artifacts/locks/deploy-web.lock` mtime 10:57.
+  - **새 게이트웨이는 실패 1.2초 뒤 healthy** — 한 번의 재호출로 전부 살릴 수 있었다.
+- **confirmed_root_cause** (3중):
+  1. `unit/feature-0002-agent-core/src/agent_core.py` 대화 루프의 `_call_llm` 예외 처리 —
+     `result["error"]` 설정 후 즉시 `break`. **재시도·재연결·재개 없음**. `ask_jobs` 도
+     `status=error` terminal(재큐 없음). SDK 재시도는 총-대기 계약 때문에 0 으로 묶여 있고
+     앱 층에 대체가 없었다.
+  2. `modules/llm_provider_health.py` `_UNAVAIL_PAT` 이 `connection.*(refused|reset)` 만 알아
+     `"Connection error."` 는 **분류 실패 → `return None`** → SDK 원문이 그대로 사용자 화면에.
+     retryable 안내도, provider health 기록도 없었다.
+  3. **인프라 경계**: `docker-compose.yml` gateway `stop_grace_period=120s` 가 실측 분포
+     **안쪽**이었다 — 30일 대화 LLM 라운드 1,210건 중 **120초 초과 96건(7.9%)**, p50 11.3s ·
+     p95 181.8s · max 854s.
+  재발경로 = **infra(배포마다 recreate — 우리 통제 안이지만 없앨 수는 없음)** → **코드가 권위선**.
+- **왜 아무도 못 잡았나**: 형제 경로인 **노드 분석은 커밋 `14826f4b`(2026-07-30)로 일시 실패
+  재시도·회로차단을 이미 받았는데 대화 경로만 못 받았다** — 자매 하드닝 비대칭.
+- **corroboration**: **structural** — 90일 raw 전송층 실패 `Connection error.` **8건 / 8 distinct
+  conv** + `Request timed out.` **10건 / 10 distinct conv** = **18 대화**. 2026-08-06 16:14:00.636
+  은 **3 대화 동시**(단일 인프라 이벤트가 3명을 함께 날림). 발생일이 배포일과 정렬(07-30 #1088 ·
+  08-06 #1178 · 08-07 #1195/#1196 · 08-12 오늘).
+- **거짓양성 기각(`refuted`)**: **F1** 무해 아님(7분 40초 대기 후 빈손 + 즉시 새 대화 재시작).
+  **F2** 사용자 입력 오류 아님. **F3** 기수정 아님 — `FR-ask-orphan-redeploy-dead-air`(#1088)는
+  **워커가 죽은** job 의 회수를 봉인했고, 이번은 **워커는 살아 있고 gateway 만** 죽어 run 이
+  스스로 error 로 종결한 경로라 그 봉인이 닿지 않는다(`ask_jobs` 645 = `status=error`, attempts=1,
+  재큐 0). **F4** 의도된 동작 아님 — 배포 recreate 자체는 의도지만, 진행 중 사용자 요청을 재시도
+  없이 폐기하는 것은 feature-0020 이 선언한 무중단 계약 위반. **F5** ANCHOR 충돌 없음. **F6**
+  외부 기인 아님 — **우리 배포**가 원인.
+- **triage**: S=5(대화 끊김·이탈) · F=4(structural 18 대화) · L=4(1 수정이 Connection error +
+  Request timed out + 배포 창 전량 커버) · C=5 · R=3 → **32**, disposition=**fix-now**.
+  위험등급 **Major**(§12.3 코어 LLM 전달 경로) → attended human-decision. 사용자가 봉인 범위를
+  **연결+타임아웃 재시도 + 누적 추론 재사용 방어 + RC-2 동반** 으로 명시 선택(2026-08-12).
+- **봉인**: ① 일시 실패 시 **같은 라운드 재호출**(누적 `messages` 무손실, 상한 2회, 지수 backoff,
+  대기 중 1초 주기 취소 폴링) ② 분류 정본 `modules/llm.classify_agent_llm_failure` 1곳(전경
+  permanent 집합은 배경보다 엄격) ③ 전송층 예외를 한국어 안내로 치환하되 **글로벌 배너 비오염**
+  (`_TAG_PAT` 미등록 → `confirmed=False`) ④ gateway·surge `stop_grace_period` 120s→**330s** +
+  `deploy-web.sh` 드리프트 경고. red-team 경로에는 **의도적으로 달지 않는다**(이미 fail-soft —
+  거기서 재시도하면 완성된 답변의 전달만 늦춰 `FR-redteam-first-pass-unabortable` 을 되살린다).
+- **§18.8 패널 흡수(가장 중요한 것)**: 초판은 **탈출구를 재시도가 삼켰다** — 사용자가 '즉시 답변'
+  을 눌러도 재시도 루프가 그 신호를 보지 않아 **도구를 켠 원래 라운드를 그대로 다시** 불렀고,
+  backoff 마지막 tick 뒤 도착한 취소도 못 봐서 곧바로 수 분 블로킹 호출로 들어갔다. 이 감사가
+  고치려던 "대기 구간에 탈출구가 없다"(`FR-redteam-first-pass-unabortable`)의 **재생산**이다.
+  그 밖에 ① 게이트웨이측 502/504 가 `timeout_class` 로 안 잡혀 예산 없이 재시도 허용 → 어휘 추가
+  + **측정 정본**(상한의 절반 이상 태운 실패는 분류 무관 게이트) ② SDK 재시도 중첩 가능 →
+  대화 클라이언트 `max_retries=0` 고정 ③ grace 가 콘솔 지원 범위(3600s)를 못 덮는 한계를 문서에
+  명시 + 배포마다 드리프트 경고. **초판 테스트는 finalize 확인이 1곳만 남아도 통과**(m9 생존)해
+  확인 지점 개수·순서를 세는 테스트로 교체했다.
+- **fix**: `CHG-20260812T110000-llm-transient-retry-resume`
+  (TASK-20260812T110000) / **코드 거주 primary `feature-0002-agent-core`** + secondary cross-ref
+  `feature-0020-zd-deploy-all`(compose grace + 배포 경고, 파일 소유) /
+  `REV-20260812T110000-llm-transient-retry-resume`
+- **rc_ids**: RC-1(재시도 부재) · RC-2(배포 grace 부족) · RC-3(전송층 원문 노출) ·
+  **batch-id**: B-20260812T110000-llm-transient-retry-resume
+- **범위 밖(deferred/watch)**: ① 재시도가 소진된 뒤에도 run 을 재개하지 못한다 — 누적 도구 결과는
+  `core_messages` 에 남아 **같은 대화에서 다시 물으면** 재사용되지만, 사용자에게 그 사실을 알리는
+  표면이 없어 이번 사고처럼 새 대화로 이탈한다(별 항목). ② `FR-insight-worker-conn-stale` 과
+  동형으로 insight/분석 경로의 SDK 재시도 knob 는 손대지 않았다(소비자·복구 정책이 다름).
+- **라이브 실측 필요분(§정직)**: 코드/테스트는 "재시도 계약이 동작함" 까지만 증명한다.
+  ① 다음 배포 창에서 in-flight 대화가 실제로 살아남는지(ask-worker 로그 `llm_transient_retry`)
+  ② 재시도 대기 중 '중단'·'즉시 답변' 이 즉시 듣는지 ③ 진행 표시가 실제로 보이는지
+  ④ **corroboration 재측정** — `Connection error.`/`Request timed out.` distinct_conv 추이.
+  감소 시 `verified`, 재증가 시 `regressed`.
+
+## FR-agent-history-window-inverted — fixed:undeployed (L4; PG 히스토리 로더가 가장 오래된 N행을 집어 긴 대화의 최근 맥락이 유실)
+
+- **status**: `fixed:undeployed` — 위 batch 에 동승(같은 cycle·같은 테스트 파일). 배포 전.
+- **source**: 자체 발견(2026-08-12) — 사용자가 지시한 "추론 내역 유실 방어" 축을 코드로 확인하다
+  적발. 사용자 보고 아님.
+- **last_seen**: 2026-08-12 · **seen_count**: 0(라이브 마찰 미관측) · **seen_distinct_conv**: 5
+  (구조적 노출 대화 수 — core 메시지 200행 초과)
+- **symptom_confidence**: n/a(증상 미관측) ·
+  **rootcause_confidence**: high (코드 file:line + **라이브 replica 전후 대조 실측**)
+- **suspected_layers**: **L4** — 정본 로드 SQL 이 무엇을 SELECT 하는가.
+- **confirmed_root_cause.location**: `unit/feature-0002-agent-core/src/modules/runtime_backend.py`
+  `_PG_LOAD_CORE_MESSAGES`(+`_WINDOWED`·`_BRANCH`)의 `ORDER BY id ASC LIMIT %(limit)s` —
+  **가장 오래된** n행. 호출측 `agent_core._assemble_core_messages` 는 받은 목록의 **tail** 을
+  윈도우로 쓰므로, core 메시지가 n(=`max_messages`×4, 기본 200)을 넘으면 최근 맥락이 통째로
+  빠지고 옛 구간의 끝자락만 모델에 간다. **MySQL 경로는 `ORDER BY id DESC LIMIT` + reverse 로
+  최신 n행** — 백엔드 간 동작이 반대였다(`AGENT_RUNTIME_READ_BACKEND` 토글만으로 답변 품질이 바뀜).
+- **라이브 대조(replica, 읽기 전용)**: 281행 대화에서 구 SQL = id **3369~3574**(최신 **81행 유실**),
+  신 SQL = **3450~3655**. 90일 기준 200행 초과 대화 **5건**(최대 281행).
+- **거짓양성 기각(`refuted`)**: F1 무해 아님(도구를 많이 쓰는 긴 리뷰 대화가 정확히 이 형태 —
+  이 감사의 대상 워크로드). F3 기수정 아님(`git log` 확인). F4 의도된 동작 아님(형제 경로가 반대).
+- **triage**: S=4 · F=2(현 노출 5 대화) · L=3 · C=5 · R=4 → **20**. 빈도는 낮으나 Phase 7.4
+  **"명백한 구조결함"** 분기 충족(삼각측량 confirmed + 코드 정본 확정 + 재발경로 구조) →
+  국소-봉인 fix-now. 사용자 지시(추론 내역 유실 방어)의 직접 대상이기도 하다.
+- **봉인**: 3경로 모두 "최신 n행 → 오름차순 복원"(서브쿼리 `ORDER BY id DESC LIMIT` → 외부
+  `ORDER BY id ASC`). **가시성 술어는 서브쿼리 안에 유지** — 가려진 구간이 먼저 배제된 뒤 최신
+  n행을 집어야 은닉 구간이 윈도우 예산을 잠식하지 않고 물리 배제 계약도 보존된다(보안 경계 무변).
+- **fix**: `CHG-20260812T110000-llm-transient-retry-resume` 동승 / `feature-0002-agent-core`
+- **rc_ids**: RC-4 · **batch-id**: B-20260812T110000-llm-transient-retry-resume
+- **라이브 실측 필요분(§정직)**: 200행 초과 대화에서 배포 후 답변이 최근 턴을 실제로 인용하는지.
+
 ## FR-redteam-first-pass-unabortable — fixed:deployed:unverified-live (L7↔L2 구조; 자가 검증 대기 구간에 사용자 탈출구·진행 표시 부재)
 
 - **status**: `fixed:deployed:unverified-live` — 코드/테스트(신규 **25** PASS + headless **13** PASS ·

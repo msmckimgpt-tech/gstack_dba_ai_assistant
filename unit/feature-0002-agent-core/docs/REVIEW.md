@@ -1575,3 +1575,25 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
 
 ## REV-20260811T150000-version-evidence-deploy [SKIPPED:post-deploy-live-evidence+docs-only] — PASS
 - **Trigger**: 문서만(배포·실측 기록, 원장 status). 코드 변경 0 → §18.8 표 "비정책 doc-only" 행.
+
+## REV-20260812T110000-llm-transient-retry-resume [CODEX:backend+qa] — PASS (P1 3 · P2 2 전건 흡수 후)
+- **Trigger**: `query` keyword matched (히스토리 로드 SQL 3경로 재작성) + `performance/latency`
+  (LLM 호출 재시도·지연 경로) → backend, qa. auth/session/UI 변경 0.
+- **채널 근거(§18.8.2-1 제약-없는 채널 우선)**: 본 위임 세션에 "요청 없이 Agent tool 을 호출하지
+  말라" 는 **상위 우선순위 하네스 지시**가 걸려 있다(§18.8.2 carve-out). 그래서 subagent panel
+  대신 제약 없는 채널인 `codex review --uncommitted` 로 수행했다. 판정 기준 정본은
+  `docs/CODE_REVIEW.md`(§18.8.1-2).
+- **1라운드 verdict**: 지적 5건 — **P1** ① 게이트웨이측 타임아웃(502/504·`litellm.Timeout`)이
+  `timeout_class` 로 안 잡혀 예산 없이 재시도 허용 ② 재시도 루프가 '즉시 답변' 을 보지 않아
+  도구 켠 원래 라운드를 재개시 ③ compose grace(330s)가 콘솔 지원 범위(최대 3600s)를 못 덮음.
+  **P2** ④ backoff 마지막 tick 뒤 도착한 취소 미관측(다음 줄이 수 분 블로킹) ⑤ SDK 재시도가
+  앱 재시도와 중첩되면 provider 호출 증폭 + 총-대기 배수.
+- **흡수**: ①=어휘 추가 + **측정 정본**(`_LLM_SLOW_FAILURE_RATIO`, 어휘 drift 무관) ②=확인
+  지점 2곳(재시도 결정 전·backoff 후) + 소비하지 않고 바깥 루프 위임 ③=한계 명시 +
+  `deploy-web.sh` 배포마다 드리프트 경고 ④=대기 종료 후 취소 재확인 ⑤=대화 클라이언트
+  `max_retries=0` 고정.
+- **흡수 검증**: 지적 5건 각각에 회귀 테스트 + **뮤테이션 12/12 KILLED**. 초판 테스트는 finalize
+  확인이 1곳만 남아도 통과했다(m9 생존) — 확인 지점 **개수와 순서**를 세는 테스트로 교체해
+  KILLED 전환. `docs/CODE_REVIEW.md` 위험 축 대조: 무음 절단 0 · fail-open 게이트 0(재시도 실패는
+  종전대로 사용자에게 노출) · 멱등성(재호출은 응답 미수신 상태라 도구 부작용 없음) · 격리 경계
+  무변경(히스토리 가시성 술어 서브쿼리 내 유지).

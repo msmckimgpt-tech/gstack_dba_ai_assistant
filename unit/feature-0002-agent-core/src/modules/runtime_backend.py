@@ -225,12 +225,23 @@ LIMIT %(limit)s
 # gc-assistant-dialect-context (RC-2): sender_account_id 를 함께 로드한다 — 그룹대화에서 LLM 이
 # 누가 무슨 말을 했는지(발신자 라벨)를 맥락으로 받도록(REQ-GC-R5). 유일 소비처는 agent_core
 # _load_conversation_messages 의 PG read path (tuple index 5 로 매핑).
+# conv-audit FR-agent-history-window-inverted (2026-08-12): `ORDER BY id ASC LIMIT n` 은
+# **가장 오래된 n행**을 집는다. 호출측(`_assemble_core_messages`)은 받은 목록의 **tail** 을
+# 윈도우로 쓰므로, core 메시지가 n(=max_messages×4, 기본 200)을 넘는 대화에서는 최근 맥락이
+# 통째로 사라지고 옛 구간의 끝자락만 모델에 들어갔다 — 도구를 많이 쓰는 긴 리뷰 대화가 정확히
+# 그 형태다(이 감사의 대상 워크로드). MySQL 경로는 처음부터 `ORDER BY id DESC LIMIT n` + reverse
+# 로 최신 n행을 집고 있었으므로 **PG 경로만 반대**였다(백엔드 간 동작 불일치).
+# 서브쿼리로 최신 n행을 고른 뒤 오름차순으로 되돌린다 — 반환 계약(ASC 정렬)은 불변.
 _PG_LOAD_CORE_MESSAGES = """
 SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
-FROM agent_runtime.core_messages
-WHERE conversation_id = %(conversation_id)s
+FROM (
+    SELECT id, role, content, tool_calls, tool_call_id, name, sender_account_id
+    FROM agent_runtime.core_messages
+    WHERE conversation_id = %(conversation_id)s
+    ORDER BY id DESC
+    LIMIT %(limit)s
+) recent
 ORDER BY id ASC
-LIMIT %(limit)s
 """
 
 # share-visibility-window: 멤버별 가시 경계(created_at 로 bridge)를 적용한 LLM recall.
@@ -240,18 +251,25 @@ LIMIT %(limit)s
 #               가시범위 = [floor,ceiling] ∪ [joined,∞). 중간 갭(ceiling, joined)만 은닉.
 # 가려진 pre-floor/중간 구간의 core_messages 행은 애초에 로드되지 않아 프롬프트 인젝션으로도
 # 추출 불가(물리 배제, SECURITY.md §14 — 대화 history 는 datamark 대상 아님이라 이 배제가 유일 방어).
+# FR-agent-history-window-inverted: linear 경로와 동일 교정(최신 n행 → 오름차순 복원).
+# 가시성 술어는 서브쿼리 안에 그대로 둔다 — 가려진 구간이 먼저 배제된 뒤에 최신 n행을 집어야
+# 은닉 구간이 윈도우 예산을 잠식하지 않고, 배제 계약(물리 미로드)도 그대로 유지된다.
 _PG_LOAD_CORE_MESSAGES_WINDOWED = """
 SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
-FROM agent_runtime.core_messages
-WHERE conversation_id = %(conversation_id)s
-  AND (%(floor_ca)s IS NULL OR created_at >= %(floor_ca)s)
-  AND (%(ceil_ca)s IS NULL OR created_at <= %(ceil_ca)s
-       OR (%(joined_ca)s IS NOT NULL AND created_at >= %(joined_ca)s))
-  AND NOT (recall_floor_created_at IS NOT NULL
-           AND %(floor_ca)s IS NOT NULL
-           AND recall_floor_created_at < %(floor_ca)s)
+FROM (
+    SELECT id, role, content, tool_calls, tool_call_id, name, sender_account_id
+    FROM agent_runtime.core_messages
+    WHERE conversation_id = %(conversation_id)s
+      AND (%(floor_ca)s IS NULL OR created_at >= %(floor_ca)s)
+      AND (%(ceil_ca)s IS NULL OR created_at <= %(ceil_ca)s
+           OR (%(joined_ca)s IS NOT NULL AND created_at >= %(joined_ca)s))
+      AND NOT (recall_floor_created_at IS NOT NULL
+               AND %(floor_ca)s IS NOT NULL
+               AND recall_floor_created_at < %(floor_ca)s)
+    ORDER BY id DESC
+    LIMIT %(limit)s
+) recent
 ORDER BY id ASC
-LIMIT %(limit)s
 """
 
 # feature-0019 message-editing: 대화의 브랜치 게이트 상태(첫 편집에서만 has_branches=true).
@@ -389,15 +407,20 @@ WITH RECURSIVE path AS (
     WHERE m.conversation_id = %(conversation_id)s
 )
 SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
-FROM path
-WHERE (%(floor_ca)s::timestamptz IS NULL OR created_at >= %(floor_ca)s::timestamptz)
-  AND (%(ceil_ca)s::timestamptz IS NULL OR created_at <= %(ceil_ca)s::timestamptz
-       OR (%(joined_ca)s::timestamptz IS NOT NULL AND created_at >= %(joined_ca)s::timestamptz))
-  AND NOT (recall_floor_created_at IS NOT NULL
-           AND %(floor_ca)s::timestamptz IS NOT NULL
-           AND recall_floor_created_at < %(floor_ca)s::timestamptz)
+FROM (
+    SELECT id, role, content, tool_calls, tool_call_id, name, sender_account_id
+    FROM path
+    WHERE (%(floor_ca)s::timestamptz IS NULL OR created_at >= %(floor_ca)s::timestamptz)
+      AND (%(ceil_ca)s::timestamptz IS NULL OR created_at <= %(ceil_ca)s::timestamptz
+           OR (%(joined_ca)s::timestamptz IS NOT NULL AND created_at >= %(joined_ca)s::timestamptz))
+      AND NOT (recall_floor_created_at IS NOT NULL
+               AND %(floor_ca)s::timestamptz IS NOT NULL
+               AND recall_floor_created_at < %(floor_ca)s::timestamptz)
+    -- FR-agent-history-window-inverted: 활성 브랜치 경로에서도 **최신** n행을 집는다.
+    ORDER BY id DESC
+    LIMIT %(limit)s
+) recent
 ORDER BY id ASC
-LIMIT %(limit)s
 """
 
 # share-visibility-window: restricted 게이트 + 발신자 멤버 window 를 1 쿼리로(LEFT JOIN).

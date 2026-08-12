@@ -158,6 +158,10 @@ __all__ = [
     "AGENT_OBJECT_RESOLVE_MODEL",
     "AGENT_OBJECT_RESOLVE_TIMEOUT_SEC",
     "AGENT_OPENAI_MAX_RETRIES",
+    "AGENT_LLM_TRANSIENT_RETRY_MAX",
+    "AGENT_LLM_TRANSIENT_RETRY_BASE_SEC",
+    "AGENT_LLM_TRANSIENT_RETRY_MAX_SEC",
+    "AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC",
     "AGENT_OUT_DIR",
     "AGENT_PLAN_MODEL",
     "AGENT_PLAN_TIMEOUT_MIN_SEC",
@@ -1189,6 +1193,33 @@ AGENT_QUERY_CONFIRM_HEAVY_TRUST_LLM = (
 # TASK-0237: 새 이름 AGENT_LLM_MAX_RETRIES 우선, 구이름 fallback(운영 .env 무중단).
 AGENT_OPENAI_MAX_RETRIES = int(
     os.getenv("AGENT_LLM_MAX_RETRIES") or os.getenv("AGENT_OPENAI_MAX_RETRIES") or "0"
+)
+# ── 대화 경로 LLM 일시(transient) 실패 재시도 ────────────────────────────────
+# conv-audit FR-llm-transient-failure-kills-run (2026-08-12): 대화 루프의 LLM 호출이 일시
+# 전송 실패(게이트웨이 순단·연결 절단·per-attempt 타임아웃)로 예외를 던지면 run 이 그 자리에서
+# 종결되고, **그때까지 누적한 도구 결과 전량과 수만 토큰이 함께 폐기**된다. 라이브 실측(90일)
+# 에서 `Connection error.` 8 대화 + `Request timed out.` 10 대화가 이 경로로 죽었고, 그중
+# 다수가 우리 자신의 배포가 게이트웨이를 recreate 한 창에 몰려 있었다(재시작 직후 1~2초면 정상).
+#
+# 왜 SDK 재시도(AGENT_OPENAI_MAX_RETRIES)로 하지 않는가: SDK 층 재시도는 per-attempt 타임아웃을
+# 배수로 늘려 "총-대기 = 콘솔 AGENT_TIMEOUT_SEC" 계약(feature-0007 timeout-console-sync)을 깨고,
+# 취소·'즉시 답변' 폴링이 그 사이 전부 무응답이 된다. 그래서 SDK 는 0 을 유지하고 **앱 층에서
+# 같은 라운드만** 다시 부른다 — 누적 `messages`(도구 결과 포함)를 그대로 재사용하므로 재시도가
+# 성공하면 유실이 0 이고, 대기 중에도 취소를 매 초 검사할 수 있다.
+AGENT_LLM_TRANSIENT_RETRY_MAX = max(0, int(os.getenv("AGENT_LLM_TRANSIENT_RETRY_MAX", "2")))
+AGENT_LLM_TRANSIENT_RETRY_BASE_SEC = max(
+    0.0, float(os.getenv("AGENT_LLM_TRANSIENT_RETRY_BASE_SEC", "1.5"))
+)
+AGENT_LLM_TRANSIENT_RETRY_MAX_SEC = max(
+    0.0, float(os.getenv("AGENT_LLM_TRANSIENT_RETRY_MAX_SEC", "8.0"))
+)
+# 타임아웃 계열 재시도는 "한 번 더 최대 per-attempt 상한만큼 태울 수 있다"는 뜻이라, run 예산에
+# 그만큼 남아 있을 때만 허용한다 — 남은 예산이 모자라면 재호출은 어차피 다음 루프 진입에서
+# 예산 컷에 걸려 "타임아웃으로 종료" 로 끝나므로, 사용자를 더 붙잡아 두기만 하고 얻는 게 없다.
+# (연결 절단 계열은 요청이 도달조차 못 했으므로 이 게이트를 적용하지 않는다 — 재호출이 곧
+# 재연결이고 비용이 거의 0.) **0 이하 = per-attempt 상한을 그대로 요구(기본)**, 양수 = 그 값.
+AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC = float(
+    os.getenv("AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC", "0") or "0"
 )
 AGENT_MEMORY_MAX_TURNS = int(os.getenv("AGENT_MEMORY_MAX_TURNS", "10"))
 AGENT_CSV_PREVIEW_ROWS = int(os.getenv("AGENT_CSV_PREVIEW_ROWS", "20"))
