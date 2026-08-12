@@ -76,3 +76,26 @@ source_of_truth: true
 - [x] verify-completion --pre-commit PASS (본 cycle 1차 commit)
 - [x] Git 커밋 + 원격 동기화 (PR #780 머지 eaba795a)
 - [x] (deploy-backed) 라이브 재배포 검증 — 실배포 exit 0 + edge /healthz 200 + 워커 healthy
+
+## TASK-20260812T140000 워커·gateway 교체 quiesce 게이트 (무중단 배포 근본 해소)
+사용자 지시(2026-08-12) — conv-audit `FR-llm-transient-failure-kills-run` 대응 중 "배포 이슈가
+나타나는 원인을 근본적으로 해소할 수 있도록 완벽한 무중단 배포 환경을 먼저 구성" 요청.
+
+- [x] 현행 spine 실측 — web 은 `predrain`(실제 신호 + fail-closed)으로 이미 정본, **워커·gateway
+      만 눈감고 재는 타이머**. ask_jobs 363건: p50 81s · p95 691s · max 2,024s, **60초 초과 66%**
+      vs ask-worker drain 60s. 반대편: 시스템은 30일 중 **2.1% 만 busy**(대기가 현실적)
+- [x] `quiesce_user_runs` — 진행 중 사용자 run 2신호 합산(ask_jobs running[heartbeat 신선분만]
+      + web active_streams) 폴링, 상한까지 조용해지지 않으면 **중단**(fail-closed)
+- [x] 두 신호 모두 관측 불가 = "조용한지 알 수 없다" → 0 으로 읽지 않고 중단(vacuous pass 방지)
+- [x] 배선 — ask-worker recreate **직전**, gateway 본체 recreate **직전**(surge healthy 이후).
+      배경 워커(insight/ops)는 대상 아님(실패=degraded 후 재시도)
+- [x] `--force-busy` 탈출구 + usage 등재. 강행 시 **무중단이 아니었음을 배포 말미에 보고**
+      (`quiesce_summary` — LRN-20260811T1557 "성공 보고 ≠ 무중단" 직접 적용)
+- [x] 게이트 중단 경로가 surge 를 정리(leaked surge 재발 방지)
+- [x] 테스트 18건 신규 + **`pyproject.toml testpaths` 등재**(feature-0014 가 남긴 교훈의 자기적용)
+- [x] 뮤테이션 9/9 KILLED · 전 testpaths 회귀 실패 0(선재 2건 제외) · ruff/bash -n/TOML OK
+- [x] 라이브 SQL 검증 — 운영 primary 에서 게이트 쿼리 실행(현재 running=0)
+- [x] §18.8 적대 검증(codex, full-panel 대체 채널) — **P1 5건 흡수**(실행모드 게이트 · unknown
+      차단 · settle 재확인 · stale 분리차단 · 롤백 보고[차단은 의도적 미수용]) + **자체 적발
+      1건**(공용 헬퍼의 실패→0 관용을 전용 probe 로 교체). 뮤테이션 16/16 KILLED
+- [ ] 배포 + 첫 실전 게이트 동작 실측(로그에 `quiesce: … =quiet`)
