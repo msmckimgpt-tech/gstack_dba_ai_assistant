@@ -59,3 +59,23 @@ source_of_truth: true
 - Impact: 신규 테이블 부재는 이 feature 엔드포인트만 fail-closed 로 막고(의도), 무관한
   서브시스템은 건드리지 않는다. 기존 동작 무변경.
 - Rollback Notes: 해당 함수의 try 경계만 되돌리면 되나, 되돌릴 이유가 없다(순수 방어).
+
+## CHG-20260812-0004
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **라이브 배포 실패 → 근본 수정.** 서버측 모듈 4종을 feature-local `src/` 에서
+  `unit/feature-0003-agent-web-ui/src/` 로 이동하고 라우터의 `sys.path` 주입을 제거.
+- 발견 경위: `make deploy-web` 에서 web-a 가 기동 즉시
+  `ModuleNotFoundError: No module named 'oauth_store'` 로 죽음. agent 이미지 Dockerfile 은
+  feature-0002/src · shared · feature-0003/src 만 COPY 하므로 feature-0041 의 `src/` 는
+  이미지에 존재하지 않는다. **단위 테스트는 repo 레이아웃에서 돌아 전부 통과**했다.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/{oauth_store,session_guard,tool_authz,tool_ledger}.py`
+    (feature-0041 src 에서 `git mv`)
+  - `unit/feature-0003-agent-web-ui/src/routers/{ai_tools,oauth_as}.py` (sys.path 주입 제거)
+  - `unit/feature-0041-external-ai-tool-surface/tests/test_container_importability.py` (신규 5건)
+  - 테스트 4파일 import 경로 정정
+- Impact: 무중단 롤링이 설계대로 작동해 **사용자 영향 0** — web-b(구코드)가 계속 서빙했고
+  Caddy 가 web-a 를 passive 격리했다. 라이브 확인: Caddy `/livez` 200(`git_commit=d619259d`).
+  alembic 0055 는 이미 적용 완료(롤백 불필요 — additive).
+- Rollback Notes: 모듈 위치 이동이라 되돌릴 이유 없음. 되돌리면 같은 기동 실패가 재현된다.

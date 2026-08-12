@@ -195,5 +195,10 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 | 무회귀 | — | AC-9(feature-0023 `ask` 축 · 전 스위트 green) |
 | 무회귀(부트스트랩) | `_ensure_oauth_client_schema` 예외 봉인 | catchup 체인 중단 방지 — 신규 테이블 부재는 이 feature 만 fail-closed, 무관 서브시스템 무영향 |
 
+> ⚠ **코드 거주지**: 서버측 모듈 4종은 `unit/feature-0003-agent-web-ui/src/` 에 있다(= 컨테이너
+> `/app/web`). feature-local `src/` 에 두면 agent 이미지가 COPY 하지 않아 **라이브 기동이 죽는다**
+> (배포 1차 실패로 실증 — CHG-20260812-0004). `test_container_importability.py` 가 이 계약을 고정한다.
+> MCP 어댑터만 feature-local 에 남는다 — 클라이언트 측에서 실행되므로 이미지에 들어갈 이유가 없다.
+
 **미구현(TASK §5.1)**: HTTP/SSE MCP 전송 · L4 권한 비대칭 flag · 발견 자료 갱신 ·
 관리 콘솔 '외부 도구 한도' 탭.

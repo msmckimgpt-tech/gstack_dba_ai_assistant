@@ -105,3 +105,21 @@ source_of_truth: true
   배포 후 검증에서 4개 테이블 실재를 직접 확인해 이 침묵을 보완한다(POST-DEPLOY).
 - Human Approval Needed: 아니오 (배포 자체는 `deploy_scope: included` 사전 승인 + 사용자
   2026-08-12 명시 지시).
+
+
+## REV-20260812-0004 [SKIPPED:deploy-failure-rootfix] — 라이브 기동 실패 근본 수정
+
+- Related Change: CHG-20260812-0004
+- Reason: 배포 1차에서 web-a 가 `ModuleNotFoundError` 로 기동 실패. 코드 거주지 이동이라
+  설계 판단이 바뀌지 않아 패널을 재호출하지 않는다(로직 변경 0 — `git mv` + import 경로).
+- **놓친 이유(정직)**: 단위 테스트가 **repo 레이아웃**에서만 돌았다. "repo 에서 import 되는 것"
+  과 "배포 이미지에서 import 되는 것" 은 다른 집합인데, 그 차이를 재는 게이트가 없었다.
+  codex 리뷰 2회도 이걸 못 잡았다 — diff 만 보면 경로가 자연스러워 보이고, Dockerfile COPY
+  목록과 대조해야만 드러난다.
+- 재발 방지: `test_container_importability.py` 5건 — Dockerfile COPY 목록을 파싱해 (a) 서버측
+  모듈이 COPY 되는 트리 안에 있는지 (b) 라우터가 이미지에 없는 경로로 `sys.path` 를 주입하지
+  않는지 (c) top-level import 가 이미지 레이아웃에서 해석되는지 정적으로 확인한다.
+- 사용자 영향: **0** — 무중단 롤링(one-at-a-time)이 설계대로 작동해 web-b(구코드)가 계속
+  서빙했고, Caddy 가 실패한 web-a 를 passive 격리했다. 이 사고는 그 안전망이 실제로 동작함을
+  확인해 준 사례이기도 하다.
+- Human Approval Needed: 아니오 (배포 재실행은 `deploy_scope: included` 범위).

@@ -24,11 +24,8 @@ LLM 비용이 호출자에게 귀속되고, 우리 계정 쿼터 소진이 이 �
 """
 from __future__ import annotations
 
-import json
 import secrets
-import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -39,11 +36,11 @@ import app
 INCLUDE_ORDER = 9_450  # oauth_as(9_400) 다음, ai_discovery(9_500) 앞
 router = APIRouter()
 
-_FEATURE_SRC = str(Path(__file__).resolve().parents[3]
-                   / "feature-0041-external-ai-tool-surface" / "src")
-if _FEATURE_SRC not in sys.path:
-    sys.path.insert(0, _FEATURE_SRC)
-
+# feature-0041 서버측 모듈은 **이 디렉터리**(= 컨테이너 `/app/web`)에 있다.
+# 초기 구현은 feature-local `unit/feature-0041-.../src` 에 두고 sys.path 를 주입했는데,
+# agent 이미지가 그 경로를 COPY 하지 않아 라이브 기동이 ModuleNotFoundError 로 죽었다
+# (Dockerfile 은 feature-0002/0003/shared 만 복사). 소비자가 feature-0003 라우터뿐이므로
+# 코드 거주지를 소비처로 옮기는 것이 이 저장소 관례에도 맞다.
 import oauth_store as _store        # noqa: E402
 import session_guard as _guard      # noqa: E402
 import tool_authz as _authz         # noqa: E402
