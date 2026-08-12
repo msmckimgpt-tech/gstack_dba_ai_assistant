@@ -121,3 +121,10 @@ source_of_truth: true
   통과했을 것이다. 실패를 비-0 종료로 구분하는 전용 probe 로 교체하고 회귀 테스트를 세웠다.
 - **흡수 검증**: 신규/변경 테스트 포함 **26 PASS** · **뮤테이션 16/16 KILLED**(모드 게이트 ·
   unknown 차단 · stale 차단 · settle 재확인 · 롤백 보고 · 전용 probe · 관용 헬퍼 복귀 등).
+
+## REV-20260812T160000-quiesce-postdeploy [SKIPPED:non-policy-doc] — PASS
+- **Trigger**: 문서만(배포·실측 기록, 원장 status 전이, LRN 신설). 코드 변경 0 →
+  §18.8 dispatch 표 "비정책 doc-only" 행. 선행 코드 cycle 은 `REV-20260812T140000-quiesce-gate`
+  에서 codex backend+qa(full-panel 대체 채널)로 P1 5건 흡수 완료.
+- 기록에 **통과하지 못한 조건을 함께 남겼다** — 이번 배포는 유휴 상태라 게이트가 즉시 통과했고,
+  "바쁠 때 기다렸다 통과하는" 궤적은 미관측이다(과장 금지).

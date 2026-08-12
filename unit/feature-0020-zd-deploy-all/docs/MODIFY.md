@@ -155,3 +155,18 @@ source_of_truth: true
   늘어난다(진행 중 run 이 있을 때만 그만큼 대기 — 유휴 시 종전과 동일).
 - Rollback Notes: `quiesce_gate` 호출 2곳을 제거하면 즉시 종전 동작. 다만 그 순간부터 배포는
   다시 진행 중 사용자 run 을 죽인다.
+
+## CHG-20260812T160000-quiesce-postdeploy (POST-DEPLOY 기록 — 문서만)
+- Date: 2026-08-12. `CHG-20260812T140000-quiesce-gate` 의 배포·실측 기록.
+- **배포**: PR #1219 merge main `7c2918a8` → **2단계 배포**(사용자 선택: ① web·워커 → ② `--force-gateway`).
+  게이트가 **실전에서 두 번 발화, 두 번 다 `=quiet`**. 5서비스 healthy · `/healthz` ok · surge 잔재 0.
+- **가장 중요한 실측 2가지**:
+  ① gateway `StopTimeout` 이 교체 **전 120 / 후 330** — compose 값 변경은 **recreate 없이는
+     발효되지 않는다**. 1단계만 돌렸다면 앱 재시도만 살고 배포 층은 구 예산 그대로였을 것이다
+     (드리프트 판정이 litellm config sha·이미지만 보기 때문 — 2단계 분리가 필요했던 이유).
+  ② 게이트 로그에 **settle 재확인이 실제로 찍혔다** — 스냅샷 1장이 아니라 두 표본으로 판정했다.
+- **정직**: 이번 배포는 시스템이 유휴(진행 중 run 0)라 게이트가 즉시 통과했다. **"바쁠 때 실제로
+  기다렸다가 통과하는" 궤적은 아직 관측되지 않았다** — 합성 부하 또는 실사용 중 배포에서 확인 필요.
+- Files: 본 문서 · `docs/TASK.md` · `docs/TEST.md` · `docs/LEARNINGS.md`(LRN 신설) ·
+  conv-audit 원장(status 전이) · feature-0002 `docs/{TASK,TEST}.md`(cross-ref, 문서만).
+- Impact: 문서만 — 런타임 0.
