@@ -314,6 +314,40 @@ def finish_ask_job(
         return cur.fetchone() is not None
 
 
+def requeue_ask_job_for_resume(
+    conn, job_id: int, lease_epoch: int, *, attempts_cap: int
+) -> bool:
+    """일시 LLM 장애로 소진된 run 을 **재개용으로 재큐**한다 (conv-audit 2차).
+
+    terminal(error) 로 닫지 않고 `pending` 으로 되돌린다 — 누적 도구 호출·결과는 이미
+    `core_messages` 에 영속돼 있고 히스토리 로더가 replay 하므로, 재claim 된 run 이 그
+    맥락을 이어받아 **처음부터 다시 하지 않는다**(payload 에 `resume_hint` 를 심어 재개
+    run 이 그 사실을 알고 "이미 조회한 것 재조회 금지" 지시를 받는다).
+
+    가드:
+      - **자기 lease 일 때만**(fencing) — 박탈된 run 이 새 소유자의 상태를 되돌리지 못한다.
+      - `attempts < cap` — attempts 는 claim 시점에 증가하므로 여기서 더하지 않는다.
+        cap 을 넘긴 행은 재큐하지 않고 False 를 돌려 호출측이 정상 terminal 로 닫게 한다
+        (`release_worker_jobs_on_shutdown` 과 같은 규율 — 무한 재큐 방지).
+      - `lease_epoch++` — 아직 살아 있을 수 있는 자기 executor 스레드를 fencing.
+
+    Returns: True(재큐됨 — 호출측은 terminal 을 찍지 말아야 한다) / False(재큐 안 됨).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE agent_runtime.ask_jobs "
+            "SET status = 'pending', claimed_by = NULL, claimed_at = NULL, "
+            "    started_at = NULL, heartbeat_at = NULL, finished_at = NULL, "
+            "    lease_epoch = lease_epoch + 1, "
+            "    payload = coalesce(payload, '{}'::jsonb) || '{\"resume_hint\": true}'::jsonb "
+            "WHERE id = %(id)s AND lease_epoch = %(lease)s "
+            "  AND status = 'running' AND attempts < %(cap)s "
+            "RETURNING id",
+            {"id": int(job_id), "lease": int(lease_epoch), "cap": int(attempts_cap)},
+        )
+        return cur.fetchone() is not None
+
+
 def set_job_run_id(conn, job_id: int, lease_epoch: int, run_id: str) -> bool:
     """claim 직후 worker 가 생성한 run_id 를 job 에 기록(ops 가시성 + sweeper 가 KV 정리
     시 사용). 자기 lease 일 때만. Returns: True(기록) / False(lease 박탈)."""

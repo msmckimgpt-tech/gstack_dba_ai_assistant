@@ -1597,3 +1597,37 @@ Cross-ref: TASK-20260803T170000-loadgate-replay-verify · CHG-20260803T170000-lo
   KILLED 전환. `docs/CODE_REVIEW.md` 위험 축 대조: 무음 절단 0 · fail-open 게이트 0(재시도 실패는
   종전대로 사용자에게 노출) · 멱등성(재호출은 응답 미수신 상태라 도구 부작용 없음) · 격리 경계
   무변경(히스토리 가시성 술어 서브쿼리 내 유지).
+
+## REV-20260812T180000-llm-transient-resume [CODEX:backend+qa] — PASS (P1 3 · P2 2 + 자체 적발 1 흡수 후)
+- **Trigger**: `query`(재큐 SQL 신설) + `performance/latency`(재시도 예산·대기) keyword matched
+  → backend, qa. 신규 권한·엔드포인트·자격증명 경로 0(security 렌즈 N/A — 게이트 없는 write 는
+  자기 lease + attempts cap 가드만 추가).
+- **채널 근거(§18.8.2-1)**: 본 위임 세션에 "요청 없이 Agent tool 을 호출하지 말라" 는 상위
+  우선순위 하네스 지시가 있어 제약 없는 채널 `codex review --uncommitted` 로 수행. 판정 기준
+  정본 `docs/CODE_REVIEW.md`.
+- **1라운드 verdict — P1 3 · P2 2**:
+  - **P1-1 쓰로틀을 값싼 부류로 오분류**: 429 는 요청이 **도달해서** 거부된 것인데
+    `timeout_class=False` 라 값싼 예산(6회·76.5초)을 받아 **쓰로틀을 증폭**한다.
+    → `_LLM_CHEAP_EXCLUDED_KINDS={"throttled"}` 로 제외(전송층은 여전히 값싸다 — 역검증 포함).
+  - **P1-2 취소된 run 이 재개된다**: 마지막 시도 중 사용자가 중단을 눌러도 이 분기가 먼저 잡혀
+    `resumable` 을 세우고 `canceled_by_user` 없이 break → 워커가 재큐해 **취소가 무의미**해진다.
+    → resumable 표시 **전에** 취소 재확인 + 취소면 그 경로로 넘김.
+  - **P1-3 재큐 실패 시 KV 고착**: resume 경로 run 은 KV terminal 을 찍지 않고 지연 마커도 만들지
+    않으므로, 재큐가 예외/no-op 이면 `last_status` 가 `processing` 에 남아 **프런트 무한 '처리 중'**
+    + 이후 활성 판정 오염. → `_resume_giveup_finalize`(`only_if_current_run=True`)를 no-op·예외
+    **양 경로**에 배치.
+  - **P2-1 토글 off 에서 임시파일 미정리**: 재큐가 비활성인데 `resumable` 이 세워져 정리 가드가
+    건너뛴다. → `resumable` 의 의미를 "재개로 처리된다"로 좁힘(`resume_allowed` 게이팅) — 하류
+    3곳(정리·terminal·재큐)이 한 플래그를 같은 뜻으로 읽는다.
+  - **P2-2 예산 판정이 다음 대기를 무시**: 예산 10s 에서 1.5+3+6=10.5s 까지 대기 → 문서가 선언한
+    절대 상한과 불일치. → `waited + next_backoff > budget` 으로 판정.
+- **자체 적발(패널 이전, 더 심각)**: `_cleanup_inline_paths` 가 `finally` 에 있고 그 주석이
+  **"requeue 경로에선 삭제 안 함"** 을 전제로 적혀 있었는데, 이 cycle 이 바로 그 전제를 깼다 —
+  재큐 예정 run 의 첨부 인라인 임시파일을 지워 **재개 run 이 read-after-delete 로 첨부 6건을
+  잃을** 상태였다(사고 대화가 정확히 첨부 대화다). resumable 가드 + 재큐 실패 시 그 자리 정리로
+  해소. **기존 주석이 이미 그 불변식을 말하고 있었다는 점이 핵심 교훈** — 새 경로를 추가할 때
+  "이 전제를 내가 깨는가" 를 주석에서 먼저 찾아야 했다.
+- **흡수 검증**: 지적 5건 + 자체 1건 각각에 회귀 테스트, **뮤테이션 19/19 KILLED**.
+  초판 테스트 중 2건이 약해 강화했다 — ① 임시파일 정리 검사가 예외 핸들러의 호출로 대신
+  통과해 "정상 fall-through 누수" 뮤턴트가 살아남았고(범위를 `except` 앞까지로 좁힘)
+  ② finalize 순서 검사가 문자열 위치만 봐 재큐 블록 이동을 놓칠 수 있었다.

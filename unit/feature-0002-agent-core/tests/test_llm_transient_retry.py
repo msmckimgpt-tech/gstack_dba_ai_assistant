@@ -166,8 +166,14 @@ _TRANSIENT_TIMEOUT = {"kind": LLM.FAILURE_TRANSIENT, "tag": "x", "timeout_class"
 _PERMANENT = {"kind": LLM.FAILURE_PERMANENT, "tag": "auth_invalid", "timeout_class": False}
 
 
-def test_connection_failure_retries_up_to_cap_then_stops():
-    cap = AC.AGENT_LLM_TRANSIENT_RETRY_MAX
+def test_connection_failure_retries_up_to_cheap_cap_then_stops():
+    """**계약 갱신(2026-08-12 2차 사고)**: 초판은 연결 실패도 `AGENT_LLM_TRANSIENT_RETRY_MAX`(2)
+    로 묶었는데, 그 2회(총 4.5초)가 게이트웨이 교체 공백 48초를 못 덮어 154초 추론이 폐기됐다.
+    연결 실패는 요청이 도달조차 못 해 재시도 비용이 ~0 이므로 **값싼 실패 전용 예산**을 쓴다.
+    예산 세부는 `test_llm_transient_resume.py` 가 소유한다 — 여기서는 "더 이상 작은 상한에
+    묶이지 않는다" 만 고정한다(옛 계약으로의 회귀 차단)."""
+    cap = AC.AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX
+    assert cap > AC.AGENT_LLM_TRANSIENT_RETRY_MAX
     for n in range(1, cap + 1):
         assert AC._llm_retry_allowed(_TRANSIENT_CONN, n,
                                      remaining_budget_sec=1.0, per_attempt_timeout_sec=300.0)
