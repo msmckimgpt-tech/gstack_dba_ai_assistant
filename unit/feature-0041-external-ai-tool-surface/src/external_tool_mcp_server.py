@@ -129,7 +129,7 @@ def _post(path: str, payload: dict[str, Any]) -> str:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=ctx) as resp:
+        with _opener(ctx).open(req, timeout=_TIMEOUT) as resp:
             # codex P2 — 상한 없는 read() 는 오동작·탈취된 endpoint 가 이 프로세스 메모리를
             # 고갈시키는 경로다. 초과분은 버리고 절단 사실을 알린다.
             raw = resp.read(_MAX_BYTES + 1)
@@ -148,6 +148,28 @@ def _post(path: str, payload: dict[str, Any]) -> str:
     except Exception as e:  # noqa: BLE001
         return json.dumps({"error": "request_failed", "detail": _defang(str(e)[:300])},
                           ensure_ascii=False)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """codex P1 — urllib 기본 opener 는 리다이렉트를 자동 추종하며 `Authorization` 헤더를
+    **다른 호스트로도** 실어 보낸다. 우리 API 는 도구 호출에 리다이렉트를 쓰지 않으므로
+    전면 금지한다(추종할 정당한 이유가 없고, 허용하면 토큰 유출 경로가 생긴다)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
+_OPENER_CACHE: dict = {}
+
+
+def _opener(ctx):
+    key = id(ctx)
+    if key not in _OPENER_CACHE:
+        handlers = [_NoRedirect()]
+        if ctx is not None:
+            handlers.append(urllib.request.HTTPSHandler(context=ctx))
+        _OPENER_CACHE[key] = urllib.request.build_opener(*handlers)
+    return _OPENER_CACHE[key]
 
 
 def _defang(text: str) -> str:

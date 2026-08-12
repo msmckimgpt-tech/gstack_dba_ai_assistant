@@ -143,6 +143,18 @@ async def open_task(request: Request, ctx=Depends(require_ai_token),
     except _ledger.LedgerUnavailable as exc:
         return _json_err(503, f"원장을 기록할 수 없어 요청을 중단했습니다: {exc}")
 
+    # L4 — 같은 client 에 권한 격차가 큰 세션이 동시 활성인지. **원장 전용**(응답 미포함).
+    #
+    # ⚠ codex P1: 응답에 실으면 **교차 테넌트 정보 노출**이다. OAuth `client_id` 는 DCR 로
+    #   누구나 받는 **앱 식별자**이지 설치·사용자 식별자가 아니라, 서로 무관한 사용자들이 같은
+    #   client_id 를 공유할 수 있다. 그 상태에서 상대 계정 id·권한 겹침을 돌려주면 호출자가
+    #   자기와 무관한 사용자의 존재와 권한 윤곽을 알게 된다. L4 의 목적은 **운영자 관측**이지
+    #   호출자 통보가 아니므로 원장에만 남긴다.
+    asym = _permission_asymmetry(conn, ctx, account)
+    if asym:
+        _safe_record(account, ctx, tool="open_task", outcome="ok", task_id=task_id,
+                     detail=f"asymmetry:jaccard={asym['jaccard']}:n={asym['n_accounts']}")
+
     return JSONResponse({
         "task_id": task_id,
         "product": {"id": int(product.get("id") or 0), "name": product.get("name")},
@@ -369,6 +381,65 @@ def _sibling_tasks(conn, account: dict[str, Any], client_id: str | None,
     finally:
         cur.close()
     return [{"task_id": r[0]} for r in rows]
+
+
+# L4 판정에서 훑는 계정 수 상한(codex P2 — DB 증폭 방어).
+_ASYMMETRY_MAX_ACCOUNTS = 8
+
+
+def _permission_asymmetry(conn, ctx: dict[str, Any],
+                          account: dict[str, Any]) -> dict[str, Any] | None:
+    """같은 client 의 **최근 활성 세션들**을 모아 L4 판정에 넘긴다.
+
+    "활성" 은 최근 1시간 내 open 된 task 를 가진 계정으로 근사한다 — 세션 테이블을 따로 두지
+    않고도 "지금 이 런타임이 몇 계정을 다루고 있나" 를 충분히 잡는다(정확한 동시성보다
+    **권한 격차** 가 판정의 본질이라 근사로 족하다).
+    """
+    client_id = ctx.get("client_id")
+    if not client_id:
+        return None
+    cur = conn.cursor()
+    try:
+        # codex P2: 상한 없는 fan-out 은 인증된 요청 1건으로 DB 증폭을 만든다
+        # (공유 client 에 계정이 많을수록 심해진다). 상한 안에서만 본다 —
+        # 판정의 본질은 "권한 격차가 있는가" 라 표본으로 족하다.
+        cur.execute(
+            "SELECT DISTINCT AccountId FROM WebAiTasks "
+            "WHERE ClientId = %s AND CreatedAt > (NOW() - INTERVAL 1 HOUR) "
+            "ORDER BY AccountId LIMIT %s",
+            (client_id, _ASYMMETRY_MAX_ACCOUNTS))
+        account_ids = [int(r[0]) for r in (cur.fetchall() or [])]
+    except Exception:
+        return None
+    finally:
+        cur.close()
+
+    account_ids = sorted(set(account_ids) | {int(account.get("id") or 0)})
+    if len(account_ids) < 2:
+        return None
+
+    sessions = []
+    for aid in account_ids:
+        try:
+            if aid == int(account.get("id") or 0):
+                acct = account
+            else:
+                rows = app._fetch_account_rows(
+                    conn, "a.Id = %s AND a.IsActive = 1 AND a.DeletedAt IS NULL",
+                    (aid,), include_password=False, limit_sql="LIMIT 1")
+                rows = app._decorate_account_rows(conn, rows)
+                acct = rows[0] if rows else None
+            if not acct:
+                continue
+            products = _authz.allowed_products(app, acct, conn)
+        except Exception:
+            continue
+        sessions.append({"account_id": aid,
+                         "products": [int(p.get("id") or 0) for p in products]})
+    try:
+        return _authz.permission_asymmetry(sessions)
+    except Exception:
+        return None
 
 
 def _session_notice(account: dict[str, Any]) -> str:

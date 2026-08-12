@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (P0 구현·라이브 배포 완료 a68fbbac · 인증 e2e 는 사람 1회 필요)
+- State: in-progress (P0 + 잔여 3건 완료 · 콘솔 탭·인증 e2e 만 남음)
 - Owner: AI (계획) / Human (승인)
 - Priority: high
 - Last Updated: 2026-08-12
@@ -84,6 +84,10 @@ source_of_truth: true
 - [x] TASK-20260812T090000-catchup-guard — 부트스트랩 catchup 체인 보호(배포 전 발견)
 - [x] TASK-20260812T090000-deploy-1 — PR #1223 머지 + 배포 1차(실패: 이미지 미포함 모듈)
 - [x] TASK-20260812T090000-deploy-2 — 모듈 재배치 후 배포 2차(a68fbbac) + POST-DEPLOY 12항 PASS
+- [x] TASK-20260812T190000-discovery — 매니페스트 tool_surface + 엔드포인트 카탈로그 + OpenAPI 7 path + 가이드 부록 B
+- [x] TASK-20260812T190000-l4-asymmetry — 권한 비대칭 flag(자카드, 표시 전용) + open_task 배선
+- [x] TASK-20260812T190000-http-transport — HTTP/SSE MCP 서버(토큰 무보관·헤더 전달)
+- [ ] TASK-20260812T190000-console-tab — 콘솔 '외부 도구 한도' 탭 (사용자 결정: 별도 cycle)
 
 ## 4. In Progress
 - 없음
@@ -91,14 +95,18 @@ source_of_truth: true
 ## 5. Blocked
 - 없음 (PLAN-APPROVED 2026-08-12 로 해소)
 
-## 5.1 잔여 (다음 cycle)
-- HTTP/SSE MCP 전송(f-ii) — 현재 stdio 어댑터만. `FastMCP(streamable_http_path=…)` +
-  `auth_server_provider` 로 서버측 전송을 붙이는 작업.
-- 발견 자료 갱신 — `/api/ai/manifest`·`/api/ai/guide`·큐레이션 OpenAPI 에 OAuth 등록·인가 흐름과
-  P0 도구 계약 추가(익명=static contract 불변식 유지).
-- 라이브 배포 + e2e(등록→인가→토큰→도구→제출) 및 POST-DEPLOY 검증.
-- L4 권한 비대칭 flag — 원장 컬럼은 준비됐으나 판정 로직 미구현.
-- 관리 콘솔 '외부 도구 한도' 탭(`WebRoleTokenQuotas` 패턴 복제).
+## 5.1 잔여
+
+**해소됨(2026-08-12 2차 cycle)**: HTTP/SSE 전송 · 발견 자료 · L4 비대칭 flag · 라이브 배포.
+
+남은 것:
+- **관리 콘솔 '외부 도구 한도' 탭** — 사용자 결정(2026-08-12)으로 **이번 출하에서 제외**.
+  사유: (a) `admin.js` 를 다른 활성 브랜치 2개가 동시 편집 중이라 충돌 위험이 크고
+  (b) `visual_verification_scope: always` 라 PB-0008 실 브라우저 검증이 하드 게이트여서
+  붙이면 나머지 3건 출하까지 그 검증에 묶인다. **상한 자체는 runtime 기본값으로 이미 집행 중**
+  이고 탭은 조절 편의 UI다(기능 공백 아님). 별도 cycle.
+- **인증된 전 구간 e2e** — 인가에 사람 브라우저 로그인·동의가 필요(설계상 자동화 불가).
+- P1 이후 도구(`execute_sql` 등) — 원 계획대로 별도 단계.
 
 ## 6. Done
 - 요구사항 확정 (2026-08-12 대화 — 신원/비용 2축, 동시 다중 세션 허용, 검증 이관 범위,
@@ -108,7 +116,7 @@ source_of_truth: true
 - TASK.md §2.1 구현 계획 작성
 
 ## 7. Next Action
-- 라이브 배포 후 e2e 검증(등록→인가→토큰→도구 호출→제출) + POST-DEPLOY 기록 → §5.1 잔여 착수
+- 콘솔 '외부 도구 한도' 탭 별도 cycle(admin.js 충돌 정리 후) · 사람 1회 인가로 전 구간 e2e 확정
 
 ## 8. Completion Checklist
 - [x] 모든 REQ의 AC가 구현되었다 (AC-1~11 — 단, AC-1·AC-2 의 **라이브** 확인은 배포 후, §5.1)

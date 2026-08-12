@@ -87,3 +87,29 @@ source_of_truth: true
 - Files: `docs/TEST.md` §3 (POST-DEPLOY Run) · `docs/REPORT.md` · `docs/TASK.md`
 - Impact: 코드 변경 0. 배포 사실과 검증 증적을 정본에 고정.
 - Rollback Notes: 해당 없음(기록).
+
+## CHG-20260812-0006
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 잔여 3건 구현 — 발견 자료 · L4 권한 비대칭 flag · HTTP/SSE MCP 전송.
+  codex 리뷰 P1 3건·P2 2건 전건 in-cycle 수정. 테스트 136건.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_discovery.py` (`tool_surface` 블록 ·
+    `_TOOL_SURFACE_ENDPOINTS` 8종 · 큐레이션 OpenAPI 7 path)
+  - `unit/feature-0003-agent-web-ui/src/static/ai-api-guide.md` (부록 B — 외부 AI 도구 표면)
+  - `unit/feature-0003-agent-web-ui/src/tool_authz.py` (`permission_asymmetry` — 자카드 판정)
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_tools.py` (L4 배선 · 원장 전용 · fan-out 상한)
+  - `unit/feature-0041-.../src/external_tool_mcp_http.py` (신규 — HTTP/SSE 전송)
+  - `unit/feature-0041-.../src/external_tool_mcp_server.py` (리다이렉트 금지)
+  - `unit/feature-0041-.../tests/test_remaining_surface.py` (신규 30건)
+- Impact: 발견 자료는 익명 노출 확대이나 **인스턴스 데이터 0** 불변식 유지(테스트 고정).
+  L4 는 원장 전용이라 응답 계약 무변경. HTTP 전송은 신규 프로세스로 기존 경로 무영향.
+- Rollback Notes: HTTP 전송은 파일 삭제로 소멸(배선 없음). 발견 자료·L4 는 해당 블록 제거.
+
+## CHG-20260812-0007
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **콘솔 '외부 도구 한도' 탭을 이번 출하에서 제외** (사용자 결정 2026-08-12).
+- Files: `docs/TASK.md` §5.1 · `docs/FUNCTION.md` §14
+- Impact: 기능 공백 아님 — 상한은 `tool_ledger.DEFAULTS` 로 이미 집행 중이고 탭은 조절 UI다.
+- Rollback Notes: 해당 없음(범위 결정 기록).

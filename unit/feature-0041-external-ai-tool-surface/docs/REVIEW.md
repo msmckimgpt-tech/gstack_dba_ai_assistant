@@ -136,3 +136,40 @@ source_of_truth: true
   자동 probe 로 대체 불가(설계 의도). (2) probe 가 남긴 DCR client 1건이 라이브에 존재
   (`deploy-probe` — `client_id` 만으로는 무권한이라 무해, 정리하려면 revoke).
 - Human Approval Needed: 아니오.
+
+
+## REV-20260812-0006 [CODEX:remaining-surface] — accepted
+
+- Related Change: CHG-20260812-0006
+- 실행: `codex exec -s read-only` + `git diff --cached -- '*.py'`. GATE **FAIL (P1 3건)** →
+  5건 전부 in-cycle 수정 + 회귀 테스트 6건 추가.
+
+### 지적과 처리
+
+1. **[P1] L4 가 교차 테넌트 정보를 노출** (`ai_tools.py`) — 가장 무거운 지적. OAuth `client_id` 는
+   DCR 로 누구나 받는 **앱 식별자**이지 설치·사용자 식별자가 아니다. 서로 무관한 사용자가 같은
+   client_id 를 쓸 수 있는데, 나는 그걸 "한 머신의 런타임" 으로 가정하고 **상대 계정 id·권한
+   겹침을 응답에 실었다.** → finding 에서 계정 id 제거(`n_accounts` 로 대체) + **응답에서 완전
+   제거해 원장 전용**으로 전환. L4 의 목적은 운영자 관측이지 호출자 통보가 아니다.
+2. **[P1] HTTP 전송이 `0.0.0.0` 평문 수신** — 전달하기도 전에 Bearer token 이 노출된다.
+   → **loopback 기본 바인딩** + 외부 바인딩은 `EXT_TOOL_HTTP_ALLOW_PUBLIC_BIND=1` 명시 opt-in
+   (TLS 종단 프록시 전제) + 경고.
+3. **[P1] urllib 자동 리다이렉트가 `Authorization` 을 타 호스트로 전달** — 두 어댑터 모두 해당.
+   → `_NoRedirect` 핸들러로 전면 금지(우리 API 는 도구 호출에 리다이렉트를 쓰지 않는다).
+4. **[P2] `EXT_TOOL_VERIFY_TLS=0` 이 Bearer 채널 인증을 완전히 끔** → **loopback upstream 에서만**
+   허용, 그 외는 fail-loud. 사내 self-signed 는 `EXT_TOOL_CA_BUNDLE` 이 정답.
+5. **[P2] L4 의 무제한 계정 fan-out** — 공유 client 에 계정이 많으면 인증된 요청 1건이 DB 증폭.
+   → `_ASYMMETRY_MAX_ACCOUNTS=8` 상한(판정 본질은 격차 유무라 표본으로 족하다).
+
+- Risks: 1번은 **내 설계 전제가 틀렸던 사례**다 — "client_id = 머신" 가정을 문서(ANCHOR §1)에도
+  썼는데, DCR 특성상 성립하지 않는다. L4 를 원장 전용으로 내리면서 그 가정에 의존하는 표면은
+  없어졌지만, 향후 client_id 를 신원 축으로 쓰려는 시도는 같은 함정에 빠진다.
+- Human Approval Needed: 아니오 (배포는 `deploy_scope: included`).
+
+## REV-20260812-0007 [SKIPPED:scope-decision] — 콘솔 탭 제외 결정 기록
+
+- Related Change: CHG-20260812-0007
+- Reason: 범위 결정 기록(코드 0). 사용자 결정 2026-08-12 — `admin.js` 를 다른 활성 브랜치 2개가
+  편집 중이라 충돌 위험이 크고, `visual_verification_scope: always` 로 PB-0008 이 하드 게이트여서
+  붙이면 나머지 3건 출하까지 묶인다. 상한은 이미 집행 중이라 기능 공백이 아니다.
+- Human Approval Needed: 아니오 (사용자가 직접 결정).
