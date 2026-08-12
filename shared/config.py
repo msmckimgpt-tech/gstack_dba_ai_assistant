@@ -162,6 +162,10 @@ __all__ = [
     "AGENT_LLM_TRANSIENT_RETRY_BASE_SEC",
     "AGENT_LLM_TRANSIENT_RETRY_MAX_SEC",
     "AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC",
+    "AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX",
+    "AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX_SEC",
+    "AGENT_LLM_TRANSIENT_RETRY_CHEAP_BUDGET_SEC",
+    "AGENT_ASK_RESUME_ON_TRANSIENT",
     "AGENT_OUT_DIR",
     "AGENT_PLAN_MODEL",
     "AGENT_PLAN_TIMEOUT_MIN_SEC",
@@ -1223,6 +1227,35 @@ AGENT_LLM_TRANSIENT_RETRY_MAX_SEC = max(
 # 재연결이고 비용이 거의 0.) **0 이하 = per-attempt 상한을 그대로 요구(기본)**, 양수 = 그 값.
 AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC = float(
     os.getenv("AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC", "0") or "0"
+)
+# ── 값싼(요청 미도달) 실패의 별도 예산 ────────────────────────────────────────
+# conv-audit 2차 사고(2026-08-12 17:30): 게이트웨이가 **배포 스파인 밖에서** recreate 되어
+# 17:30:05~17:30:53(+healthy 대기) 동안 부재했다. 재시도는 정상 발화했지만(`llm_transient_retry
+# attempt=1/2`) 총 대기가 위 상한(2회 × 1.5s/3.0s = **4.5초**)뿐이라 **48초+ 공백을 덮을 수
+# 없었다** — 라운드 1의 154초 추론(prompt 71,960 tok)과 도구 3건이 통째로 폐기됐다.
+#
+# 핵심 비대칭: `attempt_elapsed=0.0s` 로 즉시 거부된 실패는 **요청이 도달조차 못 했다** —
+# provider 토큰도, 게이트웨이 왕복도 소모하지 않는다. 즉 재시도 비용이 사실상 0 이므로
+# 상한 소진(timeout) 실패와 같은 예산을 쓸 이유가 없다. 값싼 실패는 **인프라 교체 공백을
+# 덮을 만큼** 오래 버티게 하고(총 대기 예산), 비싼 실패는 종전대로 짧게 둔다.
+AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX = max(
+    0, int(os.getenv("AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX", "6"))
+)
+AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX_SEC = max(
+    0.0, float(os.getenv("AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX_SEC", "30"))
+)
+# 값싼 실패의 **총 누적 대기** 상한. 시도 횟수가 남아도 이 값을 넘기면 멈춘다 —
+# 사용자를 무한정 붙잡지 않기 위한 절대 상한(실측 교체 공백 ~48s + 기동/healthy 여유).
+AGENT_LLM_TRANSIENT_RETRY_CHEAP_BUDGET_SEC = max(
+    0.0, float(os.getenv("AGENT_LLM_TRANSIENT_RETRY_CHEAP_BUDGET_SEC", "120"))
+)
+# ── 일시 실패 소진 시 run 재개(requeue) ──────────────────────────────────────
+# 위 예산을 넘기는 장애(수 분 이상)에도 **누적 작업을 버리지 않는다**. 도구 호출과 그 결과는
+# 이미 `core_messages` 에 영속돼 있고 히스토리 로더가 그대로 replay 하므로(라이브 실증),
+# job 을 재큐하면 재개 run 이 그 맥락을 이어받아 **처음부터 다시 하지 않는다**.
+AGENT_ASK_RESUME_ON_TRANSIENT = (
+    os.getenv("AGENT_ASK_RESUME_ON_TRANSIENT", "true").strip().lower()
+    not in ("false", "0", "no", "off")
 )
 AGENT_MEMORY_MAX_TURNS = int(os.getenv("AGENT_MEMORY_MAX_TURNS", "10"))
 AGENT_CSV_PREVIEW_ROWS = int(os.getenv("AGENT_CSV_PREVIEW_ROWS", "20"))

@@ -2423,3 +2423,34 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
       가 transient/한국어 안내/배너 비오염으로 분류되는 것 직접 확인(사고 당시 미분류 경로가 닫힘),
       출하 상수 5종·504 timeout_class·느린 실패 게이트·히스토리 3경로 DESC-LIMIT 확인.
 - [ ] 라이브 실측 — 다음 배포 창에서 in-flight 대화가 실제로 살아남는지(corroboration 재측정)
+
+## TASK-20260812T180000 일시 장애에서 작업 내역 보존 + 추론 재개 (conv-audit 2차)
+`FR-llm-transient-exhaustion-discards-run` — 사용자 명시 호출(2026-08-12): 첨부 6건
+(`20260709_[MV] Log_v2 이슈 대응_*.sql`) 대화가 "AWS Bedrock 서비스가 일시적으로 응답하지
+않습니다" 로 끊겨 "작업 내역을 보존한 채 다시 추론을 재개할 수 있도록 구성" 요청.
+
+- [x] 진단 — 1차 봉인의 재시도는 **정상 발화**(로그 `llm_transient_retry attempt=1/2`)했으나
+      총 대기 **4.5초** vs 게이트웨이 부재 **48초+**(created 17:30:05 → started 17:30:53,
+      `restarts=0` = 배포 스파인 밖 recreate). `attempt_elapsed=0.0s` = 요청 미도달.
+      폐기된 것: 라운드 1의 **154.2초 추론(prompt 71,960 tok)** + 도구 3건.
+- [x] 누적 작업이 이미 `core_messages` 에 영속·replay 됨을 **라이브 실증**(user → assistant
+      (tool_calls) → tool ×3 재생 확인) — 재개의 전제는 충족돼 있었고 트리거만 없었다.
+- [x] 축1 **예산을 실패 비용에 맞춤** — 값싼(요청 미도달) 실패 전용 예산: 시도 6회 ·
+      backoff cap 30s · 총 누적 대기 120s(총 대기 가능 76.5s > 실측 공백 48s). 비싼(상한 소진)
+      실패는 종전 유지. `_slow` 판정분은 값싼 경로로 새지 않게 배제.
+- [x] 축2 **소진 시 재개** — `requeue_ask_job_for_resume`(self-lease + `attempts < cap` +
+      `payload || resume_hint`) → 재claim 이 누적 맥락을 이어받음. run 은 `resumable` 계약으로
+      알리고 job 소유자(ask-worker)가 재큐 판단.
+- [x] 축3 **재개 맥락 오염 차단** — 재큐 예정 오류는 core 미기록(LLM recall 배제)·KV terminal
+      미기록(프런트 종료 방지), 화면에는 내부 안내만. 재개 run 에 "이미 조회한 것 재조회 금지"
+      system 지시.
+- [x] `resume_allowed` 를 attempts 여유로 게이팅 — cap 도달 시 종전대로 오류 turn 을 남겨
+      "재큐도 못 했는데 아무 것도 안 남는" 창을 구조적으로 제거.
+- [x] 테스트 23건 신규 + 1차 cycle 계약 테스트 1건 갱신(옛 2회 상한 회귀 차단) ·
+      **뮤테이션 12/12 KILLED** · 전 testpaths 회귀 실패 0(선재 1건) · ruff clean
+- [x] §18.8 적대 검증(codex backend+qa) — **P1 3 · P2 2 전건 흡수**(쓰로틀 값싼 부류 제외 ·
+      취소된 run 재개 금지 · 재큐 실패 시 KV terminal 보장 · resumable 을 resume_allowed 로 게이팅 ·
+      예산에 다음 backoff 포함) + **자체 적발 1건**(재큐 경로가 첨부 인라인 임시파일을 지워
+      재개 run 이 첨부를 잃을 상태 — 기존 주석이 이미 그 불변식을 말하고 있었다).
+      **뮤테이션 19/19 KILLED**(초판 테스트 2건은 판별력 부족으로 강화)
+- [ ] 배포 + POST-DEPLOY 실증(재개 로그 `ask_resume_pending` → 재claim → 답변 완주)

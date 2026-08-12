@@ -39,6 +39,7 @@ from shared.config import (
     AGENT_ASK_WORKER_STALE_SEC,
     AGENT_ASK_WORKER_SWEEP_EVERY_SEC,
     AGENT_ASK_WORKER_ATTEMPTS_CAP,
+    AGENT_ASK_RESUME_ON_TRANSIENT,
     AGENT_ASK_WORKER_JITTER_SEC,
     AGENT_ASK_WORKER_DRAIN_SEC,
     AGENT_ASK_WORKER_ROLE_STALE_SEC,
@@ -234,6 +235,10 @@ def _payload_to_kwargs(payload: dict[str, Any], account_id: int, run_id: str) ->
         "text_inline_path": payload.get("text_inline_path"),
         "reasoning_level": payload.get("reasoning_level"),  # feature-0003: 추론 강도(worker 경로 패리티)
         "run_id": run_id,
+        # conv-audit 2차: `resume_hint` 는 **재큐된 job 에만** 심겨 있다 — 재개 run 이 누적 도구
+        # 결과를 이어쓰도록 지시받는다. `resume_allowed` 는 attempts 여유에 달렸으므로 호출측
+        # (_process_job)이 주입한다.
+        "resume_hint": bool(payload.get("resume_hint")),
         # FR-brandnew-script-attachment-delivery-gap 후속: 성공 경로의 KV terminal(done)을 워커가
         # **첨부 후처리 뒤** 직접 찍는다(_finalize_deferred_terminal). run_agent 가 미리 찍으면 web
         # long-poll 이 후처리 전 raw 블록을 읽어 노출된다(§18.8 BLOCKER).
@@ -480,6 +485,24 @@ def _cleanup_inline_paths(payload: dict[str, Any]) -> None:
             log.warning("ask-worker: inline temp 삭제 실패 %s: %s", p, exc)
 
 
+def _resume_giveup_finalize(cid: str, run_id: str, result: Optional[dict[str, Any]]) -> None:
+    """재개 재큐가 성립하지 않았을 때 **KV terminal 을 반드시 남긴다** (§18.8 패널 P1-3).
+
+    resume 경로의 run 은 "재큐될 것" 을 전제로 KV terminal 을 찍지 않고 지연 마커도 만들지
+    않는다. 그런데 재큐가 실패(예외)하거나 no-op(lease 박탈·cap) 이면 `last_status` 가
+    **`processing` 에 고착**돼 프런트가 무한 '처리 중' 이 되고 이후 활성 판정도 오염된다.
+    `only_if_current_run=True` 로 새 소유자의 상태를 덮지 않는다(lease 박탈 시 안전 no-op).
+    """
+    if not isinstance(result, dict):
+        return
+    _err = str(result.get("error") or "").strip() or "일시적인 LLM 오류로 요청을 완료하지 못했습니다."
+    try:
+        set_run_status(None, cid, "error", run_id=run_id, error=_err, only_if_current_run=True)
+    except Exception:
+        log.warning("ask-worker: 재개 포기 KV terminal 기록 실패 cid=%s run=%s",
+                    cid, run_id, exc_info=True)
+
+
 def _reap_orphan_inline_files(conn) -> int:
     """활성 job 이 없는 오래된 /shared inline 파일 GC. web 크래시로 enqueue 후 정리
     주인이 사라진 누수 파일을 회수(M6 — GC 주인)."""
@@ -615,6 +638,14 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
         # None → 종전 동작 그대로.
         if int(job.get("attempts") or 1) > 1 and _created_at is not None:
             kwargs["dedup_user_message_since"] = _created_at
+        # conv-audit 2차: 재개 가능 여부를 **여기서** 결정해 run 에 알린다. attempts 여유가
+        # 없으면(cap 도달) run 은 종전대로 오류 turn 을 남겨 사용자에게 실패를 알리고, 여유가
+        # 있으면 오류 turn·KV terminal 을 보류해 아래 재큐가 이어받는다. 이렇게 두면 "재큐는
+        # 못 했는데 사용자에게 아무 것도 안 남는" 창이 **구조적으로** 생기지 않는다.
+        kwargs["resume_allowed"] = bool(
+            AGENT_ASK_RESUME_ON_TRANSIENT
+            and int(job.get("attempts") or 1) < int(AGENT_ASK_WORKER_ATTEMPTS_CAP)
+        )
         result = run_agent(**kwargs)
     except Exception as exc:
         raised = True
@@ -625,7 +656,12 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
         stop_hb.set()
         hb_thread.join(timeout=3)
         # terminal-only cleanup (M6) — requeue 가 아니라 실제 종료 직전이므로 안전.
-        _cleanup_inline_paths(payload)
+        # conv-audit 2차(자체 적발): 이 전제가 **재개 재큐로 깨졌다**. `resumable` run 은 아래에서
+        # pending 으로 되돌려 재claim 이 같은 payload 로 다시 도는데, 여기서 inline 임시파일을
+        # 지우면 재개 run 이 첨부 인라인 본문을 read-after-delete 로 잃는다(사고 대화는 첨부 6건).
+        # 그래서 resumable 이면 보류하고, 재큐가 실패해 정상 terminal 로 내려갈 때 그 자리에서 지운다.
+        if not (isinstance(result, dict) and result.get("resumable")):
+            _cleanup_inline_paths(payload)
 
     # run_agent 는 정상 종료 시 KV last_status(done/error/canceled)를 이미 기록했다.
     # 예외로 빠져나온 경우에만 KV 를 error 로 정리(프런트 무한 '처리중' 방지).
@@ -643,6 +679,43 @@ def _execute_job(conn, job: dict[str, Any]) -> None:
     # feature-0027 (P0-A): 큐레이션 패키지는 job terminal 전이 **후** 실행하므로 먼저 분리.
     # (_slim_result 는 keep-allowlist 라 어차피 미영속이나, pop 으로 명시 위생.)
     _curation_pkg = result.pop("_post_answer_curation", None) if isinstance(result, dict) else None
+
+    # ── 일시 LLM 장애 소진 → terminal 대신 재개 재큐 (conv-audit 2차) ─────────────
+    # **반드시 `_finalize_deferred_terminal` 앞에 온다.** 그 함수는 KV terminal(error/done)을
+    # 찍는데, 재큐할 run 에 대해 그것이 찍히면 프런트가 "끝났다"로 보고 스피너를 내려 재개
+    # 결과를 못 받는다(= 사용자에겐 여전히 실패). 후처리(첨부 materialize)도 이 경로에는 답변이
+    # 없어 할 일이 없으므로 함께 건너뛴다.
+    # run 이 `resumable` 을 세웠다는 것은 "원인이 일시적이고, 누적 작업이 저장소에 남아 있다" 는
+    # 뜻이다. error 로 닫으면 154초 추론·도구 결과가 통째로 버려지고 사용자는 처음부터 다시
+    # 물어야 한다(2026-08-12 17:30 사고). attempts cap 안에서 pending 으로 되돌린다.
+    if (not raised) and AGENT_ASK_RESUME_ON_TRANSIENT and isinstance(result, dict) \
+       and result.get("resumable"):
+        try:
+            if ask_jobs.requeue_ask_job_for_resume(
+                conn, job_id, lease, attempts_cap=int(AGENT_ASK_WORKER_ATTEMPTS_CAP)
+            ):
+                # 지연 terminal 마커를 **버린다** — 이 run 은 종료가 아니라 인계다.
+                result.pop("_deferred_terminal", None)
+                log.warning(
+                    "ask-worker: 일시 장애로 run 재개 재큐 job=%s run=%s reason=%s "
+                    "(누적 도구 결과 보존 — 재claim 이 이어받는다)",
+                    job_id, run_id, result.get("resume_reason"),
+                )
+                return   # terminal 미기록 — 재claim 이 이 job 을 이어서 처리한다.
+            # 여기 오는 경우는 (a) lease 박탈 — 새 소유자가 이 job 을 이어받았으므로 사용자에게
+            # 공백이 없다, 또는 (b) 경합으로 attempts 가 cap 에 닿았다.
+            log.warning(
+                "ask-worker: 재개 재큐 no-op(lease 박탈 또는 attempts cap) job=%s — "
+                "정상 terminal 경로로 진행.", job_id,
+            )
+            _resume_giveup_finalize(cid, run_id, result)
+            # 재큐하지 않으므로 이제 실제 종료다 — 위 finally 가 보류한 정리를 여기서 수행.
+            _cleanup_inline_paths(payload)
+        except Exception as exc:
+            log.warning("ask-worker: 재개 재큐 실패 job=%s: %s", job_id, exc)
+            _resume_giveup_finalize(cid, run_id, result)
+            _cleanup_inline_paths(payload)
+
     if not raised:
         try:
             _postprocess_attachment_blocks(cid, account_id, result, run_id)

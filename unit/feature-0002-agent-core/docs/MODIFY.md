@@ -1787,3 +1787,71 @@ Cross-ref: TASK-20260730T172000-dedup-param-cast · REVIEW REV-20260730T172000-d
 - **Cross-ref**: `unit/feature-0020-zd-deploy-all/docs/MODIFY.md`(compose grace + 배포 경고, 파일
   소유) · 원장 `FR-llm-transient-failure-kills-run` · `FR-agent-history-window-inverted` ·
   `REV-20260812T110000-llm-transient-retry-resume`.
+
+## CHG-20260812T180000-llm-transient-resume (일시 장애에서 작업 내역 보존 + 추론 재개)
+- **Date**: 2026-08-12. 출처 = 사용자 명시 호출 — 첨부 6건(`20260709_[MV] Log_v2 이슈 대응_*.sql`)
+  대화가 `오류: AWS Bedrock 서비스가 일시적으로 응답하지 않습니다` 로 끊김.
+  "**작업 내역을 보존한 채 다시 추론을 재개**할 수 있도록 구성" 요청.
+  원장 `FR-llm-transient-exhaustion-discards-run`. worktree `ai/claude/feature-0002-agent-core`.
+- **1차 봉인(`CHG-20260812T110000`)은 발화했지만 부족했다 — 정직한 자기 평가**:
+  로그가 `llm_transient_retry … attempt=1 / attempt=2 … kind=transient tag=unavailable
+  timeout_class=False attempt_elapsed=0.0s` 로 두 번 다 찍혔다. 즉 **분류·배선·탈출구는 정상**
+  이었고 실패한 것은 **예산**이다 — 2회 × (1.5s + 3.0s) = **총 4.5초** vs 게이트웨이 부재
+  **48초+**(`created 17:30:05` → `started 17:30:53`, `restarts=0` = 배포 스파인 **밖**의 recreate).
+  폐기된 것: 라운드 1의 **154.2초 추론(prompt 71,960 tok · completion 11,201)** + 도구 3건
+  (search_tables · search_routines · search_db_objects). 사용자 대기 2분 40초.
+- **왜 예산이 틀렸나(비대칭을 못 봤다)**: `attempt_elapsed=0.0s` 는 요청이 **provider 에 도달조차
+  못 했다**는 뜻이다 — 토큰도, 게이트웨이 왕복도 소모하지 않는다. 그런 실패의 재시도 비용은
+  사실상 0 인데 초판은 **상한 소진(timeout) 실패와 같은 예산**을 줬다. 값싼 실패는 인프라 교체
+  공백을 덮을 만큼 버텨야 하고, 비싼 실패는 짧아야 한다 — 하나의 상한으로 둘을 다룰 수 없다.
+- **봉인 3축**:
+  1. **값싼 실패 전용 예산** — `_llm_retry_is_cheap`(= `timeout_class` 아님 ∧ `_slow` 아님)이면
+     시도 **6회** · backoff cap **30s** · **총 누적 대기 120s** 상한. 총 대기 가능 **76.5초 >
+     실측 공백 48초**. `_slow`(상한 절반 이상 태우고 죽음)는 값싼 경로로 새지 않는다.
+  2. **소진 시 재개(requeue)** — `ask_jobs.requeue_ask_job_for_resume`: `status='pending'` ·
+     claim 흔적/`finished_at` 리셋 · `lease_epoch++`(fencing) · **`attempts < cap`**(무한 재큐
+     방지) · `payload || '{"resume_hint": true}'`(덮어쓰지 않고 병합 — 원 run kwargs 보존).
+     run 은 `result["resumable"]` 로 알리고 **판단·실행은 job 소유자(ask-worker)** 가 한다.
+     **재큐 분기는 `_finalize_deferred_terminal` 앞에 온다** — 뒤에 두면 KV terminal 이 찍혀
+     프런트가 종료로 보고 스피너를 내리고, 재개 결과가 와도 사용자는 못 받는다.
+  3. **재개 맥락 오염 차단** — 재큐 예정 오류는 `core_messages` 에 쓰지 않는다. 라이브에서
+     그 행이 **LLM recall 로 replay** 되는 것을 직접 확인했다(재개 맥락의 마지막 turn 이
+     `오류: …`). 운영 실패는 assistant 의 추론이 아니므로 **화면에만** 남긴다(내부 안내).
+     그리고 보존만으로는 부족해 — 재개 run 에 "위 도구 결과는 유효하다, 같은 조회를 반복하지
+     말고 이어서 진행하라, 중단을 언급하지 말라" system 지시를 히스토리·사용자 turn **뒤**에 붙인다.
+- **`resume_allowed` 는 attempts 여유로 게이팅**한다(`_process_job` 이 주입). cap 에 닿았으면
+  run 이 종전대로 오류 turn 을 남겨 사용자에게 실패를 알린다 — "재큐도 못 했는데 화면에 아무
+  것도 안 남는" 창이 **구조적으로** 생기지 않는다(초판 설계에서 보완 write 경로가 필요했던 것을
+  이 게이팅으로 없앴다).
+- **라이브 실증(진단 단계)**: 배포본에서 `_load_conversation_messages` 를 사고 대화에 직접 호출해
+  `user → assistant(tool_calls) → tool ×3 → assistant("오류: …")` 재생을 확인했다. 즉 **누적
+  작업은 이미 보존되고 있었고**(재개의 전제 충족) 트리거와 오염 차단만 없었다.
+- **검증**: 신규 **23**건 + 1차 cycle 계약 테스트 **1건 갱신**(옛 "연결 실패도 2회 상한" 을
+  고정하던 테스트 — 그 계약이 곧 이 사고였다) · **뮤테이션 12/12 KILLED**(cheap 상한 축소 ·
+  backoff cap 동일화 · 누적 대기 게이트 제거 · slow→cheap 오분류 · cap/lease/payload 가드 제거 ·
+  재큐-terminal 순서 역전 · core 오류 기록 · resume_hint 제거 · permanent 까지 재개 · 토글 기본
+  false) · 전 testpaths 회귀 실패 0(선재 1건 `chattr`) · ruff clean.
+- **§18.8 적대 패널 흡수(P1 3 · P2 2) + 자체 적발 1**:
+  ① **쓰로틀(429)을 값싼 부류에서 제외** — 도달해서 거부된 실패를 6회 재시도하면 쓰로틀을
+     증폭한다(가장 하면 안 되는 대응). 전송층만 값싸다.
+  ② **취소된 run 은 재개하지 않는다** — 마지막 시도 중 중단을 눌러도 초판은 `resumable` 을
+     세우고 `canceled_by_user` 없이 break 해, 워커가 재큐하면 **취소가 무의미**해졌다.
+  ③ **재큐 실패 시 KV terminal 보장** — resume 경로 run 은 KV 를 찍지 않으므로, 재큐가 예외/
+     no-op 이면 `last_status` 가 `processing` 에 고착돼 프런트가 무한 '처리 중' 이 된다.
+     `_resume_giveup_finalize`(`only_if_current_run=True`)를 양 경로에 배치.
+  ④ **`resumable` 을 `resume_allowed` 로 게이팅** — 재큐가 비활성/불가일 때 플래그가 서면
+     하류(임시파일 정리·terminal)가 "재개될 것"으로 오판한다. 한 플래그를 세 소비처가 같은
+     뜻으로 읽게 좁혔다.
+  ⑤ **예산 판정에 다음 backoff 포함** — 이미 쓴 대기만 비교하면 다음 대기가 상한을 넘겨도
+     통과했다(예산 10s 에서 10.5s).
+  ⑥ **자체 적발(더 심각)**: `_cleanup_inline_paths` 는 `finally` 에 있고 그 주석이 **"requeue
+     경로에선 삭제 안 함"** 을 전제로 적혀 있었는데 이 cycle 이 그 전제를 깼다 — 재큐 예정 run 의
+     첨부 인라인 임시파일을 지워 **재개 run 이 read-after-delete 로 첨부를 잃을** 상태였다
+     (사고 대화가 정확히 첨부 6건 대화다). **기존 주석이 이미 불변식을 말하고 있었다** —
+     새 경로를 추가할 때 그 전제를 내가 깨는지 주석에서 먼저 찾아야 했다.
+- **위험등급**: **Major**(§12.3 코어 LLM 경로 + 워커 lifecycle). 사용자 명시 지시로 착수.
+  신규 권한·엔드포인트·스키마 변경 0(payload jsonb 병합만 — 마이그레이션 없음).
+- **Cross-ref**: 원장 `FR-llm-transient-exhaustion-discards-run` ·
+  선행 `CHG-20260812T110000-llm-transient-retry-resume` ·
+  feature-0020 `CHG-20260812T140000-quiesce-gate`(배포 경로 봉인 — 이번 recreate 는 그 **밖**이었다) ·
+  `REV-20260812T180000-llm-transient-resume`.

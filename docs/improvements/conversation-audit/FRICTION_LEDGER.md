@@ -6,6 +6,68 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
+## FR-llm-transient-exhaustion-discards-run — fixed:undeployed (L6↔인프라 경계; 재시도 예산이 인프라 교체 공백보다 짧아 소진 = 전량 폐기)
+
+- **status**: `fixed:undeployed` — 코드/테스트(신규 **23** + 선행 cycle 계약 테스트 1건 갱신 ·
+  **뮤테이션 12/12 KILLED** · 전 testpaths 회귀 실패 0[선재 1건] · ruff clean). 배포 전.
+- **source**: 사용자 명시 호출(2026-08-12) — 첨부 6건(`20260709_[MV] Log_v2 이슈 대응_*.sql`)
+  대화가 `오류: AWS Bedrock 서비스가 일시적으로 응답하지 않습니다` 로 종료. 요청 문구:
+  "**작업 내역을 보존한 채 다시 추론을 재개**할 수 있도록 구성해주세요."
+- **last_seen**: 2026-08-12 · **seen_count**: 1 · **seen_distinct_conv**: 1
+- **modality**: 1:1 · **conv(마스킹)**: `…e4263afd` · run `…d6ec777a` · 첨부 6건(8.2KB~0.8KB)
+- **symptom_confidence**: high (사용자 보고 + DB·로그·컨테이너 실측)
+  · **rootcause_confidence**: high (`llm_usage` + `core_messages` + ask-worker 로그 +
+  게이트웨이 컨테이너 타임스탬프 **4중 삼각측량**)
+- **suspected_layers**: **L6**(전송층 실패) ↔ **인프라 경계**(배포 스파인 밖의 gateway recreate)
+- **증상(signal)**: `E-USR` 명시 보고 + `E-SYS` 오류 종료. 대기 2분 40초, 산출물 0.
+- **실측 — 1차 봉인은 발화했다(정직)**:
+  - ask-worker 로그: `llm_transient_retry … attempt=1 / attempt=2 · kind=transient ·
+    tag=unavailable · timeout_class=False · **attempt_elapsed=0.0s**` — 분류·배선·탈출구 정상.
+  - 실패한 것은 **예산**: 2회 × (1.5s + 3.0s) = **총 4.5초**.
+  - 게이트웨이 부재: `created 17:30:05` → `started 17:30:53`(+healthy 대기), `restarts=0`
+    = **재생성**. 배포 lock mtime 은 13:00(직전 배포)이라 **`deploy-web.sh` 경로가 아니다**
+    → **quiesce 게이트(feature-0020)는 이 recreate 를 보지 못한다**.
+  - 폐기된 작업: 라운드 1의 **154.2초 추론**(prompt **71,960 tok** · completion 11,201) +
+    도구 3건(search_tables · search_routines · search_db_objects).
+  - 라운드 1은 **살아서 완주했다** — 1차 봉인의 grace 330s 가 실제로 지켜줬다(그 축은 유효).
+- **confirmed_root_cause** (2중):
+  1. `agent_core` 의 재시도 예산이 **실패 비용을 구분하지 않았다**. `attempt_elapsed=0.0s`
+     즉시 거부는 요청 미도달(비용 ~0)인데 상한-소진 실패와 같은 상한(2회)을 썼다. 인프라 교체
+     공백(실측 48초+)을 덮을 수 없는 구조.
+  2. 예산 소진이 곧 **전량 폐기**였다. 누적 도구 호출·결과는 `core_messages` 에 이미 영속돼
+     있고 히스토리 로더가 replay 하는데(**라이브 실증**), 그것을 이어받을 **트리거가 없었다**.
+     게다가 오류 turn 이 core 에 기록돼 재개 맥락의 마지막 turn 이 `오류: …` 였다(오염).
+  재발경로 = **infra(우리 통제 밖의 recreate 경로 포함) + 구조** → 코드가 권위선.
+- **corroboration**: 단일 대화이나 **구조적** — 예산이 공백보다 짧은 한 gateway/provider 가
+  잠깐이라도 부재하면 재발 확정. 1차 사고(`FR-llm-transient-failure-kills-run`, 90일 18 대화)와
+  **같은 뿌리의 다음 층**이다(그때는 재시도 부재, 이번은 재시도 예산 부족 + 재개 부재).
+- **거짓양성 기각(`refuted`)**: F1 무해 아님(154초 추론 폐기) · F3 기수정 아님 — 1차 봉인은
+  발화했으나 흡수 못 함(로그로 확증) · F4 의도된 동작 아님 · F6 외부 기인 아님(우리 인프라).
+- **triage**: S=5 · F=3(구조적·단일 관측) · L=4 · C=5 · R=3 → **26**, disposition=**fix-now**
+  (Phase 7.4 "명백한 구조결함" + 사용자 명시 지시). 위험등급 **Major**(코어 LLM 경로 + 워커
+  lifecycle) → 사용자 지시로 착수.
+- **봉인 3축**: ① 값싼 실패 전용 예산(6회 · cap 30s · 총 120s → 대기 가능 **76.5초 > 공백 48초**)
+  ② 소진 시 **재개 재큐**(`requeue_ask_job_for_resume` — self-lease · `attempts<cap` ·
+  `payload||resume_hint`; **KV terminal 기록 앞**에 배치) ③ 재개 맥락 오염 차단(재큐 예정 오류는
+  core 미기록·화면만 · "이미 조회한 것 재조회 금지" system 지시).
+- **§18.8 패널 흡수(P1 3 · P2 2) + 자체 적발 1**: 쓰로틀(429)을 값싼 부류에서 제외(재시도가
+  부하를 더한다) · **취소된 run 재개 금지**(초판은 취소를 무의미하게 만들었다) · 재큐 실패 시
+  KV terminal 보장(프런트 무한 '처리 중' 차단) · `resumable` 을 `resume_allowed` 로 게이팅 ·
+  예산에 다음 backoff 포함. **자체 적발이 더 심각했다** — `_cleanup_inline_paths` 주석이 이미
+  "requeue 경로에선 삭제 안 함" 을 전제로 적혀 있었는데 이 cycle 이 그 전제를 깨, 재개 run 이
+  **첨부 6건을 read-after-delete 로 잃을** 상태였다. 뮤테이션 **19/19 KILLED**.
+- **fix**: `CHG-20260812T180000-llm-transient-resume`(TASK-20260812T180000) /
+  **코드 거주 `feature-0002-agent-core`** / `REV-20260812T180000-llm-transient-resume`
+- **rc_ids**: RC-1(예산 미분리) · RC-2(재개 트리거 부재) · RC-3(오류 turn recall 오염) ·
+  **batch-id**: B-20260812T180000-llm-transient-resume
+- **범위 밖(deferred/watch)**: ① **배포 스파인 밖의 recreate 경로**(수동 `docker compose up -d`
+  등)는 quiesce 게이트가 보지 못한다 — 게이트를 compose 레벨로 끌어내리거나 운영 규약으로
+  막아야 한다(별 항목·사람 판단). ② 재개는 **라운드 단위**가 아니라 **run 재실행 + 히스토리
+  replay** 다 — 직전 라운드의 부분 추론(초안)은 재사용하지 않는다(전량 이월은 별 cycle).
+- **라이브 실측 필요분(§정직)**: ① 실제 장애에서 `ask_resume_pending` → 재claim → 답변 완주가
+  관측되는지 ② 재개 run 이 실제로 도구를 재조회하지 않는지(같은 tool 이 2회 찍히지 않는지)
+  ③ 프런트 스피너가 재개 구간 동안 유지되는지 ④ corroboration 재측정.
+
 ## FR-llm-transient-failure-kills-run — fixed:deployed:unverified-live (L6↔L2 구조; 일시 전송 실패 1회가 run 전체와 누적 도구 작업을 폐기)
 
 - **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-12, PR #1217 merge main

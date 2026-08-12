@@ -42,6 +42,10 @@ from shared.config import (
     AGENT_LLM_TRANSIENT_RETRY_BASE_SEC,
     AGENT_LLM_TRANSIENT_RETRY_MAX_SEC,
     AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC,
+    # conv-audit 2차: 값싼(요청 미도달) 실패의 별도 예산 + 소진 시 재개 토글.
+    AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX,
+    AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX_SEC,
+    AGENT_LLM_TRANSIENT_RETRY_CHEAP_BUDGET_SEC,
 )
 from shared.db import connect_with_retry, execute_sql as raw_execute_sql, DatasourceCircuitOpen
 from modules.memory import (
@@ -4585,13 +4589,39 @@ def _cancel_requested_for_run(conn, conversation_id: str, run_id: str) -> bool:
 _LLM_RETRY_CANCEL_POLL_SEC = 1.0
 
 
-def _llm_retry_backoff_sec(attempt: int) -> float:
-    """attempt(1-based)의 대기 시간 — 지수 backoff, 상한 clamp. 0 이면 즉시 재호출."""
+# §18.8 패널 P1-1: `timeout_class` 가 아니라는 것만으로 값싸다고 볼 수 없다. **429 쓰로틀은
+# 요청이 provider 에 도달해서 거부된 것**이고 즉시 돌아오므로 `timeout_class=False` 인데, 그것을
+# 값싼 부류로 넣으면 6회 × 76.5초 재시도로 **쓰로틀을 증폭**한다(가장 하면 안 되는 대응).
+# 쓰로틀은 종전의 짧은 예산을 유지하고, 소진되면 사용자에게 "잠시 후 다시" 를 알린다.
+_LLM_CHEAP_EXCLUDED_KINDS = frozenset({"throttled"})
+
+
+def _llm_retry_is_cheap(failure: dict) -> bool:
+    """이 실패의 재시도 비용이 사실상 0 인가(요청이 provider 에 도달조차 못 했는가).
+
+    conv-audit 2차 사고: 게이트웨이 부재로 `attempt_elapsed=0.0s` 즉시 거부된 실패는 토큰도
+    왕복도 소모하지 않는다. 그런 실패에 상한 소진(timeout) 실패와 같은 예산을 주면 **인프라
+    교체 공백(실측 48초+)을 덮을 수 없다** — 이 판정이 두 예산을 갈라준다.
+
+    단 **도달해서 거부된 실패(쓰로틀)는 제외**한다 — 재시도가 부하를 더한다(패널 P1-1).
+    """
+    if str((failure or {}).get("tag") or "") in _LLM_CHEAP_EXCLUDED_KINDS:
+        return False
+    return not bool((failure or {}).get("timeout_class"))
+
+
+def _llm_retry_backoff_sec(attempt: int, *, cheap: bool = False) -> float:
+    """attempt(1-based)의 대기 시간 — 지수 backoff, 상한 clamp. 0 이면 즉시 재호출.
+
+    cheap=True 면 상한을 값싼-실패 전용 cap 으로 올린다(공백이 길어도 버티게).
+    """
     base = max(0.0, float(AGENT_LLM_TRANSIENT_RETRY_BASE_SEC))
     if base <= 0.0:
         return 0.0
     wait = base * (2.0 ** max(0, int(attempt) - 1))
-    cap = max(0.0, float(AGENT_LLM_TRANSIENT_RETRY_MAX_SEC))
+    cap = max(0.0, float(
+        AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX_SEC if cheap else AGENT_LLM_TRANSIENT_RETRY_MAX_SEC
+    ))
     return min(wait, cap) if cap > 0.0 else wait
 
 
@@ -4605,15 +4635,15 @@ _LLM_SLOW_FAILURE_RATIO = 0.5
 def _llm_retry_allowed(failure: dict, attempt: int, *,
                        remaining_budget_sec: "float | None",
                        per_attempt_timeout_sec: "float | None",
-                       attempt_elapsed_sec: "float | None" = None) -> bool:
+                       attempt_elapsed_sec: "float | None" = None,
+                       waited_total_sec: float = 0.0) -> bool:
     """이 실패를 **같은 라운드 재호출**로 흡수할지 판정한다.
 
     attempt = 이번에 시도하려는 재시도 회차(1-based). remaining_budget_sec=None 이면 예산
     무제한(사용자가 타임아웃 연장을 승인한 run) — headroom 게이트를 적용하지 않는다.
     attempt_elapsed_sec = 방금 실패한 시도가 실제로 태운 시간(미전달이면 어휘 판정만 사용).
+    waited_total_sec = 이 라운드에서 재시도 대기로 이미 태운 누적 시간(값싼 실패 예산 게이트).
     """
-    if attempt > max(0, int(AGENT_LLM_TRANSIENT_RETRY_MAX)):
-        return False
     if str((failure or {}).get("kind") or "") != _LLM_FAILURE_TRANSIENT:
         return False
     _cap = float(per_attempt_timeout_sec or 0.0)
@@ -4621,6 +4651,22 @@ def _llm_retry_allowed(failure: dict, attempt: int, *,
         attempt_elapsed_sec is not None and _cap > 0.0
         and float(attempt_elapsed_sec) >= _cap * _LLM_SLOW_FAILURE_RATIO
     )
+    # 값싼(요청 미도달) 실패는 별도 예산 — 인프라 교체 공백을 덮어야 하므로 시도 횟수와
+    # **총 누적 대기** 두 상한으로만 유계한다. `_slow` 로 판정된 느린 실패는 값싸지 않다.
+    if _llm_retry_is_cheap(failure) and not _slow:
+        if attempt > max(0, int(AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX)):
+            return False
+        _budget = float(AGENT_LLM_TRANSIENT_RETRY_CHEAP_BUDGET_SEC)
+        # 패널 P2-2: 이미 쓴 대기만 비교하면 **다음 대기가 예산을 넘겨도** 통과한다
+        # (예산 10s 에서 1.5+3+6=10.5s 까지 대기). 다음 backoff 를 더해 판정한다 —
+        # 문서가 선언한 "총 누적 대기 절대 상한" 과 실제 동작을 일치시킨다.
+        if _budget > 0.0:
+            _next = _llm_retry_backoff_sec(int(attempt), cheap=True)
+            if float(waited_total_sec) + _next > _budget:
+                return False
+        return True
+    if attempt > max(0, int(AGENT_LLM_TRANSIENT_RETRY_MAX)):
+        return False
     if (failure or {}).get("timeout_class") or _slow:
         need = float(AGENT_LLM_TRANSIENT_RETRY_TIMEOUT_HEADROOM_SEC)
         if need <= 0.0:
@@ -5432,6 +5478,8 @@ def run_agent(
     reasoning_level: str | None = None,
     defer_terminal_status: bool = False,
     dedup_user_message_since=None,
+    resume_allowed: bool = False,
+    resume_hint: bool = False,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
 
@@ -5507,6 +5555,8 @@ def run_agent(
             reasoning_level=reasoning_level,
             defer_terminal_status=defer_terminal_status,
             dedup_user_message_since=dedup_user_message_since,
+            resume_allowed=resume_allowed,
+            resume_hint=resume_hint,
         )
     finally:
         clear_active_schema_allowlist()
@@ -5667,6 +5717,8 @@ def _run_agent_core(
     reasoning_level: str | None = None,
     defer_terminal_status: bool = False,
     dedup_user_message_since=None,
+    resume_allowed: bool = False,
+    resume_hint: bool = False,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -6367,6 +6419,25 @@ def _run_agent_core(
         logging.getLogger(__name__).warning(
             "attachment turn manifest 생성 실패 — 사용자 턴 첨부 사실 미부착", exc_info=True)
     messages.append({"role": "user", "content": _live_user_content})
+    # ── 재개 run 의 이어가기 지시 (conv-audit 2차) ────────────────────────────
+    # 직전 시도가 일시 오류로 소진돼 재큐된 run 이다. 위 히스토리에는 그 시도가 **이미 수행한**
+    # 도구 호출과 결과가 그대로 들어 있다(core_messages 영속 → 로더 replay, 라이브 실증).
+    # 그 사실을 명시하지 않으면 모델은 사용자 질문만 보고 **같은 조회를 처음부터 다시** 한다 —
+    # 작업 내역이 물리적으로 보존돼도 재사용되지 않으면 사용자 체감은 유실과 같다.
+    if resume_hint:
+        messages.append({
+            "role": "system",
+            "content": (
+                "The previous attempt at this request was interrupted by a transient "
+                "infrastructure error, not by any problem with the work itself. The conversation "
+                "above already contains the tool calls that attempt made and their results — "
+                "they are valid and current. Continue from there: do NOT repeat lookups whose "
+                "results are already shown, and do NOT restart the analysis from scratch. "
+                "Call additional tools only for what is genuinely still missing, then answer. "
+                "Do not mention the interruption or apologise for it; just deliver the answer."
+            ),
+        })
+        _emit_activity("직전 시도에서 조사한 내용을 이어받아 재개하는 중")
 
     if output_mode == "console":
         console.print(f"\n[dim]대화: {cid[:20]}... | 모델: {model}[/dim]")
@@ -6536,6 +6607,7 @@ def _run_agent_core(
         # 1.2초 뒤 정상이었다). 재시도 대기 중에도 취소를 매 초 검사한다 — 대기가 새로운
         # 사각지대가 되지 않게(`FR-redteam-first-pass-unabortable` 의 교훈).
         _llm_retry_n = 0
+        _llm_waited_total = 0.0       # 이 라운드 재시도 대기 누적(값싼 실패 예산 게이트)
         _llm_defer_to_outer = False   # 패널 P1-2: '즉시 답변' 은 바깥 루프가 정본으로 처리한다
         while True:
             _llm_exc: "Exception | None" = None
@@ -6570,7 +6642,30 @@ def _run_agent_core(
             if not _llm_retry_allowed(_fail, _llm_retry_n + 1,
                                       remaining_budget_sec=_remaining,
                                       per_attempt_timeout_sec=_per_attempt,
-                                      attempt_elapsed_sec=_attempt_elapsed):
+                                      attempt_elapsed_sec=_attempt_elapsed,
+                                      waited_total_sec=_llm_waited_total):
+                # 재시도로 흡수하지 못했다. 원인이 **일시적**이면 이 run 을 버리는 대신
+                # 재개 대상으로 표시한다 — 누적 도구 결과는 이미 core_messages 에 있고
+                # 히스토리 로더가 replay 하므로, 재개 run 이 처음부터 다시 하지 않는다.
+                # (실제 재큐는 job 소유자인 ask-worker 가 판단·실행한다 — 아래 result 계약.)
+                # 패널 P1-2: 마지막 시도 중에 사용자가 중단을 눌렀을 수 있다. 그 경우
+                # **재개 대상이 아니다** — 사용자가 명시적으로 취소한 요청을 워커가 재큐해
+                # 계속 진행하면 취소가 무의미해진다. 여기서 한 번 더 보고 취소면 그 경로로 넘긴다.
+                if _cancel_requested_for_run(mem_conn, cid, run_id):
+                    canceled_by_user = True
+                    break
+                # 패널 P2-1: `resume_allowed` 가 아니면(토글 off 또는 attempts cap 도달) 재큐가
+                # 일어나지 않는다. 그때 `resumable` 을 세우면 하류(임시파일 정리·terminal 기록)가
+                # "재개될 것" 으로 오판한다 — 플래그의 의미를 "재개로 처리된다"로 좁힌다.
+                if resume_allowed and str(_fail.get("kind") or "") == _LLM_FAILURE_TRANSIENT:
+                    result["resumable"] = True
+                    result["resume_reason"] = str(_fail.get("tag") or "transient")
+                    logger.warning(
+                        "llm_transient_exhausted conv=%s run=%s round=%s attempts=%s "
+                        "waited_total=%.1fs kind=%s tag=%s → resumable",
+                        cid, run_id, llm_round, _llm_retry_n, _llm_waited_total,
+                        _fail.get("kind"), _fail.get("tag"),
+                    )
                 break
             # ── 탈출구 우선(§18.8 패널 P1-2/P2-1) ───────────────────────────────
             # 사용자가 이미 중단을 눌렀으면 재시도하지 않는다.
@@ -6588,9 +6683,14 @@ def _run_agent_core(
             except Exception:
                 pass
             _llm_retry_n += 1
+            _retry_cap_shown = (
+                max(0, int(AGENT_LLM_TRANSIENT_RETRY_CHEAP_MAX))
+                if _llm_retry_is_cheap(_fail)
+                else max(0, int(AGENT_LLM_TRANSIENT_RETRY_MAX))
+            )
             _emit_activity(
                 f"LLM 연결이 일시적으로 끊겨 재연결하는 중 "
-                f"({_llm_retry_n}/{max(0, int(AGENT_LLM_TRANSIENT_RETRY_MAX))}) — "
+                f"({_llm_retry_n}/{_retry_cap_shown}) — "
                 f"지금까지 조사한 내용은 그대로 유지됩니다"
             )
             logger.warning(
@@ -6599,7 +6699,7 @@ def _run_agent_core(
                 cid, run_id, llm_round, _llm_retry_n,
                 _fail.get("kind"), _fail.get("tag"), _fail.get("timeout_class"), _attempt_elapsed,
             )
-            _wait_left = _llm_retry_backoff_sec(_llm_retry_n)
+            _wait_left = _llm_retry_backoff_sec(_llm_retry_n, cheap=_llm_retry_is_cheap(_fail))
             while _wait_left > 0.0:
                 if _cancel_requested_for_run(mem_conn, cid, run_id):
                     canceled_by_user = True
@@ -6607,6 +6707,7 @@ def _run_agent_core(
                 _tick = min(_LLM_RETRY_CANCEL_POLL_SEC, _wait_left)
                 time.sleep(_tick)
                 _wait_left -= _tick
+                _llm_waited_total += _tick
             if canceled_by_user:
                 break
             # 패널 P2-1: backoff 마지막 tick 뒤에 도착한 중단 신호는 위 루프가 못 본다. 바로 다음
@@ -7411,6 +7512,27 @@ def _run_agent_core(
             delete_conversation_records(mem_conn, cid)
         except Exception:
             pass
+    elif result["error"] and resume_allowed and result.get("resumable"):
+        # ── 일시 실패 소진 → 재개 예정 (conv-audit 2차) ───────────────────────
+        # 여기서 **core_messages 에 오류 turn 을 쓰지 않는다.** 그 행은 LLM recall 에 그대로
+        # replay 되므로(라이브 실증: 재개 맥락의 마지막 turn 이 "오류: …" 였다) 재개 run 이
+        # "나는 실패했다" 를 근거로 삼게 되고, 도구 결과 → 답변으로 이어지는 자연스러운
+        # 연결도 끊긴다. 운영상의 실패는 assistant 의 추론이 아니므로 **화면에만** 남긴다.
+        # KV terminal(error)도 찍지 않는다 — 프런트가 '처리 중'을 유지해 재개를 기다려야 한다.
+        # 실제 재큐는 job 소유자(ask-worker)가 `result["resumable"]` 을 보고 수행한다.
+        _resume_notice = "일시적인 LLM 연결 오류로 중단됐습니다 — 지금까지 조사한 내용을 유지한 채 이어서 재시도합니다."
+        try:
+            _mirror_message(mem_conn, cid, "assistant", _resume_notice, run_id,
+                            meta={"internal": True, "transient_resume": True, **_answer_product_meta},
+                            recall_tag=_answer_recall_meta)
+        except Exception:
+            pass
+        try:
+            _emit_activity("일시 오류로 중단 — 조사 내용을 유지한 채 이어서 재시도합니다")
+        except Exception:
+            pass
+        logger.warning("ask_resume_pending conv=%s run=%s reason=%s", cid, run_id,
+                       result.get("resume_reason"))
     elif result["error"]:
         error_text = f"오류: {result['error']}"
         _save_message(mem_conn, cid, "assistant", content=error_text, recall_floor_created_at=_answer_recall_floor_ca_val)
