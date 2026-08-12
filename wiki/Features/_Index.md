@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 39 active |
+| Feature 수 | 41 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-39 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+41 개 feature 카드(feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, feature-0018 은 카드 없는 슬라이스로 feature-0003 코드 거주)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -84,6 +84,8 @@ sources:
 | feature-0037-domain-synthesis | in-progress | 도메인 합성(L3, lazy) — DB(스키마) 하나의 도메인 개요를 3~5문장으로 접어 `domain_summaries`(alembic 0053)에 둔다. 입력은 개별 테이블이 아니라 그 스키마의 **클러스터 요약들(L2)** — 이미 한 번 접힌 것을 다시 접는다. **요청과 생성을 분리**해 사전 전량 생성 금지(LazyGraphRAG)와 답변 경로 런타임 합성 금지(ADR-0034-07)를 함께 지킨다: grounding 이 조회하고 없으면 `request()` 만 남기고(LLM 0·지연 0·요청 UPSERT 는 별도 RW 연결) insight tick 이 요청된 것만 `request_count` 우선순위로 합성한다(**사용이 곧 우선순위**). 재생성 축 `cluster_set_hash`(라벨·요약·멤버 수·근거 수)는 payload cap 25 로 자르기 **전** 전체 집합(최대 300)으로 해시·pass 당 3·advisory lock 을 얻은 tick 에서만·30자 미만 미저장 (라이브 클러스터 요약 1,006건/120 스키마=평균 8, 2026-07-31) | [[feature-0037-domain-synthesis]] | `unit/feature-0037-domain-synthesis/docs/FUNCTION.md` |
 | feature-0038-frontend-modularization | review | 프론트엔드 모듈화(ssot-consolidation ROADMAP **ITEM-P5b 완결** — 본편 10 cycle 2026-08-04 + 후속 Phase A~B3 2026-08-05) — 프론트 모놀리스 3파일(admin.js 14,007줄 · app.js 13,165줄 · styles.css 9,328줄, 2026-08-03 실측)을 behavior-neutral 점진 추출로 도메인 모듈화하는 initiative unit. 백엔드 `app.py` 분할은 feature-0012 가 완결했으므로 범위 밖이고, 코드는 feature-0003 `src/static/**` 에 계속 거주하며 본 unit 은 계획·추적·검증 기록 홈이다(feature-0012 와 동일 패턴). big-bang 금지 — cycle 당 단일 PR + 게이트(make test · PB-0008 브라우저 QA · 롤백 리허설 · plan-review Critical). Cycle 1 배포 완료(styles.css → `css/` 7파일 순차 concat 이 원본과 byte-identical·PB-0008 PASS·롤백 리허설 revert 왕복 diff 0) · Cycle 2~10 + Final 로 본편 완결(2026-08-04): styles.css(9,328) 소멸 + `css/` 7파일 · admin.js 14,007 → **4,804줄(-66%)** + `admin/` 9모듈 · app.js **11,119줄** + ES module 전환 + `app/` 4모듈(PR #1124~#1143 전건 배포·POST-DEPLOY PB-0008 PASS) · **후속 Phase A~B3 완결(2026-08-05, PLAN-APPROVED)**: 공유 가변 `let` 2건 state 편입(Phase A, 비-중립 mini-change) 후 사이드바·composer·progress 도메인 byte-동치 이동으로 app.js **11,119 → 8,082줄(-27%)** + `app/` 6모듈, PR #1147~#1150 전건 배포·POST-DEPLOY PASS. AC-3(오케스트레이터 ≤~3,000줄)은 부분 달성 정직 보고(잔여 admin.js 4,804줄) (위험도 Critical·PLAN-APPROVED 2026-08-03·후속 2026-08-05) | [[feature-0038-frontend-modularization]] | `unit/feature-0038-frontend-modularization/docs/FUNCTION.md` |
 | feature-0039-ops-scheduler | review | 운영 정기 잡(백업·복원 리허설·AGE 그래프 sync 증분/전량)을 호스트 root crontab → `ops-scheduler` 컨테이너 서비스로 이관. root 였던 유일한 근거인 `docker exec`(=docker 소켓 root 독점) 의존을 제거하고, 스케줄 정본을 crontab(버전관리 밖)에서 `docker-compose.yml` 의 `OPS_SCHED_*` 로 이동. §82 flock 은 호스트 lock 파일 bind-mount 로 inode 를 공유해 `routine-backfill.sh` 와 상호배제 유지(미마운트 시 fail-loud). pg_dump 는 PGDG `postgresql-client-16` 으로 서버 메이저 고정(trixie 기본 client-17 산출물은 PG16 복원 불가 실측). 부수: AGE cutover 이후 5주간 FAIL 하던 PG 복원 리허설 결함 수정(사용자 승인) — 761MB 실백업 전량 복원 PASS | [[feature-0039-ops-scheduler]] | `unit/feature-0039-ops-scheduler/docs/FUNCTION.md` |
+| feature-0040-db-object-explorer | review | 역할 기반 DB 객체 탐색 — 트리거·이벤트·SQL Server Agent 작업·뷰·시노님·시퀀스를 벤더 객체명이 아니라 **역할**(6종 taxonomy SSOT `modules/db_object_roles.py`)로 분류해 `search_db_objects`(역할 생략 시 전 역할 개관)·`describe_db_object` 도구 2종으로 노출하고, `db_objects` SSOT(alembic 0054) + AGE `DbObject`/`HAS_OBJECT`/`OBJECT_USES`(참조·실선)/`OBJECT_ON`(소유·파선) 투영으로 그래프 뷰에 편입(구리 칩·역할 아이콘·표시 토글 5종·범례). 핵심 불변식은 **미지원 ≠ 부재** — 지원상태 4종(SUPPORTED/UNSUPPORTED/PRIVILEGED/DELEGATED)이 0행을 "없다"로 뭉개는 허위 부재를 타입 레벨에서 차단하고, `msdb` 접근은 `_agent_jobs_sql` 한 함수의 고정 질의로만 한다. 신규 77건 PASS·회귀 0·실 Windows Chrome 150 WebGL 실증 (2026-08-12 머지·**라이브 배포 완료**(doc_sync 08-13 실측: alembic `0054` 적용됨(라이브 head `0055`) · `db_objects` 339행 · 그래프 자산 라이브 byte-identical) · 잔여=POST-DEPLOY PB-0008 시각검증 · 코드 거주 0002/0003) | [[feature-0040-db-object-explorer]] | `unit/feature-0040-db-object-explorer/docs/FUNCTION.md` |
+| feature-0041-external-ai-tool-surface | in-progress | 외부 AI 도구 표면(추론 주체 반전) — 외부 사용자의 AI 가 **자기 계정 LLM 으로 직접 추론**하면서 이 서비스의 데이터소스·RAG·메타지식에 접근하는 표면(LLM 비용은 호출자 부담·서비스는 자격증명 무보관). feature-0023 의 `ask` 축(우리 LLM 이 추론)과 병존·용도 구분. OAuth AS(`routers/oauth_as.py` — DCR·authorize(세션 쿠키 필수)·token·revoke) + P0 도구 9종 REST(`routers/ai_tools.py` — 관문 순서 **토큰→상한→스코프→실행→각인→원장** 고정·`P0_TOOLS` allowlist 로 도달면 고정·**원장 실패 시 결과 미반환**·거절/게이트도 원장 기록) + `WebAiTasks`(미제출률 = 소프트 강제의 계량 원천) + 전송 어댑터 2종(MCP stdio `external_tool_mcp_server.py` · HTTP/SSE — 판단 로직 0·토큰 무보관·리다이렉트 시 Authorization 전달 금지) + 발견 자료(매니페스트 `tool_surface`·큐레이션 OpenAPI 7 path — "익명=static contract, 인스턴스 데이터 0" 불변식을 테스트로 고정) · `docs/SECURITY.md §44`(신뢰경계 반전 위협모델). 1차 `a68fbbac` + 2차 `e1372f32` 라이브 배포 · POST-DEPLOY 12항/8항 실측 (2026-08-12 신규·Critical · 잔여=관리 콘솔 '외부 도구 한도' 탭 별도 cycle(사용자 결정)·사람 1회 인가 전 구간 e2e·P1 이후 도구 · 코드 거주 0003/0002/shared) | [[feature-0041-external-ai-tool-surface]] | `unit/feature-0041-external-ai-tool-surface/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 
@@ -115,4 +117,3 @@ sources:
 ## 분류
 
 `#wiki/index` · `#confidence/high` · `#maturity/substantial`
-| [[feature-0040-db-object-explorer]] | 역할 기반 DB 객체(트리거·이벤트·작업·뷰·별칭·시퀀스) 탐색 + 그래프 편입 | review |

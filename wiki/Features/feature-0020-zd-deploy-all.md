@@ -30,8 +30,8 @@ feature-0014(web 롤링)·0015(graceful/DDL)·0016-zd(PG PAUSE)·0017(빌드게�
 
 ## 2. 상태
 
-- **단계**: draft
-- **마지막 갱신**: 2026-07-14
+- **단계**: in-progress
+- **마지막 갱신**: 2026-07-14 (정본 `feature_status_date` 기준. 2026-08-12 quiesce 게이트 2 cycle(`ed257c1e` 워커·gateway 교체 게이트 · `9f43c3ca` 배포 스파인 밖 재생성 봉인 — `bin/lib/quiesce.sh`·`bin/safe-recreate.sh`·`bin/recreate-audit.sh`)은 머지·실측됐으나 정본 TASK/STATUS 의 상태 전이가 미반영 — feature-cycle 소관)
 - **AI 작업자**: ai/claude/feature-0020-zd-deploy-all
 
 ## 3. 책임 경계

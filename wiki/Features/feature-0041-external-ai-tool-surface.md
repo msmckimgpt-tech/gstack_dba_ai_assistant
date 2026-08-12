@@ -1,7 +1,7 @@
 ---
 doc_type: WIKI_FEATURE_CARD
 scope: feature
-status: stub
+status: active
 edit_policy: ai-maintained
 source_of_truth: false
 template_version: v3.12.0
@@ -10,7 +10,7 @@ ai_read_priority: 7
 wiki_role: feature_card
 wiki_name: project
 confidence: high
-maturity: stub
+maturity: substantial
 ai_generated: true
 feature_id: feature-0041-external-ai-tool-surface
 linked_unit: unit/feature-0041-external-ai-tool-surface
@@ -40,9 +40,10 @@ sources:
 
 ## 2. 상태
 
-- **단계**: stub (계획 산출물만 — 구현은 PLAN-APPROVED 이후)
+- **단계**: in-progress (P0 도구 9종 + OAuth AS + MCP stdio / HTTP·SSE 어댑터 구현 완료 · 1차 `a68fbbac` / 2차 `e1372f32` 라이브 배포 + POST-DEPLOY 12항·8항 실측 완료)
 - **마지막 갱신**: 2026-08-12
 - **AI 작업자**: claude / feature-0041 cycle
+- **잔여**: 관리 콘솔 '외부 도구 한도' 탭(사용자 결정으로 별도 cycle — admin.js 동시 편집 충돌 + PB-0008 하드 게이트, 상한 자체는 runtime 기본값으로 이미 집행 중) · 사람 1회 인가가 필요한 전 구간 e2e(설계상 자동화 불가) · P1 이후 도구(`execute_sql` 등) 별도 단계
 
 ## 3. 책임 경계
 
