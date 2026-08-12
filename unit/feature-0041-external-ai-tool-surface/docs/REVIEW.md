@@ -173,3 +173,14 @@ source_of_truth: true
   편집 중이라 충돌 위험이 크고, `visual_verification_scope: always` 로 PB-0008 이 하드 게이트여서
   붙이면 나머지 3건 출하까지 묶인다. 상한은 이미 집행 중이라 기능 공백이 아니다.
 - Human Approval Needed: 아니오 (사용자가 직접 결정).
+
+
+## REV-20260812-0008 [SKIPPED:post-deploy-record] — 2차 배포 검증 기록 (코드 0)
+
+- Related Change: CHG-20260812-0008
+- Reason: 배포 결과 기록(문서 전용). 코드·설정 변경 0.
+- 검증 요지: 서비스 4종 `e1372f32` 일치 · 무중단 0건 · 매니페스트 `tool_surface`(endpoints 8) ·
+  OpenAPI 7 path · 가이드 부록 B 서빙 · **익명 노출 인스턴스 데이터 0 라이브 실측** ·
+  기존 발견 경로 200 · 도구 표면 무토큰 401.
+- 정직 표기: HTTP/SSE 전송은 **라이브 미기동**(포트·TLS 프록시 운영 결정 선행). 코드 경로만 확보.
+- Human Approval Needed: 아니오.

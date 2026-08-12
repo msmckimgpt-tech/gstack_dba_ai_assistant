@@ -133,3 +133,24 @@ REV-20260812-0003 에서 예고한 보완 절차였고, 실제로 작동했다.
 L4: 자카드 판정 5경계 · **계정 id 미노출** · **응답 미포함(원장 전용)** · fan-out 상한.
 HTTP 전송: 토큰 무보관 · https 강제 · **loopback 기본 바인딩** · 검증끄기 loopback 한정 ·
 **리다이렉트 금지(두 어댑터)** · 9 도구 동일성.
+
+### Run 2026-08-12 (3차) — POST-DEPLOY 라이브 (Environment: live · e1372f32 · Caddy 경유)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 서비스 4종 GIT_COMMIT | 전부 `e1372f32` ✅ |
+| 2 | 무중단 실측 — caddy `no upstreams available` | **0건** ✅ |
+| 3 | `GET /api/ai/guide` 에 부록 B 포함(**갱신 반영** 확인 — 이 자산의 실제 실패 모드) | ✅ |
+| 4 | `GET /api/ai/manifest` → `tool_surface` (endpoints 8 · 키 9종) | ✅ |
+| 5 | `GET /api/ai/openapi.json` → 도구 표면 **7 path** | ✅ |
+| 6 | **익명 노출에 인스턴스 데이터 0** — 발급물 패턴 라이브 grep | **0건** ✅ (SEC-20260724) |
+| 7 | 기존 경로 `/livez`·`/llms.txt`·`/.well-known/ai-conversation-api.json` | 전부 **200** ✅ |
+| 8 | 도구 표면 무토큰 `open_task` | **401** ✅ |
+
+**PB-0008 대체 검증(#3)**: 이번 cycle 의 `static/` 변경은 `ai-api-guide.md` 뿐이고 `text/markdown`
+원문 서빙이라 렌더 표면이 없다. 의미 있는 실패 모드인 "배포본에 갱신 미반영" 을 내용 포함으로
+확인했다(사유는 feature-0003 `docs/TEST.md` 에 기록).
+
+**HTTP/SSE 전송 미기동**: 신규 프로세스라 라이브에 띄우지 않았다 — 기동은 운영 결정(포트 개방·
+TLS 종단 프록시 배치가 선행). 코드 경로는 단위 계약으로 고정했고, 기존 서비스에 영향 0
+(어느 compose 서비스에도 배선하지 않음).
