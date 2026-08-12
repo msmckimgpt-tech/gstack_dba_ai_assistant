@@ -79,11 +79,29 @@ cross-cut)·`docker-compose.yml`·`Makefile`·`bin/alembic-migrate.sh`.
 1. (기존) flock → preflight → SHA coalesce → web 이미지 build-once → migrate 게이트+적용
    → web-a/web-b 순차 롤링(pre-drain·/readyz) → reconcile_caddy(설정+이미지) → soak/자동롤백.
 2. (신규) agent 이미지 build-once(`mysql-ai-agent:<sha>`, GIT_COMMIT 검증, last-good 회전).
-3. (신규) insight-worker → ask-worker 순차: recreate(--no-deps·핀 이미지) → healthy 게이트
-   (start_period 존중) → 이미지 GIT_COMMIT 검증. 실패 시 워커군 last-good 롤백 + exit 1.
+3. (신규) insight-worker → ask-worker → ops-scheduler 순차: recreate(--no-deps·핀 이미지) →
+   healthy 게이트(start_period 존중) → 이미지 GIT_COMMIT 검증. 실패 시 워커군 last-good 롤백
+   + exit 1. **ask-worker 는 recreate 직전에 quiesce 게이트를 통과해야 한다**(아래 §7-Q).
 4. (신규) gateway reconcile: 드리프트(설정 sha 기록 대비 변경 || 이미지 ID 변경 || --force-gateway)
-   시에만 surge up → healthy → 본체 recreate → healthy → surge stop(graceful)·rm.
-5. 상태 기록(current sha, gateway_config_sha) + post_deploy_checklist.
+   시에만 surge up → healthy → **quiesce 게이트** → 본체 recreate → healthy → surge stop·rm.
+5. 상태 기록(current sha, gateway_config_sha) + **quiesce_summary** + post_deploy_checklist.
+
+### §7-Q. quiesce 게이트 — "지금 이걸 내려도 되는가" (CHG-20260812T140000)
+- **왜 surge 만으로는 부족한가**: surge replica 는 DNS alias 로 **신규** 요청만 흡수한다.
+  이미 본체 소켓에 붙은 in-flight 호출은 **프로세스 간 이전이 불가능**하다 — HTTP 요청도,
+  실행 중 agent run 도. 종전엔 그 사실을 `stop_grace_period` 타이머로 덮었고(만료 시 SIGKILL),
+  그것이 2026-08-12 사고의 기전이다. 그래서 "옮긴다" 가 아니라 **"붙어 있는 게 없을 때
+  바꾼다"** 로 푼다.
+- **관측 신호 2종을 합산한다(MUST)**: `ask_jobs.status='running'`(heartbeat 신선분만) +
+  web replica `active_streams` 합. 실행 dispatch 가 worker/inprocess 두 모드라(TASK-0169)
+  한쪽만 보면 다른 모드에서 게이트가 **공허하게 통과**한다.
+- **fail-closed(MUST)**: 상한 초과도, 양 신호 관측 불가도 **중단**이다. 중단하면 구버전이 계속
+  서빙해 무중단이 유지되지만, 강행하면 정확히 고치려는 사고가 재현된다(`predrain` 과 동일 자세).
+  **관측 불가를 0 으로 읽지 않는다** — 그것이 게이트를 있으나 마나로 만드는 vacuous pass 다.
+- **대상은 사용자 run 을 든 컴포넌트만**: ask-worker·gateway. insight-worker/ops-scheduler 는
+  배경 작업(실패=degraded 기록 후 다음 cadence 재시도)이라 제외 — 걸면 유휴 대기만 늘고 얻는 게 없다.
+- **강행은 보고된다**: `--force-busy` 통과 시 배포 말미에 "이 배포는 무중단이 아니었다" 를 남긴다.
+  조용히 통과한 배포와 끊고 지나간 배포가 같은 "배포 완료" 로 보이면 안 된다(LRN-20260811T1557).
 
 ## 8. Edge Cases
 - 워커가 배포 전부터 unhealthy: healthcheck 견고화(AC-4)로 오탐 해소를 선행하되, 게이트는
@@ -91,6 +109,13 @@ cross-cut)·`docker-compose.yml`·`Makefile`·`bin/alembic-migrate.sh`.
 - 워커 신규 이미지 결함: 워커만 last-good 롤백(web 은 이미 swap — expand/contract 가 혼합
   버전 안전을 보장). WARN 으로 혼합 상태 명시.
 - surge 기동 실패: 본체 무접촉 ABORT(기존 gateway 유지 — 무중단 보존).
+- **quiesce 상한 초과**(바쁜 시간대 배포): 해당 phase 중단 → 구 워커/gateway 계속 서빙. 배포는
+  멱등이므로 조용한 시간에 재실행하면 이어서 완료된다. 즉시 필요하면 `--force-busy`(끊기는
+  요청 수를 로그로 인지한 상태에서만).
+- **quiesce 관측 불가**(PG·web 양쪽 조회 실패): 중단. "조용한지 알 수 없다" 를 "조용하다" 로
+  읽지 않는다.
+- **죽은 워커의 stale `running` 행**: heartbeat 신선도 필터(`DEPLOY_QUIESCE_HEARTBEAT_FRESH`,
+  기본 90s)로 제외 — 안 그러면 좀비 한 줄이 배포를 영구 차단한다.
 - gateway 설정 sha 최초 기록 부재: 기록만 하고 recreate 안 함(안전 기본).
 - snap-docker metadata race: 기존 feature-0017 게이트 로직을 agent 이미지 빌드에 동일 적용.
 - dry-run: 전 신규 phase 가 명령 출력만.

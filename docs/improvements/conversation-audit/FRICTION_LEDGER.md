@@ -84,6 +84,12 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   `REV-20260812T110000-llm-transient-retry-resume`
 - **rc_ids**: RC-1(재시도 부재) · RC-2(배포 grace 부족) · RC-3(전송층 원문 노출) ·
   **batch-id**: B-20260812T110000-llm-transient-retry-resume
+- **후속 봉인(같은 뿌리의 배포 층, 2026-08-12)**: 사용자 지시로 배포 절차 자체를 근본 해소했다 —
+  `feature-0020` `CHG-20260812T140000-quiesce-gate`. grace 상향은 **완화**일 뿐이고(꼬리는 남는다),
+  근본은 "진행 중 사용자 run 이 0 일 때만 교체한다" 는 게이트다. 같은 실측이 워커 쪽에 **더 큰
+  구멍**을 드러냈다 — ask-worker drain 60s vs run p50 81s · **60초 초과 66%**. 즉 이 사고는
+  gateway 판이었고, 워커 판은 매 배포마다 훨씬 자주 일어나고 있었다(`FR-ask-orphan-redeploy-dead-air`
+  가 본 재큐는 그 결과였다). 게이트가 두 판을 한 번에 닫는다.
 - **범위 밖(deferred/watch)**: ① 재시도가 소진된 뒤에도 run 을 재개하지 못한다 — 누적 도구 결과는
   `core_messages` 에 남아 **같은 대화에서 다시 물으면** 재사용되지만, 사용자에게 그 사실을 알리는
   표면이 없어 이번 사고처럼 새 대화로 이탈한다(별 항목). ② `FR-insight-worker-conn-stale` 과

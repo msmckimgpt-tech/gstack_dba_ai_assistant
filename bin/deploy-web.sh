@@ -29,6 +29,10 @@
 #  - migrate-lint hard gate(expand/contract) → migrate(expand) → swap 순서
 #  - build-once(image pin by SHA) + last-good 유지 → 빠른 롤백(재빌드 없음)
 #  - one-at-a-time + pre-drain(상대 ready 확인 + 대상 active_streams==0 대기) + /readyz 게이트
+#  - quiesce 게이트(CHG-20260812T140000): ask-worker·gateway 교체 **직전**에 진행 중 사용자 run
+#    (ask_jobs running + web active_streams)이 0 이 되기를 기다린다. 종전엔 실제 상태를 보지 않고
+#    stop_grace 타이머로 죽였는데 실측 run 의 66%가 그 예산보다 길었다. web 의 pre-drain 과 같은
+#    fail-closed 자세 — 못 기다리면 강행이 아니라 **중단**(구버전이 계속 서빙 = 무중단 유지).
 #  - post-cutover soak(RestartCount/edge 감시) + 자동 롤백; bad-image vs dependency-down 구분
 #  - web 롤링 자체는 web-a/web-b 만 지정(--no-deps). 워커 롤아웃은 soak 통과 후
 #    별도 phase 에서 수행(feature-0020 — 구 "worker 미접촉 + WARN-only" 를 대체)
@@ -38,6 +42,7 @@
 #   sudo -E bin/deploy-web.sh --web-only      # web(+caddy reconcile)만 — 기존 feature-0014 범위
 #   sudo -E bin/deploy-web.sh --workers-only  # 워커+gateway 만 (마이그 없는 워커 코드/설정 변경 전용)
 #   sudo -E bin/deploy-web.sh --force-gateway # gateway 드리프트 무관 surge 교체 강제
+#   sudo -E bin/deploy-web.sh --force-busy    # quiesce 미달성에도 강행(진행 중 요청이 끊길 수 있음)
 #   sudo -E bin/deploy-web.sh --rollback      # last-good 이미지로 롤백(web + 워커)
 #   sudo -E bin/deploy-web.sh --dry-run       # 명령만 출력(상태 변경 없음)
 #   sudo -E bin/deploy-web.sh --help
@@ -88,10 +93,28 @@ GATEWAY_SERVICE="bedrock-gateway"
 GATEWAY_SURGE="bedrock-gateway-surge"
 GATEWAY_CONFIG_FILE="unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml"
 
+# ── 진행 중 사용자 run quiesce 게이트 (CHG-20260812T140000) ────────────────────
+# 워커·gateway 는 web 과 달리 **실제 상태 신호 없이 눈감고 재는 타이머**(stop_grace_period)로
+# 교체돼 왔다. 실측(30일 ask_jobs 363건)은 그 타이머가 분포 안쪽임을 보여준다 —
+#   agent run: p50 81s · p95 691s · max 2,024s · **60초 초과 66%**  vs ask-worker drain 60s
+#   LLM 라운드: p95 182s                                            vs gateway grace 120s(당시)
+# 즉 배포마다 진행 중 사용자 run 의 상당수가 SIGKILL 됐고, `FR-ask-orphan-redeploy-dead-air`
+# 의 회수 로직은 **죽은 뒤의 복구**였을 뿐 안 죽이는 장치가 아니었다.
+# 반대편 실측: 시스템은 30일 중 **2.1% 만 busy**(363런 × 평균 152초). 조용한 순간을 기다리는
+# 것이 현실적이다 → web 의 `predrain` 과 같은 방식(실제 신호 + fail-closed)으로 대칭 적용한다.
+QUIESCE_TIMEOUT="${DEPLOY_QUIESCE_TIMEOUT:-900}"        # 조용해지기를 기다리는 상한(초)
+QUIESCE_POLL="${DEPLOY_QUIESCE_POLL:-5}"                # 폴링 간격(초)
+QUIESCE_HEARTBEAT_FRESH="${DEPLOY_QUIESCE_HEARTBEAT_FRESH:-90}"  # 이보다 오래 heartbeat 끊긴 running = '좀비 의심' 으로 **분리 계상**(제외 아님 — 패널 P1-4)
+QUIESCE_SETTLE="${DEPLOY_QUIESCE_SETTLE:-3}"            # 조용함 확인 후 재확인 간격(스냅샷 1장의 착시 방지 — 패널 P1-3)
+QUIESCE_PG_SERVICE="${DEPLOY_QUIESCE_PG_SERVICE:-postgres}"
+
 DRY_RUN=0
 MODE="deploy"   # deploy | rollback
 SCOPE="all"     # all | web | workers (feature-0020)
 FORCE_GATEWAY=0
+FORCE_BUSY=0    # --force-busy: quiesce 미달성에도 강행(진행 중 run 이 끊길 수 있음)
+QUIESCE_REPORT=""   # 게이트별 결과(quiet|FORCED|ABORTED) — 배포 말미 정직 보고용
+QUIESCE_FORCED=0    # 강행 횟수(>0 이면 이 배포는 무중단이 아니다)
 
 # base file-set ONLY — dev override(override.yml)/self-TLS/호스트포트를 머지하지 않는다.
 DC=(docker compose -f docker-compose.yml)
@@ -118,6 +141,7 @@ while [ $# -gt 0 ]; do
     --web-only)      SCOPE="web"; shift ;;
     --workers-only)  SCOPE="workers"; shift ;;
     --force-gateway) FORCE_GATEWAY=1; shift ;;
+    --force-busy)    FORCE_BUSY=1; shift ;;
     --help|-h)       usage 0 ;;
     *) die2 "알 수 없는 인자: $1" ;;
   esac
@@ -423,6 +447,178 @@ for url in ("https://localhost:8000/livez","http://localhost:8000/livez"):
         continue
 print(0); sys.exit(0)
 ' 2>/dev/null || echo 0
+}
+
+# ── 진행 중 사용자 run 관측 (CHG-20260812T140000) ─────────────────────────────
+# 신호 2종을 **합산**한다 — 실행 dispatch 가 worker/inprocess 두 모드라(TASK-0169) 한쪽만 보면
+# 다른 모드에서 게이트가 **공허하게 통과**한다(0 을 조용함으로 오독).
+#   (a) `ask_jobs.status='running'` — worker 모드의 정본. heartbeat 가 끊긴 좀비는 세지 않는다
+#       (안 그러면 죽은 워커 한 줄이 배포를 영구 차단한다).
+#   (b) web replica 의 `active_streams` — inprocess 모드의 실행 자체 + worker 모드의 답변 attach
+#       long-poll. 다운로드 스트림도 섞여 보수적이지만, 유휴 98% 환경에서 비용이 없다.
+_ask_jobs_count() {  # $1 = 추가 술어 → 정수 | "unknown"
+  local out
+  out="$("${DC[@]}" exec -T "$QUIESCE_PG_SERVICE" sh -lc \
+    "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -tAc \"SELECT count(*) FROM agent_runtime.ask_jobs WHERE status='running' AND $1\"" \
+    2>/dev/null | tr -d '[:space:]')"
+  case "$out" in (''|*[!0-9]*) echo "unknown" ;; (*) echo "$out" ;; esac
+}
+
+running_ask_jobs() {        # heartbeat 신선 = 확실히 살아 있는 run
+  _ask_jobs_count "heartbeat_at > now() - interval '${QUIESCE_HEARTBEAT_FRESH} seconds'"
+}
+
+# §18.8 패널 P1-4: 오래된 heartbeat 를 "죽었다" 로 **단정하지 않는다**. 살아 있는 워커도 PG 연결이
+# 잠깐 흔들리면 heartbeat 를 놓칠 수 있고, 그 사이에도 LLM 호출은 계속된다(worker 모드에서
+# `active_streams` 는 그 호출을 대변하지 않는다). 초판은 이 행을 조용히 제외해 "조용함" 으로
+# 읽었는데, 그것이 곧 살아 있는 run 을 죽이는 경로다. 별도로 세어 **차단하되 구분해 로그**한다 —
+# 진짜 좀비면 stale sweeper 가 곧 pending 으로 되돌리고, 그래도 남으면 사람이 --force-busy 로 판단한다.
+stale_running_ask_jobs() {
+  _ask_jobs_count "(heartbeat_at IS NULL OR heartbeat_at <= now() - interval '${QUIESCE_HEARTBEAT_FRESH} seconds')"
+}
+
+# §18.8 패널 P1-1: `ask_jobs` 는 **worker 모드에서만** 사용자 run 의 정본이다. 코드 기본값은
+# `inprocess`(shared/config.py)이고 그 모드에서 `/api/ask` 는 `asyncio.to_thread` 로 web 안에서
+# 직접 돌며 **ask_jobs 행을 만들지 않는다**. 게다가 `/livez` 의 `active_streams` 는 CSV export 와
+# SSE 프롬프트 자동작성만 세고 `/api/ask` 를 세지 않는다(라이브 코드 확인). 즉 inprocess 모드에서
+# 이 게이트는 **아무것도 못 보고 항상 '조용함'** 이 된다 — 있으나 마나가 아니라 더 나쁘다(무중단
+# 이라고 믿게 만든다). 그래서 모드를 실측해 worker 가 아니면 통과시키지 않는다.
+ask_execution_mode() {  # → worker | <other> | "unknown"
+  local svc out
+  for svc in "${REPLICAS[@]}"; do
+    replica_cid "$svc" >/dev/null 2>&1 || continue
+    out="$("${DC_PROD[@]}" exec -T "$svc" printenv AGENT_ASK_EXECUTION_MODE 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$out" ] && { echo "$out" | tr 'A-Z' 'a-z'; return 0; }
+    # env 미설정 = 코드 기본값(inprocess). 그 사실을 unknown 으로 뭉개면 fail-closed 가 아니라
+    # 조용한 오판이 된다 — 기본값을 그대로 보고한다.
+    echo "inprocess"; return 0
+  done
+  echo "unknown"
+}
+
+# ⚠ `replica_active_streams` 를 그대로 쓰지 않는다 — 그 헬퍼는 **조회 실패도 0 으로** 돌려준다
+# (`|| echo 0` + 내부 python 의 fallback). pre-drain 에서는 그 관용이 "스트림이 없다고 보고
+# 진행" 이라는 보수적이지 않은 기본값일 뿐이지만, **이 게이트에서는 그것이 곧 vacuous pass** 다
+# (조회가 깨진 배포는 항상 '조용함' 으로 통과해 아무것도 지키지 못한다). 그래서 실패를 **명시적
+# 비-0 종료**로 구분하는 전용 probe 를 쓰고, 읽지 못한 replica 는 0 이 아니라 unknown 으로 센다.
+replica_active_streams_strict() {  # $1 = svc → 정수(성공) | 비-0 종료(조회 실패)
+  "${DC_PROD[@]}" exec -T "$1" python -c '
+import json,ssl,sys,urllib.request
+ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+for url in ("https://localhost:8000/livez","http://localhost:8000/livez"):
+    try:
+        r=urllib.request.urlopen(url,timeout=5,context=ctx if url.startswith("https") else None)
+        print(int(json.loads(r.read().decode()).get("active_streams",0))); sys.exit(0)
+    except Exception:
+        continue
+sys.exit(3)   # 두 스킴 모두 실패 = "읽지 못했다"(0 아님)
+' 2>/dev/null
+}
+
+web_active_streams_total() {  # → 정수 | "unknown"
+  local svc n total=0 seen=0 unread=0
+  for svc in "${REPLICAS[@]}"; do
+    replica_cid "$svc" >/dev/null 2>&1 || continue   # 존재하지 않는 replica 는 셀 대상이 아니다
+    if ! n="$(replica_active_streams_strict "$svc")"; then unread=1; continue; fi
+    case "$n" in (''|*[!0-9]*) unread=1; continue ;; esac
+    total=$(( total + n )); seen=1
+  done
+  # 존재하는 replica 중 **하나라도 못 읽었으면** 합계를 신뢰할 수 없다 — 못 읽은 쪽에 스트림이
+  # 남아 있을 수 있으므로 0 으로 보고하면 안 된다.
+  if [ "$unread" -eq 1 ]; then echo "unknown"; return 0; fi
+  [ "$seen" -eq 1 ] && echo "$total" || echo "unknown"
+}
+
+# ⚠ **fail-closed 결정 지점** — "지금 이 컴포넌트를 내려도 되는가". `predrain` 과 같은 자세다:
+# 중단하면 구버전이 계속 서빙해 무중단이 유지되지만, 강행하면 정확히 우리가 고치려는
+# "진행 중 사용자 요청이 죽는" 사고가 재현된다. 그래서 timeout·관측불가 모두 **중단**이고,
+# 강행은 `--force-busy` 로 사람이 명시할 때만 — 그때도 무엇을 끊는지 로그로 남긴다.
+# 한 번의 관측 → "fresh|stale|streams" (각각 정수 또는 unknown).
+quiesce_sample() { printf '%s|%s|%s' "$(running_ask_jobs)" "$(stale_running_ask_jobs)" "$(web_active_streams_total)"; }
+
+# 표본이 "확실히 조용함" 인가 — **unknown 은 조용함이 아니다**(§18.8 패널 P1-2).
+# 초판은 한쪽이 관측되면 다른 쪽 unknown 을 0 으로 읽었는데, 두 신호는 서로 다른 차원을
+# 덮으므로(worker 큐 vs web 스트림) 한쪽으로 다른 쪽을 대신 증명할 수 없다.
+quiesce_sample_is_quiet() {  # $1 = "fresh|stale|streams" → 0 조용 / 1 아님(또는 미확인)
+  local f s w; IFS='|' read -r f s w <<<"$1"
+  case "$f|$s|$w" in (*unknown*) return 1 ;; esac
+  [ "$f" -eq 0 ] && [ "$s" -eq 0 ] && [ "$w" -eq 0 ]
+}
+
+quiesce_user_runs() {  # $1 = 대상 라벨 → 0 조용함(내려도 됨) / 1 아님(중단)
+  local label="$1" deadline=$(( SECONDS + QUIESCE_TIMEOUT )) smp f s w waited=0 last_report=0 mode
+  step "quiesce 게이트: 진행 중 사용자 run 이 끝나기를 대기 ($label, 상한 ${QUIESCE_TIMEOUT}s)"
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] quiesce skip"; return 0; }
+  # 0) 실행 모드 게이트 — ask_jobs 가 정본인 모드인지 먼저 확인한다(패널 P1-1).
+  mode="$(ask_execution_mode)"
+  if [ "$mode" != "worker" ]; then
+    err "$label: 실행 모드가 '$mode' 다 — 이 모드의 `/api/ask` 는 ask_jobs 행을 만들지 않고"
+    err "  `/livez` 의 active_streams 도 그 요청을 세지 않는다(CSV/SSE 전용). 즉 게이트가 진행 중"
+    err "  run 을 **볼 수 없다** — '조용함' 으로 통과시키면 무중단이라고 오인하게 만든다."
+    err "  worker 모드(AGENT_ASK_EXECUTION_MODE=worker)로 운영하거나, 인지한 상태에서 --force-busy."
+    return 1
+  fi
+  while :; do
+    smp="$(quiesce_sample)"; IFS='|' read -r f s w <<<"$smp"
+    if quiesce_sample_is_quiet "$smp"; then
+      # 1) settle 재확인 — 한 장의 스냅샷은 "그 순간" 만 말한다. 곧바로 recreate 로 넘어가면
+      #    그 사이 들어온 run 이 죽는다(패널 P1-3). 짧은 간격으로 한 번 더 보고 둘 다 조용할
+      #    때만 진행한다. **완전한 admission barrier 는 아니다** — 잔여 창은 정직하게 남기고
+      #    문서에 명시한다(앱측 fence 는 별 cycle).
+      sleep "$QUIESCE_SETTLE"
+      smp="$(quiesce_sample)"
+      if quiesce_sample_is_quiet "$smp"; then
+        log "  $label: 진행 중 run 0 (settle ${QUIESCE_SETTLE}s 재확인, 대기 ${waited}s) — 교체 진행."
+        return 0
+      fi
+      IFS='|' read -r f s w <<<"$smp"
+      log "  $label: settle 재확인에서 신규 run 감지(fresh=$f stale=$s streams=$w) — 계속 대기."
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      err "$label: quiesce timeout(${QUIESCE_TIMEOUT}s) — ask_jobs fresh=$f · stale=$s · web streams=$w."
+      case "$f|$s|$w" in (*unknown*)
+        err "  (unknown = 관측 실패. '조용한지 알 수 없다' 를 '조용하다' 로 읽지 않는다.)"
+        err "  진단: ${DC[*]} exec -T $QUIESCE_PG_SERVICE sh -lc 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -tAc \"select 1\"'" ;;
+      esac
+      err "  지금 내리면 그 요청들이 끊긴다(= 이 게이트가 막으려는 바로 그 사고). 현 상태 유지 후 재실행(멱등)."
+      err "  즉시 진행이 필요하면 --force-busy (끊기는 요청 수를 위 값으로 인지한 상태에서만)."
+      return 1
+    fi
+    # 진행 상황을 30초마다 한 줄 — 조용히 오래 기다리면 '멈춘 배포'로 오인된다.
+    if [ $(( waited - last_report )) -ge 30 ] || [ "$waited" -eq 0 ]; then
+      log "  $label: ask_jobs fresh=$f · stale=$s · web streams=$w — 대기 중(${waited}s/${QUIESCE_TIMEOUT}s)"
+      last_report="$waited"
+    fi
+    sleep "$QUIESCE_POLL"; waited=$(( waited + QUIESCE_POLL ))
+  done
+}
+
+quiesce_gate() {  # $1 = 라벨 → 0 진행 가능. --force-busy 면 관측 결과만 남기고 통과.
+  if quiesce_user_runs "$1"; then
+    QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }$1=quiet"
+    return 0
+  fi
+  if [ "$FORCE_BUSY" -eq 1 ]; then
+    warn "$1: --force-busy 지정 — quiesce 미달성 상태로 강행한다. 위에 표시된 진행 중 요청은 끊긴다."
+    QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }$1=FORCED(진행 중 요청 끊김)"
+    QUIESCE_FORCED=$(( QUIESCE_FORCED + 1 ))
+    return 0
+  fi
+  QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }$1=ABORTED"
+  return 1
+}
+
+# LRN-20260811T1557("성공 보고 ≠ 무중단")의 직접 적용: 게이트가 통과했는지·강행했는지를
+# 배포 말미에 **반드시** 한 줄로 남긴다. 조용히 통과하면 다음 사람이 "무중단이었다" 고
+# 읽는데, --force-busy 로 끊고 지나간 배포도 똑같이 "배포 완료" 로 보이기 때문이다.
+quiesce_summary() {
+  if [ -z "$QUIESCE_REPORT" ]; then
+    log "quiesce: 미수행(scope=web — ask-worker/gateway 미접촉)"
+  elif [ "$QUIESCE_FORCED" -gt 0 ]; then
+    warn "quiesce: $QUIESCE_REPORT — **강행 ${QUIESCE_FORCED}회**. 이 배포는 무중단이 아니었다."
+  else
+    log "quiesce: $QUIESCE_REPORT — 진행 중 사용자 run 을 끊지 않았다."
+  fi
 }
 
 wait_ready() {  # $1 = svc, $2 = expected sha → 0 성공
@@ -838,6 +1034,18 @@ deploy_workers() {  # $1 = 대상 sha, $2 = pin overlay 의 web image ref(롤백
         log "$svc 이미 $sha + healthy — skip(멱등)."; continue
       fi
     fi
+    # CHG-20260812T140000: ask-worker 는 **사용자 run 을 들고 있는 유일한 워커**다. 종전엔
+    # SIGTERM 후 고정 60초(drain)만 주고 죽였는데 실측 run 의 66%가 그보다 길다 — 매 배포가
+    # 진행 중 답변을 3분의 2 확률로 죽이고 사용자는 재큐→전량 재실행(dead air)을 겪었다.
+    # 조용한 순간까지 기다렸다가 교체한다(fail-closed — 못 기다리면 강행이 아니라 중단).
+    # insight-worker/ops-scheduler 는 배경 작업(실패=degraded 기록 후 다음 cadence 재시도)이라
+    # 대상이 아니다 — 여기 넣으면 유휴 대기만 늘고 얻는 게 없다.
+    if [ "$svc" = "ask-worker" ]; then
+      quiesce_gate "ask-worker recreate" || {
+        err "ask-worker 교체 중단 — 현 워커가 계속 서빙(무중단 유지). web 은 이미 $sha."
+        return 1
+      }
+    fi
     log "recreate $svc → $AGENT_IMAGE_REPO:$sha"
     if ! run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$svc" \
        || ! wait_worker_healthy "$svc" "$WORKER_READY_TIMEOUT" "$sha"; then
@@ -859,6 +1067,20 @@ rollback_workers() {  # $1 = pin overlay 에 유지할 web image ref
     return 1
   fi
   write_pin_overlay "$web_img" "$AGENT_IMAGE_REPO:last-good"; set_dc_prod
+  # §18.8 패널 P1-5(부분 수용): 롤백에는 quiesce **게이트를 걸지 않는다** — 롤백은 복구 경로이고
+  # 여기서 막으면 결함 있는 배포가 그대로 남는다(feature-0014 가 엣지 게이트를 롤백 경로에서
+  # 비차단으로 둔 것과 같은 근거: "롤백은 완주가 우선"). 다만 **침묵하지는 않는다** — 무엇을
+  # 끊고 가는지 수치로 남긴다. 정방향은 기다리고 롤백은 끊는다는 비대칭이 로그에 보여야 한다.
+  if [ "$DRY_RUN" -ne 1 ]; then
+    local _rb_smp; _rb_smp="$(quiesce_sample)"
+    if quiesce_sample_is_quiet "$_rb_smp"; then
+      log "롤백 전 관측: 진행 중 사용자 run 0 — 끊기는 요청 없음."
+    else
+      warn "롤백 전 관측: 진행 중 사용자 run 있음(fresh|stale|streams = $_rb_smp) — **롤백은 대기하지 않는다**(복구 우선). 해당 요청은 끊긴다."
+      QUIESCE_REPORT="${QUIESCE_REPORT}${QUIESCE_REPORT:+ · }rollback=CUT($_rb_smp)"
+      QUIESCE_FORCED=$(( QUIESCE_FORCED + 1 ))
+    fi
+  fi
   for svc in "${WORKERS[@]}"; do
     run "${DC_PROD[@]}" up -d --no-deps --no-build --force-recreate "$svc" || warn "$svc 롤백 recreate 문제 — 계속."
     wait_worker_healthy "$svc" "$WORKER_READY_TIMEOUT" "$good" || warn "$svc 롤백 후에도 비정상 — 수동 확인 필요."
@@ -977,7 +1199,19 @@ deploy_gateway_reconcile() {
     err "surge replica healthy 실패 — 본체 무접촉 유지(기존 gateway 가 계속 서빙). 새 이미지/설정 점검."
     return 1
   fi
-  # 2) 본체 recreate — 신규 요청은 DNS alias 로 surge 가 흡수, in-flight 는 stop_grace drain.
+  # 2) 본체 recreate — 신규 요청은 DNS alias 로 surge 가 흡수한다. 하지만 **이미 본체 소켓에
+  #    붙어 있는 in-flight 호출은 surge 로 옮길 수 없다** — HTTP 요청은 프로세스 간 이전이
+  #    불가능하다. 종전엔 그 사실을 stop_grace 타이머로 덮었고(만료 시 SIGKILL), 그게 2026-08-12
+  #    사고의 기전이다(구 컨테이너 SIGTERM 11:00:05 → SIGKILL 11:02:05 = 정확히 grace 120s).
+  #    그래서 "옮긴다" 가 아니라 **"붙어 있는 게 없을 때 바꾼다"** 로 푼다 — quiesce 게이트가
+  #    통과한 시점엔 진행 중 사용자 run 이 0 이므로 recreate 가 아무것도 죽이지 않는다.
+  #    (게이트 통과 직후 새 run 이 시작되는 좁은 창은 상향된 stop_grace 가 흡수한다 — 두 층.)
+  quiesce_gate "gateway recreate" || {
+    err "gateway 교체 중단 — 현 본체가 계속 서빙(무중단 유지). surge 는 아래에서 정리한다."
+    run "${DC_SURGE[@]}" stop "$GATEWAY_SURGE" || true
+    run "${DC_SURGE[@]}" rm -f "$GATEWAY_SURGE" || true
+    return 1
+  }
   if ! run "${DC[@]}" up -d --no-deps --force-recreate "$GATEWAY_SERVICE" \
      || ! wait_gateway_healthy "$GATEWAY_SERVICE" "$GATEWAY_READY_TIMEOUT"; then
     err "gateway 본체 recreate 후 비정상 — surge 가 임시 서빙 중(의도적으로 유지). 수동 개입 필요. 주의: surge 는 restart:no 라 호스트 재부팅 시 소멸 — 방치 금지."
@@ -1164,6 +1398,7 @@ main() {
 
   normalize_ownership
   step "배포 완료: $TARGET_SHA (scope=$SCOPE — web 롤링·워커·gateway reconcile + soak 통과)"
+  quiesce_summary
   post_deploy_checklist
 }
 

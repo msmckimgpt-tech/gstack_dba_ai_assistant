@@ -90,3 +90,34 @@ source_of_truth: true
   `verify | tail` 파이프가 FAIL exit 을 가려(체인 미중단) check #2/#3 미충족 상태로 커밋된
   것을 새 commit 으로 정합(--amend 금지 준수).
 - [SKIPPED] 사유: 체크리스트/기록 정합 자체 — 패널 대상 아님.
+
+## REV-20260812T140000-quiesce-gate [CODEX:full-panel-substitute] — PASS (P1 5건 흡수 후)
+- **Trigger**: code change, §18.8 dispatch 표 키워드 **0건 매칭**(배포 절차 shell) → 표 규칙상
+  **full panel default**. 다만 본 위임 세션에 "요청 없이 Agent tool 을 호출하지 말라" 는 **상위
+  우선순위 하네스 지시**가 있어 §18.8.2 carve-out 에 따라 **제약 없는 채널**(`codex review
+  --uncommitted`)로 수행했다. 판정 기준 정본 `docs/CODE_REVIEW.md`(§18.8.1-2).
+  **미덮인 도메인 명시(§18.8.2-4 정직)**: ux/design 렌즈는 이 변경에 N/A(사용자 표면 무변경),
+  security 렌즈는 codex 판정 + 자체 점검(신규 권한·엔드포인트·자격증명 경로 0, 게이트 쿼리는
+  read-only `count(*)`)으로 갈음. `[SKIPPED:tool-restricted:*]` 로 남길 미검증 도메인 없음.
+- **1라운드 verdict — P1 5건**: ① inprocess 모드에서 게이트가 아무것도 못 봄(`/api/ask` 는
+  ask_jobs 행을 안 만들고 `active_streams` 는 CSV/SSE 전용) ② 한쪽 신호 unknown 을 0 으로 읽음
+  ③ 스냅샷 1장 뒤 admission 경합 ④ stale heartbeat 행을 "없음" 으로 단정 ⑤ 롤백 경로 미게이트.
+- **사실 확인(추측 아님)**: ①의 전제를 라이브로 검증했다 — `_ACTIVE_STREAMS` 증가 지점은
+  `admin_audits.py`(CSV) · `_prompt_context.py`(SSE) **두 곳뿐**이고 `/api/ask` 를 세지 않는다.
+  현행 운영 모드는 `worker`(`.env` + 라이브 web-a `printenv` 양쪽 확인)이라 오늘의 게이트는
+  유효하지만, 모드가 바뀌면 **조용히 무력화**된다 — 잠복 결함으로 인정.
+- **흡수**:
+  - ① 실행 모드를 실측해 `worker` 가 아니면 **통과시키지 않는다**(조용한 오판 → 시끄러운 거부).
+  - ② `unknown` 은 어떤 조합에서도 조용함이 아니다 — 두 신호는 서로 다른 차원이라 한쪽으로
+    다른 쪽을 증명할 수 없다.
+  - ③ settle 재확인(기본 3s) 추가로 창을 좁혔다. **완전한 admission barrier 는 아니다** —
+    앱측 fence 가 필요해 별 cycle 로 이월하고 잔여 창을 문서에 명시했다(과장 금지).
+  - ④ stale 행을 제외하지 않고 **분리 계상 + 차단**, 로그로 구분 표기.
+  - ⑤ **부분 수용** — 롤백에 게이트를 걸면 결함 있는 배포가 그대로 남는다(feature-0014 가 엣지
+    게이트를 롤백에서 비차단으로 둔 것과 같은 근거: 복구 완주 우선). 대신 **끊고 가는 양을
+    관측·보고**하고 최종 요약의 강행 카운터에 반영한다. 침묵만 제거하고 차단은 하지 않는다.
+- **자체 적발(패널 이전)**: `web_active_streams_total` 초판이 공용 `replica_active_streams` 를
+  썼는데 그 헬퍼는 **조회 실패도 0 으로** 돌려준다 — 조회가 깨진 배포는 항상 '조용함' 으로
+  통과했을 것이다. 실패를 비-0 종료로 구분하는 전용 probe 로 교체하고 회귀 테스트를 세웠다.
+- **흡수 검증**: 신규/변경 테스트 포함 **26 PASS** · **뮤테이션 16/16 KILLED**(모드 게이트 ·
+  unknown 차단 · stale 차단 · settle 재확인 · 롤백 보고 · 전용 probe · 관용 헬퍼 복귀 등).

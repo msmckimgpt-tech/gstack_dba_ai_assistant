@@ -28,9 +28,15 @@ SPOF 였고, `alembic-migrate.sh` 직접 호출은 stale 이미지로 head 를 �
   메모리를 조이는 중(라이브 mem_limit 하향 튜닝 실측)이고 gateway 는 OOM 이력(2g)까지 있다.
   상시 2번째 replica 는 steady-state 메모리 비용 결정(사람 몫)이 필요 — 배포 창 한정 surge 는
   비용 0 으로 같은 무중단을 준다. 상시 HA 가 필요해지면 surge 구조가 그대로 밑돌이 된다.
-- **Alt-C: 워커도 web 처럼 2-replica 롤링.** 안 고른 이유: 워커는 큐 기반(lease fencing·requeue·
-  멱등 쓰기)+graceful SIGTERM 이라 짧은 단일 재시작이 이미 사용자 무영향이다. 2-replica 는
-  동시성 계약(advisory lock·중복 처리)을 새로 검증해야 하는 위험만 추가.
+- **Alt-C: 워커도 web 처럼 2-replica 롤링.** 안 고른 이유: 2-replica 는 동시성 계약(advisory
+  lock·중복 처리)을 새로 검증해야 하는 위험을 추가한다. 같은 결과를 **quiesce 게이트**(진행 중
+  사용자 run 이 0 일 때만 교체, CHG-20260812T140000)로 replica 없이 얻는다 — 유휴 98% 환경이라
+  대기 비용이 사실상 0 이다.
+  ⚠ **정정(2026-08-12, 실측)**: 초판이 적었던 "짧은 단일 재시작이 이미 사용자 무영향" 은
+  **사실이 아니었다**. `ask_jobs` 30일 363건 기준 run 은 p50 81s · p95 691s 이고 워커 drain
+  예산은 60s — **60초 초과가 66%** 라 매 배포가 진행 중 답변의 다수를 죽였다. 큐 기반 복구는
+  '무영향' 이 아니라 '수 분 뒤 재실행' 이었다. 방향(2-replica 미채택)은 유지하되 그 근거를
+  "재시작이 무해해서" 에서 "게이트로 재시작 자체를 조용한 순간에 몰아서" 로 바꾼다.
 - **Alt-D: MySQL 도 PG 처럼 PAUSE 래퍼.** 안 고른 이유: MySQL 앞단엔 pgbouncer 같은 pooler 가
   없어 동형 구현 불가(구조적). DDL 은 online-DDL 게이트가 기커버, 엔진 재시작은 0015 ANCHOR 가
   범위 밖으로 고정.
@@ -38,8 +44,13 @@ SPOF 였고, `alembic-migrate.sh` 직접 호출은 stale 이미지로 head 를 �
 ## §3. 가정된 사용 시나리오
 개발자 PR 이 머지되어 `sudo -E bin/deploy-web.sh` 가 돈다. 사용자는 대화 중이고 insight-worker
 는 야간 분석 cycle 중간이다. web 이 롤링 swap 된 뒤, 워커들이 fresh 이미지로 순차 recreate
-된다 — insight 는 루프 경계에서 곱게 내려가고, ask-worker 의 in-flight run 은 lease requeue 로
-새 컨테이너가 이어받는다. litellm 설정이 바뀐 배포라면 surge replica 가 먼저 떠서 DNS alias 로
+된다 — insight 는 루프 경계에서 곱게 내려가고, ask-worker 는 **진행 중 run 이 끝난 뒤에만**
+교체된다(quiesce 게이트, CHG-20260812T140000). 조용해지지 않으면 배포는 강행하지 않고 중단하며,
+구 워커가 계속 서빙한다.
+⚠ **정정(2026-08-12)**: 초판은 "in-flight run 은 lease requeue 로 새 컨테이너가 이어받는다" 고
+적었으나, requeue 는 **이어받는 것이 아니라 전량 재실행**이다(부분 산출 이월은 미구현 — conv-audit
+원장 `FR-ask-orphan-redeploy-dead-air` 범위 밖 ① 로 이월). 사용자에게는 수 분의 dead air 로
+나타났다. 그래서 회수에 기대지 않고 **애초에 죽이지 않는** 게이트를 정본으로 둔다. litellm 설정이 바뀐 배포라면 surge replica 가 먼저 떠서 DNS alias 로
 합류한 뒤 본체가 재시작되므로, 그 순간 사용자가 보낸 질문의 LLM 호출도 실패하지 않는다.
 사용자는 이번에도 배포 사실을 모른다 — 그리고 운영자는 "워커 재빌드 했던가?" 를 더 이상
 기억할 필요가 없다.

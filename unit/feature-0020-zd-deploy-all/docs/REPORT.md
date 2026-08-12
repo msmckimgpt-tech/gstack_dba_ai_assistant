@@ -52,3 +52,15 @@ web·워커·gateway·caddy 전부가 무중단/near-zero 롤아웃되도록 완
 - Push / main 병합: 완료 (cycle-finalize --pr 780, merge mutex 경유)
 - 충돌 해결: 없음 (origin/main 19커밋 전진분 rebase 무충돌; wiki/hot.md 는 additive 재구성)
 - 라이브 배포: `sudo -E bin/deploy-web.sh` exit 0 — web/워커 eaba795a healthy·edge 200·gateway 무접촉 (POST-DEPLOY 상세: docs/test-runs.d/TEST-20260714T104500-zd-deploy-all-5.md)
+
+## 8. 후속 — quiesce 게이트 (CHG-20260812T140000)
+- **계기**: conv-audit `FR-llm-transient-failure-kills-run`(2026-08-12 라이브 사고) 대응 중 사용자가
+  "배포 이슈의 원인을 근본적으로 해소할 완벽한 무중단 배포 환경" 을 먼저 요구.
+- **드러난 사실**: 본 feature 가 완성했다고 선언한 무중단은 **web 에만** 실제 게이트가 있었다.
+  워커·gateway 는 `stop_grace_period` 타이머로만 교체됐고, 실측이 그 예산이 분포 안쪽임을 보였다
+  — `ask_jobs` 363건 p50 81s · p95 691s · **60초 초과 66%** vs ask-worker drain 60s.
+  즉 §1 이 "web 만 완성돼 있었다" 고 지적한 바로 그 gap 이 워커·gateway 안에 **한 층 더** 있었다.
+- **해소**: 진행 중 사용자 run(ask_jobs running + web active_streams)이 0 일 때만 교체하는
+  fail-closed 게이트. 유휴 98% 환경이라 대부분의 배포는 즉시 통과한다.
+- **cross-ref**: 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md`
+  (`FR-llm-transient-failure-kills-run` — 앱 층 재시도는 feature-0002 가 소유, 배포 층은 여기).

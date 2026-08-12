@@ -52,3 +52,15 @@ source_of_truth: true
 - gateway surge 실교체: 본 cycle 은 gateway 드리프트가 없어 무접촉 경로만 라이브 검증
   (교체 경로는 --force-gateway 로 유도 가능하나 라이브 LLM 창 리스크로 보류 — 다음 gateway
   설정 변경 배포에서 자연 검증).
+
+### 20260812T140000-quiesce-gate 워커·gateway 교체 quiesce 게이트 (Major §12.3 — 배포 스파인, 2026-08-12) — **Environment: unit(shell 함수 격리 실행) + 라이브 SQL 대조 (배포 절차만 변경 — 런타임/웹 자산 무변경 → CHECK#13 미해당)**
+- **자동 검증 — PASS**: `unit/feature-0020-zd-deploy-all/tests/test_quiesce_gate.py` **26 passed**(§18.8 흡수 후). 검증 방식은 `bin/deploy-web.sh` 에서 quiesce 함수 블록만 떼어내 stub 로그·stub 신호와 함께 `bash -c` 로 실제 실행하는 것 — 문자열 대조가 아니라 **동작**을 본다(`gateway_grace_drift_warn` 검증과 같은 패턴).
+  - 판정 6: 조용→진행 · 바쁨→상한까지 대기 후 **ABORT** · 도중 조용해지면 즉시 진행(폴링 실동작을 파일 카운터로 확인) · web `active_streams` 단독으로도 차단 · **양 신호 관측 불가→ABORT**(vacuous pass 방지) · 한쪽만 관측 가능하면 그쪽으로 판정.
+  - `--force-busy` 3: 통과하되 `FORCED` 기록 + **"무중단이 아니었다"** 보고 · 조용 통과 시 "끊지 않았다" · 플래그 없으면 ABORT.
+  - 배선 4: ask-worker recreate **앞**(그리고 배경 워커엔 미적용) · gateway 는 surge healthy **뒤** recreate **앞** · 게이트 중단 시 surge 정리 · 성공 경로에 `quiesce_summary` 발화.
+  - 계약 5: heartbeat 신선도 필터 존재 · 상한 기본값이 실측 p95(691s) 이상 · `--force-busy` 파싱+usage 등재 · **testpaths 자기등재** · `bash -n`.
+- **뮤테이션 16/16 KILLED**(초판 9 + 전용 probe 2 + 패널 흡수 5): 관측불가→0 취급 · 워커 게이트 제거 · FORCED 카운터 무력화 · timeout→진행 · heartbeat 필터 제거 · web 신호 무시 · 중단 시 surge 미정리 · 상한 60s 축소 · testpaths 등재 제거.
+- **회귀**: 전 testpaths(feature-0002/0003/0020) 실패 **선재 2건뿐** — ① `test_oauth_exhaustion_gate::test_write_failure_...`(컨테이너에 `chattr` 부재) ② `test_edge_rolling_gate.py` **수집 오류**(`SyntaxError: f-string expression part cannot include a backslash` — 검증 컨테이너가 Python **3.11**.15 인데 그 문법은 3.12+ 전용). **둘 다 pristine main 대조에서 동일** → 회귀 0. ruff clean · `bash -n` OK · `tomllib` parse OK.
+- **라이브 대조(읽기 전용)**: 운영 primary 에서 게이트 쿼리를 실제 실행 — `SELECT count(*) … status='running' AND heartbeat_at > now() - interval '90 seconds'` → `0`(현재 진행 중 사용자 run 없음). 좀비 필터 대조(all_running=0 / fresh=0)도 함께 확인.
+- **Pass/Fail: PASS**(단위 + 뮤테이션 + 회귀 + 라이브 SQL).
+- **라이브 실측 필요분(POST-DEPLOY, append 예정)**: ① 첫 실전 배포 로그에 `quiesce: ask-worker recreate=quiet · gateway recreate=quiet` 가 실제로 찍히는지 ② 진행 중 대화가 있는 상태에서 배포를 걸어 **대기 → 통과** 궤적이 관측되는지(합성 부하로 재현) ③ 배포 전후 `ask_jobs` 에 `attempts>1` 재큐가 늘지 않는지(= 아무것도 죽이지 않았다는 사후 증거).
