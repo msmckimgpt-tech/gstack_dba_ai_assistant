@@ -9559,7 +9559,7 @@ AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 - [x] 하네스 신설 47건 + 뮤테이션 12/12 red · 기존 전수 1,684 체크 0 FAIL
 - [x] codex 적대 리뷰 P1 0 · **P2 4건 전건 반영**(403 중복 · vacuous C8 · 하드코딩 색 · TEST 기록)
 - [x] PB-0008 실 Windows Chrome — 칩 렌더·실제 클릭→diff 패널·preselect·hover·레이아웃 이동 0 — AC-ADBC-11
-- [ ] POST-DEPLOY 라이브 재확인(배포본 baked 자산) → fragment Run append
+- [x] POST-DEPLOY 라이브 재확인(배포본 baked 자산, main `eac20796`) → fragment Run 2 append — 프리뷰 결과와 차이 0
 
 ### 9. Requested Scope
 

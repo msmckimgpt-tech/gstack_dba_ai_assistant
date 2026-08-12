@@ -2488,3 +2488,13 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - **Pass/Fail: PASS**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 기록).
   POST-DEPLOY 라이브 재확인은 배포 후 Run append. Run 기록 정본:
   `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md` (§5.3 fragment).
+
+## 20260812T0030-attach-diff-bubble-chip-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+- **Environment: Windows-browser (PB-0008)** — **PASS**. PR #1215 → main `eac20796` →
+  `deploy-web --web-only`(web-a/web-b 양쪽 `mysql-ai-web:eac20796` healthy). 라이브 서빙
+  `static/app/messages.js` 가 main blob 과 **byte-identical**(스탬프 `73f92614ff4d`) ·
+  `css/chat.css` `.attach-chip-cmp` 4 hit · `/healthz git_commit=eac20796`.
+  실 Chrome/150 `https://localhost/` 에서 칩 4 · `⇄` 4(20×17px) · 클릭 → `버전 비교 —
+  probe_a.sql` 모달 1개(`v1 ↔ v2`, 옵션 7, `+1 / -0`, 행 6) · 페이지 이동 0 · pageerror 0.
+  **배포 전 프리뷰 결과와 차이 0**(baked 자산에서도 동일 동작).
+- Run 기록 정본: `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md` Run 2.

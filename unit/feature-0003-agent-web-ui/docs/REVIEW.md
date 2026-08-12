@@ -3869,3 +3869,11 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 구현이 실제로는 중복 왕복을 허용함을 드러냈다 — `disabled` 속성 하나에 방어를 걸었던 것이
 원인이다. **테스트를 통과시키려 테스트를 바꾸는 것과, 테스트를 정직하게 만든 뒤 구현을
 고치는 것의 차이**가 이 항목에 있다.
+
+## REV-20260812T003000-attach-diff-bubble-chip-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+- Trigger: doc-only (TASK/TEST/MODIFY + fragment Run 2 + 증거 1매). 코드·정책 doc 변경 0 →
+  §18.8 표 첫 행(비정책 doc-only) 적용, panel skip.
+- 근거 실측: 라이브 서빙 `messages.js` byte-identical(main `eac20796`) · 칩 `⇄` → diff 패널
+  `v1 ↔ v2` PASS · pageerror 0 — 배포 전 프리뷰 결과와 차이 0.
+- Human Approval Needed: no

@@ -88,3 +88,27 @@ C8(중복 클릭)의 **첫 판이 vacuous** 였다 — 느린 왕복을 흉내�
   트레이드오프**(칩 높이 26px 안에 24px 버튼을 넣으면 말풍선 안 칩이 본문보다 커진다)이며
   이 cycle 에서 축을 바꾸지 않았다 — 원장 등재.
 - POST-DEPLOY 라이브 재확인(배포본 baked 자산)은 배포 후 Run append.
+
+## Run 2 — POST-DEPLOY 라이브 (Environment: Windows-browser) — PASS
+
+PR #1215 머지 → main `eac20796` → `bin/deploy-web.sh --web-only`. **라이브 서빙 자산 파리티**:
+`/healthz` `git_commit=eac20796` · web-a/web-b 양쪽 이미지 `mysql-ai-web:eac20796` healthy ·
+서빙 `static/app/messages.js` 가 main blob 과 **byte-identical**(`?v=` 정규화 후, 스탬프
+`73f92614ff4d`) · 서빙 `css/chat.css` 에 `.attach-chip-cmp` 4 hit.
+
+실 Windows Chrome/150 으로 `https://localhost/`(Caddy :443) 로그인 후 같은 대화에서 실측:
+
+| 축 | 실측 | 판정 |
+|---|---|---|
+| 칩·버튼 렌더 | 첨부 칩 4 · `⇄` 4 · 버튼 20×17px | PASS |
+| 클릭 → diff 패널 | 모달 1개, 기준 `v1` ↔ 비교 `v2`, 옵션 7개, 통계 `+1 / -0`, 행 6 | PASS |
+| preselect | 배포 전 프리뷰와 동일(그 칩의 쌍) | PASS |
+| 페이지 이동 없음 | `location.pathname === "/"` | PASS |
+| 콘솔 | pageerror 0 | PASS |
+
+증거: `docs/evidence/attach-diff-bubble-chip/04-postdeploy-live-diff-modal.png`.
+배포 전 프리뷰 컨테이너 결과와 **차이 0** — baked 자산에서도 동일 동작.
+
+**배포 스파인 결과**: `deploy-web --web-only` EXIT=0 · post-cutover soak(90s) 통과 ·
+무중단 실측 `caddy | grep -c 'no upstreams available'` = **0**(배포 창 전면 503 없음,
+RUNBOOK §10 체크리스트 [5]).
