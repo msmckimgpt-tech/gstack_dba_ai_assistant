@@ -5,7 +5,7 @@ import { adminState, apiFetch } from "../admin.js?v=dev";
 // modal-backdrop-dismiss: 배경 dismiss 는 저장소 단일 primitive (작업 화면 번들과 공유).
 import { bindBackdropDismiss } from "../modal-dismiss.js?v=dev";
 import { _META_AGG_ZOOM, _META_COL_LOD_MIN, _META_COL_LOD_ZOOM, _META_CULL_MARGIN, _META_CULL_MIN, _META_DIM_OPACITY, _META_EDGE_LOD_MIN, _META_EDGE_LOD_ZOOM, _META_HDR_TYPO_CHARW, _META_LABEL_HDR_KINDS, _META_LABEL_HEADER_MIN_PX, _META_LABEL_MIN_PX, _META_MIN_READ_ZOOM, _META_TERMS_COMBO, _metaComboName, _metaGraph, _metaHdrFitNote, _metaHdrFitReset, _metaHdrLevelFont, _metaLabelBandOf, _metaNatSort, _metaPerf, _metaSchemaComboOf, _METLAY, _METtype, _METZ } from "./graph-state.js?v=dev";
-import { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
+import { _META_ROLE, _metaColStyle, _metaDbObjEdgeStyle, _metaDbObjStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle } from "./graph-roleviz.js?v=dev";
 import { _metaCacheSig, _metaStateSig } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency, _metaRelOrderAll, _metaRelSchemaOrder } from "./graph-rellayout.js?v=dev";
 import { _META_GROUP_TINTS, _metaCatAssign, _metaSimGroups, _metaStableSeq } from "./graph-simgroups.js?v=dev";
@@ -87,6 +87,14 @@ function _metaG6Build() {
       // graph-funcproc(ADR-016): 함수·프로시저는 테이블과 나란히 소속 스키마 클러스터 열에 선다.
       const sc = _metaSchemaComboOf(n);
       if (sc !== _META_TERMS_COMBO) { ensureG(sc).tables.push(n); return; }
+      ensureG(_META_TERMS_COMBO).terms.push(n); return;
+    }
+    if (n.label === "DbObject") {
+      // feature-0040: 역할 객체도 **컨텐츠**다 — 루틴과 같은 자리에서 같은 규칙으로 흐른다.
+      //   kind 필터(역할별 토글)는 빌드 입력에서 제외해 masonry/simgroups 가 자리를 자동 회수한다.
+      if (_metaGraph.hiddenKinds.has(_metaDbObjKind(n))) return;
+      const sc2 = _metaSchemaComboOf(n);
+      if (sc2 !== _META_TERMS_COMBO) { ensureG(sc2).tables.push(n); return; }
       ensureG(_META_TERMS_COMBO).terms.push(n); return;
     }
     if (n.label === "Column") {
@@ -721,6 +729,22 @@ function _metaG6Build() {
         }
         return;
       }
+      if (it.label === "DbObject") {
+        // feature-0040: 역할 객체 칩 — 루틴 칩과 동일 자리·동일 컬링 규칙, 색만 구리(DbObject).
+        //   라벨 접두는 **역할 아이콘**(⚡ 트리거 · ▤ 뷰 · ⏱ 예약 작업 …) — 루틴의 ƒ/⚙ 와 같은
+        //   역할이며, 아이콘 하나로 "이게 무슨 종류인지" 를 칩에서 바로 읽게 한다.
+        //   §18.8 패널 NIT 동형: isTerms 분기보다 **먼저** 둬야 flat-scope 객체가 용어 칩으로
+        //   강등되지 않는다(루틴이 같은 이유로 위에 있다).
+        if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) { _metaGraph._cullPartial = true; return; }
+        const orel = (_metaGraph.mode === "search" && _metaGraph.searchMatchTables && _metaGraph.searchMatchTables.has(it.key))
+          ? Math.max(typeof it.rel === "number" ? it.rel : 0, 0.9) : it.rel;
+        const orole = _metaDbObjRoleOf(it);
+        const oLabel = _metaDbObjIcon(orole) + " " + (it.name || it.key);
+        nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key),
+          data: { label: it.name || it.key, kind: "dbobject", fqn: it.fqn, object_role: orole },
+          style: Object.assign(_metaDbObjStyle(tx, ty, orel), { labelText: oLabel }) });
+        return;
+      }
       if (g.isTerms) {
         nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
         return;
@@ -923,7 +947,7 @@ function _metaG6Build() {
     if (e.type !== "REFERENCES") {
       // §57: ROUTINE_USES 도 승격 경로 참여(접힌 카드로의 사용선) — 그 외(DESCRIBES/RELATED_TERM 등)는
       //   기존대로 양끝 직접 렌더 시에만.
-      if (e.type === "ROUTINE_USES") {
+      if (e.type === "ROUTINE_USES" || e.type === "OBJECT_USES" || e.type === "OBJECT_ON") {
         const srcN = _metaGraph.nodes.get(e.source), tgtN = _metaGraph.nodes.get(e.target);
         // §18.8 패널 MINOR: kind 필터로 숨긴 루틴의 사용선이 카드 승격으로 누출되지 않게 —
         //   빌드 입력 제외(§54②)와 동일 분류식(빈값·미상 = procedure).
@@ -931,6 +955,15 @@ function _metaG6Build() {
           const rk0 = (srcN.routine_type === "function") ? "function" : "procedure";
           if (_metaGraph.hiddenKinds.has(rk0)) return;
         }
+        // feature-0040: 역할 객체도 동일 — 숨긴 역할의 사용선/소유선이 누출되지 않게.
+        if (srcN && srcN.label === "DbObject"
+            && _metaGraph.hiddenKinds.has(_metaDbObjKind(srcN))) return;
+        // feature-0040: 엣지 스타일 선택 — 역할 객체 엣지는 구리색(+ OBJECT_ON 은 파선)으로,
+        //   루틴 사용선(보라)과 화면에서 구분된다. 이 한 줄이 아래 4개 방출 지점을 모두 관장한다.
+        const _isObjEdge = (e.type === "OBJECT_USES" || e.type === "OBJECT_ON");
+        const _eStyle = (kind, cross, count) => (_isObjEdge
+          ? _metaDbObjEdgeStyle(e.type, cross, count)
+          : _metaRoutineEdgeStyle(kind, cross, count));
         const rs = renderEndpoint(e.source), rt = renderEndpoint(e.target);
         if (!rs || !rt || rs === rt) return;
         if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;   // 패널 MAJOR: SCHEMA_REF 소유
@@ -971,13 +1004,13 @@ function _metaG6Build() {
                 edges.push({ id: e.id + "::c::" + h.name, source: rs, target: h.cid,
                   data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0,
                           relation_type: h.kind, colEdge: true, ref_column: h.name },
-                  style: dimIf(_metaRoutineEdgeStyle(h.kind, xr), keep) });
+                  style: dimIf(_eStyle(h.kind, xr), keep) });
               }
               // 렌더되지 않은 참조 컬럼 몫은 테이블로 승격(FK 승격 규약 동형) — relation_type 별 1선.
               missKinds.forEach((mk) => {
                 edges.push({ id: e.id + "::t::" + mk, source: rs, target: rt,
                   data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: mk },
-                  style: dimIf(_metaRoutineEdgeStyle(mk, xr), keep) });
+                  style: dimIf(_eStyle(mk, xr), keep) });
               });
               return;
             }
@@ -988,16 +1021,20 @@ function _metaG6Build() {
           //   루틴 관계가 통째로 사라지는" 더 큰 손실이었다. REFERENCES 쪽 LOD 는 그대로 둔다.
           edges.push({ id: e.id, source: rs, target: rt,
             data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: e.relation_type },
-            style: dimIf(_metaRoutineEdgeStyle(e.relation_type, xr), keep) });
+            style: dimIf(_eStyle(e.relation_type, xr), keep) });
           return;
         }
         // graph-edge-flow(요구 ①): 집계 키에 **relation_type 을 포함**한다 — 같은 (루틴군, 테이블군)
         //   쌍이라도 읽기와 쓰기는 별도 관계선으로 남는다. 종전에는 한 덩어리로 병합한 뒤 방향
         //   화살표까지 지워(startArrow delete) "둘 다 있는데 선은 하나, 방향은 없음" 이 됐다.
         const relKind = (e.relation_type === "write") ? "write" : "read";
-        const ak = rs + "::" + rt + "::RU::" + relKind;
+        // feature-0040: 집계 키에 **엣지 타입**을 포함한다. 종전 키(`::RU::`)만 쓰면 같은
+        //   (소스군, 대상군) 쌍의 루틴 사용선과 역할 객체 사용선·소유선이 한 선으로 병합돼
+        //   스타일이 뒤섞이고(구리/보라·실선/파선), "트리거가 걸려 있다" 가 "루틴이 읽는다" 로
+        //   흡수된다 — relation_type 을 키에 넣은 것과 같은 계열의 수정(graph-edge-flow 요구 ①).
+        const ak = rs + "::" + rt + "::" + (_isObjEdge ? e.type : "RU") + "::" + relKind;
         let agg = aggMap.get(ak);
-        if (!agg) { agg = { id: "agg:" + ak, kind: "ROUTINE_USES", relType: relKind, source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false, keepLod: false }; aggMap.set(ak, agg); }
+        if (!agg) { agg = { id: "agg:" + ak, kind: (_isObjEdge ? e.type : "ROUTINE_USES"), relType: relKind, source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false, keepLod: false }; aggMap.set(ak, agg); }
         agg.count += 1;
         agg.crossDs = agg.crossDs || xr;
         agg.keep = agg.keep || keep;
@@ -1043,7 +1080,11 @@ function _metaG6Build() {
   });
   aggMap.forEach((agg) => {
     // §85: ROUTINE_USES 집계는 LOD 축약 대상에서 제외(위 직접 렌더 경로와 동일 근거 — 사용자 요청).
-    if (agg.kind !== "ROUTINE_USES"
+    // feature-0040: 역할 객체 엣지도 축약 제외 대상에 포함 — 트리거·예약작업이 어느 테이블에
+    //   걸려 있는지는 전체보기에서 가장 먼저 보고 싶은 신호이고, 축약되면 통째로 사라진다
+    //   (§85 가 ROUTINE_USES 를 제외한 것과 동일 근거).
+    const _aggKeepAll = (agg.kind === "ROUTINE_USES" || agg.kind === "OBJECT_USES" || agg.kind === "OBJECT_ON");
+    if (!_aggKeepAll
         && lodActive && !agg.keepLod && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
     // graph-edge-flow(요구 ③): 집계 엣지가 대표하는 쌍의 수를 **굵기 대신 다발 가닥 수**로 넘긴다
     //   (_metaEdgeFlow 가 count→strands 로 환산). 굵기 가산(+0.8)은 제거 — 얇은 선이 겹쳐 진해지는
@@ -1051,7 +1092,9 @@ function _metaG6Build() {
     //   ROUTINE_USES 는 relType 을 살려 읽기/쓰기 각각의 화살표 방향과 호를 유지한다.
     const st = (agg.kind === "ROUTINE_USES")
       ? _metaRoutineEdgeStyle(agg.relType, agg.crossDs, agg.count)
-      : _metaEdgeStyleFor(agg.status, agg.crossDs, agg.count);
+      : ((agg.kind === "OBJECT_USES" || agg.kind === "OBJECT_ON")
+        ? _metaDbObjEdgeStyle(agg.kind, agg.crossDs, agg.count)
+        : _metaEdgeStyleFor(agg.status, agg.crossDs, agg.count));
     edges.push({ id: agg.id, source: agg.source, target: agg.target,
       data: { label: agg.kind, status: agg.status, relation_type: agg.relType, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
       style: dimIf(st, agg.keep) });
@@ -1640,15 +1683,50 @@ const _META_GRAPH_COLOR = {
   Table: "#0f7d8c", Column: "#5c6773", GlossaryTerm: "#9c6515",
   Schema: "#3f4b8c", Datasource: "#2e7d52", Product: "#2e7d52",
   Routine: "#7b5cd6",   // graph-funcproc(ADR-016): 함수·프로시저 칩(보라 — 테이블 teal 과 구분)
+  DbObject: "#b0592a",  // feature-0040: 역할 객체 칩(구리 — Routine 보라·Table teal 과 3색 분리)
 };
 // graphux5-progress: 라벨 한글 표기(AI 능동 분석 진행 상세 — 어떤 '항목'인지 사람이 읽게).
 const _META_LABEL_KO = {
   Table: "테이블", Column: "컬럼", GlossaryTerm: "용어", Schema: "스키마",
   Datasource: "데이터소스", Product: "제품", Routine: "함수·프로시저",
+  DbObject: "DB 객체",
 };
 // graph-funcproc: 함수(ƒ)/프로시저(⚙) 표기 접두 — 칩 라벨·상세 헤더 공용.
 function _metaRoutineIcon(rt) { return rt === "function" ? "ƒ" : "⚙"; }
 function _metaRoutineKo(rt) { return rt === "function" ? "함수" : "프로시저"; }
+
+// ── feature-0040 db-object-explorer: 역할 기반 DB 객체 표시 어휘 ────────────────
+// 서버의 `modules/db_object_roles.py` 가 어휘 SSOT 이고 여기는 그 **표시 미러**다. 서버가 role
+// 문자열(view/trigger/schedule/alias/generator)을 노드 속성으로 실어 보내므로 프론트는 그것을
+// 아이콘·한글로 환원하기만 한다 — 역할 목록 자체를 프론트가 다시 정의하지 않는다(추가 역할이
+// 생겨도 이 표에 1행 넣는 것이 전부이고, 미등재 역할은 아래 폴백이 흡수해 화면에서 사라지지 않는다).
+const _META_DBOBJ_ROLE = {
+  view:      { icon: "▤", ko: "뷰" },
+  trigger:   { icon: "⚡", ko: "트리거" },
+  schedule:  { icon: "⏱", ko: "예약 작업" },
+  alias:     { icon: "↪", ko: "별칭" },
+  generator: { icon: "#", ko: "값 생성기" },
+};
+function _metaDbObjRoleOf(n) {
+  // 빈값·미상은 "unknown" 으로 **보존**한다(빈 문자열로 두면 kind 필터의 has("") 가 항상 false 라
+  // 숨길 수도 보일 수도 없는 유령 노드가 된다).
+  const r = String((n && n.object_role) || "").trim().toLowerCase();
+  return _META_DBOBJ_ROLE[r] ? r : "unknown";
+}
+function _metaDbObjIcon(role) { return (_META_DBOBJ_ROLE[role] || {}).icon || "◆"; }
+function _metaDbObjKo(role) { return (_META_DBOBJ_ROLE[role] || {}).ko || "DB 객체"; }
+// kind 필터 키 — 루틴이 function/procedure 두 키를 쓰듯, 역할 객체는 역할 하나가 곧 키다.
+function _metaDbObjKind(n) { return "dbobj:" + _metaDbObjRoleOf(n); }
+// 역할별 속성(서버가 JSON 문자열로 투영) → [[표제, 값], …]. 파싱 실패는 빈 목록(비차단).
+function _metaDbObjAttrs(n) {
+  const raw = (n && n.object_attrs) || "";
+  if (!raw) return [];
+  try {
+    const o = (typeof raw === "string") ? JSON.parse(raw) : raw;
+    if (!o || typeof o !== "object") return [];
+    return Object.keys(o).map((k) => [k, String(o[k])]);
+  } catch (_) { return []; }
+}
 // graph-navfilter(§54⑤): routine params 문자열("IN a int, OUT b varchar" — routines.py 가 ", " join,
 //   piece 는 DATA_TYPE 이라 내부 콤마 없음) → 파라미터 목록. 그래프 수직 배치·상세 패널 공용.
 function _metaRoutineParamList(n) {
@@ -2556,8 +2634,16 @@ function _metaInitGraph() {
     // graph-navfilter(§54②): 노드 종류 표시 필터 토글 — Set 갱신 → 버튼 시각 → 전체 rebuild(제자리).
     //   localStorage 영속(metaGraphHiddenKinds, metaGraphDetailW 관례) — scope-독립 preference.
     const _kindLabelKo = { edges: "관계선", function: "ƒ 함수", procedure: "⚙ 프로시저" };
-    const _kindBtns = ["metaGraphKindEdges", "metaGraphKindFn", "metaGraphKindProc"]
-      .map((bid) => document.getElementById(bid)).filter(Boolean);
+    // feature-0040: 역할 객체 토글 라벨은 `_META_DBOBJ_ROLE`(표시 어휘 SSOT)에서 파생한다 —
+    //   여기에 문자열을 다시 적으면 서버 taxonomy 와 두 벌이 되고, 그중 하나가 반드시 stale 이 된다.
+    Object.keys(_META_DBOBJ_ROLE).forEach((r) => {
+      _kindLabelKo["dbobj:" + r] = _metaDbObjIcon(r) + " " + _metaDbObjKo(r);
+    });
+    // 버튼 수집을 **DOM 질의**로 바꾼다(종전엔 id 3개 하드코딩). 역할이 늘 때마다 id 를 여기에
+    //   추가해야 하는 구조면, 마크업에만 버튼을 넣고 JS 를 빠뜨리는 순간 그 토글이 조용히
+    //   무동작이 된다(클릭해도 아무 일 없음 — 사용자가 원인을 알 수 없는 부류의 결함).
+    const _kindBtns = Array.prototype.slice.call(
+      document.querySelectorAll(".admin-meta-graph-kindctl [data-kind]"));
     try {
       const saved = JSON.parse(localStorage.getItem("metaGraphHiddenKinds") || "[]");
       if (Array.isArray(saved)) saved.forEach((k) => { if (Object.prototype.hasOwnProperty.call(_kindLabelKo, k)) _metaGraph.hiddenKinds.add(k); });
@@ -2712,4 +2798,4 @@ function _metaGraphOnNodeClick(e) {
 }
 
 
-export { _META_GRAPH_COLOR, _META_LABEL_KO, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaRendererKind, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };
+export { _META_GRAPH_COLOR, _META_LABEL_KO, _META_DBOBJ_ROLE, _metaDbObjAttrs, _metaDbObjIcon, _metaDbObjKind, _metaDbObjKo, _metaDbObjRoleOf, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaRendererKind, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList, _metaShowGraph };

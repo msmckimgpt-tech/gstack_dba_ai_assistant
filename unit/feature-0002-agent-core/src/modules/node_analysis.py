@@ -386,7 +386,7 @@ def _relevance(node: dict, meta: dict, anchor: dict) -> float:
     # 4b) 함수·프로시저 사용 관계(ROUTINE_USES, graph-funcproc ADR-016) — 현재 노드의 테이블을
     #     실제로 읽고 쓰는 코드 객체(또는 그 역방향)는 도메인 연관 신호. 깊을수록 임계 상향이
     #     자연 억제하므로 중간 강도(0.35)로 인정.
-    if (meta.get("kind") == "routine_use") and label in ("Routine", "Table"):
+    if (meta.get("kind") == "routine_use") and label in ("Routine", "Table", "DbObject"):
         content += 0.35
 
     if content <= 0.0:
@@ -485,10 +485,13 @@ def _fetch_context(node_key: str, conn):
             # graph-funcproc(ADR-017): 현재 노드가 Column 일 때 그 **소속(부모) 테이블** — 재귀로
             # 참조 컬럼이 분석되면 소속 테이블까지 분석되도록 _score_candidates 가 승격한다.
             _record(src, "parent_table", parent=True)
-        elif et == "ROUTINE_USES":
+        elif et in ("ROUTINE_USES", "OBJECT_USES", "OBJECT_ON"):
             # graph-funcproc(ADR-016): 함수·프로시저 ↔ 테이블 사용 관계 — 도메인 연관 신호로 채점.
+            # feature-0040: 역할 객체의 OBJECT_USES(정의 참조)·OBJECT_ON(트리거·별칭의 대상)도
+            #   동일 신호다 — 트리거가 걸린 테이블은 그 테이블 분석에서 가장 중요한 이웃 중
+            #   하나이며(부작용의 출처), 채점에서 빠지면 재귀 확장이 그쪽으로 가지 않는다.
             _record(tgt if src == node_key else src, "routine_use")
-            # 현재 노드가 이 루틴(src==node_key)이면 target 테이블을 read/write 와 함께 touches 로 수집.
+            # 현재 노드가 그 코드 객체(src==node_key)면 target 테이블을 read/write 와 함께 수집.
             if src == node_key:
                 routine_touches.append({"key": tgt, "access": (e.get("relation_type") or "read")})
         elif et == "REFERENCES":
@@ -515,7 +518,7 @@ def _fetch_context(node_key: str, conn):
             neighbor_meta.setdefault(k, {"kind": "other", "weight": None, "status": None, "child": False})
     # Routine 이면 touches 에 테이블명(그래프 노드에서 해소) + returns(routine_objects) 보강.
     routine_returns = ""
-    if (root or {}).get("label") == "Routine":
+    if (root or {}).get("label") in ("Routine", "DbObject"):
         for t in routine_touches:
             tn = by_key.get(t.get("key")) or {}
             t["table"] = tn.get("name") or (t.get("key") or "").rsplit(".", 1)[-1] or t.get("key")
@@ -842,6 +845,36 @@ def _build_payload(node: dict, ctx: dict) -> dict:
             touches.append({"table": tbl, "access": t.get("access") or "read"})
         if touches:
             payload["touches"] = touches
+    elif (node.get("label") or "") == "DbObject":
+        # feature-0040: 역할 객체의 분석 페이로드. 테이블용 항목(컬럼·행수)은 의미가 없고,
+        # **역할·구체타입·대상·역할별 속성**이 분석의 실질 근거다 — 이것들이 없으면 분석문이
+        # 이름만 보고 추측하게 되고, 루틴 분석이 "참조 테이블 미상" 으로 굶주리던 것과 같은
+        # 실패가 재발한다(node-analysis-routine-touch 의 교훈을 역할 축에 적용).
+        for _k in ("object_role", "object_type", "owner_object"):
+            if node.get(_k):
+                payload[_k] = str(node.get(_k))[:256]
+        _attrs = node.get("object_attrs")
+        if _attrs:
+            # 저장 시 이미 표제가 붙은 JSON 문자열이다(db_objects._attr_dict) — 파싱해 dict 로
+            # 실으면 프롬프트가 `{"시점":"AFTER","이벤트":"INSERT"}` 를 그대로 읽는다.
+            try:
+                _parsed = json.loads(_attrs) if isinstance(_attrs, str) else _attrs
+                if isinstance(_parsed, dict) and _parsed:
+                    payload["object_attributes"] = {
+                        str(k)[:64]: str(v)[:256] for k, v in list(_parsed.items())[:12]}
+            except (TypeError, ValueError):
+                payload["object_attributes_raw"] = str(_attrs)[:500]
+        # OBJECT_USES/OBJECT_ON 이웃(테이블)을 루틴의 touches 와 같은 형식으로 싣는다.
+        touches = []
+        seen_t = set()
+        for t in (ctx.get("routine_touches") or [])[:40]:
+            tbl = (t.get("table") or "").strip()
+            if not tbl or tbl in seen_t:
+                continue
+            seen_t.add(tbl)
+            touches.append({"table": tbl, "access": t.get("access") or "read"})
+        if touches:
+            payload["touches"] = touches
     return payload
 
 
@@ -964,8 +997,16 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
     # HAS_ROUTINE 라벨 부재(0034 미적용)는 [] 저하(테이블-only 로 계속, schema_table_keys 관례).
     routines = _mg.schema_routine_keys(sk, schema_key, limit=5000) or []   # 테이블과 대칭(confirm 과소보고 방지)
     total_routines = len(routines)
+    # feature-0040 db-object-explorer (사용자 결정 2026-08-12 축2 "모든 엔드포인트 분석"):
+    #   역할 기반 DB 객체(뷰·트리거·예약작업·별칭·시퀀스)도 스키마 시드에 포함한다. 열거 실패/
+    #   HAS_OBJECT 라벨 부재(0054 미적용)는 [] 저하 — 테이블·루틴만으로 계속(기존 관례 동형).
+    #   **비용 주의**: 이 편입은 스키마당 분석 대상 수를 늘린다. 상한은 기존 `cap`(schema_cap)이
+    #   그대로 적용되며 순서가 테이블 → 루틴 → 객체라 cap 절단 시 객체가 먼저 탈락한다
+    #   (기존 동작 보존 + 결정적). 사용자가 비용을 수용한 결정이나, 상한 자체는 유지한다.
+    db_objs = _mg.schema_db_object_keys(sk, schema_key, limit=5000) or []
+    total_db_objects = len(db_objs)
     done = set()
-    if only_missing and (tables or routines):
+    if only_missing and (tables or routines or db_objs):
         st = get_scope_analysis_status(sk)
         if st is None:
             # silent 저하 방지(§18.8 MINOR): 집계 실패를 done=∅ 로 계속하면 이미 분석 완료된
@@ -976,11 +1017,14 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
     targets = ([dict(t, label="Table") for t in tables
                 if t.get("key") and (not only_missing or t["key"] not in done)]
                + [dict(r, label="Routine") for r in routines
-                  if r.get("key") and (not only_missing or r["key"] not in done)])
+                  if r.get("key") and (not only_missing or r["key"] not in done)]
+               + [dict(o, label="DbObject") for o in db_objs
+                  if o.get("key") and (not only_missing or o["key"] not in done)])
     missing = len(targets)
     capped = missing > cap
     targets = targets[:cap]
     base = {"total_tables": total, "total_routines": total_routines,
+            "total_db_objects": total_db_objects,
             "missing": missing, "planned": len(targets), "capped": capped}
     lease = max(60, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_LEASE_SEC", 900)))
     c, owned = _rw_conn(conn)
@@ -1285,7 +1329,11 @@ def enqueue_change_analysis(scope_key: str, schema_key: str, node_keys, *,
         for row, label in ([(r, "Table") for r in (_mg.schema_table_keys(sk, schema_key,
                                                                          limit=5000) or [])]
                            + [(r, "Routine") for r in (_mg.schema_routine_keys(sk, schema_key,
-                                                                               limit=5000) or [])]):
+                                                                               limit=5000) or [])]
+                           # feature-0040: 역할 객체도 실재 검증 대상 — 여기서 빠지면 위 시드가
+                           # DbObject 를 넣어도 "그래프 미투영" 으로 전량 탈락한다(축 편입 무효화).
+                           + [(r, "DbObject") for r in (_mg.schema_db_object_keys(
+                               sk, schema_key, limit=5000) or [])]):
             if row.get("key"):
                 meta[row["key"]] = dict(row, label=label)
         present = [k for k in keys if k in meta]
@@ -1356,7 +1404,14 @@ def _insert_seed_jobs(cur, run_id: str, scope_key: str, keys, meta: dict, refine
     added, added_keys = 0, []
     for k in keys:
         info = (meta or {}).get(k) or {}
-        label = info.get("label") or ("Routine" if str(k).endswith("()") else "Table")
+        # key 네임스페이스로 라벨 폴백 — `…()`=Routine · `…[role]`=DbObject(feature-0040) · 그 외 Table.
+        # meta 가 비는 경로(자동 재분석 등)에서 라벨이 Table 로 뭉개지면 분석 프롬프트가 테이블용
+        # 질문(컬럼·행수)을 트리거·뷰에 던진다.
+        _kk = str(k)
+        label = info.get("label") or (
+            "Routine" if _kk.endswith("()")
+            else "DbObject" if (_kk.endswith("]") and "[" in _kk.rsplit(".", 1)[-1])
+            else "Table")
         fqn = info.get("fqn") or (str(k).split(":", 1)[1] if ":" in str(k) else "")
         name = info.get("name") or (fqn.rsplit(".", 1)[-1] if fqn else k)
         try:

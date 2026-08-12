@@ -386,10 +386,15 @@ function newCtx(opts) {
 
   check("⑩ ShowClusterDetailById 가 focusFam 파라미터 보유",
     /async function _metaGraphShowClusterDetailById\(comboId, focusFam\)/.test(src));
-  check("⑩ ShowClusterDetailById → RenderClusterDetail 로 focusFam 전달",
-    /_metaGraphRenderClusterDetail\(schemaName, schemaName, tables, childTables, childCols, null, false, comboId, routines, focusFam\)/.test(src));
-  check("⑩ RenderClusterDetail 이 focusFam 파라미터 보유",
-    /function _metaGraphRenderClusterDetail\(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId, routines, focusFam\)/.test(src));
+  // feature-0040: 인자 목록 **전체**를 pin 하던 두 단언을 "focusFam 이 마지막 인자로 끝까지
+  //   전달된다" 로 좁힌다. 지키려는 불변식은 *focusFam 이 호출자→렌더러로 관통한다* 이지
+  //   *중간 인자가 영원히 그대로다* 가 아니었는데, 전체 pin 이라 무관한 인자 1개만 늘어도
+  //   (여기선 `dbObjects`) 실패했다 — 실패가 신호가 아니라 유지보수 비용이 되는 부류의 단언.
+  //   `focusFam` 을 빼거나 순서를 뒤바꾸면 여전히 FAIL 한다(보호 강도 유지).
+  check("⑩ ShowClusterDetailById → RenderClusterDetail 로 focusFam 전달(마지막 인자)",
+    /_metaGraphRenderClusterDetail\(schemaName, schemaName, tables, childTables, childCols, null, false, comboId,[^)]*,\s*focusFam\)/.test(src));
+  check("⑩ RenderClusterDetail 이 focusFam 파라미터 보유(마지막 파라미터)",
+    /function _metaGraphRenderClusterDetail\(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId,[^)]*,\s*focusFam\)/.test(src));
   check("⑩ RenderClusterDetail 이 FocusPanelGroup 결과를 반환(상태줄 보강 소스)",
     /return _metaGraphFocusPanelGroup\(focusFam\);/.test(src));
 

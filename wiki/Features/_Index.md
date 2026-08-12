@@ -115,3 +115,4 @@ sources:
 ## 분류
 
 `#wiki/index` · `#confidence/high` · `#maturity/substantial`
+| [[feature-0040-db-object-explorer]] | 역할 기반 DB 객체(트리거·이벤트·작업·뷰·별칭·시퀀스) 탐색 + 그래프 편입 | review |

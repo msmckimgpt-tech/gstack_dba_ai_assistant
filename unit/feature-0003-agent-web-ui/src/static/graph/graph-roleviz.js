@@ -294,6 +294,26 @@ function _metaRoutineStyle(x, y, rel) {
     labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700,
     labelMaxWidth: w - 10, cursor: "pointer" };
 }
+// feature-0040: 역할 객체 칩 — 루틴 칩과 **같은 기하**(폭 산식·radius·라벨 예산)를 쓰고 색만 다르다.
+//   기하를 복제하지 않고 같은 식을 쓰는 이유: band-visual-fit(2026-07-31) 이 잡은 결함이 정확히
+//   "테이블만 고치고 루틴 칩을 빠뜨려 라벨이 알약 밖으로 밀린" 것이었다. 세 번째 칩 종류가
+//   또 다른 하드코딩을 들이면 같은 결함이 재생산된다 — labelMaxWidth 는 반드시 폭 파생값이다.
+function _metaDbObjStyle(x, y, rel) {
+  const w = Math.min(190, _METLAY.TW + (typeof rel === "number" ? Math.round(rel * 40) : 0));
+  return { x, y, size: [w, 24], radius: 12, fill: _META_GRAPH_COLOR.DbObject, stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.NODE,
+    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700,
+    labelMaxWidth: w - 10, cursor: "pointer" };
+}
+// feature-0040: OBJECT_USES(정의 참조) · OBJECT_ON(트리거·별칭이 걸린 대상) 엣지 스타일.
+//   OBJECT_ON 은 **소유** 관계라 실선 대신 짧은 파선으로 구분한다 — 같은 색·같은 굵기로 두면
+//   "이 테이블을 읽는다" 와 "이 테이블에 걸려 있다" 가 화면에서 구별되지 않는다(분리 투영의 목적 상실).
+function _metaDbObjEdgeStyle(edgeType, crossDs, count) {
+  const own = edgeType === "OBJECT_ON";
+  const s = { stroke: crossDs ? "#a855c7" : _META_GRAPH_COLOR.DbObject,
+    lineWidth: _metaEdgeWidthFor(count), zIndex: _METZ.EDGE, endArrow: true };
+  if (own) { s.lineDash = [4, 3]; s.endArrow = false; s.startArrow = false; }
+  return s;
+}
 function _metaCtlStyle(x, y) {
   return { x, y, size: [18, 18], radius: 4, fill: "#ffffff", stroke: "#0a5b66", lineWidth: 1.5, zIndex: _METZ.CTL,
     labelText: "−", labelPlacement: "center", labelFill: "#0a5b66", labelFontSize: 15, labelFontWeight: 700, cursor: "pointer" };
@@ -492,4 +512,4 @@ function _metaFocusAdjacency(selKey) {
 }
 
 
-export { _META_ROLE, _metaColStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaNodeStates, _metaRoleChipHTML, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle };
+export { _META_ROLE, _metaColStyle, _metaDbObjEdgeStyle, _metaDbObjStyle, _metaComboEdgesRestore, _metaComboMemberIds, _metaComboStyleFor, _metaCtlStyle, _metaDragZBoost, _metaDragZRestore, _metaEdgeFlow, _metaEdgeWidthFor, _metaEdgeStyleFor, _metaFocusAdjacency, _metaFocusKeyFor, _metaGraphBindLegendTabs, _metaGraphZAssert, _metaNodeStates, _metaRoleChipHTML, _metaRoleLegendTips, _metaRoleOf, _metaRoutineEdgeStyle, _metaRoutineStyle, _metaSchemaCardStyle, _metaSchemaCtlStyle, _metaSchemaRefEdgeStyle, _metaTableStyle, _metaTermStyle };

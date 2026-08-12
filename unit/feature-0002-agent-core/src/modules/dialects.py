@@ -245,6 +245,54 @@ def _limit_scan_cap(sql: str, facts: dict) -> int | None:
     return 0 if n == 0 else n + off
 
 
+# ── 역할 기반 DB 객체 조회 공통 상수·헬퍼 (feature-0040 db-object-explorer) ──────
+# 열거 상한은 `search_routines` 의 51(=50+1 초과 감지) 과 같은 계열이다. **상한 도달 자체를
+# 도구가 감지해 "더 있음" 을 고지**해야 하므로 표시 상한보다 1 크게 뽑는다 — 조용한 절단은
+# 곧 허위 부재다(AGENTS.md §16.7 G9-b 무음 절단 금지).
+_OBJ_ROWS_LIMIT = 201
+# 표시 상한(도구가 잘라 보여주는 수). _OBJ_ROWS_LIMIT 보다 작아야 초과 감지가 성립한다.
+OBJECT_ROWS_SHOWN = 200
+
+
+def _mysql_snippet(col: str, keyword: str) -> str:
+    """본문 매칭 지점의 앞뒤 문맥 조각 (MySQL) — `search_routines` 의 MATCH_SNIPPET 과 동형.
+
+    keyword 가 비면(전체 열거) `LOCATE('', x)` 가 1 을 돌려 무의미한 머리말이 붙으므로 상수 ''.
+    """
+    if not keyword:
+        return "'' AS MATCH_SNIPPET"
+    return (
+        f"CASE WHEN LOCATE('{keyword}', COALESCE({col}, '')) > 0\n"
+        f"                 THEN SUBSTRING({col}, GREATEST(LOCATE('{keyword}', {col}) - 40, 1), 140)\n"
+        f"                 ELSE '' END AS MATCH_SNIPPET"
+    )
+
+
+def _mssql_snippet(col: str, keyword: str) -> str:
+    """본문 매칭 지점의 앞뒤 문맥 조각 (T-SQL). CHARINDEX 는 미발견 시 0 → CASE 로 가드."""
+    if not keyword:
+        return "CAST('' AS NVARCHAR(200)) AS MATCH_SNIPPET"
+    return (
+        f"CASE WHEN CHARINDEX('{keyword}', ISNULL({col}, '')) > 0\n"
+        f"                 THEN CAST(SUBSTRING({col},\n"
+        f"                      CASE WHEN CHARINDEX('{keyword}', {col}) - 40 < 1 THEN 1\n"
+        f"                           ELSE CHARINDEX('{keyword}', {col}) - 40 END, 140) AS NVARCHAR(200))\n"
+        f"                 ELSE CAST('' AS NVARCHAR(200)) END AS MATCH_SNIPPET"
+    )
+
+
+def _sql_str_list(values) -> str:
+    """`'a','b'` 형태의 SQL 문자열 리터럴 목록. 빈 입력이면 매칭 불가 리터럴을 돌려준다.
+
+    **fail-closed**: 허용 DB 목록이 비었는데 빈 `IN ()` 을 만들면 구문 오류이거나(엔진에 따라)
+    필터가 사라져 전 서버 범위가 열린다. 빈 목록은 `IN ('')` 로 남겨 **아무것도 매칭되지 않게**
+    한다 — 경계가 불명확할 때 넓게 여는 대신 닫는다.
+    caller 가 `_safe_ident` 로 정제한 값만 넘긴다(SQLi 경계). 방어적으로 작은따옴표를 이중화한다.
+    """
+    out = [str(v).replace("'", "''") for v in (values or ()) if str(v or "").strip()]
+    return ", ".join(f"'{v}'" for v in out) if out else "''"
+
+
 class Dialect:
     name = "mysql"
     sqlglot = "mysql"
@@ -402,6 +450,90 @@ class Dialect:
         컬럼 계약: ORDINAL_POSITION, PARAMETER_NAME, PARAMETER_MODE, DATA_TYPE. (position 0 = 함수 반환)
         """
         raise NotImplementedError
+
+    # ══════════════════════════════════════════════════════════════════
+    #  역할 기반 DB 객체 (feature-0040 db-object-explorer)
+    # ══════════════════════════════════════════════════════════════════
+    # `modules/db_object_roles.py` 의 역할 taxonomy(view/trigger/schedule/alias/generator)를
+    # 각 엔진의 구체 객체로 매핑하는 계층. **신규 DBMS 를 붙일 때 손대는 유일한 곳**이며,
+    # 역할 축 자체는 DBMS 수와 무관하게 고정된다.
+    #
+    # 컬럼 계약(엔진 무관, 위치 파싱 — 기존 도구들과 동일 관례):
+    #   list_objects      → SCHEMA_NAME, OBJECT_NAME, OBJECT_TYPE, OWNER_OBJECT,
+    #                       ATTR_A, ATTR_B, ATTR_C, MATCH_SNIPPET
+    #   object_definition → OBJECT_NAME, OBJECT_TYPE, OWNER_OBJECT,
+    #                       ATTR_A, ATTR_B, ATTR_C, PART_LABEL, DEFINITION
+    # ATTR_A/B/C 의 **의미는 역할마다 다르며** `object_attr_labels(role)` 이 표제를 준다
+    # (예: trigger → 시점 / 이벤트 / 활성). 위치 계약을 고정하고 표제만 역할별로 두면,
+    # 도구·수집기·그래프가 역할이 늘어도 파싱 코드를 고치지 않는다.
+    #
+    # PART_LABEL 은 **한 객체가 여러 본문 조각으로 구성되는 역할**을 위한 것이다
+    # (SQL Server Agent 작업 = 단계 N개). 조각이 없으면 ''.
+
+    def object_support(self, role: str) -> str:
+        """이 엔진에서 `role` 의 지원 상태 — SUPPORTED | UNSUPPORTED | PRIVILEGED | DELEGATED.
+
+        **UNSUPPORTED 를 0행으로 뭉개지 않는 것이 본 API 의 존재 이유다.** MySQL 에 별칭을
+        물으면 0행이 나오지만 그것은 "없다" 가 아니라 "MySQL 에 시노님 개념이 없다" 이며,
+        둘을 구분하지 않으면 모델이 허위 부재를 서술한다
+        (`db_object_roles` 모듈 docstring · FR-false-absence-zero-row-catalog-scope).
+
+        `OWNED_ELSEWHERE`(현재 `routine`) 는 **여기서 일괄 DELEGATED 로 확정**한다 — 엔진별
+        하위클래스에 맡기면 하나가 표에서 빠지는 순간 "이 DBMS 는 프로시저를 지원하지 않는다"
+        는 거짓이 나온다. 실제로 초판이 그렇게 동작했다(하위클래스 dict 에 routine 부재 →
+        기본값 UNSUPPORTED 로 낙하). 엔진이 재정의할 수 없는 자리에 두어 구조적으로 막는다.
+        """
+        from . import db_object_roles as _r
+        r = _r.normalize_role(role)
+        if r in _r.OWNED_ELSEWHERE:
+            return _r.DELEGATED
+        return self._object_support(r)
+
+    def _object_support(self, role: str) -> str:
+        """엔진별 지원 상태 — 하위클래스가 재정의한다(`OWNED_ELSEWHERE` 는 위에서 이미 처리)."""
+        from . import db_object_roles as _r
+        return _r.UNSUPPORTED
+
+    def object_privilege_note(self, role: str) -> str:
+        """PRIVILEGED 역할에 덧붙일 엔진별 구체 사유(어느 권한이 있어야 보이는가). 없으면 ''."""
+        return ""
+
+    def object_attr_labels(self, role: str) -> tuple:
+        """역할별 ATTR_A/B/C 표제 3-tuple. 미사용 슬롯은 ''.
+
+        기본값은 역할 축 공통이며, 엔진이 다른 표제를 쓰면 오버라이드한다.
+        """
+        from . import db_object_roles as _r
+        return {
+            _r.ROLE_VIEW: ("갱신가능", "CHECK 옵션", "컬럼 수"),
+            _r.ROLE_TRIGGER: ("시점", "이벤트", "활성"),
+            _r.ROLE_SCHEDULE: ("상태", "주기", "최근 실행"),
+            _r.ROLE_ALIAS: ("대상 객체", "대상 위치", ""),
+            _r.ROLE_GENERATOR: ("시작값", "증가값", "현재값"),
+        }.get(_r.normalize_role(role), ("", "", ""))
+
+    def list_objects(self, role: str, keyword: str = "", schema: str = "",
+                     db: str = "", allow_dbs: "tuple|list" = (),
+                     sys_exclude_schemas: "frozenset|set|tuple" = ()) -> "str|None":
+        """역할별 객체 **열거·검색** SQL. 지원하지 않으면 None.
+
+        `keyword` 는 빈 문자열이면 필터 없이 전량 열거한다(`search_routines` 와 동일 규약 —
+        원 마찰의 질문이 "몇 개나 있나" 라는 열거였고, 필수로 두면 모델이 와일드카드로 우회한다).
+        `allow_dbs` 는 **서버 스코프 객체**(SQL Server Agent 작업)의 제품 경계 필터용 —
+        caller 가 `_safe_ident` + allowlist 검증을 마친 값만 넘긴다(SQLi/무단 catalog 차단).
+        `sys_exclude_schemas` 는 **schema 미지정 전량 열거**의 시스템·내부 스키마 차단용이며
+        `search_routines` 와 동일하게 **필수**다 — 누락하면 allowlist 무관 영구차단 대상인
+        `agent_memory` 의 뷰·트리거까지 열거된다(search_routines 의 §18.8 BLOCKER 와 동형).
+        """
+        return None
+
+    def object_definition(self, role: str, name: str, schema: str = "",
+                          db: str = "", allow_dbs: "tuple|list" = ()) -> "str|None":
+        """역할별 객체 **정의 본문·속성** 조회 SQL. 지원하지 않으면 None.
+
+        한 객체가 여러 행으로 나올 수 있다(Agent 작업의 단계). 그 경우 PART_LABEL 로 구분한다.
+        """
+        return None
 
 
 class MySQLDialect(Dialect):
@@ -627,6 +759,164 @@ class MySQLDialect(Dialect):
         WHERE SPECIFIC_SCHEMA = '{schema}' AND SPECIFIC_NAME = '{name}'
         ORDER BY ROUTINE_TYPE, ORDINAL_POSITION
     """
+
+    # ── 역할 기반 DB 객체 (feature-0040) ────────────────────────────────────
+    # MySQL 매핑:  view→VIEW · trigger→TRIGGER · schedule→EVENT · alias/generator→없음
+    #
+    # **PRIVILEGED 판정 근거 (MySQL 매뉴얼)**: `information_schema.TRIGGERS` 는 그 트리거가 붙은
+    # 테이블에 대한 TRIGGER 권한이, `information_schema.EVENTS` 는 그 스키마에 대한 EVENT 권한이
+    # 있어야 행이 보인다. 최소권한 RO 계정(SELECT-only)에는 **오류 없이 빈 목록**이 돌아오므로,
+    # 결과만으로는 "없음" 과 "안 보임" 이 구분되지 않는다 → 반드시 모호성을 고지한다(§16.7 G7-c).
+    # `information_schema.VIEWS` 는 행 자체는 SELECT 권한으로 보이고 **VIEW_DEFINITION 만**
+    # SHOW VIEW 권한을 요구하므로, 열거는 SUPPORTED 이고 본문 부재는 도구가 graceful 안내한다.
+    def _object_support(self, role: str) -> str:
+        from . import db_object_roles as _r
+        return {
+            _r.ROLE_VIEW: _r.SUPPORTED,
+            _r.ROLE_TRIGGER: _r.PRIVILEGED,
+            _r.ROLE_SCHEDULE: _r.PRIVILEGED,
+            _r.ROLE_ALIAS: _r.UNSUPPORTED,       # MySQL 에 SYNONYM 없음
+            _r.ROLE_GENERATOR: _r.UNSUPPORTED,   # AUTO_INCREMENT 는 컬럼 속성이지 독립 객체가 아님
+        }.get(_r.normalize_role(role), _r.UNSUPPORTED)
+
+    def object_privilege_note(self, role: str) -> str:
+        from . import db_object_roles as _r
+        r = _r.normalize_role(role)
+        if r == _r.ROLE_TRIGGER:
+            return "MySQL 은 대상 테이블의 TRIGGER 권한이 있어야 트리거가 카탈로그에 보입니다."
+        if r == _r.ROLE_SCHEDULE:
+            return "MySQL 은 해당 스키마의 EVENT 권한이 있어야 이벤트가 카탈로그에 보입니다."
+        return ""
+
+    def list_objects(self, role: str, keyword: str = "", schema: str = "",
+                     db: str = "", allow_dbs=(), sys_exclude_schemas=()) -> "str|None":
+        from . import db_object_roles as _r
+        r = _r.normalize_role(role)
+        # MySQL 의 information_schema 는 **인스턴스 전역**이라 catalog 접두가 불필요(db 인자 무시).
+        # 스키마 절은 컬럼명이 카탈로그 뷰마다 다르므로 역할별로 조립한다. `str.format` 을 쓰지 않는
+        # 이유: `_safe_ident` 는 중괄호를 제거하지 않아, 스키마명에 `{`/`}` 가 섞이면 format 이
+        # KeyError/IndexError 로 죽거나 엉뚱한 치환을 한다(구조화 도구는 예외로 죽으면 안 된다).
+        def sch(col: str) -> str:
+            if schema:
+                return f"\n            AND {col} = '{schema}'"
+            # schema 미지정 = 인스턴스 전량 열거 → 시스템·내부 스키마를 **여기서** 잘라낸다.
+            out = ""
+            for x in sorted(sys_exclude_schemas or ()):
+                out += f"\n            AND {col} != '{str(x).replace(chr(39), chr(39) * 2)}'"
+            return out
+
+        if r == _r.ROLE_VIEW:
+            where = sch("TABLE_SCHEMA")
+            if keyword:
+                where += (f"\n            AND (TABLE_NAME LIKE '%{keyword}%'"
+                          f" OR COALESCE(VIEW_DEFINITION, '') LIKE '%{keyword}%')")
+            snip = _mysql_snippet("VIEW_DEFINITION", keyword)
+            return f"""
+        SELECT
+            TABLE_SCHEMA, TABLE_NAME, 'VIEW' AS OBJECT_TYPE, '' AS OWNER_OBJECT,
+            COALESCE(IS_UPDATABLE, '') AS ATTR_A,
+            COALESCE(CHECK_OPTION, '') AS ATTR_B,
+            '' AS ATTR_C,
+            {snip}
+        FROM information_schema.VIEWS
+        WHERE 1=1{where}
+        ORDER BY TABLE_SCHEMA, TABLE_NAME
+        LIMIT {_OBJ_ROWS_LIMIT}
+    """
+        if r == _r.ROLE_TRIGGER:
+            where = sch("TRIGGER_SCHEMA")
+            if keyword:
+                where += (f"\n            AND (TRIGGER_NAME LIKE '%{keyword}%'"
+                          f" OR EVENT_OBJECT_TABLE LIKE '%{keyword}%'"
+                          f" OR COALESCE(ACTION_STATEMENT, '') LIKE '%{keyword}%')")
+            snip = _mysql_snippet("ACTION_STATEMENT", keyword)
+            # MySQL 트리거는 항상 활성(DISABLE 구문이 없다) → ATTR_C 는 상수 '활성'.
+            return f"""
+        SELECT
+            TRIGGER_SCHEMA, TRIGGER_NAME, 'TRIGGER' AS OBJECT_TYPE,
+            EVENT_OBJECT_TABLE AS OWNER_OBJECT,
+            ACTION_TIMING AS ATTR_A,
+            EVENT_MANIPULATION AS ATTR_B,
+            '활성' AS ATTR_C,
+            {snip}
+        FROM information_schema.TRIGGERS
+        WHERE 1=1{where}
+        ORDER BY TRIGGER_SCHEMA, EVENT_OBJECT_TABLE, TRIGGER_NAME
+        LIMIT {_OBJ_ROWS_LIMIT}
+    """
+        if r == _r.ROLE_SCHEDULE:
+            where = sch("EVENT_SCHEMA")
+            if keyword:
+                where += (f"\n            AND (EVENT_NAME LIKE '%{keyword}%'"
+                          f" OR COALESCE(EVENT_DEFINITION, '') LIKE '%{keyword}%')")
+            snip = _mysql_snippet("EVENT_DEFINITION", keyword)
+            # 주기(ATTR_B): RECURRING 은 `EVERY <n> <unit>`, ONE TIME 은 실행 시각.
+            return f"""
+        SELECT
+            EVENT_SCHEMA, EVENT_NAME, 'EVENT' AS OBJECT_TYPE, '' AS OWNER_OBJECT,
+            COALESCE(STATUS, '') AS ATTR_A,
+            CASE WHEN EVENT_TYPE = 'RECURRING'
+                 THEN CONCAT('EVERY ', COALESCE(INTERVAL_VALUE, '?'), ' ',
+                             COALESCE(INTERVAL_FIELD, ''))
+                 ELSE CONCAT('ONE TIME @ ', COALESCE(CAST(EXECUTE_AT AS CHAR), '?')) END AS ATTR_B,
+            COALESCE(CAST(LAST_EXECUTED AS CHAR), '') AS ATTR_C,
+            {snip}
+        FROM information_schema.EVENTS
+        WHERE 1=1{where}
+        ORDER BY EVENT_SCHEMA, EVENT_NAME
+        LIMIT {_OBJ_ROWS_LIMIT}
+    """
+        return None
+
+    def object_definition(self, role: str, name: str, schema: str = "",
+                          db: str = "", allow_dbs=()) -> "str|None":
+        from . import db_object_roles as _r
+        r = _r.normalize_role(role)
+        # `str.format` 미사용 사유는 list_objects 의 sch() 주석 참조(중괄호 포함 스키마명 방어).
+        def sch(col: str) -> str:
+            return f" AND {col} = '{schema}'" if schema else ""
+
+        if r == _r.ROLE_VIEW:
+            return f"""
+        SELECT
+            TABLE_NAME, 'VIEW' AS OBJECT_TYPE, '' AS OWNER_OBJECT,
+            COALESCE(IS_UPDATABLE, '') AS ATTR_A,
+            COALESCE(CHECK_OPTION, '') AS ATTR_B,
+            '' AS ATTR_C,
+            '' AS PART_LABEL,
+            COALESCE(VIEW_DEFINITION, '') AS DEFINITION
+        FROM information_schema.VIEWS
+        WHERE TABLE_NAME = '{name}'{sch('TABLE_SCHEMA')}
+        ORDER BY TABLE_SCHEMA
+    """
+        if r == _r.ROLE_TRIGGER:
+            return f"""
+        SELECT
+            TRIGGER_NAME, 'TRIGGER' AS OBJECT_TYPE, EVENT_OBJECT_TABLE AS OWNER_OBJECT,
+            ACTION_TIMING AS ATTR_A, EVENT_MANIPULATION AS ATTR_B, '활성' AS ATTR_C,
+            '' AS PART_LABEL,
+            COALESCE(ACTION_STATEMENT, '') AS DEFINITION
+        FROM information_schema.TRIGGERS
+        WHERE TRIGGER_NAME = '{name}'{sch('TRIGGER_SCHEMA')}
+        ORDER BY TRIGGER_SCHEMA
+    """
+        if r == _r.ROLE_SCHEDULE:
+            return f"""
+        SELECT
+            EVENT_NAME, 'EVENT' AS OBJECT_TYPE, '' AS OWNER_OBJECT,
+            COALESCE(STATUS, '') AS ATTR_A,
+            CASE WHEN EVENT_TYPE = 'RECURRING'
+                 THEN CONCAT('EVERY ', COALESCE(INTERVAL_VALUE, '?'), ' ',
+                             COALESCE(INTERVAL_FIELD, ''))
+                 ELSE CONCAT('ONE TIME @ ', COALESCE(CAST(EXECUTE_AT AS CHAR), '?')) END AS ATTR_B,
+            COALESCE(CAST(LAST_EXECUTED AS CHAR), '') AS ATTR_C,
+            '' AS PART_LABEL,
+            COALESCE(EVENT_DEFINITION, '') AS DEFINITION
+        FROM information_schema.EVENTS
+        WHERE EVENT_NAME = '{name}'{sch('EVENT_SCHEMA')}
+        ORDER BY EVENT_SCHEMA
+    """
+        return None
 
     def probe_relationship_overlap(self, src_schema, src_table, src_col,
                                    tgt_schema, tgt_table, tgt_col, sample, timeout_ms=0):
@@ -1080,6 +1370,337 @@ class MSSQLDialect(Dialect):
         FROM {c}INFORMATION_SCHEMA.PARAMETERS
         WHERE {_schema_clause}SPECIFIC_NAME = '{name}'
         ORDER BY ORDINAL_POSITION
+    """
+
+    # ── 역할 기반 DB 객체 (feature-0040) ────────────────────────────────────
+    # SQL Server 매핑:
+    #   view→VIEW · trigger→DML/DDL TRIGGER · schedule→**SQL Server Agent 작업**
+    #   alias→SYNONYM · generator→SEQUENCE
+    #
+    # **schedule(Agent 작업)의 두 가지 비대칭** — 다른 역할과 달리 특별 취급이 필요하다:
+    #  (1) **저장 위치가 DB 밖**: 작업은 `msdb` 에 있고 서버 스코프다. 그런데 `msdb` 는
+    #      `system_databases()` 소속이라 freeform 에서 하드 차단된 DB 다. 본 경로는 **코드가
+    #      고정한 컬럼 투영 + 허용 DB 필터**로만 msdb 를 읽는다(구조화 도구 전용 — freeform 의
+    #      msdb 차단은 그대로다). 임의 msdb 조회로 확장될 여지를 남기지 않기 위해, 여기서
+    #      생성되는 SQL 은 `sysjobs`/`sysjobsteps`/`sysjobschedules`/`sysschedules` 4개 뷰의
+    #      **고정 조인**이며 사용자 입력은 `name`/`keyword`/`allow_dbs` 뿐이다(전부 caller 가
+    #      `_safe_ident` 정제).
+    #  (2) **제품 경계 귀속**: 작업 자체엔 소속 DB 가 없고 **단계(step)의 `database_name`** 이
+    #      대상 DB 다. 따라서 허용 DB 를 대상으로 하는 단계가 하나라도 있는 작업만 노출하고,
+    #      SCHEMA_NAME 슬롯에 그 DB 명을 넣는다(MSSQL store-slot=DB명 규약 ADR-007 과 정합).
+    #      `database_name` 이 빈 단계(CmdExec/PowerShell 등 OS 레벨)는 어느 허용 DB 와도
+    #      매칭되지 않아 **자동 제외**된다 — fail-closed 이며, 그 사실을 도구가 caveat 으로 고지한다.
+    #
+    # **PRIVILEGED 판정 근거**: `msdb.dbo.sysjobs` 는 sysadmin 이 아니면 **자기가 소유한 작업만**
+    # 반환한다(SQLAgentUserRole). RO 계정의 빈 결과는 "작업 없음" 을 뜻하지 않는다 → 모호성 고지.
+    def _object_support(self, role: str) -> str:
+        from . import db_object_roles as _r
+        return {
+            _r.ROLE_VIEW: _r.SUPPORTED,
+            _r.ROLE_TRIGGER: _r.SUPPORTED,
+            _r.ROLE_SCHEDULE: _r.PRIVILEGED,
+            _r.ROLE_ALIAS: _r.SUPPORTED,
+            _r.ROLE_GENERATOR: _r.SUPPORTED,
+        }.get(_r.normalize_role(role), _r.UNSUPPORTED)
+
+    def object_privilege_note(self, role: str) -> str:
+        from . import db_object_roles as _r
+        if _r.normalize_role(role) == _r.ROLE_SCHEDULE:
+            return ("SQL Server Agent 작업은 sysadmin 이 아니면 **자기가 소유한 작업만** 보입니다"
+                    "(SQLAgentUserRole). 또한 대상 DB 가 지정되지 않은 단계(CmdExec/PowerShell 등 "
+                    "OS 레벨 작업)는 제품 경계 밖이라 목록에서 제외됩니다.")
+        return ""
+
+    def object_attr_labels(self, role: str) -> tuple:
+        from . import db_object_roles as _r
+        if _r.normalize_role(role) == _r.ROLE_GENERATOR:
+            # MSSQL SEQUENCE 는 현재값 대신 last_used_value(아직 미사용이면 NULL)를 제공한다 —
+            # '현재값' 이라 부르면 NULL 을 0 으로 오독하므로 표제를 정확히 둔다(§16.7 G7).
+            return ("시작값", "증가값", "마지막 사용값")
+        return super().object_attr_labels(role)
+
+    def list_objects(self, role: str, keyword: str = "", schema: str = "",
+                     db: str = "", allow_dbs=(), sys_exclude_schemas=()) -> "str|None":
+        from . import db_object_roles as _r
+        r = _r.normalize_role(role)
+        c = self._cat(db)
+        sch = f"\n            AND s.name = '{schema}'" if schema else ""
+        if r == _r.ROLE_VIEW:
+            kw = ""
+            if keyword:
+                kw = (f"\n            AND (v.name LIKE '%{keyword}%'"
+                      f" OR ISNULL(m.definition, '') LIKE '%{keyword}%')")
+            snip = _mssql_snippet("m.definition", keyword)
+            return f"""
+        SELECT TOP {_OBJ_ROWS_LIMIT}
+            s.name AS SCHEMA_NAME, v.name AS OBJECT_NAME,
+            CAST('VIEW' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST('' AS NVARCHAR(256)) AS OWNER_OBJECT,
+            CAST(CASE WHEN v.is_date_correlation_view = 1 THEN 'NO' ELSE 'YES' END AS NVARCHAR(8)) AS ATTR_A,
+            CAST(CASE WHEN v.with_check_option = 1 THEN 'CHECK' ELSE '' END AS NVARCHAR(16)) AS ATTR_B,
+            CAST((SELECT COUNT(*) FROM {c}sys.columns cc WHERE cc.object_id = v.object_id) AS NVARCHAR(16)) AS ATTR_C,
+            {snip}
+        FROM {c}sys.views v
+        JOIN {c}sys.schemas s ON s.schema_id = v.schema_id
+        LEFT JOIN {c}sys.sql_modules m ON m.object_id = v.object_id
+        WHERE v.is_ms_shipped = 0{sch}{kw}
+        ORDER BY s.name, v.name
+    """
+        if r == _r.ROLE_TRIGGER:
+            kw = ""
+            if keyword:
+                kw = (f"\n            AND (tr.name LIKE '%{keyword}%'"
+                      f" OR ISNULL(OBJECT_NAME(tr.parent_id), '') LIKE '%{keyword}%'"
+                      f" OR ISNULL(m.definition, '') LIKE '%{keyword}%')")
+            snip = _mssql_snippet("m.definition", keyword)
+            # DML 트리거만(parent_class=1). DDL/LOGON 트리거는 DB·서버 스코프라 소유 테이블이 없어
+            # 별도 행으로 뽑는다(아래 UNION) — 그래프에서 테이블에 붙일 수 없으므로 OWNER_OBJECT=''.
+            return f"""
+        SELECT TOP {_OBJ_ROWS_LIMIT} * FROM (
+        SELECT
+            s.name AS SCHEMA_NAME, tr.name AS OBJECT_NAME,
+            CAST('DML_TRIGGER' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST(OBJECT_NAME(tr.parent_id) AS NVARCHAR(256)) AS OWNER_OBJECT,
+            CAST(CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END AS NVARCHAR(16)) AS ATTR_A,
+            CAST(STUFF(
+                CASE WHEN EXISTS (SELECT 1 FROM {c}sys.trigger_events te
+                     WHERE te.object_id = tr.object_id AND te.type_desc = 'INSERT') THEN ',INSERT' ELSE '' END +
+                CASE WHEN EXISTS (SELECT 1 FROM {c}sys.trigger_events te
+                     WHERE te.object_id = tr.object_id AND te.type_desc = 'UPDATE') THEN ',UPDATE' ELSE '' END +
+                CASE WHEN EXISTS (SELECT 1 FROM {c}sys.trigger_events te
+                     WHERE te.object_id = tr.object_id AND te.type_desc = 'DELETE') THEN ',DELETE' ELSE '' END,
+                1, 1, '') AS NVARCHAR(64)) AS ATTR_B,
+            CAST(CASE WHEN tr.is_disabled = 1 THEN '비활성' ELSE '활성' END AS NVARCHAR(16)) AS ATTR_C,
+            {snip}
+        FROM {c}sys.triggers tr
+        JOIN {c}sys.objects po ON po.object_id = tr.parent_id
+        JOIN {c}sys.schemas s ON s.schema_id = po.schema_id
+        LEFT JOIN {c}sys.sql_modules m ON m.object_id = tr.object_id
+        WHERE tr.is_ms_shipped = 0 AND tr.parent_class = 1{sch}{kw}
+        UNION ALL
+        SELECT
+            CAST('' AS NVARCHAR(128)) AS SCHEMA_NAME, tr.name AS OBJECT_NAME,
+            CAST('DDL_TRIGGER' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST('' AS NVARCHAR(256)) AS OWNER_OBJECT,
+            CAST('DDL' AS NVARCHAR(16)) AS ATTR_A,
+            CAST(ISNULL((SELECT TOP 1 te.type_desc FROM {c}sys.trigger_events te
+                         WHERE te.object_id = tr.object_id), '') AS NVARCHAR(64)) AS ATTR_B,
+            CAST(CASE WHEN tr.is_disabled = 1 THEN '비활성' ELSE '활성' END AS NVARCHAR(16)) AS ATTR_C,
+            {snip}
+        FROM {c}sys.triggers tr
+        LEFT JOIN {c}sys.sql_modules m ON m.object_id = tr.object_id
+        WHERE tr.is_ms_shipped = 0 AND tr.parent_class = 0{kw}
+        ) q
+        ORDER BY q.SCHEMA_NAME, q.OWNER_OBJECT, q.OBJECT_NAME
+    """
+        if r == _r.ROLE_ALIAS:
+            kw = f"\n            AND sy.name LIKE '%{keyword}%'" if keyword else ""
+            # base_object_name 은 `[db].[schema].[object]` 또는 linked-server 4-part 를 그대로 담는다.
+            # 그 값이 **허용 DB 밖**을 가리키면 이름을 노출하지 않는다 — 시노님이 freeform
+            # `_SAFE_SYS_VIEWS` 에서 의도적으로 제외됐던 바로 그 사유(allowlist 밖 DB·linked server
+            # 명 노출)를 구조화 경로에서도 지킨다. 존재는 알리되 대상 이름은 가린다.
+            allow = _sql_str_list(allow_dbs)
+            _base_db = ("PARSENAME(sy.base_object_name, 3)")
+            return f"""
+        SELECT TOP {_OBJ_ROWS_LIMIT}
+            s.name AS SCHEMA_NAME, sy.name AS OBJECT_NAME,
+            CAST('SYNONYM' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST(CASE WHEN PARSENAME(sy.base_object_name, 4) IS NOT NULL THEN ''
+                      WHEN {_base_db} IS NULL OR LOWER({_base_db}) IN ({allow})
+                      THEN ISNULL(sy.base_object_name, '') ELSE '' END AS NVARCHAR(512)) AS OWNER_OBJECT,
+            CAST(CASE WHEN PARSENAME(sy.base_object_name, 4) IS NOT NULL THEN ''
+                      WHEN {_base_db} IS NULL OR LOWER({_base_db}) IN ({allow})
+                      THEN ISNULL(sy.base_object_name, '') ELSE '' END AS NVARCHAR(512)) AS ATTR_A,
+            CAST(CASE WHEN PARSENAME(sy.base_object_name, 4) IS NOT NULL THEN '(원격 서버 — 범위 밖)'
+                      WHEN {_base_db} IS NULL THEN '(현재 DB)'
+                      WHEN LOWER({_base_db}) IN ({allow}) THEN {_base_db}
+                      ELSE '(허용 범위 밖 DB)' END AS NVARCHAR(128)) AS ATTR_B,
+            CAST('' AS NVARCHAR(16)) AS ATTR_C,
+            CAST('' AS NVARCHAR(200)) AS MATCH_SNIPPET
+        FROM {c}sys.synonyms sy
+        JOIN {c}sys.schemas s ON s.schema_id = sy.schema_id
+        WHERE 1=1{sch}{kw}
+        ORDER BY s.name, sy.name
+    """
+        if r == _r.ROLE_GENERATOR:
+            kw = f"\n            AND sq.name LIKE '%{keyword}%'" if keyword else ""
+            return f"""
+        SELECT TOP {_OBJ_ROWS_LIMIT}
+            s.name AS SCHEMA_NAME, sq.name AS OBJECT_NAME,
+            CAST('SEQUENCE' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST('' AS NVARCHAR(256)) AS OWNER_OBJECT,
+            CAST(ISNULL(CONVERT(NVARCHAR(64), sq.start_value), '') AS NVARCHAR(64)) AS ATTR_A,
+            CAST(ISNULL(CONVERT(NVARCHAR(64), sq.increment), '') AS NVARCHAR(64)) AS ATTR_B,
+            CAST(ISNULL(CONVERT(NVARCHAR(64), sq.last_used_value), '(미사용)') AS NVARCHAR(64)) AS ATTR_C,
+            CAST('' AS NVARCHAR(200)) AS MATCH_SNIPPET
+        FROM {c}sys.sequences sq
+        JOIN {c}sys.schemas s ON s.schema_id = sq.schema_id
+        WHERE 1=1{sch}{kw}
+        ORDER BY s.name, sq.name
+    """
+        if r == _r.ROLE_SCHEDULE:
+            return self._agent_jobs_sql(keyword=keyword, name="", allow_dbs=allow_dbs,
+                                        schema=schema)
+        return None
+
+    def object_definition(self, role: str, name: str, schema: str = "",
+                          db: str = "", allow_dbs=()) -> "str|None":
+        from . import db_object_roles as _r
+        r = _r.normalize_role(role)
+        c = self._cat(db)
+        d = str(db or "").strip()
+        sch = f" AND s.name = '{schema}'" if schema else ""
+        # cross-DB 정의: routine_definition 과 동일 사유 — OBJECT_DEFINITION() 은 pin DB 컨텍스트에서
+        # 평가되므로 [db].sys.sql_modules 를 직접 읽는다(object_id 가 같은 [db] 공간에서 해소).
+        if r in (_r.ROLE_VIEW, _r.ROLE_TRIGGER):
+            is_view = r == _r.ROLE_VIEW
+            src = "sys.views" if is_view else "sys.triggers"
+            otype = "VIEW" if is_view else "TRIGGER"
+            if is_view:
+                owner = "CAST('' AS NVARCHAR(256))"
+                join_schema = f"JOIN {c}sys.schemas s ON s.schema_id = o.schema_id"
+                attr_a = "CAST(CASE WHEN o.is_date_correlation_view = 1 THEN 'NO' ELSE 'YES' END AS NVARCHAR(8))"
+                attr_b = "CAST(CASE WHEN o.with_check_option = 1 THEN 'CHECK' ELSE '' END AS NVARCHAR(16))"
+                attr_c = f"CAST((SELECT COUNT(*) FROM {c}sys.columns cc WHERE cc.object_id = o.object_id) AS NVARCHAR(16))"
+                where_extra = "o.is_ms_shipped = 0"
+            else:
+                owner = "CAST(ISNULL(OBJECT_NAME(o.parent_id), '') AS NVARCHAR(256))"
+                # DDL/LOGON 트리거(parent_class=0)는 소유 테이블이 없어 스키마 조인이 성립하지 않는다
+                # → LEFT JOIN 으로 두고 스키마 필터가 있으면 DML 트리거만 남는다.
+                join_schema = (f"LEFT JOIN {c}sys.objects po ON po.object_id = o.parent_id "
+                               f"LEFT JOIN {c}sys.schemas s ON s.schema_id = po.schema_id")
+                attr_a = "CAST(CASE WHEN o.is_instead_of_trigger = 1 THEN 'INSTEAD OF' WHEN o.parent_class = 0 THEN 'DDL' ELSE 'AFTER' END AS NVARCHAR(16))"
+                attr_b = (f"CAST(ISNULL(STUFF((SELECT ',' + te.type_desc FROM {c}sys.trigger_events te "
+                          f"WHERE te.object_id = o.object_id FOR XML PATH('')), 1, 1, ''), '') AS NVARCHAR(200))")
+                attr_c = "CAST(CASE WHEN o.is_disabled = 1 THEN '비활성' ELSE '활성' END AS NVARCHAR(16))"
+                where_extra = "o.is_ms_shipped = 0"
+            if d:
+                def_expr = (f"(SELECT sm.definition FROM {c}sys.sql_modules sm "
+                            f"WHERE sm.object_id = o.object_id)")
+            else:
+                def_expr = "OBJECT_DEFINITION(o.object_id)"
+            return f"""
+        SELECT
+            o.name AS OBJECT_NAME, CAST('{otype}' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            {owner} AS OWNER_OBJECT,
+            {attr_a} AS ATTR_A, {attr_b} AS ATTR_B, {attr_c} AS ATTR_C,
+            CAST('' AS NVARCHAR(128)) AS PART_LABEL,
+            CAST(ISNULL({def_expr}, '') AS NVARCHAR(MAX)) AS DEFINITION
+        FROM {c}{src} o
+        {join_schema}
+        WHERE {where_extra} AND o.name = '{name}'{sch}
+    """
+        if r == _r.ROLE_ALIAS:
+            allow = _sql_str_list(allow_dbs)
+            _base_db = "PARSENAME(sy.base_object_name, 3)"
+            # 대상이 허용 범위 밖이면 DEFINITION 도 가린다(위 list_objects 와 동일 사유).
+            _safe_base = (f"CASE WHEN PARSENAME(sy.base_object_name, 4) IS NOT NULL THEN '(원격 서버 대상 — 이름 비공개)'"
+                          f" WHEN {_base_db} IS NULL OR LOWER({_base_db}) IN ({allow})"
+                          f" THEN ISNULL(sy.base_object_name, '') ELSE '(허용 범위 밖 DB 대상 — 이름 비공개)' END")
+            return f"""
+        SELECT
+            sy.name AS OBJECT_NAME, CAST('SYNONYM' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST({_safe_base} AS NVARCHAR(512)) AS OWNER_OBJECT,
+            CAST({_safe_base} AS NVARCHAR(512)) AS ATTR_A,
+            CAST(CASE WHEN PARSENAME(sy.base_object_name, 4) IS NOT NULL THEN '(원격 서버 — 범위 밖)'
+                      WHEN {_base_db} IS NULL THEN '(현재 DB)'
+                      WHEN LOWER({_base_db}) IN ({allow}) THEN {_base_db}
+                      ELSE '(허용 범위 밖 DB)' END AS NVARCHAR(128)) AS ATTR_B,
+            CAST('' AS NVARCHAR(16)) AS ATTR_C,
+            CAST('' AS NVARCHAR(128)) AS PART_LABEL,
+            CAST({_safe_base} AS NVARCHAR(MAX)) AS DEFINITION
+        FROM {c}sys.synonyms sy
+        JOIN {c}sys.schemas s ON s.schema_id = sy.schema_id
+        WHERE sy.name = '{name}'{sch}
+    """
+        if r == _r.ROLE_GENERATOR:
+            return f"""
+        SELECT
+            sq.name AS OBJECT_NAME, CAST('SEQUENCE' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST(TYPE_NAME(sq.user_type_id) AS NVARCHAR(256)) AS OWNER_OBJECT,
+            CAST(ISNULL(CONVERT(NVARCHAR(64), sq.start_value), '') AS NVARCHAR(64)) AS ATTR_A,
+            CAST(ISNULL(CONVERT(NVARCHAR(64), sq.increment), '') AS NVARCHAR(64)) AS ATTR_B,
+            CAST(ISNULL(CONVERT(NVARCHAR(64), sq.last_used_value), '(미사용)') AS NVARCHAR(64)) AS ATTR_C,
+            CAST('' AS NVARCHAR(128)) AS PART_LABEL,
+            CAST(CONCAT('MINVALUE ', ISNULL(CONVERT(NVARCHAR(64), sq.minimum_value), '?'),
+                        ' MAXVALUE ', ISNULL(CONVERT(NVARCHAR(64), sq.maximum_value), '?'),
+                        CASE WHEN sq.is_cycling = 1 THEN ' CYCLE' ELSE ' NO CYCLE' END,
+                        CASE WHEN sq.is_cached = 1 THEN ' CACHE' ELSE ' NO CACHE' END) AS NVARCHAR(MAX)) AS DEFINITION
+        FROM {c}sys.sequences sq
+        JOIN {c}sys.schemas s ON s.schema_id = sq.schema_id
+        WHERE sq.name = '{name}'{sch}
+    """
+        if r == _r.ROLE_SCHEDULE:
+            return self._agent_jobs_sql(keyword="", name=name, allow_dbs=allow_dbs, schema=schema)
+        return None
+
+    def _agent_jobs_sql(self, keyword: str, name: str, allow_dbs, schema: str = "") -> str:
+        """SQL Server Agent 작업 조회 — 열거(name='')와 정의(name!='')를 한 골격으로.
+
+        **msdb 접근의 유일한 지점**이다. 컬럼 투영·조인·필터가 전부 여기서 고정되며,
+        외부에서 오는 값은 `keyword`/`name`/`allow_dbs`/`schema`(전부 caller 가 `_safe_ident`
+        정제) 뿐이다 — freeform 의 msdb 하드 차단은 불변이고, 이 경로가 새 우회로가 되지
+        않도록 임의 SQL 조립을 허용하지 않는다.
+
+        열거 모드: 작업당 1행(대상 DB 별로 분해 — 한 작업이 여러 허용 DB 를 건드리면 각 DB 슬롯에
+        나타난다). 정의 모드: **단계당 1행**(PART_LABEL='N. 단계명', DEFINITION=단계 명령).
+        `sysjobsteps.database_name` 이 허용 DB 인 단계만 통과한다(제품 경계 — 위 (2) 참조).
+        """
+        allow = _sql_str_list(allow_dbs)
+        db_filter = f"LOWER(st.database_name) IN ({allow})"
+        if schema:
+            db_filter += f" AND LOWER(st.database_name) = LOWER('{schema}')"
+        # 주기 표현: sysschedules 는 freq_type 코드라 사람이 읽을 문자열로 환원한다.
+        freq = """CASE sc.freq_type
+                    WHEN 1 THEN '1회'
+                    WHEN 4 THEN CONCAT('매일(', sc.freq_interval, '일 간격)')
+                    WHEN 8 THEN '매주'
+                    WHEN 16 THEN '매월'
+                    WHEN 32 THEN '매월(상대)'
+                    WHEN 64 THEN 'SQL Agent 시작 시'
+                    WHEN 128 THEN 'CPU 유휴 시'
+                    ELSE '' END"""
+        if name:
+            return f"""
+        SELECT
+            j.name AS OBJECT_NAME, CAST('AGENT_JOB' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST(ISNULL(st.database_name, '') AS NVARCHAR(256)) AS OWNER_OBJECT,
+            CAST(CASE WHEN j.enabled = 1 THEN '활성' ELSE '비활성' END AS NVARCHAR(16)) AS ATTR_A,
+            CAST(ISNULL((SELECT TOP 1 {freq} FROM msdb.dbo.sysjobschedules js
+                         JOIN msdb.dbo.sysschedules sc ON sc.schedule_id = js.schedule_id
+                         WHERE js.job_id = j.job_id), '(스케줄 없음)') AS NVARCHAR(64)) AS ATTR_B,
+            CAST(ISNULL(CONVERT(NVARCHAR(32), j.date_modified, 120), '') AS NVARCHAR(32)) AS ATTR_C,
+            CAST(CONCAT(st.step_id, '. ', st.step_name, ' [', ISNULL(st.subsystem, ''), ' @ ',
+                        ISNULL(st.database_name, ''), ']') AS NVARCHAR(128)) AS PART_LABEL,
+            CAST(ISNULL(st.command, '') AS NVARCHAR(MAX)) AS DEFINITION
+        FROM msdb.dbo.sysjobs j
+        JOIN msdb.dbo.sysjobsteps st ON st.job_id = j.job_id
+        WHERE j.name = '{name}' AND {db_filter}
+        ORDER BY st.step_id
+    """
+        kw = ""
+        if keyword:
+            kw = (f" AND (j.name LIKE '%{keyword}%'"
+                  f" OR ISNULL(j.description, '') LIKE '%{keyword}%'"
+                  f" OR EXISTS (SELECT 1 FROM msdb.dbo.sysjobsteps k"
+                  f"            WHERE k.job_id = j.job_id AND ISNULL(k.command, '') LIKE '%{keyword}%'))")
+        return f"""
+        SELECT TOP {_OBJ_ROWS_LIMIT}
+            CAST(st.database_name AS NVARCHAR(128)) AS SCHEMA_NAME,
+            j.name AS OBJECT_NAME,
+            CAST('AGENT_JOB' AS NVARCHAR(32)) AS OBJECT_TYPE,
+            CAST('' AS NVARCHAR(256)) AS OWNER_OBJECT,
+            CAST(CASE WHEN j.enabled = 1 THEN '활성' ELSE '비활성' END AS NVARCHAR(16)) AS ATTR_A,
+            CAST(ISNULL((SELECT TOP 1 {freq} FROM msdb.dbo.sysjobschedules js
+                         JOIN msdb.dbo.sysschedules sc ON sc.schedule_id = js.schedule_id
+                         WHERE js.job_id = j.job_id), '(스케줄 없음)') AS NVARCHAR(64)) AS ATTR_B,
+            CAST(ISNULL(CONVERT(NVARCHAR(32), j.date_modified, 120), '') AS NVARCHAR(32)) AS ATTR_C,
+            CAST(ISNULL(j.description, '') AS NVARCHAR(200)) AS MATCH_SNIPPET
+        FROM msdb.dbo.sysjobs j
+        JOIN msdb.dbo.sysjobsteps st ON st.job_id = j.job_id
+        WHERE {db_filter}{kw}
+        GROUP BY st.database_name, j.name, j.enabled, j.job_id, j.date_modified, j.description
+        ORDER BY st.database_name, j.name
     """
 
     def probe_relationship_overlap(self, src_schema, src_table, src_col,
