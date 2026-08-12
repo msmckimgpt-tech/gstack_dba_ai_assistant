@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (PLAN-APPROVED 2026-08-12 → P0 구현 완료 · 라이브 배포 대기)
+- State: in-progress (P0 구현·라이브 배포 완료 a68fbbac · 인증 e2e 는 사람 1회 필요)
 - Owner: AI (계획) / Human (승인)
 - Priority: high
 - Last Updated: 2026-08-12
@@ -83,7 +83,7 @@ source_of_truth: true
 - [x] TASK-20260812T075301-docs — SECURITY 신규 절·ARCHITECTURE·ROUTEMAP·발견 자료·0023 ANCHOR §1
 - [x] TASK-20260812T090000-catchup-guard — 부트스트랩 catchup 체인 보호(배포 전 발견)
 - [x] TASK-20260812T090000-deploy-1 — PR #1223 머지 + 배포 1차(실패: 이미지 미포함 모듈)
-- [ ] TASK-20260812T090000-deploy-2 — 모듈 재배치 후 배포 2차 + POST-DEPLOY 검증
+- [x] TASK-20260812T090000-deploy-2 — 모듈 재배치 후 배포 2차(a68fbbac) + POST-DEPLOY 12항 PASS
 
 ## 4. In Progress
 - 없음

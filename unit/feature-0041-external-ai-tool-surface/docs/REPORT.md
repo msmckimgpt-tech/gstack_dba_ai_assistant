@@ -10,7 +10,7 @@ source_of_truth: true
 
 ## 1. 현재 상태
 
-**in-progress — P0 구현 완료 · 라이브 배포 미실시.**
+**in-progress — P0 구현 완료 · 라이브 배포 완료(a68fbbac) · POST-DEPLOY 12항 PASS.**
 
 계획 승인(`PLAN-APPROVED` 2026-08-12) 후 P0 를 구현했다. 신규 route 8개는 전부 OAuth 토큰 뒤에
 있고, **라이브에 배포되지 않았으므로 현재 도달면은 0** 이다. 기존 경로는 무변경이다 —
@@ -51,13 +51,18 @@ source_of_truth: true
 - `verify-completion.sh --pre-commit` PASS.
 - **§18.8 패널 2회**: REV-0001(계획, P1 3건) · REV-0002(구현 코드, P1 2건+P2 2건) — 전건 in-cycle
   수정. 구현 리뷰의 지적이 **전부 클라이언트 어댑터**에 몰렸다는 점을 REVIEW.md 에 기록했다.
-- ⚠ **라이브 e2e 미실시** — 본 worktree 에 서비스가 기동돼 있지 않다. "외부 AI 가 등록→인가→
-  토큰→도구→제출 을 완주한다" 는 아직 실측되지 않은 주장이다(TASK §9 G3 에 명시).
+- **라이브 배포 완료** `a68fbbac` — 무중단 실측 0건, 서비스 4종 커밋 일치, POST-DEPLOY 12항
+  PASS(TEST.md §3). 무토큰 401 · DCR 201 · 비-HTTPS redirect 400 · 미로그인 authorize 302→/login
+  · 기존 경로 200 전부 확인.
+- ⚠ **인증된 전 구간 e2e 는 미검증** — 인가 코드 발급에 사람 브라우저 로그인·동의가 필요해
+  자동 probe 로 대체할 수 없다(설계상 의도). "외부 AI 가 등록→인가→토큰→도구→제출 을
+  완주한다" 는 **사람이 한 번 통과시켜야 확정**된다.
+- 배포 1차 실패 1건(모듈이 이미지에 미포함) — 근본 수정 + 회귀 게이트 추가. 사용자 영향 0.
 
 ## 4. 잔여 (BLOCKED 아님 — 다음 cycle)
 
-- **라이브 배포 + e2e 5-probe** (등록 201 / 인가 302+code / 토큰 200 / 도구 200+각인 / 무토큰 401).
-  배포는 외부 영향 행동이라 **사람 결정**이다.
+- **인증된 전 구간 e2e** — 사람이 브라우저로 한 번 인가하면 확정된다(MCP 어댑터 env 3개 설정 후
+  `open_task` → `describe_table` → `submit_answer`). 자동화 불가 구간.
 - HTTP/SSE MCP 전송(f-ii) — 현재 stdio 만. 발견 자료(`/api/ai/manifest`·`guide`·OpenAPI) 갱신.
 - L4 권한 비대칭 flag(원장 컬럼은 준비됨) · 관리 콘솔 '외부 도구 한도' 탭.
 

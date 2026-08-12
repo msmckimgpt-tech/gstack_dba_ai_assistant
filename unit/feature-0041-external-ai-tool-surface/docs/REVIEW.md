@@ -123,3 +123,16 @@ source_of_truth: true
   서빙했고, Caddy 가 실패한 web-a 를 passive 격리했다. 이 사고는 그 안전망이 실제로 동작함을
   확인해 준 사례이기도 하다.
 - Human Approval Needed: 아니오 (배포 재실행은 `deploy_scope: included` 범위).
+
+## REV-20260812-0005 [SKIPPED:post-deploy-record] — 배포 검증 기록 (코드 변경 0)
+
+- Related Change: CHG-20260812-0005
+- Reason: 라이브 배포 결과와 POST-DEPLOY probe 12항을 정본에 기록하는 문서 전용 변경.
+  코드·설정 변경이 0 이라 §18.8 패널 대상이 아니다.
+- 검증 요지: 서비스 4종 커밋 일치 · 무중단 실측 0건 · alembic 0055 직접 확인 · 신규 테이블
+  5종 실재 · 무토큰 401 · DCR 201 / 비-HTTPS 400 · 미로그인 authorize 302→/login ·
+  기존 경로(`/livez`·`/api/ai/manifest`·`/llms.txt`) 200.
+- **정직 표기 2건**: (1) 인증된 전 구간 e2e 는 사람 브라우저 인가가 필요해 미검증 —
+  자동 probe 로 대체 불가(설계 의도). (2) probe 가 남긴 DCR client 1건이 라이브에 존재
+  (`deploy-probe` — `client_id` 만으로는 무권한이라 무해, 정리하려면 revoke).
+- Human Approval Needed: 아니오.

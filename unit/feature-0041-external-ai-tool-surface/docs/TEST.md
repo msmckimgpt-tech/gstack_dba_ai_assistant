@@ -89,3 +89,34 @@ source_of_truth: true
 - **부하 상한의 실 DB 집계** — fake 커서로 임계 판정만 덮었다. `tool_call_usage` 인덱스가 실제
   질의 계획에서 쓰이는지는 배포 후 `EXPLAIN` 으로 확인한다.
 - **L4 권한 비대칭 flag** — 미구현이라 테스트 없음(TASK §5.1).
+
+### Run 2026-08-12 — POST-DEPLOY 라이브 (Environment: live · a68fbbac · Caddy 경유)
+
+배포: `make deploy-web` (deploy_scope: included). 1차 실패(모듈 미포함) → 근본 수정 → 2차 성공.
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 서비스별 GIT_COMMIT (web-a·web-b·insight-worker·ask-worker) | 전부 `a68fbbac` ✅ |
+| 2 | 무중단 실측 — caddy `no upstreams available` 15분 | **0건** ✅ |
+| 3 | `alembic_version` (stale agent image 함정 직접 확인) | `0055_tool_call_usage` ✅ |
+| 4 | `agent_runtime.tool_call_usage` 실재 + GRANT(rw INSERT / ro SELECT) | `t\|t` ✅ |
+| 5 | MySQL 신규 4테이블(WebOAuth{Clients,Grants,Tokens}·WebAiTasks) | 전부 존재 ✅ |
+| 6 | 무토큰 `POST /api/ai/tools/open_task` | **401** ✅ (AC-1) |
+| 7 | 무토큰 `POST /api/ai/tools/describe_table` | **401** ✅ |
+| 8 | DCR `POST /api/ai/oauth/register` (정상 https redirect) | **201 + client_id** ✅ |
+| 9 | DCR 비-HTTPS redirect 등록 | **400 거절** ✅ (AC-11) |
+| 10 | `POST /api/ai/oauth/token` grant_type=password | **400 거절** ✅ |
+| 11 | 미로그인 `GET /api/ai/oauth/authorize` | **302 → /login** ✅ (코드 미발급 — 신원 축) |
+| 12 | 기존 경로 무영향 — `/livez`·`/api/ai/manifest`·`/llms.txt` | 전부 **200** ✅ (AC-9) |
+
+**#5 관련 정정**: 최초 확인에서 4테이블 MISSING 으로 보였으나, 이는 probe 가 **데이터플레인
+MySQL**(게임 DB)에 붙은 오진이었다. 앱 자신의 `_connect_memory()` 로 재확인해 전부 실재 확인.
+`_ensure_oauth_client_schema` 가 예외를 삼키는 설계(CHG-20260812-0003)라 이 직접 확인이
+REV-20260812-0003 에서 예고한 보완 절차였고, 실제로 작동했다.
+
+**남은 미검증**: 인가 코드 → 토큰 교환 → 도구 호출의 **인증된 전 구간 e2e**. 사람 브라우저
+로그인·동의가 필요해 자동 probe 로 대체할 수 없다(설계상 의도). #11 이 그 직전 단계까지 확인.
+
+**배포 부작용**: probe 로 DCR client 1건(`deploy-probe`, redirect `https://probe.invalid/cb`)이
+라이브에 생성됐다. `client_id` 만으로는 어떤 데이터에도 접근할 수 없어 무해하나, 운영자가
+정리하려면 `WebOAuthClients` 에서 해당 행을 revoke 하면 된다.
