@@ -10,6 +10,14 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260812T193000-attach-md-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
+- **대상 diff**: `unit/feature-0003-agent-web-ui/docs/{TASK,REPORT}.md` + `docs/test-runs.d/*.md` — **코드 변경 0**.
+- §18.8 dispatch 표 1행(비정책 doc-only) → panel SKIP. 실측 자체는 PB-0008 실 Windows
+  Chrome/150 으로 수행했고 근거는 fragment 에 있다.
+- **결론**: 선행 cycle 이 선언한 잔여 2건 종결(배포본 probe 뒤집힘 · 배포본 모듈 직접 렌더).
+  남은 1건(라이브 `.md` 첨부를 실 계정으로 여는 조합 대조)은 타 사용자 데이터 접근이라
+  수행하지 않고 **미실측으로 명시**했다 — 완료로 오인 보고하지 않는다(§16.3 정직성).
+
 ## REV-20260812T183000-attach-md-highlight [CODEX:attach-md-highlight] — GATE PASS (P1 0건 · P2 3건 전건 반영)
 
 - **Trigger**: `UI/screen/layout keyword matched` (§18.8 dispatch 표 3행 → ux·design) +

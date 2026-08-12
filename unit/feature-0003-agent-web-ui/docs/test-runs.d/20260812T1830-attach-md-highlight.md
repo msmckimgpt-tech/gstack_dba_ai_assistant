@@ -130,3 +130,50 @@ OK — 146 passed, 0 failed        (선행 113 → +33: A15~A19 · B37~B55 · D8
 
 `python3 bin/win-browser.py down` 으로 **본 드라이버가 띄운 인스턴스만** 종료(사용자 일반
 브라우저 보존). 전용 프로파일이므로 다른 세션 탭에 무접촉.
+
+---
+
+### Run (2026-08-12, POST-DEPLOY) — 배포본 `d0241c93` 실측 — **Environment: Windows-browser**
+
+배포(`bin/deploy-web.sh --web-only`, web-a/web-b `GIT_COMMIT=d0241c93`, 서빙 스탬프
+`code-highlight.js?v=49accee151c3`, 엣지 `no upstreams available` **0건 = 실 무중단`) 직후,
+위 §5 에 선언한 잔여 2건을 닫는다.
+
+#### 1. 배포본 모듈 실물 probe (codex [P2-3] 종결)
+
+같은 시나리오를 재실행했고 step 3 probe 가 **뒤집혔다**:
+
+| 시점 | `served_module` | `has_md` | `detect_readme` | `langs` |
+|---|---|---|---|---|
+| 배포 전 (PRE) | loaded | **false** | null | `sql,json,yaml,xml,csv,tsv` |
+| 배포 후 (POST) | loaded | **true** | `"md"` | `sql,json,yaml,xml,csv,tsv,md` |
+
+"배포된 ESM 이 실제로 로드·배선되는가" 가 주입 사본으로는 fail-open 이라는 지적이 이 대조로
+닫힌다 — **재실행 가능한 게이트**이며, 다음 배포에서 회귀하면 같은 step 이 false 로 돌아온다.
+
+#### 2. 배포본 모듈로 직접 렌더 (주입 사본 아님)
+
+라이브 페이지에서 `import('/static/code-highlight.js')` 한 **서빙 모듈**의
+`detectCodeLanguage`/`paintCodeInto` 로 22행 markdown 표본을 실 `attach-diff-code` 구조에 렌더:
+
+- `served=true` · `lossless=true` · `spans=30` · `foreign=0`(span 외 태그 0)
+- computed 색: keyword `rgb(124,58,237)`/600 · type `rgb(21,94,117)` · string `rgb(146,64,14)` ·
+  delim `rgb(98,95,85)`/**700** · bool `rgb(124,58,237)` · punct `rgb(98,95,85)` — 정본 일치
+- `lang=md` · `label=Markdown`
+- Evidence: `artifacts/pb0008/attach-md-highlight/post-deploy/04_md_served_module.png`
+- 육안(zoom 2.2, 판독가능): 제목 보라 · 인라인코드/URL 앰버 · 링크 라벨 파랑 · 표 파이프 굵은 회색 +
+  정렬행 전체 회색 · `**PK**`·`~~deprecated~~` 청록 · 인용 `>` 회색 · fence + `sql` ·
+  `---` 회색 · `- [x]` 마커+체크박스 · **L18 `- |` 이 리스트 마커 + 파이프로 갈림**(codex P2-2
+  수정이 배포 산출물에서 확인) · **L20 산문 `2 * 3 * 4`·`snake_case`·`#hashtag` 무색**.
+- 세션 격리: 전용 CDP 포트 9242 · 전용 프로파일 · `launch` 응답 `reused:false` (§16.6 v3.44.0).
+
+#### 3. 남은 것 (정직 표기)
+
+- 라이브 `.md` 첨부(3건 존재: `readme.md`·`CCU_쿼리_리뷰_요약_실무자용.md`·`README.md`)의
+  **원문 보기 모달을 실제 사용자 계정으로 여는** 대조는 하지 않았다 — 타 사용자 대화의 첨부라
+  열람 자체가 남의 데이터 접근이다. 대신 그 경로를 이루는 두 조각을 각각 실측했다:
+  ① 배포본 모듈 → 실 CSS → 픽셀(위 §2), ② `_renderSource` → `_paintCell` → `paintCodeInto` 배선
+  (`verify_attach_diff_syntax_highlight.mjs` H13/H14 가 **실 모듈 + 실 `attach-diff.js`** 로 구동).
+  조합만 미실측이며, 그 사실을 완료로 오인 보고하지 않는다.
+- fence 내부 오색(§5)은 라인 독립 원칙의 알려진 대가로 그대로 남는다 — 위 캡처 L12 의
+  `SELECT 1;` 이 무색으로 떨어져 이번 표본에서는 무해했다.

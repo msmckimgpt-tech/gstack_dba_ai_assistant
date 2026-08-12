@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Task
 
+## 20260812T1930-attach-md-postverify — 배포본 실측으로 선행 cycle 잔여 종결 (비-정책 doc-only)
+
+선행 `20260812T1830-attach-md-highlight` 가 "배포 후에만 확인 가능" 으로 남긴 2건을 배포본
+`d0241c93` 에서 닫는다.
+
+- [x] 배포본 실물 probe 뒤집힘 확인 — `has_md: false → true`, `langs` 에 `md` 추가
+      (codex [P2-3] fail-open 지적 종결, 재실행 가능한 게이트)
+- [x] **배포본 모듈로 직접 렌더** — `import('/static/code-highlight.js')` 의
+      `paintCodeInto` 로 실 `attach-diff-code` 구조 렌더, computed 색 정본 일치·무손실·
+      span 외 태그 0, 판독가능 캡처 확보
+- [x] 배포 품질 실측 — web-a/web-b `GIT_COMMIT=d0241c93` · 엣지 `no upstreams available` **0건**
+- [x] 미실측 잔여를 완료로 오인 보고하지 않고 fragment §3 에 명시
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 잔여 종결 — ✓ (2/2 확인, 미실측 1건은 사유와 함께 명시)
+
 ## 20260812T1830-attach-md-highlight — 첨부 `.md` 구문 하이라이트 (Minor §12.3 — frontend-only)
 
 **사용자 요청**: "프로젝트 내 서비스에서, 첨부파일 중 '.md' 파일에 대한 포멧도 내부적으로
