@@ -68,9 +68,9 @@ source_of_truth: true
 - `get_task_context`: LLM 진입점 미호출 단정 테스트(소스·런타임 양쪽).
 - 0023 무회귀: `ask` 경로 기존 테스트 전건 green.
 
-<!-- 사람 승인 시 아래 마커를 추가한다:
-<!-- PLAN-APPROVED by <user> on YYYY-MM-DD -->
--->
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-08-12 -->
+<!-- 승인 근거: 2026-08-12 대화 — "네, 승인합니다. 구현 및 완수까지 진행해주세요." -->
+
 
 ## 3. Task Queue
 - [ ] TASK-20260812T075301-schema-ledger — `tool_call_usage` alembic + OAuth 테이블 부트스트랩
