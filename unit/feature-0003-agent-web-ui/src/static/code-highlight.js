@@ -14,8 +14,9 @@
 //    없다 — 첨부 본문은 사용자가 올린 임의 바이트이므로 문자열 조립은 금지다.
 //  - **확장은 레지스트리 한 항목**: 언어 추가 = `LANGS` 에 `{ exts, tokenize }` 를 넣는 것뿐이고
 //    호출자(`paintCodeInto`)는 바뀌지 않는다. 1차 범위는 SQL + 구조화 데이터(JSON/YAML/XML/CSV)
-//    이며 Python·JS·Shell·Markdown 등은 같은 자리에 추가한다(사용자 결정 2026-08-06: "SQL +
-//    구조화 데이터를 우선 추가하되, 차후 확장될 수 있습니다").
+//    였고(사용자 결정 2026-08-06: "SQL + 구조화 데이터를 우선 추가하되, 차후 확장될 수
+//    있습니다"), 그 예고대로 **Markdown 을 같은 자리에 추가**했다(사용자 요청 2026-08-12:
+//    "첨부파일 중 '.md' 파일에 대한 포멧도 내부적으로 처리"). Python·JS·Shell 등도 동일 경로.
 //  - **라인 독립 토큰화**: diff 는 행 단위로 렌더되므로 토큰화도 행 단위다. 여러 줄에 걸친
 //    블록 주석(`/* … */`)이나 멀티라인 문자열은 **각 행이 독립 판정**된다. 행 상태를 이어붙이는
 //    방식을 택하지 않은 이유: 맥락 축약 뷰는 중간을 `gap` 으로 생략하므로 상태가 끊긴 지점부터
@@ -262,6 +263,197 @@ function _makeCsvTokenizer(delim) {
   };
 }
 
+// ── Markdown ────────────────────────────────────────────────────────────────
+// 산문 마크업이라 앞의 다섯 언어와 성격이 다르다. 여기서 색이 하는 일은 "예약어를 찾는 것"이
+// 아니라 **문서의 뼈대(구조 표식)와 산문을 가르는 것**이다 — 제목·인용·리스트·표·링크·코드가
+// 본문과 같은 색이면, diff 에서 바뀐 줄이 *구조* 변경인지 *문장* 변경인지 눈으로 갈리지 않는다.
+//
+// 판정은 **블록(줄 머리) → 인라인** 2단이다. Markdown 의 블록 구성요소는 대부분 줄 앵커라
+// 라인 독립 원칙과 궁합이 좋다(제목·리스트·인용·구분선·표 정렬행이 모두 한 줄 안에서 닫힌다).
+//
+// ⚠️ **알려진 한계 — fenced code block**: 여는 ``` 과 닫는 ``` 사이의 줄들은 원래 코드지만,
+// 라인 독립 판정이라 markdown 규칙으로 읽힌다(코드 안 `# comment` 가 제목색, `- item` 이
+// 리스트 마커색). SQL 의 여러 줄 주석과 **같은 성격의 절충**이며(위 설계 원칙의 "라인 독립
+// 토큰화" 참조), 상태를 이어붙이지 않는 이유도 같다 — 맥락 축약 뷰가 중간을 생략하므로 상태가
+// 끊긴 지점부터 색이 통째로 어긋난다. 대신 fence 줄 자체를 눈에 띄게 칠해 "여기부터 코드" 를
+// 읽히게 한다.
+//
+// ⚠️ **`_강조_` 는 의도적 미지원**: 이 화면에 오는 `.md` 는 DB·SQL·운영 문서가 다수라
+// `snake_case` 컬럼명과 `__dunder__` 가 흔하다. 밑줄 강조를 인식하면 그것들이 통째로 강조색을
+// 받아 **없는 강조를 만든다**. 이 모듈의 "무색이 오색보다 낫다" 선언대로 `*강조*`·`**강조**`·
+// `~~취소선~~` 만 인식한다.
+//
+// 색은 새 변수를 만들지 않고 기존 9개 팔레트를 재사용한다(대비 회귀는 하네스 G2 가 매 실행
+// 재계산하므로, 변수를 늘리지 않는 편이 검증면을 넓히지 않으면서 안전하다):
+//   제목/`===` → keyword · 강조/fence 언어명 → type · 인라인코드/URL → string ·
+//   링크 라벨 → func · 참조정의 라벨 → key · 인용/fence 마커 → comment ·
+//   리스트 마커/구분선/표 정렬행/링크 구두점 → punct · 표 파이프 → delim · 체크박스 → bool
+
+// 줄 머리(블록) 판정 — 배열 순서가 곧 우선순위. 모두 `^` 앵커라 위치당 1회만 시도된다.
+const MD_FENCE_RE     = /^([ \t]{0,3})(`{3,}|~{3,})(.*)$/;
+// CommonMark 대로 `#` 뒤에 공백을 요구한다 — `#hashtag`·`#1` 을 제목으로 칠하지 않기 위해.
+const MD_ATX_RE       = /^[ \t]{0,3}#{1,6}(?:[ \t][\s\S]*)?$/;
+const MD_SETEXT_H1_RE = /^[ \t]{0,3}=+[ \t]*$/;
+// 구분선 = `---` / `***` / `___` (3개 이상). setext H2 밑줄·YAML front-matter 경계도 여기로 온다.
+const MD_RULE_RE      = /^[ \t]{0,3}(?:\*[ \t]*){3,}$|^[ \t]{0,3}(?:-[ \t]*){3,}$|^[ \t]{0,3}(?:_[ \t]*){3,}$/;
+const MD_QUOTE_RE     = /^([ \t]{0,3})((?:>[ \t]?){1,8})/;
+const MD_LIST_RE      = /^([ \t]{0,32})([-*+]|\d{1,9}[.)])([ \t]+)/;
+const MD_TASK_RE      = /^(\[[ xX]\])(?=[ \t]|$)/;
+const MD_REFDEF_RE    = /^([ \t]{0,3}\[)([^\]\n]{1,200})(\]:)/;
+
+// GFM 표 정렬행(`|---|:--:|`). 값싼 문자 구성 필터로 후보를 거른 뒤 **셀 단위**로 확인한다.
+// 정규식 `(...)+` 반복을 쓰지 않는 이유는 YAML 과 같다(실패 경로 2차 비용) — split 은 선형이고,
+// 셀별 검사는 짧은 문자열에만 걸린다.
+//
+// ⚠️ 초판은 "`|` 와 `-` 를 포함하고 `[ \t|:-]` 로만 구성" 만 봤는데, 그러면 **리스트 항목
+// `- |` 이 줄 전체 회색**이 됐다(codex 적대 리뷰 [P2]). 셀 문법을 실제로 확인하고, **선두 `|` 가
+// 없으면 셀이 2개 이상**일 것을 요구해 그 오독을 막는다(`|---|` 같은 1열 표는 선두 `|` 로 성립,
+// `- |` 는 선두 `|` 가 없고 셀도 1개라 탈락 → 리스트 마커 규칙으로 넘어간다).
+const MD_TABLE_CELL_RE = /^[ \t]*:?-+:?[ \t]*$/;
+function _mdIsTableDelimRow(s) {
+  if (!/^[ \t|:-]+$/.test(s)) return false;          // 1차 필터(선형) — 후보 아니면 즉시 탈락
+  const body = s.trim();
+  const lead = body.charAt(0) === "|";
+  const inner = body.replace(/^\|/, "").replace(/\|$/, "");
+  if (inner.indexOf("|") === -1 && !lead) return false;   // 선두 `|` 없는 1-셀은 표가 아니다
+  const cells = inner.split("|");
+  if (cells.length === 0) return false;
+  for (let i = 0; i < cells.length; i++) {
+    if (!MD_TABLE_CELL_RE.test(cells[i])) return false;   // 셀 = (`:`)`-`+(`:`) 만
+  }
+  return true;
+}
+
+// 강조 구간의 양 끝이 공백이면 강조가 아니다(CommonMark: 여는 표식 뒤·닫는 표식 앞 공백 금지).
+// `2 * 3 * 4` 의 `* 3 *` 를 강조로 칠하지 않기 위한 방어 — 정규식으로 밀어넣으면 역추적이
+// 늘어나므로 매칭 후 코드에서 판정한다(비용 O(1)).
+function _mdEmphOk(matched, markLen) {
+  const inner = matched.slice(markLen, matched.length - markLen);
+  return inner.length > 0 && !/^[ \t]/.test(inner) && !/[ \t]$/.test(inner);
+}
+
+// 인라인 표식. 반복 상한(`{0,200}`·`{0,300}`)은 YAML 과 같은 이유 — 실재하는 라벨·URL 길이를
+// 넘지 않으면서 실패 경로의 스캔을 묶는다. 마지막 `([\s\S])` catch-all 이 **무손실의
+// load-bearing 부품**인 것도 CSV 와 동일하다(짝 없는 `*`·`[` 는 여기로 떨어져 무색 보존).
+//
+//  1 백슬래시 이스케이프  2 인라인 코드  3~7 링크/이미지  8 `[` 런  9 자동링크
+// 10 강조(`**`/`~~`)    11 강조(`*`)   12 표 파이프    13 산문 런  14 catch-all
+// (8·13·14 는 모두 무색이라 호출부 분기가 필요 없다 — 마지막 `else e.plain(m[0])` 가 함께 받는다.)
+//
+// ⚠️ 성능 — 링크 대안이 이 토크나이저의 2차 비용 지점이다(YAML 의 key 대안과 같은 자리).
+// `"[".repeat(4000)` 같은 줄은 위치마다 라벨 상한까지 훑고 `](` 에서 실패한다(실측 2.98ms —
+// 하네스 I1 상한 1.0ms 초과). 두 가지로 묶었다:
+//   ① **사전 가드** — 줄에 `](` 와 `)` 가 둘 다 없으면 완전한 인라인 링크가 성립할 수 없으므로
+//      링크 대안을 **끈 정규식**을 쓴다(YAML 의 "`:` 없으면 key 정규식을 돌리지 않는다" 와 동형).
+//      의미 변화 0 — 그 줄에서는 원래 매칭될 수 없는 대안이다.
+//   ② 라벨·URL 200자 상한 + **라벨 본문에서 `[` 를 제외**. 가드는 `…[[[[](x)` 처럼 `](` 를
+//      끝에 단 줄로 우회될 수 있는데(실측 2.18ms), 라벨에서 `[` 를 빼면 그런 줄은 각 `[`
+//      위치에서 **첫 문자에 실패**한다(0.03ms). 대괄호가 중첩된 라벨(`[see [1]](u)`)은 무색으로
+//      떨어질 뿐 손실은 없다 — 이 모듈의 "무색 > 오색" 과 정합.
+const _MD_LINK_ALT = "(!?\\[)([^\\]\\[\\n]{0,200})(\\]\\()([^)\\n]{0,200})(\\))";
+// 링크 대안을 끈 변형 — 그룹 번호(3~7)를 보존해야 호출부 분기가 하나로 유지된다(아래 `[` 런과
+// 산문 런의 번호도 두 변형에서 같아야 한다).
+// `[^\s\S]` 는 공집합 문자클래스라 절대 매칭되지 않는다(대안 전체가 즉시 실패).
+const _MD_NOLINK_ALT = "([^\\s\\S])([^\\s\\S])([^\\s\\S])([^\\s\\S])([^\\s\\S])";
+const _mdInlineSrc = (linkAlt, runClass) =>
+  "(\\\\[\\\\`*_~[\\]()#+\\-.!|>])" +
+  "|(``[^`\\n]{0,300}``|`[^`\\n]{0,300}`)" +
+  "|" + linkAlt +
+  // 링크를 이루지 못한 `[` 연속 — **반드시 링크 대안 뒤**에 온다(진짜 링크가 먼저 이긴다).
+  // 없으면 `"[".repeat(4000)` 이 1글자씩 catch-all 로 떨어져 문자마다 13-그룹 match 배열을
+  // 할당한다(실측 0.80ms → 0.06ms). 방출은 무색이라 아래 `else e.plain(m[0])` 가 함께 받는다.
+  "|(\\[+)" +
+  "|(<(?:https?|ftp|mailto):[^>\\s]{0,200}>)" +
+  "|(\\*\\*[^*\\n]{1,300}\\*\\*|~~[^~\\n]{1,300}~~)" +
+  "|(\\*[^*\\s\\n][^*\\n]{0,300}\\*)" +
+  // 연속 파이프는 **한 토큰**으로 묶는다(`\|+`). 실제 표에서 파이프는 셀 사이라 붙어 있지 않으므로
+  // 화면은 동일하고(같은 클래스·인접), 병리 입력(`"|".repeat(4000)`)에서 span 4,000개가 1개로
+  // 줄어 DOM 비용이 사라진다 — codex 적대 리뷰 [P2](span 폭증) 대응. CSV 구분자와 달리 markdown
+  // 파이프는 "빈 셀" 이라도 색 의미가 같아 묶어도 정보 손실이 없다.
+  "|(\\|+)" +
+  // 표식을 **시작할 수 없는** 문자들의 연속 — 산문 한 덩어리를 한 번에 삼킨다. CSV 의
+  // `[^,"]+` 필드 대안과 같은 역할이고, 없으면 산문 1글자마다 정규식이 8개 대안을 헛돌아
+  // 비용이 문자 수에 비례해 붙는다(실측: 이 대안 도입 전후 산문 줄 4~6배 차이).
+  // 제외 문자 = `\`(이스케이프) `` ` ``(코드) `*`(강조) `~`(취소선) `[`(링크) `!`(이미지)
+  // `<`(자동링크) `|`(표). `]`·`)` 는 어떤 표식도 **시작**하지 못하므로 포함해도 안전하다.
+  "|(" + runClass + "+)" +
+  "|([\\s\\S])";
+// 링크 대안이 꺼진 변형에서는 `[`·`!` 도 아무 표식을 시작하지 못하므로 산문 런에 넣는다
+// (`"[".repeat(4000)` 류가 1글자씩 catch-all 로 떨어지지 않게 — 0.76ms → 0.005ms).
+const MD_INLINE_RE = new RegExp(_mdInlineSrc(_MD_LINK_ALT, "[^\\\\`*~\\[!<|\\n]"), "g");
+const MD_INLINE_NOLINK_RE = new RegExp(_mdInlineSrc(_MD_NOLINK_ALT, "[^\\\\`*~<|\\n]"), "g");
+
+function tokenizeMarkdown(text) {
+  const e = _emitter();
+  let rest = text;
+
+  // ⓪ 인용 마커(`>`)를 먼저 벗긴다 — 인용 안의 제목·리스트·fence 도 같은 규칙으로 읽히게.
+  const qm = MD_QUOTE_RE.exec(rest);
+  if (qm) { e.plain(qm[1]); e.tok("code-tok-comment", qm[2]); rest = rest.slice(qm[0].length); }
+
+  // ① fence 경계 — info string(```sql 의 `sql`)은 언어명이라 type 색. 이 줄은 여기서 끝.
+  const fm = MD_FENCE_RE.exec(rest);
+  if (fm) {
+    e.plain(fm[1]);
+    e.tok("code-tok-comment", fm[2]);
+    e.tok("code-tok-type", fm[3]);
+    return e.done();
+  }
+  // ② ATX 제목 — **줄 전체**를 제목색으로. 제목은 문서의 뼈대라 한 덩어리로 읽히는 편이 낫다
+  //    (안쪽 인라인 표식까지 쪼개면 제목이 문장처럼 흩어져 위계가 깨진다).
+  if (MD_ATX_RE.test(rest)) { e.tok("code-tok-keyword", rest); return e.done(); }
+  // ③ setext H1 밑줄(`===`) — 제목과 같은 색으로 짝을 보인다.
+  if (MD_SETEXT_H1_RE.test(rest)) { e.tok("code-tok-keyword", rest); return e.done(); }
+  // ④ 구분선 / setext H2 밑줄 / front-matter 경계 — 구조 구두점.
+  if (MD_RULE_RE.test(rest)) { e.tok("code-tok-punct", rest); return e.done(); }
+  // ⑤ 표 정렬행 — 이 줄만 색이 다르면 "여기가 표 머리" 가 한눈에 잡힌다.
+  if (_mdIsTableDelimRow(rest)) { e.tok("code-tok-punct", rest); return e.done(); }
+
+  // ⑥ 리스트 마커(+ task 체크박스). 마커만 칠하고 항목 본문은 인라인 규칙으로 넘긴다.
+  const lm = MD_LIST_RE.exec(rest);
+  if (lm) {
+    e.plain(lm[1]);
+    e.tok("code-tok-punct", lm[2]);
+    e.plain(lm[3]);
+    rest = rest.slice(lm[0].length);
+    const tm = MD_TASK_RE.exec(rest);
+    if (tm) { e.tok("code-tok-bool", tm[1]); rest = rest.slice(tm[1].length); }
+  } else {
+    // ⑦ 참조 정의(`[ref]: https://…`) — 라벨은 이름표라 key 자리.
+    const rm = MD_REFDEF_RE.exec(rest);
+    if (rm) {
+      e.tok("code-tok-punct", rm[1]);
+      e.tok("code-tok-key", rm[2]);
+      e.tok("code-tok-punct", rm[3]);
+      rest = rest.slice(rm[0].length);
+    }
+  }
+
+  // ⑧ 인라인 스캔. 완전한 인라인 링크가 성립할 수 없는 줄은 링크 대안을 끈 정규식으로
+  //    (위 성능 주석 ①). 판정은 문자 포함 여부 2회 — 정규식 실패 경로보다 훨씬 싸다.
+  const re = (rest.indexOf("](") !== -1 && rest.indexOf(")") !== -1)
+    ? MD_INLINE_RE : MD_INLINE_NOLINK_RE;
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(rest)) !== null) {
+    if (m[1]) e.plain(m[1]);                          // `\*` 등 이스케이프 — 표식이 아니다
+    else if (m[2]) e.tok("code-tok-string", m[2]);    // 인라인 코드 = 리터럴
+    else if (m[3]) {                                  // [라벨](url) · ![대체텍스트](url)
+      e.tok("code-tok-punct", m[3]);
+      e.tok("code-tok-func", m[4]);
+      e.tok("code-tok-punct", m[5]);
+      e.tok("code-tok-string", m[6]);
+      e.tok("code-tok-punct", m[7]);
+    }
+    else if (m[9]) e.tok("code-tok-string", m[9]);    // <https://…> 자동 링크
+    else if (m[10]) { if (_mdEmphOk(m[10], 2)) e.tok("code-tok-type", m[10]); else e.plain(m[10]); }
+    else if (m[11]) { if (_mdEmphOk(m[11], 1)) e.tok("code-tok-type", m[11]); else e.plain(m[11]); }
+    else if (m[12]) e.tok("code-tok-delim", m[12]);   // 표 파이프 — CSV 구분자와 같은 자리
+    else e.plain(m[0]);                               // 8 `[` 런 · 13 산문 런 · 14 catch-all
+  }
+  return e.done();
+}
+
 // ── 언어 레지스트리 ─────────────────────────────────────────────────────────
 // 확장은 여기 한 항목. `exts` 는 소문자 확장자(점 없음), `label` 은 사용자 표기용.
 //
@@ -281,6 +473,10 @@ export const LANGS = {
   xml:  { label: "XML",  exts: ["xml", "xsd", "xsl", "xslt", "html", "htm", "svg", "plist", "config", "csproj"], tokenize: tokenizeXml },
   csv:  { label: "CSV",  exts: ["csv"], tokenize: _makeCsvTokenizer(",") },
   tsv:  { label: "TSV",  exts: ["tsv", "tab"], tokenize: _makeCsvTokenizer("\t") },
+  // `md`/`markdown` 은 서버 `_EXTENSION_KIND_MAP` 이 둘 다 `text` 로 매핑하므로 **실제로 이
+  // 화면에 도달한다**(위 도달성 주의의 반례가 아니라 확인된 경우). `mdown`·`mkd` 류 별칭은
+  // 서버 지도에 없어 등록하지 않는다 — 등록해도 칠해지지 않을 확장자를 늘리지 않는다.
+  md:   { label: "Markdown", exts: ["md", "markdown"], tokenize: tokenizeMarkdown },
 };
 
 // 확장자 → 언어 key 역인덱스. 같은 확장자를 두 언어가 주장하면 **먼저 등록된 쪽**이 이긴다

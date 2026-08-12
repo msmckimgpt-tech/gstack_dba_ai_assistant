@@ -8,6 +8,46 @@ source_of_truth: true
 
 # Task
 
+## 20260812T1830-attach-md-highlight — 첨부 `.md` 구문 하이라이트 (Minor §12.3 — frontend-only)
+
+**사용자 요청**: "프로젝트 내 서비스에서, 첨부파일 중 '.md' 파일에 대한 포멧도 내부적으로
+처리할 수 있도록 구성해주세요."
+
+**해석 근거**: 선행 cycle `20260806T1853-attach-diff-syntax` 가 `static/code-highlight.js`
+헤더에 "1차 범위는 SQL + 구조화 데이터이며 Python·JS·Shell·**Markdown** 등은 같은 자리에
+추가한다" 를 남겼고, "내부적으로 처리" 는 그 모듈의 설계 원칙(**vendor 무추가 경량
+토크나이저**)과 정확히 대응한다.
+
+### 2.1 Implementation Plan
+
+| 파일 | 심볼 | 변경 | 완료 판정 |
+|---|---|---|---|
+| `src/static/code-highlight.js` | `tokenizeMarkdown` · `MD_*_RE` · `_mdIsTableDelimRow` · `_mdEmphOk` · `LANGS.md` | 신규 토크나이저 + 레지스트리 1항목 | `detectCodeLanguage("README.md")==="md"` 이고 제목·리스트·표·링크·강조·코드가 서로 다른 토큰으로 갈린다 |
+| `src/static/css/base.css` | `--code-tok-*` 주석 | **주석만** (값 무변경) | 변수 9개 유지(하네스 G1) · 렌더 무변경 |
+| `src/static/css/chat.css` | delim 규칙 주석 | **주석만** | G4/G5 유지 |
+| `tests/verify_attach_diff_syntax_highlight.mjs` | A/B/C/D/H/I 축 | markdown 검증 추가 | 전건 PASS + 오색 금지 negative 단언 포함 |
+| `src/scenario.attach-md-highlight.json` | — | PB-0008 시나리오 신규 | 실 Windows Chrome 에서 `ok:true` + 판독가능 캡처 |
+
+- 접근: 블록(줄 머리) → 인라인 2단 판정. 색은 **새 팔레트 변수를 만들지 않고** 기존 9개 재사용
+  (대비 회귀를 하네스 G2 가 매 실행 재계산하므로 검증면을 넓히지 않는 편이 안전).
+- 위험도: **Minor** (§12.3 — 비파괴 추가, frontend-only, 백엔드·RBAC·스키마·마이그레이션 0).
+
+- [x] `tokenizeMarkdown` + `LANGS.md` 구현 (fence·ATX·setext·구분선·표 정렬행·인용·리스트·
+      체크박스·참조정의 / 인라인: 이스케이프·코드·링크·이미지·자동링크·강조·표 파이프)
+- [x] 성능 방어 — 링크 대안 사전 가드 + 라벨에서 `[` 제외 + `[` 런 + 산문 런
+      (적대 입력 2.98ms → 0.76ms, 산문 920자 토큰 1개 0.002ms)
+- [x] 하네스 29축 추가 → **142 PASS / 0 FAIL**, 형제 하네스 회귀 0
+- [x] PB-0008 실 Windows Chrome/150 — 전용 프로파일·전용 포트로 **자기 인스턴스** 확보 후
+      실 CSS 위 렌더 확인 + 판독가능 확대 캡처 3장
+- [x] 문서 정합 (FUNCTION/MODIFY/REVIEW/test-runs.d/REPORT/STATUS)
+
+### 9. Requested Scope
+
+- 첨부 `.md` 포맷을 내부적으로(외부 라이브러리 없이) 처리 — ✓ `LANGS.md` + `tokenizeMarkdown`
+- 처리 결과가 실제 사용자 화면(첨부 원문 보기 · 버전 diff)에 도달 — ✓ H13/H14 배선 실측 +
+  PB-0008 실 브라우저 렌더
+- 기존 언어·표면 무회귀 — ✓ A19(확장자 무탈취) · 형제 하네스 3종 전건 PASS · CSS 값 무변경
+
 ## TASK-20260807T1830-gc-guide-postverify — 안내 툴팁 PB-0008 재실측 기록 (비-정책 doc-only)
 
 capture 수정 배포본 `f60d67c5` 에서 8축 전부 재실측해 선행 2 cycle 의 잔여를 닫는다.

@@ -3133,7 +3133,7 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
 .attach-diff-code .code-tok-var     { color: var(--code-tok-var); }
 .attach-diff-code .code-tok-comment { color: var(--code-tok-comment); font-style: italic; }
 .attach-diff-code .code-tok-punct   { color: var(--code-tok-punct); }
-/* CSV/TSV 구분자 — 배경 칩을 쓰지 않는다. 초판은 `rgba(0,0,0,0.06)` 칩을 얹었는데 측정하니
+/* CSV/TSV 구분자 · Markdown 표 파이프(`|`) — 배경 칩을 쓰지 않는다. 초판은 `rgba(0,0,0,0.06)` 칩을 얹었는데 측정하니
    ① 칩 자체가 자기 셀 배경 대비 **1.14:1**(WCAG 1.4.11 은 3:1)로 "1글자는 색만으론 안 보인다"는
    자기 목적을 달성하지 못하고 ② 칩 안 글자 대비를 4.01→3.52 로 **더 떨어뜨리며** ③ 인라인 배경은
    line box(18.6px)가 아니라 content area(≈14px)만 칠해 줄마다 점선 띠가 생기고 ④ 20열 CSV 는

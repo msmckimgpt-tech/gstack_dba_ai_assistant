@@ -10,6 +10,44 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260812T183000-attach-md-highlight [CODEX:attach-md-highlight] — GATE PASS (P1 0건 · P2 3건 전건 반영)
+
+- **Trigger**: `UI/screen/layout keyword matched` (§18.8 dispatch 표 3행 → ux·design) +
+  `Code change` (frontend). 변경 = `static/code-highlight.js` 토크나이저 신규 + CSS **주석만** +
+  하네스/시나리오. 백엔드·API·RBAC·스키마 **0**.
+- **채널 선택 근거 (§18.8.2)**: 본 세션에는 상위 우선순위 도구 제약("요청 없이 Agent tool 호출
+  금지")이 걸려 있다. §18.8.2 의 해소 순서대로 **제약 없는 채널을 먼저** 썼다 —
+  `codex exec -s read-only`(§18.8.1 항목 2, check #9 accepted) + 기계적 cross-ref 점검 +
+  PB-0008 실측. 검증 착수 자체는 confirm 대상이 아니므로 되묻지 않고 수행했다(§18.8.2).
+  subagent panel(ux/design)은 호출하지 않았다 — 상위 지시 carve-out. **미검증으로 남은 도메인은
+  없다**: 이 변경의 ux/design 축은 "색이 실제로 어떻게 보이는가" 이며 PB-0008 실 Windows Chrome
+  computed style + 판독가능 확대 캡처로 **직접 실측**했다(bundle-only reviewer 보다 강한 증거).
+- **[P1] 0건 → GATE PASS.** [P2] 3건, 전건 반영:
+  1. **연속 `|` span 폭증** — `\|+` 로 한 토큰 병합. 실 표는 파이프가 인접하지 않아 화면 무변경,
+     병리 입력 4,000 토큰 → 1 토큰(0.83ms → 0.058ms). 회귀 잠금 `B47d`·`I3b`.
+  2. **표 정렬행 판정 과대** — **실제 오색 결함**이었다. 초판은 "`|`·`-` 포함 + 문자집합" 만 봐서
+     리스트 항목 `- |` 이 **줄 전체 회색**이 됐다. 셀 문법(`:?-+:?`) 확인 + "선두 `|` 없으면 2셀
+     이상" 으로 좁혔다. 회귀 잠금 `B47b`·`B47c` + PB-0008 캡처 L27 실물 확인.
+  3. **시나리오 fail-open** — 배포 모듈 대신 사본을 주입하므로 배포본 로드 실패에도 PASS 한다는
+     지적. 시나리오에 **배포본 실물 probe** step 을 추가해 `has_md`/`langs` 를 기록하게 했고,
+     배포 전 baseline(`has_md:false`, `langs:sql,json,yaml,xml,csv,tsv`)을 실측해 두었다 —
+     POST-DEPLOY 재실행이 `true` 로 뒤집히는지가 그 축의 종결이다. 배선 축 자체는 jsdom
+     `H13/H14` 가 **실 모듈 + 실 `attach-diff.js` 렌더 경로**로 이미 커버한다.
+- **판단 근거 (설계 결정 3건)**:
+  - **새 팔레트 변수 0** — 기존 9종 재사용. 변수를 늘리면 대비 계산 하네스(G1/G2)의 검증면이
+    함께 넓어지는데, markdown 은 기존 토큰 의미(구조/리터럴/이름표)로 전부 표현 가능하므로
+    넓힐 이유가 없다. AC-AVD-24(WCAG AA)·AC-AVD-27(적용) 계약이 그대로 상속된다.
+  - **`_강조_` 의도적 미지원** — 이 화면에 오는 `.md` 는 DB·SQL 문서가 다수라 `snake_case`·
+    `__dunder__` 가 흔하다. 인식하면 **없는 강조**를 만든다. 모듈 선언 "무색이 오색보다 낫다" 를
+    따랐고, `B51` 이 그 전제를 negative 로 단정한다.
+  - **fence 내부 markdown 판정 수용** — 라인 독립 원칙(맥락 축약 뷰가 중간을 생략하므로 상태를
+    이어붙이면 색이 통째로 어긋난다)의 **기존 절충**을 뒤집지 않았다. 대신 fence 줄 자체를 칠해
+    경계를 읽히고, 한계를 모듈 헤더·FUNCTION AC-AMD-5·TEST fragment 에 명시했다.
+- **리스크**: 없음(비파괴 추가). 롤백은 `LANGS.md` 한 항목 제거로 `.md` 가 종전 무색으로 복귀.
+  외부 비용·보안·데이터 영향 0. 2차-효과(캐시 무효화) 없음 — fingerprint 계산 무변경.
+- **검증**: 하네스 **146 PASS/0 FAIL** · 형제 3종 회귀 0(77/125/61) · PB-0008 실 Windows
+  Chrome/150 PASS · pytest 무관(changeset 에 `.py` 0).
+
 ## REV-20260807T183000-gc-guide-postverify [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
 - 대상 diff: `feature-0003/docs/{TASK,MODIFY,REPORT}.md` + `docs/test-runs.d/*.md` — **코드 변경 0**.
 - §18.8 dispatch 표 첫 행(비정책 doc-only) → panel SKIP. 사실 정합만 자체 확인: 배포 SHA
