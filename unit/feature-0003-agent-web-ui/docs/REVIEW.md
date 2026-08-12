@@ -3787,8 +3787,6 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 바닥이라 폭 고정이 아니다" 는 구조적 지적은 옳았고, 글꼴 확대 A/B 로 **실제 열 깨짐을 재현**했다
 (22→24px, `👁` 1135→1133). 추정 수치가 틀렸다고 지적 전체를 기각했으면 그 결함을 놓쳤을 것이다 —
 수치는 검증하고 **기전은 따로 판정**해야 한다.
-
-
 ## REV-20260811T183000-ai-claude-api-exposure-hardening [SKIPPED:subagent-dispatch-disabled]
 
 - Trigger: `auth` · `API/endpoint` · `보안 헤더` 키워드 — §18.8 dispatch 표상 **security + backend +
@@ -3836,3 +3834,38 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
 - **landing/배포**: 무인 cron doc_sync — 로컬 commit 까지, push/merge/deploy=wrapper(v3).
 - 비-정책 doc(사용자향 릴리즈노트 데이터)만 변경 — 정책 doc 패널 불요.
 - Timestamp: 2026-08-12T01:03:01+09:00
+## REV-20260811T184500-attach-diff-bubble-chip [CODEX:frontend-ui] — CONCERN (P1 0 · P2 4, 전건 반영)
+
+- Trigger: UI/button/modal/screen 키워드 매칭 (버튼·모달·화면) → §18.8 표상 `ux, design` 도메인.
+  **채널 선택 근거(§18.8.2)**: 본 위임 세션에 "요청 없이 Agent tool 을 호출하지 말 것" 이라는
+  **상위 우선순위 지시**가 걸려 있어 subagent panel 대신 §18.8.1 의 제약 없는 채널
+  (`codex review --uncommitted`, codex-cli 0.146.0)로 검증했다. §18.8 의 "사전 승인" 은 repo
+  정책이 부여할 수 있는 범위 안에서만 유효하므로 그 지시를 우회 근거로 쓰지 않았다.
+- Scope: `src/static/app/messages.js` · `src/static/css/chat.css` ·
+  `tests/verify_attach_bubble_diff_entry.mjs` (uncommitted diff 전량)
+- Verdict: **P1(GATE) 0건**. P2 4건 — 전건 반영 후 재검증.
+- Findings:
+  - **[P2] 403 공통 토스트 중복** (`messages.js`) — `apiFetch` 가 403 에 이미 토스트를 내고
+    throw 하는데 catch 가 또 낸다. 같은 사유가 두 번 뜨고 두 번째가 첫 번째의 표시 시간을
+    리셋한다. → **반영**: `e.status === 403` 은 재표시하지 않음. 회귀 잠금 C7c·뮤테이션 M9.
+  - **[P2] C8(중복 클릭) 테스트가 vacuous** (`verify_attach_bubble_diff_entry.mjs`) — 느린
+    왕복 promise 를 만들어 두고 `apiFetch` stub 에 연결하지 않았고 클릭도 1회뿐이라, 두 번째
+    in-flight 요청이 통과해도 통과한다(AGENTS.md 의 경계 false-pass 항목). → **반영**: 게이트를
+    stub 에 실제 연결 + 3회 dispatch + `API_CALLS === 1` 단언. **이 수정이 구현 결함을 드러냈다**
+    — `disabled` 는 trusted 클릭만 막아 dispatch 3회에 왕복 3회·모달 3개였다. 상태 플래그
+    재진입 가드(`dataset.diffBusy`) 추가로 해소(C8b·C8d, 뮤테이션 M10).
+  - **[P2] hover 에 하드코딩 `rgba`** (`chat.css`) — feature AGENTS.md '색상 / 토큰 규칙' 은
+    `:root` 토큰만 허용한다. → **반영**: `--primary-soft`/`--primary` 로 교체(형제
+    `.message-action-btn:hover` 와 동일 조합)하고 말풍선별 분기 제거. 회귀 잠금 D7·D7b,
+    뮤테이션 M11. **부수 발견**: 토큰화 후 흰 칩(`--surface`)과의 배경 대비가 **1.09** 임을
+    실측해 `inset` 테두리 신호를 추가(D7c·D7d, M12) — 리뷰 지적을 따르다 더 나은 결함을 찾았다.
+  - **[P2] Windows-browser 검증 기록 부재** (신규 클릭 경로) — `TEST.md`/`test-runs.d` 에 Run
+    이 없어 CHECK#13 hard gate 대상. → **반영**: PB-0008 실 Windows Chrome/150 실측 후
+    `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md` + `TEST.md` Run 기록.
+- Human Approval Needed: no (Minor §12.3 — 비파괴 UI 추가, 신규 권한·엔드포인트·스키마 0)
+
+**교훈 — 리뷰가 테스트를 고치게 하자 구현이 red 가 됐다**: P2 두 번째 지적은 "테스트가
+느슨하다" 는 것이었고, 그것만 고치면 끝날 일로 보였다. 그러나 느슨함을 제거한 테스트는
+구현이 실제로는 중복 왕복을 허용함을 드러냈다 — `disabled` 속성 하나에 방어를 걸었던 것이
+원인이다. **테스트를 통과시키려 테스트를 바꾸는 것과, 테스트를 정직하게 만든 뒤 구현을
+고치는 것의 차이**가 이 항목에 있다.

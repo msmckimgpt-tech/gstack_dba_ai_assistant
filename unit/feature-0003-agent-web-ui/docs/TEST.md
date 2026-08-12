@@ -2466,3 +2466,25 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - `node --check static/release-notes-data.js` PASS · `node tests/verify_release_notes.mjs` **34 pass / 0 fail**(변경 전 baseline 동일 = 회귀 0, 이 env 에서 편집 전·후 두 번 실측). 구조: releases 44→46, `generated`==`releases[0].date`==2026-08-11, `releases[1].date`==2026-08-07, 기존 블록 전량 보존, type/area enum 위반 0, 스키마 외 키 0, 내부용어 누출 0(19 패턴). 렌더러·CSS 무변경이므로 PB-0008 신규 실측 불요(데이터 블록 추가는 기존 그룹 렌더 경로 재사용).
 - **env 후반 소실**: cycle 후반 재확인 시점에 `/tmp/node_modules/jsdom` 이 무인 env 의 `/tmp` 정리로 사라져 `verify_release_notes.mjs` 가 `MODULE_NOT_FOUND` 로 미가동됐다. 정본 HEAD 의 pristine 릴리즈노트로 교체해도 동일 실패가 재현되므로 본 변경과 무관하다(위 34/0 은 편집 전·후 두 번 실측한 실값).
 - 라이브 파리티 실측(배포 게이트 확증): 델타로 바뀐 서빙 static 8종 전부 라이브가 브랜치 blob 과 byte-identical(`?v=` 정규화 후), `/healthz` 200, 컨테이너 이미지 `d56367c8` = HEAD.
+## 20260811T1845-attach-diff-bubble-chip — 말풍선 수정본 첨부 칩의 diff 진입 버튼 (Minor §12.3)
+- **Environment: node18 + jsdom@22** — 신규 `tests/verify_attach_bubble_diff_entry.mjs` **47 PASS / 0 FAIL**
+  (어포던스·이벤트 격리·체인 해석 6경로·구조 계약) · **뮤테이션 12/12 red** · 기존 하네스 전수
+  **50 suite / 1,684 체크 / 0 FAIL**(감소 0) · 실브라우저 기하 `verify_attach_diff_geometry.py`
+  **55 PASS** · 행 액션 정렬 **10 조합 PASS**. 백엔드·권한·스키마 변경 0(기존 엔드포인트 재사용).
+- **Environment: Windows-browser (PB-0008)** — **PASS**. 실 Windows Chrome/150, bind-mount 프리뷰
+  컨테이너(`:18099`, 라이브 이미지 `8e88a60e` + worktree `src`) — **라이브 무접촉·데이터 변경 0**.
+  칩 4개 전부 `⇄` 렌더(순서 `name>size>ver>cmp>dl`, 20×17px) · **실제 마우스 클릭 → `버전 비교 —
+  probe_a.sql` 모달**이 `v1·사용자 ↔ v2·AI 수정` 로 열림(체인은 v1~v7 인데 **그 칩의 쌍**을 정확히
+  preselect — 모달 기본값이면 `6↔7` 이 열려 이 답변과 무관한 diff 가 보인다) · 체인 옵션 7개 전량
+  전달 · 페이지 이동 0 · 모달 1개 · hover 렌더(배경 `#eff6ff`·글자 `#2563eb`·inset 테두리)를 확대
+  2.6× 캡처로 비-hover 형제 3칩과 대조 판독 · hover 레이아웃 이동 Δ0(옆 `↓` 좌표 불변) · pageerror 0.
+- **대비 실측이 설계를 바꿨다**: `--primary-soft` 배경만으로는 흰 칩(`--surface`) 대비가 **1.09** 라
+  hover 가 보이지 않는다(글자색 대비는 4.75 AA) → 형제 `.message-action-btn` 이 border-color 를
+  바꾸는 것과 같은 취지로 `inset` 테두리 추가(레이아웃 이동 0).
+- **한계**: trusted hover 는 `bin/win-browser.py` 에 CDP mouseMoved 서브커맨드가 없어 **같은 선언을
+  주입해 렌더 결과를 판독**(선택자 발동만 우회) · 칩 본체 클릭의 다운로드 유지는 jsdom(B2) + 뮤테이션
+  M2 로 잠금(실브라우저는 OS 다운로드 경로라 자동 판독 미도달) · 히트 영역 20×17 은 WCAG 24×24
+  미만이나 저장소 칩·행 액션 공통의 선재 트레이드오프(원장 등재).
+- **Pass/Fail: PASS**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 기록).
+  POST-DEPLOY 라이브 재확인은 배포 후 Run append. Run 기록 정본:
+  `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md` (§5.3 fragment).

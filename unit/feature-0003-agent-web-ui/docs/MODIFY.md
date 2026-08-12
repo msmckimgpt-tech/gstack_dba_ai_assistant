@@ -3277,7 +3277,6 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `tests/verify_attach_version_action_align.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT}.md`,
   `docs/reviews/20260811T1300Z-ux-design.md`, `docs/test-runs.d/20260811T1200-attach-version-action-align.md`.
 - Timestamp: 2026-08-11T13:00:00+09:00
-
 ## CHG-20260811T1830-ai-claude-api-exposure-hardening — 익명 API 표면 축소 + 엣지 보안 헤더 + 데이터플레인 RO 계정
 
 - Trigger: 사용자 보고 — 외부 AI(codex, root 계정)의 무인증 라이브 API 감사 결과 검증·대응 요청.
@@ -3315,3 +3314,38 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - landing/배포: 무인 cron doc_sync — verify-completion(operational, feature-0003) → 로컬 commit 까지만. push/merge/deploy 는 wrapper 소유(v3).
 - Reason: changed paths are docs + 비-정책 static data only — 코드/스키마/권한 변경 0.
 - Timestamp: 2026-08-12T01:03:01+09:00
+## CHG-20260811T1845-ai-claude-corp-attach-diff-bubble-chip — 말풍선 수정본 첨부 칩의 diff 진입 버튼
+
+- **What**: assistant(및 사용자 재업로드) 말풍선 첨부 칩에 `⇄` 버튼을 얹어, 그 칩이 가리키는
+  버전의 **직전 ↔ 자신** 쌍으로 기존 첨부 버전 비교 모달을 연다.
+- **Why**: 비교 모달은 `(attach-version-diff, 2026-08-06)` 이후 있었지만 진입점이 첨부 사이드
+  패널에만 있었다 — 변경을 만든 화면(말풍선)에서 그 변경으로 가는 길이 없었고, 칩에서 가능한
+  일은 다운로드뿐이었다(사용자 캡처가 지목한 상태).
+- **모달·렌더러는 재사용**: `openAttachmentDiffModal` / `openAttachmentSourceModal` 를
+  `messages.js` 가 import 한다. diff 표를 이 모듈이 다시 그리지 않는다 — 렌더러를 복제하면
+  규칙이 두 벌이 되고, 이 저장소는 그 기전으로 단일열 배경 소실 회귀를 이미 치렀다
+  (`attach-diff-unified-bg`). 하네스 D2 가 복제 0 을 소스에서 잠근다.
+- **preselect 가 이 변경의 실질**: 모달 기본값은 "직전↔최신" 이라, 체인이 v1~v7 인데 v2 칩을
+  누르면 `6↔7`(이 답변과 무관한 쌍)이 열린다. 그래서 `to` = 이 칩의 버전, `from` = 체인에
+  **실제로 남아 있는** 직전 버전으로 지정한다. `thisVer - 1` 을 쓰면 중간 버전이 삭제된
+  체인에서 없는 번호를 지정해 `<select>` 가 조용히 첫 옵션으로 떨어진다(무음 오표시).
+- **재진입 가드가 필요했던 이유(codex P2 → 구현 결함 발견)**: 첫 판은 `btn.disabled` 하나로
+  중복 클릭을 막았고 테스트도 disabled 상태만 단언했다. 리뷰어가 "그 테스트는 중복을 실제로
+  막는지 검증하지 않는다" 고 지목해 왕복을 붙잡고 3회 클릭하도록 고치자 **구현이 red 로
+  뒤집혔다** — `disabled` 는 trusted 클릭만 막고 프로그램 dispatch 는 리스너를 실행한다.
+  상태 플래그(`dataset.diffBusy`)를 추가해 왕복 자체를 1회로 봉인했다.
+- **403 중복 토스트**: `apiFetch` 가 403 에 공통 토스트를 내는데 catch 가 또 냈다 — 같은 사유가
+  두 번 뜨고 두 번째가 첫 번째의 표시 시간을 리셋한다. 403 은 공통 처리에 위임.
+- **hover 는 대비 실측이 설계를 바꿨다**: 색 토큰 규칙(feature AGENTS.md)에 맞춰
+  `--primary-soft` 배경 + `--primary` 글자로 갔더니, assistant 칩 배경이 `--surface`(흰색)라
+  **배경 대비 1.09** 로 hover 가 사실상 안 보였다(실브라우저 토큰 실측). 형제
+  `.message-action-btn:hover` 가 border-color 를 함께 바꾸는 것과 같은 취지로 `inset` 그림자
+  테두리를 더했다 — `inset` 이라 **레이아웃 이동 0**(옆 `↓` 좌표 Δ0 실측).
+- **Verification**: 신규 하네스 47 PASS · 뮤테이션 **12/12 red** · 기존 mjs 전수 50 suite /
+  1,684 체크 0 FAIL · 실브라우저 기하 55 PASS · **PB-0008 실 Windows Chrome/150 전축 PASS**
+  (bind-mount 프리뷰 `:18099`, 라이브 무접촉) · codex 적대 리뷰 P1 0 / P2 4 전건 반영.
+- Files: `src/static/app/messages.js`, `src/static/css/chat.css`,
+  `tests/verify_attach_bubble_diff_entry.mjs`, `docs/{FUNCTION,TASK,MODIFY,REVIEW,REPORT,TEST}.md`,
+  `docs/test-runs.d/20260811T1845-attach-diff-bubble-chip.md`,
+  `docs/evidence/attach-diff-bubble-chip/*.png`.
+- Timestamp: 2026-08-11T18:45:00+09:00
