@@ -85,3 +85,23 @@ source_of_truth: true
   네트워크에 나가는 컴포넌트다.
 - Open Questions: 없음.
 - Human Approval Needed: **배포**는 사람 결정(외부 영향 + Critical). 라이브 e2e 미실시 상태.
+
+
+## REV-20260812-0003 [SKIPPED:pre-deploy-hardening] — 배포 전 자체 점검 (패널 재호출 불요)
+
+- Related Change: CHG-20260812-0003 (catchup 체인 보호)
+- Reason: 라이브 배포 직전 `LEARNINGS.md` 의 반복 결함 목록을 이 변경에 대조하다 발견한
+  **순수 방어 수정**이다. 새 기능·새 경로·새 노출면이 0 이고, 기존 함수의 try 경계만 넓혀
+  예외가 `_ensure_seed_catchup` 로 새지 않게 한다.
+- 발견 내용: `conn.cursor()` 가 try 밖 → 커서 획득 실패가 catchup 으로 전파 → 뒤따르는 6건
+  (gdrive·아바타·첨부 버전·DB allowlist·**audit events**·**audit chain**)이 조용히 skip.
+  `resource-acquire-outside-try` 는 LEARNINGS 에 **4 cycle 반복**으로 기록된 패턴이고,
+  seed-catchup abort 는 별도 사례로 기록돼 있다 — 둘이 겹치는 자리였다.
+- 판단: §18.8 패널 재호출을 하지 않는 근거 — (a) 변경이 `try:` 한 줄 이동 + except 추가이고
+  (b) 방향이 항상 안전한 쪽(예외 봉인)이며 (c) AST 단정 7건으로 회귀를 고정했고 (d) 직전
+  REV-0002 codex 리뷰의 대상 코드와 같은 파일이 아니다. 새 판단이 필요한 설계 변경이 아니다.
+- Risks: 예외를 삼키므로 **테이블 생성 실패가 조용해진다.** 그 대가는 의도적이다 — 실패 시
+  이 feature 의 엔드포인트가 fail-closed 로 막히고(도달면 0), 무관한 서브시스템은 살아남는다.
+  배포 후 검증에서 4개 테이블 실재를 직접 확인해 이 침묵을 보완한다(POST-DEPLOY).
+- Human Approval Needed: 아니오 (배포 자체는 `deploy_scope: included` 사전 승인 + 사용자
+  2026-08-12 명시 지시).

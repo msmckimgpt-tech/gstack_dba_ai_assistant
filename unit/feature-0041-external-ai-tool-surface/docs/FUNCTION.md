@@ -193,6 +193,7 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 | 도구 표면 | `routers/ai_tools.py` | AC-4(`get_task_context` LLM 0) · AC-7(원 질문·답변 적재) |
 | MCP 어댑터 | `src/external_tool_mcp_server.py` | L1 세션 격리(라벨 필수·https 강제·응답 상한) |
 | 무회귀 | — | AC-9(feature-0023 `ask` 축 · 전 스위트 green) |
+| 무회귀(부트스트랩) | `_ensure_oauth_client_schema` 예외 봉인 | catchup 체인 중단 방지 — 신규 테이블 부재는 이 feature 만 fail-closed, 무관 서브시스템 무영향 |
 
 **미구현(TASK §5.1)**: HTTP/SSE MCP 전송 · L4 권한 비대칭 flag · 발견 자료 갱신 ·
 관리 콘솔 '외부 도구 한도' 탭.

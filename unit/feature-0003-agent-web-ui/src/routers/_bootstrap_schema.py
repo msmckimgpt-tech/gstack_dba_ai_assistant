@@ -2379,9 +2379,18 @@ def _ensure_oauth_client_schema(conn) -> None:
 
     fast-path(`_ensure_seed_catchup`)·slow-path(`_ensure_web_tables`) 양쪽 호출 — 기존 배포
     자동 적용. additive·비파괴.
+
+    ⚠ **`conn.cursor()` 까지 try 안에 둔다 (LRN 반복 결함 + catchup abort)**: 본 함수는
+    `_ensure_seed_catchup` (운영 재기동 fast path) 의 **중간**에서 호출되고, 그 함수는 항목마다
+    try 로 감싸지 않는다 — 여기서 예외가 새면 **뒤따르는 catchup 항목이 전부 조용히 skip** 된다
+    (gdrive 토큰 · 아바타 컬럼 · 첨부 버전 · DB allowlist 규칙 · **audit events** · **audit chain**).
+    `docs/LEARNINGS.md` 의 seed-catchup abort 사례와 동일 기전이므로, 커서 획득 실패도 이 함수
+    안에서 흡수한다. 신규 테이블 부재는 이 feature 의 엔드포인트만 실패시키지만(fail-closed),
+    catchup 중단은 무관한 서브시스템을 조용히 망가뜨린다 — 후자가 훨씬 나쁘다.
     """
-    cur = conn.cursor()
+    cur = None
     try:
+        cur = conn.cursor()
         try:
             cur.execute(
                 """
@@ -2480,8 +2489,15 @@ def _ensure_oauth_client_schema(conn) -> None:
             )
         except Exception:
             pass
+    except Exception:
+        # 커서 획득 실패 등 — 여기서 흡수한다(catchup 체인 보호, 위 docstring 참조).
+        pass
     finally:
-        cur.close()
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
 
 
 def _ensure_avatar_icon_schema(conn) -> None:

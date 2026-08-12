@@ -81,6 +81,8 @@ source_of_truth: true
 - [x] TASK-20260812T075301-injection — 3단 판정 + 저장 시점 datamark
 - [x] TASK-20260812T075301-mcp-adapters — stdio(i) + HTTP/SSE(ii) 어댑터
 - [x] TASK-20260812T075301-docs — SECURITY 신규 절·ARCHITECTURE·ROUTEMAP·발견 자료·0023 ANCHOR §1
+- [x] TASK-20260812T090000-catchup-guard — 부트스트랩 catchup 체인 보호(배포 전 발견)
+- [ ] TASK-20260812T090000-deploy — PR 머지 + 라이브 배포 + POST-DEPLOY 검증
 
 ## 4. In Progress
 - 없음

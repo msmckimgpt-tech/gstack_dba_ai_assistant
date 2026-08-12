@@ -44,3 +44,18 @@ source_of_truth: true
 - Rollback Notes: route 8개는 라우터 파일 2개 삭제로 사라진다(자동 등록이라 배선 편집 불필요).
   alembic downgrade 0055 는 DROP TABLE(신규 테이블이라 데이터 손실 없음). MySQL 신규 테이블 4종은
   남겨도 무해(참조 없음).
+
+## CHG-20260812-0003
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **배포 전 발견 — catchup 체인 보호.** `_ensure_oauth_client_schema` 의
+  `conn.cursor()` 가 try 밖에 있어, 커서 획득 실패가 `_ensure_seed_catchup`(운영 재기동
+  fast path) 으로 전파되면 **뒤따르는 catchup 항목 6건이 조용히 skip** 되는 구조였다
+  (gdrive 토큰·아바타 컬럼·첨부 버전·DB allowlist 규칙·**audit events**·**audit chain**).
+  `docs/LEARNINGS.md` 의 seed-catchup abort 사례 + resource-acquire-outside-try 반복 결함과
+  동일 기전.
+- Files: `unit/feature-0003-agent-web-ui/src/routers/_bootstrap_schema.py` ·
+  `unit/feature-0041-external-ai-tool-surface/tests/test_bootstrap_catchup_isolation.py` (신규 7건)
+- Impact: 신규 테이블 부재는 이 feature 엔드포인트만 fail-closed 로 막고(의도), 무관한
+  서브시스템은 건드리지 않는다. 기존 동작 무변경.
+- Rollback Notes: 해당 함수의 try 경계만 되돌리면 되나, 되돌릴 이유가 없다(순수 방어).
