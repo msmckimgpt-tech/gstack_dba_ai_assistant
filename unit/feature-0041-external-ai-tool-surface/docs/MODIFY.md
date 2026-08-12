@@ -79,3 +79,11 @@ source_of_truth: true
   Caddy 가 web-a 를 passive 격리했다. 라이브 확인: Caddy `/livez` 200(`git_commit=d619259d`).
   alembic 0055 는 이미 적용 완료(롤백 불필요 — additive).
 - Rollback Notes: 모듈 위치 이동이라 되돌릴 이유 없음. 되돌리면 같은 기동 실패가 재현된다.
+
+## CHG-20260812-0005
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: **라이브 배포 완료(`a68fbbac`) + POST-DEPLOY 12항 검증 기록** — 문서 전용.
+- Files: `docs/TEST.md` §3 (POST-DEPLOY Run) · `docs/REPORT.md` · `docs/TASK.md`
+- Impact: 코드 변경 0. 배포 사실과 검증 증적을 정본에 고정.
+- Rollback Notes: 해당 없음(기록).
