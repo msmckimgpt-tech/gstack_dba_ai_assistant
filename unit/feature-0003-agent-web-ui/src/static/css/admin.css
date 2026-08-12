@@ -500,7 +500,11 @@
      목록이 길면 자체 max-height + overflow-y:auto 로 흡수(이 박스는 클리핑 조상이 아님). */
   margin-top: 4px;
   width: 100%;
-  max-height: 220px;
+  /* dbpicker-layout-stability(2026-08-12): 220px 는 sticky toolbar(검색+정규식+선택 카운트,
+     실측 112px)가 절반을 먹어 후보 130개 중 **4행**만 보였다 — 연속 선택이 곧 연속 스크롤이라
+     사용자가 보고한 번거로움의 다른 절반이다. 목록이 picker 아래로 내려가 위쪽 공간이
+     확보됐으므로 뷰포트 비례로 넓힌다(작은 화면에서는 50vh 가 상한). */
+  max-height: min(50vh, 420px);
   overflow-y: auto;
   background: #fff;
   border: 1px solid var(--border, rgba(0,0,0,.15));
