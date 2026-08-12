@@ -1361,31 +1361,101 @@
 .admin-sf-diagram-note { font-size: 12.5px; font-style: italic; }
 
 /* TASK-20260624-item11-metadata-glossary-enum (ITEM-11 MVP-1): 메타데이터 거버넌스 탭 */
+
+/* metadata-pane-refresh (20260812T1739): pane 지역 토큰.
+   `--meta-ring` 은 base.css `.field input:focus` 의 halo 와 **같은 값**이다 — 메타데이터 입력만
+   halo 없이 border-color 만 바꾸던 것이 "다른 화면에 비해 촌스럽다" 의 1차 원인(D1)이었다.
+   토큰으로 두면 이 pane 의 모든 입력면(폼 필드·스코프 select·골격 셀)이 한 값을 공유한다.
+   `--meta-hairline` 은 통합 표 안의 행 구분선 — 카드 테두리(`--border`)보다 한 단계 옅다. */
+.admin-pane[data-admin-pane="metadata"],
+.admin-meta-bootstrap {
+  /* ⚠️ 값은 **전부 `:root` 토큰에서 파생**한다 — `docs/AGENTS.md` §색상/토큰 규칙("모든 색상은
+     :root 토큰만 사용")·§10("인라인 하드코딩 색상값 사용" 금지). 리터럴 rgba 를 적으면
+     팔레트가 바뀔 때 이 pane 만 뒤처진다(codex 적대 리뷰 P2 지적 반영).
+     `:root` 자체를 확장하지 않으므로 §10 의 ADR 요건 대상이 아니다(pane 지역 파생 변수). */
+  --meta-ring:       0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
+  --meta-ring-error: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+  --meta-hairline:   var(--border-subtle);
+  --meta-hover-tint: color-mix(in srgb, var(--primary) 4%, transparent);
+  /* 입력·select hover 경계 — `--border` 를 text-muted 쪽으로 살짝 당긴 값(리터럴 금지). */
+  --meta-border-hover: color-mix(in srgb, var(--border) 82%, var(--text-muted));
+  /* 통합 표 열 폭 — sticky 헤더행(`.admin-meta-bs-gh-*`)과 데이터행(`.is-flat .admin-meta-bs-*`)이
+     이 **한 값**을 공유한다. 두 곳에 숫자를 따로 적으면 한쪽만 고쳐 열이 어긋나는 부류의 결함이 생긴다. */
+  --meta-grid-name-w:  clamp(180px, 32%, 340px);
+  --meta-grid-state-w: 5.5rem;
+  /* sticky 열 헤더가 붙을 지점의 보정값 — **스크롤러 `.admin-detail-col` 의 `padding-top` 과
+     같아야 한다**(admin.css `padding: 18px 22px`). sticky 는 스크롤포트의 *padding box* 를
+     기준으로 붙으므로 `top: 0` 이면 헤더가 padding 만큼 아래에 서고, 그 18px 띠로 **직전 행이
+     헤더 위에 반쯤 비쳐 보인다**(PB-0008 실 Chrome 캡처로 적발). 음수 top 으로 border edge 까지
+     끌어올려 띠를 없앤다. 이 결합은 하네스가 admin.css 실제 값과 대조해 잠근다(무언의 drift 방지). */
+  --meta-grid-head-inset: 18px;
+}
+
 .admin-meta-scope-label { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
+/* metadata-pane-refresh: 네이티브 select 화살표를 인라인 SVG chevron 으로 교체(폭·색을 토큰과 정합)
+   + hover/focus 피드백을 폼 필드와 동일 계약으로. 그래프 pane 도 이 클래스를 공유하므로
+   레이아웃 영향은 오른쪽 padding 확보뿐이며(폭은 flex 로 신축) 시각 개선은 두 pane 에 함께 적용된다. */
 .admin-meta-scope-select {
-  padding: 6px 10px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 6px 28px 6px 11px;
   border-radius: var(--r-sm, 6px);
   border: 1px solid var(--border);
-  background: var(--surface);
+  background-color: var(--surface);
+  /* ⚠️ data URI 안에는 CSS 변수를 넣을 수 없다(브라우저가 url() 을 파싱할 때 var() 를 해소하지
+     않는다). mask-image 로 색을 토큰화하려면 배경 fill 을 잃거나 wrapper 요소가 필요해 markup 을
+     넓게 건드려야 한다 → 이 한 곳만 `--text-muted` 의 **값을 복제**하고, 그 복제를 하네스가
+     base.css 토큰과 대조해 잠근다(무언의 drift → 검증 대상 전환). */
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23807d72' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
   color: var(--text);
   font-size: 13px;
+  transition: border-color .14s ease, box-shadow .14s ease;
 }
+.admin-meta-scope-select:hover:not(:disabled) { border-color: var(--meta-border-hover, var(--border)); }
+.admin-meta-scope-select:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--meta-ring, 0 0 0 3px rgba(37, 99, 235, .12));
+}
+.admin-meta-scope-select:disabled { background-color: var(--surface-2, var(--bg)); color: var(--text-muted); cursor: not-allowed; }
 .admin-meta-subtabs {
   display: flex;
-  gap: 6px;
+  gap: 2px;
   margin: 10px 0 14px;
   border-bottom: 1px solid var(--border);
 }
+/* metadata-pane-refresh: 인디케이터를 `border-bottom` 에서 `::after` 인셋 바로 옮긴다.
+   (a) 밑줄이 탭 폭 전체가 아니라 라벨 폭에 맞춰 좁혀져 활성 탭이 더 또렷하고,
+   (b) hover 에 옅은 프리뷰 인디케이터를 줄 수 있어(테두리로는 활성과 구분 불가) 클릭 전
+   어디로 가는지 읽힌다. border-bottom:2px transparent 는 남겨 두면 ::after 와 이중 라인이
+   되므로 제거하고 높이는 padding 으로 잡는다. */
 .admin-meta-subtab {
-  padding: 8px 14px;
-  font-size: 13px;
+  position: relative;
+  padding: 9px 14px 10px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--text-muted);
-  border-bottom: 2px solid transparent;
-  transition: color .13s, border-color .13s;
+  border-radius: var(--r-sm, 6px) var(--r-sm, 6px) 0 0;
+  transition: color .13s ease, background-color .13s ease;
 }
-.admin-meta-subtab:hover { color: var(--text); }
-.admin-meta-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.admin-meta-subtab::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background-color .13s ease;
+}
+.admin-meta-subtab:hover { color: var(--text); background-color: var(--meta-hover-tint, rgba(37, 99, 235, .04)); }
+.admin-meta-subtab:hover::after { background: color-mix(in srgb, var(--primary) 30%, transparent); }
+.admin-meta-subtab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.admin-meta-subtab.is-active { color: var(--primary); background-color: transparent; }
+.admin-meta-subtab.is-active::after { background: var(--primary); }
 /* 2차 보기 strip(secondary nav) — 메인 밑줄 서브탭보다 시각적 하위(필 형태). B8: 서브탭↔보기 strip 여백 분리. */
 .admin-meta-views {
   display: flex;
@@ -1409,6 +1479,7 @@
   transition: color .13s, background .13s;
 }
 .admin-meta-view:hover { color: var(--text); background: var(--surface-2, var(--bg)); }
+.admin-meta-view:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .admin-meta-view.is-active {
   color: var(--primary);
   background: rgba(37, 99, 235, .10);   /* borderless light chip — 밑줄 1차 탭보다 낮은 강조. */
@@ -1447,13 +1518,21 @@
 .admin-meta-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .admin-meta-field-wide { grid-column: 1 / -1; }
 @media (max-width: 720px) { .admin-meta-form-grid { grid-template-columns: 1fr; } }
-.admin-meta-field-label { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); }
+.admin-meta-field-label { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); letter-spacing: .005em; }
 /* B6: 인라인 검증 — 필수 미입력 필드는 red border + 필드 하단 메시지(토스트 병행). */
 .admin-meta-field.is-error .admin-meta-input { border-color: var(--danger, #dc2626); }
-.admin-meta-field.is-error .admin-meta-field-label { color: var(--danger, #dc2626); }
+/* metadata-pane-refresh: 에러 필드에 포커스하면 아래 일반 :focus 규칙의 **파란** halo 가 붙어
+   빨간 테두리와 색이 충돌한다(에러 신호 약화) → danger halo 로 override. */
+.admin-meta-field.is-error .admin-meta-input:focus {
+  border-color: var(--danger, #dc2626);
+  box-shadow: var(--meta-ring-error, 0 0 0 3px rgba(220, 38, 38, .12));
+}
 .admin-meta-field-error { font-size: 11px; color: var(--danger, #dc2626); }
+/* metadata-pane-refresh (D1): base.css `.field input` 계약과 동일선상으로 끌어올린다 —
+   transition + hover 경계 + **3px 포커스 halo**. 종전엔 halo 없이 border-color 만 바꿔,
+   같은 콘솔의 다른 폼(프로필·인증·드로어)보다 반응이 얇게 느껴졌다. */
 .admin-meta-input {
-  padding: 9px 11px;
+  padding: 9px 12px;
   border-radius: var(--r-sm, 6px);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -1461,10 +1540,27 @@
   font-size: 14px;
   width: 100%;
   box-sizing: border-box;
+  transition: border-color .14s ease, box-shadow .14s ease, background-color .14s ease;
 }
-textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inherit; }
-.admin-meta-input:focus { outline: none; border-color: var(--primary); }
-.admin-meta-form-actions { display: flex; gap: 8px; }
+.admin-meta-input::placeholder { color: var(--text-muted); opacity: .85; }
+.admin-meta-input:hover:not(:disabled):not(:focus) { border-color: var(--meta-border-hover, var(--border)); }
+textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inherit; line-height: 1.55; }
+.admin-meta-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--meta-ring, 0 0 0 3px rgba(37, 99, 235, .12));
+}
+.admin-meta-input:disabled { background: var(--surface-2, var(--bg)); color: var(--text-muted); cursor: not-allowed; }
+/* select 로 렌더되는 필드(부트스트랩 대상 DB 등)도 같은 chevron 규약. */
+select.admin-meta-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23807d72' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+}
+.admin-meta-form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
 /* ITEM-09 batch2: 그래프 뷰 CSS(구 L8246~8682)는 graph/graph.css 로 분리(admin.html 전용 link).
    아래 1규칙은 metadata pane AI 자동완성 버튼과 공유라 잔류(census 2026-07-12). */
@@ -1474,21 +1570,28 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-list { margin-top: 0; display: flex; flex-direction: column; gap: 6px; }
 /* B4: 카드 스타일 행 — border-bottom(이중 divider) 제거, 1px full border + radius. surface-2 정의로
    hover/active 가 이제 확실히 구분된다(hover=surface-2, active=primary-soft). */
+/* metadata-pane-refresh: 카드 라운드를 `--r-md` 로 올려 우측 상세 카드·통합 표와 곡률을 맞추고,
+   hover 에 elevation 을 줘 "들어올려지는" 피드백(색만 바뀌던 것보다 조작감이 또렷하다). */
 .admin-meta-row {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 11px 12px;
+  padding: 12px 13px;
   border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
+  border-radius: var(--r-md, 10px);
   background: var(--surface);
 }
 /* 선택(편집) 가능한 행만 클릭 affordance — 검토 큐 행(자체 액션)은 제외(role 미부여). */
-.admin-meta-row[role="button"] { cursor: pointer; transition: background .12s, border-color .12s; }
-.admin-meta-row[role="button"]:hover { background: var(--surface-2, var(--bg)); border-color: #d8d7d1; }
+.admin-meta-row[role="button"] { cursor: pointer; transition: background .14s ease, border-color .14s ease, box-shadow .14s ease; }
+.admin-meta-row[role="button"]:hover { background: var(--surface); border-color: #d8d7d1; box-shadow: var(--shadow-sm); }
 /* L6: 클릭 가능한 카드 행의 키보드 포커스 가시화(role=button + tabindex=0). */
 .admin-meta-row[role="button"]:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
-.admin-meta-row.is-active { background: var(--primary-soft, #eff6ff); border-color: var(--primary); }
+/* 선택 행 — 배경 틴트 + 테두리에 좌측 accent rail 을 더해, 목록이 길어도 현재 선택이 스캔으로 찾힌다. */
+.admin-meta-row.is-active {
+  background: var(--primary-soft, #eff6ff);
+  border-color: var(--primary);
+  box-shadow: inset 3px 0 0 0 var(--primary);
+}
 .admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 /* B5: 제목↔본문 계층 강화 — 제목 15/700, 본문 13/muted. ux2 #1: 밀집 완화 — line-height 로 가독성. */
 .admin-meta-row-title { font-size: 15px; font-weight: 700; color: var(--text); word-break: break-word; line-height: 1.35; }
@@ -1540,7 +1643,7 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
    '일부만 승인 해제' 후 '등록'(bulk-promote)한다. .admin-meta-row 계열과 동일 토큰 사용. */
 .admin-meta-bundle {
   border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
+  border-radius: var(--r-md, 10px);   /* metadata-pane-refresh: 목록 카드·통합 표와 곡률 정합 */
   background: var(--surface);
   margin-bottom: 12px;
   overflow: hidden;
@@ -1567,8 +1670,13 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-bundle-row {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-soft, var(--border));
+  /* metadata-pane-refresh: `--border-soft` 는 정의되지 않은 변수라 항상 `--border` 로 폴백돼 왔다
+     (= 카드 테두리와 같은 굵기의 내부 divider → 행마다 선이 무거웠다). 실제 존재하는
+     hairline 토큰으로 교체해 의도했던 "옅은 내부 구분선" 이 실제로 적용되게 한다. */
+  border-bottom: 1px solid var(--meta-hairline, var(--border-subtle, #f0efea));
+  transition: background-color .12s ease;
 }
+.admin-meta-bundle-row:hover { background-color: var(--meta-hover-tint, rgba(37, 99, 235, .04)); }
 .admin-meta-bundle-row:last-child { border-bottom: none; }
 .admin-meta-bundle-check { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--primary); cursor: pointer; }
 .admin-meta-bundle-check-sp { width: 16px; flex-shrink: 0; }   /* 체크박스 없는 행(비-pending) 정렬 placeholder. */
@@ -1628,7 +1736,9 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   border-radius: 0; background: transparent; padding: 8px 4px;
 }
 .admin-meta-group-rows > .admin-meta-row:last-child { border-bottom: none; }
-.admin-meta-group .admin-meta-row[role="button"]:hover { background: var(--surface, #fff); border-radius: var(--r-sm, 6px); }
+/* metadata-pane-refresh: 그룹 내부 행은 테두리 없는 divider 행이므로 카드 hover elevation 을 상속하면
+   안 된다(떠 있는 그림자 + 테두리 없음 = 어긋난 조합). 틴트만 남긴다. */
+.admin-meta-group .admin-meta-row[role="button"]:hover { background: var(--surface, #fff); border-radius: var(--r-sm, 6px); box-shadow: none; }
 .admin-meta-group .admin-meta-row.is-active { background: var(--primary-soft, rgba(37, 99, 235, .10)); border-radius: var(--r-sm, 6px); }
 /* 폴리시 #4: 그룹 카드 내 timestamp 는 순수 노이즈(테이블당 다수 행 반복) → 숨김. */
 .admin-meta-group .admin-meta-row-meta { display: none; }
@@ -1649,8 +1759,10 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-skel-bar:nth-child(3) { width: 64%; }
 @keyframes admin-meta-skel { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 @media (prefers-reduced-motion: reduce) { .admin-meta-skel-bar { animation: none; } }
+/* metadata-pane-refresh: dashed 테두리는 이 콘솔의 어느 표면에서도 쓰이지 않는 고립된 스타일이라
+   "임시로 붙인 영역" 처럼 읽혔다 → 실선 hairline + 틴트 서피스(다른 보조 패널과 동일 어휘). */
 .admin-meta-rel-panel {
-  border: 1px dashed var(--border); border-radius: var(--r-md, 10px);
+  border: 1px solid var(--border); border-radius: var(--r-md, 10px);
   padding: 10px 12px; margin: 2px 0 8px; background: var(--surface-2, var(--bg));
 }
 .admin-meta-rel-head { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); margin-bottom: 8px; }
@@ -1666,9 +1778,17 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-bootstrap {
   border: 1px solid var(--border);
   border-radius: var(--r-md, 10px);
-  background: var(--bg);
+  /* metadata-pane-refresh (D7): 이 섹션은 흰 `.admin-detail-col` **안**에 들어간다.
+     배경을 canvas 회색(`--bg`)으로 두면 흰 카드 안의 회색 박스 안에 다시 흰 결과 카드가 겹쳐
+     3중 surface 가 된다. 패널 자체를 surface 로 올려 중첩을 2단(패널 → 통합 표)으로 줄인다. */
+  background: var(--surface);
   margin-bottom: 16px;
-  overflow: hidden;
+  /* metadata-pane-refresh: `hidden` → `clip`. 둘 다 둥근 모서리를 클립하지만 `overflow:hidden` 은
+     **scroll container 를 만든다** — 그러면 자손의 `position:sticky` 가 (스크롤되지 않는) 이 박스를
+     기준으로 잡혀 실질 무동작이 된다(신규 grid-head 와 기존 `.admin-meta-bs-pager` 양쪽 해당).
+     `overflow:clip` 은 클리핑만 하고 scroll container 를 만들지 않으므로, sticky 가 의도대로
+     실 스크롤러인 `.admin-detail-col`(overflow-y:auto) 을 기준으로 동작한다. */
+  overflow: clip;
   /* metadata-bootstrap-flex-clip-fix: metadata pane 은 flex column + 고정 height + overflow-y:auto 다.
      이 섹션은 overflow:hidden(둥근 모서리 클립용) 이라 flex 의 auto 최소높이(min-height:auto)가 0 으로
      떨어져, 골격 결과가 많을 때(수십 테이블) flex-shrink 로 90px 까지 압축·내부 클립되고 pane 스크롤도
@@ -1681,26 +1801,38 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   width: 100%;
   text-align: left;
   padding: 12px 14px;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 700;
   color: var(--text);
   background: transparent;
+  transition: color .13s ease, background-color .13s ease;
 }
-.admin-meta-bootstrap-toggle:hover { color: var(--primary); }
+.admin-meta-bootstrap-toggle:hover { color: var(--primary); background-color: var(--meta-hover-tint, rgba(37, 99, 235, .04)); }
+.admin-meta-bootstrap-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 /* scope-single-ds-ui: 공용(common) 스코프 부트스트랩 empty-state — 관리 콘솔 list-detail
    .admin-detail-empty 컨벤션을 재사용한다. 안내문이 한 줄 placeholder 보다 길어 줄간격/여백만
    보강하고, <strong> 은 본문 톤으로 강조한다(패널 내부라 상하 여백은 약간 압축). */
 .admin-meta-bootstrap-empty { padding: 28px 20px; line-height: 1.55; }
 .admin-meta-bootstrap-empty strong { color: var(--text); font-weight: 600; }
 .admin-meta-bootstrap-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
-/* metadata-bs-paging: 결과 위 컨트롤 영역(노트/셀렉터/상태) 세로 여백 압축 — 결과가 더 빨리 시작. */
-.admin-meta-bootstrap-note { font-size: 12px; color: var(--text-muted); margin: 8px 0 10px; line-height: 1.45; }
+/* metadata-bs-paging: 결과 위 컨트롤 영역(노트/셀렉터/상태) 세로 여백 압축 — 결과가 더 빨리 시작.
+   metadata-pane-refresh: 안내문을 좌측 accent rail 로 묶어 "읽고 넘어가는 보조 설명" 으로 격하 —
+   종전엔 본문과 같은 무게의 회색 문단이라 시선이 먼저 걸렸다. */
+.admin-meta-bootstrap-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 10px 0 12px;
+  padding: 8px 0 8px 11px;
+  line-height: 1.5;
+  border-left: 2px solid var(--border);
+}
+.admin-meta-bootstrap-note strong { color: var(--text-2, var(--text-muted)); font-weight: 600; }
 .admin-meta-bootstrap-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 .admin-meta-bootstrap-controls .admin-meta-field { flex: 1 1 200px; min-width: 160px; }
 .admin-meta-bootstrap-fetch { flex-shrink: 0; }
@@ -1717,7 +1849,16 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   gap: 8px;
   margin-bottom: 8px;
 }
-.admin-meta-bs-search { flex: 1 1 auto; min-width: 0; }
+/* metadata-pane-refresh: 검색란은 좌측 목록 `.admin-search` 와 같은 magnifier affordance 를 갖는다
+   (이 pane 안에 검색 입력이 둘인데 한쪽만 아이콘이 있어 격이 달라 보였다). */
+.admin-meta-bs-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 32px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cg fill='none' stroke='%23807d72' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='6' cy='6' r='4.25'/%3E%3Cpath d='M9.2 9.2L12.5 12.5'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: left 10px center;
+}
 .admin-meta-bs-filter-count {
   flex-shrink: 0;
   font-size: 12px;
@@ -1725,7 +1866,7 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.admin-meta-bs-expandall { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
+.admin-meta-bs-expandall { flex-shrink: 0; padding: 6px 13px; font-size: 12px; border-radius: 999px; }
 
 /* metadata-bs-paging: 페이저 — 결과를 META_BS_PAGE_SIZE(=30)개/쪽으로 나눠 세로 스크롤을 고정.
    admin.js 가 1페이지뿐이면 숨기고, 그 외엔 이전/다음 + "페이지 P / T" 라벨을 노출. */
@@ -1739,11 +1880,19 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
      pane(overflow-y:auto) 하단에 sticky 고정해 이전/다음을 항상 도달 가능하게 한다. */
   position: sticky;
   bottom: 0;
-  background: var(--bg);
-  padding: 6px 0;
+  /* metadata-pane-refresh: 패널이 `--surface` 가 되어 종전 `--bg`(canvas 회색)는 색이 어긋난다.
+     반투명 + blur 로 아래 행이 살짝 비쳐 "떠 있는 컨트롤" 로 읽히게(불투명 띠보다 가벼움). */
+  /* 불투명도는 실렌더 캡처로 정했다 — 88% 에서는 뒤 행의 글자가 그대로 읽혀 페이저 라벨과
+     겹쳐 보였다(blur 만으로는 텍스트 대비를 못 지운다). 95% + blur 로 "떠 있는 느낌" 은
+     남기고 가독성을 확보한다. */
+  background: color-mix(in srgb, var(--surface, #fff) 95%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-top: 1px solid var(--meta-hairline, var(--border-subtle, #f0efea));
+  padding: 8px 0 6px;
   z-index: 1;
 }
-.admin-meta-bs-page-btn { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
+.admin-meta-bs-page-btn { flex-shrink: 0; padding: 5px 13px; font-size: 12px; border-radius: 999px; }
 .admin-meta-bs-page-btn:disabled { opacity: 0.45; cursor: default; }
 .admin-meta-bs-page-label {
   font-size: 12px;
@@ -1754,47 +1903,139 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   text-align: center;
 }
 
-/* metadata-bs-collapse: 결과는 접힌 한 줄 행들의 조밀 스택(여백 최소화). gap 도 축소. */
-.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 3px; }
-.admin-meta-bs-table {
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
+/* ── metadata-pane-refresh (20260812T1739, D2): 골격 결과를 **단일 통합 표** 로 ──────────────
+   종전: 행마다 `border:1px + radius` 카드 + 그 안에 다시 테두리 입력 → 박스-안-박스가 `gap:3px`
+   로 30개 쌓여 격자 노이즈가 화면을 지배했다("촌스럽다" 의 시각적 본체).
+   지금: 결과 컨테이너 하나가 카드이고, 각 행은 hairline divider 로만 나뉘는 row-group 이다
+   (Notion database / Supabase table editor / Linear 계열의 표 편집기 패턴).
+
+   ⚠️ DOM 계약은 1개도 바꾸지 않았다 — `.admin-meta-bs-table[data-schema][data-table]` ·
+   `.admin-meta-bs-desc[data-kind]` · `.admin-meta-bs-col[data-column]` · `.is-flat`/`.is-collapsed`
+   가 그대로라 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapApplyDescriptions`)·필터/페이징의
+   전체-DOM 수집 불변식이 정의상 유지된다(입력값 유실 회귀 표면 0).
+
+   열 폭은 토큰(`--meta-grid-*-w`)으로 헤더행과 데이터행이 **한 값을 공유**한다 — 두 곳에 숫자를
+   따로 적으면 한쪽만 고쳐 열이 어긋나는 종류의 결함이 생긴다. */
+.admin-meta-bootstrap-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;              /* 위 grid-head 가 상단 변을 소유 */
+  border-radius: 0 0 var(--r-md, 10px) var(--r-md, 10px);
   overflow: hidden;
 }
+/* 골격 미조회 상태에서 빈 테두리 상자가 남지 않게. */
+.admin-meta-bootstrap-result:empty { display: none; }
+/* 헤더행이 숨겨진 상태(columns 모드)에서는 결과 컨테이너가 상단 변을 되찾는다.
+   가시성 축은 **`hidden` 속성 단일 채널**이다 — `style.display` 문자열 매칭은 직렬화 표기
+   차이(`display: none` vs `display:none`)에 결속돼 잠복 실패한다. metadata.js 도 `hidden` 만 쓴다. */
+.admin-meta-bs-grid-head[hidden] + .admin-meta-bootstrap-result {
+  border-top: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+}
+
+/* sticky 열 헤더 — "이 입력란이 무엇을 받는 칸인지" 를 30행 스크롤 중에도 유지한다.
+   tables 모드 전용(columns 모드는 접힘 헤더라 열 개념이 성립하지 않음 → metadata.js 가 숨김). */
+.admin-meta-bs-grid-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px) var(--r-md, 10px) 0 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  /* 헤드리스 실렌더 계측: `--text-muted`(#807d72) 는 `--surface-2` 위에서 **3.58:1** 로 WCAG AA
+     (4.5:1, 11.5px 는 large-text 예외 없음) 미달이었다 → `--text-2`(#5a5852) 로 승격. */
+  color: var(--text-2, var(--text-muted));
+  position: sticky;
+  top: calc(-1 * var(--meta-grid-head-inset, 18px));
+  z-index: 2;
+}
+/* `[hidden]`(0,2,0)이 위 `display:flex`(0,1,0)를 이겨 columns 모드에서 확실히 사라진다. */
+.admin-meta-bs-grid-head[hidden] { display: none; }
+.admin-meta-bs-gh-name  { flex: 0 0 var(--meta-grid-name-w, clamp(180px, 32%, 340px)); min-width: 0; }
+.admin-meta-bs-gh-desc  { flex: 1 1 auto; min-width: 0; }
+.admin-meta-bs-gh-state { flex: 0 0 var(--meta-grid-state-w, 5.5rem); text-align: right; }
+
+.admin-meta-bs-table {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  border-top: 1px solid var(--meta-hairline, var(--border-subtle, #f0efea));
+  overflow: hidden;
+}
+/* 첫 행은 grid-head(또는 컨테이너)의 상단 변이 경계를 이미 그린다 — 이중선 방지. */
+.admin-meta-bootstrap-result > .admin-meta-bs-table:first-child { border-top: none; }
 /* 접기 헤더 — 클릭 가능한 한 줄 행(caret + 이름 + 입력상태 힌트). button 으로 키보드 토글 가능. */
 .admin-meta-bs-table-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  padding: 6px 10px;  /* metadata-bs-paging: 행 높이 압축(여백 과다 해소) */
+  padding: 8px 12px;  /* metadata-pane-refresh: 통합 표 행 리듬(grid-head/flat row 와 좌우 12px 정합) */
   text-align: left;
   background: transparent;
   border: none;
   cursor: pointer;
   color: var(--text);
+  transition: background-color .12s ease;
 }
 .admin-meta-bs-table-head:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
 .admin-meta-bs-table-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.admin-meta-bs-caret { flex-shrink: 0; width: 12px; font-size: 11px; color: var(--text-muted); }
+/* metadata-pane-refresh: caret 글리프(▸/▾)는 metadata.js 가 교체한다 — 여기서는 폭·색만. */
+.admin-meta-bs-caret { flex-shrink: 0; width: 12px; font-size: 10px; color: var(--text-muted); }
 .admin-meta-bs-table-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* metadata-pane-refresh (D4): 앱 등폭 토큰(D2Coding). 종전 하드코딩 스택은 같은 화면의
+     `.admin-meta-code`·`.admin-meta-bundle-loc` 와 글꼴이 갈려 식별자 렌더가 pane 안에서도 달랐다. */
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   word-break: break-all;
   min-width: 0;
 }
+/* metadata-pane-refresh (D3): raw `●`/`○` 글리프 텍스트 → CSS dot + 시맨틱 색.
+   고정폭 우측 정렬 셀이라 dot+라벨이 한 덩어리로 오른쪽 열에 맞춰진다(행마다 흔들림 0). */
 .admin-meta-bs-hint {
   flex-shrink: 0;
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
   font-size: 11px;
-  color: var(--text-muted);
+  font-weight: 600;
+  /* 헤드리스 실렌더 계측: `--text-muted`(#807d72) 는 흰 행 배경에서 **4.12:1** 로 WCAG AA 미달
+     (11px 본문이라 large-text 예외 없음) → `--text-2`(#5a5852) 로 승격. 종전 힌트도 muted 였으니
+     이 승격은 선재 미달의 해소이기도 하다. */
+  color: var(--text-2, var(--text-muted));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  transition: color .14s ease;
 }
-.admin-meta-bs-hint.is-filled { color: var(--primary); }
+.admin-meta-bs-hint::before {
+  content: "";
+  order: -1;                 /* 텍스트 앞(왼쪽) — 종전 "● 설명 입력됨" 의 읽기 순서 보존 */
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  /* 미입력 = 옅은 중립 dot. 상태는 **라벨 텍스트가 이미 전달**하므로 dot 은 보조 채널이고
+     (WCAG 1.4.1 색-단독 전달 아님), 그래서 대비 하한의 구속 대상이 아니다. */
+  opacity: .42;
+  transition: opacity .14s ease, background-color .14s ease;
+}
+/* 일부 입력됨(columns) / 입력됨(tables) — 진행 신호. */
+.admin-meta-bs-hint.is-filled { color: var(--tag-info-fg, #1d4ed8); }
+.admin-meta-bs-hint.is-filled::before { opacity: 1; background: var(--primary); }
+/* 전량 입력 완료 — 성공 신호(작업이 끝난 테이블을 스캔으로 찾을 수 있게). */
+.admin-meta-bs-hint.is-complete { color: var(--tag-ok-fg, #15803d); }
+.admin-meta-bs-hint.is-complete::before { opacity: 1; background: var(--success, #16a34a); }
 /* metadata-bs-inline-desc: tables 모드 평면 행 — 이름↔상태 사이 빈 중앙 여백을 설명 입력란으로
    채운다(여백 효용화 + 펼침 없이 바로 입력). 접기 헤더(button) 대신 비클릭 div 행이며,
    columns 모드(.is-collapsed)는 기존 접힘 헤더를 그대로 유지한다. */
@@ -1802,12 +2043,18 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 10px;
+  padding: 4px 12px;   /* metadata-pane-refresh: grid-head 와 좌우 12px 정합 */
+  min-height: 40px;    /* 셀 높이 안정 — ghost 입력이 hover 시 fill 을 얻어도 행이 흔들리지 않게 */
+  transition: background-color .12s ease;
 }
+/* 행 전체 hover/focus-within 틴트 — 편집 가능한 표 행이라는 affordance(개별 테두리 없이도 읽힘). */
+.admin-meta-bs-table.is-flat:hover .admin-meta-bs-row { background-color: var(--meta-hover-tint, rgba(37, 99, 235, .04)); }
+.admin-meta-bs-table.is-flat:focus-within .admin-meta-bs-row { background-color: color-mix(in srgb, var(--primary) 6%, transparent); }
 /* metadata-bs-inline-align: 이름 칸을 고정 폭(행 너비 비례, 모든 행 동일 px)으로 둬, 테이블명 길이가
-   제각각이어도 입력란의 시작 x·너비가 행마다 정렬되게 한다. 칸을 넘는 긴 이름은 ellipsis(전체명 title). */
+   제각각이어도 입력란의 시작 x·너비가 행마다 정렬되게 한다. 칸을 넘는 긴 이름은 ellipsis(전체명 title).
+   metadata-pane-refresh: 폭을 토큰화해 sticky grid-head 의 같은 열과 값을 공유한다. */
 .admin-meta-bs-table.is-flat .admin-meta-bs-table-name {
-  flex: 0 0 clamp(180px, 32%, 340px);
+  flex: 0 0 var(--meta-grid-name-w, clamp(180px, 32%, 340px));
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -1818,33 +2065,91 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
    동일-specificity `.admin-meta-bs-desc`(flex:1; min-width:120px)에 밀리지 않도록 `.is-flat` 로
    스코프해 specificity(0,2,0)를 올린다(미스코프 시 min-width:0 이 dead-code 가 됨 — CSS-lens 패널 적발). */
 .admin-meta-bs-table.is-flat .admin-meta-bs-desc-inline { flex: 1 1 auto; min-width: 0; margin-top: 0; }
-/* 상태 힌트도 고정 폭 + 우측 정렬 — 입력란 오른쪽 끝까지 행마다 정렬되고, 입력(○→●) 시 입력란 너비가 흔들리지 않는다. */
-.admin-meta-bs-table.is-flat .admin-meta-bs-hint { flex: 0 0 5.5rem; margin-left: 0; text-align: right; }
-/* 본문 — 접힘(.is-collapsed) 시 숨김(시각 토글, 입력은 DOM 보존). */
-.admin-meta-bs-body { padding: 0 10px 8px; }  /* metadata-bs-paging: 본문 여백 압축 */
+/* 상태 힌트도 고정 폭 + 우측 정렬 — 입력란 오른쪽 끝까지 행마다 정렬되고, 입력 상태가 바뀌어도 입력란 너비가 흔들리지 않는다. */
+.admin-meta-bs-table.is-flat .admin-meta-bs-hint { flex: 0 0 var(--meta-grid-state-w, 5.5rem); margin-left: 0; text-align: right; }
+/* 본문 — 접힘(.is-collapsed) 시 숨김(시각 토글, 입력은 DOM 보존).
+   metadata-pane-refresh: 펼친 본문을 옅게 틴트 + 좌측 들여쓰기 → "이 테이블에 속한 컬럼" 이라는
+   포함 관계가 카드 테두리 없이도 읽힌다(중첩 카드 제거의 대체 신호). */
+.admin-meta-bs-body {
+  padding: 2px 12px 10px 30px;
+  background-color: color-mix(in srgb, var(--surface-2, #f0efea) 45%, transparent);
+  border-top: 1px solid var(--meta-hairline, var(--border-subtle, #f0efea));
+}
 .admin-meta-bs-table.is-collapsed .admin-meta-bs-body { display: none; }
 .admin-meta-bs-col {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 3px 0;  /* metadata-bs-paging: 컬럼 행 여백 압축 */
-  border-top: 1px solid var(--border);
+  min-height: 34px;
+  border-top: 1px solid var(--meta-hairline, var(--border-subtle, #f0efea));
 }
 .admin-meta-bs-col:first-of-type { border-top: none; }
+/* metadata-pane-refresh (D8): 컬럼명이 가변 폭 + break-all 이라 입력란 시작 x 가 행마다 어긋났다
+   (tables 모드는 이미 고정폭 정렬이었는데 columns 모드만 들쭉날쭉). 고정 폭 + ellipsis 로 정렬. */
 .admin-meta-bs-col-name {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  min-width: 120px;
-  word-break: break-all;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  flex: 0 0 clamp(110px, 26%, 210px);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
 }
-.admin-meta-bs-col-type { font-size: 11px; color: var(--text-muted); min-width: 80px; }
-.admin-meta-bs-col-none { font-size: 12px; color: var(--text-muted); }
-.admin-meta-bs-desc { flex: 1; min-width: 120px; }
+.admin-meta-bs-col-type {
+  font-size: 11px;
+  color: var(--text-muted);
+  /* 고정 폭 = 입력란 시작 x 정렬의 조건. 대부분의 타입 표기(`(varchar(255))` 등)를 담되
+     초과분은 ellipsis 이고 전체 값은 metadata.js 가 `title` 로 보존한다. */
+  flex: 0 0 7rem;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.admin-meta-bs-col-none { font-size: 12px; color: var(--text-muted); padding: 6px 0; }
+/* metadata-pane-refresh (D2 핵심): 설명 입력란을 **ghost cell** 로.
+   기본 = 배경·테두리 투명(표 안의 텍스트처럼 읽힘) → row hover 시 옅은 fill(편집 가능 신호)
+   → focus 시 흰 배경 + primary 테두리 + halo. 30행이 각자 테두리를 그리던 격자 노이즈가 사라지고
+   시선이 "지금 편집 중인 한 칸" 에 모인다(Notion/Supabase 표 편집기 계약).
+   placeholder 는 기본 옅게 두고 hover/focus 에서 또렷해진다 — 30행 반복 문구의 시각 무게 경감. */
+.admin-meta-bs-desc {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 9px;
+  font-size: 13.5px;
+  background-color: transparent;
+  border-color: transparent;
+}
+.admin-meta-bs-desc::placeholder { opacity: .42; transition: opacity .14s ease; }
+.admin-meta-bs-desc:hover:not(:focus) { background-color: var(--surface, #fff); border-color: var(--border); }
+.admin-meta-bs-desc:hover::placeholder { opacity: .8; }
+.admin-meta-bs-desc:focus {
+  background-color: var(--surface, #fff);
+  border-color: var(--primary);
+  box-shadow: var(--meta-ring, 0 0 0 3px rgba(37, 99, 235, .12));
+  position: relative;
+  z-index: 1;   /* halo 가 인접 행 divider 위로 올라오게 */
+}
+.admin-meta-bs-desc:focus::placeholder { opacity: .8; }
 .admin-meta-bs-table .admin-meta-bs-desc { margin-top: 0; }
-.admin-meta-bootstrap-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-.admin-meta-bootstrap-saveinfo { font-size: 12px; color: var(--text-muted); }
+/* metadata-pane-refresh (D6): 저장 액션 행 — 버튼 라벨이 2줄로 줄바꿈되던 결함 수정.
+   버튼은 nowrap + 축소 금지, 가변 폭은 안내 문구가 흡수한다. */
+.admin-meta-bootstrap-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--meta-hairline, var(--border-subtle, #f0efea));
+}
+.admin-meta-bootstrap-actions > .btn-primary,
+.admin-meta-bootstrap-actions > .btn-secondary { white-space: nowrap; flex: 0 0 auto; }
+.admin-meta-bootstrap-saveinfo { flex: 1 1 240px; min-width: 0; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); }
 
 /* TASK-20260624-metadata-ai-autocomplete: AI 자동완성 버튼(단건 #metadataSuggestBtn ·
    일괄 #metadataBootstrapAiBtn) — btn-secondary 위에 옅은 primary 강조로 ✨ AI 액션임을

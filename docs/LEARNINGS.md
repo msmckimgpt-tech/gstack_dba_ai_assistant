@@ -683,3 +683,45 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
   필요하면 (a) 별도 worktree 를 `git worktree add --detach <base>` 로 만들거나 (b) `git stash push
   -u -m "<고유 메시지>"` 후 `git stash list` 로 **내 엔트리를 확인해서** `stash@{n}` 을 명시 pop.
   `-q` 는 쓰지 않는다.
+
+## LRN-20260812-sticky-pins-to-padding-box
+
+- **category**: quirk
+- **맥락**: 메타데이터 골격 그리드에 sticky 열 헤더를 `position: sticky; top: 0` 으로 넣었다.
+- **무슨 일이 일어났나**: 헤더가 스크롤러 상단이 아니라 **18px 아래**에 고정되고, 그 띠로 직전
+  행이 헤더 위에 반쯤 비쳐 보였다. 헤드리스·실브라우저 모두 "sticky 는 동작" 이라 판정했다.
+- **근본 원인 2개**:
+  1. **sticky 는 스크롤포트의 *padding box* 를 기준으로 붙는다.** 스크롤러 `.admin-detail-col` 이
+     `padding: 18px 22px` 라 `top: 0` 은 곧 "padding edge" 이고, border edge~padding edge 18px
+     구간은 콘텐츠가 그대로 지나간다. 보정 = `top: calc(-1 * <스크롤러 padding-top>)`.
+  2. **조상의 `overflow: hidden` 은 scroll container 를 만들어 자손 sticky 를 무력화한다.**
+     둥근 모서리 클리핑 목적이면 **`overflow: clip`** 을 쓴다(클립만 하고 scroll container 미생성).
+     같은 서브트리의 기존 `.admin-meta-bs-pager`(sticky bottom)도 이 이유로 무동작이었다.
+- **판정 방법**: sticky 를 **절대 y 좌표와 컨테이너 상단 비교**로 검증하면 위 1번 때문에 정상도
+  실패로 읽힌다. 판정은 **위치 불변성** — 더 스크롤해도 top 이 같은가. 그리고 헤더 바로 위
+  좌표의 `elementFromPoint` 가 행 콘텐츠가 아닌지(비침 여부)를 함께 본다.
+- **규칙**: 스크롤러 padding 에 결합된 보정값은 토큰으로 두고 **하네스가 스크롤러의 실제
+  padding 과 동치인지 검사**한다. 결합을 없앨 수 없으면 검증 대상으로 전환한다.
+
+## LRN-20260812-verify-the-measurement-not-just-the-code
+
+- **category**: mistake
+- **맥락**: 메타데이터 pane 재구성에서 CSS 정적 단언(mjs) + headless 실렌더 계측을 새로 짰다.
+- **무슨 일이 일어났나**: 같은 cycle 에서 **계측 자체가 3번 틀렸다**. (a) `rule()` 헬퍼가 indexOf
+  매칭이라 `.admin-meta-input:focus` 검색이 `.admin-meta-field.is-error .admin-meta-input:focus` 에
+  먼저 걸려 **다른 규칙 본문**을 반환하고, 셀렉터~`{` 사이 정렬용 공백 2칸 때문에 규칙을 못 찾아
+  "선언 없음" 으로 오판했다 → 4건 거짓 FAIL. (b) headless 합성 페이지가 실 클래스 체인
+  (`body.admin-shell` + `.admin-list-detail` 그리드)을 그대로 써서 **두 번째 트랙이 0 으로 붕괴**
+  (행 폭 24px = 좌우 padding 합)했고, 정렬 계측이 실물과 무관해졌다 → 3건 거짓 FAIL. (c) sticky
+  판정을 절대 좌표로 해 정상을 실패로 읽었고, 앞 단계의 `focus()` 가 스크롤을 옮겨 before/after
+  부호까지 뒤집혔다.
+- **왜 위험한가**: (a)(b) 는 거짓 FAIL 이라 시끄럽게 드러났지만, **같은 종류의 결함이 거짓 PASS
+  방향으로 나면 조용하다.** 실제로 (c) 를 절대 좌표 판정으로 그냥 통과시켰다면 sticky 결함을
+  못 잡았다. 또 pytest 7건이 red 였는데 원인은 코드가 아니라 **base staleness**(작업 중 main 12
+  커밋 전진 → 베이스 이미지가 요구하는 심볼이 내 base 에 없음)였다.
+- **규칙**:
+  1. 새 단언은 **뮤테이션으로 판별력을 확인**한다(이번 10/10 KILLED). 통과만 보고 믿지 않는다.
+  2. CSS 규칙 조회는 문자열 검색이 아니라 **파싱 후 정규화 셀렉터 완전일치**로 한다.
+  3. 합성 계측 페이지는 실 레이아웃 컨테이너를 흉내내지 말고 **계측 대상만 남기고 폭을 고정**한다.
+  4. 기하 계측 전에 **포커스·스크롤 상태를 리셋**한다(앞 단계의 부작용이 좌표를 오염시킨다).
+  5. red 를 보면 **pristine main 기준선과 실패 집합을 대조**해 귀책을 먼저 가른다.

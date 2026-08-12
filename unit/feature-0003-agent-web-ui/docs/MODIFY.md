@@ -3454,7 +3454,6 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md`,
   `docs/evidence/pb0008-dbpicker-layout-stability-postdeploy-20260812.png`.
 - Timestamp: 2026-08-12T18:10:00+09:00
-
 ## CHG-20260812T181700-ai-claude-hangul-qwerty-search — 한/영 자판 교차 검색 (Minor §12.3)
 
 - Date: 2026-08-12. REQ-20260812-hangul-qwerty-search. 사용자 요청(첨부 화면 2건: 제품 드롭업
@@ -3504,3 +3503,55 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
 - `static/app.js` `_searchHighlight`: 강조를 후보 집합 교대 패턴으로 — 반대 자판 매칭 결과가
   강조 0 이던 것 해소.
 - 회귀 테스트 3건 신설(원문 1자 게이트 · 감사 escape · 보관 escape). mjs 49 · pytest 41 PASS.
+## CHG-20260812T1739-ai-root-metadata-pane-refresh — 메타데이터 pane 입력 UI 통합 표 재구성 (Major §12.3)
+
+- **Why**: 사용자 보고 — "서비스 내 메타데이터 입력창이 다른 화면에 비해 촌스럽다는 의견을
+  받았습니다. 다른 모범적인 웹사이트를 참조하여 세련된 형태로 재구성해줄 수 있을까요?"
+  조사 결과 다수가 취향이 아니라 **이 pane 만 앱 디자인 시스템의 토큰·계약을 안 쓰는** 것이었다
+  (D1 포커스 halo 부재 · D2 박스-안-박스 격자 · D3 raw `●`/`○` 글리프 · D4 등폭 하드코딩 ·
+  D5 전각 `＋` · D6 저장 버튼 2줄 줄바꿈 · D7 회색 패널 3중 중첩 · D8 컬럼명 가변 폭).
+  사용자 결정(2026-08-12): 시각 방향 = 통합 표 + 프리미티브, 범위 = 메타데이터 pane 전체.
+- **What (표시 계층만 — 백엔드·라우터·권한·스키마·마이그레이션 0)**:
+  - `static/css/search-audit.css` — pane 지역 토큰 4종(+열 폭 2종, sticky inset 1종) 신설,
+    `.admin-meta-input` 을 `base.css .field` 계약과 동일한 halo·hover·transition 으로 승격,
+    골격 결과를 **단일 표 surface + hairline row-group + ghost cell + 상태 dot** 으로 재조립,
+    서브탭 `::after` 인디케이터, 목록 카드 `--r-md` + hover elevation + 선택 좌측 accent rail,
+    검토 큐/그룹/스켈레톤/페이저/rel-panel 정합, `overflow: hidden` → `clip`(sticky 실효화).
+  - `static/admin.html` — sticky 열 헤더 markup(`#metadataBootstrapGridHead`, 결과 컨테이너 바로
+    앞 형제) 신설, 전각 `＋` → ASCII `+` **3곳**.
+  - `static/admin/metadata.js` — 힌트에서 raw 글리프 제거(문구 보존) + `is-complete` 3단 상태,
+    열 헤더 가시성 `hidden` 단일 채널 동기 3지점. **DOM 셀렉터·dataset 계약 무변경**.
+  - 신규 `tests/verify_metadata_pane_refresh.mjs`(80 checks, 뮤테이션 10/10 KILLED) ·
+    `tests/headless/verify_metadata_pane_refresh_render.py`(30 checks, 실렌더 계측).
+- **사전 검증이 잡은 것 2건 (배포 전 수정)**:
+  1. **대비 미달** — headless 실렌더 계산에서 상태 라벨 `--text-muted` 가 흰 행에서 **4.12:1**,
+     열 헤더가 `--surface-2` 에서 **3.58:1** 로 WCAG AA 미달 → `--text-2` 승격(7.11 / 6.18).
+     (상태 라벨 미달은 종전 힌트에도 있던 **선재 결함**의 해소이기도 하다.)
+  2. **sticky 무동작·행 비침** — `top: 0` 은 스크롤포트 *padding box* 기준이라 `.admin-detail-col`
+     의 `padding-top` 18px 띠로 직전 행이 헤더 위에 반쯤 비쳤다(PB-0008 캡처 판독 적발) →
+     `top: calc(-1 * var(--meta-grid-head-inset))`. 결합은 하네스가 대조 검사.
+- **검증**: 신규 80 + headless 30 · 기존 metadata 하네스 5종 **154 checks 전건 green** ·
+  mjs 53 파일 전건 green · pytest **4312 passed / 1 failed**(그 1건은 pristine main 동일 재현
+  = 선재 red) · **PB-0008 실 Chrome 150** 격리 컨테이너 실측 PASS(열 정렬 편차 0.00px/30행,
+  라이브 데이터 변경 0).
+- **base 갱신**: 작업 중 main 이 **12 커밋 전진**(병렬 세션 PR 머지)해 pytest 7건이 base staleness
+  로 red 였다 → `origin/main`(6a419f38) 리베이스 후 0. 착수·검증 직전 `rev-list origin/main..HEAD`
+  확인이 필요하다는 선례 재확인.
+- Files: `src/static/css/search-audit.css`, `src/static/admin.html`,
+  `src/static/admin/metadata.js`, `tests/verify_metadata_pane_refresh.mjs`,
+  `tests/headless/verify_metadata_pane_refresh_render.py`,
+  `docs/{DESIGN,FUNCTION,TASK,TEST,MODIFY,REVIEW,REPORT}.md`,
+  `docs/test-runs.d/20260812T183000-metadata-pane-refresh.md`,
+  `docs/evidence/{pb0008-metadata-pane-refresh,pb0008-metadata-form-refresh,headless-metadata-pane-refresh}-20260812.png`,
+  `../../docs/STATUS.md`.
+- **codex 적대 리뷰 (P1 0 · P2 3) 전건 반영** — ① 고정 폭 + ellipsis 로 잘리는 컬럼명·타입에
+  `title` 회수 경로 부여(+ 타입 칸 5.5→7rem) ② 정적 markup 만 고쳐 남아 있던 **JS 동적 라벨**의
+  전각 `＋` 3곳 교체(empty-state·ENUM '코드 추가') ③ pane 지역 토큰의 리터럴 색을 **전부 `:root`
+  파생**으로 전환(`color-mix(in srgb, var(--primary) 12%, transparent)` 등 — `docs/AGENTS.md`
+  §색상/§10 준수) + hover 경계 `#d4d2ca` → `--meta-border-hover` 파생. 파생이 값을 바꾸지 않았음은
+  **합성 픽셀 대조**로 확인(headless Δ=0 · 실 Chrome Δ=1/255 한 채널). data URI 안 SVG 색만 파생
+  불가(브라우저가 `url()` 안 `var()` 미해소)라 값 복제 + 하네스 대조 검사로 봉인.
+- **재검증**: mjs **90 checks**(뮤테이션 2라운드 누적 **15/15 KILLED**) · headless **32 checks** ·
+  mjs 53 파일 green · pytest 1,390 PASS · 실 Chrome 재확인(columns title·입력란 x 편차 0.00px·
+  페이지 전체 전각 `＋` 0건).
+- Timestamp: 2026-08-12T19:15:00+09:00

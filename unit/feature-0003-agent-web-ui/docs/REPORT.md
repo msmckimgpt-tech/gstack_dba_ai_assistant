@@ -2302,3 +2302,39 @@ security 패널이 `get_object_bytes` 전체 적재(최대 25× 증폭)를 지�
   자리가 비고 나머지 아이콘이 세로 정렬 — **사용자 보고 뒤틀림 해소 확인**.
 - 라이브 데이터는 읽기만. fragment
   `docs/test-runs.d/20260811T1200-attach-version-action-align.md` POST-DEPLOY 절 참조.
+
+### [2026-08-12] metadata-pane-refresh — 메타데이터 pane 입력 UI 통합 표 재구성 (Major §12.3, 표시 계층 전용)
+
+**요청**: "서비스 내 메타데이터 입력창이 다른 화면에 비해 촌스럽다는 의견을 받았습니다. 다른
+모범적인 웹사이트를 참조하여 세련된 형태로 재구성해줄 수 있을까요?"
+사용자 결정: 시각 방향 = **통합 표 + 프리미티브**, 범위 = **메타데이터 pane 전체**.
+
+**진단** — 결함 다수가 취향이 아니라 **이 pane 만 앱 토큰·계약을 안 쓰는** 것이었다:
+포커스 halo 부재(다른 폼은 3px) · 박스-안-박스 격자(행 카드 + 내부 테두리 입력 × 30) ·
+raw `●`/`○` 글리프(`--tag-*` 토큰 미사용) · 등폭 하드코딩(`var(--mono)` 미사용) · 전각 `＋`
+(다른 pane 은 ASCII) · 저장 버튼 2줄 줄바꿈 · 회색 패널 3중 중첩 · 컬럼명 가변 폭.
+
+**변경**: `css/search-audit.css`(주) + `admin.html`(sticky 열 헤더 markup, `＋`→`+`) +
+`admin/metadata.js`(글리프 제거·3단 상태·헤더 가시성 동기). **백엔드·라우터·권한·스키마·
+마이그레이션 0.** 골격 그리드의 **DOM 셀렉터 계약은 1개도 바꾸지 않아** 입력값 유실 회귀 표면을
+정의상 0 으로 뒀다.
+
+**검증**: 신규 `verify_metadata_pane_refresh.mjs` **80 checks**(뮤테이션 10/10 KILLED) +
+`headless/verify_metadata_pane_refresh_render.py` **30 checks**(실렌더) · 기존 metadata 하네스
+5종 154 checks green · mjs 53 파일 전건 green · pytest **4312 passed / 1 failed**(pristine main
+동일 재현 = 선재 red) · **PB-0008 실 Chrome 150** 격리 컨테이너 PASS(125테이블 실데이터, 열 정렬
+편차 **0.00px/30행**, 라이브 데이터 변경 0).
+
+**사전 검증이 배포 전에 잡은 결함 2건**: ① 상태 라벨·열 헤더 WCAG AA 미달(4.12 / 3.58) →
+`--text-2` 승격(7.11 / 6.18). ② sticky `top:0` 이 스크롤러 padding 18px 띠를 남겨 직전 행이 헤더
+위에 비침 → `top: calc(-1 * var(--meta-grid-head-inset))` + 하네스 결합 검사.
+
+**§8 후속 / 남은 리스크**
+- **POST-DEPLOY 라이브 재확인 필요** — 본 Run 은 §13.2.9 격리 컨테이너(베이스 `d619259d`)
+  기준이다. JS/HTML 변경 포함이라 `docker cp` 프리뷰는 원리적으로 불충분(모듈 캐시·스탬프
+  미주입) → 배포 후 baked 자산 재실측이 완료 조건.
+- 반응형(확대 200% · 폭 <720px) 미측정. 통합 표 열 폭이 `clamp()` 라 붕괴 위험은 낮으나 실측 아님.
+- `.admin-meta-scope-select` 는 **그래프 뷰 pane 과 공유** — chevron·halo 개선이 그쪽에도 적용
+  되나(의도된 정합) 그래프 pane 은 실측하지 않았다.
+- `--meta-grid-head-inset` 은 `.admin-detail-col` padding-top 에 결합돼 있다. 하네스가 동치를
+  검사하므로 drift 는 검증에서 잡히지만, 공유 클래스 padding 변경 시 이 토큰도 함께 갱신해야 한다.

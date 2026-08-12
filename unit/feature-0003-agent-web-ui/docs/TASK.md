@@ -9623,7 +9623,6 @@ AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 - "첨부파일의 수정이 나타났다면 해당 수정에 따라 diff 패널이 출력될 수 있도록 버튼을 구성" —
   ✓ (수정본 칩에 `⇄` 신설, 클릭 시 **그 수정의 쌍**(직전↔자신)으로 기존 diff 패널 출력. 실
   브라우저에서 체인 v1~v7 중 칩(v2)의 쌍 `1↔2` 가 열림을 실측)
-
 ## 20260812T1726-dbpicker-layout-stability — '+ 데이터베이스 추가' 목록이 체크할 때마다 밀리는 문제 (Minor §12.3 — feature-0003 `static/admin/products.js`·`static/css/admin.css` + 신규 하네스 2종. 백엔드·라우터·권한·스키마·마이그레이션 0)
 
 **사용자 요청**: "'관리 콘솔 > 제품 > 데이터베이스 추가' 기능을 통해 참조할 DB 목록에서
@@ -9716,3 +9715,139 @@ rmffhqjf = 글로벌 - tmzlem = 스키드 - 등…"
 - **범위 밖(원장)**: AI 내부 도구 검색(`file_ops.py` 대화 검색 툴·`schema.py` 테이블 후보
   탐색)은 사용자 텍스트 박스가 아니라 모델이 만든 질의라 자판 오타가 발생하지 않는다 —
   의도적 미적용.
+
+## 20260812T1739-metadata-pane-refresh — 메타데이터 pane 입력 UI 를 모던 데이터 편집기 패턴으로 재구성 (Major §12.3 — feature-0003 `static/css/search-audit.css`·`static/admin/metadata.js`·`static/admin.html` + 신규 하네스. 백엔드·라우터·권한·스키마·마이그레이션 0)
+
+**사용자 요청**: "서비스 내 메타데이터 입력창이 다른 화면에 비해 촌스럽다는 의견을 받았습니다.
+다른 모범적인 웹사이트를 참조하여 세련된 형태로 재구성해줄 수 있을까요?"
+
+**사용자 결정 (2026-08-12)**: 시각 방향 = **통합 표 + 공용 프리미티브**, 적용 범위 = **메타데이터 pane 전체**.
+
+### 진단 — "다른 화면에 비해" 가 정확한 이유 (토큰 미사용)
+
+문제의 다수는 취향이 아니라 **이 pane 만 앱 디자인 시스템의 토큰·계약을 안 쓰는** 것이다.
+
+| # | 결함 | 근거 | 다른 화면의 계약 |
+|---|---|---|---|
+| D1 | 입력 포커스에 halo 없음 | `search-audit.css` `.admin-meta-input:focus { outline:none; border-color }` | `base.css` `.field input:focus` = `box-shadow: 0 0 0 3px rgba(37,99,235,.12)` |
+| D2 | 박스-안-박스 격자 노이즈 | 행마다 `border:1px + radius` 카드 + 그 안에 테두리 입력, `gap:3px` 로 30개 | 모던 데이터 편집기 = 단일 표 surface + hairline divider + ghost cell |
+| D3 | 상태가 raw 글리프 텍스트 | `_metaBootstrapUpdateHint` 가 `"● 설명 입력됨"` / `"○ 비어있음"` | `--tag-ok-*` / `--tag-neutral-*` 시맨틱 토큰 (같은 파일 `.admin-meta-tag-*` 는 이미 사용) |
+| D4 | 등폭 글꼴 불일치 | `.admin-meta-bs-table-name` / `-col-name` 이 `ui-monospace, SFMono-Regular…` 하드코딩 | `var(--mono)` = D2Coding (같은 파일 `.admin-meta-code` 는 이미 토큰 사용) |
+| D5 | 전각 플러스 `＋` | `admin.html:633,671,683` — **메타데이터 pane 만** | 제품·역할·데이터소스 pane 전부 ASCII `+ 새 …` |
+| D6 | 저장 버튼 텍스트 2줄 줄바꿈 | `.admin-meta-bootstrap-actions` 에 `white-space` 규약 없음 (사용자 스크린샷) | — |
+| D7 | 회색 패널이 흰 상세 카드 안에 겹침 | `.admin-meta-bootstrap { background: var(--bg) }` 가 흰 `.admin-detail-col` 내부 | canvas-in-card 중첩 |
+| D8 | 컬럼명 폭 가변 → 입력란 시작 x 들쭉날쭉 | `.admin-meta-bs-col-name { min-width:120px; word-break:break-all }` | tables 모드는 이미 고정 폭 정렬(`metadata-bs-inline-align`) |
+
+### 설계 원칙 — DOM 계약 보존, 시각만 교체
+
+골격 그리드의 저장·AI 일괄·힌트·필터·페이징은 **DOM 셀렉터에 결속**돼 있다
+(`.admin-meta-bs-table[data-schema][data-table]` · `.admin-meta-bs-desc[data-kind]` ·
+`.admin-meta-bs-col[data-column]` · `.is-flat`/`.is-collapsed` · `.admin-meta-bs-hint`).
+따라서 **셀렉터 계약을 1개도 바꾸지 않고** 통합 표 외형을 CSS 로 달성한다 — 입력값 유실
+회귀(가장 비싼 실패 모드)의 표면을 정의상 0 으로 만든다. JS 변경은 (a) 힌트 글리프 제거 +
+상태 클래스 부여, (b) 신규 grid head 가시성 토글 2곳으로 한정한다.
+
+### 2.1 Implementation Plan
+
+**A. 공용 폼 프리미티브** — `static/css/search-audit.css`
+- `.admin-meta-input` — `transition` + hover border + **`base.css` 와 동일한 3px 포커스 halo** + `:disabled` + placeholder 톤 (D1)
+- `.admin-meta-field.is-error .admin-meta-input:focus` — danger halo (에러 상태에서 파란 링 덮임 방지)
+- `select.admin-meta-input` / `.admin-meta-scope-select` — `appearance:none` + inline SVG chevron + 포커스 halo
+- `.admin-meta-field-label` — `--text-2` 고정 + `letter-spacing`
+
+**B. 골격 그리드 → 통합 표** — `search-audit.css` + `admin.html` + `admin/metadata.js`
+- `.admin-meta-bootstrap` — `background: var(--surface)` (D7) + 그리드 폭 토큰(`--meta-grid-name-w`/`--meta-grid-state-w`) 선언
+- **신규** `.admin-meta-bs-grid-head` (`#metadataBootstrapGridHead`, admin.html) — sticky 열 헤더 `테이블 / 설명 / 상태`, 폭은 위 토큰 공유 → 행과 열 정렬 보장. **tables 모드 전용**(columns 는 접힘 헤더라 열 개념 불일치)
+- `.admin-meta-bootstrap-result` — 단일 카드 surface, `gap: 0`, `:empty` 숨김
+- `.admin-meta-bs-table` — 자체 border/radius/bg 제거 → hairline `border-top` row-group (D2)
+- `.admin-meta-bs-desc` — ghost cell(투명 배경·투명 테두리) → hover 시 `--surface-2` fill, focus 시 테두리 + halo + `z-index`
+- `.admin-meta-bs-hint` — 고정폭 우측 정렬 셀 + `::before` 상태 dot, `is-filled`/`is-complete` 시맨틱 색 (D3)
+- `.admin-meta-bs-col-name` — 고정 폭 + ellipsis 로 컬럼 입력란 시작 x 정렬 (D8)
+- `_metaBootstrapUpdateHint` — `"● "`/`"○ "` 글리프 제거(텍스트 `비어있음`/`설명 입력됨` 유지 = 기존 하네스 계약), `is-complete` 토글 추가
+- `_metaBootstrapRenderResult` — grid head 가시성·라벨을 filterBar 3 지점과 동기
+
+**C. pane 전체 시각 정합** — `search-audit.css`
+- `.admin-meta-subtab` — `::after` 인셋 인디케이터 + hover 프리뷰 + `focus-visible`
+- `.admin-meta-filter-bar` / `.admin-meta-views` — 컨트롤 행 리듬 재조정
+- `.admin-meta-row` — `--r-md` + hover `shadow-sm` + 선택 시 좌측 accent rail (`inset 3px 0 0 var(--primary)`)
+- `.admin-meta-bundle` / `.admin-meta-group` / `.admin-meta-review-detail` / 스켈레톤 / 페이저 — 라운드·여백·sticky 반투명 정합
+
+**D. 마감** — `admin.html`
+- `＋` → `+` 3곳 (D5) · `.admin-meta-bootstrap-actions` nowrap + info 줄 flex (D6)
+
+**E. 검증**
+- 기존 하네스 회귀 0: `verify_metadata_bs_inline_desc.mjs`(CSS 정렬 규칙 + 힌트 텍스트 계약) · `verify_metadata_bs_paging.mjs` · `verify_metadata_bs_prefill.mjs` · `verify_metadata_list_detail.mjs` · `verify_metadata_scope_single_ds.mjs`
+- **신규** `verify_metadata_pane_refresh.mjs` — D1~D8 각 축을 CSS/JS/HTML 정적 단언 + jsdom 힌트 행위로 잠금 (재발 방지)
+- **PB-0008 실 Windows 브라우저** (`visual_verification_scope: always`, verify check #13 hard gate)
+
+### 완료 판정 기준 (AC)
+
+- `AC-20260812T1739-metadata-pane-refresh-1` — `.admin-meta-input:focus` 가 `base.css .field input:focus` 와 동일한 3px halo 를 갖는다
+- `AC-…-2` — 골격 결과가 단일 표 surface + hairline row + sticky 열 헤더로 렌더되고, 행마다의 독립 카드 테두리가 없다
+- `AC-…-3` — 설명 입력란이 기본 ghost 이고 hover/focus 에서만 테두리·halo 가 드러난다
+- `AC-…-4` — 상태 표시가 raw `●`/`○` 글리프 없이 CSS dot + `--tag-*` 시맨틱 색으로 렌더된다
+- `AC-…-5` — 골격 저장·AI 일괄·힌트·필터·페이징의 **DOM 셀렉터가 변경 전과 동일**하고 입력값 수집이 회귀 0 이다
+- `AC-…-6` — 등폭 식별자가 `var(--mono)` 를 쓰고 `＋` 전각 플러스가 pane 에서 사라진다
+- `AC-…-7` — 저장 액션 행의 버튼 텍스트가 어떤 폭에서도 줄바꿈되지 않는다
+- `AC-…-8` — 기존 metadata 하네스 5종 + 전수 스위트 FAIL 증가 0, PB-0008 실 브라우저 Run 기록
+
+### 위험도 — Major (§12.3)
+
+인증·인가·개인정보·파괴적 데이터 변경 0, 마이그레이션 0. 프론트 표시 계층 3파일이며
+**2개 이상 파일 + 사용자 표면 전면 변경**이라 Minor 로 두지 않는다. 최대 실패 모드는
+"골격 입력값이 저장에서 누락" 이고, 위 *DOM 계약 보존* 설계로 표면을 없앤 뒤 신규 하네스가
+셀렉터 동일성을 정적으로 잠근다.
+
+<!-- PLAN-APPROVED by mckim on 2026-08-12 -->
+> 승인 근거: 사용자가 본 cycle 진입 시 AskUserQuestion 으로 시각 방향("통합 표 + 프리미티브")과
+> 적용 범위("메타데이터 pane 전체")를 명시 선택했다. 위 계획은 그 두 선택의 구현 분해이며 범위를
+> 확대하지 않는다.
+
+### 진행 (완료)
+
+- [x] 진단 — D1~D8 을 코드 근거(파일·라인)로 열거, "취향" 이 아닌 **토큰·계약 미사용**으로 환원
+- [x] A. 공용 폼 프리미티브 — `base.css .field` 와 동일 halo(`--meta-ring`) · hover · transition ·
+      danger halo · select chevron — AC-…-1
+- [x] B. 골격 그리드 → 통합 표 — 단일 카드 surface · hairline row-group · ghost cell ·
+      상태 dot 3단 · sticky 열 헤더(토큰 공유 열 폭) — AC-…-2·3·4
+- [x] B'. **DOM 셀렉터·dataset 계약 무변경** 확인(12항 정적 잠금) — AC-…-5
+- [x] C. pane 전역 정합 — 서브탭 `::after` 인디케이터 · 목록 카드 곡률·elevation·accent rail ·
+      검토 큐/그룹/스켈레톤/페이저/rel-panel
+- [x] D. 마감 — 전각 `＋`→ASCII 3곳 · `var(--mono)` 토큰 · 저장 버튼 nowrap — AC-…-6·7
+- [x] E1. 신규 하네스 `verify_metadata_pane_refresh.mjs` **80 checks** · 뮤테이션 **10/10 KILLED**
+- [x] E2. 신규 `headless/verify_metadata_pane_refresh_render.py` **30 checks**(실렌더 — 정적 단언이
+      원리적으로 못 보는 cascade·픽셀 정렬·대비·줄바꿈·sticky)
+- [x] E3. 기존 metadata 하네스 5종 **154 checks green** · mjs 53 파일 전건 green
+- [x] E4. pytest **4312 passed / 1 failed** — 그 1건은 pristine main 동일 재현(선재 red, 귀책 아님)
+- [x] E5. **PB-0008 실 Chrome 150** — §13.2.9 격리 컨테이너, 125테이블 실데이터, 열 정렬 편차
+      0.00px/30행, 라이브 데이터 변경 0 — AC-…-8
+- [x] E6. 사전 검증 적발 2건 수정 — WCAG 대비 미달(4.12/3.58 → 7.11/6.18) · sticky padding 띠
+- [x] F. base 갱신 — 작업 중 main 12커밋 전진 → `origin/main` 리베이스 후 pytest red 0
+- [x] G. docs — DESIGN §3.1·§3.2 계약 신설 · FUNCTION · TEST(케이스 10 + Run) · MODIFY · REVIEW ·
+      REPORT · test-runs.d fragment · STATUS
+
+### 7. Completion Checklist
+
+- [x] 모든 REQ의 AC가 구현되었다 (AC-…-1 ~ -8)
+- [x] 자동 테스트가 통과한다 (신규 110 + 기존 154 green · mjs 53 파일 green · pytest 선재 red 외 0)
+- [x] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 `docs/test-runs.d/` fragment 에
+      `Environment: Windows-browser` Run 을 기록했다 (§15.4.1 · PB-0008)
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다 (`CHG-20260812T1739-…`)
+- [x] REVIEW.md에 판단 근거가 기록되었다 (`REV-20260812T1739-…`)
+- [x] REPORT.md에 최종 상태가 반영되었다 (§8 후속·리스크 포함)
+- [x] TEST.md에 테스트 결과가 기록되었다 (케이스 10건 + Run)
+- [x] BLOCKED 항목이 없다
+- [x] STATUS.md에 기능 상태가 갱신되었다
+- [x] LEARNINGS.md에 발견된 교훈이 기록되었다 (계측 오진 3종 + sticky padding box)
+- [x] ANCHOR.md §1~§3 (기존 feature — 신규 앵커 불요)
+- [ ] `bin/verify-completion.sh --pre-commit feature-0003-agent-web-ui` PASS (§16.3)
+- [ ] Git 커밋·원격 동기화 (§16.3)
+- [ ] **POST-DEPLOY 라이브 재실측** — 배포 후 baked 자산에서 PB-0008 재확인 → fragment Run 2
+
+### 9. Requested Scope
+
+- "메타데이터 입력창이 다른 화면에 비해 촌스럽다 → 모범적인 웹사이트를 참조해 세련된 형태로
+  재구성" — ✓ (통합 표 편집기 패턴으로 재조립. "다른 화면에 비해" 를 **토큰·계약 미사용 8건**으로
+  환원해 각각 정본 계약에 붙였고, 실 Chrome 에서 열 정렬 편차 0.00px·halo 동치·상태 dot 전이를
+  실측. 사용자가 지정한 범위 = pane 전체)

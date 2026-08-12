@@ -1281,7 +1281,7 @@ function renderMetadataList() {
     } else {
       const creatable = !_METADATA_NO_CREATE[sub] && can(_METADATA_SUBTAB_CREATE_PERM[sub] || "metadata.table.create");
       listEl.appendChild(_metaEmptyState(_METADATA_EMPTY_MSG[sub] || "등록된 항목이 없습니다.",
-        creatable ? "＋ 새 항목으로 시작하세요." : ""));
+        creatable ? "+ 새 항목으로 시작하세요." : ""));
     }
     return;
   }
@@ -1308,12 +1308,12 @@ function _metaStartEdit(it) {
   _metaSyncListActive();
 }
 
-// ux2 #3: ENUM 컬럼 그룹의 '＋ 코드 추가' 버튼. source 는 그룹({schema,table,column}) 또는 항목({schema_name,…}).
+// ux2 #3: ENUM 컬럼 그룹의 '+ 코드 추가' 버튼. source 는 그룹({schema,table,column}) 또는 항목({schema_name,…}).
 function _metaMakeEnumAddCodeBtn(source) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn-secondary admin-meta-enum-add";
-  btn.textContent = "＋ 코드 추가";
+  btn.textContent = "+ 코드 추가";
   btn.title = "이 컬럼에 새 코드↔라벨 추가";
   btn.addEventListener("click", (e) => {
     e.stopPropagation();   // 그룹 head/행 클릭 전파 차단.
@@ -2419,6 +2419,9 @@ function _metaBootstrapRenderResult() {
   const saveActions = document.getElementById("metadataBootstrapSaveActions");
   const filterBar = document.getElementById("metadataBootstrapFilterBar");
   const pager = document.getElementById("metadataBootstrapPager");  // metadata-bs-paging
+  // metadata-pane-refresh: 통합 표 sticky 열 헤더. 가시성은 `hidden` 속성 단일 채널
+  // (CSS `[hidden]` 규칙 + 인접 형제 규칙이 결과 컨테이너의 상단 변 소유를 넘겨받는다).
+  const gridHead = document.getElementById("metadataBootstrapGridHead");
   if (!wrap) return;
   wrap.replaceChildren();
   const bs = adminState.metadata.bootstrap;
@@ -2430,6 +2433,7 @@ function _metaBootstrapRenderResult() {
     if (saveActions) saveActions.style.display = "none";
     if (filterBar) filterBar.style.display = "none";
     if (pager) pager.style.display = "none";
+    if (gridHead) gridHead.hidden = true;
     const l = document.createElement("div");
     l.className = "admin-list-empty";
     l.textContent = "로딩 중…";
@@ -2440,6 +2444,7 @@ function _metaBootstrapRenderResult() {
     if (saveActions) saveActions.style.display = "none";
     if (filterBar) filterBar.style.display = "none";
     if (pager) pager.style.display = "none";
+    if (gridHead) gridHead.hidden = true;
     return;
   }
   for (const t of bs.tables) {
@@ -2520,9 +2525,15 @@ function _metaBootstrapRenderResult() {
         const cn = document.createElement("span");
         cn.className = "admin-meta-bs-col-name";
         cn.textContent = colName;
+        // metadata-pane-refresh: 이름 칸이 고정 폭(입력란 시작 x 정렬 조건)이라 긴 컬럼명은
+        // ellipsis 로 잘린다 → 전체 이름을 hover 로 회수 가능하게(tables 모드 테이블명과 동일 규약).
+        cn.title = colName;
         const dt = document.createElement("span");
         dt.className = "admin-meta-bs-col-type";
         dt.textContent = c.data_type ? `(${c.data_type})` : "";
+        // metadata-pane-refresh: 타입 칸이 고정 폭(입력란 시작 x 정렬을 위해)이라 긴 타입
+        // (`decimal(18,4)` 등)은 ellipsis 로 잘린다 → 전체 값을 hover 로 보존.
+        if (c.data_type) dt.title = String(c.data_type);
         const inp = document.createElement("input");
         inp.type = "text";
         inp.className = "admin-meta-input admin-meta-bs-desc";
@@ -2545,6 +2556,10 @@ function _metaBootstrapRenderResult() {
     wrap.appendChild(block);
     _metaBootstrapUpdateHint(block, mode);
   }
+  // metadata-pane-refresh: 통합 표 열 헤더는 **tables 모드 전용**이다 — columns 모드의 행은
+  // 접힘 헤더(caret + 이름 + 상태)라 "설명" 열이 존재하지 않고, 입력란은 펼친 본문 안에 있다.
+  // 없는 열의 라벨을 띄우면 헤더가 행과 어긋난 거짓 정보가 된다.
+  if (gridHead) gridHead.hidden = mode !== "tables";
   // 검색/펼치기 바 초기화(매 fetch 마다 검색어·펼침상태·페이지 리셋).
   if (filterBar) {
     filterBar.style.display = "";
@@ -2585,14 +2600,20 @@ function _metaBootstrapSyncExpandAllLabel() {
 }
 
 // 입력상태 힌트 갱신 — tables: 설명 유무, columns: 채운/전체 컬럼 수.
+// metadata-pane-refresh(20260812T1739): raw `●`/`○` 글리프를 텍스트에서 제거했다 — 상태 dot 은
+// CSS(`.admin-meta-bs-hint::before`)가 그리고 색은 `--tag-*` 시맨틱 토큰에서 나온다. 라벨 문구
+// (`비어있음` / `설명 입력됨` / `컬럼 N/M`)는 그대로다(사용자 문구·기존 하네스 계약 보존).
+// `is-complete` 는 "전량 입력 완료" 3단 상태 — 미입력 / 진행 / 완료를 색으로 스캔하게 한다.
 function _metaBootstrapUpdateHint(block, mode) {
   const hint = block && block.querySelector(".admin-meta-bs-hint");
   if (!hint) return;
   if (mode === "tables") {
     const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
     const has = !!(inp && (inp.value || "").trim());
-    hint.textContent = has ? "● 설명 입력됨" : "○ 비어있음";
+    hint.textContent = has ? "설명 입력됨" : "비어있음";
     hint.classList.toggle("is-filled", has);
+    // tables 는 테이블당 설명 1줄뿐이라 "입력됨" 이 곧 완료다.
+    hint.classList.toggle("is-complete", has);
   } else {
     const total = block.querySelectorAll(".admin-meta-bs-col").length;
     let filled = 0;
@@ -2601,6 +2622,7 @@ function _metaBootstrapUpdateHint(block, mode) {
     });
     hint.textContent = total ? `컬럼 ${filled}/${total}` : "컬럼 없음";
     hint.classList.toggle("is-filled", filled > 0);
+    hint.classList.toggle("is-complete", total > 0 && filled === total);
   }
 }
 
