@@ -113,3 +113,11 @@ source_of_truth: true
 - Files: `docs/TASK.md` §5.1 · `docs/FUNCTION.md` §14
 - Impact: 기능 공백 아님 — 상한은 `tool_ledger.DEFAULTS` 로 이미 집행 중이고 탭은 조절 UI다.
 - Rollback Notes: 해당 없음(범위 결정 기록).
+
+## CHG-20260812-0008
+- Date: 2026-08-12
+- Related Requirement: REQ-20260812-external-ai-tool-surface
+- Summary: 2차 라이브 배포(`e1372f32`) + POST-DEPLOY 8항 검증 기록. 문서 전용.
+- Files: `docs/TEST.md` §3 (3차 Run) · `docs/REPORT.md` §3.1 · `docs/TASK.md`
+- Impact: 코드 0.
+- Rollback Notes: 해당 없음(기록).

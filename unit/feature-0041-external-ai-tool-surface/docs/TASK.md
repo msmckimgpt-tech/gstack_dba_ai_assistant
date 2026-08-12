@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress (P0 + 잔여 3건 완료 · 콘솔 탭·인증 e2e 만 남음)
+- State: in-progress (P0 + 잔여 3건 배포 완료 e1372f32 · 콘솔 탭·인증 e2e 만 남음)
 - Owner: AI (계획) / Human (승인)
 - Priority: high
 - Last Updated: 2026-08-12
@@ -87,7 +87,9 @@ source_of_truth: true
 - [x] TASK-20260812T190000-discovery — 매니페스트 tool_surface + 엔드포인트 카탈로그 + OpenAPI 7 path + 가이드 부록 B
 - [x] TASK-20260812T190000-l4-asymmetry — 권한 비대칭 flag(자카드, 표시 전용) + open_task 배선
 - [x] TASK-20260812T190000-http-transport — HTTP/SSE MCP 서버(토큰 무보관·헤더 전달)
+- [x] TASK-20260812T190000-deploy-3 — 2차 배포(e1372f32) + POST-DEPLOY 8항 PASS
 - [ ] TASK-20260812T190000-console-tab — 콘솔 '외부 도구 한도' 탭 (사용자 결정: 별도 cycle)
+- [ ] TASK-20260812T190000-http-bringup — HTTP/SSE 전송 프로세스 라이브 기동 (포트·TLS 프록시 운영 결정 선행)
 
 ## 4. In Progress
 - 없음
