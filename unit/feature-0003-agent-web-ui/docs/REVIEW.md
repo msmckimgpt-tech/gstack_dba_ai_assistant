@@ -3977,7 +3977,6 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
   + 드롭다운 420px/가시 10행 — **이월했던 캐시 축을 우회 없이 종결**. 엣지 `no upstreams
   available` 0건. 서버 정본 무변경(pending 미적용).
 - Human Approval Needed: no
-
 ## REV-20260812T181700-ai-claude-hangul-qwerty-search — 한/영 자판 교차 검색
 
 **판단 1 — primitive 를 왜 `shared/` 에 두는가.** 처음엔 feature-0003 의 `src/modules/` 에
@@ -4064,3 +4063,98 @@ escape 를 걸지 않았고**, 그 동작을 이번 cycle 에서 바꾸지 않�
 
 - 신규 mjs **49 PASS** · 신규 pytest **41 PASS** · feature-0003 프론트 mjs **54 suite 전건 PASS**
 - 전 pytest 스위트 = main 기준선과 동일 실패 집합(`test_oauth_exhaustion_gate` = `chattr` 부재 1건)
+## REV-20260812T184500-ai-root-metadata-pane-refresh — 메타데이터 pane 입력 UI 통합 표 재구성 (Major §12.3)
+
+- **Trigger**: 사용자 요청(표현 계층 재구성). frontend 3파일 + 신규 하네스 2종. 백엔드·라우터·
+  권한·엔드포인트·스키마·마이그레이션 **0**.
+- **판단의 중심 — "촌스럽다" 를 취향이 아니라 계약 위반으로 환원했다**: 색·간격을 눈으로 고르는
+  대신, 이 pane 이 **앱이 이미 가진 토큰·계약을 안 쓰는 지점 8개(D1~D8)를 코드 근거로 열거**하고
+  각각을 정본 계약에 붙였다. 그래서 "다른 화면에 비해" 라는 사용자 표현이 정확했다 —
+  `base.css .field input:focus` 는 3px halo 인데 `.admin-meta-input:focus` 는 `border-color`
+  단독이었고, `--tag-*` 시맨틱 토큰이 같은 파일에 있는데 상태는 raw `●`/`○` 텍스트였고,
+  `var(--mono)` 가 있는데 식별자는 하드코딩 스택이었고, 다른 pane 은 모두 ASCII `+` 인데 여기만
+  전각 `＋` 였다. 이 프레이밍이 없으면 재구성은 다음 사람이 또 뒤집는 취향 변경이 된다.
+- **가장 비싼 실패 모드를 구조로 차단**: 골격 그리드의 저장·AI 일괄·힌트·필터·페이징은 전부
+  **DOM 순회**다(`.admin-meta-bs-desc[data-kind]` 등). "입력한 설명이 저장에서 조용히 누락" 이
+  이 화면의 최악 결함이므로, **셀렉터·dataset 계약을 1개도 바꾸지 않고 시각만 CSS 로 교체**하는
+  설계를 택했다. 그 결과 회귀 표면이 정의상 0 이고, 하네스 `[C1-계약]` 12항이 그 동일성을 정적으로
+  잠근다. (대안 = 그리드를 `<table>` 로 재작성 → 시각 자유도는 크지만 수집 로직 전면 재작성 +
+  페이징의 "전체 DOM 수집" 불변식 재검증이 필요해 비용·위험이 이득을 넘는다. 불채택.)
+- **검증 층을 목적별로 나눴다**: 정적 CSS 단언(mjs)은 cascade 승부·픽셀 정렬·대비·줄바꿈을
+  **원리적으로** 볼 수 없다(jsdom 은 layout 미계산). 그래서 headless Chromium 실렌더 계측을
+  PRE-DEPLOY 보조 게이트로 두고, 완료 게이트는 PB-0008 실 Windows Chrome 으로 유지했다.
+  **이 분리가 실제로 결함 2건을 배포 전에 잡았다** — 대비 미달 2건(headless 계산)과 sticky
+  padding 띠(PB-0008 캡처 판독). 정적 단언만으로는 둘 다 통과했을 것이다.
+- **테스트 자체의 오진을 3번 정정했다 (기록 가치)**:
+  1. `rule()` 헬퍼가 indexOf 매칭이라 `.admin-meta-input:focus` 검색이
+     `.admin-meta-field.is-error .admin-meta-input:focus` 에 먼저 걸려 **다른 규칙 본문**을 반환했고,
+     셀렉터~`{` 사이 공백 2칸에 결속돼 규칙을 못 찾고 "없음" 으로 오판했다 → 규칙 파서 + 정규화
+     셀렉터 완전일치로 교체.
+  2. headless 합성 페이지가 `body.admin-shell` + `.admin-list-detail` 그리드를 그대로 써서
+     **두 번째 트랙이 0 으로 붕괴**(행 폭 24px = padding 합)했고, 정렬 계측이 무의미했다 →
+     상세 컬럼 고정 폭으로 변수 제거.
+  3. sticky 판정을 **절대 y 를 컨테이너 상단과 비교**해 실패로 읽었다. sticky 는 padding box
+     기준이라 `top:0` 이어도 border+padding 아래에 선다 → 판정을 **위치 불변성**(추가 스크롤 후
+     동일)으로 바꿨다. 앞선 focus 가 스크롤을 옮겨 before/after 부호가 뒤집힌 오진도 함께 정정.
+  교훈: **초록/빨강을 그대로 믿기 전에 그 단언이 무엇을 재는지 확인한다.** 세 번 모두 "코드가
+  틀렸다" 가 아니라 "계측이 틀렸다" 였고, 그중 하나(3번)는 실제 결함을 가릴 수도 있었다.
+- **대비 승격의 이중 성격**: 상태 라벨 `--text-muted`(4.12:1) 는 **종전 힌트에도 있던 선재 미달**
+  이다. 재구성 대상이라 같은 cycle 에서 고쳤고, 이를 "본 변경이 만든 결함 수정" 으로 오기하지 않는다.
+- **sticky inset 의 결합을 숨기지 않았다**: `--meta-grid-head-inset: 18px` 는 스크롤러
+  `.admin-detail-col` 의 `padding-top` 에 결합돼 있다. 결합 자체를 없앨 수 없으므로(공유 클래스의
+  padding 을 이 pane 때문에 바꿀 수 없다) **하네스가 두 값의 동치를 검사**하게 해서 무언의 drift 를
+  검증 대상으로 전환했다. 값이 벌어지면 띠가 다시 생기거나 헤더가 카드 테두리를 넘는다.
+- **위험·한계 (정직 표기)**:
+  - POST-DEPLOY 라이브 재확인 **미완** — 본 Run 은 §13.2.9 격리 컨테이너(베이스 이미지
+    `d619259d`) 기준이다. JS/HTML 변경을 포함하므로 `docker cp` 프리뷰는 원리적으로 불충분
+    (모듈 캐시·스탬프 미주입)이며, 배포 후 baked 자산 재실측이 완료 조건이다.
+  - 반응형(확대 200% · 폭 <720px)은 미측정. 통합 표 열 폭이 `clamp()` 라 붕괴 위험은 낮으나 실측 아님.
+  - `.admin-meta-scope-select` 는 **그래프 뷰 pane 과 공유**한다. chevron·halo 개선이 그쪽에도
+    적용되며(의도된 정합), 레이아웃 영향은 우측 padding 확보뿐이나 그래프 pane 은 실측하지 않았다.
+- **§18.8 dispatch**: UI/레이아웃·표시 계층 단독 변경(ux/design 축)이며 보안·계약·스키마 표면 0.
+  대비·정렬·상태 판독성은 **실렌더 정량 계측**(WCAG 계산 · 픽셀 편차 · elementFromPoint)으로
+  대체 검증했고, 그 계측이 결함 2건을 실제로 적발했다 → 패널 skip.
+- Human Approval Needed: no — 사용자가 진입 시 시각 방향("통합 표 + 프리미티브")과 범위
+  ("메타데이터 pane 전체")를 명시 선택했고(TASK.md PLAN-APPROVED 2026-08-12), 구현은 그 두
+  선택의 분해로 범위를 확대하지 않았다. §12 승인 항목(인증·인가·파괴적 데이터·개인정보·외부
+  비용·롤백 어려운 마이그레이션) 해당 0.
+
+## REV-20260812T191500-ai-root-metadata-pane-refresh-codex [CODEX:metadata-pane-refresh] — CONCERN (P1 0 · P2 3, 전건 반영)
+
+- Related TASK: feature-0003-agent-web-ui
+- Source: codex review (codex-cli 0.146.0 `--uncommitted`)
+- Trigger: UI/layout/form keyword matched (§18.8 표 "UI, form, layout / 폼, 화면, 레이아웃" 행 →
+  ux·design). AgentTool subagent 패널 대신 §18.8.1 이 check #9 accepted 로 인정하는 codex-review
+  경로를 썼다 — 본 세션은 subagent 호출이 허용되지 않았고, ux/design 축(대비·정렬·상태 판독)은
+  이미 실렌더 정량 계측(WCAG 계산·픽셀 편차·`elementFromPoint`)으로 검증돼 있어 독립 코드 리뷰가
+  더 보완적이었다.
+- Timestamp: 2026-08-12T19:15:00+09:00
+- Verdict: CONCERN (P1 0건 / P2 3건) → **3건 전건 반영 후 재검증**
+- P2 지적과 처리:
+  1. **잘린 컬럼 식별자의 회수 경로 부재** — 열 정렬을 위해 `.admin-meta-bs-col-name` 을 고정 폭 +
+     ellipsis 로 바꿨는데 `metadata.js` 는 `textContent` 만 넣어, 긴 컬럼명이 판독 불가가 된다.
+     정렬을 얻고 식별자를 잃으면 순손실이라는 지적이 정확하다. → 컬럼명·타입 모두 `title` 부여
+     (tables 모드 테이블명이 이미 쓰던 규약과 통일) + 타입 칸 폭 5.5rem → 7rem. 하네스
+     `[C4-D8]` 4항으로 "잘림을 만드는 CSS 와 회수 경로가 같은 요소에 짝지어야 한다" 를 잠갔다.
+  2. **동적 라벨의 전각 `＋` 잔존** — 정적 markup 3곳만 고쳤고 `metadata.js` 가 생성하는
+     empty-state 문구와 ENUM '코드 추가' 버튼에 글리프가 남아 있었다. 사용자에게는 같은 pane 에서
+     여전히 보인다. → JS 동적 문자열 3곳 교체 + 하네스가 **JS 소스까지 스캔**(`[B6-D5]`).
+     정적 markup 만 검사하던 초판 단언이 이 누락을 통과시켰다 — 검사 표면이 좁았던 것.
+  3. **pane 지역 토큰의 리터럴 색** — `--meta-ring: … rgba(37,99,235,.12)` 처럼 값을 복제했는데,
+     `docs/AGENTS.md` §색상/토큰 규칙("모든 색상은 :root 토큰만 사용")·§10("인라인 하드코딩 색상값
+     사용" 금지) 위반이고 팔레트 변경 시 이 pane 만 뒤처진다. → 전부 `:root` 파생으로 전환
+     (`color-mix(in srgb, var(--primary) 12%, transparent)` 등) + hover 경계 리터럴 `#d4d2ca` 도
+     `--meta-border-hover` 파생으로 교체. `:root` 자체를 확장하지 않아 §10 의 ADR 요건 비대상이다.
+- **파생 전환이 값을 바꾸지 않았음을 실측으로 확인** (문자열 비교로는 불가 — Chrome 은
+  `color-mix()` 를 `oklab()`/`color(srgb …)` 로 직렬화한다): 흰 배경 합성 픽셀 대조로
+  headless Δ=0(`[228,236,253]` 양쪽), 실 Windows Chrome Δ=1(base `[228,236,253]` vs meta
+  `[228,236,252]` — 1/255 한 채널, srgb `color()` 경로의 반올림이며 지각 불가). 등가 판정을
+  **정적 문자열 → 합성 픽셀**로 옮긴 것이 이 cycle 의 계측 개선이다.
+- **data URI 안 SVG 색은 파생 불가** — 브라우저가 `url()` 안에서 `var()` 를 해소하지 않고,
+  `mask-image` 로 토큰화하면 입력의 배경 fill 을 잃거나 wrapper 요소가 필요해 markup 을 넓게
+  건드린다. 이 한 곳만 `--text-muted` 값을 복제하고, 하네스가 base.css 토큰과 **대조 검사**해
+  무언의 drift 를 검증 대상으로 전환했다(sticky inset 과 동일 기법).
+- 재검증: mjs **90 checks**(뮤테이션 **15/15 KILLED** — 2라운드 누적) · headless **32 checks** ·
+  mjs 53 파일 전건 green · pytest 1,390 PASS(feature-0003+0023) · 실 Chrome 재확인
+  (columns 모드 title 3종·입력란 시작 x 편차 0.00px·페이지 전체 전각 `＋` 0건·halo 파생 해소).
+- Human Approval Needed: no (P1 0 · 표시 계층 · 승인 항목 §12 해당 0)

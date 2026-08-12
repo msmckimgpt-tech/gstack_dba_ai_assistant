@@ -96,6 +96,62 @@ source_of_truth: true
 
 `.admin-bulk-actions:not(:empty)` 일 때만 sticky/shadow 적용.
 
+### 3.1 입력면(form primitive) 계약 — 콘솔 전역 (metadata-pane-refresh, 2026-08-12)
+
+**불변식: 콘솔의 모든 입력면은 `base.css` 의 `.field input:focus` 와 동일한 포커스 halo 를
+쓴다.** 카테고리별 입력 클래스(`.admin-meta-input` 등)가 자체 포커스 처리를 하더라도 halo 값은
+공유한다 — 값이 갈리면 "같은 콘솔인데 화면마다 반응이 다르다" 로 읽히고, 실제로 그 괴리가
+사용자 보고("메타데이터 입력창이 다른 화면에 비해 촌스럽다", 2026-08-12)의 1차 원인이었다.
+
+| 토큰 | 값 | 용도 |
+|---|---|---|
+| `--meta-ring` | `0 0 0 3px rgba(37, 99, 235, .12)` | 입력 포커스 halo — **`base.css .field input:focus` 와 동일 값** |
+| `--meta-ring-error` | `0 0 0 3px rgba(220, 38, 38, .12)` | 에러 필드 포커스 halo (파란 halo 가 빨간 테두리를 덮는 것 방지) |
+| `--meta-hairline` | `var(--border-subtle)` | 통합 표 내부 행 divider (카드 테두리보다 한 단계 옅음) |
+| `--meta-hover-tint` | `color-mix(in srgb, var(--primary) 4%, transparent)` | 편집 가능 행/탭 hover 틴트 |
+
+선언 위치: `.admin-pane[data-admin-pane="metadata"], .admin-meta-bootstrap` (pane 지역 — 전역
+누출 없음). 다른 카테고리 pane 이 같은 계약을 채택할 때 셀렉터를 확장한다.
+
+- 입력면은 **`border` 폭을 항상 유지**하고 색만 바꾼다 — hover/focus 에서 폭이 변하면 행이 흔들린다.
+- `select` 는 `appearance:none` + 인라인 SVG chevron 을 쓴다(네이티브 화살표는 토큰 색과 어긋난다).
+- 회귀 잠금: `tests/verify_metadata_pane_refresh.mjs` `[A1-D1]` 이 두 halo 값의 **동치**를 검사한다.
+
+### 3.2 대량 인라인 편집 그리드 계약 (bulk inline-edit grid)
+
+행마다 카드 테두리를 두고 그 안에 테두리 입력을 넣는 구조는 30행 규모에서 격자 노이즈가 화면을
+지배한다. 대량 인라인 편집면은 **단일 표 surface** 로 조립한다 (Notion database / Supabase table
+editor 계열).
+
+```
+.admin-meta-bs-grid-head        ← sticky 열 헤더 (결과 컨테이너 바로 앞 형제, [hidden] 로 토글)
+.admin-meta-bootstrap-result    ← 단일 카드 surface (border 1px, gap 0, 상단 변은 헤더 소유)
+  └ .admin-meta-bs-table        ← row-group: border none + border-top hairline (첫 행 제외)
+      └ .admin-meta-bs-row      ← min-height 고정 + hover/focus-within 틴트
+          ├ ...-table-name      ← flex 0 0 var(--meta-grid-name-w) + ellipsis
+          ├ ...-bs-desc         ← ghost cell (투명 배경·투명 테두리 → hover fill → focus halo+z-index)
+          └ ...-bs-hint         ← flex 0 0 var(--meta-grid-state-w) + 우측 정렬 + ::before 상태 dot
+```
+
+**불변식 5가지:**
+
+1. **열 폭은 토큰 단일 출처** — 헤더행과 데이터행이 `--meta-grid-name-w` / `--meta-grid-state-w`
+   를 공유한다. 두 곳에 숫자를 적으면 한쪽만 고쳐 열이 어긋난다.
+2. **DOM 셀렉터 계약 불변** — 저장·AI 일괄·힌트·필터·페이징이 전부 DOM 순회 기반이므로
+   (`.admin-meta-bs-table[data-schema][data-table]` · `.admin-meta-bs-desc[data-kind]` ·
+   `.admin-meta-bs-col[data-column]` · `.is-flat`/`.is-collapsed`) **시각 변경은 CSS 로만** 하고
+   셀렉터·dataset 을 건드리지 않는다. 이 계약이 "입력값이 저장에서 조용히 누락" 이라는 최악의
+   실패 모드를 정의상 차단한다.
+3. **상태는 색 단독 전달 금지** — 라벨 텍스트가 상태를 말하고 dot(`::before`)은 보조 채널이다
+   (WCAG 1.4.1). 라벨 색은 실 배경에서 **4.5:1 이상**을 만족해야 한다(`--text-muted` 는 흰 행에서
+   4.12:1 로 미달 — `--text-2` 를 쓴다).
+4. **sticky 는 `overflow: clip` 을 전제한다** — 조상에 `overflow: hidden` 이 있으면 그 조상이
+   scroll container 가 되어 자손 sticky 가 무력화된다. 둥근 모서리 클리핑이 필요하면 `clip` 을 쓴다.
+5. **sticky `top` 은 스크롤러 padding 을 보정한다** — sticky 는 스크롤포트의 *padding box* 기준으로
+   붙으므로 `top: 0` 이면 `.admin-detail-col` 의 `padding-top`(18px) 만큼 아래에 서고 그 띠로 직전
+   행이 헤더 위에 비친다. `top: calc(-1 * var(--meta-grid-head-inset))` 로 border edge 까지 끌어
+   올리며, **`--meta-grid-head-inset` == 스크롤러 padding-top** 결합을 하네스가 검사한다.
+
 ## 4. 자료구조 contract
 
 ```js

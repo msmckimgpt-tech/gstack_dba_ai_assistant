@@ -630,7 +630,7 @@
           </div>
           <div class="admin-pane-actions">
             <!-- list-detail(metadata-list-detail): '+ 새 항목' = 우측 상세에 생성 폼. 생성 비활성(samples)·검토 큐에선 admin.js 가 숨긴다. 카운트는 목록 head 로 이동. -->
-            <button type="button" id="metadataNewBtn" class="btn-primary admin-meta-new-btn">＋ 새 항목</button>
+            <button type="button" id="metadataNewBtn" class="btn-primary admin-meta-new-btn">+ 새 항목</button>
             <button type="button" id="metadataRefreshBtn" class="btn-secondary">새로고침</button>
           </div>
         </header>
@@ -668,7 +668,7 @@
             <div class="admin-list-toolbar">
               <input type="search" id="metadataSearch" class="admin-search" placeholder="항목 검색…" autocomplete="off" aria-label="메타데이터 항목 검색" />
               <!-- 스키마 골격 가져오기(테이블/컬럼 일괄) — 우측 상세 모드로 진입. admin.js 가 테이블/컬럼+kb.ingest.manual 일 때만 노출. -->
-              <button type="button" class="btn-secondary admin-meta-bs-open" id="metadataBootstrapOpenBtn" style="display:none">＋ 스키마 골격 가져오기</button>
+              <button type="button" class="btn-secondary admin-meta-bs-open" id="metadataBootstrapOpenBtn" style="display:none">+ 스키마 골격 가져오기</button>
             </div>
             <div class="admin-list-head">
               <span class="admin-list-count" id="metadataCount" aria-live="polite"></span>
@@ -680,7 +680,7 @@
           <div class="admin-detail-col" id="metadataDetail">
             <!-- 미선택 안내 — 다른 카테고리 list-detail empty-state(.admin-detail-empty) 컨벤션 + 거버넌스 안내문 통합. -->
             <div class="admin-detail-empty" id="metadataDetailEmpty">
-              <p>왼쪽 목록에서 항목을 선택해 수정하거나, 우측 상단 <strong>＋ 새 항목</strong>으로 추가하세요.</p>
+              <p>왼쪽 목록에서 항목을 선택해 수정하거나, 우측 상단 <strong>+ 새 항목</strong>으로 추가하세요.</p>
               <p class="admin-meta-detail-note">용어사전(도메인 용어↔정의)·ENUM 코드사전(컬럼 코드↔라벨)·테이블/컬럼 설명·샘플쿼리를 <strong>제품별</strong>로 관리합니다. 등록 내용은 그 제품의 질문/스키마 매칭 시 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다(제품이 여러 DB에 걸쳐 있어도 동일하게 적용). <strong>공용</strong> 스코프는 모든 제품에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
             </div>
         <!-- 부트스트랩 패널 — 우측 상세 모드(metadata-list-detail). '스키마 골격 가져오기' 버튼으로 진입.
@@ -712,6 +712,17 @@
               <input type="text" class="admin-meta-input admin-meta-bs-search" id="metadataBootstrapSearch" placeholder="테이블명 검색…" aria-label="테이블명 검색" autocomplete="off" />
               <span class="admin-meta-bs-filter-count" id="metadataBootstrapFilterCount" aria-live="polite"></span>
               <button type="button" class="btn-secondary admin-meta-bs-expandall" id="metadataBootstrapExpandAll">모두 펼치기</button>
+            </div>
+            <!-- metadata-pane-refresh(20260812T1739): 통합 표 sticky 열 헤더 — 30행을 스크롤해도
+                 "지금 무엇을 입력하는 칸인지" 가 유지된다. 열 폭은 데이터행과 CSS 토큰
+                 (--meta-grid-name-w / --meta-grid-state-w)을 공유해 정렬이 한 값에서 나온다.
+                 결과 컨테이너 바로 앞 형제여야 한다(CSS 인접 형제 규칙이 상단 변 소유를 넘겨받음).
+                 가시성 축은 `hidden` 속성 단일 채널(admin/metadata.js) — tables 모드 전용이며
+                 columns 모드는 접힘 헤더 구조라 열 개념이 성립하지 않아 숨긴다. -->
+            <div class="admin-meta-bs-grid-head" id="metadataBootstrapGridHead" hidden>
+              <span class="admin-meta-bs-gh-name" id="metadataBootstrapGridHeadName">테이블</span>
+              <span class="admin-meta-bs-gh-desc">설명</span>
+              <span class="admin-meta-bs-gh-state">상태</span>
             </div>
             <div class="admin-meta-bootstrap-result" id="metadataBootstrapResult"></div>
             <!-- metadata-bs-paging: 대규모 스키마 세로 스크롤 고정 — 결과를 페이지(30개/쪽)로 분할.

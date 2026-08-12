@@ -2542,3 +2542,52 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 
 > UI 변경을 포함하는 후속 작업(콘솔 '외부 도구 한도' 탭)은 **PB-0008 실 브라우저 검증 대상**이며,
 > 그래서 이번 출하에서 의도적으로 분리했다(사용자 결정 2026-08-12).
+
+## 20260812T1739-metadata-pane-refresh — 메타데이터 pane 입력 UI 통합 표 재구성 (web/UI, Major §12.3)
+
+### 1. 케이스 정의
+
+| ID | 케이스 | 기법 | 정본 |
+|---|---|---|---|
+| `TEST-20260812T1739-metadata-pane-refresh-1` | 공용 입력 프리미티브가 `base.css .field input:focus` 와 **동일 halo 값**을 쓴다 (D1) | 정적 CSS 대조(토큰 값 동치) + 실브라우저 computed | mjs `[A1-D1]` · PB-0008 §3 |
+| `-2` | 골격 결과가 단일 표 surface + hairline row 이고 **행별 카드 테두리가 0** 이다 (D2) | 정적 CSS + 실브라우저 30행 전수 computed border | mjs `[B1/B2-D2]` · headless `[1]` · PB-0008 §1 |
+| `-3` | 설명 입력란이 기본 ghost 이고 hover/focus 에서만 드러나며 **레이아웃 이동 0** 이다 | 실브라우저 트러스티드 클릭 전/후 computed | headless `[2]` · PB-0008 §3 |
+| `-4` | 상태가 raw `●`/`○` 없이 CSS dot + `--tag-*` 시맨틱 색 **3단**(미입력/진행/완료)으로 렌더된다 (D3) | jsdom 행위 + 실브라우저 `::before` computed + 실입력 전이 | mjs `[C3/D1~D5]` · headless `[4]` · PB-0008 §4 |
+| `-5` | 저장·AI일괄·힌트·필터·페이징의 **DOM 셀렉터 계약이 변경 전과 동일**하다 (입력값 유실 0) | 정적 계약 12항 + jsdom 수집 셀렉터 | mjs `[C1-계약]` · `[D6]` |
+| `-6` | 등폭 식별자가 `var(--mono)` 를 쓰고 전각 `＋` 가 pane 에서 사라진다 (D4·D5) | 정적 + 실브라우저 computed font-family / 페이지 텍스트 스캔 | mjs `[A2/B6]` · PB-0008 §5 |
+| `-7` | 저장 액션 버튼 라벨이 줄바꿈·잘림 없이 단일 행이다 (D6) | 실브라우저 높이·`white-space`·`scrollWidth` | headless `[6]` · PB-0008 §6 |
+| `-8` | sticky 열 헤더가 **카드 border edge 에 도킹**해 직전 행이 위로 비치지 않고, 추가 스크롤에도 불변이다 | 실브라우저 scrollTop 다지점 + `elementFromPoint` | headless `[7]` · PB-0008 §7 |
+| `-9` | 상태 라벨·열 헤더가 실 배경에서 **WCAG AA 4.5:1** 이상이다 | headless 실렌더 대비 계산 | headless `[5]` |
+| `-10` | columns 서브뷰에서 열 헤더가 숨고 결과 컨테이너가 상단 변을 되찾는다 | 실브라우저 서브탭 전환 후 computed | PB-0008 §8 |
+
+### 2. 회귀 잠금 (신규 하네스)
+
+- `tests/verify_metadata_pane_refresh.mjs` — **90 checks**. D1~D8 각 축을 CSS/JS/HTML 정적 단언 +
+  jsdom 상태 전이로 잠근다. **뮤테이션 10종 전건 KILLED**(halo 제거 · 행 카드 테두리 복원 ·
+  ghost 해제 · 열 폭 토큰→리터럴 · `overflow:clip`→`hidden` · raw 글리프 복원 · `is-complete`
+  제거 · 전각 플러스 복귀 · `hidden`→`style.display` 채널 전환 · mono 토큰→하드코딩).
+  `--meta-grid-head-inset` == `.admin-detail-col` padding-top **결합 검사** + data-URI SVG stroke 색 ==
+  `--text-muted` **결합 검사** 포함(파생 불가 지점의 무언의 drift 를 검증 대상으로 전환).
+  codex 적대 리뷰 반영으로 추가된 축: 잘린 식별자의 `title` 회수 경로(`[C4-D8]`) · **JS 동적 라벨**의
+  전각 플러스 스캔(`[B6-D5]`) · pane 토큰의 리터럴 색 0(`[A1-token]`). 2라운드 누적 **뮤테이션 15/15 KILLED**.
+- `tests/headless/verify_metadata_pane_refresh_render.py` — **32 checks**(headless Chromium 실렌더).
+  정적 단언이 원리적으로 못 보는 축 — cascade 승부 · **픽셀 열 정렬** · 대비 계산 · 줄바꿈 발생 ·
+  sticky 실동작 · **halo 합성 픽셀 등가**(토큰 파생 후 값 불변 검증 — Chrome 이 `color-mix()` 를
+  `oklab()`/`color(srgb …)` 로 직렬화하므로 문자열 비교로는 원리적으로 불가). PB-0008 을 대체하지
+  않는 PRE-DEPLOY 보조 게이트다.
+
+### 3. Run 기록
+
+- **Environment: Windows-browser (PB-0008)** — **PASS** (실 Chrome 150.0.7871.128, §13.2.9 격리
+  컨테이너 `web-metaui-verify`, 라이브 web replica 무접촉). 제품 `건즈 글로벌 QA` × `gunzgame`
+  골격 **125테이블/846컬럼** 실데이터. 열 정렬 편차 **0.00px**(30행) · 행 카드 테두리 0 ·
+  트러스티드 클릭 halo = base.css 동일 값 · 상태 전이 `비어있음`→`설명 입력됨`(dot 회색→녹색) ·
+  버튼 단일 행 · sticky 도킹 `272 == border edge` 불변. **라이브 데이터 변경 0**(저장 미클릭,
+  목록 `1건` 불변). **사전 검증이 결함 1건 적발**(sticky `top:0` → 스크롤러 padding 18px 띠로
+  직전 행 비침) → `top: calc(-1 * var(--meta-grid-head-inset))` 수정 후 재실측 PASS.
+- Run 기록 정본: `docs/test-runs.d/20260812T183000-metadata-pane-refresh.md` (§5.3 fragment).
+- **POST-DEPLOY 이월**: 머지·배포 후 라이브 baked 자산에서 위 축을 재실측해 Run 2 append
+  (JS/HTML 변경 포함 cycle 이라 `docker cp` 프리뷰가 원리적으로 불충분).
+- **전수 회귀**: mjs 하네스 **53 파일 전건 green**(종료코드) · pytest **4312 passed / 1 failed**
+  — 그 1건(`test_oauth_exhaustion_gate.py::test_write_failure_after_successful_post_cannot_kill_slot_selection`)은
+  **pristine main 에서 동일 재현**되는 선재 red 로, 본 변경(프론트 표시 계층 3파일) 귀책 아님.

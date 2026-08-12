@@ -3584,3 +3584,55 @@ border box 안쪽으로 그려지지 않으므로 글자 영역 마크색 픽셀
   파라미터 수가 정확히 일치한다.
 - AC-20260812T181700-hangul-qwerty-search-5: 변환 대상이 없는 검색어의 조립 SQL 이 종전과
   문자열 동치다(회귀 0).
+
+## (metadata-pane-refresh, 2026-08-12) 메타데이터 pane 입력 UI — 통합 표 + 공용 폼 프리미티브 (web/UI, Major §12.3, 표시 계층 전용)
+
+사용자 보고("메타데이터 입력창이 다른 화면에 비해 촌스럽다")에 대응해 관리 콘솔 > 지식베이스 >
+메타데이터 pane 의 **표시 계층만** 재구성했다. 데이터 모델·API·권한·주입 경로는 무변경이다.
+
+### 현재 동작
+
+**공용 입력면** (`.admin-meta-input`, `.admin-meta-scope-select`, `select.admin-meta-input`)
+
+- 포커스 시 `base.css` `.field input:focus` 와 **동일한 3px halo**(`--meta-ring`) + primary 테두리.
+  에러 필드는 danger halo(`--meta-ring-error`)로 빨간 테두리와 색이 충돌하지 않는다.
+- hover 시 테두리만 진해지고 **폭은 1px 로 고정** — 상태 전이에 레이아웃 이동이 없다.
+- `select` 은 네이티브 화살표 대신 토큰 색 인라인 SVG chevron.
+
+**스키마 골격 일괄 입력(테이블 설명 / 컬럼 설명) — 통합 표**
+
+- 결과 전체가 **하나의 카드 surface** 이고, 각 테이블 행은 상단 hairline divider 로만 구분된다
+  (행별 카드 테두리·radius 없음).
+- 상단에 **sticky 열 헤더**(`테이블 · 설명 · 상태`)가 붙어 30행을 스크롤해도 어떤 칸을 입력하는지
+  유지된다. 열 폭은 헤더와 데이터행이 CSS 토큰 한 값을 공유하므로 항상 정렬된다.
+  헤더는 **tables 서브뷰 전용** — columns 서브뷰는 접힘 헤더 구조라 "설명" 열이 없어 숨긴다.
+- 설명 입력란은 **ghost cell**: 기본은 투명(표 안 텍스트처럼 읽힘) → 행 hover 시 옅은 fill →
+  포커스 시 흰 배경 + primary 테두리 + halo. placeholder 는 기본 옅고 hover/focus 에서 또렷해진다.
+- 입력 상태는 **CSS dot + 시맨틱 색 3단**: 미입력(중립) / 진행(`is-filled`, primary) /
+  완료(`is-complete`, success). tables 는 설명 1줄이라 입력 즉 완료, columns 는 `N/M` 이 전량일 때
+  완료다(컬럼 0개는 완료로 보지 않는다). 라벨 텍스트가 상태를 말하고 dot 은 보조 채널이다.
+- 저장 액션 행의 버튼 라벨은 줄바꿈되지 않으며 가변 폭은 안내 문구가 흡수한다.
+- 페이저는 sticky + 반투명 blur 로 항상 도달 가능하다.
+
+**pane 전역 정합**
+
+- 서브탭은 라벨 폭에 맞춘 `::after` 인디케이터(활성 primary, hover 옅은 프리뷰) + `focus-visible`.
+- 좌측 목록 카드는 `--r-md` 곡률 + hover elevation, 선택 행은 좌측 primary accent rail.
+- 검토 큐 묶음·그룹 카드·스켈레톤·관계 패널의 곡률·divider·여백을 위 어휘로 통일했다
+  (관계 패널의 dashed 테두리는 콘솔에서 고립된 스타일이라 실선 hairline 으로 교체).
+- 등폭 식별자는 앱 토큰 `var(--mono)`(D2Coding), 진입 버튼은 다른 pane 과 같은 ASCII `+`.
+
+### 접근성
+
+- 상태 라벨·열 헤더는 실 배경에서 WCAG AA(4.5:1) 이상 — 실렌더 계측으로 상태 라벨 7.11:1,
+  열 헤더 6.18:1 확인(종전 `--text-muted` 는 각각 4.12:1 / 3.58:1 미달이었다).
+- 상태는 색 단독으로 전달하지 않는다(라벨 텍스트 + dot).
+- 서브탭·보기 strip·부트스트랩 토글에 `focus-visible` 링.
+
+### 불변식 (정본: `docs/DESIGN.md` §3.1 · §3.2)
+
+- 골격 그리드의 **DOM 셀렉터·dataset 계약은 불변**이다 — 저장·AI 일괄·힌트·필터·페이징이 DOM
+  순회 기반이므로 시각 변경은 CSS 로만 한다. 입력값 수집 경로에 회귀가 생기지 않는다.
+- 열 폭은 `--meta-grid-name-w` / `--meta-grid-state-w` **단일 출처**.
+- sticky 는 조상 `overflow: clip`(hidden 금지)과 `top: calc(-1 * var(--meta-grid-head-inset))`
+  (스크롤러 padding-top 보정)을 전제한다.
