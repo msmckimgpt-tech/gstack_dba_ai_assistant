@@ -64,3 +64,32 @@ source_of_truth: true
 - **라이브 대조(읽기 전용)**: 운영 primary 에서 게이트 쿼리를 실제 실행 — `SELECT count(*) … status='running' AND heartbeat_at > now() - interval '90 seconds'` → `0`(현재 진행 중 사용자 run 없음). 좀비 필터 대조(all_running=0 / fresh=0)도 함께 확인.
 - **Pass/Fail: PASS**(단위 + 뮤테이션 + 회귀 + 라이브 SQL).
 - **라이브 실측 필요분(POST-DEPLOY, append 예정)**: ① 첫 실전 배포 로그에 `quiesce: ask-worker recreate=quiet · gateway recreate=quiet` 가 실제로 찍히는지 ② 진행 중 대화가 있는 상태에서 배포를 걸어 **대기 → 통과** 궤적이 관측되는지(합성 부하로 재현) ③ 배포 전후 `ask_jobs` 에 `attempts>1` 재큐가 늘지 않는지(= 아무것도 죽이지 않았다는 사후 증거).
+
+- **[POST-DEPLOY 2026-08-12] quiesce 게이트 라이브 실증 (PASS)** — PR #1219 merge main `7c2918a8` →
+  **2단계 배포**(사용자 선택). 게이트가 **실전에서 두 번 발화했고 두 번 다 통과**했다.
+  - **1단계**(`sudo -E bin/deploy-web.sh`) — web 롤링 + soak 통과 → 워커 롤아웃 직전 게이트 발화:
+    `=== quiesce 게이트: 진행 중 사용자 run 이 끝나기를 대기 (ask-worker recreate, 상한 900s) ===`
+    → 최종 요약 `quiesce: ask-worker recreate=quiet — 진행 중 사용자 run 을 끊지 않았다.`
+    gateway 는 `드리프트 없음 — 무접촉(blip 0)`(compose `stop_grace_period` 는 드리프트 판정
+    대상이 아님 — 2단계 분리의 근거를 실측으로 확인).
+  - **2단계**(`--force-gateway`) — 멱등 skip(web/워커 이미 대상 SHA) → surge up→healthy →
+    게이트 `gateway recreate: 진행 중 run 0 (settle 3s 재확인, 대기 0s) — 교체 진행.` →
+    본체 recreate → healthy → `gateway 무중단 교체 완료.` → surge Removed →
+    `quiesce: gateway recreate=quiet — 진행 중 사용자 run 을 끊지 않았다.`
+  - **settle 재확인이 로그에 실제로 찍혔다** — 스냅샷 1장이 아니라 두 표본으로 판정했다는 증거.
+  - **배포 결과**: 5서비스 `GIT_COMMIT=7c2918a8` **전부 healthy**(web-a·web-b·ask-worker·
+    insight-worker·ops-scheduler). edge `/healthz` = `status=ok · git_commit=7c2918a8 ·
+    mysql_ok=true · pg_ok=true`. surge 잔재 0.
+  - **grace 적용 실증**: 교체 **전** `docker inspect` = `StopTimeout=120`, 교체 **후** = **`330`**.
+    즉 compose 값 변경이 recreate 없이는 발효되지 않는다는 사실도 함께 실측됐다(2단계가 필요했던
+    이유 — 1단계만 돌렸다면 앱 재시도만 발효되고 배포 층은 구 예산 그대로였을 것).
+  - **끊긴 요청 0**: 두 게이트 모두 `=quiet` 이고 강행 카운터 0 → 이 배포는 **실제로 무중단**이었다.
+- **[POST-DEPLOY 2026-08-12] 배포본 런타임 실증 (ask-worker `7c2918a8`)** — 앱 층 봉인(PR #1217)이
+  같은 이미지에 함께 실려 있음을 확인:
+  상수 `RETRY_MAX=2 · BASE=1.5s · CAP=8.0s · SLOW_RATIO=0.5 · CANCEL_POLL=1.0s` ·
+  `Connection error.` → `transient / timeout_class=False / 한국어 안내 / confirmed=False`(글로벌
+  배너 비오염) · `Request timed out.` → `transient / timeout_class=True` ·
+  401 auth → `permanent`(재시도 안 함) · 504 `Gateway timeout` → `timeout_class=True`(패널 P1-1) ·
+  느린 실패 예산 게이트 `_llm_retry_allowed(...attempt_elapsed=280s, remaining=10s) = False`.
+  히스토리 창 교정도 배포본에서 확인 — linear·windowed·branch **3경로 모두** `LIMIT-order=DESC` +
+  `returns-ASC=True`.

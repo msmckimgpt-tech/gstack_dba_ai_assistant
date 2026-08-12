@@ -2419,5 +2419,7 @@ rationale=REVIEW `REV-20260806T160000-attach-delivery-tool` ·
 - [x] §18.8 패널(codex backend+qa, `query`/`performance` 키워드) — **P1 3 · P2 2 전건 흡수**
       (느린 실패 예산 게이트 · '즉시 답변' 무시 · grace 지원범위 한계 · backoff 후 취소 미관측 ·
       SDK 재시도 중첩). 흡수 검증 뮤테이션 12/12 KILLED
-- [ ] 배포 + POST-DEPLOY 런타임 실증
+- [x] 배포 + POST-DEPLOY 런타임 실증 — `7c2918a8` 5서비스 healthy. 배포본에서 `Connection error.`
+      가 transient/한국어 안내/배너 비오염으로 분류되는 것 직접 확인(사고 당시 미분류 경로가 닫힘),
+      출하 상수 5종·504 timeout_class·느린 실패 게이트·히스토리 3경로 DESC-LIMIT 확인.
 - [ ] 라이브 실측 — 다음 배포 창에서 in-flight 대화가 실제로 살아남는지(corroboration 재측정)

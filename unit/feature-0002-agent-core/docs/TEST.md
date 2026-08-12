@@ -167,3 +167,24 @@ source_of_truth: true
 - **라이브 replica 대조(읽기 전용)**: 신 히스토리 SQL 3경로를 `postgres-replica` 에서 실행 — linear 은 281행 대화에서 **구 SQL id 3369~3574 vs 신 SQL 3450~3655**(최신 81행 유실 → 해소)를 수치로 대조, windowed/branch 는 문법·NULL 파라미터 캐스팅 실행 확인.
 - **Pass/Fail: PASS**(단위 + 뮤테이션 + 회귀 + 라이브 SQL 대조).
 - **라이브 실측 필요분(POST-DEPLOY, append 예정)**: ① 다음 배포 창에서 in-flight 대화가 실제로 살아남는지(ask-worker 로그 `llm_transient_retry`) ② 재시도 대기 중 '중단'·'즉시 답변' 이 즉시 듣는지 ③ 진행 표시("재연결하는 중 … 조사한 내용은 그대로 유지됩니다")가 실제로 보이는지 ④ 원장 corroboration 재측정(`Connection error.`/`Request timed out.` distinct_conv 추이).
+
+- **[POST-DEPLOY 2026-08-12] llm-transient-retry-resume 배포 + 런타임 실증 (PASS)** — PR #1217 merge
+  main `65baf50b` → (병렬 세션 배포 `be6e8e1a` 로 1차 롤아웃, 이후 `7c2918a8` 로 재롤아웃).
+  **5서비스 `GIT_COMMIT=7c2918a8` 전부 healthy**, edge `/healthz` `status=ok·mysql_ok·pg_ok`.
+  - **배포본 ask-worker 실증**: `_llm_retry_allowed`/`_llm_retry_backoff_sec` 적재 True ·
+    출하 상수 `RETRY_MAX=2 · BASE=1.5s · CAP=8.0s · SLOW_RATIO=0.5 · CANCEL_POLL=1.0s` ·
+    `classify_agent_llm_failure` 적재 True.
+  - **원 마찰의 예외가 실제로 분류된다**: `Connection error.` → `kind=transient ·
+    timeout_class=False · 한국어 안내(“다시 시도”) · confirmed=False`(= 사용자에겐 친절 메시지,
+    글로벌 provider 배너는 **켜지지 않음**). 사고 당시엔 이 예외가 분류 실패로 SDK 원문이 그대로
+    노출됐다 — **그 경로가 배포본에서 닫힌 것을 직접 확인**.
+  - `Request timed out.` → `transient · timeout_class=True` · 401 auth → `permanent`(재시도 안 함,
+    사용자를 backoff 만큼 더 붙잡지 않음) · 504 `Gateway timeout` → `timeout_class=True`(패널 P1-1
+    흡수분) · 느린 실패 게이트 `attempt_elapsed=280s, remaining=10s → False`.
+  - **히스토리 창 교정 실증**: 배포본 `runtime_backend` 의 linear·windowed·branch **3경로 모두**
+    `LIMIT` 을 받는 정렬이 `DESC`, 반환 정렬은 `ASC` — 최신 N행을 싣는다.
+  - **아직 남은 것(정직)**: 위는 전부 "봉인이 배포본에 실려 의도대로 동작한다" 까지다.
+    **"실제 사용자 대화에서 그 마찰이 사라졌는지" 는 미측정** — 다음 배포 창에서 in-flight 대화가
+    살아남는지(ask-worker 로그 `llm_transient_retry`), 재시도 대기 중 '중단'·'즉시 답변' 이 즉시
+    듣는지, 진행 표시가 보이는지, 그리고 원장 corroboration(`Connection error.`/`Request timed
+    out.` distinct_conv 추이) 재측정이 남았다.

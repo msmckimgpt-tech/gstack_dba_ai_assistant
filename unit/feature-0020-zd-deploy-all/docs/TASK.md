@@ -98,4 +98,7 @@ source_of_truth: true
 - [x] §18.8 적대 검증(codex, full-panel 대체 채널) — **P1 5건 흡수**(실행모드 게이트 · unknown
       차단 · settle 재확인 · stale 분리차단 · 롤백 보고[차단은 의도적 미수용]) + **자체 적발
       1건**(공용 헬퍼의 실패→0 관용을 전용 probe 로 교체). 뮤테이션 16/16 KILLED
-- [ ] 배포 + 첫 실전 게이트 동작 실측(로그에 `quiesce: … =quiet`)
+- [x] 배포 + **첫 실전 게이트 동작 실측** — 2단계 배포에서 게이트가 **두 번 발화, 두 번 다 통과**
+      (`ask-worker recreate=quiet` · `gateway recreate=quiet`, settle 재확인 로그 포함).
+      5서비스 `7c2918a8` healthy · `/healthz` ok · gateway `StopTimeout` 120 → **330** 전환 실측 ·
+      surge 잔재 0 · 강행 카운터 0(= 이 배포는 실제로 무중단).

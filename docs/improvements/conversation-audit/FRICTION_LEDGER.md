@@ -6,9 +6,16 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 
 ---
 
-## FR-llm-transient-failure-kills-run — fixed:undeployed (L6↔L2 구조; 일시 전송 실패 1회가 run 전체와 누적 도구 작업을 폐기)
+## FR-llm-transient-failure-kills-run — fixed:deployed:unverified-live (L6↔L2 구조; 일시 전송 실패 1회가 run 전체와 누적 도구 작업을 폐기)
 
-- **status**: `fixed:undeployed` — 코드/테스트(신규 **42**[41 PASS + 1 skip] · **뮤테이션 12/12
+- **status**: `fixed:deployed:unverified-live` — **배포 완료**(2026-08-12, PR #1217 merge main
+  `65baf50b` → 최종 롤아웃 `7c2918a8`, 5서비스 healthy, edge `/healthz` ok). 배포 층 후속 봉인은
+  PR #1219(`7c2918a8`)로 함께 출하됐고 **2단계 배포 실측에서 게이트가 두 번 다 `=quiet`** 였다.
+  **배포본 런타임 실증**: 출하 상수 5종 · `Connection error.` → transient/한국어 안내/글로벌 배너
+  비오염 · `Request timed out.` → timeout_class · 401 → permanent · 504 → timeout_class ·
+  느린 실패 예산 게이트 · 히스토리 3경로 DESC-LIMIT. 상세는 feature-0002 `docs/TEST.md` POST-DEPLOY.
+  **라이브 대화 실측 미수행** → `unverified-live`.
+  코드/테스트(신규 **42**[41 PASS + 1 skip] · **뮤테이션 12/12
   KILLED** · feature-0002 전량 회귀 실패 0[선재 환경 1건 `chattr` 부재는 pristine main 대조 동일]
   · ruff clean · 신 SQL 3경로 라이브 replica 실행 확인) + **§18.8 codex backend+qa 패널 P1 3 ·
   P2 2 전건 흡수**. 배포 전.
@@ -100,9 +107,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
   ④ **corroboration 재측정** — `Connection error.`/`Request timed out.` distinct_conv 추이.
   감소 시 `verified`, 재증가 시 `regressed`.
 
-## FR-agent-history-window-inverted — fixed:undeployed (L4; PG 히스토리 로더가 가장 오래된 N행을 집어 긴 대화의 최근 맥락이 유실)
+## FR-agent-history-window-inverted — fixed:deployed:unverified-live (L4; PG 히스토리 로더가 가장 오래된 N행을 집어 긴 대화의 최근 맥락이 유실)
 
-- **status**: `fixed:undeployed` — 위 batch 에 동승(같은 cycle·같은 테스트 파일). 배포 전.
+- **status**: `fixed:deployed:unverified-live` — 위 batch 에 동승. **배포 완료**(`7c2918a8`).
+  배포본 실증: linear·windowed·branch **3경로 모두** `LIMIT` 정렬 DESC + 반환 ASC.
+  200행 초과 대화에서 답변이 최근 턴을 실제로 인용하는지는 미측정 → `unverified-live`.
 - **source**: 자체 발견(2026-08-12) — 사용자가 지시한 "추론 내역 유실 방어" 축을 코드로 확인하다
   적발. 사용자 보고 아님.
 - **last_seen**: 2026-08-12 · **seen_count**: 0(라이브 마찰 미관측) · **seen_distinct_conv**: 5
