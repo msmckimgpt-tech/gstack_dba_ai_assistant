@@ -188,3 +188,38 @@ syntax-highlight 146 전건 PASS.
 - **하네스가 과잉 차단도 잡았다(기록)**: `srcset` 용 콤마 분할을 모든 URL 속성에 적용해
   `data:image/png;base64,AAAA` 가 콤마에서 쪼개져 **인라인 이미지까지 차단**되던 버그를 E4 가
   적발했다. 콤마 분할은 `srcset` 에만 적용하도록 좁혔다.
+
+---
+
+### Run (2026-08-12, POST-DEPLOY) — 배포본 `105fa2b7` 실측 — **Environment: Windows-browser**
+
+배포(`bin/deploy-web.sh --web-only`, web-a/web-b `GIT_COMMIT=105fa2b7`, 엣지
+`no upstreams available` **0건 = 실 무중단**) 직후, §6 에 선언한 잔여 중 **배포본 도달 축**을 닫는다.
+
+라이브 페이지에서 **배포된 실제 모듈**(`import('/static/app/attach-diff.js')`)과 서빙
+`chat.css` 를 직접 조회해 신규 배선이 도달했는지 단정했다(어긋나면 throw):
+
+| 축 | 결과 |
+|---|---|
+| `_renderMarkdownInto` 존재 | ✓ |
+| **inert `<template>` 파싱**(`tpl.innerHTML = safe`) | ✓ |
+| 첨부 전용 sanitize 프로필 `_ATTACH_SANITIZE` | ✓ |
+| 렌더러 클래스 allowlist `_RENDERER_CLASS_RE` | ✓ |
+| 미디어 `data:` 한정 `_mediaLoadAllowed` | ✓ |
+| 같은 출처 링크 비활성화 `deadLinks` | ✓ |
+| **`_renderMarkdownInto` 안에 mermaid 렌더 호출 없음** | ✓ |
+| `chat.css` 의 `.attach-source-md` · `.attach-source-md-task` 규칙 | ✓ |
+| `openAttachmentSourceModal` export | ✓ (function) |
+
+세션 격리: 전용 CDP 포트 9242 · 전용 프로파일 · `reused:false`. 검증 종료 후
+`win-browser.py down` 으로 본 드라이버 인스턴스만 종료.
+
+#### 남은 미실측 (정직 표기)
+
+- **라이브 `.md` 첨부를 실 계정으로 열어 본 조합 대조는 하지 않았다** — 라이브 `.md` 첨부 3건은
+  타 사용자 대화에 속해 열람 자체가 남의 데이터 접근이다. 경로의 조각들(배포본 모듈 도달 · 정본
+  구현의 실 브라우저 렌더 · 실 모듈 배선 하네스 G축)은 각각 실측했고, **조합만 미실측**이다.
+- **브라우저의 실제 네트워크 요청 발생 여부**는 계측하지 못했다(win-browser.py 가 CDP Network
+  도메인을 노출하지 않는다). 방어는 **구조**(inert `<template>` 파싱 — 요청이 일어날 수 있는
+  시점 자체가 없음)와 **최종 DOM 속성 census**(자동요청 속성의 외부 출처 0)로 확인했다.
+  요청 계측이 필요하면 CDP Network 이벤트를 수집하는 별 도구 축이 필요하다.

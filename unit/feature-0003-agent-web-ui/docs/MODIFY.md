@@ -11,6 +11,12 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260812T220000-attach-md-render-post — 배포본 실측 기록 (doc-only, 코드 변경 0)
+- 배포본 `105fa2b7` 의 **실제 모듈**을 라이브에서 import 해 신규 배선 9축 도달을 단정(어긋나면 throw).
+- 배포 품질: web-a/web-b 동일 SHA · 엣지 `no upstreams available` 0건(실 무중단).
+- 미실측 2건 명시: 라이브 `.md` 첨부 조합 대조(타 사용자 데이터 접근이라 미수행) · 브라우저 실
+  네트워크 요청 계측(도구가 CDP Network 미노출 — 방어는 구조와 DOM census 로 확인).
+
 ## CHG-20260812T203000-attach-md-render — 첨부 `.md` 마크다운 렌더 (Minor §12.3, frontend-only)
 - **요청(재지시)**: "구문 색이 아니라, 실제 마크다운 구성으로 출력되도록 구현해주세요." (2026-08-12)
 - **원인**: 선행 `CHG-20260812T183000-attach-md-highlight` 가 같은 요청을 **구문 하이라이트**로
