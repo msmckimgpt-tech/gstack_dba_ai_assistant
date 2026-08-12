@@ -2591,3 +2591,16 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - **전수 회귀**: mjs 하네스 **53 파일 전건 green**(종료코드) · pytest **4312 passed / 1 failed**
   — 그 1건(`test_oauth_exhaustion_gate.py::test_write_failure_after_successful_post_cannot_kill_slot_selection`)은
   **pristine main 에서 동일 재현**되는 선재 red 로, 본 변경(프론트 표시 계층 3파일) 귀책 아님.
+
+## 20260812T2005-metadata-pane-refresh-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+
+- **Environment: Windows-browser (PB-0008)** — **PASS**. PR #1231 → main `e250dad7` →
+  `make deploy-web-only`(web-a/web-b 양쪽 `mysql-ai-web:e250dad7` · 스탬프 `06bd063c9b98` ·
+  엣지 `no upstreams available` **0건** = 무중단 실측 · soak 통과).
+  실 Chrome/150 `https://localhost/admin` 에서 `건즈 글로벌 QA` × `gunzgame` 125테이블 실데이터로
+  **전 축 재실측 — 프리뷰(Run 1·2)와 차이 0**: 행 카드 테두리 좌·우·하 0(30행 전수) · 입력란
+  시작/끝 x 편차 **0.00px** · 헤더 열 정합 0.00px · ghost cell 기본 투명 + 실 클릭 시 3px halo ·
+  상태 전이 `비어있음`→`설명 입력됨`(dot 회색→녹색, raw 글리프 0) · `D2Coding` · 버튼 nowrap ·
+  sticky 도킹 `272 == border edge` · 전각 `＋` 0건. **라이브 데이터 변경 0**(저장 미클릭, 목록 `1건` 불변).
+  → Run 1·2 가 이월했던 "라이브 baked 자산" 축을 **종결**.
+- Run 기록 정본: `docs/test-runs.d/20260812T183000-metadata-pane-refresh.md` Run 3.

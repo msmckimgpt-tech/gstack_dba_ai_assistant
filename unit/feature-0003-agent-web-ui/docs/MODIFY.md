@@ -3555,3 +3555,18 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   mjs 53 파일 green · pytest 1,390 PASS · 실 Chrome 재확인(columns title·입력란 x 편차 0.00px·
   페이지 전체 전각 `＋` 0건).
 - Timestamp: 2026-08-12T19:15:00+09:00
+
+## CHG-20260812T2005-ai-root-metadata-pane-refresh-postdeploy — POST-DEPLOY 라이브 실측 기록 (doc-only)
+
+- **What**: PR #1231 머지(main `e250dad7`) → `make deploy-web-only` 후 라이브 배포본에서 전 축을
+  재실측하고 fragment Run 3 · TEST.md · TASK.md 이월 항목에 기록. **코드 변경 0.**
+- **배포 파리티 실측**: web-a/web-b 양쪽 `mysql-ai-web:e250dad7` healthy · 서빙
+  `css/search-audit.css?v=06bd063c9b98`(빌드 주입) · 서빙 HTML 에 `metadataBootstrapGridHead` 존재 ·
+  엣지 `no upstreams available` **0건**(12분 창 — 무중단 실측) · soak 통과.
+- **결과**: 프리뷰와 **차이 0** — 열 정렬 편차 0.00px(30행), sticky 도킹 272==border edge,
+  포커스 halo 토큰 파생 정상 해소(`color(srgb …/0.12) 0 0 0 3px`), 상태 3단 전이, `D2Coding`,
+  버튼 nowrap, 전각 `＋` 0건. 라이브 데이터 변경 0(저장 미클릭 · 목록 `1건` 불변).
+- Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`,
+  `docs/test-runs.d/20260812T183000-metadata-pane-refresh.md`(Run 3),
+  `docs/evidence/pb0008-metadata-pane-refresh-postdeploy-20260812.png`.
+- Timestamp: 2026-08-12T20:05:00+09:00

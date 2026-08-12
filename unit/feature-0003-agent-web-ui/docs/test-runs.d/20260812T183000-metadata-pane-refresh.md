@@ -214,3 +214,57 @@ codex 적대 리뷰(P1 0 · P2 3)를 전건 반영한 뒤, 변경면을 실 Wind
 - **POST-DEPLOY 라이브 재실측** — 여전히 미완. 본 Run 도 격리 컨테이너 기준이다.
 - 반응형(확대 200% · 폭 <720px) 미측정.
 - 그래프 뷰 pane(공유 `.admin-meta-scope-select`) 실측 미수행.
+
+---
+
+# Run 3 — POST-DEPLOY 라이브 실측 (Environment: Windows-browser)
+
+**run_at**: 2026-08-12T20:05:00+09:00 · **verdict**: PASS — **이월했던 라이브 축 종결**
+
+Run 1·2 는 §13.2.9 격리 컨테이너 기준이었다. PR #1231 머지(main `e250dad7`) →
+`make deploy-web-only` 후 **라이브 배포본의 baked 자산**에서 전 축을 재실측했다.
+JS/HTML 변경을 포함하는 cycle 이라 `docker cp` 프리뷰가 원리적으로 불충분(모듈 캐시·스탬프
+미주입)했고, 이 Run 이 그 사각을 닫는다.
+
+## 배포 파리티
+
+| 항목 | 실측 |
+|---|---|
+| web-a / web-b 이미지 | 양쪽 `mysql-ai-web:e250dad7` (= main HEAD) |
+| 서빙 자산 스탬프 | `css/search-audit.css?v=06bd063c9b98` (신규 주입 — 수기 bump 0) |
+| 서빙 HTML 에 열 헤더 markup | 존재 (`metadataBootstrapGridHead` × 2) |
+| **엣지 무중단** | `no upstreams available` **0건** (12분 창) — 롤링 중 전면 503 0 |
+| 접근 경로 | `https://localhost/admin` (Caddy :443), 실 Chrome 150.0.7871.128 |
+
+## 실측 결과 — 프리뷰와 차이 0
+
+제품 `건즈 글로벌 QA` × `gunzgame` 골격 **125테이블 / 846컬럼**(페이지당 30행).
+
+| 축 | 라이브 실측 | Run 1·2 대비 |
+|---|---|---|
+| 행 카드 테두리 (30행 전수) | 고유값 `{0/0/0/0/0, 0/0/0/1px/0}` — 좌·우·하 0, radius 0 | 동일 |
+| 입력란 시작/끝 x 편차 | **0.00 / 0.00px** | 동일 |
+| 상태 열 우측 끝 편차 | **0.00px** | 동일 |
+| 헤더 '설명' 열 − 입력란 시작 | **0.00px** | 동일 |
+| ghost cell 기본 | bg `rgba(0,0,0,0)` · border `rgba(0,0,0,0)` · width `1px` · shadow `none` | 동일 |
+| 포커스(실 트러스티드 클릭) | `color(srgb 0.145098 0.388235 0.921569 / 0.12) 0 0 0 3px` · border `rgb(37,99,235)` · bg `#fff` | 동일(토큰 파생 해소 확인) |
+| 상태 전이(실 키보드 입력) | `비어있음` → `설명 입력됨` + `is-filled is-complete` · 라벨 `rgb(21,128,61)` · dot `rgb(22,163,74)` · raw 글리프 **false** | 동일 |
+| 상태 dot | `7px` · `border-radius 50%` · opacity `0.42` | 동일 |
+| 등폭 토큰 | `D2Coding` | 동일 |
+| 저장 액션 버튼 | `AI 로 설명 일괄 생성: h24/nowrap` · `설명 입력분 저장: h40/nowrap` | 동일 |
+| sticky 도킹 | computed `top: -18px` · `scrollTop=800` 에서 헤더 top **272 == border edge 272** | 동일 |
+| 전각 `＋` (페이지 전체 텍스트) | **0건** | 동일 |
+
+**라이브 데이터 변경 0** — 입력은 클라이언트 스테이징이고 `설명 입력분 저장` 을 누르지 않았다.
+종료 시점 테이블 설명 목록 `1건`(`gunzgame.item`) — 사용자 원본 스크린샷과 동일.
+
+## 증거
+
+- [`evidence/pb0008-metadata-pane-refresh-postdeploy-20260812.png`](../evidence/pb0008-metadata-pane-refresh-postdeploy-20260812.png)
+  — 라이브 배포본. sticky 헤더 카드 상단 도킹(띠 없음) · ghost cell hover 노출 · 상태 dot 열 정렬.
+
+## 남는 이월 (축소)
+
+- 반응형(확대 200% · 폭 <720px) 미측정 — 통합 표 열 폭이 `clamp()` 라 붕괴 위험은 낮으나 실측 아님.
+- 그래프 뷰 pane(공유 `.admin-meta-scope-select`) 실측 미수행 — chevron·halo 개선이 그쪽에도
+  적용되며 레이아웃 영향은 우측 padding 확보뿐.
