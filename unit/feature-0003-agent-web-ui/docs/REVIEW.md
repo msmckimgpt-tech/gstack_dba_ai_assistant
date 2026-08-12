@@ -3977,3 +3977,90 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
   + 드롭다운 420px/가시 10행 — **이월했던 캐시 축을 우회 없이 종결**. 엣지 `no upstreams
   available` 0건. 서버 정본 무변경(pending 미적용).
 - Human Approval Needed: no
+
+## REV-20260812T181700-ai-claude-hangul-qwerty-search — 한/영 자판 교차 검색
+
+**판단 1 — primitive 를 왜 `shared/` 에 두는가.** 처음엔 feature-0003 의 `src/modules/` 에
+뒀다가, 이미지 레이아웃(`unit/feature-0002-agent-core/src/Dockerfile`)을 확인하고 옮겼다:
+`/app/modules` = feature-0002, feature-0003 의 modules 는 `/app/web/modules`(`from web.modules
+import …`). 즉 `from modules.hangul_qwerty import …` 는 **런타임에 ImportError** 가 되고,
+호출부가 fail-soft 라 예외를 삼켜 "기능이 조용히 죽은 채 배포" 되었을 것이다. 게다가 그래프
+검색(feature-0002 `metadata_graph.py`)도 같은 매핑표를 써야 하므로, 두 서비스가 공유하는
+`shared/`(Dockerfile 이 정확히 이 용도로 `/app/shared` 에 배치) 가 정답이다. §17 교차참조를
+`shared/docs/MODIFY.md` 에 남겼다.
+
+**판단 2 — 후보 최소 길이 2자(오탐 억제).** 자판 변환은 정상 검색에도 새 매칭을 더한다.
+한글은 자모가 음절로 합쳐져 **짧은 영문이 1글자 한글**이 되기 쉽고(`dk` → `아`), 그 1글자는
+아무 목록에나 걸린다 — 기존 하네스가 이를 실측으로 잡았다(제품 검색 `dk` 가 "DK온라인" 외에
+"글로벌 라이브" 까지 매칭). 사용자 의도는 **잘못 친 검색어의 구제**이지 정상 결과의 확장이
+아니므로 2자 미만 후보는 채택하지 않는다. 요청 예시 4건은 전부 2자 이상이라 무손실.
+- 검토했으나 불채택: "원문 매칭이 0건일 때만 변환 후보로 재시도"(2-패스). 오탐이 0 이 되지만
+  서버 검색은 커서 페이징과 rate-limit 이 걸린 단일 쿼리라 2-패스가 페이징 계약을 깨고,
+  클라이언트만 2-패스로 하면 같은 검색어가 화면마다 다르게 동작한다. 균일성을 택했다.
+
+**판단 3 — 서버 비용.** 후보가 2개면 LIKE 항이 2배가 된다. EXISTS 서브쿼리를 후보마다 반복하지
+않고 **서브쿼리 안쪽에서 컬럼을 OR 전개**(`_like_any_clause`)해, 늘어나는 것은 컬럼 비교뿐이고
+서브쿼리 수는 그대로다. 대화 본문 검색은 이미 per-account 10req/min rate limit 과 감사 로깅이
+걸린 경로이며(REQ-20260518-0010), 변환 대상이 없는 검색어는 후보가 1개라 종전과 동일한 SQL 이
+나간다. `LIKE ANY(ARRAY[…])` 는 PG 문법상 `ESCAPE` 와 병용 불가라 쓰지 않았다(SECURITY §8.3
+escape 규약 유지가 우선).
+
+**판단 4 — escape 규약.** 변환은 자판 매핑이라 `%`/`_`/`!` 를 새로 만들지 않지만, escape 는
+후보마다 개별 적용한다(단일 진입점 유지). 보관 대화 검색(`admin_conversations`)은 **종전부터
+escape 를 걸지 않았고**, 그 동작을 이번 cycle 에서 바꾸지 않았다 — 후보만 늘렸다(범위 밖 변경
+회피). 그 비대칭은 `_archive_search_likes` docstring 에 명시했다.
+
+**판단 5 — 하네스 보강 vs 완화.** 기존 하네스 4종이 `searchVariants is not defined` 로 깨졌다.
+이는 classic 주입 realm 이 새 import 를 모르기 때문이며(`esm-classic-inject.mjs` 가 "그 시점에
+심볼 stub 을 선주입하라" 고 예고한 상황), **stub 대신 정본 소스를 주입**했다 — stub 을 두면
+하네스가 검색 동작을 vacuous 하게 통과시킨다. `test_graph_search_content` 2건도 단언을 약화하지
+않고 "플레이스홀더 수 = 파라미터 수" 정합으로 **강화**했다.
+
+**범위 밖(의도적 미적용)**: AI 도구가 스스로 만드는 내부 질의 — `modules/file_ops.py`(대화 검색
+툴), `modules/schema.py`(테이블 후보 탐색). 사용자 타이핑이 아니라 모델 생성 질의라 자판 오타가
+성립하지 않고, 후보 확장은 순수 비용이다.
+
+## REV-20260812T181700-hangul-qwerty-search [CODEX:search-layout-conversion] — CONCERN → PASS (P1 0 · P2 5 · P3 1, 전건 반영)
+
+- Related TASK: feature-0003-agent-web-ui (`20260812T1817-hangul-qwerty-search`)
+- Source: codex exec `--sandbox read-only` (staged diff 적대 리뷰, 6축 지정)
+- Trigger: `query/쿼리`(SQL LIKE 조립) + `UI/화면`(검색창) keyword matched → dispatch 표상
+  backend·qa·ux·design. **채널 선택 근거**: 본 세션에 "요청 없이 Agent tool 호출 금지" 상위
+  우선순위 지시가 걸려 있어 §18.8.2 *상위 우선순위 지시 carve-out* 을 적용 — subagent panel
+  대신 제약 없는 채널(codex)로 4축을 모두 지정 리뷰했다. `[SKIPPED:tool-restricted:*]` 없음
+  (security 축은 본 변경에 인증·권한·세션 표면이 없어 dispatch 대상 아님).
+- Timestamp: 2026-08-12T18:17:00+09:00
+- Verdict: **CONCERN → PASS** (P1 0건. P2 5 · P3 1 전건 반영 후 재검증)
+- Human Approval Needed: no
+
+### 지적 6건과 처리
+
+1. **[P2] 감사 로그 필터 LIKE escape 누락** (`_audit_infra.py`) — 종전부터 escape 가 없어
+   검색어의 `%`/`_` 가 와일드카드로 샜다. 내 변경이 그 라인을 건드렸으므로 같은 cycle 에서
+   **SECURITY §8.3 규약(`ESCAPE '!'` + 3-char escape)에 맞췄다**. 회귀 테스트 신설.
+2. **[P2] 보관 대화 검색 LIKE escape 누락** (`admin_conversations.py`, PG·MySQL 양쪽) — 동일.
+   최초 판단은 "종전 동작 보존" 이었으나, 규약 위반 상태를 그대로 두는 것이 아니라 **함께
+   봉인**하는 것이 맞다. 두 경로 모두 `ESCAPE '!'` + escape 적용 + 테스트.
+3. **[P2] 그래프 relevance 점수가 원문만 반영** (`metadata_graph.py`) — 정확한 지적이며
+   **기능 무력화 경로**였다. 변환 후보로 매칭된 노드는 pg_trgm similarity 가 ≈0 이라, 점수
+   정렬 후 `limit` 재절단에서 통째로 탈락한다(매칭됐는데 결과에서 사라짐). 점수를 **후보
+   집합의 최댓값**으로 산출하도록 수정(후보 1개면 종전 식과 동치).
+4. **[P2] 최소 길이 게이트가 후보에만 적용** (`hangul-qwerty.js` · `hangul_qwerty.py`) —
+   내 게이트는 후보 길이만 봤다. 반대 방향(1자 원문 `가` → 2자 후보 `rk`)이 열려 있어
+   `marketing`·`worker` 같은 무관한 항목이 잡힌다. **원문에도 동일 게이트**를 걸어 1자
+   검색어는 확장 자체를 하지 않는다. 요청 예시 4건은 전부 2자 이상이라 무손실.
+5. **[P2] 쿼리 비용 과소평가** — 단정 대신 **실측**했다. 라이브 PG(core_conversations 349행 ·
+   core_messages 7,164행 · messages 1,956행)에서 `EXPLAIN ANALYZE` 로 대화 검색 WHERE 를
+   재현: 후보 1개 **108.2ms** → 후보 2개 **203.2ms**(약 1.88×), PG `statement_timeout`
+   3,000ms 대비 **6.8%**. **단일 표본·현행 데이터 규모 기준**이며, 데이터가 10배 규모가 되면
+   timeout 에 근접할 수 있다 — 후보는 최대 1개만 추가(상한 2×)되고 원문 2자 게이트가 최악
+   케이스를 줄이며 per-account 10req/min rate limit 이 유지되지만, **증가 추세는 재평가
+   대상**으로 REPORT §8 에 등재한다(선행 인덱스가 없는 `%…%` 스캔이라는 성질은 본 변경 이전과 동일).
+6. **[P3] 결과 강조가 원문만** (`app.js _searchHighlight`) — 반대 자판으로 매칭된 결과는
+   원문이 본문에 없어 강조가 하나도 안 붙고, 사용자는 "왜 이게 나왔는지" 를 알 수 없다.
+   후보 집합을 하나의 교대 패턴으로 강조하도록 수정(후보 1개면 종전 정규식과 동치).
+
+### 재검증 (반영 후)
+
+- 신규 mjs **49 PASS** · 신규 pytest **41 PASS** · feature-0003 프론트 mjs **54 suite 전건 PASS**
+- 전 pytest 스위트 = main 기준선과 동일 실패 집합(`test_oauth_exhaustion_gate` = `chattr` 부재 1건)

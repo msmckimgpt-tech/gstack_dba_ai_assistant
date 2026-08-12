@@ -9,18 +9,20 @@ import {
   buildQuotaEditor, buildRoleProductCardList,
 } from "../admin.js?v=dev";
 import { filteredAccounts } from "./accounts.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 /* ── Roles pane ──────────────────────────────────────────────────────── */
 
 function filteredRoles() {
-  const q = adminState.roleSearch.trim().toLowerCase();
+  const qv = searchVariants(adminState.roleSearch);
   const serverRoles = adminState.roles.filter((role) => {
     // 계정 탭 filteredAccounts() 와 동형: 상태 필터 먼저, 그다음 검색어 매칭.
     if (adminState.roleFilter === "active" && !role.is_active) return false;
     if (adminState.roleFilter === "inactive" && role.is_active) return false;
-    if (!q) return true;
-    return String(role.name || "").toLowerCase().includes(q) ||
-           String(role.key || "").toLowerCase().includes(q);
+    if (!qv.length) return true;
+    return matchesAnyVariant(String(role.name || "").toLowerCase(), qv) ||
+           matchesAnyVariant(String(role.key || "").toLowerCase(), qv);
   });
   return serverRoles;
 }

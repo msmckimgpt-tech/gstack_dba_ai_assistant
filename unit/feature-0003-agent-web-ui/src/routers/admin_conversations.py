@@ -23,6 +23,25 @@ INCLUDE_ORDER = 20  # 등록 순서 고정 — 2026-07-10 현행 include 순서 
 router = APIRouter()
 
 
+def _archive_search_likes(q: str) -> list[str]:
+    """hangul-qwerty-search: 보관 대화 검색어를 원문 + 반대 자판 변환본 LIKE 패턴으로.
+
+    후보가 1개면 결과 리스트도 1개라 종전과 같은 개수의 조건이 나간다. **SECURITY §8.3**
+    (모든 LIKE 는 `ESCAPE '!'` + `!`/`%`/`_` 3-char escape)을 함께 적용한다 — 본 엔드포인트는
+    종전에 escape 가 없어 검색어의 `%`/`_` 가 와일드카드로 새던 상태였고(codex 적대 리뷰 P2),
+    후보 확장으로 같은 라인을 건드리는 이 cycle 에서 규약을 맞춘다. escape 는 후보마다 개별 적용.
+    """
+    from routers._conv_store import _escape_like_for_search
+    try:
+        from shared.hangul_qwerty import search_variants
+        variants = search_variants(q)
+    except Exception:
+        variants = []
+    if not variants:
+        variants = [q]
+    return [f"%{_escape_like_for_search(str(v))}%" for v in variants]
+
+
 @router.get("/api/admin/conversations/archived")
 def admin_archived_conversations(request: Request, account=Depends(require_permission("conversation.archive.read.any", message="보관 대화 조회 권한이 필요합니다 (conversation.archive.read.any).")), conn=Depends(get_conn)) -> JSONResponse:
     """보관된 대화 목록(admin 감사). 권한: conversation.archive.read.any.
@@ -49,8 +68,16 @@ def admin_archived_conversations(request: Request, account=Depends(require_permi
             where = ["c.archived_at IS NOT NULL"]
             params: list[Any] = []
             if q:
-                where.append("(c.topic ILIKE %s OR c.conversation_id ILIKE %s)")
-                params.extend([f"%{q}%", f"%{q}%"])
+                # hangul-qwerty-search: 원문 + 반대 자판 변환본(`rmffhqjf` → `글로벌`).
+                #   후보가 1개면 종전과 동일한 SQL 이라 회귀 0.
+                likes = _archive_search_likes(q)
+                where.append(
+                    "(" + " OR ".join(
+                        ["c.topic ILIKE %s ESCAPE '!'"] * len(likes)
+                        + ["c.conversation_id ILIKE %s ESCAPE '!'"] * len(likes)
+                    ) + ")"
+                )
+                params.extend(likes + likes)
             sql = (
                 "SELECT c.conversation_id, COALESCE(NULLIF(TRIM(c.topic),''),'(제목 없음)'), "
                 "c.owner_account_id, c.created_at, c.updated_at, c.archived_at, "
@@ -86,8 +113,15 @@ def admin_archived_conversations(request: Request, account=Depends(require_permi
                 where = ["c.archived_at IS NOT NULL"]
                 params2: list[Any] = []
                 if q:
-                    where.append("(c.topic LIKE %s OR c.conversation_id LIKE %s)")
-                    params2.extend([f"%{q}%", f"%{q}%"])
+                    # hangul-qwerty-search: PG 경로와 동형(원문 + 반대 자판 변환본).
+                    likes2 = _archive_search_likes(q)
+                    where.append(
+                        "(" + " OR ".join(
+                            ["c.topic LIKE %s ESCAPE '!'"] * len(likes2)
+                            + ["c.conversation_id LIKE %s ESCAPE '!'"] * len(likes2)
+                        ) + ")"
+                    )
+                    params2.extend(likes2 + likes2)
                 cur.execute(
                     "SELECT c.conversation_id, c.topic, c.owner_account_id, c.created_at, "
                     "c.updated_at, c.archived_at, c.archived_by_account_id, c.product_id "

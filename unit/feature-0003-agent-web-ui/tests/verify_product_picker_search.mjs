@@ -27,6 +27,7 @@ if (!JSDOM) {
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { hangulQwertyClassicSource } from "./esm-classic-inject.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC = join(__dirname, "..", "src", "static");
@@ -43,6 +44,8 @@ global.document = dom.window.document;
 global.navigator = dom.window.navigator;
 
 const appSrc = readFileSync(join(STATIC, "app.js"), "utf8");
+// hangul-qwerty-search: 검색 필터가 import 하는 정본 primitive 를 realm 에 선주입.
+const hqSrc = hangulQwertyClassicSource(STATIC);
 
 function extractFn(src, name) {
   const start = src.indexOf(`function ${name}(`);
@@ -83,6 +86,7 @@ ok("buildProductDropupItem 이 data-search 설정", /dataset\.search/.test(build
 // ── 격리 평가 harness ────────────────────────────────────────────────
 function makeRender(state) {
   const harness = `
+    ${hqSrc}
     ${idHash}
     ${idSvg}
     ${connMeta}

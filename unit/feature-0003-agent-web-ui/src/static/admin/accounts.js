@@ -10,14 +10,16 @@ import {
   groupedPermissions, renderPermissionGrid, _updateOverrideGroupSummary,
   buildQuotaEditor, buildAccountProductOverrideList,
 } from "../admin.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 /* ── Accounts pane ───────────────────────────────────────────────────── */
 
 function filteredAccounts() {
-  const q = adminState.accountSearch.trim().toLowerCase();
+  const qv = searchVariants(adminState.accountSearch);
   return adminState.accounts.filter((account) => {
     const username = String(account.username || "").toLowerCase();
-    if (q && !username.includes(q)) return false;
+    if (qv.length && !matchesAnyVariant(username, qv)) return false;
     if (adminState.accountFilter === "active") return account.is_active && !account.deleted_at;
     if (adminState.accountFilter === "inactive") return !account.is_active && !account.deleted_at;
     if (adminState.accountFilter === "deleted") return Boolean(account.deleted_at);

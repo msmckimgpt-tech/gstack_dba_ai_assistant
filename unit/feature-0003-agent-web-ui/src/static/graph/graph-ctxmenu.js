@@ -6,6 +6,8 @@ import { _META_SEARCH_CAP, _META_TERMS_COMBO, _metaComboName, _metaGraph, _metaN
 import { _META_ROLE, _metaFocusAdjacency, _metaFocusKeyFor, _metaRoleChipHTML, _metaRoleOf } from "./graph-roleviz.js?v=dev";
 import { _metaApplyState, _metaCacheSig, _metaSetBusy, _metaSigRole, _metaStateSig, _metaYieldPaint } from "./graph-util.js?v=dev";
 import { _metaRelAdjacency } from "./graph-rellayout.js?v=dev";
+// hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
+import { searchVariants } from "../hangul-qwerty.js?v=dev";
 import { _metaSimGroups } from "./graph-simgroups.js?v=dev";
 import { _META_GRAPH_COLOR, _META_LABEL_KO, _metaDbObjAttrs, _metaDbObjIcon, _metaDbObjKo, _metaDbObjKind, _metaDbObjRoleOf, _metaAncestorKindKo, _metaCatParent, _metaG6Apply, _metaGraphAnimateFocus, _metaGraphClearHoverHighlight, _metaGraphFitClamped, _metaGraphHoverPan, _metaGraphHoverPanCancel, _metaGraphLoadRoots, _metaGraphResetModel, _metaGraphSetHoverHighlight, _metaGraphStatus, _metaRenderedAncestorFor, _metaRenderedIdFor, _metaRoutineIcon, _metaRoutineKo, _metaRoutineParamList } from "./graph-core.js?v=dev";
 const G6 = window.G6;  // UMD 전역 bridge (admin.html classic script 선행 로드)
@@ -421,13 +423,23 @@ function _metaGraphInitResizer() {
 }
 
 // 검색어 관련도 점수(0~1): exact name > prefix > name contains > fqn contains.
-function _metaRelevance(name, fqn, ql) {
+//   hangul-qwerty-search: `qvs` 는 원문 + 반대 자판 변환본 후보 배열. 서버가 반대 자판으로
+//   매칭한 노드를 원문만으로 채점하면 전부 기본값(0.3)으로 눌려 칩 크기·정렬이 무의미해진다.
+//   후보별 점수의 **최댓값**을 쓴다(원문 매칭이 있으면 종전 값 그대로 — 회귀 0).
+function _metaRelevance(name, fqn, qvs) {
   name = (name || "").toLowerCase(); fqn = (fqn || "").toLowerCase();
-  if (name === ql) return 1.0;
-  if (name.startsWith(ql)) return 0.85;
-  if (name.indexOf(ql) >= 0) return 0.65;
-  if (fqn.indexOf(ql) >= 0) return 0.45;
-  return 0.3;
+  const terms = Array.isArray(qvs) ? qvs : [qvs];
+  let best = 0.3;
+  for (const t of terms) {
+    if (!t) continue;
+    let s = 0.3;
+    if (name === t) s = 1.0;
+    else if (name.startsWith(t)) s = 0.85;
+    else if (name.indexOf(t) >= 0) s = 0.65;
+    else if (fqn.indexOf(t) >= 0) s = 0.45;
+    if (s > best) best = s;
+  }
+  return best;
 }
 
 // graph-navfilter(§54③): 검색이 순수 추가한 노드 중 사용자 미접촉(pristine)만 모델에서 회수 —
@@ -568,9 +580,10 @@ async function _metaGraphSearch(q) {
   // 유사도(rel) → 용어 칩 크기 가산. 백엔드 pg_trgm score 우선, 없으면 클라 휴리스틱.
   //   §54③: preserve 모델에는 기존 노드 수천 개가 있으므로 **매칭 노드에만** rel 부여(전역 부여 시
   //   비매칭 칩 폭 왜곡·상세 유사도 배지 오표시). 비-preserve(리셋) 모델은 카드+terms 뿐이라 동치.
-  const ql = q.toLowerCase();
+  // hangul-qwerty-search: 서버 검색과 같은 후보 집합으로 채점(원문 + 반대 자판 변환본).
+  const qvs = searchVariants(q);
   _metaGraph.nodes.forEach((n) => {
-    if (matchNodes.has(n.key)) n.rel = (typeof n.score === "number") ? n.score : _metaRelevance(n.name, n.fqn, ql);
+    if (matchNodes.has(n.key)) n.rel = (typeof n.score === "number") ? n.score : _metaRelevance(n.name, n.fqn, qvs);
     else delete n.rel;
   });
   await _metaG6Apply(preserve ? false : true);   // §54③: preserve 시 카메라·배치 유지
