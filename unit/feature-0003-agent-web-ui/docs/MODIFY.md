@@ -11,6 +11,38 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260812T183000-attach-md-highlight — 첨부 `.md` 구문 하이라이트 (Minor §12.3, frontend-only)
+- **요청**: "프로젝트 내 서비스에서, 첨부파일 중 '.md' 파일에 대한 포멧도 내부적으로 처리할 수
+  있도록 구성해주세요." (2026-08-12)
+- **원인/범위**: `.md` 첨부는 서버 쪽에서 이미 전부 열려 있었다 — `_EXTENSION_KIND_MAP`(md·markdown
+  → `text`) · `_MIME_KIND_HINTS`(`text/markdown`) · `_VERSION_DIFF_TEXT_KINDS`(text 포함) ·
+  원문 보기 `ATTACH_SOURCE_VIEWABLE_KINDS` · `_ASSISTANT_NEW_ALLOWED_EXT`. 막힌 곳은 프론트
+  `static/code-highlight.js` 의 `LANGS` **한 곳**뿐이었고, 그래서 `.md` 는 화면에서 구조가 산문과
+  같은 색이었다. 선행 cycle `20260806T1853-attach-diff-syntax` 가 모듈 헤더에 예고한 확장분.
+- **Files**:
+  - `src/static/code-highlight.js` — `tokenizeMarkdown` 신규(블록 판정 `MD_FENCE_RE`·`MD_ATX_RE`·
+    `MD_SETEXT_H1_RE`·`MD_RULE_RE`·`MD_QUOTE_RE`·`MD_LIST_RE`·`MD_TASK_RE`·`MD_REFDEF_RE` +
+    `_mdIsTableDelimRow` / 인라인 `MD_INLINE_RE`·`MD_INLINE_NOLINK_RE` + `_mdEmphOk`),
+    `LANGS.md = { label:"Markdown", exts:["md","markdown"] }`, 헤더 주석의 "차후 확장" 문구 갱신.
+  - `src/static/css/base.css` · `src/static/css/chat.css` — **주석만** (팔레트 의미에 markdown
+    역할 병기). **색 값·규칙 무변경** → 렌더 무변경, 하네스 G1(변수 9개)·G4·G5 유지.
+  - `tests/verify_attach_diff_syntax_highlight.mjs` — markdown 축 29건 추가(113 → **142**),
+    fuzz 알파벳에 `~|+` 추가.
+  - `src/scenario.attach-md-highlight.json` — PB-0008 시나리오 신규.
+  - `docs/test-runs.d/20260812T1830-attach-md-highlight.md` — Run 기록 신규.
+- **설계 결정 3건**: ① **새 팔레트 변수 0** — 기존 9종 재사용(대비 계산 하네스 G2 의 검증면을
+  넓히지 않는 편이 안전, AC-AVD-24 계약 상속). ② **`_강조_` 의도적 미지원** — 이 화면의 `.md` 는
+  DB·SQL 문서가 다수라 `snake_case`·`__dunder__` 를 강조로 칠하면 없는 강조를 만든다("무색 > 오색").
+  ③ **fence 내부는 markdown 규칙으로 읽힘을 수용** — 라인 독립 원칙(맥락 축약 뷰가 중간을 생략하므로
+  상태 이어붙이기는 색이 통째로 어긋난다)의 기존 절충 유지, fence 줄 자체를 칠해 경계를 읽힌다.
+- **성능**: 링크 대안이 2차 비용 지점이라 초판 `"[".repeat(4000)` **2.98ms**, 가드 우회형
+  `…[[[[](x)` **2.18ms** → ① `](`·`)` 부재 시 링크 대안을 끈 정규식 ② 라벨·URL 200자 상한 +
+  라벨에서 `[` 제외 ③ `[` 런·산문 런 대안 → **0.76ms**(최악) · 산문 920자 **토큰 1개 0.002ms**.
+- **검증**: 하네스 **142 PASS/0 FAIL** · 형제 하네스 회귀 0(source-view 77 · version-diff 125 ·
+  identical-source 61) · **PB-0008 실 Windows Chrome/150 PASS**(전용 프로파일·전용 CDP 포트로
+  자기 인스턴스 확보, 배포 CSS 위 실 `attach-diff-code` 구조 렌더, computed 색 9종 정본 일치,
+  판독가능 확대 캡처 3장). pytest 무관(변경 파일에 `.py` **0**).
+
 ## CHG-20260807T130000-reasoning-stop-reason-stage (AI 추론 콘솔 ② 단계가 중단 사유를 읽음, Minor)
 - **cross-ref — 정본은 feature-0002-agent-core** `CHG-20260807T130000-redteam-abortable-review`
   (FR-redteam-first-pass-unabortable). 그쪽 변경으로 red-team 자가 검증이 사용자 '즉시 답변'이나

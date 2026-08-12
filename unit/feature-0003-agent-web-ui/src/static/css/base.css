@@ -46,15 +46,15 @@
      삭제 표식" 으로 읽혔다 — design P2) / var=보라 진한 쪽(앰버 계열이면 string 과 ΔE 9.5·이색형
      0.75 로 사실상 동일했다) / comment·punct=**warm** 회색(#6b7280 은 273° cool 로 이 파일의
      warm canvas 100°대 회색들과 어긋났다 — design P3). */
-  --code-tok-keyword: #7c3aed;   /* 예약어 · XML 태그 · bool/null   (최저 4.73) */
-  --code-tok-type:    #155e75;   /* 데이터 타입                     (최저 6.03) */
-  --code-tok-func:    #1d4ed8;   /* 함수 호출                       (최저 5.56) */
-  --code-tok-key:     #0369a1;   /* JSON/YAML 키 · XML 속성명       (최저 4.92) */
-  --code-tok-string:  #92400e;   /* 문자열 리터럴                   (최저 5.88) */
-  --code-tok-number:  #0f766e;   /* 숫자 리터럴                     (최저 4.54) */
-  --code-tok-var:     #6b21a8;   /* @변수 · YAML 앵커 · XML 엔티티  (최저 7.24) */
-  --code-tok-comment: #5a5852;   /* 주석                            (최저 5.90) */
-  --code-tok-punct:   #625f55;   /* 구두점 · CSV 구분자             (최저 5.30) */
+  --code-tok-keyword: #7c3aed;   /* 예약어 · XML 태그 · bool/null · MD 제목      (최저 4.73) */
+  --code-tok-type:    #155e75;   /* 데이터 타입 · MD 강조·fence 언어명           (최저 6.03) */
+  --code-tok-func:    #1d4ed8;   /* 함수 호출 · MD 링크 라벨                     (최저 5.56) */
+  --code-tok-key:     #0369a1;   /* JSON/YAML 키 · XML 속성명 · MD 참조정의 라벨 (최저 4.92) */
+  --code-tok-string:  #92400e;   /* 문자열 리터럴 · MD 인라인코드·URL            (최저 5.88) */
+  --code-tok-number:  #0f766e;   /* 숫자 리터럴                                  (최저 4.54) */
+  --code-tok-var:     #6b21a8;   /* @변수 · YAML 앵커 · XML 엔티티               (최저 7.24) */
+  --code-tok-comment: #5a5852;   /* 주석 · MD 인용·fence 마커                    (최저 5.90) */
+  --code-tok-punct:   #625f55;   /* 구두점 · CSV 구분자 · MD 리스트·구분선       (최저 5.30) */
 
   /* Text — warm near-black ink */
   --text:          #26251e;

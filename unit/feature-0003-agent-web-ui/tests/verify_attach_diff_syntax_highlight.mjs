@@ -83,6 +83,19 @@ ok("A11 점으로 끝나는 이름", detectCodeLanguage("weird.") === null);
 ok("A12 쿼리 꼬리 제거", detectCodeLanguage("a.sql?v=2") === "sql");
 ok("A13 라벨 조회", codeLanguageLabel("sql") === "SQL" && codeLanguageLabel("json") === "JSON");
 ok("A14 미지원 lang 라벨은 key 대문자화(빈 화면 금지)", codeLanguageLabel("zzz") === "ZZZ");
+// markdown (사용자 요청 2026-08-12) — 서버 `_EXTENSION_KIND_MAP` 이 md/markdown 을 `text` 로
+// 매핑하므로 실제 도달한다. 그 지도에 없는 별칭(`mdx`·`mdown`)은 등록하지 않는 것이 계약이다
+// (등록해도 칠해지지 않을 확장자를 늘리지 않는다 — 레지스트리 주석의 도달성 원칙).
+ok("A15 .md/.markdown → md",
+  detectCodeLanguage("README.md") === "md" && detectCodeLanguage("guide.markdown") === "md");
+ok("A16 대문자·경로·쿼리 꼬리도 md", detectCodeLanguage("docs/A.MD") === "md" &&
+  detectCodeLanguage("notes.md?v=3") === "md");
+ok("A17 서버 지도에 없는 md 별칭은 미등록 (거짓 도달 주장 금지)",
+  detectCodeLanguage("a.mdx") === null && detectCodeLanguage("a.mdown") === null);
+ok("A18 md 라벨", codeLanguageLabel("md") === "Markdown");
+ok("A19 md 등록이 기존 확장자를 뺏지 않는다 (선등록 우선 규칙 유지)",
+  detectCodeLanguage("a.sql") === "sql" && detectCodeLanguage("a.csv") === "csv" &&
+  detectCodeLanguage("a.html") === "xml");
 
 // ── (B) 토큰 계약 ────────────────────────────────────────────────────────────
 console.log("\n[B] 언어별 토큰 계약");
@@ -175,6 +188,81 @@ console.log("\n[B] 언어별 토큰 계약");
   ok("B36 XML 엔티티 토큰 유지(방출 누락 회귀 잠금)", clsOf(pe, "code-tok-var").includes("&amp;"));
 }
 {
+  // ── Markdown (사용자 요청 2026-08-12) ──────────────────────────────────────
+  // 이 언어에서 색이 하는 일은 예약어 찾기가 아니라 **구조 표식과 산문 가르기** 다.
+  // 그래서 계약도 "무엇이 구조로 읽히는가" + "무엇이 구조로 **오독되지 않는가**" 2축이다.
+  const h = tokenizeCodeLine("## 스키마 정의", "md");
+  ok("B37 ATX 제목은 줄 전체가 제목색", clsOf(h, "code-tok-keyword")[0] === "## 스키마 정의" &&
+    (h || []).length === 1, JSON.stringify(h));
+  ok("B38 `#` 뒤 공백이 없으면 제목이 아니다 (#hashtag·#1 오독 금지)",
+    clsOf(tokenizeCodeLine("#hashtag 는 태그다", "md"), "code-tok-keyword").length === 0 &&
+    clsOf(tokenizeCodeLine("#1 이슈 참조", "md"), "code-tok-keyword").length === 0);
+  ok("B39 7개 이상 `#` 은 제목이 아니다",
+    clsOf(tokenizeCodeLine("####### seven", "md"), "code-tok-keyword").length === 0);
+  const li = tokenizeCodeLine("- [x] 완료 항목 **강조** 와 `code`", "md");
+  ok("B40 리스트 마커는 punct · task 체크박스는 bool",
+    clsOf(li, "code-tok-punct").includes("-") && clsOf(li, "code-tok-bool").includes("[x]"));
+  ok("B41 강조는 type · 인라인 코드는 string",
+    clsOf(li, "code-tok-type").includes("**강조**") && clsOf(li, "code-tok-string").includes("`code`"));
+  ok("B42 순서 리스트 마커", clsOf(tokenizeCodeLine("1. 첫째", "md"), "code-tok-punct").includes("1."));
+  const q = tokenizeCodeLine("> ## 인용 안 제목", "md");
+  ok("B43 인용 마커는 comment · 인용 안 제목도 제목으로 읽는다",
+    clsOf(q, "code-tok-comment").includes("> ") && clsOf(q, "code-tok-keyword").includes("## 인용 안 제목"));
+  const fe = tokenizeCodeLine("```sql", "md");
+  ok("B44 fence 마커는 comment · info string(언어명)은 type",
+    clsOf(fe, "code-tok-comment").includes("```") && clsOf(fe, "code-tok-type").includes("sql"));
+  ok("B45 구분선/front-matter 경계는 punct · setext H1 밑줄은 제목색",
+    clsOf(tokenizeCodeLine("---", "md"), "code-tok-punct").includes("---") &&
+    clsOf(tokenizeCodeLine("===", "md"), "code-tok-keyword").includes("==="));
+  const tb = tokenizeCodeLine("| id | name |", "md");
+  ok("B46 GFM 표 파이프는 delim (열 밀림을 보이게 — CSV 구분자와 같은 자리)",
+    clsOf(tb, "code-tok-delim").length === 3, JSON.stringify(clsOf(tb, "code-tok-delim")));
+  ok("B47 표 정렬행은 줄 전체가 punct",
+    clsOf(tokenizeCodeLine("|---|:--:|", "md"), "code-tok-punct")[0] === "|---|:--:|" &&
+    clsOf(tokenizeCodeLine("|---|", "md"), "code-tok-punct")[0] === "|---|" &&
+    clsOf(tokenizeCodeLine("---|---", "md"), "code-tok-punct")[0] === "---|---");
+  // codex 적대 리뷰 [P2] 회귀 — 초판의 표 정렬행 판정("`|`·`-` 포함 + 문자집합")이 너무 넓어
+  // **리스트 항목 `- |` 이 줄 전체 회색**이었다. 셀 문법 + "선두 `|` 없으면 2셀 이상" 으로 좁혔다.
+  {
+    const t = tokenizeCodeLine("- |", "md");
+    ok("B47b `- |` 는 표 정렬행이 아니라 리스트 마커 + 파이프 (오색 회귀 잠금)",
+      clsOf(t, "code-tok-punct").includes("-") && clsOf(t, "code-tok-delim").includes("|") &&
+      !clsOf(t, "code-tok-punct").includes("- |"), JSON.stringify(t));
+    const t2 = tokenizeCodeLine("- item | x", "md");
+    ok("B47c 파이프를 품은 리스트 항목도 정렬행이 아니다",
+      clsOf(t2, "code-tok-punct").includes("-") && clsOf(t2, "code-tok-delim").includes("|"));
+  }
+  // codex 적대 리뷰 [P2] 회귀 — 연속 파이프를 파이프마다 span 으로 쪼개면 병리 입력에서 DOM
+  // 노드가 폭증한다(4,000자 → span 4,000개). 한 토큰으로 묶어도 색·의미가 같다.
+  ok("B47d 연속 파이프는 한 토큰 (span 폭증 회귀 잠금)",
+    tokenizeCodeLine("|".repeat(4000), "md").length === 1 &&
+    clsOf(tokenizeCodeLine("|| a", "md"), "code-tok-delim")[0] === "||");
+  const lk = tokenizeCodeLine("[문서](https://a.b/c) · ![그림](./x.png) · <https://auto.link>", "md");
+  ok("B48 링크 라벨은 func · URL 은 string · 대괄호는 punct",
+    clsOf(lk, "code-tok-func").includes("문서") && clsOf(lk, "code-tok-string").includes("https://a.b/c") &&
+    clsOf(lk, "code-tok-punct").includes("]("), JSON.stringify(lk));
+  ok("B49 이미지 `![` 도 링크와 같은 분해 · 자동링크는 string",
+    clsOf(lk, "code-tok-punct").includes("![") && clsOf(lk, "code-tok-func").includes("그림") &&
+    clsOf(lk, "code-tok-string").includes("<https://auto.link>"));
+  ok("B50 참조 정의 라벨은 key",
+    clsOf(tokenizeCodeLine("[ref]: https://example.com", "md"), "code-tok-key").includes("ref"));
+
+  // 오색 금지 — 이 모듈의 "무색 > 오색" 선언은 negative 단언 없이는 지켜지지 않는다.
+  // 아래 다섯은 **이 화면에 실제로 오는 .md**(DB·SQL·운영 문서)에서 오독이 나는 자리다.
+  ok("B51 snake_case·__dunder__ 는 강조가 아니다 (`_강조_` 의도적 미지원)",
+    clsOf(tokenizeCodeLine("컬럼 user_id 와 __init__ 참조", "md"), "code-tok-type").length === 0);
+  ok("B52 `2 * 3 * 4` 는 강조가 아니다 (표식 안쪽 공백 금지)",
+    clsOf(tokenizeCodeLine("총합은 2 * 3 * 4 입니다", "md"), "code-tok-type").length === 0);
+  ok("B53 산문 속 `-`·`#` 은 구조 표식이 아니다",
+    clsOf(tokenizeCodeLine("a-b-c 형식이며 색 #fff 를 쓴다", "md"), "code-tok-punct").length === 0 &&
+    clsOf(tokenizeCodeLine("a-b-c 형식이며 색 #fff 를 쓴다", "md"), "code-tok-keyword").length === 0);
+  ok("B54 백슬래시 이스케이프는 표식이 아니다 (`\\*`·`\\|`)",
+    clsOf(tokenizeCodeLine("\\*not emph\\* 와 \\| pipe", "md"), "code-tok-type").length === 0 &&
+    clsOf(tokenizeCodeLine("\\*not emph\\* 와 \\| pipe", "md"), "code-tok-delim").length === 0);
+  ok("B55 순수 산문 줄은 토큰 1개·무색 (없는 구조를 만들지 않는다)",
+    (() => { const t = tokenizeCodeLine("이 문서는 스키마 정의서입니다.", "md");
+      return t.length === 1 && t[0].cls === null; })());
+
   ok("B26 미지원 lang 은 null (호출자가 평문 경로)", tokenizeCodeLine("x", "zzz") === null);
   ok("B27 빈 줄은 null (span 낭비 금지)", tokenizeCodeLine("", "sql") === null);
   const long = "x".repeat(4001);
@@ -197,6 +285,15 @@ const LOSSLESS_SAMPLES = [
   ["xml", "<a href='x'>&amp;&#65;</a><br/>"],
   ["csv", 'a,,b,"c""d",3.5,'],
   ["tsv", "\t\ta\tb"],
+  ["md", "## 제목 **강조** `code` [링크](https://a.b?x=1&y=2) ![img](./a.png)"],
+  ["md", "> - [ ] 할 일 ~~취소~~ *기울임* | 표 | 파이프 |"],
+  ["md", "짝 없는 표식: *열림 [열림 `열림 ~~열림 **열림"],
+  ["md", "***bold italic*** 와 a*b*c 와 2 * 3"],
+  ["md", "\\*escaped\\* \\| \\[ \\` \\\\"],
+  ["md", "|---|:--:|---|"],
+  ["md", "```json  extra info"],
+  ["md", "   "],
+  ["md", "[ref]: https://example.com \"제목\""],
 ];
 let losslessBad = 0;
 for (const [lang, src] of LOSSLESS_SAMPLES) {
@@ -208,7 +305,9 @@ for (const [lang, src] of LOSSLESS_SAMPLES) {
 ok(`C1 표본 ${LOSSLESS_SAMPLES.length}건 전부 무손실`, losslessBad === 0, `${losslessBad}건 불일치`);
 {
   // 무작위 문자 조합으로도 손실이 없어야 한다 — 위 표본이 못 덮은 조합을 겨냥한 fuzz.
-  const alphabet = `abcXYZ0123 \t'"\`<>&#{}[](),:;=*/-@$_.!?\\`;
+  // `~|+` 는 markdown 추가(2026-08-12) 와 함께 넣었다 — 취소선·표 파이프·리스트 마커가
+  // 짝 없이 섞인 조합이 이 언어의 무손실 위험 지점이다(다른 언어에는 무해한 추가).
+  const alphabet = `abcXYZ0123 \t'"\`<>&#{}[](),:;=*/-@$_.!?~|+\\`;
   let seed = 20260806;                     // 결정적 PRNG (Math.random 금지 — 재현 가능해야 한다)
   const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
   let bad = 0, checked = 0;
@@ -260,6 +359,17 @@ const { window } = dom;
   const td2 = window.document.createElement("td");
   paintCodeInto(td2, null, "sql");
   ok("D7 null 본문은 빈 문자열", td2.textContent === "");
+  // markdown 은 링크 URL 을 토큰으로 **분리**하므로, 그 조각이 속성처럼 다뤄지지 않는지 본다.
+  // (분리는 색을 위한 것이고 링크를 만드는 것이 아니다 — 첨부 본문은 임의 바이트다.)
+  const evilMd = `[클릭](javascript:alert(1)) <img src=x onerror=alert(2)> ![](" onload=")`;
+  const td3 = window.document.createElement("td");
+  td3.className = "attach-diff-code";
+  paintCodeInto(td3, evilMd, "md");
+  ok("D8 markdown 링크가 anchor 를 만들지 않는다 (span 만 · 원문 텍스트 보존)",
+    td3.textContent === evilMd &&
+    Array.from(td3.querySelectorAll("*")).every((e) => e.tagName.toLowerCase() === "span") &&
+    td3.querySelectorAll("a,img,script").length === 0,
+    td3.innerHTML.slice(0, 140));
 }
 
 // ── (E) 렌더 통합 ───────────────────────────────────────────────────────────
@@ -573,6 +683,40 @@ console.log("\n[H] 토글 실구동 (표가 실제로 바뀌는가)");
     ok("H12 미지원 확장자 첨부는 토글 숨김", true);   // A8·E14 가 판정 축을 이미 잠금
     window.document.body.innerHTML = "";
   }
+  {
+    // H13 — markdown 첨부의 **어포던스 배선 실측**(§16.7 G3). A15 가 판정 함수를 잠그고
+    // B37~B55 가 토큰을 잠그지만, "실제 첨부 화면에서 md 가 칠해지고 토글이 뜨는가" 는
+    // 모달을 몰아 봐야 드러난다 — 판정만 맞고 배선이 빠지면 사용자에게는 아무것도 안 바뀐다.
+    const mdVersions = [
+      { version_number: 1, original_filename: "README.md", created_by_role: "user" },
+      { version_number: 2, original_filename: "README.md", created_by_role: "user" },
+    ];
+    const MD_DATA = {
+      ...DATA,
+      rows: [
+        { type: "equal", left_no: 1, left: "# 스키마 정의서", right_no: 1, right: "# 스키마 정의서" },
+        { type: "replace", left_no: 2, left: "- [ ] 인덱스 점검", right_no: 2, right: "- [x] 인덱스 점검" },
+        { type: "insert", left_no: null, left: null, right_no: 3, right: "| a | b |" },
+      ],
+    };
+    window.document.body.innerHTML = "";
+    const M2 = mkModule(async () => MD_DATA);
+    M2.openAttachmentDiffModal(21, mdVersions);
+    await tick(); await tick();
+    const doc2 = window.document;
+    const spans = doc2.querySelectorAll("td.attach-diff-code span[class^='code-tok-']");
+    const label = doc2.querySelector(".attach-diff-hl-label");
+    const wrap2 = doc2.querySelector(".attach-diff-hltoggle");
+    ok("H13 .md 첨부 diff 가 실제로 칠해지고 토글 라벨이 'Markdown 구문 색'",
+      spans.length > 0 && !!wrap2 && wrap2.hidden === false &&
+      label && label.textContent === "Markdown 구문 색",
+      `spans=${spans.length} label=${label && label.textContent}`);
+    const cellText = Array.from(doc2.querySelectorAll("td.attach-diff-code")).map((td) => td.textContent).join("|");
+    ok("H14 .md 렌더도 본문 텍스트 무손실",
+      cellText.includes("# 스키마 정의서") && cellText.includes("- [x] 인덱스 점검") && cellText.includes("| a | b |"),
+      cellText.slice(0, 120));
+    window.document.body.innerHTML = "";
+  }
 }
 
 // ── (I) 성능 — 2차 폭발 회귀 잠금 ────────────────────────────────────────────
@@ -581,6 +725,14 @@ console.log("\n[H] 토글 실구동 (표가 실제로 바뀌는가)");
 // 절대 시간은 머신마다 다르므로 **넉넉한 상한**만 둔다(초판은 이 상한을 크게 넘겼다).
 console.log("\n[I] 토큰화 비용 (2차 폭발 회귀 잠금)");
 {
+  // markdown 추가분(2026-08-12): 링크 대안이 이 언어의 2차 비용 지점이라 그 축을 겨눈다.
+  // 초판 구현은 `"[".repeat(4000)` 에서 2.98ms, `…[[[[](x)` 로 사전 가드를 우회하면 2.18ms
+  // 였다(라벨 상한까지 훑고 `](` 에서 실패). 사전 가드 + 라벨에서 `[` 제외 + 산문 런으로
+  // 내렸고, 그 회귀를 여기서 잠근다.
+  // ⚠️ **일부러 넣지 않은 케이스**: `"|".repeat(4000)` 같은 "토큰 4,000개 방출" 입력은
+  // markdown 회귀 신호가 아니다 — 같은 조건에서 csv `","×4000`=0.71ms · json `":"×4000`=0.69ms ·
+  // md `"|"×4000`=0.69ms 로 **언어 무관 공통 바닥**이 측정됐다(emitter 의 토큰당 객체 생성 비용).
+  // I1 에 넣으면 markdown 과 무관한 이유로 상한에 붙으므로, 그 성질은 아래 I3 이 비율로 잠근다.
   const HOSTILE = [
     ["yaml", "- ".repeat(2000)],
     ["yaml", "- ".repeat(1000) + "x: 1"],
@@ -588,6 +740,16 @@ console.log("\n[I] 토큰화 비용 (2차 폭발 회귀 잠금)");
     ["json", '"' + '\\"'.repeat(1000)],
     ["xml", "<".repeat(4000)],
     ["csv", '"'.repeat(4000)],
+    ["md", "[".repeat(4000)],                        // 사전 가드 경로
+    ["md", "[".repeat(3990) + "](x)"],               // 가드 우회 — 라벨에서 `[` 제외가 막는다
+    ["md", "a[".repeat(1990) + "](x)"],              // 같은 축, 라벨 본문이 있는 형태
+    ["md", "[x](".repeat(999) + ")"],                // URL 상한 경로
+    ["md", "![".repeat(2000)],
+    ["md", "**a".repeat(1300)],
+    ["md", "*".repeat(3999) + "a"],
+    ["md", "`".repeat(4000)],
+    ["md", "<".repeat(4000)],
+    ["md", "> ".repeat(2000)],
   ];
   let worst = 0, worstLabel = "";
   for (const [lang, src] of HOSTILE) {
@@ -608,6 +770,31 @@ console.log("\n[I] 토큰화 비용 (2차 폭발 회귀 잠금)");
   const growth = t[2] / Math.max(t[1], 1e-6);
   ok(`I2 길이 2배 시 비용 증가 < 3× (실측 ${growth.toFixed(2)}× — ${t.map((x) => x.toFixed(3)).join("/")}ms)`,
     growth < 3.0);
+  // I3 — "토큰 4,000개 방출" 은 언어 무관 공통 바닥(위 HOSTILE 주석)이라 절대 시간으로 재면
+  // markdown 과 무관한 이유로 흔들린다. **비율**로 잠근다: 같은 토큰 수를 내는 csv 대비
+  // markdown 이 유의하게 느리지 않아야 한다(기계 속도가 상쇄되어 머신 독립).
+  const msOf = (lang, src) => {
+    const t0 = process.hrtime.bigint();
+    for (let i = 0; i < 20; i++) tokenizeCodeLine(src, lang);
+    return Number(process.hrtime.bigint() - t0) / 1e6 / 20;
+  };
+  const csvFloor = msOf("csv", ",".repeat(4000));
+  const mdPipes = msOf("md", "|".repeat(4000));
+  ok(`I3 토큰 4,000개 방출 비용이 공통 바닥(csv) 대비 2× 미만 (md ${mdPipes.toFixed(3)}ms / csv ${csvFloor.toFixed(3)}ms)`,
+    mdPipes < Math.max(csvFloor, 0.05) * 2);
+  // I3b — DOM 노드 수도 회귀 축이다(codex [P2]): 토큰이 곧 span 이라 병리 입력의 토큰 수가
+  // 그대로 DOM 비용이 된다. csv 는 구분자마다 열이 갈리므로 4,000 토큰이 계약이지만,
+  // markdown 파이프는 묶어도 의미가 같다 — 그 차이를 수치로 잠근다.
+  ok(`I3b 병리 파이프 줄의 토큰 수 (md ${tokenizeCodeLine("|".repeat(4000), "md").length} vs csv ${tokenizeCodeLine(",".repeat(4000), "csv").length})`,
+    tokenizeCodeLine("|".repeat(4000), "md").length === 1);
+  // I4 — 실제로 이 화면에 오는 것은 적대 입력이 아니라 **산문**이다. 산문 런 대안이 빠지면
+  // 1글자마다 8개 대안을 헛돌아 비용이 붙는다(도입 전후 4~6배). 그 회귀를 잠근다.
+  const prose = "이 문서는 데이터베이스 스키마 정의서이며 각 테이블의 컬럼과 인덱스를 설명합니다. ".repeat(20).slice(0, 3900);
+  const proseMs = msOf("md", prose);
+  const proseToks = tokenizeCodeLine(prose, "md");
+  ok(`I4 산문 ${prose.length}자가 토큰 1개·${proseMs.toFixed(3)}ms (산문 런 대안 회귀 잠금)`,
+    proseToks.length === 1 && proseToks[0].cls === null && proseMs < 0.3,
+    `${proseToks.length}토큰 ${proseMs.toFixed(3)}ms`);
 }
 
 console.log(`\n${failed === 0 ? "OK" : "FAILED"} — ${passed} passed, ${failed} failed`);
