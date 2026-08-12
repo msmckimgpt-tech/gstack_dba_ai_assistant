@@ -3067,6 +3067,79 @@ html[data-motion="off"] .attach-list-item.is-openable { transition: none; }
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
 }
+/* ── 첨부 마크다운 렌더 뷰 (사용자 요청 2026-08-12) ───────────────────────────
+   `.md` 첨부를 **문서로** 보여 준다. 타이포·코드블록·표는 답변 말풍선과 같은 파이프라인의
+   산출물이므로 `.message-content` 를 함께 붙여 그 스타일을 **상속**하고, 여기서는 첨부 화면에만
+   필요한 것만 얹는다 — 규칙을 두 벌 두면 같은 마크다운이 두 화면에서 갈린다.
+   말풍선에 없는 요소(h4~h6·blockquote·hr·task 목록)는 문서에서 흔하므로 여기서 채운다. */
+.attach-source-md {
+  padding: 16px 20px;
+  background: var(--surface, #fff);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+  /* 긴 URL·코드가 가로 스크롤을 만들지 않게 — 스크롤은 코드블록·표가 각자 처리한다. */
+  overflow-wrap: anywhere;
+}
+/* 말풍선은 h1~h3 를 같은 크기로 눌러 두지만(대화 흐름), 문서 뷰에서는 위계가 보여야 한다. */
+.attach-source-md h1 { font-size: 20px; margin: 18px 0 8px; }
+.attach-source-md h2 { font-size: 17px; margin: 16px 0 7px; }
+.attach-source-md h3 { font-size: 15px; margin: 14px 0 6px; }
+.attach-source-md h1:first-child,
+.attach-source-md h2:first-child,
+.attach-source-md h3:first-child { margin-top: 0; }
+.attach-source-md h4,
+.attach-source-md h5,
+.attach-source-md h6 {
+  margin: 12px 0 5px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.attach-source-md h1,
+.attach-source-md h2 { border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+.attach-source-md blockquote {
+  margin: 10px 0;
+  padding: 4px 14px;
+  border-left: 3px solid var(--border);
+  color: var(--text-2);
+}
+.attach-source-md blockquote > :last-child { margin-bottom: 0; }
+.attach-source-md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 18px 0;
+}
+/* GFM task 목록 — 첨부 렌더는 `<input>` 을 허용하지 않으므로(피싱 표면) 상태를 **비대화형
+   글리프**로 치환한다. 체크 상태가 사라지면 `- [x]` 와 `- [ ]` 가 같아 보이므로 색으로도 가른다. */
+.attach-source-md-task {
+  margin-right: 6px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  user-select: none;
+}
+.attach-source-md-task.is-checked { color: var(--success, #16a34a); }
+.attach-source-md table { width: auto; min-width: 60%; }
+/* 표가 넓으면 문서 전체가 아니라 표만 스크롤한다. */
+.attach-source-md .attach-source-md-tablewrap { overflow-x: auto; }
+/* 교차 출처 미디어 중립화 칩 — 무엇이 있었는지는 보여 주되 로드는 하지 않는다.
+   `--danger` 계열이 아니라 중립 회색인 이유: 이것은 문서의 결함이 아니라 우리의 보호 조치다. */
+.attach-source-md-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0;
+  padding: 3px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-xs, 4px);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  /* 긴 URL 이 문단을 밀지 않게 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
 .attach-diff-table {
   border-collapse: collapse;
   width: 100%;
