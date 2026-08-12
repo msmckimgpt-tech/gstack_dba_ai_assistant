@@ -3392,3 +3392,20 @@ Task-Cycle: feature-0003-agent-web-ui · TASK `20260729T2200-metadata-product-sc
   `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md`,
   `docs/evidence/pb0008-dbpicker-layout-stability*.png`.
 - Timestamp: 2026-08-12T17:26:25+09:00
+
+## CHG-20260812T1810-ai-claude-corp-db-picker-layout-stability-postdeploy — POST-DEPLOY 라이브 실측 기록 (doc-only)
+
+- **What**: PR #1221 머지(main `d619259d`) → `make deploy-web-only` 후 라이브에서 재실측하고
+  fragment Run 2 · TEST.md · TASK.md 이월 항목에 기록. 코드 변경 0.
+- **파리티 실측**: web-a/web-b 양쪽 `mysql-ai-web:d619259d` healthy · `/healthz
+  git_commit=d619259d` · 서빙 `css/admin.css` 에 `min(50vh, 420px)` · `admin/products.js` 의
+  picker→chipWrap 순서 · `insertBefore(addRow, dsAccordion)` 확인 · 스탬프 `c1426a14086f` ·
+  엣지 `no upstreams available` **0건**(무중단 실측).
+- **결과**: 드롭다운 `420px` / **가시 10행** — 배포 전 프리뷰에서 구 CSS 가 `immutable` 로
+  붙들려 이월했던 축을 **캐시 우회 없이** 종결. 실 클릭 이동 **0px** + 같은 좌표 동일 DB 유지,
+  역검증 **+38px** 재현. pending 새로고침 후 0 · 서버 정본 16/1 → 라이브 데이터 변경 0.
+  **배포 전 프리뷰 결과와 차이 0**.
+- Files: `docs/{TASK,TEST,MODIFY,REVIEW}.md`,
+  `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md`,
+  `docs/evidence/pb0008-dbpicker-layout-stability-postdeploy-20260812.png`.
+- Timestamp: 2026-08-12T18:10:00+09:00
