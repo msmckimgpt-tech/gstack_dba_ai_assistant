@@ -9599,8 +9599,10 @@ AC-ADI-13 · CHG/REV `20260811T1500-ai-claude-attach-diff-mark-underscore`.
 - [x] PB-0008 실 Windows Chrome 150 — 격리 컨테이너(`:18099`, 라이브 무접촉) 130개 후보 실화면.
       실 트러스티드 클릭으로 **0px** + 같은 좌표 `elementFromPoint` 동일 DB 유지, 역검증에서
       38px/74px 재현. 서버 정본 무변경 확인(`webproductdatabases` 16/1, 바인딩 2행)
-- [ ] **POST-DEPLOY 이월**: 배포본에서 드롭다운 가시 행 수(AC-…-4)를 캐시 무효화 없이 재확인
-      — 프리뷰에서 구 CSS 가 `immutable` 로 붙들려 1차 측정이 220px 로 나왔던 축
+- [x] **POST-DEPLOY 완수**(2026-08-12, main `d619259d` 배포본): 드롭다운 가시 행 수(AC-…-4)를
+      **캐시 무효화 없이** 재확인 — `listH=420px` · **가시 10행**. 함께 실 클릭 0px + 역검증
+      +38px 재현 · 엣지 `no upstreams available` 0건(무중단 실측) · 서버 정본 무변경.
+      fragment Run 2 append
 
 ### 9. Requested Scope
 

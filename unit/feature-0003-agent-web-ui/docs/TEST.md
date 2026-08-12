@@ -2518,3 +2518,13 @@ ask-worker 에 도달해야 각인이 라이브 답변에 걸린다) 후 서비�
 - **Pass/Fail: PASS**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 기록).
   Run 기록 정본: `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md` (§5.3 fragment).
   **POST-DEPLOY 이월**: 드롭다운 가시 행 수를 배포본에서 캐시 무효화 없이 재확인.
+
+## 20260812T1810-dbpicker-layout-stability-postdeploy — POST-DEPLOY 라이브 실측 (doc-only)
+- **Environment: Windows-browser (PB-0008)** — **PASS**. PR #1221 → main `d619259d` →
+  `make deploy-web-only`(web-a/web-b 양쪽 `mysql-ai-web:d619259d` healthy · 엣지
+  `no upstreams available` **0건** = 무중단 실측 · 스탬프 `c1426a14086f`).
+  실 Chrome/150 `https://localhost/admin` 에서 편집기 순서 `[picker, 목록, 규칙]` ·
+  드롭다운 **420px / 가시 10행**(Run 1 의 프리뷰 캐시 이월 축을 **캐시 우회 없이** 종결) ·
+  실 클릭 시 이동 **0px** + 같은 좌표 동일 DB 유지(16→17행) · 역검증 **+38px** 재현 ·
+  새로고침 후 pending 0 + 서버 정본 16/1 로 **라이브 데이터 변경 0**.
+- Run 기록 정본: `docs/test-runs.d/20260812T172625-dbpicker-layout-stability.md` Run 2.

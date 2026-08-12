@@ -3922,3 +3922,12 @@ C10b 로 "정합 체인은 건드리지 않는지" 를 반대 방향에서 단�
   스탬프가 같은 URL 이라 `immutable` 로 붙들린 것 — 고유 쿼리 stylesheet 를 새로 붙여 실제 서빙
   파일로 재측정(420px/10행)했고, **배포본 재확인을 POST-DEPLOY 로 이월**했다.
 - Human Approval Needed: no (Minor §12.3 — frontend 표현 계층, 권한·엔드포인트·스키마·마이그레이션 0)
+
+## REV-20260812T181000-ai-claude-corp-db-picker-layout-stability-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록
+
+- Trigger: doc-only (TASK/TEST/MODIFY + fragment Run 2 + 증거 1매). 코드·정책 doc 변경 0 →
+  §18.8 표 첫 행(비정책 doc-only) 적용, panel skip.
+- 근거 실측: 라이브 배포본(main `d619259d`)에서 실 Chrome/150 으로 이동 **0px**(역검증 +38px)
+  + 드롭다운 420px/가시 10행 — **이월했던 캐시 축을 우회 없이 종결**. 엣지 `no upstreams
+  available` 0건. 서버 정본 무변경(pending 미적용).
+- Human Approval Needed: no

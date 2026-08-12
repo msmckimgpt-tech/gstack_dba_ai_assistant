@@ -69,3 +69,33 @@ verdict: PASS (Environment: Windows-browser, 실 Chrome 150.0.7871.128 relay)
 **Runner**: AI · **Bridge**: relay @ `http://172.26.144.1:9223` · **Pass/Fail**: PASS
 
 **후속(POST-DEPLOY)**: 배포본에서 §3 의 가시 행 수를 캐시 무효화 없이 재확인한다.
+
+---
+
+# Run 2 — POST-DEPLOY 라이브 실측 (Environment: Windows-browser)
+
+**run_at**: 2026-08-12T18:10:00+09:00 · **verdict**: PASS
+
+PR #1221 머지(main `d619259d`) → `make deploy-web-only` 롤링 완료. web-a/web-b 양쪽
+`mysql-ai-web:d619259d` · `/healthz git_commit=d619259d` · 엣지 `no upstreams available`
+**0건**(무중단 실측) · 자산 스탬프 `c1426a14086f`.
+
+라이브 서빙 자산에 수정 반영 확인 — `css/admin.css` 에 `min(50vh, 420px)` 1 hit ·
+`admin/products.js` 에 `dbEditorWrap.appendChild(pickerWrap)` → `(chipWrap)` 순서 ·
+`dbSection.insertBefore(addRow, dsAccordion)` 1 hit.
+
+실 Chrome/150 `https://localhost/admin` 제품 `CC_QA` × `mssql-qa-idc`(후보 130개):
+
+- 편집기 자식 순서 `[admin-db-picker-wrap, cov-db-wrap, cov-db-rule]` · 섹션 순서
+  `[…, cov-detail, ds-acc-add-row, ds-acc]` — 배포본에서도 동일.
+- **드롭다운 `listH=420px` · 가시 10행** — Run 1 에서 프리뷰 캐시(`immutable`)로 이월했던
+  축을 **캐시 우회 없이** 배포본에서 확인. 이월 종결.
+- 실 트러스티드 클릭 → 앵커 이동 **0px**, 같은 좌표 `elementFromPoint` 가 동일 DB
+  (`atum2_db_7`) 유지, 16→17행, `선택됨 17개`, `1건 pending`.
+- **역검증**: 같은 화면에서 DOM 순서만 수정 전으로 되돌리고 같은 클릭 → **+38px** 재현.
+- 새로고침 후 `0건 pending`, 서버 정본 `webproductdatabases(113)` = 16/1 — **라이브 데이터
+  변경 0**(`모두 적용` 미클릭).
+
+**증거**: `docs/evidence/pb0008-dbpicker-layout-stability-postdeploy-20260812.png`
+
+**배포 전 프리뷰 결과와 차이 0** (가시 행 수 축 포함).
