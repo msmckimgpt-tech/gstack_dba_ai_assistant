@@ -177,4 +177,22 @@ feature-0023(외부 AI가 `ask` 로 **우리 LLM의 답변**을 받는 축)과�
 
 ## 13. Pre-approved Changes
 
-- 없음 (Critical — §7.1 Plan 승인 후 착수)
+- 없음 (Critical — §7.1 Plan 승인 후 착수. `PLAN-APPROVED` 2026-08-12)
+
+## 14. 구현 현황 (2026-08-12, P0)
+
+구현된 파일과 §11 AC 의 대응. **라이브 배포·e2e 는 미실시** — AC-1·AC-2 의 라이브 확인은 배포 후다.
+
+| 계층 | 파일 | 커버하는 AC |
+|---|---|---|
+| OAuth 저장 계약 | `src/oauth_store.py` | AC-1(세션 실재) · AC-10(코드 1회용·rotation/reuse·해시) · AC-11(DCR redirect) |
+| OAuth HTTP | `routers/oauth_as.py` | 위 계약의 전송면 |
+| authz seam | `src/tool_authz.py` | AC-2(스코프 fail-closed) |
+| 각인·탐지·판정 | `src/session_guard.py` | AC-3(각인) · AC-5(교차오염, 명시 신호 한정) · AC-8(인젝션 3단) |
+| 부하 원장 | `src/tool_ledger.py` + alembic 0055 | AC-6(원장·429·fail-closed) |
+| 도구 표면 | `routers/ai_tools.py` | AC-4(`get_task_context` LLM 0) · AC-7(원 질문·답변 적재) |
+| MCP 어댑터 | `src/external_tool_mcp_server.py` | L1 세션 격리(라벨 필수·https 강제·응답 상한) |
+| 무회귀 | — | AC-9(feature-0023 `ask` 축 · 전 스위트 green) |
+
+**미구현(TASK §5.1)**: HTTP/SSE MCP 전송 · L4 권한 비대칭 flag · 발견 자료 갱신 ·
+관리 콘솔 '외부 도구 한도' 탭.

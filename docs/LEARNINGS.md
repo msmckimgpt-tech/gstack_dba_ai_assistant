@@ -661,3 +661,25 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
   사용자 무영향" · "requeue 로 새 컨테이너가 이어받는다" 고 적고 있었다. 둘 다 **사실이 아니었다**
   (66% 사망, requeue=전량 재실행). 방향이 틀린 게 아니라 **근거가 틀린** 경우라, 충돌로 멈추지 말고
   §1~§3 을 정정하고 그 사실을 MODIFY 에 남긴다.
+
+
+## LRN-20260812-worktree-stash-is-repo-shared
+
+- **맥락**: feature-0041 cycle 중 "변경 전 기준선 대비 테스트 실패" 를 재보려고 격리 worktree 에서
+  `git stash -q && pytest && git stash pop -q` 를 돌렸다.
+- **무슨 일이 일어났나**: 내 변경은 전부 **untracked 신규 파일**이라 `git stash`(without `-u`)가
+  아무것도 담지 않았고, 이어진 `git stash pop` 이 **다른 브랜치(`ai/claude/attach-source-view`)의
+  기존 stash@{0}** 를 이 worktree 에 풀었다. `attachments.py`·`composer.js`·`chat.css`·
+  `route_snapshot_p5b.json` 등 만진 적 없는 파일에 conflict 가 생기고, HEAD 에 있던 파일 2개가
+  working tree 에서 사라졌다.
+- **근본 원인**: **stash 는 worktree-local 이 아니라 저장소 공유 ref(`refs/stash`)** 다.
+  worktree 별 격리(브랜치·인덱스·HEAD)에 익숙해지면 stash 도 격리돼 있다고 착각하기 쉽다.
+- **왜 조용했나**: `-q` 가 "No local changes to save" 를 삼켰다. pop 이 남의 stash 를 꺼낸다는
+  신호는 conflict 파일 목록뿐이었다.
+- **해소**: conflict 파일을 `git checkout -f HEAD -- <paths>` 로 되돌리고 `git reset` 으로 인덱스
+  정리. pop 이 **conflict 로 끝나면 stash 엔트리는 보존**되므로 남의 작업은 유실되지 않았다
+  (`git stash list` 9건 그대로).
+- **규칙**: 다중 worktree 저장소에서 **bare `git stash`/`git stash pop` 금지**. 기준선 비교가
+  필요하면 (a) 별도 worktree 를 `git worktree add --detach <base>` 로 만들거나 (b) `git stash push
+  -u -m "<고유 메시지>"` 후 `git stash list` 로 **내 엔트리를 확인해서** `stash@{n}` 을 명시 pop.
+  `-q` 는 쓰지 않는다.

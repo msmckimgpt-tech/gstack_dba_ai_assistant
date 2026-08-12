@@ -52,3 +52,36 @@ source_of_truth: true
   처리·전송 2종·대화 기록 보존·context_depth 전부 확정).
 - Human Approval Needed: **예** — §7.1 Critical. TASK.md §2.1에 `PLAN-APPROVED` 마커가
   부여되기 전까지 구현 착수 금지(§5 BLOCKED 등재).
+
+
+## REV-20260812-0002 [CODEX:implementation] — accepted
+
+- Related Change: CHG-20260812-0002 (P0 구현)
+- Reason: §18.8 security 렌즈. 계획 리뷰(REV-0001)는 **문서**에 대한 것이라 코드 리뷰를
+  대체하지 않는다 — 배포 전 필수라고 스스로 적어 둔 항목을 같은 cycle 에서 이행했다.
+- 실행: `codex exec -s read-only` + `git diff --cached -- '*.py'`. GATE **FAIL (P1 2건)** →
+  4건 전부 in-cycle 수정 + 회귀 테스트 5건 추가.
+
+### 지적 사항과 처리 — 전부 MCP 어댑터(클라이언트 측)에 집중
+
+1. **[P1] Bearer token 이 평문/MITM 에 노출** — `BASE_URL` 의 https 미검증 + TLS 검증 끄기 허용.
+   → `_require_https()` 신설(https 강제, loopback 만 예외, 위반 시 fail-loud SystemExit).
+   검증 끄기는 사내 self-signed 현실 때문에 남기되 **`EXT_TOOL_CA_BUNDLE`(사설 CA)** 을 권장
+   경로로 추가하고, 끄면 stderr 경고를 낸다. 회귀 테스트 2건.
+2. **[P1] `LABEL` 이 선택이라 L1 격리가 무력화** — 라벨 없는 두 계정 인스턴스가 **같은 tool
+   이름**을 갖는다. 세션 격리의 유일한 물리적 gate 가 선택 사항이었다.
+   → `_require_label()` 로 **필수화** + charset/길이 검증(`[A-Za-z0-9_-]{1,32}`).
+   `_name()` 의 `if LABEL else` 분기 제거. 회귀 테스트가 그 분기의 부활을 막는다.
+3. **[P2] 오류 본문이 각인 없이 tool 결과로 유입** — 성공 경로의 인젝션 gate 를 오류 경로로
+   우회할 수 있다. → `_defang()` 으로 sentinel·`[SCOPE]` 제거 후 반환(HTTPError·일반 예외 양쪽).
+4. **[P2] 응답 크기 무제한 `read()`** — 오동작·탈취된 endpoint 가 MCP 프로세스 메모리를 고갈.
+   → `_MAX_BYTES`(기본 8MiB) 상한 + 초과 시 `response_too_large`.
+
+- Alternatives Considered: (1)에서 "검증 끄기 옵션 자체를 제거" 도 검토했으나 사내 self-signed
+  환경(CONTRIBUTING §10)에서 현실적으로 막힌다 — 대신 **올바른 경로(CA 지정)를 1급으로 만들고
+  끄기는 경고와 함께 남기는** 절충. (2)는 절충 없이 필수화 — 선택으로 두면 격리가 사실상 없다.
+- Risks: 지적 4건이 전부 **클라이언트 측 어댑터**였다는 점이 시사적이다 — 서버측 관문은
+  단위 테스트로 두껍게 덮었는데 어댑터는 "얇은 래퍼" 라는 이유로 덜 봤다. 얇아도 토큰을 들고
+  네트워크에 나가는 컴포넌트다.
+- Open Questions: 없음.
+- Human Approval Needed: **배포**는 사람 결정(외부 영향 + Critical). 라이브 e2e 미실시 상태.

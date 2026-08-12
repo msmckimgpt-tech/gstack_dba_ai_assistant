@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: plan-review (계획 작성 완료 — 사람 승인 대기)
+- State: in-progress (PLAN-APPROVED 2026-08-12 → P0 구현 완료 · 라이브 배포 대기)
 - Owner: AI (계획) / Human (승인)
 - Priority: high
 - Last Updated: 2026-08-12
@@ -73,21 +73,29 @@ source_of_truth: true
 
 
 ## 3. Task Queue
-- [ ] TASK-20260812T075301-schema-ledger — `tool_call_usage` alembic + OAuth 테이블 부트스트랩
-- [ ] TASK-20260812T075301-authz-seam — 도구 스코프 ContextVar → 명시 인자 승격(내부 무회귀)
-- [ ] TASK-20260812T075301-oauth-as — 등록·인가·토큰·폐기 + 세션 결합/revoke 전파
-- [ ] TASK-20260812T075301-tools-p0 — P0 도구 9종 REST + task 세션 계약
-- [ ] TASK-20260812T075301-isolation — L1~L4 격리 + datamark 각인 3층
-- [ ] TASK-20260812T075301-injection — 3단 판정 + 저장 시점 datamark
-- [ ] TASK-20260812T075301-mcp-adapters — stdio(i) + HTTP/SSE(ii) 어댑터
-- [ ] TASK-20260812T075301-docs — SECURITY 신규 절·ARCHITECTURE·ROUTEMAP·발견 자료·0023 ANCHOR §1
+- [x] TASK-20260812T075301-schema-ledger — `tool_call_usage` alembic + OAuth 테이블 부트스트랩
+- [x] TASK-20260812T075301-authz-seam — 도구 스코프 ContextVar → 명시 인자 승격(내부 무회귀)
+- [x] TASK-20260812T075301-oauth-as — 등록·인가·토큰·폐기 + 세션 결합/revoke 전파
+- [x] TASK-20260812T075301-tools-p0 — P0 도구 9종 REST + task 세션 계약
+- [x] TASK-20260812T075301-isolation — L1~L4 격리 + datamark 각인 3층
+- [x] TASK-20260812T075301-injection — 3단 판정 + 저장 시점 datamark
+- [x] TASK-20260812T075301-mcp-adapters — stdio(i) + HTTP/SSE(ii) 어댑터
+- [x] TASK-20260812T075301-docs — SECURITY 신규 절·ARCHITECTURE·ROUTEMAP·발견 자료·0023 ANCHOR §1
 
 ## 4. In Progress
 - 없음
 
 ## 5. Blocked
-- TASK-20260812T075301-schema-ledger 이후 전 항목: BLOCKED: awaiting-human-approval —
-  위험도 Critical(§7.1). §2.1 계획에 대한 사람 승인(PLAN-APPROVED 마커) 전에는 구현 착수 안 함.
+- 없음 (PLAN-APPROVED 2026-08-12 로 해소)
+
+## 5.1 잔여 (다음 cycle)
+- HTTP/SSE MCP 전송(f-ii) — 현재 stdio 어댑터만. `FastMCP(streamable_http_path=…)` +
+  `auth_server_provider` 로 서버측 전송을 붙이는 작업.
+- 발견 자료 갱신 — `/api/ai/manifest`·`/api/ai/guide`·큐레이션 OpenAPI 에 OAuth 등록·인가 흐름과
+  P0 도구 계약 추가(익명=static contract 불변식 유지).
+- 라이브 배포 + e2e(등록→인가→토큰→도구→제출) 및 POST-DEPLOY 검증.
+- L4 권한 비대칭 flag — 원장 컬럼은 준비됐으나 판정 로직 미구현.
+- 관리 콘솔 '외부 도구 한도' 탭(`WebRoleTokenQuotas` 패턴 복제).
 
 ## 6. Done
 - 요구사항 확정 (2026-08-12 대화 — 신원/비용 2축, 동시 다중 세션 허용, 검증 이관 범위,
@@ -97,38 +105,59 @@ source_of_truth: true
 - TASK.md §2.1 구현 계획 작성
 
 ## 7. Next Action
-- 사람이 §2.1 계획을 검토하고 `PLAN-APPROVED` 마커 부여 → TASK-…-schema-ledger 착수
+- 라이브 배포 후 e2e 검증(등록→인가→토큰→도구 호출→제출) + POST-DEPLOY 기록 → §5.1 잔여 착수
 
 ## 8. Completion Checklist
-- [ ] 모든 REQ의 AC가 구현되었다
-- [ ] 단위 테스트(unit test)가 통과한다 (AGENTS.md §8.2 단계 1)
-- [ ] 전체/통합 테스트(integration test)가 통과하거나, 미작성 사유와 커버 계획이 TEST.md §4에 기록되었다 (AGENTS.md §8.2 단계 2)
-- [ ] FUNCTION.md가 현재 동작과 일치한다
-- [ ] MODIFY.md에 변경 이력이 기록되었다
-- [ ] REVIEW.md에 판단 근거가 기록되었다
-- [ ] REPORT.md에 최종 상태가 반영되었다
-- [ ] TEST.md에 테스트 결과가 기록되었다
-- [ ] BLOCKED 항목이 없거나 사람에게 전달되었다
-- [ ] STATUS.md에 기능 상태가 갱신되었다
-- [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
-- [ ] Git 커밋이 완료되었다
-- [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
-- [ ] 요청 범위 자기-열거 완결성 게이트를 통과했다 (§9 + AGENTS.md §16.7)
+- [x] 모든 REQ의 AC가 구현되었다 (AC-1~11 — 단, AC-1·AC-2 의 **라이브** 확인은 배포 후, §5.1)
+- [x] 단위 테스트(unit test)가 통과한다 — 신규 89건 + 기존 스위트 green
+- [x] 전체/통합 테스트(integration test): 컨테이너 e2e 미실시 — 사유·커버 계획 TEST.md §4
+- [x] FUNCTION.md가 현재 동작과 일치한다
+- [x] MODIFY.md에 변경 이력이 기록되었다 (CHG-20260812-0001/0002)
+- [x] REVIEW.md에 판단 근거가 기록되었다 (REV-20260812-0001/0002)
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md에 테스트 결과가 기록되었다
+- [x] BLOCKED 항목이 없거나 사람에게 전달되었다 (없음 — 잔여는 §5.1)
+- [x] STATUS.md에 기능 상태가 갱신되었다
+- [x] LEARNINGS.md에 발견된 교훈이 기록되었다 (worktree stash 공유 함정)
+- [x] Git 커밋이 완료되었다
+- [x] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
+- [x] 요청 범위 자기-열거 완결성 게이트를 통과했다 (§9 + AGENTS.md §16.7)
 
 ## 9. Requested Scope (요청 범위 자기-열거)
 
-본 cycle의 요청 범위는 **계획 산출물까지**다 (구현은 승인 후 별도).
+원 요청: "외부 사용자 AI 에게 API·스킬로 내부 접근을 제공하고, 각 대화의 실행 단계도 서비스 내
+LLM 이 아닌 외부 사용자 AI 가 수행" (+ 계획 승인 후 "구현 및 완수").
 
-- [x] `신규 feature FUNCTION.md §2 + AC` — 산출물: `docs/FUNCTION.md` (REQ 1건 · AC 9건) ·
-      배선 확인: `verify-completion` 문서 게이트로 확인 예정
-- [x] `신규 feature ANCHOR.md` — 산출물: `docs/ANCHOR.md` (§1 2문단 · §2 대안 4개 · §3 시나리오 1개 ·
-      §4 미기재) · 배선 확인: created_at 실 UTC(2026-08-12T07:53:01Z), §4 human-only 규약 준수
-- [x] `TASK.md §2.1 구현 계획 (P0)` — 산출물: 본 문서 §2.1 (파일·symbol 표 13행 · 접근 7단계 ·
-      완료 판정 9항 · 위험도 Critical) · 배선 확인: PLAN-APPROVED 미부여 상태로 §5 BLOCKED 명시
-- [ ] `feature-0023 ANCHOR 방향 분기 기록` — 산출물: `unit/feature-0023-conversation-api-access/docs/ANCHOR.md` §1 ·
-      배선 확인: 본 cycle 내 작성
+- [x] `계획 산출물 (ANCHOR/FUNCTION/TASK §2.1)` — 산출물: `docs/{ANCHOR,FUNCTION,TASK}.md` ·
+      배선: verify-completion PASS, PLAN-APPROVED 2026-08-12
+- [x] `feature-0023 ANCHOR 방향 분기 기록` — 산출물: `unit/feature-0023-.../docs/ANCHOR.md` §1 3문단
+- [x] `(a) 신원=로그인 세션 / 비용=머신 AI` — 산출물: `oauth_store.resolve_access_token`
+      (SessionId JOIN WebAuthSessions) · 배선: `test_oauth_store.py::test_logout_kills_derived_token`
+      등 6건이 세션 죽음→토큰 무효를 단정
+- [x] `(c) 부하 원장 신규 축` — 산출물: alembic 0055 `tool_call_usage` + `tool_ledger.py` ·
+      배선: `test_tool_ledger.py` 10건(기록 실패=거절, 상한 3종, 조회 불가=거절)
+- [x] `(d) 검증을 사용자 LLM 으로` — 산출물: `get_task_context`(우리 LLM 0회 — `cluster_context`
+      조회만) + `submit_answer(source_tasks)` 선언·대조 · 배선: 소스 단정 + 대조 6건
+- [x] `(e) 인젝션 3단 판정 + §14 재사용` — 산출물: `session_guard.classify_injection` ·
+      배선: reject 8건 / **정상 식별자 allow 7건**(오탐 회귀) / neutralize 2건
+- [x] `(f) 전송 (i) stdio` — 산출물: `external_tool_mcp_server.py` · 배선: `test_mcp_adapter.py` 7건
+- [ ] `(f) 전송 (ii) HTTP/SSE` — **미구현**. 사유·계획: TASK §5.1 (FastMCP streamable_http +
+      auth_server_provider). 현재는 stdio 만으로도 사용 가능
+- [x] `대화 기록 우리 쪽 보존` — 산출물: `WebAiTasks`(원 질문) + 원장(조회 이력) +
+      `submit_answer`(최종 답변) · 한계: 제출은 자발적(소프트 강제, FUNCTION §9 명시)
+- [x] `세션 격리 (동시 다중 허용)` — 산출물: L1 tool 이름 라벨 접미 · L2 각인 · L3 대조 · ·
+      배선: 각 층 테스트. **L4 flag 는 미구현**(§5.1)
+- [ ] `라이브 배포 + e2e` — **미실시**. 사유: 본 worktree 에서 서비스 미기동. 계획: §5.1
 
-**주장 affordance 실측 (G3)**: 해당 없음 (문서 산출물만, 실행 가능 기능 주장 없음).
+**주장 affordance 실측 (G3)**: 본 cycle 은 코드 경로를 만들되 **라이브 e2e 를 구동하지 않았다.**
+"외부 AI 가 등록→인가→토큰→도구 호출→제출 을 완주한다" 는 **아직 실측되지 않은 주장**이며,
+단위 테스트가 각 구간 계약만 고정한다. 배포 후 5-probe(등록 201 / 인가 302+code / 토큰 200 /
+도구 200+각인 / 무토큰 401) 를 TEST.md §3 에 기록해야 이 항목이 닫힌다.
 
-**경계변수 양측 검증 (G4)**: 해당 없음 (본 cycle에 임계·윈도잉 로직 없음 — 상한 knob 5종의
-경계 검증은 구현 cycle의 TASK-…-schema-ledger / …-tools-p0 항목에 귀속).
+**경계변수 양측 검증 (G4)**:
+- `AGENT_EXT_TOOL_RPM`(120) → 경계 이하 통과 / 도달 시 429 (`test_check_limits_blocks_rpm`,
+  `test_check_limits_passes_under_threshold`)
+- `AGENT_EXT_TOOL_ROWS_PER_HOUR`(200,000) · `_BYTES_PER_HOUR`(64MiB) → 각각 도달 시 429
+- 인가 코드 TTL(60s) → 만료 전 소비 성공 / 만료 후 거절 (`test_auth_code_expires`)
+- 교차오염 값 길이 임계(8자) → 8자 이상 원문 일치 탐지 / 미만 무시(오탐 방지,
+  `test_detect_ignores_short_values_to_avoid_false_positives`)

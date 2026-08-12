@@ -57,3 +57,35 @@ source_of_truth: true
 
 ## 4. Untested Areas
 - 아직 검증되지 않은 영역
+
+
+## 3. Test Runs
+
+### Run 2026-08-12 — 단위 (Environment: local pytest, PYTHONPATH=agent-core/src:web-ui/src:.)
+
+| 스위트 | 결과 |
+|---|---|
+| `unit/feature-0041-external-ai-tool-surface/tests` (신규 89건) | **PASS** |
+| `unit/feature-0002-agent-core/tests` | PASS (skip 다수 — 라이브 백엔드 격리) |
+| `unit/feature-0003-agent-web-ui/tests` | PASS (`test_share_redaction_invariant` 제외) |
+| `unit/feature-0023-conversation-api-access/tests` | PASS (`ask` 축 무회귀) |
+| `bin/migrate-lint.sh` | PASS — 0055 expand-safe, head 단일 |
+
+신규 89건 내역: `test_session_guard.py` 20 · `test_tool_authz.py` 15 · `test_oauth_store.py` 37 ·
+`test_tool_ledger.py` 10 · `test_mcp_adapter.py` 7.
+
+**`test_share_redaction_invariant.py` 미실행 사유**: `import web.app` 이 컨테이너 경로(`/app`)를
+요구한다(파일 자체가 `sys.path.insert(0, "/app")` 폴백을 갖고 있다). 로컬 worktree 에는 그 경로가
+없어 수집 단계에서 실패하며, **본 변경과 무관**하다(공유 리댁션 경로는 건드리지 않았다).
+`make test`(컨테이너)에서는 정상 수집된다.
+
+## 4. 미작성 테스트와 커버 계획
+
+- **라이브 e2e (등록→인가→토큰→도구→제출)** — 미실시. 본 worktree 에 서비스가 기동돼 있지 않고,
+  라이브 인스턴스에 신규 인증 경로를 붙이는 것은 배포 행위라 별도 단계다. 배포 후 5-probe 를
+  §3 에 Run 으로 추가한다(등록 201 / 인가 302+code / 토큰 200 / 도구 200+각인 존재 / 무토큰 401).
+- **동시성 경합(코드 2회 동시 교환)** — 단위는 순차 2회로만 덮었다. `UPDATE … WHERE ConsumedAt
+  IS NULL` 의 rowcount 판정이 방어이므로 실 DB 동시 요청 2건으로 확인해야 완결된다.
+- **부하 상한의 실 DB 집계** — fake 커서로 임계 판정만 덮었다. `tool_call_usage` 인덱스가 실제
+  질의 계획에서 쓰이는지는 배포 후 `EXPLAIN` 으로 확인한다.
+- **L4 권한 비대칭 flag** — 미구현이라 테스트 없음(TASK §5.1).

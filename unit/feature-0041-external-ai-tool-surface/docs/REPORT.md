@@ -10,13 +10,27 @@ source_of_truth: true
 
 ## 1. 현재 상태
 
-**plan-review — 계획 산출물 완료, 구현 미착수.**
+**in-progress — P0 구현 완료 · 라이브 배포 미실시.**
 
-본 cycle 의 범위는 방향(ANCHOR)·명세(FUNCTION)·구현 계획(TASK §2.1) 작성까지다. 코드 변경 0,
-런타임 영향 0. 위험도 **Critical**(§12.3 — 인증·인가 trust 모델 신설 + 신규 데이터 유출면)이라
-§7.1 에 따라 `PLAN-APPROVED` 마커 부여 전까지 구현에 착수하지 않는다.
+계획 승인(`PLAN-APPROVED` 2026-08-12) 후 P0 를 구현했다. 신규 route 8개는 전부 OAuth 토큰 뒤에
+있고, **라이브에 배포되지 않았으므로 현재 도달면은 0** 이다. 기존 경로는 무변경이다 —
+`modules/tools.py` 미수정, feature-0023 `ask` 축 무변경, 내부 대화 경로는 새 authz seam 을 거치지
+않는다.
 
-## 2. 산출물
+## 2. 산출물 (구현)
+
+| 층 | 파일 | 요지 |
+|---|---|---|
+| 스키마 | `alembic 0055` · `_bootstrap_schema._ensure_oauth_client_schema` | `tool_call_usage`(PG 부하 원장) + `WebOAuthClients/Grants/Tokens` + `WebAiTasks` |
+| 보안 코어 | `src/session_guard.py` | L2 각인 · L3 교차오염 탐지(명시 신호 한정) · 인젝션 3단 판정 |
+| 보안 코어 | `src/tool_authz.py` | 계정 RBAC → 제품 교차검증 → 라우터 · ContextVar 누수 방지 |
+| 보안 코어 | `src/oauth_store.py` | 코드 1회용 · 3요소 결합 · PKCE S256 · rotation/reuse 계열 폐기 · 세션 결합 |
+| 보안 코어 | `src/tool_ledger.py` | 기록/조회 실패 = 거절(fail-closed) · 상한 3종 |
+| REST | `routers/oauth_as.py` · `routers/ai_tools.py` | DCR·authorize·token·revoke / P0 도구 9종 |
+| 어댑터 | `src/external_tool_mcp_server.py` | stdio MCP · 라벨 필수 · https 강제 · 응답 상한 |
+| 테스트 | `tests/*` 5파일 | **94건** green |
+
+## 2.1 계획 cycle 산출물
 
 - `docs/ANCHOR.md` — §1 방향(추론 주체 반전의 이유·2축 신원/비용) · §2 대안 4개(0023 확장 /
   BYOK / 구독 토큰 보관 / 역방향 MCP) · §3 시나리오 1개
@@ -31,20 +45,21 @@ source_of_truth: true
 
 ## 3. 검증
 
-- `bin/verify-completion.sh --pre-commit feature-0041-external-ai-tool-surface` → **PASS**
-  (전 CHECK PASS, wiki 카드 WARN 도 해소)
-- §18.8 검증 패널: 세션 Agent-tool 제약으로 feature-0030 선례(§18.8.2)대로 `/codex review` 채택.
-  GATE **FAIL (P1 3건)** → 전건 in-cycle 수정 후 재확인. 상세는 REVIEW.md.
-- 테스트: 코드 변경이 없어 신규 테스트 없음. 구현 cycle 의 완료 판정 기준을 TASK §2.1 에 선고정.
+- 단위 테스트 **94건 green** (session_guard 25 · tool_authz 15 · oauth_store 37 · tool_ledger 10 ·
+  mcp_adapter 12 — 뒤 두 자릿수는 codex 수정 회귀 포함). 기존 스위트(0002/0003/0023) 무회귀.
+- `bin/migrate-lint.sh` PASS (0055 expand-safe · head 단일).
+- `verify-completion.sh --pre-commit` PASS.
+- **§18.8 패널 2회**: REV-0001(계획, P1 3건) · REV-0002(구현 코드, P1 2건+P2 2건) — 전건 in-cycle
+  수정. 구현 리뷰의 지적이 **전부 클라이언트 어댑터**에 몰렸다는 점을 REVIEW.md 에 기록했다.
+- ⚠ **라이브 e2e 미실시** — 본 worktree 에 서비스가 기동돼 있지 않다. "외부 AI 가 등록→인가→
+  토큰→도구→제출 을 완주한다" 는 아직 실측되지 않은 주장이다(TASK §9 G3 에 명시).
 
-## 4. 승인 대기 (BLOCKED)
+## 4. 잔여 (BLOCKED 아님 — 다음 cycle)
 
-- **Critical 승인 대기**: TASK.md §2.1 계획에 대한 사람 승인(`PLAN-APPROVED` 마커).
-  승인 전까지 TASK.md §3 Task Queue 의 구현 항목 전건 BLOCKED (§5 등재).
-- 승인 시 착수 순서: `schema-ledger` → `authz-seam` → `oauth-as` → `tools-p0` → `isolation`
-  → `injection` → `mcp-adapters` → `docs`.
-- **구현 cycle 에서 §18.8 보안 렌즈를 다시 받아야 한다** — 본 cycle 의 codex 리뷰는 *계획* 에
-  대한 것이고, OAuth AS·도구 표면은 신규 인증·유출 경계라 코드 단계에서 재검증이 필요하다.
+- **라이브 배포 + e2e 5-probe** (등록 201 / 인가 302+code / 토큰 200 / 도구 200+각인 / 무토큰 401).
+  배포는 외부 영향 행동이라 **사람 결정**이다.
+- HTTP/SSE MCP 전송(f-ii) — 현재 stdio 만. 발견 자료(`/api/ai/manifest`·`guide`·OpenAPI) 갱신.
+- L4 권한 비대칭 flag(원장 컬럼은 준비됨) · 관리 콘솔 '외부 도구 한도' 탭.
 
 ## 5. 알려진 한계 (정직 표기)
 
