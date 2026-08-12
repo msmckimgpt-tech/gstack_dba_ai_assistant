@@ -523,6 +523,8 @@ def _ensure_web_tables():
         app._ensure_web_account_totp_schema(conn)
         # feature-0023 (REQ-20260722-conversation-api-access): Bearer API 토큰 테이블 (slow path).
         app._ensure_web_api_tokens_schema(conn)
+        # feature-0041 (REQ-20260812-external-ai-tool-surface): OAuth AS 저장 계약 3종 (slow path).
+        app._ensure_oauth_client_schema(conn)
         # TASK-20260623T190000-gdrive-foundation (feature-0010): 계정별 Google Drive 토큰 테이블 (slow path).
         app._ensure_web_gdrive_tokens_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
@@ -2353,6 +2355,151 @@ def _ensure_web_api_tokens_schema(conn) -> None:
     finally:
         cur.close()
 
+
+def _ensure_oauth_client_schema(conn) -> None:
+    """feature-0041 (REQ-20260812-external-ai-tool-surface): 외부 AI 도구 표면의 OAuth
+    authorization-server 저장 계약 (멱등 CREATE — `_ensure_web_api_tokens_schema` idiom 동형).
+
+    feature-0023 의 Bearer 토큰은 **운영자가 CLI 로 발급**하는 장수명 자격증명이라 "사용자별
+    신원" 도 "세션 실재" 도 담지 못한다. 본 feature 는 신원을 **우리 로그인 세션**으로 못박으므로
+    (사람이 브라우저에서 로그인·동의) authorization-code 흐름과 그 저장 계약이 필요하다.
+
+    **codex REV-20260812-0001 P1 반영 — 저장 계약이 곧 보안 경계다:**
+      · 인가 코드는 **1회용**(`ConsumedAt` NOT NULL 이면 거절) + 단TTL + 발급 시
+        `(ClientId, RedirectUri, CodeChallenge)` 에 결합 — 셋 중 하나라도 교환 시점에 다르면 거절.
+      · access/refresh 는 **해시만 저장**(평문 컬럼 없음). `WebApiTokens.TokenHash` 규약 재사용.
+      · refresh 는 **rotation** 하며, 이미 교체된 refresh 가 다시 오면(**reuse**) 그 `FamilyId`
+        계열 전체를 폐기한다 — 토큰 탈취를 탐지하는 사실상 유일한 신호다.
+      · `SessionId` 로 웹 세션에 결합 — 사용자가 브라우저에서 로그아웃하면 그 세션에서 파생된
+        토큰이 함께 죽는다(= "세션 실재" 요구의 집행면).
+
+    **DCR redirect 정책(codex P1)**: `RedirectUris` 는 등록 시 검증된 값만 담고, 인가 시
+    **정확 일치**로만 매칭한다(prefix·와일드카드 금지). HTTPS 고정 + loopback 예외는 애플리케이션
+    (`routers/oauth_as.py::_validate_redirect_uri`)이 강제하며, 본 스키마는 그 결과를 보관만 한다.
+
+    fast-path(`_ensure_seed_catchup`)·slow-path(`_ensure_web_tables`) 양쪽 호출 — 기존 배포
+    자동 적용. additive·비파괴.
+
+    ⚠ **`conn.cursor()` 까지 try 안에 둔다 (LRN 반복 결함 + catchup abort)**: 본 함수는
+    `_ensure_seed_catchup` (운영 재기동 fast path) 의 **중간**에서 호출되고, 그 함수는 항목마다
+    try 로 감싸지 않는다 — 여기서 예외가 새면 **뒤따르는 catchup 항목이 전부 조용히 skip** 된다
+    (gdrive 토큰 · 아바타 컬럼 · 첨부 버전 · DB allowlist 규칙 · **audit events** · **audit chain**).
+    `docs/LEARNINGS.md` 의 seed-catchup abort 사례와 동일 기전이므로, 커서 획득 실패도 이 함수
+    안에서 흡수한다. 신규 테이블 부재는 이 feature 의 엔드포인트만 실패시키지만(fail-closed),
+    catchup 중단은 무관한 서브시스템을 조용히 망가뜨린다 — 후자가 훨씬 나쁘다.
+    """
+    cur = None
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS WebOAuthClients (
+                    Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    ClientId VARCHAR(64) NOT NULL,
+                    ClientName VARCHAR(128) NULL,
+                    RedirectUris TEXT NOT NULL,
+                    RegisteredIp VARCHAR(64) NULL,
+                    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    LastUsedAt DATETIME NULL,
+                    RevokedAt DATETIME NULL,
+                    UNIQUE KEY UQ_WebOAuthClients_ClientId (ClientId),
+                    KEY IX_WebOAuthClients_Created (CreatedAt),
+                    KEY IX_WebOAuthClients_Ip (RegisteredIp, CreatedAt)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS WebOAuthGrants (
+                    Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    CodeHash CHAR(64) NOT NULL,
+                    ClientId VARCHAR(64) NOT NULL,
+                    AccountId BIGINT NOT NULL,
+                    SessionId BIGINT NULL,
+                    RedirectUri VARCHAR(512) NOT NULL,
+                    CodeChallenge VARCHAR(128) NOT NULL,
+                    CodeChallengeMethod VARCHAR(8) NOT NULL DEFAULT 'S256',
+                    Scopes VARCHAR(512) NULL,
+                    ExpiresAt DATETIME NOT NULL,
+                    ConsumedAt DATETIME NULL,
+                    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY UQ_WebOAuthGrants_Code (CodeHash),
+                    KEY IX_WebOAuthGrants_Expires (ExpiresAt)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS WebOAuthTokens (
+                    Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    TokenHash CHAR(64) NOT NULL,
+                    TokenType VARCHAR(8) NOT NULL,
+                    FamilyId CHAR(32) NOT NULL,
+                    ClientId VARCHAR(64) NOT NULL,
+                    AccountId BIGINT NOT NULL,
+                    SessionId BIGINT NULL,
+                    Scopes VARCHAR(512) NULL,
+                    ExpiresAt DATETIME NOT NULL,
+                    ReplacedAt DATETIME NULL,
+                    RevokedAt DATETIME NULL,
+                    LastUsedAt DATETIME NULL,
+                    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY UQ_WebOAuthTokens_Hash (TokenHash),
+                    KEY IX_WebOAuthTokens_Family (FamilyId),
+                    KEY IX_WebOAuthTokens_Account (AccountId),
+                    KEY IX_WebOAuthTokens_Session (SessionId),
+                    KEY IX_WebOAuthTokens_Active (RevokedAt, ExpiresAt)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+        except Exception:
+            pass
+        try:
+            # task 세션 계약(feature-0041): 외부 AI 의 한 작업 단위. 모든 도구 호출이 여기 묶이고,
+            # 원 질문(open)·최종 답변(submit)이 서비스 측 대화로 흘러가는 근거가 된다.
+            # `SubmittedAt IS NULL` 로 남은 task 가 곧 **미제출률** — 자발적 제출을 강제할 수는
+            # 없으므로(구조적 한계) 측정해서 소프트 강제하는 것이 유일한 수단이다.
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS WebAiTasks (
+                    Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    TaskId VARCHAR(64) NOT NULL,
+                    AccountId BIGINT NOT NULL,
+                    ClientId VARCHAR(64) NULL,
+                    ConversationId VARCHAR(255) NULL,
+                    ProductId BIGINT NULL,
+                    Question TEXT NULL,
+                    Status VARCHAR(16) NOT NULL DEFAULT 'open',
+                    InjectionVerdict VARCHAR(16) NULL,
+                    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    SubmittedAt DATETIME NULL,
+                    UNIQUE KEY UQ_WebAiTasks_TaskId (TaskId),
+                    KEY IX_WebAiTasks_Account (AccountId, CreatedAt),
+                    KEY IX_WebAiTasks_Client (ClientId, CreatedAt),
+                    KEY IX_WebAiTasks_Open (Status, CreatedAt)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+            )
+        except Exception:
+            pass
+    except Exception:
+        # 커서 획득 실패 등 — 여기서 흡수한다(catchup 체인 보호, 위 docstring 참조).
+        pass
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+
+
 def _ensure_avatar_icon_schema(conn) -> None:
     """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
     / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
@@ -2463,6 +2610,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_account_totp_schema(conn)
     # feature-0023 (REQ-20260722-conversation-api-access): Bearer API 토큰 테이블 (fast path).
     _ensure_web_api_tokens_schema(conn)
+    # feature-0041 (REQ-20260812-external-ai-tool-surface): OAuth AS 저장 계약 3종 (fast path).
+    _ensure_oauth_client_schema(conn)
     # TASK-20260623T190000-gdrive-foundation (feature-0010): 계정별 Google Drive 토큰 테이블 (fast path).
     _ensure_web_gdrive_tokens_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
