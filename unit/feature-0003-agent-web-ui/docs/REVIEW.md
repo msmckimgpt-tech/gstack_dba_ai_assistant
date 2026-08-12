@@ -10,6 +10,11 @@ source_of_truth: true
 
 > 이전 기록(389건): [REVIEW-archive-20260711T115053.md](./_archive/REVIEW-archive-20260711T115053.md)
 
+## REV-20260812T220000-attach-md-render-post [SKIPPED:non-policy-doc] — POST-DEPLOY 실측 기록 (doc-only)
+- 대상 diff: `feature-0003/docs/{TASK,MODIFY,REPORT}.md` + `docs/test-runs.d/*.md` — **코드 변경 0**.
+- §18.8 dispatch 표 1행(비정책 doc-only) → panel SKIP. 실측은 PB-0008 실 Windows Chrome 으로 수행.
+- 결론: 배포본 도달 축 종결. 미실측 2건은 사유와 함께 명시했고 완료로 오인 보고하지 않는다.
+
 ## REV-20260812T203000-attach-md-render [CODEX:attach-md-render] — 요청 재해석 + 신규 렌더 표면의 보안 판단
 
 - **Trigger**: `UI/screen/layout keyword matched` (§18.8 ux·design) + `Code change` (frontend).

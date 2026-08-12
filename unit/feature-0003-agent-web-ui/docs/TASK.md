@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## 20260812T2200-attach-md-render-post — 배포본 실측으로 잔여 종결 (비-정책 doc-only)
+
+- [x] 배포본 `105fa2b7` 의 **실제 모듈**(`import('/static/app/attach-diff.js')`)에 신규 배선 9축
+      전부 도달 확인 (inert template · 첨부 sanitize 프로필 · 클래스 allowlist · `data:` 한정 미디어 ·
+      링크 비활성화 · mermaid 미렌더 · CSS 규칙 2종 · export)
+- [x] 배포 품질 — web-a/web-b 동일 SHA · 엣지 `no upstreams available` **0건**
+- [x] 미실측 2건(라이브 첨부 조합 대조 · 실 네트워크 요청 계측)을 사유와 함께 명시
+
+### 9. Requested Scope
+
+- 선행 cycle 의 POST-DEPLOY 잔여 종결 — ✓ (배포본 도달 축 확인, 미실측 2건 명시)
+
 ## 20260812T2030-attach-md-render — 첨부 `.md` 를 **마크다운 문서로 렌더** (Minor §12.3 — frontend-only)
 
 **사용자 요청(재지시)**: "요구사항이 잘 못 구현되었습니다. 구문 색이 아니라, 실제 마크다운
