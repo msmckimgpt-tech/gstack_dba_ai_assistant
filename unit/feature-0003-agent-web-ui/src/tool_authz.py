@@ -153,3 +153,60 @@ def scoped_execution(agent_core_mod: Any, tools_mod: Any, mem_conn,
                 router.close_all()
             except Exception:
                 pass
+
+
+# ── L4: 권한 비대칭 flag (feature-0041) ───────────────────────────────────────
+
+def permission_asymmetry(sessions: "list[dict[str, Any]]") -> dict[str, Any] | None:
+    """같은 `client_id` 에 **권한 집합이 크게 다른** 세션이 동시 활성인지 판정한다.
+
+    ## 왜 이 축인가
+
+    한 AI 런타임이 A·B·C 계정 세션을 동시에 다루는 것은 허용된다(내부 서비스는 병렬 작업이
+    필요하다). 그런데 **오염의 실제 피해 크기는 세션 수가 아니라 권한 격차**에 달려 있다 —
+    같은 제품만 보는 세션끼리 섞이면 손해가 작고, 한쪽만 민감 데이터소스에 닿을 수 있으면 크다.
+    그래서 차단이 아니라 **위험 구간만 조준해 표시**한다.
+
+    Args:
+        sessions: `[{"account_id": int, "products": set|list[int]}, …]` — 같은 client 의 활성 세션.
+
+    Returns:
+        비대칭이 유의하면 finding dict, 아니면 None. 판정은 **자카드 유사도**로 한다 —
+        교집합 크기만 보면 큰 집합끼리의 부분 겹침을 과소평가하고, 차집합만 보면 한쪽이
+        작을 때 과대평가한다.
+
+    ⚠ 이 함수는 **표시 전용**이다. 차단하면 병렬 세션 허용 결정(2026-08-12)을 뒤집는 것이 된다.
+    """
+    live = [s for s in (sessions or []) if s.get("account_id") is not None]
+    if len(live) < 2:
+        return None
+
+    sets = {int(s["account_id"]): {int(p) for p in (s.get("products") or ())} for s in live}
+    accounts = sorted(sets)
+    worst: tuple[float, int, int] | None = None
+    for i, a in enumerate(accounts):
+        for b in accounts[i + 1:]:
+            sa, sb = sets[a], sets[b]
+            union = sa | sb
+            if not union:
+                continue                      # 둘 다 권한 없음 — 비교 대상 아님
+            jaccard = len(sa & sb) / len(union)
+            if worst is None or jaccard < worst[0]:
+                worst = (jaccard, a, b)
+
+    if worst is None:
+        return None
+    jaccard, a, b = worst
+    if jaccard >= 0.5:                        # 절반 이상 겹치면 유의한 비대칭 아님
+        return None
+    # ⚠ 반환값에 **계정 id 를 담지 않는다**(codex P1): 이 finding 은 원장·운영자용이고,
+    #   호출자에게 상대 계정을 알려주면 교차 테넌트 정보 노출이 된다(`client_id` 는 공유 가능한
+    #   앱 식별자다). 운영자는 원장의 account_id·client_id 컬럼으로 대상을 특정할 수 있다.
+    return {
+        "kind": "permission_asymmetry",
+        "n_accounts": len(accounts),
+        "jaccard": round(jaccard, 3),
+        "detail": (f"같은 client 에 권한 격차가 큰 세션이 동시 활성입니다 "
+                   f"(계정 {len(accounts)}개, 최소 제품집합 유사도 {jaccard:.2f}). "
+                   f"교차오염이 일어나면 피해가 큰 조합입니다."),
+    }

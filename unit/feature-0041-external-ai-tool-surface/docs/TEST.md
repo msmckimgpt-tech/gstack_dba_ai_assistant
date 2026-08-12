@@ -120,3 +120,16 @@ REV-20260812-0003 에서 예고한 보완 절차였고, 실제로 작동했다.
 **배포 부작용**: probe 로 DCR client 1건(`deploy-probe`, redirect `https://probe.invalid/cb`)이
 라이브에 생성됐다. `client_id` 만으로는 어떤 데이터에도 접근할 수 없어 무해하나, 운영자가
 정리하려면 `WebOAuthClients` 에서 해당 행을 revoke 하면 된다.
+
+### Run 2026-08-12 (2차) — 잔여 3건 단위 (Environment: local pytest)
+
+| 스위트 | 결과 |
+|---|---|
+| `unit/feature-0041-external-ai-tool-surface/tests` | **136건 PASS** (기존 101 + 신규 30 + codex 회귀 6, 중복 제외) |
+| `unit/feature-0003-agent-web-ui/tests` | PASS (`test_share_redaction_invariant` 컨테이너 경로 의존 제외) |
+
+신규 커버리지 요지 — 발견 자료: `tool_surface` 계약 존재 · **인스턴스 데이터 0**(발급물 패턴
+정규식) · 수기 카탈로그 · OpenAPI 7 operationId · 가이드가 "인가는 자동화 불가" 를 명시.
+L4: 자카드 판정 5경계 · **계정 id 미노출** · **응답 미포함(원장 전용)** · fan-out 상한.
+HTTP 전송: 토큰 무보관 · https 강제 · **loopback 기본 바인딩** · 검증끄기 loopback 한정 ·
+**리다이렉트 금지(두 어댑터)** · 9 도구 동일성.
