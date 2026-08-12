@@ -28,7 +28,7 @@
 //    까지만 말하므로 긴 줄에서는 사용자가 두 줄을 눈으로 대조해야 했다. 구간 계산은 서버가
 //    한 번만 하고(2열·단일열 동일), 프론트는 이미 칠해진 텍스트 노드를 문자 오프셋으로 쪼개
 //    감싼다 — 구문 색과 변경 마크가 서로를 지우지 않는 독립 레이어가 된다.
-import { apiFetch, bindBackdropDismiss, escapeHtml, showToast, detectCodeLanguage, paintCodeInto, codeLanguageLabel } from "../app.js?v=dev";
+import { apiFetch, bindBackdropDismiss, escapeHtml, showToast, detectCodeLanguage, paintCodeInto, codeLanguageLabel, markdownToHtml } from "../app.js?v=dev";
 
 const VIEW_MODE_KEY = "attachDiffViewMode";   // "split" | "unified"
 const CONTEXT_KEY = "attachDiffContextFull";  // "1" 이면 전체 맥락
@@ -85,6 +85,289 @@ function _readHighlightOn() {
 }
 function _writeHighlightOn(on) {
   try { localStorage.setItem(HIGHLIGHT_KEY, on ? "1" : "0"); } catch (e) { /* private mode */ }
+}
+
+// ── 마크다운 렌더 (사용자 요청 2026-08-12) ───────────────────────────────────
+// `.md` 첨부를 **문서로** 보여 준다. 선행 cycle 은 같은 요청을 구문 색으로 처리했는데,
+// 사용자가 원한 것은 "실제 마크다운 구성으로 출력" — 제목이 제목으로, 표가 표로, 목록이
+// 목록으로 보이는 것이었다. 원문(줄번호+평문)은 토글로 남긴다.
+//
+// **렌더 파이프라인은 새로 만들지 않는다**: 답변 말풍선과 같은 `markdownToHtml`
+// (`marked.parse` → enhance(diff/sql/attachment-edit/mermaid) → `DOMPurify.sanitize`)을 그대로
+// 쓴다. 같은 `.md` 가 대화 본문에 인용될 때와 첨부로 열릴 때 다르게 보이면 그 자체가 결함이고,
+// 파이프라인을 두 벌 두면 한쪽만 갱신되는 것이 이 모듈이 반복해 기록한 결함 기전이다.
+const MD_RENDER_KEY = "attachSourceMarkdown";   // "0" 이면 원문 보기 (기본: 렌더)
+function _readMdRenderOn() {
+  try { return localStorage.getItem(MD_RENDER_KEY) !== "0"; } catch (e) { return true; }
+}
+function _writeMdRenderOn(on) {
+  try { localStorage.setItem(MD_RENDER_KEY, on ? "1" : "0"); } catch (e) { /* private mode */ }
+}
+
+/** 이 첨부가 마크다운으로 렌더할 대상인가 — 판정은 `code-highlight.js` 레지스트리 단일 정본. */
+function _isMarkdownFile(filename) {
+  return detectCodeLanguage(filename) === "md";
+}
+
+/** 원문 행 배열 → 원본 텍스트. `gap` 행은 본문이 아니므로 제외한다. */
+function _sourceText(data) {
+  const rows = Array.isArray(data && data.rows) ? data.rows : [];
+  const out = [];
+  for (const r of rows) {
+    if (!r || r.type === "gap") continue;
+    out.push(r.right ?? r.left ?? "");
+  }
+  return out.join("\n");
+}
+
+// 첨부 본문은 **사용자가 올린 임의 바이트**다. 답변 말풍선(LLM 산출물)과 같은 sanitize 를
+// 거치지만, 그것만으로는 닫히지 않는 축이 하나 있다: **원격 리소스 fetch**.
+// `![](https://attacker/track.gif)` 한 줄이면 그 문서를 여는 모든 멤버의 IP·열람 시각이
+// 업로더가 고른 서버로 새어 나간다(스크립트 실행이 아니라 로드 자체가 신호라 DOMPurify 는
+// 막지 않는다). 그룹 대화에서 첨부는 멤버 전원이 열람하므로 이 경로는 실재한다.
+// 응답 헤더의 CSP 는 현재 **report-only** 라 차단이 아니라 보고만 한다 — 즉 브라우저가 막아
+// 주리라 기대할 수 없다. 그래서 sanitize 이후 DOM 에서 **교차 출처 리소스를 직접 중립화**하고,
+// 사용자에게는 URL 을 텍스트로 보여 준다(숨기지 않는다 — 무엇이 있었는지는 알아야 한다).
+// **첨부 전용 sanitize 프로필** — 말풍선(LLM 산출물)용 기본 프로필보다 좁다. 기본 프로필은
+// `style`·`form`·`input`·`action` 을 통과시키는데, 임의 업로드 본문에서는 그것들이 각각
+// ① `<div style="background:url(https://evil/x)">` CSS 비콘 ② 인증된 앱 위에 뜨는 외부 form
+// (`position:fixed` 오버레이 + `action=https://evil`) 피싱이 된다(codex 적대 리뷰 [P1]).
+// 미디어 태그도 전부 막고, **`img` 만 남겨** 아래에서 URL 을 보여 주는 칩으로 바꾼다
+// (무엇이 있었는지는 사용자가 알아야 하므로 통째로 지우지 않는다).
+// `svg`/`math` 는 네임스페이스 혼동 + `<image href>` 우회 경로라 문서 렌더에서 제외한다
+// (```mermaid 다이어그램은 sanitize 이후 `mermaid.render` 가 만들므로 영향 없다).
+// 렌더러(marked + enhance*)가 스스로 붙이는 클래스만 통과시키는 allowlist. 사용자 HTML 이
+// 들고 온 클래스는 앱 CSS 를 빌려 UI 를 위장할 수 있으므로 여기 없으면 제거한다(6R [P1]).
+const _RENDERER_CLASS_RE = /^(?:language-[\w+#.-]+|sql-block|sql-tok-[\w-]+|diff-(?:block|line|add|del|hunk|meta|ctx|lineno)|mermaid-(?:block|pending|rendered|error)|attachment-edit-note)$/;
+const _ATTACH_SANITIZE = {
+  FORBID_TAGS: [
+    "style", "form", "input", "button", "textarea", "select",
+    "iframe", "object", "embed", "link", "meta", "base",
+    "svg", "math", "video", "audio", "source", "track", "picture", "map", "area",
+  ],
+  FORBID_ATTR: [
+    "style", "srcset", "poster", "ping", "background",
+    "formaction", "action", "usemap", "longdesc", "lowsrc", "dynsrc",
+    // `id`/`name` 은 앱의 기존 요소와 충돌하거나 DOM clobbering 표면이 된다 — 문서에 필요 없다.
+    "id", "name",
+  ],
+};
+// sanitize 이후에도 URL 을 실어 나를 수 있는 요소 — 위 프로필이 대부분을 막지만, 방어를 한 곳에만
+// 걸지 않는다(프로필이 완화되면 여기서 잡힌다).
+const _MEDIA_SEL = "img,video,audio,source,track,embed,object,iframe,image";
+
+function _resolveUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  try { return new URL(s, document.baseURI); } catch (e) { return null; }
+}
+/** `data:image/…` — 인라인이라 네트워크 요청이 없다. */
+function _isInlineImage(raw) { return /^data:image\//i.test(String(raw || "").trim()); }
+/**
+ * 같은 출처의 http(s) 인가. **프로토콜 상대 URL(`//host/x`)도 정확히 판정**한다 —
+ * 초판은 `^https?:` 문자열 검사라 `//evil/x` 가 "상대 경로" 로 통과했다(codex [P1]).
+ * 판정은 문자열이 아니라 `new URL(raw, baseURI)` 의 실 origin 으로 한다.
+ */
+function _isSameOrigin(raw) {
+  const u = _resolveUrl(raw);
+  if (!u) return false;
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  return u.origin === window.location.origin;
+}
+/**
+ * 이 미디어 URL 을 **실제로 로드해도 되는가**. 답은 `data:image/` 뿐이다.
+ *
+ * 초판은 "같은 출처면 안전" 으로 봤는데 **틀렸다**(codex 적대 리뷰 4R [P1]). 이 앱에는 GET 만으로
+ * 상태가 움직이는 인증 엔드포인트가 있고(예: `routers/oauth_as.py` 의 authorize),
+ * `![x](/api/ai/oauth/authorize?…redirect_uri=https://attacker/…)` 한 줄이면 **열람자의 세션으로**
+ * 인가 코드가 발급돼 공격자에게 리다이렉트된다 — 즉 같은 출처가 오히려 위험한 방향이다
+ * (교차 출처 비콘은 정보 유출, 같은 출처는 **권한 행사**).
+ *
+ * 잃는 것은 거의 없다: 첨부 `.md` 가 참조하는 이미지는 우리 서버에 호스팅되지 않아
+ * 상대 경로든 절대 경로든 어차피 404 다. `data:` 인라인 이미지는 네트워크 요청이 없어 남긴다.
+ * 나머지는 URL 을 텍스트 칩으로 보여 주므로 **무엇이 있었는지는 사라지지 않는다**.
+ */
+function _mediaLoadAllowed(url) {
+  return _isInlineImage(url);
+}
+// 링크 판정에서만 쓰인다(요청이 아니라 **클릭 이동**의 외부 여부) — 미디어에는 쓰지 않는다.
+function _isSameOriginOrInline(url) {
+  return _isInlineImage(url) || _isSameOrigin(url);
+}
+
+/**
+ * 렌더된 DOM 에 첨부 전용 하드닝을 적용한다 (sanitize **이후**).
+ *  - 교차 출처 미디어 → 로드하지 않고 URL 을 텍스트 칩으로 대체(비콘 차단)
+ *  - 외부 링크 → `target=_blank` + `rel="noopener noreferrer nofollow"`
+ * @returns {{blockedMedia: number, deadLinks: number}} 중립화 건수 (호출자가 배너로 표면화)
+ */
+function _hardenRenderedMarkdown(root) {
+  let blockedMedia = 0;
+  // URL 을 실어 나르는 속성은 `src` 하나가 아니다 — `srcset`·`poster`·`href`/`xlink:href`·`data`
+  // 가 모두 요청을 만든다(codex 적대 리뷰 [P1]: `<img src="/safe" srcset="https://evil 2x">`).
+  // 프로필이 대부분을 이미 막지만, **하나라도 남으면 비콘**이므로 여기서 전부 확인한다.
+  const URL_ATTRS = ["src", "srcset", "poster", "data", "href", "xlink:href"];
+  const anyRemote = (el) => URL_ATTRS.some((a) => {
+    const v = el.getAttribute(a);
+    if (!v) return false;
+    // ⚠️ 콤마 분할은 **`srcset` 에만** 적용한다(`url 1x, url 2x` 목록). 다른 속성에 적용하면
+    // `data:image/png;base64,AAAA` 의 콤마에서 쪼개져 인라인 이미지가 통째로 차단된다
+    // (하네스가 적발 — 과잉 차단도 결함이다).
+    const candidates = a === "srcset"
+      ? String(v).split(",").map((part) => part.trim().split(/\s+/)[0])
+      : [String(v).trim()];
+    return candidates.some((u) => u && !_mediaLoadAllowed(u));
+  });
+  root.querySelectorAll(_MEDIA_SEL).forEach((el) => {
+    const src = el.getAttribute("src") || el.getAttribute("data")
+      || el.getAttribute("srcset") || el.getAttribute("href") || "";
+    const tag = el.tagName.toLowerCase();
+    // iframe·object·embed 는 출처와 무관하게 문서 안에 둘 이유가 없다(첨부는 문서다).
+    if (tag === "iframe" || tag === "object" || tag === "embed" || anyRemote(el)) {
+      const chip = document.createElement("span");
+      chip.className = "attach-source-md-blocked";
+      const alt = el.getAttribute("alt") || "";
+      // 텍스트로만 넣는다 — 여기서 문자열을 조립하면 하드닝이 새 XSS 경로가 된다.
+      chip.textContent = `🚫 외부 ${tag} 차단${alt ? ` · ${alt}` : ""}${src ? ` · ${src}` : ""}`;
+      chip.title = "외부 서버로 열람 사실이 새지 않도록 로드하지 않았습니다. 필요하면 원문 보기에서 URL 을 확인하세요.";
+      el.replaceWith(chip);
+      blockedMedia += 1;
+    }
+  });
+  // 링크는 미디어와 **위험 방향이 반대**다.
+  //  - 교차 출처 링크: 우리 세션 쿠키가 가지 않는다 → 클릭 가능하게 두되 `rel`/`target` 강제.
+  //  - **같은 출처 링크: 열람자의 세션으로 우리 엔드포인트를 부른다** → 그것이 위험한 쪽이다.
+  //    `[정상 문서](/api/ai/oauth/authorize?client_id=…&redirect_uri=https://evil/cb)` 처럼
+  //    라벨로 가려 두면 한 번의 클릭으로 열람자 권한의 인가 코드가 공격자에게 간다
+  //    (codex 적대 리뷰 5R [P1] — 이미지 자동 GET 을 닫은 뒤에도 남아 있던 "권한 사용" 경로).
+  //    첨부 문서가 이 앱의 엔드포인트로 딥링크할 정당한 이유는 없으므로 **비활성화**하고 URL 을
+  //    텍스트로 보여 준다(숨기지 않는다 — 필요하면 사용자가 직접 복사해 연다).
+  //  - 문서 내 앵커(`#section`)는 스크롤일 뿐이라 남긴다 — 긴 문서의 목차가 동작해야 한다.
+  //  - `mailto:`/`tel:` 등 비-HTTP 스킴은 우리 세션과 무관하다.
+  let deadLinks = 0;
+  root.querySelectorAll("a[href]").forEach((a) => {
+    const href = a.getAttribute("href") || "";
+    if (href.startsWith("#")) return;                       // 문서 내 앵커
+    const u = _resolveUrl(href);
+    if (!u || (u.protocol !== "http:" && u.protocol !== "https:")) return;
+    if (u.origin !== window.location.origin) {
+      // 문자열이 아니라 **resolve 된 origin** 으로 판정한다 — `//evil/x`(프로토콜 상대)가
+      // `^https?:` 검사를 빠져나가던 구멍을 닫는다(codex [P1]).
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener noreferrer nofollow");
+      return;
+    }
+    const chip = document.createElement("span");
+    chip.className = "attach-source-md-blocked";
+    chip.textContent = `🚫 앱 내부 링크 비활성 · ${a.textContent || ""} · ${href}`;
+    chip.title = "첨부 문서가 이 앱의 주소를 여는 것을 막았습니다 — 클릭 한 번으로 내 권한이 쓰일 수 있습니다. 필요하면 주소를 직접 복사해 여세요.";
+    a.replaceWith(chip);
+    deadLinks += 1;
+  });
+  // ```mermaid 블록을 **코드블록으로 되돌린다** (첨부 경로에서는 다이어그램을 렌더하지 않는다).
+  //
+  // 왜 렌더하지 않는가(codex 적대 리뷰 [P1]): `renderMermaidDiagrams` 는 sanitize·하드닝이 끝난
+  // **뒤에** 라이브 DOM 으로 SVG 를 넣는다. mermaid 의 `%%{init: {"themeCSS": "…url(https://evil/x)"}}%%`
+  // 지시자는 그 SVG 안 `<style>` 에 **외부 `url()` 을 그대로 만들어** 첨부 전용 sanitize 프로필과
+  // 위 URL 중립화를 **둘 다 우회한** 열람 비콘이 된다(vendored mermaid 10.9.3 에서 재현됨).
+  // 말풍선에서는 입력이 LLM 산출물이라 그 위험을 감수하지만, **첨부는 임의 업로드**다 — 같은
+  // 파이프라인을 쓰되 이 후처리 한 단계만 끊는 것이 비용 대비 정확한 조치다.
+  // 대안(생성된 SVG 를 inert DOM 에서 재정화)은 mermaid API 가 직접 삽입하는 구조라 우회면이
+  // 다시 넓어지고, 다이어그램은 markdown 표준도 아니다 — 원문은 코드블록으로 그대로 읽힌다.
+  root.querySelectorAll(".mermaid-block").forEach((el) => {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.className = "language-mermaid";
+    code.textContent = el.textContent || "";   // 텍스트로만 — 재주입 경로를 만들지 않는다
+    pre.appendChild(code);
+    el.replaceWith(pre);
+  });
+
+  // 넓은 표는 **표만** 가로 스크롤한다 — 감싸지 않으면 표 하나가 문서 전체에 가로 스크롤바를
+  // 만들어 본문 읽기가 어긋난다(모달 폭은 고정이라 이 조건이 흔하다).
+  root.querySelectorAll("table").forEach((t) => {
+    if (t.parentElement && t.parentElement.classList.contains("attach-source-md-tablewrap")) return;
+    const w = document.createElement("div");
+    w.className = "attach-source-md-tablewrap";
+    t.replaceWith(w);
+    w.appendChild(t);
+  });
+  return { blockedMedia, deadLinks };
+}
+
+/**
+ * 마크다운 본문을 컨테이너에 렌더한다.
+ * @returns {{ok: boolean, blockedMedia: number}} `ok:false` 면 호출자가 원문 표로 폴백한다.
+ */
+function _renderMarkdownInto(container, text) {
+  const src = String(text || "");
+  // 렌더 라이브러리 미로드(파일 결합 실패·구버전 캐시)면 **조용히 빈 화면을 주지 않는다** —
+  // 호출자가 원문 표로 폴백하고 사유를 배너로 알린다. `markdownToHtml` 은 그 경우
+  // `<pre>` 폴백을 돌려주므로, 라이브러리 유무를 여기서 직접 판정한다.
+  if (!window.marked || !window.DOMPurify) return { ok: false, blockedMedia: 0, deadLinks: 0 };
+  let html = "";
+  try { html = markdownToHtml(src); } catch (e) { return { ok: false, blockedMedia: 0, deadLinks: 0 }; }
+  if (!html) return { ok: false, blockedMedia: 0, deadLinks: 0 };
+  // 2차 sanitize — 첨부 전용 좁은 프로필(위 `_ATTACH_SANITIZE`). 문자열 입출력이라 DOMPurify
+  // 내부 파싱은 inert 문서에서 일어난다(요청 없음).
+  // ⚠️ **strict sanitize 전에** GFM 작업 목록의 체크박스를 글리프로 바꾼다.
+  // `_ATTACH_SANITIZE` 는 `input` 을 막는데(피싱 표면), marked 가 `- [x]`/`- [ ]` 를 정확히
+  // `<input type=checkbox disabled>` 로 내므로 그대로 두면 **체크 상태가 조용히 사라져**
+  // `- [x] 완료` 와 `- [ ] 대기` 가 같은 목록으로 보인다(codex 적대 리뷰 3R [P1] — 요청한
+  // 기능 자체의 회귀). 상태는 살리고 상호작용 요소는 없애기 위해 **비대화형 글리프**로 치환한다.
+  // 이 변환도 `<template>`(inert)에서 수행하며 텍스트는 `textContent` 로만 넣는다.
+  try {
+    const tplTask = document.createElement("template");
+    tplTask.innerHTML = html;
+    // **사용자 HTML 의 `class` 를 걸러낸다.** 이것을 두면 `<div class="share-mgr-backdrop">` 한 줄로
+    // 앱의 모달 배경 스타일(`position:fixed; z-index:9999`)을 그대로 얻어, 첨부 문서가 **앱 UI 를
+    // 위장**할 수 있다(codex 적대 리뷰 6R [P1] — UI redress). `style` 을 막아도 클래스로 같은 일이
+    // 된다. 렌더러가 만든 클래스(코드블록 언어·SQL 토큰·diff·mermaid)만 통과시킨다 — 그것들이
+    // 없으면 코드블록 구문색·mermaid 강등이 함께 죽으므로 전부 지우지는 않는다.
+    tplTask.content.querySelectorAll("[class]").forEach((el) => {
+      const kept = String(el.getAttribute("class") || "").split(/\s+/)
+        .filter((c) => c && _RENDERER_CLASS_RE.test(c));
+      if (kept.length) el.setAttribute("class", kept.join(" "));
+      else el.removeAttribute("class");
+    });
+    tplTask.content.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      const span = document.createElement("span");
+      const checked = cb.hasAttribute("checked") || cb.checked === true;
+      span.className = `attach-source-md-task${checked ? " is-checked" : ""}`;
+      span.textContent = checked ? "☑" : "☐";
+      span.setAttribute("aria-label", checked ? "완료" : "미완료");
+      cb.replaceWith(span);
+    });
+    html = tplTask.innerHTML;
+  } catch (e) { /* 변환 실패는 치명적이지 않다 — 아래 sanitize 가 체크박스를 지울 뿐 */ }
+
+  let safe = "";
+  try { safe = window.DOMPurify.sanitize(html, _ATTACH_SANITIZE); }
+  catch (e) { return { ok: false, blockedMedia: 0, deadLinks: 0 }; }
+  if (!safe) return { ok: false, blockedMedia: 0, deadLinks: 0 };
+
+  // ⚠️ **inert 파싱이 이 함수의 핵심**이다. 초판은 살아 있는 노드에 sanitize 결과를 그대로 먹여 파싱한 뒤
+  // 원격 미디어를 제거했는데, 브라우저는 **파싱 시점에 이미 요청을 시작**한다 — 최종 DOM 에서
+  // 지워도 비콘은 이미 나간 뒤다(codex 적대 리뷰 [P1], 이 기능의 목적 자체를 무효화하던 결함).
+  // `<template>` 의 content 는 browsing context 가 없는 별도 문서라 **리소스를 가져오지 않는다**
+  // (같은 이유로 `enhanceMermaidBlocks`·`enhanceDiffBlocks` 도 template 을 쓴다). 여기서 URL 을
+  // 중립화한 **뒤에** 라이브 DOM 으로 옮기므로, 교차 출처 요청은 한 번도 발생하지 않는다.
+  const tpl = document.createElement("template");
+  tpl.innerHTML = safe;
+  const { blockedMedia, deadLinks } = _hardenRenderedMarkdown(tpl.content);
+
+  const host = document.createElement("div");
+  // `message-content` 를 함께 붙여 답변 말풍선과 **같은 타이포·코드블록 스타일**을 상속한다
+  // (같은 파이프라인의 산출물이 화면마다 다르게 보이지 않게). 첨부 전용 조정은
+  // `.attach-source-md` 쪽에만 둔다.
+  host.className = "attach-source-md message-content";
+  host.appendChild(tpl.content);              // 이 시점엔 교차 출처 URL 이 남아 있지 않다
+  container.appendChild(host);
+  // ⚠️ **여기서 `renderMermaidDiagrams` 를 호출하지 않는다** — 그것은 sanitize·하드닝 이후에
+  // 라이브 DOM 으로 SVG 를 넣는 유일한 경로이고, mermaid `themeCSS` 지시자로 외부 `url()` 을
+  // 심을 수 있어 두 방어선을 모두 우회한다(위 `_hardenRenderedMarkdown` 의 mermaid 주석 참조).
+  // ```mermaid 는 코드블록으로 표시되며, 그 변환은 하드닝 단계가 **inert** 상태에서 끝냈다.
+  return { ok: true, blockedMedia, deadLinks };
 }
 
 function _versionLabel(v) {
@@ -534,6 +817,17 @@ function _identicalFlags(data) {
 // gap 행은 여기 오지 않는 것이 정상이다(서버가 identical 이면 축약하지 않는다). 그래도
 // 오면 "생략" 문구로 그린다 — 조용히 버리면 사용자가 잘린 원문을 전체로 오인한다.
 function _renderSource(container, data, opts) {
+  // 마크다운 렌더 경로 — `.md` 첨부를 문서로 출력한다(사용자 요청 2026-08-12).
+  // 실패(라이브러리 미로드·빈 결과) 시 **조용히 비우지 않고** 아래 원문 표로 떨어진다.
+  if (opts && opts.md) {
+    const res = _renderMarkdownInto(container, _sourceText(data));
+    if (res.ok) {
+      if (typeof opts.onMdRendered === "function") opts.onMdRendered(res);
+      return;
+    }
+    if (typeof opts.onMdFallback === "function") opts.onMdFallback();
+  }
+
   const table = document.createElement("table");
   // `is-source` 는 **표 계층** modifier 다(`is-split`·`is-unified` 와 같은 축). 행 계층은
   // `is-equal`/`is-insert`… 어휘라 같은 토큰을 두 계층에 얹지 않는다 — 후속 CSS 규칙이 두 곳에
@@ -663,7 +957,32 @@ function _renderBody(bodyEl, data, mode, opts) {
     srcWrap.className = "attach-diff-splitwrap";
     const srcScroller = document.createElement("div");
     srcScroller.className = "attach-diff-scroller";
-    _renderSource(srcScroller, data, opts);
+    // 배너는 렌더 결과를 알아야 만들 수 있으므로 **뒤에 만들어 본문 앞에 끼운다**
+    // (원문 보기 모달과 같은 계약 — 차단 사실은 본문보다 먼저 읽혀야 한다).
+    let mdNotice = null;
+    _renderSource(srcScroller, data, {
+      ...(opts || {}),
+      onMdRendered: ({ blockedMedia, deadLinks }) => {
+        if (!blockedMedia && !deadLinks) return;
+        mdNotice = document.createElement("div");
+        mdNotice.className = "attach-diff-notice is-warn";
+        const parts = [];
+        if (blockedMedia) parts.push(`이미지·미디어 ${blockedMedia}건`);
+        if (deadLinks) parts.push(`앱 내부 링크 ${deadLinks}건`);
+        mdNotice.textContent =
+          `${parts.join(" · ")}을 차단했습니다 — 문서를 여는 것만으로 열람 사실이 외부로 새거나 `
+          + "클릭 한 번으로 내 권한이 쓰이지 않도록 막았습니다. 원래 주소는 본문에 표시됩니다.";
+      },
+      onMdFallback: () => {
+        mdNotice = document.createElement("div");
+        mdNotice.className = "attach-diff-notice is-warn";
+        mdNotice.textContent =
+          "마크다운으로 렌더하지 못해 원문으로 표시합니다 (렌더 라이브러리 미로드일 수 있습니다).";
+        // 원문 보기 모달과 같은 이유로 컨트롤을 화면과 일치시킨다(codex [P2]) — 저장값은 불변.
+        if (typeof opts.onMdFallbackSync === "function") opts.onMdFallbackSync();
+      },
+    });
+    if (mdNotice) bodyEl.appendChild(mdNotice);
     srcWrap.appendChild(srcScroller);
     bodyEl.appendChild(srcWrap);
     _restoreScrollAnchor(srcScroller, anchor);
@@ -827,6 +1146,12 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     '      <button type="button" class="attach-diff-mode" data-mode="unified">단일열</button>' +
     '    </div>' +
     '    <label class="attach-diff-ctxtoggle"><input type="checkbox" class="attach-diff-ctxfull"><span>동일한 줄도 모두 보기</span></label>' +
+    // 마크다운 렌더 토글 — 이 모달에서는 **내용이 동일해 원문을 출력하는 화면**에서만 뜻이 있다
+    // (줄 대조 diff 는 렌더하면 대조 자체가 성립하지 않는다). 원문 보기 모달과 같은 저장 키를
+    // 써서 한쪽에서 고른 보기 방식이 다른 쪽에도 적용된다 — 같은 파일이 두 화면에서 다르게
+    // 보이지 않는다는 이 모듈의 계약.
+    '    <label class="attach-source-mdtoggle" hidden><input type="checkbox" class="attach-source-md-cb">' +
+    '<span>마크다운으로 보기</span></label>' +
     // 구문 하이라이트 토글 — **색이 실제로 칠해질 수 있을 때만** 표시한다(아래 `syncHlToggle`).
     // 옆의 맥락 토글과 같은 체크박스 관용구를 쓴다(같은 성격의 on/off 를 다른 위젯으로 두지 않는다).
     '    <label class="attach-diff-hltoggle" hidden><input type="checkbox" class="attach-diff-hl">' +
@@ -891,10 +1216,24 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
   // (내용 동일 = 원문 뷰도 **칠할 본문이 있는 화면**이다 — 원문 출력이 생긴 뒤로는
   //  `identical` 을 제외하지 않는다. 제외한 채 두면 원문만 무색으로 남아, 같은 파일이
   //  diff 화면에서는 색이 있고 원문 화면에서는 없는 비일관이 된다.)
+  const mdWrap = backdrop.querySelector(".attach-source-mdtoggle");
+  const mdCb = backdrop.querySelector(".attach-source-md-cb");
+  let mdOn = _readMdRenderOn();
+  mdCb.checked = mdOn;
+  // 이 모달의 마크다운 렌더는 **identical(원문 출력) 화면 한정**이다 — 줄 대조 diff 를 렌더하면
+  // 어느 줄이 바뀌었는지가 사라진다. 그래서 노출 판정에 `identical` 이 들어간다(하이라이트
+  // 토글이 `identical` 을 제외하지 **않는** 것과 정반대이며, 이 비대칭은 의도다).
+  const mdRenderable = (data) => _isMarkdownFile(filename)
+    && Boolean(data) && data.comparable !== false && Boolean(data.identical)
+    && Array.isArray(data.rows) && data.rows.length > 0;
   const syncHlToggle = (data) => {
+    const md = mdRenderable(data);
+    mdWrap.hidden = !md;
+    if (md) mdCb.checked = mdOn;
     const paintable = Boolean(detectedLang) && Boolean(data)
       && data.comparable !== false
-      && Array.isArray(data.rows) && data.rows.length > 0;
+      && Array.isArray(data.rows) && data.rows.length > 0
+      && !(md && mdOn);   // 렌더된 문서에는 칠할 원문 줄이 없다
     hlWrap.hidden = !paintable;
     if (!paintable) return;
     hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
@@ -945,6 +1284,16 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     // 하이라이트가 꺼져 있으면 lang 을 아예 넘기지 않는다 — 렌더러가 종전 평문 경로를 타므로
     // "끔" 이 곧 이전 동작과 동일함이 구조로 보장된다(끈 상태에 잔여 span 이 남지 않는다).
     lang: hlOn ? detectedLang : null,
+    // identical 원문 화면에서만 참 — `_renderBody` 의 diff 경로는 이 값을 읽지 않는다.
+    md: mdOn && mdRenderable(lastData),
+    onMdFallbackSync: () => {
+      mdCb.checked = false;
+      hlWrap.hidden = !detectedLang;
+      if (detectedLang) {
+        hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+        hlCb.checked = hlOn;
+      }
+    },
     onRatioChange: (r) => { ratio = r; },
     // "동일한 줄도 모두 보기" 가 켜져 있으면 이미 전부 보이므로 전개 버튼을 달지 않는다.
     onExpandGap: ctxCb.checked ? null : expandGap,
@@ -1081,6 +1430,15 @@ export function openAttachmentDiffModal(attachmentId, versions, preselect) {
     rerender();
   });
 
+  // 마크다운 ↔ 원문 전환(identical 화면 한정). 원문 보기 모달과 **같은 저장 키**라 한쪽에서
+  // 고른 방식이 다른 쪽에도 적용된다.
+  mdCb.addEventListener("change", () => {
+    mdOn = mdCb.checked;
+    _writeMdRenderOn(mdOn);
+    syncHlToggle(lastData);   // 구문 색 토글 노출이 md 상태에 종속된다
+    rerender();
+  });
+
   load();
 }
 
@@ -1126,6 +1484,11 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     '  </div>' +
     '  <div class="attach-diff-controls">' +
     '    <span class="attach-diff-stats" role="status" aria-live="polite"></span>' +
+    // 마크다운 렌더 토글 — `.md` 첨부에서만 보인다(사용자 요청 2026-08-12). 기본 켬이며
+    // 끄면 종전의 줄번호+원문 표로 돌아간다. 구문 색 토글과 **동시에 보이지 않는다**:
+    // 렌더된 문서에는 칠할 원문 줄이 없어 그 토글이 아무 일도 하지 않는 거짓 어포던스가 된다.
+    '    <label class="attach-source-mdtoggle" hidden><input type="checkbox" class="attach-source-md-cb">' +
+    '<span>마크다운으로 보기</span></label>' +
     // 구문 색 토글은 비교 모달과 **같은 관용구·같은 저장 키**다 — 한쪽에서 끈 사용자가 다른
     // 쪽에서 다시 켜야 한다면 그건 두 기능이 아니라 한 기능의 일관성 결함이다.
     '    <label class="attach-diff-hltoggle" hidden><input type="checkbox" class="attach-diff-hl">' +
@@ -1156,33 +1519,51 @@ export function openAttachmentSourceModal(attachmentId, opts) {
   const hlWrap = backdrop.querySelector(".attach-diff-hltoggle");
   const hlCb = backdrop.querySelector(".attach-diff-hl");
   const hlLabel = backdrop.querySelector(".attach-diff-hl-label");
+  const mdWrap = backdrop.querySelector(".attach-source-mdtoggle");
+  const mdCb = backdrop.querySelector(".attach-source-md-cb");
 
   fnameEl.textContent = String(o.filename || "파일");
   let detectedLang = detectCodeLanguage(fnameEl.textContent);
   let hlOn = _readHighlightOn();
   hlCb.checked = hlOn;
+  let mdOn = _readMdRenderOn();
+  mdCb.checked = mdOn;
 
   let lastData = null;
   let reqSeq = 0;
 
-  const syncHlToggle = (data) => {
+  /** 이 화면에 마크다운으로 렌더할 본문이 실제로 있는가 (파일명만으로 판정하지 않는다). */
+  const mdRenderable = (data) => _isMarkdownFile(fnameEl.textContent)
+    && Boolean(data) && data.viewable !== false
+    && Array.isArray(data.rows) && data.rows.length > 0;
+
+  const syncToggles = (data) => {
+    // 노출 판정은 `syncHlToggle` 과 같은 원칙 — **렌더할 본문이 실제로 왔을 때만** 보인다.
+    const md = mdRenderable(data);
+    mdWrap.hidden = !md;
+    if (md) mdCb.checked = mdOn;
+    // 마크다운으로 보는 동안 구문 색 토글은 숨긴다(칠할 원문 줄이 화면에 없다 — 거짓 어포던스).
     const paintable = Boolean(detectedLang) && Boolean(data) && data.viewable !== false
-      && Array.isArray(data.rows) && data.rows.length > 0;
+      && Array.isArray(data.rows) && data.rows.length > 0 && !(md && mdOn);
     hlWrap.hidden = !paintable;
     if (!paintable) return;
     hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
     hlCb.checked = hlOn;
   };
-  syncHlToggle(null);
+  const syncHlToggle = syncToggles;   // 기존 호출부 이름 보존(같은 함수 — 판정면이 하나여야 한다)
+  syncToggles(null);
 
   // 컨트롤이 하나도 없으면 컨트롤 바를 통째로 숨긴다 — 바이너리 화면에서 통계도 토글도 없이
   // padding + border-bottom 만 남아 제목 아래에 정체불명의 빈 띠가 그어졌다(§18.8 design 지적).
   const syncControlsBar = () => {
-    controlsEl.hidden = !statsEl.textContent && hlWrap.hidden;
+    controlsEl.hidden = !statsEl.textContent && hlWrap.hidden && mdWrap.hidden;
   };
   syncControlsBar();
 
-  const renderOpts = () => ({ lang: hlOn ? detectedLang : null });
+  const renderOpts = () => ({
+    lang: hlOn ? detectedLang : null,
+    md: mdOn && mdRenderable(lastData),
+  });
 
   // 절단·해시와 같은 계열의 판정: **"원문" 은 전량을 봤을 때만 쓸 수 있는 말**이다.
   // (비교 모달 `_identicalFlags` 와 같은 원칙 — 형제 화면이 명시적으로 금지한 것을 여기서
@@ -1257,8 +1638,41 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     wrap.className = "attach-diff-splitwrap";
     const scroller = document.createElement("div");
     scroller.className = "attach-diff-scroller";
-    _renderSource(scroller, data, renderOpts());
+    // 렌더 결과에 따라 배너를 **뒤에 만들어 본문 앞에 끼운다** — 차단 건수·폴백 사유는
+    // 렌더가 끝나야 알 수 있고, 사용자는 그 사실을 본문보다 먼저 봐야 한다.
+    let mdNotice = null;
+    _renderSource(scroller, data, {
+      ...renderOpts(),
+      onMdRendered: ({ blockedMedia, deadLinks }) => {
+        if (!blockedMedia && !deadLinks) return;
+        mdNotice = document.createElement("div");
+        mdNotice.className = "attach-diff-notice is-warn";
+        const parts = [];
+        if (blockedMedia) parts.push(`이미지·미디어 ${blockedMedia}건`);
+        if (deadLinks) parts.push(`앱 내부 링크 ${deadLinks}건`);
+        mdNotice.textContent =
+          `${parts.join(" · ")}을 차단했습니다 — 문서를 여는 것만으로 열람 사실이 외부로 새거나 `
+          + "클릭 한 번으로 내 권한이 쓰이지 않도록 막았습니다. 원래 주소는 본문에 표시됩니다.";
+      },
+      onMdFallback: () => {
+        mdNotice = document.createElement("div");
+        mdNotice.className = "attach-diff-notice is-warn";
+        mdNotice.textContent =
+          "마크다운으로 렌더하지 못해 원문으로 표시합니다 (렌더 라이브러리 미로드일 수 있습니다).";
+        // 컨트롤을 **화면과 일치**시킨다 — 체크는 켜져 있는데 원문 표가 보이면 사용자는
+        // 토글이 고장 났다고 읽는다(codex 적대 리뷰 [P2]). 저장값은 건드리지 않는다:
+        // 이 전환은 사용자의 선택이 아니라 실패로 인한 강등이므로 다음 열람에서 다시 시도한다.
+        mdCb.checked = false;
+        hlWrap.hidden = !detectedLang;
+        if (detectedLang) {
+          hlLabel.textContent = `${codeLanguageLabel(detectedLang)} 구문 색`;
+          hlCb.checked = hlOn;
+        }
+        syncControlsBar();
+      },
+    });
     wrap.appendChild(scroller);
+    if (mdNotice) bodyEl.appendChild(mdNotice);
     bodyEl.appendChild(wrap);
     _restoreScrollAnchor(scroller, anchor);
   };
@@ -1314,6 +1728,17 @@ export function openAttachmentSourceModal(attachmentId, opts) {
     hlOn = hlCb.checked;
     _writeHighlightOn(hlOn);
     render({ keepScroll: true });
+  });
+
+  // 마크다운 ↔ 원문 전환. 스크롤은 **보존하지 않는다** — 두 뷰는 좌표계가 다르다(렌더된 문서의
+  // 스크롤 위치를 줄 표에 그대로 얹으면 엉뚱한 곳으로 튄다). 전환은 사용자가 의도한 뷰 변경이라
+  // 맨 위에서 시작하는 편이 예측 가능하다.
+  mdCb.addEventListener("change", () => {
+    mdOn = mdCb.checked;
+    _writeMdRenderOn(mdOn);
+    syncToggles(lastData);      // 구문 색 토글 노출이 md 상태에 종속된다
+    syncControlsBar();
+    render({ keepScroll: false });
   });
 
   load();

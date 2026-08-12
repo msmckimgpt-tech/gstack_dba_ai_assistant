@@ -8,6 +8,50 @@ source_of_truth: true
 
 # Task
 
+## 20260812T2030-attach-md-render — 첨부 `.md` 를 **마크다운 문서로 렌더** (Minor §12.3 — frontend-only)
+
+**사용자 요청(재지시)**: "요구사항이 잘 못 구현되었습니다. 구문 색이 아니라, 실제 마크다운
+구성으로 출력되도록 구현해주세요."
+
+**선행 오해석**: `20260812T1830-attach-md-highlight` 가 "`.md` 포맷도 내부적으로 처리" 를 **구문
+하이라이트**로 읽었다. 요청의 본질은 "포맷을 색으로 구분" 이 아니라 **"포맷대로 보여 달라"** 였다.
+선행 작업은 되돌리지 않는다 — 원문 보기(토글 off)와 **변경이 있는 diff** 화면은 줄 대조가 목적이라
+렌더하면 기능이 사라진다. 두 기능은 대체가 아니라 같은 화면의 두 모드다.
+
+### 2.1 Implementation Plan
+
+| 파일 | 심볼 | 변경 | 완료 판정 |
+|---|---|---|---|
+| `src/static/app/attach-diff.js` | `_renderMarkdownInto` · `_hardenRenderedMarkdown` · `_sourceText` · `_isMarkdownFile` · `_readMdRenderOn`/`_writeMdRenderOn` · `_renderSource` md 분기 · 두 모달 토글 | 마크다운 렌더 경로 + 첨부 전용 하드닝 | `.md` 첨부가 제목·표·목록·강조·인용·코드블록 서식으로 출력되고, 토글로 원문 복귀 시 byte 무손실 |
+| `src/static/css/chat.css` | `.attach-source-md*` | 문서 서식(위계·blockquote·hr·task·표 wrap·차단 칩) | 실 브라우저 computed 위계 h1>h2>h3>=p |
+| `tests/verify_attach_source_markdown.mjs` | — | 신규 하네스(실 vendor 로드) | 전건 PASS + 뮤테이션 역검증 |
+| `src/scenario.attach-md-render.json` | — | PB-0008 시나리오 신규 | 실 Windows Chrome 렌더 + 판독가능 캡처 |
+
+- 접근: **파이프라인 신규 제작 0** — 답변 말풍선과 같은 `markdownToHtml` 재사용(복제가 곧 결함 기전).
+- 위험도: **Minor** (§12.3 — frontend-only, 백엔드·RBAC·스키마·마이그레이션 0). 단 첨부 본문을
+  HTML 로 렌더하는 **신규 표면**이라 보안 하드닝을 함께 넣는다.
+
+- [x] `_renderSource` 마크다운 경로 + 두 모달 토글(기본 켬·영속·구문색 토글과 배타)
+- [x] 첨부 전용 하드닝 — 교차 출처 미디어 중립화(비콘 차단) · `iframe/object/embed` 제거 ·
+      외부 링크 `rel`/`target` · 표 wrap. 차단 건수는 배너로 표면화(무음 금지)
+- [x] 렌더 실패 시 **빈 화면이 아니라** 원문 표 + 사유 배너
+- [x] codex 적대 리뷰 **6라운드 [P1] 7건 전건 반영** — 다속성/프로토콜상대 URL · **inert 파싱**
+      (라이브 선파싱으로 비콘이 이미 나가던 결함) · 첨부 전용 sanitize 프로필 · **mermaid 미렌더**
+      (하드닝 이후 SVG 주입 + `themeCSS` 외부 url 우회) · **같은 출처 이미지 GET-CSRF**(oauth
+      authorize → 미디어는 `data:` 만 허용) · **같은 출처 링크 클릭 권한사용**(비활성화 + URL 노출) · **사용자 클래스 UI 위장**(렌더러 클래스 allowlist)
+      + GFM 체크박스 상태 소실·`data:` 과잉 차단 회귀 해소
+- [x] 신규 하네스 **102 PASS**(실 vendor marked+DOMPurify 로드) · **뮤테이션 14종 KILL**
+      (살아남아 고친 검사 결함 3건 기록) · 형제 하네스 4종 회귀 0(77/125/61/146)
+- [x] PB-0008 실 Windows Chrome/150 — 위계·표·인용·코드블록·차단칩 실측 + 판독가능 캡처
+- [x] 문서 정합 (FUNCTION/MODIFY/REVIEW/test-runs.d/REPORT/STATUS)
+
+### 9. Requested Scope
+
+- 구문 색이 아니라 **실제 마크다운 구성으로 출력** — ✓ 제목·표·목록·강조·인용·코드블록·체크박스가
+  각각의 서식으로 렌더(PB-0008 실측 + 하네스 B축 12건)
+- 원문 확인 경로 보존 — ✓ 토글로 원문 표 복귀, byte 무손실(C3)
+- 줄 대조가 목적인 화면은 보존 — ✓ 변경 있는 diff 에는 렌더 토글 미노출(G5/G6)
+
 ## 20260812T1930-attach-md-postverify — 배포본 실측으로 선행 cycle 잔여 종결 (비-정책 doc-only)
 
 선행 `20260812T1830-attach-md-highlight` 가 "배포 후에만 확인 가능" 으로 남긴 2건을 배포본

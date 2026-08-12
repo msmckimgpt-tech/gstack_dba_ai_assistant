@@ -11,6 +11,53 @@ source_of_truth: true
 
 > 이전 기록(408건): [MODIFY-archive-20260711T115053.md](./_archive/MODIFY-archive-20260711T115053.md)
 
+## CHG-20260812T203000-attach-md-render — 첨부 `.md` 마크다운 렌더 (Minor §12.3, frontend-only)
+- **요청(재지시)**: "구문 색이 아니라, 실제 마크다운 구성으로 출력되도록 구현해주세요." (2026-08-12)
+- **원인**: 선행 `CHG-20260812T183000-attach-md-highlight` 가 같은 요청을 **구문 하이라이트**로
+  해석. 요청의 본질은 "포맷대로 보여 달라" 였다. 선행 작업은 유지한다 — 원문 보기(토글 off)와
+  변경이 있는 diff 는 줄 대조가 목적이라 렌더하면 기능이 사라진다(두 모드의 관계).
+- **Files**:
+  - `src/static/app/attach-diff.js` — `MD_RENDER_KEY`·`_readMdRenderOn`/`_writeMdRenderOn` ·
+    `_isMarkdownFile` · `_sourceText` · `_MEDIA_SEL`/`_isSameOriginOrInline`/`_hardenRenderedMarkdown` ·
+    `_renderMarkdownInto` 신규 + `_renderSource` md 분기 + 두 모달(원문 보기·비교 identical)의
+    `마크다운으로 보기` 토글·배너·재렌더 배선. `markdownToHtml` 을 `../app.js` 에서 import.
+  - `src/static/css/chat.css` — `.attach-source-md`(+`h1~h6`·`blockquote`·`hr`·task·표 wrap) ·
+    `.attach-source-md-blocked` · `.attach-source-md-tablewrap` 신규.
+  - `tests/verify_attach_source_markdown.mjs` 신규(66) · `src/scenario.attach-md-render.json` 신규 ·
+    `docs/test-runs.d/20260812T2030-attach-md-render.md` 신규.
+- **설계 결정 3건**: ① **파이프라인 신규 제작 0** — 답변 말풍선과 같은 `markdownToHtml` 재사용
+  (복제가 곧 결함 기전). ② **토글 기본 켬 + 원문 복귀 보존** — 요청은 렌더지만 원문 확인 수단을
+  없애지 않는다(첨부는 계약 문서일 수 있어 바이트 그대로를 봐야 하는 상황이 있다).
+  ③ **렌더 중 구문색 토글 숨김** — 칠할 원문 줄이 화면에 없어 거짓 어포던스가 된다.
+- **보안(신규 표면이라 함께 넣음)**: 첨부 본문은 **사용자가 올린 임의 바이트**이고 그룹 멤버 전원이
+  연다. sanitize 로 닫히지 않는 축은 **원격 리소스 fetch** — `![](https://attacker/x.gif)` 한 줄로
+  열람자 IP·시각이 업로더가 고른 서버로 샌다(로드 자체가 신호). 응답 CSP 는 **report-only**(실측)라
+  브라우저가 막지 않는다. → sanitize 이후 DOM 에서 교차 출처 미디어 중립화(URL 은 텍스트 칩으로
+  노출·건수 배너) · `iframe/object/embed` 제거 · 외부 링크 `rel="noopener noreferrer nofollow"`.
+- **codex 적대 리뷰 6라운드 [P1] 7건 전건 반영**(모두 실제 결함):
+  ① URL 검사가 `src`/`data` 뿐이라 `srcset`·`poster`·`xlink:href` 우회 + 프로토콜 상대 URL(`//evil`)이
+     `^https?:` 문자열 검사를 통과 → 다속성 검사 + **resolve 된 origin** 판정.
+  ② **라이브 DOM 에 먼저 파싱한 뒤 제거**해 비콘이 이미 나간 뒤였다(기능 목적 자체를 무효화) →
+     `<template>`(inert)에서 중립화한 **뒤** 라이브로 이동.
+  ③ 공용 DOMPurify 프로필이 `style`/`form`/`input`/`action` 을 허용(CSS url 비콘·인증 앱 위 피싱) →
+     **첨부 전용 좁은 프로필**(`_ATTACH_SANITIZE`) 2차 sanitize.
+  ④ **mermaid 가 하드닝 이후 라이브 DOM 에 SVG 를 주입**하고 `themeCSS` 로 외부 `url()` 을 심을 수
+     있었다 → 첨부 경로에서 mermaid 렌더 중단 + 코드블록 강등(inert 단계에서 변환).
+  ⑤ **같은 출처 이미지를 허용**해 `![](/api/ai/oauth/authorize?redirect_uri=…)` 로 열람자 세션의
+     인가 코드가 발급되는 **GET-CSRF** → 미디어 로드 허용을 **`data:image/` 로만** 축소.
+  ⑥ 이미지 자동 GET 을 닫은 뒤에도 **같은 출처 링크 클릭**으로 열람자 권한이 쓰이는 경로가 남음 →
+     같은 출처 링크는 **비활성화 + URL 텍스트 노출**(문서 내 앵커·`mailto:` 는 예외).
+  ⑦ 사용자 HTML 의 `class` 가 앱 CSS 를 빌려 **UI 위장**(`share-mgr-backdrop` = 모달 배경) →
+     렌더러 생성 클래스 allowlist + `id`/`name` 제거.
+  부수로 GFM 체크박스가 `input` 금지에 걸려 **상태가 소실**되던 회귀를 글리프(`☑`/`☐`) 치환으로,
+  콤마 분할이 `data:` URI 를 쪼개 **인라인 이미지까지 과잉 차단**하던 버그를 `srcset` 한정으로 해소.
+- **검증**: 신규 하네스 **102 PASS**(스텁 아님 — `marked.umd.js`+`purify.min.js` 실제 로드) ·
+  **뮤테이션 14종 전건 KILL**(살아남아 고친 검사 결함 3건은 TEST fragment 에 기록) ·
+  형제 4종 회귀 0 · **PB-0008 실 Windows Chrome/150 PASS — 정본 `_renderMarkdownInto` 를 그대로
+  실행**(초판 시나리오는 옛 취약 구현을 복제해 증거로 성립하지 않았음, 재작성 후 재실행):
+  `renderOk` · `tasks 2/checked 1` · `mermaidCode 1/svg 0` · `inputs 0` · `remoteImgs 0` ·
+  **`remoteAttrLeaks []`** · 위계 20>17>15>14px · `markersGone`. pytest 무관(`.py` 0).
+
 ## CHG-20260812T193000-attach-md-postverify — 배포본 실측 기록 (doc-only, 코드 변경 0)
 - 선행 `CHG-20260812T183000-attach-md-highlight` 가 "배포 후에만 확인 가능" 으로 남긴 잔여를
   배포본 `d0241c93` 에서 닫는다. **코드·자산 변경 0** — 문서만.
